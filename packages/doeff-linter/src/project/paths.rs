@@ -1,9 +1,9 @@
-//! repo の中の path の道具(根からの相対の綴り・宣言の file の鍵・glob の照合)。規則の module はここを直に読む — 組み立ての
-//! project/mod.rs を読み戻すと、mod.rs が宣言する子の module と依存の輪になる。
+//! Path utilities inside a repo (relative spelling from the root, keys of declaration files, glob matching). Rule modules read this directly -- reading back
+//! project/mod.rs, which assembles things, would form a dependency cycle with the child modules that mod.rs declares.
 
 use std::path::Path;
 
-/// path の repo の根からの相対の綴り(区切り `/`)。根の外なら None。symlink の違いは正規化してもう一度試す。
+/// Spelling of a path relative to the repo root (separator `/`). None if outside the root. Differences in symlinks are normalized and tried once more.
 pub fn relative_path(root: &Path, path: &Path) -> Option<String> {
     let joined = |rel: &Path| rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
     if let Ok(rel) = path.strip_prefix(root) {
@@ -17,9 +17,9 @@ pub fn relative_path(root: &Path, path: &Path) -> Option<String> {
     canonical.strip_prefix(&root).ok().map(joined)
 }
 
-/// 宣言の file(architecture.hy)の鍵の綴り — 根の下なら根からの相対、根の外なら `..` を含む根からの相対(区切り `/`)。
-/// 設定の root で package の `src/` を根にすると、package の根の architecture.hy は根の外になる。機体ごとに変わる絶対 path や
-/// 置き場を失った file 名だけを鍵に入れず、どの機体でも同じ鍵にするため。
+/// Key spelling of a declaration file (architecture.hy) -- relative to the root if under it, otherwise relative to the root including `..` (separator `/`).
+/// With the config root at a package's `src/`, the package's root architecture.hy lies outside the root. This is so the key is the same on every machine,
+/// rather than putting into the key an absolute path or a file name that varies per machine and loses its location.
 pub fn declared_rel(root: &Path, path: &Path) -> String {
     if let Some(rel) = relative_path(root, path) {
         return rel;
@@ -35,7 +35,7 @@ pub fn declared_rel(root: &Path, path: &Path) -> String {
         .join("/")
 }
 
-/// path の glob の照合 — `**` は 0 個以上の段、`*` は段の中の任意の綴り(`/` を越えない)。`/` を含まない綴りは file の名に当てる。
+/// Path glob matching -- `**` is zero or more segments, `*` is any spelling within a segment (does not cross `/`). A spelling without `/` is matched against the file name.
 pub fn glob_matches(pattern: &str, rel: &str) -> bool {
     let path: Vec<&str> = rel.split('/').collect();
     if !pattern.contains('/') {
@@ -45,7 +45,7 @@ pub fn glob_matches(pattern: &str, rel: &str) -> bool {
     segments_match(&parts, &path)
 }
 
-/// glob の段の列と path の段の列の照合(`**` は 0 個以上の段)。
+/// Matches a sequence of glob segments against a sequence of path segments (`**` is zero or more segments).
 pub(crate) fn segments_match(pattern: &[&str], path: &[&str]) -> bool {
     match pattern.split_first() {
         None => path.is_empty(),
@@ -54,7 +54,7 @@ pub(crate) fn segments_match(pattern: &[&str], path: &[&str]) -> bool {
     }
 }
 
-/// 1 段の照合(`*` は任意の綴り)。
+/// Matches a single segment (`*` is any spelling).
 fn segment_matches(pattern: &str, name: &str) -> bool {
     match pattern.split_once('*') {
         None => pattern == name,

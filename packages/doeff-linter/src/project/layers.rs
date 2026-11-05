@@ -1,46 +1,46 @@
-//! 層の設定の型 — `[tool.doeff-linter.layers]` と `roles` の節の読んだ形と、層の番号・置き場・タグの読み方の検めた形。
-//! 設定の節を組む `settings`・宣言を読む `architecture`・Jev の問い `semantic`・事実の読み `facts` が下から読む型で、
-//! この file は project の他の module を読まない(settings.rs から分けた)。
+//! Types of the layer settings: the read form of the `[tool.doeff-linter.layers]` and `roles` sections, and the validated form of how layer numbers, locations, and tags are read.
+//! These are types read from below by `settings` (which assembles the settings sections), `architecture` (which reads declarations), `semantic` (Jev questions), and `facts` (reading facts), and
+//! this file reads no other module of project (split out of settings.rs).
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// `[tool.doeff-linter.layers]` — 層の順と置き場と、層ごとの import の決まり。
+/// `[tool.doeff-linter.layers]`: the order of layers, locations, and the import rules per layer.
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct LayersSection {
-    /// 層の名前(外の世界からの遠さの順)。
+    /// Layer names (in order of distance from the outside world).
     #[serde(default)]
     pub order: Vec<String>,
-    /// 層の名前 → repo の根からの置き場(1 つの綴りか、綴りの列)。段 `*` は service の名に当たる(例 `controllers/*/core`)。
+    /// Layer name -> location from the repo root (one spelling or a list of spellings). The segment `*` matches a service name (e.g. `controllers/*/core`).
     #[serde(default)]
     pub paths: BTreeMap<String, PathPatterns>,
-    /// 層の規則の外に置く path の区切り(dir の名か file の名の完全一致 — 例 `tests`・`conftest.py`)。
+    /// Path separators outside the layer rules (exact match of a dir name or a file name, e.g. `tests`, `conftest.py`).
     #[serde(default)]
     pub exclude: Vec<String>,
-    /// 層の module として読む拡張子(既定 hy・hyk・hyp・py)。
+    /// Extensions read as layer modules (default hy, hyk, hyp, py).
     #[serde(default)]
     pub extensions: Option<Vec<String>>,
-    /// 層の名前 → import してよい層の名前(同じ層も書く)。書かない層は制限しない。
+    /// Layer name -> names of layers it may import from (write the same layer too). A layer not written is unrestricted.
     #[serde(default)]
     pub allow_imports: BTreeMap<String, Vec<String>>,
-    /// 層の名前 → 直に import してはいけない module の綴り(前方一致 — 例 httpx・urllib.request)。
+    /// Layer name -> module spellings that must not be imported directly (prefix match, e.g. httpx, urllib.request).
     #[serde(default)]
     pub forbid_modules: BTreeMap<String, Vec<String>>,
-    /// 型だけを置く層(関数と handler を定めない)。
+    /// Layers that hold only types (they define no functions or handlers).
     #[serde(default)]
     pub types_only: Vec<String>,
-    /// 値を型だけで渡す層(defwire と写像・型の無い組を置かない — DOEFF170・171)。
+    /// Layers that pass values by type only (defwire, mappings; no untyped tuples, DOEFF170 and 171).
     #[serde(default)]
     pub wire_free: Vec<String>,
-    /// 型だけの層で数える関数の定義の形(Hy の頭の綴り。既定 defk・deff・defp・defpp・defhandler・defn)。
+    /// Shapes of function definitions counted in type-only layers (head spellings in Hy; default defk, deff, defp, defpp, defhandler, defn).
     #[serde(default)]
     pub function_definers: Option<Vec<String>>,
-    /// 層の名前 → 層の説明(出力の layers と、違反の理由の文に差し込む)。
+    /// Layer name -> layer description (inserted into the output's layers and into the text of violation reasons).
     #[serde(default)]
     pub describe: BTreeMap<String, LayerDescription>,
 }
 
-/// 層の置き場の書き方 — 1 つの綴りか、綴りの列(移行の途中は、層が先の形と service が先の形を並べて書く)。
+/// How a layer's location is written: one spelling or a list of spellings (during migration, a layer-first form and a service-first form can be written side by side).
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum PathPatterns {
@@ -49,7 +49,7 @@ pub enum PathPatterns {
 }
 
 impl PathPatterns {
-    /// 綴りの列。
+    /// A list of spellings.
     pub fn list(&self) -> Vec<&str> {
         match self {
             PathPatterns::One(one) => vec![one.as_str()],
@@ -58,22 +58,22 @@ impl PathPatterns {
     }
 }
 
-/// 置き場の綴りの 1 段(そのままの名か、service の名に当たる `*`)。
+/// One segment of a location spelling (a literal name, or `*` matching a service name).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaceSegment {
     Literal(String),
     Service,
 }
 
-/// 置き場の綴り 1 つ(検めた後)。
+/// One location spelling (after validation).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacePattern {
-    /// 設定に書かれた綴り(揃えた後)。
+    /// The spelling written in the settings (after normalization).
     pub text: String,
     pub segments: Vec<PlaceSegment>,
 }
 
-/// file の path が置き場に当たった結果(実際の dir と、`*` に当たった service の名)。
+/// The result of a file path matching a location (the actual dir, and the service name matched by `*`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaceMatch {
     pub dir: String,
@@ -81,28 +81,28 @@ pub struct PlaceMatch {
 }
 
 impl PlacePattern {
-    /// 綴りを読む。空・`.`・絶対 path・`..`・段の中の `*`(`foo*`)・`*` の 2 つ以上は理由を返す。
+    /// Reads a spelling. Returns a reason for: empty, `.`, an absolute path, `..`, `*` inside a segment (`foo*`), or two or more `*`.
     pub fn parse(text: &str) -> Result<PlacePattern, String> {
         let normalized = normalize_dir(text);
         if normalized.is_empty() || normalized == "." || normalized.starts_with('/') {
-            return Err(format!("置き場 {:?} は repo の根の下の dir でない(空・`.`・絶対 path は使えない)", text));
+            return Err(format!("location {:?} is not a dir under the repo root (empty, `.`, and absolute paths cannot be used)", text));
         }
         let mut segments = Vec::new();
         for part in normalized.split('/') {
             match part {
                 "*" => segments.push(PlaceSegment::Service),
-                ".." | "." | "" => return Err(format!("置き場 {:?} に `..`・`.`・空の段は使えない", text)),
-                other if other.contains('*') => return Err(format!("置き場 {:?} の `*` は段まるごとだけに書ける", text)),
+                ".." | "." | "" => return Err(format!("location {:?} cannot use `..`, `.`, or an empty segment", text)),
+                other if other.contains('*') => return Err(format!("`*` in location {:?} can be written only as a whole segment", text)),
                 other => segments.push(PlaceSegment::Literal(other.to_string())),
             }
         }
         if segments.iter().filter(|s| **s == PlaceSegment::Service).count() > 1 {
-            return Err(format!("置き場 {:?} の `*`(service の段)は 1 つまで", text));
+            return Err(format!("`*` (the service segment) in location {:?} is allowed at most once", text));
         }
         Ok(PlacePattern { text: normalized, segments })
     }
 
-    /// `*` より前のそのままの段(探索を始める dir)。
+    /// The literal segments before `*` (the dir where the search starts).
     pub fn base(&self) -> String {
         self.segments
             .iter()
@@ -115,7 +115,7 @@ impl PlacePattern {
             .join("/")
     }
 
-    /// file の repo の根からの path がこの置き場の下なら、実際の dir と service の名を返す。
+    /// If the file's path from the repo root is under this location, returns the actual dir and the service name.
     pub fn matches(&self, rel: &str) -> Option<PlaceMatch> {
         let parts: Vec<&str> = rel.split('/').collect();
         if parts.len() <= self.segments.len() {
@@ -132,60 +132,60 @@ impl PlacePattern {
         Some(PlaceMatch { dir: parts[..self.segments.len()].join("/"), service })
     }
 
-    /// 段の数(当たった置き場が 2 つある時は、段の多い方を採る)。
+    /// The number of segments (when two locations match, the one with more segments is taken).
     pub fn depth(&self) -> usize {
         self.segments.len()
     }
 }
 
-/// `[tool.doeff-linter.layers.describe.<層>]` — 層が何か(Rust には書かず、repo ごとの設定が持つ)。
+/// `[tool.doeff-linter.layers.describe.<layer>]`: what the layer is (not written in Rust; the per-repo settings hold it).
 #[derive(Debug, Deserialize, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct LayerDescription {
-    /// 層の要約(例 業務の判断と Program)。
+    /// Summary of the layer (e.g. business decisions and Program).
     pub summary: Option<String>,
-    /// この層が知る物。
+    /// What this layer knows.
     pub knows: Option<String>,
-    /// この層が知らない物。
+    /// What this layer does not know.
     pub does_not_know: Option<String>,
-    /// 迷った時の問い。
+    /// The question to ask when unsure.
     pub question: Option<String>,
 }
 
-/// `[tool.doeff-linter.roles]` — role の閉じた一覧と、層ごとに許す role。
+/// `[tool.doeff-linter.roles]`: the closed list of roles and the roles allowed per layer.
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct RolesSection {
     #[serde(default)]
     pub names: Vec<String>,
     #[serde(default)]
     pub by_layer: BTreeMap<String, Vec<String>>,
-    /// role → その役の説明(違反の理由の文に差し込む。一覧から外した古い役の説明も書ける)。
+    /// role -> description of that role (inserted into the text of violation reasons. Descriptions of old roles removed from the list can also be written).
     #[serde(default)]
     pub describe: BTreeMap<String, String>,
 }
 
-/// 設定の中の層の番号(`order` の添字)。
+/// Layer number in the settings (the index into `order`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LayerId(pub usize);
 
-/// 検めた後の層 1 つ。
+/// One layer after validation.
 #[derive(Debug, Clone)]
 pub struct LayerSpec {
     pub name: String,
-    /// repo の根からの置き場の綴り(`*` の段は service)。
+    /// Location spellings from the repo root (a `*` segment is the service).
     pub places: Vec<PlacePattern>,
-    /// import してよい層(None = 制限しない)。
+    /// Layers it may import from (None = unrestricted).
     pub allowed: Option<BTreeSet<LayerId>>,
     pub forbid_modules: BTreeSet<String>,
     pub types_only: bool,
-    /// 値を型だけで渡す層か(DOEFF170・171)。
+    /// Whether it is a layer that passes values by type only (DOEFF170 and 171).
     pub wire_free: bool,
-    /// 許す role(None = role の規則を当てない)。
+    /// Allowed roles (None = the role rule is not applied).
     pub roles: Option<BTreeSet<String>>,
-    /// 層の説明(設定に無ければ欄は全部 None)。
+    /// Description of the layer (all fields are None if absent from the settings).
     pub description: LayerDescription,
 }
 
-/// タグの読み方(検めた後)。
+/// How tags are read (after validation).
 #[derive(Debug, Clone)]
 pub struct TagReading {
     pub module_variable_hy: String,
@@ -195,65 +195,65 @@ pub struct TagReading {
     pub effect_definers: BTreeSet<String>,
     pub record_definers: BTreeSet<String>,
     pub function_definers: BTreeSet<String>,
-    /// 定義の :tags に必須の鍵。
+    /// Keys required in a definition's :tags.
     pub required: Vec<String>,
-    /// module の頭のタグで補えるか。
+    /// Whether the module-head tag can fill them in.
     pub module_default: bool,
-    /// タグを必須にする定義の頭。
+    /// Heads of definitions that require tags.
     pub require_on: BTreeSet<String>,
 }
 
-/// 層の設定(検めた後)。
+/// The layer settings (after validation).
 #[derive(Debug, Clone)]
 pub struct LayerSettings {
     pub layers: Vec<LayerSpec>,
-    /// role → 説明。
+    /// role -> description.
     pub role_descriptions: BTreeMap<String, String>,
     pub exclude: BTreeSet<String>,
     pub extensions: BTreeSet<String>,
     pub tags: TagReading,
-    /// architecture.hy の root(在れば、宣言した置き場所の外の module の層を :role のタグから推す)。
+    /// The root of architecture.hy (if present, infers the layer of modules outside the declared locations from the :role tag).
     pub infer_root: Option<String>,
 }
 
-/// dir の綴りを揃える(`./` と末尾の `/` を外し、区切りを `/` にする)。
+/// Normalizes a dir spelling (removes `./` and a trailing `/`, and makes the separator `/`).
 pub fn normalize_dir(dir: &str) -> String {
     let unified = dir.replace('\\', "/");
     let trimmed = unified.trim_start_matches("./").trim_end_matches('/');
     trimmed.to_string()
 }
 
-/// `[tool.doeff-linter.tags]` — タグの読み方(doeff-hy の綴り。既定のままでよい)。
+/// `[tool.doeff-linter.tags]`: how tags are read (doeff-hy's spelling; the default is fine).
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct TagsSection {
-    /// Hy の module の頭のタグの名(`(val MODULE-TAGS {…})`)。
+    /// Name of the tag at the head of a Hy module (`(val MODULE-TAGS {…})`).
     pub module_variable_hy: Option<String>,
-    /// Python の module の頭のタグの名(`MODULE_TAGS = {…}`)。
+    /// Name of the tag at the head of a Python module (`MODULE_TAGS = {…}`).
     pub module_variable_py: Option<String>,
-    /// 契約の辞書に `:tags` を書ける定義の形。
+    /// Shapes of definitions that may write `:tags` in a contract dict.
     pub contract_definers: Option<Vec<String>>,
-    /// タグを書く場所の無い定義の形(module の頭のタグに頼る)。
+    /// Shapes of definitions that have no place to write tags (relying on the module-head tag).
     pub plain_definers: Option<Vec<String>>,
-    /// `(名 "doc"? {… :tags {…}})` の形の effect の型の定義の形(既定 defeffect)。
+    /// Shape of an effect type definition of the form `(name "doc"? {… :tags {…}})` (default defeffect).
     pub effect_definers: Option<Vec<String>>,
-    /// `(名 "doc"? {:tags {…} :check […]}? 欄 …)` の形の record の型の定義の形(既定 defrecord — doeff-hy の頭の辞書)。
-    /// 頭の辞書が在ればその :tags を読み、無ければタグを書いていない定義。
+    /// Shape of a record type definition of the form `(name "doc"? {:tags {…} :check […]}? field …)` (default defrecord; doeff-hy's head dict).
+    /// If a head dict exists, its :tags are read; if not, it is a definition that writes no tags.
     pub record_definers: Option<Vec<String>>,
-    /// DOEFF112: 定義の :tags に必須の鍵(既定 context・role)。
+    /// DOEFF112: keys required in a definition's :tags (default context, role).
     pub required: Option<Vec<String>>,
-    /// DOEFF112: module の頭のタグで定義のタグを補えるか(既定 true)。
+    /// DOEFF112: whether the module-head tag can fill in a definition's tags (default true).
     pub module_default: Option<bool>,
-    /// DOEFF112: タグを必須にする定義の頭(既定 defk・deff・defp・defhandler・defeffect。defrecord は頭の辞書で :tags を
-    /// 書けるので、ここに足せば必須にできる — 既定では足さない: 頭の辞書は省ける形なので)。
+    /// DOEFF112: heads of definitions that require tags (default defk, deff, defp, defhandler, defeffect. defrecord can write :tags in its head dict,
+    /// so adding it here makes it required; it is not added by default, because the head dict is a form that can be omitted).
     pub require_on: Option<Vec<String>>,
 }
 
-/// 文字列の列を集合にする(設定の省略時の既定値と合わせるため)。
+/// Turns a list of strings into a set (to match the settings' defaults when omitted).
 fn set_of(values: &[&str]) -> BTreeSet<String> {
     values.iter().map(|s| s.to_string()).collect()
 }
 
-/// タグの読み方を設定から作る(省略した欄は doeff-hy の既定の綴り)。
+/// Builds how tags are read from the settings (omitted fields take doeff-hy's default spelling).
 pub fn tag_reading(tags: Option<&TagsSection>, function_definers: Option<&Vec<String>>) -> TagReading {
     let tags = tags.cloned().unwrap_or_default();
     TagReading {
@@ -291,7 +291,7 @@ mod place_tests {
             Some(PlaceMatch { dir: "controllers/land_notice/core".into(), service: Some("land_notice".into()) })
         );
         assert_eq!(pattern.matches("controllers/core/goal.hy"), None);
-        assert_eq!(pattern.matches("controllers/land_notice/core"), None, "dir そのものは file でない");
+        assert_eq!(pattern.matches("controllers/land_notice/core"), None, "the dir itself is not a file");
         let plain = PlacePattern::parse("controllers/core").unwrap();
         assert_eq!(plain.matches("controllers/core/a/b.hy"), Some(PlaceMatch { dir: "controllers/core".into(), service: None }));
         for bad in ["", ".", "/abs", "a/../b", "a/b*", "*/x/*"] {

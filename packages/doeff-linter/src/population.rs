@@ -1,14 +1,14 @@
-//! Python の文ごとの規則の母集団を、file ごとに、その file を持つ package の architecture.hy の層の宣言から決める 1 点。
+//! The single point that decides, per file, the rule population for per-statement Python rules, from the layer declarations in the architecture.hy of the package owning that file.
 //!
-//! linter は 1 回の実行に宣言 1 つ(設定の architecture か、根の architecture.hy)を読む。doeff の根の実行(pre-commit・make lint-doeff)は
-//! package の宣言を読まないので、package が層に書いた規則の除外が効かなかった。ここでは file から上へ最も近い architecture.hy
-//! (その package の持ち主の宣言)を引き、その file が除外を持つ層(`:modules` の名指し・`:exempt [(rule 規則 ID "理由")]`)の module なら:
-//!   - 除外した規則の当たりを落とす(理由は宣言に在る — 理由の無い除外は宣言の読みが断る)
-//!   - その層の `:forbid-modules` の module の import を DOEFF032 で名指す(外した層に業務の code が入ったら赤)
-//! 宣言を読めない時は、その file の誤りとして名指す(黙って外さない・黙って当てない)。
+//! The linter reads one declaration per run (the configured architecture, or the root architecture.hy). A root run of doeff (pre-commit, make lint-doeff) does not read
+//! package declarations, so rule exemptions that a package wrote on its layers had no effect. Here we find the nearest architecture.hy above the file
+//! (the declaration of the package owner), and if the file is a module of a layer with exemptions (named in `:modules`, with `:exempt [(rule RULE-ID "reason")]`):
+//!   - drop findings of the exempted rules (the reason lives in the declaration; an exemption without a reason is rejected by the declaration reader)
+//!   - name imports of the layer's `:forbid-modules` modules with DOEFF032 (red if business code enters an exempted layer)
+//! When the declaration cannot be read, it is named as an error of that file (neither silently exempted nor silently applied).
 //!
-//! module の名は Python の決まり(`__init__.py` の在る dir を上へたどる)で出す — 設定の根(root)にも architecture.hy の :root
-//! (層の置き場の根)にも依らない。
+//! Module names are derived by Python's rule (walking up through directories that have `__init__.py`), independent of the configured root and of
+//! architecture.hy's :root (the root of the layer locations).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,15 +19,15 @@ use rustpython_ast::{Mod, Stmt};
 use crate::models::{Severity, Violation};
 use crate::project::architecture::Architecture;
 
-/// 外した層の module が業務の module を import した当たりの規則 ID(名の持ち主は rules::doeff032_rule_population_declaration)。
+/// Rule ID for a finding where a module of an exempted layer imports a business module (the name is owned by rules::doeff032_rule_population_declaration).
 pub use crate::rules::doeff032_rule_population_declaration::RULE_ID as BUSINESS_IMPORT_RULE_ID;
 
-/// file 1 つの母集団の答え。
+/// The population answer for one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilePopulation {
-    /// 除外を持つ層の module ではない — どの規則もそのまま当たる。
+    /// Not a module of a layer with exemptions — every rule applies as is.
     Plain,
-    /// 除外を持つ層の名指しの module。
+    /// A module named by a layer with exemptions.
     Exempt {
         layer: String,
         rules: Vec<String>,
@@ -38,14 +38,14 @@ pub enum FilePopulation {
 
 type Declarations = HashMap<PathBuf, Result<Arc<Architecture>, String>>;
 
-/// 宣言の file → 読んだ宣言(か読めなかった理由)。1 回の実行の中で同じ宣言を 1 度だけ読む。
+/// Declaration file -> the declaration read (or the reason it could not be read). The same declaration is read only once per run.
 fn declarations() -> &'static Mutex<Declarations> {
     static CACHE: OnceLock<Mutex<Declarations>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 実行の頭で読んだ宣言を、母集団の問いに渡す。同じ宣言を 2 度読まないため(`Architecture::load` は 530KB の architecture.hy で 1 回 30〜80 ミリ秒 —
-/// 書いた file 1 つの hook の CPU の約 1/4)。呼び手は、問いが読むのと同じ読み方(宣言の dir を repo の根として読んだ宣言)だけを渡す。
+/// Pass the declaration read at the start of the run to the population query, so the same declaration is not read twice (`Architecture::load` takes 30-80 ms for a 530KB architecture.hy —
+/// about 1/4 of the CPU of a hook for one written file). Callers pass only declarations read the same way the query reads them (the declaration's dir as the repo root).
 pub fn remember_declaration(path: &Path, architecture: Arc<Architecture>) {
     declarations()
         .lock()
@@ -53,7 +53,7 @@ pub fn remember_declaration(path: &Path, architecture: Arc<Architecture>) {
         .insert(path.to_path_buf(), Ok(architecture));
 }
 
-/// file から上へ最も近い architecture.hy。repo の根(`.git` の在る dir)より上は見ない。
+/// The nearest architecture.hy above the file. Does not look above the repo root (the dir containing `.git`).
 fn nearest_declaration(file: &Path) -> Option<PathBuf> {
     let mut dir = file.parent()?;
     loop {
@@ -68,7 +68,7 @@ fn nearest_declaration(file: &Path) -> Option<PathBuf> {
     }
 }
 
-/// file の module の名(点で区切った綴り)— `__init__.py` の在る dir を上へたどって組む(`a/b/__init__.py` は `a.b`)。
+/// The file's module name (dot-separated) — built by walking up through dirs that have `__init__.py` (`a/b/__init__.py` is `a.b`).
 fn module_name(file: &Path) -> Option<String> {
     let stem = file.file_stem()?.to_str()?.to_string();
     let mut parts: Vec<String> = if stem == "__init__" {
@@ -88,7 +88,7 @@ fn module_name(file: &Path) -> Option<String> {
     Some(parts.join("."))
 }
 
-/// 宣言の file を読む(同じ宣言は 1 度だけ)。根は宣言の在る dir。
+/// Read the declaration file (the same declaration only once). The root is the dir containing the declaration.
 fn declaration(path: &Path) -> Result<Arc<Architecture>, String> {
     let mut cache = declarations()
         .lock()
@@ -101,7 +101,7 @@ fn declaration(path: &Path) -> Result<Arc<Architecture>, String> {
                 .map(Arc::new)
                 .map_err(|problems| {
                     format!(
-                        "{} の誤り(この file の規則の母集団を決められない):\n  {}",
+                        "error in {} (cannot decide the rule population of this file):\n  {}",
                         path.display(),
                         problems.join("\n  ")
                     )
@@ -110,14 +110,14 @@ fn declaration(path: &Path) -> Result<Arc<Architecture>, String> {
         .clone()
 }
 
-/// file の母集団を決める。宣言を読めない時は Err(理由)。
+/// Decide the population of a file. Err(reason) when the declaration cannot be read.
 pub fn population_of(file: &Path) -> Result<FilePopulation, String> {
     let absolute = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let Some(path) = nearest_declaration(&absolute) else {
         return Ok(FilePopulation::Plain);
     };
     let architecture = declaration(&path)?;
-    // :files の path での名指しを先に見る(module の名を持たない file)、無ければ :modules の名
+    // Look first for a naming by path in :files (files without a module name), otherwise the names in :modules
     let base = path.parent().unwrap_or(Path::new("."));
     let by_file = absolute
         .strip_prefix(base)
@@ -139,7 +139,7 @@ pub fn population_of(file: &Path) -> Result<FilePopulation, String> {
     })
 }
 
-/// import の名(`a.b.c`)が、禁じた module(`a` か `a.b`)かその下か。
+/// Whether an import name (`a.b.c`) is a forbidden module (`a` or `a.b`) or under one.
 fn forbidden(name: &str, forbid_modules: &[String]) -> Option<String> {
     forbid_modules
         .iter()
@@ -152,7 +152,7 @@ fn forbidden(name: &str, forbid_modules: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// 文の列(入れ子の関数・class・分岐の中を含む)から、禁じた module の import を集める(位置と import の名と禁じた module)。
+/// From a list of statements (including nested functions, classes, and branches), collect imports of forbidden modules (position, import name, and forbidden module).
 fn forbidden_imports(
     stmts: &[Stmt],
     forbid_modules: &[String],
@@ -168,7 +168,7 @@ fn forbidden_imports(
                 }
             }
             Stmt::ImportFrom(import) => {
-                // 相対 import(level > 0)は同じ package の中 — 禁じた module の綴りにはならない。
+                // A relative import (level > 0) stays within the same package — it cannot be the spelling of a forbidden module.
                 let level: u32 = import.level.as_ref().map(|l| l.to_u32()).unwrap_or(0);
                 if let (Some(module), 0) = (&import.module, level) {
                     if let Some(hit) = forbidden(module.as_str(), forbid_modules) {
@@ -207,7 +207,7 @@ fn forbidden_imports(
     }
 }
 
-/// 外した層の module の、禁じた module の import の当たり(DOEFF032)。
+/// Findings (DOEFF032) for imports of forbidden modules from a module of an exempted layer.
 pub fn business_import_violations(
     file_path: &str,
     ast: &Mod,
@@ -225,9 +225,9 @@ pub fn business_import_violations(
             Violation::new(
                 BUSINESS_IMPORT_RULE_ID.to_string(),
                 format!(
-                    "規則の母集団から外した層 {} の module が業務の module {} を import している({} — 層の :forbid-modules の {})。外した層は \
-                     起動の時点のような Program の外の code だけを置く所で、業務の code が入ると、外した規則がその code にも当たらなくなる。\
-                     業務の code は外していない層へ移す({})",
+                    "module of layer {} excluded from the rule population imports business module {} ({} — {} of the layer's :forbid-modules). An excluded layer \
+                     is for code outside any Program, such as at startup time; if business code enters it, the excluded rules stop applying to that code too. \
+                     Move the business code to a layer that is not excluded ({})",
                     layer,
                     name,
                     file_path,
@@ -250,13 +250,13 @@ mod tests {
 (defarchitecture pkg
   :root "pkg"
   :layers [(layer startup
-             :summary "Python の起動の時点(.pth)で入る見張り"
+             :summary "A watcher installed at Python startup (.pth)"
              :modules [guard]
-             :exempt [(rule DOEFF004 "Program の外で起動の時点に入るので、設定を Ask で受ける入口が無い")]
+             :exempt [(rule DOEFF004 "Installed at startup outside any Program, so there is no entry point to receive config via Ask")]
              :forbid-modules [doeff doeff_hy])])
 "#;
 
-    /// 壊れた宣言の file の在る repo を作る(`guard.py` は宣言の `:modules [guard]` の module)。(repo の dir, 宣言の path, guard.py)を返す。
+    /// Build a repo containing a broken declaration file (`guard.py` is a module of the declaration's `:modules [guard]`). Returns (repo dir, declaration path, guard.py).
     fn broken_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join(".git")).unwrap();
@@ -266,20 +266,20 @@ mod tests {
         (dir, root.join("architecture.hy"), root.join("guard.py"))
     }
 
-    /// 実行の頭で読んだ宣言を渡されたら、母集団の問いは architecture.hy を読み直さない。
-    /// 宣言の file を壊してある repo で、読み直せば誤りになる所を、渡した宣言で答える。
+    /// When given a declaration read at the start of the run, the population query does not re-read architecture.hy.
+    /// In a repo whose declaration file is broken, where re-reading would produce an error, answer from the passed declaration.
     #[test]
     fn a_remembered_declaration_answers_without_reading_the_file_again() {
         let (_unremembered, _, guard) = broken_repo();
-        assert!(population_of(&guard).is_err(), "検の前提: 壊した宣言を読めば誤りになる");
+        assert!(population_of(&guard).is_err(), "test precondition: reading the broken declaration is an error");
 
         let good = tempfile::TempDir::new().unwrap();
         let good_declaration = good.path().canonicalize().unwrap().join("architecture.hy");
         std::fs::write(&good_declaration, DECLARATION).unwrap();
-        let loaded = Architecture::load(&good_declaration, good_declaration.parent().unwrap()).expect("検の前提: 宣言が読める");
+        let loaded = Architecture::load(&good_declaration, good_declaration.parent().unwrap()).expect("test precondition: the declaration is readable");
 
         let (_remembered, declaration, guard) = broken_repo();
         remember_declaration(&declaration, Arc::new(loaded));
-        assert!(matches!(population_of(&guard), Ok(FilePopulation::Exempt { .. })), "渡した宣言から答える");
+        assert!(matches!(population_of(&guard), Ok(FilePopulation::Exempt { .. })), "answers from the passed declaration");
     }
 }

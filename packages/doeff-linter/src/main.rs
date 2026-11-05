@@ -18,8 +18,8 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-/// binary の確保器 — repo 全体の Hy の索引の cache の読み・辿り・後片づけの小さな確保と解放を速くするため(Cargo.toml の註)。
-/// 答えは変えない。
+/// Binary allocator -- to speed up the small allocations and frees of reading, walking, and tearing down the repo-wide Hy index cache (see the note in Cargo.toml).
+/// It does not change the answers.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -44,9 +44,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
     - Rule IDs are case-insensitive (doeff001 = DOEFF001)
     - File-level noqa must appear before any code (comments/docstrings allowed before it)
 
-EXIT CODES(重い mode の既定・editor-json の repo 全体):
-  0 = error なし / 1 = error あり / 2 = 引数・設定の誤り
-  75 = 未実行 — 機体の検の枠の待ちが上限を越え、lint をせずに終わった(撃ち直せる・赤でも緑でもない — check_slot.rs)
+EXIT CODES (the default of heavy modes; the whole repo for editor-json):
+  0 = no errors / 1 = errors / 2 = argument or config error
+  75 = not run -- the wait for the machine's check slot exceeded the limit and it finished without linting (can be re-run; neither red nor green -- check_slot.rs)
 
 EXAMPLES:
   doeff-linter .                         Lint current directory
@@ -54,9 +54,9 @@ EXAMPLES:
   doeff-linter --disable DOEFF001        Disable specific rule
   doeff-linter --modified                Lint only git-modified files
   doeff-linter --output-format json      Output in JSON format
-  doeff-linter --output-format editor-json            エディタ向けの JSON(repo 全体)
-  doeff-linter --output-format editor-json --stdin --path <file>   保存前の内容の 1 file
-  doeff-linter --config <file> --root <dir> ...       設定 file と repo の根を指定
+  doeff-linter --output-format editor-json            JSON for editors (whole repo)
+  doeff-linter --output-format editor-json --stdin --path <file>   one file's pre-save content
+  doeff-linter --config <file> --root <dir> ...       specify the config file and the repo root
 "#)]
 struct Args {
     /// Files or directories to lint
@@ -83,24 +83,24 @@ struct Args {
     #[arg(long)]
     no_config: bool,
 
-    /// 設定 file(`[tool.doeff-linter]` を持つ pyproject.toml の形か、節の中身だけの TOML)。無ければ上へ探す
+    /// Config file (the form of a pyproject.toml that has `[tool.doeff-linter]`, or a TOML holding only the section's contents). If absent, searches upward
     #[arg(long)]
     config: Option<PathBuf>,
 
-    /// repo の根(層の置き場・登録簿・鍵の path の基準)。既定は見つけた pyproject.toml の dir、--config の時は今の dir
+    /// The repo root (the base for layer locations, registries, and key paths). Defaults to the dir of the pyproject.toml that was found; with --config, the current dir
     #[arg(long)]
     root: Option<PathBuf>,
 
-    /// 保存前の内容を stdin から読む(--path が要る・editor-json の時だけ)
+    /// Read pre-save content from stdin (requires --path; only with editor-json)
     #[arg(long)]
     stdin: bool,
 
-    /// --stdin の内容をどの file として判じるか
+    /// Which file to judge the --stdin content as
     #[arg(long)]
     path: Option<PathBuf>,
 
-    /// 基点(main の先端)で走らせた editor-json の出力 file。基点に無い critical を new_critical に出し、在れば終了コード 4
-    /// (editor-json の時だけ・仕様 1 節「基点との比べ」)
+    /// The editor-json output file run at the baseline (the tip of main). Reports in new_critical the criticals not in the baseline, and exits with code 4 if any
+    /// (only with editor-json; spec section 1 "comparison with the baseline")
     #[arg(long)]
     baseline_report: Option<PathBuf>,
 
@@ -112,47 +112,47 @@ struct Args {
     #[arg(long)]
     hook: bool,
 
-    /// git の commit の hook として走る — stage した source に file 1 つで決まる規則を当てて
-    /// HEAD の版と比べ、新しい破れが在れば終了コード 1(repo 全体の規則は当てない)
+    /// Runs as a git commit hook -- applies the rules decided by one file to the staged sources and
+    /// compares with the HEAD version; exits with code 1 if there are new breaches (whole-repo rules are not applied)
     #[arg(long)]
     commit_hook: bool,
 
-    /// --commit-hook の子の linter 1 回ごとの上限(秒)。設定の commit_hook.timeout_s より勝つ(既定 20)。0 は上限なし — 上限で
-    /// 打ち切られて止まった commit を、同じ比べで終わりまで確かめ直す時に使う
+    /// Upper limit per child linter run of --commit-hook (seconds). Wins over the config's commit_hook.timeout_s (default 20). 0 means no limit -- used to
+    /// re-verify to the end, with the same comparison, a commit that stopped because it was cut off by the limit
     #[arg(long)]
     commit_hook_timeout_s: Option<u64>,
 
-    /// --commit-hook の報告を書く file — HEAD の版と stage した path の 2 つの測り(測った path の列・editor-json の形の違反・判じた
-    /// 規則)を 1 つの JSON で書く(仕様 3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は変えない
+    /// The file to write the --commit-hook report to -- writes the two measurements (HEAD version and staged paths) (the list of measured paths, violations in editor-json form, and the rules judged)
+    /// as one JSON (spec section 3 "commit hook report"). The blocking decision, exit code, and stderr text do not change
     #[arg(long)]
     report_out: Option<PathBuf>,
 
-    /// 規則の一覧を JSON で出して終わる — 各規則の ID と、当たりを判じるのに repo 全体が要るか(whole_repo)。門と hook は repo 全体の
-    /// 比べに当てる規則をこの名乗りで選ぶ(手で保つ一覧を持たない)
+    /// Prints the list of rules as JSON and exits -- each rule's ID, and whether judging its hits needs the whole repo (whole_repo). The gate and the hook choose the rules to apply to the whole-repo
+    /// comparison by this declaration (no hand-maintained list)
     #[arg(long)]
     list_rules: bool,
 
-    /// 変えた path(path の引数・repo の根から)に当てる規則の分けを JSON で出して終わる — {"quick", "whole", "declaration_changed"}。
-    /// commit の hook と同じ 1 か所の判定(宣言の file を変えた変更は file 1 つで判じる規則も whole へ)を、
-    /// マージの門が読む口
+    /// Prints as JSON, and exits, the split of rules to apply to the changed paths (path arguments; from the repo root) -- {"quick", "whole", "declaration_changed"}.
+    /// The single judgment shared with the commit hook (a change to a declaration file also moves rules decided by one file into whole),
+    /// the interface the merge gate reads
     #[arg(long)]
     split_rules: bool,
 
-    /// 変えた path(repo の根から・複数)を直接・間接に import(Hy は require も)する検の file を、距離つきの JSON で出して終わる
-    /// (登記の前の入口が契約の検と変えた検の後ろに足す)。--test-pattern が要る
+    /// Prints as JSON with distances, and exits, the test files that directly or indirectly import (for Hy, also require) the changed paths (from the repo root; multiple)
+    /// (the entry before registration adds them after the contract tests and the changed tests). Requires --test-pattern
     #[arg(long, num_args = 1.., value_name = "PATH")]
     affected_tests: Option<Vec<String>>,
 
-    /// --affected-tests が検の file と見なす名の規則(fnmatch・`/` を含まない規則は file の名に当てる・複数回)。呼び手の集め手の定義を渡す
+    /// Name rules that --affected-tests treats as test files (fnmatch; a rule without `/` is matched against the file name; may be repeated). Pass the caller's collector definition
     #[arg(long, value_name = "GLOB")]
     test_pattern: Vec<String>,
 
-    /// --affected-tests で、直接の使い手の file がこの数を越える module は通り抜けず hubs に名指す(既定 40)
+    /// With --affected-tests, a module whose number of direct user files exceeds this is not passed through and is named in hubs (default 40)
     #[arg(long)]
     max_dependents: Option<usize>,
 
-    /// commit 本文の file(--commit-hook と --split-rules)— 本文に理由つきの `Lint-Baseline: declarations <理由>` の行が在れば、基点を
-    /// 今の宣言(設定 file と architecture.hy)で測る 1 回限りの指定として読む(規則を鳴らし始める commit のため)
+    /// The commit body file (--commit-hook and --split-rules) -- if the body has a `Lint-Baseline: declarations <reason>` line with a reason, it is read as a one-time directive to measure the baseline
+    /// with the current declarations (config file and architecture.hy) (for a commit that starts to fire a rule)
     #[arg(long)]
     commit_message: Option<PathBuf>,
 
@@ -174,21 +174,21 @@ struct Args {
     #[arg(long)]
     no_log: bool,
 
-    /// 意味の規則(DOEFF201・202・203)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file(cache に答えの在る定義も問い直す)。
-    /// 旗の無い既定は --semantic-changed と同じ(cache を使い、変わった定義だけ問う)
+    /// Ask Jev with the semantic rules (DOEFF201, 202, 203) -- targets are the files in the path arguments, or if none, the files changed in git (definitions with an answer in the cache are asked again).
+    /// With no flag, the default is the same as --semantic-changed (uses the cache and asks only changed definitions)
     #[arg(long)]
     semantic: bool,
 
-    /// 意味の規則で Jev に問わず、cache を読むだけにする(旧い既定 — 網の無い所で撃たない実行。問えなかった数は数えない)
+    /// Does not ask Jev for the semantic rules and only reads the cache (the old default -- a run that does not fire where there is no network. The count of unanswerable ones is not counted)
     #[arg(long)]
     semantic_cache_only: bool,
 
-    /// 意味の規則で、設定した層の全部の定義を Jev に問う
+    /// Asks Jev about all definitions in the configured layers for the semantic rules
     #[arg(long)]
     semantic_all: bool,
 
-    /// 意味の規則で、対象の file(--semantic と同じ選び方)のうち手元の cache に答えの無い定義(中身が変わった定義)だけを Jev に問う
-    /// (旗の無い既定もこれ — 全体の実行はそのうえで代理の覚えも受け取る)
+    /// Asks Jev, for the semantic rules, only about the definitions among the target files (chosen the same way as --semantic) that have no answer in the local cache (definitions whose contents changed)
+    /// (this is also the default with no flag -- the whole run also receives the proxy's memory on top of that)
     #[arg(long)]
     semantic_changed: bool,
 }
@@ -210,7 +210,7 @@ struct HookOutput {
     followup_message: Option<String>,
 }
 
-/// 出力の形(閉じた集合)。知らない綴りは今までどおり text として扱う。
+/// Output format (a closed set). An unknown spelling is treated as text as before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputFormat {
     Text,
@@ -219,7 +219,7 @@ enum OutputFormat {
 }
 
 impl OutputFormat {
-    /// `--output-format` の綴りを読む。
+    /// Reads the spelling of `--output-format`.
     fn parse(text: &str) -> OutputFormat {
         match text {
             "json" => OutputFormat::Json,
@@ -229,32 +229,32 @@ impl OutputFormat {
     }
 }
 
-/// 設定を読んで決めた実行の前提(設定・repo の根・有効な規則・除く pattern・層の規則の設定)。
+/// The premises of a run decided by reading the config (config, repo root, enabled rules, exclusion patterns, settings for the layer rules).
 struct Setup {
     config: Option<config::Config>,
     root: PathBuf,
     enabled_rules: Option<Vec<String>>,
     exclude_patterns: Vec<String>,
     settings: ProjectSettings,
-    /// 設定の知らない鍵と規則の ID(読まずに残りを読んだ — DOEFF100 で知らせる)。
+    /// Unknown config keys and rule IDs (the rest was read without them -- reported by DOEFF100).
     notices: Vec<project::notice::ConfigNotice>,
-    /// 読んだ service と層の宣言の file(根の外に在っても宣言の規則が判じる — 名指しの範囲の外に数えない)。
+    /// The service and layer declaration files that were read (the declaration rules judge them even if they are outside the root -- not counted as outside the named range).
     declaration: Option<PathBuf>,
 }
 
 impl Setup {
-    /// 知らせ(DOEFF100)の違反。`enable` の一覧に載っていなくても出す(一覧は DOEFF100 より古い設定にも在り、そこで黙ると
-    /// 知らない鍵を黙って読み飛ばす形に戻る)。止めるのは `disable` に DOEFF100 を名指した時だけ(prepare が notices を空にする)。
+    /// Violations of notices (DOEFF100). Emitted even if not in the `enable` list (the list also exists in configs older than DOEFF100, and staying silent there
+    /// would return to silently skipping unknown keys). They stop only when `disable` names DOEFF100 (prepare empties the notices).
     fn notice_findings(&self) -> Vec<project::Finding> {
         project::notice_findings::findings(&self.notices, &self.root)
     }
 
-    /// 有効な層の規則(`enable`・`disable` を当てた後)。
+    /// Enabled layer rules (after applying `enable` and `disable`).
     fn project_rules(&self) -> BTreeSet<ProjectRule> {
         project::enabled_rules(self.enabled_rules.as_deref())
     }
 
-    /// 層の規則のうち、設定の節が在って判定がつながっている物。
+    /// Among the layer rules, those whose config section exists and whose judgment is wired.
     fn project_wired(&self) -> BTreeSet<ProjectRule> {
         self.project_rules()
             .into_iter()
@@ -266,7 +266,7 @@ impl Setup {
                 | ProjectRule::MatchFieldHyphen
                 | ProjectRule::ModuleDeclaresTags
                 | ProjectRule::RoleMatchesLayer => self.settings.layers.is_some(),
-                // 値を型だけで渡す層を 1 つも宣言していなければ、判定はつながっていない(0 件を「守れている」と読ませない)。
+                // If no layer that passes values by type only is declared, the judgment is not wired (do not let 0 findings read as "protected").
                 ProjectRule::DictOutsideItsPlace => self.settings.layers.is_some(),
                 ProjectRule::WireInWireFreeLayer | ProjectRule::BareMapInWireFreeLayer => {
                     self.settings.layers.as_ref().is_some_and(|l| l.layers.iter().any(|spec| spec.wire_free))
@@ -290,10 +290,10 @@ impl Setup {
                 ProjectRule::ClassWithBehaviour => self.settings.definitions.is_some(),
                 ProjectRule::DefkCalledBare => self.settings.definitions.is_some(),
                 ProjectRule::EffectsDisagreeWithInference => self.settings.definitions.is_some(),
-                // DOEFF175 は定義の規則の母集団(definitions の paths と test_paths)の宣言を要る — 無ければ判じていない(0 件を「守れている」と読ませない)。
+                // DOEFF175 requires the declaration of the definition rules' population (paths and test_paths of definitions) -- without it, it is not judged (do not let 0 findings read as "protected").
                 ProjectRule::StaleOutcomeBranch => self.settings.definitions.is_some(),
                 ProjectRule::TranslationEmitsIntent => self.settings.layers.is_some() && self.settings.translation.is_some(),
-                // DOEFF174 は業務の層と :lower-layer-modules の宣言の両方が在る repo だけ(無ければ母集団が空 — 判じていない)。
+                // DOEFF174 applies only to repos that have both the business layers and the :lower-layer-modules declaration (without them the population is empty -- not judged).
                 ProjectRule::LowerLayerInDomain => {
                     self.settings.layers.is_some()
                         && self.settings.translation.as_ref().is_some_and(|t| !t.domain_layers.is_empty())
@@ -343,7 +343,7 @@ impl Setup {
                 | ProjectRule::IntentEffectUncovered => {
                     self.settings.architecture.as_ref().is_some_and(|a| a.business_fakes.is_some() && a.assembly_shape.is_some())
                 }
-                // DOEFF137 は DOEFF133 と同じ全体の索引と定義の辺の図を使う(有効にする条件も同じ)。
+                // DOEFF137 uses the same whole-repo index and definition-edge graph as DOEFF133 (and the conditions for enabling it are the same).
                 ProjectRule::TestKindMismatch | ProjectRule::WorldHandlerWithoutContractTest => {
                     self.settings.architecture.as_ref().is_some_and(|a| !a.world_handlers.is_empty() && a.edge_mark.is_some())
                 }
@@ -355,13 +355,13 @@ impl Setup {
                 }
                 ProjectRule::SemanticMixedConcerns => self.settings.semantic.as_ref().is_some_and(|s| s.mixed_concerns.is_some()),
                 ProjectRule::SemanticClassRole => self.settings.semantic.as_ref().is_some_and(|s| s.class_role.is_some()),
-                // 登録簿の当たらない行は、登録簿を設定した repo でだけ判じる(判じる鍵は、その実行で判じた規則の鍵だけ)。
+                // Unmatched registry lines are judged only in repos that configured a registry (the keys judged are only the keys of rules judged in that run).
                 ProjectRule::RegistryEntryStale => !self.settings.registry.dirs.is_empty() || !self.settings.registry.files.is_empty(),
             })
             .collect()
     }
 
-    /// 層の規則の設定が 1 つでも在るか(無ければ層の規則を走らせない)。
+    /// Whether any setting for the layer rules exists (if not, the layer rules are not run).
     fn has_project_rules(&self) -> bool {
         self.settings.layers.is_some() || self.settings.architecture.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some() || self.settings.services.is_some()
             || self.settings.definitions.is_some()
@@ -370,18 +370,18 @@ impl Setup {
     }
 }
 
-/// 意味の規則の扱いを引数から決める(--semantic-all = 全部・--semantic = 指定の file か git で変わった file・--semantic-changed = その
-/// うち答えの無い定義だけ・どれも無ければ cache だけ)。問わない実行のうち全体の実行(hook を含む)は、代理が在れば「覚えている時だけ」
-/// 問う(Peek)。編集中の 1 file(--stdin)は cache だけ(エディタは保存と打つのが止まった時に --semantic で新しく問う)。
+/// Decides the handling of the semantic rules from the arguments (--semantic-all = all; --semantic = specified files or files changed in git; --semantic-changed = among those,
+/// only definitions with no answer; if none, cache only). Among runs that do not ask, whole runs (including the hook) ask "only when remembered" if a proxy exists
+/// (Peek). A single file being edited (--stdin) is cache only (the editor asks anew with --semantic when saving and when typing stops).
 fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project::semantic::SemanticMode {
     use project::semantic::SemanticMode;
     if args.semantic_all {
         return SemanticMode::AskAll;
     }
-    // 既定 = 全体の実行は cache を使い、変わった定義だけを問う(Jev を使う規則も毎回どこでも走らせ、
-    // 既定で cache を使う)。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
-    // 全体 3 秒の上限の中で層の規則の知らせを失わないため(#1190 の決定 A・戻し方 = 下の Some(_) の枝を AskChanged にする)。
-    // cache を読むだけの全体の実行は --semantic-cache-only で名指す。
+    // Default = whole runs use the cache and ask only changed definitions (rules that use Jev are also run everywhere every time,
+    // and by default use the cache). A single-file --stdin (the hook right after writing, and the editor) by default reads only the cache -- so as not to lose the layer rules' notices
+    // within the hook's overall 3-second limit (decision A of #1190; to revert, make the Some(_) branch below AskChanged).
+    // A whole run that only reads the cache is named with --semantic-cache-only.
     if args.semantic_cache_only || (stdin_path.is_some() && !args.semantic && !args.semantic_changed) {
         return match stdin_path {
             Some(_) => SemanticMode::CacheOnly,
@@ -409,12 +409,12 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
     match (args.semantic_changed, args.semantic, stdin_path) {
         (true, _, _) => SemanticMode::AskChanged(targets),
         (false, true, _) => SemanticMode::Ask(targets),
-        // 旗の無い全体の実行の既定: 変わった定義だけを問い、代理の覚えも受け取る(1 file の既定は上で cache だけに返した)。
+        // Default of a whole run with no flag: ask only changed definitions and also receive the proxy's memory (the default for a single file returned cache only above).
         (false, false, _) => SemanticMode::PeekThenAskChanged(targets),
     }
 }
 
-/// git で変わった file(追跡していない file を含む・repo の根からの path)。
+/// Files changed in git (including untracked files; paths from the repo root).
 fn git_changed_files(root: &Path) -> Vec<String> {
     let output = Command::new("git").arg("-C").arg(root).args(["status", "--porcelain", "-uall"]).output();
     match output {
@@ -430,15 +430,15 @@ fn git_changed_files(root: &Path) -> Vec<String> {
     }
 }
 
-/// 設定を探して読み、repo の根と有効な規則を決める。設定が読めない・名前が食い違う時は理由の文(終了コード 2)。
+/// Finds and reads the config and decides the repo root and the enabled rules. When the config cannot be read or names mismatch, a reason sentence (exit code 2).
 fn prepare(args: &Args) -> Result<Setup, String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("今の dir を読めない: {}", e))?;
+    let cwd = std::env::current_dir().map_err(|e| format!("cannot read the current dir: {}", e))?;
     let loaded = if args.no_config {
         None
     } else {
         config::load_config_checked(args.config.as_deref(), &cwd)?
     };
-    // 設定の root(設定 file の dir からの相対)。
+    // The config's root (relative to the config file's dir).
     let declared_root = loaded
         .as_ref()
         .and_then(|l| l.config.root.as_ref().map(|r| l.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()).join(r)));
@@ -448,12 +448,12 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         (None, None, Some(found), None) => found.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()),
         _ => cwd.clone(),
     };
-    let root = root.canonicalize().map_err(|e| format!("repo の根 {} を読めない: {}", root.display(), e))?;
+    let root = root.canonicalize().map_err(|e| format!("cannot read repo root {}: {}", root.display(), e))?;
     let config_dir = loaded.as_ref().and_then(|l| l.path.canonicalize().ok()).and_then(|p| p.parent().map(Path::to_path_buf));
     let mut notices: Vec<project::notice::ConfigNotice> = loaded.as_ref().map(|l| l.notices.clone()).unwrap_or_default();
     let config_file = loaded.as_ref().map(|l| (l.path.clone(), l.text.clone()));
     let config = loaded.map(|l| l.config);
-    // service と層の宣言: 設定の architecture(設定 file の dir から)か、repo の根の architecture.hy。
+    // The service and layer declaration: the config's architecture (from the config file's dir), or architecture.hy at the repo root.
     let architecture_path = match config.as_ref().and_then(|c| c.architecture.clone()) {
         Some(path) => Some(config_dir.clone().unwrap_or_else(|| root.clone()).join(path)),
         None => Some(root.join("architecture.hy")).filter(|p| p.is_file()),
@@ -461,11 +461,11 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     let declaration = architecture_path.clone();
     let architecture = match architecture_path {
         Some(path) => Some(
-            project::architecture::Architecture::load(&path, &root).map_err(|problems| format!("architecture.hy の誤り:\n  {}", problems.join("\n  ")))?,
+            project::architecture::Architecture::load(&path, &root).map_err(|problems| format!("architecture.hy errors:\n  {}", problems.join("\n  ")))?,
         ),
         None => None,
     };
-    // 母集団の問い(`population_of`)は宣言の dir を根として同じ宣言を読み直す。同じ読み方の時は読んだ物を渡して、2 度読まない。
+    // The population query (`population_of`) re-reads the same declaration with the declaration's dir as the root. When the way of reading is the same, pass what was read so it is not read twice.
     if let (Some(path), Some(architecture)) = (&declaration, &architecture) {
         if path.parent() == Some(root.as_path()) {
             doeff_linter::population::remember_declaration(path, std::sync::Arc::new(architecture.clone()));
@@ -474,18 +474,18 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     notices.extend(architecture.iter().flat_map(|a| a.notices.iter().cloned()));
     let mut settings = match (&config, architecture) {
         (Some(config), architecture) => {
-            config.project_settings_with(architecture).map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?
+            config.project_settings_with(architecture).map_err(|problems| format!("config errors:\n  {}", problems.join("\n  ")))?
         }
         (None, Some(architecture)) => config::Config::default()
             .project_settings_with(Some(architecture))
-            .map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
+            .map_err(|problems| format!("config errors:\n  {}", problems.join("\n  ")))?,
         (None, None) => ProjectSettings::default(),
     };
-    // 根の外で歩く dir(設定 file の dir から)。無い dir は黙って何も歩かない形にせず、設定の誤りとして止める。
+    // Dirs to walk outside the root (from the config file's dir). A nonexistent dir is stopped as a config error rather than silently walking nothing.
     let include_base = config_dir.clone().unwrap_or_else(|| root.clone());
     settings.include = config.iter().flat_map(|c| c.include.iter()).map(|dir| include_base.join(dir)).collect();
     if let Some(missing) = settings.include.iter().find(|dir| !dir.is_dir()) {
-        return Err(format!("設定の include の dir {} が無い", missing.display()));
+        return Err(format!("settings include dir {} does not exist", missing.display()));
     }
     settings.config_dir = config_dir;
     if let Some((path, text)) = &config_file {
@@ -497,13 +497,13 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     if silenced {
         notices.clear();
     }
-    // class の継承元を同じ repo の file から探す規則(DOEFF002)が、根の上の dir を探さないための上限。
+    // The upper bound so that the rule that looks for a class's base in files of the same repo (DOEFF002) does not search dirs above the root.
     doeff_linter::rules::class_inheritance::set_repo_root(&root);
     Ok(Setup { config, root, enabled_rules, exclude_patterns, settings, notices, declaration })
 }
 
-/// 違反を出す file を path の引数で絞る時の path の列(既定の "." なら None = 全部)。名指しの .hy の隣の同じ名の .pyi も含める
-/// (DOEFF145 は .hy の実行時の形を偽る .pyi に当たりを出す — .hy だけを名指しても判じて残す)。
+/// The list of paths when narrowing the files that emit violations by the path arguments (None for the default "." = all). Includes the same-name .pyi next to a named .hy
+/// (DOEFF145 hits a .pyi that falsifies the .hy's runtime shape -- naming only the .hy still judges and keeps it).
 fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
     if paths.iter().all(|p| p == ".") {
         return None;
@@ -511,8 +511,8 @@ fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
     Some(project::record_stubs::with_sibling_stubs(paths.iter().map(|p| editor::normalize_path(Path::new(p))).collect()))
 }
 
-/// 層の規則の違反を、今までの出力(text・json・hook)が読む形(Python の規則の違反と同じ Violation)に写す。
-/// only があれば、その path の下の file の違反だけにする。
+/// Maps the layer rules' violations to the form that the existing output (text, json, hook) reads (the same Violation as the Python rules' violations).
+/// If only is given, keeps only violations of files under those paths.
 fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<LintResult> {
     let mut by_path: BTreeMap<PathBuf, Vec<&project::Finding>> = BTreeMap::new();
     for finding in report.findings.iter().filter(|f| only.is_none_or(|only| only.iter().any(|p| f.path.starts_with(p)))) {
@@ -525,7 +525,7 @@ fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<Lint
             let source = match std::fs::read_to_string(&path) {
                 Ok(text) => text,
                 Err(error) => {
-                    eprintln!("doeff-linter: {}: 位置を求めるために読めない: {}", path_text, error);
+                    eprintln!("doeff-linter: {}: cannot read to find the position: {}", path_text, error);
                     String::new()
                 }
             };
@@ -533,17 +533,17 @@ fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<Lint
             result.violations = findings
                 .into_iter()
                 .map(|f| {
-                    // 人と agent が読む形 — 短い 1 行の後に「これは」(主体)・「なぜ」(理由)・law の文・直し方・鍵を並べる。
+                    // The form humans and agents read -- after a short line, lay out "This is" (the subject), "Why" (the reason), the law's sentence, the fix, and the key.
                     let head = match &f.law {
                         Some(law) => format!("[{}] {}", law, f.message),
                         None => f.message.clone(),
                     };
-                    let mut lines = vec![head, format!("これは: {}", f.explanation.subject), format!("なぜ: {}", f.explanation.reason)];
+                    let mut lines = vec![head, format!("This is: {}", f.explanation.subject), format!("Why: {}", f.explanation.reason)];
                     if let Some(statement) = &f.explanation.law_statement {
                         lines.push(format!("law: {}", statement));
                     }
-                    lines.push(format!("直し方: {}", f.hint));
-                    lines.push(format!("鍵: {}", f.key));
+                    lines.push(format!("Fix: {}", f.hint));
+                    lines.push(format!("Key: {}", f.key));
                     let message = lines.join("\n");
                     Violation::new(f.rule.id().to_string(), message, offset_of(&source, f.range.start), path_text.clone(), f.severity)
                 })
@@ -554,9 +554,9 @@ fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<Lint
 }
 
 
-/// `doeff-linter fix <変換>` — 書き換えの命令(違反を報告する本体の命令とは別の口)。
+/// `doeff-linter fix <transform>` -- the rewriting command (a separate entry from the main command that reports violations).
 #[derive(Parser, Debug)]
-#[command(name = "doeff-linter fix", about = "機械的に直せる違反を書き換える")]
+#[command(name = "doeff-linter fix", about = "Rewrite violations that can be fixed mechanically")]
 struct FixCli {
     #[command(subcommand)]
     command: FixCommand,
@@ -564,40 +564,40 @@ struct FixCli {
 
 #[derive(clap::Subcommand, Debug)]
 enum FixCommand {
-    /// Hy の defn を defk に直し、repo の中の呼び手を <- / ! に書き換える(DOEFF110・DOEFF126)
+    /// Rewrite Hy's defn to defk, and rewrite callers in the repo to <- / ! (DOEFF110, DOEFF126)
     DefnToDefk(DefnToDefkArgs),
 }
 
 #[derive(clap::Args, Debug)]
 struct DefnToDefkArgs {
-    /// 変換する定義を探す file か dir(複数可)
+    /// Files or dirs to search for definitions to transform (multiple allowed)
     #[arg(long, required = true)]
     path: Vec<PathBuf>,
-    /// repo の根(呼び手を探す範囲)。既定は path から上へ探した .git のある dir
+    /// The repo root (the range in which callers are searched). Defaults to the dir with .git found by searching upward from the path
     #[arg(long)]
     root: Option<PathBuf>,
-    /// file を書かずに計画だけを出す
+    /// Output only the plan without writing files
     #[arg(long)]
     dry_run: bool,
-    /// 出力の形: text(人が読む表)・json
+    /// Output format: text (a table for humans) or json
     #[arg(long, default_value = "text")]
     output_format: String,
-    /// 報告の JSON を書く file(出力の形と別に)
+    /// The file to write the report JSON to (separate from the output format)
     #[arg(long)]
     report: Option<PathBuf>,
-    /// 呼び手を全部書き換えられる関数だけを変換する(既定は変換して、書き換えられない呼び手を判断の要る物に出す)
+    /// Transform only functions whose callers can all be rewritten (by default it transforms, and puts callers that cannot be rewritten out as items needing a decision)
     #[arg(long)]
     strict: bool,
-    /// 除く path(根からの前方一致・既定の clients/hy/acp_client と docs/design-checks に足す)
+    /// Paths to exclude (prefix match from the root; added to the defaults clients/hy/acp_client and docs/design-checks)
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<String>,
 }
 
-/// `fix` の命令を走らせる。終了コード 0 = 残った素の呼びなし・1 = 残った素の呼びあり・2 = 引数・読み書きの誤り。
+/// Runs the `fix` command. Exit code 0 = no bare calls remain, 1 = bare calls remain, 2 = argument or read/write error.
 fn run_fix(argv: &[String]) -> ExitCode {
     let cli = FixCli::parse_from(argv.iter().skip(1));
     let FixCommand::DefnToDefk(args) = cli.command;
-    let targets: Vec<PathBuf> = match args.path.iter().map(|p| p.canonicalize().map_err(|e| format!("{} を読めない: {}", p.display(), e))).collect() {
+    let targets: Vec<PathBuf> = match args.path.iter().map(|p| p.canonicalize().map_err(|e| format!("cannot read {}: {}", p.display(), e))).collect() {
         Ok(targets) => targets,
         Err(reason) => {
             eprintln!("doeff-linter fix: {}", reason);
@@ -609,16 +609,16 @@ fn run_fix(argv: &[String]) -> ExitCode {
         Ok(None) => match targets.first().and_then(|t| t.ancestors().find(|a| a.join(".git").exists()).map(Path::to_path_buf)) {
             Some(root) => root,
             None => {
-                eprintln!("doeff-linter fix: repo の根(.git のある dir)が見つからない — --root で渡す");
+                eprintln!("doeff-linter fix: cannot find the repo root (a dir with .git) -- pass it with --root");
                 return ExitCode::from(2);
             }
         },
         Err(error) => {
-            eprintln!("doeff-linter fix: --root を読めない: {}", error);
+            eprintln!("doeff-linter fix: cannot read --root: {}", error);
             return ExitCode::from(2);
         }
     };
-    // deff の理由の印は repo の設定([tool.doeff-linter.definitions] deff_reason_marker)から — 読めなければ既定。
+    // The mark for deff's reason comes from the repo's config ([tool.doeff-linter.definitions] deff_reason_marker) -- the default if unreadable.
     let reason_marker = config::load_config_checked(None, &root)
         .ok()
         .flatten()
@@ -638,13 +638,13 @@ fn run_fix(argv: &[String]) -> ExitCode {
     let json = match serde_json::to_string_pretty(&report) {
         Ok(json) => json,
         Err(error) => {
-            eprintln!("doeff-linter fix: 報告を JSON にできない: {}", error);
+            eprintln!("doeff-linter fix: cannot turn the report into JSON: {}", error);
             return ExitCode::from(2);
         }
     };
     if let Some(path) = &args.report {
         if let Err(error) = std::fs::write(path, &json) {
-            eprintln!("doeff-linter fix: {} を書けない: {}", path.display(), error);
+            eprintln!("doeff-linter fix: cannot write {}: {}", path.display(), error);
             return ExitCode::from(2);
         }
     }
@@ -659,7 +659,7 @@ fn run_fix(argv: &[String]) -> ExitCode {
     }
 }
 
-/// 1 file の実行の thread の上限(下の main の註)。
+/// Upper limit of threads for a single-file run (see the note in main below).
 const SINGLE_FILE_THREADS: usize = 4;
 
 fn main() -> ExitCode {
@@ -667,11 +667,11 @@ fn main() -> ExitCode {
     if argv.get(1).map(String::as_str) == Some("fix") {
         return run_fix(&argv);
     }
-    // 事実の cache の上限の片づけを渡された process(機体の検の枠を取らない — 待つ hook はいない)。
+    // A process that was handed the cleanup of the fact cache's upper limit (it does not take the machine's check slot -- no hook is waiting).
     if argv.get(1).map(String::as_str) == Some(doeff_linter::project::facts_cache::SWEEP_COMMAND) {
         return doeff_linter::project::facts_cache::run_handed_sweep(&argv[2..]);
     }
-    // 作業木の変わりを inotify で覚えて 1 file の実行の問いに答える常駐の process。
+    // A resident process that remembers changes in the working tree via inotify and answers the queries of a single-file run.
     if argv.get(1).map(String::as_str) == Some(doeff_linter::project::fsmonitor::SERVE_COMMAND) {
         return doeff_linter::project::fsmonitor::daemon::serve();
     }
@@ -683,11 +683,11 @@ fn main() -> ExitCode {
     }
 
     if args.report_out.is_some() && (!args.commit_hook || args.split_rules) {
-        eprintln!("doeff-linter: --report-out は --commit-hook の時だけ使える(--split-rules とは使えない)");
+        eprintln!("doeff-linter: --report-out can be used only with --commit-hook (it cannot be used with --split-rules)");
         return ExitCode::from(2);
     }
 
-    // 重い mode は、仕事の前に機体の検の枠を 1 つ取る(正本の命令の包みへ自分を exec で渡す — 渡せたら戻らない)。
+    // Heavy modes take one of the machine's check slots before working (hand itself over via exec to the canonical command's wrapper -- if handed over, it does not return).
     check_slot::enter(check_slot::weight(check_slot::Mode {
         list_rules: args.list_rules,
         split_rules: args.split_rules,
@@ -703,21 +703,21 @@ fn main() -> ExitCode {
     }
 
     if let Some(changed) = &args.affected_tests {
-        // 逆依存の問いも小さな仕事(cache の温まった doeff で CPU 0.05 秒)— 負荷 26 の機体で 36 本の thread は sys の時間だけで
-        // 0.9〜11 秒を使い、4 本は冷えて 0.28 秒・温まって 0.07 秒だった。
+        // Reverse-dependency queries are also small work (0.05 seconds of CPU on doeff with a warm cache) -- on a machine with load 26, 36 threads used
+        // 0.9 to 11 seconds in sys time alone, while 4 threads took 0.28 seconds cold and 0.07 seconds warm.
         if std::env::var_os("RAYON_NUM_THREADS").is_none() {
             let _ = rayon::ThreadPoolBuilder::new().num_threads(SINGLE_FILE_THREADS).build_global();
         }
         return run_affected_tests(&args, changed);
     }
 
-    // 1 file の実行(--stdin・書き込み直後の hook と editor)は小さな仕事の並びなので、thread を増やしても速くならず、thread の
-    // 待ち合わせの CPU だけが増える(#1033 の実測・36 core の機体: 36 本で CPU 0.45 秒 / 4 本で 0.30 秒・壁時計は同じ 0.27 秒)。
-    // RAYON_NUM_THREADS が明示されていればそれに従う。
+    // A single-file run (--stdin, the hook right after writing, and the editor) is a sequence of small jobs, so more threads do not make it faster and only increase the CPU of
+    // thread coordination (measured in #1033, on a 36-core machine: 36 threads 0.45 seconds of CPU / 4 threads 0.30 seconds, with the same wall clock of 0.27 seconds).
+    // If RAYON_NUM_THREADS is set explicitly, follow it.
     if args.stdin && std::env::var_os("RAYON_NUM_THREADS").is_none() {
         let _ = rayon::ThreadPoolBuilder::new().num_threads(SINGLE_FILE_THREADS).build_global();
     }
-    // 1 file の実行は、repo の全 file の stat と歩きを常駐の process に問う(無ければ今までどおり自分で歩く)。
+    // A single-file run asks the resident process for the stat and walk of all files in the repo (if there is none, it walks itself as before).
     if args.stdin {
         doeff_linter::project::fsmonitor::enable();
     }
@@ -729,16 +729,16 @@ fn main() -> ExitCode {
     match OutputFormat::parse(&args.output_format) {
         OutputFormat::EditorJson => run_editor(&args),
         OutputFormat::Text | OutputFormat::Json if args.baseline_report.is_some() => {
-            eprintln!("doeff-linter: --baseline-report は --output-format editor-json の時だけ使える");
+            eprintln!("doeff-linter: --baseline-report can be used only with --output-format editor-json");
             ExitCode::from(2)
         }
         OutputFormat::Text | OutputFormat::Json => run_normal(&args),
     }
 }
 
-/// `--commit-hook` — git の作業木の根(`--root` が勝つ)と設定を決め、本体(doeff_linter::commit_hook)を撃つ。`--split-rules` も同じ
-/// 根と設定から、変えた path に当てる規則の分けだけを出す(門と hook が同じ判定を使う)。
-/// 終了コード 0 = 通す・1 = 止める(上限で打ち切って測れなかった時を含む)・2 = 設定・git・linter の誤り。
+/// `--commit-hook` -- decides the git working tree root (`--root` wins) and the config, and fires the body (doeff_linter::commit_hook). `--split-rules` likewise outputs only the split of rules to apply to the changed paths
+/// from the same root and config (the gate and the hook use the same judgment).
+/// Exit code 0 = pass, 1 = block (including when it was cut off by the limit and could not measure), 2 = config, git, or linter error.
 fn run_commit_hook(args: &Args) -> ExitCode {
     let fail = |reason: String| {
         eprintln!("doeff-linter commit-hook: {}", reason);
@@ -746,7 +746,7 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     };
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
-        Err(error) => return fail(format!("今の dir を読めない: {}", error)),
+        Err(error) => return fail(format!("cannot read the current dir: {}", error)),
     };
     let root = match &args.root {
         Some(root) => root.clone(),
@@ -757,7 +757,7 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     };
     let root = match root.canonicalize() {
         Ok(root) => root,
-        Err(error) => return fail(format!("repo の根 {} を読めない: {}", root.display(), error)),
+        Err(error) => return fail(format!("cannot read repo root {}: {}", root.display(), error)),
     };
     let loaded = if args.no_config {
         None
@@ -769,20 +769,20 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     };
     let linter = match std::env::current_exe() {
         Ok(linter) => linter,
-        Err(error) => return fail(format!("今の binary の path を読めない: {}", error)),
+        Err(error) => return fail(format!("cannot read the current binary's path: {}", error)),
     };
     let config = loaded.as_ref().map(|l| (&l.config, l.path.canonicalize().unwrap_or_else(|_| l.path.clone())));
     let mut options = doeff_linter::commit_hook::CommitHookOptions::new(root, config, &args.enable, &args.disable, args.commit_hook_timeout_s, linter);
     if let Some(file) = &args.commit_message {
         let message = match std::fs::read_to_string(file) {
             Ok(message) => message,
-            Err(error) => return fail(format!("commit 本文 {} を読めない: {}", file.display(), error)),
+            Err(error) => return fail(format!("cannot read commit body {}: {}", file.display(), error)),
         };
         options.overlay = doeff_linter::commit_hook::baseline_overlay(&message, &options.declarations);
         options.message = Some(cwd.join(file));
     }
     if args.split_rules {
-        // 門の口: path の引数を変えた path として、hook と同じ判定の分けを出す(既定の . は変えた path ではない)。
+        // The gate's interface: treat the path arguments as changed paths and output the same split of judgments as the hook (the default . is not a changed path).
         let changed: Vec<String> = args.paths.iter().filter(|p| p.as_str() != ".").cloned().collect();
         let split = doeff_linter::commit_hook::split_for_change(&options.enabled, &changed, &options.declarations);
         let changed_declaration = doeff_linter::commit_hook::touches_declaration(&changed, &options.declarations);
@@ -795,26 +795,26 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     ExitCode::from(doeff_linter::commit_hook::run(&options, args.report_out.as_deref()))
 }
 
-/// `--affected-tests` — repo の根(`--root` が勝つ・無ければ今の dir の git の作業木の根)の git が知る file から逆依存を辿り、
-/// 答えの JSON(project::affected_tests::AffectedReport)を 1 行で出す。終了コード 0 = 答えた・2 = 引数・git の誤り。
+/// `--affected-tests` -- walks reverse dependencies from the files that git knows in the repo root (`--root` wins; otherwise the root of the git working tree of the current dir),
+/// and outputs the answer JSON (project::affected_tests::AffectedReport) in one line. Exit code 0 = answered, 2 = argument or git error.
 fn run_affected_tests(args: &Args, changed: &[String]) -> ExitCode {
     let fail = |reason: String| {
         eprintln!("doeff-linter affected-tests: {}", reason);
         ExitCode::from(2)
     };
     if args.test_pattern.is_empty() {
-        return fail("検の file の名の規則が無い — --test-pattern で呼び手の集め手の規則を渡す(既定の一覧は持たない)".to_string());
+        return fail("no rule for test file names -- pass the caller's collector rule with --test-pattern (there is no default list)".to_string());
     }
     let root = match &args.root {
         Some(root) => root.clone(),
-        None => match std::env::current_dir().map_err(|e| format!("今の dir を読めない: {}", e)).and_then(|cwd| doeff_linter::commit_hook::git_toplevel(&cwd)) {
+        None => match std::env::current_dir().map_err(|e| format!("cannot read the current dir: {}", e)).and_then(|cwd| doeff_linter::commit_hook::git_toplevel(&cwd)) {
             Ok(root) => root,
             Err(reason) => return fail(reason),
         },
     };
     let root = match root.canonicalize() {
         Ok(root) => root,
-        Err(error) => return fail(format!("repo の根 {} を読めない: {}", root.display(), error)),
+        Err(error) => return fail(format!("cannot read repo root {}: {}", root.display(), error)),
     };
     let files = match project::affected_tests::known_files(&root) {
         Ok(files) => files,
@@ -831,24 +831,24 @@ fn run_affected_tests(args: &Args, changed: &[String]) -> ExitCode {
             println!("{}", json);
             ExitCode::SUCCESS
         }
-        Err(error) => fail(format!("答えを JSON にできない: {}", error)),
+        Err(error) => fail(format!("cannot turn the answer into JSON: {}", error)),
     }
 }
 
-/// 基点との比べで新しい critical が在る時の終了コード(仕様 1 節)。
+/// The exit code when there is a new critical in the comparison with the baseline (spec section 1).
 const NEW_CRITICAL_EXIT: u8 = 4;
 
-/// `--baseline-report` の file を読み、基点の critical の識別子の集合を返す(無ければ None)。読めない・形が違えば理由。
+/// Reads the `--baseline-report` file and returns the set of identifiers of the baseline's criticals (None if absent). A reason if unreadable or the shape is wrong.
 fn baseline_identities(args: &Args) -> Result<Option<std::collections::BTreeSet<String>>, String> {
     let Some(path) = &args.baseline_report else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path).map_err(|e| format!("--baseline-report {} を読めない: {}", path.display(), e))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read --baseline-report {}: {}", path.display(), e))?;
     doeff_linter::baseline::read_baseline(&text).map(Some).map_err(|reason| format!("--baseline-report {}: {}", path.display(), reason))
 }
 
-/// `--output-format editor-json` — エディタ向けの JSON を 1 つ出す。終了コード 0 = 新しい破れ(error)なし、1 = あり、2 = 引数・設定の誤り、
-/// 4 = `--baseline-report` の基点に無い critical あり(仕様 1 節の表が正本)。
+/// `--output-format editor-json` -- outputs one JSON for editors. Exit code 0 = no new breaches (errors), 1 = some, 2 = argument or config error,
+/// 4 = there are criticals not in the `--baseline-report` baseline (the table in spec section 1 is the source of truth).
 fn run_editor(args: &Args) -> ExitCode {
     if let Some(reason) = missing_semantic_targets(args) {
         eprintln!("doeff-linter: {}", reason);
@@ -875,12 +875,12 @@ fn run_editor(args: &Args) -> ExitCode {
 
     let (python_results, project_report, stdin_file, only) = if args.stdin {
         let Some(path) = &args.path else {
-            eprintln!("doeff-linter: --stdin には --path が要る");
+            eprintln!("doeff-linter: --stdin requires --path");
             return ExitCode::from(2);
         };
         let mut source = String::new();
         if let Err(error) = io::stdin().read_to_string(&mut source) {
-            eprintln!("doeff-linter: stdin を読めない: {}", error);
+            eprintln!("doeff-linter: cannot read stdin: {}", error);
             return ExitCode::from(2);
         }
         let path = editor::normalize_path(path);
@@ -901,7 +901,7 @@ fn run_editor(args: &Args) -> ExitCode {
         (python_results, project_report, Some((path, source)), None)
     } else {
         if args.path.is_some() {
-            eprintln!("doeff-linter: --path は --stdin と一緒に使う");
+            eprintln!("doeff-linter: --path is used together with --stdin");
             return ExitCode::from(2);
         }
         let python_results = if python_rules.is_empty() {
@@ -923,13 +923,13 @@ fn run_editor(args: &Args) -> ExitCode {
 
     let mut project_report = project_report;
     project_report.findings.extend(setup.notice_findings());
-    // 設定の知らない鍵(DOEFF100)は全体の実行でも 1 file の実行でも同じ設定から出す — どちらの実行も判じた規則として名乗る(#2163)。
+    // Unknown config keys (DOEFF100) come from the same config in both whole runs and single-file runs -- both runs declare it as a judged rule (#2163).
     project_report.judged.insert(ProjectRule::UnknownConfigKey);
-    // 保存前の Hy の file の見出しと束縛(版 2)— repo の Hy の表の上で、この file だけは stdin の中身で読む。
+    // The headings and bindings of a pre-save Hy file (version 2) -- on top of the repo's Hy table, only this file is read from stdin's contents.
     let signatures = stdin_file.as_ref().and_then(|(path, source)| {
         let is_hy = path.extension().is_some_and(|e| e == "hy" || e == "hyk" || e == "hyp");
         let rel = project::relative_path(&setup.root, path).filter(|_| is_hy)?;
-        // project の実行が同じ overlay で組んだ表があれば使い回す(無い時 = 規則が表を要らなかった時だけ組む・#1033)。
+        // If there is a table that the project run built with the same overlay, reuse it (build one only when none exists = only when the rules did not need the table; #1033).
         let built;
         let world = match project_report.world.as_ref() {
             Some(world) => world,
@@ -954,7 +954,7 @@ fn run_editor(args: &Args) -> ExitCode {
     }));
     report.new_critical =
         baseline.map(|baseline| doeff_linter::baseline::blocking_criticals(&baseline, &report.violations, only.is_some()));
-    // 名指した Hy の file のうち linter が歩く範囲の外の物(層の規則が判じていない — 仕様 1 節「名指しの範囲の外」)。
+    // Of the named Hy files, those outside the range the linter walks (not judged by the layer rules -- spec section 1 "outside the named range").
     report.out_of_scope = match (&only, stdin_file.is_none() && setup.has_project_rules()) {
         (Some(named), true) => {
             Some(
@@ -969,7 +969,7 @@ fn run_editor(args: &Args) -> ExitCode {
     match doeff_linter::timing::timed("editor-serialize", || serde_json::to_string(&report)) {
         Ok(text) => println!("{}", text),
         Err(error) => {
-            eprintln!("doeff-linter: 出力を JSON にできない: {}", error);
+            eprintln!("doeff-linter: cannot turn the output into JSON: {}", error);
             return ExitCode::from(2);
         }
     }
@@ -986,7 +986,7 @@ fn run_editor(args: &Args) -> ExitCode {
     }
 }
 
-/// 破れは無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった)時の終了コード。
+/// The exit code when there are no breaches but an answer could not be obtained for a definition that the semantic rules should have asked about (could not measure).
 const UNMEASURED_EXIT: u8 = 3;
 
 fn run_as_hook(args: &Args) -> ExitCode {
@@ -1014,11 +1014,11 @@ fn run_as_hook(args: &Args) -> ExitCode {
         .workspace_roots
         .unwrap_or_else(|| vec![".".to_string()]);
 
-    // Load config(hook は agent を止めないので、設定が読めない時は理由を stderr に出して設定なしで続ける)
+    // Load config (the hook does not stop the agent, so when the config cannot be read, print the reason to stderr and continue without a config)
     let setup = match prepare(args) {
         Ok(setup) => setup,
         Err(reason) => {
-            eprintln!("doeff-linter: {}(設定なしで続ける)", reason);
+            eprintln!("doeff-linter: {} (continuing without a config)", reason);
             let (enabled_rules, exclude_patterns) = config::merge_config(None, &args.enable, &args.disable, &args.exclude);
             Setup {
                 config: None,
@@ -1040,10 +1040,10 @@ fn run_as_hook(args: &Args) -> ExitCode {
     // Collect files (hook mode always respects exclusions)
     let files = collect_python_files_with_options(&paths, &exclude_patterns, true);
 
-    // Lint files(層の規則の違反も同じ形で足す)
+    // Lint files (the layer rules' violations are added in the same form)
     let mut results = lint_files_parallel(&files, &all_rules);
     if setup.has_project_rules() {
-        // hook(作業係の停止の見張り)は全体の実行 — 代理が在れば「覚えている時だけ」問う。
+        // The hook (the watcher for the worker's stop) is a whole run -- if a proxy exists, it asks "only when remembered".
         let only = only_paths(&paths);
         let mut report =
             project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole { focus: only.as_deref() }, &project::semantic::SemanticMode::Peek);
@@ -1123,7 +1123,7 @@ struct ViolationSummary {
     file_path: String,
     line: usize,
     source_line: String,
-    /// 層の規則の違反の文(これは・なぜ・直し方 — agent が理由を読んで直せるように)。
+    /// The sentence for a layer rule's violation (this is, why, fix -- so that an agent can read the reason and fix it).
     detail: Option<String>,
 }
 
@@ -1160,10 +1160,10 @@ fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> 
     message
 }
 
-/// `--semantic` / `--semantic-changed` で名指した path のうち、disk に無い物を断る理由(全部在れば None)。名指しの path は問う対象の
-/// 組(SemanticMode の targets)の鍵になるので、無い path は どの定義にも当たらず、問う数 0・較正 not-run・終了コード 0 で黙って終わっていた
-/// (3 人が「問う数が多いと黙って 0」と読んだ実例は、zsh が引用符の無い `$FILES` を分けず、11 個の path が空白で
-/// 繋がった 1 つの無い path として届いていた)。問うと名指した実行が何も問わずに緑を名乗らないよう、引数の誤りとして終了コード 2 で止める。
+/// The reason to refuse, among the paths named by `--semantic` / `--semantic-changed`, those that are not on disk (None if all exist). The named paths are the key of the set of targets to ask
+/// (SemanticMode's targets), so a nonexistent path hit no definition and the run silently ended with 0 asked, calibration not-run, and exit code 0
+/// (in the real case where 3 people read this as "silently 0 when many are asked", zsh did not split the unquoted `$FILES`, and 11 paths arrived joined by spaces as
+/// one nonexistent path). So that a run that named something to ask does not claim green having asked nothing, it stops with exit code 2 as an argument error.
 fn missing_semantic_targets(args: &Args) -> Option<String> {
     if !(args.semantic || args.semantic_changed) || args.stdin {
         return None;
@@ -1173,21 +1173,21 @@ fn missing_semantic_targets(args: &Args) -> Option<String> {
         return None;
     }
     Some(format!(
-        "--semantic で名指した path が無い — 問う対象を決められないので止める(空白を含む 1 つの引数に繋がっていないか — zsh は引用符の無い $VAR を語に分けない): {}",
-        missing.iter().map(|p| format!("{:?}", p)).collect::<Vec<_>>().join("・")
+        "the path named by --semantic does not exist -- cannot decide what to ask, so stopping (is it joined into one argument containing spaces? zsh does not split an unquoted $VAR into words): {}",
+        missing.iter().map(|p| format!("{:?}", p)).collect::<Vec<_>>().join(", ")
     ))
 }
 
 fn run_normal(args: &Args) -> ExitCode {
     if args.stdin || args.path.is_some() {
-        eprintln!("doeff-linter: --stdin と --path は --output-format editor-json の時だけ使う");
+        eprintln!("doeff-linter: --stdin and --path are used only with --output-format editor-json");
         return ExitCode::from(2);
     }
     if let Some(reason) = missing_semantic_targets(args) {
         eprintln!("doeff-linter: {}", reason);
         return ExitCode::from(2);
     }
-    // Load config(読めない設定は黙って捨てず、理由を出して終了コード 2)
+    // Load config (an unreadable config is not silently discarded; print the reason and exit with code 2)
     let setup = match prepare(args) {
         Ok(setup) => setup,
         Err(reason) => {
@@ -1230,7 +1230,7 @@ fn run_normal(args: &Args) -> ExitCode {
 
         // Filter by exclude patterns and convert to PathBuf
         // Modified mode always applies exclusions (like force_exclude)
-        // symlink と本物を 1 つにまとめるのは dir の走査・名指しの file と同じ 1 点(#2905)
+        // Merging symlinks and the real thing into one is the same single point as dir traversal and named files (#2905)
         one_path_per_file(
             modified_files
                 .into_iter()
@@ -1251,16 +1251,16 @@ fn run_normal(args: &Args) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // Lint files(層の規則の違反も同じ形で足す)
+    // Lint files (the layer rules' violations are added in the same form)
     let mut results = lint_files_parallel(&files, &all_rules);
-    // 意味の規則で問うはずだったのに答えを得られなかった数(0 でなければ、破れが無くても緑と分けて終了コード 3)。
+    // The number of definitions the semantic rules should have asked about but got no answer for (if not 0, even with no breaches, it is separated from green with exit code 3).
     let mut unmeasured = 0;
-    // 命令の行で名指した Hy の file のうち、linter が歩く範囲の外の物(層の規則が判じていない — 破れが無くても緑と分けて終了コード 3)。
-    // --modified は名指しではないので数えない。
+    // Of the Hy files named on the command line, those outside the range the linter walks (not judged by the layer rules -- even with no breaches, separated from green with exit code 3).
+    // --modified is not naming, so it is not counted.
     let mut outside: Vec<PathBuf> = Vec::new();
     if setup.has_project_rules() {
-        // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。file 1 つで判じられる規則は
-        // この path の下だけを読む(Target::Whole の focus)。
+        // With --modified, only the changed files' violations (do not stop on known violations in unchanged files). Rules that can be judged by one file
+        // read only under this path (the focus of Target::Whole).
         let only: Option<Vec<PathBuf>> = if args.modified { Some(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect())) } else { only_paths(&args.paths) };
         if let (Some(named), false) = (&only, args.modified) {
             outside = project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, setup.declaration.as_deref());
@@ -1275,11 +1275,11 @@ fn run_normal(args: &Args) -> ExitCode {
             eprintln!("doeff-linter: {}", error);
         }
         for note in &report.notes {
-            eprintln!("doeff-linter: 知らせ — {}", note);
+            eprintln!("doeff-linter: notice -- {}", note);
         }
         if let Some(semantic) = &report.semantic {
             eprintln!(
-                "doeff-linter: 意味の規則(Jev {}・{}) — 判定済み {}・未判定 {}・今回撃った {}・測れなかった {}・代理の覚えから {}・入力のトークン {}・較正 {}",
+                "doeff-linter: semantic rules (Jev {}, {}) -- judged {}, unjudged {}, fired this time {}, unmeasurable {}, from the proxy's memory {}, input tokens {}, calibration {}",
                 semantic.model,
                 semantic.wire,
                 semantic.judged,
@@ -1293,7 +1293,7 @@ fn run_normal(args: &Args) -> ExitCode {
             unmeasured = semantic.unmeasured;
             let labeled = &semantic.labeled;
             eprintln!(
-                "doeff-linter: 意味の規則の誤判定 {} 件(一覧に載り、違反から外した)・人の判定との突き合わせ — 正例 {} 件のうち答え {}・当たり {}/反例 {} 件のうち答え {}・当たり {}",
+                "doeff-linter: {} semantic rule misjudgments (listed, removed from violations), comparison with human judgment -- of {} positive examples answered {}, hits {} / of {} counterexamples answered {}, hits {}",
                 semantic.false_positives,
                 labeled.positives.listed,
                 labeled.positives.judged,
@@ -1305,7 +1305,7 @@ fn run_normal(args: &Args) -> ExitCode {
         }
         results.extend(project_results(&report, only.as_deref()));
     } else if !setup.notices.is_empty() {
-        // 層の規則の節が無い設定でも、知らない鍵は知らせる(黙って読み飛ばさない)。
+        // Even with a config that has no layer-rule section, unknown keys are reported (not silently skipped).
         let report = ProjectReport { findings: setup.notice_findings(), ..ProjectReport::default() };
         results.extend(project_results(&report, only_paths(&args.paths).as_deref()));
     }
@@ -1368,16 +1368,16 @@ fn run_normal(args: &Args) -> ExitCode {
         eprintln!("\nNo issues found.");
     }
 
-    // Return exit code(0 = 破れなし・1 = 破れあり・2 = 引数・設定の誤り・3 = 破れは無いが測れなかった物が在る — 意味の規則を測れなかった
-    // 定義か、名指した Hy の file が linter の歩く範囲の外)
+    // Return exit code (0 = no breaches, 1 = breaches, 2 = argument or config error, 3 = no breaches but something could not be measured -- a definition for which the semantic rules
+    // could not be measured, or a named Hy file is outside the range the linter walks)
     if error_count > 0 {
         ExitCode::from(1)
     } else if unmeasured > 0 || !outside.is_empty() {
         if unmeasured > 0 {
-            eprintln!("doeff-linter: 意味の規則を測れなかった定義が {} 在る(Jev に問えない・proxy の覚えを読む束が返らない)— 緑ではない", unmeasured);
+            eprintln!("doeff-linter: {} definitions could not be measured by the semantic rules (cannot ask Jev, or the bundle that reads the proxy's memory did not return) -- not green", unmeasured);
         }
         if !outside.is_empty() {
-            eprintln!("doeff-linter: 名指した Hy の file のうち {} 個が対象の外(上の行)— 測っていないので緑ではない", outside.len());
+            eprintln!("doeff-linter: {} of the named Hy files are out of scope (lines above) — not measured, so not green", outside.len());
         }
         ExitCode::from(UNMEASURED_EXIT)
     } else {
@@ -1385,10 +1385,10 @@ fn run_normal(args: &Args) -> ExitCode {
     }
 }
 
-/// 名指した Hy の file が linter の歩く範囲の外である事を名指す 1 行(通常の入口の stderr)。
+/// One line that names that a named Hy file is outside the range the linter walks (stderr of the normal entry).
 fn outside_line(path: &Path, root: &Path) -> String {
     format!(
-        "doeff-linter: 対象の外 — {}(linter が歩く範囲 = 根 {} の下の Hy の file の外 — 層の規則はこの file を判じていない)",
+        "doeff-linter: out of scope — {}(outside the range the linter walks = Hy files under root {} — layer rules do not judge this file)",
         path.display(),
         root.display()
     )
@@ -1478,7 +1478,7 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
             if !v.source_line.is_empty() {
                 println!("      {}", v.source_line.bright_white());
             }
-            // 層の規則は違反ごとに文が違う(これは・なぜ・law・直し方・鍵)ので、1 件ずつ出す。
+            // Layer rules have a different sentence per violation (this is, why, law, fix, key), so emit them one at a time.
             if ProjectRule::parse(rule_id).is_some() {
                 for line in v.message.lines() {
                     println!("      {}", line);

@@ -1,31 +1,31 @@
-//! DOEFF144: 構造を持つ値は欄の名前と型を静的に持つ型で表す — 公開面の型の注記に素の写像・素の組が無いことを file 1 つずつ判じる
-//! (agora-controllers の scripts/check_typed_values.hy の判定の移し先。判定の意味は元と同じにし、広げも狭めもしない)。
+//! DOEFF144: a value with structure is expressed by a type that statically holds field names and types — judges, one file at a time, that the type annotations of the public surface contain no bare mapping or bare tuple
+//! (the new home of the judgment of agora-controllers' scripts/check_typed_values.hy. The meaning of the judgment is kept the same as the original; it is neither widened nor narrowed).
 //!
-//! 読む file は repo の architecture.hy の `:typed-values {:files [..] :except [..]}` にだけ在り、ここには書かない。判定は file 1 つを
-//! 読めば決まるので repo 全体の索引を組まない — 名指しの path(`focus`)が在ればその下の file だけを読み、無ければ宣言の glob の頭の
-//! dir だけを歩く(DOEFF150・151 と同じ読み)。
+//! The files to read exist only in the repo's architecture.hy under `:typed-values {:files [..] :except [..]}` and are not written here. The judgment is decided by reading one file,
+//! so no index of the whole repo is built — if a named path (`focus`) exists, only files under it are read; otherwise only the leading
+//! dirs of the declared globs are walked (the same reading as DOEFF150 and 151).
 //!
-//! 公開面 = 次の 3 か所の型の注記(名が `_` で始まる物は数えない — `Class.欄` は最後の段の名で見る):
-//!   * class の欄: Hy の defclass・defrecord・defwire の直下の `(#^ T 名)`・`#^ T 名`・`(setv #^ T 名 …)`/ Python の class の直下の `名: T`。
-//!   * 関数の戻り値: Hy の `(defn #^ T 名 …)`(defk・deff の名の注記も)と defk・deff の `:post [(: % T)]` / Python の `-> T`。
-//!     最上位の関数と class の method を数え、関数の中の入れ子の関数は数えない。
-//!   * 答えの組: Hy の defn・defk・deff が長さ 2 以上の組の literal `#(a b)` を答えにする形(最後の式か `(return #(a b))`)。
+//! Public surface = the type annotations at the following 3 places (names starting with `_` are not counted — `Class.field` is looked at by its last segment):
+//!   * Class fields: `(#^ T name)`, `#^ T name`, `(setv #^ T name …)` directly under Hy's defclass, defrecord, defwire / `name: T` directly under a Python class.
+//!   * Function return values: Hy's `(defn #^ T name …)` (also annotations on the names of defk and deff) and `:post [(: % T)]` of defk and deff / Python's `-> T`.
+//!     Top-level functions and class methods are counted; functions nested inside a function are not.
+//!   * Answer tuples: the form where a Hy defn, defk, or deff makes a tuple literal `#(a b)` of length 2 or more its answer (the last expression or `(return #(a b))`).
 //!
-//! 赤にする型(union の枝・入れ物の中身も見る): 素の写像(dict・Mapping・MutableMapping と JSON の値の別名 JsonValue・JsonObject …)・
-//! 素の組(tuple・Tuple)・値の型が object / Any の写像・長さの決まった組 `tuple[A, B]`・要素の型が object / Any の組
-//! `tuple[Any, ...]`(型を付けたことにならない)。赤にしない型: キーで引く索引 `dict[str, Row]`・同じ型の列 `tuple[X, ...]`・
-//! 凍らせた写像。これらの名は Python の型の意味なので linter が持つ。Hy の `(get tuple #(X ...))`・`(of tuple X ...)`・`(of dict K V)`・
-//! `(get dict #(K V))` も同じに読む — doeff-hy がこの形を :pre / :post と欄に書けるようにした(#1791)。
+//! Types made red (union branches and the contents of containers are also looked at): bare mappings (dict, Mapping, MutableMapping, and the JSON-value aliases JsonValue, JsonObject …),
+//! bare tuples (tuple, Tuple), mappings whose value type is object / Any, fixed-length tuples `tuple[A, B]`, and tuples whose element type is object / Any
+//! `tuple[Any, ...]` (this does not count as giving a type). Types not made red: indexes looked up by key `dict[str, Row]`, sequences of the same type `tuple[X, ...]`, and
+//! frozen mappings. These names carry Python's type meaning, so the linter holds them. Hy's `(get tuple #(X ...))`, `(of tuple X ...)`, `(of dict K V)`, and
+//! `(get dict #(K V))` are read the same way — doeff-hy made this form writable in :pre / :post and fields (#1791).
 //!
-//! 構造を持つ値ではない 3 つの形は、名の形で決めてその種類の赤だけを外す(#1762 の決定 Q2-2 — Plain・plain_shape):
-//! 並べ替えのキー(名が `…key-of`・`sort-key`・`order-key`)と SQL の引数の並び(`params`・`…-params`)の素の組・組の literal、
-//! キーで引く索引(`…-by-…`)の素の写像。それ以外の名の公開面の素の組・素の写像は今までどおり鳴る。
+//! The 3 forms that are not values with structure are decided by the shape of the name, and only that kind of red is excluded (decision Q2-2 of #1762 — Plain, plain_shape):
+//! bare tuples and tuple literals for sort keys (names `…key-of`, `sort-key`, `order-key`) and SQL argument lists (`params`, `…-params`),
+//! and bare mappings for indexes looked up by key (`…-by-…`). Bare tuples and bare mappings on the public surface under other names still fire as before.
 //!
-//! `:post` は isinstance の契約で中身の型を書けないので、名に型の注記の在る defk・deff の `:post` は写像だけを赤にする(素の組は同じ型の
-//! 列かもしれない)。名に注記の無い defk・deff の `:post` は唯一の型の宣言なので、素の組も赤にする。
+//! `:post` is an isinstance contract and cannot state the types of the contents, so for the `:post` of a defk or deff whose name has a type annotation, only mappings are made red (a bare tuple may be a sequence of the same
+//! type). The `:post` of a defk or deff whose name has no annotation is the only type declaration, so bare tuples are made red too.
 //!
-//! Hy の読みは元の判定の字句の読みと同じ木にそろえる — quote の記号は捨て、`#*`・reader macro の tag は 1 つの名として並べ、
-//! `#{…}` は写像と同じ括弧に数え、bracket 文字列は区切りごと 1 つの文字列にする。
+//! Hy reading is aligned to the same tree as the lexical reading of the original judgment — quote symbols are dropped, `#*` and reader macro tags are listed as one name,
+//! `#{…}` is counted as the same brackets as a mapping, and a bracket string is made one string per delimiter.
 
 use std::path::{Path, PathBuf};
 
@@ -36,7 +36,7 @@ use rustpython_parser::{parse, Mode};
 use super::architecture::FileSelection;
 use super::retired::{judge_files, selected};
 
-/// 素の写像(中身の型の無い写像)。JSON の値の別名は dict | list | … と dict[str, JsonValue] に名を替えた素の写像なので同じに数える。
+/// Bare mappings (mappings with no type for the contents). Aliases of JSON values are bare mappings renamed to dict | list | … and dict[str, JsonValue], so they are counted the same.
 const BARE_MAPPINGS: &[&str] = &[
     "dict",
     "Dict",
@@ -52,11 +52,11 @@ const BARE_MAPPINGS: &[&str] = &[
     "JsonObject",
     "JSONObject",
 ];
-/// 素の組。
+/// Bare tuples.
 const BARE_TUPLES: &[&str] = &["tuple", "Tuple", "typing.Tuple"];
-/// 何でも入る値の型(写像の値がこれなら欄の集まりを運ぶ物)。
+/// Types that accept anything (if a mapping's value is one of these, it carries a collection of fields).
 const OPEN_VALUES: &[&str] = &["object", "Any", "typing.Any"];
-/// 中身の型を見る入れ物(と union の書き方)。
+/// Containers whose contents' types are looked at (and the ways of writing a union).
 const CONTAINERS: &[&str] = &[
     "list",
     "List",
@@ -76,32 +76,32 @@ const CONTAINERS: &[&str] = &[
     "Union",
     "typing.Union",
 ];
-/// 答えの組を探す時に入らない入れ子の関数の頭。
+/// Heads of nested functions not entered when searching for answer tuples.
 const NESTED_FUNCTIONS: &[&str] = &["fn", "defn", "defk", "deff", "fnk"];
 
-/// 構造を持つ値ではない形(record にする意味が無い・#1762 の決定 Q2-2)。名の最後の段の形で決め、その形の
-/// 赤の種類だけを外す(同じ名でも別の種類の赤は鳴る)。どの形が例外かはこの型と plain_shape の 1 か所にだけ書く。
+/// Shapes that are not values with structure (no point in making them records; decision Q2-2 of #1762). Decided by the shape of the last segment of the name, and only that shape's
+/// kind of red is excluded (red of a different kind under the same name still fires). Which shapes are exceptions is written in only one place, this type and plain_shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Plain {
-    /// 並べ替えのキー(`order-key-of`・`sort-key` — `#((- at) subject key)` の類)。素の組と組の literal を外す。
+    /// Sort keys (`order-key-of`, `sort-key` — things like `#((- at) subject key)`). Excludes bare tuples and tuple literals.
     SortKey,
-    /// SQL の引数の並び(`params`・`…-params`)。素の組と組の literal を外す。
+    /// SQL argument lists (`params`, `…-params`). Excludes bare tuples and tuple literals.
     SqlArgs,
-    /// キーで引く索引(`ledger-by-agent` の `…-by-…`)。素の写像を外す(値の型が開いた写像は鳴る)。
+    /// Indexes looked up by key (`…-by-…` as in `ledger-by-agent`). Excludes bare mappings (a mapping with an open value type still fires).
     Index,
 }
 
 impl Plain {
-    /// 赤の理由 problem がこの形の外す種類か。
+    /// Whether the red reason `problem` is a kind this shape excludes.
     fn covers(self, problem: &str) -> bool {
         match self {
-            Plain::SortKey | Plain::SqlArgs => problem.starts_with("素の組") || problem.starts_with("長さ"),
-            Plain::Index => problem.starts_with("素の写像"),
+            Plain::SortKey | Plain::SqlArgs => problem.starts_with("bare tuple") || problem.starts_with("fixed-length tuple") || problem.starts_with("tuple literal of length"),
+            Plain::Index => problem.starts_with("bare mapping"),
         }
     }
 }
 
-/// 名(`Class.名` は最後の段)→ 構造を持つ値ではない形(snake の名も kebab に揃えて見る)。
+/// Name (`Class.name` uses the last segment) -> shape that is not a value with structure (snake names are also looked at aligned to kebab).
 fn plain_shape(name: &str) -> Option<Plain> {
     let last = name.rsplit('.').next().unwrap_or(name).replace('_', "-");
     if last.ends_with("key-of") || ["sort-key", "order-key"].iter().any(|k| last == *k || last.ends_with(&format!("-{}", k))) {
@@ -115,28 +115,28 @@ fn plain_shape(name: &str) -> Option<Plain> {
     }
 }
 
-/// 名 name の赤の理由 problem を、構造を持つ値ではない形の外す種類なら落とす。
+/// Drops the red reason `problem` of name `name` if it is a kind excluded by the shape that is not a value with structure.
 fn unless_plain(name: &str, problem: String) -> Option<String> {
     (!plain_shape(name).is_some_and(|shape| shape.covers(&problem))).then_some(problem)
 }
 
-/// 注記の在り場所(登録簿の鍵の細目の種類と、知らせの文の語)。
+/// Where the annotation is (the kind of the registry key detail, and the word in the notice text).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum What {
-    /// class の欄。
+    /// A class field.
     Field,
-    /// 関数・method の戻り値の注記。
+    /// The return annotation of a function or method.
     Return,
-    /// 名に型の注記の在る defk・deff の :post(写像だけを赤にする)。
+    /// The :post of a defk or deff whose name has a type annotation (only mappings are made red).
     Post,
-    /// 名に型の注記の無い defk・deff の :post(素の組も赤にする)。
+    /// The :post of a defk or deff whose name has no type annotation (bare tuples are made red too).
     PostStrict,
-    /// 答えにする組の literal。
+    /// A tuple literal made the answer.
     Pair,
 }
 
 impl What {
-    /// 登録簿の鍵の細目の種類。
+    /// The kind of the registry key detail.
     pub fn kind(self) -> &'static str {
         match self {
             What::Field => "field",
@@ -146,39 +146,39 @@ impl What {
         }
     }
 
-    /// 知らせの文の語。
+    /// The word in the notice text.
     pub fn label(self) -> &'static str {
         match self {
-            What::Field => "欄",
-            What::Return => "戻り値",
-            What::Post => "答え(:post)",
-            What::PostStrict => "答え(:post・名の注釈なし)",
-            What::Pair => "答え(組の literal)",
+            What::Field => "field",
+            What::Return => "return value",
+            What::Post => "answer (:post)",
+            What::PostStrict => "answer (:post, no annotation on the name)",
+            What::Pair => "answer (tuple literal)",
         }
     }
 }
 
-/// 当たり 1 つ。
+/// One hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedHit {
-    /// 当たった注記の byte の範囲。
+    /// The byte range of the annotation that hit.
     pub start: usize,
     pub end: usize,
-    /// 名(class の欄と method は `Class.名`)。
+    /// The name (`Class.name` for class fields and methods).
     pub name: String,
     pub what: What,
-    /// 赤の理由。
+    /// The red reason.
     pub problem: String,
 }
 
 impl TypedHit {
-    /// 登録簿の鍵の細目(`<種類>:<名>`)。
+    /// The detail of the registry key (`<kind>:<name>`).
     pub fn detail(&self) -> String {
         format!("{}:{}", self.what.kind(), self.name)
     }
 }
 
-/// 読んだ file 1 つの当たり。
+/// The hits of one file read.
 pub struct FileHits {
     pub rel: String,
     pub path: PathBuf,
@@ -186,7 +186,7 @@ pub struct FileHits {
     pub hits: Vec<TypedHit>,
 }
 
-// --- Hy の木(元の判定の字句の読みと同じ形)------------------------------------------------------------------------
+// --- Hy tree (the same shape as the lexical reading of the original judgment) ------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -198,9 +198,9 @@ enum Kind {
 
 #[derive(Debug, Clone)]
 enum Hy {
-    /// 記号・keyword・数(元の判定の str)。
+    /// Symbol, keyword, number (the str of the original judgment).
     Name { text: String, start: usize, end: usize },
-    /// 文字列の literal(中身)。
+    /// String literal (contents).
     Text { value: String, start: usize, end: usize },
     Form { kind: Kind, items: Vec<Hy>, start: usize, end: usize },
 }
@@ -230,18 +230,18 @@ impl Hy {
         }
     }
 
-    /// 式 (…) で中身が在る物の中身。
+    /// The contents of an expression (…) that has contents.
     fn expression(&self) -> Option<&[Hy]> {
         self.form(Kind::Paren).filter(|items| !items.is_empty())
     }
 
-    /// 式の頭の名(式でない・頭が名でない時は空)。
+    /// The name of the head of an expression (empty if it is not an expression or the head is not a name).
     fn head(&self) -> &str {
         self.expression().and_then(|items| items[0].name()).unwrap_or("")
     }
 }
 
-/// 読み取り器の form を、元の判定の字句の読みの木の項目の列にする(1 つの form が 0 個か 2 個以上の項目になることもある)。
+/// Turns the reader's forms into a list of items of the tree of the original judgment's lexical reading (one form may become 0 items, or 2 or more).
 fn lower_into(source: &str, form: &Form, out: &mut Vec<Hy>) {
     let text = |start: usize, end: usize| source.get(start..end).unwrap_or("").to_string();
     let (start, end) = (form.span.start, form.span.end);
@@ -269,7 +269,7 @@ fn lower_into(source: &str, form: &Form, out: &mut Vec<Hy>) {
                 Prefix::Quote | Prefix::Quasiquote | Prefix::Unquote | Prefix::UnquoteSplice => None,
             };
             match (spelled, inner) {
-                // `#*xs` は字句の上で 1 つの名(空白を挟めば 2 つ)。
+                // `#*xs` is one name lexically (two if whitespace is between).
                 (Some(_), Some(inner)) if matches!(inner.node, Node::Symbol | Node::Keyword | Node::Number) && inner.span.start == start + spelled.map_or(0, str::len) => {
                     out.push(Hy::Name { text: text(start, inner.span.end), start, end: inner.span.end })
                 }
@@ -290,8 +290,8 @@ fn lower_into(source: &str, form: &Form, out: &mut Vec<Hy>) {
             }
             if parts.len() >= 2 {
                 let mut rest = parts.into_iter();
-                let annotation = rest.next().expect("2 つ在る");
-                let target = rest.next().expect("2 つ在る");
+                let annotation = rest.next().expect("two exist");
+                let target = rest.next().expect("two exist");
                 let marker = Hy::Name { text: "annotate".to_string(), start, end: start + 2 };
                 out.push(Hy::Form { kind: Kind::Paren, items: vec![marker, target, annotation], start, end });
                 out.extend(rest);
@@ -312,12 +312,12 @@ fn lower_into(source: &str, form: &Form, out: &mut Vec<Hy>) {
     }
 }
 
-/// Hy の source → 最上位の項目の列(読めない所が在れば理由)。
+/// Hy source -> list of top-level items (the reason if there is a place that cannot be read).
 fn read_hy(source: &str) -> Result<Vec<Hy>, String> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     if let Some(issue) = reader.issues.first() {
-        return Err(format!("Hy の読み取り器が読めない所が {} か所(最初 = {:?})", reader.issues.len(), issue));
+        return Err(format!("the Hy reader could not read {} places (first = {:?})", reader.issues.len(), issue));
     }
     let mut out = Vec::new();
     for form in &forms {
@@ -326,39 +326,39 @@ fn read_hy(source: &str) -> Result<Vec<Hy>, String> {
     Ok(out)
 }
 
-// --- 型の判定(Hy と Python で共通の部分)---------------------------------------------------------------------------
+// --- Type judgment (the part common to Hy and Python) ---------------------------------------------------------------------------
 
-/// 名 1 つの判定(素の写像・素の組)。
+/// Judgment of one name (bare mapping, bare tuple).
 fn name_problem(name: &str) -> Option<String> {
     if BARE_MAPPINGS.contains(&name) {
-        Some(format!("素の写像 {}", name))
+        Some(format!("bare mapping {}", name))
     } else if BARE_TUPLES.contains(&name) {
-        Some(format!("素の組 {}", name))
+        Some(format!("bare tuple {}", name))
     } else {
         None
     }
 }
 
-/// 文字列で書いた型("A | B")— `|` で分けた枝の名だけを見る。
+/// A type written as a string ("A | B") — looks only at the names of the branches split by `|`.
 fn string_type_problem(text: &str) -> Option<String> {
     text.split('|').find_map(|part| name_problem(part.trim()))
 }
 
-/// X[args] の形の型の判定(Hy と Python で共通)。
+/// Judgment of a type of the form X[args] (common to Hy and Python).
 fn generic_problem<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<String>, open: &dyn Fn(&T) -> bool, ellipsis: &dyn Fn(&T) -> bool) -> Option<String> {
     if BARE_MAPPINGS.contains(&base) {
         if args.len() == 2 && open(args[1]) {
-            return Some(format!("値の型が開いた写像 {}[…, object/Any]", base));
+            return Some(format!("open-value-type mapping {}[…, object/Any]", base));
         }
         return args.iter().find_map(|a| problem(a));
     }
     if BARE_TUPLES.contains(&base) {
         if args.len() >= 2 && !ellipsis(args[args.len() - 1]) {
-            return Some(format!("長さの決まった組 {}[A, B]", base));
+            return Some(format!("fixed-length tuple {}[A, B]", base));
         }
-        // 同じ型の列 tuple[X, ...] でも、要素の型が object / Any なら型を付けたことにならない。
+        // Even a sequence of the same type tuple[X, ...] does not count as giving a type if the element type is object / Any.
         if args.len() == 2 && open(args[0]) {
-            return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
+            return Some(format!("open-element-type tuple {}[object/Any, ...]", base));
         }
         return args.iter().filter(|a| !ellipsis(a)).find_map(|a| problem(a));
     }
@@ -368,9 +368,9 @@ fn generic_problem<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<St
     None
 }
 
-// --- Hy の型の判定 --------------------------------------------------------------------------------------------------
+// --- Hy type judgment --------------------------------------------------------------------------------------------------
 
-/// 写像の値の型が「何でも」(object / Any・それを含む union)。
+/// Whether the mapping's value type is "anything" (object / Any, or a union containing it).
 fn hy_open(node: &Hy) -> bool {
     if let Some(name) = node.name() {
         return OPEN_VALUES.contains(&name);
@@ -382,7 +382,7 @@ fn hy_ellipsis(node: &Hy) -> bool {
     node.is("...")
 }
 
-/// (get X #(a b)) / (get X a) / (of X a b) の型の引数の列。
+/// The argument list of the type of (get X #(a b)) / (get X a) / (of X a b).
 fn type_args(items: &[Hy]) -> Vec<&Hy> {
     if items[0].is("of") {
         return items[2..].iter().collect();
@@ -395,7 +395,7 @@ fn type_args(items: &[Hy]) -> Vec<&Hy> {
     items[2..].iter().collect()
 }
 
-/// Hy の型の注記 1 つ → 赤の理由。
+/// One Hy type annotation -> red reason.
 fn hy_type_problem(node: &Hy) -> Option<String> {
     match node {
         Hy::Name { text, .. } => name_problem(text),
@@ -416,9 +416,9 @@ fn hy_type_problem(node: &Hy) -> Option<String> {
     }
 }
 
-// --- Python の型の判定 ----------------------------------------------------------------------------------------------
+// --- Python type judgment ----------------------------------------------------------------------------------------------
 
-/// Python の名・属性の注記を点で繋いだ名(それ以外は空)。
+/// The name of a Python name or attribute annotation joined by dots (empty otherwise).
 fn py_dotted(node: &Expr) -> String {
     match node {
         Expr::Name(name) => name.id.to_string(),
@@ -445,7 +445,7 @@ fn py_ellipsis(node: &Expr) -> bool {
     matches!(node, Expr::Constant(c) if matches!(c.value, Constant::Ellipsis))
 }
 
-/// Python の型の注記 1 つ → 赤の理由。
+/// One Python type annotation -> red reason.
 fn py_type_problem(node: &Expr) -> Option<String> {
     match node {
         Expr::Name(_) | Expr::Attribute(_) => name_problem(&py_dotted(node)),
@@ -467,14 +467,14 @@ fn py_type_problem(node: &Expr) -> Option<String> {
     }
 }
 
-// --- 公開面の注記を拾う ----------------------------------------------------------------------------------------------
+// --- Collecting annotations of the public surface ----------------------------------------------------------------------------------------------
 
-/// 注記 1 つ(判じる前)。
+/// One annotation (before judging).
 enum Annotation<'a> {
     Hy(&'a Hy),
-    /// 名に型の注記の在る defk・deff の :post の T(写像だけを赤にする)。
+    /// T of the :post of a defk or deff whose name has a type annotation (only mappings are made red).
     Post(&'a Hy),
-    /// 長さの決まった組の literal の答え(長さ)。
+    /// The answer of a fixed-length tuple literal (the length).
     Pair(usize),
 }
 
@@ -489,13 +489,13 @@ impl Site<'_> {
     fn problem(&self) -> Option<String> {
         match &self.annotation {
             Annotation::Hy(node) => hy_type_problem(node),
-            Annotation::Post(node) => hy_type_problem(node).filter(|p| !p.starts_with("素の組")),
-            Annotation::Pair(width) => Some(format!("長さ {} の組の literal を答えにする(複数の意味を並べた組)", width)),
+            Annotation::Post(node) => hy_type_problem(node).filter(|p| !p.starts_with("bare tuple")),
+            Annotation::Pair(width) => Some(format!("tuple literal of length {} as the answer (a tuple lining up several meanings)", width)),
         }
     }
 }
 
-/// 項目の綴り(名は綴り・それ以外は source の字面)。
+/// The spelling of an item (the spelling for a name; the source text otherwise).
 fn spelled(source: &str, node: &Hy) -> String {
     match node {
         Hy::Name { text, .. } => text.clone(),
@@ -506,13 +506,13 @@ fn spelled(source: &str, node: &Hy) -> String {
     }
 }
 
-/// (annotate 名 型) → (名・型・名の範囲)。
+/// (annotate name type) -> (name, type, range of the name).
 fn annotated<'a>(source: &str, node: &'a Hy) -> Option<(String, &'a Hy, (usize, usize))> {
     let items = node.expression()?;
     (node.head() == "annotate" && items.len() == 3).then(|| (spelled(source, &items[1]), &items[2], items[1].span()))
 }
 
-/// defk・deff の :post [(: % T)] の T の列。
+/// The list of T in :post [(: % T)] of a defk or deff.
 fn defk_posts(items: &[Hy]) -> Vec<&Hy> {
     let mut out = Vec::new();
     for part in items {
@@ -529,12 +529,12 @@ fn defk_posts(items: &[Hy]) -> Vec<&Hy> {
     out
 }
 
-/// 長さ 2 以上の組の literal の長さ。
+/// The length of a tuple literal of length 2 or more.
 fn pair_width(node: &Hy) -> Option<usize> {
     node.form(Kind::Tuple).map(<[Hy]>::len).filter(|&n| n >= 2)
 }
 
-/// defn・defk・deff の本体が答えにする組の literal(最後の式と (return #(…)))— 入れ子の関数の中は見ない。
+/// The tuple literal that the body of a defn, defk, or deff makes its answer (the last expression and (return #(…))) — nested functions are not looked into.
 fn returned_pairs(items: &[Hy]) -> Vec<(usize, (usize, usize))> {
     let body = items.get(3..).unwrap_or(&[]);
     let mut out = Vec::new();
@@ -561,7 +561,7 @@ fn returned_pairs(items: &[Hy]) -> Vec<(usize, (usize, usize))> {
     out
 }
 
-/// defn・defk・deff 1 つ → 戻り値の注記・:post・答えの組。
+/// One defn, defk, or deff -> return annotation, :post, and answer tuple.
 fn hy_function_sites<'a>(source: &str, form: &'a Hy) -> Vec<Site<'a>> {
     let head = form.head();
     let Some(items) = form.expression().filter(|items| items.len() >= 2) else { return Vec::new() };
@@ -587,7 +587,7 @@ fn hy_function_sites<'a>(source: &str, form: &'a Hy) -> Vec<Site<'a>> {
     out
 }
 
-/// defclass・defrecord・defwire 1 つ → 欄の注記と method の注記(名は `Class.名`)。
+/// One defclass, defrecord, or defwire -> field annotations and method annotations (names are `Class.name`).
 fn hy_class_sites<'a>(source: &str, form: &'a Hy) -> Vec<Site<'a>> {
     let Some(items) = form.expression() else { return Vec::new() };
     let name_at = if items.len() > 2 && matches!(items[1], Hy::Form { .. }) { 2 } else { 1 };
@@ -613,7 +613,7 @@ fn hy_class_sites<'a>(source: &str, form: &'a Hy) -> Vec<Site<'a>> {
     out
 }
 
-/// Hy の file の当たり。
+/// The hits of a Hy file.
 fn hy_hits(source: &str) -> Result<Vec<TypedHit>, String> {
     let forms = read_hy(source)?;
     let mut sites = Vec::new();
@@ -633,14 +633,14 @@ fn hy_hits(source: &str) -> Result<Vec<TypedHit>, String> {
         .collect())
 }
 
-/// 公開の名か(`Class.名` は最後の段の名で見る)。
+/// Whether it is a public name (`Class.name` is looked at by the last segment).
 fn public(name: &str) -> bool {
     !name.rsplit('.').next().unwrap_or(name).starts_with('_')
 }
 
-/// Python の file の当たり。
+/// The hits of a Python file.
 fn py_hits(source: &str, rel: &str) -> Result<Vec<TypedHit>, String> {
-    let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let module = parse(source, Mode::Module, rel).map_err(|error| format!("does not parse into a syntax tree: {}", error))?;
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
     let mut out = Vec::new();
     let mut judge = |name: String, what: What, annotation: Option<&Expr>, fallback: (usize, usize)| {
@@ -678,7 +678,7 @@ fn py_hits(source: &str, rel: &str) -> Result<Vec<TypedHit>, String> {
     Ok(out)
 }
 
-/// file 1 つ(根からの path rel と中身)を判じる — Hy と Python の file だけ(ほかは空)。読めなければ理由。
+/// Judges one file (path rel from the root, and contents) — only Hy and Python files (others are empty). The reason if it cannot be read.
 pub fn judge(rel: &str, source: &str) -> Result<Vec<TypedHit>, String> {
     let mut hits = if rel.ends_with(".hy") {
         hy_hits(source)?
@@ -691,12 +691,12 @@ pub fn judge(rel: &str, source: &str) -> Result<Vec<TypedHit>, String> {
     Ok(hits)
 }
 
-/// 判じる file か(宣言の glob に当たる Hy か Python の file)。
+/// Whether it is a file to judge (a Hy or Python file that matches a declared glob).
 pub fn wants(rel: &str, selection: &FileSelection) -> bool {
     (rel.ends_with(".hy") || rel.ends_with(".py")) && selected(rel, &selection.files, &selection.except)
 }
 
-/// 宣言の file を読んで判じる(focus が在ればその下の file だけ)。読めない file は理由を返す。
+/// Reads and judges the declared files (if focus exists, only files under it). The reason is returned for a file that cannot be read.
 pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
     judge_files(
         root,
@@ -704,40 +704,40 @@ pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -
         focus,
         |rel, _| wants(rel, selection),
         |rel, path, source| {
-            let hits = judge(&rel, &source).map_err(|reason| format!("{}: DOEFF144 の判定が読めない({})", rel, reason))?;
+            let hits = judge(&rel, &source).map_err(|reason| format!("{}: the DOEFF144 judgment cannot be read ({})", rel, reason))?;
             Ok((!hits.is_empty()).then(|| FileHits { rel, path, source, hits }))
         },
     )
 }
 
-// --- 値を型だけで渡す層(DOEFF170・171)----------------------------------------------------------
+// --- Layer that passes values only by type (DOEFF170, 171) ----------------------------------------------------------
 //
-// 層の宣言 `:wire-free True` の層(agora の core)は、wire の型(defwire)を持たず、写像も中身の型の無い組 / 列も受け渡さない
-// (defwire は core に置かず、写像は組む事そのものが目的の時だけ渡す。データを引くための写像は
-// キー → 値の関数か効果にする)。DOEFF144 と違い、
-// 型つきの写像(`(of dict str Row)`)も鳴る(データを引く写像はキー → 値の関数か効果にする)。写像を組むのが目的の綴りは翻訳の層の
-// 1 点に置くので、この層には例外を置かない — ただし並べ替えのキーの組(Plain::SortKey)は値の受け渡しではないので外す。
+// A layer declared `:wire-free True` (agora's core) has no wire types (defwire) and passes neither mappings nor tuples / sequences with no type for the contents
+// (defwire is not placed in core, and mappings are passed only when building the mapping is itself the purpose. A mapping for looking up data is
+// made a key -> value function or an effect). Unlike DOEFF144,
+// typed mappings (`(of dict str Row)`) also fire (a mapping for looking up data is made a key -> value function or an effect). The spelling whose purpose is building a mapping is placed at the single point of the translation layer,
+// so no exception is placed in this layer — except that tuples for sort keys (Plain::SortKey) are not passing values, so they are excluded.
 
-/// 写像(中身の型の有無を問わない)— DOEFF144 の素の写像に、JSON の本文の別名と凍らせた写像を足した物。
+/// Mappings (whether or not they have a type for the contents) — DOEFF144's bare mappings plus the aliases of JSON bodies and frozen mappings.
 const WIRE_FREE_MAPPINGS: &[&str] = &["JsonBody", "JSONBody", "OpaqueJson", "FrozenMap"];
-/// 中身の型が無ければ鳴る列(組は BARE_TUPLES)。
+/// Sequences that fire when they have no type for the contents (tuples are BARE_TUPLES).
 const BARE_LISTS: &[&str] = &["list", "List", "typing.List"];
 
-/// 当たりの種類。
+/// Kind of hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireFreeWhat {
-    /// defwire の宣言(DOEFF170)。
+    /// A defwire declaration (DOEFF170).
     Wire,
-    /// :pre の引数の型(DOEFF171)。
+    /// The type of a :pre argument (DOEFF171).
     Pre,
-    /// :post の答えの型(DOEFF171)。
+    /// The type of the :post answer (DOEFF171).
     Post,
-    /// defclass・defrecord の欄の型(DOEFF171)。
+    /// The type of a defclass or defrecord field (DOEFF171).
     Field,
 }
 
 impl WireFreeWhat {
-    /// 登録簿の鍵の細目の種類。
+    /// The kind of the registry key detail.
     pub fn kind(self) -> &'static str {
         match self {
             WireFreeWhat::Wire => "wire",
@@ -748,37 +748,37 @@ impl WireFreeWhat {
     }
 }
 
-/// 値を型だけで渡す層の当たり 1 つ。
+/// One hit of the layer that passes values only by type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireFreeHit {
     pub start: usize,
     pub end: usize,
-    /// 名(defwire の名・`定義:引数`・`定義`・`Class.欄`)。
+    /// Name (the name of a defwire, `definition:argument`, `definition`, `Class.field`).
     pub name: String,
     pub what: WireFreeWhat,
-    /// 赤の理由(defwire は空)。
+    /// The red reason (empty for defwire).
     pub problem: String,
 }
 
 impl WireFreeHit {
-    /// 登録簿の鍵の細目(`<種類>:<名>`)。
+    /// The detail of the registry key (`<kind>:<name>`).
     pub fn detail(&self) -> String {
         format!("{}:{}", self.what.kind(), self.name)
     }
 }
 
-/// 名 1 つ — 写像か、中身の型の無い組・列。
+/// One name — a mapping, or a tuple / sequence with no type for the contents.
 fn wire_free_name_problem(name: &str) -> Option<String> {
     if BARE_MAPPINGS.contains(&name) || WIRE_FREE_MAPPINGS.contains(&name) {
-        Some(format!("写像 {}", name))
+        Some(format!("mapping {}", name))
     } else if BARE_TUPLES.contains(&name) || BARE_LISTS.contains(&name) {
-        Some(format!("中身の型の無い {}", name))
+        Some(format!("{} with no element type", name))
     } else {
         None
     }
 }
 
-/// 型の注記 1 つ → 赤の理由(union の枝・入れ物の中身も見る)。写像は中身の型が在っても鳴る。
+/// One type annotation -> red reason (union branches and the contents of containers are also looked at). A mapping fires even if it has a type for the contents.
 fn wire_free_type_problem(node: &Hy) -> Option<String> {
     match node {
         Hy::Name { text, .. } => wire_free_name_problem(text),
@@ -798,17 +798,17 @@ fn wire_free_type_problem(node: &Hy) -> Option<String> {
     }
 }
 
-/// 総称型 base[args] 1 つ → 赤の理由(Hy と Python の注記で同じ判定)。写像は中身の型が在っても鳴る。
+/// One generic type base[args] -> red reason (the same judgment for Hy and Python annotations). A mapping fires even if it has a type for the contents.
 fn wire_free_generic<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<String>, open: &dyn Fn(&T) -> bool, ellipsis: &dyn Fn(&T) -> bool) -> Option<String> {
     if BARE_MAPPINGS.contains(&base) || WIRE_FREE_MAPPINGS.contains(&base) {
-        return Some(format!("写像 {}[…](中身の型が在ってもデータを引く写像は渡さない)", base));
+        return Some(format!("mapping {}[…] (a mapping for looking up data is not passed even if it has a type for the contents)", base));
     }
     if BARE_TUPLES.contains(&base) {
         if args.len() >= 2 && !ellipsis(args[args.len() - 1]) {
-            return Some(format!("長さの決まった組 {}[A, B]", base));
+            return Some(format!("fixed-length tuple {}[A, B]", base));
         }
         if args.first().is_some_and(|a| open(a)) {
-            return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
+            return Some(format!("open-element-type tuple {}[object/Any, ...]", base));
         }
     }
     if BARE_TUPLES.contains(&base) || BARE_LISTS.contains(&base) || CONTAINERS.contains(&base) {
@@ -817,7 +817,7 @@ fn wire_free_generic<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<
     None
 }
 
-/// Python の型の注記 1 つ → 赤の理由(wire_free_type_problem の Python 版 — 文字列の注記は式として読み直す)。
+/// One Python type annotation -> red reason (the Python version of wire_free_type_problem — a string annotation is re-read as an expression).
 fn py_wire_free_type_problem(node: &Expr) -> Option<String> {
     match node {
         Expr::Name(_) | Expr::Attribute(_) => wire_free_name_problem(&py_dotted(node)),
@@ -839,7 +839,7 @@ fn py_wire_free_type_problem(node: &Expr) -> Option<String> {
     }
 }
 
-/// Python の file 1 つの class の欄の注記(`Class.欄`・注記)の列 — 名が _ で始まる欄・ClassVar も含めて全部(欄は値の受け渡しの形)。
+/// The annotations of the class fields (`Class.field`, annotation) of one Python file in the layer that passes values only by type — all of them, including fields starting with _ and ClassVar (fields are the shape of passing values).
 fn py_field_sites(module: &[Stmt]) -> Vec<(String, &Expr)> {
     module
         .iter()
@@ -859,10 +859,10 @@ fn py_field_sites(module: &[Stmt]) -> Vec<(String, &Expr)> {
         .collect()
 }
 
-/// 値を型だけで渡す層の Python の file 1 つを判じる(DOEFF171 の欄の型 — dataclass・TypedDict・class の欄の注記)。
-/// Python には defwire も :pre / :post も無いので、見るのは欄だけ。読めなければ理由。
+/// Judges one Python file in the layer that passes values only by type (the field types of DOEFF171 — annotations of dataclass, TypedDict, and class fields).
+/// Python has neither defwire nor :pre / :post, so only fields are looked at. The reason if it cannot be read.
 pub fn py_wire_free_hits(source: &str, rel: &str) -> Result<Vec<WireFreeHit>, String> {
-    let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let module = parse(source, Mode::Module, rel).map_err(|error| format!("does not parse into a syntax tree: {}", error))?;
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
     let mut out: Vec<WireFreeHit> = py_field_sites(&module.body)
         .into_iter()
@@ -876,15 +876,15 @@ pub fn py_wire_free_hits(source: &str, rel: &str) -> Result<Vec<WireFreeHit>, St
     Ok(out)
 }
 
-/// 値を型だけで渡す層の外の Python の file 1 つの欄の写像(DOEFF172 の欄の臭い)。読めなければ理由。
+/// The mapping fields of one Python file outside the layer that passes values only by type (the field smell of DOEFF172). The reason if it cannot be read.
 pub fn py_dict_smell_hits(source: &str, rel: &str) -> Result<Vec<DictSmellHit>, String> {
-    let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let module = parse(source, Mode::Module, rel).map_err(|error| format!("does not parse into a syntax tree: {}", error))?;
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
     let mut out: Vec<DictSmellHit> = py_field_sites(&module.body)
         .into_iter()
         .filter(|(_, node)| !py_relays_opaque_json(node))
         .filter_map(|(name, node)| {
-            let problem = py_wire_free_type_problem(node).filter(|problem| problem.starts_with("写像"))?;
+            let problem = py_wire_free_type_problem(node).filter(|problem| problem.starts_with("mapping"))?;
             let range = node.range();
             Some(DictSmellHit { start: range.start().to_usize(), end: range.end().to_usize(), name, what: DictSmellWhat::Field, problem })
         })
@@ -893,7 +893,7 @@ pub fn py_dict_smell_hits(source: &str, rel: &str) -> Result<Vec<DictSmellHit>, 
     Ok(out)
 }
 
-/// defk・deff の :pre [(: 引数 T) …] の (引数・T) の列。
+/// The list of (argument, T) of :pre [(: argument T) …] of a defk or deff.
 fn defk_pres(items: &[Hy]) -> Vec<(String, &Hy)> {
     let mut out = Vec::new();
     for part in items {
@@ -912,7 +912,7 @@ fn defk_pres(items: &[Hy]) -> Vec<(String, &Hy)> {
     out
 }
 
-/// defclass・defrecord・defwire 1 つの欄の(`Class.欄`・型の注記)の列(method の注記は含めない)。
+/// The list of (`Class.field`, type annotation) of the fields of one defclass, defrecord, or defwire (method annotations are not included).
 fn field_sites<'a>(source: &str, form: &'a Hy) -> Vec<(String, &'a Hy)> {
     hy_class_sites(source, form)
         .into_iter()
@@ -924,14 +924,14 @@ fn field_sites<'a>(source: &str, form: &'a Hy) -> Vec<(String, &'a Hy)> {
         .collect()
 }
 
-/// 値を型だけで渡す層の Hy の file 1 つを判じる(DOEFF170 の defwire と DOEFF171 の :pre / :post / 欄の型)。読めなければ理由。
+/// Judges one Hy file in the layer that passes values only by type (the defwire of DOEFF170 and the :pre / :post / field types of DOEFF171). The reason if it cannot be read.
 pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
     let forms = read_hy(source)?;
     let mut out = Vec::new();
     let typed = |name: String, what: WireFreeWhat, node: &Hy| -> Option<WireFreeHit> {
         let problem = wire_free_type_problem(node)?;
-        // 並べ替えのキーの関数(`…key-of`・`sort-key`)の答えの組は値の受け渡しではない(DOEFF144 の Plain::SortKey と同じ名の形)。
-        if what == WireFreeWhat::Post && plain_shape(&name) == Some(Plain::SortKey) && !problem.starts_with("写像") {
+        // The answer tuple of a sort-key function (`…key-of`, `sort-key`) is not passing a value (the same name shape as DOEFF144's Plain::SortKey).
+        if what == WireFreeWhat::Post && plain_shape(&name) == Some(Plain::SortKey) && !problem.starts_with("mapping") {
             return None;
         }
         let (start, end) = node.span();
@@ -946,8 +946,8 @@ pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
                     let (start, end) = class.span();
                     out.push(WireFreeHit { start, end, name: spelled(source, class), what: WireFreeWhat::Wire, problem: String::new() });
                 }
-                // defwire の欄の型も defrecord・defclass と同じに見る(defrecord の欄に dict を
-                // 持たせるのは本当に要る時だけ。欄の dict 系は 3 つの宣言のどれでも)。
+                // The field types of a defwire are looked at the same as defrecord and defclass (giving a defrecord field
+                // a dict is only for when it is really needed. For dict-type fields, all 3 declarations).
                 out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| typed(name, WireFreeWhat::Field, node)));
             }
             "defclass" | "defrecord" => {
@@ -966,36 +966,36 @@ pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
     Ok(out)
 }
 
-// --- 写像の置き場の臭い(DOEFF172)------------------------------------------------------------
+// --- Smells of where mappings are placed (DOEFF172) ------------------------------------------------------------
 //
-// agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ。
-// だから handler の外で写像を組む定義と、欄に写像を持つ型は臭い(数えるだけ — major・warning)。写像を組むのが目的の定義(:post が
-// 写像 — JSON の境界で綴る 1 点)と defhandler の中は数えない。値を型だけで渡す層の欄の写像は DOEFF171(critical)が見るので、欄の
-// 臭いはそれ以外の層だけ。
+// agora's data is in the DB and read through effects. In-memory mappings are only for caches, and caches are held by the effect layer (handler).
+// So definitions that build a mapping outside a handler and types that hold a mapping in a field are smells (only counted — major, warning). Definitions whose purpose is building a mapping (:post is
+// a mapping — the single point that spells at the JSON boundary) and inside defhandler are not counted. Mapping fields in the layer that passes values only by type are seen by DOEFF171 (critical), so field
+// smells are only for the other layers.
 
-/// 写像の置き場の臭いの種類。
+/// Kinds of smell of where mappings are placed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DictSmellWhat {
-    /// 欄の型が写像(defclass・defrecord・defwire)。
+    /// The field type is a mapping (defclass, defrecord, defwire).
     Field,
-    /// handler の外の定義の本体で写像を組む(`{…}`・`(dfor …)`・`(dict …)`)。
+    /// A definition builds a mapping outside a handler (`{…}`, `(dfor …)`, `(dict …)`).
     Built,
 }
 
-/// 写像の置き場の臭い 1 つ。
+/// One smell of where mappings are placed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictSmellHit {
     pub start: usize,
     pub end: usize,
-    /// 名(`Class.欄` か定義の名)。
+    /// Name (`Class.field` or the definition's name).
     pub name: String,
     pub what: DictSmellWhat,
-    /// 欄なら型の理由、組む所なら数の文。
+    /// For a field, the reason of the type; for a build site, the count sentence.
     pub problem: String,
 }
 
 impl DictSmellHit {
-    /// 登録簿の鍵の細目(`field:<Class.欄>`・`built:<定義>`)。
+    /// The detail of the registry key (`field:<Class.field>`, `built:<definition>`).
     pub fn detail(&self) -> String {
         let kind = match self.what {
             DictSmellWhat::Field => "field",
@@ -1005,18 +1005,18 @@ impl DictSmellHit {
     }
 }
 
-/// 型の注記が写像か(中身の型の有無を問わない)。
+/// Whether the type annotation is a mapping (whether or not it has a type for the contents).
 fn mapping_problem(node: &Hy) -> Option<String> {
-    wire_free_type_problem(node).filter(|problem| problem.starts_with("写像"))
+    wire_free_type_problem(node).filter(|problem| problem.starts_with("mapping"))
 }
 
-/// `(match 主 型 本体 型 :if 守り 本体 …)` の、型の位置を除いた項(主・守り・本体)— 型の `{…}` は値を組まず形を照らすだけなので数えない
-/// (以前は `{"type" "call"}` の型を「写像を組む」と数えていた)。
+/// The terms of `(match subject type body type :if guard body …)` excluding the type positions (subject, guard, body) — the `{…}` of a type does not build a value and only matches a shape, so it is not counted
+/// (before, the type `{"type" "call"}` was counted as "building a mapping").
 fn match_evaluated(items: &[Hy]) -> Vec<&Hy> {
     let mut out: Vec<&Hy> = items.get(1).into_iter().collect();
     let mut at = 2;
     while at < items.len() {
-        // items[at] は型 — 飛ばす。続く `:if 守り` の守りと、その後の本体は式なので数える。
+        // items[at] is a type — skipped. The guard after the following `:if guard` and the bodies after it are expressions, so they are counted.
         at += 1;
         if items.get(at).is_some_and(|item| item.is(":if")) {
             out.extend(items.get(at + 1));
@@ -1028,7 +1028,7 @@ fn match_evaluated(items: &[Hy]) -> Vec<&Hy> {
     out
 }
 
-/// 式の木の中で写像を組む所の数 — `{…}`(`#{…}` の集合は数えない)・`(dfor …)`・`(dict …)`。defhandler の中と match の型の位置は数えない。
+/// The number of places that build a mapping in an expression tree — `{…}` (`#{…}` sets are not counted), `(dfor …)`, `(dict …)`. Inside a defhandler and the type positions of match are not counted.
 fn built_mappings(source: &str, node: &Hy) -> usize {
     let Hy::Form { kind, items, start, .. } = node else { return 0 };
     let head = node.head();
@@ -1047,14 +1047,14 @@ fn built_mappings(source: &str, node: &Hy) -> usize {
     inner + usize::from(builds)
 }
 
-/// 契約の辞書か(`{:pre …}`・`{:post …}`・`{:tags …}` — 鍵が契約の語で始まる {…})。
+/// Whether it is a contract dict (`{:pre …}`, `{:post …}`, `{:tags …}` — a {…} whose keys start with a contract word).
 fn contract_map(item: &Hy) -> bool {
     item.form(Kind::Brace).is_some_and(|map| map.first().is_some_and(|key| key.is(":pre") || key.is(":post") || key.is(":tags")))
 }
 
-/// defk・deff・defn の本体の始まり(名・引数の後の先頭の docstring と契約の辞書を飛ばした位置)。docstring は契約の辞書の前にも後にも
-/// 置けるので、先頭に並ぶ文字列と契約の辞書を順を問わず飛ばす(以前は引数の直後の {…} だけを契約と読み、
-/// docstring の後の契約の辞書を「handler の外で組む写像」と数えていた)。
+/// The start of the body of a defk, deff, or defn (the position after the name and arguments, skipping the leading docstring and the contract dict). A docstring can be placed both before and after the contract dict,
+/// so the strings and contract dicts lined up at the head are skipped in any order (before, only the {…} right after the arguments was read as the contract,
+/// and the contract dict after a docstring was counted as a "mapping built outside a handler").
 fn body_start(items: &[Hy]) -> usize {
     let mut at = 3;
     while items.get(at).is_some_and(|item| matches!(item, Hy::Text { .. }) || contract_map(item)) {
@@ -1063,17 +1063,17 @@ fn body_start(items: &[Hy]) -> usize {
     at
 }
 
-/// 外の形の名(doeff-hy の declarations.hy の SPELLS と同じ閉じた一覧 — 名乗れるのはこのどれか)。
+/// Names of external shapes (the same closed list as SPELLS in doeff-hy's declarations.hy — only one of these may be declared).
 const BOUNDARY_FORMS: &[&str] = &["json", "http", "env", "schema", "records"];
 
-/// 契約の :tags の境界の名乗り(:spells = 外の形を綴る 1 点・:reads = 外の形を型へ読む 1 点)の形の名。無いか一覧の外なら None
-/// (以前は :spells の空でない値なら何でも受けた)。
+/// The shape name of a boundary declaration (:spells = the single point that spells an external shape, :reads = the single point that reads an external shape into a type) in the contract's :tags. None if absent or outside the list
+/// (before, any non-empty value of :spells was accepted).
 fn boundary_form_of(items: &[Hy]) -> Option<String> {
     let contract = items.get(3..body_start(items))?.iter().find_map(|item| item.form(Kind::Brace).filter(|_| contract_map(item)))?;
     tags_boundary_form(contract)
 }
 
-/// 頭の辞書(契約の辞書・defwire の頭の辞書)の :tags の境界の名乗りの形の名。
+/// The shape name of the :tags boundary declaration of a head dict (the contract dict, or the head dict of a defwire).
 fn tags_boundary_form(head: &[Hy]) -> Option<String> {
     let tags = (0..head.len().saturating_sub(1)).step_by(2).find_map(|i| head[i + 1].form(Kind::Brace).filter(|_| head[i].is(":tags")))?;
     (0..tags.len().saturating_sub(1)).step_by(2).find_map(|i| match &tags[i + 1] {
@@ -1082,24 +1082,24 @@ fn tags_boundary_form(head: &[Hy]) -> Option<String> {
     })
 }
 
-/// defwire の頭の辞書(名前と docstring の後の {…})の境界の名乗りの形の名(契約どおりの外の形の写像の欄を持つ
-/// wire の型は、何の境界かを :spells / :reads で名乗れば欄を数えない。defrecord は値の型なので名乗りを効かせない)。
+/// The shape name of the boundary declaration of the head dict of a defwire (the {…} after the name and docstring) (a wire type that has fields of mappings in the contract's external shape
+/// does not count the fields if it declares what boundary it is with :spells / :reads. defrecord is a value type, so the declaration has no effect).
 fn wire_boundary_form(items: &[Hy]) -> Option<String> {
     items.get(2..)?.iter().filter(|item| !matches!(item, Hy::Text { .. })).take(1).find_map(|item| item.form(Kind::Brace)).and_then(tags_boundary_form)
 }
 
-/// 列の型の名か(要素の型が中継の型なら、列も中を読まずに運ぶ)。
+/// Whether it is the name of a sequence type (if the element type is a relay type, the sequence also carries it without reading inside).
 const RELAY_SEQUENCES: [&str; 4] = ["tuple", "list", "typing.Tuple", "typing.List"];
 
-/// 欄の型が中を読まない中継の型 OpaqueJson ちょうどか(None との和を含む)— DOEFF172 は写像と数えない(#2077・
-/// #2211・#2068 で採った中継の形。OpaqueJson と他の写像の和は数える)。要素の型が中継の型の tuple / list(`(get tuple #(OpaqueJson ...))`・
-/// `(of tuple OpaqueJson ...)`・`(get list OpaqueJson)`)も、中継を 0 個以上運ぶだけなので数えない(#2586)。
+/// Whether the field type is exactly the relay type OpaqueJson that does not read inside (including a union with None) — DOEFF172 does not count it as a mapping (the relay form adopted in #2077,
+/// #2211, #2068. A union of OpaqueJson and another mapping is counted). A tuple / list whose element type is the relay type (`(get tuple #(OpaqueJson ...))`,
+/// `(of tuple OpaqueJson ...)`, `(get list OpaqueJson)`) also only carries zero or more relays, so it is not counted (#2586).
 fn relays_opaque_json(node: &Hy) -> bool {
     match node {
         Hy::Name { text, .. } => text == "OpaqueJson" || text.ends_with(".OpaqueJson"),
         _ => match node.expression() {
-            // 和は、少なくとも 1 枝が中継で、残りの枝が None か写像でない型(record など)なら中継(#2629 — `(| OpaqueJson Record)`)。
-            // 写像の枝(dict 等)を含む和は今までどおり数える。
+            // A union is a relay if at least one branch is a relay and the remaining branches are None or non-mapping types (such as records) (#2629 — `(| OpaqueJson Record)`).
+            // A union containing a mapping branch (dict etc.) is counted as before.
             Some(items) if node.head() == "|" => {
                 let parts = &items[1..];
                 parts.iter().any(relays_opaque_json)
@@ -1116,7 +1116,7 @@ fn relays_opaque_json(node: &Hy) -> bool {
     }
 }
 
-/// Python の注記が OpaqueJson ちょうどか(`OpaqueJson | None`・`Optional[OpaqueJson]`・文字列の注記を含む)。
+/// Whether a Python annotation is exactly OpaqueJson (including `OpaqueJson | None`, `Optional[OpaqueJson]`, and string annotations).
 fn py_relays_opaque_json(node: &Expr) -> bool {
     let is_none = |expr: &Expr| matches!(expr, Expr::Constant(constant) if matches!(constant.value, Constant::None)) || py_dotted(expr) == "None";
     match node {
@@ -1133,25 +1133,25 @@ fn py_relays_opaque_json(node: &Expr) -> bool {
             if matches!(base.as_str(), "Optional" | "typing.Optional") {
                 return py_relays_opaque_json(&subscript.slice);
             }
-            // tuple[OpaqueJson, ...]・list[OpaqueJson] — 要素の型が中継の型の列も数えない(#2586)。
+            // tuple[OpaqueJson, ...], list[OpaqueJson] — sequences whose element type is the relay type are also not counted (#2586).
             let elements: Vec<&Expr> = match subscript.slice.as_ref() {
                 Expr::Tuple(tuple) => tuple.elts.iter().filter(|elt| !py_ellipsis(elt)).collect(),
                 single => vec![single],
             };
             RELAY_SEQUENCES.contains(&base.as_str()) && !elements.is_empty() && elements.into_iter().all(py_relays_opaque_json)
         }
-        // 和は、少なくとも 1 枝が中継で、他の枝が None か写像でない型(record など)なら中継(#2629)。写像の枝を含む和は数える。
+        // A union is a relay if at least one branch is a relay and the other branches are None or non-mapping types (such as records). A union containing a mapping branch is counted.
         _ => is_bit_or(node).is_some_and(|(l, r)| {
             let other_ok = |expr: &Expr| {
-                py_relays_opaque_json(expr) || is_none(expr) || py_wire_free_type_problem(expr).is_none_or(|problem| !problem.starts_with("写像"))
+                py_relays_opaque_json(expr) || is_none(expr) || py_wire_free_type_problem(expr).is_none_or(|problem| !problem.starts_with("mapping"))
             };
             (py_relays_opaque_json(l) || py_relays_opaque_json(r)) && other_ok(l) && other_ok(r)
         }),
     }
 }
 
-/// Hy の file 1 つの写像の置き場の臭い。fields = 値を型だけで渡す層の外か(偽なら欄は見ない — その層の欄は DOEFF171 が見る。:spells の
-/// 名乗りもその層の外だけで効く)。読めなければ理由。
+/// The smell of where mappings are placed in one Hy file. fields = whether it is outside the layer that passes values only by type (if false, fields are not looked at — fields of that layer are seen by DOEFF171. The :spells
+/// declaration also takes effect only outside that layer). The reason if it cannot be read.
 pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, String> {
     let forms = read_hy(source)?;
     let mut out = Vec::new();
@@ -1169,20 +1169,20 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
             "defk" | "deff" | "defn" if items.len() >= 3 => {
                 let name = annotated(source, &items[1]).map(|(n, _, _)| n).or_else(|| items[1].name().map(str::to_string));
                 let Some(name) = name else { continue };
-                // 写像を組むのが目的の定義(:post が写像)は数えない — 綴りの 1 点。
+                // A definition whose purpose is building a mapping (:post is a mapping) is not counted — the single point of spelling.
                 if defk_posts(items).into_iter().any(|node| mapping_problem(node).is_some()) {
                     continue;
                 }
-                // 外の形を綴る・読むのが目的の 1 点(契約の :tags に :spells / :reads を形の名で名乗る)は数えない — operator の選んだ線 (b)、dict を
-                // 組む事が目的の 1 点だけ可(#2515)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
+                // The single point whose purpose is spelling or reading an external shape (declare :spells / :reads with a shape name in the contract's :tags) is not counted — the line the operator chose (b), only the single point whose purpose is building a dict is allowed
+                // (#2515). In the layer that passes values only by type (core), it is counted even if declared (that layer does not spell).
                 if fields && boundary_form_of(items).is_some() {
                     continue;
                 }
-                // 先頭の docstring と契約の辞書は写像の値ではない(順を問わない)。
+                // The leading docstring and the contract dict are not mapping values (in any order).
                 let count: usize = items.get(body_start(items)..).unwrap_or(&[]).iter().map(|item| built_mappings(source, item)).sum();
                 if count > 0 {
                     let (start, end) = items[1].span();
-                    out.push(DictSmellHit { start, end, name, what: DictSmellWhat::Built, problem: format!("handler の外で写像を {} か所で組む", count) });
+                    out.push(DictSmellHit { start, end, name, what: DictSmellWhat::Built, problem: format!("builds a mapping in {} places outside a handler", count) });
                 }
             }
             _ => {}
@@ -1215,20 +1215,20 @@ mod tests {
   {:pre [(: rows (of list Page))] :post [(: % int)]}
   (len #{1 2}))
 "#;
-        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
-        // 鳴る: 写像の欄(defrecord・defwire)・handler の外で写像を組む定義(dfor と {…} の 2 か所)。
-        // 鳴らない: 型つきの組の欄・:post が写像の dump(綴りの 1 点)・defhandler の中・契約の辞書と :tags・集合 #{…}。
+        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("readable").into_iter().map(|h| h.detail()).collect() };
+        // Fires: mapping fields (defrecord, defwire), a definition that builds a mapping outside a handler (2 places: dfor and {…}).
+        // Does not fire: tuple-typed fields, a dump whose :post is a mapping (the single point of spelling), inside defhandler, contract dicts and :tags, sets #{…}.
         assert_eq!(details(true), vec!["field:Page.counts", "field:PageWire.extra", "built:index-of"]);
-        // 値を型だけで渡す層では欄は DOEFF171 が見るので数えない。
+        // In the layer that passes values only by type, fields are seen by DOEFF171 and so are not counted.
         assert_eq!(details(false), vec!["built:index-of"]);
         let built = dict_smell_hits(source, false).unwrap();
-        assert!(built[0].problem.contains("2 か所"), "{:?}", built);
+        assert!(built[0].problem.contains("2 places"), "{:?}", built);
     }
 
     #[test]
     fn dict_smell_skips_match_patterns_but_counts_the_subject_guard_and_body() {
-        // match の型の位置の {…} は値を組まず形を照らすだけ(以前は「写像を組む」と数えた — turn_event_codec の
-        // detail-of-json)。主・`:if` の守り・本体で組む写像は今までどおり数える。
+        // The {…} at a match type position does not build a value and only matches a shape (before, it was counted as "building a mapping" — turn_event_codec's
+        // detail-of-json). Mappings built in the subject, the `:if` guard, and the body are counted as before.
         let source = r#"
 (defk detail-of [value]
   {:pre [(: value dict)] :post [(: % str)] :tags {:context "x" :role "protocol"}}
@@ -1252,36 +1252,36 @@ mod tests {
     {} 0
     _ 1))
 "#;
-        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        let found: Vec<String> = dict_smell_hits(source, true).expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(found, vec!["built:built-in-the-body", "built:built-in-the-guard", "built:built-in-the-subject"]);
     }
 
     #[test]
     fn dict_smell_skips_the_contract_after_a_docstring_and_honours_spells_outside_core() {
-        // docstring の後に置いた契約の辞書は写像の値ではない(以前は引数の直後の {…} だけを契約と読み、数えていた)。
-        // 本文で組む写像は docstring の有無を問わず数える。:tags の :spells(wire の形を綴る 1 点の名乗り)は値を型だけで渡す層の外でだけ効く。
+        // A contract dict placed after a docstring is not a mapping value (before, only the {…} right after the arguments was read as the contract and was counted).
+        // Mappings built in the body are counted whether or not there is a docstring. The :spells of :tags (the declaration of the single point that spells a wire shape) takes effect only outside the layer that passes values only by type.
         let source = r#"
 (defk note [n]
-  "docstring が先。"
+  "docstring comes first."
   {:pre [(: n int)] :post [(: % str)] :tags {:context "x" :role "judgment"}}
-  f"{n} 件")
+  f"{n} items")
 (defk index-of [rows]
-  "docstring が先でも本文の写像は数える。"
+  "A mapping in the body is counted even when the docstring comes first."
   {:pre [(: rows list)] :post [(: % int)] :tags {:context "x" :role "judgment"}}
   (len (dfor r rows r.id r)))
 (defk payload-text [row]
   {:pre [(: row Row)] :post [(: % str)] :tags {:context "x" :role "protocol" :spells "json"}}
   (json.dumps {"id" row.id}))
 "#;
-        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
-        assert_eq!(details(true), vec!["built:index-of"], "契約の辞書だけの定義と :spells の名乗りは数えない");
-        assert_eq!(details(false), vec!["built:index-of", "built:payload-text"], "値を型だけで渡す層では :spells を名乗っても数える");
+        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("readable").into_iter().map(|h| h.detail()).collect() };
+        assert_eq!(details(true), vec!["built:index-of"], "a definition with only a contract dict and a :spells declaration are not counted");
+        assert_eq!(details(false), vec!["built:index-of", "built:payload-text"], "in the layer that passes values only by type, :spells is counted even if declared");
     }
 
     #[test]
     fn dict_smell_honours_spells_and_reads_with_a_form_name_only() {
-        // :spells / :reads の値は外の形の名(json / http / env / schema)。形の名の無い名乗りは数える(失敗ケース 1)・
-        // core(値を型だけで渡す層)では形の名で名乗っても数える(失敗ケース 2)。
+        // The value of :spells / :reads is the name of an external shape (json / http / env / schema). A declaration without a shape name is counted (failure case 1);
+        // in core (the layer that passes values only by type), it is counted even when declared with a shape name (failure case 2).
         let source = r#"
 (defk header-map [x]
   {:pre [(: x int)] :post [(: % str)] :tags {:context "x" :role "protocol" :spells "http"}}
@@ -1302,76 +1302,76 @@ mod tests {
   {:pre [(: x int)] :post [(: % int)] :tags {:context "x" :role "protocol" :reads ""}}
   (len {"a" x}))
 "#;
-        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("読める").into_iter().map(|h| h.detail()).collect() };
-        assert_eq!(details(true), vec!["built:yaml-map", "built:empty-reads"], "形の名の名乗りだけが数えない");
+        let details = |fields: bool| -> Vec<String> { dict_smell_hits(source, fields).expect("readable").into_iter().map(|h| h.detail()).collect() };
+        assert_eq!(details(true), vec!["built:yaml-map", "built:empty-reads"], "only a declaration with a shape name is not counted");
         assert_eq!(
             details(false),
             vec!["built:header-map", "built:read-row", "built:env-map", "built:where-of", "built:yaml-map", "built:empty-reads"],
-            "core では名乗っても数える"
+            "counted even when declared in core"
         );
     }
 
     #[test]
     fn dict_smell_does_not_count_opaque_json_relay_fields() {
-        // 中を読まない中継の型 OpaqueJson の欄(None との和を含む)は写像と数えない。OpaqueJson 以外の写像の欄・
-        // OpaqueJson と他の写像の和は数える(失敗ケース 3)。
+        // A field of the relay type OpaqueJson that does not read inside (including a union with None) is not counted as a mapping. Fields of mappings other than OpaqueJson and
+        // unions of OpaqueJson and another mapping are counted (failure case 3).
         let source = r#"
 (defrecord Relay (#^ OpaqueJson body) (#^ (| OpaqueJson None) extra) (#^ dict index) (#^ (| OpaqueJson dict) mixed) (#^ JsonBody raw))
 "#;
-        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        let found: Vec<String> = dict_smell_hits(source, true).expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(found, vec!["field:Relay.index", "field:Relay.mixed", "field:Relay.raw"]);
         let py = "class Relay:\n    body: OpaqueJson\n    extra: OpaqueJson | None\n    later: 'Optional[OpaqueJson]'\n    index: dict[str, int]\n    mixed: OpaqueJson | dict\n";
-        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(py_found, vec!["field:Relay.index", "field:Relay.mixed"]);
     }
 
     #[test]
     fn dict_smell_does_not_count_sequences_of_opaque_json_relays() {
-        // 要素の型が中継の型 OpaqueJson の tuple / list(中を読まない JSON を 0 個以上運ぶだけ)は写像と数えない。
-        // 写像の欄と、要素の型が OpaqueJson と写像の和の列は今までどおり数える(失敗ケース)。
+        // A tuple / list whose element type is the relay type OpaqueJson (only carries zero or more JSON that is not read inside) is not counted as a mapping.
+        // Mapping fields and sequences whose element type is a union of OpaqueJson and a mapping are counted as before (failure case).
         let source = r#"
 (defrecord Docs (#^ (get tuple #(OpaqueJson ...)) documents) (#^ (of tuple OpaqueJson ...) more) (#^ (get list OpaqueJson) listed)
   (#^ (| (get tuple #(OpaqueJson ...)) None) maybe) (#^ dict index) (#^ (get tuple #((| OpaqueJson dict) ...)) mixed))
 "#;
-        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        let found: Vec<String> = dict_smell_hits(source, true).expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(found, vec!["field:Docs.index", "field:Docs.mixed"]);
         let py = "class Docs:\n    documents: tuple[OpaqueJson, ...]\n    listed: list[OpaqueJson]\n    maybe: 'tuple[OpaqueJson, ...] | None'\n    index: dict[str, int]\n    mixed: tuple[OpaqueJson | dict, ...]\n";
-        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(py_found, vec!["field:Docs.index", "field:Docs.mixed"]);
     }
 
     #[test]
     fn dict_smell_does_not_count_unions_of_opaque_json_and_records() {
-        // PostSettled.result: 中継の型 OpaqueJson と写像でない型(record)の和は
-        // 写像と数えない。写像の枝を含む和と、中継の枝の無い写像の和は今までどおり数える(失敗ケース)。
+        // PostSettled.result: a union of the relay type OpaqueJson and a non-mapping type (record) is not
+        // counted as a mapping. A union containing a mapping branch, and a union of mappings with no relay branch, are counted as before (failure case).
         let source = r#"
 (defrecord Settled (#^ (| OpaqueJson IntakeRecord) result) (#^ (| OpaqueJson IntakeRecord None) maybe) (#^ (| IntakeRecord OpaqueJson) flipped)
   (#^ (| OpaqueJson dict) mixed) (#^ (| IntakeRecord dict) plain))
 "#;
-        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        let found: Vec<String> = dict_smell_hits(source, true).expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(found, vec!["field:Settled.mixed", "field:Settled.plain"]);
         let py = "class Settled:\n    result: OpaqueJson | IntakeRecord\n    maybe: 'OpaqueJson | IntakeRecord | None'\n    flipped: IntakeRecord | OpaqueJson\n    mixed: OpaqueJson | dict[str, int]\n    plain: IntakeRecord | dict[str, int]\n";
-        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        let py_found: Vec<String> = py_dict_smell_hits(py, "x.py").expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(py_found, vec!["field:Settled.mixed", "field:Settled.plain"]);
     }
 
     #[test]
     fn dict_smell_honours_a_boundary_named_defwire_only() {
-        // 契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の :tags に :spells /
-        // :reads を形の名で名乗れば欄を数えない。名乗らない defwire・形の名でない名乗り・defrecord の欄は数える。
+        // A defwire that has a field of a mapping in the contract's external shape is not counted if it declares
+        // :spells / :reads with a shape name in its head dict's :tags. A defwire that does not declare, a declaration that is not a shape name, and defrecord fields are counted.
         let source = r#"
-(defwire Usage "公開する自由なキーの索引。" {:tags {:context "x" :role "type" :spells "json"} :names :camel} (#^ (of dict str int) counts))
-(defwire Plain "名乗りなし。" {:tags {:context "x" :role "type"} :names :camel} (#^ (of dict str int) counts))
-(defwire Yaml "形の名でない。" {:tags {:context "x" :role "type" :spells "yaml"}} (#^ (of dict str int) counts))
-(defrecord Rec "値の型。" {:tags {:context "x" :role "type" :spells "json"}} (#^ (of dict str int) counts))
+(defwire Usage "A free-key index to publish." {:tags {:context "x" :role "type" :spells "json"} :names :camel} (#^ (of dict str int) counts))
+(defwire Plain "No declaration." {:tags {:context "x" :role "type"} :names :camel} (#^ (of dict str int) counts))
+(defwire Yaml "Not a shape name." {:tags {:context "x" :role "type" :spells "yaml"}} (#^ (of dict str int) counts))
+(defrecord Rec "A value type." {:tags {:context "x" :role "type" :spells "json"}} (#^ (of dict str int) counts))
 "#;
-        let found: Vec<String> = dict_smell_hits(source, true).expect("読める").into_iter().map(|h| h.detail()).collect();
+        let found: Vec<String> = dict_smell_hits(source, true).expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(found, vec!["field:Plain.counts", "field:Yaml.counts", "field:Rec.counts"]);
     }
 
-    /// 値を型だけで渡す層の当たりの細目の列。
+    /// The list of details of the hits of the layer that passes values only by type.
     fn wire_free(source: &str) -> Vec<String> {
-        wire_free_hits(source).expect("読める").into_iter().map(|h| h.detail()).collect()
+        wire_free_hits(source).expect("readable").into_iter().map(|h| h.detail()).collect()
     }
 
     #[test]
@@ -1398,27 +1398,27 @@ mod tests {
 
     #[test]
     fn wire_free_layer_lets_typed_records_and_sequences_through() {
-        // 当たらない例: 型つきの defrecord・同じ型の列・str の引数・並べ替えのキーの組。
+        // Examples that do not hit: typed defrecord, a sequence of the same type, str arguments, tuples of sort keys.
         let source = "(defrecord Row (#^ str name) (#^ (of tuple str ...) tags))\n(defk names [rows]\n  {:pre [(: rows (of list Row))] :post [(: % (of tuple str ...))]}\n  #())\n";
         assert!(wire_free(source).is_empty(), "{:?}", wire_free(source));
     }
 
     #[test]
     fn python_fields_in_the_wire_free_layer() {
-        // .py の class の欄 — 型つきの写像・文字列の注記・Optional の中・中身の型の無い組・凍った写像は鳴り、
-        // 名と欄の型を持つ型と同じ型の列は鳴らない。名が _ で始まる欄も欄なので見る(DOEFF144 の公開面の絞りとは違う)。
+        // A .py class field — typed mappings, string annotations, inside Optional, tuples with no element type, and frozen mappings fire,
+        // and types with names and field types and sequences of the same type do not. Fields whose names start with _ are fields too, so they are looked at (different from DOEFF144's narrowing of the public surface).
         let source = "from typing import Mapping, Optional\n\nclass View:\n    rows: Mapping[str, 'Row']\n    meta: 'dict[str, int]'\n    \
                       maybe: Optional[dict]\n    pair: tuple\n    _cache: FrozenMap\n    ids: tuple[str, ...]\n    row: Row\n    \
                       def method(self) -> dict:\n        return {}\n";
-        let found: Vec<String> = py_wire_free_hits(source, "core/view.py").expect("読める").into_iter().map(|h| h.detail()).collect();
+        let found: Vec<String> = py_wire_free_hits(source, "core/view.py").expect("readable").into_iter().map(|h| h.detail()).collect();
         assert_eq!(found, vec!["field:View.rows", "field:View.meta", "field:View.maybe", "field:View.pair", "field:View._cache"]);
-        let smells: Vec<String> = py_dict_smell_hits(source, "entry/view.py").expect("読める").into_iter().map(|h| h.detail()).collect();
-        assert_eq!(smells, vec!["field:View.rows", "field:View.meta", "field:View.maybe", "field:View._cache"], "172 は写像の欄だけ(組は数えない)");
+        let smells: Vec<String> = py_dict_smell_hits(source, "entry/view.py").expect("readable").into_iter().map(|h| h.detail()).collect();
+        assert_eq!(smells, vec!["field:View.rows", "field:View.meta", "field:View.maybe", "field:View._cache"], "172 looks at mapping fields only (tuples are not counted)");
     }
 
-    /// (細目・理由の頭)の列。
+/// (detail, head of the reason) list.
     fn hits(rel: &str, source: &str) -> Vec<(String, String)> {
-        judge(rel, source).expect("読める").into_iter().map(|h| (h.detail(), h.problem)).collect()
+        judge(rel, source).expect("readable").into_iter().map(|h| (h.detail(), h.problem)).collect()
     }
 
     fn details(rel: &str, source: &str) -> Vec<String> {
@@ -1457,7 +1457,7 @@ mod tests {
         ];
         for t in flagged {
             let source = format!("(defn #^ {} f [] 1)\n", t);
-            assert_eq!(details("a.hy", &source), vec!["return:f"], "赤: {}", t);
+            assert_eq!(details("a.hy", &source), vec!["return:f"], "red: {}", t);
         }
         let allowed = [
             "str",
@@ -1473,7 +1473,7 @@ mod tests {
         ];
         for t in allowed {
             let source = format!("(defn #^ {} f [] 1)\n", t);
-            assert!(details("a.hy", &source).is_empty(), "緑: {}", t);
+            assert!(details("a.hy", &source).is_empty(), "green: {}", t);
         }
     }
 
@@ -1487,7 +1487,7 @@ mod tests {
         let found = hits("a.hy", source);
         let mut keys: Vec<&str> = found.iter().map(|(d, _)| d.as_str()).collect();
         keys.sort();
-        assert_eq!(keys, vec!["post:mapped", "post:named-map", "post:plain"], "defn の :post は読まない・名に注記の在る :post の素の組は緑");
+        assert_eq!(keys, vec!["post:mapped", "post:named-map", "post:plain"], "the :post of defn is not read; a bare tuple in a :post whose name has an annotation is green");
         let what: Vec<What> = judge("a.hy", source).unwrap().iter().map(|h| h.what).collect();
         assert!(what.contains(&What::PostStrict) && what.contains(&What::Post));
     }
@@ -1504,7 +1504,7 @@ mod tests {
     #[test]
     fn private_names_are_not_counted_and_methods_are() {
         let source = "(defn #^ dict _hidden [] 1)\n(defclass _Private [] (#^ dict shown))\n(defclass Row [] (#^ dict _inner)\n  (defn #^ tuple pair [self] 1)\n  (defk _secret [self] {:post [(: % dict)]} 1))\n";
-        assert_eq!(details("a.hy", source), vec!["field:_Private.shown", "return:Row.pair"], "_ は最後の段の名で見る");
+        assert_eq!(details("a.hy", source), vec!["field:_Private.shown", "return:Row.pair"], "_ is looked at by the last segment");
     }
 
     #[test]
@@ -1533,14 +1533,14 @@ mod tests {
     fn unreadable_files_are_reasons_not_silence() {
         assert!(judge("a.hy", "(defn #^ dict f [] 1").is_err());
         assert!(judge("a.py", "def f(:\n").is_err());
-        assert!(judge("a.md", "dict").unwrap().is_empty(), "Hy と Python の file だけを読む");
+        assert!(judge("a.md", "dict").unwrap().is_empty(), "only Hy and Python files are read");
     }
 
-    // --- 構造を持つ値ではない形---------------------------------------------------------------
+    // --- Shapes that are not values with structure ---------------------------------------------------------------
 
     #[test]
     fn a_sort_key_tuple_is_not_flagged() {
-        // 並べ替えのキーの :post の素の組と、答えの組の literal は鳴らない(Hy・Python とも)。
+        // Bare tuples in the :post of sort keys, and tuple literals as answers, do not fire (in both Hy and Python).
         let source = "(defk order-key-of [item]\n  {:pre [] :post [(: % tuple)]}\n  #((- item.at) item.key))\n\
                       (defk activity-sort-key [item]\n  {:pre [] :post [(: % tuple)]}\n  #(item.at item.key))\n";
         assert_eq!(details("a.hy", source), Vec::<String>::new());
@@ -1549,7 +1549,7 @@ mod tests {
 
     #[test]
     fn sql_arguments_in_order_are_not_flagged() {
-        // SQL の引数の並び(欄 params・…-params の答え)の素の組は鳴らない。
+        // Bare tuples of SQL argument lists (the answers of fields params and …-params) do not fire.
         let source = "(defrecord InList (#^ str text) (#^ tuple params))\n\
                       (defk select-params [key]\n  {:pre [] :post [(: % tuple)]}\n  #(key 1))\n";
         assert_eq!(details("a.hy", source), Vec::<String>::new());
@@ -1557,7 +1557,7 @@ mod tests {
 
     #[test]
     fn an_index_by_key_is_not_flagged() {
-        // キーで引く索引(…-by-…)の素の写像は鳴らない。
+        // Bare mappings of indexes looked up by key (…-by-…) do not fire.
         let source = "(defk ledger-by-agent [entries]\n  {:pre [] :post [(: % dict)]}\n  {})\n";
         assert_eq!(details("a.hy", source), Vec::<String>::new());
         assert_eq!(details("a.py", "def rows_by_key(rows) -> dict:\n    return {}\n"), Vec::<String>::new());
@@ -1565,7 +1565,7 @@ mod tests {
 
     #[test]
     fn a_public_return_tuple_and_a_record_field_dict_still_flag() {
-        // 反例: 3 つの形の名でない公開の戻り値の素の組・record の欄の素の写像は今までどおり鳴る。
+        // Counterexample: bare tuples as public return values with names that are not one of the 3 shapes, and bare mappings in record fields, still fire as before.
         let source = "(defk decide [x]\n  {:pre [] :post [(: % tuple)]}\n  #(x 1))\n\
                       (defrecord Charge (#^ dict meta))\n";
         assert_eq!(details("a.hy", source), vec!["field:Charge.meta", "pair:decide", "post:decide"]);
@@ -1574,18 +1574,18 @@ mod tests {
 
     #[test]
     fn a_plain_shape_name_still_flags_the_other_kind() {
-        // 反例: 形の名でも、外す種類でない赤は鳴る — 索引の名の素の組・並べ替えの名の素の写像・索引の値の型が開いた写像。
+        // Counterexample: even with the shape's name, red of a kind not excluded fires — a bare tuple under an index name, a bare mapping under a sort-key name, and a mapping with an open value type under an index.
         let source = "(defk rows-by-key [rows]\n  {:pre [] :post [(: % tuple)]}\n  rows)\n\
                       (defk order-key-of [item]\n  {:pre [] :post [(: % dict)]}\n  {})\n\
                       (defrecord View (#^ (get dict #(str object)) items-by-id))\n";
         assert_eq!(details("a.hy", source), vec!["field:View.items-by-id", "post:order-key-of", "post:rows-by-key"]);
     }
 
-    // --- 要素の型つきの総称型(doeff-hy の #1790 の形)-------------------------------------------
+    // --- Generic types with element types (the form of doeff-hy's #1790) -------------------------------------------
 
     #[test]
     fn element_typed_tuple_in_post_is_not_flagged() {
-        // 鳴らない例: 要素の型つきの同じ型の列を :post に書いた形(get と of の 2 つの綴り・和の中)。
+        // Examples that do not fire: a sequence of the same type with an element type written in :post (two spellings, get and of, and inside a union).
         let source = "(defk names [n]\n  {:pre [] :post [(: % (get tuple #(str ...)))]}\n  n)\n\
                       (defk ids [n]\n  {:pre [] :post [(: % (of tuple int ...))]}\n  n)\n\
                       (defk maybe [n]\n  {:pre [] :post [(: % (| (get tuple #(str ...)) None))]}\n  n)\n";
@@ -1594,7 +1594,7 @@ mod tests {
 
     #[test]
     fn key_and_value_typed_dict_field_is_not_flagged() {
-        // 鳴らない例: キーと値の型つきの写像を record の欄と :post に書いた形。
+        // Examples that do not fire: a mapping with key and value types written in a record field and :post.
         let source = "(defrecord Index (#^ (of dict str int) counts) (#^ (get dict #(str Row)) rows))\n\
                       (defk totals [n]\n  {:pre [] :post [(: % (of dict str int))]}\n  n)\n";
         assert_eq!(details("a.hy", source), Vec::<String>::new());
@@ -1602,14 +1602,14 @@ mod tests {
 
     #[test]
     fn bare_tuple_in_post_still_flags() {
-        // 鳴る例: 名に注記の無い defk の :post の素の組(要素の型が無い)。
+        // Example that fires: the bare tuple in the :post of a defk whose name has no annotation (no element type).
         let source = "(defk pairs [n]\n  {:pre [] :post [(: % tuple)]}\n  n)\n";
-        assert_eq!(hits("a.hy", source), vec![("post:pairs".to_string(), "素の組 tuple".to_string())]);
+        assert_eq!(hits("a.hy", source), vec![("post:pairs".to_string(), "bare tuple tuple".to_string())]);
     }
 
     #[test]
     fn open_element_generics_still_flag() {
-        // 鳴る例: 要素の型が Any / object の総称型は型を付けたことにならない(組の要素・写像の値)— Hy と Python。
+        // Examples that fire: a generic type whose element type is Any / object is not giving a type (tuple elements, mapping values) — in both Hy and Python.
         let source = "(defk loose [n]\n  {:pre [] :post [(: % (of tuple Any ...))]}\n  n)\n\
                       (defrecord Bag (#^ (get tuple #(object ...)) items) (#^ (of dict str Any) extra))\n";
         assert_eq!(details("a.hy", source), vec!["field:Bag.extra", "field:Bag.items", "post:loose"]);

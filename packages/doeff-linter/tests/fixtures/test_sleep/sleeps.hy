@@ -1,9 +1,9 @@
-;;; DOEFF211(Hy の検は realtime を名乗らない限り壁の時計で眠らない)の検体 — 名乗っていない所の time.sleep / asyncio.sleep と
-;;; 言い換えを鳴らし、realtime を名乗る検(deftest・素の関数)の中・0 秒の譲り・出来事の待ち・読まない form は鳴らさない。
-;;; 行末の印を 2 つの検が読む(同じ検体で、規則の読みと名簿の読みが食い違うとどちらかが赤になる):
-;;;   「; 鳴る」  … 鳴るべき行。packages/doeff-linter/tests/test_sleep.rs が、印の行の集合と linter の当たりの行の集合を突き合わせる。
-;;;   「; 名乗る」… realtime を名乗る検(deftest か、decorator で名乗る素の関数)の頭の行。tests/semgrep/test_realtime_tests_registry.py が、名簿の読みが拾う名の集合と突き合わせる。
-;;; この file は実行しない(読むだけの検体)。module の段の名乗りの検体は隣の realtime_module.hy。
+;;; Fixture for DOEFF211 (a Hy test does not sleep on the wall clock unless it declares realtime) — fires on time.sleep / asyncio.sleep and
+;;; their rewordings where not declared, and does not fire inside tests that declare realtime (deftest, plain functions), zero-second yields, event waits, or unread forms.
+;;; Two tests read the end-of-line markers (on the same fixture; if the rule's reading and the registry's reading disagree, one of them goes red):
+;;;   "; fires"  ... a line that should fire. packages/doeff-linter/tests/test_sleep.rs compares the set of marked lines with the set of linter hit lines.
+;;;   "; 名乗る" (= declares)  ... the head line of a test that declares realtime (a deftest, or a plain function declaring by decorator). tests/semgrep/test_realtime_tests_registry.py compares it with the set of names the registry's reading picks up.
+;;; This file is not executed (a fixture that is only read). The fixture for module-level declaration is the neighboring realtime_module.hy.
 (require doeff-hy.macros [deftest defk <- val])
 (import asyncio)
 (import threading)
@@ -16,82 +16,82 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴る: 名乗らずに壁の時計で待つ
+;; Fires: waiting on the wall clock without declaring
 
 (deftest test-waits-for-the-server-by-sleeping
   (start-server)
-  (time.sleep 0.3)  ; 鳴る
+  (time.sleep 0.3)  ; fires
   (assert (server-ready)))
 
 
 (defk poll-until-ready [probe deadline]
   {:pre [(callable probe)] :post [(: % bool)] :tags {:context "sample" :role "program"}}
-  "検の helper(program でも素の callable でも、検の file の中の眠りは同じに数える)。"
+  "Test helper (whether a program or a plain callable, a sleep inside a test file is counted the same)."
   (while (and (not (probe)) (< (time.monotonic) deadline))
-    (time.sleep 0.05))  ; 鳴る
+    (time.sleep 0.05))  ; fires
   (probe))
 
 
 (defn :async #^ bool all-closed [sessions]
   (while (not (all (gfor s sessions s.closed)))
-    (await (asyncio.sleep 0.02)))  ; 鳴る
+    (await (asyncio.sleep 0.02)))  ; fires
   True)
 
 
 (deftest test-waits-through-aliases
-  (clock.sleep 0.2)  ; 鳴る
-  (<- (Await (rest 0.2)))  ; 鳴る
-  (.sleep time 0.1)  ; 鳴る
+  (clock.sleep 0.2)  ; fires
+  (<- (Await (rest 0.2)))  ; fires
+  (.sleep time 0.1)  ; fires
   (assert True))
 
 
 (deftest test-rewords-the-sleep-as-an-event-nobody-sets
-  ;; その場で作った Event は誰も set しない — 秒つきで待つのは眠りの言い換え。
-  (.wait (threading.Event) 0.1)  ; 鳴る
+  ;; An Event made on the spot is never set by anyone — waiting with seconds is a rewording of sleeping.
+  (.wait (threading.Event) 0.1)  ; fires
   (assert True))
 
 
 (deftest test-marked-with-another-mark
   {:marks ["slow"]}
-  (time.sleep 1.0)  ; 鳴る
+  (time.sleep 1.0)  ; fires
   (assert True))
 
 
 (deftest test-with-a-map-that-is-not-the-meta
   (assert True)
   {:marks ["realtime"]}
-  (time.sleep 1.0)  ; 鳴る
+  (time.sleep 1.0)  ; fires
   (assert True))
 
 
 (defk helper-with-marks-in-its-contract []
   {:pre [] :post [(: % None)] :marks ["realtime"] :tags {:context "sample" :role "program"}}
-  "deftest でない定義の map は名乗りではない。"
-  (time.sleep 1.0)  ; 鳴る
+  "The map of a definition that is not a deftest is not a declaration."
+  (time.sleep 1.0)  ; fires
   None)
 
 
 (defn [pytest.mark.slow] #^ None test-decorated-with-another-mark []
-  (time.sleep 1.0))  ; 鳴る
+  (time.sleep 1.0))  ; fires
 
 
 (defn test-with-the-mark-in-its-parameters [pytest.mark.realtime]
-  ;; 名の後の `[…]` は引数の並び(decorator の並びは名より前)。
-  (time.sleep 1.0))  ; 鳴る
+  ;; The `[…]` after the name is the parameter list (the decorator list comes before the name).
+  (time.sleep 1.0))  ; fires
 
 
 (defn declares-inside-a-function []
-  ;; 最上位でない束ねは module の名乗りではない。
+  ;; A binding that is not top-level is not a module-level declaration.
   (val pytestmark pytest.mark.realtime)
-  (time.sleep 1.0))  ; 鳴る
+  (time.sleep 1.0))  ; fires
 
 
 (setv marks pytest.mark.realtime)
-(time.sleep 2.0)  ; 鳴る
+(time.sleep 2.0)  ; fires
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴らない: realtime を名乗る deftest(実時間そのものが対象)
+;; Does not fire: a deftest that declares realtime (real time itself is the subject)
 
 (deftest test-two-threads-overlap  ; 名乗る
   {:marks ["realtime"]}
@@ -101,7 +101,7 @@
 
 
 (deftest test-a-real-process-ends [tmp-path]  ; 名乗る
-  "先頭の docstring と引数の並びの後の meta。"
+  "The meta after the leading docstring and the parameter list."
   {:interpreters ["sample"] :marks ["slow" "realtime"]}
   (<- child (start tmp-path))
   (while (alive child)
@@ -117,7 +117,7 @@
 
 
 (defn [pytest.mark.slow pytest.mark.realtime] #^ None test-a-plain-function-declares-by-its-decorator []  ; 名乗る
-  "素の関数の検(deftest でない)は、decorator の並びの印で名乗る。関数の中で定める program の眠りも、名乗った関数の中。"
+  "A plain-function test (not a deftest) declares by the marks in its decorator list. A program's sleep defined inside the function is also inside the declared function."
   (defk counted []
     {:pre [] :post [(: % int)]}
     (time.sleep 0.1)
@@ -126,7 +126,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴らない: 時間を待たない形・出来事の待ち・読まない form
+;; Does not fire: forms that do not wait on time, event waits, and unread forms
 
 (deftest test-waits-on-the-virtual-clock
   (<- (Delay 5.0))
@@ -149,7 +149,7 @@
 
 
 (deftest test-hands-a-sleeping-program-to-a-child-process [tmp-path]
-  ;; (time.sleep 9) — 註の中
+  ;; (time.sleep 9) — inside a comment
   #_(time.sleep 9)
   (val quoted '(time.sleep 9))
   (.write-text (/ tmp-path "nap.hy") "(import time)\n(time.sleep 30)\n")

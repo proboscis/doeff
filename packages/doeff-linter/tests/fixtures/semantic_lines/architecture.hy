@@ -1,25 +1,25 @@
-;;; テストの宣言 — Jev の規則 DOEFF201・202・205 の線引き 5 つと、線引きごとの鳴る例・鳴らない例 1 つずつ(計 10)。
-;;; 線引きの文 = agora-controllers の architecture.hy の註の節「Jev の規則 DOEFF201 / 202 / 205 の線引き」(main 8bad3b59f)の
-;;; 原文のまま。決められなかった行で採った 2 点は、1 点目を線引き 5・2 点目を線引き 4 の文の後ろに足した。例 = 文書
-;;; analysis-jev-judgments-47-by-lines-2026-10-01.html(sha256 4c93c656…)の「47 件の実物の例」の定義を同じ main から取った抜粋(:tags・docstring・
-;;; 註を落とし、略した所は `;; …`)。層の説明は同じ main の core と protocol のコピー。
-;;; 線引き 4 の 2 例は `{:code … :why …}` の組(why が問いに code と組で載ること・:code と :why の並びを問わないこと)、
-;;; 残りの 8 例は code の文字列だけの形(前の形のまま読めること)。
+;;; Test declaration — 5 Jev lines for rules DOEFF201, 202 and 205, with one firing example and one silent example per line (10 in total).
+;;; The line texts = verbatim from the comment section "Lines for Jev rules DOEFF201 / 202 / 205" of agora-controllers' architecture.hy (main 8bad3b59f).
+;;; For the two points taken on rows that could not be decided, the first was appended after the text of line 5 and the second after the text of line 4. The examples = an excerpt of the definitions from the same main,
+;;; taken from the "47 real examples" of the document analysis-jev-judgments-47-by-lines-2026-10-01.html (sha256 4c93c656…) (:tags, docstrings and
+;;; comments dropped; omitted parts are `;; …`). The layer descriptions are copies of core and protocol from the same main.
+;;; The 2 examples of line 4 are `{:code … :why …}` pairs (the why appears in the question paired with the code; the order of :code and :why does not matter),
+;;; and the other 8 examples are only the code string (the earlier form is still readable).
 (defarchitecture lines-sample
   :root "app"
-  :layers [(layer core :summary "業務の判断と Program" :knows "業務の判断(いつ・誰に・何を)"
-                         :does-not-know "相手が誰か、どう通信するか" :question "通信の方法が変わってもこのコードは変わらないか?" :roles [type judgment program])
-           (layer protocol :summary "intent を相手の話し方へ訳す handler" :knows "相手の話し方(要求を汎用の effect へ言い換える)"
-                         :does-not-know "本物か模擬か" :question "要求を別の汎用の effect に言い換えているだけか?" :roles [protocol])]
-  :semantic-lines [(line "線引き 1" :rules [DOEFF201]
-                     :text "protocol の定義がしてよいのは、外から来た値の形の確認(型に読む・欄の有無と形式を確かめる)、読み書き、探した物が無い時のエラー値、判断の関数の答えを値に直すことだけとする。業務の状態(記録の値・期限・持ち主・状態の移り方・もう済んだか)を見て、返す答え(渡す・断る・書く・どの結果か)を決めるのは業務の判断で、core の純粋な関数に置く。architecture.hy に書いてある 9/30 の決定(翻訳の handler は読み書きだけを持ち、判断は core の純粋な関数を呼ぶ)と同じ線。custody には core が無いので、採ると core を作る仕事になる。9/29 に誤判定とした同じ形の行(record-end-precondition)も違反に変わる。"
+  :layers [(layer core :summary "Business judgment and Programs" :knows "Business judgment (when, to whom, what)"
+                         :does-not-know "Who the counterparty is and how to communicate" :question "If the way of communicating changes, does this code stay the same?" :roles [type judgment program])
+           (layer protocol :summary "Handlers that translate an intent into the counterparty's way of speaking" :knows "The counterparty's way of speaking (rewriting a request into generic effects)"
+                         :does-not-know "Real or simulated" :question "Is it only rewriting the request into another generic effect?" :roles [protocol])]
+  :semantic-lines [(line "Line 1" :rules [DOEFF201]
+                     :text "What a protocol definition may do is only: check the shape of a value that came from outside (read it into a type, check the presence and format of fields), read and write, return an error value when what was looked up is missing, and turn the answer of a judgment function into a value. Looking at business state (a record's value, deadline, owner, how the state transitions, whether it is already done) and deciding the answer to return (hand over, refuse, write, which result) is business judgment, and goes in a pure function of core. This is the same line as the 9/30 decision written in architecture.hy (a translation handler only reads and writes, and calls a pure function of core for judgment). custody has no core, so adopting this turns into the work of creating a core. A row of the same shape that was judged a false positive on 9/29 (record-end-precondition) also turns into a violation."
                      :fires [#[code[(defk access-of-held [ledger lease-id]
   {:pre [(: ledger CustodyHttpLedger) (: lease-id str)] :post [(: % (| TurnCredential TurnCredentialUnavailable))]}
   (<- at datetime (GetTime))
   (setv held (.get ledger.held lease-id) now (! (epoch-ms-of-time at)))
   (cond
-    (is held None) (TurnCredentialUnavailable :reason (+ "lease " lease-id " は借りていないか、もう返した"))
-    (<= (min held.access-expires-at held.expires-at) now) (TurnCredentialUnavailable :reason (+ "lease " lease-id " の token は期限を過ぎた"))
+    (is held None) (TurnCredentialUnavailable :reason (+ "lease " lease-id " is not borrowed or has already been returned"))
+    (<= (min held.access-expires-at held.expires-at) now) (TurnCredentialUnavailable :reason (+ "lease " lease-id " has a token past its expiry"))
     True (TurnCredential held.access-token)))]code]]
                      :silent [#[code[(defk send-task [placement job assignment workers]
   {:pre [(: placement TaskPlacement) (: job TaskJob) (: assignment TaskAssignment) (: workers tuple)]
@@ -32,19 +32,19 @@
   (cond
     (and (is-not worker None) worker-open) (do (<- sent (| TaskSent TaskUnreachable) (submit-task placement job assignment))
                                                 sent)
-    (or (is worker None) (not worker.live)) (TaskRefused :reason (+ "機体が居ない: " assignment.node))
-    True (TaskRefused :reason (+ "機体が drain 中: " assignment.node))))]code]])
-                   (line "線引き 2" :rules [DOEFF202]
-                     :text "core は JSON の綴りを知らない。JSON の文字列を作る・読む(json.dumps・json.loads・dump-json)のは protocol か入口の部品で、core は型の値だけを受け取り、返す。本文の JSON から計算する値(ハッシュ・byte 数)と、手元の契約の文書の読み込みも同じ。9/29 の判定で classifier の core の JSON の正規化(RFC 8785)を違反としたのと同じ線。元の判定と違うのは、手元の契約の文書を読む行 33 だけ。"
+    (or (is worker None) (not worker.live)) (TaskRefused :reason (+ "no machine: " assignment.node))
+    True (TaskRefused :reason (+ "machine is draining: " assignment.node))))]code]])
+                   (line "Line 2" :rules [DOEFF202]
+                     :text "core does not know the spelling of JSON. Building and reading JSON strings (json.dumps, json.loads, dump-json) is done by protocol or an entry-point part; core only receives and returns typed values. The same applies to values computed from the JSON body (hash, byte count) and to reading a local contract document. This is the same line as the 9/29 judgment that treated the JSON normalization (RFC 8785) in the classifier's core as a violation. The only difference from the original judgment is row 33, which reads a local contract document."
                      :fires [#[code[(defk tag-families-of [core-text]
   {:pre [(: core-text str)]
    :post [(: % TagFamilies)]}
   (setv document (json.loads core-text))
   (when (not (isinstance document dict))
-    (raise (ValueError "kanban-core.json が object でない")))
+    (raise (ValueError "kanban-core.json is not an object")))
   (setv section (.get (.get document CORE-PARTICIPATION {}) CORE-TAG-FAMILIES))
   (when (not (isinstance section dict))
-    (raise (ValueError f"kanban-core.json に {CORE-PARTICIPATION}.{CORE-TAG-FAMILIES} が無い")))
+    (raise (ValueError f"kanban-core.json has no {CORE-PARTICIPATION}.{CORE-TAG-FAMILIES}")))
   ;; …
   (TagFamilies :families (tuple families)
                :table rows
@@ -59,8 +59,8 @@
     (return None))
   (<- next RunStatus (renewed-status row.status owner now ttl-ms))
   next)]code]])
-                   (line "線引き 3" :rules [DOEFF202]
-                     :text "core は HTTP を知らない。URL・path・query を組む・持つこと、HTTP の method・status・ヘッダーを選ぶ・持つこと、外の相手の URL の形(GitHub の commit の URL など)を知ることは protocol でする。HTTP の中継や他の service の HTTP の契約の確認のように、通信そのものを仕事にする service でも同じで、core は「どこへ」「準備できたか」「どの項目が合わないか」を型の値で持つ。元の判定と違うのは、他の service の HTTP の契約を確かめる型(行 2・迷いだった)と、GitHub の commit のリンクを組む行 32。"
+                   (line "Line 3" :rules [DOEFF202]
+                     :text "core does not know HTTP. Building or holding URLs, paths and queries, choosing or holding HTTP methods, statuses and headers, and knowing the shape of an outside party's URL (such as a GitHub commit URL) is done in protocol. The same applies to a service whose job is communication itself, such as an HTTP relay or checking the HTTP contract of another service; core holds \"where to\", \"whether it is ready\" and \"which item does not match\" as typed values. The differences from the original judgment are the type that checks another service's HTTP contract (row 2, which was undecided) and row 32, which builds a GitHub commit link."
                      :fires [#[code[(defk relay-url-of [row target]
   {:pre [(: row RelayRow) (: target str)] :post [(: % str)]}
   (val base (.rstrip row.upstream "/"))
@@ -78,9 +78,9 @@
     (return (BorrowerBookUnreadable :reason book.reason)))
   (<- verdict (| WriterAdmitted WriterRefused) (writer-verdict key book))
   verdict)]code]])
-                   (line "線引き 4" :rules [DOEFF205]
-                     :text "入力の形の確認とは、型の無い値(dict・JSON の値・生の文字列)から欄を読む・isinstance で型を確かめる・欄の有無・空・長さ・形式・語彙を確かめることを言う。型に読んだ後の欄でも、空・長さ・形式・語彙の確認は形の確認に数える。型の union の枝分けは形の確認に数えない。形の確認は入口(protocol か、型へ読む 1 つの関数)で済ませ、判断の定義には持ち込まない。9/30 に manager が決めた「型に読んだ後の欄の制限は形の確認に数えない」を逆にする(厳しい側)。これで行 35・37・44 が誤判定から違反に変わる。code の中の定数や自分の集計の控えのような、外から来ていない型の無い dict は、線引き 4 の「入力」に数えない。"
-                     :fires [{:why "型に読んだ要求の id の形を正規表現で確かめる形の確認と、担当を決める判断が同じ定義に在る。"
+                   (line "Line 4" :rules [DOEFF205]
+                     :text "Checking the shape of input means reading fields from an untyped value (dict, JSON value, raw string), checking the type with isinstance, and checking the presence, emptiness, length, format or vocabulary of fields. Even for a field after it has been read into a type, checks of emptiness, length, format and vocabulary count as shape checks. Branching on the arms of a type union does not count as a shape check. Shape checks are finished at the entry point (protocol, or a single function that reads into a type) and are not brought into the definition of a judgment. This reverses the 9/30 manager decision that \"restrictions on a field after reading into a type do not count as shape checks\" (the strict side). With this, rows 35, 37 and 44 change from false positives to violations. An untyped dict that did not come from outside, such as a constant inside the code or a tally of its own, does not count as \"input\" in line 4."
+                     :fires [{:why "A shape check that verifies the form of the id of a typed request with a regular expression and a judgment that decides the owner are in the same definition."
                               :code #[code[(defk classify-message [request]
   {:pre [(: request ClassifyRequest)] :post [(: % (| Accepted Rejected Unavailable))]}
   (when (not (MESSAGE-ID-RE.match request.message))
@@ -114,16 +114,16 @@
       (join-record (ParticipantRecord :chat request.chat :agent request.agent :origin request.origin :joined-at now :kind request.kind
                                       :defaults request.defaults)))
   joined)]code]
-                               :why "形の確認は join-problem に任せ、その答えで断りの値を返すだけ。形の確認が無いので混ざらない。"}])
-                   (line "線引き 5" :rules [DOEFF205 DOEFF201]
-                     :text "業務の判断とは、業務の決まりで答えを決めること(誰が何をしてよいか・どの結果にするか・何を書くか)を言う。読めなかった値をどの値として扱うか(既定の値に倒す・飛ばす)と、画面や集計のための組み立て(投影・集計)も業務の判断に数える。「読めない値を既定に倒すのは判断」は規則 201 にも効く(protocol が読めない値を既定に倒せば違反)。読めない値を「無い(None)」で表して判断の関数へ渡す事は、線引き 5 の「読めなかった値をどの値として扱うか」に含めない。"
+                               :why "The shape check is left to join-problem, and this only returns a refusal value from its answer. There is no shape check, so nothing is mixed."}])
+                   (line "Line 5" :rules [DOEFF205 DOEFF201]
+                     :text "Business judgment means deciding the answer by business rules (who may do what, which result to give, what to write). Deciding which value to treat an unreadable value as (falling back to a default, skipping it) and assembling for display or tallying (projection, aggregation) also count as business judgment. \"Falling back an unreadable value to a default is judgment\" applies to rule 201 as well (if protocol falls back an unreadable value to a default, it is a violation). Representing an unreadable value as \"none (None)\" and passing it to a judgment function is not included in line 5's \"which value to treat an unreadable value as\"."
                      :fires [#[code[(defk progress-items [material args limit offset now]
   {:pre [(: material ProgressMaterial) (: args dict) (: limit int) (: offset int) (: now int)]
    :post [(: % (| EntityItems EntityRefused))]}
   (setv board material.board
         namespace (.get args ENTITY-ARG-NAMESPACE))
   (when (not (isinstance namespace str))
-    (return (EntityRefused :reason (+ KANBAN-ENTITY-PROGRESS " には args." ENTITY-ARG-NAMESPACE "(card の名前空間)が要る"))))
+    (return (EntityRefused :reason (+ KANBAN-ENTITY-PROGRESS " requires args." ENTITY-ARG-NAMESPACE " (the card namespace)"))))
   (<- since (| int None EntityRefused) (since-of args))
   (when (isinstance since EntityRefused)
     (return since))

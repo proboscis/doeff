@@ -1,38 +1,38 @@
-//! 変えた file を直接・間接に import(Hy は require も)する検の file を、距離つきで選ぶ — 入口 `--affected-tests`
-//! (2 便目)。登記の前の入口(doeff の scripts/run_changed_tests.py・agora の land の前の検)が、
-//! 契約の検の組と変えた検の後ろに、近い順で足す。
+//! Selects, with distances, the test files that import (and for Hy, also require) a changed file directly or indirectly — the entry point `--affected-tests`
+//! (second release). Entry points before registration (doeff's scripts/run_changed_tests.py, and agora's pre-land checks)
+//! append them in order of closeness after the set of contract tests and the changed tests.
 //!
-//! 読み方:
-//! - 母集団 = repo の git が知る file(`git ls-files --cached --others --exclude-standard` — 追跡外の新しい file を含み、
-//!   無視した file は含まない)のうち、Python(`.py`)と Hy(`.hy`・`.hyk`・`.hyp`)。依存の読みは層の規則と同じ
-//!   (`facts::module_dependencies` — import は `collect_imports`・`python_imports`、Hy の `(require …)` の module を足す)。
-//! - module の名 = file の path を、source の根から点で綴った物。source の根 = file から上へ歩いて最初に当たる dir のうち、
-//!   名が `src`・名が Python の識別子でない(`doeff-core-effects`)・親の pyproject.toml の `[tool.maturin] python-source` が
-//!   名指す dir のどれか(repo の根も根)。名が識別子の dir は、自分の `pyproject.toml` を持っていても根にしない — agora-controllers の
-//!   `controllers/scheduling` は pyproject.toml を持つが、使い手は全部 repo の根からの名(`controllers.scheduling.protocol.…`)で
-//!   import する。根にすると module が `protocol.…` と名付けられて使い手と結ばず、逆依存の検が黙って 0 本になった(2026-10-05・
-//!   入れ子の側の名で import する file は、linter を使う 4 つの repo で 0 件と数えてから外した)。
-//!   `__init__` は package の名。`.pyi` は読まないが、
-//!   変えた path としては隣の module と同じ名になる(stub を変えれば、その module の使い手を選ぶ)。
-//! - import の先 `a.b.名` は、知っている module の名のうち最も長い接頭辞へ縮める(`from pkg import name` は `pkg/name.py` が
-//!   在ればそれ、無ければ `pkg/__init__.py`)。どの接頭辞も知らなければ repo の外(標準・第三者の library)。親の package の
-//!   `__init__` は辺に数えない(数えると、`__init__` が何でも読む package では全部が選ばれる)。
-//! - module は source の根と名の組で分ける。同じ名の module が 2 つ以上の根に在れば(package ごとの `tests/interpreters.hy`)、
-//!   import した file と同じ根の物へ結び、同じ根に無ければ全部へ結ぶ(保守側)。選ぶ側の検は file ごとに数える。
+//! How it reads:
+//! - Population = the files git knows in the repo (`git ls-files --cached --others --exclude-standard` — includes new untracked files and
+//!   excludes ignored files) that are Python (`.py`) or Hy (`.hy`, `.hyk`, `.hyp`). Dependencies are read the same way as the layer rules
+//!   (`facts::module_dependencies` — imports come from `collect_imports` and `python_imports`, with the modules of Hy `(require …)` added).
+//! - Module name = the file's path spelled with dots from its source root. Source root = among the dirs found walking up from the file, the first dir that
+//!   is named `src`, has a name that is not a Python identifier (`doeff-core-effects`), or is one named by the parent's pyproject.toml
+//!   `[tool.maturin] python-source` (the repo root is also a root). A dir whose name is an identifier is not made a root even if it has its own `pyproject.toml` — agora-controllers'
+//!   `controllers/scheduling` has a pyproject.toml, but every user imports it by a name from the repo root (`controllers.scheduling.protocol.…`).
+//!   Making it a root would name the module `protocol.…`, which would not connect to its users, and the reverse-dependency check silently became 0 (2026-10-05;
+//!   files that import by the nested side's name were counted as 0 across the 4 repos that use the linter before this was dropped).
+//!   `__init__` is the package's name. `.pyi` is not read, but
+//!   as a changed path it gets the same name as the neighboring module (changing a stub selects the users of that module).
+//! - An import target `a.b.name` is shrunk to the longest prefix among the known module names (`from pkg import name` is `pkg/name.py` if
+//!   it exists, otherwise `pkg/__init__.py`). If no prefix is known, it is outside the repo (a standard or third-party library). The parent package's
+//!   `__init__` is not counted as an edge (if it were, every test would be selected for a package whose `__init__` reads everything).
+//! - Modules are distinguished by the pair of source root and name. If modules of the same name exist under 2 or more roots (`tests/interpreters.hy` per package),
+//!   connect to the one under the same root as the importing file, and to all of them if none is under the same root (the conservative side). Selected tests are counted per file.
 //!
-//! Hy の require(マクロへの依存)の扱い: import と同じ辺に数える — マクロの展開が変われば require した module の
-//! 書き換わった本体が変わるので、実行時の import と同じく使い手の検を選ぶべきだから。ただし `doeff-hy.macros` のように
-//! ほぼ全部の Hy の file が require する module を変えると、全部が選ばれて 60 秒の上限の中で意味のある順にならない。
-//! そこで **広すぎる module**(直接の使い手の file の数が `max_dependents` を越える module)は、import か require かを
-//! 問わず通り抜けない — その先の検は選ばず、`hubs` に名と使い手の数を出す。呼び手は「逆依存が広すぎて選ばなかった
-//! (repo 全体は日次の全体の検が測る)」と名指す。require だけを特別に扱わないのは、`doeff/__init__.py` のような import の
-//! 中心も同じ形で全部を選ばせるから(1 つの規則で両方を止める)。
+//! Handling of Hy require (dependency on macros): it counts as the same kind of edge as import — if macro expansion changes, the
+//! rewritten body of the required module changes, so, as with a runtime import, the users' tests should be selected. However, changing a module such as `doeff-hy.macros`
+//! that nearly every Hy file requires would select everything, and the order would stop being meaningful within the 60-second limit.
+//! So a **too-broad module** (one whose number of direct user files exceeds `max_dependents`) is not passed through, whether by import or by
+//! require — the tests beyond it are not selected, and its name and number of users are reported in `hubs`. The caller says
+//! "the reverse dependencies are too broad, so nothing was selected (the daily full run measures the whole repo)". The reason require is not treated specially is that an import
+//! hub such as `doeff/__init__.py` would likewise select everything (one rule stops both).
 //!
-//! 限界(静的な import で選べない物): module を文字列で持って importlib で読む検(stub の突き合わせ)と、木を歩く検
-//! (dogfood の孤児の走査・母集団の検)は選べない — それは契約の検の表(固定の組)が受け持つ。
+//! Limits (what static imports cannot select): tests that hold a module as a string and load it with importlib (stub matching), and tests that walk the tree
+//! (dogfood orphan scan, population checks) cannot be selected — the table of contract tests (a fixed set) is responsible for those.
 //!
-//! 費用: file ごとの依存の読みは file の中身と module の名だけで決まるので、facts_cache の種類 "module-dependencies" に
-//! 置く(鍵の名 = path と module の名 — 置き場の形が変わって module の名が変われば、その file を読み直す)。
+//! Cost: the dependency read for each file is decided only by the file's contents and module name, so it is stored under the facts_cache kind "module-dependencies"
+//! (key = path and module name — if the layout changes and the module name changes, that file is re-read).
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -42,71 +42,71 @@ use serde::{Deserialize, Serialize};
 use super::facts::{module_dependencies, Language, ModuleDependencies};
 use super::names::is_identifier;
 
-/// 直接の使い手がこの数を越える module は通り抜けない(頭の註)。doeff の本線(2026-10-02・1700 file)の実測: 何でも読む
-/// module の直接の使い手は `doeff` 611・`doeff_hy.macros` 530・`doeff_vm` 102・`doeff_core_effects.effects` 72 で、
-/// 通り抜けると検の file の 500 前後(全部)を選ぶ。`sql_effects` のような普通の module は 1 桁。60 秒の上限で走る検の数
-/// (1 file 約 1 秒で数十本)を目安に、その間に置く。呼び手は `--max-dependents` で変えられる。
+/// A module with more direct users than this is not passed through (see the header note). Measured on doeff's main line (2026-10-02, 1700 files): the direct users of the modules that read
+/// everything are `doeff` 611, `doeff_hy.macros` 530, `doeff_vm` 102, `doeff_core_effects.effects` 72, so
+/// passing through would select around 500 test files (all of them). Ordinary modules like `sql_effects` have a single digit. Chosen between those, using as a guide the number of tests that run in the 60-second limit
+/// (about 1 second per file, a few dozen). The caller can change it with `--max-dependents`.
 pub const DEFAULT_MAX_DEPENDENTS: usize = 40;
 
-/// 依存を読む file の拡張子と言語。
+/// Extensions and languages of files whose dependencies are read.
 const READ_EXTENSIONS: &[(&str, Language)] = &[("py", Language::Python), ("hy", Language::Hy), ("hyk", Language::Hy), ("hyp", Language::Hy)];
-/// module の名を持つが読まない拡張子(変えた path としてだけ数える)。
+/// Extensions that have a module name but are not read (counted only as changed paths).
 const NAMED_ONLY_EXTENSIONS: &[&str] = &["pyi"];
 
-/// 問い(変えた path・検の file の名の規則・広すぎる module の分け目)。
+/// The query (changed paths, rules for test file names, and the split point for too-broad modules).
 #[derive(Debug, Clone)]
 pub struct Query {
-    /// repo の根からの path(消えた file も可)。
+    /// Paths from the repo root (deleted files are allowed).
     pub changed: Vec<String>,
-    /// 検の file の名の規則(fnmatch — `/` を含まない規則は file の名に、含む規則は根からの path に当てる)。呼び手の定義を渡す。
+    /// Rules for test file names (fnmatch — a rule without `/` is applied to the file name, one with `/` to the path from the root). The caller passes its definition.
     pub test_patterns: Vec<String>,
     pub max_dependents: usize,
 }
 
-/// 選んだ検の file 1 つ。
+/// One selected test file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AffectedTest {
     pub path: String,
-    /// 変えた file からの辺の数(直接 import する検 = 1)。
+    /// Number of edges from the changed file (a test that imports it directly = 1).
     pub distance: usize,
-    /// 変えた path → … → 検の file の道(最短の 1 本)。
+    /// Path changed path → … → test file (one shortest path).
     pub via: Vec<String>,
 }
 
-/// 通り抜けなかった広すぎる module。
+/// A too-broad module that was not passed through.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Hub {
     pub module: String,
-    /// module の source の根の dir(repo の根からの path・空 = repo の根)。
+    /// The dir of the module's source root (path from the repo root; empty = the repo root).
     pub root: String,
-    /// 直接の使い手の file の数。
+    /// Number of direct user files.
     pub dependents: usize,
-    /// その module に届いた距離。
+    /// The distance at which that module was reached.
     pub distance: usize,
 }
 
-/// 依存を読めなかった file(読めた分の辺は使う — 選び漏れの在りうる所として名指す)。
+/// A file whose dependencies could not be read (the edges that could be read are used — named as a place where selections may be missed).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Unreadable {
     pub path: String,
     pub reason: String,
 }
 
-/// 答え(`--affected-tests` の JSON)。
+/// The answer (the JSON of `--affected-tests`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AffectedReport {
-    /// 距離の近い順・同じ距離は path の順。
+    /// In order of closeness; ties in path order.
     pub tests: Vec<AffectedTest>,
     pub hubs: Vec<Hub>,
-    /// module の名を持たない変えた path(Python・Hy の source でない — 逆依存を辿れない)。
+    /// Changed paths that have no module name (not Python or Hy source — reverse dependencies cannot be traced).
     pub not_modules: Vec<String>,
     pub unreadable: Vec<Unreadable>,
-    /// 依存を読んだ file の数(母集団)。
+    /// Number of files whose dependencies were read (the population).
     pub files_read: usize,
     pub max_dependents: usize,
 }
 
-/// cache に置く file 1 つの依存の読み。
+/// The dependency read of one file, stored in the cache.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileDependencies {
     rel: String,
@@ -114,20 +114,20 @@ struct FileDependencies {
     read: ModuleDependencies,
 }
 
-/// 拡張子を外した path と拡張子。
+/// A path with the extension removed, and the extension.
 fn split_extension(rel: &str) -> Option<(&str, &str)> {
     let name_at = rel.rfind('/').map_or(0, |at| at + 1);
     let dot = rel[name_at..].rfind('.')? + name_at;
     Some((&rel[..dot], &rel[dot + 1..]))
 }
 
-/// 読む言語(読まない file は None)。
+/// The language to read (None for a file that is not read).
 fn language_of(rel: &str) -> Option<Language> {
     let (_, extension) = split_extension(rel)?;
     READ_EXTENSIONS.iter().find(|(e, _)| *e == extension).map(|(_, language)| *language)
 }
 
-/// source の根の判定(dir ごとに覚える)。
+/// Decision of the source root (remembered per dir).
 struct SourceRoots<'a> {
     root: &'a Path,
     memo: HashMap<String, bool>,
@@ -138,7 +138,7 @@ impl<'a> SourceRoots<'a> {
         SourceRoots { root, memo: HashMap::new() }
     }
 
-    /// 根からの dir(空 = repo の根)が source の根か(頭の註)。
+    /// Whether the dir from the root (empty = the repo root) is a source root (see the header note).
     fn is_source_root(&mut self, dir: &str) -> bool {
         if dir.is_empty() {
             return true;
@@ -152,14 +152,14 @@ impl<'a> SourceRoots<'a> {
         answer
     }
 
-    /// dir の pyproject.toml の `[tool.maturin] python-source`(無い・読めなければ None — 読めない設定は他の根の印で決まる)。
+    /// The pyproject.toml `[tool.maturin] python-source` of the dir (None if absent or unreadable — an unreadable setting is decided by the markers of other roots).
     fn declared_python_source(&self, dir: &str) -> Option<String> {
         let text = std::fs::read_to_string(self.root.join(dir).join("pyproject.toml")).ok()?;
         let value: toml::Value = toml::from_str(&text).ok()?;
         value.get("tool")?.get("maturin")?.get("python-source")?.as_str().map(str::to_string)
     }
 
-    /// 根からの path の module(source の根の dir と module の名 — Python・Hy の source と stub でなければ None)。
+    /// The module of a path from the root (the source root dir and module name — None unless it is Python or Hy source or a stub).
     fn module_key(&mut self, rel: &str) -> Option<ModuleKey> {
         let (stem_path, extension) = split_extension(rel)?;
         if !READ_EXTENSIONS.iter().any(|(e, _)| *e == extension) && !NAMED_ONLY_EXTENSIONS.contains(&extension) {
@@ -176,14 +176,14 @@ impl<'a> SourceRoots<'a> {
     }
 }
 
-/// module 1 つの識別 — source の根の dir と module の名(同じ名の module が package ごとに在っても分ける)。
+/// Identity of one module — the source root dir and the module name (kept distinct even if modules of the same name exist in each package).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 struct ModuleKey {
     root: String,
     module: String,
 }
 
-/// fnmatch の照合(`*` は `/` も越える任意の綴り・`?` は 1 文字・`[…]` / `[!…]` は文字の組 — Python の fnmatch.fnmatchcase と同じ)。
+/// fnmatch matching (`*` is any spelling and also crosses `/`, `?` is one character, `[…]` / `[!…]` is a character set — the same as Python's fnmatch.fnmatchcase).
 fn fnmatch(pattern: &[char], text: &[char]) -> bool {
     match pattern.split_first() {
         None => text.is_empty(),
@@ -197,13 +197,13 @@ fn fnmatch(pattern: &[char], text: &[char]) -> bool {
     }
 }
 
-/// `[` の後の文字の組を読む — 照合の関数と `]` の後の残り(閉じていなければ None = `[` はただの文字)。
+/// Reads the character set after `[` — returns the matching function and the rest after `]` (None if not closed = `[` is just a character).
 fn char_class(rest: &[char]) -> Option<(impl Fn(char) -> bool + '_, &[char])> {
     let (negated, body) = match rest.first() {
         Some('!') => (true, &rest[1..]),
         _ => (false, rest),
     };
-    // 最初の `]` は組の中の文字(fnmatch と同じ)。
+    // The first `]` is a character in the set (same as fnmatch).
     let close = body.iter().skip(1).position(|c| *c == ']')? + 1;
     let set = &body[..close];
     let matches = move |c: char| {
@@ -223,7 +223,7 @@ fn char_class(rest: &[char]) -> Option<(impl Fn(char) -> bool + '_, &[char])> {
     Some((matches, &body[close + 1..]))
 }
 
-/// path が検の file の名の規則に当たるか(`/` を含まない規則は file の名に、含む規則は根からの path に当てる — pytest と同じ)。
+/// Whether the path matches the rule for test file names (a rule without `/` is applied to the file name, one with `/` to the path from the root — same as pytest).
 pub fn is_test_file(rel: &str, patterns: &[String]) -> bool {
     let name: Vec<char> = rel.rsplit('/').next().unwrap_or(rel).chars().collect();
     let whole: Vec<char> = rel.chars().collect();
@@ -233,7 +233,7 @@ pub fn is_test_file(rel: &str, patterns: &[String]) -> bool {
     })
 }
 
-/// repo の git が知る file(追跡と追跡外の新しい file・無視した file は除く)の、根からの path。
+/// Paths from the root of the files git knows in the repo (tracked and new untracked files; ignored files excluded).
 pub fn known_files(root: &Path) -> Result<Vec<String>, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
@@ -241,18 +241,18 @@ pub fn known_files(root: &Path) -> Result<Vec<String>, String> {
         .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
         .stdin(std::process::Stdio::null())
         .output()
-        .map_err(|e| format!("git を起こせない: {}", e))?;
+        .map_err(|e| format!("cannot start git: {}", e))?;
     if !output.status.success() {
-        return Err(format!("git ls-files が失敗した: {}", String::from_utf8_lossy(&output.stderr).trim()));
+        return Err(format!("git ls-files failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
     }
     let listed: BTreeSet<String> = output.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect();
     Ok(listed.into_iter().collect())
 }
 
-/// 問いに答える(files = 母集団の根からの path — 呼び手は `known_files` か、検では模型の木の一覧を渡す)。
+/// Answers the query (files = paths from the root of the population — the caller passes `known_files`, and tests pass the list of the model tree).
 pub fn affected_tests(root: &Path, files: &[String], query: &Query) -> AffectedReport {
     let mut roots = SourceRoots::new(root);
-    // cache の鍵の名 = path・source の根・module の名(置き場の形が変わって module が変われば、その file を読み直す)。
+    // Cache key = path, source root, module name (if the layout changes and the module changes, that file is re-read).
     let keyed: Vec<(String, PathBuf)> = files
         .iter()
         .filter(|rel| language_of(rel).is_some())
@@ -269,7 +269,7 @@ pub fn affected_tests(root: &Path, files: &[String], query: &Query) -> AffectedR
             let language = language_of(rel)?;
             let read = match std::fs::read_to_string(path) {
                 Ok(source) => module_dependencies(language, &source, module),
-                Err(error) => ModuleDependencies { dependencies: Vec::new(), error: Some(format!("読めない: {}", error)) },
+                Err(error) => ModuleDependencies { dependencies: Vec::new(), error: Some(format!("cannot read: {}", error)) },
             };
             Some(FileDependencies { rel: rel.to_string(), key: ModuleKey { root: source_root.to_string(), module: module.to_string() }, read })
         })
@@ -277,16 +277,16 @@ pub fn affected_tests(root: &Path, files: &[String], query: &Query) -> AffectedR
     crate::timing::timed("affected-tests.walk", || walk(&read, query, &mut roots))
 }
 
-/// 逆向きの索引を組み、変えた path から幅優先で辿る。
+/// Builds the reverse index and traces breadth-first from the changed paths.
 fn walk(read: &[FileDependencies], query: &Query, roots: &mut SourceRoots) -> AffectedReport {
     let key_of: HashMap<&str, &ModuleKey> = read.iter().map(|f| (f.rel.as_str(), &f.key)).collect();
-    // module の名 → その名を持つ module(source の根ごと)。
+    // Module name → the modules having that name (per source root).
     let mut named: HashMap<&str, BTreeSet<&ModuleKey>> = HashMap::new();
     for file in read {
         named.entry(file.key.module.as_str()).or_default().insert(&file.key);
     }
-    // import の先を、知っている module の名の最も長い接頭辞へ縮める(どれも知らなければ repo の外)。同じ名が 2 つ以上の
-    // source の根に在れば、import した file と同じ根の物を選び、同じ根に無ければ全部(保守側)。
+    // Shrink the import target to the longest prefix of the known module names (outside the repo if none is known). If the same name exists under 2 or more
+    // source roots, choose the one under the same root as the importing file, and all of them if none is under the same root (the conservative side).
     let resolve = |target: &str, importer: &ModuleKey| -> Vec<&ModuleKey> {
         let mut candidate = target;
         loop {
@@ -300,7 +300,7 @@ fn walk(read: &[FileDependencies], query: &Query, roots: &mut SourceRoots) -> Af
             }
         }
     };
-    // module → それを import か require する file(自分自身の module は除く — import と require は同じ辺: 頭の註)。
+    // module → the files that import or require it (excluding the module itself — import and require are the same edge: see the header note).
     let mut users: HashMap<&ModuleKey, BTreeSet<&str>> = HashMap::new();
     for file in read {
         for dependency in &file.read.dependencies {
@@ -311,7 +311,7 @@ fn walk(read: &[FileDependencies], query: &Query, roots: &mut SourceRoots) -> Af
     }
     let changed: Vec<(&str, ModuleKey)> = query.changed.iter().filter_map(|rel| roots.module_key(rel).map(|k| (rel.as_str(), k))).collect();
     let not_modules: Vec<String> = query.changed.iter().filter(|rel| roots.module_key(rel).is_none()).cloned().collect();
-    // 幅優先: 段 = module の展開。file の訪問は 1 度(最短の道を残す)。
+    // Breadth-first: a level = the expansion of a module. Each file is visited once (the shortest path is kept).
     let seeds: BTreeSet<&str> = query.changed.iter().map(String::as_str).collect();
     let mut parent: HashMap<&str, (&str, usize)> = HashMap::new();
     let mut expanded: BTreeSet<ModuleKey> = BTreeSet::new();
@@ -362,7 +362,7 @@ fn walk(read: &[FileDependencies], query: &Query, roots: &mut SourceRoots) -> Af
 mod tests {
     use super::*;
 
-    /// 模型の木を書き、git を使わずに一覧を渡して問う。
+    /// Writes a model tree and asks, passing the list without using git.
     fn model(files: &[(&str, &str)]) -> (tempfile::TempDir, Vec<String>) {
         let dir = tempfile::tempdir().unwrap();
         for (rel, text) in files {
@@ -387,7 +387,7 @@ mod tests {
         report.tests.iter().map(|t| (t.path.as_str(), t.distance)).collect()
     }
 
-    /// 失敗ケース(Python): a → b → test_x の連鎖で、a を変えると test_x が距離 2 で選ばれ、a を import しない検は選ばれない。
+    /// Failure case (Python): in the chain a → b → test_x, changing a selects test_x at distance 2, and tests that do not import a are not selected.
     #[test]
     fn a_python_chain_selects_the_test_at_distance_two_and_not_the_unrelated_test() {
         let (dir, files) = model(&[
@@ -407,11 +407,11 @@ mod tests {
             report.tests[1].via,
             vec!["packages/pkg-a/src/pkg_a/a.py", "packages/pkg-a/src/pkg_a/b.py", "packages/pkg-a/tests/test_x.py"]
         );
-        // `from pkg_a import b_missing` は pkg_a/__init__.py へ縮む — a を変えても __init__ は通らない(親の package を辺に数えない)。
+        // `from pkg_a import b_missing` shrinks to pkg_a/__init__.py — changing a does not pass through __init__ (the parent package is not counted as an edge).
         assert!(report.hubs.is_empty() && report.unreadable.is_empty() && report.not_modules.is_empty());
     }
 
-    /// 失敗ケース(Hy): import と require の連鎖で、a を変えると test_x.hy が距離 2 で選ばれ、a に依らない検は選ばれない。
+    /// Failure case (Hy): in the chain of import and require, changing a selects test_x.hy at distance 2, and tests that do not depend on a are not selected.
     #[test]
     fn a_hy_chain_through_require_selects_the_test_at_distance_two() {
         let (dir, files) = model(&[
@@ -422,9 +422,9 @@ mod tests {
             ("lib-tests/test_x.hy", "(import app.b [f])\n(defn test-x [] (assert (f)))\n"),
             ("lib-tests/test_y.hy", "(import os)\n"),
         ]);
-        // `lib` は識別子なので source の根ではない — 模型では根の pyproject.toml だけが根で、module は lib.app.a。
+        // `lib` is an identifier, so it is not a source root — in the model only the root pyproject.toml is a root, and the module is lib.app.a.
         let report = ask(&dir, &files, &["lib/app/a.hy"], DEFAULT_MAX_DEPENDENTS);
-        assert!(report.tests.is_empty(), "module の名が合わないのに選んだ: {:?}", report.tests);
+        assert!(report.tests.is_empty(), "selected even though the module names do not match: {:?}", report.tests);
         let (dir, files) = model(&[
             ("pyproject.toml", ""),
             ("src/app/__init__.py", ""),
@@ -435,13 +435,13 @@ mod tests {
         ]);
         let report = ask(&dir, &files, &["src/app/a.hy"], DEFAULT_MAX_DEPENDENTS);
         assert_eq!(distances(&report), vec![("tests/test_x.hy", 2)]);
-        // stub(.pyi)を変えても同じ module の使い手を選ぶ。README は module ではないと名指す。
+        // Changing a stub (.pyi) also selects the users of the same module. State that the README is not a module.
         let report = ask(&dir, &files, &["src/app/b.pyi", "README.md"], DEFAULT_MAX_DEPENDENTS);
         assert_eq!(distances(&report), vec![("tests/test_x.hy", 1)]);
         assert_eq!(report.not_modules, vec!["README.md".to_string()]);
     }
 
-    /// 広すぎる module(直接の使い手が分け目を越える)は通り抜けず、名と数を hubs に出す — require でも import でも同じ。
+    /// A too-broad module (direct users exceed the split point) is not passed through, and its name and number are put in hubs — the same for require and import.
     #[test]
     fn a_module_used_by_too_many_files_is_named_as_a_hub_and_not_walked_through() {
         let (dir, files) = model(&[
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(distances(&report), vec![("tests/test_a.hy", 1), ("tests/test_b.hy", 1), ("tests/test_c.hy", 1)]);
     }
 
-    /// 同じ名の module(package ごとの tests/test_models.py)が在っても、選ぶ検は import した file だけ。
+    /// Even if modules of the same name exist (tests/test_models.py per package), the tests selected are only the files that imported it.
     #[test]
     fn colliding_test_module_names_do_not_select_the_other_package_test() {
         let (dir, files) = model(&[
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(distances(&report), vec![("packages/p-one/tests/test_models.py", 1)]);
     }
 
-    /// import の先の名が 2 つの package に在れば(`tests.interpreters`)、import した file と同じ source の根の物へ結ぶ。
+    /// If an import target's name exists in 2 packages (`tests.interpreters`), connect to the one under the same source root as the importing file.
     #[test]
     fn an_import_of_a_colliding_name_binds_to_the_same_source_root() {
         let (dir, files) = model(&[
@@ -489,9 +489,9 @@ mod tests {
         assert_eq!(distances(&report), vec![("packages/p-one/tests/test_one.hy", 1)]);
     }
 
-    /// 失敗ケース(agora-controllers の形): 名が識別子の dir が自分の pyproject.toml を持っていても、その下の module は repo の根からの名で
-    /// 知る — 直す前は `controllers/scheduling` を根にして `protocol.records_turns` と名付け、`controllers.scheduling.protocol.records_turns`
-    /// を import する検を 1 本も選ばなかった。
+    /// Failure case (agora-controllers shape): even if a dir whose name is an identifier has its own pyproject.toml, the modules under it are known by the name from the repo root —
+    /// before the fix, `controllers/scheduling` was made a root and named `protocol.records_turns`, and not a single test that imports `controllers.scheduling.protocol.records_turns`
+    /// was selected.
     #[test]
     fn an_identifier_dir_with_its_own_pyproject_keeps_the_names_from_the_repo_root() {
         let (dir, files) = model(&[

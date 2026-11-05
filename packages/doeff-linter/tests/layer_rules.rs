@@ -1,12 +1,12 @@
-//! 層の規則(DOEFF101〜108)と `--output-format editor-json` の検 — 一時の repo を作って binary を走らせ、出力の JSON を見る。
-//! 各規則の悪い例(違反が出る)と良い例(出ない)を Hy と Python の両方で持つ。
+//! Tests for the layer rules (DOEFF101 to 108) and `--output-format editor-json` — build a temporary repo, run the binary, and inspect the output JSON.
+//! Each rule has bad examples (a violation appears) and good examples (none appears), in both Hy and Python.
 
 use serde_json::Value;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// 検で使う設定(層 4 つ・law・登録簿・環境の語)。`extra` を末尾に足せる。
+/// Settings used by the tests (4 layers, laws, registry, environment words). `extra` can be appended at the end.
 fn config(extra: &str) -> String {
     format!(
         r#"
@@ -36,16 +36,16 @@ intent = ["intent", "type"]
 foundation = ["foundation"]
 entry = ["entry"]
 [tool.doeff-linter.roles.describe]
-translation = "翻訳の handler"
+translation = "translation handler"
 
 [tool.doeff-linter.layers.describe.core]
-summary = "業務の判断"
-knows = "業務の判断"
-does_not_know = "通信の手段"
-question = "通信が変わっても変わらないか?"
+summary = "business judgment"
+knows = "business judgment"
+does_not_know = "means of communication"
+question = "Does it stay the same when communication changes?"
 
 [tool.doeff-linter.layers.describe.foundation]
-knows = "本物の I/O"
+knows = "real I/O"
 
 [tool.doeff-linter.raw_side_effects]
 allowed_layers = ["foundation", "entry"]
@@ -61,23 +61,23 @@ name = "core-imports-only-intent"
 adr = "ADR-TEST"
 rules = ["DOEFF101", "DOEFF102"]
 layers = ["core"]
-statement = "core は intent だけを読む"
+statement = "core reads only intent"
 
 [[tool.doeff-linter.laws]]
 name = "no-environment-name"
 adr = "ADR-TEST"
 rules = ["DOEFF108"]
-statement = "業務の名に環境の語が無い"
+statement = "no environment words in business names"
 
 [[tool.doeff-linter.laws]]
 name = "not-wired-yet"
 adr = "ADR-TEST"
-statement = "まだ針の無い law"
+statement = "a law with no hook yet"
 
 [[tool.doeff-linter.laws]]
 name = "absolute-imports"
 rules = ["DOEFF016"]
-statement = "相対 import を使わない"
+statement = "do not use relative imports"
 
 [tool.doeff-linter.registry]
 dirs = ["registry/BREACHES"]
@@ -87,7 +87,7 @@ files = ["registry/keys.txt"]
     )
 }
 
-/// 一時の repo(pyproject.toml と file の列)を作る。
+/// Build a temporary repo (pyproject.toml and a list of files).
 fn repo(files: &[(&str, &str)], extra_config: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("pyproject.toml"), config(extra_config)).unwrap();
@@ -101,7 +101,7 @@ fn repo(files: &[(&str, &str)], extra_config: &str) -> tempfile::TempDir {
     dir
 }
 
-/// binary を root で走らせ、(終了コード・stdout・stderr)を返す。stdin を渡せる。
+/// Run the binary at the root and return (exit code, stdout, stderr). Can pass stdin.
 fn run(root: &Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args(args)
@@ -116,14 +116,14 @@ fn run(root: &Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String)
     (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stdout).into_owned(), String::from_utf8_lossy(&output.stderr).into_owned())
 }
 
-/// editor-json を repo 全体で走らせ、(終了コード・JSON)を返す。
+/// Run editor-json over the whole repo and return (exit code, JSON).
 fn editor(root: &Path) -> (i32, Value) {
     let (code, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log"], None);
-    let value: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let value: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     (code, value)
 }
 
-/// 違反の列から、規則 rule の鍵を並べる。
+/// From the list of violations, list the keys of rule `rule`.
 fn keys(report: &Value, rule: &str) -> Vec<String> {
     let mut keys: Vec<String> = report["violations"]
         .as_array()
@@ -136,12 +136,12 @@ fn keys(report: &Value, rule: &str) -> Vec<String> {
     keys
 }
 
-/// 鍵 key の違反を 1 つ取る。
+/// Take the violation with key `key`.
 fn violation<'a>(report: &'a Value, key: &str) -> &'a Value {
-    report["violations"].as_array().unwrap().iter().find(|v| v["key"] == key).unwrap_or_else(|| panic!("鍵 {} が無い: {}", key, report))
+    report["violations"].as_array().unwrap().iter().find(|v| v["key"] == key).unwrap_or_else(|| panic!("key {} is missing: {}", key, report))
 }
 
-const INTENT_HY: &str = "(val MODULE-TAGS {:context \"billing\" :role \"intent\"})\n(defclass Charge [] \"請求の intent\")\n";
+const INTENT_HY: &str = "(val MODULE-TAGS {:context \"billing\" :role \"intent\"})\n(defclass Charge [] \"billing intent\")\n";
 const FOUNDATION_HY: &str = "(val MODULE-TAGS {:context \"io\" :role \"foundation\"})\n(defn send [x] x)\n";
 
 #[test]
@@ -174,9 +174,9 @@ fn import_direction_bad_and_good_in_hy_and_python() {
     assert_eq!(hy["adr"], "ADR-TEST");
     assert_eq!(hy["severity"], "error");
     assert_eq!(hy["registered"], false);
-    // 責務の境界の規則は宣言が無くても既定で critical。
+    // The responsibility-boundary rule is critical by default even without a declaration.
     assert_eq!(hy["level"], "critical");
-    // 位置は import の記号 send(1 行目の 27〜31 列)。
+    // The position is the import symbol send (columns 27 to 31 of line 1).
     assert_eq!(hy["range"]["start"], serde_json::json!({"line": 0, "character": 27}));
     assert_eq!(hy["range"]["end"], serde_json::json!({"line": 0, "character": 31}));
     let py = violation(&report, "app/core/bad_py.py::core-imports-only-intent::app.foundation.io.send");
@@ -196,7 +196,7 @@ fn forbidden_module_and_types_only_layer() {
         "",
     );
     let (_, report) = editor(dir.path());
-    // 前方一致: urllib.request.urlopen は urllib.request に当たり、純粋な urllib.parse は当たらない。
+    // Prefix match: urllib.request.urlopen matches urllib.request, and the pure urllib.parse does not.
     assert_eq!(
         keys(&report, "DOEFF102"),
         vec![
@@ -205,7 +205,7 @@ fn forbidden_module_and_types_only_layer() {
             "app/core/proc.py::core-imports-only-intent::subprocess",
         ]
     );
-    // law の無い層(intent)の規則は、鍵の <規則> の欄が規則の ID になる。
+    // For a layer without laws (intent), the <rule> field of the key is the rule ID.
     assert_eq!(keys(&report, "DOEFF103"), vec!["app/intent/bad.hy::DOEFF103::definitions", "app/intent/bad_py.py::DOEFF103::definitions"]);
     let intent = violation(&report, "app/intent/bad.hy::DOEFF103::definitions");
     assert_eq!(intent["law"], Value::Null);
@@ -216,18 +216,18 @@ fn forbidden_module_and_types_only_layer() {
 fn tags_are_declared_and_roles_match_the_layer() {
     let dir = repo(
         &[
-            // 定義にタグが無く、module の頭のタグも無い。
+            // The definition has no tag, and the module head has no tag either.
             ("app/core/untagged.hy", "(defn decide [x] x)\n(defk plan [x] {:pre [] :post []} x)\n"),
-            // 何も名乗らない Python の module。
+            // A Python module that claims nothing.
             ("app/core/untagged_py.py", "def decide(x):\n    return x\n"),
-            // 定義の :tags だけで名乗る(module の頭のタグは要らない)— 良い例。
-            ("app/core/per_definition.hy", "(defk plan [x] \"計画\" {:pre [] :post [] :tags {:context \"billing\" :role \"judgment\"}} x)\n"),
-            // role が層に合わない・context が無い。
+            // Claims only by the definition's :tags (no module-head tag needed) — a good example.
+            ("app/core/per_definition.hy", "(defk plan [x] \"plan\" {:pre [] :post [] :tags {:context \"billing\" :role \"judgment\"}} x)\n"),
+            // The role does not fit the layer, or there is no context.
             ("app/core/wrong_role.hy", "(val MODULE-TAGS {:context \"billing\" :role \"translation\"})\n(defn f [] 1)\n"),
             ("app/core/no_context.py", "MODULE_TAGS = {\"role\": \"judgment\"}\n"),
             ("app/core/tests/test_x.hy", "(defn test-x [] 1)\n"),
-            // defeffect の辞書の :tags で名乗る — 良い例(module の頭のタグは要らない)。タグの無い defeffect は悪い例。
-            ("app/intent/effects.hy", "(defeffect Charge \"請求\" {:fields [amount] :answer int :tags {:context \"billing\" :role \"intent\"}})\n"),
+            // Claims via the :tags in the defeffect dictionary — a good example (no module-head tag needed). A defeffect without tags is a bad example.
+            ("app/intent/effects.hy", "(defeffect Charge \"billing\" {:fields [amount] :answer int :tags {:context \"billing\" :role \"intent\"}})\n"),
             ("app/intent/untagged_effect.hy", "(defeffect Refund {:fields [amount] :answer int})\n"),
         ],
         "",
@@ -239,8 +239,8 @@ fn tags_are_declared_and_roles_match_the_layer() {
     );
     assert_eq!(keys(&report, "DOEFF105"), vec!["app/core/no_context.py::DOEFF105::judgment", "app/core/wrong_role.hy::DOEFF105::translation"]);
     let untagged = violation(&report, "app/core/untagged.hy::DOEFF104");
-    assert!(untagged["message"].as_str().unwrap().contains("decide・plan"));
-    // 位置は最初のタグの無い定義の名。
+    assert!(untagged["message"].as_str().unwrap().contains("decide, plan"));
+    // The position is the name of the first definition without a tag.
     assert_eq!(untagged["range"]["start"], serde_json::json!({"line": 0, "character": 6}));
     let modules = report["modules"].as_array().unwrap();
     let per_definition = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("per_definition.hy")).unwrap();
@@ -248,7 +248,7 @@ fn tags_are_declared_and_roles_match_the_layer() {
     assert_eq!(per_definition["context"], "billing");
     assert_eq!(per_definition["role"], "judgment");
     assert_eq!(per_definition["violations"], 0);
-    assert!(!modules.iter().any(|m| m["path"].as_str().unwrap().contains("/tests/")), "検は層の母集団の外");
+    assert!(!modules.iter().any(|m| m["path"].as_str().unwrap().contains("/tests/")), "tests are outside the layer population");
 }
 
 #[test]
@@ -260,25 +260,25 @@ fn raw_side_effects_outside_allowed_layers() {
                 "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(import time)\n(import pathlib [Path])\n(defn now [] (time.time))\n(defn size [p] (.stat (Path p)))\n(defn later [] (now))\n",
             ),
             ("app/foundation/clock.hy", "(val MODULE-TAGS {:context \"io\" :role \"foundation\"})\n(import time)\n(defn now [] (time.time))\n(defn relay [] (now))\n"),
-            // 鳴らない例(DOEFF107): 生の副作用に届かない呼びの連なりと、許された層の中の経由。
+            // Silent examples (DOEFF107): a call chain that does not reach a raw side effect, and a route through an allowed layer.
             ("app/core/sum.hy", "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(defn add [a b] (+ a b))\n(defn total [xs] (add 1 2))\n"),
         ],
         "",
     );
     let (_, report) = editor(dir.path());
-    // DOEFF107 は生の副作用へ届く経由(core の later → now)だけに出て、届かない total と foundation の relay には出ない。
+    // DOEFF107 appears only on a route that reaches a raw side effect (core's later -> now), not on total that does not reach it or foundation's relay.
     let via_keys = keys(&report, "DOEFF107");
     assert_eq!(via_keys.len(), 1, "{:?}", via_keys);
     assert!(via_keys[0].starts_with("app/core/clock.hy::DOEFF107::later"), "{:?}", via_keys);
     let direct = keys(&report, "DOEFF106");
     assert!(direct.contains(&"app/core/clock.hy::DOEFF106::now::time.time".to_string()), "{:?}", direct);
-    assert!(direct.iter().all(|k| k.starts_with("app/core/")), "foundation は許された層: {:?}", direct);
+    assert!(direct.iter().all(|k| k.starts_with("app/core/")), "foundation is an allowed layer: {:?}", direct);
     let strong = violation(&report, "app/core/clock.hy::DOEFF106::now::time.time");
     assert_eq!(strong["severity"], "error");
     let weak = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF106" && v["key"].as_str().unwrap().ends_with(".stat")).unwrap();
     assert_eq!(weak["severity"], "warning");
-    // 経由の証拠(全体の実行だけ)は info で経路つき。
-    let via = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF107").expect("経由の証拠");
+    // The route evidence (whole run only) is info with the path.
+    let via = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF107").expect("route evidence");
     assert_eq!(via["severity"], "info");
     assert!(via["message"].as_str().unwrap().contains("later"));
     assert!(via["message"].as_str().unwrap().contains("now"));
@@ -286,14 +286,14 @@ fn raw_side_effects_outside_allowed_layers() {
 
 #[test]
 fn python_env_reads_outside_allowed_layers() {
-    // 業務の層の `.py` の環境変数の読みも DOEFF106 に当たる(Hy の file だけでなく)。
+    // Reading environment variables in a business layer's `.py` also hits DOEFF106 (not only Hy files).
     let dir = repo(
         &[
             (
                 "app/core/settings.py",
                 "import os\nfrom os import getenv as ge\nMODULE_TAGS = {\"context\": \"billing\", \"role\": \"judgment\"}\n\ndef mode():\n    return os.environ[\"MODE\"]\n\ndef level():\n    return ge(\"LEVEL\")\n",
             ),
-            // 当たらない例: 許された層(foundation)の読み・文字列と註の中の綴り・別の物の environ 属性。
+            // Non-hitting examples: reads in an allowed layer (foundation), spellings inside strings and comments, and an environ attribute of something else.
             ("app/foundation/env.py", "import os\nMODULE_TAGS = {\"context\": \"io\", \"role\": \"foundation\"}\nX = os.getenv(\"X\")\n"),
             (
                 "app/core/plain.py",
@@ -343,7 +343,7 @@ fn environment_names_in_business_code() {
 fn registry_marks_known_breaches_and_reconciling_lowers_to_info() {
     let files = [("app/core/untagged.hy", "(defn decide [x] x)\n"), ("app/core/other.hy", "(defn plan [x] x)\n")];
     let dir = repo(&files, "");
-    std::fs::write(dir.path().join("registry/BREACHES/aaaaaaaaaaaa.txt"), "app/core/untagged.hy::DOEFF104\n理由 — 担い手 #1\n").unwrap();
+    std::fs::write(dir.path().join("registry/BREACHES/aaaaaaaaaaaa.txt"), "app/core/untagged.hy::DOEFF104\nreason — owner #1\n").unwrap();
     let (code, report) = editor(dir.path());
     let known = violation(&report, "app/core/untagged.hy::DOEFF104");
     assert_eq!(known["severity"], "warning");
@@ -352,9 +352,9 @@ fn registry_marks_known_breaches_and_reconciling_lowers_to_info() {
     assert_eq!(new["severity"], "error");
     assert_eq!(code, 1);
 
-    // 1 行 1 鍵の登録簿でも同じ。照合中の規則は info(registered は登録簿どおり)で、終了コードは 0。
+    // The same holds for a one-key-per-line registry. A reconciling rule is info (registered follows the registry), and the exit code is 0.
     let dir = repo(&files, "reconciling = [\"DOEFF104\"]\n");
-    std::fs::write(dir.path().join("registry/keys.txt"), "# 既知\napp/core/other.hy::DOEFF104\n").unwrap();
+    std::fs::write(dir.path().join("registry/keys.txt"), "# known\napp/core/other.hy::DOEFF104\n").unwrap();
     let (code, report) = editor(dir.path());
     assert_eq!(code, 0, "{}", report);
     assert_eq!(violation(&report, "app/core/other.hy::DOEFF104")["severity"], "info");
@@ -373,7 +373,7 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
         "",
     );
     let (code, report) = editor(dir.path());
-    // 版 2(#849・8f7b7201)で defk / deff の見出し signatures と束縛の型 bindings を足した。全体の実行では両方とも空の列。
+    // Version 2 (#849, 8f7b7201) added the defk / deff heading `signatures` and the binding types `bindings`. Both are empty lists in a whole run.
     assert_eq!(report["version"], 2);
     assert!(report["root"].as_str().unwrap().starts_with('/'));
     assert_eq!(report["errors"], serde_json::json!([]));
@@ -382,13 +382,13 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
     }
     assert_eq!(report["signatures"], serde_json::json!([]));
     assert_eq!(report["bindings"], serde_json::json!([]));
-    // 保存前の 1 file の実行(stdin)では、その Hy の file の見出しと束縛の型が欄ごとに出る。
+    // In a pre-save single-file run (stdin), that Hy file's headings and binding types appear per field.
     let plan = "(defk plan [x]\n  {:pre [(: x int)] :post [(: % str)] :tags {:context \"billing\" :role \"judgment\"}}\n  (<- s str (render x))\n  (val n 1)\n  s)\n(defk render [x] {:pre [(: x int)] :post [(: % str)]} (str x))\n";
     std::fs::write(dir.path().join("app/core/plan.hy"), plan).unwrap();
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/plan.hy"], Some(plan));
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
     assert_eq!(single["version"], 2);
-    let signature = single["signatures"].as_array().unwrap().iter().find(|s| s["name"] == "plan").expect("plan の見出し");
+    let signature = single["signatures"].as_array().unwrap().iter().find(|s| s["name"] == "plan").expect("heading of plan");
     assert_eq!(signature["kind"], "defk");
     assert!(signature["path"].as_str().unwrap().ends_with("app/core/plan.hy"));
     assert_eq!(signature["range"]["start"], serde_json::json!({"line": 0, "character": 6}));
@@ -402,7 +402,7 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
     assert_eq!(signature["effects"]["complete"], true);
     assert_eq!(signature["tags"], serde_json::json!({"context": "billing", "role": "judgment"}));
     let bindings = single["bindings"].as_array().unwrap();
-    let bound = bindings.iter().find(|b| b["name"] == "s").expect("s の束縛");
+    let bound = bindings.iter().find(|b| b["name"] == "s").expect("binding of s");
     assert_eq!(bound["form"], "<-");
     assert_eq!(bound["origin"], "annotation");
     assert_eq!(bound["type"]["name"], "str");
@@ -412,13 +412,13 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
     }
     assert_eq!(bound["absent"], false);
     assert_eq!(bound["raises"], serde_json::json!([]));
-    let plain = bindings.iter().find(|b| b["name"] == "n").expect("n の束縛");
+    let plain = bindings.iter().find(|b| b["name"] == "n").expect("binding of n");
     assert_eq!(plain["form"], "val");
     assert!(plain["annotation_range"].is_null());
     assert!(plain["modifier"].is_null());
-    // 定義ごとの本体の文字の行(20 節・#910)— 全体の実行では空、stdin の実行では定義ごとに行と字の役が出る。
+    // Body text lines per definition (clause 20, #910) — empty in a whole run; in a stdin run, lines and text roles appear per definition.
     assert_eq!(report["bodies"], serde_json::json!([]));
-    let body = single["bodies"].as_array().unwrap().iter().find(|b| b["name"] == "plan").expect("plan の本体");
+    let body = single["bodies"].as_array().unwrap().iter().find(|b| b["name"] == "plan").expect("body of plan");
     let shown: Vec<(u64, String)> = body["lines"]
         .as_array()
         .unwrap()
@@ -430,39 +430,39 @@ fn editor_json_shape_rules_and_python_rule_ranges() {
         .collect();
     assert_eq!(shown, vec![(2, "val str s ⇐ render(x)".to_string()), (3, "val int n = 1".to_string()), (4, "s".to_string())]);
     assert_eq!(body["lines"][0]["segments"][0], serde_json::json!({"text": "val", "role": "keyword", "range": {"start": {"line": 2, "character": 3}, "end": {"line": 2, "character": 5}}, "effect": null, "definition": null}));
-    // 既存の Python の規則(DOEFF016)も行の範囲と law つきで出る。
+    // Existing Python rules (DOEFF016) also appear with line ranges and laws.
     let relative = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF016").expect("DOEFF016");
     assert_eq!(relative["law"], "absolute-imports");
     assert_eq!(relative["key"], Value::Null);
     assert_eq!(relative["range"], serde_json::json!({"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 16}}));
     for key in ["rule", "law", "adr", "severity", "path", "range", "message", "hint", "key", "registered"] {
-        assert!(relative.get(key).is_some(), "欄 {} が無い", key);
+        assert!(relative.get(key).is_some(), "field {} is missing", key);
     }
     assert_eq!(code, 1);
     let rules = report["rules"].as_array().unwrap();
-    let unwired = rules.iter().find(|r| r["rule"] == "not-wired-yet").expect("針の無い law");
+    let unwired = rules.iter().find(|r| r["rule"] == "not-wired-yet").expect("law with no hook");
     assert_eq!(unwired["wired"], false);
     assert_eq!(unwired["adr"], "ADR-TEST");
     let core = rules.iter().find(|r| r["rule"] == "DOEFF101").unwrap();
     assert_eq!(core["wired"], true);
-    assert!(core["statement"].as_str().unwrap().contains("core は intent だけを読む"));
+    assert!(core["statement"].as_str().unwrap().contains("core reads only intent"));
 }
 
 #[test]
 fn stdin_path_judges_unsaved_text_with_utf16_columns() {
     let dir = repo(&[("app/intent/charge.hy", INTENT_HY), ("app/foundation/io.hy", FOUNDATION_HY), ("app/core/edit.hy", "")], "");
     let path = dir.path().join("app/core/edit.hy");
-    let unsaved = ";; 日本語の註 — 位置は UTF-16\n(val MODULE-TAGS {:context \"請求\" :role \"judgment\"})\n(import 日本.語 app.foundation.io [send])\n";
+    let unsaved = ";; Japanese comment — positions are UTF-16\n(val MODULE-TAGS {:context \"請求\" :role \"judgment\"})\n(import 日本.語 app.foundation.io [send])\n";
     let (code, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", path.to_str().unwrap()], Some(unsaved));
     assert_eq!(code, 1);
     let report: Value = serde_json::from_str(&stdout).unwrap();
     let hit = violation(&report, "app/core/edit.hy::core-imports-only-intent::app.foundation.io.send");
-    // 3 行目 "(import 日本.語 app.foundation.io [" の send は UTF-16 で 32 列目から(byte では 38)。
+    // The send in line 3 "(import 日本.語 app.foundation.io [" starts at column 32 in UTF-16 (38 in bytes).
     assert_eq!(hit["range"]["start"], serde_json::json!({"line": 2, "character": 32}));
     assert_eq!(hit["range"]["end"], serde_json::json!({"line": 2, "character": 36}));
-    // path は正規化した根 + 根からの path(全体の実行と同じ形)。disk の空の file ではなく stdin の内容を判じた。
+    // path is the normalized root + the path from the root (the same form as a whole run). It judged the stdin contents, not the empty file on disk.
     assert_eq!(hit["path"], path.canonicalize().unwrap().to_str().unwrap());
-    assert_eq!(report["modules"].as_array().unwrap().len(), 1, "1 file の実行は その file だけ");
+    assert_eq!(report["modules"].as_array().unwrap().len(), 1, "a single-file run covers only that file");
     assert_eq!(report["modules"][0]["context"], "請求");
 }
 
@@ -474,11 +474,11 @@ fn exit_codes_for_arguments_and_broken_config() {
     assert!(stderr.contains("--path"));
     let (code, report) = editor(dir.path());
     assert_eq!(code, 0, "{}", report);
-    // 鳴らない例: 知っている鍵だけの設定では DOEFF100 は出ない。
+    // Silent example: with a config of only known keys, DOEFF100 does not appear.
     assert!(keys(&report, "DOEFF100").is_empty(), "{:?}", keys(&report, "DOEFF100"));
 
-    // この binary の知らない鍵(設定が binary より新しい・書き違い)は lint 全体を止めず、その鍵だけを読まずに DOEFF100 の warning で
-    // 知らせる(以前は終了コード 2 でエディタの違反の欄が空になった)。
+    // A key unknown to this binary (config newer than the binary, or a typo) does not stop the whole lint; only that key is skipped and reported
+    // as a DOEFF100 warning (previously exit code 2 left the editor's violation field empty).
     let newer = repo(&[], "[tool.doeff-linter.raw_side_effects.extra]\n");
     let (code, stdout, stderr) = run(newer.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 0, "{}", stderr);
@@ -491,7 +491,7 @@ fn exit_codes_for_arguments_and_broken_config() {
     assert!(notices[0]["explanation"]["reason"].as_str().unwrap().contains(doeff_linter::BUILD_COMMIT));
     assert_eq!(report["linter"]["commit"], doeff_linter::BUILD_COMMIT);
 
-    // 設定の名前の食い違いは黙って捨てず終了コード 2。
+    // A mismatch in config names is not silently dropped; exit code 2.
     let unknown_layer = tempfile::TempDir::new().unwrap();
     std::fs::write(
         unknown_layer.path().join("pyproject.toml"),
@@ -506,7 +506,7 @@ fn exit_codes_for_arguments_and_broken_config() {
 #[test]
 fn explicit_config_file_and_root() {
     let dir = repo(&[("app/core/untagged.hy", "(defn decide [x] x)\n")], "");
-    // pyproject を消し、外に置いた設定 file(節の中身だけの形)を --config と --root で渡す。
+    // Remove pyproject, and pass a config file placed outside (only the section contents) with --config and --root.
     let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap();
     std::fs::remove_file(dir.path().join("pyproject.toml")).unwrap();
     let outside = tempfile::TempDir::new().unwrap();
@@ -539,14 +539,14 @@ fn stdin_and_whole_runs_agree_on_paths_through_a_symlink() {
     let outside = tempfile::TempDir::new().unwrap();
     let link = outside.path().join("link");
     std::os::unix::fs::symlink(dir.path(), &link).unwrap();
-    // 全体の実行(symlink の dir から)と、symlink を通した path の 1 file の実行で、同じ file の path が同じ。
+    // A whole run (from a symlink dir) and a single-file run via a path through a symlink give the same file path for the same file.
     let (_, whole) = editor(&link);
     let whole_path = violation(&whole, "app/core/untagged.hy::DOEFF104")["path"].clone();
     let via_link = link.join("app/core/untagged.hy");
     let (_, stdout, _) = run(&link, &["--output-format", "editor-json", "--no-log", "--stdin", "--path", via_link.to_str().unwrap()], Some("(defn decide [x] x)\n"));
     let single: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(violation(&single, "app/core/untagged.hy::DOEFF104")["path"], whole_path);
-    // path の引数で絞っても(symlink や `..` を通しても)Python の規則の違反は落ちない。
+    // Even when narrowed by a path argument (through a symlink or `..`), Python rule violations are not dropped.
     let dotted = link.join("app/core/../billing");
     let (_, stdout, _) = run(&link, &["--output-format", "editor-json", "--no-log", dotted.to_str().unwrap()], None);
     let narrowed: Value = serde_json::from_str(&stdout).unwrap();
@@ -554,7 +554,7 @@ fn stdin_and_whole_runs_agree_on_paths_through_a_symlink() {
     assert!(narrowed["violations"].as_array().unwrap().iter().all(|v| v["path"].as_str().unwrap().contains("/app/billing/")));
 }
 
-/// 違反の explanation(subject・reason・law_statement)を鍵で引く。
+/// Look up a violation's explanation (subject, reason, law_statement) by key.
 fn explanation<'a>(report: &'a Value, key: &str) -> &'a Value {
     &violation(report, key)["explanation"]
 }
@@ -578,47 +578,47 @@ fn every_layer_rule_explains_what_it_is_and_why() {
         "",
     );
     let (_, report) = editor(dir.path());
-    // DOEFF101: 主体は import 先とその層、理由は層の説明(設定)と import してよい層、law の文は逐語。
+    // DOEFF101: the subject is the import target and its layer; the reason is the layer description (config) and the layers that may be imported; the law text is verbatim.
     let direction = explanation(&report, "app/core/bad.hy::core-imports-only-intent::app.foundation.io.send");
     assert_eq!(
         direction["subject"],
-        "import 先 app.foundation.io.send は層 foundation(path が app/foundation/ の下) — この file は層 core(業務の判断) — path が app/core/ の下、タグの role = judgment"
+        "import target app.foundation.io.send is in layer foundation (path under app/foundation/) — This file is in layer core (business judgment) — path is under app/core/, tag role = judgment"
     );
     assert_eq!(
         direction["reason"],
-        "層 core(業務の判断)は外の世界から最も遠い層で、業務の判断を知り、通信の手段は知らない。core が import してよいのは 層 core・層 intent だけ。import 先の層 foundation は本物の I/O を持つので、core から読むと、core が層 foundation の持つ物に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。"
+        "Layer core (business judgment) is the layer farthest from the outside world; it knows business judgment and does not know means of communication. core may import only layer core, layer intent. The import target, layer foundation, has real I/O, so reading it from core makes core touch what layer foundation holds (even if handlers are swapped in the simulation, only that place touches the real thing)."
     );
-    assert_eq!(direction["law_statement"], "core は intent だけを読む");
-    // DOEFF102・104・106・107・108 と 103・105 も、主体と理由の文を持つ。
+    assert_eq!(direction["law_statement"], "core reads only intent");
+    // DOEFF102, 104, 106, 107, 108, and also 103 and 105, have a subject and a reason sentence.
     let forbidden = explanation(&report, "app/core/bad.hy::core-imports-only-intent::httpx");
-    assert!(forbidden["subject"].as_str().unwrap().starts_with("import 先 httpx(層 core で禁じた I/O の module) —"));
-    assert!(forbidden["reason"].as_str().unwrap().contains("I/O は層 foundation・層 entry の handler が持ち"), "{}", forbidden["reason"]);
+    assert!(forbidden["subject"].as_str().unwrap().starts_with("import target httpx (an I/O module forbidden in layer core) —"));
+    assert!(forbidden["reason"].as_str().unwrap().contains("I/O is held by the handlers of layer foundation, layer entry"), "{}", forbidden["reason"]);
     let role = explanation(&report, "app/core/peer.hy::DOEFF105::translation");
-    assert!(role["subject"].as_str().unwrap().contains("path とタグが食い違う(role translation はどの層の役でもない(今の role の一覧に無い))"), "{}", role["subject"]);
-    assert!(role["reason"].as_str().unwrap().starts_with("role translation(翻訳の handler)は"), "{}", role["reason"]);
-    assert_eq!(role["law_statement"], Value::Null, "law の無い規則は null");
+    assert!(role["subject"].as_str().unwrap().contains("the path and the tag disagree (role translation is not a role of any layer (not in the current list of roles))"), "{}", role["subject"]);
+    assert!(role["reason"].as_str().unwrap().starts_with("role translation (translation handler) is"), "{}", role["reason"]);
+    assert_eq!(role["law_statement"], Value::Null, "a rule without a law is null");
     let untagged = explanation(&report, "app/core/untagged.hy::DOEFF104");
-    assert!(untagged["subject"].as_str().unwrap().starts_with("定義 decide(タグ無し)"));
-    assert!(explanation(&report, "app/core/empty.py::DOEFF104")["subject"].as_str().unwrap().starts_with("この module はタグを何も名乗っていない"));
+    assert!(untagged["subject"].as_str().unwrap().starts_with("definition decide (no tags)"));
+    assert!(explanation(&report, "app/core/empty.py::DOEFF104")["subject"].as_str().unwrap().starts_with("this module declares no tags at all"));
     let types = explanation(&report, "app/intent/funcs.hy::DOEFF103::definitions");
-    // intent には説明が無い — 層の順と規則の決まりだけで文を作る。
+    // intent has no description — the sentence is built only from the layer order and the rules.
     assert_eq!(
         types["reason"],
         "層 intent は外の世界からの遠さの順で 2 番目の層。型の宣言だけを置く層なので、処理の中身を持つ関数と handler は置けない(別の層へ移す)。"
     );
     let raw = explanation(&report, "app/core/bad.hy::DOEFF106::now::time.time");
-    assert!(raw["subject"].as_str().unwrap().starts_with("定義 now(defn)が time.time(time の生の副作用・import を通した名前か組み込みの強い証拠)に直に触る"), "{}", raw["subject"]);
+    assert!(raw["subject"].as_str().unwrap().starts_with("definition now (defn) directly touches time.time (a raw side effect of time; strong evidence: a name via an import, or a built-in)"), "{}", raw["subject"]);
     let via = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF107").unwrap();
-    assert!(via["explanation"]["subject"].as_str().unwrap().starts_with("定義 later が now を通して time.time"));
+    assert!(via["explanation"]["subject"].as_str().unwrap().starts_with("definition later reaches, through now, time.time"));
     let env = explanation(&report, "app/billing/handlers_fake.hy::no-environment-name::fake_charge");
-    assert_eq!(env["subject"], "定義 fake_charge(defhandler)の名(環境の語 fake を含む)");
-    assert_eq!(env["law_statement"], "業務の名に環境の語が無い");
-    // module の layer_reason と、最上位の layers(説明の無い層は name だけ)。
+    assert_eq!(env["subject"], "name of definition fake_charge (defhandler) (contains environment words fake)");
+    assert_eq!(env["law_statement"], "no environment words in business names");
+    // The module's layer_reason, and the top-level layers (a layer without a description has only name).
     let modules = report["modules"].as_array().unwrap();
     let peer = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("peer.hy")).unwrap();
-    assert!(peer["layer_reason"].as_str().unwrap().starts_with("path とタグが食い違う"), "{}", peer["layer_reason"]);
+    assert!(peer["layer_reason"].as_str().unwrap().starts_with("the path and the tag disagree"), "{}", peer["layer_reason"]);
     let good = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("app/intent/charge.hy")).unwrap();
-    assert_eq!(good["layer_reason"], "path の置き場所で決めた — app/intent/ の下は層 intent。タグの role = intent もこの層の役");
+    assert_eq!(good["layer_reason"], "Decided by the path location — under app/intent/ is layer intent. The tag role = intent is also a role of this layer");
     assert_eq!(
         report["layers"],
         serde_json::json!([
@@ -628,7 +628,7 @@ fn every_layer_rule_explains_what_it_is_and_why() {
             {"name": "entry", "summary": null, "knows": null, "does_not_know": null, "question": null}
         ])
     );
-    // Python の文ごとの規則の explanation は null(契約で許す形)。
+    // The explanation of Python per-statement rules is null (the form the contract allows).
     let python = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF016");
     if let Some(python) = python {
         assert_eq!(python["explanation"], Value::Null);
@@ -640,23 +640,23 @@ fn text_output_carries_what_and_why_for_agents() {
     let dir = repo(&[("app/core/peer.hy", "(val MODULE-TAGS {:context \"peer\" :role \"translation\"})\n(defn f [] 1)\n")], "");
     let (code, stdout, _) = run(dir.path(), &["--no-log"], None);
     assert_eq!(code, 1);
-    assert!(stdout.contains("これは: この file は層 core(業務の判断)"), "{}", stdout);
-    assert!(stdout.contains("なぜ: role translation(翻訳の handler)は"), "{}", stdout);
-    assert!(stdout.contains("直し方: "), "{}", stdout);
+    assert!(stdout.contains("This is: This file is in layer core (business judgment)"), "{}", stdout);
+    assert!(stdout.contains("Why: role translation (translation handler) is"), "{}", stdout);
+    assert!(stdout.contains("Fix: "), "{}", stdout);
 }
 
 #[test]
 fn describing_an_unknown_layer_is_a_config_error() {
     let dir = repo(&[], "");
-    let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap() + "\n[tool.doeff-linter.layers.describe.ghost]\nsummary = \"無い層\"\n";
+    let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap() + "\n[tool.doeff-linter.layers.describe.ghost]\nsummary = \"nonexistent layer\"\n";
     std::fs::write(dir.path().join("pyproject.toml"), text).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2);
     assert!(stderr.contains("layers.describe") && stderr.contains("ghost"), "{}", stderr);
 }
 
-/// service が先の形(controllers/<service>/{core,intent,protocol}/・controllers/shared/{core,intent}/・controllers/foundation/)と、
-/// 層が先の形(controllers/core/)を並べた設定の repo。
+/// A config repo that lines up the service-first form (controllers/<service>/{core,intent,protocol}/, controllers/shared/{core,intent}/, controllers/foundation/) and
+/// the layer-first form (controllers/core/).
 fn service_repo(files: &[(&str, String)], extra: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let config = format!(
@@ -689,7 +689,7 @@ open_layers = ["intent"]
     dir
 }
 
-/// タグの頭の行(context と role)。
+/// The head lines of the tag (context and role).
 fn tags(context: &str, role: &str) -> String {
     format!("(val MODULE-TAGS {{:context \"{}\" :role \"{}\"}})\n", context, role)
 }
@@ -709,7 +709,7 @@ fn service_first_layout_judges_layers_and_service_boundaries() {
     ];
     let dir = service_repo(&files, "");
     let (_, report) = editor(dir.path());
-    // 別の service の core と protocol を読むと破れ。intent と shared は読んでよい。層が先の形(service 無し)は判じない。
+    // Reading another service's core and protocol is a breach. intent and shared may be read. The layer-first form (no service) is not judged.
     assert_eq!(
         keys(&report, "DOEFF109"),
         vec![
@@ -718,22 +718,22 @@ fn service_first_layout_judges_layers_and_service_boundaries() {
         ]
     );
     let crossing = explanation(&report, "controllers/billing/core/decide.hy::DOEFF109::controllers.custody.core.lease.pick");
-    assert!(crossing["subject"].as_str().unwrap().starts_with("import 先 controllers.custody.core.lease.pick は service custody の層 core(path が controllers/custody/core/ の下) — この file は service billing の層 core — path が controllers/billing/core/ の下"), "{}", crossing["subject"]);
-    assert!(crossing["reason"].as_str().unwrap().contains("service をまたいで判断や翻訳を読むと、custody の中身を変えた時に billing が壊れる。custody に頼むことは custody の intent を通す"), "{}", crossing["reason"]);
-    // 層の判定は service が先の形でも効く(core の置き場の 2 つの形)。
+    assert!(crossing["subject"].as_str().unwrap().starts_with("import target controllers.custody.core.lease.pick is in service custody's layer core (path under controllers/custody/core/) — This file is in layer core of service billing — path is under controllers/billing/core/"), "{}", crossing["subject"]);
+    assert!(crossing["reason"].as_str().unwrap().contains("Reading judgments or translations across services means that when the contents of custody change, billing breaks. Requests to custody go through custody's intents"), "{}", crossing["reason"]);
+    // The layer judgment also works in the service-first form (two forms of the core location).
     let modules = report["modules"].as_array().unwrap();
     let decide = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("billing/core/decide.hy")).unwrap();
     assert_eq!(decide["layer"], "core");
     assert_eq!(decide["service"], "billing");
-    assert!(decide["layer_reason"].as_str().unwrap().contains("controllers/billing/core/ の下は service billing の層 core"), "{}", decide["layer_reason"]);
+    assert!(decide["layer_reason"].as_str().unwrap().contains("under controllers/billing/core/ is layer core of service billing"), "{}", decide["layer_reason"]);
     let old = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("controllers/core/old.hy")).unwrap();
     assert_eq!(old["layer"], "core");
     assert_eq!(old["service"], Value::Null);
-    // :context と dir の service の食い違いは info の知らせ。shared は見ない。
+    // A mismatch between :context and the dir's service is an info notice. shared is not checked.
     assert_eq!(keys(&report, "DOEFF113"), vec!["controllers/custody/core/misplaced.hy::DOEFF113::billing"]);
     assert_eq!(violation(&report, "controllers/custody/core/misplaced.hy::DOEFF113::billing")["severity"], "info");
 
-    // 例外に書いた組は読んでよい。
+    // A pair written in the exceptions may be read.
     let dir = service_repo(&files, "exceptions = [{ from = \"billing\", to = \"custody\" }]\n");
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF109").is_empty());
@@ -741,8 +741,8 @@ fn service_first_layout_judges_layers_and_service_boundaries() {
 
 #[test]
 fn named_paths_judge_definitions_only_in_the_named_files() {
-    // 命令の行で path を名指した実行(commit の hook)は、定義の規則を名指しの下の file だけで判じる。
-    // 名指しの外の file を読まないことを、読めない file(UTF-8 でない)で確かめる — 全体の実行では「読めない」を名乗る。
+    // A run that names paths on the command line (the commit hook) judges the definition rules only on the files under the named paths.
+    // That it does not read files outside the named paths is checked with an unreadable file (not UTF-8) — a whole run claims it is "unreadable".
     let dir = definition_repo(&[("app/a.hy", "(defn helper [x] x)\n"), ("app/b.hy", "(defn other [x] x)\n")], "");
     std::fs::write(dir.path().join("app/broken.hy"), [0xff_u8, 0xfe, 0x00]).unwrap();
     let (_, whole, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
@@ -756,7 +756,7 @@ fn named_paths_judge_definitions_only_in_the_named_files() {
     assert_eq!(keys(&named, "DOEFF110"), vec!["app/a.hy::DOEFF110::helper"]);
 }
 
-/// 定義の書き方の規則(DOEFF110〜112)だけの repo。
+/// A repo with only the definition-writing rules (DOEFF110 to 112).
 fn definition_repo(files: &[(&str, &str)], extra: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let config = format!(
@@ -790,11 +790,11 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
 (defk good [x] {:pre [] :tags {:context "billing" :role "judgment"}} x)
 (defk untagged [x] {:pre []} x)
 (defk half [x] {:tags {:context "billing"}} x)
-(deff callback [x] {:tags {:context "billing" :role "judgment"}} x)  ; defk にできない: 外の library の callback
-; defk にできない: 素の callable を渡す先
+(deff callback [x] {:tags {:context "billing" :role "judgment"}} x)  ; defk にできない: callback of an external library
+; defk にできない: where a plain callable is passed
 (deff above [x] {:tags {:context "billing" :role "judgment"}} x)
 (deff bare [x] {:tags {:context "billing" :role "judgment"}} x)
-(defeffect Charge "請求" {:fields [amount] :answer int})
+(defeffect Charge "Billing" {:fields [amount] :answer int})
 "#;
     let dir = definition_repo(
         &[("app/billing/logic.hy", source), ("vendor/macros/m.hy", "(defn m [] 1)\n"), ("app/billing/tests/t.hy", "(defn t [] 1)\n")],
@@ -802,25 +802,25 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
     );
     let (code, report) = editor(dir.path());
     assert_eq!(code, 1);
-    // defn は違反(decorator つきも)。eval-and-compile の中と、除いた置き場・検は外。
+    // defn is a violation (with a decorator too). Inside eval-and-compile, and in excluded locations and tests, it is outside.
     assert_eq!(keys(&report, "DOEFF110"), vec!["app/billing/logic.hy::DOEFF110::decorated", "app/billing/logic.hy::DOEFF110::helper"]);
-    // 理由の註は同じ行か直前の行。
+    // The reason comment is on the same line or the line just before.
     assert_eq!(keys(&report, "DOEFF111"), vec!["app/billing/logic.hy::DOEFF111::bare"]);
-    // タグ必須: :tags が無い・必須の鍵が欠けた・defeffect。
+    // Tags required: no :tags, a missing required key, and defeffect.
     assert_eq!(
         keys(&report, "DOEFF112"),
         vec!["app/billing/logic.hy::DOEFF112::Charge", "app/billing/logic.hy::DOEFF112::half", "app/billing/logic.hy::DOEFF112::untagged"]
     );
     let defn = explanation(&report, "app/billing/logic.hy::DOEFF110::helper");
-    assert_eq!(defn["subject"], "定義 helper(defn)");
-    assert!(defn["reason"].as_str().unwrap().starts_with("defn は契約の辞書を持てず、:tags を書けない"));
-    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする(素の関数でなければならない理由が見当たらない)"));
+    assert_eq!(defn["subject"], "definition helper (defn)");
+    assert!(defn["reason"].as_str().unwrap().starts_with("defn cannot have a contract dict and cannot write :tags"));
+    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("Make it a defk (no reason is visible why it must be a bare function)"));
     let half = explanation(&report, "app/billing/logic.hy::DOEFF112::half");
-    assert_eq!(half["subject"], "定義 half(defk)の :tags に role が無い");
+    assert_eq!(half["subject"], "definition half (defk) lacks role in :tags");
     let untagged = explanation(&report, "app/billing/logic.hy::DOEFF112::untagged");
-    assert_eq!(untagged["subject"], "定義 untagged(defk)の :tags に context・role が無い(契約の辞書に :tags そのものが無い)");
+    assert_eq!(untagged["subject"], "definition untagged (defk) lacks context, role in :tags (the contract dict has no :tags at all)");
 
-    // module の頭のタグで補える(module_default = true・既定)/ 補えない(false)。登録簿の鍵は warning。
+    // Can be supplemented by the module head tag (module_default = true, the default) / cannot (false). Registry keys are warnings.
     let with_module = "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(defk untagged [x] {:pre []} x)\n";
     let dir = definition_repo(&[("app/a.hy", with_module)], "");
     let (_, report) = editor(dir.path());
@@ -835,9 +835,9 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
 
 #[test]
 fn defrecord_header_tags_are_read_and_required_only_when_configured() {
-    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}。頭の辞書は省ける形なので、
-    // 既定の DOEFF112 は defrecord を数えない。require_on に足した repo では頭の辞書の :tags を必須にする。
-    let source = r#"(defrecord ChatId "chat の id" {:tags {:context "chat" :role "type"} :check [(ok? value)]} #^ str value)
+    // The head dictionary {:tags … :check […]} of doeff-hy's defrecord. The head dictionary can be omitted, so
+    // the default DOEFF112 does not count defrecord. A repo that adds it to require_on requires :tags in the head dictionary.
+    let source = r#"(defrecord ChatId "chat id" {:tags {:context "chat" :role "type"} :check [(ok? value)]} #^ str value)
 (defrecord Span {:check [(<= start end)]} #^ int start #^ int end)
 (defrecord Plain #^ str key)
 "#;
@@ -854,9 +854,9 @@ fn defrecord_header_tags_are_read_and_required_only_when_configured() {
 
 #[test]
 fn defwire_header_tags_are_read_like_defrecord() {
-    // doeff-hy の defwire(JSON の境目の型)は defrecord へ展開する。頭の辞書の :tags は定義のタグで、
-    // :names と :unknown は wire の形の鍵(タグではない)。require_on に defwire を足した repo ではタグの無い defwire を名指す。
-    let source = r#"(defwire LandingRow "台帳の 1 行" {:tags {:context "chat" :role "type"} :names :camel :unknown :reject} #^ str lane-id)
+    // doeff-hy's defwire (a type at the JSON boundary) expands to defrecord. The head dictionary's :tags are the definition's tags,
+    // and :names and :unknown are keys of the wire shape (not tags). A repo that adds defwire to require_on names a defwire without tags.
+    let source = r#"(defwire LandingRow "one row of the ledger" {:tags {:context "chat" :role "type"} :names :camel :unknown :reject} #^ str lane-id)
 (defwire Bare {:names :camel} #^ str key)
 "#;
     let dir = definition_repo(&[("app/chat/model.hy", source)], "");
@@ -873,7 +873,7 @@ fn defwire_header_tags_are_read_like_defrecord() {
 #[test]
 fn registered_severity_per_rule_and_registry_relative_to_the_config_file() {
     let source = "(defn old [x] x)\n(defn new-one [x] x)\n";
-    // 設定 file と登録簿を repo の外の同じ dir に置き、registry.config_files で設定 file からの相対で読む。
+    // Put the config file and the registry in the same dir outside the repo, and read them relative to the config file with registry.config_files.
     let dir = definition_repo(&[("app/a.hy", source)], "");
     std::fs::remove_file(dir.path().join("pyproject.toml")).unwrap();
     let outside = tempfile::TempDir::new().unwrap();
@@ -892,12 +892,12 @@ registered_severity = "info"
     let args = ["--output-format", "editor-json", "--no-log", "--config", config_path.to_str().unwrap(), "--root", dir.path().to_str().unwrap()];
     let (code, stdout, stderr) = run(dir.path(), &args, None);
     let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}", e, stderr));
-    // 登録簿に載った破れは設定の重さ(info)、載っていない破れは今どおり error。
+    // A breach listed in the registry gets the config severity (info), and one not listed is an error as before.
     assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["severity"], "info");
     assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["registered"], true);
     assert_eq!(violation(&report, "app/a.hy::DOEFF110::new_one")["severity"], "error");
     assert_eq!(code, 1);
-    // 知らない重さは設定の誤り。
+    // An unknown severity is a config error.
     std::fs::write(&config_path, config.replace("\"info\"", "\"loud\"")).unwrap();
     let (code, _, stderr) = run(dir.path(), &args, None);
     assert_eq!(code, 2);
@@ -906,7 +906,7 @@ registered_severity = "info"
 
 #[test]
 fn level_is_declared_per_rule_and_registry_lowers_only_the_severity() {
-    // 重大さ(level)は repo の宣言で、登録簿で重さ(severity)を下げても下げない — エディタが「手つかずの critical」を数える軸。
+    // The gravity (level) is the repo's declaration, and lowering the severity in the registry does not lower it — the axis by which the editor counts "untouched critical".
     let source = "(defn old [x] x)\n(defn new-one [x] x)\n";
     let config = r#"
 [tool.doeff-linter.rules.DOEFF110]
@@ -925,38 +925,38 @@ level = "critical"
     assert_eq!(fresh["severity"], "error");
     assert_eq!(fresh["standing"], "new");
     assert_eq!(fresh["level"], "critical");
-    // 宣言も既定の表も無い規則は規則そのものの重さから(error = major)。
+    // A rule with neither a declaration nor a default table uses the rule's own severity (error = major).
     let dir = definition_repo(&[("app/a.hy", source)], "");
     let (_, report) = editor(dir.path());
     assert_eq!(violation(&report, "app/a.hy::DOEFF110::old")["level"], "major");
-    // 既定の表の規則も repo の宣言が勝つ(既定と違う所だけを書く)。
+    // For a rule in the default table, the repo's declaration also wins (write only where it differs from the default).
     let dir = repo(
         &[("app/foundation/io.hy", FOUNDATION_HY), ("app/core/bad.hy", "(import app.foundation.io [send])\n(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(defn decide [x] x)\n")],
         "[tool.doeff-linter.rules.DOEFF101]\nlevel = \"major\"\n",
     );
     let (_, report) = editor(dir.path());
     assert_eq!(violation(&report, "app/core/bad.hy::core-imports-only-intent::app.foundation.io.send")["level"], "major");
-    // 知らない重大さは設定の誤り。
+    // An unknown gravity is a config error.
     let dir = definition_repo(&[("app/a.hy", source)], &config.replace("\"critical\"", "\"loud\""));
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2);
     assert!(stderr.contains("rules.DOEFF110.level"), "{}", stderr);
 }
 
-/// architecture.hy を repo の根に置いた repo(TOML には規則の入り切りだけ)。
+/// A repo with architecture.hy at the repo root (the TOML has only rule on/off).
 fn architecture_repo(files: &[(&str, String)], toml_extra: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let architecture = r#"
 (defarchitecture sample
   :root "app"
-  :layers [(layer core :summary "業務の判断" :roles [judgment type] :imports [core intent])
-           (layer intent :summary "要求の型" :roles [intent type] :imports [intent] :types-only True)
-           (layer foundation :summary "汎用の I/O" :roles [foundation] :imports [foundation])]
+  :layers [(layer core :summary "business judgment" :roles [judgment type] :imports [core intent])
+           (layer intent :summary "request types" :roles [intent type] :imports [intent] :types-only True)
+           (layer foundation :summary "generic I/O" :roles [foundation] :imports [foundation])]
   :shared "shared"
   :foundation foundation)
-(defservice billing "請求" {:depends-on [custody ledger] :layers [core intent]})
-(defservice custody "預かり所" {:layers [core intent]})
-(defservice ledger "台帳" {:layers [core intent]})
+(defservice billing "Billing" {:depends-on [custody ledger] :layers [core intent]})
+(defservice custody "Custody" {:layers [core intent]})
+(defservice ledger "Ledger" {:layers [core intent]})
 "#;
     std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
     let toml = format!(
@@ -972,7 +972,7 @@ fn architecture_repo(files: &[(&str, String)], toml_extra: &str) -> tempfile::Te
     dir
 }
 
-/// `:root-modules` に名を宣言した root 直下の module は DOEFF114 にならず、宣言を外すと(か別の名の file は)DOEFF114 が出る。
+/// A root-level module whose name is declared in `:root-modules` does not become DOEFF114; removing the declaration (or a file with another name) produces DOEFF114.
 #[test]
 fn root_modules_declared_pass_and_undeclared_fail_doeff114() {
     let files = [("app/macros.hy", "(defn m [] 1)\n".to_string()), ("app/other.hy", "(defn o [] 1)\n".to_string())];
@@ -1008,7 +1008,7 @@ fn architecture_declares_services_layers_and_dependencies() {
     let dir = architecture_repo(&files, "");
     let (code, report) = editor(dir.path());
     assert_eq!(code, 1, "{}", report);
-    // DOEFF114: 宣言の外の module は全部(root の直下・service の dir の直下・宣言に無い dir の中 — 層が先の dir も旧い dir も例外なし)。
+    // DOEFF114: every module outside the declaration (directly under root, directly under a service dir, inside a dir not in the declaration — layer-first dirs and old dirs alike, no exceptions).
     assert_eq!(
         keys(&report, "DOEFF114"),
         vec![
@@ -1021,59 +1021,59 @@ fn architecture_declares_services_layers_and_dependencies() {
             "app/top.hy::DOEFF114"
         ]
     );
-    // DOEFF115: 宣言に無い service の dir と、service の中の宣言に無い層の dir(dir ごとに 1 件)。
+    // DOEFF115: a service dir not in the declaration, and a layer dir not in the declaration inside a service (one per dir).
     assert_eq!(keys(&report, "DOEFF115"), vec!["app/billing/scripts::DOEFF115", "app/core::DOEFF115", "app/mystery::DOEFF115", "app/old::DOEFF115"]);
-    // 移し先の案: service は :context のタグ、層は :role のタグ(推せなければ今の path の段の層の名)。
+    // Suggested destination: the service from the :context tag, the layer from the :role tag (if it cannot be inferred, the layer of the current path segment).
     assert_eq!(
         violation(&report, "app/core/legacy_core.hy::DOEFF114")["hint"],
-        "app/kanban/core/legacy_core.hy へ移す(service は :context のタグ、層は定義の :role のタグから推した案 — 推せない時だけ今の置き場所の層)"
+        "Move it to app/kanban/core/legacy_core.hy (a proposal inferred from the :context tag for the service and the definition's :role tag for the layer; the current location's layer only when it cannot be inferred)"
     );
-    assert!(violation(&report, "app/billing/scripts/tool.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/billing/core/tool.hy へ移す"));
-    assert!(violation(&report, "app/old/anything.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/<service>/<層>/anything.hy へ移す"));
+    assert!(violation(&report, "app/billing/scripts/tool.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("Move it to app/billing/core/tool.hy"));
+    assert!(violation(&report, "app/old/anything.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("Move it to app/<service>/<layer>/anything.hy"));
     let undeclared = explanation(&report, "app/mystery::DOEFF115");
-    assert!(undeclared["subject"].as_str().unwrap().contains("service mystery は architecture.hy に宣言されていない"), "{}", undeclared["subject"]);
-    // DOEFF116: 依存先の intent 以外を読む・:depends-on に無い service を読む。shared と foundation は service ではない。
+    assert!(undeclared["subject"].as_str().unwrap().contains("service mystery is not declared in architecture.hy"), "{}", undeclared["subject"]);
+    // DOEFF116: reading something other than the dependency's intent, or reading a service not in :depends-on. shared and foundation are not services.
     assert_eq!(
         keys(&report, "DOEFF116"),
         vec!["app/billing/core/decide.hy::DOEFF116::app.custody.core.pick.pick", "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge"]
     );
     let undeclared_dependency = explanation(&report, "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge");
-    assert!(undeclared_dependency["reason"].as_str().unwrap().contains("service custody の依存の宣言(:depends-on = 無し)に billing が無い"), "{}", undeclared_dependency["reason"]);
-    // DOEFF117(info): billing は ledger に依存すると宣言したが読んでいない。位置は architecture.hy。
+    assert!(undeclared_dependency["reason"].as_str().unwrap().contains("The declaration of service custody's dependencies (:depends-on = none) does not include billing"), "{}", undeclared_dependency["reason"]);
+    // DOEFF117 (info): billing declared a dependency on ledger but does not read it. The position is architecture.hy.
     let unused = violation(&report, "architecture.hy::DOEFF117::billing>ledger");
-    // 鳴らない例: billing が読んでいる依存 custody には出ない(宣言して使っていない ledger の 1 件だけ)。
+    // Silent example: it does not appear for custody, a dependency billing does read (only the one for ledger, declared but unused).
     assert_eq!(keys(&report, "DOEFF117"), vec!["architecture.hy::DOEFF117::billing>ledger"]);
     assert_eq!(unused["severity"], "info");
     assert!(unused["path"].as_str().unwrap().ends_with("architecture.hy"));
-    // DOEFF113: 宣言した service の中の :context の食い違いは warning。
+    // DOEFF113: a :context mismatch inside a declared service is a warning.
     assert_eq!(violation(&report, "app/billing/core/wrong_context.hy::DOEFF113::custody")["severity"], "warning");
-    // 宣言の外の module は :role のタグから層を推して層の規則を受ける(role judgment → core・core から foundation を読むと DOEFF101)。
+    // A module outside the declaration infers its layer from the :role tag and receives the layer rules (role judgment -> core; core reading foundation gives DOEFF101).
     assert_eq!(keys(&report, "DOEFF101"), vec!["app/core/legacy_core.hy::DOEFF101::app.foundation.io.send"]);
     let module = report["modules"].as_array().unwrap().iter().find(|m| m["path"].as_str().unwrap().ends_with("app/core/legacy_core.hy")).unwrap();
-    assert!(module["layer_reason"].as_str().unwrap().starts_with("タグで決めた — app/core/ は architecture.hy の宣言した置き場所ではない"), "{}", module["layer_reason"]);
-    // 既存の分は登録簿に載せても、registered_severity = warning なら黄で見え続ける。
+    assert!(module["layer_reason"].as_str().unwrap().starts_with("Decided by tag — app/core/ is not a location declared in architecture.hy"), "{}", module["layer_reason"]);
+    // Even when existing ones are listed in the registry, registered_severity = warning keeps them visible as yellow.
     let dir = architecture_repo(&files, "[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n[tool.doeff-linter.rules.DOEFF114]\nregistered_severity = \"warning\"\n");
     std::fs::write(dir.path().join("known.txt"), "app/old/anything.hy::DOEFF114\n").unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(violation(&report, "app/old/anything.hy::DOEFF114")["severity"], "warning");
     assert_eq!(violation(&report, "app/top.hy::DOEFF114")["severity"], "error");
-    // :legacy は廃止 — 書くと設定の誤り。
+    // :legacy is removed — writing it is a config error.
     std::fs::write(dir.path().join("architecture.hy"), "(defarchitecture s :root \"app\" :layers [(layer core)] :legacy [\"app/old\"])\n").unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2);
-    assert!(stderr.contains(":legacy は廃止した"), "{}", stderr);
-    // editor-json の architecture(service の一覧と層の宣言)。
+    assert!(stderr.contains(":legacy has been retired"), "{}", stderr);
+    // The editor-json architecture (the list of services and the layer declarations).
     let architecture = &report["architecture"];
     assert_eq!(architecture["name"], "sample");
     assert_eq!(architecture["services"][0]["name"], "billing");
-    assert_eq!(architecture["services"][0]["description"], "請求");
+    assert_eq!(architecture["services"][0]["description"], "Billing");
     assert_eq!(architecture["services"][0]["depends_on"], serde_json::json!(["custody", "ledger"]));
-    assert_eq!(architecture["layers"][0]["summary"], "業務の判断");
+    assert_eq!(architecture["layers"][0]["summary"], "business judgment");
     assert_eq!(report["layers"][0]["name"], "core");
 }
 
-/// :dir で dir と名の違う service(doeff-cluster が区画を _ の dir へ隠した形 — doeff の ADR-DOE-API-001 R15)。置き場は :dir の dir で
-/// (DOEFF114 にしない)、DOEFF113 はタグの :context を dir でなく service の名と照らす。
+/// A service whose name differs from its :dir dir (the form where doeff-cluster hides a partition in a _ dir — ADR-DOE-API-001 R15 of doeff). The location is the :dir dir
+/// (not DOEFF114), and DOEFF113 compares the tag's :context against the service name, not the dir.
 #[test]
 fn a_service_with_its_own_dir_matches_the_context_by_its_name() {
     let files = [
@@ -1083,34 +1083,34 @@ fn a_service_with_its_own_dir_matches_the_context_by_its_name() {
     ];
     let dir = architecture_repo(&files, "");
     let architecture = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap();
-    let hidden = architecture.replace("(defservice custody \"預かり所\" {:layers", "(defservice custody \"預かり所\" {:dir \"_custody\" :layers");
+    let hidden = architecture.replace("(defservice custody \"Custody\" {:layers", "(defservice custody \"Custody\" {:dir \"_custody\" :layers");
     assert_ne!(hidden, architecture);
     std::fs::write(dir.path().join("architecture.hy"), hidden).unwrap();
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF114").is_empty(), "{}", report);
-    // :context が service の名(custody)の file は鳴らない。名と違う :context(billing)だけが warning。
+    // A file whose :context is the service name (custody) is silent. Only a :context that differs from the name (billing) is a warning.
     assert_eq!(keys(&report, "DOEFF113"), vec!["app/_custody/core/wrong_context.hy::DOEFF113::billing"]);
     let wrong = violation(&report, "app/_custody/core/wrong_context.hy::DOEFF113::billing");
     assert_eq!(wrong["severity"], "warning");
-    assert!(wrong["message"].as_str().unwrap().contains("置き場の service custody と食い違う"), "{}", wrong["message"]);
-    assert!(wrong["explanation"]["reason"].as_str().unwrap().starts_with("dir は service custody を指す"), "{}", wrong["explanation"]["reason"]);
+    assert!(wrong["message"].as_str().unwrap().contains("disagrees with the location's service custody"), "{}", wrong["message"]);
+    assert!(wrong["explanation"]["reason"].as_str().unwrap().starts_with("The dir points to service custody"), "{}", wrong["explanation"]["reason"]);
 }
 
-/// #1799: DOEFF101 と DOEFF116 は同じ import を二重に数えない(層の向きを DOEFF101 が持つ)。DOEFF116 の案内は依存が輪になる時に
-/// 「宣言に足す」と言わない。DOEFF114 の移し先の層は定義の :role から推す(今の置き場所の層は推せない時だけ)。
+/// #1799: DOEFF101 and DOEFF116 do not count the same import twice (DOEFF101 owns the layer direction). The DOEFF116 guidance does not say
+/// "add it to the declaration" when the dependency would form a cycle. The destination layer for DOEFF114 is inferred from the definition's :role (the current location's layer only when it cannot be inferred).
 #[test]
 fn dependency_and_place_rules_do_not_double_count_or_misguide() {
     let files = [
-        // intent の層から別の service の core を読む — 層の向き(DOEFF101)で 1 件。宣言に無い依存(DOEFF116)でも数えない。
+        // Reading another service's core from an intent layer — one hit by the layer direction (DOEFF101). It is not also counted as an undeclared dependency (DOEFF116).
         ("app/custody/intent/peek.hy", tags("custody", "intent") + "(import app.billing.core.rate [rate])\n(defclass Peek [])\n"),
         ("app/billing/core/rate.hy", tags("billing", "judgment") + "(defn rate [] 1)\n"),
-        // billing は custody に依存する — custody が billing を読むのを :depends-on に足すと輪になる。
+        // billing depends on custody — adding custody's read of billing to :depends-on would form a cycle.
         ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
         ("app/custody/core/uses_billing.hy", tags("custody", "judgment") + "(import app.billing.intent.charge [Charge])\n(defn u [] 1)\n"),
-        // ledger は custody に依存しない — 足す案内のまま。
+        // ledger does not depend on custody — the guidance stays "add it".
         ("app/ledger/intent/entry.hy", tags("ledger", "intent") + "(defclass Entry [])\n"),
         ("app/custody/core/uses_ledger.hy", tags("custody", "judgment") + "(import app.ledger.intent.entry [Entry])\n(defn v [] 1)\n"),
-        // 層が先の dir の intent/ に置いた判断 — 移し先の層は role(judgment → core)。role が 2 つの層に合う時だけ path の intent。
+        // A judgment placed in intent/ of a layer-first dir — the destination layer is by role (judgment -> core). Only when the role fits two layers does the path's intent apply.
         ("app/intent/judge.hy", tags("kanban", "judgment") + "(defn j [] 1)\n"),
         ("app/intent/shape.hy", tags("kanban", "type") + "(defclass Shape [])\n"),
     ];
@@ -1125,12 +1125,12 @@ fn dependency_and_place_rules_do_not_double_count_or_misguide() {
         ]
     );
     let cyclic = violation(&report, "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge")["hint"].as_str().unwrap().to_string();
-    assert!(cyclic.contains("輪になる") && cyclic.contains("custody の intent か shared へ移し") && !cyclic.contains(":depends-on に足し、"), "{}", cyclic);
+    assert!(cyclic.contains("a cycle") && cyclic.contains("into custody's intent or into shared") && !cyclic.contains("Add the dependency to :depends-on"), "{}", cyclic);
     let plain = violation(&report, "app/custody/core/uses_ledger.hy::DOEFF116::app.ledger.intent.entry.Entry")["hint"].as_str().unwrap().to_string();
-    assert!(plain.starts_with("依存先を :depends-on に足し"), "{}", plain);
-    assert!(violation(&report, "app/intent/judge.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/kanban/core/judge.hy へ移す"));
-    assert!(violation(&report, "app/intent/shape.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("app/kanban/intent/shape.hy へ移す"));
-    // DOEFF101 を切ると、同じ import は DOEFF116 が数える(二重を避けるのは DOEFF101 が判じる時だけ)。
+    assert!(plain.starts_with("Add the dependency to :depends-on"), "{}", plain);
+    assert!(violation(&report, "app/intent/judge.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("Move it to app/kanban/core/judge.hy"));
+    assert!(violation(&report, "app/intent/shape.hy::DOEFF114")["hint"].as_str().unwrap().starts_with("Move it to app/kanban/intent/shape.hy"));
+    // Turning DOEFF101 off makes DOEFF116 count the same import (avoiding the double count applies only when DOEFF101 judges).
     let dir = architecture_repo(&files, "");
     let toml = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap().replace("\"DOEFF101\", ", "");
     std::fs::write(dir.path().join("pyproject.toml"), toml).unwrap();
@@ -1144,25 +1144,25 @@ fn architecture_misreadings_and_double_declarations_are_config_errors() {
     std::fs::write(dir.path().join("architecture.hy"), "(defarchitecture s :root \"app\" :layers [(layer core)])\n(defservice a {:layers [ghost]})\n(defservice a {})\n").unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2);
-    assert!(stderr.contains("ghost") && stderr.contains("service a が 2 度") && stderr.contains("architecture.hy:3:1"), "{}", stderr);
-    // 層を TOML と architecture.hy の両方で宣言するのは誤り(宣言は 1 か所)。
+    assert!(stderr.contains("ghost") && stderr.contains("service a is declared twice") && stderr.contains("architecture.hy:3:1"), "{}", stderr);
+    // Declaring layers in both TOML and architecture.hy is an error (the declaration lives in one place).
     let dir = architecture_repo(&[], "[tool.doeff-linter.layers]\norder = [\"core\"]\npaths = { core = \"app/core\" }\n");
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2);
-    assert!(stderr.contains("二重の宣言"), "{}", stderr);
-    // architecture.hy が無い repo は今どおり(editor-json の architecture は null)。
+    assert!(stderr.contains("duplicate declaration"), "{}", stderr);
+    // A repo without architecture.hy stays as before (the editor-json architecture is null).
     let (_, report) = editor(repo(&[], "").path());
     assert_eq!(report["architecture"], Value::Null);
 }
 
-/// 理由の種類を宣言した architecture.hy と定義の規則の repo。
+/// A repo with an architecture.hy that declares the kinds of reasons, plus the definition rules.
 fn reason_repo(source: &str, registry: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
         r#"(defarchitecture s :root "app" :layers [(layer core)]
-  :plain-callable-reasons [(reason library-callback "外の library が素の関数として呼ぶ(sorted の key・dataclass の hook)")
-                           (reason process-entry "process の入口の main")])
+  :plain-callable-reasons [(reason library-callback "called as a plain function by an external library (sorted key, dataclass hook)")
+                           (reason process-entry "main, the entry of a process")])
 "#,
     )
     .unwrap();
@@ -1192,7 +1192,7 @@ fn deff_reasons_are_free_text_and_only_missing_empty_or_ditto_is_an_error() {
 "#;
     let dir = reason_repo(source, "app/core/x.hy::DOEFF111::registered_same\n");
     let (_, report) = editor(dir.path());
-    // 決定的に出すのは註が無い・理由が空・「同上」とその変形だけ。種類の札は要求しない(一覧に無い種類も受け付ける)。
+    // What it emits deterministically is only: no comment, an empty reason, and "same as above" (同上) and its variants. A kind label is not required (kinds not in the list are accepted too).
     assert_eq!(
         keys(&report, "DOEFF111"),
         vec![
@@ -1208,11 +1208,11 @@ fn deff_reasons_are_free_text_and_only_missing_empty_or_ditto_is_an_error() {
     }
     assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::registered_same")["severity"], "warning");
     let same = violation(&report, "app/core/x.hy::DOEFF111::same");
-    assert!(same["explanation"]["reason"].as_str().unwrap().contains("library-callback(外の library が素の関数として呼ぶ"), "{}", same["explanation"]["reason"]);
-    assert!(same["hint"].as_str().unwrap().contains("「同上」は使わない"));
-    // defn: 同じ行の註が一覧の種類を名乗れば「deff にする」、そうでなければ「defk にする」。
-    assert!(violation(&report, "app/core/x.hy::DOEFF110::main")["hint"].as_str().unwrap().starts_with("deff にする(理由 library-callback"));
-    assert!(violation(&report, "app/core/x.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする"));
+    assert!(same["explanation"]["reason"].as_str().unwrap().contains("library-callback (called as a plain function by an external library"), "{}", same["explanation"]["reason"]);
+    assert!(same["hint"].as_str().unwrap().contains("do not use \"同上\" (\"ditto\")"));
+    // defn: if the same-line comment names a kind from the list, "make it a deff"; otherwise "make it a defk".
+    assert!(violation(&report, "app/core/x.hy::DOEFF110::main")["hint"].as_str().unwrap().starts_with("Make it a deff (reason library-callback"));
+    assert!(violation(&report, "app/core/x.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("Make it a defk"));
 }
 
 #[test]
@@ -1249,12 +1249,12 @@ fn tests_are_deftest_only_in_the_configured_test_places() {
     );
     assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_a")["severity"], "error");
     assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_old")["severity"], "warning");
-    assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_d")["explanation"]["subject"], "定義 test_d(fn)— 検の置き場の、名が test で始まる関数");
-    assert!(violation(&report, "app/tests/t.hy::DOEFF118::test_a")["hint"].as_str().unwrap().starts_with("deftest にする"));
+    assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_d")["explanation"]["subject"], "definition test_d (fn) — a function in a test location whose name starts with test");
+    assert!(violation(&report, "app/tests/t.hy::DOEFF118::test_a")["hint"].as_str().unwrap().starts_with("Make it a deftest"));
     assert_eq!(code, 1);
 }
 
-/// DOEFF119 の repo(定義の規則の母集団 = app・既知の破れの登録簿つき)。
+/// The DOEFF119 repo (population of the definition rules = app, with a registry of known breaches).
 fn class_repo(files: &[(&str, &str)], registry: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
@@ -1308,8 +1308,8 @@ fn classes_are_judged_by_what_their_methods_touch_not_by_name() {
         .filter(|v| v["rule"] == "DOEFF119" && v["path"].as_str().unwrap().ends_with("shapes.hy"))
         .map(|v| (v["key"].as_str().unwrap().rsplit("::").next().unwrap().to_string(), v["severity"].as_str().unwrap().to_string()))
         .collect();
-    // 値の class(Point2D)・例外・外の library の基底(EffectBase)は出ない。欄だけ(Row — __post_init__ の検めだけ)は info。
-    // 生の副作用に触る(Client の method・Poller の欄の初期値)は error、self の欄を書き換える(Counter・repo の中の基底の Child)は warning。
+    // Value classes (Point2D), exceptions, and external-library bases (EffectBase) do not appear. Fields only (Row — only __post_init__ validation) is info.
+    // Touching raw side effects (Client's method, Poller's field initial value) is error; rewriting self's fields (Counter, and Child whose base is inside the repo) is warning.
     let expected: std::collections::BTreeMap<String, String> = [
         ("Row", "info"),
         ("Client", "error"),
@@ -1324,18 +1324,18 @@ fn classes_are_judged_by_what_their_methods_touch_not_by_name() {
     assert_eq!(found, expected);
     assert_eq!(code, 1);
     let client = violation(&report, "app/core/shapes.hy::DOEFF119::Client");
-    assert!(client["explanation"]["subject"].as_str().unwrap().contains("外の世界に触る class(証拠 "), "{}", client["explanation"]["subject"]);
+    assert!(client["explanation"]["subject"].as_str().unwrap().contains("a class that touches the outside world (evidence "), "{}", client["explanation"]["subject"]);
     assert!(client["explanation"]["subject"].as_str().unwrap().contains("httpx.Client"));
     assert!(client["hint"].as_str().unwrap().contains("(session val …)"));
     let counter = violation(&report, "app/core/shapes.hy::DOEFF119::Counter");
     assert!(counter["explanation"]["subject"].as_str().unwrap().contains("bump: self.n"), "{}", counter["explanation"]["subject"]);
     assert!(counter["explanation"]["subject"].as_str().unwrap().contains("note: self.seen"));
-    assert!(counter["hint"].as_str().unwrap().starts_with("値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数"));
-    assert!(violation(&report, "app/core/shapes.hy::DOEFF119::Row")["hint"].as_str().unwrap().starts_with("defrecord にする"));
+    assert!(counter["hint"].as_str().unwrap().starts_with("Values are defrecord (immutable), behavior is pure functions that return new values"));
+    assert!(violation(&report, "app/core/shapes.hy::DOEFF119::Row")["hint"].as_str().unwrap().starts_with("Make it a defrecord"));
     assert_eq!(violation(&report, "app/core/shapes.hy::DOEFF119::Known")["registered"], true);
 }
 
-/// DOEFF120 の repo — architecture.hy(foundation と :wire-modules つき)・DOEFF120 だけを入れた TOML・既知の破れの登録簿。
+/// The DOEFF120 repo — architecture.hy (with foundation and :wire-modules), a TOML with only DOEFF120, and a registry of known breaches.
 fn json_value_repo(files: &[(&str, &str)], registry: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
@@ -1348,7 +1348,7 @@ fn json_value_repo(files: &[(&str, &str)], registry: &str) -> tempfile::TempDir 
            (layer foundation :roles [foundation])]
   :foundation foundation
   :wire-modules ["app.foundation.records_client" app.billing.protocol.wire_*])
-(defservice billing "請求" {:layers [core intent protocol]})
+(defservice billing "Billing" {:layers [core intent protocol]})
 "#,
     )
     .unwrap();
@@ -1369,32 +1369,32 @@ fn json_value_repo(files: &[(&str, &str)], registry: &str) -> tempfile::TempDir 
 #[test]
 fn json_value_is_allowed_only_in_parsers_and_listed_foundation_modules() {
     let files = [
-        // core の Hy — import と注釈(#^)。docstring の語は数えない。
+        // core Hy — import and annotations (#^). Words in a docstring are not counted.
         (
             "app/billing/core/decide.hy",
-            "(import doeff_hy.wire [JsonValue])\n(defk decide [#^ JsonValue payload] {:pre [] :post []}\n  \"JsonValue を受けて決める\"\n  (get payload \"k\"))\n",
+            "(import doeff_hy.wire [JsonValue])\n(defk decide [#^ JsonValue payload] {:pre [] :post []}\n  \"Receives a JsonValue and decides\"\n  (get payload \"k\"))\n",
         ),
-        // 型の別名の文字列の中の語も数える(名 1 つ + 文字列の中の語 2 つ = 3 か所・どれも 3 行目)。
+        // Words inside a type alias string are also counted (1 name + 2 words in the string = 3 places, all on line 3).
         (
             "app/billing/protocol/shape.py",
             "from typing import TypeAlias\n\nJsonValue: TypeAlias = \"dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None\"\n",
         ),
-        // JsonObject(dict[str, JsonValue])も同じ逃げ道 — 文字列の注釈と、Hy の #( … ) の中。
+        // JsonObject (dict[str, JsonValue]) is the same loophole — in a string annotation and inside Hy #( … ).
         ("app/billing/core/obj.py", "def read(payload: \"JsonObject\") -> int:\n    return 1\n"),
         ("app/billing/intent/body.hy", "(setv Body (get dict #(str JsonObject)))\n"),
-        // 文字列・註・docstring だけの言及は数えない。
-        ("app/billing/core/doc_only.hy", ";; JsonValue は使わない\n(defk f [x] \"JsonValue ではなく型のある値を受ける\" x)\n"),
-        ("app/billing/core/doc_only.py", "\"\"\"JsonValue の話だけ。\"\"\"\n# JsonValue\ndef f(x: int) -> int:\n    \"\"\"JsonObject とは書かない\"\"\"\n    return x\n"),
-        // :wire-modules に在り foundation の層に在る → 許す。foundation でも :wire-modules に無ければ許さない。
+        // Mentions only in strings, comments, and docstrings are not counted.
+        ("app/billing/core/doc_only.hy", ";; JsonValue is not used\n(defk f [x] \"Takes a typed value, not JsonValue\" x)\n"),
+        ("app/billing/core/doc_only.py", "\"\"\"Only talks about JsonValue.\"\"\"\n# JsonValue\ndef f(x: int) -> int:\n    \"\"\"Does not write JsonObject\"\"\"\n    return x\n"),
+        // In :wire-modules and in the foundation layer -> allowed. Even in foundation, not allowed if it is not in :wire-modules.
         ("app/foundation/records_client.hy", "(import doeff_hy.wire [JsonValue])\n(defk send [#^ JsonValue body] body)\n"),
         ("app/foundation/other.py", "from doeff_hy.wire import JsonValue\n"),
-        // :wire-modules の pattern に当たるが foundation の外 → 許さない(訳を説明に出す)。
+        // Matches a :wire-modules pattern but outside foundation -> not allowed (the reason goes in the explanation).
         ("app/billing/protocol/wire_codec.hy", "(import doeff_hy.wire [JsonValue])\n"),
-        // 組み込みの汎用の解き手(module の綴りの末尾が doeff_records._wire)は、どこに置かれても許す。
+        // The built-in generic resolver (a module spelling ending in doeff_records._wire) is allowed wherever it is placed.
         ("vendor/doeff_records/_wire.hy", "(setv JsonValue object)\n"),
-        // 隠し dir の下は母集団の外。
+        // Below a hidden dir is outside the population.
         (".venv/lib/x.py", "JsonValue = dict\n"),
-        // 登録簿に載った既知の分は registered_severity(この設定では info)。
+        // Known ones listed in the registry get registered_severity (info in this config).
         ("app/billing/core/known.hy", "(setv x (: payload JsonValue))\n"),
     ];
     let dir = json_value_repo(&files, "app/billing/core/known.hy::DOEFF120\n");
@@ -1412,30 +1412,30 @@ fn json_value_is_allowed_only_in_parsers_and_listed_foundation_modules() {
             "app/foundation/other.py::DOEFF120",
         ]
     );
-    // module ごとに 1 件・位置は最初の使用・数とほかの行は説明に。
+    // One per module; the position is the first use; the count and other lines go in the explanation.
     let decide = violation(&report, "app/billing/core/decide.hy::DOEFF120");
     assert_eq!(decide["severity"], "error");
     assert_eq!(decide["range"]["start"], serde_json::json!({"line": 0, "character": 23}));
-    assert_eq!(decide["explanation"]["subject"], "module app.billing.core.decide — JsonValue を 2 か所で使う(最初 1 行目・ほかに 2 行目)");
-    assert!(decide["explanation"]["reason"].as_str().unwrap().ends_with("この module は :wire-modules に無い。"), "{}", decide["explanation"]["reason"]);
-    assert!(decide["hint"].as_str().unwrap().starts_with("JSON の形を defwire で型に起こし"), "{}", decide["hint"]);
+    assert_eq!(decide["explanation"]["subject"], "module app.billing.core.decide — JsonValue used in 2 places (first on line 1, others on lines 2)");
+    assert!(decide["explanation"]["reason"].as_str().unwrap().ends_with("This module is not in :wire-modules."), "{}", decide["explanation"]["reason"]);
+    assert!(decide["hint"].as_str().unwrap().starts_with("Turn the JSON shape into a type with defwire"), "{}", decide["hint"]);
     let shape = violation(&report, "app/billing/protocol/shape.py::DOEFF120");
     assert_eq!(shape["severity"], "error");
-    assert_eq!(shape["explanation"]["subject"], "module app.billing.protocol.shape — JsonValue を 3 か所で使う(すべて 3 行目)");
-    assert_eq!(violation(&report, "app/billing/core/obj.py::DOEFF120")["explanation"]["subject"], "module app.billing.core.obj — JsonObject を 1 か所で使う(1 行目)");
+    assert_eq!(shape["explanation"]["subject"], "module app.billing.protocol.shape — JsonValue used in 3 places (all on line 3)");
+    assert_eq!(violation(&report, "app/billing/core/obj.py::DOEFF120")["explanation"]["subject"], "module app.billing.core.obj — JsonObject used in 1 place (line 1)");
     let listed = violation(&report, "app/billing/protocol/wire_codec.hy::DOEFF120");
     assert_eq!(listed["severity"], "error");
     assert!(
-        listed["explanation"]["reason"].as_str().unwrap().contains(":wire-modules の app.billing.protocol.wire_* に当たるが、foundation の層(app/foundation/)に無いので許さない"),
+        listed["explanation"]["reason"].as_str().unwrap().contains("matches app.billing.protocol.wire_* in :wire-modules but is not in the foundation layer (app/foundation/), so it is not allowed"),
         "{}",
         listed["explanation"]["reason"]
     );
-    assert!(listed["hint"].as_str().unwrap().starts_with("送受信そのものを app/foundation/ の module へ移して"), "{}", listed["hint"]);
+    assert!(listed["hint"].as_str().unwrap().starts_with("Move the sending and receiving itself into a module under app/foundation/"), "{}", listed["hint"]);
     let known = violation(&report, "app/billing/core/known.hy::DOEFF120");
     assert_eq!(known["severity"], "info");
     assert_eq!(known["registered"], true);
 
-    // 保存前の 1 file(stdin)も同じ判定。許された module は何も出さない。
+    // A pre-save single file (stdin) gets the same judgment. An allowed module produces nothing.
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/billing/core/decide.hy"], Some(files[0].1));
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}", e, stderr));
     assert_eq!(keys(&single, "DOEFF120"), vec!["app/billing/core/decide.hy::DOEFF120"]);
@@ -1444,7 +1444,7 @@ fn json_value_is_allowed_only_in_parsers_and_listed_foundation_modules() {
     assert!(keys(&allowed, "DOEFF120").is_empty(), "{}", allowed);
 }
 
-/// 臭いの規則(DOEFF121〜125)の repo — 層 core と protocol、定義の規則の母集団、臭いの設定、登録簿。
+/// The repo for the smell rules (DOEFF121 to 125) — layers core and protocol, the population of the definition rules, the smell settings, and a registry.
 fn smell_repo(files: &[(&str, &str)], extra: &str, registry: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let config = format!(
@@ -1473,7 +1473,7 @@ files = ["known.txt"]
     dir
 }
 
-/// decide-tag(agora-controllers controllers/kanban/core/tag_judgment.hy)を縮めた形 — 5 つの臭いを全部持つ。
+/// A shrunk form of decide-tag (agora-controllers controllers/kanban/core/tag_judgment.hy) — it has all 5 smells.
 const DECIDE_TAG: &str = r#"(val MODULE-TAGS {:context "kanban" :role "judgment"})
 (import app.core.rules [Refusal TagsAccepted])
 (defk decide-tag [intent board]
@@ -1496,11 +1496,11 @@ const DECIDE_TAG: &str = r#"(val MODULE-TAGS {:context "kanban" :role "judgment"
 
 #[test]
 fn smells_are_found_in_business_code_with_failure_types_from_declarations() {
-    let rules = "(defrecord Refusal \"断り\" {:failure True} #^ str reason #^ str detail)\n(defrecord TagsAccepted #^ tuple words)\n";
+    let rules = "(defrecord Refusal \"Refusal\" {:failure True} #^ str reason #^ str detail)\n(defrecord TagsAccepted #^ tuple words)\n";
     let files = [("app/core/rules.hy", rules), ("app/core/tag_judgment.hy", DECIDE_TAG), ("app/protocol/tags.hy", DECIDE_TAG)];
     let dir = smell_repo(&files, "", "");
     let (code, report) = editor(dir.path());
-    // DOEFF121 は判断の層(core)の file だけ。DOEFF122〜125 は業務の file の全部。
+    // DOEFF121 is only for files in the judgment layer (core). DOEFF122 to 125 are for all business files.
     assert_eq!(keys(&report, "DOEFF121"), vec!["app/core/tag_judgment.hy::DOEFF121::decide_tag::subject"]);
     assert_eq!(
         keys(&report, "DOEFF122"),
@@ -1517,27 +1517,27 @@ fn smells_are_found_in_business_code_with_failure_types_from_declarations() {
     );
     assert_eq!(keys(&report, "DOEFF124").len(), 2);
     assert_eq!(keys(&report, "DOEFF125"), vec!["app/core/tag_judgment.hy::DOEFF125::decide_tag::writes", "app/protocol/tags.hy::DOEFF125::decide_tag::writes"]);
-    // 重さの既定は warning(Absent / Raise が本線に入った後 — 終了コード 0)。説明と直し方。
+    // The default severity is warning (after Absent / Raise entered the main line — exit code 0). The explanation and the fix.
     assert!(report["violations"].as_array().unwrap().iter().filter(|v| v["rule"].as_str().unwrap().starts_with("DOEFF12")).all(|v| v["severity"] == "warning"));
     assert_eq!(code, 0);
     let rethrow = violation(&report, "app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said");
-    assert!(rethrow["explanation"]["subject"].as_str().unwrap().contains("失敗の型 Refusal を受け"), "{}", rethrow["explanation"]["subject"]);
-    assert!(rethrow["hint"].as_str().unwrap().contains("(<- (Raise 失敗の値))"));
+    assert!(rethrow["explanation"]["subject"].as_str().unwrap().contains("receives the failure type Refusal"), "{}", rethrow["explanation"]["subject"]);
+    assert!(rethrow["hint"].as_str().unwrap().contains("(<- (Raise failure-value))"));
     let shape = violation(&report, "app/core/tag_judgment.hy::DOEFF121::decide_tag::subject");
     assert!(shape["hint"].as_str().unwrap().contains("defwire"));
     assert_eq!(shape["range"]["start"]["line"], 5);
 
-    // 失敗の型の宣言が無ければ DOEFF122 は出ない(名前で決め打ちしない)。
-    let plain = "(defrecord Refusal \"断り\" #^ str reason #^ str detail)\n(defrecord TagsAccepted #^ tuple words)\n";
+    // Without a failure-type declaration DOEFF122 does not appear (it does not hard-code by name).
+    let plain = "(defrecord Refusal \"Refusal\" #^ str reason #^ str detail)\n(defrecord TagsAccepted #^ tuple words)\n";
     let dir = smell_repo(&[("app/core/rules.hy", plain), ("app/core/tag_judgment.hy", DECIDE_TAG)], "", "");
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF122").is_empty());
-    // defeffect の :failure の宣言も失敗の型になる。
-    let effect = "(import app.core.rules [Refusal TagsAccepted])\n(defeffect Check \"検め\" {:fields [x] :answer (| TagsAccepted Refusal) :failure [Refusal]})\n";
+    // A defeffect :failure declaration also makes a failure type.
+    let effect = "(import app.core.rules [Refusal TagsAccepted])\n(defeffect Check \"Check\" {:fields [x] :answer (| TagsAccepted Refusal) :failure [Refusal]})\n";
     let dir = smell_repo(&[("app/core/rules.hy", plain), ("app/core/effects.hy", effect), ("app/core/tag_judgment.hy", DECIDE_TAG)], "", "");
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said"]);
-    // 同じ名の型が別の module にあれば、宣言した方だけが失敗の型(webapp の Refusal は宣言が無い)。
+    // If a type with the same name is in another module, only the declared one is a failure type (webapp's Refusal has no declaration).
     let webapp = DECIDE_TAG.replace("(import app.core.rules [Refusal TagsAccepted])", "(import app.webapp.model [Refusal TagsAccepted])");
     let dir = smell_repo(
         &[("app/core/rules.hy", rules), ("app/webapp/model.hy", plain), ("app/core/tag_judgment.hy", DECIDE_TAG), ("app/core/webapp_tag.hy", &webapp)],
@@ -1547,7 +1547,7 @@ fn smells_are_found_in_business_code_with_failure_types_from_declarations() {
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/tag_judgment.hy::DOEFF122::decide_tag::add_said"]);
 
-    // 登録簿に載った分は info、新しい分は warning。設定の severity で info に下げられる。
+    // Ones listed in the registry are info, new ones are warning. Config severity can lower them to info.
     let dir = smell_repo(&files, "", "app/core/tag_judgment.hy::DOEFF125::decide_tag::writes\n");
     let (code, report) = editor(dir.path());
     assert_eq!(violation(&report, "app/core/tag_judgment.hy::DOEFF125::decide_tag::writes")["severity"], "info");
@@ -1558,13 +1558,13 @@ fn smells_are_found_in_business_code_with_failure_types_from_declarations() {
     let (_, report) = editor(dir.path());
     assert_eq!(violation(&report, "app/protocol/tags.hy::DOEFF125::decide_tag::writes")["severity"], "info");
     assert_eq!(violation(&report, "app/protocol/tags.hy::DOEFF124::decide_tag::add_said")["severity"], "warning");
-    // 臭いの規則でない ID と error の重さは設定の誤り。
+    // An ID that is not a smell rule, and a severity of error, are config errors.
     for bad in ["[tool.doeff-linter.rules.DOEFF101]\nseverity = \"warning\"\n", "[tool.doeff-linter.rules.DOEFF121]\nseverity = \"error\"\n"] {
         let dir = smell_repo(&files, bad, "");
         let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
         assert_eq!(code, 2, "{}", stderr);
     }
-    // 知らない層の名も設定の誤り。
+    // An unknown layer name is also a config error.
     let dir = smell_repo(&files, "", "");
     let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap().replace("shape_check_layers = [\"core\"]", "shape_check_layers = [\"ghost\"]");
     std::fs::write(dir.path().join("pyproject.toml"), text).unwrap();
@@ -1575,7 +1575,7 @@ fn smells_are_found_in_business_code_with_failure_types_from_declarations() {
 
 #[test]
 fn smells_have_clean_counterparts_and_run_on_a_single_file() {
-    // 型のある値の判断・Raise で出す失敗・内包表記の蓄え・使い回す名 — どれも当たらない。
+    // Judgment of a typed value, a failure emitted with Raise, a comprehension accumulator, a reused name — none of these hit.
     let clean = r#"(defk decide [intent board]
   {:tags {:context "kanban" :role "judgment"}}
   (<- said (| TagsAccepted Refusal) (tags-verdict intent.add))
@@ -1591,7 +1591,7 @@ fn smells_have_clean_counterparts_and_run_on_a_single_file() {
     let dir = smell_repo(&[("app/core/rules.hy", rules), ("app/core/clean.hy", clean)], "", "");
     let (_, report) = editor(dir.path());
     assert!(report["violations"].as_array().unwrap().iter().all(|v| !v["rule"].as_str().unwrap().starts_with("DOEFF12")), "{}", report["violations"]);
-    // 1 file の実行(エディタの保存)でも、repo の宣言から失敗の型を読む。
+    // A single-file run (an editor save) also reads the failure types from the repo declaration.
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/clean.hy"], Some(DECIDE_TAG));
     let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/clean.hy::DOEFF122::decide_tag::add_said"]);
@@ -1600,7 +1600,7 @@ fn smells_have_clean_counterparts_and_run_on_a_single_file() {
 
 #[test]
 fn only_the_assembly_layer_may_read_a_dependency_protocol() {
-    // 決まり: 組み立ての entry に限り、:depends-on に宣言した依存先の protocol(翻訳の handler)も読んでよい。
+    // Rule: only in an assembling entry, the protocol of a dependency declared in :depends-on (a translation handler) may also be read.
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
@@ -1610,9 +1610,9 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
            (layer intent :roles [intent type])
            (layer protocol :roles [protocol])
            (layer entry :roles [entry] :dependency-layers [intent protocol])])
-(defservice automation "自動化" {:depends-on [messaging] :layers [core intent protocol entry]})
-(defservice messaging "郵便" {:layers [core intent protocol]})
-(defservice ledger "台帳" {:layers [core intent protocol]})
+(defservice automation "Automation" {:depends-on [messaging] :layers [core intent protocol entry]})
+(defservice messaging "Mail" {:layers [core intent protocol]})
+(defservice ledger "Ledger" {:layers [core intent protocol]})
 "#,
     )
     .unwrap();
@@ -1621,11 +1621,11 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
         ("app/messaging/protocol/reception.hy", tags("messaging", "protocol") + "(defn translate [] 1)\n"),
         ("app/messaging/intent/submit.hy", tags("messaging", "intent") + "(defclass Submit [])\n"),
         ("app/ledger/protocol/book.hy", tags("ledger", "protocol") + "(defn book [] 1)\n"),
-        // entry が依存先の protocol と intent を読む = 通る。
+        // entry reads the dependency's protocol and intent = passes.
         ("app/automation/entry/handlers.hy", tags("automation", "entry") + "(import app.messaging.protocol.reception [translate])\n(import app.messaging.intent.submit [Submit])\n(defn handlers [] 1)\n"),
-        // core が依存先の protocol を読む = 違反(entry 以外は intent だけ)。
+        // core reads the dependency's protocol = violation (outside entry only intent).
         ("app/automation/core/plan.hy", tags("automation", "judgment") + "(import app.messaging.protocol.reception [translate])\n(defn plan [] 1)\n"),
-        // entry が宣言に無い service の protocol を読む = 違反。
+        // entry reads the protocol of a service not in the declaration = violation.
         ("app/automation/entry/main.hy", tags("automation", "entry") + "(import app.ledger.protocol.book [book])\n(defn main [] 1)\n"),
     ];
     for (rel, text) in &files {
@@ -1643,19 +1643,19 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
     );
     assert_eq!(code, 1);
     let core = violation(&report, "app/automation/core/plan.hy::DOEFF116::app.messaging.protocol.reception.translate");
-    assert!(core["message"].as_str().unwrap().contains("層 core が依存先で読めるのは intent だけ"), "{}", core["message"]);
-    assert!(core["explanation"]["reason"].as_str().unwrap().contains(":dependency-layers で広げた層"), "{}", core["explanation"]["reason"]);
-    // 存在しない層の名は設定の誤り。
+    assert!(core["message"].as_str().unwrap().contains("the only layer-core reads allowed in a dependency are intent"), "{}", core["message"]);
+    assert!(core["explanation"]["reason"].as_str().unwrap().contains("a layer that :dependency-layers in the layer of architecture.hy widens"), "{}", core["explanation"]["reason"]);
+    // A nonexistent layer name is a config error.
     let text = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().replace(":dependency-layers [intent protocol]", ":dependency-layers [intent ghost]");
     std::fs::write(dir.path().join("architecture.hy"), text).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2);
-    assert!(stderr.contains(":dependency-layers の ghost"), "{}", stderr);
+    assert!(stderr.contains("ghost in :dependency-layers of layer"), "{}", stderr);
 }
 
 #[test]
 fn placed_layers_depend_only_on_placed_modules() {
-    // :placed-dependencies の層(service と shared)の module は、root の下の層の置き場の外の module を読まない。
+    // Modules of the :placed-dependencies layers (service and shared) do not read modules outside the layer locations under root.
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
@@ -1668,28 +1668,28 @@ fn placed_layers_depend_only_on_placed_modules() {
   :shared "shared"
   :foundation foundation
   :placed-dependencies [core intent])
-(defservice billing "請求" {:layers [core intent entry]})
+(defservice billing "Billing" {:layers [core intent entry]})
 "#,
     )
     .unwrap();
     std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF140\"]\n").unwrap();
     let files = [
-        // 置き場の外: service の dir の直下の module・宣言に無い dir の中の module・package の中の置き場の外の module。
-        ("app/billing/vocabulary.hy", "(setv WORD \"請求\")\n".to_string()),
+        // Outside the locations: a module directly under a service dir, a module inside a dir not in the declaration, and a module outside the locations inside a package.
+        ("app/billing/vocabulary.hy", "(setv WORD \"billing\")\n".to_string()),
         ("app/billing/model/row.hy", "(setv ROW 1)\n".to_string()),
         ("app/billing/views/__init__.py", "".to_string()),
         ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
         ("app/foundation/store.hy", tags("io", "foundation") + "(defn store [] 1)\n"),
         ("elsewhere/lib.hy", "(setv LIB 1)\n".to_string()),
-        // 違反: 同じ module を 2 度読んでも 1 件・名の import は持ち主の module に解く。
+        // Violation: reading the same module twice is still one hit; a name import resolves to the owner module.
         (
             "app/billing/core/decide.hy",
             tags("billing", "judgment")
                 + "(import app.billing.vocabulary [WORD])\n(import app.billing.vocabulary)\n(import app.billing.intent.charge [Charge])\n(import elsewhere.lib [LIB])\n(import json)\n(defn decide [] 1)\n",
         ),
-        // 違反: shared の層も service と同じ(宣言に無い dir の中の module を読む)。
+        // Violation: the shared layer is the same as a service (reading a module inside a dir not in the declaration).
         ("app/shared/intent/names.hy", tags("shared", "intent") + "(import app.billing.model.row [ROW])\n(defclass Name [])\n"),
-        // 通る: package の印(置き場の決まる前の dir の束ね)は数えない・:placed-dependencies に無い層(entry)は見ない。
+        // Passes: a package marker (a bundle of dirs before the location is decided) is not counted, and a layer not in :placed-dependencies (entry) is not checked.
         ("app/billing/core/views.hy", tags("billing", "judgment") + "(import app.billing.views)\n(defn views [] 1)\n"),
         ("app/billing/entry/main.hy", tags("billing", "entry") + "(import app.billing.vocabulary [WORD])\n(defn main [] 1)\n"),
     ];
@@ -1706,13 +1706,13 @@ fn placed_layers_depend_only_on_placed_modules() {
     assert_eq!(code, 1);
     let decide = violation(&report, "app/billing/core/decide.hy::DOEFF140::app.billing.vocabulary");
     assert!(decide["message"].as_str().unwrap().contains("app/billing/vocabulary.hy"), "{}", decide["message"]);
-    assert_eq!(decide["range"]["start"]["line"], 1, "最初の import の所に出す");
-    // 渡した file 1 つの実行でも同じ 1 件(判定は渡した file の import と置き場だけで決まる)。
+    assert_eq!(decide["range"]["start"]["line"], 1, "shown at the first import");
+    // A run with one given file also gives the same single hit (the judgment is decided only by the given file's imports and location).
     let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/billing/core/decide.hy"], None);
     let single: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(keys(&single, "DOEFF140"), vec!["app/billing/core/decide.hy::DOEFF140::app.billing.vocabulary"]);
-    // 宣言に無い層の名と foundation の層は設定の誤り。
-    for (bad, said) in [("[core ghost]", ":placed-dependencies の ghost は :layers に無い"), ("[core foundation]", ":placed-dependencies の foundation は :foundation の層")] {
+    // A layer name not in the declaration, and the foundation layer, are config errors.
+    for (bad, said) in [("[core ghost]", "ghost in :placed-dependencies is not in :layers"), ("[core foundation]", "foundation in :placed-dependencies is a :foundation layer")] {
         let text = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().replace(":placed-dependencies [core intent]", &format!(":placed-dependencies {}", bad));
         let broken = tempfile::TempDir::new().unwrap();
         std::fs::write(broken.path().join("architecture.hy"), text).unwrap();
@@ -1723,8 +1723,8 @@ fn placed_layers_depend_only_on_placed_modules() {
     }
 }
 
-/// 別の file の defrecord で宣言の型が Program を名指す欄に置いた素の defk 呼びは拾わない(Program を運ぶ欄)。
-/// 同じ型の dict の欄に置いた素の呼びは今までどおり error(事実: doeff-records の start-records-server の :prepare)。
+/// A bare defk call placed in a field whose declared type names Program in a defrecord of another file is not picked up (a field that carries a Program).
+/// A bare call placed in a dict field of the same type is an error as before (fact: :prepare of start-records-server in doeff-records).
 #[test]
 fn defk_called_bare_into_a_program_field_of_a_record_is_not_an_answer() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -1736,14 +1736,14 @@ fn defk_called_bare_into_a_program_field_of_a_record_is_not_an_answer() {
     let files = [
         (
             "app/core/serving.hy",
-            "(defrecord Serving\n  \"設定\"\n  (#^ (| Program EffectBase) prepare)\n  (#^ dict rows))\n(defk ready [h] {:tags {:context \"c\" :role \"program\"}} h)\n",
+            "(defrecord Serving\n  \"Settings\"\n  (#^ (| Program EffectBase) prepare)\n  (#^ dict rows))\n(defk ready [h] {:tags {:context \"c\" :role \"program\"}} h)\n",
         ),
         (
             "app/core/shell.hy",
             concat!(
                 "(import app.core.serving [Serving ready])\n",
-                "(deff start [h] (Serving :prepare (ready h) :rows {}))  ; defk にできない: 検の殻\n",
-                "(deff wrong [h] (Serving :prepare None :rows (ready h)))  ; defk にできない: 検の殻\n",
+                "(deff start [h] (Serving :prepare (ready h) :rows {}))  ; defk にできない: test shell\n",
+                "(deff wrong [h] (Serving :prepare None :rows (ready h)))  ; defk にできない: test shell\n",
             ),
         ),
     ];
@@ -1759,7 +1759,7 @@ fn defk_called_bare_into_a_program_field_of_a_record_is_not_an_answer() {
 
 #[test]
 fn defk_called_bare_is_an_error_and_program_positions_are_not() {
-    // 事実(#798): defk に改めた latest-by-ref を、deff と検が素のまま呼んでいた — Program が値として流れた。
+    // Fact (#798): latest-by-ref, converted to a defk, was being called bare by a deff and by tests — a Program flowed through as a value.
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("pyproject.toml"),
@@ -1773,9 +1773,9 @@ fn defk_called_bare_is_an_error_and_program_positions_are_not() {
             "app/core/texts.hy",
             concat!(
                 "(import app.core.reads [latest-by-ref plain])\n",
-                "(deff text-at [ref] (.get (latest-by-ref ref) \"text\"))  ; defk にできない: 検の値\n",
-                "(deff expected-inputs [ref] (tuple (latest-by-ref ref)))  ; defk にできない: 検の値\n",
-                "(deff runner [ref] (run-on (latest-by-ref ref)))  ; defk にできない: Program を受けて走らせる\n",
+                "(deff text-at [ref] (.get (latest-by-ref ref) \"text\"))  ; defk にできない: test value\n",
+                "(deff expected-inputs [ref] (tuple (latest-by-ref ref)))  ; defk にできない: test value\n",
+                "(deff runner [ref] (run-on (latest-by-ref ref)))  ; defk にできない: takes a Program and runs it\n",
                 "(defk good [ref] (<- row (latest-by-ref ref)) (return (plain row)))\n",
             ),
         ),
@@ -1795,15 +1795,15 @@ fn defk_called_bare_is_an_error_and_program_positions_are_not() {
             "app/core/texts.hy::DOEFF126::text_at::latest_by_ref"
         ]
     );
-    // 新しい素の呼びは error、登録簿に載った物は warning。defk でない plain の素の呼びは拾わない。
+    // A new bare call is an error, and one listed in the registry is a warning. A bare call to a plain (non-defk) is not picked up.
     assert_eq!(violation(&report, "app/core/texts.hy::DOEFF126::text_at::latest_by_ref")["severity"], "error");
     assert_eq!(violation(&report, "app/core/texts.hy::DOEFF126::expected_inputs::latest_by_ref")["severity"], "warning");
     assert_eq!(code, 1);
     let bare = violation(&report, "app/core/texts.hy::DOEFF126::text_at::latest_by_ref");
-    assert_eq!(bare["explanation"]["subject"], "定義 text_at(deff)が defk latest-by-ref を素で呼んでいる");
-    assert!(bare["hint"].as_str().unwrap().starts_with("(<- x (f …)) で束ねる"));
+    assert_eq!(bare["explanation"]["subject"], "definition text_at (deff) calls defk latest-by-ref bare");
+    assert!(bare["hint"].as_str().unwrap().starts_with("Bind it with (<- x (f …))"));
     assert_eq!(bare["range"]["start"]["line"], 1);
-    // 1 file の実行(エディタの保存)でも repo の defk を知っている。
+    // A single-file run (an editor save) also knows the repo's defks.
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/texts.hy"], Some("(import app.core.reads [latest-by-ref])\n(deff fresh [r] (len (latest-by-ref r)))\n"));
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&single, "DOEFF126"), vec!["app/core/texts.hy::DOEFF126::fresh::latest_by_ref"]);
@@ -1811,7 +1811,7 @@ fn defk_called_bare_is_an_error_and_program_positions_are_not() {
 
 #[test]
 fn a_function_argument_called_bare_across_files_is_found_at_the_callee() {
-    // 事実(#798・agora L1550): rows-by-text が引数 field-of を素で呼び、呼び手はそこに fnk を渡していた — 索引が常に空になった。
+    // Fact (#798, agora L1550): rows-by-text called its argument field-of bare, and the caller passed an fnk there — the index was always empty.
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF126\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n").unwrap();
     let files = [
@@ -1824,17 +1824,17 @@ fn a_function_argument_called_bare_across_files_is_found_at_the_callee() {
         std::fs::write(path, text).unwrap();
     }
     let (code, report) = editor(dir.path());
-    // 呼び先 rows-by-text の素の呼びだけが違反(rows-safe は (<- …) で受ける・fn を渡す呼び手は追わない)。
+    // Only the bare call to the callee rows-by-text is a violation (rows-safe takes it with (<- …); callers passing an fn are not followed).
     assert_eq!(keys(&report, "DOEFF126"), vec!["app/core/index.hy::DOEFF126::rows_by_text::field_of"]);
     assert_eq!(code, 1);
     let found = violation(&report, "app/core/index.hy::DOEFF126::rows_by_text::field_of");
-    assert!(found["explanation"]["subject"].as_str().unwrap().contains("呼び手 app/core/tags.hy の tag_rows_of がそこに fnk を渡す"), "{}", found["explanation"]["subject"]);
+    assert!(found["explanation"]["subject"].as_str().unwrap().contains("caller app/core/tags.hy in tag_rows_of passes fnk there"), "{}", found["explanation"]["subject"]);
     assert_eq!(found["range"]["start"]["line"], 2);
 }
 
 #[test]
 fn effects_disagreeing_with_inference_are_warnings_at_the_call_and_the_declaration() {
-    // #849: 見出しの「宣言と推論の食い違い」の札をやめ、違反している場所(撃った呼び・:effects の中の名)に出す。
+    // #849: drop the "mismatch between declaration and inference" label on the heading, and show it at the violating place (the call that fired, the name inside :effects).
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("pyproject.toml"),
@@ -1844,7 +1844,7 @@ fn effects_disagreeing_with_inference_are_warnings_at_the_call_and_the_declarati
     let files = [
         (
             "app/intent/rows.hy",
-            "(defrecord Row \"行\" (#^ str id))\n(defeffect ReadRow \"読む\" {:fields [(: id str)] :answer Row :tags {:context \"c\" :role \"intent\"}})\n(defeffect PutRow \"書く\" {:fields [(: row Row)] :answer bool :tags {:context \"c\" :role \"intent\"}})\n",
+            "(defrecord Row \"Row\" (#^ str id))\n(defeffect ReadRow \"Read\" {:fields [(: id str)] :answer Row :tags {:context \"c\" :role \"intent\"}})\n(defeffect PutRow \"Write\" {:fields [(: row Row)] :answer bool :tags {:context \"c\" :role \"intent\"}})\n",
         ),
         (
             "app/core/flow.hy",
@@ -1864,20 +1864,20 @@ fn effects_disagreeing_with_inference_are_warnings_at_the_call_and_the_declarati
         std::fs::write(path, text).unwrap();
     }
     let (_, report) = editor(dir.path());
-    // 宣言の無い quiet・一致する fetch・外の effect Delay が一致する waits は出ない。
+    // quiet with no declaration, fetch that matches, and waits where the outside effect Delay matches do not appear.
     assert_eq!(keys(&report, "DOEFF127"), vec!["app/core/flow.hy::DOEFF127::store::Delay", "app/core/flow.hy::DOEFF127::store::ReadRow"]);
     let undeclared = violation(&report, "app/core/flow.hy::DOEFF127::store::ReadRow");
     assert_eq!(undeclared["severity"], "warning");
     assert_eq!(undeclared["range"]["start"]["line"], 3);
-    assert!(undeclared["message"].as_str().unwrap().contains("fetch を経由して、:effects に無い effect ReadRow"), "{}", undeclared);
-    assert_eq!(undeclared["explanation"]["subject"], "defk store が fetch を経由して effect ReadRow を起こしている");
+    assert!(undeclared["message"].as_str().unwrap().contains("goes through fetch and raises effect ReadRow, which is not in :effects"), "{}", undeclared);
+    assert_eq!(undeclared["explanation"]["subject"], "defk store raises effect ReadRow via fetch");
     let unused = violation(&report, "app/core/flow.hy::DOEFF127::store::Delay");
-    assert!(unused["message"].as_str().unwrap().contains(":effects に Delay を書いているが、起こしていない"));
+    assert!(unused["message"].as_str().unwrap().contains("lists Delay in :effects but does not raise it"));
 }
 
 #[test]
 fn an_unreadable_hy_file_is_reported_to_the_editor_and_the_hook() {
-    // 読めない file の違反が黙って空にならない — 有効な規則の一覧(ここでは DOEFF104 だけ)に関わらず DOEFF128 の error で出る。
+    // A violation of an unreadable file is not silently emptied — it appears as a DOEFF128 error regardless of the list of enabled rules (here only DOEFF104).
     let files = [
         ("app/core/broken.hy", "(val MODULE-TAGS {:context \"c\" :role \"judgment\"})\n(defk f [x]\n  (print \"no end)\n"),
         ("app/core/fine.hy", "(val MODULE-TAGS {:context \"c\" :role \"judgment\"})\n(defk g [xs] (print f\"{(.join \"; \" xs)}\"))\n"),
@@ -1888,20 +1888,20 @@ fn an_unreadable_hy_file_is_reported_to_the_editor_and_the_hook() {
     let broken = violation(&report, "app/core/broken.hy::DOEFF128");
     assert_eq!(broken["severity"], "error");
     assert_eq!(broken["range"]["start"]["line"], 1);
-    assert!(broken["message"].as_str().unwrap().contains("読めない"), "{}", broken["message"]);
+    assert!(broken["message"].as_str().unwrap().contains("cannot read"), "{}", broken["message"]);
     assert_eq!(code, 1);
-    // 保存前の 1 file の実行でも同じ。
+    // The same in a pre-save single-file run.
     let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/broken.hy"], Some(files[0].1));
     let single: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(keys(&single, "DOEFF128"), vec!["app/core/broken.hy::DOEFF128"]);
-    // agent の hook の知らせにも出る。
+    // It also appears in the agent hook notice.
     let hook_input = format!("{{\"workspace_roots\": [\"{}\"]}}", dir.path().display());
     let (_, stdout, stderr) = run(dir.path(), &["--hook", "--no-log"], Some(&hook_input));
     assert!(stdout.contains("DOEFF128"), "{}\n{}", stdout, stderr);
 }
 
-/// :verification-environment の dir(模擬の環境 — service ではない置き場)の下の module は DOEFF114・115 にしない。
-/// 1 つだけ受け、ほかの置き場の判定は変えない。service と同じ名は設定の誤り。
+/// Modules under the :verification-environment dir (a simulation environment — a location that is not a service) do not become DOEFF114 or 115.
+/// Only one is accepted, and the judgment of other locations does not change. The same name as a service is a config error.
 #[test]
 fn verification_environment_is_a_declared_non_service_place() {
     let files = [
@@ -1918,17 +1918,17 @@ fn verification_environment_is_a_declared_non_service_place() {
     assert_eq!(keys(&report, "DOEFF114"), vec!["app/old/anything.hy::DOEFF114"]);
     assert_eq!(keys(&report, "DOEFF115"), vec!["app/old::DOEFF115"]);
 
-    // service の dir と同じ名は設定の誤り(置き場の判定が 2 通りに読める)。
+    // The same name as a service dir is a config error (the location judgment would read two ways).
     let dir = architecture_repo(&files, "");
     let path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&path).unwrap().replace(":foundation foundation)", ":foundation foundation\n  :verification-environment \"billing\")");
     std::fs::write(&path, text).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains(":verification-environment billing は宣言した service の dir と同じ名にできない"), "{}", stderr);
+    assert!(stderr.contains(":verification-environment billing cannot have the same name as a declared service's dir"), "{}", stderr);
 }
 
-/// DOEFF130 の repo — 層 core・intent・protocol の service 2 つ(kanban は shared に依存)と、pyproject.toml(`toml_extra` を末尾に足す)。
+/// The DOEFF130 repo — two services with layers core, intent, and protocol (kanban depends on shared), and pyproject.toml (`toml_extra` appended at the end).
 fn translation_repo(files: &[(&str, &str)], toml_extra: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
@@ -1938,15 +1938,15 @@ fn translation_repo(files: &[(&str, &str)], toml_extra: &str) -> tempfile::TempD
   :layers [(layer core :roles [judgment program type])
            (layer intent :roles [intent type])
            (layer protocol :roles [protocol])])
-(defservice kanban "盤" {:depends-on [shared] :layers [core intent protocol]})
-(defservice shared "共有" {:layers [core]})
+(defservice kanban "Board" {:depends-on [shared] :layers [core intent protocol]})
+(defservice shared "Shared" {:layers [core]})
 "#,
     )
     .unwrap();
     std::fs::write(
         dir.path().join("pyproject.toml"),
         format!(
-            "[tool.doeff-linter]\nenable = [\"DOEFF130\"]\n\n[[tool.doeff-linter.laws]]\nname = \"translation-targets-only-generic-foundation-effects\"\nadr = \"ADR-TEST\"\nrules = [\"DOEFF130\"]\nlayers = [\"protocol\"]\nstatement = \"protocol の handler は doeff の汎用の effect だけを出す\"\n{}",
+            "[tool.doeff-linter]\nenable = [\"DOEFF130\"]\n\n[[tool.doeff-linter.laws]]\nname = \"translation-targets-only-generic-foundation-effects\"\nadr = \"ADR-TEST\"\nrules = [\"DOEFF130\"]\nlayers = [\"protocol\"]\nstatement = \"protocol handlers emit only doeff's generic effects\"\n{}",
             toml_extra
         ),
     )
@@ -1959,19 +1959,19 @@ fn translation_repo(files: &[(&str, &str)], toml_extra: &str) -> tempfile::TempD
     dir
 }
 
-/// DOEFF130 の file の組 — 業務の intent 2 つ(defclass と defeffect)・shared の core の判断(intent を出す物・輪になる物)・kanban の protocol の handler。
+/// The DOEFF130 file set — two business intents (a defclass and a defeffect), a shared core judgment (one that emits an intent, one that forms a cycle), and a kanban protocol handler.
 const TRANSLATION_FILES: [(&str, &str); 4] = [
     (
         "app/kanban/intent/board.hy",
-        "(defclass ReadBoard [])\n(defeffect CreateCard \"card を作る\" {:fields [(: title str)]})\n",
+        "(defclass ReadBoard [])\n(defeffect CreateCard \"Creates a card\" {:fields [(: title str)]})\n",
     ),
     (
-        // #955 が申し送る反例の形: shared の core の関数が ReadBoard(intent)を出し、protocol の handler がそれを import して呼ぶ。
+        // The counterexample shape handed over by #955: a shared core function emits ReadBoard (an intent), and a protocol handler imports and calls it.
         "app/shared/core/board_view.hy",
         "(import app.kanban.intent.board [ReadBoard])\n(defk view [c] (<- b (ReadBoard)) b)\n(defk deep [c] (<- v (view c)) v)\n(defk ping [n] (<- x (pong n)) x)\n(defk pong [n] (<- x (ping n)) x)\n",
     ),
     (
-        // 業務の流れ(層 core の program)が intent を出すのは正しい — protocol の外なので当たらない。
+        // A business flow (a layer-core program) emitting an intent is correct — it is outside protocol, so it does not hit.
         "app/kanban/core/flow.hy",
         "(import app.kanban.intent.board [CreateCard])\n(defk open-card [t] (<- c (CreateCard t)) c)\n",
     ),
@@ -1982,7 +1982,7 @@ const TRANSLATION_FILES: [(&str, &str); 4] = [
 (import app.kanban.intent.board [CreateCard ReadBoard])
 (import app.shared.core.board_view [view deep ping])
 
-;; 正例: 受けた intent を doeff の汎用の effect(HttpRequest・記録の書き)へ出し直すだけ。
+;; Positive example: only re-emits the received intent into doeff's generic effects (HttpRequest, record writes).
 (defk put-card [t] (<- r (PutRow "cards" t)) r)
 (defhandler http-reads
   (ReadBoard []
@@ -1992,30 +1992,30 @@ const TRANSLATION_FILES: [(&str, &str); 4] = [
     (<- r (put-card t))
     (resume r)))
 
-;; 反例: import した shared の core の関数を経由して ReadBoard を出す(本文の名だけでは見えない)。
+;; Counterexample: emits ReadBoard via an imported shared core function (invisible from the names in the body alone).
 (defhandler board-reads
   (Lookup [c]
     (<- b (view c))
     (resume b)))
 
-;; 反例: 2 段の経由。
+;; Counterexample: a two-step route.
 (defhandler deep-reads
   (Deep [c]
     (<- b (deep c))
     (resume b)))
 
-;; 反例: 本体で直に intent を出す。
+;; Counterexample: emits an intent directly in the body.
 (defhandler card-writes
   (NewCard [t]
     (<- x (CreateCard t))
     (resume x)))
 
-;; 反例: [effect k] を受ける関数の handler。
+;; Counterexample: a handler of a function that takes [effect k].
 (defk raw-handler [effect k]
   (<- (CreateCard "x"))
   (k effect))
 
-;; 輪になる呼び(ping ↔ pong)でも止まり、intent に届かなければ当たらない。
+;; It also stops at a cyclic call (ping <-> pong), and does not hit if the intent is not reached.
 (defhandler loops
   (Spin [n]
     (<- x (ping n))
@@ -2026,8 +2026,8 @@ const TRANSLATION_FILES: [(&str, &str); 4] = [
 
 #[test]
 fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
-    // 層 protocol の handler は doeff の汎用の effect だけを出し、層 intent の型(業務の intent)を出さない。
-    // 推論は import した defk の先まで辿る — 本体の名だけの判定(DOEFF201・check_business_fakes.hy)がすり抜ける形を塞ぐ。
+    // A layer-protocol handler emits only doeff's generic effects, and does not emit layer-intent types (business intents).
+    // Inference follows through imported defks — closing a shape that slips past a check on names in the body alone (DOEFF201, check_business_fakes.hy).
     let dir = translation_repo(&TRANSLATION_FILES, "");
     let (code, report) = editor(dir.path());
     assert_eq!(
@@ -2042,17 +2042,17 @@ fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
     assert_eq!(code, 1);
     let via = violation(&report, "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::board_reads::app.kanban.intent.board.ReadBoard");
     assert_eq!(via["severity"], "error");
-    // 場所 = handler の本体の、intent に至る最初の呼び((view c) の view — 0 始まりの 18 行目)。
+    // Location = in the handler body, the first call that leads to the intent (view in (view c) — line 18, 0-based).
     assert_eq!(via["range"]["start"]["line"], 18);
-    assert!(via["message"].as_str().unwrap().contains("handler board-reads(層 protocol)が view を経由して、層 intent の業務の intent ReadBoard を出す"), "{}", via["message"]);
-    assert_eq!(via["explanation"]["subject"], "handler board-reads(層 protocol)が view を経由して、層 intent の intent ReadBoard を出している");
-    assert_eq!(via["explanation"]["law_statement"], "protocol の handler は doeff の汎用の effect だけを出す");
+    assert!(via["message"].as_str().unwrap().contains("handler board-reads (layer protocol) goes through view and emits, from layer intent, the business intent ReadBoard"), "{}", via["message"]);
+    assert_eq!(via["explanation"]["subject"], "handler board-reads (layer protocol) emits intent ReadBoard of layer intent via view");
+    assert_eq!(via["explanation"]["law_statement"], "protocol handlers emit only doeff's generic effects");
     let deep = violation(&report, "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::deep_reads::app.kanban.intent.board.ReadBoard");
-    assert!(deep["message"].as_str().unwrap().contains("deep → view を経由して"), "{}", deep["message"]);
+    assert!(deep["message"].as_str().unwrap().contains("goes through deep → view and emits"), "{}", deep["message"]);
     let direct = violation(&report, "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::card_writes::app.kanban.intent.board.CreateCard");
-    assert!(direct["message"].as_str().unwrap().contains("handler card-writes(層 protocol)が層 intent の業務の intent CreateCard を出す"), "{}", direct["message"]);
+    assert!(direct["message"].as_str().unwrap().contains("handler card-writes (layer protocol) emits, from layer intent, the business intent CreateCard"), "{}", direct["message"]);
 
-    // 保存前の 1 file の実行(エディタ)でも同じ 4 件。
+    // A pre-save single-file run (editor) also gives the same 4 hits.
     let source = TRANSLATION_FILES[3].1;
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/kanban/protocol/reads.hy"], Some(source));
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
@@ -2061,8 +2061,8 @@ fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
 
 #[test]
 fn a_translation_handler_may_emit_another_services_public_intent() {
-    // 決め(DOEFF156 の「他の service の公開の効果」と揃える): 止めるのは handler と同じ service の intent だけ。
-    // 他の service の intent(公開の契約)を出すのは翻訳の仕事 — 例: durable の翻訳が郵便の受付の intent を出す(#1508)。
+    // Decision (aligned with DOEFF156's "other services' public effects"): what is stopped is only the intent of the same service as the handler.
+    // Emitting another service's intent (a public contract) is the translation's job — e.g. a durable translation emits the mail intake intent (#1508).
     let files = [
         ("app/kanban/intent/board.hy", "(defclass ReadBoard [])\n"),
         ("app/orders/intent/orders.hy", "(defclass PlaceOrder [])\n"),
@@ -2071,13 +2071,13 @@ fn a_translation_handler_may_emit_another_services_public_intent() {
             r#"(import app.kanban.intent.board [ReadBoard])
 (import app.orders.intent.orders [PlaceOrder])
 
-;; 正例: 他の service(orders)の公開の intent を出す。
+;; Positive example: emits another service's (orders) public intent.
 (defhandler order-bridge
   (Bridge [x]
     (<- r (PlaceOrder))
     (resume r)))
 
-;; 反例: 自分の service(kanban)の intent を出す — 今までどおり error。
+;; Counterexample: emits its own service's (kanban) intent — an error as before.
 (defhandler own-reads
   (Lookup [c]
     (<- b (ReadBoard))
@@ -2093,8 +2093,8 @@ fn a_translation_handler_may_emit_another_services_public_intent() {
   :layers [(layer core :roles [judgment program type])
            (layer intent :roles [intent type])
            (layer protocol :roles [protocol])])
-(defservice kanban "盤" {:depends-on [orders] :layers [core intent protocol]})
-(defservice orders "注文" {:layers [core intent protocol]})
+(defservice kanban "Board" {:depends-on [orders] :layers [core intent protocol]})
+(defservice orders "Orders" {:layers [core intent protocol]})
 "#,
     )
     .unwrap();
@@ -2107,7 +2107,7 @@ fn a_translation_handler_may_emit_another_services_public_intent() {
 
 #[test]
 fn translation_effects_depth_and_layers_are_configured() {
-    // 辿る段の上限は設定 — 0 なら handler の本体で直に出す intent だけ。
+    // The limit on the steps followed is a setting — with 0, only the intent emitted directly in the handler body.
     let dir = translation_repo(&TRANSLATION_FILES, "\n[tool.doeff-linter.translation_effects]\nmax_depth = 1\n");
     let (_, report) = editor(dir.path());
     assert_eq!(
@@ -2127,19 +2127,19 @@ fn translation_effects_depth_and_layers_are_configured() {
             "app/kanban/protocol/reads.hy::translation-targets-only-generic-foundation-effects::raw_handler::app.kanban.intent.board.CreateCard",
         ]
     );
-    // 節に書いた層の名が無ければ設定の誤り(黙って当たらなくならない)。
+    // If a layer name written in the section does not exist, it is a config error (so it does not silently stop hitting).
     let dir = translation_repo(&TRANSLATION_FILES, "\n[tool.doeff-linter.translation_effects]\nhandler_layers = [\"ghost\"]\n");
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("translation_effects.handler_layers: 層 ghost は宣言した層に無い"), "{}", stderr);
+    assert!(stderr.contains("translation_effects.handler_layers: layer ghost is not among the declared layers"), "{}", stderr);
 }
 
-/// 許可名簿(:world-handlers)を書いた repo(層 core・foundation・entry・service billing)。
+/// A repo that writes the allow-list (:world-handlers) (layers core, foundation, entry, and service billing).
 fn world_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     world_repo_with(files, "", "[\"DOEFF106\", \"DOEFF131\"]")
 }
 
-/// 名簿に要素を足した world_repo(`extra` は :world-handlers の列の末尾に足す要素・`enable` は規則の列)。
+/// A world_repo with elements added to the list (`extra` is the element appended at the end of the :world-handlers list; `enable` is the list of rules).
 fn world_repo_with(files: &[(&str, String)], extra: &str, enable: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let architecture = r#"
@@ -2151,7 +2151,7 @@ fn world_repo_with(files: &[(&str, String)], extra: &str, enable: &str) -> tempf
   :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
                      :wraps ["doeff_core_effects.os_file:os-file-handler"])EXTRA])
-(defservice billing "請求" {:layers [core entry]})
+(defservice billing "Billing" {:layers [core entry]})
 "#
     .replace("EXTRA", extra);
     std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
@@ -2164,8 +2164,8 @@ fn world_repo_with(files: &[(&str, String)], extra: &str, enable: &str) -> tempf
     dir
 }
 
-/// R1: 許可名簿を書いた repo では、生の I/O は名簿の定義の module だけに許し(層では許さない — entry も
-/// 名簿に無い foundation の module も当たる)、:wraps の doeff の実 I/O の handler を名指してよいのは名簿の定義だけ(DOEFF131)。
+/// R1: in a repo that writes an allow-list, raw I/O is allowed only in the modules of the list's definitions (not allowed by layer — entry and
+/// foundation modules not in the list also hit), and only the list's definitions may name doeff's real-I/O handlers in :wraps (DOEFF131).
 #[test]
 fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     let files = [
@@ -2195,7 +2195,7 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     assert_eq!(
         raw,
         vec!["app/billing/entry/main.hy::DOEFF106::fetch::httpx.get", "app/foundation/sockets.hy::DOEFF106::open_one::socket.socket"],
-        "名簿の module(host)・例外の型だけの httpx と urllib.parse(unreachable)は当てない: {}",
+        "the list's module (host), and httpx and urllib.parse (unreachable) used only as exception types, do not hit: {}",
         report
     );
     assert!(violation(&report, "app/billing/entry/main.hy::DOEFF106::fetch::httpx.get")["message"].as_str().unwrap().contains(":world-handlers"));
@@ -2206,7 +2206,7 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
             "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler",
             "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler",
         ],
-        "名簿の定義 with-host の中は当てず、同じ module の名簿に無い定義と entry は当てる: {}",
+        "inside the list's definition with-host does not hit; a definition not in the list in the same module, and entry, do hit: {}",
         report
     );
     let found = violation(&report, "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler");
@@ -2214,8 +2214,8 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     assert_eq!(found["level"], "critical");
 }
 
-/// DOEFF107 の経由の辿りは許可名簿(:world-handlers)の定義に入らない。名簿の with-host も名簿に無い
-/// make-client も同じ生の副作用(httpx.AsyncClient)に届く — with-host は中で make-client を呼ぶ。`entry` は entry の module の本文。
+/// The route-following of DOEFF107 does not enter the allow-list (:world-handlers) definitions. The list's with-host and a make-client
+/// not in the list reach the same raw side effect (httpx.AsyncClient) — with-host calls make-client inside. `entry` is the body of the entry module.
 fn via_repo(entry: &str) -> tempfile::TempDir {
     let files = [
         ("app/foundation/client.hy", tags("shared", "foundation") + "(import httpx)\n(defk make-client [] (httpx.AsyncClient))\n"),
@@ -2231,7 +2231,7 @@ fn via_repo(entry: &str) -> tempfile::TempDir {
     world_repo_with(&files, "", "[\"DOEFF107\"]")
 }
 
-/// entry の module の定義 `name` に当たった DOEFF107 の鍵。
+/// The DOEFF107 key that hit definition `name` of the entry module.
 fn via_keys_of(report: &Value, name: &str) -> Vec<String> {
     keys(report, "DOEFF107").into_iter().filter(|k| k.starts_with(&format!("app/billing/entry/main.hy::DOEFF107::{}::", name))).collect()
 }
@@ -2240,7 +2240,7 @@ fn via_keys_of(report: &Value, name: &str) -> Vec<String> {
 fn via_through_a_declared_world_handler_is_not_reported() {
     let dir = via_repo("(defk run [body] (with-host body))\n");
     let (_, report) = editor(dir.path());
-    assert!(via_keys_of(&report, "run").is_empty(), "名簿の with-host の先は with-host の責務: {}", report);
+    assert!(via_keys_of(&report, "run").is_empty(), "beyond the list's with-host is with-host's responsibility: {}", report);
 }
 
 #[test]
@@ -2248,22 +2248,22 @@ fn via_through_an_undeclared_definition_is_reported() {
     let dir = via_repo("(defk run [] (make-client))\n");
     let (_, report) = editor(dir.path());
     let found = via_keys_of(&report, "run");
-    assert_eq!(found.len(), 1, "名簿に無い make-client を通る経路は当たる: {}", report);
+    assert_eq!(found.len(), 1, "a route through make-client, which is not in the list, hits: {}", report);
     assert!(found[0].contains("make-client") && found[0].ends_with("httpx.AsyncClient"), "{:?}", found);
 }
 
 #[test]
 fn via_is_reported_when_an_undeclared_path_exists_beside_a_declared_one() {
-    // 名簿の with-host を先に呼ぶので、止めずに辿ると with-host>make-client の経路が先に同じ証拠を取る — 止めた後も、
-    // 名簿を通らない make-client の経路で当たる
+    // It calls the list's with-host first, so following without stopping would let the with-host>make-client route take the same evidence first — even after stopping,
+    // it hits via the make-client route that does not go through the list
     let dir = via_repo("(defk run [body] (with-host body) (make-client))\n");
     let (_, report) = editor(dir.path());
     let found = via_keys_of(&report, "run");
-    assert_eq!(found.len(), 1, "名簿を通らない経路が在れば当たる: {}", report);
-    assert!(!found[0].contains("with-host"), "経路に名簿の定義を含めない: {:?}", found);
+    assert_eq!(found.len(), 1, "a route that does not go through the list hits: {}", report);
+    assert!(!found[0].contains("with-host"), "the route does not include the list's definition: {:?}", found);
 }
 
-/// R2: 許可名簿の定義は実在し、層 foundation の module に在る(DOEFF132 — 位置は architecture.hy の名簿の要素)。
+/// R2: the allow-list definitions exist and are in a module of layer foundation (DOEFF132 — the position is the list element in architecture.hy).
 #[test]
 fn world_handler_list_entries_exist_in_the_foundation_layer() {
     let files = [
@@ -2283,19 +2283,19 @@ fn world_handler_list_entries_exist_in_the_foundation_layer() {
             "architecture.hy::DOEFF132::app.foundation.host:gone",
             "architecture.hy::DOEFF132::app.foundation.nowhere:x",
         ],
-        "実在する foundation の with-host は当てない: {}",
+        "an existing foundation with-host does not hit: {}",
         report
     );
     let misplaced = violation(&report, "architecture.hy::DOEFF132::app.billing.entry.main:run");
-    assert!(misplaced["message"].as_str().unwrap().contains("層 entry に在る"), "{}", misplaced);
+    assert!(misplaced["message"].as_str().unwrap().contains("is in layer entry"), "{}", misplaced);
     assert_eq!(misplaced["level"], "critical");
-    assert!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["message"].as_str().unwrap().contains("定義 gone が無い"));
+    assert!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["message"].as_str().unwrap().contains("has no definition gone"));
     let line = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().lines().position(|l| l.contains("app.foundation.host:gone")).unwrap();
     assert_eq!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["range"]["start"]["line"], line);
 }
 
-/// R3: テストの種類は届く先から導く — 名簿の定義・:wraps の handler・生の I/O に(定義を辿って)届く deftest は
-/// 縁で :edge-mark の印が要り、届かない deftest は手元で印を持たない。食い違いは DOEFF133(critical)。
+/// R3: the kind of test is derived from where it reaches — a deftest that reaches a list definition, a :wraps handler, or raw I/O (following definitions)
+/// needs an :edge-mark at the edge, and a deftest that does not reach has no mark locally. A mismatch is DOEFF133 (critical).
 #[test]
 fn test_kind_is_derived_from_what_the_test_reaches() {
     let files = [
@@ -2319,14 +2319,14 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
              (deftest test-edge-module-marked (<- n (hosted 1)) (assert n))\n"
                 .to_string(),
         ),
-        // defadr の並び [..] の中に入れ子の deftest の :marks も印(当てない)。
+        // :marks of a deftest nested inside a defadr list [..] also count as a mark (does not hit).
         (
             "app/billing/tests/test_nested_adr.hy",
             "(import app.billing.core.helpers [hosted])\n\
-             (defadr adr-nested :title \"入れ子\" :tests [(deftest test-edge-in-a-list {:marks [\"real_world\"]} (<- n (hosted 1)) (assert n))])\n"
+             (defadr adr-nested :title \"nested\" :tests [(deftest test-edge-in-a-list {:marks [\"real_world\"]} (<- n (hosted 1)) (assert n))])\n"
                 .to_string(),
         ),
-        // 読むだけの受け手(:static-readers)に値で渡すだけの縁の定義は、実行されないので届かない(手元 — 当てない)。
+        // An edge definition that is only passed by value to a read-only receiver (:static-readers) is not executed, so it does not reach (local — does not hit).
         ("app/billing/core/closure.hy", tags("billing", "judgment") + "(defk read-closure [case] (str case))\n"),
         (
             "app/billing/tests/test_closure.hy",
@@ -2334,13 +2334,13 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
              (deftest test-local-reads-a-foundation (<- text (read-closure hosted)) (assert text))\n"
                 .to_string(),
         ),
-        // 註と検の中の文字列の値に在る印の綴りは module の印ではない(手元のテストは印なしのまま — 当てない)。
+        // A mark spelling that appears in a comment or in a test's string value is not the module's mark (a local test stays unmarked — does not hit).
         (
             "app/billing/tests/test_mark_in_text.hy",
-            "(import app.billing.core.calc [add])\n;; 印の綴りの説明: pytestmark = pytest.mark.real_world\n\
+            "(import app.billing.core.calc [add])\n;; explanation of the mark spelling: pytestmark = pytest.mark.real_world\n\
              (deftest test-local-reads-spellings\n  (<- n (add 1 2))\n  (assert (in \"pytest\" \"(val pytestmark pytest.mark.real-world)\")))\n\
              (deftest test-local-reads-a-marks-spelling\n  (assert (in \"marks\" \"(deftest test-x {:marks [\\\"real_world\\\"]} 1)\")))\n\
-             (deftest test-local-with-fixture-and-doc-marked [tmp-path] \"説明\" {:marks [\"real_world\"]} (<- n (add 1 2)) (assert n))\n"
+             (deftest test-local-with-fixture-and-doc-marked [tmp-path] \"description\" {:marks [\"real_world\"]} (<- n (add 1 2)) (assert n))\n"
                 .to_string(),
         ),
     ];
@@ -2358,10 +2358,10 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
             "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_two_steps::edge",
             "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_wrapped::edge",
             "app/billing/tests/test_kinds.hy::DOEFF133::test_local_marked::local",
-            // fixture の並びと docstring の後ろの設定の :marks も印(doeff-hy の deftest と同じ読み方)。
+            // :marks in the settings after the fixture list and the docstring also count as a mark (read the same as doeff-hy's deftest).
             "app/billing/tests/test_mark_in_text.hy::DOEFF133::test_local_with_fixture_and_doc_marked::local",
         ],
-        "印の在る縁(:marks と module の pytestmark)と印の無い手元は当てない・文字列の中の :marks は印ではない: {}",
+        "edges with a mark (:marks and a module pytestmark) and local tests without a mark do not hit; :marks inside a string is not a mark: {}",
         report
     );
     let two_steps = violation(&report, "app/billing/tests/test_kinds.hy::DOEFF133::test_edge_two_steps::edge");
@@ -2369,10 +2369,10 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
     assert_eq!(two_steps["level"], "critical");
 }
 
-/// 縁の定義を値として検めるだけの名指し — 比べの form(is・is-not・=・!=・in・not-in)と assert(失敗の時の
-/// 表示の文を含む)の直接の被演算子(literal の列・組の中と、被演算子の dotted の属性の読みを含む)— は届かない(手元・当てない)。呼ぶ・他の定義へ渡す・比べの中で
-/// 呼んだ結果を比べる・比べの外で属性を読む名指しは今までどおり届く(縁・印が無いので当てる — 解釈器の定数が handler を
-/// `f.__module__` で名指す DOEFF137 の形を壊さない)。
+/// A reference that only checks an edge definition as a value — direct operands of comparison forms (is, is-not, =, !=, in, not-in) and assert (including the message shown on
+/// failure) (including inside literal lists and tuples, and dotted attribute reads of the operand) — does not reach (local, does not hit). A reference that calls, passes to another definition,
+/// compares the result of a call inside a comparison, or reads an attribute outside a comparison reaches as before (it is an edge with no mark, so it hits — so as not to break the shape of DOEFF137 where an interpreter constant names a handler
+/// with `f.__module__`).
 #[test]
 fn inspecting_a_value_does_not_reach_but_passing_or_calling_it_does() {
     let files = [
@@ -2404,13 +2404,13 @@ fn inspecting_a_value_does_not_reach_but_passing_or_calling_it_does() {
             "app/billing/tests/test_inspect.hy::DOEFF133::test_edge_passes_the_value::edge",
             "app/billing/tests/test_inspect.hy::DOEFF133::test_edge_reads_a_dunder_outside_a_comparison::edge",
         ],
-        "比べの被演算子と dunder の属性の読みは届かず、他の定義へ渡す名指しと比べの中の呼び出しは届く: {}",
+        "operands of comparisons and dunder attribute reads do not reach; references passed to another definition and calls inside a comparison do: {}",
         report
     );
 }
 
-/// defrecord の欄の名は宣言する名で、同じ名の import(関数)への名指しではない — 外の世界に届く関数と同じ名の欄を持つ record を
-/// 使うだけの検は届かない(偽の赤にしない)。本当にその関数を呼ぶ検は今までどおり届く。
+/// A defrecord field name is a declared name, not a reference to an import (function) of the same name — a test that merely uses a record with a field named like a function that reaches the outside world
+/// does not reach (no false red). A test that really calls that function reaches as before.
 #[test]
 fn a_defrecord_field_named_like_a_world_function_does_not_reach_it() {
     let files = [
@@ -2437,15 +2437,15 @@ fn a_defrecord_field_named_like_a_world_function_does_not_reach_it() {
     assert_eq!(
         keys(&report, "DOEFF133"),
         vec!["app/billing/tests/test_field.hy::DOEFF133::test_edge_calls_the_function::edge"],
-        "欄の名では届かず、関数を呼ぶ検だけが届く: {}",
+        "a field name does not reach; only a test that calls the function does: {}",
         report
     );
 }
 
-/// deftest が(Hy の定義を通して)名指す repo の中の Python の関数(`.py`)は、その中の子 process
-/// (`subprocess.run`・`os.system`)と、名前で決まる Python の呼び先(同じ module の関数・import した関数・class の構築と
-/// `self.m`)まで辿る — 届けば縁(印が要る)。型の注記と except の型の中の名は値の実行ではない(届かない)。Python の関数から
-/// Hy の定義へ戻る呼びも辿る。構文の壊れた Python の module は黙って手元にせず、報告の誤りに名乗る。
+/// A Python function (`.py`) in the repo that a deftest names (through a Hy definition) is followed to child processes inside it
+/// (`subprocess.run`, `os.system`) and to Python callees decided by name (functions in the same module, imported functions, class construction and
+/// `self.m`) — if it reaches, it is an edge (a mark is needed). Names in type annotations and except types are not execution of values (they do not reach). Calls from a Python function
+/// back to a Hy definition are also followed. A Python module with broken syntax is not silently made local; it is named in the report's errors.
 #[test]
 fn test_kind_follows_python_functions_into_their_subprocesses() {
     let files = [
@@ -2493,7 +2493,7 @@ fn test_kind_follows_python_functions_into_their_subprocesses() {
             "app/billing/tests/test_python.hy::DOEFF133::test_edge_through_a_hy_helper::edge",
             "app/billing/tests/test_python.hy::DOEFF133::test_local_quiet_marked::local",
         ],
-        "Python の関数の子 process に届く印なしは縁で当たり、印つき・注記と except の型だけの関数は当てない: {}",
+        "an unmarked test reaching a Python function's child process hits as an edge; marked ones, and functions with only annotations and except types, do not hit: {}",
         report
     );
     let launch = violation(&report, "app/billing/tests/test_python.hy::DOEFF133::test_edge_launch_unmarked::edge");
@@ -2501,12 +2501,12 @@ fn test_kind_follows_python_functions_into_their_subprocesses() {
     let helper = violation(&report, "app/billing/tests/test_python.hy::DOEFF133::test_edge_through_a_hy_helper::edge");
     assert!(helper["message"].as_str().unwrap().contains("bake-all → tools.bake.launch"), "{}", helper["message"]);
     let errors = report["errors"].as_array().unwrap();
-    assert!(errors.iter().any(|e| e.as_str().unwrap().contains("tools/broken.py")), "構文の壊れた module を名乗る: {}", report);
+    assert!(errors.iter().any(|e| e.as_str().unwrap().contains("tools/broken.py")), "the module with broken syntax is named: {}", report);
 }
 
-/// 契約の検は `:interpreters [本物 相手役]` の名の定数(file の外の文字列の定数)で同じ deftest を両方の組み立てで回す。名の定数を import
-/// から定義へ解き、その module の名 → 組み立ての表がその名に当てた組み立てを deftest の届く先に足す — 本文が手元の定義だけを呼んでも、
-/// 本物の組み立てだけが外の世界に届けば縁(印が要る)。相手役だけを回す deftest は手元のまま(agora-controllers の契約の検の 25 件)。
+/// A contract test runs the same deftest under both assemblies via the name constants (string constants outside the file) of `:interpreters [real stand-in]`. It resolves the imported name constant
+/// to a definition, and adds the assembly that the module's name -> assembly table assigns to that name to what the deftest reaches — even if the body calls only local definitions,
+/// it is an edge (a mark is needed) if only the real assembly reaches the outside world. A deftest that runs only the stand-in stays local (25 contract tests in agora-controllers).
 #[test]
 fn test_kind_follows_the_interpreters_to_their_assemblies() {
     let files = [
@@ -2542,16 +2542,16 @@ fn test_kind_follows_the_interpreters_to_their_assemblies() {
             "app/billing/tests/test_contract.hy::DOEFF133::test_contract_unmarked::edge",
             "app/billing/tests/test_contract.hy::DOEFF133::test_stand_only_marked::local",
         ],
-        "本物の組み立てに届く契約の検は縁(印つきは当てない)・相手役だけを回す検は手元: {}",
+        "a contract test reaching the real assembly is an edge (a marked one does not hit), and a test running only the stand-in is local: {}",
         report
     );
     let unmarked = violation(&report, "app/billing/tests/test_contract.hy::DOEFF133::test_contract_unmarked::edge");
     assert!(unmarked["message"].as_str().unwrap().contains("under-real → with-host → app.foundation.host:with-host"), "{}", unmarked["message"]);
 }
 
-/// 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
-/// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
-/// file の外の定数の記号のまま(読み解かない)。理由つきの :contract-test (none …) の handler は判じない・理由の無い none は鳴る(#1796)。
+/// Each allow-list handler needs an edge test (a deftest with a non-empty :interpreters that reaches the handler's definition in the same graph as DOEFF133)
+/// — if missing, DOEFF137 (critical, detail = the list spelling) at the list element in architecture.hy. Elements of :interpreters stay
+/// symbols of constants outside the file (not resolved). A handler with a :contract-test (none …) with a reason is not judged; a none without a reason fires (#1796).
 #[test]
 fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     let files = [
@@ -2560,7 +2560,7 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
             tags("shared", "foundation")
                 + "(defk with-host [body] body)\n(defk with-clock [body] body)\n(defk with-queue [body] body)\n(defk with-exempt [body] body)\n",
         ),
-        // 解釈器の組み立ての定数(file の外の記号)が handler を名指す — deftest は :interpreters でこの定数を並べるだけ。
+        // A constant of an interpreter assembly (a symbol outside the file) names the handler — the deftest just lists this constant in :interpreters.
         (
             "app/foundation/tests/contract_handlers.hy",
             "(import app.foundation.host [with-host])\n\
@@ -2570,10 +2570,10 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
         (
             "app/foundation/tests/test_host_contract.hy",
             "(import app.foundation.tests.contract_handlers [HOST SIM])\n\
-             (deftest test-host-answers\n  \"本物と模擬が同じ検を通る\"\n  {:interpreters [HOST SIM] :marks [\"real_world\"]}\n  (assert True))\n"
+             (deftest test-host-answers\n  \"the real one and the simulation pass the same check\"\n  {:interpreters [HOST SIM] :marks [\"real_world\"]}\n  (assert True))\n"
                 .to_string(),
         ),
-        // :interpreters を持たない deftest が届くだけ・空の :interpreters は縁の検に数えない。
+        // A deftest without :interpreters that merely reaches, and an empty :interpreters, do not count as an edge test.
         (
             "app/foundation/tests/test_clock_plain.hy",
             "(import app.foundation.host [with-clock with-queue])\n\
@@ -2595,7 +2595,7 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     assert_eq!(
         keys(&report, "DOEFF137"),
         vec!["architecture.hy::DOEFF137::app.foundation.host:with-clock", "architecture.hy::DOEFF137::app.foundation.host:with-queue"],
-        "縁の検の届く with-host と理由つきの :contract-test (none …) の with-exempt は当てない: {}",
+        "with-host reached by an edge test, and with-exempt with a reasoned :contract-test (none …), do not hit: {}",
         report
     );
     let clock = violation(&report, "architecture.hy::DOEFF137::app.foundation.host:with-clock");
@@ -2604,7 +2604,7 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
     let line = text.lines().position(|l| l.contains("app.foundation.host:with-clock")).unwrap();
     assert_eq!(clock["range"]["start"]["line"], line);
 
-    // 理由の無い記号 none は鳴る — 縁の検の届く with-host に書いても当てる(#1796)。
+    // A bare symbol none without a reason fires — it hits even when written on with-host, which an edge test reaches (#1796).
     let bare = text
         .replace(
             "\n                     :contract-test (none :doeff-test \"packages/doeff-core-effects/tests/test_os_file.hy::test-os-file-contract\")",
@@ -2621,25 +2621,25 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
             "architecture.hy::DOEFF137::app.foundation.host:with-exempt",
             "architecture.hy::DOEFF137::app.foundation.host:with-queue"
         ],
-        "理由の無い none の with-exempt と with-clock を当てる: {}",
+        "with-exempt and with-clock with a none without a reason hit: {}",
         report
     );
     let exempt = violation(&report, "architecture.hy::DOEFF137::app.foundation.host:with-exempt");
-    assert!(exempt["message"].as_str().unwrap().contains(":contract-test none に理由が無い"), "{}", exempt);
+    assert!(exempt["message"].as_str().unwrap().contains(":contract-test none has no reason"), "{}", exempt);
 
-    // :contract-test の値は理由つきの (none …) か記号 none だけ — ほかの値は宣言の誤り(終了コード 2)。
+    // The value of :contract-test is only a reasoned (none …) or the symbol none — other values are declaration errors (exit code 2).
     let bad = bare.replace("with-exempt\" :touches [file] :contract-test none", "with-exempt\" :touches [file] :contract-test (none :doeff-test \"\")");
     assert_ne!(bad, bare);
     std::fs::write(&arch_path, bad).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("world-handler app.foundation.host:with-exempt の :contract-test は (none"), "{}", stderr);
+    assert!(stderr.contains("world-handler app.foundation.host:with-exempt :contract-test must be (none"), "{}", stderr);
 }
 
-/// DOEFF137 の拡張(相手役の名簿 :stand-ins): 組(相手役・本物)ごとに、空でない :interpreters を持ち、相手役と本物の両方に届く
-/// deftest(契約の検 — verified fake・Pact の形)が要る。本物は索引の外(doeff などの package)でもよく、その時は本物を名指す定義から
-/// 辿る。解釈器を名の文字列(`"module:名"` / `"module:名@<変種>"`)で綴る定数も、その handler を名指す定義に数える。片方にしか届かない :interpreters の検・両方に届いても :interpreters の無い検は数えない。理由つきの :contract-test (none …) の
-/// 組は判じない・理由の無い none は鳴る。当たりの位置は名簿の要素・細目は「相手役->本物」・重さは critical。
+/// Extension of DOEFF137 (the stand-in list :stand-ins): for each pair (stand-in, real), a deftest with a non-empty :interpreters that reaches both the stand-in and the real one
+/// (a contract test — the verified fake / Pact shape) is needed. The real one may be outside the index (a package such as doeff), in which case it is followed from the definition naming the real one.
+/// A constant that spells an interpreter as a name string (`"module:name"` / `"module:name@<variant>"`) also counts as a definition naming that handler. A test with :interpreters that reaches only one side, or one that reaches both but has no :interpreters, does not count. A reasoned :contract-test (none …)
+/// pair is not judged; a none without a reason fires. The hit position is the list element, the detail is "stand-in->real", and the severity is critical.
 #[test]
 fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
     let files = [
@@ -2654,7 +2654,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
                    (defk with-fake-clock [body] body)\n(defk with-fake-disk [body] body)\n(defk with-fake-bare [body] body)\n\
                    (defk with-fake-store [body] body)\n",
         ),
-        // 解釈器の組み立ての定数(file の外の記号)が handler を名指す — 本物の LLM の handler は索引の外の package に在る。
+        // A constant of an interpreter assembly (a symbol outside the file) names the handler — the real LLM handler is in a package outside the index.
         (
             "app/foundation/tests/contract_handlers.hy",
             "(import app.foundation.host [with-host with-mail with-queue])\n\
@@ -2667,7 +2667,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
              (val STORE \"doeff_records.store:with-store@postgres\")\n(val FAKE-STORE \"app.foundation.peers:with-fake-store\")\n"
                 .to_string(),
         ),
-        // 良い例: 本物と相手役を :interpreters に並べた検(本物が索引に在る組と、索引の外に在る組)。
+        // Good example: a test listing the real one and the stand-in in :interpreters (a pair whose real one is in the index, and a pair whose real one is outside the index).
         (
             "app/foundation/tests/test_peer_contracts.hy",
             "(import app.foundation.tests.contract_handlers [HOST SIM MAIL FAKE-MAIL LIVE FAKE-LIVE FAKE-QUEUE STORE FAKE-STORE])\n\
@@ -2678,7 +2678,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
              (deftest test-store-answers-alike {:interpreters [STORE FAKE-STORE] :marks [\"real_world\"]} (assert True))\n"
                 .to_string(),
         ),
-        // 悪い例: 時計の相手役と本物の両方に届くが :interpreters が無い。
+        // Bad example: reaches both the clock's stand-in and the real one, but has no :interpreters.
         (
             "app/foundation/tests/test_clock_plain.hy",
             "(import app.foundation.host [with-clock])\n(import app.foundation.peers [with-fake-clock])\n\
@@ -2707,36 +2707,36 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
             "architecture.hy::DOEFF137::app.foundation.peers:with-fake-queue->app.foundation.host:with-queue",
             "architecture.hy::DOEFF137::app.foundation.peers:with-ghost->doeff_openai.live:with-live",
         ],
-        "両方に届く契約の検の在る mail・live(本物が索引の外)・store(解釈器を名の文字列で綴る — 本物は @変種つき)と理由つきの disk は当てず、本物に届かない queue・:interpreters の無い clock・定義の無い ghost を当てる: {}",
+        "mail and live (real one outside the index), store (interpreters spelled as name strings — the real one with a @variant), and the reasoned disk, do not hit; queue that does not reach the real one, clock without :interpreters, and ghost with no definition hit: {}",
         report
     );
     let clock = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-fake-clock->app.foundation.host:with-clock");
     assert_eq!(clock["level"], "critical");
     assert_eq!(clock["severity"], "error");
-    assert!(clock["message"].as_str().unwrap().contains("本物 app.foundation.host:with-clock と同じ契約の検"), "{}", clock);
+    assert!(clock["message"].as_str().unwrap().contains("of the same contract as real app.foundation.host:with-clock"), "{}", clock);
     let line = text.lines().position(|l| l.contains("app.foundation.peers:with-fake-clock")).unwrap();
     assert_eq!(clock["range"]["start"]["line"], line);
     let ghost = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-ghost->doeff_openai.live:with-live");
-    assert!(ghost["message"].as_str().unwrap().contains("相手役の定義が索引に無い"), "{}", ghost);
+    assert!(ghost["message"].as_str().unwrap().contains("the stand-in's definition is not in the index"), "{}", ghost);
 
-    // 理由の無い記号 none は鳴る — 契約の検の届く mail に書いても当てる。
+    // A bare symbol none without a reason fires — it hits even when written on mail, which a contract test reaches.
     let bare = text.replace(":real \"app.foundation.host:with-mail\")", ":real \"app.foundation.host:with-mail\" :contract-test none)");
     assert_ne!(bare, text);
     std::fs::write(&arch_path, &bare).unwrap();
     let (_, report) = editor(dir.path());
     let mail = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-fake-mail->app.foundation.host:with-mail");
-    assert!(mail["message"].as_str().unwrap().contains(":contract-test none に理由が無い"), "{}", mail);
+    assert!(mail["message"].as_str().unwrap().contains(":contract-test none has no reason"), "{}", mail);
 
-    // 名簿の形の誤り(:real の無い組)は宣言の誤り(終了コード 2)。
+    // A malformed list (a pair without :real) is a declaration error (exit code 2).
     let bad = text.replace("(stand-in \"app.foundation.peers:with-ghost\" :real \"doeff_openai.live:with-live\")", "(stand-in \"app.foundation.peers:with-ghost\")");
     assert_ne!(bad, text);
     std::fs::write(&arch_path, bad).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("stand-in app.foundation.peers:with-ghost に :real"), "{}", stderr);
+    assert!(stderr.contains("stand-in app.foundation.peers:with-ghost has no :real"), "{}", stderr);
 }
 
-/// #1564: 種つきの疑似乱数を使う性質の検は手元、OS の entropy を使う操作は縁のまま。
+/// #1564: a property test using a seeded pseudo-random number is local; an operation using OS entropy stays an edge.
 #[test]
 fn test_kind_distinguishes_seeded_random_from_entropy() {
     let files = [
@@ -2769,18 +2769,18 @@ fn test_kind_distinguishes_seeded_random_from_entropy() {
     ], "{report}");
 }
 
-/// 実 I/O の handler は doeff の目録(data/world_handlers.json)から知る — :wraps は目録に在る物だけ(外は設定の誤り)、
-/// 目録に在り :wraps に無い handler(subprocess-handler)を名簿の外で名指しても DOEFF131、:edge-touches から file を外すと file だけに
-/// 届くテストは手元(決定 B)。
+/// Real I/O handlers are known from doeff's inventory (data/world_handlers.json) — :wraps accepts only those in the inventory (outside is a config error),
+/// a handler in the inventory but not in :wraps (subprocess-handler) named outside the list is also DOEFF131, and removing a file from :edge-touches makes a test that reaches
+/// only the file local (decision B).
 #[test]
 fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
-    // :wraps が目録の外なら設定の誤り(終了コード 2)。
+    // If :wraps is outside the inventory, it is a config error (exit code 2).
     let outside = r#"
                    (world-handler "app.foundation.host:with-other" :touches [http] :wraps ["somewhere.else:mystery-handler"])"#;
     let dir = world_repo_with(&[("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-other [body] body)\n")], outside, "[\"DOEFF131\"]");
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("somewhere.else:mystery-handler は doeff の実 I/O の handler の目録"), "{}", stderr);
+    assert!(stderr.contains("somewhere.else:mystery-handler is not in doeff's catalog of real I/O handlers"), "{}", stderr);
 
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
@@ -2807,18 +2807,18 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
     let named = keys(&report, "DOEFF131");
     assert!(named.contains(&"app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_process:subprocess-handler".to_string()), "{:?}", named);
     let found = violation(&report, "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_process:subprocess-handler");
-    assert!(found["message"].as_str().unwrap().contains("名簿のどの定義もこの handler を :wraps に挙げていない"), "{}", found["message"]);
+    assert!(found["message"].as_str().unwrap().contains("no definition in the roster lists this handler in :wraps"), "{}", found["message"]);
     assert_eq!(
         keys(&report, "DOEFF133"),
         vec!["app/billing/tests/test_io.hy::DOEFF133::test_files_marked::local", "app/billing/tests/test_io.hy::DOEFF133::test_process::edge"],
-        "file だけのテストは手元(印なしは当てない)・process は縁: {}",
+        "a test that reaches only a file is local (unmarked does not hit), and process is an edge: {}",
         report
     );
 }
 
-/// environ の答え手は名で実 I/O が決まる — この process の os.environ を読む os-environ-reader は目録の env で、
-/// 名簿の外の定義が並べると DOEFF131。渡された値の表だけに答える environ-table-reader は目録に無く、同じ所で並べても当たらない
-/// (模擬の宿が値の表で答える形を誤検出しない)。以前は 1 つの名 environ-reader が既定の引数の時だけ os.environ を読み、目録に載せられなかった。
+/// environ answerers decide real I/O by name — os-environ-reader, which reads this process's os.environ, is env in the inventory,
+/// and listing it outside the list gives DOEFF131. environ-table-reader, which answers only from a given table of values, is not in the inventory, and listing it in the same place does not hit
+/// (so as not to falsely detect the shape where a simulated host answers from a table of values). Previously a single name environ-reader read os.environ only when its argument was the default, and could not be put in the inventory.
 #[test]
 fn os_environ_reader_is_a_world_handler_and_the_table_reader_is_not() {
     let files = [
@@ -2842,23 +2842,23 @@ fn os_environ_reader_is_a_world_handler_and_the_table_reader_is_not() {
     );
 }
 
-/// R6: テストは deftest だけ — :test-forms の綴りの型で選んだ file の、Python の def test_*・module ごとの skip・
-/// pytest の外の check script・deftest の runner を file ごとに 1 件 DOEFF135(critical)で出す。deftest だけの file は当てない。
+/// R6: tests are only deftest — for files selected by the :test-forms spelling type, emit one DOEFF135 (critical) per file for Python def test_*, per-module skip,
+/// check scripts outside pytest, and deftest runners. A file with only deftest does not hit.
 #[test]
 fn test_forms_other_than_deftest_are_red() {
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         ("app/billing/tests/test_good.hy", "(deftest test-one (assert True))\n".to_string()),
         ("app/billing/tests/test_python.py", "import pytest\n\ndef helper():\n    pass\n\ndef test_a():\n    assert True\n\nclass TestB:\n    def test_b(self):\n        assert True\n".to_string()),
-        ("app/billing/tests/test_skipped.hy", "(import pytest)\n(pytest.skip \"doeff 側の不足\" :allow-module-level True)\n(deftest test-x (assert True))\n".to_string()),
-        // 束ねの名と skip の印が別の行に在る複数行の pytestmark(agora の test_local_agora_e2e.hy の形)。
+        ("app/billing/tests/test_skipped.hy", "(import pytest)\n(pytest.skip \"missing on the doeff side\" :allow-module-level True)\n(deftest test-x (assert True))\n".to_string()),
+        // A multi-line pytestmark where the bundle name and the skip mark are on different lines (the shape of agora's test_local_agora_e2e.hy).
         (
             "app/billing/tests/test_marked_multiline.hy",
-            "(import pytest)\n;; module ごとの skip は pytestmark の印で書く(註の中の語は当てない)。\n(val pytestmark\n  (pytest.mark.skip :reason (+ \"理由の 1 行目(括弧も在る)\"\n                              \"理由の 2 行目\")))\n(deftest test-x (assert True))\n"
+            "(import pytest)\n;; a per-module skip is written with the pytestmark mark (words in comments do not hit).\n(val pytestmark\n  (pytest.mark.skip :reason (+ \"first line of the reason (with parentheses too)\"\n                              \"second line of the reason\")))\n(deftest test-x (assert True))\n"
                 .to_string(),
         ),
         ("app/billing/tests/test_marked_multiline.py", "import pytest\n\npytestmark = [\n    pytest.mark.skip(reason=\"x\"),\n]\n".to_string()),
-        // skip でない印の複数行の束ねと、1 行の印は当てない。束ねの後の検ごとの skip も束ねに数えない。
+        // A multi-line bundle of a non-skip mark, and a one-line mark, do not hit. A per-test skip after the bundle is not counted as the bundle either.
         (
             "app/billing/tests/test_marked_real_world.hy",
             "(import pytest)\n(val pytestmark\n  pytest.mark.real-world)\n(deftest test-x (assert True))\n(deftest test-y (pytest.mark.skip))\n".to_string(),
@@ -2888,17 +2888,17 @@ fn test_forms_other_than_deftest_are_red() {
         "{}",
         report
     );
-    // 複数行の束ねは束ねの名の行を指す。
+    // A multi-line bundle points at the line of the bundle name.
     let multiline = violation(&report, "app/billing/tests/test_marked_multiline.hy::DOEFF135::module-skip");
     assert_eq!(multiline["range"]["start"]["line"], 2);
     let python = violation(&report, "app/billing/tests/test_python.py::DOEFF135::python-test");
-    assert!(python["message"].as_str().unwrap().contains("def test_* が 2 本"), "{}", python["message"]);
+    assert!(python["message"].as_str().unwrap().contains("2 Python def test_* functions"), "{}", python["message"]);
     assert_eq!(python["range"]["start"]["line"], 5);
     assert_eq!(python["level"], "critical");
 }
 
-/// 許可名簿の規則(DOEFF106・131)は層の置き場の外の file(層の外の dir・:root の外で :raw-io-roots に挙げた dir)にも当たる。
-/// 検の file と :raw-io-roots の外(scripts/)は当てない。
+/// The allow-list rules (DOEFF106, 131) also hit files outside the layer locations (dirs outside the layers, and dirs outside :root listed in :raw-io-roots).
+/// Test files and dirs outside :raw-io-roots (scripts/) do not hit.
 #[test]
 fn world_handler_rules_cover_files_outside_the_layers() {
     let files = [
@@ -2911,7 +2911,7 @@ fn world_handler_rules_cover_files_outside_the_layers() {
         ),
         ("services/record/tests/test_main.hy", "(import socket)\n(deftest test-x (socket.socket))\n".to_string()),
         ("scripts/tool.hy", "(import subprocess)\n(defn go [] (subprocess.run [\"true\"]))\n".to_string()),
-        // 実行できる ADR の冊(defadr を持つ file)と、file の中の deftest の実 I/O はテストの持ち分 — 当てない。
+        // A collection of executable ADRs (a file with defadr) and the real I/O of a deftest in a file are the tests' share — they do not hit.
         ("app/sim/adr/defadr_rule.hy", "(import pathlib [Path])\n(defadr rule \"x\")\n(defn read-src [] (open \"a.hy\"))\n".to_string()),
         ("app/sim/checks.hy", "(import socket)\n(deftest test-open (socket.socket))\n".to_string()),
     ];
@@ -2928,24 +2928,24 @@ fn world_handler_rules_cover_files_outside_the_layers() {
     );
     assert_eq!(keys(&report, "DOEFF131"), vec!["services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler"], "{}", report);
     let found = violation(&report, "services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler");
-    assert!(found["message"].as_str().unwrap().contains("層の置き場の外"), "{}", found["message"]);
+    assert!(found["message"].as_str().unwrap().contains("outside the layer locations"), "{}", found["message"]);
     assert_eq!(found["level"], "critical");
 
-    // 1 file の実行(--stdin)も層の置き場の外の file に 106・131 を当て、全体の実行と同じ当たりを出す — 1 file の
-    // 実行がこの 2 つを判じると名乗る(judged_rules)ので、エディタは全体の結果をこの結果で差し替える。
+    // A single-file run (--stdin) also applies 106 and 131 to files outside the layer locations and gives the same hits as a whole run — because a single-file
+    // run claims to judge these two (judged_rules), the editor replaces the whole result with this result.
     let main = dir.path().join("services/record/main.hy");
     let text = std::fs::read_to_string(&main).unwrap();
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", main.to_str().unwrap()], Some(&text));
-    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&single, "DOEFF106"), vec!["services/record/main.hy::DOEFF106::serve::threading.Thread"], "{}", single);
     assert_eq!(keys(&single, "DOEFF131"), keys(&report, "DOEFF131"), "{}", single);
     let judged: Vec<&str> = single["judged_rules"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
     assert!(judged.contains(&"DOEFF106") && judged.contains(&"DOEFF131"), "{:?}", judged);
 }
 
-/// R5: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かなければ
-/// defservice の位置で DOEFF136(critical)。模擬の環境のテストが組み立てを呼ぶ service と、entry の層を持たない service は当てない。
-/// service の中のテスト(app/ledger/tests)が呼んでいても、模擬の環境の外なので数えない。billing は defsystem を挟んで届く(defsystem も呼び出しの持ち主)。
+/// R5: if not even one deftest under the simulation environment (:verification-environment) reaches a definition in a service's entry layer, it is
+/// DOEFF136 (critical) at the defservice position. A service whose simulation-environment test calls the assembly, and a service without an entry layer, do not hit.
+/// A call from a test inside the service (app/ledger/tests) is not counted since it is outside the simulation environment. billing is reached through a defsystem (a defsystem is also an owner of calls).
 #[test]
 fn services_not_run_on_the_sim_are_red() {
     let files = [
@@ -2959,18 +2959,18 @@ fn services_not_run_on_the_sim_are_red() {
     let dir = world_repo_with(&files, "", "[\"DOEFF136\"]");
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :verification-environment \"sim\"")
-        + "(defservice ledger \"台帳\" {:layers [core entry]})\n(defservice notes \"覚え書き\" {:layers [core]})\n";
+        + "(defservice ledger \"Ledger\" {:layers [core entry]})\n(defservice notes \"Notes\" {:layers [core]})\n";
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF136"), vec!["architecture.hy::DOEFF136::ledger"], "{}", report);
     let found = violation(&report, "architecture.hy::DOEFF136::ledger");
-    assert!(found["message"].as_str().unwrap().contains("service ledger の entry の層("), "{}", found["message"]);
+    assert!(found["message"].as_str().unwrap().contains("service ledger's entry layer ("), "{}", found["message"]);
     assert_eq!(found["severity"], "error", "{}", found);
 }
 
-/// code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants(`module:関数` の列)を
-/// 宣言していない・名指した関数が実在しない・その関数の :role が judgment でない時、defservice の位置で DOEFF163(critical)。
-/// entry の層を持たない service と、entry の層に定義の無い service は当てない。登録簿に載った欠けは warning に下がる。
+/// When a service that has code (at least one definition in the entry layer) does not declare :invariants (a list of `module:function`) in its defservice,
+/// a named function does not exist, or the function's :role is not judgment, DOEFF163 (critical) at the defservice position.
+/// A service without an entry layer, and a service with no definitions in the entry layer, do not hit. A gap listed in the registry drops to warning.
 #[test]
 fn services_without_declared_invariants_are_red() {
     let judged = "{:pre [(: seen list)] :post [(: % list)] :tags {:context \"sim\" :role \"judgment\"}}";
@@ -2983,9 +2983,9 @@ fn services_without_declared_invariants_are_red() {
         (
             "app/sim/invariants.hy",
             format!(
-                "(defk billing-holds [seen]\n  {}\n  \"請求の不変条件。\"\n  [])\n\
-                 (defk orders-run [seen]\n  {{:pre [(: seen list)] :post [(: % list)] :tags {{:context \"sim\" :role \"program\"}}}}\n  \"判断でない。\"\n  [])\n\
-                 (defk stock-holds [seen]\n  {}\n  \"在庫の不変条件。\"\n  [])\n",
+                "(defk billing-holds [seen]\n  {}\n  \"Billing invariants.\"\n  [])\n\
+                 (defk orders-run [seen]\n  {{:pre [(: seen list)] :post [(: % list)] :tags {{:context \"sim\" :role \"program\"}}}}\n  \"Not a judgment.\"\n  [])\n\
+                 (defk stock-holds [seen]\n  {}\n  \"Stock invariants.\"\n  [])\n",
                 judged, judged
             ),
         ),
@@ -2995,13 +2995,13 @@ fn services_without_declared_invariants_are_red() {
     let text = std::fs::read_to_string(&arch_path)
         .unwrap()
         .replace("{:layers [core entry]})", "{:layers [core entry] :invariants [\"app.sim.invariants:billing-holds\"]})")
-        + "(defservice ledger \"台帳\" {:layers [core entry]})\n\
-           (defservice orders \"注文\" {:layers [core entry] :invariants [\"app.sim.invariants:gone\" \"app.sim.invariants:orders-run\"]})\n\
-           (defservice stock \"在庫\" {:layers [core entry]})\n\
-           (defservice notes \"覚え書き\" {:layers [core]})\n\
-           (defservice empty \"空\" {:layers [core entry]})\n";
+        + "(defservice ledger \"Ledger\" {:layers [core entry]})\n\
+           (defservice orders \"Orders\" {:layers [core entry] :invariants [\"app.sim.invariants:gone\" \"app.sim.invariants:orders-run\"]})\n\
+           (defservice stock \"Stock\" {:layers [core entry]})\n\
+           (defservice notes \"Notes\" {:layers [core]})\n\
+           (defservice empty \"Empty\" {:layers [core entry]})\n";
     std::fs::write(&arch_path, text).unwrap();
-    // 既知の欠け: stock の宣言の欠けは登録簿に載っている(warning に下がる)。
+    // Known gap: stock's missing declaration is listed in the registry (drops to warning).
     let pyproject = dir.path().join("pyproject.toml");
     let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\nfiles = [\"registry/keys.txt\"]\n";
     std::fs::write(&pyproject, settings).unwrap();
@@ -3020,24 +3020,24 @@ fn services_without_declared_invariants_are_red() {
         report
     );
     let missing = violation(&report, "architecture.hy::DOEFF163::ledger");
-    assert!(missing["message"].as_str().unwrap().contains("service ledger は :invariants を宣言していない"), "{}", missing["message"]);
+    assert!(missing["message"].as_str().unwrap().contains("service ledger does not declare :invariants"), "{}", missing["message"]);
     assert_eq!(missing["level"], "critical", "{}", missing);
     let gone = violation(&report, "architecture.hy::DOEFF163::orders::app.sim.invariants:gone");
-    assert!(gone["message"].as_str().unwrap().contains("定義が無い"), "{}", gone["message"]);
+    assert!(gone["message"].as_str().unwrap().contains("no definition (wrong module or function name)"), "{}", gone["message"]);
     let role = violation(&report, "architecture.hy::DOEFF163::orders::app.sim.invariants:orders-run");
-    assert!(role["message"].as_str().unwrap().contains(":role が program"), "{}", role["message"]);
+    assert!(role["message"].as_str().unwrap().contains(":role is program"), "{}", role["message"]);
     let known = violation(&report, "architecture.hy::DOEFF163::stock");
     assert_eq!(known["severity"], "warning", "{}", known);
     assert_eq!(known["registered"], true, "{}", known);
 }
 
-/// DOEFF136 と対: code を持つ service は defservice に :system(cluster に置く系の defsystem)を宣言し、その系は
-/// entry の層に在る defsystem で、引数は型つきの土台 1 つ(土台を受ける job の関数の引数の型が素の Callable・写像・組でない)。
-/// 鳴る例: 宣言なし・定義なし・defsystem でない・引数 2 つ・土台の型が Callable・型なし・entry の外・他の service の entry の系・空の理由の例外。
-/// 鳴る例(part-of): 指す系が無い・指す物が defsystem でない。
-/// 鳴らない例: 宣言あり + 型つきの土台 1 つ・他の service の entry の系を指す part-of・理由つきの例外(旧い経路に残す service と、
-/// process を持たない部品の service — agent-catalog の形)。entry の層を持たない service も数える(#2221): :system なしは鳴り、
-/// part-of・理由つきの例外は鳴らない。
+/// Paired with DOEFF136: a service that has code declares :system (a defsystem placed in the cluster) in its defservice, and that system is
+/// a defsystem in the entry layer whose argument is one typed foundation (the argument type of the job function that takes the foundation is not a plain Callable, mapping, or tuple).
+/// Firing examples: no declaration, no definition, not a defsystem, two arguments, foundation type Callable, no type, outside entry, another service's entry system, an exception with an empty reason.
+/// Firing examples (part-of): the system pointed at does not exist, the thing pointed at is not a defsystem.
+/// Silent examples: a declaration + one typed foundation, a part-of pointing at another service's entry system, a reasoned exception (a service left on the old route, and
+/// a part service with no process — the agent-catalog shape). A service without an entry layer is also counted (#2221): no :system fires, and
+/// part-of and a reasoned exception do not fire.
 #[test]
 fn services_without_a_declared_system_are_red() {
     let job = |name: &str, ty: Option<&str>| match ty {
@@ -3050,7 +3050,7 @@ fn services_without_a_declared_system_are_red() {
             "app/billing/entry/system.hy",
             tags("billing", "entry")
                 + &job("billing-job", Some("BillingFoundation"))
-                + "(defsystem billing-system [foundation]\n  \"請求の系\"\n  (billing (billing-job foundation) :needs #{\"pg\"}))\n",
+                + "(defsystem billing-system [foundation]\n  \"Billing system\"\n  (billing (billing-job foundation) :needs #{\"pg\"}))\n",
         ),
         ("app/ledger/entry/main.hy", tags("ledger", "entry") + "(defk start [] 2)\n"),
         (
@@ -3085,21 +3085,21 @@ fn services_without_a_declared_system_are_red() {
     let text = std::fs::read_to_string(&arch_path)
         .unwrap()
         .replace("{:layers [core entry]})", "{:layers [core entry] :system \"app.billing.entry.system:billing-system\"})")
-        + "(defservice ledger \"台帳\" {:layers [core entry]})\n\
-           (defservice orders \"注文\" {:layers [core entry] :system [\"app.orders.entry.system:orders-system\" \"app.orders.entry.system:orders-plain\"\n\
+        + "(defservice ledger \"Ledger\" {:layers [core entry]})\n\
+           (defservice orders \"Orders\" {:layers [core entry] :system [\"app.orders.entry.system:orders-system\" \"app.orders.entry.system:orders-plain\"\n\
              \"app.orders.entry.system:orders-bare\" \"app.orders.entry.main:take\" \"app.orders.entry.system:gone\"\n\
              \"app.orders.entry.system:orders-typed\" \"app.orders.entry.system:orders-typed-callable\" \"app.orders.entry.system:orders-typed-two\"]})\n\
-           (defservice stock \"在庫\" {:layers [core entry] :system \"app.sim.systems:stock-system\"})\n\
-           (defservice archive \"保管\" {:layers [core entry] :system {:exempt \"\"}})\n\
-           (defservice reports \"報告\" {:layers [core entry] :system {:exempt \"旧い経路に残す — 機体ごとの起動で cluster の系に載せない\"}})\n\
-           (defservice catalog \"許可名簿\" {:layers [core entry] :system {:exempt \"process を持たない部品 — main も deploy も無く、読むだけで他の service が使う\"}})\n\
-           (defservice tasks \"作業\" {:layers [core entry] :system \"app.billing.entry.system:billing-system\"})\n\
-           (defservice agents \"担い手\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
-           (defservice helpers \"手伝い\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:nowhere\"}})\n\
-           (defservice jobs \"仕事\" {:layers [core entry] :system {:part-of \"app.orders.entry.main:take\"}})\n\
-           (defservice notes \"覚え書き\" {:layers [core]})\n\
-           (defservice vault \"預かり\" {:layers [core] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
-           (defservice parts \"部品\" {:layers [core] :system {:exempt \"process を持たない部品 — 他の service が読むだけ\"}})\n";
+           (defservice stock \"Stock\" {:layers [core entry] :system \"app.sim.systems:stock-system\"})\n\
+           (defservice archive \"Archive\" {:layers [core entry] :system {:exempt \"\"}})\n\
+           (defservice reports \"Reports\" {:layers [core entry] :system {:exempt \"left on the old route — started per machine, not placed in the cluster system\"}})\n\
+           (defservice catalog \"Allow-list\" {:layers [core entry] :system {:exempt \"a part with no process — no main or deploy, only read and used by other services\"}})\n\
+           (defservice tasks \"Tasks\" {:layers [core entry] :system \"app.billing.entry.system:billing-system\"})\n\
+           (defservice agents \"Agents\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
+           (defservice helpers \"Helpers\" {:layers [core entry] :system {:part-of \"app.billing.entry.system:nowhere\"}})\n\
+           (defservice jobs \"Jobs\" {:layers [core entry] :system {:part-of \"app.orders.entry.main:take\"}})\n\
+           (defservice notes \"Notes\" {:layers [core]})\n\
+           (defservice vault \"Vault\" {:layers [core] :system {:part-of \"app.billing.entry.system:billing-system\"}})\n\
+           (defservice parts \"Parts\" {:layers [core] :system {:exempt \"a part with no process — only read by other services\"}})\n";
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(
@@ -3109,7 +3109,7 @@ fn services_without_a_declared_system_are_red() {
             "architecture.hy::DOEFF173::helpers::app.billing.entry.system:nowhere",
             "architecture.hy::DOEFF173::jobs::app.orders.entry.main:take",
             "architecture.hy::DOEFF173::ledger",
-            // entry の層を持たない service も数える(custody の形)。vault(part-of)と parts(理由つきの例外)は鳴らない。
+            // A service without an entry layer is also counted (the custody shape). vault (part-of) and parts (reasoned exception) do not fire.
             "architecture.hy::DOEFF173::notes",
             "architecture.hy::DOEFF173::orders::app.orders.entry.main:take",
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:gone",
@@ -3124,32 +3124,32 @@ fn services_without_a_declared_system_are_red() {
         "{}",
         report
     );
-    // 他の service の entry の系を指す宣言も赤(:system はその service 自身の entry の層の系 — cisco-c8 と #2188 の決め)。
+    // A declaration pointing at another service's entry system is also red (:system is the system in that service's own entry layer — the decision of cisco-c8 and #2188).
     let borrowed = violation(&report, "architecture.hy::DOEFF173::tasks::app.billing.entry.system:billing-system");
-    assert!(borrowed["message"].as_str().unwrap().contains("entry の層に無い"), "{}", borrowed["message"]);
-    // part-of(その service の code が別の service の系の中で走る): 他の service の entry の系を指してよい(agents は鳴らない)。
-    // 指す先が無い・defsystem でないなら赤。
+    assert!(borrowed["message"].as_str().unwrap().contains("not in the entry layer"), "{}", borrowed["message"]);
+    // part-of (that service's code runs inside another service's system): it may point at another service's entry system (agents does not fire).
+    // Red if the target does not exist or is not a defsystem.
     let nowhere = violation(&report, "architecture.hy::DOEFF173::helpers::app.billing.entry.system:nowhere");
-    assert!(nowhere["message"].as_str().unwrap().contains("定義が無い"), "{}", nowhere["message"]);
+    assert!(nowhere["message"].as_str().unwrap().contains("no definition found"), "{}", nowhere["message"]);
     let not_system = violation(&report, "architecture.hy::DOEFF173::jobs::app.orders.entry.main:take");
-    assert!(not_system["message"].as_str().unwrap().contains("defsystem でない"), "{}", not_system["message"]);
+    assert!(not_system["message"].as_str().unwrap().contains("not a defsystem"), "{}", not_system["message"]);
     let missing = violation(&report, "architecture.hy::DOEFF173::ledger");
-    assert!(missing["message"].as_str().unwrap().contains("service ledger は :system"), "{}", missing["message"]);
+    assert!(missing["message"].as_str().unwrap().contains("service ledger did not declare :system"), "{}", missing["message"]);
     assert_eq!(missing["level"], "critical", "{}", missing);
     let two = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-system::params");
-    assert!(two["message"].as_str().unwrap().contains("引数が土台 1 つでない([foundation programs])"), "{}", two["message"]);
+    assert!(two["message"].as_str().unwrap().contains("arguments are not exactly one foundation([foundation programs])"), "{}", two["message"]);
     let plain = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-plain::plain-job");
     assert!(plain["message"].as_str().unwrap().contains("(of Callable [str] int)"), "{}", plain["message"]);
     let bare = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-bare::bare-job");
-    assert!(bare["message"].as_str().unwrap().contains("書かれていない"), "{}", bare["message"]);
+    assert!(bare["message"].as_str().unwrap().contains("not written"), "{}", bare["message"]);
     let take = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.main:take");
-    assert!(take["message"].as_str().unwrap().contains("defsystem でない"), "{}", take["message"]);
+    assert!(take["message"].as_str().unwrap().contains("not a defsystem"), "{}", take["message"]);
     let outside = violation(&report, "architecture.hy::DOEFF173::stock::app.sim.systems:stock-system");
-    assert!(outside["message"].as_str().unwrap().contains("entry の層に無い"), "{}", outside["message"]);
+    assert!(outside["message"].as_str().unwrap().contains("not in the entry layer"), "{}", outside["message"]);
 }
 
-/// DOEFF207 の見本の repo: 本番の系 2 つ(billing・orders)と、本番の系でない模擬の系 1 つ。`outside` = architecture.hy に書く
-/// `:outside-writers` の値(None = 書かない)。
+/// The sample repo for DOEFF207: two production systems (billing, orders) and one simulation system that is not a production system. `outside` = the value of `:outside-writers`
+/// written in architecture.hy (None = not written).
 fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
     let job = |name: &str| format!("(defk {} [foundation]\n  {{:post [(: % int)] :tags {{:context \"app\" :role \"entry\"}}}}\n  \"job。\"\n  1)\n", name);
     let files = [
@@ -3160,7 +3160,7 @@ fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
                 + &job("billing-job")
                 + &job("audit-job")
                 + &job("bare-job")
-                + "(defsystem billing-system [foundation]\n  \"請求の系\"\n\
+                + "(defsystem billing-system [foundation]\n  \"Billing system\"\n\
                    (billing (billing-job foundation) :needs #{\"pg\"} :reads #{\"store:orders\" \"store:audit\" \"ledger:items\"} :writes #{\"store:bills\"})\n\
                    (audit (audit-job foundation) :needs #{\"pg\"} :reads #{} :writes #{\"store:audit\"})\n\
                    (bare (bare-job foundation) :needs #{\"pg\"}))\n",
@@ -3173,7 +3173,7 @@ fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
         ),
         (
             "app/sim/systems.hy",
-            // 模擬の系の job の書きは書き手に数えない(record:turn を書いても、本番の orders の読みは赤のまま)。
+            // A simulation-system job's write is not counted as a writer (even if it writes record:turn, the production orders read stays red).
             tags("sim", "entry")
                 + &job("stock-job")
                 + "(defsystem stock-system [foundation]\n  (stock (stock-job foundation) :needs #{\"pg\"} :reads #{\"store:nothing\"} :writes #{\"record:turn\"}))\n",
@@ -3189,32 +3189,32 @@ fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
         .unwrap()
         .replace(":foundation foundation", &declared)
         .replace("{:layers [core entry]})", "{:layers [core entry] :system \"app.billing.entry.system:billing-system\"})")
-        + "(defservice orders \"注文\" {:layers [core entry] :system \"app.orders.entry.system:orders-system\"})\n";
+        + "(defservice orders \"Orders\" {:layers [core entry] :system \"app.orders.entry.system:orders-system\"})\n";
     std::fs::write(&arch_path, text).unwrap();
     dir
 }
 
-/// この種の違反は doeff-linter が見つける — 本番の系の job が
-/// 読む組に、本番の job の :writes も :outside-writers の行も無ければ赤(新しい入口の画面が、本番に書き手の無い会話の記録を読んでいた形)。
-/// 本番の系の job に欄が無ければ赤。本番の系でない模擬の系は数えない。
+/// doeff-linter finds this kind of violation — a production-system job
+/// is red if the pair it reads has neither a production job's :writes nor an :outside-writers line (the shape where a new entry screen read a conversation record that had no writer in production).
+/// It is red if a production-system job has no field. A simulation system that is not a production system is not counted.
 #[test]
 fn production_reads_without_a_writer_are_red() {
-    let dir = access_repo(Some("{\"ledger:items\" \"台帳の外の道具\"}"));
+    let dir = access_repo(Some("{\"ledger:items\" \"a tool outside the ledger\"}"));
     let (_, report) = editor(dir.path());
     assert_eq!(
         keys(&report, "DOEFF207"),
         vec![
             "app/billing/entry/system.hy::DOEFF207::billing-system::bare::reads",
             "app/billing/entry/system.hy::DOEFF207::billing-system::bare::writes",
-            // 今夜の形: 本番の job が読む会話の記録の種類を、どの本番の job も書かない(書くのは模擬の系の job だけ)。
+            // Tonight's shape: no production job writes the kind of conversation record that a production job reads (only a simulation-system job writes it).
             "app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn",
         ]
     );
     let turn = violation(&report, "app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn");
-    assert!(turn["message"].as_str().unwrap().contains("書き手が無い"), "{}", turn["message"]);
+    assert!(turn["message"].as_str().unwrap().contains("has no writer"), "{}", turn["message"]);
     assert_eq!(turn["level"], "critical", "{}", turn);
-    // 外の書き手の表に載せれば、同じ読みは緑。
-    let written = access_repo(Some("{\"ledger:items\" \"台帳の外の道具\" \"record:turn\" \"手番の task\"}"));
+    // If it is listed in the outside-writers table, the same read is green.
+    let written = access_repo(Some("{\"ledger:items\" \"a tool outside the ledger\" \"record:turn\" \"the turn task\"}"));
     let (_, report) = editor(written.path());
     assert_eq!(
         keys(&report, "DOEFF207"),
@@ -3225,15 +3225,15 @@ fn production_reads_without_a_writer_are_red() {
     );
 }
 
-/// DOEFF207 の job でない書き手の見本: 本番の系 orders の job が record:turn を読み、task の Program run-task
-/// (app/orders/core/run.hy)が契約の `:writes` で書くと名乗る。`reached` = job が run-task を呼ぶか(本番の入口から届くか)・
-/// `declares` = run-task が :writes を書くか。本番の入口は :business-fakes の宣言(DOEFF143 と同じ)で決まる。
+/// The sample for a DOEFF207 writer that is not a job: a production-system orders job reads record:turn, and the task Program run-task
+/// (app/orders/core/run.hy) claims to write via the contract's `:writes`. `reached` = whether the job calls run-task (whether it is reached from the production entry),
+/// `declares` = whether run-task writes :writes. The production entry is decided by the :business-fakes declaration (same as DOEFF143).
 fn task_writer_repo(reached: bool, declares: bool) -> tempfile::TempDir {
     let writes = if declares { " :writes #{\"record:turn\"}" } else { "" };
     let (import, call) = if reached { ("(import app.orders.core.run [run-task])\n", "(run-task 1)") } else { ("", "1") };
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
-        ("app/orders/core/run.hy", tags("orders", "judgment") + &format!("(defk run-task [x]\n  \"task の Program。\"\n  {{:post [(: % int)]{}}}\n  x)\n", writes)),
+        ("app/orders/core/run.hy", tags("orders", "judgment") + &format!("(defk run-task [x]\n  \"Program of the task.\"\n  {{:post [(: % int)]{}}}\n  x)\n", writes)),
         (
             "app/orders/entry/system.hy",
             tags("orders", "entry")
@@ -3244,16 +3244,16 @@ fn task_writer_repo(reached: bool, declares: bool) -> tempfile::TempDir {
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF207\"]");
     let arch_path = dir.path().join("architecture.hy");
-    let declared = ":foundation foundation\n  :outside-writers {\"ledger:items\" \"台帳の外の道具\"}\n  \
+    let declared = ":foundation foundation\n  :outside-writers {\"ledger:items\" \"a tool outside the ledger\"}\n  \
                     :business-fakes {:simulation [\"app/sim/**\"] :tests [\"tests/**\"] :production [\"app/**\"] :business-modules [\"app.orders\"]}";
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declared)
-        + "(defservice orders \"注文\" {:layers [core entry] :system \"app.orders.entry.system:orders-system\"})\n";
+        + "(defservice orders \"Orders\" {:layers [core entry] :system \"app.orders.entry.system:orders-system\"})\n";
     std::fs::write(&arch_path, text).unwrap();
     dir
 }
 
-/// 本番の入口(系の job の Program)から届く task の Program が :writes で名乗れば、その組の読みは緑。名乗りを外すと赤
-/// (task の code から書きが消えて名乗りも消えた形)。
+/// If a task Program reached from the production entry (a system job's Program) claims it in :writes, that pair's read is green. Removing the claim makes it red
+/// (the shape where the write vanished from the task's code and the claim vanished too).
 #[test]
 fn a_reached_function_that_declares_its_writes_is_a_writer() {
     let (_, report) = editor(task_writer_repo(true, true).path());
@@ -3263,14 +3263,14 @@ fn a_reached_function_that_declares_its_writes_is_a_writer() {
     assert_eq!(keys(&report, "DOEFF207"), vec!["app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn"]);
 }
 
-/// 本番の入口から届かない定義の :writes は書き手に数えない(模擬だけの task や、使われていない定義が名乗っても読みは赤のまま)。
+/// A :writes of a definition not reached from the production entry is not counted as a writer (even if a simulation-only task or an unused definition claims it, the read stays red).
 #[test]
 fn an_unreached_function_that_declares_writes_is_not_a_writer() {
     let (_, report) = editor(task_writer_repo(false, true).path());
     assert_eq!(keys(&report, "DOEFF207"), vec!["app/orders/entry/system.hy::DOEFF207::orders-system::orders::record:turn"]);
 }
 
-/// :outside-writers を書いていない repo には DOEFF207 を当てない(欄は doeff の defsystem では任意 — 求めるのは宣言した repo の本番の系だけ)。
+/// DOEFF207 is not applied to a repo that does not write :outside-writers (the field is optional in doeff's defsystem — only the production systems of repos that declare it are required).
 #[test]
 fn reads_are_not_judged_without_outside_writers() {
     let dir = access_repo(None);
@@ -3278,12 +3278,12 @@ fn reads_are_not_judged_without_outside_writers() {
     assert!(keys(&report, "DOEFF207").is_empty(), "{:?}", keys(&report, "DOEFF207"));
 }
 
-/// DOEFF208 の見本の repo: 本番の code(:business-fakes の :production)に、記録の変更の待ちを起動の手段にする所と、当たらない形を並べる。
-/// `declared` = architecture.hy に :business-fakes を書くか(書かない repo には当てない)。
+/// The sample repo for DOEFF208: in production code (:production of :business-fakes), lines the shape that uses waiting for a record change as the start mechanism, and shapes that do not hit.
+/// `declared` = whether :business-fakes is written in architecture.hy (it is not applied to a repo that does not write it).
 fn record_wait_repo(declared: bool) -> tempfile::TempDir {
     let files = [
         (
-            // 当たる: entry の handler の列に記録の変更の合図の源を結ぶ(read-signal-handler・module の名つきの records-signal-handler)。
+            // Hits: tying a record-change signal source into an entry handler list (read-signal-handler, and records-signal-handler with a module name).
             "app/billing/entry/turn_events.hy",
             tags("billing", "entry")
                 + "(import doeff_records.event_source [read-signal-handler])\n(import doeff_records [event-source])\n\
@@ -3291,8 +3291,8 @@ fn record_wait_repo(declared: bool) -> tempfile::TempDir {
                    (defk run-maker [body]\n  (with-handlers [(event-source.records-signal-handler BINDINGS on-moved)] body))\n",
         ),
         (
-            // 当たる: 記録の変更を待つ(秒が変数・literal の 5.0・位置の引数の 3 つ目)。当たらない: 秒 0・0.0・秒を書かない(既定 0)・
-            // match の pattern の綴り。
+            // Hits: waiting for a record change (seconds as a variable, a literal 5.0, the third positional argument). Does not hit: seconds 0, 0.0, no seconds written (default 0),
+            // and the spelling in a match pattern.
             "app/billing/core/memo_wait.hy",
             tags("billing", "judgment")
                 + "(import doeff_records.effects [WatchChanges WatchEvents])\n\
@@ -3305,13 +3305,13 @@ fn record_wait_repo(declared: bool) -> tempfile::TempDir {
                    (defk waited [ask]\n  (match ask\n    (WatchChanges :timeout timeout) (float timeout)\n    (WatchEvents :timeout t) :if (> t 0) t\n    _ 0.0))\n",
         ),
         (
-            // 当たらない: 記録の効果に答える handler の中で出し直す待ち(中継)。
+            // Does not hit: a wait re-emitted inside a handler that answers a record effect (a relay).
             "app/billing/foundation/relay.hy",
             tags("shared", "foundation")
                 + "(defhandler records-relay\n  (WatchChanges [tables cursor timeout limit]\n    (<- answer (WatchChanges tables cursor :timeout timeout))\n    (resume answer))\n  \
                    (WatchEvents [stream after timeout]\n    (resume (WatchEvents stream after timeout))))\n",
         ),
-        // 当たらない: 模擬の環境・検の file・doeff-records の package の中(使い手でなく、効果と源の持ち主)。
+        // Does not hit: inside the simulation environment, test files, and the doeff-records package (not users, but the owners of the effect and source).
         ("app/sim/world.hy", tags("sim", "entry") + "(defk emulated [body]\n  (with-handlers [(read-signal-handler BINDINGS on-moved)] body))\n"),
         ("app/billing/tests/test_wait.hy", tags("billing", "entry") + "(deftest waits\n  (WatchChanges #(\"message\") cursor :timeout 5.0))\n"),
         (
@@ -3332,10 +3332,10 @@ fn record_wait_repo(declared: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 記録を書いて記録を待つ設計を linter で禁じ — 記録と起動を分ける:
-/// 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
-/// handler の外で秒が 0 でない記録の変更の待ちを出す所は赤。待たずに 1 回読む(秒 0)・模擬・検・doeff-records の中・記録の効果に答える
-/// handler の中・match の pattern は当たらない。
+/// A design that writes a record and waits for the record is forbidden by the linter — record and start are separated:
+/// the place where production code makes record changes an event source (tying a signal source), and the place where a wait for a record change
+/// with non-zero seconds is emitted outside a record-effect handler are red. Reading once without waiting (seconds 0), simulation, tests, inside doeff-records, inside a handler answering record effects,
+/// and match patterns do not hit.
 #[test]
 fn production_waits_on_record_changes_are_red() {
     let dir = record_wait_repo(true);
@@ -3353,13 +3353,13 @@ fn production_waits_on_record_changes_are_red() {
     );
     let source = violation(&report, "app/billing/entry/turn_events.hy::DOEFF208::run-placer::read-signal-handler");
     assert_eq!(source["level"], "critical", "{}", source);
-    assert!(source["message"].as_str().unwrap().contains("記録の変更を出来事の源にする"), "{}", source["message"]);
+    assert!(source["message"].as_str().unwrap().contains("makes record changes an event source"), "{}", source["message"]);
     let wait = violation(&report, "app/billing/core/memo_wait.hy::DOEFF208::wait-for::WatchChanges");
     assert!(wait["message"].as_str().unwrap().contains(":timeout left"), "{}", wait["message"]);
     assert!(!wait["explanation"]["reason"].as_str().unwrap().is_empty(), "{}", wait);
 }
 
-/// :business-fakes(本番の code の範囲の宣言)を書いていない repo には DOEFF208 を当てない(本番の code の範囲が分からない)。
+/// DOEFF208 is not applied to a repo that does not write :business-fakes (the range of production code, so the range of production code is unknown).
 #[test]
 fn record_waits_are_not_judged_without_business_fakes() {
     let dir = record_wait_repo(false);
@@ -3367,19 +3367,19 @@ fn record_waits_are_not_judged_without_business_fakes() {
     assert!(keys(&report, "DOEFF208").is_empty(), "{:?}", keys(&report, "DOEFF208"));
 }
 
-/// DOEFF209 の見本の repo: 本番の code(:business-fakes の :production)に、同じ物を時間の待ちを挟んで繰り返し取りに行く形と、当たらない形を
-/// 並べる。`declared` = architecture.hy に :business-fakes を書くか(書かない repo には当てない)。
+/// The sample repo for DOEFF209: in production code (:production of :business-fakes), lines the shape that repeatedly fetches the same thing with a time wait in between, and shapes that do not hit.
+/// `declared` = whether :business-fakes is written in architecture.hy (it is not applied to a repo that does not write it).
 fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
     let files = [
         (
-            // 補助: 今から s 秒後に期限を掛けて 1 度だけ待つ(1 度だけなので補助そのものは当たらず、繰り返しの中の呼び手が当たる)。
+            // Helper: set a deadline s seconds from now and wait just once (since it is once, the helper itself does not hit, and the caller inside a repetition does).
             "app/billing/core/clock_help.hy",
             tags("billing", "judgment")
                 + "(defk arm-next [s]\n  (<- now (GetTime))\n  (<- (ArmTimer TAG (+ now (timedelta :seconds s)))))\n",
         ),
         (
-            // 当たる: 今 + 秒の ArmTimer を loop の中で掛けて読む・Delay の loop・補助の defk に包んだ形・:poll-seconds・
-            // 印が無い時も試す loop に「届かない間だけの繋ぎ直し」を書いた形(区分が合わない)・語彙の外の理由。
+            // Hits: a loop that sets an ArmTimer of now + seconds and reads, a Delay loop, a shape wrapped in a helper defk, :poll-seconds,
+            // a loop that also tries when there is no mark and has a "reconnect only while unreachable" written (the category does not fit), and a reason outside the vocabulary.
             "app/billing/core/polls.hy",
             tags("billing", "judgment")
                 + "(import app.billing.core.clock_help [arm-next])\n\
@@ -3393,9 +3393,9 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
                    (defk poll-unproven []\n  (while True\n    (<- (Delay 5.0)) ; 時間で取り直す理由: 相手に変更の知らせが無い: 預かり所\n    (<- (ReadCustody))))\n",
         ),
         (
-            // 当たらない: 行から導いた期限・変わりを待つ上限の秒(DOEFF208 の側)・1 度だけの期限・書くだけの loop(理由つき)・
-            // 変更の知らせの無い相手(相手と確かめの根拠つきの理由)・印が在る間だけ試す繋ぎ直し(理由つき)・別の task に渡す 1 度の待ち・秒 0 の譲り・期限の差の眠り・
-            // 要求の timeout。
+            // Does not hit: a deadline derived from a row, the upper-limit seconds for waiting for change (DOEFF208's side), a one-time deadline, a write-only loop (with a reason),
+            // a counterpart with no change notification (a reason with the counterpart and the basis for the check), a reconnect that tries only while the mark is present (with a reason), a single wait handed to another task, the zero-second concession, a sleep for a deadline difference,
+            // and a request timeout.
             "app/billing/core/fine.hy",
             tags("billing", "judgment")
                 + "(import app.billing.core.clock_help [arm-next])\n\
@@ -3408,7 +3408,7 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
                    (defk spawner []\n  (while True\n    (<- (Spawn (arm-next 5.0)))\n    (<- (WaitForEvent Moved))))\n\
                    (defk yields [due]\n  (while True\n    (<- now (GetTime))\n    (<- (Delay 0.0))\n    (<- (Delay (- due now)))\n    (<- (HttpRequest URL :timeout 5.0))))\n",
         ),
-        // 当たる: 前の分けで漏れた services/record と、doeff の package(doeff-core-effects・doeff-traverse・doeff-records の中も)。
+        // Hits: services/record leaked by the previous split, and doeff packages (including inside doeff-core-effects, doeff-traverse, and doeff-records).
         ("services/record/serving.hy", "(defk store-watch []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadStore))))\n".to_string()),
         (
             "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
@@ -3419,7 +3419,7 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
             "packages/doeff-records/src/doeff_records/maintenance.hy",
             "(defk maintain [s]\n  (while True\n    (<- (Delay s))\n    (<- (Compact))))\n".to_string(),
         ),
-        // 当たらない: 模擬の環境・検の file(母集団の外)。
+        // Does not hit: the simulation environment and test files (outside the population).
         ("app/sim/world.hy", tags("sim", "entry") + "(defk emulated []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n"),
         ("app/billing/tests/test_poll.hy", tags("billing", "entry") + "(deftest polls\n  (while True\n    (<- (Delay 5.0))))\n"),
     ];
@@ -3434,10 +3434,10 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 取りに行く繰り返しは全部直す対象で最後の手段に限る:
-/// 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
-/// 取りに行く所は赤 — 今 + 秒の ArmTimer・Delay・補助の定義に包んだ形・:poll-seconds。期限の待ち・変わりを待つ上限の秒・1 度だけの期限・
-/// 閉じた語彙の理由を書いた所は通る。母集団は services/record と doeff の package(doeff-core-effects・doeff-traverse・doeff-records)も含む。
+/// Repeated fetches are all to be fixed, and limited to a last resort:
+/// a place where a production-code Program fetches the same thing repeatedly with a time wait in between
+/// is red — an ArmTimer of now + seconds, Delay, a shape wrapped in a helper definition, :poll-seconds. A deadline wait, the upper-limit seconds for waiting for change, a one-time deadline,
+/// and a place with a reason in the closed vocabulary pass. The population also includes services/record and doeff packages (doeff-core-effects, doeff-traverse, doeff-records).
 #[test]
 fn production_polling_on_timers_is_red() {
     let dir = timed_refetch_repo(true);
@@ -3466,16 +3466,16 @@ fn production_polling_on_timers_is_red() {
     let helper = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-helper::arm-next::periodic");
     assert!(helper["message"].as_str().unwrap().contains("clock_help.hy:"), "{}", helper["message"]);
     let always = violation(&report, "app/billing/core/polls.hy::DOEFF209::reconnect-always::Delay::periodic");
-    assert!(always["message"].as_str().unwrap().contains("届かない後の取り直し"), "{}", always["message"]);
+    assert!(always["message"].as_str().unwrap().contains("refetch after unreachable"), "{}", always["message"]);
     let excuse = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-excuse::Delay::periodic");
-    assert!(excuse["message"].as_str().unwrap().contains("閉じた語彙の外"), "{}", excuse["message"]);
+    assert!(excuse["message"].as_str().unwrap().contains("outside the closed vocabulary"), "{}", excuse["message"]);
     let kube = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-kube::Delay::periodic");
-    assert!(kube["message"].as_str().unwrap().contains("この相手は変更の知らせを持つ(Kubernetes)"), "{}", kube["message"]);
+    assert!(kube["message"].as_str().unwrap().contains("this party has change notifications (Kubernetes)"), "{}", kube["message"]);
     let unproven = violation(&report, "app/billing/core/polls.hy::DOEFF209::poll-unproven::Delay::periodic");
-    assert!(unproven["message"].as_str().unwrap().contains("何で確かめたか"), "{}", unproven["message"]);
+    assert!(unproven["message"].as_str().unwrap().contains("how it was verified"), "{}", unproven["message"]);
 }
 
-/// :business-fakes(本番の code の範囲の宣言)を書いていない repo には DOEFF209 を当てない。
+/// DOEFF209 is not applied to a repo that does not write :business-fakes (the declaration of the range of production code).
 #[test]
 fn polling_on_timers_is_not_judged_without_business_fakes() {
     let dir = timed_refetch_repo(false);
@@ -3483,18 +3483,18 @@ fn polling_on_timers_is_not_judged_without_business_fakes() {
     assert!(keys(&report, "DOEFF209").is_empty(), "{:?}", keys(&report, "DOEFF209"));
 }
 
-/// 登録簿の dir を足し、その中の file に鍵 key を書く(既知の当たりとして載せてみる)。
+/// Add a registry dir and write the key `key` into a file in it (try listing it as a known hit).
 fn register_key(root: &Path, key: &str) {
     let pyproject = root.join("pyproject.toml");
     let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\ndirs = [\"registry/BREACHES\"]\n";
     std::fs::write(&pyproject, settings).unwrap();
     let registry = root.join("registry/BREACHES");
     std::fs::create_dir_all(&registry).unwrap();
-    std::fs::write(registry.join("known.txt"), format!("{}\n既知の当たりとして載せてみる(下がらない事の見本)\n", key)).unwrap();
+    std::fs::write(registry.join("known.txt"), format!("{}\nTry listing it as a known hit (a sample showing it is not lowered)\n", key)).unwrap();
 }
 
-/// DOEFF208・209 の鍵を登録簿に載せても、当たりは error・critical・登録の外のまま(既知の一覧で通す形にしない —
-/// DOEFF206 の intent_fakes_in_verification_are_not_lowered_by_the_registry と同じ形)。
+/// Even if the keys of DOEFF208 and 209 are listed in the registry, the hits stay error, critical, and outside the registry (not turned into passing by a known list —
+/// the same shape as DOEFF206's intent_fakes_in_verification_are_not_lowered_by_the_registry).
 #[test]
 fn record_waits_and_polling_are_not_lowered_by_the_registry() {
     for (dir, rule, key) in [
@@ -3511,21 +3511,21 @@ fn record_waits_and_polling_are_not_lowered_by_the_registry() {
     }
 }
 
-/// 名指しの path と基点の報告を渡して editor-json を走らせ、(終了コード・新しい critical の識別子の辞書順)を返す。
+/// Run editor-json with the named paths and the baseline report, and return (exit code, the new critical identifiers in lexicographic order).
 fn named_against_baseline(root: &Path, baseline: &Path, named: &[&str]) -> (i32, Vec<String>) {
     let mut args = vec!["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()];
     args.extend_from_slice(named);
     let (code, stdout, stderr) = run(root, &args, None);
-    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     let mut fresh: Vec<String> =
-        report["new_critical"].as_array().unwrap_or_else(|| panic!("new_critical が無い: {}", report)).iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        report["new_critical"].as_array().unwrap_or_else(|| panic!("new_critical is missing: {}", report)).iter().map(|v| v.as_str().unwrap().to_string()).collect();
     fresh.sort();
     (code, fresh)
 }
 
-/// cisco-c8 の可 — 規則 A の入口の形: 既知の一覧を持たない規則(登録簿で下げない規則 — DOEFF206〜209)の critical は、
-/// 名指しの path(変えた file)に在れば、基点の報告に同じ鍵が在っても new_critical に入る(基点の差でも登録簿でも下がらない)。名指していない
-/// file の当たりは入らない。名指しの無い全体の実行は基点の差だけ(全体の数は日次で出す)。
+/// cisco-c8's approval — the shape of Rule A's entry: the critical of a rule with no known list (a rule not lowered by the registry — DOEFF206 to 209)
+/// enters new_critical if it is in a named path (a changed file), even if the baseline report has the same key (it is lowered neither by the baseline diff nor by the registry). A hit in a file
+/// that is not named does not enter. A whole run with no named paths is only the baseline diff (the whole count is reported daily).
 #[test]
 fn rules_without_a_registry_block_their_hits_in_named_files_even_when_the_baseline_has_them() {
     let dir = record_wait_repo(true);
@@ -3541,13 +3541,13 @@ fn rules_without_a_registry_block_their_hits_in_named_files_even_when_the_baseli
         ]
     );
     assert_eq!(code, 4);
-    // 名指していない file(turn_events.hy)の当たりは入らない。
+    // A hit in a file that is not named (turn_events.hy) does not enter.
     let (_, fresh) = named_against_baseline(root, &baseline, &["app/billing/foundation/relay.hy"]);
     assert!(fresh.is_empty(), "{:?}", fresh);
-    // 名指しの無い実行は基点の差だけ。
+    // A run with no named paths is only the baseline diff.
     let (_, fresh) = named_against_baseline(root, &baseline, &[]);
     assert!(fresh.is_empty(), "{:?}", fresh);
-    // DOEFF209 も同じ入口を通る(全体を判じてから名指しの path で絞る)。
+    // DOEFF209 goes through the same entry (judge everything, then narrow by the named paths).
     let dir = timed_refetch_repo(true);
     let root = dir.path();
     let baseline = baseline_file(root);
@@ -3556,36 +3556,36 @@ fn rules_without_a_registry_block_their_hits_in_named_files_even_when_the_baseli
     assert_eq!(code, 4);
 }
 
-/// 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
-/// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
-/// 母集団が 0 になり、条を消しても鳴らなかった。
+/// A repo with no layer dirs (`<root>/<dir>/entry/`) (a repo split by feature dirs, like merge-queue) declares where its code lives with the defservice
+/// `:entry-modules`. A declared service enters the population of DOEFF163 — in the form without a declaration there is no entry dir, so
+/// the population was 0 and it did not fire even when the clauses were removed.
 fn entry_module_repo(queue: &str) -> tempfile::TempDir {
     let judged = "{:pre [(: writes tuple)] :post [(: % tuple)] :tags {:context \"lease\" :role \"judgment\"}}";
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         ("app/queue/main.hy", "(defk cycle [] 1)\n".to_string()),
-        ("app/queue/lease_invariants.hy", format!("(defk fenced-writes [writes]\n  {}\n  \"柵の条。\"\n  #())\n", judged)),
+        ("app/queue/lease_invariants.hy", format!("(defk fenced-writes [writes]\n  {}\n  \"Fence clause.\"\n  #())\n", judged)),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF163\"]");
     let arch_path = dir.path().join("architecture.hy");
-    let text = std::fs::read_to_string(&arch_path).unwrap() + &format!("(defservice queue \"列\" {{:layers [core] {}}})\n", queue);
+    let text = std::fs::read_to_string(&arch_path).unwrap() + &format!("(defservice queue \"Queue\" {{:layers [core] {}}})\n", queue);
     std::fs::write(&arch_path, text).unwrap();
     dir
 }
 
-/// 失敗ケース 1: `:entry-modules` を宣言し :invariants の無い service は、entry の層の dir が無くても DOEFF163(critical)。
+/// Failure case 1: a service that declares `:entry-modules` and has no :invariants is DOEFF163 (critical) even without an entry layer dir.
 #[test]
 fn a_service_with_entry_modules_and_no_invariants_is_red() {
     let dir = entry_module_repo(":entry-modules [\"app.queue.main\"]");
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF163"), vec!["architecture.hy::DOEFF163::queue"], "{}", report);
     let found = violation(&report, "architecture.hy::DOEFF163::queue");
-    assert!(found["message"].as_str().unwrap().contains("service queue は :invariants を宣言していない"), "{}", found["message"]);
+    assert!(found["message"].as_str().unwrap().contains("service queue does not declare :invariants"), "{}", found["message"]);
     assert_eq!(found["level"], "critical", "{}", found);
 }
 
-/// 失敗ケース 2: `:entry-modules` と judgment の :invariants を宣言した service は緑(条を消すと失敗ケース 1 の形で赤)。
-/// 宣言の無い service(`:entry-modules` も entry の層も無い)は今までどおり数えない。
+/// Failure case 2: a service that declares `:entry-modules` and a judgment :invariants is green (removing the clause turns it red in the shape of failure case 1).
+/// A service with no declaration (neither `:entry-modules` nor an entry layer) is not counted, as before.
 #[test]
 fn a_service_with_entry_modules_and_a_judgment_invariant_is_green() {
     let dir = entry_module_repo(":entry-modules [\"app.queue.main\"] :invariants [\"app.queue.lease_invariants:fenced-writes\"]");
@@ -3593,22 +3593,22 @@ fn a_service_with_entry_modules_and_a_judgment_invariant_is_green() {
     assert!(keys(&report, "DOEFF163").is_empty(), "{}", report);
     let silent = entry_module_repo("");
     let (_, report) = editor(silent.path());
-    assert!(keys(&report, "DOEFF163").is_empty(), "宣言の無い service を数えた: {}", report);
+    assert!(keys(&report, "DOEFF163").is_empty(), "a service with no declaration was counted: {}", report);
 }
 
-/// 失敗ケース 3: `:entry-modules` の module の Hy の file が無ければ、綴りの誤りで母集団から黙って外れた形にせず DOEFF163(`entry::<module>`)。
+/// Failure case 3: if the Hy file of an `:entry-modules` module is missing, DOEFF163 (`entry::<module>`) so that a spelling mistake does not silently drop it from the population.
 #[test]
 fn an_entry_module_without_a_file_is_red() {
     let dir = entry_module_repo(":entry-modules [\"app.queue.mian\"] :invariants [\"app.queue.lease_invariants:fenced-writes\"]");
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF163"), vec!["architecture.hy::DOEFF163::queue::entry::app.queue.mian"], "{}", report);
     let found = violation(&report, "architecture.hy::DOEFF163::queue::entry::app.queue.mian");
-    assert!(found["message"].as_str().unwrap().contains("Hy の file(app/queue/mian.hy)が無い"), "{}", found["message"]);
+    assert!(found["message"].as_str().unwrap().contains("Hy file (app/queue/mian.hy) not found"), "{}", found["message"]);
 }
 
-/// monorepo の package(`pkg/pyproject.toml` と `pkg/src/cluster/…`)で、設定の `root = "src"` が module の名を
-/// import の名(`cluster.coord`)に揃える。architecture.hy は package の根(根の外)に置き、設定の `architecture` で名指す。
-/// `invariants` を書くかと `root` を書くかで 3 通りを作る。
+/// In a monorepo package (`pkg/pyproject.toml` and `pkg/src/cluster/…`), the config's `root = "src"` aligns module names
+/// with import names (`cluster.coord`). architecture.hy is placed at the package root (outside the root), and named by the config's `architecture`.
+/// Three variants are made by whether `invariants` is written and whether `root` is written.
 fn package_repo(invariants: bool, root: bool) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let settings = format!(
@@ -3622,13 +3622,13 @@ fn package_repo(invariants: bool, root: bool) -> tempfile::TempDir {
         (
             "architecture.hy",
             format!(
-                "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"土台\")] :foundation foundation)\n\
-                 (defservice coord \"調停\" {{:entry-modules [\"cluster.coord\"]{}}})\n",
+                "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"foundation\")] :foundation foundation)\n\
+                 (defservice coord \"Coordination\" {{:entry-modules [\"cluster.coord\"]{}}})\n",
                 declared
             ),
         ),
         ("src/cluster/coord.hy", "(defk run [] 1)\n".to_string()),
-        ("src/cluster/coord_invariants.hy", format!("(defk writes-survive [before after]\n  {}\n  \"条。\"\n  #())\n", judged)),
+        ("src/cluster/coord_invariants.hy", format!("(defk writes-survive [before after]\n  {}\n  \"Clause.\"\n  #())\n", judged)),
     ];
     for (rel, text) in files {
         let path = dir.path().join(rel);
@@ -3638,7 +3638,7 @@ fn package_repo(invariants: bool, root: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 失敗ケース 1: 設定の root = "src" で、:entry-modules と :invariants の名指しが解け、DOEFF163 は緑。
+/// Failure case 1: with the config's root = "src", the references in :entry-modules and :invariants resolve, and DOEFF163 is green.
 #[test]
 fn a_package_with_a_source_root_setting_resolves_its_declarations() {
     let dir = package_repo(true, true);
@@ -3647,8 +3647,8 @@ fn a_package_with_a_source_root_setting_resolves_its_declarations() {
     assert!(keys(&report, "DOEFF163").is_empty(), "{}", report);
 }
 
-/// 失敗ケース 2: 条(:invariants)を消すと DOEFF163 が赤。鍵は根(src)の外の architecture.hy を `..` の相対で名乗る(機体ごとの絶対 path
-/// を鍵に入れない)。
+/// Failure case 2: removing the clause (:invariants) turns DOEFF163 red. The key names architecture.hy outside the root (src) with a relative `..` (the per-machine absolute path
+/// is not put in the key).
 #[test]
 fn a_package_without_its_clause_is_red_with_a_relative_key() {
     let dir = package_repo(false, true);
@@ -3657,8 +3657,8 @@ fn a_package_without_its_clause_is_red_with_a_relative_key() {
     assert_eq!(violation(&report, "../architecture.hy::DOEFF163::coord")["level"], "critical", "{}", report);
 }
 
-/// 失敗ケース 3: root を書かなければ根は設定 file の dir で module の名は `src.cluster.coord` になり、:entry-modules の module が見つからない
-/// (設定の root が効いていることの証拠)。
+/// Failure case 3: if root is not written, the root is the config file's dir and the module name becomes `src.cluster.coord`, so the :entry-modules module is not found
+/// (evidence that the config's root is in effect).
 #[test]
 fn a_package_without_the_source_root_setting_cannot_find_its_modules() {
     let dir = package_repo(true, false);
@@ -3670,10 +3670,10 @@ fn a_package_without_the_source_root_setting_cannot_find_its_modules() {
     );
 }
 
-/// K2: entry の層を持つ service ごとに、壊した handler の反例(反例の表の節に届き、その service の entry にも届く
-/// deftest)が無ければ defservice の位置で DOEFF164(critical)。billing は自分の業務の効果の壊した handler を自分の検で回す(有り)。
-/// stock は土台の効果(どの service の dir の下にも無い効果)の壊した handler を模擬の検で回す(有り — 表の当たりにも数え、腐りにしない)。
-/// ledger は模擬の検が entry に届くが反例が無い(赤)。notes は entry の層を持たない(数えない)。
+/// K2: for each service with an entry layer, if there is no counterexample of a broken handler (a deftest that reaches a clause of the counterexample table and also reaches that service's entry),
+/// DOEFF164 (critical) at the defservice position. billing runs a broken handler of its own business effect in its own test (present).
+/// stock runs a broken handler of a foundation effect (an effect under no service's dir) in a simulation test (present — also counted as a table hit, so not stale).
+/// ledger's simulation test reaches the entry but has no counterexample (red). notes has no entry layer (not counted).
 #[test]
 fn services_without_a_counterexample_are_red() {
     let files = [
@@ -3699,28 +3699,28 @@ fn services_without_a_counterexample_are_red() {
         ),
         (
             "tables/COUNTEREXAMPLES/billing.txt",
-            "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\n".to_string(),
+            "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\nA broken handler that returns 0 for billing\n".to_string(),
         ),
-        ("tables/COUNTEREXAMPLES/stock.txt", "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\n止まった時計\n".to_string()),
+        ("tables/COUNTEREXAMPLES/stock.txt", "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\nA stopped clock\n".to_string()),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF164\", \"DOEFF176\"]");
     let arch_path = dir.path().join("architecture.hy");
     let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
                  :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes)
-        + "(defservice ledger \"台帳\" {:layers [core entry]})\n(defservice stock \"在庫\" {:layers [core entry]})\n(defservice notes \"覚え書き\" {:layers [core]})\n";
+        + "(defservice ledger \"Ledger\" {:layers [core entry]})\n(defservice stock \"Stock\" {:layers [core entry]})\n(defservice notes \"Notes\" {:layers [core]})\n";
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF164"), vec!["architecture.hy::DOEFF164::ledger"], "{}", report);
     let found = violation(&report, "architecture.hy::DOEFF164::ledger");
-    assert!(found["message"].as_str().unwrap().contains("service ledger に壊した handler の反例が無い"), "{}", found["message"]);
+    assert!(found["message"].as_str().unwrap().contains("service ledger has no counterexample of a broken handler"), "{}", found["message"]);
     assert_eq!(found["severity"], "error", "{}", found);
-    // 土台の効果に答える壊した handler の行は表の当たり(古い行 DOEFF176 にしない)。
+    // A row of a broken handler that answers a foundation effect is a table hit (it does not become the old-row DOEFF176).
     assert!(keys(&report, "DOEFF176").iter().all(|k| !k.contains("stopped-clock")), "{}", report);
 }
 
-/// :business-fakes の :unserved(違反を固定する縮める向きの表)の無い dir は空の表として読む(知らせ 1 行・errors に
-/// しない — 最後の行を消すと git は空の dir を持たない)。宣言の一覧(:counterexamples)の無い dir は今までどおり読めない(errors)。
+/// A dir with no :business-fakes :unserved (a table that fixes violations, in the shrinking direction) is read as an empty table (one notice line, not put in errors
+/// — git does not keep an empty dir when the last row is removed). A dir with no declaration list (:counterexamples) is unreadable as before (errors).
 #[test]
 fn an_absent_unserved_table_is_empty_but_an_absent_declaration_list_is_unreadable() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -3733,17 +3733,17 @@ fn an_absent_unserved_table_is_empty_but_an_absent_declaration_list_is_unreadabl
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     let errors: Vec<&str> = report["errors"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
-    assert!(errors.iter().all(|e| !e.contains("EXTERNAL-UNSERVED")), "無い :unserved の表は読みの誤りにしない: {:?}", errors);
-    assert!(errors.iter().any(|e| e.contains("tables/COUNTEREXAMPLES") && e.contains("読めない")), "無い宣言の一覧は読めない: {:?}", errors);
-    // 知らせは text の出力の stderr に出る(登録簿の無い dir の知らせと同じ口 — #1732)
+    assert!(errors.iter().all(|e| !e.contains("EXTERNAL-UNSERVED")), "a missing :unserved table is not a read error: {:?}", errors);
+    assert!(errors.iter().any(|e| e.contains("tables/COUNTEREXAMPLES") && e.contains("cannot read")), "a missing declaration list is unreadable: {:?}", errors);
+    // The notice goes to stderr in text output (the same channel as the notice for a dir with no registry — #1732)
     let (_, _, stderr) = run(dir.path(), &["--output-format", "text", "--no-log"], None);
-    assert!(stderr.contains("知らせ") && stderr.contains("tables/EXTERNAL-UNSERVED"), "空と読んだ事を知らせる: {}", stderr);
+    assert!(stderr.contains("notice") && stderr.contains("tables/EXTERNAL-UNSERVED"), "the empty reading is announced: {}", stderr);
 }
 
-/// DOEFF143(模擬の偽物)と DOEFF157(検だけの偽物)を規則の ID で名指して確かめる。
-/// 模擬の環境の fake-charge と検の file の test-charge は業務の効果 Charge に tap でなく答える(鳴る例)。同じ置き場の、受けた効果を
-/// そのまま渡す tap の handler(出し直しの答えを resume する watch-charge・reperform する watch-refund
-/// `(resume (Charge))` は効果の値そのものを答える節に読む)と、反例の表に在るわざと壊した handler(broken-refund・broken-charge)は鳴らない(鳴らない例)。
+/// Check DOEFF143 (simulation fakes) and DOEFF157 (test-only fakes) by naming them by rule ID.
+/// The simulation environment's fake-charge and the test file's test-charge answer the business effect Charge rather than tap (firing examples). In the same location, a tap handler that passes the received effect
+/// straight on (watch-charge, which resumes the re-performed answer; watch-refund, which reperforms —
+/// `(resume (Charge))` is read as a clause that answers the effect value itself), and a deliberately broken handler in the counterexample table (broken-refund, broken-charge) do not fire (silent examples).
 #[test]
 fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are_not() {
     let files = [
@@ -3766,10 +3766,10 @@ fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are
              (deftest test-with-handlers (with-handlers [test-charge watch-refund broken-charge] 1))\n"
                 .to_string(),
         ),
-        ("tables/COUNTEREXAMPLES/sim_refund.txt", "app/sim/fake_billing.hy::broken-refund::app.billing.intent.effects.Refund\n返金を 0 で返す壊した handler\n".to_string()),
+        ("tables/COUNTEREXAMPLES/sim_refund.txt", "app/sim/fake_billing.hy::broken-refund::app.billing.intent.effects.Refund\nA broken handler that returns 0 for a refund\n".to_string()),
         (
             "tables/COUNTEREXAMPLES/test_charge.txt",
-            "app/billing/tests/test_fakes.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\n".to_string(),
+            "app/billing/tests/test_fakes.hy::broken-charge::app.billing.intent.effects.Charge\nA broken handler that returns 0 for billing\n".to_string(),
         ),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\"]");
@@ -3782,24 +3782,24 @@ fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
     let fake = "app/sim/fake_billing.hy::DOEFF143::fake-charge::app.billing.intent.effects.Charge";
     assert_eq!(keys(&report, "DOEFF143"), vec![fake], "{}", report);
-    assert!(violation(&report, fake)["message"].as_str().unwrap().contains("偽物(模擬の根からだけ届く)"), "{}", violation(&report, fake));
+    assert!(violation(&report, fake)["message"].as_str().unwrap().contains("(reachable only from the simulation root)"), "{}", violation(&report, fake));
     let test_only = "app/billing/tests/test_fakes.hy::DOEFF157::test-charge::app.billing.intent.effects.Charge";
     assert_eq!(keys(&report, "DOEFF157"), vec![test_only], "{}", report);
-    assert!(violation(&report, test_only)["message"].as_str().unwrap().contains("検だけの偽物"), "{}", violation(&report, test_only));
+    assert!(violation(&report, test_only)["message"].as_str().unwrap().contains("test-only fake"), "{}", violation(&report, test_only));
     assert_eq!(violation(&report, test_only)["severity"], "error");
 }
 
-/// 反例の表の当たらない古い行は DOEFF176 で出し、DOEFF143(偽物の数)には入れない(偽物の数と古い行の数を規則の番号で別に数える)。
-/// 表の 2 行のうち broken-refund は今も在る壊した handler に当たり(鳴らない例)、gone-charge はどの節にも当たらない(鳴る例)。
-/// DOEFF176 を enable しなければ古い行は出ない(DOEFF143 へ戻らない)。
+/// Old rows of the counterexample table that no longer hit are emitted as DOEFF176 and not counted in DOEFF143 (fakes) (the count of fakes and the count of old rows are counted separately by rule number).
+/// Of the table's 2 rows, broken-refund hits a broken handler that still exists (silent example), and gone-charge hits no clause (firing example).
+/// Without enabling DOEFF176, old rows do not appear (they do not go back to DOEFF143).
 #[test]
 fn a_stale_counterexample_row_is_doeff176_not_a_doeff143_fake() {
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         ("app/billing/intent/effects.hy", "(import doeff [EffectBase])\n(defclass Charge [EffectBase])\n(defclass Refund [EffectBase])\n".to_string()),
         ("app/sim/fake_billing.hy", "(import app.billing.intent.effects [Refund])\n(defhandler broken-refund (Refund [] (resume 0)))\n".to_string()),
-        ("tables/COUNTEREXAMPLES/sim_refund.txt", "app/sim/fake_billing.hy::broken-refund::app.billing.intent.effects.Refund\n返金を 0 で返す壊した handler\n".to_string()),
-        ("tables/COUNTEREXAMPLES/gone_charge.txt", "app/sim/fake_billing.hy::gone-charge::app.billing.intent.effects.Charge\n消した壊した handler\n".to_string()),
+        ("tables/COUNTEREXAMPLES/sim_refund.txt", "app/sim/fake_billing.hy::broken-refund::app.billing.intent.effects.Refund\nA broken handler that returns 0 for a refund\n".to_string()),
+        ("tables/COUNTEREXAMPLES/gone_charge.txt", "app/sim/fake_billing.hy::gone-charge::app.billing.intent.effects.Charge\nA removed broken handler\n".to_string()),
     ];
     let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
                  :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
@@ -3815,16 +3815,16 @@ fn a_stale_counterexample_row_is_doeff176_not_a_doeff143_fake() {
         assert_eq!(keys(&report, "DOEFF176"), expected, "{}: {}", enable, report);
         if let Some(key) = expected.first() {
             let found = violation(&report, key);
-            assert!(found["message"].as_str().unwrap().contains("はもう当たらない"), "{}", found);
+            assert!(found["message"].as_str().unwrap().contains("no longer matches"), "{}", found);
             assert_eq!(found["severity"], "error", "{}", found);
         }
     }
 }
 
-/// DOEFF164 は service に反例が 1 本あれば緑。DOEFF167 は defservice の :clauses の条ごとに、反例の表の行の
-/// `breaks: <service>::<条>` で名乗る壊した handler の反例(節に届く deftest が service の entry にも届く)か、:clause-exemptions の理由を求める。
-/// billing: B1 は反例が有る・B2 は名乗る行が無い(赤)・B3 は理由つきで外した。stock: 土台の効果の反例が S1 を名乗る(有り — 陽性対照)。
-/// ledger: :clauses を書かない(service の名で赤)。notes は entry の層を持たない(数えない)。B9 を名乗る行は設定の誤り。
+/// DOEFF164 is green if a service has at least one counterexample. For each clause in the defservice :clauses, DOEFF167 requires either a broken-handler counterexample claimed by the table row's
+/// `breaks: <service>::<clause>` (a deftest reaching the clause also reaches the service's entry), or a :clause-exemptions reason.
+/// billing: B1 has a counterexample, B2 has no claiming row (red), B3 is exempted with a reason. stock: the foundation effect's counterexample claims S1 (present — positive control).
+/// ledger: does not write :clauses (red by the service name). notes has no entry layer (not counted). A row claiming B9 is a config error.
 #[test]
 fn clauses_without_a_counterexample_are_red() {
     let files = [
@@ -3850,12 +3850,12 @@ fn clauses_without_a_counterexample_are_red() {
         ),
         (
             "tables/COUNTEREXAMPLES/billing.txt",
-            "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\nbreaks: billing::B1\n"
+            "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\nA broken handler that returns 0 for billing\nbreaks: billing::B1\n"
                 .to_string(),
         ),
         (
             "tables/COUNTEREXAMPLES/stock.txt",
-            "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\n止まった時計\nbreaks: stock::S1\n".to_string(),
+            "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\nA stopped clock\nbreaks: stock::S1\n".to_string(),
         ),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF167\"]");
@@ -3863,39 +3863,39 @@ fn clauses_without_a_counterexample_are_red() {
     let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
                  :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
     let base = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes).replace(
-        "(defservice billing \"請求\" {:layers [core entry]})",
-        "(defservice billing \"請求\" {:layers [core entry] :clauses [\"B1\" \"B2\" \"B3\"] :clause-exemptions {\"B3\" \"壊した handler では破れない(構造の保証)\"}})",
-    ) + "(defservice ledger \"台帳\" {:layers [core entry]})\n(defservice stock \"在庫\" {:layers [core entry] :clauses [\"S1\"]})\n\
-         (defservice notes \"覚え書き\" {:layers [core]})\n";
-    assert!(base.contains(":clauses [\"B1\""), "billing の宣言を差し替えられない:\n{}", base);
+        "(defservice billing \"Billing\" {:layers [core entry]})",
+        "(defservice billing \"Billing\" {:layers [core entry] :clauses [\"B1\" \"B2\" \"B3\"] :clause-exemptions {\"B3\" \"cannot be broken by a broken handler (structural guarantee)\"}})",
+    ) + "(defservice ledger \"Ledger\" {:layers [core entry]})\n(defservice stock \"Stock\" {:layers [core entry] :clauses [\"S1\"]})\n\
+         (defservice notes \"Notes\" {:layers [core]})\n";
+    assert!(base.contains(":clauses [\"B1\""), "billing's declaration cannot be replaced:\n{}", base);
     std::fs::write(&arch_path, &base).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF167"), vec!["architecture.hy::DOEFF167::billing::B2", "architecture.hy::DOEFF167::ledger"], "{}", report);
     let gap = violation(&report, "architecture.hy::DOEFF167::billing::B2");
-    assert!(gap["message"].as_str().unwrap().contains("service billing の条 B2 に壊した handler の反例が無い"), "{}", gap["message"]);
+    assert!(gap["message"].as_str().unwrap().contains("service billing clause B2 has no counterexample with a broken handler"), "{}", gap["message"]);
     assert_eq!(gap["severity"], "error", "{}", gap);
     let undeclared = violation(&report, "architecture.hy::DOEFF167::ledger");
-    assert!(undeclared["message"].as_str().unwrap().contains("(:clauses)を宣言していない"), "{}", undeclared["message"]);
+    assert!(undeclared["message"].as_str().unwrap().contains("clause names (:clauses)"), "{}", undeclared["message"]);
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
 
-    // 反例: 宣言に無い条を名乗る行は設定の誤り(黙って数えない)。
+    // Counterexample: a row claiming a clause not in the declaration is a config error (not silently counted).
     std::fs::write(
         dir.path().join("tables/COUNTEREXAMPLES/billing.txt"),
-        "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\nbreaks: billing::B1 billing::B9\n",
+        "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\nA broken handler that returns 0 for billing\nbreaks: billing::B1 billing::B9\n",
     )
     .unwrap();
     let (_, report) = editor(dir.path());
-    assert!(report["errors"].to_string().contains("条 B9 は service billing の :clauses に無い"), "{}", report["errors"]);
+    assert!(report["errors"].to_string().contains("clause B9 is not in service billing's :clauses"), "{}", report["errors"]);
 
-    // 陽性対照: B2 を名乗り(同じ反例が B1 と B2 を破る)、ledger が条を理由つきで全部外せば、DOEFF167 は 0。
+    // Positive control: if it claims B2 (the same counterexample breaks B1 and B2) and ledger exempts all its clauses with reasons, DOEFF167 is 0.
     std::fs::write(
         dir.path().join("tables/COUNTEREXAMPLES/billing.txt"),
-        "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\n請求を 0 で返す壊した handler\nbreaks: billing::B1 billing::B2\n",
+        "app/billing/tests/test_broken.hy::broken-charge::app.billing.intent.effects.Charge\nA broken handler that returns 0 for billing\nbreaks: billing::B1 billing::B2\n",
     )
     .unwrap();
     let covered = base.replace(
-        "(defservice ledger \"台帳\" {:layers [core entry]})",
-        "(defservice ledger \"台帳\" {:layers [core entry] :clauses [\"L1\"] :clause-exemptions {\"L1\" \"理由\"}})",
+        "(defservice ledger \"Ledger\" {:layers [core entry]})",
+        "(defservice ledger \"Ledger\" {:layers [core entry] :clauses [\"L1\"] :clause-exemptions {\"L1\" \"reason\"}})",
     );
     std::fs::write(&arch_path, covered).unwrap();
     let (_, report) = editor(dir.path());
@@ -3903,16 +3903,16 @@ fn clauses_without_a_counterexample_are_red() {
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
 }
 
-/// 層の dir を持たない repo の service(`:entry-modules` で入口を宣言 — merge-queue の形)も、DOEFF164・167 の母集団に
-/// 入り、反例の節に届く deftest がその入口の module に届けば有り。以前は entry の層の dir だけを母集団にしたので、`:entry-modules` の
-/// service は数えられず(反例の行を消しても鳴らない)、条と反例の結びを確かめられなかった。
-/// `row` = 反例の表の行を置くか。
+/// A service of a repo with no layer dirs (declaring the entry with `:entry-modules` — the merge-queue shape) also enters the population of DOEFF164 and 167,
+/// and is present if a deftest reaching a counterexample clause reaches that entry module. Previously only entry layer dirs were the population, so a `:entry-modules`
+/// service was not counted (it did not fire even when the counterexample row was removed), and the link between clauses and counterexamples could not be checked.
+/// `row` = whether to place the counterexample table row.
 fn entry_module_counterexample_repo(row: bool) -> tempfile::TempDir {
     let mut files = vec![
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         ("app/queue/effects.hy", "(import doeff [EffectBase])\n(defclass Put [EffectBase])\n".to_string()),
         ("app/queue/main.hy", "(import app.queue.effects [Put])\n(defk cycle [] (Put))\n".to_string()),
-        ("app/queue/judge.hy", "(defk fenced [writes] {:pre [] :post [] :tags {:context \"queue\" :role \"judgment\"}} \"条。\" #())\n".to_string()),
+        ("app/queue/judge.hy", "(defk fenced [writes] {:pre [] :post [] :tags {:context \"queue\" :role \"judgment\"}} \"Clause.\" #())\n".to_string()),
         (
             "tests/test_fence.hy",
             "(import app.queue.effects [Put])\n(import app.queue.main [cycle])\n\
@@ -3921,7 +3921,7 @@ fn entry_module_counterexample_repo(row: bool) -> tempfile::TempDir {
         ),
     ];
     if row {
-        files.push(("tables/COUNTEREXAMPLES/queue.txt", "tests/test_fence.hy::unfenced::app.queue.effects.Put\n柵を迂回する書き手\nbreaks: queue::Q1\n".to_string()));
+        files.push(("tables/COUNTEREXAMPLES/queue.txt", "tests/test_fence.hy::unfenced::app.queue.effects.Put\nA writer that bypasses the fence\nbreaks: queue::Q1\n".to_string()));
     }
     let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF163\", \"DOEFF164\", \"DOEFF167\"]");
     std::fs::create_dir_all(dir.path().join("tables/COUNTEREXAMPLES")).unwrap();
@@ -3929,12 +3929,12 @@ fn entry_module_counterexample_repo(row: bool) -> tempfile::TempDir {
     let fakes = ":foundation foundation\n  :business-fakes {:simulation [\"app/sim/**\"] :tests [\"tests/**\"] :production [\"app/**\"] \
                  :business-modules [\"app.queue\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes)
-        + "(defservice queue \"列\" {:layers [core] :entry-modules [\"app.queue.main\"] :invariants [\"app.queue.judge:fenced\"] :clauses [\"Q1\"]})\n";
+        + "(defservice queue \"Queue\" {:layers [core] :entry-modules [\"app.queue.main\"] :invariants [\"app.queue.judge:fenced\"] :clauses [\"Q1\"]})\n";
     std::fs::write(&arch_path, text).unwrap();
     dir
 }
 
-/// 失敗ケース 1: 反例の行が条 Q1 を名乗り、その節に届く deftest が :entry-modules の module(app/queue/main.hy)に届けば、DOEFF164・167 は緑。
+/// Failure case 1: if a counterexample row claims clause Q1 and a deftest reaching that clause reaches the :entry-modules module (app/queue/main.hy), DOEFF164 and 167 are green.
 #[test]
 fn an_entry_module_service_with_a_counterexample_is_green() {
     let dir = entry_module_counterexample_repo(true);
@@ -3944,7 +3944,7 @@ fn an_entry_module_service_with_a_counterexample_is_green() {
     assert!(keys(&report, "DOEFF167").is_empty(), "{}", report);
 }
 
-/// 失敗ケース 2: 反例の行を消すと、:entry-modules の service が DOEFF164(反例が無い)と DOEFF167(条 Q1 に反例が無い)で赤。
+/// Failure case 2: removing the counterexample row turns the :entry-modules service red for DOEFF164 (no counterexample) and DOEFF167 (clause Q1 has no counterexample).
 #[test]
 fn an_entry_module_service_without_its_counterexample_is_red() {
     let dir = entry_module_counterexample_repo(false);
@@ -3953,16 +3953,16 @@ fn an_entry_module_service_without_its_counterexample_is_red() {
     assert_eq!(keys(&report, "DOEFF167"), vec!["architecture.hy::DOEFF167::queue::Q1"], "{}", report);
 }
 
-/// K4: intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
-/// (1 鍵 1 file の dir)に載せ、載った欠けは warning に下がる。Charge と Refund はどちらも検から出さず答え手も無い(欠け)—
-/// Refund だけが登録簿に載っている。Settle は 3 列がすべて埋まり出ない(鳴らない例・#1818)。
+/// K4: gaps in the coverage of intent effects (DOEFF165, the K3 table) fail as critical. Existing gaps are listed in the registry
+/// (a dir with one key per file), and listed gaps drop to warning. Charge and Refund are both not emitted by tests and have no answerer (gaps) —
+/// only Refund is listed in the registry. Settle has all 3 columns filled and does not appear (silent example, #1818).
 #[test]
 fn intent_effect_coverage_gaps_are_red_unless_registered() {
     let intent = |name: &str| {
         format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name)
     };
-    // 鳴らない例: Settle は 3 列がすべて埋まる — deftest が出し、翻訳の層(ここでは entry)の settle-reads が
-    // 模擬の根(組み立ての層の file)からも本番の入口(組の file の production-handlers)からも届く。
+    // Silent example: Settle has all 3 columns filled — a deftest emits it, and the translation layer's (here entry) settle-reads is reached
+    // from both the simulation root (a file of the assembly layer) and the production entry (production-handlers of the assembly file).
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund") + &intent("Settle")),
@@ -3990,7 +3990,7 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
         .unwrap()
         .replace(":foundation foundation", declarations)
         .replace("(layer entry", "(layer intent :roles [intent] :imports [core intent])\n           (layer entry")
-        .replace("(defservice billing \"請求\" {:layers [core entry]})", "(defservice billing \"請求\" {:layers [core intent entry]})");
+        .replace("(defservice billing \"Billing\" {:layers [core entry]})", "(defservice billing \"Billing\" {:layers [core intent entry]})");
     std::fs::write(&arch_path, text).unwrap();
     let pyproject = dir.path().join("pyproject.toml");
     let settings = std::fs::read_to_string(&pyproject).unwrap() + "[tool.doeff-linter.registry]\ndirs = [\"registry/EFFECT-COVERAGE-BREACHES\"]\n";
@@ -3999,13 +3999,13 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
     std::fs::create_dir_all(&registry).unwrap();
     std::fs::write(
         registry.join("refund.txt"),
-        "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Refund\n既知の欠け(検の見本)\n",
+        "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Refund\nA known gap (a test sample)\n",
     )
     .unwrap();
     let (_, report) = editor(dir.path());
     let charge = "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Charge";
     let refund = "app/billing/intent/effects.hy::DOEFF165::billing::app.billing.intent.effects.Refund";
-    // 完全一致: 3 列の埋まった Settle は出ない。
+    // Exact match: Settle, with 3 filled columns, does not appear.
     assert_eq!(keys(&report, "DOEFF165"), vec![charge, refund], "{}", report);
     let new_gap = violation(&report, charge);
     assert_eq!(new_gap["severity"], "error", "{}", new_gap);
@@ -4015,18 +4015,18 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
     assert_eq!(known["registered"], true, "{}", known);
 }
 
-/// DOEFF206 の宣言(:verification-environment "sim"・:business-fakes の 4 つの表・:assembly-shape の intent の層)を書いた一時の repo。
-/// 請求の service は層 intent を持ち、効果 Charge・Refund・Settle・Ship は層 intent、Now は土台(foundation)の効果。
+/// A temporary repo with the DOEFF206 declarations (:verification-environment "sim", the 4 tables of :business-fakes, the intent layer of :assembly-shape).
+/// The billing service has layer intent, the effects Charge, Refund, Settle, and Ship are layer intent, and Now is a foundation effect.
 fn intent_fake_repo(files: &[(&str, String)], registry: Option<(&str, &str)>) -> tempfile::TempDir {
     intent_fake_repo_enabling(files, registry, "[\"DOEFF206\"]")
 }
 
-/// `intent_fake_repo` と同じ repo で、当てる規則を `enable` で選ぶ。
+/// The same repo as `intent_fake_repo`, with the rules to apply selected by `enable`.
 fn intent_fake_repo_enabling(files: &[(&str, String)], registry: Option<(&str, &str)>, enable: &str) -> tempfile::TempDir {
     let intent = |name: &str| format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name);
     let mut all: Vec<(&str, String)> = vec![
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
-        ("app/foundation/clock_effects.hy", tags("shared", "foundation") + "(defeffect Now \"時計\" {:fields [] :answer int :tags {:context \"shared\" :role \"foundation\"}})\n"),
+        ("app/foundation/clock_effects.hy", tags("shared", "foundation") + "(defeffect Now \"Clock\" {:fields [] :answer int :tags {:context \"shared\" :role \"foundation\"}})\n"),
         ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund") + &intent("Settle") + &intent("Ship")),
     ];
     all.extend(files.iter().cloned());
@@ -4043,7 +4043,7 @@ fn intent_fake_repo_enabling(files: &[(&str, String)], registry: Option<(&str, &
         .unwrap()
         .replace(":foundation foundation", declarations)
         .replace("(layer entry", "(layer intent :roles [intent] :imports [core intent])\n           (layer entry")
-        .replace("(defservice billing \"請求\" {:layers [core entry]})", "(defservice billing \"請求\" {:layers [core intent entry]})");
+        .replace("(defservice billing \"Billing\" {:layers [core entry]})", "(defservice billing \"Billing\" {:layers [core intent entry]})");
     std::fs::write(&arch_path, text).unwrap();
     for table in ["EXTERNAL-EFFECTS", "COUNTEREXAMPLES", "LOWER-LAYER-PASSAGES", "TEST-ONLY-FAKES"] {
         std::fs::create_dir_all(dir.path().join("tables").join(table)).unwrap();
@@ -4054,27 +4054,27 @@ fn intent_fake_repo_enabling(files: &[(&str, String)], registry: Option<(&str, &
         std::fs::write(&pyproject, settings).unwrap();
         let registry = dir.path().join("registry/BREACHES");
         std::fs::create_dir_all(&registry).unwrap();
-        std::fs::write(registry.join(name), format!("{}\n既知の当たりとして載せてみる(下がらない事の見本)\n", key)).unwrap();
+        std::fs::write(registry.join(name), format!("{}\nTry listing it as a known hit (a sample showing it is not lowered)\n", key)).unwrap();
     }
     dir
 }
 
-/// DOEFF206 の (a): 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を
-/// 通せば、その行の file の位置で critical。土台(foundation)の効果を通す行は鳴らない。
+/// DOEFF206 (a): if a row of a table that lets violations through (the external-world table, the table passing lower layers, the test-only fakes table) passes an intent-layer effect,
+/// critical at that row's file position. A row passing a foundation effect does not fire.
 #[test]
 fn tables_passing_intent_effects_are_critical_at_the_row() {
     let files = [
-        ("tables/EXTERNAL-EFFECTS/charge.txt", "app.billing.intent.effects.Charge\n外の相手(と名乗った intent の効果)\n".to_string()),
-        ("tables/EXTERNAL-EFFECTS/now.txt", "app.foundation.clock_effects.Now\n時計(土台の効果 — 鳴らない)\n".to_string()),
+        ("tables/EXTERNAL-EFFECTS/charge.txt", "app.billing.intent.effects.Charge\nAn outside party (an intent effect claimed as such)\n".to_string()),
+        ("tables/EXTERNAL-EFFECTS/now.txt", "app.foundation.clock_effects.Now\nClock (a foundation effect — does not fire)\n".to_string()),
         (
             "tables/LOWER-LAYER-PASSAGES/refund.txt",
-            "app/sim/route.hy::route-refund::app.billing.intent.effects.Refund\n振り分け(intent の効果 — 鳴る)\n".to_string(),
+            "app/sim/route.hy::route-refund::app.billing.intent.effects.Refund\nRouting (an intent effect — fires)\n".to_string(),
         ),
         (
             "tables/TEST-ONLY-FAKES/settle.txt",
-            "app/billing/tests/test_settle.hy::fake-settle::app.billing.intent.effects.Settle\n検だけの偽物(intent の効果 — 鳴る)\n".to_string(),
+            "app/billing/tests/test_settle.hy::fake-settle::app.billing.intent.effects.Settle\nTest-only fake (an intent effect — fires)\n".to_string(),
         ),
-        ("tables/TEST-ONLY-FAKES/now.txt", "app/billing/tests/test_clock.hy::fake-now::app.foundation.clock_effects.Now\n土台の効果(鳴らない)\n".to_string()),
+        ("tables/TEST-ONLY-FAKES/now.txt", "app/billing/tests/test_clock.hy::fake-now::app.foundation.clock_effects.Now\nA foundation effect (does not fire)\n".to_string()),
     ];
     let dir = intent_fake_repo(&files, None);
     let (_, report) = editor(dir.path());
@@ -4088,12 +4088,12 @@ fn tables_passing_intent_effects_are_critical_at_the_row() {
         assert_eq!(found["severity"], "error", "{}", found);
         assert_eq!(found["level"], "critical", "{}", found);
     }
-    assert!(violation(&report, external)["message"].as_str().unwrap().contains("intent の層の効果 app.billing.intent.effects.Charge を通す"), "{}", report);
+    assert!(violation(&report, external)["message"].as_str().unwrap().contains("passes the intent-layer effect app.billing.intent.effects.Charge"), "{}", report);
 }
 
-/// DOEFF206 の (b): 検証環境の dir の handler が intent の層の効果に自前で答えれば critical。
-/// 鳴らない例: 出し直した答えをそのまま resume する tap(受けた effect の別名の出し直しを含む)・反例の表に鍵の在る壊した節・土台の効果に答える節・検証環境の外(本番の側)の同じ節。
-/// 鳴る例: 自前の値・出し直した答えを変えて resume・枝の 1 つで自前の値を渡す節。
+/// DOEFF206 (b): critical if a handler in the verification-environment dir answers an intent-layer effect on its own.
+/// Silent examples: a tap that resumes the re-performed answer as is (including re-performing under an alias of the received effect), a broken clause whose key is in the counterexample table, a clause answering a foundation effect, and the same clause outside the verification environment (the production side).
+/// Firing examples: its own value, resuming with a changed re-performed answer, and a clause that passes its own value in one branch.
 #[test]
 fn verification_handlers_answering_intent_effects_are_critical_except_pass_through_taps() {
     let files = [
@@ -4115,7 +4115,7 @@ fn verification_handlers_answering_intent_effects_are_critical_except_pass_throu
             "app/billing/entry/translate.hy",
             tags("billing", "entry") + "(import app.billing.intent.effects [Charge])\n(defhandler charge-reads (Charge [amount] (resume 0)))\n",
         ),
-        ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\n出荷を 0 で返す壊した handler\n".to_string()),
+        ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\nA broken handler that returns 0 for a shipment\n".to_string()),
     ];
     let dir = intent_fake_repo(&files, None);
     let (_, report) = editor(dir.path());
@@ -4127,13 +4127,13 @@ fn verification_handlers_answering_intent_effects_are_critical_except_pass_throu
     assert_eq!(keys(&report, "DOEFF206"), expected, "{}", report);
     let found = violation(&report, &key("fake-charge", "Charge"));
     assert_eq!(found["level"], "critical", "{}", found);
-    assert!(found["message"].as_str().unwrap().contains("自前で答える"), "{}", found);
+    assert!(found["message"].as_str().unwrap().contains("by itself"), "{}", found);
 }
 
-/// 失敗ケース: 効果の import の綴りを、定義元の module から再 export する入口(`app.billing` の根 —
-/// TYPE_CHECKING の `X as X` と `__getattr__` の名 → module の表)へ替えるだけでは、反例の表の行(定義元の綴りの鍵)は当たったままで、
-/// 層の判じ(intent の効果か)も変わらない。綴りを鍵にする実装では、入口の綴りの broken-ship が表に当たらず古い行(DOEFF176)と
-/// DOEFF206 の当たりになり、入口の綴りの Charge が intent と読まれず fake-charge の DOEFF206 が消える。
+/// Failure case: merely replacing the effect's import spelling with an entry that re-exports from the defining module (the root of `app.billing` —
+/// the `X as X` under TYPE_CHECKING and the `__getattr__` name -> module table) leaves the counterexample table row (keyed by the defining spelling) still hitting, and
+/// the layer judgment (whether it is an intent effect) does not change either. An implementation keyed by spelling would fail to match broken-ship's entry spelling to the table and give an old row (DOEFF176) and a
+/// DOEFF206 hit, and the entry-spelled Charge would not be read as intent, so fake-charge's DOEFF206 would vanish.
 #[test]
 fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers() {
     let entry = "from importlib import import_module\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    \
@@ -4150,12 +4150,12 @@ fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers
                     spelled
                 ),
             ),
-            ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\n出荷を 0 で返す壊した handler\n".to_string()),
+            ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\nA broken handler that returns 0 for a shipment\n".to_string()),
         ];
         let dir = intent_fake_repo_enabling(&files, None, "[\"DOEFF143\", \"DOEFF176\", \"DOEFF206\"]");
         let (_, report) = editor(dir.path());
         assert_eq!(report["errors"], serde_json::json!([]), "{}: {}", spelled, report["errors"]);
-        // 知らせの細目は節の書いた綴りのまま。intent と読む事(fake-charge が鳴る)と、表の行に当たる事(broken-ship が鳴らない)は綴りに依らない。
+        // The notice detail stays as the clause's written spelling. Reading it as intent (fake-charge fires) and hitting the table row (broken-ship does not fire) do not depend on the spelling.
         assert_eq!(
             keys(&report, "DOEFF206"),
             vec![format!("app/sim/fake_billing.hy::DOEFF206::verification:fake-charge::{}.Charge", spelled)],
@@ -4169,7 +4169,7 @@ fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers
     }
 }
 
-/// 解けない効果の名(定義の module の file が無い)は綴りのまま照らし、解けなかった事を errors に出す(黙って綴りに倒さない)。
+/// An effect name that cannot be resolved (the defining module's file is missing) is matched by its spelling, and the failure to resolve is put in errors (it does not silently fall back to the spelling).
 #[test]
 fn an_effect_whose_origin_cannot_be_traced_is_reported() {
     let files = [(
@@ -4180,13 +4180,13 @@ fn an_effect_whose_origin_cannot_be_traced_is_reported() {
     let (_, report) = editor(dir.path());
     let errors: Vec<&str> = report["errors"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     assert!(
-        errors.iter().any(|e| e.contains("app.gone.effects.Charge") && e.contains("定義元を解けない") && e.contains("fake-charge")),
+        errors.iter().any(|e| e.contains("app.gone.effects.Charge") && e.contains("cannot resolve the defining origin") && e.contains("fake-charge")),
         "{:?}",
         errors
     );
 }
 
-/// DOEFF206: 登録簿(既知の当たりの表)に鍵を載せても DOEFF206 の当たりは下がらない — error・critical・registered でない。
+/// DOEFF206: even if a key is listed in the registry (the table of known hits), DOEFF206's hits are not lowered — error, critical, not registered.
 #[test]
 fn intent_fakes_in_verification_are_not_lowered_by_the_registry() {
     let files = [(
@@ -4224,15 +4224,15 @@ fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     dir
 }
 
-/// C11: 使わないと決めた語は語ごとに 1 件ずつ当たり(反例 = 各語 1 本)、別の語の一部・規則を述べる行・宣言の外の
-/// file・:except の file は当たらない。意味の綴りは正規表現で、定義の名の群は定義の名だけを見る。新しい当たりは critical。
+/// C11: each word decided not to be used hits once per word (counterexample = one per word), and part of another word, a line that states the rule, a file outside the declaration, and a
+/// file in :except do not hit. A semantic spelling is a regular expression, and the group of definition names looks only at definition names. New hits are critical.
 #[test]
 fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     let words = ["席", "mailbox", "letter", "auth home", "mail", "掃引"];
-    let mut files: Vec<(String, String)> = words.iter().enumerate().map(|(i, w)| (format!("app/billing/w{}.hy", i), format!(";; 見出し\n(setv note \"本文に {} を書く\")\n", w))).collect();
+    let mut files: Vec<(String, String)> = words.iter().enumerate().map(|(i, w)| (format!("app/billing/w{}.hy", i), format!(";; heading\n(setv note \"write {} in the body\")\n", w))).collect();
     files.extend([
         ("README.md".to_string(), "郵便は Message と書く。email address と mail-box は別の語。\n使わない語 = 席 / mail\n".to_string()),
-        ("docs/README.md".to_string(), "mail は根の README ではないので宣言の外\n".to_string()),
+        ("docs/README.md".to_string(), "mail is not the root README, so it is outside the declaration\n".to_string()),
         ("app/terms.json".to_string(), "{\"terms\": [{\"term\": \"mail\"}]}\n".to_string()),
         ("docs/design/turns.txt".to_string(), "会話(意味は agent)が chat を受ける\nconversation means agent\n会話は agent の手番の列を持つ\n".to_string()),
         (
@@ -4245,7 +4245,7 @@ fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     let dir = retired_repo(&refs);
     let (_, report) = editor(dir.path());
     let mut expected: Vec<String> = words.iter().enumerate().map(|(i, w)| format!("app/billing/w{}.hy::DOEFF150::{}", i, w)).collect();
-    // 意味の綴りは 2 行(日本語の形と英語の形)に当たり、どちらも群の名の鍵になる。
+    // The semantic spelling hits 2 lines (the Japanese form and the English form), and both become keys of the group name.
     expected.extend([
         "app/chat/rows.hy::DOEFF150::conversation-names".to_string(),
         "docs/design/turns.txt::DOEFF150::conversation-means-agent".to_string(),
@@ -4258,30 +4258,30 @@ fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     let mail = violation(&report, "app/billing/w4.hy::DOEFF150::mail");
     assert_eq!(mail["level"], "critical", "{}", mail);
     assert_eq!(mail["range"]["start"]["line"], 1);
-    assert!(mail["message"].as_str().unwrap().contains("使わないと決めた綴り mail(群 vocabulary・代わり:"), "{}", mail["message"]);
+    assert!(mail["message"].as_str().unwrap().contains("retired spelling mail (group vocabulary, instead:"), "{}", mail["message"]);
     let names = violation(&report, "app/chat/rows.hy::DOEFF150::conversation-names");
-    assert!(names["message"].as_str().unwrap().contains("定義の名 ConversationSlice"), "{}", names["message"]);
+    assert!(names["message"].as_str().unwrap().contains("definition name ConversationSlice"), "{}", names["message"]);
 }
 
-/// `:in lines` は実際に使う code の中の綴りだけを数える — Hy の記号・欄名・command の
-/// 文字列・ほかの文字列と Python・shell の code は鳴り、註(Hy の `;`・Python と shell の `#`)・定義の docstring・`.md` の本文は鳴らない。
+/// `:in lines` counts only spellings in code that is actually used — Hy symbols, field names, command
+/// strings, other strings, and Python and shell code fire; comments (Hy `;`, Python and shell `#`), definition docstrings, and `.md` bodies do not.
 #[test]
 fn retired_words_count_code_not_comments_docstrings_or_markdown() {
     let dir = retired_repo(&[
-        ("app/billing/symbol.hy", ";; mail の註\n(setv mail 1)\n".to_string()),
+        ("app/billing/symbol.hy", ";; comment on mail\n(setv mail 1)\n".to_string()),
         ("app/billing/field.hy", "(defrecord Row (#^ str letter))\n".to_string()),
         ("app/billing/command.hy", "(defk run [] (RunProcess \"cd x && mail -s hi\"))\n".to_string()),
-        ("app/billing/code.py", "\"\"\"mail の module\"\"\"\nimport os  # mail は註\nsend = os.environ[\"mail\"]\n".to_string()),
-        ("app/billing/run.sh", "# mail の註\nexec mail -s hi\n".to_string()),
+        ("app/billing/code.py", "\"\"\"the mail module\"\"\"\nimport os  # mail is a comment\nsend = os.environ[\"mail\"]\n".to_string()),
+        ("app/billing/run.sh", "# comment on mail\nexec mail -s hi\n".to_string()),
         (
             "app/billing/quiet.hy",
-            ";;; mail の頭の註\n(defk send [x]\n  \"mail を送るため\"\n  x) ; letter は註\n(defclass Box [] \"mail の箱\" (setv n 1))\n\
-             (setv note \"email address と mail-box は別の語\")\n(setv rule \"mail\") ; 使わない語の例\n"
+            ";;; head comment on mail\n(defk send [x]\n  \"to send mail\"\n  x) ; letter is a comment\n(defclass Box [] \"the mail box\" (setv n 1))\n\
+             (setv note \"email address and mail-box are different words\")\n(setv rule \"mail\") ; 使わない語の例\n"
                 .to_string(),
         ),
-        ("app/billing/prose.md", "# mail\n本文の mail と letter\n```sh\nexec mail -s hi\n```\n".to_string()),
-        ("app/billing/quiet.py", "def f():\n    '''mail の関数'''\n    return 1  # letter\n".to_string()),
-        ("app/billing/quiet.sh", "#!/bin/sh\n# mail の註\necho $# ${#x}  # letter\n".to_string()),
+        ("app/billing/prose.md", "# mail\nmail and letter in the body\n```sh\nexec mail -s hi\n```\n".to_string()),
+        ("app/billing/quiet.py", "def f():\n    '''function of mail'''\n    return 1  # letter\n".to_string()),
+        ("app/billing/quiet.sh", "#!/bin/sh\n# comment on mail\necho $# ${#x}  # letter\n".to_string()),
     ]);
     let (_, report) = editor(dir.path());
     assert_eq!(
@@ -4297,11 +4297,11 @@ fn retired_words_count_code_not_comments_docstrings_or_markdown() {
         report
     );
     let symbol = violation(&report, "app/billing/symbol.hy::DOEFF150::mail");
-    assert_eq!(symbol["range"]["start"]["line"], 1, "註の行でなく code の行: {}", symbol);
+    assert_eq!(symbol["range"]["start"]["line"], 1, "the line of code, not of the comment: {}", symbol);
 }
 
-/// `:in paths` の群は file の名(最後の `.` より前)だけを見る — 退役した名の file は語ごとに 1 件、中身・dir の名・
-/// 別の語の一部は当たらない。:rule-lines は :in lines の時だけ効くので、:in paths と組むと宣言の問題になる。
+/// A `:in paths` group looks only at the file name (before the last `.`) — a file with a retired name hits once per word; contents, dir names, and
+/// part of another word do not hit. :rule-lines takes effect only for :in lines, so combining it with :in paths is a declaration problem.
 #[test]
 fn retired_paths_hit_the_file_name_only() {
     let dir = world_repo_with(
@@ -4309,7 +4309,7 @@ fn retired_paths_hit_the_file_name_only() {
             ("app/operators/worker.hy", "(defk run [] 1)\n".to_string()),
             ("app/operators/design_request.hy", "(defk run [] 1)\n".to_string()),
             ("app/operators/worker_pool.hy", "(defk run [] 1)\n".to_string()),
-            ("app/operators/probe.hy", "(setv worker 1) ; worker は中身だけ\n".to_string()),
+            ("app/operators/probe.hy", "(setv worker 1) ; worker is content only\n".to_string()),
             ("app/worker/probe.hy", "(defk run [] 1)\n".to_string()),
         ],
         "",
@@ -4318,7 +4318,7 @@ fn retired_paths_hit_the_file_name_only() {
     let arch_path = dir.path().join("architecture.hy");
     let declarations = r#":foundation foundation
   :retired-words [(retired-words "retired-operators" :words ["worker" "design_request"] :files ["app/operators/*.hy"]
-                    :in paths :instead "退役した operator の file を置き直さない")]"#;
+                    :in paths :instead "do not re-place retired operator files")]"#;
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", declarations);
     std::fs::write(&arch_path, &text).unwrap();
     let (_, report) = editor(dir.path());
@@ -4329,16 +4329,16 @@ fn retired_paths_hit_the_file_name_only() {
         report
     );
     let worker = violation(&report, "app/operators/worker.hy::DOEFF150::worker");
-    assert!(worker["message"].as_str().unwrap().contains("file の名に使わないと決めた綴り worker"), "{}", worker["message"]);
+    assert!(worker["message"].as_str().unwrap().contains("retired spelling worker in a file name"), "{}", worker["message"]);
     assert_eq!(worker["level"], "critical", "{}", worker);
-    std::fs::write(&arch_path, text.replace(":in paths", ":in paths :rule-lines [\"使わない\"]")).unwrap();
+    std::fs::write(&arch_path, text.replace(":in paths", ":in paths :rule-lines [\"do not use\"]")).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
-    assert!(stderr.contains(":rule-lines は :in lines の時だけ効く"), "{}", stderr);
-    assert_ne!(code, 0, "宣言の誤りは走らせずに止まる");
+    assert!(stderr.contains(":rule-lines of retired-words"), "{}", stderr);
+    assert_ne!(code, 0, "a declaration error stops without running");
 }
 
-/// C11: 退役した呼びは呼びごとに 1 件ずつ当たり(反例 = 各呼び 1 本)、註・文字列・読み捨てた form・:except の
-/// テストの file・値として名指すだけの所は当たらない。
+/// C11: a retired call hits once per call (counterexample = one per call), and comments, strings, discarded forms, test files in :except,
+/// and places that merely name it as a value do not hit.
 #[test]
 fn retired_calls_hit_once_per_call() {
     let calls = ["Now", "Elapsed", "EpochMillis", "ReadClock", "time.time"];
@@ -4346,7 +4346,7 @@ fn retired_calls_hit_once_per_call() {
     files.extend([
         (
             "app/billing/quiet.hy".to_string(),
-            ";; 効果 (Now) と (Elapsed) は退役した(経過は (GetMonotonic))\n(setv note \"(time.time)\")\n#_(Now)\n(setv clock Now)\n(defk ok [] (GetMonotonic))\n"
+            ";; the effects (Now) and (Elapsed) are retired (elapsed time is (GetMonotonic))\n(setv note \"(time.time)\")\n#_(Now)\n(setv clock Now)\n(defk ok [] (GetMonotonic))\n"
                 .to_string(),
         ),
         ("app/billing/tests/test_clock.hy".to_string(), "(deftest test-clock (Now))\n".to_string()),
@@ -4359,24 +4359,24 @@ fn retired_calls_hit_once_per_call() {
     assert_eq!(keys(&report, "DOEFF151"), expected, "{}", report);
     let now = violation(&report, "app/billing/c0.hy::DOEFF151::Now");
     assert_eq!(now["level"], "critical");
-    assert_eq!(now["range"]["start"]["character"], 16, "位置は呼びの頭の記号: {}", now);
+    assert_eq!(now["range"]["start"]["character"], 16, "the position is the head symbol of the call: {}", now);
 }
 
-/// 条件: file 1 つで判じられる規則は、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。
-/// 全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ file の母集団を見分ける。
+/// Condition: a rule judged per file reads only the files under the named path if one is given (it does not read the whole repo).
+/// A whole run reads all the declared files — whether an unreadable file (not UTF-8) appears in the reasons distinguishes the population of files read.
 #[test]
 fn retired_rules_read_only_the_named_files() {
-    let dir = retired_repo(&[("app/billing/named.hy", "(setv note \"mail を送る\")\n".to_string())]);
+    let dir = retired_repo(&[("app/billing/named.hy", "(setv note \"send mail\")\n".to_string())]);
     std::fs::write(dir.path().join("app/billing/broken.md"), [0xffu8, 0xfe, b'\n']).unwrap();
     let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
-    assert!(whole_err.contains("app/billing/broken.md: 読めない"), "全体の実行は宣言の file を全部読む: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/billing/broken.md: unreadable"), "a whole run reads all declared files: {}\n{}", whole_err, whole_out);
     let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/billing/named.hy"], None);
-    assert!(!named_err.contains("broken.md"), "名指しの実行は名指しの file だけを読む: {}", named_err);
-    assert!(named_out.contains("DOEFF150") && named_out.contains("named.hy"), "名指しの file の当たりは出る: {}\n{}", named_out, named_err);
-    assert_ne!(code, 0, "新しい当たりは error");
+    assert!(!named_err.contains("broken.md"), "a named run reads only the named file: {}", named_err);
+    assert!(named_out.contains("DOEFF150") && named_out.contains("named.hy"), "a hit in the named file appears: {}\n{}", named_out, named_err);
+    assert_ne!(code, 0, "a new hit is an error");
 }
 
-/// 宣言の読み違い(正規表現が読めない・普通の文字列の \・:files が無い・:in の語の外)は、位置つきの設定の誤りにする。
+/// Misreads of a declaration (an unreadable regular expression, a backslash in an ordinary string, no :files, a word outside :in) become config errors with a position.
 #[test]
 fn retired_declaration_misreadings_are_config_errors() {
     let dir = world_repo_with(&[], "", "[\"DOEFF150\"]");
@@ -4389,21 +4389,21 @@ fn retired_declaration_misreadings_are_config_errors() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("retired-words a の正規表現 ( を読めない"), "{}", all);
-    assert!(all.contains(":patterns の正規表現は r\"…\" の文字列で書く"), "{}", all);
-    assert!(all.contains("retired-words c に :files が無い"), "{}", all);
-    assert!(all.contains(":in は lines か names"), "{}", all);
+    assert!(all.contains("cannot read the regular expression ( of retired-words a"), "{}", all);
+    assert!(all.contains("the regular expression of :patterns must be written as an r\"…\" string"), "{}", all);
+    assert!(all.contains("retired-words c has no :files"), "{}", all);
+    assert!(all.contains(":in must be lines, names, or paths"), "{}", all);
 }
 
-/// 契約の file(wire の欄 carrier.mail と stream の種類の enum の値 mail — agora-controllers の agora-kinds.json・record-service.json の形)。
-/// letter はどこにも無い(契約に無い綴り)。
-const WIRE_CONTRACT: &str = r#"{"comment": "letter と mail の説明の文は集めない",
+/// Contract file (the wire field carrier.mail and the stream-kind enum value mail — the shape of agora-controllers' agora-kinds.json and record-service.json).
+/// letter appears nowhere (a spelling not in the contract).
+const WIRE_CONTRACT: &str = r#"{"comment": "explanatory sentences about letter and mail are not collected",
   "kinds": {"conversation-input": {"schema": {"properties": {"status": {"properties": {"carrier": {"properties": {"mail": {"type": "string"}, "job": {"type": "string"}}}}}}}}},
   "$defs": {"storedEvent": {"properties": {"streamKind": {"enum": ["chat", "mail"]}}}},
   "examples": [{"note": "letter"}]}"#;
 
-/// DOEFF150 の :contract-files を書いた群(と DOEFF151 の呼びの群)の一時の repo。contract_files は :contract-files の中身、contracts は
-/// 置く契約の file(根からの path と中身)。
+/// A temporary repo for the group that writes DOEFF150's :contract-files (and the DOEFF151 call group). contract_files is the contents of :contract-files, and contracts is
+/// the contract files to place (path from the root and contents).
 fn contract_repo(files: &[(&str, String)], contract_files: &str, contracts: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = world_repo_with(files, "", "[\"DOEFF150\", \"DOEFF151\"]");
     let arch_path = dir.path().join("architecture.hy");
@@ -4424,14 +4424,14 @@ fn contract_repo(files: &[(&str, String)], contract_files: &str, contracts: &[(&
     dir
 }
 
-/// 案 2: :contract-files の契約の綴り(キーの名・enum の値)に在る語は、Hy の文字列で中身がその語ちょうどの物・
-/// defwire の欄の定義の名・Python の文字列で中身がその語ちょうどの物だけを数えない。同じ綴りの内部の名(変数・defrecord の欄・loop の
-/// 変数・Python の名)と、契約に無い語(letter)の文字列は当たる。hint は登録簿を勧めず、契約の file を確かめさせる。
+/// Plan 2: words in the contract's spellings (key names, enum values) in :contract-files are not counted only when they are a Hy string whose contents are exactly that word,
+/// the name of a defwire field definition, or a Python string whose contents are exactly that word. Internal names of the same spelling (variables, defrecord fields, loop
+/// variables, Python names) and strings of a word not in the contract (letter) do hit. The hint does not recommend the registry, and makes the reader check the contract file.
 #[test]
 fn retired_words_skip_contract_strings_and_wire_fields_only() {
     let dir = contract_repo(
         &[
-            ("app/billing/wire.hy", "(defwire InputCarrier \"取った印\" {:names :camel} (#^ str job) (#^ str mail))\n".to_string()),
+            ("app/billing/wire.hy", "(defwire InputCarrier \"taken mark\" {:names :camel} (#^ str job) (#^ str mail))\n".to_string()),
             ("app/billing/seen.hy", "(defwire InputSeen {:unknown :ignore} (setv #^ (| str None) mail None))\n".to_string()),
             ("app/billing/stream.hy", "(defk append [record] (.append record \"c\" \"id\" [] \"mail\"))\n".to_string()),
             ("app/billing/inner.hy", "(setv mail 1)\n".to_string()),
@@ -4458,17 +4458,17 @@ fn retired_words_skip_contract_strings_and_wire_fields_only() {
         report
     );
     let python = violation(&report, "app/billing/vocab.py::DOEFF150::mail");
-    assert_eq!(python["range"]["start"]["line"], 2, "契約の値の文字列の 2 行でなく、内部の名の行: {}", python);
+    assert_eq!(python["range"]["start"]["line"], 2, "the line of the internal name, not of the 2-line contract value string: {}", python);
     for key in ["app/billing/inner.hy::DOEFF150::mail", "app/billing/clock.hy::DOEFF151::Now"] {
         let hint = violation(&report, key)["hint"].as_str().unwrap().to_string();
-        assert!(!hint.contains("登録簿に載せる"), "hint が登録簿を勧める: {}", hint);
-        assert!(!hint.contains(":rule-lines"), "hint が目印を足す書き方を誘う: {}", hint);
+        assert!(!hint.contains("registry"), "the hint recommends the registry: {}", hint);
+        assert!(!hint.contains(":rule-lines"), "the hint invites adding marks: {}", hint);
     }
     assert!(violation(&report, "app/billing/inner.hy::DOEFF150::mail")["hint"].as_str().unwrap().contains(":contract-files"));
 }
 
-/// :contract-files の file が無い・JSON でない・契約の綴りが 1 つも無い・:in lines でない群に書いた時は、黙って空に
-/// せず位置つきの宣言の誤りにし、走らせずに止まる。
+/// When a :contract-files file is missing, is not JSON, has no contract spelling at all, or is written for a group that is not :in lines, it does not silently become empty
+/// but becomes a declaration error with a position and stops without running.
 #[test]
 fn contract_files_misreadings_are_config_errors() {
     let dir = contract_repo(
@@ -4478,18 +4478,18 @@ fn contract_files_misreadings_are_config_errors() {
     );
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
-    assert_eq!(code, 2, "宣言の誤りは走らせずに止まる: {}", all);
+    assert_eq!(code, 2, "a declaration error stops without running: {}", all);
     for needle in [
-        "retired-words message の :contract-files の docs/contracts/missing.json(",
-        "を読めない",
-        "retired-words message の :contract-files の docs/contracts/broken.json(",
-        "が JSON として読めない",
-        "retired-words message の :contract-files の docs/contracts/empty.json に契約の綴り(キーの名・enum / const の値)が 1 つも無い",
-        "retired-words message の :contract-files の ../outside.json は repo の根からの path",
+        "docs/contracts/missing.json (",
+        "cannot be read:",
+        "docs/contracts/broken.json (",
+        "cannot be read as JSON",
+        "docs/contracts/empty.json in :contract-files of retired-words message has no contract spelling at all (key names, enum / const values)",
+        "../outside.json in :contract-files of retired-words message must be a path from the repo root",
     ] {
-        assert!(all.contains(needle), "{} が無い:\n{}", needle, all);
+        assert!(all.contains(needle), "{} is missing:\n{}", needle, all);
     }
-    assert!(!all.contains("DOEFF150"), "走らせていない: {}", all);
+    assert!(!all.contains("DOEFF150"), "it was not run: {}", all);
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path).unwrap();
     let names = text
@@ -4499,14 +4499,14 @@ fn contract_files_misreadings_are_config_errors() {
     std::fs::write(dir.path().join("docs/contracts/wire.json"), WIRE_CONTRACT).unwrap();
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     assert_eq!(code, 2, "{}{}", stdout, stderr);
-    assert!(stderr.contains("retired-words message の :contract-files は :in lines の時だけ効く"), "{}", stderr);
+    assert!(stderr.contains(":contract-files of retired-words message is effective only with :in lines"), "{}", stderr);
     std::fs::write(&arch_path, text.replace(":contract-files [\"docs/contracts/missing.json\" \"docs/contracts/broken.json\" \"docs/contracts/empty.json\" \"../outside.json\"]", ":contract-files []")).unwrap();
     let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("retired-words message の :contract-files が空"), "{}", stderr);
+    assert!(stderr.contains(":contract-files of retired-words message is empty"), "{}", stderr);
 }
 
-/// DOEFF144・145 の宣言を architecture.hy に足した一時の repo(読む file の glob は agora-controllers の宣言と同じ形)。
+/// A temporary repo with the DOEFF144 and 145 declarations added to architecture.hy (the globs of the files to read have the same shape as agora-controllers' declarations).
 fn typed_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     let dir = world_repo_with(files, "", "[\"DOEFF144\", \"DOEFF145\"]");
     let arch_path = dir.path().join("architecture.hy");
@@ -4518,8 +4518,8 @@ fn typed_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     dir
 }
 
-/// 公開面の型の注記の素の写像・素の組は、欄・戻り値・:post・答えの組の 4 種類の鍵で 1 か所 1 件ずつ当たる。
-/// 内部の名・入れ子の関数・:except の file・宣言の外の file は当たらない。直した形(欄の名前と型を持つ record)は何も出さない。
+/// A plain mapping or plain tuple in a public type annotation hits once per place, by 4 kinds of keys: field, return value, :post, and answer tuple.
+/// Internal names, nested functions, files in :except, and files outside the declaration do not hit. The fixed shape (a record with field names and types) emits nothing.
 #[test]
 fn typed_values_red_on_counterexamples_and_empty_on_typed_forms() {
     let bad = "(defrecord Charge (#^ dict meta) (#^ (get dict #(str Row)) index))\n\
@@ -4556,15 +4556,15 @@ fn typed_values_red_on_counterexamples_and_empty_on_typed_forms() {
     .collect();
     expected.sort();
     assert_eq!(keys(&report, "DOEFF144"), expected, "{}", report);
-    assert_ne!(code, 0, "新しい当たりは error");
+    assert_ne!(code, 0, "a new hit is an error");
     let decide = violation(&report, "app/core/bad.hy::DOEFF144::post:decide");
     assert_eq!(decide["level"], "critical", "{}", decide);
-    assert!(decide["message"].as_str().unwrap().contains("答え(:post・名の注釈なし) decide の型が 素の組 tuple"), "{}", decide["message"]);
+    assert!(decide["message"].as_str().unwrap().contains("answer (:post, no annotation on the name) decide has type bare tuple tuple"), "{}", decide["message"]);
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
 }
 
-/// .hy で kw-only の record を kw_only=True の無い @dataclass で宣言する .pyi は class ごとに 1 件。直した .pyi・
-/// 同じ名の .hy の無い .pyi・@dataclass の無い class は当たらない。
+/// A .pyi that declares a kw-only record of a .hy with @dataclass lacking kw_only=True hits once per class. A fixed .pyi,
+/// a .pyi with no .hy of the same name, and a class without @dataclass do not hit.
 #[test]
 fn record_stubs_red_when_kw_only_record_stub_lacks_kw_only() {
     let hy = "(defrecord Row (#^ str a))\n(defclass [(dataclass :frozen True :kw-only True)] Manual [] (#^ int n))\n(defrecord Fine (#^ str b))\n(defrecord Bare (#^ str c))\n";
@@ -4579,30 +4579,30 @@ fn record_stubs_red_when_kw_only_record_stub_lacks_kw_only() {
     assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Manual".to_string(), "app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
     let row = violation(&report, "app/core/rows.pyi::DOEFF145::Row");
     assert_eq!(row["level"], "critical", "{}", row);
-    assert_eq!(row["range"]["start"]["line"], 1, "位置は @dataclass の飾り: {}", row);
-    // 直した形は何も出さない。
+    assert_eq!(row["range"]["start"]["line"], 1, "the position is the @dataclass decorator: {}", row);
+    // The fixed shape emits nothing.
     std::fs::write(dir.path().join("app/core/rows.pyi"), stub.replace("@dataclass(frozen=True)\nclass Row", "@dataclass(frozen=True, kw_only=True)\nclass Row").replace("@dataclass\nclass Manual", "@dataclass(kw_only=True)\nclass Manual")).unwrap();
     let (_, fixed) = editor(dir.path());
     assert!(keys(&fixed, "DOEFF145").is_empty(), "{}", fixed);
 }
 
-/// 条件: DOEFF144・145 は file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を
-/// 読まない)。全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ母集団を見分ける。
+/// Condition: DOEFF144 and 145 are judged per file, so if a named path is given they read only the files under it (they do not read the whole
+/// repo). A whole run reads all the declared files — whether an unreadable file (not UTF-8) appears in the reasons distinguishes the population read.
 #[test]
 fn typed_value_rules_read_only_the_named_files() {
     let dir = typed_repo(&[("app/core/named.hy", "(defn #^ dict load [] 1)\n".to_string())]);
     std::fs::write(dir.path().join("app/core/broken.hy"), [0xffu8, 0xfe, b'\n']).unwrap();
     std::fs::write(dir.path().join("app/core/broken.pyi"), [0xffu8, 0xfe, b'\n']).unwrap();
     let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
-    assert!(whole_err.contains("app/core/broken.hy: 読めない"), "全体の実行は宣言の file を全部読む: {}\n{}", whole_err, whole_out);
-    assert!(whole_err.contains("app/core/broken.pyi: 読めない"), "全体の実行は宣言の .pyi を全部読む: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/core/broken.hy: could not read"), "a whole run reads all declared files: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/core/broken.pyi: unreadable"), "a whole run reads all declared .pyi files: {}\n{}", whole_err, whole_out);
     let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/core/named.hy"], None);
-    assert!(!named_err.contains("broken"), "名指しの実行は名指しの file だけを読む: {}", named_err);
-    assert!(named_out.contains("DOEFF144") && named_out.contains("named.hy"), "名指しの file の当たりは出る: {}\n{}", named_out, named_err);
-    assert_ne!(code, 0, "新しい当たりは error");
+    assert!(!named_err.contains("broken"), "a named run reads only the named file: {}", named_err);
+    assert!(named_out.contains("DOEFF144") && named_out.contains("named.hy"), "a hit in the named file appears: {}\n{}", named_out, named_err);
+    assert_ne!(code, 0, "a new hit is an error");
 }
 
-/// :typed-values・:record-stubs の読み違い(辞書でない・:files が無い・知らない鍵)は位置つきの設定の誤りにする。
+/// Misreads of :typed-values and :record-stubs (not a dictionary, no :files, an unknown key) become config errors with a position.
 #[test]
 fn typed_value_declaration_misreadings_are_config_errors() {
     let dir = world_repo_with(&[], "", "[\"DOEFF144\", \"DOEFF145\"]");
@@ -4614,11 +4614,11 @@ fn typed_value_declaration_misreadings_are_config_errors() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains(":typed-values は {:files [..] :except [..]} の辞書"), "{}", all);
-    assert!(all.contains(":record-stubs に :files(読む file の glob)が無い"), "{}", all);
+    assert!(all.contains(":typed-values must be a dictionary {:files [..] :except [..]}"), "{}", all);
+    assert!(all.contains(":record-stubs has no :files (globs of the files to read)"), "{}", all);
 }
 
-/// レビューの指摘(#1191): .hy だけを名指した実行でも、隣の同じ名の .pyi(宣言の glob に当たる物)を判じ、.pyi の鍵で出す。
+/// Review finding (#1191): even a run that names only the .hy judges the adjacent .pyi of the same name (one matching the declaration's glob) and emits with the .pyi's key.
 #[test]
 fn record_stubs_judge_the_stub_next_to_a_named_hy() {
     let dir = typed_repo(&[
@@ -4633,8 +4633,8 @@ fn record_stubs_judge_the_stub_next_to_a_named_hy() {
     assert_ne!(code, 0);
 }
 
-/// 保存前の 1 file の実行(--stdin): .hy の中身は stdin から、隣の .pyi は disk から読み、当たりは .pyi の path で出す。DOEFF144 も
-/// stdin の中身で判じる(disk の中身ではない)。
+/// A pre-save single-file run (--stdin): the .hy contents come from stdin, the adjacent .pyi is read from disk, and the hit is emitted with the .pyi's path. DOEFF144 also
+/// judges by the stdin contents (not the disk contents).
 #[test]
 fn stdin_run_judges_unsaved_hy_for_typed_values_and_record_stubs() {
     let dir = typed_repo(&[
@@ -4646,12 +4646,12 @@ fn stdin_run_judges_unsaved_hy_for_typed_values_and_record_stubs() {
     let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
     assert_eq!(keys(&report, "DOEFF144"), vec!["app/core/rows.hy::DOEFF144::return:load".to_string()], "{}", report);
-    // disk の .hy は defclass(kw-only でない)なので、全体の実行では DOEFF145 は当たらない。
+    // The .hy on disk is a defclass (not kw-only), so DOEFF145 does not hit in a whole run.
     let (_, whole) = editor(dir.path());
     assert!(keys(&whole, "DOEFF145").is_empty(), "{}", whole);
 }
 
-/// :record-stubs の :except に当たる .pyi は読まない。
+/// A .pyi matching :except of :record-stubs is not read.
 #[test]
 fn record_stubs_except_is_honoured() {
     let hy = "(defrecord Row (#^ str a))\n".to_string();
@@ -4669,8 +4669,8 @@ fn record_stubs_except_is_honoured() {
     assert!(keys(&excepted, "DOEFF145").is_empty(), "{}", excepted);
 }
 
-/// DOEFF146: :single-point-vocabulary の :except の外でその群の語彙(正規表現)を読んでいる file を
-/// 群ごとに 1 件、critical で出す。:except の file 自身は当てない。
+/// DOEFF146: a file that reads the group's vocabulary (regular expressions) outside :except of :single-point-vocabulary is emitted
+/// once per group, as critical. The :except file itself does not hit.
 #[test]
 fn vocabulary_outside_its_single_point_is_red() {
     let files = [
@@ -4691,19 +4691,19 @@ fn vocabulary_outside_its_single_point_is_red() {
         ":foundation foundation",
         ":foundation foundation\n  :single-point-vocabulary [(vocabulary-scope \"job-phase\" \
          :patterns [r\"\\bJOB-PHASE-[A-Z]+\\b\"] :files [\"app/billing/glue/**\"] \
-         :except [\"app/billing/glue/slice.hy\"] :instead \"app/billing/glue/slice.hy の答えを読む\")]",
+         :except [\"app/billing/glue/slice.hy\"] :instead \"read the answer of app/billing/glue/slice.hy\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF146"), vec!["app/billing/glue/queue.hy::DOEFF146::job-phase"], "{}", report);
     let hit = violation(&report, "app/billing/glue/queue.hy::DOEFF146::job-phase");
-    assert!(hit["message"].as_str().unwrap().contains("2 行"), "{}", hit["message"]);
-    assert!(hit["message"].as_str().unwrap().contains("slice.hy の答えを読む"), "{}", hit["message"]);
+    assert!(hit["message"].as_str().unwrap().contains("2 lines"), "{}", hit["message"]);
+    assert!(hit["message"].as_str().unwrap().contains("read the answer of app/billing/glue/slice.hy"), "{}", hit["message"]);
     assert_eq!(hit["range"]["start"]["line"], 1);
     assert_eq!(hit["level"], "critical");
 }
 
-/// :single-point-vocabulary の必須の鍵が無ければ読み取りの誤り(位置つき)。
+/// If a required key of :single-point-vocabulary is missing, it is a read error (with a position).
 #[test]
 fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -4717,15 +4717,15 @@ fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("vocabulary-scope a に :patterns が無い"), "{}", all);
-    assert!(all.contains("vocabulary-scope a に :files が無い"), "{}", all);
-    assert!(all.contains("vocabulary-scope a に :except(判定の 1 点)が無い"), "{}", all);
-    assert!(all.contains("vocabulary-scope a に :instead(直し方)が無い"), "{}", all);
+    assert!(all.contains("vocabulary-scope a has no :patterns"), "{}", all);
+    assert!(all.contains("vocabulary-scope a has no :files"), "{}", all);
+    assert!(all.contains("vocabulary-scope a has no :except (the single point of judgment)"), "{}", all);
+    assert!(all.contains("vocabulary-scope a has no :instead (how to fix it)"), "{}", all);
 }
 
-/// DOEFF148: :confined-spellings の綴りを :except の外の file が書いていれば、file と群ごとに 1 件、
-/// critical で出す。文字列の中は数え(外の口の動詞・route の綴り)、註は数えない。Python の file も読む。:files に当たる file が
-/// 無い群は architecture.hy の位置で missing。
+/// DOEFF148: if a file outside :except writes a spelling of :confined-spellings, it is emitted once per file and group,
+/// as critical. Inside strings is counted (the verbs of outside ports, route spellings), and comments are not. Python files are read too. A group with no file matching :files is
+/// reported as missing at the architecture.hy position.
 #[test]
 fn spelling_outside_its_files_is_red() {
     let files = [
@@ -4733,18 +4733,18 @@ fn spelling_outside_its_files_is_red() {
         ("app/billing/protocol/peer.hy", "(defk send [x] (HttpRequest \"POST\" \"/api/rows\" x))\n".to_string()),
         (
             "app/billing/core/glue.hy",
-            "; \"/api/intake\" は退いた\n(setv a 1)\n(defk go [x] (HttpRequest \"GET\" \"/api/intake\" x))\n".to_string(),
+            "; \"/api/intake\" was retired\n(setv a 1)\n(defk go [x] (HttpRequest \"GET\" \"/api/intake\" x))\n".to_string(),
         ),
-        ("app/billing/entry/values.py", "# /api/intake の註\nROUTE = \"/api/intake\"\n".to_string()),
+        ("app/billing/entry/values.py", "# comment on /api/intake\nROUTE = \"/api/intake\"\n".to_string()),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF148\"]");
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(
         ":foundation foundation",
         ":foundation foundation\n  :confined-spellings [(confined-spelling \"http\" :patterns [r\"\\(HttpRequest\\s\"] \
-         :files [\"app/billing/**\"] :except [\"app/billing/protocol/*.hy\"] :why \"外の口は層 protocol だけ\") \
-         (confined-spelling \"acp-intake\" :patterns [r\"/api/intake\"] :files [\"app/billing/**\"] :why \"投函の受け手は列\") \
-         (confined-spelling \"gone\" :patterns [r\"x\"] :files [\"app/gone/**\"] :why \"消えた\")]",
+         :files [\"app/billing/**\"] :except [\"app/billing/protocol/*.hy\"] :why \"the outside port is only layer protocol\") \
+         (confined-spelling \"acp-intake\" :patterns [r\"/api/intake\"] :files [\"app/billing/**\"] :why \"the mail-drop receiver is the queue\") \
+         (confined-spelling \"gone\" :patterns [r\"x\"] :files [\"app/gone/**\"] :why \"gone\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -4760,14 +4760,14 @@ fn spelling_outside_its_files_is_red() {
         report
     );
     let hit = violation(&report, "app/billing/core/glue.hy::DOEFF148::acp-intake");
-    assert!(hit["message"].as_str().unwrap().contains("1 か所"), "{}", hit["message"]);
+    assert!(hit["message"].as_str().unwrap().contains("1 occurrence(s)"), "{}", hit["message"]);
     assert_eq!(hit["range"]["start"]["line"], 2);
     assert_eq!(hit["level"], "critical");
     let python = violation(&report, "app/billing/entry/values.py::DOEFF148::acp-intake");
     assert_eq!(python["range"]["start"]["line"], 1);
 }
 
-/// :confined-spellings の必須の鍵が無ければ読み取りの誤り(位置つき)。:except は書かなくてよい。
+/// If a required key of :confined-spellings is missing, it is a read error (with a position). :except need not be written.
 #[test]
 fn confined_spelling_requires_patterns_files_and_why() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -4781,25 +4781,25 @@ fn confined_spelling_requires_patterns_files_and_why() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("confined-spelling a に :patterns が無い"), "{}", all);
-    assert!(all.contains("confined-spelling a に :files が無い"), "{}", all);
-    assert!(all.contains("confined-spelling a に :why(なぜこの file だけか)が無い"), "{}", all);
-    assert!(!all.contains("confined-spelling a に :except"), "{}", all);
-    assert!(all.contains("confined-spelling b の正規表現 ( を読めない"), "{}", all);
+    assert!(all.contains("confined-spelling a has no :patterns"), "{}", all);
+    assert!(all.contains("confined-spelling a has no :files"), "{}", all);
+    assert!(all.contains("confined-spelling a has no :why (why only these files)"), "{}", all);
+    assert!(!all.contains("confined-spelling a has no :except"), "{}", all);
+    assert!(all.contains("cannot read the regular expression ( of confined-spelling b"), "{}", all);
 }
 
-/// 群の綴りに結んだ名も群の綴り(:names-bound-in — agora-controllers の群 web-push-private-key が秘密キーの参照の名を正規表現の写しで
-/// 持ち、キーの入れ替えの旧いキーの参照の名を他の file で読んでも赤にならなかった)。
-/// 失敗ケース: 宣言の :environ に足した新しい参照の名を core が文字列で読む・翻訳の val の名で読む・Python が mangle した名で読む・
-/// 翻訳が参照の名を並べた列の名で読むと、architecture.hy を書き換えずに赤。名を写しで持つ群(bill-key-copied)は同じ 4 つを通す。
-/// 群の綴りに当たらない値に結んだ名と、関数の中の束縛の名は数えない。
+/// A name bound to a group spelling is also a group spelling (:names-bound-in — the group web-push-private-key in agora-controllers kept the names of secret-key references as a copy of regular expressions, and
+/// reading an old key reference name from key rotation in another file did not turn red).
+/// Failure case: if core reads a new reference name added to the declaration's :environ as a string, reads it by a translation's val name, or reads it by a name Python mangled, or
+/// reads it by a name in a list where a translation lined up the reference names, it turns red without rewriting architecture.hy. A group that holds the names as a copy (bill-key-copied) lets the same 4 through.
+/// A name bound to a value that does not match a group spelling, and a name bound inside a function, are not counted.
 #[test]
 fn a_name_bound_to_a_confined_spelling_is_confined_too() {
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         (
             "app/billing/entry/system.hy",
-            "(defsystem billing-system [foundation]\n  \"請求の系\"\n  (billing (billing-job foundation) :needs #{\"zeus\"} :replicas 1\n    \
+            "(defsystem billing-system [foundation]\n  \"Billing system\"\n  (billing (billing-job foundation) :needs #{\"zeus\"} :replicas 1\n    \
              :environ {\"BILL_KEY_REF\" \"secret:ns/bill-vapid/private_key\"\n              \
              \"BILL_PREVIOUS_KEY_REF\" \"secret:ns/bill-vapid/previous_private_key\"\n              \
              \"BILL_CONTACT\" \"https://example.org\"}))\n"
@@ -4825,7 +4825,7 @@ fn a_name_bound_to_a_confined_spelling_is_confined_too() {
         ("app/billing/core/by_python.py", "from app.billing.protocol.keys import BILL_KEY_REF_ENV\n".to_string()),
         (
             "app/billing/core/contact.hy",
-            "(defk contact [] (supplied-setting \"BILL_CONTACT\"))\n(defk doc [] \"BILL_KEY_REFERENCE は別の名\")\n(defk mine [ref] ref)\n".to_string(),
+            "(defk contact [] (supplied-setting \"BILL_CONTACT\"))\n(defk doc [] \"BILL_KEY_REFERENCE is another name\")\n(defk mine [ref] ref)\n".to_string(),
         ),
     ];
     let dir = world_repo_with(&files, "", "[\"DOEFF148\"]");
@@ -4834,9 +4834,9 @@ fn a_name_bound_to_a_confined_spelling_is_confined_too() {
         ":foundation foundation",
         ":foundation foundation\n  :confined-spellings [(confined-spelling \"bill-key\" :patterns [r\"bill-vapid\"] \
          :names-bound-in [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :files [\"app/billing/**\"] \
-         :except [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :why \"秘密キーを読むのは keys.hy だけ\") \
+         :except [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :why \"only keys.hy reads the secret key\") \
          (confined-spelling \"bill-key-copied\" :patterns [r\"bill-vapid\" r\"\\bBILL_KEY_REF\\b\" r\"\\bBILL-KEY-REF-ENV\\b\"] \
-         :files [\"app/billing/**\"] :except [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :why \"写し\")]",
+         :files [\"app/billing/**\"] :except [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :why \"copy\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -4853,13 +4853,13 @@ fn a_name_bound_to_a_confined_spelling_is_confined_too() {
     );
     let hit = violation(&report, "app/billing/core/by_name.hy::DOEFF148::bill-key");
     let message = hit["message"].as_str().unwrap();
-    assert!(message.contains("2 か所(最初の当たり BILL-PREVIOUS-KEY-REF-ENV)"), "{}", message);
+    assert!(message.contains("2 occurrence(s) outside the files allowed to write it (first match BILL-PREVIOUS-KEY-REF-ENV)"), "{}", message);
     let reason = hit["explanation"]["reason"].as_str().unwrap();
-    assert!(reason.contains("導いた名: BILL_KEY_REF・BILL_PREVIOUS_KEY_REF・BILL-KEY-REF-ENV・BILL-PREVIOUS-KEY-REF-ENV・BILL-KEY-REFS"), "{}", reason);
+    assert!(reason.contains("derived names: BILL_KEY_REF, BILL_PREVIOUS_KEY_REF, BILL-KEY-REF-ENV, BILL-PREVIOUS-KEY-REF-ENV, BILL-KEY-REFS"), "{}", reason);
 }
 
-/// :names-bound-in の file は、群の綴りを書いてよい(:except に当たる)読める Hy の file で、file ごとに群の綴りに当たる値に結んだ名を
-/// 1 つ以上持つ(定数を関数の中へ移した file の名が黙って群から落ちない — 盲検の後の見直し)。外れれば位置つきの読み取りの誤り。
+/// A :names-bound-in file is a readable Hy file where the group's spelling may be written (matches :except), and each file has at least one name bound to a value matching a group spelling
+/// (so a file whose constant was moved into a function does not silently drop out of the group — a review after the blind test). If violated, a position-attached read error.
 #[test]
 fn names_bound_in_must_be_hy_files_the_group_lets_write() {
     let files = [
@@ -4883,23 +4883,23 @@ fn names_bound_in_must_be_hy_files_the_group_lets_write() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("confined-spelling a の :names-bound-in の app/billing/core/other.hy は :except に当たらない"), "{}", all);
-    assert!(all.contains("confined-spelling a の :names-bound-in の app/billing/protocol/gone.hy を読めない"), "{}", all);
-    assert!(all.contains("confined-spelling a の :names-bound-in の /abs.hy は repo の根からの Hy の file の path"), "{}", all);
-    assert!(all.contains("confined-spelling b の :names-bound-in の app/billing/protocol/plain.hy に、群の綴りに当たる値に結んだ名が 1 つも無い"), "{}", all);
-    assert!(!all.contains("confined-spelling b の :names-bound-in の app/billing/protocol/keyed.hy"), "{}", all);
-    assert!(all.contains("confined-spelling c の :names-bound-in が空"), "{}", all);
+    assert!(all.contains("app/billing/core/other.hy in :names-bound-in of confined-spelling a does not match :except"), "{}", all);
+    assert!(all.contains("cannot read app/billing/protocol/gone.hy"), "{}", all);
+    assert!(all.contains("/abs.hy in :names-bound-in of confined-spelling a must be the path of a Hy file from the repo root"), "{}", all);
+    assert!(all.contains("app/billing/protocol/plain.hy in :names-bound-in of confined-spelling b has no name bound to a value matching the group's spelling"), "{}", all);
+    assert!(!all.contains("app/billing/protocol/keyed.hy in :names-bound-in of confined-spelling b"), "{}", all);
+    assert!(all.contains(":names-bound-in of confined-spelling c is empty"), "{}", all);
 }
 
-/// DOEFF161: :counted-spellings の当たりの数が :count / :at-least に合わなければ 1 件、critical で出す。
-/// :within は名指した定義ごとに数え、無い定義は missing。Hy の註は数えず、yaml は拡張子を問わずそのまま読む。
+/// DOEFF161: if the number of hits of :counted-spellings does not match :count / :at-least, it is emitted once, as critical.
+/// :within counts per named definition, and a missing definition is missing. Hy comments are not counted, and yaml is read as is regardless of extension.
 #[test]
 fn spelling_count_differs_is_red() {
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         (
             "app/billing/protocol/peer.hy",
-            "(defk send [x] (Req \"POST\" x)) ; \"POST\" は註\n\n(defk read [x] (Req \"POST\" (Req \"POST\" x)))\n".to_string(),
+            "(defk send [x] (Req \"POST\" x)) ; \"POST\" is a comment\n\n(defk read [x] (Req \"POST\" (Req \"POST\" x)))\n".to_string(),
         ),
         ("app/billing/rules.yaml", "rules:\n  - id: one\n".to_string()),
     ];
@@ -4908,11 +4908,11 @@ fn spelling_count_differs_is_red() {
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(
         ":foundation foundation",
         ":foundation foundation\n  :counted-spellings [(counted-spelling \"posts\" :pattern r\"\\x22POST\\x22\" \
-         :files [\"app/billing/protocol/peer.hy\"] :count 2 :why \"書きは 2 つ\") \
+         :files [\"app/billing/protocol/peer.hy\"] :count 2 :why \"two writes\") \
          (counted-spelling \"seats\" :pattern r\"\\x22POST\\x22\" :files [\"app/billing/protocol/peer.hy\"] \
-         :within [\"send\" \"read\" \"gone\"] :count 1 :why \"座ごとに 1 つ\") \
-         (counted-spelling \"rule-one\" :pattern r\"id: one\" :files [\"app/billing/rules.yaml\"] :at-least 1 :why \"規則の実在\") \
-         (counted-spelling \"rule-two\" :pattern r\"id: two\" :files [\"app/billing/rules.yaml\"] :at-least 1 :why \"規則の実在\")]",
+         :within [\"send\" \"read\" \"gone\"] :count 1 :why \"one per seat\") \
+         (counted-spelling \"rule-one\" :pattern r\"id: one\" :files [\"app/billing/rules.yaml\"] :at-least 1 :why \"the rule exists\") \
+         (counted-spelling \"rule-two\" :pattern r\"id: two\" :files [\"app/billing/rules.yaml\"] :at-least 1 :why \"the rule exists\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -4928,13 +4928,13 @@ fn spelling_count_differs_is_red() {
         report
     );
     let posts = violation(&report, "app/billing/protocol/peer.hy::DOEFF161::posts");
-    assert!(posts["message"].as_str().unwrap().contains("3 か所(ちょうど 2 のはず)"), "{}", posts["message"]);
+    assert!(posts["message"].as_str().unwrap().contains("3 occurrence(s) ("), "{}", posts["message"]);
     assert_eq!(posts["level"], "critical");
     let seat = violation(&report, "app/billing/protocol/peer.hy::DOEFF161::seats:read");
     assert_eq!(seat["range"]["start"]["line"], 2);
 }
 
-/// :counted-spellings の必須の鍵が無ければ読み取りの誤り。:count と :at-least はどちらか 1 つ。
+/// If a required key of :counted-spellings is missing, it is a read error. Exactly one of :count and :at-least.
 #[test]
 fn counted_spelling_requires_pattern_files_one_count_and_why() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -4950,23 +4950,23 @@ fn counted_spelling_requires_pattern_files_one_count_and_why() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("counted-spelling a に :pattern が無い"), "{}", all);
-    assert!(all.contains("counted-spelling a に :files が無い"), "{}", all);
-    assert!(all.contains("counted-spelling a には :count か :at-least のどちらか 1 つを書く"), "{}", all);
-    assert!(all.contains("counted-spelling a に :why(なぜこの数か)が無い"), "{}", all);
-    assert!(all.contains("counted-spelling b には :count か :at-least のどちらか 1 つを書く"), "{}", all);
-    assert!(all.contains("counted-spelling c の :count は 0 以上の整数"), "{}", all);
+    assert!(all.contains("counted-spelling a has no :pattern"), "{}", all);
+    assert!(all.contains("counted-spelling a has no :files"), "{}", all);
+    assert!(all.contains("counted-spelling a must have exactly one of :count or :at-least"), "{}", all);
+    assert!(all.contains("counted-spelling a has no :why (why this count)"), "{}", all);
+    assert!(all.contains("counted-spelling b must have exactly one of :count or :at-least"), "{}", all);
+    assert!(all.contains(":count of counted-spelling c must be an integer of 0 or more"), "{}", all);
 }
 
-/// DOEFF149: :field-holders の型の欄を持つ class が :holders と違えば、一覧の外の持ち手は class の位置で、欄を
-/// 持たない一覧の class と :classes の無い class は architecture.hy の位置で、critical で出す。docstring・method の中・既定値の文字列は数えない。
+/// DOEFF149: if a class having a field of the :field-holders type differs from :holders, a holder outside the list is emitted at the class position as critical, and a listed class
+/// that lacks the field and a class not in :classes are emitted at the architecture.hy position as critical. Docstrings, method bodies, and strings of default values are not counted.
 #[test]
 fn field_holders_differ_is_red() {
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         (
             "app/billing/core/types.py",
-            "class RecordCache:\n    \"\"\"RecordCache は本文の容器。\"\"\"\n    rows: tuple\n\n\
+            "class RecordCache:\n    \"\"\"RecordCache is the container for the body.\"\"\"\n    rows: tuple\n\n\
              class Sent:\n    cache: RecordCache | None = None\n\n\
              class Sneaky:\n    spare: list[RecordCache]\n\n\
              class State:\n    note: str = \"Record\"\n    def f(self) -> None:\n        x: Record = None\n"
@@ -4978,8 +4978,8 @@ fn field_holders_differ_is_red() {
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(
         ":foundation foundation",
         ":foundation foundation\n  :field-holders [(field-holders \"cache\" :type \"RecordCache\" :files [\"app/billing/core/*.py\"] \
-         :holders [\"Sent\" \"Page\"] :why \"容器は 1 つ\") \
-         (field-holders \"state\" :type \"Record\" :files [\"app/billing/core/*.py\"] :classes [\"State\" \"Gone\"] :holders [] :why \"状態は本文を持たない\")]",
+         :holders [\"Sent\" \"Page\"] :why \"one container\") \
+         (field-holders \"state\" :type \"Record\" :files [\"app/billing/core/*.py\"] :classes [\"State\" \"Gone\"] :holders [] :why \"state does not hold the body\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -4994,12 +4994,12 @@ fn field_holders_differ_is_red() {
         report
     );
     let sneaky = violation(&report, "app/billing/core/types.py::DOEFF149::cache:Sneaky");
-    assert!(sneaky["message"].as_str().unwrap().contains("class Sneaky が RecordCache の欄を持つ"), "{}", sneaky["message"]);
+    assert!(sneaky["message"].as_str().unwrap().contains("class Sneaky has fields of RecordCache"), "{}", sneaky["message"]);
     assert_eq!(sneaky["level"], "critical");
     assert_eq!(sneaky["range"]["start"]["line"], 7);
 }
 
-/// :field-holders の必須の鍵が無ければ読み取りの誤り。:holders は空の列でよいが書く。:classes を書けば :holders はその中の名。
+/// If a required key of :field-holders is missing, it is a read error. :holders may be an empty list but must be written. If :classes is written, :holders are names within it.
 #[test]
 fn field_holders_requires_type_files_holders_and_why() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -5014,15 +5014,15 @@ fn field_holders_requires_type_files_holders_and_why() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("field-holders a に :type(数える型の綴り)が無い"), "{}", all);
-    assert!(all.contains("field-holders a に :files が無い"), "{}", all);
-    assert!(all.contains("field-holders a に :holders が無い"), "{}", all);
-    assert!(all.contains("field-holders a に :why(なぜこの顔ぶれか)が無い"), "{}", all);
-    assert!(all.contains("field-holders b の :holders の B が :classes に無い"), "{}", all);
+    assert!(all.contains("field-holders a has no :type (the type spelling to count)"), "{}", all);
+    assert!(all.contains("field-holders a has no :files"), "{}", all);
+    assert!(all.contains("field-holders a has no :holders"), "{}", all);
+    assert!(all.contains("field-holders a has no :why (why this roster)"), "{}", all);
+    assert!(all.contains("B in :holders of field-holders b is not in :classes"), "{}", all);
 }
 
-/// DOEFF162: :effect-census の :files で EffectBase を継ぐ class の宣言が :effects の一覧と食い違えば、
-/// 食い違いごとに 1 件、critical で出す(一覧の外・2 度の宣言・宣言の無い一覧の effect)。
+/// DOEFF162: if the declarations of classes inheriting EffectBase in :files of :effect-census differ from the :effects list,
+/// one hit per difference is emitted as critical (outside the list, declared twice, a listed effect with no declaration).
 #[test]
 fn effect_outside_census_is_red() {
     let files = [
@@ -5035,7 +5035,7 @@ fn effect_outside_census_is_red() {
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(
         ":foundation foundation",
         ":foundation foundation\n  :effect-census [(effect-census \"billing\" :files [\"app/billing/effects.py\" \"app/billing/intent/socket.hy\"] \
-         :effects [\"Send\" \"Close\" \"Log\"] :why \"外への要求は一覧で閉じる\")]",
+         :effects [\"Send\" \"Close\" \"Log\"] :why \"requests to the outside are closed by the list\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -5050,7 +5050,7 @@ fn effect_outside_census_is_red() {
     assert_eq!(sneaky["level"], "critical");
 }
 
-/// :effect-census の必須の鍵が無ければ読み取りの誤り。
+/// If a required key of :effect-census is missing, it is a read error.
 #[test]
 fn effect_census_requires_files_effects_and_why() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -5064,14 +5064,14 @@ fn effect_census_requires_files_effects_and_why() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("effect-census a に :files が無い"), "{}", all);
-    assert!(all.contains("effect-census a に :effects が無い"), "{}", all);
-    assert!(all.contains("effect-census a に :why(なぜ一覧で閉じるか)が無い"), "{}", all);
+    assert!(all.contains("effect-census a has no :files"), "{}", all);
+    assert!(all.contains("effect-census a has no :effects"), "{}", all);
+    assert!(all.contains("effect-census a has no :why (why the list is closed)"), "{}", all);
 }
 
-/// 記録の client は HttpRequest の effect を出すだけ — 実 HTTP は HttpRequest に
-/// 答える本物の handler(目録の http-production-handler)の側で数える。通常の client と表で絞る client は目録に載せない。
-/// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。
+/// The records client only emits HttpRequest effects — real HTTP is counted on the side of the real handler
+/// that answers HttpRequest (the inventory's http-production-handler). Ordinary clients and clients narrowed by a table are not listed in the inventory.
+/// Places that merely name RecordsEndpoint as a value (a type annotation) are not counted either.
 #[test]
 fn records_client_is_counted_by_its_outer_http_handler() {
     let files = [
@@ -5114,8 +5114,8 @@ fn records_client_is_counted_by_its_outer_http_handler() {
     }
 }
 
-/// 移行の間だけ残した目録の行は撤去済み。効果を出すだけの記録 client を
-/// 実 I/O の :wraps に挙げる古い宣言は、通常の「目録に無い」設定エラーで止める。
+/// The inventory row kept only during migration has been removed. An old declaration that lists a records client
+/// that only emits effects in the real I/O :wraps is stopped by the usual "not in the inventory" config error.
 #[test]
 fn records_clients_cannot_be_declared_as_world_handler_wraps() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-records [body] body)\n")];
@@ -5125,13 +5125,13 @@ fn records_clients_cannot_be_declared_as_world_handler_wraps() {
         let dir = world_repo_with(&files, &extra, "[\"DOEFF131\"]");
         let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
         assert_eq!(code, 2, "{}", stderr);
-        assert!(stderr.contains(&format!("{target} は doeff の実 I/O の handler の目録")), "{}", stderr);
+        assert!(stderr.contains(&format!("{target} is not in doeff's catalog of real I/O handlers")), "{}", stderr);
     }
 }
 
-/// C7b: 決めた材料だけで判じる定義(:blind-definitions)— 宣言した定義から呼び出しで届く定義が、helper と別の
-/// module を越えても、使わない語を読めば赤(届いた定義と語ごとに 1 件)。註の中の語・届かない定義の語は数えない。:no-imports なら module の
-/// import は赤で、:allow-requires の macro の require は許す。名指す定義が無ければ architecture.hy の位置で赤(母集団 0 を緑にしない)。
+/// C7b: definitions judged only by decided material (:blind-definitions) — a definition reached by calls from a declared definition is red if it reads a word that must not be used,
+/// even across helpers and other modules (one per reached definition and word). Words in comments and words in unreached definitions are not counted. With :no-imports, a module's
+/// import is red, and a macro require in :allow-requires is allowed. If the named definition is missing, it is red at the architecture.hy position (an empty population is never green).
 #[test]
 fn blind_definitions_read_only_their_inputs() {
     let files = [
@@ -5140,7 +5140,7 @@ fn blind_definitions_read_only_their_inputs() {
             "app/billing/core/entrance.hy",
             "(require doeff-hy.macros [defk])\n(import app.billing.core.routes [peek])\n\
              (defk decide [said] (helper said))\n\
-             (defk helper [x]\n  ;; view.policy は読まない(註は数えない)\n  (peek x))\n"
+             (defk helper [x]\n  ;; view.policy is not read (comments are not counted)\n  (peek x))\n"
                 .to_string(),
         ),
         ("app/billing/core/routes.hy", "(defk peek [x] (get x \"view.policy\"))\n(defk unrelated [] \"message-class\")\n".to_string()),
@@ -5150,7 +5150,7 @@ fn blind_definitions_read_only_their_inputs() {
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(
         ":foundation foundation",
-        ":foundation foundation\n  :blind-definitions [(blind \"app.billing.core.entrance:decide\" :forbid-words [\"view.policy\" \"message-class\"]\n                         :no-imports True :allow-requires [\"doeff-hy.macros\"] :why \"保証は依頼者の言葉だけから決まる\")\n                       (blind \"app.billing.core.clean:decide\" :forbid-words [\"view.policy\"] :no-imports True\n                         :allow-requires [\"doeff-hy.macros\"] :why \"同じ\")\n                       (blind \"app.billing.core.gone:decide\" :no-imports True :why \"消えた定義\")]",
+        ":foundation foundation\n  :blind-definitions [(blind \"app.billing.core.entrance:decide\" :forbid-words [\"view.policy\" \"message-class\"]\n                         :no-imports True :allow-requires [\"doeff-hy.macros\"] :why \"the guarantee is decided only from the requester's words\")\n                       (blind \"app.billing.core.clean:decide\" :forbid-words [\"view.policy\"] :no-imports True\n                         :allow-requires [\"doeff-hy.macros\"] :why \"same\")\n                       (blind \"app.billing.core.gone:decide\" :no-imports True :why \"removed definition\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -5166,11 +5166,11 @@ fn blind_definitions_read_only_their_inputs() {
     );
     let reached = violation(&report, "app/billing/core/routes.hy::DOEFF141::peek:view.policy");
     assert_eq!(reached["level"], "critical", "{}", reached);
-    assert!(reached["message"].as_str().unwrap().contains("app.billing.core.entrance:decide から届く定義 peek"), "{}", reached["message"]);
+    assert!(reached["message"].as_str().unwrap().contains("The definition peek reached from app.billing.core.entrance:decide"), "{}", reached["message"]);
     assert_eq!(reached["range"]["start"]["line"], 0);
 }
 
-/// 宣言の読み違い(何も求めない宣言・:no-imports の無い :allow-requires・:why の無い宣言・綴りの形)は設定の誤り。
+/// Misreads of a declaration (a declaration that asks for nothing, :allow-requires without :no-imports, a declaration without :why, the spelling shape) are config errors.
 #[test]
 fn blind_declaration_misreadings_are_config_errors() {
     let dir = world_repo_with(&[], "", "[\"DOEFF141\"]");
@@ -5183,15 +5183,15 @@ fn blind_declaration_misreadings_are_config_errors() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("blind a.b:c に :forbid-words も :no-imports True も無い"), "{}", all);
-    assert!(all.contains("blind a.b:d の :allow-requires は :no-imports True の時だけ効く"), "{}", all);
-    assert!(all.contains("blind a.b:e に :why"), "{}", all);
-    assert!(all.contains("blind の no-colon は \"module.path:名\" の綴り"), "{}", all);
+    assert!(all.contains("blind a.b:c has neither :forbid-words nor :no-imports True"), "{}", all);
+    assert!(all.contains(":allow-requires of blind a.b:d is effective only with :no-imports True"), "{}", all);
+    assert!(all.contains("blind a.b:e has no :why"), "{}", all);
+    assert!(all.contains("no-colon in blind must be a spelling \"module.path:NAME\""), "{}", all);
 }
 
-/// 呼んでよい頭を決めた定義(:allowed-heads)— 定義の中(入れ子を含む)の `( … )` の頭が一覧の
-/// 外なら、頭ごとに 1 件(最初に現れた所)。文字列・註・`#_`・tuple の中の綴りは頭に数えない。同じ module のほかの定義の頭は見ない。
-/// 名指す定義が無ければ architecture.hy の位置で赤(母集団 0 を緑にしない)。
+/// A definition with decided allowed heads (:allowed-heads) — if the head of a `( … )` inside the definition (including nested ones) is outside the list,
+/// one hit per head (where it first appears). Spellings inside strings, comments, `#_`, and tuples do not count as heads. Heads of other definitions in the same module are not looked at.
+/// If the named definition is missing, it is red at the architecture.hy position (an empty population is never green).
 #[test]
 fn allowed_heads_confine_what_a_definition_may_call() {
     let files = [
@@ -5199,7 +5199,7 @@ fn allowed_heads_confine_what_a_definition_may_call() {
         (
             "app/billing/entry/server.hy",
             "(require doeff-hy.macros [defk <-])\n\
-             (defk confined [conn text]\n  {:pre [(: text str)]}\n  ;; (decode text) は註なので数えない\n  (<- r (Try (on-text conn text)))\n  \"(parse text)\"\n  #_(explode)\n  \
+             (defk confined [conn text]\n  {:pre [(: text str)]}\n  ;; (decode text) is a comment so it is not counted\n  (<- r (Try (on-text conn text)))\n  \"(parse text)\"\n  #_(explode)\n  \
              (when (isinstance r Err)\n    (return (refuse conn (decode r))))\n  (setv pair #(first second))\n  (decode r))\n\
              (defk refuse [conn fault] (Send conn fault))\n\
              (defk other [x] (anything-goes x))\n"
@@ -5210,7 +5210,7 @@ fn allowed_heads_confine_what_a_definition_may_call() {
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path).unwrap().replace(
         ":foundation foundation",
-        ":foundation foundation\n  :allowed-heads [(allowed-heads \"app.billing.entry.server:confined\"\n                    :heads [\"defk\" \":\" \"<-\" \"Try\" \"on-text\" \"when\" \"isinstance\" \"return\" \"refuse\" \"setv\"]\n                    :why \"Try の外で例外を上げない\")\n                  (allowed-heads \"app.billing.entry.server:refuse\" :heads [\"defk\" \"Send\"] :why \"断りの 1 点\")\n                  (allowed-heads \"app.billing.entry.server:gone\" :heads [\"defk\"] :why \"消えた定義\")]",
+        ":foundation foundation\n  :allowed-heads [(allowed-heads \"app.billing.entry.server:confined\"\n                    :heads [\"defk\" \":\" \"<-\" \"Try\" \"on-text\" \"when\" \"isinstance\" \"return\" \"refuse\" \"setv\"]\n                    :why \"do not raise exceptions outside Try\")\n                  (allowed-heads \"app.billing.entry.server:refuse\" :heads [\"defk\" \"Send\"] :why \"the single point of refusal\")\n                  (allowed-heads \"app.billing.entry.server:gone\" :heads [\"defk\"] :why \"removed definition\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -5222,11 +5222,11 @@ fn allowed_heads_confine_what_a_definition_may_call() {
     );
     let unlisted = violation(&report, "app/billing/entry/server.hy::DOEFF147::decode");
     assert_eq!(unlisted["level"], "critical", "{}", unlisted);
-    assert!(unlisted["message"].as_str().unwrap().contains("app.billing.entry.server:confined の中で呼んでよい頭の一覧の外の (decode …)"), "{}", unlisted["message"]);
-    assert_eq!(unlisted["range"]["start"]["line"], 8, "最初に現れた所(when の枝の中): {}", unlisted);
+    assert!(unlisted["message"].as_str().unwrap().contains("app.billing.entry.server:confined calls (decode …), which is outside the list of heads it may call"), "{}", unlisted["message"]);
+    assert_eq!(unlisted["range"]["start"]["line"], 8, "where it first appears (inside the when branch): {}", unlisted);
 }
 
-/// 一覧の中の頭だけなら緑。宣言の読み違い(:heads の無い宣言・:why の無い宣言・2 度の宣言・綴りの形)は設定の誤り。
+/// Only heads in the list is green. Misreads of a declaration (a declaration without :heads, without :why, declared twice, the spelling shape) are config errors.
 #[test]
 fn allowed_heads_pass_when_listed_and_misreadings_are_config_errors() {
     let files = [
@@ -5238,7 +5238,7 @@ fn allowed_heads_pass_when_listed_and_misreadings_are_config_errors() {
     let original = std::fs::read_to_string(&arch_path).unwrap();
     let clean = original.replace(
         ":foundation foundation",
-        ":foundation foundation\n  :allowed-heads [(allowed-heads \"app.billing.entry.server:refuse\" :heads [\"defk\" \"Send\"] :why \"断りの 1 点\")]",
+        ":foundation foundation\n  :allowed-heads [(allowed-heads \"app.billing.entry.server:refuse\" :heads [\"defk\" \"Send\"] :why \"the single point of refusal\")]",
     );
     std::fs::write(&arch_path, clean).unwrap();
     let (_, report) = editor(dir.path());
@@ -5251,14 +5251,14 @@ fn allowed_heads_pass_when_listed_and_misreadings_are_config_errors() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("allowed-heads a.b:c に :heads が無い"), "{}", all);
-    assert!(all.contains("allowed-heads a.b:d に :why"), "{}", all);
-    assert!(all.contains("allowed-heads a.b:e が 2 度宣言されている"), "{}", all);
-    assert!(all.contains("allowed-heads の no-colon は \"module.path:名\" の綴り"), "{}", all);
+    assert!(all.contains("allowed-heads a.b:c has no :heads"), "{}", all);
+    assert!(all.contains("allowed-heads a.b:d has no :why"), "{}", all);
+    assert!(all.contains("allowed-heads a.b:e is declared twice"), "{}", all);
+    assert!(all.contains("no-colon in allowed-heads must be a spelling \"module.path:NAME\""), "{}", all);
 }
 
-/// 頭を呼んでよい場所と回数(:call-sites)。正しい形なら緑。場所の外の呼び・回数の食い違い・直ぐ外の
-/// form の食い違い・分岐の外の呼び・消えた場所・当たる file の無い宣言は、それぞれの鍵で赤(:except の file と註・文字列の中は数えない)。
+/// Where and how many times a head may be called (:call-sites). The correct shape is green. A call outside the sites, a count mismatch, a mismatch of the immediately
+/// enclosing form, a call outside a branch, a vanished site, and a declaration with no matching file are each red by their own key (files in :except and anything inside comments and strings are not counted).
 #[test]
 fn call_sites_confine_where_a_head_is_called() {
     let server = "(require doeff-hy.macros [defk <-])\n\
@@ -5266,13 +5266,13 @@ fn call_sites_confine_where_a_head_is_called() {
                   (defk serve [config]\n  (cond (isinstance arrival Text) (confined arrival.conn arrival.text)\n        (isinstance arrival AnswerFailed) (refuse arrival.conn arrival.failure)))\n\
                   (defk refuse [conn fault] (Send conn fault))\n";
     let service = "(defk process [config] (run (watching (try-handler (serve config)))))\n";
-    let declare = "\n  :call-sites [(call-site \"Try\" :files [\"app/billing/**/*.hy\"] :except [\"app/billing/**/tests/**\"]\n                 :sites [(site \"app.billing.entry.server:confined\" :count 1)] :why \"閉じ込めは 1 点\")\n               (call-site \"refuse\" :files [\"app/billing/entry/server.hy\"]\n                 :sites [(site \"app.billing.entry.server:confined\" :count 1) (site \"app.billing.entry.server:serve\" :count 1 :branch \"AnswerFailed\")]\n                 :why \"断りは 2 か所\")\n               (call-site \"serve\" :files [\"app/billing/entry/service.hy\"]\n                 :sites [(site \"app.billing.entry.service:process\" :count 1 :parent \"try-handler\")] :why \"try-handler は最も内側\")]";
+    let declare = "\n  :call-sites [(call-site \"Try\" :files [\"app/billing/**/*.hy\"] :except [\"app/billing/**/tests/**\"]\n                 :sites [(site \"app.billing.entry.server:confined\" :count 1)] :why \"confinement is at one point\")\n               (call-site \"refuse\" :files [\"app/billing/entry/server.hy\"]\n                 :sites [(site \"app.billing.entry.server:confined\" :count 1) (site \"app.billing.entry.server:serve\" :count 1 :branch \"AnswerFailed\")]\n                 :why \"refusal is at two places\")\n               (call-site \"serve\" :files [\"app/billing/entry/service.hy\"]\n                 :sites [(site \"app.billing.entry.service:process\" :count 1 :parent \"try-handler\")] :why \"try-handler is the innermost\")]";
     let build = |server: &str, service: &str, extra: &str| {
         let files = [
             ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
             ("app/billing/entry/server.hy", server.to_string()),
             ("app/billing/entry/service.hy", service.to_string()),
-            ("app/billing/core/react.hy", "(defk react [x] ;; (Try x) は註\n  \"(Try x)\" x)\n".to_string()),
+            ("app/billing/core/react.hy", "(defk react [x] ;; (Try x) is a comment\n  \"(Try x)\" x)\n".to_string()),
             ("app/billing/core/tests/test_react.hy", "(defk t [] (Try (x)))\n".to_string()),
         ];
         let dir = world_repo_with(&files, "", "[\"DOEFF159\"]");
@@ -5303,7 +5303,7 @@ fn call_sites_confine_where_a_head_is_called() {
     assert_eq!(outside["level"], "critical", "{}", outside);
     assert_eq!(outside["range"]["start"]["line"], 2, "{}", outside);
 
-    // 場所の定義の名を変える(消えた場所)+ 断りの 1 点の中から自分を呼ぶ(場所の外の呼び)。
+    // Rename the site definition (a vanished site) + call itself from within the single point of refusal (a call outside the sites).
     let renamed = server.replace("(Send conn fault)", "(refuse conn fault)").replace("(defk confined", "(defk kept");
     let (_, report) = editor(build(&renamed, service, "").path());
     assert_eq!(
@@ -5319,7 +5319,7 @@ fn call_sites_confine_where_a_head_is_called() {
     );
 }
 
-/// 回数の食い違いと、当たる file の無い宣言。宣言の読み違い(:files・:sites・:why の無い宣言・2 度の宣言・整数でない :count)は設定の誤り。
+/// A count mismatch, and a declaration with no matching file. Misreads of a declaration (a declaration without :files, :sites, or :why, declared twice, a non-integer :count) are config errors.
 #[test]
 fn call_site_counts_and_misreadings() {
     let files = [
@@ -5331,13 +5331,13 @@ fn call_site_counts_and_misreadings() {
     let original = std::fs::read_to_string(&arch_path).unwrap();
     let counted = original.replace(
         ":foundation foundation",
-        ":foundation foundation\n  :call-sites [(call-site \"go\" :files [\"app/billing/entry/server.hy\"] :sites [(site \"app.billing.entry.server:serve\" :count 1)] :why \"1 度\")\n               (call-site \"stop\" :files [\"app/nowhere/**/*.hy\"] :sites [(site \"app.billing.entry.server:serve\")] :why \"空\")]",
+        ":foundation foundation\n  :call-sites [(call-site \"go\" :files [\"app/billing/entry/server.hy\"] :sites [(site \"app.billing.entry.server:serve\" :count 1)] :why \"once\")\n               (call-site \"stop\" :files [\"app/nowhere/**/*.hy\"] :sites [(site \"app.billing.entry.server:serve\")] :why \"empty\")]",
     );
     std::fs::write(&arch_path, counted).unwrap();
     let (_, report) = editor(dir.path());
     assert_eq!(keys(&report, "DOEFF159"), vec!["app/billing/entry/server.hy::DOEFF159::go:count:serve", "architecture.hy::DOEFF159::stop:empty"], "{}", report);
     let count = violation(&report, "app/billing/entry/server.hy::DOEFF159::go:count:serve");
-    assert!(count["message"].as_str().unwrap().contains("app.billing.entry.server:serve の中の (go …) が 2 回(宣言は 1 回ちょうど)"), "{}", count["message"]);
+    assert!(count["message"].as_str().unwrap().contains("inside app.billing.entry.server:serve, (go …) appears 2 times (the declaration says exactly 1)"), "{}", count["message"]);
 
     let broken = original.replace(
         ":foundation foundation",
@@ -5347,15 +5347,15 @@ fn call_site_counts_and_misreadings() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("call-site a に :files が無い"), "{}", all);
-    assert!(all.contains("call-site b に :sites が無い"), "{}", all);
-    assert!(all.contains(":count は 0 以上の整数"), "{}", all);
-    assert!(all.contains("call-site c に :why"), "{}", all);
-    assert!(all.contains("call-site d が 2 度宣言されている"), "{}", all);
+    assert!(all.contains("call-site a has no :files"), "{}", all);
+    assert!(all.contains("call-site b has no :sites"), "{}", all);
+    assert!(all.contains(":count must be an integer of 0 or more"), "{}", all);
+    assert!(all.contains("call-site c has no :why"), "{}", all);
+    assert!(all.contains("call-site d is declared twice"), "{}", all);
 }
 
-/// 系の値(defsystem の定義と :systems の :carriers の引数)が運ぶ土台は、系を回す入口(:systems の :runners)に
-/// 届く検からだけ届く — 系の値を読むだけの検と、道具で組むだけの検は手元。土台を直に呼ぶ検は今までどおり縁。
+/// The foundation carried by a system value (the definition of a defsystem and the argument of :carriers in :systems) is reached only from tests that
+/// reach the entry that runs the system (:runners in :systems) — a test that merely reads the system value, and a test that merely assembles with tools, are local. A test that calls the foundation directly is an edge as before.
 #[test]
 fn a_system_value_reaches_the_world_only_when_a_runner_runs_it() {
     let files = [
@@ -5399,14 +5399,14 @@ fn a_system_value_reaches_the_world_only_when_a_runner_runs_it() {
     );
 }
 
-/// DOEFF160: :broad-catches の :files の Hy・Python の file の広い例外の捕捉は、:carriers の定義の中で
-/// 例外を名で束縛して :event の出来事へ渡す物だけ — 外の捕捉は file ごとに、名を渡さない境界は境界ごとに 1 件、critical で出す。
+/// DOEFF160: a broad exception catch in the Hy and Python files of :files in :broad-catches is allowed only if it binds the exception by name inside a :carriers definition
+/// and passes it to the :event event — one per file for an outside catch, and one per boundary for a boundary that does not pass the name, as critical.
 #[test]
 fn broad_catches_are_confined_to_declared_carriers() {
     let deferred = "(defk carry [inbox program]\n  (try (<- a program)\n    (except [TaskCancelledError] (raise))\n    (except [error Exception] (<- (PutChannel inbox (Queued :arrival None :failure error))))))\n";
-    let react = "(defk react [x] ;; (except [Exception] x) は註\n  \"(except [] x)\" (try (x) (except [ValueError] None)))\n";
+    let react = "(defk react [x] ;; (except [Exception] x) is a comment\n  \"(except [] x)\" (try (x) (except [ValueError] None)))\n";
     let worker = "def work():\n    try:\n        run()\n    except (KeyError, ValueError):\n        pass\n";
-    let declare = "\n  :broad-catches [(broad-catch \"screen\" :files [\"app/billing/**/*.hy\" \"app/billing/**/*.py\"] :except [\"app/billing/**/tests/**\"]\n                   :carriers [(carrier \"app.billing.core.deferred:carry\" :event \"Queued\")] :why \"契約の破れを握りつぶさない\")]";
+    let declare = "\n  :broad-catches [(broad-catch \"screen\" :files [\"app/billing/**/*.hy\" \"app/billing/**/*.py\"] :except [\"app/billing/**/tests/**\"]\n                   :carriers [(carrier \"app.billing.core.deferred:carry\" :event \"Queued\")] :why \"do not swallow contract violations\")]";
     let build = |deferred: &str, react: &str, worker: &str| {
         let files = [
             ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
@@ -5424,7 +5424,7 @@ fn broad_catches_are_confined_to_declared_carriers() {
     let (_, report) = editor(build(deferred, react, worker).path());
     assert_eq!(keys(&report, "DOEFF160"), Vec::<String>::new(), "{}", report);
 
-    // 反応に Hy の広い捕捉・Python に except Exception: と except:・境界が例外を出来事へ渡さない(握りつぶし)。
+    // A broad catch in Hy in react, `except Exception:` and `except:` in Python, and a boundary that does not pass the exception to the event (swallowing).
     let swallowing = deferred.replace(":failure error", ":failure None");
     let broad_react = react.replace("(except [ValueError] None)", "(except [e Exception] None)");
     let broad_worker = worker.replace("except (KeyError, ValueError):", "except (KeyError, Exception):") + "\ndef other():\n    try:\n        run()\n    except:\n        pass\n";
@@ -5442,9 +5442,9 @@ fn broad_catches_are_confined_to_declared_carriers() {
     let worker_hit = violation(&report, "app/billing/core/worker.py::DOEFF160::screen:outside");
     assert_eq!(worker_hit["level"], "critical", "{}", worker_hit);
     assert_eq!(worker_hit["range"]["start"]["line"], 3, "{}", worker_hit);
-    assert!(worker_hit["message"].as_str().unwrap().contains("2 件"), "{}", worker_hit);
+    assert!(worker_hit["message"].as_str().unwrap().contains("2 broad exception catch(es)"), "{}", worker_hit);
 
-    // 束縛しない広い捕捉は境界の中でも当たる。境界の定義が消えれば、その中の捕捉は外の捕捉になり、境界は無い。
+    // A broad catch that does not bind hits even inside a boundary. If the boundary's definition vanishes, the catch inside becomes an outside catch, and there is no boundary.
     let unbound = deferred.replace("(except [error Exception]", "(except [Exception]");
     let (_, report) = editor(build(&unbound, react, worker).path());
     assert_eq!(keys(&report, "DOEFF160"), vec!["app/billing/core/deferred.hy::DOEFF160::screen:unbound:carry"], "{}", report);
@@ -5458,7 +5458,7 @@ fn broad_catches_are_confined_to_declared_carriers() {
     );
 }
 
-/// :broad-catches の母集団 0 は赤、読み違いは読み取りの誤り。
+/// An empty population for :broad-catches is red, and a misreading is a read error.
 #[test]
 fn broad_catches_empty_population_and_misreadings() {
     let files = [("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n")];
@@ -5467,7 +5467,7 @@ fn broad_catches_empty_population_and_misreadings() {
     let original = std::fs::read_to_string(&arch_path).unwrap();
     let text = original.replace(
         ":foundation foundation",
-        ":foundation foundation\n  :broad-catches [(broad-catch \"gone\" :files [\"app/gone/**/*.hy\"] :why \"母集団 0\")]",
+        ":foundation foundation\n  :broad-catches [(broad-catch \"gone\" :files [\"app/gone/**/*.hy\"] :why \"empty population\")]",
     );
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
@@ -5481,27 +5481,27 @@ fn broad_catches_empty_population_and_misreadings() {
     let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
     let all = format!("{}{}", stdout, stderr);
     assert_ne!(code, 0, "{}", all);
-    assert!(all.contains("carrier app.x:y に :event(例外を載せる出来事)が無い"), "{}", all);
-    assert!(all.contains("broad-catch a に :files が無い"), "{}", all);
-    assert!(all.contains("broad-catch a に :why(なぜ広い捕捉を置かないか)が無い"), "{}", all);
-    assert!(all.contains("broad-catch b が 2 度宣言されている"), "{}", all);
+    assert!(all.contains("carrier app.x:y has no :event (the event that carries the exception)"), "{}", all);
+    assert!(all.contains("broad-catch a has no :files"), "{}", all);
+    assert!(all.contains("broad-catch a has no :why (why broad catches are not placed)"), "{}", all);
+    assert!(all.contains("broad-catch b is declared twice"), "{}", all);
 }
 
-/// DOEFF166 の repo: DOEFF110・111 を判じ(111 は law bare-needs-reason の名で鍵を組む)、登録簿は 1 鍵 1 file の dir と 1 行 1 鍵の file。
+/// The DOEFF166 repo: it judges DOEFF110 and 111 (111 builds its key with the law name bare-needs-reason), and the registry is a one-key-per-file dir plus a one-key-per-line file.
 fn stale_registry_repo(dir_keys: &[&str], listed: &str, enable: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("architecture.hy"), "(defarchitecture s :root \"app\" :layers [(layer core)])\n").unwrap();
     std::fs::write(
         dir.path().join("pyproject.toml"),
         format!(
-            "[tool.doeff-linter]\nenable = [{}]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.registry]\ndirs = [\"reg/BREACHES\"]\nfiles = [\"known.txt\"]\n\n[[tool.doeff-linter.laws]]\nname = \"bare-needs-reason\"\nrules = [\"DOEFF111\"]\nstatement = \"素の関数は理由を書く\"\n",
+            "[tool.doeff-linter]\nenable = [{}]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.registry]\ndirs = [\"reg/BREACHES\"]\nfiles = [\"known.txt\"]\n\n[[tool.doeff-linter.laws]]\nname = \"bare-needs-reason\"\nrules = [\"DOEFF111\"]\nstatement = \"write a reason for a plain function\"\n",
             enable
         ),
     )
     .unwrap();
     std::fs::create_dir_all(dir.path().join("reg/BREACHES")).unwrap();
     for (i, key) in dir_keys.iter().enumerate() {
-        std::fs::write(dir.path().join(format!("reg/BREACHES/k{}.txt", i)), format!("{}\n理由\n", key)).unwrap();
+        std::fs::write(dir.path().join(format!("reg/BREACHES/k{}.txt", i)), format!("{}\nreason\n", key)).unwrap();
     }
     std::fs::write(dir.path().join("known.txt"), listed).unwrap();
     std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
@@ -5512,8 +5512,8 @@ fn stale_registry_repo(dir_keys: &[&str], listed: &str, enable: &str) -> tempfil
 #[test]
 fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whole_repo() {
     let enable = "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"";
-    // 今も当たる鍵(law の名・規則の ID)・当たらなくなった鍵(dir の file と list の行)・enable に無い規則の鍵・規則を引けない他の検の鍵。
-    // enable に無い規則(DOEFF119)も、鍵が名指すので同じ実行で当てて判じる(前は判じずに見逃した)。
+    // Keys that still hit (law name, rule ID), keys that no longer hit (a dir file and a list line), a key of a rule not in enable, and a key of another check whose rule cannot be looked up.
+    // A rule not in enable (DOEFF119) is also judged in the same run because the key names it (previously it was not judged and missed).
     let dir = stale_registry_repo(
         &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone", "app/core/x.hy::DOEFF119::Old"],
         "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
@@ -5528,20 +5528,20 @@ fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whol
             "reg/BREACHES/k2.txt::DOEFF166::app/core/x.hy::DOEFF119::Old",
         ]
     );
-    assert!(keys(&report, "DOEFF119").is_empty(), "enable に無い規則の当たりは報告しない: {:?}", keys(&report, "DOEFF119"));
+    assert!(keys(&report, "DOEFF119").is_empty(), "hits of a rule not in enable are not reported: {:?}", keys(&report, "DOEFF119"));
     let gone = violation(&report, "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone");
     assert_eq!(gone["severity"], "error");
     assert!(gone["message"].as_str().unwrap().contains("DOEFF111"), "{}", gone["message"]);
-    assert_eq!(code, 1, "当たらない行は error — 終了コード 1");
-    // 今も当たる鍵は今までどおり warning に下がる。
+    assert_eq!(code, 1, "a row that does not hit is an error — exit code 1");
+    // A key that still hits drops to warning as before.
     assert_eq!(violation(&report, "app/core/x.hy::bare-needs-reason::bare")["severity"], "warning");
 
-    // 反例: 古い行を消せば DOEFF166 は出ない。
+    // Counterexample: removing the old row makes DOEFF166 not appear.
     let clean = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::bare"], "app/core/x.hy::DOEFF110::helper\n", enable);
     let (_, report) = editor(clean.path());
     assert!(keys(&report, "DOEFF166").is_empty(), "{:?}", keys(&report, "DOEFF166"));
 
-    // 名指しの file だけの実行と、DOEFF166 を有効にしない実行では判じない。
+    // A run with only named files, and a run that does not enable DOEFF166, do not judge.
     let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/core/x.hy"], None);
     let named: Value = serde_json::from_str(&stdout).unwrap();
     assert!(keys(&named, "DOEFF166").is_empty(), "{:?}", keys(&named, "DOEFF166"));
@@ -5550,56 +5550,56 @@ fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whol
     assert!(keys(&report, "DOEFF166").is_empty());
 }
 
-/// editor-json の一番上の欄 judged_rules(この実行で判じた規則の ID)を読む。
+/// Read the top-level field judged_rules of editor-json (the IDs of the rules judged in this run).
 fn judged_rules(report: &Value) -> Vec<String> {
-    report["judged_rules"].as_array().unwrap_or_else(|| panic!("judged_rules が無い: {}", report)).iter().map(|r| r.as_str().unwrap().to_string()).collect()
+    report["judged_rules"].as_array().unwrap_or_else(|| panic!("judged_rules is missing: {}", report)).iter().map(|r| r.as_str().unwrap().to_string()).collect()
 }
 
 #[test]
 fn a_single_file_run_names_the_rules_it_judged_and_leaves_out_rules_judged_only_on_the_whole_repo() {
-    // 1 file の実行(--stdin --path)は DOEFF166 を判じない — judged_rules に載せず、エディタはその違反を全体の
-    // 実行の結果のまま残す。全体の実行は載せる。どちらの実行も、出した違反の規則は全部 judged_rules に在る。
+    // A single-file run (--stdin --path) does not judge DOEFF166 — it is not listed in judged_rules, and the editor leaves that violation as the result of the whole
+    // run. A whole run lists it. In both kinds of runs, the rules of the violations emitted are all in judged_rules.
     let dir = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::gone"], "", "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"");
     let (_, whole) = editor(dir.path());
-    assert!(!keys(&whole, "DOEFF166").is_empty(), "全体の実行は当たらない行を出す: {}", whole);
+    assert!(!keys(&whole, "DOEFF166").is_empty(), "a whole run emits rows that do not hit: {}", whole);
     let whole_judged = judged_rules(&whole);
     for rule in ["DOEFF110", "DOEFF111", "DOEFF166"] {
-        assert!(whole_judged.iter().any(|r| r == rule), "全体の実行は {} を判じる: {:?}", rule, whole_judged);
+        assert!(whole_judged.iter().any(|r| r == rule), "a whole run judges {}: {:?}", rule, whole_judged);
     }
 
     let path = dir.path().join("app/core/x.hy");
     let text = std::fs::read_to_string(&path).unwrap();
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", path.to_str().unwrap()], Some(&text));
-    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     let single_judged = judged_rules(&single);
-    assert!(!single_judged.iter().any(|r| r == "DOEFF166"), "1 file の実行は 166 を判じない: {:?}", single_judged);
+    assert!(!single_judged.iter().any(|r| r == "DOEFF166"), "a single-file run does not judge 166: {:?}", single_judged);
     assert!(single_judged.iter().any(|r| r == "DOEFF110") && single_judged.iter().any(|r| r == "DOEFF111"), "{:?}", single_judged);
-    assert!(!keys(&single, "DOEFF110").is_empty(), "1 file の実行も 110 を判じて出す: {}", single);
-    // rules[] は有効な規則の一覧のまま(166 も wired で載る)— 判じたかは judged_rules が名乗る。
+    assert!(!keys(&single, "DOEFF110").is_empty(), "a single-file run also judges and emits 110: {}", single);
+    // rules[] stays the list of enabled rules (166 is also listed as wired) — whether it was judged is claimed by judged_rules.
     assert!(single["rules"].as_array().unwrap().iter().any(|r| r["rule"] == "DOEFF166" && r["wired"] == true), "{}", single["rules"]);
-    // 名指しの path の全体の実行も 166 だけを判じない。
+    // A whole run with named paths also does not judge only 166.
     let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/core/x.hy"], None);
     let named: Value = serde_json::from_str(&stdout).unwrap();
     assert!(!judged_rules(&named).iter().any(|r| r == "DOEFF166"), "{:?}", judged_rules(&named));
     for report in [&whole, &single, &named] {
         let judged = judged_rules(report);
         for v in report["violations"].as_array().unwrap() {
-            assert!(judged.iter().any(|r| r == v["rule"].as_str().unwrap()), "違反の規則 {} が judged_rules に無い: {:?}", v["rule"], judged);
+            assert!(judged.iter().any(|r| r == v["rule"].as_str().unwrap()), "the violation's rule {} is not in judged_rules: {:?}", v["rule"], judged);
         }
     }
 }
 
-/// repo 全体を editor-json で、`--enable` に rules を渡して走らせる。
+/// Run the whole repo with editor-json, passing rules to `--enable`.
 fn editor_enabling(root: &Path, rules: &str) -> (i32, Value) {
     let (code, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log", "--enable", rules], None);
-    let value: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let value: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     (code, value)
 }
 
 #[test]
 fn registry_rows_are_judged_by_the_rules_they_name_even_when_only_166_is_enabled() {
-    // `--enable DOEFF166` だけでも、登録簿の行が名指す規則(DOEFF110・law bare-needs-reason の DOEFF111)を同じ実行で当てて
-    // 当たらない行を error にする。直す前は名指す規則が走らず、166 は黙って 0 件だった(#1992 の見逃し)。
+    // Even with only `--enable DOEFF166`, the rules named by the registry rows (DOEFF110 and DOEFF111 of the law bare-needs-reason) are judged in the same run, and
+    // rows that do not hit become errors. Before the fix the named rules did not run, and 166 silently gave 0 hits (the miss of #1992).
     let dir = stale_registry_repo(
         &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone"],
         "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
@@ -5613,12 +5613,12 @@ fn registry_rows_are_judged_by_the_rules_they_name_even_when_only_166_is_enabled
             "reg/BREACHES/k1.txt::DOEFF166::app/core/x.hy::bare-needs-reason::gone",
         ]
     );
-    assert_eq!(code, 1, "当たらない行は error — 終了コード 1");
-    // 名指す規則は 166 の判じにだけ使う — enable に無い規則の当たり(今も当たる行を含む)は報告しない。
+    assert_eq!(code, 1, "a row that does not hit is an error — exit code 1");
+    // The named rules are used only for 166's judgment — hits of rules not in enable (including rows that still hit) are not reported.
     assert!(keys(&report, "DOEFF110").is_empty(), "{:?}", keys(&report, "DOEFF110"));
     assert!(keys(&report, "DOEFF111").is_empty(), "{:?}", keys(&report, "DOEFF111"));
 
-    // enable に在る規則の当たりは、166 を足しても変わらない(名指されて足した 111 の当たりも混ざらない)。
+    // Hits of rules in enable do not change even when 166 is added (hits of 111 added by being named are not mixed in either).
     let (_, alone) = editor_enabling(dir.path(), "DOEFF110");
     let (_, with_166) = editor_enabling(dir.path(), "DOEFF110,DOEFF166");
     assert!(!keys(&alone, "DOEFF110").is_empty(), "{:?}", keys(&alone, "DOEFF110"));
@@ -5627,7 +5627,7 @@ fn registry_rows_are_judged_by_the_rules_they_name_even_when_only_166_is_enabled
     assert_eq!(keys(&with_166, "DOEFF166"), keys(&report, "DOEFF166"));
 }
 
-/// DOEFF142 の宣言(:handler-arguments)を architecture.hy に足した一時の repo(決定 C の失敗ケースの検)。
+/// A temporary repo with the DOEFF142 declaration (:handler-arguments) added to architecture.hy (the test for decision C's failure case).
 fn handler_argument_repo(source: &str) -> tempfile::TempDir {
     let files = [("app/billing/protocol/answer.hy", tags("billing", "protocol") + source)];
     let dir = world_repo_with(&files, "", "[\"DOEFF142\"]");
@@ -5639,8 +5639,8 @@ fn handler_argument_repo(source: &str) -> tempfile::TempDir {
     dir
 }
 
-/// DOEFF142: defhandler の引数が client・可変の店を取れば赤(鳴る例)。frozen の record の設定を取る handler と、
-/// 残す理由の註(:keep-mark)を書いた handler は鳴らない(鳴らない例)。
+/// DOEFF142: red if a defhandler argument takes a client or a mutable store (firing example). A handler taking a frozen record setting, and
+/// a handler with a keep-reason comment (:keep-mark), do not fire (silent examples).
 #[test]
 fn handler_arguments_that_hold_a_client_or_a_store_are_red() {
     let firing = "(import httpx)\n\
@@ -5648,22 +5648,22 @@ fn handler_arguments_that_hold_a_client_or_a_store_are_red() {
     let dir = handler_argument_repo(firing);
     let (_, report) = editor(dir.path());
     let hits = keys(&report, "DOEFF142");
-    assert_eq!(hits.len(), 2, "client と名の store の 2 つ: {:?}\n{}", hits, report);
+    assert_eq!(hits.len(), 2, "two: a client and a name store: {:?}\n{}", hits, report);
     assert!(hits.iter().all(|k| k.starts_with("app/billing/protocol/answer.hy::DOEFF142::charge-reads::")), "{:?}", hits);
     assert_eq!(violation(&report, &hits[0])["severity"], "error");
 
     let quiet = "(require doeff-hy.record [defrecord])\n\
-                 (defrecord ChargeSettings \"請求の設定\" (#^ str currency))\n\
+                 (defrecord ChargeSettings \"Billing settings\" (#^ str currency))\n\
                  (defhandler charge-reads [#^ ChargeSettings settings]\n  (Charge [amount] (resume amount)))\n\
-                 (defhandler kept-reads [store]\n  ;; handler-state-kept: 検の台だけが渡す記録の箱(本番の組には載らない)\n  (Charge [amount] (resume amount)))\n";
+                 (defhandler kept-reads [store]\n  ;; handler-state-kept: a record box passed only by the test rig (not in the production assembly)\n  (Charge [amount] (resume amount)))\n";
     let dir = handler_argument_repo(quiet);
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF142").is_empty(), "{:?}\n{}", keys(&report, "DOEFF142"), report);
 }
 
-/// DOEFF155・158 の宣言(:business-fakes と :assembly-shape)を書いた一時の repo。請求の service の層は
-/// core・intent・protocol(翻訳の層)・entry(組み立ての層)。本番の入口 = 組の file(app/*/entry/handler_sets.hy)の名が production で
-/// 始まる定義。intent の効果は Charge と Refund(app/billing/intent/effects.hy)。
+/// A temporary repo with the DOEFF155 and 158 declarations (:business-fakes and :assembly-shape). The billing service's layers are
+/// core, intent, protocol (translation layer), and entry (assembly layer). Production entry = a definition in an assembly file (app/*/entry/handler_sets.hy) whose name starts
+/// with production. The intent effects are Charge and Refund (app/billing/intent/effects.hy).
 fn assembly_repo(files: &[(&str, String)], enable: &str) -> tempfile::TempDir {
     let intent = |name: &str| {
         format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name)
@@ -5688,12 +5688,12 @@ fn assembly_repo(files: &[(&str, String)], enable: &str) -> tempfile::TempDir {
             "(layer entry",
             "(layer intent :roles [intent] :imports [core intent])\n           (layer protocol :roles [protocol] :imports [intent protocol])\n           (layer entry",
         )
-        .replace("(defservice billing \"請求\" {:layers [core entry]})", "(defservice billing \"請求\" {:layers [core intent protocol entry]})");
+        .replace("(defservice billing \"Billing\" {:layers [core entry]})", "(defservice billing \"Billing\" {:layers [core intent protocol entry]})");
     std::fs::write(&arch_path, text).unwrap();
     dir
 }
 
-/// Charge に答える handler charge-reads を置いた file(層の dir の下・請求の文脈)。
+/// A file placing the handler charge-reads that answers Charge (under a layer dir, billing context).
 fn charge_handler(layer: &str, name: &str) -> String {
     tags("billing", layer)
         + &format!(
@@ -5702,13 +5702,13 @@ fn charge_handler(layer: &str, name: &str) -> String {
         )
 }
 
-/// 本番の入口(組の file の production-handlers)が handler を並べる。
+/// The production entry (production-handlers of the assembly file) lines up the handlers.
 fn production_set(imports: &str, handlers: &str) -> String {
     tags("billing", "entry") + &format!("{}\n(defk production-handlers [] [{}])\n", imports, handlers)
 }
 
-/// DOEFF158: 本番の入口から届く intent の効果の答え手が、翻訳の層の外に在れば赤・翻訳の層に 2 つ在れば両方赤
-/// (鳴る例)。翻訳の層の handler 1 つだけが答えれば鳴らない(鳴らない例)。
+/// DOEFF158: red if an answerer of an intent effect reached from the production entry is outside the translation layer; both red if two are in the translation layer
+/// (firing examples). If only one translation-layer handler answers, it does not fire (silent example).
 #[test]
 fn intent_answerers_outside_or_doubled_in_the_translation_layer_are_red() {
     let outside = [
@@ -5745,13 +5745,13 @@ fn intent_answerers_outside_or_doubled_in_the_translation_layer_are_red() {
     assert!(keys(&report, "DOEFF158").is_empty(), "{:?}\n{}", keys(&report, "DOEFF158"), report);
 }
 
-/// 翻訳の層(protocol)に Charge の翻訳 charge-reads と、その列の定数 TRANSLATION-HANDLERS を置いた file。
+/// The translation layer (protocol) places the Charge translation charge-reads and the file with its list constant TRANSLATION-HANDLERS.
 fn translation_module() -> String {
     charge_handler("protocol", "charge-reads") + "(require doeff-hy.macros [val])\n(val TRANSLATION-HANDLERS [charge-reads])\n"
 }
 
-/// DOEFF155: 組み立ての層に退役した組み立ての関数(:retired-function)が残る・翻訳の列の 1 点が翻訳の列でない
-/// handler を並べる、のどちらも赤(鳴る例)。翻訳の列の 1 点が翻訳の層の定数の列だけを並べれば鳴らない(鳴らない例)。
+/// DOEFF155: both are red (firing examples) if the assembly layer still has a retired assembly function (:retired-function), or if the single point of the translation list lines up
+/// a handler that is not a translation-list handler. If the single point of the translation list lines up only the translation layer's constant list, it does not fire (silent example).
 #[test]
 fn assembly_shape_breaks_are_red() {
     let retired = [
@@ -5796,9 +5796,9 @@ fn assembly_shape_breaks_are_red() {
     assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
 }
 
-/// DOEFF155 — 模擬の組み立ての翻訳の handler は本番と同じ物: 翻訳の列の 1 点が列を引数で受ける・
-/// 検証環境(:verification-environment)か検の file が翻訳の列を 1 点の外で開いて並べる、のどちらも赤(鳴る例)。模擬と検が本番の
-/// 1 点を呼べば鳴らない(鳴らない例)。
+/// DOEFF155 — the simulation assembly's translation handlers are the same as production's: both are red (firing examples) if the single point of the translation list takes the list as an argument, or if the
+/// verification environment (:verification-environment) or a test file opens the translation list outside the single point and lines it up. If the simulation and tests call the production
+/// single point, it does not fire (silent example).
 #[test]
 fn simulations_that_build_their_own_translation_list_are_red() {
     let point = |params: &str, extra: &str| {
@@ -5834,7 +5834,7 @@ fn simulations_that_build_their_own_translation_list_are_red() {
     assert!(hits[0].starts_with("app/billing/tests/test_world.hy::") && hits[0].ends_with(list), "{:?}", hits);
     assert!(hits[1].starts_with("app/sim/world.hy::") && hits[1].ends_with(list), "{:?}", hits);
 
-    // 組み立ての層が翻訳の層の handler を束ねた列(1 点が並べる列の一部)を、模擬が開いて並べても赤。
+    // It is red even if the simulation opens and lines up a list in which the assembly layer bundled translation-layer handlers (part of the list the single point lines up).
     let bundled = [
         ("app/billing/protocol/translate.hy", translation_module()),
         (
@@ -5867,9 +5867,9 @@ fn simulations_that_build_their_own_translation_list_are_red() {
     assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
 }
 
-/// 翻訳の層(protocol)の翻訳の列 TRANSLATION-HANDLERS を `order` の順に並べた file。charge-reads は Charge に答え、旧い置き場
-/// (intent でない業務の module)の効果 LegacyRow を出し直す。legacy-reads は LegacyRow に答える。refund-reads は Refund に答え、
-/// `refund_body` を本体に持つ。
+/// A file that lines up the translation list TRANSLATION-HANDLERS of the translation layer (protocol) in `order`. charge-reads answers Charge and re-performs the effect LegacyRow of the old location
+/// (a business module that is not intent). legacy-reads answers LegacyRow. refund-reads answers Refund and
+/// has `refund_body` as its body.
 fn reissuing_translations(order: &str, refund_body: &str) -> String {
     tags("billing", "protocol")
         + "(require doeff-hy.macros [defhandler val])\n\
@@ -5880,7 +5880,7 @@ fn reissuing_translations(order: &str, refund_body: &str) -> String {
         + &format!("(defhandler refund-reads []\n  (Refund [amount] (resume {})))\n(val TRANSLATION-HANDLERS [{}])\n", refund_body, order)
 }
 
-/// 翻訳の列の 1 点(組み立ての層)が翻訳の層の列だけを並べる。
+/// The single point of the translation list (assembly layer) lines up only the translation layer's list.
 fn translation_point() -> String {
     tags("billing", "entry")
         + "(import app.billing.protocol.translate [TRANSLATION-HANDLERS])\n\
@@ -5889,10 +5889,10 @@ fn translation_point() -> String {
 
 const LEGACY_EFFECTS: &str = "(import doeff [EffectBase])\n(defclass LegacyRow [EffectBase])\n";
 
-/// DOEFF156(答えの置き場)を規則の ID で名指して確かめる。鳴る例 = 翻訳の handler が intent の効果を
-/// 出し直す(refund-reads → Charge)・出し直した効果に答える同じ列の handler が内側に在る(charge-reads の LegacyRow に答える legacy-reads が
-/// 後ろ)・組の file の組の関数が並べる土台の handler が業務の効果に答える。鳴らない例 = 同じ列の外側(前)の handler が答える intent でない
-/// 効果の出し直し(単体テストの is_shape() == false の行の「出し直してよい」側)。
+/// Check DOEFF156 (location of the answer) by naming it by rule ID. Firing examples = a translation handler re-performs an intent effect
+/// (refund-reads -> Charge), a handler of the same list that answers the re-performed effect is inside (legacy-reads, which answers charge-reads' LegacyRow, is
+/// behind), and a foundation handler that the assembly function of the assembly file lines up answers a business effect. Silent example = re-performing a non-intent
+/// effect that a handler outside (in front of) the same list answers (the "may re-perform" side of the row is_shape() == false in the unit test).
 #[test]
 fn assembly_answers_in_the_wrong_place_are_red() {
     let misplaced = [
@@ -5929,14 +5929,14 @@ fn assembly_answers_in_the_wrong_place_are_red() {
     assert!(keys(&report, "DOEFF156").is_empty(), "{:?}\n{}", keys(&report, "DOEFF156"), report);
 }
 
-/// 境目の部品(:boundary-parts)を宣言した world_repo(`parts` は :boundary-parts の要素の列・`enable` は規則の列)。
+/// A world_repo declaring boundary parts (:boundary-parts) (`parts` is the list of :boundary-parts elements, `enable` is the list of rules).
 fn boundary_repo(files: &[(&str, String)], parts: &str, enable: &str) -> tempfile::TempDir {
     let dir = world_repo_with(files, "", enable);
     declare_boundary_parts(&dir, parts);
     dir
 }
 
-/// 一時の repo の architecture.hy に境目の部品(:boundary-parts — `parts` は要素の列)を足す。
+/// Add boundary parts (:boundary-parts — `parts` is the list of elements) to a temporary repo's architecture.hy.
 fn declare_boundary_parts(dir: &tempfile::TempDir, parts: &str) {
     let arch_path = dir.path().join("architecture.hy");
     let text = std::fs::read_to_string(&arch_path)
@@ -5945,8 +5945,8 @@ fn declare_boundary_parts(dir: &tempfile::TempDir, parts: &str) {
     std::fs::write(&arch_path, text).unwrap();
 }
 
-/// 境目の部品(:boundary-parts)の module の中では、宣言した :touches の種類の生の副作用を DOEFF106 で当てない
-/// — 種類の外の生の副作用と、宣言の無い module は今どおり当たる。層の中の file と層の置き場の外の file の両方で同じ。
+/// Inside a boundary-part (:boundary-parts) module, DOEFF106 does not hit raw side effects of the declared :touches kinds
+/// — raw side effects outside the kinds, and modules with no declaration, hit as before. The same for files inside layers and files outside the layer locations.
 #[test]
 fn boundary_parts_allow_only_the_declared_touches() {
     let bench = "(import socket)\n(import time)\n(import subprocess)\n\
@@ -5956,8 +5956,8 @@ fn boundary_parts_allow_only_the_declared_touches() {
         ("app/billing/entry/other.hy", tags("billing", "entry") + "(import socket)\n(defn open-one [] (socket.socket))\n"),
         ("app/tools/probe.hy", bench.to_string()),
     ];
-    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network clock] :reason "本物の待ち受けへ撃つ縁の台")
-                   (boundary-part "app.tools.probe" :touches [network clock] :reason "人が回す入口")"#;
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network clock] :reason "an edge rig that fires at a real listener")
+                   (boundary-part "app.tools.probe" :touches [network clock] :reason "an entry run by a person")"#;
     let dir = boundary_repo(&files, parts, "[\"DOEFF106\"]");
     let (_, report) = editor(dir.path());
     assert_eq!(
@@ -5967,15 +5967,15 @@ fn boundary_parts_allow_only_the_declared_touches() {
             "app/billing/entry/other.hy::DOEFF106::open_one::socket.socket",
             "app/tools/probe.hy::DOEFF106::spawn::subprocess.run",
         ],
-        "宣言した network・clock は当てず、種類の外の process と宣言の無い module は当てる: {}",
+        "the declared network and clock do not hit; process outside the kinds and a module with no declaration do: {}",
         report
     );
 }
 
-/// 境目の部品(:boundary-parts)の module の中では、:touches に宣言した触れる先の生の呼び(time.time → clock)を
-/// DOEFF151 でも当てない(DOEFF106 と同じ写し方 — 生の時計を通す所は部品の宣言 1 か所)。反例 = 宣言の無い module・:touches に
-/// clock の無い部品・層の置き場の外の宣言の無い file の time.time と、部品の中でも生の副作用でない呼び(効果の Now)は当たる。
-/// 1 file の実行(保存前の中身を stdin で渡す editor の形)も同じ宣言を読む。
+/// Inside a boundary-part (:boundary-parts) module, raw calls to the touch targets declared in :touches (time.time -> clock) do not hit
+/// DOEFF151 either (the same mapping as DOEFF106 — the place that passes the raw clock is one declaration of the part). Counterexamples = a module with no declaration, a part without
+/// clock in :touches, and time.time in an undeclared file outside the layer locations, and even inside a part a call that is not a raw side effect (the effect Now) hits.
+/// A single-file run (the editor shape passing pre-save contents on stdin) reads the same declaration.
 #[test]
 fn retired_calls_skip_only_the_raw_calls_a_boundary_part_declares() {
     let stamp = "(defk stamp [] (time.time))\n";
@@ -5986,9 +5986,9 @@ fn retired_calls_skip_only_the_raw_calls_a_boundary_part_declares() {
         ("app/tools/probe.hy", stamp.to_string()),
         ("app/tools/loose.hy", stamp.to_string()),
     ];
-    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network clock] :reason "本物の待ち受けへ撃つ縁の台")
-                   (boundary-part "app.billing.entry.wire" :touches [network] :reason "時計を読まない縁の台")
-                   (boundary-part "app.tools.probe" :touches [clock] :reason "人が回す入口")"#;
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network clock] :reason "an edge rig that fires at a real listener")
+                   (boundary-part "app.billing.entry.wire" :touches [network] :reason "an edge rig that does not read the clock")
+                   (boundary-part "app.tools.probe" :touches [clock] :reason "an entry run by a person")"#;
     let dir = retired_repo(&files);
     declare_boundary_parts(&dir, parts);
     let (_, report) = editor(dir.path());
@@ -6000,17 +6000,17 @@ fn retired_calls_skip_only_the_raw_calls_a_boundary_part_declares() {
             "app/billing/entry/wire.hy::DOEFF151::time.time",
             "app/tools/loose.hy::DOEFF151::time.time",
         ],
-        "clock を宣言した部品の time.time だけを当てず、宣言の無い module・clock の無い部品の time.time と部品の中の Now は当てる: {}",
+        "only time.time in a part that declares clock does not hit; time.time in a module with no declaration or in a part without clock, and Now inside a part, do: {}",
         report
     );
     let (_, stdout, stderr) =
         run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/billing/entry/bench.hy"], Some(&files[0].1));
-    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
-    assert_eq!(keys(&single, "DOEFF151"), vec!["app/billing/entry/bench.hy::DOEFF151::Now"], "1 file の実行も部品の宣言を読む: {}", single);
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&single, "DOEFF151"), vec!["app/billing/entry/bench.hy::DOEFF151::Now"], "a single-file run also reads the part declaration: {}", single);
 }
 
-/// 宣言(:environment-branches)の :layers の層の Hy の定義が、環境の名の値と比べる・dry-run の印で分岐すると
-/// DOEFF168 が critical で当たる。反例 = 環境の名でない値との比較と、:layers に無い層(entry)の同じ形は当たらない。
+/// When a Hy definition in a :layers layer of the declaration (:environment-branches) compares with a value of an environment name or branches on a dry-run mark,
+/// DOEFF168 hits as critical. Counterexamples = a comparison with a value that is not an environment name, and the same shape in a layer not in :layers (entry), do not hit.
 #[test]
 fn environment_branches_hit_only_in_the_declared_business_layers() {
     let files = [
@@ -6030,16 +6030,16 @@ fn environment_branches_hit_only_in_the_declared_business_layers() {
     assert_eq!(
         keys(&report, "DOEFF168"),
         vec!["app/billing/core/rules.hy::DOEFF168::value:emulated", "app/billing/core/write.hy::DOEFF168::flag:dry-run"],
-        "core の環境の名の値との比較と dry-run の印での分岐は当て、環境の名でない値と entry の層は当てない: {}",
+        "a comparison with an environment name value and a branch on a dry-run mark in core hit; a value that is not an environment name and the entry layer do not: {}",
         report
     );
     let hit = violation(&report, "app/billing/core/rules.hy::DOEFF168::value:emulated");
     assert_eq!(hit["level"], "critical", "{}", hit);
 }
 
-/// match の class pattern の keyword の欄の名に `-` が在れば、層の置き場のどの Hy の file でも critical で当てる
-/// (Hy が keyword を属性名へ mangle しないので決して当たらない節)。`_` で書いた欄・位置引数の pattern・節の本体の keyword は当てない。
-/// defk の form の中は doeff-hy が欄の名を属性名へ直す(doeff_hy/match_fields.py)ので当てない。
+/// If a `-` appears in a keyword field name of a match class pattern, it hits as critical in any Hy file in the layer locations
+/// (a clause that never matches because Hy does not mangle keywords to attribute names). A field written with `_`, a positional-argument pattern, and a keyword in a clause body do not hit.
+/// Inside a defk form it does not hit because doeff-hy rewrites field names to attribute names (doeff_hy/match_fields.py).
 #[test]
 fn hyphenated_fields_in_match_class_patterns_hit_in_every_layer() {
     let files = [
@@ -6053,16 +6053,16 @@ fn hyphenated_fields_in_match_class_patterns_hit_in_every_layer() {
     assert_eq!(
         keys(&report, "DOEFF169"),
         vec!["app/billing/core/rules.hy::DOEFF169::Rec:ended-reason", "app/billing/entry/wiring.hy::DOEFF169::Rec:a-b"],
-        "`-` の在る欄の名は層を問わず defk の外で当て、`_` の欄・位置引数・節の本体・defk の中は当てない: {}",
+        "a field name with `-` hits outside defk regardless of layer; a `_` field, positional arguments, a clause body, and inside defk do not: {}",
         report
     );
     let hit = violation(&report, "app/billing/core/rules.hy::DOEFF169::Rec:ended-reason");
     assert_eq!(hit["level"], "critical", "{}", hit);
 }
 
-/// 値を型だけで渡す層(層の :wire-free True — ここでは core)では、defwire の宣言(DOEFF170)と、:pre / :post と
-/// defrecord の欄の型の写像(型つきの写像も)・中身の型の無い組(DOEFF171)を critical で当てる。宣言の無い層(entry)の同じ形・型つきの
-/// defrecord と同じ型の列・宣言を外した repo は当てない(判定は層の宣言から入る)。
+/// In a layer that passes values only by type (the layer's :wire-free True — here core), a defwire declaration (DOEFF170), and a mapping in the type of :pre / :post and
+/// defrecord fields (including a typed mapping) and a tuple with no content type (DOEFF171) hit as critical. The same shape in a layer with no declaration (entry), a typed
+/// list of the same type as a typed defrecord, and a repo with the declaration removed do not hit (the judgment enters from the layer's declaration).
 #[test]
 fn wire_free_layer_forbids_defwire_and_maps() {
     let files = [
@@ -6094,21 +6094,21 @@ fn wire_free_layer_forbids_defwire_and_maps() {
             "app/billing/core/rules.hy::DOEFF171::field:InvoiceWire.extra",
             "app/billing/core/rules.hy::DOEFF171::pre:total:index"
         ],
-        "core の欄の dict(defrecord・defwire)と型つきの写像の :pre は当て、型つきの列・同じ型の組と entry の層は当てない: {}",
+        "a dict field in core (defrecord, defwire) and a :pre of a typed mapping hit; a typed list, a tuple of the same type, and the entry layer do not: {}",
         report
     );
     for key in ["app/billing/core/rules.hy::DOEFF170::wire:InvoiceWire", "app/billing/core/rules.hy::DOEFF171::pre:total:index"] {
         assert_eq!(violation(&report, key)["level"], "critical", "{}", key);
     }
-    // 宣言を外せば同じ file でも当たらない(層の宣言が判定の入口)。
+    // Without the declaration, the same file does not hit (the layer's declaration is the entry of the judgment).
     std::fs::write(&path, declared).unwrap();
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF170").is_empty() && keys(&report, "DOEFF171").is_empty(), "{}", report);
 }
 
-/// 値を型だけで渡す層の Python の file の欄(dataclass の欄の注記)も DOEFF171 が当てる(以前は Hy の file だけを数え、
-/// core の .py の Mapping[ の欄を黙って見逃していた)。失敗ケース 3 つ: core の .py の写像の欄は鳴る / 同じ欄を名と欄の型を持つ class に
-/// 起こした .py は鳴らない / entry の層(宣言の無い層)の .py の同じ欄は DOEFF171 では鳴らず、DOEFF172 が数える。
+/// DOEFF171 also hits Python-file fields (dataclass field annotations) of a layer that passes values only by type (previously it counted only Hy files, and
+/// silently missed a Mapping[ field in a core .py). Three failure cases: a mapping field in a core .py fires / a .py that turns the same field into a class
+/// with a name and field types does not fire / the same field in an entry-layer (no declaration) .py does not fire for DOEFF171, and DOEFF172 counts it.
 #[test]
 fn wire_free_layer_judges_python_dataclass_fields() {
     let dataclass = |body: &str| format!("from collections.abc import Mapping\nfrom dataclasses import dataclass\n\n\n@dataclass(frozen=True)\n{}", body);
@@ -6128,16 +6128,16 @@ fn wire_free_layer_judges_python_dataclass_fields() {
     assert_eq!(
         keys(&report, "DOEFF171"),
         vec!["app/billing/core/views.py::DOEFF171::field:Totals.counts", "app/billing/core/views.py::DOEFF171::field:Totals.lines"],
-        "core の .py の写像の欄と中身の型の無い組は当て、型つきの組・型に起こした欄・entry の .py は当てない: {}",
+        "a mapping field and a tuple with no content type in a core .py hit; a typed tuple, a field turned into a type, and an entry .py do not: {}",
         report
     );
     assert_eq!(violation(&report, "app/billing/core/views.py::DOEFF171::field:Totals.counts")["level"], "critical", "{}", report);
     assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/page.py::DOEFF172::field:Page.counts"], "{}", report);
 }
 
-/// 写像の置き場の臭い(DOEFF172・major・warning — 数えるだけ)。handler の外の定義の本体で写像を組む所と、
-/// 値を型だけで渡す層の外の欄の写像を当てる。defhandler の中・:post が写像の綴りの 1 点・契約の辞書・値を型だけで渡す層の欄(DOEFF171 の
-/// 持ち場)は当てない。
+/// Smell of where mappings are placed (DOEFF172, major, warning — count only). It hits where a definition body outside a handler builds a mapping, and
+/// mapping fields outside the layer that passes values only by type. Inside defhandler, a single point where :post is a mapping spelling, contract dictionaries, and fields of the layer that passes values only by type (DOEFF171's
+/// territory) do not hit.
 #[test]
 fn dict_smells_count_built_maps_and_map_fields_outside_their_place() {
     let files = [
@@ -6166,7 +6166,7 @@ fn dict_smells_count_built_maps_and_map_fields_outside_their_place() {
             "app/billing/entry/wiring.hy::DOEFF172::built:serve",
             "app/billing/entry/wiring.hy::DOEFF172::field:Page.counts"
         ],
-        "組む所と core の外の欄は当て、:post が写像の dump・defhandler・core の欄は当てない: {}",
+        "building places and fields outside core hit; a :post that is a mapping dump, defhandler, and core fields do not: {}",
         report
     );
     let hit = violation(&report, "app/billing/entry/wiring.hy::DOEFF172::field:Page.counts");
@@ -6174,8 +6174,8 @@ fn dict_smells_count_built_maps_and_map_fields_outside_their_place() {
     assert_eq!(hit["severity"], "warning", "{}", hit);
 }
 
-/// DOEFF172 の失敗ケース 2 つ — match の型の位置に {…} を書いた定義は鳴らない(型は値を組まない — 以前は
-/// 「写像を組む」と数えた)/ 同じ match の本体で写像を組む定義は鳴る。
+/// Two failure cases of DOEFF172 — a definition that writes {…} in the position of a match pattern does not fire (a pattern does not build a value — previously it was
+/// counted as "builds a mapping") / a definition that builds a mapping in the body of the same match fires.
 #[test]
 fn dict_smells_skip_match_patterns() {
     let files = [(
@@ -6186,20 +6186,20 @@ fn dict_smells_skip_match_patterns() {
     )];
     let dir = world_repo_with(&files, "", "[\"DOEFF172\"]");
     let (_, report) = editor(dir.path());
-    assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/codec.hy::DOEFF172::built:counted"], "型の {{…}} は数えず本体の写像は数える: {}", report);
+    assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/codec.hy::DOEFF172::built:counted"], "{{…}} in a pattern is not counted and a mapping in a body is: {}", report);
 }
 
-/// DOEFF172 の失敗ケース 2 つ — docstring の後に契約の辞書だけを持つ定義は鳴らない(以前は契約の metadata を
-/// 「handler の外で組む写像」と数えた)/ 本文で写像を組む定義は鳴る。:tags の :spells(wire の形を綴る 1 点の名乗り)は core の外(ここでは entry)では
-/// 数えず、値を型だけで渡す層(core)では名乗っても数える。
+/// Two failure cases of DOEFF172 — a definition that has only a contract dictionary after the docstring does not fire (previously it counted the contract's metadata as
+/// "a mapping built outside a handler") / a definition that builds a mapping in the body fires. :spells of :tags (the single-point claim that spells a wire shape) is not
+/// counted outside core (here entry), and is counted even if claimed in the layer that passes values only by type (core).
 #[test]
 fn dict_smells_skip_the_contract_after_a_docstring_and_honour_spells_outside_core() {
     let files = [
         (
             "app/billing/entry/wire.hy",
             tags("billing", "entry")
-                + "(defk note [n]\n  \"docstring が先。\"\n  {:pre [(: n int)] :post [(: % str)] :tags {:context \"billing\" :role \"entry\"}}\n  (str n))\n\
-                   (defk index-of [rows]\n  \"docstring が先。\"\n  {:pre [(: rows list)] :post [(: % int)] :tags {:context \"billing\" :role \"entry\"}}\n  (len (dfor r rows r r)))\n\
+                + "(defk note [n]\n  \"docstring comes first.\"\n  {:pre [(: n int)] :post [(: % str)] :tags {:context \"billing\" :role \"entry\"}}\n  (str n))\n\
+                   (defk index-of [rows]\n  \"docstring comes first.\"\n  {:pre [(: rows list)] :post [(: % int)] :tags {:context \"billing\" :role \"entry\"}}\n  (len (dfor r rows r r)))\n\
                    (defk payload-text [n]\n  {:pre [(: n int)] :post [(: % str)] :tags {:context \"billing\" :role \"entry\" :spells \"json\"}}\n  (json.dumps {\"n\" n}))\n",
         ),
         (
@@ -6216,26 +6216,26 @@ fn dict_smells_skip_the_contract_after_a_docstring_and_honour_spells_outside_cor
     assert_eq!(
         keys(&report, "DOEFF172"),
         vec!["app/billing/core/rules.hy::DOEFF172::built:payload-text", "app/billing/entry/wire.hy::DOEFF172::built:index-of"],
-        "契約だけの定義と entry の :spells は鳴らず、本文の写像と core の :spells は鳴る: {}",
+        "a definition with only a contract and :spells in entry do not fire; a mapping in the body and :spells in core do: {}",
         report
     );
 }
 
-/// 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
+/// A boundary part names the allowed kinds (:touches — a closed vocabulary) and a reason (:reason). A missing one and a word outside the vocabulary are config errors that stop the run.
 #[test]
 fn boundary_parts_need_touches_and_a_reason() {
     let files = [("app/billing/entry/bench.hy", tags("billing", "entry") + "(defk run [] 1)\n")];
     let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network])
-                   (boundary-part "app.billing.entry.other" :touches [socket] :reason "語の外")"#;
+                   (boundary-part "app.billing.entry.other" :touches [socket] :reason "outside the vocabulary")"#;
     let dir = boundary_repo(&files, parts, "[\"DOEFF106\"]");
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("boundary-part app.billing.entry.bench に :reason"), "{}", stderr);
-    assert!(stderr.contains("boundary-part app.billing.entry.other の :touches の socket は語の外"), "{}", stderr);
+    assert!(stderr.contains("boundary-part app.billing.entry.bench has no :reason"), "{}", stderr);
+    assert!(stderr.contains("socket in :touches of boundary-part app.billing.entry.other is not in the vocabulary"), "{}", stderr);
 }
 
-/// 境目の部品の生の副作用は DOEFF106 で当てないが、索引の証拠としては残るので、部品に届く deftest は縁で
-/// :edge-mark の印が要る(DOEFF133)— 印の無い検は当たり、印の在る検は当たらない。
+/// A boundary part's raw side effects are not hit by DOEFF106, but they remain as index evidence, so a deftest reaching the part needs the
+/// :edge-mark mark at the edge (DOEFF133) — a test without the mark hits, and a test with the mark does not.
 #[test]
 fn tests_reaching_a_boundary_part_need_the_edge_mark() {
     let files = [
@@ -6248,44 +6248,44 @@ fn tests_reaching_a_boundary_part_need_the_edge_mark() {
                 .to_string(),
         ),
     ];
-    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network] :reason "縁の台")"#;
+    let parts = r#"(boundary-part "app.billing.entry.bench" :touches [network] :reason "an edge rig")"#;
     let dir = boundary_repo(&files, parts, "[\"DOEFF106\", \"DOEFF133\"]");
     let (_, report) = editor(dir.path());
-    assert!(keys(&report, "DOEFF106").is_empty(), "宣言した network は当てない: {}", report);
+    assert!(keys(&report, "DOEFF106").is_empty(), "the declared network does not hit: {}", report);
     assert_eq!(
         keys(&report, "DOEFF133"),
         vec!["app/billing/tests/test_bench.hy::DOEFF133::test_unmarked::edge"],
-        "部品に届く印の無い検だけを当てる: {}",
+        "only a test without a mark that reaches the part hits: {}",
         report
     );
 }
 
-// ------------------------------------------------------------------ 基点との比べ(--baseline-report)
+// ------------------------------------------------------------------ Comparison with the baseline (--baseline-report)
 
-/// DOEFF110 を critical にした一時の repo の設定(登録簿は空 — 基点との比べは登録簿に依らない)。
+/// The config of a temporary repo with DOEFF110 as critical (the registry is empty — comparison with the baseline does not depend on the registry).
 const CRITICAL_110: &str = "[tool.doeff-linter.rules.DOEFF110]\nlevel = \"critical\"\n";
 
-/// root で editor-json を走らせた出力を基点の file に書き、その path を返す。
+/// Write the output of editor-json run at root to the baseline file, and return its path.
 fn baseline_file(root: &Path) -> std::path::PathBuf {
     let (_, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log"], None);
-    assert!(serde_json::from_str::<Value>(&stdout).is_ok(), "基点の出力が JSON でない: {}\n{}", stdout, stderr);
+    assert!(serde_json::from_str::<Value>(&stdout).is_ok(), "the baseline output is not JSON: {}\n{}", stdout, stderr);
     let path = root.join("baseline.json");
     std::fs::write(&path, stdout).unwrap();
     path
 }
 
-/// 基点の file と比べて editor-json を走らせ、(終了コード・新しい critical の識別子の列)を返す。
+/// Run editor-json compared with the baseline file, and return (exit code, list of new critical identifiers).
 fn against_baseline(root: &Path, baseline: &Path) -> (i32, Vec<String>) {
     let (code, stdout, stderr) =
         run(root, &["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()], None);
-    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
-    let fresh = report["new_critical"].as_array().unwrap_or_else(|| panic!("new_critical が無い: {}", report));
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
+    let fresh = report["new_critical"].as_array().unwrap_or_else(|| panic!("new_critical is missing: {}", report));
     (code, fresh.iter().map(|v| v.as_str().unwrap().to_string()).collect())
 }
 
 #[test]
 fn baseline_a_new_critical_is_named_and_changes_the_exit_code() {
-    // 増えた: 基点に無い critical の識別子が new_critical に出て、終了コードが 4(新しい critical あり)になる。
+    // Increased: a critical identifier not in the baseline appears in new_critical, and the exit code becomes 4 (new critical present).
     let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n")], CRITICAL_110);
     let baseline = baseline_file(dir.path());
     std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n(defn new-one [x] x)\n").unwrap();
@@ -6296,7 +6296,7 @@ fn baseline_a_new_critical_is_named_and_changes_the_exit_code() {
 
 #[test]
 fn baseline_fixing_three_and_adding_one_is_still_a_new_critical() {
-    // 件数ではなく識別子の集合で比べる: 3 件直して 1 件足した commit は、件数が減っても赤。
+    // Compare by the set of identifiers, not the count: a commit that fixes 3 and adds 1 is red even if the count decreased.
     let dir = definition_repo(&[("app/a.hy", "(defn a1 [x] x)\n(defn a2 [x] x)\n(defn a3 [x] x)\n")], CRITICAL_110);
     let baseline = baseline_file(dir.path());
     std::fs::write(dir.path().join("app/a.hy"), "(defn b1 [x] x)\n").unwrap();
@@ -6307,7 +6307,7 @@ fn baseline_fixing_three_and_adding_one_is_still_a_new_critical() {
 
 #[test]
 fn baseline_fewer_or_same_criticals_are_not_new() {
-    // 減った・同じ: new_critical は空で、終了コードは基点の比べの無い時と同じ(ここでは error の違反が在るので 1)。
+    // Decreased or same: new_critical is empty, and the exit code is the same as when there is no baseline comparison (here 1 because there is an error violation).
     let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n(defn gone [x] x)\n")], CRITICAL_110);
     let baseline = baseline_file(dir.path());
     let (code, fresh) = against_baseline(dir.path(), &baseline);
@@ -6321,14 +6321,14 @@ fn baseline_fewer_or_same_criticals_are_not_new() {
 
 #[test]
 fn baseline_a_moved_file_keeps_its_criticals() {
-    // file の移動: 規則と名が同じで path だけ違い、基点の同じ識別子が消えていれば同じ破れとみなす(1 対 1)。
+    // File move: if rule and name are the same, only the path differs, and the same identifier in the baseline has vanished, it is regarded as the same breach (one to one).
     let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n")], CRITICAL_110);
     let baseline = baseline_file(dir.path());
     std::fs::remove_file(dir.path().join("app/a.hy")).unwrap();
     std::fs::write(dir.path().join("app/b.hy"), "(defn old [x] x)\n").unwrap();
     let (_, fresh) = against_baseline(dir.path(), &baseline);
     assert!(fresh.is_empty(), "{:?}", fresh);
-    // 基点の識別子が残ったまま別の path に同じ名が増えたら、移動ではなく新しい破れ。
+    // If the baseline identifier remains and the same name is added at a different path, it is a new breach, not a move.
     std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n").unwrap();
     let (code, fresh) = against_baseline(dir.path(), &baseline);
     assert_eq!(fresh, vec!["app/b.hy::DOEFF110::old".to_string()]);
@@ -6337,7 +6337,7 @@ fn baseline_a_moved_file_keeps_its_criticals() {
 
 #[test]
 fn baseline_only_criticals_are_compared_and_a_bad_file_is_an_argument_error() {
-    // critical でない規則の新しい破れは new_critical に入らない。読めない基点の file は引数の誤り(2)。
+    // A new breach of a non-critical rule does not enter new_critical. An unreadable baseline file is an argument error (2).
     let dir = definition_repo(&[("app/a.hy", "(defn old [x] x)\n")], "");
     let baseline = baseline_file(dir.path());
     std::fs::write(dir.path().join("app/a.hy"), "(defn old [x] x)\n(defn new-one [x] x)\n").unwrap();
@@ -6350,8 +6350,8 @@ fn baseline_only_criticals_are_compared_and_a_bad_file_is_an_argument_error() {
     assert_eq!(code, 2, "{}", stderr);
 }
 
-/// 層の宣言の :exempt で定義の書き方の規則を外す repo。package の dir に architecture.hy を置き、src の module を
-/// 名指す(doeff-hy の macro の展開の時点の module と同じ形)。declaration が None なら宣言を置かない。
+/// A repo that removes the definition-writing rules with the layer declaration's :exempt. architecture.hy is placed in the package dir, and the src module is
+/// named (the same form as the module at macro-expansion time in doeff-hy). If declaration is None, no declaration is placed.
 fn exempt_repo(declaration: Option<&str>) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join(".git")).unwrap();
@@ -6372,32 +6372,32 @@ fn exempt_repo(declaration: Option<&str>) -> tempfile::TempDir {
     dir
 }
 
-/// 外す module: macro の本体が展開の時点に呼ぶ defn(helper)を持つ。
+/// The exempted module: it has a defn (helper) that a macro body calls at expansion time.
 const EXPAND_HY: &str = "(val MODULE-TAGS {:context \"app\" :role \"macro\"})\n(defn helper [form] form)\n(defmacro m [form] (helper form))\n";
 
-/// macro の展開の時点の module を名指して DOEFF110 を理由つきで外す宣言。REASON を置き換えて理由の無い宣言も作る。
-const EXEMPT_DECLARATION: &str = "(defarchitecture pkg\n  :root \"app\"\n  :layers [(layer macro\n             :summary \"macro の展開の時点に呼ばれる\"\n             :knows \"Hy の form\"\n             :does-not-know \"doeff の Program\"\n             :modules [app.expand]\n             :exempt [(rule DOEFF110 \"REASON\")])])\n";
+/// A declaration that exempts DOEFF110 with a reason by naming the module at macro-expansion time. REASON is replaced to also make a declaration with no reason.
+const EXEMPT_DECLARATION: &str = "(defarchitecture pkg\n  :root \"app\"\n  :layers [(layer macro\n             :summary \"called at macro-expansion time\"\n             :knows \"Hy forms\"\n             :does-not-know \"doeff Programs\"\n             :modules [app.expand]\n             :exempt [(rule DOEFF110 \"REASON\")])])\n";
 
 #[test]
 fn a_layer_exemption_drops_the_definition_rule_only_for_the_named_module() {
-    let declared = EXEMPT_DECLARATION.replace("REASON", "macro の展開の時点に Python の関数として呼ばれる — Program を返せない");
+    let declared = EXEMPT_DECLARATION.replace("REASON", "called as a Python function at macro-expansion time — cannot return a Program");
     let dir = exempt_repo(Some(&declared));
-    // 全体の実行: 名指しの module(app.expand)の defn は外れ、名指していない module の defn は今どおり鳴る。
+    // Whole run: the defn of the named module (app.expand) is exempted, and the defn of a module that is not named still fires as before.
     let (_, whole) = editor(dir.path());
     assert_eq!(keys(&whole, "DOEFF110"), vec!["pkg/src/app/runtime.hy::DOEFF110::decide"], "{}", whole);
-    // 1 file の実行(editor・commit の hook の子)も同じ 1 点で外す。
+    // A single-file run (the child of the editor and commit hooks) exempts at the same single point.
     let source = std::fs::read_to_string(dir.path().join("pkg/src/app/expand.hy")).unwrap();
     let (_, stdout, stderr) =
         run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "pkg/src/app/expand.hy"], Some(&source));
-    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     assert!(keys(&single, "DOEFF110").is_empty(), "{}", single);
 }
 
 #[test]
 fn an_exempted_module_still_names_a_defn_that_no_macro_reaches() {
-    // 失敗ケース(#2877 の決め 2 の見張り): 外した module に、package のどの defmacro からも届かない実行の時点の defn を足すと、
-    // 外していても鳴る(理由の文つき)。1 file の実行でも同じ。
-    let declared = EXEMPT_DECLARATION.replace("REASON", "macro の展開の時点に Python の関数として呼ばれる — Program を返せない");
+    // Failure case (a watch for decision 2 of #2877): if a runtime-time defn that no defmacro of the package reaches is added to the exempted module,
+    // it fires even though it is exempted (with the reason sentence). The same in a single-file run.
+    let declared = EXEMPT_DECLARATION.replace("REASON", "called as a Python function at macro-expansion time — cannot return a Program");
     let dir = exempt_repo(Some(&declared));
     let with_runtime = format!("{}(defn thaw [x] x)\n", EXPAND_HY);
     std::fs::write(dir.path().join("pkg/src/app/expand.hy"), &with_runtime).unwrap();
@@ -6409,12 +6409,12 @@ fn an_exempted_module_still_names_a_defn_that_no_macro_reaches() {
         whole
     );
     let thaw = violation(&whole, "pkg/src/app/expand.hy::DOEFF110::thaw");
-    assert!(thaw["message"].as_str().unwrap_or("").contains("どの defmacro からも届かない"), "{}", thaw);
+    assert!(thaw["message"].as_str().unwrap_or("").contains("no defmacro of the package reaches it"), "{}", thaw);
     let (_, stdout, stderr) =
         run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "pkg/src/app/expand.hy"], Some(&with_runtime));
-    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, stderr));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&single, "DOEFF110"), vec!["pkg/src/app/expand.hy::DOEFF110::thaw"], "{}", single);
-    // 展開した code(別の file の macro の quasiquote の中)が呼ぶ部品も「macro の持ち主の関数」として届く — 外れる。
+    // A part called by the expanded code (inside a quasiquote of a macro in another file) is also reached as "a function owned by the macro" — it is exempted.
     std::fs::write(
         dir.path().join("pkg/src/app/guards.hy"),
         "(val MODULE-TAGS {:context \"app\" :role \"macro\"})\n(defmacro g [] `(thaw 1))\n",
@@ -6426,7 +6426,7 @@ fn an_exempted_module_still_names_a_defn_that_no_macro_reaches() {
 
 #[test]
 fn without_a_declaration_or_a_reason_the_definition_rule_still_hits() {
-    // 失敗ケース 1: 宣言が無ければ、どちらの module の defn も鳴る。
+    // Failure case 1: without the declaration, the defn of both modules fires.
     let dir = exempt_repo(None);
     let (_, report) = editor(dir.path());
     assert_eq!(
@@ -6435,7 +6435,7 @@ fn without_a_declaration_or_a_reason_the_definition_rule_still_hits() {
         "{}",
         report
     );
-    // 失敗ケース 2: 理由の無い除外は宣言の読みの誤りで、何も外さない(黙って緑にしない)。
+    // Failure case 2: an exclusion with no reason is a declaration read error, and exempts nothing (it is not silently made green).
     let reasonless = exempt_repo(Some(&EXEMPT_DECLARATION.replace("REASON", "")));
     let (_, report) = editor(reasonless.path());
     assert_eq!(
@@ -6446,8 +6446,8 @@ fn without_a_declaration_or_a_reason_the_definition_rule_still_hits() {
     );
 }
 
-/// DOEFF174 の見本の repo — 層 core・intent・protocol・foundation の service billing と shared。`lower_layer` = architecture.hy の
-/// :business-fakes に :lower-layer-modules を書くか(書かない repo では判じない)。
+/// The sample repo for DOEFF174 — service billing and shared with layers core, intent, protocol, foundation. `lower_layer` = whether to write :lower-layer-modules in architecture.hy's
+/// :business-fakes (it is not judged in a repo that does not write it).
 fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let declared = if lower_layer { " :lower-layer-modules [\"doeff_records.effects\"]" } else { "" };
@@ -6462,8 +6462,8 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
            (layer foundation :roles [foundation])]
   :foundation foundation
   :business-fakes {{:simulation ["app/sim/**"] :tests ["**/tests/**"] :production ["app/**"] :business-modules ["app.billing"]{}}})
-(defservice billing "請求" {{:depends-on [shared] :layers [core intent protocol]}})
-(defservice shared "共有" {{:layers [core]}})
+(defservice billing "Billing" {{:depends-on [shared] :layers [core intent protocol]}})
+(defservice shared "Shared" {{:layers [core]}})
 "#,
             declared
         ),
@@ -6472,13 +6472,13 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
     std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF174\"]\n").unwrap();
     let files = [
         (
-            // 当たらない: intent の層が値の型(ChangedRow・Row・RowType)を import して使う。
+            // Does not hit: the intent layer imports and uses value types (ChangedRow, Row, RowType).
             "app/billing/intent/orders.hy",
             "(import doeff_records.event_source [ChangedRow])\n(import doeff_records.values [Row])\n(import doeff_records.typed [RowType])\n\
              (defclass ReadOrder [])\n(defclass OrderMoved [] (setv #^ ChangedRow changed None) (setv #^ RowType kind None))\n",
         ),
         (
-            // shared の core の defk が生の効果を出す(これ自身も業務の層 core の定義なので当たる)。
+            // A shared core defk emits a raw effect (this itself is also a definition of business layer core, so it hits).
             "app/shared/core/rows.hy",
             "(import doeff_records.effects [ReadRow])\n(defk read-order-row [key] (<- row (ReadRow \"orders\" key)) row)\n",
         ),
@@ -6493,31 +6493,31 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
 (import app.billing.intent.orders [ReadOrder])
 (import app.shared.core.rows [read-order-row])
 
-;; 当たる: 生の効果を直に出す。
+;; Hits: emits a raw effect directly.
 (defk direct-read [key] (<- row (ReadRow "orders" key)) row)
 
-;; 当たる: shared の defk を呼び、その先が生の効果を出す。
+;; Hits: calls a shared defk, which emits a raw effect.
 (defk via-shared [key] (<- row (read-order-row key)) row)
 
-;; 当たる: 合図の源の handler(doeff_records.event_source)を with_handlers で被せる。
+;; Hits: wraps a signal-source handler (doeff_records.event_source) with with_handlers.
 (defk watch [tables body] (with_handlers [(timer-handler) (read-signal-handler tables "billing")] body))
 
-;; 当たる: 同じ package の repo の外の defk(効果を包む read-typed)を実行する。
+;; Hits: runs a defk outside the repo in the same package (read-typed, which wraps an effect).
 (defk typed-read [kind key] (<- row (read-typed kind key)) row)
 
-;; 当たらない: 値の型の使用(ChangedRow・Row・RowType・typed-row は実行しない)。
+;; Does not hit: use of value types (ChangedRow, Row, RowType; typed-row is not run).
 (defk changed-key [changed] {:pre [(: changed ChangedRow)]} (. changed key))
 (defk as-typed [#^ RowType kind #^ Row row] (typed-row kind row))
 
-;; 当たらない: ドメインの効果だけを出す。
+;; Does not hit: emits only domain effects.
 (defk domain-read [key] (<- order (ReadOrder)) order)
 
-;; 当たらない(静的に名が決まらない): 答えで受けた handler を値のまま被せる。
+;; Does not hit (the name is not statically decided): wraps a handler received as an answer, as a value.
 (defk given-handlers [opened body] (with_handlers (list opened.handlers) body))
 "#,
         ),
         (
-            // 当たらない: 翻訳の層の handler が生の効果を出し、合図の源を被せる。
+            // Does not hit: a translation-layer handler emits a raw effect and wraps a signal source.
             "app/billing/protocol/reads.hy",
             r#"(import doeff [with_handlers])
 (import doeff_records.effects [ReadRow])
@@ -6531,7 +6531,7 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
 "#,
         ),
         (
-            // 当たらない: 土台の層が記録の client の handler を被せ、生の効果を出す。
+            // Does not hit: the foundation layer wraps a records client handler and emits a raw effect.
             "app/foundation/records.hy",
             "(import doeff [with_handlers])\n(import doeff_records.http_client [http-records-handler])\n(import doeff_records.effects [PutRow])\n\
              (defk with-records [body] (with_handlers [(http-records-handler \"http://r\")] body))\n(defk put-one [row] (<- (PutRow \"t\" row)))\n",
@@ -6545,9 +6545,9 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 記録の service の生の操作を使うのは handler(protocol・foundation の層)だけ。業務の層
-/// (core・intent)の定義が :lower-layer-modules の効果を出す(直に・defk を辿って・同じ package の repo の外の defk を実行して)所と、
-/// その package の handler を被せる所は critical。値の型の使用・ドメインの効果・翻訳と土台の層は当たらない。
+/// Only handlers (protocol and foundation layers) use the records service's raw operations. A business layer
+/// (core, intent) definition that emits an effect of :lower-layer-modules (directly, by following a defk, or by running a defk outside the repo in the same package), and
+/// a place that wraps that package's handler, are critical. Use of value types, domain effects, and the translation and foundation layers do not hit.
 #[test]
 fn domain_layers_do_not_use_lower_layer_effects_or_handlers() {
     let dir = lower_layer_repo(true);
@@ -6567,12 +6567,12 @@ fn domain_layers_do_not_use_lower_layer_effects_or_handlers() {
     assert_eq!(code, 1);
     let via = violation(&report, "app/billing/core/flow.hy::DOEFF174::via_shared::doeff_records.effects.ReadRow");
     assert_eq!(via["level"], "critical", "{}", via);
-    assert!(via["message"].as_str().unwrap().contains("read_order_row を経由して、下の層の効果 ReadRow を出す"), "{}", via["message"]);
+    assert!(via["message"].as_str().unwrap().contains("goes through read_order_row and emits the lower-layer effect ReadRow"), "{}", via["message"]);
     let handler = violation(&report, "app/billing/core/flow.hy::DOEFF174::watch::doeff_records.event_source.read_signal_handler");
-    assert!(handler["message"].as_str().unwrap().contains("下の層の handler"), "{}", handler["message"]);
+    assert!(handler["message"].as_str().unwrap().contains("lower-layer handler"), "{}", handler["message"]);
     assert!(!handler["explanation"]["reason"].as_str().unwrap_or("").is_empty(), "{}", handler);
 
-    // 保存前の 1 file の実行(エディタ)でも同じ当たり。
+    // A pre-save single-file run (editor) gives the same hits.
     let source = std::fs::read_to_string(dir.path().join("app/billing/core/flow.hy")).unwrap();
     let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/billing/core/flow.hy"], Some(&source));
     let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
@@ -6580,7 +6580,7 @@ fn domain_layers_do_not_use_lower_layer_effects_or_handlers() {
     assert_eq!(keys(&single, "DOEFF174"), whole);
 }
 
-/// :lower-layer-modules を書いていない repo では DOEFF174 を判じない(母集団が空 — 規則の一覧で wired 偽と出す)。
+/// Do not judge DOEFF174 when :lower-layer-modules is not written (the population is empty — shown as wired false in the rule list).
 #[test]
 fn lower_layer_uses_are_not_judged_without_the_declaration() {
     let dir = lower_layer_repo(false);

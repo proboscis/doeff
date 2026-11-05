@@ -243,8 +243,8 @@ impl LintRule for NoAskInTryRule {
         "Forbid using 'ask' effect inside try/except blocks"
     }
 
-    /// 自分で入れ子の文(関数・class・try ほか)を歩いて当たりを出す規則なので、本体は module の上の段の文だけを
-    /// 渡す(#2858 — 入れ子の文も渡すと、同じ当たりを入れ子の深さの分だけ数えていた)。
+    /// This rule walks nested statements (functions, classes, try, etc.) itself and emits the findings, so it is
+    /// handed only the module's top-level statements as the body (#2858: handing it nested statements too counted the same finding once per nesting depth).
     fn reach(&self) -> RuleReach {
         RuleReach::Subtree
     }

@@ -13,9 +13,9 @@ impl NoTupleReturnsRule {
         Self
     }
 
-    /// `tuple[X, ...]` の添字か — 同じ型の可変長の列(型のある列)で、複数の値を位置で返す組ではない
-    /// (packages/doeff-cluster の検の補助が `-> tuple[str, ...]` で名の列を返して誤って当たった。
-    /// DOEFF171 も同じ形を型のある列として受ける)。
+    /// Whether this is the subscript of `tuple[X, ...]` — a variable-length sequence of one type (a typed sequence), not a tuple returning several values by position
+    /// (a check helper in packages/doeff-cluster returned a list of names as `-> tuple[str, ...]` and was flagged by mistake.
+    /// DOEFF171 likewise accepts the same shape as a typed sequence).
     fn is_homogeneous_sequence(slice: &Expr) -> bool {
         match slice {
             Expr::Tuple(tuple) => {
@@ -197,7 +197,7 @@ def get_coords() -> tuple[float, float]:
 
     #[test]
     fn test_a_homogeneous_sequence_is_not_a_tuple_return() {
-        // `tuple[X, ...]` は同じ型の可変長の列 — 位置で複数の値を返す組ではない。
+        // `tuple[X, ...]` is a variable-length sequence of one type — not a tuple returning several values by position.
         let code = r#"
 from typing import Tuple
 
@@ -215,7 +215,7 @@ def maybe_names() -> tuple[str, ...] | None:
 
     #[test]
     fn test_a_fixed_pair_still_fires_beside_a_sequence() {
-        // 失敗ケース: 位置で値を返す組(2 つ・3 つ・入れ子)は今までどおり当たる — 省略記号の無い組だけを外していない。
+        // Failure case: tuples returning values by position (two, three, nested) are flagged as before — only tuples without an ellipsis are not excluded.
         let code = r#"
 def pair() -> tuple[str, int]:
     return ("a", 1)

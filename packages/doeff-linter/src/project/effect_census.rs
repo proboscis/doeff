@@ -1,15 +1,15 @@
-//! DOEFF162: effect の宣言の全体(#1438 — 元は agora-controllers の一時の判定
-//! controllers/screen/tests/intake_only_rules.hy の 2)。
+//! DOEFF162: the whole set of effect declarations (#1438 — originally a temporary check in agora-controllers,
+//! 2 of controllers/screen/tests/intake_only_rules.hy).
 //!
-//! architecture.hy の `:effect-census [(effect-census "名" :files [..] :effects [..] :base "EffectBase" :why "…") …]` の宣言ごとに、
-//! `:files` に当たる Hy・Python の file(註を落とす)から `:base` を継ぐ class の宣言を集め、`:effects` の一覧と比べる。
-//!   * 一覧に無い effect の宣言は、宣言の位置で 1 件(鍵の細目 `<名>:<effect>`)。
-//!   * 同じ名の宣言が 2 つ以上なら、2 つ目の位置で 1 件(`<名>:<effect>:twice`)。
-//!   * 一覧に在って宣言が無い effect は architecture.hy の位置で 1 件(`<名>:<effect>:missing`)。
-//!   * `:files` に当たる file が無ければ architecture.hy の位置で 1 件(`<名>:missing` — 母集団 0 を緑にしない)。
-//! effect を足す変更は、宣言の一覧も同じ変更で直す(黙って増えない)。宣言の形は Python の `class X(… base …):` と Hy の
-//! `(defclass [飾り] X [… base …])` / `(defclass X [… base …])`、`:base` が `EffectBase` なら Hy の `(defeffect X …)` も
-//! (defeffect は常に EffectBase を継ぐ)。
+//! For each architecture.hy declaration `:effect-census [(effect-census "name" :files [..] :effects [..] :base "EffectBase" :why "…") …]`,
+//! collect class declarations inheriting `:base` from the Hy and Python files matching `:files` (comments dropped) and compare them with the `:effects` list.
+//!   * An effect declaration not in the list -> one hit at the declaration position (key detail `<name>:<effect>`).
+//!   * Two or more declarations of the same name -> one hit at the second position (`<name>:<effect>:twice`).
+//!   * An effect in the list with no declaration -> one hit at the architecture.hy position (`<name>:<effect>:missing`).
+//!   * If no file matches `:files`, one hit at the architecture.hy position (`<name>:missing` — an empty population is never green).
+//! A change that adds an effect must update the declaration list in the same change (so effects do not grow silently). Recognized declaration forms are Python `class X(… base …):` and Hy
+//! `(defclass [decorators] X [… base …])` / `(defclass X [… base …])`, and when `:base` is `EffectBase`, also Hy `(defeffect X …)`
+//! (defeffect always inherits EffectBase).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,29 +19,29 @@ use doeff_indexer::hy_index::{Position, Range};
 use super::architecture::EffectCensus;
 use super::spelling_scope::{code_text, line_of, selected_files};
 
-/// 当たりの種類(閉じた 4 つ)。
+/// Kind of hit (a closed set of 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CensusProblem {
-    /// 一覧に無い effect を宣言している。
+    /// Declares an effect that is not in the list.
     Unlisted { effect: String },
-    /// 同じ名の effect を 2 度宣言している。
+    /// Declares the same effect name twice.
     Twice { effect: String },
-    /// 一覧に在る effect の宣言が無い。
+    /// An effect in the list has no declaration.
     Undeclared { effect: String },
-    /// `:files` に当たる file が無い。
+    /// No file matches `:files`.
     NoFiles,
 }
 
-/// 当たり 1 つ。
+/// One hit.
 #[derive(Debug, Clone)]
 pub struct CensusFinding {
     pub rel: String,
-    /// 宣言の名。
+    /// Name of the declaration.
     pub group: String,
     pub why: String,
     pub range: Range,
     pub problem: CensusProblem,
-    /// 登録簿の鍵の細目。
+    /// Detail of the registry key.
     pub detail: String,
 }
 
@@ -50,13 +50,13 @@ fn at_line(line: u32) -> Range {
     Range { start: at, end: at }
 }
 
-/// file の本文(註を落とした物)の中の、base を継ぐ class の (名, byte の位置)。
+/// (name, byte position) of classes inheriting base in a file's body (comments dropped).
 fn declared_in(rel: &str, code: &str, base: &str) -> Vec<(String, usize)> {
     let is_effect_base = base == EFFECT_BASE;
     let base = regex::escape(base);
     let pattern = if rel.ends_with(".hy") {
         let defclass = format!(r"\(defclass\s+(?:\[[^\]]*\]\s+)?([\w\-]+)\s+\[[^\]]*\b{}\b[^\]]*\]", base);
-        // doeff-hy の defeffect は常に doeff の EffectBase を継ぐ class へ展開する(doeff_hy/declarations.hy の defeffect-form)。
+        // doeff-hy's defeffect always expands to a class inheriting doeff's EffectBase (defeffect-form in doeff_hy/declarations.hy).
         if is_effect_base { format!(r"{}|\(defeffect\s+([\w\-]+)", defclass) } else { defclass }
     } else {
         format!(r"(?m)^[ \t]*class\s+(\w+)\s*\([^)]*\b{}\b[^)]*\)\s*:", base)
@@ -68,10 +68,10 @@ fn declared_in(rel: &str, code: &str, base: &str) -> Vec<(String, usize)> {
         .collect()
 }
 
-/// defeffect が継ぐ base の名。
+/// The base name that defeffect inherits.
 const EFFECT_BASE: &str = "EffectBase";
 
-/// 宣言 1 つを判じる。読めなかった file は errors へ積む。
+/// Judge one declaration. Files that could not be read are pushed to errors.
 fn judge_one(root: &Path, declared: &EffectCensus, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<CensusFinding> {
     let finding = |rel: String, range: Range, problem: CensusProblem, detail: String| CensusFinding {
         rel,
@@ -85,13 +85,13 @@ fn judge_one(root: &Path, declared: &EffectCensus, architecture_rel: &str, error
     if population.is_empty() {
         return vec![finding(architecture_rel.to_string(), declared.range, CensusProblem::NoFiles, format!("{}:missing", declared.name))];
     }
-    // 名 → 宣言の位置(file・行)の列(path の順・本文の順)。
+    // name -> list of declaration positions (file, line) (in path order, then body order).
     let mut seen: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
     for rel in population {
         let source = match std::fs::read_to_string(root.join(&rel)) {
             Ok(source) => source,
             Err(error) => {
-                errors.push(format!("{}: 読めない: {}", rel, error));
+                errors.push(format!("{}: cannot read: {}", rel, error));
                 continue;
             }
         };
@@ -131,7 +131,7 @@ fn judge_one(root: &Path, declared: &EffectCensus, architecture_rel: &str, error
     out
 }
 
-/// 宣言の全部を判じる。architecture_rel は architecture.hy の根からの path(宣言の無い effect の位置)。
+/// Judge all declarations. architecture_rel is the path of architecture.hy from the root (the position for effects with no declaration).
 pub fn find(root: &Path, declarations: &[EffectCensus], architecture_rel: &str) -> (Vec<CensusFinding>, Vec<String>) {
     let mut errors = Vec::new();
     let found = declarations.iter().flat_map(|declared| judge_one(root, declared, architecture_rel, &mut errors)).collect();
@@ -148,7 +148,7 @@ mod tests {
             files: files.iter().map(|p| p.to_string()).collect(),
             effects: effects.iter().map(|p| p.to_string()).collect(),
             base: "EffectBase".to_string(),
-            why: "理由".to_string(),
+            why: "reason".to_string(),
             range: Range::default(),
         }
     }
@@ -173,10 +173,10 @@ mod tests {
 
     #[test]
     fn hy_defeffect_declarations_count_as_effect_base() {
-        let hy = "; (defeffect Gone {:answer int :tags {}})\n(defeffect Tally\n  \"数える\"\n  {:answer int :tags {}})\n(defeffect Frame-Cut {:answer int :tags {}})\n";
+        let hy = "; (defeffect Gone {:answer int :tags {}})\n(defeffect Tally\n  \"Counts\"\n  {:answer int :tags {}})\n(defeffect Frame-Cut {:answer int :tags {}})\n";
         let code = code_text("s.hy", hy);
         assert_eq!(declared_in("s.hy", &code, "EffectBase").into_iter().map(|d| d.0).collect::<Vec<_>>(), vec!["Tally", "Frame-Cut"]);
-        // defeffect は常に doeff の EffectBase を継ぐ — 別の base の宣言には数えない。
+        // defeffect always inherits doeff's EffectBase — it does not count as a declaration of a different base.
         assert!(declared_in("s.hy", &code, "ScreenEffect").is_empty());
         let dir = repo(&[("s/loop_reports.hy", hy)]);
         let (hits, errors) = find(dir.path(), &[census(&["s/loop_reports.hy"], &["Tally", "Frame-Cut"])], "architecture.hy");

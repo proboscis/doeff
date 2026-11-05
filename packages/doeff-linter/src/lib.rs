@@ -6,7 +6,7 @@
 //! - Code organization
 
 pub mod build_info;
-// 外の crate(main.rs・tests)が読む名。crate の中は build_info を直に読む(lib.rs を読み戻すと依存の輪になる — #2119)。
+// Names read by external crates (main.rs and tests). Inside the crate, build_info is read directly (reading lib.rs back would make a dependency cycle — #2119).
 pub use build_info::{BUILD_COMMIT, VERSION_TEXT};
 
 pub mod baseline;
@@ -52,9 +52,9 @@ pub fn lint_file(
     lint_source_at(&path_str, &source, rules)
 }
 
-/// path の決まった file の source に Python の規則を当て、その file を持つ package の宣言の母集団(crate::population — 層の
-/// `:exempt` の除外と、外した層の業務の import の DOEFF032)を当てる。実行の入口(file の列・editor の 1 file)はここを通る —
-/// lint_source は母集団を知らない(規則の単体の検の口)。
+/// Apply the Python rules to the source of a file with a known path, and apply the declaration population of the package that owns the file (crate::population — the layer
+/// `:exempt` exclusions, and DOEFF032 for business imports of excluded layers). Run entry points (a list of files, a single editor file) go through here —
+/// lint_source does not know the population (it is the entry point for unit-testing a rule).
 pub fn lint_source_at(
     file_path: &str,
     source: &str,
@@ -78,8 +78,8 @@ pub fn lint_source_at(
                 }
             }
         }
-        // 宣言を読めない時は外さず(どの規則もそのまま当たる)、読めないことを当たりで名指す — file の誤り(error の欄)にすると、
-        // text の出力はその file の当たりを隠し、終了コードにも数えない。
+        // If the declaration cannot be read, nothing is excluded (every rule applies as is), and the failure to read is named as a finding — making it a file error (the error field)
+        // would make the text output hide that file's findings, and it would not count toward the exit code.
         Err(reason) => {
             if named {
                 result.violations.push(Violation::new(
@@ -122,7 +122,7 @@ pub fn lint_source(
     }
 
     if let Mod::Module(module) = &ast {
-        // module 全体を見る規則は file に 1 度だけ(module の最初の文を stmt にして)— #2858。
+        // Rules that look at the whole module run once per file (with the module's first statement as stmt) — #2858.
         if let Some(first) = module.body.first() {
             let context = RuleContext {
                 stmt: first,
@@ -142,8 +142,8 @@ pub fn lint_source(
     result
 }
 
-/// 本体の再帰がこの文を規則に渡すか — 規則が見る単位(RuleReach)に従う。自分で入れ子を歩く規則に入れ子の文を
-/// 渡すと、同じ当たりを入れ子の深さの分だけ数える。
+/// Whether the body's recursion passes this statement to the rule — follows the unit the rule looks at (RuleReach). Passing nested statements to a rule that
+/// walks nesting by itself counts the same finding once per nesting depth.
 fn passes_statement(reach: RuleReach, top_level: bool) -> bool {
     match reach {
         RuleReach::Statement => true,
@@ -152,7 +152,7 @@ fn passes_statement(reach: RuleReach, top_level: bool) -> bool {
     }
 }
 
-/// 規則を 1 回当て、noqa で抑えた当たりを除いて積む。
+/// Apply a rule once, and accumulate the findings, excluding those suppressed by noqa.
 fn apply_rule(
     rule: &dyn LintRule,
     context: &RuleContext,
@@ -175,7 +175,7 @@ fn line_to_offset(source: &str, line: usize) -> usize {
         .sum()
 }
 
-/// 文 1 つを、その単位を受け持つ規則に当て、入れ子の文へ降りる。`top_level` = module の上の段の文。
+/// Apply one statement to the rules that handle its unit, and descend into nested statements. `top_level` = a statement at the module's top level.
 #[allow(clippy::too_many_arguments)]
 fn check_stmt_recursive(
     stmt: &Stmt,
@@ -198,7 +198,7 @@ fn check_stmt_recursive(
         apply_rule(rule.as_ref(), &context, noqa, violations);
     }
 
-    // Recursively check nested statements(入れ子の本体の一覧は utils の 1 か所 — module を自分で辿る規則も同じ一覧を読む)
+    // Recursively check nested statements (the list of nested bodies is in one place in utils — rules that walk a module by themselves read the same list)
     for body in utils::nested_bodies(stmt) {
         for s in body {
             check_stmt_recursive(s, false, file_path, source, ast, rules, noqa, violations);
@@ -250,13 +250,13 @@ pub fn collect_python_files_with_options(
     one_path_per_file(files)
 }
 
-/// 同じ本物の file を指す path(symlink とその本物・同じ file への別の symlink)を 1 つにまとめる。
+/// Merge paths that point to the same real file (a symlink and its target, or another symlink to the same file) into one.
 ///
-/// 名指す path: 対象に symlink でない path(本物)があればそれ、無ければ最初に見た path。並びは
-/// 各 file を最初に見た順。本物を解けない path(壊れた symlink など)は、それだけで 1 つと数える。
-/// 同じ当たりを path の数だけ数えないための 1 点で、file を集める経路(dir の走査・名指しの file・
-/// `--modified`)はどれもここを通る。規則が当たるかは本物で決まる
-/// (母集団の宣言も symlink を解いて引く)ので、まとめても見る範囲は減らない。
+/// The path to name: the real (non-symlink) path if one is among the targets, otherwise the first path seen. The order is
+/// the order in which each file was first seen. A path whose real file cannot be resolved (such as a broken symlink) counts as one by itself.
+/// This is the single point that prevents counting the same finding once per path; every route that collects files (dir traversal, named files,
+/// `--modified`) goes through here. Whether a rule applies is decided by the real file
+/// (the population declaration is also looked up after resolving symlinks), so merging does not shrink the range examined.
 pub fn one_path_per_file(files: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
     let mut seen: Vec<std::path::PathBuf> = Vec::new();
     let mut chosen: std::collections::HashMap<std::path::PathBuf, std::path::PathBuf> =
@@ -278,17 +278,17 @@ pub fn one_path_per_file(files: Vec<std::path::PathBuf>) -> Vec<std::path::PathB
     seen.into_iter().filter_map(|real| chosen.remove(&real)).collect()
 }
 
-/// path そのものが symlink か(先を辿らずに見る)。問うのは 2 つの path が同じ本物に解けた時だけで、
-/// その時は両方とも読めている — 読めないのは実行の途中で消えた時だけで、どちらの path で名指しても同じ。
+/// Whether the path itself is a symlink (looked at without following it). This is asked only when two paths resolved to the same real file,
+/// and then both are readable — unreadable happens only when removed during the run, and naming by either path gives the same result.
 fn is_symlink(path: &Path) -> bool {
     std::fs::symlink_metadata(path).map_or(false, |meta| meta.file_type().is_symlink())
 }
 
-/// path が除く pattern に当たるか — path の部品 1 つ(dir の名か file の名)が pattern と一致する時だけ。
+/// Whether the path matches an exclude pattern — only when one component of the path (a dir name or a file name) equals the pattern.
 ///
-/// 部分一致は見ない: 以前は file の名(dir の走査では dir の名も)に pattern を「含む」だけで外し、既定の
-/// `build`・`dist`・`.git` が `doeff_indexer_build_backend.py`・`verify_dist_metadata.py`・`.github/` のような名を黙って
-/// 判定の外にしていた(当たり 0 ではなく判定していない)。
+/// Substring matches are not looked at: formerly a file name (and a dir name during dir traversal) was excluded merely by "containing" the pattern, and the default
+/// `build`, `dist`, and `.git` silently put names like `doeff_indexer_build_backend.py`, `verify_dist_metadata.py`, and `.github/`
+/// outside the judgment (not 0 findings, but not judged).
 pub fn should_exclude(path: &Path, patterns: &[String]) -> bool {
     path.components().any(|component| {
         component
@@ -513,14 +513,14 @@ p: Program = process()"#,
             .find(|r| r.rule_id() == rule_id)
     }
 
-    /// import できる package(`__init__.py` の在る一時の dir)。置き場を見る DOEFF010 が鳴る場所を作る。
+    /// An importable package (a temporary dir containing `__init__.py`). It creates a place where DOEFF010, which looks at the location, fires.
     fn importable_package() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().expect("一時の dir");
-        std::fs::write(dir.path().join("__init__.py"), "").expect("__init__.py を置く");
+        let dir = tempfile::tempdir().expect("temporary dir");
+        std::fs::write(dir.path().join("__init__.py"), "").expect("place __init__.py");
         dir
     }
 
-    /// noqa の検で規則に渡す file の path。DOEFF010 は package の中の `test_` の file でだけ鳴るので、その path を名指す。
+    /// The file path passed to rules in the noqa test. DOEFF010 fires only for `test_` files inside a package, so name such a path.
     fn noqa_case_path(rule_id: &str, package: &tempfile::TempDir) -> String {
         if rule_id == "DOEFF010" {
             package.path().join("test_example.py").to_string_lossy().into_owned()
@@ -778,7 +778,7 @@ p: Program = process()"#,
         result.join("\n")
     }
 
-    /// 本体の文ごとの再帰を通した、規則 1 つの当たりの数(規則が見る単位どおりに渡す)。
+    /// The number of findings of one rule through the body's per-statement recursion (passed according to the unit the rule looks at).
     fn hits_of(rule: Box<dyn LintRule>, file_path: &str, code: &str) -> usize {
         let rule_id = rule.rule_id().to_string();
         let rules: Vec<Box<dyn LintRule>> = vec![rule];
@@ -789,7 +789,7 @@ p: Program = process()"#,
             .count()
     }
 
-    /// module 全体を見る規則(DOEFF008)の当たり 1 つは 1 件(直す前は本体が渡す文の数だけ数えていた)。
+    /// One finding of a rule that looks at the whole module (DOEFF008) counts as one (before the fix, it was counted as many times as the number of statements the body passed).
     #[test]
     fn a_module_rule_counts_one_finding_once() {
         let code = "from dataclasses import dataclass\n\n@dataclass\nclass Person:\n    name: str\n\nperson = Person(\"Alice\")\nperson.name = \"Bob\"\nprint(person)\n";
@@ -797,8 +797,8 @@ p: Program = process()"#,
         assert_eq!(hits_of(rule, "test.py", code), 1);
     }
 
-    /// 自分で入れ子を歩く規則(DOEFF014)の、関数の中の try 1 つは 1 件(直す前は関数の文と try の文の 2 度)・
-    /// class の method の中の try 1 つも 1 件(直す前は class・method・try の 3 度)。
+    /// One try inside a function, for a rule that walks nesting by itself (DOEFF014), counts as one (before the fix, twice: the function statement and the try statement) —
+    /// and one try inside a class method also counts as one (before the fix, three times: class, method, and try).
     #[test]
     fn a_subtree_rule_counts_a_nested_finding_once() {
         let in_function = "def f():\n    try:\n        g()\n    except ValueError:\n        pass\n";
@@ -809,7 +809,7 @@ p: Program = process()"#,
         }
     }
 
-    /// module の規則は、入れ子の文を持つ file でも 1 度だけ当たる(置き場を見る DOEFF010)。
+    /// A module rule applies only once even to a file with nested statements (DOEFF010, which looks at the location).
     #[test]
     fn a_module_rule_runs_once_per_file() {
         let code = "def test_a():\n    if True:\n        assert 1\n\ndef test_b():\n    assert 2\n";
@@ -818,35 +818,35 @@ p: Program = process()"#,
         assert_eq!(hits_of(rule, &noqa_case_path("DOEFF010", &package), code), 1);
     }
 
-    /// 本体の文ごとの再帰を通した DOEFF004 の当たりの数。規則 1 つ(自分では入れ子に降りない)を当てる。
+    /// The number of DOEFF004 findings through the body's per-statement recursion. Applies one rule (which does not descend into nesting by itself).
     fn environ_hits(code: &str) -> usize {
         hits_of(Box::new(crate::rules::doeff004_no_os_environ::NoOsEnvironRule::new()), "test.py", code)
     }
 
-    /// 関数・メソッドの中の読み 1 つは 1 度だけ数える(直す前は規則が入れ子へ降り、本体の再帰も同じ文を渡して 2 度)。
+    /// One read inside a function or method is counted only once (before the fix, the rule descended into nesting and the body's recursion passed the same statement too, so twice).
     #[test]
     fn a_read_inside_a_function_is_counted_once() {
         let code = "import os\ndef store_root():\n    configured = os.environ.get(\"STORE\", \"\").strip()\n    return configured\nclass Settings:\n    def home(self):\n        if True:\n            return os.getenv(\"HOME\")\n";
         assert_eq!(environ_hits(code), 2);
     }
 
-    /// async def の中の await の中の読みにも当たる(本体の再帰が関数の本体を渡し、規則が await の中を辿る)。
+    /// It also matches a read inside an await inside an async def (the body's recursion passes the function body, and the rule follows into the await).
     #[test]
     fn a_read_inside_await_in_an_async_function_is_seen() {
         let code = "import os\nasync def g(h):\n    return await h(os.getenv(\"G\"))\n";
         assert_eq!(environ_hits(code), 1);
     }
 
-    /// 入れ子の関数・method の中の os.environ の参照(値として渡す・`in`)と os.getenv の参照も、それぞれ 1 度だけ数える
-    /// (直す前は添字・呼び出しの形だけを見ていて 0 件)。
+    /// References to os.environ (passed as a value, `in`) and os.getenv references inside nested functions and methods are each also counted only once
+    /// (before the fix, only subscript and call shapes were looked at, so 0).
     #[test]
     fn a_reference_inside_nested_functions_is_counted_once() {
         let code = "import os\ndef outer():\n    def inner():\n        return dict(os.environ)\n    return inner\nclass Settings:\n    def present(self):\n        return \"HOME\" in os.environ\n    def reader(self):\n        return os.getenv\n";
         assert_eq!(environ_hits(code), 3);
     }
 
-    // 本体の再帰が降りる入れ子の本体。各構文の本体の中の os.getenv() が当たる数を見る —
-    // 本体の再帰が降りない本体が在ると、そこの当たりは 0 件になる。
+    // Nested bodies the body's recursion descends into. Check how many os.getenv() calls inside each construct's body match —
+    // if a body exists that the body's recursion does not descend into, the findings there are 0.
 
     #[test]
     fn the_else_body_of_for_is_checked() {
@@ -884,8 +884,8 @@ p: Program = process()"#,
         assert_eq!(environ_hits(code), 4);
     }
 
-    /// 本物の file 1 つ(`tools/backend.py`)と、それを指す symlink 2 つ(`a/backend.py`・
-    /// `b/backend.py`)を置いた dir — doeff の `doeff_cargo_backend.py` と同じ形(#2905)。
+    /// A dir containing one real file (`tools/backend.py`) and two symlinks pointing at it (`a/backend.py`,
+    /// `b/backend.py`) — the same shape as doeff's `doeff_cargo_backend.py` (#2905).
     fn real_file_and_two_links(code: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("tools").join("backend.py");
@@ -911,7 +911,7 @@ p: Program = process()"#,
 
     #[test]
     fn a_file_reached_through_symlinks_is_linted_once_under_its_real_path() {
-        // dir を走査すると本物 1 つと symlink 2 つが集まる — 当たり 1 つが 3 件と数えられていた(#2905)
+        // Traversing the dir collects one real file and two symlinks — one finding had been counted as three (#2905)
         let (dir, real) = real_file_and_two_links(ONE_ENVIRON_READ);
         let files = collect_python_files(&[dir.path().to_string_lossy().to_string()], &[]);
         assert_eq!(files, vec![real]);
@@ -920,7 +920,7 @@ p: Program = process()"#,
 
     #[test]
     fn symlinks_alone_still_count_their_real_file_once() {
-        // 本物を対象に入れず symlink だけを名指しても、数えが消えず 1 件(最初に名指した path で)
+        // Even when only the symlink is named without including the real file, the count does not vanish and is one (by the path named first)
         let (dir, _real) = real_file_and_two_links(ONE_ENVIRON_READ);
         let link_a = dir.path().join("a").join("backend.py");
         let link_b = dir.path().join("b").join("backend.py");
@@ -947,7 +947,7 @@ p: Program = process()"#,
 
     #[test]
     fn a_file_whose_name_only_contains_an_excluded_word_is_still_linted() {
-        // 反例(#3012): 名に build・dist を含むだけの file が、名指しても dir の走査でも判定の外になっていた
+        // Counterexample (#3012): a file whose name merely contains build or dist was outside the judgment both when named and during dir traversal
         let dir = tempfile::TempDir::new().unwrap();
         let backend = dir.path().join("doeff_indexer_build_backend.py");
         let metadata = dir.path().join("verify_dist_metadata.py");
@@ -964,7 +964,7 @@ p: Program = process()"#,
 
     #[test]
     fn a_dir_whose_name_only_contains_an_excluded_word_is_still_walked() {
-        // .github/ は .git を、fixtures_discovery/ は fixtures を含むだけ — 走査で dir ごと刈られていた
+        // .github/ merely contains .git, and fixtures_discovery/ merely contains fixtures — whole dirs had been pruned during traversal
         let dir = tempfile::TempDir::new().unwrap();
         for sub in [".github", "fixtures_discovery"] {
             std::fs::create_dir(dir.path().join(sub)).unwrap();
@@ -976,7 +976,7 @@ p: Program = process()"#,
 
     #[test]
     fn a_dir_or_file_named_exactly_like_a_pattern_is_still_excluded() {
-        // 一致は今までどおり外す: dir の build/・fixtures/ の中と、名指しの file の部品が pattern と一致する時
+        // Matches are excluded as before: inside the dir build/ or fixtures/, and when a component of a named file equals the pattern
         let dir = tempfile::TempDir::new().unwrap();
         for sub in ["build", "fixtures"] {
             std::fs::create_dir(dir.path().join(sub)).unwrap();

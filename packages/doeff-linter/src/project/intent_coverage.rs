@@ -1,53 +1,53 @@
-//! DOEFF165: intent の効果の網羅の表(親 #1155「業務ロジックを『テストした』の定義」)。
+//! DOEFF165: the coverage table of intent effects (parent #1155 "definition of having 'tested' business logic").
 //!
-//! 各 service の intent の層(`:assembly-shape :intent-layer`)に宣言した効果(defeffect)ごとに 3 つの列を読む:
-//!   * 手元の検から出すか — 検の file の定義から届く定義(効果の節 = 答え手を除く)が、その効果を名指す(作る)。
-//!   * 模擬の答え手 — 模擬の根(模擬の環境・組み立ての層・模擬の組の関数)から届く効果の節。
-//!   * 本番の答え手 — 本番の入口(本番の組の関数・defsystem・`__main__`・入口の文字列)から届く効果の節。
-//! 到達の図は DOEFF143・158 と同じ物(`judge_business_fakes`)を使う。ここは列の値から欠けを決める純な判定だけを持つ。
-//! 欠けが 1 つでもある効果を 1 件の違反にする(鍵の細目 `<service>::<効果>`)。K3 は報告だけ(重さ info)だった。K4(#1562)から
-//! 重さ error・既定の段 critical で失敗にし、repo の登録簿に載った既知の欠けは warning に下がる(新しい欠けだけが赤)。
+//! For each effect (defeffect) declared in each service's intent layer (`:assembly-shape :intent-layer`), three columns are read:
+//!   * Whether a local test emits it — a definition reachable from a test file's definitions (effect clauses = excluding answerers) names (constructs) the effect.
+//!   * Simulation answerer — effect clauses reachable from the simulation roots (simulation environment, assembly layer, simulation assembly functions).
+//!   * Production answerer — effect clauses reachable from the production entries (production assembly functions, defsystem, `__main__`, entry strings).
+//! The reachability graph is the same one as DOEFF143 and 158 (`judge_business_fakes`). This file holds only the pure judgment that decides gaps from the column values.
+//! An effect with even one gap becomes one violation (key detail `<service>::<effect>`). K3 was report-only (severity info). From K4 (#1562),
+//! severity is error and the default tier is critical, so it fails; known gaps listed in the repo's registry drop to warning (only new gaps are red).
 
-/// 効果 1 つの列の値(到達の図から読んだ事実)。
+/// Column values for one effect (facts read from the reachability graph).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectFacts {
-    /// 効果の完全名(module + 名)。
+    /// Full name of the effect (module + name).
     pub effect: String,
-    /// 効果を宣言した file(根からの path)。
+    /// The file that declares the effect (path from the root).
     pub rel: String,
-    /// 宣言の file を置き場に持つ service(architecture.hy の defservice の名)— どの service の dir の下にも無ければ None。
+    /// The service that has the declaring file in its location (defservice name in architecture.hy) — None if it is under no service's dir.
     pub service: Option<String>,
-    /// 手元の検から届く定義のうち、この効果を名指す物(答え手を除く・完全名・並べ済み)。
+    /// Definitions reachable from local tests that name this effect (excluding answerers; full names; sorted).
     pub emitters: Vec<String>,
-    /// 模擬の根から届く答え手(`<handler>` の完全名・並べ済み)。
+    /// Answerers reachable from the simulation roots (full names of `<handler>`; sorted).
     pub simulated: Vec<String>,
-    /// 本番の入口から届く答え手(並べ済み)。
+    /// Answerers reachable from the production entries (sorted).
     pub produced: Vec<String>,
 }
 
-/// 欠けの種類(閉じた 3 つ)。
+/// Kind of gap (a closed set of 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Gap {
-    /// 手元の検から届く定義がこの効果を出さない(どの検もこの業務の操作を通らない)。
+    /// No definition reachable from local tests emits this effect (no test goes through this business operation).
     NotEmittedByTest,
-    /// 模擬の根から届く答え手が無い(模擬の環境で出すと答えが無い)。
+    /// No answerer is reachable from the simulation roots (emitting it in the simulation environment gets no answer).
     NoSimulatedAnswerer,
-    /// 本番の入口から届く答え手が無い(本番で出すと答えが無い)。
+    /// No answerer is reachable from the production entries (emitting it in production gets no answer).
     NoProducedAnswerer,
 }
 
 impl Gap {
-    /// 人が読む 1 語句。
+    /// A phrase for humans.
     pub fn words(self) -> &'static str {
         match self {
-            Gap::NotEmittedByTest => "手元の検から出さない",
-            Gap::NoSimulatedAnswerer => "模擬の答え手が無い",
-            Gap::NoProducedAnswerer => "本番の答え手が無い",
+            Gap::NotEmittedByTest => "not emitted by local tests",
+            Gap::NoSimulatedAnswerer => "no simulation answerer",
+            Gap::NoProducedAnswerer => "no production answerer",
         }
     }
 }
 
-/// 表の 1 行(効果 1 つ)。
+/// One table row (one effect).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub facts: EffectFacts,
@@ -55,29 +55,29 @@ pub struct Row {
 }
 
 impl Row {
-    /// 知らせの鍵の細目 `<service>::<効果>`(service の無い効果は `-`)。
+    /// Notice key detail `<service>::<effect>` (`-` for an effect with no service).
     pub fn detail(&self) -> String {
         format!("{}::{}", self.facts.service.as_deref().unwrap_or("-"), self.facts.effect)
     }
 
-    /// 3 列を 1 行で(`--explain` と知らせの本文)。
+    /// The three columns on one line (`--explain` and the notice body).
     pub fn columns(&self) -> String {
-        let list = |names: &[String]| if names.is_empty() { "無し".to_string() } else { names.join("・") };
+        let list = |names: &[String]| if names.is_empty() { "none".to_string() } else { names.join(", ") };
         format!(
-            "手元の検から出す定義 = {} / 模擬の答え手 = {} / 本番の答え手 = {}",
+            "definitions emitted by local tests = {} / simulation answerer = {} / production answerer = {}",
             list(&self.facts.emitters),
             list(&self.facts.simulated),
             list(&self.facts.produced)
         )
     }
 
-    /// 欠けの語句を並べた 1 行。
+    /// One line listing the gap phrases.
     pub fn gap_words(&self) -> String {
-        self.gaps.iter().map(|g| g.words()).collect::<Vec<_>>().join("・")
+        self.gaps.iter().map(|g| g.words()).collect::<Vec<_>>().join(", ")
     }
 }
 
-/// 列の値から欠けを決める。
+/// Decide gaps from the column values.
 pub fn gaps_of(facts: &EffectFacts) -> Vec<Gap> {
     let mut gaps = Vec::new();
     if facts.emitters.is_empty() {
@@ -92,14 +92,14 @@ pub fn gaps_of(facts: &EffectFacts) -> Vec<Gap> {
     gaps
 }
 
-/// 表の全部の行(service・効果の順)。欠けの無い行も含む — 知らせにするのは欠けのある行だけ(呼び手が選ぶ)。
+/// All rows of the table (in service, effect order). Includes rows with no gaps — only rows with gaps become notices (the caller selects).
 pub fn table(facts: Vec<EffectFacts>) -> Vec<Row> {
     let mut rows: Vec<Row> = facts.into_iter().map(|f| Row { gaps: gaps_of(&f), facts: f }).collect();
     rows.sort_by(|a, b| a.facts.service.cmp(&b.facts.service).then_with(|| a.facts.effect.cmp(&b.facts.effect)));
     rows
 }
 
-/// 効果の完全名を宣言した file の置き場から、それを持つ service を引く(dir の最も長い前方一致)。
+/// From the location of the file that declares an effect's full name, look up the service that owns it (longest dir prefix match).
 pub fn service_of<'s>(rel: &str, services: &'s [(String, String)]) -> Option<&'s str> {
     services
         .iter()
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn a_small_example_table_names_each_gap() {
-        // 欠けのある小さな例: 網羅された効果 1・検から出さない効果 1・本番の答え手の無い効果 1・何も無い効果 1(別の service)。
+        // A small example with gaps: 1 covered effect, 1 effect not emitted by tests, 1 effect with no production answerer, 1 effect with nothing (another service).
         let rows = table(vec![
             facts("board", "app.board.intent.effects.MoveCard", &["app.board.core.move"], &["app.board.protocol.h"], &["app.board.protocol.h"]),
             facts("board", "app.board.intent.effects.ArchiveCard", &[], &["app.board.protocol.h"], &["app.board.protocol.h"]),
@@ -146,15 +146,15 @@ mod tests {
                 ),
             ]
         );
-        // 3 列は名を並べ、空の列は「無し」と書く。
+        // The three columns list names; an empty column is written "none".
         let claim = &rows[1];
-        assert_eq!(claim.columns(), "手元の検から出す定義 = app.board.core.claim / 模擬の答え手 = app.board.protocol.h / 本番の答え手 = 無し");
-        assert_eq!(rows[3].gap_words(), "手元の検から出さない・模擬の答え手が無い・本番の答え手が無い");
+        assert_eq!(claim.columns(), "definitions emitted by local tests = app.board.core.claim / simulation answerer = app.board.protocol.h / production answerer = none");
+        assert_eq!(rows[3].gap_words(), "not emitted by local tests, no simulation answerer, no production answerer");
     }
 
     #[test]
     fn a_fully_covered_effect_has_no_gap() {
-        // 反例: 3 列が全部埋まった効果は欠け 0(知らせにならない)。
+        // Counterexample: an effect whose three columns are all filled has 0 gaps (no notice).
         let full = facts("board", "app.board.intent.effects.MoveCard", &["t"], &["s"], &["p"]);
         assert!(gaps_of(&full).is_empty());
     }
@@ -164,7 +164,7 @@ mod tests {
         let services = vec![("board".to_string(), "app/board".to_string()), ("board-ui".to_string(), "app/board/ui".to_string())];
         assert_eq!(service_of("app/board/intent/effects.hy", &services), Some("board"));
         assert_eq!(service_of("app/board/ui/intent/effects.hy", &services), Some("board-ui"));
-        // 反例: 名の頭が同じでも dir が違えば当たらない・どの dir の下にも無ければ None。
+        // Counterexample: the same name prefix but a different dir does not match; None if under no dir.
         assert_eq!(service_of("app/boardroom/intent/effects.hy", &services), None);
         assert_eq!(service_of("lib/x.hy", &services), None);
     }

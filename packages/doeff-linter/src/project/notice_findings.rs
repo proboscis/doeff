@@ -1,5 +1,5 @@
-//! 設定の知らせ(DOEFF100)を違反の形(Finding)へ直す — 説明(Explanation)と違反の型を読む側を、知らせの型と鍵の位置の読み
-//! (`notice`)から分けた。`notice` は宣言を読む `architecture`・設定を組む `settings` が下から読むので、違反と説明を読まない。
+//! Turns a config notice (DOEFF100) into a violation (Finding) — the side that reads the Explanation and the violation type is split off from the notice type and the key-location reading
+//! (`notice`). `notice` is read from below by `architecture` (which reads declarations) and `settings` (which builds settings), so it must not read violations or explanations.
 
 use std::path::Path;
 
@@ -10,7 +10,7 @@ use super::report::{Finding, FindingOrigin};
 use super::rule::ProjectRule;
 use crate::models::Severity;
 
-/// 知らせを DOEFF100 の違反にする(warning・登録簿の外・決定的な規則)。
+/// Turns notices into DOEFF100 violations (warning, outside the registry, a deterministic rule).
 pub fn findings(notices: &[ConfigNotice], root: &Path) -> Vec<Finding> {
     let rule = ProjectRule::UnknownConfigKey;
     notices
@@ -19,14 +19,14 @@ pub fn findings(notices: &[ConfigNotice], root: &Path) -> Vec<Finding> {
             let rel = relative_path(root, &notice.file).unwrap_or_else(|| notice.file.to_string_lossy().into_owned());
             let (message, subject, what) = match &notice.kind {
                 NoticeKind::Key => (
-                    format!("設定の鍵 {} をこの linter は知らない — 読まずに残りの規則を走らせた", notice.key),
-                    format!("これは {} の鍵 {}", rel, notice.key),
-                    "この鍵",
+                    format!("This linter does not know the config key {} — the remaining rules ran without reading it", notice.key),
+                    format!("This is the key {1} in {0}", rel, notice.key),
+                    "this key",
                 ),
                 NoticeKind::RuleId(id) => (
-                    format!("設定の {} が参照する規則 {} をこの linter は知らない — その参照だけを読まずに残りの規則を走らせた", notice.key, id),
-                    format!("これは {} の {} が参照する規則 {}", rel, notice.key, id),
-                    "この規則",
+                    format!("This linter does not know a rule referenced by config {}: {} — the remaining rules ran without reading only that reference", notice.key, id),
+                    format!("This is, in {}, the rule {} referenced by {}", rel, id, notice.key),
+                    "this rule",
                 ),
             };
             let detail = match &notice.kind {
@@ -50,7 +50,7 @@ pub fn findings(notices: &[ConfigNotice], root: &Path) -> Vec<Finding> {
                 explanation: Explanation {
                     subject,
                     reason: format!(
-                        "この linter(doeff {} から組んだ)は{}を知らない。linter が設定より古い(開発版の置き場の binary は doeff の本線から自動で組み直される — それを待つ)か、書き違い",
+                        "This linter (built from doeff {}) does not know {}. Either the linter is older than the config (the binary in the dev-build location is rebuilt automatically from doeff's mainline — wait for that) or it is a typo",
                         crate::build_info::BUILD_COMMIT,
                         what
                     ),

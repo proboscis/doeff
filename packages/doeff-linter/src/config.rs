@@ -43,104 +43,104 @@ pub struct Config {
     #[serde(default = "default_log_file")]
     pub log_file: Option<String>,
 
-    /// 層の規則(DOEFF101〜105)の層の順・置き場・import の決まり — `[tool.doeff-linter.layers]`
+    /// Layer order, locations, and import rules for the layer rules (DOEFF101-105) -- `[tool.doeff-linter.layers]`
     #[serde(default)]
     pub layers: Option<LayersSection>,
 
-    /// タグの読み方 — `[tool.doeff-linter.tags]`(既定のままでよい)
+    /// How tags are read -- `[tool.doeff-linter.tags]` (the default is fine)
     #[serde(default)]
     pub tags: Option<TagsSection>,
 
-    /// role の閉じた一覧と層ごとに許す role — `[tool.doeff-linter.roles]`
+    /// The closed list of roles and the roles allowed per layer -- `[tool.doeff-linter.roles]`
     #[serde(default)]
     pub roles: Option<RolesSection>,
 
-    /// 業務の名に付けてはいけない環境の語(DOEFF108)— `[tool.doeff-linter.environment_names]`
+    /// Environment words that must not be attached to business names (DOEFF108) -- `[tool.doeff-linter.environment_names]`
     #[serde(default)]
     pub environment_names: Option<EnvironmentNamesSection>,
 
-    /// 生の副作用に直に触ってよい層(DOEFF106・107)— `[tool.doeff-linter.raw_side_effects]`
+    /// Layers that may touch raw side effects directly (DOEFF106, 107) -- `[tool.doeff-linter.raw_side_effects]`
     #[serde(default)]
     pub raw_side_effects: Option<RawSideEffectsSection>,
 
-    /// 規則 ID と ADR の law の対応 — `[[tool.doeff-linter.laws]]`
+    /// Mapping between rule IDs and ADR laws -- `[[tool.doeff-linter.laws]]`
     #[serde(default)]
     pub laws: Vec<LawEntry>,
 
-    /// 既知の破れの登録簿と照合中の規則 — `[tool.doeff-linter.registry]`
+    /// Registry of known breaches and the rules being reconciled -- `[tool.doeff-linter.registry]`
     #[serde(default)]
     pub registry: Option<RegistrySection>,
 
-    /// service の境界(DOEFF109)と文脈の照らし(DOEFF113)— `[tool.doeff-linter.services]`
+    /// Service boundaries (DOEFF109) and context checking (DOEFF113) -- `[tool.doeff-linter.services]`
     #[serde(default)]
     pub services: Option<ServicesSection>,
 
-    /// 定義の書き方の規則(DOEFF110 defn の禁止・111 deff の理由・112 タグ必須)の母集団 — `[tool.doeff-linter.definitions]`
+    /// Population of the rules on how definitions are written (DOEFF110 defn prohibition, 111 reasons for deff, 112 required tags) -- `[tool.doeff-linter.definitions]`
     #[serde(default)]
     pub definitions: Option<DefinitionsSection>,
 
-    /// Hy の program は壁の時計で眠らない(DOEFF210)の母集団 = program の置き場 — `[tool.doeff-linter.program_sleep]`
+    /// Population of "a Hy program does not sleep on the wall clock" (DOEFF210) = where programs live -- `[tool.doeff-linter.program_sleep]`
     #[serde(default)]
     pub program_sleep: Option<ProgramSleepSection>,
 
-    /// Hy の検は realtime を名乗らない限り壁の時計で眠らない(DOEFF211)の母集団 = 検の置き場 — `[tool.doeff-linter.test_sleep]`
+    /// Population of "a Hy test does not sleep on the wall clock unless it declares realtime" (DOEFF211) = where tests live -- `[tool.doeff-linter.test_sleep]`
     #[serde(default)]
     pub test_sleep: Option<TestSleepSection>,
 
-    /// service と層の宣言 architecture.hy の path(設定 file の dir からの相対)。書かなければ repo の根の architecture.hy を探す。
+    /// Path of architecture.hy, the declaration of services and layers (relative to the config file's dir). If not written, looks for architecture.hy at the repo root.
     #[serde(default)]
     pub architecture: Option<String>,
 
-    /// repo の根(module の名・層の置き場・登録簿・鍵の path の基準)の path(設定 file の dir からの相対)。書かなければ設定 file の dir。
-    /// `--root` が勝つ。monorepo の package の `src/` の下を根にして、module の名を import の名(`doeff_cluster.x`)に揃えるため
-    /// (設定 file の dir を根にすると `src.doeff_cluster.x` になる)。
+    /// Path of the repo root (the base for module names, layer locations, registries, and key paths) (relative to the config file's dir). If not written, the config file's dir.
+    /// `--root` wins. This is so that, with the root set under a monorepo package's `src/`, module names match import names (`doeff_cluster.x`)
+    /// (with the config file's dir as the root it would become `src.doeff_cluster.x`).
     #[serde(default)]
     pub root: Option<String>,
 
-    /// 根の外で歩く dir(設定 file の dir からの相対)— その下の Hy の file は定義の書き方の規則の母集団と「対象の外」の判定に入る
-    /// (層の規則は根の下の層の置き場だけを判じるので入らない)。名乗りは根から `..` を含む相対(`../tests/x.hy` — 宣言の file の鍵と
-    /// 同じ形)。root = "src" の package の `tests/` を判じるため。
+    /// Dirs to walk outside the root (relative to the config file's dir) -- the Hy files under them enter the population of the rules on how definitions are written and the judgment of "outside the target"
+    /// (the layer rules judge only the layer locations under the root, so they are not included). Claimed names are relative to the root and include `..` (`../tests/x.hy` -- the same form as the key of a declaration file).
+    /// This is to judge the `tests/` of a package with root = "src".
     #[serde(default)]
     pub include: Vec<String>,
 
-    /// 意味の規則(DOEFF201・202 — Jev)の層と閾値 — `[tool.doeff-linter.semantic]`
+    /// Layers and thresholds for the semantic rules (DOEFF201, 202 -- Jev) -- `[tool.doeff-linter.semantic]`
     #[serde(default)]
     pub semantic: Option<crate::project::semantic::SemanticSection>,
 
-    /// 臭いの規則(DOEFF121〜125)の設定 — `[tool.doeff-linter.smells]`
+    /// Settings for the smell rules (DOEFF121-125) -- `[tool.doeff-linter.smells]`
     #[serde(default)]
     pub smells: Option<crate::project::settings::SmellsSection>,
 
-    /// 翻訳の handler が出す effect の規則(DOEFF130)の設定 — `[tool.doeff-linter.translation_effects]`
+    /// Settings for the rule on effects emitted by translation handlers (DOEFF130) -- `[tool.doeff-linter.translation_effects]`
     #[serde(default)]
     pub translation_effects: Option<crate::project::settings::TranslationEffectsSection>,
 
-    /// commit の hook(`--commit-hook`)の設定 — `[tool.doeff-linter.commit_hook]`
+    /// Settings for the commit hook (`--commit-hook`) -- `[tool.doeff-linter.commit_hook]`
     #[serde(default)]
     pub commit_hook: Option<CommitHookSection>,
 }
 
-/// `[tool.doeff-linter.commit_hook]` — commit の hook の入口(`--commit-hook`)が読む設定。
-/// 各 repo が hook の論理を写して持たず、この 1 か所の宣言だけを書く。
+/// `[tool.doeff-linter.commit_hook]` -- the settings read by the commit hook's entry point (`--commit-hook`).
+/// Each repo does not copy and keep the hook's logic; it writes only this one declaration.
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct CommitHookSection {
-    /// 退役した鍵— 以前は repo 全体に当てる規則の手の一覧。今は読まず、残っていれば hook が 1 行で名乗る
-    /// (規則の分けは `ProjectRule::needs_whole_repo` の名乗り)。古い設定を読めなくしないために形だけ残す。
+    /// A retired key -- formerly the hand-written list of rules applied to the whole repo. It is no longer read, and if left in place the hook announces it in one line
+    /// (the split of rules is declared by `ProjectRule::needs_whole_repo`). Only the shape is kept so that old configs do not become unreadable.
     #[serde(default)]
     pub whole_repo_rules: Vec<String>,
-    /// 子の linter 1 回ごとの上限(秒・既定 20)。越えたら測れなかったとして止めない。
+    /// Upper limit per child linter run (seconds, default 20). If exceeded, it is treated as unmeasurable and does not block.
     #[serde(default)]
     pub timeout_s: Option<u64>,
 }
 
 impl Config {
-    /// 層の規則の節を検めて、規則が読む形にする(名前の食い違いは理由の文の列)。
+    /// Checks the section for the layer rules and turns it into the form the rules read (name mismatches become a list of reason sentences).
     pub fn project_settings(&self) -> Result<ProjectSettings, Vec<String>> {
         self.project_settings_with(None)
     }
 
-    /// 層の規則の設定を作る。architecture.hy が在れば、層・role は そこから写し、TOML の layers・roles・services は置けない
-    /// (宣言を 1 か所にするため)。
+    /// Builds the settings for the layer rules. If architecture.hy exists, layers and roles are copied from it, and TOML layers, roles, and services cannot be placed
+    /// (to keep the declaration in one place).
     pub fn project_settings_with(&self, architecture: Option<Architecture>) -> Result<ProjectSettings, Vec<String>> {
         let mut settings = match &architecture {
             None => self.project_settings_toml()?,
@@ -149,18 +149,18 @@ impl Config {
                 for (name, present) in [("layers", self.layers.is_some()), ("roles", self.roles.is_some()), ("services", self.services.is_some())] {
                     if present {
                         clashes.push(format!(
-                            "[tool.doeff-linter.{}] は {} と二重の宣言 — 層・role・service は architecture.hy だけに書く",
+                            "[tool.doeff-linter.{}] is a duplicate declaration of {} -- write layers, roles, and services only in architecture.hy",
                             name,
                             arch.path.display()
                         ));
                     }
                 }
-                // 生の I/O を許す所は、architecture.hy の許可名簿(:world-handlers)を書いたらそこだけで決める — 層で許す
-                // [tool.doeff-linter.raw_side_effects] allowed_layers と並べない。
+                // Where raw I/O is allowed is decided only by architecture.hy's allowlist (:world-handlers) once it is written -- not combined with the layers allowed by
+                // [tool.doeff-linter.raw_side_effects] allowed_layers.
                 let allowed_layers = self.raw_side_effects.as_ref().is_some_and(|raw| !raw.allowed_layers.is_empty());
                 if !arch.world_handlers.is_empty() && allowed_layers {
                     clashes.push(format!(
-                        "[tool.doeff-linter.raw_side_effects] allowed_layers は {} の :world-handlers と二重の宣言 — 生の I/O を許す所は許可名簿だけに書く",
+                        "[tool.doeff-linter.raw_side_effects] allowed_layers is a duplicate declaration of the :world-handlers of {} -- write where raw I/O is allowed only in the allowlist",
                         arch.path.display()
                     ));
                 }
@@ -174,22 +174,22 @@ impl Config {
             }
         };
         settings.architecture = architecture;
-        // :wraps は doeff の実 I/O の handler の目録に在る物だけ(目録の外の handler を包むと、どの規則もその handler を実 I/O と知らない)。
+        // :wraps may contain only handlers that are in doeff's catalog of real I/O handlers (if a handler outside the catalog is wrapped, no rule knows that handler to be real I/O).
         if let Some(arch) = settings.architecture.as_ref() {
             let catalog = crate::project::world_catalog::WorldCatalog::bundled();
             let outside: Vec<String> = arch
                 .world_handlers
                 .iter()
-                .flat_map(|h| h.wraps.iter().filter(|w| !catalog.handlers.contains_key(&w.target())).map(move |w| format!("{} の :wraps の {}", h.definition.spelling(), w.spelling())))
+                .flat_map(|h| h.wraps.iter().filter(|w| !catalog.handlers.contains_key(&w.target())).map(move |w| format!("{} :wraps {}", h.definition.spelling(), w.spelling())))
                 .collect();
             if !outside.is_empty() {
                 return Err(outside
                     .into_iter()
-                    .map(|what| format!("{}: {} は doeff の実 I/O の handler の目録(doeff-linter data/world_handlers.json)に無い — 目録に足すか :wraps から外す", arch.path.display(), what))
+                    .map(|what| format!("{}: {} is not in doeff's catalog of real I/O handlers (doeff-linter data/world_handlers.json) -- add it to the catalog or remove it from :wraps", arch.path.display(), what))
                     .collect());
             }
         }
-        // 許可名簿を書いた repo では、生の副作用を許す所 = 名簿の定義の module(TOML の raw_side_effects の節が無くても判じる)。
+        // In a repo that wrote an allowlist, where raw side effects are allowed = the modules of the allowlist's definitions (judged even without the TOML raw_side_effects section).
         if let Some(arch) = settings.architecture.as_ref().filter(|a| !a.world_handlers.is_empty()) {
             let modules = arch.world_modules();
             let raw = settings.raw.get_or_insert_with(|| crate::project::raw_settings::RawSettingsSpec {
@@ -201,7 +201,7 @@ impl Config {
             raw.world_modules = Some(modules);
             raw.boundary = arch.boundary_touches();
         }
-        // 宣言した置き場所の外の module(層が先の dir など)は、:role のタグから層を推して層の規則をかける。
+        // For modules outside the declared locations (such as a dir that precedes the layer), infer the layer from the :role tag and apply the layer rules.
         if let (Some(arch), Some(layers)) = (&settings.architecture, settings.layers.as_mut()) {
             layers.infer_root = Some(crate::project::layers::normalize_dir(&arch.root));
         }
@@ -214,7 +214,7 @@ impl Config {
                     Some(index) => {
                         layers.insert(crate::project::layers::LayerId(index));
                     }
-                    None => unknown.push(format!("smells.shape_check_layers: 層 {} は宣言した層に無い", name)),
+                    None => unknown.push(format!("smells.shape_check_layers: layer {} is not among the declared layers", name)),
                 }
             }
             if !unknown.is_empty() {
@@ -222,7 +222,7 @@ impl Config {
             }
             settings.smells = Some(crate::project::settings::SmellSettings { shape_check_layers: layers });
         }
-        // DOEFF130 — 節を書いたなら層の名の誤りは設定の誤り。書かなければ既定の層(protocol・intent)が両方在る時だけ当たる。
+        // DOEFF130 -- if the section is written, a mistake in a layer name is a config error. If not written, it applies only when both default layers (protocol, intent) exist.
         {
             let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
             let explicit = self.translation_effects.is_some();
@@ -235,14 +235,14 @@ impl Config {
                         Some(index) => {
                             found.insert(crate::project::layers::LayerId(index));
                         }
-                        None => unknown.push(format!("translation_effects.{}: 層 {} は宣言した層に無い", key, name)),
+                        None => unknown.push(format!("translation_effects.{}: layer {} is not among the declared layers", key, name)),
                     }
                 }
                 found
             };
             let handler_layers = resolve(&section.handler_layers, "handler_layers");
             let intent_layers = resolve(&section.intent_layers, "intent_layers");
-            // DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り。書かなければ既定の名のうち宣言に在る層だけ(DOEFF130 を止めない)。
+            // Business layers of DOEFF174 -- if written, a mistake in a name is a config error. If not written, only those of the default names that exist in the declaration (do not stop DOEFF130).
             let domain_layers = match &section.domain_layers {
                 Some(list) => resolve(list, "domain_layers"),
                 None => crate::project::settings::DEFAULT_DOMAIN_LAYERS
@@ -264,7 +264,7 @@ impl Config {
             let mut find = |name: &str, what: &str| {
                 let found = names.iter().position(|n| n == name).map(crate::project::layers::LayerId);
                 if found.is_none() {
-                    unknown.push(format!("{}: 層 {} は宣言した層に無い", what, name));
+                    unknown.push(format!("{}: layer {} is not among the declared layers", what, name));
                 }
                 found
             };
@@ -274,14 +274,14 @@ impl Config {
             if !problems.is_empty() {
                 return Err(problems);
             }
-            // 問いに入れる線引きは architecture.hy の :semantic-lines から取り込む(定義元は architecture.hy の 1 か所)。
+            // The lines drawn for the question are taken from :semantic-lines of architecture.hy (the source is the single place architecture.hy).
             let lines = settings.architecture.as_ref().map(|arch| arch.semantic_lines.clone()).unwrap_or_default();
             settings.semantic = Some(crate::project::semantic::SemanticSettings { lines, ..checked });
         }
         Ok(settings)
     }
 
-    /// TOML の節から層の規則の設定を作る(規則ごとの重さも読む)。
+    /// Builds the settings for the layer rules from the TOML sections (also reads the severity per rule).
     fn project_settings_toml(&self) -> Result<ProjectSettings, Vec<String>> {
         let mut problems = Vec::new();
         let mut unknown_rules = Vec::new();
@@ -289,8 +289,8 @@ impl Config {
         let mut base_severity = std::collections::BTreeMap::new();
         let mut level = std::collections::BTreeMap::new();
         for (id, rule) in &self.rules {
-            // この binary に無い規則(DOEFF と 3 桁の形)の設定は、誤りにせずその規則の設定だけを読まずに知らせる(DOEFF100)。
-            // Python の文ごとの規則(DOEFF001〜031)の設定もこの表に在るので、層の規則でも Python の規則でもない物だけ。
+            // Settings for rules not in this binary (the form DOEFF plus 3 digits) are not treated as errors; only that rule's settings are skipped and reported (DOEFF100).
+            // The settings of the Python per-statement rules (DOEFF001-031) are also in this table, so only those that are neither layer rules nor Python rules.
             if crate::project::notice::is_rule_id_shape(id)
                 && ProjectRule::parse(id).is_none()
                 && !get_all_rule_ids().contains(&id.to_uppercase())
@@ -308,8 +308,8 @@ impl Config {
                     (Some(rule), Some(severity)) => {
                         base_severity.insert(rule, severity);
                     }
-                    (None, _) => problems.push(format!("rules.{}.severity: 臭いの規則(DOEFF121〜125)の ID ではない", id)),
-                    (_, None) => problems.push(format!("rules.{}.severity: {:?} は warning・info のどちらでもない(臭いの規則は error にしない)", id, text)),
+                    (None, _) => problems.push(format!("rules.{}.severity: not the ID of a smell rule (DOEFF121-125)", id)),
+                    (_, None) => problems.push(format!("rules.{}.severity: {:?} is neither warning nor info (smell rules are not made error)", id, text)),
                 }
             }
             if let Some(text) = &rule.level {
@@ -317,7 +317,7 @@ impl Config {
                     Some(parsed) => {
                         level.insert(id.to_uppercase(), parsed);
                     }
-                    None => problems.push(format!("rules.{}.level: {:?} は critical・major・minor・info のどれでもない", id, text)),
+                    None => problems.push(format!("rules.{}.level: {:?} is none of critical, major, minor, info", id, text)),
                 }
             }
             let Some(text) = &rule.registered_severity else { continue };
@@ -331,8 +331,8 @@ impl Config {
                 (Some(rule), Some(severity)) => {
                     registered_severity.insert(rule, severity);
                 }
-                (None, _) => problems.push(format!("rules.{}.registered_severity: 層の規則(DOEFF101〜113)の ID ではない", id)),
-                (_, None) => problems.push(format!("rules.{}.registered_severity: {:?} は error・warning・info のどれでもない", id, text)),
+                (None, _) => problems.push(format!("rules.{}.registered_severity: not the ID of a layer rule (DOEFF101-113)", id)),
+                (_, None) => problems.push(format!("rules.{}.registered_severity: {:?} is none of error, warning, info", id, text)),
             }
         }
         let mut settings = match self.validate_sections() {
@@ -347,7 +347,7 @@ impl Config {
         Ok(settings)
     }
 
-    /// 層の規則の節を検める(規則ごとの設定の前の部分)。
+    /// Checks the section for the layer rules (the part before the per-rule settings).
     fn validate_sections(&self) -> Result<ProjectSettings, Vec<String>> {
         ProjectSettings::validate(&ProjectSections {
             layers: self.layers.as_ref(),
@@ -401,14 +401,14 @@ pub struct RuleConfig {
     /// DOEFF009: Skip test functions (starting with test_)
     pub skip_test_functions: Option<bool>,
 
-    /// 層の規則(DOEFF101〜113): 登録簿に載った破れの重さ(error・warning・info。既定 warning)
+    /// Layer rules (DOEFF101-113): the severity of breaches listed in the registry (error, warning, info. Default warning)
     pub registered_severity: Option<String>,
 
-    /// どの規則でも: 重大さ(critical・major・minor・info)。無ければ規則そのものの重さから(error = major・warning = minor・info = info)。
-    /// 重さと違い登録簿で下げない — エディタの違反の欄が「手つかずの critical」を数える軸
+    /// For any rule: the criticality (critical, major, minor, info). If absent, derived from the rule's own severity (error = major, warning = minor, info = info).
+    /// Unlike severity, it is not lowered by the registry -- the axis on which the editor's violation pane counts "untouched critical"
     pub level: Option<String>,
 
-    /// 臭いの規則(DOEFF121〜125): 重さ(warning・info。既定 warning — Absent / Raise が本線に入ったので info から上げた)
+    /// Smell rules (DOEFF121-125): severity (warning, info. Default warning -- raised from info because Absent / Raise entered the main line)
     pub severity: Option<String>,
 }
 
@@ -479,43 +479,43 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
     Some(config)
 }
 
-/// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。
+/// The config file found, and its `[tool.doeff-linter]` section.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub config: Config,
-    /// 設定を読んだ file。
+    /// The file the config was read from.
     pub path: PathBuf,
-    /// 設定の file の本文(知らない規則の ID の位置を後で探すため)。
+    /// The body of the config file (to find the position of unknown rule IDs later).
     pub text: String,
-    /// この binary の知らない鍵(読まずに残りを読んだ — DOEFF100 で知らせる)。
+    /// Keys this binary does not know (the rest was read without them -- reported by DOEFF100).
     pub notices: Vec<crate::project::notice::ConfigNotice>,
 }
 
-/// 設定 file を読む。`[tool.doeff-linter]` の節を持つ file(pyproject.toml の形)でも、節の中身だけを書いた file でもよい。
-/// 読めない・TOML でない・欄の型が違う時は理由の文を返す(黙って既定値にしない)。
-/// この binary の知らない鍵(どの段でも)は誤りにせず、その鍵だけを読まずに知らせの列へ積む(設定は binary より
-/// 先に進むことがあり、その間に lint 全体を止めない)。知っている鍵の唯一の正本は Config と各節の struct の定義(`serde_ignored` が
-/// 定義に無い鍵を path つきで集める — 鍵の表を手で持たない)。書き違いも同じ知らせで見える。
+/// Reads a config file. It may be a file with a `[tool.doeff-linter]` section (the pyproject.toml form) or a file that holds only the section's contents.
+/// When it cannot be read, is not TOML, or a field has the wrong type, returns a reason sentence (does not silently fall back to defaults).
+/// Keys this binary does not know (at any level) are not made errors; only that key is skipped and pushed into the list of notices (the config can
+/// get ahead of the binary, and the whole lint must not stop in the meantime). The single source of truth for known keys is the definitions of Config and each section's struct (`serde_ignored`
+/// collects keys not in the definitions with their paths -- no hand-maintained key table). Typos are visible through the same notices.
 pub fn load_config_file(path: &Path) -> Result<LoadedConfig, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("{} を読めない: {}", path.display(), e))?;
-    let value: toml::Value = toml::from_str(&content).map_err(|e| format!("{} は TOML として読めない: {}", path.display(), e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let value: toml::Value = toml::from_str(&content).map_err(|e| format!("{} cannot be read as TOML: {}", path.display(), e))?;
     let section = match value.get("tool").and_then(|tool| tool.get("doeff-linter")) {
         Some(section) => section.clone(),
         None => value,
     };
     let mut unknown: Vec<String> = Vec::new();
-    // serde_ignored の path は Option の段を `?` と書く(`semantic.?.proxy_url`)— 設定に書く綴り(`semantic.proxy_url`)へ戻す。
+    // serde_ignored's path writes an Option level as `?` (`semantic.?.proxy_url`) -- return it to the spelling written in the config (`semantic.proxy_url`).
     let spell = |path: &serde_ignored::Path| -> String {
         path.to_string().split('.').filter(|s| !s.is_empty() && *s != "?").collect::<Vec<_>>().join(".")
     };
     let config: Config = serde_ignored::deserialize(section, |key| unknown.push(spell(&key)))
-        .map_err(|e: toml::de::Error| format!("{} の [tool.doeff-linter] を読めない: {}", path.display(), e))?;
+        .map_err(|e: toml::de::Error| format!("cannot read [tool.doeff-linter] of {}: {}", path.display(), e))?;
     let notices = unknown.iter().map(|key| crate::project::notice::key_notice(path, &content, key)).collect();
     Ok(LoadedConfig { config, path: path.to_path_buf(), text: content, notices })
 }
 
-/// 設定を探して読む: explicit(`--config`)があればそれを、無ければ start から上へ `[tool.doeff-linter]` を持つ pyproject.toml を探す。
-/// 見つからなければ Ok(None)。見つけた file が読めなければ Err。
+/// Finds and reads the config: uses explicit (`--config`) if given, otherwise searches upward from start for a pyproject.toml that has `[tool.doeff-linter]`.
+/// Ok(None) if not found. Err if the found file cannot be read.
 pub fn load_config_checked(explicit: Option<&Path>, start: &Path) -> Result<Option<LoadedConfig>, String> {
     let path = match explicit {
         Some(path) => path.to_path_buf(),
@@ -527,8 +527,8 @@ pub fn load_config_checked(explicit: Option<&Path>, start: &Path) -> Result<Opti
     load_config_file(&path).map(Some)
 }
 
-/// 規則の ID の全部 — Python の文ごとの規則(rules の get_all_rules)と層の規則(ProjectRule)。設定の有効な規則の既定と知らない規則の
-/// 判じに使う。ここに置くのは、rules/mod.rs が project を読むと依存の輪になるため(config は既に ProjectRule を読む)。
+/// All rule IDs -- the Python per-statement rules (get_all_rules in rules) and the layer rules (ProjectRule). Used for the default of the config's enabled rules and for judging unknown rules
+/// . They are placed here because rules/mod.rs reading project would form a dependency cycle (config already reads ProjectRule).
 pub fn get_all_rule_ids() -> Vec<String> {
     crate::rules::get_all_rules()
         .iter()
@@ -537,20 +537,20 @@ pub fn get_all_rule_ids() -> Vec<String> {
         .collect()
 }
 
-/// 規則の ID が、当たりを判じるのに repo 全体が要る規則か。Python の文ごとの規則(DOEFF001〜031)は file 1 つで
-/// 判じるので偽。層の規則は ProjectRule::needs_whole_repo の名乗り。知らない ID は偽(有効な規則の一覧には載らない — DOEFF100 が知らせる)。
+/// Whether a rule ID is a rule that needs the whole repo to judge its hits. The Python per-statement rules (DOEFF001-031) are judged from one file,
+/// so false. Layer rules are as declared by ProjectRule::needs_whole_repo. Unknown IDs are false (they are not on the list of enabled rules -- DOEFF100 reports them).
 pub fn needs_whole_repo(id: &str) -> bool {
     ProjectRule::parse(id).is_some_and(|rule| rule.needs_whole_repo())
 }
 
-/// 規則の ID が Jev に問う意味の規則か(ProjectRule::is_semantic の名乗り — ID の頭では決めない)。Python の文ごとの
-/// 規則と知らない ID は偽。
+/// Whether a rule ID is a semantic rule that asks Jev (as declared by ProjectRule::is_semantic -- not decided by the ID prefix). The Python per-statement
+/// rules and unknown IDs are false.
 pub fn is_semantic(id: &str) -> bool {
     ProjectRule::parse(id).is_some_and(|rule| rule.is_semantic())
 }
 
-/// `--list-rules` の出力 — 全部の規則の ID と、repo 全体が要るかの名乗り(門と hook が repo 全体の比べの規則を選ぶ 1 か所)と、Jev に問う
-/// 規則かの名乗り(門が Jev の規則を分ける 1 か所)。
+/// Output of `--list-rules` -- the IDs of all rules, the declaration of whether the whole repo is needed (the one place where the gate and the hook choose the rules of whole-repo comparison), and the declaration of whether it is a rule that asks Jev
+/// (the one place where the gate separates Jev's rules).
 pub fn rule_list_json() -> serde_json::Value {
     serde_json::Value::Array(
         get_all_rule_ids()
@@ -698,29 +698,29 @@ max_mutable_attributes = 5
         assert_eq!(config.rules["DOEFF003"].max_mutable_attributes, Some(5));
     }
 
-    /// architecture.hy の許可名簿(:world-handlers)を書いたら、層で生の I/O を許す allowed_layers は二重の宣言。
+    /// Once architecture.hy's allowlist (:world-handlers) is written, the allowed_layers that allow raw I/O by layer is a duplicate declaration.
     #[test]
     fn allowed_layers_clash_with_the_world_handler_list() {
         let arch_source = r#"(defarchitecture s :root "app" :layers [(layer core) (layer foundation)] :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http])])"#;
         let arch = Architecture::parse(arch_source, Path::new("architecture.hy")).unwrap();
         let with_layers: Config = toml::from_str("[raw_side_effects]\nallowed_layers = [\"foundation\"]\n").unwrap();
-        let problems = with_layers.project_settings_with(Some(arch.clone())).err().expect("二重の宣言を通した").join("\n");
-        assert!(problems.contains("allowed_layers は architecture.hy の :world-handlers と二重の宣言"), "{}", problems);
+        let problems = with_layers.project_settings_with(Some(arch.clone())).err().expect("passed a duplicate declaration").join("\n");
+        assert!(problems.contains("allowed_layers is a duplicate declaration of the :world-handlers of architecture.hy"), "{}", problems);
         let without: Config = toml::from_str("[raw_side_effects]\ncatalog_extra = \"extra.json\"\n").unwrap();
-        assert!(without.project_settings_with(Some(arch)).is_ok(), "allowed_layers の無い raw_side_effects を断った");
+        assert!(without.project_settings_with(Some(arch)).is_ok(), "rejected raw_side_effects without allowed_layers");
     }
 
-    /// 設定が binary より新しい時(知らない鍵がどの段に在っても)、誤りにせずその鍵だけを読まずに知らせ、残りは読む。
+    /// When the config is newer than the binary (an unknown key at any level), it is not made an error; only that key is skipped and reported, and the rest is read.
     #[test]
     fn unknown_keys_at_every_depth_are_notices_and_the_rest_is_read() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("pyproject.toml");
         let content = "[tool.doeff-linter]\nenable = [\"ALL\"]\nfuture_top = 1\n\n[tool.doeff-linter.semantic]\nmystery_knob = 2\n\n[tool.doeff-linter.smells]\nshape_check_layers = []\nnew_smell_knob = true\n";
         fs::write(&path, content).unwrap();
-        let loaded = load_config_file(&path).expect("知らない鍵で読みを止めた");
+        let loaded = load_config_file(&path).expect("stopped reading at an unknown key");
         assert_eq!(loaded.config.enable, vec!["ALL"]);
-        assert!(loaded.config.smells.is_some(), "知らない鍵の在る節を丸ごと捨てた");
+        assert!(loaded.config.smells.is_some(), "threw away a whole section that has an unknown key");
         let found: Vec<(String, u32)> = loaded.notices.iter().map(|n| (n.key.clone(), n.range.start.line)).collect();
         assert_eq!(
             found,
@@ -728,7 +728,7 @@ max_mutable_attributes = 5
         );
     }
 
-    /// 型の違う値は今までどおり誤り(知らない鍵だけを知らせに回す)。
+    /// A value of the wrong type is an error as before (only unknown keys are sent to the notices).
     #[test]
     fn wrong_types_are_still_errors() {
         let dir = TempDir::new().unwrap();
@@ -768,7 +768,7 @@ mod project_settings_tests {
     use crate::project::settings::*;
     use super::Config;
 
-    /// 設定の文字列を読んで検める。
+    /// Reads and checks a config string.
     fn validate(text: &str) -> Result<ProjectSettings, Vec<String>> {
         let config: Config = toml::from_str(text).unwrap();
         config.project_settings()
@@ -800,7 +800,7 @@ reconciling = ["DOEFF104"]
         let layers = settings.layers.as_ref().unwrap();
         assert_eq!(layers.layers[0].places[0].text, "app/core");
         assert_eq!(layers.layers[0].allowed.as_ref().unwrap().len(), 1);
-        assert!(layers.layers[1].allowed.is_none(), "書かない層は制限しない");
+        assert!(layers.layers[1].allowed.is_none(), "a layer with nothing written is not restricted");
         assert_eq!(settings.law_for(ProjectRule::LayerImportDirection, Some(LayerId(0))).map(|l| l.name.as_str()), Some("core-law"));
         assert!(settings.law_for(ProjectRule::LayerImportDirection, Some(LayerId(1))).is_none());
         assert_eq!(settings.law_for_external("doeff016").map(|l| l.name.as_str()), Some("core-law"));
@@ -817,7 +817,7 @@ reconciling = ["DOEFF104"]
         .join("\n");
         assert!(problems.contains("layers.paths.a"), "{}", problems);
         assert!(problems.contains("layers.paths.b"), "{}", problems);
-        assert!(problems.contains("入れ子"), "{}", problems);
+        assert!(problems.contains("nested"), "{}", problems);
         let without_layers = validate("[roles]\nnames = []\n").unwrap_err().join("\n");
         assert!(without_layers.contains("roles"), "{}", without_layers);
     }
@@ -848,11 +848,11 @@ layers = ["core"]
         )
         .unwrap_err();
         let text = problems.join("\n");
-        for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF1O1", "env-by-layer"] {
-            assert!(text.contains(needle), "{} が無い: {}", needle, text);
+        for needle in ["twice", "ghost", "nowhere", "translation", "DOEFF1O1", "env-by-layer"] {
+            assert!(text.contains(needle), "{} is missing: {}", needle, text);
         }
-        // 形の正しい知らない ID(この binary より新しい規則)は誤りにしない — DOEFF100 の知らせに回す。
-        assert!(!text.contains("DOEFF999"), "新しい規則の ID を誤りにした: {}", text);
+        // A well-formed unknown ID (a rule newer than this binary) is not made an error -- it goes to the DOEFF100 notice.
+        assert!(!text.contains("DOEFF999"), "made the ID of a new rule an error: {}", text);
     }
 
     #[test]
@@ -866,9 +866,9 @@ name = "future"
 rules = ["DOEFF998", "DOEFF110"]
 "#,
         )
-        .expect("新しい規則の ID で設定を読めなくした");
+        .expect("made the config unreadable because of the ID of a new rule");
         let refs: Vec<(&str, &str)> = settings.unknown_rules.iter().map(|u| (u.key.as_str(), u.id.as_str())).collect();
         assert_eq!(refs, vec![("laws.future.rules", "DOEFF998"), ("registry.reconciling", "DOEFF999")]);
-        assert_eq!(settings.laws[0].rules, vec![ProjectRuleOrExternal::Project(ProjectRule::DefnForbidden)], "読める参照まで捨てた");
+        assert_eq!(settings.laws[0].rules, vec![ProjectRuleOrExternal::Project(ProjectRule::DefnForbidden)], "threw away even the readable reference");
     }
 }

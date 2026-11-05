@@ -1,8 +1,8 @@
-//! 意味の規則と Jev の呼び出しを覚える代理の検。代理は手元の偽の HTTP(127.0.0.1)で、覚えは本文の代理の鍵
-//! (proxy_key)で引く。反例: 全体の実行は代理に鍵の束で「覚えている時だけ」問い(定義 1 つずつ撃たない・本文を送らない)、本物の Jev を
-//! 呼ばせない・代理に届かなくても止まらない・編集中の 1 file(--stdin)は
-//! 代理に問わない・--semantic-changed は中身の変わった定義だけを問い、書きかけで読めない定義は問わない・較正は覚えを使わない・
-//! proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない)・env の JEV_BASE_URL が repo の代理より勝つ。
+//! Tests for the proxy that remembers semantic rules and Jev calls. The proxy is a local fake HTTP server (127.0.0.1), and the memory is looked up by the body's proxy key
+//! (proxy_key). Counterexamples: a whole run asks the proxy "only when it remembers" with a bundle of keys (does not fire per definition, does not send the body), does not
+//! call the real Jev, does not stall when the proxy is unreachable, does not ask the proxy for the single file being edited (--stdin),
+//! --semantic-changed asks only definitions whose content changed and does not ask definitions that are unreadable because they are half-written, calibration does not use the memory,
+//! the Authorization header is not sent to the proxy (nor the TypeSafe key), and env's JEV_BASE_URL wins over the repo's proxy.
 
 use doeff_linter::project::semantic::{proxy_key, PEEK_BATCH};
 use serde_json::Value;
@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 偽の代理に届いた問い 1 つ(path・見出し Cache-Control・Authorization・x-jev-caller・定義の名・束の鍵の数)。
+/// One query that reached the fake proxy (path, Cache-Control header, Authorization, x-jev-caller, the definition's name, the number of keys in the bundle).
 #[derive(Debug, Clone)]
 struct Seen {
     path: String,
@@ -25,15 +25,15 @@ struct Seen {
     keys: usize,
 }
 
-/// 偽の代理: 本文の代理の鍵(linter の proxy_key — 代理と同じ鍵になることは key_contract の検が確かめる)→ 答えを覚え、
-/// /v1/systemone の no-cache と、/v1/systemone/peek(覚えている時だけの問いの束)を代理と同じに扱う。
+/// The fake proxy: remembers answers keyed by the body's proxy key (the linter's proxy_key — that it equals the proxy's key is verified by the key_contract test),
+/// and handles /v1/systemone no-cache and /v1/systemone/peek (a bundle of "only when remembered" queries) the same as the proxy.
 struct FakeProxy {
     url: String,
     seen: Arc<Mutex<Vec<Seen>>>,
 }
 
-/// 本物の Jev の代わりの答え(較正の例は幅に入る・source の語で確率を決める)。cost が在れば上流が費用を載せた答え(Vercel の AI
-/// Gateway の形 providerMetadata.gateway.cost)、無ければ TypeSafe 直と同じく usage だけの答え。
+/// An answer in place of the real Jev (the calibration examples fall within the band; the probability is decided by words in the source). If cost is present, an answer where upstream attaches the cost (Vercel's AI
+/// Gateway shape providerMetadata.gateway.cost); otherwise, as with TypeSafe directly, an answer with usage only.
 fn answer_for(body: &Value, cost: Option<&str>) -> Value {
     let name = body["state"]["definition"]["name"].as_str().unwrap_or("");
     let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
@@ -49,12 +49,12 @@ fn answer_for(body: &Value, cost: Option<&str>) -> Value {
     answer
 }
 
-/// 上流が費用を載せない(TypeSafe 直と同じ)偽の proxy。
+/// A fake proxy whose upstream attaches no cost (same as TypeSafe directly).
 fn fake_proxy() -> FakeProxy {
     fake_proxy_with_cost(None)
 }
 
-/// 上流が答えに費用 cost を載せる(載せないなら None)偽の proxy。
+/// A fake proxy whose upstream attaches a cost `cost` to the answer (None if it attaches none).
 fn fake_proxy_with_cost(cost: Option<&'static str>) -> FakeProxy {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
@@ -128,7 +128,7 @@ fn fake_proxy_with_cost(cost: Option<&'static str>) -> FakeProxy {
 }
 
 impl FakeProxy {
-    /// 届いた問いを読み、列を空にする。
+    /// Read the queries that arrived and empty the queue.
     fn take(&self) -> Vec<Seen> {
         std::mem::take(&mut *self.seen.lock().unwrap())
     }
@@ -136,7 +136,7 @@ impl FakeProxy {
 
 const TYPESAFE_KEY: &str = "apikey_typesafe_must_not_leave";
 
-/// 層 2 つと意味の規則と proxy の設定の repo。
+/// A repo with two layers, a semantic rule, and a proxy setting.
 fn repo(files: &[(&str, &str)], proxy_url: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let config = format!(
@@ -147,7 +147,7 @@ enable = ["DOEFF201", "DOEFF202"]
 order = ["core", "protocol"]
 paths = {{ core = "app/core", protocol = "app/protocol" }}
 [tool.doeff-linter.layers.describe.protocol]
-summary = "翻訳の handler"
+summary = "translation handler"
 [tool.doeff-linter.semantic]
 business_decision = {{ layers = ["protocol"] }}
 transport_knowledge = {{ layers = ["core"] }}
@@ -163,13 +163,13 @@ proxy_url = "{proxy_url}"
     dir
 }
 
-/// editor-json で走らせる(HOME は一時の dir・TypeSafe のキーを env に置く — 代理へ送られないことを見る)。
+/// Run with editor-json (HOME is a temporary dir, and the TypeSafe key is put in env — to check that it is not sent to the proxy).
 fn run(root: &Path, extra: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -> (Value, Duration) {
     let (value, elapsed, _) = run_with_code(root, extra, stdin, env);
     (value, elapsed)
 }
 
-/// run と同じで、終了コードも返す。
+/// Same as run, and also returns the exit code.
 fn run_with_code(root: &Path, extra: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -> (Value, Duration, i32) {
     let home = tempfile::TempDir::new().unwrap();
     let mut args = vec!["--output-format", "editor-json", "--no-log"];
@@ -213,31 +213,31 @@ fn violation<'a>(report: &'a Value, rule: &str, name: &str) -> Option<&'a Value>
 #[test]
 fn whole_run_takes_remembered_answers_from_the_proxy_without_asking_jev() {
     let proxy = fake_proxy();
-    // 別の worktree(A)が問うて代理が覚えた — 較正は覚えを使わない(no-cache)。
+    // Another worktree (A) asked and the proxy remembered — calibration does not use the memory (no-cache).
     let first = repo(FILES, &proxy.url);
     let (asked, _) = run(first.path(), &["--semantic-all"], None, &[]);
     assert_eq!(asked["semantic"]["wire"], "direct(repo)", "{}", asked["semantic"]);
     let seen = proxy.take();
     let calibration: Vec<&Seen> = seen.iter().filter(|s| ["may-manage?", "classifier-call", "post-json", "wake"].contains(&s.name.as_str())).collect();
     assert!(!calibration.is_empty());
-    assert!(calibration.iter().all(|s| s.cache_control == "no-cache"), "較正は覚えを使わない: {:?}", calibration);
+    assert!(calibration.iter().all(|s| s.cache_control == "no-cache"), "calibration does not use the memory: {:?}", calibration);
     assert!(seen.iter().filter(|s| !calibration.iter().any(|c| c.name == s.name)).all(|s| s.cache_control.is_empty()));
-    assert!(seen.iter().all(|s| s.authorization.is_empty()), "proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない): {:?}", seen);
-    // 手元の cache の空の worktree(B)の全体の実行は、代理に鍵の束で「覚えている時だけ」問うて答えを得る。束は 1 つ(定義 4 つの鍵)で、
-    // 本物の Jev への問い(/v1/systemone)は 0。
+    assert!(seen.iter().all(|s| s.authorization.is_empty()), "the Authorization header is not sent to the proxy (nor the TypeSafe key): {:?}", seen);
+    // A whole run in worktree (B), whose local cache is empty, asks the proxy "only when it remembers" with a bundle of keys and gets the answers. There is one bundle (the keys of four definitions),
+    // and queries to the real Jev (/v1/systemone) are 0.
     let second = repo(FILES, &proxy.url);
     let (plain, _) = run(second.path(), &[], None, &[]);
     let seen = proxy.take();
     assert_eq!(seen.len(), 1, "{:?}", seen);
     assert_eq!((seen[0].path.as_str(), seen[0].keys), ("/v1/systemone/peek", 4));
-    assert_eq!(seen[0].authorization, "", "覚えている時だけの問いにも Authorization を付けない");
+    assert_eq!(seen[0].authorization, "", "no Authorization is attached even to the query that asks only when remembered");
     assert_eq!(plain["semantic"]["asked"], 0);
     assert_eq!(plain["semantic"]["peeked"], 4, "{}", plain["semantic"]);
     assert_eq!(plain["semantic"]["unjudged"], 0);
     let decision = violation(&plain, "DOEFF201", "may_post?").or_else(|| violation(&plain, "DOEFF201", "hyx_may_postXquestion_markX"));
-    assert_eq!(decision.expect("代理の覚えの答えで違反が出る")["probability"], 0.93);
+    assert_eq!(decision.expect("a violation appears from the proxy's remembered answer")["probability"], 0.93);
     assert!(violation(&plain, "DOEFF202", "route").is_some());
-    // 受け取った答えは手元の cache に書いたので、次の全体の実行は代理に問わない。
+    // The received answers were written to the local cache, so the next whole run does not ask the proxy.
     let (again, _) = run(second.path(), &[], None, &[]);
     assert!(proxy.take().is_empty());
     assert_eq!(again["semantic"]["peeked"], 0);
@@ -246,7 +246,7 @@ fn whole_run_takes_remembered_answers_from_the_proxy_without_asking_jev() {
 
 #[test]
 fn whole_run_without_a_reachable_proxy_stays_on_the_local_cache() {
-    // 届かない proxy の束は答えの有無を測れていない — 未判定ではなく「測れなかった」。止まらずに終わる。
+    // The bundle to an unreachable proxy has not measured whether answers exist — it is "could not be measured", not unjudged. It finishes without stalling.
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", closed.local_addr().unwrap());
     drop(closed);
@@ -255,11 +255,11 @@ fn whole_run_without_a_reachable_proxy_stays_on_the_local_cache() {
     assert_eq!(report["semantic"]["unmeasured"], 4, "{}", report["semantic"]);
     assert_eq!(report["semantic"]["unjudged"], 0, "{}", report["semantic"]);
     assert_eq!(report["semantic"]["peeked"], 0);
-    assert_eq!(code, 3, "測れなかった定義が在る実行は緑と分ける(終了コード 3)");
-    assert!(elapsed < Duration::from_secs(5), "届かない代理で止まらない: {:?}", elapsed);
+    assert_eq!(code, 3, "a run with definitions that could not be measured is distinguished from green (exit code 3)");
+    assert!(elapsed < Duration::from_secs(5), "does not stall on an unreachable proxy: {:?}", elapsed);
 }
 
-/// 束を受けてから `delay` 待って答える proxy(答えは空 — 覚えていない)。待ちの内に返らない束の検のため。
+/// A proxy that waits `delay` after receiving a bundle and then answers (the answer is empty — nothing remembered). For testing bundles that do not return within the wait.
 fn slow_proxy(delay: Duration) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
@@ -291,9 +291,9 @@ fn slow_proxy(delay: Duration) -> String {
 
 #[test]
 fn a_peek_batch_that_does_not_return_in_time_is_unmeasured_not_unjudged() {
-    // proxy が束に待ち(proxy_peek_timeout_ms)の内に答えないと、linter は束を捨てる。以前はその定義を黙って
-    // 未判定に数え、判定済みの repo が「未判定 7697」と出た。答えの有無を測れていないので「測れなかった」に数え、未判定に入れない。
-    // 反例: 同じ proxy が待ちの内に答えれば(覚えていない = 答えが無い)、それは未判定。
+    // If the proxy does not answer a bundle within the wait (proxy_peek_timeout_ms), the linter discards the bundle. Formerly it silently counted those definitions
+    // as unjudged, and a repo that had been judged showed "unjudged 7697". Since whether answers exist has not been measured, count them as "could not be measured" and not as unjudged.
+    // Counterexample: if the same proxy answers within the wait (nothing remembered = no answer), that is unjudged.
     let slow = slow_proxy(Duration::from_millis(2000));
     let dir = repo(FILES, &slow);
     let config = dir.path().join("pyproject.toml");
@@ -304,28 +304,28 @@ fn a_peek_batch_that_does_not_return_in_time_is_unmeasured_not_unjudged() {
     assert_eq!(report["semantic"]["unjudged"], 0, "{}", report["semantic"]);
     assert_eq!(report["semantic"]["judged"], 0, "{}", report["semantic"]);
     assert_eq!(code, 3);
-    assert!(elapsed < Duration::from_millis(1900), "待ちで束を切る: {:?}", elapsed);
+    assert!(elapsed < Duration::from_millis(1900), "the bundle is cut off at the wait: {:?}", elapsed);
     let answered = repo(FILES, &slow_proxy(Duration::from_millis(0)));
     let (report, _, code) = run_with_code(answered.path(), &[], None, &[]);
-    assert_eq!(report["semantic"]["unjudged"], 4, "待ちの内に答えた束の覚えていない定義は未判定: {}", report["semantic"]);
+    assert_eq!(report["semantic"]["unjudged"], 4, "definitions in a bundle answered within the wait with nothing remembered are unjudged: {}", report["semantic"]);
     assert_eq!(report["semantic"]["unmeasured"], 0, "{}", report["semantic"]);
     assert_eq!(code, 0);
 }
 
 #[test]
 fn stdin_plain_run_does_not_ask_the_proxy() {
-    // 1 file の --stdin(書いた直後の hook・エディタ)の既定は cache だけ(hook の 3 秒の上限)。
+    // The default for a single-file --stdin (hook and editor right after writing) is cache only (the hook's 3-second limit).
     let proxy = fake_proxy();
     let dir = repo(FILES, &proxy.url);
     let path = dir.path().join("app/protocol/chat.hy");
     let (report, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap()], Some("(defk may-post? [who] (in who permission))\n"), &[]);
     assert!(report["semantic"].is_object());
-    assert!(proxy.take().is_empty(), "編集中の決定的な実行は代理にも問わない");
+    assert!(proxy.take().is_empty(), "a deterministic run during editing does not ask the proxy either");
 }
 
 #[test]
 fn stdin_changed_run_asks_only_uncached_definitions() {
-    // --semantic-changed を名指した 1 file の実行は、cache に答えの無い定義だけを問い、答えを cache に書く(2 度目は問わない)。
+    // A single-file run that names --semantic-changed asks only definitions that have no answer in the cache and writes the answers to the cache (it does not ask the second time).
     let proxy = fake_proxy();
     let dir = repo(FILES, &proxy.url);
     let path = dir.path().join("app/protocol/chat.hy");
@@ -339,12 +339,12 @@ fn stdin_changed_run_asks_only_uncached_definitions() {
         .collect();
     assert_eq!(asked, vec!["may-post?".to_string()], "{}", report["semantic"]);
     let (_, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic-changed"], Some(source), &[]);
-    assert!(proxy.take().is_empty(), "答えを cache に書いたので 2 度目は問わない");
+    assert!(proxy.take().is_empty(), "the answers were written to the cache, so it does not ask the second time");
 }
 
 #[test]
 fn unreachable_jev_is_unmeasured_and_not_green() {
-    // 決まり: 問うはずの定義が Jev に届かず答えを得られなければ「測れなかった」— 破れが無くても終了コード 3。
+    // Rule: if a definition that should have been asked does not reach Jev and gets no answer, it is "could not be measured" — exit code 3 even with no violation.
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", closed.local_addr().unwrap());
     drop(closed);
@@ -352,9 +352,9 @@ fn unreachable_jev_is_unmeasured_and_not_green() {
     let path = dir.path().join("app/protocol/chat.hy");
     let (report, _, code) = run_with_code(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic-changed"], Some("(defk may-post? [who] (in who permission))\n"), &[]);
     assert!(report["semantic"]["unmeasured"].as_u64().unwrap() >= 1, "{}", report["semantic"]);
-    assert_eq!(code, 3, "測れなかった時は緑(0)と分ける");
+    assert_eq!(code, 3, "when it could not be measured, it is distinguished from green (0)");
     let (quiet, _, code) = run_with_code(dir.path(), &["--stdin", "--path", path.to_str().unwrap()], Some("(defk may-post? [who] (in who permission))\n"), &[]);
-    assert_eq!(quiet["semantic"]["unmeasured"], 0, "問わない実行は測れなかったに数えない");
+    assert_eq!(quiet["semantic"]["unmeasured"], 0, "a run that asks nothing does not count as could not be measured");
     assert_eq!(code, 0);
 }
 
@@ -365,7 +365,7 @@ fn semantic_changed_asks_only_changed_and_readable_definitions() {
     let _ = run(dir.path(), &["--semantic-all"], None, &[]);
     proxy.take();
     let path = dir.path().join("app/protocol/chat.hy");
-    // may-post? は変えず・read-body は中身を変え・書きかけの half を足す。
+    // may-post? is unchanged, read-body changes its content, and half, which is half-written, is added.
     let edited = "(defk may-post? [who] (in who permission))\n(defk read-body [text] (json.loads (.strip text)))\n(defk half [x] (+ x\n";
     let (report, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic", "--semantic-changed"], Some(edited), &[]);
     let asked: Vec<String> = proxy
@@ -374,9 +374,9 @@ fn semantic_changed_asks_only_changed_and_readable_definitions() {
         .filter(|s| !["may-manage?", "classifier-call", "post-json", "wake"].contains(&s.name.as_str()))
         .map(|s| s.name)
         .collect();
-    assert_eq!(asked, vec!["read-body".to_string()], "変わった定義だけを問い、書きかけ(half)は問わない");
-    assert_eq!(report["semantic"]["unjudged"], 1, "書きかけは未判定: {}", report["semantic"]);
-    // 何も変わっていなければ 1 つも問わない(較正も撃たない)。
+    assert_eq!(asked, vec!["read-body".to_string()], "only the changed definition is asked, and the half-written one (half) is not asked");
+    assert_eq!(report["semantic"]["unjudged"], 1, "the half-written one is unjudged: {}", report["semantic"]);
+    // If nothing changed, nothing is asked (calibration is not fired either).
     let (_, _) = run(dir.path(), &["--stdin", "--path", path.to_str().unwrap(), "--semantic", "--semantic-changed"], Some(edited), &[]);
     assert!(proxy.take().is_empty());
 }
@@ -388,14 +388,14 @@ fn env_base_url_wins_over_the_repo_proxy() {
     let dir = repo(FILES, &proxy.url);
     let (report, _) = run(dir.path(), &["--semantic-all"], None, &[("JEV_BASE_URL", &other.url), ("JEV_API_KEY", "env-key")]);
     assert_eq!(report["semantic"]["wire"], "direct(env)");
-    assert!(proxy.take().is_empty(), "env の宛先が在れば repo の代理を使わない");
+    assert!(proxy.take().is_empty(), "if env's destination exists, the repo's proxy is not used");
     let seen = other.take();
     assert!(!seen.is_empty() && seen.iter().all(|s| s.authorization == "Bearer env-key" && s.cache_control.is_empty()), "{:?}", seen);
 }
 
 #[test]
 fn whole_run_peeks_thousands_of_definitions_in_a_few_batches() {
-    // 定義が数千ある repo でも、覚えている時だけの問いは PEEK_BATCH 個ずつの束で撃つ(定義 1 つずつ撃たない)。
+    // Even in a repo with thousands of definitions, "only when remembered" queries are fired in bundles of PEEK_BATCH (not per definition).
     let proxy = fake_proxy();
     let many: String = (0..(PEEK_BATCH * 2 + 500)).map(|i| format!("(defk step-{} [x] (+ x {}))\n", i, i)).collect();
     let files: Vec<(&str, &str)> = vec![("app/protocol/many.hy", many.as_str())];
@@ -405,20 +405,20 @@ fn whole_run_peeks_thousands_of_definitions_in_a_few_batches() {
     let second = repo(&files, &proxy.url);
     let (plain, _) = run(second.path(), &[], None, &[]);
     let seen = proxy.take();
-    assert!(seen.iter().all(|s| s.path == "/v1/systemone/peek"), "本物の Jev への問いは 0");
+    assert!(seen.iter().all(|s| s.path == "/v1/systemone/peek"), "queries to the real Jev are 0");
     let mut sizes: Vec<usize> = seen.iter().map(|s| s.keys).collect();
     sizes.sort();
-    assert_eq!(sizes, vec![500, PEEK_BATCH, PEEK_BATCH], "束は 3 つ");
+    assert_eq!(sizes, vec![500, PEEK_BATCH, PEEK_BATCH], "there are three bundles");
     assert_eq!(plain["semantic"]["peeked"], PEEK_BATCH * 2 + 500, "{}", plain["semantic"]);
     assert_eq!(plain["semantic"]["unjudged"], 0);
 }
 
 #[test]
 fn proxy_key_matches_the_proxy_key_contract_sample() {
-    // proxy(repo proboscis/jev-proxy — 2026-10-01 に doeff から移した)の鍵の決まりの見本の写しを読む。
-    // 正本は proxy の repo の tests/key_contract.json(proxy の検 test_key_contract_sample_is_the_proxy_key が読む)で、この写しは
-    // 移した時に 1 byte も違わない(sha256 8b4acc8b…)。鍵の決まりを変える時は、2 つの repo の見本と実装を同じ組の変更で直す
-    // (片方の決まりだけを変えると、その側の検が赤になる)。
+    // Read the copy of the key-rule sample of the proxy (repo proboscis/jev-proxy — moved from doeff on 2026-10-01).
+    // The source of truth is tests/key_contract.json in the proxy's repo (read by the proxy's test test_key_contract_sample_is_the_proxy_key), and this copy
+    // does not differ by even 1 byte from when it was moved (sha256 8b4acc8b…). When changing the key rule, fix the samples and implementations in both repos in one coordinated change
+    // (changing the rule on only one side turns that side's test red).
     let cases: Vec<Value> = serde_json::from_str(include_str!("proxy_key_contract.json")).unwrap();
     assert!(cases.len() >= 4);
     for case in cases {
@@ -426,16 +426,16 @@ fn proxy_key_matches_the_proxy_key_contract_sample() {
     }
 }
 
-/// 手元の cache の答え 1 つを読む(どれでもよい — 同じ偽の上流の答えなので費用の欄は同じ)。
+/// Read one answer in the local cache (any will do — they are answers of the same fake upstream, so the cost field is the same).
 fn one_cached_answer(root: &Path) -> Value {
     let cache = root.join(".doeff-linter").join("semantic-cache");
-    let first = std::fs::read_dir(&cache).unwrap().next().expect("cache に答えが在る").unwrap().path();
+    let first = std::fs::read_dir(&cache).unwrap().next().expect("an answer exists in the cache").unwrap().path();
     serde_json::from_str(&std::fs::read_to_string(first).unwrap()).unwrap()
 }
 
 #[test]
 fn the_cache_records_the_upstream_cost_and_a_remembered_answer_is_not_charged_again() {
-    // 上流が答えに費用を載せれば、linter は今回の費用に数え、手元の cache の答えにも費用が載る。
+    // If upstream attaches a cost to the answer, the linter counts it in this run's cost, and the cost is also attached to the answer in the local cache.
     let proxy = fake_proxy_with_cost(Some("0.00004"));
     let first = repo(FILES, &proxy.url);
     let (asked, _) = run(first.path(), &["--semantic-all"], None, &[]);
@@ -446,8 +446,8 @@ fn the_cache_records_the_upstream_cost_and_a_remembered_answer_is_not_charged_ag
     assert_eq!((summary["cost_unreported"].as_u64(), summary["remembered"].as_u64()), (Some(0), Some(0)), "{}", summary);
     assert_eq!((summary["input_tokens"].as_u64(), summary["output_tokens"].as_u64()), (Some(100 * calls), Some(2 * calls)), "{}", summary);
     assert_eq!(one_cached_answer(first.path())["reported_cost_usd"], 0.00004);
-    // 別の worktree が同じ定義を問うと、proxy の覚え(x-jev-proxy: hit)で答える — 上流を呼んでいないので、その回の費用と token は
-    // 数えない(較正は no-cache で上流を呼ぶので数える)。
+    // When another worktree asks the same definition, the proxy answers from its memory (x-jev-proxy: hit) — upstream is not called, so that run's cost and tokens are
+    // not counted (calibration calls upstream with no-cache, so it is counted).
     proxy.take();
     let second = repo(FILES, &proxy.url);
     let (again, _) = run(second.path(), &["--semantic-all"], None, &[]);
@@ -462,8 +462,8 @@ fn the_cache_records_the_upstream_cost_and_a_remembered_answer_is_not_charged_ag
 
 #[test]
 fn an_upstream_without_a_cost_is_counted_as_unreported_not_as_zero() {
-    // TypeSafe 直のように上流が費用を載せない答えは、費用 0 ではなく「不明」に数え、cache にも 0 を書かない。
-    // token 数(usage)は数える。
+    // An answer where upstream attaches no cost, as with TypeSafe directly, is counted as "unknown" rather than cost 0, and 0 is not written to the cache either.
+    // The token count (usage) is counted.
     let proxy = fake_proxy();
     let dir = repo(FILES, &proxy.url);
     let (asked, _) = run(dir.path(), &["--semantic-all"], None, &[]);
@@ -477,8 +477,8 @@ fn an_upstream_without_a_cost_is_counted_as_unreported_not_as_zero() {
 
 #[test]
 fn each_question_names_its_caller_and_rule_in_the_caller_header() {
-    // proxy が問いを呼び手と規則で分けて数えられるよう、問いごとに見出し x-jev-caller で `doeff-linter/<規則>` を名乗る。較正は
-    // `/calibration` を付けて規則の問いと分け、覚えている時だけの問いの束は `doeff-linter/peek`。
+    // So that the proxy can count queries separately by caller and rule, each query declares `doeff-linter/<rule>` in the header x-jev-caller. Calibration
+    // is distinguished from rule queries by appending `/calibration`, and the bundle of "only when remembered" queries is `doeff-linter/peek`.
     let proxy = fake_proxy();
     let first = repo(FILES, &proxy.url);
     let _ = run(first.path(), &["--semantic-all"], None, &[]);

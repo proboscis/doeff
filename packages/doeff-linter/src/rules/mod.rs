@@ -1,7 +1,7 @@
 //! Lint rules for doeff-linter
 
 pub mod base;
-// DOEFF002 が class の継承元を読む部品(規則ではない)
+// The part DOEFF002 uses to read a class's base classes (not a rule)
 pub mod class_inheritance;
 
 // Rule implementations
@@ -79,8 +79,8 @@ pub fn get_rules_by_id() -> HashMap<String, Box<dyn LintRule>> {
         .collect()
 }
 
-// 規則の ID の全部(この Python の規則と層の規則)・repo 全体が要るかの名乗り・`--list-rules` は config.rs(層の規則 project::rule を読む
-// 側)に在る — ここが project を読むと、project/settings.rs がここの get_all_rules を読むので依存の輪になる。
+// All rule IDs (these Python rules plus the layer rules), the declaration of whether a rule needs the whole repo, and `--list-rules` live in config.rs (the side that reads the layer rules, project::rule)
+// — if this module read project, project/settings.rs reads get_all_rules here, which would make a dependency cycle.
 
 /// Get rules filtered by enabled IDs
 pub fn get_enabled_rules(enabled_ids: Option<&[String]>) -> Vec<Box<dyn LintRule>> {

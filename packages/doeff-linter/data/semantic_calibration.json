@@ -1,5 +1,5 @@
 {
- "about": "意味の規則の較正の見張り — jev-lint の labels.json の札で、際どくない正例と反例(agora-controllers 379ebcdd の定義の写し)。正例は p >= 0.8、反例は p <= 0.2 に入るはず(試作の 4 回の実測: 正例 0.91〜0.97・反例 0.03〜0.06)。 DOEFF204 の 2 例は合成(operator の例 — client を欄に持つ窓口と、Point2D の値の class)。比べるのは external-world の確率。 DOEFF205 の 2 例は agora-controllers 068dee21 の写し(正例 = 形の検めと判断が混ざった decide-tag・反例 = 型のある盤の上の純粋な判断 card-tags-of)。比べるのは mixed の確率。",
+ "about": "Calibration watch for the semantic rules — non-borderline positive and negative examples from jev-lint's labels.json labels (copies of definitions from agora-controllers 379ebcdd). Positives should land at p >= 0.8 and negatives at p <= 0.2 (4 prototype measurements: positives 0.91-0.97, negatives 0.03-0.06). The 2 DOEFF204 examples are synthetic (operator's examples — a front desk that holds a client in a field, and a value class Point2D). What is compared is the external-world probability. The 2 DOEFF205 examples are copies from agora-controllers 068dee21 (positive = decide-tag, where shape checking and judgment are mixed; negative = card-tags-of, a pure judgment over a typed board). What is compared is the mixed probability. The Japanese in the \"source\" fields is kept as in the original definitions (the examples are measured as-is).",
  "items": [
   {
    "rule": "DOEFF201",

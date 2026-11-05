@@ -1,17 +1,17 @@
-//! DOEFF142: handler は接続の object や書き換える店を引数で受け取らない(#1366 — 元は agora-controllers の
-//! 一時の検 handler_arguments_rules.hy・#686)。
+//! DOEFF142: a handler does not take connection objects or a rewritable store as arguments (#1366 — originally the
+//! temporary check handler_arguments_rules.hy in agora-controllers, #686).
 //!
-//! defhandler の引数の並び `[ … ]` の 1 つずつを分ける:
-//!   * `client`    — 型の名の末尾が Client / Connection / Pool / Engine、または名が client / conn / connection / …-client / …-conn
-//!   * `container` — 型が可変の入れ物(dict / list / set / bytearray / MutableMapping … — `(get dict …)` を含む)
-//!   * `object`    — 型が可変の object: repo の class の索引で frozen でない class(frozen の dataclass・frozen の設定・Enum・
-//!                   NamedTuple・defrecord は値)、または索引に無い型(資源の object)
-//!   * `named`     — 型の注記が無く、名が店を指す(architecture.hy の `:store-names` / `:store-suffixes`)
-//! 値の引数(str / int / … / Path / tuple / frozenset / Callable と frozen の class)は数えない。
+//! Splits the defhandler argument list `[ … ]` into individual arguments:
+//!   * `client`    — the type name ends with Client / Connection / Pool / Engine, or the name is client / conn / connection / …-client / …-conn
+//!   * `container` — the type is a mutable container (dict / list / set / bytearray / MutableMapping … — including `(get dict …)`)
+//!   * `object`    — the type is a mutable object: a class in the repo's class index that is not frozen (frozen dataclass, frozen config, Enum,
+//!                   NamedTuple and defrecord are values), or a type missing from the index (a resource object)
+//!   * `named`     — there is no type annotation and the name points to a store (`:store-names` / `:store-suffixes` in architecture.hy)
+//! Value arguments (str / int / … / Path / tuple / frozenset / Callable and frozen classes) are not counted.
 //!
-//! 判定は渡した file だけで決まる。例外は `object` の「class が frozen か」で、repo の Hy と Python の class の索引を file ごとの
-//! キャッシュ(facts_cache)で引く — 1 file の実行でも変わった file だけ読み直す。母集団・店の名・残す理由の註の印は repo の宣言
-//! (`:handler-arguments`)から読み、ここには Python の一般の名だけを置く。
+//! The verdict depends only on the file passed in. The exception is `object`'s "is the class frozen": the index of the repo's Hy and Python classes is looked up through a per-file
+//! cache (facts_cache) — even a single-file run re-reads only the changed files. The population, the store names and the marker for the keep-reason comment are read from the repo declaration
+//! (`:handler-arguments`); only generic Python names are placed here.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ use super::hy_files::{self, WalkRules};
 use super::facts::ByteSpan;
 use super::paths::glob_matches;
 
-/// 引数の種類(閉じた集合)。
+/// Kind of argument (a closed set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgKind {
     Client,
@@ -49,36 +49,36 @@ impl ArgKind {
     }
 }
 
-/// 当たり 1 件(どの handler の、どの引数)。
+/// One finding (which argument of which handler).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArgFinding {
     pub handler: String,
     pub param: String,
     pub kind: ArgKind,
-    /// 型の注記の綴り(無ければ空)。
+    /// Spelling of the type annotation (empty if none).
     pub type_text: String,
     pub span: ByteSpan,
 }
 
 impl ArgFinding {
-    /// 登録簿の鍵の細目(`<handler>::<引数>`)。
+    /// Detail of the registry key (`<handler>::<argument>`).
     pub fn detail(&self) -> String {
         format!("{}::{}", self.handler, self.param)
     }
 }
 
-/// class の名と frozen か(file ごとのキャッシュに置く)。
+/// Class name and whether it is frozen (kept in the per-file cache).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassFrozen {
     pub name: String,
     pub frozen: bool,
 }
 
-/// class の名 → frozen か(同じ名が frozen でない所に 1 つでもあれば frozen でない)。
+/// Class name → frozen? (a name is not frozen if even one non-frozen class has the same name).
 pub type ClassIndex = HashMap<String, bool>;
 
-/// class の名が値(frozen)か引ける物 — repo 全体の索引(`ClassIndex`)か、引かれた時に作る索引(`Deferred<ClassIndex>`・1 file の実行)。
-/// 索引に無い名は値でない。
+/// Something that can look up whether a class name is a value (frozen) — the repo-wide index (`ClassIndex`), or an index built on demand (`Deferred<ClassIndex>`, single-file run).
+/// A name missing from the index is not a value.
 pub trait ClassLookup {
     fn is_value(&self, name: &str) -> bool;
 }
@@ -108,10 +108,10 @@ const VALUE_TYPES: &[&str] = &[
 ];
 const SKIP_ATOMS: &[&str] = &["&optional", "&rest", "&kwonly", "&kwargs", "*", "/"];
 const VALUE_BASES: &[&str] = &["Enum", "StrEnum", "IntEnum", "NamedTuple", "enum.Enum"];
-/// 歩かない dir(隠し dir と生成物)。
+/// Directories not to walk (hidden directories and generated output).
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
-/// 引数 1 つ(名と型の注記)。
+/// One argument (name and type annotation).
 struct Param<'a> {
     name: String,
     annotation: Option<&'a Form>,
@@ -134,7 +134,7 @@ fn read_forms(source: &str) -> Vec<Form> {
     Reader::new(source, 0, source.len()).read_all()
 }
 
-/// 型の注記 → 見る名の列: 名はそのまま・`(get T …)` は T・`(| A B)` は枝ごと・文字列の型は `|` で分けた枝。
+/// Type annotation → list of names to inspect: a name as is; `(get T …)` is T; `(| A B)` per branch; a string type is its branches split by `|`.
 fn type_bases(source: &str, form: &Form) -> Vec<String> {
     match &form.node {
         Node::Symbol => vec![text(source, form).to_string()],
@@ -152,7 +152,7 @@ fn type_bases(source: &str, form: &Form) -> Vec<String> {
     }
 }
 
-/// 引数の並び `[ … ]` → 引数の列(`#^` の注記・`[名 既定値]`・`(annotate 名 型)`・`#*` / `#**` の可変長を読む)。
+/// Argument list `[ … ]` → list of arguments (reads `#^` annotations, `[name default]`, `(annotate name type)` and `#*` / `#**` variadics).
 fn params_of<'a>(source: &str, items: &'a [Form]) -> Vec<Param<'a>> {
     let mut out = Vec::new();
     for item in items {
@@ -183,7 +183,7 @@ fn params_of<'a>(source: &str, items: &'a [Form]) -> Vec<Param<'a>> {
     out
 }
 
-/// 引数 1 つ → 種類(値の引数は None)。
+/// One argument → kind (None for a value argument).
 fn kind_of(source: &str, param: &Param, decl: &HandlerArguments, classes: &dyn ClassLookup) -> Option<ArgKind> {
     let name = param.name.as_str();
     let bases: Vec<String> = param.annotation.map(|a| type_bases(source, a)).unwrap_or_default();
@@ -205,7 +205,7 @@ fn kind_of(source: &str, param: &Param, decl: &HandlerArguments, classes: &dyn C
     mutable.then_some(ArgKind::Object)
 }
 
-/// form の木の中の `(defhandler 名 [引数] …)` を全部(入れ子も)。
+/// All `(defhandler name [args] …)` in the form tree (including nested ones).
 fn handler_forms<'a>(source: &str, forms: &'a [Form], out: &mut Vec<&'a Form>) {
     for form in forms {
         let items = match &form.node {
@@ -223,7 +223,7 @@ fn handler_forms<'a>(source: &str, forms: &'a [Form], out: &mut Vec<&'a Form>) {
     }
 }
 
-/// 1 file の当たり。本文(`(defhandler` から次の最上位の form まで — 後ろの註を含む)に残す理由の印が在る handler は数えない。
+/// Findings of one file. A handler whose body (from `(defhandler` to the next top-level form — including trailing comments) has the keep-reason marker is not counted.
 pub fn findings_in(source: &str, decl: &HandlerArguments, classes: &dyn ClassLookup) -> Vec<ArgFinding> {
     let forms = read_forms(source);
     let tops: Vec<usize> = forms.iter().map(|f| f.span.start).collect();
@@ -248,12 +248,12 @@ pub fn findings_in(source: &str, decl: &HandlerArguments, classes: &dyn ClassLoo
     out
 }
 
-/// file の綴りが母集団に入るか(:files のどれかに当たり、:exclude のどれにも当たらない)。
+/// Whether the file's path falls in the population (matches some of :files and none of :exclude).
 pub fn in_population(rel: &str, decl: &HandlerArguments) -> bool {
     rel.ends_with(".hy") && decl.files.iter().any(|p| glob_matches(p, rel)) && !decl.exclude.iter().any(|p| glob_matches(p, rel))
 }
 
-/// root の下の file(隠し dir と生成物を歩かない)を拡張子で選ぶ。
+/// Select files under root by extension (not walking hidden directories and generated output).
 fn walk(root: &Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
     let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|entry| {
         let name = entry.file_name().to_string_lossy();
@@ -269,13 +269,13 @@ fn walk(root: &Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// 母集団の file(全体の実行)。
+/// Population files (whole-repo run).
 pub fn population(root: &Path, decl: &HandlerArguments) -> Vec<(String, PathBuf)> {
     walk(root, &["hy"]).into_iter().filter(|(rel, _)| in_population(rel, decl)).collect()
 }
 
-/// Hy の source の class → frozen か。defclass は decorator の `:frozen True` か、基底が Enum / NamedTuple の類なら値。
-/// defrecord(凍結の record)と `(val|setv 名 (get Callable …))` の別名は値。
+/// Hy source: class → frozen? A defclass is a value if its decorator has `:frozen True` or its base is Enum / NamedTuple or the like.
+/// defrecord (frozen record) and the alias `(val|setv name (get Callable …))` are values.
 pub fn hy_classes(source: &str) -> Vec<ClassFrozen> {
     fn visit(source: &str, forms: &[Form], out: &mut Vec<ClassFrozen>) {
         for form in forms {
@@ -319,7 +319,7 @@ pub fn hy_classes(source: &str) -> Vec<ClassFrozen> {
     out
 }
 
-/// Python の source の class → frozen か(frozen=True の decorator・Enum / NamedTuple の基底・本文の frozen の設定)。読めなければ空。
+/// Python source: class → frozen? (frozen=True decorator, Enum / NamedTuple base, frozen setting in the body). Empty if unreadable.
 pub fn py_classes(source: &str) -> Vec<ClassFrozen> {
     fn slice<'s>(source: &'s str, range: rustpython_parser::text_size::TextRange) -> &'s str {
         source.get(usize::from(range.start())..usize::from(range.end())).unwrap_or("")
@@ -357,7 +357,7 @@ pub fn py_classes(source: &str) -> Vec<ClassFrozen> {
     out
 }
 
-/// repo の Hy と Python の class の索引(file ごとのキャッシュ — 変わった file だけ読み直す)。overlay = 1 file の実行の保存前の中身。
+/// Index of the repo's Hy and Python classes (per-file cache — only changed files are re-read). overlay = the pre-save content for a single-file run.
 pub fn class_index(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
     let files = walk(root, &["hy", "py"]);
     let found: Vec<(String, Vec<ClassFrozen>)> = super::facts_cache::per_file(root, "handler-argument-classes", &files, |rel, path| {
@@ -367,7 +367,7 @@ pub fn class_index(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
     index_of(&found, overlay)
 }
 
-/// file 1 つの class(Hy か Python かは根からの path で決める)。
+/// Classes of one file (Hy or Python is decided by the path from the root).
 fn classes_in(rel: &str, source: &str) -> Vec<ClassFrozen> {
     if rel.ends_with(".hy") {
         hy_classes(source)
@@ -376,7 +376,7 @@ fn classes_in(rel: &str, source: &str) -> Vec<ClassFrozen> {
     }
 }
 
-/// 索引に入れる file の歩き方(`walk` と同じ集まり — 隠し dir と生成物の dir を降りず、Hy と Python の file を拾う)。
+/// How to walk the files that go into the index (the same set as `walk` — does not descend into hidden or generated directories, and picks up Hy and Python files).
 const CLASS_WALK: WalkRules = WalkRules { descend: class_descends, take: class_takes };
 
 fn class_descends(name: &str) -> bool {
@@ -387,9 +387,9 @@ fn class_takes(extension: &str) -> bool {
     extension == "hy" || extension == "py"
 }
 
-/// 1 file の実行の class の索引(答えは `class_index` と同じ)。repo の Hy と Python の file を、dir を開く待ちを重ねて歩き(`walk` は順に歩くので、冷えた
-/// 作業木で約 2000 の dir を 1 つずつ待つ)、変わっていない file の class は git の blob の id で引いて中身を読まない(`ChunkedFacts`)。
-/// 同じ中身でも Hy と Python では読み方が違うので、覚えの種類を分ける。
+/// Class index for a single-file run (the answer is the same as `class_index`). Walks the repo's Hy and Python files with directory-open waits overlapped (`walk` goes one at a time, so on a cold
+/// worktree it would wait for about 2000 directories one by one), and looks up the classes of unchanged files by git blob id without reading the content (`ChunkedFacts`).
+/// The same content is read differently as Hy and as Python, so the cache kinds are kept separate.
 pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
     let hy = ChunkedFacts::<Vec<ClassFrozen>>::open(root, "class-frozen-hy", |rel| rel.ends_with(".hy") && hy_files::walks_to(&CLASS_WALK, rel));
     let py = ChunkedFacts::<Vec<ClassFrozen>>::open(root, "class-frozen-py", |rel| rel.ends_with(".py") && hy_files::walks_to(&CLASS_WALK, rel));
@@ -416,7 +416,7 @@ pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> Class
     };
     let found: Vec<(String, Vec<ClassFrozen>)> = crate::timing::timed("handler-argument-classes.scan", || match hy_files::walk_reading_with(root, &CLASS_WALK, &classes_of) {
         Some(walked) => walked.into_iter().filter_map(|(_, found)| found).collect(),
-        // 根が dir として開けない時は、歩く物(`walk`)に任せる。
+        // If the root cannot be opened as a directory, leave it to the walker (`walk`).
         None => walk(root, &["hy", "py"]).iter().filter_map(|(_, path)| classes_of(path)).collect(),
     });
     for memory in [&hy, &py].into_iter().flatten() {
@@ -426,7 +426,7 @@ pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> Class
     index_of(&found, overlay)
 }
 
-/// file ごとの class から索引を作る(同じ名が frozen でない class が 1 つでも在れば frozen でない)。overlay の file は保存前の中身で数える。
+/// Build the index from per-file classes (a name is not frozen if even one class with that name is not frozen). Overlay files are counted with their pre-save content.
 fn index_of(found: &[(String, Vec<ClassFrozen>)], overlay: Option<(&str, &str)>) -> ClassIndex {
     let mut index = ClassIndex::new();
     let mut add = |classes: &[ClassFrozen]| {
@@ -459,7 +459,7 @@ mod tests {
             exclude: vec!["**/tests/**".into()],
             store_names: vec!["state".into(), "store".into()],
             store_suffixes: vec!["-store".into()],
-            keep_mark: Some("引数に残す理由:".into()),
+            keep_mark: Some("Reason to keep as argument:".into()),
             value_types: vec!["Settings".into()],
         }
     }
@@ -499,7 +499,7 @@ mod tests {
   None)
 
 (defhandler kept [#^ (get dict str int) table]
-  ;; 引数に残す理由: 検が中身を組んでから渡す店
+  ;; Reason to keep as argument: a store the check builds the content of before passing it
   None)
 "#;
         let classes: ClassIndex = hy_classes(source).into_iter().map(|c| (c.name, c.frozen)).collect();
@@ -533,8 +533,8 @@ mod tests {
         assert!(!in_population("scripts/x.hy", &decl()));
     }
 
-    /// 1 file の実行の索引(並べて歩き、blob の id で引く)は、`class_index`(順に歩き、file ごとのキャッシュ)と同じ答え — 隠し dir・生成物の dir・
-    /// symlink・Hy でも Python でもない file・同じ名の frozen と frozen でない class・保存前の中身(overlay)も。
+    /// The single-file-run index (walks in parallel, looks up by blob id) gives the same answer as `class_index` (walks in order, per-file cache) — including hidden dirs, generated dirs,
+    /// symlinks, files that are neither Hy nor Python, same-named frozen and non-frozen classes, and pre-save content (overlay).
     #[test]
     fn the_index_made_while_walking_in_parallel_equals_the_plain_index() {
         let dir = tempfile::tempdir().unwrap();
@@ -557,7 +557,7 @@ mod tests {
         std::os::unix::fs::symlink(dir.path().join("app"), dir.path().join("linked")).unwrap();
         for overlay in [None, Some(("app/w.hy", "(defclass [(dataclass :frozen True)] Written [])\n"))] {
             let plain = class_index(dir.path(), overlay);
-            assert!(plain.len() >= 6 && plain.get("Cfg") == Some(&false) && plain.get("Settings") == Some(&true), "検の材料が足りない: {plain:?}");
+            assert!(plain.len() >= 6 && plain.get("Cfg") == Some(&false) && plain.get("Settings") == Some(&true), "not enough check material: {plain:?}");
             assert_eq!(class_index_by_blobs(dir.path(), overlay), plain);
         }
     }

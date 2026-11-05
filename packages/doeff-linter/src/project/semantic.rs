@@ -1,27 +1,27 @@
-//! 意味の規則(DOEFF201・202)— 決定的な規則では読めない「コードが何をしているか」を Jev(TypeSafe の System One の model)に問う。
-//! 宛先(URL・model・通信の形・API キー)の決め方は doeff の packages/doeff-jev/src/doeff_jev/_target.py の写し(下の resolve_target)、
-//! 通信の形(direct = TypeSafe の /v1/systemone・gateway = Vercel AI Gateway の evaluation-model v4)は同じ package の wire.py の写し。
+//! Semantic rules (DOEFF201, 202) — ask Jev (TypeSafe's System One model) about "what the code is doing", which deterministic rules cannot read.
+//! How the target (URL, model, wire form, API key) is decided is a copy of doeff's packages/doeff-jev/src/doeff_jev/_target.py (resolve_target below);
+//! the wire forms (direct = TypeSafe's /v1/systemone, gateway = Vercel AI Gateway's evaluation-model v4) are a copy of wire.py in the same package.
 //!
-//! - 問いの文(instructions・criteria)はこの file の 1 か所の宣言(英語のまま — jev-lint の questions.py の J2・J3 と同じ内容)。
-//!   DOEFF201・202・205 の問いには、repo の architecture.hy の :semantic-lines(どこからが違反かの線引きの文と鳴る例・鳴らない例)を
-//!   instructions の lines に入れる(SemanticQuestion::wire_with — 文と例の定義元は architecture.hy)。
-//! - gateway を呼ぶのは `--semantic` / `--semantic-all` の時だけ。決定的な規則の実行(エディタの保存ごと・hook)は cache を読むだけ。
-//! - cache の答えが無い定義は違反にせず「未判定」の数に出す(合格に倒さない)。
-//! - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定でも選べない)。
-//! - 較正の見張り: 問いを撃つ実行ごとに、既知の正例と反例(data/semantic_calibration.json)を 1 回ずつ問い、確率が幅の外なら cache を捨てて警告する。
-//! API キーの値は、設定・出力・log・cache の鍵に書かない。
+//! - The question text (instructions, criteria) is declared in one place in this file (kept in English — same content as J2 and J3 in jev-lint's questions.py).
+//!   For the DOEFF201, 202 and 205 questions, the repo's architecture.hy :semantic-lines (sentences for where a violation begins, plus firing and silent examples) are put
+//!   into the `lines` of instructions (SemanticQuestion::wire_with — architecture.hy is the source of the sentences and examples).
+//! - The gateway is called only for `--semantic` / `--semantic-all`. Runs of the deterministic rules (every editor save, hooks) only read the cache.
+//! - A definition with no cached answer is not a violation; it is counted as "undecided" (never defaults to pass).
+//! - Severity is only warning or info (no error until hit/miss rates are measured — it cannot be chosen in settings either).
+//! - Calibration watch: every run that fires questions asks one known positive and one known negative example (data/semantic_calibration.json) once each; if the probability is outside the range, the cache is discarded and a warning is shown.
+//! API key values are never written to settings, output, logs, or cache keys.
 //!
-//! Jev の呼び出しを覚える代理(repo proboscis/jev-proxy — 2026-10-01 に doeff の packages/doeff-jev-proxy から移した):
-//! - 宛先は repo ごとの設定 `[tool.doeff-linter.semantic] proxy_url` で向ける(機体全体の環境変数にしない — 会社の repo は向けない)。
-//!   env の JEV_BASE_URL が在ればそちらが勝つ。proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は
-//!   呼び手の身元を問わない・2026-10-02 に proxy の token を外した)。
-//! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を代理に「覚えている時だけ」問い、返った答えを手元の
-//!   cache に書く。本物の Jev は呼ばない。問いは定義 1 つずつではなく、代理の鍵(proxy_key — 本文を正規化した sha256)の束
-//!   (POST <proxy_url>/peek・PEEK_BATCH 個ずつ)で撃つ — 定義が数千ある repo でも往復が数回で済み、本文を送らない。
-//!   代理に届かない・時間切れ(proxy_peek_timeout_ms・既定 DEFAULT_PROXY_PEEK_TIMEOUT_MS)の時は手元の cache だけで動く。
-//! - 較正の見張りの問いは覚えを使わない(Cache-Control: no-cache — model の中身が変わったことを代理の覚えが隠さないため)。
-//! - `--semantic-changed` は、指定の file のうち手元の cache に答えの無い定義(= 中身が変わった定義)だけを問う。
-//!   読み取りで壊れた箇所を含む定義(書きかけ)はどの実行でも問わない。
+//! Proxy that remembers Jev calls (repo proboscis/jev-proxy — moved from doeff's packages/doeff-jev-proxy on 2026-10-01):
+//! - The target is pointed at by the per-repo setting `[tool.doeff-linter.semantic] proxy_url` (not a machine-wide environment variable — company repos are not pointed at it).
+//!   If env JEV_BASE_URL is set, it wins. No Authorization header is sent to the proxy (nor the TypeSafe key — the proxy does not
+//!   ask who the caller is; the proxy token was removed on 2026-10-02).
+//! - A full run of the deterministic rules (hook, run without arguments) asks the proxy, "only if it remembers", about definitions missing from the local cache, and writes the returned answers into the local
+//!   cache. The real Jev is not called. Questions are not sent per definition but in batches of proxy keys (proxy_key — sha256 of the normalized body)
+//!   (POST <proxy_url>/peek, PEEK_BATCH at a time) — even a repo with thousands of definitions needs only a few round trips, and no body is sent.
+//!   If the proxy is unreachable or times out (proxy_peek_timeout_ms; default DEFAULT_PROXY_PEEK_TIMEOUT_MS), only the local cache is used.
+//! - Calibration watch questions do not use the proxy's memory (Cache-Control: no-cache — so the proxy's memory does not hide a change in the model itself).
+//! - `--semantic-changed` asks only about definitions in the given files that have no answer in the local cache (= definitions whose content changed).
+//!   Definitions containing a spot broken by the reader (work in progress) are never asked about in any run.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -36,57 +36,57 @@ use sha2::{Digest, Sha256};
 
 use super::layers::{LayerDescription, LayerId};
 
-/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …] :silent [例 …])`)。
-/// どこからが違反かの文と、鳴る例・鳴らない例を、その規則の問いの instructions に入れる。文と例は repo の宣言に
-/// だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。
+/// Definition of one boundary of a rule asked of Jev (`(line "name" :rules [DOEFF201 …] :text "…" :fires [example …] :silent [example …])` in `:semantic-lines`).
+/// The sentence for where a violation begins, plus firing and silent examples, go into the instructions of that rule's question. The sentence and examples exist
+/// only in the repo's declaration; the linter holds none (the single source is architecture.hy).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticLine {
-    /// 線引きの名(問いに名として載る — 例 「線引き 1」)。
+    /// Name of the boundary (appears in the question as a name — e.g. "line 1").
     pub name: String,
-    /// この線引きを入れる問い(DOEFF201・202・205 のどれか — 閉じた集合は SemanticQuestion::LINED)。
+    /// The questions this boundary goes into (one of DOEFF201, 202, 205 — the closed set is SemanticQuestion::LINED).
     pub rules: Vec<SemanticQuestion>,
-    /// 線引きの文(空にしない)。
+    /// Sentence of the boundary (must not be empty).
     pub text: String,
-    /// この線引きで違反になる例(省いてよい)。
+    /// Examples that are violations under this boundary (may be omitted).
     pub fires: Vec<LineExample>,
-    /// この線引きで違反にならない例(省いてよい)。
+    /// Examples that are not violations under this boundary (may be omitted).
     pub silent: Vec<LineExample>,
 }
 
-/// 線引きの例 1 つ(`"<code>"` か `{:code "<code>" :why "…"}`)。why = その例がなぜ鳴る / 鳴らないかの 1 文で、問いに
-/// code と組で載る。例が code だけだと線引きの文の文言に負けた(send-task・list-limit-of・join-chat は自分自身が鳴らない例として問いに
-/// 載りながら高く出た・#1944)。
+/// One example of a boundary (`"<code>"` or `{:code "<code>" :why "…"}`). why = one sentence on why the example fires / stays silent, put into the question
+/// paired with the code. With code alone, the example lost to the wording of the boundary sentence (send-task, list-limit-of and join-chat were listed in the question as examples that
+/// should not fire, yet scored high; #1944).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineExample {
-    /// 例の code(空にしない)。
+    /// Code of the example (must not be empty).
     pub code: String,
-    /// なぜ鳴る / 鳴らないかの 1 文(書かなければ None — 空の文は設定の誤り)。
+    /// One sentence on why it fires / stays silent (None if not written — an empty sentence is a settings error).
     pub why: Option<String>,
 }
 
-/// 意味の問いの種類(閉じた集合)。
+/// Kind of semantic question (closed set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SemanticQuestion {
-    /// J2: 定義が要求の言い換えを越えて業務の判断をしているか(protocol の層に当てる)。
+    /// J2: whether the definition makes business decisions beyond rephrasing a request (applied to the protocol layer).
     BusinessDecision,
-    /// J3: 定義が通信の手段を知っているか(core の層に当てる)。
+    /// J3: whether the definition knows the means of communication (applied to the core layer).
     TransportKnowledge,
-    /// deff が本当に素の関数でなければならない理由を、architecture.hy の種類の一覧 + none から選ぶ(Choice)。
+    /// Choose, from architecture.hy's list of kinds plus none, the reason a deff truly has to be a plain function (Choice).
     PlainCallable,
-    /// 処理を持つ method のある class が value / external-world / stateful / other のどれか(Choice・DOEFF204)。
+    /// Whether a class with methods that do work is value / external-world / stateful / other (Choice, DOEFF204).
     ClassRole,
-    /// 役が judgment / program の定義が、入力の形の検めと業務の判断を混ぜているか(Choice・DOEFF205)。
+    /// Whether a definition whose role is judgment / program mixes checking the shape of input with business decisions (Choice, DOEFF205).
     MixedConcerns,
 }
 
 impl SemanticQuestion {
-    /// 全部の問い。
+    /// All questions.
     pub const ALL: [SemanticQuestion; 2] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge];
 
-    /// architecture.hy の :semantic-lines で線引きを入れられる問い(DOEFF201・202・205)。
+    /// Questions into which :semantic-lines of architecture.hy can put boundaries (DOEFF201, 202, 205).
     pub const LINED: [SemanticQuestion; 3] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge, SemanticQuestion::MixedConcerns];
 
-    /// 規則の ID(DOEFF201 …)。
+    /// Rule ID (DOEFF201 …).
     pub fn id(self) -> &'static str {
         match self {
             SemanticQuestion::BusinessDecision => "DOEFF201",
@@ -97,12 +97,12 @@ impl SemanticQuestion {
         }
     }
 
-    /// 線引きを入れた問い— architecture.hy の :semantic-lines のうちこの問いに当たる線引きの名・文・鳴る例・鳴らない例を
-    /// instructions に入れ、線引きの読み方と答えの向きを lines_note に書く。例は `{"code", "why"}` の組(why を書いた例だけ why を持つ・#1995)で、
-    /// code は定義の source と同じく :tags を消して渡す(申告に引きずられないため)。
-    /// instructions は鍵の object ではなく、1 つの鍵の object を宣言の順に並べた列で送る(#1995 — object の鍵は名の順に並び、DOEFF205 では
-    /// 一般の注が線引きの後ろに来ていた): 問いの部品(instruction_parts の順)→ lines_note → lines。線引きが最後に来て一般の文に勝つ順になる。
-    /// 当たる線引きが無ければ wire() のまま — 宣言の無い repo の問いと cache のキーは変わらない。
+    /// Question with the boundaries put in — puts the name, sentence, firing examples and silent examples of the :semantic-lines entries matching this question into
+    /// instructions, and writes how to read the boundaries and the direction of the answer into lines_note. An example is a `{"code", "why"}` pair (only examples with a why have it; #1995), and
+    /// code is passed with :tags removed, as with the definition's source (so it is not dragged by the declaration).
+    /// instructions is sent not as an object of keys but as a list of single-key objects in declaration order (#1995 — object keys sort by name, and for DOEFF205
+    /// the general note came after the boundaries): the question's parts (in instruction_parts order) → lines_note → lines. The boundaries come last, so they win over the general sentences.
+    /// If no boundary matches, it stays as wire() — the question and cache key of a repo with no declaration do not change.
     pub fn wire_with(self, lines: &[SemanticLine]) -> Value {
         let examples = |all: &[LineExample]| -> Vec<Value> {
             all.iter()
@@ -138,9 +138,9 @@ impl SemanticQuestion {
         question
     }
 
-    /// 線引きを入れる問い(LINED)の instructions の部品を宣言の順に(鍵・中身 — 問いの文は英語でここ 1 か所)。wire() は部品を鍵の object に
-    /// して送り、wire_with はこの順の列で送る。
-    /// 線引きを入れない問い(DOEFF203・204)の instructions は wire() の 1 か所に在り、ここは空。
+    /// Parts of the instructions of the questions that take boundaries (LINED), in declaration order (key, content — the question text is in English, in this one place). wire() sends the parts as an object of keys,
+    /// and wire_with sends them as a list in this order.
+    /// The instructions of questions that take no boundaries (DOEFF203, 204) live in one place in wire(); this is empty for them.
     fn instruction_parts(self) -> Vec<(&'static str, Value)> {
         match self {
             SemanticQuestion::BusinessDecision => vec![
@@ -164,9 +164,9 @@ impl SemanticQuestion {
                     ]),
                 ),
             ],
-            // 枠は 2 つを同じ重さで問う: 通信の手段と、外の data の型の無い形(dict・JSON の値を欄名で読む・組む)。前の枠は
-            // 通信の手段だけで、json.loads を書かない欄名の読みを repo の線引きと例で足しても、似た形の別の定義へ広がらなかった(#2044・#2052)。
-            // 欄の既定値は「欄名で読む」の内に数えるだけで、既定に倒すのが誰の仕事かは言わない(それは DOEFF201 の判断の問い)。
+            // The frame asks about two things with equal weight: the means of communication, and the untyped shape of outside data (dicts, reading or building JSON values by field name). The previous frame
+            // covered only the means of communication, so even adding a field-name read that does not write json.loads via the repo's boundary and examples did not spread to other definitions of similar shape (#2044, #2052).
+            // A default for a field is merely counted within "reading by field name"; who is responsible for falling back to the default is not stated (that is the DOEFF201 judgment question).
             SemanticQuestion::TransportKnowledge => vec![
                 (
                     "question",
@@ -192,8 +192,8 @@ impl SemanticQuestion {
                     ]),
                 ),
             ],
-            // 注は線引き 4(agora-controllers の architecture.hy)の例外と同じ文(#1995 — 前の注は isinstance と dict の読みを例外なしに形の確認と
-            // 言い、線引きと食い違った: union の枝分けの _on-text・模擬の世界の dict の list-nodes・任せた確認の答えで断る open-chat-room が高く出た)。
+            // The note is the same sentence as the exception of boundary 4 (agora-controllers' architecture.hy) (#1995 — the previous note called isinstance and dict reads shape checking without exception, which
+            // contradicted the boundary: _on-text that branches on union cases, list-nodes on a dict of a mock world, and open-chat-room that refuses with the answer of a delegated check scored high).
             SemanticQuestion::MixedConcerns => vec![
                 ("question", json!("What does the definition in `definition.source` do? `layer` describes what code in its layer should know and not know.")),
                 (
@@ -205,12 +205,12 @@ impl SemanticQuestion {
         }
     }
 
-    /// 部品を鍵の object にした instructions。
+    /// The instructions with the parts made into an object of keys.
     fn instructions_of(parts: Vec<(&'static str, Value)>) -> Value {
         Value::Object(parts.into_iter().map(|(name, content)| (name.to_string(), content)).collect())
     }
 
-    /// 線引きの読み方と答えの向き(問いの文は英語でここ 1 か所)。線引きを入れない問いは None。
+    /// How to read the boundaries and the direction of the answer (the question text is in English, in this one place). None for questions that take no boundaries.
     fn lines_note(self) -> Option<&'static str> {
         match self {
             SemanticQuestion::BusinessDecision => Some(
@@ -226,7 +226,7 @@ impl SemanticQuestion {
         }
     }
 
-    /// DOEFF203 の問い(Choice)。criteria は architecture.hy の受け入れる理由・受け入れない理由の型(名 → 説明)と none。問いの文は英語でここ 1 か所。
+    /// The DOEFF203 question (Choice). criteria are the acceptable-reason and unacceptable-reason kinds of architecture.hy (name → description) plus none. The question text is in English, in this one place.
     pub fn plain_callable_wire(accepted: &[(String, String)], rejected: &[(String, String)]) -> Value {
         let mut criteria = serde_json::Map::new();
         for (name, description) in accepted {
@@ -249,7 +249,7 @@ impl SemanticQuestion {
         })
     }
 
-    /// Jev へ渡す問い(direct の形 — type は noul。gateway の形へは gateway_question で写す)。jev-lint の questions.py の J2・J3 と同じ内容。
+    /// The question passed to Jev (direct form — type is noul. It is mapped to the gateway form by gateway_question). Same content as J2 and J3 in jev-lint's questions.py.
     pub fn wire(self) -> Value {
         match self {
             SemanticQuestion::BusinessDecision => json!({
@@ -295,76 +295,76 @@ impl SemanticQuestion {
         }
     }
 
-    /// 問いの意味(説明の文に差し込む日本語)。
+    /// Meaning of the question (Japanese inserted into the explanation text).
     pub fn meaning(self) -> &'static str {
         match self {
-            SemanticQuestion::BusinessDecision => "要求の言い換えを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしている",
-            SemanticQuestion::TransportKnowledge => "通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)か、外の data の型の無い形(dict・JSON の値を欄名で読む・組む)を知っている",
-            SemanticQuestion::PlainCallable => "名乗った理由の種類では、素の関数でなければならない理由にならない見込み",
-            SemanticQuestion::ClassRole => "処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み",
-            SemanticQuestion::MixedConcerns => "判断の定義が、入力の形の検めと業務の判断を混ぜている見込み",
+            SemanticQuestion::BusinessDecision => "makes business decisions beyond rephrasing the request (who is allowed, business rules, recipients, business outcomes)",
+            SemanticQuestion::TransportKnowledge => "knows the means of communication (URLs and queries, HTTP methods and statuses, JSON wire form, SQL, endpoint addresses) or the untyped shape of outside data (reading or building dicts / JSON values by field name)",
+            SemanticQuestion::PlainCallable => "the stated reason kind is not likely to justify a plain function",
+            SemanticQuestion::ClassRole => "a class with methods that do work is likely a window to the outside world or something that holds state",
+            SemanticQuestion::MixedConcerns => "a judgment definition likely mixes checking the shape of input with business decisions",
         }
     }
 }
 
-/// `[tool.doeff-linter.semantic]` の問い 1 つの設定(読んだ形)。
+/// Settings of one question in `[tool.doeff-linter.semantic]` (as read).
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct QuestionSection {
-    /// 問いを当てる層の名。
+    /// Names of the layers the question applies to.
     #[serde(default)]
     pub layers: Vec<String>,
-    /// この確率以上で warning。
+    /// warning at or above this probability.
     pub warning: Option<f64>,
-    /// この確率以上で info。
+    /// info at or above this probability.
     pub info: Option<f64>,
-    /// 置けない欄(Jev の判定は error にしない)— 知らない鍵として読み飛ばさず、書かれていれば設定の誤りにするために読む。
+    /// A field that cannot be set (Jev's judgment is never an error) — read so that, if written, it is a settings error rather than skipped as an unknown key.
     pub error: Option<f64>,
 }
 
-/// `[tool.doeff-linter.semantic]`(読んだ形)。重さは warning と info だけで、error の欄は無い。宛先・model・キーはここに書かない
-/// (doeff-jev と同じ決め方 — 環境変数 JEV_* と ~/.config/jev/client.json)。例外は Jev の呼び出しを覚える代理の宛先 proxy_url(repo ごとに向ける)。
+/// `[tool.doeff-linter.semantic]` (as read). Severity is only warning and info; there is no error field. The target, model and key are not written here
+/// (same decision as doeff-jev — env JEV_* and ~/.config/jev/client.json). The exception is proxy_url, the target of the proxy that remembers Jev calls (pointed per repo).
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct SemanticSection {
     #[serde(default)]
     pub business_decision: QuestionSection,
     #[serde(default)]
     pub transport_knowledge: QuestionSection,
-    /// DOEFF203: 理由を受け入れるかの閾値(受け入れない答えの確率で warning / info)。
+    /// DOEFF203: threshold for accepting a reason (warning / info by the probability of a non-accepting answer).
     pub plain_callable: Option<PlainCallableSection>,
-    /// DOEFF204: Jev が external-world / stateful を選んだ確率の閾値(warning_min・info_min)。
+    /// DOEFF204: threshold for the probability that Jev chose external-world / stateful (warning_min, info_min).
     pub class_role: Option<PlainCallableSection>,
-    /// DOEFF205: 問う定義の役・物差しの層・閾値。
+    /// DOEFF205: role of the definitions to ask about, the layer used as a yardstick, and thresholds.
     pub mixed_concerns: Option<MixedConcernsSection>,
     pub workers: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub source_limit: Option<usize>,
-    /// Jev の呼び出しを覚える代理の宛先(例 http://jev-proxy.example:8878/v1/systemone)。無ければ代理を使わない。
+    /// Target of the proxy that remembers Jev calls (e.g. http://jev-proxy.example:8878/v1/systemone). If absent, no proxy is used.
     pub proxy_url: Option<String>,
-    /// 覚えている時だけの問いの時間の上限(ms・既定 5000 — 全部の束を合わせた上限)。
+    /// Time limit for "only if remembered" questions (ms; default 5000 — the limit for all batches combined).
     pub proxy_peek_timeout_ms: Option<u64>,
-    /// 誤判定の一覧の dir(repo の根からの相対・1 鍵 1 file・2 行目から後が人の判定の理由)。載った Jev の当たりは出さず、件数にも入れない。
+    /// Directory of the false-positive list (relative to the repo root; one file per key; line 2 onward is the human's reason for the judgment). Jev hits listed there are not shown and not counted.
     #[serde(default)]
     pub false_positives: Vec<String>,
-    /// 人が「本当の違反」と判定した当たりの一覧の dir(形は誤判定の一覧と同じ)。違反の出し方は変えず、当たり外れを測る正例として読む。
+    /// Directory of the list of hits a human judged to be "real violations" (same form as the false-positive list). It does not change how violations are shown; it is read as positive examples for measuring hits and misses.
     #[serde(default)]
     pub true_positives: Vec<String>,
 }
 
-/// `[tool.doeff-linter.semantic] mixed_concerns`(読んだ形)。
+/// `[tool.doeff-linter.semantic] mixed_concerns` (as read).
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct MixedConcernsSection {
-    /// 問う定義の役(タグの :role — 既定 judgment・program)。
+    /// Role of the definitions to ask about (the tag's :role — default judgment, program).
     #[serde(default)]
     pub roles: Vec<String>,
-    /// 物差しの層(その層の説明を Jev に渡す — 例 core)。
+    /// Layer used as a yardstick (that layer's description is passed to Jev — e.g. core).
     pub layer: String,
-    /// Jev が mixed を選び、その確率がこれ以上で warning(既定 0.7)。
+    /// Warning when Jev chooses mixed and its probability is at least this (default 0.7).
     pub warning_min: Option<f64>,
-    /// これ以上で info(既定 0.5)。
+    /// Info at or above this (default 0.5).
     pub info_min: Option<f64>,
 }
 
-/// DOEFF205 の設定(検めた後)。
+/// DOEFF205 settings (after validation).
 #[derive(Debug, Clone)]
 pub struct MixedConcernsSettings {
     pub roles: BTreeSet<String>,
@@ -373,37 +373,37 @@ pub struct MixedConcernsSettings {
     pub info_min: f64,
 }
 
-/// 代理の設定(検めた後)。
+/// Proxy settings (after validation).
 #[derive(Debug, Clone)]
 pub struct ProxySettings {
     pub url: String,
     pub peek_timeout: Duration,
 }
 
-/// 覚えている時だけの問いの時間の上限の既定(ms — 全部の束を合わせた上限。遅い網の機体から数千の鍵を送っても収まる長さ)。
+/// Default time limit for "only if remembered" questions (ms — the limit for all batches combined; long enough to send thousands of keys from a machine on a slow network).
 pub const DEFAULT_PROXY_PEEK_TIMEOUT_MS: u64 = 5000;
-/// 覚えている時だけの問いの束 1 つの鍵の数(代理の上限 20000 の内 — 鍵 1 つは 67 byte 前後)。
+/// Number of keys in one "only if remembered" batch (within the proxy's limit of 20000 — one key is about 67 bytes).
 pub const PEEK_BATCH: usize = 1000;
-/// 代理の鍵の決まりの版(proboscis/jev-proxy の src/doeff_jev_proxy/key.hy の KEY-VERSION と同じ)。
+/// Version of the proxy's key rules (same as KEY-VERSION in proboscis/jev-proxy's src/doeff_jev_proxy/key.hy).
 pub const PROXY_KEY_VERSION: &str = "jev-proxy-key-1";
 
-/// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
+/// `[tool.doeff-linter.semantic] plain_callable` (as read).
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct PlainCallableSection {
-    /// Jev が受け入れない答え(受け入れない型か none)を選び、その確率がこれ以上で warning(既定 0.4)。
+    /// Warning when Jev chooses a non-accepting answer (a non-accepting kind or none) and its probability is at least this (default 0.4).
     pub warning_min: Option<f64>,
-    /// 受け入れる答えを選んでも、受け入れない答えの確率の和がこれ以上なら info(既定 0.4)。
+    /// Info when the sum of the probabilities of non-accepting answers is at least this even if an accepting answer was chosen (default 0.4).
     pub info_min: Option<f64>,
 }
 
-/// DOEFF203 の設定(検めた後)。
+/// DOEFF203 settings (after validation).
 #[derive(Debug, Clone, Copy)]
 pub struct PlainCallableSettings {
     pub warning_min: f64,
     pub info_min: f64,
 }
 
-/// 問い 1 つの設定(検めた後)。
+/// Settings of one question (after validation).
 #[derive(Debug, Clone)]
 pub struct QuestionSettings {
     pub layers: BTreeSet<LayerId>,
@@ -411,7 +411,7 @@ pub struct QuestionSettings {
     pub info: f64,
 }
 
-/// 意味の規則の設定(検めた後)。
+/// Settings of the semantic rules (after validation).
 #[derive(Debug, Clone)]
 pub struct SemanticSettings {
     pub plain_callable: Option<PlainCallableSettings>,
@@ -421,20 +421,20 @@ pub struct SemanticSettings {
     pub workers: usize,
     pub timeout: Duration,
     pub source_limit: usize,
-    /// Jev の呼び出しを覚える代理(無ければ使わない)。
+    /// Proxy that remembers Jev calls (not used if absent).
     pub proxy: Option<ProxySettings>,
-    /// 誤判定の一覧の dir(repo の根からの相対)。
+    /// Directory of the false-positive list (relative to the repo root).
     pub false_positives: Vec<String>,
-    /// 人が本当の違反と判定した当たりの一覧の dir(repo の根からの相対)。
+    /// Directory of the list of hits a human judged to be real violations (relative to the repo root).
     pub true_positives: Vec<String>,
-    /// Jev の問いに入れる線引き(architecture.hy の :semantic-lines — 無ければ空で、問いは今のまま)。
-    /// TOML の節には書かず、設定の組み立て(config.rs)が architecture.hy から取り込む — 文の定義元は architecture.hy の 1 か所。
+    /// Boundaries put into Jev's questions (architecture.hy :semantic-lines — empty if absent, and the questions stay as they are).
+    /// Not written in the TOML section; the settings assembly (config.rs) pulls them in from architecture.hy — the sentences are defined in one place, architecture.hy.
     pub lines: Vec<SemanticLine>,
 }
 
 
 impl SemanticSettings {
-    /// 読んだ節を検める(層の名は find で引く・閾値は 0〜1 で info ≤ warning)。
+    /// Validate the sections as read (layer names are looked up with find; thresholds are 0 to 1 with info ≤ warning).
     pub fn validate(section: &SemanticSection, find: &mut dyn FnMut(&str, &str) -> Option<LayerId>, problems: &mut Vec<String>) -> SemanticSettings {
         let mut questions = BTreeMap::new();
         for (question, part, name, (warning, info)) in [
@@ -444,12 +444,12 @@ impl SemanticSettings {
             let layers: BTreeSet<LayerId> =
                 part.layers.iter().filter_map(|layer| find(layer, &format!("semantic.{}.layers", name))).collect();
             if part.error.is_some() {
-                problems.push(format!("semantic.{}.error: Jev の判定の重さは warning と info だけ(error にしない)", name));
+                problems.push(format!("semantic.{}.error: Jev's judgment severity is only warning and info (never error)", name));
             }
             let warning = part.warning.unwrap_or(warning);
             let info = part.info.unwrap_or(info);
             if !(0.0..=1.0).contains(&warning) || !(0.0..=1.0).contains(&info) || info > warning {
-                problems.push(format!("semantic.{}: 閾値は 0〜1 で info ≤ warning(warning = {}・info = {})", name, warning, info));
+                problems.push(format!("semantic.{}: thresholds are 0 to 1 with info ≤ warning (warning = {}, info = {})", name, warning, info));
             }
             if !layers.is_empty() {
                 questions.insert(question, QuestionSettings { layers, warning, info });
@@ -459,7 +459,7 @@ impl SemanticSettings {
             section.map(|p| {
                 let settings = PlainCallableSettings { warning_min: p.warning_min.unwrap_or(warning), info_min: p.info_min.unwrap_or(info) };
                 if !(0.0..=1.0).contains(&settings.warning_min) || !(0.0..=1.0).contains(&settings.info_min) {
-                    problems.push(format!("semantic.{}: 閾値は 0〜1(warning_min = {}・info_min = {})", name, settings.warning_min, settings.info_min));
+                    problems.push(format!("semantic.{}: thresholds are 0 to 1 (warning_min = {}, info_min = {})", name, settings.warning_min, settings.info_min));
                 }
                 settings
             })
@@ -476,7 +476,7 @@ impl SemanticSettings {
             };
             if !(0.0..=1.0).contains(&settings.warning_min) || !(0.0..=1.0).contains(&settings.info_min) || settings.info_min > settings.warning_min {
                 problems.push(format!(
-                    "semantic.mixed_concerns: 閾値は 0〜1 で info_min ≤ warning_min(warning_min = {}・info_min = {})",
+                    "semantic.mixed_concerns: thresholds are 0 to 1 with info_min ≤ warning_min (warning_min = {}, info_min = {})",
                     settings.warning_min, settings.info_min
                 ));
             }
@@ -484,7 +484,7 @@ impl SemanticSettings {
         });
         let proxy = section.proxy_url.as_ref().and_then(|url| {
             if !(url.starts_with("http://") || url.starts_with("https://")) {
-                problems.push(format!("semantic.proxy_url は http:// か https:// の URL: {}", url));
+                problems.push(format!("semantic.proxy_url must be an http:// or https:// URL: {}", url));
                 return None;
             }
             Some(ProxySettings {
@@ -493,7 +493,7 @@ impl SemanticSettings {
             })
         });
         if section.proxy_url.is_none() && section.proxy_peek_timeout_ms.is_some() {
-            problems.push("semantic.proxy_peek_timeout_ms は proxy_url と一緒に書く".to_string());
+            problems.push("semantic.proxy_peek_timeout_ms must be written together with proxy_url".to_string());
         }
         SemanticSettings {
             proxy,
@@ -510,8 +510,8 @@ impl SemanticSettings {
         }
     }
 
-    /// DOEFF203: 重さを決める — 受け入れない答えを選び確率が warning_min 以上なら warning、受け入れない答えを選んだがそれ未満か、
-    /// 受け入れる答えを選んでも受け入れない答えの確率の和が info_min 以上なら info。error にはしない。
+    /// DOEFF203: decide severity — warning if a non-accepting answer is chosen with probability at least warning_min; info if a non-accepting answer is chosen below that, or
+    /// if, even with an accepting answer chosen, the sum of non-accepting probabilities is at least info_min. Never error.
     pub fn plain_callable_severity(&self, chosen_accepted: bool, chosen_probability: f64, rejected_total: f64) -> Option<crate::models::Severity> {
         let spec = self.plain_callable?;
         match chosen_accepted {
@@ -522,8 +522,8 @@ impl SemanticSettings {
         }
     }
 
-    /// DOEFF204: Jev が選んだ答えと確率から重さを決める — external-world / stateful を warning_min 以上で warning、info_min 以上で info。
-    /// value と other は出さない。error にはしない。
+    /// DOEFF204: decide severity from the answer Jev chose and its probability — external-world / stateful gives warning at warning_min or more, info at info_min or more.
+    /// value and other are not shown. Never error.
     pub fn class_role_severity(&self, chosen: &str, probability: f64) -> Option<crate::models::Severity> {
         let spec = self.class_role?;
         match chosen {
@@ -533,7 +533,7 @@ impl SemanticSettings {
         }
     }
 
-    /// DOEFF205: Jev が mixed を選んだ確率から重さを決める(ほかの答えは出さない・error にはしない)。
+    /// DOEFF205: decide severity from the probability that Jev chose mixed (other answers are not shown; never error).
     pub fn mixed_concerns_severity(&self, chosen: &str, probability: f64) -> Option<crate::models::Severity> {
         let spec = self.mixed_concerns.as_ref()?;
         match chosen {
@@ -543,7 +543,7 @@ impl SemanticSettings {
         }
     }
 
-    /// 確率から重さを決める(閾値に届かなければ None)。
+    /// Decide severity from a probability (None if it does not reach the thresholds).
     pub fn severity(&self, question: SemanticQuestion, probability: f64) -> Option<crate::models::Severity> {
         let spec = self.questions.get(&question)?;
         if probability >= spec.warning {
@@ -556,13 +556,13 @@ impl SemanticSettings {
     }
 }
 
-/// 問い 1 つ分の定義(state と cache の鍵)。
+/// Definition for one question (state and cache key).
 #[derive(Debug, Clone)]
 pub struct SemanticItem {
     pub question: SemanticQuestion,
-    /// Jev へ渡す問いの JSON(DOEFF203 は理由の種類の一覧を含む)。
+    /// The question JSON passed to Jev (DOEFF203 includes the list of reason kinds).
     pub question_json: Value,
-    /// DOEFF203: 名乗った理由の種類(他の問いは None)。
+    /// DOEFF203: the reason kind stated (None for other questions).
     pub declared: Option<String>,
     pub rel: String,
     pub path: PathBuf,
@@ -572,29 +572,29 @@ pub struct SemanticItem {
     pub layer: LayerId,
     pub state: Value,
     pub key: String,
-    /// 定義の source が読み取りで壊れていない(書きかけでない)か — 壊れた定義は問わない。
+    /// Whether the definition's source is not broken by the reader (i.e. not work in progress) — broken definitions are not asked about.
     pub readable: bool,
 }
 
-/// 定義の source が Hy の読み取りで壊れた箇所(閉じない括弧・対応しない閉じ括弧・閉じない文字列)を持たないか。
+/// Whether the definition's source has no spot broken by the Hy reader (unclosed parenthesis, unmatched closer, unclosed string).
 pub fn readable(source: &str) -> bool {
     let mut reader = doeff_indexer::hy_index::reader::Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     !forms.is_empty() && reader.issues.is_empty()
 }
 
-/// 申告の :tags を source から消す(申告を見せると Jev が引きずられる — jev-lint の TAGS と同じ)。
+/// Remove the declaration's :tags from the source (showing the declaration drags Jev — same as TAGS in jev-lint).
 fn strip_tags(source: &str) -> String {
     static TAGS: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     TAGS.get_or_init(|| Regex::new(r"\s*:tags\s+\{[^}]*\}").unwrap_or_else(|_| Regex::new("$^").unwrap())).replace_all(source, "").into_owned()
 }
 
-/// 文字数で切る(char の境目で)。
+/// Truncate by character count (at a char boundary).
 fn truncate(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
 }
 
-/// 決まった綴りの JSON(cache の鍵のため — object の鍵を並べる)。
+/// JSON in a fixed spelling (for the cache key — object keys are sorted).
 fn canonical(value: &Value) -> String {
     match value {
         Value::Object(map) => {
@@ -608,12 +608,12 @@ fn canonical(value: &Value) -> String {
     }
 }
 
-/// 問いの本文の代理の鍵(64 桁の小文字の 16 進)= sha256(PROXY_KEY_VERSION + "\n" + 決まった綴りの本文)。代理の決まり(proboscis/jev-proxy
-/// の src/doeff_jev_proxy/key.hy の normalize-request — object の鍵を符号位置の順に並べ・区切りの空白なし・
-/// 文字は UTF-8 のまま)と同じ鍵になる。本文は model を持つこと(代理は model の無い本文に既定の名を足してから綴る)。小数は綴りが
-/// 言語で違うので同じ鍵にならない(外れるだけで、別の問いの答えには当たらない — linter の本文は小数を持たない)。
-/// 同じ鍵になることは、代理の見本(正本 = proboscis/jev-proxy の tests/key_contract.json・写し = この package の
-/// tests/proxy_key_contract.json)を両方の repo の検が読んで確かめる。
+/// Proxy key of the question body (64 lowercase hex digits) = sha256(PROXY_KEY_VERSION + "\n" + body in the fixed spelling). Yields the same key as the proxy's rules (proboscis/jev-proxy
+/// src/doeff_jev_proxy/key.hy normalize-request — object keys sorted by code point, no separating whitespace,
+/// characters kept as UTF-8). The body must have a model (the proxy adds a default name to a body without a model before spelling it). Decimals are spelled
+/// differently per language, so they would not yield the same key (it just misses and never hits the answer of another question — the linter's body has no decimals).
+/// That the keys match is confirmed by the checks of both repos reading the proxy's sample (source of truth = tests/key_contract.json in proboscis/jev-proxy; copy = this package's
+/// tests/proxy_key_contract.json).
 pub fn proxy_key(body: &Value) -> String {
     let mut hasher = Sha256::new();
     hasher.update(PROXY_KEY_VERSION.as_bytes());
@@ -622,7 +622,7 @@ pub fn proxy_key(body: &Value) -> String {
     hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// 定義 1 つの state と cache の鍵を作る。鍵 = sha256(model・問いの JSON(線引きを入れた物)・層の説明・タグを消した source)。申告の役は鍵に入れない。
+/// Build the state and cache key of one definition. Key = sha256(model, question JSON (with boundaries put in), layer description, source with tags removed). The declared role is not part of the key.
 #[allow(clippy::too_many_arguments)]
 pub fn item(
     settings: &SemanticSettings,
@@ -660,7 +660,7 @@ pub fn item(
     SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
 }
 
-/// DOEFF203 の定義 1 つの state と cache の鍵を作る(state = 定義・書かれた理由。鍵 = sha256(model・問いの JSON・state))。
+/// Build the state and cache key of one DOEFF203 definition (state = definition and the stated reason. Key = sha256(model, question JSON, state)).
 #[allow(clippy::too_many_arguments)]
 pub fn plain_callable_item(
     settings: &SemanticSettings,
@@ -704,7 +704,7 @@ pub fn plain_callable_item(
     }
 }
 
-/// DOEFF204 の class 1 つの state と cache の鍵を作る(state = class の source(タグを消して切る)と欄の宣言)。
+/// Build the state and cache key of one DOEFF204 class (state = the class's source (tags removed, truncated) and the field declarations).
 #[allow(clippy::too_many_arguments)]
 pub fn class_item(
     settings: &SemanticSettings,
@@ -744,7 +744,7 @@ pub fn class_item(
     }
 }
 
-/// DOEFF205 の定義 1 つの state と cache の鍵を作る(state = 定義の source(タグを消して切る)と物差しの層の説明・問いは線引きを入れた物)。
+/// Build the state and cache key of one DOEFF205 definition (state = the definition's source (tags removed, truncated) and the description of the yardstick layer; the question is the one with boundaries put in).
 #[allow(clippy::too_many_arguments)]
 pub fn mixed_item(
     settings: &SemanticSettings,
@@ -775,9 +775,9 @@ pub fn mixed_item(
     SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
 }
 
-/// 閾値と比べる確率 — 較正の見張りと、人の判定との突き合わせ(`labeled`)の 2 か所がこの 1 つを使う。Noul は答えの確率、選ぶ形の問いは
-/// 的の語の確率(DOEFF204 = external-world・DOEFF205 = mixed)。選ぶ形の答えの `probability` は選んだ語の確率なので、そのまま使うと
-/// judgment-only 0.97・mixed 0.02 の答えが 0.97 に見える(#1994 — 205 の閾値の表がこの読み違いの上で作られた)。
+/// The probability compared with thresholds — the calibration watch and the comparison with human judgments (`labeled`) both use this one. Noul uses the probability of the answer; a choice question uses
+/// the probability of the target word (DOEFF204 = external-world, DOEFF205 = mixed). The `probability` of a choice answer is the probability of the chosen word, so using it as is would
+/// make an answer of judgment-only 0.97 / mixed 0.02 look like 0.97 (#1994 — the DOEFF205 threshold table was built on this misreading).
 pub fn target_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
     match question {
         SemanticQuestion::ClassRole => answer.probabilities.as_ref().and_then(|p| p.get("external-world").copied()).unwrap_or(0.0),
@@ -786,85 +786,85 @@ pub fn target_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
     }
 }
 
-/// Jev の答え(確率・答えに載った費用 USD と token 数・答えた model)。手元の cache に書く形。
+/// Jev's answer (probability, cost in USD and token counts reported in the answer, and the model that answered). The form written to the local cache.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Answer {
     pub probability: f64,
-    /// 答えに載った費用(USD)— 上流が答えに載せた時だけ Some(Vercel の AI Gateway の providerMetadata.gateway.cost)。TypeSafe 直は
-    /// 載せないので None で、0 と区別する。以前の cache の欄 cost_usd は、載らない時も 0 と書いていたので読まない
-    /// (読むと「費用 0」と「不明」が混ざる — 前の答えは不明として読む)。
+    /// Cost reported in the answer (USD) — Some only when upstream put it in the answer (Vercel AI Gateway's providerMetadata.gateway.cost). Direct TypeSafe does not
+    /// report it, so it is None, distinguished from 0. The old cache field cost_usd wrote 0 even when nothing was reported, so it is not read
+    /// (reading it would mix "cost 0" with "unknown" — old answers are read as unknown).
     #[serde(default)]
     pub reported_cost_usd: Option<f64>,
-    /// 入力の token 数(答えの usage に在る時だけ Some — 無い答えを 0 と書かない)。
+    /// Input token count (Some only when present in the answer's usage — an answer without it is not written as 0).
     #[serde(default)]
     pub input_tokens: Option<u64>,
-    /// 出力の token 数(答えの usage に在る時だけ Some — 単価を掛けて費用を見積もる材料・#1892 の案 B)。
+    /// Output token count (Some only when present in the answer's usage — material for estimating cost by multiplying by unit prices; #1892 plan B).
     #[serde(default)]
     pub output_tokens: Option<u64>,
-    /// 答えた model の版つきの名(direct の答えの model — 例 jev-1.13.0。gateway は返さない)。
+    /// Versioned name of the model that answered (the model of a direct answer — e.g. jev-1.13.0; the gateway does not return it).
     #[serde(default)]
     pub served_model: Option<String>,
-    /// Choice の答え(選んだ種類)。
+    /// The Choice answer (the chosen kind).
     #[serde(default)]
     pub choice: Option<String>,
-    /// Choice の種類ごとの確率。
+    /// Probability per Choice kind.
     #[serde(default)]
     pub probabilities: Option<BTreeMap<String, f64>>,
 }
 
-/// 代理の覚えの使い方(代理への見出し Cache-Control)。代理でない宛先には何も足さない。
+/// How to use the proxy's memory (the Cache-Control header to the proxy). Nothing is added for a target that is not a proxy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Freshness {
-    /// 覚えていれば覚えた答え・無ければ本物の Jev(見出しなし)。
+    /// If remembered, the remembered answer; otherwise the real Jev (no header).
     Remembered,
-    /// 覚えを使わず本物の Jev に問い直す(no-cache — 較正の見張り)。
+    /// Do not use the memory and ask the real Jev again (no-cache — calibration watch).
     Fresh,
 }
 
-/// 覚えている時だけの問いの束の結果。
+/// Result of a batch of "only if remembered" questions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PeekedMany {
-    /// 代理が覚えていた答え(代理の鍵 → 答え — 覚えていない鍵は載らない・本物の Jev は呼んでいない)。
+    /// Answers the proxy remembered (proxy key → answer — keys not remembered are absent; the real Jev was not called).
     Remembered(BTreeMap<String, Answer>),
-    /// 代理に届かない・時間切れ・代理でない宛先・読めない答え(理由)。
+    /// The proxy is unreachable, timed out, the target is not a proxy, or an answer is unreadable (the reason).
     Unreachable(String),
 }
 
-/// 呼び手の名を送る見出し(doeff の packages/doeff-jev/src/doeff_jev/_wire.py の CALLER_HEADER と同じ名)。proxy が問いを呼び手と規則で
-/// 分けて数える。本文に入れると proxy の鍵(proxy_key)が変わるので見出しで送る。
+/// Header that sends the caller's name (same name as CALLER_HEADER in doeff's packages/doeff-jev/src/doeff_jev/_wire.py). The proxy counts questions separately by caller and rule.
+/// Putting it in the body would change the proxy's key (proxy_key), so it is sent in a header.
 pub const CALLER_HEADER: &str = "x-jev-caller";
-/// 覚えている時だけの問いの束(peek)の呼び手の名(束は規則をまたぐので規則の id を付けない)。
+/// Caller name of a batch of "only if remembered" questions (a batch spans rules, so no rule id is attached).
 pub const PEEK_CALLER: &str = "doeff-linter/peek";
 
-/// 規則の問いの呼び手の名(`doeff-linter/DOEFF205` — doeff-jev の caller と同じ `<部品>/<規則>` の形)。
+/// Caller name of a rule's question (`doeff-linter/DOEFF205` — the same `<component>/<rule>` form as doeff-jev's caller).
 pub fn caller_of(question: SemanticQuestion) -> String {
     format!("doeff-linter/{}", question.id())
 }
 
-/// 較正の見張りの問いの呼び手の名(`doeff-linter/DOEFF205/calibration` — 規則の問いと分けて数える)。
+/// Caller name of a calibration watch question (`doeff-linter/DOEFF205/calibration` — counted separately from the rule's questions).
 pub fn calibration_caller_of(question: SemanticQuestion) -> String {
     format!("{}/calibration", caller_of(question))
 }
 
-/// Jev へ問う口(本物は HTTP・検では偽物)。
+/// The mouth that asks Jev (HTTP for the real one, a fake in checks).
 pub trait Gateway: Sync {
-    /// 1 つの定義に 1 つの問いを撃つ(答えと、その回が上流に払わせた分)。caller = 見出し CALLER_HEADER で送る呼び手の名
-    /// (caller_of / calibration_caller_of の値・空なら送らない)。
+    /// Fire one question for one definition (the answer, and what that call made upstream pay). caller = the caller's name sent in the header CALLER_HEADER
+    /// (the value of caller_of / calibration_caller_of; not sent if empty).
     fn ask(&self, state: &Value, question: &Value, freshness: Freshness, caller: &str) -> Result<Asked, String>;
-    /// 問いの本文の代理の鍵(proxy_key)。宛先が代理でなければ None(覚えている時だけの問いは代理にだけ撃つ)。
+    /// Proxy key of the question body (proxy_key). None if the target is not a proxy (an "only if remembered" question is fired only at a proxy).
     fn proxy_key(&self, state: &Value, question: &Value) -> Option<String>;
-    /// 代理の鍵の束を代理に「覚えている時だけ」問う(本物の Jev を呼ばない・撃ち直さない)。代理でない宛先は Unreachable。
+    /// Ask the proxy for a batch of proxy keys "only if remembered" (the real Jev is not called; no re-asking). A target that is not a proxy gives Unreachable.
     fn peek_many(&self, keys: &[String], timeout: Duration) -> PeekedMany;
-    /// 宛先の model の名(cache の鍵と出力のため)。
+    /// Model name of the target (for the cache key and output).
     fn model(&self) -> String;
 }
 
-// ---- 宛先の決め方(doeff の packages/doeff-jev/src/doeff_jev/_target.py の写し — 決め方は _target.py の docstring の順と既定値のまま)----
-// 解き方(上が勝つ):
-// 1. 環境変数 JEV_BASE_URL / JEV_MODEL / JEV_WIRE / JEV_API_KEY / JEV_API_KEY_FILE
-// 2. 設定 file ~/.config/jev/client.json(欄 base_url / model / wire / api_key_file)
-// 3. 既定 = TypeSafe 直(/v1/systemone・model jev-latest)。キーは TYPESAFE_API_KEY → ~/.config/jev/api_key。
-//    gateway(Vercel AI Gateway の evaluation-model)を名指した時は model typesafe-ai/jev・キーは AI_GATEWAY_API_KEY → ~/jev_key。
+// ---- How the target is decided (a copy of doeff's packages/doeff-jev/src/doeff_jev/_target.py — the decision follows the order and defaults in the docstring of _target.py) ----
+// How it is resolved (the upper one wins):
+// 1. Environment variables JEV_BASE_URL / JEV_MODEL / JEV_WIRE / JEV_API_KEY / JEV_API_KEY_FILE
+// 2. Settings file ~/.config/jev/client.json (fields base_url / model / wire / api_key_file)
+// 3. Default = TypeSafe direct (/v1/systemone, model jev-latest). The key is TYPESAFE_API_KEY → ~/.config/jev/api_key.
+//    When the gateway (Vercel AI Gateway's evaluation-model) is named, model is typesafe-ai/jev and the key is AI_GATEWAY_API_KEY → ~/jev_key.
 
 pub const DIRECT_URL: &str = "https://api.typesafe.ai/v1/systemone";
 pub const DIRECT_MODEL: &str = "jev-latest";
@@ -875,7 +875,7 @@ const CONFIG_FILE: &str = "~/.config/jev/client.json";
 const DIRECT_KEY_FILE: &str = "~/.config/jev/api_key";
 const GATEWAY_KEY_FILE: &str = "~/jev_key";
 
-/// 通信の形。
+/// Wire form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Wire {
@@ -883,21 +883,21 @@ pub enum Wire {
     Gateway,
 }
 
-/// 解いた宛先(キーの値は Debug に出さない)。
+/// The resolved target (the key value is not shown in Debug).
 #[derive(Clone)]
 pub struct JevTarget {
     pub base_url: String,
     pub model: String,
     pub wire: Wire,
     api_key: Option<String>,
-    /// env / file / default / repo(記録用 — repo = repo の設定の代理)。
+    /// env / file / default / repo (for records — repo = the proxy from the repo's settings).
     pub source: &'static str,
-    /// 宛先が Jev の呼び出しを覚える代理か(覚えている時だけの問いと no-cache の見出しは代理にだけ送る)。
+    /// Whether the target is a proxy that remembers Jev calls ("only if remembered" questions and the no-cache header are sent only to a proxy).
     pub proxy: bool,
 }
 
 impl std::fmt::Debug for JevTarget {
-    /// キーの値を出さない Debug。
+    /// Debug that does not show the key value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JevTarget")
             .field("base_url", &self.base_url)
@@ -910,7 +910,7 @@ impl std::fmt::Debug for JevTarget {
     }
 }
 
-/// URL と申告から通信の形を決める(target.py の _wire_of)。
+/// Decide the wire form from the URL and the declaration (target.py's _wire_of).
 fn wire_of(url: &str, declared: Option<&str>) -> Wire {
     match declared {
         Some("direct") => Wire::Direct,
@@ -920,7 +920,7 @@ fn wire_of(url: &str, declared: Option<&str>) -> Wire {
     }
 }
 
-/// 宛先を解く(純粋 — 環境と file の読みは引数で受け取る。target.py の resolve_target と同じ順)。
+/// Resolve the target (pure — reads of the environment and files are received as arguments. Same order as target.py's resolve_target).
 pub fn resolve_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&str) -> Option<String>, wire: Option<&str>) -> JevTarget {
     let file_cfg: serde_json::Map<String, Value> =
         read_text(CONFIG_FILE).and_then(|text| serde_json::from_str::<Value>(&text).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
@@ -962,8 +962,8 @@ pub fn resolve_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&
     JevTarget { base_url: url, model, wire: resolved_wire, api_key: key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()), source, proxy: false }
 }
 
-/// repo の設定の proxy を重ねて宛先を解く(純粋)。env の JEV_BASE_URL が在ればそれが勝つ(proxy を使わない)。proxy へはキーを
-/// 送らない(TYPESAFE_API_KEY などの本物のキーも送らない)。model は解いた direct の model(gateway を解いていれば direct の既定)。
+/// Resolve the target with the repo settings' proxy layered on (pure). If env JEV_BASE_URL is set, it wins (the proxy is not used). No key is sent to the proxy
+/// (real keys such as TYPESAFE_API_KEY are not sent either). model is the resolved direct model (the direct default if the gateway was resolved).
 pub fn resolve_repo_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&str) -> Option<String>, proxy: Option<&ProxySettings>) -> JevTarget {
     let base = resolve_target(env, read_text, None);
     match proxy {
@@ -982,7 +982,7 @@ pub fn resolve_repo_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn
     }
 }
 
-/// `~` を展開して file を読む(無ければ None — target.py の read_text_from_disk)。
+/// Expand `~` and read the file (None if absent — target.py's read_text_from_disk).
 pub fn read_text_from_disk(path: &str) -> Option<String> {
     let expanded = match path.strip_prefix("~/") {
         Some(rest) => PathBuf::from(std::env::var("HOME").ok()?).join(rest),
@@ -991,17 +991,17 @@ pub fn read_text_from_disk(path: &str) -> Option<String> {
     std::fs::read_to_string(expanded).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
-/// この process の環境と home の file から宛先を解く(組み立て点だけが呼ぶ I/O — target.py の target_from_process_environment)。
+/// Resolve the target from this process's environment and files in home (I/O called only by the assembly point — target.py's target_from_process_environment).
 pub fn target_from_process_environment() -> JevTarget {
     resolve_target(&|key| std::env::var(key).ok(), &read_text_from_disk, None)
 }
 
-/// この process の環境・home の file・repo の代理の設定から宛先を解く(組み立て点だけが呼ぶ I/O)。
+/// Resolve the target from this process's environment, files in home, and the repo's proxy settings (I/O called only by the assembly point).
 pub fn target_for_repo(proxy: Option<&ProxySettings>) -> JevTarget {
     resolve_repo_target(&|key| std::env::var(key).ok(), &read_text_from_disk, proxy)
 }
 
-/// 問いを gateway の綴りへ写す(noul は boolean — wire.py の _gateway_question)。
+/// Map the question to the gateway's spelling (noul becomes boolean — wire.py's _gateway_question).
 fn gateway_question(question: &Value) -> Value {
     let mut out = question.clone();
     if let Some(map) = out.as_object_mut() {
@@ -1012,20 +1012,20 @@ fn gateway_question(question: &Value) -> Value {
     out
 }
 
-/// Jev の口を HTTP で呼ぶ本物(direct と gateway の両方の形 — wire.py の prepare と parse の写し)。
+/// The real implementation that calls Jev's mouth over HTTP (both the direct and gateway forms — a copy of wire.py's prepare and parse).
 pub struct HttpGateway {
     target: JevTarget,
     agent: ureq::Agent,
 }
 
 impl HttpGateway {
-    /// 宛先から口を作る。TypeSafe と Vercel の宛先でキーが無ければ理由を返す(値は出さない)。
+    /// Build the mouth from a target. Return the reason if there is no key for a TypeSafe or Vercel target (the value is not shown).
     pub fn new(target: JevTarget, timeout: Duration) -> Result<HttpGateway, String> {
         let needs_key = target.base_url.contains("api.typesafe.ai") || target.base_url.contains(GATEWAY_HOST);
         if needs_key && target.api_key.is_none() {
             return Err(match target.wire {
-                Wire::Direct => "Jev の API キーが無い(JEV_API_KEY・JEV_API_KEY_FILE・TYPESAFE_API_KEY・~/.config/jev/api_key)".to_string(),
-                Wire::Gateway => "Jev の API キーが無い(JEV_API_KEY・JEV_API_KEY_FILE・AI_GATEWAY_API_KEY・~/jev_key)".to_string(),
+                Wire::Direct => "no Jev API key (JEV_API_KEY, JEV_API_KEY_FILE, TYPESAFE_API_KEY, ~/.config/jev/api_key)".to_string(),
+                Wire::Gateway => "no Jev API key (JEV_API_KEY, JEV_API_KEY_FILE, AI_GATEWAY_API_KEY, ~/jev_key)".to_string(),
             });
         }
         Ok(HttpGateway { target, agent: ureq::AgentBuilder::new().timeout(timeout).build() })
@@ -1033,7 +1033,7 @@ impl HttpGateway {
 }
 
 impl HttpGateway {
-    /// 問いの本文(direct と gateway の形 — 覚えている時だけの問いも同じ本文を送るので、代理の鍵が揃う)。
+    /// Body of the question (direct and gateway forms — an "only if remembered" question sends the same body, so the proxy keys match).
     fn body(&self, state: &Value, question: &Value) -> Value {
         match self.target.wire {
             Wire::Direct => json!({"state": state, "questions": {"q": question}, "model": self.target.model}),
@@ -1043,8 +1043,8 @@ impl HttpGateway {
 }
 
 impl Gateway for HttpGateway {
-    /// 1 回問う(429・5xx は 3 回まで間を空けて撃ち直す)。代理には Fresh の時だけ Cache-Control: no-cache を付ける。代理の答えの
-    /// 見出し x-jev-proxy が覚えた答え・相乗りを名乗れば、その回は上流を呼んでいない(費用と token を数えない)。
+    /// Ask once (429 and 5xx are retried up to 3 times with gaps). Cache-Control: no-cache is added for the proxy only when Fresh. If the proxy's answer
+    /// header x-jev-proxy says remembered answer or coalesced, upstream was not called that time (cost and tokens are not counted).
     fn ask(&self, state: &Value, question: &Value, freshness: Freshness, caller: &str) -> Result<Asked, String> {
         let body = self.body(state, question);
         let mut last = String::new();
@@ -1068,7 +1068,7 @@ impl Gateway for HttpGateway {
             match request.send_string(&body.to_string()) {
                 Ok(ok) => {
                     let remembered = self.target.proxy && answered_from_memory(ok.header("x-jev-proxy"));
-                    let text = ok.into_string().map_err(|e| format!("答えを読めない: {}", e))?;
+                    let text = ok.into_string().map_err(|e| format!("cannot read the answer: {}", e))?;
                     let answer = parse_answer(&text)?;
                     let charge = charge_of(&answer, remembered);
                     return Ok(Asked { answer, charge });
@@ -1080,21 +1080,21 @@ impl Gateway for HttpGateway {
                 Err(ureq::Error::Status(code, answer)) => {
                     return Err(format!("HTTP {}: {}", code, answer.into_string().unwrap_or_default().chars().take(300).collect::<String>()))
                 }
-                Err(error) => return Err(format!("Jev に届かない: {}", error)),
+                Err(error) => return Err(format!("cannot reach Jev: {}", error)),
             }
         }
         Err(last)
     }
 
-    /// 代理の鍵(代理の宛先の時だけ — 本文は ask と同じ綴り)。
+    /// Proxy key (only for a proxy target — the body is spelled the same as in ask).
     fn proxy_key(&self, state: &Value, question: &Value) -> Option<String> {
         self.target.proxy.then(|| proxy_key(&self.body(state, question)))
     }
 
-    /// 鍵の束を POST <proxy_url>/peek で覚えている時だけ問う(撃ち直さない)。代理でない宛先には撃たない(本物の Jev を呼ばないため)。
+    /// Ask a batch of keys "only if remembered" with POST <proxy_url>/peek (no re-asking). Not fired at a target that is not a proxy (so the real Jev is not called).
     fn peek_many(&self, keys: &[String], timeout: Duration) -> PeekedMany {
         if !self.target.proxy {
-            return PeekedMany::Unreachable("宛先が代理でない(覚えている時だけの問いは代理にだけ撃つ)".to_string());
+            return PeekedMany::Unreachable("the target is not a proxy (an \"only if remembered\" question is fired only at a proxy)".to_string());
         }
         let url = format!("{}/peek", self.target.base_url.trim_end_matches('/'));
         let request =
@@ -1102,30 +1102,30 @@ impl Gateway for HttpGateway {
         match request.send_string(&json!({ "keys": keys }).to_string()) {
             Ok(ok) => match ok.into_string().map_err(|e| e.to_string()).and_then(|text| parse_remembered(&text)) {
                 Ok(answers) => PeekedMany::Remembered(answers),
-                Err(reason) => PeekedMany::Unreachable(format!("代理の答えを読めない: {}", reason)),
+                Err(reason) => PeekedMany::Unreachable(format!("cannot read the proxy's answer: {}", reason)),
             },
-            Err(ureq::Error::Status(code, _)) => PeekedMany::Unreachable(format!("代理が HTTP {} を返した", code)),
-            Err(error) => PeekedMany::Unreachable(format!("代理に届かない: {}", error)),
+            Err(ureq::Error::Status(code, _)) => PeekedMany::Unreachable(format!("the proxy returned HTTP {}", code)),
+            Err(error) => PeekedMany::Unreachable(format!("cannot reach the proxy: {}", error)),
         }
     }
 
-    /// 宛先の model の名。
+    /// Model name of the target.
     fn model(&self) -> String {
         self.target.model.clone()
     }
 }
 
-/// 答えの JSON から確率を読む(direct は answers.q.noul・gateway は answers.q.probability — wire.py の _parse_answer)。
+/// Read the probability from the answer JSON (direct: answers.q.noul; gateway: answers.q.probability — wire.py's _parse_answer).
 pub fn parse_answer(text: &str) -> Result<Answer, String> {
-    let value: Value = serde_json::from_str(text).map_err(|e| format!("答えが JSON でない: {}", e))?;
-    let raw = value.pointer("/answers/q").ok_or_else(|| format!("答えに answers.q が無い: {}", text.chars().take(200).collect::<String>()))?;
+    let value: Value = serde_json::from_str(text).map_err(|e| format!("the answer is not JSON: {}", e))?;
+    let raw = value.pointer("/answers/q").ok_or_else(|| format!("the answer has no answers.q: {}", text.chars().take(200).collect::<String>()))?;
     let choice = raw.get("choice").and_then(Value::as_str).map(str::to_string);
     let probabilities: Option<BTreeMap<String, f64>> =
         raw.get("probabilities").and_then(Value::as_object).map(|m| m.iter().filter_map(|(k, v)| v.as_f64().map(|p| (k.clone(), p))).collect());
     let probability = match raw.get("noul").or_else(|| raw.get("probability")).and_then(Value::as_f64) {
         Some(p) => p,
         None if choice.is_some() => choice.as_ref().and_then(|c| probabilities.as_ref()?.get(c).copied()).unwrap_or(0.0),
-        None => return Err(format!("答えに noul の確率も choice も無い: {}", text.chars().take(200).collect::<String>())),
+        None => return Err(format!("the answer has neither a noul probability nor a choice: {}", text.chars().take(200).collect::<String>())),
     };
     let reported_cost_usd =
         value.pointer("/providerMetadata/gateway/cost").and_then(|c| c.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| c.as_f64()));
@@ -1137,31 +1137,31 @@ pub fn parse_answer(text: &str) -> Result<Answer, String> {
     Ok(Answer { probability, reported_cost_usd, input_tokens, output_tokens, served_model, choice, probabilities })
 }
 
-/// 1 回の問いが上流に払わせた分(答えの欄とは別 — proxy の覚えた答えは元の問いの費用を本文に持つが、この回は上流を呼んでいない)。
+/// What one question made upstream pay (separate from the answer's fields — the proxy's remembered answer carries the original question's cost in its body, but this call did not call upstream).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Charge {
-    /// 上流を呼び、答えに費用が載っていた(USD)。
+    /// Upstream was called and the answer carried the cost (USD).
     Reported(f64),
-    /// 上流を呼んだが、答えに費用が載っていない(TypeSafe 直 — 0 ではなく不明)。
+    /// Upstream was called but the answer carries no cost (direct TypeSafe — unknown, not 0).
     Unreported,
-    /// 上流を呼んでいない(proxy の覚えた答え・同じ問いへの相乗り・覚えている時だけの問い)— この回の費用と token は 0。
+    /// Upstream was not called (the proxy's remembered answer, joining the same question, or an "only if remembered" question) — cost and tokens for this call are 0.
     Remembered,
 }
 
-/// 1 回の問いの答えと、その回の費用。
+/// The answer to one question, and the cost of that call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Asked {
     pub answer: Answer,
     pub charge: Charge,
 }
 
-/// proxy の答えの見出し x-jev-proxy が「上流を呼ばずに答えた」印か(hit = 覚えた答え・coalesced = 同じ問いへの相乗り — proboscis/jev-proxy の
-/// service.hy の見出しの語)。見出しが無い(proxy でない宛先)・miss・refreshed は上流を呼んだ。
+/// Whether the proxy's answer header x-jev-proxy marks "answered without calling upstream" (hit = remembered answer, coalesced = joined the same question — words of the header in proboscis/jev-proxy's
+/// service.hy). No header (a target that is not a proxy), miss and refreshed mean upstream was called.
 pub fn answered_from_memory(marker: Option<&str>) -> bool {
     matches!(marker, Some("hit") | Some("coalesced"))
 }
 
-/// 1 回の問いの費用を決める(純粋): 上流を呼んでいなければ Remembered、呼んで答えに費用が載っていれば Reported、載っていなければ Unreported。
+/// Decide the cost of one question (pure): Remembered if upstream was not called; Reported if it was called and the answer carries a cost; Unreported otherwise.
 pub fn charge_of(answer: &Answer, remembered: bool) -> Charge {
     match (remembered, answer.reported_cost_usd) {
         (true, _) => Charge::Remembered,
@@ -1170,33 +1170,33 @@ pub fn charge_of(answer: &Answer, remembered: bool) -> Charge {
     }
 }
 
-/// 代理の覚えている時だけの問いの束の答え {"answers": {鍵: Jev の答えの本文}} を読む(1 つでも読めなければ全体を読めないとする)。
+/// Read the proxy's batch answer {"answers": {key: body of Jev's answer}} to "only if remembered" questions (if even one is unreadable, the whole is treated as unreadable).
 pub fn parse_remembered(text: &str) -> Result<BTreeMap<String, Answer>, String> {
-    let value: Value = serde_json::from_str(text).map_err(|e| format!("答えが JSON でない: {}", e))?;
-    let answers = value.get("answers").and_then(Value::as_object).ok_or_else(|| "答えに answers の object が無い".to_string())?;
+    let value: Value = serde_json::from_str(text).map_err(|e| format!("the answer is not JSON: {}", e))?;
+    let answers = value.get("answers").and_then(Value::as_object).ok_or_else(|| "the answer has no answers object".to_string())?;
     answers.iter().map(|(key, answer)| parse_answer(&answer.to_string()).map(|a| (key.clone(), a))).collect()
 }
 
-/// cache の置き場(repo の根の .doeff-linter/semantic-cache/)。
+/// Location of the cache (.doeff-linter/semantic-cache/ at the repo root).
 pub fn cache_dir(root: &Path) -> PathBuf {
     root.join(".doeff-linter").join("semantic-cache")
 }
 
-/// cache から答えを読む(無い・読めない時は None)。
+/// Read an answer from the cache (None if absent or unreadable).
 pub fn read_cache(root: &Path, key: &str) -> Option<Answer> {
     let text = std::fs::read_to_string(cache_dir(root).join(format!("{}.json", key))).ok()?;
     serde_json::from_str(&text).ok()
 }
 
-/// 答えを cache へ書く。
+/// Write an answer to the cache.
 fn write_cache(root: &Path, key: &str, answer: &Answer) -> Result<(), String> {
     let dir = cache_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cache の dir を作れない: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create the cache dir: {}", e))?;
     let text = serde_json::to_string(answer).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("{}.json", key)), text).map_err(|e| format!("cache を書けない: {}", e))
+    std::fs::write(dir.join(format!("{}.json", key)), text).map_err(|e| format!("cannot write the cache: {}", e))
 }
 
-/// 較正の見張りの例 1 つ(data/semantic_calibration.json)。
+/// One calibration watch example (data/semantic_calibration.json).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CalibrationExample {
     pub rule: String,
@@ -1207,117 +1207,117 @@ pub struct CalibrationExample {
     pub path: String,
     pub layer: String,
     pub source: String,
-    /// DOEFF204 の例の欄の宣言(`名: 型`)。
+    /// Declaration of the fields of a DOEFF204 example (`name: type`).
     #[serde(default)]
     pub fields: Vec<String>,
 }
 
-/// 同梱の較正の例。
+/// The bundled calibration examples.
 #[derive(Debug, Clone, Deserialize)]
 struct CalibrationFile {
     items: Vec<CalibrationExample>,
 }
 
-/// 正例の確率の下限と、反例の確率の上限(既定の幅)。
+/// Lower bound of the probability of a positive example and upper bound of a negative example (the default range).
 pub const CALIBRATION_POSITIVE_MIN: f64 = 0.8;
 pub const CALIBRATION_NEGATIVE_MAX: f64 = 0.2;
 
-/// 同梱の較正の例を読む。
+/// Read the bundled calibration examples.
 pub fn calibration_examples() -> Vec<CalibrationExample> {
     serde_json::from_str::<CalibrationFile>(include_str!("../../data/semantic_calibration.json")).map(|f| f.items).unwrap_or_default()
 }
 
-/// 問いを撃つ実行の結果。
+/// Result of a run that fires questions.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SemanticSummary {
     pub model: String,
-    /// 通信の形と宛先の出どころ(env / file / default)— キーの値は出さない。
+    /// The wire form and where the target came from (env / file / default) — the key value is not shown.
     pub wire: String,
-    /// 答えのある定義の数(cache か今回の問い)。
+    /// Number of definitions with an answer (from the cache or this run's questions).
     pub judged: usize,
-    /// 答えの無い定義の数(未判定 — 合格ではない)。
+    /// Number of definitions with no answer (undecided — not a pass).
     pub unjudged: usize,
-    /// 今回問うはずだったのに答えを得られなかった定義の数(Jev に届かない・鍵が無い・較正が撃てない — 「測れなかった」。緑と分けて出す)。
+    /// Number of definitions that were to be asked this time but got no answer (Jev unreachable, no key, calibration could not be fired — "unmeasured". Shown separately from green).
     pub unmeasured: usize,
-    /// 今回 gateway へ撃った数(較正を含む)。
+    /// Number fired at the gateway this time (including calibration).
     pub asked: usize,
-    /// 今回、代理が覚えていた答えを受け取って手元の cache に書いた数(覚えている時だけの問い — 本物の Jev は呼んでいない)。
+    /// Number of answers the proxy remembered that were received and written to the local cache this time ("only if remembered" questions — the real Jev was not called).
     pub peeked: usize,
-    /// 今回の費用(上流が答えに費用を載せた回の USD の和)。載せない回(TypeSafe 直)は cost_unreported に数え、ここに 0 を足さない
-    /// — cost_unreported が 0 でなければ、この和は下限。
+    /// Cost this time (sum of USD over the calls where upstream put a cost in the answer). Calls that do not report it (direct TypeSafe) are counted in cost_unreported, and 0 is not added here
+    /// — if cost_unreported is not 0, this sum is a lower bound.
     pub cost_usd: f64,
-    /// 今回、上流を呼んだのに答えに費用が載っていなかった回の数(費用は不明 — 0 ではない)。
+    /// Number of calls this time where upstream was called but the answer carried no cost (cost unknown — not 0).
     pub cost_unreported: usize,
-    /// 今回、proxy が覚えた答え・相乗りで答えた回の数(上流を呼んでいない — 費用と token を数えない)。
+    /// Number of calls this time answered by the proxy's remembered answer or by joining another question (upstream not called — cost and tokens not counted).
     pub remembered: usize,
-    /// 今回、上流を呼んだ回の入力の token の和(答えに usage が在った回だけ)。
+    /// Sum of input tokens of the calls that called upstream this time (only calls whose answer had usage).
     pub input_tokens: u64,
-    /// 今回、上流を呼んだ回の出力の token の和(答えに usage が在った回だけ)。
+    /// Sum of output tokens of the calls that called upstream this time (only calls whose answer had usage).
     pub output_tokens: u64,
-    /// 今回答えた model の版つきの名(direct だけ・撃たない実行は null)。
+    /// Versioned name of the model that answered this time (direct only; null for a run that fires nothing).
     pub served_model: Option<String>,
-    /// 較正の見張りの結果(not-run・ok・drifted・failed)。
+    /// Result of the calibration watch (not-run, ok, drifted, failed).
     pub calibration: String,
-    /// 誤判定の一覧に載っていて、違反から外した当たりの数(出さず・件数に入れない)。
+    /// Number of hits removed from violations because they are on the false-positive list (not shown and not counted).
     pub false_positives: usize,
-    /// 人の判定(誤判定の一覧 = 反例・正例の一覧 = 正例)と Jev の答えの突き合わせ。
+    /// Comparison of human judgments (false-positive list = negative examples, positive-example list = positive examples) with Jev's answers.
     pub labeled: LabeledSummary,
 }
 
-/// 人の判定と Jev の答えの突き合わせ — 今の閾値で当たりになるかと、判定ごとの確率(閾値を決める材料)。
+/// Comparison of human judgments with Jev's answers — whether each is a hit at the current thresholds, and the probability per judgment (material for deciding thresholds).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LabeledSummary {
-    /// 正例(人が本当の違反と判定した物)。
+    /// Positive examples (what a human judged to be a real violation).
     pub positives: LabelCount,
-    /// 反例(誤判定の一覧)。
+    /// Negative examples (the false-positive list).
     pub negatives: LabelCount,
-    /// 答えのある判定ごとの確率(鍵の順)。
+    /// Probability per judgment that has an answer (in key order).
     pub items: Vec<LabeledAnswer>,
 }
 
-/// 判定の種類ごとの数。
+/// Counts per kind of judgment.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LabelCount {
-    /// 一覧に載った鍵の数。
+    /// Number of keys on the list.
     pub listed: usize,
-    /// そのうち Jev の答えがある(今の定義を判じた)数。
+    /// Of those, the number with a Jev answer (the current definition was judged).
     pub judged: usize,
-    /// そのうち今の閾値で当たりになる数(正例なら当たり・反例なら誤判定)。
+    /// Of those, the number that are hits at the current thresholds (hits for positive examples, false positives for negative examples).
     pub flagged: usize,
 }
 
-/// 判定 1 つと Jev の答え。
+/// One judgment and Jev's answer.
 #[derive(Debug, Clone, Serialize)]
 pub struct LabeledAnswer {
     pub key: String,
     pub rule: String,
-    /// 人の判定(true = 本当の違反・false = 誤判定)。
+    /// Human judgment (true = real violation, false = false positive).
     pub expect: bool,
-    /// 閾値と比べる確率(`target_probability` — Noul は答えの確率・DOEFF204 は external-world・DOEFF205 は mixed の確率)。
+    /// Probability compared with thresholds (`target_probability` — the probability of the answer for Noul, of external-world for DOEFF204, of mixed for DOEFF205).
     pub probability: f64,
-    /// 今の閾値で当たりになるか。
+    /// Whether it is a hit at the current thresholds.
     pub flagged: bool,
 }
 
-/// 何を撃つか。
+/// What to fire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticMode {
-    /// cache を読むだけ(エディタの編集中の決定的な実行)。
+    /// Only read the cache (deterministic runs while editing in the editor).
     CacheOnly,
-    /// cache を読み、無い定義は代理に「覚えている時だけ」問う(全体の実行・hook — 代理が無ければ CacheOnly と同じ)。
+    /// Read the cache, and ask the proxy "only if remembered" about definitions not in it (full runs and hooks — the same as CacheOnly if there is no proxy).
     Peek,
-    /// 指定した file の定義を撃つ(repo の根からの path)。
+    /// Fire the definitions of the given files (paths from the repo root).
     Ask(BTreeSet<String>),
-    /// 指定した file の定義のうち、手元の cache に答えの無い定義(中身が変わった定義)だけを撃つ。
+    /// Fire only the definitions of the given files that have no answer in the local cache (definitions whose content changed).
     AskChanged(BTreeSet<String>),
-    /// 全部の定義を撃つ。
+    /// Fire all definitions.
     AskAll,
-    /// 旗の無い全体の実行の既定: 指定した file の定義のうち手元の cache に答えの無い物だけを撃ち(AskChanged と同じ)、
-    /// 残りの答えの無い定義は代理に「覚えている時だけ」問う(Peek と同じ — 別の worker の答えを受け取る)。
+    /// Default of a full run without flags: fire only the definitions of the given files that have no answer in the local cache (same as AskChanged),
+    /// and ask the proxy "only if remembered" about the remaining definitions with no answer (same as Peek — receive answers from other workers).
     PeekThenAskChanged(BTreeSet<String>),
 }
 
-/// 意味の規則の結果(答えのある定義と、要約・理由)。
+/// Result of the semantic rules (definitions with answers, and the summary and reasons).
 pub struct SemanticOutcome {
     pub answered: Vec<(SemanticItem, Answer)>,
     pub summary: SemanticSummary,
@@ -1325,7 +1325,7 @@ pub struct SemanticOutcome {
 }
 
 impl SemanticSummary {
-    /// 1 回の問いの費用と token を要約に足すため — 上流を呼んでいない回(proxy の覚え)は数えず、費用の載らない回は不明として数える。
+    /// To add the cost and tokens of one question to the summary — calls that did not call upstream (the proxy's memory) are not counted, and calls that report no cost are counted as unknown.
     pub fn tally(&mut self, asked: &Asked) {
         match asked.charge {
             Charge::Remembered => {
@@ -1344,7 +1344,7 @@ impl SemanticSummary {
     }
 }
 
-/// 定義の問いを cache から読み、mode が撃つ物は gateway へ撃つ(同時に workers 本)。撃つ実行は先に較正の見張りを撃つ。
+/// Read the questions of definitions from the cache, and fire the ones the mode fires at the gateway (`workers` at a time). A run that fires first fires the calibration watch.
 pub fn evaluate(
     root: &Path,
     settings: &SemanticSettings,
@@ -1359,7 +1359,7 @@ pub fn evaluate(
         ..SemanticSummary::default()
     };
     let mut errors = Vec::new();
-    // 書きかけで読めない定義はどの実行でも問わない(未判定に数える)。
+    // Definitions that are work in progress and cannot be read are not asked about in any run (counted as undecided).
     let wants_ask = |item: &SemanticItem| {
         item.readable
             && match mode {
@@ -1372,8 +1372,8 @@ pub fn evaluate(
             }
     };
     let asking = items.iter().any(wants_ask);
-    // 問うと名指した Hy の file のうち、問いになる定義が 1 つも無い物を名乗る(問いの層の外・最上位の定義なし・書きかけ)— 名指しが
-    // どの問いにもならずに「今回撃った 0」で終わる時、なぜ 0 かを黙らない。
+    // Report named Hy files that have no definition that becomes a question (outside the asked layers, no top-level definition, work in progress) — so that when a named file
+    // becomes no question and the run ends with "fired this time: 0", it does not stay silent about why it is 0.
     if let SemanticMode::Ask(targets) | SemanticMode::AskChanged(targets) = mode {
         let silent: Vec<&str> = targets
             .iter()
@@ -1382,9 +1382,9 @@ pub fn evaluate(
             .collect();
         if !silent.is_empty() {
             errors.push(format!(
-                "意味の規則: 名指しの file のうち {} 個には問いになる定義が無い(問いの層の外・最上位の定義なし・書きかけ)— 今回撃った数に入らない: {}",
+                "semantic rules: {} of the named files have no definition to ask about (outside the asked layers, no top-level definition, or work in progress) — not counted in the number fired this time: {}",
                 silent.len(),
-                silent.join("・")
+                silent.join(", ")
             ));
         }
     }
@@ -1413,12 +1413,12 @@ pub fn evaluate(
                             let probability = target_probability(example.question, &answer);
                             let inside = if expect { probability >= CALIBRATION_POSITIVE_MIN } else { probability <= CALIBRATION_NEGATIVE_MAX };
                             if !inside {
-                                drifted.push(format!("{} の {}(期待 {})が p={:.2}", example.question_id(), example.name, if expect { "真" } else { "偽" }, probability));
+                                drifted.push(format!("{} {} (expected {}) is p={:.2}", example.question_id(), example.name, if expect { "true" } else { "false" }, probability));
                             }
                         }
                         Err(reason) => {
                             summary.calibration = "failed".to_string();
-                            errors.push(format!("意味の規則の較正の問いが撃てない: {}", reason));
+                            errors.push(format!("semantic rules: cannot fire the calibration question: {}", reason));
                         }
                     }
                 }
@@ -1429,17 +1429,17 @@ pub fn evaluate(
                         summary.calibration = "drifted".to_string();
                         let removed = std::fs::remove_dir_all(cache_dir(root)).is_ok();
                         errors.push(format!(
-                            "意味の規則の較正が既定の幅(正例 p ≥ {}・反例 p ≤ {})から外れた — model が変わった疑いで cache を捨てた{}: {}",
+                            "semantic rules: calibration left the default range (positive p ≥ {}, negative p ≤ {}) — the cache was discarded on suspicion that the model changed{}: {}",
                             CALIBRATION_POSITIVE_MIN,
                             CALIBRATION_NEGATIVE_MAX,
-                            if removed { "" } else { "(捨てる cache は無かった)" },
-                            drifted.join("・")
+                            if removed { "" } else { " (there was no cache to discard)" },
+                            drifted.join(", ")
                         ));
                     }
                 }
             }
-            (None, _) => errors.push("意味の規則: gateway の口を作れないので撃たない(cache だけを読む)".to_string()),
-            (_, Err(error)) => errors.push(format!("意味の規則: 並列の pool を作れない: {}", error)),
+            (None, _) => errors.push("semantic rules: the gateway mouth cannot be built, so nothing is fired (only the cache is read)".to_string()),
+            (_, Err(error)) => errors.push(format!("semantic rules: cannot build the parallel pool: {}", error)),
         }
     }
     let can_ask = asking && gateway.is_some() && summary.calibration != "failed";
@@ -1466,7 +1466,7 @@ pub fn evaluate(
             (item, cached)
         }).collect(),
     };
-    // 全体の実行・hook: 手元の cache に無い読める定義を、代理の鍵の束で代理に「覚えている時だけ」問う(本物の Jev は呼ばない)。
+    // Full runs and hooks: ask the proxy "only if remembered" about readable definitions missing from the local cache, in batches of proxy keys (the real Jev is not called).
     let resolved = match (mode, gateway, &pool, settings.proxy.as_ref()) {
         (SemanticMode::Peek | SemanticMode::PeekThenAskChanged(_), Some(gateway), Ok(pool), Some(proxy)) => {
             let wanted: Vec<Option<String>> = resolved
@@ -1480,7 +1480,7 @@ pub fn evaluate(
             let peeked = if keys.is_empty() { Peeked::default() } else { peek_remembered(gateway, &keys, proxy.peek_timeout, pool) };
             if let Some(reason) = &peeked.missed_reason {
                 errors.push(format!(
-                    "意味の規則: proxy の覚えを読む束が返らなかった({})— 鍵 {} 個の定義を測れなかった(未判定ではない・待ち = semantic.proxy_peek_timeout_ms {} ms)",
+                    "semantic rules: the batch reading the proxy's memory did not return ({}) — definitions for {} keys could not be measured (not undecided; wait = semantic.proxy_peek_timeout_ms {} ms)",
                     reason,
                     peeked.missed.len(),
                     proxy.peek_timeout.as_millis()
@@ -1530,14 +1530,14 @@ pub fn evaluate(
                 summary.asked += 1;
                 summary.unjudged += 1;
                 summary.unmeasured += 1;
-                errors.push(format!("{} の {}: Jev に問えない: {}", item.rel, item.name, reason));
+                errors.push(format!("{} {}: cannot ask Jev: {}", item.rel, item.name, reason));
             }
-            // proxy の覚えを読む束が待ちの内に返らなかった(届かない・時間切れ)定義は、答えが在るかどうかを測れていない — 未判定に数えず
-            // 「測れなかった」に数える(束が 5 秒を超えた機体で、判定済み 6813 の repo が黙って未判定 7697 と出た)。
+            // A definition whose proxy-memory batch did not return within the wait (unreachable, timed out) has not been measured for whether an answer exists — count it as "unmeasured", not
+            // as undecided (on a machine where the batch exceeded 5 seconds, a repo with 6813 judged silently showed 7697 undecided).
             None if missed => summary.unmeasured += 1,
             None => {
                 summary.unjudged += 1;
-                // 問うはずだった定義が、gateway・較正・pool のどれかで問えずに終わった(測れなかった)。
+                // A definition that was to be asked ended without being asked, through the gateway, calibration or pool (unmeasured).
                 if wants_ask(&item) {
                     summary.unmeasured += 1;
                 }
@@ -1547,16 +1547,16 @@ pub fn evaluate(
     SemanticOutcome { answered, summary, errors }
 }
 
-/// 定義 1 つの答えの出どころ — 今回問うた答え(費用を数えて手元の cache に書く)・手元の cache か proxy の覚えから読んだ答え(今回は
-/// 上流を呼んでいない — 費用を数えない)・今回問えなかった理由。
+/// Where one definition's answer came from — an answer asked this time (cost is counted and written to the local cache), an answer read from the local cache or the proxy's memory (this time
+/// upstream was not called — cost not counted), or the reason it could not be asked this time.
 enum Resolved {
     Asked(Asked),
     Known(Answer),
     Failed(String),
 }
 
-/// proxy の覚えを読んだ結果: answers = 覚えていた答え(proxy の鍵 → 答え)/ missed = 束が返らなかった(届かない・時間切れ・撃たずに
-/// 止めた)鍵 — 答えが在るかどうかを測れていない / missed_reason = 最初に返らなかった束の理由。
+/// Result of reading the proxy's memory: answers = remembered answers (proxy key → answer) / missed = keys of batches that did not return (unreachable, timed out, stopped without being fired)
+/// — whether an answer exists has not been measured / missed_reason = the reason of the first batch that did not return.
 #[derive(Default)]
 struct Peeked {
     answers: BTreeMap<String, Answer>,
@@ -1564,8 +1564,8 @@ struct Peeked {
     missed_reason: Option<String>,
 }
 
-/// 代理の鍵の束を PEEK_BATCH 個ずつに分けて並べて代理に「覚えている時だけ」問い、覚えていた答えを集める。全部の束を合わせた時間の
-/// 上限つきで、どれかの束が届かなければ残りの束は撃たない。返らなかった束の鍵は missed に集める(未判定と分けて数える — #1885)。
+/// Split the batch of proxy keys into PEEK_BATCH at a time, ask the proxy "only if remembered" in parallel, and collect the remembered answers. With a time
+/// limit covering all batches combined; if any batch is unreachable, the remaining batches are not fired. Keys of batches that did not return are collected in missed (counted separately from undecided; #1885).
 fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, pool: &rayon::ThreadPool) -> Peeked {
     let deadline = Instant::now() + timeout;
     let unreachable = AtomicBool::new(false);
@@ -1577,10 +1577,10 @@ fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, po
             .map(|batch| {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
-                    return missed_batch(batch, format!("待ち {} ms を使い切った", timeout.as_millis()));
+                    return missed_batch(batch, format!("used up the wait of {} ms", timeout.as_millis()));
                 }
                 if unreachable.load(Ordering::Relaxed) {
-                    return missed_batch(batch, "先の束が返らなかったので撃たなかった".to_string());
+                    return missed_batch(batch, "not fired because an earlier batch did not return".to_string());
                 }
                 match gateway.peek_many(batch, left) {
                     PeekedMany::Remembered(answers) => Peeked { answers, ..Peeked::default() },
@@ -1602,7 +1602,7 @@ fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, po
 }
 
 impl SemanticItem {
-    /// 問いの ID(較正の知らせの文のため)。
+    /// ID of the question (for the calibration notice text).
     fn question_id(&self) -> &'static str {
         self.question.id()
     }
@@ -1615,13 +1615,13 @@ mod tests {
     #[test]
     fn strips_tags_truncates_and_keys_do_not_see_declared_roles() {
         let settings = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
-        let description = LayerDescription { summary: Some("翻訳".into()), ..LayerDescription::default() };
+        let description = LayerDescription { summary: Some("translation".into()), ..LayerDescription::default() };
         let range = { let p = doeff_indexer::hy_index::Position { line: 0, character: 0 }; doeff_indexer::hy_index::Range { start: p, end: p } };
         let one = item(&settings, "jev-latest", SemanticQuestion::BusinessDecision, "a.hy", Path::new("/r/a.hy"), "f", "defk", range, "(defk f [x] {:tags {:role \"protocol\"}} x)", LayerId(0), "protocol", &description);
         let other = item(&settings, "jev-latest", SemanticQuestion::BusinessDecision, "a.hy", Path::new("/r/a.hy"), "f", "defk", range, "(defk f [x] {:tags {:role \"judgment\"}} x)", LayerId(0), "protocol", &description);
-        assert_eq!(one.key, other.key, "申告の役は鍵に入れない");
+        assert_eq!(one.key, other.key, "the declared role is not part of the key");
         assert_eq!(one.state["definition"]["source"], "(defk f [x] {} x)");
-        let long = item(&settings, "jev-latest", SemanticQuestion::BusinessDecision, "a.hy", Path::new("/r/a.hy"), "f", "defk", range, &"あ".repeat(5000), LayerId(0), "protocol", &description);
+        let long = item(&settings, "jev-latest", SemanticQuestion::BusinessDecision, "a.hy", Path::new("/r/a.hy"), "f", "defk", range, &"a".repeat(5000), LayerId(0), "protocol", &description);
         assert_eq!(long.state["definition"]["source"].as_str().unwrap().chars().count(), 1800);
         assert_eq!(
             parse_answer(r#"{"answers":{"q":{"type":"boolean","probability":0.93}},"providerMetadata":{"gateway":{"cost":"0.00006"}},"usage":{"inputTokens":10}}"#).unwrap(),
@@ -1640,9 +1640,9 @@ mod tests {
         assert_eq!(calibration_examples().len(), 8);
     }
 
-    // ---- 答えの費用: 上流が答えに載せた時だけ費用が在り、載せない答えは 0 ではなく「不明」----
+    // ---- Cost of an answer: a cost exists only when upstream put it in the answer; an answer without it is "unknown", not 0 ----
 
-    /// 費用の在る答え(Vercel の AI Gateway の形)— 費用と token を読み、上流を呼んだ回はその費用を数える。
+    /// An answer with a cost (Vercel AI Gateway form) — read the cost and tokens, and count that cost for a call that called upstream.
     #[test]
     fn an_answer_with_a_cost_is_charged_that_cost() {
         let answer = parse_answer(
@@ -1657,7 +1657,7 @@ mod tests {
         assert_eq!((summary.cost_usd, summary.cost_unreported, summary.input_tokens, summary.output_tokens), (0.00004, 0, 900, 3));
     }
 
-    /// 費用も usage も無い答え — 費用は 0 ではなく不明、token も 0 と書かない。
+    /// An answer with neither cost nor usage — the cost is unknown, not 0, and tokens are not written as 0 either.
     #[test]
     fn an_answer_without_a_cost_is_unreported_not_zero() {
         let answer = parse_answer(r#"{"answers":{"q":{"noul":0.2}},"model":"jev-1.13.0"}"#).unwrap();
@@ -1667,12 +1667,12 @@ mod tests {
         let mut summary = SemanticSummary::default();
         summary.tally(&asked);
         assert_eq!((summary.cost_usd, summary.cost_unreported, summary.input_tokens), (0.0, 1, 0));
-        // cache に書く形でも「費用は無い」のまま(0 を書かない)。
+        // Even in the form written to the cache it stays "no cost" (0 is not written).
         let written = serde_json::to_value(&asked.answer).unwrap();
         assert_eq!(written["reported_cost_usd"], Value::Null);
     }
 
-    /// usage(token 数)だけの答え(TypeSafe 直の形)— token は数え、費用は不明として数える(単価を掛ける材料 — #1892 の案 B)。
+    /// An answer with only usage (token counts) (direct TypeSafe form) — tokens are counted and the cost is counted as unknown (material for multiplying by unit prices; #1892 plan B).
     #[test]
     fn a_usage_only_answer_keeps_tokens_and_leaves_the_cost_unreported() {
         let answer = parse_answer(r#"{"answers":{"q":{"noul":0.7}},"usage":{"input_tokens":1234,"output_tokens":5},"model":"jev-1.13.0"}"#).unwrap();
@@ -1683,7 +1683,7 @@ mod tests {
         assert_eq!((summary.cost_usd, summary.cost_unreported, summary.input_tokens, summary.output_tokens), (0.0, 1, 1234, 5));
     }
 
-    /// proxy が覚えた答え・相乗りで答えた回は上流を呼んでいない — 本文に元の問いの費用が在っても、その回の費用と token は数えない。
+    /// A call answered by the proxy's remembered answer or by joining another question did not call upstream — even if the body has the original question's cost, that call's cost and tokens are not counted.
     #[test]
     fn a_remembered_answer_is_not_charged_again() {
         assert!(answered_from_memory(Some("hit")) && answered_from_memory(Some("coalesced")));
@@ -1699,7 +1699,7 @@ mod tests {
         assert_eq!((summary.cost_usd, summary.cost_unreported, summary.remembered, summary.input_tokens), (0.0, 0, 1, 0));
     }
 
-    /// 以前の cache の答え(cost_usd を載らない時も 0 と書いていた)は、費用を「不明」として読む。token 数はそのまま読む。
+    /// An old cache answer (which wrote cost_usd as 0 even when nothing was reported) is read with the cost as "unknown". Token counts are read as they are.
     #[test]
     fn an_old_cache_answer_reads_its_cost_as_unknown() {
         let old: Answer = serde_json::from_str(r#"{"probability":0.1,"cost_usd":0.0,"input_tokens":1000,"served_model":"jev-1.13.0"}"#).unwrap();
@@ -1710,15 +1710,15 @@ mod tests {
     fn target_resolution_matches_doeff_jev() {
         let env = |pairs: &'static [(&'static str, &'static str)]| move |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string());
         let no_files = |_: &str| None;
-        // 既定 = TypeSafe 直・キーは TYPESAFE_API_KEY。
+        // Default = direct TypeSafe; the key is TYPESAFE_API_KEY.
         let direct = resolve_target(&env(&[("TYPESAFE_API_KEY", "k1")]), &no_files, None);
         assert_eq!((direct.base_url.as_str(), direct.model.as_str(), direct.wire, direct.source), (DIRECT_URL, DIRECT_MODEL, Wire::Direct, "default"));
         assert_eq!(direct.api_key.as_deref(), Some("k1"));
-        assert!(!format!("{:?}", direct).contains("k1"), "Debug にキーの値を出さない");
-        // gateway を名指した時の既定。
+        assert!(!format!("{:?}", direct).contains("k1"), "the key value must not appear in Debug");
+        // The default when the gateway is named.
         let gateway = resolve_target(&env(&[("JEV_WIRE", "gateway"), ("AI_GATEWAY_API_KEY", "g")]), &no_files, None);
         assert_eq!((gateway.base_url.as_str(), gateway.model.as_str(), gateway.wire), (GATEWAY_URL, GATEWAY_MODEL, Wire::Gateway));
-        // 環境変数が設定 file に勝ち、設定 file が既定に勝つ。
+        // Environment variables win over the settings file, and the settings file wins over the default.
         let files = |path: &str| (path == "~/.config/jev/client.json").then(|| r#"{"base_url":"http://seimf:8000/v1/systemone","model":"file-model"}"#.to_string());
         let from_file = resolve_target(&env(&[]), &files, None);
         assert_eq!((from_file.base_url.as_str(), from_file.model.as_str(), from_file.source), ("http://seimf:8000/v1/systemone", "file-model", "file"));
@@ -1731,23 +1731,23 @@ mod tests {
         let env = |pairs: &'static [(&'static str, &'static str)]| move |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string());
         let proxy = ProxySettings { url: "http://proxy:8878/v1/systemone".into(), peek_timeout: Duration::from_millis(1500) };
         let files = |path: &str| (path == "~/.config/jev/api_key").then(|| "file-key\n".to_string());
-        // proxy へはキーを送らない(env と home の file の TypeSafe のキーへも倒れない)。キーが無くても口は作れる。
+        // No key is sent to the proxy (nor does it fall back to the TypeSafe key in env or the file in home). The mouth can be built without a key.
         let via = resolve_repo_target(&env(&[("TYPESAFE_API_KEY", "real-key")]), &files, Some(&proxy));
         assert_eq!((via.base_url.as_str(), via.model.as_str(), via.wire, via.source, via.proxy), ("http://proxy:8878/v1/systemone", DIRECT_MODEL, Wire::Direct, "repo", true));
         assert_eq!(via.api_key, None);
         assert!(HttpGateway::new(via, Duration::from_secs(1)).is_ok());
-        // env の JEV_BASE_URL が在れば repo の proxy を使わない。
+        // If env JEV_BASE_URL is set, the repo's proxy is not used.
         let env_wins = resolve_repo_target(&env(&[("JEV_BASE_URL", "http://seimf/v1"), ("TYPESAFE_API_KEY", "k")]), &files, Some(&proxy));
         assert_eq!((env_wins.base_url.as_str(), env_wins.proxy), ("http://seimf/v1", false));
-        // gateway を名指した環境でも、proxy へは direct の形と direct の model で問う。
+        // Even in an environment that names the gateway, the proxy is asked in the direct form with the direct model.
         let gateway_env = resolve_repo_target(&env(&[("JEV_WIRE", "gateway")]), &files, Some(&proxy));
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
     }
 
-    /// architecture.hy に :semantic-lines の無い repo では、問いは wire() のまま。DOEFF201 の cache のキーは線引きを足す前
-    /// と同じ — キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。DOEFF205 のキーは
-    /// #1995 で一般の注を線引き 4 の例外と揃えたので変わった(値は #1995 の code で組んだ物)。DOEFF202 のキーは #2059 で枠に外の data の
-    /// 型の無い形を足したので変わった(値は #2059 の code で組んだ物)。
+    /// For a repo with no :semantic-lines in architecture.hy, the question stays as wire(). The DOEFF201 cache key is the same as before boundaries were added
+    /// — the key value was built with the code from before boundaries were added (if it changes, all definitions of that repo go back to "no answer"). The DOEFF205 key
+    /// changed in #1995 when the general note was aligned with the exception of boundary 4 (the value was built with the code of #1995). The DOEFF202 key changed in #2059 when the frame gained the untyped shape of outside
+    /// data (the value was built with the code of #2059).
     #[test]
     fn without_lines_the_questions_and_keys_stay_as_before() {
         let settings = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
@@ -1764,7 +1764,7 @@ mod tests {
         let transport = layered(SemanticQuestion::TransportKnowledge);
         let mixed = mixed_item(&settings, "jev-latest", "a.hy", Path::new("/r/a.hy"), "f", "defk", range, source, LayerId(0), "core", &description);
         for one in [&decision, &transport, &mixed] {
-            assert_eq!(one.question_json, one.question.wire(), "線引きの無い問いは今の問いのまま");
+            assert_eq!(one.question_json, one.question.wire(), "a question with no boundaries stays the current question");
         }
         assert_eq!(
             [decision.key.as_str(), transport.key.as_str(), mixed.key.as_str()],
@@ -1776,54 +1776,54 @@ mod tests {
         );
     }
 
-    /// 線引きを入れた問いの instructions の部品(1 つの鍵の object の列)から、鍵 key の中身を引く。
+    /// From the parts of the instructions of a question with boundaries (a list of single-key objects), pull out the content of key `key`.
     fn part<'a>(question: &'a Value, key: &str) -> &'a Value {
         question["instructions"].as_array().and_then(|parts| parts.iter().find_map(|p| p.get(key))).unwrap_or(&Value::Null)
     }
 
-    /// 線引きを入れた問いの instructions の部品の鍵(送る順)。
+    /// Keys of the parts of the instructions of a question with boundaries (in the order sent).
     fn part_keys(question: &Value) -> Vec<String> {
         question["instructions"].as_array().map(|parts| parts.iter().filter_map(|p| p.as_object()?.keys().next().cloned()).collect()).unwrap_or_default()
     }
 
-    /// 線引き 1 つ(鳴る例は why つき・鳴らない例は code だけ)。
+    /// One boundary (the firing example has a why; the silent example has only a code).
     fn sample_line(name: &str, rules: Vec<SemanticQuestion>) -> SemanticLine {
         SemanticLine {
             name: name.into(),
             rules,
-            text: format!("{} の文", name),
-            fires: vec![LineExample { code: "(defk f [x] {:tags {:role \"protocol\"}} (g x))".into(), why: Some(format!("{} で鳴る理由", name)) }],
+            text: format!("{} sentence", name),
+            fires: vec![LineExample { code: "(defk f [x] {:tags {:role \"protocol\"}} (g x))".into(), why: Some(format!("{} fires reason", name)) }],
             silent: vec![LineExample { code: "(defk h [x] x)".into(), why: None }],
         }
     }
 
-    /// 線引きはその規則の問いにだけ入る(名・文・鳴る例・鳴らない例・答えの向き)。例の code の :tags は消し、why を書いた
-    /// 例は `{"code", "why"}`、書かない例は `{"code"}` で載る(#1995)。線引きを入れた問いは cache のキーも変わる(線引きを変えると答えなしに
-    /// 戻る — 想定どおり)。
+    /// A boundary goes only into the questions of its rules (name, sentence, firing examples, silent examples, direction of the answer). :tags in an example's code is removed, and an example
+    /// with a why is carried as `{"code", "why"}`, one without as `{"code"}` (#1995). A question with boundaries also changes the cache key (changing a boundary goes back to
+    /// no answer — as intended).
     #[test]
     fn lines_go_into_the_instructions_of_their_questions_only() {
         use SemanticQuestion::{BusinessDecision, MixedConcerns, PlainCallable, TransportKnowledge};
         let line = sample_line;
-        let lines = vec![line("一", vec![BusinessDecision]), line("二", vec![TransportKnowledge]), line("五", vec![MixedConcerns, BusinessDecision])];
+        let lines = vec![line("one", vec![BusinessDecision]), line("two", vec![TransportKnowledge]), line("five", vec![MixedConcerns, BusinessDecision])];
         let names = |question: &Value| -> Vec<String> {
             part(question, "lines").as_array().map(|all| all.iter().filter_map(|l| l["name"].as_str().map(str::to_string)).collect()).unwrap_or_default()
         };
         let decision = BusinessDecision.wire_with(&lines);
-        assert_eq!(names(&decision), ["一", "五"]);
+        assert_eq!(names(&decision), ["one", "five"]);
         assert_eq!(
             part(&decision, "lines")[0],
-            json!({"name": "一", "text": "一 の文", "violating_examples": [{"code": "(defk f [x] {} (g x))", "why": "一 で鳴る理由"}], "complying_examples": [{"code": "(defk h [x] x)"}]})
+            json!({"name": "one", "text": "one sentence", "violating_examples": [{"code": "(defk f [x] {} (g x))", "why": "one fires reason"}], "complying_examples": [{"code": "(defk h [x] x)"}]})
         );
         assert_eq!(part(&decision, "question"), &BusinessDecision.wire()["instructions"]["question"]);
         assert_eq!(decision["criteria"], BusinessDecision.wire()["criteria"]);
         assert!(part(&decision, "lines_note").as_str().is_some_and(|note| note.contains("answer true") && note.contains("`why`")));
         let transport = TransportKnowledge.wire_with(&lines);
-        assert_eq!(names(&transport), ["二"]);
+        assert_eq!(names(&transport), ["two"]);
         assert_eq!(part(&transport, "question"), &TransportKnowledge.wire()["instructions"]["question"]);
         let mixed = MixedConcerns.wire_with(&lines);
-        assert_eq!(names(&mixed), ["五"]);
+        assert_eq!(names(&mixed), ["five"]);
         assert!(part(&mixed, "lines_note").as_str().is_some_and(|note| note.contains("is `mixed`")));
-        // 線引きを入れない問いと、当たる線引きの無い問いは今のまま。
+        // Questions that take no boundaries, and questions with no matching boundary, stay as they are.
         assert_eq!(PlainCallable.wire_with(&lines), PlainCallable.wire());
         assert_eq!(TransportKnowledge.wire_with(&lines[..1]), TransportKnowledge.wire());
         let bare = SemanticSettings::validate(&SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
@@ -1838,57 +1838,57 @@ mod tests {
         assert_eq!(after.question_json, BusinessDecision.wire_with(&lined.lines));
     }
 
-    /// 線引きを入れた問いの instructions は、宣言の順(問いの文 → 一般の例・注 → 線引きの読み方 → 線引き)の列で送る —
-    /// 鍵の object だと鍵の名の順に並び、DOEFF205 の一般の注(note)が線引き(lines)の後ろに来て、「上の注と違えば線引きに従え」が
-    /// 逆さに読めた。送る本文の文字列でも、この順に出る(列は綴りでも順を保つ)。
+    /// The instructions of a question with boundaries are sent as a list in declaration order (the question text → general examples and note → how to read the boundaries → the boundaries) —
+    /// as an object of keys they would sort by key name, the DOEFF205 general note would come after the boundaries (lines), and "if it differs from the note above, follow the boundaries"
+    /// would read upside down. The order also holds in the body string that is sent (a list keeps its order in spelling too).
     #[test]
     fn lined_instructions_go_in_the_declared_order_with_the_lines_last() {
         use SemanticQuestion::{BusinessDecision, MixedConcerns, TransportKnowledge};
-        let lines = vec![sample_line("一", vec![BusinessDecision, TransportKnowledge, MixedConcerns])];
+        let lines = vec![sample_line("one", vec![BusinessDecision, TransportKnowledge, MixedConcerns])];
         for (question, keys) in [
             (BusinessDecision, vec!["question", "business_decision_examples", "not_business_decision_examples", "lines_note", "lines"]),
             (TransportKnowledge, vec!["question", "note", "transport_knowledge_examples", "not_transport_knowledge_examples", "lines_note", "lines"]),
             (MixedConcerns, vec!["question", "note", "lines_note", "lines"]),
         ] {
             let wired = question.wire_with(&lines);
-            assert_eq!(part_keys(&wired), keys, "{} の部品の順", question.id());
-            // 送る本文の綴り(proxy へ送る JSON の文字列)でも、部品の中身は宣言の順に出る。
+            assert_eq!(part_keys(&wired), keys, "order of the parts of {}", question.id());
+            // Even in the spelling of the body sent (the JSON string sent to the proxy), the content of the parts comes out in declaration order.
             let sent = serde_json::to_string(&wired).unwrap();
-            let at: Vec<usize> = keys.iter().map(|key| sent.find(&format!("\"{}\":", key)).unwrap_or_else(|| panic!("{} が無い: {}", key, sent))).collect();
-            assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{} の送る順が宣言の順と違う: {:?}\n{}", question.id(), at, sent);
+            let at: Vec<usize> = keys.iter().map(|key| sent.find(&format!("\"{}\":", key)).unwrap_or_else(|| panic!("{} is missing: {}", key, sent))).collect();
+            assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "the order of {} in the sent body differs from the declaration order: {:?}\n{}", question.id(), at, sent);
         }
     }
 
-    /// DOEFF205 の一般の注は、線引き 4 の例外(型の union の枝分け・外から来ていない dict・形の確認を任せた関数の答えで
-    /// 断るだけの枝)を同じ向きで言う — 前の注は isinstance と dict の読みを例外なしに形の確認と言い、線引きと食い違った。
+    /// The DOEFF205 general note states the exceptions of boundary 4 (branching on cases of a typed union, a dict that did not come from outside, a branch that only
+    /// refuses with the answer of a function the shape check was delegated to) in the same direction — the previous note called isinstance and dict reads shape checking without exception, contradicting the boundary.
     #[test]
     fn the_mixed_concerns_note_states_the_exceptions_of_the_lines() {
         let note = SemanticQuestion::MixedConcerns.wire()["instructions"]["note"].as_str().unwrap_or_default().to_string();
         for needle in ["untyped input that came from outside", "branching on the cases of a typed union", "did not come from outside", "the shape check was left to"] {
-            assert!(note.contains(needle), "注に {:?} が無い: {}", needle, note);
+            assert!(note.contains(needle), "the note lacks {:?}: {}", needle, note);
         }
     }
 
-    /// DOEFF202 の枠は、通信の手段(a)と外の data の型の無い形(b — dict・JSON の値を欄名で読む・組む)を同じ重さで問う。
-    /// 前の枠は通信の手段だけで、json.loads を書かない欄名の読みは repo の線引きと例を足しても広がらなかった。true の例に json.loads を
-    /// 含まない欄名の読みが在り、false の例に型の値だけで判じる core が在る。
+    /// The DOEFF202 frame asks with equal weight about the means of communication (a) and the untyped shape of outside data (b — dicts, reading or building JSON values by field name).
+    /// The previous frame covered only the means of communication, and a field-name read that does not write json.loads did not spread even when the repo's boundary and examples were added. The true examples
+    /// include a field-name read without json.loads, and the false examples include a core that decides with typed values only.
     #[test]
     fn the_transport_knowledge_frame_weighs_untyped_field_reads_like_transport() {
         let wired = SemanticQuestion::TransportKnowledge.wire();
         let instructions = &wired["instructions"];
         let question = instructions["question"].as_str().unwrap_or_default();
         for needle in ["(a) how communication is carried out", "(b) the untyped shape of outside data", "by field name"] {
-            assert!(question.contains(needle), "問いの文に {:?} が無い: {}", needle, question);
+            assert!(question.contains(needle), "the question text lacks {:?}: {}", needle, question);
         }
         let note = instructions["note"].as_str().unwrap_or_default();
         for needle in ["(b) weighs the same as (a)", "whether or not the code calls json.loads", "the protocol side's job"] {
-            assert!(note.contains(needle), "注に {:?} が無い: {}", needle, note);
+            assert!(note.contains(needle), "the note lacks {:?}: {}", needle, note);
         }
         let texts = |key: &str| -> Vec<String> {
             instructions[key].as_array().map(|all| all.iter().filter_map(|t| t.as_str().map(str::to_string)).collect()).unwrap_or_default()
         };
-        assert!(texts("transport_knowledge_examples").iter().any(|t| t.contains("no json.loads in the code")), "true の例に json.loads を含まない欄名の読みが無い");
-        assert!(texts("not_transport_knowledge_examples").iter().any(|t| t.contains("receives typed values")), "false の例に型の値だけで判じる core が無い");
+        assert!(texts("transport_knowledge_examples").iter().any(|t| t.contains("no json.loads in the code")), "the true examples lack a field-name read without json.loads");
+        assert!(texts("not_transport_knowledge_examples").iter().any(|t| t.contains("receives typed values")), "the false examples lack a core that decides with typed values only");
         assert!(wired["criteria"]["true"].as_str().is_some_and(|t| t.contains("with or without json.loads")));
     }
 

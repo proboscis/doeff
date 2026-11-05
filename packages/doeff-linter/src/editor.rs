@@ -1,16 +1,16 @@
-//! エディタ向けの出力 `--output-format editor-json`(契約 = docs/SPECIFICATION.md 2 節・版 2)の形と、その組み立て。
+//! The shape of the editor-facing output `--output-format editor-json` (contract = docs/SPECIFICATION.md section 2, version 2) and how it is assembled.
 //!
-//! linter が規則の判定の唯一の正本で、エディタ(doeff-runner)はこの JSON を表示するだけ。Python の文ごとの規則
-//! (DOEFF001〜031)と層の規則(DOEFF101〜108)の違反を 1 つの形に揃える。位置は 0 始まりの行・UTF-16 の列。
+//! The linter is the sole source of truth for rule judgments; the editor (doeff-runner) only displays this JSON. It unifies violations of the Python per-statement rules
+//! (DOEFF001 to 031) and the layer rules (DOEFF101 to 108) into one shape. Positions are 0-based lines and UTF-16 columns.
 //!
-//! `rules` の各項目には短い日本語の名(`title`)と規則の家族(`family`)を持たせる — エディタが規則ごとの行に
-//! 名を添え、家族で行の絵を変えるため。名と家族の正本は linter 側(層の規則は `project::rule::ProjectRule`・
-//! Python の規則は `rule_info::RuleInfo`)にあり、エディタは写しを持たない。版は上げない(欄の追加だけ — 契約の更新 6)。
+//! Each item of `rules` carries a short name (`title`) and a rule family (`family`) — so the editor can attach
+//! the name to each rule's row and change the row's icon by family. The source of truth for names and families is on the linter side (`project::rule::ProjectRule` for layer rules,
+//! `rule_info::RuleInfo` for Python rules), and the editor keeps no copy. The version is not bumped (only a field is added — contract update 6).
 //!
-//! 一番上の `judged_rules` は、この実行で判じた規則の ID(契約の更新 8)。1 file の実行(`--stdin`)は repo 全体で
-//! だけ判じる規則(DOEFF166・141 など — `ProjectRule::judged_on_one_file` が偽の規則)を走らせないので、エディタは 1 file の結果で
-//! この列の規則の違反だけを差し替え、ほかの規則の違反は全体の実行の結果のまま残す。版は上げない(欄の追加 — 欄の無い古い出力を読む
-//! エディタは今までどおり全部差し替え、版を上げると版 2 だけを読む古いエディタが出力の全体を捨てる)。
+//! The top-level `judged_rules` lists the IDs of the rules judged in this run (contract update 8). A single-file run (`--stdin`) does not run rules that are judged only
+//! over the whole repo (DOEFF166, 141, and so on — rules for which `ProjectRule::judged_on_one_file` is false), so the editor replaces only the violations of the rules in this list
+//! with the single-file result and leaves the violations of other rules as in the whole run's result. The version is not bumped (a field is added — an editor reading old output without the field
+//! replaces everything as before, and bumping the version would make an old editor that reads only version 2 discard the entire output).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -26,11 +26,11 @@ use crate::project::settings::ProjectSettings;
 use crate::project::report::ProjectReport;
 use crate::rule_info::get_rule_info;
 
-/// 契約の版。形を変える時は契約と一緒に上げる。版 2 = defk / deff の見出し `signatures` と束縛の型 `bindings` を足した
-/// (エディタが型・effect・tags を読むだけの表示で描くため)。
+/// The contract version. Bump it together with the contract when the shape changes. Version 2 = added the defk / deff headings `signatures` and the binding types `bindings`
+/// (so the editor can draw types, effects, and tags in a display that only reads).
 pub const EDITOR_CONTRACT_VERSION: u32 = 2;
 
-/// 違反の重さ(契約の閉じた集合)。
+/// The severity of a violation (a closed set in the contract).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EditorSeverity {
@@ -40,7 +40,7 @@ pub enum EditorSeverity {
 }
 
 impl From<Severity> for EditorSeverity {
-    /// linter の重さを契約の綴りへ写す。
+    /// Map the linter's severity to the contract's spelling.
     fn from(severity: Severity) -> Self {
         match severity {
             Severity::Error => EditorSeverity::Error,
@@ -50,7 +50,7 @@ impl From<Severity> for EditorSeverity {
     }
 }
 
-/// 違反 1 件。
+/// One violation.
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorViolation {
     pub rule: String,
@@ -63,21 +63,21 @@ pub struct EditorViolation {
     pub hint: Option<String>,
     pub key: Option<String>,
     pub registered: bool,
-    /// 登録簿と照合中で下げる前の、規則そのものの重さ(`severity` はこれを下げた後)。エディタが「手つかずの重い破れ」を数える材料。
+    /// The rule's own severity before being lowered by registry reconciliation (`severity` is the value after lowering). Material for the editor to count "untouched heavy violations".
     pub base_severity: EditorSeverity,
-    /// 新しい破れ(new)・登録簿に載った既知の破れ(registered)・照合中で下げた(reconciling)。
+    /// New violation (new), known violation listed in the registry (registered), or lowered during reconciliation (reconciling).
     pub standing: crate::project::report::Standing,
-    /// 規則の重大さ(repo の宣言 `rules.<ID>.level`、無ければ base_severity から)。登録簿で下げない。
+    /// The rule's gravity (the repo's declaration `rules.<ID>.level`, otherwise from base_severity). Not lowered by the registry.
     pub level: crate::project::rule::RuleLevel,
-    /// これは何か・なぜ違反か・law の文(層の規則だけ。Python の文ごとの規則は null)。
+    /// What this is, why it is a violation, and the law statement (layer rules only. null for Python per-statement rules).
     pub explanation: Option<Explanation>,
-    /// 判定の出どころ(linter = 決定的な規則・jev = Jev の意味の判定)。
+    /// Where the judgment came from (linter = a deterministic rule, jev = a Jev semantic judgment).
     pub source: crate::project::report::FindingOrigin,
-    /// Jev の判定の確率(Jev の違反だけ・他は null)。
+    /// The probability of the Jev judgment (Jev violations only; null for others).
     pub probability: Option<f64>,
 }
 
-/// 地図の材料の module 1 つ。
+/// One module of the map's material.
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorModule {
     pub path: String,
@@ -85,13 +85,13 @@ pub struct EditorModule {
     pub context: Option<String>,
     pub role: Option<String>,
     pub violations: usize,
-    /// 層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
+    /// What decided the layer (path location, tag, or a mismatch between the two).
     pub layer_reason: Option<String>,
-    /// 置き場の `*` の段に当たった service の名(層が先の形なら null)。
+    /// The name of the service that matched the `*` segment of the location (null if the layer is fixed in advance).
     pub service: Option<String>,
 }
 
-/// 層の説明 1 件(設定 `[tool.doeff-linter.layers.describe.<層>]` から。設定に無い欄は null)。
+/// One layer description (from the setting `[tool.doeff-linter.layers.describe.<layer>]`. Fields absent from the setting are null).
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorLayer {
     pub name: String,
@@ -101,92 +101,92 @@ pub struct EditorLayer {
     pub question: Option<String>,
 }
 
-/// 有効な規則(と、ADR に在って針の無い law)の 1 件。この実行で判じたかは `EditorReport::judged_rules` が名乗る(#2163)。
+/// One enabled rule (or a law that exists in an ADR but has no detector). Whether it was judged in this run is declared by `EditorReport::judged_rules` (#2163).
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorRule {
     pub rule: String,
     pub adr: Option<String>,
     pub statement: String,
     pub wired: bool,
-    /// 短い日本語の名(違反の形。エディタが規則ごとの見出しに使う)。契約の更新 6。
+    /// A short name (the shape of the violation; the editor uses it as a heading for each rule). Contract update 6.
     pub title: String,
-    /// 規則の家族(エディタが違反の欄の行の絵を選ぶ閉じた集合)。契約の更新 6。
+    /// The rule's family (a closed set from which the editor chooses the icon of a violation's field row). Contract update 6.
     pub family: RuleFamily,
 }
 
-/// この出力を作った binary(版と、組んだ doeff の commit — 置き場の binary が古いかを外から見分けるため)。
+/// The binary that produced this output (its version and the doeff commit it was built from — so that one can tell from outside whether the binary in storage is stale).
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorLinter {
     pub version: String,
     pub commit: String,
 }
 
-/// 出力の全体。
+/// The whole output.
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorReport {
     pub version: u32,
-    /// 出力を作った binary(契約の版 1 への追加の欄 — 拡張の読み込みは知らない一番上の欄を読み飛ばす)。
+    /// The binary that produced the output (a field added to contract version 1 — the extension's loader skips top-level fields it does not know).
     pub linter: EditorLinter,
     pub root: String,
-    /// 層の順(外の世界から遠い順)と説明。
+    /// The order of layers (farthest from the outside world first) and their descriptions.
     pub layers: Vec<EditorLayer>,
-    /// 意味の規則(Jev)の要約 — model・通信の形・判定済み / 未判定の数・今回撃った数と費用・較正の結果。設定が無ければ null。
+    /// A summary of the semantic rules (Jev) — model, communication shape, counts of judged / unjudged, the number fired this time and its cost, and calibration results. null if there is no setting.
     pub semantic: Option<crate::project::semantic::SemanticSummary>,
-    /// architecture.hy の宣言(service の一覧 — name・dir・description・depends_on・layers と、層の宣言)。無ければ null。
+    /// The declaration of architecture.hy (the list of services — name, dir, description, depends_on, layers — and the layer declarations). null if absent.
     pub architecture: Option<crate::project::architecture::Architecture>,
     pub violations: Vec<EditorViolation>,
-    /// `--stdin` の file の defk / deff の見出し(版 2・全体の実行では空)。
+    /// The defk / deff headings of the `--stdin` file (version 2; empty in a whole run).
     pub signatures: Vec<crate::project::signatures::Signature>,
-    /// `--stdin` の file の束縛(`<-`・val・var・setv・:=)の型(版 2・全体の実行では空)。
+    /// The types of the bindings (`<-`, val, var, setv, :=) of the `--stdin` file (version 2; empty in a whole run).
     pub bindings: Vec<crate::project::signatures::Binding>,
-    /// `--stdin` の file の定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え(版 2 への欄の追加・全体の実行では空・17 節)。
+    /// A display replacement showing the calls in a definition's body of the `--stdin` file in the shape `f(a, b)` (a field added to version 2; empty in a whole run; section 17).
     pub rewrites: Vec<crate::project::call_view::Rewrite>,
-    /// `--stdin` の file の定義ごとの本体の文字の行(読む面が描く — 版 2 への欄の追加・全体の実行では空・20 節)。
+    /// The lines of body text for each definition of the `--stdin` file (drawn by the reading surface — a field added to version 2; empty in a whole run; section 20).
     pub bodies: Vec<crate::project::body_view::Body>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
-    /// この実行で判じた規則の ID(辞書順・重ねない — 契約の更新 8)。当たりを出し切った規則で、0 件の規則も載る。
-    /// `rules[]` の欄(`judged`)にしないのは、`rules[]` が有効な規則の一覧で、その外で出る違反の規則(noqa の知らせ NOQA001・enable に
-    /// 無くても出す DOEFF100 / DOEFF128)を持たないため — 判じたかは実行の性質で、report の一番上で名乗る。`violations` の規則はどれも
-    /// この列に入る。
+    /// The IDs of the rules judged in this run (in dictionary order, no duplicates — contract update 8). Rules that finished emitting their findings, including rules with 0 findings.
+    /// It is not made a field (`judged`) of `rules[]` because `rules[]` is the list of enabled rules and lacks the rules of violations emitted outside it (the noqa notice NOQA001, and DOEFF100 / DOEFF128 which are emitted even when not in
+    /// enable) — whether a rule was judged is a property of the run, so it is declared at the top of the report. Every rule of `violations` is in
+    /// this list.
     pub judged_rules: Vec<String>,
     pub errors: Vec<String>,
-    /// `--baseline-report` の時: 基点に無い critical の識別子(`<path>::<規則>::<名>`・辞書順)。基点と比べない時は null
-    /// (仕様 1 節「基点との比べ」— 版は上げない欄の追加)。
+    /// When `--baseline-report`: the identifiers of critical violations not in the baseline (`<path>::<rule>::<name>`, in dictionary order). null when not compared with a baseline
+    /// (spec section 1, "comparison with the baseline" — a field added without bumping the version).
     pub new_critical: Option<Vec<String>>,
-    /// path を名指した全体の実行の時: 名指した Hy の file のうち linter が歩く範囲(根の下と設定の include)の外の物(正規化した絶対の
-    /// path — 違反の path と同じ形・辞書順)。
-    /// 名指しの無い実行と `--stdin` は null(仕様 1 節「名指しの範囲の外」— 版は上げない欄の追加)。
+    /// When it is a whole run with paths named: of the named Hy files, those outside the range the linter walks (under the root plus the settings' include) (normalized absolute
+    /// paths — the same shape as violation paths, in dictionary order).
+    /// null for a run with no named paths and for `--stdin` (spec section 1, "outside the named scope" — a field added without bumping the version).
     pub out_of_scope: Option<Vec<String>>,
 }
 
 impl EditorReport {
-    /// 新しい破れ(error)があるか — 終了コード 1 の条件。登録簿に載った破れ(warning)と info は数えない。
+    /// Whether there is a new violation (error) — the condition for exit code 1. Violations listed in the registry (warning) and info are not counted.
     pub fn has_errors(&self) -> bool {
         self.violations.iter().any(|v| v.severity == EditorSeverity::Error)
     }
 }
 
-/// 組み立てに要る入力。
+/// The inputs needed for assembly.
 pub struct EditorInput<'a> {
     pub root: &'a Path,
-    /// Python の規則の結果(file の path は cwd からの相対か絶対)。
+    /// The results of the Python rules (a file's path is relative to cwd or absolute).
     pub python: &'a [LintResult],
-    /// 保存前の内容(`--stdin` の時の 1 file — path は絶対)。
+    /// The content before saving (one file for `--stdin` — the path is absolute).
     pub stdin: Option<(&'a Path, &'a str)>,
     pub project: &'a ProjectReport,
     pub settings: &'a ProjectSettings,
     pub python_rules: &'a [String],
     pub project_rules: &'a BTreeSet<ProjectRule>,
-    /// 規則ごとに節が在って判定がつながっているか(層の規則だけ)。
+    /// Whether each rule has a clause and its judgment is wired (layer rules only).
     pub project_wired: &'a BTreeSet<ProjectRule>,
-    /// 違反を出す file を絞る(None なら全部)。
+    /// Narrow the files that emit violations (all if None).
     pub only: Option<&'a [PathBuf]>,
-    /// `--stdin` の Hy の file の見出しと束縛(版 2)。
+    /// The headings and bindings of the `--stdin` Hy file (version 2).
     pub signatures: Option<&'a crate::project::file_view::FileSignatures>,
 }
 
-/// 出力を組み立てる。
+/// Assemble the output.
 pub fn build(input: &EditorInput) -> EditorReport {
     let mut violations = Vec::new();
     let mut errors: Vec<String> = input.project.errors.clone();
@@ -204,7 +204,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
             _ => match std::fs::read_to_string(&path) {
                 Ok(text) => text,
                 Err(error) => {
-                    errors.push(format!("{}: 位置を求めるために読めない: {}", path.display(), error));
+                    errors.push(format!("{}: cannot be read to determine positions: {}", path.display(), error));
                     String::new()
                 }
             },
@@ -298,8 +298,8 @@ pub fn build(input: &EditorInput) -> EditorReport {
     }
 }
 
-/// この実行で判じた規則の ID(辞書順)。Python の文ごとの規則は file 1 つで決まるので、全体の実行でも 1 file の実行でも有効な物の全部と、
-/// それを走らせる時に必ず出しうる noqa の知らせ(NOQA001)。層の規則は project の実行が判じた物(`ProjectReport::judged`)。
+/// The IDs of the rules judged in this run (in dictionary order). Python per-statement rules are decided per file, so in both a whole run and a single-file run it is all the enabled ones, plus
+/// the noqa notice (NOQA001) that can always be emitted when they run. Layer rules are those judged by the project run (`ProjectReport::judged`).
 fn judged_rule_ids(input: &EditorInput) -> Vec<String> {
     let noqa = (!input.python_rules.is_empty()).then(|| crate::noqa::NOQA_RULE_ID.to_string());
     let project = input.project.judged.iter().map(|rule| rule.id().to_string());
@@ -307,7 +307,7 @@ fn judged_rule_ids(input: &EditorInput) -> Vec<String> {
     ids.into_iter().collect()
 }
 
-/// 層の順と説明(層の設定が無ければ空)。
+/// The layer order and descriptions (empty if there are no layer settings).
 fn layer_list(settings: &ProjectSettings) -> Vec<EditorLayer> {
     settings
         .layers
@@ -323,11 +323,11 @@ fn layer_list(settings: &ProjectSettings) -> Vec<EditorLayer> {
         .collect()
 }
 
-/// 走らせた規則の一覧(law の文があれば law ごと)と、針の無い law。
+/// The list of rules that ran (per law if there is a law statement), and laws with no detector.
 fn rule_list(input: &EditorInput) -> Vec<EditorRule> {
     let mut rules = Vec::new();
     for id in input.python_rules {
-        // Python の文ごとの規則(DOEFF001〜031)。層の規則の ID がここに紛れることは無いので家族は python 固定。
+        // Python per-statement rules (DOEFF001 to 031). Layer rule IDs never get mixed in here, so the family is fixed to python.
         let info = get_rule_info(id);
         match input.settings.law_for_external(id) {
             Some(law) => rules.push(EditorRule {
@@ -381,14 +381,14 @@ fn rule_list(input: &EditorInput) -> Vec<EditorRule> {
             adr: law.adr.clone(),
             statement: law_statement(law),
             wired: false,
-            title: "自動の判定がまだ無い決まり".to_string(),
+            title: "A rule with no automatic check yet".to_string(),
             family: RuleFamily::Law,
         });
     }
     rules
 }
 
-/// law の文(statement が空なら law の名)。
+/// The law statement (the law's name if statement is empty).
 fn law_statement(law: &crate::project::law::LawSpec) -> String {
     if law.statement.is_empty() {
         law.name.clone()
@@ -397,8 +397,8 @@ fn law_statement(law: &crate::project::law::LawSpec) -> String {
     }
 }
 
-/// path を出力と照合の唯一の形にする — 絶対にしてから正規化する(symlink と `..` を解く)。file がまだ無ければ
-/// 親の dir を正規化して名前をつなぐ。どちらも失敗したら絶対にしただけの path。
+/// Make a path the sole form used for output and reconciliation — make it absolute and then normalize it (resolving symlinks and `..`). If the file does not exist yet,
+/// normalize the parent dir and join the name. If both fail, the path is just made absolute.
 pub fn normalize_path(path: &Path) -> PathBuf {
     let absolute = absolute(path);
     if let Ok(real) = absolute.canonicalize() {
@@ -410,7 +410,7 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     }
 }
 
-/// path を絶対にする(cwd からの相対なら cwd を前に付け、`./` を外す)。
+/// Make a path absolute (if relative to cwd, put cwd in front and remove `./`).
 pub fn absolute(path: &Path) -> PathBuf {
     let joined = if path.is_absolute() {
         path.to_path_buf()
@@ -426,7 +426,7 @@ mod tests {
     use crate::project::law::LawSpec;
     use crate::project::report::ProjectReport;
 
-    /// `rule_list` を呼ぶための最小の `EditorInput` を組み立てる。
+    /// Assemble the minimal `EditorInput` needed to call `rule_list`.
     fn build_input<'a>(
         python_rules: &'a [String],
         project_rules: &'a BTreeSet<ProjectRule>,
@@ -450,8 +450,8 @@ mod tests {
 
     #[test]
     fn judged_rules_name_python_rules_noqa_and_the_project_judged_rules_only() {
-        // judged_rules は Python の規則(と NOQA001)と project の実行が判じた規則だけ — 1 file の実行で判じない
-        // DOEFF166 は有効でも載らない(rules[] には有効な規則として載ったまま)。
+        // judged_rules contains only the Python rules (and NOQA001) and the rules judged by the project run — DOEFF166, which is not judged in a single-file run,
+        // is not listed even when enabled (it stays in rules[] as an enabled rule).
         let python_rules = vec!["DOEFF016".to_string()];
         let project_rules: BTreeSet<ProjectRule> = [ProjectRule::DefnForbidden, ProjectRule::RegistryEntryStale].into_iter().collect();
         let project_wired = project_rules.clone();
@@ -462,11 +462,11 @@ mod tests {
         let report = build(&input);
 
         assert_eq!(report.judged_rules, vec!["DOEFF016", "DOEFF110", "DOEFF128", "NOQA001"]);
-        assert!(report.rules.iter().any(|r| r.rule == "DOEFF166"), "rules[] は有効な規則の一覧のまま");
-        // Python の規則が無ければ NOQA001 も出ない(lint_source を走らせない)。
+        assert!(report.rules.iter().any(|r| r.rule == "DOEFF166"), "rules[] stays the list of enabled rules");
+        // Without Python rules, NOQA001 is not emitted either (lint_source is not run).
         let input = build_input(&[], &project_rules, &project_wired, &project, &settings);
         assert_eq!(build(&input).judged_rules, vec!["DOEFF110", "DOEFF128"]);
-        // JSON では一番上の欄 judged_rules。
+        // In JSON it is the top-level field judged_rules.
         let json = serde_json::to_value(build(&input)).unwrap();
         assert_eq!(json["judged_rules"], serde_json::json!(["DOEFF110", "DOEFF128"]));
     }
@@ -480,37 +480,37 @@ mod tests {
         let project = ProjectReport::default();
         let mut settings = ProjectSettings::default();
         settings.laws.push(LawSpec {
-            name: "no-針-law".to_string(),
+            name: "no-detector-law".to_string(),
             adr: None,
             statement: "".to_string(),
-            rules: Vec::new(), // 規則を持たない law
+            rules: Vec::new(), // a law with no rules
             layers: BTreeSet::new(),
         });
         let input = build_input(&python_rules, &project_rules, &project_wired, &project, &settings);
 
         let rules = rule_list(&input);
 
-        let python_rule = rules.iter().find(|r| r.rule == "DOEFF001").expect("DOEFF001 が rules に無い");
-        assert_eq!(python_rule.title, "変数名が builtin を隠す");
+        let python_rule = rules.iter().find(|r| r.rule == "DOEFF001").expect("DOEFF001 is not in rules");
+        assert_eq!(python_rule.title, "Variable name shadows a builtin");
         assert_eq!(python_rule.family, RuleFamily::Python);
 
-        let layer_rule = rules.iter().find(|r| r.rule == "DOEFF110").expect("DOEFF110 が rules に無い");
-        assert_eq!(layer_rule.title, "defn を使っている");
+        let layer_rule = rules.iter().find(|r| r.rule == "DOEFF110").expect("DOEFF110 is not in rules");
+        assert_eq!(layer_rule.title, "uses defn");
         assert_eq!(layer_rule.family, RuleFamily::Definition);
 
-        let law_rule = rules.iter().find(|r| r.rule == "no-針-law").expect("針の無い law が rules に無い");
-        assert_eq!(law_rule.title, "自動の判定がまだ無い決まり");
+        let law_rule = rules.iter().find(|r| r.rule == "no-detector-law").expect("the law with no detector is not in rules");
+        assert_eq!(law_rule.title, "A rule with no automatic check yet");
         assert_eq!(law_rule.family, RuleFamily::Law);
 
-        // JSON でも title・family が欄として出る(3 種類とも)。
+        // In JSON, title and family also appear as fields (for all three kinds).
         let json = serde_json::to_value(&rules).unwrap();
-        for id in ["DOEFF001", "DOEFF110", "no-針-law"] {
+        for id in ["DOEFF001", "DOEFF110", "no-detector-law"] {
             let entry = json.as_array().unwrap().iter().find(|v| v["rule"] == id).unwrap();
-            assert!(entry.get("title").is_some(), "{} に title が無い", id);
-            assert!(entry.get("family").is_some(), "{} に family が無い", id);
+            assert!(entry.get("title").is_some(), "{} has no title", id);
+            assert!(entry.get("family").is_some(), "{} has no family", id);
         }
         assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF110").unwrap()["family"], "definition");
         assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF001").unwrap()["family"], "python");
-        assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "no-針-law").unwrap()["family"], "law");
+        assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "no-detector-law").unwrap()["family"], "law");
     }
 }

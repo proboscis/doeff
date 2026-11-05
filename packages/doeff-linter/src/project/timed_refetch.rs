@@ -1,45 +1,45 @@
-//! DOEFF209 — 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く所(取りに行く
-//! 繰り返しは全部直す対象で最後の手段に限り、この方針を doeff-linter と defjevrule で強制する)。
+//! DOEFF209 — where a Program in production code repeatedly fetches the same thing with time waits in between (all such fetch
+//! loops are to be fixed, as a last resort only, and this policy is enforced with doeff-linter and defjevrule).
 //!
-//! 母集団は DOEFF208 と同じ宣言(architecture.hy の `:business-fakes` の本番の code の Hy の file — `business_fakes::production_code`)。
-//! DOEFF208 と違い doeff-records の package の中も外さない(この規則は待ちの書き手そのものを見る — 効果と源の持ち主も時間で取り直す loop を
-//! 持てば当たる)。
+//! The population is the same declaration as DOEFF208 (Hy files of production code under `:business-fakes` in architecture.hy — `business_fakes::production_code`).
+//! Unlike DOEFF208, the doeff-records package is not excluded either (this rule looks at the writers of waits themselves — if the owner of the effects and sources also has a loop that refetches on time,
+//! it hits).
 //!
-//! 見る物は「起きる刻の出所」(Delay と sleep の綴りだけでは、今 + 決まった秒に ArmTimer を掛けて TimerFired で起きる形を取りこぼす):
-//! 1. 時間の待ちの綴り — `(Delay 秒)`・`(WaitTicks _ 秒 …)`(秒が literal の 0 の譲りと、`(- 期限 今)` の期限の待ちは外す)・
-//!    `ArmTimer` / `ArmedTimer` の刻(位置の 2 つ目か `:at`)が `(+ 今 …)` を含む物(今 = 同じ定義の中で GetTime・now-ms・clock-ms と、
-//!    引数の無い定義で本文がそれらを呼ぶ物〔`(defk wall-ms-now [] …)`〕から結んだ名と、その名を 1 つだけ受ける変換の呼びで結んだ名)か、
-//!    `(+ 今 …)` から結んだ名(`(<- at (time-of-epoch-ms (+ now …)))` の at)を含む物。繰り返しの中の待ちには、繰り返しの中で結んだ今
-//!    だけを数える(繰り返しの前に 1 度読んだ今から求めた刻は、毎回同じ刻で、時間で取り直す形ではない)。
-//! 2. 補助の定義 — 1 度目に読んで集め、2 度目から呼び手を当てる(名簿で持たず、変わりが無くなるまで読み直す):
-//!    - 刻を渡す補助: 引数が(結び直しを辿って)刻の位置へ流れる定義。呼び手の引数が `(+ 今 …)` を含めば、その呼びが待ちの綴り。
-//!    - 今を受ける補助: 刻が `(+ 引数 …)` か、`(+ 引数 …)` から結んだ名を含む定義。呼び手が今の名をその引数に渡せば、その呼びが待ちの綴り。
-//!    - 待ちを返す補助: 繰り返しの外に待ちの綴りを持つ定義。呼びが待ちの綴り。
-//!    呼びの頭は同じ file の定義か、`(import module [名])` の名で引き、引けない `a.b` の綴りは名の一致が 1 つだけの時に引く。
-//! 3. 繰り返し — 待ちの綴りが `while`・`loop` の本体・`event-loop` の節の中に在るか、定義が自分を呼ぶ(再帰)。1 度だけ掛けて
-//!    抜ける物は当てない(その定義は待ちを返す補助になり、繰り返しの中の呼び手が当たる)。
-//!    別の task を立てる呼び(`Spawn`・名に spawn を持つ包み)の中は見ない — 渡した Program の待ちはその task の 1 度の待ちで、渡した
-//!    Program が自分で繰り返すなら、その定義の中で当たる。
-//!    本番の handler(`defhandler`)の節が繰り返しの外の待ちで(分岐を通らずに必ず)答える効果も待ちを返す補助と同じに扱い、その効果を繰り返しの中で出す所が
-//!    当たる(周期の間の眠りを効果 AwaitNextTick にして handler で Delay する形 — WatchChanges・WatchEvents に答える節は DOEFF208 の側)。
-//!    Python の `time.sleep` / `asyncio.sleep`(module の名つきの `sleep`)も眠りに数える。
-//! 4. ライブラリへ問い直しの間隔を渡す鍵の引数 `:poll-seconds`(literal の 0 でない値)は、繰り返しを問わず当てる(繰り返すのはライブラリ)。
+//! What it looks at is "where the waking time comes from" (the spellings of Delay and sleep alone would miss the form that arms an ArmTimer at now + a fixed number of seconds and wakes on TimerFired):
+//! 1. Spellings of time waits — `(Delay seconds)`, `(WaitTicks _ seconds …)` (a yield with a literal 0 seconds and a deadline wait of the form `(- deadline now)` are excluded), and
+//!    `ArmTimer` / `ArmedTimer` whose time (2nd positional or `:at`) contains `(+ now …)` (now = a name bound from GetTime, now-ms, or clock-ms in the same definition,
+//!    from a definition with no parameters whose body calls them [`(defk wall-ms-now [] …)`], or from a conversion call that takes exactly one such name),
+//!    or contains a name bound from `(+ now …)` (the `at` of `(<- at (time-of-epoch-ms (+ now …)))`). For a wait inside a repetition, only a now bound inside the repetition
+//!    is counted (a time computed from a now read once before the repetition is the same time every iteration and is not a form that refetches on time).
+//! 2. Helper definitions — collected on the first reading, and callers are matched from the second (not held in a registry; re-read until nothing changes):
+//!    - Helpers that take a time: definitions whose parameter flows (following rebinding) into the time position. If the caller's argument contains `(+ now …)`, that call is a wait spelling.
+//!    - Helpers that take a now: definitions whose time contains `(+ parameter …)` or a name bound from `(+ parameter …)`. If the caller passes a now name to that parameter, that call is a wait spelling.
+//!    - Helpers that return a wait: definitions that have a wait spelling outside a repetition. A call to one is a wait spelling.
+//!    A call head is resolved to a definition in the same file or by the name in `(import module [name])`; an unresolvable `a.b` spelling is resolved when exactly one name matches.
+//! 3. Repetition — a wait spelling is inside a `while` or `loop` body or an `event-loop` clause, or the definition calls itself (recursion). Something that sets it only once and
+//!    exits is not matched (that definition becomes a helper that returns a wait, and the caller inside a repetition is matched).
+//!    Inside a call that starts another task (`Spawn`, or a wrapper with spawn in its name) is not looked at — the wait of a Program handed over is that task's single wait, and if the handed-over
+//!    Program repeats by itself, it is matched inside that definition.
+//!    An effect that a production handler (`defhandler`) clause always answers (without going through a branch) with a wait outside a repetition is also treated the same as a helper that returns a wait, and the place that emits that effect inside a repetition
+//!    is matched (the form that turns the sleep between periods into an AwaitNextTick effect and Delays in the handler — clauses that answer WatchChanges and WatchEvents are on DOEFF208's side).
+//!    Python's `time.sleep` / `asyncio.sleep` (`sleep` with a module name) also count as sleeps.
+//! 4. The key argument `:poll-seconds` that passes a re-query interval to a library (a literal non-0 value) is matched regardless of repetition (the library does the repeating).
 //!
-//! 当たらない物: 起きる刻が行や予定から導かれる期限の待ち(刻に `(+ 今 …)` を含まない)・変わりを待つ時の上限の秒(WatchChanges /
-//! WatchEvents の秒 — DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中・
-//! 時間切れの期限(tag が top level の名で、その tag と比べる分岐の本体が全部 繰り返しを抜ける `(stop …)` の物 — 止めの合図を待つ上限の
-//! 秒。来た後に同じ読みを繰り返す本体が在る tag は外さない — stopping_tags)。
+//! Not matched: waits for a deadline derived from a row or a schedule (the time does not contain `(+ now …)`), the upper-bound seconds when waiting for changes (the seconds of WatchChanges /
+//! WatchEvents — DOEFF208's side), a request's timeout, a `match` pattern, the head of a handler clause (`(Delay [seconds] …)`), inside quote and `#_`, and
+//! timeout deadlines (a tag that is a top-level name, where every branch body that compares against that tag is a `(stop …)` that exits the repetition — the upper-bound
+//! seconds for waiting on a stop signal. A tag with a body that repeats the same read after it arrives is not excluded — stopping_tags).
 //!
-//! 区分(当たりの鍵の細目の最後の段と本文): `periodic`(純粋に時間で取り直す)と `retry`(届かない後の取り直し — 待ちの綴り・掛ける期限の
-//! tag・囲む match の節の型の綴りに retry / unreachable / unavailable が在る。補助の呼びは補助の中の待ちが全部 retry の時)。
+//! Category (the last segment of the hit's key detail, and the message): `periodic` (refetches purely on time) and `retry` (refetching after being unreachable — the wait spelling, the deadline's
+//! tag, or the enclosing match clause's type spelling contains retry / unreachable / unavailable. A helper call counts only when all waits inside the helper are retry).
 //!
-//! 場所に書いて通す理由: 当たりの行か、その直前に続く註だけの行に `; 時間で取り直す理由: <語>`(DOEFF111 の `; defk にできない: <理由>` と
-//! 同じ置き方)。語は閉じた集合 — `相手に変更の知らせが無い: <相手> — <何で確かめたか>`(相手の名と確かめの根拠〔相手の API の文書の節・
-//! 相手の code の行・試した命令と結果〕のどちらも空でない。相手が変更の知らせを持つと分かっている相手〔PARTIES_WITH_CHANGE_NOTICE —
-//! Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図〕なら通さない — Mac の調整役の条件 2026-10-07)・
-//! `書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`・
-//! `届かない間だけの繋ぎ直し`(区分 retry の当たりだけ — 届かない印か失敗の答えが在る間だけ間を置いて繋がるかを試し、data を取りに
-//! 行かず、戻ったら印を消す形)。語の外・区分の合わない語は通さず、当たりの本文に訳を足す。
+//! Reasons that may be written at the place to pass: on the hit's line, or on a comment-only line just before it, `; 時間で取り直す理由: <word>` (placed the same way as DOEFF111's `; defk にできない: <reason>`).
+//! The words are a closed set — `相手に変更の知らせが無い: <party> — <how it was verified>` (both the party's name and the basis of the verification [a section of the party's API documentation,
+//! a line of the party's code, or a command tried and its result] must be non-empty. A party known to have change notifications [PARTIES_WITH_CHANGE_NOTICE —
+//! Kubernetes, the coordinator's GET /watch, the doeff-events infrastructure, the records service's change signal] is not passed — Mac coordinator's condition 2026-10-07),
+//! `書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`,
+//! `届かない間だけの繋ぎ直し` (only for hits of category retry — a form that, only while an unreachable marker or a failure answer exists, waits and tries whether the connection works, does not go
+//! fetch data, and clears the marker once it returns). Words outside these and words that do not fit the category are not passed, and the reason is added to the hit's message.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -53,42 +53,42 @@ use super::hy_files;
 use super::paths::relative_path;
 use crate::position::{LineIndex, Range};
 
-/// 今を返す呼びの頭(最後の段)。
+/// Heads of calls that return now (last segment).
 const CLOCK_HEADS: &[&str] = &["GetTime", "now-ms", "clock-ms"];
-/// 期限を掛ける効果と期限の値(刻は位置の 2 つ目か `:at`)。
+/// Effects that set a deadline, and the deadline value (the time is the 2nd positional or `:at`).
 const TIMER_SINKS: &[&str] = &["ArmTimer", "ArmedTimer"];
 const TIMER_AT_POSITION: usize = 1;
-/// 時間で眠る効果と、秒の位置の引数の添字。
+/// Effects that sleep on time, and the index of the seconds positional argument.
 const SLEEPS: &[(&str, usize)] = &[("Delay", 0), ("WaitTicks", 1)];
-/// 分岐の form(handler の節の中で、この下の待ちは必ずの待ちではない)。
+/// Branch forms (below one in a handler clause, a wait is not a certain wait).
 const BRANCHES: &[&str] = &["if", "when", "unless", "cond", "match", "try", "and", "or", "while", "loop"];
-/// 記録の変更の待ちの効果(秒は DOEFF208 の側 — これに答える handler の節の待ちは数えない)。
+/// Effects that wait on record changes (the seconds are DOEFF208's side — waits in handler clauses that answer these are not counted).
 const RECORD_WAITS: &[&str] = &["WatchChanges", "WatchEvents"];
-/// ライブラリへ問い直しの間隔を渡す鍵の引数。
+/// Key arguments that pass a re-query interval to a library.
 const POLL_KEY: &str = ":poll-seconds";
-/// 繰り返しの form と、繰り返す中身の最初の添字。
-/// `for` は数えない — 有限の集まりを 1 つずつ回す形で、時間で取り直す形ではない(届かない時の数回の試しは while か再帰で書かれる)。
+/// Repetition forms, and the first index of the repeated contents.
+/// `for` is not counted — it goes over a finite collection one by one and is not a form that refetches on time (a few attempts when unreachable are written with while or recursion).
 const REPEATING: &[(&str, usize)] = &[("while", 1), ("loop", 1), ("event-loop", 2)];
-/// 呼べる定義の頭(待ちを返す補助になり得る物)。
+/// Heads of callable definitions (those that can be helpers returning a wait).
 const CALLABLE_HEADS: &[&str] = &["defk", "deff", "defn", "defp", "defn/a"];
-/// 届かない後の取り直しを名乗る綴り(小文字で比べる)。
+/// Spellings that claim refetching after being unreachable (compared in lowercase).
 const RETRY_WORDS: &[&str] = &["retry", "unreachable", "unavailable"];
-/// 場所に書いて通す理由の註の目印。
+/// The marker of the reason comment written at the place to pass (Japanese: "reason for refetching on time:" — the vocabulary is matched by the code and used in repos' Hy comments, so it is kept).
 pub const REASON_MARKER: &str = "時間で取り直す理由:";
-/// 補助の読み直しの上限(補助の連なりの深さ — 超えたら打ち切る)。
+/// Upper bound on re-reading the helpers (the depth of the chain of helpers — cut off when exceeded).
 const MAX_ROUNDS: usize = 16;
 
-/// 当たりの区分(閉じた集合)。
+/// Category of a hit (closed set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Refetch {
-    /// 純粋に時間で取り直す。
+    /// Purely refetching on time.
     Periodic,
-    /// 届かない後の取り直し(今 + retry 秒の期限)。
+    /// Refetching after being unreachable (a deadline of now + retry seconds).
     Retry,
 }
 
 impl Refetch {
-    /// 鍵の細目の最後の段。
+    /// The last segment of the key detail.
     pub fn word(self) -> &'static str {
         match self {
             Refetch::Periodic => "periodic",
@@ -96,16 +96,16 @@ impl Refetch {
         }
     }
 
-    /// 本文の区分の名。
+    /// The name of the category in the message.
     pub fn label(self) -> &'static str {
         match self {
-            Refetch::Periodic => "時間で取り直す",
-            Refetch::Retry => "届かない後の取り直し",
+            Refetch::Periodic => "refetch on a timer",
+            Refetch::Retry => "refetch after unreachable",
         }
     }
 }
 
-/// 書くだけの loop の種類(閉じた集合)。
+/// Kinds of write-only loops (closed set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteOnly {
     Liveness,
@@ -113,49 +113,49 @@ pub enum WriteOnly {
     LeaseExtension,
 }
 
-/// 場所に書いて通す理由(閉じた語彙)。
+/// Reasons that may be written at the place to pass (closed vocabulary).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
-    /// 相手に変更の知らせが無い(相手の名と、何で確かめたか — どちらも空でない)。
+    /// "The other party has no change notification" (the party's name and how it was verified — both non-empty).
     NoChangeNotice { party: String, evidence: String },
-    /// 書くだけ(生存の印・報告・期限の延長)。
+    /// Write-only (liveness marker, report, lease extension).
     WriteOnly(WriteOnly),
-    /// 届かない間だけの繋ぎ直し(区分 retry だけ)。
+    /// Reconnecting only while unreachable (category retry only).
     ReconnectWhileUnreachable,
 }
 
-/// 「相手に変更の知らせが無い」の語の頭。
+/// The head of the word "The other party has no change notification" (Japanese, matched by the code and used in repos' Hy comments, so it is kept).
 pub const NO_CHANGE_NOTICE: &str = "相手に変更の知らせが無い:";
-/// 相手の名と確かめの根拠の区切り。
+/// The separator between the party's name and the basis of the verification.
 pub const EVIDENCE_SEPARATOR: char = '—';
 
-/// 変更の知らせを持つと分かっている相手(閉じた一覧 — 表に出す名, 照らす綴り)。照らし方: 書いた相手の名を小文字にし、空白を除き、`_` を
-/// `-` に揃えた綴りが、照らす綴りのどれかを含めば当てる(Mac の調整役の条件 2026-10-07)。
+/// Parties known to have change notifications (closed list — the name to show, the spellings to match). How it is matched: the written party's name is lowercased, whitespace is removed, and `_` is aligned to
+/// `-`; if that spelling contains any of the spellings to match, it hits (Mac coordinator's condition 2026-10-07).
 pub const PARTIES_WITH_CHANGE_NOTICE: &[(&str, &[&str])] = &[
     ("Kubernetes", &["kubernetes", "k8s", "kube-apiserver"]),
-    ("coordinator の GET /watch", &["coordinator", "/watch"]),
-    ("doeff-events の基盤", &["doeff-events"]),
-    ("記録の service の変更の合図", &["記録のservice", "記録の変更の合図", "agora-record", "doeff-records"]),
+    ("coordinator GET /watch", &["coordinator", "/watch"]),
+    ("doeff-events infrastructure", &["doeff-events"]),
+    ("records service change signal", &["記録のservice", "記録の変更の合図", "agora-record", "doeff-records"]),
 ];
 
-/// 相手の名が、変更の知らせを持つと分かっている相手なら、その表に出す名。
+/// If the party's name is a party known to have change notifications, the name to show for it.
 pub fn party_with_change_notice(party: &str) -> Option<&'static str> {
     let spelled: String = party.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase().replace('_', "-");
     PARTIES_WITH_CHANGE_NOTICE.iter().find(|(_, words)| words.iter().any(|w| spelled.contains(w))).map(|(name, _)| *name)
 }
 
-/// 理由を通さない訳(閉じた集合)。
+/// Reasons for not passing a reason (closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReasonRefusal {
-    /// 閉じた語彙の外(書いた語そのもの)。
+    /// Outside the closed vocabulary (the written word itself).
     OutsideVocabulary(String),
-    /// 「相手に変更の知らせが無い」に相手の名か確かめの根拠が無い。
+    /// "The other party has no change notification" lacks the party's name or the basis of the verification.
     MissingPartyOrEvidence,
-    /// 相手が変更の知らせを持つと分かっている(表に出す名)。
+    /// The party is known to have change notifications (the name to show).
     PartyHasChangeNotice(&'static str),
 }
 
-/// 理由の語を読む。
+/// Reads a reason word.
 pub fn parse_reason(text: &str) -> Result<Reason, ReasonRefusal> {
     let text = text.trim();
     if let Some(rest) = text.strip_prefix(NO_CHANGE_NOTICE) {
@@ -177,7 +177,7 @@ pub fn parse_reason(text: &str) -> Result<Reason, ReasonRefusal> {
     }
 }
 
-/// 当たりの場所に書いた理由の判じ(無い・通す・通さない訳)。
+/// Judgment of the reason written at the hit's place (none, passed, or the reason for not passing).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReasonRead {
     Absent,
@@ -185,30 +185,30 @@ pub enum ReasonRead {
     Rejected(String),
 }
 
-/// 待ちの綴りの元(補助の中の待ちを呼び手の本文に出すため)。
+/// The origin of a wait spelling (to show a wait inside a helper in the caller's body).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Origin {
     pub rel: String,
-    /// 1 から数えた行。
+    /// Line counted from 1.
     pub line: usize,
     pub text: String,
     pub kind: Refetch,
 }
 
-/// 当たりの綴りの種類(閉じた集合)。
+/// Kinds of hit spelling (closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SiteKind {
-    /// Delay・WaitTicks の眠り。
+    /// A sleep by Delay or WaitTicks.
     Sleep,
-    /// 今 + 決まった秒の期限(直の ArmTimer / ArmedTimer か、刻を渡す補助・今を受ける補助の呼び)。
+    /// A deadline of now + a fixed number of seconds (a direct ArmTimer / ArmedTimer, or a call to a helper that takes a time or a helper that takes a now).
     Timer,
-    /// 待ちを返す補助の呼び(補助の中の待ちの元)。
+    /// A call to a helper that returns a wait (the origin of the wait inside the helper).
     Helper(Vec<Origin>),
-    /// ライブラリへ問い直しの間隔を渡す鍵の引数。
+    /// A key argument that passes a re-query interval to a library.
     PollSeconds,
 }
 
-/// 当たり 1 つ。
+/// One hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefetchFinding {
     pub rel: String,
@@ -217,46 +217,46 @@ pub struct RefetchFinding {
     pub head: String,
     pub kind: SiteKind,
     pub refetch: Refetch,
-    /// 場所に書いた理由が通らなかった訳(書いていなければ None)。
+    /// The reason why the reason written at the place was not passed (None if none was written).
     pub rejected_reason: Option<String>,
-    /// 同じ定義の中の同じ頭・同じ区分の、通らない当たりの残りの行(1 から数えた行 — 当たりは鍵ごとに 1 つにまとめ、最初の場所に出す)。
+    /// The remaining lines of unpassed hits of the same head and same category in the same definition (lines counted from 1 — hits are merged into one per key and shown at the first place).
     pub also_at: Vec<usize>,
 }
 
 impl RefetchFinding {
-    /// 鍵の細目(定義の名::頭の綴り::区分)。
+    /// Detail of the key (definition name::head spelling::category).
     pub fn detail(&self) -> String {
         format!("{}::{}::{}", self.definition, self.head, self.refetch.word())
     }
 
-    /// 主体(何が・どこで)。
+    /// Subject (what, where).
     pub fn subject(&self) -> String {
         match &self.kind {
-            SiteKind::PollSeconds => format!("定義 {} の ({} … :poll-seconds …)", self.definition, self.head),
-            _ => format!("定義 {} の ({} …)", self.definition, self.head),
+            SiteKind::PollSeconds => format!("definition {} ({} … :poll-seconds …)", self.definition, self.head),
+            _ => format!("definition {} ({} …)", self.definition, self.head),
         }
     }
 
-    /// 違反の文。
+    /// The violation text.
     pub fn describe(&self) -> String {
         let what = match &self.kind {
-            SiteKind::Sleep => "時間で眠ってから繰り返す".to_string(),
-            SiteKind::Timer => "今 + 決まった秒の期限を繰り返しの中で掛ける".to_string(),
+            SiteKind::Sleep => "repeats after sleeping on time".to_string(),
+            SiteKind::Timer => "sets a deadline of now + a fixed number of seconds inside a repetition".to_string(),
             SiteKind::Helper(origins) => {
                 let shown: Vec<String> = origins.iter().take(3).map(|o| format!("{}:{} {}", o.rel, o.line, o.text)).collect();
-                let more = if origins.len() > 3 { format!(" ほか {} か所", origins.len() - 3) } else { String::new() };
-                format!("中で時間の待ちを掛ける補助を繰り返しの中で呼ぶ(待ちの元: {}{})", shown.join("・"), more)
+                let more = if origins.len() > 3 { format!(" and {} more places", origins.len() - 3) } else { String::new() };
+                format!("calls, inside a repetition, a helper that sets a time wait inside (wait origins: {}{})", shown.join(", "), more)
             }
-            SiteKind::PollSeconds => "ライブラリへ問い直しの間隔を渡す(ライブラリが時間で問い直す)".to_string(),
+            SiteKind::PollSeconds => "passes a re-query interval to a library (the library re-queries on time)".to_string(),
         };
-        let rejected = self.rejected_reason.as_ref().map(|why| format!("。書いた理由は通らない: {}", why)).unwrap_or_default();
+        let rejected = self.rejected_reason.as_ref().map(|why| format!(". The reason written is not passed: {}", why)).unwrap_or_default();
         let also = if self.also_at.is_empty() {
             String::new()
         } else {
-            format!("(同じ定義の同じ形が {} 行にも在る — どれも同じ直しか理由が要る)", self.also_at.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("・"))
+            format!("(the same form in the same definition also appears on lines {} — each needs the same fix or a reason)", self.also_at.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "))
         };
         format!(
-            "{} — 区分 {}: {}{}。同じ物を時間の待ちを挟んで繰り返し取りに行く — 相手の変わりの知らせ(出来事)で起きる形にする。相手が変わりを知らせる手段を持たない所だけ、その行か直前の註に `; {} <語>` を書く{}",
+            "{} — category {}: {}{}. It fetches the same thing repeatedly with time waits in between — make it wake on the other party's change notification (an event). Only where the other party has no way to announce changes, write `; {} <word>` on that line or the comment line just before it{}",
             self.subject(),
             self.refetch.label(),
             what,
@@ -271,12 +271,12 @@ fn last_segment(spelled: &str) -> &str {
     spelled.rsplit('.').next().unwrap_or(spelled)
 }
 
-/// 名の比べの形(Hy の `-` と `_` を同じに読む)。
+/// Comparison form of a name (Hy's `-` and `_` are read as the same).
 fn norm(name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// 記号の綴りの頭の段(`beat.seconds` → `beat`)を比べの形にした物。
+/// The head segment of a symbol spelling (`beat.seconds` -> `beat`) as a comparison form.
 fn root_name(spelled: &str) -> String {
     norm(spelled.split('.').next().unwrap_or(spelled))
 }
@@ -301,7 +301,7 @@ fn literal_zero(source: &str, form: &Form) -> bool {
     matches!(form.node, Node::Number) && spelled(source, form).replace('_', "").parse::<f64>().is_ok_and(|v| v == 0.0)
 }
 
-/// 別の task を立てる呼びか(doeff の `Spawn` と、名に spawn を持つ包み — `spawn-work` など)。
+/// Whether it is a call that starts another task (doeff's `Spawn`, and wrappers with spawn in the name — such as `spawn-work`).
 fn spawns(head: &str) -> bool {
     last_segment(head).to_lowercase().contains("spawn")
 }
@@ -311,7 +311,7 @@ fn has_retry_word(text: &str) -> bool {
     RETRY_WORDS.iter().any(|w| lower.contains(w))
 }
 
-/// 呼びの引数(頭の後ろ)から、鍵 `keyword` の値か位置 `position` の引数を返す。
+/// From a call's arguments (after the head), returns the value of key `keyword` or the argument at position `position`.
 fn argument<'f>(source: &str, args: &[&'f Form], position: usize, keyword: Option<&str>) -> Option<&'f Form> {
     if let Some(word) = keyword {
         if let Some(at) = args.iter().position(|f| is_keyword(source, f, word)) {
@@ -325,7 +325,7 @@ fn argument<'f>(source: &str, args: &[&'f Form], position: usize, keyword: Optio
     positional.get(position).map(|&at| args[at])
 }
 
-/// form の木の子(quote の中は見ない)。
+/// The children of a form tree (quote is not looked into).
 fn children(form: &Form) -> Vec<&Form> {
     match &form.node {
         Node::Seq { items, .. } => visible(items),
@@ -336,7 +336,7 @@ fn children(form: &Form) -> Vec<&Form> {
     }
 }
 
-/// form の中の記号のどれかの頭の段が names に在るか。
+/// Whether the head segment of any symbol in the form is in names.
 fn mentions(source: &str, form: &Form, names: &BTreeSet<String>) -> bool {
     match form.node {
         Node::Symbol => names.contains(&root_name(spelled(source, form))),
@@ -344,7 +344,7 @@ fn mentions(source: &str, form: &Form, names: &BTreeSet<String>) -> bool {
     }
 }
 
-/// `(+ a …)` の引数の記号のうち names に在る物(form の木の全部)。
+/// Among the arguments of `(+ a …)`, the symbols that are in names (the whole form tree).
 fn plus_operands(source: &str, form: &Form, names: &BTreeSet<String>, found: &mut BTreeSet<String>) {
     if let Some(items) = form.paren_items().map(visible) {
         if head_symbol(source, &items) == Some("+") {
@@ -369,7 +369,7 @@ fn has_now_plus(source: &str, form: &Form, clocks: &BTreeSet<String>) -> bool {
     !found.is_empty()
 }
 
-/// `(- 期限 … 今)` の形(期限の待ち)を含むか。
+/// Whether it contains the form `(- deadline … now)` (a deadline wait).
 fn deadline_difference(source: &str, form: &Form, clocks: &BTreeSet<String>) -> bool {
     let own = form.paren_items().map(visible).is_some_and(|items| {
         head_symbol(source, &items) == Some("-")
@@ -378,7 +378,7 @@ fn deadline_difference(source: &str, form: &Form, clocks: &BTreeSet<String>) -> 
     own || children(form).into_iter().any(|c| deadline_difference(source, c, clocks))
 }
 
-/// `(match 主題 pattern 本体 pattern :if 条件 本体 …)` の (pattern の添字, 本体の添字)。
+/// `(match subject pattern body pattern :if condition body …)` as (index of pattern, index of body).
 fn match_clauses(source: &str, items: &[&Form]) -> Vec<(usize, usize)> {
     let mut clauses = Vec::new();
     let mut at = 2;
@@ -391,7 +391,7 @@ fn match_clauses(source: &str, items: &[&Form]) -> Vec<(usize, usize)> {
     clauses
 }
 
-/// 定義の引数の名(比べの形・並びの順 — `*`・`/` は数えない)。
+/// Names of a definition's parameters (comparison form, in order — `*` and `/` are not counted).
 fn parameters(source: &str, items: &[&Form]) -> Vec<String> {
     let Some(vector) = items.iter().skip(2).find_map(|f| f.bracket_items()) else { return Vec::new() };
     fn name_of(source: &str, form: &Form) -> Option<String> {
@@ -412,7 +412,7 @@ fn parameters(source: &str, items: &[&Form]) -> Vec<String> {
         .collect()
 }
 
-/// top level の form の名(`(defk 名 …)`・`(setv 名 …)` は名・ほかは頭の綴り)。
+/// The name of a top-level form (the name for `(defk name …)` and `(setv name …)`, the head's spelling otherwise).
 fn definition_name(source: &str, form: &Form) -> String {
     let items = form.paren_items().map(visible).unwrap_or_default();
     let head = items.first().map(|h| spelled(source, h)).unwrap_or("");
@@ -426,7 +426,7 @@ fn definition_name(source: &str, form: &Form) -> String {
         .unwrap_or_else(|| head.to_string())
 }
 
-/// top level の定義 1 つ。
+/// One top-level definition.
 struct Definition {
     name: String,
     key: String,
@@ -435,7 +435,7 @@ struct Definition {
     form: usize,
 }
 
-/// 母集団の file 1 つ(読んだ form・定義・import の名 → module)。
+/// One file of the population (the forms read, the definitions, and import name -> module).
 struct Unit {
     rel: String,
     source: String,
@@ -465,7 +465,7 @@ impl Unit {
     }
 }
 
-/// `(import module [名 名 :as 別名 …] module …)` の名 → module。
+/// Name -> module for `(import module [name name :as alias …] module …)`.
 fn read_imports(source: &str, items: &[&Form], into: &mut HashMap<String, String>) {
     let mut module: Option<String> = None;
     for item in items {
@@ -495,26 +495,26 @@ fn read_imports(source: &str, items: &[&Form], into: &mut HashMap<String, String
 
 type DefId = (usize, usize);
 
-/// 補助の表(読み直しのたびに育つ)。
+/// The helper tables (grow on each re-reading).
 #[derive(Default, Clone, PartialEq, Eq)]
 struct Helpers {
-    /// 刻を渡す補助 — (引数の添字, 引数の名)。
+    /// Helpers that take a time — (argument index, argument name).
     passthrough: HashMap<DefId, BTreeSet<(usize, String)>>,
-    /// 今を受ける補助 — (引数の添字, 引数の名, 区分)。
+    /// Helpers that take a now — (argument index, argument name, category).
     now_param: HashMap<DefId, BTreeSet<(usize, String, Refetch)>>,
-    /// 待ちを返す補助 — 待ちの元。
+    /// Helpers that return a wait — the origin of the wait.
     waits: HashMap<DefId, BTreeSet<Origin>>,
-    /// 本番の handler の節が繰り返しの外の時間の待ちで答える効果(比べの形の名)— 待ちの元。
+    /// Effects that a production handler's clause answers with a time wait outside a repetition (names in comparison form) — the origin of the wait.
     effects: HashMap<String, BTreeSet<Origin>>,
 }
 
-/// module の綴り → file(path の後ろの段の一致が 1 つだけの物)・定義の名 → 定義(全体で 1 つだけの物)。
+/// Module spelling -> file (those where exactly one matches by trailing path segments); definition name -> definition (those unique across the whole).
 struct Index {
     modules: HashMap<String, Vec<usize>>,
     unique: HashMap<String, Vec<DefId>>,
-    /// 今を返す呼びの頭(比べの形)— CLOCK_HEADS と、引数の無い定義で本文がそれを呼ぶ物(`(defk wall-ms-now [] …)`)。
+    /// Heads of calls that return now (comparison form) — CLOCK_HEADS, and definitions with no parameters whose body calls them (`(defk wall-ms-now [] …)`).
     clock_heads: BTreeSet<String>,
-    /// 時間切れの期限の tag(比べの形 — stopping_tags)。
+    /// Tags of timeout deadlines (comparison form — stopping_tags).
     stopping_tags: BTreeSet<String>,
 }
 
@@ -552,7 +552,7 @@ impl Index {
         Index { modules, unique, clock_heads, stopping_tags: stopping_tags(units) }
     }
 
-    /// file `file` の呼びの頭の綴りが指す定義。
+    /// The definition that the call head's spelling in file `file` points to.
     fn resolve(&self, units: &[Unit], file: usize, head: &str) -> Option<DefId> {
         let key = norm(last_segment(head));
         let unit = &units[file];
@@ -569,10 +569,10 @@ impl Index {
     }
 }
 
-/// 時間切れの期限の tag — top level で結んだ名(`(val STOP-WAIT-TAG "…")`)のうち、その tag と比べる分岐(`(cond (= tag 名) 本体 …)`・
-/// `(if (= tag 名) 本体 …)`)が母集団に 1 つ以上在り、その本体が全部 繰り返しを抜ける `(stop …)` の物。止めの合図を待つ上限の秒の期限は、
-/// 来たら待ちを打ち切って抜けるだけで、同じ物を取りに行く繰り返しではない。来た後に
-/// 同じ読みを繰り返す本体が 1 つでも在る tag は外さない。
+/// Tags of timeout deadlines — among names bound at top level (`(val STOP-WAIT-TAG "…")`), those for which at least one branch that compares against the tag (`(cond (= tag name) body …)`,
+/// `(if (= tag name) body …)`) exists in the population and whose bodies are all a `(stop …)` that exits the repetition. A deadline for the upper-bound seconds of waiting for a stop signal
+/// only cuts the wait short and exits when it arrives, and is not a repetition that fetches the same thing. A tag that has even one body that
+/// repeats the same read after it arrives is not excluded.
 fn stopping_tags(units: &[Unit]) -> BTreeSet<String> {
     let mut seen: HashMap<String, bool> = HashMap::new();
     for unit in units {
@@ -601,7 +601,7 @@ fn stopping_tags(units: &[Unit]) -> BTreeSet<String> {
     seen.into_iter().filter(|(name, exits)| *exits && constants.contains(name)).map(|(name, _)| name).collect()
 }
 
-/// form の木の、`(= a b)` で比べる分岐の (比べた記号の名〔比べの形・最後の段〕, 本体) を visit に渡す(`cond` の組と `if` の then)。
+/// Passes to visit, from a form tree, the (name of the compared symbol [comparison form, last segment], body) of branches compared with `(= a b)` (the pairs of `cond` and the then of `if`).
 fn tag_branches<'f>(source: &str, form: &'f Form, visit: &mut impl FnMut(Vec<String>, &'f Form)) {
     if let Some(items) = form.paren_items().map(visible) {
         let pairs: Vec<(&Form, &Form)> = match head_symbol(source, &items) {
@@ -621,7 +621,7 @@ fn tag_branches<'f>(source: &str, form: &'f Form, visit: &mut impl FnMut(Vec<Str
     }
 }
 
-/// 定義 1 つの中の待ちの綴り。
+/// The wait spellings inside one definition.
 #[derive(Debug, Clone)]
 struct Site {
     start: usize,
@@ -632,7 +632,7 @@ struct Site {
     repeated: bool,
 }
 
-/// 定義 1 つを読んだ結果。
+/// The result of reading one definition.
 #[derive(Default)]
 struct Facts {
     sites: Vec<Site>,
@@ -640,7 +640,7 @@ struct Facts {
     now_param: BTreeSet<(usize, String, Refetch)>,
 }
 
-/// 定義 1 つを歩く道具。
+/// The tool that walks one definition.
 struct Walk<'a> {
     units: &'a [Unit],
     index: &'a Index,
@@ -648,14 +648,14 @@ struct Walk<'a> {
     file: usize,
     me: DefId,
     params: &'a [String],
-    /// 定義の中の全部の結びから読んだ今の名(繰り返しの外の待ちの綴りに使う)。
+    /// Names of now read from all the bindings in the definition (used for wait spellings outside a repetition).
     anywhere: Moments,
-    /// 繰り返しの中の結びだけから読んだ今の名(繰り返しの中の待ちの綴りに使う — 繰り返しの前に 1 度読んだ今から求めた刻は、
-    /// 繰り返しのたびに同じ刻で、時間で取り直す形ではない)。
+    /// Names of now read from only the bindings inside a repetition (used for wait spellings inside a repetition — a time computed from a now read once before the repetition is
+    /// the same time every iteration and is not a form that refetches on time).
     in_loop: Moments,
     recursive: bool,
     derived: Vec<BTreeSet<String>>,
-    /// 引数ごとに、`(+ 引数 …)` から結んだ名(`(<- at (time-of-epoch-ms (+ now retry-ms)))` の at — 今を受ける補助の刻)。
+    /// Per parameter, a name bound from `(+ parameter …)` (the `at` of `(<- at (time-of-epoch-ms (+ now retry-ms)))` — the time of a helper that takes a now).
     plus_derived: Vec<BTreeSet<String>>,
     facts: Facts,
 }
@@ -669,7 +669,7 @@ impl<'a> Walk<'a> {
         if in_loop { &self.in_loop } else { &self.anywhere }
     }
 
-    /// 刻の式 `at` を判じる(今 + 秒なら Some — 中身は結んだ式が届かない後の取り直しを名乗るか)。今を受ける・刻を渡す引数を集める。
+    /// Judges a time expression `at` (Some if now + seconds — the content is whether the bound expression claims refetching after being unreachable). Collects the parameters that take a now or a time.
     fn time_argument(&mut self, at: &Form, kind: Refetch, in_loop: bool) -> Option<bool> {
         let source = self.source();
         let moments = self.moments(in_loop);
@@ -708,8 +708,8 @@ impl<'a> Walk<'a> {
         };
         let head = head_symbol(source, &items).map(str::to_string);
         if head.as_deref().is_some_and(spawns) {
-            // 別の task に渡す Program の中の待ちは、その task の 1 度の待ち — 渡す側の繰り返しでも、渡す側の待ちでもない(渡した
-            // Program が自分で繰り返すなら、その定義の中で当たる)。
+            // A wait inside a Program handed to another task is that task's single wait — it is neither the passing side's repetition nor the passing side's wait (if the handed-over
+            // Program repeats by itself, it is matched inside that definition).
             return;
         }
         if let Some(head) = head.as_deref() {
@@ -732,14 +732,14 @@ impl<'a> Walk<'a> {
         self.facts.sites.push(Site { start: at.span.start, end: at.span.end, head: last_segment(head).to_string(), kind, refetch, repeated });
     }
 
-    /// 呼び 1 つが待ちの綴りか。
+    /// Whether a call is a wait spelling.
     fn site_of(&mut self, form: &Form, items: &[&Form], head: &str, in_loop: bool, retry_hint: bool) {
         let source = self.source();
         let repeated = in_loop || self.recursive;
         let name = last_segment(head);
         let args = &items[1..];
         if args.first().is_some_and(|f| f.bracket_items().is_some()) {
-            // handler の節の頭(`(Delay [秒] …)`)・`fn` / `let` の引数の並び — 呼びではない。
+            // The head of a handler clause (`(Delay [seconds] …)`) and the parameter list of `fn` / `let` — not calls.
             return;
         }
         let named_retry = retry_hint || has_retry_word(spelled(source, form));
@@ -761,7 +761,7 @@ impl<'a> Walk<'a> {
         if TIMER_SINKS.contains(&name) {
             let tag = argument(source, args, 0, Some(":tag")).filter(|t| matches!(t.node, Node::Symbol));
             if tag.is_some_and(|t| self.index.stopping_tags.contains(&norm(last_segment(spelled(source, t))))) {
-                // 時間切れの期限(来たら繰り返しを抜けるだけ)— 同じ物を取りに行く繰り返しではない。
+                // A timeout deadline (it only exits the repetition when it arrives) — not a repetition that fetches the same thing.
                 return;
             }
             let refetch = kind_of(named_retry);
@@ -777,7 +777,7 @@ impl<'a> Walk<'a> {
             return;
         }
         let Some(target) = target else {
-            // 定義でない頭 — 本番の handler の節が時間の待ちで答える効果なら、その効果を出す所が待ちを返す補助の呼びと同じ。
+            // A head that is not a definition — if it is an effect that a production handler's clause answers with a time wait, the place that emits that effect is the same as a call to a helper that returns a wait.
             if let Some(origins) = self.helpers.effects.get(&norm(name)).cloned() {
                 let all_retry = origins.iter().all(|o| o.kind == Refetch::Retry);
                 let refetch = kind_of(retry_hint || all_retry || has_retry_word(name));
@@ -822,7 +822,7 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// 定義の中の名の結び(`(<- 名 [型] 式)`・`(val 名 式)`・`(setv 名 式)`・`(var 名 式)`・`(:= 名 式)`)を出てくる順に。
+/// The bindings of names in a definition (`(<- name [type] expr)`, `(val name expr)`, `(setv name expr)`, `(var name expr)`, `(:= name expr)`) in the order they appear.
 fn bindings<'f>(source: &str, form: &'f Form, in_loop: bool, out: &mut Vec<Binding<'f>>) {
     let Some(items) = form.paren_items().map(visible) else {
         for child in children(form) {
@@ -831,7 +831,7 @@ fn bindings<'f>(source: &str, form: &'f Form, in_loop: bool, out: &mut Vec<Bindi
         return;
     };
     {
-        // `:=` はHy の reader が keyword として読むので、頭は記号に限らず綴りで比べる。
+        // `:=` is read by Hy's reader as a keyword, so the head is compared by spelling, not limited to symbols.
         let head = items.first().map(|h| spelled(source, h)).unwrap_or("");
         let bound = match head {
             "<-" if items.len() >= 3 => Some((items[1], *items.last().unwrap())),
@@ -848,19 +848,19 @@ fn bindings<'f>(source: &str, form: &'f Form, in_loop: bool, out: &mut Vec<Bindi
     }
 }
 
-/// 結び 1 つ(名・式・繰り返しの中か)。
+/// One binding (name, expression, and whether it is inside a repetition).
 struct Binding<'f> {
     name: String,
     expr: &'f Form,
     in_loop: bool,
 }
 
-/// 今の名と、今 + 秒から結んだ名(`(<- at (time-of-epoch-ms (+ now …)))` の at)。
+/// The now names, and the names bound from now + seconds (the `at` of `(<- at (time-of-epoch-ms (+ now …)))`).
 #[derive(Default)]
 struct Moments {
     clocks: BTreeSet<String>,
     relative: BTreeSet<String>,
-    /// relative のうち、結んだ式の綴りが届かない後の取り直しを名乗る名。
+    /// Among relative, the names whose bound expression's spelling claims refetching after being unreachable.
     retry_named: BTreeSet<String>,
 }
 
@@ -881,7 +881,7 @@ impl Moments {
     }
 }
 
-/// 今の名(今を返す呼び・今の名を 1 つだけ受ける変換の呼びで結んだ名)。
+/// The now names (names bound by a call that returns now, or by a conversion call that takes exactly one now name).
 fn clock_names<'f>(source: &str, clock_heads: &BTreeSet<String>, binds: impl Iterator<Item = &'f Binding<'f>>) -> BTreeSet<String> {
     let mut clocks = BTreeSet::new();
     for bind in binds {
@@ -897,7 +897,7 @@ fn clock_names<'f>(source: &str, clock_heads: &BTreeSet<String>, binds: impl Ite
     clocks
 }
 
-/// 定義 1 つを今の補助の表で読む。
+/// Reads one definition with the now helper table.
 fn read_definition(units: &[Unit], index: &Index, helpers: &Helpers, me: DefId) -> Facts {
     let unit = &units[me.0];
     let definition = &unit.definitions[me.1];
@@ -942,19 +942,19 @@ fn read_definition(units: &[Unit], index: &Index, helpers: &Helpers, me: DefId) 
     walk.facts
 }
 
-/// form の木に、頭の最後の段が heads に在る呼びが在るか。
+/// Whether the form tree has a call whose head's last segment is in heads.
 fn calls_any(source: &str, form: &Form, heads: &BTreeSet<String>) -> bool {
     let own = form.paren_items().map(visible).is_some_and(|items| head_symbol(source, &items).is_some_and(|h| heads.contains(&norm(last_segment(h)))));
     own || children(form).into_iter().any(|c| calls_any(source, c, heads))
 }
 
-/// 定義の本文が自分を呼ぶか(頭の form そのものは数えない)。
+/// Whether a definition's body calls itself (the head form itself is not counted).
 fn calls_itself(source: &str, form: &Form, key: &str, top: bool) -> bool {
     let own = !top && form.paren_items().map(visible).is_some_and(|items| head_symbol(source, &items).is_some_and(|h| !h.contains('.') && norm(h) == key));
     own || children(form).into_iter().any(|c| calls_itself(source, c, key, false))
 }
 
-/// 補助の表を、変わりが無くなるまで読み直して作る。
+/// Builds the helper table by re-reading until nothing changes.
 fn settle(units: &[Unit], index: &Index) -> (Helpers, Vec<(DefId, Facts)>) {
     let ids: Vec<DefId> = units.iter().enumerate().flat_map(|(file, unit)| (0..unit.definitions.len()).map(move |def| (file, def))).collect();
     let mut helpers = Helpers::default();
@@ -996,8 +996,8 @@ fn settle(units: &[Unit], index: &Index) -> (Helpers, Vec<(DefId, Facts)>) {
     (helpers, read)
 }
 
-/// defhandler の節ごとに、繰り返しの外の待ちの綴りの元(効果の名は比べの形)。記録の変更の待ち(WatchChanges・WatchEvents)に答える節は
-/// 数えない — 変わりを待つ時の上限の秒は DOEFF208 の側。
+/// Per defhandler clause, the origins of wait spellings outside a repetition (effect names in comparison form). Clauses that answer waits on record changes (WatchChanges, WatchEvents) are
+/// not counted — the upper-bound seconds when waiting for changes are DOEFF208's side.
 fn clause_waits(unit: &Unit, definition: &Definition, facts: &Facts) -> Vec<(String, BTreeSet<Origin>)> {
     let source = unit.source.as_str();
     let items = unit.forms[definition.form].paren_items().map(visible).unwrap_or_default();
@@ -1032,8 +1032,8 @@ fn clause_waits(unit: &Unit, definition: &Definition, facts: &Facts) -> Vec<(Str
         .collect()
 }
 
-/// 分岐の form(`if`・`when`・`unless`・`cond`・`match`・`try`・`and`・`or`)を通らずに届く呼びの頭の位置(節が必ず待つ所 — 失敗の枝だけで
-/// 待つ節は、その効果を待ちにしない)。
+/// The positions of call heads reachable without going through a branch form (`if`, `when`, `unless`, `cond`, `match`, `try`, `and`, `or`) (where a clause surely waits — a clause that
+/// waits only in a failure branch does not make that effect a wait).
 fn unconditional_heads(source: &str, form: &Form, into: &mut BTreeSet<usize>) {
     let Some(items) = form.paren_items().map(visible) else { return };
     let head = head_symbol(source, &items);
@@ -1054,7 +1054,7 @@ fn site_origin(unit: &Unit, site: &Site) -> Origin {
     Origin { rel: unit.rel.clone(), line, text: line_text.chars().take(80).collect(), kind: site.refetch }
 }
 
-/// 当たりの行か、その直前に続く註だけの行の理由の註を読む。
+/// Reads the reason comment on the hit's line, or on a comment-only line just before it.
 pub fn reason_at(source: &str, line: usize, refetch: Refetch) -> ReasonRead {
     let lines: Vec<&str> = source.lines().collect();
     let mut candidates = vec![lines.get(line).copied().unwrap_or("")];
@@ -1068,25 +1068,25 @@ pub fn reason_at(source: &str, line: usize, refetch: Refetch) -> ReasonRead {
     };
     match parse_reason(text) {
         Ok(Reason::ReconnectWhileUnreachable) if refetch != Refetch::Retry => ReasonRead::Rejected(
-            "「届かない間だけの繋ぎ直し」は区分 届かない後の取り直し(届かない印か失敗の答えが在る間だけ試す所)にだけ書ける".to_string(),
+            "\"届かない間だけの繋ぎ直し\" can be written only for the category \"refetch after unreachable\" (a place that tries only while an unreachable marker or a failure answer exists)".to_string(),
         ),
         Ok(_) => ReasonRead::Accepted,
         Err(ReasonRefusal::OutsideVocabulary(word)) => ReasonRead::Rejected(format!(
-            "「{}」は閉じた語彙の外({} <相手> {} <何で確かめたか> / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し)",
+            "\"{}\" is outside the closed vocabulary ({} <party> {} <how it was verified> / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し)",
             word, NO_CHANGE_NOTICE, EVIDENCE_SEPARATOR
         )),
         Err(ReasonRefusal::MissingPartyOrEvidence) => ReasonRead::Rejected(format!(
-            "「{}」には相手の名と、{} の後に何で確かめたか(相手の API の文書の節・相手の code の行・試した命令と結果)の両方が要る",
+            "\"{}\" needs both the party's name and, after {}, how it was verified (a section of the party's API documentation, a line of the party's code, or a command tried and its result)",
             NO_CHANGE_NOTICE.trim_end_matches(':'),
             EVIDENCE_SEPARATOR
         )),
         Err(ReasonRefusal::PartyHasChangeNotice(known)) => {
-            ReasonRead::Rejected(format!("この相手は変更の知らせを持つ({}) — その知らせで起きる形にする", known))
+            ReasonRead::Rejected(format!("this party has change notifications ({}) — make it wake on those notifications", known))
         }
     }
 }
 
-/// 母集団の file を読んだ物から当たりを出す(検の入口 — file の中身を直に渡す)。
+/// Produces hits from the files read (the entry point for tests — passes file contents directly).
 pub fn judge_sources(files: Vec<(String, String)>) -> Vec<RefetchFinding> {
     let units: Vec<Unit> = files.into_par_iter().map(|(rel, source)| Unit::read(rel, source)).collect();
     let index = Index::new(&units);
@@ -1138,7 +1138,7 @@ pub fn judge_sources(files: Vec<(String, String)>) -> Vec<RefetchFinding> {
     merged
 }
 
-/// repo の本番の code の Hy の file を全部判じる(当たり・読めない file の理由)。
+/// Judges all Hy files of the repo's production code (hits, and reasons for unreadable files).
 pub fn find(root: &Path, decl: &BusinessFakes) -> (Vec<RefetchFinding>, Vec<String>) {
     let files: Vec<(String, std::path::PathBuf)> = hy_files::collect(root)
         .into_iter()
@@ -1147,7 +1147,7 @@ pub fn find(root: &Path, decl: &BusinessFakes) -> (Vec<RefetchFinding>, Vec<Stri
         .collect();
     let read: Vec<Result<(String, String), String>> = files
         .into_par_iter()
-        .map(|(rel, path)| std::fs::read_to_string(&path).map(|source| (rel.clone(), source)).map_err(|error| format!("{}: 読めない: {}", rel, error)))
+        .map(|(rel, path)| std::fs::read_to_string(&path).map(|source| (rel.clone(), source)).map_err(|error| format!("{}: cannot read: {}", rel, error)))
         .collect();
     let (sources, errors): (Vec<_>, Vec<_>) = read.into_iter().partition(Result::is_ok);
     (judge_sources(sources.into_iter().filter_map(Result::ok).collect()), errors.into_iter().filter_map(Result::err).collect())
@@ -1225,8 +1225,8 @@ mod tests {
         assert_eq!(details(&[("h.hy", handler), ("u.hy", user)]), vec!["run::AwaitNextTick::periodic", "os::sleep::periodic"]);
     }
 
-    /// 決まり: 止めの合図を待つ上限の期限(来たら繰り返しを抜けるだけ — agora-controllers の
-    /// task_attempt.hy の pumping-loop の deadline-passed の形)は当てない。同じ形でも、期限が来た後に同じ読みを繰り返す本体なら当たる。
+    /// Rule: a deadline for the upper bound of waiting on a stop signal (it only exits the repetition when it arrives — the deadline-passed form of pumping-loop in agora-controllers'
+    /// task_attempt.hy) is not matched. Even the same form is matched if its body repeats the same read after the deadline arrives.
     #[test]
     fn a_deadline_that_only_ends_the_wait_is_not_hit_but_one_that_reads_again_is() {
         let shape = |after_stop_wait: &str| {
@@ -1246,32 +1246,32 @@ mod tests {
 
     #[test]
     fn reasons_are_a_closed_vocabulary() {
-        // 相手と確かめの根拠が在れば通る。
+        // Passes if the party and the basis of the verification exist.
         assert_eq!(
-            parse_reason(" 相手に変更の知らせが無い: 預かり所 — custody の API の文書 3 節に watch が無い"),
-            Ok(Reason::NoChangeNotice { party: "預かり所".into(), evidence: "custody の API の文書 3 節に watch が無い".into() })
+            parse_reason(" 相手に変更の知らせが無い: custody-store — no watch in section 3 of custody's API documentation"),
+            Ok(Reason::NoChangeNotice { party: "custody-store".into(), evidence: "no watch in section 3 of custody's API documentation".into() })
         );
-        // 根拠が無い・相手が無い = 通さない。
-        for text in ["相手に変更の知らせが無い: 預かり所", "相手に変更の知らせが無い: 預かり所 — ", "相手に変更の知らせが無い: — 文書 3 節"] {
+        // No basis, or no party = not passed.
+        for text in ["相手に変更の知らせが無い: custody-store", "相手に変更の知らせが無い: custody-store — ", "相手に変更の知らせが無い: — section 3 of the documentation"] {
             assert_eq!(parse_reason(text), Err(ReasonRefusal::MissingPartyOrEvidence), "{}", text);
         }
-        // 変更の知らせを持つと分かっている相手 = 通さない(大小文字・空白・別名を問わない)。
+        // A party known to have change notifications = not passed (regardless of case, whitespace, or alias).
         for (party, known) in [
             ("Kubernetes", "Kubernetes"),
-            ("kubernetes の API", "Kubernetes"),
+            ("kubernetes API", "Kubernetes"),
             ("K8s", "Kubernetes"),
-            ("doeff-cluster の Coordinator", "coordinator の GET /watch"),
-            ("doeff_events の基盤", "doeff-events の基盤"),
-            ("記録の service", "記録の service の変更の合図"),
+            ("doeff-cluster Coordinator", "coordinator GET /watch"),
+            ("doeff_events infrastructure", "doeff-events infrastructure"),
+            ("記録の service", "records service change signal"),
         ] {
-            let text = format!("相手に変更の知らせが無い: {} — 文書を読んだ", party);
+            let text = format!("相手に変更の知らせが無い: {} — read the documentation", party);
             assert_eq!(parse_reason(&text), Err(ReasonRefusal::PartyHasChangeNotice(known)), "{}", text);
         }
         assert_eq!(parse_reason("書くだけ: 生存の印"), Ok(Reason::WriteOnly(WriteOnly::Liveness)));
-        // 閉じた語彙の外の語は通さない(閉じた語彙から外した綴りもここに入る)。
-        assert_eq!(parse_reason("仕方ない"), Err(ReasonRefusal::OutsideVocabulary("仕方ない".into())));
-        let known = "(defk a []\n  (while True\n    ;; 時間で取り直す理由: 相手に変更の知らせが無い: Kubernetes — 試した\n    (<- (Delay 1.0))\n    (<- (Read))))\n";
-        assert!(matches!(reason_at(known, 3, Refetch::Periodic), ReasonRead::Rejected(why) if why.contains("この相手は変更の知らせを持つ")));
+        // Words outside the closed vocabulary are not passed (spellings removed from the closed vocabulary also come in here).
+        assert_eq!(parse_reason("cannot be helped"), Err(ReasonRefusal::OutsideVocabulary("cannot be helped".into())));
+        let known = "(defk a []\n  (while True\n    ;; 時間で取り直す理由: 相手に変更の知らせが無い: Kubernetes — tried it\n    (<- (Delay 1.0))\n    (<- (Read))))\n";
+        assert!(matches!(reason_at(known, 3, Refetch::Periodic), ReasonRead::Rejected(why) if why.contains("this party has change notifications")));
         let source = "(defk a []\n  (while True\n    ;; 時間で取り直す理由: 届かない間だけの繋ぎ直し\n    (<- (Delay 1.0))\n    (<- (Read))))\n";
         assert!(matches!(reason_at(source, 3, Refetch::Periodic), ReasonRead::Rejected(_)));
         assert_eq!(reason_at(source, 3, Refetch::Retry), ReasonRead::Accepted);

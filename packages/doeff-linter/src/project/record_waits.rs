@@ -1,15 +1,15 @@
-//! DOEFF208 — 本番の code が、記録の変更の待ちを job を起こす手段にする所(記録を書いて記録を
-//! 待つ設計を linter で見つけて禁じる。記録と起動を分け、起動は Redis や RabbitMQ などの出来事の基盤から受けて即座に応じる)。
+//! DOEFF208 — where production code makes waiting on record changes the means of waking a job (the design of writing a record and
+//! waiting for the record is found by the linter and forbidden. Separate recording from launching; launching is received from an event infrastructure such as Redis or RabbitMQ and answered immediately).
 //!
-//! 当たるのは、architecture.hy に `:business-fakes` を書いた repo の本番の code の Hy の file(`business_fakes::production_code` — DOEFF143 の
-//! 本番の入口・DOEFF207 の job でない書き手と同じ範囲の宣言。検・模擬の環境・読まない file は外れる)。次の 2 つを当たりにする:
-//! - 記録の変更を出来事の源にする所 — doeff-records の合図の源の工場(`read-signal-handler`・`records-signal-handler`)の呼び。
-//! - 記録の変更を待つ所 — `WatchChanges`・`WatchEvents` を、秒(`:timeout` か位置の引数の 3 つ目)が literal の 0 でない値で出す
-//!   (変数・式・展開 `#*` / `#**` も「0 と言えない」ので当たる)。秒を書かない形は既定の 0(待たずに 1 回読む)なので当たらない。
+//! It applies to Hy files of production code in a repo that wrote `:business-fakes` in architecture.hy (`business_fakes::production_code` — the same scope declaration as DOEFF143's
+//! production entry and DOEFF207's non-job writers. Tests, mock environments, and files not read are excluded). The following 2 are hits:
+//! - Where record changes are made an event source — calls to doeff-records' signal-source factories (`read-signal-handler`, `records-signal-handler`).
+//! - Where record changes are waited on — `WatchChanges` / `WatchEvents` issued with seconds (`:timeout` or the 3rd positional argument) that is a literal non-0 value
+//!   (a variable, an expression, or a splat `#*` / `#**` also hits since it "cannot be said to be 0"). The form that does not write seconds is the default 0 (read once without waiting), so it does not hit.
 //!
-//! 当たらない物: 待たずに 1 回読む(秒 0 — 受け手が起動や繋ぎ直しの時に記録を読んで追いつく形)・記録への書き(落とさないための入力の行)・
-//! 記録の効果に答える handler(節の頭が `WatchChanges` / `WatchEvents` の defhandler)の中で出し直す待ち・match の pattern の綴り・
-//! doeff-records の package(dir `doeff_records`)の中 — この規則は使い手を見る。効果と源の持ち主は、出来事の基盤へ替える時に源そのものを消す。
+//! Not hits: reading once without waiting (seconds 0 — the form where the receiver catches up by reading records at startup or reconnection), writing to records (the input line so as not to drop anything),
+//! a wait re-issued inside a handler that answers a record effect (a defhandler whose clause head is `WatchChanges` / `WatchEvents`), the spelling of a match pattern, and
+//! inside the doeff-records package (dir `doeff_records`) — this rule looks at users. The owner of the effects and sources removes the source itself when switching to the event infrastructure.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -23,24 +23,24 @@ use super::hy_files;
 use super::paths::relative_path;
 use crate::position::{LineIndex, Range};
 
-/// 記録の変更を出来事の源にする工場(doeff-records の event_source.hy)— 呼びの頭の綴りの最後の段。
+/// The factory that makes record changes an event source (doeff-records' event_source.hy) — the last segment of the call head's spelling.
 const SIGNAL_SOURCES: &[&str] = &["read-signal-handler", "records-signal-handler"];
-/// 記録の変更の待ちの効果(doeff-records の effects.hy)— どちらも秒は位置の引数の 3 つ目(`tables cursor timeout` / `stream after timeout`)。
+/// The effects that wait on record changes (doeff-records' effects.hy) — in both, seconds is the 3rd positional argument (`tables cursor timeout` / `stream after timeout`).
 const RECORD_WAITS: &[&str] = &["WatchChanges", "WatchEvents"];
 const TIMEOUT_POSITION: usize = 2;
-/// 効果と源の持ち主の package の dir(この下は母集団の外)。
+/// The dir of the package that owns the effects and sources (below this is outside the population).
 const OWNER_PACKAGE_DIR: &str = "doeff_records";
 
-/// 当たりの種類(閉じた集合)。
+/// Kind of hit (closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WaitUse {
-    /// 合図の源の工場の呼び(頭の綴りの最後の段)。
+    /// A call to a signal-source factory (the last segment of the head's spelling).
     SignalSource { factory: String },
-    /// 秒が 0 でない記録の変更の待ち(効果の名・秒の綴り)。
+    /// A record-change wait whose seconds is not 0 (effect name, spelling of seconds).
     LongPoll { effect: String, timeout: String },
 }
 
-/// 当たり 1 つ(根からの path・呼びの頭の位置・囲む top level の定義の名・種類)。
+/// One hit (path from the root, position of the call head, name of the enclosing top-level definition, kind).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaitFinding {
     pub rel: String,
@@ -50,7 +50,7 @@ pub struct WaitFinding {
 }
 
 impl WaitFinding {
-    /// 鍵の細目(定義の名::頭の綴り)。
+    /// Key detail (definition name::head spelling).
     pub fn detail(&self) -> String {
         let head = match &self.what {
             WaitUse::SignalSource { factory } => factory,
@@ -59,35 +59,35 @@ impl WaitFinding {
         format!("{}::{}", self.definition, head)
     }
 
-    /// 主体(何が・どこで)。
+    /// Subject (what, where).
     pub fn subject(&self) -> String {
         match &self.what {
-            WaitUse::SignalSource { factory } => format!("定義 {} の ({} …)", self.definition, factory),
-            WaitUse::LongPoll { effect, timeout } => format!("定義 {} の ({} … :timeout {})", self.definition, effect, timeout),
+            WaitUse::SignalSource { factory } => format!("definition {} ({} …)", self.definition, factory),
+            WaitUse::LongPoll { effect, timeout } => format!("definition {} ({} … :timeout {})", self.definition, effect, timeout),
         }
     }
 
-    /// 違反の文。
+    /// The violation text.
     pub fn describe(&self) -> String {
         match &self.what {
             WaitUse::SignalSource { .. } => format!(
-                "{} — 記録の変更を出来事の源にする(記録の変更の待ちで job を起こす)。記録は記録、起動は起動 — 起こすのは出来事の基盤の知らせにする",
+                "{} — makes record changes an event source (wakes a job by waiting on record changes). Records are records, launching is launching — wake through a notification from the event infrastructure",
                 self.subject()
             ),
             WaitUse::LongPoll { .. } => format!(
-                "{} — 記録の変更を秒 0 でない待ちで待つ(記録の変更の待ちで job を起こす)。記録は記録、起動は起動 — 待たずに 1 回読む(秒 0)か、出来事の基盤の知らせで起こす",
+                "{} — waits on record changes with a non-0 wait (wakes a job by waiting on record changes). Records are records, launching is launching — read once without waiting (seconds 0), or wake through a notification from the event infrastructure",
                 self.subject()
             ),
         }
     }
 }
 
-/// 頭の綴りの最後の段(`event-source.read-signal-handler` → `read-signal-handler`)。
+/// The last segment of the head's spelling (`event-source.read-signal-handler` -> `read-signal-handler`).
 fn last_segment(spelled: &str) -> &str {
     spelled.rsplit('.').next().unwrap_or(spelled)
 }
 
-/// `#_` で読み捨てた form を除いた中身。
+/// The contents excluding forms discarded with `#_`.
 fn visible(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|f| !matches!(f.node, Node::Discarded)).collect()
 }
@@ -96,14 +96,14 @@ fn spelled<'s>(source: &'s str, form: &Form) -> &'s str {
     source.get(form.span.start..form.span.end).unwrap_or("")
 }
 
-/// 呼びの頭の記号の綴りの最後の段(呼びでなければ None)。
+/// The last segment of a call head symbol's spelling (None if not a call).
 fn call_head<'s>(source: &'s str, form: &Form) -> Option<&'s str> {
     let items = form.paren_items()?;
     let head = visible(items).into_iter().next()?;
     matches!(head.node, Node::Symbol).then(|| last_segment(spelled(source, head)))
 }
 
-/// 記録の変更の待ちに答える defhandler か(直下の節の頭が待ちの効果)。
+/// Whether it is a defhandler that answers record-change waits (the head of the clause directly under it is the wait effect).
 fn answers_record_waits(source: &str, items: &[&Form]) -> bool {
     items.first().is_some_and(|head| spelled(source, head) == "defhandler")
         && items.iter().skip(2).any(|clause| call_head(source, clause).is_some_and(|h| RECORD_WAITS.contains(&h)))
@@ -113,7 +113,7 @@ fn is_keyword(source: &str, form: &Form, word: &str) -> bool {
     matches!(form.node, Node::Keyword) && spelled(source, form) == word
 }
 
-/// `(match 主題 pattern 本体 pattern :if 条件 本体 …)` の pattern の位置(中身の添字)。
+/// The position of the pattern in `(match subject pattern body pattern :if condition body …)` (index into the contents).
 fn match_patterns(source: &str, items: &[&Form]) -> BTreeSet<usize> {
     if items.first().map(|head| spelled(source, head)) != Some("match") {
         return BTreeSet::new();
@@ -123,14 +123,14 @@ fn match_patterns(source: &str, items: &[&Form]) -> BTreeSet<usize> {
         .collect()
 }
 
-/// 秒の値が literal の 0 か(`0`・`0.0`・`0.` など)。
+/// Whether the value of seconds is a literal 0 (`0`, `0.0`, `0.`, etc.).
 fn literal_zero(source: &str, form: &Form) -> bool {
     matches!(form.node, Node::Number) && spelled(source, form).replace('_', "").parse::<f64>().is_ok_and(|v| v == 0.0)
 }
 
-/// 待ちの効果の引数(頭の後ろ)から、0 と言えない秒の綴りを返す(0 か、秒を書かない既定の 0 なら None)。
+/// From the arguments of a wait effect (after the head), returns the spelling of seconds that cannot be said to be 0 (None if 0, or the default 0 with no seconds written).
 fn nonzero_timeout(source: &str, args: &[&Form]) -> Option<String> {
-    // 鍵の引数は値と組で飛ばし、位置の引数の添字だけを並べる。
+    // Skip keyword arguments together with their values, and list only the indices of positional arguments.
     let positional: Vec<usize> = std::iter::successors(Some(0), |&at| args.get(at).map(|f| if matches!(f.node, Node::Keyword) { at + 2 } else { at + 1 }))
         .take_while(|&at| at < args.len())
         .filter(|&at| !matches!(args[at].node, Node::Keyword))
@@ -145,7 +145,7 @@ fn nonzero_timeout(source: &str, args: &[&Form]) -> Option<String> {
     }
 }
 
-/// form の木の当たり(byte の範囲と種類)。記録の待ちに答える defhandler の中と match の pattern は見ない。
+/// Hits in a form's tree (byte range and kind). Does not look inside a defhandler that answers record waits, or at match patterns.
 fn hits(source: &str, form: &Form) -> Vec<(usize, usize, WaitUse)> {
     match &form.node {
         Node::Seq { items, .. } => {
@@ -176,7 +176,7 @@ fn hits(source: &str, form: &Form) -> Vec<(usize, usize, WaitUse)> {
     }
 }
 
-/// top level の form の名(`(defk 名 …)`・`(setv 名 …)` は名・ほかは頭の綴り)。
+/// The name of a top-level form (the name for `(defk name …)` and `(setv name …)`, the head's spelling otherwise).
 fn definition_name(source: &str, form: &Form) -> String {
     let items = form.paren_items().map(visible).unwrap_or_default();
     let head = items.first().map(|h| spelled(source, h)).unwrap_or("");
@@ -190,7 +190,7 @@ fn definition_name(source: &str, form: &Form) -> String {
         .unwrap_or_else(|| head.to_string())
 }
 
-/// file 1 つ(根からの path と中身)の当たり。
+/// Hits of one file (path from the root and contents).
 pub fn judge(rel: &str, source: &str) -> Vec<WaitFinding> {
     let lines = LineIndex::new(source);
     let mut reader = Reader::new(source, 0, source.len());
@@ -208,12 +208,12 @@ pub fn judge(rel: &str, source: &str) -> Vec<WaitFinding> {
         .collect()
 }
 
-/// 母集団の file か — 本番の code(`:business-fakes` の宣言)で、効果と源の持ち主の package の外。
+/// Whether it is a file in the population — production code (the `:business-fakes` declaration) and outside the package that owns the effects and sources.
 fn in_population(rel: &str, decl: &BusinessFakes) -> bool {
     production_code(rel, decl) && !rel.split('/').any(|segment| segment == OWNER_PACKAGE_DIR)
 }
 
-/// repo の本番の code の Hy の file を全部判じる(当たり・読めない file の理由)。
+/// Judges all Hy files of the repo's production code (hits, and reasons for unreadable files).
 pub fn find(root: &Path, decl: &BusinessFakes) -> (Vec<WaitFinding>, Vec<String>) {
     let files: Vec<(String, std::path::PathBuf)> = hy_files::collect(root)
         .into_iter()
@@ -224,7 +224,7 @@ pub fn find(root: &Path, decl: &BusinessFakes) -> (Vec<WaitFinding>, Vec<String>
         .into_par_iter()
         .map(|(rel, path)| match std::fs::read_to_string(&path) {
             Ok(source) => Ok(judge(&rel, &source)),
-            Err(error) => Err(format!("{}: 読めない: {}", rel, error)),
+            Err(error) => Err(format!("{}: cannot read: {}", rel, error)),
         })
         .collect();
     let (found, errors): (Vec<_>, Vec<_>) = judged.into_iter().partition(Result::is_ok);

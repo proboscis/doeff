@@ -1,16 +1,16 @@
-//! 名の定義元(正典の名)を解く 1 か所の解き手。
+//! The single resolver that resolves where a name is defined (the canonical name).
 //!
-//! 同じ物は、定義した module からも、それを再 export する入口(`from x import Y as Y`・`__getattr__` の名 → module の表・Hy の
-//! `(import x [Y])`)からも import できる。索引の名(doeff-indexer の `qualify.rs`)は書いた import の文を繋いだ綴りで、入口から import
-//! し直すだけで綴りが変わる。名で照らす規則(DOEFF143・157・164・167・206 の効果の節の鍵・表の照らし・層の判じ)と、class の基底を
-//! 同じ repo の class へ解く DOEFF002(`rules::class_inheritance`)は、ここの再 export の辿りを使い、綴りに依らない名で読む。
+//! The same object can be imported both from the module that defined it and from an entry point that re-exports it (`from x import Y as Y`, the name -> module table of `__getattr__`, Hy's
+//! `(import x [Y])`). The index name (`qualify.rs` of doeff-indexer) is the spelling that chains the written import statements, and merely re-importing from an entry point
+//! changes the spelling. The rules that match by name (the effect-section keys of DOEFF143, 157, 164, 167, 206, the table matching, and the layer judgment), and DOEFF002 (`rules::class_inheritance`), which resolves a class's base
+//! to a class in the same repo, use the re-export tracing here and read names that do not depend on the spelling.
 //!
-//! - Python の module の束ね(`import`・`from … import …`・`if TYPE_CHECKING:` の中も)と、`__getattr__` を持つ module の
-//!   文字列の名 → module の表(`_LAZY_EXPORTS` の形 — 遅れて読む入口)を読む。
-//! - Hy の module は doeff-indexer の索引(最上位の定義と import)を読む。
-//! - module の file を引く起点の dir は呼び手が決める(DOEFF002 は repo の中だけ・効果の名は project の根と、その外の path 依存 —
-//!   `pyproject.toml` の `[tool.uv.sources]` の path と `.venv` の `.pth` の dir と site-packages)。
-//! - 辿る段は `MAX_REEXPORT_DEPTH` まで。解けない名は None を返し、綴りに黙って倒さない(呼び手が所見に出す)。
+//! - Reads the bindings of a Python module (`import`, `from … import …`, including inside `if TYPE_CHECKING:`), and for a module that has `__getattr__`, the
+//!   table from string names to modules (the `_LAZY_EXPORTS` shape — a lazily loaded entry point).
+//! - For Hy modules, reads the doeff-indexer index (top-level definitions and imports).
+//! - The starting dirs for looking up a module's file are decided by the caller (DOEFF002 only inside the repo; for effect names, the project root and the path dependencies outside it —
+//!   the paths in `[tool.uv.sources]` of `pyproject.toml`, the dirs in `.pth` of `.venv`, and site-packages).
+//! - The tracing goes up to `MAX_REEXPORT_DEPTH` steps. A name that cannot be resolved returns None and is not silently reduced to the spelling (the caller reports it as a finding).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,37 +22,37 @@ use rustpython_parser::{parse, Mode};
 
 use crate::utils::each_statement;
 
-/// 再 export を辿る段の上限。
+/// The upper limit on the steps of tracing a re-export.
 pub const MAX_REEXPORT_DEPTH: usize = 8;
 
-/// Python の module を引く file の形(`a/b.py` か `a/b/__init__.py`)。
+/// The shapes of files that a Python module is looked up as (`a/b.py` or `a/b/__init__.py`).
 pub const PYTHON_FILES: &[ModuleFile] = &[ModuleFile::Module("py"), ModuleFile::Package("py")];
 
-/// Python と Hy の module を引く file の形(Hy を先に引く — Hy の module の隣の `.pyi` は型の写しで、定義元ではない)。
+/// The shapes of files that a Python and Hy module is looked up as (Hy first — the `.pyi` next to a Hy module is a copy of the types, not the definition).
 pub const SOURCE_FILES: &[ModuleFile] =
     &[ModuleFile::Module("hy"), ModuleFile::Module("py"), ModuleFile::Package("py"), ModuleFile::Package("hy")];
 
-/// module の file の形 1 つ(拡張子つき)。
+/// One file shape of a module (with an extension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleFile {
     /// `a/b.<ext>`
     Module(&'static str),
-    /// `a/b/__init__.<ext>`(名の無い module は起点の `__init__.<ext>`)
+    /// `a/b/__init__.<ext>` (a module with no name is the starting point's `__init__.<ext>`)
     Package(&'static str),
 }
 
-/// file の中の名の束ね。
+/// Name bindings in a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Binding {
-    /// `import a.b`(束ねる名は `a` — dotted は `a`)・`import a.b as c`(dotted は `a.b`)。
+    /// `import a.b` (the bound name is `a` — dotted is `a`), `import a.b as c` (dotted is `a.b`).
     Module { dotted: String },
-    /// `from <module> import <name>` の名(level = 相対 import の点の数)。
+    /// The name of `from <module> import <name>` (level = the number of dots of a relative import).
     Member { module: String, level: u32, name: String },
-    /// 同じ名を違う物へ束ねた(try の import の逃げ道ほか)— どちらとも決めない。
+    /// The same name was bound to different things (an escape route of a try import, and so on) — not decided either way.
     Ambiguous,
 }
 
-/// 再 export の 1 段の先(`from <module> import <name>` — level は相対 import の点の数・0 は絶対)。
+/// One step beyond a re-export (`from <module> import <name>` — level is the number of dots of a relative import, 0 is absolute).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hop {
     pub module: String,
@@ -60,7 +60,7 @@ pub struct Hop {
     pub name: String,
 }
 
-/// Python の module の import の束ね(module の直下と、関数・class・if ほかの入れ子の中の import 文の全部)。
+/// The import bindings of a Python module (all import statements directly under the module and nested inside functions, classes, if, and so on).
 pub fn python_bindings(body: &[Stmt]) -> HashMap<String, Binding> {
     let mut bindings = HashMap::new();
     each_statement(body, &mut |stmt| match stmt {
@@ -104,8 +104,8 @@ fn bind(bindings: &mut HashMap<String, Binding>, name: String, binding: Binding)
     }
 }
 
-/// `__getattr__` で遅れて読む名の表(名 → module)— module の直下に `def __getattr__` が在る時だけ、直下の dict の字面のうち
-/// 鍵と値が全部文字列の物を読む(`_LAZY_EXPORTS = {"LeaseOp": "pkg._shared.model", …}`)。
+/// The table of names loaded lazily by `__getattr__` (name -> module) — only when `def __getattr__` exists directly under the module, among the dict literals directly under it,
+/// reads those whose keys and values are all strings (`_LAZY_EXPORTS = {"LeaseOp": "pkg._shared.model", …}`).
 pub fn lazy_exports(body: &[Stmt]) -> HashMap<String, String> {
     let has_getattr = body.iter().any(|stmt| matches!(stmt, Stmt::FunctionDef(def) if def.name.as_str() == "__getattr__"));
     let mut out = HashMap::new();
@@ -139,8 +139,8 @@ fn string(expr: &Expr) -> Option<String> {
     }
 }
 
-/// 名 `name` の再 export の 1 段の先 — `from x import name`(別名の束ねも)か、遅れて読む名の表の行。module そのものの束ねと
-/// 決められない束ねは辿らない。
+/// One step beyond the re-export of the name `name` — `from x import name` (including an aliased binding) or a row of the lazily loaded name table. Does not trace a binding of the module itself or
+/// a binding that cannot be decided.
 pub fn reexport_hop(bindings: &HashMap<String, Binding>, lazy: &HashMap<String, String>, name: &str) -> Option<Hop> {
     match bindings.get(name) {
         Some(Binding::Member { module, level, name }) => Some(Hop { module: module.clone(), level: *level, name: name.clone() }),
@@ -153,7 +153,7 @@ pub fn dotted_parts(dotted: &str) -> impl Iterator<Item = String> + '_ {
     dotted.split('.').filter(|part| !part.is_empty()).map(str::to_string)
 }
 
-/// 起点の dir から module の path を引く(`files` の順に試す)。
+/// Looks up a module's path from the starting dir (tries in the order of `files`).
 pub fn lookup(root: &Path, parts: &[String], files: &[ModuleFile]) -> Option<PathBuf> {
     let base = parts.iter().fold(root.to_path_buf(), |path, part| path.join(part));
     files.iter().find_map(|file| {
@@ -166,8 +166,8 @@ pub fn lookup(root: &Path, parts: &[String], files: &[ModuleFile]) -> Option<Pat
     })
 }
 
-/// 読んでいる file の上の dir のうち `__init__.py` を持たない dir(import の起点になる dir — package の dir は起点ではない)と、その `src`
-/// (近い順)。`bound`(repo の根)までで、無ければ `.git` を持つ dir まで。
+/// Among the dirs above the file being read, those that do not have `__init__.py` (dirs that become import starting points — a package dir is not a starting point), and its `src`
+/// (nearest first). Up to `bound` (the repo root), or if absent, up to a dir that has `.git`.
 pub fn import_roots_within(from: &Path, bound: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let mut dir = from.parent();
@@ -191,13 +191,13 @@ pub fn import_roots_within(from: &Path, bound: Option<&Path>) -> Vec<PathBuf> {
     roots
 }
 
-/// Python の module 1 つの、名の定義と再 export の事実。
+/// The facts of name definitions and re-exports of one Python module.
 struct PythonModule {
-    /// module の直下で定義した名(class・関数・代入の的の名)。
+    /// Names defined directly under the module (class, function, assignment target names).
     defined: HashSet<String>,
     bindings: HashMap<String, Binding>,
     lazy: HashMap<String, String>,
-    /// `from <module> import *` の先(移した module の殻が型の検査に見せる形)— ほかで名が見つからない時に順に探す。
+    /// The target of `from <module> import *` (the shape a moved module's shell shows to the type checker) — searched in order when the name is not found elsewhere.
     stars: Vec<Hop>,
 }
 
@@ -244,29 +244,29 @@ fn name_of(expr: &Expr) -> Option<String> {
     }
 }
 
-/// module の file 1 つの読み。
+/// The reading of one module file.
 enum Facts {
     Python(PythonModule),
     Hy(Arc<HyFileIndex>),
     Unreadable,
 }
 
-/// 効果ほかの名(完全名 `<module>.<名>`)を、定義元の正典の名へ解く。1 回の判定の中で名ごとと file ごとに 1 度だけ解く。
+/// Resolves a name of an effect and the like (full name `<module>.<name>`) to the canonical name of its definition. Resolved once per name and per file within one judgment.
 pub struct Origins<'a> {
     project_root: PathBuf,
-    /// 絶対の module を引く起点の dir(近い順)。
+    /// The starting dirs for looking up an absolute module (nearest first).
     roots: Vec<PathBuf>,
-    /// project の Hy の file の索引(root からの path → 索引)— 読み直さずに使う。
+    /// The index of the project's Hy files (path from root -> index) — used without re-reading.
     project_hy: &'a HashMap<String, HyFileIndex>,
-    /// project の Hy の file の module(索引の名 — dir の `-` は `_`)→ root からの path。
+    /// The modules of the project's Hy files (index name — `-` in a dir becomes `_`) -> path from root.
     project_modules: HashMap<String, String>,
     files: HashMap<PathBuf, Arc<Facts>>,
-    /// (名を書いた file の dir・名)→ 解いた名。
+    /// (The dir of the file where the name was written, name) -> the resolved name.
     names: HashMap<(Option<PathBuf>, String), Option<String>>,
 }
 
 impl<'a> Origins<'a> {
-    /// project の根 `root` の module と、その外の path 依存の source を引く解き手。
+    /// The resolver that looks up the project root `root`'s modules and the sources of path dependencies outside it.
     pub fn new(root: &Path, project_hy: &'a HashMap<String, HyFileIndex>) -> Self {
         let mut roots: Vec<PathBuf> = Vec::new();
         let mut push = |dir: PathBuf| {
@@ -295,7 +295,7 @@ impl<'a> Origins<'a> {
         }
     }
 
-    /// 起点の dir を足す(検と、呼び手が知る別の置き場のため)。
+    /// Adds a starting dir (for the checks, and for other locations the caller knows).
     pub fn with_roots(mut self, extra: impl IntoIterator<Item = PathBuf>) -> Self {
         for dir in extra {
             if !self.roots.contains(&dir) {
@@ -305,12 +305,12 @@ impl<'a> Origins<'a> {
         self
     }
 
-    /// 完全名 `name` の定義元の正典の名(定義した module + 名)。module の file が見つからない・名の定義も辿れる再 export も無い時は None。
+    /// The canonical name of the definition of the full name `name` (the defining module + name). None when the module's file is not found, or the name's definition is not found and no traceable re-export exists.
     pub fn origin(&mut self, name: &str) -> Option<String> {
         self.origin_from(name, None)
     }
 
-    /// `origin` と同じ — 名を書いた file(project の根からの path)の上の import の起点の dir も引く(入れ子の dir の package)。
+    /// The same as `origin` — also looks up the import starting dirs above the file where the name was written (path from the project root) (packages in nested dirs).
     pub fn origin_from(&mut self, name: &str, written_in: Option<&str>) -> Option<String> {
         let from = written_in.map(|rel| self.project_root.join(rel));
         let key = (from.as_ref().and_then(|f| f.parent().map(Path::to_path_buf)), name.to_string());
@@ -322,7 +322,7 @@ impl<'a> Origins<'a> {
         found
     }
 
-    /// module の file — project の Hy の module(索引の名)・名を書いた file の上の起点の dir・project と path 依存の起点の dir の順に引く。
+    /// The module's file — looked up in the order of the project's Hy module (index name), the starting dirs above the file where the name was written, and the starting dirs of the project and path dependencies.
     fn module_file(&self, module: &str, from: Option<&Path>) -> Option<PathBuf> {
         if let Some(rel) = self.project_modules.get(module) {
             return Some(self.project_root.join(rel));
@@ -400,7 +400,7 @@ impl<'a> Origins<'a> {
     }
 }
 
-/// 相対 import(level 段)を、書いた module(package の `__init__` なら package そのもの)から絶対の module へ直す。
+/// Converts a relative import (level steps) to an absolute module, from the module that wrote it (for a package's `__init__`, the package itself).
 fn absolute(module: &str, package: bool, hop: &Hop) -> Option<String> {
     if hop.level == 0 {
         return Some(hop.module.clone());
@@ -416,7 +416,7 @@ fn absolute(module: &str, package: bool, hop: &Hop) -> Option<String> {
     Some(base.join("."))
 }
 
-/// `pyproject.toml` の `[tool.uv.sources]` の path 依存の dir(root からの相対は root から)。
+/// The dir of a path dependency in `[tool.uv.sources]` of `pyproject.toml` (a path relative to root is from root).
 fn uv_source_dirs(root: &Path) -> Vec<PathBuf> {
     let Ok(text) = std::fs::read_to_string(root.join("pyproject.toml")) else { return Vec::new() };
     let Ok(value) = text.parse::<toml::Table>() else { return Vec::new() };
@@ -426,7 +426,7 @@ fn uv_source_dirs(root: &Path) -> Vec<PathBuf> {
     sources.values().filter_map(|source| source.get("path")?.as_str()).map(|path| root.join(path)).collect()
 }
 
-/// `.venv` の site-packages の dir と、そこの `.pth` が並べる dir(`import` で始まる行と註は読まない)。
+/// The dirs of `.venv`'s site-packages, and the dirs listed by the `.pth` files there (lines starting with `import` and comments are not read).
 fn venv_dirs(root: &Path) -> Vec<PathBuf> {
     let Ok(libs) = std::fs::read_dir(root.join(".venv").join("lib")) else { return Vec::new() };
     let mut out = Vec::new();

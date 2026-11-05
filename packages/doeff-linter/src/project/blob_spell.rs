@@ -1,9 +1,9 @@
-//! file 1 つの「どの名を綴っているか」の覚え — git の blob の id を鍵に、中身を読まずに引く。
+//! A memory of "which names a file spells", for one file — looked up by the git blob id as key, without reading the contents.
 //!
-//! 1 file の実行は、呼び先の名を字面に綴る file だけを選ぶために、repo の Hy を全部読む(`spelled_callers`)。`Spelling::in_source` が見るのは
-//! 「記号の最後の段」だけ: 空白と `( ) [ ] { } " ;` で区切った語の、最後の `.` より後ろ。その語(`-` を `_` に畳む)の集合を、file ごとに Bloom filter
-//! で覚えておけば、名の綴りを含まない file は、中身を読まずに「綴らない」と答えられる(Bloom filter は「在る」を誤って言うだけで、「無い」を誤って
-//! 言わない — 誤った「在る」は file を読み直すだけで答えは変わらない)。
+//! A single-file run reads all of the repo's Hy (`spelled_callers`) to pick only the files that spell the callee's name literally. What `Spelling::in_source` looks at is
+//! only "the last segment of a symbol": for words delimited by whitespace and `( ) [ ] { } " ;`, the part after the last `.`. If the set of those words (with `-` folded into `_`) is remembered per file in a Bloom filter,
+//! a file that does not contain the spelling of a name can be answered "does not spell it" without reading its contents (a Bloom filter only wrongly says "present", never wrongly
+//! says "absent" — a wrong "present" just re-reads the file, and the answer does not change).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,23 +15,23 @@ use super::smells::has_failure_declaration_spelling;
 use super::spelling::Spelling;
 use super::{hy_files, paths};
 
-/// 覚えの置き場の種類の名。
+/// Name of the kind of memory store.
 const KIND: &str = "blob-spell";
 
-/// repo の Hy の file 1 つを見た結果。
+/// The result of looking at one Hy file of the repo.
 pub enum Seen {
-    /// 覚えで済んだ(中身を読んでいない)。
+    /// Settled by the memory (contents not read).
     Spell(BlobSpell),
-    /// 中身を読んだ(覚えが無い・index と外れた file・覚えが `wants_source` に当たった file)。
+    /// Contents were read (no memory, a file out of step with the index, or a file the memory matched against `wants_source`).
     Source(String),
-    /// 読めなかった。
+    /// Could not be read.
     Unreadable,
 }
 
-/// repo の Hy の全部を歩きながら、file ごとに綴りの覚えを git の blob の id で引く。覚えが在って
-/// `wants_source(覚え)` が偽の file は中身を読まない。覚えが無い・index と外れた file・`wants_source` が真の file は中身を読む(覚えの無い blob は、
-/// 読んだ中身から覚えを作って置く)。覚えは index の並びの塊ごとに 1 file で引く(`ChunkedFacts` — 冷えた作業木で置き場の file を 4600 開かない)。
-/// 計器へ段 `label` の時間と、中身を読んだ数(`<label> read=N`)を出す。並びは `hy_files::collect_reading` と同じ。
+/// While walking all of the repo's Hy, looks up each file's spelling memory by git blob id. A file that has a memory and
+/// for which `wants_source(memory)` is false is not read. A file with no memory, a file out of step with the index, or a file for which `wants_source` is true is read (for a blob with no memory,
+/// a memory is made from the contents read and stored). Memories are looked up one file per chunk of the index order (`ChunkedFacts` — so a cold worktree does not open 4600 store files).
+/// Emits to the instrument the time of stage `label` and the number of files whose contents were read (`<label> read=N`). The order is the same as `hy_files::collect_reading`.
 pub fn scan(root: &Path, label: &str, wants_source: impl Fn(&BlobSpell) -> bool + Sync) -> Vec<(String, PathBuf, Seen)> {
     let memory = ChunkedFacts::<BlobSpell>::open(root, KIND, |rel| hy_files::walks_to(&hy_files::HY_WALK, rel));
     let read = AtomicUsize::new(0);
@@ -46,7 +46,7 @@ pub fn scan(root: &Path, label: &str, wants_source: impl Fn(&BlobSpell) -> bool 
     seen
 }
 
-/// file 1 つを見る(`scan` の 1 件)。
+/// Looks at one file (one item of `scan`).
 fn see(root: &Path, memory: Option<&ChunkedFacts<BlobSpell>>, wants_source: &(impl Fn(&BlobSpell) -> bool + Sync), path: &Path, read: &AtomicUsize) -> Seen {
     let known = memory.and_then(|memory| {
         let rel = paths::relative_path(root, path)?;
@@ -66,12 +66,12 @@ fn see(root: &Path, memory: Option<&ChunkedFacts<BlobSpell>>, wants_source: &(im
     Seen::Source(source)
 }
 
-/// 記号の終わり(`spelling::SYMBOL_END` の字)。
+/// Symbol-ending characters (the characters of `spelling::SYMBOL_END`).
 fn ends_symbol(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r' | '(' | ')' | '[' | ']' | '{' | '}' | '"' | ';')
 }
 
-/// 語の hash(FNV-1a — build をまたいで同じ値。`-` は `_` に畳む: 名の綴りは `_` を `-` とも綴れる)。
+/// Hash of a word (FNV-1a — the same value across builds. `-` is folded into `_`: a name's spelling may write `_` as `-` too).
 fn hash_of(token: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in token.bytes() {
@@ -81,20 +81,20 @@ fn hash_of(token: &str) -> u64 {
     hash
 }
 
-/// bit の位置の数と、語 1 つあたりの bit の数(2 の冪に切り上げる)。呼び先の名を 12 個探す file(requests_projection)では、前の 3 個・8 bit
-/// の誤った「在る」が名 1 つで約 1%・repo の Hy 4620 file の約 500 を読ませた。8 個・16 bit なら名 1 つで
-/// 約 0.05% 以下(表は約 2 倍)。
+/// The number of bit positions, and the number of bits per word (rounded up to a power of 2). For a file that looks for 12 callee names (requests_projection), the previous 3 hashes / 8 bits
+/// gave a wrong "present" of about 1% per name, making about 500 of the repo's 4620 Hy files be read. With 8 hashes / 16 bits it is
+/// about 0.05% or less per name (the table is about 2x larger).
 const HASHES: u64 = 8;
 const BITS_PER_WORD: usize = 16;
 
-/// bit の位置 `HASHES` 個(二重の hash — 1 つの hash の上下を使う)。`bits` は 2 の冪。
+/// `HASHES` bit positions (double hashing — uses the upper and lower halves of one hash). `bits` is a power of 2.
 fn positions(hash: u64, bits: usize) -> impl Iterator<Item = usize> {
     let first = hash & 0xffff_ffff;
     let step = (hash >> 32) | 1;
     (0..HASHES).map(move |i| (first.wrapping_add(i.wrapping_mul(step)) as usize) & (bits - 1))
 }
 
-/// file 1 つが綴る名の覚えと、`(defk` の綴りを含むか・失敗の型の宣言の綴り(`smells::has_failure_declaration_spelling`)を含むか・`(defeffect` を含むか。
+/// The memory of the names one file spells, whether it contains the spelling of `(defk`, whether it contains the spelling of a failure-type declaration (`smells::has_failure_declaration_spelling`), and whether it contains `(defeffect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobSpell {
     pub defk: bool,
@@ -123,7 +123,7 @@ impl BlobSpell {
         BlobSpell { defk: source.contains("(defk"), failure: has_failure_declaration_spelling(source), defeffect: source.contains("(defeffect"), bloom }
     }
 
-    /// `spelling` を綴るかもしれないか。false なら必ず綴らない(`Spelling::in_source` が false)。
+    /// Whether it might spell `spelling`. If false it definitely does not spell it (`Spelling::in_source` is false).
     pub fn may_spell(&self, spelling: &Spelling) -> bool {
         let Some(name) = spelling.folded_name() else { return true };
         let bits = self.bloom.len() * 8;
@@ -138,7 +138,7 @@ impl BlobSpell {
 mod tests {
     use super::*;
 
-    /// 覚えが「綴らない」と答える名は、`Spelling::in_source` も false(誤って「無い」と言わない)。いろいろな綴り方の file と名で全部の組を見る。
+    /// A name the memory answers "does not spell" is also false for `Spelling::in_source` (never wrongly says "absent"). Checks every pair over files and names with various ways of spelling.
     #[test]
     fn a_no_from_the_memory_is_always_a_no_from_the_source() {
         let sources = [
@@ -158,24 +158,24 @@ mod tests {
             for name in names {
                 let spelling = Spelling::of(name);
                 if !memory.may_spell(&spelling) {
-                    assert!(!spelling.in_source(source), "{name:?} を {source:?} が綴るのに、覚えは綴らないと言った");
+                    assert!(!spelling.in_source(source), "{name:?} is spelled by {source:?}, but the memory said it does not spell it");
                 }
                 if spelling.in_source(source) {
-                    assert!(memory.may_spell(&spelling), "{name:?} を綴る {source:?} を、覚えが取りこぼした");
+                    assert!(memory.may_spell(&spelling), "the memory missed {source:?}, which spells {name:?}");
                 }
             }
         }
     }
 
-    /// 綴らない名を「綴るかもしれない」と誤る割合が小さい — 誤った「在る」は file を読ませるだけだが、名を多く探す file では読む数が
-    /// 名の数だけ増える(1 千語の file・綴らない名 1 万で、誤りは 0.1% 以下)。
+    /// The rate of wrongly saying "might spell" for a name that is not spelled is small — a wrong "present" only makes a file be read, but for a file that looks for many names the number read
+    /// grows with the number of names (for a file with 1000 words and 10 thousand unspelled names, errors are 0.1% or less).
     #[test]
     fn few_names_the_file_does_not_spell_are_taken_as_maybe_spelled() {
         let source: String = (0..1000).map(|i| format!("(word-{i} x)\n")).collect();
         let memory = BlobSpell::of(&source);
         let wrong = (0..10_000).filter(|j| memory.may_spell(&Spelling::of(&format!("other_{j}")))).count();
-        assert!(wrong <= 10, "綴らない名 1 万のうち {wrong} を綴るかもしれないと誤った");
-        assert!((0..1000).all(|i| memory.may_spell(&Spelling::of(&format!("word_{i}")))), "綴る名を取りこぼさない");
+        assert!(wrong <= 10, "of 10 thousand unspelled names, {wrong} were wrongly judged as possibly spelled");
+        assert!((0..1000).all(|i| memory.may_spell(&Spelling::of(&format!("word_{i}")))), "spelled names are not missed");
     }
 
     #[test]

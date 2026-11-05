@@ -1,19 +1,19 @@
-//! dir の中の file の読みを、file の指紋で覚える。
+//! Remembers the reading of the files in a dir by the files' fingerprint.
 //!
-//! 登録簿と判定の一覧は 1 鍵 1 file の dir で、agora-controllers では 500 file ほどある。1 file の hook は何度も撃たれ、その度に全部を open すると、
-//! page cache が数分で追い出される Pod では毎回 disk を待つ(IO の圧迫 55〜66% の日、冷えた作業木の 1 回の open 596 件のうち 494 件がこの dir だった)。
-//! 一方、冷えた状態でも stat は 449 回で 0.02 秒(inode は 1 block に 16 個載る)。指紋が前の実行と同じなら、中身を読まずに前の読みの結果を使う。
+//! The registry and the list of judgments are dirs with one file per key, about 500 files in agora-controllers. A one-file hook fires many times, and opening everything each time
+//! means waiting on the disk every time in a Pod where the page cache is evicted within minutes (on days with 55-66% IO pressure, 494 of the 596 opens in one cold working-tree run were this dir).
+//! On the other hand, even cold, 449 stats take 0.02 seconds (16 inodes fit in one block). If the fingerprint equals the previous run's, the previous reading's result is used without reading the contents.
 //!
-//! 指紋は 2 通り:
-//! - 全部の file が git の index の行と同じ stat なら(`GitIndex::blob_of` — 中身は index の blob と同じ)、(根からの path・blob の id)で作る。中身だけで
-//!   決まるので、同じ commit から作った別の作業木どうしが結果を分け合う(冷えた新しい作業木は 449 file を読まず、覚えも書かない。
-//!   読みの待ちが 0.8〜4.8 秒・覚えの書きが 1.8〜3.0 秒止まる回があった)。
-//! - 1 つでも外れれば(index に無い・書き替えた・git の作業木でない)、(path・大きさ・更新時刻・inode)で作る。path を含むので作業木ごと。
+//! There are two kinds of fingerprint:
+//! - If every file has the same stat as its git index row (`GitIndex::blob_of`: the contents equal the index's blob), it is built from (path from the root, blob id). Since it is
+//!   decided by contents alone, different working trees made from the same commit share results (a new cold working tree neither reads the 449 files nor writes a memo.
+//!   There were runs stalled 0.8-4.8 seconds waiting on reads and 1.8-3.0 seconds writing memos).
+//! - If even one file deviates (not in the index, rewritten, not a git working tree), it is built from (path, size, mtime, inode). It includes the path, so it is per working tree.
 //!
-//! 後者で、指紋が同じなのに中身が違う事は、(1) 更新時刻を戻して書く道具(`touch -r`・`cp -p`)で大きさも同じに保った時と、(2) 更新時刻の刻みより
-//! 短い間に同じ大きさで書き替えた時に起きうる。(2) は git の racy と同じ守りで外す — 更新から `SETTLE` 経っていない file が 1 つでも在れば覚えない
-//! (その実行は毎回読む)。(1) は覚えない手立てが無いが、登録簿の file を更新時刻まで保って同じ大きさに書き替える運用は無い。
-//! 前者の守りは index の側に在る(行の更新時刻が index を書いた時刻以後の行は信じない — `git_index` の頭の註)。
+//! With the latter, contents can differ even though the fingerprint is the same in two cases: (1) a tool that writes while restoring the mtime (`touch -r`, `cp -p`) keeps the size the same too, and (2) a rewrite
+//! with the same size within a shorter span than the mtime granularity. (2) is excluded with the same guard as git's racy case: if even one file was updated less than `SETTLE` ago, nothing is remembered
+//! (that run reads every time). For (1) there is no way to avoid remembering, but there is no workflow that rewrites a registry file to the same size while preserving its mtime.
+//! The guard for the former is on the index side (rows whose mtime is at or after the time the index was written are not trusted; see the header comment of `git_index`).
 
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
@@ -26,14 +26,14 @@ use super::fsmonitor;
 use super::git_index::{self, GitIndex};
 use super::{bulk_read, facts_cache, paths};
 
-/// 更新からこの時間経っていない file は、同じ瞬間の別の書き込みと更新時刻で区別できないので覚えない。
+/// A file updated less than this long ago cannot be told apart by mtime from another write at the same instant, so it is not remembered.
 const SETTLE_NS: u128 = 2_000_000_000;
-/// blob の id の指紋で、index の行と stat が外れて中身を読んで id を作る file の数の上限(dir の file の 1/8 と大きい方)。
+/// Upper limit on the number of files, under the blob-id fingerprint, whose stat deviates from the index row so that the contents are read to build the id (1/8 of the dir's files, or this, whichever is larger).
 const UNTRUSTED_AT_MOST: usize = 16;
 
-/// `files` の読みの結果 `T` を、`files` の指紋で覚える。指紋が前と同じなら `read` を呼ばずに前の結果を返す。
-/// `read` は結果と「覚えてよいか」を返す(根の絶対 path を持つ結果は置き場が断るので、呼び手が先に外す)。
-/// 指紋を作れない(更新の直後の file・読めない file・file が無い)時は覚えず、毎回 `read` を呼ぶ。
+/// Remembers the reading result `T` of `files` by the fingerprint of `files`. If the fingerprint equals the previous one, returns the previous result without calling `read`.
+/// `read` returns the result and "whether it may be remembered" (the store refuses a result that holds the root's absolute path, so the caller removes it first).
+/// When no fingerprint can be built (a just-updated file, an unreadable file, no files), nothing is remembered and `read` is called every time.
 pub fn remembered<T, F>(root: &Path, kind: &str, files: &[PathBuf], read: F) -> T
 where
     T: Serialize + DeserializeOwned,
@@ -45,7 +45,7 @@ where
     }
 }
 
-/// 指紋の hash(FNV-1a — 実行と build をまたいで同じ答え)。
+/// Hash of the fingerprint (FNV-1a: the same answer across runs and builds).
 struct Fnv(u64);
 
 impl Fnv {
@@ -61,25 +61,25 @@ impl Fnv {
     }
 }
 
-/// `files` 全部の指紋(頭の註の 2 通り — blob の id で作れればそれ、作れなければ stat で)。覚えられない時は None。
+/// Fingerprint of all of `files` (the two kinds in the header comment: by blob id if it can be built, otherwise by stat). None if it cannot be remembered.
 fn fingerprint(root: &Path, files: &[PathBuf]) -> Option<u64> {
     if files.is_empty() {
         return None;
     }
-    // 常駐の process(`fsmonitor`)が全部の file を「index の行と同じ」と答えていれば、stat せずに blob の id の指紋を作る。
+    // If the resident process (`fsmonitor`) has answered that all files are "the same as the index rows", build the blob-id fingerprint without stat.
     if let Some(key) = by_vouched(root, files) {
         return Some(key);
     }
-    // 冷えた stat も待ちなので重ねる(冷えた 449 回で 0.02 秒でも、IO の圧迫が重い時は 1 回ずつ待つ)。
+    // A cold stat is also a wait, so overlap them (even if 449 take 0.02 seconds, under heavy IO pressure each waits one at a time).
     let metas = bulk_read::fan_out(files, |file| std::fs::metadata(file).ok());
     by_blobs(root, files, &metas).or_else(|| by_stamps(files, &metas))
 }
 
-/// (根からの path・中身の blob の id)の指紋 — 作業木をまたいで同じ値になる。stat が git の index の行と同じ file は index の id を使い(中身を読まない)、
-/// 外れた file(index に無い・書き替えた・index を書いたのと同じ刻に書かれた racy の行 — 作業木を作った直後は、最後に書かれた数 file がそうなる)は
-/// 中身を読んで id を作る。外れた file が多い(`UNTRUSTED_AT_MOST` を越える)・git の作業木でない時は None(stat の指紋に任せる — 毎回全部を読むより、
-/// 作業木ごとに覚えるほうが軽い)。外れた file に更新から `SETTLE_NS` 経っていない物が在れば None(読む間に書かれている file の id を指紋にしない)。
-/// stat の指紋と同じ値にならないよう、頭に種類の印を混ぜる。
+/// Fingerprint of (path from the root, blob id of the contents): the same value across working trees. For a file whose stat equals the git index row it uses the index's id (without reading contents),
+/// and for a deviating file (not in the index, rewritten, or a racy row written at the same instant the index was written: right after a working tree is made, the last few files written are like this)
+/// it reads the contents to build the id. None if many files deviate (more than `UNTRUSTED_AT_MOST`) or it is not a git working tree (leave it to the stat fingerprint: remembering per working tree
+/// is lighter than reading everything every time). None if a deviating file was updated less than `SETTLE_NS` ago (the id of a file that may be written while being read is not used as a fingerprint).
+/// A kind marker is mixed into the head so that it never equals the value of a stat fingerprint.
 fn by_blobs(root: &Path, files: &[PathBuf], metas: &[Option<Metadata>]) -> Option<u64> {
     let index = GitIndex::of(root)?;
     let rels: Vec<String> = files.iter().map(|file| paths::relative_path(root, file)).collect::<Option<_>>()?;
@@ -101,7 +101,7 @@ fn by_blobs(root: &Path, files: &[PathBuf], metas: &[Option<Metadata>]) -> Optio
     blob_fingerprint(&rels, oids)
 }
 
-/// `by_blobs` の指紋の hash(path と blob の id の並び)。
+/// Hash of the `by_blobs` fingerprint (the sequence of paths and blob ids).
 fn blob_fingerprint(rels: &[String], oids: Vec<Option<[u8; 20]>>) -> Option<u64> {
     let mut hash = Fnv::new();
     hash.mix(b"git-blob\0");
@@ -114,7 +114,7 @@ fn blob_fingerprint(rels: &[String], oids: Vec<Option<[u8; 20]>>) -> Option<u64>
     Some(hash.0)
 }
 
-/// 全部の file を常駐の process が「index の行と同じ」と答えた時の blob の id の指紋(`by_blobs` と同じ値 — stat も読みも無い)。1 つでも違えば None。
+/// Blob-id fingerprint for when the resident process answered that all files are "the same as the index rows" (the same value as `by_blobs`; no stat and no read). None if even one differs.
 fn by_vouched(root: &Path, files: &[PathBuf]) -> Option<u64> {
     let session = fsmonitor::session(root)?;
     let rels: Vec<String> = files.iter().map(|file| paths::relative_path(root, file)).collect::<Option<_>>()?;
@@ -122,7 +122,7 @@ fn by_vouched(root: &Path, files: &[PathBuf]) -> Option<u64> {
     oids.iter().all(Option::is_some).then(|| blob_fingerprint(&rels, oids)).flatten()
 }
 
-/// (path・大きさ・更新時刻・inode)の指紋。更新から `SETTLE_NS` 経っていない file・読めない file が在れば None。
+/// Fingerprint of (path, size, mtime, inode). None if there is a file updated less than `SETTLE_NS` ago or an unreadable file.
 fn by_stamps(files: &[PathBuf], metas: &[Option<Metadata>]) -> Option<u64> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_nanos();
     let mut hash = Fnv::new();
@@ -141,7 +141,7 @@ fn by_stamps(files: &[PathBuf], metas: &[Option<Metadata>]) -> Option<u64> {
     Some(hash.0)
 }
 
-/// file 1 つの印(大きさ・更新時刻 ns・inode)。
+/// The marker of one file (size, mtime ns, inode).
 fn stamp(meta: &Metadata) -> Option<(u64, u128, u64)> {
     let mtime_ns = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
     Some((meta.len(), mtime_ns, inode(meta)))
@@ -188,16 +188,16 @@ mod tests {
         let a = aged(dir.path(), "a.txt", "one");
         let b = aged(dir.path(), "b.txt", "two");
         let base = fingerprint(dir.path(), &[a.clone(), b.clone()]).unwrap();
-        // 大きさ
+        // size
         std::fs::write(&b, "three").unwrap();
         set_age(&b, 3600);
         let resized = fingerprint(dir.path(), &[a.clone(), b.clone()]).unwrap();
         assert_ne!(resized, base);
-        // 更新時刻だけ(大きさは同じ)
+        // mtime only (size is the same)
         set_age(&b, 7200);
         let retimed = fingerprint(dir.path(), &[a.clone(), b.clone()]).unwrap();
         assert_ne!(retimed, resized);
-        // file の集まり(足す・減らす)
+        // set of files (added, removed)
         let c = aged(dir.path(), "c.txt", "x");
         assert_ne!(fingerprint(dir.path(), &[a.clone(), b.clone(), c]).unwrap(), retimed);
         assert_ne!(fingerprint(dir.path(), std::slice::from_ref(&a)).unwrap(), retimed);
@@ -209,7 +209,7 @@ mod tests {
         let second = tempfile::tempdir().unwrap();
         let a = aged(first.path(), "a.txt", "one");
         let b = aged(second.path(), "a.txt", "one");
-        // 更新時刻も同じにする(inode と path だけが違う)。
+        // make the mtime the same too (only inode and path differ).
         let at = std::fs::metadata(&a).unwrap().modified().unwrap();
         std::fs::File::options().write(true).open(&b).unwrap().set_modified(at).unwrap();
         assert_ne!(fingerprint(first.path(), &[a]), fingerprint(second.path(), &[b]));
@@ -226,8 +226,8 @@ mod tests {
             .is_ok_and(|status| status.success())
     }
 
-    /// 同じ commit から作った 2 つの作業木の同じ file は、path も inode も更新時刻も違うが、blob の id の指紋は同じ(作業木をまたいで分け合う)。
-    /// 片方の file を書き替えれば(index の blob と違う中身)、その作業木は stat の指紋に倒れて違う値になる。git が無い機体では確かめない。
+    /// The same file in two working trees made from the same commit differs in path, inode, and mtime, but the blob-id fingerprint is the same (shared across working trees).
+    /// If one file is rewritten (contents different from the index's blob), that working tree falls back to the stat fingerprint and gets a different value. Not checked on machines without git.
     #[test]
     fn two_worktrees_of_one_commit_share_the_blob_fingerprint() {
         let main = tempfile::tempdir().unwrap();
@@ -245,20 +245,20 @@ mod tests {
         assert!(git(main.path(), &["worktree", "add", "-q", "--detach", other.to_str().unwrap()]));
         let shared = fingerprint(main.path(), &files(main.path()));
         assert!(shared.is_some());
-        // 作ったばかりの作業木の file は、更新から 2 秒の内(index と同じ刻の racy の行でもありうる)— 読む間に書かれうるので覚えない。
-        assert_eq!(fingerprint(&other, &files(&other)), None, "書かれた直後の file の指紋を作った");
-        // 更新時刻が index の行と外れた file は、中身を読んで blob の id を作る — 中身が同じなら別の作業木と同じ指紋。
+        // A file in a just-made working tree is within 2 seconds of its update (it may also be a racy row at the same instant as the index), and may be written while being read, so it is not remembered.
+        assert_eq!(fingerprint(&other, &files(&other)), None, "built a fingerprint for a just-written file");
+        // A file whose mtime deviates from the index row has its contents read to build the blob id; with the same contents it gets the same fingerprint as another working tree.
         for file in files(&other) {
             set_age(&file, 3600);
         }
-        assert_eq!(fingerprint(&other, &files(&other)), shared, "同じ中身の作業木どうしで指紋が違う");
+        assert_eq!(fingerprint(&other, &files(&other)), shared, "working trees with the same contents have different fingerprints");
         std::fs::write(other.join("reg/b.txt"), "changed\n").unwrap();
         set_age(&other.join("reg/b.txt"), 3600);
         let changed = fingerprint(&other, &files(&other));
-        assert!(changed.is_some() && changed != shared, "書き替えた file を index の blob の指紋で数えた");
+        assert!(changed.is_some() && changed != shared, "counted a rewritten file by the index blob's fingerprint");
     }
 
-    /// index の行と外れた file が多い dir は、毎回全部を読んで id を作るより作業木ごとに stat で覚えるほうが軽い — stat の指紋に倒す(作業木ごとに違う値)。
+    /// A dir where many files deviate from the index rows is lighter to remember per working tree by stat than to read everything every time to build ids; fall back to the stat fingerprint (a different value per working tree).
     #[test]
     fn many_files_off_the_index_fall_back_to_the_stat_fingerprint() {
         let main = tempfile::tempdir().unwrap();
@@ -276,7 +276,7 @@ mod tests {
             set_age(file, 7200);
         }
         let metas: Vec<Option<Metadata>> = files.iter().map(|file| std::fs::metadata(file).ok()).collect();
-        assert_eq!(by_blobs(main.path(), &files, &metas), None, "40 file のうち 40 が index と外れても中身を読んで指紋を作った");
+        assert_eq!(by_blobs(main.path(), &files, &metas), None, "built a fingerprint by reading contents even though 40 of 40 files deviate from the index");
         assert_eq!(fingerprint(main.path(), &files), by_stamps(&files, &metas));
         assert_ne!(fingerprint(main.path(), &files), trusted);
     }
@@ -287,10 +287,10 @@ mod tests {
         let old = aged(dir.path(), "old.txt", "one");
         let fresh = dir.path().join("fresh.txt");
         std::fs::write(&fresh, "now").unwrap();
-        assert!(fingerprint(dir.path(), &[old.clone(), fresh]).is_none(), "更新の直後は覚えない");
-        assert!(fingerprint(dir.path(), &[old.clone(), dir.path().join("missing.txt")]).is_none(), "読めない file があれば覚えない");
-        assert!(fingerprint(dir.path(), &[]).is_none(), "file が無ければ覚えない");
-        // 未来の更新時刻(時計のずれ)も、今と区別できないので覚えない。
+        assert!(fingerprint(dir.path(), &[old.clone(), fresh]).is_none(), "nothing is remembered right after an update");
+        assert!(fingerprint(dir.path(), &[old.clone(), dir.path().join("missing.txt")]).is_none(), "nothing is remembered if there is an unreadable file");
+        assert!(fingerprint(dir.path(), &[]).is_none(), "nothing is remembered if there are no files");
+        // A future mtime (clock skew) cannot be told apart from now either, so nothing is remembered.
         let future = dir.path().join("future.txt");
         std::fs::write(&future, "later").unwrap();
         std::fs::File::options().write(true).open(&future).unwrap().set_modified(SystemTime::now() + Duration::from_secs(3600)).unwrap();

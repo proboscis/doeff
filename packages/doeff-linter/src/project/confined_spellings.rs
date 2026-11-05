@@ -1,15 +1,15 @@
-//! DOEFF148: 書いてよい file を決めた綴り(#1436 — 元は agora-controllers の一時の判定
-//! controllers/screen/tests/intake_only_rules.hy の 3 の一部・4・6・7 の語・8 の前半・9)。
+//! DOEFF148: spellings confined to the files that may write them (#1436 — originally a temporary check in agora-controllers
+//! controllers/screen/tests/intake_only_rules.hy, part of 3, 4, the words of 6 and 7, the first half of 8, and 9).
 //!
-//! architecture.hy の `:confined-spellings [(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…") …]` の群ごとに、
-//! `:files` に当たり `:except` に当たらない Hy・Python の file を読み、註を落とした本文(文字列は残す)に `:patterns` のどれかが
-//! 当たれば file ごとに 1 件出す(当たった数を message に書く・位置は最初の当たり)。`:except` はこの綴りを書いてよい file で、
-//! 空なら `:files` のどこにも書かない綴り。`:files` に当たる file が 1 つも無ければ architecture.hy の位置で 1 件(`missing` —
-//! 母集団 0 を緑にしない)。
-//! DOEFF146(:single-point-vocabulary)と違い、文字列の中も数え、Python の file も読む — 外の口の動詞 `"POST"`・route の綴り
-//! `"/api/intake"`・effect の宣言の file(effects.py)は、文字列か Python の中に在る。
-//! 群の `:names-bound-in` から導いた名(bound_names.rs)は、architecture.hy を読む時に群の `:patterns` の後ろへ足してあり、ここは
-//! 書いた綴りと同じに当てる。
+//! For each group in architecture.hy's `:confined-spellings [(confined-spelling "name" :patterns [r"…"] :files [..] :except [..] :why "…") …]`,
+//! read every Hy/Python file that matches `:files` and does not match `:except`; if any of the `:patterns` matches the text with comments removed
+//! (strings are kept), report one finding per file (the match count goes in the message; the position is the first match). `:except` is the files that may write
+//! this spelling; if empty, the spelling is written nowhere in `:files`. If no file matches `:files`, report one finding at the position in architecture.hy (`missing` —
+//! a population of 0 is not allowed to be green).
+//! Unlike DOEFF146 (:single-point-vocabulary), this also counts inside strings and reads Python files — the verb of the outside entry `"POST"`, the route spelling
+//! `"/api/intake"`, and the file declaring effects (effects.py) all live in strings or in Python.
+//! Names derived from a group's `:names-bound-in` (bound_names.rs) are appended after the group's `:patterns` when architecture.hy is read, and here they are matched
+//! the same as written spellings.
 
 use std::path::{Path, PathBuf};
 
@@ -18,33 +18,33 @@ use doeff_indexer::hy_index::Range;
 use super::architecture::ConfinedSpelling;
 use super::spelling_scope::{code_text, line_of, selected_files};
 
-/// 当たりの種類(閉じた 2 つ)。
+/// Kind of match (a closed set of 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfinedProblem {
-    /// 書いてよい file の外に count 件在る。
+    /// There are count matches outside the files that may write it.
     Outside { count: usize },
-    /// `:files` に当たる file が無い。
+    /// No file matches `:files`.
     Missing,
 }
 
-/// 当たり 1 つ(file × 群)。
+/// One match (file x group).
 #[derive(Debug, Clone)]
 pub struct ConfinedFinding {
     pub rel: String,
-    /// 群の名(登録簿の鍵の細目 — missing は `<群>:missing`)。
+    /// Name of the group (detail of the registry key — for missing it is `<group>:missing`).
     pub group: String,
     pub why: String,
     pub range: Range,
     pub problem: ConfinedProblem,
-    /// 最初の当たりの綴り(missing は None — 導いた名で赤になった時に、どの名かを知らせに書く)。
+    /// Spelling of the first match (None for missing — when a derived name turns it red, so the notice can say which name).
     pub first: Option<String>,
-    /// 群の :names-bound-in から導いた名(知らせの説明に書く — 書いていない名がなぜ群の綴りかを architecture.hy の外から読めるように)。
+    /// Names derived from the group's :names-bound-in (written in the notice's explanation — so one can see, from outside architecture.hy, why an unwritten name is a spelling of the group).
     pub bound: Vec<String>,
 }
 
-/// 群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。読めなかった file は errors へ積む。focus(命令の行の名指し)が
-/// 在れば、その下の file だけを読む — 当たりは file ごとに 1 件でその file に付くので、答えは全部を読んで名指しで絞った時と同じ
-/// (母集団 0 の知らせは glob で決まり、読まない)。1 file の commit の hook で群ごとに母集団を全部読んでいた。
+/// For each group, finds matches outside `:except` (in the order of group declarations, then path order). Files that could not be read are pushed to errors. If focus (a name given on the command line)
+/// is present, reads only the files under it — a match attaches to its file, one per file, so the answer is the same as reading everything and then filtering by the named paths
+/// (the population-0 notice is decided by the glob and is not read). A one-file commit hook used to read the whole population for every group.
 pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, focus: Option<&[PathBuf]>) -> (Vec<ConfinedFinding>, Vec<String>) {
     let mut out = Vec::new();
     let mut errors = Vec::new();
@@ -71,7 +71,7 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, fo
             let source = match std::fs::read_to_string(root.join(rel)) {
                 Ok(source) => source,
                 Err(error) => {
-                    errors.push(format!("{}: 読めない: {}", rel, error));
+                    errors.push(format!("{}: could not read: {}", rel, error));
                     continue;
                 }
             };
@@ -110,7 +110,7 @@ mod tests {
             except: except.iter().map(|p| p.to_string()).collect(),
             names_bound_in: Vec::new(),
             bound_names: Vec::new(),
-            why: "理由".to_string(),
+            why: "reason".to_string(),
             range: Range::default(),
         }
     }
@@ -119,7 +119,7 @@ mod tests {
     fn a_spelling_in_a_string_is_counted_but_not_in_a_comment() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
-        std::fs::write(dir.path().join("s/a.hy"), "; \"/api/intake\" は退いた\n(setv u \"/api/intake\")\n").unwrap();
+        std::fs::write(dir.path().join("s/a.hy"), "; \"/api/intake\" was retired\n(setv u \"/api/intake\")\n").unwrap();
         std::fs::write(dir.path().join("s/b.py"), "# /api/intake\nx = 1\n").unwrap();
         let (hits, errors) = find(dir.path(), &[group(&[r"/api/intake"], &["s/**"], &[])], "architecture.hy", None);
         assert!(errors.is_empty(), "{:?}", errors);
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn named_paths_read_only_the_named_files() {
-        // 名指しの下の file だけを読む — 名指しの外の読めない file(UTF-8 でない)を読まず、当たりは名指しの分だけ。
+        // Read only the files under the named paths — do not read an unreadable file (not UTF-8) outside them; matches come only from the named ones.
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
         std::fs::write(dir.path().join("s/a.hy"), "(PostIntake x)\n").unwrap();

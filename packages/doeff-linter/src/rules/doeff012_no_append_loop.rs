@@ -684,7 +684,7 @@ impl LintRule for NoAppendLoopRule {
         "Prefer list comprehensions or named functions over append loops"
     }
 
-    /// 文の並び(module の本体)を見る規則なので、本体が file に 1 度だけ当てる(#2858 — 最初の文の絞りは本体の役目)。
+    /// This rule looks at a statement sequence (the module body), so the body applies it once per file (#2858 — narrowing by the first statement is the body's job).
     fn reach(&self) -> RuleReach {
         RuleReach::Module
     }

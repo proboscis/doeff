@@ -1,30 +1,30 @@
-//! DOEFF126: defk の定義を素で呼んでいる所を拾う。
+//! DOEFF126: finds places that call a defk definition bare.
 //!
-//! defk を素で呼ぶと、答えではなく Program が返る。型の誤りで落ちずに、静かに間違った値として流れる(
-//! defk に改めた `latest-by-ref` を deff と検 4 file が素のまま呼んでいた — 検で見つかった)。defn / deff を defk に改める便が何百と
-//! 続くので、呼び手の取り残しを見張る。決まり(戻せる)。
+//! Calling a defk bare returns a Program instead of the answer. It does not fail with a type error and flows on quietly as a wrong value (
+//! `latest-by-ref`, which had been changed to a defk, was still being called bare by a deff and 4 test files — found by a test). Changes from defn / deff to defk number in the hundreds and
+//! keep coming, so this watches for callers left behind. A convention (reversible).
 //!
-//! defk と分かる定義 = repo の Hy の file の最上位の `(defk 名 …)`(`do` と `eval-and-compile` の中も)。呼びの頭の綴りは file の import と
-//! 定義の場所で module まで解き(`smells::Scope`)、defk の集合と比べる。追えない呼び(引数で受けた関数・method)は拾わない。
+//! A definition known to be a defk = a top-level `(defk name …)` in a Hy file of the repo (also inside `do` and `eval-and-compile`). The spelling of a call head is resolved to a module using the file's imports and
+//! the definition's location (`smells::Scope`) and compared with the set of defks. Calls that cannot be traced (functions received as arguments, methods) are not picked up.
 //!
-//! 拾うのは、呼びの答えを値として使う所だけ(Program が値の代わりに流れて静かに間違う所): 比べ・演算・真偽の組み合わせ
-//! (`=`・`+`・`in`・`not`・`and` …)、答えを読む組み込みの関数(`len`・`str`・`get`・`sorted`・`isinstance` …)、method の的と引数
-//! (`(.get (f …) "欄")`・`(.append out (f …))`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねと
-//! 内包表記の元)、record の欄(頭が大文字の型を作る呼び — doeff の package の effect は除く・repo の `defrecord` で宣言の型が Program か
-//! EffectBase を名指す欄も除く — `ProgramFields`)。その位置の中の `if`・`when`・`cond`・`do`・`let` の枝も
-//! 答えとして使う所のまま。
-//! repo の defk の呼びの引数のうち、受ける引数の `:pre` の型が Program を受け得ない型(`ValueParams` — 組み込みの値の型・None・repo の
-//! `defrecord`・`defwire`・`defenum` と、その `(get T …)`・`(of T …)`・`(| …)`)の位置も答えとして使う所(`(counts-sources-of (measure-rows-of standing))`
-//! — Call が渡り、:pre の型の検に実行の時に初めて当たって落ちる。実弾 = agora-controllers の job patrol が 2026-11-04 に起動の約 5 分後に毎回
-//! 落ちた。段が開く周期まで実行されず、merge と宣言を素通りした)。型の註の無い引数・Program・object・Any・知らない別名を受ける引数は拾わない。
-//! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
-//! 関数(run-on など)かもしれず、追えない)、名への束ね(後で Program として渡すかもしれない)。
+//! Only places that use the call's answer as a value are picked up (where a Program flows in place of a value and quietly goes wrong): comparisons, operations, and boolean combinations
+//! (`=`, `+`, `in`, `not`, `and` …), built-in functions that read the answer (`len`, `str`, `get`, `sorted`, `isinstance` …), the target and arguments of a method
+//! (`(.get (f …) "field")`, `(.append out (f …))`) and attributes (`(. (f …) field)`), conditions (the head of `if`, `when`, `while`; the condition of `cond`), the source of repetition (the binding of `for` and
+//! the source of a comprehension), and record fields (calls that build a type whose head is capitalized — effects of doeff packages are excluded, and so are fields whose type declared by the repo's `defrecord` names Program or
+//! EffectBase — `ProgramFields`). Branches of `if`, `when`, `cond`, `do`, `let` inside such a position
+//! stay as places that use the answer.
+//! Among arguments to a repo defk call, positions whose receiving parameter's `:pre` type cannot accept a Program (`ValueParams` — built-in value types, None, the repo's
+//! `defrecord`, `defwire`, `defenum`, and their `(get T …)`, `(of T …)`, `(| …)`) are also places that use the answer (`(counts-sources-of (measure-rows-of standing))`
+//! — a Call is passed in, and it first hits the `:pre` type check at run time and fails. The real case: agora-controllers' job patrol failed every time about 5 minutes after startup on 2026-11-04.
+//! It was not run until the stage's cycle opened, and slipped through merge and declaration). Parameters without a type annotation, or that accept Program, object, Any, or an unknown alias are not picked up.
+//! Not picked up: the right side of `(<- …)`, `(! …)`, `(return …)`, arguments of a call that accepts a Program (including the form passed to a repo function — it may be a function that accepts a Program and runs it
+//! (such as run-on) and cannot be traced), and bindings to a name (it may be passed later as a Program).
 //!
-//! 定義の外(module の最上位の式 — `(val TABLE [(entry "a" (f …)) …])`・`(setv PAIRS #(…))`)は、位置を問わず答えとして使う所として拾う。
-//! 定義の外には Program を走らせる所が無く、表の行や名に束ねた Program は値の代わりに流れる(実弾 = agora-controllers c6271008a が
-//! scripts/land_focus_gate.hy の最上位の表に defk の tests-of を run 無しで足し、`--all` が起動で落ちた)。ただし `run`・`<-`・`!`・
-//! doeff の package の呼びの中、defk の呼びの引数、関数の本体(`fn`・`fnk`・`defmacro`・`defclass` …)、quote / quasiquote の中は定義の中と同じ判定で下る。
-//! `defsystem` は定義(関数に展開される)で、job の行の Program の式は答えとして使う所ではない。
+//! Outside definitions (top-level expressions of a module — `(val TABLE [(entry "a" (f …)) …])`, `(setv PAIRS #(…))`), regardless of position, they are picked up as places that use the answer.
+//! Outside a definition there is nowhere to run a Program, and a Program bound into a table row or a name flows on in place of a value (the real case: agora-controllers c6271008a
+//! added a defk tests-of without run to the top-level table of scripts/land_focus_gate.hy, and `--all` failed at startup). However, inside calls to `run`, `<-`, `!`, and
+//! doeff packages, arguments of defk calls, function bodies (`fn`, `fnk`, `defmacro`, `defclass` …), and quote / quasiquote, the same judgment as inside a definition applies as it descends.
+//! `defsystem` is a definition (expanded to a function), and the Program expression on a job row is not a place that uses the answer.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -37,66 +37,66 @@ use super::names::{hy_mangle, module_of};
 use super::rule::ProjectRule;
 use super::smells::{children, live, span_of, Hy, Scope};
 
-/// defk の集合(module まで含めた名・mangle 済み)と、各 defk の引数のうち `:pre` の型を名指した物(`ValueParams`)。
+/// The set of defks (names including the module, mangled) and, for each defk's parameters, those whose `:pre` type is named (`ValueParams`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DefkNames {
     names: BTreeSet<String>,
-    /// module まで含めた defk の名 → 引数の並びと `:pre` の型(引数の型を 1 つも名指さない defk は載せない)。
+    /// Name of a defk including the module -> its parameter list and `:pre` types (a defk that names no parameter type is not recorded).
     #[serde(default)]
     params: BTreeMap<String, ValueParams>,
 }
 
-/// defk 1 つの引数の並びと、`:pre` の `(: 名 型)` が名指す型。型は union の枝ごとに、Program を受け得ない組み込みの型・None なら空の綴り、
-/// それ以外は定義の file の import で module まで解いた名(呼びの所で repo の record の名と比べる — `ProgramFields::is_record`)。
-/// 枝の 1 つでも読めない形(文字列の註・型の引数・Program を名指すかもしれない式)の引数は載せない。
+/// One defk's parameter list and the types named by `(: name type)` in `:pre`. The type is, per union branch, an empty spelling for a built-in type that cannot accept a Program or for None,
+/// otherwise the name resolved to a module using the defining file's imports (compared at the call site with the repo's record names — `ProgramFields::is_record`).
+/// A parameter with any branch of an unreadable form (a string annotation, type arguments, an expression that may name Program) is not recorded.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ValueParams {
-    /// 位置で渡せる引数の名(mangle 済み・`*` か `#*` の前まで)。
+    /// Names of parameters that can be passed by position (mangled; up to before `*` or `#*`).
     positional: Vec<String>,
-    /// 引数の名(mangle 済み)→ 型の union の枝。
+    /// Parameter name (mangled) -> the branches of the type's union.
     types: BTreeMap<String, Vec<String>>,
 }
 
 impl ValueParams {
-    /// 引数の名(mangle 済み)が、Program を受け得ない型だけを名指すか(`records` = repo の record の型の名)。
+    /// Whether the parameter (name mangled) names only types that cannot accept a Program (`records` = the repo's record type names).
     fn refuses_program(&self, name: &str, records: &ProgramFields) -> bool {
         self.types.get(name).is_some_and(|arms| !arms.is_empty() && arms.iter().all(|arm| arm.is_empty() || records.is_record(arm)))
     }
 }
 
 impl DefkNames {
-    /// module まで含めた名の列から作る(検のため)。
+    /// Built from a list of names including the module (for tests).
     pub fn of(names: &[&str]) -> Self {
         DefkNames { names: names.iter().map(|n| n.to_string()).collect(), params: BTreeMap::new() }
     }
 
-    /// 別の集合を足す。
+    /// Adds another set.
     pub fn extend(&mut self, other: DefkNames) {
         self.names.extend(other.names);
         self.params.extend(other.params);
     }
 
-    /// defk(module まで含めた名)の引数の並びと型。
+    /// The parameter list and types of a defk (name including the module).
     fn params_of(&self, qualified: &str) -> Option<&ValueParams> {
         self.params.get(qualified)
     }
 
-    /// module まで含めた名が defk か。
+    /// Whether the name including the module is a defk.
     pub fn contains(&self, qualified: &str) -> bool {
         self.names.contains(qualified)
     }
 
-    /// 数(報告のため)。
+    /// Count (for reporting).
     pub fn len(&self) -> usize {
         self.names.len()
     }
 
-    /// 空か。
+    /// Whether it is empty.
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }
 
-    /// 集まりの指紋(file ごとの事実の cache の印に使う — この集まりに依る事実は、集まりが変われば作り直す)。
+    /// Fingerprint of the collection (used for the mark of the per-file facts cache — facts that depend on this collection are rebuilt when the collection changes).
     pub fn digest(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -118,7 +118,7 @@ impl DefkNames {
     }
 }
 
-/// 1 つの source の最上位の defk の名(`<module>.<名>`)。
+/// Names of top-level defks in one source (`<module>.<name>`).
 pub fn defk_names_in(source: &str, module: &str) -> DefkNames {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -155,12 +155,12 @@ pub fn defk_names_in(source: &str, module: &str) -> DefkNames {
     DefkNames { names, params }
 }
 
-/// Program を受け得ない組み込みの型(Call はどれの instance でもない — `:pre` の isinstance が必ず断る)。
+/// Built-in types that cannot accept a Program (a Call is not an instance of any of them — the `:pre` isinstance always rejects it).
 const VALUE_BUILTINS: &[&str] = &[
     "None", "str", "int", "float", "bool", "bytes", "bytearray", "complex", "tuple", "list", "dict", "set", "frozenset",
 ];
 
-/// `(defk 名 [引数] {:pre [(: 名 型) …] …} …)` の引数の並びと型(`defk` の items — 名の前の decorator の列は読まない)。
+/// The parameter list and types of `(defk name [params] {:pre [(: name type) …] …} …)` (the items of `defk` — the decorator list before the name is not read).
 fn value_params_of(hy: &Hy<'_>, scope: Scope<'_>, items: &[&Form]) -> Option<ValueParams> {
     let params = items.get(2).and_then(|p| p.bracket_items())?;
     let mut positional = Vec::new();
@@ -171,7 +171,7 @@ fn value_params_of(hy: &Hy<'_>, scope: Scope<'_>, items: &[&Form]) -> Option<Val
             Node::Annotated { target: Some(target), .. } => hy.symbol(target),
             Node::Seq { delim: Delim::Bracket, .. } => param.bracket_items().and_then(|i| i.first()).and_then(|first| hy.symbol(first)),
             _ => {
-                // `#* rest`・`#** kw` — その先は位置で渡せない。
+                // `#* rest`, `#** kw` — what follows cannot be passed by position.
                 open = false;
                 continue;
             }
@@ -202,7 +202,7 @@ fn value_params_of(hy: &Hy<'_>, scope: Scope<'_>, items: &[&Form]) -> Option<Val
     Some(ValueParams { positional, types })
 }
 
-/// 型の式の union の枝(組み込みの値の型・None は空の綴り、それ以外の名は module まで解いた名)。読めない形は None。
+/// The union branches of a type expression (built-in value types and None are an empty spelling; other names are names resolved to a module). None for unreadable forms.
 fn type_arms(hy: &Hy<'_>, scope: Scope<'_>, ty: &Form) -> Option<Vec<String>> {
     if let Some(name) = hy.symbol(ty) {
         return Some(vec![if VALUE_BUILTINS.contains(&name) { String::new() } else { scope.qualify(name) }]);
@@ -216,22 +216,22 @@ fn type_arms(hy: &Hy<'_>, scope: Scope<'_>, ty: &Form) -> Option<Vec<String>> {
             }
             Some(arms)
         }
-        // `(get tuple #(X ...))`・`(of dict K V)` — isinstance が見るのは外側の型だけ。
+        // `(get tuple #(X ...))`, `(of dict K V)` — isinstance looks only at the outer type.
         "get" | "of" => type_arms(hy, scope, parts.get(1)?),
         _ => None,
     }
 }
 
-/// repo の Hy の file の defk の集合 — 集める file(`files`)と引き方(`reach`)を受ける(規則が無効なら空)。`(defk` の綴りを含む file だけを読み、最上位の defk の名を
-/// module まで含めた名にする。1 file の実行は書いた file が名指す module の file だけを渡す(defk の集合は module まで含めた名で引かれ、引く名は書いた file の
-/// 記号を解いた名 — その module の file だけで答えが同じ)。
+/// The set of defks in the repo's Hy files — takes the files to collect (`files`) and the lookup method (`reach`) (empty if the rule is disabled). Reads only files that contain the spelling `(defk`, and makes the names of top-level defks
+/// names including the module. A single-file run passes only the module files that the written file names (the set of defks is looked up by names including the module, and the names looked up are those obtained by resolving the written file's
+/// symbols — the answer is the same with only those modules' files).
 pub fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: facts_cache::Reach, files: &[(String, PathBuf)]) -> DefkNames {
     let mut all = DefkNames::default();
     if !enabled.contains(&ProjectRule::DefkCalledBare) {
         return all;
     }
-    // file ごとの defk の名はその file の中身だけで決まるので、変わった file だけ読み直す(保存ごとの 1 file の実行でも
-    // repo 全体の名が要るため — #1025)。
+    // A file's defk names are decided by that file's contents alone, so only changed files are re-read (even a single-file run on every save
+    // needs the names of the whole repo — #1025).
     let found: Vec<DefkNames> = facts_cache::per_file_in(reach, root, "defk-names", "", files, |rel, path| {
         let source = std::fs::read_to_string(path).ok()?;
         source.contains("(defk").then(|| defk_names_in(&source, &module_of(rel)))
@@ -242,21 +242,21 @@ pub fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
     all
 }
 
-/// record の型の欄のうち、宣言の型が Program か EffectBase を名指す欄(module まで含めた型の名 → 欄の名・どちらも mangle 済み)。
-/// その欄は Program を運ぶ宣言なので、型を作る呼びのその欄に置いた素の defk 呼びは答えとして使う所ではない(
-/// doeff-records の RecordsServing の :prepare は (| Program EffectBase) で、serve-records が用意の task として走らせる)。
-/// 入れないのは、型の註の無い欄・object / Any の欄・別名で隠れた欄(別名の名は Program と綴られない)— どれも今までどおり答えとして数える。
+/// Among the fields of a record type, those whose declared type names Program or EffectBase (type name including the module -> field names, both mangled).
+/// Such a field is a declaration that carries a Program, so a bare defk call placed in that field of a type-building call is not a place that uses the answer (
+/// doeff-records' RecordsServing has :prepare as (| Program EffectBase), and serve-records runs it as a prepared task).
+/// Not included: fields without a type annotation, object / Any fields, and fields hidden behind an alias (the alias's name is not spelled Program) — all still counted as answers as before.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProgramFields {
     fields: BTreeMap<String, BTreeSet<String>>,
-    /// repo の `defrecord`・`defwire`・`defenum` の型の名(module まで含めた名・mangle 済み)— Program を受け得ない型(defk の引数の
-    /// `:pre` の型がこれだけなら、その引数に置いた素の defk 呼びは答えとして使う所 — `ValueParams`)。
+    /// Type names of the repo's `defrecord`, `defwire`, `defenum` (names including the module, mangled) — types that cannot accept a Program (if a defk parameter's
+    /// `:pre` type is only these, a bare defk call placed in that parameter is a place that uses the answer — `ValueParams`).
     #[serde(default)]
     records: BTreeSet<String>,
 }
 
 impl ProgramFields {
-    /// 別の表を足す。
+    /// Adds another table.
     pub fn extend(&mut self, other: ProgramFields) {
         for (record, fields) in other.fields {
             self.fields.entry(record).or_default().extend(fields);
@@ -264,35 +264,35 @@ impl ProgramFields {
         self.records.extend(other.records);
     }
 
-    /// module まで含めた型の名の欄(mangle 済み)が Program を運ぶ宣言か。
+    /// Whether the field (mangled) of the type name including the module is a declaration that carries a Program.
     pub fn carries_program(&self, record: &str, field: &str) -> bool {
         self.fields.get(record).is_some_and(|names| names.contains(field))
     }
 
-    /// module まで含めた型の名が repo の record(`defrecord`・`defwire`・`defenum`)か。
+    /// Whether the type name including the module is a repo record (`defrecord`, `defwire`, `defenum`).
     pub fn is_record(&self, qualified: &str) -> bool {
         self.records.contains(qualified)
     }
 
-    /// 空か。
+    /// Whether it is empty.
     pub fn is_empty(&self) -> bool {
         self.fields.is_empty() && self.records.is_empty()
     }
 }
 
-/// 欄の型の宣言が名指すと Program を運ぶ欄とする型の名(module を付けた綴りは最後の段で比べる — `doeff.Program` も同じ)。
+/// Type names that make a field one that carries a Program when named by the field's type declaration (a spelling with a module is compared by its last segment — `doeff.Program` too).
 const PROGRAM_TYPES: &[&str] = &["Program", "EffectBase"];
 
-/// 欄の型の註(綴り)が Program か EffectBase を名指すか — 註を語に区切り、どれかの語の最後の段が PROGRAM_TYPES の名なら真
-/// (`(| Program EffectBase)`・`Program`・`doeff.Program`)。`object`・`Any`・別名は名指さない。
+/// Whether the field's type annotation (spelling) names Program or EffectBase — splits the annotation into words, and true if the last segment of any word is a name in PROGRAM_TYPES
+/// (`(| Program EffectBase)`, `Program`, `doeff.Program`). `object`, `Any`, and aliases do not name them.
 fn names_program_type(annotation: &str) -> bool {
     annotation
         .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-'))
         .any(|word| PROGRAM_TYPES.contains(&word.rsplit('.').next().unwrap_or(word)))
 }
 
-/// 1 つの source の最上位の `defrecord` の、宣言の型が Program か EffectBase を名指す欄(`<module>.<型の名>` → 欄の名)。
-/// 欄は `(#^ 型 名)` と `#^ 型 名` の 2 つの綴り(doeff-hy の defrecord)。最上位の `defrecord`・`defwire`・`defenum` の型の名も控える。
+/// Fields of a source's top-level `defrecord` whose declared type names Program or EffectBase (`<module>.<type name>` -> field names).
+/// A field has 2 spellings, `(#^ type name)` and `#^ type name` (doeff-hy's defrecord). The type names of top-level `defrecord`, `defwire`, `defenum` are also recorded.
 pub fn program_fields_in(source: &str, module: &str) -> ProgramFields {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -331,61 +331,61 @@ pub fn program_fields_in(source: &str, module: &str) -> ProgramFields {
     found
 }
 
-/// 素の呼び 1 件。
+/// One bare call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BareCall {
-    /// 呼びを含む最上位の定義の名(mangle 済み — 定義の外なら `<module>`)。
+    /// Name of the top-level definition that contains the call (mangled — `<module>` if outside a definition).
     pub definition: String,
-    /// 呼びを含む定義の頭(defk・deff・defn・deftest …)— 説明の文のため。
+    /// Head of the definition that contains the call (defk, deff, defn, deftest …) — for the explanation text.
     pub container: String,
-    /// 呼んだ defk の綴り(書かれたとおり)。
+    /// Spelling of the called defk (as written).
     pub callee: String,
     pub span: ByteSpan,
 }
 
 impl BareCall {
-    /// 登録簿の鍵の細目(`<定義>::<呼んだ defk>`)。
+    /// Detail of the registry key (`<definition>::<called defk>`).
     pub fn detail(&self) -> String {
         format!("{}::{}", self.definition, hy_mangle(&self.callee))
     }
 }
 
-/// 答えを値として読む Python の演算子と組み込みの関数(引数の全部が答えとして使う所)。
+/// Python operators and built-in functions that read the answer as a value (all their arguments are places that use the answer).
 const VALUE_HEADS: &[&str] = &[
     "=", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "//", "%", "**", "in", "not-in", "not", "and", "or", "is", "is-not", "len", "str",
     "int", "float", "bool", "tuple", "list", "dict", "set", "frozenset", "sorted", "reversed", "any", "all", "sum", "min", "max", "repr",
     "get", "isinstance", "print", "enumerate", "zip", "iter", "next", "hash", "format", "abs", "round", "assert",
 ];
 
-/// 名に束ねる形(`(setv 名 式 …)` の組・`(val 名 式)`・`(var 名 式)`・`(:= 名 式)`)— 素の呼びを名に束ねて後で答えとして使う形を追うため。
+/// Forms that bind to a name (pairs of `(setv name expr …)`, `(val name expr)`, `(var name expr)`, `(:= name expr)`) — to follow forms that bind a bare call to a name and use the answer later.
 const PLAIN_BINDING_HEADS: &[&str] = &["setv", "setx", "val", "var", ":="];
 
-/// 答えとして使う位置を中の枝へ受け継ぐ形(条件の式は別に答えとして使う所)。
+/// Forms that carry the answer-use position into inner branches (the condition expression is separately a place that uses the answer).
 const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let"];
 
-/// 内包表記(元は items[2])。
+/// Comprehensions (the source is items[2]).
 const COMPREHENSIONS: &[&str] = &["lfor", "sfor", "gfor", "dfor"];
 
-/// 定義の頭(呼びを含む定義の名を取るため)。defsystem(doeff-hy)は関数に展開され、job の行の式は「名 → Program」の
-/// Program の値そのもの(実行しない — 宣言の道具と sim-cluster が読む)なので、定義の中と同じ判定で下る(job の式は答えとして使う所ではない・#913)。
+/// Definition heads (to get the name of the definition that contains the call). defsystem (doeff-hy) expands to a function, and the expression on a job row is the Program value itself of
+/// "name -> Program" (not run — read by the declaration tooling and sim-cluster), so the same judgment as inside a definition applies as it descends (a job expression is not a place that uses the answer, #913).
 const DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defn/a", "defp", "defpp", "defhandler", "deftest", "defeffect", "defsystem"];
 
-/// 定義の外で、中の Program を受ける形(`run` と effect として出す形)— 中は定義の中と同じ判定で下る。doeff の package の呼びも同じ扱い。
+/// Forms outside a definition that take a Program inside (`run` and the form emitted as an effect) — the inside is descended with the same judgment as inside a definition. Calls of doeff packages are treated the same.
 const MODULE_LEVEL_PROGRAM_HEADS: &[&str] = &["run", "<-", "!", "yield", "yield-from"];
 
-/// 定義の外に書いた関数の本体・macro・class・import — 中は定義の中と同じ判定で下る(呼ばれた時に答えを返す所で、定義の外ではない)。
+/// Function bodies, macros, classes, and imports written outside a definition — the inside is descended with the same judgment as inside a definition (they return an answer when called; they are not outside a definition).
 const MODULE_LEVEL_BODY_HEADS: &[&str] = &[
     "fn", "fn/a", "fnk", "defmacro", "defmacro/g!", "defreader", "defclass", "defrecord", "defmain", "import", "require", "quote", "quasiquote",
 ];
 
-/// 1 つの source の、答えとして使う所で呼んだ defk を全部拾う(同じ定義の同じ呼び先は最初の 1 件だけ)。record の欄の型は知らない
-/// (型を作る呼びの欄は全部答えとして数える — 欄の型を使うのは `bare_calls_with`)。
+/// Picks up every defk called at a place that uses the answer in one source (only the first of the same callee in the same definition). Does not know record field types
+/// (all fields of a type-building call are counted as answers — the field types are used by `bare_calls_with`).
 pub fn bare_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<BareCall> {
     bare_calls_with(source, scope, defks, &ProgramFields::default())
 }
 
-/// `bare_calls_in` と同じ — ただし型を作る呼びの `:欄 値` で、その欄の宣言の型が Program か EffectBase を名指すなら(`fields`)、値を
-/// 答えとして数えない(欄が Program を運ぶ宣言)。
+/// Same as `bare_calls_in` — except that for a `:field value` in a type-building call, if the field's declared type names Program or EffectBase (`fields`), the value is
+/// not counted as an answer (the field is a declaration that carries a Program).
 pub fn bare_calls_with(source: &str, scope: Scope<'_>, defks: &DefkNames, fields: &ProgramFields) -> Vec<BareCall> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -399,7 +399,7 @@ pub fn bare_calls_with(source: &str, scope: Scope<'_>, defks: &DefkNames, fields
     found
 }
 
-/// 素の呼びを探して木を下る道具。
+/// The tool that looks for bare calls and descends the tree.
 struct Walker<'a> {
     hy: Hy<'a>,
     scope: Scope<'a>,
@@ -408,7 +408,7 @@ struct Walker<'a> {
 }
 
 impl Walker<'_> {
-    /// 最上位の form 1 つ — 定義なら名と頭を控えて本体を下り、`do` などは中へ入る。
+    /// One top-level form — for a definition, notes the name and head and descends into the body; `do` and the like are entered.
     fn top(&self, form: &Form, out: &mut Vec<BareCall>) {
         let head = self.hy.head(form);
         match head {
@@ -438,7 +438,7 @@ impl Walker<'_> {
                 };
                 for child in items.into_iter().skip(1) {
                     match live(child) {
-                        // defsystem の job の行 `(名 Program の式 :欄 値 …)` の頭は job の名で、呼びではない(同じ名の defk が在っても)— 中だけを下る。
+                        // The head of a defsystem job row `(name Program-expr :field value …)` is the job's name, not a call (even if a defk of the same name exists) — only the inside is descended.
                         Some(row) if h == "defsystem" && row.first().is_some_and(|head| matches!(head.node, Node::Symbol)) => {
                             for part in row.into_iter().skip(1) {
                                 self.walk(part, false, &context, out);
@@ -463,16 +463,16 @@ impl Walker<'_> {
         }
     }
 
-    /// form を下る。`value` はこの form の答えが値として使われる位置か。
+    /// Descends into a form. `value` is whether this form's answer is in a position used as a value.
     fn walk(&self, form: &Form, value: bool, context: &Context, out: &mut Vec<BareCall>) {
         self.walk_at(form, value, false, context, out);
     }
 
-    /// form を下る。`yielded` はこの form が effect として出される位置(`(<- … form)` の右辺・`(! form)`・`(yield form)`)か。
+    /// Descends into a form. `yielded` is whether this form is in a position emitted as an effect (the right side of `(<- … form)`, `(! form)`, `(yield form)`).
     fn walk_at(&self, form: &Form, value: bool, yielded: bool, context: &Context, out: &mut Vec<BareCall>) {
         match &form.node {
             Node::Seq { delim: Delim::Paren, .. } => self.call(form, value, yielded, context, out),
-            // defk の素の呼びを束ねた名(`all`・`all.x`)を答えとして使う所 — 束ねた呼びを違反にする。
+            // A name bound to a bare defk call (`all`, `all.x`) is used as an answer — the bound call becomes a violation.
             Node::Symbol if value => {
                 let text = self.hy.text(form);
                 let name = text.split('.').next().unwrap_or(text);
@@ -480,7 +480,7 @@ impl Walker<'_> {
                     out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
                 }
             }
-            // 定義の外の quote / quasiquote(`'(f …)`・`` `(f …) ``)と reader の tag の中は呼びではない — 定義の中と同じ判定で下る。
+            // Inside quote / quasiquote outside a definition (`'(f …)`, `` `(f …) ``) and reader tags is not a call — descended with the same judgment as inside a definition.
             Node::Prefixed { prefix: Prefix::Quote | Prefix::Quasiquote, .. } | Node::Tagged { .. } if context.module_level => {
                 let inner = context.inside_definition();
                 for child in children(form) {
@@ -495,13 +495,13 @@ impl Walker<'_> {
         }
     }
 
-    /// `( … )` 1 つ — 自分が defk の呼びで答えとして使われているなら積み、子へ「答えとして使う位置か」を配る。
+    /// One `( … )` — if it is a defk call used as an answer, push it, and pass to children "whether it is a position used as an answer".
     fn call(&self, form: &Form, value: bool, yielded: bool, context: &Context, out: &mut Vec<BareCall>) {
         let items = live(form).unwrap_or_default();
         let head = items.first().and_then(|h| self.hy.head_text(h));
         let qualified = head.filter(|h| !h.starts_with(':')).map(|h| self.scope.qualify(h));
         let is_defk = qualified.as_deref().is_some_and(|q| self.defks.contains(q)) && !head.is_some_and(|h| context.shadowed.contains(h));
-        // `(all.get k)` — 束ねた名の method を呼ぶのも、その名を答えとして使う所。
+        // `(all.get k)` — calling a method of a bound name is also a place that uses that name as an answer.
         if let Some((callee, span)) = head.and_then(|h| h.split_once('.')).and_then(|(name, _)| context.bound.get(name)) {
             out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
         }
@@ -509,9 +509,9 @@ impl Walker<'_> {
             out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.to_string(), span: span_of(form) });
         }
         let doeff = qualified.as_deref().is_some_and(|q| q.starts_with("doeff"));
-        // 定義の外で、中が Program を受ける所・関数の本体・defk の呼びの引数(その defk が Program を受けるかもしれない — 呼び自体は積んだ)
-        // なら、中は定義の中と同じ判定で下る。
-        // `run` を値として受け取る呼び(`(map run #((f …) …))`)も、中の Program を走らせる所。
+        // Outside a definition, in a place where the inside takes a Program, a function body, or an argument to a defk call (that defk may take a Program — the call itself was pushed)
+        // the inside is descended with the same judgment as inside a definition.
+        // A call that receives `run` as a value (`(map run #((f …) …))`) is also a place that runs the Programs inside.
         let passes_runner =
             items.iter().skip(1).filter_map(|item| self.hy.symbol(item)).any(|s| s == "run" || self.scope.qualify(s) == "doeff.run");
         let leaves_module_level = context.module_level
@@ -528,9 +528,9 @@ impl Walker<'_> {
         } else {
             context
         };
-        // record の欄は答えとして使う所 — ただし effect として出す型(`(<- (AnswerLater :answer (f …)))`)の欄は Program を運ぶことがあるので除く。
+        // A record field is a place that uses the answer — except that fields of a type emitted as an effect (`(<- (AnswerLater :answer (f …)))`) may carry a Program, so they are excluded.
         let constructor = head.is_some_and(|h| h.chars().next().is_some_and(|c| c.is_ascii_uppercase())) && !doeff && !is_defk && !yielded;
-        // その欄の宣言の型が Program か EffectBase を名指す `:欄 値` の値は、Program を運ぶ欄に置いた物 — 答えとして使う所ではない(#2877)。
+        // The value of `:field value` whose declared field type names Program or EffectBase is placed in a field that carries a Program — not a place that uses the answer (#2877).
         let program_field = |index: usize| -> bool {
             let record = qualified.as_deref().filter(|_| constructor);
             let keyword = items.get(index.wrapping_sub(1)).filter(|prev| index >= 2 && matches!(prev.node, Node::Keyword));
@@ -540,7 +540,7 @@ impl Walker<'_> {
             }
         };
         let binds = head == Some("<-");
-        // repo の defk の呼びの引数のうち、受ける引数の `:pre` の型が Program を受け得ない位置は答えとして使う所(Call が :pre の検で落ちる)。
+        // Among arguments to a repo defk call, positions whose receiving parameter's `:pre` type cannot accept a Program are places that use the answer (the Call fails the :pre type check).
         let value_slots = qualified
             .as_deref()
             .filter(|_| is_defk)
@@ -553,14 +553,14 @@ impl Walker<'_> {
                 _ if value_slots.get(index).copied().unwrap_or(false) => true,
                 Some(h) if VALUE_HEADS.contains(&h) => true,
                 Some(".") => index == 1,
-                // method の的も引数も答えとして使う所(`(.get (f …) "欄")`・`(.append out (f …))`)。
+                // Both the target and the arguments of a method are places that use the answer (`(.get (f …) "field")`, `(.append out (f …))`).
                 Some(h) if h.starts_with('.') && h.len() > 1 => true,
                 Some("if" | "when" | "unless" | "while") if index == 1 => true,
                 Some("cond") => index % 2 == 1 || value,
                 Some(h) if BRANCHING_FORMS.contains(&h) => value,
                 Some(h) if COMPREHENSIONS.contains(&h) => index == 2,
                 Some("for") if index == 1 => {
-                    // `(for [x (f …)] …)` — 束ねの列の元(奇数の位置)が繰り返しの元。
+                    // `(for [x (f …)] …)` — the source of the binding list (odd positions) is the source of repetition.
                     let sources = child.bracket_items().map(super::smells::live_items).unwrap_or_default();
                     for (at, source) in sources.iter().enumerate() {
                         self.walk(source, at % 2 == 1, context, out);
@@ -578,22 +578,22 @@ impl Walker<'_> {
     }
 }
 
-/// 下っている所の定義(鍵と説明のため)と、その定義の中で defk の素の呼びを束ねた名(名 → 呼んだ defk・束ねた呼びの範囲)。
+/// The definition being descended (for the key and explanation), and the names bound within it to bare defk calls (name -> called defk, range of the bound call).
 struct Context {
     definition: String,
     container: String,
     bound: BTreeMap<String, (String, ByteSpan)>,
-    /// 定義の中で局所に束ねた名(綴りのまま — 入れ子の deff・defn・defk の名・引数・束ねの的)。同じ綴りの呼びは局所の物を呼ぶので defk の呼びと読まない
-    /// (agora-controllers の検の中の `(deff mail-of …)` が、同じ file の最上位の defk mail-of を隠す)。
+    /// Names bound locally within the definition (as spelled — names, parameters, and binding targets of nested deff, defn, defk). A call with the same spelling calls the local one, so it is not read as a defk call
+    /// (a `(deff mail-of …)` in a test of agora-controllers hides the top-level defk mail-of of the same file).
     shadowed: BTreeSet<String>,
-    /// 定義の外(module の最上位の式)を下っているか。定義の外には Program を走らせる所が無いので、`run` などの Program を受ける形
-    /// (`MODULE_LEVEL_PROGRAM_HEADS`・doeff の package の呼び)と関数の本体(`MODULE_LEVEL_BODY_HEADS`)と quote の外にある defk の呼びは、
-    /// 位置を問わず答えとして使う所(表の行・`+` の引数・repo の関数の引数・名への束ね)。
+    /// Whether it is descending outside definitions (a module's top-level expressions). Outside definitions there is nowhere to run a Program, so defk calls outside forms that take a Program such as `run`
+    /// (`MODULE_LEVEL_PROGRAM_HEADS`, calls of doeff packages), outside function bodies (`MODULE_LEVEL_BODY_HEADS`), and outside quote are
+    /// places that use the answer regardless of position (table rows, arguments of `+`, arguments of repo functions, bindings to names).
     module_level: bool,
 }
 
 impl Context {
-    /// 定義の外の判定を外した写し(Program を受ける形・関数の本体・quote の中を、定義の中と同じ判定で下るため)。
+    /// A copy with the outside-definition judgment removed (to descend into forms that take a Program, function bodies, and quote with the same judgment as inside a definition).
     fn inside_definition(&self) -> Context {
         Context {
             definition: self.definition.clone(),
@@ -606,7 +606,7 @@ impl Context {
 }
 
 impl Walker<'_> {
-    /// defk の呼び `(f a b :c d)` の items の位置ごとに、受ける引数の `:pre` の型が Program を受け得ないか(`#*`・`#**` の後の位置の引数は追わない)。
+    /// For each position in the items of a defk call `(f a b :c d)`, whether the receiving parameter's `:pre` type cannot accept a Program (parameters at positions after `#*` or `#**` are not followed).
     fn value_slots(&self, items: &[&Form], params: &ValueParams) -> Vec<bool> {
         let mut slots = vec![false; items.len()];
         let mut position = Some(0usize);
@@ -634,13 +634,13 @@ impl Walker<'_> {
         slots
     }
 
-    /// 定義の中で局所に束ねた名(引数・入れ子の定義の名と引数・束ねの的)— 同じ綴りの呼びは defk の呼びと読まない。
+    /// Names bound locally within the definition (parameters, names and parameters of nested definitions, binding targets) — a call with the same spelling is not read as a defk call.
     fn local_names(&self, definition: &Form) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         let items = live(definition).unwrap_or_default();
-        // 定義の自分の名は隠さない(自分を呼び直す defk は defk の呼び)— 引数と本体の中の束ねだけを集める。
+        // The definition's own name is not hidden (a defk that calls itself again is a defk call) — only bindings in the parameters and body are collected.
         let mut body_at = if items.get(1).is_some_and(|first| first.bracket_items().is_some()) { 3 } else { 2 };
-        // 引数の並びの無い定義(`(deftest 名 本体 …)`)もある — 本体の最初の form を引数と読まない。
+        // Some definitions have no parameter list (`(deftest name body …)`) — the first form of the body is not read as parameters.
         if let Some(params) = items.get(body_at).filter(|p| p.bracket_items().is_some()) {
             self.param_names(params, &mut names);
             body_at += 1;
@@ -677,7 +677,7 @@ impl Walker<'_> {
         names
     }
 
-    /// 引数の並び `[a #^ T b [c 1] #* rest]` の名(綴りのまま)。
+    /// Names in the parameter list `[a #^ T b [c 1] #* rest]` (as spelled).
     fn param_names(&self, params: &Form, names: &mut BTreeSet<String>) {
         for param in params.bracket_items().map(super::smells::live_items).unwrap_or_default() {
             let name = match &param.node {
@@ -689,7 +689,7 @@ impl Walker<'_> {
         }
     }
 
-    /// 束ねの的の名(記号か `#^ T 名` の名)。
+    /// Names of binding targets (a symbol, or the name in `#^ T name`).
     fn bound_symbol(&self, form: &Form) -> Option<&str> {
         match &form.node {
             Node::Annotated { target: Some(target), .. } => self.hy.symbol(target),
@@ -697,8 +697,8 @@ impl Walker<'_> {
         }
     }
 
-    /// 定義の中で、defk の素の呼びを `setv`・`val`・`var`・`:=`・`let` で名に束ねた所を集める。同じ名を `(<- 名 …)` でも束ねる定義では
-    /// その名を追わない(どちらの値か決まらない)。追うのは 1 つの定義の中だけ。
+    /// Collects, within a definition, places where a bare defk call is bound to a name with `setv`, `val`, `var`, `:=`, `let`. In a definition that binds the same name also with `(<- name …)`,
+    /// that name is not followed (it is undecided which value it is). Followed only within one definition.
     fn bare_bindings(&self, definition: &Form) -> BTreeMap<String, (String, ByteSpan)> {
         let mut bound = BTreeMap::new();
         let mut effect_bound = BTreeSet::new();
@@ -743,7 +743,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// module m・import の束縛 bindings で素の呼びを (定義::呼び先) の列にする。defk は `m.fetch` と `lib.load`。
+    /// For module m and import bindings `bindings`, makes the bare calls into a list of (definition::callee). The defks are `m.fetch` and `lib.load`.
     fn found(source: &str, bindings: &[(&str, &str)]) -> Vec<String> {
         let bindings: BTreeMap<String, String> = bindings.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let defks = DefkNames::of(&["m.fetch", "lib.load"]);
@@ -758,12 +758,12 @@ mod tests {
         assert_eq!(names.len(), 3);
     }
 
-    /// record の欄の宣言の型が Program か EffectBase を名指す時だけ、型を作る呼びのその欄の素の呼びを数えない。
-    /// 型の註の無い欄・object / Any の欄・別名で隠れた欄・位置で渡した値は今までどおり数える。
+    /// Only when a record field's declared type names Program or EffectBase, the bare call in that field of a type-building call is not counted.
+    /// Fields without a type annotation, object / Any fields, fields hidden behind an alias, and values passed by position are counted as before.
     #[test]
     fn record_fields_declared_as_programs_carry_bare_calls_and_others_do_not() {
         let source = r#"(defrecord Serving
-  "設定"
+  "settings"
   (#^ (| Program EffectBase) prepare)
   #^ Program later
   (#^ doeff.Program qualified)
@@ -789,9 +789,9 @@ mod tests {
         let defks = DefkNames::of(&["m.fetch"]);
         let got: Vec<String> =
             bare_calls_with(source, Scope { module: "m", bindings: &bindings }, &defks, &fields).iter().map(|c| c.detail()).collect();
-        // Program を運ぶ欄(prepare・later・qualified)の carries は拾わない。註の無い欄・object・Any・別名・dict・位置の値は拾う。
+        // The carries of fields that carry a Program (prepare, later, qualified) are not picked up. Fields without annotation, object, Any, alias, dict, and positional values are picked up.
         assert_eq!(got, vec!["untyped::fetch", "opaque::fetch", "any_typed::fetch", "hidden::fetch", "data::fetch", "positional::fetch"]);
-        // 欄の型を知らない呼び(bare_calls_in)は今までどおり全部拾う。
+        // A call that does not know the field types (bare_calls_in) still picks up everything as before.
         assert!(found(source, &[]).contains(&"carries::fetch".to_string()));
     }
 
@@ -827,13 +827,13 @@ mod tests {
 (deff runner [x] (run-on (fetch x) handlers))
 (deff builder [x] (fetch x))
 (deff callback [x] (helper x) (len (other.fetch x)) (len (f x)))"#;
-        // Program を受ける呼びの引数・名への束ね・関数の答えとして返す形は拾わない(Program として渡すかもしれない)。
-        // 追えない呼び(helper・method・引数の f)も拾わない。
+        // Arguments of calls that accept a Program, bindings to names, and forms returned as a function's answer are not picked up (they may be passed as a Program).
+        // Calls that cannot be traced (helper, method, parameter f) are not picked up either.
         let bindings = [("run", "doeff"), ("with_handlers", "doeff"), ("Gather", "doeff"), ("Spawn", "doeff"), ("load", "lib")];
         assert!(found(source, &bindings).is_empty(), "{:?}", found(source, &bindings));
     }
 
-    /// 1 つの source を repo の全部として、defk の名と record の表をその source から作って素の呼びを拾う(module m・import は無し)。
+    /// Treats one source as the whole repo, builds the defk names and record table from that source, and picks up bare calls (no module m or imports).
     fn found_in_repo(source: &str) -> Vec<String> {
         let bindings = BTreeMap::new();
         let defks = defk_names_in(source, "m");
@@ -841,13 +841,13 @@ mod tests {
         bare_calls_with(source, Scope { module: "m", bindings: &bindings }, &defks, &fields).iter().map(|c| c.detail()).collect()
     }
 
-    /// 受ける引数の `:pre` の型が Program を受け得ない(組み込みの値の型・None・repo の record)defk の呼びの引数に、defk を素で呼んで
-    /// 渡す形は拾う — 実弾 = agora-controllers の job patrol(2026-11-04)の `(counts-sources-of (measure-rows-of standing))`。
-    /// Call が渡り、:pre の型の検に実行の時に初めて当たって落ちた。位置の引数・keyword の引数・record の型の引数・枝の中も同じ。
+    /// A form that passes a bare defk call as an argument to a defk call whose receiving parameter's `:pre` type cannot accept a Program (built-in value types, None, repo records) is
+    /// picked up — the real case: agora-controllers' job patrol (2026-11-04) `(counts-sources-of (measure-rows-of standing))`.
+    /// A Call was passed in, and it first hit the `:pre` type check at run time and failed. Positional arguments, keyword arguments, record type arguments, and inside branches are the same.
     #[test]
     fn bare_defk_calls_passed_where_the_receiving_defk_refuses_programs_are_found() {
-        let source = r#"(defrecord StandingState "控え" (#^ int n))
-(defrecord ContinuingEntry "行" (#^ str word))
+        let source = r#"(defrecord StandingState "note" (#^ int n))
+(defrecord ContinuingEntry "row" (#^ str word))
 (defk measure-rows-of [standing]
   {:pre [(: standing (| StandingState None))] :post [(: % (get tuple #(ContinuingEntry ...)))]}
   #())
@@ -873,11 +873,11 @@ mod tests {
         );
     }
 
-    /// 受ける引数が Program を受けるかもしれない時は拾わない: 型の註の無い引数・Program・object・知らない別名・型の引数のある union の枝、
-    /// `#*` の後の位置、`<-` か `!` で値にしてから渡す形、局所の `deff` が同じ綴りの defk を隠す呼び、defsystem の job の行の頭(job の名)。
+    /// Not picked up when the receiving parameter may accept a Program: a parameter without a type annotation, Program, object, an unknown alias, a union branch with type arguments,
+    /// positions after `#*`, forms made into a value with `<-` or `!` before passing, calls where a local `deff` hides a defk of the same spelling, and the head of a defsystem job row (the job's name).
     #[test]
     fn bare_defk_calls_passed_where_the_receiving_defk_may_take_programs_are_not_found() {
-        let source = r#"(defrecord Row "行" (#^ str word))
+        let source = r#"(defrecord Row "row" (#^ str word))
 (defk rows-of [n] {:pre [(: n int)] :post [(: % tuple)]} #())
 (defk count-of [rows] {:pre [(: rows tuple)]} (len rows))
 (defk untyped [body] body)
@@ -908,8 +908,8 @@ mod tests {
 
     #[test]
     fn bound_bare_calls_used_as_values_and_assert_messages_are_found() {
-        // agora の incident_placement.hy(直す前 9e2574a6^)の形: (.items (histories run)) は method の的、
-        // (setv … all (histories run)) の後の (get all job) は束ねた名を答えとして使う所。assert の文 (describe …) も答えとして使う。
+        // The form of agora's incident_placement.hy (before the fix 9e2574a6^): (.items (histories run)) is a method target,
+        // and (get all job) after (setv … all (histories run)) is a place that uses the bound name as an answer. The assert statement (describe …) also uses the answer.
         let source = r#"(deff turn-survives-roll [run]
   (for [[job history] (.items (fetch run))] (print job)))
 (deff waits-of-run [run]
@@ -929,8 +929,8 @@ mod tests {
 
     #[test]
     fn bare_calls_inside_module_level_tables_are_found() {
-        // agora-controllers c6271008a の scripts/land_focus_gate.hy を縮めた形: module の最上位の表の行に defk の tests-of を run 無しで足し、
-        // 表に Program が混ざって `--all` が起動で落ちた。表の行の組み立て(`+`・repo の関数 entry の引数)の中でも、定義の外では答えとして使う所。
+        // A shrunken form of scripts/land_focus_gate.hy of agora-controllers c6271008a: added a defk tests-of without run to a module top-level table row,
+        // a Program got mixed into the table and `--all` failed at startup. Also inside the construction of table rows (`+`, arguments of the repo function entry), outside a definition it is a place that uses the answer.
         let source = r#"(defn entry [path cmds] [path cmds])
 (setv SIM-TESTS [(run (fetch "sim"))])
 (val TABLE [(entry "a" [(run (fetch "x"))])
@@ -941,8 +941,8 @@ mod tests {
 
     #[test]
     fn module_level_programs_that_are_run_passed_or_quoted_are_not_bare() {
-        // 定義の外でも拾わない: run・doeff の Program を受ける呼び・`<-`・`!` の中、defk を値として渡す所(呼んでいない)、
-        // 関数の本体(fn・fnk・defmacro・defclass の method)、quote / quasiquote の中。
+        // Not picked up even outside definitions: inside run, calls that accept a doeff Program, `<-`, `!`, places that pass a defk as a value (not called),
+        // function bodies (fn, fnk, defmacro, defclass methods), and inside quote / quasiquote.
         let source = r#"(setv ANSWER (run (with_handlers [h] (fetch 1))))
 (setv DIRECT (doeff.run (fetch 2)))
 (setv REGISTRY {"fetch" fetch "load" load})
@@ -959,16 +959,16 @@ mod tests {
 
     #[test]
     fn defsystem_job_programs_are_declared_not_bare() {
-        // doeff-hy の defsystem は関数に展開され、job の行の式は「名 → Program」の Program の値そのもの(実行しない)。
-        // job の名が defk の名と同じ形(controllers/kanban/entry/writes_service.hy の (fetch (fetch foundation)))も呼びではない。
+        // doeff-hy's defsystem expands to a function, and the expression on a job row is the Program value itself of "name -> Program" (not run).
+        // A job name of the same form as a defk name (controllers/kanban/entry/writes_service.hy's (fetch (fetch foundation))) is also not a call.
         let source = r#"(defsystem sample-system [foundation]
-  "見本の系"
+  "sample system"
   (fetch (fetch foundation 3 1.0) :needs #{"sim"})
   (placer (load foundation) :needs #{"sim"} :environ {"POLL" "5.0"}))
 (defsystem wrong-system [foundation]
   (reader (fetch foundation) :environ {"X" (str (load "k"))}))
 (val OUTSIDE (fetch 1))"#;
-        // defsystem の中でも答えとして使う所(`str` の引数)の素の呼びと、定義の外の素の呼びは今までどおり拾う。
+        // Even inside defsystem, bare calls in places that use the answer (arguments of `str`) and bare calls outside definitions are picked up as before.
         assert_eq!(found(source, &[("load", "lib")]), vec!["wrong_system::load", "<m>::fetch"]);
     }
 }

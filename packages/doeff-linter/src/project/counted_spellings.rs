@@ -1,12 +1,12 @@
-//! DOEFF161: 数を決めた綴り(#1437 — 元は agora-controllers の一時の判定
-//! controllers/screen/tests/intake_only_rules.hy の 1・3 の数と座・4 の残り・5・7 の節・8 の後半・semgrep の規則の実在)。
+//! DOEFF161: spellings whose count is fixed (#1437; originally a temporary check in agora-controllers:
+//! controllers/screen/tests/intake_only_rules.hy items 1 and 3 (the counts and the seat), the remainder of 4, the sections of 5 and 7, the second half of 8, and the existence of the semgrep rules).
 //!
-//! architecture.hy の `:counted-spellings [(counted-spelling "名" :pattern r"…" :files [..] :count N :why "…") …]` の宣言ごとに、
-//! `:files` に当たる file(拡張子を問わない — Hy と Python は註を落とし、ほかはそのまま読む)の本文で `:pattern` の当たりを数え、
-//! 数が決めた数でなければ 1 件出す。`:count N` はちょうど N・`:at-least N` は N 以上(どちらか 1 つ)。
-//! `:within ["名" …]` があれば、`:files` の Hy の file の top level の定義(頭が def で始まる form)のうち名指した物ごとに、その form の
-//! 中の当たりを数える(1 つの定義の中に閉じていることを決める — 数だけでは、定義の外に生えた当たりを見分けられない)。
-//! `:files` に当たる file が無い・名指した定義が無いなら `missing`(母集団 0 を緑にしない)。
+//! For each declaration `:counted-spellings [(counted-spelling "name" :pattern r"…" :files [..] :count N :why "…") …]` in architecture.hy,
+//! counts the matches of `:pattern` in the text of the files matching `:files` (any extension: Hy and Python are read with comments dropped, others as they are),
+//! and emits one finding if the count is not the fixed count. `:count N` means exactly N and `:at-least N` means N or more (exactly one of the two).
+//! If `:within ["name" …]` is given, for each named top-level definition (a form whose head starts with def) in the Hy files of `:files`, counts the matches
+//! inside that form (this fixes that the matches are confined to one definition; a count alone cannot tell apart a match that grew outside the definition).
+//! If no file matches `:files`, or a named definition does not exist, it is `missing` (a population of 0 is not made green).
 
 use std::path::Path;
 
@@ -17,25 +17,25 @@ use super::architecture::{CountedSpelling, WantedCount};
 use super::spelling_scope::{code_text, line_of, selected, Extensions};
 use super::top_level;
 
-/// 当たりの種類(閉じた 2 つ)。
+/// Kind of finding (a closed set of two).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CountProblem {
-    /// 数が合わない(within = 数えた定義の名・None は :files の全体)。
+    /// The count does not match (within = name of the definition counted; None means the whole of :files).
     Mismatch { found: usize, wanted: WantedCount, within: Option<String> },
-    /// 数える所が無い。
+    /// There is nothing to count.
     Missing { reason: String },
 }
 
-/// 当たり 1 つ。
+/// One finding.
 #[derive(Debug, Clone)]
 pub struct CountFinding {
     pub rel: String,
-    /// 宣言の名。
+    /// Name of the declaration.
     pub group: String,
     pub why: String,
     pub range: Range,
     pub problem: CountProblem,
-    /// 登録簿の鍵の細目(`<名>` / `<名>:<定義>` / `<名>:missing` / `<名>:<定義>:missing`)。
+    /// Detail of the registry key (`<name>` / `<name>:<definition>` / `<name>:missing` / `<name>:<definition>:missing`).
     pub detail: String,
 }
 
@@ -44,13 +44,13 @@ fn at_line(line: u32) -> Range {
     Range { start: at, end: at }
 }
 
-/// top level の、頭が def で始まり 2 つ目が name の form の byte の範囲。
+/// Byte range of a top-level form whose head starts with def and whose second element is a name.
 fn definition_span(source: &str, name: &str) -> Option<(usize, usize)> {
     let forms = Reader::new(source, 0, source.len()).read_all();
     top_level::definition(source, &forms, name).map(|form| (form.span.start, form.span.end))
 }
 
-/// 宣言 1 つを判じる。読めなかった file は errors へ積む。
+/// Judges one declaration. Files that could not be read are pushed to errors.
 fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<CountFinding> {
     let finding = |rel: String, range: Range, problem: CountProblem, detail: String| CountFinding {
         rel,
@@ -66,11 +66,11 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
         return vec![finding(
             architecture_rel.to_string(),
             declared.range,
-            CountProblem::Missing { reason: ":files に当たる file が無い".to_string() },
+            CountProblem::Missing { reason: "no file matches :files".to_string() },
             format!("{}:missing", declared.name),
         )];
     }
-    // file ごとの (path, 元の本文, 註を落とした本文)。
+    // Per file: (path, original text, text with comments dropped).
     let mut texts: Vec<(String, String, String)> = Vec::new();
     for rel in population {
         match std::fs::read_to_string(root.join(&rel)) {
@@ -78,7 +78,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
                 let code = code_text(&rel, &source);
                 texts.push((rel, source, code));
             }
-            Err(error) => errors.push(format!("{}: 読めない: {}", rel, error)),
+            Err(error) => errors.push(format!("{}: unreadable: {}", rel, error)),
         }
     }
     if declared.within.is_empty() {
@@ -108,7 +108,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
             out.push(finding(
                 architecture_rel.to_string(),
                 declared.range,
-                CountProblem::Missing { reason: format!(":files の Hy の file に定義 {} が無い", name) },
+                CountProblem::Missing { reason: format!("the Hy files of :files have no definition {}", name) },
                 format!("{}:{}:missing", declared.name, name),
             ));
             continue;
@@ -126,7 +126,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
     out
 }
 
-/// 宣言の全部を判じる。architecture_rel は architecture.hy の根からの path(数える所が無い宣言の位置)。
+/// Judges all declarations. architecture_rel is the path of architecture.hy from the root (the location of a declaration with nothing to count).
 pub fn find(root: &Path, declarations: &[CountedSpelling], architecture_rel: &str) -> (Vec<CountFinding>, Vec<String>) {
     let mut errors = Vec::new();
     let found = declarations.iter().flat_map(|declared| judge_one(root, declared, architecture_rel, &mut errors)).collect();
@@ -144,7 +144,7 @@ mod tests {
             files: files.iter().map(|p| p.to_string()).collect(),
             within: within.iter().map(|p| p.to_string()).collect(),
             wanted,
-            why: "理由".to_string(),
+            why: "reason".to_string(),
             range: Range::default(),
         }
     }

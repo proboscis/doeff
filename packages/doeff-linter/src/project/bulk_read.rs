@@ -1,56 +1,56 @@
-//! 小さい file を大量に読む所の待ちを重ねる(冷えた作業木の最初の 1 回)。
+//! Overlaps the waiting in places that read many small files in bulk (the first run on a cold working tree).
 //!
-//! 1 file の実行は、登録簿の dir(1 鍵 1 file — agora-controllers で 447 file)と、書いた file が名指す module の源(数十〜数百 file)を読む。
-//! 作業木ごとに別の inode なので、冷えた作業木では 1 file ごとに disk を 1 回待つ。順に読むと待ちが足し算になり、混んだ Pod(load 70〜100・
-//! io の圧迫 12〜30%)の冷えた作業木で、登録簿の読みだけが中央値 2.4 秒・最大 10.8 秒かかった(hook の期限は 4 秒)。待ちは CPU を使わず、
-//! disk は並べて頼むほど速く返すので、読みを多めの thread で重ねる(冷えた 449 file の実測 — 直列 6.4 秒 / 8 本 0.93 秒 / 16 本 0.62 秒 /
-//! 32 本 0.37 秒・どれも中央値)。
+//! A one-file run reads the registry dir (one file per key; 447 files in agora-controllers) and the sources of the modules the written file names (tens to hundreds of files).
+//! Each working tree has different inodes, so on a cold working tree every file waits once on the disk. Reading in sequence makes the waits add up; in a busy Pod (load 70-100,
+//! io pressure 12-30%) on a cold working tree, reading the registry alone took a median of 2.4 seconds and a maximum of 10.8 seconds (the hook deadline is 4 seconds). Waiting uses no CPU, and
+//! the disk returns faster the more requests are queued in parallel, so reads are overlapped with many threads (measured on 449 cold files: serial 6.4 s / 8 threads 0.93 s / 16 threads 0.62 s /
+//! 32 threads 0.37 s, all medians).
 //!
-//! repo の Hy の全部(約 2900 file)を読む所と、約 1200 の dir を開く所(`hy_files::collect` の走査)は、もっと多い本数で重ねる(`fan_out_wide`)。
+//! The places that read all the repo's Hy (about 2900 files) and open about 1200 dirs (the walk of `hy_files::collect`) overlap with even more threads (`fan_out_wide`).
 //!
-//! 1 file の実行の rayon の pool は 4 本に絞ってある(CPU の仕事は thread を増やしても速くならない — main.rs の `SINGLE_FILE_THREADS`)。
-//! 待ちを重ねるのは CPU の仕事ではないので、その pool とは別に、読みの間だけ `std::thread::scope` の thread を起こす。
+//! The rayon pool of a one-file run is limited to 4 threads (more threads do not speed up CPU work; see `SINGLE_FILE_THREADS` in main.rs).
+//! Overlapping waits is not CPU work, so threads of `std::thread::scope` are started only for the duration of the reads, separate from that pool.
 //!
-//! 待ちを重ねる意味があるのは待ちが disk の待ちの時だけ: page cache から読める間に thread を 128 本起こすと、仕事は速くならずに CPU だけが増える(`Widen`)。
-//! そこで少ない本数で始め、待ちが長い仕事が続いたら呼び手が決めた本数まで増やす。
+//! Overlapping waits is worthwhile only when the wait is a disk wait: starting 128 threads while reads can be served from the page cache does not speed the work up and only adds CPU (`Widen`).
+//! So it starts with a small number, and if long-waiting work continues, it grows to the number the caller decided.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::Scope;
 use std::time::{Duration, Instant};
 
-/// 待ちを重ねる thread の数(呼び手の thread を含む)。
+/// Number of threads that overlap waits (including the caller's thread).
 pub const READERS: usize = 32;
 
-/// repo の Hy の全部(約 2900 file・約 1200 の dir)を読む・開く時に待ちを重ねる thread の数。登録簿や名指しの源(数百 file)の READERS で足りる並べ方では、
-/// 冷えた作業木の全 file の読みが 3.3 秒(中央値・agora-controllers 2839 file・Pod の load 83)かかり、128 本で 1.8 秒・256 本で 1.9 秒だった。
-/// thread は disk を待っている間 CPU を使わない(stack は触った分だけ)ので、頭打ちの手前の 128 本にする。ただし起こす本数は呼び手が決める上限で、実際に動く本数は
-/// 待ちが disk の待ちだと見えた時だけ増える(`WARM_READERS`・下)。
+/// Number of threads that overlap waits when reading and opening all of the repo's Hy (about 2900 files, about 1200 dirs). With an arrangement like READERS, which suffices for the registry and named sources (hundreds of files),
+/// reading all files on a cold working tree took 3.3 seconds (median; agora-controllers 2839 files; Pod load 83), versus 1.8 seconds with 128 threads and 1.9 seconds with 256.
+/// A thread uses no CPU while waiting on the disk (the stack costs only what is touched), so use 128, just short of the plateau. However, the number started is an upper bound the caller decides, and the number actually running
+/// grows only when the wait looks like a disk wait (`WARM_READERS`, below).
 pub const WIDE_READERS: usize = 128;
 
-/// これより少ない件数は、thread を起こす手間のほうが重いので呼び手の thread で順に読む。
+/// Fewer items than this are read in sequence on the caller's thread, since starting threads costs more.
 const SERIAL_BELOW: usize = 4;
 
-/// 待ちを重ねる thread は、**待ちが disk の待ちだと見えた時だけ**増やす。page cache から読めている間(1 件が数十マイクロ秒)は、thread を 128 本起こしても
-/// 仕事は速くならず、起動と待ち合わせの CPU だけが増える(混んだ機体〔load 80〕で repo の Hy 4,144 file を page cache から読むのに、128 本で CPU 7〜14 秒・
-/// 1 本で 0.4〜0.8 秒)。そこで `WARM_READERS` 本で始め、disk を読んだ仕事が `SLOW_IN_ROW` 件になったら、呼び手が決めた本数まで
-/// 1 度だけ増やす。冷えた作業木では最初の数件で増えるので、重なる待ちの数は変わらない。
+/// Threads that overlap waits grow **only when the wait looks like a disk wait**. While reads are served from the page cache (one item takes tens of microseconds), starting 128 threads
+/// does not speed the work up and only adds CPU for startup and rendezvous (on a busy machine [load 80], reading the repo's 4,144 Hy files from the page cache took 7-14 seconds of CPU with 128 threads
+/// and 0.4-0.8 seconds with 1). So it starts with `WARM_READERS` threads and, once work that read the disk reaches `SLOW_IN_ROW` items, grows once to the number
+/// the caller decided. On a cold working tree it grows within the first few items, so the number of overlapped waits does not change.
 ///
-/// disk を読んだかは、その thread が頼んだ block の読みの数(`getrusage` の RUSAGE_THREAD・ru_inblock — `thread_reads`)で見る: page cache から読めた仕事は
-/// 0 のまま、冷えた dir・inode・中身の読みは増える(2026-10-23 の実測: 冷えた dir の読み 1 回で 8〜544・inode の先読みが効いた後の stat は 0)。前は 1 件の時間
-/// (`SLOW_ITEM` 以上が `SLOW_IN_ROW` 件続く)で見ていたが、負荷 100 を越える Pod では CPU の順番待ちだけで 1 件が 500 マイクロ秒を越え、温まった作業木でも
-/// 128 本へ増えて、repo の Hy を集める段が sys の CPU を 0.6〜4.9 秒使っていた。数を読めない機体だけ時間で見る。
+/// Whether the disk was read is judged by the number of block reads that thread requested (`getrusage` RUSAGE_THREAD, ru_inblock; see `thread_reads`): work served from the page cache
+/// stays at 0, while reads of a cold dir, inode, or contents increase it (measured 2026-10-23: 8-544 for one read of a cold dir; stat is 0 after the inode readahead has taken effect). It used to be judged by the time of one item
+/// (`SLOW_ITEM` or more, `SLOW_IN_ROW` times in a row), but in a Pod with load over 100, waiting for a CPU turn alone made one item exceed 500 microseconds, and even on a warmed working tree
+/// it grew to 128 threads, and the stage that collects the repo's Hy used 0.6-4.9 seconds of sys CPU. Only machines where the count cannot be read judge by time.
 const WARM_READERS: usize = 4;
 const SLOW_ITEM: Duration = Duration::from_micros(500);
 const SLOW_IN_ROW: usize = 3;
 
-/// この thread がこれまでに頼んだ block の読みの数(512 byte 単位 — `getrusage(RUSAGE_THREAD)` の ru_inblock)。読めない機体では None。
+/// Number of block reads this thread has requested so far (in 512-byte units; ru_inblock of `getrusage(RUSAGE_THREAD)`). None on machines where it cannot be read.
 #[cfg(target_os = "linux")]
 fn thread_reads() -> Option<u64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: getrusage は渡した rusage を書くだけで、ほかの memory に触らない。0 が返った時だけ書かれた値を読む(zeroed で全欄が初期化済みでもある)。
+    // SAFETY: getrusage only writes the rusage it is given and touches no other memory. The written value is read only when 0 is returned (all fields are also initialized by zeroed).
     let done = unsafe { libc::getrusage(libc::RUSAGE_THREAD, usage.as_mut_ptr()) } == 0;
-    // SAFETY: 上の zeroed で全 byte が初期化されていて、rusage は全欄が整数の型。
+    // SAFETY: all bytes are initialized by the zeroed above, and every field of rusage is an integer type.
     done.then(|| unsafe { usage.assume_init() }.ru_inblock).and_then(|reads| u64::try_from(reads).ok())
 }
 
@@ -59,39 +59,39 @@ fn thread_reads() -> Option<u64> {
     None
 }
 
-/// 仕事 1 つを始めた時の印(時刻と、その thread の block の読みの数)。
+/// The marker taken when one piece of work starts (the time, and that thread's number of block reads).
 struct Began {
     at: Instant,
     reads: Option<u64>,
 }
 
-/// 仕事 1 つが済んだ時の見分け。
+/// The verdict when one piece of work finishes.
 struct Ended {
-    /// その仕事が遅かった(disk を読んだ・時間で見分ける時は `slow_item` 以上かかった)。
+    /// That work was slow (it read the disk; when judging by time, it took `slow_item` or more).
     slow: bool,
-    /// thread を増やす時の最初の 1 回。
+    /// The first time, when growing the threads.
     widen: bool,
 }
 
-/// 仕事ごとの印から、待ちが disk の待ちかを見分ける(全部の thread で数える)。
+/// Tells from per-work markers whether the wait is a disk wait (counted across all threads).
 struct Widen {
     slow_item: Duration,
     slow_in_row: usize,
     seen_in_row: AtomicUsize,
-    /// disk を読んだ仕事の数(`by_disk` の時)。
+    /// Number of pieces of work that read the disk (when `by_disk`).
     seen_reading: AtomicUsize,
-    /// thread の block の読みの数で見分けるか(偽なら 1 件の時間で見分ける)。
+    /// Whether to judge by the thread's block-read count (if false, judge by the time of one item).
     by_disk: bool,
     widened: AtomicBool,
 }
 
 impl Widen {
-    /// 決まりの値で見分ける — thread の block の読みの数を読める機体ではそれで、読めなければ時間(`SLOW_ITEM`・`SLOW_IN_ROW`)で。
+    /// Judges by the standard values: by block-read count on machines that can read the thread's count, otherwise by time (`SLOW_ITEM`, `SLOW_IN_ROW`).
     fn standard() -> Self {
         Widen { by_disk: thread_reads().is_some(), ..Widen::new(SLOW_ITEM, SLOW_IN_ROW) }
     }
 
-    /// 1 件が `slow_item` 以上かかる回が `slow_in_row` 件続いたら増やす時と見る(検が時計に頼らない値を差せるよう、決まりの値と分ける)。
+    /// Treated as the time to grow when `slow_in_row` consecutive items each take `slow_item` or more (kept separate from the standard values so that tests can supply values that do not depend on the clock).
     fn new(slow_item: Duration, slow_in_row: usize) -> Self {
         Widen {
             slow_item,
@@ -103,12 +103,12 @@ impl Widen {
         }
     }
 
-    /// 仕事 1 つを始める時の印。
+    /// The marker taken when one piece of work starts.
     fn begin(&self) -> Began {
         Began { at: Instant::now(), reads: if self.by_disk { thread_reads() } else { None } }
     }
 
-    /// `began` で始めた仕事が済んだ。その仕事が遅かったか(disk を読んだか・`slow_item` 以上かかったか)と、増やす時の最初の 1 回か。
+    /// The work started with `began` has finished. Whether that work was slow (read the disk, or took `slow_item` or more), and whether this is the first time, when growing.
     fn end(&self, began: Began) -> Ended {
         match began.reads.zip(thread_reads()) {
             Some((before, after)) if self.by_disk => Ended { slow: after > before, widen: self.observe_reading(after > before) },
@@ -119,7 +119,7 @@ impl Widen {
         }
     }
 
-    /// 仕事 1 つが `took` かかった。遅い仕事が続いた最初の 1 回だけ true(増やす時)。
+    /// One piece of work took `took`. true only the first time slow work continues (when growing).
     fn observe(&self, took: Duration) -> bool {
         if took < self.slow_item {
             self.seen_in_row.store(0, Ordering::Relaxed);
@@ -131,8 +131,8 @@ impl Widen {
         !self.widened.swap(true, Ordering::Relaxed)
     }
 
-    /// 仕事 1 つが disk を読んだか(`read`)。disk を読んだ仕事が `slow_in_row` 件になった最初の 1 回だけ true。続いているかは問わない — 読みの数は
-    /// CPU の順番待ちで増えないので、1 回だけの遅れを外す必要が無い(冷えた dir の後の stat は inode の先読みで読まないので、続けて数えると冷えた歩きでも途切れる)。
+    /// Whether one piece of work read the disk (`read`). true only the first time the pieces that read the disk reach `slow_in_row`. Whether they continue does not matter: the read count
+    /// does not grow from waiting for a CPU turn, so there is no need to filter out a single delay (a stat after a cold dir does not read because of inode readahead, so counting consecutively would break even on a cold walk).
     fn observe_reading(&self, read: bool) -> bool {
         if !read || self.seen_reading.fetch_add(1, Ordering::Relaxed) + 1 < self.slow_in_row {
             return false;
@@ -141,7 +141,7 @@ impl Widen {
     }
 }
 
-/// `items` の全部に `work` を当て、結果を `items` の順で返す。待ち(file の読み・stat)を重ねるための道具で、`work` は互いに独立であること。
+/// Applies `work` to all of `items` and returns the results in the order of `items`. A tool for overlapping waits (file reads, stat); `work` must be independent of one another.
 pub fn fan_out<X, R>(items: &[X], work: impl Fn(&X) -> R + Sync) -> Vec<R>
 where
     X: Sync,
@@ -150,7 +150,7 @@ where
     fan_out_with(READERS, items, work)
 }
 
-/// `fan_out` の、repo の全部を読む・開く所のための形(`WIDE_READERS` 本)。
+/// The form of `fan_out` for places that read and open the whole repo (`WIDE_READERS` threads).
 pub fn fan_out_wide<X, R>(items: &[X], work: impl Fn(&X) -> R + Sync) -> Vec<R>
 where
     X: Sync,
@@ -159,7 +159,7 @@ where
     fan_out_with(WIDE_READERS, items, work)
 }
 
-/// `fan_out` の、待ちを重ねる thread の数 `readers` を呼び手が決める形。
+/// The form of `fan_out` where the caller decides the number of threads `readers` that overlap waits.
 pub fn fan_out_with<X, R>(readers: usize, items: &[X], work: impl Fn(&X) -> R + Sync) -> Vec<R>
 where
     X: Sync,
@@ -168,7 +168,7 @@ where
     fan_out_tuned(readers, Widen::standard(), items, work)
 }
 
-/// `fan_out_with` の、増やす時の見分け方 `widen` を呼び手が決める形(検のため)。
+/// The form of `fan_out_with` where the caller decides how to tell when to grow, `widen` (for tests).
 fn fan_out_tuned<X, R>(readers: usize, widen: Widen, items: &[X], work: impl Fn(&X) -> R + Sync) -> Vec<R>
 where
     X: Sync,
@@ -176,7 +176,7 @@ where
 {
     #[cfg(test)]
     let watch = watch::current();
-    // 検の観測(`watch`)は sleep で disk の待ちを模すので、disk の読みの数でなく時間で見分ける(sleep は disk を読まない)。
+    // The test's observation (`watch`) imitates a disk wait with sleep, so it judges by time rather than by the disk read count (sleep does not read the disk).
     #[cfg(test)]
     let widen = if watch.is_some() { Widen { by_disk: false, ..widen } } else { widen };
     let run = |item: &X| -> R {
@@ -203,19 +203,19 @@ where
         spread.add_readers(scope, spread.first - 1);
         spread.pull(scope);
     });
-    spread.slots.into_iter().map(|slot| slot.into_inner().expect("fan_out の結果の置き場").expect("fan_out は全部の item の結果を置く")).collect()
+    spread.slots.into_iter().map(|slot| slot.into_inner().expect("fan_out result slot").expect("fan_out places a result for every item")).collect()
 }
 
-/// `fan_out_with` の仕事の置き場 — thread が items を 1 つずつ引き、遅い待ちが続いたら引く thread を増やす。
+/// The work store of `fan_out_with`: threads draw items one by one, and when slow waits continue, more threads draw.
 struct Spread<'a, X, R> {
     items: &'a [X],
     run: &'a (dyn Fn(&X) -> R + Sync),
     next: AtomicUsize,
     slots: Vec<Mutex<Option<R>>>,
     widen: Widen,
-    /// 始めの thread の数(呼び手を含む)。
+    /// Number of threads at the start (including the caller).
     first: usize,
-    /// 増やした後の thread の数の上限(呼び手を含む)。
+    /// Upper bound on the number of threads after growing (including the caller).
     readers: usize,
 }
 
@@ -226,7 +226,7 @@ impl<'a, X: Sync, R: Send> Spread<'a, X, R> {
             let Some(item) = self.items.get(index) else { break };
             let began = self.widen.begin();
             let result = (self.run)(item);
-            *self.slots[index].lock().expect("fan_out の結果の置き場") = Some(result);
+            *self.slots[index].lock().expect("fan_out result slot") = Some(result);
             if self.widen.end(began).widen {
                 self.add_readers(scope, self.readers - self.first);
             }
@@ -235,7 +235,7 @@ impl<'a, X: Sync, R: Send> Spread<'a, X, R> {
 
     fn add_readers<'scope, 'env>(&'env self, scope: &'scope Scope<'scope, 'env>, count: usize) {
         for _ in 0..count {
-            // thread を起こせない機体(pid の上限など)でも止まらない — 起こせた分と他の thread で全部読み切る。
+            // It does not stop even on machines that cannot start threads (pid limit, etc.): the threads that could be started and the other threads read everything.
             if std::thread::Builder::new().spawn_scoped(scope, move || self.pull(scope)).is_err() {
                 break;
             }
@@ -243,11 +243,11 @@ impl<'a, X: Sync, R: Send> Spread<'a, X, R> {
     }
 }
 
-/// 仕事が仕事を生む時の、待ちを重ねる道具。`seed` の仕事から始め、`step` が仕事 1 つを済ませて、続きの仕事と結果(あれば)を返す。
+/// A tool for overlapping waits when work generates work. Starting from the `seed` work, `step` finishes one piece of work and returns the follow-up work and the result (if any).
 ///
-/// repo の tree を歩く(dir を開くと中の dir と file が見つかる)のと、見つけた file を読むのを、層の切れ目なしに重ねる: 続きの仕事はすぐ他の thread が拾うので、
-/// 深い dir を開く待ちと、浅い所で見つかった file の読みの待ちが同時に進む。層ごとに揃えて進める形は、層の中でいちばん遅い待ちに全部が揃う。
-/// 結果の順は決まらない(呼び手が並べる)。仕事は互いに独立であること。後ろに積んだ仕事から先に拾う(dir を先に開くと、並べられる仕事が早く増える)。
+/// It overlaps walking the repo's tree (opening a dir finds the dirs and files inside) with reading the files found, without layer boundaries: follow-up work is picked up immediately by other threads, so
+/// the wait for opening a deep dir and the wait for reading files found in a shallow place progress at the same time. Advancing layer by layer would make everything line up behind the slowest wait in the layer.
+/// The order of results is not fixed (the caller sorts). Work must be independent of one another. Work pushed later is picked up first (opening a dir first makes the work that can be queued grow sooner).
 pub fn pipeline<T, R>(readers: usize, seed: Vec<T>, step: impl Fn(T) -> (Vec<T>, Option<R>) + Sync) -> Vec<R>
 where
     T: Send,
@@ -256,7 +256,7 @@ where
     pipeline_tuned(readers, Widen::standard(), seed, step)
 }
 
-/// `pipeline` の、増やす時の見分け方 `widen` を呼び手が決める形(検のため)。
+/// The form of `pipeline` where the caller decides how to tell when to grow, `widen` (for tests).
 fn pipeline_tuned<T, R>(readers: usize, widen: Widen, seed: Vec<T>, step: impl Fn(T) -> (Vec<T>, Option<R>) + Sync) -> Vec<R>
 where
     T: Send,
@@ -282,18 +282,18 @@ where
 
 #[cfg(test)]
 thread_local! {
-    /// この thread が最後に回した `pipeline` の、共有の列の lock を取った回数(検のため)。
+    /// How many times the shared queue's lock was taken in the `pipeline` this thread ran last (for tests).
     static LAST_PIPELINE_LOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// `pipeline` の仕事の置き場 — thread が仕事を引き、遅い待ちが続いたら引く thread を増やす。結果は thread が終わる時に `results` へ足す。
+/// The work store of `pipeline`: threads draw work, and when slow waits continue, more threads draw. Results are added to `results` when a thread finishes.
 struct Crew<'a, T, R> {
     queue: Queue<T>,
     step: &'a (dyn Fn(T) -> (Vec<T>, Option<R>) + Sync),
     widen: Widen,
-    /// 始めの thread の数(呼び手を含む)。
+    /// Number of threads at the start (including the caller).
     first: usize,
-    /// 増やした後の thread の数の上限(呼び手を含む)。
+    /// Upper bound on the number of threads after growing (including the caller).
     readers: usize,
     results: Mutex<Vec<R>>,
 }
@@ -301,19 +301,19 @@ struct Crew<'a, T, R> {
 impl<'a, T: Send, R: Send> Crew<'a, T, R> {
     fn add_readers<'scope, 'env>(&'env self, scope: &'scope Scope<'scope, 'env>, count: usize) {
         for _ in 0..count {
-            // thread を起こせない機体(pid の上限など)でも止まらない — 起こせた分と呼び手の thread で全部済ませる。
+            // It does not stop even on machines that cannot start threads (pid limit, etc.): the threads that could be started and the caller's thread finish everything.
             if std::thread::Builder::new().spawn_scoped(scope, move || self.work(scope)).is_err() {
                 break;
             }
         }
     }
 
-    /// 仕事が尽きる(待っている仕事も、仕事を持つ thread も無くなる)まで引き続ける。
+    /// Keeps drawing until the work runs out (no waiting work and no thread holding work remain).
     ///
-    /// 続きの仕事は手元(`mine`)に積んで自分で済ませ、共有の列の lock は手元が空になった時と、待っている thread へ仕事を渡す時だけ取る。仕事 1 つごとに
-    /// 共有の列を通すと、page cache から読める間の小さな仕事(stat 1 回)で 128 本の thread が 1 つの lock を取り合い、新しい作業木の最初の 1 回の CPU が
-    /// sys だけで 10〜34 秒になった。遅い仕事(disk の待ち)の後に待っている thread が在れば手元の半分を共有の列へ渡すので、
-    /// 冷えた作業木の待ちは今までどおり重なる。
+    /// Follow-up work is pushed onto the local stack (`mine`) and finished by oneself; the shared queue's lock is taken only when the local stack is empty and when handing work to a waiting thread. If every piece of work
+    /// went through the shared queue, then with small work that can be served from the page cache (one stat), 128 threads would fight over one lock, and the CPU of the first run on a new working tree
+    /// was 10-34 seconds in sys alone. After slow work (a disk wait), if a thread is waiting, half of the local stack is handed to the shared queue,
+    /// so the waits on a cold working tree overlap as before.
     fn work<'scope, 'env>(&'env self, scope: &'scope Scope<'scope, 'env>) {
         let mut results = Vec::new();
         loop {
@@ -324,8 +324,8 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
                 results.extend(result);
                 mine.extend(more);
                 let ended = self.widen.end(began);
-                // 遅い仕事(disk の待ち)の後だけ、待っている thread へ、後で拾う側(列の頭の方)の半分を渡す — 速い仕事は手元で済ませる方が CPU も lock も
-                // 少ない。手元に仕事が在る間は `active` を持ったままなので、渡す前に済んだと見えない。
+                // Only after slow work (a disk wait), hand half of the side picked up later (the head of the queue) to a waiting thread. Fast work is better finished locally, with less CPU and less lock use.
+                // While work remains locally, `active` is still held, so it cannot appear finished before handing over.
                 if ended.slow && mine.len() > 1 && self.queue.waiting.load(Ordering::Relaxed) > 0 {
                     let shared: Vec<T> = mine.drain(..mine.len() / 2).collect();
                     locked(&self.queue).tasks.extend(shared);
@@ -340,8 +340,8 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
         self.results.lock().unwrap_or_else(PoisonError::into_inner).extend(results);
     }
 
-    /// 共有の列から、次に拾う側の半分(少なくとも 1 つ)を手元へ引き、`active` を数える印と一緒に返す(並ぶ thread が残りを分ける — lock の回数は
-    /// 仕事の数でなく thread の数と分けた回数で決まる)。列が空でも仕事を持つ thread が在れば、渡されるか全部済むまで待つ。全部済んだら None。
+    /// From the shared queue, draws half of the side to be picked up next (at least 1 item) into the local stack, and returns it with the marker that counts `active` (the parallel threads split the rest; the number of lock acquisitions is
+    /// decided by the number of threads and splits, not by the amount of work). Even if the queue is empty, if a thread holds work, it waits until work is handed over or everything finishes. None when everything has finished.
     fn take(&self) -> Option<(Vec<T>, Holding<'_, T>)> {
         let mut state = locked(&self.queue);
         loop {
@@ -349,7 +349,7 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
                 let keep = state.tasks.len() - (state.tasks.len() / 2).max(1);
                 let mine = state.tasks.split_off(keep);
                 state.active += 1;
-                // 残りが在れば、待っている thread を 1 本だけ起こす(起きた thread が残りの半分を引いて次を起こす — 全部を一度に起こして lock を取り合わない)。
+                // If any remains, wake only one waiting thread (the woken thread draws half of the rest and wakes the next; do not wake all at once and fight over the lock).
                 if !state.tasks.is_empty() {
                     self.queue.wake.notify_one();
                 }
@@ -368,15 +368,15 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
 struct Queue<T> {
     state: Mutex<Pending<T>>,
     wake: Condvar,
-    /// 共有の列が空で待っている thread の数(仕事を持つ thread が手元の仕事を渡すかを、lock を取らずに決める)。
+    /// Number of threads waiting with the shared queue empty (decides without taking the lock whether a thread holding work should hand over its local work).
     waiting: AtomicUsize,
-    /// 共有の列の lock を取った回数(検が、仕事の数より大きく少ない事を確かめる)。
+    /// Number of times the shared queue's lock was taken (a test checks that it is far fewer than the amount of work).
     locks: AtomicUsize,
 }
 
 struct Pending<T> {
     tasks: Vec<T>,
-    /// 今 仕事を持つ(共有の列から引いて、手元の仕事を済ませている)thread の数。0 で `tasks` も空なら、仕事は全部済んだ。
+    /// Number of threads that currently hold work (they have drawn from the shared queue and are finishing local work). If 0 and `tasks` is also empty, all the work is finished.
     active: usize,
 }
 
@@ -385,7 +385,7 @@ fn locked<T>(queue: &Queue<T>) -> MutexGuard<'_, Pending<T>> {
     queue.state.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// thread が仕事を持つ間 `active` を数える印。手元の仕事が尽きた時(`step` が panic した時も)に減らし、全部済んだなら待っている thread を起こす。
+/// A marker that counts `active` while a thread holds work. It decrements when the local work runs out (also when `step` panics), and wakes waiting threads if everything is finished.
 struct Holding<'a, T> {
     queue: &'a Queue<T>,
 }
@@ -400,7 +400,7 @@ impl<T> Drop for Holding<'_, T> {
     }
 }
 
-/// 検が置く観測 — `fan_out` の仕事が同時に何件進んだかを数える(読みが本当に重なっているかを、時計に頼らず確かめる)。
+/// Observation placed by tests: counts how many pieces of `fan_out` work progressed at once (to check, without relying on the clock, that reads really overlap).
 #[cfg(test)]
 pub(crate) mod watch {
     use std::cell::RefCell;
@@ -418,7 +418,7 @@ pub(crate) mod watch {
         static CURRENT: RefCell<Option<Arc<Watch>>> = const { RefCell::new(None) };
     }
 
-    /// `body` の間に呼び手の thread が始める `fan_out` を観測し、(`body` の結果, 同時に進んだ仕事の最大数)を返す。重なりが出るよう、仕事ごとに `hold` だけ待たせる。
+    /// Observes the `fan_out` that the caller's thread starts during `body`, and returns (the result of `body`, the maximum number of pieces of work in progress at once). Each piece of work waits `hold` so that overlap appears.
     pub(crate) fn watching<T>(hold: Duration, body: impl FnOnce() -> T) -> (T, usize) {
         let watch = Arc::new(Watch { hold, in_flight: AtomicUsize::new(0), peak: AtomicUsize::new(0) });
         CURRENT.with(|current| *current.borrow_mut() = Some(Arc::clone(&watch)));
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 200);
     }
 
-    /// 時間で見分ける Widen — sleep で disk の待ちを模す test のため(sleep は disk を読まないので、決まりの見分け方では増えない)。
+    /// A Widen that judges by time, for tests that imitate a disk wait with sleep (sleep does not read the disk, so the standard way of telling would not grow).
     fn by_time() -> Widen {
         Widen::new(SLOW_ITEM, SLOW_IN_ROW)
     }
@@ -471,8 +471,8 @@ mod tests {
         let items: Vec<usize> = (0..64).collect();
         let (out, peak) = watching(Duration::from_millis(20), || fan_out_tuned(READERS, by_time(), &items, |n| *n));
         assert_eq!(out, items);
-        assert!(peak >= 8, "待ちが重なっていない(同時に進んだ最大 {peak} 件 — 冷えた disk の待ちが足し算になる)");
-        assert!(peak <= READERS, "起こす thread の数が上限 {READERS} を越えた({peak} 件)");
+        assert!(peak >= 8, "waits are not overlapping (maximum in progress at once: {peak}; the waits on a cold disk would add up)");
+        assert!(peak <= READERS, "the number of threads started exceeded the upper bound {READERS} ({peak})");
     }
 
     #[test]
@@ -480,11 +480,11 @@ mod tests {
         let items: Vec<usize> = (0..400).collect();
         let (out, peak) = watching(Duration::from_millis(20), || fan_out_tuned(WIDE_READERS, by_time(), &items, |n| *n));
         assert_eq!(out, items);
-        assert!(peak > READERS, "待ちが READERS より広く重なっていない(同時に進んだ最大 {peak} 件)");
-        assert!(peak <= WIDE_READERS, "起こす thread の数が上限 {WIDE_READERS} を越えた({peak} 件)");
+        assert!(peak > READERS, "waits are not overlapping more widely than READERS (maximum in progress at once: {peak})");
+        assert!(peak <= WIDE_READERS, "the number of threads started exceeded the upper bound {WIDE_READERS} ({peak})");
     }
 
-    /// 仕事が仕事を生む木(根 → 10 → 100 → 1000)を、層の切れ目なしに重ねて済ませる: 全部の仕事が 1 度ずつ済み、結果が揃い、同時に進んだ仕事が多い。
+    /// A tree where work generates work (root -> 10 -> 100 -> 1000) is finished with overlap and no layer boundaries: every piece of work is finished exactly once, the results are complete, and many pieces are in progress at once.
     #[test]
     fn a_pipeline_runs_every_task_once_and_overlaps_the_waits_across_levels() {
         let in_flight = AtomicUsize::new(0);
@@ -501,13 +501,13 @@ mod tests {
         let mut ids: Vec<(usize, usize)> = results;
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 1111, "同じ仕事を 2 度済ませた");
-        assert!(peak.load(Ordering::SeqCst) >= 8, "待ちが重なっていない(同時に進んだ最大 {} 件)", peak.load(Ordering::SeqCst));
+        assert_eq!(ids.len(), 1111, "the same work was finished twice");
+        assert!(peak.load(Ordering::SeqCst) >= 8, "waits are not overlapping (maximum in progress at once: {})", peak.load(Ordering::SeqCst));
         assert!(peak.load(Ordering::SeqCst) <= WIDE_READERS);
     }
 
-    /// 速い仕事の木(1111 件)は、共有の列の lock を仕事の数より大きく少ない回数で済ませる。仕事ごとに lock を取り合う形は、新しい作業木の最初の 1 回で
-    /// 128 本の thread が stat 1 回ほどの仕事を回し、sys の CPU を 10〜34 秒使った。遅い待ちで thread が増えた時も同じ。
+    /// A tree of fast work (1111 items) finishes with far fewer shared-queue lock acquisitions than the amount of work. The arrangement where every piece of work fights over the lock, on the first run on a new working tree,
+    /// had 128 threads cycling through work the size of one stat and used 10-34 seconds of sys CPU. The same holds when threads grew because of slow waits.
     #[test]
     fn a_pipeline_takes_the_shared_queue_lock_far_fewer_times_than_there_are_tasks() {
         let tree = |widen: Widen, hold: Duration| {
@@ -516,13 +516,13 @@ mod tests {
                 let more = if depth < 3 { (0..10).map(|child| (depth + 1, id * 10 + child)).collect() } else { Vec::new() };
                 (more, Some((depth, id)))
             });
-            assert_eq!(results.len(), 1111, "全部の仕事が 1 度ずつ済む");
+            assert_eq!(results.len(), 1111, "all work is finished exactly once");
             LAST_PIPELINE_LOCKS.with(std::cell::Cell::get)
         };
         let quick = tree(Widen::new(Duration::from_secs(3600), SLOW_IN_ROW), Duration::ZERO);
-        assert!(quick < 1111 / 4, "速い仕事 1111 件で共有の列の lock を {quick} 回取った");
+        assert!(quick < 1111 / 4, "took the shared queue's lock {quick} times for 1111 fast items");
         let slow = tree(Widen::new(Duration::ZERO, SLOW_IN_ROW), Duration::from_micros(300));
-        assert!(slow < 1111 * 2, "thread が増えた遅い仕事 1111 件で共有の列の lock を {slow} 回取った");
+        assert!(slow < 1111 * 2, "took the shared queue's lock {slow} times for 1111 slow items with grown threads");
     }
 
     #[test]
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(one, vec![0, 1, 2, 3]);
     }
 
-    /// 作業した thread の数(item ごとに thread の id を集める)。
+    /// Number of threads that worked (collects the thread id per item).
     fn threads_used<X: Sync>(items: &[X], widen: Widen, hold: Duration) -> usize {
         let seen = Mutex::new(std::collections::HashSet::new());
         fan_out_tuned(WIDE_READERS, widen, items, |_| {
@@ -543,39 +543,39 @@ mod tests {
         seen.into_inner().unwrap().len()
     }
 
-    /// page cache から読めている間(1 件が速い)は thread を増やさない: 128 本で読むと CPU だけが増える。
+    /// While reads are served from the page cache (one item is fast), threads do not grow: reading with 128 threads only adds CPU.
     #[test]
     fn quick_items_stay_within_the_warm_readers() {
         let items: Vec<usize> = (0..2000).collect();
-        // 遅いと見る時間を 1 時間にして、時計の揺れで増える回を無くす。
+        // Set the time regarded as slow to 1 hour, to eliminate runs that grow because of clock jitter.
         let used = threads_used(&items, Widen::new(Duration::from_secs(3600), SLOW_IN_ROW), Duration::ZERO);
-        assert!(used <= WARM_READERS, "速い仕事で {used} 本の thread が動いた(上限 {WARM_READERS})");
+        assert!(used <= WARM_READERS, "{used} threads ran on fast work (upper bound {WARM_READERS})");
     }
 
-    /// 待ちが続けて長い(冷えた disk)なら、呼び手が決めた本数まで増える。
+    /// If waits are consistently long (a cold disk), the threads grow up to the number the caller decided.
     #[test]
     fn slow_items_widen_to_the_readers_the_caller_chose() {
         let items: Vec<usize> = (0..400).collect();
         let used = threads_used(&items, Widen::new(Duration::ZERO, SLOW_IN_ROW), Duration::from_millis(3));
-        assert!(used > WARM_READERS, "遅い仕事が続いても thread が増えない({used} 本)");
-        assert!(used <= WIDE_READERS, "起こす thread の数が上限 {WIDE_READERS} を越えた({used} 本)");
+        assert!(used > WARM_READERS, "threads do not grow even though slow work continues ({used} threads)");
+        assert!(used <= WIDE_READERS, "the number of threads started exceeded the upper bound {WIDE_READERS} ({used} threads)");
     }
 
-    /// 遅い仕事が 1 件だけ(thread が止められた遅れ)では増やさない — 続く遅れだけを待ちと見る。
+    /// A single slow item (a delay caused by a thread being stopped) does not grow it: only continuing delays are regarded as waits.
     #[test]
     fn one_slow_item_among_quick_ones_does_not_widen() {
         let widen = Widen::new(Duration::from_millis(1), 3);
         assert!(!widen.observe(Duration::from_millis(5)));
         assert!(!widen.observe(Duration::from_millis(5)));
-        assert!(!widen.observe(Duration::from_micros(10)), "速い仕事が挟まれば数え直す");
+        assert!(!widen.observe(Duration::from_micros(10)), "if a fast item is interleaved, the count starts over");
         assert!(!widen.observe(Duration::from_millis(5)));
         assert!(!widen.observe(Duration::from_millis(5)));
-        assert!(widen.observe(Duration::from_millis(5)), "続けて 3 件遅ければ増やす");
-        assert!(!widen.observe(Duration::from_millis(5)), "増やすのは 1 度だけ");
+        assert!(widen.observe(Duration::from_millis(5)), "grow if 3 consecutive items are slow");
+        assert!(!widen.observe(Duration::from_millis(5)), "grow only once");
     }
 
-    /// 決まりの見分け方では、disk を読まない仕事は 1 件が遅くても(CPU の順番待ち・lock の待ち)増やさない — 負荷 100 を越える Pod で、温まった作業木の
-    /// repo の Hy の読みが 128 本へ増えて sys の CPU を 0.6〜4.9 秒使っていた。thread の読みの数を読めない機体では確かめない。
+    /// With the standard way of telling, work that does not read the disk does not grow the threads even if one item is slow (waiting for a CPU turn, waiting on a lock): in a Pod with load over 100, the warmed working tree's
+    /// reading of the repo's Hy grew to 128 threads and used 0.6-4.9 seconds of sys CPU. Not checked on machines that cannot read the thread's read count.
     #[test]
     fn slow_items_that_read_nothing_from_disk_stay_within_the_warm_readers() {
         if thread_reads().is_none() {
@@ -583,7 +583,7 @@ mod tests {
         }
         let items: Vec<usize> = (0..200).collect();
         let used = threads_used(&items, Widen::standard(), Duration::from_millis(2));
-        assert!(used <= WARM_READERS, "disk を読まない遅い仕事で {used} 本の thread が動いた(上限 {WARM_READERS})");
+        assert!(used <= WARM_READERS, "{used} threads ran on slow work that does not read the disk (upper bound {WARM_READERS})");
         let seen = Mutex::new(std::collections::HashSet::new());
         pipeline_tuned(WIDE_READERS, Widen::standard(), vec![(0usize, 0usize)], |(depth, id)| {
             std::thread::sleep(Duration::from_millis(1));
@@ -591,11 +591,11 @@ mod tests {
             ((if depth < 2 { (0..10).map(|child| (depth + 1, id * 10 + child)).collect() } else { Vec::new() }), Some(()))
         });
         let used = seen.into_inner().unwrap().len();
-        assert!(used <= WARM_READERS, "disk を読まない遅い歩きで {used} 本の thread が動いた(上限 {WARM_READERS})");
+        assert!(used <= WARM_READERS, "{used} threads ran on a slow walk that does not read the disk (upper bound {WARM_READERS})");
     }
 
-    /// disk を読んだ仕事が `slow_in_row` 件になったら 1 度だけ増やす — 間に disk を読まない仕事が挟まっても数え直さない(冷えた dir の後の stat は
-    /// inode の先読みで disk を読まないので、続けて数えると冷えた歩きでも増えない)。
+    /// Grows only once when work that read the disk reaches `slow_in_row` items: it does not start over even if work that does not read the disk is interleaved (a stat after a cold dir does not read the disk because of
+    /// inode readahead, so counting consecutively would not grow it even on a cold walk).
     #[test]
     fn items_that_read_from_disk_widen_once_even_with_cached_items_between() {
         let widen = Widen { by_disk: true, ..Widen::new(Duration::from_secs(3600), 3) };
@@ -604,11 +604,11 @@ mod tests {
         assert!(!widen.observe_reading(false));
         assert!(!widen.observe_reading(true));
         assert!(!widen.observe_reading(false));
-        assert!(widen.observe_reading(true), "disk を読んだ 3 件目で増やす");
-        assert!(!widen.observe_reading(true), "増やすのは 1 度だけ");
+        assert!(widen.observe_reading(true), "grow at the 3rd item that read the disk");
+        assert!(!widen.observe_reading(true), "grow only once");
     }
 
-    /// thread の読みの数は、読める機体では thread ごとに減らない数。
+    /// The thread's read count is a number that does not decrease per thread, on machines where it can be read.
     #[test]
     fn the_reads_of_a_thread_never_go_down() {
         let Some(first) = thread_reads() else { return };
@@ -616,7 +616,7 @@ mod tests {
         assert!(thread_reads().is_some_and(|later| later >= first));
     }
 
-    /// 仕事が仕事を生む形も、速い間は動く thread が少なく、遅い待ちが続けば増える。
+    /// The form where work generates work also uses few threads while work is fast, and grows when slow waits continue.
     #[test]
     fn a_pipeline_widens_only_when_the_waits_are_long() {
         let tree = |widen: Widen, hold: Duration| {
@@ -627,13 +627,13 @@ mod tests {
                 let more = if depth < 3 { (0..10).map(|child| (depth + 1, id * 10 + child)).collect() } else { Vec::new() };
                 (more, Some((depth, id)))
             });
-            assert_eq!(results.len(), 1111, "全部の仕事が 1 度ずつ済む");
+            assert_eq!(results.len(), 1111, "all work is finished exactly once");
             seen.into_inner().unwrap().len()
         };
         let quick = tree(Widen::new(Duration::from_secs(3600), SLOW_IN_ROW), Duration::ZERO);
-        assert!(quick <= WARM_READERS, "速い仕事で {quick} 本の thread が動いた(上限 {WARM_READERS})");
+        assert!(quick <= WARM_READERS, "{quick} threads ran on fast work (upper bound {WARM_READERS})");
         let slow = tree(Widen::new(Duration::ZERO, SLOW_IN_ROW), Duration::from_millis(2));
-        assert!(slow > WARM_READERS && slow <= WIDE_READERS, "遅い待ちが続いた時の thread の数 {slow}");
+        assert!(slow > WARM_READERS && slow <= WIDE_READERS, "number of threads when slow waits continued {slow}");
     }
 
     #[test]
@@ -647,9 +647,9 @@ mod tests {
     #[test]
     fn a_failing_item_is_a_result_of_its_own_and_the_others_still_run() {
         let items: Vec<usize> = (0..40).collect();
-        let out = fan_out(&items, |n| if n % 7 == 3 { Err(format!("{n} を読めない")) } else { Ok(*n) });
+        let out = fan_out(&items, |n| if n % 7 == 3 { Err(format!("cannot read {n}")) } else { Ok(*n) });
         for (n, result) in items.iter().zip(&out) {
-            assert_eq!(result, &if n % 7 == 3 { Err(format!("{n} を読めない")) } else { Ok(*n) });
+        assert_eq!(result, &if n % 7 == 3 { Err(format!("cannot read {n}")) } else { Ok(*n) });
         }
     }
 
@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(fan_out(&[] as &[u8], |n| *n), Vec::<u8>::new());
     }
 
-    /// `Mutex` を使う仕事が呼び手の thread と他の thread の両方で進んでも、結果が落ちない。
+    /// Even if work using a `Mutex` progresses on both the caller's thread and other threads, no results are lost.
     #[test]
     fn items_that_share_a_lock_still_all_get_their_results() {
         let seen = Mutex::new(Vec::new());

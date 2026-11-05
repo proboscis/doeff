@@ -1,38 +1,38 @@
-//! 宣言した file の集まりの本文を、註を落として読む共通の部品(DOEFF148 の :confined-spellings・DOEFF161 の :counted-spellings —
-//! #1436・#1437)。
+//! Shared component that reads the text of a set of declared files with comments removed (:confined-spellings of DOEFF148 and :counted-spellings of DOEFF161 —
+//! #1436, #1437).
 //!
-//! 群の `:files`(repo の根に錨を下ろした glob)に当たり `:except` に当たらない file を集め、拡張子ごとの註を落とした本文を返す。
-//! 文字列は落とさない — 外の口の動詞 `"POST"` や route の綴り `"/api/intake"` は文字列で書かれるので、文字列を数えない DOEFF146
-//! (:single-point-vocabulary)では見えない。註は落とす(経緯を述べる註まで当たりにしない)。
-//! 歩くのは glob の頭の、`*` を含まない段の dir だけ(repo 全体は歩かない)。
+//! Collects the files that match a group's `:files` (globs anchored at the repo root) and do not match `:except`, and returns their text with comments removed per extension.
+//! Strings are not removed — outward-facing verbs like `"POST"` and route spellings like `"/api/intake"` are written as strings, so DOEFF146
+//! (:single-point-vocabulary), which does not count strings, cannot see them. Comments are removed (so that even comments recounting history do not count as hits).
+//! Only the leading dirs of a glob, the segments containing no `*`, are walked (the whole repo is not walked).
 
 use std::path::Path;
 
 use super::paths::{glob_matches, relative_path};
 
-/// 歩かない dir(隠し dir と生成物)。
+/// Dirs that are not walked (hidden dirs and generated output).
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
-/// 読む file の拡張子(Hy・Python・Python の型の宣言)。
+/// Extensions of files that are read (Hy, Python, Python type declarations).
 const READ_EXTENSIONS: &[&str] = &["hy", "py", "pyi"];
 
-/// 読む file の拡張子の選び方(閉じた 2 つ)。
+/// How the extensions to read are chosen (a closed set of 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Extensions {
-    /// Hy・Python・Python の型の宣言だけ(glob が dir を名指す群 — 設定や文書を拾わない)。
+    /// Only Hy, Python, and Python type declarations (for groups whose glob names a dir — does not pick up settings or documents).
     Code,
-    /// glob に当たる file を拡張子を問わず(名指した設定の file — semgrep の yaml など)。
+    /// Files matching the glob regardless of extension (named settings files — such as semgrep yaml).
     Any,
 }
 
-/// 註の書き方(閉じた 3 つ)。
+/// How comments are written (a closed set of 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommentStyle {
-    /// Hy: `;` から行末。文字列は `"…"`。
+    /// Hy: from `;` to the end of the line. Strings are `"…"`.
     Hy,
-    /// Python: `#` から行末。文字列は `'…'`・`"…"`・三重の引用符。
+    /// Python: from `#` to the end of the line. Strings are `'…'`, `"…"`, and triple quotes.
     Python,
-    /// 註を落とさない(Hy と Python の外の file はそのまま読む)。
+    /// Comments are not removed (files other than Hy and Python are read as they are).
     Plain,
 }
 
@@ -46,7 +46,7 @@ fn style_of(rel: &str) -> CommentStyle {
     }
 }
 
-/// 註を空白に置き換えた本文(文字列はそのまま・byte の位置と行は保つ — 定義の範囲を元の本文の byte で引くため)。
+/// The text with comments replaced by whitespace (strings kept as they are; byte positions and lines are preserved — so that definition ranges can be taken in bytes of the original text).
 pub fn code_text(rel: &str, source: &str) -> String {
     let style = style_of(rel);
     if style == CommentStyle::Plain {
@@ -54,7 +54,7 @@ pub fn code_text(rel: &str, source: &str) -> String {
     }
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
-    // 開いている文字列の閉じの綴り(None = 文字列の外)。
+    // The closing spelling of the open string (None = outside a string).
     let mut closing: Option<Vec<char>> = None;
     let mut index = 0;
     while index < chars.len() {
@@ -109,19 +109,19 @@ pub fn code_text(rel: &str, source: &str) -> String {
     out
 }
 
-/// glob の頭の、`*` を含まない段を繋いだ dir(歩き始める所)。
+/// The dir formed by joining the leading segments of the glob that contain no `*` (where the walk starts).
 fn walk_base(glob: &str) -> String {
     let parts: Vec<&str> = glob.split('/').collect();
     let fixed: Vec<&str> = parts.iter().take(parts.len().saturating_sub(1)).take_while(|p| !p.contains('*')).copied().collect();
     fixed.join("/")
 }
 
-/// `:files` に当たり `:except` に当たらない、読む拡張子の file(根からの path・path の順・重なりなし)。
+/// Files with a readable extension that match `:files` and do not match `:except` (paths from the root, in path order, no duplicates).
 pub fn selected_files(root: &Path, files: &[String], except: &[String]) -> Vec<String> {
     selected(root, files, except, Extensions::Code)
 }
 
-/// `:files` に当たり `:except` に当たらない file(拡張子の選び方を名指す)。
+/// Files that match `:files` and do not match `:except` (naming how the extension is chosen).
 pub fn selected(root: &Path, files: &[String], except: &[String], extensions: Extensions) -> Vec<String> {
     let mut rels: Vec<String> = Vec::new();
     for glob in files {
@@ -150,7 +150,7 @@ pub fn selected(root: &Path, files: &[String], except: &[String], extensions: Ex
     rels
 }
 
-/// 本文の byte の位置の行(0 始まり)。
+/// The line (0-based) at a byte position in the text.
 pub fn line_of(text: &str, at: usize) -> u32 {
     text.get(..at).map_or(0, |head| head.matches('\n').count() as u32)
 }
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn hy_comments_are_blanked_and_strings_are_kept() {
-        let code = code_text("a.hy", "(setv v \"POST\") ; \"PUT\" は書かない\n(f \"a;b\")\n");
+        let code = code_text("a.hy", "(setv v \"POST\") ; do not write \"PUT\"\n(f \"a;b\")\n");
         assert!(code.contains("\"POST\""), "{}", code);
         assert!(!code.contains("PUT"), "{}", code);
         assert!(code.contains("\"a;b\""), "{}", code);
@@ -170,21 +170,21 @@ mod tests {
 
     #[test]
     fn python_comments_are_blanked_and_strings_are_kept() {
-        let code = code_text("a.py", "x = \"#1\"  # sqlite3\ny = '''\n# 中\n'''\nz = 'it\\'s'  # open(\n");
+        let code = code_text("a.py", "x = \"#1\"  # sqlite3\ny = '''\n# inner\n'''\nz = 'it\\'s'  # open(\n");
         assert!(code.contains("\"#1\""), "{}", code);
         assert!(!code.contains("sqlite3"), "{}", code);
-        assert!(code.contains("# 中"), "三重の引用符の中は文字列: {}", code);
+        assert!(code.contains("# inner"), "inside triple quotes is a string: {}", code);
         assert!(!code.contains("open("), "{}", code);
         assert_eq!(code.lines().count(), 5);
     }
 
     #[test]
     fn byte_positions_are_kept_and_other_files_are_read_as_they_are() {
-        let source = "; 日本語の註\n(f \"POST\")\n";
+        let source = "; Japanese comment\n(f \"POST\")\n";
         let code = code_text("a.hy", source);
         assert_eq!(code.len(), source.len());
         assert_eq!(code.find("\"POST\""), source.find("\"POST\""));
-        assert_eq!(code_text("a.yaml", "id: x # 註\n"), "id: x # 註\n");
+        assert_eq!(code_text("a.yaml", "id: x # note\n"), "id: x # note\n");
     }
 
     #[test]

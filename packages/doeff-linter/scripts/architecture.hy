@@ -1,21 +1,21 @@
-;;; packages/doeff-linter/scripts の file の層の宣言。
+;;; Layer declaration for the files in packages/doeff-linter/scripts.
 ;;;
-;;; 今は、規則の母集団から外す層 1 つだけを置く(tools/architecture.hy・packages/doeff-indexer/architecture.hy と同じ形)。doeff-linter は
-;;; Python の文ごとの規則の母集団を、file から上へ最も近い architecture.hy から決める(#2811)。ここで外すのは下の名指しの module だけ。
+;;; For now it places only one layer that is excluded from the rule population (the same shape as tools/architecture.hy and packages/doeff-indexer/architecture.hy). doeff-linter
+;;; decides the population of per-statement Python rules from the nearest architecture.hy above a file (#2811). Only the named module below is excluded here.
 ;;;
-;;; snapshot = linter の断面を組む道具 linter_snapshot(PEP 723 の script・依存は空 = stdlib だけ)。commit の hook と pin の便が
-;;;   `uv run --script` で呼び、repo の Python の環境が無くても動く — doeff の Program の外で走り、doeff の handler(ReadEnvironment に
-;;;   答える subprocess_handler)を import できない。環境変数(置き場の名・XDG_CACHE_HOME・HOME・git の GIT_*)は、入口の main が
-;;;   1 度だけ読んで写像として下の関数へ渡す(下の関数は os.environ を読まない)。
-;;;   - 外す規則: DOEFF004(os.environ を直に読む・参照する)— 名指しの module(linter_snapshot)に限る。
-;;;   - 禁じる import: doeff の module。stdlib だけの約束が崩れると DOEFF032 が赤にする。
-;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり入口の読みに当たる。この file を消すと、この dir の file の母集団は根の設定へ戻る。
+;;; snapshot = the tool linter_snapshot that assembles the linter's cross-section (a PEP 723 script, with empty dependencies = stdlib only). The commit hook and the pin helper
+;;;   call it via `uv run --script`, and it works even without the repo's Python environment — it runs outside a doeff Program and cannot import doeff handlers (the subprocess_handler that
+;;;   answers ReadEnvironment). The entry point main reads the environment variables (the storage location name, XDG_CACHE_HOME, HOME, and git's GIT_*) exactly
+;;;   once and passes them to the functions below as a mapping (the functions below do not read os.environ).
+;;;   - Excluded rule: DOEFF004 (reading or referencing os.environ directly) — limited to the named module (linter_snapshot).
+;;;   - Forbidden import: doeff modules. If the stdlib-only promise breaks, DOEFF032 turns red.
+;;; How to revert: delete the :exempt line and DOEFF004 applies to the entry-point reads again. If this file is deleted, the files in this dir return to the root's settings for their population.
 (defarchitecture doeff-linter-scripts
   :root "."
   :layers [(layer snapshot
-             :summary "linter の断面を組む stdlib だけの道具 — uv run --script で呼ぶ、Program の外の code"
-             :knows "git・cargo・断面の置き場・環境変数の写像"
-             :does-not-know "doeff の Program・effect・handler"
+             :summary "A stdlib-only tool that assembles the linter's cross-section — invoked with uv run --script, code outside a Program"
+             :knows "git, cargo, the cross-section storage location, the mapping of environment variables"
+             :does-not-know "doeff Programs, effects, handlers"
              :modules [linter_snapshot]
-             :exempt [(rule DOEFF004 "PEP 723 の stdlib だけの script は doeff の Program の外で走り doeff の handler を import できないので、入口の main が環境変数の写像を 1 度だけ読んで下の関数へ渡す")]
+             :exempt [(rule DOEFF004 "A PEP 723 stdlib-only script runs outside a doeff Program and cannot import doeff handlers, so the entry point main reads the environment-variable mapping exactly once and passes it to the functions below")]
              :forbid-modules [doeff doeff_core_effects doeff_hy doeff_vm doeff_agents doeff_cluster])])

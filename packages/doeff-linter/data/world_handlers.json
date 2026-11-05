@@ -1,19 +1,19 @@
 {
- "_about": "doeff の実 I/O の handler の目録— 被せると外の世界(HTTP・file・子 process・実時計・socket・DB・環境変数・thread・cluster の coordinator)に触れる handler と組み立て。linter の DOEFF131・DOEFF133 の相手で、:world-handlers の :wraps はここに在る物だけ。載せない物: 値から答えるだけ(memory・fake・sim・再生)・effect を出し直すだけの翻訳・例外の型。",
+ "_about": "Catalog of doeff's real I/O handlers — handlers and assemblies that, once installed, touch the outside world (HTTP, files, child processes, the real clock, sockets, DBs, environment variables, threads, the cluster coordinator). It is the counterpart of the linter's DOEFF131 and DOEFF133; only the entries here may appear in :wraps of :world-handlers. Not listed: handlers that only answer from values (memory, fake, sim, replay), translations that only re-emit effects, and exception types.",
  "_not_listed": {
-  "doeff_core_effects._handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
-  "doeff_cluster._worker.protocol.status_file:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler(#2466)",
-  "doeff_cluster._record_store.protocol.record_files:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store.entry.main)",
-  "doeff_cluster._worker.protocol.tree_files:tree-files": "木の effect を file system の effect と slog へ出し直すだけ — 本番は os-file-handler・模擬の世界は memory-file-handler が答える(#2468 で本物の答え手を退役)",
-  "doeff_cluster._foundation.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)",
-  "doeff_records._pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
-  "doeff_core_effects._scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない",
-  "doeff_cluster._worker.protocol.world:local-host": "ObserveWorld に各言い換えの観測を問うてまとめるだけ(#2469)",
-  "doeff_cluster._worker.protocol.code_store:code-host": "版ごとのコードの木を子 process と file system の effect へ出し直すだけ — 実 I/O は subprocess-handler・os-file-handler(#2466)",
-  "doeff_cluster._worker.protocol.env_store:env-host": "実行環境の root を子 process と file system の effect へ出し直すだけ — 実 I/O は subprocess-handler・os-file-handler(#2467)",
-  "doeff_cluster._worker.protocol.coordinator_link:coordinator-link": "heartbeat・Program の取り寄せ・名指しの待ちを宛先の部品の上の HttpRequest と file の effect へ出し直すだけ — 実 I/O は http-production-handler・os-file-handler(#2427)",
-  "doeff_cluster._worker.protocol.lease_release:lease-release": "lease の返しを宛先の部品の上の HttpRequest へ出し直すだけ(#2427)",
-  "doeff_cluster._worker.entry.drain_main:coordinator-calls": "drain の問いを宛先の部品の上の HttpRequest へ出し直すだけ(#2427)"
+  "doeff_core_effects._handlers:slog_handler": "only prints to stderr (the touch-target words have no stdout or stderr)",
+  "doeff_cluster._worker.protocol.status_file:status-file": "only re-emits file-system effects (MakeDirectory, WriteText) — real I/O is done by the outer os-file-handler (#2466)",
+  "doeff_cluster._record_store.protocol.record_files:record-files": "only re-emits file-system effects — real I/O is done by the outer os-file-handler (record_store.entry.main)",
+  "doeff_cluster._worker.protocol.tree_files:tree-files": "only re-emits tree effects as file-system effects and slog — in production os-file-handler answers, in the mock world memory-file-handler answers (the real responder was retired in #2468)",
+  "doeff_cluster._foundation.record_handlers:effect-recorder": "the sink is injected (values only for MemorySink) — sending to the store only re-emits HttpRequest (real I/O is done by the outer http-production-handler, #2583)",
+  "doeff_records._pg:pg-records-handler": "only re-emits SqlQuery (the real DB is handled by postgres-sql-handler)",
+  "doeff_core_effects._scheduler:scheduled": "the shared scheduler (laid under every Program, mock ones included) — the environment variable is only an implementation choice and time.monotonic is only a stall watchdog; it does not answer effects from the outside world",
+  "doeff_cluster._worker.protocol.world:local-host": "only asks ObserveWorld for the observation of each rephrasing and gathers them (#2469)",
+  "doeff_cluster._worker.protocol.code_store:code-host": "only re-emits the per-version code tree as child-process and file-system effects — real I/O is done by subprocess-handler and os-file-handler (#2466)",
+  "doeff_cluster._worker.protocol.env_store:env-host": "only re-emits the root of the execution environment as child-process and file-system effects — real I/O is done by subprocess-handler and os-file-handler (#2467)",
+  "doeff_cluster._worker.protocol.coordinator_link:coordinator-link": "only re-emits heartbeat, Program fetching, and named waits as HttpRequest and file effects on the destination part — real I/O is done by http-production-handler and os-file-handler (#2427)",
+  "doeff_cluster._worker.protocol.lease_release:lease-release": "only re-emits the lease return as HttpRequest on the destination part (#2427)",
+  "doeff_cluster._worker.entry.drain_main:coordinator-calls": "only re-emits the drain query as HttpRequest on the destination part (#2427)"
  },
  "handlers": [
   {
@@ -21,28 +21,28 @@
    "touches": [
     "http"
    ],
-   "why": "httpx.AsyncClient で送る(_http_handlers_impl.hy:39)"
+   "why": "sends with httpx.AsyncClient (_http_handlers_impl.hy:39)"
   },
   {
    "handler": "doeff_core_effects._http_handlers:http-production-handler",
    "touches": [
     "http"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_core_effects:http_production_handler",
    "touches": [
     "http"
    ],
-   "why": "http_production_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of http_production_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.http_handlers:http-production-handler",
    "touches": [
     "http"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_core_effects._http_handlers_impl:http-fixture-handler",
@@ -50,7 +50,7 @@
     "http",
     "file"
    ],
-   "why": "record で実送信・fixture の file を読み書き"
+   "why": "sends for real in record mode; reads and writes the fixture file"
   },
   {
    "handler": "doeff_core_effects._http_handlers:http-fixture-handler",
@@ -58,7 +58,7 @@
     "http",
     "file"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_core_effects:http_fixture_handler",
@@ -66,7 +66,7 @@
     "http",
     "file"
    ],
-   "why": "http_fixture_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of http_fixture_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.http_handlers:http-fixture-handler",
@@ -74,28 +74,28 @@
     "http",
     "file"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_core_effects._os_file:os-file-handler",
    "touches": [
     "file"
    ],
-   "why": "os・shutil・tempfile・fcntl で file を読み書き(_os_file.hy:184)"
+   "why": "reads and writes files with os, shutil, tempfile, fcntl (_os_file.hy:184)"
   },
   {
    "handler": "doeff_core_effects:os_file_handler",
    "touches": [
     "file"
    ],
-   "why": "os_file_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of os_file_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.os_file:os-file-handler",
    "touches": [
     "file"
    ],
-   "why": "os_file_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of os_file_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._os_process:subprocess-handler",
@@ -103,7 +103,7 @@
     "process",
     "env"
    ],
-   "why": "subprocess.run・os.environ・socket.gethostname(os_process.hy:73)"
+   "why": "subprocess.run, os.environ, socket.gethostname (os_process.hy:73)"
   },
   {
    "handler": "doeff_core_effects:subprocess_handler",
@@ -111,7 +111,7 @@
     "process",
     "env"
    ],
-   "why": "subprocess_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of subprocess_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.os_process:subprocess-handler",
@@ -119,56 +119,56 @@
     "process",
     "env"
    ],
-   "why": "subprocess.run・os.environ・socket.gethostname(os_process.hy:73)"
+   "why": "subprocess.run, os.environ, socket.gethostname (os_process.hy:73)"
   },
   {
    "handler": "doeff_core_effects._aiohttp_http_server:aiohttp-http-server",
    "touches": [
     "network"
    ],
-   "why": "aiohttp で listen する"
+   "why": "listens with aiohttp"
   },
   {
    "handler": "doeff_core_effects:aiohttp_http_server",
    "touches": [
     "network"
    ],
-   "why": "aiohttp_http_server の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of aiohttp_http_server (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects._aiohttp_ws_client:aiohttp-ws-client",
    "touches": [
     "network"
    ],
-   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ(installer — 被せる実物は下)"
+   "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect (installer — the real one it installs is below)"
   },
   {
    "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-client",
    "touches": [
     "network"
    ],
-   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ(installer — 被せる実物は下)"
+   "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect (installer — the real one it installs is below)"
   },
   {
    "handler": "doeff_core_effects._aiohttp_ws_client:aiohttp-ws-link-handler",
    "touches": [
     "network"
    ],
-   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ"
+   "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect"
   },
   {
    "handler": "doeff_core_effects:aiohttp_ws_link_handler",
    "touches": [
     "network"
    ],
-   "why": "aiohttp_ws_link_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of aiohttp_ws_link_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-link-handler",
    "touches": [
     "network"
    ],
-   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ"
+   "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect"
   },
   {
    "handler": "doeff_core_effects._clickhouse_http_sql:clickhouse-http-sql-handler",
@@ -176,7 +176,7 @@
     "http",
     "db"
    ],
-   "why": "urllib.request.urlopen で POST"
+   "why": "POSTs with urllib.request.urlopen"
   },
   {
    "handler": "doeff_core_effects:clickhouse_http_sql_handler",
@@ -184,7 +184,7 @@
     "http",
     "db"
    ],
-   "why": "clickhouse_http_sql_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of clickhouse_http_sql_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.clickhouse_http_sql:clickhouse-http-sql-handler",
@@ -192,7 +192,7 @@
     "http",
     "db"
    ],
-   "why": "urllib.request.urlopen で POST"
+   "why": "POSTs with urllib.request.urlopen"
   },
   {
    "handler": "doeff_core_effects._postgres_sql:postgres-sql-handler",
@@ -200,7 +200,7 @@
     "db",
     "thread"
    ],
-   "why": "psycopg.connect・BoundedSemaphore"
+   "why": "psycopg.connect, BoundedSemaphore"
   },
   {
    "handler": "doeff_core_effects:postgres_sql_handler",
@@ -208,7 +208,7 @@
     "db",
     "thread"
    ],
-   "why": "postgres_sql_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of postgres_sql_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.postgres_sql:postgres-sql-handler",
@@ -216,7 +216,7 @@
     "db",
     "thread"
    ],
-   "why": "psycopg.connect・BoundedSemaphore"
+   "why": "psycopg.connect, BoundedSemaphore"
   },
   {
    "handler": "doeff_core_effects._pooled_postgres_sql:pooled-postgres-sql-handler",
@@ -224,7 +224,7 @@
     "db",
     "thread"
    ],
-   "why": "Executor の thread で psycopg"
+   "why": "psycopg on an Executor thread"
   },
   {
    "handler": "doeff_core_effects:pooled_postgres_sql_handler",
@@ -232,7 +232,7 @@
     "db",
     "thread"
    ],
-   "why": "pooled_postgres_sql_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of pooled_postgres_sql_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.pooled_postgres_sql:pooled-postgres-sql-handler",
@@ -240,28 +240,28 @@
     "db",
     "thread"
    ],
-   "why": "Executor の thread で psycopg"
+   "why": "psycopg on an Executor thread"
   },
   {
    "handler": "doeff_core_effects._stop_signal_handlers:os-signal-stop-handler",
    "touches": [
     "process"
    ],
-   "why": "signal.signal で SIGINT・SIGTERM を捕まえる"
+   "why": "catches SIGINT and SIGTERM with signal.signal"
   },
   {
    "handler": "doeff_core_effects:os_signal_stop_handler",
    "touches": [
     "process"
    ],
-   "why": "os_signal_stop_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of os_signal_stop_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.stop_signal_handlers:os-signal-stop-handler",
    "touches": [
     "process"
    ],
-   "why": "signal.signal で SIGINT・SIGTERM を捕まえる"
+   "why": "catches SIGINT and SIGTERM with signal.signal"
   },
   {
    "handler": "doeff_core_effects._thread_pool_compute:thread-pool-compute-handler",
@@ -269,7 +269,7 @@
     "thread",
     "clock"
    ],
-   "why": "pool.submit で別 thread の VM。pool の負荷(ReadComputeLoad)の待ちの秒を time.monotonic で測り、process に 1 つの置き場を threading.Lock で pool の thread と共有する(_thread_pool_compute.hy)"
+   "why": "a VM on another thread via pool.submit. Measures the wait seconds of the pool load (ReadComputeLoad) with time.monotonic, and shares the one per-process store with the pool threads via threading.Lock (_thread_pool_compute.hy)"
   },
   {
    "handler": "doeff_core_effects:thread_pool_compute_handler",
@@ -277,7 +277,7 @@
     "thread",
     "clock"
    ],
-   "why": "thread_pool_compute_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of thread_pool_compute_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.thread_pool_compute:thread-pool-compute-handler",
@@ -285,7 +285,7 @@
     "thread",
     "clock"
    ],
-   "why": "thread_pool_compute_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of thread_pool_compute_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._process_meter:process-meter-handler",
@@ -293,7 +293,7 @@
     "thread",
     "clock"
    ],
-   "why": "process に 1 つの計器の置き場を threading.Lock で別の run・thread と共有し、gc.callbacks に繋いだ callback が time.monotonic で GC の停止を測る(process_meter.hy)"
+   "why": "shares the one per-process meter store with other runs and threads via threading.Lock, and a callback hooked into gc.callbacks measures GC pauses with time.monotonic (process_meter.hy)"
   },
   {
    "handler": "doeff_core_effects:process_meter_handler",
@@ -301,7 +301,7 @@
     "thread",
     "clock"
    ],
-   "why": "process_meter_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of process_meter_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.process_meter:process-meter-handler",
@@ -309,49 +309,49 @@
     "thread",
     "clock"
    ],
-   "why": "process に 1 つの計器の置き場を threading.Lock で別の run・thread と共有し、gc.callbacks に繋いだ callback が time.monotonic で GC の停止を測る(process_meter.hy)"
+   "why": "shares the one per-process meter store with other runs and threads via threading.Lock, and a callback hooked into gc.callbacks measures GC pauses with time.monotonic (process_meter.hy)"
   },
   {
    "handler": "doeff_core_effects._process_latest:process-latest-handler",
    "touches": [
     "thread"
    ],
-   "why": "process に 1 つの最新の値の置き場を別の run・thread と共有する(process_latest.hy)"
+   "why": "shares the one per-process store of the latest value with other runs and threads (process_latest.hy)"
   },
   {
    "handler": "doeff_core_effects:process_latest_handler",
    "touches": [
     "thread"
    ],
-   "why": "process_latest_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of process_latest_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.process_latest:process-latest-handler",
    "touches": [
     "thread"
    ],
-   "why": "process に 1 つの最新の値の置き場を別の run・thread と共有する(process_latest.hy)"
+   "why": "shares the one per-process store of the latest value with other runs and threads (process_latest.hy)"
   },
   {
    "handler": "doeff_core_effects._gc_freeze:gc-freeze-handler",
    "touches": [
     "process"
    ],
-   "why": "gc.collect・gc.freeze で process の GC の状態を変える(_gc_freeze.hy)"
+   "why": "changes the process GC state with gc.collect and gc.freeze (_gc_freeze.hy)"
   },
   {
    "handler": "doeff_core_effects:gc_freeze_handler",
    "touches": [
     "process"
    ],
-   "why": "gc_freeze_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of gc_freeze_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.gc_freeze:gc-freeze-handler",
    "touches": [
     "process"
    ],
-   "why": "gc_freeze_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of gc_freeze_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._faulthandler_stack_dump:faulthandler-stack-dump-handler",
@@ -359,7 +359,7 @@
     "thread",
     "file"
    ],
-   "why": "faulthandler.dump_traceback_later の C の thread が期限を数え、過ぎたら sys.stderr の file に全 thread の stack を書く(_faulthandler_stack_dump.hy)"
+   "why": "the C thread of faulthandler.dump_traceback_later counts the deadline and, once past, writes the stacks of all threads to the sys.stderr file (_faulthandler_stack_dump.hy)"
   },
   {
    "handler": "doeff_core_effects:faulthandler_stack_dump_handler",
@@ -367,7 +367,7 @@
     "thread",
     "file"
    ],
-   "why": "faulthandler_stack_dump_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of faulthandler_stack_dump_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.faulthandler_stack_dump:faulthandler-stack-dump-handler",
@@ -375,49 +375,49 @@
     "thread",
     "file"
    ],
-   "why": "faulthandler_stack_dump_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of faulthandler_stack_dump_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._handlers:await_handler",
    "touches": [
     "thread"
    ],
-   "why": "asyncio の loop を daemon thread で起こす"
+   "why": "starts an asyncio loop on a daemon thread"
   },
   {
    "handler": "doeff_core_effects:await_handler",
    "touches": [
     "thread"
    ],
-   "why": "await_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of await_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.handlers:await_handler",
    "touches": [
     "thread"
    ],
-   "why": "await_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of await_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._handlers:env_var_ask",
    "touches": [
     "env"
    ],
-   "why": "os.environ を読む"
+   "why": "reads os.environ"
   },
   {
    "handler": "doeff_core_effects:env_var_ask",
    "touches": [
     "env"
    ],
-   "why": "env_var_ask の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of env_var_ask (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.handlers:env_var_ask",
    "touches": [
     "env"
    ],
-   "why": "env_var_ask の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of env_var_ask — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._cache_handlers:sqlite_cache_handler",
@@ -425,7 +425,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite3.connect の file"
+   "why": "the sqlite3.connect file"
   },
   {
    "handler": "doeff_core_effects:sqlite_cache_handler",
@@ -433,7 +433,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_cache_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of sqlite_cache_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",
@@ -441,7 +441,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_cache_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of sqlite_cache_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._memo_handlers:sqlite_memo_handler",
@@ -449,7 +449,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite3.connect の file"
+   "why": "the sqlite3.connect file"
   },
   {
    "handler": "doeff_core_effects:sqlite_memo_handler",
@@ -457,7 +457,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_memo_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of sqlite_memo_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_core_effects.memo_handlers:sqlite_memo_handler",
@@ -465,21 +465,21 @@
     "db",
     "file"
    ],
-   "why": "sqlite_memo_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
+   "why": "old spelling of sqlite_memo_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_time._handlers.async_time:async_time_handler",
    "touches": [
     "clock"
    ],
-   "why": "asyncio.sleep・datetime.now・time.monotonic(壁時計)"
+   "why": "asyncio.sleep, datetime.now, time.monotonic (wall clock)"
   },
   {
    "handler": "doeff_time:async-time-handler",
    "touches": [
     "clock"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_time._handlers.sync_time:sync_time_handler",
@@ -487,7 +487,7 @@
     "clock",
     "thread"
    ],
-   "why": "time.sleep・threading.Timer"
+   "why": "time.sleep, threading.Timer"
   },
   {
    "handler": "doeff_time:sync-time-handler",
@@ -495,98 +495,98 @@
     "clock",
     "thread"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_cluster._shared.entry.host_reader:host-reader",
    "touches": [
     "env"
    ],
-   "why": "os.environ の DOEFF_WORKER_PROGRAM と子の文脈(foundation の読みを通す — 古い置き場 foundation/host_contract の host-reader は 2026-10-03 に消した)"
+   "why": "DOEFF_WORKER_PROGRAM in os.environ and the child's context (passes the foundation read — host-reader at the old location foundation/host_contract was removed on 2026-10-03)"
   },
   {
    "handler": "doeff_cluster:host_reader",
    "touches": [
     "env"
    ],
-   "why": "host_reader の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of host_reader (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.entry.host_reader:host-reader",
    "touches": [
     "env"
    ],
-   "why": "os.environ の DOEFF_WORKER_PROGRAM と子の文脈(foundation の読みを通す — 古い置き場 foundation/host_contract の host-reader は 2026-10-03 に消した)"
+   "why": "DOEFF_WORKER_PROGRAM in os.environ and the child's context (passes the foundation read — host-reader at the old location foundation/host_contract was removed on 2026-10-03)"
   },
   {
    "handler": "doeff_cluster._foundation.host_contract:os-environ-reader",
    "touches": [
     "env"
    ],
-   "why": "この process の os.environ を読む(host_contract.hy:93)— 値の表だけに答える environ-table-reader は名を分けて載せない(#1536)"
+   "why": "reads this process's os.environ (host_contract.hy:93) — environ-table-reader, which answers only from a table of values, is a separate name and is not listed (#1536)"
   },
   {
    "handler": "doeff_cluster:os_environ_reader",
    "touches": [
     "env"
    ],
-   "why": "os_environ_reader の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of os_environ_reader (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster._foundation.record_handlers:recording-handler",
    "touches": [
     "clock"
    ],
-   "why": "run の名と行の時刻を実時計(time.time)で作る — 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)"
+   "why": "builds the run name and row timestamps from the real clock (time.time) — sending to the store only re-emits HttpRequest (real I/O is done by the outer http-production-handler, #2583)"
   },
   {
    "handler": "doeff_cluster._foundation.kube_handlers:kube-api",
    "touches": [
     "http"
    ],
-   "why": "httpx で kubernetes の API"
+   "why": "the kubernetes API via httpx"
   },
   {
    "handler": "doeff_cluster._shared.protocol.readiness_handlers:readiness-http",
    "touches": [
     "cluster"
    ],
-   "why": "coordinator へ httpx で POST"
+   "why": "POSTs to the coordinator with httpx"
   },
   {
    "handler": "doeff_cluster:readiness_http",
    "touches": [
     "cluster"
    ],
-   "why": "readiness_http の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of readiness_http (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.readiness_handlers:readiness-http",
    "touches": [
     "cluster"
    ],
-   "why": "coordinator へ httpx で POST"
+   "why": "POSTs to the coordinator with httpx"
   },
   {
    "handler": "doeff_cluster._shared.protocol.metrics_handlers:metrics-http",
    "touches": [
     "cluster"
    ],
-   "why": "coordinator へ httpx で POST"
+   "why": "POSTs to the coordinator with httpx"
   },
   {
    "handler": "doeff_cluster:metrics_http",
    "touches": [
     "cluster"
    ],
-   "why": "metrics_http の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of metrics_http (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.metrics_handlers:metrics-http",
    "touches": [
     "cluster"
    ],
-   "why": "coordinator へ httpx で POST"
+   "why": "POSTs to the coordinator with httpx"
   },
   {
    "handler": "doeff_cluster._shared.protocol.shared_handlers:shared-http",
@@ -594,7 +594,7 @@
     "cluster",
     "clock"
    ],
-   "why": "coordinator の board・leases へ httpx・time.sleep の再送"
+   "why": "httpx to the coordinator's board and leases, with time.sleep retries"
   },
   {
    "handler": "doeff_cluster:shared_http",
@@ -602,7 +602,7 @@
     "cluster",
     "clock"
    ],
-   "why": "shared_http の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of shared_http (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.shared_handlers:shared-http",
@@ -610,28 +610,28 @@
     "cluster",
     "clock"
    ],
-   "why": "coordinator の board・leases へ httpx・time.sleep の再送"
+   "why": "httpx to the coordinator's board and leases, with time.sleep retries"
   },
   {
    "handler": "doeff_cluster._shared.protocol.remote:remote-cluster",
    "touches": [
     "cluster"
    ],
-   "why": "TaskClient で coordinator へ"
+   "why": "to the coordinator via TaskClient"
   },
   {
    "handler": "doeff_cluster:remote_cluster",
    "touches": [
     "cluster"
    ],
-   "why": "remote_cluster の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of remote_cluster (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.remote:remote-cluster",
    "touches": [
     "cluster"
    ],
-   "why": "TaskClient で coordinator へ"
+   "why": "to the coordinator via TaskClient"
   },
   {
    "handler": "doeff_cluster._shared.protocol.detached:detached-cluster",
@@ -645,7 +645,7 @@
    "touches": [
     "cluster"
    ],
-   "why": "detached_cluster の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of detached_cluster (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.detached:detached-cluster",
@@ -659,21 +659,21 @@
    "touches": [
     "cluster"
    ],
-   "why": "WarmClient の /warm"
+   "why": "/warm of WarmClient"
   },
   {
    "handler": "doeff_cluster:warm_cluster",
    "touches": [
     "cluster"
    ],
-   "why": "warm_cluster の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of warm_cluster (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.detached:warm-cluster",
    "touches": [
     "cluster"
    ],
-   "why": "WarmClient の /warm"
+   "why": "/warm of WarmClient"
   },
   {
    "handler": "doeff_cluster._foundation.coordinator_inbox:http-requests",
@@ -682,49 +682,49 @@
     "clock",
     "thread"
    ],
-   "why": "本物の HTTP server の thread と queue.get(timeout)"
+   "why": "the thread of a real HTTP server and queue.get(timeout)"
   },
   {
    "handler": "doeff_cluster._foundation.wal_store:wal-store",
    "touches": [
     "file"
    ],
-   "why": "fsync・rename"
+   "why": "fsync, rename"
   },
   {
    "handler": "doeff_cluster._shared.entry.cluster_foundation:with-cluster-handlers",
    "touches": [
     "cluster"
    ],
-   "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
+   "why": "assembly — installs real I/O handlers such as readiness-http, shared-http, remote-cluster"
   },
   {
    "handler": "doeff_cluster:with_cluster_handlers",
    "touches": [
     "cluster"
    ],
-   "why": "with_cluster_handlers の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of with_cluster_handlers (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.entry.cluster_foundation:with-cluster-handlers",
    "touches": [
     "cluster"
    ],
-   "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
+   "why": "assembly — installs real I/O handlers such as readiness-http, shared-http, remote-cluster"
   },
   {
    "handler": "doeff_cluster._shared.entry.cluster_foundation:cluster-handlers",
    "touches": [
     "cluster"
    ],
-   "why": "組み立て — 上の列そのもの"
+   "why": "assembly — the above list itself"
   },
   {
    "handler": "doeff_cluster.shared.entry.cluster_foundation:cluster-handlers",
    "touches": [
     "cluster"
    ],
-   "why": "組み立て — 上の列そのもの"
+   "why": "assembly — the above list itself"
   },
   {
    "handler": "doeff_cluster._shared.entry.client_foundation:with-detached-client",
@@ -732,7 +732,7 @@
     "cluster",
     "env"
    ],
-   "why": "組み立て — 手元の道具の名乗りで detached-cluster を被せる・版の識別に os.environ の DOEFF_RUNTIME_ENV_KEY を読む(#2782)"
+   "why": "assembly — installs detached-cluster under the local tool's identity, and reads DOEFF_RUNTIME_ENV_KEY in os.environ to identify the version (#2782)"
   },
   {
    "handler": "doeff_cluster:with_detached_client",
@@ -740,7 +740,7 @@
     "cluster",
     "env"
    ],
-   "why": "with_detached_client の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+   "why": "entry spelling of with_detached_client (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
    "handler": "doeff_cluster.shared.entry.client_foundation:with-detached-client",
@@ -748,7 +748,7 @@
     "cluster",
     "env"
    ],
-   "why": "組み立て — 手元の道具の名乗りで detached-cluster を被せる・版の識別に os.environ の DOEFF_RUNTIME_ENV_KEY を読む(#2782)"
+   "why": "assembly — installs detached-cluster under the local tool's identity, and reads DOEFF_RUNTIME_ENV_KEY in os.environ to identify the version (#2782)"
   },
   {
    "handler": "doeff_agents._io_handlers:driver-io-handler",
@@ -759,7 +759,7 @@
     "clock",
     "network"
    ],
-   "why": "shutil.which・os.environ・open・socket・subprocess・time"
+   "why": "shutil.which, os.environ, open, socket, subprocess, time"
   },
   {
    "handler": "doeff_agents._sessionhost.substrate:real-substrate",
@@ -769,14 +769,14 @@
     "file",
     "env"
    ],
-   "why": "subprocess.run で tmux・time.sleep"
+   "why": "tmux and time.sleep via subprocess.run"
   },
   {
    "handler": "doeff_agents._sessionhost.substrate_herdr:herdr-substrate",
    "touches": [
     "network"
    ],
-   "why": "unix socket に connect"
+   "why": "connects to a unix socket"
   },
   {
    "handler": "doeff_agents._sessionhost.store:sqlite-session-store",
@@ -784,7 +784,7 @@
     "db",
     "thread"
    ],
-   "why": "sqlite3.connect と単一 writer の thread"
+   "why": "sqlite3.connect and a single-writer thread"
   },
   {
    "handler": "doeff_agents._handlers.claude:claude-handler",
@@ -794,14 +794,14 @@
     "network",
     "thread"
    ],
-   "why": "tmux・~/.claude.json・McpToolServer"
+   "why": "tmux, ~/.claude.json, McpToolServer"
   },
   {
    "handler": "doeff_agents._handlers.codex:codex-handler",
    "touches": [
     "process"
    ],
-   "why": "tmux の new-session・send-keys"
+   "why": "tmux new-session and send-keys"
   },
   {
    "handler": "doeff_agents._handlers.effectful:tmux-agent-defhandler",
@@ -810,7 +810,7 @@
     "network",
     "clock"
    ],
-   "why": "tmux・McpToolServer・time.monotonic"
+   "why": "tmux, McpToolServer, time.monotonic"
   },
   {
    "handler": "doeff_agents._handlers:daemon_agent_handler",
@@ -818,7 +818,7 @@
     "network",
     "process"
    ],
-   "why": "agentd の unix socket・daemon を起こす"
+   "why": "the unix socket of agentd; starts the daemon"
   },
   {
    "handler": "doeff_agents._handlers:claude_agent_runtime_handlers",
@@ -827,7 +827,7 @@
     "file",
     "thread"
    ],
-   "why": "組み立て — doeff_claude_code の claude-code-handler(子 process の claude)を被せる"
+   "why": "assembly — installs claude-code-handler of doeff_claude_code (claude as a child process)"
   },
   {
    "handler": "doeff_agents:claude-agent-runtime-handlers",
@@ -836,7 +836,7 @@
     "file",
     "thread"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_agents._handlers:claude_process_layer_handler",
@@ -845,7 +845,7 @@
     "file",
     "thread"
    ],
-   "why": "層 2 だけ — doeff_claude_code の claude-code-handler(子 process の claude)を作る"
+   "why": "layer 2 only — builds claude-code-handler of doeff_claude_code (claude as a child process)"
   },
   {
    "handler": "doeff_agents:claude-process-layer-handler",
@@ -854,7 +854,7 @@
     "file",
     "thread"
    ],
-   "why": "上の再輸出の綴り"
+   "why": "re-export spelling of the above"
   },
   {
    "handler": "doeff_claude_code._handler:claude-code-handler",
@@ -863,7 +863,7 @@
     "file",
     "thread"
    ],
-   "why": "subprocess.Popen・stdin/stdout の thread・SIGTERM"
+   "why": "subprocess.Popen, stdin/stdout threads, SIGTERM"
   },
   {
    "handler": "doeff_docker._handlers.shell:shell-run-handler",
@@ -881,7 +881,7 @@
     "thread",
     "clock"
    ],
-   "why": "workspace_handler・exec_handler・agentd"
+   "why": "workspace_handler, exec_handler, agentd"
   },
   {
    "handler": "doeff_conductor._handlers.utils:make_offloaded_scheduled_handler",
@@ -897,7 +897,7 @@
     "process",
     "clock"
    ],
-   "why": "httpx・subprocess.Popen・time.sleep"
+   "why": "httpx, subprocess.Popen, time.sleep"
   },
   {
    "handler": "doeff_agentic._handlers.tmux:tmux_handler",
@@ -905,7 +905,7 @@
     "process",
     "clock"
    ],
-   "why": "subprocess.run・time.sleep"
+   "why": "subprocess.run, time.sleep"
   },
   {
    "handler": "doeff_agentic._handlers.production:agentic_effectful_handlers",
@@ -914,14 +914,14 @@
     "file",
     "clock"
    ],
-   "why": "tmux・state_dir・time.sleep"
+   "why": "tmux, state_dir, time.sleep"
   },
   {
    "handler": "doeff_git._handlers.production:production_handlers",
    "touches": [
     "process"
    ],
-   "why": "git と gh を subprocess.run"
+   "why": "runs git and gh via subprocess.run"
   },
   {
    "handler": "doeff_flow._handlers.production:production_handlers",
@@ -930,7 +930,7 @@
     "env",
     "clock"
    ],
-   "why": "JSONL の追記・DOEFF_FLOW_TRACE_DIR"
+   "why": "JSONL appends, DOEFF_FLOW_TRACE_DIR"
   },
   {
    "handler": "doeff_jev._handlers.journal:journal_handler",
@@ -938,7 +938,7 @@
     "file",
     "clock"
    ],
-   "why": "open(\"a\")・time.strftime"
+   "why": "open(\"a\"), time.strftime"
   },
   {
    "handler": "doeff_secret._handlers:env_var_handler",
@@ -959,70 +959,70 @@
    "touches": [
     "http"
    ],
-   "why": "Secret Manager の client"
+   "why": "the Secret Manager client"
   },
   {
    "handler": "doeff_gemini._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
-   "why": "google.genai の SDK を Await"
+   "why": "Awaits the google.genai SDK"
   },
   {
    "handler": "doeff_gemini._handlers.production:gemini_production_handler",
    "touches": [
     "http"
    ],
-   "why": "同上"
+   "why": "same as above"
   },
   {
    "handler": "doeff_gemini._handlers.production:gemini_image_handler",
    "touches": [
     "http"
    ],
-   "why": "同上"
+   "why": "same as above"
   },
   {
    "handler": "doeff_openai._handlers.production:openai_production_handler",
    "touches": [
     "http"
    ],
-   "why": "OpenAI の SDK を Await"
+   "why": "Awaits the OpenAI SDK"
   },
   {
    "handler": "doeff_openai._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
-   "why": "同上"
+   "why": "same as above"
   },
   {
    "handler": "doeff_openrouter._handlers.production:openrouter_production_handler",
    "touches": [
     "http"
    ],
-   "why": "OpenRouter の SDK を Await"
+   "why": "Awaits the OpenRouter SDK"
   },
   {
    "handler": "doeff_openrouter._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
-   "why": "同上"
+   "why": "same as above"
   },
   {
    "handler": "doeff_seedream._handlers.production:seedream_image_handler",
    "touches": [
     "http"
    ],
-   "why": "Seedream の SDK を Await"
+   "why": "Awaits the Seedream SDK"
   },
   {
    "handler": "doeff_seedream._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
-   "why": "同上"
+   "why": "same as above"
   }
  ]
 }

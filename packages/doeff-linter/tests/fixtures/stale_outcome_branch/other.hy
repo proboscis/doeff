@@ -1,4 +1,4 @@
-;;; DOEFF175 の検体 — 別の module の同じ名の型(app.effects.Missing とは別の型。宣言した方だけが不在の型)。
+;;; Fixture for DOEFF175 — a type with the same name in a different module (distinct from app.effects.Missing; only the declared one is the absent type).
 (require doeff-hy.record [defrecord])
 
 

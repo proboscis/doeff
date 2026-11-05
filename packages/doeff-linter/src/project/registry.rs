@@ -1,6 +1,6 @@
-//! 既知の破れの登録簿を読む — 1 鍵 1 file の dir(中の `*.txt` の 1 行目が鍵)と、1 行 1 鍵の file。
-//! 読めない dir・file は止めずに理由を返す(登録簿が読めないことを緑にしないため、呼び手は errors に出す)。無い dir は空の登録簿
-//! (知らせ notes — 最後の行を消すと git が dir ごと消すため)。
+//! Reads the registries of known breaches -- a dir of one key per file (the first line of each `*.txt` inside is the key), and a file of one key per line.
+//! A dir or file that cannot be read is reported with its reason without stopping (so that an unreadable registry is not made green, the caller puts it in errors). A missing dir is an empty registry
+//! (a notice in notes -- because deleting the last line makes git delete the dir itself).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -9,19 +9,19 @@ use serde::{Deserialize, Serialize};
 
 use super::{bulk_read, dir_stamp};
 
-/// 読んだ登録簿(鍵の集合)と、読めなかった理由。
+/// The registry that was read (a set of keys) and the reasons for what could not be read.
 #[derive(Debug, Default, Clone)]
 pub struct Registry {
     pub keys: BTreeSet<String>,
-    /// 鍵 → 載った登録簿の file(root からの綴り — DOEFF166 の当たらない行の知らせが消す file を名指す)。
+    /// Key -> the registry file it appears in (spelled from the root -- the notice for an unmatched line in DOEFF166 names the file to delete).
     pub origins: BTreeMap<String, String>,
     pub problems: Vec<String>,
-    /// 読みの誤りではない知らせ(無い dir を空の登録簿として読んだ)。
+    /// Notices that are not read errors (a missing dir was read as an empty registry).
     pub notes: Vec<String>,
 }
 
 impl Registry {
-    /// root からの相対の dir と file の登録簿を全部読む。
+    /// Reads all the registries of dirs and files relative to root.
     pub fn load(root: &Path, dirs: &[String], files: &[String]) -> Registry {
         let mut registry = Registry::default();
         for dir in dirs {
@@ -33,25 +33,25 @@ impl Registry {
         registry
     }
 
-    /// 1 鍵 1 file の dir を読む(`*.txt` の 1 行目が鍵)。
+    /// Reads a dir of one key per file (the first line of each `*.txt` is the key).
     ///
-    /// 無い dir は空の登録簿として読む(知らせを 1 行)。登録簿は縮める向きの表で、最後の 1 行を消すと git は
-    /// 空の dir を持たないので dir ごと消える — それは正しい操作なので読めないとしない。登録簿は既知の当たりを緩めるだけの表なので、
-    /// 無い(綴りの誤りを含む)dir を空と読んでも判定は厳しい側にしか倒れない(載っていたはずの当たりは新しい当たりとして出る)。
+    /// A missing dir is read as an empty registry (one notice line). The registry is a table that only shrinks, and when the last line is deleted git does not keep
+    /// an empty dir, so the dir disappears with it -- that is a correct operation, so it is not treated as unreadable. The registry is a table that only loosens known findings, so
+    /// even reading a missing dir (including a misspelled one) as empty can only tip the verdict toward the stricter side (findings that should have been listed show up as new findings).
     fn read_dir(&mut self, root: &Path, path: &Path, shown: &str) {
         if !path.exists() {
-            self.notes.push(format!("登録簿の dir {} が無い — 空の登録簿として読んだ", shown));
+            self.notes.push(format!("registry dir {} does not exist -- read as an empty registry", shown));
             return;
         }
         let files = match txt_files(path) {
             Ok(files) => files,
             Err(error) => {
-                self.problems.push(format!("登録簿の dir {} を読めない: {}", shown, error));
+                self.problems.push(format!("cannot read registry dir {}: {}", shown, error));
                 return;
             }
         };
-        // 1 鍵 1 file の dir は数百 file になる — 前の実行と(名・大きさ・更新時刻)が同じなら中身を読まずに前の読みを使い(`dir_stamp`)、
-        // 読む時は冷えた作業木で 1 file ごとに disk を待たないよう重ねる。
+        // A dir of one key per file runs to hundreds of files -- if (name, size, mtime) match the previous run, the previous read is used without reading the contents (`dir_stamp`);
+        // when reading, waits are overlapped so a cold working tree does not wait on disk file by file.
         let read = dir_stamp::remembered(root, "registry-dir", &files, || read_key_files(&files));
         let shown = shown.trim_end_matches('/');
         for (key, name) in read.keys {
@@ -61,7 +61,7 @@ impl Registry {
         self.problems.extend(read.problems);
     }
 
-    /// 1 行 1 鍵の file を読む(空行と `#` で始まる行は飛ばす)。
+    /// Reads a file of one key per line (blank lines and lines starting with `#` are skipped).
     fn read_list(&mut self, path: &Path, shown: &str) {
         match std::fs::read_to_string(path) {
             Ok(text) => {
@@ -70,47 +70,47 @@ impl Registry {
                     self.origins.insert(line.to_string(), shown.to_string());
                 }
             }
-            Err(error) => self.problems.push(format!("登録簿の file {} を読めない: {}", shown, error)),
+            Err(error) => self.problems.push(format!("cannot read registry file {}: {}", shown, error)),
         }
     }
 }
 
-/// 人が判定した鍵の一覧(1 鍵 1 file の dir・`*.txt` の 1 行目が鍵・2 行目から後が判定の理由)— 意味の規則の誤判定の一覧と正例の一覧。
-/// 理由の無い file は判定として読まない(理由の書けない判定を黙って効かせない)。
+/// A list of keys judged by a person (a dir of one key per file; the first line of each `*.txt` is the key, and line 2 onward is the reason for the judgment) -- the list of misjudgments and the list of positive examples of the semantic rules.
+/// A file without a reason is not read as a judgment (a judgment that cannot state its reason is not silently allowed to take effect).
 #[derive(Debug, Default, Clone)]
 pub struct JudgedKeys {
-    /// 鍵 → 判定の理由。
+    /// Key -> reason for the judgment.
     pub reasons: BTreeMap<String, String>,
     pub problems: Vec<String>,
-    /// 読みの誤りではない知らせ(`Absent::Empty` の一覧の無い dir を空として読んだ)。
+    /// Notices that are not read errors (a missing dir for an `Absent::Empty` list was read as empty).
     pub notes: Vec<String>,
 }
 
-/// 一覧の dir が無い時の読み方(呼び手が一覧の性質で選ぶ)。
+/// How to read when the list's dir is missing (the caller chooses by the nature of the list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Absent {
-    /// 読めない(errors に出す)— 宣言の一覧(外の世界の効果・反例)と Jev の判定の一覧。無い dir を空と読むと、綴りの誤りで宣言が
-    /// 黙って消える。
+    /// Unreadable (put in errors) -- the declaration lists (effects of the outside world, counterexamples) and the list of Jev's judgments. If a missing dir were read as empty, a misspelling would
+    /// silently make the declarations disappear.
     Unreadable,
-    /// 空の一覧(notes に 1 行)— 違反を固定する縮める向きの表(`:unserved`)。最後の行を消すと git は空の dir を持たないので dir ごと
-    /// 消える — それは正しい操作(登録簿の Registry::read_dir と同じ)。空と読んでも判定は厳しい側にしか
-    /// 倒れない(載っていたはずの不足は当たりとして出る)。
+    /// An empty list (one line in notes) -- a table that only shrinks and pins down violations (`:unserved`). When the last line is deleted git does not keep an empty dir, so the dir
+    /// disappears with it -- that is a correct operation (same as Registry::read_dir of the registry). Even reading it as empty, the verdict
+    /// can only tip toward the stricter side (shortfalls that should have been listed show up as findings).
     Empty,
 }
 
 impl JudgedKeys {
-    /// root からの相対の dir を全部読む。無い dir は `absent` の読み方で読む。
+    /// Reads all dirs relative to root. A missing dir is read the way `absent` says.
     pub fn load(root: &Path, dirs: &[String], absent: Absent) -> JudgedKeys {
         let mut judged = JudgedKeys::default();
         for dir in dirs {
             if absent == Absent::Empty && !root.join(dir).exists() {
-                judged.notes.push(format!("判定の一覧の dir {} が無い — 空の一覧として読んだ", dir));
+                judged.notes.push(format!("judgment list dir {} does not exist -- read as an empty list", dir));
                 continue;
             }
             let files = match txt_files(&root.join(dir)) {
                 Ok(files) => files,
                 Err(error) => {
-                    judged.problems.push(format!("判定の一覧の dir {} を読めない: {}", dir, error));
+                    judged.problems.push(format!("cannot read judgment list dir {}: {}", dir, error));
                     continue;
                 }
             };
@@ -124,15 +124,15 @@ impl JudgedKeys {
     }
 }
 
-/// 1 鍵 1 file の登録簿の dir を読んだ結果 — `*.txt` の file の順の (鍵, file の名) と、読めなかった理由。dir の指紋で覚える物(`dir_stamp`)。
+/// The result of reading a one-key-per-file registry dir -- (key, file name) in the order of the `*.txt` files, and the reasons for what could not be read. Something remembered by the dir's fingerprint (`dir_stamp`).
 #[derive(Serialize, Deserialize)]
 struct KeyFiles {
     keys: Vec<(String, String)>,
     problems: Vec<String>,
 }
 
-/// 登録簿の file の中身を実際に読む(読みの待ちを重ねる)。結果と「覚えてよいか」— 読めない理由は file の絶対 path を持つので、理由が在る読みは覚えない
-/// (置き場は根の絶対 path を持つ値を断る)。
+/// Actually reads the contents of the registry files (overlapping the read waits). Returns the result and "whether it may be remembered" -- the reasons for unreadable files contain the file's absolute path, so a read with reasons is not remembered
+/// (the store refuses values that contain the root's absolute path).
 fn read_key_files(files: &[PathBuf]) -> (KeyFiles, bool) {
     let texts = crate::timing::timed("registry.read", || bulk_read::fan_out(files, |file| std::fs::read_to_string(file)));
     let mut read = KeyFiles { keys: Vec::new(), problems: Vec::new() };
@@ -143,23 +143,23 @@ fn read_key_files(files: &[PathBuf]) -> (KeyFiles, bool) {
                     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     read.keys.push((key.to_string(), name));
                 }
-                None => read.problems.push(format!("登録簿の file {} の 1 行目が空", file.display())),
+                None => read.problems.push(format!("line 1 of registry file {} is empty", file.display())),
             },
-            Err(error) => read.problems.push(format!("登録簿の file {} を読めない: {}", file.display(), error)),
+            Err(error) => read.problems.push(format!("cannot read registry file {}: {}", file.display(), error)),
         }
     }
     let keep = read.problems.is_empty();
     (read, keep)
 }
 
-/// 人が判定した鍵の dir を読んだ結果 — `*.txt` の file の順の (鍵, 理由) と、読めなかった理由。`KeyFiles` と同じく dir の指紋で覚える物。
+/// The result of reading a dir of person-judged keys -- (key, reason) in the order of the `*.txt` files, and the reasons for what could not be read. Like `KeyFiles`, something remembered by the dir's fingerprint.
 #[derive(Serialize, Deserialize)]
 struct JudgedFiles {
     reasons: Vec<(String, String)>,
     problems: Vec<String>,
 }
 
-/// 判定の一覧の file の中身を実際に読む。結果と「覚えてよいか」(`read_key_files` と同じ — 読めない理由が在る読みは覚えない)。
+/// Actually reads the contents of the judgment list files. Returns the result and "whether it may be remembered" (same as `read_key_files` -- a read with unreadable reasons is not remembered).
 fn read_judged_files(files: &[PathBuf]) -> (JudgedFiles, bool) {
     let texts = crate::timing::timed("judged.read", || bulk_read::fan_out(files, |file| std::fs::read_to_string(file)));
     let mut read = JudgedFiles { reasons: Vec::new(), problems: Vec::new() };
@@ -167,7 +167,7 @@ fn read_judged_files(files: &[PathBuf]) -> (JudgedFiles, bool) {
         let text = match text {
             Ok(text) => text,
             Err(error) => {
-                read.problems.push(format!("判定の一覧の file {} を読めない: {}", file.display(), error));
+                read.problems.push(format!("cannot read judgment list file {}: {}", file.display(), error));
                 continue;
             }
         };
@@ -175,8 +175,8 @@ fn read_judged_files(files: &[PathBuf]) -> (JudgedFiles, bool) {
         let key = lines.next().map(str::trim).unwrap_or("");
         let reason = lines.map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join(" ");
         match (key.is_empty(), reason.is_empty()) {
-            (true, _) => read.problems.push(format!("判定の一覧の file {} の 1 行目(鍵)が空", file.display())),
-            (false, true) => read.problems.push(format!("判定の一覧の file {} に判定の理由(2 行目から後)が無い — 読まない", file.display())),
+            (true, _) => read.problems.push(format!("line 1 (the key) of judgment list file {} is empty", file.display())),
+            (false, true) => read.problems.push(format!("judgment list file {} has no reason for the judgment (line 2 onward) -- not read", file.display())),
             (false, false) => read.reasons.push((key.to_string(), reason)),
         }
     }
@@ -184,7 +184,7 @@ fn read_judged_files(files: &[PathBuf]) -> (JudgedFiles, bool) {
     (read, keep)
 }
 
-/// dir の中の `*.txt` を名の順に並べる。
+/// Lists the `*.txt` files in a dir in name order.
 fn txt_files(path: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut files: Vec<_> = std::fs::read_dir(path)?
         .filter_map(Result::ok)
@@ -204,14 +204,14 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let table = dir.path().join("BREACHES");
         std::fs::create_dir(&table).unwrap();
-        std::fs::write(table.join("aaa.txt"), "a.hy::rule::x\n理由\n").unwrap();
+        std::fs::write(table.join("aaa.txt"), "a.hy::rule::x\nreason\n").unwrap();
         std::fs::write(table.join(".keep"), "").unwrap();
-        std::fs::write(dir.path().join("keys.txt"), "# 註\n\nb.hy::rule\n").unwrap();
+        std::fs::write(dir.path().join("keys.txt"), "# comment\n\nb.hy::rule\n").unwrap();
         let registry = Registry::load(dir.path(), &["BREACHES".to_string(), "MISSING".to_string()], &["keys.txt".to_string()]);
         assert!(registry.keys.contains("a.hy::rule::x"));
         assert!(registry.keys.contains("b.hy::rule"));
         assert_eq!(registry.keys.len(), 2);
-        // 最後の行を消して git が dir ごと消した登録簿は、読めないではなく空(知らせ 1 行)。
+        // A registry whose last line was deleted so git removed the dir itself is empty, not unreadable (one notice line).
         assert!(registry.problems.is_empty(), "{:?}", registry.problems);
         assert_eq!(registry.notes.len(), 1);
         assert!(registry.notes[0].contains("MISSING"));
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn a_registry_path_that_is_not_a_readable_dir_is_still_a_problem() {
-        // 反例: 在るのに dir として読めない(file が置かれている)登録簿は、空と読まずに読めないとして出す。
+        // Counterexample: a registry that exists but cannot be read as a dir (a file is placed there) is reported as unreadable, not read as empty.
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("BREACHES"), "a.hy::rule::x\n").unwrap();
         let registry = Registry::load(dir.path(), &["BREACHES".to_string()], &[]);
@@ -233,19 +233,19 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let list = dir.path().join("FALSE");
         std::fs::create_dir(&list).unwrap();
-        std::fs::write(list.join("a.txt"), "a.hy::DOEFF201::f\n行の形を読むだけ\n業務の判断ではない\n").unwrap();
+        std::fs::write(list.join("a.txt"), "a.hy::DOEFF201::f\nonly reads the shape of the line\nnot a business judgment\n").unwrap();
         std::fs::write(list.join("b.txt"), "b.hy::DOEFF201::g\n\n").unwrap();
         let judged = JudgedKeys::load(dir.path(), &["FALSE".to_string(), "MISSING".to_string()], Absent::Unreadable);
-        assert_eq!(judged.reasons.get("a.hy::DOEFF201::f").map(String::as_str), Some("行の形を読むだけ 業務の判断ではない"));
-        assert_eq!(judged.reasons.len(), 1, "理由の無い判定は読まない");
+        assert_eq!(judged.reasons.get("a.hy::DOEFF201::f").map(String::as_str), Some("only reads the shape of the line not a business judgment"));
+        assert_eq!(judged.reasons.len(), 1, "a judgment without a reason is not read");
         assert_eq!(judged.problems.len(), 2);
-        assert!(judged.problems.iter().any(|p| p.contains("理由")));
-        assert!(judged.problems.iter().any(|p| p.contains("MISSING")), "宣言の一覧の無い dir は読めない");
+        assert!(judged.problems.iter().any(|p| p.contains("reason")));
+        assert!(judged.problems.iter().any(|p| p.contains("MISSING")), "a missing dir for a declaration list is unreadable");
         assert!(judged.notes.is_empty());
     }
 
-    /// 1 鍵 1 file の dir は、冷えた作業木で 1 file ごとに disk を待つので、読みの待ちを重ねる(447 file の登録簿を
-    /// 順に読むと、混んだ Pod の冷えた作業木で中央値 2.4 秒かかった)。答えは順に読んだ時と同じで、読めない file の知らせは file の順。
+    /// A dir of one key per file waits on disk file by file in a cold working tree, so the read waits are overlapped (reading a 447-file registry
+    /// sequentially took a median of 2.4 seconds in a cold working tree on a busy Pod). The answer is the same as reading sequentially, and notices for unreadable files are in file order.
     #[test]
     fn a_dir_of_one_key_files_is_read_with_overlapping_waits_and_answers_in_file_order() {
         use super::super::bulk_read::watch::watching;
@@ -253,19 +253,19 @@ mod tests {
         let table = dir.path().join("BREACHES");
         std::fs::create_dir(&table).unwrap();
         for n in 0..60 {
-            std::fs::write(table.join(format!("k{n:02}.txt")), format!("app/f{n}.hy::DOEFF124::g{n}\n理由\n")).unwrap();
+            std::fs::write(table.join(format!("k{n:02}.txt")), format!("app/f{n}.hy::DOEFF124::g{n}\nreason\n")).unwrap();
         }
-        std::fs::write(table.join("k10a.txt"), "\n理由\n").unwrap(); // 1 行目が空
-        std::fs::create_dir(table.join("k20a.txt")).unwrap(); // file として読めない
-        std::fs::write(table.join("k30a.txt"), [0xff, 0xfe, b'\n']).unwrap(); // UTF-8 でない
+        std::fs::write(table.join("k10a.txt"), "\nreason\n").unwrap(); // line 1 is empty
+        std::fs::create_dir(table.join("k20a.txt")).unwrap(); // cannot be read as a file
+        std::fs::write(table.join("k30a.txt"), [0xff, 0xfe, b'\n']).unwrap(); // not UTF-8
         let (registry, peak) = watching(std::time::Duration::from_millis(20), || Registry::load(dir.path(), &["BREACHES".to_string()], &[]));
-        assert!(peak >= 8, "登録簿の読みの待ちが重なっていない(同時に進んだ最大 {peak} 件)");
+        assert!(peak >= 8, "registry read waits are not overlapping (max in flight at once: {peak})");
         assert_eq!(registry.keys.len(), 60);
         assert_eq!(registry.origins.get("app/f7.hy::DOEFF124::g7").map(String::as_str), Some("BREACHES/k07.txt"));
         let order: Vec<&str> = ["k10a.txt", "k20a.txt", "k30a.txt"].to_vec();
         assert_eq!(registry.problems.len(), 3, "{:?}", registry.problems);
         for (problem, name) in registry.problems.iter().zip(order) {
-            assert!(problem.contains(name), "{problem} は {name} の知らせのはず(file の順)");
+            assert!(problem.contains(name), "{problem} should be the notice for {name} (file order)");
         }
     }
 
@@ -276,17 +276,17 @@ mod tests {
         let list = dir.path().join("FALSE");
         std::fs::create_dir(&list).unwrap();
         for n in 0..40 {
-            std::fs::write(list.join(format!("j{n:02}.txt")), format!("a.hy::DOEFF201::f{n}\n判定の理由 {n}\n")).unwrap();
+            std::fs::write(list.join(format!("j{n:02}.txt")), format!("a.hy::DOEFF201::f{n}\njudgment reason {n}\n")).unwrap();
         }
         let (judged, peak) = watching(std::time::Duration::from_millis(20), || JudgedKeys::load(dir.path(), &["FALSE".to_string()], Absent::Unreadable));
-        assert!(peak >= 8, "判定の一覧の読みの待ちが重なっていない(同時に進んだ最大 {peak} 件)");
+        assert!(peak >= 8, "judgment list read waits are not overlapping (max in flight at once: {peak})");
         assert_eq!(judged.reasons.len(), 40);
-        assert_eq!(judged.reasons.get("a.hy::DOEFF201::f5").map(String::as_str), Some("判定の理由 5"));
+        assert_eq!(judged.reasons.get("a.hy::DOEFF201::f5").map(String::as_str), Some("judgment reason 5"));
         assert!(judged.problems.is_empty(), "{:?}", judged.problems);
     }
 
-    /// 縮める向きの表(Absent::Empty)の無い dir は空の一覧(知らせ 1 行・読みの誤りにしない)。鍵を 1 つ足せば
-    /// 今までどおり効く。
+    /// A missing dir of a shrinking table (Absent::Empty) is an empty list (one notice line, not a read error). Adding one key
+    /// makes it take effect as before.
     #[test]
     fn an_absent_shrinking_list_reads_as_empty_and_one_added_key_counts() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -297,9 +297,9 @@ mod tests {
         assert!(absent.notes[0].contains("UNSERVED"));
         let list = dir.path().join("UNSERVED");
         std::fs::create_dir(&list).unwrap();
-        std::fs::write(list.join("a.txt"), "app.orders.intent.Send\n#1 で書く\n").unwrap();
+        std::fs::write(list.join("a.txt"), "app.orders.intent.Send\nwrite in #1\n").unwrap();
         let one = JudgedKeys::load(dir.path(), &["UNSERVED".to_string()], Absent::Empty);
-        assert_eq!(one.reasons.get("app.orders.intent.Send").map(String::as_str), Some("#1 で書く"));
+        assert_eq!(one.reasons.get("app.orders.intent.Send").map(String::as_str), Some("write in #1"));
         assert!(one.problems.is_empty() && one.notes.is_empty());
     }
 }

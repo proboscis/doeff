@@ -1,9 +1,9 @@
-//! 位置の変換 — byte の位置と、エディタの位置(0 始まりの行・UTF-16 の code unit の列)の行き来。
-//! byte → UTF-16 は doeff-indexer の `LineIndex`(hy-index の位置と同じ単位)を使う。
+//! Position conversion — moving between byte positions and editor positions (0-based line, column in UTF-16 code units).
+//! byte -> UTF-16 uses doeff-indexer's `LineIndex` (the same unit as hy-index positions).
 
 pub use doeff_indexer::hy_index::{LineIndex, Position, Range};
 
-/// エディタの位置を byte の位置へ戻す(行や列が source の外なら、その行の終わりか source の終わりに寄せる)。
+/// Converts an editor position back to a byte position (if the line or column is outside the source, clamps to the end of that line or the end of the source).
 pub fn offset_of(src: &str, position: Position) -> usize {
     let mut line_start = 0usize;
     for _ in 0..position.line {
@@ -23,7 +23,7 @@ pub fn offset_of(src: &str, position: Position) -> usize {
     line_end
 }
 
-/// byte の位置を含む行の、その位置から行末までの範囲(列の取れない規則の違反の位置)。
+/// The range from a byte position to the end of its line (the violation position for rules that cannot get a column).
 pub fn line_range(src: &str, offset: usize) -> Range {
     let lines = LineIndex::new(src);
     let mut offset = offset.min(src.len());
@@ -35,7 +35,7 @@ pub fn line_range(src: &str, offset: usize) -> Range {
     lines.range(offset, line_end)
 }
 
-/// 1 行目の頭から行末までの範囲(file 全体に掛かる違反の位置)。
+/// The range from the start of the first line to its end (the violation position for violations that apply to the whole file).
 pub fn first_line_range(src: &str) -> Range {
     line_range(src, 0)
 }
@@ -50,7 +50,7 @@ mod tests {
         let lines = LineIndex::new(src);
         let at = src.find("httpx").unwrap();
         let position = lines.position(at);
-        // 2 行目: "(import 外.世界 [" は UTF-16 で 14 code unit。
+        // Line 2: "(import 外.世界 [" is 14 UTF-16 code units.
         assert_eq!(position, Position { line: 1, character: 14 });
         assert_eq!(offset_of(src, position), at);
         let emoji = "x = \"😀\"; y\n";
@@ -71,8 +71,8 @@ mod tests {
         assert_eq!(offset_of(src, Position { line: 9, character: 0 }), src.len());
     }
 
-    /// 行の表から戻す `LineIndex::offset` は、source の頭から数える `offset_of` と同じ答えを返す —
-    /// 日本語・絵文字の列、行の外の列、source の外の行、末尾の改行の後の行も含めて。
+    /// `LineIndex::offset`, which maps back from the line table, returns the same answer as `offset_of`, which counts from the start of the source —
+    /// including columns of Japanese text and emoji, columns beyond the line, lines beyond the source, and the line after a trailing newline.
     #[test]
     fn line_index_offset_agrees_with_offset_of() {
         for src in ["(setv 名前 1)\n(import 外.世界 [httpx])\n", "x = \"😀\"; y\nz", "abc\r\ndef", "", "\n\n", "末尾に改行なし"] {
@@ -80,7 +80,7 @@ mod tests {
             for line in 0..5u32 {
                 for character in 0..20u32 {
                     let p = Position { line, character };
-                    assert_eq!(lines.offset(p), offset_of(src, p), "{src:?} の {p:?}");
+                    assert_eq!(lines.offset(p), offset_of(src, p), "{src:?} at {p:?}");
                 }
             }
         }

@@ -1,5 +1,5 @@
 {
-  "about": "DOEFF002 が「継承元(repo の外)の class が自分で持つ属性」と「その class が自分で置く属性」を分けるための表(rules::class_inheritance)。名は import から解いた完全な綴り(`from textual.app import App` の App は `textual.app.App`)。",
+  "about": "Table that lets DOEFF002 separate \"attributes that a base class (outside the repo) owns itself\" from \"attributes that the class places itself\" (rules::class_inheritance). Names are the full spelling resolved from imports (the App in `from textual.app import App` is `textual.app.App`).",
   "transparent_bases": [
     "object",
     "builtins.object",
@@ -8,10 +8,10 @@
     "typing.Protocol",
     "typing_extensions.Protocol"
   ],
-  "transparent_bases_about": "実体の属性を 1 つも持たないと分かっている基底。これだけを継承元に持つ class は、継承元が持つ属性の無い class と同じに読む(基底が無い class と同じく、init の外で初めて置いた属性にも鳴らす)。",
+  "transparent_bases_about": "Bases known to have no instance attributes at all. A class whose only bases are these is read the same as a class with no base attributes (and, as for a class with no base, it is reported for attributes first assigned outside init).",
   "framework_attributes": {
     "textual.app.App": ["title", "sub_title"],
     "textual.screen.Screen": ["title", "sub_title"]
   },
-  "framework_attributes_about": "基底が持つと分かっている属性(基底の属性の全部ではない — 載っていても、その基底はほかの属性を持ちうる物として読む)。framework は subclass がその名へ書くことを前提にしている(Textual の `self.sub_title = ...` は header の表示を変える)ので、名を `_mut_` に変えると動かなくなる。subclass が `__init__` でも置いていても、継承元の属性への書きとして鳴らさない。載せる物は framework の source で、その名が基底の class に宣言され、利用者が書く口として文書化されていることを確かめた物だけ。"
+  "framework_attributes_about": "Attributes known to be owned by the base (not all of the base's attributes -- even when listed, the base is read as possibly having other attributes). The framework expects subclasses to write to these names (Textual's `self.sub_title = ...` changes the header display), so renaming them to `_mut_` would break it. Even when a subclass also places them in `__init__`, they are not reported as writes to a base attribute. Only entries are listed for which the framework's source was checked to declare the name in the base class and to document it as an interface for users to write."
 }

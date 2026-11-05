@@ -1,17 +1,17 @@
-//! DOEFF106 の Python の枝: 層の置き場の `.py` の file の環境変数の読み(`os.environ`・`os.getenv`)を見つける(
-//! #1898 の子 (b))。Hy の file の生の副作用は Hy の定義の索引(hy_index の raw_catalog)が集めるが、Python の file はその索引の外で、
-//! 業務の層の `.py` が環境変数を読んでも何も当たらなかった。
+//! Python branch of DOEFF106: finds environment-variable reads (`os.environ`, `os.getenv`) in `.py` files under the layer roots
+//! (child (b) of #1898). Raw side effects in Hy files are collected by the Hy definition index (raw_catalog of hy_index), but Python files lie outside that index,
+//! so nothing was flagged when a business-layer `.py` read an environment variable.
 //!
-//! 読みの位置は Python の字句(rustpython の lexer)で探す — 文字列と註の中は別の字句なので数えない。当てる形:
-//!   * `os.environ`・`os.getenv`(`import os as o` の別名 `o.environ` も)
-//!   * `from os import environ` / `getenv`(`as` の別名も)の後の素の名 `environ`・`getenv`
+//! Read positions are found with Python tokens (the rustpython lexer) — strings and comments are separate tokens and are not counted. Forms matched:
+//!   * `os.environ`, `os.getenv` (also the alias `o.environ` from `import os as o`)
+//!   * the bare names `environ` / `getenv` after `from os import environ` / `getenv` (also `as` aliases)
 //!
-//! どの名が os・os.environ・os.getenv を指すかは、DOEFF004 と同じ表(utils の OsEnvNames — 構文木の import 文から作る)で解く。
-//! 以前は字句の並びから別名を集め、`import json, os as o`(os が 2 番目以降)の o を見落とし、`from pkg import os as o` の o を
-//! os と見ていた。import 文の中の字句は読みでないので数えない。
+//! Which names refer to os, os.environ, os.getenv is resolved with the same table as DOEFF004 (OsEnvNames in utils — built from the import statements of the syntax tree).
+//! Previously aliases were collected from the token sequence, which missed `o` in `import json, os as o` (os in second or later position) and
+//! treated `o` in `from pkg import os as o` as os. Tokens inside import statements are not reads, so they are not counted.
 //!
-//! 環境変数のほかの生の副作用(file・時計・network)は、ここでは当てない — 範囲を環境変数の読みに絞る(#1907 の決め — 広げると当たりが
-//! 増えうるので、要る時に別の変更で足す)。当たった位置を包む関数の名は構文木の関数の範囲から引く(無ければ module の直下)。
+//! Other raw side effects (files, clock, network) are not matched here — the scope is limited to environment-variable reads (decision of #1907 — widening would
+//! increase hits, so add it in a separate change when needed). The name of the function enclosing a hit is taken from the function ranges of the syntax tree (module top level if none).
 
 use rustpython_ast::{Mod, Ranged, Stmt};
 use rustpython_parser::lexer::lex;
@@ -19,22 +19,22 @@ use rustpython_parser::{parse, Mode, Tok};
 
 use crate::utils::{each_statement, OsEnvNames};
 
-/// 環境変数を読む `os` の属性の名。
+/// Names of `os` attributes that read environment variables.
 const ENV_NAMES: &[&str] = &["environ", "getenv"];
 
-/// 見つけた環境変数の読み 1 つ。
+/// One environment-variable read found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvRead {
-    /// source の byte の位置(始まり・終わり)。
+    /// Byte position in the source (start, end).
     pub start: usize,
     pub end: usize,
-    /// 読みの綴り(`os.environ`・`os.getenv`)。
+    /// Spelling of the read (`os.environ`, `os.getenv`).
     pub name: String,
-    /// 包む関数の名(`外.内` — 無ければ `<module>`)。
+    /// Name of the enclosing function (`outer.inner` — `<module>` if none).
     pub definition: String,
 }
 
-/// 関数の範囲と名(入れ子は `外.内`)を集めるため。
+/// To collect function ranges and names (nested ones as `outer.inner`).
 fn functions(body: &[Stmt], prefix: &str, out: &mut Vec<(usize, usize, String)>) {
     for statement in body {
         let (name, inner) = match statement {
@@ -50,7 +50,7 @@ fn functions(body: &[Stmt], prefix: &str, out: &mut Vec<(usize, usize, String)>)
     }
 }
 
-/// 位置を包むいちばん内側の関数の名を返すため。
+/// To return the name of the innermost function enclosing a position.
 fn enclosing(spans: &[(usize, usize, String)], at: usize) -> String {
     spans
         .iter()
@@ -60,7 +60,7 @@ fn enclosing(spans: &[(usize, usize, String)], at: usize) -> String {
         .unwrap_or_else(|| "<module>".to_string())
 }
 
-/// 素の名が指す os の読みの名(`environ`・`getenv`)— 表に無い名は None。
+/// The os read name a bare name refers to (`environ`, `getenv`) — None for names not in the table.
 fn bare_original(names: &OsEnvNames, name: &str) -> Option<&'static str> {
     if names.environ.contains(name) {
         Some("environ")
@@ -71,14 +71,14 @@ fn bare_original(names: &OsEnvNames, name: &str) -> Option<&'static str> {
     }
 }
 
-/// `.py` の source の環境変数の読みを見つけるため(字句に読めない file は空 — 構文の誤りは別の規則が出す)。
-/// 構文木に読めない file は名の表を作れないので、素の `os.environ`・`os.getenv` だけを当てる。
+/// To find environment-variable reads in `.py` source (a file that cannot be tokenized yields empty — syntax errors are reported by another rule).
+/// A file that cannot be parsed into a syntax tree cannot give a name table, so only the plain `os.environ` and `os.getenv` are matched.
 pub fn env_reads(source: &str) -> Vec<EnvRead> {
     let Ok(tokens) = lex(source, Mode::Module).collect::<Result<Vec<_>, _>>() else {
         return Vec::new();
     };
     let mut spans = Vec::new();
-    // import 文の範囲(その中の字句 — `from os import environ` の environ ほか — は読みでない)。
+    // Ranges of import statements (tokens inside them — e.g. `environ` in `from os import environ` — are not reads).
     let mut imports: Vec<(usize, usize)> = Vec::new();
     let mut names = OsEnvNames::plain();
     if let Ok(ast) = parse(source, Mode::Module, "<module>") {
@@ -150,16 +150,16 @@ mod tests {
         );
     }
 
-    /// 反例: `import json, os as o` の o は os を指す — 直す前は import の直後の名が os の時だけ別名を
-    /// 覚え、0 件だった。関数の中の import の別名も同じ。
+    /// Counterexample: `o` in `import json, os as o` refers to os — before the fix, an alias was
+    /// remembered only when the name right after import was os, giving 0 hits. The same holds for aliases from imports inside functions.
     #[test]
     fn an_os_alias_after_another_module_in_one_import_is_found() {
         let source = "import json, os as o\nA = o.environ[\"A\"]\n\ndef f():\n    import sys, os as p\n    return p.getenv(\"B\")\n";
         assert_eq!(names(source), vec![("os.environ".into(), "<module>".into()), ("os.getenv".into(), "f".into())]);
     }
 
-    /// 反例: `from pkg import os as o` の o は pkg の中の os で、os の module ではない — 直す前は字句の
-    /// `import os as o` の並びに当たり、os の別名と見ていた。
+    /// Counterexample: `o` in `from pkg import os as o` is the os inside pkg, not the os module — before the fix, the token
+    /// sequence `import os as o` matched and it was treated as an alias of os.
     #[test]
     fn os_imported_from_another_package_is_not_an_os_alias() {
         let source = "from pkg import os as o\nA = o.environ[\"A\"]\n";
@@ -168,8 +168,8 @@ mod tests {
 
     #[test]
     fn strings_comments_and_other_attributes_are_not_found() {
-        // 反例: 文字列・註の中の綴り・os の別の属性・別の物の environ 属性は環境変数の読みではない。
-        let source = "import os\n# os.environ を読まない\nS = \"os.getenv\"\nP = os.path.join(\"a\", \"b\")\nQ = request.environ\n";
+        // Counterexample: spellings inside strings and comments, other attributes of os, and the environ attribute of another object are not environment-variable reads.
+        let source = "import os\n# do not read os.environ\nS = \"os.getenv\"\nP = os.path.join(\"a\", \"b\")\nQ = request.environ\n";
         assert!(names(source).is_empty(), "{:?}", names(source));
     }
 }

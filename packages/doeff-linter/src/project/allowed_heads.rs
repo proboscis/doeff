@@ -1,16 +1,16 @@
-//! DOEFF147: 呼んでよい頭を決めた定義(#1413 — 元は agora-controllers の一時の判定
-//! controllers/screen/tests/fault_boundary_rules.hy の (e)(g))。
+//! DOEFF147: definitions with a fixed set of heads that may be called (#1413 — originally a temporary check in agora-controllers,
+//! controllers/screen/tests/fault_boundary_rules.hy (e)(g)).
 //!
-//! architecture.hy の `:allowed-heads [(allowed-heads "module:名" :heads [..] :why "…")]` の定義ごとに:
-//!   * 定義の form(入れ子の定義を含む)を読み取り器で読み、`( … )` の頭が記号か keyword の物の綴りを集める。文字列・註・`#_` で
-//!     読み捨てた form は読まない。:heads に無い頭ごとに 1 件(鍵の細目 = 頭の綴り・位置 = 定義の中で最初に現れた所)。
-//!   * 宣言した定義が見つからない(module の Hy の file が無い・定義が無い)なら architecture.hy の位置で 1 件(`missing`)。
-//! 頭は関数の呼び出しだけでなく特殊形式(`when`・`setv`)と macro(`defk`・`<-`)も含む — 例外を上げうるかは linter には分からない
-//! ので、宣言が綴りで決める。`#( … )` の tuple と `[ … ]`・`{ … }` の要素は呼び出しでないので頭に数えない(元の判定の正規表現は
-//! tuple の 1 つ目も頭に数えていた — 数えない分だけ当たりが少ない)。
-//! 読むのは宣言した定義の module の file だけ(repo 全体は読まない)。定義は file の top level の form のうち、頭が `def` で始まる記号
-//! (defk・defn・defhandler …)で 2 つ目が宣言の名の物 — 索引は組まない(定義の範囲が要るだけで、索引の解析は 2,000 行の file 1 つで
-//! 秒のけたを使う)。
+//! For each definition in architecture.hy's `:allowed-heads [(allowed-heads "module:name" :heads [..] :why "…")]`:
+//!   * Read the definition's form (including nested definitions) with the reader and collect the spellings of heads of `( … )` that are symbols or keywords. Forms discarded
+//!     by strings, comments, or `#_` are not read. One finding per head not in :heads (key detail = the head's spelling, position = where it first appears in the definition).
+//!   * If the declared definition is not found (no Hy file for the module, or no such definition), one finding (`missing`) at architecture.hy's position.
+//! Heads include not only function calls but also special forms (`when`, `setv`) and macros (`defk`, `<-`) — the linter cannot know whether one may raise an exception,
+//! so the declaration decides by spelling. Elements of a `#( … )` tuple, `[ … ]`, and `{ … }` are not calls and do not count as heads (the original check's regular expression
+//! also counted the first element of a tuple as a head — there are fewer hits by exactly that amount).
+//! Only the file of the declared definition's module is read (not the whole repo). A definition is a top-level form in the file whose head is a symbol starting with `def`
+//! (defk, defn, defhandler …) and whose second element is the declared name — no index is built (only the definition's extent is needed, and index analysis of one 2,000-line file
+//! takes seconds).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -22,30 +22,30 @@ use super::architecture::AllowedHeads;
 use super::top_level;
 use crate::position::LineIndex;
 
-/// 当たりの種類(閉じた 2 つ)。
+/// Kind of finding (a closed set of two).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadProblem {
-    /// 定義の中に一覧の外の頭 head が在る。
+    /// A head `head` outside the list exists in the definition.
     Unlisted { head: String },
-    /// 宣言した定義が見つからない。
+    /// The declared definition is not found.
     Missing { reason: String },
 }
 
-/// 当たり 1 つ。
+/// One finding.
 #[derive(Debug, Clone)]
 pub struct HeadFinding {
-    /// 宣言の綴り(`module:名`)。
+    /// The declared spelling (`module:name`).
     pub declared: String,
     pub why: String,
-    /// 当たりの file(根からの path)と、その中の位置。Missing は architecture.hy。
+    /// The file of the finding (path from the root) and the position within it. For Missing, it is architecture.hy.
     pub rel: String,
     pub range: Range,
     pub problem: HeadProblem,
-    /// 登録簿の鍵の細目。
+    /// Detail of the registry key.
     pub detail: String,
 }
 
-/// form の木の中の `( … )` の頭(記号と keyword)の byte の範囲を、現れた順に積む。
+/// Push the byte ranges of heads (symbols and keywords) of `( … )` in the form tree, in order of appearance.
 fn heads_of(form: &Form, out: &mut Vec<(usize, usize)>) {
     match &form.node {
         Node::Seq { delim, items } => {
@@ -74,7 +74,7 @@ fn heads_of(form: &Form, out: &mut Vec<(usize, usize)>) {
     }
 }
 
-/// 宣言 1 つを判じる。読めなかった file は errors へ積む。
+/// Judge one declaration. Files that could not be read are pushed to errors.
 fn judge_one(root: &Path, declared: &AllowedHeads, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<HeadFinding> {
     let spelling = declared.definition.spelling();
     let finding = |rel: String, range: Range, problem: HeadProblem, detail: String| HeadFinding {
@@ -92,18 +92,18 @@ fn judge_one(root: &Path, declared: &AllowedHeads, architecture_rel: &str, error
     let source = match std::fs::read_to_string(&path) {
         Ok(source) => source,
         Err(error) if path.exists() => {
-            errors.push(format!("{}: 読めない: {}", rel, error));
+            errors.push(format!("{}: unreadable: {}", rel, error));
             return Vec::new();
         }
-        Err(_) => return missing(format!("module {} の Hy の file({})が repo に無い", declared.definition.module, rel)),
+        Err(_) => return missing(format!("Hy file ({}) for module {} does not exist in the repo", rel, declared.definition.module)),
     };
     let top = Reader::new(&source, 0, source.len()).read_all();
     let Some(definition) = top_level::definition(&source, &top, &declared.definition.name) else {
-        return missing(format!("{} に定義 {} が無い", rel, declared.definition.name));
+        return missing(format!("definition {} not found in {}", declared.definition.name, rel));
     };
     let mut spans = Vec::new();
     heads_of(definition, &mut spans);
-    // 頭ごとに最初の位置 1 つ(綴りの順 — 当たりの並びを決める)。
+    // The first position per head (in spelling order — this decides the order of findings).
     let mut first_at: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for (s, e) in spans {
         first_at.entry(&source[s..e]).or_insert((s, e));
@@ -116,7 +116,7 @@ fn judge_one(root: &Path, declared: &AllowedHeads, architecture_rel: &str, error
         .collect()
 }
 
-/// 宣言の全部を判じる。architecture_rel は architecture.hy の根からの path(見つからない宣言の位置)。
+/// Judge all declarations. architecture_rel is the path of architecture.hy from the root (the position of declarations that are not found).
 pub fn find(root: &Path, declarations: &[AllowedHeads], architecture_rel: &str) -> (Vec<HeadFinding>, Vec<String>) {
     let mut errors = Vec::new();
     let found: Vec<HeadFinding> = declarations.iter().flat_map(|declared| judge_one(root, declared, architecture_rel, &mut errors)).collect();
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn heads_are_the_first_symbol_of_each_paren_form_outside_strings_and_comments() {
-        let text = "(defk f [x] {:pre [(: x str)]} ; (decode x) は註\n  \"(parse x)\" (when (.get x 1) (Send x)) #_(boom) #(tuple 1))";
+        let text = "(defk f [x] {:pre [(: x str)]} ; (decode x)  is a comment\n  \"(parse x)\" (when (.get x 1) (Send x)) #_(boom) #(tuple 1))";
         assert_eq!(heads(text), vec!["defk", ":", "when", ".get", "Send"]);
     }
 }

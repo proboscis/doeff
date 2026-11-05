@@ -1,8 +1,8 @@
-//! この binary を組んだ時の情報(build.rs が env に渡す)。crate の中の読み手は lib.rs でなくここを読む — 子の module が
-//! crate の根(lib.rs)を読み戻すと、lib.rs が宣言する全 module が 1 つの依存の輪になる。
+//! Information about the build of this binary (build.rs passes it through env). Readers inside the crate read this, not lib.rs — if a child module
+//! read back from the crate root (lib.rs), every module declared by lib.rs would form a single dependency cycle.
 
-/// この binary を組んだ doeff の commit(build.rs が決める — 自動の組み直しが渡す env DOEFF_LINTER_BUILD_COMMIT か、
-/// 手で組んだ時の git の HEAD に `+dirty`、git が無ければ `unknown`)。`--version` と editor-json の `linter` が名乗る。
+/// The doeff commit this binary was built from (decided by build.rs — either the env DOEFF_LINTER_BUILD_COMMIT passed by an automated rebuild, or
+/// the git HEAD with `+dirty` for a hand build, or `unknown` when there is no git). Reported by `--version` and by `linter` in editor-json.
 pub const BUILD_COMMIT: &str = env!("DOEFF_LINTER_COMMIT");
-/// `--version` の文(`<版> (doeff <commit>)`)。
+/// The `--version` text (`<version> (doeff <commit>)`).
 pub const VERSION_TEXT: &str = concat!(env!("CARGO_PKG_VERSION"), " (doeff ", env!("DOEFF_LINTER_COMMIT"), ")");

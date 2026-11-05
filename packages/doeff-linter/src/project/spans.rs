@@ -1,11 +1,11 @@
-//! 定義の範囲の道具。規則の module(assembly_shape.rs など)が組み立ての project/mod.rs を読み戻さずに使えるよう、自分の module に
-//! 置く(読み戻すと依存の輪になる)。
+//! Helpers for definition ranges. Kept in their own module so rule modules (assembly_shape.rs etc.) can use them without reading back
+//! from the assembling project/mod.rs (reading back would create a dependency cycle).
 
 use doeff_indexer::hy_index::Definition;
 
 use crate::position::Range;
 
-/// 位置 spot を含む、いちばん内側の定義の添字(無ければ None)— 参照や呼び出しを、それを書いた定義へ帰すため。
+/// Index of the innermost definition containing position spot (None if none) — to attribute a reference or call to the definition that wrote it.
 pub fn innermost_definition(definitions: &[Definition], spot: &Range) -> Option<usize> {
     definitions
         .iter()

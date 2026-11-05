@@ -1,32 +1,32 @@
-//! `doeff-linter fix defn-to-defk` — Hy の defn を defk に直し、repo の中の呼び手を `<-` / `!` へ書き換える変換。
+//! `doeff-linter fix defn-to-defk` — a transform that rewrites Hy defn into defk and rewrites callers within the repo to `<-` / `!`.
 //!
-//! 出自: linter の直しは単純なはずなのに時間がかかりすぎていた。
-//! LLM の係が file ごとに呼び手の書き換えまで手でしていたので、機械的な書き換えをこの変換へ移し、係は変換が直せなかった
-//! 「判断の要る物」だけを直す(coordinator の戻せる決定)。
+//! Origin: linter fixes were supposed to be simple but were taking far too long.
+//! An LLM worker was hand-rewriting callers file by file, so the mechanical rewriting moves into this transform, and the worker fixes only the
+//! "needs judgement" items the transform could not fix (a reversible decision by the coordinator).
 //!
-//! 読み方は linter と同じ doeff-indexer の読み取り器(form の木と byte の範囲)で、書き換えは byte の範囲の置き換えだけ
-//! (書いた人の改行・註・字下げは残す)。変換の後に DOEFF126(defk の素の呼び)の判定を同じ読み手で撃ち、残りを報告する。
+//! It reads with the same doeff-indexer reader as the linter (form tree and byte ranges), and rewrites only by replacing byte ranges
+//! (the author's line breaks, comments and indentation are kept). After the transform, it runs the DOEFF126 (bare defk call) check with the same reader and reports what remains.
 //!
-//! 定義の書き換え:
-//! - `(defn #^ R 名 [#^ T x …] "doc" 本体)` → `(defk 名 [x …] {:pre [(: x T) …] :post [(: % R)]} "doc" 本体)`。defk は :pre に全部の引数の
-//!   型、:post に戻り値の型を要る(doeff-hy の macro が確かめる)ので、書いてある `#^` の注記から組む。注記が無い・`object`・`Any` の物は
-//!   組めない(判断の要る物)。`(get list str)` のような型の引数つきの型は isinstance が受けないので、契約には元の型(`list`)を書き、
-//!   引数の `#^` の注記は残す(静的な型は注記が持つ)。既定値が None の引数は `(| T None)`、`float` は `(| float int)`(int を渡す呼び手が
-//!   普通なので — 注記は検査されなかった)。
-//! - 既に `{:pre … :post …}` の辞書があれば残し、足りない鍵だけ足す。`:tags` は足さない(別の規則 DOEFF112 が見る)。
+//! Rewriting definitions:
+//! - `(defn #^ R name [#^ T x …] "doc" body)` → `(defk name [x …] {:pre [(: x T) …] :post [(: % R)]} "doc" body)`. defk requires the types of all arguments in :pre and the
+//!   return type in :post (the doeff-hy macro checks this), so they are built from the existing `#^` annotations. Items with no annotation, `object` or `Any`
+//!   cannot be built (needs judgement). A parametrized type such as `(get list str)` is not accepted by isinstance, so the contract gets the base type (`list`)
+//!   and the argument's `#^` annotation is kept (the annotation carries the static type). An argument whose default is None becomes `(| T None)`, and `float` becomes `(| float int)`
+//!   (callers commonly pass an int — the annotation was never checked).
+//! - If a `{:pre … :post …}` dict already exists it is kept and only the missing keys are added. `:tags` is not added (another rule, DOEFF112, looks at it).
 //!
-//! 呼び手の書き換え(repo の Hy の file 全部):
-//! - `(setv x (f a))`・`(val x (f a))`(名 1 つへの束ね)→ `(<- x (f a))`。
-//! - それ以外の式の途中・末尾の呼び → `(! (f a))`(末尾も — defk の本体が Program を返すと :post の型で落ちる。実測 2026-09-28)。
-//! - 書き換えられない所(内包表記・素の関数(defn・deff・fn)の中・method・module の最上位・macro の中・`->` の中・関数そのものを値として
-//!   渡す所・Python からの参照・import の別名・除いた path の file)は書き換えず、「判断の要る物」に出す(係が手で直す — coordinator の
-//!   指示 2026-09-28)。`--strict` の時は、そういう所が 1 つでもある関数を変換しない(呼び手を壊れたまま残さない)。関数の中の呼び手は、
-//!   その関数も変換されるなら書き換えられる(不動点で決める)。
-//! - 既に `(<- x (f a))`・`(! (f a))`・`(run (f a))` の形で呼ばれている defn は Program を返す組み立てなので変換しない(判断の要る物)。
+//! Rewriting callers (all Hy files in the repo):
+//! - `(setv x (f a))`, `(val x (f a))` (binding to a single name) → `(<- x (f a))`.
+//! - Any other call in the middle or at the end of an expression → `(! (f a))` (also at the end — a defk body returning a Program fails on the :post type. Measured 2026-09-28).
+//! - Places that cannot be rewritten (comprehensions, inside plain functions (defn, deff, fn), methods, module top level, inside macros, inside `->`, places that pass the function itself as a value,
+//!   references from Python, import aliases, files under excluded paths) are not rewritten and are listed under "needs judgement" (the worker fixes them by hand — coordinator
+//!   instruction 2026-09-28). With `--strict`, a function that has even one such place is not converted (so callers are not left broken). A caller inside a function can be
+//!   rewritten if that function is also converted (decided by a fixed point).
+//! - A defn that is already called in the form `(<- x (f a))`, `(! (f a))` or `(run (f a))` is an assembly that returns a Program, so it is not converted (needs judgement).
 //!
-//! 当てない形(報告の「当てなかった物」): dunder の名、`:async`、定義の行か直前の註の行に deff の理由の印(設定の
-//! `definitions.deff_reason_marker`)か「defn のまま」がある物、`eval-and-compile` の中、class の method、除いた path(既定は
-//! `clients/hy/acp_client`・`docs/design-checks` — 報告にも出さない)。
+//! Forms not targeted (the report's "skipped" list): dunder names, `:async`, items with a deff reason marker (the setting
+//! `definitions.deff_reason_marker`) or "defn のまま" on the definition line or the comment line just before it, anything inside `eval-and-compile`, class methods, excluded paths (default
+//! `clients/hy/acp_client`, `docs/design-checks` — not shown in the report either).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -43,35 +43,35 @@ use super::names::{absolute_module, hy_mangle, module_of};
 use super::paths::relative_path;
 use super::smells::{children, live, live_items, span_of, Hy, Scope};
 
-/// 既定で除く path(repo の根からの前方一致)— ACP の client の写しと、設計の検証の見本。
+/// Paths excluded by default (prefix match from the repo root) — a copy of the ACP client, and design-verification samples.
 pub const DEFAULT_EXCLUDES: &[&str] = &["clients/hy/acp_client", "docs/design-checks"];
 
-/// 設定に印が無い時の deff の理由の印(settings.rs の既定と同じ)。
+/// The deff reason marker when the settings give none (same as the default in settings.rs).
 pub const DEFAULT_REASON_MARKER: &str = "defk にできない:";
 
-/// defn のまま残す理由の註の、印のほかの綴り(agora の既存の註)。
+/// Other spellings of the marker for the comment giving the reason to leave a defn as is (existing comments in agora).
 const KEEP_MARKERS: &[&str] = &["defn のまま"];
 
-/// 変換の入力。
+/// Input of the transform.
 #[derive(Debug, Clone)]
 pub struct FixOptions {
-    /// repo の根(呼び手を探す範囲・module の綴りの基準)。
+    /// Repo root (the range in which callers are searched; the base for module spellings).
     pub root: PathBuf,
-    /// 変換する定義を探す file か dir(絶対の path)。
+    /// File or directory (absolute path) in which to look for definitions to convert.
     pub targets: Vec<PathBuf>,
-    /// 除く path(根からの前方一致)。
+    /// Excluded paths (prefix match from the root).
     pub excludes: Vec<String>,
-    /// deff の理由の印。
+    /// The deff reason marker.
     pub reason_marker: String,
-    /// file を書き換えるか(偽なら計画だけを報告する)。
+    /// Whether to rewrite files (if false, only the plan is reported).
     pub write: bool,
-    /// 呼び手を全部書き換えられる関数だけを変換する(偽なら変換して、書き換えられない呼び手を判断の要る物に出す)。
+    /// Convert only functions whose callers can all be rewritten (if false, convert and list the callers that cannot be rewritten under needs judgement).
     pub strict: bool,
 }
 
-// --- 報告 ---------------------------------------------------------------------------------
+// --- Report -------------------------------------------------------------------------------
 
-/// file の中の位置(1 始まり)。
+/// Position in a file (1-based).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Location {
     pub file: String,
@@ -85,16 +85,16 @@ impl std::fmt::Display for Location {
     }
 }
 
-/// defk に直した定義 1 つ。
+/// One definition rewritten to defk.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConvertedDefinition {
     pub location: Location,
     pub name: String,
-    /// 足した契約の辞書(既にあって足さなかったら空)。
+    /// The contract dict that was added (empty if one already existed and nothing was added).
     pub contract: String,
 }
 
-/// 呼びの書き換えの形。
+/// Kind of call rewrite.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum CallRewrite {
@@ -104,124 +104,124 @@ pub enum CallRewrite {
     Bang,
 }
 
-/// 書き換えた呼び 1 つ。
+/// One call that was rewritten.
 #[derive(Debug, Clone, Serialize)]
 pub struct RewrittenCall {
     pub location: Location,
     pub callee: String,
-    /// 呼びを含む定義の名(module の最上位なら空)。
+    /// Name of the definition containing the call (empty at module top level).
     pub container: String,
     pub rewrite: CallRewrite,
 }
 
-/// 呼び手を書き換えられない理由。
+/// Why a caller cannot be rewritten.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum CallerBlock {
-    /// 内包表記(lfor・gfor・dfor・sfor)の中 — yield を置けない。
+    /// Inside a comprehension (lfor, gfor, dfor, sfor) — a yield cannot be placed.
     Comprehension { head: String },
-    /// 変換しない素の関数(defn・deff・fn・defclass)の中。
+    /// Inside a plain function that is not converted (defn, deff, fn, defclass).
     PlainFunction { head: String, name: String },
-    /// module の最上位(import の時に走る)。
+    /// Module top level (runs at import time).
     ModuleLevel,
-    /// 定義の見出し(既定値・契約の辞書)— 定義の時か素の検査として走る。
+    /// Definition header (default values, contract dict) — runs at definition time or as a plain check.
     Signature,
-    /// macro の中(defmacro)。
+    /// Inside a macro (defmacro).
     Macro,
-    /// `->`・`->>`・`as->`・`doto` の段 — 呼びの形が書いた形と違う。
+    /// A step of `->`, `->>`, `as->`, `doto` — the call form differs from the written form.
     ThreadingMacro { head: String },
-    /// 関数そのものを値として渡している(`sorted` の `:key`・`map` の引数・表の値など)。
+    /// The function itself is passed as a value (`:key` of `sorted`, an argument of `map`, a table value, etc.).
     PassedAsValue,
-    /// 既に Program として束ねている(`<-` の右辺・`!`・`yield`)— Program を返す組み立て。
+    /// Already bound as a Program (right side of `<-`, `!`, `yield`) — an assembly that returns a Program.
     AlreadyBound,
-    /// Program を受ける関数(run・Gather …)へ渡している — Program を返す組み立て。
+    /// Passed to a function that takes a Program (run, Gather …) — an assembly that returns a Program.
     ProgramArgument { head: String },
-    /// Python の file からの参照。
+    /// A reference from a Python file.
     Python,
-    /// Hy と Python の外の file(pyproject の入口など)からの参照。
+    /// A reference from a file other than Hy and Python (e.g. a pyproject entry point).
     OtherFile,
-    /// `(import m [f :as g])` の別名 — 別名の呼びを追えない。
+    /// An alias in `(import m [f :as g])` — calls through the alias cannot be traced.
     ImportAlias { alias: String },
-    /// 除いた path の file の中。
+    /// Inside a file under an excluded path.
     ExcludedFile,
 }
 
 impl std::fmt::Display for CallerBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CallerBlock::Comprehension { head } => write!(f, "内包表記 {} の中で呼んでいる", head),
-            CallerBlock::PlainFunction { head, name } => write!(f, "変換しない素の関数({} {})の中で呼んでいる", head, name),
-            CallerBlock::ModuleLevel => write!(f, "module の最上位で呼んでいる"),
-            CallerBlock::Signature => write!(f, "定義の見出し(既定値・契約)で呼んでいる"),
-            CallerBlock::Macro => write!(f, "macro の中で使っている"),
-            CallerBlock::ThreadingMacro { head } => write!(f, "{} の段として呼んでいる", head),
-            CallerBlock::PassedAsValue => write!(f, "関数そのものを値として渡している"),
-            CallerBlock::AlreadyBound => write!(f, "既に <- / ! で束ねている(Program を返す組み立て)"),
-            CallerBlock::ProgramArgument { head } => write!(f, "Program を受ける {} へ渡している(Program を返す組み立て)", head),
-            CallerBlock::Python => write!(f, "Python の file から参照している"),
-            CallerBlock::OtherFile => write!(f, "Hy と Python の外の file から参照している"),
-            CallerBlock::ImportAlias { alias } => write!(f, "import の別名 {} で取り込んでいる", alias),
-            CallerBlock::ExcludedFile => write!(f, "除いた path の file の中で使っている"),
+            CallerBlock::Comprehension { head } => write!(f, "called inside comprehension {}", head),
+            CallerBlock::PlainFunction { head, name } => write!(f, "called inside a plain function that is not converted ({} {})", head, name),
+            CallerBlock::ModuleLevel => write!(f, "called at module top level"),
+            CallerBlock::Signature => write!(f, "called in a definition header (default value or contract)"),
+            CallerBlock::Macro => write!(f, "used inside a macro"),
+            CallerBlock::ThreadingMacro { head } => write!(f, "called as a step of {}", head),
+            CallerBlock::PassedAsValue => write!(f, "the function itself is passed as a value"),
+            CallerBlock::AlreadyBound => write!(f, "already bound with <- / ! (an assembly that returns a Program)"),
+            CallerBlock::ProgramArgument { head } => write!(f, "passed to {}, which takes a Program (an assembly that returns a Program)", head),
+            CallerBlock::Python => write!(f, "referenced from a Python file"),
+            CallerBlock::OtherFile => write!(f, "referenced from a file other than Hy and Python"),
+            CallerBlock::ImportAlias { alias } => write!(f, "imported under the alias {}", alias),
+            CallerBlock::ExcludedFile => write!(f, "used inside a file under an excluded path"),
         }
     }
 }
 
-/// 判断の要る物の理由。
+/// Reason an item needs judgement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum JudgementReason {
-    /// 引数に型の注記が無い(defk の :pre に書く型が決まらない)。
+    /// An argument has no type annotation (the type to write in defk's :pre cannot be decided).
     MissingParamType { param: String },
-    /// 戻り値の型の注記が無い(:post に書く型が決まらない)。
+    /// No return type annotation (the type to write in :post cannot be decided).
     MissingReturnType,
-    /// `object`・`Any` — defk の契約が拒む広すぎる型。
+    /// `object`, `Any` — types too broad, which the defk contract rejects.
     BroadType { target: String, written: String },
-    /// isinstance に写せない型(`Literal`・文字列の説明など)。
+    /// A type that cannot be mapped to isinstance (`Literal`, a string description, etc.).
     UnconvertibleType { target: String, written: String },
-    /// 飾り(`(defn [装飾] …)`)がある。
+    /// Has decorators (`(defn [decorator] …)`).
     Decorated { decorators: String },
-    /// 本体に yield がある(生成器)。
+    /// The body has a yield (generator).
     Generator,
-    /// 引数の名が effect の handler の形(effect・eff・k)— defk は拒む。
+    /// An argument name looks like an effect handler (effect, eff, k) — defk rejects it.
     HandlerLikeParams { params: Vec<String> },
-    /// 検の関数(test- で始まる)— defk ではなく deftest にする。
+    /// A check function (starts with test-) — it should become a deftest, not a defk.
     TestFunction,
-    /// 関数の中の defn(class の method ではない)。
+    /// A defn inside a function (not a class method).
     NestedDefn { outer: String },
-    /// 書き換えられない呼び手・参照がある(この所)。
+    /// There is a caller or reference that cannot be rewritten (this place).
     BlockedCaller { callee: String, why: CallerBlock },
-    /// 関数は defk にした — この呼び手・参照は書き換えられないので手で直す。
+    /// The function became a defk — this caller or reference cannot be rewritten, so fix it by hand.
     CallerLeft { callee: String, why: CallerBlock },
 }
 
 impl std::fmt::Display for JudgementReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            JudgementReason::MissingParamType { param } => write!(f, "引数 {} に型の注記が無い", param),
-            JudgementReason::MissingReturnType => write!(f, "戻り値の型の注記が無い"),
-            JudgementReason::BroadType { target, written } => write!(f, "{} の型 {} は defk の契約が拒む広い型", target, written),
-            JudgementReason::UnconvertibleType { target, written } => write!(f, "{} の型 {} を isinstance の型に写せない", target, written),
-            JudgementReason::Decorated { decorators } => write!(f, "飾り {} がある", decorators),
-            JudgementReason::Generator => write!(f, "本体に yield がある(生成器)"),
-            JudgementReason::HandlerLikeParams { params } => write!(f, "引数の名 {} が handler の形", params.join("・")),
-            JudgementReason::TestFunction => write!(f, "検の関数 — deftest にする"),
-            JudgementReason::NestedDefn { outer } => write!(f, "{} の中の defn", outer),
-            JudgementReason::BlockedCaller { callee, why } => write!(f, "{} の呼び手: {}", callee, why),
-            JudgementReason::CallerLeft { callee, why } => write!(f, "{} は defk にした — この呼び手を手で直す: {}", callee, why),
+            JudgementReason::MissingParamType { param } => write!(f, "argument {} has no type annotation", param),
+            JudgementReason::MissingReturnType => write!(f, "no return type annotation"),
+            JudgementReason::BroadType { target, written } => write!(f, "type {1} of {0} is too broad; the defk contract rejects it", target, written),
+            JudgementReason::UnconvertibleType { target, written } => write!(f, "type {1} of {0} cannot be mapped to an isinstance type", target, written),
+            JudgementReason::Decorated { decorators } => write!(f, "has decorators {}", decorators),
+            JudgementReason::Generator => write!(f, "the body has a yield (generator)"),
+            JudgementReason::HandlerLikeParams { params } => write!(f, "argument names {} look like a handler", params.join(", ")),
+            JudgementReason::TestFunction => write!(f, "a check function — make it a deftest"),
+            JudgementReason::NestedDefn { outer } => write!(f, "a defn inside {}", outer),
+            JudgementReason::BlockedCaller { callee, why } => write!(f, "callers of {}: {}", callee, why),
+            JudgementReason::CallerLeft { callee, why } => write!(f, "{} became a defk — fix this caller by hand: {}", callee, why),
         }
     }
 }
 
-/// 判断の要る物 1 件。
+/// One item that needs judgement.
 #[derive(Debug, Clone, Serialize)]
 pub struct NeedsJudgement {
     pub location: Location,
-    /// 変換しなかった定義の名。
+    /// Name of the definition that was not converted.
     pub definition: String,
     pub reason: JudgementReason,
 }
 
-/// 当てなかった理由(直す対象の外)。
+/// Why an item was skipped (outside the fix targets).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SkipReason {
@@ -235,16 +235,16 @@ pub enum SkipReason {
 impl std::fmt::Display for SkipReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SkipReason::Dunder => write!(f, "dunder の名"),
+            SkipReason::Dunder => write!(f, "dunder name"),
             SkipReason::Async => write!(f, ":async"),
-            SkipReason::ReasonComment { comment } => write!(f, "理由の註: {}", comment),
-            SkipReason::CompileTime => write!(f, "eval-and-compile の中"),
-            SkipReason::Method => write!(f, "class の method"),
+            SkipReason::ReasonComment { comment } => write!(f, "reason comment: {}", comment),
+            SkipReason::CompileTime => write!(f, "inside eval-and-compile"),
+            SkipReason::Method => write!(f, "class method"),
         }
     }
 }
 
-/// 当てなかった定義 1 つ。
+/// One definition that was skipped.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkippedDefinition {
     pub location: Location,
@@ -252,7 +252,7 @@ pub struct SkippedDefinition {
     pub reason: SkipReason,
 }
 
-/// 変換の後に残った素の呼び(DOEFF126)1 件。位置は書き換えた後の source の行(ほかの報告の位置は書き換える前の行)。
+/// One bare call (DOEFF126) remaining after the transform. The position is a line of the rewritten source (positions in the other reports are lines before rewriting).
 #[derive(Debug, Clone, Serialize)]
 pub struct ResidualBareCall {
     pub location: Location,
@@ -260,11 +260,11 @@ pub struct ResidualBareCall {
     pub callee: String,
 }
 
-/// 実行 1 回の報告。
+/// Report of one run.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FixReport {
     pub root: String,
-    /// file を書き換えたか(偽 = 計画だけ)。
+    /// Whether files were rewritten (false = plan only).
     pub written: bool,
     pub converted: Vec<ConvertedDefinition>,
     pub rewritten_calls: Vec<RewrittenCall>,
@@ -275,13 +275,13 @@ pub struct FixReport {
 }
 
 impl FixReport {
-    /// 人が読む表(Markdown の表)。
+    /// Human-readable table (Markdown table).
     pub fn table(&self) -> String {
         let mut out = String::new();
         let binds = self.rewritten_calls.iter().filter(|c| matches!(c.rewrite, CallRewrite::Bind { .. })).count();
         out.push_str(&format!(
-            "defn → defk({}): 変換 {} 件・呼びの書き換え {} 件(<- {}・! {})・判断の要る物 {} 件・当てなかった物 {} 件・残った素の呼び {} 件・書き換えた file {} 本\n",
-            if self.written { "書き換えた" } else { "計画だけ" },
+            "defn → defk({}): {} converted, {} calls rewritten (<- {}, ! {}), {} needing judgement, {} skipped, {} bare calls remaining, {} files rewritten\n",
+            if self.written { "rewritten" } else { "plan only" },
             self.converted.len(),
             self.rewritten_calls.len(),
             binds,
@@ -292,13 +292,13 @@ impl FixReport {
             self.changed_files.len()
         ));
         if !self.converted.is_empty() {
-            out.push_str("\n## 変換した定義\n\n| 所(書き換える前の行) | 名 | 足した契約 |\n|---|---|---|\n");
+            out.push_str("\n## Converted definitions\n\n| Location (line before rewriting) | Name | Contract added |\n|---|---|---|\n");
             for c in &self.converted {
                 out.push_str(&format!("| {} | {} | `{}` |\n", c.location, c.name, c.contract));
             }
         }
         if !self.rewritten_calls.is_empty() {
-            out.push_str("\n## 書き換えた呼び\n\n| 所(書き換える前の行) | 呼び先 | 呼びを含む定義 | 形 |\n|---|---|---|---|\n");
+            out.push_str("\n## Rewritten calls\n\n| Location (line before rewriting) | Callee | Enclosing definition | Form |\n|---|---|---|---|\n");
             for c in &self.rewritten_calls {
                 let form = match &c.rewrite {
                     CallRewrite::Bind { from } => format!("{} → <-", from),
@@ -308,19 +308,19 @@ impl FixReport {
             }
         }
         if !self.needs_judgement.is_empty() {
-            out.push_str("\n## 判断の要る物\n\n| 所(書き換える前の行) | 定義 | 理由 |\n|---|---|---|\n");
+            out.push_str("\n## Needs judgement\n\n| Location (line before rewriting) | Definition | Reason |\n|---|---|---|\n");
             for j in &self.needs_judgement {
                 out.push_str(&format!("| {} | {} | {} |\n", j.location, j.definition, j.reason));
             }
         }
         if !self.skipped.is_empty() {
-            out.push_str("\n## 当てなかった物\n\n| 所(書き換える前の行) | 名 | 理由 |\n|---|---|---|\n");
+            out.push_str("\n## Skipped\n\n| Location (line before rewriting) | Name | Reason |\n|---|---|---|\n");
             for s in &self.skipped {
                 out.push_str(&format!("| {} | {} | {} |\n", s.location, s.name, s.reason));
             }
         }
         if !self.residual_bare_calls.is_empty() {
-            out.push_str("\n## 残った素の呼び(DOEFF126)\n\n| 所(書き換えた後の行) | 定義 | 呼び先 |\n|---|---|---|\n");
+            out.push_str("\n## Remaining bare calls (DOEFF126)\n\n| Location (line after rewriting) | Definition | Callee |\n|---|---|---|\n");
             for r in &self.residual_bare_calls {
                 out.push_str(&format!("| {} | {} | {} |\n", r.location, r.definition, r.callee));
             }
@@ -329,9 +329,9 @@ impl FixReport {
     }
 }
 
-// --- 読んだ file ------------------------------------------------------------------------------
+// --- Files read ------------------------------------------------------------------------------
 
-/// 読んだ Hy の file 1 本。
+/// One Hy file that was read.
 struct HyFile {
     rel: String,
     path: PathBuf,
@@ -340,9 +340,9 @@ struct HyFile {
     forms: Vec<Form>,
     bindings: BTreeMap<String, String>,
     lines: Vec<usize>,
-    /// 変換する定義を探す file か。
+    /// Whether this is a file in which to look for definitions to convert.
     target: bool,
-    /// 除いた path の file か。
+    /// Whether this is a file under an excluded path.
     excluded: bool,
 }
 
@@ -376,9 +376,9 @@ fn location_in(rel: &str, lines: &[usize], source: &str, offset: usize) -> Locat
     Location { file: rel.to_string(), line, column }
 }
 
-// --- 定義の読み ------------------------------------------------------------------------------
+// --- Reading definitions ------------------------------------------------------------------------------
 
-/// byte の範囲の置き換え 1 つ。
+/// One replacement of a byte range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Edit {
     start: usize,
@@ -386,7 +386,7 @@ struct Edit {
     text: String,
 }
 
-/// 変換の候補の定義 1 つ。
+/// One candidate definition for conversion.
 struct Candidate {
     file: usize,
     name: String,
@@ -396,23 +396,23 @@ struct Candidate {
     contract: String,
 }
 
-/// 型の注記を契約の型へ写した物。
+/// A type annotation mapped to a contract type.
 struct ContractType {
     text: String,
-    /// 型の引数を落とした(注記を残す)。
+    /// Type arguments were dropped (the annotation is kept).
     reduced: bool,
 }
 
-/// 型を写せない理由。
+/// Why a type cannot be mapped.
 enum TypeProblem {
     Broad(String),
     Unconvertible(String),
 }
 
-/// 広すぎて defk の契約が拒む型。
+/// Types too broad, which the defk contract rejects.
 const BROAD_TYPES: &[&str] = &["object", "Any", "typing.Any"];
 
-/// 型の注記の form を isinstance に渡せる契約の型の綴りにする。
+/// Turn a type annotation form into a spelling of a contract type that can be passed to isinstance.
 fn contract_type(hy: &Hy<'_>, form: &Form) -> Result<ContractType, TypeProblem> {
     let written = hy.text(form).to_string();
     match &form.node {
@@ -476,12 +476,12 @@ fn contract_type(hy: &Hy<'_>, form: &Form) -> Result<ContractType, TypeProblem> 
     }
 }
 
-/// 契約の型が None を受けるか(既定値 None の引数に `(| T None)` を足すか決めるため)。
+/// Whether the contract type accepts None (to decide whether to add `(| T None)` for an argument whose default is None).
 fn accepts_none(text: &str) -> bool {
     text == "None" || text.split(|c: char| c.is_whitespace() || c == '(' || c == ')').any(|w| w == "None")
 }
 
-/// 定義の form の部品。
+/// Parts of a definition form.
 struct DefinitionParts<'f> {
     decorators: Option<&'f Form>,
     is_async: bool,
@@ -490,7 +490,7 @@ struct DefinitionParts<'f> {
     body: Vec<&'f Form>,
 }
 
-/// `(defn [装飾]? :async? #^ R? 名 [引数] 本体…)` を部品に分ける(形が違えば None)。
+/// Split `(defn [decorator]? :async? #^ R? name [args] body…)` into parts (None if the shape differs).
 fn definition_parts<'f>(hy: &Hy<'_>, items: &[&'f Form]) -> Option<DefinitionParts<'f>> {
     let mut at = 1;
     let mut decorators = None;
@@ -518,7 +518,7 @@ fn definition_parts<'f>(hy: &Hy<'_>, items: &[&'f Form]) -> Option<DefinitionPar
     Some(DefinitionParts { decorators, is_async, name_form, params, body: items[at + 2..].to_vec() })
 }
 
-/// 定義の名(注記を外した綴り)と戻り値の注記。
+/// The definition's name (spelling without the annotation) and the return annotation.
 fn name_and_return<'f>(hy: &Hy<'_>, name_form: &'f Form) -> (String, Option<&'f Form>) {
     match &name_form.node {
         Node::Annotated { annotation, target: Some(target) } => (hy.text(target).to_string(), annotation.as_deref()),
@@ -526,14 +526,14 @@ fn name_and_return<'f>(hy: &Hy<'_>, name_form: &'f Form) -> (String, Option<&'f 
     }
 }
 
-/// 候補を調べた結果。
+/// Result of examining a candidate.
 enum Examined {
     Candidate(Candidate),
     Skipped(SkipReason),
     Judgement(Vec<JudgementReason>),
 }
 
-/// 1 つの最上位の defn を調べる。
+/// Examine one top-level defn.
 fn examine(file: &HyFile, index: usize, form: &Form, items: &[&Form], compile_time: bool, marker: &str) -> Option<(String, Examined)> {
     let hy = Hy { src: &file.source };
     let parts = definition_parts(&hy, items)?;
@@ -581,7 +581,7 @@ fn examine(file: &HyFile, index: usize, form: &Form, items: &[&Form], compile_ti
                     None => continue,
                 }
             }
-            // `#* args`・`#** kw` — 契約は要らない(注記はそのまま)。
+            // `#* args`, `#** kw` — no contract needed (the annotation is kept as is).
             Node::Prefixed { prefix: Prefix::Unpack | Prefix::UnpackMapping, .. } => continue,
             _ => (hy.text(target).to_string(), None),
         };
@@ -614,11 +614,11 @@ fn examine(file: &HyFile, index: usize, form: &Form, items: &[&Form], compile_ti
         }
         Some(Ok(ty)) => Some(format!("(: % {})", ty.text)),
         Some(Err(TypeProblem::Broad(written))) => {
-            problems.push(JudgementReason::BroadType { target: "戻り値".to_string(), written });
+            problems.push(JudgementReason::BroadType { target: "return value".to_string(), written });
             None
         }
         Some(Err(TypeProblem::Unconvertible(written))) => {
-            problems.push(JudgementReason::UnconvertibleType { target: "戻り値".to_string(), written });
+            problems.push(JudgementReason::UnconvertibleType { target: "return value".to_string(), written });
             None
         }
     };
@@ -656,7 +656,7 @@ fn examine(file: &HyFile, index: usize, form: &Form, items: &[&Form], compile_ti
     Some((name.clone(), Examined::Candidate(Candidate { file: index, name, qualified, start: form.span.start, edits, contract })))
 }
 
-/// 本体の頭の契約の辞書(docstring の後 — 鍵が :pre・:post・:tags・:effects のどれかで始まる物)。
+/// The contract dict at the head of the body (after the docstring — one whose key starts with any of :pre, :post, :tags, :effects).
 fn existing_contract<'f>(hy: &Hy<'_>, body: &[&'f Form]) -> Option<&'f Form> {
     let mut rest = body.iter();
     let mut first = rest.next()?;
@@ -667,7 +667,7 @@ fn existing_contract<'f>(hy: &Hy<'_>, body: &[&'f Form]) -> Option<&'f Form> {
     (first.is_brace() && keys.iter().next().is_some_and(|k| matches!(k.as_str(), ":pre" | ":post" | ":tags" | ":effects"))).then_some(*first)
 }
 
-/// 辞書の鍵(keyword だけ・偶数の位置)。
+/// Keys of a dict (keywords only, at even positions).
 fn contract_keys(hy: &Hy<'_>, dict: &Form) -> BTreeSet<String> {
     match &dict.node {
         Node::Seq { delim: Delim::Brace, items } => live_items(items).iter().step_by(2).filter(|k| matches!(k.node, Node::Keyword)).map(|k| hy.text(k).to_string()).collect(),
@@ -675,7 +675,7 @@ fn contract_keys(hy: &Hy<'_>, dict: &Form) -> BTreeSet<String> {
     }
 }
 
-/// 契約の辞書を置く所 — 引数の `]` の後が行の終わり(か註)なら次の行に字下げして、同じ行に本体が続くなら `]` の直後に置く。
+/// Where to put the contract dict — if what follows the argument `]` is the end of the line (or a comment), put it on the next line, indented; if the body continues on the same line, put it right after `]`.
 fn contract_insertion(source: &str, form_start: usize, params_end: usize, contract: &str) -> Edit {
     let line_end = source[params_end..].find('\n').map(|at| params_end + at).unwrap_or(source.len());
     let rest = source[params_end..line_end].trim();
@@ -688,7 +688,7 @@ fn contract_insertion(source: &str, form_start: usize, params_end: usize, contra
     }
 }
 
-/// 定義の行(頭から引数の終わりまで)か直前の註だけの行に、理由の註があればその註の文。
+/// If the definition line (from the head to the end of the arguments) or a comment-only line just before it has a reason comment, that comment's text.
 fn reason_comment(source: &str, form_start: usize, params_end: usize, marker: &str) -> Option<String> {
     let line_start = source[..form_start].rfind('\n').map(|at| at + 1).unwrap_or(0);
     let line_end = source[params_end..].find('\n').map(|at| params_end + at).unwrap_or(source.len());
@@ -700,7 +700,7 @@ fn reason_comment(source: &str, form_start: usize, params_end: usize, marker: &s
     }).next()
 }
 
-/// form の中に yield があるか(入れ子の fn の中は数えない)。
+/// Whether the form contains a yield (inside a nested fn is not counted).
 fn has_yield(hy: &Hy<'_>, form: &Form) -> bool {
     match hy.head(form) {
         Some("yield" | "yield-from") => true,
@@ -709,39 +709,39 @@ fn has_yield(hy: &Hy<'_>, form: &Form) -> bool {
     }
 }
 
-// --- 呼び手 ------------------------------------------------------------------------------
+// --- Callers ------------------------------------------------------------------------------
 
-/// 呼びのある所の囲み(書き換えられるか)。
+/// The enclosing context of a call site (can it be rewritten?).
 #[derive(Debug, Clone)]
 enum Frame {
-    /// Program の本体(defk・deftest・defhandler・fnk・defp・do! …)。
+    /// Body of a Program (defk, deftest, defhandler, fnk, defp, do! …).
     Program,
-    /// 変換の候補の本体(候補が変換されれば Program)。
+    /// Body of a conversion candidate (a Program if the candidate is converted).
     Candidate { candidate: usize, name: String },
-    /// 書き換えられない所。
+    /// A place that cannot be rewritten.
     Blocked(CallerBlock),
 }
 
-/// 呼びの形。
+/// Shape of a call.
 #[derive(Debug, Clone)]
 enum Shape {
-    /// 呼び — Some なら名 1 つへの束ね(setv / val の頭の範囲)。
+    /// A call — if Some, a binding to a single name (the range of the head of setv / val).
     Call { bind: Option<ByteSpan> },
-    /// 既に <- / ! / yield で束ねている。
+    /// Already bound with <- / ! / yield.
     Yielded,
-    /// Program を受ける関数の引数。
+    /// An argument of a function that takes a Program.
     ProgramArgument { head: String },
-    /// `->` の段。
+    /// A step of `->`.
     Threaded { head: String },
-    /// 呼びの頭ではない参照。
+    /// A reference that is not the head of a call.
     Reference,
-    /// 読めない所からの参照(Python・別名・ほかの file)。
+    /// A reference from a place that cannot be read (Python, an alias, another file).
     Foreign(CallerBlock),
 }
 
-/// 候補の関数を使う所 1 つ。
+/// One place that uses a candidate function.
 struct Site {
-    /// Hy の file(Python などの参照は None)。
+    /// A Hy file (None for references from Python etc.).
     file: Option<usize>,
     location: Location,
     span: ByteSpan,
@@ -751,7 +751,7 @@ struct Site {
     shape: Shape,
 }
 
-/// 呼びの子の位置の種類。
+/// Kind of position of a call's child.
 #[derive(Debug, Clone)]
 enum Slot {
     Value,
@@ -761,7 +761,7 @@ enum Slot {
     Threaded(String),
 }
 
-/// Program を受けて走らせる・組み合わせる関数(候補がここへ渡されていれば Program を返す組み立て)。
+/// Functions that take a Program and run or combine it (if a candidate is passed here, it is an assembly that returns a Program).
 const PROGRAM_TAKERS: &[&str] = &[
     "run", "run-on", "run_on", "async-run", "async_run", "Gather", "Spawn", "Race", "Safe", "Try", "Local", "Listen", "Intercept", "WithHandler",
     "with-handler", "with_handler", "with-handlers", "with_handlers", "maybe", "result", "on-raise", "absent-as",
@@ -775,14 +775,14 @@ const PLAIN_DEFINITIONS: &[&str] = &["deff", "defclass"];
 const PLAIN_FUNCTIONS: &[&str] = &["fn", "fn/a"];
 const MACROS: &[&str] = &["defmacro", "defmacro/g!", "defreader"];
 
-/// 呼び手を探して 1 つの file を下る道具。
+/// Tool that searches for callers and descends through one file.
 struct SiteWalker<'a> {
     hy: Hy<'a>,
     file: &'a HyFile,
     index: usize,
     scope: Scope<'a>,
     candidates: &'a BTreeMap<String, usize>,
-    /// この file の最上位の候補(form の始まり → 候補の番号)。
+    /// Top-level candidates of this file (form start → candidate index).
     tops: &'a BTreeMap<usize, usize>,
 }
 
@@ -879,7 +879,7 @@ impl SiteWalker<'_> {
             }
             _ => {}
         }
-        // 呼びの頭が候補なら、この呼びを積む。
+        // If the call head is a candidate, record this call.
         match (&first.node, head) {
             (Node::Symbol, Some(spelled)) => {
                 if let Some(callee) = self.resolve(spelled) {
@@ -910,7 +910,7 @@ impl SiteWalker<'_> {
         }
     }
 
-    /// `(<- x …)` へ直せる名(点の無い記号)か。
+    /// Whether this is a name that can be fixed to `(<- x …)` (a symbol without a dot).
     fn plain_name(&self, form: &Form) -> bool {
         self.hy.symbol(form).is_some_and(|s| !s.contains('.') && !s.starts_with(':'))
     }
@@ -922,7 +922,7 @@ impl SiteWalker<'_> {
         }
     }
 
-    /// 定義の form — 見出し(飾り・引数の既定値・契約の辞書)は外の囲みで、本体は body_frame で下る。
+    /// A definition form — the header (decorators, argument defaults, contract dict) is in the outer context; the body is descended through body_frame.
     fn definition(&self, items: &[&Form], outer: &Frame, outer_container: &str, name: &str, body_frame: Frame, out: &mut Vec<Site>) {
         let head = self.hy.head_text(items[0]).unwrap_or("");
         let (header, body): (Vec<&Form>, Vec<&Form>) = match head {
@@ -930,7 +930,7 @@ impl SiteWalker<'_> {
                 Some(parts) => (parts.decorators.into_iter().chain([parts.params]).collect(), parts.body),
                 None => (Vec::new(), items[1..].to_vec()),
             },
-            // 名の後が全部本体(deftest・defhandler・defp・defclass …)。
+            // Everything after the name is body (deftest, defhandler, defp, defclass …).
             _ => (Vec::new(), items.get(2..).map(|r| r.to_vec()).unwrap_or_default()),
         };
         let header_frame = match outer {
@@ -947,7 +947,7 @@ impl SiteWalker<'_> {
         }
     }
 
-    /// `(import m [f :as g])` の別名で候補を取り込む所。
+    /// A place that imports a candidate via an alias in `(import m [f :as g])`.
     fn import_aliases(&self, items: &[&Form], frame: &Frame, container: &str, out: &mut Vec<Site>) {
         if self.hy.head_text(items[0]) != Some("import") {
             return;
@@ -974,7 +974,7 @@ impl SiteWalker<'_> {
     }
 }
 
-/// Python と toml の file からの参照(名が綴りとして現れ、module の綴りも現れる file)。
+/// References from Python and toml files (files where the name appears as a spelling and the module spelling also appears).
 fn foreign_sites(root: &Path, candidates: &[Candidate], files: &[HyFile]) -> Vec<Site> {
     let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, candidate) in candidates.iter().enumerate() {
@@ -1018,7 +1018,7 @@ fn foreign_sites(root: &Path, candidates: &[Candidate], files: &[HyFile]) -> Vec
     out
 }
 
-/// source の識別子の綴り → 現れた byte の位置。
+/// Spelling of identifiers in source → byte positions where they appear.
 fn identifier_offsets(source: &str) -> BTreeMap<&str, Vec<usize>> {
     let mut out: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     let bytes = source.as_bytes();
@@ -1038,8 +1038,8 @@ fn identifier_offsets(source: &str) -> BTreeMap<&str, Vec<usize>> {
     out
 }
 
-/// 使う所が関数の変換を止めるか — 厳格なら書き換えられない所の全部、そうでなければ Program を返す組み立ての印(既に束ねている・
-/// Program を受ける関数へ渡している)だけ(変換すると呼び手の意味が変わる)。
+/// Whether a use blocks converting the function — in strict mode, every place that cannot be rewritten; otherwise only the marks of an assembly that returns a Program (already bound,
+/// passed to a function that takes a Program) (converting would change the meaning of the caller).
 fn blocks(site: &Site, alive: &BTreeSet<usize>, strict: bool) -> bool {
     match verdict(site, alive) {
         Ok(_) => false,
@@ -1048,7 +1048,7 @@ fn blocks(site: &Site, alive: &BTreeSet<usize>, strict: bool) -> bool {
     }
 }
 
-/// 使う所 1 つの判定 — 書き換えの形か、書き換えられない理由。
+/// Verdict for one use — a rewrite shape, or a reason it cannot be rewritten.
 fn verdict(site: &Site, alive: &BTreeSet<usize>) -> Result<Option<ByteSpan>, CallerBlock> {
     match &site.shape {
         Shape::Reference => Err(match &site.frame {
@@ -1068,21 +1068,21 @@ fn verdict(site: &Site, alive: &BTreeSet<usize>) -> Result<Option<ByteSpan>, Cal
     }
 }
 
-// --- 実行 ------------------------------------------------------------------------------------
+// --- Execution ------------------------------------------------------------------------------------
 
-/// 変換を 1 回走らせる(options.write が偽なら file を書かずに計画だけを返す)。
+/// Run the transform once (if options.write is false, return only the plan without writing files).
 pub fn run(options: &FixOptions) -> Result<FixReport, String> {
     let root = &options.root;
     let mut files: Vec<HyFile> = Vec::new();
     for path in super::hy_files::collect(root) {
-        let source = std::fs::read_to_string(&path).map_err(|e| format!("{} を読めない: {}", path.display(), e))?;
+        let source = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
         if let Some(file) = HyFile::read(root, &path, source, &options.targets, &options.excludes) {
             files.push(file);
         }
     }
     let mut report = FixReport { root: root.display().to_string(), written: options.write, ..FixReport::default() };
 
-    // 1. 候補の定義を集める。
+    // 1. Collect candidate definitions.
     let mut candidates: Vec<Candidate> = Vec::new();
     for (index, file) in files.iter().enumerate() {
         if !file.target {
@@ -1112,7 +1112,7 @@ pub fn run(options: &FixOptions) -> Result<FixReport, String> {
         nested_definitions(&hy, file, &mut report);
     }
 
-    // 2. 候補を使う所を repo の全部の Hy の file と Python・toml から集める。
+    // 2. Collect the places that use candidates from all Hy files in the repo, plus Python and toml.
     let by_qualified: BTreeMap<String, usize> = candidates.iter().enumerate().map(|(i, c)| (c.qualified.clone(), i)).collect();
     let mut sites: Vec<Site> = Vec::new();
     for (index, file) in files.iter().enumerate() {
@@ -1136,7 +1136,7 @@ pub fn run(options: &FixOptions) -> Result<FixReport, String> {
         sites.extend(foreign_sites(root, &candidates, &files));
     }
 
-    // 3. 不動点 — 書き換えられない所がある候補を落とし、落ちた候補の本体の呼びも書き換えられなくなる。
+    // 3. Fixed point — drop candidates that have places that cannot be rewritten; the calls in the bodies of dropped candidates also become unrewritable.
     let mut alive: BTreeSet<usize> = (0..candidates.len()).collect();
     loop {
         let dropped: BTreeSet<usize> = sites.iter().filter(|s| alive.contains(&s.callee) && blocks(s, &alive, options.strict)).map(|s| s.callee).collect();
@@ -1154,7 +1154,7 @@ pub fn run(options: &FixOptions) -> Result<FixReport, String> {
         }
     }
 
-    // 4. 書き換えを file ごとに集める。
+    // 4. Collect rewrites per file.
     let mut edits: BTreeMap<usize, Vec<Edit>> = BTreeMap::new();
     let mut needs: BTreeMap<usize, BTreeSet<&str>> = BTreeMap::new();
     for &index in &alive {
@@ -1194,7 +1194,7 @@ pub fn run(options: &FixOptions) -> Result<FixReport, String> {
         }
     }
 
-    // 5. 書き換えた source を作り、DOEFF126 を撃つ。
+    // 5. Build the rewritten source and run DOEFF126.
     let mut rewritten: BTreeMap<usize, String> = BTreeMap::new();
     for (file, list) in &edits {
         rewritten.insert(*file, apply_edits(&files[*file].source, list)?);
@@ -1203,7 +1203,7 @@ pub fn run(options: &FixOptions) -> Result<FixReport, String> {
     report.residual_bare_calls = residual_bare_calls(&files, &rewritten, &sites);
     if options.write {
         for (file, text) in &rewritten {
-            std::fs::write(&files[*file].path, text).map_err(|e| format!("{} を書けない: {}", files[*file].path.display(), e))?;
+            std::fs::write(&files[*file].path, text).map_err(|e| format!("cannot write {}: {}", files[*file].path.display(), e))?;
         }
     }
     report.converted.sort_by(|a, b| a.location.cmp(&b.location));
@@ -1213,14 +1213,14 @@ pub fn run(options: &FixOptions) -> Result<FixReport, String> {
     Ok(report)
 }
 
-/// 入れ子の定義を調べる時の、外の定義。
+/// The outer definition, when examining nested definitions.
 struct Outer {
     name: String,
-    /// 外が class か(中の defn は method)。
+    /// Whether the outer is a class (a defn inside is a method).
     class: bool,
 }
 
-/// 関数の中の defn(method は当てなかった物、ほかは判断の要る物)。
+/// A defn inside a function (a method is skipped; anything else needs judgement).
 fn nested_definitions(hy: &Hy<'_>, file: &HyFile, report: &mut FixReport) {
     fn visit(hy: &Hy<'_>, file: &HyFile, form: &Form, outer: Option<&Outer>, top: bool, report: &mut FixReport) {
         let Some(items) = live(form) else {
@@ -1269,10 +1269,10 @@ fn nested_definitions(hy: &Hy<'_>, file: &HyFile, report: &mut FixReport) {
     }
 }
 
-/// 名を持つ定義(入れ子の defn の外の名を取るため)。
+/// A definition with a name (to take the outer name of a nested defn).
 const DEFINITION_LIKE: &[&str] = &["defk", "deff", "deftest", "defhandler", "defp", "defpp", "defmacro"];
 
-/// file の require に要る macro を足す書き換え(既にあれば None)。
+/// A rewrite that adds the macros a file's require needs (None if already present).
 fn require_edit(file: &HyFile, needed: &BTreeSet<&str>) -> Option<Edit> {
     let hy = Hy { src: &file.source };
     let mut first_import: Option<usize> = None;
@@ -1310,7 +1310,7 @@ fn require_edit(file: &HyFile, needed: &BTreeSet<&str>) -> Option<Edit> {
     Some(Edit { start: at, end: at, text: format!("(require doeff-hy.macros [{}])\n", names.join(" ")) })
 }
 
-/// 書き換えを後ろから当てる(重なる書き換えは誤り)。
+/// Apply the rewrites from the back (overlapping rewrites are an error).
 fn apply_edits(source: &str, edits: &[Edit]) -> Result<String, String> {
     let mut sorted: Vec<&Edit> = edits.iter().collect();
     sorted.sort_by(|a, b| b.start.cmp(&a.start).then(b.end.cmp(&a.end)));
@@ -1319,7 +1319,7 @@ fn apply_edits(source: &str, edits: &[Edit]) -> Result<String, String> {
     let mut limit = usize::MAX;
     for edit in sorted {
         if edit.end > limit {
-            return Err(format!("書き換えが重なった({}..{})", edit.start, edit.end));
+            return Err(format!("rewrites overlap ({}..{})", edit.start, edit.end));
         }
         out.replace_range(edit.start..edit.end, &edit.text);
         limit = edit.start;
@@ -1327,7 +1327,7 @@ fn apply_edits(source: &str, edits: &[Edit]) -> Result<String, String> {
     Ok(out)
 }
 
-/// 書き換えた後の source で DOEFF126 を撃つ(書き換えた file と、候補を使う所のある file)。
+/// Run DOEFF126 on the rewritten source (the rewritten files, and files that have a place using a candidate).
 fn residual_bare_calls(files: &[HyFile], rewritten: &BTreeMap<usize, String>, sites: &[Site]) -> Vec<ResidualBareCall> {
     let text_of = |index: usize| rewritten.get(&index).map(String::as_str).unwrap_or(&files[index].source);
     let mut defks = bare_calls::DefkNames::default();
@@ -1359,7 +1359,7 @@ fn residual_bare_calls(files: &[HyFile], rewritten: &BTreeMap<usize, String>, si
 mod tests {
     use super::*;
 
-    /// 一時の repo に file を置き、変換を走らせて (報告・書き換えた後の中身) を返す。
+    /// Put files in a temporary repo, run the transform, and return (report, rewritten contents).
     struct Fixture {
         dir: tempfile::TempDir,
     }
@@ -1413,7 +1413,7 @@ mod tests {
                 r#"(require doeff-hy.macros [val])
 
 (defn #^ int add-one [#^ int x #^ (| str None) [label None]]
-  "1 を足す。"
+  "Add 1."
   (+ x 1))
 
 (defn #^ (get list int) twice [#^ (get list int) xs #^ float scale]
@@ -1438,13 +1438,13 @@ mod tests {
         assert_eq!(report.converted.len(), 2);
         let core = fx.read("app/core.hy");
         assert!(core.contains("(require doeff-hy.macros [val defk])"), "{}", core);
-        assert!(core.contains("(defk add-one [x [label None]]\n  {:pre [(: x int) (: label (| str None))] :post [(: % int)]}\n  \"1 を足す。\""), "{}", core);
-        // 型の引数つきの型は契約に元の型、注記は残す。float は int も受ける。
+        assert!(core.contains("(defk add-one [x [label None]]\n  {:pre [(: x int) (: label (| str None))] :post [(: % int)]}\n  \"Add 1.\""), "{}", core);
+        // A parametrized type gets the base type in the contract, and the annotation is kept. float also accepts int.
         assert!(core.contains("(defk twice [#^ (get list int) xs scale]\n  {:pre [(: xs list) (: scale (| float int))] :post [(: % list)]}"), "{}", core);
         let used = fx.read("app/use.hy");
         assert!(used.contains("(<- a (add-one n))"), "{}", used);
         assert!(used.contains("(<- b (twice [n] 2.0))"), "{}", used);
-        // 式の途中の呼びは !、既に require にある <- は足さない。
+        // A call in the middle of an expression becomes !; an existing <- in require is not added again.
         assert!(used.contains("(+ a (! (add-one (len b))))"), "{}", used);
         assert!(used.starts_with("(require doeff-hy.macros [defk <- val])"), "{}", used);
         assert!(report.residual_bare_calls.is_empty(), "{:?}", report.residual_bare_calls);
@@ -1495,25 +1495,25 @@ mod tests {
             ("py_user.py", "from m import from_python\n"),
         ]);
         let report = fx.run_strict("m.hy");
-        // caller-of-blocked は in-plain を呼ぶが、自分の呼び手は無いので変換される(in-plain の呼びは素の defn の中ではなくなる… が
-        // in-plain は deff の中でも呼ばれるので落ちる)。
+        // caller-of-blocked calls in-plain, but it has no caller of its own, so it is converted (in-plain's call is no longer inside a plain defn… but
+        // in-plain is also called from inside a deff, so it is dropped).
         let converted: Vec<&str> = report.converted.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(converted, vec!["caller-of-blocked"]);
         let why: BTreeSet<String> = reasons(&report).into_iter().collect();
         for expected in [
-            "in-comprehension:m.in_comprehension の呼び手: 内包表記 lfor の中で呼んでいる",
-            "in-plain:m.in_plain の呼び手: 変換しない素の関数(deff helper)の中で呼んでいる",
-            "as-key:m.as_key の呼び手: 関数そのものを値として渡している",
-            "at-module:m.at_module の呼び手: module の最上位で呼んでいる",
-            "in-fn:m.in_fn の呼び手: 変換しない素の関数(fn k)の中で呼んでいる",
-            "builder:m.builder の呼び手: 既に <- / ! で束ねている(Program を返す組み立て)",
-            "from-python:m.from_python の呼び手: Python の file から参照している",
+            "in-comprehension:callers of m.in_comprehension: called inside comprehension lfor",
+            "in-plain:callers of m.in_plain: called inside a plain function that is not converted (deff helper)",
+            "as-key:callers of m.as_key: the function itself is passed as a value",
+            "at-module:callers of m.at_module: called at module top level",
+            "in-fn:callers of m.in_fn: called inside a plain function that is not converted (fn k)",
+            "builder:callers of m.builder: already bound with <- / ! (an assembly that returns a Program)",
+            "from-python:callers of m.from_python: referenced from a Python file",
         ] {
-            assert!(why.contains(expected), "{} が無い: {:?}", expected, why);
+            assert!(why.contains(expected), "missing {}: {:?}", expected, why);
         }
         let text = fx.read("m.hy");
         assert!(text.contains("(defn #^ int in-plain [#^ int x] x)"), "{}", text);
-        // 変換した caller-of-blocked の本体の in-plain は defn のまま(defk の中で素の関数を呼ぶのは正しい)。
+        // in-plain in the body of the converted caller-of-blocked stays a defn (calling a plain function from inside a defk is correct).
         assert!(text.contains("(defk caller-of-blocked [x] {:pre [(: x int)] :post [(: % int)]} (in-plain x))"), "{}", text);
     }
 
@@ -1527,9 +1527,9 @@ mod tests {
 "#,
         )]);
         let report = fx.run_strict("m.hy");
-        // outer は module の最上位で呼ばれるので落ち、outer の中の inner の呼びは素の defn の中になるので inner も落ちる。
+        // outer is called at module top level so it is dropped; the call to inner inside outer ends up inside a plain defn, so inner is dropped too.
         assert!(report.converted.is_empty(), "{:?}", report.converted);
-        assert!(reasons(&report).contains(&"inner:m.inner の呼び手: 変換しない素の関数(defn outer)の中で呼んでいる".to_string()), "{:?}", reasons(&report));
+        assert!(reasons(&report).contains(&"inner:callers of m.inner: called inside a plain function that is not converted (defn outer)".to_string()), "{:?}", reasons(&report));
         assert!(report.changed_files.is_empty());
     }
 
@@ -1540,7 +1540,7 @@ mod tests {
                 "m.hy",
                 r#"(defn __getattr__ [name] name)
 (defn :async fetch [url] url)
-(defn #^ int kept [#^ int x] x)  ; defk にできない: 外の framework が素の関数として呼ぶ
+(defn #^ int kept [#^ int x] x)  ; defk にできない: called by an external framework as a plain function
 (eval-and-compile (defn #^ int helper [#^ int x] x))
 (defclass Box [] (defn #^ int size [self] 1))
 "#,
@@ -1552,14 +1552,14 @@ mod tests {
         assert_eq!(
             skipped,
             vec![
-                "__getattr__:dunder の名",
+                "__getattr__:dunder name",
                 "fetch::async",
-                "kept:理由の註: defk にできない: 外の framework が素の関数として呼ぶ",
-                "helper:eval-and-compile の中",
-                "size:class の method",
+                "kept:reason comment: defk にできない: called by an external framework as a plain function",
+                "helper:inside eval-and-compile",
+                "size:class method",
             ]
         );
-        // 除いた path の定義は数えも書き換えもしない。
+        // Definitions under an excluded path are neither counted nor rewritten.
         assert!(fx.read("clients/hy/acp_client/a.hy").starts_with("(defn"));
         assert!(report.converted.is_empty() && report.changed_files.is_empty());
     }
@@ -1583,21 +1583,21 @@ mod tests {
         let report = fx.run("m.hy");
         let why: Vec<String> = reasons(&report);
         for expected in [
-            "untyped:引数 x に型の注記が無い",
-            "untyped:戻り値の型の注記が無い",
-            "no-param-type:引数 x に型の注記が無い",
-            "no-return:戻り値の型の注記が無い",
-            "broad:x の型 object は defk の契約が拒む広い型",
-            "literal:x の型 (get Literal \"a\") を isinstance の型に写せない",
-            "decorated:飾り [cache] がある",
-            "gen:本体に yield がある(生成器)",
-            "test-thing:検の関数 — deftest にする",
-            "handler-like:引数の名 effect・k が handler の形",
-            "inner:outer の中の defn",
+            "untyped:argument x has no type annotation",
+            "untyped:no return type annotation",
+            "no-param-type:argument x has no type annotation",
+            "no-return:no return type annotation",
+            "broad:type object of x is too broad; the defk contract rejects it",
+            "literal:type (get Literal \"a\") of x cannot be mapped to an isinstance type",
+            "decorated:has decorators [cache]",
+            "gen:the body has a yield (generator)",
+            "test-thing:a check function — make it a deftest",
+            "handler-like:argument names effect, k look like a handler",
+            "inner:a defn inside outer",
         ] {
-            assert!(why.contains(&expected.to_string()), "{} が無い: {:?}", expected, why);
+            assert!(why.contains(&expected.to_string()), "missing {}: {:?}", expected, why);
         }
-        // outer 自身は変換される(中の defn は素の関数のまま)。
+        // outer itself is converted (the defn inside stays a plain function).
         assert_eq!(report.converted.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["outer"]);
     }
 
@@ -1616,7 +1616,7 @@ mod tests {
         assert_eq!(report.converted.len(), 2, "{:?}", reasons(&report));
         let text = fx.read("m.hy");
         assert!(text.contains("{:pre [(: x int)] :post [(: % int)] :tags {:context \"c\" :role \"judgment\"}}"), "{}", text);
-        // 答えの辞書は契約ではない — 契約をその前に置く。
+        // A dict that is the answer is not a contract — put the contract before it.
         assert!(text.contains("(defk literal-dict [] {:pre [] :post [(: % dict)]} {\"a\" 1})"), "{}", text);
     }
 
@@ -1631,8 +1631,8 @@ mod tests {
         ]);
         let report = fx.run_strict("a.hy");
         let why = reasons(&report);
-        assert!(why.contains(&"step:a.step の呼び手: -> の段として呼んでいる".to_string()), "{:?}", why);
-        assert!(why.contains(&"aliased:a.aliased の呼び手: import の別名 other で取り込んでいる".to_string()), "{:?}", why);
+        assert!(why.contains(&"step:callers of a.step: called as a step of ->".to_string()), "{:?}", why);
+        assert!(why.contains(&"aliased:callers of a.aliased: imported under the alias other".to_string()), "{:?}", why);
         assert!(report.converted.is_empty());
     }
 
@@ -1651,20 +1651,20 @@ mod tests {
 "#,
         )]);
         let report = fx.run("m.hy");
-        // leaf は変換し、内包表記と module の最上位の呼びは手で直す物に出す。builder は Program を返す組み立てなので変換しない。
+        // leaf is converted; calls in a comprehension and at module top level are listed as things to fix by hand. builder is an assembly that returns a Program, so it is not converted.
         assert_eq!(report.converted.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["leaf"]);
         let why: BTreeSet<String> = reasons(&report).into_iter().collect();
         for expected in [
-            "leaf:m.leaf は defk にした — この呼び手を手で直す: 内包表記 lfor の中で呼んでいる",
-            "leaf:m.leaf は defk にした — この呼び手を手で直す: module の最上位で呼んでいる",
-            "builder:m.builder の呼び手: 既に <- / ! で束ねている(Program を返す組み立て)",
+            "leaf:m.leaf became a defk — fix this caller by hand: called inside comprehension lfor",
+            "leaf:m.leaf became a defk — fix this caller by hand: called at module top level",
+            "builder:callers of m.builder: already bound with <- / ! (an assembly that returns a Program)",
         ] {
-            assert!(why.contains(expected), "{} が無い: {:?}", expected, why);
+            assert!(why.contains(expected), "missing {}: {:?}", expected, why);
         }
         let text = fx.read("m.hy");
         assert!(text.contains("(+ ys [(! (leaf 1))])") && text.contains("(lfor x xs (leaf x))"), "{}", text);
-        // 手で直す呼びの module の最上位の束ねは、書き換えずに残り、DOEFF126 の残りにも出る(定義の外の defk の呼びは位置を問わず素の呼び)。
-        // 内包表記の中の呼び(defk の本体の中・答えを値として使う所ではない)は残りに出ない。
+        // The module-top-level binding of a call to fix by hand stays unrewritten and also appears in DOEFF126's remainder (a defk call outside a definition is a bare call regardless of position).
+        // A call inside a comprehension (inside a defk body, not a place that uses the answer as a value) does not appear in the remainder.
         assert!(text.contains("(setv CONSTANT (leaf 1))"), "{}", text);
         let residual: Vec<(&str, &str)> = report.residual_bare_calls.iter().map(|r| (r.definition.as_str(), r.callee.as_str())).collect();
         assert_eq!(residual, vec![("<m>", "leaf")]);
@@ -1686,6 +1686,6 @@ mod tests {
         assert_eq!(report.converted.len(), 1);
         assert_eq!(report.changed_files, vec!["m.hy".to_string()]);
         assert_eq!(fx.read("m.hy"), "(defn #^ int one [] 1)\n");
-        assert!(report.table().contains("計画だけ"));
+        assert!(report.table().contains("plan only"));
     }
 }

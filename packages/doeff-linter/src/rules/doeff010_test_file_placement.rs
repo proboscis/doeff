@@ -4,11 +4,11 @@
 //! with `__init__.py` — outside a `tests` directory. There it ships with the package and pytest
 //! collects the package's classes as tests.
 //!
-//! 鳴るのは「import できる package の中に置かれた検の file」だけ。package でない dir
-//! (agentd の conformance の組・設計の記録の模型・examples・道具の script)に置かれた `test_*.py` は配る code に混ざらず、
-//! この規則の害の外 — 前は祖先に `tests` の dir が無いだけで鳴り、doeff だけで 41 件の誤検出を出していた。
-//! 失う当たり: package でない dir(repo の根など)の `test_*.py` と、PEP 420 の名前空間 package(`__init__.py` の無い
-//! package)の中の検の file。
+//! It fires only for "test files placed inside an importable package". `test_*.py` placed in a non-package dir
+//! (agentd's conformance suite, design-record models, examples, tool scripts) does not get mixed into shipped code and is
+//! outside this rule's concern — previously it fired merely because no ancestor dir was named `tests`, producing 41 false positives in doeff alone.
+//! Cases lost: `test_*.py` in a non-package dir (such as the repo root), and test files inside a PEP 420 namespace package (a
+//! package without `__init__.py`).
 
 use crate::models::{RuleContext, Severity, Violation};
 use crate::rules::base::{LintRule, RuleReach};
@@ -45,8 +45,8 @@ impl TestFilePlacementRule {
         false
     }
 
-    /// file の dir が import できる package か(`__init__.py` が在るか)— この規則が file system を読む唯一の所。
-    /// 相対の path は linter が file を開いたのと同じ作業 dir から読む。
+    /// Whether the file's dir is an importable package (has `__init__.py`) — the only place this rule reads the file system.
+    /// A relative path is read from the same working dir from which the linter opened the file.
     fn dir_is_package(file_path: &str) -> bool {
         Path::new(file_path)
             .parent()
@@ -63,14 +63,14 @@ impl LintRule for TestFilePlacementRule {
         "Test files must not be placed inside an importable package outside a 'tests' directory"
     }
 
-    /// file の置き場を見る規則なので、本体が file に 1 度だけ当てる(#2858 — 最初の文の絞りは本体の役目)。
+    /// This rule looks at where a file is placed, so the body applies it to a file exactly once (#2858 — narrowing by the first sentence is the body's job).
     fn reach(&self) -> RuleReach {
         RuleReach::Module
     }
 
     fn check(&self, context: &RuleContext) -> Vec<Violation> {
         let path = context.file_path;
-        // 名と置き場の判じ(純粋)を先に済ませ、file system は名が検の file で tests の外の時だけ読む。
+        // Do the name and placement judgment (pure) first; read the file system only when the name is a test file and it is outside tests.
         if !Self::is_test_file(path) || Self::is_in_tests_directory(path) || !Self::dir_is_package(path) {
             return Vec::new();
         }
@@ -122,19 +122,19 @@ mod tests {
         violations
     }
 
-    /// 一時の dir の下に dir を作り、`package` が真なら `__init__.py` を置く。返すのは作った dir の path。
+    /// Create a dir under a temporary dir, and place `__init__.py` if `package` is true. Returns the path of the created dir.
     fn make_dir(root: &TempDir, relative: &str, package: bool) -> String {
         let dir = root.path().join(relative);
-        fs::create_dir_all(&dir).expect("dir を作る");
+        fs::create_dir_all(&dir).expect("create dir");
         if package {
-            fs::write(dir.join("__init__.py"), "").expect("__init__.py を置く");
+            fs::write(dir.join("__init__.py"), "").expect("place __init__.py");
         }
         dir.to_string_lossy().into_owned()
     }
 
     const TEST_CODE: &str = "def test_something(): pass";
 
-    // 鳴るべき形: import できる package の中の検の file。
+    // Shapes that should fire: a test file inside an importable package.
 
     #[test]
     fn a_test_file_inside_a_package_is_flagged() {
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(check_code(TEST_CODE, &format!("{sub}/test.py")).len(), 1);
     }
 
-    // 鳴らないべき形: package でない dir(conformance の組・examples・道具)と tests の dir の中。
+    // Shapes that should not fire: non-package dirs (conformance suite, examples, tools) and inside a tests dir.
 
     #[test]
     fn a_test_file_in_a_directory_without_init_is_not_flagged() {
@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(check_code("def something(): pass", &format!("{pkg}/module.py")).len(), 0);
     }
 
-    /// 親の dir だけが package で、file の dir 自身に `__init__.py` が無い時は鳴らない(その dir は import できない)。
+    /// Does not fire when only the parent dir is a package and the file's own dir has no `__init__.py` (that dir is not importable).
     #[test]
     fn a_plain_directory_under_a_package_is_not_flagged() {
         let root = tempfile::tempdir().unwrap();

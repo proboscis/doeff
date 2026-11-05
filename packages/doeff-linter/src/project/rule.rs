@@ -1,260 +1,260 @@
-//! 層の規則(repo をまたいで判じる規則)の閉じた一覧。ID・題・文・直し方の既定の 1 行はここだけに書く。
+//! The closed list of layer rules (rules judged across the repo). The ID, title, statement, and default one-line fix are written only here.
 
 use serde::Serialize;
 
-/// 規則の家族(エディタの一覧で規則を束ねる、閉じた分類)。
+/// The rule family (a closed classification that groups rules in the editor's list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleFamily {
-    /// 層の向き・置ける物(DOEFF101〜103)と、翻訳の層の handler が出す effect(DOEFF130)。
+    /// Layer direction and what may be placed (DOEFF101 to 103), and effects emitted by translation-layer handlers (DOEFF130).
     Layer,
-    /// タグ(:context・role)の宣言と食い違い(DOEFF104・105・113)。
+    /// Tag declarations (:context, role) and mismatches (DOEFF104, 105, 113).
     Tags,
-    /// 生の副作用(DOEFF106・107)。
+    /// Raw side effects (DOEFF106, 107).
     Raw,
-    /// 名の付け方(DOEFF108)。
+    /// Naming (DOEFF108).
     Naming,
-    /// 置き場所・依存(DOEFF109・114〜117)と、設定の知らない鍵(DOEFF100 — 置き場所の宣言 architecture.hy と同じ設定の話なので
-    /// この家族に入れる。拡張の家族の一覧は閉じているので、新しい家族を足すと古い拡張が出力を丸ごと捨てる)。
+    /// Placement and dependencies (DOEFF109, 114 to 117), and keys the settings do not know (DOEFF100 — it is the same settings matter as the placement declaration architecture.hy, so it goes
+    /// into this family. The extension's list of families is closed, so adding a new family makes old extensions discard the whole output).
     Place,
-    /// 定義の書き方(DOEFF110〜112・118)。
+    /// How definitions are written (DOEFF110 to 112, 118).
     Definition,
-    /// class(DOEFF119・204)。
+    /// class (DOEFF119, 204).
     Class,
-    /// JsonValue と wire(DOEFF120)。
+    /// JsonValue and wire (DOEFF120).
     Wire,
-    /// 臭い(DOEFF121〜125・205)。
+    /// Smells (DOEFF121 to 125, 205).
     Smell,
-    /// Jev(意味の判定・DOEFF201〜203)。
+    /// Jev (semantic judgment, DOEFF201 to 203).
     Jev,
-    /// Python の文ごとの規則(DOEFF001〜031・NOQA001・知らない ID)。
+    /// Python per-statement rules (DOEFF001 to 031, NOQA001, unknown IDs).
     Python,
-    /// 規則を持たない law。
+    /// A law with no rules.
     Law,
 }
 
-/// 層の規則の種類。Python の文ごとの規則(DOEFF001〜031)と違い、repo の module の一覧と設定を見て判じる。
+/// The kinds of layer rule. Unlike the Python per-statement rules (DOEFF001 to 031), they are judged by looking at the repo's list of modules and the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProjectRule {
-    /// DOEFF100: 設定(pyproject の [tool.doeff-linter]・architecture.hy)にこの linter の知らない鍵か規則の ID がある
-    /// (その鍵だけを読まずに残りの規則を走らせた知らせ・warning — linter が設定より古いか、書き違い)。
+    /// DOEFF100: the settings (pyproject's [tool.doeff-linter], architecture.hy) contain a key or rule ID this linter does not know
+    /// (a notice that the remaining rules were run without reading that key — warning; the linter is older than the settings, or a typo).
     UnknownConfigKey,
-    /// DOEFF128: Hy の file を読み取り器が最後まで読めない(違反が欠ける — 有効な規則の一覧に関わらず出す)。
+    /// DOEFF128: the reader cannot read a Hy file to the end (violations are missing — emitted regardless of the list of enabled rules).
     UnreadableFile,
-    /// DOEFF101: 層の import の向き — 許された層の外の module を import しない。
+    /// DOEFF101: layer import direction — do not import modules outside the allowed layers.
     LayerImportDirection,
-    /// DOEFF102: 層ごとに禁じた module(I/O の module など)を直に import しない。
+    /// DOEFF102: do not directly import modules forbidden per layer (such as I/O modules).
     LayerForbiddenModule,
-    /// DOEFF103: 型だけの層に関数と handler を定めない。
+    /// DOEFF103: do not define functions and handlers in a types-only layer.
     LayerTypesOnly,
-    /// DOEFF104: 層の module は文脈と役をタグで名乗る。
+    /// DOEFF104: a layer's module declares its context and role with tags.
     ModuleDeclaresTags,
-    /// DOEFF105: タグの role がその層で許される物。
+    /// DOEFF105: the tag's role is one allowed in that layer.
     RoleMatchesLayer,
-    /// DOEFF106: 生の副作用に直に触る定義は許された層にだけ置く。
+    /// DOEFF106: definitions that touch raw side effects directly are placed only in allowed layers.
     RawSideEffectDirect,
-    /// DOEFF107: 呼ぶ定義を通して生の副作用に届く(事実の知らせ・info)。
+    /// DOEFF107: reaching a raw side effect through a called definition (a notice of fact — info).
     RawSideEffectVia,
-    /// DOEFF108: 業務の file・handler・組み立ての関数の名に環境の語を付けない。
+    /// DOEFF108: do not put environment words in the names of business files, handlers, and assembly functions.
     EnvironmentName,
-    /// DOEFF109: service の境界 — ある service の判断と翻訳の層は、別の service の判断と翻訳の層を読まない。
+    /// DOEFF109: service boundary — one service's judgment and translation layers do not read another service's judgment and translation layers.
     ServiceBoundary,
-    /// DOEFF110: Hy の defn / defn/a を使わない(契約の辞書と :tags を書ける defk を使う)。
+    /// DOEFF110: do not use Hy's defn / defn/a (use defk, which can carry a contract dictionary and :tags).
     DefnForbidden,
-    /// DOEFF111: deff には defk にできない理由の註を付ける。
+    /// DOEFF111: attach a comment giving the reason a deff cannot be a defk.
     DeffNeedsReason,
-    /// DOEFF112: defk・deff・defp・defhandler・defeffect は :tags で必須の鍵を名乗る。
+    /// DOEFF112: defk, deff, defp, defhandler, and defeffect declare the required keys in :tags.
     DefinitionTagsRequired,
-    /// DOEFF113: タグの :context と dir の service が食い違う(info。service を宣言していれば warning)。
+    /// DOEFF113: the tag's :context and the dir's service disagree (info; warning if the service is declared).
     ContextMatchesService,
-    /// DOEFF114: 宣言されていない置き場所の module(architecture.hy の service の層・shared・foundation・legacy のどれでもない)。
+    /// DOEFF114: a module in an undeclared location (none of architecture.hy's service layers, shared, foundation, or legacy).
     UndeclaredPlace,
-    /// DOEFF115: 宣言に無い service の dir、service の中の宣言に無い層の dir。
+    /// DOEFF115: a service dir not in the declaration, or a layer dir inside a service not in the declaration.
     UndeclaredDirectory,
-    /// DOEFF116: service の依存 — 宣言の :depends-on に無い service を読む、または依存先の読めない層(層の :dependency-layers か :open-layers の外)を読む。
+    /// DOEFF116: service dependency — reading a service not in the declaration's :depends-on, or reading a layer of the dependency that is not readable (outside the layer's :dependency-layers or :open-layers).
     ServiceDependency,
-    /// DOEFF117: 宣言したのに使っていない依存(info)。
+    /// DOEFF117: a declared dependency that is not used (info).
     UnusedDependency,
-    /// DOEFF118: 検の置き場の検の関数は deftest だけで書く(名が test_ の defn・deff・defk・fn の束縛を置かない)。
+    /// DOEFF118: test functions in test locations are written only with deftest (do not place bindings of defn, deff, defk, or fn whose name is test_).
     TestIsDeftest,
-    /// DOEFF119: 処理を持つ method のある defclass を業務の code に書かない(欄だけの class は defrecord を勧める info)。
+    /// DOEFF119: do not write a defclass with methods that hold logic in business code (for a class with only fields, info recommending defrecord).
     ClassWithBehaviour,
-    /// DOEFF120: JsonValue(素の dict を名で包んだだけの型)を、汎用の解き手と :wire-modules に挙げた foundation の送受信の module の外で使わない。
+    /// DOEFF120: do not use JsonValue (a type that merely wraps a plain dict with a name) outside generic solvers and the foundation send/receive modules listed in :wire-modules.
     JsonValueOutsideWire,
-    /// DOEFF121: 判断の層の定義が、文字列の鍵で読んだ欄を isinstance で検める(JSON の形の検めが core に入っている)。
+    /// DOEFF121: a judgment-layer definition checks with isinstance a field read with a string key (a JSON shape check has crept into core).
     ShapeCheckInJudgment,
-    /// DOEFF122: match の腕が、失敗の型を受けて受けた値を return し直すだけ(手書きの例外の再送出)。
+    /// DOEFF122: a match arm receives a failure type and merely returns the received value again (a hand-written re-raise of an exception).
     FailureRethrow,
-    /// DOEFF123: `(<- x T (f …))` の直後に `(return x)` が来て、x を他で使わない。
+    /// DOEFF123: `(return x)` comes right after `(<- x T (f …))`, and x is used nowhere else.
     BindThenReturn,
-    /// DOEFF124: 同じ値の 2 つ以上の欄を 1 本の文字列につなぐ。
+    /// DOEFF124: join two or more fields of the same value into one string.
     FieldsJoinedIntoText,
-    /// DOEFF125: for / while の中で蓄えを毎回作り直す。
+    /// DOEFF125: rebuild an accumulator on each pass inside for / while.
     RebuiltAccumulator,
-    /// DOEFF126: defk の定義を素で呼ぶ(答えではなく Program が返り、静かに間違った値として流れる)。
+    /// DOEFF126: call a defk definition bare (a Program is returned instead of the answer, and flows on silently as a wrong value).
     DefkCalledBare,
-    /// DOEFF127: defk の `:effects` の宣言が推論と合わない(宣言に無い effect を起こす・宣言した effect を起こさない)。
+    /// DOEFF127: a defk's `:effects` declaration disagrees with inference (raises an effect not in the declaration, or does not raise a declared effect).
     EffectsDisagreeWithInference,
-    /// DOEFF175: effect が defeffect で不在・失敗と宣言した型を、その effect の答えを束ねた変数に対して値として分ける枝(match の腕・isinstance)—
-    /// `<-` と `!` はその型を束ねず Absent / Raise として逃がすので、枝は決して通らない(ADR-DOE-CORE-EFFECTS-003 R14 (4) — effect を切り替えた版の
-    /// 後に残る古い分岐。当たりが 0 になるまでその版を着地させない)。登録簿で下げない。
+    /// DOEFF175: a branch (match arm, isinstance) that separates as a value, on a variable that binds an effect's answer, the types the effect declared in defeffect as absent or failure —
+    /// `<-` and `!` do not bind those types but let them escape as Absent / Raise, so the branch never runs (ADR-DOE-CORE-EFFECTS-003 R14 (4) — an old branch left after
+    /// the version that switched the effect. That version is not landed until the hits reach 0). Not lowered by the registry.
     StaleOutcomeBranch,
-    /// DOEFF130: 翻訳の層の handler が業務の intent(層 intent の型の effect)を出す — import した defk の先まで辿る。
+    /// DOEFF130: a translation-layer handler emits a business intent (an effect of a type in the intent layer) — followed through imported defks.
     TranslationEmitsIntent,
-    /// DOEFF174: 業務の層(設定の translation_effects.domain_layers — 既定 core・intent)の定義が、architecture.hy の :business-fakes の
-    /// :lower-layer-modules の効果を出す(defk の呼びを辿って届く形も)か、その module の package の handler を with_handlers で被せる —
-    /// 記録の service の生の操作は handler(protocol・foundation)の仕事。既知の一覧で下げない。
+    /// DOEFF174: a definition in a business layer (the setting translation_effects.domain_layers — default core and intent) emits an effect of architecture.hy's :business-fakes
+    /// :lower-layer-modules (including shapes reached by following defk calls), or wraps handlers of that module's package with with_handlers —
+    /// raw operations on a record service are the job of handlers (protocol, foundation). Not lowered by the known list.
     LowerLayerInDomain,
-    /// DOEFF168: 業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義が、環境の名の値と比べるか dry-run の印で分岐する
-    /// (業務の層は環境を知らない・環境の違いは handler の組の差し替えだけで表す)。
+    /// DOEFF168: a Hy definition in a business layer (architecture.hy's :environment-branches :layers) branches by comparing with a value of an environment name or by a dry-run flag
+    /// (business layers do not know the environment — differences between environments are expressed only by swapping the set of handlers).
     EnvironmentBranch,
-    /// DOEFF169: `match` の class pattern の keyword の欄の名に `-` が在る(Hy が属性名へ mangle しないので決して当たらない)。
+    /// DOEFF169: a keyword field name in a `match` class pattern contains `-` (Hy does not mangle it into an attribute name, so it never matches).
     MatchFieldHyphen,
-    /// DOEFF170: 値を型だけで渡す層(architecture.hy の層の `:wire-free True` — agora の core)に defwire の宣言が在る(wire の型 — 欄名の
-    /// 対応を持つ宣言と parse / dump — は翻訳の層に置く)。
+    /// DOEFF170: a defwire declaration exists in a layer that passes values by type only (architecture.hy's layer `:wire-free True` — agora's core) (wire types — declarations that hold the
+    /// correspondence of field names, and parse / dump — go in the translation layer).
     WireInWireFreeLayer,
-    /// DOEFF171: 値を型だけで渡す層の定義の :pre / :post と defclass / defrecord の欄の型に、写像(dict・Mapping・JsonBody・FrozenMap …・
-    /// 型つきの写像も)か中身の型の無い組 / 列(tuple・list)が在る。
+    /// DOEFF171: the :pre / :post of a definition in a layer that passes values by type only, and the field types of defclass / defrecord, contain a mapping (dict, Mapping, JsonBody, FrozenMap …,
+    /// including typed mappings) or a tuple / list without a content type.
     BareMapInWireFreeLayer,
-    /// DOEFF172(臭い・major): 写像の置き場 — handler の外の定義の本体で写像を組む(`{…}`・dfor・(dict …))か、値を型だけで渡す層の外の
-    /// defclass・defrecord・defwire の欄が写像(数えるだけ)。
+    /// DOEFF172 (smell, major): where mappings live — a definition body outside a handler builds a mapping (`{…}`, dfor, (dict …)), or the fields of a defclass, defrecord, or defwire outside the layers that pass values by type only
+    /// are mappings (counting only).
     DictOutsideItsPlace,
-    /// DOEFF131: architecture.hy の許可名簿(:world-handlers)の外の定義が、名簿の :wraps に挙げた doeff の実 I/O の handler を名指す
-    /// (外の世界に触れてよいのは名簿の定義だけ)。
+    /// DOEFF131: a definition outside architecture.hy's allowlist (:world-handlers) names a doeff real I/O handler listed in the allowlist's :wraps
+    /// (only the allowlist's definitions may touch the outside world).
     WorldHandlerNamedOutsideList,
-    /// DOEFF132: 許可名簿の定義が実在しない・層 foundation の外に在る(外の世界に触れてよい定義は foundation の層にだけ置く)。
-    /// 位置は architecture.hy の名簿の要素。
+    /// DOEFF132: an allowlist definition does not exist or is outside the foundation layer (definitions that may touch the outside world are placed only in the foundation layer).
+    /// The position is the allowlist element in architecture.hy.
     WorldHandlerMisplaced,
-    /// DOEFF133: テストの種類(手元 / 縁)を届く先から導き、architecture.hy の :edge-mark の印と食い違う物 — 名簿の定義・:wraps の
-    /// handler・生の I/O に届くのに印が無い / 届かないのに印が在る。
-    /// Hy の定義が名指す repo の中の Python の関数の中の生の I/O と呼び先も届く先に数える(python_reach)。
+    /// DOEFF133: the kind of test (local / edge) derived from what it reaches disagrees with architecture.hy's :edge-mark marker — it reaches an allowlist definition, a :wraps
+    /// handler, or raw I/O but has no marker / it reaches none but has a marker.
+    /// Raw I/O inside Python functions in the repo that a Hy definition names, and their callees, also count as reached (python_reach).
     TestKindMismatch,
-    /// DOEFF137: architecture.hy の許可名簿(:world-handlers)の handler に、縁の検(空でない `:interpreters` を持ち、その handler の
-    /// 定義に届く deftest)が 1 本も無い — 本物と模擬が同じ検を通ることを見ていない実 I/O の handler。
-    /// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `:contract-test none` は鳴る(書き方は直し方の文 — #1796)。
+    /// DOEFF137: a handler in architecture.hy's allowlist (:world-handlers) has not a single edge test (a deftest that has a non-empty `:interpreters` and reaches that handler's
+    /// definition) — a real I/O handler for which it is not checked that the real one and the fake pass the same test.
+    /// A handler with a reasoned `:contract-test (none …)` is not judged; a reasonless `:contract-test none` fires (how to write it is in the fix text — #1796).
     WorldHandlerWithoutContractTest,
-    /// DOEFF135: deftest 以外のテストの形(Python の def test_*・module ごとの skip・pytest の外の check script・deftest の runner)—
-    /// architecture.hy の :test-forms の綴りの型で file を選ぶ。
+    /// DOEFF135: test forms other than deftest (Python def test_*, per-module skip, check scripts outside pytest, deftest runners) —
+    /// files are selected by the spelling patterns of architecture.hy's :test-forms.
     TestFormNotDeftest,
-    /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る — architecture.hy の :single-point-vocabulary の群が
-    /// 名指す語彙(正規表現)を、:except の file(判定の1点)の外の :files が読んでいる(#1371)。
+    /// DOEFF146: vocabulary that confines judgment to one place exists outside :except — the vocabulary (regular expressions) named by the groups of architecture.hy's :single-point-vocabulary
+    /// is read by :files outside the :except files (the single point of judgment) (#1371).
     VocabularyOutsideSinglePoint,
-    /// DOEFF148: 書いてよい file を決めた綴りが :except の外に在る — architecture.hy の :confined-spellings の群が名指す綴り
-    /// (正規表現・文字列の中も数える)を、:except の外の :files が書いている(#1436)。
+    /// DOEFF148: a spelling restricted to specific files exists outside :except — the spellings (regular expressions; strings are counted too) named by the groups of architecture.hy's :confined-spellings
+    /// are written by :files outside :except (#1436).
     SpellingOutsideItsFiles,
-    /// DOEFF161: 数を決めた綴りの当たりの数が決めた数でない — architecture.hy の :counted-spellings の宣言の :pattern を、:files(か :within
-    /// の定義)の中で数えた数が :count / :at-least に合わない(#1437)。
+    /// DOEFF161: the number of hits of a counted spelling is not the decided number — the count of the :pattern of architecture.hy's :counted-spellings declaration, counted within :files (or the :within
+    /// definitions), does not fit :count / :at-least (#1437).
     SpellingCountDiffers,
-    /// DOEFF162: effect の宣言の全体が一覧と食い違う — architecture.hy の :effect-census の :files で :base を継ぐ class の宣言が
-    /// :effects の一覧に無い・2 度在る・一覧の effect の宣言が無い(#1438)。
+    /// DOEFF162: the whole set of effect declarations disagrees with the list — in the :files of architecture.hy's :effect-census, a class declaration inheriting :base is
+    /// not in the :effects list, appears twice, or an effect in the list has no declaration (#1438).
     EffectOutsideCensus,
-    /// DOEFF149: 型の欄を持つ class の顔ぶれが一覧と食い違う — architecture.hy の :field-holders の :files の Python の class のうち、
-    /// 欄の注記に :type が在る class が :holders に無い・:holders の class がその欄を持たない。
+    /// DOEFF149: the lineup of classes that hold type fields disagrees with the list — among the Python classes in the :files of architecture.hy's :field-holders,
+    /// a class whose field annotation has :type is not in :holders, or a class in :holders does not have that field.
     FieldHoldersDiffer,
-    /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
-    /// — 本番の組み立てを手元で回していない service(#1111)。
+    /// DOEFF136: not a single deftest under the fake environment (:verification-environment) reaches the definitions in a service's entry layer
+    /// — a service whose production assembly is not run locally (#1111).
     ServiceUntestedOnSim,
-    /// DOEFF163: code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants を宣言していない・名指した関数が実在しない・
-    /// その関数の :role が judgment でない(業務ロジックを「テストした」と数える条件)。
+    /// DOEFF163: a service with code (one or more definitions in the entry layer) does not declare :invariants in defservice, the named function does not exist, or
+    /// that function's :role is not judgment (the condition for counting business logic as "tested").
     ServiceInvariantsMissing,
-    /// DOEFF173: code を持つ service が defservice に :system(cluster に置く系の defsystem)を宣言していない・名指した module が
-    /// その service の entry の層に無い・名が defsystem でない・defsystem の引数が型つきの土台 1 つでない(
-    /// DOEFF136 と対。defsystem が在れば汎用の模擬 cluster のテストに自動で載るので、規則が求めるのは宣言と形だけ)。
+    /// DOEFF173: a service with code does not declare :system (the defsystem placed in the cluster) in defservice, the named module is not in
+    /// that service's entry layer, the name is not a defsystem, or the defsystem's argument is not exactly one typed base (the
+    /// counterpart of DOEFF136. If a defsystem exists, it is automatically included in the generic fake-cluster tests, so the rule asks only for the declaration and the shape).
     ServiceSystemMissing,
-    /// DOEFF207: 本番の系の job に読み書きの欄 :reads / :writes が無い・job が読む外の置き場の組に、本番の job の書き手も
-    /// :outside-writers の行も無い(#3496)。登録簿で下げない。宣言は :outside-writers。
+    /// DOEFF207: a production-system job has no read/write fields :reads / :writes, or a pair read by a job has neither a production job's writer nor a
+    /// row in :outside-writers (#3496). Not lowered by the registry. The declaration is :outside-writers.
     SystemAccessUnwritten,
-    /// DOEFF208: 本番の code が記録の変更の待ちを job を起こす手段にする — doeff-records の合図の源の工場(read-signal-handler・
-    /// records-signal-handler)の呼びと、記録の効果の handler の外の秒が 0 でない WatchChanges / WatchEvents。
-    /// 登録簿で下げない。母集団は :business-fakes の本番の code。
+    /// DOEFF208: production code uses waiting for record changes as a means of waking a job — calls to the factories of doeff-records' signal sources (read-signal-handler,
+    /// records-signal-handler), and WatchChanges / WatchEvents with nonzero seconds outside the record effect handlers.
+    /// Not lowered by the registry. The population is production code of :business-fakes.
     RecordChangeWakesJob,
-    /// DOEFF209: 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く — Delay・WaitTicks・今 + 決まった秒の
-    /// ArmTimer / ArmedTimer(補助の定義に包んだ形も)を繰り返しの中に置く所と、ライブラリへ渡す :poll-seconds。
-    /// 登録簿で下げない。母集団は :business-fakes の本番の code。
+    /// DOEFF209: a Program in production code repeatedly fetches the same thing with time waits in between — places that put Delay, WaitTicks, and ArmTimer / ArmedTimer with
+    /// now + a fixed number of seconds (including shapes wrapped in helper definitions) inside a repetition, and :poll-seconds passed to a library.
+    /// Not lowered by the registry. The population is production code of :business-fakes.
     PollingOnTimer,
-    /// DOEFF210: Hy の program(defk・defp の本体)が time.sleep / asyncio.sleep で壁の時計を待つ — 時間は doeff-time の効果
-    /// (Delay など)で待ち、壁の時計で待つのは handler の実装だけ(doeff の ADR-DOE-TIME-001 R1・R2)。
-    /// 母集団は設定の `[tool.doeff-linter.program_sleep]`(program の置き場 — 書いた repo にだけ当たる)。
+    /// DOEFF210: a Hy program (the body of defk or defp) waits on the wall clock with time.sleep / asyncio.sleep — time is waited for with doeff-time effects
+    /// (Delay and so on), and only the handler's implementation waits on the wall clock (doeff's ADR-DOE-TIME-001 R1, R2).
+    /// The population is the setting `[tool.doeff-linter.program_sleep]` (where programs live — it applies only to repos that write it).
     ProgramSleepsOnWallClock,
-    /// DOEFF211: Hy の検が、実時間が対象だと名乗らずに time.sleep / asyncio.sleep(と言い換えの `(.wait (threading.Event) 秒)`)で
-    /// 壁の時計を待つ — 検は仮想の時計で走らせるか出来事で待ち、実時間そのものが対象の検だけが realtime を名乗る(doeff の
-    /// ADR-DOE-TIME-001 R3)。母集団は設定の `[tool.doeff-linter.test_sleep]`(検の置き場 — 書いた repo にだけ当たる)。
+    /// DOEFF211: a Hy test waits on the wall clock with time.sleep / asyncio.sleep (and the equivalent `(.wait (threading.Event) seconds)`) without declaring that real time is the subject —
+    /// tests run on a virtual clock or wait on events, and only tests whose subject is real time itself declare realtime (doeff's
+    /// ADR-DOE-TIME-001 R3). The population is the setting `[tool.doeff-linter.test_sleep]` (where tests live — it applies only to repos that write it).
     TestSleepsOnWallClock,
-    /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
-    /// import する — 置き場の決まっていない module への依存。
+    /// DOEFF140: a layer module of architecture.hy's :placed-dependencies (service and shared) imports a module under root that is outside the layer locations
+    /// — a dependency on a module whose placement is undecided.
     PlacedDependency,
-    /// DOEFF141: architecture.hy の :blind-definitions の定義から届く定義が宣言した語を読む・定義の module が import を持つ
-    /// — 決めた材料だけで判じる定義に、ほかの材料が入り込む。
+    /// DOEFF141: definitions reachable from a definition in architecture.hy's :blind-definitions read a declared word, or the definition's module has imports
+    /// — other material has crept into a definition meant to be judged only on decided material.
     BlindDefinitionReads,
-    /// DOEFF147: architecture.hy の :allowed-heads の定義の中に、許した頭の一覧の外の頭の form が在る — 例外を上げない物だけを
-    /// 呼ぶと決めた定義に、上げうる呼びが入り込む(#1413)。
+    /// DOEFF147: inside a definition in architecture.hy's :allowed-heads, there is a head form outside the list of allowed heads — a call that can raise has crept into a definition
+    /// meant to call only things that do not raise exceptions (#1413).
     DefinitionCallsUnlistedHead,
-    /// DOEFF159: architecture.hy の :call-sites で呼んでよい場所と回数を決めた頭を、場所の外で呼ぶ・回数や外の form や分岐が宣言と違う
-    /// — 閉じ込めた 1 点が黙って 2 つ目を生やす(#1414)。
+    /// DOEFF159: a head whose allowed places and counts are fixed by architecture.hy's :call-sites is called outside those places, or the count, outer form, or branch differs from the declaration
+    /// — a confined single point silently grows a second one (#1414).
     CallOutsideDeclaredSites,
-    /// DOEFF160: 広い例外の捕捉(`(except [] …)`・Exception・BaseException・AssertionError・Python の `except:`)が architecture.hy の
-    /// :broad-catches の :carriers(捕まえた例外を名で束縛し、決めた出来事に載せて運ぶ境界)の外に在る(#1415)。
+    /// DOEFF160: a broad exception catch (`(except [] …)`, Exception, BaseException, AssertionError, Python's `except:`) is outside architecture.hy's
+    /// :broad-catches :carriers (a boundary that binds the caught exception by name and carries it on a decided event) (#1415).
     BroadCatchOutsideCarrier,
-    /// DOEFF150: architecture.hy の :retired-words で使わないと決めた綴り(語・正規表現・定義の名)が、宣言の file に在る
-    /// (語の表は repo の宣言にだけ在る)。
+    /// DOEFF150: a spelling (word, regular expression, definition name) decided as not to be used by architecture.hy's :retired-words is in a declared file
+    /// (the table of words exists only in the repo's declaration).
     RetiredWord,
-    /// DOEFF151: architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、宣言の Hy の file が呼ぶ(#1193)。
+    /// DOEFF151: a declared Hy file calls a call decided as not to be used by architecture.hy's :retired-calls (retired effects, clocks …) (#1193).
     RetiredCall,
-    /// DOEFF142: defhandler の引数に client・可変の入れ物・可変の object・店の名の引数を取る(接続先と設定は Ask・状態は session に持つ —
-    /// #1366)。母集団と店の名は architecture.hy の :handler-arguments から読む。
+    /// DOEFF142: a defhandler takes as arguments a client, a mutable container, a mutable object, or a store-name argument (connection targets and settings are Ask, state is held in session —
+    /// #1366). The population and the store names are read from architecture.hy's :handler-arguments.
     HandlerArgumentHoldsState,
-    /// DOEFF144: 公開面の型の注記(class の欄・関数の戻り値・defk / deff の :post)が素の写像・素の組・値の開いた写像・長さの決まった組、
-    /// または関数が長さ 2 以上の組の literal を答えにする — 構造を持つ値は欄の名前と型を持つ型で表す。
+    /// DOEFF144: a public-surface type annotation (class field, function return, defk / deff :post) is a plain mapping, plain tuple, open-valued mapping, or fixed-length tuple,
+    /// or a function answers with a tuple literal of length 2 or more — a structured value is expressed with a type that has field names and types.
     UntypedStructuredValue,
-    /// DOEFF145: 同じ dir の同じ名の .hy で kw-only の record(defrecord か、飾りに :kw-only True の dataclass を持つ defclass)を、
-    /// 型の宣言(.pyi)が kw_only=True の無い @dataclass で宣言する — 型検査は位置の引数の呼びを通すが実行時は TypeError(#1191)。
+    /// DOEFF145: a kw-only record (a defrecord, or a defclass with a dataclass carrying :kw-only True as decoration) in a .hy of the same name in the same dir
+    /// is declared by a type declaration (.pyi) as a @dataclass without kw_only=True — the type checker accepts calls with positional arguments, but at runtime it is a TypeError (#1191).
     RecordStubNotKwOnly,
-    /// DOEFF143: 模擬の根から届き本番の入口から届かない定義が業務の効果に tap でなく答える(偽の handler)・外の世界の表の腐り(反例の表の古い行は DOEFF176)。
-    ///宣言は architecture.hy の :business-fakes。
+    /// DOEFF143: a definition reachable from a fake root but not from the production entry answers a business effect without tap (a fake handler) / rot in the outside-world table (stale rows of the counterexample table are DOEFF176).
+    /// The declaration is architecture.hy's :business-fakes.
     BusinessEffectFake,
-    /// DOEFF176: 反例の表(:business-fakes の :counterexamples)の行が、わざと壊したどの handler の節にも当たらない — 古い行。
-    /// 判じは DOEFF143 と同じ 1 か所(偽物の数と古い行の数を別の番号で数えるため DOEFF143 から分けた)。宣言は :business-fakes。
+    /// DOEFF176: a row of the counterexample table (:business-fakes :counterexamples) matches no clause of any deliberately broken handler — a stale row.
+    /// Judged in the same single place as DOEFF143 (split from DOEFF143 so the number of fakes and the number of stale rows are counted under different numbers). The declaration is :business-fakes.
     StaleCounterexampleRow,
-    /// DOEFF155: 組み立ての形の破れ — 組の file が残る・組み立ての 1 点の関数の形(土台の列 1 つ + 翻訳の層から import した翻訳の列)・
-    /// defk 以外で書いた組み立て・列の並び・翻訳の列が別の service の翻訳を並べる・1 点が列を引数で受ける・
-    /// 検証環境と検が翻訳の列を 1 点の外で並べる(#3408)。宣言は :assembly-shape。
+    /// DOEFF155: breaches of the shape of assembly — a set file remains / the shape of the assembly's single-point function (one base list + translation lists imported from the translation layer) /
+    /// assembly written with something other than defk / list order / a translation list lists another service's translations / the single point receives the list as an argument /
+    /// the verification environment and tests list translation lists outside the single point (#3408). The declaration is :assembly-shape.
     AssemblyShapeBroken,
-    /// DOEFF156: 翻訳の handler が列の外の業務の効果を出し直す・土台の handler が業務の効果に答える。
+    /// DOEFF156: a translation handler re-emits a business effect outside its list / a base handler answers a business effect.
     AssemblyAnswerMisplaced,
-    /// DOEFF157: 検の定義からだけ届く定義が業務の効果か下の層の効果に答える — 検だけの偽物。宣言は :business-fakes。
+    /// DOEFF157: a definition reachable only from tests answers a business effect or an effect of a lower layer — a fake that exists only for tests. The declaration is :business-fakes.
     TestOnlyFake,
-    /// DOEFF158: 本番の入口から届く intent の効果の答え手が翻訳の層の handler 1 つでない。層の名は :assembly-shape。
+    /// DOEFF158: the answerer of an intent effect reachable from the production entry is not exactly one translation-layer handler. Layer names are in :assembly-shape.
     IntentAnswererNotTranslation,
-    /// DOEFF164: entry の層を持つ service に、壊した handler の反例(反例の表の節に届き、その service の entry にも届く deftest)が 1 本も無い。宣言は :business-fakes の :counterexamples と :verification-environment。
+    /// DOEFF164: a service with an entry layer has not a single counterexample of a broken handler (a deftest that reaches a clause of the counterexample table and also reaches that service's entry). The declaration is :business-fakes' :counterexamples and :verification-environment.
     ServiceWithoutCounterexample,
-    /// DOEFF167: service の条(defservice の :clauses — :invariants の関数が返す条の名)に、その条を破ると反例の表で名乗る(`breaks:` の行)
-    /// 壊した handler の反例が無く、外した理由(:clause-exemptions)も無い — 条ごとの網羅の欠け(ADR R2 の「条ごとに」)。
-    /// code を持つ service が :clauses を宣言していなければ service の名で 1 つ。宣言は defservice と :business-fakes の :counterexamples。
+    /// DOEFF167: a clause of a service (defservice's :clauses — the clause names returned by the :invariants function) has no counterexample of a broken handler that
+    /// declares in the counterexample table (a `breaks:` row) that it breaks that clause, and no reason for exclusion (:clause-exemptions) — a gap in per-clause coverage (ADR R2, "per clause").
+    /// If a service with code does not declare :clauses, one is reported under the service's name. The declaration is defservice and :business-fakes' :counterexamples.
     ClauseWithoutCounterexample,
-    /// DOEFF165: intent の層の効果に、手元の検から出す定義・模擬の答え手・本番の答え手のどれかが無い — 網羅の表の欠け
-    /// (まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
+    /// DOEFF165: an effect of the intent layer lacks one of: a definition fired from a local test, a fake answerer, or a production answerer — a gap in the coverage table
+    /// (report only at first = severity info. Making it a failure is #1562 K4). Layer names are in :assembly-shape.
     IntentEffectUncovered,
-    /// DOEFF206: 検証環境(:verification-environment)の handler が intent の層の効果に自前で答える(片方の枝だけでも)・
-    /// 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す — 本番の翻訳の handler が手元で 1 度も
-    /// 走らないまま緑になる穴(#3407・#3406)。登録簿で下げない。宣言は :business-fakes・:verification-environment・:assembly-shape。
+    /// DOEFF206: a handler of the verification environment (:verification-environment) answers an intent-layer effect itself (even on only one branch) /
+    /// a row of a table that lets violations through (the outside-world table, the table that passes lower layers, the table of test-only fakes) passes an intent-layer effect — a hole where the production translation handler
+    /// never runs locally and yet everything goes green (#3407, #3406). Not lowered by the registry. The declarations are :business-fakes, :verification-environment, and :assembly-shape.
     IntentFakedInVerification,
-    /// DOEFF166: 登録簿の鍵が、全体の実行で判じた規則のどの所見にも当たらない — 当たらなくなった古い行(#1706)。
-    /// 鍵が名指す規則は enable に無くても同じ実行で当て、当たりは 166 の判じにだけ使う。
+    /// DOEFF166: a registry key matches no finding of any rule judged in the whole run — a stale row that no longer matches (#1706).
+    /// The rule the key names is applied in the same run even if it is not in enable, and its hits are used only for the judgment of 166.
     RegistryEntryStale,
-    /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
+    /// DOEFF201 (semantic, Jev): a translation-layer definition makes a business judgment.
     SemanticBusinessDecision,
-    /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
+    /// DOEFF202 (semantic, Jev): a judgment-layer definition knows the means of communication.
     SemanticTransportKnowledge,
-    /// DOEFF203(意味・Jev): deff が名乗った素の関数の理由の種類が、コードに当たらない見込み。
+    /// DOEFF203 (semantic, Jev): the kind of reason for a plain function that a deff declared is likely not to match the code.
     SemanticPlainCallable,
-    /// DOEFF204(意味・Jev): 処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み。
+    /// DOEFF204 (semantic, Jev): a class with methods that hold logic is likely to be a window to the outside world or something that holds state.
     SemanticClassRole,
-    /// DOEFF205(意味・Jev): 判断の定義が、入力の形の検めと業務の判断を混ぜている見込み。
+    /// DOEFF205 (semantic, Jev): a judgment definition is likely to mix input-shape checks with business judgment.
     SemanticMixedConcerns,
 }
 
 impl ProjectRule {
-    /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
+    /// All layer rules (for the output list and the expansion of `ALL`).
     pub const ALL: &'static [ProjectRule] = &[
         ProjectRule::UnknownConfigKey,
         ProjectRule::UnreadableFile,
@@ -339,7 +339,7 @@ impl ProjectRule {
         ProjectRule::SemanticMixedConcerns,
     ];
 
-    /// 規則の ID。
+    /// The rule's ID.
     pub fn id(self) -> &'static str {
         match self {
             ProjectRule::UnknownConfigKey => "DOEFF100",
@@ -426,14 +426,14 @@ impl ProjectRule {
         }
     }
 
-    /// 規則の既定の重大さ(repo の宣言 `rules.<ID>.level` が無い時)。None の規則は規則そのものの重さから決める
-    /// (error = major・warning = minor・info = info)。責務の境界の違反は常に critical(責務の境界を
-    /// 守る事が doeff の code を検で確かめられる形に保つ前提だから)— repo ごとに写すと片方が黙って古くなるので、既定はここ 1 か所。
-    /// 新しい規則はどちらかに置く(網羅の match — 決めずに足せない)。
+    /// The rule's default gravity (when the repo's declaration `rules.<ID>.level` is absent). A rule with None is decided from the rule's own severity
+    /// (error = major, warning = minor, info = info). Violations of the responsibility boundary are always critical (because the premise is to
+    /// keep doeff code in a shape that tests can verify) — copying it per repo would let one side go silently stale, so the default lives in this one place.
+    /// Place a new rule in one or the other (an exhaustive match — it cannot be added without deciding).
     pub fn default_level(self) -> Option<RuleLevel> {
         match self {
-            // 責務の境界: 層の向き・層で禁じた module・型だけの層・生の副作用・service の境界と依存・翻訳が業務の intent を出す・
-            // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)。
+            // Responsibility boundary: layer direction, modules forbidden per layer, types-only layers, raw side effects, service boundary and dependencies, translation emitting business intents,
+            // Jev judgments (business judgment in translation layers, communication means in judgment layers, mixing of shape checks and judgment).
             ProjectRule::LayerImportDirection
             | ProjectRule::LayerForbiddenModule
             | ProjectRule::LayerTypesOnly
@@ -441,11 +441,11 @@ impl ProjectRule {
             | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::TestKindMismatch
-            // 縁の検の無い実 I/O の handler(#1363 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
+            // A real I/O handler with no edge test (#1363 — known hits listed in the registry are warning, new hits are critical).
             | ProjectRule::WorldHandlerWithoutContractTest
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::VocabularyOutsideSinglePoint
-            // 書いてよい file を決めた綴りが外に在る(#1436 — #1373 の孫。新しい当たりは critical)。
+            // A spelling restricted to specific files exists outside them (#1436 — a grandchild of #1373. New hits are critical).
             | ProjectRule::SpellingOutsideItsFiles
             | ProjectRule::SpellingCountDiffers
             | ProjectRule::EffectOutsideCensus
@@ -456,24 +456,24 @@ impl ProjectRule {
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
             | ProjectRule::PollingOnTimer
-            // program が handler を迂回して壁の時計で待つ(時間は handler の責務 — doeff の ADR-DOE-TIME-001)。
+            // A program bypasses the handler and waits on the wall clock (time is the handler's responsibility — doeff's ADR-DOE-TIME-001).
             | ProjectRule::ProgramSleepsOnWallClock
-            // 検が、実時間が対象だと名乗らずに壁の時計で待つ(Python の検の同じ決まりは semgrep の ERROR — 同じ ADR の R3)。
+            // A test waits on the wall clock without declaring that real time is the subject (the same rule for Python tests is semgrep's ERROR — R3 of the same ADR).
             | ProjectRule::TestSleepsOnWallClock
-            // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
+            // A dependency on a module outside the locations (#1188 — known hits listed in the registry are warning, new hits are critical).
             | ProjectRule::PlacedDependency
-            // 決めた材料だけで判じる定義に、ほかの材料が入り込む(#1368 — #1188 の子。新しい当たりは critical)。
+            // Other material has crept into a definition meant to be judged only on decided material (#1368 — a child of #1188. New hits are critical).
             | ProjectRule::BlindDefinitionReads
-            // 呼んでよい頭を決めた定義に、一覧の外の呼びが入り込む(#1413 — #1372 の孫。新しい当たりは critical)。
+            // A call outside the list has crept into a definition whose allowed heads are decided (#1413 — a grandchild of #1372. New hits are critical).
             | ProjectRule::DefinitionCallsUnlistedHead
-            // 呼んでよい場所と回数を決めた頭が場所の外で呼ばれる(#1414 — #1372 の孫。新しい当たりは critical)。
+            // A head with decided allowed places and counts is called outside the places (#1414 — a grandchild of #1372. New hits are critical).
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::BroadCatchOutsideCarrier
-            // 使わないと決めた綴りと呼び(#1193 の決め — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
+            // Spellings and calls decided as not to be used (the decision of #1193 — known hits listed in the registry are warning, new hits are critical).
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::HandlerArgumentHoldsState
-            // 公開面の型の素の写像・素の組と、.pyi の kw_only の食い違い(#1191 の決め — 既定は critical)。
+            // Plain mappings and plain tuples in public-surface types, and the kw_only mismatch with .pyi (the decision of #1191 — default is critical).
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::BusinessEffectFake
@@ -483,39 +483,39 @@ impl ProjectRule {
             | ProjectRule::TestOnlyFake
             | ProjectRule::IntentAnswererNotTranslation
             | ProjectRule::ServiceWithoutCounterexample
-            // 条ごとの反例の欠け(#1713 — 登録簿に載った既知の欠けは warning、新しい欠けは critical)。
+            // Gaps in per-clause counterexamples (#1713 — known gaps listed in the registry are warning, new gaps are critical).
             | ProjectRule::ClauseWithoutCounterexample
-            // intent の効果の網羅の欠け(#1561 K3 の表を #1562 K4 で失敗に — 登録簿に載った既知の欠けは warning、新しい欠けは critical)。
+            // Gaps in coverage of intent effects (the table of #1561 K3 made a failure by #1562 K4 — known gaps listed in the registry are warning, new gaps are critical).
             | ProjectRule::IntentEffectUncovered
             | ProjectRule::IntentFakedInVerification
-            // 登録簿の当たらない古い行(縮める向きの登録簿を、消し忘れで緩めたままにしない — #1706)。
+            // Stale registry rows that match nothing (do not leave a registry that is meant to shrink loosened by forgetting to delete rows — #1706).
             | ProjectRule::RegistryEntryStale
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::LowerLayerInDomain
-            // 業務の層が環境の名や dry-run の印で分岐する(#1906 — 責務の境界の違反)。
+            // A business layer branches on an environment name or a dry-run flag (#1906 — a violation of the responsibility boundary).
             | ProjectRule::EnvironmentBranch
-            // 決して当たらない match の節(#2036 — 黙って既定の枝に倒れる誤り)。
+            // A match clause that never matches (#2036 — a mistake that silently falls to the default branch).
             | ProjectRule::MatchFieldHyphen
-            // 宣言を切り替えた effect の古い分岐(決して通らない枝 — ADR-DOE-CORE-EFFECTS-003 R14 (4)・毎回の切り替えの門)。
+            // Old branches of an effect whose declaration was switched (branches that never run — ADR-DOE-CORE-EFFECTS-003 R14 (4), the gate for every switch).
             | ProjectRule::StaleOutcomeBranch
-            // 値を型だけで渡す層の defwire と素の写像(#2143)。
+            // defwire and plain mappings in layers that pass values by type only (#2143).
             | ProjectRule::WireInWireFreeLayer
             | ProjectRule::BareMapInWireFreeLayer
-            // 宣言に無い置き場所(どの層の決まりも当たらない)・defk を素で呼ぶ(Program が値として流れる本物の誤り)・
-            // 読めない file(判定が欠け、0 件に見えても合格ではない)。
+            // A location not in the declaration (no layer rule applies), calling a defk bare (a real mistake in which a Program flows as a value),
+            // and an unreadable file (judgments are missing, so even 0 findings is not a pass).
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::DefkCalledBare
             | ProjectRule::UnreadableFile => Some(RuleLevel::Critical),
-            // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)は、較正が済んで信頼できるまで critical に
-            // しない(#942 で critical にしたのを戻す)。当たりの重さは
-            // warning なので、宣言が無いと minor になる — 責務の境界の読みとして見落とさないよう major に置く。
+            // Jev judgments (business judgment in translation layers, communication means in judgment layers, mixing of shape checks and judgment) are not made critical until
+            // calibration is done and they can be trusted (reverting what #942 made critical). The severity of the hit is
+            // warning, so without a declaration it would become minor — place it at major so it is not overlooked as a reading of the responsibility boundary.
             ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge
             | ProjectRule::SemanticMixedConcerns
-            // 写像の置き場の臭い(#2143 の (2) — 数えるだけ・当たりの重さは warning なので宣言が無いと minor になる)。
+            // Smell for where mappings live (#2143 (2) — counting only; the hit's severity is warning, so without a declaration it becomes minor).
             | ProjectRule::DictOutsideItsPlace => Some(RuleLevel::Major),
             ProjectRule::UnknownConfigKey
             | ProjectRule::ModuleDeclaresTags
@@ -541,32 +541,32 @@ impl ProjectRule {
         }
     }
 
-    /// 当たりを判じるのに repo 全体が要るか— file F に付く当たりの有無が、F の外の source の中身・存在・置き場で
-    /// 変わりうる規則(repo 全体の表 — module の索引・定義の graph・推論の世界・名の一覧 — を引く・複数の file を数えて突き合わせる・
-    /// 当たりを architecture.hy や登録簿の行に付ける・「無ければ出す」当たりを持つ)は真。変えた path だけに当てても出ないので、門と
-    /// commit の hook はこの名乗りで repo 全体の比べに当てる規則を選ぶ(以前は repo の手の一覧 — 足し忘れた DOEFF149・161 の新しい
-    /// error が main に入った・L3137)。偽 = F の中身と設定だけで決まる。新しい規則はどちらかに置く(網羅の match)。
+    /// Whether the whole repo is needed to judge a hit — whether the presence of a hit attached to file F can change with the contents, existence, or location of source outside F
+    /// is true for rules that (consult whole-repo tables — the module index, the definition graph, the inference world, the list of names — count and cross-check several files,
+    /// attach hits to architecture.hy or registry rows, or have "emit if absent" hits). Applying it only to changed paths would not emit them, so the gate and
+    /// the commit hook use this claim to choose the rules to apply in a whole-repo comparison (formerly the repo's hand-kept list — a new
+    /// error of DOEFF149 and 161, which were forgotten to be added, got into main; L3137). False = decided only by F's contents and the settings. Place a new rule in one or the other (an exhaustive match).
     pub fn needs_whole_repo(self) -> bool {
         match self {
-            // module の索引(import 先の置き場・存在)を引く: 層の向き・service の境界と依存・翻訳の intent・置き場の外の依存。
+            // Consult the module index (location and existence of import targets): layer direction, service boundary and dependencies, translation intents, dependencies outside locations.
             ProjectRule::LayerImportDirection
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::LowerLayerInDomain
             | ProjectRule::PlacedDependency
-            // 呼びを他の file の定義まで辿る・repo 全体の名や型や推論を引く: 生の副作用の経由・class の外の基底・失敗の型・
-            // defk の名・effect の推論・handler の引数の class の索引・.pyi の隣の .hy。
+            // Follow calls into definitions in other files, or consult whole-repo names, types, and inference: reaching raw side effects, base classes outside the class, failure types,
+            // defk names, effect inference, the index of handler-argument classes, the .hy next to a .pyi.
             | ProjectRule::RawSideEffectVia
             | ProjectRule::ClassWithBehaviour
             | ProjectRule::FailureRethrow
-            // 別の file の defeffect が宣言する不在・失敗の型を引く(DOEFF122 と同じ宣言の集め)。
+            // Consult the absent and failure types declared by defeffect in other files (the same declaration collection as DOEFF122).
             | ProjectRule::StaleOutcomeBranch
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::RecordStubNotKwOnly
-            // 当たりが dir・architecture.hy・登録簿の行に付く・複数の file を突き合わせる・宣言した物が無ければ出す。
+            // Hits attach to a dir, architecture.hy, or a registry row; several files are cross-checked; emit if a declared thing is missing.
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::UnusedDependency
             | ProjectRule::WorldHandlerMisplaced
@@ -581,10 +581,10 @@ impl ProjectRule {
             | ProjectRule::ServiceInvariantsMissing
             | ProjectRule::ServiceSystemMissing
             | ProjectRule::SystemAccessUnwritten
-            // DOEFF209 は補助の定義(今 + 秒の期限を掛けて待つ defk・handler の節)を repo 全体から集め、別の file の補助の変化で呼び手に当たりが付く。
+            // DOEFF209 collects helper definitions (defks and handler clauses that wait with a deadline of now + seconds) from the whole repo, and a change in a helper in another file attaches a hit to a caller.
             | ProjectRule::PollingOnTimer
             | ProjectRule::RegistryEntryStale
-            // テストと本番の届き(定義の graph)を辿る: テストの種類・模擬で回さない service・縁の検・偽物・組み立て・反例・網羅。
+            // Follow the reach of tests and production (the definition graph): kinds of tests, services not run on fakes, edge tests, fakes, assembly, counterexamples, coverage.
             | ProjectRule::TestKindMismatch
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::WorldHandlerWithoutContractTest
@@ -598,8 +598,8 @@ impl ProjectRule {
             | ProjectRule::ClauseWithoutCounterexample
             | ProjectRule::IntentEffectUncovered
             | ProjectRule::IntentFakedInVerification
-            // F の中身と宣言だけで決まるが、architecture.hy の宣言(置き場・テストの形の glob)を変えた commit で別の file に当たりが
-            // 付く — repo の手の一覧が #1983 で足した理由のまま、repo 全体の側に置く。
+            // Decided only by F's contents and the declaration, but a commit that changes architecture.hy's declaration (locations, test-form globs) attaches hits to other files
+            // — it stays on the whole-repo side for the same reason the repo's hand-kept list added in #1983.
             | ProjectRule::UndeclaredPlace
             | ProjectRule::TestFormNotDeftest => true,
             ProjectRule::UnknownConfigKey
@@ -622,11 +622,11 @@ impl ProjectRule {
             | ProjectRule::RebuiltAccumulator
             | ProjectRule::EnvironmentBranch
             | ProjectRule::MatchFieldHyphen
-            // DOEFF210 は file の中身と設定の program_sleep の置き場だけで決まる(handler の実装の名乗りも定義が自分の辞書に書く)。
+            // DOEFF210 is decided only by the file's contents and the settings' program_sleep locations (a handler implementation's claim is also written by the definition in its own dictionary).
             | ProjectRule::ProgramSleepsOnWallClock
-            // DOEFF211 も file の中身と設定の test_sleep の置き場だけで決まる(realtime の名乗りは同じ file の module の段か deftest の meta)。
+            // DOEFF211 is also decided only by the file's contents and the settings' test_sleep locations (the realtime claim is at the module level of the same file or in a deftest's meta).
             | ProjectRule::TestSleepsOnWallClock
-            // file 1 つ(と層の宣言)で決まる。
+            // Decided by one file (and the layer declaration).
             | ProjectRule::WireInWireFreeLayer
             | ProjectRule::BareMapInWireFreeLayer
             | ProjectRule::DictOutsideItsPlace
@@ -635,11 +635,11 @@ impl ProjectRule {
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::UntypedStructuredValue
-            // DOEFF208 は file の中身と architecture.hy の :business-fakes だけで決まる(宣言を変えた commit は split_for_change が全部の規則を
-            // repo 全体の比べへ移す — DOEFF170・171・173 と同じ)。stage した path に当て、既知の一覧を持たない規則の入口(基点の差で
-            // 下げない new_critical)を通す。
+            // DOEFF208 is decided only by the file's contents and architecture.hy's :business-fakes (a commit that changes the declaration has split_for_change move all rules
+            // to the whole-repo comparison — the same as DOEFF170, 171, and 173). It is applied to staged paths and goes through the entry point for rules without a known list (new_critical that
+            // is not lowered by the baseline difference).
             | ProjectRule::RecordChangeWakesJob
-            // Jev に問う意味の規則は門と hook が当てない(定義ごとに問う — 判じる単位は定義)。
+            // Semantic rules that ask Jev are not applied by the gate and hook (they ask per definition — the unit of judgment is the definition).
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge
             | ProjectRule::SemanticPlainCallable
@@ -648,21 +648,21 @@ impl ProjectRule {
         }
     }
 
-    /// 1 file の実行(`Target::Single` — エディタの `--stdin --path`)がこの規則を判じるか。真の規則は
-    /// `run_with` の `Target::Single` の枝に判定を持ち、その file についての当たりを出し切る。偽の規則は repo 全体の実行
-    /// (`Target::Whole`)だけが判じる — 1 file の実行では走らせず(`run_with` が有効な規則からこの名乗りで外す)、editor-json の
-    /// `judged_rules` に載らないので、エディタはその規則の違反を全体の実行の結果のまま残す(以前は 1 file の実行の結果で file の違反を
-    /// 全部差し替え、DOEFF166・141 などの違反がその file から消えていた)。
+    /// Whether a single-file run (`Target::Single` — the editor's `--stdin --path`) judges this rule. A true rule
+    /// has its judgment in the `Target::Single` branch of `run_with` and finishes emitting the hits for that file. A false rule is judged only by a whole-repo run
+    /// (`Target::Whole`) — it is not run in a single-file run (`run_with` removes it from the enabled rules by this claim) and is not listed in editor-json's
+    /// `judged_rules`, so the editor leaves that rule's violations as in the whole run's result (formerly the single-file run's result replaced all of the file's violations,
+    /// and violations such as DOEFF166 and 141 vanished from that file).
     ///
-    /// `needs_whole_repo`(当たりが F の外の source で変わりうるか — 門と commit の hook の分け)とは別の問い: DOEFF101 は repo 全体の
-    /// module の索引を引くが 1 file の実行も索引を組んで判じる(ここでは真)、DOEFF146 は file 1 つで決まるが 1 file の実行の枝を
-    /// 持たない(ここでは偽)。新しい規則はどちらかに置く(網羅の match)。
+    /// This is a different question from `needs_whole_repo` (whether a hit can change with source outside F — the split between the gate and the commit hook): DOEFF101 consults the whole repo's
+    /// module index, but a single-file run also builds the index and judges (true here); DOEFF146 is decided by one file but has no single-file branch
+    /// (false here). Place a new rule in one or the other (an exhaustive match).
     pub fn judged_on_one_file(self) -> bool {
         match self {
-            // 設定の知らない鍵(main が両方の実行で足す)・読めない Hy の file(1 file ならその保存前の中身)。
+            // Keys the settings do not know (main adds them in both runs), and Hy files that cannot be read (for a single file, its pre-save contents).
             ProjectRule::UnknownConfigKey
             | ProjectRule::UnreadableFile
-            // 層の module 1 つの判定(judge_layer_file — 1 file の実行も repo の層の module の索引を組んで当てる)。
+            // The judgment of one layer module (judge_layer_file — a single-file run also builds the index of the repo's layer modules and applies it).
             | ProjectRule::LayerImportDirection
             | ProjectRule::LayerForbiddenModule
             | ProjectRule::LayerTypesOnly
@@ -677,16 +677,16 @@ impl ProjectRule {
             | ProjectRule::WireInWireFreeLayer
             | ProjectRule::BareMapInWireFreeLayer
             | ProjectRule::DictOutsideItsPlace
-            // 生の副作用の許可名簿 — 層の file は judge_layer_file、層の置き場の外の file は judge_unplaced_world を 1 file にも当てる。
+            // The allowlist of raw side effects — layer files use judge_layer_file, and files outside layer locations use judge_unplaced_world, applied to a single file too.
             | ProjectRule::RawSideEffectDirect
             | ProjectRule::RawSideEffectVia
             | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::TranslationEmitsIntent
             | ProjectRule::LowerLayerInDomain
-            // 置き場(DOEFF115 は 1 file ではその file に出す — PlaceScope::Single)。
+            // Location (DOEFF115 emits on that file in a single-file run — PlaceScope::Single).
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
-            // 定義・臭い・素の呼び・effect の食い違い(定義の file 1 つずつ)。
+            // Definitions, smells, bare calls, and effect mismatches (one definition file at a time).
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
             | ProjectRule::DefinitionTagsRequired
@@ -700,7 +700,7 @@ impl ProjectRule {
             | ProjectRule::DefkCalledBare
             | ProjectRule::EffectsDisagreeWithInference
             | ProjectRule::StaleOutcomeBranch
-            // file 1 つずつの宣言の規則。
+            // Declaration rules, one file at a time.
             | ProjectRule::JsonValueOutsideWire
             | ProjectRule::EnvironmentName
             | ProjectRule::ProgramSleepsOnWallClock
@@ -710,13 +710,13 @@ impl ProjectRule {
             | ProjectRule::RetiredCall
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
-            // 意味の規則(1 file の実行は cache を読む — 定義ごと)。
+            // Semantic rules (a single-file run reads the cache — per definition).
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole
             | ProjectRule::SemanticMixedConcerns => true,
-            // 当たりが architecture.hy・登録簿の行・宣言した :files の群に付くか、複数の file を数えて突き合わせる。
+            // Hits attach to architecture.hy, a registry row, or the declared :files groups, or several files are counted and cross-checked.
             ProjectRule::UnusedDependency
             | ProjectRule::BlindDefinitionReads
             | ProjectRule::DefinitionCallsUnlistedHead
@@ -732,7 +732,7 @@ impl ProjectRule {
             | ProjectRule::RecordChangeWakesJob
             | ProjectRule::PollingOnTimer
             | ProjectRule::RegistryEntryStale
-            // 定義の graph(テストと本番の届き)を repo 全体で辿る。
+            // Follow the definition graph (reach of tests and production) across the whole repo.
             | ProjectRule::WorldHandlerMisplaced
             | ProjectRule::TestKindMismatch
             | ProjectRule::WorldHandlerWithoutContractTest
@@ -747,17 +747,17 @@ impl ProjectRule {
             | ProjectRule::ClauseWithoutCounterexample
             | ProjectRule::IntentEffectUncovered
             | ProjectRule::IntentFakedInVerification
-            // file 1 つで決まるが、1 file の実行の枝をまだ持たない(全体の実行が file の群を歩く)。
+            // Decided by one file, but it does not yet have a single-file branch (a whole run walks the groups of files).
             | ProjectRule::TestFormNotDeftest
             | ProjectRule::VocabularyOutsideSinglePoint => false,
         }
     }
 
-    /// 登録簿(既知の当たりの表)に載った当たりを warning へ下げてよい規則か。DOEFF175 も下げない — 切り替えの門で、当たりが 0 になるまで
-    /// その版を着地させない(law declarations-switch-one-effect-at-a-time)ので、既知の一覧で通せては門が空く。DOEFF206 は下げない — 違反を通す表を作らせない規則が、
-    /// 別の表で通せては穴が残る(同じ穴を 2 度開けない)。DOEFF207・208・209 も下げない —
-    /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209)。DOEFF211 も下げない — 検の眠りの規則の外へ出る道は
-    /// realtime の名乗り(と、名乗りを理由と一緒に載せる repo の名簿)だけにする。
+    /// Whether the rule is one whose hits listed in the registry (the table of known hits) may be lowered to warning. DOEFF175 is not lowered either — it is the gate for a switch, and the version is not landed
+    /// until the hits reach 0 (law declarations-switch-one-effect-at-a-time), so letting the known list pass it would open the gate. DOEFF206 is not lowered — if a rule that stops tables letting violations through
+    /// could be bypassed through another table, a hole would remain (do not open the same hole twice). DOEFF207, 208, and 209 are not lowered either —
+    /// existing hits are not put into a table to let them pass (DOEFF208, 209). DOEFF211 is not lowered either — the only way out of the test-sleep rule is
+    /// the realtime claim (and the repo's roster that lists claims together with reasons).
     pub fn lowered_by_registry(self) -> bool {
         !matches!(
             self,
@@ -771,7 +771,7 @@ impl ProjectRule {
         )
     }
 
-    /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
+    /// Whether it is a smell rule (DOEFF121 to 125 — default severity warning, and can be lowered to info by the settings' severity).
     pub fn is_smell(self) -> bool {
         matches!(
             self,
@@ -783,7 +783,7 @@ impl ProjectRule {
         )
     }
 
-    /// Jev に問う意味の規則(DOEFF201〜205)か — 誤判定の一覧が効くのはこの規則の当たりだけ。
+    /// Whether it is a semantic rule that asks Jev (DOEFF201 to 205) — the list of false judgments applies only to hits of these rules.
     pub fn is_semantic(self) -> bool {
         matches!(
             self,
@@ -795,15 +795,15 @@ impl ProjectRule {
         )
     }
 
-    /// ID の綴り(大文字小文字は問わない)から規則を引く。層の規則でなければ None。
+    /// Look up a rule from the spelling of its ID (case-insensitive). None if it is not a layer rule.
     pub fn parse(id: &str) -> Option<ProjectRule> {
         let upper = id.to_uppercase();
         ProjectRule::ALL.iter().copied().find(|rule| rule.id() == upper)
     }
 
-    /// 層の宣言の `:exempt [(rule 規則 ID "理由")]` で、名指しの module を理由つきで母集団から外せる規則か。
-    /// 定義の file ごとに判じる定義の書き方の規則だけ — critical(DOEFF126 素の defk 呼び)と、file ごとに判じない規則(service・層・
-    /// Jev)は外せない(外す 1 点は定義の file の判定の直後なので、それ以外の ID を書くと黙って効かない形になる)。
+    /// Whether it is a rule from which, in a layer declaration's `:exempt [(rule rule-ID "reason")]`, a named module can be excluded from the population with a reason.
+    /// Only the definition-writing rules judged per definition file — critical (DOEFF126, bare defk call) and rules not judged per file (service, layer,
+    /// Jev) cannot be excluded (the one point of exclusion is right after the judgment of a definition file, so writing any other ID would silently have no effect).
     pub fn exemptible_by_layer(self) -> bool {
         matches!(
             self,
@@ -815,7 +815,7 @@ impl ProjectRule {
         )
     }
 
-    /// 層ごとに判じる規則か(law の layers が効く規則)。DOEFF108 は業務の file 全体に当たり、層を持たない。
+    /// Whether it is a rule judged per layer (a rule where the law's layers take effect). DOEFF108 applies to all business files and has no layers.
     pub fn is_layered(self) -> bool {
         match self {
             ProjectRule::LayerImportDirection
@@ -902,94 +902,94 @@ impl ProjectRule {
         }
     }
 
-    /// 短い日本語の名(違反の形。エディタの一覧の見出しに使う)。
+    /// A short name (the shape of the violation; used as a heading in the editor's list).
     pub fn label(self) -> &'static str {
         match self {
-            ProjectRule::UnknownConfigKey => "設定の知らない鍵",
-            ProjectRule::UnreadableFile => "Hy の file を読めない",
-            ProjectRule::LayerImportDirection => "層の向きに逆らう import",
-            ProjectRule::LayerForbiddenModule => "層に禁じた module の import",
-            ProjectRule::LayerTypesOnly => "型だけの層に関数がある",
-            ProjectRule::ModuleDeclaresTags => "文脈と役のタグが無い",
-            ProjectRule::RoleMatchesLayer => "層に合わない role",
-            ProjectRule::RawSideEffectDirect => "許されない層で生の副作用",
-            ProjectRule::RawSideEffectVia => "呼んだ先で生の副作用に届く",
-            ProjectRule::EnvironmentName => "業務の名に環境の語",
-            ProjectRule::ServiceBoundary => "別の service の内側を読む",
-            ProjectRule::DefnForbidden => "defn を使っている",
-            ProjectRule::DeffNeedsReason => "deff に理由の註が無い",
-            ProjectRule::DefinitionTagsRequired => "定義の :tags が足りない",
-            ProjectRule::ContextMatchesService => ":context が service と違う",
-            ProjectRule::UndeclaredPlace => "宣言に無い置き場所の module",
-            ProjectRule::UndeclaredDirectory => "宣言に無い dir",
-            ProjectRule::ServiceDependency => "宣言に無い service への依存",
-            ProjectRule::PlacedDependency => "置き場の外の module への依存",
-            ProjectRule::BlindDefinitionReads => "決めた材料の外を読む判断の定義",
-            ProjectRule::DefinitionCallsUnlistedHead => "呼んでよい頭の一覧の外を呼ぶ定義",
-            ProjectRule::CallOutsideDeclaredSites => "決めた場所の外で呼ぶ頭",
-            ProjectRule::BroadCatchOutsideCarrier => "運搬の境界の外の広い例外の捕捉",
-            ProjectRule::UnusedDependency => "使っていない依存",
-            ProjectRule::TestIsDeftest => "deftest でないテスト",
-            ProjectRule::ClassWithBehaviour => "処理を持つ class",
-            ProjectRule::JsonValueOutsideWire => "送受信の外で JsonValue",
-            ProjectRule::ShapeCheckInJudgment => "判断の層で入力の形を調べる",
-            ProjectRule::FailureRethrow => "失敗を受けて返し直すだけ",
-            ProjectRule::BindThenReturn => "<- の直後に return するだけ",
-            ProjectRule::FieldsJoinedIntoText => "欄をつないで 1 本の文字列にする",
-            ProjectRule::RebuiltAccumulator => "ループの中で蓄えを作り直す",
-            ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
-            ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
-            ProjectRule::StaleOutcomeBranch => "宣言した不在・失敗の型を値として分ける古い分岐",
-            ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
-            ProjectRule::LowerLayerInDomain => "業務の層が下の層の効果か handler を直に使う",
-            ProjectRule::EnvironmentBranch => "業務の層が環境の名や dry-run の印で分岐する",
-            ProjectRule::MatchFieldHyphen => "match の class pattern の欄の名に - が在る(決して当たらない)",
-            ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層に defwire が在る",
-            ProjectRule::BareMapInWireFreeLayer => "値を型だけで渡す層の契約や欄に写像・型の無い組",
-            ProjectRule::DictOutsideItsPlace => "handler の外で組む写像・欄の写像",
-            ProjectRule::WorldHandlerNamedOutsideList => "許可名簿の外で実 I/O の handler を名指す",
-            ProjectRule::WorldHandlerMisplaced => "許可名簿の定義が無い・foundation の外に在る",
-            ProjectRule::TestKindMismatch => "テストの種類(手元 / 縁)と印が食い違う",
-            ProjectRule::WorldHandlerWithoutContractTest => "縁の検の無い許可名簿の handler・相手役",
-            ProjectRule::TestFormNotDeftest => "deftest 以外のテストの形",
-            ProjectRule::VocabularyOutsideSinglePoint => "判定の1点の外で同じ語彙を読んでいる",
-            ProjectRule::SpellingOutsideItsFiles => "書いてよい file の外の綴り",
-            ProjectRule::SpellingCountDiffers => "数が決めた数でない綴り",
-            ProjectRule::EffectOutsideCensus => "一覧と食い違う effect の宣言",
-            ProjectRule::FieldHoldersDiffer => "一覧と食い違う型の欄の持ち手",
-            ProjectRule::ServiceUntestedOnSim => "模擬の環境のテストが回さない service",
-            ProjectRule::ServiceInvariantsMissing => "不変条件を宣言していない service",
-            ProjectRule::ServiceSystemMissing => "系を宣言していない service",
-            ProjectRule::SystemAccessUnwritten => "本番の job の読みに書き手が無い",
-            ProjectRule::RecordChangeWakesJob => "記録の変更の待ちで job を起こす",
-            ProjectRule::PollingOnTimer => "時間の待ちを挟んで同じ物を取りに行く",
-            ProjectRule::ProgramSleepsOnWallClock => "program が壁の時計で眠る",
-            ProjectRule::TestSleepsOnWallClock => "検が名乗らずに壁の時計で眠る",
-            ProjectRule::RetiredWord => "使わないと決めた綴り",
-            ProjectRule::RetiredCall => "使わないと決めた呼び",
-            ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
-            ProjectRule::UntypedStructuredValue => "公開面の型が素の写像・素の組",
-            ProjectRule::RecordStubNotKwOnly => "型の宣言の @dataclass に kw_only=True が無い",
-            ProjectRule::BusinessEffectFake => "業務の効果に答える偽の handler",
-            ProjectRule::StaleCounterexampleRow => "反例の表の当たらない古い行",
-            ProjectRule::AssemblyShapeBroken => "組み立ての形の破れ",
-            ProjectRule::AssemblyAnswerMisplaced => "翻訳の先か土台の答えが業務の効果",
-            ProjectRule::TestOnlyFake => "検だけの偽物",
-            ProjectRule::IntentAnswererNotTranslation => "intent の効果の答え手が翻訳の 1 つでない",
-            ProjectRule::ServiceWithoutCounterexample => "壊した handler の反例が無い service",
-            ProjectRule::ClauseWithoutCounterexample => "反例も外した理由も無い不変条件の条",
-            ProjectRule::IntentEffectUncovered => "intent の効果の網羅の欠け",
-            ProjectRule::IntentFakedInVerification => "検証環境が intent の効果に自前で答える",
-            ProjectRule::RegistryEntryStale => "登録簿の当たらない古い行",
-            ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
-            ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
-            ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
-            ProjectRule::SemanticClassRole => "class が外の窓口か状態を持つ(Jev)",
-            ProjectRule::SemanticMixedConcerns => "入力の形の確認と判断が混ざる(Jev)",
+            ProjectRule::UnknownConfigKey => "Key the settings do not know",
+            ProjectRule::UnreadableFile => "Hy file cannot be read",
+            ProjectRule::LayerImportDirection => "Import against the layer direction",
+            ProjectRule::LayerForbiddenModule => "Import of a module forbidden in the layer",
+            ProjectRule::LayerTypesOnly => "Function in a types-only layer",
+            ProjectRule::ModuleDeclaresTags => "Missing context and role tags",
+            ProjectRule::RoleMatchesLayer => "Role that does not fit the layer",
+            ProjectRule::RawSideEffectDirect => "Raw side effect in a disallowed layer",
+            ProjectRule::RawSideEffectVia => "Reaches a raw side effect through a callee",
+            ProjectRule::EnvironmentName => "Environment word in a business name",
+            ProjectRule::ServiceBoundary => "Reads the inside of another service",
+            ProjectRule::DefnForbidden => "uses defn",
+            ProjectRule::DeffNeedsReason => "deff has no reason comment",
+            ProjectRule::DefinitionTagsRequired => "Definition's :tags are incomplete",
+            ProjectRule::ContextMatchesService => ":context differs from the service",
+            ProjectRule::UndeclaredPlace => "Module in a location not in the declaration",
+            ProjectRule::UndeclaredDirectory => "Dir not in the declaration",
+            ProjectRule::ServiceDependency => "Dependency on a service not in the declaration",
+            ProjectRule::PlacedDependency => "Dependency on a module outside the locations",
+            ProjectRule::BlindDefinitionReads => "Judgment definition reading outside its decided material",
+            ProjectRule::DefinitionCallsUnlistedHead => "Definition calling outside the list of allowed heads",
+            ProjectRule::CallOutsideDeclaredSites => "Head called outside its decided places",
+            ProjectRule::BroadCatchOutsideCarrier => "Broad exception catch outside a carrying boundary",
+            ProjectRule::UnusedDependency => "Unused dependency",
+            ProjectRule::TestIsDeftest => "Test that is not a deftest",
+            ProjectRule::ClassWithBehaviour => "class with logic",
+            ProjectRule::JsonValueOutsideWire => "JsonValue outside send/receive",
+            ProjectRule::ShapeCheckInJudgment => "Input shape check in a judgment layer",
+            ProjectRule::FailureRethrow => "Merely returns a received failure again",
+            ProjectRule::BindThenReturn => "Merely returns right after <-",
+            ProjectRule::FieldsJoinedIntoText => "Joins fields into one string",
+            ProjectRule::RebuiltAccumulator => "Rebuilds an accumulator inside a loop",
+            ProjectRule::DefkCalledBare => "Calls a defk bare and uses it as the answer",
+            ProjectRule::EffectsDisagreeWithInference => ":effects declaration disagrees with inference",
+            ProjectRule::StaleOutcomeBranch => "Stale branch separating declared absent/failure types as values",
+            ProjectRule::TranslationEmitsIntent => "Translation handler emits a business intent",
+            ProjectRule::LowerLayerInDomain => "Business layer uses a lower layer's effect or handler directly",
+            ProjectRule::EnvironmentBranch => "Business layer branches on an environment name or dry-run flag",
+            ProjectRule::MatchFieldHyphen => "Field name with - in a match class pattern (never matches)",
+            ProjectRule::WireInWireFreeLayer => "defwire in a layer that passes values by type only",
+            ProjectRule::BareMapInWireFreeLayer => "Mapping or untyped tuple in a contract or field of a layer that passes values by type only",
+            ProjectRule::DictOutsideItsPlace => "Mapping built outside a handler, or a mapping field",
+            ProjectRule::WorldHandlerNamedOutsideList => "Names a real I/O handler outside the allowlist",
+            ProjectRule::WorldHandlerMisplaced => "Allowlist definition missing or outside foundation",
+            ProjectRule::TestKindMismatch => "Test kind (local / edge) disagrees with its marker",
+            ProjectRule::WorldHandlerWithoutContractTest => "Allowlist handler without an edge test, and its counterpart",
+            ProjectRule::TestFormNotDeftest => "Test form other than deftest",
+            ProjectRule::VocabularyOutsideSinglePoint => "Same vocabulary read outside the single point of judgment",
+            ProjectRule::SpellingOutsideItsFiles => "Spelling outside the files allowed to write it",
+            ProjectRule::SpellingCountDiffers => "Spelling whose count is not the decided number",
+            ProjectRule::EffectOutsideCensus => "Effect declaration that disagrees with the list",
+            ProjectRule::FieldHoldersDiffer => "Holders of type fields that disagree with the list",
+            ProjectRule::ServiceUntestedOnSim => "Service not run by tests of the fake environment",
+            ProjectRule::ServiceInvariantsMissing => "Service that declares no invariants",
+            ProjectRule::ServiceSystemMissing => "Service that declares no system",
+            ProjectRule::SystemAccessUnwritten => "Production job reads something that has no writer",
+            ProjectRule::RecordChangeWakesJob => "Wakes a job by waiting for record changes",
+            ProjectRule::PollingOnTimer => "Fetches the same thing with time waits in between",
+            ProjectRule::ProgramSleepsOnWallClock => "Program sleeps on the wall clock",
+            ProjectRule::TestSleepsOnWallClock => "Test sleeps on the wall clock without declaring it",
+            ProjectRule::RetiredWord => "Spelling decided as not to be used",
+            ProjectRule::RetiredCall => "Call decided as not to be used",
+            ProjectRule::HandlerArgumentHoldsState => "Handler argument takes a client or mutable store",
+            ProjectRule::UntypedStructuredValue => "Public-surface type is a plain mapping or plain tuple",
+            ProjectRule::RecordStubNotKwOnly => "@dataclass in the type declaration lacks kw_only=True",
+            ProjectRule::BusinessEffectFake => "Fake handler answering a business effect",
+            ProjectRule::StaleCounterexampleRow => "Stale row of the counterexample table that matches nothing",
+            ProjectRule::AssemblyShapeBroken => "Breach of the shape of assembly",
+            ProjectRule::AssemblyAnswerMisplaced => "Translation target or base answer is a business effect",
+            ProjectRule::TestOnlyFake => "Test-only fake",
+            ProjectRule::IntentAnswererNotTranslation => "Answerer of an intent effect is not exactly one translation",
+            ProjectRule::ServiceWithoutCounterexample => "Service with no counterexample of a broken handler",
+            ProjectRule::ClauseWithoutCounterexample => "Invariant clause with neither a counterexample nor an exclusion reason",
+            ProjectRule::IntentEffectUncovered => "Gap in coverage of an intent effect",
+            ProjectRule::IntentFakedInVerification => "Verification environment answers an intent effect itself",
+            ProjectRule::RegistryEntryStale => "Stale registry row that matches nothing",
+            ProjectRule::SemanticBusinessDecision => "Business judgment in a translation layer (Jev)",
+            ProjectRule::SemanticTransportKnowledge => "Judgment layer knows the means of communication (Jev)",
+            ProjectRule::SemanticPlainCallable => "deff reason does not fit (Jev)",
+            ProjectRule::SemanticClassRole => "class is a window to the outside or holds state (Jev)",
+            ProjectRule::SemanticMixedConcerns => "Input shape check mixed with judgment (Jev)",
         }
     }
 
-    /// 規則の家族(エディタの一覧で束ねる分類)。
+    /// The rule family (a classification that groups rules in the editor's list).
     pub fn family(self) -> RuleFamily {
         match self {
             ProjectRule::LayerImportDirection
@@ -1073,7 +1073,7 @@ impl ProjectRule {
         }
     }
 
-    /// 題(人が読む短い名)。
+    /// The title (a short human-readable name).
     pub fn title(self) -> &'static str {
         match self {
             ProjectRule::UnknownConfigKey => "Unknown Config Key",
@@ -1160,183 +1160,183 @@ impl ProjectRule {
         }
     }
 
-    /// 規則の文(law が結びついていない時に一覧へ出す)。
+    /// The rule statement (shown in the list when no law is linked).
     pub fn statement(self) -> &'static str {
         match self {
-            ProjectRule::UnreadableFile => "Hy の file は読み取り器が最後まで読める(読めない file は違反が欠けるので、有効な規則の一覧に関わらず error で知らせる)",
-            ProjectRule::UnknownConfigKey => "設定(pyproject の [tool.doeff-linter]・architecture.hy)の鍵と規則の ID は、この linter が知っている物だけ — 知らない物はその鍵だけを読まずに残りの規則を走らせ、知らせる(linter が設定より古いか、書き違い)",
-            ProjectRule::LayerImportDirection => "層の module は、設定で許した層の module だけを import する(repo の外の import は数えない)",
-            ProjectRule::LayerForbiddenModule => "層の module は、その層に禁じた module(I/O の module など)を直に import しない",
-            ProjectRule::LayerTypesOnly => "型だけの層の module は関数と handler を定めない",
-            ProjectRule::ModuleDeclaresTags => "層の module の定義は、定義の :tags か module の頭のタグで文脈(context)と役(role)を名乗る",
-            ProjectRule::RoleMatchesLayer => "タグの role は、その module の層で許された role の 1 つで、context も名乗る",
-            ProjectRule::RawSideEffectDirect => "生の副作用(http・時刻・乱数・file・process・環境変数 …)に直に触る定義は、設定で許した層にだけ置く",
-            ProjectRule::RawSideEffectVia => "呼ぶ定義を通して生の副作用に届く定義の知らせ(違反ではなく事実)— :world-handlers に宣言した定義の先は辿らない",
-            ProjectRule::EnvironmentName => "業務の file・handler・組み立ての関数の名に環境の語を付けない",
-            ProjectRule::ServiceBoundary => "ある service の判断と翻訳の層(設定の guarded_layers)は、別の service の同じ層を読まない。読んでよいのは別の service の open_layers と共有の置き場だけ",
-            ProjectRule::DefnForbidden => "Hy の定義は defn / defn/a ではなく defk で書く(マクロの展開の時の関数と、設定で除いた置き場は除く)",
-            ProjectRule::DeffNeedsReason => "deff の定義の行か直前の行に、defk にできない理由の註を書く",
-            ProjectRule::DefinitionTagsRequired => "defk・deff・defp・defhandler・defeffect は契約の辞書の :tags で必須の鍵(設定)を名乗る",
-            ProjectRule::ContextMatchesService => "タグの :context は、その file が置かれた service の名と合う(知らせ)",
-            ProjectRule::UndeclaredPlace => "root の下の module は、architecture.hy で宣言した service の層・shared・foundation・legacy のどれかに置く",
-            ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
-            ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の、A の module の層が読める層(その層の :dependency-layers — 組み立ての層は intent と protocol —、無ければ :open-layers の intent)と shared だけ",
-            ProjectRule::BlindDefinitionReads => "architecture.hy の :blind-definitions の定義は決めた材料だけで判じる — その定義から呼び出しと名指しで推移的に届く repo の Hy の定義の本体(註を除く)に :forbid-words の綴りが無く、:no-imports なら定義の module が import と require を持たない(:allow-requires の module の require は macro の読み込みなので除く)。宣言した定義は実在する",
-            ProjectRule::DefinitionCallsUnlistedHead => "architecture.hy の :allowed-heads の定義は、:heads に挙げた頭の form だけを持つ — 定義の form の中(入れ子を含む・文字列と註を除く)の `( … )` の頭の綴り(記号と keyword)が :heads の外なら、その頭ごとに当たる。宣言した定義は実在する",
-            ProjectRule::CallOutsideDeclaredSites => "architecture.hy の :call-sites の頭は、:files の Hy の file(:except を除く)の中で :sites の定義の中でだけ呼ぶ — :count を書いた場所はその数ちょうど、:parent を書いた場所の呼びは直ぐ外の form の頭がその綴り、:branch を書いた場所の呼びは条件の form にその記号が在る cond・when・if・unless の枝の中。場所の定義は実在し、:files に当たる file は 1 つ以上",
-            ProjectRule::BroadCatchOutsideCarrier => "architecture.hy の :broad-catches の :files の Hy・Python の file(:except を除く)に広い例外の捕捉(`(except [] …)`・`(except [… Exception …] …)`・BaseException・AssertionError・Python の `except:`・`except Exception:`)を置かない — 許すのは :carriers の定義の中で、捕捉が例外を名で束縛し、その捕捉の中でその名を :event の出来事の引数に渡す物だけ(契約の破れを握りつぶさず、列へ運ぶ境界)。運搬の境界の定義は実在し、:files に当たる file は 1 つ以上",
-            ProjectRule::PlacedDependency => "architecture.hy の :placed-dependencies の層の module(service と shared)は、層の置き場(service の層・shared の層・foundation と、層の名の段を持つ dir)に在る module にだけ依存する — root の下の置き場の決まっていない module(service の dir の直下・宣言に無い dir の中)を import しない",
-            ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
-            ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
-            ProjectRule::ClassWithBehaviour => "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
-            ProjectRule::JsonValueOutsideWire => "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy._wire・doeff_records._wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
-            ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
-            ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
-            ProjectRule::SemanticPlainCallable => "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",
-            ProjectRule::ShapeCheckInJudgment => "判断の層(設定の smells.shape_check_layers)の定義は、文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検めない",
-            ProjectRule::FailureRethrow => "match の腕が、失敗の型(defrecord の :failure True・defeffect の :failure / :absent の宣言)を受けて、受けた値かそれを包み直した値を return するだけにしない",
-            ProjectRule::BindThenReturn => "(<- x T (f …)) の直後に (return x) を置き、x を他で使わない形にしない",
-            ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
-            ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
-            ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
-            ProjectRule::StaleOutcomeBranch => "defeffect が :absent / :failure で宣言した型を、その effect の答えを束ねた変数((<- x (E …))・(val x (! (E …))))に対して値として分けない — match の腕・isinstance(型の tuple・cond の枝も)。<- と ! はその型を束ねず Absent / Raise として逃がすので、枝は決して通らない(ADR-DOE-CORE-EFFECTS-003 R14 (4))",
-            ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない。file は architecture.hy の :test-forms の綴りの型で選ぶ",
-            ProjectRule::VocabularyOutsideSinglePoint => "ある語彙(job の phase・turn の state・担い手の欄 等)の判定は 1 つの file(architecture.hy の :single-point-vocabulary の :except)に閉じ込める — 他の file が同じ正規表現に当たる綴りを読むと、そこが第 2 の判定点になり、直す時に片方だけ直して食い違う",
-            ProjectRule::SpellingOutsideItsFiles => "architecture.hy の :confined-spellings の群の綴り(正規表現)は :except の file にだけ書く(:except が空なら :files のどこにも書かない)— :files に当たる Hy・Python の file の、註を落とした本文(文字列の中も数える)を読む。:files に当たる file が 1 つも無い群も当たる(母集団 0 を緑にしない)",
-            ProjectRule::SpellingCountDiffers => "architecture.hy の :counted-spellings の宣言ごとに、:files に当たる file(Hy と Python は註を落とす・文字列は数える)の :pattern の当たりの数が :count(ちょうど)か :at-least(以上)に合う — :within があれば名指した top level の定義ごとに、その定義の中で数える。数える file や定義が無い宣言も当たる(母集団 0 を緑にしない)",
-            ProjectRule::EffectOutsideCensus => "architecture.hy の :effect-census の宣言ごとに、:files の Hy・Python の file(註を除く)で :base を継ぐ class の宣言の集まりが :effects の一覧と一致する — 一覧に無い宣言・同じ名の 2 度の宣言・宣言の無い一覧の effect が当たる。:files に当たる file が無い宣言も当たる(母集団 0 を緑にしない)",
-            ProjectRule::FieldHoldersDiffer => "architecture.hy の :field-holders の宣言ごとに、:files の Python の file の module の直下の class のうち、本体の直下の欄(注記つきの代入)の注記に :type の綴りが語として在る class が :holders の一覧ちょうど — 一覧に無い持ち手と、その欄を持たない(か無い)一覧の class が当たる。:classes を書けば名指した class だけを数え、無い class も当たる。:files に当たる Python の file が無い宣言も当たる(母集団 0 を緑にしない)",
-            ProjectRule::RetiredWord => "architecture.hy の :retired-words で使わないと決めた綴りを、群の :files の file に書かない — :words は語として単独で在る所(前後が英字・_・- でない)、:patterns は行ごとの正規表現、:in names は定義の名だけ・:in paths は file の名だけを見る。:rule-lines の綴りを含む行(規則そのものを述べる行)と、:in lines の註・docstring・.md の file(使っていない綴り)は数えない。:contract-files の契約の file のキーの名・enum / const の値に在る語は、Hy・Python の文字列で中身がその語ちょうどの物と defwire の欄の定義の名では数えない(契約と wire の欄名は契約の綴りのまま)",
-            ProjectRule::RetiredCall => "architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、群の :files の Hy の file で呼ばない — 頭の記号が :calls の綴りの form を数え、註・文字列・読み捨てた form は数えない",
-            ProjectRule::UntypedStructuredValue => "構造を持つ値は欄の名前と型を静的に持つ型(frozen の dataclass・defrecord・defwire)で表す — architecture.hy の :typed-values の file の公開面(名が _ で始まらない物)の、class の欄・関数と method の戻り値・defk / deff の :post の型に、素の写像(dict・Mapping・JsonValue …)・素の組(tuple)・値が object / Any の写像・長さの決まった組 tuple[A, B]・それらを中身に持つ入れ物を書かず、defn / defk / deff は長さ 2 以上の組の literal #(a b) を答えにしない。:post は isinstance の契約なので写像だけを赤にし、名に型の注記の無い defk / deff の :post は素の組も赤にする",
-            ProjectRule::RecordStubNotKwOnly => "architecture.hy の :record-stubs の型の宣言(.pyi)は、同じ dir の同じ名の .hy の実行時の形を偽らない — .hy で欄を名でしか受けない record(defrecord か、飾りに (dataclass … :kw-only True …) を持つ defclass)を @dataclass で宣言するなら kw_only=True を書く",
-            ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
-            ProjectRule::ServiceInvariantsMissing => "architecture.hy の defservice は(entry の層を持たない service も)、architecture.hy の defservice に :invariants(業務の不変条件の関数 `module:関数` の列)を宣言する — 名指した関数は実在し、:tags の :role が judgment(記録を受けて破りの列を返す純粋な判断)。宣言の無い service・実在しない関数・判断でない関数は赤",
-            ProjectRule::ServiceSystemMissing => "architecture.hy の defservice は(entry の層を持たない service も)、architecture.hy の defservice に :system(cluster に置く系 `module:defsystem の名`・系が複数なら列)を宣言する — 名指した module はその service の entry の層に在り、名は defsystem で定義され、引数は型つきの土台 1 つ(defsystem の引数の型の注記 `[#^ T foundation]` が在ればそれで、無ければ土台を受ける job の関数の引数の型が書かれ、素の Callable・写像・組でない)。defsystem が在れば汎用の模擬 cluster のテストに自動で載る。その service の code が別の service の系の中で走るなら {:part-of \"module:defsystem の名\"}(指す系はどこかの service の entry の層)、旧い経路に残す service と process を持たない部品の service(main も deploy も無く他の service が読むだけ)は {:exempt \"理由\"} と理由を書く(理由の中身は判じない・空の理由は赤)",
-            ProjectRule::SystemAccessUnwritten => "architecture.hy に :outside-writers(本番の系の job でない書き手が書く外の置き場の組の表)を書いた repo では、本番の系(defservice の :system が名指す defsystem)の job は :reads と :writes(読む・書く外の置き場の組 `\"<置き場>:<名>\"` の文字列の集合・使わなければ #{})を書き、job の :reads の組は、どれかの本番の job の :writes か、本番の入口(:business-fakes の宣言で決まる・DOEFF143 と同じ)から届く defk・deff の契約の :writes(job でない書き手 — 系の job から送られる task の Program など)か、:outside-writers の表に在る — 本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる穴を閉じる(この種の違反は doeff-linter が見つける)。登録簿で下げない",
-            ProjectRule::RecordChangeWakesJob => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file・doeff-records の package の中を除く)は、記録の変更の待ちで job を起こさない — doeff-records の合図の源の工場(read-signal-handler・records-signal-handler)を呼ばず、記録の効果に答える handler の外で WatchChanges・WatchEvents を秒(:timeout か位置の 3 つ目)が literal の 0 でない値で出さない。待たずに 1 回読む(秒 0)・記録への書きは当たらない(記録を書いて記録を待つ設計を禁じ、記録と起動を分ける)。登録簿で下げない",
-            ProjectRule::PollingOnTimer => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file — doeff-records の package の中も含む)の Program は、同じ物を時間の待ちを挟んで繰り返し取りに行かない — 繰り返し(while・loop の本体・event-loop の節・自分を呼ぶ定義)の中に、Delay・WaitTicks・module の名つきの sleep(秒が literal の 0 の譲りと (- 期限 今) の期限の待ちを除く)・刻が (+ 今 …) の ArmTimer / ArmedTimer(今 = 同じ定義で GetTime・now-ms・clock-ms から結んだ名)・それらを包む補助の定義の呼びと、handler の節が必ず待つ効果を出す所(repo を読み直して集める — 別の task に渡す Program の中は見ない)を置かない。ライブラリへ問い直しの間隔を渡す :poll-seconds も当たる。起きる刻が行や予定から導かれる期限の待ち・1 度だけ掛けて抜ける期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout は当たらない。相手が変わりを知らせる手段を持たない所だけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書いて通す — 語は閉じた集合(相手に変更の知らせが無い: <相手> — <何で確かめたか>〔相手と確かめの根拠のどちらも空でなく、変更の知らせを持つと分かっている相手 — Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — でない〕 / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し — 最後は区分 retry の当たりだけ)(取りに行く繰り返しは全部直す対象で最後の手段に限る)。登録簿で下げない",
-            ProjectRule::TestSleepsOnWallClock => "設定の `[tool.doeff-linter.test_sleep]` の検の置き場の Hy の file(path の区切りに parts の名の dir を持つ file と、名が names の glob に合う file — exclude の dir の下を除く)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・method の綴り `(.sleep time 秒)`・(Await (asyncio.sleep 秒)) の中の呼び・言い換えの `(.wait (threading.Event) 秒)` も)— 検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を名指して待つ。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象だと名乗った所だけ: module の最上位の `(val pytestmark pytest.mark.realtime)`(印の list・tuple でも)を持つ file の全部・meta の map の :marks に \"realtime\" を持つ deftest の中・decorator の並びに印を持つ素の関数の検 `(defn [pytest.mark.realtime] 名 [] …)` の中。名乗った検は、名簿を持つ repo では名簿にも理由と一緒に載せる(doeff の ADR-DOE-TIME-001 R3・待ちは doeff の時間の効果で書く)",
-            ProjectRule::ProgramSleepsOnWallClock => "設定の `[tool.doeff-linter.program_sleep]` の置き場の Hy の program(defk・defp の本体 — 字面で内側に在る fn・defn・deff の中も)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・(Await (asyncio.sleep 秒)) の中の呼びも)— 時間は doeff-time の効果(Delay・WaitUntil・WaitWithin …)で待ち、1 秒が何であるかは呼び手が置く時間の handler が決める。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは handler の実装だけ: defhandler の本体・引数の並びが [effect k] の定義・契約の辞書の :tags の :role が foundation(汎用の I/O の役 — handler からだけ呼ばれる helper)を自分で名乗る defk・defp。最上位の deff・defn(素の callable)は program でないので数えない(doeff の ADR-DOE-TIME-001 R1・R2・待ちは doeff の時間の効果で書く)",
-            ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
-            ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
-            ProjectRule::StaleCounterexampleRow => "反例の表の行は、わざと壊した反例の handler が今も在る間だけ置く — 壊した handler を直したか消したら行も消す",
-            ProjectRule::AssemblyShapeBroken => "組み立ては 1 点 — 組み立ての層の関数(引数 = 土台の値)が、土台の handler の列 1 つと、各 service の翻訳の層の翻訳の列の定数を並べるだけ。本番と模擬の違いは渡す土台の値だけで、組の file は残さない。翻訳の列は自分の service の翻訳だけを持ち、別の service の効果を出し直す列の外側にはそれに答える列を並べる。名前は architecture.hy の :assembly-shape で宣言する",
-            ProjectRule::AssemblyAnswerMisplaced => "業務の効果の答えは翻訳の列の handler に置く — 翻訳の handler が出し直すのは業務を知らない汎用の効果か同じ列の効果(答える handler は外側)か他の service の公開の効果だけで、土台の handler は外の世界の効果にだけ答える",
-            ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
-            ProjectRule::IntentAnswererNotTranslation => "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)— 環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える(ADR R9)",
-            ProjectRule::ServiceWithoutCounterexample => "業務の service ごとに、わざと壊した handler の反例を 1 本以上持つ — 反例の表(:counterexamples)の節に届く deftest のうち、その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届く物が 1 本も無く、節の効果の定義元がその service か土台でなければ、反例の無い service として赤にする",
-            ProjectRule::ClauseWithoutCounterexample => "業務の不変条件は条ごとに、わざと壊した handler の反例を 1 本以上持つか、持たない理由を宣言する — defservice の :clauses の条ごとに、反例の表(:counterexamples)の行のうち `breaks: <service>::<条>` でその条を名乗り、その節に届く deftest が service の entry の層の定義にも届く物が 1 本も無く、:clause-exemptions の理由も無ければ、網羅の欠けとして赤にする(service に 1 本あれば緑の DOEFF164 を条へ細かくした物)",
-            ProjectRule::RegistryEntryStale => "既知の破れの登録簿は縮める向きだけ — 載った鍵は今も当たる所見を指す。全体の実行で、鍵の区切り(law の名か規則の ID)が指す規則を判じたのに、どの所見にも当たらない鍵は消し忘れの古い行",
-            ProjectRule::IntentFakedInVerification => "intent の層の効果には、検証環境でも本番の翻訳の handler(層 protocol)が答える — 検証環境の handler が自前で答える・表の行で通すと、本番の翻訳が手元で 1 度も走らないまま緑になる(この種の違反は doeff-linter が見つける)。外すのは、どの終わりも受けた効果をそのまま外へ渡す節と、反例の表に載せたわざと壊した節だけ(片方の枝でだけ自前で答える節は表の行が要る)",
-            ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(#1155)",
-            ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(実の I/O を持つ handler を当てるまでは全部が手元)",
-            ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler と :stand-ins の組(相手役・本物)には縁の検が 1 本以上在る — 組は相手役と本物の両方に届く検だけを数える・空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。理由つきの :contract-test (none …) の handler は判じない・理由の無い :contract-test none は鳴る",
-            ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
-            ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
-            ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
-            ProjectRule::LowerLayerInDomain => "記録の service の生の操作(下の層の効果 — architecture.hy の :business-fakes の :lower-layer-modules)を読み書きするのは handler(翻訳の層・土台の層)の仕事 — 業務の層(設定の translation_effects.domain_layers・既定 core・intent)の定義は、その効果を出さず(defk の呼びを辿って届く形も)、その module の package の handler を with_handlers で被せず、ドメインの効果だけを出す",
-            ProjectRule::EnvironmentBranch => "業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義は、環境の名の値(:values — production・emulated …)と比べず(=・!=・is・is-not・in・not-in の引数の文字列の literal と、match の節の型)、dry-run の印(:flags)で分岐しない(if・when・unless・cond の条件と match の主語の中の記号)— 環境の違いは handler の組の差し替えだけで表す(業務の層は環境を知らない)",
-            ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層(architecture.hy の層の :wire-free True)に defwire を置かない — wire の型(欄名の対応 :names を持つ宣言)と parse / dump は翻訳の層(protocol)に置き、この層は欄名を持たない型(defrecord)だけを持つ",
-            ProjectRule::BareMapInWireFreeLayer => "値を型だけで渡す層(:wire-free True)の defk・defn・deff の :pre / :post と defclass・defrecord の欄の型と Python の class の欄の注記に、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonBody・JsonObject・OpaqueJson・FrozenMap — 中身の型の在る写像も)と中身の型の無い組・列(tuple・list)を書かない — データは型(defrecord)か、キー → 値の関数・効果で受け渡す",
-            ProjectRule::DictOutsideItsPlace => "写像は cache のためだけに効果の層(defhandler)が持つ — handler の外の defk・deff・defn の本体で写像({…}・dfor・(dict …))を組まず、defclass・defrecord・defwire の欄と Python の class の欄に写像を持たない(値を型だけで渡す層の欄は DOEFF171)。写像を組むのが目的の定義(:post が写像 — JSON の境界で綴る 1 点・または :tags に :spells / :reads を形の名〔json・http・env・schema・records〕で名乗る外の形を綴る・読む 1 点 — core の外だけ)と、中を読まない中継の型 OpaqueJson の欄は数えない(臭い・数えるだけ)",
-            ProjectRule::MatchFieldHyphen => "match の節の型の class pattern(`(Class :欄 型)`)の keyword の欄の名は、Python の属性名の綴り(`-` でなく `_`)で書く — Hy は class pattern の keyword を mangle しないので `:a-b` は `case Class(a-b=…)` になり、どの値にも当たらない",
-            ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
-            ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
-            ProjectRule::SemanticClassRole => "DOEFF119 が何も出さない、処理を持つ method のある class は値の class(欄から計算するだけ)である(Jev の判定 — 外の世界の窓口か状態を持つ物なら warning か info)",
+            ProjectRule::UnreadableFile => "A Hy file can be read to the end by the reader (a file that cannot be read has missing violations, so it is reported as an error regardless of the list of enabled rules)",
+            ProjectRule::UnknownConfigKey => "The keys and rule IDs of the settings (pyproject's [tool.doeff-linter], architecture.hy) are only ones this linter knows — an unknown one is reported while the remaining rules run without reading that key (the linter is older than the settings, or a typo)",
+            ProjectRule::LayerImportDirection => "A layer's module imports only modules of the layers the settings allow (imports from outside the repo are not counted)",
+            ProjectRule::LayerForbiddenModule => "A layer's module does not directly import modules forbidden in that layer (such as I/O modules)",
+            ProjectRule::LayerTypesOnly => "A module in a types-only layer defines no functions or handlers",
+            ProjectRule::ModuleDeclaresTags => "A definition in a layer's module declares its context and role with the definition's :tags or the module's head tags",
+            ProjectRule::RoleMatchesLayer => "The tag's role is one of the roles allowed in that module's layer, and the context is declared too",
+            ProjectRule::RawSideEffectDirect => "Definitions that directly touch raw side effects (http, time, randomness, files, processes, environment variables …) are placed only in layers the settings allow",
+            ProjectRule::RawSideEffectVia => "A notice of definitions that reach raw side effects through called definitions (a fact, not a violation) — it does not follow past definitions declared in :world-handlers",
+            ProjectRule::EnvironmentName => "Do not put environment words in the names of business files, handlers, and assembly functions",
+            ProjectRule::ServiceBoundary => "One service's judgment and translation layers (the settings' guarded_layers) do not read the same layers of another service. Only another service's open_layers and the shared location may be read",
+            ProjectRule::DefnForbidden => "Write Hy definitions with defk, not defn / defn/a (except functions at macro-expansion time and locations excluded by the settings)",
+            ProjectRule::DeffNeedsReason => "On the line of a deff definition or the line before it, write a comment giving the reason it cannot be a defk",
+            ProjectRule::DefinitionTagsRequired => "defk, deff, defp, defhandler, and defeffect declare the required keys (settings) in the contract dictionary's :tags",
+            ProjectRule::ContextMatchesService => "The tag's :context matches the name of the service the file is placed in (a notice)",
+            ProjectRule::UndeclaredPlace => "A module under root is placed in one of the service layers, shared, foundation, or legacy declared in architecture.hy",
+            ProjectRule::UndeclaredDirectory => "A dir under root is a declared service or shared, foundation, or legacy, and a dir inside a service is a declared layer",
+            ProjectRule::ServiceDependency => "Service A may read only the services in A's :depends-on, at the layers readable from A's module's layer (that layer's :dependency-layers — the assembly layer reads intent and protocol —, or otherwise intent in :open-layers), and shared",
+            ProjectRule::BlindDefinitionReads => "Definitions in architecture.hy's :blind-definitions are judged only on decided material — the bodies (excluding comments) of the repo's Hy definitions reached transitively by calls and names from that definition contain no spelling of :forbid-words, and with :no-imports the definition's module has no import or require (a require of a module in :allow-requires is excluded because it loads a macro). The declared definition exists",
+            ProjectRule::DefinitionCallsUnlistedHead => "A definition in architecture.hy's :allowed-heads has only the head forms listed in :heads — if the spelling (symbol or keyword) of the head of a `( … )` inside the definition's form (including nesting, excluding strings and comments) is outside :heads, it is a hit for each such head. The declared definition exists",
+            ProjectRule::CallOutsideDeclaredSites => "A head in architecture.hy's :call-sites is called, within the Hy files of :files (excluding :except), only inside the definitions in :sites — a place with :count is exactly that number, a call at a place with :parent has the head of the immediately enclosing form with that spelling, and a call at a place with :branch is inside a branch of a cond, when, if, or unless whose condition form contains that symbol. The place's definition exists, and at least one file matches :files",
+            ProjectRule::BroadCatchOutsideCarrier => "Do not place broad exception catches (`(except [] …)`, `(except [… Exception …] …)`, BaseException, AssertionError, Python's `except:` and `except Exception:`) in the Hy and Python files of architecture.hy's :broad-catches :files (excluding :except) — the only thing allowed is, inside a :carriers definition, a catch that binds the exception by name and passes that name within the catch to the :event event's argument (a boundary that carries a contract violation into a list instead of swallowing it). The carrier-boundary definition exists, and at least one file matches :files",
+            ProjectRule::PlacedDependency => "A layer's module (service and shared) in architecture.hy's :placed-dependencies depends only on modules in the layer locations (a service's layer, shared's layer, foundation, and dirs that have a layer-name segment) — it does not import a module under root whose location is undecided (directly under a service dir, or inside a dir not in the declaration)",
+            ProjectRule::UnusedDependency => "No module of the service reads a declared dependency (:depends-on) (a notice)",
+            ProjectRule::TestIsDeftest => "Tests in test locations (the settings' test_paths) are written with deftest — do not place bindings of defn, deff, defk, or fn whose name starts with test- / test_",
+            ProjectRule::ClassWithBehaviour => "A defclass in business code is only a value class — do not write a class whose methods or field initial values touch raw side effects (error), or a class whose methods rewrite self's fields (warning). For a class with only fields, defrecord is recommended (info). Classes that inherit exceptions, Enum, Protocol, or bases from external libraries are allowed. It is not judged by name",
+            ProjectRule::JsonValueOutsideWire => "JsonValue, JSONValue, JsonObject, and JSONObject (types that merely wrap a plain dict, list, str … with a name) may be used only by generic solvers (doeff_hy._wire, doeff_records._wire) and the foundation-layer send/receive modules listed in architecture.hy's :wire-modules. Other modules (protocol, intent, core …) see only typed values whose shape the solver has verified",
+            ProjectRule::SemanticBusinessDecision => "A translation-layer definition merely rephrases a request in the other party's way of speaking and makes no business judgment (a Jev judgment; warning or info)",
+            ProjectRule::SemanticTransportKnowledge => "A judgment-layer definition does not know the means of communication (URL, HTTP, JSON wire, SQL) (a Jev judgment; warning or info)",
+            ProjectRule::SemanticPlainCallable => "The text of a deff's reason comment matches a reason architecture.hy accepts (such as an external library calling a plain function) (a Jev judgment; warning or info)",
+            ProjectRule::ShapeCheckInJudgment => "A definition in a judgment layer (the settings' smells.shape_check_layers) does not check the shape of input with a string-key (.get x \"field\") and isinstance on that field",
+            ProjectRule::FailureRethrow => "A match arm does not merely receive a failure type (declared by defrecord's :failure True and defeffect's :failure / :absent) and return the received value or a re-wrapped value",
+            ProjectRule::BindThenReturn => "Do not put (return x) right after (<- x T (f …)) with x used nowhere else",
+            ProjectRule::FieldsJoinedIntoText => "Do not join two or more fields of the same value into one string with + or an f-string",
+            ProjectRule::RebuiltAccumulator => "Do not rebuild an accumulator each time inside for / while with (:= xs (+ xs #(…)))",
+            ProjectRule::EffectsDisagreeWithInference => "If a defk writes :effects, make it the same set as the effects inferred from the calls fired in the body ((<- …), (! …)) — do not raise an effect not in the declaration, and do not declare an effect that is not raised (a defk without :effects is out of scope)",
+            ProjectRule::StaleOutcomeBranch => "Do not separate, as values, the types that defeffect declared with :absent / :failure on a variable that binds the effect's answer ((<- x (E …)), (val x (! (E …)))) — match arms, isinstance (also a tuple of types, and cond branches). <- and ! do not bind those types but let them escape as Absent / Raise, so the branch never runs (ADR-DOE-CORE-EFFECTS-003 R14 (4))",
+            ProjectRule::TestFormNotDeftest => "Tests are written only with deftest and collected by pytest — do not place Python def test_*, per-module skip, check scripts that run outside pytest, or runners that run deftests themselves. Files are selected by the spelling patterns of architecture.hy's :test-forms",
+            ProjectRule::VocabularyOutsideSinglePoint => "The judgment of a vocabulary (a job's phase, a turn's state, a bearer's field, etc.) is confined to one file (architecture.hy's :single-point-vocabulary :except) — if another file reads a spelling that matches the same regular expression, that becomes a second judgment point, and a fix to only one of them makes them disagree",
+            ProjectRule::SpellingOutsideItsFiles => "The spelling (regular expression) of a group in architecture.hy's :confined-spellings is written only in the :except files (if :except is empty, it is written nowhere in :files) — reads the body, with comments dropped (strings are counted too), of the Hy and Python files matching :files. A group with no file matching :files is also a hit (a population of 0 is not made green)",
+            ProjectRule::SpellingCountDiffers => "For each declaration in architecture.hy's :counted-spellings, the number of hits of :pattern in the files matching :files (comments dropped for Hy and Python; strings counted) fits :count (exactly) or :at-least (or more) — with :within, it is counted inside each named top-level definition. A declaration with no file or definition to count is also a hit (a population of 0 is not made green)",
+            ProjectRule::EffectOutsideCensus => "For each declaration in architecture.hy's :effect-census, the set of class declarations inheriting :base in the Hy and Python files of :files (excluding comments) matches the :effects list — a declaration not in the list, the same name declared twice, and a listed effect with no declaration are hits. A declaration with no file matching :files is also a hit (a population of 0 is not made green)",
+            ProjectRule::FieldHoldersDiffer => "For each declaration in architecture.hy's :field-holders, among the module-level classes of the Python files of :files, the classes whose body-level fields (annotated assignments) have an annotation with the spelling :type as a word are exactly the :holders list — a holder not in the list, and a listed class that does not have (or lacks) that field are hits. With :classes, only the named classes are counted, and a missing class is also a hit. A declaration with no Python file matching :files is also a hit (a population of 0 is not made green)",
+            ProjectRule::RetiredWord => "Do not write in the files of a group's :files the spellings decided as not to be used by architecture.hy's :retired-words — :words are where it stands alone as a word (not preceded or followed by letters, _, or -), :patterns are per-line regular expressions, :in names looks only at definition names, and :in paths looks only at file names. Lines containing a :rule-lines spelling (lines that state the rule itself), and comments, docstrings, and .md files under :in lines (spellings not in use) are not counted. Words in the key names of contract files in :contract-files and the values of enum / const are not counted in Hy / Python strings whose content is exactly that word or in the names of defwire field definitions (contract and wire field names stay as the contract's spelling)",
+            ProjectRule::RetiredCall => "Do not call, in the Hy files of a group's :files, the calls decided as not to be used by architecture.hy's :retired-calls (retired effects, clocks …) — counts forms whose head symbol is a :calls spelling; comments, strings, and discarded forms are not counted",
+            ProjectRule::UntypedStructuredValue => "A structured value is expressed with a type that statically has field names and types (frozen dataclass, defrecord, defwire) — in the public surface (names not starting with _) of the files in architecture.hy's :typed-values, do not write in class fields, function and method return values, or the types of defk / deff :post a plain mapping (dict, Mapping, JsonValue …), a plain tuple, a mapping whose values are object / Any, a fixed-length tuple tuple[A, B], or a container holding those, and defn / defk / deff do not answer with a tuple literal #(a b) of length 2 or more. :post is an isinstance contract, so only mappings are red, and for a defk / deff whose name has no type annotation, a plain tuple in :post is red too",
+            ProjectRule::RecordStubNotKwOnly => "The type declarations (.pyi) of architecture.hy's :record-stubs do not misrepresent the runtime shape of the .hy of the same name in the same dir — if a record that accepts fields only by name in .hy (a defrecord, or a defclass with (dataclass … :kw-only True …) as decoration) is declared with @dataclass, write kw_only=True",
+            ProjectRule::ServiceUntestedOnSim => "A business service is put on the fake environment with its production assembly (entry layer) as is, and is verified by running with only handler swaps — if not a single deftest under the fake environment (:verification-environment) reaches a definition in that service's entry layer, it is red as an unverified service",
+            ProjectRule::ServiceInvariantsMissing => "A defservice in architecture.hy (including services without an entry layer) declares :invariants (a list of business-invariant functions `module:function`) in architecture.hy's defservice — the named function exists and its :tags :role is judgment (a pure judgment that takes records and returns a list of violations). A service with no declaration, a nonexistent function, or a function that is not a judgment is red",
+            ProjectRule::ServiceSystemMissing => "A defservice in architecture.hy (including services without an entry layer) declares :system (the system placed in the cluster, `module:defsystem name`; a list if there are several systems) in architecture.hy's defservice — the named module is in that service's entry layer, the name is defined by defsystem, and the argument is exactly one typed base (if the defsystem's argument has a type annotation `[#^ T foundation]`, that; otherwise the type of the job function's argument that receives the base is written, and it is not a plain Callable, mapping, or tuple). If a defsystem exists, it is automatically included in the generic fake-cluster tests. If that service's code runs inside another service's system, write {:part-of \"module:defsystem name\"} (the system pointed to is in some service's entry layer); for a service left on the old path and a component service with no process (no main or deploy, only read by other services), write {:exempt \"reason\"} with a reason (the reason's content is not judged; an empty reason is red)",
+            ProjectRule::SystemAccessUnwritten => "In a repo whose architecture.hy has :outside-writers (a table of pairs of external storage written by writers that are not production-system jobs), a job of a production system (the defsystem named by defservice's :system) writes :reads and :writes (sets of strings of the pairs of external storage it reads and writes, `\"<storage>:<name>\"`; #{} if unused), and each pair in a job's :reads is in some production job's :writes, in the :writes of the contract of a defk / deff reachable from a production entry point (decided by the :business-fakes declaration — the same as DOEFF143) (writers that are not jobs — such as Programs of tasks sent from a system's job), or in the :outside-writers table — this closes the hole where a record with no production writer is read while a stand-in produces it in the local fake and everything goes green (doeff-linter finds violations of this kind). Not lowered by the registry",
+            ProjectRule::RecordChangeWakesJob => "Production code in a repo whose architecture.hy has :business-fakes (Hy files matching :production and not matching :tests, :simulation, or :skip; excluding inside the doeff-records package) does not wake a job by waiting for record changes — it does not call doeff-records' signal-source factories (read-signal-handler, records-signal-handler), and outside the handlers that answer record effects it does not emit WatchChanges or WatchEvents with seconds (:timeout or the third positional) that are a literal nonzero value. Reading once without waiting (seconds 0) and writes to records are not hits (it forbids designs that write records and wait for records, and separates records from starting). Not lowered by the registry",
+            ProjectRule::PollingOnTimer => "A Program in production code in a repo whose architecture.hy has :business-fakes (Hy files matching :production and not matching :tests, :simulation, or :skip — including inside the doeff-records package) does not repeatedly fetch the same thing with time waits in between — inside a repetition (the body of while or loop, an event-loop clause, a definition that calls itself) it does not place Delay, WaitTicks, a sleep with a module name (excluding yields of a literal 0 seconds and deadline waits of (- deadline now)), ArmTimer / ArmedTimer whose time is (+ now …) (now = a name bound in the same definition from GetTime, now-ms, or clock-ms), calls to helper definitions that wrap them, and places where a handler clause always emits an effect that waits (collected by re-reading the repo — it does not look inside a Program passed to another task). It also hits :poll-seconds, which passes a re-query interval to a library. Deadline waits whose wake time is derived from a row or schedule, a deadline applied once and exited, the upper-bound seconds when waiting for a change (the DOEFF208 side), and request timeouts are not hits. Only where the other party has no means of announcing changes, write `; 時間で取り直す理由: <word>` (the Japanese marker 'reason to re-fetch by time') on the hit's line or the line before to let it pass — the word is a closed set (`相手に変更の知らせが無い: <party> — <how it was checked>` [no change notification from the other party; neither the party nor the basis of the check is empty, and the party is not one known to have change notifications — Kubernetes, the coordinator's GET /watch, the doeff-events foundation, the record service's change signal] / `書くだけ` [write-only: a liveness mark, a report, a deadline extension] / `届かない間だけの繋ぎ直し` [reconnecting only while unreachable — in the end only hits of category retry]) (every fetching repetition is to be fixed and this is limited to a last resort). Not lowered by the registry",
+            ProjectRule::TestSleepsOnWallClock => "Hy files in the test locations of the settings' `[tool.doeff-linter.test_sleep]` (files with a dir named in parts as a path segment, and files whose name matches the names glob — excluding under exclude dirs) do not call time.sleep or asyncio.sleep (including t.sleep with the import alias `(import time :as t)`, names bound by `(import asyncio [sleep])`, the method spelling `(.sleep time seconds)`, calls inside (Await (asyncio.sleep seconds)), and the equivalent `(.wait (threading.Event) seconds)`) — a test has the program emit doeff-time effects (Delay and so on) and runs on a virtual clock (sim-time-handler), or waits by naming the event to wait for. Yields of a literal 0 seconds are not counted. Waiting on the wall clock is allowed only where the test declares that real time itself (a real thread, a real asyncio loop, a real external process) is the subject: all of a file that has the module-level `(val pytestmark pytest.mark.realtime)` (also as a list or tuple of marks), inside a deftest whose meta map's :marks has \"realtime\", and inside a plain-function test `(defn [pytest.mark.realtime] name [] …)` that has the mark in its decorator list. A test that declares it is also listed with its reason in the roster in repos that keep a roster (doeff's ADR-DOE-TIME-001 R3; waiting is written with doeff's time effects)",
+            ProjectRule::ProgramSleepsOnWallClock => "Hy programs (bodies of defk and defp — including inside fn, defn, and deff that are textually inside) in the locations of the settings' `[tool.doeff-linter.program_sleep]` do not call time.sleep or asyncio.sleep (including t.sleep with the import alias `(import time :as t)`, names bound by `(import asyncio [sleep])`, and calls inside (Await (asyncio.sleep seconds))) — time is waited for with doeff-time effects (Delay, WaitUntil, WaitWithin …), and what one second is is decided by the time handler the caller places. Yields of a literal 0 seconds are not counted. Waiting on the wall clock is allowed only in handler implementations: the body of a defhandler, definitions whose argument list is [effect k], and a defk or defp that itself declares in the contract dictionary's :tags the :role foundation (a generic I/O role — a helper called only from handlers). A top-level deff or defn (plain callable) is not a program and is not counted (doeff's ADR-DOE-TIME-001 R1, R2; waiting is written with doeff's time effects)",
+            ProjectRule::HandlerArgumentHoldsState => "A handler does not receive connection objects or rewritable stores as arguments — read connection targets, credentials, and settings with Ask, create the client only once with (session val client …) at the head of the body, and hold state with (session var …) (so an outer handler can swap and observe them). For arguments that remain, write the reason in the body with architecture.hy's :handler-arguments :keep-mark comment",
+            ProjectRule::BusinessEffectFake => "Do not make fakes that answer business effects — fakes are only for effects that touch the outside world. Write business operations with defks that emit effects of lower layers, and tests swap only the handlers of the outside world. Fake roots, production entry points, and business modules are declared in architecture.hy's :business-fakes",
+            ProjectRule::StaleCounterexampleRow => "A row of the counterexample table is kept only while the deliberately broken counterexample handler still exists — when the broken handler is fixed or removed, the row is removed too",
+            ProjectRule::AssemblyShapeBroken => "Assembly is a single point — a function in the assembly layer (argument = the base value) merely lists one base handler list and the constants of translation lists of each service's translation layer. The only difference between production and fakes is the base value passed, and no set file remains. A translation list holds only its own service's translations, and outside a list that re-emits another service's effect, a list that answers it is placed. Names are declared in architecture.hy's :assembly-shape",
+            ProjectRule::AssemblyAnswerMisplaced => "Answers to business effects go in the translation list's handlers — a translation handler re-emits only generic effects that know nothing of the business, effects of the same list (the answering handler is outer), or public effects of other services, and a base handler answers only effects of the outside world",
+            ProjectRule::TestOnlyFake => "Do not make test-only fakes — there is exactly one production business handler, and tests are assembled by swapping base handlers (record effects, clocks, external parties). Deliberately broken counterexample handlers are listed with reasons in the counterexample table (:counterexamples)",
+            ProjectRule::IntentAnswererNotTranslation => "Only one translation-layer handler answers an intent effect (the same for production and fakes) — do not answer with a separate answerer per environment or with a base handler; fakes swap the base (ADR R9)",
+            ProjectRule::ServiceWithoutCounterexample => "Each business service has one or more counterexamples of deliberately broken handlers — if, among the deftests reaching a clause of the counterexample table (:counterexamples), not one reaches a definition in that service's entry layer (the same graph as DOEFF136, in reverse), and the clause's effect is not defined by that service or the base, it is red as a service without a counterexample",
+            ProjectRule::ClauseWithoutCounterexample => "Each clause of a business invariant has one or more counterexamples of deliberately broken handlers, or declares why it has none — for each clause of defservice's :clauses, if among the rows of the counterexample table (:counterexamples) that name that clause with `breaks: <service>::<clause>`, no deftest reaching that clause also reaches a definition in the service's entry layer, and there is no :clause-exemptions reason, it is red as a gap in coverage (DOEFF164, which is green with one per service, made finer per clause)",
+            ProjectRule::RegistryEntryStale => "The registry of known breaches only shrinks — a listed key points to a finding that still matches. In a whole run, a key whose rule (named by the key's separator, a law name or a rule ID) was judged but that matches no finding is a stale row that was forgotten to be deleted",
+            ProjectRule::IntentFakedInVerification => "An intent-layer effect is answered by the production translation handler (layer protocol) in the verification environment too — if a verification-environment handler answers it itself or a table row lets it through, the production translation never runs locally and everything goes green (doeff-linter finds violations of this kind). The only exclusions are clauses where every ending passes the received effect through as is, and deliberately broken clauses listed in the counterexample table (a clause that answers itself on only one branch needs a table row)",
+            ProjectRule::IntentEffectUncovered => "An intent-layer effect is emitted by a definition reachable from a local test and has an answerer reachable from both a fake root and the production entry — an effect missing any of the three is a business operation that cannot be said to be tested (#1155)",
+            ProjectRule::TestKindMismatch => "There are only two kinds of tests — local (no handler touching the outside world is reachable from the definitions it reaches) / edge (reaches an allowlist definition, a :wraps handler, or raw I/O). The kind is not decided by people but derived from what is reached, and only edge tests carry architecture.hy's :edge-mark marker (until a handler with real I/O is applied, everything is local)",
+            ProjectRule::WorldHandlerWithoutContractTest => "Each pair of a handler in architecture.hy's :world-handlers and a :stand-ins pair (counterpart, real one) has one or more edge tests — for a pair, only tests that reach both the counterpart and the real one count; among deftests with a non-empty :interpreters, those that reach that handler's definition by following definition edges (calls, references, nesting — the same graph as DOEFF133). A handler with a reasoned :contract-test (none …) is not judged; a reasonless :contract-test none fires",
+            ProjectRule::WorldHandlerMisplaced => "A definition listed in architecture.hy's :world-handlers exists and is in a module of the foundation layer (the only place for definitions that may touch the outside world is foundation)",
+            ProjectRule::WorldHandlerNamedOutsideList => "Only definitions in the allowlist (and definitions nested inside them) may name the doeff real I/O handlers (os-file-handler, http-production-handler …) listed in architecture.hy's :world-handlers :wraps — both places where they are passed as values (with-handlers lists) and calls are counted",
+            ProjectRule::TranslationEmitsIntent => "Handlers in the translation layer (the settings' handler_layers) — defhandler and functions taking [effect k] — emit only doeff's generic effects and do not emit business intents (types in the settings' intent_layers) — calls executed in the body ((<- …), (! …)) are followed through imported defks",
+            ProjectRule::LowerLayerInDomain => "Reading and writing raw operations of a record service (lower-layer effects — architecture.hy's :business-fakes :lower-layer-modules) is the job of handlers (translation layer, base layer) — definitions in business layers (the settings' translation_effects.domain_layers, default core and intent) do not emit those effects (including shapes reached by following defk calls), do not wrap handlers of that module's package with with_handlers, and emit only domain effects",
+            ProjectRule::EnvironmentBranch => "Hy definitions in business layers (architecture.hy's :environment-branches :layers) do not compare with values of environment names (:values — production, emulated …) (string literals in the arguments of =, !=, is, is-not, in, not-in, and the types of match clauses) and do not branch on dry-run flags (:flags) (symbols in the conditions of if, when, unless, cond and the subject of match) — differences between environments are expressed only by swapping the set of handlers (business layers do not know the environment)",
+            ProjectRule::WireInWireFreeLayer => "Do not place defwire in a layer that passes values by type only (architecture.hy's layer :wire-free True) — wire types (declarations that have :names, the correspondence of field names) and parse / dump go in the translation layer (protocol), and this layer holds only types without field names (defrecord)",
+            ProjectRule::BareMapInWireFreeLayer => "In a layer that passes values by type only (:wire-free True), do not write in the :pre / :post of defk, defn, and deff, the field types of defclass and defrecord, and the field annotations of Python classes, a mapping (dict, Dict, Mapping, MutableMapping, JsonValue, JsonBody, JsonObject, OpaqueJson, FrozenMap — including mappings with content types) or a tuple / list without a content type (tuple, list) — data is passed by type (defrecord), or by key → value functions and effects",
+            ProjectRule::DictOutsideItsPlace => "Mappings are held only for caching, by the effect layer (defhandler) — do not build mappings ({…}, dfor, (dict …)) in the bodies of defk, deff, and defn outside handlers, and do not hold mappings in the fields of defclass, defrecord, and defwire or in the fields of Python classes (fields in layers that pass values by type only are DOEFF171). Definitions whose purpose is to build a mapping (:post is a mapping — the one point that spells it at a JSON boundary — or the one point that spells or reads an external shape, claiming :spells / :reads in :tags with a shape name [json, http, env, schema, records] — outside core only) and fields of the relay type OpaqueJson, which does not read the inside, are not counted (a smell; counting only)",
+            ProjectRule::MatchFieldHyphen => "The keyword field names in a match clause's class pattern (`(Class :field type)`) are written in Python's attribute-name spelling (`_`, not `-`) — Hy does not mangle the keywords of class patterns, so `:a-b` becomes `case Class(a-b=…)` and matches no value",
+            ProjectRule::DefkCalledBare => "A defk definition is called only where it is passed as a Program (the right side of (<- …), (! …), (return …), and arguments of calls that take a Program) — calling it bare returns a Program, not the answer",
+            ProjectRule::SemanticMixedConcerns => "A definition whose role is judgment / program does not mix input-shape checks with business judgment (a Jev judgment — warning or info)",
+            ProjectRule::SemanticClassRole => "A class with methods that hold logic, for which DOEFF119 emits nothing, is a value class (computing only from its fields) (a Jev judgment — warning or info if it is a window to the outside world or holds state)",
         }
     }
 
-    /// 直し方の既定の 1 行。
+    /// The default one-line fix.
     pub fn hint(self) -> &'static str {
         match self {
-            ProjectRule::UnreadableFile => "Hy 本体(hy.read_many)が読めるなら doeff-linter の読み取り器の誤りなので知らせる。Hy も読めないなら括弧か文字列を直す",
-            ProjectRule::UnknownConfigKey => "linter が古いなら本線からの自動の組み直しを待つ(開発版の置き場は数分以内に置き換わる — 手で組んで差し替えない)。書き違いなら鍵の名を直す",
-            ProjectRule::LayerImportDirection => "向きに反する import を外す — 要る値は許された層(intent の型など)へ移すか、effect を出して下の層の handler に答えさせる",
-            ProjectRule::LayerForbiddenModule => "I/O は許された層(foundation など)の handler に置き、この層からは effect を出す",
-            ProjectRule::LayerTypesOnly => "関数と handler は別の層(core・protocol)へ移し、この層には型だけを置く",
-            ProjectRule::ModuleDeclaresTags => "契約の辞書に :tags {:context … :role …} を書くか、module の頭に MODULE-TAGS を置く",
-            ProjectRule::RoleMatchesLayer => "role をこの層で許された物に直すか、module を role に合う層の dir へ移す",
-            ProjectRule::RawSideEffectDirect => "effect を出して、許された層の handler に I/O をさせる",
-            ProjectRule::RawSideEffectVia => "経路の先の定義が effect を出す形になっているかを確かめる",
-            ProjectRule::EnvironmentName => "環境の違いは土台の handler の差し替えで表し、業務の名からは環境の語を外す",
-            ProjectRule::ServiceBoundary => "別の service に頼むことは、その service の intent を出して頼む(判断や翻訳の module を直に読まない)。共有する物は共有の置き場へ移す",
-            ProjectRule::DefnForbidden => "defk にする。外の library の callback のように素の関数が要るなら deff にして、同じ行に `; defk にできない: <理由>` と :tags を書く",
-            ProjectRule::DeffNeedsReason => "deff の行か直前の行に `; defk にできない: <理由>` を書く(書けないなら defk にする)",
-            ProjectRule::DefinitionTagsRequired => "契約の辞書に :tags {:context \"…\" :role \"…\"} を書く",
-            ProjectRule::ContextMatchesService => ":context を service の名に合わせるか、file を :context の service の dir へ移す",
-            ProjectRule::UndeclaredPlace => "architecture.hy に宣言するか、宣言した置き場所(<root>/<service>/<層>/)へ移す",
-            ProjectRule::UndeclaredDirectory => "architecture.hy に defservice か service の :layers を足すか、dir を宣言した置き場所へ移す",
-            ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
-            ProjectRule::BlindDefinitionReads => "判断に要る材料は定義の引数で受け、語の読みは呼び手の側(判断の外)に置く — 届いた先の helper へ逃がしても推移閉包で当たる。module の import は外し、値は引数で渡す",
-            ProjectRule::DefinitionCallsUnlistedHead => "一覧の外の呼びは定義の外(呼び手の側・例外を受け止める境界の中)へ移す — 移せない呼びが本当に例外を上げないなら、理由を :why に書いて :heads に足す",
-            ProjectRule::CallOutsideDeclaredSites => "呼びを宣言した場所へ戻す(2 つ目の閉じ込めや断りの座を生やさない)— 場所を広げるのが意図した境界の変更なら、同じ変更で architecture.hy の :sites と :count を直し、理由を :why に書く",
-            ProjectRule::BroadCatchOutsideCarrier => "捕捉を狭くする(ValueError など、起きると分かっている例外だけ)か、捕捉を消して上げる — 例外を列へ運ぶ境界なら、捕まえた例外を名で束縛して :event の出来事に渡し、その定義を同じ変更で :carriers に足して理由を :why に書く",
-            ProjectRule::PlacedDependency => "読む先の module を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 移す前の置き場への依存は移す変更で消す",
-            ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
-            ProjectRule::TestIsDeftest => "deftest にする(検の値を組む補助は defk にして deftest の中で `(<- …)` で呼ぶ)",
-            ProjectRule::ClassWithBehaviour => "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)。状態なら 値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ",
-            ProjectRule::JsonValueOutsideWire => "JSON の形を defwire で型に起こし、送受信の foundation の module が parse した型のある値を渡す(JsonValue を手で分解して読む関数は書かない)。送受信そのものを行う foundation の module なら architecture.hy の :wire-modules に挙げる",
-            ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら誤判定の一覧に載せる)",
-            ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら誤判定の一覧に載せる)",
-            ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら誤判定の一覧に載せる)",
-            ProjectRule::ShapeCheckInJudgment => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする",
-            ProjectRule::FailureRethrow => "失敗は (<- (Raise 失敗の値)) で出し(呼び手へ手で return し直さない)、受けて写す所だけ呼ぶ側で (on-raise 本文 (Refusal r) 写し先) と受ける(ADR-DOE-CORE-EFFECTS-003 R3・R7)",
-            ProjectRule::BindThenReturn => "(return (! (f …))) と 1 つにするか、失敗なら (<- (Raise …)) で出す",
-            ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
-            ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
-            ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
-            ProjectRule::StaleOutcomeBranch => "枝を消して成功の道だけにする — 不在で何かしたい所は (<- x (E …) :absent <失敗>) か absent-as、失敗で何かしたい所は on-raise、不在や失敗を値として持ち回る所は (maybe (E …)) で包んで Nothing を受ける形にする(R14 (3))",
-            ProjectRule::TestFormNotDeftest => "deftest に書き直す(判定の関数は同じ process で呼ぶ)— 守る物が消えたなら file ごと消す。module ごとの skip は足りない物を直すか、その検だけを skip する",
-            ProjectRule::VocabularyOutsideSinglePoint => "群の :instead が名指す判定の1点(:except の file)の答えを読む — 直せない既存の当たりは登録簿に載せる",
-            ProjectRule::SpellingOutsideItsFiles => "綴りを :except の file へ移し、外の file はその file の口を通す — 書いてよい file を増やすなら、理由を :why に書いて :except に足す",
-            ProjectRule::SpellingCountDiffers => "数を :count(:at-least)に合わせる — 足した当たりは決めた定義や file の口へ移し、消えた当たりは戻す。数を変えるなら、理由を :why に書いて宣言の数を同じ変更で直す",
-            ProjectRule::EffectOutsideCensus => "effect を足すなら同じ変更で :effects の一覧にも足す(消すなら一覧からも消す)— 同じ名の 2 つ目の宣言は 1 つにまとめる",
-            ProjectRule::FieldHoldersDiffer => "その型の欄は一覧の class にだけ置く(ほかの class は一覧の class を通して持つ)— 持ち手を変えるなら、理由を :why に書いて :holders を同じ変更で直す",
-            ProjectRule::RetiredWord => "群の :instead の語に書き換える。契約の綴り(wire の欄名・契約の値)なら、群の :contract-files の契約の file に在るかを確かめる(在れば文字列と defwire の欄の定義は数えない)",
-            ProjectRule::RetiredCall => "群の :instead の物に置き換える",
-            ProjectRule::HandlerArgumentHoldsState => "引数を消し、接続先と設定は Ask、client は (session val …)、状態は (session var …) へ移す — 同じ handler を別の設定で並べるなど引数に残す物は本文に理由の註を書く",
-            ProjectRule::UntypedStructuredValue => "欄の名前と型を持つ frozen の record(defrecord・defwire・dataclass)を定義して返す・持つ — :post は [(: % <record の型>)] で検める。キーで引く索引は dict[str, Row]・同じ型の列は tuple[X, ...] と中身の型を書く。値の形を外の系が決める境界なら登録簿に理由と共に載せる",
-            ProjectRule::RecordStubNotKwOnly => "型の宣言の飾りを @dataclass(frozen=True, kw_only=True) にする",
-            ProjectRule::BusinessEffectFake => "業務の操作を下の層の効果を出す defk で書き直して偽物を消す — 外の世界の効果なら外の世界の表に理由つきで足し、わざと壊した反例なら反例の表に載せる",
-            ProjectRule::StaleCounterexampleRow => "当たらなくなった反例の表の行(1 鍵 1 file の dir のその file)を消す",
-            ProjectRule::AssemblyShapeBroken => "組の file の組み立てを組み立ての層の関数へ移して file を消す・関数を defk で書き、本体を [土台の列 翻訳の列 …] だけにする・別の service の翻訳は組み立ての層で別の列として並べる",
-            ProjectRule::AssemblyAnswerMisplaced => "業務の効果に答える所を翻訳の列の handler へ移すか、答えを汎用の効果へ出し直す・出し直した効果に答える handler を列の前(外側)へ並べる",
-            ProjectRule::TestOnlyFake => "検の組み立てを本番の handler + 土台の差し替えに書き直して偽物を消す — わざと壊した反例なら反例の表に載せる",
-            ProjectRule::IntentAnswererNotTranslation => "intent の効果の答えを翻訳の層の handler 1 つへまとめ、土台や環境ごとの handler からは外す",
-            ProjectRule::ServiceWithoutCounterexample => "その service の effect(か土台の effect)に答える handler をわざと壊した反例の deftest を模擬の環境に書き、handler を反例の表に理由つきで載せる — 今すぐ書けない service は登録簿に理由と担い手つきで載せる",
-            ProjectRule::ClauseWithoutCounterexample => "その条を破る壊した handler の反例の deftest を模擬の環境に書き、反例の表の行に `breaks: <service>::<条>` を足す — 壊した handler では破れない条(構造の保証)は defservice の :clause-exemptions に理由を書く・今すぐ書けない条は登録簿に理由と担い手つきで載せる",
-            ProjectRule::RegistryEntryStale => "当たらなくなった登録簿の行(1 鍵 1 file の dir ならその file・1 行 1 鍵の file ならその行)を消す",
-            ProjectRule::IntentFakedInVerification => "検証環境の自前の答えと表の行を消し、本番の翻訳の handler を組み立てに載せて、その下の土台(記録・時計・外の相手)の handler だけを差し替える — わざと壊した反例なら反例の表に鍵を載せる(登録簿では下げられない)",
-            ProjectRule::IntentEffectUncovered => "欠けた列を埋める — 検から出さないなら模擬の環境の deftest でその業務の操作を通す・答え手が無いなら翻訳の層の handler を組み立てに載せる(使わない効果なら宣言を消す)",
-            ProjectRule::ServiceUntestedOnSim => "模擬の環境の tests に、その service の entry の組み立てを handler の差し替えだけで回す deftest を足す",
-            ProjectRule::ServiceInvariantsMissing => "defservice に :invariants [\"<module>:<関数>\" …] を足し、関数は :role \"judgment\" の defk で置く(模擬の環境の <service>_invariants.hy など)。既知の欠けは登録簿に理由と持ち主を載せる",
-            ProjectRule::ServiceSystemMissing => "defservice に :system \"<module>:<defsystem の名>\" を足し、defsystem はその service の entry の層に (defsystem 名 [foundation] …) の形で置く。土台を受ける job の関数は :pre に土台の型(defrecord)を書く。旧い経路に残す service と process を持たない部品の service は :system {:exempt \"理由\"}",
-            ProjectRule::SystemAccessUnwritten => "job の行に :reads #{…} :writes #{…} を書く。読む組に書き手が無いなら、その組を書く job を本番の系に足すか、書き手が本番の系の job でない(外の repo の道具・人の操作・job でない task)なら architecture.hy の :outside-writers に組と書き手を書く",
-            ProjectRule::RecordChangeWakesJob => "記録の変更を待って起きる形をやめる: 起こす知らせは出来事の基盤(redis・rabbitmq など)から受け、記録は書くだけにする。起動や繋ぎ直しの時に追いつくための読みは待たない 1 回の読み(秒 0)にする。合図の源(read-signal-handler)を handler の列から外し、出来事の基盤の知らせを受ける源に替える",
-            ProjectRule::PollingOnTimer => "時間の間隔で取りに行くのをやめ、相手の変わりの知らせ(出来事 — doeff-events の Publish / WaitForEvent・出来事の基盤)で起きる形にする。起きる刻が行や予定から決まる期限の待ちは、その刻を行から導いて掛ける。相手が変わりを知らせる手段を持たない所・書くだけの loop(生存の印・報告・期限の延長)・届かない印か失敗の答えが在る間だけ繋がるかを試し、戻ったら印を消す繋ぎ直しだけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書く",
-            ProjectRule::TestSleepsOnWallClock => "実時間が対象でない待ちは外す — program の待ちは `(<- (Delay 秒))` にして検を sim-time-handler の仮想の時計で走らせる・相手の状態を待つなら出来事(threading.Event の set・queue の get・process の wait)を名指して待つ。実時間そのものが対象(本物の thread の重なり・本物の asyncio の loop・本物の外の process や socket の締め切りつきの待ち)なら名乗る: その検だけなら `(deftest 名 {:marks [\"realtime\"]} …)`(素の関数の検は `(defn [pytest.mark.realtime] 名 [] …)`)、helper や file の全体なら最上位に `(val pytestmark pytest.mark.realtime)`。名乗った検は repo の realtime の名簿(doeff は tests/realtime_tests.toml)に「実時間の何が対象か」の理由と一緒に載せる",
-            ProjectRule::ProgramSleepsOnWallClock => "待ちを doeff-time の効果に替える — `(import doeff_time [Delay])` と `(<- (Delay 秒))`(期限まで待つなら WaitUntil・上限つきで待つなら WaitWithin)。program を走らせる所に時間の handler を置く(本番は sync-time-handler か async-time-handler・検は sim-time-handler)。handler からだけ呼ばれ、本物の相手(子 process・端末)の実時間を待つ helper なら、その定義の契約の辞書に `:tags {:context \"<文脈>\" :role \"foundation\"}` を書いて名乗り、訳を docstring に書く",
-            ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
-            ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器(:stand-ins の組なら本物と相手役)を :interpreters に並べた deftest を書き、同じ検を両方に通す — 名簿の :stand-ins の組も同じ書き方で none を書ける・縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
-            ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
-            ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
-            ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
-            ProjectRule::LowerLayerInDomain => "業務の層にはドメインの効果(層 intent の型)を置いて出し、その効果を記録の service の生の操作へ言い換えるのは翻訳の層の handler にする — 生の効果の handler を被せる所(合図の源・記録の client)は組み立ての層(entry)の handler の列へ移す",
-            ProjectRule::EnvironmentBranch => "環境で変わる振る舞いは effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない",
-            ProjectRule::WireInWireFreeLayer => "defwire の宣言を翻訳の層(protocol)へ移し、この層には欄名を持たない defrecord を置いて、protocol が wire の型から読んで渡す",
-            ProjectRule::BareMapInWireFreeLayer => "写像は欄の名前と型を持つ defrecord にするか、データを引くための写像(索引・表)はキー → 値の関数か効果(例 (ReadRow table key))にする — 写像を組むのが目的の綴りは翻訳の層(protocol)の 1 点に置く",
-            ProjectRule::DictOutsideItsPlace => "データを引く写像はキー → 値の関数か効果(例 (ReadRow table key))にし、cache が要るなら handler の session に置く — 欄の写像は欄の名前と型を持つ defrecord にする。JSON を組む綴りは :post が写像の 1 点の定義に寄せる",
-            ProjectRule::MatchFieldHyphen => "欄の名の `-` を `_` に書き換える(`:ended-reason` → `:ended_reason`)— 直すと今まで当たらなかった節が当たるようになるので、その定義の検を撃って振る舞いの変化を確かめる",
-            ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
-            ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら誤判定の一覧に載せる)",
-            ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら誤判定の一覧に載せる)",
+            ProjectRule::UnreadableFile => "If Hy itself (hy.read_many) can read it, it is an error in doeff-linter's reader, so report it. If Hy cannot read it either, fix the parentheses or strings",
+            ProjectRule::UnknownConfigKey => "If the linter is old, wait for the automatic rebuild from the main line (the development build location is replaced within minutes — do not build and swap by hand). If it is a typo, fix the key name",
+            ProjectRule::LayerImportDirection => "Remove the import that goes against the direction — move the needed value to an allowed layer (such as intent types), or emit an effect and let a lower layer's handler answer it",
+            ProjectRule::LayerForbiddenModule => "Put I/O in handlers of allowed layers (such as foundation), and emit effects from this layer",
+            ProjectRule::LayerTypesOnly => "Move functions and handlers to another layer (core, protocol), and place only types in this layer",
+            ProjectRule::ModuleDeclaresTags => "Write :tags {:context … :role …} in the contract dictionary, or place MODULE-TAGS at the head of the module",
+            ProjectRule::RoleMatchesLayer => "Change the role to one allowed in this layer, or move the module to a layer dir that fits the role",
+            ProjectRule::RawSideEffectDirect => "Emit an effect and have a handler in an allowed layer do the I/O",
+            ProjectRule::RawSideEffectVia => "Check whether the definition at the end of the path is in a form that emits effects",
+            ProjectRule::EnvironmentName => "Express environment differences by swapping base handlers, and remove environment words from business names",
+            ProjectRule::ServiceBoundary => "To ask another service for something, emit that service's intent (do not read its judgment or translation modules directly). Move shared things to the shared location",
+            ProjectRule::DefnForbidden => "Make it a defk. If a plain function is needed, such as a callback for an external library, make it a deff and write `; defk にできない: <reason>` (the marker means \"cannot be a defk\") and :tags on the same line",
+            ProjectRule::DeffNeedsReason => "Write `; defk にできない: <reason>` (the marker means \"cannot be a defk\") on the deff's line or the line before it (if you cannot write one, make it a defk)",
+            ProjectRule::DefinitionTagsRequired => "Write :tags {:context \"…\" :role \"…\"} in the contract dictionary",
+            ProjectRule::ContextMatchesService => "Make :context match the service's name, or move the file to the dir of the :context service",
+            ProjectRule::UndeclaredPlace => "Declare it in architecture.hy, or move it to a declared location (<root>/<service>/<layer>/)",
+            ProjectRule::UndeclaredDirectory => "Add a defservice or the service's :layers to architecture.hy, or move the dir to a declared location",
+            ProjectRule::ServiceDependency => "Add the dependency to :depends-on, and ask by emitting the dependency's intent (do not read its judgment or translation modules directly)",
+            ProjectRule::BlindDefinitionReads => "Receive the material a judgment needs as the definition's arguments, and put the reading of words on the caller's side (outside the judgment) — escaping into a helper it reaches still hits through the transitive closure. Remove the module's imports and pass values as arguments",
+            ProjectRule::DefinitionCallsUnlistedHead => "Move calls outside the list out of the definition (to the caller's side, or inside a boundary that catches exceptions) — if a call that cannot be moved truly raises no exception, write the reason in :why and add it to :heads",
+            ProjectRule::CallOutsideDeclaredSites => "Return the call to the declared place (do not grow a second confinement or a seat of refusal) — if widening the places is an intended change of the boundary, fix architecture.hy's :sites and :count in the same change and write the reason in :why",
+            ProjectRule::BroadCatchOutsideCarrier => "Narrow the catch (only exceptions known to occur, such as ValueError), or remove the catch and let it propagate — if it is a boundary that carries exceptions into a list, bind the caught exception by name and pass it to the :event event, add that definition to :carriers in the same change, and write the reason in :why",
+            ProjectRule::PlacedDependency => "Move the module being read to a layer location (<root>/<service>/<layer>/), or move the needed type to intent and read it — remove the dependency on the pre-move location in the change that moves it",
+            ProjectRule::UnusedDependency => "Remove the unused dependency from :depends-on",
+            ProjectRule::TestIsDeftest => "Make it a deftest (make helpers that build test values defks and call them with `(<- …)` inside the deftest)",
+            ProjectRule::ClassWithBehaviour => "Make a window to the outside world a base handler — hold resources (connections, clients, file handles) in (session val …) directly under the defhandler, and answer effects such as ListRows and PutRow (for fakes, a fake base handler). For state: values are defrecords (immutable), behaviour is pure functions that return new values, and state lives in one place, a handler's (session var …) such as a world, with changes flowing as effects. Even when rewriting is needed for speed, rewriting happens only inside the handler",
+            ProjectRule::JsonValueOutsideWire => "Turn the JSON shape into a type with defwire, and pass the typed value parsed by the send/receive foundation module (do not write functions that take apart a JsonValue by hand and read it). If it is a foundation module that does the sending and receiving itself, list it in architecture.hy's :wire-modules",
+            ProjectRule::SemanticBusinessDecision => "Move the business judgment to core's judgment, and have the translation handler only use its answer (if Jev is wrong, add it to the list of false judgments)",
+            ProjectRule::SemanticTransportKnowledge => "Move the means of communication to protocol's translation handler, and have core only emit intents (if Jev is wrong, add it to the list of false judgments)",
+            ProjectRule::SemanticPlainCallable => "If the kind does not fit, make it a defk — for assembly (a sequence of handlers) use `(defk handlers-of [foundation])`, for tests a deftest, and for helpers that build values a defk called with `(<- …)` (if Jev is wrong, add it to the list of false judgments)",
+            ProjectRule::ShapeCheckInJudgment => "Parse the shape check into a defwire type at the protocol boundary (fail at the parsing step if the shape does not fit), and have this definition receive the typed value and only make the judgment",
+            ProjectRule::FailureRethrow => "Raise failures with (<- (Raise failure-value)) (do not return them again to the caller by hand), and only where the failure is received and mapped, receive it on the caller's side with (on-raise body (Refusal r) mapped-value) (ADR-DOE-CORE-EFFECTS-003 R3, R7)",
+            ProjectRule::BindThenReturn => "Merge into a single (return (! (f …))), or for a failure raise it with (<- (Raise …))",
+            ProjectRule::FieldsJoinedIntoText => "Pass typed values as they are (do not flatten fields into strings) — turn them into text only at the one boundary that shows them to people",
+            ProjectRule::RebuiltAccumulator => "Build accumulators at once with a comprehension (lfor) — do not stack rebuilds of (+ xs #(…)) inside a loop",
+            ProjectRule::EffectsDisagreeWithInference => "Add the effects being raised to :effects, or remove the effects not being raised (inference does not subtract effects handled by a handler — if the body handles them, list it in the registry)",
+            ProjectRule::StaleOutcomeBranch => "Remove the branch and keep only the success path — where you want to do something on absence use (<- x (E …) :absent <failure>) or absent-as, where you want to do something on failure use on-raise, and where absence or failure is carried around as a value wrap with (maybe (E …)) and receive Nothing (R14 (3))",
+            ProjectRule::TestFormNotDeftest => "Rewrite it as a deftest (call the judging function in the same process) — if what it protected is gone, delete the whole file. For a per-module skip, fix what is missing, or skip only that test",
+            ProjectRule::VocabularyOutsideSinglePoint => "Read the answer of the single point of judgment named by the group's :instead (the :except file) — list existing hits that cannot be fixed in the registry",
+            ProjectRule::SpellingOutsideItsFiles => "Move the spelling to the :except file, and have other files go through that file's entry point — if increasing the files allowed to write it, write the reason in :why and add it to :except",
+            ProjectRule::SpellingCountDiffers => "Make the number match :count (:at-least) — move added hits to the decided definition or file's entry point, and restore hits that disappeared. If changing the number, write the reason in :why and fix the declaration's number in the same change",
+            ProjectRule::EffectOutsideCensus => "If adding an effect, add it to the :effects list in the same change (if removing, remove it from the list too) — merge a second declaration of the same name into one",
+            ProjectRule::FieldHoldersDiffer => "Place that type's field only in the classes in the list (other classes hold it through a listed class) — if changing the holders, write the reason in :why and fix :holders in the same change",
+            ProjectRule::RetiredWord => "Rewrite it with the group's :instead word. If it is a contract spelling (a wire field name or a contract value), check whether it exists in the group's :contract-files contract file (if it does, strings and defwire field definitions are not counted)",
+            ProjectRule::RetiredCall => "Replace it with the group's :instead",
+            ProjectRule::HandlerArgumentHoldsState => "Remove the argument, and move connection targets and settings to Ask, the client to (session val …), and state to (session var …) — for arguments that remain, such as lining up the same handler with different settings, write a reason comment in the body",
+            ProjectRule::UntypedStructuredValue => "Define, return, and hold a frozen record with field names and types (defrecord, defwire, dataclass) — check :post with [(: % <record type>)]. Write the content types: an index looked up by key is dict[str, Row], and a sequence of the same type is tuple[X, ...]. If it is a boundary where an external system decides the value's shape, list it in the registry with the reason",
+            ProjectRule::RecordStubNotKwOnly => "Make the decoration in the type declaration @dataclass(frozen=True, kw_only=True)",
+            ProjectRule::BusinessEffectFake => "Rewrite the business operation as a defk that emits effects of a lower layer and remove the fake — for an effect of the outside world, add it to the outside-world table with a reason; for a deliberately broken counterexample, list it in the counterexample table",
+            ProjectRule::StaleCounterexampleRow => "Remove the row of the counterexample table that no longer matches (for a dir with one key per file, that file)",
+            ProjectRule::AssemblyShapeBroken => "Move the set file's assembly to a function in the assembly layer and delete the file; write the function as a defk whose body is only [base-list translation-list …]; list another service's translations as a separate list in the assembly layer",
+            ProjectRule::AssemblyAnswerMisplaced => "Move the place that answers a business effect to a translation list's handler, or re-emit the answer as a generic effect and place the handler that answers the re-emitted effect before (outside) in the list",
+            ProjectRule::TestOnlyFake => "Rewrite the test assembly as the production handler plus base swaps and remove the fake — for a deliberately broken counterexample, list it in the counterexample table",
+            ProjectRule::IntentAnswererNotTranslation => "Gather the answer to an intent effect into one translation-layer handler, and remove it from base and per-environment handlers",
+            ProjectRule::ServiceWithoutCounterexample => "Write in the fake environment a deftest of a counterexample that deliberately breaks a handler answering that service's effect (or a base effect), and list the handler in the counterexample table with a reason — for a service that cannot be written right now, list it in the registry with a reason and an owner",
+            ProjectRule::ClauseWithoutCounterexample => "Write in the fake environment a deftest of a counterexample of a broken handler that breaks that clause, and add `breaks: <service>::<clause>` to the counterexample table's row — for a clause that a broken handler cannot break (a structural guarantee), write the reason in defservice's :clause-exemptions; for a clause that cannot be written right now, list it in the registry with a reason and an owner",
+            ProjectRule::RegistryEntryStale => "Remove the registry row that no longer matches (for a dir with one key per file, that file; for a file with one key per row, that row)",
+            ProjectRule::IntentFakedInVerification => "Remove the verification environment's own answer and the table row, put the production translation handler in the assembly, and swap only the base handlers below it (records, clocks, external parties) — for a deliberately broken counterexample, list the key in the counterexample table (it cannot be lowered by the registry)",
+            ProjectRule::IntentEffectUncovered => "Fill the missing column — if it is not emitted from tests, run that business operation through a deftest in the fake environment; if there is no answerer, put the translation-layer handler in the assembly (if the effect is unused, remove the declaration)",
+            ProjectRule::ServiceUntestedOnSim => "Add to the fake environment's tests a deftest that runs that service's entry assembly with only handler swaps",
+            ProjectRule::ServiceInvariantsMissing => "Add :invariants [\"<module>:<function>\" …] to the defservice, and place the function as a defk with :role \"judgment\" (such as <service>_invariants.hy in the fake environment). List known gaps in the registry with a reason and an owner",
+            ProjectRule::ServiceSystemMissing => "Add :system \"<module>:<defsystem name>\" to the defservice, and place the defsystem in that service's entry layer in the form (defsystem name [foundation] …). For the job function that receives the base, write the base's type (defrecord) in :pre. For a service left on the old path and a component service with no process, use :system {:exempt \"reason\"}",
+            ProjectRule::SystemAccessUnwritten => "Write :reads #{…} :writes #{…} on the job's row. If the pair read has no writer, add a job that writes that pair to the production system, or, if the writer is not a production-system job (a tool in an external repo, a human operation, a task that is not a job), write the pair and the writer in architecture.hy's :outside-writers",
+            ProjectRule::RecordChangeWakesJob => "Stop the design that wakes up by waiting for record changes: receive the waking signal from the event foundation (redis, rabbitmq, and so on) and only write the records. Make the reads used to catch up at startup or reconnection a single read that does not wait (seconds 0). Remove the signal source (read-signal-handler) from the handler list and replace it with a source that receives the event foundation's signals",
+            ProjectRule::PollingOnTimer => "Stop fetching at time intervals, and wake on the other party's change notifications (events — doeff-events' Publish / WaitForEvent, the event foundation). For deadline waits whose wake time is decided by a row or schedule, derive that time from the row and apply it. Only where the other party has no means of announcing changes, write-only loops (liveness marks, reports, deadline extensions), and reconnections that only try whether it connects while an unreachable mark or failure answer exists and remove the mark on return, write `; 時間で取り直す理由: <word>` (the marker means \"reason to re-fetch by time\") on the hit's line or the line before",
+            ProjectRule::TestSleepsOnWallClock => "Remove waits whose subject is not real time — make a program's wait `(<- (Delay seconds))` and run the test on sim-time-handler's virtual clock, and to wait for the other party's state, name the event to wait for (a threading.Event set, a queue get, a process wait). If real time itself is the subject (overlap of real threads, a real asyncio loop, deadline-bound waits on real external processes or sockets), declare it: for that test alone `(deftest name {:marks [\"realtime\"]} …)` (for a plain-function test `(defn [pytest.mark.realtime] name [] …)`), and for a helper or a whole file `(val pytestmark pytest.mark.realtime)` at the top level. A test that declares it is listed in the repo's realtime roster (doeff's tests/realtime_tests.toml) together with the reason \"what about real time is the subject\"",
+            ProjectRule::ProgramSleepsOnWallClock => "Replace the wait with doeff-time effects — `(import doeff_time [Delay])` and `(<- (Delay seconds))` (WaitUntil to wait until a deadline, WaitWithin to wait with an upper bound). Place a time handler where programs run (sync-time-handler or async-time-handler in production, sim-time-handler in tests). For a helper called only from handlers that waits on the real time of a real counterpart (a child process, a terminal), declare it by writing `:tags {:context \"<context>\" :role \"foundation\"}` in that definition's contract dictionary, and write the reason in the docstring",
+            ProjectRule::TestKindMismatch => "If it is an edge test, add the marker (it is then excluded from the default pytest); if it is meant to be local, replace the real I/O handler it reaches with a fake handler — if it is local but has the marker, remove it",
+            ProjectRule::WorldHandlerWithoutContractTest => "Write a deftest that lists the real one (that handler) and the fake interpreter (for a :stand-ins pair, the real one and the counterpart) in :interpreters, and pass the same test through both — a :stand-ins pair in the roster can also be written with none in the same way; only for a handler that has a reason for having no edge test, write none in the roster row with the name of the test that carries the reason: if it merely wraps a doeff handler in one line and the contract test is on doeff's side, :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<test name>\") (a path from the doeff repo's root); if another test in this repo verifies the contract, :contract-test (none :repo-test \"<file>.hy::<test name>\") (a path from this repo's root). A reasonless :contract-test none fires",
+            ProjectRule::WorldHandlerMisplaced => "Move the definition to the foundation layer (the dir of architecture.hy's :foundation), or make the roster's spelling (module:name) match the real thing — if the definition is no longer needed, remove it from the roster",
+            ProjectRule::WorldHandlerNamedOutsideList => "Run the body under a roster definition (e.g. with-agora-process) and do not wrap real I/O handlers yourself — if a new place that touches the outside world is needed, place that definition in the foundation layer and list it in the roster",
+            ProjectRule::TranslationEmitsIntent => "Place business flows that emit intents in a layer-core program, and have the translation handler merely re-emit the received intent as doeff's generic effects (HttpRequest, record reads and writes, clocks …) — if a defk it passes through emits the intent, use the generic effect directly instead of calling that defk",
+            ProjectRule::LowerLayerInDomain => "In the business layer, place and emit domain effects (types of layer intent), and let a translation-layer handler rephrase those effects into the record service's raw operations — move the places that wrap handlers of raw effects (signal sources, record clients) to the handler list of the assembly layer (entry)",
+            ProjectRule::EnvironmentBranch => "Make behaviour that varies by environment an effect, and let per-environment handlers (production, fake, dry-run) answer it — definitions in the business layer read neither environment names nor dry-run flags",
+            ProjectRule::WireInWireFreeLayer => "Move the defwire declaration to the translation layer (protocol), place a defrecord without field names in this layer, and have protocol read it from the wire type and pass it on",
+            ProjectRule::BareMapInWireFreeLayer => "Make a mapping a defrecord with field names and types, or make a mapping for looking up data (an index or table) a key → value function or effect (e.g. (ReadRow table key)) — put the spelling whose purpose is to build a mapping at one point in the translation layer (protocol)",
+            ProjectRule::DictOutsideItsPlace => "Make a mapping for looking up data a key → value function or effect (e.g. (ReadRow table key)), and if a cache is needed, put it in the handler's session — make a field mapping a defrecord with field names and types. Gather the spelling that builds JSON into the one definition whose :post is a mapping",
+            ProjectRule::MatchFieldHyphen => "Rewrite the `-` in the field name to `_` (`:ended-reason` → `:ended_reason`) — fixing it makes clauses that never matched start to match, so fire that definition's tests to check the change in behaviour",
+            ProjectRule::DefkCalledBare => "Bind it with (<- x (f …)) or receive the answer with (! (f …)) — if it is inside a plain function, make that function a defk and make the caller a Program",
+            ProjectRule::SemanticMixedConcerns => "Parse the shape check into a defwire type at the protocol boundary (fail at the parsing step if the shape does not fit), and have this definition receive the typed value and only make the judgment (if Jev is wrong, add it to the list of false judgments)",
+            ProjectRule::SemanticClassRole => "For a window to the outside world, a base handler (resources in (session val …)); for state, one place, a handler's (session var …) (if Jev is wrong, add it to the list of false judgments)",
         }
     }
 }
 
-/// 規則の重大さ(repo が `[tool.doeff-linter.rules.<ID>] level` で宣言する方針)。重さ(severity)とは別の軸で、
-/// 登録簿で重さを下げても重大さは下げない — エディタが「手つかずの critical が何件残るか」を数えるため。
+/// The rule's gravity (a policy that the repo declares with `[tool.doeff-linter.rules.<ID>] level`). An axis separate from severity,
+/// and lowering severity through the registry does not lower gravity — so that the editor can count "how many untouched criticals remain".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleLevel {
@@ -1347,7 +1347,7 @@ pub enum RuleLevel {
 }
 
 impl RuleLevel {
-    /// 設定の綴りを読む(閉じた集合の外は None)。
+    /// Read the settings' spelling (None outside the closed set).
     pub fn parse(text: &str) -> Option<RuleLevel> {
         match text {
             "critical" => Some(RuleLevel::Critical),
@@ -1358,7 +1358,7 @@ impl RuleLevel {
         }
     }
 
-    /// 宣言の無い規則の重大さ — 規則そのものの重さ(登録簿で下げる前)から決める。critical は宣言だけが付ける。
+    /// The gravity of a rule with no declaration — decided from the rule's own severity (before lowering by the registry). Only a declaration sets critical.
     pub fn default_for(base: crate::models::Severity) -> RuleLevel {
         match base {
             crate::models::Severity::Error => RuleLevel::Major,
@@ -1372,7 +1372,7 @@ impl RuleLevel {
 mod tests {
     use super::*;
 
-    /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
+    /// DOEFF ID → the family to assign (the request's table itself).
     const EXPECTED_FAMILIES: &[(&str, RuleFamily)] = &[
         ("DOEFF100", RuleFamily::Place),
         ("DOEFF128", RuleFamily::Place),
@@ -1460,34 +1460,34 @@ mod tests {
     #[test]
     fn every_rule_has_a_non_empty_label() {
         for rule in ProjectRule::ALL {
-            assert!(!rule.label().is_empty(), "{} の label が空", rule.id());
+            assert!(!rule.label().is_empty(), "{} has an empty label", rule.id());
         }
     }
 
     #[test]
     fn jev_rules_are_not_critical_until_calibrated() {
-        // 決定 B(#1762 / #1801): Jev の 201・202・205 は major。反例 = 責務の境界の規則(DOEFF101・130)は今までどおり critical。
+        // Decision B (#1762 / #1801): Jev's 201, 202, and 205 are major. Counterexample = the responsibility-boundary rules (DOEFF101, 130) remain critical as before.
         use super::RuleLevel;
         for id in ["DOEFF201", "DOEFF202", "DOEFF205"] {
-            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
-            assert_eq!(rule.default_level(), Some(RuleLevel::Major), "{} の既定の重大さ", id);
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} is not in ProjectRule", id));
+            assert_eq!(rule.default_level(), Some(RuleLevel::Major), "default gravity of {}", id);
         }
         for id in ["DOEFF101", "DOEFF130"] {
-            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
-            assert_eq!(rule.default_level(), Some(RuleLevel::Critical), "{} の既定の重大さ", id);
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} is not in ProjectRule", id));
+            assert_eq!(rule.default_level(), Some(RuleLevel::Critical), "default gravity of {}", id);
         }
         for id in ["DOEFF203", "DOEFF204"] {
-            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
-            assert_eq!(rule.default_level(), None, "{} は宣言の無い規則のまま", id);
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} is not in ProjectRule", id));
+            assert_eq!(rule.default_level(), None, "{} remains a rule with no declaration", id);
         }
     }
 
     #[test]
     fn family_matches_the_assignment_table_for_all_33_rules() {
-        assert_eq!(EXPECTED_FAMILIES.len(), ProjectRule::ALL.len(), "割り当ての表が ALL の数と食い違う");
+        assert_eq!(EXPECTED_FAMILIES.len(), ProjectRule::ALL.len(), "the assignment table disagrees with the number of ALL");
         for &(id, expected) in EXPECTED_FAMILIES {
-            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));
-            assert_eq!(rule.family(), expected, "{} の family が違う", id);
+            let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} is not in ProjectRule", id));
+            assert_eq!(rule.family(), expected, "family of {} is wrong", id);
         }
     }
 }

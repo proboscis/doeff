@@ -1,15 +1,15 @@
-//! DOEFF149: 型の欄を持つ class の顔ぶれ(親 #1192 — 元は agora-controllers の一時の判定
-//! controllers/screen/tests/record_body_rules.hy の ③)。
+//! DOEFF149: the roster of classes that hold a typed field (parent #1192 -- originally agora-controllers' temporary check
+//! item 3 of controllers/screen/tests/record_body_rules.hy).
 //!
-//! architecture.hy の `:field-holders [(field-holders "名" :type "T" :files [..] :classes [..] :holders [..] :why "…") …]` の宣言ごとに、
-//! `:files` に当たる Python の file(.py・.pyi)の module の直下の class を読み、class の本体の直下の欄(`名: 注記` の注記つきの代入)の
-//! 注記に `:type` の綴りが語として在る class を「持ち手」と数え、`:holders` の一覧と比べる。
-//!   * 一覧に無い持ち手は、class の位置で 1 件(鍵の細目 `<名>:<class>`)。
-//!   * 一覧に在って持ち手でない class(その型の欄が無い・class が無い)は architecture.hy の位置で 1 件(`<名>:<class>:absent`)。
-//!   * `:classes` を書けば、名指した class だけを数える。名指した class が無ければ architecture.hy の位置で 1 件
-//!     (`<名>:<class>:missing`)。
-//!   * `:files` に当たる Python の file が無ければ architecture.hy の位置で 1 件(`<名>:missing` — 母集団 0 を緑にしない)。
-//! 構文木にならない file は読めない物として errors に積む(黙って緑にしない)。
+//! For each declaration `:field-holders [(field-holders "name" :type "T" :files [..] :classes [..] :holders [..] :why "…") …]` in architecture.hy,
+//! reads the module-level classes of the Python files (.py, .pyi) matching `:files`, counts as a "holder" each class that has, directly in its body, a field (an annotated assignment `name: annotation`)
+//! whose annotation contains the spelling of `:type` as a word, and compares with the `:holders` list.
+//!   * A holder not in the list: one finding at the class's position (key detail `<name>:<class>`).
+//!   * A class in the list that is not a holder (it has no field of that type, or the class does not exist): one finding at the position in architecture.hy (`<name>:<class>:absent`).
+//!   * If `:classes` is written, only the named classes are counted. If a named class does not exist, one finding at the position in architecture.hy
+//!     (`<name>:<class>:missing`).
+//!   * If no Python file matches `:files`, one finding at the position in architecture.hy (`<name>:missing` -- an empty population is not made green).
+//! Files that do not parse into a syntax tree are pushed into errors as unreadable (not silently made green).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,31 +21,31 @@ use rustpython_parser::{parse, Mode};
 use super::architecture::FieldHolders;
 use super::spelling_scope::{line_of, selected_files};
 
-/// 当たりの種類(閉じた 4 つ)。
+/// Kind of finding (a closed set of 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HolderProblem {
-    /// 一覧に無い class がその型の欄を持つ。
+    /// A class not in the list has a field of that type.
     Unlisted { class: String },
-    /// 一覧の class がその型の欄を持たない(class が無い時も)。
+    /// A class in the list does not have a field of that type (also when the class does not exist).
     Absent { class: String },
-    /// :classes で名指した class が無い。
+    /// A class named in :classes does not exist.
     NoClass { class: String },
-    /// `:files` に当たる Python の file が無い。
+    /// No Python file matches `:files`.
     NoFiles,
 }
 
-/// 当たり 1 つ。
+/// One finding.
 #[derive(Debug, Clone)]
 pub struct HolderFinding {
     pub rel: String,
-    /// 宣言の名。
+    /// Name of the declaration.
     pub group: String,
-    /// 数えた型の綴り。
+    /// Spelling of the counted type.
     pub type_name: String,
     pub why: String,
     pub range: Range,
     pub problem: HolderProblem,
-    /// 登録簿の鍵の細目。
+    /// Detail of the registry key.
     pub detail: String,
 }
 
@@ -54,9 +54,9 @@ fn at_line(line: u32) -> Range {
     Range { start: at, end: at }
 }
 
-/// Python の本文の module の直下の class ごとの (名, 行, 本体の直下の注記つきの欄の注記の綴りの列)。
+/// For each module-level class in a Python source, (name, line, spellings of the annotations of the annotated fields directly in the body).
 fn classes_of(rel: &str, source: &str) -> Result<Vec<(String, u32, Vec<String>)>, String> {
-    let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let module = parse(source, Mode::Module, rel).map_err(|error| format!("does not parse into a syntax tree: {}", error))?;
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
     Ok(module
         .body
@@ -81,7 +81,7 @@ fn classes_of(rel: &str, source: &str) -> Result<Vec<(String, u32, Vec<String>)>
         .collect())
 }
 
-/// 宣言 1 つを判じる。読めなかった file は errors へ積む。
+/// Judges one declaration. Unreadable files are pushed into errors.
 fn judge_one(root: &Path, declared: &FieldHolders, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<HolderFinding> {
     let finding = |rel: String, range: Range, problem: HolderProblem, detail: String| HolderFinding {
         rel,
@@ -98,13 +98,13 @@ fn judge_one(root: &Path, declared: &FieldHolders, architecture_rel: &str, error
         return vec![finding(architecture_rel.to_string(), declared.range, HolderProblem::NoFiles, format!("{}:missing", declared.name))];
     }
     let Ok(word) = regex::Regex::new(&format!(r"\b{}\b", regex::escape(&declared.type_name))) else { return Vec::new() };
-    // class の名 → (file・行・その型の欄を持つか)。同じ名の class が 2 つ在れば、持つ方を採る(持ち手を見落とさない)。
+    // Class name -> (file, line, whether it has a field of that type). If two classes share a name, take the one that has it (do not miss a holder).
     let mut seen: BTreeMap<String, (String, u32, bool)> = BTreeMap::new();
     for rel in population {
         let source = match std::fs::read_to_string(root.join(&rel)) {
             Ok(source) => source,
             Err(error) => {
-                errors.push(format!("{}: 読めない: {}", rel, error));
+                errors.push(format!("{}: unreadable: {}", rel, error));
                 continue;
             }
         };
@@ -143,7 +143,7 @@ fn judge_one(root: &Path, declared: &FieldHolders, architecture_rel: &str, error
     }
     for name in &declared.holders {
         let holds = seen.get(name).is_some_and(|entry| entry.2);
-        // :classes で名指して class が無いなら、上の missing が既に出ている(同じ事を 2 件にしない)。
+        // If a class is named in :classes but does not exist, the missing finding above has already been emitted (do not make one thing two findings).
         let reported = !declared.classes.is_empty() && !seen.contains_key(name);
         if !holds && !reported {
             out.push(finding(
@@ -157,7 +157,7 @@ fn judge_one(root: &Path, declared: &FieldHolders, architecture_rel: &str, error
     out
 }
 
-/// 宣言の全部を判じる。architecture_rel は architecture.hy の根からの path(一覧の class の欠けの位置)。
+/// Judges all declarations. architecture_rel is the path of architecture.hy from the root (the position for a missing class in the list).
 pub fn find(root: &Path, declarations: &[FieldHolders], architecture_rel: &str) -> (Vec<HolderFinding>, Vec<String>) {
     let mut errors = Vec::new();
     let found = declarations.iter().flat_map(|declared| judge_one(root, declared, architecture_rel, &mut errors)).collect();
@@ -175,7 +175,7 @@ mod tests {
             files: files.iter().map(|p| p.to_string()).collect(),
             classes: classes.iter().map(|p| p.to_string()).collect(),
             holders: holders.iter().map(|p| p.to_string()).collect(),
-            why: "理由".to_string(),
+            why: "reason".to_string(),
             range: Range::default(),
         }
     }
@@ -191,7 +191,7 @@ mod tests {
     }
 
     const TYPES: &str = "from dataclasses import dataclass\n\n\
-        @dataclass(frozen=True)\nclass RecordCache:\n    \"\"\"Note: RecordCache は本文の容器。\"\"\"\n    rows: tuple\n\n\
+        @dataclass(frozen=True)\nclass RecordCache:\n    \"\"\"Note: RecordCache is the container of the body.\"\"\"\n    rows: tuple\n\n\
         @dataclass(frozen=True)\nclass ConversationSent:\n    cid: str\n    records: RecordCache | None = None\n\n\
         class Helper:\n    def f(self) -> None:\n        cache: RecordCache = RecordCache(())\n\n\
         @dataclass(frozen=True)\nclass ServerState:\n    sent: dict\n    record_note: str = \"RecordCache\"\n";
@@ -245,6 +245,6 @@ mod tests {
         assert_eq!(hits[0].problem, HolderProblem::NoFiles);
         let broken = repo(&[("m/types.py", "class Broken(:\n")]);
         let (_, errors) = find(broken.path(), &[holders("X", &["m/types.py"], &[], &[])], "architecture.hy");
-        assert!(errors.iter().any(|e| e.contains("構文木にならない")), "{:?}", errors);
+        assert!(errors.iter().any(|e| e.contains("does not parse into a syntax tree")), "{:?}", errors);
     }
 }

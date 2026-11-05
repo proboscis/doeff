@@ -3,9 +3,9 @@
 use rustpython_ast::{ExceptHandler, Expr, Mod, Stmt, StmtClassDef};
 use std::collections::BTreeSet;
 
-/// 文の入れ子の本体(規則に 1 つずつ渡す文の列)。文の種類を網羅する(`_ =>` を使わない)— 降りない本体が在ると、
-/// そこの code にはどの規則も当たらない(for / while の else・async for・async with・match の case・try* を
-/// 落としていた)。linter 本体の文ごとの再帰と、module 全体を自分で辿る規則が読む 1 か所。
+/// Bodies nested in statements (the statement lists handed to each rule one by one). Covers every kind of statement (no `_ =>`) — if there is a body we do not descend into,
+/// no rule applies to the code there (this used to drop for / while else, async for, async with, match case, and try*).
+/// The one place read by the linter's own per-statement recursion and by rules that walk the whole module themselves.
 pub fn nested_bodies(stmt: &Stmt) -> Vec<&[Stmt]> {
     match stmt {
         Stmt::FunctionDef(func) => vec![func.body.as_slice()],
@@ -41,7 +41,7 @@ pub fn nested_bodies(stmt: &Stmt) -> Vec<&[Stmt]> {
     }
 }
 
-/// try と try* の本体・各 handler の本体・else・finally。
+/// The bodies of try and try*, the body of each handler, else, and finally.
 fn try_bodies<'a>(
     body: &'a [Stmt],
     handlers: &'a [ExceptHandler],
@@ -57,7 +57,7 @@ fn try_bodies<'a>(
         .collect()
 }
 
-/// 文の列とその入れ子の本体の文を全部、書いた順(外の文の後にその本体の文)に 1 度ずつ `visit` へ渡す。
+/// Passes every statement of a statement list and its nested bodies to `visit` exactly once, in written order (an outer statement, then the statements of its body).
 pub fn each_statement<'a>(body: &'a [Stmt], visit: &mut impl FnMut(&'a Stmt)) {
     for stmt in body {
         visit(stmt);
@@ -67,22 +67,22 @@ pub fn each_statement<'a>(body: &'a [Stmt], visit: &mut impl FnMut(&'a Stmt)) {
     }
 }
 
-/// file の中で環境変数の読みを指す名の表(DOEFF004 と DOEFF106 の環境変数の種類が読む 1 か所)。
-/// file の import 文(module の直下と、関数・class・if ほかの入れ子の中の import 文の全部)から 1 度だけ作る。
-/// 名の束ね先は file 全体で 1 つ(Python の名の有効範囲は見ない — 関数の中の `import os as x` の `x` も file の全体で os を指すと見る)。
-/// `importlib.import_module("os")`・`__import__("os")`・`from os import *` は見ない(範囲の外)。
+/// Table of names that point to environment-variable reads within a file (the one place read by the environment-variable kinds of DOEFF004 and DOEFF106).
+/// Built once from the file's import statements (all of them: directly under the module, and nested inside functions, classes, if, and so on).
+/// The binding target of a name is one for the whole file (Python name scopes are not considered — `x` of `import os as x` inside a function is also treated as pointing to os across the file).
+/// `importlib.import_module("os")`, `__import__("os")`, and `from os import *` are not considered (out of scope).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OsEnvNames {
-    /// os の module を指す名 — 常に `os`、と `import os as N` の `N`。
+    /// Names pointing to the os module — always `os`, and `N` of `import os as N`.
     pub os: BTreeSet<String>,
-    /// os.environ を指す素の名 — `from os import environ` の `environ`、`from os import environ as N` の `N`。
+    /// Bare names pointing to os.environ — `environ` of `from os import environ`, and `N` of `from os import environ as N`.
     pub environ: BTreeSet<String>,
-    /// os.getenv を指す素の名 — `from os import getenv` の `getenv`、`from os import getenv as N` の `N`。
+    /// Bare names pointing to os.getenv — `getenv` of `from os import getenv`, and `N` of `from os import getenv as N`.
     pub getenv: BTreeSet<String>,
 }
 
 impl OsEnvNames {
-    /// 構文木の無い時の表(素の `os` だけ)。
+    /// Table for when there is no syntax tree (only the bare `os`).
     pub fn plain() -> Self {
         Self {
             os: BTreeSet::from(["os".to_string()]),
@@ -91,7 +91,7 @@ impl OsEnvNames {
         }
     }
 
-    /// module の全部の import 文から作る。
+    /// Built from all import statements of the module.
     pub fn of_module(ast: &Mod) -> Self {
         let mut names = Self::plain();
         if let Mod::Module(module) = ast {
@@ -100,7 +100,7 @@ impl OsEnvNames {
         names
     }
 
-    /// import 文 1 つが束ねる名を覚える(import 文でない文は何も束ねない)。
+    /// Remembers the names bound by one import statement (a statement that is not an import binds no names).
     fn learn(&mut self, stmt: &Stmt) {
         if let Stmt::Import(import) = stmt {
             for alias in &import.names {
@@ -126,7 +126,7 @@ impl OsEnvNames {
         }
     }
 
-    /// 式が os.environ を指すか — `<os の名>.environ` か、environ を指す素の名。
+    /// Whether the expression points to os.environ — `<os name>.environ`, or a bare name pointing to environ.
     pub fn is_environ(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Attribute(attr) => attr.attr.as_str() == "environ" && self.is_os(&attr.value),
@@ -135,7 +135,7 @@ impl OsEnvNames {
         }
     }
 
-    /// 式が os.getenv を指すか — `<os の名>.getenv` か、getenv を指す素の名。
+    /// Whether the expression points to os.getenv — `<os name>.getenv`, or a bare name pointing to getenv.
     pub fn is_getenv(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Attribute(attr) => attr.attr.as_str() == "getenv" && self.is_os(&attr.value),
@@ -144,7 +144,7 @@ impl OsEnvNames {
         }
     }
 
-    /// 式が os の module を指す名か。
+    /// Whether the expression is a name pointing to the os module.
     fn is_os(&self, expr: &Expr) -> bool {
         matches!(expr, Expr::Name(name) if self.os.contains(name.id.as_str()))
     }
