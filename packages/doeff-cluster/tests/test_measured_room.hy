@@ -7,10 +7,11 @@
 ;;;       置かず、待ちの文で名指す
 ;;;   (3) 予約は上限の 1/6(CPU 36 の機体で 6 — 手で書いていた zeus の値)で、半分ずつ優先 0 以上の task と背景の仕事に残す
 ;;;   (4) GET /state の taskRoom は置き方と同じ数えで、worker の行に手書きの枠の欄は無い
-;;;   (5) 優先度を下げた process(nice > 0)の CPU の使いと、task の層の外の実行の待ちでは 0 にならない。普通の優先度の使いで埋まった機体と、
-;;;       task の層の task 自身が待つ機体は 0
+;;;   (5) 優先度を下げた process(nice > 0)の CPU の使いと、task の層の外の実行の待ちでは 0 にならない。普通の優先度の使いで埋まった機体は
+;;;       task の層の PSI を名乗る worker なら層の床の 1 本まで(名乗らない worker は 0)、task の層の task 自身が待つ機体は 0
 ;;; 失敗ケース = 混んだ機体へ手の数どおりに置く・置いたばかりの task を数えずに 1 拍で詰め込む・測りの無い worker に置く・
-;;; 空きの少ない機体を選ぶ・背景の仕事が大きい機体の最後の空きまで埋める・譲る命令が CPU を埋めた機体を空き 0 と判じる。
+;;; 空きの少ない機体を選ぶ・背景の仕事が大きい機体の最後の空きまで埋める・譲る命令が CPU を埋めた機体を空き 0 と判じる・
+;;; 同居の service が CPU を埋めた機体へ、task の層に取り分が在っても 1 本も置かない。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -21,7 +22,8 @@
 (import dataclasses [replace])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad StatusRow])
 (import doeff_cluster._coordinator.intent.cluster_model [WorkerReport ClusterObservations])
-(import doeff_cluster._coordinator.core.measured_room [measured-room memory-room-mib reserve-of task-cap-of unseen-since TASK-RAMP-MS])
+(import doeff_cluster._coordinator.core.measured_room [measured-room memory-room-mib reserve-of task-cap-of unseen-since TASK-RAMP-MS
+                                                        layer-floor-of])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text state-view load-of])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed heartbeat-of])
@@ -157,11 +159,12 @@
   ;; 失敗ケース(直す前の判定 = nice の分も task の層の PSI も読まない — 前の版の worker の名乗りと同じ): 同じ機体を 0 と判じる。
   (<- before-fix int (measured-room (replace yielding :cpu-nice None :task-cpu-some-avg10 None) 0 0 0))
   (assert (= before-fix 0))
-  ;; 普通の優先度の使いで埋まった機体は、task の層の待ちが低くても 0(CPU の空きが無い)。
+  ;; 普通の優先度の使いで埋まった機体は CPU の空きが無い。task の層の待ちが低ければ層の床の 1 本だけ置け、1 本置いた後は 0。
   (<- normal MeasuredLoad (measured-from-proc NORMAL-FULL TASK-CPU-PSI))
   (assert (= #((round normal.cpu-busy 3) normal.cpu-nice) #(0.997 0.0)) normal)
-  (<- filled int (measured-room normal 0 0 0))
-  (assert (= filled 0) normal)
+  (<- floored int (measured-room normal 0 0 0))
+  (<- filled int (measured-room normal 1 0 0))
+  (assert (= #(floored filled) #(1 0)) normal)
   ;; nice の使いが多くても、task の層の task 自身が実行を待つ(some 55% ≥ 40%)機体は 0(譲りが cgroup の重みで効かない時の止め)。
   (<- waiting MeasuredLoad (measured-from-proc NICE-FULL TASK-WAITING-PSI))
   (<- stalled int (measured-room waiting 0 0 0))
@@ -170,6 +173,40 @@
   (<- layerless MeasuredLoad (measured-from-proc NICE-FULL None))
   (<- blind-to-layers int (measured-room layerless 0 0 0))
   (assert (= #(layerless.task-cpu-some-avg10 blind-to-layers) #(None 0)) layerless))
+
+
+;; 2026-11-05 19:4x JST の atlas(CPU 16 個・同居の service が普通の優先度で使い 0.97・機体の CPU の PSI some 54.6%・memory の空き 7266 MiB)。
+;; task の層の CPU の PSI は、置いた task が動けている時 3.0%・実行を待つ時 55%。
+(val ATLAS-CROWDED (MeasuredLoad :at-ms 1000 :cpus 16 :cpu-busy 0.97 :memory-total-MiB 20263 :memory-available-MiB 7266
+                                 :cpu-some-avg10 54.6 :memory-some-avg10 0.01 :cpu-nice 0.0006 :task-cpu-some-avg10 3.0))
+
+
+(deftest test-a-crowded-shared-machine-takes-one-task-on-the-share-of-its-task-layer
+  ;; 失敗ケース(直す前): CPU の空き ⌊16 × 0.03 − 1⌋ < 0 なので、待っている 2 本とも空きの無い文で待ち続ける(11-04 は 9 時間)。
+  ;; 直した後: task の層の PSI を名乗る worker には層の床の 1 本を置き、2 本目は空きの無い文で待つ。
+  (<- atlas WorkerInfo (worker "atlas" ATLAS-CROWDED))
+  (<- state ClusterState (state-of #(atlas) (! (queued-all ["t1" "t2"]))))
+  (val placed (! (tasks-placed 1000 state state.placements T)))
+  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
+  (assert (= #((. (.row placed "t1") phase) (. (.row placed "t1") worker) (. (.row placed "t2") phase) (. (.row placed "t2") detail))
+             #("assigned" "atlas" "queued" no-room))
+          placed)
+  ;; 床は CPU の空きが床より少ない時だけ効き、置いた task の数を引く(1 本置いた worker は 0・置いていない worker は 1)。
+  (val floors #((! (layer-floor-of ATLAS-CROWDED 0)) (! (layer-floor-of ATLAS-CROWDED 1))
+                (! (layer-floor-of (replace ATLAS-CROWDED :task-cpu-some-avg10 None) 0))))
+  (assert (= floors #(1 0 0)) floors)
+  ;; 層を名乗らない worker(前の版・層の無い機体)には床を掛けない — 機体の PSI で止める(取り分を測れない)。
+  (<- layerless int (measured-room (replace ATLAS-CROWDED :task-cpu-some-avg10 None :cpu-nice None) 0 0 0))
+  ;; 置いた task 自身が実行を待つ(task の層の some 55% ≥ 40%)なら床も 0。
+  (<- waiting int (measured-room (replace ATLAS-CROWDED :task-cpu-some-avg10 55.0) 0 0 0))
+  ;; memory の判定は床で緩めない: 空き 2000 − 床 1536 = 464 MiB は枠 0。予約が空きを食い尽くした機体も 0。memory の PSI の待ちも 0。
+  (<- short int (measured-room (replace ATLAS-CROWDED :memory-available-MiB 2000) 0 0 0))
+  (<- reserved int (measured-room ATLAS-CROWDED 0 0 5730))
+  (<- reclaiming int (measured-room (replace ATLAS-CROWDED :memory-some-avg10 12.0) 0 0 0))
+  (assert (= #(layerless waiting short reserved reclaiming) #(0 0 0 0 0)))
+  ;; 空いた機体では床でなく CPU の空きが決める(床は空きを減らさない): 使い 0.25 → 11。
+  (<- roomy int (measured-room (replace ATLAS-CROWDED :cpu-busy 0.25 :memory-available-MiB 18000) 0 0 0))
+  (assert (= roomy 11)))
 
 
 (deftest test-the-reserve-is-a-sixth-of-the-cap-and-unseen-tasks-count-from-the-reading
