@@ -1,63 +1,63 @@
-;;; 汎用の HTTP の待ち受けの effect(http_server_effects.hy)の本物の答え手 aiohttp-http-server(agora-controllers の
-;;; webapp の受け口の土台 #767 / #795 から移した)。aiohttp の待ち受け・応答の送出・HTTP と ws の中継の実 I/O で、判断を持たない
-;;; (何をどう送るかは呼び手の Program が HttpRespond の値で決める)。aiohttp は extra `http-server` の依存。
+;;; The real handler aiohttp-http-server for the generic HTTP listening effects (http_server_effects.hy) (moved from the base of the
+;;; agora-controllers webapp intake, #767 / #795). It is the real I/O for aiohttp listening, sending responses, and relaying HTTP and ws, and holds no
+;;; judgment (what to send and how is decided by the caller's Program through the HttpRespond value). aiohttp is a dependency of the extra `http-server`.
 ;;;
-;;;   待ち受けの loop aiohttp の server とこの module の実 I/O の全部は、process に 1 つの待ち受けの loop(edge-loop — await-handler の
-;;;                 共有の event loop とは別の daemon thread で回る)の上で走る。答え手の節は Await で共有の loop に入り、そこから待ち受けの
-;;;                 loop の coroutine の完了を待つ(across)。共有の loop か協調型の scheduler が止まっても、待ち受けの loop は接続を受け続ける
-;;;                 (2026-10-02 の record の job は共有の loop が 30 秒止まり、/healthz も答えなかった)
-;;;   loop の遅れ   待ち受けの loop は作った時から EDGE-LAG-TICK-SECONDS ごとに寝て起き、予定の刻と起きた刻の差(寝過ごし — thread が
-;;;                 CPU を待った分と、loop の上の他の仕事が塞いだ分)を集め、EDGE-LAG-WINDOW-SECONDS の窓ごとに拍の数・最長・99% を
-;;;                 stderr に 1 行名乗る(edge-lag-line)。ws の ping への pong もこの loop が返すので、画面の外の測りの client の CPU の待ちと
-;;;                 分けて、待ち受けの側の往復の遅れを読める
-;;;   probe の口   HttpListen の probes に当たる要求(probe-for — GET・HEAD と path)は列にも scheduler にも渡さず、待ち受けの loop が
-;;;                 answer の Program を別の thread(asyncio.to_thread)の自分の run で走らせて答える(probe-answer)。札は 1 つ数える
-;;;   待ち受け      aiohttp の server を待ち受けの loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
-;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
-;;;                 長い中継が他の要求を止めない。列(Arrivals)に既に在る出来事は、HttpNextRequest の節が答え手の節の thread で待たずに
-;;;                 取る(共有の loop へ入らない — 書き 1 回で起きた待ちの読みが列に溜まった時に 1 つずつ往復しない
-;;;                 の案 1)。列が空の時は scheduler の外から完了させる promise を列に預け、待ち受けの loop が積んだ拍に完了させる(共有の
-;;;                 loop を経ない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない)
-;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
-;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
-;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
-;;;                 aiohttp の lingering で読み捨てさせない)。宣言の長さが PREFETCH-BYTES 以下の本文は、待ち受けの loop が出来事を並べる
-;;;                 前に読み切り、HttpReadBody は共有の loop へ入らずに答え手の節の側で上限を判じて答える(
-;;;                 超えれば同じ HttpBodyTooLarge で、答えの後に接続を閉じる)。先に読んだ本文は、読まずに HttpForward した札では
-;;;                 中継先へそのまま送る
-;;;   接続の持ち方  使われない接続は IDLE-CONNECTION-SECONDS(3630 秒)で閉じる — doeff の HTTP の client が使われない接続を持つ秒
-;;;                 (_http_handlers_impl.hy の CLIENT-KEEPALIVE-SECONDS 60 秒)より長い(server の切り > client の上限 — その file の頭の註の
-;;;                 契約)
-;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)。
-;;;                 答え手の節は命令を待ち受けの loop へ積むだけで戻る(共有の loop を経ず、往復を待たない)。
-;;;                 積んだ順に渡るので、後から撃った読み・閉じより先に渡る。札が待ち受けに無い(2 度目・知らない札)命令は、積んだ
-;;;                 側がもう戻っているので、待ち受けの loop で 1 行名乗って捨てる。
-;;;                 相手が先に切った後の書き込みの失敗(答えが遅れ、相手の上限が先に来た — ConnectionError)は aiohttp へ上げず、1 行で
-;;;                 名乗って待ち受けごとに数える(上げると aiohttp が 1 件ごとに traceback を書く — 2026-10-02 の record の止まりで約 2.2KB ×
-;;;                 265 本)。待ち受けを閉じる時に、届かなかった答えの合計を 1 行名乗る
-;;;   HTTP の中継   本文を両向きとも streaming で通す。hop-by-hop の頭を落とし、X-Forwarded-Proto / X-Forwarded-For を足す。Host は要求の
-;;;                 値のまま。中継先に届かなければ 502
-;;;   ws の中継     先に中継先へ ws で繋いでから(届かなければ 502)、要求を ws に上げて frame を両向きに写す。1 frame の上限は HttpListen の
-;;;                 ws-max-bytes。中継の側は ping を撃たず(autoping を切る)、端末の間の ping / pong と close の状態符をそのまま写す。
-;;;                 中継先へ繋ぐ時の上限は 2 つで、HTTP の中継とは別に持つ(ws の中継だけの client に置く): 繋ぐまで(名前の引き + TCP の
-;;;                 接続)は WS-UPSTREAM-CONNECT-SECONDS・繋がった後の handshake の答えは WS-UPSTREAM-HANDSHAKE-SECONDS — どちらも越えれば
-;;;                 ws に上げずに 502。繋いだ後の frame の読みに上限は無い(長く黙る接続を切らない)
-;;;   ws の終端     WsAccept で要求を ws に上げる(handshake の形が合わなければ断りの応答 — GET でなければ 405・Upgrade: websocket が無ければ
-;;;                 426・他は 400 — を返して 1 行名乗る)。上げたら接続ごとに読みの loop(aiohttp が ping への pong・分割の組み立て・UTF-8 の検め・
-;;;                 1 通の上限 ws-max-bytes を持つ)と、送りの箱 + 書き手の task(WsSendText / WsClose は箱へ積むだけで待たない — 遅い 1 接続が
-;;;                 他の接続と本体を塞がない)を立てる。箱の溜まりが ws-send-max-bytes を超える 1 通が来たら、その接続をその場で切る(箱を捨てる・
-;;;                 transport を落とす)。閉じた接続への送りは黙って捨てる。出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed)は要求と
-;;;                 同じ列へ並べ、受けた拍の単調時計を received-at に載せる。WsSendText の節は、箱へ積む仕事を待ち受けの loop へ積むだけで
-;;;                 戻る(共有の loop を経ず、往復を待たない — 応答の送出と同じ形・同じ通を接続の数だけ送る呼び手の
-;;;                 1 周期が、送り 1 回ごとの往復の待ちで送りの数に比例して伸びていた)。積んだ順に渡るので、同じ札への送りは撃った順に
-;;;                 箱へ入り、後から撃った閉じ(WsClose)・勘定の読み(TakeWsSendReport)・待ち受けの閉じ(HttpShutdown)より先に渡る
-;;;   閉じ          HttpShutdown で新しい要求を受けず、開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、
-;;;                 残った接続は落として待ち受けを畳む。以後の HttpNextRequest は HttpServerClosed
-;;;   送りの勘定    積んだ・流した・捨てた byte と流すまでの所要を数え、TakeWsSendReport で渡して 0 に戻す(消費者の計器の材料)
-;;; 台本の答え手と同じに決める物は http_server_effects.hy の判断の defk を呼ぶ(本文を運ぶ答えか carries-content・ws の断りの status
-;;; ws-refusal-status・送りの上限で切るか send-overflows・WsClosed で名乗る状態符と理由 closing-of — こちらの WsClose ならその状態符と理由、
-;;; 相手の close なら相手の状態符と理由)。契約テストは tests/test_http_server_contract.hy。
-;;; 並び: 組の外側に await-handler が要る。
+;;;   Listener loop  The aiohttp server and all of this module's real I/O run on a single listener loop per process (edge-loop -- runs on a daemon thread separate from
+;;;                 the shared event loop of await-handler). Handler clauses enter the shared loop with Await and from there wait for a coroutine on the listener
+;;;                 loop to finish (across). Even if the shared loop or the cooperative scheduler stalls, the listener loop keeps accepting connections
+;;;                 (in the 2026-10-02 record job the shared loop stalled for 30 seconds and /healthz did not answer either)
+;;;   Loop lag      From the moment it is created, the listener loop sleeps and wakes every EDGE-LAG-TICK-SECONDS, collects the difference between the scheduled time and the wake time (oversleep -- the time the thread
+;;;                 waited for CPU plus the time other work on the loop blocked it), and announces one line to stderr per EDGE-LAG-WINDOW-SECONDS window with the tick count, the maximum, and the 99th percentile
+;;;                 (edge-lag-line). The pong to a ws ping is also returned by this loop, so the listener-side round-trip lag can be read separately from the CPU wait of an external measuring client
+;;;   Probe ports   A request matching the probes of HttpListen (probe-for -- GET/HEAD and a path) is handed to neither the queue nor the scheduler; the listener loop
+;;;                 runs the answer Program in its own run on a separate thread (asyncio.to_thread) and answers (probe-answer). It counts one ticket
+;;;   Listening     Stand up the aiohttp server on the listener loop (HttpListen). Assign a ticket to each request, line up the event
+;;;                 HttpRequestArrived (containing the headers and the sender's address = request.remote) in the queue, wait for a command (with a ticket), and then fire the real I/O -- the caller only fires and does not wait, so
+;;;                 a long relay does not stall other requests. Events already in the queue (Arrivals) are taken by the HttpNextRequest clause on the handler clause's thread without waiting
+;;;                 (without entering the shared loop -- so that, when reads of waits caused by one write pile up in the queue, they do not make a round trip one at a time;
+;;;                 plan 1). When the queue is empty, it leaves in the queue a promise that is completed from outside the scheduler, and the listener loop completes it at the tick that enqueues (without going through the shared
+;;;                 loop -- avoiding the cost of the scheduler thread waking the shared loop on every wait)
+;;;   Body reading  HttpReadBody reads the body of the ticket's request from request.content as a stream of chunks (the default 1 MiB limit of aiohttp's request.read does not
+;;;                 apply -- the only limit is the effect's max-bytes). If the declared Content-Length exceeds the limit it is refused without reading; for a request with no declaration (chunked) or
+;;;                 a false one, reading stops and is refused at the tick when the amount read exceeds the limit by even 1 byte. A refused ticket closes its connection after the answer is sent (the rest of the body is not
+;;;                 left to be read and discarded by aiohttp's lingering). A body whose declared length is PREFETCH-BYTES or less is read in full by the listener loop before
+;;;                 lining up the event, and HttpReadBody answers on the handler clause's side, judging the limit without entering the shared loop (
+;;;                 if exceeded, it is the same HttpBodyTooLarge, and the connection is closed after the answer). For a ticket that is HttpForward'ed without reading, the body read ahead is sent
+;;;                 to the upstream as is
+;;;   Connections   An unused connection is closed after IDLE-CONNECTION-SECONDS (3630 seconds) -- longer than the seconds for which doeff's HTTP client keeps an unused connection
+;;;                 (CLIENT-KEEPALIVE-SECONDS, 60 seconds, in _http_handlers_impl.hy) (server cutoff > client limit -- the contract in the
+;;;                 header note of that file)
+;;;   Sending responses  Send the status and headers of HttpRespond as they are; the body is a byte string or a file range (read length bytes from start in chunks and write them).
+;;;                 The handler clause only enqueues the command to the listener loop and returns (without going through the shared loop, and without waiting for a round trip).
+;;;                 Commands are handed over in the order enqueued, so they are handed over before a read or close fired later.
+;;;                 A command whose ticket is not at the listener (second time, unknown ticket) -- the enqueuer has already returned -- is announced
+;;;                 in one line on the listener loop and discarded.
+;;;                 A write failure after the peer has already disconnected (the answer was late and the peer's limit came first -- ConnectionError) is not raised to aiohttp; it is announced in one line
+;;;                 and counted per listener (raising it makes aiohttp write a traceback for each one -- in the 2026-10-02 record stall, about 2.2KB x
+;;;                 265). When the listener is closed, the total of undelivered answers is announced in one line
+;;;   HTTP relay    Pass the body through as a stream in both directions. Drop hop-by-hop headers and add X-Forwarded-Proto / X-Forwarded-For. Host stays as the request's
+;;;                 value. If the upstream cannot be reached, 502
+;;;   ws relay      First connect to the upstream with ws (502 if unreachable), then upgrade the request to ws and mirror frames in both directions. The limit for one frame is the ws-max-bytes of HttpListen.
+;;;                 The relay side does not fire pings (autoping is turned off) and mirrors the ping / pong and close status codes between the endpoints as they are. There are two limits for connecting to the upstream,
+;;;                 held separately from the HTTP relay (placed on a client only for the ws relay): until connected (name resolution + TCP
+;;;                 connection) is WS-UPSTREAM-CONNECT-SECONDS, and the handshake answer after connecting is WS-UPSTREAM-HANDSHAKE-SECONDS -- if either is exceeded,
+;;;                 502 without upgrading to ws. There is no limit on reading frames after connecting (a connection that stays silent for long is not cut)
+;;;   ws termination  WsAccept upgrades the request to ws (if the handshake shape does not fit, return a refusal response -- 405 if not GET, 426 if there is no
+;;;                 Upgrade: websocket, 400 otherwise -- and announce one line). Once upgraded, for each connection stand up a read loop (aiohttp provides the pong to a ping, assembly of fragments, UTF-8 validation, and the
+;;;                 per-message limit ws-max-bytes) and a send box + writer task (WsSendText / WsClose only enqueue to the box and do not wait -- one slow connection does not
+;;;                 block other connections or the main body). If a message arrives that makes the box's backlog exceed ws-send-max-bytes, that connection is cut on the spot (the box is discarded and the
+;;;                 transport is dropped). Sends to a closed connection are silently discarded. Events (WsOpened, WsTextArrived, WsBinaryArrived, WsClosed) are lined up in the same queue as
+;;;                 requests, with the monotonic clock of the tick when received put in received-at. The WsSendText clause only enqueues the work of loading the box to the listener loop and
+;;;                 returns (without going through the shared loop, and without waiting for a round trip -- the same shape as sending responses; a caller's
+;;;                 cycle that sends the same message to as many connections as there are had grown in proportion to the number of sends because of the round-trip wait on each send). Commands are handed over in the order enqueued, so sends to the same ticket enter the
+;;;                 box in the order fired, and are handed over before a close fired later (WsClose), a read of the tally (TakeWsSendReport), and a listener close (HttpShutdown)
+;;;   Closing       HttpShutdown stops accepting new requests, enqueues close 1000 to every open ws, waits up to drain-seconds for the writers to finish flushing,
+;;;                 drops the remaining connections, and folds up the listener. After that HttpNextRequest yields HttpServerClosed
+;;;   Send tally    Count the bytes enqueued, flushed, and discarded and the time taken to flush, hand them over with TakeWsSendReport, and reset to 0 (material for the consumer's instruments)
+;;; Things decided the same way as in the scripted handler call the judgment defk's of http_server_effects.hy (carries-content for whether an answer carries a body, ws-refusal-status for the
+;;; ws refusal status, send-overflows for whether to cut at the send limit, closing-of for the status code and reason announced in WsClosed -- this side's WsClose gives its status code and reason,
+;;; and the peer's close gives the peer's status code and reason). The contract test is tests/test_http_server_contract.hy.
+;;; Composition: await-handler is needed outside the set.
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "http-server" :role "foundation"})
 (import asyncio)
@@ -84,63 +84,63 @@
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
-;; file の範囲を送る塊の byte 数。
+;; Number of bytes per chunk when sending a file range.
 (val FILE-CHUNK-BYTES 262144)
-;; 要求の本文を読む塊の byte 数(上限の手前では残りの分だけ読む)。
+;; Number of bytes per chunk when reading a request body (near the limit, only the remainder is read).
 (val BODY-CHUNK-BYTES 262144)
-;; 待ち受けの loop が出来事を並べる前に読み切る本文の、宣言の長さの上限(頭の註の本文の読み — 塊 1 つ分)。
+;; Upper limit of the declared length of a body the listener loop reads in full before lining up the event (body reading in the header note -- one chunk).
 (val PREFETCH-BYTES BODY-CHUNK-BYTES)
 
-;; 使われない接続(keep-alive)を閉じるまでの秒(頭の註の接続の持ち方)。client が持つ秒(CLIENT-KEEPALIVE-SECONDS 60 秒)より長く置き、
-;; client が server の閉じた接続へ書く形を普段は起こさない。値は aiohttp の AppRunner の既定(RequestHandler の 3630 秒 — 「間の reverse
-;; proxy より長く」)と同じで、今の振る舞いを変えない。既定に頼らず名で置く — aiohttp の既定は立て方で違い(run_app は 75 秒)、版でも変わる。
+;; Seconds until an unused connection (keep-alive) is closed (connection handling in the header note). Set longer than the seconds the client holds (CLIENT-KEEPALIVE-SECONDS, 60 seconds),
+;; so the case where the client writes to a connection the server closed does not normally occur. The value equals the default of aiohttp's AppRunner (RequestHandler's 3630 seconds -- "longer than the
+;; intermediate reverse proxy"), so current behavior does not change. It is set by name rather than relying on the default -- aiohttp's default differs by how it is set up (run_app uses 75 seconds) and also changes by version.
 (val IDLE-CONNECTION-SECONDS 3630.0)
-;; HTTP の中継の、中継先への接続の上限と読みの間の上限(秒 — 旧い nginx の proxy_read_timeout 300s と同じ)。
+;; Limits for HTTP relay: the connection limit to the upstream and the limit between reads (seconds -- same as the old nginx proxy_read_timeout 300s).
 (val CONNECT-SECONDS 10.0)
 (val HTTP-READ-SECONDS 300.0)
-;; ws の中継が中継先へ繋ぐ時の 2 つの上限(秒 — 頭の註の ws の中継。HTTP の中継の上の 2 つとは別に持つ)。
-;;   繋ぐまで         名前の引きと TCP の接続を合わせた上限。中継先が入れ替わる間は繋ぎの SYN が黙って落ち、断りも返らない — 相手の繋ぎの
-;;                    上限より短く見切って 502 を返し、相手がすぐ撃ち直せるようにする
-;;   handshake の答え 繋がった後、中継先の 101 を待つ読みの間の上限。繋がった中継先の遅い答えを「繋ぐまで」の短い上限で切らない
-;;                    (切ると、答えの遅い中継先へ相手が撃ち直し続ける)
+;; The two limits when the ws relay connects to the upstream (seconds -- the ws relay in the header note. Held separately from the two above for the HTTP relay).
+;;   Until connected   The combined limit of name resolution and the TCP connection. While the upstream is being swapped, the connect SYN is silently dropped and no refusal returns -- give up shorter than the peer's connect
+;;                    limit and return 502, so the peer can retry immediately
+;;   Handshake answer  After connecting, the limit between reads while waiting for the upstream's 101. Do not cut a slow answer from a connected upstream with the short "until connected" limit
+;;                    (if cut, the peer keeps retrying against an upstream with slow answers)
 (val WS-UPSTREAM-CONNECT-SECONDS 3.0)
 (val WS-UPSTREAM-HANDSHAKE-SECONDS 15.0)
-;; 中継で写さない頭(hop-by-hop — RFC 9110 7.6.1)。ws の中継は handshake の頭も写さない(aiohttp が中継先への handshake を組む)。
+;; Headers not mirrored in the relay (hop-by-hop -- RFC 9110 7.6.1). The ws relay does not mirror handshake headers either (aiohttp builds the handshake to the upstream).
 (val HOP-BY-HOP (frozenset #("connection" "keep-alive" "proxy-authenticate" "proxy-authorization" "te" "trailer" "trailers"
                             "transfer-encoding" "upgrade")))
 (val WS-HANDSHAKE-PREFIX "sec-websocket-")
-;; 送れない close の状態符: 状態符なし(1005)は正常終了(1000)で、異常終了(1006・1015 — close frame の無い切断)と、close frame を
-;; 受けずに相手が消えた時は 1011(中継の側の異常)で閉じる — 端末が「意図した切断」と読み違えて再接続を止めないように。
+;; Close status codes that cannot be sent: no status code (1005) is a normal close (1000); an abnormal close (1006, 1015 -- a disconnect without a close frame) and
+;; the peer vanishing without sending a close frame are closed with 1011 (an abnormality on the relay side) -- so the endpoint does not misread it as an "intended disconnect" and stop reconnecting.
 (val NO-STATUS-CLOSE 1005)
 (val ABNORMAL-CLOSE-CODES (frozenset #(1006 1015)))
 (val NORMAL-CLOSE 1000)
 (val RELAY-FAILED-CLOSE 1011)
 
-;; process に 1 つの待ち受けの loop の置き場(鍵 EDGE-KEY → loop)と、作る時の lock(頭の註 — 待ち受けの数だけ thread を増やさない)。
+;; Where the single listener loop per process is kept (key EDGE-KEY -> loop), and the lock used when creating it (header note -- do not add threads per listener).
 (val EDGE-LOOPS {})
 (val EDGE-LOOP-LOCK (threading.Lock))
 (val EDGE-KEY "edge")
-;; 待ち受けの loop の遅れの計器(頭の註の loop の遅れ)の拍の間と、1 行名乗る窓の秒。走っている計器は鍵 EDGE-KEY → task の future で持つ。
+;; Tick interval and the window seconds for announcing one line, for the listener loop's lag instrument (loop lag in the header note). Running instruments are held as key EDGE-KEY -> the task's future.
 (val EDGE-LAG-TICK-SECONDS 0.05)
 (val EDGE-LAG-WINDOW-SECONDS 60.0)
 (val EDGE-LAG-METERS {})
-;; across が待ち受けの loop から運ぶ答えの型。
+;; The type of the answer that across carries from the listener loop.
 (val Carried (TypeVar "Carried"))
 
 
-(defn #^ bool upgrade-asked [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
-  "要求が ws への Upgrade を求めているかを出来事に載せるため。"
+(defn #^ bool upgrade-asked [#^ web.Request request]  ; cannot be a defk: real I/O at the intake that reads the aiohttp request headers
+  "To put on the event whether the request asks for an Upgrade to ws."
   (= (.lower (.get request.headers "Upgrade" "")) "websocket"))
 
 
-(defn #^ frozenset hop-names [#^ str connection]  ; defk にできない: 中継の実 I/O(aiohttp の頭の組)
-  "写さない頭の名(固定の hop-by-hop と、Connection の頭が名指す頭 — RFC 9110 7.6.1)を決めるため。"
+(defn #^ frozenset hop-names [#^ str connection]  ; cannot be a defk: real I/O of the relay (building aiohttp headers)
+  "To decide the names of headers not to mirror (the fixed hop-by-hop ones plus the headers named by the Connection header -- RFC 9110 7.6.1)."
   (| HOP-BY-HOP (frozenset (gfor token (.split connection ",") :if (.strip token) (.lower (.strip token))))))
 
 
-(defn #^ list forwarded-headers [#^ web.Request request #^ bool ws]  ; defk にできない: 中継の実 I/O(aiohttp の頭の組)
-  "中継先へ渡す頭(hop-by-hop と、ws なら handshake の頭を除く)に X-Forwarded-Proto / X-Forwarded-For を足すため。値は (名 値) の組の列
-   (同じ名の頭が複数あっても落とさない)。"
+(defn #^ list forwarded-headers [#^ web.Request request #^ bool ws]  ; cannot be a defk: real I/O of the relay (building aiohttp headers)
+  "To add X-Forwarded-Proto / X-Forwarded-For to the headers passed to the upstream (excluding hop-by-hop and, for ws, handshake headers). The value is a list of (name value) pairs
+   (headers with the same name are not dropped even if there are several)."
   (setv hops (hop-names (.get request.headers "Connection" ""))
         kept (lfor [name value] (.items request.headers)
                    :if (not (or (in (.lower name) hops) (and ws (.startswith (.lower name) WS-HANDSHAKE-PREFIX))
@@ -152,8 +152,8 @@
   (+ kept [#("X-Forwarded-Proto" proto) #("X-Forwarded-For" (if chain (+ chain ", " peer) peer))]))
 
 
-(defn #^ int sendable-close [#^ (| int None) code]  ; defk にできない: ws の中継の実 I/O(close frame の組)
-  "受けた close の状態符を、送り直せる状態符にするため(状態符なしは正常終了・異常終了は 1011 — 頭の註)。"
+(defn #^ int sendable-close [#^ (| int None) code]  ; cannot be a defk: real I/O of the ws relay (building close frames)
+  "To turn a received close status code into one that can be sent again (no status code is a normal close; abnormal is 1011 -- header note)."
   (cond
     (or (is code None) (= code NO-STATUS-CLOSE)) NORMAL-CLOSE
     (in code ABNORMAL-CLOSE-CODES) RELAY-FAILED-CLOSE
@@ -161,8 +161,8 @@
 
 
 (defn :async #^ None pump [#^ (| web.WebSocketResponse aiohttp.ClientWebSocketResponse) source
-                           #^ (| web.WebSocketResponse aiohttp.ClientWebSocketResponse) target]  ; defk にできない: ws の中継の実 I/O(aiohttp の socket を写す)
-  "片向きの frame を写すため: 文字・byte・ping・pong をそのまま・close は状態符ごと相手へ写して終わる。相手が先に閉じていれば終わる。"
+                           #^ (| web.WebSocketResponse aiohttp.ClientWebSocketResponse) target]  ; cannot be a defk: real I/O of the ws relay (mirrors the aiohttp socket)
+  "To mirror frames in one direction: text, bytes, ping, and pong as they are; close is mirrored to the peer together with its status code, and then it ends. It ends if the peer has already closed."
   (while True
     (setv message (await (.receive source)))
     (try
@@ -180,8 +180,8 @@
         (return None)))))
 
 
-(defn #^ None relay-failed [#^ str line]  ; defk にできない: 中継の実 I/O(access log の代わりの 1 行)
-  "中継の失敗を stderr に 1 行名乗るため(access log を出さないので、どの口が落ちたかを外から見分ける)。"
+(defn #^ None relay-failed [#^ str line]  ; cannot be a defk: real I/O of the relay (one line in place of an access log)
+  "To announce a relay failure in one line on stderr (no access log is emitted, so which port failed can be told from outside)."
   (print (+ "http-server: " line) :file sys.stderr :flush True)
   None)
 
@@ -189,16 +189,16 @@
 (defk edge-lag-line [overshoots window-seconds]
   {:pre [(: overshoots tuple) (> (len overshoots) 0) (: window-seconds float)] :post [(: % str)]
    :tags {:context "http-server" :role "judgment"}}
-  "待ち受けの loop の窓 1 つの寝過ごし(秒の組)を、拍の数・最長・99%(並べて 99% の位置の値 — 下から ceil(0.99 n) 番目)の 1 行に
-   するため(頭の註の loop の遅れ)。"
+  "To turn the oversleeps (a tuple of seconds) of one window of the listener loop into one line with the tick count, the maximum, and the 99th percentile (the value at the 99% position when sorted -- the
+   ceil(0.99 n)-th from the bottom) (loop lag in the header note)."
   (val ordered (sorted overshoots))
   (val p99 (get ordered (- (math.ceil (* 0.99 (len ordered))) 1)))
   (.format "edge-loop lag: window={:.0f}s ticks={} max_ms={:.1f} p99_ms={:.1f}"
            window-seconds (len ordered) (* 1000.0 (get ordered -1)) (* 1000.0 p99)))
 
 
-(defn :async #^ None meter-edge-lag [#^ float tick-seconds #^ float window-seconds]  ; defk にできない: 待ち受けの loop の上で寝て時計を読む実 I/O
-  "待ち受けの loop の寝過ごしを測り続け、窓ごとに 1 行名乗るため(頭の註の loop の遅れ)。待ち受けの loop が止まるまで回る。"
+(defn :async #^ None meter-edge-lag [#^ float tick-seconds #^ float window-seconds]  ; cannot be a defk: real I/O that sleeps on the listener loop and reads the clock
+  "To keep measuring the listener loop's oversleep and announce one line per window (loop lag in the header note). Runs until the listener loop stops."
   (setv overshoots #()
         window-start (time.monotonic))
   (while True
@@ -212,17 +212,17 @@
             window-start woke))))
 
 
-(defn #^ int refusal-status [#^ web.Request request]  ; defk にできない: aiohttp の要求の頭を読む受け口の実 I/O
-  "ws に上げられない要求へ返す断りの status を決めるため(形の断りは台本の答え手と同じ ws-refusal-status — GET でない 405・
-   Upgrade: websocket が無い 426。形が合っても handshake の残りの検めで断れば 400)。"
+(defn #^ int refusal-status [#^ web.Request request]  ; cannot be a defk: real I/O at the intake that reads the aiohttp request headers
+  "To decide the refusal status returned to a request that cannot be upgraded to ws (a shape refusal is the same ws-refusal-status as the scripted handler -- 405 if not GET,
+   426 if there is no Upgrade: websocket. Even if the shape is right, refusing in the remaining handshake validation gives 400)."
   (or (run (ws-refusal-status request.method (upgrade-asked request))) 400))
 
 
 (defclass WsPeer []
-  "ws に上げた接続 1 本と、その送りの箱(待ち受けの loop の上だけで触る)。outbox = 積んだ物の列(#(\"text\" 文 積んだ拍)
-   か #(\"close\" #(状態符 理由) 積んだ拍))・pending = 箱の文の byte の合計・closed = 以後は積まない(閉じを積んだ・切った・終わった)・
-   cut = 送りの上限で切った理由(None = 切っていない)・sent = こちらが積んだ閉じ(WsCloseFrame)・received = 相手から受けた閉じ・
-   wake = 書き手を起こす印・writer = 書き手の task。"
+  "One connection upgraded to ws and its send box (touched only on the listener loop). outbox = a queue of enqueued items (#(\"text\" text enqueued-tick)
+   or #(\"close\" #(status-code reason) enqueued-tick)), pending = total bytes of text in the box, closed = nothing is enqueued after this (a close was enqueued, cut, or finished),
+   cut = the reason it was cut at the send limit (None = not cut), sent = the close we enqueued (WsCloseFrame), received = the close received from the peer,
+   wake = the signal that wakes the writer, writer = the writer's task."
 
   (defn #^ None __init__ [self #^ str ticket #^ web.Request request #^ web.WebSocketResponse ws]
     (setv self.ticket ticket
@@ -240,21 +240,21 @@
 
 
 (defclass Arrivals []
-  "受け口の列(要求と ws の出来事・閉じの印)。待ち受けの loop だけが積み(put)、受け手はどの thread からでも列に在る出来事を待たずに
-   取れ(take-now — 共有の loop へ入らない)、空なら scheduler の外から完了させる promise を預けて、積まれた
-   拍に起こされる(wake-on-arrival — 共有の loop も待ち受けの loop の coroutine も経ない)。積んだ順に取れる。"
+  "The intake queue (requests, ws events, and close markers). Only the listener loop enqueues (put), and a receiver can take an event already in the queue from any thread without waiting
+   (take-now -- without entering the shared loop); if empty, it leaves a promise that is completed from outside the scheduler and is woken
+   at the tick when something is enqueued (wake-on-arrival -- through neither the shared loop nor a coroutine of the listener loop). Items can be taken in the order enqueued."
 
   (defn #^ None __init__ [self]
-    ;; ready = 積まれてまだ取られていない出来事(deque の append と popleft は thread をまたいで安全)。sleepers = 空の列を見て起こしを
-    ;; 待つ受け手の promise。lock = 「空を見て預ける」と「積んで起こす」を互いに割り込ませない錠(起こしを取りこぼさない)。
+    ;; ready = events enqueued and not yet taken (deque append and popleft are safe across threads). sleepers = the promises of receivers that saw an empty queue and are waiting
+    ;; to be woken. lock = a lock so that "see empty and leave" and "enqueue and wake" do not interrupt each other (so a wake-up is not missed).
     (setv self.ready (deque)
           self.sleepers #()
           self.lock (threading.Lock))
     None)
 
   (defn #^ None put [self #^ HttpEvent event]
-    "出来事を列の末尾へ積み、空の列を見て待つ受け手を全部起こすため(待ち受けの loop の上で)。起こされた受け手は列から自分で取り、
-     他の受け手が先に取っていれば預け直す(取り消された待ちの promise を起こしても起こしを失わない)。"
+    "To append an event to the end of the queue and wake all receivers waiting on an empty queue (on the listener loop). A woken receiver takes from the queue itself, and
+     if another receiver took first, it leaves its promise again (so a wake-up is not lost even if a promise of a cancelled wait is woken)."
     (.append self.ready event)
     (with [_ self.lock]
       (setv waking self.sleepers
@@ -264,8 +264,8 @@
     None)
 
   (defn #^ None wake-on-arrival [self promise]
-    "列が空なら、次に積まれた拍に promise(scheduler の外から完了させる promise)を None で完了させるため(受け手の thread で)。預ける
-     前に積まれていれば、すぐ完了させる。"
+    "If the queue is empty, to complete promise (a promise completed from outside the scheduler) with None at the tick when the next item is enqueued (on the receiver's thread). If something was enqueued
+     before leaving it, complete it immediately."
     (with [_ self.lock]
       (setv now (bool self.ready))
       (when (not now)
@@ -275,7 +275,7 @@
     None)
 
   (defn #^ (| HttpEvent None) take-now [self]
-    "列の先頭の出来事を待たずに取るため(どの thread からでも — 空なら None)。"
+    "To take the event at the head of the queue without waiting (from any thread -- None if empty)."
     (try
       (.popleft self.ready)
       (except [IndexError]
@@ -283,42 +283,42 @@
 
 
 (defclass WebEdge []
-  "aiohttp の待ち受けと、札ごとの命令の待ちと、ws に上げた接続(待ち受けの loop — 頭の註 — の上だけで触る。答え手の節は across で
-   渡す)。待ち受けの handler の session の値。"
+  "The aiohttp listener, the per-ticket wait for commands, and the connections upgraded to ws (touched only on the listener loop -- header note. Handler clauses
+   pass through across). The session value of the listener's handler."
 
   (defn #^ None __init__ [self]
     (setv self.address None
           self.ws-max-bytes None
           self.ws-send-max-bytes None
-          ;; 受け口の列(待ち受けの loop が積み、答え手の節は在れば待たずに取る — Arrivals)。
+          ;; The intake queue (the listener loop enqueues; handler clauses take without waiting if something is there -- Arrivals).
           self.arrivals (Arrivals)
-          ;; 中継の client は 2 つ: HTTP の中継(client)と ws の中継(ws-client — 中継先へ繋ぐ時の上限が違う)。
+          ;; There are two relay clients: the HTTP relay (client) and the ws relay (ws-client -- the limits for connecting to the upstream differ).
           self.client None
           self.ws-client None
           self.runner None
-          ;; 開いた待ち受けの口(HttpStopListening で口だけを閉じる — 開いた接続は runner が持ち続ける)。
+          ;; The opened listening port (HttpStopListening closes only the port -- open connections are kept by the runner).
           self.site None
           self.waiting {}
           self.unread {}
-          ;; 札 → 待ち受けの loop が先に読んだ本文の答え(頭の註の本文の読み)。待ち受けの loop が出来事を並べる前に置き、答え手の節の
-          ;; thread が読みで 1 度だけ取る(dict の pop 1 回)。命令を渡した札からは外す。
+          ;; ticket -> the answer for a body the listener loop read ahead (body reading in the header note). Put before the listener loop lines up the event, and the handler clause's
+          ;; thread takes it exactly once on a read (one dict pop). Removed from a ticket whose command has been handed over.
           self.prefetched {}
           self.oversized (set)
           self.peers {}
           self.shut None
           self.ws-send-drain None
-          ;; 答え手が自分で答える probe の口(HttpListen の probes)。
+          ;; Probe ports the handler answers by itself (the probes of HttpListen).
           self.probes #()
-          ;; 答え手がその場で答える ws の 1 通の口(HttpListen の ws-shortcuts)。
+          ;; Ports for one ws message that the handler answers on the spot (the ws-shortcuts of HttpListen).
           self.ws-shortcuts #()
           self.count 0
-          ;; 相手が先に切って届かなかった答えの数(この待ち受けの起動から — 0 に戻さない)。
+          ;; Number of answers that did not arrive because the peer disconnected first (since this listener started -- not reset to 0).
           self.dropped-answers 0)
     (self.reset-report)
     None)
 
   (defn #^ None reset-report [self]
-    "送りの勘定を 0 に戻すため(TakeWsSendReport で渡した後)。"
+    "To reset the send tally to 0 (after handing it over with TakeWsSendReport)."
     (setv self.queued-frames 0
           self.queued-bytes 0
           self.flushed-bytes 0
@@ -328,8 +328,8 @@
     None)
 
   (defn #^ asyncio.AbstractEventLoop edge-loop [self]
-    "待ち受けを共有の event loop と scheduler の止まりから切り離すため、process に 1 つの待ち受けの loop を引く(無い・閉じていれば作り、
-     自分の daemon thread で回し、遅れの計器を載せる — 頭の註)。"
+    "To detach the listener from stalls of the shared event loop and scheduler, draw the single listener loop per process (if none or closed, create one,
+     run it on its own daemon thread, and attach the lag instrument -- header note)."
     (with [EDGE-LOOP-LOCK]
       (setv loop (.get EDGE-LOOPS EDGE-KEY))
       (when (or (is loop None) (.is-closed loop))
@@ -341,15 +341,15 @@
       loop))
 
   (defn :async #^ Carried across [self #^ (get Coroutine #(object object Carried)) coroutine]
-    "答え手の節(Await — 共有の event loop)から待ち受けの loop で coroutine を走らせ、その答えを待つため。待ちが取り消されれば待ち受けの
-     loop の task も取り消す。"
+    "To run a coroutine on the listener loop from a handler clause (Await -- the shared event loop) and wait for its answer. If the wait is cancelled, the listener
+     loop's task is cancelled too."
     (await (asyncio.wrap-future (asyncio.run-coroutine-threadsafe coroutine (self.edge-loop)))))
 
   (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes
                                      #^ (get tuple #(HttpProbe ...)) probes
                                      #^ bool share-port #^ (get tuple #(WsShortcut ...)) ws-shortcuts]
-    "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求は、probe の口に当たる物を除いてすべて列へ並ぶ)。share-port = 同じ port を
-     別の待ち受けと共有して開く(SO_REUSEPORT)。ws-shortcuts = ws の 1 通にその場で答える口(頭の註)。"
+    "To open the listener and answer the bound address (requests arriving after opening are all lined up in the queue except those matching a probe port). share-port = open sharing the same port with
+     another listener (SO_REUSEPORT). ws-shortcuts = ports that answer one ws message on the spot (header note)."
     (setv self.address address
           self.ws-max-bytes ws-max-bytes
           self.ws-send-max-bytes ws-send-max-bytes
@@ -358,11 +358,11 @@
     (setv self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
                                                                              :sock-read HTTP-READ-SECONDS)))
-    ;; ws の中継だけの client: aiohttp の ws_connect は要求ごとの ClientTimeout を受けず、session の値で繋ぐので、上限を HTTP の中継と
-    ;; 分けるには session を分ける(接続の置き場も別になり、ws の中継は HTTP の中継の使われていない接続を使い回さず毎回 繋ぐ)。
-    ;; connect = 接続を得るまでの全部(接続の枠の空き待ち + 名前の引き + TCP の接続 — sock-connect は名前の引きを含まない)。
-    ;; sock-read = 要求を書いた後の読みの間の上限で、handshake の答えにだけ効く(aiohttp は 101 を受けると読みの上限を外す)。
-    ;; total は置かない(繋いだ ws を時間で切らない)。
+    ;; A client only for the ws relay: aiohttp's ws_connect does not accept a per-request ClientTimeout and connects with the session's value, so to keep the limits
+    ;; separate from the HTTP relay the session is separate (the connection pool is also separate, and the ws relay does not reuse unused connections of the HTTP relay but connects each time).
+    ;; connect = everything until a connection is obtained (waiting for a free connection slot + name resolution + TCP connection -- sock-connect does not include name resolution).
+    ;; sock-read = the limit between reads after the request is written, effective only for the handshake answer (aiohttp removes the read limit on receiving 101).
+    ;; total is not set (a connected ws is not cut by time).
     (setv self.ws-client (aiohttp.ClientSession :timeout (aiohttp.ClientTimeout :total None :connect WS-UPSTREAM-CONNECT-SECONDS
                                                                                 :sock-read WS-UPSTREAM-HANDSHAKE-SECONDS)))
     (setv app (web.Application))
@@ -375,8 +375,8 @@
     (HttpAddress :host self.address.host :port (get bound 1)))
 
   (defn #^ (| HttpEvent None) take-arrival [self]
-    "受け口の列に既に在る次の出来事を、答え手の節の thread で待たずに取るため(共有の loop へ入らない —
-     列が空なら None で、答え手の節が wake-on-arrival に promise を預けて待つ)。閉じた後は HttpServerClosed(列に何が残っていても)。"
+    "To take the next event already in the intake queue on the handler clause's thread without waiting (without entering the shared loop --
+     None if the queue is empty, and the handler clause leaves a promise with wake-on-arrival and waits). After closing, HttpServerClosed (whatever remains in the queue)."
     (when (is-not self.shut None)
       (return (HttpServerClosed :reason self.shut)))
     (setv event (.take-now self.arrivals))
@@ -385,8 +385,8 @@
         (self.closed-or event)))
 
   (defn #^ (get tuple #(HttpEvent ...)) take-queued [self]
-    "受け口の列に既に在る出来事を、答え手の節の thread で待たずに全部取るため(HttpTakeQueued — 受けた順・空なら空の tuple)。閉じた
-     後は HttpServerClosed を 1 つ含めて止める(その後の出来事は取らない)。"
+    "To take every event already in the intake queue on the handler clause's thread without waiting (HttpTakeQueued -- in received order; an empty tuple if empty). After
+     closing, stop after including one HttpServerClosed (later events are not taken)."
     (setv taken #())
     (while True
       (setv event (.take-arrival self))
@@ -397,61 +397,61 @@
         (return taken))))
 
   (defn #^ HttpEvent closed-or [self #^ HttpEvent event]
-    "取った出来事を渡すため — 閉じた後に取った閉じの印でない出来事は、閉じた理由の HttpServerClosed に替える。"
+    "To hand over a taken event -- after closing, an event taken that is not the close marker is replaced with HttpServerClosed carrying the close reason."
     (if (and (is-not self.shut None) (not (isinstance event HttpServerClosed)))
         (HttpServerClosed :reason self.shut)
         event))
 
   (defn :async #^ web.StreamResponse dispatch [self #^ web.Request request]
-    "aiohttp の要求 1 つを、probe の口に当たれば待ち受けの loop の上で自分で答え、他は列へ並べる(receive)ため。"
+    "To handle one aiohttp request: if it matches a probe port, answer it ourselves on the listener loop; otherwise line it up in the queue (receive)."
     (setv probe (run (probe-for self.probes request.method request.path)))
     (if (is probe None)
         (await (self.receive request))
         (await (self.answer-probe probe))))
 
   (defn :async #^ web.Response answer-probe [self #^ HttpProbe probe]
-    "probe の口の要求 1 つに、列も scheduler も通さずに答えるため(頭の註)。answer は別の thread の自分の run で走らせ、待ち受けの loop を
-     塞がない。札は他の要求と同じ数えで 1 つ使う。"
+    "To answer one request on a probe port without going through the queue or the scheduler (header note). answer runs in its own run on a separate thread, so it does not block the listener
+     loop. It uses one ticket, counted the same way as other requests."
     (setv self.count (+ self.count 1))
     (setv answer (await (asyncio.to-thread probe-answer probe)))
     (web.Response :status answer.status :body answer.body :headers (lfor header answer.headers #(header.name header.value))))
 
   (defn :async #^ None settle [self #^ str ticket #^ HttpCommand command]
-    "本体の命令を札の要求へ渡すため(同じ札へ 2 度渡すと KeyError — 判断は要求ごとに 1 つ)。"
+    "To hand the main body's command to the ticket's request (handing over to the same ticket twice raises KeyError -- one judgment per request)."
     (self.hand-over ticket command)
     None)
 
   (defn #^ None hand-over [self #^ str ticket #^ HttpCommand command]
-    "本体の命令を札の要求へ渡し、その札の本文をもう読ませないため(待ち受けの loop の上で — 受けの coroutine が起きる前に積まれた本文の
-     読みも HttpBodyFailed になる)。先に読んで誰も取らなかった本文は命令と一緒に受けの coroutine へ渡す(中継が送る)。同じ札へ 2 度
-     渡すと KeyError。"
+    "To hand the main body's command to the ticket's request and stop letting that ticket's body be read any more (on the listener loop -- a body read
+     enqueued before the receiving coroutine wakes also becomes HttpBodyFailed). A body that was read ahead and that nobody took is handed to the receiving coroutine together with the command (the relay sends it). Handing over to the same ticket twice
+     raises KeyError."
     (setv waiting (.pop self.waiting ticket))
     (.pop self.unread ticket None)
     (.set-result waiting #(command (.pop self.prefetched ticket None)))
     None)
 
   (defn #^ None posted [self #^ str ticket #^ HttpCommand command]
-    "積まれた命令(post)を待ち受けの loop の上で札へ渡すため。札が待ち受けに無い(2 度目・知らない札)か、相手が先に去って札の待ちが
-     取り消されていれば、1 行名乗って捨てる — 積んだ側はもう戻っていて上げる先が無く、待ち受けの loop へ上げると callback の traceback に
-     なる(頭の註の応答の送出・#2757)。"
+    "To hand an enqueued command (post) to its ticket on the listener loop. If the ticket is not at the listener (second time, unknown ticket) or the peer left first and the ticket's wait
+     was cancelled, announce one line and discard -- the enqueuer has already returned and there is nowhere to raise to, and raising onto the listener loop becomes a callback traceback
+     (sending responses in the header note, #2757)."
     (try
       (self.hand-over ticket command)
       (except [error #(KeyError asyncio.InvalidStateError)]
-        (relay-failed (.format "札 {} への命令 {} は、待ち受けに無い札(2 度目か知らない札)か相手が先に去った札へ積まれたので捨てた: {!r}"
-                               ticket (. (type command) __name__) error))))
+        (relay-failed (.format "command {} for ticket {} was dropped because it was enqueued for a ticket that is not at the listener (second time or unknown) or whose peer left first: {!r}"
+                               (. (type command) __name__) ticket error))))
     None)
 
   (defn #^ None post [self #^ str ticket #^ HttpCommand command]
-    "本体の命令を待ち受けの loop へ積むだけで戻るため(答えの送り — 共有の loop を経ず、往復を待たない)。
-     待ち受けの loop は積まれた順に回すので、後から撃った across の coroutine より先に渡る。先に読んだ本文は積む前にここで外す —
-     答えの後に撃った読みは、命令が渡るより先でも先に読んだ本文を取らない。"
+    "To only enqueue the main body's command to the listener loop and return (sending an answer -- without going through the shared loop, without waiting for a round trip).
+     The listener loop runs in the order enqueued, so this is handed over before the coroutine of an across fired later. The body read ahead is removed here before enqueuing --
+     a read fired after the answer does not take the body read ahead, even if it comes before the command is handed over."
     (.pop self.prefetched ticket None)
     (.call-soon-threadsafe (self.edge-loop) self.posted ticket command)
     None)
 
   (defn :async #^ web.StreamResponse receive [self #^ web.Request request]
-    "aiohttp の要求 1 つ: 札を振り、宣言の小さい本文を先に読んで(頭の註の本文の読み)出来事を並べ、本体の命令を待って実 I/O を撃つため。
-     受けた刻は先に読む前に打つ。"
+    "One aiohttp request: assign a ticket, read ahead a body with a small declaration (body reading in the header note), line up the event, and wait for the main body's command, then fire the real I/O.
+     The received time is stamped before the read-ahead."
     (setv received-at (time.monotonic))
     (setv self.count (+ self.count 1))
     (setv ticket (str self.count)
@@ -467,7 +467,7 @@
                                             :received-at received-at
                                             :remote request.remote))
     (setv [command unclaimed] (await waiting))
-    ;; 命令を受けた札の本文はもう読ませない(渡した拍に hand-over が外した)。本文を上限で断った札は、答えを送った後に接続を閉じる。
+    ;; The body of a ticket that has received a command is no longer read (hand-over removed it at the tick of handing over). A ticket whose body was refused at the limit closes the connection after the answer is sent.
     (setv cut-off (in ticket self.oversized))
     (.discard self.oversized ticket)
     (match command
@@ -477,23 +477,23 @@
       (WsAccept :ticket accepted) (await (self.terminate-ws request accepted))))
 
   (defn :async #^ web.StreamResponse terminate-ws [self #^ web.Request request #^ str ticket]
-    "札の要求を ws に上げて終端するため: 読みの loop で 1 通を出来事へ並べ、送りは書き手の task に任せ、終わったら WsClosed を並べる。"
+    "To upgrade the ticket's request to ws and terminate it: line up each message as an event from the read loop, leave sending to the writer task, and line up WsClosed when finished."
     (setv ws (web.WebSocketResponse :max-msg-size self.ws-max-bytes))
     (when (not (. (.can-prepare ws request) ok))
       (setv status (refusal-status request))
-      (relay-failed (.format "札 {} の ws の handshake が成らなかった: 形が違う(status {})" ticket status))
+      (relay-failed (.format "ws handshake of ticket {} did not succeed: wrong shape (status {})" ticket status))
       (return (web.Response :status status :text WS-REFUSAL-TEXT)))
     (try
       (await (.prepare ws request))
       (except [error #(ConnectionResetError RuntimeError web.HTTPException)]
-        (relay-failed (.format "札 {} の ws の handshake が成らなかった: {!r}" ticket error))
+        (relay-failed (.format "ws handshake of ticket {} did not succeed: {!r}" ticket error))
         (return ws)))
     (setv peer (WsPeer ticket request ws))
     (setv (get self.peers ticket) peer)
     (setv peer.writer (asyncio.create-task (self.write-loop peer)))
     (.put self.arrivals (WsOpened :ticket ticket :received-at (time.monotonic)))
     (try
-      ;; async for では相手の close の理由(message.extra)が読めないので、receive を直に回して相手の閉じを控える。
+      ;; async for cannot read the peer's close reason (message.extra), so run receive directly and keep the peer's close.
       (while True
         (setv message (await (.receive ws)))
         (match message.type
@@ -508,16 +508,16 @@
     ws)
 
   (defn :async #^ None text-arrived [self #^ str ticket #^ str text]
-    "ws の文字の 1 通を列へ並べるため。その場で答える口に当たる 1 通(ws-shortcut-for)は、answer を待ち受けの loop の外の thread の自分の run で
-     走らせ(ws-shortcut-outcome)、答えの文をその接続の箱へ積み終えてから、積んだ文と拍を載せて並べる(頭の註 — 読みの loop はこれを待つので、
-     同じ接続の次の 1 通はこの後に並ぶ)。answer が落ちたら 1 行名乗り、何も積まずに並べる。"
+    "To line up one ws text message in the queue. For a message matching a port that answers on the spot (ws-shortcut-for), run answer in its own run on a thread outside the listener loop
+     (ws-shortcut-outcome), finish enqueuing the answer's text into that connection's box, and then line it up carrying the enqueued text and tick (header note -- the read loop waits for this,
+     so the next message of the same connection is lined up after this). If answer fails, announce one line and line it up without enqueuing anything."
     (setv received-at (time.monotonic))
     (setv shortcut (run (ws-shortcut-for self.ws-shortcuts text)))
     (when (is shortcut None)
       (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))
       (return None))
     (setv outcome (await (asyncio.to-thread ws-shortcut-outcome shortcut ticket text)))
-    ;; 段ごとに積む(頭の註の 2 段の答え): 続き rest の在る段は積んでから rest を同じく loop の外の thread で走らせる。
+    ;; Enqueue stage by stage (the two-stage answer in the header note): for a stage with a continuation rest, enqueue and then run rest, likewise on a thread outside the loop.
     (setv sent #()
           carried None
           answered-at None)
@@ -532,16 +532,16 @@
               (setv carried value
                     outcome (if (is rest None) None (await (asyncio.to-thread ws-shortcut-stage rest)))))
         (WsShortcutFailed :reason reason)
-          (do (relay-failed (.format "札 {} の ws の 1 通にその場で答えられなかった(本体へ渡す): {}" ticket reason))
+          (do (relay-failed (.format "could not answer one ws message of ticket {} on the spot (handing it to the main body): {}" ticket reason))
               (setv carried None
                     outcome None))))
-    ;; 答えの文が無ければ何も積まず、当たらなかった 1 通と同じ形で並べる(answered-at は積んだ時だけ — 頭の註)。
+    ;; If there is no answer text, enqueue nothing and line it up in the same shape as a message that did not match (answered-at only when something was enqueued -- header note).
     (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at :answered sent
                                        :answered-at answered-at :carried carried))
     None)
 
   (defn :async #^ None finish-peer [self #^ WsPeer peer]
-    "読みの loop が終わった接続を畳むため: こちらが閉じを積んでいれば書き手が流し切るのを待ち、他は箱を捨てて書き手を止め、WsClosed を並べる。"
+    "To fold up a connection whose read loop has finished: if we enqueued a close, wait for the writer to finish flushing; otherwise discard the box, stop the writer, and line up WsClosed."
     (setv closing (and peer.closed (is peer.cut None)))
     (when (and closing (is-not peer.writer None))
       (await (asyncio.wait #{peer.writer} :timeout (or self.ws-send-drain DEFAULT-DRAIN-SECONDS))))
@@ -549,14 +549,14 @@
     (when (is-not peer.writer None)
       (.cancel peer.writer))
     (.pop self.peers peer.ticket None)
-    ;; 名乗る状態符と理由は台本の答え手と同じ closing-of で決める(切り・こちらの閉じ・相手の閉じ・切れた時の状態符の順)。
+    ;; The status code and reason to announce are decided by the same closing-of as the scripted handler (in the order: cut, our close, the peer's close, the status code when lost).
     (setv lost peer.ws.close-code)
     (setv frame (run (closing-of peer.cut peer.sent peer.received (if (is lost None) None (int lost)))))
     (.put self.arrivals (WsClosed :ticket peer.ticket :code frame.code :reason frame.reason :received-at (time.monotonic)))
     None)
 
   (defn :async #^ None write-loop [self #^ WsPeer peer]
-    "接続ごとの書き手: 箱の 1 通を順に相手へ書き(流した勘定と所要を数える)、閉じを積まれたら close を送って終わる。書けなければ箱を捨てる。"
+    "The per-connection writer: write the box's messages to the peer in order (counting the flushed tally and time taken), and on an enqueued close send close and finish. If it cannot write, discard the box."
     (while True
       (while (not peer.outbox)
         (when peer.closed
@@ -574,7 +574,7 @@
                   (self.seal peer size)
                   (return None))
                 (except [asyncio.CancelledError]
-                  ;; 書きかけのまま接続が終わった(読みの loop が書き手を取り消した): 取り出した 1 通も捨てた勘定へ載せてから取り消しを通す。
+                  ;; The connection ended mid-write (the read loop cancelled the writer): count the one message taken out as discarded too, then let the cancellation through.
                   (self.seal peer size)
                   (raise)))
               (setv self.flushed-bytes (+ self.flushed-bytes size))
@@ -586,7 +586,7 @@
               (return None)))))
 
   (defn #^ None seal [self #^ WsPeer peer #^ int unsent]
-    "接続の箱を閉じて中身を捨てるため(unsent = 書き手が取り出したが書けなかった byte — 箱の中身と一緒に捨てた勘定へ)。"
+    "To close the connection's box and discard its contents (unsent = bytes the writer took out but could not write -- counted as discarded together with the box's contents)."
     (setv peer.closed True)
     (setv dropped (+ peer.pending unsent))
     (setv peer.outbox (deque) peer.pending 0)
@@ -595,33 +595,33 @@
     None)
 
   (defn #^ None post-text [self #^ str ticket #^ str text]
-    "本体の送りを待ち受けの loop へ積むだけで戻るため(共有の loop を経ず、往復を待たない — 頭の註の ws の終端)。待ち受けの loop は積まれた順に
-     回すので、同じ札への送りは撃った順に箱へ入り、後から撃った across の coroutine(閉じ・勘定の読み・待ち受けの閉じ)より先に渡る。"
+    "To only enqueue the main body's send to the listener loop and return (without going through the shared loop, without waiting for a round trip -- ws termination in the header note). The listener loop runs in the order
+     enqueued, so sends to the same ticket enter the box in the order fired, and are handed over before the coroutine of an across fired later (close, read of the tally, listener close)."
     (.call-soon-threadsafe (self.edge-loop) self.send-text ticket text)
     None)
 
   (defn #^ None post-text-each [self #^ (get tuple #(str ...)) tickets #^ str text]
-    "同じ文字の 1 通を札の列の接続へ送る仕事を、待ち受けの loop へ 1 回だけ積むため(札の順に send-text と同じ決めで箱へ入る)。"
+    "To enqueue to the listener loop, only once, the work of sending one text message to the connections of a list of tickets (enters the boxes in ticket order with the same rules as send-text)."
     (.call-soon-threadsafe (self.edge-loop) self.send-text-each tickets text)
     None)
 
   (defn #^ None send-text-each [self #^ (get tuple #(str ...)) tickets #^ str text]
-    "札の列の箱へ同じ文字の 1 通を積むため(待たない — 待ち受けの loop の上で呼ぶ)。札ごとの決めは send-text と同じ。"
+    "To enqueue one text message into the boxes of a list of tickets (does not wait -- call on the listener loop). The per-ticket rules are the same as send-text."
     (for [ticket tickets]
       (self.send-text ticket text))
     None)
 
   (defn #^ None send-text [self #^ str ticket #^ str text]
-    "札の接続の箱へ文字の 1 通を積むため(待たない — 待ち受けの loop の上で呼ぶ)。閉じた・知らない札は捨てる。溜まりが上限を超える 1 通なら
-     接続をその場で切る。"
+    "To enqueue one text message into the ticket's connection box (does not wait -- call on the listener loop). Closed and unknown tickets are discarded. If it is a message that makes the backlog exceed the limit,
+     cut the connection on the spot."
     (setv peer (.get self.peers ticket))
     (when (or (is peer None) peer.closed)
       (return None))
     (setv size (len (.encode text "utf-8"))
           limit self.ws-send-max-bytes)
     (when (is limit None)
-      (raise (RuntimeError "HttpListen の前の WsSendText")))
-    ;; 切るかは台本の答え手と同じ send-overflows で決める(上限を超える 1 通は積まずに切る)。
+      (raise (RuntimeError "WsSendText before HttpListen")))
+    ;; Whether to cut is decided by the same send-overflows as the scripted handler (a message exceeding the limit is cut without being enqueued).
     (if (run (send-overflows peer.pending size limit))
         (do (setv self.cuts (+ self.cuts 1)
                   peer.cut WS-CUT-REASON)
@@ -636,7 +636,7 @@
     None)
 
   (defn :async #^ None close-ws [self #^ str ticket #^ int code #^ str reason]
-    "札の接続へ閉じを積むため(積んだ 1 通を流し切ってから close を送る — 待たない)。"
+    "To enqueue a close into the ticket's connection (send close after flushing the messages already enqueued -- does not wait)."
     (setv peer (.get self.peers ticket))
     (when (or (is peer None) peer.closed)
       (return None))
@@ -647,7 +647,7 @@
     None)
 
   (defn :async #^ None stop-listening [self]
-    "待ち受けの口だけを閉じるため(新しい接続を受けない — 開いている接続と出来事の流れは runner が持ち続ける)。2 度目は何もしない。"
+    "To close only the listening port (no new connections are accepted -- open connections and the flow of events are kept by the runner). The second time does nothing."
     (when (is-not self.site None)
       (setv site self.site
             self.site None)
@@ -655,8 +655,8 @@
     None)
 
   (defn :async #^ None shutdown [self #^ str reason #^ float drain-seconds #^ int close-code]
-    "待ち受けを閉じるため: 先に待ち受けの口を閉じ(新しい接続を受けない)、開いている ws の全部へ close close-code を積み、書き手が流し切るのを
-     drain-seconds まで待ち、残りは落として畳む。"
+    "To close the listener: first close the listening port (no new connections are accepted), enqueue close close-code to every open ws, wait up to drain-seconds
+     for the writers to finish flushing, and drop the rest and fold up."
     (setv self.shut reason
           self.ws-send-drain drain-seconds)
     (await (self.stop-listening))
@@ -675,41 +675,41 @@
       (when (is-not client None)
         (await (.close client))))
     (when (> self.dropped-answers 0)
-      (relay-failed (.format "待ち受けを閉じる — 相手が先に切って届かなかった答えは合わせて {} 件" self.dropped-answers)))
+      (relay-failed (.format "closing the listener -- undelivered answers in total: {} (peer closed first)" self.dropped-answers)))
     (.put self.arrivals (HttpServerClosed :reason reason))
     None)
 
   (defn :async #^ WsSendReport take-report [self]
-    "送りの勘定を渡して 0 に戻すため。"
+    "To hand over the send tally and reset it to 0."
     (setv report (WsSendReport :queued-frames self.queued-frames :queued-bytes self.queued-bytes :flushed-bytes self.flushed-bytes
                                :flush-seconds (tuple self.flush-seconds) :dropped-bytes self.dropped-bytes :cuts self.cuts))
     (self.reset-report)
     report)
 
-  (defn :async #^ HttpBodyOutcome read-body [self #^ str ticket #^ int max-bytes]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
-    "札の要求の本文を上限まで流しながら読むため(頭の註 — 宣言が上限を超えれば読まずに断る・読んだ量が上限を超えた拍に止めて断る)。
-     札ごとに 1 度だけ: 読み終えた・命令を受けた・知らない札は HttpBodyFailed。"
+  (defn :async #^ HttpBodyOutcome read-body [self #^ str ticket #^ int max-bytes]  ; cannot be a defk: real I/O that reads the aiohttp request body (a coroutine on the event loop)
+    "To read the ticket's request body as a stream up to the limit (header note -- if the declaration exceeds the limit, refuse without reading; stop and refuse at the tick when the amount read exceeds the limit).
+     Only once per ticket: a ticket already read, one that has received a command, or an unknown ticket gets HttpBodyFailed."
     (setv request (.pop self.unread ticket None))
     (when (is request None)
-      (return (HttpBodyFailed :reason (.format "札 {} の要求の本文は読めない(知らない札・読み終えた札・命令を撃った後の札)" ticket))))
+      (return (HttpBodyFailed :reason (.format "the request body of ticket {} cannot be read (unknown ticket, already-read ticket, or ticket after a command was fired)" ticket))))
     (setv declared request.content-length)
     (when (and (is-not declared None) (> declared max-bytes))
       (.add self.oversized ticket)
       (return (HttpBodyTooLarge :declared declared)))
     (await (self.drain-body ticket request max-bytes)))
 
-  (defn :async #^ (| HttpBodyOutcome None) prefetch [self #^ str ticket #^ web.Request request]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
-    "宣言の長さが PREFETCH-BYTES 以下の本文を、出来事を並べる前に待ち受けの loop で読み切るため(頭の註の本文の読み)。宣言の無い
-     (chunked)・大きい本文と ws の Upgrade は読まない(None — HttpReadBody が待ち受けの loop で上限を見ながら読む)。"
+  (defn :async #^ (| HttpBodyOutcome None) prefetch [self #^ str ticket #^ web.Request request]  ; cannot be a defk: real I/O that reads the aiohttp request body (a coroutine on the event loop)
+    "To read in full on the listener loop, before lining up the event, a body whose declared length is PREFETCH-BYTES or less (body reading in the header note). A body with no declaration
+     (chunked), a large body, and a ws Upgrade are not read (None -- HttpReadBody reads on the listener loop while watching the limit)."
     (setv declared request.content-length)
     (if (or (is declared None) (> declared PREFETCH-BYTES) (upgrade-asked request))
         None
         (await (self.drain-body ticket request declared))))
 
   (defn #^ (| HttpBodyOutcome None) take-prefetched [self #^ str ticket #^ int max-bytes]
-    "待ち受けの loop が先に読んだ札の本文を、答え手の節の thread で 1 度だけ取って上限で判じるため(先に読んでいない・もう取った・命令を
-     渡した札は None)。上限を超えれば HttpBodyTooLarge(宣言の長さ)で、札を oversized へ積む — 待ち受けの loop は積まれた順に回すので、
-     後から撃った答えより先に入り、答えの後に接続を閉じる(頭の註)。"
+    "To take once on the handler clause's thread a ticket's body that the listener loop read ahead, and judge it against the limit (None for a ticket not read ahead, already taken, or one whose command
+     was handed over). If it exceeds the limit, it is HttpBodyTooLarge (the declared length) and the ticket is added to oversized -- the listener loop runs in the order enqueued, so
+     this enters before an answer fired later, and the connection is closed after the answer (header note)."
     (setv early (.pop self.prefetched ticket None))
     (match early
       (HttpBodyRead :data data) (if (> (len data) max-bytes)
@@ -718,8 +718,8 @@
                                     early)
       _ early))
 
-  (defn :async #^ HttpBodyOutcome drain-body [self #^ str ticket #^ web.Request request #^ int max-bytes]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
-    "札の要求の本文を max-bytes まで塊で流しながら読むため(読んだ量が上限を超えた拍に止めて断り、札を oversized へ入れる)。"
+  (defn :async #^ HttpBodyOutcome drain-body [self #^ str ticket #^ web.Request request #^ int max-bytes]  ; cannot be a defk: real I/O that reads the aiohttp request body (a coroutine on the event loop)
+    "To read the ticket's request body in chunks up to max-bytes as a stream (stop and refuse at the tick when the amount read exceeds the limit, and put the ticket into oversized)."
     (setv declared request.content-length)
     (setv chunks [] total 0)
     (try
@@ -733,19 +733,19 @@
           (.add self.oversized ticket)
           (return (HttpBodyTooLarge :declared declared))))
       (except [error #(ConnectionError web.RequestPayloadError PayloadAccessError)]
-        (return (HttpBodyFailed :reason (.format "札 {} の要求の本文を読めなかった: {!r}" ticket error)))))
+        (return (HttpBodyFailed :reason (.format "could not read the request body of ticket {}: {!r}" ticket error)))))
     (HttpBodyRead :data (.join b"" chunks)))
 
   (defn :async #^ web.StreamResponse respond [self #^ web.Request request #^ int status #^ (get tuple #(HttpHeader ...)) headers
                                               #^ (| HttpBodyBytes HttpBodyFileRange HttpNoBody) body #^ bool cut-off]
-    "翻訳の handler が決めた答えをそのまま送るため(file の範囲は塊で読んで書く)。cut-off = 本文を上限で断った札 — 送った後に接続を閉じる
-     (残りの本文を読み捨てない)。"
+    "To send as is the answer the translation handler decided (a file range is read in chunks and written). cut-off = a ticket whose body was refused at the limit -- close the connection after sending
+     (the rest of the body is not read and discarded)."
     (setv response (web.StreamResponse :status status))
     (for [header headers]
       (if (= (.lower header.name) "content-length")
           (setv response.content-length (int header.value))
           (.add response.headers header.name header.value)))
-    ;; 本文を運ばない答え(HEAD・1xx・204・304)は、本文を渡されても送らない — 台本の答え手と同じ carries-content で決める。
+    ;; An answer that carries no body (HEAD, 1xx, 204, 304) does not send the body even if one is passed -- decided by the same carries-content as the scripted handler.
     (setv sent-body (if (run (carries-content request.method status)) body (HttpNoBody)))
     (try
       (match sent-body
@@ -766,19 +766,19 @@
         (HttpNoBody) (await (.prepare response request)))
       (await (.write-eof response))
       (when cut-off
-        ;; 書いた答えは transport が流し切ってから閉じる。protocol の側で閉じるので、aiohttp は残りの本文の lingering をしない。
+        ;; Close the written answer after the transport has flushed it. Closing on the protocol side means aiohttp does not do lingering for the rest of the body.
         (.force-close request.protocol))
       (except [error ConnectionError]
-        ;; 相手が先に切った(頭の註の応答の送出)— aiohttp へ上げず 1 行で名乗って数える。返した答えは aiohttp が畳む(閉じた transport
-        ;; への書きの ConnectionError は aiohttp が黙って受ける)。
+        ;; The peer disconnected first (sending responses in the header note) -- do not raise to aiohttp; announce in one line and count. The response returned is folded up by aiohttp (a write
+        ;; to a closed transport raising ConnectionError is silently accepted by aiohttp).
         (setv self.dropped-answers (+ self.dropped-answers 1))
-        (relay-failed (.format "{} {} への答え(status {})は相手が先に切ったので届かなかった — この待ち受けで {} 件目: {}"
+        (relay-failed (.format "answer to {} {} (status {}) was not delivered because the peer closed first -- number {} on this listener: {}"
                                request.method request.path status self.dropped-answers error))))
     response)
 
   (defn :async #^ web.StreamResponse relay-http [self #^ web.Request request #^ str url #^ (| HttpBodyOutcome None) unclaimed]
-    "HTTP の要求を中継先へ streaming で写すため(届かなければ 502)。unclaimed = 待ち受けの loop が先に読み、誰も取らなかった本文(頭の註の
-     本文の読み — 読み切った本文はそのまま送る)。"
+    "To mirror an HTTP request to the upstream as a stream (502 if unreachable). unclaimed = a body the listener loop read ahead and nobody took (body reading
+     in the header note -- a body read in full is sent as is)."
     (setv response None)
     (setv data (match unclaimed
                  (HttpBodyRead :data read) read
@@ -797,32 +797,32 @@
         (await (.write-eof response))
         response)
       (except [error #(aiohttp.ClientError asyncio.TimeoutError)]
-        (relay-failed (+ "中継先 " url " への HTTP の中継が切れた: " (repr error)))
+        (relay-failed (+ "HTTP relay to upstream " url " was cut: " (repr error)))
         (when (is response None)
-          (return (web.Response :status 502 :text (+ "中継先に届かない: " url ": " (repr error)))))
-        ;; 本文の途中で切れた: 終わりの印(chunked の終端)を送らずに接続を落とす — 途中の本文を完全な答えとして受けさせない。
+          (return (web.Response :status 502 :text (+ "cannot reach the upstream: " url ": " (repr error)))))
+        ;; Cut mid-body: drop the connection without sending the end marker (the chunked terminator) -- so the partial body is not accepted as a complete answer.
         (.force-close response)
         (when request.transport
           (.close request.transport))
         response)))
 
   (defn :async #^ web.StreamResponse relay-ws [self #^ web.Request request #^ str url]
-    "ws の要求を中継先へ繋いで frame を両向きに写すため(先に中継先へ繋ぎ、届かなければ Upgrade せずに 502 — 繋ぐまでの上限と handshake の
-     答えの上限を越えた時も同じ。上限は ws の中継の client が持つ・頭の註)。"
+    "To connect a ws request to the upstream and mirror frames in both directions (connect to the upstream first, and if unreachable, 502 without upgrading -- the same when the limit until connected or the limit for the handshake
+     answer is exceeded. The limits are held by the ws relay's client -- header note)."
     (setv protocols (lfor p (.split (.get request.headers "Sec-WebSocket-Protocol" "") ",") :if (.strip p) (.strip p)))
     (try
       (setv upstream (await (.ws-connect self.ws-client url :headers (forwarded-headers request True) :autoping False
                                          :max-msg-size self.ws-max-bytes :protocols protocols)))
       (except [error #(aiohttp.ClientError asyncio.TimeoutError)]
-        (relay-failed (+ "中継先 " url " へ ws で届かない: " (repr error)))
-        (return (web.Response :status 502 :text (+ "中継先に ws で届かない: " url ": " (repr error))))))
+        (relay-failed (+ "cannot reach upstream " url " by ws: " (repr error)))
+        (return (web.Response :status 502 :text (+ "cannot reach the upstream by ws: " url ": " (repr error))))))
     (setv client (web.WebSocketResponse :autoping False :max-msg-size self.ws-max-bytes
                                         :protocols (if upstream.protocol [upstream.protocol] [])))
     (try
       (await (.prepare client request))
       (await (asyncio.gather (pump client upstream) (pump upstream client)))
       (finally
-        ;; 片向きの写しが例外で抜けても、両側を閉じて相方の写しを終わらせる。
+        ;; Even if one direction's mirroring exits with an exception, close both sides and end the partner's mirroring.
         (await (.close upstream :code RELAY-FAILED-CLOSE))
         (await (.close client :code RELAY-FAILED-CLOSE))))
     client))
@@ -830,8 +830,8 @@
 
 (defk read-on-edge [edge ticket max-bytes]
   {:pre [(: edge WebEdge) (: ticket str) (: max-bytes int)] :post [(: % HttpBodyOutcome)]}
-  "札の本文の読みに答えるため: 待ち受けの loop が先に読んだ本文は答え手の節の thread で判じて答え(共有の loop へ入らない — 頭の註の
-   本文の読み)、先に読んでいない札は共有の loop から待ち受けの loop で読む(across)。"
+  "To answer a read of a ticket's body: a body the listener loop read ahead is judged and answered on the handler clause's thread (without entering the shared loop -- body
+   reading in the header note), and a ticket not read ahead is read from the shared loop on the listener loop (across)."
   (match (.take-prefetched edge ticket max-bytes)
     None (do (<- outcome HttpBodyOutcome (Await (.across edge (.read-body edge ticket max-bytes))))
              outcome)
@@ -840,9 +840,9 @@
 
 (defk next-on-edge [edge]
   {:pre [(: edge WebEdge)] :post [(: % HttpEvent)]}
-  "受け手へ次の出来事を渡すため: 受け口の列に既に在れば答え手の節の thread で待たずに取り(共有の loop へ入らない — 頭の註の待ち受け)、
-   空なら scheduler の外から完了させる promise を列に預けて積まれるまで待ち、起きたら取り直す(待ちの間に共有の loop と待ち受けの loop を
-   往復しない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない)。"
+  "To hand the receiver the next event: if it is already in the intake queue, take it on the handler clause's thread without waiting (without entering the shared loop -- listening in the header note);
+   if empty, leave in the queue a promise that is completed from outside the scheduler and wait until something is enqueued, then take again on waking (without going back and forth between the shared loop and the listener loop
+   during the wait -- avoiding the cost of the scheduler thread waking the shared loop on every wait)."
   (match (.take-arrival edge)
     None (do (<- promise (CreateExternalPromise))
              (.wake-on-arrival edge.arrivals promise)
@@ -853,10 +853,10 @@
 
 
 (defhandler aiohttp-http-server
-  "HTTP の待ち受けの effect(HttpListen・HttpNextRequest・HttpRespond・ws の送受など)に、aiohttp の実 I/O で答える(頭の註)。
-   組の外側に await-handler が要る。"
-  ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
-  ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
+  "Answer the HTTP listening effects (HttpListen, HttpNextRequest, HttpRespond, ws send/receive, and so on) with aiohttp's real I/O (header note).
+   await-handler is needed outside the set."
+  ;; Real I/O of the listening effects (header note). The listener object is created only once as the session value. Clauses enter the shared event loop of await-handler with Await and
+  ;; from there wait on a coroutine of the listener loop with across (await-handler is needed outside the set).
   (session val edge (WebEdge))
   (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts]
     (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts))))
@@ -865,13 +865,13 @@
     (<- arrival HttpEvent (next-on-edge edge))
     (resume arrival))
   (HttpTakeQueued []
-    ;; 列に既に在る出来事だけを、共有の loop へ入らずに取る(頭の註の待ち受け — 待たない)。
+    ;; Take only the events already in the queue, without entering the shared loop (listening in the header note -- does not wait).
     (resume (.take-queued edge)))
   (HttpReadBody [ticket max-bytes]
     (<- outcome HttpBodyOutcome (read-on-edge edge ticket max-bytes))
     (resume outcome))
   (HttpRespond [ticket status headers body]
-    ;; 答えは待ち受けの loop へ積むだけ(共有の loop を経ない — 頭の註の応答の送出)。
+    ;; The answer is only enqueued to the listener loop (without going through the shared loop -- sending responses in the header note).
     (.post edge ticket effect)
     (resume None))
   (HttpForward [ticket url]
@@ -884,11 +884,11 @@
     (<- (Await (.across edge (.settle edge ticket effect))))
     (resume None))
   (WsSendText [ticket text]
-    ;; 送りは待ち受けの loop へ積むだけ(共有の loop を経ない — 頭の註の ws の終端)。
+    ;; The send is only enqueued to the listener loop (without going through the shared loop -- ws termination in the header note).
     (.post-text edge ticket text)
     (resume None))
   (WsSendTextEach [tickets text]
-    ;; 札の列の送りも待ち受けの loop へ 1 回積むだけ(札ごとの積みは send-text と同じ)。
+    ;; A send to a list of tickets is also enqueued to the listener loop only once (the per-ticket enqueuing is the same as send-text).
     (.post-text-each edge tickets text)
     (resume None))
   (WsClose [ticket code reason]

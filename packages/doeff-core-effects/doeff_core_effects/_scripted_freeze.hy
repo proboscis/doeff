@@ -1,12 +1,12 @@
-;;; heap の凍結の fake の答え手 scripted-freeze-handler(ADR-DOE-CORE-EFFECTS-004)— CollectAndFreeze に、GC に触れず
-;;; 決めた数で答える。模擬と検で、凍結を求める境目だけを確かめ、process の GC の状態を変えないため。
+;;; scripted-freeze-handler, a fake responder for heap freezing (ADR-DOE-CORE-EFFECTS-004) -- answers CollectAndFreeze with a decided
+;;; number without touching the GC. So that mocks and tests verify only the boundary that asks for freezing, and do not change the process's GC state.
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "freeze" :role "foundation"})
 (import doeff_core_effects._heap_effects [CollectAndFreeze])
 
 
 (defhandler scripted-freeze-handler [#^ int count]
-  "CollectAndFreeze に count で答える(GC に触れない)。"
-  ;; 引数に残す理由: 答える数は検ごとに決める台本の値で、Ask で読む設定ではない。
+  "Answer CollectAndFreeze with count (does not touch the GC)."
+  ;; Why it stays an argument: the number answered is a scripted value decided per test, not a setting read with Ask.
   (CollectAndFreeze []
     (resume count)))

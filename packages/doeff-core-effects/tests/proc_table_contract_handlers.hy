@@ -1,10 +1,10 @@
-;;; 機体の process の表の契約テストの解釈器(composition root)— 同じ契約の Program を、process の表の handler だけ替えて走らせる。
+;;; The interpreters (composition root) of the contract test of the process table of the machine -- runs the Program of the same contract with only the process table handler swapped.
 ;;;
-;;;   os-proc-table        本物: os-proc-table-handler(/proc と os.kill)+ 検の中で起こす本物の眠る子(sleep 30 — 検の process の子)
-;;;   scripted-proc-table  fake: scripted-proc-table-handler(台本の表 — 親と眠る子の 2 行)
+;;;   os-proc-table        Real: os-proc-table-handler (/proc and os.kill) + a real sleeping child started inside the test (sleep 30 -- a child of the test process)
+;;;   scripted-proc-table  Fake: scripted-proc-table-handler (a scripted table -- two rows, the parent and the sleeping child)
 ;;;
-;;; 契約の世界は解釈器ごとに同じ形で用意する(ProcWorld の答え): 眠る子の pid と、その親の pid。
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The world of the contract is prepared in the same shape for each interpreter (the answer of ProcWorld): the pid of the sleeping child and the pid of its parent.
+;;; The user is doeff_interpreter of conftest.py (the names of :interpreters of deftest -> INTERPRETERS).
 (require doeff-hy.macros [defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -18,31 +18,31 @@
 
 (val OS-PROC-TABLE "os-proc-table")
 (val SCRIPTED-PROC-TABLE "scripted-proc-table")
-;; 台本の世界の pid と起動の刻(本物の値と混ざらない大きさ)。
+;; The pids and start times of the scripted world (of a size that does not mix with real values).
 (val SCRIPTED-PARENT 70000)
 (val SCRIPTED-SLEEPER 70001)
 (val SCRIPTED-TICKS 900000)
 
 
 (defrecord ProcPids
-  "契約の世界の process(sleeper = 眠る子の pid・parent = その親の pid)。"
+  "A process of the contract world (sleeper = the pid of the sleeping child, parent = the pid of its parent)."
   (#^ int sleeper)
   (#^ int parent))
 
 
 (defclass [(dataclass :frozen True)] ProcWorld [EffectBase]
-  "契約の世界の process(ProcPids)を求める効果。")
+  "An effect that asks for the process of the contract world (ProcPids).")
 
 
 (defhandler proc-world [#^ ProcPids pids]
-  ;; 引数に残す理由: pid は解釈器ごとに組み立ての側で決まる値(本物は走るたびに起こす子)。
+  ;; Why it stays as an argument: the pid is a value decided on the assembly side per interpreter (for the real one, a child started on every run).
   (ProcWorld []
     (resume pids)))
 
 
 (defk under-os-proc-table [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")] :tags {:context "proc-table-test" :role "foundation"}}
-  "本物の os-proc-table-handler の下で program を走らせる。眠る子(sleep 30)をこの検の process の子として起こし、走った後に止めて刈る。"
+  {:pre [(: program Program)] :post [(: % "the answer of the contract Program (the type differs per Program)")] :tags {:context "proc-table-test" :role "foundation"}}
+  "Runs the program under the real os-proc-table-handler. Starts a sleeping child (sleep 30) as a child of this test's process, and stops and reaps it after the run."
   (val sleeper (subprocess.Popen ["sleep" "30"]))
   (var answer None)
   (try
@@ -55,8 +55,8 @@
 
 
 (defk under-scripted-proc-table [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")] :tags {:context "proc-table-test" :role "foundation"}}
-  "fake の scripted-proc-table-handler の下で program を走らせる。表 = 親と、その子の眠る子の 2 行。外から順に: state・世界・表。"
+  {:pre [(: program Program)] :post [(: % "the answer of the contract Program (the type differs per Program)")] :tags {:context "proc-table-test" :role "foundation"}}
+  "Runs the program under the fake scripted-proc-table-handler. Table = two rows, the parent and its child the sleeping child. From the outside in: state, world, table."
   (val rows #((ProcRow :pid SCRIPTED-PARENT :ppid 1 :start-ticks SCRIPTED-TICKS :rss-bytes 8192 :comm "parent")
               (ProcRow :pid SCRIPTED-SLEEPER :ppid SCRIPTED-PARENT :start-ticks (+ SCRIPTED-TICKS 1) :rss-bytes 4096 :comm "sleep")))
   (<- answer (with_handlers [(state) (proc-world (ProcPids :sleeper SCRIPTED-SLEEPER :parent SCRIPTED-PARENT))

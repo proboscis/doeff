@@ -1,17 +1,17 @@
-"""ClickHouse の往復が走っている間に SIGTERM で終わる子 process(tests/test_sql_effects.hy の process の終わりの検が起こす)。
+"""Child process that exits via SIGTERM while a ClickHouse round trip is in flight (raised by the process-exit check in tests/test_sql_effects.hy).
 
-引数: url(偽の ClickHouse の口)と shape。
-  * shape = stop  — 本番の service の形: os-signal-stop-handler を据え(最初の StopRequested)、問い合わせを別の task で撃ち、止めの合図を
-                    待ったら問い合わせを待たずに終わる(Program が値を返し、Python が普通に終わる — 往復の thread は daemon のまま走っている)。
-  * shape = plain — SIGTERM の受け手を据えない形: 問い合わせの答えを待つ間に既定のままの SIGTERM を受ける。
-どちらも、走っている往復を置いて終わると、偽の server は答えを書く前に接続の閉じを見る(直す前の落ちの道)。
+Arguments: url (the fake ClickHouse endpoint) and shape.
+  * shape = stop  -- the production service shape: installs os-signal-stop-handler (first StopRequested), fires a query in a separate task, and on the stop
+                    signal exits without waiting for the query (the Program returns a value and Python ends normally -- the round-trip thread keeps running as a daemon).
+  * shape = plain -- no SIGTERM receiver installed: receives the default SIGTERM while waiting for the query's answer.
+In both, when the process exits leaving the running round trip behind, the fake server sees the connection close before it writes its answer (the failure path from before the fix).
 """
 
 from __future__ import annotations
 
 import sys
 
-import hy  # noqa: F401  - doeff_core_effects の Hy の module を読むため
+import hy  # noqa: F401  - to load doeff_core_effects' Hy modules
 from doeff_core_effects import (
     AwaitStop,
     ClickHouseDatabase,
@@ -29,14 +29,14 @@ from doeff import do, run, with_handlers
 
 @do
 def ask():
-    """置き場 cold へ問い合わせ 1 つを流し、答えを返す。"""
+    """Send one query to the cold store and return the answer."""
     answer = yield SqlQuery("cold", "SELECT 1", ())
     return answer
 
 
 @do
 def serve_until_stop():
-    """止めの受け手を据え、問い合わせを別の task で撃ち、止めの合図で(問い合わせを待たずに)終わる — 本番の service の止め方。"""
+    """Install the stop receiver, fire a query in a separate task, and exit on the stop signal (without waiting for the query) -- how the production service stops."""
     yield StopRequested()
     yield Spawn(ask(), daemon=True)
     reason = yield AwaitStop()

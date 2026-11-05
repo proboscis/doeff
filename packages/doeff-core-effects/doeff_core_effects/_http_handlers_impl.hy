@@ -1,24 +1,24 @@
-;;; HttpRequest の本物の答え手(http-production-handler)・記録と再生の答え手(http-fixture-handler)と、本物の client の作り方
-;;; (http-client-factory)。
+;;; The real handler for HttpRequest (http-production-handler), the record-and-replay handler (http-fixture-handler), and how to build the real client
+;;; (http-client-factory).
 ;;;
-;;; 使われない接続の持ち方の契約: client は使われない接続を CLIENT-KEEPALIVE-SECONDS(60 秒)まで持ち、相手の server は
-;;; それより長く持つ(server の切り > client の上限 — doeff の待ち受け aiohttp-http-server は IDLE-CONNECTION-SECONDS の 3630 秒・
-;;; doeff-cluster の受け口は 120 秒)。だから server が先に閉じた接続へ client が書く形は、server の再起動などの時だけ起きる。その時、
-;;; 相手の閉じ(FIN)が届いていれば httpcore は送る前にその接続を捨てて張り直す。送った後に閉じられた要求は httpx も httpcore も送り直さず、
-;;; 送り直すかは HttpRequest の max-retries だけが決める(冪等でない書きは 0 回で出す)。
+;;; Contract for holding idle connections: the client holds an idle connection up to CLIENT-KEEPALIVE-SECONDS (60 seconds), and the peer server holds it
+;;; longer than that (server cutoff > client limit -- doeff's listening aiohttp-http-server uses IDLE-CONNECTION-SECONDS of 3630 seconds, and
+;;; the doeff-cluster endpoint uses 120 seconds). So the client writing to a connection the server closed first happens only on things like a server restart. In that case,
+;;; if the peer's close (FIN) has arrived, httpcore discards that connection before sending and reconnects. A request closed after being sent is not resent by httpx or httpcore,
+;;; and whether to resend is decided only by max-retries of HttpRequest (non-idempotent writes are issued with 0 retries).
 ;;;
-;;; 同時に client へ渡す要求の数の契約: 答え手は client の範囲ごとに、scheduler の semaphore を 2 段持つ —
-;;; 宛先(scheme・host・port)ごとの CLIENT-ORIGIN-MAX-IN-FLIGHT 本と、全部で CLIENT-MAX-CONNECTIONS 本(httpcore の接続の上限と同じ数)。
-;;; 要求は宛先の許可・全体の許可の順に取ってから client へ渡し、溢れた要求は httpcore の列でなく scheduler の FIFO で待つ。httpcore 1.0.9 の
-;;; AsyncConnectionPool は要求 1 つが終わるたびに「列の全部 × 接続の全部」を照らすので、列が数千になると await の橋の thread を使い切った
-;;; (画面の server・2026-10-26 16:18 UTC — 待ち 10,651)。宛先の枠を全体より小さくして、1 つの宛先(その long-poll や溢れ)が全体の枠を
-;;; 食い切って他の宛先の短い要求を飢えさせない。同じ宛先の中の long-poll と短い要求は同じ枠を分ける(宛先の枠の内で FIFO)。
+;;; Contract for the number of requests handed to the client at once: per client scope, the handler holds two tiers of scheduler semaphores --
+;;; CLIENT-ORIGIN-MAX-IN-FLIGHT slots per destination (scheme, host, port), and CLIENT-MAX-CONNECTIONS slots overall (the same number as httpcore's connection limit).
+;;; A request takes the destination permit and then the overall permit before being handed to the client, and overflowing requests wait in the scheduler's FIFO, not in httpcore's queue. httpcore 1.0.9's
+;;; AsyncConnectionPool checks "the whole queue x all connections" each time one request finishes, so when the queue reached thousands it used up the threads of the await bridge
+;;; (screen server, 2026-10-26 16:18 UTC -- 10,651 waiting). Make the destination slots smaller than the overall slots, so that one destination (its long-polls or overflow) cannot consume the overall slots
+;;; and starve short requests to other destinations. Long-polls and short requests to the same destination share the same slots (FIFO within the destination's slots).
 ;;;
-;;; 接続の枠の漏れ(同じ card): httpcore 1.0.9 は、要求に新しい接続(まだつないでいない — info が CONNECTING)を割り当てた後、その要求が
-;;; 接続を使い始める前に取り消されるか時間切れになると、その接続を pool に残す。残った接続は閉じても空いてもおらず、つなぐ者もいないので、
-;;; 接続の上限の 1 本を永く持つ。上限の数だけ溜まると、後の要求は全部 PoolTimeout になる(画面の server・17:38 UTC — 橋が暇なまま 20 分)。
-;;; 上流の直し(encode/httpcore PR #1099・#986)は出ていないので、要求が例外か取り消しで終わるたびに、どの要求も持たない CONNECTING の接続を
-;;; pool から外す(_reap-orphan-connections)。
+;;; Leak of connection slots (same card): after assigning a request a new connection (not yet connected -- info is CONNECTING), httpcore 1.0.9 leaves that connection in the pool if the request is
+;;; cancelled or times out before it starts using the connection. The leftover connection is neither closed nor free, and nobody will connect it, so it holds one of the connection limit
+;;; indefinitely. Once as many accumulate as the limit, all later requests become PoolTimeout (screen server, 17:38 UTC -- the bridge idle for 20 minutes).
+;;; The upstream fix (encode/httpcore PRs #1099 and #986) is not released, so every time a request ends by exception or cancellation, CONNECTING connections held by no request are
+;;; removed from the pool (_reap-orphan-connections).
 (require doeff-hy.macros [defk deff <- do! val])
 (val MODULE-TAGS {:context "http" :role "foundation"})
 (require doeff-hy.handle [defhandler])
@@ -57,24 +57,24 @@
     _ HttpFailureKind.OTHER))
 
 
-;; 使われない接続を client が持つ秒(頭の註の契約)。呼びの間より長くし、呼びのたびに TCP を張り直して名前を引き直さない — 記録の service
-;; への書きは数十秒空き(本番の画面の job の計時で 10〜30 秒)、httpx の既定 5 秒では 5 秒を越えて空いた書きが毎回張り直した(26〜30 秒
-;; 空くと書き 1 回が 165〜190 ms・service の中は 14〜22 ms)。相手の server が使われない接続を閉じる秒より短く保つ。
+;; Seconds the client holds idle connections (the contract in the header comment). Longer than the interval between calls, so that TCP is not re-established and the name re-resolved on every call -- writes to the recording service
+;; are spaced tens of seconds apart (10-30 seconds in the production screen job's timing), and with httpx's default 5 seconds, every write spaced more than 5 seconds apart reconnected (at 26-30 seconds
+;; spacing one write took 165-190 ms, versus 14-22 ms inside the service). Keep it shorter than the seconds after which the peer server closes idle connections.
 (val CLIENT-KEEPALIVE-SECONDS 60.0)
-;; 接続の数の上限と、使われない接続を持つ数の上限 — httpx 0.28 の AsyncClient の既定と同じ値(変える訳が無い)。
+;; Limits on the number of connections and on the number of idle connections held -- the same values as httpx 0.28's AsyncClient defaults (no reason to change them).
 (val CLIENT-MAX-CONNECTIONS 100)
 (val CLIENT-MAX-KEEPALIVE-CONNECTIONS 20)
 (val CLIENT-LIMITS (httpx.Limits :max-connections CLIENT-MAX-CONNECTIONS :max-keepalive-connections CLIENT-MAX-KEEPALIVE-CONNECTIONS
                                  :keepalive-expiry CLIENT-KEEPALIVE-SECONDS))
-;; 1 つの宛先へ同時に client へ渡す要求の数の上限(頭の註の契約)。全体の上限 CLIENT-MAX-CONNECTIONS より小さくし、残りの枠を他の宛先に残す。
+;; Upper limit on requests handed to the client at once for one destination (the contract in the header comment). Smaller than the overall limit CLIENT-MAX-CONNECTIONS, leaving the remaining slots for other destinations.
 (val CLIENT-ORIGIN-MAX-IN-FLIGHT 64)
 
 
 (defclass ClientGate []
-  "client の範囲 1 つの許可(頭の註の契約): total = 全体の許可(scheduler の semaphore・CLIENT-MAX-CONNECTIONS 本)・origins = 宛先の鍵 →
-   宛先の許可(初めて撃つ宛先の拍に作る)。範囲の外へ出ず、範囲の終わりで client と共に捨てる。"
+  "Permits for one client scope (the contract in the header comment): total = overall permit (scheduler semaphore, CLIENT-MAX-CONNECTIONS slots); origins = destination key ->
+   destination permit (created at the tick when a destination is first fired). It does not leave the scope, and is discarded with the client at the end of the scope."
   (defn #^ None __init__ [self #^ Semaphore total]
-    "全体の許可を受け、宛先の許可を空で始めるため。"
+    "Takes the overall permit and starts the destination permits empty."
     (setv self.total total)
     (setv #^ (get dict #((| tuple str) Semaphore)) self.origins {})
     None))
@@ -82,7 +82,7 @@
 
 (defk _origin-key [url]
   {:pre [(: url str)] :post [(: % (| tuple str))] :tags {:context "http" :role "foundation"}}
-  "宛先の許可を引く鍵(scheme・host・port)を作るため。httpx が読めない URL は URL そのものを鍵にする(要求は client が断る)。"
+  "Builds the key (scheme, host, port) for looking up the destination permit. For a URL httpx cannot read, the URL itself is the key (the request is refused by the client)."
   (try
     (val parsed (httpx.URL url))
     #(parsed.scheme parsed.host parsed.port)
@@ -92,19 +92,19 @@
 
 (defk _origin-permit [gate url]
   {:pre [(: gate ClientGate) (: url str)] :post [(: % Semaphore)] :tags {:context "http" :role "foundation"}}
-  "url の宛先の許可を引くため(まだ無ければ CLIENT-ORIGIN-MAX-IN-FLIGHT 本で作る)。"
+  "Looks up the destination permit for url (created with CLIENT-ORIGIN-MAX-IN-FLIGHT slots if it does not exist yet)."
   (<- key (| tuple str) (_origin-key url))
   (val known (.get gate.origins key))
   (when (is-not known None)
     (return known))
   (<- created (CreateSemaphore CLIENT-ORIGIN-MAX-IN-FLIGHT))
-  ;; 作る間に同じ宛先の別の要求が先に置いていれば、それを使う。
+  ;; If another request to the same destination placed one first while this was being created, use that.
   (.setdefault gate.origins key created))
 
 
 (defn _client-pools [client]
-  "client の持つ httpcore の接続の pool の列(既定の transport と、proxy の env が足した mount)。httpcore の pool を持たない代役の
-   client には空。"
+  "The list of httpcore connection pools the client holds (the default transport, and mounts added by proxy env). Empty for a stand-in
+   client that holds no httpcore pool."
   (setv transports (+ [(getattr client "_transport" None)] (list (.values (getattr client "_mounts" {})))))
   (lfor transport transports
         :setv pool (getattr transport "_pool" None)
@@ -113,8 +113,8 @@
 
 
 (defn #^ int _reap-orphan-connections [client]
-  "どの要求も持たない CONNECTING の接続(頭の註の漏れ)を client の pool から外し、外した数を答える。つないでいない接続なので閉じる I/O は
-   無い。外した後に列で待つ要求が在れば、空いた枠へ割り当て直す(割り当てが閉じる接続は橋の loop で閉じる)。"
+  "Removes CONNECTING connections held by no request (the leak in the header comment) from the client's pool, and answers the number removed. They are connections not yet connected, so there is no I/O to close them.
+   If requests are waiting in the queue after removal, reassign them to the freed slots (connections the assignment closes are closed in the bridge loop)."
   (setv reaped 0)
   (for [pool (_client-pools client)]
     (setv claimed (sfor request pool._requests
@@ -136,7 +136,7 @@
 
 
 (defn :async _sent-or-reaped [client #** request-arguments]
-  "client.request を待ち、例外か取り消しで終わった時は、上げる前に client の pool から漏れた接続を外す(頭の註の漏れ)。"
+  "Awaits client.request, and when it ends by exception or cancellation, removes leaked connections from the client's pool before raising (the leak in the header comment)."
   (try
     (return (await (.request client #** request-arguments)))
     (except [BaseException]
@@ -144,12 +144,12 @@
       (raise))))
 
 
-(deff http-client-factory [* #^ bool [trust-env True] #^ (| ssl.SSLContext bool) [verify True]]  ; defk にできない: 答え手が範囲の初めに Program の外で素の関数として呼ぶ client の作り手(client-factory の値)
+(deff http-client-factory [* #^ bool [trust-env True] #^ (| ssl.SSLContext bool) [verify True]]  ; cannot be a defk: the client builder (the client-factory value) that the handler calls as a plain function outside any Program at the start of the scope
   {:pre [(: trust-env bool) (: verify (| ssl.SSLContext bool))] :post [(: % httpx.AsyncClient)]}
-  "本物の HTTP の client を 1 つ作るため: 使われない接続の持ち方は CLIENT-LIMITS(頭の註の契約)、それ以外は httpx の既定のまま。
-   trust-env = proxy の env と .netrc を読むか・verify = 相手の証明書を何で検めるか(SSLContext か真偽)— どちらも既定は httpx と同じ。
-   http-production-handler と http-fixture-handler の client-factory の既定。自前の引数で作る組み立ては、
-   :client-factory (fn [] (http-client-factory :trust-env False)) の形で同じ持ち方を受ける。"
+  "Builds one real HTTP client: how idle connections are held is CLIENT-LIMITS (the contract in the header comment); everything else stays at the httpx defaults.
+   trust-env = whether to read proxy env and .netrc; verify = what to check the peer's certificate with (an SSLContext or a boolean) -- both default to the same as httpx.
+   The default client-factory of http-production-handler and http-fixture-handler. An assembly built with its own arguments receives the same way of holding connections in the form
+   :client-factory (fn [] (http-client-factory :trust-env False))."
   (httpx.AsyncClient :limits CLIENT-LIMITS :trust-env trust-env :verify verify))
 
 
@@ -182,8 +182,8 @@
                        :detail (.format "TimeoutError: no address for {} within {} s" host timeout-seconds)))))
 
 
-;; http-production-handler が答える効果と、節が出す効果(下の宣言の 1 か所の値)。ResolveHost は HTTP の接続が中で行う名前引きを単独で
-;; 行う効果で、接続と同じ resolver を使うので同じ答え手が答える。
+;; The effects http-production-handler answers, and the effects the clauses emit (the value in one place in the declaration below). ResolveHost is an effect that performs on its own the name resolution
+;; the HTTP connection does internally; it uses the same resolver as the connection, so the same handler answers it.
 (val HTTP-PRODUCTION-HANDLES #(HttpRequest ResolveHost))
 (val HTTP-PRODUCTION-EFFECTS #(Await SlogEffect CreateSemaphore AcquireSemaphore ReleaseSemaphore))
 
@@ -199,14 +199,14 @@
   (defn #^ Program scoped-handler [#^ (| Program EffectBase) program]
     (_run-with-scoped-client client-factory sleep resolver program))
   (_copy-handler-metadata scoped-handler (_http-production-handler None None sleep resolver))
-  ;; 呼ぶたびに作る installer にも同じ宣言を置く — stacked_handlers の束が中の handler の宣言の和を作れるように(#3724 の読み)。
+  ;; Put the same declaration in the installer made on every call too -- so that the bundle of stacked_handlers can build the union of the inner handlers' declarations (reading of #3724).
   (setv scoped-handler.__doeff_handles__ HTTP-PRODUCTION-HANDLES
         scoped-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
   scoped-handler)
 
-;; 節を静的に読めない(client の寿命を包む関数を返す)ので、答える効果と節が出す効果を宣言する(doeff-effect-analyzer の
-;; __doeff_handles__ / __doeff_effects__ — 本番の土台の閉じ具合の検が「読めない handler」と数えないため・#2337)。関数そのものと、
-;; 関数が返す installer の両方が、この 1 か所の値を持つ。
+;; The clauses cannot be read statically (it returns a function that wraps the client's lifetime), so declare the effects answered and the effects the clauses emit (of doeff-effect-analyzer's
+;; __doeff_handles__ / __doeff_effects__ -- so that the check of how closed the production foundation is does not count it as an "unreadable handler"; #2337). Both the function itself and
+;; the installer the function returns carry this one-place value.
 (setv http-production-handler.__doeff_handles__ HTTP-PRODUCTION-HANDLES
       http-production-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
 
@@ -262,7 +262,7 @@
 
 
 (defk _permitted [permit program]
-  {:pre [(: permit Semaphore) (: program Program)] :post [(: % "program の答え")] :tags {:context "http" :role "foundation"}}
+  {:pre [(: permit Semaphore) (: program Program)] :post [(: % "program answer")] :tags {:context "http" :role "foundation"}}
   "Hold one permit of permit while program runs, and give it back however program ends (an answer, an error or a Cancel)."
   (<- (AcquireSemaphore permit))
   (try
@@ -272,7 +272,7 @@
 
 
 (defk _perform-request-gated [client gate request]
-  {:pre [(: client "client-factory が作った client(httpx.AsyncClient か代役)") (: gate ClientGate) (: request HttpRequest)] :post [(: % "client の答え(HttpResponse)")] :tags {:context "http" :role "foundation"}}
+  {:pre [(: client "client made by client-factory (httpx.AsyncClient or a stand-in)") (: gate ClientGate) (: request HttpRequest)] :post [(: % "client answer (HttpResponse)")] :tags {:context "http" :role "foundation"}}
   "Hand one attempt to client only while holding its origin's permit and then the client-wide permit (the head comment's contract) —
    so the requests waiting beyond the limits wait in the scheduler, not in httpcore's queue. A retry's back-off holds no permit."
   (<- origin Semaphore (_origin-permit gate request.url))
@@ -313,7 +313,7 @@
               next-response))))))
 
 
-;; 区間を割る httpcore の trace の出来事の名(HttpRequest の trace-phases)。
+;; Names of httpcore trace events that split the interval (trace-phases of HttpRequest).
 (val TRACE-CONNECT-STARTED "connection.connect_tcp.started")
 (val TRACE-CONNECT-COMPLETE "connection.connect_tcp.complete")
 (val TRACE-SEND-STARTED "http11.send_request_headers.started")
@@ -373,7 +373,7 @@
                                              request.timeout-seconds
                                              (httpx.Timeout request.timeout-seconds :connect request.connect-timeout-seconds))
                                 :follow-redirects request.follow-redirects
-                                ;; trace は旗の在る要求だけに渡す(引数 extensions を持たない代役の client も、旗の無い要求には今までどおり答える)。
+                                ;; pass trace only for requests with the flag (a stand-in client without an extensions argument still answers requests without the flag as before).
                                 #** (if (is tracer None) {} {"extensions" {"trace" tracer}}))))
     (<- phases (| HttpPhases None) (_traced-phases tracer started))
     (setv answer (HttpResponse :status response.status-code
@@ -383,10 +383,10 @@
                                :url (str response.url)
                                :elapsed-seconds (.total-seconds response.elapsed)
                                :phases phases))
-    ;; httpx の応答と本文の流れの循環を外す。httpx の client は応答に本文の流れを付け直し、その流れが応答を
-    ;; 指し返す(Response.stream = BoundAsyncStream(..., response=self))ので、そのままでは応答と本文の bytes・str が参照の数で放されず、
-    ;; cyclic GC の回まで残る。free-threading の CPython は GC の間隔を生きている物の数に応じて広げ、GC で放した memory を機体へ返さないので、
-    ;; 大きい応答を周ごとに受ける job の常駐量が上がり続けた。本文は読み終えて上の答えに写したので、流れを空の流れ(公開の欄 stream)に替える。
+    ;; Break the cycle between the httpx response and the body stream. The httpx client reattaches a body stream to the response, and that stream
+    ;; points back at the response (Response.stream = BoundAsyncStream(..., response=self)), so as is, the response and the body bytes/str are not released by reference counts and
+    ;; stay until a cyclic GC round. A free-threading CPython widens the GC interval in proportion to the number of live objects and does not return memory released by GC to the machine,
+    ;; so the resident size of a job that receives large responses every round kept rising. The body has been read and copied into the answer above, so replace the stream with an empty stream (public field stream).
     (setv response.stream (httpx.ByteStream b""))
     answer))
 

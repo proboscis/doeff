@@ -1,16 +1,16 @@
-;;; 全 thread の stack を書く見張りの memory の答え手 memory-stack-dump-handler— ArmStackDump・DisarmStackDump・
-;;; ReadStackDumps に、1 つの run の中の台帳(session の値)で答える。
+;;; In-memory handler memory-stack-dump-handler for the watchdog that writes the stacks of all threads -- answers ArmStackDump, DisarmStackDump and
+;;; ReadStackDumps with a ledger (a session value) inside one run.
 ;;;
-;;; 何のためか: 模擬と検では、本物(faulthandler_stack_dump.hy)と同じ約束で「止まった時だけ・止まり 1 回に 1 度」書くかを確かめたいが、
-;;; 実時間の見張りの thread にも process の log にも触れたくない。違うのは書くかどうかだけで、期限の数え方(stack_dump_effects.hy の
-;;; stack-dumps-at)は本物と同じ。外側に state の handler が要る。
+;;; Why: in simulations and tests we want to check that it writes "only when stuck, once per stall" with the same contract as the real one (faulthandler_stack_dump.hy), but
+;;; we do not want to touch the real-time watchdog thread or the process log. The only difference is whether it writes; how deadlines are counted (stack-dumps-at in stack_dump_effects.hy)
+;;; is the same as the real one. A state handler is required outside.
 (require doeff-hy.macros [defhandler <- var val])
 (val MODULE-TAGS {:context "stack-dump" :role "foundation"})
 (import doeff_core_effects._stack_dump_effects [ArmStackDump DisarmStackDump ReadStackDumps StackDumpLedger stack-dumps-at])
 
 
 (defhandler memory-stack-dump-handler
-  "見張りの効果に、書かずに台帳だけで答える(頭の註)。"
+  "Answer the watchdog effects with only a ledger, without writing (see header note)."
   (session var ledger (StackDumpLedger :deadline None :written #()))
   (ArmStackDump [at seconds]
     (<- settled StackDumpLedger (stack-dumps-at ledger at))

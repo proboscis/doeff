@@ -1,11 +1,11 @@
-;;; 計器の断面の Prometheus の text の描き手(meter_prometheus.hy の render-prometheus・#2709)の検。
+;;; Tests for the Prometheus text renderer of the meter snapshot (render-prometheus in meter_prometheus.hy, #2709).
 ;;;
-;;; 見る性質:
-;;;   * helps が空なら、使い手の画面の計器の描き手と 1 byte も違わない(名の昇順・counter → gauge → 秒の観測・counter の _total・
-;;;     秒の観測の _seconds_sum と _seconds_count・末尾の改行 1 つ — 画面が乗り換えられる)
-;;;   * helps に在る名だけ、# TYPE の前に # HELP の行を置き、説明の \ と改行を escape する
-;;;   * 空の断面は改行 1 つ
-;;;   * 積んだ順に依らず、同じ断面は同じ文字列
+;;; Properties checked:
+;;;   * when helps is empty, the output differs by not even 1 byte from the consumer's screen meter renderer (names ascending, counter -> gauge -> seconds observation, counter _total,
+;;;     seconds observation _seconds_sum and _seconds_count, one trailing newline -- the screen can switch over)
+;;;   * only names present in helps get a # HELP line before # TYPE, with \ and newlines in the description escaped
+;;;   * an empty snapshot is a single newline
+;;;   * the same snapshot gives the same string regardless of accumulation order
 (require doeff-hy.macros [deftest <-])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [MeterSettings MeterSnapshot]
@@ -14,7 +14,7 @@
 
 
 (deftest test-without-helps-the-text-matches-the-screen-meter-rendering
-  ;; 画面の計器の描き手の検(使い手の repo の test_metrics.hy の test-metrics-fold-and-render)と同じ積み方・同じ字面。
+  ;; Same accumulation and same literals as the screen meter renderer test (test-metrics-fold-and-render in the consumer repo's test_metrics.hy).
   (<- m1 MeterSnapshot (counted EMPTY-METER "loop_reconcile" 1.0))
   (<- m2 MeterSnapshot (counted m1 "loop_reconcile" 2.0))
   (<- m3 MeterSnapshot (gauged m2 "loop_queue_depth" 4.0))
@@ -32,11 +32,11 @@
   (<- m2 MeterSnapshot (counted m1 "refusals" 0.0))
   (<- m3 MeterSnapshot (gauged m2 "depth" 1.0))
   (<- m4 MeterSnapshot (observed m3 (MeterSettings) "answer" 0.5))
-  (<- text str (render-prometheus m4 (FrozenMap {"requests" "数えた\\要求\n2 行目" "depth" "待ちの深さ" "answer" "答えの秒"})))
+  (<- text str (render-prometheus m4 (FrozenMap {"requests" "counted\\requests\nline 2" "depth" "queue depth" "answer" "answer seconds"})))
   (assert (= text (+ "# TYPE refusals_total counter\nrefusals_total 0.0\n"
-                     "# HELP requests_total 数えた\\\\要求\\n2 行目\n# TYPE requests_total counter\nrequests_total 2.0\n"
-                     "# HELP depth 待ちの深さ\n# TYPE depth gauge\ndepth 1.0\n"
-                     "# HELP answer_seconds 答えの秒\n# TYPE answer_seconds summary\nanswer_seconds_sum 0.5\nanswer_seconds_count 1\n"))
+                     "# HELP requests_total counted\\\\requests\\nline 2\n# TYPE requests_total counter\nrequests_total 2.0\n"
+                     "# HELP depth queue depth\n# TYPE depth gauge\ndepth 1.0\n"
+                     "# HELP answer_seconds answer seconds\n# TYPE answer_seconds summary\nanswer_seconds_sum 0.5\nanswer_seconds_count 1\n"))
           text))
 
 

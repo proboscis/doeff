@@ -1,8 +1,8 @@
-"""http-production-handler が呼ぶたびに作る installer の宣言の失敗ケース。
+"""Failure cases for the declarations of the installer that http-production-handler creates on each call.
 
-http-production-handler は scope ごとに client を作るため、節を静的に読めない関数(installer)を返す。答える効果と出す効果は
-__doeff_handles__ / __doeff_effects__ で宣言しているが、宣言は関数そのものにしか無く、installer には写っていなかった。
-そのため stacked_handlers の束(中の handler の宣言の和を付ける)に installer を入れると、束が「読めない handler」のままになった。
+http-production-handler creates a client per scope, so it returns a function (the installer) whose clauses cannot be read statically. The effects it answers and emits are
+declared with __doeff_handles__ / __doeff_effects__, but the declarations existed only on the function itself and were not carried over to the installer.
+As a result, putting the installer into a stacked_handlers bundle (which attaches the union of the inner handlers' declarations) left the bundle an "unreadable handler".
 """
 
 from doeff import stacked_handlers

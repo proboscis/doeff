@@ -1,7 +1,7 @@
-;;; lifeline_starter.py を Hy の入口から走らせる。Hy の入口は自分の process の sys.executable を hy の起動口に
-;;; 書き換える(hy/cmdline.py)ので、doeff-cluster の worker(boot.sh の `exec hy -m …`)と同じく、sys.executable が python でない
-;;; 起こす側になる。使い方: hy lifeline_starter_hy.hy <mode> <out-path> -(子は sleep だけ — 孫を起こす形は sys.executable を使うので
-;;; ここでは使わない)
+;;; Run lifeline_starter.py from a Hy entry point. The Hy entry point rewrites its own process's sys.executable to the hy launcher
+;;; (hy/cmdline.py), so, as with the doeff-cluster worker (boot.sh's `exec hy -m ...`), sys.executable is not python
+;;; and becomes the spawning side. Usage: hy lifeline_starter_hy.hy <mode> <out-path> - (the child only sleeps -- the form that spawns a grandchild uses sys.executable, so
+;;; it is not used here)
 (require doeff-hy.macros [val])
 (import os runpy sys)
 

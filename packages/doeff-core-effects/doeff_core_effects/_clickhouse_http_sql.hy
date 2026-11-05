@@ -1,35 +1,35 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の本物の ClickHouse の答え手 clickhouse-http-sql-handler。client の library を
-;;; 使わず、stdlib の http.client の HTTP POST 1 本 = 問い合わせ 1 つ。値の詰め替えだけで判断を持たない。要求の組み立てと答えの写しは純関数に
-;;; 切ってある(clickhouse-query-request・clickhouse-insert-request・clickhouse-kill-request・clickhouse-rows・clickhouse-failure — 実 DB なしで
-;;; 検を撃てる)。
-;;;   - database の宣言 ClickHouseDatabase(名・URL・ClickHouse の中の database・資格・server 側の期限)は組み立ての側が渡す。
-;;;   - 引数は中立の `:name` を `{name:Type}` へ書き換え、値は URL の `param_name` で送る(型は値の Python の型から閉じた表 CLICKHOUSE-TYPES)。
-;;;   - 答えの形は JSONCompactEachRow(64 bit の整数を quote しない設定)。rowcount は HTTP が数えないので None(投入は
-;;;     X-ClickHouse-Summary の written_rows)。wait_end_of_query = 1 で、誤りを答えの途中ではなく HTTP の status で受ける。
-;;;   - SqlInsertRows = `INSERT INTO t (欄) FORMAT JSONCompactEachRow` の本文 1 つ。JSON は bytes を運べないので bytes の値は ValueError。
-;;;   - SqlTransaction は SqlFailed(0A000)で断る(transaction の無い置き場 — program を走らせない)。
-;;;   - 失敗: X-ClickHouse-Exception-Code の在る答えは SqlFailed(sqlstate = None — ClickHouse は SQLSTATE を持たない・reason に code と文)。
-;;;     HTTP が届かない・code の無い 5xx(前段の proxy)は SqlUnreachable。
-;;;   - client は server が答えるまで接続を離れない(proboscis-ema ISSUE-TRD-199): ClickHouse 24.11 は、client が離れた
-;;;     接続へ結果か例外を書く所(HTTPHandler::trySendExceptionToClient)で落ちる。そこで要求ごとに server 側の期限(max_execution_time = 宣言の
-;;;     deadline・timeout_overflow_mode = throw)と query_id を送り、答えの始まりを「期限 + 余白(WAIT-MARGIN-SECONDS)」の秒だけ待つ —
-;;;     遅い問い合わせは server が期限で断り(TIMEOUT_EXCEEDED)、その答えを client がまだ待っている間に SqlFailed として受ける。待ちは宣言に
-;;;     置かず期限から導く(clickhouse-waits)ので、待ちが期限以下の組は作れない。待ちを越えた時(網の切れ・server の止まり)は、元の接続を
-;;;     閉じる前に別の接続で `KILL QUERY WHERE query_id = …` を撃ち、元の接続の答え(取り消しの例外)を KILL-GRACE-SECONDS の間 読んでから
-;;;     閉じる(clickhouse-abandon)。読めなかった時だけ SqlUnreachable で離れる。接続できなかった要求は server で何も走っていないので、
-;;;     そのまま SqlUnreachable。
-;;;   - scheduler を塞がない: HTTP の往復(問い合わせ・投入・表の宣言の DDL の列)は scheduler の thread で撃たず、呼び 1 つに thread 1 本
-;;;     (offloaded_call.hy の ThreadPerCall)の新しい VM で回し、撃った task だけが外から完了させる promise で待つ(postgres-sql-handler と
-;;;     同じ作法)。遅い問い合わせの間も、同じ run の他の task(別の置き場への文・待ち受けの /healthz・時計の刻み)は回る。外側に scheduled が
-;;;     要る。接続も貸し出しも持たないので、取り消された待ちに届かなかった答えの後始末は要らない(keep-nothing)。待ち手が取り消されても
-;;;     走っている往復は止めない(止めると server の問い合わせを置いて離れる)— 往復は上の待ちの約束の秒の内に終わる。
-;;;   - process の終わりも往復を置いて離れない: 往復の thread は daemon なので、process が終わると往復の途中で
-;;;     消え、OS が socket を閉じた接続へ server が答えを書いて落ちた(10-24 08:23 JST — worker の Pod の入れ替えで終わった record の
-;;;     service の SELECT)。走っている往復は台帳(ROUND-TRIPS)に載せ、process の終わり(Python の終わりの atexit・既定のままの
-;;;     SIGTERM)に読み終える(settle-round-trips): EXIT-SETTLE-SECONDS の間 往復が自ら終わるのを待ち、残った往復へ KILL QUERY を撃ち、
-;;;     取り消しの答えを往復の thread が元の接続で読み終えるのを EXIT-KILL-GRACE-SECONDS の間 待つ。読み終えが始まった後の往復は
-;;;     始めない(SqlUnreachable)。全体の秒は、止めの合図から KILL までの猶予の内に収まる短さに置く(往復の期限までは待たない)。
-;;;     SIGTERM の受け手を据えた process(os-signal-stop-handler など)は、受け手が Program を終わらせた後の atexit で読み終える。
+;;; Real ClickHouse answerer clickhouse-http-sql-handler of the generic SQL effects (sql_effects.hy). Uses no client library;
+;;; one HTTP POST of stdlib http.client = one query. It only repacks values and holds no judgment. Building requests and mapping answers are cut out as pure functions
+;;; (clickhouse-query-request, clickhouse-insert-request, clickhouse-kill-request, clickhouse-rows, clickhouse-failure -- so the
+;;; checks can run without a real DB).
+;;;   - The database declaration ClickHouseDatabase (name, URL, the database inside ClickHouse, credentials, server-side deadline) is passed by the assembling side.
+;;;   - Arguments rewrite the neutral `:name` to `{name:Type}`, and values are sent in the URL's `param_name` (the type comes from the closed table CLICKHOUSE-TYPES by the value's Python type).
+;;;   - The answer shape is JSONCompactEachRow (with the setting that does not quote 64-bit integers). rowcount is None because HTTP does not count it (for inserts,
+;;;     written_rows of X-ClickHouse-Summary). With wait_end_of_query = 1, errors are received as the HTTP status, not in the middle of the answer.
+;;;   - SqlInsertRows = one body of `INSERT INTO t (columns) FORMAT JSONCompactEachRow`. JSON cannot carry bytes, so a bytes value is a ValueError.
+;;;   - SqlTransaction is refused with SqlFailed (0A000) (a store with no transactions -- the program is not run).
+;;;   - Failures: an answer with X-ClickHouse-Exception-Code is SqlFailed (sqlstate = None -- ClickHouse has no SQLSTATE; reason carries the code and text).
+;;;     An unreachable HTTP, or a 5xx with no code (a front proxy), is SqlUnreachable.
+;;;   - The client does not leave the connection until the server answers (proboscis-ema ISSUE-TRD-199): ClickHouse 24.11 crashes where it writes a result or exception
+;;;     to a connection the client has left (HTTPHandler::trySendExceptionToClient). So per request it sends a server-side deadline (max_execution_time = the declared
+;;;     deadline, timeout_overflow_mode = throw) and a query_id, and waits for the start of the answer for "deadline + margin (WAIT-MARGIN-SECONDS)" seconds --
+;;;     a slow query is refused by the server at the deadline (TIMEOUT_EXCEEDED), and the client receives that answer as SqlFailed while it is still waiting. The wait is not
+;;;     placed in the declaration but derived from the deadline (clickhouse-waits), so a pair whose wait is at or below the deadline cannot be built. When the wait is exceeded (network cut, server stopped),
+;;;     before closing the original connection it fires `KILL QUERY WHERE query_id = ...` on another connection, reads the original connection's answer (the cancellation exception) for KILL-GRACE-SECONDS, and then
+;;;     closes (clickhouse-abandon). Only when it cannot be read does it leave with SqlUnreachable. A request that could not connect had nothing run on the server,
+;;;     so it is SqlUnreachable as is.
+;;;   - Does not block the scheduler: HTTP round trips (queries, inserts, the DDL sequence of table declarations) are not fired on the scheduler's thread but run in a new VM with one thread per call
+;;;     (ThreadPerCall of offloaded_call.hy), and only the task that fired waits on a promise completed from outside (the same convention as postgres-sql-handler).
+;;;     Even during a slow query, the other tasks of the same run (statements to another store, the listener's /healthz, clock ticks) keep running. scheduled is needed
+;;;     outside. It holds neither connections nor leases, so no cleanup is needed for an answer that did not reach a cancelled wait (keep-nothing). Even if the waiter is cancelled,
+;;;     the running round trip is not stopped (stopping it would leave the server's query behind) -- the round trip ends within the seconds of the wait promise above.
+;;;   - The end of the process also does not leave a round trip behind: the round-trip thread is a daemon, so when the process ends it
+;;;     vanishes in the middle of a round trip, and the server wrote an answer to a connection the OS had closed the socket of and crashed (10-24 08:23 JST -- the SELECT of the record
+;;;     service that ended when a worker Pod was replaced). Running round trips are put on the ledger (ROUND-TRIPS) and settled at the end of the process (Python's atexit at exit, the default
+;;;     SIGTERM) (settle-round-trips): wait for EXIT-SETTLE-SECONDS for round trips to end by themselves, fire KILL QUERY at the remaining round trips, and
+;;;     wait EXIT-KILL-GRACE-SECONDS for the round-trip threads to finish reading the cancellation answers on the original connections. A round trip after settling has begun is
+;;;     not started (SqlUnreachable). The total seconds are kept short enough to fit within the grace from the stop signal to KILL (it does not wait for the round trip's deadline).
+;;;     A process with a SIGTERM receiver installed (os-signal-stop-handler etc.) settles in atexit after the receiver has ended the Program.
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (import atexit)
@@ -55,42 +55,42 @@
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
-;; 値の Python の型 → 引数の ClickHouse の型(閉じた表・bool は int より先に引く)。None は型が分からないので Nullable(String)。
+;; Python type of a value -> ClickHouse type of an argument (a closed table; bool is looked up before int). None is Nullable(String) since its type is unknown.
 (val CLICKHOUSE-TYPES #(#(bool "Bool") #(int "Int64") #(float "Float64") #(str "String") #(bytes "String") #((type None) "Nullable(String)")))
-;; 宣言の欄の型 → ClickHouse の型。
+;; Declaration column type -> ClickHouse type.
 (val CLICKHOUSE-COLUMN-TYPES {SqlColumnType.INTEGER "Int64" SqlColumnType.FLOAT "Float64" SqlColumnType.TEXT "String"
                               SqlColumnType.BYTES "String" SqlColumnType.BOOLEAN "Bool" SqlColumnType.JSON "String"})
-;; 答えの形と、問い合わせごとに付ける設定(期限と query_id は要求ごとの値なので clickhouse-deadline-pairs が足す)。
+;; The answer shape, and the settings attached per query (the deadline and query_id are per-request values, so clickhouse-deadline-pairs adds them).
 (val ANSWER-FORMAT "JSONCompactEachRow")
 (val QUERY-SETTINGS #(#("default_format" ANSWER-FORMAT) #("output_format_json_quote_64bit_integers" "0") #("wait_end_of_query" "1")))
-;; 期限を越えた問い合わせを server が断る形(既定の throw を名乗る — user の profile が break なら、期限で切った途中の行を黙って返す)。
+;; The shape in which the server refuses a query that exceeded its deadline (names the default throw -- if the user's profile is break, rows cut off midway by the deadline would be silently returned).
 (val TIMEOUT-OVERFLOW-MODE "throw")
-;; 待ちの余白(頭の註): client が答えの始まりを待つ秒 = 期限 + この秒。server は期限を処理の区切りの間でしか読まないので、期限で断った答えは
-;; 期限より少し後に届く — その遅れをこの秒の内に収める。宣言はこの 1 か所(使い手ごとに変えない)。
+;; Wait margin (header comment): the seconds the client waits for the start of the answer = deadline + these seconds. The server reads the deadline only between processing steps, so an answer refused at the deadline arrives
+;; slightly after the deadline -- keep that delay within these seconds. The declaration is this one place (not changed per user).
 (val WAIT-MARGIN-SECONDS 15.0)
-;; 待ちを越えた後(頭の註)、KILL QUERY の往復を待つ秒と、元の接続で取り消しの答えを読む秒(それぞれ)。
+;; After the wait is exceeded (header comment): the seconds to wait for the KILL QUERY round trip, and the seconds to read the cancellation answer on the original connection (each).
 (val KILL-GRACE-SECONDS 15.0)
-;; process の終わりの読み終え(頭の註)で、走っている往復が自ら終わるのを待つ秒と、その後 KILL QUERY の往復と取り消しの答えの読みに
-;; それぞれ許す秒。和(6 秒)は、doeff-cluster の worker が job の process group へ止めの合図を送ってから KILL するまでの猶予(shim の
-;; 8.5 秒 = --stop-grace 10 秒 − 掃除の余裕 1.5 秒)の内に置く — 越えると読み終える前に KILL で接続が切れ、同じ落ちになる。
+;; In settling at the end of the process (header comment): the seconds to wait for running round trips to end by themselves, and then the seconds allowed
+;; each for the KILL QUERY round trip and for reading the cancellation answer. The sum (6 seconds) is kept within the grace between the doeff-cluster worker sending the stop signal to the job's process group and KILLing it (the shim's
+;; 8.5 seconds = --stop-grace 10 seconds - 1.5 seconds of cleanup margin) -- exceeding it would cut the connection by KILL before settling finishes, causing the same crash.
 (val EXIT-SETTLE-SECONDS 2.0)
 (val EXIT-KILL-GRACE-SECONDS 2.0)
-;; client が名乗る User-Agent(server の query_log の http_user_agent — この client の要求を他の HTTP の client と見分ける)。
+;; The User-Agent the client announces (http_user_agent in the server's query_log -- distinguishes this client's requests from other HTTP clients).
 (val USER-AGENT "doeff-clickhouse-http-sql")
-;; query_id の形(client が作る uuid4 — KILL QUERY の文へ直に書くので、この形の外の値は断る)。
+;; The shape of query_id (a uuid4 the client makes -- written directly into the KILL QUERY statement, so values outside this shape are refused).
 (val QUERY-ID-SHAPE (re.compile "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
-;; ClickHouse に無い機能(transaction・一意の索引)を断る時の SQLSTATE(feature_not_supported)。
+;; The SQLSTATE for refusing features ClickHouse lacks (transactions, unique indexes) (feature_not_supported).
 (val NOT-SUPPORTED-SQLSTATE "0A000")
-;; HTTP の往復を回す Executor(頭の註 — 呼び 1 つに thread 1 本)。
+;; The Executor that runs HTTP round trips (header comment -- one thread per call).
 (val CLICKHOUSE-THREADS (ThreadPerCall))
-;; 引数の値の escaped の形で escape する byte(ClickHouse の TabSeparated と同じ)。
+;; Bytes to escape in the escaped form of an argument value (the same as ClickHouse's TabSeparated).
 (val ESCAPES #(#(b"\\" b"\\\\") #(b"\t" b"\\t") #(b"\n" b"\\n") #(b"\r" b"\\r")))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ClickHouseDatabase []
-  "ClickHouse の database の宣言(name = 業務が SqlQuery に書く名・url = HTTP の口(http://host:8123)・database = ClickHouse の中の
-   database・user / password = 資格 — password は repr に出さない・deadline = 1 要求の server 側の期限の秒 — max_execution_time として
-   要求ごとに送る・0 より大きい有限の値)。client の待ちは宣言に持たず期限から導く(頭の註・clickhouse-waits)。"
+  "Declaration of a ClickHouse database (name = the name the business writes in SqlQuery, url = the HTTP endpoint (http://host:8123), database = the database inside
+   ClickHouse, user / password = credentials -- password is not shown in repr, deadline = the server-side deadline in seconds for one request -- sent per request as max_execution_time,
+   a finite value greater than 0). The client's wait is not held in the declaration but derived from the deadline (header comment, clickhouse-waits)."
   #^ str name
   #^ str url
   #^ str database
@@ -99,20 +99,20 @@
   (setv password (field :repr False))
   #^ float deadline
   (setv deadline 30.0)
-  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass が作る時に呼ぶ検め(Program を返すと実行されない)
-    ;; 0 は ClickHouse の「期限なし」— server が断らないので、client の待ちが先に尽きて問い合わせを置いて離れる組になる。
+  (defn #^ None __post-init__ [self]  ; cannot be a defk: a check called when the dataclass builds it (it would not run if it returned a Program)
+    ;; 0 means "no deadline" in ClickHouse -- the server would not refuse, so the client's wait would run out first, making a pair that leaves the query behind.
     (when (or (isinstance self.deadline bool) (not (isinstance self.deadline #(int float))) (not (< 0 self.deadline math.inf)))
       (raise (ValueError f"ClickHouseDatabase.deadline must be a finite number of seconds > 0, got {self.deadline !r}")))))
 
 
 (defrecord ClickHouseWaits
-  "要求 1 つの待ちの組(頭の註): deadline = server へ max_execution_time として送る秒・wait = client が答えの始まりを待つ秒(期限より
-   長い — 期限で断った答えを待ちの内に受ける)・grace = 待ちを越えた後、KILL QUERY の往復と取り消しの答えの読みにそれぞれ許す秒。
-   待ちが期限以下の組は作れない(作る時に ValueError)。"
+  "The wait pair of one request (header comment): deadline = the seconds sent to the server as max_execution_time, wait = the seconds the client waits for the start of the answer (longer than the deadline
+   -- so an answer refused at the deadline is received within the wait), grace = the seconds allowed, after the wait is exceeded, each for the KILL QUERY round trip and for reading the cancellation answer.
+   A pair whose wait is at or below the deadline cannot be built (ValueError on construction)."
   (#^ float deadline)
   (#^ float wait)
   (#^ float grace)
-  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass が作る時に呼ぶ検め(Program を返すと実行されない)
+  (defn #^ None __post-init__ [self]  ; cannot be a defk: a check called when the dataclass builds it (it would not run if it returned a Program)
     (when (not (< 0 self.deadline self.wait math.inf))
       (raise (ValueError f"ClickHouseWaits.wait must outlast the deadline, got deadline {self.deadline !r} and wait {self.wait !r}")))
     (when (not (< 0 self.grace math.inf))
@@ -120,26 +120,26 @@
 
 
 (defrecord ClickHouseParam
-  "URL で送る引数 1 つ(name = 引数の名・text = escaped の形の値の byte 列)。"
+  "One argument sent in the URL (name = the argument's name, text = the value's byte string in escaped form)."
   (#^ str name)
   (#^ bytes text))
 
 
 (defrecord ClickHouseStatement
-  "ClickHouse の `{name:Type}` へ書き換えた文と、URL で送る引数。"
+  "The statement rewritten to ClickHouse's `{name:Type}`, and the arguments sent in the URL."
   (#^ str text)
   (#^ (get tuple #(ClickHouseParam ...)) params))
 
 
 (defrecord ClickHouseHeader
-  "HTTP の頭 1 つ。"
+  "One HTTP header."
   (#^ str name)
   (#^ str value))
 
 
 (defrecord ClickHouseRequest
-  "ClickHouse へ送る HTTP POST 1 本(url = 設定と引数を載せた URL・body = 本文・headers = 資格の頭・query-id = server の問い合わせの名
-   — URL の query_id と同じ値・waits = 待ちの組 — URL の max_execution_time と同じ期限)。"
+  "One HTTP POST sent to ClickHouse (url = the URL carrying settings and arguments, body = the body, headers = the credential headers, query-id = the server's query name
+   -- the same value as the URL's query_id, waits = the wait pair -- the same deadline as the URL's max_execution_time)."
   (#^ str url)
   (#^ bytes body)
   (#^ (get tuple #(ClickHouseHeader ...)) headers)
@@ -148,14 +148,14 @@
 
 
 (defrecord ClickHouseKill
-  "待ちを越えた要求の問い合わせを止める KILL QUERY の HTTP POST 1 本(url = 設定を載せない口・body = 文・headers = 元の要求と同じ資格の頭)。"
+  "One HTTP POST of KILL QUERY that stops the query of a request whose wait was exceeded (url = the endpoint carrying no settings, body = the statement, headers = the same credential headers as the original request)."
   (#^ str url)
   (#^ bytes body)
   (#^ (get tuple #(ClickHouseHeader ...)) headers))
 
 
 (defrecord ClickHouseResponse
-  "ClickHouse の HTTP の答え(status・body・exception-code = X-ClickHouse-Exception-Code・summary = X-ClickHouse-Summary)。"
+  "ClickHouse's HTTP answer (status, body, exception-code = X-ClickHouse-Exception-Code, summary = X-ClickHouse-Summary)."
   (#^ int status)
   (#^ bytes body)
   (#^ (| str None) exception-code)
@@ -163,20 +163,20 @@
 
 
 (defclass RoundTrips []
-  "走っている HTTP の往復の台帳(頭の註 — process の終わりに読み終えるため)。running = query_id → #(要求 終わりの印)・closing = 終わりの
-   読み終えが始まった印(その後の往復は台帳に載せない = 始めない)。往復の thread と終わりの手順の間で錠を取って触る。資源の係なので値の型では
-   ない。"
+  "Ledger of running HTTP round trips (header comment -- to settle at the end of the process). running = query_id -> #(request, end marker), closing = the marker that the end
+   settling has begun (round trips after that are not put on the ledger = not started). Touched under a lock between the round-trip thread and the end procedure. It is a resource keeper, so it is not
+   a value type."
 
-  (deff __init__ [self]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self RoundTrips)] :post [(: % "None")]}
-    "空の台帳で始めるため。"
+    "To start with an empty ledger."
     (setv self.lock (threading.Lock)
           self.running {}
           self.closing False))
 
-  (deff enter [self request]  ; defk にできない: 往復の thread と終わりの手順が共に触る台帳の口(VM の外の資源)
+  (deff enter [self request]  ; cannot be a defk: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
     {:pre [(: self RoundTrips) (: request ClickHouseRequest)] :post [(: % (| threading.Event None))]}
-    "往復を始める前に台帳へ載せ、往復の終わりに立てる印を受けるため(読み終えが始まった後は載せず None — 呼び手は往復を始めない)。"
+    "To put a round trip on the ledger before starting it, and to receive the marker raised at the end of the round trip (None after settling has begun and nothing is put -- the caller does not start the round trip)."
     (with [_ self.lock]
       (if self.closing
           None
@@ -184,37 +184,37 @@
               (setv (get self.running request.query-id) #(request done))
               done))))
 
-  (deff leave [self request done]  ; defk にできない: 往復の thread と終わりの手順が共に触る台帳の口(VM の外の資源)
+  (deff leave [self request done]  ; cannot be a defk: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
     {:pre [(: self RoundTrips) (: request ClickHouseRequest) (: done threading.Event)] :post [(: % "None")]}
-    "接続を閉じた往復を台帳から外し、終わりの印を立てるため。"
+    "To remove a round trip that closed its connection from the ledger and raise the end marker."
     (with [_ self.lock]
       (.pop self.running request.query-id None))
     (.set done)
     None)
 
-  (deff close [self]  ; defk にできない: 往復の thread と終わりの手順が共に触る台帳の口(VM の外の資源)
+  (deff close [self]  ; cannot be a defk: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
     {:pre [(: self RoundTrips)] :post [(: % tuple)]}
-    "読み終えの始まりに、それより後の往復を断り、走っている往復(要求と終わりの印の組)を答えるため。"
+    "At the start of settling, to refuse later round trips and answer the running round trips (pairs of request and end marker)."
     (with [_ self.lock]
       (setv self.closing True)
       (tuple (.values self.running)))))
 
 
-;; process の往復の台帳(頭の註)。
+;; The process's round-trip ledger (header comment).
 (val ROUND-TRIPS (RoundTrips))
 
 
 (defk clickhouse-type [value]
   {:pre [(: value (| int float str bytes bool None))] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "引数の値の Python の型から ClickHouse の型を引くため(閉じた表 CLICKHOUSE-TYPES)。"
+  "To look up the ClickHouse type from the Python type of an argument value (the closed table CLICKHOUSE-TYPES)."
   (next (gfor #(kind name) CLICKHOUSE-TYPES :if (isinstance value kind) name)))
 
 
 (defk clickhouse-param-text [value]
   {:pre [(: value (| int float str bytes bool None))] :post [(: % bytes)]
    :tags {:context "sql" :role "foundation"}}
-  "引数の値を URL の param_* で送る escaped の形の byte 列にするため(NULL は \\N)。"
+  "To turn an argument value into the byte string in escaped form sent as the URL's param_* (NULL is \\N)."
   (val raw (match value
              None None
              (bool) (if value b"true" b"false")
@@ -229,7 +229,7 @@
 (defk clickhouse-statement [statement params]
   {:pre [(: statement str) (: params tuple)] :post [(: % ClickHouseStatement)]
    :tags {:context "sql" :role "foundation"}}
-  "中立の記法の文を ClickHouse の `{name:Type}` の文と URL の引数へ書き換えるため(引数の名の食い違いは ValueError)。"
+  "To rewrite a statement in the neutral notation into a ClickHouse `{name:Type}` statement and URL arguments (a mismatch of argument names is a ValueError)."
   (<- parts (split-statement statement))
   (<- (checked-params parts params))
   (var text "")
@@ -246,35 +246,35 @@
 (defk clickhouse-url [database pairs]
   {:pre [(: database ClickHouseDatabase) (: pairs list)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "database の URL に設定と引数を載せるため(pairs = 名と値の組の列 — urlencode へ渡す 1 点)。"
+  "To put settings and arguments on the database's URL (pairs = a sequence of name-value pairs -- the single point passed to urlencode)."
   (+ (.rstrip database.url "/") "/?" (urllib.parse.urlencode (+ [#("database" database.database)] pairs))))
 
 
 (defk clickhouse-headers [database]
   {:pre [(: database ClickHouseDatabase)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "資格の頭を作るため。"
+  "To build the credential headers."
   #((ClickHouseHeader :name "X-ClickHouse-User" :value database.user) (ClickHouseHeader :name "X-ClickHouse-Key" :value database.password)))
 
 
 (defk clickhouse-waits [database]
   {:pre [(: database ClickHouseDatabase)] :post [(: % ClickHouseWaits)]
    :tags {:context "sql" :role "foundation"}}
-  "database の期限から要求の待ちの組を導くため(頭の註 — 待ち = 期限 + WAIT-MARGIN-SECONDS・猶予 = KILL-GRACE-SECONDS)。"
+  "To derive a request's wait pair from the database's deadline (header comment -- wait = deadline + WAIT-MARGIN-SECONDS, grace = KILL-GRACE-SECONDS)."
   (ClickHouseWaits :deadline (float database.deadline) :wait (+ database.deadline WAIT-MARGIN-SECONDS) :grace KILL-GRACE-SECONDS))
 
 
 (defk clickhouse-seconds-text [seconds]
   {:pre [(: seconds float)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "秒を URL の設定の値にするため(整数の秒は小数点なし — 30.0 は 30)。"
+  "To turn seconds into the value of a URL setting (integer seconds have no decimal point -- 30.0 is 30)."
   (if (.is-integer seconds) (str (int seconds)) (repr seconds)))
 
 
 (defk clickhouse-deadline-pairs [waits query-id]
   {:pre [(: waits ClickHouseWaits) (: query-id str)] :post [(: % list)]
    :tags {:context "sql" :role "foundation"}}
-  "要求ごとに URL へ足す設定(server 側の期限・期限を越えたら断る形・問い合わせの名)を作るため(頭の註)。"
+  "To build the settings added to the URL per request (the server-side deadline, the form that refuses on exceeding it, and the query name) (header comment)."
   [#("max_execution_time" (! (clickhouse-seconds-text waits.deadline))) #("timeout_overflow_mode" TIMEOUT-OVERFLOW-MODE)
    #("query_id" query-id)])
 
@@ -282,14 +282,14 @@
 (defk new-query-id []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "要求 1 つの問い合わせの名を作るため(uuid4 — 待ちを越えた時に KILL QUERY で名指す)。"
+  "To build the query name of one request (uuid4 -- used to name it with KILL QUERY when the wait is exceeded)."
   (str (uuid.uuid4)))
 
 
 (defk clickhouse-query-request [database statement params]
   {:pre [(: database ClickHouseDatabase) (: statement str) (: params (get tuple #(SqlParam ...)))] :post [(: % ClickHouseRequest)]
    :tags {:context "sql" :role "foundation"}}
-  "SqlQuery 1 つを HTTP POST 1 本にするため(文は本文・設定と引数は URL — 期限と query_id は要求ごと)。"
+  "To turn one SqlQuery into one HTTP POST (the statement is the body, settings and arguments are in the URL -- the deadline and query_id are per request)."
   (<- bound (clickhouse-statement statement params))
   (<- waits (clickhouse-waits database))
   (<- query-id (new-query-id))
@@ -302,12 +302,12 @@
 (defk clickhouse-insert-request [database table columns rows]
   {:pre [(: database ClickHouseDatabase) (: table str) (: columns tuple) (: rows tuple)] :post [(: % ClickHouseRequest)]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows を `INSERT … FORMAT JSONCompactEachRow` の HTTP POST 1 本にするため(JSON の行の本文 — bytes の値は ValueError・
-   期限と query_id は要求ごと)。"
+  "To turn SqlInsertRows into one HTTP POST of `INSERT ... FORMAT JSONCompactEachRow` (the body is JSON rows -- a bytes value is a ValueError;
+   the deadline and query_id are per request)."
   (<- (checked-rows columns rows))
   (for [row rows]
     (when (any (gfor value row (isinstance value bytes)))
-      (raise (ValueError (.format "ClickHouse の JSON の投入は bytes の値を運べない(表 {})" table)))))
+      (raise (ValueError (.format "ClickHouse JSON insertion cannot carry bytes values (table {})" table)))))
   (val query (.format "INSERT INTO {} ({}) FORMAT JSONCompactEachRow" (! (checked-identifier table))
                       (.join ", " (! (checked-identifiers columns)))))
   (val body (.join "" (gfor row rows (+ (json.dumps (list row) :ensure-ascii False) "\n"))))
@@ -320,10 +320,10 @@
 (defk clickhouse-kill-request [request]
   {:pre [(: request ClickHouseRequest)] :post [(: % ClickHouseKill)]
    :tags {:context "sql" :role "foundation"}}
-  "要求の問い合わせを止める KILL QUERY の POST を作るため(同じ口と資格・ASYNC — 止めの合図だけを送り、取り消しの答えは元の接続で読む)。
-   query_id は client が作った uuid4 なので文へ直に書く(形の外の値は ValueError)。"
+  "To build the POST of KILL QUERY that stops the request's query (the same endpoint and credentials, ASYNC -- only sends the stop signal, and the cancellation answer is read on the original connection).
+   query_id is a uuid4 the client made, so it is written directly into the statement (a value outside the shape is a ValueError)."
   (when (is (.fullmatch QUERY-ID-SHAPE request.query-id) None)
-    (raise (ValueError (.format "KILL QUERY に書けない query_id {!r}" request.query-id))))
+    (raise (ValueError (.format "query_id {!r} cannot be written into KILL QUERY" request.query-id))))
   (val target (urllib.parse.urlsplit request.url))
   (ClickHouseKill :url (urllib.parse.urlunsplit #(target.scheme target.netloc target.path "" ""))
                   :body (.encode (.format "KILL QUERY WHERE query_id = '{}' ASYNC" request.query-id) "ascii")
@@ -333,15 +333,15 @@
 (defk clickhouse-rows [body]
   {:pre [(: body bytes)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "JSONCompactEachRow の答えの本文を行の tuple へ写すため(値は SqlValue へ正規化 — 配列・Map の欄は TypeError)。
-   行の区切りは \\n だけ — splitlines は値に生で来る U+0085・U+2028・U+2029 でも切る。"
+  "To map the body of a JSONCompactEachRow answer to a tuple of rows (values are normalized to SqlValue -- an array or Map column is a TypeError).
+   Rows are separated only by \\n -- splitlines also splits at U+0085, U+2028, U+2029, which arrive raw in values."
   (! (normalized-rows (lfor line (.split (.decode body "utf-8") "\n") :if (.strip line) (json.loads line)))))
 
 
 (defk clickhouse-written-rows [summary]
   {:pre [(: summary (| str None))] :post [(: % (| int None))]
    :tags {:context "sql" :role "foundation"}}
-  "X-ClickHouse-Summary の written_rows を読むため(無ければ None)。"
+  "To read written_rows of X-ClickHouse-Summary (None if absent)."
   (if (is summary None)
       None
       (do (val written (.get (json.loads summary) "written_rows"))
@@ -351,7 +351,7 @@
 (defk clickhouse-failure [response]
   {:pre [(: response ClickHouseResponse)] :post [(: % (| SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "200 でない HTTP の答えを失敗の値へ写すため(頭の註)。"
+  "To map a non-200 HTTP answer to a failure value (header comment)."
   (val text (.strip (.decode response.body "utf-8" "replace")))
   (if (is response.exception-code None)
       (SqlUnreachable :reason (.format "HTTP {}: {}" response.status text))
@@ -361,12 +361,12 @@
 (defk clickhouse-schema-statements [tables]
   {:pre [(: tables (get tuple #(SqlTable ...)))] :post [(: % (| (get tuple #(str ...)) SqlFailed))]
    :tags {:context "sql" :role "foundation"}}
-  "表の宣言を ClickHouse の DDL(MergeTree・ORDER BY = 主鍵・索引は minmax の data skipping)に描くため。一意の索引は持てないので
-   SqlFailed(0A000)。"
+  "To render table declarations as ClickHouse DDL (MergeTree, ORDER BY = primary key, indexes are minmax data skipping). Unique indexes cannot be had, so
+   SqlFailed (0A000)."
   (var statements [])
   (for [table tables]
     (when (any (gfor index table.indexes index.unique))
-      (return (SqlFailed :sqlstate NOT-SUPPORTED-SQLSTATE :reason (.format "ClickHouse は一意の索引を持てない(表 {})" table.name))))
+      (return (SqlFailed :sqlstate NOT-SUPPORTED-SQLSTATE :reason (.format "ClickHouse cannot have unique indexes (table {})" table.name))))
     (var definitions [])
     (for [column table.columns]
       (.append definitions (.format "{} {}" (! (checked-identifier column.name))
@@ -387,15 +387,15 @@
 (defk _clickhouse-transaction-refusal [database]
   {:pre [(: database str)] :post [(: % SqlFailed)]
    :tags {:context "sql" :role "foundation"}}
-  "SqlTransaction への断り(頭の註 — 本物の答え手と模擬 clickhouse_mock_sql が同じ値を返す 1 か所)。"
+  "The refusal for SqlTransaction (header comment -- the single place where the real answerer and the mock clickhouse_mock_sql return the same value)."
   (SqlFailed :sqlstate NOT-SUPPORTED-SQLSTATE
-             :reason (.format "ClickHouse の database {!r} は transaction を持たない(SqlTransaction を断る)" database)))
+             :reason (.format "ClickHouse database {!r} has no transactions (SqlTransaction is refused)" database)))
 
 
 (defk clickhouse-connection [url seconds]
   {:pre [(: url str) (: seconds float)] :post [(: % http.client.HTTPConnection)]
    :tags {:context "sql" :role "foundation"}}
-  "URL の口への HTTP の接続(まだ繋がない)を作るため(https なら TLS・socket の 1 回の読み書きの待ちは seconds 秒)。"
+  "To make an HTTP connection to the URL's endpoint (not yet connected) (for https, TLS; the wait for one socket read or write is seconds seconds)."
   (val target (urllib.parse.urlsplit url))
   (if (= target.scheme "https")
       (http.client.HTTPSConnection target.hostname target.port :timeout seconds)
@@ -405,7 +405,7 @@
 (defk clickhouse-path [url]
   {:pre [(: url str)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "URL から HTTP の要求の行に書く path と設定の部分を取るため。"
+  "To get from the URL the path and settings part to write on the HTTP request line."
   (val target (urllib.parse.urlsplit url))
   (urllib.parse.urlunsplit #("" "" (or target.path "/") target.query "")))
 
@@ -413,7 +413,7 @@
 (defk clickhouse-post [connection url body headers]
   {:pre [(: connection http.client.HTTPConnection) (: url str) (: body bytes) (: headers tuple)] :post [(: % (type None))]
    :tags {:context "sql" :role "foundation"}}
-  "繋いだ接続へ POST の頭と本文を送るため(答えは読まない — 読むのは clickhouse-read)。"
+  "To send the POST head and body on the connected connection (the answer is not read -- clickhouse-read reads it)."
   (.request connection "POST" (! (clickhouse-path url)) :body body
             :headers (| (dfor h headers h.name h.value) {"User-Agent" USER-AGENT}))
   None)
@@ -422,7 +422,7 @@
 (defk answer-started [connection seconds]
   {:pre [(: connection http.client.HTTPConnection) (: seconds float)] :post [(: % bool)]
    :tags {:context "sql" :role "foundation"}}
-  "送った要求の答えの byte が届いたか(届くか閉じられるまで最長 seconds 秒待つ)を、答えを読まずに知るため(頭の註の待ち)。"
+  "To learn, without reading the answer, whether the answer's bytes for the sent request have arrived (waits up to seconds seconds until they arrive or the connection is closed) (the wait of the header comment)."
   (if (is connection.sock None)
       False
       (with [selector (selectors.DefaultSelector)]
@@ -433,27 +433,27 @@
 (defk clickhouse-read [connection]
   {:pre [(: connection http.client.HTTPConnection)] :post [(: % (| ClickHouseResponse SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "始まった答えを頭と本文まで読み切るため(読みの 1 回ごとの待ちは接続の socket の秒・途中で切れたら SqlUnreachable)。"
+  "To read the started answer through to the head and body (the wait for each read is the connection's socket seconds -- if cut midway, SqlUnreachable)."
   (try
     (with [answer (.getresponse connection)]
       (ClickHouseResponse :status answer.status :body (.read answer)
                           :exception-code (.getheader answer "X-ClickHouse-Exception-Code")
                           :summary (.getheader answer "X-ClickHouse-Summary")))
     (except [error #(OSError http.client.HTTPException)]
-      (SqlUnreachable :reason (.format "答えの読みが切れた: {!r}" error)))))
+      (SqlUnreachable :reason (.format "Reading the answer was cut off: {!r}" error)))))
 
 
 (defk clickhouse-kill [kill seconds]
   {:pre [(: kill ClickHouseKill) (: seconds float)] :post [(: % (| ClickHouseResponse SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "KILL QUERY の POST 1 本を別の接続で送り、その答えを受けるため(ASYNC の KILL はすぐ答える — 最長 seconds 秒)。"
+  "To send one KILL QUERY POST on another connection and receive its answer (an ASYNC KILL answers at once -- up to seconds seconds)."
   (<- connection (clickhouse-connection kill.url seconds))
   (try
     (try
       (.connect connection)
       (<- (clickhouse-post connection kill.url kill.body kill.headers))
       (except [error OSError]
-        (return (SqlUnreachable :reason (.format "KILL QUERY を送れない: {!r}" error)))))
+        (return (SqlUnreachable :reason (.format "Cannot send KILL QUERY: {!r}" error)))))
     (<- answer (clickhouse-read connection))
     answer
     (finally (.close connection))))
@@ -463,16 +463,16 @@
   {:pre [(: connection http.client.HTTPConnection) (: request ClickHouseRequest) (: why str)]
    :post [(: % (| ClickHouseResponse SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "待ちを越えた要求から、server の問い合わせを止めてから離れるため(頭の註): 別の接続で KILL QUERY を撃ち、元の接続で取り消しの答えを
-   猶予の秒だけ待って読む。読めればその答え(取り消しの例外 — 呼び手が SqlFailed へ写す。KILL の前に終わった問い合わせなら、その答え)、
-   読めなければ SqlUnreachable(理由に KILL の結末)。元の接続を閉じるのは呼び手。"
+  "To leave, from a request whose wait was exceeded, after stopping the server's query (header comment): fire KILL QUERY on another connection, and wait on the original connection
+   for the grace seconds to read the cancellation answer. If it can be read, that answer (the cancellation exception -- the caller maps it to SqlFailed; if the query ended before the KILL, that answer),
+   if not, SqlUnreachable (with the KILL outcome in the reason). Closing the original connection is the caller's job."
   (<- kill (clickhouse-kill-request request))
   (<- killed (clickhouse-kill kill request.waits.grace))
   (val kill-outcome (match killed
                       (SqlUnreachable :reason reason) reason
-                      (ClickHouseResponse :status 200) "KILL QUERY は受けられた"
+                      (ClickHouseResponse :status 200) "KILL QUERY was accepted"
                       (ClickHouseResponse :status status :body body)
-                        (.format "KILL QUERY が断られた(HTTP {}: {})" status (.strip (.decode body "utf-8" "replace")))))
+                        (.format "KILL QUERY was refused (HTTP {}: {})" status (.strip (.decode body "utf-8" "replace")))))
   (when (is-not connection.sock None)
     (.settimeout connection.sock request.waits.grace))
   (<- started (answer-started connection request.waits.grace))
@@ -480,37 +480,37 @@
     (<- answer (clickhouse-read connection))
     (when (isinstance answer ClickHouseResponse)
       (return answer)))
-  (SqlUnreachable :reason (.format "{}(query_id {})— 取り消しの答えが {} 秒の内に届かない・{}" why request.query-id
+  (SqlUnreachable :reason (.format "{} (query_id {}) -- the cancellation answer did not arrive within {} seconds; {}" why request.query-id
                                    (! (clickhouse-seconds-text request.waits.grace)) kill-outcome)))
 
 
 (defk clickhouse-send [request]
   {:pre [(: request ClickHouseRequest)] :post [(: % (| ClickHouseResponse SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "HTTP POST 1 本を送って答えを受けるため(頭の註の待ちの約束): 答えの始まりを waits.wait 秒待ち、越えたら clickhouse-abandon で
-   問い合わせを止めてから離れる。繋げなければ(server で何も走っていない)そのまま SqlUnreachable。往復は接続を閉じるまで台帳
-   ROUND-TRIPS に載り、process の終わりの読み終えが始まった後は始めない(頭の註)。"
+  "To send one HTTP POST and receive the answer (the wait promise of the header comment): wait waits.wait seconds for the start of the answer, and if exceeded, stop
+   the query with clickhouse-abandon and leave. If it cannot connect (nothing is running on the server), it is SqlUnreachable as is. The round trip is on the ledger
+   ROUND-TRIPS until the connection is closed, and is not started after settling at the end of the process has begun (header comment)."
   (val done (.enter ROUND-TRIPS request))
   (when (is done None)
-    (return (SqlUnreachable :reason (.format "process が終わる所なので往復を始めない(query_id {})" request.query-id))))
+    (return (SqlUnreachable :reason (.format "The process is ending, so the round trip is not started (query_id {})" request.query-id))))
   (try
     (<- connection (clickhouse-connection request.url request.waits.wait))
     (try
       (try
         (.connect connection)
         (except [error OSError]
-          (return (SqlUnreachable :reason (.format "接続できない: {!r}" error)))))
+          (return (SqlUnreachable :reason (.format "Cannot connect: {!r}" error)))))
       (try
         (<- (clickhouse-post connection request.url request.body request.headers))
         (except [error OSError]
-          (<- broken (clickhouse-abandon connection request (.format "要求を送る途中で切れた: {!r}" error)))
+          (<- broken (clickhouse-abandon connection request (.format "Cut off while sending the request: {!r}" error)))
           (return broken)))
       (<- started (answer-started connection request.waits.wait))
       (if started
           (do (<- answer (clickhouse-read connection))
               answer)
           (do (<- abandoned (clickhouse-abandon connection request
-                                                (.format "待ち {} 秒の内に答えが始まらない" (! (clickhouse-seconds-text request.waits.wait)))))
+                                                (.format "The answer did not start within the {}-second wait" (! (clickhouse-seconds-text request.waits.wait)))))
               abandoned))
       (finally (.close connection)))
     (finally (.leave ROUND-TRIPS request done))))
@@ -519,26 +519,26 @@
 (defk clickhouse-exit-kill [request grace]
   {:pre [(: request ClickHouseRequest) (: grace float)] :post [(: % (| ClickHouseResponse SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "process の終わりの読み終え(頭の註)で、自ら終わらなかった往復の問い合わせを KILL QUERY で止めるため(取り消しの答えは往復の thread が
-   元の接続で読む)。"
+  "In settling at the end of the process (header comment), to stop with KILL QUERY the query of a round trip that did not end by itself (the round-trip thread reads the cancellation answer
+   on the original connection)."
   (<- kill (clickhouse-kill-request request))
   (<- answer (clickhouse-kill kill grace))
   answer)
 
 
-(deff submit-exit-kill [request grace]  ; defk にできない: process の終わり(atexit・信号の受け手)に VM の外から呼ぶ入口の部品
+(deff submit-exit-kill [request grace]  ; cannot be a defk: a part of the entry point called from outside the VM at process end (atexit, signal receiver)
   {:pre [(: request ClickHouseRequest) (: grace float)] :post [(: % Future)]
    :tags {:context "sql" :role "foundation"}}
-  "process の終わりの読み終えで、往復 1 つの KILL QUERY を CLICKHOUSE-THREADS の thread で撃ち、他の往復の KILL と並べるため。"
+  "In settling at the end of the process, to fire the KILL QUERY of one round trip on a thread of CLICKHOUSE-THREADS and run it in parallel with the KILLs of other round trips."
   (.submit CLICKHOUSE-THREADS (fn [] (run-detached (clickhouse-exit-kill request grace)))))
 
 
-(deff settle-round-trips [settle-seconds grace]  ; defk にできない: process の終わり(atexit・信号の受け手)に VM の外から呼ぶ入口
+(deff settle-round-trips [settle-seconds grace]  ; cannot be a defk: the entry point called from outside the VM at process end (atexit, signal receiver)
   {:pre [(: settle-seconds float) (: grace float)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "process が終わる前に、走っている往復を読み終えるため(頭の註): 後の往復を断り、settle-seconds の間 往復が自ら終わるのを待ち、残った往復へ
-   KILL QUERY を撃ち(1 本に最長 grace 秒・別々の thread で並べて)、取り消しの答えを往復の thread が読み終えるのを KILL から grace 秒の
-   後まで待つ。答え = それでも読み終えなかった往復の要求(process はそれを置いて終わる)。全体は最長 settle-seconds + 2 × grace 秒。"
+  "To settle running round trips before the process ends (header comment): refuse later round trips, wait settle-seconds for round trips to end by themselves, fire
+   KILL QUERY at the remaining ones (up to grace seconds each -- in parallel on separate threads), and wait until grace seconds after the KILL for the round-trip threads to finish reading the cancellation answers.
+   Answer = the requests of round trips that still could not be settled (the process ends leaving them behind). The total is at most settle-seconds + 2 x grace seconds."
   (setv started (time.monotonic))
   (setv running (.close ROUND-TRIPS))
   (for [#(_ done) running]
@@ -552,28 +552,28 @@
   (tuple (gfor #(request done) stuck :if (not (.is-set done)) request)))
 
 
-(deff settle-at-exit []  ; defk にできない: Python の終わり(atexit)が呼ぶ素の callback
+(deff settle-at-exit []  ; cannot be a defk: a plain callback called by Python's exit (atexit)
   {:pre [] :post [(: % "None")]
    :tags {:context "sql" :role "foundation"}}
-  "Program が終わって Python が終わる時に、走っている往復を読み終えるため(頭の註・daemon の往復の thread は待たれずに消える)。"
+  "To settle running round trips when the Program ends and Python ends (header comment -- daemon round-trip threads vanish without being waited for)."
   (settle-round-trips EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS)
   None)
 
 
 (defclass SettleThenTerminate []
-  "既定のまま(受け手の無い)の SIGTERM で終わる process が、走っている往復を読み終えてから同じ SIGTERM で終わるための受け手(頭の註)。
-   受け手を据えた process(os-signal-stop-handler など)は受け手を置き換えるので、これは働かない(その時は atexit が読み終える)。資源の係
-   なので値の型ではない。"
+  "A receiver for a process that ends on the default (receiverless) SIGTERM, to settle running round trips and then end with the same SIGTERM (header comment).
+   A process with a receiver installed (os-signal-stop-handler etc.) replaces the receiver, so this does not work (then atexit settles). It is a resource keeper,
+   so it is not a value type."
 
-  (deff __init__ [self]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self SettleThenTerminate)] :post [(: % "None")]}
-    "まだ信号を受けていない印で始めるため。"
+    "To start with the marker that no signal has been received yet."
     (setv self.received False))
 
-  (deff receive [self number frame]  ; defk にできない: Python の信号の受け手(main の thread の素の callback)
+  (deff receive [self number frame]  ; cannot be a defk: Python's signal receiver (a plain callback on the main thread)
     {:pre [(: self SettleThenTerminate) (: number int) (: frame (| types.FrameType None))] :post [(: % "None")]}
-    "SIGTERM を受けたら往復を読み終え、既定の受け手に戻して同じ信号で終わるため(読み終えの間に届いた 2 つ目の SIGTERM は読み終えを
-     待たせるだけで、先に終わらせない)。"
+    "On receiving SIGTERM, to settle round trips, return to the default receiver, and end with the same signal (a second SIGTERM that arrives during settling only
+     makes settling wait, and does not end it earlier)."
     (when (not self.received)
       (setv self.received True)
       (settle-round-trips EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS)
@@ -582,11 +582,11 @@
     None))
 
 
-(deff install-exit-settle []  ; defk にできない: module を読む時に 1 度だけ Python の終わりと信号の受け手を据える入口
+(deff install-exit-settle []  ; cannot be a defk: the entry point that installs Python's exit hook and the signal receiver just once when the module is loaded
   {:pre [] :post [(: % "None")]
    :tags {:context "sql" :role "foundation"}}
-  "process の終わりの 2 つの道(Python の終わり・既定のままの SIGTERM)で、走っている往復を読み終えるため(頭の註)。SIGTERM の受け手は、
-   信号を据えられる main の thread で、受け手がまだ既定のままの時だけ据える(据えた受け手を持つ process の振る舞いは変えない)。"
+  "To settle running round trips on the two paths at the end of the process (Python's exit and the default SIGTERM) (header comment). The SIGTERM receiver is installed only in
+   the main thread, where signals can be installed, and only when the receiver is still the default (the behavior of a process holding an installed receiver is not changed)."
   (atexit.register settle-at-exit)
   (when (and (is (threading.current-thread) (threading.main-thread)) (= (signal.getsignal signal.SIGTERM) signal.SIG-DFL))
     (signal.signal signal.SIGTERM (. (SettleThenTerminate) receive)))
@@ -599,7 +599,7 @@
 (defk clickhouse-answer [request insert]
   {:pre [(: request ClickHouseRequest) (: insert bool)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "要求を送り、答えを SqlRows か失敗の値にするため(insert = 投入 — 行を読まず written_rows を数える)。"
+  "To send a request and turn the answer into SqlRows or a failure value (insert = an insert -- it does not read rows but counts written_rows)."
   (<- response (clickhouse-send request))
   (match response
     (SqlUnreachable) (return response)
@@ -615,7 +615,7 @@
 (defk clickhouse-ensure-tables [database tables]
   {:pre [(: database ClickHouseDatabase) (: tables tuple)] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "表の宣言を DDL に描いて順に流すため(最初の失敗で止める)。"
+  "To render table declarations into DDL and run them in order (stop at the first failure)."
   (<- statements (clickhouse-schema-statements tables))
   (when (isinstance statements SqlFailed)
     (return statements))
@@ -630,14 +630,14 @@
 (defk off-scheduler [program]
   {:pre [(: program Program)] :post [(: % (| SqlRows SqlFailed SqlUnreachable SqlSchemaApplied))]
    :tags {:context "sql" :role "foundation"}}
-  "HTTP の往復を持つ Program を scheduler の thread の外(CLICKHOUSE-THREADS の新しい VM)で値にし、撃った task だけが待つため(頭の註)。"
+  "To turn a Program that has HTTP round trips into a value outside the scheduler's thread (a new VM of CLICKHOUSE-THREADS), with only the task that fired waiting (header comment)."
   (<- answer (offloaded CLICKHOUSE-THREADS (fn [] (run-detached program)) keep-nothing))
   answer)
 
 
 (defhandler clickhouse-http-sql-handler [#^ (get tuple #(ClickHouseDatabase ...)) databases]
-  ;; 引数に残す理由: database の宣言(URL と資格)は組み立ての側が渡す値で、答える database の名で PostgreSQL の答え手と同じ組に並べ分ける。
-  "本物の ClickHouse の答え手(頭の註)。databases = ClickHouseDatabase の tuple(宣言した名にだけ答え、他の名は外側へ回す)。"
+  ;; Why it stays an argument: the database declarations (URL and credentials) are values passed by the assembling side, and are sorted into the same set as the PostgreSQL answerer by the name of the database answered.
+  "The real ClickHouse answerer (header comment). databases = a tuple of ClickHouseDatabase (answers only declared names, and passes other names outside)."
   {:tags {:context "sql" :role "foundation"}}
   (SqlQuery [database statement params] :when (any (gfor d databases (= d.name database)))
     (val declared (next (gfor d databases :if (= d.name database) d)))

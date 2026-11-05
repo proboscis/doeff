@@ -1,11 +1,11 @@
-;;; 接続の上の prepared statement の名の持ち主は doeff 1 つ: 束ねた transaction の
-;;; 文は postgres-flush が doeff_pq_N の名で用意して接続ごとの PreparedBook に覚え、psycopg の自動の prepare は止めてある。psycopg に名を
-;;; 持たせると、cursor の道で同じ文を 6 回目から _pg3_N として用意し、その後の ROLLBACK で自分の覚えを捨てて DEALLOCATE ALL を送り、
-;;; doeff_pq_N も消す — PreparedBook は知らないので、その接続の次の束ねた往復は 26000 で落ち続けた(merge-queue-ledger の put-row の 500)。
-;;;   - 使い捨ての PostgreSQL(postgres_support/disposable_postgres.py)へ、貸し出しの上限 1 本で繋ぐ(どの借りも同じ接続)。
-;;;   - 2 つの PostgreSQL の答え手(postgres-sql-handler・pooled-postgres-sql-handler)の両方で、本番の経路を撃つ: 束ねた transaction で名を
-;;;     用意する → cursor の道で同じ文を psycopg の既定の閾値(5 回)を越えて流す → 束ねない transaction が文の上限(57014)で落ちて ROLLBACK → 束ねた
-;;;     transaction をもう一度。
+;;; The owner of prepared statement names on a connection is doeff alone: postgres-flush prepares the statements of a batched transaction
+;;; under the names doeff_pq_N and remembers them in a per-connection PreparedBook, and psycopg's automatic prepare is turned off. If psycopg holds names
+;;; itself, on the cursor path it prepares the same statement as _pg3_N from the 6th time, and the following ROLLBACK discards its own memory and sends DEALLOCATE ALL,
+;;; which also deletes doeff_pq_N -- PreparedBook does not know, so that connection's next batched round trip kept failing with 26000 (the 500 of put-row in merge-queue-ledger).
+;;;   - Connect to a disposable PostgreSQL (postgres_support/disposable_postgres.py) with a lease limit of 1 (every borrow is the same connection).
+;;;   - With both PostgreSQL handlers (postgres-sql-handler and pooled-postgres-sql-handler), fire the production path: prepare the names in a batched transaction
+;;;     -> run the same statement on the cursor path more than psycopg's default threshold (5 times) -> an unbatched transaction fails on the statement limit (57014) and ROLLBACKs -> the batched
+;;;     transaction once more.
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_core_effects [state])
@@ -17,7 +17,7 @@
 (val DB "store")
 (val POSTGRES-DSN (session-dsn "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val POSTGRES-SKIP-REASON (session-postgres-skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN"))
-;; psycopg の既定の prepare_threshold(5)を越える回数。
+;; A count exceeding psycopg's default prepare_threshold (5).
 (val CURSOR-REPEATS 8)
 
 (val NAMED (SqlTable :name "named_rows"
@@ -28,7 +28,7 @@
 (defk counted []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "表の行の数を読むため(束ねた transaction でも cursor の道でも同じ文)。"
+  "To read the number of rows of a table (the same statement in a batched transaction and on the cursor path)."
   (<- answer (SqlQuery DB "SELECT count(*) FROM named_rows WHERE id >= :floor" #((SqlParam :name "floor" :value 0))))
   (assert (isinstance answer SqlRows) answer)
   (get answer.rows 0 0))
@@ -37,16 +37,16 @@
 (defk timed-out []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "文の上限(statement_timeout)で落ちる program(本番の刈りの文の上限切れと同じ 57014 — transaction は ROLLBACK される)。"
+  "A program that fails on the statement limit (statement_timeout) (57014, the same as the production pruning statement hitting its limit -- the transaction is ROLLBACKed)."
   (<- (SqlQuery DB "SET LOCAL statement_timeout = '50ms'" #()))
   (<- (SqlQuery DB "SELECT pg_sleep(1)" #()))
-  "来ない")
+  "never reached")
 
 
 (defk prepared-names []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "今の接続(上限 1 本 — 同じ接続)の server の上の prepared statement の名を、名の順に読むため。"
+  "To read, sorted by name, the prepared statement names on the server for the current connection (limit 1 -- the same connection)."
   (<- answer (SqlQuery DB "SELECT name FROM pg_prepared_statements ORDER BY name" #()))
   (tuple (gfor row answer.rows (get row 0))))
 
@@ -54,7 +54,7 @@
 (defk rolled-back-path []
   {:pre [] :post [(: % dict)]
    :tags {:context "sql" :role "program"}}
-  "本番の経路(頭の註)を撃ち、束ねた transaction の答えと server の上の名を集めるため。"
+  "To fire the production path (header comment) and collect the batched transaction's answers and the names on the server."
   (<- (SqlEnsureTables DB #(NAMED)))
   (<- (SqlQuery DB "DELETE FROM named_rows" #()))
   (<- first (SqlTransaction DB (counted) None True))
@@ -70,21 +70,21 @@
 (defk asserted-rolled-back-path [seen]
   {:pre [(: seen dict)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "rolled-back-path の答えを、名の持ち主の決まりに照らすため。"
+  "To check the answers of rolled-back-path against the rules of name ownership."
   (assert (= (get seen "first") 0) seen)
   (assert (and (isinstance (get seen "failed") SqlFailed) (= (. (get seen "failed") sqlstate) "57014")) seen)
-  ;; server の上の名は doeff の名だけ(psycopg は cursor の道で何度流しても名を付けない)。ROLLBACK の後も消えない。
+  ;; The names on the server are doeff's only (psycopg assigns no name on the cursor path however many times it runs). They do not disappear after ROLLBACK.
   (assert (all (gfor name (get seen "before") (.startswith name "doeff_pq_"))) seen)
   (assert (get seen "before") seen)
   (assert (= (get seen "after") (get seen "before")) seen)
-  ;; ROLLBACK の後の束ねた往復も、覚えた名で通る(26000 で落ちない)。
+  ;; The batched round trip after ROLLBACK also goes through with the remembered names (it does not fail with 26000).
   (assert (= (get seen "again") 0) seen)
   None)
 
 
 (deftest test-postgres-rollback-keeps-doeff-prepared-names
   {:skip-if (bool POSTGRES-SKIP-REASON) :skip-reason POSTGRES-SKIP-REASON}
-  ;; 2 つの PostgreSQL の答え手とも、cursor の道の ROLLBACK が doeff の名を消さず、次の束ねた transaction が通る。
+  ;; With both PostgreSQL handlers, the cursor path's ROLLBACK does not delete doeff's names, and the next batched transaction goes through.
   (val pool (ThreadPoolExecutor :max-workers 2))
   (try
     (val plain (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))

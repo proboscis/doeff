@@ -1,8 +1,8 @@
-;;; 乱数の検。契約(本物 os-random-handler と fake seeded-random-handler が同じ deftest を通る)と、fake だけの性質。
-;;; 解釈器の組み立ては random_contract_handlers.hy。
+;;; Random tests. The contract (the real os-random-handler and the fake seeded-random-handler pass the same deftest) and fake-only properties.
+;;; The interpreter assembly is in random_contract_handlers.hy.
 ;;;
-;;;   契約  RandomBytes の答えは長さ count の bytes で、続けた 2 回の呼びは違う値(本物は確率 2^-128 で一致しうるが無視できる)
-;;;   fake  同じ種・同じ呼びの順なら run をまたいで同じ値、違う種なら違う値(模擬の名乗りが毎回同じになる)
+;;;   contract  The answer of RandomBytes is bytes of length count, and two consecutive calls give different values (the real one can coincide with probability 2^-128, which is negligible)
+;;;   fake      Same seed and same call order give the same values across runs; a different seed gives different values (so simulated identities are the same every time)
 (require doeff-hy.macros [deftest defk <-])
 (import doeff [run with_handlers])
 (import doeff_core_effects [state])
@@ -17,14 +17,14 @@
   (<- empty bytes (RandomBytes 0))
   (<- long bytes (RandomBytes 100))
   (assert (= (len first) 16) first)
-  (assert (!= first second) (.format "続けた 2 回が同じ値 {!r}" first))
+  (assert (!= first second) (.format "two consecutive calls gave the same value {!r}" first))
   (assert (= empty b"") empty)
   (assert (= (len long) 100) long))
 
 
 (defk first-draw-of [seed]
   {:pre [(: seed int)] :post [(: % bytes)] :tags {:context "random-test" :role "foundation"}}
-  "種 seed の fake の答え手で新しい run を回し、1 回目の答えを得るため(run をまたいだ再現を見る)。"
+  "To run a new run with the fake handler of seed `seed` and obtain the first answer (to look at reproduction across runs)."
   (run (with_handlers [(state) (seeded-random-handler seed)] (RandomBytes 4))))
 
 
@@ -32,5 +32,5 @@
   (<- same-a bytes (first-draw-of 7))
   (<- same-b bytes (first-draw-of 7))
   (<- other bytes (first-draw-of 8))
-  (assert (= same-a same-b) "同じ種の 1 回目が run ごとに違う")
-  (assert (!= same-a other) "違う種の 1 回目が同じ"))
+  (assert (= same-a same-b) "the first answer for the same seed differs per run")
+  (assert (!= same-a other) "the first answer for a different seed is the same"))

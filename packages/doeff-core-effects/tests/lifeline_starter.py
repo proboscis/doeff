@@ -1,12 +1,12 @@
-"""StartProcess の「起こした process が終わったら、その子も終わる」の検で、起こす側になる小さな script。
+"""A small script that plays the starter side in the StartProcess test of "when the started process ends, its child ends too".
 
-本物の答え手(subprocess-handler)で子を 1 つ StartProcess し(process-group True — 新しい session)、子の pid を out-path へ 1 行で書く。
-  * mode = hold: 書いた後は終わらずに待つ — 検が外から SIGKILL する(起こした側が片づけを走らせずに死ぬ形)
-  * mode = exit: 書いた後に StopProcess を呼ばず普通に終わる
-  * mode = outlive: 子を「起こした側より長く生きる」(ChildLifetime.OUTLIVES-STARTER)で起こし、書いた後に普通に終わる
-子の命令は child-out が "-" なら `sleep 600`、そうでなければこの script 自身を mode hold・out-path = child-out で起こす(子が更に別の
-session の孫を起こす形)。
-使い方: python lifeline_starter.py <mode> <out-path> <child-out>
+Starts one child with StartProcess using the real handler (subprocess-handler) (process-group True -- a new session), and writes the child's pid on one line to out-path.
+  * mode = hold: after writing, keeps waiting without ending -- the test SIGKILLs it from outside (the starter dies without running cleanup)
+  * mode = exit: after writing, ends normally without calling StopProcess
+  * mode = outlive: starts the child to "outlive the starter" (ChildLifetime.OUTLIVES-STARTER) and, after writing, ends normally
+The child's command is `sleep 600` if child-out is "-"; otherwise it starts this script itself with mode hold and out-path = child-out (the child in turn starts a grandchild in yet another
+session).
+Usage: python lifeline_starter.py <mode> <out-path> <child-out>
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import signal
 import sys
 
-import hy  # noqa: F401  - doeff_core_effects の Hy の module を読むため
+import hy  # noqa: F401  - to load the Hy modules of doeff_core_effects
 from doeff_core_effects import (
     ChildLifetime,
     ProcessStarted,
@@ -27,14 +27,14 @@ from doeff import run, with_handlers
 
 
 def child_argv(child_out: str) -> tuple[str, ...]:
-    """起こす子の命令 — child-out が "-" なら眠るだけの子、そうでなければ孫を起こす子(この script の hold)。"""
+    """The command of the child to start -- a child that only sleeps if child-out is "-", otherwise a child that starts a grandchild (this script's hold)."""
     if child_out == "-":
         return ("sleep", "600")
     return (sys.executable, __file__, "hold", child_out, "-")
 
 
 def start_of(mode: str, child_out: str) -> StartProcess:
-    """起こす頼み — 既定(lifetime を書かない)= 起こした側と一緒に終わる。outlive だけが OUTLIVES-STARTER を書く。"""
+    """The start request -- default (no lifetime written) = ends together with the starter. Only outlive writes OUTLIVES-STARTER."""
     match mode:
         case "outlive":
             return StartProcess(
@@ -45,13 +45,13 @@ def start_of(mode: str, child_out: str) -> StartProcess:
         case "hold" | "exit":
             return StartProcess(argv=child_argv(child_out), process_group=True)
         case _:
-            raise SystemExit(f"知らない mode: {mode}")
+            raise SystemExit(f"unknown mode: {mode}")
 
 
 def main(mode: str, out_path: str, child_out: str) -> None:
     started = run(scheduled(with_handlers([subprocess_handler], start_of(mode, child_out))))
     if not isinstance(started, ProcessStarted):
-        raise SystemExit(f"子を起こせなかった: {started}")
+        raise SystemExit(f"could not start the child: {started}")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(f"{started.pid}\n")
     if mode == "hold":

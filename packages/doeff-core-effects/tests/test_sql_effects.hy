@@ -1,17 +1,17 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の検。
-;;;   - I/O なしの答え手(sqlite-sql-handler)に、effect の約束を全部撃つ: 引数の書き換えと値の正規化・失敗の 2 型(SqlFailed の SQLSTATE の類・
-;;;     SqlUnreachable)・transaction の約束 3 つ(最初の失敗で rollback して再開しない・禁じた effect と入れ子を断る・例外で rollback)・
-;;;     DDL の宣言・宣言していない database を外側へ回す。
-;;;   - 本物の答え手(postgres-sql-handler・clickhouse-http-sql-handler)は、方言の書き換えと答えの写しを純関数で撃つ。実 DB の結合の検は
-;;;     DSN / URL の環境変数(DOEFF_SQL_TEST_POSTGRES_DSN・DOEFF_SQL_TEST_CLICKHOUSE_URL)が無ければ skip する。
-;;;   - scheduler を塞がない答え手(pooled-postgres-sql-handler — #880 U2)は実 PG で: 同じ筋書きの答え・遅い問い合わせの横で別の task が進む・
-;;;     transaction の錠の番号が旧い書き方の hashtext と同じ・取り消しで rollback して接続と許可を返す。
-;;;   - postgres-sql-handler も scheduler を塞がない(#1215)ことを実 PG で: 遅い問い合わせの横で別の task が進む・同じ lock-key の transaction
-;;;     だけが直列で、違う鍵は並ぶ。
-;;;   - 往復のまとめ(SqlBatch — #3605): BEGIN と錠は最初の文と同じ往復・合図と commit の束は COMMIT と同じ往復・SQL を出さない program は
-;;;     往復 0(偽の答え手で数える)。束の途中の文が落ちたら後ろは流れず ROLLBACK・commit の束の後の SQL は断る・transaction の外の束は断る
-;;;     (sqlite と実 PG)。pipeline の中で文が落ちた接続を、次の transaction が同じ接続のまま使える(pooled)。pipeline mode の無い環境では
-;;;     接続の貸し出しを作る所で落ちる。
+;;; Tests for the generic SQL effects (sql_effects.hy).
+;;;   - Fire every effect contract at the I/O-free handler (sqlite-sql-handler): argument rewriting and value normalization; the two failure types (SqlFailed with SQLSTATE classes,
+;;;     SqlUnreachable); the three transaction contracts (roll back at the first failure and do not resume; refuse forbidden effects and nesting; roll back on exception);
+;;;     DDL declaration; passing undeclared databases to the outside.
+;;;   - For the real handlers (postgres-sql-handler, clickhouse-http-sql-handler), fire dialect rewriting and answer mapping with pure functions. Integration tests against a real DB
+;;;     are skipped unless the DSN / URL environment variables (DOEFF_SQL_TEST_POSTGRES_DSN, DOEFF_SQL_TEST_CLICKHOUSE_URL) are set.
+;;;   - The handler that does not block the scheduler (pooled-postgres-sql-handler -- #880 U2), on a real PG: the same scenario gives the same answers; another task makes progress next to a slow query;
+;;;     the transaction lock number is the same as the old hashtext way of writing it; cancellation rolls back and returns the connection and the permit.
+;;;   - On a real PG, postgres-sql-handler also does not block the scheduler (#1215): another task makes progress next to a slow query; only transactions with the same lock-key
+;;;     are serialized, and different keys run side by side.
+;;;   - Round-trip batching (SqlBatch -- #3605): BEGIN and the lock take the same round trip as the first statement; the signal and the commit bundle take the same round trip as COMMIT; a program that issues no SQL takes
+;;;     0 round trips (counted with a fake handler). If a statement in the middle of a bundle fails, the rest are not sent and ROLLBACK runs; SQL after a commit bundle is refused; a bundle outside a transaction is refused
+;;;     (sqlite and real PG). The next transaction can keep using the same connection after a statement failed inside the pipeline (pooled). In an environment without pipeline mode,
+;;;     it fails at the point where the connection lease is created.
 (require doeff-hy.macros [deftest defk deff <- val var with-handler])
 (require doeff-hy.record [defrecord])
 (import os)
@@ -49,22 +49,22 @@
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 (import pytest)
 
-;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
-;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+;; The waits in this file are about real time (which waits count is listed in this file's row of the roster tests/realtime_tests.toml) -- the rule on sleeps in tests (DOEFF211 of doeff-linter)
+;; is not applied to sleeps inside a file that declares itself realtime.
 (val pytestmark pytest.mark.realtime)
 
 (val DB "store")
 (val POSTGRES-DSN (session-dsn "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val CLICKHOUSE-URL (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_URL"))
-;; 実 PG の検の skip(DSN か psycopg が無い)。DSN は env が無ければ conftest が立てた使い捨ての PostgreSQL の物
-;; (postgres_support/disposable_postgres.py)。立てられなかった時は、その理由を名指す。
+;; Skip for the real-PG tests (no DSN or no psycopg). Unless the env var is set, the DSN is the throwaway PostgreSQL that conftest started
+;; (postgres_support/disposable_postgres.py). If it could not be started, the reason is named.
 (val POSTGRES-SKIP-REASON (session-postgres-skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val POOLED-SKIP-REASON (cond POSTGRES-SKIP-REASON POSTGRES-SKIP-REASON
-                              (is (importlib.util.find-spec "psycopg") None) "psycopg が無い(uv run --with psycopg で足す)"
+                              (is (importlib.util.find-spec "psycopg") None) "psycopg is missing (add it with uv run --with psycopg)"
                               True ""))
 (val POOLED-SKIP (bool POOLED-SKIP-REASON))
 
-;; 検の表: 主鍵つきの行の表と、一意の索引を持つ表。
+;; Test tables: a table of rows with a primary key, and a table with a unique index.
 (val ITEMS (SqlTable :name "items"
                      :columns #((SqlColumn :name "id" :type SqlColumnType.INTEGER) (SqlColumn :name "label" :type SqlColumnType.TEXT)
                                 (SqlColumn :name "weight" :type SqlColumnType.FLOAT :nullable True)
@@ -78,7 +78,7 @@
 (defk seeded [database]
   {:pre [(: database str)] :post [(: % SqlSchemaApplied)]
    :tags {:context "sql" :role "program"}}
-  "検の表を宣言して用意するため。"
+  "To declare and prepare the test table."
   (<- applied (SqlEnsureTables database #(ITEMS)))
   applied)
 
@@ -86,22 +86,22 @@
 (defk count-items [database]
   {:pre [(: database str)] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "items の行の数を読むため。"
+  "To read the number of rows in items."
   (<- answer SqlRows (SqlQuery database "SELECT count(*) FROM items" #()))
   (val counted (get answer.rows 0 0))
   (assert (isinstance counted int) counted)
   counted)
 
 
-;; --- 引数の書き換えと値の正規化 --------------------------------------------------------------------------------------------------
+;; --- Argument rewriting and value normalization --------------------------------------------------------------------------------------------------
 
 (defk round-trip [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "閉じた集合の値を全部書いて読み戻す筋書き(sqlite と本物の PostgreSQL で同じ答えになる)。"
+  "A scenario that writes every value of the closed set and reads it back (sqlite and real PostgreSQL give the same answer)."
   (<- (seeded database))
   (<- inserted (SqlInsertRows database "items" #("id" "label" "weight" "blob" "flag" "doc")
-                              #(#(1 "一" 1.5 b"\x00\xff" True "{\"a\": 1}") #(2 "二" None None False None))))
+                              #(#(1 "one" 1.5 b"\x00\xff" True "{\"a\": 1}") #(2 "two" None None False None))))
   (<- one (SqlQuery database "INSERT INTO items (id, label) VALUES (:id, :label)" #((SqlParam :name "id" :value 3) (SqlParam :name "label" :value "a:b"))))
   (<- read (SqlQuery database
                      "SELECT id, label, weight, blob, flag, doc, ':id' FROM items WHERE id >= :low AND label <> ':low' -- :ignored
@@ -117,8 +117,8 @@
   (val read (get answers 2))
   (assert (= inserted (SqlRows :rows #() :rowcount 2)) inserted)
   (assert (= one (SqlRows :rows #() :rowcount 1)) one)
-  ;; literal と注釈の中の `:name` は引数でない・BOOLEAN は bool・BYTES は bytes・JSON は text。
-  (assert (= read.rows #(#(1 "一" 1.5 b"\x00\xff" True "{\"a\": 1}" ":id") #(2 "二" None None False None ":id") #(3 "a:b" None None None None ":id")))
+  ;; `:name` inside a literal or a comment is not an argument; BOOLEAN is bool, BYTES is bytes, JSON is text.
+  (assert (= read.rows #(#(1 "one" 1.5 b"\x00\xff" True "{\"a\": 1}" ":id") #(2 "two" None None False None ":id") #(3 "a:b" None None None None ":id")))
           read)
   (assert (= read.rowcount 3)))
 
@@ -130,33 +130,33 @@
                              #("SELECT :a" #((SqlParam :name "a" :value 1) (SqlParam :name "a" :value 2)))]]
     (try
       (<- (sqlite-statement statement params))
-      (assert False (.format "断られていない: {}" statement))
+      (assert False (.format "Not refused: {}" statement))
       (except [ValueError])))
   (try
     (<- (sqlite-statement "SELECT :a" #((SqlParam :name "a" :value (json.loads "[1]")))))
-    (assert False "閉じた集合の外の値が通った")
+    (assert False "A value outside the closed set got through")
     (except [TypeError]))
   (assert (= (! (normalized-value (Decimal "2"))) 2)))
 
 
 (deftest test-a-remembered-split-still-checks-each-call-and-keeps-values-in-order
-  ;; 同じ文の 2 度目は覚えた割り(同じ tuple)を使う — それでも呼びごとの params は検め、値は `?` の順に並ぶ。
+  ;; The second time for the same statement uses the remembered split (the same tuple) -- even so, params are checked on every call, and values are lined up in the order of `?`.
   (val statement "SELECT :b, :a, :b, ':a' -- :c")
   (<- first (split-statement statement))
   (<- again (split-statement statement))
-  (assert (is first again) "同じ文の 2 度目が覚えた割りを返していない")
+  (assert (is first again) "The second time for the same statement did not return the remembered split")
   (<- bound (sqlite-statement statement #((SqlParam :name "a" :value 1) (SqlParam :name "b" :value "x"))))
   (assert (= #(bound.text bound.values) #("SELECT ?, ?, ?, ':a' -- :c" #("x" 1 "x"))) bound)
   (try
     (<- (sqlite-statement statement #((SqlParam :name "a" :value 1))))
-    (assert False "覚えた文で params の欠けが通った")
+    (assert False "A missing param got through on a remembered statement")
     (except [ValueError])))
 
 
 (deftest test-split-memo-holds-at-most-its-part-limit-after-a-stream-of-value-count-statements
-  ;; 値の数だけ引数を並べる文(`IN (:k0, …)`)を値の数ごとに流しても、覚えが抱える部品(SqlText・SqlPlaceholder)は
-  ;; SPLIT-MEMO-PART-LIMIT の内に収まる(文の数だけで限った時は 4096 文 × 約 120 部品を抱えた)。
-  ;; 覚えは module の 1 つなので、流す前の中身を退けて空から流し、終わりに戻す(他の検の覚えを汚さない)。
+;; Even when statements that line up as many arguments as there are values (`IN (:k0, ...)`) are streamed for each number of values, the parts the memo holds (SqlText, SqlPlaceholder) stay
+;; within SPLIT-MEMO-PART-LIMIT (when limited only by the number of statements, it held 4096 statements x about 120 parts).
+;; The memo is one per module, so set aside its contents before streaming, stream from empty, and restore at the end (so as not to pollute the memo of other tests).
   (val saved #((dict sd.SPLIT-MEMO) (get sd.SPLIT-MEMO-PARTS 0)))
   (.clear sd.SPLIT-MEMO)
   (setv (get sd.SPLIT-MEMO-PARTS 0) 0)
@@ -165,9 +165,9 @@
     (<- first (split-statement wide))
     (<- again (split-statement wide))
     (assert (= (len first) 401) (len first))
-    (assert (= first again) "覚えない文の割りが呼びごとに違う")
-    (assert (not-in wide sd.SPLIT-MEMO) "部品が数百の文を覚えた")
-    ;; agora-records の present-cold-keys の形: cid の数 × seq の数ごとに別の文(4096 文を越え、部品の総数は 30 万を越える)。
+    (assert (= first again) "The split of a statement that is not remembered differs on each call")
+    (assert (not-in wide sd.SPLIT-MEMO) "A statement with hundreds of parts was remembered")
+    ;; The shape of present-cold-keys in agora-records: a different statement for each combination of cid count x seq count (exceeds 4096 statements, and the total number of parts exceeds 300,000).
     (val stream (lfor c (range 1 41) s (range 1 121)
                       (+ "SELECT cid, record_seq, rev FROM events WHERE cid IN (" (.join ", " (gfor i (range c) f":cid{i}"))
                          ") AND record_seq IN (" (.join ", " (gfor i (range s) f":seq{i}")) ")")))
@@ -179,7 +179,7 @@
     (assert (<= held sd.SPLIT-MEMO-PART-LIMIT) held)
     (assert (<= (len sd.SPLIT-MEMO) sd.SPLIT-MEMO-LIMIT) (len sd.SPLIT-MEMO))
     (assert (all (gfor parts (.values sd.SPLIT-MEMO) (<= (len parts) sd.SPLIT-MEMO-STATEMENT-PARTS))))
-    ;; 覚えた文の 2 度目は覚えた割りそのものを返す(上限で覚えを止めても、覚えた文の速さは落ちない)。
+    ;; The second time for a remembered statement returns the remembered split itself (even if remembering stops at the limit, the speed for remembered statements does not drop).
     (val kept (next (iter sd.SPLIT-MEMO)))
     (<- kept-again (split-statement kept))
     (assert (is kept-again (get sd.SPLIT-MEMO kept)))
@@ -190,23 +190,23 @@
 
 
 (deftest test-plain-rows-pass-through-and-other-values-are-still-normalized
-  ;; 値の型が閉じた集合そのものの行は写すだけ・それ以外の型が混じる行は今までどおり normalized-value を通る。
+;; A row whose value types are exactly the closed set is only copied; a row mixing other types goes through normalized-value as before.
   (<- plain (normalized-rows [#(1 "a" 1.5 b"x" True None)]))
   (assert (= plain #(#(1 "a" 1.5 b"x" True None))) plain)
   (<- mixed (normalized-rows [#(1 (Decimal "2.5") (bytearray b"y"))]))
   (assert (= mixed #(#(1 2.5 b"y"))) mixed)
   (try
     (<- (normalized-rows [#(1 (object))]))
-    (assert False "写す決まりの無い型が通った")
+    (assert False "A type with no copy rule got through")
     (except [TypeError])))
 
 
-;; --- 失敗の 2 型 ------------------------------------------------------------------------------------------------------------
+;; --- The two failure types ------------------------------------------------------------------------------------------------------------
 
 (defk failures [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "断り(一意の違反)・文の誤り・不達・戻った後の答えを集める筋書き。"
+  "A scenario that collects a refusal (unique violation), a statement error, unreachability, and the answer after recovery."
   (<- (seeded database))
   (<- (SqlQuery database "INSERT INTO items (id, label) VALUES (1, 'x')" #()))
   (<- duplicate (SqlQuery database "INSERT INTO items (id, label) VALUES (1, 'y')" #()))
@@ -236,7 +236,7 @@
 (defk out-of-range [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "INTEGER の範囲(64 bit)の外の整数を引数の bind と行の挿入の両方で渡す筋書き。"
+  "A scenario that passes an integer outside the INTEGER range (64 bit) both as an argument bind and as a row insert."
   (<- (seeded database))
   (<- bound (SqlQuery database "INSERT INTO items (id, label) VALUES (:id, 'x')" #((SqlParam :name "id" :value (** 2 63)))))
   (<- inserted (SqlInsertRows database "items" #("id" "label") #(#((** 2 63) "y"))))
@@ -245,15 +245,15 @@
 
 
 (deftest test-sqlite-refuses-an-out-of-range-integer-like-postgres
-  ;; 本物の PostgreSQL は bigint の範囲外を 22003(numeric_value_out_of_range)で断る。sqlite3 の bind は OverflowError(sqlite3.Error の仲間
-  ;; ではない)を出すので、答え手が値にしないと呼び手の Program へ例外が抜け、模擬と本物の答えが食い違う。
+;; Real PostgreSQL refuses values outside the bigint range with 22003 (numeric_value_out_of_range). The sqlite3 bind raises OverflowError (not a kind of sqlite3.Error),
+;; so unless the handler turns it into a value, the exception escapes into the caller's Program, and the mock and the real answers diverge.
   (<- answers (with-handler [(state) (sqlite-sql-handler #(DB))] (out-of-range DB)))
   (val bound (get answers 0))
   (val inserted (get answers 1))
   (val after (get answers 2))
   (assert (and (isinstance bound SqlFailed) (= bound.sqlstate "22003")) bound)
   (assert (and (isinstance inserted SqlFailed) (= inserted.sqlstate "22003")) inserted)
-  ;; 断った後も接続は使える(行は 1 つも入っていない)。
+  ;; The connection is usable even after the refusal (no row was inserted).
   (assert (= after (SqlRows :rows #(#(0)) :rowcount 1)) after))
 
 
@@ -265,40 +265,40 @@
   (assert (isinstance (! (sqlite-failure #("ProgrammingError" "DatabaseError") "Cannot operate on a closed database.")) SqlUnreachable)))
 
 
-;; --- transaction の約束 ---------------------------------------------------------------------------------------------------
+;; --- The transaction contracts ---------------------------------------------------------------------------------------------------
 
 (defk insert-two [database log]
   {:pre [(: database str) (: log list)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で 2 行を入れる program(log に進み具合を残す)。"
+  "A program that inserts 2 rows inside a transaction (leaves its progress in log)."
   (<- (SqlQuery database "INSERT INTO items (id, label) VALUES (10, 'a')" #()))
-  (.append log "一行目")
+  (.append log "first row")
   (<- (SqlInsertRows database "items" #("id" "label") #(#(11 "b"))))
-  (.append log "二行目")
-  "入れた")
+  (.append log "second row")
+  "inserted")
 
 
 (defk fail-second [database log]
   {:pre [(: database str) (: log list)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "1 行目を入れた後に一意の違反を起こす program。例外を広く捕まえても、失敗の後は再開されないことを見る。"
+  "A program that causes a unique violation after inserting the first row. Checks that even when exceptions are caught broadly, it is not resumed after the failure."
   (<- (SqlQuery database "INSERT INTO items (id, label) VALUES (20, 'c')" #()))
-  (.append log "一行目")
+  (.append log "first row")
   (try
     (<- (SqlQuery database "INSERT INTO items (id, label) VALUES (20, 'd')" #()))
-    (.append log "失敗の後に再開された")
+    (.append log "resumed after the failure")
     (except [Exception]
-      (.append log "失敗が例外で投げ込まれた")))
-  "ここへは来ない")
+      (.append log "the failure was thrown in as an exception")))
+  "never reached")
 
 
 (defk misuse [database program]
   {:pre [(: database str) (: program Program)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction が SqlTransactionMisuse で断られることを、断りの文にして返す筋書き。"
+  "A scenario that turns the refusal of a transaction with SqlTransactionMisuse into a refusal message and returns it."
   (try
     (<- (SqlTransaction database program None))
-    "断られていない"
+    "not refused"
     (except [error SqlTransactionMisuse]
       (str error))))
 
@@ -306,41 +306,41 @@
 (defk ask-state []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で禁じた effect(状態の Get)を出す program。"
+  "A program that emits a forbidden effect (state Get) inside a transaction."
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (30, 'e')" #()))
   (<- (Get "key"))
-  "来ない")
+  "never reached")
 
 
 (defk nested []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で入れ子の transaction を出す program。"
+  "A program that emits a nested transaction inside a transaction."
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (31, 'f')" #()))
   (<- (SqlTransaction DB (count-items DB) None))
-  "来ない")
+  "never reached")
 
 
 (defk other-database []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で別の database へ問い合わせる program。"
+  "A program that queries a different database inside a transaction."
   (<- (SqlQuery "other" "SELECT 1" #()))
-  "来ない")
+  "never reached")
 
 
 (defk raising []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "1 行を入れた後に例外を投げる program。"
+  "A program that raises an exception after inserting 1 row."
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (40, 'g')" #()))
-  (raise (RuntimeError "program の誤り")))
+  (raise (RuntimeError "program error")))
 
 
 (defk transactions [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "transaction の約束 3 つを順に撃つ筋書き。"
+  "A scenario that fires the three transaction contracts in order."
   (<- (seeded database))
   (val committed-log [])
   (<- committed (SqlTransaction database (insert-two database committed-log) "lock-a"))
@@ -375,27 +375,27 @@
   (val after-misuse (get answers 9))
   (val raised (get answers 10))
   (val after-raise (get answers 11))
-  ;; commit した program の答えがそのまま返り、2 行が残る。
-  (assert (= #(committed committed-log after-commit) #("入れた" #("一行目" "二行目") 2)))
-  ;; (1) 最初の失敗で rollback し、program を再開しない(例外を投げ込まない — 広く捕まえる program でも続かない)。
+  ;; The answer of the committed program is returned as is, and the 2 rows remain.
+  (assert (= #(committed committed-log after-commit) #("inserted" #("first row" "second row") 2)))
+  ;; (1) Roll back at the first failure and do not resume the program (no exception is thrown in -- it does not continue even for a program that catches broadly).
   (assert (and (isinstance failed SqlFailed) (= failed.sqlstate "23000")) failed)
-  (assert (= failed-log #("一行目")) failed-log)
+  (assert (= failed-log #("first row")) failed-log)
   (assert (= after-failure 2) after-failure)
-  ;; (2) 禁じた effect・入れ子・別の database は断られ、rollback される。
+  ;; (2) Forbidden effects, nesting and a different database are refused, and rolled back.
   (assert (in "Get" refused-state) refused-state)
   (assert (in "SqlTransaction" refused-nested) refused-nested)
   (assert (in "other" refused-other) refused-other)
   (assert (= after-misuse 2) after-misuse)
-  ;; (3) program の例外は rollback して通す。
-  (assert (= #(raised after-raise) #("program の誤り" 2))))
+  ;; (3) An exception of the program is passed through after rolling back.
+  (assert (= #(raised after-raise) #("program error" 2))))
 
 
-;; --- DDL の宣言と database の分け方 -------------------------------------------------------------------------------------------
+;; --- DDL declaration and how databases are divided -------------------------------------------------------------------------------------------
 
 (defk declared-twice []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "同じ宣言を 2 度流し(在れば何もしない)、一意の索引が効くことを見る筋書き。"
+  "A scenario that runs the same declaration twice (does nothing if it already exists) and checks that the unique index is effective."
   (<- first (seeded DB))
   (<- second (seeded DB))
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (1, 'same')" #()))
@@ -419,7 +419,7 @@
 (defk two-databases []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "2 つの database に同じ表を用意し、片方にだけ書く筋書き。"
+  "A scenario that prepares the same table in 2 databases and writes to only one."
   (<- (seeded "hot"))
   (<- (seeded "cold"))
   (<- (SqlQuery "hot" "INSERT INTO items (id, label) VALUES (1, 'x')" #()))
@@ -427,12 +427,12 @@
 
 
 (deftest test-each-handler-answers-only-its-declared-databases
-  ;; 内側の答え手は hot だけに答え、cold は外側の答え手へ回る(本物の PostgreSQL と ClickHouse を同じ組に並べる形)。
+  ;; The inner handler answers only hot, and cold is passed to the outer handler (the form that lines up real PostgreSQL and ClickHouse in the same set).
   (<- counts (with-handler [(state) (sqlite-sql-handler #("cold")) (sqlite-sql-handler #("hot"))] (two-databases)))
   (assert (= counts #(1 0)) counts))
 
 
-;; --- 本物の答え手の書き換えと写し(純関数) ----------------------------------------------------------------------------------
+;; --- Rewriting and answer mapping of the real handlers (pure functions) ----------------------------------------------------------------------------------
 
 (deftest test-postgres-rewrites-to-pyformat-and-escapes-percent
   (<- bound (postgres-statement "SELECT '%s :x', x::bigint, :x FROM t WHERE y LIKE 'a%' AND z = :z -- :x"
@@ -442,7 +442,7 @@
   (assert (= insert "INSERT INTO items (id, label) VALUES (%s, %s)") insert)
   (try
     (<- (postgres-insert-statement "items; DROP TABLE x" #("id")))
-    (assert False "引用の要る名が通った")
+    (assert False "A name that needs quoting got through")
     (except [ValueError])))
 
 
@@ -455,28 +455,28 @@
 
 
 (deftest test-postgres-connection-sqlstates-map-to-unreachable
-  ;; 接続の例外(class 08 の全部)と 57P01・57P02・57P03(管理者による切断・crash による切断・起動中 / 停止中)は SQLSTATE を持っていても
-  ;; 届かない。
+  ;; Connection exceptions (all of class 08) and 57P01, 57P02, 57P03 (disconnect by administrator, disconnect by crash, starting up / shutting down) are
+  ;; unreachable even if they carry a SQLSTATE.
   (for [sqlstate ["08000" "08001" "08003" "08006" "08P01" "57P01" "57P02" "57P03"]]
     (<- answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "gone"))
     (assert (= answer (SqlUnreachable :reason "gone")) #(sqlstate answer)))
-  ;; 反例: class 57 の他(57014 = 文の取り消し・57000)と、接続でない engine の答え(23505・40001・53300)は SqlFailed のまま。
+  ;; Counterexamples: the rest of class 57 (57014 = statement cancellation, 57000) and engine answers that are not connections (23505, 40001, 53300) remain SqlFailed.
   (for [sqlstate ["57014" "57000" "23505" "40001" "53300"]]
     (<- engine-answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "engine"))
     (assert (= engine-answer (SqlFailed :sqlstate sqlstate :reason "engine")) #(sqlstate engine-answer))))
 
 
-;; --- 接続の上限------------------------------------------------------------------------------------------
-;; DB の pod が入れ替わった後、上限の無い接続は相手の居ない TCP のまま文を待ち続け、記録の service が 44 分固まった。
+;; --- Connection limits ------------------------------------------------------------------------------------------
+;; After the DB pod was replaced, a connection without limits kept waiting on a TCP connection with no peer, and the record service froze for 44 minutes.
 
 (deftest test-postgres-connections-carry-the-timeouts
-  ;; 既定の貸し出しは、開く接続に接続・keepalive・送った bytes の返事・文の上限を付ける。
+  ;; The default lease puts a limit on connecting, keepalive, the reply to sent bytes, and statements on the connections it opens.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn ""))))
   (assert (= (.connection-options connections DB)
              {"connect_timeout" 5 "keepalives" 1 "keepalives_idle" 10 "keepalives_interval" 5 "keepalives_count" 3
               "tcp_user_timeout" 15000 "options" "-c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000"})
           (.connection-options connections DB))
-  ;; 文の上限を付けない宣言(None)では options を渡さない(DSN の options を消さない)。
+  ;; With the declaration that puts no statement limit (None), options is not passed (the options of the DSN are not erased).
   (val unbounded (PostgresConnections #((PostgresDatabase :name DB :dsn ""))
                                       :timeouts (PostgresTimeouts :connect-seconds 2 :keepalive-idle-seconds 1 :keepalive-interval-seconds 1
                                                                   :keepalive-count 1 :unacknowledged-milliseconds 900
@@ -490,9 +490,9 @@
 
 
 (deftest test-postgres-connect-to-a-silent-server-answers-unreachable
-  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
-  ;; 接続を受けるだけで何も答えない口(DB の pod の入れ替えの最中と同じ形 — TCP の握手は kernel が済ませ、PostgreSQL の起動の答えが来ない)へ
-  ;; 開くと、上限(libpq の下限 2 秒)で SqlUnreachable が返る。反例 = 上限の無い接続は、口が閉じるまで答えを待ち続ける。
+  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg is missing"}
+  ;; When opening toward a port that only accepts connections and answers nothing (the same form as during the replacement of the DB pod -- the kernel finishes the TCP handshake, and the PostgreSQL startup answer never comes),
+  ;; SqlUnreachable is returned at the limit (the libpq lower bound of 2 seconds). Counterexample = a connection without limits keeps waiting for an answer until the port closes.
   (val silent (socket.create-server #("127.0.0.1" 0)))
   (val port (get (.getsockname silent) 1))
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (.format "host=127.0.0.1 port={} dbname=x user=x" port)))
@@ -510,10 +510,10 @@
 
 
 (defclass CuttingProxy []
-  "実 PG の前に置く TCP の中継(検の殻)— cut で走っている接続を両側とも閉じる(DB の pod の入れ替えで口が途中で閉じた形)。"
+  "A TCP relay placed in front of the real PG (test scaffolding) -- cut closes the running connections on both sides (the form where the port closes midway because of the replacement of the DB pod)."
 
-  (defn #^ None __init__ [self #^ str host #^ int port]  ; defk にできない: 検の殻の資源(socket と thread)の初期化
-    "中継の待ち受けを開き、受けた接続ごとに行き先へ繋いで流す thread を立てるため。"
+  (defn #^ None __init__ [self #^ str host #^ int port]  ; cannot be a defk: initializing the test scaffolding's resources (socket and thread)
+    "To open the relay's listener and start, for each accepted connection, a thread that connects to the destination and forwards."
     (setv self.target #(host port)
           self.listener (socket.create-server #("127.0.0.1" 0))
           self.port (get (.getsockname self.listener) 1)
@@ -521,8 +521,8 @@
           self.lock (threading.Lock))
     (.start (threading.Thread :target self.accept :daemon True)))
 
-  (defn #^ None accept [self]  ; defk にできない: 検の殻の thread の target
-    "受けた接続を行き先へ繋ぎ、両向きに流すため(待ち受けが閉じたら終わる)。"
+  (defn #^ None accept [self]  ; cannot be a defk: target of the test scaffolding's thread
+    "To connect accepted connections to the destination and forward in both directions (ends when the listener closes)."
     (while True
       (try
         (setv [client _] (.accept self.listener))
@@ -532,8 +532,8 @@
       (for [[a b] [[client upstream] [upstream client]]]
         (.start (threading.Thread :target self.pipe :args #(a b) :daemon True)))))
 
-  (defn #^ socket.socket connect-upstream [self]  ; defk にできない: 検の殻の socket を開く
-    "行き先へ繋ぐため。host が / で始まれば PostgreSQL の unix socket の dir へ繋ぐ(使い捨ての PostgreSQL は TCP で待ち受けない)。"
+  (defn #^ socket.socket connect-upstream [self]  ; cannot be a defk: opens the test scaffolding's socket
+    "To connect to the destination. If host starts with /, connect to the PostgreSQL unix socket dir (the throwaway PostgreSQL does not listen on TCP)."
     (setv #(host port) self.target)
     (if (.startswith host "/")
       (do
@@ -542,8 +542,8 @@
         upstream)
       (socket.create-connection self.target)))
 
-  (defn #^ None pipe [self #^ socket.socket a #^ socket.socket b]  ; defk にできない: 検の殻の thread の target
-    "a から読んだ bytes を b へ流すため(どちらかが閉じたら終わる)。"
+  (defn #^ None pipe [self #^ socket.socket a #^ socket.socket b]  ; cannot be a defk: target of the test scaffolding's thread
+    "To forward the bytes read from a to b (ends when either closes)."
     (try
       (while True
         (setv data (.recv a 65536))
@@ -551,24 +551,24 @@
         (.sendall b data))
       (except [OSError] None)))
 
-  (defn #^ None cut [self]  ; defk にできない: 検の殻の操作
-    "走っている接続を全部、両側とも閉じるため(待ち受けは開いたまま — 次の接続は通す)。"
+  (defn #^ None cut [self]  ; cannot be a defk: operation of the test scaffolding
+    "To close all running connections on both sides (the listener stays open -- the next connection is let through)."
     (with [self.lock]
       (for [s self.live]
         (try (.shutdown s socket.SHUT-RDWR) (except [OSError] None))
         (.close s))
       (.clear self.live)))
 
-  (defn #^ None close [self]  ; defk にできない: 検の殻の後始末
-    "中継を止めるため。"
+  (defn #^ None close [self]  ; cannot be a defk: cleanup of the test scaffolding
+    "To stop the relay."
     (.cut self)
     (.close self.listener)))
 
 
 (deftest test-postgres-recovers-after-the-connection-is-cut-mid-way
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 実 PG の反例(#1479 の受入 — 本番の DB の pod は入れ替えない): 中継の口で接続を途中で閉じると、その接続の次の文は
-  ;; SqlUnreachable、その次の文は新しい接続で 25 秒以内に答える(切れた接続は返す時に捨てられ、次の借りが張り直す)。
+  ;; Counterexample on a real PG (acceptance of #1479 -- the production DB pod is not replaced): when the connection is closed midway at the relay port, the next statement on that connection gets
+  ;; SqlUnreachable, and the statement after that answers on a new connection within 25 seconds (the broken connection is discarded when returned, and the next borrow reconnects).
   (import psycopg.conninfo [conninfo-to-dict make-conninfo])
   (val target (conninfo-to-dict (or POSTGRES-DSN "")))
   (val proxy (CuttingProxy (.get target "host" "127.0.0.1") (int (.get target "port" 5432))))
@@ -590,17 +590,17 @@
 
 
 (defk select-one []
-  {:pre [] :post [(: % "SqlQuery の答え")] :tags {:context "sql" :role "program"}}
-  "transaction の中身として 1 行を読むため(錠が取れたかだけを見る)。"
+  {:pre [] :post [(: % "answer of SqlQuery")] :tags {:context "sql" :role "program"}}
+  "To read 1 row as the body of a transaction (only checks whether the lock was taken)."
   (<- answer (SqlQuery DB "SELECT 1" #()))
   answer)
 
 
 (defk locked-write-after-a-stalled-transaction [idle-milliseconds]
-  {:pre [(: idle-milliseconds (| int None))] :post [(: % "SqlTransaction の答え")]
+  {:pre [(: idle-milliseconds (| int None))] :post [(: % "answer of SqlTransaction")]
    :tags {:context "sql" :role "program"}}
-  "transaction の途中で止まった接続(BEGIN と錠の後に何もしない — 返す finally に届かなかった形)の横で、同じ錠の transaction を撃つため。
-  idle-milliseconds = transaction の途中で何もしない上限(None = 付けない)。文の上限は 3 秒。"
+  "To fire a transaction with the same lock next to a connection stalled midway through a transaction (does nothing after BEGIN and the lock -- the form where it never reached the returning finally).
+  idle-milliseconds = the limit for doing nothing midway through a transaction (None = not set). The statement limit is 3 seconds."
   (val timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
                                   :unacknowledged-milliseconds 15000 :statement-milliseconds 3000
                                   :idle-transaction-milliseconds idle-milliseconds))
@@ -617,9 +617,9 @@
 
 (deftest test-postgres-cuts-a-stalled-transaction-so-its-lock-is-freed
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 実 PG: 錠を持ったまま止まった transaction は、上限(0.5 秒)で engine が切って錠を外し、同じ錠の
-  ;; transaction が通る。上限の無い接続では錠が外れず、同じ錠の transaction は文の上限(3 秒)で 57014 に落ちる(2026-09-30 の着地の台帳の
-  ;; 事故の形)。
+  ;; Real PG: a transaction that stalled while holding a lock is cut by the engine at the limit (0.5 seconds), which frees the lock, and a transaction with the same lock
+  ;; goes through. With a connection without limits the lock is not freed, and a transaction with the same lock fails with 57014 at the statement limit (3 seconds) (the form of the incident in the landing ledger on 2026-09-30).
+  ;;
   (<- freed (locked-write-after-a-stalled-transaction 500))
   (assert (= (get freed.rows 0 0) 1) freed)
   (<- blocked (locked-write-after-a-stalled-transaction None))
@@ -629,7 +629,7 @@
 
 (deftest test-postgres-cuts-a-statement-at-the-statement-timeout
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 実 PG: 文の上限(0.5 秒)を超えた文は engine が取り消し(57014)、SqlFailed で返る。接続は返されて次の文が答える。
+  ;; Real PG: a statement that exceeds the statement limit (0.5 seconds) is cancelled by the engine (57014) and returned as SqlFailed. The connection is returned and the next statement answers.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN "")))
                                         :timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10
                                                                     :keepalive-interval-seconds 5 :keepalive-count 3
@@ -670,37 +670,37 @@
           request.url)
   (assert (= request.body b"SELECT {i:Int64}"))
   (assert (= (lfor h request.headers #(h.name h.value)) [#("X-ClickHouse-User" "reader") #("X-ClickHouse-Key" "secret")]))
-  (assert (not-in "secret" (repr CLICKHOUSE)) "資格が repr に出た"))
+  (assert (not-in "secret" (repr CLICKHOUSE)) "The credentials appeared in repr"))
 
 
 (defk url-settings [url]
   {:pre [(: url str)] :post [(: % list)]
    :tags {:context "sql" :role "program"}}
-  "要求の URL に載った設定の名と値の組を読むため(期限と query_id の検)。"
+  "To read the pairs of setting names and values carried in the request URL (tests of the deadline and query_id)."
   (urllib.parse.parse-qsl (. (urllib.parse.urlsplit url) query)))
 
 
 (deftest test-clickhouse-waits-outlast-the-server-deadline
-  ;; 失敗ケース: 宣言が client の待ち(timeout 30 秒)だけを持ち、server へ期限を送らなかった。遅い問い合わせの
-  ;; 途中で client が接続を捨て、ClickHouse 24.11 は離れた接続へ答えを書く所で落ちた。宣言は期限だけを持ち、待ちは期限から導く。
+  ;; Failure case: the declaration held only the client's wait (timeout 30 seconds) and did not send a deadline to the server. In the middle of a slow query,
+  ;; the client dropped the connection, and ClickHouse 24.11 crashed at the point of writing the answer to the departed connection. The declaration holds only the deadline, and the wait is derived from the deadline.
   (try
     (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "" :timeout 30.0)
-    (assert False "client の待ちだけの宣言が作れた")
+    (assert False "A declaration with only the client's wait could be created")
     (except [TypeError]))
   (for [bad #(0 0.0 -1.0 (float "inf") (float "nan") True)]
     (try
       (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "" :deadline bad)
-      (assert False (.format "期限 {!r} の宣言が作れた(0 は ClickHouse の期限なし)" bad))
+      (assert False (.format "A declaration with deadline {!r} could be created (0 means no deadline in ClickHouse)" bad))
       (except [ValueError])))
   (for [#(deadline wait) #(#(30.0 30.0) #(30.0 29.0) #(0.0 1.0))]
     (try
       (ClickHouseWaits :deadline deadline :wait wait :grace 1.0)
-      (assert False (.format "待ち {} が期限 {} 以下の組が作れた" wait deadline))
+      (assert False (.format "A pair with wait {} at or below deadline {} could be created" wait deadline))
       (except [ValueError])))
   (<- waits (clickhouse-waits CLICKHOUSE))
   (assert (= waits (ClickHouseWaits :deadline 2.0 :wait (+ 2.0 WAIT-MARGIN-SECONDS) :grace KILL-GRACE-SECONDS)) waits)
   (assert (> waits.wait waits.deadline) waits)
-  ;; 問い合わせ・投入・表の宣言の DDL のどの要求も、期限と、要求ごとに違う query_id を送る。
+  ;; Every request -- query, insert, and the DDL of a table declaration -- sends the deadline and a query_id that differs for each request.
   (<- query (clickhouse-query-request CLICKHOUSE "SELECT 1" #()))
   (<- again (clickhouse-query-request CLICKHOUSE "SELECT 1" #()))
   (<- insert (clickhouse-insert-request CLICKHOUSE "events" #("id") #(#(1))))
@@ -710,24 +710,24 @@
     (assert (= (get settings "timeout_overflow_mode") "throw") settings)
     (assert (= (get settings "query_id") request.query-id) #(settings request.query-id))
     (assert (= request.waits waits) request.waits))
-  (assert (!= query.query-id again.query-id) "query_id が要求の間で重なった")
+  (assert (!= query.query-id again.query-id) "query_id overlapped between requests")
   (<- kill (clickhouse-kill-request query))
   (assert (= kill.url "http://127.0.0.1:9/") kill.url)
   (assert (= kill.body (.encode (.format "KILL QUERY WHERE query_id = '{}' ASYNC" query.query-id) "ascii")) kill.body)
   (assert (= kill.headers query.headers) kill.headers)
   (try
     (<- (clickhouse-kill-request (replace query :query-id "x' OR 1 = 1 --")))
-    (assert False "形の外の query_id が KILL QUERY の文に載った")
+    (assert False "A query_id outside the expected form was put into the KILL QUERY statement")
     (except [ValueError])))
 
 
 (deftest test-clickhouse-insert-is-one-json-body
-  (<- request (clickhouse-insert-request CLICKHOUSE "events" #("id" "body") #(#(1 "一") #(2 None))))
+  (<- request (clickhouse-insert-request CLICKHOUSE "events" #("id" "body") #(#(1 "one") #(2 None))))
   (assert (in "query=INSERT+INTO+events+%28id%2C+body%29+FORMAT+JSONCompactEachRow" request.url) request.url)
-  (assert (= request.body (.encode "[1, \"一\"]\n[2, null]\n" "utf-8")) request.body)
+  (assert (= request.body (.encode "[1, \"one\"]\n[2, null]\n" "utf-8")) request.body)
   (try
     (<- (clickhouse-insert-request CLICKHOUSE "events" #("body") #(#(b"\x00"))))
-    (assert False "bytes の値が JSON に載った")
+    (assert False "A bytes value got into the JSON")
     (except [ValueError])))
 
 
@@ -742,12 +742,12 @@
   (assert (= gateway (SqlUnreachable :reason "HTTP 502: Bad Gateway")) gateway)
   (try
     (<- (clickhouse-rows b"[[1,2]]\n"))
-    (assert False "配列の欄が閉じた集合を越えて通った")
+    (assert False "An array column got through beyond the closed set")
     (except [TypeError])))
 
 
 (deftest test-clickhouse-answers-split-only-at-the-row-newline
-  ;; ClickHouse の JSON は U+0085(NEL)を生の C2 85 で出し、U+2028・U+2029 も生で来うる — 行の区切りは \n だけ。
+  ;; The JSON of ClickHouse emits U+0085 (NEL) as a raw C2 85, and U+2028 and U+2029 can also arrive raw -- the only row separator is \n.
   (<- rows (clickhouse-rows (.encode "[1,\"a\u0085b\"]\n[2,\"c\u2028d\u2029e\"]\n" "utf-8")))
   (assert (= rows #(#(1 "a\u0085b") #(2 "c\u2028d\u2029e"))) rows))
 
@@ -766,7 +766,7 @@
 (defk clickhouse-without-engine []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "transaction の断りと、届かない HTTP の答えを集める筋書き(127.0.0.1:9 は待ち受けが無い)。"
+  "A scenario that collects the refusal of a transaction and an unreachable HTTP answer (nothing listens on 127.0.0.1:9)."
   (<- refused (SqlTransaction "cold" (count-items "cold")))
   (<- unreachable (SqlQuery "cold" "SELECT 1"))
   #(refused unreachable))
@@ -781,10 +781,10 @@
 
 
 (defclass SlowClickHouse [http.server.BaseHTTPRequestHandler]
-  "問い合わせの POST に delay 秒の後で 1 行 [1] を答える偽の ClickHouse の HTTP の口(答え手が scheduler を塞ぐかを見る検のため)。"
-  (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
+  "A fake ClickHouse HTTP port that answers a query POST with 1 row [1] after delay seconds (for the test that checks whether the handler blocks the scheduler)."
+  (deff do-POST [self]  ; cannot be a defk: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
-    "本文を読み捨て、1 秒の後で JSONCompactEachRow の 1 行を答えるため。"
+    "To discard the body and answer one JSONCompactEachRow row after 1 second."
     (.read self.rfile (int (.get self.headers "Content-Length" "0")))
     (time.sleep 1.0)
     (setv body b"[1]\n")
@@ -794,16 +794,16 @@
     (.write self.wfile body)
     None)
 
-  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+  (deff log-message [self format #* args]  ; cannot be a defk: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
-    "検の出力に要求の行を出さないため。"
+    "To keep request lines out of the test output."
     None))
 
 
 (defk clickhouse-finished-at []
   {:pre [] :post [(: % float)]
    :tags {:context "sql" :role "program"}}
-  "ClickHouse へ問い合わせ 1 つを流し、終わった拍の単調時計を答えるため。"
+  "To send one query to ClickHouse and answer the monotonic clock at the moment it finished."
   (<- answer SqlRows (SqlQuery "cold" "SELECT 1" #()))
   (time.monotonic))
 
@@ -811,7 +811,7 @@
 (defk slow-clickhouse-beside-ticks []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "1 秒かかる ClickHouse の問い合わせの横で、別の task が刻めるかを見るため(塞がれていれば刻みは問い合わせの後になる)。"
+  "To check whether another task can tick next to a ClickHouse query that takes 1 second (if blocked, the ticks come after the query)."
   (<- slow (Spawn (clickhouse-finished-at)))
   (<- seen (ticks 5 0.05))
   (<- finished (Wait slow))
@@ -828,13 +828,13 @@
     (finally (.shutdown server) (.server-close server)))
   (val seen (get answer 0))
   (val finished (get answer 1))
-  ;; 刻み 5 つ(0.25 秒)は 1 秒の問い合わせが終わる前に終わる(塞がれていれば全部が終わりの後)。
+  ;; The 5 ticks (0.25 seconds) finish before the 1-second query finishes (if blocked, all of them come after the end).
   (assert (< (get seen -1) finished) #(seen finished)))
 
 
 (defrecord Received
-  "偽の ClickHouse が受けた POST 1 本(kind = query か kill・query-id / deadline / overflow = URL の query_id・max_execution_time・
-   timeout_overflow_mode・body = 本文・agent = User-Agent・at = 受けた拍の単調時計)。"
+  "One POST received by the fake ClickHouse (kind = query or kill; query-id / deadline / overflow = the query_id, max_execution_time and
+   timeout_overflow_mode of the URL; body = the body; agent = User-Agent; at = the monotonic clock at the moment of receipt)."
   (#^ str kind)
   (#^ (| str None) query-id)
   (#^ (| str None) deadline)
@@ -845,15 +845,15 @@
 
 
 (defclass FakeClickHouse [http.server.BaseHTTPRequestHandler]
-  "期限と KILL QUERY を見る偽の ClickHouse の HTTP の口(server の欄 mode と cancels が振る舞いを決める)。
-     mode \"deadline\" = 期限を守る server: 問い合わせを URL の max_execution_time の秒より少し長く走らせ(server は期限を処理の区切りで
-                       しか読まない)、期限で断った答え(500・code 159 TIMEOUT_EXCEEDED)を返す。
-     mode \"stuck\"    = 止まった server: 問い合わせには KILL QUERY が来るまで答えず、KILL を受けたら(cancels が真の時)名指された問い合わせ
-                       へ取り消しの答え(500・code 394 QUERY_WAS_CANCELLED)を返す。cancels が偽なら KILL を受けても問い合わせは止まらない。
-   受けた POST を Received にして server の received(thread をまたぐ queue)へ入れる。"
-  (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
+  "A fake ClickHouse HTTP port for checking the deadline and KILL QUERY (the server's fields mode and cancels decide the behavior).
+     mode \"deadline\" = a server that keeps the deadline: runs the query a little longer than the max_execution_time seconds of the URL (the server reads the deadline only at
+                       processing boundaries), and returns an answer refused at the deadline (500, code 159 TIMEOUT_EXCEEDED).
+     mode \"stuck\"    = a stuck server: does not answer a query until KILL QUERY arrives, and when it receives a KILL (if cancels is true) returns a cancellation answer (500, code 394 QUERY_WAS_CANCELLED)
+                       for the named query. If cancels is false, the query does not stop even when a KILL is received.
+   Turns each received POST into a Received and puts it into the server's received (a queue across threads)."
+  (deff do-POST [self]  ; cannot be a defk: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
-    "受けた POST を記し、mode の振る舞いで答えるため。"
+    "To record the received POST and answer with the behavior of mode."
     (setv settings (dict (urllib.parse.parse-qsl (. (urllib.parse.urlsplit self.path) query)))
           body (.read self.rfile (int (.get self.headers "Content-Length" "0")))
           kind (if (.startswith body b"KILL QUERY") "kill" "query"))
@@ -876,16 +876,16 @@
                                 (.write self.wfile (get failure 1))))
     None)
 
-  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+  (deff log-message [self format #* args]  ; cannot be a defk: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
-    "検の出力に要求の行を出さないため。"
+    "To keep request lines out of the test output."
     None))
 
 
 (defk fake-clickhouse [mode cancels]
   {:pre [(: mode str) (: cancels bool)] :post [(: % http.server.ThreadingHTTPServer)]
    :tags {:context "sql" :role "program"}}
-  "偽の ClickHouse(FakeClickHouse — mode と cancels は class の註)を立てるため。"
+  "To start a fake ClickHouse (FakeClickHouse -- mode and cancels are described in the class docstring)."
   (val server (http.server.ThreadingHTTPServer #("127.0.0.1" 0) FakeClickHouse))
   (setv server.mode mode
         server.cancels cancels
@@ -898,14 +898,14 @@
 (defk received-by [server]
   {:pre [(: server http.server.ThreadingHTTPServer)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "偽の ClickHouse が受けた POST を受けた順に読むため。"
+  "To read the POSTs received by the fake ClickHouse in the order received."
   (tuple (lfor _ (range (.qsize server.received)) (.get-nowait server.received))))
 
 
 (defk fake-database [server deadline]
   {:pre [(: server http.server.ThreadingHTTPServer) (: deadline float)] :post [(: % ClickHouseDatabase)]
    :tags {:context "sql" :role "program"}}
-  "偽の ClickHouse の口を指す置き場 cold の宣言を作るため。"
+  "To create the declaration of the store cold that points to the fake ClickHouse port."
   (ClickHouseDatabase :name "cold" :url (.format "http://127.0.0.1:{}" (get server.server-address 1)) :database "default"
                       :user "default" :password "" :deadline deadline))
 
@@ -913,14 +913,14 @@
 (defk ask-cold [statement]
   {:pre [(: statement str)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "program"}}
-  "置き場 cold へ問い合わせ 1 つを流し、答え(失敗の値も)を返すため。"
+  "To send one query to the store cold and return the answer (including failure values)."
   (<- answer (SqlQuery "cold" statement #()))
   answer)
 
 
 (deftest test-clickhouse-waits-for-the-server-to-refuse-at-its-deadline
-  ;; 失敗ケース: client が 30 秒の待ちで接続を捨て、server は離れた接続へ答えを書く所で落ちた。client は期限を
-  ;; 送り、期限より長く待つので、server が期限で断った答えを、接続を保ったまま SqlFailed として受ける(KILL QUERY は撃たない)。
+  ;; Failure case: the client dropped the connection after waiting 30 seconds, and the server crashed at the point of writing the answer to the departed connection. The client sends the deadline
+  ;; and waits longer than the deadline, so it receives the answer that the server refused at the deadline as a SqlFailed while keeping the connection (KILL QUERY is not fired).
   (<- server (fake-clickhouse "deadline" False))
   (try
     (<- declared (fake-database server 1.0))
@@ -930,7 +930,7 @@
   (assert (and (isinstance answer SqlFailed) (is answer.sqlstate None) (in "Code: 159" answer.reason) (in "TIMEOUT_EXCEEDED" answer.reason))
           answer)
   (<- received (received-by server))
-  (assert (= (lfor r received r.kind) ["query"]) (.format "期限で断る server へ KILL QUERY を撃った: {!r}" received))
+  (assert (= (lfor r received r.kind) ["query"]) (.format "KILL QUERY was fired at a server that refuses at the deadline: {!r}" received))
   (val asked (get received 0))
   (assert (and (= asked.deadline "1") (= asked.overflow "throw") (is-not asked.query-id None)) asked)
   (assert (= asked.agent USER-AGENT) asked))
@@ -939,21 +939,21 @@
 (defk stuck-request [server]
   {:pre [(: server http.server.ThreadingHTTPServer)] :post [(: % ClickHouseRequest)]
    :tags {:context "sql" :role "program"}}
-  "止まった偽の server への問い合わせ 1 つを、検の秒に縮めた待ちの組(待ち 0.5 秒・猶予 1 秒)で作るため。"
+  "To create one query to the stuck fake server with a set of waits shrunk to test seconds (wait 0.5 seconds, grace 1 second)."
   (<- declared (fake-database server 0.2))
   (<- request (clickhouse-query-request declared "SELECT 1" #()))
   (replace request :waits (ClickHouseWaits :deadline 0.2 :wait 0.5 :grace 1.0)))
 
 
 (deftest test-clickhouse-kills-the-query-before-leaving-a-stuck-server
-  ;; 失敗ケース: 待ちを越えた client が socket を閉じるだけで離れ、server の問い合わせが走ったまま残った。
-  ;; 待ちを越えたら、元の接続を閉じる前に別の接続で KILL QUERY を撃ち、元の接続で取り消しの答えを受ける。
+  ;; Failure case: a client that went past its wait left by only closing the socket, and the server's query kept running.
+  ;; When the wait is exceeded, fire KILL QUERY on a different connection before closing the original connection, and receive the cancellation answer on the original connection.
   (<- server (fake-clickhouse "stuck" True))
   (try
     (<- request (stuck-request server))
     (<- answer (clickhouse-answer request False))
     (finally (.set server.killed) (.shutdown server) (.server-close server)))
-  ;; 取り消しの答え(394)は KILL の後に元の接続へ書かれる — それを受けた事が、KILL の時に元の接続を閉じていなかった証。
+  ;; The cancellation answer (394) is written to the original connection after the KILL -- that it was received proves the original connection was not closed at the time of the KILL.
   (assert (and (isinstance answer SqlFailed) (in "QUERY_WAS_CANCELLED" answer.reason)) answer)
   (<- received (received-by server))
   (assert (= (lfor r received r.kind) ["query" "kill"]) received)
@@ -961,12 +961,12 @@
   (val kill (get received 1))
   (assert (= asked.query-id request.query-id) #(asked request.query-id))
   (assert (= kill.body (.encode (.format "KILL QUERY WHERE query_id = '{}' ASYNC" request.query-id) "ascii")) kill)
-  ;; KILL は待ち(0.5 秒)を越えてから撃つ(待ちの内に撃たない)。
+  ;; The KILL is fired after the wait (0.5 seconds) is exceeded (not within the wait).
   (assert (>= (- kill.at asked.at) 0.45) #(asked kill)))
 
 
 (deftest test-clickhouse-leaves-unreachable-only-after-the-kill-and-grace
-  ;; KILL QUERY を受けても問い合わせが止まらない server からは、KILL を撃ち、猶予の間 元の接続で答えを待ってから SqlUnreachable で離れる。
+  ;; From a server whose query does not stop even after receiving KILL QUERY, fire the KILL, wait for the answer on the original connection during the grace period, and then leave with SqlUnreachable.
   (<- server (fake-clickhouse "stuck" False))
   (val started (time.monotonic))
   (try
@@ -975,46 +975,46 @@
     (finally (.set server.killed) (.shutdown server) (.server-close server)))
   (val elapsed (- (time.monotonic) started))
   (assert (isinstance answer SqlUnreachable) answer)
-  (assert (and (in request.query-id answer.reason) (in "KILL QUERY は受けられた" answer.reason)) answer.reason)
+  (assert (and (in request.query-id answer.reason) (in "KILL QUERY was accepted" answer.reason)) answer.reason)
   (<- received (received-by server))
   (assert (= (lfor r received r.kind) ["query" "kill"]) received)
-  ;; 待ち 0.5 秒 + 猶予 1 秒は待つ(KILL の往復は速い)— 猶予を待たずに離れていない。
+  ;; It waits for wait 0.5 seconds + grace 1 second (the KILL round trip is fast) -- it does not leave without waiting for the grace.
   (assert (<= 1.4 elapsed 5.0) elapsed))
 
 
-;; --- process の終わりの読み終え----------------------------------------------------------------------------
+;; --- Draining at the end of the process ----------------------------------------------------------------------------
 
-;; SIGTERM で終わる子 process(問い合わせを撃つ・shape は file の註)。
+;; A child process that ends on SIGTERM (fires a query; the shape is described in the file's header comment).
 (val EXIT-CHILD (os.path.join (os.path.dirname (os.path.abspath __file__)) "clickhouse_exit_child.py"))
-;; 子の import と終わりを待つ上限の秒(import に数秒・読み終えは最長 EXIT-SETTLE-SECONDS + 2 × EXIT-KILL-GRACE-SECONDS)。
+;; The upper limit in seconds for waiting for the child's import and end (a few seconds for the import; the drain takes at most EXIT-SETTLE-SECONDS + 2 x EXIT-KILL-GRACE-SECONDS).
 (val EXIT-CHILD-LIMIT-SECONDS 60.0)
 
 
 (defrecord Seen
-  "process の終わりを見る偽の ClickHouse が見た出来事 1 つ(kind = query・kill・answered = 問い合わせの答えを書き終えた・closed = 問い合わせの
-   接続の閉じを見た・at = 見た拍の単調時計・answered-before-close = closed の時、答えを書き終えた後の閉じか)。"
+  "One event seen by the fake ClickHouse that watches the end of the process (kind = query, kill, answered = finished writing the answer to the query, closed = saw the close of the query's
+   connection; at = the monotonic clock at the moment seen; answered-before-close = when closed, whether the close came after the answer was fully written)."
   (#^ str kind)
   (#^ float at)
   (#^ bool answered-before-close))
 
 
-(deff client-closed [connection seconds]  ; defk にできない: http.server が呼ぶ素の callback から呼ぶ socket の見張り
+(deff client-closed [connection seconds]  ; cannot be a defk: socket watching called from a plain callback called by http.server
   {:pre [(: connection socket.socket) (: seconds float)] :post [(: % bool)]
    :tags {:context "sql" :role "program"}}
-  "問い合わせの接続を client が閉じたか(最長 seconds 秒見る)を、本文の後の byte を読まずに知るため(閉じた接続は読めて 0 byte)。"
+  "To know whether the client closed the query's connection (watched for at most seconds seconds) without reading the byte after the body (a closed connection is readable with 0 bytes)."
   (setv readable (. (select.select [connection] [] [] seconds) [0]))
   (and (bool readable) (= (.recv connection 1 socket.MSG-PEEK) b"")))
 
 
 (defclass ExitWatchingClickHouse [http.server.BaseHTTPRequestHandler]
-  "process の終わりを見る偽の ClickHouse の HTTP の口(server の欄 mode が振る舞いを決める)。
-     mode \"slow\"  = 問い合わせに 1 秒の後で 1 行を答える(その間に client が閉じれば、答えを書かずに閉じを記す)。
-     mode \"stuck\" = 問い合わせには KILL QUERY が来るまで答えず、KILL を受けたら取り消しの答え(500・code 394)を返す。
-   答えの後は client の閉じを見て、答えを書き終えた後の閉じか(answered-before-close)を記す — 直す前は、答えを書く前に閉じる(本番の
-   ClickHouse は、その閉じた接続へ答えを書く所で落ちた)。見た出来事を Seen にして server の seen(thread をまたぐ queue)へ入れる。"
-  (deff do-POST [self]  ; defk にできない: http.server が呼ぶ素の callback
+  "A fake ClickHouse HTTP port that watches the end of the process (the server's field mode decides the behavior).
+     mode \"slow\"  = answers a query with 1 row after 1 second (if the client closes in the meantime, records the close without writing the answer).
+     mode \"stuck\" = does not answer a query until KILL QUERY arrives, and when it receives a KILL returns a cancellation answer (500, code 394).
+   After the answer it watches for the client's close and records whether the close came after the answer was fully written (answered-before-close) -- before the fix, the close came before the answer was written (the production
+   ClickHouse crashed at the point of writing the answer to that closed connection). Turns the events seen into Seen and puts them into the server's seen (a queue across threads)."
+  (deff do-POST [self]  ; cannot be a defk: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
-    "受けた POST を記し、mode の振る舞いで答え、client の閉じを記すため。"
+    "To record the received POST, answer with the behavior of mode, and record the client's close."
     (setv body (.read self.rfile (int (.get self.headers "Content-Length" "0"))))
     (when (.startswith body b"KILL QUERY")
       (.put self.server.seen (Seen :kind "kill" :at (time.monotonic) :answered-before-close False))
@@ -1043,15 +1043,15 @@
     (setv self.close-connection True)
     None)
 
-  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+  (deff log-message [self format #* args]  ; cannot be a defk: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
-    "検の出力に要求の行を出さないため。"
+    "To keep request lines out of the test output."
     None))
 
 
 (defrecord ExitWatch
-  "子 process を SIGTERM で終わらせた 1 回の観測(seen = 偽の server が見た出来事を見た順に・signalled = SIGTERM を送った拍・code = 子の
-   終わりの code・stderr = 子の stderr)。"
+  "One observation of ending a child process with SIGTERM (seen = the events the fake server saw, in the order seen; signalled = the moment SIGTERM was sent; code = the child's
+   exit code; stderr = the child's stderr)."
   (#^ tuple seen)
   (#^ float signalled)
   (#^ int code)
@@ -1061,8 +1061,8 @@
 (defk terminate-mid-round-trip [mode shape]
   {:pre [(: mode str) (: shape str)] :post [(: % ExitWatch)]
    :tags {:context "sql" :role "program"}}
-  "偽の ClickHouse(mode)へ問い合わせる子 process(shape)を起こし、server が問い合わせを受けたらすぐ SIGTERM を送り、子の終わりまでに
-   server が見た出来事を集めるため。"
+  "To start a child process (shape) that queries the fake ClickHouse (mode), send SIGTERM as soon as the server receives the query, and collect the events the
+   server saw until the child ended."
   (val server (http.server.ThreadingHTTPServer #("127.0.0.1" 0) ExitWatchingClickHouse))
   (setv server.mode mode
         server.killed (threading.Event)
@@ -1076,7 +1076,7 @@
     (.send-signal child signal.SIGTERM)
     (val signalled (time.monotonic))
     (val stderr (get (.communicate child :timeout EXIT-CHILD-LIMIT-SECONDS) 1))
-    ;; 子の終わりの後に server が書く出来事(答えの後の閉じ)を待つ。
+    ;; Wait for the events the server writes after the child ends (the close after the answer).
     (time.sleep 0.3)
     (ExitWatch :seen (+ #(first) (tuple (lfor _ (range (.qsize server.seen)) (.get-nowait server.seen))))
                :signalled signalled :code child.returncode :stderr stderr)
@@ -1088,19 +1088,19 @@
 
 
 (deftest test-clickhouse-reads-the-answer-before-a-stopped-service-ends
-  ;; 失敗ケース(10-24 08:23 JST): 止めの合図で service の Program が終わり、Python が終わると、daemon の往復の
-  ;; thread は待たれずに消え、OS が閉じた接続へ server が答えを書いて落ちた。終わりの読み終えが、答えを読み終えてから終わらせる。
+  ;; Failure case (10-24 08:23 JST): when the stop signal ended the service's Program and Python exited, the daemon round-trip
+  ;; thread vanished without being waited for, and the server crashed writing the answer to a connection the OS had closed. The drain at the end finishes only after reading the answer.
   (<- watch (terminate-mid-round-trip "slow" "stop"))
   (assert (= watch.code 0) watch)
   (assert (= (lfor s watch.seen s.kind) ["query" "answered" "closed"]) watch)
   (val answered (get watch.seen 1))
   (assert (. (get watch.seen 2) answered-before-close) watch)
-  ;; 答えは SIGTERM の後に書かれた(合図の時はまだ往復が走っていた — 読み終えが process の終わりを待たせた)。
+  ;; The answer was written after the SIGTERM (at the time of the signal the round trip was still running -- the drain made the process wait for its end).
   (assert (> answered.at watch.signalled) watch))
 
 
 (deftest test-clickhouse-reads-the-answer-before-a-default-sigterm-ends-the-process
-  ;; SIGTERM の受け手を据えない process(既定の SIGTERM は atexit も走らせずに即座に終わる)も、往復を読み終えてから同じ SIGTERM で終わる。
+  ;; A process that does not install a SIGTERM receiver (the default SIGTERM ends immediately without even running atexit) also ends with the same SIGTERM after finishing reading the round trip.
   (<- watch (terminate-mid-round-trip "slow" "plain"))
   (assert (= watch.code (- signal.SIGTERM)) watch)
   (assert (= (lfor s watch.seen s.kind) ["query" "answered" "closed"]) watch)
@@ -1108,21 +1108,21 @@
 
 
 (deftest test-clickhouse-kills-a-stuck-query-before-a-stopped-service-ends
-  ;; 終わりの読み終えの秒(EXIT-SETTLE-SECONDS)の内に終わらない往復は、接続を閉じる前に KILL QUERY を撃ち、取り消しの答えを読んでから
-  ;; 離れる(期限の 60 秒までは待たない — 止めの合図から KILL までの猶予の内に終わる)。
+  ;; A round trip that does not finish within the drain seconds (EXIT-SETTLE-SECONDS) fires KILL QUERY before closing the connection, and leaves after reading the cancellation answer
+  ;; (it does not wait for the 60-second deadline -- it ends within the grace from the stop signal to the KILL).
   (<- watch (terminate-mid-round-trip "stuck" "stop"))
   (assert (= watch.code 0) watch)
   (assert (= (lfor s watch.seen s.kind) ["query" "kill" "answered" "closed"]) watch)
   (val kill (get watch.seen 1))
   (val closed (get watch.seen 3))
   (assert closed.answered-before-close watch)
-  ;; KILL は読み終えの秒を待ってから撃ち、子は猶予(shim の 8.5 秒)の内に終わる。
+  ;; The KILL is fired after waiting the drain seconds, and the child ends within the grace (8.5 seconds of the shim).
   (assert (>= (- kill.at watch.signalled) (- EXIT-SETTLE-SECONDS 0.5)) watch)
   (assert (< (- closed.at watch.signalled) (+ EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS EXIT-KILL-GRACE-SECONDS 1.0)) watch))
 
 
 (deftest test-clickhouse-round-trips-refuse-to-start-once-settling-began
-  ;; 読み終えが始まった後に始まる往復は、台帳に載らない(process はその往復を置いて終わるので、接続も繋がない)。
+  ;; A round trip that starts after the drain began is not put on the ledger (the process ends leaving that round trip behind, so it does not even open a connection).
   (val trips (RoundTrips))
   (<- request (clickhouse-query-request (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9" :database "default" :user "default"
                                                             :password "") "SELECT 1" #()))
@@ -1133,12 +1133,12 @@
   (assert (.is-set done)))
 
 
-;; --- 実 DB との結合(環境変数が無ければ skip) --------------------------------------------------------------------------------
+;; --- Integration with a real DB (skipped if the environment variables are not set) --------------------------------------------------------------------------------
 
 (defk fresh [database]
   {:pre [(: database str)] :post [(: % SqlRows)]
    :tags {:context "sql" :role "program"}}
-  "実 DB の検の表を消して作り直すため(前の走行の行を残さない)。"
+  "To drop and recreate the test table on the real DB (so no rows from a previous run remain)."
   (<- dropped SqlRows (SqlQuery database "DROP TABLE IF EXISTS items" #()))
   dropped)
 
@@ -1146,7 +1146,7 @@
 (defk postgres-journey []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "sqlite と同じ筋書きを本物の PostgreSQL で走らせる。"
+  "Runs the same scenario as sqlite on real PostgreSQL."
   (<- (fresh DB))
   (<- trip (round-trip DB))
   (<- (fresh DB))
@@ -1166,7 +1166,7 @@
   (val memory-trip (get memory 0))
   (val memory-promises (get memory 1))
   (assert (= (cut real-trip 1 None) (cut memory-trip 1 None)) #(real-trip memory-trip))
-  ;; SQLSTATE は本物が細かい(23505)ので類の 2 文字で比べる。
+  ;; The real one has finer SQLSTATEs (23505), so compare by the 2-character class.
   (val class-of (fn [answer] (if (isinstance answer SqlFailed) (cut (or answer.sqlstate "") 0 2) answer)))
   (assert (= (tuple (map class-of real-promises)) (tuple (map class-of memory-promises))) #(real-promises memory-promises)))
 
@@ -1174,7 +1174,7 @@
 (defk clickhouse-journey []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "本物の ClickHouse に表を宣言し、投入し、引数つきで読む筋書き。"
+  "A scenario that declares a table on real ClickHouse, inserts into it, and reads with arguments."
   (<- (SqlQuery "cold" "DROP TABLE IF EXISTS events" #()))
   (<- (SqlEnsureTables "cold" #((SqlTable :name "events" :columns #((SqlColumn :name "id" :type SqlColumnType.INTEGER)
                                                                     (SqlColumn :name "body" :type SqlColumnType.TEXT :nullable True)
@@ -1189,7 +1189,7 @@
 
 (deftest test-clickhouse-answers-over-http
   {:skip-if (is CLICKHOUSE-URL None)
-   :skip-reason "DOEFF_SQL_TEST_CLICKHOUSE_URL が無い"}
+   :skip-reason "DOEFF_SQL_TEST_CLICKHOUSE_URL is not set"}
   (val declared (ClickHouseDatabase :name "cold" :url (or CLICKHOUSE-URL "") :database (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_DATABASE" "default")
                                     :user (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_USER" "default")
                                     :password (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_PASSWORD" "") :deadline 10.0))
@@ -1204,9 +1204,9 @@
 
 (deftest test-clickhouse-server-refuses-at-the-deadline-over-http
   {:skip-if (is CLICKHOUSE-URL None)
-   :skip-reason "DOEFF_SQL_TEST_CLICKHOUSE_URL が無い"}
-  ;; 本物の ClickHouse が、送った期限(max_execution_time 1 秒)で 20 秒の問い合わせを断り、client はその答えを SqlFailed として受ける
-  ;; (待ち = 期限 + 余白 — client が先に離れない)。
+   :skip-reason "DOEFF_SQL_TEST_CLICKHOUSE_URL is not set"}
+  ;; Real ClickHouse refuses a 20-second query at the deadline that was sent (max_execution_time 1 second), and the client receives that answer as a SqlFailed
+  ;; (wait = deadline + margin -- the client does not leave first).
   (val declared (ClickHouseDatabase :name "cold" :url (or CLICKHOUSE-URL "") :database (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_DATABASE" "default")
                                     :user (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_USER" "default")
                                     :password (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_PASSWORD" "") :deadline 1.0))
@@ -1218,12 +1218,12 @@
   (assert (< elapsed (+ 1.0 WAIT-MARGIN-SECONDS)) elapsed))
 
 
-;; --- scheduler を塞がない PostgreSQL の答え手(pooled-postgres-sql-handler)。実 PG が要る(環境変数が無ければ skip)---
+;; --- PostgreSQL handler that does not block the scheduler (pooled-postgres-sql-handler). Needs a real PG (skipped if the environment variables are not set) ---
 
 (defk pause [seconds]
   {:pre [(: seconds float)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "壁の時計で seconds 待つため(外から完了させる promise — 待つのはこの task だけ)。"
+  "To wait seconds by the wall clock (a promise completed from outside -- only this task waits)."
   (<- promise (CreateExternalPromise))
   (.start (threading.Timer seconds (fn [] (.complete promise None))))
   (<- (Wait promise.future))
@@ -1233,7 +1233,7 @@
 (defk finished-at [statement]
   {:pre [(: statement str)] :post [(: % float)]
    :tags {:context "sql" :role "program"}}
-  "文 1 つを流し、終わった拍の単調時計を答えるため。"
+  "To run one statement and answer the monotonic clock at the moment it finished."
   (<- answer SqlRows (SqlQuery DB statement #()))
   (time.monotonic))
 
@@ -1241,7 +1241,7 @@
 (defk ticks [count seconds]
   {:pre [(: count int) (: seconds float)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "seconds ごとに count 回刻み、刻んだ拍の単調時計を答えるため(scheduler が塞がれていれば遅れる)。"
+  "To tick count times every seconds and answer the monotonic clock at each tick (it is late if the scheduler is blocked)."
   (var seen #())
   (for [_ (range count)]
     (<- (pause seconds))
@@ -1252,9 +1252,9 @@
 (defk slow-beside-ticks []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "許可(接続 1 本)を取り合う遅い問い合わせ 2 つの横で、別の task が刻めるかを見るため。2 つとも 1 秒眠るので、どちらが先に許可を
-   取っても、後の方は先の方が許可を返すまで待ち、終わりの刻が 1 秒離れる(2 本の接続で並んで走れば、ほぼ同じ刻に終わる)。許可を取る
-   順は driver の thread の起き方で決まり、決まらない — 先に spawn した方が先に取る、を断言の前提にしない。"
+  "To check whether another task can tick next to 2 slow queries that compete for the permit (1 connection). Both sleep 1 second, so whichever takes the permit
+   first, the later one waits until the earlier one returns the permit, and the end times are 1 second apart (if they ran side by side on 2 connections, they would end at about the same time). The order
+   in which the permit is taken depends on how the driver threads wake up and is not fixed -- do not assume in the assertion that the one spawned first takes it first."
   (<- slow (Spawn (finished-at "SELECT pg_sleep(1.0)")))
   (<- queued (Spawn (finished-at "SELECT pg_sleep(1.0)")))
   (<- seen (ticks 5 0.05))
@@ -1265,7 +1265,7 @@
 (defk advisory-lock-held []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で、この接続が持つ advisory lock の番号(bigint の鍵)を pg_locks から読むため。"
+  "To read, from pg_locks, the number (bigint key) of the advisory lock held by this connection inside a transaction."
   (<- held SqlRows (SqlQuery DB (+ "SELECT ((classid::bigint << 32) | objid::bigint) FROM pg_locks "
                                    "WHERE locktype = 'advisory' AND pid = pg_backend_pid()") #()))
   (assert (= (len held.rows) 1) held.rows)
@@ -1275,7 +1275,7 @@
 (defk lock-numbers [key]
   {:pre [(: key str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "lock-key の transaction が取る錠の番号と、新しい書き方の SELECT hashtext(:k) の値を並べるため。"
+  "To line up the lock number taken by a transaction with a lock-key and the value of the new way of writing, SELECT hashtext(:k)."
   (<- held (SqlTransaction :database DB :program (advisory-lock-held) :lock-key key))
   (<- hashed SqlRows (SqlQuery DB "SELECT hashtext(:k)" #((SqlParam :name "k" :value key))))
   #(held (get hashed.rows 0 0)))
@@ -1284,7 +1284,7 @@
 (defk insert-then-sleep []
   {:pre [] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で 1 行入れてから長く眠るため(眠りの間に取り消される)。"
+  "To insert 1 row inside a transaction and then sleep for a long time (it is cancelled during the sleep)."
   (<- (SqlQuery DB "INSERT INTO pooled_cancel (id) VALUES (1)" #()))
   (<- (SqlQuery DB "SELECT pg_sleep(1.5)" #()))
   None)
@@ -1293,7 +1293,7 @@
 (defk cancel-mid-transaction []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "transaction の途中で task を取り消し、取り消しが届くか・入れた行が残らないか・許可が返って次の問い合わせが通るかを見るため。"
+  "To cancel a task midway through a transaction and check whether the cancellation arrives, whether the inserted row does not remain, and whether the permit is returned so that the next query goes through."
   (<- (SqlQuery DB "DROP TABLE IF EXISTS pooled_cancel" #()))
   (<- (SqlQuery DB "CREATE TABLE pooled_cancel (id bigint)" #()))
   (<- task (Spawn (SqlTransaction :database DB :program (insert-then-sleep) :lock-key "pooled-cancel")))
@@ -1323,7 +1323,7 @@
 
 (deftest test-pooled-postgres-does-not-block-the-scheduler
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 接続 1 本: 遅い問い合わせが許可を持ち、2 つ目は許可を待つ。その間も別の task の刻みが遅れない。
+  ;; 1 connection: the slow query holds the permit and the second one waits for it. Even so, the ticks of another task are not delayed.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (ThreadPoolExecutor :max-workers 1))
   (try
@@ -1333,16 +1333,16 @@
   (val first-done (min (get answer 1)))
   (val second-done (max (get answer 1)))
   (assert (= (len seen) 5))
-  ;; 刻みは全部、先に許可を取った問い合わせ(1 秒)が終わる前に済む。
+  ;; All the ticks finish before the query that took the permit first (1 second) finishes.
   (assert (< (max seen) first-done) #(seen first-done))
-  ;; 後の方は許可(接続 1 本)が返るまで待った(並んで走れば、ほぼ同じ刻に終わる)。
+  ;; The later one waited until the permit (1 connection) was returned (if they ran side by side, they would end at about the same time).
   (assert (>= (- second-done first-done) 0.9) #(first-done second-done)))
 
 
 (deftest test-pooled-postgres-takes-the-same-advisory-lock-as-before
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (import psycopg)
-  (val keys #("records-writer" "agora-records-writer" "records-migrate" "会話-01J0000000000000000000000"))
+  (val keys #("records-writer" "agora-records-writer" "records-migrate" "conversation-01J0000000000000000000000"))
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
   (val pool (ThreadPoolExecutor :max-workers 2))
   (var numbers #())
@@ -1351,18 +1351,18 @@
       (<- pair (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (lock-numbers key)))
       (:= numbers (+ numbers #(pair))))
     (finally (.close connections) (.shutdown pool)))
-  ;; 旧い書き方(doeff-records の pg_sql.hy の lock-statement — 位置の %s に鍵を結ぶ)で同じ鍵の hashtext を読む。
+  ;; Read the hashtext of the same keys with the old way of writing (lock-statement in pg_sql.hy of doeff-records -- binds the key to a positional %s).
   (val old (with [connection (psycopg.connect (or POSTGRES-DSN "") :autocommit True)]
              (tuple (gfor key keys (get (.fetchone (.execute connection "SELECT hashtext(%s)" #(key))) 0)))))
   (for [[key pair before] (zip keys numbers old)]
-    ;; transaction が取った錠の番号 = 新しい書き方の hashtext(:k) = 旧い書き方の hashtext(%s)。
+    ;; The lock number taken by the transaction = hashtext(:k) of the new way = hashtext(%s) of the old way.
     (assert (= (get pair 0) (get pair 1) before) #(key pair before))))
 
 
 (deftest test-pooled-postgres-rolls-back-and-returns-the-connection-on-cancel
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (import psycopg)
-  ;; 接続 1 本: 取り消しの後の問い合わせが通れば、許可と接続が返っている。
+  ;; 1 connection: if a query after the cancellation goes through, the permit and the connection have been returned.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (ThreadPoolExecutor :max-workers 1))
   (try
@@ -1371,14 +1371,14 @@
     (assert (= (len idle) 1) idle)
     (assert (= (. (get idle 0) info transaction-status) psycopg.pq.TransactionStatus.IDLE))
     (finally (.close connections) (.shutdown pool)))
-  ;; 取り消しが届き、transaction の中で入れた行は rollback で残らない。
+  ;; The cancellation arrives, and the row inserted inside the transaction does not remain because of the rollback.
   (assert (= answer #(True 0)) answer))
 
 
 (defk slow-read-then-commit []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "1 往復目に 1 秒眠る読み、2 往復目の commit の束で 1 行を入れる束ねた transaction の program(1 往復目の間に待ち手を取り消す検のため)。"
+  "A batched transaction program that reads while sleeping 1 second in the first round trip and inserts 1 row in the commit bundle of the second round trip (for the test that cancels the waiter during the first round trip)."
   (<- (SqlQuery DB "SELECT pg_sleep(1.0)" #()))
   (<- answers (SqlBatch DB #((SqlQuery DB "INSERT INTO pooled_cancel (id) VALUES (1)" #())) :commit True))
   (len answers))
@@ -1387,8 +1387,8 @@
 (defk cancel-mid-batched-transaction []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "束ねた transaction の 1 往復目の間に task を取り消し、取り消しが届くか・2 往復目(入れる行と COMMIT)が流れないか・許可が返って次の
-   問い合わせが通るかを見るため。"
+  "To cancel a task during the first round trip of a batched transaction and check whether the cancellation arrives, whether the second round trip (the row insert and COMMIT) is not sent, and whether the permit is returned so that the next
+   query goes through."
   (<- (SqlQuery DB "DROP TABLE IF EXISTS pooled_cancel" #()))
   (<- (SqlQuery DB "CREATE TABLE pooled_cancel (id bigint)" #()))
   (<- task (Spawn (SqlTransaction :database DB :program (slow-read-then-commit) :lock-key "pooled-cancel" :batched True)))
@@ -1405,9 +1405,9 @@
 (deftest test-a-batched-transaction-cancelled-in-its-first-round-trip-sends-no-second
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (import psycopg)
-  ;; 束ねた transaction は往復の間に scheduler へ戻らず driver の thread の仕事 1 つで走る。それでも 1 往復目の間に
-  ;; 待ち手が去れば、2 往復目(行の書きと COMMIT)は流さずに ROLLBACK し、接続を transaction の外の形で返す(往復ごとに戻っていた時と同じ)。
-  ;; 接続 1 本: 取り消しの後の問い合わせが通れば、許可と接続が返っている。
+  ;; A batched transaction does not return to the scheduler between round trips and runs as one job of the driver thread. Even so, if the waiter leaves during the first round trip,
+  ;; the second round trip (the row write and COMMIT) is not sent but ROLLBACK runs, and the connection is returned in the form outside a transaction (the same as when it returned on every round trip).
+  ;; 1 connection: if a query after the cancellation goes through, the permit and the connection have been returned.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (ThreadPoolExecutor :max-workers 2))
   (try
@@ -1422,7 +1422,7 @@
 (defk abandon-mid-transaction []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の途中の task を Cancel も Wait もせずに置いて、親の program を終えるため(run の終わりの後始末を撃つ — #2684)。"
+  "To leave a task midway through a transaction without either Cancel or Wait and finish the parent program (triggers the cleanup at the end of the run -- #2684)."
   (<- (SqlQuery DB "DROP TABLE IF EXISTS pooled_abandon" #()))
   (<- (SqlQuery DB "CREATE TABLE pooled_abandon (id bigint)" #()))
   (<- (Spawn (SqlTransaction :database DB :program (insert-into-abandon-then-sleep) :lock-key "pooled-abandon")))
@@ -1433,19 +1433,19 @@
 (defk insert-into-abandon-then-sleep []
   {:pre [] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で 1 行入れてから長く眠るため(眠りの間に親の run が終わる)。"
+  "To insert 1 row inside a transaction and then sleep for a long time (the parent run ends during the sleep)."
   (<- (SqlQuery DB "INSERT INTO pooled_abandon (id) VALUES (1)" #()))
   (<- (SqlQuery DB "SELECT pg_sleep(1.5)" #()))
   None)
 
 
-(defn #^ (get tuple #(str PostgresConnections)) abandoned-in-its-own-run [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; defk にできない: 親の run を別の thread で走らせ切る検の入口(この検の run の中では親が終わらない)
-  "transaction の途中の task を残して終わる run を 1 つ走らせ切り、その後の接続の貸し出しを返すため。answerer-of = 接続の貸し出し → 答え手の組。"
+(defn #^ (get tuple #(str PostgresConnections)) abandoned-in-its-own-run [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; cannot be a defk: the test's entry point that runs the parent run to completion in another thread (the parent does not end inside this test's own run)
+  "To run one run to completion that ends leaving a task midway through a transaction, and return the connection lease afterwards. answerer-of = connection lease -> set of handlers."
   (import warnings)
   (import doeff [run with_handlers])
   (import doeff_core_effects [scheduled])
   (setv connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
-  (defn #^ str ask []  ; defk にできない: 別の thread で走らせ切る run の本体
+  (defn #^ str ask []  ; cannot be a defk: the body of a run that is run to completion in another thread
     (with [_ (warnings.catch-warnings)]
       (warnings.simplefilter "ignore")
       (run (scheduled (with_handlers (answerer-of connections) (abandon-mid-transaction))))))
@@ -1456,9 +1456,9 @@
 
 (deftest test-postgres-returns-the-connection-of-a-transaction-the-run-left-behind
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 根(#2684): run の親が終わる時に途中の transaction の task を捨てると、接続を返す finally が走らず、
-  ;; 接続は借りたまま・transaction の途中のまま残った(貸し出しの空き 0・許可の空き 0)。今は run の終わりに Cancel が届き、
-  ;; finally が rollback して接続を返す。
+  ;; Root cause (#2684): when the run's parent ends and drops the task midway through a transaction, the finally that returns the connection did not run, and
+  ;; the connection stayed borrowed and stayed midway through the transaction (free lease slots 0, free permits 0). Now a Cancel arrives at the end of the run, and
+  ;; the finally rolls back and returns the connection.
   (import psycopg)
   (val pool (ThreadPoolExecutor :max-workers 2))
   (for [answerer-of [(fn [connections] [(state) (postgres-sql-handler connections)])
@@ -1469,17 +1469,17 @@
     (try
       (assert (= answer "left") answer)
       (val idle (list (. (get connections.idle DB) queue)))
-      (assert (= (len idle) 1) f"接続が返っていない(貸し出しの空き {(len idle)})")
+      (assert (= (len idle) 1) f"The connection was not returned (free lease slots {(len idle)})")
       (assert (= (. (get idle 0) info transaction-status) psycopg.pq.TransactionStatus.IDLE))
       (with [admin (psycopg.connect (or POSTGRES-DSN "") :autocommit True)]
-        (assert (= (get (.fetchone (.execute admin "SELECT count(*) FROM pooled_abandon")) 0) 0) "transaction の中で入れた行が残った"))
+        (assert (= (get (.fetchone (.execute admin "SELECT count(*) FROM pooled_abandon")) 0) 0) "A row inserted inside the transaction remained"))
       (finally (.close connections))))
   (.shutdown pool))
 
 
-(defn #^ (| SqlRows SqlFailed SqlUnreachable) answer-while-terminated [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; defk にできない: 答え手を別の thread の run で回し、この thread から接続を切る検の入口
-  "長い問い合わせの途中で管理者がその接続を切った(pg_terminate_backend — SQLSTATE 57P01)時の答えを読むため。
-   answerer-of = 接続の貸し出し → 答え手の組(list)。"
+(defn #^ (| SqlRows SqlFailed SqlUnreachable) answer-while-terminated [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; cannot be a defk: the test's entry point that runs the handler in a run on another thread and cuts the connection from this thread
+  "To read the answer when an administrator cut the connection midway through a long query (pg_terminate_backend -- SQLSTATE 57P01).
+   answerer-of = connection lease -> set of handlers (a list)."
   (import psycopg)
   (import uuid)
   (import doeff [run with_handlers])
@@ -1487,7 +1487,7 @@
   (setv marker (.format "doeff_terminate_{}" (. (uuid.uuid4) hex))
         connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1)
         answers [])
-  (defn #^ None ask []  ; defk にできない: thread の target
+  (defn #^ None ask []  ; cannot be a defk: target of a thread
     (.append answers (run (scheduled (with_handlers (answerer-of connections)
                                                     (SqlQuery DB (.format "SELECT pg_sleep(30) /* {} */" marker) #()))))))
   (setv worker (threading.Thread :target ask))
@@ -1505,8 +1505,8 @@
 
 (deftest test-postgres-reads-an-administrator-disconnect-as-unreachable
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 実 PG の反例: 問い合わせの途中で接続を管理者に切られた(57P01)答えは、同期の答え手でも塞がない答え手でも SqlUnreachable
-  ;; (#880 の裁定の前は SqlFailed(57P01))。
+  ;; Counterexample on a real PG: the answer when the connection is cut by an administrator (57P01) midway through a query is SqlUnreachable for both the synchronous handler and the non-blocking handler
+  ;; (before the ruling of #880 it was SqlFailed (57P01)).
   (val sync-answer (answer-while-terminated (fn [connections] [(postgres-sql-handler connections)])))
   (assert (isinstance sync-answer SqlUnreachable) sync-answer)
   (val pool (ThreadPoolExecutor :max-workers 1))
@@ -1516,13 +1516,13 @@
   (assert (isinstance pooled-answer SqlUnreachable) pooled-answer))
 
 
-;; --- postgres-sql-handler も scheduler を塞がない。実 PG が要る(環境変数が無ければ skip)-------------------------
-;; 前は driver の呼びを scheduler の thread で同期に撃ったので、遅い文の間は同じ run の他の task(成果物の置き場の /healthz)も待った。
+;; --- postgres-sql-handler also does not block the scheduler. Needs a real PG (skipped if the environment variables are not set) -------------------------
+;; Before, the driver call was fired synchronously on the scheduler thread, so while a slow statement ran, the other tasks of the same run (/healthz of the artifact store) waited too.
 
 (defk timed-sleep [seconds]
   {:pre [(: seconds float)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で、錠を取った後の始まりと終わりの時刻(PG の clock_timestamp の epoch 秒)を眠りを挟んで読むため。"
+  "To read, inside a transaction, the start and end times after taking the lock (epoch seconds of PG's clock_timestamp) with a sleep in between."
   (<- began SqlRows (SqlQuery DB "SELECT extract(epoch FROM clock_timestamp())::float8" #()))
   (<- (SqlQuery DB "SELECT pg_sleep(:s)" #((SqlParam :name "s" :value seconds))))
   (<- ended SqlRows (SqlQuery DB "SELECT extract(epoch FROM clock_timestamp())::float8" #()))
@@ -1532,7 +1532,7 @@
 (defk locked-pair [first-key second-key]
   {:pre [(: first-key str) (: second-key str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "鍵つきの transaction 2 つを並べて走らせ、その横で別の task が刻めるかを見るため(各 transaction は錠の中で 0.4 秒眠る)。"
+  "To run 2 transactions with keys side by side and check whether another task can tick next to them (each transaction sleeps 0.4 seconds inside the lock)."
   (val started (time.monotonic))
   (<- first (Spawn (SqlTransaction :database DB :program (timed-sleep 0.4) :lock-key first-key)))
   (<- second (Spawn (SqlTransaction :database DB :program (timed-sleep 0.4) :lock-key second-key)))
@@ -1543,8 +1543,8 @@
 
 (deftest test-postgres-does-not-block-the-scheduler
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 接続 1 本: 遅い問い合わせ(pg_sleep 1 秒)が接続を持ち、2 つ目は接続を待つ。その間も別の task の刻みが遅れない。答え手は
-  ;; postgres-sql-handler 1 つだけ(state も pool も被せない — 組み立ての側は変わらない)。
+  ;; 1 connection: a slow query (pg_sleep 1 second) holds the connection and the second one waits for a connection. Even so, the ticks of another task are not delayed. The handler is
+  ;; just one postgres-sql-handler (no state or pool layered on -- the assembly side does not change).
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (try
     (<- answer (with-handler [(postgres-sql-handler connections)] (slow-beside-ticks)))
@@ -1553,16 +1553,16 @@
   (val first-done (min (get answer 1)))
   (val second-done (max (get answer 1)))
   (assert (= (len seen) 5))
-  ;; 刻みは全部、先に接続を取った問い合わせ(1 秒)が終わる前に済む(塞ぐ答え手なら刻みは遅い問い合わせの後になる)。
+  ;; All the ticks finish before the query that took the connection first (1 second) finishes (with a blocking handler the ticks would come after the slow query).
   (assert (< (max seen) first-done) #(seen first-done))
-  ;; 後の方は接続(1 本)が返るまで待った(並んで走れば、ほぼ同じ刻に終わる)。
+  ;; The later one waited until the connection (1 connection) was returned (if they ran side by side, they would end at about the same time).
   (assert (>= (- second-done first-done) 0.9) #(first-done second-done)))
 
 
 (deftest test-postgres-serializes-only-transactions-with-the-same-lock-key
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 接続 2 本: 同じ鍵の transaction 2 つは錠で直列(時刻の区間が重ならない)・違う鍵なら並ぶ(区間が重なる — 直列なのは錠のためで、
-  ;; scheduler が塞がれたためではない)。どちらの間も別の task の刻みは遅れない。
+  ;; 2 connections: 2 transactions with the same key are serialized by the lock (their time spans do not overlap); with different keys they run side by side (the spans overlap -- the serialization is due to the lock,
+  ;; not to a blocked scheduler). During both, the ticks of another task are not delayed.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 2))
   (try
     (<- same (with-handler [(postgres-sql-handler connections)] (locked-pair "doeff-1215-lock" "doeff-1215-lock")))
@@ -1571,16 +1571,16 @@
   (val overlap (fn [spans] (- (min (get spans 0 1) (get spans 1 1)) (max (get spans 0 0) (get spans 1 0)))))
   (assert (<= (overlap (get same 1)) 0) same)
   (assert (> (overlap (get apart 1)) 0.2) apart)
-  ;; 刻み(4 回 × 0.05 秒)は始まりから 0.6 秒より前に済む。同じ鍵の 2 つは直列で合わせて 0.8 秒以上かかるので、塞ぐ答え手なら刻みは
-  ;; その後になる。
+  ;; The ticks (4 times x 0.05 seconds) finish within 0.6 seconds of the start. The 2 with the same key are serialized and take 0.8 seconds or more in total, so with a blocking handler the ticks would come
+  ;; after that.
   (for [result #(same apart)]
     (assert (< (max (get result 0)) 0.6) result)))
 
 
 (deftest test-postgres-connections-keep-the-dsn-options-and-add-the-statement-bound
-  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
-  ;; DSN が options(-c search_path …)を名乗っていれば、文の上限の -c はそれに継ぎ足す(keyword で勝たせると DSN の -c が黙って消え、
-  ;; 表が名指した schema でなく public に作られた)。名乗らない database は文の上限だけ。
+  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg is missing"}
+  ;; If the DSN declares options (-c search_path ...), the -c for the statement limit is appended to it (if it won by keyword, the -c of the DSN would silently vanish, and
+  ;; the table was created in public instead of the named schema). A database that declares none gets only the statement limit.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn "postgresql://u@/d?host=%2Ftmp&options=-c%20search_path%3Ds1")
                                           (PostgresDatabase :name "plain" :dsn "postgresql://u@/d"))))
   (assert (= (get (.connection-options connections DB) "options") "-c search_path=s1 -c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000")
@@ -1589,12 +1589,12 @@
           (.connection-options connections "plain")))
 
 
-;; --- 往復のまとめ(SqlBatch・BEGIN と COMMIT の相乗り)--------------------------------------------------------------
+;; --- Batching round trips (SqlBatch, BEGIN and COMMIT riding along) --------------------------------------------------------------
 
 (defk recorded-flush [flush]
   {:pre [(: flush TransactionFlush)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "偽の答え手の往復 1 回: 流す物を状態の flushes に覚え、requests ごとに 0 行の答えを返すため(往復の数え方の検 — DB を使わない)。"
+  "One round trip of the fake handler: remembers what was sent in the state flushes and returns an answer of 0 rows for each of the requests (for testing how round trips are counted -- uses no DB)."
   (<- seen (Get "flushes"))
   (<- (Put "flushes" (+ seen #(flush))))
   (tuple (gfor _ flush.requests (SqlRows :rows #() :rowcount 0))))
@@ -1603,7 +1603,7 @@
 (defk recorded-rollback []
   {:pre [] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "偽の答え手の ROLLBACK: 状態の rollbacks を 1 増やすため。"
+  "ROLLBACK of the fake handler: increments the state rollbacks by 1."
   (<- seen (Get "rollbacks"))
   (<- (Put "rollbacks" (+ seen 1)))
   None)
@@ -1612,7 +1612,7 @@
 (defk recorded-transaction [program]
   {:pre [(: program Program)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "program を偽の答え手(合図を受ける — PostgreSQL の答え手と同じ)の transaction で走らせ、#(答え 往復の tuple ROLLBACK の数) を返すため。"
+  "To run program in a transaction of the fake handler (it accepts signals -- the same as the PostgreSQL handler) and return #(answer, tuple of round trips, number of ROLLBACKs)."
   (<- (Put "flushes" #()))
   (<- (Put "rollbacks" 0))
   (<- answer (run-in-batched-transaction DB program (fn [flush] (recorded-flush flush)) (fn [] (recorded-rollback)) :accepts-notices True))
@@ -1624,22 +1624,22 @@
 (defk computed-only []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "SQL を 1 つも出さない program(純粋な計算だけ)。"
+  "A program that emits no SQL at all (pure computation only)."
   (+ 1 2))
 
 
 (defk one-query []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "文 1 つを流して commit の束を出さずに終わる program。"
+  "A program that runs one statement and ends without emitting a commit bundle."
   (<- (SqlQuery DB "SELECT 1" #()))
-  "読んだ")
+  "read")
 
 
 (defk notified-batch []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "合図を出し、文 2 つの commit の束で終わる program(答え = 束の答えの数)。"
+  "A program that emits a signal and ends with a commit bundle of 2 statements (answer = the number of answers of the bundle)."
   (<- (SqlNotify DB "changes" #("table:parts")))
   (<- answers (SqlBatch DB #((SqlQuery DB "SELECT 1" #()) (SqlQuery DB "SELECT 2" #())) :commit True))
   (len answers))
@@ -1648,24 +1648,24 @@
 (defk notified-only []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "合図だけを出す program。"
+  "A program that emits only a signal."
   (<- (SqlNotify DB "changes" #("table:parts")))
-  "合図だけ")
+  "signal only")
 
 
 (defk empty-commit []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "文の無い commit の束だけを出す program(流す物が無い)。"
+  "A program that emits only a commit bundle without statements (there is nothing to send)."
   (<- answers (SqlBatch DB #() :commit True))
   (assert (= answers #()) answers)
-  "空の束")
+  "empty bundle")
 
 
 (defk round-trip-shapes []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "往復の形の筋書きを偽の答え手で順に撃つため。"
+  "To fire the scenarios of round trip shapes in order with the fake handler."
   (<- pure (recorded-transaction (computed-only)))
   (<- single (recorded-transaction (one-query)))
   (<- batched (recorded-transaction (notified-batch)))
@@ -1675,8 +1675,8 @@
 
 
 (deftest test-a-transaction-shares-round-trips-with-begin-and-commit
-  ;; 失敗ケース(#3605): SQL を出さない program は往復 0(BEGIN も COMMIT も流さない)。BEGIN と錠は最初の文と同じ往復・commit の束と覚えた
-  ;; 合図は COMMIT と同じ往復。
+  ;; Failure case (#3605): a program that emits no SQL takes 0 round trips (neither BEGIN nor COMMIT is sent). BEGIN and the lock take the same round trip as the first statement, and the commit bundle and the remembered
+  ;; signal take the same round trip as COMMIT.
   (<- shapes (with-handler [(state)] (round-trip-shapes)))
   (val pure (get shapes 0))
   (val single (get shapes 1))
@@ -1684,7 +1684,7 @@
   (val signal (get shapes 3))
   (val empty (get shapes 4))
   (assert (= pure #(3 #() 0)) pure)
-  (assert (= (get single 0) "読んだ") single)
+  (assert (= (get single 0) "read") single)
   (assert (= (get single 1) #((TransactionFlush :opening True :requests #((SqlQuery DB "SELECT 1" #())) :notices #() :closing False)
                               (TransactionFlush :opening False :requests #() :notices #() :closing True)))
           single)
@@ -1693,37 +1693,37 @@
                                                  :notices #((SqlNotify DB "changes" #("table:parts"))) :closing True)))
           batched)
   (assert (= (get signal 1) #((TransactionFlush :opening True :requests #() :notices #((SqlNotify DB "changes" #("table:parts"))) :closing True))) signal)
-  (assert (= empty #("空の束" #() 0)) empty)
+  (assert (= empty #("empty bundle" #() 0)) empty)
   (assert (all (gfor shape shapes (= (get shape 2) 0))) shapes))
 
 
 (defk failing-batch [database third]
   {:pre [(: database str) (: third str)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "束の 2 文目が一意の違反で落ちる program(third = 束の 3 文目)。束の答えは来ない — 来れば program が答えを返して commit する。"
+  "A program whose 2nd statement of a bundle fails with a unique violation (third = the 3rd statement of the bundle). The answer of the bundle never comes -- if it did, the program would return an answer and commit."
   (<- (SqlBatch database #((SqlQuery database "INSERT INTO items (id, label) VALUES (70, 'x')" #())
                            (SqlQuery database "INSERT INTO items (id, label) VALUES (70, 'y')" #())
                            (SqlQuery database third #()))
                 :commit True))
-  "束の後に再開された")
+  "resumed after the bundle")
 
 
 (defk query-after-commit [database]
   {:pre [(: database str)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "commit の束の後に文を出す program。"
+  "A program that emits a statement after a commit bundle."
   (<- (SqlBatch database #((SqlQuery database "INSERT INTO items (id, label) VALUES (80, 'c')" #())) :commit True))
   (<- (SqlQuery database "SELECT 1" #()))
-  "来ない")
+  "never reached")
 
 
 (defk stray-batch-refusal [database]
   {:pre [(: database str)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の外で束を出し、断りの文を返すため。"
+  "To emit a bundle outside a transaction and return the refusal message."
   (try
     (<- (SqlBatch database #((SqlQuery database "SELECT 1" #()))))
-    "断られていない"
+    "not refused"
     (except [error SqlTransactionMisuse]
       (str error))))
 
@@ -1731,18 +1731,18 @@
 (defk batch-in-default-transaction [database]
   {:pre [(: database str)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "batched を選んでいない transaction の中で束を出す program(断られて、束の文は流れない)。"
+  "A program that emits a bundle inside a transaction that did not choose batched (it is refused, and the statements of the bundle are not sent)."
   (<- (SqlBatch database #((SqlQuery database "INSERT INTO items (id, label) VALUES (81, 'u')" #())) :commit True))
-  "来ない")
+  "never reached")
 
 
 (defk misuse-under [database program batched]
   {:pre [(: database str) (: program Program) (: batched bool)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "batched を選んだ / 選ばない transaction が SqlTransactionMisuse で断られることを、断りの文にして返す筋書き。"
+  "A scenario that turns the refusal with SqlTransactionMisuse of a transaction that chose / did not choose batched into a refusal message and returns it."
   (try
     (<- (SqlTransaction database program :lock-key None :batched batched))
-    "断られていない"
+    "not refused"
     (except [error SqlTransactionMisuse]
       (str error))))
 
@@ -1750,8 +1750,8 @@
 (defk batch-promises [database third]
   {:pre [(: database str) (: third str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "束の約束を順に撃つ筋書き: 途中の文が落ちる束(1 文目も戻る)・commit の束の後の文(断り — commit は残る)・batched を選ばない transaction の
-   中の束(断り — 何も書かない)・transaction の外の束(断り)。"
+  "A scenario that fires the contracts of bundles in order: a bundle in which a statement midway fails (the 1st statement is also rolled back); a statement after a commit bundle (refused -- the commit remains); a bundle inside a transaction that did not choose batched
+   (refused -- nothing is written); a bundle outside a transaction (refused)."
   (<- (seeded database))
   (<- failed (SqlTransaction database (failing-batch database third) :lock-key "batch-lock" :batched True))
   (<- after-failure (count-items database))
@@ -1766,21 +1766,21 @@
 (defk asserted-batch-promises [promises]
   {:pre [(: promises tuple)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "batch-promises の答えを sqlite と実 PG で同じ判定にかけるため。"
+  "To apply the same checks to the answers of batch-promises on sqlite and on real PG."
   (val failed (get promises 0))
   (assert (and (isinstance failed SqlFailed) (.startswith (or failed.sqlstate "") "23")) failed)
   (assert (= (get promises 1) 0) promises)
-  (assert (in "commit の束で終わった後に SqlQuery" (get promises 2)) promises)
+  (assert (in "emitted SqlQuery after it ended with a commit bundle" (get promises 2)) promises)
   (assert (= (get promises 3) 1) promises)
-  (assert (in "transaction の外" (get promises 4)) promises)
-  (assert (in "batched を選んでいない" (get promises 5)) promises)
+  (assert (in "outside a transaction" (get promises 4)) promises)
+  (assert (in "did not choose batched" (get promises 5)) promises)
   (assert (= (get promises 6) 1) promises)
   None)
 
 
 (deftest test-sqlite-batch-stops-at-the-first-failure-and-refuses-sql-after-commit
-  ;; 失敗ケース(#3605): 束の途中の文が落ちたら transaction は戻り program は再開されない・commit の束の後の SQL は断る(commit は残る)・
-  ;; transaction の外の束は断る。sqlite は束を順に流す(答えは PostgreSQL の答え手と同じ)。
+  ;; Failure case (#3605): if a statement midway through a bundle fails, the transaction is rolled back and the program is not resumed; SQL after a commit bundle is refused (the commit remains);
+  ;; a bundle outside a transaction is refused. sqlite sends the bundle in order (the answers are the same as the PostgreSQL handler's).
   (<- promises (with-handler [(state) (sqlite-sql-handler #(DB))] (batch-promises DB "INSERT INTO items (id, label) VALUES (71, 'z')")))
   (<- (asserted-batch-promises promises)))
 
@@ -1788,7 +1788,7 @@
 (defk postgres-batch-promises []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "束の約束を本物の PostgreSQL で撃ち、束の 3 文目(sequence を進める — sequence は rollback で戻らない)が流れたかを添えるため。"
+  "To fire the contracts of bundles on real PostgreSQL and attach whether the 3rd statement of the bundle (advances a sequence -- a sequence does not go back on rollback) was sent."
   (<- (fresh DB))
   (<- (SqlQuery DB "DROP SEQUENCE IF EXISTS batch_probe" #()))
   (<- (SqlQuery DB "CREATE SEQUENCE batch_probe" #()))
@@ -1799,20 +1799,20 @@
 
 (deftest test-postgres-batch-stops-at-the-first-failure-and-refuses-sql-after-commit
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 失敗ケース(#3605): 束は 1 つの pipeline で送る。途中の文が落ちたら PostgreSQL は後ろの文(sequence を進める 3 文目・COMMIT)を流さず、
-  ;; 答えは最初に落ちた文の失敗で、ROLLBACK で 1 文目も戻る。commit の束の後の SQL と transaction の外の束は断る。
+  ;; Failure case (#3605): a bundle is sent in one pipeline. If a statement midway fails, PostgreSQL does not run the statements after it (the 3rd statement that advances the sequence, COMMIT),
+  ;; the answer is the failure of the statement that failed first, and the 1st statement is also rolled back by ROLLBACK. SQL after a commit bundle and a bundle outside a transaction are refused.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (try
     (<- answer (with-handler [(postgres-sql-handler connections)] (postgres-batch-promises)))
     (finally (.close connections)))
   (<- (asserted-batch-promises (get answer 0)))
-  (assert (is (get answer 1) False) "落ちた文の後ろの文が流れた(sequence が進んだ)"))
+  (assert (is (get answer 1) False) "A statement after the failed statement was sent (the sequence advanced)"))
 
 
 (defk failed-pipeline []
-  {:pre [] :post [(: % "SqlTransaction の答え")]
+  {:pre [] :post [(: % "answer of SqlTransaction")]
    :tags {:context "sql" :role "program"}}
-  "表を用意し、束の途中の文が落ちる transaction を撃つため(pipeline の中の失敗)。"
+  "To prepare the table and fire a transaction in which a statement midway through a bundle fails (a failure inside the pipeline)."
   (<- (fresh DB))
   (<- (seeded DB))
   (<- failed (SqlTransaction DB (failing-batch DB "SELECT 1") :lock-key "pooled-batch" :batched True))
@@ -1822,7 +1822,7 @@
 (defk counted-after-insert []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "1 行を入れて数える commit の束 1 つの program(答え = 入れた後の行の数)。"
+  "A program with one commit bundle that inserts 1 row and counts (answer = the number of rows after the insert)."
   (<- answers (SqlBatch DB #((SqlQuery DB "INSERT INTO items (id, label) VALUES (90, 'n')" #())
                              (SqlQuery DB "SELECT count(*) FROM items" #()))
                 :commit True))
@@ -1831,14 +1831,14 @@
 
 (deftest test-pooled-postgres-reuses-the-connection-after-a-failed-pipeline
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 失敗ケース(#3605・cisco-c8 の条件 2): pipeline の中で文が落ちた transaction の接続は、pipeline mode を出て transaction を戻した形で
-  ;; 返り、次の transaction が同じ接続のまま普通に使える(pipeline を開いたまま返した接続は、返す時に捨てられて別の接続になる)。接続 1 本。
+  ;; Failure case (#3605, condition 2 of cisco-c8): the connection of a transaction in which a statement failed inside the pipeline is returned in the form that has left pipeline mode and rolled the transaction back,
+  ;; and the next transaction can use the same connection as usual (a connection returned with the pipeline left open is discarded on return and becomes a different connection). 1 connection.
   (import psycopg)
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (ThreadPoolExecutor :max-workers 1))
   (try
     (<- failed (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (failed-pipeline)))
-    ;; 返った接続の形は貸し出しを閉じる前に読む(閉じると状態は UNKNOWN)。
+    ;; Read the form of the returned connection before closing the lease (once closed, the state is UNKNOWN).
     (val first (list (. (get connections.idle DB) queue)))
     (val returned (tuple (gfor c first #(c.pgconn.pipeline-status c.info.transaction-status))))
     (<- counted (with-handler [(state) (pooled-postgres-sql-handler connections pool)]
@@ -1848,15 +1848,15 @@
   (assert (and (isinstance failed SqlFailed) (.startswith (or failed.sqlstate "") "23")) failed)
   (assert (= returned #(#(psycopg.pq.PipelineStatus.OFF psycopg.pq.TransactionStatus.IDLE))) returned)
   (assert (= counted 1) counted)
-  (assert (and (= (len second) 1) (is (get second 0) (get first 0))) "落ちた pipeline の後の接続が使い続けられず、捨てられた"))
+  (assert (and (= (len second) 1) (is (get second 0) (get first 0))) "The connection after the failed pipeline was not kept in use and was discarded"))
 
 
 (defclass CountingPool [ThreadPoolExecutor]
-  "driver の pool に出した仕事の数を数える pool(#3688 の子 (3) — transaction 1 つの driver の thread への乗り換えの数)。"
-  (defn #^ None __init__ [self]  ; defk にできない: Executor の初期化(concurrent.futures の約束 — VM の外)
+  "A pool that counts the number of jobs submitted to the driver's pool (child (3) of #3688 -- the number of switches to the driver's thread for one transaction)."
+  (defn #^ None __init__ [self]  ; cannot be a defk: initialization of an Executor (a contract of concurrent.futures -- outside the VM)
     (.__init__ (super) :max-workers 2)
     (setv self.submitted 0))
-  (defn #^ Future submit [self #^ (get Callable #(... object)) call #^ object #* args #^ object #** kwargs]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
+  (defn #^ Future submit [self #^ (get Callable #(... object)) call #^ object #* args #^ object #** kwargs]  ; cannot be a defk: the entry point of an Executor (a contract of concurrent.futures -- outside the VM)
     (setv self.submitted (+ self.submitted 1))
     (.submit (super) call #* args #** kwargs)))
 
@@ -1864,7 +1864,7 @@
 (defk fresh-seeded []
   {:pre [] :post [(: % SqlSchemaApplied)]
    :tags {:context "sql" :role "program"}}
-  "検の表を消して作り直すため(数える前の用意 — transaction の外の文)。"
+  "To drop and recreate the test table (preparation before counting -- statements outside a transaction)."
   (<- (fresh DB))
   (<- applied (seeded DB))
   applied)
@@ -1873,7 +1873,7 @@
 (defk read-then-commit []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "1 往復目で行を数え、2 往復目の commit の束で 1 行を入れる program(記録の置き場の書きと同じ 2 往復 — 答え = 入れた後の行の数)。"
+  "A program that counts rows in the 1st round trip and inserts 1 row in the commit bundle of the 2nd round trip (the same 2 round trips as a write to the record store -- answer = the number of rows after the insert)."
   (<- (SqlQuery DB "SELECT count(*) FROM items" #()))
   (<- answers (SqlBatch DB #((SqlQuery DB "INSERT INTO items (id, label) VALUES (91, 'r')" #())
                              (SqlQuery DB "SELECT count(*) FROM items" #()))
@@ -1883,10 +1883,10 @@
 
 (deftest test-pooled-postgres-drives-a-batched-transaction-in-one-job
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 失敗ケース: 束ねた transaction は、借りる・全部の往復と間の判定・返すを driver の仕事 1 つで回し、往復の間に
-  ;; scheduler の thread へ戻らない — 2 往復の書きも往復 1 回の transaction も pool に出す仕事は 1 つ(前は往復ごとに 1 つで 2 と 1 —
-  ;; 1 往復目の答えから 2 往復目までの scheduler の待ちの間も置き場の書きの錠を持ち、混むほど錠を待つ書きが積もった)。
-  ;; 答えと、接続が 1 本のまま返ることも見る。
+  ;; Failure case: a batched transaction runs borrowing, all the round trips with the checks between them, and returning as one job of the driver, and does not return to the scheduler's thread between round trips
+  ;; -- both a 2-round-trip write and a 1-round-trip transaction submit one job to the pool (before, one per round trip, so 2 and 1 --
+  ;; during the scheduler's wait from the answer of the 1st round trip to the 2nd round trip, the store write's lock was also held, and the more crowded it got, the more writes waiting for the lock piled up).
+  ;; It also checks the answers, and that the connection is returned as the same single connection.
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (CountingPool))
   (try
@@ -1907,9 +1907,9 @@
 
 
 (deftest test-postgres-connections-refuse-an-environment-without-pipeline-mode [monkeypatch]
-  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
-  ;; 失敗ケース(#3605・cisco-c8 の条件 1): psycopg / libpq が pipeline mode を持たない環境では、接続の貸し出しを作る所(起動の時)で名を
-  ;; 挙げて落ちる — 文を 1 つずつ流す道へ黙って倒さない。
+  {:skip-if PSYCOPG-SKIP :skip-reason "psycopg is missing"}
+  ;; Failure case (#3605, condition 1 of cisco-c8): in an environment where psycopg / libpq lacks pipeline mode, it fails naming it at the point where the connection lease is created (at startup)
+  ;; -- it does not silently fall back to the path that sends statements one at a time.
   (import psycopg)
   (.setattr monkeypatch psycopg.Pipeline "is_supported" (classmethod (fn [cls] False)))
   (var refused "")

@@ -1,10 +1,10 @@
-;;; 大きな値を通した PostgreSQL の接続を空きの列に戻さない: libpq は接続ごとの送りと受けの buffer を通した一番大きな
-;;; message まで伸ばして閉じるまで縮めないので、目安(LARGE-CARRY-BYTES)を越える値を通した接続は返す時に閉じる。SqlQuery の binary は
-;;; 答えの行を binary の形で受け、bytea を 16 進の text(本文の 2 倍)にしない。
-;;;   - 使い捨ての PostgreSQL(postgres_support/disposable_postgres.py)へ、中継(statement_wire_tap.py)を挟んで繋ぐ。接続を使い回したかは
-;;;     pg_backend_pid() の値で見る(閉じた接続の次の借りは新しい backend)。答えの行の大きさは中継が数えた server → client の bytes で見る。
-;;;   - 2 つの PostgreSQL の答え手(postgres-sql-handler・pooled-postgres-sql-handler)の両方で、文 1 つ(送り・受け)・batched でない
-;;;     transaction・batched の transaction を撃つ。
+;;; Do not return a PostgreSQL connection that carried a large value to the idle list: libpq grows the per-connection send and receive buffers to the largest
+;;; message passed through and does not shrink them until closed, so a connection that carried a value over the guideline (LARGE-CARRY-BYTES) is closed on return. The binary of SqlQuery
+;;; receives the answer rows in binary form and does not turn a bytea into hexadecimal text (twice the body).
+;;;   - Connect to a disposable PostgreSQL (postgres_support/disposable_postgres.py) through a relay (statement_wire_tap.py). Whether a connection was reused is seen from
+;;;     the value of pg_backend_pid() (the next borrow after a closed connection is a new backend). The size of the answer rows is seen from the server -> client bytes the relay counted.
+;;;   - With both PostgreSQL answerers (postgres-sql-handler, pooled-postgres-sql-handler), fire a single statement (send and receive), a non-batched
+;;;     transaction, and a batched transaction.
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import os)
 (import concurrent.futures [ThreadPoolExecutor])
@@ -25,15 +25,15 @@
                                 (SqlColumn :name "label" :type SqlColumnType.TEXT) (SqlColumn :name "ok" :type SqlColumnType.BOOLEAN))
                      :primary-key #("id")))
 
-;; 本文の大きさ: 目安を越える送り / 目安の半分より大きい(16 進の text で受けると 2 倍で目安を越え、binary で受ければ越えない)/ wire の
-;; 大きさを測る 1 MiB。
+;; Body sizes: a send over the guideline / larger than half the guideline (received as hexadecimal text it is twice that and exceeds the guideline, received as binary it does not) / 1 MiB
+;; for measuring the size on the wire.
 (val LARGE-BODY (os.urandom (+ LARGE-CARRY-BYTES 1)))
 (val HALF-BODY (os.urandom (+ (// LARGE-CARRY-BYTES 2) 4096)))
 (val MEASURED-BODY (os.urandom (* 1024 1024)))
 
 
 (deftest test-largest-message-bytes-estimates-the-biggest-row
-  ;; 見積もりは行ごとの str(UTF-8 の長さ)と bytes(16 進で受けたなら 2 倍)の和の最大で、他の型は数えない。
+  ;; The estimate is the maximum of the sum of str (UTF-8 length) and bytes (twice that if received in hexadecimal) per row; other types are not counted.
   (<- plain (largest-message-bytes #(#("abc" b"12345" 7 None) #("é" True)) False))
   (assert (= plain 8) plain)
   (<- doubled (largest-message-bytes #(#("abc" b"12345" 7 None) #("é" True)) True))
@@ -42,12 +42,12 @@
   (assert (= none 0) none))
 
 
-;; --- 実 PostgreSQL ----------------------------------------------------------------------------------------------------------
+;; --- Real PostgreSQL ----------------------------------------------------------------------------------------------------------
 
 (defk backend-pid []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "今 借りた接続の backend の pid を読むため(接続を使い回したかを見る)。"
+  "To read the pid of the backend of the connection just borrowed (to see whether a connection was reused)."
   (<- answer (SqlQuery DB "SELECT pg_backend_pid()" #()))
   (get answer.rows 0 0))
 
@@ -55,9 +55,9 @@
 (defk stored [id body]
   {:pre [(: id int) (: body bytes)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "本文 body を行 id に書くため(文 1 つ — 引数で本文を送る)。"
+  "To write the body body to row id (a single statement -- the body is sent as an argument)."
   (<- answer (SqlQuery DB "INSERT INTO carry_blobs (id, body, label, ok) VALUES (:id, :body, :label, :ok)"
-                       #((SqlParam :name "id" :value id) (SqlParam :name "body" :value body) (SqlParam :name "label" :value "札")
+                       #((SqlParam :name "id" :value id) (SqlParam :name "body" :value body) (SqlParam :name "label" :value "tag")
                          (SqlParam :name "ok" :value True))))
   (assert (isinstance answer SqlRows) answer)
   None)
@@ -66,7 +66,7 @@
 (defk read-row [id binary]
   {:pre [(: id int) (: binary bool)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "行 id を読むため(binary = 答えの行を binary の形で受ける)。"
+  "To read row id (binary = receive the answer rows in binary form)."
   (<- answer (SqlQuery DB "SELECT id, body, label, ok, length(body) FROM carry_blobs WHERE id = :id" #((SqlParam :name "id" :value id))
                        binary))
   (assert (isinstance answer SqlRows) answer)
@@ -76,7 +76,7 @@
 (defk stored-in-transaction [id body batched]
   {:pre [(: id int) (: body bytes) (: batched bool)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "本文 body を transaction の中で行 id に書くため(batched = 往復をまとめる transaction)。"
+  "To write the body body to row id inside a transaction (batched = a transaction that bundles round trips)."
   (<- answer (SqlTransaction DB (stored id body) None batched))
   (assert (is answer None) answer)
   None)
@@ -85,7 +85,7 @@
 (defk read-in-transaction [id binary]
   {:pre [(: id int) (: binary bool)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "行 id を batched の transaction の中で読むため(pipeline の文にも binary が届くかを見る)。"
+  "To read row id inside a batched transaction (to see whether binary reaches the pipeline statements too)."
   (<- row (SqlTransaction DB (read-row id binary) None True))
   row)
 
@@ -93,8 +93,8 @@
 (defk reused-after [program]
   {:pre [(: program "Program")] :post [(: % bool)]
    :tags {:context "sql" :role "program"}}
-  "program を撃った後の次の借りが、前と同じ接続(同じ backend)かを答えるため(貸し出しの上限 1 本 — 前の借りの接続は空きの列に在るか、
-   閉じられたか)。"
+  "To answer whether the next borrow after firing the program is the same connection (same backend) as before (lending limit of 1 -- is the previous borrow's connection in the idle list or
+   closed?)."
   (<- before (backend-pid))
   (<- program)
   (<- after (backend-pid))
@@ -104,7 +104,7 @@
 (defk carried [tap]
   {:pre [(: tap StatementWireTap)] :post [(: % dict)]
    :tags {:context "sql" :role "program"}}
-  "撃ち方ごとに、次の借りが同じ接続を使い回したか・答えの行の値・wire の大きさを集めるため。"
+  "To collect, per way of firing, whether the next borrow reused the same connection, the values of the answer rows, and the size on the wire."
   (<- (SqlEnsureTables DB #(BLOBS)))
   (<- (SqlQuery DB "DELETE FROM carry_blobs" #()))
   (<- (stored 1 HALF-BODY))
@@ -134,18 +134,18 @@
 (defk asserted-carried [seen]
   {:pre [(: seen dict)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "carried の答えを、目安の決まり(越えた接続は閉じる・越えない接続は使い回す)と binary の読みの決まりに照らすため。"
+  "To check the carried answers against the guideline rule (a connection over it is closed, one under it is reused) and the binary read rule."
   (val reuse (dfor key #("small" "large-send" "text-read" "binary-read" "unbatched" "batched" "batched-text-read" "batched-binary-read")
                    key (get seen key)))
   (assert (= reuse {"small" True "large-send" False "text-read" False "binary-read" True "unbatched" False "batched" False
                     "batched-text-read" False "batched-binary-read" True})
           reuse)
-  ;; binary の形で受けた行の値は text の形と同じ(bytea・text・真偽・数)。
-  (val expected #(1 HALF-BODY "札" True (len HALF-BODY)))
+  ;; The values of rows received in binary form are the same as in text form (bytea, text, boolean, number).
+  (val expected #(1 HALF-BODY "tag" True (len HALF-BODY)))
   (assert (= (get seen "text-row") expected) (get seen "text-row" 4))
   (assert (= (get seen "binary-row") expected) (get seen "binary-row" 4))
   (assert (= (get seen "pipelined-row") expected) (get seen "pipelined-row" 4))
-  ;; wire の上の答えの大きさ: text の形は 16 進で本文の 2 倍を越え、binary の形は本文の 1.01 倍に収まる。
+  ;; Size of the answer on the wire: text form exceeds twice the body in hexadecimal, binary form stays within 1.01 times the body.
   (val body (len MEASURED-BODY))
   (assert (> (get seen "text-wire") (* 2 body)) #((get seen "text-wire") body))
   (assert (< (get seen "binary-wire") (* 1.01 body)) #((get seen "binary-wire") body))
@@ -155,7 +155,7 @@
 (defk tapped-dsn [tap]
   {:pre [(: tap StatementWireTap)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "検の DSN を、中継の口へ繋ぐ DSN に書き換えるため(SSL・GSS の交渉をしない — 中継は平文の message を渡す)。"
+  "To rewrite the test DSN into a DSN that connects to the relay's port (no SSL or GSS negotiation -- the relay passes plain messages)."
   (import psycopg.conninfo [make-conninfo])
   (make-conninfo (or POSTGRES-DSN "") :host "127.0.0.1" :port (str tap.port) :sslmode "disable" :gssencmode "disable"))
 
@@ -163,7 +163,7 @@
 (defk tap-target []
   {:pre [] :post [(: % (| str tuple))]
    :tags {:context "sql" :role "program"}}
-  "検の DSN が指す PostgreSQL の口(unix socket の path か #(host port))を読むため。"
+  "To read the port of the PostgreSQL the test DSN points at (a unix socket path or #(host port))."
   (import psycopg.conninfo [conninfo-to-dict])
   (val given (conninfo-to-dict (or POSTGRES-DSN "")))
   (val host (.get given "host" "127.0.0.1"))
@@ -175,8 +175,8 @@
 
 (deftest test-postgres-closes-connections-that-carried-large-values
   {:skip-if (bool POSTGRES-SKIP-REASON) :skip-reason POSTGRES-SKIP-REASON}
-  ;; 目安を越える値を送った・受けた接続は、2 つの PostgreSQL の答え手とも返す時に閉じる(次の借りは新しい backend)。越えない接続は
-  ;; 使い回す。binary の読みは値が text の形と同じで、wire の上で本文の 2 倍にならない。
+  ;; A connection that sent or received a value over the guideline is closed on return with both PostgreSQL answerers (the next borrow is a new backend). A connection under it is
+  ;; reused. The binary read gives the same values as the text form and is not twice the body on the wire.
   (<- target (tap-target))
   (val tap (StatementWireTap target))
   (<- dsn (tapped-dsn tap))
@@ -185,8 +185,8 @@
     (val plain (PostgresConnections #((PostgresDatabase :name DB :dsn dsn)) :size 1))
     (try
       (<- direct (with-handler [(postgres-sql-handler plain)] (carried tap)))
-      ;; 閉じた接続は訳 large で数える。上限 1 本の貸し出しなので、閉じるたびに次の借りが 1 本開く(最後の要求の
-      ;; 接続が閉じられていれば、開いた数と閉じた数は同じ)。
+      ;; Closed connections are counted under reason large. With a lending limit of 1, each close lets the next borrow open one (if the last request's
+      ;; connection was closed, the number opened and the number closed are equal).
       (val tallies (.tallies plain))
       (assert (and (> tallies.large 0) (<= tallies.large tallies.opened (+ tallies.large 1))) tallies)
       (finally (.close plain)))

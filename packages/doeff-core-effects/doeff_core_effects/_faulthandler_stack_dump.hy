@@ -1,15 +1,15 @@
-;;; 全 thread の stack を書く見張りの本物の答え手 faulthandler-stack-dump-handler— ArmStackDump・DisarmStackDump・
-;;; ReadStackDumps に、CPython の faulthandler の見張りと 1 つの run の中の台帳で答える。
+;;; Real handler for the watchdog that writes the stacks of all threads, faulthandler-stack-dump-handler: answers ArmStackDump, DisarmStackDump and
+;;; ReadStackDumps with CPython's faulthandler watchdog and a ledger within one run.
 ;;;
-;;; 何のためか: 共有の実行の流れが止まると、止めた呼び出しは止まりが明けた後には stack に残らない。止まりの最中に全 thread の stack を
-;;; process の log(sys.stderr)へ書いておけば、後から名指せる。faulthandler.dump_traceback_later は期限を C の thread で数え、期限を
-;;; 過ぎたらその thread が書くので、止まった thread が GIL や free-threading の全 thread の停止を持ったままでも書ける(Python の thread の
-;;; 見張りは自分も止まる)。repeat なしなので、張った見張り 1 つにつき書くのは 1 度だけ。
+;;; Why: when the shared execution flow stalls, the call that caused the stall no longer remains in any stack once the stall ends. If the stacks of all threads are written
+;;; to the process log (sys.stderr) during the stall, it can be identified later. faulthandler.dump_traceback_later counts the deadline in a C thread and
+;;; that thread writes once the deadline passes, so it can write even while the stalled thread holds the GIL or the stop of all threads under free-threading (a Python-thread
+;;; watchdog would stall too). There is no repeat, so each armed watchdog writes only once.
 ;;;
-;;; 約束: faulthandler の見張りは process に 1 つ(張り直すと前の見張りは消える)— この答え手を 1 つの process に 2 つ入れない。書き先は
-;;; 張った時の sys.stderr。期限の判じ(ReadStackDumps の答え)は memory の答え手と同じ数え方(stack_dump_effects.hy の stack-dumps-at)で、
-;;; 呼び手の刻(time.monotonic と同じ物差し)で数える。faulthandler に渡す残りの秒は at + seconds - いまの time.monotonic(過ぎていれば
-;;; 最小の秒 — すぐ書く)。外側に state の handler が要る。
+;;; Contract: there is one faulthandler watchdog per process (re-arming removes the previous one) -- do not install this handler twice in one process. The write target is
+;;; sys.stderr at the time of arming. The deadline judgement (the answer of ReadStackDumps) is counted the same way as the memory handler (stack-dumps-at in stack_dump_effects.hy),
+;;; using the caller's clock (the same scale as time.monotonic). The remaining seconds passed to faulthandler are at + seconds - the current time.monotonic (if already past,
+;;; the minimum seconds -- write immediately). An outer state handler is required.
 (require doeff-hy.macros [defhandler <- val var])
 (val MODULE-TAGS {:context "stack-dump" :role "foundation"})
 (import faulthandler)
@@ -17,12 +17,12 @@
 (import time)
 (import doeff_core_effects._stack_dump_effects [ArmStackDump DisarmStackDump ReadStackDumps StackDumpLedger stack-dumps-at])
 
-;; faulthandler が受ける最小の残りの秒(0 以下は受けない)。
+;; The minimum remaining seconds faulthandler accepts (0 or less is not accepted).
 (val MINIMUM-SECONDS 0.001)
 
 
 (defhandler faulthandler-stack-dump-handler
-  "見張りの効果に、faulthandler の見張りで本当に書いて答える(頭の註)。"
+  "Answers the watchdog effects by actually writing through the faulthandler watchdog (see the header comment)."
   (session var ledger (StackDumpLedger :deadline None :written #()))
   (ArmStackDump [at seconds]
     (<- settled StackDumpLedger (stack-dumps-at ledger at))

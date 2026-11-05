@@ -1,9 +1,9 @@
 (require doeff-hy.macros [defk <- val])
 
 ;;; rooted-file-handler(doeff_core_effects._rooted_file):
-;;;   * 1 つの memory の置き場を root ごとに分けて見せる: 同じ内側の path が root ごとに別の file を指し、書きは root の下に着く
-;;;   * 答えの path(PathStat の real-path・FileFailed の path と文・LockHeld の path)は内側の path で返る(root を見せない)
-;;;   * 反例: `..` で root の外(隣の root)を読もうとしても内側の / で止まる・相対 path は呼び手の誤りとして断る
+;;;   * Show one memory store separated per root: the same inner path points to a different file per root, and writes land under the root
+;;;   * Answer paths (real-path of PathStat, path and message of FileFailed, path of LockHeld) are returned as inner paths (the root is not shown)
+;;;   * Counterexample: trying to read outside the root (the neighboring root) with `..` stops at the inner / ; a relative path is refused as the caller's error
 
 (import pytest)
 (import doeff [run with_handlers])
@@ -12,14 +12,14 @@
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [rooted-file-handler])
 
-;; 2 つの node の置き場(同じ内側の path /etc/x が node ごとに違う中身)。
+;; The stores of 2 nodes (the same inner path /etc/x has different content per node).
 (val INITIAL (MemoryFiles :files #((MemoryFile :path "/nodes/a/etc/x" :content b"a")
                                    (MemoryFile :path "/nodes/b/etc/x" :content b"b"))
                           :dirs #("/nodes" "/nodes/a" "/nodes/a/etc" "/nodes/b" "/nodes/b/etc")))
 
 
 (defn rooted [root program]
-  "置き場 1 つの上に root の見え方を 1 つ被せて走らせる(外側が先 — state・置き場・root)。"
+  "Run on top of one store with one root view overlaid (outer first -- state, store, root)."
   (run (with_handlers [(state) (memory-file-handler INITIAL) (rooted-file-handler root)] program)))
 
 
@@ -46,7 +46,7 @@
 
 (defn test-writes-land-under-the-root-and-answers-show-inner-paths []
   (setv #(writes stat paths) (rooted "/nodes/a" (write-then-look)))
-  ;; 書きの答えはどれも None(断りの値 FileFailed を黙って捨てない)。
+  ;; All write answers are None (the refusal value FileFailed is not silently discarded).
   (assert (= writes #(None None None)) writes)
   (assert (= stat.kind PathKind.FILE))
   (assert (= stat.real-path "/var/run/token2") stat)
@@ -64,8 +64,8 @@
 
 
 (defn #^ None test-a-symlink-points-inside-the-root []
-  ;; link の絶対の先は内側の / から読む先なので root の下へ移す(移さないと置き場の / の下の別の file を指す)・
-  ;; 相対の先は link の在る dir から読むのでそのまま。
+  ;; The absolute target of a link is a target read from the inner /, so move it under the root (if not moved, it would point to another file under the store's /) --
+  ;; a relative target is read from the dir containing the link, so it stays as is.
   (setv #(absolute relative through-absolute through-relative links) (rooted "/nodes/a" (link-then-read)))
   (assert (= #(absolute relative) #(None None)))
   (assert (= #(through-absolute through-relative) #("a" "a")) #(through-absolute through-relative))
@@ -79,7 +79,7 @@
 
 
 (defn test-dot-dot-stops-at-the-inner-root []
-  ;; 反例: 隣の root(/nodes/b)を .. で読もうとしても、内側の / で止まって /nodes/a/b/etc/x(無い)を読む。
+  ;; Counterexample: even trying to read the neighboring root (/nodes/b) with .., it stops at the inner / and reads /nodes/a/b/etc/x (nonexistent).
   (setv answer (rooted "/nodes/a" (escape)))
   (assert (isinstance answer FileFailed) answer)
   (assert (= answer.path "/b/etc/x") answer)
@@ -105,5 +105,5 @@
 
 
 (defn test-a-relative-path-is-refused []
-  (with [(pytest.raises Exception :match "絶対 path")]
+  (with [(pytest.raises Exception :match "absolute path")]
     (rooted "/nodes/a" (relative))))

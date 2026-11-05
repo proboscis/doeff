@@ -1,10 +1,10 @@
-;;; 乱数の契約テストの解釈器(composition root)— 同じ契約の Program を、乱数の答え手だけ替えて走らせる(
-;;; #1107 の決め)。
+;;; Interpreter for the randomness contract tests (composition root) -- runs the Program of the same contract, swapping only the randomness handler (
+;;; decision in #1107).
 ;;;
-;;;   os-random      本物: os-random-handler(os.urandom)
-;;;   seeded-random  fake: seeded-random-handler(種と呼びの順で決まった値 — 呼びの数えを持つので外側に state が要る)
+;;;   os-random      real: os-random-handler (os.urandom)
+;;;   seeded-random  fake: seeded-random-handler (values determined by the seed and call order -- it keeps a call count, so state is needed on the outside)
 ;;;
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; Used by conftest.py's doeff_interpreter (the :interpreters name of deftest -> INTERPRETERS).
 (require doeff-hy.macros [defk <- val])
 (import functools [partial])
 (import doeff [Program with_handlers])
@@ -15,15 +15,15 @@
 (val OS-RANDOM "os-random")
 (val SEEDED-RANDOM "seeded-random")
 
-;; fake の種(契約は長さと呼びごとの違いだけを見る)。
+;; Seed for the fake (the contract only looks at length and per-call differences).
 (val SEED 7)
 
 
 (defk under-random [name program]
   {:pre [(: name str) (in name #{OS-RANDOM SEEDED-RANDOM}) (: program Program)]
-   :post [(: % "契約の Program の答え(型は Program ごと)")]
+   :post [(: % "Answer of the contract's Program (type varies per Program)")]
    :tags {:context "random-test" :role "foundation"}}
-  "name の乱数の答え手の下で program を走らせるため。"
+  "To run program under the randomness handler named name."
   (val handlers (if (= name OS-RANDOM) [os-random-handler] [(state) (seeded-random-handler SEED)]))
   (<- answer (with_handlers handlers program))
   answer)

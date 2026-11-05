@@ -1,10 +1,10 @@
-;;; 機体の process の表の効果(proc_table_effects.hy)の本物の答え手 os-proc-table-handler。
+;;; Real answerer os-proc-table-handler for the machine's process table effects (proc_table_effects.hy).
 ;;;
-;;;   ReadProcTable  /proc の直下の数の dir ごとに stat を 1 度読み、ProcRow の列(pid の昇順)で答える。読む間に終わった process・
-;;;                  zombie は入れない。rss は page の数 × この機体の page の byte(os.sysconf の SC_PAGE_SIZE)。
-;;;   SignalPid      stat を読み直し、同じ start-ticks で zombie でない時だけ os.kill で 1 つの pid へ送る(group へは送らない)。
-;;;   /proc の無い機体では ProcTableUnavailable を上げる — 黙って空の表にしない。
-;;; /proc と os.kill に触るのはこの module だけ(台本の scripted_proc_table.hy は触らない)。本物との契約は tests/test_proc_table_contract.hy。
+;;;   ReadProcTable  Reads stat once for each numeric dir directly under /proc and answers with a list of ProcRow (ascending pid). Processes and
+;;;                  zombies that ended while reading are excluded. rss is the page count x this machine's page bytes (os.sysconf SC_PAGE_SIZE).
+;;;   SignalPid      Re-reads stat and sends via os.kill to a single pid (never to a group) only when the start-ticks are the same and it is not a zombie.
+;;;   On a machine without /proc it raises ProcTableUnavailable -- it does not silently return an empty table.
+;;; Only this module touches /proc and os.kill (the script module scripted_proc_table.hy does not). The contract with the real thing is tests/test_proc_table_contract.hy.
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import os)
@@ -13,17 +13,17 @@
 (import doeff_core_effects._proc_table_effects [ProcRow ReadProcTable SignalPid proc-row-of-stat])
 (import doeff_core_effects._warm_effects [signal-number-of])
 
-;; process の表の置き場の根(Linux の procfs)。
+;; Root of the process table store (Linux procfs).
 (val PROC-ROOT "/proc")
 
 
 (defclass ProcTableUnavailable [RuntimeError]
-  "この機体に /proc が無いので、process の表を読めない・signal を送る相手を確かめられない。")
+  "This machine has no /proc, so the process table cannot be read and the signal target cannot be verified.")
 
 
 (defk stat-row [pid page-bytes]
   {:pre [(: pid int) (> pid 0) (: page-bytes int)] :post [(: % (| ProcRow None))] :tags {:context "process" :role "foundation"}}
-  "pid の process を表の 1 行にするため。読む間に終わった・zombie = None(表に入れない)。"
+  "To turn a pid's process into one row of the table. A process that ended while reading, or a zombie = None (not put in the table)."
   (val text (try (with [f (open (os.path.join PROC-ROOT (str pid) "stat") :encoding "utf-8" :errors "surrogateescape")] (.read f))
                  (except [[FileNotFoundError ProcessLookupError]] None)))
   (if (is text None)
@@ -34,20 +34,20 @@
 
 (defk proc-root-present []
   {:pre [] :post [(: % None)] :tags {:context "process" :role "foundation"}}
-  "/proc の無い機体を名指しで断るため(黙って空の表・送らない答えにしない)。"
+  "To refuse by name a machine without /proc (never silently an empty table or a no-send answer)."
   (when (not (os.path.isdir PROC-ROOT))
-    (raise (ProcTableUnavailable (.format "{} が無い機体では process の表を読めない・signal の相手を確かめられない" PROC-ROOT))))
+    (raise (ProcTableUnavailable (.format "On a machine without {}, the process table cannot be read and the signal target cannot be verified" PROC-ROOT))))
   None)
 
 
 (defk os-read-proc-table []
   {:pre [] :post [(: % tuple)] :tags {:context "process" :role "foundation"}}
-  "機体の process の表を 1 度読むため(頭の註)。"
+  "To read the machine's process table once (header comment)."
   (<- (proc-root-present))
   (val page-bytes (os.sysconf "SC_PAGE_SIZE"))
   (val pids (sorted (gfor name (os.listdir PROC-ROOT) :if (.isdigit name) (int name))))
-  ;; 読んだ行は #(行 前の組) の組に繋ぎ、最後に 1 度だけ tuple にする(行ごとに今までの列を写し直すと行の数の 2 乗 — process が
-  ;; 8 万本を越えた機体で、読みが main の scheduler を塞いだ)。
+  ;; Read rows are chained into a #(row previous-pair) pair, and converted to a tuple just once at the end (copying the list so far for every row is quadratic in the row count -- on a machine with over
+  ;; 80,000 processes, reading blocked the main scheduler).
   (var chained #())
   (for [pid pids]
     (<- row (| ProcRow None) (stat-row pid page-bytes))
@@ -59,7 +59,7 @@
 
 (defk os-signal-pid [pid start-ticks sent]
   {:pre [(: pid int) (: start-ticks int) (: sent ProcessSignal)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
-  "pid の process 1 つへ signal を送るため(頭の註)。同じ start-ticks で走っている時だけ送り、他人の process には送らない。"
+  "To send a signal to a single pid's process (header comment). Sends only when it is running with the same start-ticks, and never to someone else's process."
   (<- (proc-root-present))
   (var row None)
   (when (> pid 0)
@@ -74,8 +74,8 @@
 
 
 (defhandler os-proc-table-handler
-  "process の一覧の effect(ReadProcTable・SignalPid)に、本物の /proc と os.kill で答える。"
-  ;; 本物の /proc と os.kill(頭の註)。
+  "Answers the process-list effects (ReadProcTable, SignalPid) with the real /proc and os.kill."
+  ;; Real /proc and os.kill (header comment).
   (ReadProcTable []
     (<- rows tuple (os-read-proc-table))
     (resume rows))

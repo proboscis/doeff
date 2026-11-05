@@ -1,11 +1,11 @@
-;;; Python と Hy の source を、import が検める方式(PEP 552 の checked hash)の .pyc に焼く部品(#2463)— 汎用の効果 CompilePythonSources
-;;; (file_effects.hy)の答え手(os_file.hy の本物・memory_file.hy の memory)が同じ判断を通る。
-;;;   compiled-pyc         source の中身 1 つ → .pyc の中身(焼けなければ SourceNotCompiled)
-;;;   checked-hash-pyc     焼いた code → .pyc の中身(PEP 552 の頭 + marshal)
-;;;   kept-pyc             木に既に在る .pyc(前の木から引き継いだ物)を焼き直さずに残すか(今の source と今の macro に合う時だけ)
-;;;   pyc-path             source の path → 同じ dir の __pycache__ の .pyc の path
-;;;   compile-python-sources  本物: 木の source を process の pool で並列に焼いて __pycache__ へ置く(fork — Hy の macro 展開が大半)
-;;;   prepare-compile-path    焼く process の import の路に木の中の根を足す(焼く source の macro が木の中の別の module を require するため)
+;;; Component that bakes Python and Hy sources into .pyc files in the form that import verifies (PEP 552 checked hash) (#2463) -- the handlers of the generic effect CompilePythonSources
+;;; (file_effects.hy) (the real one in os_file.hy and the memory one in memory_file.hy) go through the same judgement.
+;;;   compiled-pyc         the content of one source -> the content of a .pyc (SourceNotCompiled if it cannot be baked)
+;;;   checked-hash-pyc     baked code -> the content of a .pyc (PEP 552 header + marshal)
+;;;   kept-pyc             whether to keep a .pyc already in the tree (inherited from the previous tree) without re-baking (only when it matches the current source and current macros)
+;;;   pyc-path             source path -> the path of the .pyc in __pycache__ in the same dir
+;;;   compile-python-sources  the real one: bake the tree's sources in parallel in a process pool and place them in __pycache__ (fork -- Hy macro expansion is most of the cost)
+;;;   prepare-compile-path    add the roots inside the tree to the import path of the baking process (because a baked source's macros require other modules inside the tree)
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "bytecode" :role "foundation"})
 (import importlib.machinery)
@@ -22,14 +22,14 @@
 (import doeff_core_effects._file_effects [SourceNotCompiled])
 
 
-;; PEP 552 の hash 方式の .pyc の頭の flags: bit 0 = hash 方式・bit 1 = import の時に source の hash を検める(checked)。
+;; Flags in the header of a PEP 552 hash-based .pyc: bit 0 = hash-based, bit 1 = verify the source hash at import time (checked).
 (val CHECKED-HASH-FLAGS 0b11)
 
 
 (defk checked-hash-pyc [code data]
   {:pre [(: code types.CodeType) (: data bytes)] :post [(: % bytes)]}
-  "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 = magic・flags・source の hash 8 byte、
-   続けて marshal した code)。標準の私的な実装 importlib._bootstrap_external._code_to_hash_pyc と同じ並びを公開の API で組む。"
+  "To turn baked code into the content of a .pyc that import verifies by the source hash (PEP 552 -- header = magic, flags, 8 bytes of source hash,
+   followed by the marshaled code). Builds the same layout as the standard private implementation importlib._bootstrap_external._code_to_hash_pyc using the public API."
   (+ importlib.util.MAGIC-NUMBER
      (.to-bytes CHECKED-HASH-FLAGS 4 "little")
      (importlib.util.source-hash data)
@@ -38,10 +38,10 @@
 
 (defk compiled-pyc [rel name path data]
   {:pre [(: rel str) (: name str) (: path str) (: data bytes)] :post [(: % (| bytes SourceNotCompiled))]}
-  "source の中身 1 つを、import が検める方式(PEP 552 の checked hash)の .pyc の中身にするため。焼けない時は SourceNotCompiled
-   (import の時に同じ誤りが出るので、ここでは記録だけ)。rel = 木の中の相対 path・name = module 名・path = source の在処(Hy の source かの
-   見分けと、誤りの文に出る名)。Hy の source は import と同じく module を置いた中で compile し、展開が依った macro の記録を付ける —
-   記録の無い .pyc は import の時に doeff-hy の古さの検めが compile し直すので、焼いた分が無駄になる。"
+  "To turn the content of one source into the content of a .pyc in the form that import verifies (PEP 552 checked hash). When it cannot be baked, SourceNotCompiled
+   (the same error appears at import time, so we only record it here). rel = relative path inside the tree, name = module name, path = location of the source (used to tell
+   whether it is a Hy source, and the name shown in the error message). A Hy source is compiled inside the module being placed, as at import, and the record of the macros the expansion relied on is attached --
+   a .pyc without that record gets recompiled by doeff-hy's staleness check at import time, so the baking would be wasted."
   (try
     (val loader (importlib.machinery.SourceFileLoader name path))
     (val code (source-to-code-as-import loader data path))
@@ -53,27 +53,27 @@
 
 (defk kept-pyc [path data existing]
   {:pre [(: path str) (: data bytes) (: existing bytes)] :post [(: % bool)]}
-  "木に既に在る .pyc の中身 existing(前の木から引き継いだ物)を焼き直さずに残すか — 今の source data と今の環境の macro にそのまま
-   使える時だけ残すため(doeff-hy の古さの検めと同じ照らし方)。path = source の在処(Hy の source かの見分け)。"
+  "Whether to keep the content existing of a .pyc already in the tree (inherited from the previous tree) without re-baking -- keep it only when it can be used
+   as is with the current source data and the macros of the current environment (checked the same way as doeff-hy's staleness check). path = location of the source (used to tell whether it is a Hy source)."
   (bytecode-is-current path existing data))
 
 
-(defn #^ str pyc-path [#^ str source]  ; defk にできない: 内包表記と process の pool の中で呼ぶ path の計算
-  "source の path → 同じ dir の __pycache__ の .pyc の path(import が探す名 — <名>.<cache の印>.pyc)。"
+(defn #^ str pyc-path [#^ str source]  ; cannot be a defk: a path computation called inside comprehensions and the process pool
+  "source path -> the path of the .pyc in __pycache__ in the same dir (the name import looks for -- <name>.<cache tag>.pyc)."
   (setv #(head tail) (posixpath.split source))
   (posixpath.join head "__pycache__" (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc")))
 
 
-(defn #^ (| SourceNotCompiled None) compile-one [#^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が呼ぶ
-  "本物の木の source 1 つを焼いて __pycache__ へ置く(別の file へ書いて置き換える)。焼けない・読めない時は SourceNotCompiled。"
+(defn #^ (| SourceNotCompiled None) compile-one [#^ str tree #^ str rel #^ str name]  ; cannot be a defk: called by a child of the process pool
+  "Bake one source of the real tree and place it in __pycache__ (write to a separate file and replace). SourceNotCompiled when it cannot be baked or read."
   (setv source (posixpath.join tree rel))
   (try
     (with [f (open source "rb")] (setv data (.read f)))
     (except [error OSError]
-      (return (SourceNotCompiled :path rel :reason (str error)))))   ; 読めない source の文は file の効果の断りと同じ形(OSError の文)
+      (return (SourceNotCompiled :path rel :reason (str error)))))   ; the message for an unreadable source has the same form as the refusal of the file effects (the OSError message)
   (setv cache (pyc-path source))
-  ;; 前の木から引き継いだ .pyc が今の source と今の環境の macro に合えば焼き直さない(合わない物はここで焼き直す。
-  ;; 焼き直しは別の file へ書いて置き換えるので、hardlink の先の前の木の .pyc は変わらない)。
+  ;; If the .pyc inherited from the previous tree matches the current source and the macros of the current environment, do not re-bake (ones that do not match are re-baked here.
+  ;; Re-baking writes to a separate file and replaces, so the previous tree's .pyc behind a hardlink does not change).
   (when (os.path.isfile cache)
     (with [f (open cache "rb")] (setv existing (.read f)))
     (when (run (kept-pyc source data existing)) (return None)))
@@ -86,23 +86,23 @@
   None)
 
 
-(deff prepare-compile-path [tree roots]  ; defk にできない: process の pool の initializer と console script の main(素の関数として呼ばれる入口)
+(deff prepare-compile-path [tree roots]  ; cannot be a defk: the initializer of the process pool and the main of the console script (entry points called as plain functions)
   {:pre [(: tree str) (: roots tuple)] :post [(: % None)]}
-  "焼く process の import の路に木の中の根を足し(前が先)、焼く途中の import が timestamp 方式の .pyc を書かないようにする。"
+  "Add the roots inside the tree to the import path of the baking process (earlier ones first), and keep imports during baking from writing timestamp-based .pyc files."
   (setv sys.dont-write-bytecode True)
   (for [root (reversed roots)]
     (.insert sys.path 0 (posixpath.join tree root))))
 
 
-(deff _compile-item [item]  ; defk にできない: process の pool の子が素の関数として呼ぶ(pool.map に渡す)
+(deff _compile-item [item]  ; cannot be a defk: called as a plain function by a child of the process pool (passed to pool.map)
   {:pre [(: item tuple)] :post [(: % (| SourceNotCompiled None))]}
-  "pool の子で #(木 相対 path module 名) の組 1 つを焼くため(焼けなければ SourceNotCompiled)。"
+  "To bake one #(tree relative-path module-name) tuple in a pool child (SourceNotCompiled if it cannot be baked)."
   (compile-one #* item))
 
 
-(defn #^ tuple compile-python-sources [#^ str tree #^ tuple items #^ int jobs #^ tuple roots]  ; defk にできない: process の pool を回す
-  "木の source(#(相対 path module 名) の列)を焼いて __pycache__ へ置き、焼けなかった物の SourceNotCompiled の列を返す。焼きは 1 file
-   ずつ独立で CPU だけを使うので jobs 個の process に分ける(fork — spawn では子が Hy の module を import し直す前に関数を解けない)。"
+(defn #^ tuple compile-python-sources [#^ str tree #^ tuple items #^ int jobs #^ tuple roots]  ; cannot be a defk: runs the process pool
+  "Bake the tree's sources (a sequence of #(relative-path module-name)) and place them in __pycache__, returning the sequence of SourceNotCompiled for those that could not be baked. Baking is independent
+   per file and uses only CPU, so it is split across jobs processes (fork -- with spawn the child cannot resolve the function before re-importing the Hy modules)."
   (setv work (lfor #(rel name) items #(tree rel name)))
   (setv results
     (if (or (<= jobs 1) (<= (len work) 1))

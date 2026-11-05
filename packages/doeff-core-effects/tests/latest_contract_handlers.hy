@@ -1,11 +1,11 @@
-;;; 最新の値の契約テストの解釈器(composition root)— 同じ契約の Program を、最新の値の答え手だけ替えて走らせる(
-;;; #1107 の決め)。
+;;; The interpreter (composition root) for the latest-value contract tests -- runs the same contract Program, swapping only the latest-value answerer (
+;;; decision of #1107).
 ;;;
-;;;   process-latest  本物: process-latest-handler(process に 1 つの置き場 — 別の run・別の thread と同じ名前で共有する)
-;;;   memory-latest   fake: memory-latest-handler(1 つの run の中の状態だけ — thread を読まない)
+;;;   process-latest  real: process-latest-handler (one store per process -- shared by the same name across other runs and other threads)
+;;;   memory-latest   fake: memory-latest-handler (state only within one run -- does not read threads)
 ;;;
-;;; 本物は名前ごとに process の置き場を持つので、解釈器は走らせるたびに新しい名前を使う(前の検の値が混ざらない)。
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The real one has a process store per name, so the interpreter uses a new name on every run (values from earlier checks do not mix in).
+;;; Used by conftest.py's doeff_interpreter (the names in deftest's :interpreters -> INTERPRETERS).
 (require doeff-hy.macros [defk <- val])
 (import functools [partial])
 (import itertools [count])
@@ -17,15 +17,15 @@
 (val PROCESS-LATEST "process-latest")
 (val MEMORY-LATEST "memory-latest")
 
-;; 本物の置き場の名前を走らせるたびに変える数え手(process の置き場は検の process の間ずっと残る)。
+;; A counter that changes the real store's name on every run (the process store stays for the whole life of the test process).
 (val RUN-NUMBERS (count))
 
 
 (defk under-latest [name program]
   {:pre [(: name str) (in name #{PROCESS-LATEST MEMORY-LATEST}) (: program Program)]
-   :post [(: % "契約の Program の答え(型は Program ごと)")]
+   :post [(: % "answer of the contract Program (type varies per Program)")]
    :tags {:context "latest-test" :role "foundation"}}
-  "name の最新の値の答え手の下で program を走らせる。本物は走らせるたびに新しい置き場の名前を使う。"
+  "Run program under the latest-value answerer for name. The real one uses a new store name on every run."
   (val handler (if (= name PROCESS-LATEST)
                    (process-latest-handler (+ "latest-contract-" (str (next RUN-NUMBERS))))
                    memory-latest-handler))

@@ -1,38 +1,38 @@
-;;; 最新の値の memory の答え手 memory-latest-handler(ADR-DOE-CORE-EFFECTS-004)— PublishLatest・ReadLatest・AwaitLatest に、
-;;; 1 つの run の中の状態(session の値)で答える。
+;;; Memory handler for latest values, memory-latest-handler (ADR-DOE-CORE-EFFECTS-004): answers PublishLatest, ReadLatest and AwaitLatest with
+;;; state within one run (a session value).
 ;;;
-;;; 何のためか: 模擬と検では、本物(process_latest.hy)と同じ契約で最新の値の受け渡しを確かめたいが、process に 1 つの置き場や thread に
-;;; 触れたくない。違うのは置き場だけ(process に 1 つ → この run の中)。別の run とは共有しない。外側に state の handler が要る。
+;;; Why: in mocks and tests we want to check the handoff of latest values under the same contract as the real one (process_latest.hy) without touching the one-per-process store or threads.
+;;; Only the store differs (one per process -> within this run). It is not shared with other runs. An outer state handler is required.
 ;;;
-;;; 保存先は本物と同じ形: 中身を書き換える dict 2 つ(型 → 最新の値・型 → 掛かっている呼び鈴の組)を 1 つの値 MemoryLatestStore にまとめ、
-;;; session の値はその 1 つだけにする。run の中で最初に答える時に 1 度作って session に置き、以後の節は取り出して中身を書き換える(置き直さない)。
-;;; だから置く・読む 1 回ごとの session の出し入れは 1 回(置く回数の多い使い手の検の歩数に乗る — 呼び鈴の組を 2 つ目の session の値に
-;;; 持っていた形では置くたびに 3 回だった・test_memory_latest.hy)。
+;;; The store has the same shape as the real one: two mutable dicts (type -> latest value, type -> set of hung bells) are gathered into one value MemoryLatestStore,
+;;; and that is the only session value. It is created once at the first answer in the run and placed in the session; later clauses take it out and mutate its contents (it is not re-placed).
+;;; So each publish or read costs one session access (this counts toward the step count of tests with heavy publishers -- the older shape that
+;;; kept the set of bells in a second session value cost 3 per publish; test_memory_latest.hy).
 ;;;
-;;; 変わるまでの待ち(AwaitLatest)は本物と同じ形: 待つ側は呼び鈴(CreateExternalPromise の約束 — 同じ run の task が
-;;; 完了してもよい)を呼び鈴の組に掛け、park の形(Wait の TaskPriority.IDLE — 約束が開いている間も仮想の時計が進む)で待つ。PublishLatest が値を
-;;; 差し替えた後に、その型の呼び鈴を全部外して鳴らす。呼び手が待ちの task を Cancel した時は、約束の取り消しの callback(effect を出せない)が
-;;; 呼び鈴の組から外す。鳴らす側は置いた値で呼び鈴を完了し、待つ側はその値を答える(同じ object が置き直された時は seen のままなので、
-;;; また掛けて待つ)。
+;;; Waiting until a change (AwaitLatest) has the same shape as the real one: the waiter hangs a bell (a CreateExternalPromise promise -- a task in the same run may
+;;; complete it) in the set of bells and waits in the park form (Wait with TaskPriority.IDLE -- the virtual clock advances even while the promise is open). After PublishLatest
+;;; replaces the value, it detaches and rings all the bells of that type. When the caller Cancels the waiting task, the promise's cancel callback (which cannot emit effects)
+;;; detaches it from the set of bells. The ringing side completes the bell with the published value and the waiter answers with that value (when the same object is re-published it is still seen, so
+;;; it hangs a bell and waits again).
 (require doeff-hy.macros [defhandler deff var val <-])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "latest" :role "foundation"})
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass])  ; used by the defrecord expansion
 (import functools [partial])
 (import doeff_core_effects._latest_effects [PublishLatest ReadLatest AwaitLatest])
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait TaskPriority])
 
 
 (defrecord MemoryLatestStore
-  "1 つの run の中の保存先: values = 型 → 最新の値・bells = 型 → 掛かっている呼び鈴の組。どちらも節が中身を書き換える dict(頭の註)。"
+  "The store within one run: values = type -> latest value, bells = type -> set of hung bells. Both are dicts whose contents the clauses mutate (see the header comment)."
   {:tags {:context "latest" :role "type"}}
   (#^ (get dict #(type object)) values)
   (#^ (get dict #(type (get tuple #((get ExternalPromise object) ...)))) bells))
 
 
-(deff drop-bell [bells kind bell]  ; defk にできない: 呼び鈴の約束の取り消しの callback(ExternalPromise.on-cancel)が scheduler の中で素の関数として呼ぶ
+(deff drop-bell [bells kind bell]  ; cannot be a defk: it is called as a plain function inside the scheduler by the bell promise's cancel callback (ExternalPromise.on-cancel)
   {:pre [(: bells dict) (: kind type) (: bell ExternalPromise)] :post [(: % None)] :tags {:context "latest" :role "foundation"}}
-  "待ち終えた・取り消された待ちの呼び鈴 bell を型 kind の組から外すため(鳴って外された後なら何もしない — 呼び鈴は object そのもので比べる)。"
+  "To detach the bell of a finished or cancelled wait from the set of type kind (does nothing if it was already detached by ringing -- bells are compared by object identity)."
   (setv left (tuple (gfor other (.get bells kind #()) :if (is-not other bell) other)))
   (if left
       (setv (get bells kind) left)
@@ -41,7 +41,7 @@
 
 
 (defhandler memory-latest-handler
-  "PublishLatest・ReadLatest・AwaitLatest に、この run の中の保存先 MemoryLatestStore で答える(頭の註)。"
+  "Answers PublishLatest, ReadLatest and AwaitLatest with the MemoryLatestStore within this run (see the header comment)."
   (session val store (MemoryLatestStore :values {} :bells {}))
   (PublishLatest [value]
     (setv (get store.values (type value)) value)

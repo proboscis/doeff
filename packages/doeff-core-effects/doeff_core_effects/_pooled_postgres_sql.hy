@@ -1,32 +1,32 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の本物の PostgreSQL の答え手のうち、scheduler を塞がない版 pooled-postgres-sql-handler
-;;; (G2)。postgres-sql-handler(postgres_sql.hy)も #1215 から scheduler を塞がない(呼び 1 つに thread 1 本・許可は
-;;; thread の間の錠)。この版は同じ文・同じ値の写し・同じ transaction の手順(run-in-transaction)を使い、thread の数を呼び手の pool で
-;;; 抑えるために、待ち方を次のように変える:
-;;;   - 接続の許可の待ち = scheduler の CreateSemaphore / AcquireSemaphore(database ごとに PostgresConnections の size 個)。許可を待つ task の
-;;;     横で他の task が回る。
-;;;   - driver の I/O(接続を開く・文を流す・COMMIT・ROLLBACK・接続を返す)だけを呼び手の pool の thread へ逃がし、外から完了させる promise
-;;;     (CreateExternalPromise + Wait)で待つ(thread_pool_compute.hy と同じ作法)。待つのは撃った task だけ。
-;;;   - SqlQuery / SqlInsertRows / SqlEnsureTables = 許可を取り、pool の仕事 1 つで「接続を借りる → 流す → 返す」。
-;;;   - SqlTransaction = 許可を取り、接続を 1 本借りて、BEGIN(錠 — lock-key と locks の順・postgres-sql-handler と
-;;;     同じ文)→ program → COMMIT の各段を pool で流す。中の SqlQuery は transaction の scope の handler が同じ接続で pool へ回す(program 側の
-;;;     約束は postgres-sql-handler と同じ)。batched = True を選んだ transaction だけは postgres-sql-handler と同じ往復のまとめ方(BEGIN と錠は
-;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)で、借りる・全部の往復と間の program・返すを
-;;;     pool の仕事 1 つで回す(往復の間に scheduler へ戻らない — postgres_sql.hy の offloaded-batched-transaction)。transaction の外の SqlBatch は名指して断る
-;;;     (stray-batch)。
-;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice・名で絞る形は #3688)は postgres-sql-handler と同じ手順
-;;;     (postgres_sql.hy の notified・hung-notice — 名の重なる呼び鈴だけを、接続を返した後に鳴らす)。transaction の外の SqlNotify は接続の
-;;;     許可を取ってから流す。呼び鈴を掛けるのは待ち受けの接続で、許可を使わない。
-;;;   - 取り消し: 待っている task が Cancel されたら、run-in-transaction が ROLLBACK を流し、接続を返し(返す時にも transaction の途中なら
-;;;     rollback)、許可を返してから取り消しを通す。始まっていない pool の仕事は外し、取り消しの後に出来た答え(借りた接続)は pool で返す。
-;;;     走り中の文は止めない(文が終わるまで ROLLBACK は driver の錠で待つ)。
-;;; 契約(組み立ての側が守る):
-;;;   - pool(Executor)の worker の数は、この handler に渡す PostgresConnections の宣言した接続の数の合計(database の数 × size)以上にする。
-;;;     許可を持つ task の driver の呼びが pool の中で互いを待たないため。pool の持ち主は呼び手(作るのも閉じるのも組み立ての側)。
-;;;   - 並び: 外側に scheduled と、session の値の置き場(doeff_core_effects の state)が要る。
-;;;   - 同じ PostgresConnections を postgres-sql-handler と分け合ってもよい(接続の上限は PostgresConnections の錠が pool の thread の中で守る)。
-;;;   - 仕組みの置き場: 外から完了させる promise で待つ係(offloaded・取り消しの後始末 Handoff)は offloaded_call.hy、接続を借りて流して返す
-;;;     仕事(offloaded-statement)と transaction の段(offloaded-transaction)は postgres_sql.hy — postgres-sql-handler と共に使う(#1215)。この file が
-;;;     持つのは許可の待ち方(scheduler の semaphore)と、呼び手の pool を使うことだけ。
+;;; The real PostgreSQL answerer for the generic SQL effects (sql_effects.hy), in the version that does not block the scheduler: pooled-postgres-sql-handler
+;;; (G2). postgres-sql-handler (postgres_sql.hy) also does not block the scheduler since #1215 (one thread per call, permits are
+;;; an inter-thread lock). This version uses the same statements, the same value mapping, and the same transaction procedure (run-in-transaction), and in order to hold the number of threads down with the caller's pool,
+;;; it changes the way of waiting as follows:
+;;;   - Waiting for a connection permit = the scheduler's CreateSemaphore / AcquireSemaphore (size of PostgresConnections per database). Other tasks run
+;;;     alongside a task waiting for a permit.
+;;;   - Only the driver's I/O (opening a connection, running a statement, COMMIT, ROLLBACK, returning a connection) is offloaded to a thread of the caller's pool, and waited for with a promise completed from outside
+;;;     (CreateExternalPromise + Wait) (the same practice as thread_pool_compute.hy). Only the task that fired waits.
+;;;   - SqlQuery / SqlInsertRows / SqlEnsureTables = take a permit, and in one pool job "lease a connection -> run -> return".
+;;;   - SqlTransaction = take a permit, lease one connection, and run each stage of BEGIN (lock - the order of lock-key and locks, the same statement as in postgres-sql-handler
+;;;     ) -> program -> COMMIT in the pool. The SqlQuery inside is routed to the pool on the same connection by the transaction scope's handler (the program side's
+;;;     promises are the same as postgres-sql-handler). Only a transaction that chose batched = True uses the same way of batching round trips as postgres-sql-handler
+;;;     (BEGIN and the lock go in the same round trip as the first statement, and the commit bundle goes in the same round trip as COMMIT - one round trip = one pipeline, #3605), and runs lease, all round trips and the program between them, and return
+;;;     in one pool job (no return to the scheduler between round trips - offloaded-batched-transaction in postgres_sql.hy). A SqlBatch outside a transaction is refused by name
+;;;     (stray-batch).
+;;;   - Notifications (SqlNotify, SqlHangNotice, SqlDropNotice; the name-filtered form is #3688) use the same procedure as postgres-sql-handler
+;;;     (notified and hung-notice in postgres_sql.hy - only the bells with overlapping names are rung, after the connection is returned). A SqlNotify outside a transaction is run after taking a connection
+;;;     permit. The bell is hung on the listening connection, which does not use a permit.
+;;;   - Cancellation: when the waiting task is Cancelled, run-in-transaction runs ROLLBACK, returns the connection (and also rolls back on return if in the middle of a transaction),
+;;;     returns the permit, and then lets the cancellation through. Pool jobs that have not started are removed, and an answer produced after the cancellation (a leased connection) is returned in the pool.
+;;;     A running statement is not stopped (ROLLBACK waits on the driver's lock until the statement ends).
+;;; Contract (kept by the assembly side):
+;;;   - The number of workers of the pool (Executor) must be at least the total number of connections declared in the PostgresConnections handed to this handler (number of databases x size).
+;;;     So that the driver calls of tasks holding permits do not wait for each other inside the pool. The owner of the pool is the caller (the assembly side makes and closes it).
+;;;   - Placement: scheduled and a session value store (state of doeff_core_effects) are needed outside.
+;;;   - The same PostgresConnections may be shared with postgres-sql-handler (the connection limit is kept by the lock of PostgresConnections inside the pool's threads).
+;;;   - Where the machinery lives: the part that waits with a promise completed from outside (offloaded, the post-cancellation cleanup Handoff) is in offloaded_call.hy, and the job that leases, runs, and returns a connection
+;;;     (offloaded-statement) and the transaction stage (offloaded-transaction) are in postgres_sql.hy - used together with postgres-sql-handler (#1215). What this file
+;;;     holds is only the way of waiting for permits (the scheduler's semaphore) and the use of the caller's pool.
 (require doeff-hy.macros [defhandler defk <- val var])
 (import concurrent.futures [Executor])
 (import doeff [Program])
@@ -38,9 +38,9 @@
 
 
 (defk permit-for [permits database size]
-  {:pre [(: permits dict) (: database str) (: size int)] :post [(: % "scheduler の Semaphore")]
+  {:pre [(: permits dict) (: database str) (: size int)] :post [(: % "scheduler Semaphore")]
    :tags {:context "sql" :role "foundation"}}
-  "database の接続の許可(scheduler の semaphore)を引くため(まだ無ければ size 個の許可で作る)。"
+  "To look up the connection permit (the scheduler's semaphore) for database (made with size permits if it does not exist yet)."
   (if (in database permits)
       (get permits database)
       (do (<- created (CreateSemaphore size))
@@ -48,9 +48,9 @@
 
 
 (defk permitted [permit program]
-  {:pre [(: permit "scheduler の Semaphore") (: program Program)] :post [(: % "program の答え")]
+  {:pre [(: permit "scheduler Semaphore") (: program Program)] :post [(: % "answer of program")]
    :tags {:context "sql" :role "foundation"}}
-  "接続の許可を scheduler で待って取り、program を回し、必ず許可を返すため。"
+  "To take a connection permit by waiting in the scheduler, run program, and always return the permit."
   (<- (AcquireSemaphore permit))
   (try
     (<- answer program)
@@ -59,19 +59,19 @@
 
 
 (defhandler pooled-postgres-sql-handler [#^ PostgresConnections connections #^ Executor pool #^ (get tuple #(str ...)) [serialized-lock-keys #()]]
-  ;; 引数に残す理由: 接続の貸し出しは組み立ての側が作って閉じる資源で(DSN と資格を持つ)、答える database の名で ClickHouse の答え手と
-  ;; 同じ組に並べ分ける。pool も組み立ての側が作って閉じる資源(worker の数の契約は頭の註)。
-  ;; permits = database の名 → 接続の許可(scheduler の semaphore — 初めて使う拍に作る)(session の値)。
-  "scheduler を塞がない本物の PostgreSQL の答え手(頭の註)。connections が宣言した database の名にだけ答える(他の名は外側へ回す)。"
+  ;; Reason it stays an argument: the connection lease is a resource that the assembly side makes and closes (it holds the DSN and credentials), and it is lined up in the same set as the ClickHouse answerer, sorted by the database name it answers.
+  ;; The pool is also a resource that the assembly side makes and closes (the worker-count contract is in the header comment).
+  ;; permits = database name -> connection permit (the scheduler's semaphore - made on the first beat it is used) (a session value).
+  "The real PostgreSQL answerer that does not block the scheduler (header comment). Answers only the database names that connections declared (other names are passed outward)."
   {:tags {:context "sql" :role "foundation"}}
   (session var permits {})
-  ;; serialized-lock-keys はsession中固定の有限tuple。登録キーだけを接続取得前に直列化する。
-  ;; Semaphoreは回収されないので保持して再利用する。ローカルの待機にはDBのstatement_timeoutは掛からない。
+  ;; serialized-lock-keys is a finite tuple fixed for the session. Only registered keys are serialized before acquiring a connection.
+  ;; Semaphores are not garbage-collected, so they are kept and reused. The DB's statement_timeout does not apply to the local wait.
   (session var transaction-permits {})
   (SqlQuery [database statement params binary] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
-    ;; 許可は初めての拍に 1 度だけ置く(在れば session の値を書き直さない — 文ごとの Put を土台まで往復させない)。
-    ;; 下の節も同じ。
+    ;; The permit is placed only once, on the first beat (if present, the session value is not rewritten - so a Put per statement does not make a round trip down to the foundation).
+    ;; The same for the clauses below.
     (when (not-in database permits)
       (:= permits (| permits {database created})))
     (val request (SqlQuery database statement params binary))
@@ -111,7 +111,7 @@
       (:= admitted (permitted admission transaction)))
     (<- answer admitted)
     (resume answer))
-  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  ;; A bundle batches round trips within a transaction - inside a transaction the SqlTransaction scope answers, and only bundles emitted outside reach here.
   (SqlBatch [database queries commit] :when (in database (.names connections))
     (<- refusal (stray-batch database))
     (raise refusal))

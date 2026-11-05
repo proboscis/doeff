@@ -1,20 +1,20 @@
-;;; 最新の値の本物の答え手 process-latest-handler(ADR-DOE-CORE-EFFECTS-004)— PublishLatest・ReadLatest・AwaitLatest に、
-;;; process に 1 つの保存先で答える。
+;;; Real handler for latest values, process-latest-handler (ADR-DOE-CORE-EFFECTS-004): answers PublishLatest, ReadLatest and AwaitLatest
+;;; with one store per process.
 ;;;
-;;; 何のためか: 動き続ける process では、処理ループの run が断面(破れの記録・同期の進み・標本の ring …)を置き、別の run(probe の HTTP)が
-;;; 書き手を待たずに読む。session の値は 1 つの run の中にしか無いので、この module が「名前 → 置き場(型 → 最新の値)」を process に 1 つ
-;;; 持ち、同じ名前で入れた答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。class は作らない(ADR-DOE-HY-007 R3・R4)。
+;;; Why: in a long-running process, the run of the processing loop places a snapshot (a record of failures, sync progress, a ring of samples ...) and another run (the probe's HTTP)
+;;; reads it without waiting for the writer. Session values exist only within one run, so this module keeps one "name -> board (type -> latest value)" per process,
+;;; and handlers installed under the same name (different runs, different threads) read and write the same board. No class is made (ADR-DOE-HY-007 R3, R4).
 ;;;
-;;; 書きは置き場の dict の 1 つの鍵の差し替え 1 回、読みは 1 つの鍵の参照 1 回で、どちらも lock を取らない(dict の 1 回の読み書きは
-;;; free-threaded の Python でも割れない)。置き場を作る時だけ lock を取る。置き場は process の終わりまで残る。
-;;; thread に触るのはこの module だけ(memory の答え手 memory_latest.hy は触らない)。
+;;; A write is one replacement of one key in the board's dict and a read is one lookup of one key; neither takes a lock (a single dict read or write is not torn even under
+;;; free-threaded Python). A lock is taken only when creating a board. Boards remain until the process ends.
+;;; Only this module touches threads (the memory handler memory_latest.hy does not).
 ;;;
-;;; 変わるまでの待ち(AwaitLatest): 待つ側は呼び鈴(CreateExternalPromise の約束 — 別の thread から完了してよい唯一の手段)を
-;;; 「名前 → 型 → 掛かっている呼び鈴の組」(BELLS)に掛けてから保存先を確かめ直し、まだ seen なら呼び鈴の約束を park の形(Wait の TaskPriority.IDLE —
-;;; 仮想の時計を止めない)で待つ。置く側の PublishLatest は値を差し替えた後に、その型の呼び鈴を全部外して鳴らす。取りこぼさない順: 待つ側は
-;;; 「掛ける → 確かめ直す」、置く側は「差し替える → 外して鳴らす」で、呼び鈴の組の出し入れだけを BELLS-LOCK の中で行う — 置く側が外す時に
-;;; 呼び鈴が無ければ、待つ側がもう一度読む時は差し替えた後の値を見る。呼び手が待ちの task を Cancel した時は、呼び鈴の約束の取り消しの callback
-;;; (ExternalPromise.on-cancel)が呼び鈴を外す(残さない)。同じ object が置き直された時は seen のままなので、また掛けて待つ。
+;;; Waiting until a change (AwaitLatest): the waiter hangs a bell (a CreateExternalPromise promise -- the only means that may be completed from another thread) in
+;;; "name -> type -> set of hung bells" (BELLS), then re-checks the store, and if it is still seen, waits on the bell's promise in the park form (Wait with TaskPriority.IDLE --
+;;; the virtual clock is not stopped). After replacing the value, PublishLatest on the publishing side detaches and rings all the bells of that type. Order that loses nothing: the waiter does
+;;; "hang -> re-check" and the publisher does "replace -> detach and ring", and only the insertion and removal of the set of bells happen inside BELLS-LOCK -- if there is no
+;;; bell when the publisher detaches, then when the waiter reads again it sees the replaced value. When the caller Cancels the waiting task, the bell promise's cancel callback
+;;; (ExternalPromise.on-cancel) detaches the bell (does not leave it). When the same object is re-published it is still seen, so the waiter hangs a bell and waits again.
 (require doeff-hy.macros [defhandler defk deff val var <-])
 (val MODULE-TAGS {:context "latest" :role "foundation"})
 (import threading)
@@ -23,17 +23,17 @@
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait TaskPriority])
 
 
-;; process に 1 つ: 名前 → 置き場(型 → 最新の値)と、置き場を作る時の lock。
+;; One per process: name -> board (type -> latest value), and the lock for creating a board.
 (val BOARDS {})
 (val BOARDS-LOCK (threading.Lock))
-;; process に 1 つ: 名前 → 呼び鈴の保存先(型 → 掛かっている呼び鈴の組)と、呼び鈴の組を出し入れする時の lock(頭の註の変わるまでの待ち)。
+;; One per process: name -> store of bells (type -> set of hung bells), and the lock for inserting and removing the set of bells (the wait until a change in the header comment).
 (val BELLS {})
 (val BELLS-LOCK (threading.Lock))
 
 
 (defk latest-board [name]
   {:pre [(: name str)] :post [(: % dict)] :tags {:context "latest" :role "foundation"}}
-  "答え手を入れる時に、name の置き場(型 → 最新の値)を引くため(無ければ作る — 別の run と同じ置き場を共有する)。"
+  "To look up the board of name (type -> latest value) when installing the handler (created if absent -- shared with other runs)."
   (with [BOARDS-LOCK]
     (when (not-in name BOARDS)
       (setv (get BOARDS name) {}))
@@ -42,7 +42,7 @@
 
 (defk latest-bells [name]
   {:pre [(: name str)] :post [(: % dict)] :tags {:context "latest" :role "foundation"}}
-  "答え手を入れる時に、name の呼び鈴の保存先(型 → 掛かっている呼び鈴の組)を引くため(無ければ作る — 別の run と同じ保存先を共有する)。"
+  "To look up the store of bells of name (type -> set of hung bells) when installing the handler (created if absent -- shared with other runs)."
   (with [BOARDS-LOCK]
     (when (not-in name BELLS)
       (setv (get BELLS name) {}))
@@ -51,15 +51,15 @@
 
 (defk hang-bell [bells kind bell]
   {:pre [(: bells dict) (: kind type) (: bell ExternalPromise)] :post [(: % None)] :tags {:context "latest" :role "foundation"}}
-  "待つ側の呼び鈴 bell を、型 kind の組の末尾に掛けるため(頭の註の取りこぼさない順の「掛ける」)。"
+  "To hang the waiter's bell at the end of the set of type kind (the \"hang\" of the order that loses nothing in the header comment)."
   (with [BELLS-LOCK]
     (setv (get bells kind) (+ (.get bells kind #()) #(bell))))
   None)
 
 
-(deff unhang-bell [bells kind bell]  ; defk にできない: 呼び鈴の約束の取り消しの callback(ExternalPromise.on-cancel)が scheduler の中で素の関数として呼ぶ
+(deff unhang-bell [bells kind bell]  ; cannot be a defk: it is called as a plain function inside the scheduler by the bell promise's cancel callback (ExternalPromise.on-cancel)
   {:pre [(: bells dict) (: kind type) (: bell ExternalPromise)] :post [(: % None)] :tags {:context "latest" :role "foundation"}}
-  "待ち終えた・取り消された待ちの呼び鈴 bell を型 kind の組から外すため(鳴って外された後なら何もしない — 呼び鈴は object そのもので比べる)。"
+  "To detach the bell of a finished or cancelled wait from the set of type kind (does nothing if it was already detached by ringing -- bells are compared by object identity)."
   (with [BELLS-LOCK]
     (setv left (tuple (gfor other (.get bells kind #()) :if (is-not other bell) other)))
     (if left
@@ -70,7 +70,7 @@
 
 (defk ring-bells [bells kind]
   {:pre [(: bells dict) (: kind type)] :post [(: % None)] :tags {:context "latest" :role "foundation"}}
-  "型 kind に掛かっている呼び鈴を全部外して鳴らすため(頭の註の「外して鳴らす」— 鳴らすのは lock の外。2 度目の完了は無視される)。"
+  "To detach and ring all the bells hung on type kind (the \"detach and ring\" in the header comment -- ringing happens outside the lock. A second completion is ignored)."
   (with [BELLS-LOCK]
     (val rung (.pop bells kind #())))
   (for [bell rung]
@@ -79,8 +79,8 @@
 
 
 (defhandler process-latest-handler [#^ str name]
-  "PublishLatest・ReadLatest・AwaitLatest に、process に 1 つの保存先 name で答える(頭の註)。"
-  ;; 引数に残す理由: name は別の run と同じ置き場を共有する鍵 — 入れる所ごとに決まる値で、Ask では区別できない。
+  "Answers PublishLatest, ReadLatest and AwaitLatest with the one-per-process store name (see the header comment)."
+  ;; Why it stays an argument: name is the key that shares a board with other runs -- a value decided per place of installation, which Ask cannot distinguish.
   (session val board (! (latest-board name)))
   (session val bells (! (latest-bells name)))
   (PublishLatest [value]
@@ -94,7 +94,7 @@
     (while (is current seen)
       (<- bell ExternalPromise (CreateExternalPromise))
       (<- (hang-bell bells kind bell))
-      ;; 掛けてから確かめ直す(読んだ直後・掛ける前に置かれた値を取りこぼさない — 頭の註)。待ちが取り消されたら callback が呼び鈴を外す。
+      ;; Hang first, then re-check (so a value published right after the read and before hanging is not lost -- header comment). If the wait is cancelled, the callback detaches the bell.
       (when (is (.get board kind) seen)
         (.on-cancel bell (partial unhang-bell bells kind bell))
         (<- (Wait bell.future :priority TaskPriority.IDLE)))

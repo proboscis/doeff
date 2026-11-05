@@ -286,8 +286,8 @@ class Raise(EffectBase[Never], Generic[_E]):
     def __post_init__(self) -> None:
         if isinstance(self.reason, BaseException):
             raise TypeError(
-                "Raise の理由に Python の例外は置けない — 例外は実装の誤りのまま上げ、想定内の失敗は"
-                f"値で表す(ADR-DOE-CORE-EFFECTS-003 R11): {self.reason!r}"
+                "A Python exception cannot be placed in a Raise reason -- raise exceptions as-is as implementation errors, and express expected failures"
+                f"as values (ADR-DOE-CORE-EFFECTS-003 R11): {self.reason!r}"
             )
 
 

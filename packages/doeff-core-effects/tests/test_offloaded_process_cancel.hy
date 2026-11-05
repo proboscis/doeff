@@ -1,26 +1,28 @@
-;;; offloaded-subprocess-handler(os_process.hy)で走らせる子 process の要求を取り消す検(#2792 の
-;;; L1276 で RLock にした offloaded_call.hy の Handoff の錠の、子 process の側の使い手の検)。本物の子(/bin/sh・sleep・true)を使う。
+;;; Tests for cancelling a child-process request run by offloaded-subprocess-handler (os_process.hy) (the child-process-side
+;;; user of the Handoff lock in offloaded_call.hy that #2792 L1276 made an RLock). Uses real children (/bin/sh, sleep, true).
 ;;;
-;;;   (a) 仕事が始まる前の取り消し: 子を起こす仕事を thread に渡したが、その thread がまだ仕事を始めていない間に、待っている task を
-;;;       取り消す。Handoff の give-up が錠を持ったまま Future.cancel を呼び、Future.cancel は同じ thread で完了の callback(deliver)を
-;;;       呼ぶので、錠が入り直せないと scheduler の thread がそこで止まる。始まる前の間を確実に作るため、この検だけ os_process の
-;;;       PROCESS-THREADS を GatedStart(gate が開くまで仕事を始めない Executor)に差し替える。取り消した仕事は gate が開いても始まらず、
-;;;       子は 1 度も起きない。
-;;;   (b) 子が走っている間の取り消し: 子が自分の pid を FIFO へ書いた後(走っている)に、待っている task を取り消す。子は時間の上限
-;;;       (RunProcess の timeout)と猶予の内に居なくなる — subprocess.run と同じ待ち方の道(process-group なし)も run-watched の道
-;;;       (process-group)も。
-;;;   (c) 時間の上限の無い子が走っている間の取り消し: 上限が無いので、取り消しの手当てが子を止めなければ子は
-;;;       自然に終わるまで残る(#2829 で分かった — 前は答えを捨てるだけだった)。取り消しの後、RunProcess の stop-grace の内に子が
-;;;       居なくなる。process-group の道では、子が背景に起こした孫も居なくなる(group ごと止める)。
-;;;   (d) (c) の子が SIGTERM を無視する時: stop-grace の後に SIGKILL で止まる(group なら孫も)。
-;;;   (e) 止めた子の数え: 計器の答え手を渡した metered-offloaded-subprocess-handler の下で (c) と (d) を 1 回ずつ取り消すと、計器の
-;;;       counter process_cancel_terminated と process_cancel_killed が 1 つずつ進む(描くと名に _total が付く)。数えるのは要求の run の外(別の thread の
-;;;       新しい VM)なので、計器は run をまたいで同じ置き場を読み書きする process-meter-handler(検ごとの名の置き場)。
+;;;   (a) Cancel before the work starts: the work that spawns the child was handed to a thread, but the thread has not started it yet, and the
+;;;       waiting task is cancelled. Handoff's give-up calls Future.cancel while holding the lock, and Future.cancel calls the completion
+;;;       callback (deliver) on the same thread, so if the lock cannot be re-entered the scheduler thread stops right there. To reliably create
+;;;       the before-start window, only this test replaces os_process's PROCESS-THREADS with GatedStart (an Executor that does not start work
+;;;       until the gate opens). The cancelled work does not start even after the gate opens,
+;;;       so the child is never spawned.
+;;;   (b) Cancel while the child runs: the waiting task is cancelled after the child has written its own pid to a FIFO (so it is running).
+;;;       The child is gone within the time limit (RunProcess timeout) plus the grace period -- both on the path that waits the same way
+;;;       as subprocess.run (no process-group) and on the run-watched path
+;;;       (process-group).
+;;;   (c) Cancel while a child with no time limit runs: since there is no limit, the child would remain until it ends
+;;;       naturally unless the cancel handling stops it (found in #2829 -- before, the answer was merely discarded). After the cancel, the child is
+;;;       gone within RunProcess's stop-grace. On the process-group path, the grandchild the child started in the background is gone too (the whole group is stopped).
+;;;   (d) When the (c) child ignores SIGTERM: it is stopped by SIGKILL after the stop-grace (the grandchild too, for a group).
+;;;   (e) Counting stopped children: under metered-offloaded-subprocess-handler given a meter responder, cancelling (c) and (d) once each advances the meter's
+;;;       counters process_cancel_terminated and process_cancel_killed by one each (rendering adds _total to the name). The counting happens outside the request's run (a new VM
+;;;       on another thread), so the meter is a process-meter-handler (a per-test place name) that reads and writes the same place across runs.
 ;;;
-;;; 確かめる事: 取り消された task は TaskCancelledError で終わる・scheduler は固まらずに次の task(子 1 本の RunProcess)へ進む・
-;;; 子は残らない((a) は起きない・(b)(c)(d) は猶予の後に pid が生きていない)。
-;;; 筋書きは検の thread とは別の daemon の thread の新しい VM で回し、SCENARIO-LIMIT 秒で答えが無ければ名指して落とす — 錠が固まって
-;;; も、その thread を置いたまま検は赤で終わり、検の束を止めない(pytest の上限 60 秒を待たない)。
+;;; What is checked: the cancelled task ends with TaskCancelledError; the scheduler does not hang and moves on to the next task (a RunProcess of one child);
+;;; no child is left over ((a) never starts; for (b)(c)(d) no pid is alive after the grace).
+;;; The scenario runs in a new VM on a daemon thread separate from the test thread; if there is no answer in SCENARIO-LIMIT seconds, the test fails naming it -- even if the lock hangs,
+;;; the test ends red with that thread left behind and does not stop the test suite (it does not wait for pytest's 60-second limit).
 (require doeff-hy.macros [defk deff deftest <- val])
 (require doeff-hy.record [defrecord])
 (import contextlib)
@@ -45,34 +47,34 @@
 (import doeff_core_effects [ProcessAlive ProcessOutcome RunProcess])
 (import doeff_core_effects [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 
-;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
-;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+;; The waits in this file are about real time (what they are about is in this file's row of the roster tests/realtime_tests.toml) -- the sleep rule for tests
+;; (DOEFF211 of doeff-linter) is not applied to sleeps in a file that declares itself realtime.
 (val pytestmark pytest.mark.realtime)
 
-;; 筋書き 1 つの上限(秒)。普段は 1 秒の内に終わる。過ぎたら scheduler の thread が固まったと見て落とす。
+;; Upper limit (seconds) for one scenario. It normally ends within 1 second. Past it, the scheduler thread is considered hung and the test fails.
 (val SCENARIO-LIMIT 5.0)
-;; (b) の子の時間の上限(RunProcess の timeout・秒)と、上限の後に子が止まって回収されるまでの猶予(秒)・生死を問う間隔(秒)。
+;; The child's time limit in (b) (RunProcess timeout, seconds), the grace (seconds) until the child is stopped and reaped after the limit, and the interval (seconds) for asking whether it is alive.
 (val CHILD-LIMIT 0.5)
 (val GONE-GRACE 1.0)
 (val POLL 0.02)
-;; 自分の pid を $1 へ書いてから眠る子(exec なので眠りも同じ pid)。眠りは上限と猶予より長い — 止める係が居なければ残る。
+;; A child that writes its own pid to $1 and then sleeps (exec, so the sleep has the same pid). The sleep is longer than the limit plus the grace -- it remains if nobody stops it.
 (val PID-THEN-SLEEP "echo $$ > \"$1\"; exec sleep 5")
-;; 次の task の子(取り消しの後も答え手が子を走らせる)とその答え。
+;; The child of the next task (the responder still runs children after the cancel) and its answer.
 (val NEXT-ARGV #("true"))
 (val NEXT-OUTCOME (ProcessOutcome :exit-code 0 :stdout "" :stderr ""))
-;; (c)(d) の子の RunProcess の stop-grace(秒 — 取り消しで SIGTERM を送ってから SIGKILL までの猶予)。
+;; RunProcess's stop-grace for the (c)(d) child (seconds -- the grace from sending SIGTERM on cancel to SIGKILL).
 (val CANCEL-GRACE 0.5)
-;; (c)(d) の子: 時間の上限を付けずに走らせ、止める係が居なければ 30 秒残る。process-group の道では背景に孫を 1 つ起こし、子と孫の pid を
-;; $1 へ書く(exec なので眠りも子と同じ pid)。(d) は頭で SIGTERM を無視する(無視は exec と孫へ継がれる)。
+;; The (c)(d) child: run without a time limit; if nobody stops it, it remains for 30 seconds. On the process-group path it starts one grandchild in the background and writes the child's and grandchild's pids to
+;; $1 (exec, so the sleep has the same pid as the child). (d) ignores SIGTERM at the start (the ignore is inherited by the exec and the grandchild).
 (val LONE-UNBOUNDED "echo $$ > \"$1\"; exec sleep 30")
 (val GROUP-UNBOUNDED "sleep 30 & echo $$ $! > \"$1\"; exec sleep 30")
 (val IGNORE-TERM "trap '' TERM; ")
 
 
 (defrecord BeforeStart
-  "(a) の筋書きで見た事: ended-by-cancel = 取り消した task が TaskCancelledError で終わったか・held-cancelled = thread に渡した仕事の
-   Future が取り消されたか・started = gate が開いた後に仕事の thread が仕事を始めたか・pid-written = 子が起きて pid を書いたか・
-   next-outcome = 取り消しの後に走らせた次の子の答え。"
+  "What scenario (a) saw: ended-by-cancel = whether the cancelled task ended with TaskCancelledError; held-cancelled = whether the Future of the work
+   handed to the thread was cancelled; started = whether the work thread started the work after the gate opened; pid-written = whether the child woke up and wrote its pid;
+   next-outcome = the answer of the next child run after the cancel."
   (#^ bool ended-by-cancel)
   (#^ bool held-cancelled)
   (#^ bool started)
@@ -81,9 +83,9 @@
 
 
 (defrecord WhileRunning
-  "(b) の筋書きで見た事: pid = 走っていた子の pid・ended-by-cancel = 取り消した task が TaskCancelledError で終わったか・
-   moved-on-seconds = 取り消しから次の子の答えまでの秒・next-outcome = 次の子の答え・alive-at-deadline = 子の上限と猶予を過ぎても
-   pid が生きていたか。"
+  "What scenario (b) saw: pid = the pid of the running child; ended-by-cancel = whether the cancelled task ended with TaskCancelledError;
+   moved-on-seconds = seconds from the cancel to the next child's answer; next-outcome = the next child's answer; alive-at-deadline = whether the
+   pid was still alive past the child's limit and grace."
   (#^ int pid)
   (#^ bool ended-by-cancel)
   (#^ float moved-on-seconds)
@@ -92,9 +94,9 @@
 
 
 (defrecord Unbounded
-  "(c)(d) の筋書きで見た事: pids = 子(process-group なら子と孫)の pid・ended-by-cancel = 取り消した task が TaskCancelledError で
-   終わったか・moved-on-seconds = 取り消しから次の子の答えまでの秒・next-outcome = 次の子の答え・survivors = 猶予(CANCEL-GRACE)と
-   GONE-GRACE を過ぎても生きていた pid。"
+  "What scenarios (c)(d) saw: pids = the pids of the child (child and grandchild for a process-group); ended-by-cancel = whether the cancelled task ended with TaskCancelledError;
+   moved-on-seconds = seconds from the cancel to the next child's answer; next-outcome = the next child's answer; survivors = the pids still alive past the grace (CANCEL-GRACE) and
+   GONE-GRACE."
   (#^ (get tuple #(int ...)) pids)
   (#^ bool ended-by-cancel)
   (#^ float moved-on-seconds)
@@ -103,37 +105,37 @@
 
 
 (defrecord CountedStops
-  "(e) の筋書きで見た事: terminated・killed = 計器の counter(SIGTERM で止まった数・SIGKILL まで要った数)・survivors = 2 つの取り消しの
-   猶予の後も生きていた pid。"
+  "What scenario (e) saw: terminated, killed = the meter's counters (number stopped by SIGTERM, number that needed SIGKILL); survivors = the pids still alive after the grace of
+   the two cancels."
   (#^ float terminated)
   (#^ float killed)
   (#^ (get tuple #(int ...)) survivors))
 
 
 (defclass GatedStart [ThreadPerCall]
-  "呼び 1 つに daemon の thread 1 本を起こす点は ThreadPerCall と同じで、その thread が仕事を始める(Future を走りに変える)前に gate が
-   開くのを待つ Executor(検の殻 — 資源なので値の型ではない)。submit した Future を submitted へ、gate の後に仕事を始めたか
-   (set_running_or_notify_cancel の答え — 取り消された Future は False)を decided へ渡す。"
+  "Like ThreadPerCall in that each call starts one daemon thread, but an Executor that waits for the gate to open before the thread starts the work (turns the Future into running)
+   (a test shell -- a resource, so not a value type). Passes the submitted Future to submitted, and whether the work started after the gate
+   (the answer of set_running_or_notify_cancel -- False for a cancelled Future) to decided."
 
-  (deff __init__ [self gate submitted decided]  ; defk にできない: 検の殻の資源の初期化
+  (deff __init__ [self gate submitted decided]  ; cannot be a defk: initializing the resources of the test shell
     {:pre [(: self GatedStart) (: gate threading.Event) (: submitted (get ExternalPromise Future)) (: decided (get ExternalPromise bool))]
      :post [(: % None)]}
-    "gate と、知らせを受ける promise 2 つを持つため。"
+    "To hold the gate and two promises that receive notifications."
     (setv self.gate gate
           self.submitted submitted
           self.decided decided))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
+  (deff submit [self call #* args]  ; cannot be a defk: the Executor's interface (a concurrent.futures contract -- outside the VM)
     {:pre [(: self GatedStart) (: call Callable) (: args tuple)] :post [(: % Future)]}
-    "call を新しい thread で gate が開いた後に回す Future を返し、その Future を submitted へ渡すため。"
+    "To return a Future that runs call on a new thread after the gate opens, and to pass that Future to submitted."
     (setv future (Future))
     (.complete self.submitted future)
     (.start (threading.Thread :target self.start-after-gate :args #(future call args) :name "doeff-gated-call" :daemon True))
     future)
 
-  (deff start-after-gate [self future call args]  ; defk にできない: 仕事の thread の本体(VM の外)
+  (deff start-after-gate [self future call args]  ; cannot be a defk: the body of the work thread (outside the VM)
     {:pre [(: self GatedStart) (: future Future) (: call Callable) (: args tuple)] :post [(: % None)]}
-    "gate が開く(SCENARIO-LIMIT 秒まで)のを待ち、Future が取り消されていなければ call を回して答えを Future へ置くため。"
+    "To wait for the gate to open (up to SCENARIO-LIMIT seconds) and, if the Future was not cancelled, run call and put the answer in the Future."
     (.wait self.gate SCENARIO-LIMIT)
     (setv started (.set-running-or-notify-cancel future))
     (.complete self.decided started)
@@ -144,9 +146,9 @@
           (.set-exception future error))))))
 
 
-(deff report-pid [fifo promise]  ; defk にできない: 検の殻の thread の本体(VM の外で FIFO の書き手を待つ)
+(deff report-pid [fifo promise]  ; cannot be a defk: the body of a test-shell thread (waits outside the VM for the FIFO writer)
   {:pre [(: fifo str) (: promise (get ExternalPromise int))] :post [(: % None)]}
-  "子が FIFO へ書いた自分の pid を読んで promise へ渡すため(子は読み手が開くまで書きを待つので、走り出した子の pid を問い直さずに知る)。"
+  "To read the pid the child wrote to the FIFO and pass it to the promise (the child waits to write until a reader opens, so the pid of the child that started is known without asking again)."
   (try
     (with [reader (open fifo :encoding "utf-8")]
       (.complete promise (int (.read reader))))
@@ -154,9 +156,9 @@
       (.fail promise error))))
 
 
-(deff report-pids [fifo promise]  ; defk にできない: 検の殻の thread の本体(VM の外で FIFO の書き手を待つ)
+(deff report-pids [fifo promise]  ; cannot be a defk: the body of a test-shell thread (waits outside the VM for the FIFO writer)
   {:pre [(: fifo str) (: promise (get ExternalPromise tuple))] :post [(: % None)]}
-  "子が FIFO へ書いた空白区切りの pid(子と、process-group なら孫)を読んで promise へ渡すため(report-pid の複数の形)。"
+  "To read the whitespace-separated pids the child wrote to the FIFO (the child and, for a process-group, the grandchild) and pass them to the promise (the plural form of report-pid)."
   (try
     (with [reader (open fifo :encoding "utf-8")]
       (.complete promise (tuple (gfor word (.split (.read reader)) (int word)))))
@@ -167,7 +169,7 @@
 (defk ended-by-cancel [task]
   {:pre [(: task (get Task ProcessOutcome))] :post [(: % bool)]
    :tags {:context "process-test" :role "program"}}
-  "取り消した task を待ち、取り消しで終わったかを答えるため。"
+  "To wait for the cancelled task and answer whether it ended by the cancel."
   (try
     (<- (Wait task))
     False
@@ -177,7 +179,7 @@
 (defk alive-at-deadline [pid deadline]
   {:pre [(: pid int) (: deadline float)] :post [(: % bool)]
    :tags {:context "process-test" :role "program"}}
-  "pid の子が居なくなるのを POLL 秒ごとに問い、deadline(monotonic の秒)を過ぎてもまだ生きていたかを答えるため。"
+  "To ask every POLL seconds until the child of pid is gone, and answer whether it was still alive past deadline (monotonic seconds)."
   (<- alive bool (ProcessAlive pid))
   (if (and alive (< (time.monotonic) deadline))
       (do (time.sleep POLL)
@@ -189,7 +191,7 @@
 (defk survivors [pids deadline]
   {:pre [(: pids tuple) (: deadline float)] :post [(: % tuple)]
    :tags {:context "process-test" :role "program"}}
-  "pids のうち deadline(monotonic の秒)を過ぎても生きていた pid を答えるため(1 つずつ alive-at-deadline で問う — 期限は共通)。"
+  "To answer which of pids were still alive past deadline (monotonic seconds) (asks alive-at-deadline for each -- the deadline is shared)."
   (var left #())
   (for [pid pids]
     (<- alive bool (alive-at-deadline pid deadline))
@@ -201,15 +203,15 @@
 (defk cancelled-before-the-call-starts [monkeypatch pid-file]
   {:pre [(: monkeypatch pytest.MonkeyPatch) (: pid-file str)] :post [(: % BeforeStart)]
    :tags {:context "process-test" :role "program"}}
-  "(a) の筋書き(頭の註): 子を起こす仕事を thread に渡した後、その thread が仕事を始める前に、待っている task を取り消す。gate を開いた
-   後で、本物の PROCESS-THREADS に戻して次の子を走らせる。"
+  "Scenario (a) (see the header note): after handing the work that spawns the child to a thread, and before that thread starts the work, cancel the waiting task. After opening the gate,
+   put back the real PROCESS-THREADS and run the next child."
   (<- submitted (CreateExternalPromise))
   (<- decided (CreateExternalPromise))
   (val gate (threading.Event))
   (.setattr monkeypatch process-module "PROCESS_THREADS" (GatedStart gate submitted decided))
   (<- task (Spawn (RunProcess :argv #("/bin/sh" "-c" PID-THEN-SLEEP "sh" pid-file))))
   (<- held Future (Wait submitted.future))
-  ;; 錠を持った give-up の中の Future.cancel が、同じ thread で deliver を呼ぶ(入り直せない錠ならここで固まる)。
+  ;; Future.cancel inside the lock-holding give-up calls deliver on the same thread (with a lock that cannot be re-entered, it hangs here).
   (<- (Cancel task))
   (<- ended bool (ended-by-cancel task))
   (.set gate)
@@ -224,8 +226,8 @@
 (defk cancelled-while-the-child-runs [fifo grouped]
   {:pre [(: fifo str) (: grouped bool)] :post [(: % WhileRunning)]
    :tags {:context "process-test" :role "program"}}
-  "(b) の筋書き(頭の註): 子が pid を書いた後(走っている間)に、待っている task を取り消し、次の子を走らせ、子が上限と猶予の内に
-   居なくなるかを見る。grouped = process-group で走らせるか(run-watched の道)。"
+  "Scenario (b) (see the header note): cancel the waiting task after the child wrote its pid (while it runs), run the next child, and see whether the child
+   is gone within the limit and the grace. grouped = whether to run with a process-group (the run-watched path)."
   (<- seen-pid (CreateExternalPromise))
   (os.mkfifo fifo)
   (.start (threading.Thread :target report-pid :args #(fifo seen-pid) :name "doeff-pid-reader" :daemon True))
@@ -244,9 +246,9 @@
 (defk cancelled-without-a-time-limit [fifo grouped ignores-term]
   {:pre [(: fifo str) (: grouped bool) (: ignores-term bool)] :post [(: % Unbounded)]
    :tags {:context "process-test" :role "program"}}
-  "(c)(d) の筋書き(頭の註): 時間の上限の無い子が pid を書いた後(走っている間)に、待っている task を取り消し、次の子を走らせ、子(と
-   孫)が猶予の内に居なくなるかを見る。grouped = process-group で走らせるか(run-watched の道)・ignores-term = 子と孫が SIGTERM を
-   無視するか。猶予の後に残った pid は答えに名指し、検の後始末として SIGKILL で止める(赤の時に眠りを 30 秒残さない)。"
+  "Scenarios (c)(d) (see the header note): cancel the waiting task after a child with no time limit wrote its pid (while it runs), run the next child, and see whether the child (and
+   grandchild) are gone within the grace. grouped = whether to run with a process-group (the run-watched path); ignores-term = whether the child and grandchild
+   ignore SIGTERM. The pids remaining after the grace are named in the answer and stopped with SIGKILL as test cleanup (so a red run does not leave a 30-second sleep)."
   (<- seen-pids (CreateExternalPromise))
   (os.mkfifo fifo)
   (.start (threading.Thread :target report-pids :args #(fifo seen-pids) :name "doeff-pid-reader" :daemon True))
@@ -269,8 +271,8 @@
 (defk meter-by [place deadline]
   {:pre [(: place str) (: deadline float)] :post [(: % MeterSnapshot)]
    :tags {:context "process-test" :role "program"}}
-  "計器の置き場 place の 2 つの counter(取り消しで止めた子の数)が共に 1 以上になるのを POLL 秒ごとに deadline まで読み、最後に読んだ
-   断面を答えるため(数えるのは止めた thread なので、子が居なくなった少し後に出る)。"
+  "To read the two counters (number of children stopped by cancel) of the meter place every POLL seconds until both are at least 1, up to deadline, and answer the last
+   snapshot read (the counting is done by the stopping thread, so it shows up a little after the child is gone)."
   (<- snapshot MeterSnapshot (with_handlers [(state) (process-meter-handler place (MeterSettings))] (ReadMeter)))
   (val counters snapshot.counters)
   (if (and (< (min (.get counters CANCEL-TERMINATED-METRIC 0.0) (.get counters CANCEL-KILLED-METRIC 0.0)) 1.0)
@@ -284,8 +286,8 @@
 (defk counted-cancels [term-fifo kill-fifo grouped place]
   {:pre [(: term-fifo str) (: kill-fifo str) (: grouped bool) (: place str)] :post [(: % CountedStops)]
    :tags {:context "process-test" :role "program"}}
-  "(e) の筋書き(頭の註): SIGTERM で止まる子と SIGTERM を無視する子を 1 つずつ取り消し((c)(d) の筋書き)、計器 place の 2 つの counter を
-   読む。"
+  "Scenario (e) (see the header note): cancel one child that stops on SIGTERM and one that ignores SIGTERM (the (c)(d) scenario), and read the two counters of the meter place
+   place."
   (<- by-term Unbounded (cancelled-without-a-time-limit term-fifo grouped False))
   (<- by-kill Unbounded (cancelled-without-a-time-limit kill-fifo grouped True))
   (<- snapshot MeterSnapshot (meter-by place (+ (time.monotonic) GONE-GRACE)))
@@ -295,24 +297,24 @@
 
 
 (defk settled-within [scenario what [handler offloaded-subprocess-handler]]
-  {:pre [(: scenario Program) (: what str) (: handler Callable)] :post [(: % "筋書きの答え(型は筋書きごと)")]
+  {:pre [(: scenario Program) (: what str) (: handler Callable)] :post [(: % "the scenario's answer (the type depends on the scenario)")]
    :tags {:context "process-test" :role "program"}}
-  "筋書きを、検の thread とは別の daemon の thread の新しい VM で handler(既定 offloaded-subprocess-handler)と scheduled の下に 1 回回し、
-   SCENARIO-LIMIT 秒まで答えを待つため。過ぎたら what を名指して落とす(固まった thread は daemon のまま置く — 頭の註)。"
+  "To run the scenario once, in a new VM on a daemon thread separate from the test thread, under handler (default offloaded-subprocess-handler) and scheduled,
+   waiting for the answer up to SCENARIO-LIMIT seconds. Past it, fail naming what (the hung thread is left as a daemon -- see the header note)."
   (val running (.submit (ThreadPerCall) run-detached (scheduled (with_handlers [handler] scenario))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]
-      (raise (AssertionError (.format "{} が {} 秒で終わらない(scheduler の thread が固まった)" what SCENARIO-LIMIT))))))
+      (raise (AssertionError (.format "{} did not finish in {} seconds (the scheduler thread hung)" what SCENARIO-LIMIT))))))
 
 
 (deftest test-a-run-cancelled-before-its-call-starts-moves-on-and-starts-no-child [monkeypatch tmp-path]
-  ;; (a)(頭の註): 入り直せない錠なら、取り消しの中で scheduler の thread が固まり、SCENARIO-LIMIT で赤になる。
+  ;; (a) (header note): with a lock that cannot be re-entered, the scheduler thread hangs inside the cancel and the test goes red at SCENARIO-LIMIT.
   (val pid-file (str (/ tmp-path "pid")))
-  (<- seen BeforeStart (settled-within (cancelled-before-the-call-starts monkeypatch pid-file) "仕事が始まる前の取り消し"))
+  (<- seen BeforeStart (settled-within (cancelled-before-the-call-starts monkeypatch pid-file) "cancel before the work starts"))
   (assert seen.ended-by-cancel seen)
   (assert seen.held-cancelled seen)
-  ;; 取り消した仕事は gate が開いても始まらず、子は起きない。
+  ;; The cancelled work does not start even after the gate opens, and the child is never spawned.
   (assert (not seen.started) seen)
   (assert (not seen.pid-written) seen)
   (assert (= seen.next-outcome NEXT-OUTCOME) seen))
@@ -320,66 +322,66 @@
 
 (deftest test-a-run-cancelled-while-its-child-runs-moves-on-and-leaves-no-child [#^ bool grouped tmp-path]
   {:params {"grouped" [False True]}}
-  ;; (b)(頭の註): 取り消しは子の終わりを待たずに次の task へ進み、子は上限と猶予の内に居なくなる。
+  ;; (b) (header note): the cancel moves on to the next task without waiting for the child to end, and the child is gone within the limit and the grace.
   (val fifo (str (/ tmp-path "pid.fifo")))
-  (<- seen WhileRunning (settled-within (cancelled-while-the-child-runs fifo grouped) "子が走っている間の取り消し"))
+  (<- seen WhileRunning (settled-within (cancelled-while-the-child-runs fifo grouped) "cancel while the child runs"))
   (assert seen.ended-by-cancel seen)
   (assert (= seen.next-outcome NEXT-OUTCOME) seen)
   (assert (< seen.moved-on-seconds CHILD-LIMIT)
-          (.format "取り消しから次の子の答えまで {:.2f} 秒(子の上限 {} 秒を待った)" seen.moved-on-seconds CHILD-LIMIT))
+          (.format "{:.2f} seconds from the cancel to the next child's answer (waited for the child's limit of {} seconds)" seen.moved-on-seconds CHILD-LIMIT))
   (assert (not seen.alive-at-deadline)
-          (.format "子 {} が上限 {} 秒と猶予 {} 秒の後も残っている" seen.pid CHILD-LIMIT GONE-GRACE)))
+          (.format "child {} remains after the limit of {} seconds and the grace of {} seconds" seen.pid CHILD-LIMIT GONE-GRACE)))
 
 
 (deftest test-a-cancelled-child-without-a-time-limit-is-stopped-within-the-grace [#^ bool grouped tmp-path]
   {:params {"grouped" [False True]}}
-  ;; (c)(頭の註): 取り消しの手当てが子を止めなければ、上限の無い子(と孫)は 30 秒残って赤になる。
+  ;; (c) (header note): if the cancel handling does not stop the child, the child with no limit (and the grandchild) remains for 30 seconds and the test goes red.
   (val fifo (str (/ tmp-path "pid.fifo")))
-  (<- seen Unbounded (settled-within (cancelled-without-a-time-limit fifo grouped False) "上限の無い子の取り消し"))
+  (<- seen Unbounded (settled-within (cancelled-without-a-time-limit fifo grouped False) "cancel of a child with no limit"))
   (assert seen.ended-by-cancel seen)
   (assert (= seen.next-outcome NEXT-OUTCOME) seen)
   (assert (< seen.moved-on-seconds CANCEL-GRACE)
-          (.format "取り消しから次の子の答えまで {:.2f} 秒(子の止まりを待った)" seen.moved-on-seconds))
+          (.format "{:.2f} seconds from the cancel to the next child's answer (waited for the child to stop)" seen.moved-on-seconds))
   (assert (= seen.survivors #())
-          (.format "子と孫 {} のうち {} が、取り消しから猶予 {} 秒と {} 秒の後も残っている" seen.pids seen.survivors CANCEL-GRACE GONE-GRACE)))
+          (.format "of child and grandchild {}, {} remain after the cancel plus the grace of {} seconds and {} seconds" seen.pids seen.survivors CANCEL-GRACE GONE-GRACE)))
 
 
 (deftest test-a-cancelled-child-that-ignores-term-is-killed-after-the-grace [#^ bool grouped tmp-path]
   {:params {"grouped" [False True]}}
-  ;; (d)(頭の註): SIGTERM を無視する子(と孫)は、猶予の後に SIGKILL を送らなければ残って赤になる。
+  ;; (d) (header note): a child (and grandchild) that ignores SIGTERM remains and the test goes red unless SIGKILL is sent after the grace.
   (val fifo (str (/ tmp-path "pid.fifo")))
-  (<- seen Unbounded (settled-within (cancelled-without-a-time-limit fifo grouped True) "SIGTERM を無視する子の取り消し"))
+  (<- seen Unbounded (settled-within (cancelled-without-a-time-limit fifo grouped True) "cancel of a child that ignores SIGTERM"))
   (assert seen.ended-by-cancel seen)
   (assert (= seen.next-outcome NEXT-OUTCOME) seen)
   (assert (< seen.moved-on-seconds CANCEL-GRACE)
-          (.format "取り消しから次の子の答えまで {:.2f} 秒(子の止まりを待った)" seen.moved-on-seconds))
+          (.format "{:.2f} seconds from the cancel to the next child's answer (waited for the child to stop)" seen.moved-on-seconds))
   (assert (= seen.survivors #())
-          (.format "子と孫 {} のうち {} が、取り消しから猶予 {} 秒と {} 秒の後も残っている" seen.pids seen.survivors CANCEL-GRACE GONE-GRACE)))
+          (.format "of child and grandchild {}, {} remain after the cancel plus the grace of {} seconds and {} seconds" seen.pids seen.survivors CANCEL-GRACE GONE-GRACE)))
 
 
 (deftest test-children-stopped-by-cancel-are-counted-by-how-they-stopped [#^ bool grouped tmp-path caplog]
   {:params {"grouped" [False True]}}
-  ;; (e)(頭の註): 止めた子を数えなければ、counter は 0 のまま(または無いまま)で赤になる。置き場の名は検ごとに分ける(process に 1 つ)。
-  ;; 止めた子 2 つは log にも 1 行ずつ、argv の頭(/bin/sh)を名指して出る。
+  ;; (e) (header note): if stopped children are not counted, the counters stay at 0 (or absent) and the test goes red. The place name is separate per test (one per process).
+  ;; The two stopped children each also appear as one line in the log, naming the head of argv (/bin/sh).
   (val place (.format "test-offloaded-process-cancel:{}" tmp-path))
   (<- seen CountedStops (settled-within (counted-cancels (str (/ tmp-path "term.fifo")) (str (/ tmp-path "kill.fifo")) grouped place)
-                                        "止めた子の数え"
+                                        "counting of stopped children"
                                         (metered-offloaded-subprocess-handler (process-meter-handler place (MeterSettings)))))
   (assert (= seen.survivors #()) seen)
-  (assert (= seen.terminated 1.0) (.format "SIGTERM で止まった数が {}(1 のはず)" seen.terminated))
-  (assert (= seen.killed 1.0) (.format "SIGKILL まで要った数が {}(1 のはず)" seen.killed))
+  (assert (= seen.terminated 1.0) (.format "the number stopped by SIGTERM is {} (should be 1)" seen.terminated))
+  (assert (= seen.killed 1.0) (.format "the number that needed SIGKILL is {} (should be 1)" seen.killed))
   (val lines (lfor record caplog.records :if (= record.name process-module.__name__) (.getMessage record)))
   (assert (and (= (len lines) 2) (all (gfor line lines (in "'/bin/sh'" line)))) lines))
 
 
-;; (f) OS が signal の送りを断る機体(EPERM — 2026-11-01 の helios では AppArmor が container の中の process どうしの signal を拒んだ):
-;; 取り消しで止める子へ SIGTERM も SIGKILL も届かない。止めの手当ては断られた SIGKILL の後に子の終わりを待たずに返り(待てば止めの
-;; thread が子の終わりまで返らない)、止めたと数えず、止められなかった事を warning の 1 行で名指す。子は走ったまま。
-;; 反例 = 断られた SIGKILL の後に子を待つ形(直す前)は SCENARIO-LIMIT で赤・group でない子へ Popen の terminate で送る形は
-;; PermissionError で赤。
+;; (f) A machine where the OS refuses to send signals (EPERM -- on helios on 2026-11-01 AppArmor refused signals between processes inside the container):
+;; neither SIGTERM nor SIGKILL reaches the child that the cancel stops. The stop handling returns after the refused SIGKILL without waiting for the child to end (if it waited, the stopping
+;; thread would not return until the child ended), does not count it as stopped, and names the failure to stop in one warning line. The child keeps running.
+;; Counterexamples = the form that waits for the child after the refused SIGKILL (before the fix) goes red at SCENARIO-LIMIT; the form that sends to a non-group child with Popen's terminate
+;; goes red with PermissionError.
 
 (defrecord RefusedStop
-  "(f) の筋書きで見た事: alive = 止めの手当ての後も子が走っていたか・terminated・killed = 計器の counter(取り消しで止めた数)。"
+  "What scenario (f) saw: alive = whether the child was still running after the stop handling; terminated, killed = the meter's counters (number stopped by cancel)."
   (#^ bool alive)
   (#^ float terminated)
   (#^ float killed))
@@ -388,8 +390,8 @@
 (defk refused-cancel-stop [grouped place]
   {:pre [(: grouped bool) (: place str)] :post [(: % RefusedStop)]
    :tags {:context "process-test" :role "program"}}
-  "(f) の筋書き: 走っている子を、signal の送りを全部断る機体の代役(os.killpg・os.kill を EPERM にする)の下で取り消しの手当てに止めさせ、
-   子の生死と計器 place の counter を読む。子は最後に本物の SIGKILL で片づける。"
+  "Scenario (f): have the cancel handling stop a running child under a stand-in for a machine that refuses all signal sends (os.killpg and os.kill raise EPERM),
+   and read the child's liveness and the counters of the meter place. The child is finally cleaned up with a real SIGKILL."
   (val child (subprocess.Popen ["sleep" "30"] :start-new-session grouped))
   (try
     (val watch (process-module.ChildWatch CANCEL-GRACE (process-meter-handler place (MeterSettings))))
@@ -408,10 +410,10 @@
 
 (deftest test-a-cancelled-child-whose-kill-the-os-refuses-is-not-waited-for-nor-counted [#^ bool grouped tmp-path caplog]
   {:params {"grouped" [False True]}}
-  ;; (f)(上の註)。
+  ;; (f) (note above).
   (val place (.format "test-offloaded-process-cancel-refused:{}" tmp-path))
-  (<- seen RefusedStop (settled-within (refused-cancel-stop grouped place) "signal を断る機体の取り消しの止め"))
+  (<- seen RefusedStop (settled-within (refused-cancel-stop grouped place) "stop on cancel on a machine that refuses signals"))
   (assert seen.alive seen)
   (assert (= #(seen.terminated seen.killed) #(0.0 0.0)) seen)
   (val lines (lfor record caplog.records :if (= record.name process-module.__name__) (.getMessage record)))
-  (assert (and (= (len lines) 1) (in "止められなかった" (get lines 0)) (in "'sleep'" (get lines 0))) lines))
+  (assert (and (= (len lines) 1) (in "could not stop" (get lines 0)) (in "'sleep'" (get lines 0))) lines))

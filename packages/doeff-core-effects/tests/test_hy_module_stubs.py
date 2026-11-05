@@ -1,12 +1,12 @@
-"""Hy の module の隣の型の宣言(.pyi)と実装の食い違いの失敗ケース(sql_effects.pyi・sqlite_sql.pyi に作り、
-#2323 で http_server_effects・file_effects・memory_file・random_effects・seeded_random へ広げた)。
+"""Failure cases of mismatches between the type declaration (.pyi) next to a Hy module and its implementation (built for sql_effects.pyi and sqlite_sql.pyi,
+extended in #2323 to http_server_effects, file_effects, memory_file, random_effects, and seeded_random).
 
-型の宣言は手書きなので、.hy の側で欄を足す・消す・並べ替える・関数の引数を変えると、宣言だけが古いまま黙って残る。
-ここで .hy の source を読み、module の直下で定義した公開の名と宣言の名を照らし、さらに:
+The type declarations are handwritten, so if a field is added, removed, or reordered on the .hy side, or a function argument is changed, only the declaration silently stays stale.
+Here the .hy source is read, the public names defined directly under the module are checked against the names in the declaration, and in addition:
 
-- defrecord / defeffect の型は dataclass の欄の名・順・既定値の有無が宣言の欄と同じ。
-- defenum の型は member の名と値が同じ。
-- defk / defhandler の関数は引数の名と順が同じ。
+- For defrecord / defeffect types, the dataclass field names, order, and presence of defaults are the same as the declaration's fields.
+- For defenum types, the member names and values are the same.
+- For defk / defhandler functions, the argument names and order are the same.
 """
 
 import ast
@@ -19,18 +19,18 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import hy
 import pytest
 from doeff_hy._static_stub import hidden_name
 
-# stub(.pyi)は型の引数の構文(PEP 695 — `class SqlTransaction[T]`)で書き、3.11 の ast はそれを読めない。stub と module の
-# 突き合わせは Python の版に依らないので、3.12 から見る。
-pytestmark = pytest.mark.skipif(sys.version_info < (3, 12), reason="stub の型の引数の構文は Python 3.12 から")
+# The stub (.pyi) is written in the type-parameter syntax (PEP 695 -- `class SqlTransaction[T]`), which the ast of 3.11 cannot read. Matching the stub against the module
+# does not depend on the Python version, so look at it from 3.12.
+pytestmark = pytest.mark.skipif(sys.version_info < (3, 12), reason="the type-parameter syntax of the stub needs Python 3.12 or later")
 
 PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 
-#: 型の宣言を持つ Hy の module(宣言を足したらここへ並べる)。
+#: Hy modules that have a type declaration (list them here when you add a declaration).
 STUBBED_MODULES = (
     "sql_effects",
     "sqlite_sql",
@@ -56,7 +56,7 @@ STUBBED_MODULES = (
     "aiohttp_ws_client",
 )
 
-#: module の直下で名を定義する Hy の form の頭。
+#: Heads of the Hy forms that define a name directly under the module.
 DEFINING_HEADS = frozenset(
     {
         "defrecord",
@@ -65,7 +65,7 @@ DEFINING_HEADS = frozenset(
         "defclass",
         "defk",
         "deff",
-        # `defk にできない` 理由つきの defn(内包表記の中で呼ぶ述語など)も公開の名を定義する — 道具が作る .pyi は宣言する(#2887)。
+        # A defn with a `cannot be a defk` reason (such as a predicate called inside a comprehension) also defines a public name -- the .pyi the tool generates declares it (#2887).
         "defn",
         "defhandler",
         "val",
@@ -77,15 +77,15 @@ DEFINING_HEADS = frozenset(
 
 @dataclass(frozen=True)
 class StubField:
-    """dataclass の欄 1 つ(名と既定値の有無)。"""
+    """One dataclass field (name and presence of a default)."""
 
     name: str
     has_default: bool
 
 
 def _named(form: hy.models.Expression) -> hy.models.Symbol | None:
-    """定義の form の名の Symbol: 先頭の次の要素。`(defn :async …)` の keyword は飛ばし、戻り値の注記 `(defn #^ T 名 …)`(reader が
-    `(annotate 名 T)` に読む)は中の名を取る(#4007 — async の defn を持つ答え手の module を照らすため)。名が無ければ None。"""
+    """The Symbol of the name of a defining form: the element after the head. The keyword of `(defn :async ...)` is skipped, and a return-value annotation `(defn #^ T name ...)` (which the reader
+    reads as `(annotate name T)`) takes the inner name (#4007 -- to check modules of answerers that have an async defn). None if there is no name."""
     rest = [item for item in form[1:] if not isinstance(item, hy.models.Keyword)]
     match rest:
         case [hy.models.Symbol() as name, *_]:
@@ -101,7 +101,7 @@ def _named(form: hy.models.Expression) -> hy.models.Symbol | None:
 
 
 def _defined_name(form: object) -> str | None:
-    """.hy の直下の form 1 つが定義する名(Python の名へ mangle した物)。定義の form でなければ None。"""
+    """The name defined by one form directly under .hy (mangled to a Python name). None if it is not a defining form."""
     match form:
         case hy.models.Expression() if (
             len(form) >= 2
@@ -109,7 +109,7 @@ def _defined_name(form: object) -> str | None:
             and _named(form) is not None
         ):
             return hy.mangle(str(_named(form)))
-        # 飾りの付いた class(`(defclass [(dataclass :frozen True)] 名 [EffectBase] …)`)は名が 3 つ目に来る。
+        # A decorated class (`(defclass [(dataclass :frozen True)] name [EffectBase] ...)`) has its name in the 3rd position.
         case hy.models.Expression() if (
             len(form) >= 3
             and str(form[0]) == "defclass"
@@ -122,7 +122,7 @@ def _defined_name(form: object) -> str | None:
 
 
 def _hy_defined_names(module: str) -> tuple[str, ...]:
-    """.hy の module の直下で定義した公開の名(書いた順)。"""
+    """Public names defined directly under the .hy module (in the order written)."""
     forms = hy.read_many((PACKAGE / f"{module}.hy").read_text(encoding="utf-8"))
     names = (_defined_name(form) for form in forms)
     return tuple(n for n in names if n is not None and not n.startswith("_") and not hidden_name(n))
@@ -133,7 +133,7 @@ def _stub_tree(module: str) -> ast.Module:
 
 
 def _declared_name(node: ast.stmt) -> str | None:
-    """宣言の直下の文 1 つが宣言する名(import は宣言でない — None)。"""
+    """The name declared by one statement directly under the declaration (an import is not a declaration -- None)."""
     match node:
         case (
             ast.ClassDef(name=name)
@@ -148,14 +148,14 @@ def _declared_name(node: ast.stmt) -> str | None:
 
 
 def _stub_declared_names(tree: ast.Module) -> tuple[str, ...]:
-    """宣言の module の直下で宣言した公開の名(_ で始まる宣言の中だけの型は除く)。module の印(MODULE_TAGS)など型の面に出さない名は、
-    生成の道具 doeff_hy._static_stub と同じ判定 hidden_name で両側から外す(#2909)。"""
+    """Public names declared directly under the declaration module (excluding types inside a declaration that start with _). Names not shown on the type surface, such as the module tag (MODULE_TAGS),
+    are removed from both sides with hidden_name, the same judgment as the generation tool doeff_hy._static_stub (#2909)."""
     names = (_declared_name(node) for node in tree.body)
     return tuple(n for n in names if n is not None and not n.startswith("_") and not hidden_name(n))
 
 
 def _stub_fields(node: ast.ClassDef) -> tuple[StubField, ...]:
-    """宣言の class の本体の注記した欄(書いた順)。"""
+    """The annotated fields (in the order written) of the body of a declared class."""
     return tuple(
         StubField(name=stmt.target.id, has_default=stmt.value is not None)
         for stmt in node.body
@@ -164,7 +164,7 @@ def _stub_fields(node: ast.ClassDef) -> tuple[StubField, ...]:
 
 
 def _stub_enum_members(node: ast.ClassDef) -> tuple[tuple[str, str], ...]:
-    """宣言の StrEnum の member(名と値・書いた順)。"""
+    """The members (name and value, in the order written) of a declared StrEnum."""
     return tuple(
         (stmt.targets[0].id, stmt.value.value)
         for stmt in node.body
@@ -192,7 +192,7 @@ def _stub_parameters(node: ast.FunctionDef) -> tuple[str, ...]:
 
 
 def _class_mismatch(name: str, value: object, node: ast.ClassDef) -> str | None:
-    """宣言の class 1 つと実装の型の食い違い(None = 一致・照らす形でない)。"""
+    """The mismatch between one declared class and the implemented type (None = matches or not a form to check)."""
     match value:
         case type() if issubclass(value, enum.Enum):
             actual = tuple((m.name, str(m.value)) for m in value)
@@ -200,7 +200,7 @@ def _class_mismatch(name: str, value: object, node: ast.ClassDef) -> str | None:
             return (
                 None
                 if actual == declared
-                else f"{name} の member が違う: 実装 {actual} / 宣言 {declared}"
+                else f"{name} has different members: implementation {actual} / declaration {declared}"
             )
         case type() if dataclasses.is_dataclass(value):
             actual_fields = _runtime_fields(value)
@@ -208,14 +208,14 @@ def _class_mismatch(name: str, value: object, node: ast.ClassDef) -> str | None:
             return (
                 None
                 if actual_fields == declared_fields
-                else f"{name} の欄が違う: 実装 {actual_fields} / 宣言 {declared_fields}"
+                else f"{name} has different fields: implementation {actual_fields} / declaration {declared_fields}"
             )
         case _:
             return None
 
 
 def _function_mismatch(name: str, value: object, node: ast.FunctionDef) -> str | None:
-    """宣言の関数 1 つと実装の関数の引数の食い違い(None = 一致)。"""
+    """The mismatch between the arguments of one declared function and the implemented function (None = matches)."""
     match value:
         case _ if callable(value):
             actual = tuple(inspect.signature(value).parameters)
@@ -223,20 +223,20 @@ def _function_mismatch(name: str, value: object, node: ast.FunctionDef) -> str |
             return (
                 None
                 if actual == declared
-                else f"{name} の引数が違う: 実装 {actual} / 宣言 {declared}"
+                else f"{name} has different arguments: implementation {actual} / declaration {declared}"
             )
         case _:
-            return f"{name} は実装で関数でない"
+            return f"{name} is not a function in the implementation"
 
 
 def _mismatches(module: str, tree: ast.Module) -> tuple[str, ...]:
-    """宣言(tree)と実装の食い違いの一覧(空 = 一致)。"""
+    """The list of mismatches between the declaration (tree) and the implementation (empty = matches)."""
     runtime = importlib.import_module(f"doeff_core_effects.{module}")
     defined = _hy_defined_names(module)
     declared = _stub_declared_names(tree)
     public = [node for node in tree.body if _declared_name(node) in defined]
-    missing = tuple(f"宣言に無い公開の名: {n}" for n in defined if n not in declared)
-    extra = tuple(f"実装に無い宣言の名: {n}" for n in declared if n not in defined)
+    missing = tuple(f"public name not in the declaration: {n}" for n in defined if n not in declared)
+    extra = tuple(f"declared name not in the implementation: {n}" for n in declared if n not in defined)
     classes = (
         _class_mismatch(node.name, getattr(runtime, node.name), node)
         for node in public
@@ -256,7 +256,7 @@ def test_the_stub_matches_the_hy_module(module: str) -> None:
 
 
 def _without_field(tree: ast.Module, class_name: str, field: str) -> ast.Module:
-    """宣言の class class_name から欄 field を消した写し。"""
+    """A copy of the declaration with the field field removed from the class class_name."""
     broken = copy.deepcopy(tree)
     for node in broken.body:
         match node:
@@ -272,33 +272,33 @@ def _without_field(tree: ast.Module, class_name: str, field: str) -> ast.Module:
 
 
 def test_a_dropped_stub_field_is_found() -> None:
-    # 宣言の SqlRows から欄 rowcount を 1 つ消すと、欄の食い違いとして見つかる(検が黙って通らない)。
+    # Removing the field rowcount from the declared SqlRows is found as a field mismatch (the test does not pass silently).
     broken = _without_field(_stub_tree("sql_effects"), "SqlRows", "rowcount")
-    assert [m for m in _mismatches("sql_effects", broken) if m.startswith("SqlRows の欄が違う")]
+    assert [m for m in _mismatches("sql_effects", broken) if m.startswith("SqlRows has different fields")]
 
 
 def test_a_dropped_effect_field_is_found() -> None:
-    # 宣言の effect HttpListen(defclass の dataclass)から欄 ws_send_max_bytes を消すと、欄の食い違いとして見つかる。
+    # Removing the field ws_send_max_bytes from the declared effect HttpListen (a defclass dataclass) is found as a field mismatch.
     broken = _without_field(_stub_tree("http_server_effects"), "HttpListen", "ws_send_max_bytes")
     assert [
         m
         for m in _mismatches("http_server_effects", broken)
-        if m.startswith("HttpListen の欄が違う")
+        if m.startswith("HttpListen has different fields")
     ]
 
 
 def test_a_dropped_arrival_remote_is_found() -> None:
-    # 台本が運ぶ出来事 HttpRequestArrived の宣言から送り元の欄 remote を消すと、欄の食い違いとして見つかる。
+    # Removing the sender field remote from the declaration of HttpRequestArrived, an event the script carries, is found as a field mismatch.
     broken = _without_field(_stub_tree("http_server_effects"), "HttpRequestArrived", "remote")
     assert [
         m
         for m in _mismatches("http_server_effects", broken)
-        if m.startswith("HttpRequestArrived の欄が違う")
+        if m.startswith("HttpRequestArrived has different fields")
     ]
 
 
 def test_a_dropped_handler_parameter_is_found() -> None:
-    # 宣言の scripted_http_server から引数 script を消すと、引数の食い違いとして見つかる。
+    # Removing the argument script from the declared scripted_http_server is found as an argument mismatch.
     broken = copy.deepcopy(_stub_tree("scripted_http_server"))
     for node in broken.body:
         match node:
@@ -309,13 +309,13 @@ def test_a_dropped_handler_parameter_is_found() -> None:
     assert [
         m
         for m in _mismatches("scripted_http_server", broken)
-        if m.startswith("scripted_http_server の引数が違う")
+        if m.startswith("scripted_http_server has different arguments")
     ]
 
 
 def test_a_module_mark_is_not_a_public_name_but_a_dropped_function_still_is() -> None:
-    # 頭のタグ MODULE-TAGS(doeff-linter の印)は、生成の道具 static_stub と同じく型の面の名に数えない(#2909)。memory_file.hy は
-    # MODULE-TAGS を定義し、宣言に MODULE_TAGS は無いが食い違いにならない。宣言から公開の関数を 1 つ消すと、今どおり見つかる。
+    # The head tag MODULE-TAGS (the mark of doeff-linter) is not counted as a name on the type surface, same as the generation tool static_stub (#2909). memory_file.hy
+    # defines MODULE-TAGS, and the declaration has no MODULE_TAGS but it is not a mismatch. Removing one public function from the declaration is still found as before.
     forms = hy.read_many((PACKAGE / "memory_file.hy").read_text(encoding="utf-8"))
     assert "MODULE_TAGS" in {_defined_name(form) for form in forms}
     assert "MODULE_TAGS" not in _hy_defined_names("memory_file")
@@ -325,4 +325,4 @@ def test_a_module_mark_is_not_a_public_name_but_a_dropped_function_still_is() ->
         node.name for node in broken.body if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
     )
     broken.body = [node for node in broken.body if not (isinstance(node, ast.FunctionDef) and node.name == dropped)]
-    assert f"宣言に無い公開の名: {dropped}" in _mismatches("memory_file", broken)
+    assert f"public name not in the declaration: {dropped}" in _mismatches("memory_file", broken)

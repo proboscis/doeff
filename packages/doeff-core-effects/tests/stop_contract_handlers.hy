@@ -1,14 +1,14 @@
-;;; 止めの合図の契約テストの解釈器(composition root)— 同じ契約の Program を、止めの合図の handler だけ替えて走らせる。
+;;; Interpreter (composition root) for the stop-signal contract tests - runs the same contract Program with only the stop-signal handler swapped.
 ;;;
-;;;   os-signal  本物: os-signal-stop-handler(process に届く本当の SIGINT / SIGTERM)
-;;;   scripted   fake: scripted-stop-handler(I/O なし — RaiseStop で合図を起こす)
+;;;   os-signal  real: os-signal-stop-handler (a real SIGINT / SIGTERM delivered to the process)
+;;;   scripted   fake: scripted-stop-handler (no I/O - raises the signal with RaiseStop)
 ;;;
-;;; 契約の Program は SendStop の効果で合図を起こす。合図を起こす手段だけが解釈器ごとに違う:
-;;;   os-signal → 検の process へ本当の signal を送る(os.kill(os.getpid(), signum))
-;;;   scripted  → RaiseStop で本物の箱が書くのと同じ理由の文字列(signal-reason)を起こす
-;;; StopHandlerUnderTest は外側に state の handler を置かずに走らせる反例のために、試している handler そのものを答える。
-;;; os-signal の組み立ては走る前の SIGINT / SIGTERM の受け手を覚え、走った後に戻す(本物の handler は受け手を戻さない)。
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The contract Program raises the signal with the SendStop effect. Only the means of raising the signal differs per interpreter:
+;;;   os-signal -> sends a real signal to the test process (os.kill(os.getpid(), signum))
+;;;   scripted  -> raises, with RaiseStop, the same reason string (signal-reason) that the real box writes
+;;; StopHandlerUnderTest answers the handler under test itself, for the counterexample that runs without a state handler outside.
+;;; The os-signal assembly remembers the SIGINT / SIGTERM receivers from before the run and restores them afterwards (the real handler does not restore receivers).
+;;; Used by doeff_interpreter in conftest.py (the :interpreters names of deftest -> INTERPRETERS).
 (require doeff-hy.macros [defk defhandler <- val])
 (import dataclasses [dataclass])
 (import functools [partial])
@@ -27,29 +27,29 @@
 
 
 (defclass [(dataclass :frozen True)] SendStop [EffectBase]
-  "契約の Program が止めの合図 signum を起こす効果(答え = None)。"
+  "Effect by which the contract Program raises stop signal signum (answer = None)."
   (#^ int signum))
 
 
 (defclass [(dataclass :frozen True)] StopHandlerUnderTest [EffectBase]
-  "試している止めの合図の handler そのものを求める効果(外側に state の handler を置かない反例のため)。")
+  "Effect that asks for the stop-signal handler under test itself (for the counterexample that places no state handler outside).")
 
 
 (defk signal-reason [signum]
   {:pre [(: signum int)] :post [(: % str)] :tags {:context "stop-signal-test" :role "judgment"}}
-  "signum の合図を受けた本物の箱(StopBox)が書く理由の文字列。scripted の側はこれを RaiseStop の理由にする。"
+  "The reason string that the real box (StopBox) writes on receiving signal signum. The scripted side uses this as the RaiseStop reason."
   (+ "signal " (str (int signum))))
 
 
 (defhandler send-by-os-signal
-  "SendStop を、検の process 自身へ本当の signal を送って起こす(Python は次の bytecode の区切りで受け手を呼ぶ)。"
+  "Raise SendStop by sending a real signal to the test process itself (Python calls the receiver at the next bytecode boundary)."
   (SendStop [signum]
     (os.kill (os.getpid) signum)
     (resume None)))
 
 
 (defhandler send-by-raise-stop
-  "SendStop を、内側の scripted-stop-handler へ RaiseStop を出して起こす。"
+  "Raise SendStop by emitting RaiseStop to the inner scripted-stop-handler."
   (SendStop [signum]
     (<- reason str (signal-reason signum))
     (<- (RaiseStop reason))
@@ -61,18 +61,18 @@
 
 
 (defhandler stop-handler-under-test [handler]
-  ;; 引数に残す理由: 試す handler は解釈器の名ごとに組み立ての側で決まる値で、契約の Program の側に区別する名が無い。
+  ;; Reason it stays an argument: the handler under test is a value decided on the assembly side per interpreter name, and the contract Program has no name to distinguish it.
   (StopHandlerUnderTest []
     (resume handler)))
 
 
 (defk under-stop-signal [name program]
   {:pre [(: name str) (in name STOP-HANDLERS) (: program Program)]
-   :post [(: % "契約の Program の答え(型は Program ごと)")]
+   :post [(: % "answer of the contract Program (type varies per Program)")]
    :tags {:context "stop-signal-test" :role "foundation"}}
-  "name の止めの合図の handler の下で program を走らせる。外から順に: state・試す handler の答え手・止めの合図の handler・
-   合図の起こし手(scripted の起こし手が出す RaiseStop を止めの合図の handler が受けるので、起こし手が一番内側)。
-   走る前の SIGINT / SIGTERM の受け手を走った後に戻す。"
+  "Run program under the stop-signal handler named name. From outside in: state, the answerer of the handler under test, the stop-signal handler,
+   and the signal raiser (the stop-signal handler receives the RaiseStop that the scripted raiser emits, so the raiser is innermost).
+   Restores the SIGINT / SIGTERM receivers from before the run after it."
   (val handler (get STOP-HANDLERS name))
   (val saved (dfor signum STOP-SIGNALS signum (signal.getsignal signum)))
   (try

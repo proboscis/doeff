@@ -1,136 +1,136 @@
-;;; 汎用の HTTP の待ち受け(受ける側)の effect(消費者 = #795 webapp の受け口)。送る側の HttpRequest
-;;; (http_effects.hy)と対になる土台の語彙で、業務の語を持たない。答え手は仕組みごとに差し替える:
-;;;   aiohttp-http-server   本物の待ち受け(aiohttp_http_server.hy — aiohttp は extra `http-server` の依存)
-;;;   scripted-http-server  I/O なし — 台本の要求の列を出来事にし、受けた命令を記録する(scripted_http_server.hy)
+;;; Effects of a generic HTTP listener (the receiving side) (consumer = the receiving end of the #795 webapp). Paired with the sending side's HttpRequest
+;;; (http_effects.hy), a foundation vocabulary with no business terms. The answerer is swapped per mechanism:
+;;;   aiohttp-http-server   the real listener (aiohttp_http_server.hy - aiohttp is a dependency of the extra `http-server`)
+;;;   scripted-http-server  no I/O - turns a script's sequence of requests into events and records the commands received (scripted_http_server.hy)
 ;;;
-;;;   HttpListen       待ち受けを開く(address・ws の 1 通の上限・ws の接続ごとの送りの上限・port の共有)。答え = 実際に結んだ宛先 HttpAddress
-;;;                    (port 0 を渡せば空いている port を結ぶ — 結んだ port はこの答えで知る)。share-port = 同じ port を別の待ち受けと
-;;;                    共有して開く(SO_REUSEPORT — 入れ替えで新旧の待ち受けを重ねる形。両方が真で開いた時だけ重なり、
-;;;                    新しい接続は開いている待ち受けへ kernel が振り分ける)。既定の偽は今どおり — 使われている port は開けない
-;;;   HttpNextRequest  次の出来事。答え = HttpEvent: HttpRequestArrived(札・method・path・target・頭・ws への Upgrade を求めたか・送り元の address)・
-;;;                    ws の出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed — WsAccept で ws に上げた札だけ)・HttpServerClosed
-;;;   HttpTakeQueued   既に受けて列に溜まっている出来事を、待たずに全部取る。答え = HttpEvent の tuple(受けた順・溜まっていなければ空)。
-;;;                    取った出来事は HttpNextRequest でもう渡らない(同じ流れの先取り)。閉じた後は HttpNextRequest と同じく HttpServerClosed を
-;;;                    1 つ含んで止まる。消費者が、溜まった出来事の中から急ぐ物を先に処理する並べ替えのため(
-;;;                    画面 6 枚の同時の読み込みの 36 通の後ろで、別の接続の会話を開く要求が約 1 秒待った)
-;;;   HttpRespond     札の要求へ status・頭・本文(HttpBodyBytes / HttpBodyFileRange / HttpNoBody)を送る。答え = None
-;;;   HttpForward      札の要求を url へ HTTP で中継する(本文は両向き streaming・hop-by-hop の頭を落とし X-Forwarded-Proto / -For を足す・
-;;;                    届かなければ 502)。答え = None
-;;;   WsForward        札の要求を url へ ws で中継する(frame を両向きに写す・ping / pong と close の状態符を素通し・届かなければ 502)。答え = None
-;;;   WsAccept         札の要求を ws に上げて、ここで終端する(handshake の検めと 101 は答え手 — 成らなければ断りの応答を返して 1 行名乗り、
-;;;                    出来事は出ない)。上げ終えたら出来事 WsOpened、以後その接続の 1 通が WsTextArrived / WsBinaryArrived、接続が終われば
-;;;                    WsClosed(状態符と理由)が HttpNextRequest の同じ流れに並ぶ。ping への pong・分割の組み立て・mask の検め・UTF-8 の検め・
-;;;                    1 通の上限(HttpListen の ws-max-bytes)を超えた接続の切りは答え手が持つ。答え = None
-;;; 札ごとに命令(HttpRespond・HttpForward・WsForward・WsAccept)はちょうど 1 つ。命令は撃つだけで待たない(長い中継が他の要求を止めない)。
-;;; WsAccept で上げた接続へは次の 2 つを何度でも撃てる(どちらも撃つだけで待たない — 答え手が接続ごとの送りの箱に積み、書くのは答え手の側):
-;;;   WsSendText       文字の 1 通を送る。閉じた・知らない札への送りは黙って捨てる。箱の溜まりが HttpListen の ws-send-max-bytes を超える
-;;;                    接続(読まない相手)はその場で切る(箱の中身を捨て、出来事 WsClosed の理由に名乗る)。答え = None
-;;;   WsSendTextEach   札の列の接続へ、同じ文字の 1 通ずつを送る(1 回の求め — 札ごとに WsSendText を撃つのと同じ決め: 札の順に、閉じた・知らない札は
-;;;                    黙って捨て、箱の溜まりが上限を超える接続はその場で切る。本物の答え手は 1 回の積みで全部の札の箱へ入れる。同じ通を
-;;;                    接続の数だけ送る消費者の、送り 1 回ごとの固定費を通 1 つにつき 1 回にするため)。答え = None
-;;;   WsClose          状態符と理由で閉じる(箱に積んだ 1 通を流し切ってから close を送る)。答え = None
-;;; 待ち受けの全体へは:
-;;;   HttpStopListening 待ち受けだけを閉じる — 新しい接続を受けない(port を共有する別の待ち受けが在れば、新しい接続はそちらへ行く)。
-;;;                    開いている接続(ws と命令を待つ要求)と出来事の流れはそのまま続く。入れ替えで退く側が、客を閉じる前に撃つ
-;;;                    (閉じられた客の張り直しが退く側に当たらない)。答え = None
-;;;   HttpShutdown     待ち受けを閉じる — 先に待ち受けの口を閉じて新しい接続を受けず(HttpStopListening と同じ — 閉じを受けた客の直後の
-;;;                    張り直しが、port を共有する別の待ち受けに当たる)、開いている ws の全部へ close close-code(既定 1000 — 入れ替えで退く
-;;;                    側は 1001 going away)を送り、送りの箱を drain-seconds まで流し切ってから閉じる。以後の
-;;;                    HttpNextRequest は HttpServerClosed(reason)。答え = None
-;;;   TakeWsSendReport 送りの箱の勘定(前に読んでから積んだ・流した・捨てた byte と流すまでの所要 — WsSendReport)を読んで 0 に戻す。
-;;;                    消費者が自分の計器へ積むための材料で、答え手は消費者の計器を知らない
-;;; 出来事の received-at = 答え手がその出来事を受けた拍の単調時計の秒(time.monotonic と同じ物差し — 消費者の待ちの計器の起点)。時計を
-;;; 持たない台本の答え手では、台本の書き手が載せた値のまま(載せなければ None)。
-;;; 要求の remote = 送り元の address(IP の綴り)。本物の答え手は接続の相手(aiohttp の request.remote)を載せ、名乗れない時は None。
-;;; 台本の答え手では、台本の書き手が HttpRequestArrived に載せた値のまま(載せなければ None)。
-;;; 要求の本文を読む effect(記録の service は POST の本文が本体):
-;;;   HttpReadBody     札の要求の本文を max-bytes まで読む。答え = HttpBodyOutcome:
-;;;                      HttpBodyRead(data)          本文の全部(本文なしは b"")
-;;;                      HttpBodyTooLarge(declared)  本文が max-bytes を超える — declared = 要求が宣言した Content-Length(chunked 等で
-;;;                                                  宣言が無ければ None)。宣言が上限を超えていれば 1 byte も読まずに断る。宣言が無い・
-;;;                                                  宣言を偽る要求は、流しながら読んで上限を 1 byte でも超えた拍に読むのを止めて断る
-;;;                                                  (Content-Length の有無を問わず、memory に載せるのは高々 max-bytes + 1 byte)
-;;;                      HttpBodyFailed(reason)      読めなかった(相手が途中で切った・本文の形が壊れている・知らない札・命令を
-;;;                                                  撃った後の札)
-;;;                    命令(HttpRespond 等)より前に、札ごとに高々 1 度撃つ。断った後の答え(413 等)は呼び手が HttpRespond で送り、
-;;;                    答え手はその答えを送った後に接続を閉じる(残りの本文を読み捨てない)。HttpForward に渡す札では撃たない(中継は本文を
-;;;                    streaming で写すので、先に読むと写す本文が無くなる)。
-;;; file の状態は file_effects.hy の StatPath で読む(ここに持たない)。
-;;; 答え手が自分で答える probe の口(本体の流れが止まっても生存の問いに答える):
-;;;   HttpListen の probes = HttpProbe の列。GET か HEAD で path(query を除く)が probe の path と同じ要求は、出来事にせず(HttpNextRequest に
-;;;   届かない)、答え手がその HttpProbe の answer(答えが HttpProbeAnswer の Program)を自分の run で走らせて答える。札は他の要求と同じ
-;;;   数えで 1 つ使う(届いた順の札の並びを本物と台本でそろえる)。
-;;;   answer は閉じた Program にする: 答え手は handler を足さずに走らせるので、要る handler(state・最新の値の置き場・時計 …)は answer の
-;;;   中に被せる。本体の run の状態(session の値)も Await の共有の event loop も使わない。answer が例外で落ちれば 500 と理由の文
-;;;   (probe-failure)。
-;;;   本物の答え手は、待ち受けを await-handler の共有の event loop とは別の thread の loop に立て、answer をさらに別の thread で走らせる —
-;;;   共有の loop と協調型の scheduler が止まっても probe は答える。台本の答え手は、出来事の列でその要求に来た HttpNextRequest の中で answer を
-;;;   走らせて答え、記録(HttpServed)に残す。
-;;;   何を答えるか(生存 = process が居る・仕事ができる = 本体の流れが動いている、の分け方や閾値)は呼び手が answer に書く — ここは業務の語を
-;;;   持たない。
-;;; 答え手がその場で答える ws の 1 通の口(消費者の処理ループが 1 項目を数百 ms 持つ間も、急ぐ 1 通の答えを
-;;; 待たせない):
-;;;   HttpListen の ws-shortcuts = WsShortcut の列。ws に上げた接続の文字の 1 通が、ある WsShortcut の marker(文字列)を含めば(ws-shortcut-for —
-;;;   先頭の 1 つ)、答え手は answer(札と 1 通の文を受けて、送る文の tuple を答える閉じた Program を返す関数)を自分の run で走らせ
-;;;   (ws-shortcut-outcome — probe-answer と同じく本体の run の handler と状態に触れない)、答えの文を順にその接続の送りの箱へ積む。その後で
-;;;   1 通を今までどおり出来事 WsTextArrived として列へ並べ、欄 answered に積んだ文の列・answered-at に積み終えた拍の単調時計を載せる
-;;;   (当たらなかった 1 通と、answer が空の tuple で答えた 1 通は answered が空・answered-at が None)。本体は同じ 1 通を受け、自分の状態を
-;;;   変える(答えを積み直すかは本体が決める)。
-;;;   答えは 2 段にも分けられる(先に「読み込み中」を送り、記録を読んでから行を送る): answer の Program が
-;;;   WsShortcutAhead(texts と続きの閉じた Program rest)で答えれば、答え手は texts を積んでから rest を同じ自分の run で走らせ、rest の答えを
-;;;   同じ形で受ける(rest がまた WsShortcutAhead なら続ける)。終わりの答えが WsShortcutCarried(texts と値 carried)なら、texts を積み、
-;;;   1 通の出来事の欄 carried に値を載せて本体へ渡す(本体が答え手の読んだ物を自分の状態へ畳み、同じ物を読み直さない)。answered は全部の段で
-;;;   積んだ文の列・answered-at は最後の段を積み終えた拍。
-;;;   接続ごとの 1 通の順は変わらない: 答え手は当たった 1 通の答えを(全部の段を)積み終えるまで、その接続の次の 1 通を読まない。answer が落ちた・答えの型が
-;;;   違う時は何も積まず(WsShortcutFailed の理由を答え手が 1 行名乗る)、1 通は answered が空のまま並ぶ — 本体がいつもどおり答える。続きの段が
-;;;   落ちた時は、それまでに積んだ文を answered に載せ、carried は空のまま並べる。
-;;;   本物の答え手は answer を待ち受けの loop の外の thread で走らせる(本体の scheduler が止まっていても答える)。台本の答え手は、列の頭が当たる
-;;;   1 通の時に answer を走らせ、送った文を記録(WsTextSent)に残してから出来事を渡す。
-;;; 2 つの答え手が同じに決める物は、ここの判断の defk を両方が呼ぶ: carries-content(本文を運ぶ答えか — HEAD・1xx・204・304 は送らない)・
-;;; ws-refusal-status(WsAccept の断りの status)・send-overflows(送りの上限で切るか)・closing-of(WsClosed で名乗る状態符と理由)・
-;;; probe-for(要求が probe の口に当たるか)・probe-failure(answer が落ちた probe の答え)・ws-shortcut-for(1 通がその場で答える口に当たるか)。
-;;; probe の answer を走らせるのも両方が同じ probe-answer、ws の口の answer は同じ ws-shortcut-outcome(どちらも Program の外から呼ぶ入口)。
-;;; 2 つが同じ性質を持つことは tests/test_http_server_contract.hy の契約テストが両方の答え手で確かめる。
+;;;   HttpListen       Opens the listener (address, ws per-message limit, ws per-connection send limit, port sharing). Answer = the address actually bound, HttpAddress
+;;;                    (pass port 0 to bind a free port - the bound port is learned from this answer). share-port = open sharing the same port with another listener
+;;;                    (SO_REUSEPORT - for stacking old and new listeners during a swap. They overlap only when both open it as true, and
+;;;                    the kernel distributes new connections to the open listeners). The default false is as before - a port in use cannot be opened
+;;;   HttpNextRequest  The next event. Answer = HttpEvent: HttpRequestArrived (ticket, method, path, target, headers, whether an Upgrade to ws was requested, the sender's address),
+;;;                    ws events (WsOpened, WsTextArrived, WsBinaryArrived, WsClosed - only for tickets raised to ws with WsAccept), HttpServerClosed
+;;;   HttpTakeQueued   Takes all events already received and queued, without waiting. Answer = a tuple of HttpEvent (in received order; empty if nothing queued).
+;;;                    Events taken are no longer delivered by HttpNextRequest (taking ahead in the same stream). After closing, like HttpNextRequest, it stops
+;;;                    with one HttpServerClosed included. For consumers that reorder so urgent ones among queued events are processed first (
+;;;                    behind 36 messages from 6 screens loading at once, a request to open a conversation on another connection waited about 1 second)
+;;;   HttpRespond     Sends status, headers, and body (HttpBodyBytes / HttpBodyFileRange / HttpNoBody) to the ticket's request. Answer = None
+;;;   HttpForward      Relays the ticket's request to url over HTTP (body streamed both ways, hop-by-hop headers dropped, X-Forwarded-Proto / -For added,
+;;;                    502 if unreachable). Answer = None
+;;;   WsForward        Relays the ticket's request to url over ws (frames copied both ways, ping / pong and the close status code passed through, 502 if unreachable). Answer = None
+;;;   WsAccept         Raises the ticket's request to ws and terminates it here (handshake checks and the 101 are the answerer's - if it does not succeed, it returns a refusal response and logs one line,
+;;;                    and no event comes out). When raising finishes, the event WsOpened, then each message of that connection as WsTextArrived / WsBinaryArrived, and when the connection ends
+;;;                    WsClosed (status code and reason) line up in the same stream of HttpNextRequest. Answering ping with pong, assembling fragments, checking masks, checking UTF-8, and
+;;;                    cutting a connection that exceeds the per-message limit (ws-max-bytes of HttpListen) are the answerer's. Answer = None
+;;; Exactly one command (HttpRespond, HttpForward, WsForward, WsAccept) per ticket. A command is only fired and not waited for (a long relay does not stall other requests).
+;;; The following two can be fired any number of times to a connection raised with WsAccept (both are only fired, not waited for - the answerer queues them in the per-connection send box, and the writing is the answerer's side):
+;;;   WsSendText       Sends one text message. A send to a closed or unknown ticket is silently dropped. A connection whose box backlog exceeds ws-send-max-bytes of HttpListen
+;;;                    (a peer that does not read) is cut on the spot (the box contents are dropped, and it is named in the reason of the event WsClosed). Answer = None
+;;;   WsSendTextEach   Sends the same one text message each to the connections of a list of tickets (one request - the same rules as firing WsSendText per ticket: in ticket order, closed or unknown tickets are
+;;;                    silently dropped, and a connection whose box backlog exceeds the limit is cut on the spot. The real answerer puts it into every ticket's box in one queuing pass. So that a consumer sending the same message
+;;;                    to as many connections as there are makes the fixed cost per send once per message). Answer = None
+;;;   WsClose          Closes with a status code and reason (flushes the message queued in the box and then sends close). Answer = None
+;;; For the listener as a whole:
+;;;   HttpStopListening Closes only the listener - accepts no new connections (if another listener shares the port, new connections go there).
+;;;                    Open connections (ws and requests waiting for commands) and the event stream continue as they are. Fired by the retiring side in a swap, before it closes its clients
+;;;                    (so the clients' reconnect after being closed does not hit the retiring side). Answer = None
+;;;   HttpShutdown     Closes the listener - first closes the listener's mouth and accepts no new connections (the same as HttpStopListening - the reconnect right after a client receives the close
+;;;                    hits another listener sharing the port), sends close close-code (default 1000 - the retiring side in a swap uses
+;;;                    1001 going away) to all open ws, and closes after flushing the send boxes for up to drain-seconds. After that
+;;;                    HttpNextRequest gives HttpServerClosed(reason). Answer = None
+;;;   TakeWsSendReport Reads and resets to 0 the accounting of the send boxes (bytes queued, flushed, and dropped since the last read, and the time taken to flush - WsSendReport).
+;;;                    Material for the consumer to accumulate into its own meters; the answerer does not know the consumer's meters
+;;; received-at of an event = the monotonic clock seconds at the beat when the answerer received that event (the same scale as time.monotonic - the origin of the consumer's wait meter). For a scripted answerer that
+;;; has no clock, the value is whatever the script's author put (None if not put).
+;;; remote of a request = the sender's address (IP spelling). The real answerer puts the connection's peer (aiohttp's request.remote), and None when it cannot be determined.
+;;; For a scripted answerer, it is whatever the script's author put in HttpRequestArrived (None if not put).
+;;; The effect that reads a request body (for the record service, the POST body is the main thing):
+;;;   HttpReadBody     Reads the ticket's request body up to max-bytes. Answer = HttpBodyOutcome:
+;;;                      HttpBodyRead(data)          the whole body (b"" for no body)
+;;;                      HttpBodyTooLarge(declared)  the body exceeds max-bytes - declared = the Content-Length the request declared (None if
+;;;                                                  there is no declaration, as with chunked). If the declaration exceeds the limit it is refused without reading a single byte. A request with no declaration or
+;;;                                                  a false declaration is read while streaming and the read is stopped and refused at the beat it exceeds the limit by even 1 byte
+;;;                                                  (regardless of whether Content-Length exists, at most max-bytes + 1 byte is held in memory)
+;;;                      HttpBodyFailed(reason)      could not be read (the peer cut in the middle, the body shape is broken, an unknown ticket, a ticket after a
+;;;                                                  command was fired)
+;;;                    Fire at most once per ticket, before the command (HttpRespond, etc.). The caller sends the answer after a refusal (413, etc.) with HttpRespond, and
+;;;                    the answerer closes the connection after sending that answer (it does not read and discard the rest of the body). Not fired for a ticket passed to HttpForward (the relay copies the body by
+;;;                    streaming, so reading first would leave no body to copy).
+;;; The state of a file is read with StatPath of file_effects.hy (not held here).
+;;; The probe entry that the answerer answers by itself (answers liveness questions even when the main stream has stopped):
+;;;   probes of HttpListen = a list of HttpProbe. A GET or HEAD request whose path (excluding the query) equals a probe's path is not made an event (it does not reach HttpNextRequest);
+;;;   the answerer runs that HttpProbe's answer (a Program whose answer is HttpProbeAnswer) in its own run and answers. A ticket is used the same
+;;;   way as for other requests (so the order of tickets in arrival order matches between the real one and the script).
+;;;   answer must be a closed Program: the answerer runs it without adding handlers, so the handlers it needs (state, the latest-value store, clock ...) are wrapped inside
+;;;   answer. It uses neither the main run's state (session values) nor Await's shared event loop. If answer fails with an exception, 500 and a reason sentence
+;;;   (probe-failure).
+;;;   The real answerer stands the listener on a loop in a thread separate from await-handler's shared event loop, and runs answer on yet another thread -
+;;;   so the probe answers even if the shared loop and the cooperative scheduler stop. The scripted answerer runs answer inside the HttpNextRequest that the request reaches in the event sequence, answers,
+;;;   and leaves it in the record (HttpServed).
+;;;   What to answer (how to divide liveness = the process is there and ability to work = the main stream is moving, and the thresholds) is written by the caller in answer - this has no business
+;;;   terms.
+;;; The ws message entry that the answerer answers on the spot (so that an urgent message's answer is not
+;;; kept waiting even while the consumer's processing loop holds one item for several hundred ms):
+;;;   ws-shortcuts of HttpListen = a list of WsShortcut. If one text message of a connection raised to ws contains the marker (a string) of a WsShortcut (ws-shortcut-for -
+;;;   the first one), the answerer runs answer (a function that receives the ticket and the one message's text and returns a closed Program answering a tuple of texts to send) in its own run
+;;;   (ws-shortcut-outcome - like probe-answer, it touches neither the main run's handlers nor state), and queues the answer texts in order into that connection's send box. After that,
+;;;   it lines up that message in the queue as the event WsTextArrived as before, with the field answered carrying the list of texts queued and answered-at carrying the monotonic clock at the beat queuing finished
+;;;   (a message that did not match, and a message for which answer returned an empty tuple, have answered empty and answered-at None). The main body receives the same message and
+;;;   changes its own state (whether to queue the answer again is the main body's decision).
+;;;   The answer can also be split into two stages (first send "loading", then read the record and send the rows): if the answer Program
+;;;   answers with WsShortcutAhead (texts and the closed Program rest for the continuation), the answerer queues texts and then runs rest in the same run of its own, and receives rest's answer
+;;;   in the same form (if rest is WsShortcutAhead again, it continues). If the final answer is WsShortcutCarried (texts and the value carried), it queues texts and
+;;;   puts the value in the field carried of that one message's event and passes it to the main body (so the main body folds what the answerer read into its own state and does not read it again). answered is the list of texts queued
+;;;   across all stages, and answered-at is the beat when the last stage finished queuing.
+;;;   The order of messages per connection does not change: the answerer does not read the next message of that connection until it finishes queuing the answer (all stages) of the matched message. If answer failed or the answer's type
+;;;   is wrong, nothing is queued (the answerer logs one line of the reason for WsShortcutFailed) and the message lines up with answered left empty - the main body answers as usual. If a continuation stage
+;;;   failed, the texts queued so far are put in answered and carried is left empty.
+;;;   The real answerer runs answer on a thread outside the listener's loop (it answers even if the main scheduler has stopped). The scripted answerer runs answer when the head of the queue is a matching
+;;;   message, records the texts sent in the record (WsTextSent), and then passes the event.
+;;; What the two answerers must decide the same way is decided by both calling the judgment defks here: carries-content (whether the answer carries a body - HEAD, 1xx, 204, 304 are not sent),
+;;; ws-refusal-status (the status of the WsAccept refusal), send-overflows (whether to cut at the send limit), closing-of (the status code and reason named in WsClosed),
+;;; probe-for (whether a request hits a probe entry), probe-failure (the answer of a probe whose answer failed), ws-shortcut-for (whether a message hits the on-the-spot answer entry).
+;;; The two also run a probe's answer with the same probe-answer, and a ws entry's answer with the same ws-shortcut-outcome (both are entries called from outside a Program).
+;;; That the two have the same properties is verified on both answerers by the contract test tests/test_http_server_contract.hy.
 ;;;
-;;; 台本の語彙(本物の待ち受けには無い): HttpScript・ScriptedUpstream・ScriptedBody = 台本・HttpServed = 受けた命令と端末が受け取る答え・
-;;; WsTextSent / WsCloseSent = ws の接続へ送った 1 通と閉じ・ReadHttpServed = 記録を読む effect(検と筋書きが覗くため)・
-;;; AppendHttpScript = 走っている台本の後ろへ出来事を足す effect(筋書きの相手役が時刻の来た拍に届ける — scripted-http-server だけが答える)。
+;;; Script vocabulary (not in the real listener): HttpScript, ScriptedUpstream, ScriptedBody = the script; HttpServed = the commands received and the answer the terminal receives;
+;;; WsTextSent / WsCloseSent = one message and the close sent to a ws connection; ReadHttpServed = the effect that reads the record (for tests and scenarios to peek);
+;;; AppendHttpScript = the effect that appends events behind a running script (the scenario's counterpart delivers them at the beat the time arrives - only scripted-http-server answers).
 (require doeff-hy.macros [defk deff val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import doeff [EffectBase Program run])
 
-;; ws の 1 通(中継では 1 frame)の上限の既定(byte)。
+;; Default limit (bytes) of one ws message (one frame in a relay).
 (val DEFAULT-WS-MAX-BYTES (* 1024 1024))
-;; ws の接続ごとの送りの箱の上限の既定(byte)— 読まない相手の箱をここまで溜めて切る。
+;; Default limit (bytes) of each ws connection's send box - the box of a peer that does not read is allowed to pile up to this and then cut.
 (val DEFAULT-WS-SEND-MAX-BYTES (* 16 1024 1024))
-;; 待ち受けを閉じる時に送りの箱を流し切るのを待つ上限の既定(秒)。
+;; Default upper limit (seconds) of waiting to flush the send boxes when closing the listener.
 (val DEFAULT-DRAIN-SECONDS 1.0)
-;; ws の閉じの状態符(RFC 6455 7.4.1)— 答え手が名乗る物。
+;; ws close status codes (RFC 6455 7.4.1) - what the answerer names.
 (val WS-CLOSE-NORMAL 1000)
 (val WS-CLOSE-ABNORMAL 1006)
-;; ws に上げられない要求への断りの答えの本文(WsAccept の断り — 答え手が名乗る物)。
-(val WS-REFUSAL-TEXT "WebSocket の Upgrade(GET・Upgrade: websocket・Sec-WebSocket-Key)が要る")
-;; 送りの上限で切った接続の WsClosed の理由(答え手が名乗る物)。
-(val WS-CUT-REASON "送りの箱が上限を超えた(読まない相手)")
+;; Body of the refusal answer for a request that cannot be raised to ws (the WsAccept refusal - what the answerer names).
+(val WS-REFUSAL-TEXT "A WebSocket Upgrade (GET, Upgrade: websocket, Sec-WebSocket-Key) is required")
+;; Reason in WsClosed for a connection cut at the send limit (what the answerer names).
+(val WS-CUT-REASON "send box exceeded the limit (peer that does not read)")
 
 
 (defrecord HttpAddress
-  "待ち受けの宛先。"
+  "The listener's address."
   (#^ str host)
   (#^ int port))
 
 
 (defrecord HttpHeader
-  "HTTP の頭 1 つ(同じ名が複数あっても落とさないよう列で持つ)。"
+  "One HTTP header (held as a list so that the same name appearing several times is not dropped)."
   (#^ str name)
   (#^ str value))
 
 
 (defrecord HttpRequestArrived
-  "届いた要求 1 つ: 札・method・path(query なし)・target(query つき)・頭の列・ws への Upgrade を求めたか・受けた拍(頭の註)・
-   remote = 送り元の address(IP の綴り — 答え手が名乗れない時は None)。"
+  "One request that arrived: ticket, method, path (without query), target (with query), the list of headers, whether an Upgrade to ws was requested, the beat received (header comment),
+   remote = the sender's address (IP spelling - None when the answerer cannot determine it)."
   (#^ str ticket)
   (#^ str method)
   (#^ str path)
@@ -142,15 +142,15 @@
 
 
 (defrecord WsOpened
-  "WsAccept で札の要求を ws に上げ終えた(以後この札の 1 通が届く)。"
+  "A ticket's request was raised to ws with WsAccept (after this, messages of this ticket arrive)."
   (#^ str ticket)
   (setv #^ (| float None) received-at None))
 
 
 (defrecord WsTextArrived
-  "ws に上げた札の接続に文字の 1 通が届いた(分割は組み立て済み・UTF-8 は検め済み)。answered = 答え手がその場で答える口(ws-shortcuts)で
-   この 1 通の前にその接続の送りの箱へ積んだ文の列(当たらなければ空)・answered-at = 積み終えた拍の単調時計の秒(当たらなければ None —
-   頭の註)・carried = 答え手の口の終わりの段が本体へ渡した値(WsShortcutCarried — 渡さなければ None)。"
+  "A text message arrived on the connection of a ticket raised to ws (fragments are already assembled, UTF-8 is already checked). answered = the list of texts queued into that connection's send box before this message by the answerer's on-the-spot entry (ws-shortcuts)
+   (empty if it did not match), answered-at = the monotonic clock seconds at the beat queuing finished (None if it did not match -
+   header comment), carried = the value that the final stage of the answerer's entry handed to the main body (WsShortcutCarried - None if not handed)."
   (#^ str ticket)
   (#^ str text)
   (setv #^ (| float None) received-at None
@@ -160,15 +160,15 @@
 
 
 (defrecord WsBinaryArrived
-  "ws に上げた札の接続に byte の 1 通が届いた(受けるかは消費者が決める — 受けないなら WsClose で閉じる)。"
+  "A binary message arrived on the connection of a ticket raised to ws (the consumer decides whether to accept it - close with WsClose if not)."
   (#^ str ticket)
   (#^ bytes data)
   (setv #^ (| float None) received-at None))
 
 
 (defrecord WsClosed
-  "ws に上げた札の接続が終わった: code = 閉じの状態符(相手の close・こちらの WsClose・切れた時は 1006)・reason = 理由の文
-   (送りの上限で切った時はそう名乗る)。以後この札への送りは捨てられる。"
+  "The connection of a ticket raised to ws ended: code = the close status code (the peer's close, our WsClose, or 1006 when it dropped), reason = the reason sentence
+   (when cut at the send limit, it is named so). After this, sends to this ticket are dropped."
   (#^ str ticket)
   (#^ int code)
   (#^ str reason)
@@ -176,19 +176,19 @@
 
 
 (defrecord HttpServerClosed
-  "待ち受けが閉じた(HttpShutdown・台本が尽きた等)。"
+  "The listener closed (HttpShutdown, the script ran out, etc.)."
   (#^ str reason))
 
 
-;; HttpNextRequest の答えの union。
+;; The union of answers of HttpNextRequest.
 (val WsEvent (| WsOpened WsTextArrived WsBinaryArrived WsClosed))
 (val HttpEvent (| HttpRequestArrived WsOpened WsTextArrived WsBinaryArrived WsClosed HttpServerClosed))
 
 
 (defrecord WsSendReport
-  "送りの箱の勘定(前に TakeWsSendReport で読んでから): queued-frames / queued-bytes = 箱へ積んだ 1 通の数と byte・flushed-bytes = 相手へ
-   流した byte・flush-seconds = 流した 1 通ごとの積んでから流すまでの秒(新しい方から FLUSH-SAMPLES-LIMIT まで — byte の勘定は全数)・
-   dropped-bytes = 捨てた byte(送りの上限で切った・接続が終わった時に箱に残った)・cuts = 送りの上限で切った接続の数。"
+  "Accounting of the send boxes (since the last read with TakeWsSendReport): queued-frames / queued-bytes = the number and bytes of messages queued into the boxes, flushed-bytes = bytes
+   flushed to the peer, flush-seconds = the seconds from queuing to flushing for each flushed message (up to FLUSH-SAMPLES-LIMIT, newest first - the byte accounting is complete),
+   dropped-bytes = bytes dropped (cut at the send limit, or left in the box when the connection ended), cuts = the number of connections cut at the send limit."
   (#^ int queued-frames)
   (#^ int queued-bytes)
   (#^ int flushed-bytes)
@@ -197,99 +197,99 @@
   (#^ int cuts))
 
 
-;; 1 回の WsSendReport が持つ所要の標本の上限(読まれない間に際限なく溜めない)。
+;; Upper limit of timing samples one WsSendReport holds (so they do not pile up without bound while unread).
 (val FLUSH-SAMPLES-LIMIT 4096)
 
 
 (defrecord HttpBodyBytes
-  "本文 = 決まった byte 列。"
+  "Body = a fixed byte string."
   (#^ bytes data))
 
 
 (defrecord HttpBodyFileRange
-  "本文 = file の path の start から length byte(答え手が読んで送る — 大きい file を memory に載せない)。"
+  "Body = length bytes from start of the file at path (the answerer reads and sends it - a large file is not loaded into memory)."
   (#^ str path)
   (#^ int start)
   (#^ int length))
 
 
 (defrecord HttpNoBody
-  "本文なし(304・HEAD・302)。")
+  "No body (304, HEAD, 302).")
 
 
 (val HttpBody (| HttpBodyBytes HttpBodyFileRange HttpNoBody))
 
 
 (defrecord HttpBodyRead
-  "HttpReadBody の答え: 要求の本文の全部(本文なしは b\"\")。"
+  "Answer of HttpReadBody: the whole request body (b\"\" for no body)."
   (#^ bytes data))
 
 
 (defrecord HttpBodyTooLarge
-  "HttpReadBody の答え: 本文が上限を超えた(declared = 要求が宣言した Content-Length・宣言が無ければ None — 頭の註)。"
+  "Answer of HttpReadBody: the body exceeded the limit (declared = the Content-Length the request declared, None if there was no declaration - header comment)."
   (#^ (| int None) declared))
 
 
 (defrecord HttpBodyFailed
-  "HttpReadBody の答え: 本文を読めなかった(reason = 理由の文 — 頭の註)。"
+  "Answer of HttpReadBody: the body could not be read (reason = a reason sentence - header comment)."
   (#^ str reason))
 
 
-;; HttpReadBody の答えの union。
+;; The union of answers of HttpReadBody.
 (val HttpBodyOutcome (| HttpBodyRead HttpBodyTooLarge HttpBodyFailed))
 
 
 (defrecord HttpProbeAnswer
-  "probe の口の答え(頭の註): status・頭・本文の byte 列(HEAD の答えは本文を送らない — carries-content)。"
+  "Answer of the probe entry (header comment): status, headers, and the body's byte string (the answer to HEAD does not send the body - carries-content)."
   (#^ int status)
   (#^ (get tuple #(HttpHeader ...)) headers)
   (#^ bytes body))
 
 
 (defrecord HttpProbe
-  "答え手が自分で答える probe の口 1 つ(頭の註): path = 当たる path(query を除く — GET と HEAD だけ当たる)・answer = 答えが
-   HttpProbeAnswer の閉じた Program(要求ごとに答え手が自分の run で走らせる)。"
+  "One probe entry that the answerer answers by itself (header comment): path = the path that matches (excluding the query - only GET and HEAD match), answer = a closed Program whose answer is
+   HttpProbeAnswer (the answerer runs it in its own run for each request)."
   (#^ str path)
   (#^ (get Program #(HttpProbeAnswer object)) answer))
 
 
 (defrecord WsShortcut
-  "答え手がその場で答える ws の 1 通の口 1 つ(頭の註): marker = 1 通の文がこれを含めば当たる・answer = 札と 1 通の文を受けて、送る文の
-   tuple を答える閉じた Program を返す関数(1 通ごとに答え手が自分の run で走らせる)。"
+  "One ws message entry that the answerer answers on the spot (header comment): marker = matches if a message's text contains it, answer = a function that receives the ticket and the one message's text and returns a closed Program
+   answering a tuple of texts to send (the answerer runs it in its own run for each message)."
   (#^ str marker)
   (#^ (get Callable #([str str] Program)) answer))
 
 
 (defrecord WsShortcutAhead
-  "ws の口の answer の途中の答え(頭の註の 2 段の答え): texts = 今その接続へ順に積む文の列・rest = 積んだ後に答え手が同じく自分の run で
-   走らせる続きの閉じた Program(答えは answer と同じ形 — 文の tuple・WsShortcutAhead・WsShortcutCarried)。"
+  "An intermediate answer of a ws entry's answer (the two-stage answer in the header comment): texts = the list of texts to queue now, in order, into that connection, rest = the closed continuation Program that the answerer runs, likewise in its own run,
+   after queuing (its answer has the same shape as answer - a tuple of texts, WsShortcutAhead, WsShortcutCarried)."
   (#^ (get tuple #(str ...)) texts)
   (#^ Program rest))
 
 
 (defrecord WsShortcutCarried
-  "ws の口の answer の終わりの答えのうち、本体へ値を渡す物(頭の註): texts = その接続へ順に積む文の列・carried = 1 通の出来事
-   WsTextArrived の欄 carried に載せて本体へ渡す値(None は渡さない)。"
+  "Among the final answers of a ws entry's answer, the one that hands a value to the main body (header comment): texts = the list of texts to queue, in order, into that connection, carried = the value to put in the field carried of the event
+   WsTextArrived for that message and hand to the main body (None is not handed)."
   (#^ (get tuple #(str ...)) texts)
   (#^ object carried))
 
 
 (defrecord WsShortcutAnswered
-  "ws の口の answer の 1 段の答え: texts = その接続へ順に積む文の列(空なら何も積まない)・rest = 積んだ後に走らせる続きの段(None = 終わり)・
-   carried = 終わりの段が本体へ渡す値(頭の註)。"
+  "One stage's answer of a ws entry's answer: texts = the list of texts to queue, in order, into that connection (nothing is queued if empty), rest = the continuation stage to run after queuing (None = the end),
+   carried = the value the final stage hands to the main body (header comment)."
   (#^ (get tuple #(str ...)) texts)
   (setv #^ (| Program None) rest None
         #^ object carried None))
 
 
 (defrecord WsShortcutFailed
-  "ws の口の answer が落ちたか、答えの型が違った(reason = 理由の文 — 答え手が 1 行名乗り、何も積まない)。"
+  "A ws entry's answer failed or its answer had the wrong type (reason = a reason sentence - the answerer logs one line, and nothing is queued)."
   (#^ str reason))
 
 
 (defclass [(dataclass :frozen True)] HttpListen [(get EffectBase HttpAddress)]
-  "待ち受けを開く(頭の註)。probes = 答え手が自分で答える probe の口の列・ws-shortcuts = 答え手がその場で答える ws の 1 通の口の列。答え =
-   結んだ宛先 HttpAddress。"
+  "Opens the listener (header comment). probes = the list of probe entries the answerer answers by itself, ws-shortcuts = the list of ws message entries the answerer answers on the spot. Answer =
+   the bound address, HttpAddress."
   (#^ HttpAddress address)
   (setv #^ int ws-max-bytes DEFAULT-WS-MAX-BYTES
         #^ int ws-send-max-bytes DEFAULT-WS-SEND-MAX-BYTES
@@ -299,15 +299,15 @@
 
 
 (defclass [(dataclass :frozen True)] HttpNextRequest [(get EffectBase HttpEvent)]
-  "次の出来事を 1 つ受ける(頭の註)。")
+  "Receives one next event (header comment).")
 
 
 (defclass [(dataclass :frozen True)] HttpTakeQueued [(get EffectBase (get tuple #(HttpEvent ...)))]
-  "既に受けて列に溜まっている出来事を、待たずに全部取る(頭の註)。")
+  "Takes all events already received and queued, without waiting (header comment).")
 
 
 (defclass [(dataclass :frozen True)] HttpRespond [(get EffectBase None)]
-  "札の要求へ status・頭・本文を送る(頭の註)。"
+  "Sends status, headers, and body to the ticket's request (header comment)."
   (#^ str ticket)
   (#^ int status)
   (#^ (get tuple #(HttpHeader ...)) headers)
@@ -315,80 +315,80 @@
 
 
 (defclass [(dataclass :frozen True)] HttpReadBody [(get EffectBase HttpBodyOutcome)]
-  "札の要求の本文を max-bytes まで読む(頭の註)。答え = HttpBodyOutcome。"
+  "Reads the ticket's request body up to max-bytes (header comment). Answer = HttpBodyOutcome."
   (#^ str ticket)
   (#^ int max-bytes))
 
 
 (defclass [(dataclass :frozen True)] HttpForward [(get EffectBase None)]
-  "札の要求を url へ HTTP で中継する(頭の註)。"
+  "Relays the ticket's request to url over HTTP (header comment)."
   (#^ str ticket)
   (#^ str url))
 
 
 (defclass [(dataclass :frozen True)] WsForward [(get EffectBase None)]
-  "札の要求を url へ ws で中継する(頭の註)。"
+  "Relays the ticket's request to url over ws (header comment)."
   (#^ str ticket)
   (#^ str url))
 
 
 (defclass [(dataclass :frozen True)] WsAccept [(get EffectBase None)]
-  "札の要求を ws に上げて、ここで終端する(頭の註)。"
+  "Raises the ticket's request to ws and terminates it here (header comment)."
   (#^ str ticket))
 
 
 (defclass [(dataclass :frozen True)] WsSendText [(get EffectBase None)]
-  "ws に上げた札の接続へ文字の 1 通を送る(頭の註)。"
+  "Sends one text message to the connection of a ticket raised to ws (header comment)."
   (#^ str ticket)
   (#^ str text))
 
 
 (defclass [(dataclass :frozen True)] WsSendTextEach [(get EffectBase None)]
-  "ws に上げた札の列の接続へ、同じ文字の 1 通ずつを 1 回の求めで送る(頭の註)。"
+  "Sends the same one text message each, in one request, to the connections of a list of tickets raised to ws (header comment)."
   (#^ (get tuple #(str ...)) tickets)
   (#^ str text))
 
 
 (defclass [(dataclass :frozen True)] WsClose [(get EffectBase None)]
-  "ws に上げた札の接続を状態符と理由で閉じる(頭の註)。"
+  "Closes the connection of a ticket raised to ws with a status code and reason (header comment)."
   (#^ str ticket)
   (#^ int code)
   (#^ str reason))
 
 
 (defclass [(dataclass :frozen True)] HttpStopListening [(get EffectBase None)]
-  "待ち受けだけを閉じる — 新しい接続を受けず、開いている接続と出来事の流れは続く(頭の註)。")
+  "Closes only the listener - accepts no new connections, while open connections and the event stream continue (header comment).")
 
 
 (defclass [(dataclass :frozen True)] HttpShutdown [(get EffectBase None)]
-  "待ち受けを閉じる(頭の註)。reason = 以後の HttpServerClosed の理由・drain-seconds = 送りの箱を流し切るのを待つ上限の秒・close-code =
-   開いている ws へ送る閉じの状態符。"
+  "Closes the listener (header comment). reason = the reason of HttpServerClosed from then on, drain-seconds = the upper limit in seconds of waiting to flush the send boxes, close-code =
+   the close status code sent to open ws."
   (#^ str reason)
   (setv #^ float drain-seconds DEFAULT-DRAIN-SECONDS
         #^ int close-code WS-CLOSE-NORMAL))
 
 
 (defclass [(dataclass :frozen True)] TakeWsSendReport [(get EffectBase WsSendReport)]
-  "送りの箱の勘定を読んで 0 に戻す(頭の註)。答え = WsSendReport。")
+  "Reads the accounting of the send boxes and resets it to 0 (header comment). Answer = WsSendReport.")
 
 
-;; 札の要求への命令の union(答え手と台本の記録が命令 1 つを受ける型)。
+;; The union of commands to a ticket's request (the type by which the answerer and the script's record receive one command).
 (val HttpCommand (| HttpRespond HttpForward WsForward WsAccept))
 
 
-;; --- 答え手が共に呼ぶ判断(本物の aiohttp-http-server と台本の scripted-http-server が同じ関数で決める)--------------------------------
+;; --- Judgments the answerers call in common (the real aiohttp-http-server and the scripted scripted-http-server decide with the same functions) --------------------------------
 
 (defk carries-content [method status]
   {:pre [(: method str) (: status int)] :post [(: % bool)] :tags {:context "http-server" :role "judgment"}}
-  "method の要求への status の答えが本文を運ぶか(RFC 9110 6.4.1 — HEAD の答えと 1xx・204・304 は本文を送らない)。運ばない答えは
-   HttpRespond に本文を渡されても送らない(送ると同じ接続の次の答えの頭として読まれる)。"
+  "Whether the answer of status to a request of method carries a body (RFC 9110 6.4.1 - answers to HEAD and 1xx, 204, 304 do not send a body). An answer that does not carry one
+   is not sent even if a body is passed to HttpRespond (sending it would be read as the head of the next answer on the same connection)."
   (not (or (= method "HEAD") (< status 200) (in status #(204 304)))))
 
 
 (defk ws-refusal-status [method upgrade]
   {:pre [(: method str) (: upgrade bool)] :post [(: % (| int None))] :tags {:context "http-server" :role "judgment"}}
-  "WsAccept で ws に上げられない要求の形への断りの status(GET でない 405・Upgrade: websocket が無い 426)。None = 形は上げられる
-   (本物の答え手は handshake の残りの検め — Sec-WebSocket-Key 等 — で断れば 400)。"
+  "The refusal status for a request shape that cannot be raised to ws with WsAccept (405 if not GET, 426 if no Upgrade: websocket). None = the shape can be raised
+   (the real answerer refuses with 400 if the rest of the handshake checks - Sec-WebSocket-Key, etc. - fail)."
   (cond
     (!= method "GET") 405
     (not upgrade) 426
@@ -397,13 +397,13 @@
 
 (defk send-overflows [held size limit]
   {:pre [(: held int) (: size int) (: limit int)] :post [(: % bool)] :tags {:context "http-server" :role "judgment"}}
-  "送りの箱に held byte が溜まった接続へ size byte の 1 通を積むと上限 limit を超えるか(超えるならその 1 通を積まずに接続を切る —
-   WsSendText の頭の註)。"
+  "Whether queuing a message of size bytes into a send box that already has held bytes piled up would exceed the limit (if so, the connection is cut without queuing that message -
+   header comment of WsSendText)."
   (> (+ held size) limit))
 
 
 (defrecord WsCloseFrame
-  "ws の閉じの状態符と理由(こちらが送った close・相手から受けた close・接続が終わった時に名乗る物)。"
+  "The status code and reason of a ws close (the close we sent, the close we received from the peer, or what is named when the connection ended)."
   (#^ int code)
   (#^ str reason))
 
@@ -411,9 +411,8 @@
 (defk closing-of [cut sent received lost]
   {:pre [(: cut (| str None)) (: sent (| WsCloseFrame None)) (: received (| WsCloseFrame None)) (: lost (| int None))]
    :post [(: % WsCloseFrame)] :tags {:context "http-server" :role "judgment"}}
-  "ws の接続が終わった時に WsClosed で名乗る状態符と理由を決めるため: 送りの上限で切った(cut = 切りの理由)なら 1006・こちらが WsClose で
-   閉じた(sent)ならその状態符と理由・相手が閉じた(received)なら相手の状態符と理由・どれでもなければ切れた時の状態符(lost — 無ければ
-   1006)。"
+  "To decide the status code and reason named in WsClosed when a ws connection ends: 1006 if cut at the send limit (cut = the reason for the cut); if we closed with WsClose
+   (sent), that status code and reason; if the peer closed (received), the peer's status code and reason; if none of these, the status code for a dropped connection (lost - if none, 1006)."
   (cond
     (is-not cut None) (WsCloseFrame :code WS-CLOSE-ABNORMAL :reason cut)
     (is-not sent None) sent
@@ -423,8 +422,8 @@
 
 (defk probe-for [probes method path]
   {:pre [(: probes (of tuple HttpProbe ...)) (: method str) (: path str)] :post [(: % (| HttpProbe None))] :tags {:context "http-server" :role "judgment"}}
-  "要求を答え手が自分で答えるか決めるため(頭の註の probe の口): GET か HEAD で、path(query を除く)が probes のどれかの path と同じなら
-   その HttpProbe、他は None(出来事として本体へ渡す)。"
+  "To decide whether the answerer answers a request by itself (the probe entry in the header comment): for a GET or HEAD whose path (excluding the query) equals the path of any of probes,
+   that HttpProbe, otherwise None (passed to the main body as an event)."
   (if (in method #("GET" "HEAD"))
       (next (gfor probe probes :if (= probe.path path) probe) None)
       None))
@@ -432,15 +431,15 @@
 
 (defk probe-failure [path reason]
   {:pre [(: path str) (: reason str)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server" :role "judgment"}}
-  "probe の answer が落ちた時の答えを決めるため(500 と理由の文 — 答えを出せない probe を健康と読ませない)。"
+  "To decide the answer when a probe's answer failed (500 and a reason sentence - so that a probe that cannot produce an answer is not read as healthy)."
   (HttpProbeAnswer :status 500 :headers #((HttpHeader :name "Content-Type" :value "text/plain; charset=utf-8"))
-                   :body (.encode (.format "{} の probe は答えを出せなかった: {}" path reason) "utf-8")))
+                   :body (.encode (.format "probe for {} could not produce an answer: {}" path reason) "utf-8")))
 
 
-(deff probe-answer [probe]  ; defk にできない: 答え手が本体の Program の外(本物 = 待ち受けの loop の外の thread・台本 = handler の節)で呼び、閉じた answer を自分の run で走らせる入口
+(deff probe-answer [probe]  ; cannot be a defk: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
   {:pre [(: probe HttpProbe)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server" :role "foundation"}}
-  "probe の口の要求 1 つの答えを、本体の run(scheduler・session の値・Await の共有の event loop)に触れずに出すため(頭の註): answer を
-   自分の run で走らせ、落ちた・答えの型が違う時は probe-failure の 500。2 つの答え手が同じこの関数で答える。"
+  "To produce the answer for one probe-entry request without touching the main body's run (scheduler, session values, Await's shared event loop) (header comment): runs answer in
+   its own run, and if it failed or the answer's type is wrong, probe-failure's 500. The two answerers answer with this same function."
   (try
     (setv answer (run probe.answer))
     (except [error Exception]
@@ -452,58 +451,58 @@
 
 (defk ws-shortcut-for [shortcuts text]
   {:pre [(: shortcuts (of tuple WsShortcut ...)) (: text str)] :post [(: % (| WsShortcut None))] :tags {:context "http-server" :role "judgment"}}
-  "ws の文字の 1 通を答え手がその場で答えるか決めるため(頭の註の ws の口): 文が marker を含む最初の WsShortcut、どれも含まなければ None
-   (出来事として本体へ渡すだけ)。"
+  "To decide whether the answerer answers one ws text message on the spot (the ws entry in the header comment): the first WsShortcut whose marker the text contains, or None if none contains it
+   (it is only passed to the main body as an event)."
   (next (gfor shortcut shortcuts :if (in shortcut.marker text) shortcut) None))
 
 
-(deff ws-shortcut-outcome [shortcut ticket text]  ; defk にできない: 答え手が本体の Program の外(本物 = 待ち受けの loop の外の thread・台本 = handler の節)で呼び、閉じた answer を自分の run で走らせる入口
+(deff ws-shortcut-outcome [shortcut ticket text]  ; cannot be a defk: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
   {:pre [(: shortcut WsShortcut) (: ticket str) (: text str)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))]
    :tags {:context "http-server" :role "foundation"}}
-  "ws の口に当たった 1 通の答えの文を、本体の run(scheduler・session の値・Await の共有の event loop)に触れずに出すため(頭の註): answer の
-   Program を自分の run で走らせ、その 1 段目の答えを ws-shortcut-stage で読む。2 つの答え手が同じこの関数で答える。"
+  "To produce the answer texts for one message that hit a ws entry without touching the main body's run (scheduler, session values, Await's shared event loop) (header comment): runs the answer
+   Program in its own run and reads its first stage's answer with ws-shortcut-stage. The two answerers answer with this same function."
   (ws-shortcut-stage (shortcut.answer ticket text)))
 
 
-(deff ws-shortcut-stage [program]  ; defk にできない: ws-shortcut-outcome と同じく、答え手が本体の Program の外で閉じた段を自分の run で走らせる入口
+(deff ws-shortcut-stage [program]  ; cannot be a defk: like ws-shortcut-outcome, an entry where the answerer runs a closed stage in its own run outside the main body's Program
   {:pre [(: program Program)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))] :tags {:context "http-server" :role "foundation"}}
-  "ws の口の答えの 1 段(answer の Program か、前の段の rest)を自分の run で走らせ、答えを読むため(頭の註の 2 段の答え): 文の tuple なら
-   終わりの段・WsShortcutAhead なら続き rest つきの段・WsShortcutCarried なら値 carried つきの終わりの段の WsShortcutAnswered、落ちた・型が
-   違えば WsShortcutFailed。2 つの答え手が段ごとに同じこの関数で答える。"
+  "To run one stage of a ws entry's answer (the answer Program, or the previous stage's rest) in its own run and read its answer (the two-stage answer in the header comment): for a tuple of texts it is
+   a final stage; for WsShortcutAhead, a stage with continuation rest; for WsShortcutCarried, a WsShortcutAnswered of a final stage with value carried; if it failed or the type was
+   wrong, WsShortcutFailed. The two answerers answer with this same function for each stage."
   (try
     (setv answer (run program))
     (except [error Exception]
       (return (WsShortcutFailed :reason (+ (. (type error) __name__) ": " (str error))))))
   (setv texts (if (isinstance answer (| WsShortcutAhead WsShortcutCarried)) answer.texts answer))
   (when (not (and (isinstance texts tuple) (all (gfor one texts (isinstance one str)))))
-    (return (WsShortcutFailed :reason (+ "answer の答えが文の tuple でない: " (repr answer)))))
+    (return (WsShortcutFailed :reason (+ "answer's answer is not a tuple of texts: " (repr answer)))))
   (cond (isinstance answer WsShortcutAhead) (WsShortcutAnswered :texts texts :rest answer.rest)
         (isinstance answer WsShortcutCarried) (WsShortcutAnswered :texts texts :carried answer.carried)
         True (WsShortcutAnswered :texts texts)))
 
 
-;; --- 台本の語彙(scripted-http-server) -----------------------------------------------------------------------------------
+;; --- Script vocabulary (scripted-http-server) -----------------------------------------------------------------------------
 
 (defrecord ScriptedUpstream
-  "中継先 1 つの台本の答え: base = この頭で始まる URL へ届いた中継がこの答えを受ける・http-status = HTTP の中継の答えの status・
-   accepts-ws = ws の中継を受ける(受けなければ 502)。"
+  "The script's answer for one relay target: base = a relay that reached a URL starting with this prefix receives this answer, http-status = the status of the HTTP relay's answer,
+   accepts-ws = accepts a ws relay (502 if it does not)."
   (#^ str base)
   (#^ int http-status)
   (#^ bool accepts-ws))
 
 
 (defrecord ScriptedBody
-  "札の要求の本文 1 つの台本: data = 相手が送る本文の byte 列・failed = 読みの途中で相手が切った等の理由(None = 読める)。宣言の長さ
-   (Content-Length)は要求の頭(HttpRequestArrived の headers)に台本の書き手が載せる — 載せなければ chunked と同じ宣言なし。台本に本文の
-   無い札は本文なし(b\"\")。"
+  "The script for one ticket's request body: data = the byte string the peer sends, failed = a reason such as the peer cutting in the middle of reading (None = readable). The declared length
+   (Content-Length) is put by the script's author in the request's headers (headers of HttpRequestArrived) - if not put, it is the same as chunked, with no declaration. A ticket with no body in
+   the script has no body (b\"\")."
   (#^ str ticket)
   (#^ bytes data)
   (setv #^ (| str None) failed None))
 
 
 (defrecord HttpScript
-  "scripted-http-server の台本: 届く出来事の列(要求と、WsAccept で上げた札の ws の出来事)と、中継先ごとの答えと、読まない相手の札
-   (stalled — その札の送りは箱に溜まり続け、送りの上限を超えれば切られる)と、要求の本文(bodies — HttpReadBody の答えの元)。"
+  "The script of scripted-http-server: the list of events that arrive (requests, and the ws events of tickets raised with WsAccept), the answers per relay target, the tickets of peers that do not read
+   (stalled - sends to those tickets keep piling up in the box and are cut if they exceed the send limit), and the request bodies (bodies - the source of HttpReadBody's answers)."
   (#^ (get tuple #((| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed) ...)) arrivals)
   (setv #^ (get tuple #(ScriptedUpstream ...)) upstreams #()
         #^ (get frozenset str) stalled (frozenset)
@@ -511,7 +510,7 @@
 
 
 (defrecord HttpServed
-  "受けた命令 1 つと、端末が受け取る答え(status・本文の文字列 — file の範囲は中身・中継は台本の答え)。"
+  "One command received and the answer the terminal receives (status, the body's string - for a file range the contents, for a relay the script's answer)."
   (#^ str ticket)
   (#^ HttpCommand command)
   (#^ int status)
@@ -519,23 +518,23 @@
 
 
 (defrecord WsTextSent
-  "ws に上げた札の接続へ送った文字の 1 通(台本の記録)。"
+  "One text message sent to the connection of a ticket raised to ws (the script's record)."
   (#^ str ticket)
   (#^ str text))
 
 
 (defrecord WsCloseSent
-  "ws に上げた札の接続へ送った閉じ(台本の記録 — WsClose・HttpShutdown の close 1000)。"
+  "A close sent to the connection of a ticket raised to ws (the script's record - the close 1000 of WsClose and HttpShutdown)."
   (#^ str ticket)
   (#^ int code)
   (#^ str reason))
 
 
 (defclass [(dataclass :frozen True)] ReadHttpServed [(get EffectBase (get tuple #((| HttpServed WsTextSent WsCloseSent) ...)))]
-  "台本の待ち受けが受けた命令と送った ws の記録(HttpServed・WsTextSent・WsCloseSent の受けた順の tuple)を読む(頭の註)。")
+  "Reads the commands the scripted listener received and the ws records it sent (a tuple in received order of HttpServed, WsTextSent, and WsCloseSent) (header comment).")
 
 
 (defclass [(dataclass :frozen True)] AppendHttpScript [(get EffectBase None)]
-  "走っている台本の出来事の列の後ろへ arrivals を足す(頭の註)。bodies = 足す要求の本文の台本。答え = None。"
+  "Appends arrivals behind the running script's event list (header comment). bodies = the scripts of the bodies of the requests added. Answer = None."
   (#^ (get tuple #((| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed) ...)) arrivals)
   (setv #^ (get tuple #(ScriptedBody ...)) bodies #()))

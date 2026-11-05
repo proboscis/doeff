@@ -1,18 +1,18 @@
-;;; 汎用の計算の effect(compute_effects.hy)の本物の答え手 thread-pool-compute-handler。program を呼び手が渡す
-;;; thread の pool で回し、外から完了させる promise(scheduler の CreateExternalPromise)で待つ。待つのは撃った task だけで、scheduler の他の
-;;; task はその間も回る — scheduled の下で使う(doeff-time の sync-time-handler の ScheduleAt と同じ形)。
+;;; The real responder thread-pool-compute-handler for the generic compute effect (compute_effects.hy). It runs the program on a
+;;; thread pool handed in by the caller, and waits on a promise completed from outside (the scheduler's CreateExternalPromise). Only the task that fired waits; the scheduler's other
+;;; tasks keep running meanwhile -- use it under scheduled (same shape as ScheduleAt in doeff-time's sync-time-handler).
 ;;;
-;;; pool の持ち主は呼び手(作るのも閉じるのも組み立ての側 — 同時に回す数は pool の max_workers)。待っている task が Cancel されたら、まだ
-;;; 始まっていない仕事は pool から外す(始まった仕事は止めない — 答えは捨てられる)。
-;;; ⚠ Python の thread なので、純 Python の重い計算は GIL を分け合う。得られるのは「処理のループが計算の間も他の出来事に答え続ける」ことで、
-;;; CPU の本数ぶんの速さではない。
+;;; The pool's owner is the caller (the assembly side both creates and closes it -- the number running at once is the pool's max_workers). If the waiting task is Cancelled, work that has not
+;;; started yet is removed from the pool (work that has started is not stopped -- its answer is discarded).
+;;; WARNING: These are Python threads, so heavy pure-Python computation shares the GIL. What you get is "the processing loop keeps answering other events during the computation",
+;;; not a speedup proportional to the CPU count.
 ;;;
-;;; pool の負荷(ReadComputeLoad の答え): pool ごとに 1 つの断面(ComputeLoad — 変わらない値)を process に 1 つの置き場 LOADS に置き、
-;;; 仕事を出す時(並び + 1)・pool の thread で回り始める時(並び − 1・走り + 1・待った秒 = 出した刻から回り始めた刻まで)・終わる時(走り − 1・
-;;; 回った秒 = 回り始めた刻から終わった刻まで)・
-;;; 始まる前に取り消された時(並び − 1)に、LOADS-LOCK の中で差し替える。刻は time.monotonic(出す刻は scheduler の thread・回り始めの
-;;; 刻は pool の thread — 同じ時計)。答え手を組むたびでなく pool ごとに 1 つ: 同じ pool に答え手を 2 つ組んでも pool の列は 1 つ。数える
-;;; のはこの答え手が出した仕事だけ(呼び手が同じ pool に直に出した仕事は数えない)。pool が捨てられれば断面も消える(弱い参照の鍵)。
+;;; Pool load (the answer to ReadComputeLoad): one snapshot per pool (ComputeLoad -- an immutable value) is kept in a single per-process store LOADS,
+;;; and replaced inside LOADS-LOCK when work is submitted (queued + 1), when it starts running on a pool thread (queued - 1, running + 1, waited seconds = from submit time to start time), when it finishes (running - 1,
+;;; ran seconds = from start time to finish time), and
+;;; when it is cancelled before starting (queued - 1). Times come from time.monotonic (the submit time is on the scheduler's thread, the start
+;;; time on a pool thread -- the same clock). One entry per pool, not one per responder built: building two responders on the same pool still gives one pool row. Only
+;;; work submitted by this responder is counted (work the caller submits directly to the same pool is not counted). When a pool is discarded its snapshot disappears too (weak-reference key).
 (require doeff-hy.macros [defhandler deff <- val])
 (val MODULE-TAGS {:context "compute" :role "foundation"})
 (import concurrent.futures [Executor Future])
@@ -25,16 +25,16 @@
 (import doeff_core_effects._compute_effects [Compute ComputeLoad ReadComputeLoad])
 (import doeff_core_effects._inline_compute [computed])
 
-;; 仕事を 1 つも出していない pool の負荷。
+;; Load of a pool that has not had any work submitted.
 (val IDLE-LOAD (ComputeLoad :queued 0 :running 0 :started 0 :waited-seconds 0.0 :ran-seconds 0.0))
-;; pool → その pool に出した仕事の負荷の断面(頭の註)。書きは LOADS-LOCK の中で差し替える 1 回だけ。
+;; pool -> snapshot of the load of work submitted to that pool (see the header comment). Writes are a single replacement inside LOADS-LOCK.
 (val LOADS (weakref.WeakKeyDictionary))
 (val LOADS-LOCK (threading.Lock))
 
 
-(deff shift-load [pool queued running started waited ran]  ; defk にできない: pool の thread(仕事の入口と出口)と完了の callback からも呼ぶ VM の外の書き
+(deff shift-load [pool queued running started waited ran]  ; cannot be a defk: a write outside the VM, also called from pool threads (work entry and exit) and the completion callback
   {:pre [(: pool Executor) (: queued int) (: running int) (: started int) (: waited float) (: ran float)] :post [(: % None)]}
-  "pool の負荷の断面に差を足して差し替えるため(頭の註 — 並びと走りの数は同じ 1 回の差し替えで動く)。"
+  "Add the deltas to the pool's load snapshot and replace it (see the header comment -- the queued and running counts move in the same single replacement)."
   (with [LOADS-LOCK]
     (setv load (.get LOADS pool IDLE-LOAD))
     (setv (get LOADS pool) (ComputeLoad :queued (+ load.queued queued) :running (+ load.running running)
@@ -43,27 +43,27 @@
   None)
 
 
-(deff load-of [pool]  ; defk にできない: 答え手の節が置き場を読む 1 行(VM の外の置き場 — 書きと同じ lock の中で読む)
+(deff load-of [pool]  ; cannot be a defk: a one-line read of the store by the responder clause (a store outside the VM -- read inside the same lock as the writes)
   {:pre [(: pool Executor)] :post [(: % ComputeLoad)]}
-  "pool の負荷の今の断面を読むため(仕事を 1 つも出していない pool は IDLE-LOAD)。"
+  "Read the current snapshot of the pool's load (a pool that has had no work submitted gets IDLE-LOAD)."
   (with [LOADS-LOCK]
     (.get LOADS pool IDLE-LOAD)))
 
 
-(deff settle [pool promise future]  ; defk にできない: pool の thread から呼ばれる完了の callback(add-done-callback に渡す関数の本体・VM の外)
+(deff settle [pool promise future]  ; cannot be a defk: the completion callback called from a pool thread (the body of the function passed to add-done-callback, outside the VM)
   {:pre [(: pool Executor) (: promise ExternalPromise) (: future Future)] :post [(: % None)]}
-  "pool の仕事の終わりを promise へ渡す(computed は例外を値にするので、ここで落ちるのは BaseException だけ)。始まる前に取り消された仕事は
-   並びから外す(回り始めていないので、走りと待ちの累計には入っていない)。"
+  "Hand the end of the pool's work to the promise (computed turns exceptions into values, so only BaseException can fail here). Work cancelled before starting is
+   removed from the queue (it never started running, so it is not in the running and waiting totals)."
   (cond
     (.cancelled future) (shift-load pool -1 0 0 0.0 0.0)
     (is-not (.exception future) None) (.fail promise (.exception future))
     True (.complete promise (.result future))))
 
 
-(deff run-computed [program pool submitted]  ; defk にできない: pool の thread で回す入口(pool.submit に渡す・VM の外から新しい VM を起こす)
-  {:pre [(: program Program) (: pool Executor) (: submitted float)] :post [(: % "program の答え(computed が例外を値にした物)")]}
-  "pool の thread で program の答えを値にし、回り始めと終わりを pool の負荷に書くため(待った秒 = 出した刻 submitted から回り始めた刻まで・
-   回った秒 = 回り始めた刻から終わった刻まで)。"
+(deff run-computed [program pool submitted]  ; cannot be a defk: the entry run on a pool thread (passed to pool.submit -- starts a new VM from outside the VM)
+  {:pre [(: program Program) (: pool Executor) (: submitted float)] :post [(: % "the answer of program (what computed turned the exception into a value)")]}
+  "Turn the program's answer into a value on a pool thread, and write the start and end to the pool's load (waited seconds = from the submit time `submitted` to the start time,
+   ran seconds = from the start time to the finish time)."
   (setv began (time.monotonic))
   (shift-load pool -1 1 1 (max 0.0 (- began submitted)) 0.0)
   (try
@@ -73,11 +73,11 @@
 
 
 (defhandler thread-pool-compute-handler [#^ Executor pool]
-  "Compute に、program を pool の thread の新しい VM で回して答え(待つのは撃った task だけ)、ReadComputeLoad に pool の負荷で答える。"
-  ;; 引数に残す理由: pool は組み立ての側が作って閉じる資源(同時に回す数もそこで決まる)。
+  "Answer Compute by running the program in a new VM on a pool thread (only the task that fired waits), and answer ReadComputeLoad with the pool's load."
+  ;; Why it stays an argument: the pool is a resource the assembly side creates and closes (the number running at once is also decided there).
   (Compute [program]
     (<- promise (CreateExternalPromise))
-    ;; 並びに足してから出す(pool の thread が回り始めて並びから引くのは、出した後だけ)。閉じた pool が出しを断れば足した分を戻す。
+    ;; Add to the queue before submitting (a pool thread that starts running only subtracts from the queue after the submit). If a closed pool refuses the submit, give back what was added.
     (shift-load pool 1 0 0 0.0 0.0)
     (val job (try (.submit pool run-computed program pool (time.monotonic))
                   (except [refused RuntimeError]

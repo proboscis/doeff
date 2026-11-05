@@ -1,14 +1,14 @@
-"""doeff_core_effects の頭の名(Ask・Get・reader など)が、型の check に公開の名として見える事の検。
+"""Check that the top-level names of doeff_core_effects (Ask, Get, reader, etc.) are visible to type checkers as public names.
 
-py.typed の package では、`__init__.py` で import しただけの名は公開と見なされない(`__all__` か `import X as X` が要る)。
-README の Quick Start の `from doeff_core_effects import Ask, Get, Put, Tell` を写した人の editor と pyright が
-「"Ask" is not exported from module」(reportPrivateImportUsage)を出していた。
+In a py.typed package, names merely imported in `__init__.py` are not considered public (`__all__` or `import X as X` is required).
+For someone who copied `from doeff_core_effects import Ask, Get, Put, Tell` from the README Quick Start, their editor and pyright
+reported "Ask" is not exported from module (reportPrivateImportUsage).
 
-この repo は `__all__` を置かない(doeff-linter の DOEFF021 — `doeff/__init__.py` も `X as X`)ので、頭の名は `X as X` で結ぶ。
-HTTP の名(`_LAZY_EXPORTS` — Hy の module で httpx を引く)は `__getattr__` で初めて読むので、`X as X` で結べない
-(結ぶと核だけの環境の import が落ちる)。star import が `__getattr__` を通って Hy の module を読まない事も、ここで守る。
+This repo does not place `__all__` (doeff-linter DOEFF021 - `doeff/__init__.py` also uses `X as X`), so top-level names are bound with `X as X`.
+HTTP names (`_LAZY_EXPORTS` - a Hy module that pulls in httpx) are loaded for the first time via `__getattr__`, so they cannot be bound with `X as X`
+(doing so would make the import fail in a core-only environment). This also guards that a star import does not go through `__getattr__` and load the Hy module.
 
-失敗ケース: 名を `X as X` にし忘れる・HTTP の名を頭で結ぶと赤。
+Failure cases: red if a name is left without `X as X`, or an HTTP name is bound at the top level.
 """
 
 import ast
@@ -22,12 +22,12 @@ from doeff_hy._static_check import python_without_bytecode
 
 PACKAGE_DIR = Path(doeff_core_effects.__file__).resolve().parent
 
-#: README と入門の章(docs/01-getting-started.md)の例が package の頭から取る名。
+#: Names that the examples in the README and the getting-started chapter (docs/01-getting-started.md) take from the package top.
 README_NAMES = ("Ask", "Get", "Put", "Tell")
 
 
 def _head_imports() -> list[ast.alias]:
-    """`__init__.py` の頭で `from doeff_core_effects.<sub> import name` と結んである名(実行時に結ぶ、Hy を読まない名)。"""
+    """Names bound at the top of `__init__.py` as `from doeff_core_effects.<sub> import name` (bound at runtime, names that do not load Hy)."""
     tree = ast.parse((PACKAGE_DIR / "__init__.py").read_text(encoding="utf-8"))
     return [
         alias
@@ -46,13 +46,13 @@ def test_the_head_binds_the_readme_names() -> None:
 
 
 def test_every_name_the_head_binds_is_a_redundant_alias_reexport() -> None:
-    # `import X as X` が py.typed の package の再 export の印。印の無い名が型の check に「公開していない名」と読まれる。
+    # `import X as X` is the re-export marker for py.typed packages. Names without the marker are read by type checkers as "not public".
     plain = sorted(alias.name for alias in _head_imports() if alias.asname != alias.name)
-    assert plain == [], f"X as X にする: {plain}"
+    assert plain == [], f"make these X as X: {plain}"
 
 
 def test_the_head_does_not_bind_the_lazy_names() -> None:
-    # 頭で結ぶと、核だけの環境(Hy の module と httpx が無い)の `import doeff_core_effects` が落ちる。
+    # If bound at the top, `import doeff_core_effects` fails in a core-only environment (no Hy module and no httpx).
     assert set(_head_names()).isdisjoint(doeff_core_effects._LAZY_EXPORTS)
 
 
@@ -75,7 +75,7 @@ def test_star_import_does_not_load_the_hy_modules() -> None:
 
 
 def _pyright_errors(tmp_path: Path, source: str, mode: str) -> list[str]:
-    """tmp_path の 1 file を、この環境の python に入った doeff_core_effects(使い手と同じ、py.typed の package)に対して検める。"""
+    """Check one file in tmp_path against the doeff_core_effects installed in this environment's python (same as users get, a py.typed package)."""
     config = tmp_path / "pyrightconfig.json"
     config.write_text(json.dumps({"typeCheckingMode": mode}), encoding="utf-8")
     sample = tmp_path / "head_imports.py"

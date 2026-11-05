@@ -1,32 +1,32 @@
-;;; 歩の積算の効果 — 名前つきの窓を開けている間に、scheduler(Python の版も Rust の版も)が task を走らせた歩(task へ入ってから scheduler の効果で
-;;; 戻るまで)の数・壁の ns・CPU の ns と最長の歩 1 つを数える。業務の語を持たない土台の語彙。
+;;; Step tally effects - while a named window is open, count the steps (from entering a task until returning to the scheduler's effect) the scheduler (both the Python and the Rust version) ran for tasks:
+;;; the number of steps, wall ns, CPU ns, and the one longest step. A foundation vocabulary with no business terms.
 ;;;
-;;;   OpenStepTally   窓 key を開く。開いている key をもう 1 度開くと ValueError。答え = None。
-;;;   CloseStepTally  窓 key を閉じ、開けていた間の積算(StepTally)を答える。開いていない key なら None。
+;;;   OpenStepTally   Opens window key. Opening an already open key again raises ValueError. Answer = None.
+;;;   CloseStepTally  Closes window key and answers the tally (StepTally) accumulated while it was open. None if the key is not open.
 ;;;
-;;; 数えるのは、窓を開けた scheduler の thread の歩のうち、始まりも終わりも窓を開けていた間にある物(開けた歩・閉じた歩の途中は
-;;; 数えない)。窓が重なれば、同じ歩をどの窓にも足す。
+;;; What is counted: of the steps on the thread of the scheduler that opened the window, those whose start and end both fall while the window was open (a step that was in progress when the window opened or closed
+;;; is not counted). If windows overlap, the same step is added to every window.
 ;;;
-;;; task ごとの積算(#3855 の U6): 呼び手が区間の担当の task の分だけを数えられるように、窓の間に歩を進めた
-;;; task ごとの行(TaskTally)を答える。行は (run, tid) で 1 つ(run = scheduler の run の番号 — tid は run ごとの番号なので組で持つ)。
-;;; 親(parent)は窓の間に見た Spawn の出来事から引く — 窓を開ける前に生まれた task の親は None。子孫の和は呼び手が親の結びで足す。
-;;; 窓の間に始まった歩だけを数えるのは歩の積算と同じ。thread では絞らない(run の番号が process で一意なので、別の thread の run も
-;;; 別の行になる)。
+;;; Per-task tally (U6 of #3855): so that a caller can count only the tasks in charge of an interval, answer the rows
+;;; (TaskTally) per task that advanced steps during the window. There is one row per (run, tid) (run = the scheduler's run number - tid is numbered per run, so they are kept as a pair).
+;;; The parent is derived from the Spawn events seen during the window - the parent of a task born before the window opened is None. The sum over descendants is added by the caller by joining on the parent.
+;;; Counting only steps that started during the window is the same as the step tally. It does not filter by thread (run numbers are unique per process, so runs of another thread
+;;; also become separate rows).
 ;;;
-;;;   OpenTaskTally   窓 key を開く。開いている key をもう 1 度開くと ValueError。答え = None。
-;;;   ReadTaskTally   窓 key のここまでの表を答え、窓は開けたまま。開いていない key なら None。
-;;;   CloseTaskTally  窓 key を閉じ、開けていた間の表を答える。開いていない key なら None。
+;;;   OpenTaskTally   Opens window key. Opening an already open key again raises ValueError. Answer = None.
+;;;   ReadTaskTally   Answers the table so far for window key, leaving the window open. None if the key is not open.
+;;;   CloseTaskTally  Closes window key and answers the table accumulated while it was open. None if the key is not open.
 ;;;
-;;; 答え手: step-tally-handler(scheduler_step_tally.hy — scheduler の測りの口 set_scheduler_trace に sink を据えて数える。
-;;; 歩の積算の窓と task の積算の窓は同じ sink を分け合う)。
+;;; Responder: step-tally-handler (scheduler_step_tally.hy - installs a sink on the scheduler's measurement port set_scheduler_trace and counts.
+;;; The step-tally window and the task-tally window share the same sink).
 (require doeff-hy.macros [defeffect val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 
 
 (defrecord SiteTally
-  "窓 1 つの中の、task の spawn の場所 1 つの歩の和: site = 場所(根の task など場所の無い task は None)・steps = 歩の数・wall-ns /
-   cpu-ns = 歩の壁の時間と thread の CPU の時間の和。窓の中のどの task が歩を食ったかを、最長の歩 1 つより広く読むため。"
+  "The sum of steps for one task spawn site within one window: site = the site (None for a task with no site, such as the root task), steps = number of steps, wall-ns /
+   cpu-ns = the sum of the steps' wall time and thread CPU time. To read which tasks in the window consumed steps more broadly than the single longest step."
   {:tags {:context "step-tally" :role "type"}
    :check [(>= steps 1) (>= wall-ns 0) (>= cpu-ns 0)]}
   (#^ (| str None) site)
@@ -36,10 +36,10 @@
 
 
 (defrecord StepTally
-  "窓 1 つの積算: steps = 歩の数・wall-ns / cpu-ns = 歩の壁の時間と thread の CPU の時間の和・longest-* = 壁の時間が最長の歩 1 つ
-   (壁・CPU・task の spawn の場所・歩を終えた効果の型の名 — 歩が無ければ 0 と None)・ready = 最後の歩を終えた時に走れる entry の数・
-   sites = 歩を task の spawn の場所ごとに足した和(CPU の多い順・同じ CPU なら歩の多い順 — 行の和は steps・wall-ns・cpu-ns と同じ。
-   窓を閉じた時の答えにだけ載る)。"
+  "The tally of one window: steps = number of steps, wall-ns / cpu-ns = the sum of the steps' wall time and thread CPU time, longest-* = the one step with the longest wall time
+   (wall, CPU, the task's spawn site, the type name of the effect that ended the step - 0 and None if there were no steps), ready = the number of entries that could run when the last step ended,
+   sites = the sums of steps added up per task spawn site (in descending CPU order, ties by descending steps - the sum of the rows equals steps, wall-ns and cpu-ns.
+   Included only in the answer given when the window is closed)."
   {:tags {:context "step-tally" :role "type"}
    :check [(>= steps 0) (>= wall-ns 0) (>= cpu-ns 0) (>= ready 0)]}
   (#^ int steps)
@@ -53,29 +53,29 @@
   (setv #^ (get tuple #(SiteTally ...)) sites #()))
 
 
-;; 歩を 1 つも数えていない積算。
+;; A tally that has counted no steps.
 (val EMPTY-STEP-TALLY (StepTally :steps 0 :wall-ns 0 :cpu-ns 0 :longest-wall-ns 0 :longest-cpu-ns 0
                                  :longest-site None :longest-effect None :ready 0))
 
 
 (defeffect OpenStepTally
-  "窓 key を開く(頭の註)。"
+  "Opens window key (head note)."
   {:fields [(: key str)]
    :answer None
    :tags {:context "step-tally" :role "foundation"}})
 
 
 (defeffect CloseStepTally
-  "窓 key を閉じ、開けていた間の積算を答える。開いていない key なら None(頭の註)。"
+  "Closes window key and answers the tally accumulated while it was open. None if the key is not open (head note)."
   {:fields [(: key str)]
    :answer (| StepTally None)
    :tags {:context "step-tally" :role "foundation"}})
 
 
 (defrecord TaskTally
-  "task の積算の窓の 1 行(頭の註): run = scheduler の run の番号・tid = その run の中の task の番号(根の task は None)・
-   parent = 窓の間に見た Spawn の親の tid(根か、窓を開ける前に生まれた task なら None)・steps = 歩の数・wall-ns / cpu-ns = 歩の
-   壁の時間と thread の CPU の時間の和・vm-steps / handler-calls = 歩の doeff-vm の歩数と handler の呼びの和(機体の混みで揺れない)。"
+  "One row of the task-tally window (head note): run = the scheduler's run number, tid = the task's number within that run (None for the root task),
+   parent = the tid of the Spawn parent seen during the window (None for the root, or a task born before the window opened), steps = number of steps, wall-ns / cpu-ns = the sum of the steps'
+   wall time and thread CPU time, vm-steps / handler-calls = the sum of the steps' doeff-vm step counts and handler calls (they do not fluctuate with machine load)."
   {:tags {:context "step-tally" :role "type"}
    :check [(>= steps 0) (>= wall-ns 0) (>= cpu-ns 0) (>= vm-steps 0) (>= handler-calls 0)]}
   (#^ int run)
@@ -89,21 +89,21 @@
 
 
 (defeffect OpenTaskTally
-  "task の積算の窓 key を開く(頭の註)。"
+  "Opens the task-tally window key (head note)."
   {:fields [(: key str)]
    :answer None
    :tags {:context "step-tally" :role "foundation"}})
 
 
 (defeffect ReadTaskTally
-  "task の積算の窓 key のここまでの表を (run, tid) の順で答え、窓は開けたまま。開いていなければ None(頭の註)。"
+  "Answers the table so far for the task-tally window key in (run, tid) order, leaving the window open. None if it is not open (head note)."
   {:fields [(: key str)]
    :answer (| (get tuple #(TaskTally ...)) None)
    :tags {:context "step-tally" :role "foundation"}})
 
 
 (defeffect CloseTaskTally
-  "task の積算の窓 key を閉じ、開けていた間の表を (run, tid) の順で答える。開いていなければ None(頭の註)。"
+  "Closes the task-tally window key and answers the table accumulated while it was open in (run, tid) order. None if it is not open (head note)."
   {:fields [(: key str)]
    :answer (| (get tuple #(TaskTally ...)) None)
    :tags {:context "step-tally" :role "foundation"}})

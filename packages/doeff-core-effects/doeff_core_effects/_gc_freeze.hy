@@ -1,5 +1,5 @@
-;;; heap の凍結の本物の答え手 gc-freeze-handler(ADR-DOE-CORE-EFFECTS-004)— CollectAndFreeze に、process の GC で答える。
-;;; gc に触るのはこの module だけ(fake の scripted_freeze.hy は触らない)。
+;;; The real answerer for heap freezing, gc-freeze-handler (ADR-DOE-CORE-EFFECTS-004) -- answers CollectAndFreeze with the process GC.
+;;; This module is the only one that touches gc (the fake scripted_freeze.hy does not).
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "freeze" :role "foundation"})
 (import gc)
@@ -7,7 +7,7 @@
 
 
 (defhandler gc-freeze-handler
-  "CollectAndFreeze に、回収(gc.collect)してから凍らせ(gc.freeze)、凍った object の数(gc.get_freeze_count)で答える。"
+  "Answer CollectAndFreeze by collecting (gc.collect), then freezing (gc.freeze), and answering with the number of frozen objects (gc.get_freeze_count)."
   (CollectAndFreeze []
     (gc.collect)
     (gc.freeze)

@@ -1,22 +1,22 @@
 (require doeff-hy.macros [deftest defhandler defk <- val with-handler])
 
 ;;; http-host-gate(doeff_core_effects/_http_host_gate.hy):
-;;;   * 通す集合に在る host への要求は答えず、外側の答え手へそのまま流れる(port は見ない)
-;;;   * 通す集合に無い host への要求は外へ出ない: 失敗を値で受ける要求には HttpFailed(CONNECT-FAILED)、それ以外には HostNotAllowed
-;;;   * host は URL の hostname ちょうどで照らす(手元の名を前に付けただけの外の名は通らない)
-;;;   * 通す集合が空なら、どの要求も外へ出ない
-;;; 外側の相手役は受けた要求に 200(本文 = 受けた url)で答える。外へ出た要求は相手役の HttpResponse を受け、止めた要求は HttpFailed か
-;;; HostNotAllowed を受ける — HttpResponse を作るのは相手役だけなので、答えの型が「外へ出たか」をそのまま名指す。
+;;;   * a request to a host in the allowed set is not answered and flows straight to the outer answerer (the port is not checked)
+;;;   * a request to a host not in the allowed set never leaves: a request that takes failures as values gets HttpFailed(CONNECT-FAILED), any other gets HostNotAllowed
+;;;   * the host is matched exactly against the URL's hostname (an outside name that merely has a local name prefixed does not pass)
+;;;   * if the allowed set is empty, no request leaves
+;;; The outer counterpart answers a received request with 200 (body = the received url). A request that left receives the counterpart's HttpResponse, and a blocked request receives HttpFailed or
+;;; HostNotAllowed -- only the counterpart builds an HttpResponse, so the type of the answer names directly whether it "left".
 
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [HostNotAllowed http-host-gate])
 
-;; 手元の構成の通す集合(この機体の中だけ)。
+;; Allowed set of the local configuration (inside this machine only).
 (val LOOPBACK (frozenset ["127.0.0.1" "localhost" "::1"]))
 
 
 (defhandler answering-peer
-  "外側の相手役: 受けた要求に 200(本文 = 受けた url)で答える(外へ出た要求だけがこの答えを受ける)。"
+  "Outer counterpart: answers a received request with 200 (body = the received url) (only a request that left receives this answer)."
   {:tags {:context "http" :role "foundation"}}
   (HttpRequest [url]
     (resume (HttpResponse 200 {} (.encode url "utf-8") url url 0.0))))
@@ -24,14 +24,14 @@
 
 (defk ask [url values]
   {:pre [(: url str) (: values bool)] :post [(: % (| HttpResponse HttpFailed))] :tags {:context "http" :role "program"}}
-  "failures-as-values の旗だけを変えて同じ要求を 1 回出すため(撃ち直しなし)。"
+  "To issue the same request once, changing only the failures-as-values flag (no retries)."
   (<- answer (| HttpResponse HttpFailed) (HttpRequest "GET" url :max-retries 0 :failures-as-values values))
   answer)
 
 
 (defk gated [hosts url values]
   {:pre [(: hosts frozenset) (: url str) (: values bool)] :post [(: % (| HttpResponse HttpFailed))] :tags {:context "http" :role "foundation"}}
-  "相手役の内側に http-host-gate(通す集合 hosts)を被せて要求を 1 回出すため。"
+  "To issue a request once with http-host-gate (allowed set hosts) wrapped inside the counterpart."
   (<- answer (| HttpResponse HttpFailed) (with-handler [answering-peer (http-host-gate hosts)] (ask url values)))
   answer)
 
@@ -52,7 +52,7 @@
 (deftest test-a-request-to-an-outside-host-without-failures-as-values-raises-the-named-error
   (try
     (<- (gated LOOPBACK "https://api.github.com/app/installations" False))
-    (assert False "通す集合の外の要求が止まらなかった")
+    (assert False "A request outside the allowed set was not stopped")
     (except [e HostNotAllowed]
       (assert (= e.url "https://api.github.com/app/installations") e.url))))
 

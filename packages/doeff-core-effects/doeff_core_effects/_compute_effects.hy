@@ -1,43 +1,43 @@
-;;; 汎用の「純粋な計算を回して答えを値で受ける」effect(最初の消費者 = agora の画面の処理ループの外の畳みと
-;;; 問いの答え — 旧 FoldLater・AnswerLater)。業務の語を持たない土台の語彙で、process_effects.hy と同じ段。答え手は仕組みごとに差し替える:
-;;;   thread-pool-compute-handler   呼び手が渡す thread の pool で回す(thread_pool_compute.hy)。待つのは撃った task だけで、scheduler の
-;;;                                 他の task は回り続ける(scheduled の下で使う — 外から完了させる promise で待つ)
-;;;   inline-compute-handler        I/O なし — その場で同期に回す(inline_compute.hy)。仮想の時計の模擬で決定的に回る
+;;; A generic effect "run pure computation and receive the answer as a value" (first consumer = the folds and question answers outside the processing loop of the agora screen
+;;; -- formerly FoldLater and AnswerLater). A foundation vocabulary with no business words, at the same level as process_effects.hy. The answerer is swapped per mechanism:
+;;;   thread-pool-compute-handler   runs on a thread pool the caller passes (thread_pool_compute.hy). Only the task that fired waits, and the scheduler's
+;;;                                 other tasks keep running (used under scheduled -- waits on a promise completed from outside)
+;;;   inline-compute-handler        no I/O -- runs synchronously on the spot (inline_compute.hy). It runs deterministically in the virtual-clock simulation
 ;;;
-;;;   Compute   program を handler を 1 つも付けない新しい VM で回し、答えを Computed(値)か ComputeFailed(例外)で返す。
-;;;             program は純粋であること — effect を出すと届く handler が無く ComputeFailed になる(呼び手の handler には届かない。
-;;;             どちらの答え手でも同じ)。成否の解釈は呼び手が持つ(raise しない)。
+;;;   Compute   runs a program on a new VM with no handler attached and returns the answer as Computed (value) or ComputeFailed (exception).
+;;;             The program must be pure -- if it issues an effect, there is no handler to reach and it becomes ComputeFailed (it does not reach the caller's handlers.
+;;;             Same in both answerers). Interpreting success or failure is up to the caller (it does not raise).
 ;;;   ReadComputeLoad
-;;;             答え手が今 抱えている計算の負荷の断面(ComputeLoad)を読む: 並び(出して、まだ回り始めていない数)・走り(回っている数)・
-;;;             回り始めた数の累計と、その仕事が出されてから回り始めるまで待った秒の累計と、回り終えた仕事が回った秒の累計。pool の詰まり(大きな計算が pool の全部の
-;;;             thread を塞ぎ、後の計算が列で待つ)を、使い手の計器(例 GET /metrics)へ数で出すため。累計は答え手を組んだ時からの物で、
-;;;             2 回読んだ差を数の差で割れば、その間に回り始めた仕事の待ちの平均の秒になる。その場で回す答え手は列を持たないので全部 0。
+;;;             Reads a cross-section of the computation load the answerer currently holds (ComputeLoad): the queue (number issued and not yet started running), the running (number running),
+;;;             the cumulative number started, the cumulative seconds jobs waited from being issued until they started running, and the cumulative seconds finished jobs ran. To show the pool congestion (a large computation blocks all the
+;;;             threads of the pool and later computations wait in line) as numbers to the user's instruments (e.g. GET /metrics). The cumulative values are since the answerer was built, and
+;;;             dividing the difference of two reads by the difference in started gives the average wait seconds of the jobs that started in between. The answerer that runs on the spot has no queue, so all are 0.
 ;;;
-;;; 時刻で起こす事(後で起こす・遅らせて回す)はこの effect の範囲ではない — doeff-time の ScheduleAt / Delay を使う。
+;; Things triggered by time (wake up later, run delayed) are outside the scope of this effect -- use ScheduleAt / Delay of doeff-time.
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [DoExpr EffectBase])
 
 
 (defrecord Computed
-  "Compute の答え — program が返した値。"
+  "Answer of Compute -- the value the program returned."
   (#^ object value))
 
 
 (defrecord ComputeFailed
-  "Compute の答え — program が落ちた(例外を値で運ぶ。解釈は呼び手)。"
+  "Answer of Compute -- the program failed (carries the exception as a value; interpretation is up to the caller)."
   (#^ Exception error))
 
 
 (defclass [(dataclass :frozen True)] Compute [(get EffectBase (| Computed ComputeFailed))]
-  "純粋な program を回して答えを値で受ける(頭の註)。答え = Computed | ComputeFailed。"
+  "Run a pure program and receive the answer as a value (header comment). Answer = Computed | ComputeFailed."
   (#^ DoExpr program))
 
 
 (defrecord ComputeLoad
-  "ReadComputeLoad の答え — 答え手が今 抱えている計算の負荷の断面: queued = 出して、まだ回り始めていない仕事の数・running = 回っている
-   仕事の数・started = 回り始めた仕事の累計・waited-seconds = 回り始めた仕事が出されてから回り始めるまで待った秒の累計(started 個の和)・
-   ran-seconds = 回り終えた仕事が pool の thread で回った秒の累計(started − running 個の和 — 2 回読んだ差 ÷ 間の秒 ÷ thread の数 = 利用率)。"
+  "Answer of ReadComputeLoad -- a cross-section of the computation load the answerer currently holds: queued = number of jobs issued and not yet started running, running = number of jobs
+   running, started = cumulative number of jobs started, waited-seconds = cumulative seconds jobs that started waited from being issued until they started (sum over started jobs),
+   ran-seconds = cumulative seconds finished jobs ran on the pool's threads (sum over started - running jobs -- difference of two reads / seconds between / number of threads = utilization)."
   {:check [(>= queued 0) (>= running 0) (>= started 0) (>= waited-seconds 0.0) (>= ran-seconds 0.0)]}
   (#^ int queued)
   (#^ int running)
@@ -47,4 +47,4 @@
 
 
 (defclass [(dataclass :frozen True)] ReadComputeLoad [(get EffectBase ComputeLoad)]
-  "答え手が今 抱えている計算の負荷の断面を読む(頭の註)。答え = ComputeLoad。")
+  "Reads a cross-section of the computation load the answerer currently holds (header comment). Answer = ComputeLoad.")

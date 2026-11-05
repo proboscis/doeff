@@ -1,15 +1,15 @@
-;;; 汎用の file system の effect(file_effects.hy)を、外側の置き場の 1 つの dir(root)の下へ移して撃ち直す答え手 rooted-file-handler。
-;;;container の volume の mount と同じ: 内側から見た / は外側の root。置き場は持たない — 答えるのは外側の
-;;; 答え手(memory-file-handler か os-file-handler)で、この handler は path の付け替えだけをする(業務を知らない)。
+;;; rooted-file-handler: a handler that moves the generic file system effects (file_effects.hy) under a single dir (root) of the outer store and re-performs them.
+;;; Same as a container volume mount: the / seen from inside is the outer root. It holds no store -- the one that answers is the outer
+;;; handler (memory-file-handler or os-file-handler); this handler only remaps paths (it knows no business logic).
 ;;;
-;;; 使い道: 1 つの memory の置き場を、node ごと・pod ごとの file system に分けて見せる(模擬の世界で、管理者の手と pod の読みが同じ置き場に
-;;; 触る)。内側の path は絶対 path だけを受け、`..` は内側の / で止まる(root の外へ出ない)。
+;;; Use: show one memory store as separate per-node, per-pod file systems (in a simulated world, the administrator's hands and a pod's reads touch the same store).
+;;; Inner paths accept absolute paths only, and `..` stops at the inner / (it never escapes the root).
 ;;;
-;;; 付け替え:
-;;;   要求   path・source・target を root + 内側の path へ(ReleaseLock は錠の path を)。
-;;;   答え   PathStat の real-path・LockHeld の path・FileFailed の path と理由の文の中の path を内側の path へ戻す(内側に root を見せない)。
-;;;          DirEntry と EntryStat の name は dir からの名か相対 path なので変えない。
-;;; path を持たない effect(ReadMemoryFiles など)は触らずに外側へ通す。
+;;; Remapping:
+;;;   Request  path, source and target become root + the inner path (ReleaseLock uses the lock's path).
+;;;   Answer   the real-path of PathStat, the path of LockHeld, and the path of FileFailed plus any path inside its reason text are mapped back to the inner path (root is never shown inside).
+;;;            The name of DirEntry and EntryStat is a name from the dir or a relative path, so it is left unchanged.
+;;; Effects that carry no path (ReadMemoryFiles etc.) are passed to the outer handler untouched.
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import posixpath)
@@ -21,21 +21,21 @@
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 
-;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
+;; Effects with one path, and effects with two paths (copy source and copy target).
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory
                     ListDirectory WalkTree StatTree RemoveTree AcquireLock ReadDiskFree ReadDiskUsage MeasureTree))
 (val MOVE-EFFECTS #(CopyFile LinkFile CopyTree RenamePath))
-;; file の effect の答えの型の和(失敗・様子・錠・総量と空き・追記の結果・中身・一覧・空きと大きさの byte・答えの無い書き)。
+;; Sum of the answer types of the file effects (failure, status, lock, total and free space, append result, contents, listing, free-space and size bytes, a write with no answer).
 (val ANSWER (| FileFailed PathStat LockHeld DiskUsage Appended str bytes tuple int None))
 
 
 (defk outer-path [root path]
   {:pre [(: root str) (: path str)] :post [(: % str)]}
-  "内側の絶対 path を外側の path(root の下)へ移すため。`..` は内側の / で止まる(normpath が根の上へ出ない)。"
+  "Map an inner absolute path to an outer path (under root). `..` stops at the inner / (normpath does not climb above the root)."
   (when (not (and (.startswith root "/") (= root (posixpath.normpath root))))
-    (raise (ValueError (.format "rooted-file-handler の root は正規の絶対 path: {!r}" root))))
+    (raise (ValueError (.format "rooted-file-handler root must be a normalized absolute path: {!r}" root))))
   (when (not (.startswith path "/"))
-    (raise (ValueError (.format "rooted-file-handler は絶対 path だけを受ける: {!r}" path))))
+    (raise (ValueError (.format "rooted-file-handler accepts absolute paths only: {!r}" path))))
   (val inner (posixpath.normpath path))
   (cond (= inner "/") root
         (= root "/") inner
@@ -44,7 +44,7 @@
 
 (defk inner-path [root path]
   {:pre [(: root str) (: path str)] :post [(: % str)]}
-  "外側の path を内側の path へ戻すため(root の外の path はそのまま — 外側の答え手が root の外を答えることは無い)。"
+  "Map an outer path back to an inner path (a path outside root is left as is -- the outer handler never answers outside root)."
   (cond (= root "/") path
         (= path root) "/"
         (.startswith path (+ root "/")) (cut path (len root) None)
@@ -53,7 +53,7 @@
 
 (defk inner-detail [root detail]
   {:pre [(: root str) (: detail str)] :post [(: % str)]}
-  "断りの文の中の外側の path を内側の path へ戻すため(文は OSError の形 — path は repr で入る)。"
+  "Map the outer path inside a refusal text back to the inner path (the text is in OSError form -- the path appears as its repr)."
   (if (= root "/")
       detail
       (.replace (.replace detail (+ root "/") "/") (repr root) (repr "/"))))
@@ -61,13 +61,13 @@
 
 (defk inner-answer [root answer]
   {:pre [(: root str) (: answer ANSWER)] :post [(: % ANSWER)]}
-  "外側の答えを内側から見た形へ戻すため(path を持たない答えはそのまま)。"
+  "Map an outer answer back to the form seen from inside (an answer with no path is left as is)."
   (match answer
     (FileFailed :path path :detail detail)
     (do (<- inner str (inner-path root path))
         (<- told str (inner-detail root detail))
         (FileFailed :path inner :detail told))
-    ;; 欄 real-path は match の keyword の綴りに mangle されないので、型だけで当てて属性で読む。
+    ;; The field real-path is not mangled into a match keyword spelling, so match by type alone and read the attribute.
     (PathStat)
     (do (<- inner str (inner-path root answer.real-path))
         (replace answer :real-path inner))
@@ -78,9 +78,9 @@
 
 
 (defhandler rooted-file-handler [#^ str root]
-  "file system の effect の path を ROOT の下へ移して外側の答え手へ出し直す(ROOT の dir を / に見せる)。"
-  ;; 引数に残す理由: root は筋書きの世界の形(どの dir を / に見せるか)で、同じ組の中で pod ごとに違う値。
-  ;; 節の順: 型で当てる節を先に、:when つきの EffectBase の節を最後に置く(:when が偽の EffectBase の節は、後ろの節を試さずに外側へ通す)。
+  "Move the file system effect's paths under ROOT and re-issue them to the outer handler (so the ROOT dir looks like /)."
+  ;; Why it stays an argument: root is the shape of the scenario world (which dir looks like /), and differs per pod within the same set.
+  ;; Clause order: clauses matched by type come first, and the EffectBase clause with :when comes last (an EffectBase clause whose :when is false passes to the outer handler without trying later clauses).
   (CopyFile [source target]
     (<- answer (moved root effect))
     (resume answer))
@@ -88,7 +88,7 @@
     (<- answer (moved root effect))
     (resume answer))
   (CompilePythonSources [tree items jobs roots]
-    ;; 答えは木の中の相対 path なので、木の path だけを外側へ写す。
+    ;; The answer is a relative path inside the tree, so only the tree's path is mapped outward.
     (<- outer str (outer-path root tree))
     (<- answer (CompilePythonSources outer items jobs roots))
     (resume answer))
@@ -99,7 +99,7 @@
     (<- answer (moved root effect))
     (resume answer))
   (MakeSymlink [path target]
-    ;; link の先が絶対 path なら内側の / から読む先なので外側へ移す(相対の先は link の在る dir から読むので、そのまま)。
+    ;; If the link target is an absolute path, it is read from the inner /, so move it outward (a relative target is read from the dir containing the link, so it stays as is).
     (<- outer str (outer-path root path))
     (<- pointed str (if (.startswith target "/") (outer-path root target) (unchanged target)))
     (<- answer (MakeSymlink outer pointed))
@@ -118,13 +118,13 @@
 
 (defk unchanged [target]
   {:pre [(: target str)] :post [(: % str)]}
-  "相対の link の先をそのまま返すため(if の両枝を Program にそろえる)。"
+  "Return a relative link target as is (to make both branches of the if a Program)."
   target)
 
 
 (defk moved [root request]
   {:pre [(: root str) (: request MOVE-EFFECTS)] :post [(: % ANSWER)]}
-  "写し元と写し先の 2 つの path を持つ effect を root の下へ移して撃ち直すため(答えは内側の path へ戻す)。"
+  "Move an effect with two paths (copy source and copy target) under root and re-perform it (the answer is mapped back to the inner path)."
   (<- source str (outer-path root request.source))
   (<- target str (outer-path root request.target))
   (<- answer (replace request :source source :target target))

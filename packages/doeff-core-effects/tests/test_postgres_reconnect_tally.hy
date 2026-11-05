@@ -1,8 +1,8 @@
-;;; 記録の service の切片の行(1 行 約 262,260 bytes)を読み書きする要求の列が、接続を開き直さない。
-;;;   - 出自: agora-records-twin は 30 秒に 242 本の接続を開き直していた。本文を 256 KiB の切片に割った行(turn-memory-part・worktree-diff)は
-;;;     欄の名を足すと 256 KiB をわずかに越え、前の目安(LARGE-CARRY-BYTES = 256 KiB)ではその行を通した接続を返す時に毎回閉じていた。
-;;;   - 使い捨ての PostgreSQL(postgres_support/disposable_postgres.py)へ繋ぎ、貸し出しの数え(PostgresConnections.tallies)で開いた接続と
-;;;     閉じた訳を読む。目安を越える値を通した接続を閉じる決まりは test_postgres_large_carry.hy が見る。
+;;; A sequence of requests that reads and writes rows of recording-service chunks (about 262,260 bytes per row) does not reopen the connection.
+;;;   - Origin: agora-records-twin was reopening 242 connections every 30 seconds. For the rows whose body is split into 256 KiB chunks (turn-memory-part, worktree-diff),
+;;;     adding the field names takes them slightly over 256 KiB, and with the former threshold (LARGE-CARRY-BYTES = 256 KiB) the connection was closed every time it was returned after passing such a row.
+;;;   - Connect to a disposable PostgreSQL (postgres_support/disposable_postgres.py) and read the connections opened and the reasons for closing from the lending tally (PostgresConnections.tallies).
+;;;     The rule that a connection that passed a value over the threshold is closed is checked by test_postgres_large_carry.hy.
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import doeff_core_effects [SqlQuery SqlTransaction SqlEnsureTables SqlParam SqlRows SqlTable SqlColumn SqlColumnType])
 (import doeff_core_effects [postgres-sql-handler PostgresDatabase PostgresConnections])
@@ -18,7 +18,7 @@
                                 (SqlColumn :name "payload" :type SqlColumnType.TEXT))
                      :primary-key #("ledger" "key")))
 
-;; 本番の turn-memory-part の行 1 つの大きさ(2026-10-30 に agora-pg で読んだ値 — 本文 256 KiB の切片と欄の名)。
+;; The size of one row of turn-memory-part in production (the value read on agora-pg on 2026-10-30 -- a 256 KiB chunk of body plus the field names).
 (val PART-BYTES 262260)
 (val PART-COUNT 4)
 (val READS-PER-PART 10)
@@ -27,7 +27,7 @@
 (defk part-payload [index]
   {:pre [(: index int)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "切片 index の本文(PART-BYTES 字の ASCII — 切片ごとに違える)を作るため。"
+  "Makes the body of chunk index (ASCII of PART-BYTES characters -- different per chunk)."
   (val head (.format "{{\"part\":{},\"text\":\"" index))
   (+ head (* (chr (+ 97 index)) (- PART-BYTES (len head) 2)) "\"}"))
 
@@ -35,7 +35,7 @@
 (defk part-written [index]
   {:pre [(: index int)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "切片 index を transaction の中で書くため(記録の service の書きの形 — 束ねた往復)。"
+  "Writes chunk index inside a transaction (the shape of a write of the recording service -- a bundled round trip)."
   (<- answer (SqlTransaction DB (part-inserted index) None True))
   (assert (isinstance answer SqlRows) answer)
   None)
@@ -44,7 +44,7 @@
 (defk part-inserted [index]
   {:pre [(: index int)] :post [(: % SqlRows)]
    :tags {:context "sql" :role "program"}}
-  "切片 index の行を入れる文 1 つを流すため(part-written の transaction の中身)。"
+  "Runs the one statement that inserts the row of chunk index (the contents of the part-written transaction)."
   (<- payload (part-payload index))
   (<- answer (SqlQuery DB "INSERT INTO tally_parts (ledger, key, payload) VALUES (:ledger, :key, :payload)"
                        #((SqlParam :name "ledger" :value "turn-memory-part") (SqlParam :name "key" :value (str index))
@@ -56,7 +56,7 @@
 (defk part-read [index]
   {:pre [(: index int)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "切片 index を 1 行の読みで読むため(記録の service の state の読みの形)。"
+  "Reads chunk index with a one-row read (the shape of a state read of the recording service)."
   (<- answer (SqlQuery DB "SELECT payload FROM tally_parts WHERE ledger = :ledger AND key = :key"
                        #((SqlParam :name "ledger" :value "turn-memory-part") (SqlParam :name "key" :value (str index)))))
   (assert (isinstance answer SqlRows) answer)
@@ -66,7 +66,7 @@
 (defk part-requests []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "切片を PART-COUNT 個書き、それぞれを READS-PER-PART 回読む要求の列を撃ち、撃った要求の数を返すため。"
+  "Fires a sequence of requests that writes PART-COUNT chunks and reads each READS-PER-PART times, and returns the number of requests fired."
   (<- (SqlEnsureTables DB #(PARTS)))
   (<- (SqlQuery DB "DELETE FROM tally_parts" #()))
   (for [index (range PART-COUNT)]
@@ -81,13 +81,13 @@
 
 (deftest test-postgres-reuses-connections-across-part-sized-rows
   {:skip-if (bool POSTGRES-SKIP-REASON) :skip-reason POSTGRES-SKIP-REASON}
-  ;; 切片の大きさの行を読み書きする 46 の要求の列で、開く接続は 1 本(閉じた接続は 0 本)。前の目安 256 KiB では要求ごとに閉じ、
-  ;; 書きと読みの 44 回で開き直した(2026-10-30 の手元の測り — 開いた接続 44 本・閉じた訳 large 44 本)。
+  ;; A sequence of 46 requests that read and write rows of chunk size opens 1 connection (0 closed connections). With the former threshold of 256 KiB it closed on every request,
+  ;; and reopened over the 44 writes and reads (measured locally on 2026-10-30 -- 44 connections opened, 44 closed for reason large).
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn POSTGRES-DSN)) :size 1))
   (try
     (<- requests (with-handler [(postgres-sql-handler connections)] (part-requests)))
     (val tallies (.tallies connections))
     (finally (.close connections)))
-  (print "要求" requests "数え" tallies)
+  (print "requests" requests "tally" tallies)
   (assert (= requests 46) requests)
   (assert (= tallies (PostgresTallies :opened 1 :broken 0 :pipeline 0 :large 0 :rollback 0)) tallies))

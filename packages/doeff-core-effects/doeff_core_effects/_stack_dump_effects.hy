@@ -1,45 +1,44 @@
-;;; 全 thread の stack を log に書く見張りの effect — 共有の実行の流れ(scheduler・Await の橋の event loop)が止まった時に、止めた呼び出しを
-;;; 名指す証拠を止まりの最中に残すため(#2734)。業務の語を持たない土台の語彙。
+;;; Watchdog effects that write the stacks of all threads to the log -- when a shared flow of execution (the scheduler, the event loop of the Await bridge) stalls, they leave evidence naming the blocking call while the stall is still in progress (#2734). A foundation vocabulary with no business terms.
 ;;;
-;;;   ArmStackDump     at + seconds までに張り直されなければ、process の全 thread の stack を 1 度だけ書く見張りを張る。張り直すと前の見張りは
-;;;                    消える(process に見張りは 1 つ)。at = 張った刻(単調時計の秒 — time.monotonic と同じ物差し)。答え = None。
-;;;   DisarmStackDump  張った見張りを外す(at = 外した刻)。答え = None。
-;;;   ReadStackDumps   見張りが書いた刻(期限の刻)の列を、古い順に読む(at = 読む刻 — 読む刻に期限を過ぎていた見張りも書いた物に数える)。
+;;;   ArmStackDump     Arm a watchdog that writes the stacks of all threads of the process exactly once unless it is re-armed by at + seconds. Re-arming discards the previous watchdog
+;;;                    (a process has one watchdog). at = the instant of arming (seconds of the monotonic clock -- the same scale as time.monotonic). Answer = None.
+;;;   DisarmStackDump  Disarm the armed watchdog (at = the instant of disarming). Answer = None.
+;;;   ReadStackDumps   Read the instants (deadline instants) at which watchdogs wrote, oldest first (at = the instant of reading -- a watchdog whose deadline has passed by that instant also counts as written).
 ;;;
-;;; 刻を effect に載せる理由: 期限を過ぎたかの判じを、本物と memory の答え手が同じ物差し(呼び手の時計)で同じ数え方 stack-dumps-at で
-;;; する。memory の答え手は時計を持たない(仮想の時計の下の呼び手が刻を渡す)。
+;;; Why the instant rides on the effect: the real and the memory handlers decide whether the deadline has passed on the same scale (the caller's clock), with the same counting, stack-dumps-at.
+;;; The memory handler has no clock (the caller under a virtual clock passes the instant).
 ;;;
-;;; 答え手: faulthandler-stack-dump-handler(faulthandler_stack_dump.hy — 本物。期限は CPython の faulthandler の C の thread が数え、期限を
-;;; 過ぎたらその thread が sys.stderr に書く — 止まった thread が GIL や free-threading の全 thread の停止を持ったままでも書ける)と
-;;; memory-stack-dump-handler(memory_stack_dump.hy — 書かずに数えるだけ)。2 つは同じ契約のテストを通す(tests/test_stack_dump_contract.hy)。
+;;; Handlers: faulthandler-stack-dump-handler (faulthandler_stack_dump.hy -- the real one. The deadline is counted by the C thread of CPython's faulthandler, and when the deadline passes that thread writes to sys.stderr -- it can write even while the stalled thread holds the GIL or the stop of all threads under free-threading)
+;;; and memory-stack-dump-handler (memory_stack_dump.hy -- only counts, never writes).
+;;; The two pass the same contract test (tests/test_stack_dump_contract.hy).
 (require doeff-hy.macros [defeffect defk])
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass])  ; named by the defrecord expansion
 
 
 (defeffect ArmStackDump
-  "at + seconds までに張り直されなければ全 thread の stack を 1 度書く見張りを張る(頭の註)。"
+  "Arm a watchdog that writes the stacks of all threads once unless re-armed by at + seconds (see the header note)."
   {:fields [(: at float) (: seconds float)]
    :answer None
    :tags {:context "stack-dump" :role "foundation"}})
 
 
 (defeffect DisarmStackDump
-  "張った見張りを外す(頭の註)。"
+  "Disarm the armed watchdog (see the header note)."
   {:fields [(: at float)]
    :answer None
    :tags {:context "stack-dump" :role "foundation"}})
 
 
 (defeffect ReadStackDumps
-  "見張りが書いた刻の列を古い順に読む(頭の註)。"
+  "Read the instants at which watchdogs wrote, oldest first (see the header note)."
   {:fields [(: at float)]
    :answer (get tuple #(float ...))
    :tags {:context "stack-dump" :role "foundation"}})
 
 
 (defrecord StackDumpLedger
-  "見張りの台帳: deadline = 張っている見張りの期限の刻(張っていなければ None)・written = 書いた刻の列(古い順)。"
+  "The watchdog ledger: deadline = the deadline instant of the armed watchdog (None if none is armed), written = the instants at which it wrote (oldest first)."
   {:tags {:context "stack-dump" :role "foundation"}}
   (#^ (| float None) deadline)
   (#^ (get tuple #(float ...)) written))
@@ -47,7 +46,7 @@
 
 (defk stack-dumps-at [ledger at]
   {:pre [(: ledger StackDumpLedger) (: at float)] :post [(: % StackDumpLedger)] :tags {:context "stack-dump" :role "foundation"}}
-  "刻 at の時点の台帳を出すため — 期限を過ぎた見張りは期限の刻に 1 度書いて消えている(本物と memory の答え手が共有する数え方)。"
+  "Produces the ledger as of instant at -- a watchdog whose deadline has passed has written once at its deadline instant and been removed (the counting shared by the real and the memory handlers)."
   (if (and (is-not ledger.deadline None) (> at ledger.deadline))
       (StackDumpLedger :deadline None :written (+ ledger.written #(ledger.deadline)))
       ledger))

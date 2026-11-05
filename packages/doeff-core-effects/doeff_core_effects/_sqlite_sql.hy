@@ -1,16 +1,16 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の I/O なしの答え手 sqlite-sql-handler。stdlib の sqlite3 の memory の DB で
-;;; 答える — 仮想の時計の模擬で、実 process も外の engine も起こさない。業務を知らない: 表は SqlEnsureTables で呼び手が宣言する。
-;;;   - database の名ごとに `:memory:` の接続を 1 本(check_same_thread = False・自動 commit — transaction は BEGIN IMMEDIATE で明示)。
-;;;     接続は session の値で、session の値の置き場(doeff_core_effects の state)は外側に要る。
-;;;   - 引数は中立の `:name` を `?` へ書き換える(本物と同じ書き換えの道を通し、記法の誤りを模擬でも同じ所で断る)。
-;;;   - 失敗は例外の類 → SQLSTATE の類の表(SQLITE-CLASS-SQLSTATES)で SqlFailed にする — 模擬で「断り(22 / 23)」と「一時的(40)」の
-;;;     分岐を起こせるように。閉じた接続は SqlUnreachable。SetSqlOutage で database を不達にでき、その間は全部 SqlUnreachable。
-;;;   - SqlTransaction の lock-key は使わない: 接続は 1 本で、transaction の中は同じ database の問い合わせと純粋な計算だけなので
-;;;     scheduler の別の task が割り込まない(sql_transaction.hy)。既定は文 1 つずつ(BEGIN IMMEDIATE → 文 → COMMIT / ROLLBACK)。batched を
-;;;     選んだ transaction の往復 1 回(TransactionFlush — BEGIN IMMEDIATE・文・COMMIT)は順に流す(sqlite-flush — 往復の考えが無いのでまとめない。
-;;;     答えは PostgreSQL の答え手と同じ)。transaction の外の SqlBatch は名指して断る。
-;;;   - 欄の型 BOOLEAN は sqlite に無いので、宣言の型の名で読み戻しを bool へ写す(本物の PostgreSQL と同じ値を返す)。
-;;; 方言の差(sqlite で通らない PostgreSQL / ClickHouse の文)はこの答え手の外: 呼び手は両方で通る文を書く(#802 便 3 の案 A)。
+;;; sqlite-sql-handler, the I/O-free answerer of the generic SQL effects (sql_effects.hy). It answers with an in-memory DB of stdlib sqlite3
+;;; -- a simulation on a virtual clock that starts no real process and no external engine. It knows no business: the caller declares tables with SqlEnsureTables.
+;;;   - One `:memory:` connection per database name (check_same_thread = False, autocommit -- transactions are explicit with BEGIN IMMEDIATE).
+;;;     A connection is a session value, and the home of session values (the state of doeff_core_effects) is needed on the outside.
+;;;   - Arguments rewrite the neutral `:name` to `?` (going through the same rewriting path as the real one, so a notation error is refused at the same place in the simulation too).
+;;;   - Failures become SqlFailed via the table from exception class to SQLSTATE class (SQLITE-CLASS-SQLSTATES) -- so the simulation can trigger the branches of "refusal (22 / 23)" and "transient (40)".
+;;;     A closed connection is SqlUnreachable. SetSqlOutage can make a database unreachable, and during that time everything is SqlUnreachable.
+;;;   - The lock-key of SqlTransaction is not used: there is one connection, and inside a transaction there are only queries to the same database and pure computation, so
+;;;     no other task of the scheduler interrupts (sql_transaction.hy). The default is one statement at a time (BEGIN IMMEDIATE -> statement -> COMMIT / ROLLBACK). The one round trip of a transaction that chose batched
+;;;     (TransactionFlush -- BEGIN IMMEDIATE, statements, COMMIT) is flushed in order (sqlite-flush -- there is no notion of a round trip, so nothing is combined.
+;;;     The answer is the same as the PostgreSQL answerer's). A SqlBatch outside a transaction is refused by name.
+;;;   - The column type BOOLEAN does not exist in sqlite, so the read-back is mapped to bool by the declared type name (returning the same value as the real PostgreSQL).
+;;; Dialect differences (statements that PostgreSQL / ClickHouse accept but sqlite does not) are outside this answerer: the caller writes statements that work on both (plan A of #802 batch 3).
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import sqlite3)
@@ -22,21 +22,21 @@
                                         SqlValue])
 (import doeff_core_effects._sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
 
-;; 例外の類 → SQLSTATE の類(psycopg が SQLSTATE から類を選ぶ表の逆 — agora-controllers services/record/handlers_wire.hy の
-;; DRIVER-CLASS-SQLSTATES と同じ類)。OperationalError は文で分ける(sqlite-failure)。
+;; Exception class -> SQLSTATE class (the inverse of the table by which psycopg chooses a class from SQLSTATE -- the same classes as
+;; DRIVER-CLASS-SQLSTATES in agora-controllers services/record/handlers_wire.hy). OperationalError is split by statement (sqlite-failure).
 (val SQLITE-CLASS-SQLSTATES {"IntegrityError" "23000" "DataError" "22000" "InterfaceError" "22000" "ProgrammingError" "42000"
                              "NotSupportedError" "0A000" "InternalError" "XX000"})
-;; 引数の bind で sqlite3 が出す例外のうち、sqlite3.Error の仲間でない物。OverflowError = INTEGER(64 bit)の範囲外の
-;; 整数 — 本物の PostgreSQL は同じ値を 22003(numeric_value_out_of_range)で断る。値にしないと呼び手の Program へ例外が抜け、模擬と本物の
-;; 答えが食い違う。
+;; Exceptions that sqlite3 raises when binding arguments and that are not members of sqlite3.Error. OverflowError = an integer outside the INTEGER (64 bit) range
+;; -- the real PostgreSQL refuses the same value with 22003 (numeric_value_out_of_range). If it were not turned into a value, the exception would escape into the caller's Program and the simulation and the real
+;; answers would disagree.
 (val BIND-ERRORS #(OverflowError))
 (val BIND-CLASS-SQLSTATES {"OverflowError" "22003"})
-;; 錠の取り合い(一時的)の SQLSTATE — serialization_failure。
+;; SQLSTATE for lock contention (transient) -- serialization_failure.
 (val BUSY-SQLSTATE "40001")
-;; 文の誤り・無い表など OperationalError の残りの SQLSTATE。
+;; SQLSTATE for the rest of OperationalError, such as statement errors and missing tables.
 (val OPERATIONAL-SQLSTATE "42000")
 
-;; 宣言の欄の型 → sqlite の型の名(BOOLEAN は読み戻しを bool へ写すための名・JSON は text)。
+;; Declared column type -> sqlite type name (BOOLEAN is a name for mapping the read-back to bool; JSON is text).
 (val SQLITE-TYPES {SqlColumnType.INTEGER "INTEGER" SqlColumnType.FLOAT "REAL" SqlColumnType.TEXT "TEXT" SqlColumnType.BYTES "BLOB"
                    SqlColumnType.BOOLEAN "BOOLEAN" SqlColumnType.JSON "TEXT"})
 
@@ -44,13 +44,13 @@
 
 
 (defrecord SqliteStatement
-  "sqlite へ渡す形に書き換えた文(text = `?` の文・values = 引数の値を `?` の順に)。"
+  "The statement rewritten to the form passed to sqlite (text = the statement with `?`, values = the argument values in `?` order)."
   (#^ str text)
   (#^ (get tuple #(SqlValue ...)) values))
 
 
 (defrecord SqliteConnection
-  "database の名と、その DB の接続 1 本(memory の DB の答え手では session の値・file の DB の答え手では SqliteFiles の中身)。"
+  "A database name and the one connection of that DB (a session value in the memory-DB answerer; the content of SqliteFiles in the file-DB answerer)."
   (#^ str name)
   (#^ sqlite3.Connection connection))
 
@@ -58,8 +58,8 @@
 (defk sqlite-statement [statement params]
   {:pre [(: statement str) (: params (of tuple SqlParam ...))] :post [(: % SqliteStatement)]
    :tags {:context "sql" :role "foundation"}}
-  "中立の記法の文を sqlite の `?` の文へ書き換えるため(引数の名の食い違いは ValueError)。値は名から 1 度で引く表で `?` の順に並べる
-   (checked-params の後なので、文の引数の名は全部 params に在る — 引数 1 つごとに param-value を呼ぶ費用を省く)。"
+  "To rewrite a statement in the neutral notation to a sqlite `?` statement (an argument-name mismatch is a ValueError). Values are lined up in `?` order from a table that looks each up from its name once
+   (after checked-params, so all argument names of the statement are in params -- this saves the cost of calling param-value for each argument)."
   (<- parts (split-statement statement))
   (<- (checked-params parts params))
   (val by-name (dfor p params p.name p.value))
@@ -70,7 +70,7 @@
 (defk sqlite-failure [class-names message]
   {:pre [(: class-names (of tuple str ...)) (: message str)] :post [(: % (| SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "sqlite3 の例外(類の名の並び = MRO の名・文)を失敗の値へ写すため(頭の註の表)。"
+  "To map a sqlite3 exception (class-name list = MRO names, and the message) to a failure value (the table in the header comment)."
   (val lowered (.lower message))
   (cond
     (in "closed database" lowered) (SqlUnreachable :reason message)
@@ -85,7 +85,7 @@
 (defk sqlite-schema-statements [tables]
   {:pre [(: tables (of tuple SqlTable ...))] :post [(: % (of tuple str ...))]
    :tags {:context "sql" :role "foundation"}}
-  "表の宣言を sqlite の DDL(CREATE TABLE / INDEX IF NOT EXISTS)に描くため。"
+  "To render a table declaration as sqlite DDL (CREATE TABLE / INDEX IF NOT EXISTS)."
   (var statements [])
   (for [table tables]
     (val table-name (! (checked-identifier table.name)))
@@ -105,7 +105,7 @@
 (defk sqlite-run [connection text values]
   {:pre [(: connection sqlite3.Connection) (: text str) (: values (of tuple SqlValue ...))] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "書き換えた文 1 つを流して答えの値にするため(行を返す文の rowcount は返した行の数)。"
+  "To run one rewritten statement and make it an answer value (the rowcount of a row-returning statement is the number of returned rows)."
   (try
     (val cursor (.execute connection text values))
     (if (is cursor.description None)
@@ -120,7 +120,7 @@
 (defk sqlite-query [connection request]
   {:pre [(: connection sqlite3.Connection) (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlQuery 1 つに答えるため。"
+  "To answer one SqlQuery."
   (<- bound (sqlite-statement request.statement request.params))
   (<- answer (sqlite-run connection bound.text bound.values))
   answer)
@@ -129,7 +129,7 @@
 (defk sqlite-insert [connection request]
   {:pre [(: connection sqlite3.Connection) (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows 1 つに executemany で答えるため。"
+  "To answer one SqlInsertRows with executemany."
   (<- (checked-rows request.columns request.rows))
   (val table (! (checked-identifier request.table)))
   (val names (! (checked-identifiers request.columns)))
@@ -145,7 +145,7 @@
 (defk sqlite-ensure-tables [connection tables]
   {:pre [(: connection sqlite3.Connection) (: tables (of tuple SqlTable ...))] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "表の宣言を DDL に描いて順に流すため(最初の失敗で止める)。"
+  "To render table declarations as DDL and run them in order (stopping at the first failure)."
   (<- statements (sqlite-schema-statements tables))
   (for [statement statements]
     (<- answer (sqlite-run connection statement #()))
@@ -157,7 +157,7 @@
 (defk sqlite-control [connection statement]
   {:pre [(: connection sqlite3.Connection) (: statement str)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の区切りの文(BEGIN IMMEDIATE・COMMIT・ROLLBACK)を流すため(成功は None)。"
+  "To run the statements that delimit a transaction (BEGIN IMMEDIATE, COMMIT, ROLLBACK) (success is None)."
   (<- answer (sqlite-run connection statement #()))
   (if (isinstance answer SqlRows) None answer))
 
@@ -165,9 +165,9 @@
 (defk sqlite-flush [connection flush]
   {:pre [(: connection sqlite3.Connection) (: flush TransactionFlush) (not flush.notices)] :post [(: % (| tuple SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の往復 1 回(TransactionFlush)に、PostgreSQL の答え手と同じ答えを返すため(頭の註 — sqlite に往復は無いので順に流す):
-   opening = BEGIN IMMEDIATE・requests を順に・closing = COMMIT。答え = requests と同じ順の SqlRows の tuple | 最初の失敗(後ろは流さない)。
-   合図は受けない(run-in-transaction が SqlNotify を断るので notices は空)。"
+  "To answer one round trip of a transaction (TransactionFlush) with the same answer as the PostgreSQL answerer (header comment -- sqlite has no round trip, so statements are flushed in order):
+   opening = BEGIN IMMEDIATE, requests in order, closing = COMMIT. Answer = a tuple of SqlRows in the same order as requests | the first failure (later ones are not run).
+   Signals are not accepted (run-in-transaction refuses SqlNotify, so notices is empty)."
   (when flush.opening
     (<- began (sqlite-control connection "BEGIN IMMEDIATE"))
     (when (is-not began None)
@@ -190,16 +190,16 @@
 (defk sqlite-connection [target uri]
   {:pre [(: target str) (: uri bool)] :post [(: % sqlite3.Connection)]
    :tags {:context "sql" :role "foundation"}}
-  "答え手の接続を開くため(memory の DB と file の DB の答え手が同じ設定を使う): 自動 commit(transaction は BEGIN IMMEDIATE で明示)・
-   scheduler の thread の外からも使える・宣言の型を読む(BOOLEAN の読み戻し)。target = `:memory:` か URI(uri = True)。"
+  "To open the answerer's connection (the memory-DB and file-DB answerers use the same settings): autocommit (transactions are explicit with BEGIN IMMEDIATE),
+   usable from outside the scheduler's thread, reading declared types (BOOLEAN read-back). target = `:memory:` or a URI (uri = True)."
   (sqlite3.connect target :check-same-thread False :isolation-level None :detect-types sqlite3.PARSE-DECLTYPES :uri uri))
 
 
 (defk with-connection [connections database]
   {:pre [(: connections (of tuple SqliteConnection ...)) (: database str)] :post [(: % (of tuple SqliteConnection ...))]
    :tags {:context "sql" :role "foundation"}}
-  "database の memory の DB の接続が置き場に在ることを確かめ、無ければ開いて足した置き場を返すため。session の値は同じ答え手の全部で
-   分け合う(鍵が module と答え手の名で決まる)ので、答え手ごとではなく database の名ごとに 1 本を持つ。"
+  "To make sure the database's memory-DB connection is in the store, and if not, open it and return the store with it added. The session value is shared by all
+   of the same answerers (the key is decided by the module and the answerer's name), so one connection is held per database name, not per answerer."
   (if (any (gfor c connections (= c.name database)))
       connections
       (+ connections #((SqliteConnection :name database :connection (! (sqlite-connection ":memory:" False)))))))
@@ -208,14 +208,14 @@
 (defk connection-of [connections database]
   {:pre [(: connections (of tuple SqliteConnection ...)) (: database str)] :post [(: % sqlite3.Connection)]
    :tags {:context "sql" :role "foundation"}}
-  "置き場から database の接続を引くため(with-connection の後に呼ぶ)。"
+  "To look up the database's connection from the store (called after with-connection)."
   (next (gfor c connections :if (= c.name database) c.connection)))
 
 
 (defk outage-marked [unreachable database down]
   {:pre [(: unreachable (of tuple str ...)) (: database str) (: down bool)] :post [(: % (of tuple str ...))]
    :tags {:context "sql" :role "foundation"}}
-  "SetSqlOutage 1 つを不達の database の名の並びへ写すため(down = True で足し・False で外す)。"
+  "To map one SetSqlOutage to the list of unreachable database names (down = True adds, False removes)."
   (if down
       (tuple (sorted (| (set unreachable) #{database})))
       (tuple (gfor name unreachable :if (!= name database) name))))
@@ -224,17 +224,17 @@
 (defk outage-of [unreachable database]
   {:pre [(: unreachable (of tuple str ...)) (: database str)] :post [(: % (| SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "不達の印のある database への effect の答え(SqlUnreachable)を作るため。印が無ければ None。"
-  (if (in database unreachable) (SqlUnreachable :reason (.format "模擬の不達: {}" database)) None))
+  "To make the answer (SqlUnreachable) to an effect for a database marked unreachable. None if not marked."
+  (if (in database unreachable) (SqlUnreachable :reason (.format "simulated unreachable: {}" database)) None))
 
 
-;; 以下の 4 つは effect 1 つに接続 1 本で答える道(memory の DB と file の DB の答え手が同じ道を通る)。不達の印のある database は
-;; SqlUnreachable。effect ごとに分けるのは、答えの型を effect の答えの型のまま運ぶため。
+;; The following four are the path that answers one effect with one connection (the memory-DB and file-DB answerers go through the same path). A database marked unreachable is
+;; SqlUnreachable. They are split per effect so that the answer type is carried as the effect's answer type.
 
 (defk sqlite-answer-query [connection unreachable request]
   {:pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlQuery 1 つに答えるため(不達の印を見てから)。"
+  "To answer one SqlQuery (after checking the unreachable mark)."
   (<- down (outage-of unreachable request.database))
   (when (is-not down None)
     (return down))
@@ -245,7 +245,7 @@
 (defk sqlite-answer-insert [connection unreachable request]
   {:pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows 1 つに答えるため(不達の印を見てから)。"
+  "To answer one SqlInsertRows (after checking the unreachable mark)."
   (<- down (outage-of unreachable request.database))
   (when (is-not down None)
     (return down))
@@ -257,7 +257,7 @@
   {:pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: tables (of tuple SqlTable ...))]
    :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlEnsureTables 1 つに答えるため(不達の印を見てから)。"
+  "To answer one SqlEnsureTables (after checking the unreachable mark)."
   (<- down (outage-of unreachable database))
   (when (is-not down None)
     (return down))
@@ -270,8 +270,8 @@
    :pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: program (of Program A object)) (: batched bool)]
    :post [(: % (| A SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlTransaction 1 つを接続 1 本の BEGIN IMMEDIATE … COMMIT / ROLLBACK で答えるため(不達の印を見てから・手順は sql_transaction.hy —
-   既定は文 1 つずつ・batched を選んだ transaction は往復 1 回を sqlite-flush で順に流す)。"
+  "To answer one SqlTransaction with BEGIN IMMEDIATE ... COMMIT / ROLLBACK on one connection (after checking the unreachable mark; procedure in sql_transaction.hy --
+   by default one statement at a time; a transaction that chose batched flushes one round trip in order with sqlite-flush)."
   (<- down (outage-of unreachable database))
   (when (is-not down None)
     (return down))
@@ -289,12 +289,12 @@
 
 
 (defhandler sqlite-sql-handler [#^ (get tuple #(str ...)) databases]
-  ;; 引数に残す理由: 答える database の名で PostgreSQL / ClickHouse の答え手と同じ組に並べ分ける(Ask では組の中の区別が付かない)。
-  "I/O なしの SQL の答え手(頭の註)。databases = 答える database の名の tuple(他の名の effect は外側へ回す)。"
+  ;; Why it stays an argument: it sorts into the same set as the PostgreSQL / ClickHouse answerers by the database names it answers (Ask cannot distinguish within the set).
+  "The I/O-free SQL answerer (header comment). databases = a tuple of the database names it answers (effects for other names are passed to the outside)."
   {:tags {:context "sql" :role "foundation"}}
   (session var connections #())
   (session var unreachable #())
-  ;; 接続の置き場は開いた時だけ書き直す — with-connection は接続が在れば同じ tuple を返すので、毎回の書き(session の値の Put)は要らない。
+  ;; Rewrite the connection store only when it was opened -- with-connection returns the same tuple if the connection exists, so a write each time (a Put of the session value) is unneeded.
   (SetSqlOutage [database down] :when (in database databases)
     (<- marked (outage-marked unreachable database down))
     (:= unreachable marked)
@@ -323,7 +323,7 @@
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-transaction connection unreachable database program batched))
     (resume answer))
-  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  ;; A batch bundles the round trips inside a transaction -- inside a transaction the scope of SqlTransaction answers, and only batches issued outside come here.
   (SqlBatch [database queries commit] :when (in database databases)
     (<- refusal (stray-batch database))
     (raise refusal)))

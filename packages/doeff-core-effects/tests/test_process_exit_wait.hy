@@ -1,15 +1,15 @@
-;;; 子 process の終わりを待つ効果(AwaitProcessExit・AwaitWarmChildExit)と、答え手 process-exit-handler(process_exit.hy)。
-;;; 本物の process(sleep・true・sh)を使う。終わると読める fd の開き方は機体ごと(Linux = pidfd・
-;;; macOS = kqueue の EVFILT_PROC)で、同じ検がどちらの機体でもその機体の開き方を測る。
+;;; Effects that wait for a child process to end (AwaitProcessExit, AwaitWarmChildExit), and the answerer process-exit-handler (process_exit.hy).
+;;; Uses real processes (sleep, true, sh). How the fd that becomes readable on exit is opened depends on the machine (Linux = pidfd,
+;;; macOS = kqueue EVFILT_PROC), and the same tests measure the machine's own way on either machine.
 ;;;
-;;;   - 立てた子の終わりで答え、終わる前には答えない。待ちは子を回収しない(終了 code は後の PollProcess が答える)。
-;;;   - 立てていない pid は ProcessNotChild。既に終わった(回収していない)子は、その場で答える。
-;;;   - 子でない process(待ちの子から分けた子と同じ立場 — sh が背景に起こして自分は終わる)は、pid と start-ticks の組で待つ。
-;;;     start-ticks が違う(pid が使い回された)なら、その場で答える(居る別の process の終わりを待たない)。
-;;;   - 取り消した待ちは fd を残さず、待たれない coroutine の警告も出さない。
-;;;   - 終わると読める fd を取る関数(機体の開き方)は、居ない pid に None を返す。
-;;;   - 走っている子の終わりの待ちは、scheduler の止まりと数えない。子が終わったのに知らせの届かない待ちは止まりと数える
-;;;     (条 S1 — packages/doeff-core-effects/architecture.hy)。
+;;;   - Answers when a spawned child ends, and not before. The wait does not reap the child (the exit code is answered by a later PollProcess).
+;;;   - A pid that was not spawned is ProcessNotChild. A child that already ended (not reaped) is answered on the spot.
+;;;   - A non-child process (in the same position as a child detached from a waiting child - sh starts it in the background and itself exits) is waited for by the pair of pid and start-ticks.
+;;;     If start-ticks differs (the pid was reused), it answers on the spot (it does not wait for the end of a different process that exists).
+;;;   - A cancelled wait leaves no fd and emits no warning about a never-awaited coroutine.
+;;;   - The function that obtains the fd that becomes readable on exit (the machine's way of opening it) returns None for a pid that does not exist.
+;;;   - A wait for a running child's end is not counted as a scheduler stall. A wait for a child that ended but whose notice never arrives is counted as a stall
+;;;     (rule S1 - packages/doeff-core-effects/architecture.hy).
 (require doeff-hy.macros [defk deff deftest <- val])
 (import gc)
 (import logging)
@@ -40,25 +40,25 @@
 (import doeff_core_effects._os_process [STARTED-CHILDREN])
 (import pytest)
 
-;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
-;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+;; The waits in this file are about real time (what they cover is in this file's row of the roster tests/realtime_tests.toml) - the test-sleep rule
+;; (DOEFF211 of doeff-linter) is not applied to sleeps inside a file that declares itself realtime.
 (val pytestmark pytest.mark.realtime)
 
-;; 終わりから答えまでの遅れの上限(秒)と、終わる前に答えない事を見る下限の余裕(秒)。
+;; Upper bound (seconds) on the delay from the end to the answer, and the margin (seconds) of the lower bound for checking that it does not answer before the end.
 (val PROMPT 0.3)
-;; 止まりの検で縮める、scheduler の止まりの見張りの周期(秒 — 本番は 30 秒)。
+;; The period (seconds) of the scheduler's stall watchdog, shortened for the stall tests (production is 30 seconds).
 (val STALL-INTERVAL 0.05)
 
 
 (defn #^ object handled [#^ object program #^ (| str None) [implementation None]]
-  "本物の答え手の組(外側が先)の上で program を回すため。implementation = scheduler の実装(None = 既定)。"
+  "To run program on top of the set of real answerers (outermost first). implementation = the scheduler implementation (None = default)."
   (run (scheduled (with-handlers [await-handler subprocess-handler os-warm-process-handler process-exit-handler] program)
                   :implementation implementation)))
 
 
 (defk started-then-awaited [argv]
   {:pre [(: argv tuple)] :post [(: % tuple)]}
-  "子を立て、その終わりを待ち、待った後に PollProcess で問う: #(待ちの答え Poll の答え)。"
+  "Spawn a child, wait for its end, and after waiting ask with PollProcess: #(answer of the wait, answer of Poll)."
   (<- started ProcessStarted (StartProcess :argv argv))
   (<- ended (| ProcessEnded ProcessNotChild) (AwaitProcessExit started.pid))
   (<- polled (PollProcess started.pid))
@@ -67,27 +67,27 @@
 
 (defk awaited [wait]
   {:pre [(: wait (| AwaitProcessExit AwaitWarmChildExit))] :post [(: % (| ProcessEnded ProcessNotChild))]}
-  "待ちの効果を 1 つ出し、答えを返す。"
+  "Issue one wait effect and return its answer."
   (<- answer (| ProcessEnded ProcessNotChild) wait)
   answer)
 
 
 (defn #^ tuple timed [#^ object program #^ (| str None) [implementation None]]
-  "program を回し、#(答え 秒) を返すため。"
+  "To run program and return #(answer seconds)."
   (setv started (time.monotonic))
   (setv answer (handled program implementation))
   #(answer (- (time.monotonic) started)))
 
 
-;; 子の終わりの待ちがこの秒数を越えて続いた時に、証拠(子の state・waitid・pidfd・scheduler の待ちの列)を残し始める。
+;; When a wait for a child's end lasts longer than this many seconds, start leaving evidence (the child's state, waitid, pidfd, the scheduler's wait queue).
 (val EVIDENCE-AFTER 10.0)
-;; 証拠を取る間隔(秒)。
+;; Interval (seconds) at which evidence is taken.
 (val EVIDENCE-EVERY 5.0)
 
 
 (defn #^ str child-evidence [#^ int pid]
-  "子 pid の今の様子を 1 行にするため(待ちを乱さない読みだけ — 回収しない・fd は取って閉じる): /proc/<pid>/stat の state・
-   waitid(WNOWAIT で回収しない)・pidfd の poll・Popen の returncode。"
+  "To make the current state of child pid into one line (only reads that do not disturb the wait - no reaping, and the fd is opened and closed): state of /proc/<pid>/stat,
+   waitid (WNOWAIT, no reaping), poll of pidfd, and the Popen returncode."
   (try (setv stat (. (open (.format "/proc/{}/stat" pid)) (read)))
        (setv state (get (.split (get (.rsplit stat ")" 1) 1)) 0))
        (except [error OSError] (setv state (.format "gone({!r})" error))))
@@ -107,8 +107,8 @@
 
 
 (defclass ChildWaitEvidence []
-  "走っている子の終わりの待ちが after 秒を越えた時に、子の様子と scheduler の待ちの列を lines に残すため(
-   日次の回で約 60 秒止まって落ちた時に、1 回の失敗の記録から原因を決める)。待ちの上限も検の厳しさも変えない。"
+  "To leave the child's state and the scheduler's wait queue in lines when a wait for a running child's end exceeds after seconds (
+   so that when the daily run stalls for about 60 seconds and fails, the cause can be determined from a single failure record). It changes neither the wait limit nor the strictness of the test."
   (defn __init__ [self [after EVIDENCE-AFTER] [every EVIDENCE-EVERY]]
     (setv self.after after self.every every self.lines [] self.pid None self.began (time.monotonic)
           self.finished (threading.Event) self.lock (threading.Lock)))
@@ -120,16 +120,16 @@
     (.flush sys.stderr))
 
   (defn watch [self]
-    "別 thread: after 秒を越えても終わらなければ、every 秒ごとに子の様子を残す(終わったら止まる)。"
+    "Another thread: if it has not ended after after seconds, leave the child's state every every seconds (stops when it ends)."
     (when (not (.wait self.finished :timeout self.after))
       (while (not (.is-set self.finished))
         (.note self (if (is self.pid None) "pid not started yet" (child-evidence self.pid)))
         (.wait self.finished :timeout self.every))))
 
   (defn wrap-source-alive [self original]
-    "止まりの判定が呼ぶ「子はまだ終わっていないか」の読み(process_exit の child-running)を包み、after 秒を越えた読みごとに、
-     scheduler がその待ちを判じた時刻と読みの答えを残す(= scheduler の止まりの見張りが今見ている待ちの列。Python と Rust の
-     scheduler のどちらも、この読みを経由する)。"
+    "Wrap the read \"is the child not yet ended\" (child-running in process_exit) that the stall judgment calls, and for each read after after seconds,
+     leave the time the scheduler judged that wait and the read's answer (= the wait queue the scheduler's stall watchdog is looking at now. Both the Python and Rust
+     schedulers go through this read)."
     (defn probe [pid]
       (setv alive (run (original pid)))
       (when (> (- (time.monotonic) self.began) self.after)
@@ -143,7 +143,7 @@
 
 (defk started-then-awaited-watched [argv evidence]
   {:pre [(: argv tuple) (: evidence ChildWaitEvidence)] :post [(: % tuple)]}
-  "started-then-awaited と同じ待ちで、立てた子の pid を evidence に教える。"
+  "The same wait as started-then-awaited, and tells evidence the pid of the spawned child."
   (<- started ProcessStarted (StartProcess :argv argv))
   (setv evidence.pid started.pid)
   (<- ended (| ProcessEnded ProcessNotChild) (AwaitProcessExit started.pid))
@@ -152,7 +152,7 @@
 
 
 (defn #^ ChildWaitEvidence run-with-evidence [#^ object monkeypatch #^ tuple argv #^ str implementation #^ float after #^ float every]
-  "argv の子の終わりの待ちを回し、待ちが after 秒を越えた間の証拠を残した ChildWaitEvidence を返す(待った答えは .answers)。"
+  "Run the wait for the end of an argv child, and return a ChildWaitEvidence that left evidence for the period the wait exceeded after seconds (the answers of the wait are in .answers)."
   (setv evidence (ChildWaitEvidence after every))
   (.setattr monkeypatch process-exit-module "child_running" (.wrap-source-alive evidence process-exit-module.child_running))
   (setv watcher (threading.Thread :target evidence.watch :daemon True))
@@ -164,18 +164,18 @@
 
 
 (defn #^ int stray-pid [#^ str seconds]
-  "子でない process を 1 つ起こすため: sh が背景に sleep を起こして自分は終わる(sleep の親は init か subreaper — この process の子でない)。"
+  "To start one non-child process: sh starts sleep in the background and itself exits (the parent of sleep is init or a subreaper - not a child of this process)."
   (int (.strip (. (subprocess.run ["sh" "-c" (.format "sleep {} >/dev/null 2>&1 & echo $!" seconds)] :capture-output True :text True :check True)
                   stdout))))
 
 
 (defn #^ int start-ticks-of [#^ int pid]
-  "pid の process の start-ticks(Linux = /proc/<pid>/stat の 22 番目の欄・macOS = libproc の起動の時刻)を読むため。"
+  "To read the start-ticks of the process pid (Linux = the 22nd field of /proc/<pid>/stat, macOS = the start time from libproc)."
   (. (run (proc-stat-of pid)) start-ticks))
 
 
 (deftest test-the-wait-ends-when-the-started-child-ends
-  ;; 0.5 秒の子: 終わる前には答えず、終わってから PROMPT 秒の内に答える。待ちは回収しないので、後の PollProcess が終了 code 0 を答える。
+  ;; A 0.5-second child: does not answer before it ends, and answers within PROMPT seconds after it ends. The wait does not reap, so a later PollProcess answers exit code 0.
   (setv #(answers seconds) (timed (started-then-awaited #("sleep" "0.5"))))
   (setv #(ended polled) answers)
   (assert (isinstance ended ProcessEnded) ended)
@@ -184,14 +184,14 @@
 
 
 (deftest test-a-pid-the-handler-did-not-start-is-not-a-child
-  ;; 立てていない pid(自分の process)は ProcessNotChild — 待たない。
+  ;; A pid that was not spawned (this process itself) is ProcessNotChild - not waited for.
   (setv #(answer seconds) (timed (awaited (AwaitProcessExit (os.getpid)))))
   (assert (= answer (ProcessNotChild :pid (os.getpid))) answer)
   (assert (< seconds PROMPT) seconds))
 
 
 (deftest test-a-child-that-already-ended-answers-at-once
-  ;; 終わったがまだ回収していない子は、その場で答える。
+  ;; A child that ended but has not been reaped is answered on the spot.
   (setv started (handled (StartProcess :argv #("true"))))
   (time.sleep 0.3)
   (setv #(answer seconds) (timed (awaited (AwaitProcessExit started.pid))))
@@ -201,7 +201,7 @@
 
 
 (deftest test-the-wait-ends-when-a-process-that-is-not-a-child-ends
-  ;; 子でない process も、pid と start-ticks の組で、その終わりを待つ。
+  ;; A non-child process also has its end waited for, by the pair of pid and start-ticks.
   (setv pid (stray-pid "0.6"))
   (setv ticks (start-ticks-of pid))
   (setv #(answer seconds) (timed (awaited (AwaitWarmChildExit :pid pid :start-ticks ticks))))
@@ -210,7 +210,7 @@
 
 
 (deftest test-a-reused-pid-is-not-waited-on
-  ;; start-ticks が違う(pid が別の process に使い回された)なら、居る process の終わりを待たずに、その場で答える。
+  ;; If start-ticks differs (the pid was reused by another process), it answers on the spot without waiting for the end of the process that exists.
   (setv pid (stray-pid "5"))
   (try
     (setv #(answer seconds) (timed (awaited (AwaitWarmChildExit :pid pid :start-ticks (+ (start-ticks-of pid) 1)))))
@@ -221,7 +221,7 @@
 
 (defk raced-away [pid]
   {:pre [(: pid int)] :post [(: % None)]}
-  "pid の終わりの待ちを、0.2 秒の待ちと競わせて負けさせ、負けた待ちを取り消して、取り消しの済むまで待つ。"
+  "Race the wait for pid's end against a 0.2-second wait so that it loses, cancel the losing wait, and wait until the cancellation completes."
   (<- waiting (Spawn (awaited (AwaitProcessExit pid))))
   (<- short (Spawn (Await (asyncio.sleep 0.2))))
   (<- (Race waiting short))
@@ -232,12 +232,12 @@
 
 
 (defn #^ int open-descriptors []
-  "この process の開いている fd の数を数えるため(/dev/fd は Linux と macOS の両方に在る)。"
+  "To count the number of open fds of this process (/dev/fd exists on both Linux and macOS)."
   (len (os.listdir "/dev/fd")))
 
 
 (deftest test-a-cancelled-wait-leaves-no-descriptor-and-no-warning
-  ;; 競り負けて取り消された待ちは、終わりの fd を閉じ、待たれない coroutine を残さない。
+  ;; A wait that lost the race and was cancelled closes the end fd and leaves no never-awaited coroutine.
   (setv started (handled (StartProcess :argv #("sleep" "5"))))
   (setv before (open-descriptors))
   (with [_ (warnings.catch-warnings)]
@@ -252,32 +252,32 @@
 
 
 (deftest test-the-exit-fd-of-a-pid-that-is-gone-is-none
-  ;; 居ない pid(回収し終えた子)には None。
+  ;; None for a pid that does not exist (a child that has been fully reaped).
   (setv child (subprocess.Popen ["true"]))
   (.wait child)
   (assert (is (run (exit-fd-of child.pid)) None)))
 
 
 (defclass OnStallReport [logging.Handler]
-  "scheduler が止まりの警告を書いた時に on-report を呼ぶ(どの thread からでも)。"
-  (deff __init__ [self on-report]  ; defk にできない: logging.Handler の作り手(VM の外)
+  "Calls on-report when the scheduler writes a stall warning (from any thread)."
+  (deff __init__ [self on-report]  ; cannot be a defk: constructor of a logging.Handler (outside the VM)
     {:pre [(: self OnStallReport) (: on-report Callable)] :post [(: % None)]}
-    "止まりの警告を見た時の呼びを受けるため。"
+    "To receive the call to make when a stall warning is seen."
     (.__init__ (super) :level logging.WARNING)
     (setv self.on-report on-report))
 
-  (deff emit [self record]  ; defk にできない: logging が記録ごとに呼ぶ callback
+  (deff emit [self record]  ; cannot be a defk: callback that logging calls per record
     {:pre [(: self OnStallReport) (: record logging.LogRecord)] :post [(: % None)]}
-    "記録が scheduler の止まりの警告なら on-report を呼ぶため。"
+    "To call on-report if the record is the scheduler's stall warning."
     (when (in "scheduler stalled" (.getMessage record))
       (self.on-report))))
 
 
 (deftest test-waiting-on-a-running-child-is-not-a-stall [implementation monkeypatch caplog]
   {:params {"implementation" ["python" "rust"]}}
-  ;; 条 S1: 走っている子の終わりの待ちは、終わりの知らせの出どころ(終わると読める fd)が登録され、子が生きている間は止まりでない。
-  ;; 子の 0.5 秒は、縮めた止まりの見張りの周期の 10 倍。直す前は周期ごとに警告を書いた(courier の job で 30 秒ごと)。
-  ;; 待ちが EVIDENCE-AFTER 秒を越えたら、子の様子と scheduler の待ちの列を残す(失敗の記録に証拠が出る)。
+  ;; Rule S1: for a wait for a running child's end, the source of the end notice (the fd that becomes readable on end) is registered, and it is not a stall while the child is alive.
+  ;; The child's 0.5 seconds is 10 times the shortened stall-watchdog period. Before the fix, a warning was written every period (every 30 seconds in the courier job).
+  ;; When a wait exceeds EVIDENCE-AFTER seconds, leave the child's state and the scheduler's wait queue (evidence shows up in the failure record).
   (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
   (.set-level caplog logging.WARNING :logger scheduler-module.__name__)
   (val evidence (run-with-evidence monkeypatch #("sleep" "0.5") implementation EVIDENCE-AFTER EVIDENCE-EVERY))
@@ -289,8 +289,8 @@
 
 (deftest test-a-long-wait-on-a-child-leaves-evidence [implementation monkeypatch]
   {:params {"implementation" ["python" "rust"]}}
-  ;; 証拠を残す仕組みの検: 1 秒の子の待ちを 0.3 秒で証拠を取り始める設定にして、子の state・waitid・pidfd・scheduler が見ている待ちの列が
-  ;; 残る事を見る(本番の閾は EVIDENCE-AFTER)。
+  ;; Test of the evidence-leaving mechanism: set a 1-second child's wait to start taking evidence at 0.3 seconds, and check that the child's state, waitid, pidfd, and the wait queue the scheduler sees
+  ;; are left (the production threshold is EVIDENCE-AFTER).
   (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
   (val evidence (run-with-evidence monkeypatch #("sleep" "1") implementation 0.3 0.2))
   (val text (.text evidence))
@@ -301,9 +301,9 @@
 
 (deftest test-a-child-that-ended-without-its-exit-notice-is-a-stall [implementation monkeypatch caplog]
   {:params {"implementation" ["python" "rust"]}}
-  ;; 条 S1 の失敗ケース: 子は終わったのに終わりの知らせが届かない待ち(失われた起こし — #495b の見張りの対象)は止まり。
-  ;; 終わると読める fd の開き方を、書かれるまで読めない pipe に差し替え、scheduler が止まりを報じた時に初めて書く。報じなければ
-  ;; 40 周期の後に書かれ、検は赤。
+  ;; Failure case of rule S1: a wait where the child ended but the end notice never arrives (a lost wakeup - the target of the #495b watchdog) is a stall.
+  ;; Replace the way of opening the fd that becomes readable on end with a pipe that is unreadable until written, and write to it only when the scheduler reports a stall. If it does not report,
+  ;; it is written after 40 periods and the test is red.
   (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
   (.set-level caplog logging.WARNING :logger scheduler-module.__name__)
   (val pipe-ends (os.pipe))
@@ -313,9 +313,9 @@
   (val reported (threading.Event))
   (val watcher (OnStallReport (fn [] (.set reported))))
   (val logger (logging.getLogger scheduler-module.__name__))
-  (deff notice-late []  ; defk にできない: threading.Thread が別の thread で呼ぶ口(VM の外)
+  (deff notice-late []  ; cannot be a defk: entry called by threading.Thread on another thread (outside the VM)
     {:pre [] :post [(: % None)]}
-    "止まりが報じられた時(報じられなければ 40 周期の後)に、終わりの知らせの pipe を読めるようにするため。"
+    "To make the end-notice pipe readable when a stall is reported (after 40 periods if not reported)."
     (.wait reported :timeout (* STALL-INTERVAL 40))
     (os.write notice b"x")
     None)
@@ -326,4 +326,4 @@
                              (os.close never-ready)
                              (os.close notice))))
   (assert (isinstance (get answers 0) ProcessEnded) answers)
-  (assert (.is-set reported) "子が終わったのに知らせの届かない待ちは、止まりと報じる"))
+  (assert (.is-set reported) "a wait for a child that ended but whose notice never arrives is reported as a stall"))

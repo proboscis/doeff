@@ -1,10 +1,10 @@
-;;; ClickHouse の約束を持つ模擬の SQL の答え手(_clickhouse_mock_sql.hy)の約束ごとの検。
-;;;   - SqlTransaction は本物(clickhouse-http-sql-handler)と同じ SqlFailed(0A000)で断り、program は走らない。
-;;;   - SqlQuery の rowcount は None(sqlite の答え手は数える)・行は読める。
-;;;   - SqlInsertRows は書いた行の数を返す・空は 0・bytes は ValueError。
-;;;   - SqlEnsureTables は一意の索引を SqlFailed(0A000)で断る。
-;;;   - SqlBatch には答えず外側へ回る・他の database の effect も外側へ回る。
-;;;   - SetSqlOutage の間は SqlUnreachable。
+;;; Per-promise tests for the mock SQL answerer that carries ClickHouse's promises (_clickhouse_mock_sql.hy).
+;;;   - SqlTransaction is refused with the same SqlFailed(0A000) as the real one (clickhouse-http-sql-handler), and the program does not run.
+;;;   - The rowcount of SqlQuery is None (the sqlite answerer counts) and rows are readable.
+;;;   - SqlInsertRows returns the number of rows written; empty gives 0; bytes raises ValueError.
+;;;   - SqlEnsureTables refuses a unique index with SqlFailed(0A000).
+;;;   - SqlBatch is not answered and passes to the outside; effects of other databases also pass to the outside.
+;;;   - SqlUnreachable while SetSqlOutage is in force.
 (require doeff-hy.macros [deftest defk defhandler <- val var with-handler])
 (import pytest)
 (import doeff_core_effects [state])
@@ -23,16 +23,16 @@
 (defk seeded []
   {:pre [] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "検の表を宣言して 2 行を書くため。"
+  "To declare the test table and write 2 rows."
   (<- (SqlEnsureTables DB #(ITEMS)))
-  (<- (SqlInsertRows DB "items" #("id" "label") #(#(1 "一") #(2 "二"))))
+  (<- (SqlInsertRows DB "items" #("id" "label") #(#(1 "one") #(2 "two"))))
   None)
 
 
 (defk write-nine []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中身: 1 行を書いて印を返す。"
+  "Body of the transaction: write 1 row and return a marker."
   (<- (SqlQuery DB "INSERT INTO items (id) VALUES (9)" #()))
   "ran")
 
@@ -40,7 +40,7 @@
 (defk transaction-attempt []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で 1 行書こうとする筋書き(断られれば書かれない)。"
+  "A scenario that tries to write 1 row inside a transaction (nothing is written if refused)."
   (<- (seeded))
   (<- answer (SqlTransaction DB (write-nine) None))
   (<- count (SqlQuery DB "SELECT count(*) FROM items WHERE id = 9" #()))
@@ -54,12 +54,12 @@
   (<- real (_clickhouse-transaction-refusal DB))
   (assert (= answer real) answer)
   (assert (= answer.sqlstate "0A000") answer)
-  ;; program は走っていない(行は書かれていない)。
+  ;; The program did not run (no row was written).
   (assert (= rows #(#(0))) rows))
 
 
 (deftest test-sqlite-handler-would-accept-the-transaction
-  ;; 対照: 包んだ sqlite の答え手は同じ筋書きを通す — 模擬が約束を足している印。
+  ;; Contrast: the wrapped sqlite answerer lets the same scenario through - a sign that the mock adds the promises.
   (<- got (with-handler [(state) (sqlite-sql-handler #(DB))] (transaction-attempt)))
   (val answer (get got 0))
   (val rows (get got 1))
@@ -70,10 +70,10 @@
 (defk read-and-write []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "読む文と書く文の rowcount を見る筋書き。"
+  "A scenario that checks the rowcount of a read statement and a write statement."
   (<- (seeded))
   (<- read (SqlQuery DB "SELECT id, label FROM items ORDER BY id" #()))
-  (<- wrote (SqlQuery DB "INSERT INTO items (id, label) VALUES (:id, :label)" #((SqlParam :name "id" :value 3) (SqlParam :name "label" :value "三"))))
+  (<- wrote (SqlQuery DB "INSERT INTO items (id, label) VALUES (:id, :label)" #((SqlParam :name "id" :value 3) (SqlParam :name "label" :value "three"))))
   #(read wrote))
 
 
@@ -81,16 +81,16 @@
   (<- got (with-handler [(state) (clickhouse-mock-sql-handler #(DB))] (read-and-write)))
   (val read (get got 0))
   (val wrote (get got 1))
-  (assert (= read (SqlRows :rows #(#(1 "一") #(2 "二")) :rowcount None)) read)
+  (assert (= read (SqlRows :rows #(#(1 "one") #(2 "two")) :rowcount None)) read)
   (assert (= wrote (SqlRows :rows #() :rowcount None)) wrote))
 
 
 (defk insert-shapes []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "投入の答えの形(行の数・空)を見る筋書き。"
+  "A scenario that checks the shape of the insert answers (row count, empty)."
   (<- (SqlEnsureTables DB #(ITEMS)))
-  (<- two (SqlInsertRows DB "items" #("id" "label") #(#(1 "一") #(2 "二"))))
+  (<- two (SqlInsertRows DB "items" #("id" "label") #(#(1 "one") #(2 "two"))))
   (<- none (SqlInsertRows DB "items" #("id" "label") #()))
   #(two none))
 
@@ -106,7 +106,7 @@
 (defk insert-bytes []
   {:pre [] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "program"}}
-  "bytes の値を投入する筋書き(本物は JSON で運べず ValueError)。"
+  "A scenario that inserts a bytes value (the real one cannot carry it as JSON and raises ValueError)."
   (<- (SqlEnsureTables DB #(ITEMS)))
   (<- answer (SqlInsertRows DB "items" #("id" "label") #(#(1 b"x"))))
   answer)
@@ -120,7 +120,7 @@
 (defk unique-index []
   {:pre [] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "program"}}
-  "一意の索引つきの表を宣言する筋書き。"
+  "A scenario that declares a table with a unique index."
   (<- answer (SqlEnsureTables DB #((SqlTable :name "u" :columns #((SqlColumn :name "k" :type SqlColumnType.TEXT))
                                              :indexes #((SqlIndex :name "u_k" :columns #("k") :unique True))))))
   answer)
@@ -135,7 +135,7 @@
 
 
 (defhandler batch-sink []
-  "外側の答え手の代わり: SqlBatch が内側から回ってきた印を返す。"
+  "Stand-in for the outer answerer: returns a marker that SqlBatch came around from the inside."
   {:tags {:context "sql" :role "foundation"}}
   (SqlBatch [database queries commit]
     (resume "outer")))
@@ -144,14 +144,14 @@
 (defk stray-batch-and-other-database []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "SqlBatch と宣言していない database の effect が内側で答えられず外側へ回ることを見る筋書き。"
+  "A scenario that checks SqlBatch and effects of undeclared databases are not answered inside and pass to the outside."
   (<- batch (SqlBatch DB #() False))
   (<- other (SqlTransaction "elsewhere" (write-nine) None))
   #(batch other))
 
 
 (defhandler other-sink []
-  "外側の答え手の代わり: 宣言していない database の SqlTransaction を受ける。"
+  "Stand-in for the outer answerer: receives SqlTransaction for an undeclared database."
   {:tags {:context "sql" :role "foundation"}}
   (SqlTransaction [database program lock-key]
     (resume "outer-transaction")))
@@ -168,7 +168,7 @@
 (defk outage-cycle []
   {:pre [] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "不達の印を立て・外して読む筋書き。"
+  "A scenario that sets and clears the unreachable marker and reads it."
   (<- (seeded))
   (<- (SetSqlOutage DB True))
   (<- down (SqlQuery DB "SELECT 1" #()))

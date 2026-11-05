@@ -1,15 +1,15 @@
-;;; WebSocket の client の契約テスト — 同じ効果(WsConnect・WsReceive・WsSend・WsDisconnect・WsDisconnectAll)に答える本物(aiohttp-ws-client)と
-;;; fake(scripted-ws-client)が、同じ deftest を通る。解釈器の組み立てと契約の世界は ws_client_contract_handlers.hy。
+;;; WebSocket client contract tests - the real implementation (aiohttp-ws-client) and the fake (scripted-ws-client), both answering the same effects (WsConnect, WsReceive, WsSend, WsDisconnect, WsDisconnectAll),
+;;; go through the same deftests. The interpreter assembly and the contract world are in ws_client_contract_handlers.hy.
 ;;;
-;;;   * WsConnect は繋がれば WsLink(id は繋ぎを始めた順に ws-1・ws-2 … — 断られた繋ぎの番号も戻さない)、届かなければ WsConnectFailed
-;;;   * 同じ handler の下で 2 つの繋ぎが同時に進んでも id は重ならず、両方の接続が別々に使える
-;;;   * WsReceive は文字の 1 通を WsText・byte の 1 通を WsBinary で届け、相手の close はその状態符と理由の WsLinkClosed
-;;;   * 相手が閉じた後の WsReceive・WsSend・WsDisconnect は同じ WsLinkClosed(閉じ直さない)
-;;;   * WsDisconnect の状態符と理由は、答え(WsLinkClosed)にも相手の受ける close にも載り、以後の受信も同じ
-;;;   * 知らない idへの WsReceive は状態符なしの WsLinkClosed(UNKNOWN-LINK-REASON)
-;;;   * WsDisconnectAll は開いている接続の全部を閉じ、閉じた順の WsLinkClosed を答える
-;;;   * 答え手の範囲が終わると、開いたままの接続は WS-LINK-CLOSE-GOING-AWAY と SCOPE-ENDED-REASON で閉じられる(相手にも届く)
-;;; 答え手だけの性質は test_ws_client.hy(fake: 台本が尽きた時・then-close・replies の重なり・繋ぎ先の最長の一致。本物: handshake を断った status)。
+;;;   * WsConnect gives WsLink when connected (ids are ws-1, ws-2 ... in the order connections were started - the number of a refused connection is not given back), and WsConnectFailed when unreachable
+;;;   * Even if 2 connections proceed concurrently under the same handler, the ids do not overlap and both connections can be used separately
+;;;   * WsReceive delivers a text message as WsText and a byte message as WsBinary, and the peer's close arrives as WsLinkClosed with its status code and reason
+;;;   * WsReceive, WsSend and WsDisconnect after the peer has closed give the same WsLinkClosed (it is not closed again)
+;;;   * The status code and reason of WsDisconnect appear in both the answer (WsLinkClosed) and the close the peer receives, and later receives are the same
+;;;   * WsReceive on an unknown id gives a WsLinkClosed without a status code (UNKNOWN-LINK-REASON)
+;;;   * WsDisconnectAll closes all open connections and answers WsLinkClosed in the order they were closed
+;;;   * When the responder's scope ends, connections still open are closed with WS-LINK-CLOSE-GOING-AWAY and SCOPE-ENDED-REASON (this reaches the peer too)
+;;; Properties of the responder alone are in test_ws_client.hy (fake: when the script runs out, then-close, overlapping replies, longest match of the connection target. real: the status when the handshake is refused).
 (require doeff-hy.macros [defk deftest <- val var with-handler])
 (import doeff_core_effects [Spawn Wait])
 (import doeff_core_effects [HttpHeader])
@@ -21,7 +21,7 @@
 
 (defk connect [url]
   {:pre [(: url str)] :post [(: % WsLink)] :tags {:context "ws-client-test" :role "program"}}
-  "ヘッダー X-Contract: a を載せて url へ繋ぎ、繋がった事を確かめる。"
+  "Connect to url with the header X-Contract: a, and confirm it connected."
   (<- outcome WsConnectOutcome (WsConnect :url url :headers #((HttpHeader :name HEADER-NAME :value "a"))))
   (assert (isinstance outcome WsLink) outcome)
   outcome)
@@ -29,7 +29,7 @@
 
 (defk greeted [url]
   {:pre [(: url str)] :post [(: % WsLink)] :tags {:context "ws-client-test" :role "program"}}
-  "繋いで、相手の greeting(hello a — ヘッダーが相手に届いた証)を受ける。"
+  "Connect, and receive the peer's greeting (hello a - proof that the header reached the peer)."
   (<- link WsLink (connect url))
   (<- hello WsFrame (WsReceive :link link.link))
   (assert (= hello (WsText :link link.link :text GREETING)) hello)
@@ -38,7 +38,7 @@
 
 (defk sent-then-received [link text]
   {:pre [(: link str) (: text str)] :post [(: % WsFrame)] :tags {:context "ws-client-test" :role "program"}}
-  "文を送り(送れた事を確かめ)、次の frame を受ける。"
+  "Send text (confirming it was sent), and receive the next frame."
   (<- sent WsSendOutcome (WsSend :link link :text text))
   (assert (= sent (WsSent :link link)) sent)
   (<- frame WsFrame (WsReceive :link link))
@@ -54,7 +54,7 @@
   (assert (= echoed (WsText :link link.link :text "echo:hi")) echoed)
   (<- binary WsFrame (sent-then-received link.link "bin"))
   (assert (= binary (WsBinary :link link.link :data PEER-BINARY)) binary)
-  ;; 相手の close はその状態符と理由で届き、以後の受信・送信・閉じは同じ答え。
+  ;; The peer's close arrives with its status code and reason, and later receives, sends and closes give the same answer.
   (val closed (WsLinkClosed :link link.link :code PEER-BYE-CODE :reason PEER-BYE-REASON))
   (<- bye WsFrame (sent-then-received link.link "bye"))
   (assert (= bye closed) bye)
@@ -62,7 +62,7 @@
   (assert (= again closed) again)
   (<- late-send WsSendOutcome (WsSend :link link.link :text "x"))
   (assert (= late-send closed) late-send)
-  (<- late-close WsLinkClosed (WsDisconnect :link link.link :code 4000 :reason "遅い"))
+  (<- late-close WsLinkClosed (WsDisconnect :link link.link :code 4000 :reason "late"))
   (assert (= late-close closed) late-close))
 
 
@@ -70,16 +70,16 @@
   {:interpreters ["aiohttp-ws-client" "scripted-ws-client"]}
   (<- world WsWorld (ContractWsWorld))
   (<- link WsLink (greeted world.url))
-  (val closed (WsLinkClosed :link link.link :code 4002 :reason "済んだ"))
-  (<- answer WsLinkClosed (WsDisconnect :link link.link :code 4002 :reason "済んだ"))
+  (val closed (WsLinkClosed :link link.link :code 4002 :reason "done"))
+  (<- answer WsLinkClosed (WsDisconnect :link link.link :code 4002 :reason "done"))
   (assert (= answer closed) answer)
   (<- after WsFrame (WsReceive :link link.link))
   (assert (= after closed) after)
   (<- late-send WsSendOutcome (WsSend :link link.link :text "x"))
   (assert (= late-send closed) late-send)
-  ;; 相手の受けた close にも同じ状態符と理由。
+  ;; The same status code and reason appear in the close the peer received.
   (<- seen (get tuple #(PeerClose ...)) (PeerClosures :count 1))
-  (assert (= seen #((PeerClose :code 4002 :reason "済んだ"))) seen))
+  (assert (= seen #((PeerClose :code 4002 :reason "done"))) seen))
 
 
 (deftest test-an-unreachable-url-is-a-connect-failure-and-its-number-is-not-reused
@@ -88,7 +88,7 @@
   (<- failed WsConnectOutcome (WsConnect :url world.dead))
   (assert (isinstance failed WsConnectFailed) failed)
   (assert (= [failed.url failed.status] [world.dead None]) failed)
-  ;; 番号は繋ぎを始める前に確保し、断られても戻さない(同時に進む繋ぎが同じ番号を取らないため)— 断られた繋ぎが ws-1 を使い、次は ws-2。
+  ;; The number is reserved before starting a connection and is not given back even if refused (so concurrent connections do not take the same number) - the refused connection used ws-1, and the next is ws-2.
   (<- first WsLink (connect world.url))
   (<- second WsLink (connect world.url))
   (assert (= [first.link second.link] ["ws-2" "ws-3"]) [first second]))
@@ -96,7 +96,7 @@
 
 (defk connect-both-at-once [slow url]
   {:pre [(: slow str) (: url str)] :post [(: % (get tuple #(WsLink WsLink)))] :tags {:context "ws-client-test" :role "program"}}
-  "遅い繋ぎ先と速い繋ぎ先へ同時に繋ぐ(遅い方を先に始め、速い方が先に繋がる)。答え = #(遅い方の WsLink 速い方の WsLink)。"
+  "Connect concurrently to a slow target and a fast target (the slow one is started first, and the fast one connects first). Answer = #(WsLink of the slow one, WsLink of the fast one)."
   (<- slow-task (Spawn (connect slow)))
   (<- fast-task (Spawn (connect url)))
   (<- fast WsLink (Wait fast-task))
@@ -106,20 +106,20 @@
 
 (deftest test-two-connects-at-once-get-distinct-ids-and-both-links-work
   {:interpreters ["aiohttp-ws-client" "scripted-ws-client"]}
-  ;; 同じ handler の下で 2 つの繋ぎが同時に進んでも id は重ならない(番号は繋ぎを始める前に確保する — 遅い方が ws-1・速い方が ws-2)。
+  ;; Even if 2 connections proceed concurrently under the same handler, the ids do not overlap (the number is reserved before starting a connection - the slow one is ws-1 and the fast one is ws-2).
   (<- world WsWorld (ContractWsWorld))
   (<- both (get tuple #(WsLink WsLink)) (connect-both-at-once world.slow world.url))
   (val slow-link (get both 0))
   (val fast-link (get both 1))
   (assert (= [slow-link.link fast-link.link] ["ws-1" "ws-2"]) both)
-  ;; 両方の接続が別々に使える(それぞれの greeting と echo)。
+  ;; Both connections can be used separately (each one's greeting and echo).
   (<- hello-slow WsFrame (WsReceive :link slow-link.link))
   (<- hello-fast WsFrame (WsReceive :link fast-link.link))
   (assert (= [hello-slow hello-fast] [(WsText :link "ws-1" :text GREETING) (WsText :link "ws-2" :text GREETING)]) [hello-slow hello-fast])
   (<- echoed WsFrame (sent-then-received fast-link.link "hi"))
   (assert (= echoed (WsText :link "ws-2" :text "echo:hi")) echoed)
-  (<- closed WsLinkClosed (WsDisconnect :link slow-link.link :code 4005 :reason "遅い方を閉じる"))
-  (assert (= closed (WsLinkClosed :link "ws-1" :code 4005 :reason "遅い方を閉じる")) closed)
+  (<- closed WsLinkClosed (WsDisconnect :link slow-link.link :code 4005 :reason "close the slow one"))
+  (assert (= closed (WsLinkClosed :link "ws-1" :code 4005 :reason "close the slow one")) closed)
   (<- still WsFrame (sent-then-received fast-link.link "hi"))
   (assert (= still (WsText :link "ws-2" :text "echo:hi")) still))
 
@@ -139,12 +139,12 @@
   (<- world WsWorld (ContractWsWorld))
   (<- first WsLink (greeted world.url))
   (<- second WsLink (greeted world.url))
-  (<- closed (get tuple #(WsLinkClosed ...)) (WsDisconnectAll :code 4003 :reason "全部"))
-  (assert (= closed #((WsLinkClosed :link first.link :code 4003 :reason "全部") (WsLinkClosed :link second.link :code 4003 :reason "全部")))
+  (<- closed (get tuple #(WsLinkClosed ...)) (WsDisconnectAll :code 4003 :reason "all"))
+  (assert (= closed #((WsLinkClosed :link first.link :code 4003 :reason "all") (WsLinkClosed :link second.link :code 4003 :reason "all")))
           closed)
   (<- seen (get tuple #(PeerClose ...)) (PeerClosures :count 2))
-  (assert (= seen #((PeerClose :code 4003 :reason "全部") (PeerClose :code 4003 :reason "全部"))) seen)
-  ;; 何も開いていなければ空。
+  (assert (= seen #((PeerClose :code 4003 :reason "all") (PeerClose :code 4003 :reason "all"))) seen)
+  ;; Empty if nothing is open.
   (<- nothing (get tuple #(WsLinkClosed ...)) (WsDisconnectAll))
   (assert (= nothing #()) nothing))
 
@@ -152,7 +152,7 @@
 (deftest test-the-end-of-the-handlers-scope-closes-open-links-as-going-away
   {:interpreters ["aiohttp-ws-client" "scripted-ws-client"]}
   (<- world WsWorld (ContractWsWorld))
-  ;; 内側の範囲で繋いだまま出る — 範囲の終わりの後始末が閉じる(相手に届き、外側の WsReceive も閉じた idとして答える)。
+  ;; Leave while still connected in the inner scope - the cleanup at the end of the scope closes it (it reaches the peer, and the outer WsReceive also answers as a closed id).
   (<- kept WsLink (with-handler [(world.install)] (greeted world.url)))
   (<- seen (get tuple #(PeerClose ...)) (PeerClosures :count 1))
   (assert (= seen #((PeerClose :code WS-LINK-CLOSE-GOING-AWAY :reason SCOPE-ENDED-REASON))) seen)

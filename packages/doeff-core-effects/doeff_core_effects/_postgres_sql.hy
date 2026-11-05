@@ -1,60 +1,61 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の本物の PostgreSQL の答え手 postgres-sql-handler。psycopg 3 を呼んで値を
-;;; 詰め替えるだけで、判断を持たない。psycopg はこの module の I/O の関数の中でだけ読む(psycopg の無い環境でも、書き換えと写しの純関数は
-;;; 読めて検を撃てる)。
-;;;   - 接続の貸し出し PostgresConnections は組み立ての側(composition root)が database の宣言(PostgresDatabase — 名と DSN)から作って渡し、
-;;;     止める時に close する。要求 1 つ = 接続 1 本(doeff-records の置き場もこの貸し出しを使う — 同時の要求の transaction を 1 本の接続で
-;;;     混ぜない)。接続は自動 commit・json / jsonb の欄は text で読む(値の正規化の決まり)。切れた接続と transaction の途中で返った接続は
-;;;     返す時に捨てる / rollback する。目安(LARGE-CARRY-BYTES)を越える値(送った引数の組か行 1 つ・受けた行 1 つ)を通した接続も返す時に
-;;;     捨てる — libpq は接続ごとの送りと受けの buffer を通した一番大きな message まで伸ばして閉じるまで縮めないので、空きの列に戻すと大きな
-;;;     本文 1 つで数十 MB を抱え続ける。SqlQuery の binary は答えの行を binary の形で受け、bytea を 16 進の 2 倍に
-;;;     しない(大きな本文の読み)。貸し出しは開いた接続と、訳ごとに閉じた接続を数える(tallies)。
-;;;   - 接続の上限(PostgresTimeouts): 接続は開く時の上限・TCP の keepalive・送った bytes の返事を待つ上限
-;;;     (tcp_user_timeout)・文の上限(statement_timeout)を持つ。DB の pod が入れ替わると空きの接続は相手の居ない TCP のまま残り、上限が
-;;;     無いと次の文が kernel の再送の限り(数十分)固まって許可を持ち続ける — 上限があれば文は OperationalError で落ち、SqlUnreachable を
-;;;     答え、返す時に切れた接続として捨てられ、次の借りが新しく張る。
-;;;   - 引数は中立の `:name` を `%(name)s` へ書き換え、文の `%` は `%%` にする(postgres-statement)。
-;;;   - 失敗: engine の SQLSTATE をそのまま SqlFailed に。SQLSTATE の無い driver の誤りは類の表(DRIVER-CLASS-SQLSTATES — agora-controllers
-;;;     services/record/handlers_wire.hy と同じ表)で類の code に。SQLSTATE の無い OperationalError / InterfaceError・接続できない時・
-;;;     接続の例外の SQLSTATE(class 08 と 57P01・57P02・57P03)は SqlUnreachable(postgres-failure)。
-;;;   - SqlTransaction = 接続 1 本で BEGIN → 錠(lock-key と locks の順 — 排他は pg_advisory_xact_lock・共有は pg_advisory_xact_lock_shared の
-;;;     hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
-;;;     既定(batched = False)は文 1 つを 1 回ずつ流す(run-in-transaction — BEGIN・錠・文・合図・COMMIT がそれぞれ往復 1 回)。
-;;;     batched = True を選んだ transaction だけ: 往復 1 回(TransactionFlush — BEGIN と錠・文・合図・COMMIT)を psycopg 3 の
-;;;     pipeline mode の 1 つの pipeline で送り、出口の sync 1 度で答えを順に受ける(postgres-flush・run-in-batched-transaction)。途中の文が
-;;;     落ちると PostgreSQL は次の sync までの文を流さないので、答えは最初に落ちた文の失敗(TransactionAborted へ写る)で、ROLLBACK は
-;;;     run-in-batched-transaction が流す。pipeline の出入りは with で必ず閉じ、返す接続が pipeline mode のまま残っていれば捨てる(release)。
-;;;     束ねた transaction は、借りる・全部の往復と間の program・返すを driver の thread の仕事 1 つ(新しい VM)で回し、往復の間に scheduler の
-;;;     thread へ戻らない(offloaded-batched-transaction — 錠を持つ間に scheduler の待ちを挟まない)。
-;;;     借りた接続への driver の呼び(文・往復・ROLLBACK・返却)は transaction ごとの錠で 1 本ずつ(offloaded-transaction — 取り消された往復の
-;;;     thread が走り切る前に ROLLBACK が割り込まない)。pipeline mode を持たない psycopg / libpq(libpq 14 未満)では、接続の貸し出しを作る時
-;;;     (起動の時)に名を挙げて落ちる — batched の transaction を文 1 つずつ流す道へ黙って倒さない。
-;;;   - scheduler を塞がない: postgres-sql-handler は driver の I/O(接続の許可を待つ・接続を開く・文を流す・COMMIT・
-;;;     ROLLBACK・接続を返す)を scheduler の thread で撃たず、空いた thread を使い回す Executor(offloaded_call.hy の ReusedThreads — 空きが
-;;;     無い時だけ thread を起こす)で回し、撃った task
-;;;     だけが外から完了させる promise で待つ。遅い文の間も同じ run の他の task(待ち受けの /healthz・時計の刻み)は回る。同時に使う接続の
-;;;     上限は PostgresConnections の許可(thread の間の錠)が持ち、許可を待つのも thread の中 — thread の数に上限を置かないので、許可を持つ
-;;;     transaction の次の文が thread の空きを待って詰まることがない。手順(文・値の写し・transaction の段・取り消しの後始末)は
-;;;     pooled-postgres-sql-handler と同じ offloaded-transaction と offloaded-statement を使い、違いは Executor と許可の待ち方だけ(pooled は呼び手の
-;;;     pool と scheduler の semaphore)。外側に scheduled が要る(CreateExternalPromise と Wait)— session の値の置き場(state)は要らない。
-;;;   - 通知(名で絞る形は #3688): SqlNotify = pg_notify(channel, 本文)を流す(transaction の中なら同じ接続で —
-;;;     commit した時だけ届く)。本文(notice-payload)は JSON の object で、合図が関わる名(topics — 呼び手の決めた語・記録の置き場なら表と
-;;;     列の名)と、合図を出した貸し出しの印(origin — PostgresConnections ごとの乱数)を運ぶ。SqlHangNotice = channel ごとに LISTEN を
-;;;     張った接続 1 本を daemon の thread で持つ待ち受け(PostgresListener)に、待つ名と一緒に呼び鈴(外の promise)を掛ける。合図は名の
-;;;     重なる呼び鈴だけを鳴らす。名の分からない合図(topics = None・読めない本文・名を載せると本文の上限 8000 bytes に届く合図)は全部の
-;;;     待ち手に関わる合図という意味で、全部の呼び鈴を鳴らす(絞れない合図で起こし損ねない — 名の写しを間違えると永久に起きない待ち手が
-;;;     できるので、分からない時は全部)。待つ名が None の呼び鈴は全部の合図で鳴る。
-;;;     同じ process の呼び鈴は、合図を流した答え手が接続を返した後に、その場で鳴らす(ring-local — 書き手の残り〔接続を返す〕が、起こした
-;;;     待ち手の読み直しの後ろに並ばない。NOTIFY の配達を待たないので、仮想の時計の下でも合図より先に待ちの期限が来ない)。待ち受けは
-;;;     自分の印の通知を鳴らさない(同じ process の呼び鈴はもう鳴らした — 書き 1 回で待ち手を 2 回起こさない)。印で見分けるのは、
-;;;     backend の pid の集合で見分けると、切れた接続の pid を別の process の backend が引き継いだ時にその process の合図を黙って捨てるため。
-;;;     鳴らすのは transaction なら COMMIT を流した(流そうとした)時 — COMMIT の答えが失敗でも commit されたか分からない時があり(接続が
-;;;     切れた)、自分の印の通知は待ち受けが鳴らさないので、鳴らし損ねる側に倒さない(鳴らしすぎは待ち手の読み直し 1 回で済む)。答えを
-;;;     受ける前に取り消されても、接続を返す finally の中で鳴らす。transaction の外の SqlNotify も接続を返した後に鳴らす。
-;;;     待ち受けは切れたら繋ぎ直し、繋ぎ直した時に掛かっている呼び鈴を全部鳴らす(切れていた間の通知は届かないので、待ち手に読み直させる)。
-;;;     張れていない間の SqlHangNotice は SqlUnreachable。繋ぎ直しの間の秒は境界の答え手の中だけの時間で、呼び手には出ない。
-;;;   - 取り消し: 文 1 つの effect も transaction と同じく「接続を借りる」と「流して返す」を別の仕事にする。許可を待って
-;;;     いる間に取り消された要求は、許可が取れても文を流さずにすぐ返す(DB が止まった間に取り消された読みが、DB が戻った時にまとめて流れ、
-;;;     後から来た要求を待たせない)。走り出した文は止めない。
+;;; postgres-sql-handler: the real PostgreSQL handler for the generic SQL effects (sql_effects.hy). It only calls psycopg 3 and repacks
+;;; values; it holds no judgment. psycopg is imported only inside this module's I/O functions (even in an environment without psycopg, the pure
+;;; functions for rewriting and mapping can be imported and tested).
+;;;   - The connection lease PostgresConnections is built by the assembling side (composition root) from a database declaration (PostgresDatabase: name and DSN),
+;;;     and closed on shutdown. One request = one connection (the doeff-records store also uses this lease, so transactions of concurrent requests are
+;;;     never mixed on one connection). Connections are autocommit; json / jsonb columns are read as text (the value normalization rule). Connections that
+;;;     broke, and connections returned in the middle of a transaction, are discarded / rolled back
+;;;     on return. A connection that carried a value over the threshold (LARGE-CARRY-BYTES) (a set of sent arguments or one row, or one received row) is also
+;;;     discarded on return: libpq grows each connection's send and receive buffers up to the largest message passed through and does not shrink them until close, so returning it to the idle queue would keep tens of MB
+;;;     for a single large body. SqlQuery's binary receives the answer rows in binary form and does not
+;;;     double bytea into hex (reading large bodies). The lease counts opened connections and, per reason, closed connections (tallies).
+;;;   - Connection limits (PostgresTimeouts): a connection has a limit for opening, TCP keepalive, a limit for waiting for a reply to sent bytes
+;;;     (tcp_user_timeout), and a statement limit (statement_timeout). When a DB pod is replaced, idle connections remain as TCP with no peer, and without limits
+;;;     the next statement would hang for as long as the kernel retransmits (tens of minutes) while holding its permit. With limits the statement fails with OperationalError, answers SqlUnreachable,
+;;;     is discarded on return as a broken connection, and the next borrow opens a fresh one.
+;;;   - Arguments: the neutral `:name` is rewritten to `%(name)s`, and `%` in the statement becomes `%%` (postgres-statement).
+;;;   - Failures: the engine's SQLSTATE goes into SqlFailed as is. A driver error with no SQLSTATE is mapped to the class code via the class table (DRIVER-CLASS-SQLSTATES, the same table as agora-controllers
+;;;     services/record/handlers_wire.hy). OperationalError / InterfaceError with no SQLSTATE, failure to connect, and
+;;;     the connection-exception SQLSTATEs (class 08 and 57P01, 57P02, 57P03) are SqlUnreachable (postgres-failure).
+;;;   - SqlTransaction = BEGIN on one connection, then locks (in the order of lock-key and locks: exclusive uses pg_advisory_xact_lock, shared uses pg_advisory_xact_lock_shared on
+;;;     hashtext(key)), then program, then COMMIT (sql_transaction.hy).
+;;;     The default (batched = False) sends one statement at a time (run-in-transaction: BEGIN, locks, statements, signal, and COMMIT each take one round trip).
+;;;     Only transactions that choose batched = True: one round trip (TransactionFlush: BEGIN plus locks, statements, signal, and COMMIT) is sent in
+;;;     one pipeline of psycopg 3 pipeline mode, and the answers are received in order at a single sync at the exit (postgres-flush, run-in-batched-transaction). When a statement in the middle
+;;;     fails, PostgreSQL does not run the statements up to the next sync, so the answer is the failure of the first failed statement (mapped to TransactionAborted), and ROLLBACK is sent by
+;;;     run-in-batched-transaction. Entering and leaving the pipeline is always closed with `with`, and a returned connection still in pipeline mode is discarded (release).
+;;;     A batched transaction runs borrowing, all round trips and the program in between, and returning as one job of the driver's thread (a new VM), and does not return to the scheduler
+;;;     thread between round trips (offloaded-batched-transaction: no scheduler wait is inserted while holding locks).
+;;;     Driver calls on the borrowed connection (statements, round trips, ROLLBACK, return) are serialized one at a time by a per-transaction lock (offloaded-transaction: ROLLBACK does not interrupt
+;;;     before the thread of a cancelled round trip has finished running). For a psycopg / libpq without pipeline mode (libpq older than 14), building the connection lease
+;;;     (at startup) fails by naming it: a batched transaction is not silently downgraded to the one-statement-at-a-time path.
+;;;   - Do not block the scheduler: postgres-sql-handler does not fire driver I/O (waiting for a connection permit, opening a connection, running a statement, COMMIT,
+;;;     ROLLBACK, returning a connection) on the scheduler's thread; it runs it on an Executor that reuses idle threads (ReusedThreads in offloaded_call.hy: a thread is started only when none is
+;;;     free), and only the task that fired it
+;;;     waits, on a promise completed from outside. Other tasks of the same run (the listener's /healthz, clock ticks) keep running during a slow statement. The limit on connections used at the same time
+;;;     is held by PostgresConnections' permits (a lock between threads), and the wait for a permit also happens inside a thread. Since there is no limit on the number of threads, the next statement of a transaction
+;;;     holding a permit never gets stuck waiting for a free thread. The procedure (statements, value mapping, transaction stages, cleanup after cancel) uses the same offloaded-transaction and offloaded-statement as
+;;;     pooled-postgres-sql-handler; the only differences are the Executor and how permits are waited for (pooled uses the caller's
+;;;     pool and the scheduler's semaphore). A `scheduled` is required outside (CreateExternalPromise and Wait); a place for session values (state) is not.
+;;;   - Notifications (the name-filtered form is #3688): SqlNotify = sends pg_notify(channel, body) (inside a transaction, on the same connection, so
+;;;     it is delivered only on commit). The body (notice-payload) is a JSON object carrying the names the signal concerns (topics: words chosen by the caller; for the records store, table and
+;;;     column names) and a mark of the lease that emitted the signal (origin: a random value per PostgresConnections). SqlHangNotice = hangs a bell (an external promise), together with the names it waits for, on a listener
+;;;     (PostgresListener) that holds, in a daemon thread, one connection with LISTEN on each channel. A signal rings only the bells whose
+;;;     names overlap. A signal whose names are unknown (topics = None, an unreadable body, or a signal whose names would reach the 8000-byte body limit) means a signal concerning all
+;;;     waiters, and rings every bell (so a signal that cannot be narrowed never fails to wake anyone: a mistaken name mapping would leave a waiter that never wakes,
+;;;     so when unsure, all of them). A bell whose waited names are None rings on every signal.
+;;;     Bells in the same process are rung on the spot, after the handler that sent the signal has returned its connection (ring-local: the rest of the writer [returning the connection] does not queue behind the re-read of the waiter it woke.
+;;;     It does not wait for NOTIFY delivery, so even under a virtual clock the wait's deadline does not arrive before the signal). The listener
+;;;     does not ring notifications bearing its own mark (the bells in the same process were already rung; one write must not wake a waiter twice). The reason for telling them apart by mark is that
+;;;     telling them apart by a set of backend pids would silently drop another process's signals when a backend of that process inherits the pid of a broken connection.
+;;;     For a transaction, the ring happens when COMMIT was sent (or an attempt to send it was made): even if COMMIT's answer is a failure, it is sometimes unknown whether it committed (the connection
+;;;     broke), and since the listener does not ring notifications with its own mark, we do not lean toward failing to ring (ringing too much costs a waiter only one re-read). Even if cancelled
+;;;     before receiving the answer, it rings inside the finally that returns the connection. SqlNotify outside a transaction also rings after the connection is returned.
+;;;     The listener reconnects when it breaks, and on reconnecting rings every bell currently hung (notifications during the outage are not delivered, so waiters are made to re-read).
+;;;     SqlHangNotice while it is not established is SqlUnreachable. The seconds between reconnects are time only inside the boundary handler and are not visible to the caller.
+;;;   - Cancellation: for a single-statement effect, as with a transaction, "borrow a connection" and "run and return" are separate jobs. A request cancelled while waiting for a
+;;;     permit returns immediately without running the statement even if the permit is obtained (so reads cancelled while the DB was down do not all flush when the DB returns and
+;;;     make later requests wait). A statement that has started running is not stopped.
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 (require doeff-hy.record [defrecord defwire])
@@ -78,62 +79,62 @@
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects._sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
 
-;; SQLSTATE を持たない driver の誤りの類 → その類の SQLSTATE の class の code(psycopg が SQLSTATE から類を選ぶ表の逆)。
+;; Map from the class of a driver error that has no SQLSTATE to the SQLSTATE class code of that class (the inverse of the table psycopg uses to choose a class from SQLSTATE).
 (val DRIVER-CLASS-SQLSTATES {"DataError" "22000" "IntegrityError" "23000" "ProgrammingError" "42000" "NotSupportedError" "0A000"
                              "InternalError" "XX000"})
-;; SQLSTATE を持たなければ届かない(接続できない・切れた)と読む類。
+;; Classes read as unreachable (cannot connect / broken) when there is no SQLSTATE.
 (val UNREACHABLE-CLASSES #("OperationalError" "InterfaceError"))
-;; SQLSTATE を持っていても届かない(接続が切れた・engine が接続を受けない)と読む code: class 08 = 接続の例外の全部(前方 2 文字)と、
-;; 57P01 管理者による切断・57P02 crash による切断・57P03 起動中 / 停止中で接続を受けない(class 57 の他 — 57014 取り消し等 — は engine の答え)。
-;; 業務の文の誤りではなく、時間を置いて撃ち直せば晴れる失敗なので SqlFailed にしない。
+;; Codes read as unreachable even with a SQLSTATE (connection broke, or the engine does not accept connections): class 08 = all connection exceptions (first 2 characters), and
+;; 57P01 disconnect by administrator, 57P02 disconnect by crash, 57P03 starting up / shutting down and not accepting connections (the other class 57 codes, such as 57014 cancel, are engine answers).
+;; This is not a business-statement error but a failure that clears if retried after a while, so it is not SqlFailed.
 (val UNREACHABLE-SQLSTATE-CLASS "08")
 (val UNREACHABLE-SQLSTATES #("57P01" "57P02" "57P03"))
-;; 同時に貸す接続の既定の上限(database ごと)。
+;; Default limit on connections lent at the same time (per database).
 (val DEFAULT-POOL-SIZE 8)
-;; postgres-sql-handler が driver の I/O を回す Executor(空いた thread を使い回し、上限を置かない — 頭の註)。process に 1 つ。
+;; The Executor on which postgres-sql-handler runs driver I/O (reuses idle threads and has no limit; see the header comment). One per process.
 (val DRIVER-THREADS (_ReusedThreads))
 
-;; 待ち受けの接続が切れてから繋ぎ直すまでの秒(頭の註 — 境界の答え手の中だけの時間)。
+;; Seconds from when the listener's connection breaks until it reconnects (see the header comment; time only inside the boundary handler).
 (val LISTEN-RETRY-SECONDS 1)
-;; 合図の本文(NOTIFY の payload)の bytes の上限(PostgreSQL の既定の build は 8000 bytes 未満を求める — 届く本文は名を載せない・頭の註)。
+;; Upper limit in bytes of the signal body (the NOTIFY payload) (PostgreSQL's default build requires under 8000 bytes; the delivered body does not carry names, see the header comment).
 (val NOTICE-PAYLOAD-LIMIT 8000)
 
-;; 大きな値を通した接続を返す時に閉じる目安(bytes — 文 1 つ・往復 1 回の、送った引数と行・受けた行の str / bytes の長さの和)。libpq の接続は
-;; 送りと受けの buffer を通した一番大きな message の次の 2 の冪まで伸ばし、閉じるまで縮めない — 空きの列に戻すと、大きな本文 1 つで接続ごとに
-;; 数十 MB を抱え続ける。目安の下の値だけを通した接続の buffer は送りと受けの各 1 MiB まで
-;; (1 本 2 MiB・貸し出しの上限 8 本で 16 MiB)に留まる。目安を 256 KiB から 512 KiB へ上げた: 記録の service の
-;; 本文を切った行(turn-memory-part・worktree-diff — 本文の切片 256 KiB に欄の名を足して 1 行 約 262,260 bytes)が 256 KiB をわずかに
-;; 越え、それを読み書きする要求ごとに接続を閉じて開き直していた(agora-records-twin で 30 秒に 242 本・pg の thread の標本の 13% が接続の開き)。
+;; Threshold (in bytes: the sum of the str / bytes lengths of sent arguments and rows, and of received rows, for one statement or one round trip) above which a connection that carried a large value is closed on return. A libpq connection
+;; grows its send and receive buffers to the next power of 2 above the largest message passed through and does not shrink them until closed, so returning one to the idle queue would keep
+;; tens of MB per connection for a single large body. A connection that only carried values under the threshold keeps its buffers to 1 MiB each for send and receive
+;; (2 MiB per connection, 16 MiB at the lease limit of 8 connections). The threshold was raised from 256 KiB to 512 KiB: the record service's
+;; rows with truncated bodies (turn-memory-part and worktree-diff; a 256 KiB body slice plus the column names makes about 262,260 bytes per row) slightly
+;; exceeded 256 KiB, so every request that read or wrote them closed and reopened a connection (in agora-records-twin, 242 connections in 30 seconds, and 13% of the pg thread samples were spent opening connections).
 (val LARGE-CARRY-BYTES (* 512 1024))
-;; 目安を越える値を通した接続の印(release が空きの列に戻さず閉じる)。接続が消えれば印も消える(弱い参照)。
+;; Marks connections that carried a value over the threshold (release closes them instead of returning them to the idle queue). When the connection goes away, the mark goes too (weak reference).
 (val CARRIED-LARGE (weakref.WeakSet))
-;; 束ねた transaction の文を名つきの prepared statement にした覚え(接続 → PreparedBook — postgres-flush の註)。接続を捨てれば覚えも消える。
-;; 覚える文の数は接続ごとに PREPARED-MAX まで(越えた文は名を付けずに流す — 文の綴りは宣言から決まる有限の組だが、上限で守る)。
-;; 接続の上の名の置き場の持ち主はこの覚え 1 つ: psycopg の自動の prepare は止めてあり(PostgresConnections.acquire)、名を消す文
-;; (DEALLOCATE・DISCARD)を流す道は持たない — 足すと覚えの知らない消しになり、その接続の次の往復が 26000 で落ちる。
-;; 速さのために名つきにしたい文は、psycopg の prepare を戻さず、この覚えの道(postgres-flush)へ寄せる。
+;; Record of statements of batched transactions turned into named prepared statements (connection -> PreparedBook; see the note on postgres-flush). Discarding the connection discards the record.
+;; The number of statements recorded is up to PREPARED-MAX per connection (statements beyond that are sent without a name; statement spellings are a finite set determined by declarations, but the limit guards it).
+;; The only owner of the name store on a connection is this record: psycopg's automatic prepare is turned off (PostgresConnections.acquire), and
+;; there is no path that sends name-removing statements (DEALLOCATE / DISCARD): adding one would be a removal the record does not know about, and the connection's next round trip would fail with 26000.
+;; For a statement you want named for speed, route it to this record's path (postgres-flush) instead of restoring psycopg's prepare.
 (val PREPARED (weakref.WeakKeyDictionary))
 (val PREPARED-LOCK (threading.Lock))
 (val PREPARED-MAX 256)
 
-;; 宣言の欄の型 → PostgreSQL の型。
+;; Declared column type -> PostgreSQL type.
 (val POSTGRES-TYPES {SqlColumnType.INTEGER "bigint" SqlColumnType.FLOAT "double precision" SqlColumnType.TEXT "text"
                      SqlColumnType.BYTES "bytea" SqlColumnType.BOOLEAN "boolean" SqlColumnType.JSON "json"})
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PostgresDatabase []
-  "PostgreSQL の database の宣言(name = 業務が SqlQuery に書く名・dsn = psycopg の接続文字列 — 資格を含むので repr に出さない)。"
+  "Declaration of a PostgreSQL database (name = the name business code writes in SqlQuery; dsn = the psycopg connection string, which contains credentials and so is kept out of repr)."
   #^ str name
   #^ str dsn
   (setv dsn (field :repr False)))
 
 
 (defrecord PostgresTimeouts
-  "接続の上限(頭の註): 開く時(秒)・keepalive の最初の問いまでの無音(秒)・問いの間隔(秒)・答えの無い問いの数・送った bytes の返事を
-   待つ上限(ミリ秒)・文の上限(ミリ秒 — None = 付けない)・transaction の途中で何もしない上限(ミリ秒 — None = 付けない)。
-   transaction の途中の上限は、BEGIN の後に program が進まなくなった接続(返す finally に届かない — 2026-09-30 の着地の台帳で、
-   pg_advisory_xact_lock を持ったまま 6 分半 idle in transaction で残り、後続の書きが全部 statement timeout で落ちた)を
-   engine が切り、transaction を戻して錠を外すため。"
+  "Connection limits (see the header comment): open time (seconds), silence before keepalive's first probe (seconds), probe interval (seconds), number of unanswered probes, limit for waiting for a reply to
+   sent bytes (milliseconds), statement limit (milliseconds; None = none), and limit for doing nothing in the middle of a transaction (milliseconds; None = none).
+   The mid-transaction limit exists so that the engine cuts a connection whose program stopped advancing after BEGIN (it never reaches the returning finally; in the 2026-09-30 landing ledger,
+   one stayed idle in transaction for 6.5 minutes holding pg_advisory_xact_lock, and all following writes failed with statement timeout),
+   rolls back the transaction, and releases the lock."
   (#^ int connect-seconds)
   (#^ int keepalive-idle-seconds)
   (#^ int keepalive-interval-seconds)
@@ -143,32 +144,32 @@
   (#^ (| int None) idle-transaction-milliseconds))
 
 
-;; 既定の上限: 死んだ相手は keepalive で 10 + 5 × 3 = 25 秒・文を送った後は 15 秒で見つかる。文の上限 60 秒は記録の service の文(短い
-;; 読み書きと、錠を待つ表の用意)より十分長い。transaction の途中で何もしない上限 30 秒は、記録の service の transaction(文の間は純粋な
-;; 計算だけ)より十分長く、錠を持ったまま止まった接続が後続の書きを塞ぐ時間を 30 秒で切る。
+;; Default limits: a dead peer is found in 10 + 5 x 3 = 25 seconds by keepalive, and 15 seconds after a statement is sent. The statement limit of 60 seconds is well longer than the record service's statements (short
+;; reads and writes, and table preparation waiting for a lock). The mid-transaction idle limit of 30 seconds is well longer than the record service's transactions (only pure
+;; computation between statements), and caps at 30 seconds the time a connection stalled while holding a lock can block later writes.
 (val DEFAULT-TIMEOUTS (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
                                         :unacknowledged-milliseconds 15000 :statement-milliseconds 60000
                                         :idle-transaction-milliseconds 30000))
 
 
 (defrecord PostgresStatement
-  "psycopg へ渡す形に書き換えた文(text = `%(name)s` の文・params = 引数 — dict にするのは driver を呼ぶ 1 点だけ)。"
+  "A statement rewritten into the form handed to psycopg (text = a statement with `%(name)s`; params = the arguments; converting to a dict happens at only one point, where the driver is called)."
   (#^ str text)
   (#^ tuple params))
 
 
 (defclass [(dataclass :kw-only True)] RaisedNotices []
-  "transaction 1 つ(か transaction の外の SqlNotify 1 つ)が出した合図の覚え — 答え手が接続を返した後に同じ process の呼び鈴を鳴らすため
-   (頭の註)。書き換えるのは答え手の手順だけなので値の型ではない。topics = channel → 合図が関わる名(同じ channel の合図を重ねた和・
-   None = 名の分からない合図 = 全部 — dict は channel を鍵に引く覚えの索引で、外へ出さない)/ sent = 合図が届く所まで流した(transaction
-   なら COMMIT を流した・流そうとした — 鳴らすかの印)。"
+  "Record of the signals emitted by one transaction (or one SqlNotify outside a transaction), used to ring same-process bells after the handler has returned its connection
+   (see the header comment). Only the handler's procedure rewrites it, so it is not a value type. topics = channel -> names the signal concerns (the union of repeated signals on the same channel;
+   None = a signal with unknown names = all; the dict is an index keyed by channel and is not exposed) / sent = the signal was sent far enough to be delivered (for a transaction,
+   COMMIT was sent or an attempt to send it was made; the mark for whether to ring)."
   (setv #^ (get dict #(str (| (get frozenset str) None))) topics (field :default-factory dict))
   (setv #^ bool sent False))
 
 (defrecord PostgresTallies
-  "接続の貸し出しが数えた出来事(PostgresConnections.tallies): opened = 開いた接続・返す時に閉じた接続の訳ごとの数
-   (broken = 切れていた・pipeline = pipeline mode のまま・large = 目安を越える値を通した〔CARRIED-LARGE〕・rollback = transaction の途中で
-   返り rollback に落ちた)。"
+  "Events counted by the connection lease (PostgresConnections.tallies): opened = connections opened; and connections closed on return, per reason
+   (broken = was broken; pipeline = left in pipeline mode; large = carried a value over the threshold [CARRIED-LARGE]; rollback = returned in the middle of a transaction
+   and the rollback failed)."
   (#^ int opened)
   (#^ int broken)
   (#^ int pipeline)
@@ -177,17 +178,17 @@
 
 
 (defclass PostgresConnections []
-  "接続の貸し出し(頭の註)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。size = database ごとに同時に貸す接続の上限
-   (pooled-postgres-sql-handler が scheduler の許可の数として読む)・timeouts = 開く接続に付ける上限・origin = この貸し出しが出す合図の
-   印(合図を流した後に同じ process の呼び鈴を鳴らすのはこの貸し出しなので、待ち受けはこの印の通知を鳴らさない — 頭の註)。"
+  "The connection lease (see the header comment). It is a resource, so not a value type (its contents are rewritten and it is handled by identity). size = the limit on connections lent at the same time per database
+   (read by pooled-postgres-sql-handler as the number of scheduler permits); timeouts = limits put on connections that are opened; origin = the mark of signals this lease emits
+   (the lease rings same-process bells after sending a signal, so the listener does not ring notifications with this mark; see the header comment)."
 
-  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; defk にできない: 資源の class の初期化
-    "database の宣言の列と、database ごとに同時に貸す接続の上限と、接続の上限を受けるため。transaction の往復は pipeline mode で送る
-     (頭の註)ので、psycopg と libpq が pipeline mode を持たなければ、ここ(組み立ての側が起動の時に作る所)で名を挙げて落ちる。"
+  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; cannot be a defk: initialization of a resource class
+    "Receives the sequence of database declarations, the limit on connections lent at once per database, and the connection limits. Transaction round trips are sent in pipeline mode
+     (see the header comment), so if psycopg and libpq lack pipeline mode this place (built by the assembling side at startup) fails by naming it."
     (import psycopg)
     (when (not (psycopg.Pipeline.is-supported))
-      (raise (RuntimeError (.format (+ "PostgreSQL の答え手は transaction の往復を psycopg の pipeline mode で送るが、この環境は pipeline mode を"
-                                       " 持たない(psycopg {} の実装 {}・libpq {} — libpq 14 以上が要る)")
+      (raise (RuntimeError (.format (+ "The PostgreSQL handler sends transaction round trips in psycopg's pipeline mode, but this environment does not have pipeline mode"
+                                       " (psycopg {} implementation {}, libpq {}; libpq 14 or later is required)")
                                     psycopg.__version__ psycopg.pq.__impl__ (psycopg.pq.version)))))
     (setv self.size size
           self.timeouts timeouts
@@ -200,29 +201,29 @@
           self.counts (PostgresTallies :opened 0 :broken 0 :pipeline 0 :large 0 :rollback 0)
           self.counts-lock (threading.Lock)))
 
-  (defn #^ None counted [self #^ str tally]  ; defk にできない: 借りと返しの thread が同期に呼ぶ数え(VM の外の錠)
-    "出来事 tally(PostgresTallies の欄の名の 1 つ)を 1 つ数えるため。"
+  (defn #^ None counted [self #^ str tally]  ; cannot be a defk: a count called synchronously from the borrowing and returning threads (a lock outside the VM)
+    "Counts one event tally (one of the field names of PostgresTallies)."
     (with [_ self.counts-lock]
       (setv self.counts (with-fields self.counts #** {tally (+ (getattr self.counts tally) 1)}))))
 
-  (defn #^ PostgresTallies tallies [self]  ; defk にできない: 計器と検が thread の間で読む資源の数(VM の外の錠)
-    "開いた接続と、訳ごとに閉じた接続の数を読むため。"
+  (defn #^ PostgresTallies tallies [self]  ; cannot be a defk: a resource count read between threads by the meter and tests (a lock outside the VM)
+    "Reads the number of opened connections and of closed connections per reason."
     (with [_ self.counts-lock]
       self.counts))
 
-  ;; 答えの型は文字列の前方参照で書く: PostgresListener はこの class より後で定義し、Python 3.13 までは注記を定義の時に評価するので、
-  ;; 裸の名は module の読み込みを NameError で落とす(注記を遅れて評価する PEP 649 は 3.14 から)。
-  (defn #^ "PostgresListener" listener [self #^ str name #^ str channel]  ; defk にできない: 資源の待ち受けを引く(無ければ作って thread を起こす — VM の外の錠)
-    "database name の channel の待ち受け(PostgresListener)を引くため(初めての channel なら作る)。"
+  ;; The return type is written as a string forward reference: PostgresListener is defined after this class, and through Python 3.13 annotations are evaluated at definition time,
+  ;; so a bare name would make the module load fail with NameError (PEP 649, which evaluates annotations lazily, is from 3.14).
+  (defn #^ "PostgresListener" listener [self #^ str name #^ str channel]  ; cannot be a defk: looks up the resource listener (creates it and starts a thread if absent; a lock outside the VM)
+    "Looks up the listener (PostgresListener) for channel of database name (creating it for a channel seen for the first time)."
     (with [_ self.listeners-lock]
       (setv key #(name channel))
       (when (not-in key self.listeners)
         (setv (get self.listeners key) (PostgresListener self name channel)))
       (get self.listeners key)))
 
-  (defn #^ None ring-local [self #^ str name #^ RaisedNotices raised]  ; defk にできない: 答え手が接続を返す finally の中で同期に呼ぶ(VM の外の錠 — 取り消しの最中でも effect を出さずに鳴らす)
-    "合図が届く所まで流れていれば(raised.sent)、同じ process で channel ごとに掛かっている呼び鈴のうち、合図の名に関わる物をその場で
-     鳴らすため(頭の註 — 待ち受けがまだ無ければ掛かっている呼び鈴も無い)。"
+  (defn #^ None ring-local [self #^ str name #^ RaisedNotices raised]  ; cannot be a defk: called synchronously inside the finally where the handler returns the connection (a lock outside the VM; rings without emitting an effect even in the middle of cancellation)
+    "If the signal was sent far enough to be delivered (raised.sent), rings on the spot, among the bells hung per channel in the same process, those that concern the signal's names
+     (see the header comment; if there is no listener yet, there are no bells hung either)."
     (when raised.sent
       (for [[channel topics] (.items raised.topics)]
         (with [_ self.listeners-lock]
@@ -230,14 +231,14 @@
         (when (is-not listener None)
           (.ring listener topics)))))
 
-  (defn names [self]  ; defk にできない: 答え手の番(:when)で呼ぶ読み(Program を返すと真偽にならない)
-    "この貸し出しが答える database の名の並びを読むため。"
+  (defn names [self]  ; cannot be a defk: a read called from the handler's guard (:when) (returning a Program would not be a boolean)
+    "Reads the sequence of database names this lease answers for."
     (tuple self.databases))
 
-  (defn connection-options [self #^ str name]  ; defk にできない: 接続を開く thread の中で読む psycopg への引数(Program を返すと psycopg へ渡せない)
-    "開く接続に付ける上限を libpq の接続の parameter の写像で読むため(connect の keyword に渡す — DSN に同じ名が在ればこちらが勝つ)。
-     ただし options(-c を連ねた 1 本の値)は勝たせず、database name の DSN の options に engine の上限の -c を継ぎ足す — 勝たせると DSN の
-     -c search_path などが黙って消える。"
+  (defn connection-options [self #^ str name]  ; cannot be a defk: arguments for psycopg read inside the thread that opens the connection (returning a Program could not be passed to psycopg)
+    "Reads the limits put on opened connections as a mapping of libpq connection parameters (passed to connect's keywords; if the DSN has the same name, these win).
+     However, options (a single value chaining -c) does not win; the engine-limit -c settings are appended to the DSN options of database name. If it won, the DSN's
+     -c search_path and the like would silently disappear."
     (setv timeouts self.timeouts
           options {"connect_timeout" timeouts.connect-seconds
                    "keepalives" 1
@@ -245,7 +246,7 @@
                    "keepalives_interval" timeouts.keepalive-interval-seconds
                    "keepalives_count" timeouts.keepalive-count
                    "tcp_user_timeout" timeouts.unacknowledged-milliseconds})
-    ;; engine の上限(-c を連ねる): 文の上限と、transaction の途中で何もしない上限。None の上限は付けない。
+    ;; Engine limits (chained -c): the statement limit, and the limit for doing nothing in the middle of a transaction. A limit of None is not set.
     (setv bounds (lfor [setting value] [#("statement_timeout" timeouts.statement-milliseconds)
                                         #("idle_in_transaction_session_timeout" timeouts.idle-transaction-milliseconds)]
                        :if (is-not value None)
@@ -254,15 +255,15 @@
       (setv bound (.join " " bounds)
             dsn (. (get self.databases name) dsn)
             declared (when dsn
-                       ;; DSN の読みは libpq の綴り(URI・key=value の両方)なので psycopg の読みに任せる(DSN が空なら読まない —
-                       ;; psycopg は postgres の追加の依存で、接続を開く acquire と同じく使う時だけ読む)。
+                       ;; The DSN is read in libpq's spelling (both URI and key=value), so leave the reading to psycopg (if the DSN is empty it is not read;
+                       ;; psycopg is an extra dependency of postgres, and like acquire that opens connections it is imported only when used).
                        (import psycopg.conninfo [conninfo-to-dict])
                        (.get (conninfo-to-dict dsn) "options")))
       (setv (get options "options") (if declared (+ declared " " bound) bound)))
     options)
 
-  (defn acquire [self #^ str name]  ; defk にできない: 資源の貸し出し(thread の間で blocking に待つ)
-    "接続を 1 本借りるため(空きが無ければ開く・上限なら返されるまで待つ)。開けない時は psycopg の例外を通す。"
+  (defn acquire [self #^ str name]  ; cannot be a defk: borrowing a resource (blocks waiting between threads)
+    "Borrows one connection (opens one if none is idle; waits until one is returned if at the limit). If it cannot be opened, the psycopg exception passes through."
     (import psycopg)
     (import psycopg.types.string [TextLoader])
     (.acquire (get self.permits name))
@@ -270,10 +271,10 @@
       (try
         (.get-nowait (get self.idle name))
         (except [Empty]
-          ;; 接続の上の prepared statement の名の持ち主は doeff 1 つ(PREPARED の註): psycopg の自動の prepare を止める
-          ;; (prepare_threshold=None)。psycopg に名を持たせると、cursor の道で同じ文を 6 回目から _pg3_N として用意し、ROLLBACK(や DROP・
-          ;; ALTER)を見ると自分の覚えを捨てて DEALLOCATE ALL を送り、doeff_pq_N も消す — PreparedBook は知らないので、その接続は閉じるまで
-          ;; 束ねた往復が 26000 で落ちる。
+          ;; The sole owner of prepared statement names on a connection is doeff (see the note on PREPARED): turn off psycopg's automatic prepare
+          ;; (prepare_threshold=None). If psycopg held names, its cursor path would prepare the same statement as _pg3_N from the 6th execution on, and on seeing ROLLBACK (or DROP /
+          ;; ALTER) it would discard its own record and send DEALLOCATE ALL, which also removes doeff_pq_N. PreparedBook does not know about that, so on that connection
+          ;; batched round trips would fail with 26000 until it is closed.
           (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True :prepare-threshold None
                                             #** (.connection-options self name)))
           (.register-loader connection.adapters "json" TextLoader)
@@ -284,9 +285,9 @@
         (.release (get self.permits name))
         (raise))))
 
-  (defn release [self #^ str name connection]  ; defk にできない: 資源の返却(with / finally から呼ぶ)
-    "借りた接続を返すため(切れていれば捨てる・pipeline mode のまま残っていれば捨てる — 頭の註・目安を越える値を通していれば捨てる —
-     CARRIED-LARGE・transaction の途中なら rollback し、できなければ捨てる)。捨てた訳を数える(tallies)。"
+  (defn release [self #^ str name connection]  ; cannot be a defk: returning a resource (called from with / finally)
+    "Returns a borrowed connection (discard it if broken; discard it if left in pipeline mode, see the header comment; discard it if it carried a value over the threshold,
+     CARRIED-LARGE; if in the middle of a transaction, roll back, and discard it if that fails). The reason for discarding is counted (tallies)."
     (import psycopg)
     (try
       (setv dropped
@@ -306,21 +307,21 @@
               (.counted self dropped)))
       (finally (.release (get self.permits name)))))
 
-  (defn close [self]  ; defk にできない: 組み立ての側が止める時に呼ぶ資源の後始末
-    "空きの接続を全部閉じるため(貸している接続は返された時に閉じない — 止めた後に呼ぶ)。"
+  (defn close [self]  ; cannot be a defk: cleanup of a resource, called when the assembling side shuts down
+    "Closes all idle connections (connections on loan are not closed when returned, so call this after stopping)."
     (for [idle (.values self.idle)]
       (while (not (.empty idle))
         (.close (.get-nowait idle))))))
 
 
 (defclass PostgresListener []
-  "channel 1 つの待ち受け(頭の註): LISTEN を張った接続 1 本を daemon の thread で持ち、掛かっている呼び鈴(外の promise)のうち通知の名に
-   関わる物を鳴らす(自分の貸し出しの印の通知は鳴らさない)。資源なので値の型ではない。bells = 呼び鈴 → 待つ名(frozenset | None = 全部の
-   合図で鳴る — 掛けた順に鳴らす dict。set にすると順が object の番地で決まり、起きる順が走らせるたびに変わる)・listening = 今 LISTEN が
-   張れているか・listened = 1 度でも張れたか・failure = 張れていない理由・settled = 最初の接続を試し終えた印。"
+  "The listener for one channel (see the header comment): holds, in a daemon thread, one connection with LISTEN established, and rings, among the hung bells (external promises), those whose
+   names concern the notification (it does not ring notifications with its own lease's mark). It is a resource, so not a value type. bells = bell -> names waited for (frozenset | None = rings on
+   every signal; a dict, which rings in the order hung. With a set the order would be decided by object addresses, and the wake-up order would change on every run) / listening = whether LISTEN is
+   currently established / listened = whether it was ever established / failure = the reason it is not established / settled = the mark that the first connection attempt has finished."
 
-  (defn #^ None __init__ [self #^ PostgresConnections connections #^ str name #^ str channel]  ; defk にできない: 資源の class の初期化
-    "待ち受けを作り、LISTEN の thread を起こすため。"
+  (defn #^ None __init__ [self #^ PostgresConnections connections #^ str name #^ str channel]  ; cannot be a defk: initialization of a resource class
+    "Creates the listener and starts the LISTEN thread."
     (setv self.connections connections
           self.name name
           self.channel channel
@@ -332,9 +333,9 @@
           self.settled (threading.Event))
     (.start (threading.Thread :target self.listen :name "doeff-postgres-listen" :daemon True)))
 
-  (defn #^ None ring [self #^ (| (get frozenset str) None) topics]  ; defk にできない: 待ち受けの thread と接続を返した後の答え手が呼ぶ(VM の外)
-    "名 topics の合図に関わる呼び鈴を鳴らして外すため(頭の註 — topics が None = 名の分からない合図なら全部・待つ名が None の呼び鈴は
-     どの合図でも・他は名が重なる呼び鈴だけ。鳴った呼び鈴は True で完了する — WaitWithin の時間切れの None と見分ける)。"
+  (defn #^ None ring [self #^ (| (get frozenset str) None) topics]  ; cannot be a defk: called by the listener's thread and by the handler after it has returned the connection (outside the VM)
+    "Rings and removes the bells concerning a signal with names topics (see the header comment: topics = None means a signal with unknown names, so all of them; a bell whose waited names are None rings on
+     any signal; the others ring only if their names overlap. A rung bell completes with True, to be told apart from the None of a WaitWithin timeout)."
     (with [_ self.lock]
       (setv bells (tuple (gfor [bell waiting] (.items self.bells)
                                :if (or (is topics None) (is waiting None) (not (.isdisjoint waiting topics)))
@@ -344,28 +345,28 @@
     (for [bell bells]
       (.complete bell True)))
 
-  (defn #^ (| str None) hang [self #^ (get ExternalPromise (| bool None)) bell #^ (| (get frozenset str) None) topics]  ; defk にできない: driver の thread で回す(最初の接続を待つ)
-    "1 度でも LISTEN が張れていれば、名 topics(None = 全部の合図)を待つ呼び鈴を掛けて None を、1 度も張れていなければ理由の文を返すため
-     (最初の接続を試し終えるまで待つ)。繋ぎ直しの最中に掛けた呼び鈴は、繋ぎ直した時に鳴る(その間の通知は届かないので、待ち手は鳴った後に
-     読み直す)。"
+  (defn #^ (| str None) hang [self #^ (get ExternalPromise (| bool None)) bell #^ (| (get frozenset str) None) topics]  ; cannot be a defk: runs on a driver thread (waits for the first connection)
+    "If LISTEN has ever been established, hangs a bell waiting for names topics (None = every signal) and returns None; if it has never been established, returns the sentence of the reason
+     (waits until the first connection attempt has finished). A bell hung in the middle of a reconnect rings when it reconnects (notifications in between are not delivered, so the waiter
+     re-reads after being rung)."
     (.wait self.settled)
     (with [_ self.lock]
       (if self.listened
           (do (setv (get self.bells bell) topics) None)
-          (or self.failure "LISTEN が張れていない"))))
+          (or self.failure "LISTEN is not established"))))
 
-  (defn #^ None drop [self #^ (get ExternalPromise (| bool None)) bell]  ; defk にできない: 答え手の節と取り消しの後始末が呼ぶ(VM の外の錠)
-    "鳴らなかった呼び鈴を外し、その外の promise を終わらせるため(もう外れていれば外す所は何もしない)。待ち手はもう居ない(待ちを終えた
-     後か、掛けるのを取り消した時に呼ぶ)ので、None で完了しても誰も起きない — 終わらせないと scheduler の promise の行が pending の
-     まま残り、終わった物だけを消す掃除の外になる(#3508・#3494)。鳴って完了済みの呼び鈴への 2 度目の完了は scheduler が
-     無視する。"
+  (defn #^ None drop [self #^ (get ExternalPromise (| bool None)) bell]  ; cannot be a defk: called by the handler's clause and the cancellation cleanup (a lock outside the VM)
+    "Removes a bell that did not ring and finishes its external promise (if it is already removed, there is nothing to remove). There is no waiter any more (this is called after the wait has ended,
+     or when hanging was cancelled), so completing with None wakes no one. Without finishing it, the scheduler's promise row would stay
+     pending and fall outside the cleanup that removes only finished ones (#3508, #3494). A second completion of a bell that already rang and completed is
+     ignored by the scheduler."
     (with [_ self.lock]
       (.pop self.bells bell None))
     (.complete bell None))
 
-  (defn #^ None listen [self]  ; defk にできない: daemon の thread の本体(blocking に通知を待つ)
-    "LISTEN を張って通知ごとに名の関わる呼び鈴を鳴らし(自分の貸し出しの印の通知は鳴らさない — 同じ process の呼び鈴は合図を流した
-     答え手が鳴らし済み)、切れたら LISTEN-RETRY-SECONDS 置いて繋ぎ直すため(張った時にも鳴らす — 頭の註)。"
+  (defn #^ None listen [self]  ; cannot be a defk: the body of the daemon thread (blocks waiting for notifications)
+    "Establishes LISTEN and, for each notification, rings the bells whose names concern it (notifications with its own lease's mark are not rung; same-process bells were already rung by the
+     handler that sent the signal), and when the connection breaks, waits LISTEN-RETRY-SECONDS and reconnects (it also rings when it establishes; see the header comment)."
     (import psycopg)
     (import psycopg [sql])
     (while True
@@ -373,9 +374,9 @@
         (with [connection (psycopg.connect (. (get self.connections.databases self.name) dsn) :autocommit True
                                            #** (.connection-options self.connections self.name))]
           (.execute connection (.format (sql.SQL "LISTEN {}") (sql.Identifier self.channel)))
-          ;; 張った時に鳴らすのは、張った瞬間に掛かっていた呼び鈴(繋ぎ直しの間の通知を取りこぼした待ち手)だけ — 写しを錠の中で
-          ;; 取ってから settled を立てる。先に settled を立てて後から ring すると、最初の接続を待っていた hang が掛けたばかりの呼び鈴を
-          ;; 合図なしに鳴らしていた(rollback の後に鳴る・日次の test_pg_notice が時刻しだいで赤)。
+          ;; What rings on establishing is only the bells hung at the instant of establishing (waiters that missed notifications during the reconnect): take a copy inside the lock,
+          ;; then set settled. If settled were set first and ring done afterward, the bell that a hang waiting for the first connection had just hung
+          ;; would be rung without any signal (it would ring after the rollback; the daily test_pg_notice went red depending on timing).
           (with [_ self.lock]
             (setv self.listening True
                   self.listened True
@@ -401,7 +402,7 @@
 (defk postgres-statement [statement params]
   {:pre [(: statement str) (: params tuple)] :post [(: % PostgresStatement)]
    :tags {:context "sql" :role "foundation"}}
-  "中立の記法の文を psycopg の `%(name)s` の文へ書き換えるため(文の `%` は `%%` に・引数の名の食い違いは ValueError)。"
+  "Rewrites a statement in neutral notation into a psycopg `%(name)s` statement (`%` in the statement becomes `%%`; a mismatch in argument names is a ValueError)."
   (<- parts (split-statement statement))
   (<- (checked-params parts params))
   (var text "")
@@ -415,7 +416,7 @@
 (defk postgres-insert-statement [table columns]
   {:pre [(: table str) (: columns tuple)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows の executemany の文(位置の `%s`)を描くため。"
+  "Renders the executemany statement (positional `%s`) for SqlInsertRows."
   (.format "INSERT INTO {} ({}) VALUES ({})" (! (checked-identifier table)) (.join ", " (! (checked-identifiers columns)))
            (.join ", " (* ["%s"] (len columns)))))
 
@@ -423,8 +424,8 @@
 (defk postgres-failure [sqlstate class-names message]
   {:pre [(: sqlstate (| str None)) (: class-names tuple) (: message str)] :post [(: % (| SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "psycopg の例外(SQLSTATE・類の名の並び = MRO の名・文)を失敗の値へ写すため(頭の註)。postgres-sql-handler と
-   pooled-postgres-sql-handler が共に使う読み分けの 1 点。"
+  "Maps a psycopg exception (SQLSTATE, the sequence of class names = names in the MRO, and the message) to a failure value (see the header comment). The one point of
+   distinguishing that postgres-sql-handler and pooled-postgres-sql-handler both use."
   (cond
     (and (is-not sqlstate None) (or (.startswith sqlstate UNREACHABLE-SQLSTATE-CLASS) (in sqlstate UNREACHABLE-SQLSTATES)))
       (SqlUnreachable :reason message)
@@ -437,7 +438,7 @@
 (defk postgres-schema-statements [tables]
   {:pre [(: tables tuple)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "表の宣言を PostgreSQL の DDL(CREATE TABLE / INDEX IF NOT EXISTS)に描くため。"
+  "Renders table declarations as PostgreSQL DDL (CREATE TABLE / INDEX IF NOT EXISTS)."
   (var statements [])
   (for [table tables]
     (val table-name (! (checked-identifier table.name)))
@@ -457,15 +458,15 @@
 (defk postgres-error [error]
   {:pre [(: error Exception)] :post [(: % (| SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "psycopg の例外を postgres-failure の入力に割るため。"
+  "Splits a psycopg exception into the inputs of postgres-failure."
   (<- failure (postgres-failure (getattr error "sqlstate" None) (tuple (gfor c (. (type error) __mro__) c.__name__)) (str error)))
   failure)
 
 
-;; defk にできない: 行の値の数だけ呼ぶ純関数(Program を返すと値ごとに VM を往復する)
+;; cannot be a defk: a pure function called once per row value (returning a Program would round-trip through the VM for every value)
 (defn #^ int cell-bytes [#^ object value #^ bool doubled]
-  "行の値 1 つが libpq の message に占める bytes を見積もるため(str = UTF-8 の長さ・bytes = 長さ — doubled なら text の形の 16 進で 2 倍・
-   他の型は数えない)。"
+  "Estimates the bytes one row value takes in a libpq message (str = UTF-8 length; bytes = length, or doubled as hex in text form if doubled;
+   other types are not counted)."
   (match value
     (str) (if (.isascii value) (len value) (len (.encode value "utf-8")))
     (bytes) (if doubled (* 2 (len value)) (len value))
@@ -475,28 +476,28 @@
 (defk largest-message-bytes [rows doubled]
   {:pre [(: rows tuple) (: doubled bool)] :post [(: % int)]
    :tags {:context "sql" :role "foundation"}}
-  "行の並び rows(行 1 つ = libpq の message 1 つ — 送る引数の組か、受けた行)のうち、一番大きな message の bytes を見積もるため
-   (LARGE-CARRY-BYTES と比べる — buffer は一番大きな message まで伸びる。doubled = bytes を text の形の 16 進で受けた)。"
+  "Estimates the bytes of the largest message among the sequence of rows rows (one row = one libpq message: a set of sent arguments, or a received row)
+   (compared with LARGE-CARRY-BYTES; the buffer grows to the largest message. doubled = bytes were received as hex in text form)."
   (max (gfor row rows (sum (gfor value row (cell-bytes value doubled)))) :default 0))
 
 
 (defk noted-carry [connection carried]
-  {:pre [(: connection "psycopg の接続") (: carried int)] :post [(: % None)]
+  {:pre [(: connection "a psycopg connection") (: carried int)] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
-  "接続が通した message の bytes carried が目安(LARGE-CARRY-BYTES)を越えていれば、返す時に閉じる印(CARRIED-LARGE)を付けるため。"
+  "If the bytes carried of a message the connection passed through exceed the threshold (LARGE-CARRY-BYTES), marks the connection to be closed on return (CARRIED-LARGE)."
   (when (>= carried LARGE-CARRY-BYTES)
     (.add CARRIED-LARGE connection))
   None)
 
 
 (defk postgres-run [connection text params binary]
-  {:pre [(: connection "psycopg の接続") (: text str) (: params (| tuple None)) (: binary bool)]
+  {:pre [(: connection "a psycopg connection") (: text str) (: params (| tuple None)) (: binary bool)]
    :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つを流して答えの値にするため(params = None は引数の書き換えを通さない文 — DDL と transaction の区切り・binary = 答えの行を
-   binary の形で受ける — SqlQuery の binary)。送る引数と受けた行が目安を越えれば、返す時に閉じる印を付ける(noted-carry — 送りは
-   流す前に付ける: 落ちた文でも buffer は伸びている)。connection は psycopg の接続(psycopg を読まない環境でも module を読めるよう、型を
-   契約に書かない)。"
+  "Runs one statement and turns the answer into a value (params = None is a statement that skips argument rewriting, i.e. DDL and transaction delimiters; binary = receive the answer rows in
+   binary form, SqlQuery's binary). If the sent arguments or the received rows exceed the threshold, marks the connection to be closed on return (noted-carry; the send is
+   marked before running: even a failed statement has grown the buffer). connection is a psycopg connection (the type is not written in the
+   contract so that the module can be imported even in an environment without psycopg)."
   (import psycopg)
   (when (is-not params None)
     (<- sent (largest-message-bytes #((tuple (gfor p params p.value))) False))
@@ -516,18 +517,18 @@
 
 
 (defk postgres-query [connection request]
-  {:pre [(: connection "psycopg の接続") (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+  {:pre [(: connection "a psycopg connection") (: request SqlQuery)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlQuery 1 つに答えるため。"
+  "Answers one SqlQuery."
   (<- bound (postgres-statement request.statement request.params))
   (<- answer (postgres-run connection bound.text bound.params request.binary))
   answer)
 
 
 (defk postgres-insert [connection request]
-  {:pre [(: connection "psycopg の接続") (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
+  {:pre [(: connection "a psycopg connection") (: request SqlInsertRows)] :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows 1 つに executemany で答えるため(行 1 つ = 送る message 1 つ — 一番大きな行が目安を越えれば返す時に閉じる印を付ける)。"
+  "Answers one SqlInsertRows with executemany (one row = one sent message; if the largest row exceeds the threshold, the connection is marked to be closed on return)."
   (import psycopg)
   (<- (checked-rows request.columns request.rows))
   (<- text (postgres-insert-statement request.table request.columns))
@@ -545,9 +546,9 @@
 
 
 (defk postgres-ensure-tables [connection tables]
-  {:pre [(: connection "psycopg の接続") (: tables tuple)] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
+  {:pre [(: connection "a psycopg connection") (: tables tuple)] :post [(: % (| SqlSchemaApplied SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "表の宣言を DDL に描いて順に流すため(最初の失敗で止める)。"
+  "Renders table declarations as DDL and runs them in order (stops at the first failure)."
   (<- statements (postgres-schema-statements tables))
   (for [statement statements]
     (<- answer (postgres-run connection statement None False))
@@ -556,8 +557,8 @@
   (SqlSchemaApplied :statements statements))
 
 
-;; 同じ鍵の transaction を直列にする錠の文(中立の記法)— transaction の最初の往復で BEGIN の次に流す。共有の錠(SqlLock の shared)は
-;; LOCK-SHARED-STATEMENT(共有どうしは並んで持て、同じ鍵の排他の錠とだけ互いを待つ)。
+;; The statements of the lock that serializes transactions with the same key (neutral notation); run after BEGIN in a transaction's first round trip. The shared lock (SqlLock's shared) is
+;; LOCK-SHARED-STATEMENT (shared locks can be held side by side and wait on each other only with an exclusive lock of the same key).
 (val LOCK-STATEMENT "SELECT pg_advisory_xact_lock(hashtext(:key))")
 (val LOCK-SHARED-STATEMENT "SELECT pg_advisory_xact_lock_shared(hashtext(:key))")
 
@@ -565,27 +566,27 @@
 (defk transaction-locks [lock-key locks]
   {:pre [(: lock-key (| str None)) (: locks tuple)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "SqlTransaction の錠(lock-key と locks — sql_effects.hy の頭の註)を、取る順の SqlLock の並びにするため(lock-key が先・排他)。"
+  "Turns SqlTransaction's locks (lock-key and locks; see the header comment of sql_effects.hy) into a sequence of SqlLock in the order they are taken (lock-key first, exclusive)."
   (+ (if (is lock-key None) #() #((SqlLock :key lock-key))) locks))
 
 
 (defk lock-text [lock]
   {:pre [(: lock SqlLock)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "錠 1 つを取る文の綴り(中立の記法・引数 :key = 錠の鍵 — 共有の錠は LOCK-SHARED-STATEMENT)を選ぶため。"
+  "Chooses the spelling of the statement that takes one lock (neutral notation; argument :key = the lock's key; a shared lock uses LOCK-SHARED-STATEMENT)."
   (if lock.shared LOCK-SHARED-STATEMENT LOCK-STATEMENT))
 
 
-;; --- 合図(頭の註)------------------------------------------------------------------------------------------------------------
+;; --- Signals (see the header comment) -----------------------------------------------------------------------------------------------
 
-;; channel へ合図を出す文(中立の記法)— 答え手は他の文と同じ postgres-query で流す(transaction の中なら commit した時だけ届く)。
-;; 本文は notice-payload。
+;; The statement that sends a signal to a channel (neutral notation). The handler runs it with the same postgres-query as other statements (inside a transaction it is delivered only on commit).
+;; The body is notice-payload.
 (val NOTICE-STATEMENT "SELECT pg_notify(:channel, :payload)")
 
 
 (defwire NoticeWire
-  "合図の本文(NOTIFY の payload — 頭の註)の JSON の object: origin = 合図を出して同じ process の呼び鈴を鳴らす貸し出しの印(None = 鳴らす
-   貸し出しが無い)・topics = 合図が関わる名の並び(名の順・重ねない — None = 名の分からない合図 = 全部の待ち手に関わる)。"
+  "The JSON object of the signal body (NOTIFY's payload; see the header comment): origin = the mark of the lease that emitted the signal and rings same-process bells (None = there is no
+   lease that rings); topics = the sequence of names the signal concerns (in name order, without duplicates; None = a signal with unknown names = concerns all waiters)."
   {:tags {:context "sql" :role "type" :reads "json"} :names :camel :unknown :reject}
   (setv #^ (| str None) origin None)
   (setv #^ (| (get tuple #(str ...)) None) topics None))
@@ -594,8 +595,8 @@
 (defk notice-payload [origin topics]
   {:pre [(: origin (| str None)) (: topics (| tuple None))] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "合図の本文(NOTIFY の payload — NoticeWire の JSON)を綴るため(頭の註)。名を載せると本文が NOTICE-PAYLOAD-LIMIT bytes に届く書き
-   (多くの名を触る書き)は名を載せない — 全部に関わる合図にする(絞れない合図は全部を起こす側の意味 — 起こし損ねない)。"
+  "Spells the signal body (NOTIFY's payload; NoticeWire's JSON) (see the header comment). A write whose body would reach NOTICE-PAYLOAD-LIMIT bytes if the names were carried
+   (a write touching many names) does not carry the names and becomes a signal concerning all (a signal that cannot be narrowed means waking everyone, so no one is missed)."
   (<- named str (dump-json (NoticeWire :origin origin :topics (if (is topics None) None (tuple (sorted (set topics)))))))
   (<- marked str (dump-json (NoticeWire :origin origin)))
   (if (< (len (.encode named "utf-8")) NOTICE-PAYLOAD-LIMIT) named marked))
@@ -604,8 +605,8 @@
 (defk heard-notice [payload]
   {:pre [(: payload str)] :post [(: % NoticeWire)]
    :tags {:context "sql" :role "foundation"}}
-  "待ち受けが受けた合図の本文を読むため。NoticeWire の形でない本文(空・JSON でない・欄の形が違う — 印を持たない書き手や手で流した NOTIFY)は、
-   印の無い・名の分からない合図 = 全部の待ち手に関わる合図と読む(頭の註の定義)。"
+  "Reads the body of a signal the listener received. A body not in NoticeWire's form (empty, not JSON, wrong field shape; a writer without a mark, or a hand-sent NOTIFY) is read as
+   a signal with no mark and unknown names = a signal concerning all waiters (the definition in the header comment)."
   (<- heard (| NoticeWire Malformed) (parse-json NoticeWire payload))
   (match heard
     (NoticeWire) heard
@@ -615,7 +616,7 @@
 (defk notice-params [origin notify]
   {:pre [(: origin (| str None)) (: notify SqlNotify)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "合図 notify を流す文(NOTICE-STATEMENT)の引数を作るため(本文は印 origin と合図の名 — notice-payload)。"
+  "Builds the arguments of the statement (NOTICE-STATEMENT) that sends signal notify (the body is the mark origin and the signal's names; notice-payload)."
   (<- payload (notice-payload origin notify.topics))
   #((SqlParam :name "channel" :value notify.channel) (SqlParam :name "payload" :value payload)))
 
@@ -624,8 +625,8 @@
   {:pre [(: connection PipelineConnection) (: database str) (: origin (| str None)) (: notify SqlNotify)]
    :post [(: % (| SqlRows SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "合図 notify を接続で流すため(transaction の中なら commit した時だけ届く — 印 origin は合図の後に同じ process の呼び鈴を鳴らす貸し出しの
-   印・None = 鳴らす貸し出しが無い)。"
+  "Sends signal notify on the connection (inside a transaction it is delivered only on commit; the mark origin is the mark of the lease that rings same-process bells after the signal;
+   None = there is no lease that rings)."
   (<- params (notice-params origin notify))
   (<- answer (postgres-query connection (SqlQuery database NOTICE-STATEMENT params)))
   answer)
@@ -634,8 +635,8 @@
 (defk noted-notice [raised notify]
   {:pre [(: raised RaisedNotices) (: notify SqlNotify)] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
-  "合図 notify を覚え raised に足すため(接続を返した後に同じ process の呼び鈴を鳴らす — 同じ channel の名は和・どちらかが名の分からない
-   合図 None なら None)。"
+  "Adds signal notify to the record raised (same-process bells are rung after the connection is returned; names on the same channel are unioned, and if either is a
+   signal with unknown names, None, the result is None)."
   (val held (.get raised.topics notify.channel (frozenset)))
   (setv (get raised.topics notify.channel)
         (if (or (is held None) (is notify.topics None)) None (| held (frozenset notify.topics))))
@@ -643,9 +644,9 @@
 
 
 (defrecord PostgresStep
-  "pipeline に積む文 1 つ(postgres-flush の往復の中の順): text = psycopg へ渡す文 / params = 名つきの引数(None = 引数の書き換えを
-   通さない文 — BEGIN・COMMIT)/ rows = executemany で流す行(None = 文 1 つ)/ binary = 答えの行を binary の形で受ける(SqlQuery の
-   binary)/ answered = その答えを往復の答え(requests の答え)に載せるか(BEGIN・錠・合図・COMMIT は載せない)。"
+  "One statement to pile into the pipeline (the order within a postgres-flush round trip): text = the statement handed to psycopg / params = named arguments (None = a statement that skips
+   argument rewriting, i.e. BEGIN and COMMIT) / rows = rows to run with executemany (None = a single statement) / binary = receive the answer rows in binary form (SqlQuery's
+   binary) / answered = whether to put its answer in the round trip's answers (the answers for requests) (BEGIN, locks, signals, and COMMIT are not put in)."
   (#^ str text)
   (#^ (| (get tuple #(SqlParam ...)) None) params)
   (#^ (| (get tuple #((get tuple #((| int float str bytes bool None) ...)) ...)) None) rows)
@@ -656,7 +657,7 @@
 (defk step-sent-bytes [step]
   {:pre [(: step (| PostgresStep None))] :post [(: % int)]
    :tags {:context "sql" :role "foundation"}}
-  "pipeline に積む文 1 つが送る一番大きな message の bytes を見積もるため(引数の組 1 つか、executemany の行 1 つ — noted-carry へ渡す)。"
+  "Estimates the bytes of the largest message that one statement piled into the pipeline sends (one set of arguments, or one executemany row; passed to noted-carry)."
   (cond
     (is step None) 0
     (is-not step.rows None) (! (largest-message-bytes step.rows False))
@@ -667,8 +668,8 @@
 (defk request-step [request]
   {:pre [(: request (| SqlQuery SqlInsertRows))] :post [(: % (| PostgresStep None))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の中の文 1 つ(SqlQuery | SqlInsertRows)を pipeline の文にするため(引数と行の検めは送る前 — 誤りは ValueError / TypeError)。
-   行の無い SqlInsertRows は文を流さないので None(答えは SqlRows の 0 行)。"
+  "Turns one statement in a transaction (SqlQuery | SqlInsertRows) into a pipeline statement (arguments and rows are checked before sending; mistakes are ValueError / TypeError).
+   A SqlInsertRows with no rows sends no statement, so it is None (its answer is a SqlRows with 0 rows)."
   (match request
     (SqlQuery :statement statement :params params :binary binary)
       (do (<- bound (postgres-statement statement params))
@@ -682,9 +683,9 @@
 (defk flush-steps [locks origin flush]
   {:pre [(: locks tuple) (: origin (| str None)) (: flush TransactionFlush)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の往復 1 回(TransactionFlush)を pipeline に積む文の並びにするため(順 = BEGIN・錠(locks の順 — transaction-locks)・文・合図・
-   COMMIT)。requests の位置は答えの順と同じで、文を流さない request(行の無い SqlInsertRows)は None のまま並べる。合図の本文には貸し出しの
-   印 origin を載せる(頭の註 — None = 合図の後に同じ process の呼び鈴を鳴らす貸し出しが無い)。"
+  "Turns one transaction round trip (TransactionFlush) into the sequence of statements piled into the pipeline (order = BEGIN, locks [in the order of locks; transaction-locks], statements, signals,
+   COMMIT). Positions in requests match the order of the answers, and a request that sends no statement (a SqlInsertRows with no rows) stays in place as None. The signal body carries the lease's
+   mark origin (see the header comment; None = there is no lease that rings same-process bells after the signal)."
   (var opening #())
   (when flush.opening
     (:= opening #((PostgresStep :text "BEGIN" :params None :rows None :binary False :answered False)))
@@ -706,9 +707,9 @@
 
 
 (defclass [runtime-checkable] StatementCursor [Protocol]
-  "pipeline に積んだ文 1 つの答えを受ける driver の cursor の形(psycopg 3 の Cursor がこの形を持つ — psycopg はこの module の I/O の関数の
-   中でだけ読むので、契約は psycopg の型でなくこの形で書く)。description = 行を返す文の欄の並び(返さない文は None)・rowcount = engine が
-   数えた行の数・fetchall = 行を読む・close = 閉じる・executemany = 同じ文を行ごとに積む。"
+  "The shape of the driver cursor that receives the answer to one statement piled into the pipeline (psycopg 3's Cursor has this shape; psycopg is imported only inside this module's I/O functions,
+   so the contract is written with this shape rather than psycopg's type). description = the sequence of columns of a statement that returns rows (None for one that does not) / rowcount = the number of rows
+   the engine counted / fetchall = reads the rows / close = closes / executemany = piles the same statement per row."
   #^ (| tuple list None) description
   #^ int rowcount
   #^ (get Callable #([] list)) fetchall
@@ -717,20 +718,20 @@
 
 
 (defclass [runtime-checkable] PipelineConnection [Protocol]
-  "transaction の往復を 1 つの pipeline で流す driver の接続の形(psycopg 3 の Connection がこの形を持つ — StatementCursor と同じ理由で
-   psycopg の型を契約に書かない)。pipeline = pipeline mode の出入り(with)・execute = 文 1 つを積んで cursor を返す・cursor = executemany
-   を積む cursor を作る。"
+  "The shape of the driver connection that sends a transaction's round trip in one pipeline (psycopg 3's Connection has this shape; for the same reason as StatementCursor,
+   psycopg's type is not written in the contract). pipeline = entering and leaving pipeline mode (with) / execute = piles one statement and returns a cursor / cursor = creates a cursor that piles
+   executemany."
   #^ (get Callable #([] AbstractContextManager)) pipeline
   #^ (get Callable #([str (| dict None)] StatementCursor)) execute
   #^ (get Callable #([] StatementCursor)) cursor)
 
 
 (defk step-queries [transformer step]
-  {:pre [(: transformer "psycopg の Transformer") (: step (| PostgresStep None))] :post [(: % tuple)]
+  {:pre [(: transformer "a psycopg Transformer") (: step (| PostgresStep None))] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "pipeline に積む文 1 つを、libpq へ送る形(psycopg の PostgresQuery — 文の bytes・引数の bytes・型・形)の並びにするため(文 1 つは 1 つ・
-   executemany の文は行ごとに 1 つ・文を流さない request は 0)。引数の書き換えと値の写しは psycopg の cursor の execute と同じ物を使う
-   (同じ文・同じ値なら server に届く message は cursor の道と同じ)。"
+  "Turns one statement piled into the pipeline into a sequence of the forms sent to libpq (psycopg's PostgresQuery: statement bytes, argument bytes, types, formats) (one statement gives one;
+   an executemany statement gives one per row; a request that sends no statement gives 0). Argument rewriting and value mapping use the same things as psycopg's cursor execute
+   (the same statement and values give the same messages reaching the server as the cursor path)."
   (import psycopg._queries [PostgresQuery])
   (when (is step None)
     (return #()))
@@ -746,16 +747,16 @@
 
 
 (defclass [(dataclass :kw-only True)] PreparedBook []
-  "接続 1 本で名つきにした文の覚え(postgres-flush の註): names = (文の bytes, 引数の型の oid の並び) → server の上の名・issued = 次に付ける
-   名の番号。書き換えるのは接続を借りた driver の thread だけなので値の型ではない。"
+  "Record of statements named on one connection (see the note on postgres-flush): names = (statement bytes, sequence of argument type oids) -> the name on the server / issued = the number
+   of the next name to assign. Only the driver thread that borrowed the connection rewrites it, so it is not a value type."
   (setv #^ dict names (field :default-factory dict))
   (setv #^ int issued 0))
 
 
 (defk prepared-book [connection]
-  {:pre [(: connection "psycopg の接続")] :post [(: % PreparedBook)]
+  {:pre [(: connection "a psycopg connection")] :post [(: % PreparedBook)]
    :tags {:context "sql" :role "foundation"}}
-  "接続の名つきの文の覚えを引くため(無ければ空で作る — 覚えの表は thread の間で分け合うので錠の中で)。"
+  "Looks up the connection's record of named statements (creates an empty one if absent; the record table is shared between threads, so this is done inside a lock)."
   (with [_ PREPARED-LOCK]
     (when (not-in connection PREPARED)
       (setv (get PREPARED connection) (PreparedBook)))
@@ -763,10 +764,10 @@
 
 
 (defk socket-ready [pgconn events]
-  {:pre [(: pgconn "psycopg の PGconn") (: events int)] :post [(: % int)]
+  {:pre [(: pgconn "a psycopg PGconn") (: events int)] :post [(: % int)]
    :tags {:context "sql" :role "foundation"}}
-  "接続の socket が events(select の POLLIN | POLLOUT)のどれかになるまで driver の thread で待ち、起きた events を返すため(上限は持たない —
-   死んだ相手は接続の上限 tcp_user_timeout と keepalive が socket の誤りにし、文の上限は server の statement_timeout が持つ — 頭の註)。"
+  "Waits on a driver thread until the connection's socket becomes any of events (select's POLLIN | POLLOUT) and returns the events that occurred (no limit is held here:
+   a dead peer is turned into a socket error by the connection limits tcp_user_timeout and keepalive, and the statement limit is held by the server's statement_timeout; see the header comment)."
   (import select)
   (val poller (select.poll))
   (.register poller pgconn.socket events)
@@ -777,10 +778,10 @@
 
 
 (defk libpq-sent [pgconn]
-  {:pre [(: pgconn "psycopg の PGconn")] :post [(: % None)]
+  {:pre [(: pgconn "a psycopg PGconn")] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
-  "libpq の送りの buffer に積んだ文を、全部 socket へ送り切るため(送れない間は書けるか読めるまで待ち、読める時は先に受けて server の
-   送りが詰まらないようにする — libpq の PQflush の作法)。"
+  "Sends all the statements piled in libpq's send buffer to the socket (while it cannot send, waits until it is writable or readable, and when readable receives first so that the server's
+   sends do not get stuck; this is the manner of libpq's PQflush)."
   (import select)
   (while (.flush pgconn)
     (<- happened (socket-ready pgconn (| select.POLLIN select.POLLOUT)))
@@ -790,9 +791,9 @@
 
 
 (defk libpq-results [pgconn]
-  {:pre [(: pgconn "psycopg の PGconn")] :post [(: % tuple)]
+  {:pre [(: pgconn "a psycopg PGconn")] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "pipeline の sync までの答え(文ごとの PGresult — 送った順・sync の印は含めない)を受けるため(受けるまで読めるのを待つ)。"
+  "Receives the answers up to the pipeline's sync (a PGresult per statement, in the order sent; the sync mark is not included) (waits until readable before receiving)."
   (import select)
   (import psycopg [pq])
   (var results #())
@@ -809,23 +810,23 @@
 
 
 (defk result-failure [connection results]
-  {:pre [(: connection "psycopg の接続") (: results tuple)] :post [(: % (| Exception None))]
+  {:pre [(: connection "a psycopg connection") (: results tuple)] :post [(: % (| Exception None))]
    :tags {:context "sql" :role "foundation"}}
-  "往復の答えのうち、最初に落ちた文の失敗を psycopg の例外にするため(落ちた文の後ろは sync まで PIPELINE_ABORTED — 落ちていなければ None)。"
+  "Turns, among the round trip's answers, the failure of the first failed statement into a psycopg exception (statements after the failed one are PIPELINE_ABORTED until sync; None if none failed)."
   (import psycopg [pq errors])
   (val failed (next (gfor result results :if (= result.status pq.ExecStatus.FATAL-ERROR) result) None))
   (cond
     (is-not failed None) (errors.error-from-result failed :encoding connection.info.encoding)
     (any (gfor result results (= result.status pq.ExecStatus.PIPELINE-ABORTED)))
-      (errors.PipelineAborted "pipeline の文が流されなかった(落ちた文の答えが無い)")
+      (errors.PipelineAborted "the pipeline's statements were not run (there is no answer for the failed statement)")
     True None))
 
 
 (defk results-answer [transformer step results]
-  {:pre [(: transformer "psycopg の Transformer") (: step (| PostgresStep None)) (: results tuple)] :post [(: % SqlRows)]
+  {:pre [(: transformer "a psycopg Transformer") (: step (| PostgresStep None)) (: results tuple)] :post [(: % SqlRows)]
    :tags {:context "sql" :role "foundation"}}
-  "pipeline の sync の後に、文 1 つの答え(PGresult の並び — executemany は行ごとに 1 つ)を SqlRows にするため(文を流さなかった request は 0 行・
-   行を返さない文は engine が数えた行の数 — executemany は和)。"
+  "After the pipeline's sync, turns the answer of one statement (a sequence of PGresult; executemany gives one per row) into SqlRows (a request that sent no statement gives 0 rows;
+   a statement that returns no rows gives the number of rows the engine counted; for executemany, the sum)."
   (import psycopg [pq])
   (cond
     (not results) (SqlRows :rows #() :rowcount 0)
@@ -842,30 +843,30 @@
   {:pre [(: connection PipelineConnection) (: locks tuple) (: origin (| str None)) (: flush TransactionFlush)]
    :post [(: % (| tuple SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の往復 1 回(TransactionFlush)を 1 つの pipeline で送り、答えを順に受けるため(頭の註)。答え = requests と同じ順の SqlRows の
-   tuple | 最初に落ちた文の失敗(BEGIN・錠・合図・COMMIT を含む — PostgreSQL は落ちた文から sync までを流さない)。driver の I/O なので
-   driver の thread で回す。locks = 最初の往復で BEGIN の次に取る錠の並び・origin = 合図の本文に載せる貸し出しの印(flush-steps)。
-   文は psycopg の cursor を通さず、libpq の口(接続の pgconn)で pipeline mode の送りの buffer に全部積み、sync を 1 度積んでから 1 度に
-   送り切り、sync までの答えを順に受ける(cursor の pipeline は文 1 つごとに cursor・写しの組・socket の送りと
-   待ちを作り、本番の free-threaded の Python の psycopg〔C の拡張の無い pure-python の libpq の口〕で文 1 つに約 0.25 ms の CPU を使い、
-   DB は文が 1 つ届くごとに起きて次の文を待った〔pipeline の中の ClientRead〕。手元の 8 文の往復で client の CPU 2.09 → 0.62 ms)。
-   文は接続ごとに名つきの prepared statement にして使い回す(PREPARED — 初めての文は同じ往復で用意してから流す。名を付けないと server が
-   毎回 plan を組み、索引 76 本の表の行の錠つきの読みで 1 回 約 0.4 ms。cursor の道は名を付けない — psycopg の自動の prepare は止めてある)。
-   引数の書き換えと値の写し・答えの値の読みは cursor と同じ psycopg の部品(step-queries・results-answer)。pipeline mode は答えを sync まで
-   受け切った後に出る(落ちた往復でも — 送りか受けの途中で接続が切れて出られずに残った接続は、返す時に捨てる)。"
+  "Sends one transaction round trip (TransactionFlush) in a single pipeline and receives the answers in order (see the header comment). Answer = a tuple of SqlRows in the same order as requests
+   | the failure of the first failed statement (including BEGIN, locks, signals, and COMMIT; PostgreSQL does not run from the failed statement through sync). Since this is driver I/O, it runs on a
+   driver thread. locks = the sequence of locks taken after BEGIN in the first round trip / origin = the lease mark carried in the signal body (flush-steps).
+   The statements do not go through psycopg's cursor: they are all piled into the pipeline-mode send buffer through libpq's interface (the connection's pgconn), one sync is piled, then
+   everything is sent at once and the answers up to sync are received in order (the cursor pipeline creates, per statement, a cursor, a mapping set, and socket sends and
+   waits; in production's free-threaded Python psycopg [the pure-python libpq interface with no C extension] it used about 0.25 ms of CPU per statement, and
+   the DB woke for each statement that arrived and waited for the next [ClientRead inside the pipeline]. In a local 8-statement round trip, client CPU went from 2.09 to 0.62 ms).
+   Statements are reused as named prepared statements per connection (PREPARED: a statement seen for the first time is prepared in the same round trip and then run. Without names the server
+   builds a plan every time, taking about 0.4 ms per row-locking read on a table with 76 indexes. The cursor path does not name statements: psycopg's automatic prepare is turned off).
+   Argument rewriting, value mapping, and reading of answer values use the same psycopg parts as the cursor (step-queries and results-answer). Pipeline mode is left after the answers are
+   received up to sync (even for a failed round trip; a connection that broke during sending or receiving and so remained unable to leave is discarded on return)."
   (import psycopg)
   (import psycopg.adapt [Transformer])
   (<- steps (flush-steps locks origin flush))
-  ;; 送りの印は積む前に付ける(落ちた往復でも buffer は伸びている — postgres-run と同じ)。
+  ;; Mark the send before piling it (even a failed round trip has grown the buffer, as in postgres-run).
   (for [step steps]
     (<- sent (step-sent-bytes step))
     (<- (noted-carry connection sent)))
   (val pgconn connection.pgconn)
   (val transformer (Transformer connection))
   (<- book (prepared-book connection))
-  ;; この往復で新しく名を付けた文(往復が通った時だけ覚えに足す — 落ちた往復の名は server に残るが、名は番号で重ねない)。
+  ;; Statements newly named in this round trip (added to the record only if the round trip passed; names from a failed round trip remain on the server, but names are numbered and do not collide).
   (var fresh {})
-  ;; 文ごとの答えの数(名を付けた往復の文は、用意の答えと流した答えの 2 つ)— step の順・step の中の文の順。
+  ;; The number of answers per statement (a statement in a round trip where it was named has two answers: the prepare's and the run's), in step order and, within a step, in statement order.
   (var spans #())
   (var counts #())
   (var name None)
@@ -912,7 +913,7 @@
   (var at 0)
   (var mine #())
   (for [#(step step-counts) (zip steps spans :strict True)]
-    ;; 文ごとに、その文の答えの最後(名を付けた文は用意の答えの次)を取る。
+    ;; For each statement, take the last of its answers (for a newly named statement, the one after the prepare's answer).
     (:= mine #())
     (for [count step-counts]
       (:= mine (+ mine #((get results (+ at count -1)))))
@@ -928,7 +929,7 @@
 (defk postgres-begin [connection locks]
   {:pre [(: connection PipelineConnection) (: locks tuple)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction を始め、錠の並び locks(transaction-locks)を順に取るため(成功は None — 既定の手順の BEGIN と錠 1 つずつの往復)。"
+  "Starts a transaction and takes the sequence of locks locks (transaction-locks) in order (success is None; the default procedure's BEGIN and one round trip per lock)."
   (<- began (postgres-run connection "BEGIN" None False))
   (when (not (isinstance began SqlRows))
     (return began))
@@ -941,18 +942,18 @@
 
 
 (defk postgres-control [connection statement]
-  {:pre [(: connection "psycopg の接続") (: statement str)] :post [(: % (| SqlFailed SqlUnreachable None))]
+  {:pre [(: connection "a psycopg connection") (: statement str)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の区切りの文(COMMIT・ROLLBACK)を流すため(成功は None)。"
+  "Sends a transaction delimiter statement (COMMIT or ROLLBACK) (success is None)."
   (<- answer (postgres-run connection statement None False))
   (if (isinstance answer SqlRows) None answer))
 
 
 (defk postgres-lease [connections database]
-  {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "psycopg の接続 | SqlUnreachable")]
+  {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "a psycopg connection | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "接続を 1 本借りるため(開けなければ SqlUnreachable)。psycopg は借りが誤りで終わった時の読み分けでだけ読む — driver を開くのは貸し出しの
-   acquire なので、借りが通る道は偽の貸し出しで撃てる。"
+  "Borrows one connection (SqlUnreachable if it cannot be opened). psycopg is imported only for distinguishing when the borrow ends in an error; the driver is opened by the lease's
+   acquire, so the path where the borrow succeeds can be exercised with a fake lease."
   (try
     (.acquire connections database)
     (except [error Exception]
@@ -962,18 +963,18 @@
         _ (raise)))))
 
 
-(deff lease-now [connections database]  ; defk にできない: driver の thread で回す入口(VM の外)
-  {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "psycopg の接続 | SqlUnreachable")]}
-  "driver の thread で接続を 1 本借りるため(許可を待つのもこの thread — 開けなければ SqlUnreachable)。"
+(deff lease-now [connections database]  ; cannot be a defk: the entry run on a driver thread (outside the VM)
+  {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "a psycopg connection | SqlUnreachable")]}
+  "Borrows one connection on a driver thread (the wait for a permit is also on this thread; SqlUnreachable if it cannot be opened)."
   (run-detached (postgres-lease connections database)))
 
 
-(deff lease-run-return [connections database claim work]  ; defk にできない: driver の thread で回す入口
-  {:pre [(: connections PostgresConnections) (: database str) (: claim "threading.Lock") (: work "(接続) → Program の callable")]
-   :post [(: % "work の答え | SqlUnreachable | None")]}
-  "driver の thread の仕事 1 つで、接続を借り、借りた接続で work(接続 → Program)を流し、必ず返すため(文 1 つの effect の答え —
-   offloaded-statement の註)。借りられなければ SqlUnreachable。借りた後に claim を先に取れた時だけ流す — 取れなければ、待ち手が文の
-   始まる前に取り消されているので、文を流さずにすぐ返す(答えは誰にも届かないので None)。"
+(deff lease-run-return [connections database claim work]  ; cannot be a defk: the entry run on a driver thread
+  {:pre [(: connections PostgresConnections) (: database str) (: claim "threading.Lock") (: work "a callable (connection) -> Program")]
+   :post [(: % "the answer of work | SqlUnreachable | None")]}
+  "In a single driver-thread job, borrows a connection, runs work (connection -> Program) on the borrowed connection, and always returns it (the answer of a single-statement effect;
+   see the note on offloaded-statement). SqlUnreachable if it cannot be borrowed. It runs only if claim could be taken first after borrowing; if it could not, the waiter was cancelled before the statement
+   started, so it returns immediately without running the statement (the answer reaches no one, so None)."
   (setv leased (lease-now connections database))
   (cond
     (isinstance leased SqlUnreachable) leased
@@ -984,10 +985,10 @@
 
 
 (defclass [(dataclass :kw-only True)] TransactionLease []
-  "transaction 1 つが借りた接続の覚え(offloaded-transaction の註 — 接続を借りる仕事を最初の driver の呼びと、返す仕事を最後の呼びと同じ
-   仕事にするため)。書き換えるのは答え手の手順と、錠 guard を握った driver の thread だけなので値の型ではない。connection = 借りた接続 |
-   SqlUnreachable(借りられなかった)| None(まだ借りていない)/ submitted = driver の呼びを 1 つでも撃った / returned = 接続を返した
-   (借りられなかった時も、もう借りない印として立てる)/ abandoned = 待ち手が去った(この後に撃たれた呼びは流さない)。"
+  "Record of the connection one transaction borrowed (see the note on offloaded-transaction; so that the job of borrowing the connection is the same job as the first driver call, and the job of returning is the same
+   job as the last call). Only the handler's procedure and the driver thread that holds the lock guard rewrite it, so it is not a value type. connection = the borrowed connection |
+   SqlUnreachable (could not be borrowed) | None (not yet borrowed) / submitted = at least one driver call was fired / returned = the connection was returned
+   (also set when it could not be borrowed, as the mark that it will not borrow again) / abandoned = the waiter left (calls fired after this are not run)."
   (setv #^ (| PipelineConnection SqlUnreachable None) connection None)
   (setv #^ bool submitted False)
   (setv #^ bool returned False)
@@ -995,8 +996,8 @@
 
 
 (defrecord TransactionDriver
-  "transaction 1 つの driver の呼びの道具(offloaded-transaction の註): connections = 接続の貸し出し・pool = driver の thread・database = 名・
-   lease = 借りた接続の覚え・guard = 接続 1 本への driver の呼びを 1 本ずつ回す錠。"
+  "The tools for one transaction's driver calls (see the note on offloaded-transaction): connections = the connection lease / pool = the driver threads / database = the name /
+   lease = the record of the borrowed connection / guard = the lock that runs driver calls on one connection one at a time."
   (#^ PostgresConnections connections)
   (#^ Executor pool)
   (#^ str database)
@@ -1004,12 +1005,12 @@
   (#^ AbstractContextManager guard))
 
 
-(deff drive-leased [driver work closing]  ; defk にできない: driver の thread で回す入口(VM の外)
+(deff drive-leased [driver work closing]  ; cannot be a defk: the entry run on a driver thread (outside the VM)
   {:pre [(: driver TransactionDriver) (: work (get Callable #([PipelineConnection] Program))) (: closing bool)]
-   :post [(: % "work の答え | SqlUnreachable | None")]}
-  "driver の thread の仕事 1 つで、錠 guard の下で、まだ借りていなければ接続を借り、work(接続 → Program)を流し、closing(COMMIT・ROLLBACK を
-   流す最後の呼び)なら同じ仕事で接続を返すため(offloaded-transaction の註)。待ち手が去った後・返した後の呼びは流さない(None — 答えは誰にも
-   届かない)。借りられなかった後の呼びは流さずに SqlUnreachable を返す。"
+   :post [(: % "the answer of work | SqlUnreachable | None")]}
+  "In a single driver-thread job, under the lock guard, borrows a connection if not yet borrowed, runs work (connection -> Program), and, if closing (the last call, which sends COMMIT or
+   ROLLBACK), returns the connection in the same job (see the note on offloaded-transaction). Calls after the waiter left or after the return are not run (None; the answer reaches
+   no one). A call after a failed borrow is not run and returns SqlUnreachable."
   (setv lease driver.lease)
   (with [_ driver.guard]
     (when (or lease.abandoned lease.returned)
@@ -1029,10 +1030,10 @@
           (setv lease.returned True))))))
 
 
-(deff abandon-lease [driver]  ; defk にできない: driver の thread で回す後始末の入口
+(deff abandon-lease [driver]  ; cannot be a defk: the entry for cleanup run on a driver thread
   {:pre [(: driver TransactionDriver)] :post [(: % "None")]}
-  "最後の呼びが返さなかった接続を返すため(錠 guard の下 — 走っている呼びの後・offloaded-transaction の註)。印 abandoned を立てるので、まだ
-   始まっていない呼びは流さずに終わる(接続を借りる前の呼びなら、借りもしない)。"
+  "Returns a connection that the last call did not return (under the lock guard: after any running call; see the note on offloaded-transaction). It sets the mark abandoned, so calls that have not
+   started yet finish without running (a call before borrowing the connection does not even borrow)."
   (setv lease driver.lease)
   (with [_ driver.guard]
     (setv lease.abandoned True)
@@ -1043,24 +1044,24 @@
 
 
 (defk driven [driver work closing]
-  {:pre [(: driver TransactionDriver) (: work Callable) (: closing bool)] :post [(: % "work の答え | SqlUnreachable | None")]
+  {:pre [(: driver TransactionDriver) (: work Callable) (: closing bool)] :post [(: % "the answer of work | SqlUnreachable | None")]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の接続 1 本への driver の呼び 1 つを、pool の thread の仕事 1 つ(まだなら借りる・流す・closing なら返す — drive-leased)で回し、
-   撃った task だけが待つため(offloaded-transaction の註)。"
+  "Runs one driver call on a transaction's connection as one job on a pool thread (borrow if not yet; run; and, if closing, return; drive-leased), and only the task that fired it
+   waits (see the note on offloaded-transaction)."
   (setv driver.lease.submitted True)
   (<- answer (offloaded driver.pool (fn [] (drive-leased driver work closing)) keep-nothing))
   answer)
 
 
 (defclass TransactionAbandoned [Exception]
-  "束ねた transaction を driver の thread で回す間に待ち手が去った印(次の往復を流さずに ROLLBACK へ倒す — offloaded-batched-transaction)。")
+  "The mark that the waiter left while a batched transaction was running on a driver thread (the next round trip is not sent and it falls to ROLLBACK; offloaded-batched-transaction).")
 
 
 (defk leased-here [driver]
   {:pre [(: driver TransactionDriver)] :post [(: % (| PipelineConnection SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "束ねた transaction の driver の thread の中で、まだ借りていなければ接続を 1 本借りるため(最初の往復の時 — 文を流さない program は
-   借りない・開けなければ SqlUnreachable)。"
+  "Inside a batched transaction's driver thread, borrows one connection if not yet borrowed (at the time of the first round trip: a program that sends no statement
+   does not borrow; SqlUnreachable if it cannot be opened)."
   (when (is driver.lease.connection None)
     (<- leased (postgres-lease driver.connections driver.database))
     (setv driver.lease.connection leased))
@@ -1071,10 +1072,10 @@
   {:pre [(: driver TransactionDriver) (: locks tuple) (: origin str) (: raised RaisedNotices) (: flush TransactionFlush)]
    :post [(: % (| tuple SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "束ねた transaction の往復 1 回を、driver の thread の中でその場で流すため(offloaded-batched-transaction の註): 待ち手が去っていれば流さずに
-   TransactionAbandoned を上げ(ROLLBACK へ倒す)、往復に載る合図を覚え、COMMIT を載せる往復なら流す前に「届く所まで流した」の印を立てる。"
+  "Sends one round trip of a batched transaction on the spot inside the driver thread (see the note on offloaded-batched-transaction): if the waiter has left, raises
+   TransactionAbandoned without sending (falling to ROLLBACK), records the signals carried in the round trip, and, for a round trip carrying COMMIT, sets the mark 'sent far enough to be delivered' before sending."
   (when driver.lease.abandoned
-    (raise (TransactionAbandoned "待ち手が去ったので次の往復を流さない")))
+    (raise (TransactionAbandoned "the waiter left, so the next round trip is not sent")))
   (for [notify flush.notices]
     (<- (noted-notice raised notify)))
   (<- held (leased-here driver))
@@ -1089,7 +1090,7 @@
 (defk rolled-back-here [driver]
   {:pre [(: driver TransactionDriver)] :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "束ねた transaction の ROLLBACK を、driver の thread の中で借りた接続に流すため(借りていない・借りられなかった時は流す物が無い)。"
+  "Sends a batched transaction's ROLLBACK on the borrowed connection inside the driver thread (if not borrowed or could not be borrowed, there is nothing to send)."
   (val held driver.lease.connection)
   (when (or (is held None) (isinstance held SqlUnreachable))
     (return None))
@@ -1097,11 +1098,11 @@
   answer)
 
 
-(deff run-batched-here [driver locks origin raised program]  ; defk にできない: driver の thread で回す入口(VM の外から新しい VM を起こす)
+(deff run-batched-here [driver locks origin raised program]  ; cannot be a defk: the entry run on a driver thread (starts a new VM from outside the VM)
   {:pre [(: driver TransactionDriver) (: locks tuple) (: origin str) (: raised RaisedNotices) (: program Program)]
-   :post [(: % "program の答え | SqlFailed | SqlUnreachable | None")]}
-  "driver の thread の仕事 1 つで、錠 guard の下で、束ねた transaction の全部(program と往復・必要なら ROLLBACK)を新しい VM で回し、借りた
-   接続を同じ仕事で返すため(offloaded-batched-transaction の註)。待ち手が始まる前に去っていれば何もしない(None — 答えは誰にも届かない)。"
+   :post [(: % "the answer of program | SqlFailed | SqlUnreachable | None")]}
+  "In a single driver-thread job, under the lock guard, runs the whole of a batched transaction (the program and round trips, and ROLLBACK if needed) on a new VM, and returns the borrowed
+   connection in the same job (see the note on offloaded-batched-transaction). If the waiter left before it started, does nothing (None; the answer reaches no one)."
   (setv lease driver.lease)
   (with [_ driver.guard]
     (when (or lease.abandoned lease.returned)
@@ -1118,26 +1119,26 @@
         (setv lease.returned True)))))
 
 
-(deff abandoned-now [driver]  ; defk にできない: Executor の thread で回す止め方の入口(VM の外)
+(deff abandoned-now [driver]  ; cannot be a defk: the entry for the stopping method run on an Executor thread (outside the VM)
   {:pre [(: driver TransactionDriver)] :post [(: % "None")]}
-  "走っている束ねた transaction に、待ち手が去った印を立てるため(錠 guard を取らない — 走っている仕事が guard を持ったまま次の往復の前に
-   読む)。"
+  "Sets the mark that the waiter left on a running batched transaction (does not take the lock guard: the running job holds the guard and reads the mark before
+   the next round trip)."
   (setv driver.lease.abandoned True)
   None)
 
 
 (defk offloaded-batched-transaction [connections pool database program locks]
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: locks tuple)]
-   :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
+   :post [(: % "the answer of program | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "batched = True の transaction を、driver の thread の仕事 1 つ(借りる → program と往復 → 返す — run-batched-here)で回し、撃った task
-   だけが待つため。往復の間に scheduler の thread へ戻らない: 束ねた transaction の program が出せるのは SQL の effect と純粋な計算だけ
-   (sql_transaction.hy の scope — 他の effect は TransactionMisused)なので、program を driver の thread の新しい VM で回しても答えは変わらない。
-   往復ごとに scheduler へ戻ると、1 往復目の答えから 2 往復目を撃つまでの間(scheduler の列の待ち + 判定)も置き場の書きの錠を持ち続け、
-   scheduler が混むほど錠を持つ間が伸びて、同じ錠を待つ書きが積もった(agora-redesign の記録の service の PutRows)。
-   取り消し: 待ち手が去ったら、次の往復の前に印(abandoned)を読んで流さずに ROLLBACK し、接続を返す — 走っている往復は止めない(文 1 つずつの
-   手順と同じ)。印は取り消しの callback(Executor の止め方 abandoned-now)と、取り消しを受けた task がその場で立てる。finally は錠 guard の
-   下の返し abandon-lease を待つので、合図(ring-local)は走っていた往復(COMMIT を含む)の後に鳴る。"
+  "Runs a transaction with batched = True as a single driver-thread job (borrow -> program and round trips -> return; run-batched-here), and only the task that fired it
+   waits. It does not return to the scheduler's thread between round trips: the program of a batched transaction can emit only SQL effects and pure computation
+   (the scope of sql_transaction.hy; other effects are TransactionMisused), so running the program on a new VM on the driver thread does not change the answer.
+   If it returned to the scheduler on every round trip, the time from the answer of the first round trip to firing the second (the wait in the scheduler's queue plus dispatch) would also hold the store's write lock,
+   and the more crowded the scheduler, the longer the lock would be held, and writes waiting for the same lock piled up (PutRows in agora-redesign's record service).
+   Cancellation: once the waiter has left, before the next round trip it reads the mark (abandoned), does not send, issues ROLLBACK, and returns the connection; a running round trip is not stopped (the same as the
+   one-statement-at-a-time procedure). The mark is set by the cancellation callback (the Executor's stopping method abandoned-now) and, on the spot, by the task that received the cancellation. The finally waits for the return
+   abandon-lease under the lock guard, so the signal (ring-local) rings after the round trip that was running (including COMMIT)."
   (val raised (RaisedNotices))
   (val driver (TransactionDriver :connections connections :pool pool :database database :lease (TransactionLease) :guard (threading.Lock)))
   (setv driver.lease.submitted True)
@@ -1151,7 +1152,7 @@
     (finally
       (try
         (when (not driver.lease.returned)
-          ;; shielded: 取り消された task の待ちはまた取り消されるので、接続の返しは囲んで待ち切る
+          ;; shielded: the wait of a cancelled task is cancelled again, so the return of the connection is enclosed and waited out
           (<- (shielded (offloaded pool (fn [] (abandon-lease driver)) keep-nothing))))
         (finally
           (.ring-local connections database raised))))))
@@ -1159,21 +1160,21 @@
 
 (defk offloaded-transaction [connections pool database program locks batched]
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: locks tuple) (: batched bool)]
-   :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
+   :post [(: % "the answer of program | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "接続 1 本を借りて program を 1 つの transaction で回し、必ず接続を返すため(driver の I/O は pool の thread で — 頭の註)。postgres-sql-handler と
-   pooled-postgres-sql-handler が共に使う。batched = True は往復 1 回を pipeline 1 つで送る run-in-batched-transaction を driver の仕事 1 つで
-   回す(offloaded-batched-transaction — 往復の間に scheduler へ戻らない)。batched = False(既定)は文 1 つを 1 回ずつ流す run-in-transaction を
-   この下の手順で回す:
-   借りた接続への driver の呼び(文・ROLLBACK・返却)は錠 guard で 1 本ずつ回す(driven): 待ち手が取り消されても走り出した呼びの thread は
-   走り切るので、その後の ROLLBACK と返却が別の thread から同じ接続に来る(psycopg の接続の錠が同じ順を守るので、guard は流す文と順を
-   変えない)。接続を借りる仕事は最初の driver の呼び(BEGIN)と、返す仕事は最後の呼び(COMMIT か ROLLBACK を流す呼び)と同じ pool の仕事に
-   する(#3688 の子 (3) — 別の仕事にすると、共有の loop と driver の thread の間の乗り換えが書き 1 回に 2 つ増える)。
-   文を 1 つも流さない program は接続を借りない。借りられなければ、最初の呼びの答えが SqlUnreachable になり、transaction の答えもそれになる。
-   最後の呼びまで来なかった transaction(取り消し・BEGIN の失敗・例外)は、finally が返しの仕事 abandon-lease を 1 つ撃つ — guard の下なので
-   走っている呼びの後に返し、まだ始まっていない呼びは流さずに終わる。
-   合図(頭の註): transaction が出した合図を覚え(raised)、接続を返した後に同じ process の呼び鈴を鳴らす — COMMIT を流した(流そうとした)
-   transaction だけ。鳴らすのは finally の中なので、COMMIT の答えを受ける前・返却を待つ間に取り消されても鳴らす。"
+  "Borrows one connection, runs program in one transaction, and always returns the connection (driver I/O on the pool's threads; see the header comment). Used by both postgres-sql-handler and
+   pooled-postgres-sql-handler. batched = True runs run-in-batched-transaction, which sends one round trip in one pipeline, as a single driver job
+   (offloaded-batched-transaction: it does not return to the scheduler between round trips). batched = False (the default) runs run-in-transaction, which sends one statement at a time, with the
+   procedure below:
+   Driver calls on the borrowed connection (statements, ROLLBACK, return) are run one at a time under the lock guard (driven): even if the waiter is cancelled, the thread of a call that has started
+   runs to the end, so the following ROLLBACK and return come from another thread to the same connection (psycopg's connection lock keeps the same order, so guard does not change which statements are sent or their order).
+   The job of borrowing the connection is made the same pool job as the first driver call (BEGIN), and the job of returning is made the same pool job as the last call (the call that sends COMMIT or ROLLBACK)
+   (child (3) of #3688: as separate jobs, switching between the shared loop and the driver thread would increase by two per write).
+   A program that sends no statement does not borrow a connection. If it cannot be borrowed, the answer of the first call is SqlUnreachable, and the transaction's answer is that too.
+   For a transaction that did not reach the last call (cancellation, BEGIN failure, exception), finally fires one return job, abandon-lease: it is under guard, so it returns after a
+   running call, and a call that has not yet started finishes without running.
+   Signals (see the header comment): the signals the transaction emitted are recorded (raised), and after the connection is returned, same-process bells are rung. Sent COMMIT (or an attempt to send it)
+   The ringing happens inside the finally, so it rings even if cancelled before receiving COMMIT's answer or while waiting for the return."
   (when batched
     (<- whole (offloaded-batched-transaction connections pool database program locks))
     (return whole))
@@ -1191,7 +1192,7 @@
     (finally
       (try
         (when (and driver.lease.submitted (not driver.lease.returned))
-          ;; shielded: 取り消された task の待ちはまた取り消されるので、接続の返しは囲んで待ち切る
+          ;; shielded: the wait of a cancelled task is cancelled again, so the return of the connection is enclosed and waited out
           (<- (shielded (offloaded pool (fn [] (abandon-lease driver)) keep-nothing))))
         (finally
           (.ring-local connections database raised))))))
@@ -1201,8 +1202,8 @@
   {:pre [(: driver TransactionDriver) (: raised RaisedNotices)]
    :post [(: % (| SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つずつの transaction の COMMIT を流すため(offloaded-transaction の註): 流す前に「届く所まで流した」の印を立て(COMMIT の答えを受ける
-   前に取り消されても、接続を返した後に鳴らす)、同じ driver の仕事で接続を返す。"
+  "Sends COMMIT of a one-statement-at-a-time transaction (see the note on offloaded-transaction): sets the mark 'sent far enough to be delivered' before sending (so that even if cancelled before receiving
+   COMMIT's answer, the bells are rung after the connection is returned), and returns the connection in the same driver job."
   (setv raised.sent True)
   (<- answer (driven driver (fn [leased] (postgres-control leased "COMMIT")) True))
   answer)
@@ -1212,24 +1213,24 @@
   {:pre [(: driver TransactionDriver) (: origin str) (: raised RaisedNotices) (: request SqlNotify)]
    :post [(: % (| SqlRows SqlFailed SqlUnreachable None))]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つずつの transaction の中の SqlNotify を同じ接続で流し(commit した時だけ届く)、接続を返した後に鳴らすために覚えるため。"
+  "Sends a SqlNotify inside a one-statement-at-a-time transaction on the same connection (delivered only on commit) and records it so that the bells are rung after the connection is returned."
   (<- (noted-notice raised request))
   (<- answer (driven driver (fn [leased] (postgres-notice leased driver.database origin request)) False))
   answer)
 
 
 (defk offloaded-statement [connections pool database work]
-  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: work "(接続) → Program の callable")]
-   :post [(: % "work の答え | SqlUnreachable")]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: work "a callable (connection) -> Program")]
+   :post [(: % "the answer of work | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
-  "文 1 つの effect を、接続の借りと文と返却を pool の仕事 1 つ(lease-run-return)で答えるため(待つのは撃った task だけ — agora-redesign
-   #2792)。借りと文を別の仕事にすると、scheduler の thread が外から完了させる promise の往復を文ごとに 2 度払う(transaction が借りを最初の
-   driver の呼びと同じ仕事にするのと同じ訳)。
-     - 許可を待っている間(借りの途中)に取り消された要求は、許可が取れても文を流さず、すぐ返す(DB が止まった間に取り消された要求が、
-       DB が戻った時にまとめて文を流して後から来た要求を待たせない)。取り消しで抜ける finally が claim(錠)を先に取り、借りた仕事は
-       claim を取れずに文を流さず返す。
-     - 走り出した文は止めず、終わった thread が返す(取り消された task は文の終わりを待たない — 仕事が先に claim を取っている)。
-     - 始まっていない仕事は offloaded が外す(借りない — 返す物も無い)。"
+  "Answers a single-statement effect with borrowing the connection, the statement, and the return as one pool job (lease-run-return) (only the task that fired it waits; agora-redesign
+   #2792). If the borrow and the statement were separate jobs, the scheduler thread would pay twice per statement for the round trip of a promise completed from outside (the same reason a transaction makes the borrow the same job as the first
+   driver call).
+     - A request cancelled while waiting for a permit (in the middle of the borrow) does not run the statement even if the permit is obtained, and returns immediately (so requests cancelled while the DB was down do not
+       all flush their statements when the DB returns and make later requests wait). The finally that exits on cancellation takes the claim (lock) first, and the borrowing job, unable to
+       take the claim, returns without running the statement.
+     - A statement that has started running is not stopped, and the thread that finishes returns it (the cancelled task does not wait for the statement to end; the job has taken the claim first).
+     - A job that has not started is removed by offloaded (it does not borrow, and has nothing to return)."
   (val claim (threading.Lock))
   (try
     (<- answer (offloaded pool (fn [] (lease-run-return connections database claim work)) keep-nothing))
@@ -1242,8 +1243,8 @@
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: notify SqlNotify)]
    :post [(: % (| None SqlFailed SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "transaction の外の SqlNotify に答えるため(合図を流して接続を返した後に、同じ process の呼び鈴を鳴らす — 頭の註)。文の答えを受ける前に
-   取り消されても鳴らし、文が届かなかった時も鳴らす(流れたか分からない時に鳴らし損ねる側に倒さない)。"
+  "Answers a SqlNotify outside a transaction (after sending the signal and returning the connection, rings same-process bells; see the header comment). It rings even if cancelled before receiving the statement's
+   answer, and also rings when the statement did not arrive (when it is unknown whether it went through, we do not lean toward failing to ring)."
   (val raised (RaisedNotices :sent True))
   (<- (noted-notice raised notify))
   (try
@@ -1257,21 +1258,21 @@
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: channel str) (: topics (| tuple None))]
    :post [(: % (| ExternalPromise SqlUnreachable))]
    :tags {:context "sql" :role "foundation"}}
-  "SqlHangNotice に答えるため(待ち受けに、名 topics を待つ呼び鈴を掛ける — None = 全部の合図で鳴る。最初の接続を待つのは pool の thread。
-   取り消されたら掛けた呼び鈴を外す)。"
+  "Answers SqlHangNotice (hangs on the listener a bell waiting for names topics; None = rings on every signal. The wait for the first connection is on a pool thread.
+   If cancelled, the hung bell is removed)."
   (val listener (.listener connections database channel))
   (val waiting (if (is topics None) None (frozenset topics)))
   (<- bell ExternalPromise (CreateExternalPromise))
   (<- refused (offloaded pool (fn [] (.hang listener bell waiting)) (fn [_] (.drop listener bell))))
   (if (is refused None)
       bell
-      (SqlUnreachable :reason (.format "PostgreSQL の LISTEN が張れていない: {}" refused))))
+      (SqlUnreachable :reason (.format "PostgreSQL's LISTEN is not established: {}" refused))))
 
 
 (defhandler postgres-sql-handler [#^ PostgresConnections connections]
-  ;; 引数に残す理由: 接続の貸し出しは組み立ての側が作って閉じる資源で(DSN と資格を持つ)、答える database の名で ClickHouse の答え手と
-  ;; 同じ組に並べ分ける。
-  "本物の PostgreSQL の答え手(頭の註 — scheduler を塞がない)。connections が宣言した database の名にだけ答える(他の名は外側へ回す)。"
+  ;; Why it stays an argument: the connection lease is a resource that the assembling side creates and closes (it holds the DSN and credentials), and it is sorted into the same set as the ClickHouse handler
+  ;; by the name of the database it answers.
+  "The real PostgreSQL handler (see the header comment; does not block the scheduler). It answers only the database names that connections declared (other names are passed to the outside)."
   {:tags {:context "sql" :role "foundation"}}
   (SqlQuery [database statement params binary] :when (in database (.names connections))
     (val request (SqlQuery database statement params binary))
@@ -1288,7 +1289,7 @@
     (<- claims (transaction-locks lock-key locks))
     (<- answer (offloaded-transaction connections DRIVER-THREADS database program claims batched))
     (resume answer))
-  ;; 束は transaction の中の往復をまとめる物 — transaction の中では SqlTransaction の scope が答え、ここへ来るのは外で出した束だけ。
+  ;; A batch bundles round trips inside a transaction; inside a transaction SqlTransaction's scope answers, so only batches issued outside arrive here.
   (SqlBatch [database queries commit] :when (in database (.names connections))
     (<- refusal (stray-batch database))
     (raise refusal))

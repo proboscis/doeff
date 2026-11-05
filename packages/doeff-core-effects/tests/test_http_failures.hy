@@ -1,14 +1,14 @@
 (require doeff-hy.macros [deftest defk <- with-handler])
 
-;;; HttpRequest の failures-as-values(呼び手が transport の library の例外の型を知らずに届かない失敗を読むため):
-;;;   * 立てれば、応答が 1 度も来なかった失敗は HttpFailed(url・detail = 例外の class と文・kind = 失敗の類)で答える
-;;;   * 立てなければ今までどおり transport の例外が上がる(今の使い手は変わらない)
-;;;   この 2 つは本物と fake(fixture の replay)の共通の契約として test_http_request_contract.hy が見る。
-;;; 失敗の類 kind(消費者が detail の型名の文字列で期限切れを判じないため):
-;;;   * 答え手が transport の例外の class の階層から写す: 期限切れ 4 種 = TIMED-OUT・接続できない = CONNECT-FAILED・残り = OTHER
-;;;   * 反例: 名が Timeout で終わるだけの例外や、文に timed out を含む失敗は期限切れと読めない
-;;;   * kind は既定値を持たない(作り手が書き忘れたら作る時に落ちる — 黙って「期限切れでない」にならない)
-;;; 届かない相手は httpx 自身の MockTransport(library の持ち主の相手役)で作る。
+;;; failures-as-values for HttpRequest (so a caller can read unreachable-peer failures without knowing the exception types of the transport library):
+;;;   * if set, a failure where no response ever came is answered with HttpFailed (url, detail = the exception's class and message, kind = the category of failure)
+;;;   * if not set, the transport exception is raised as before (current users are unchanged)
+;;;   These two are checked by test_http_request_contract.hy as a contract shared by the real one and the fake (fixture replay).
+;;; Failure category kind (so consumers do not judge expiry from the string of a type name in detail):
+;;;   * the handler maps it from the transport exception's class hierarchy: the 4 expiry kinds = TIMED-OUT; cannot connect = CONNECT-FAILED; the rest = OTHER
+;;;   * counterexamples: an exception whose name merely ends in Timeout, or a failure whose message contains timed out, cannot be read as expiry
+;;;   * kind has no default value (if a builder forgets to write it, building fails -- it never silently becomes "not expired")
+;;; The unreachable peer is built with httpx's own MockTransport (the library owner's stand-in peer).
 
 (import datetime)
 (import httpx)
@@ -18,12 +18,12 @@
 
 
 (defclass GatewayTimeout [httpx.NetworkError]
-  "名が Timeout で終わるが期限切れの類(httpx.TimeoutException)ではない transport の失敗 — 型の名を読むと期限切れと取り違える反例。")
+  "A transport failure whose name ends in Timeout but is not an expiry category (httpx.TimeoutException) -- a counterexample where reading the type name mistakes it for an expiry.")
 
 
 (defk ask [url values]
   {:pre [(: url str) (: values bool)] :post [(: % (| HttpResponse HttpFailed))] :tags {:context "http" :role "program"}}
-  "failures-as-values の旗だけを変えて同じ要求を 1 回出すため(撃ち直しなし)。"
+  "To issue the same request once, changing only the failures-as-values flag (no retry)."
   (<- answer (| HttpResponse HttpFailed) (HttpRequest "PATCH" url :max-retries 0 :failures-as-values values))
   answer)
 
@@ -31,7 +31,7 @@
 (defk answer-from-silent-server [error-class text values]
   {:pre [(: error-class type) (: text str) (: values bool)] :post [(: % (| HttpResponse HttpFailed))]
    :tags {:context "http" :role "foundation"}}
-  "応答しない相手(MockTransport が要求ごとに error-class の例外を上げる)へ本番の答え手で 1 回要求し、答え手の答えを読むため。"
+  "To make one request with the production handler to a peer that does not respond (MockTransport raises an exception of error-class for each request), and read the handler's answer."
   (<- answer (| HttpResponse HttpFailed)
       (with-handler [await-handler
                      (http-production-handler
@@ -53,8 +53,8 @@
 
 
 (deftest test-a-failure-that-only-looks-like-a-timeout-is-not-read-as-one
-  ;; detail は型の名と文を運ぶので、detail を読む暫定は 1 つ目(型の名が …Timeout)を期限切れと読み、文を読めば 2・3 つ目も
-  ;; 期限切れと読んでしまう(#850 の反例)。kind は class の階層だけから決まる。
+  ;; detail carries the type name and message, so a stopgap that reads detail would read the 1st (type name ending in ...Timeout) as expiry, and if it read the message it would
+  ;; read the 2nd and 3rd as expiry too (the counterexample of #850). kind is decided only from the class hierarchy.
   (for [#(error-class text detail kind) [#(GatewayTimeout "upstream gave up" "GatewayTimeout: upstream gave up" HttpFailureKind.OTHER)
                                         #(httpx.ConnectError "timed out" "ConnectError: timed out" HttpFailureKind.CONNECT-FAILED)
                                         #(httpx.ReadError "ReadTimeout: peer went away" "ReadError: ReadTimeout: peer went away"
@@ -66,15 +66,15 @@
 (deftest test-a-failure-cannot-be-made-without-its-kind
   (try
     (HttpFailed :url "https://api.test/x" :detail "ReadTimeout: timed out")
-    (assert False "kind の無い HttpFailed が作れた")
+    (assert False "an HttpFailed without kind could be built")
     (except [TypeError])))
 
 
 (defclass TimeoutSpy []
-  "要求ごとの timeout の引数を控えて、200 の返事を返す client(接続の段の上限の検 — 本物の transport は時間を数えない)。
-   要求の口は答え手が呼ぶ client の口(http_handlers.pyi の HttpAsyncClient)と同じ引数を受ける。"
+  "A client that records the per-request timeout argument and returns a 200 response (a test of the connection-phase limit -- the real transport does not count time).
+   The request entry point accepts the same arguments as the client entry point the handler calls (HttpAsyncClient in http_handlers.pyi)."
   (defn #^ None __init__ [self]
-    "控えた timeout の列を空で始めるため。"
+    "To start the list of recorded timeouts empty."
     (setv #^ (get tuple #((| float httpx.Timeout None) ...)) self.timeouts #()))
   (defn :async #^ httpx.Response request [self #^ str method #^ str url *
                                          #^ (| (get dict #(str (| str int float bool None))) None) [params None]
@@ -82,27 +82,27 @@
                                          #^ (| (get dict #(str str)) None) [headers None]
                                          #^ (| float httpx.Timeout None) [timeout None]
                                          #^ bool [follow-redirects True]]
-    "要求の timeout を控えて、送らずに 200 の返事を返すため。"
+    "To record the request timeout and return a 200 response without sending."
     (setv self.timeouts (+ self.timeouts #(timeout)))
     (setv response (httpx.Response 200 :content b"ok" :request (httpx.Request method url)))
     (setattr response "elapsed" (datetime.timedelta 0))
     response)
   (defn :async #^ None aclose [self]
-    "閉じる口(持つ資源が無いので何もしない)。"
+    "The close entry point (it holds no resources so it does nothing)."
     None))
 
 
 (defk ask-with-connect-limit []
   {:pre [] :post [(: % tuple)] :tags {:context "http" :role "program"}}
-  "接続の段の上限を付けた要求と付けない要求を 1 つずつ出すため。"
+  "To issue one request with a connection-phase limit and one without."
   (<- limited HttpResponse (HttpRequest "GET" "https://api.test/a" :timeout-seconds 15.0 :connect-timeout-seconds 2.0 :max-retries 0))
   (<- plain HttpResponse (HttpRequest "GET" "https://api.test/b" :timeout-seconds 15.0 :max-retries 0))
   #(limited plain))
 
 
 (deftest test-a-connect-limit-is-passed-to-the-client-only-for-the-connection
-  ;; 失敗ケース(#2337): connect-timeout-seconds は接続の段だけの上限として client に渡り(全体の上限は timeout-seconds のまま)、
-  ;; 付けない要求は今までどおり全体の上限だけを渡す。
+  ;; Failure case (#2337): connect-timeout-seconds is passed to the client as a limit for the connection phase only (the overall limit stays timeout-seconds),
+  ;; and a request without it passes only the overall limit as before.
   (val spy (TimeoutSpy))
   (<- answers tuple (with-handler [await-handler (http-production-handler :client-factory (fn [] spy))] (ask-with-connect-limit)))
   (assert (= (tuple (gfor a answers a.status)) #(200 200)) answers)
@@ -113,18 +113,18 @@
 
 
 (defclass Made []
-  "ClosingSpy を作った数と閉じた数(検の終わりに読む)。"
+  "The number of ClosingSpy made and the number closed (read at the end of the test)."
   (defn #^ None __init__ [self]
-    "数えを 0 で始めるため。"
+    "To start the counts at 0."
     (setv self.opened 0)
     (setv self.closed 0)))
 
 
 (defclass ClosingSpy []
-  "閉じた後の要求を断る client(範囲ごとの client の寿命の検 — httpx の client も閉じた後の要求を断る)。
-   作られた数と閉じられた数を、作り手の数え(Made)に控える。"
+  "A client that refuses requests after it is closed (a test of the per-scope client lifetime -- the httpx client also refuses requests after it is closed).
+   It records the number made and the number closed in the builder's count (Made)."
   (defn #^ None __init__ [self #^ Made made]
-    "作られた事を数えに足して、開いた client として始めるため。"
+    "To add the creation to the count and start as an open client."
     (setv self.made made)
     (setv self.closed False)
     (setv made.opened (+ made.opened 1)))
@@ -134,29 +134,29 @@
                                          #^ (| (get dict #(str str)) None) [headers None]
                                          #^ (| float httpx.Timeout None) [timeout None]
                                          #^ bool [follow-redirects True]]
-    "閉じた後なら httpx と同じく断り、開いていれば送らずに 200 の返事を返すため。"
+    "If closed, refuse as httpx does; if open, return a 200 response without sending."
     (when self.closed
       (raise (RuntimeError "Cannot send a request, as the client has been closed.")))
     (setv response (httpx.Response 200 :content b"ok" :request (httpx.Request method url)))
     (setattr response "elapsed" (datetime.timedelta 0))
     response)
   (defn :async #^ None aclose [self]
-    "閉じた印を付け、閉じた数を数えに足すため。"
+    "To mark it closed and add to the closed count."
     (setv self.closed True)
     (setv self.made.closed (+ self.made.closed 1))))
 
 
 (defk ask-once [url]
   {:pre [(: url str)] :post [(: % HttpResponse)] :tags {:context "http" :role "program"}}
-  "撃ち直しなしで GET を 1 回出すため。"
+  "To issue one GET with no retry."
   (<- answer HttpResponse (HttpRequest "GET" url :max-retries 0))
   answer)
 
 
 (deftest test-one-handler-value-installed-around-two-scopes-answers-both
-  ;; 失敗ケース: 1 つの答え手の値を作って、別々の 2 つの範囲に被せる(値を持って要求ごとに被せる使い手の形)。
-  ;; 直す前は値を作った時の client 1 つを 2 つの範囲が使い、1 つ目の範囲の終わりで閉じたので、2 つ目の要求が「client が閉じた」で落ちた。
-  ;; 直した後は範囲ごとに client を作って閉じる: 2 つとも答え、作った数 = 閉じた数 = 2。
+  ;; Failure case: build one handler value and cover two separate scopes with it (the shape of a user who holds the value and covers it per request).
+  ;; Before the fix, the two scopes used the one client made when the value was built, and it was closed at the end of the first scope, so the second request failed with "client has been closed".
+  ;; After the fix, a client is made and closed per scope: both answer, and made = closed = 2.
   (val made (Made))
   (val handler (http-production-handler :client-factory (fn [] (ClosingSpy made))))
   (<- first HttpResponse (with-handler [await-handler handler] (ask-once "https://api.test/one")))

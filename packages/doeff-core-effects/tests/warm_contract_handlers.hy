@@ -1,14 +1,14 @@
-;;; 待ちの子の契約テストの解釈器(composition root)— 同じ契約の Program を、待ちの子の handler だけ替えて走らせる。
+;;; Interpreters for the warm-child contract tests (composition root) - run the same contract Program, swapping only the warm-child handler.
 ;;;
-;;;   os-warm         本物: os-warm-process-handler(unix socket と /proc)+ 検の中で起こす偽の待ちの子(fake_warm_child.py — socket ごとに
-;;;                   1 つの別の process)+ subprocess-handler(問い直しの間の sleep)
-;;;   scripted-warm   fake: scripted-warm-process-handler(I/O なし — WarmScript)+ scripted-process-handler(台本の sleep)+ memory の置き場
+;;;   os-warm         real: os-warm-process-handler (unix socket and /proc) + fake warm children started inside the test (fake_warm_child.py - one separate process per
+;;;                   socket) + subprocess-handler (the sleep between re-asks)
+;;;   scripted-warm   fake: scripted-warm-process-handler (no I/O - WarmScript) + scripted-process-handler (scripted sleep) + memory storage
 ;;;
-;;; 契約の世界は解釈器ごとに同じ形で用意する(WarmPaths の答え):
-;;;   * socket 4 つ: 受ける(accepting)・断る(refusing — 断りの文 REFUSAL)・答えない(silent)・無い(missing)
-;;;   * 入口 3 つ: EXIT-3(すぐ終了 code 3 で終わる)・SLEEPER(止められるまで走る)・VANISH(子 A を道連れに、exit の file を書かずに消える)
-;;;     本物 = 走るたびの一時 dir に module の file を置く・fake = WarmScript の runs に同じ終わり方を書く
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The contract world is prepared in the same shape for every interpreter (the answer of WarmPaths):
+;;;   * 4 sockets: accepting, refusing (refusal text REFUSAL), silent, missing
+;;;   * 3 entries: EXIT-3 (ends immediately with exit code 3), SLEEPER (runs until stopped), VANISH (takes child A down with it and disappears without writing the exit file)
+;;;     real = put the module files in a temp dir created for each run / fake = write the same endings in WarmScript's runs
+;;; Used via doeff_interpreter in conftest.py (the names in deftest's :interpreters -> INTERPRETERS).
 (require doeff-hy.macros [defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -29,13 +29,13 @@
 (val OS-WARM "os-warm")
 (val SCRIPTED-WARM "scripted-warm")
 (val MEMORY-ROOT "/warm-root")
-;; 断る socket の断りの文(偽の待ちの子と台本が同じ文を答える)。
-(val REFUSAL "待ちの子は今 頼みを受けない(契約テストの断り)")
-;; 契約の入口の名(本物 = 一時 dir の module・fake = WarmScript の runs)。
+;; Refusal text of the refusing socket (the fake warm child and the script answer the same text).
+(val REFUSAL "The warm child does not accept requests right now (refusal in the contract test)")
+;; Names of the contract entries (real = modules in a temp dir / fake = WarmScript's runs).
 (val EXIT-3 "warm_entry_exit3")
 (val SLEEPER "warm_entry_sleep")
 (val VANISH "warm_entry_vanish")
-;; 本物の入口の中身(子 B が同じ process の中で走らせる module)。VANISH は親の子 A を SIGKILL で道連れにする — exit の file が書かれない。
+;; Contents of the real entries (the module child B runs inside the same process). VANISH takes the parent's child A down with SIGKILL - the exit file is never written.
 (val ENTRY-SOURCES {EXIT-3 "import sys\nprint('out')\nsys.exit(3)\n"
                     SLEEPER "import time\ntime.sleep(30)\n"
                     VANISH "import os, signal\nos.kill(os.getppid(), signal.SIGKILL)\n"})
@@ -43,7 +43,7 @@
 
 
 (defrecord WarmPaths
-  "契約の世界の置き場(root = exit の file と log を置く dir・socket 4 つ — 頭の註)。"
+  "The storage of the contract world (root = the dir holding the exit files and logs, and 4 sockets - see the header comment)."
   (#^ str root)
   (#^ str accepting)
   (#^ str refusing)
@@ -52,18 +52,18 @@
 
 
 (defclass [(dataclass :frozen True)] WarmWorldPaths [EffectBase]
-  "契約の世界の置き場(WarmPaths)を求める効果。")
+  "An effect that asks for the storage of the contract world (WarmPaths).")
 
 
 (defhandler warm-world-paths [#^ WarmPaths paths]
-  ;; 引数に残す理由: 置き場は解釈器ごとに組み立ての側で決まる値(本物は走るたびに作る一時 dir)。
+  ;; Why it stays an argument: the storage is a value decided on the assembly side per interpreter (the real one creates a temp dir for each run).
   (WarmWorldPaths []
     (resume paths)))
 
 
 (defk paths-under [root]
   {:pre [(: root str)] :post [(: % WarmPaths)] :tags {:context "warm-test" :role "judgment"}}
-  "root の下の契約の置き場を決めるため(本物と fake で同じ名)。"
+  "Decide the contract storage under root (the same name for real and fake)."
   (WarmPaths :root root
              :accepting (os.path.join root "accepting.sock")
              :refusing (os.path.join root "refusing.sock")
@@ -72,9 +72,9 @@
 
 
 (defk under-os-warm [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")] :tags {:context "warm-test" :role "foundation"}}
-  "本物の os-warm-process-handler の下で program を走らせる。根は新しい一時 dir、入口の module をそこへ置き、偽の待ちの子を socket ごとに
-   起こす(missing の socket は起こさない)— それぞれが listen を始めた知らせの 1 行を読むまで待つ(時間で待たない)。走った後に止める。"
+  {:pre [(: program Program)] :post [(: % "The answer of the contract Program (the type depends on the Program)")] :tags {:context "warm-test" :role "foundation"}}
+  "Run program under the real os-warm-process-handler. The root is a fresh temp dir; put the entry modules there and start a fake warm child per socket
+   (sockets marked missing are not started) - wait until each has read the one line announcing it started listening (do not wait on time). Stop them after the run."
   (var answer None)
   (with [directory (tempfile.TemporaryDirectory)]
     (val root (os.path.realpath directory))
@@ -88,8 +88,8 @@
       (for [child children]
         (val first (if (is child.stdout None) "" (.readline child.stdout)))
         (when (!= (.strip first) "ready")
-          (raise (RuntimeError (.format "偽の待ちの子が起きない: {!r}" first)))))
-      ;; 本物の答え手は入力の pipe の書き口の表を session に持つので、外側に state を置く(本番は worker の session-store)。
+          (raise (RuntimeError (.format "The fake warm child did not start: {!r}" first)))))
+      ;; The real handler keeps a table of input-pipe write ends in the session, so state goes outside (in production, the worker's session-store).
       (<- ran (with_handlers [(state) (warm-world-paths paths) subprocess-handler os-warm-process-handler] program))
       (:= answer ran)
       (finally
@@ -102,22 +102,22 @@
 (defk scripted-sleep [commands request]
   {:pre [(: commands (of tuple ScriptedCommand ...)) (: request RunProcess)] :post [(: % ProcessOutcome)]
    :tags {:context "warm-test" :role "program"}}
-  "台本の sleep: 時間の経過は台本の世界に無いので、すぐ終わる。"
+  "Scripted sleep: the passage of time does not exist in the script's world, so it returns immediately."
   (ProcessOutcome :exit-code 0 :stdout "" :stderr ""))
 
 
 (val SCRIPT (WarmScript :sockets #((WarmSocket :path (+ MEMORY-ROOT "/accepting.sock"))
                                    (WarmSocket :path (+ MEMORY-ROOT "/refusing.sock") :answer WarmSocketAnswer.REFUSES :refusal REFUSAL)
                                    (WarmSocket :path (+ MEMORY-ROOT "/silent.sock") :answer WarmSocketAnswer.SILENT))
-                        ;; 本物の入口と同じ終わり方: EXIT-3 は 2 度走ってから 3・SLEEPER は止められるまで・VANISH は exit の file を書かずに消える。
+                        ;; Ends the same way as the real entries: EXIT-3 runs twice then 3 / SLEEPER until stopped / VANISH disappears without writing the exit file.
                         :runs #((WarmRun :entry EXIT-3 :polls 2 :exit-code 3)
                                 (WarmRun :entry SLEEPER :polls 1000000)
                                 (WarmRun :entry VANISH :polls 1 :writes-exit False))))
 
 
 (defk under-scripted-warm [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")] :tags {:context "warm-test" :role "foundation"}}
-  "fake の scripted-warm-process-handler の下で program を走らせる。外から順に: state・置き場・memory の置き場・台本の sleep・待ちの子の台本。"
+  {:pre [(: program Program)] :post [(: % "The answer of the contract Program (the type depends on the Program)")] :tags {:context "warm-test" :role "foundation"}}
+  "Run program under the fake scripted-warm-process-handler. From the outside in: state, storage, memory storage, scripted sleep, warm-child script."
   (<- paths WarmPaths (paths-under MEMORY-ROOT))
   (<- answer (with_handlers [(state) (warm-world-paths paths) (memory-file-handler (MemoryFiles :dirs #(MEMORY-ROOT)))
                              (scripted-process-handler (ProcessScript :commands #((ScriptedCommand :name "sleep" :run scripted-sleep))))

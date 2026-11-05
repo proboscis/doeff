@@ -1,10 +1,10 @@
-;;; heap の凍結の検。契約(本物 gc-freeze-handler と fake scripted-freeze-handler が同じ deftest を通る)と、
-;;; 本物だけの性質・fake だけの性質。解釈器の組み立ては heap_contract_handlers.hy。
+;;; Tests for heap freezing. The contract (the real gc-freeze-handler and the fake scripted-freeze-handler pass the same deftest), and
+;;; properties specific to the real one and to the fake. The interpreter assembly is in heap_contract_handlers.hy.
 ;;;
-;;;   契約     CollectAndFreeze の答えは 0 以上の int
-;;;   本物     何かを凍らせる(検の process には生きた object が在る — 答えは 0 より大きく、呼んだ後に凍った object が在る。凍らせた後に
-;;;            object は解放されうるので、後で読む gc.get_freeze_count は答えより小さくなりうる)
-;;;   fake     GC に触れない(凍った数が変わらない)で、決めた数を答える
+;;;   contract  the answer of CollectAndFreeze is an int >= 0
+;;;   real      freezes something (the test process has live objects -- the answer is greater than 0 and frozen objects exist after the call. Objects
+;;;            can be released after being frozen, so gc.get_freeze_count read later may be smaller than the answer)
+;;;   fake      does not touch the GC (the frozen count does not change) and answers a fixed number
 (require doeff-hy.macros [deftest <- val])
 (import gc)
 (import doeff [run with_handlers])
@@ -16,14 +16,14 @@
 (deftest test-a-freeze-answers-a-count
   {:interpreters ["gc-freeze" "scripted-freeze"]}
   (<- frozen int (CollectAndFreeze))
-  (assert (>= frozen 0) (.format "凍らせた数が {!r}" frozen)))
+  (assert (>= frozen 0) (.format "frozen count is {!r}" frozen)))
 
 
 (deftest test-the-real-freeze-freezes-live-objects
   (try
     (val frozen (run (with_handlers [gc-freeze-handler] (CollectAndFreeze))))
-    (assert (> frozen 0) (.format "生きた object が在るのに凍らせた数が {!r}" frozen))
-    (assert (> (gc.get-freeze-count) 0) "CollectAndFreeze の後に凍った object が無い")
+    (assert (> frozen 0) (.format "frozen count is {!r} although live objects exist" frozen))
+    (assert (> (gc.get-freeze-count) 0) "no frozen objects after CollectAndFreeze")
     (finally
       (gc.unfreeze))))
 
@@ -31,5 +31,5 @@
 (deftest test-the-scripted-freeze-leaves-the-collector-alone
   (val before (gc.get-freeze-count))
   (val frozen (run (with_handlers [(scripted-freeze-handler 3)] (CollectAndFreeze))))
-  (assert (= frozen 3) (.format "fake の答えが {!r}(決めた数 3)" frozen))
-  (assert (= (gc.get-freeze-count) before) "fake が GC の凍結を変えた"))
+  (assert (= frozen 3) (.format "fake answered {!r} (fixed count is 3)" frozen))
+  (assert (= (gc.get-freeze-count) before) "fake changed the GC freeze state"))

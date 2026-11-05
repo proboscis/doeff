@@ -1,30 +1,30 @@
-;;; 計器の effect — 動き続ける process の中で、数え上げ・秒の観測・今の値を積み、断面を読む(ADR-DOE-CORE-EFFECTS-004)。
-;;; 業務の語を持たない土台の語彙。名の綴り(Prometheus の名など)は呼び手が決める。
+;;; Meter effects -- inside a long-running process, accumulate counts, second observations and current values, and read a snapshot (ADR-DOE-CORE-EFFECTS-004).
+;;; A foundation vocabulary with no business words. The spelling of names (Prometheus names, etc.) is decided by the caller.
 ;;;
-;;;   CountMetric     counter の name に amount を足す(既定 1)。amount = 0 は「0 を置く」— 無いことと 0 を読み手が区別しなくて済む。答え = None。
-;;;   ObserveSeconds  秒の合計と回数に seconds を積む。設定に桁の表があれば、当たる桁ごとの累積の counter <name>_<label> と
-;;;                   <name>_<inf の label> も同じ 1 回で進める。答え = None。
+;;;   CountMetric     Add amount (default 1) to the counter name. amount = 0 means "put a 0" -- so a reader need not distinguish absent from 0. Answer = None.
+;;;   ObserveSeconds  Accumulate seconds into the total of seconds and the count. If the settings have a bucket table, the cumulative counters <name>_<label> for each bucket hit and
+;;;                   <name>_<the inf label> are advanced in the same single step. Answer = None.
 ;;;   ObserveSecondsBatch
-;;;                   秒の観測(SecondsObservation — 名と秒)の列 observations を 1 回で積む — ObserveSeconds を列の順に 1 つずつ撃ったのと
-;;;                   同じ断面になる(秒の合計・回数・桁の counter とも、名ごとに列の順で足す)。1 つの出来事で名を変えて何度も秒を観測する
-;;;                   呼び手(記録の service の要求ごとの区間の秒 — 1 要求で 7〜9 個)が、効果を撃つ回数を 1 回にするため。
-;;;                   答え = None。
-;;;   SetGauge        gauge の name を value に置き換える。答え = None。
-;;;   ReadMeter       今の断面(MeterSnapshot)を読む。
+;;;                   Accumulate a sequence observations of second observations (SecondsObservation -- a name and seconds) in one step -- the snapshot is the same as firing ObserveSeconds
+;;;                   one at a time in the order of the sequence (the total of seconds, the count and the bucket counters are all added per name in sequence order). So that a caller that observes seconds many times under different names for one event
+;;;                   (the seconds of the sections of each request of the record service -- 7 to 9 per request) fires the effect only once.
+;;;                   Answer = None.
+;;;   SetGauge        Replace the gauge name with value. Answer = None.
+;;;   ReadMeter       Read the current snapshot (MeterSnapshot).
 ;;;
-;;; 答え手: process-meter-handler(process_meter.hy — 本物。process に 1 つの置き場を名前で共有し、別の run・別の thread が同じ計器を
-;;; 読み書きする。GC の停止も積める)と memory-meter-handler(memory_meter.hy — 1 つの run の中の状態だけ。時計・gc・thread を読まない)。
-;;; 2 つは同じ契約のテストを通す(tests/test_meter_contract.hy)。
+;;; Responders: process-meter-handler (process_meter.hy -- the real one. It shares one store per process by name, and other runs and other threads read and write the same meter.
+;;; It can also accumulate GC pauses) and memory-meter-handler (memory_meter.hy -- only the state inside one run. It reads no clock, gc or thread).
+;;; Both pass the same contract test (tests/test_meter_contract.hy).
 ;;;
-;;; 守る事: 1 回の書きは 1 つの名の中(秒の合計・回数・その名の桁の counter)で 1 度に見える。
-;;; 守らない事: 名をまたぐ書き(全数と内訳のように 2 つの名へ積む)は 1 度に見えるとは限らない — 間の読みは片方だけ進んだ断面を見る。
-;;;             ObserveSecondsBatch の列の名をまたぐ書きも同じく約束しない(今の答え手 2 つは 1 回で差し替えるが、読み手はそれに頼らない)。
+;;; What it guarantees: one write is seen at once within one name (the total of seconds, the count and the bucket counters of that name).
+;;; What it does not guarantee: writes across names (accumulating into two names, like a total and its breakdown) are not necessarily seen at once -- a read in between sees a snapshot where only one side has advanced.
+;;;             Writes across the names of an ObserveSecondsBatch sequence are likewise not promised (the two current responders swap in one step, but readers must not rely on that).
 ;;;
-;;; 断面の形(counters・gauges・秒の合計と回数)は doeff-cluster の ReportMetrics の報告の形と同じ 3 つに揃えてある(後で断面を報告へ渡せる)。
-;;; 下の純関数(metered・counted・observed-batch・observed・gauged)は 2 つの答え手が同じ計算をするための 1 か所で、I/O を持たない。
-;;; 数えと秒の観測の計算は metered の 1 か所(書きの列 — CountMetric・ObserveSeconds・ObserveSecondsBatch を撃った順 — を 1 度に積む。
-;;; counted・observed-batch・observed は書き 1 つの列)。memory の答え手は書きを溜めて、読みの時か溜まりが METERED-WRITES 本に届いた時に
-;;; metered で 1 度に畳む(書きのたびに断面の写像を丸ごと写さない)。
+;;; The shape of the snapshot (counters, gauges, the total of seconds and the count) is aligned to the same three as the report shape of doeff-cluster's ReportMetrics (so the snapshot can be handed to a report later).
+;;; The pure functions below (metered, counted, observed-batch, observed, gauged) are the one place where the two responders do the same computation, and they do no I/O.
+;;; The computation of counts and second observations is in one place, metered (it accumulates a sequence of writes -- CountMetric, ObserveSeconds, ObserveSecondsBatch in firing order -- in one step.
+;;; counted, observed-batch and observed are sequences of one write). The memory responder collects writes and, at read time or when the pile reaches METERED-WRITES entries,
+;;; folds them in one step with metered (it does not copy the whole mapping of the snapshot at every write).
 (require doeff-hy.macros [defeffect defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -35,7 +35,7 @@
 
 
 (defrecord SecondsTotal
-  "秒の観測 1 系列: total = 観た秒の合計・count = 観た回数。"
+  "One series of second observations: total = the total of the observed seconds, count = the number of observations."
   {:tags {:context "meter" :role "type"}
    :check [(>= count 0)]}
   (#^ float total)
@@ -43,27 +43,27 @@
 
 
 (defrecord MeterSnapshot
-  "計器の断面: counters = 名 → 積んだ量・gauges = 名 → 今の値・durations = 名 → 秒の合計と回数。"
+  "A snapshot of the meter: counters = name -> accumulated amount, gauges = name -> current value, durations = name -> total of seconds and count."
   {:tags {:context "meter" :role "type"}}
   (#^ (get FrozenMap float) counters)
   (#^ (get FrozenMap float) gauges)
   (#^ (get FrozenMap SecondsTotal) durations))
 
 
-;; 何も積んでいない計器。
+;; A meter with nothing accumulated.
 (val EMPTY-METER (MeterSnapshot :counters (FrozenMap) :gauges (FrozenMap) :durations (FrozenMap)))
 
 
 (defrecord MeterBucket
-  "秒の観測の桁 1 つ: label = counter の名の末尾(例 le_200ms)・ceiling = この桁に入る秒の上限(以下)。"
+  "One bucket of second observations: label = the end of the counter name (e.g. le_200ms), ceiling = the upper limit (inclusive) of seconds that fall into this bucket."
   {:tags {:context "meter" :role "type"}}
   (#^ str label)
   (#^ float ceiling))
 
 
 (defrecord MeterSettings
-  "計器の設定: buckets = 秒の観測の桁の表(空なら桁の counter を積まない)・inf-label = 全部を数える桁の名の末尾・
-   gc-pause-name = GC の停止を積む秒の観測の名(None なら積まない — 本物の答え手だけが読む。memory の答え手は GC を見ない)。"
+  "Meter settings: buckets = the table of buckets for second observations (if empty, no bucket counters are accumulated), inf-label = the end of the name of the bucket that counts everything,
+   gc-pause-name = the name of the second observation into which GC pauses are accumulated (if None, they are not accumulated -- only the real responder reads it. The memory responder does not watch GC)."
   {:tags {:context "meter" :role "type"}}
   (setv #^ (get tuple #(MeterBucket ...)) buckets #())
   (setv #^ str inf-label "le_inf")
@@ -71,28 +71,28 @@
 
 
 (defrecord SecondsObservation
-  "秒の観測 1 つ(ObserveSecondsBatch の列の 1 項): name = 積む秒の観測の名・seconds = 観た秒。ObserveSeconds の欄と同じ。"
+  "One second observation (one item of the ObserveSecondsBatch sequence): name = the name of the second observation to accumulate into, seconds = the observed seconds. The same fields as ObserveSeconds."
   {:tags {:context "meter" :role "type"}}
   (#^ str name)
   (#^ float seconds))
 
 
 (defeffect CountMetric
-  "counter の name に amount を足す(頭の註)。"
+  "Add amount to the counter name (head note)."
   {:fields [(: name str) (: amount float 1.0)]
    :answer None
    :tags {:context "meter" :role "foundation"}})
 
 
 (defeffect ObserveSeconds
-  "秒の合計と回数に seconds を積み、桁の counter も同じ 1 回で進める(頭の註)。"
+  "Accumulate seconds into the total of seconds and the count, and advance the bucket counters in the same single step (head note)."
   {:fields [(: name str) (: seconds float)]
    :answer None
    :tags {:context "meter" :role "foundation"}})
 
 
 (defeffect ObserveSecondsBatch
-  "秒の観測の列 observations を、ObserveSeconds を列の順に 1 つずつ撃ったのと同じ断面へ 1 回で積む(頭の註)。空の列は何も積まない。"
+  "Accumulate the sequence observations of second observations in one step into the same snapshot as firing ObserveSeconds one at a time in sequence order (head note). An empty sequence accumulates nothing."
   {:fields [(: observations (get tuple #(SecondsObservation ...)))]
    :pre [(: observations tuple) (all (gfor observation observations (isinstance observation SecondsObservation)))]
    :answer None
@@ -100,27 +100,27 @@
 
 
 (defeffect SetGauge
-  "gauge の name を value に置き換える(頭の註)。"
+  "Replace the gauge name with value (head note)."
   {:fields [(: name str) (: value float)]
    :answer None
    :tags {:context "meter" :role "foundation"}})
 
 
 (defeffect ReadMeter
-  "今の断面を読む(頭の註)。"
+  "Read the current snapshot (head note)."
   {:fields []
    :answer MeterSnapshot
    :tags {:context "meter" :role "foundation"}})
 
 
-;; 名と量の対の名を引く(書きの列を名ごとにまとめる鍵)。
+;; Look up the name of a pair of name and amount (the key for grouping a sequence of writes by name).
 (val NAME-OF-PAIR (itemgetter 0))
 
 
 (defk grouped-in-order [pairs]
   {:pre [(: pairs (get tuple #(tuple ...)))] :post [(: % dict)] :tags {:context "meter" :role "judgment"}}
-  "名と値の対の列を、名 → その名の値の列(列の順)にするため。名の並びは最初に現れた順(写像に足す順を、1 つずつ積んだ時と同じにする)。
-   名で安定に並べてからまとめるので、列が長くても名の数 × 列の長さの照らしにならない。"
+  "To turn a sequence of pairs of name and value into name -> the sequence of values of that name (in sequence order). The order of names is the order of first appearance (so the order of adding to the mapping is the same as when accumulating one at a time).
+   It groups after sorting stably by name, so even a long sequence does not turn into a comparison of the number of names times the length of the sequence."
   (val grouped (dfor #(name group) (groupby (sorted pairs :key NAME-OF-PAIR) :key NAME-OF-PAIR)
                      name (tuple (gfor #(_ value) group value))))
   (dfor name (dict.fromkeys (gfor #(name _) pairs name)) name (get grouped name)))
@@ -129,14 +129,14 @@
 (defk metered [snapshot settings writes]
   {:pre [(: snapshot MeterSnapshot) (: settings MeterSettings) (: writes (get tuple #((| CountMetric ObserveSeconds ObserveSecondsBatch) ...)))]
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
-  "数えと秒の観測の書きの列 writes(撃った順)を、1 つずつ積んだのと同じ新しい断面へ 1 度に積むため(元の断面は変えない — 頭の註): 名ごとに
-   書きの順の量と秒を、元の値から列の順に 1 つずつ足すので、浮動小数の丸めまで 1 つずつ積んだのと同じ(列の秒を先に足し合わせてから積むと
-   丸めが変わる)。値(SecondsTotal)と写像の写しは名ごと・写像ごとに 1 度だけ作る — 書きを溜めて畳む memory の答え手が、溜まりが長くても
-   書き 1 つあたり定まった手間で畳めるように。"
+  "To accumulate a sequence of count and second-observation writes writes (in firing order) in one step into a new snapshot equal to accumulating them one at a time (the original snapshot is not changed -- head note): per name,
+   the amounts and seconds in write order are added one at a time from the original value in sequence order, so even the floating-point rounding is the same as accumulating one at a time (adding the seconds of the sequence first and then accumulating
+   changes the rounding). The value (SecondsTotal) and the copy of the mapping are made only once per name and per mapping -- so the memory responder, which collects writes and folds them, can fold
+   with a fixed effort per write however long the pile is."
   (val counters snapshot.counters)
   (val durations snapshot.durations)
-  ;; 書きごとの秒の観測(名と秒の対 — 数えは秒を積まない)と、counter へ足す量(名と量の対 — 数えはその名へ amount・秒の観測は桁の表の
-  ;; 当たる桁と inf の桁へ 1 つずつ・桁の表が空なら足さない)を、撃った順の列に開く。
+  ;; Expand into a sequence in firing order the second observations of each write (pairs of name and seconds -- a count accumulates no seconds) and the amounts to add to counters (pairs of name and amount -- a count adds amount to that name, a second observation adds 1 each to the
+  ;; bucket it hits in the bucket table and to the inf bucket, and adds nothing if the bucket table is empty).
   (val per-write (tuple (gfor write writes
                               (cond (isinstance write ObserveSecondsBatch) (tuple (gfor observation write.observations
                                                                                         #(observation.name observation.seconds)))
@@ -166,14 +166,14 @@
 (defk counted [snapshot name amount]
   {:pre [(: snapshot MeterSnapshot) (: name str) (: amount float)]
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
-  "counter の name に amount を足した新しい断面(元の断面は変えない — 計算は metered の書き 1 つの列)。"
+  "A new snapshot with amount added to the counter name (the original snapshot is not changed -- the computation is a sequence of one write in metered)."
   (! (metered snapshot (MeterSettings) #((CountMetric :name name :amount amount)))))
 
 
 (defk gauged [snapshot name value]
   {:pre [(: snapshot MeterSnapshot) (: name str) (: value float)]
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
-  "gauge の name を value に置き換えた新しい断面。"
+  "A new snapshot with the gauge name replaced by value."
   (MeterSnapshot :counters snapshot.counters :gauges (.updated snapshot.gauges {name value})
                  :durations snapshot.durations))
 
@@ -181,16 +181,16 @@
 (defk observed-batch [snapshot settings observations]
   {:pre [(: snapshot MeterSnapshot) (: settings MeterSettings) (: observations (get tuple #(SecondsObservation ...)))]
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
-  "秒の観測の列 observations を列の順に積んだ新しい断面を作るため(元の断面は変えない): 観測ごとに、その名の秒の合計と回数に秒を積み、
-   桁の表の当たる桁と inf の桁の counter を進める。ObserveSeconds を列の順に 1 つずつ積んだのと同じ断面になる — 秒の合計も counter も
-   名ごとに列の順で 1 つずつ足すので、浮動小数の丸めまで同じ(列の秒を先に足し合わせてから積むと丸めが変わる)。計算は metered の
-   書き 1 つの列。"
+  "To make a new snapshot with the sequence observations of second observations accumulated in sequence order (the original snapshot is not changed): for each observation, accumulate the seconds into the total of seconds and the count of that name,
+   and advance the counters of the bucket it hits in the bucket table and of the inf bucket. The snapshot is the same as accumulating ObserveSeconds one at a time in sequence order -- the total of seconds and the counters are both
+   added one at a time per name in sequence order, so even the floating-point rounding is the same (adding the seconds of the sequence first and then accumulating changes the rounding). The computation is a sequence of one
+   write in metered."
   (! (metered snapshot settings #((ObserveSecondsBatch :observations observations)))))
 
 
 (defk observed [snapshot settings name seconds]
   {:pre [(: snapshot MeterSnapshot) (: settings MeterSettings) (: name str) (: seconds float)]
    :post [(: % MeterSnapshot)] :tags {:context "meter" :role "judgment"}}
-  "秒の合計と回数に seconds を積み、桁の表の当たる桁と inf の桁の counter を進めた新しい断面を作るため(1 つの名の中を 1 度に変える —
-   計算は observed-batch の観測 1 つの列)。"
+  "To make a new snapshot with seconds accumulated into the total of seconds and the count, and the counters of the bucket it hits in the bucket table and of the inf bucket advanced (it changes one name at once --
+   the computation is a sequence of one observation in observed-batch)."
   (! (observed-batch snapshot settings #((SecondsObservation :name name :seconds seconds)))))

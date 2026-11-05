@@ -1,8 +1,9 @@
-;;; 乱数の fake の答え手 seeded-random-handler— RandomBytes に、種とこの run の中の呼びの順で決まった byte で
-;;; 答える。模擬と検で、起動ごとの名乗りを毎回同じ値にし、os の乱数に触れないため。
+;;; Fake handler for randomness, seeded-random-handler: answers RandomBytes with bytes determined by the seed and the order of calls
+;;; within this run. So that mocks and tests get the same per-startup identifiers every time without touching the OS's randomness.
 ;;;
-;;; 値の作り方: n 回目(0 始まり)の呼びは sha256("<種>:<n>:<塊>") の digest を塊 0・1・… と並べた頭の count byte。同じ種と同じ呼びの順なら
-;;; 同じ値、呼びごとに違う値になる。呼びの数えはこの run の中の状態(session の値)で、別の run とは共有しない。外側に state の handler が要る。
+;;; How values are made: the n-th call (0-based) returns the first count bytes of the sha256("<seed>:<n>:<block>") digests laid out as blocks 0, 1, ...
+;;; The same seed and the same call order give the same values, and each call gives a different value. The call count is state within this run
+;;; (a session value) and is not shared with other runs. An outer state handler is required.
 (require doeff-hy.macros [defhandler defk var val])
 (val MODULE-TAGS {:context "random" :role "foundation"})
 (import hashlib)
@@ -13,15 +14,15 @@
   {:pre [(: seed int) (: call int) (>= call 0) (: count int) (>= count 0)]
    :post [(: % bytes) (= (len %) count)]
    :tags {:context "random" :role "foundation"}}
-  "種 seed の call 回目の呼びの count 個の byte(頭の註の作り方)。"
+  "The count bytes for the call-th call with seed (made as described in the header comment)."
   (val blocks (// (+ count 31) 32))
   (val digests (lfor block (range blocks) (.digest (hashlib.sha256 (.encode (.format "{}:{}:{}" seed call block))))))
   (cut (.join b"" digests) count))
 
 
 (defhandler seeded-random-handler [#^ int seed]
-  "RandomBytes に、種 seed とこの run の中の呼びの順で決まった count 個の byte で答える(os の乱数に触れない)。"
-  ;; 引数に残す理由: 種は検と模擬ごとに決める台本の値で、Ask で読む設定ではない。
+  "Answers RandomBytes with count bytes determined by seed and the order of calls within this run (does not touch the OS's randomness)."
+  ;; Why it stays an argument: the seed is a scripted value chosen per test and mock, not a setting read through Ask.
   (session var calls 0)
   (RandomBytes [count]
     (val answer (! (seeded-bytes seed calls count)))

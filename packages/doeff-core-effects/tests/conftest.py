@@ -1,14 +1,14 @@
-"""doeff-core-effects の検の実行環境(Hy の ``test_*.hy`` の収集と deftest の解釈器)。
+"""Test execution environment for doeff-core-effects (collection of Hy ``test_*.hy`` files and the deftest interpreters).
 
-- Hy の ``test_*.hy`` の集め手は root の ini の ``doeff_hy_test_files``(doeff-adr の plugin の 1 点)— この conftest は集めない(package の母集団は ``make test-packages`` が別に走らせる)。
-- 契約テストは deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
-  stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy・http_server_contract_handlers.hy・
-  meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy ・
-  stack_dump_contract_handlers.hy ・warm_contract_handlers.hy(待ちの子の効果)が持ち、ここはその表を
-  引いて scheduler つきで 1 回回すだけ。外の module が要る解釈器(REQUIRES)は、その module の無い環境では skip する。
-- 実 PostgreSQL の検(test_sql_effects.hy)の DSN の env は、pytest_configure(検の module の import より前)で
-  postgres_support/disposable_postgres.py が用意する — env が無ければ使い捨ての PostgreSQL を立てる(
-  doeff-records の tests の conftest も同じ部品を呼ぶ)。
+- Hy ``test_*.hy`` files are collected by the root ini's ``doeff_hy_test_files`` (a single point of the doeff-adr plugin) -- this conftest does not collect them (the package population is run separately by ``make test-packages``).
+- Contract tests swap handlers through deftest's ``:interpreters``. The name -> assembly table is
+  stop_contract_handlers.hy, http_contract_handlers.hy, process_contract_handlers.hy, http_server_contract_handlers.hy,
+  meter_contract_handlers.hy, latest_contract_handlers.hy, heap_contract_handlers.hy,
+  stack_dump_contract_handlers.hy, warm_contract_handlers.hy (the effects of the awaited child) and the others; this file only
+  looks up that table and runs once with a scheduler. Interpreters that need an outside module (REQUIRES) are skipped in environments without that module.
+- The DSN env for the real PostgreSQL tests (test_sql_effects.hy) is prepared in pytest_configure (before the test modules are imported)
+  by postgres_support/disposable_postgres.py -- if the env is absent, a disposable PostgreSQL is started
+  (the conftest of the doeff-records tests calls the same component).
 """
 
 from __future__ import annotations
@@ -31,20 +31,20 @@ TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-# 使い捨ての PostgreSQL の部品(doeff-records の tests の conftest も同じ dir を読む — 置き場は 1 か所)。
+# Component for the disposable PostgreSQL (the conftest of the doeff-records tests reads the same dir -- one location).
 POSTGRES_SUPPORT_DIR = TESTS_DIR / "postgres_support"
 if str(POSTGRES_SUPPORT_DIR) not in sys.path:
     sys.path.insert(0, str(POSTGRES_SUPPORT_DIR))
 
-from disposable_postgres import provide_session_postgres  # noqa: E402 - sys.path の後
+from disposable_postgres import provide_session_postgres  # noqa: E402 - after sys.path
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """検の module が DSN の env を読む前に、使い捨ての PostgreSQL を用意する(env が在ればそれを使う)。"""
+    """Prepare a disposable PostgreSQL before the test modules read the DSN env (use the env if it exists)."""
     provide_session_postgres(config)
 
 
-# 契約テストでない deftest の名: handler は各 deftest が本体の中で被せる(test_sql_effects.hy)。
+# Names of deftests that are not contract tests: each deftest wraps the handlers inside its own body (test_sql_effects.hy).
 PLAIN = "plain"
 
 
@@ -55,7 +55,7 @@ def doeff_interpreter_name() -> str:
 
 @pytest.fixture
 def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object]:
-    """deftest の Program を、:interpreters の名の handler の組の下で scheduler つきで 1 回回す。"""
+    """Run the deftest Program once with a scheduler under the handler set of the :interpreters name."""
     from heap_contract_handlers import INTERPRETERS as HEAP_INTERPRETERS
     from http_contract_handlers import INTERPRETERS as HTTP_INTERPRETERS
     from http_server_contract_handlers import INTERPRETERS as HTTP_SERVER_INTERPRETERS
@@ -88,7 +88,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     }
     required = {**HTTP_SERVER_REQUIRES, **WS_CLIENT_REQUIRES}.get(doeff_interpreter_name)
     if required is not None and importlib.util.find_spec(required) is None:
-        pytest.skip(f"解釈器 {doeff_interpreter_name} は {required} が要る")
+        pytest.skip(f"interpreter {doeff_interpreter_name} requires {required}")
     compose = compositions[doeff_interpreter_name]
 
     def interpret(program: Program) -> object:

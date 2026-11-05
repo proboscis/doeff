@@ -1,42 +1,42 @@
-;;; 汎用の子 process の effect(process_effects.hy)の I/O なしの答え手 scripted-process-handler。本物の子 process を
-;;; 起こさず、argv[0] の名(basename)ごとの台本(ScriptedCommand)で答える。台本は Program で、file system の effect(file_effects.hy)で置き場を
-;;; 読み書きしてよい(外側の file の答え手 — 多くは memory-file-handler — が受ける)。業務を知らない: 台本の中身は呼び手が渡す。
+;;; scripted-process-handler: an I/O-free handler for the generic child-process effects (process_effects.hy). It does not start real child processes;
+;;; it answers with a script (ScriptedCommand) per argv[0] name (basename). A script is a Program and may read and write its working area through the file system effects (file_effects.hy)
+;;; (the outer file handler -- usually memory-file-handler -- receives them). It knows no business logic: the caller supplies the script contents.
 ;;;
-;;;   RunProcess        env-mode EXTEND は ProcessScript の env を継いで足した全部を台本に渡す。無い cwd・名の無い命令は started False(exit-code 127)— 本物の subprocess と同じ所・同じ順・同じ文で起こせない
-;;;                     (process_effects.hy の not-started-outcome・start-refusal)。output-path は台本の出力をその file の末尾へ足し、足せなければ
-;;;                     本物と同じく OSError を上げる。timeout は台本に任せる(台本が timed-out-outcome の答えを返してよい)。
-;;;                     env が None の時は台本も None を受ける(呼び手の環境を継ぐ印 — 継いだ中身を読むのは台本の側)。
-;;;                     process-group・stop-grace・stream-output は台本の要求にそのまま渡す(group と時間の経過は台本の
-;;;                     世界に無い — 止め方を答えに表すのは台本の側)。stream-output の output-path は、台本が終わってから出力を足す
-;;;                     (届いた順に書く本物と、終わった後の file の中身は同じ)。
-;;;                     本物との契約は tests/test_process_contract.hy。
-;;;   ProcessAlive      ProcessScript の alive(生きている pid の表)に在るか。0 以下の pid は本物と同じく生きていない。
-;;;   StartProcess      出力の file を先に開き(空を足す — 開けなければ本物と同じ文の ProcessNotStarted)、台本を timeout 0 で 1 回走らせる。
-;;;                    起こせない形の答えは ProcessNotStarted。時間切れの答え = 止めるまで走り続ける子、それ以外 =
-;;;                     すぐ終わった子(終了 code を表に置く)。台本の出力(時間切れならそれまでの分)をそれぞれの file の末尾へ足し、
-;;;                     SCRIPTED-FIRST-PID からの pid を配る。
-;;;   PollProcess       表に無い pid = ProcessNotChild・走り続ける子 = ProcessRunning・終わった子 = ProcessExited(表から外す)。
-;;;   StopProcess       表に無い pid = ProcessNotChild・走り続ける子は SIGTERM で終わった形(SCRIPTED-STOPPED-CODE = -15)・終わった子はその
-;;;                     終了 code。どれも表から外す。group と猶予は台本の世界に無い。
-;;;   SignalProcess     表に無い pid = ProcessNotChild・走り続ける子はその signal で終わった形にする(TERM = -15・KILL = -9 — 本物と同じ負の
-;;;                     値。終わりは PollProcess が答えて回収する)・終わっていた子には送らない(delivered False)(#2461)。
-;;;   WriteProcessInput 表に無い pid = ProcessNotChild・hold-stdin で立てて走り続ける子 = 書いた形(delivered True — 台本の世界に pipe は無く、
-;;;                     中身はどこにも残らない)・それ以外(終わった子・hold-stdin でない子)= 書かない(delivered False)(#3672)。
-;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
-;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
-;;;   ReadEnvironment   ProcessScript の env から。
-;;;   ReadInterpreter   ProcessScript の interpreter。
-;;;   ReadMachineName   ProcessScript の machine-name。
-;;;   ResolveModule     ProcessScript の modules の表から名で引く。表に無い名は ModuleNotFound(#2347)。
-;;;   WorkingDirectory  聞かれるたびに新しい空の dir(<work-root>/job-<n>)を作って答える — worker が job ごとに空の作業 dir を作って子を
-;;;                     起こすのの代役(同じ VM で task を走らせる模擬では task ごとに 1 回聞かれる)。
-;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
+;;;   RunProcess        With env-mode EXTEND, the script receives everything: the ProcessScript env inherited plus the additions. A missing cwd or an unknown command gives started False (exit-code 127) -- it cannot be started at the same place, in the same order, with the same message as a real subprocess
+;;;                     (not-started-outcome and start-refusal in process_effects.hy). output-path appends the script's output to the end of that file, and if it cannot append,
+;;;                     it raises OSError just like the real handler. The timeout is left to the script (the script may return a timed-out-outcome answer).
+;;;                     When env is None the script also receives None (a marker meaning inherit the caller's environment -- reading the inherited contents is the script's side).
+;;;                     process-group, stop-grace and stream-output are passed to the script's request as they are (groups and the passage of time do not exist in the script's
+;;;                     world -- expressing how it was stopped in the answer is the script's side). For stream-output with an output-path, the output is appended after the script finishes
+;;;                     (the file contents after completion are the same as the real handler, which writes in arrival order).
+;;;                     The contract with the real handler is tests/test_process_contract.hy.
+;;;   ProcessAlive      Whether the pid is in the ProcessScript alive set (table of live pids). A pid of 0 or less is not alive, same as the real handler.
+;;;   StartProcess      Opens the output files first (appends nothing -- if it cannot open, ProcessNotStarted with the same message as the real handler), then runs the script once with timeout 0.
+;;;                    An answer of a shape that cannot start is ProcessNotStarted. A timed-out answer = a child that keeps running until stopped; anything else =
+;;;                     a child that finished immediately (its exit code is put in the table). The script's output (up to that point if timed out) is appended to the end of each file,
+;;;                     and pids are handed out starting from SCRIPTED-FIRST-PID.
+;;;   PollProcess       A pid not in the table = ProcessNotChild; a running child = ProcessRunning; a finished child = ProcessExited (removed from the table).
+;;;   StopProcess       A pid not in the table = ProcessNotChild; a running child ends as if by SIGTERM (SCRIPTED-STOPPED-CODE = -15); a finished child gives its
+;;;                     exit code. All are removed from the table. Groups and grace periods do not exist in the script's world.
+;;;   SignalProcess     A pid not in the table = ProcessNotChild; a running child ends as if by that signal (TERM = -15, KILL = -9 -- the same negative
+;;;                     values as the real handler. PollProcess reports the end and reaps it); nothing is sent to a finished child (delivered False) (#2461).
+;;;   WriteProcessInput A pid not in the table = ProcessNotChild; a child started with hold-stdin and still running = written (delivered True -- there is no pipe in the script's world,
+;;;                     and the contents are kept nowhere); otherwise (a finished child, or a child without hold-stdin) = not written (delivered False) (#3672).
+;;;   ExecutableAt      The kind is StatPath of the working area (the file handler) -- a path missing from the working area is an executable file if its name (basename) is in the script, otherwise nothing.
+;;;                     Permission to execute is the name being in the script. The decision is the same executable-file-answer as the real handler (a dir is False even if its name is in the script).
+;;;   ReadEnvironment   From the ProcessScript env.
+;;;   ReadInterpreter   The ProcessScript interpreter.
+;;;   ReadMachineName   The ProcessScript machine-name.
+;;;   ResolveModule     Looks up by name in the ProcessScript modules table. A name not in the table is ModuleNotFound (#2347).
+;;;   WorkingDirectory  Each time it is asked, it creates a new empty dir (<work-root>/job-<n>) and answers with it -- standing in for the worker creating an empty working dir per job and starting the child in it
+;;;                     (in a simulation that runs tasks in the same VM, it is asked once per task).
+;;; Ordering: put the file handler outside this handler. The home of session values (the state of doeff_core_effects) is needed further outside.
 ;;;
-;;; scripted-command-peer = 名指した命令だけの外の世界: argv[0] の名(basename)が台本に在る RunProcess だけに、scripted-process-handler と同じ
-;;; 答え(scripted-answer — 無い cwd の断り・output-path への足し)で答え、ほかの子 process の呼びと process の効果(環境変数の読み・実行できるか
-;;; の問い・作業 dir・立てた子の問い …)は外側へ渡す。外側の本物か別の答え手の内側に重ねる時に使う(scripted-process-handler は process の効果の
-;;; 全部に答えるので、外側の環境の答え手より内側に置くとその答えを隠す)。env は要求のまま台本へ渡す(継ぐ環境は外側の答え手が持ち、この peer
-;;; は環境を持たない)。外側に file の答え手が要るのは scripted-process-handler と同じ。
+;;; scripted-command-peer = an outside world of only the named commands: only for RunProcess whose argv[0] name (basename) is in the script, it answers with the same
+;;; answer as scripted-process-handler (scripted-answer -- refusing a missing cwd, appending to output-path), and passes other child-process calls and process effects (reading environment variables, the question
+;;; whether something is executable, working dir, questions about started children ...) to the outside. Use it layered inside the real handler or another handler on the outside (scripted-process-handler answers all of the process
+;;; effects, so putting it inside an outer environment handler would hide that handler's answers). env is passed to the script as requested (the inherited environment is held by the outer handler; this peer
+;;; holds no environment). The outside needs a file handler, same as scripted-process-handler.
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (require doeff-hy.record [defrecord])
@@ -56,18 +56,18 @@
 
 
 (defrecord ScriptedCommand
-  "台本の命令 1 つ(name = argv[0] の basename・run = (run commands request) → ProcessOutcome を答える Program。commands は台本の表の全部 —
-   timeout のように別の命令を走らせる台本が run-scripted で引く)。"
+  "One script command (name = basename of argv[0]; run = a Program answering (run commands request) -> ProcessOutcome. commands is the whole script table --
+   a script that runs another command, like timeout, looks it up with run-scripted)."
   (#^ str name)
-  ;; 自分(ScriptedCommand)を含む型なので文字列の注記(class を作る時に名がまだ無い)。
+  ;; A string annotation because the type contains itself (ScriptedCommand) (the name does not exist yet when the class is built).
   (#^ "Callable[[tuple[ScriptedCommand, ...], RunProcess], Program[ProcessOutcome, object]]" run))
 
 
 (defrecord ProcessScript
-  "scripted-process-handler に渡す世界(commands = ScriptedCommand の tuple・env = 自分の process の環境変数・work-root = job ごとの作業 dir を
-   作る親・alive = 生きている pid の表 — ProcessAlive の答え・interpreter = 自分の process の interpreter の事実 — ReadInterpreter の答え・
-   machine-name = 自分の process が走る機体の名 — ReadMachineName の答え・modules = import が解く module の置き場の表 — ResolveModule の答え。表に無い名は ModuleNotFound)。alive の要素は pid(int)— 作る時に
-   確かめる(要素の型が欄の型 frozenset[int] と違う値を黙って持たない)。"
+  "The world handed to scripted-process-handler (commands = tuple of ScriptedCommand; env = environment variables of this process; work-root = the parent under which a per-job working dir is
+   created; alive = table of live pids -- the answer of ProcessAlive; interpreter = facts about this process's interpreter -- the answer of ReadInterpreter;
+   machine-name = name of the machine this process runs on -- the answer of ReadMachineName; modules = table of module locations that import resolves -- the answer of ResolveModule. A name not in the table is ModuleNotFound). The elements of alive are pids (int) -- checked
+   at construction (a value whose element type differs from the field type frozenset[int] is not silently held)."
   {:check [(all (gfor pid alive (isinstance pid int)))]}
   (#^ (get tuple #(ScriptedCommand ...)) commands)
   (setv #^ (get tuple #(EnvEntry ...)) env #())
@@ -81,8 +81,8 @@
 (defk scripted-child-env [inherited env env-mode env-drop]
   {:pre [(: inherited (of tuple EnvEntry ...)) (: env (| (of tuple EnvEntry ...) None)) (: env-mode EnvMode) (: env-drop (of tuple str ...))]
    :post [(: % (| (of tuple EnvEntry ...) None))]}
-  "台本に渡す子の環境を作るため: None と REPLACE は渡された env のまま(前からの振る舞い)、EXTEND は台本の世界の環境 inherited から env-drop の
-   型に合う名を外して env を足した全部(同じ名は env が勝つ — 本物の subprocess-handler の child-environment と同じ規則)。"
+  "Builds the child environment passed to the script: None and REPLACE keep the env as given (the earlier behavior); EXTEND is everything made by removing the names matching the env-drop
+   type from the script world's inherited environment and adding env (the same name is won by env -- the same rule as child-environment of the real subprocess-handler)."
   (match #(env env-mode)
     #(None _) None
     #(_ EnvMode.EXTEND) (do (val added (sfor e env e.name))
@@ -95,8 +95,8 @@
 
 (defk run-scripted [commands request]
   {:pre [(: commands (of tuple ScriptedCommand ...)) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "命令 1 つを台本で走らせるため(無い cwd・名の無い命令は起こせない形)。台本から別の命令を走らせる時もこれを呼ぶ。
-   本物の subprocess と同じ順で断る: 先に cwd(無ければ ENOENT・dir でなければ ENOTDIR)、次に命令(ENOENT)。"
+  "Runs one command with the script (a missing cwd or an unknown command is a shape that cannot start). Calling another command from a script also calls this.
+   Refuses in the same order as a real subprocess: first cwd (ENOENT if missing, ENOTDIR if not a dir), then the command (ENOENT)."
   (when (is-not request.cwd None)
     (<- stat (StatPath request.cwd))
     (val refused-errno (match stat
@@ -120,9 +120,9 @@
 
 (defk scripted-answer [commands request]
   {:pre [(: commands (of tuple ScriptedCommand ...)) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process" :role "program"}}
-  "RunProcess 1 つの台本の答えを作るため(scripted-process-handler と scripted-command-peer の答えの 1 点): run-scripted で走らせ、
-   output-path の在る要求は台本の出力をその file の末尾へ足す。足せない output-path は本物と同じく例外で上げる(本物は子の後の open が
-   OSError を上げ、答えは返らない)。"
+  "Builds the script answer for one RunProcess (the one point of the answer shared by scripted-process-handler and scripted-command-peer): runs with run-scripted, and
+   for a request with output-path appends the script output to the end of that file. An output-path that cannot be appended to raises an exception, like the real handler (the real handler's open after the child
+   raises OSError, and no answer is returned)."
   (<- outcome ProcessOutcome (run-scripted commands request))
   (when (is-not request.output-path None)
     (<- appended (AppendText request.output-path (+ outcome.stdout outcome.stderr)))
@@ -131,17 +131,17 @@
   outcome)
 
 
-;; 台本の世界で立てた子の pid の始まり(本物の pid と混ざらない大きさ)と、止めた子の終了 code(SIGTERM で終わった子 — 本物と同じ負の値)。
+;; The start of pids of children started in the script world (a size that does not mix with real pids), and the exit code of a stopped child (a child ended by SIGTERM -- the same negative value as the real handler).
 (val SCRIPTED-FIRST-PID 50000)
 (val SCRIPTED-STOPPED-CODE -15)
-;; 台本の世界で、止めるまで走り続ける子の印(立てた子の表の値 — 終わった子は終了 code)。
+;; The marker of a child in the script world that keeps running until stopped (a value in the table of started children -- a finished child holds its exit code).
 (val SCRIPTED-RUNNING "running")
 
 
 (defk scripted-open-outputs [paths]
   {:pre [(: paths (of tuple (| str None) ...))] :post [(: % (| ProcessNotStarted None))] :tags {:context "process" :role "program"}}
-  "StartProcess の出力の file を、子を立てる前に末尾へ足す形で開く(空を足す)ため — 本物は Popen の前に開き、開けなければ立てない。
-   答え = 開けなかった最初の file の理由(本物の OSError と同じ文)か None。"
+  "Opens the StartProcess output files before starting the child, in append mode (appends nothing) -- the real handler opens before Popen, and does not start if it cannot open.
+   Answer = the reason for the first file that could not be opened (the same message as the real OSError), or None."
   (var refused None)
   (for [path paths]
     (when (and (is refused None) (is-not path None))
@@ -154,7 +154,7 @@
 (defk scripted-append-outputs [stdout-path stderr-path outcome]
   {:pre [(: stdout-path (| str None)) (: stderr-path (| str None)) (: outcome ProcessOutcome)] :post [(: % None)]
    :tags {:context "process" :role "program"}}
-  "台本の子の標準出力と標準エラーを、それぞれの file の末尾へ足すため(None は捨てる — 本物の DEVNULL)。"
+  "Appends the script child's stdout and stderr to the end of their respective files (None is discarded -- the real DEVNULL)."
   (for [#(path text) #(#(stdout-path outcome.stdout) #(stderr-path outcome.stderr))]
     (when (and (is-not path None) text)
       (<- appended (AppendText path text))
@@ -165,8 +165,8 @@
 
 (defk scripted-executable-at [commands path]
   {:pre [(: commands (of tuple ScriptedCommand ...)) (: path str)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
-  "ExecutableAt に台本の世界で答えるため: 種類は置き場(外側の file の答え手)の StatPath — 置き場に無い path は、台本に名(basename)が在れば
-   実行できる file(台本がその命令の file の代役)、無ければ無い物。実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer。"
+  "Answers ExecutableAt in the script world: the kind is StatPath of the working area (the outer file handler) -- a path missing from the working area is an executable file if its name (basename) is in the script
+   (the script stands in for that command's file), otherwise nothing. Permission to execute is the name being in the script. The decision is the same executable-file-answer as the real handler."
   (val named (any (gfor c commands (= c.name (posixpath.basename path)))))
   (<- seen (| PathStat FileFailed) (StatPath path))
   (val kind (match seen
@@ -178,16 +178,16 @@
 
 
 (defhandler scripted-process-handler [#^ ProcessScript script]
-  "process の effect に、台本 SCRIPT(命令・環境・作業の根・生きている pid・interpreter・機体の名・module)で答える模擬の答え手。"
-  ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
+  "A simulated handler that answers the process effects with script SCRIPT (commands, environment, work root, live pids, interpreter, machine name, modules)."
+  ;; Why it stays an argument: the script table and environment are values that differ per scenario (not configuration but the simulated world itself).
   (session var jobs 0)
-  ;; 立てたらすぐ返す子(StartProcess)の表(pid → 終了 code か SCRIPTED-RUNNING)と、次に配る pid。
+  ;; Table of children started that return immediately (StartProcess) (pid -> exit code or SCRIPTED-RUNNING), and the next pid to hand out.
   (session val started {})
-  ;; hold-stdin で立てた子の pid(WriteProcessInput が書いた形で答える子 — #3672)。
+  ;; Pids of children started with hold-stdin (children for which WriteProcessInput answers as written -- #3672).
   (session var held (frozenset))
   (session var next-pid SCRIPTED-FIRST-PID)
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
-    ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
+    ;; The env the script sees is aligned with the full set of the child's environment variables (EXTEND adds to the script world's environment script.env minus env-drop -- the same as the real subprocess-handler).
     (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
     (<- outcome ProcessOutcome (scripted-answer script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
                                                                              :output-path output-path :process-group process-group
@@ -204,7 +204,7 @@
     (val work (posixpath.join script.work-root (.format "job-{}" jobs)))
     (<- made (MakeDirectory work))
     (when (isinstance made FileFailed)
-      (raise (RuntimeError (.format "作業 dir を作れない: {}" made.detail))))
+      (raise (RuntimeError (.format "Cannot create working dir: {}" made.detail))))
     (resume work))
   (ProcessAlive [pid]
     (resume (and (> pid 0) (in pid script.alive))))
@@ -214,15 +214,15 @@
     (resume script.machine-name))
   (ResolveModule [name]
     (resume (next (gfor m script.modules :if (= m.name name) m) (ModuleNotFound :name name))))
-  ;; hold-stdin と reap-group(#2471)は台本の世界に無い(標準入力の pipe と group が無い)— 受けて振る舞いは変えない。hold-stdin の子の pid だけは
-  ;; 覚える(WriteProcessInput が書いた形で答える子 — #3672)。
+  ;; hold-stdin and reap-group (#2471) do not exist in the script world (no stdin pipe or group) -- accepted without changing behavior. Only the pid of a hold-stdin child is
+  ;; remembered (children for which WriteProcessInput answers as written -- #3672).
   (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
     (<- refused (| ProcessNotStarted None) (scripted-open-outputs #(stdout-path stderr-path)))
     (if (is-not refused None)
         (resume refused)
         (do
           (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
-          ;; 台本を timeout 0 で 1 回走らせる: 時間切れの答え = 止めるまで走り続ける子・それ以外 = すぐ終わった子。
+          ;; Run the script once with timeout 0: a timed-out answer = a child that keeps running until stopped; anything else = a child that finished immediately.
           (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :cwd cwd :env child-env :timeout 0.0
                                                                                 :process-group process-group)))
           (if (not outcome.started)
@@ -249,7 +249,7 @@
   (SignalProcess [pid signal]
     (match (.get started pid)
       None (resume (ProcessNotChild :pid pid))
-      state :if (= state SCRIPTED-RUNNING) (do (setv (get started pid) (match signal ProcessSignal.TERM -15 ProcessSignal.KILL -9))  ; 本物の子が signal で終わった時と同じ負の値
+      state :if (= state SCRIPTED-RUNNING) (do (setv (get started pid) (match signal ProcessSignal.TERM -15 ProcessSignal.KILL -9))  ; same negative value as when a real child ends by a signal
                                               (resume (ProcessSignalled :pid pid :delivered True)))
       _ (resume (ProcessSignalled :pid pid :delivered False))))
   (WriteProcessInput [pid text]
@@ -258,16 +258,16 @@
       state (resume (ProcessInputWritten :pid pid :delivered (and (= state SCRIPTED-RUNNING) (in pid held)))))))
 
 
-;; scripted-command-peer が答える effect の型 — 使い手が、この peer を外側に置いた時に内側から外へ通す型(柵の一覧など)を、peer の答えと同じ
-;; 1 か所から読むため(peer が答える型を増やしたら、ここも同じ変更で足す)。
+;; The types of effects that scripted-command-peer answers -- so that users reading the types to pass from inside to outside when this peer is placed on the outside (such as a list of barriers) read them from the same
+;; one place as the peer's answers (when the types the peer answers increase, add them here in the same change).
 (val SCRIPTED-COMMAND-EFFECTS #(RunProcess))
 
 
 (defhandler scripted-command-peer [#^ (get tuple #(ScriptedCommand ...)) commands]
-  "argv[0] の名が台本 COMMANDS に在る RunProcess だけに scripted-process-handler と同じ答えで答え、ほかの effect は外側の答え手へ渡す模擬の答え手。"
-  ;; 名指した命令だけの外の世界を、外側の process の答え手の内側に重ねるため(頭の註の scripted-command-peer): argv[0] の名(basename)が台本に
-  ;; 在る RunProcess だけに scripted-process-handler と同じ答えで答え、ほかの呼びと process の効果は外側へ渡す。
-  ;; 引数に残す理由: 台本の表は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
+  "A simulated handler that answers with the same answer as scripted-process-handler only for RunProcess whose argv[0] name is in the script COMMANDS, and passes other effects to the outer handler."
+  ;; To layer an outside world of only the named commands inside the outer process handler (scripted-command-peer in the header comment): only for RunProcess whose argv[0] name (basename) is in the
+  ;; script, answer with the same answer as scripted-process-handler, and pass other calls and process effects to the outside.
+  ;; Why it stays an argument: the script table is a value that differs per scenario (not configuration but the simulated world itself).
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
     :when (and argv (in (posixpath.basename (get argv 0)) (frozenset (gfor c commands c.name))))
     (<- outcome ProcessOutcome (scripted-answer commands effect))

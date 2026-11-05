@@ -1,12 +1,12 @@
-"""doeff_core_effects の子を `_<名>` へ移した後も、どちらの package を先に import しても読み込みの順が保たれる事の検。
+"""Check that after moving doeff_core_effects children to `_<name>`, load order is preserved whichever package is imported first.
 
-決まり: ADR-DOE-API-001 の R5 — 名は入口(`__init__`)から出し、子は名に `_` を付けて隠す。
-doeff は読み込みの時にこの package の `_effects` と `_scheduler` を読み、この package の入口は先に doeff を読む。入口が
-遅延で出す名(`__getattr__` の `_LAZY_EXPORTS`)の module は、`import doeff` で読まない(起動を重くしない)。元の名の所の
-移し替えの module(1 行目に `# moved-submodule-shim:`)は、`_<名>` の module そのものを返す。
+Rule: R5 of ADR-DOE-API-001 - names are exported from the entry point (`__init__`); children are hidden by prefixing `_` to the name.
+At load time, doeff reads this package's `_effects` and `_scheduler`, and this package's entry point reads doeff first. Modules for names the entry point
+exports lazily (`_LAZY_EXPORTS` in `__getattr__`) are not loaded by `import doeff` (so as not to slow startup). The relocation
+shim modules at the old names (with `# moved-submodule-shim:` on line 1) return the `_<name>` module itself.
 
-失敗ケース: doeff を先に読む・doeff_core_effects を先に読む・古い path を先に読むの、どれかで import が落ちる・
-入口の名が doeff の名と別の物になる・`import doeff` が遅延の名の module を読む・古い path が別の写しの module を返すと赤。
+Failure cases: red if importing doeff first, importing doeff_core_effects first, or importing an old path first makes the import fail,
+an entry-point name becomes a different object from doeff's name, `import doeff` loads a lazy name's module, or an old path returns a separate copy of the module.
 """
 
 import subprocess
@@ -14,9 +14,9 @@ import sys
 
 import pytest
 
-#: 子の古い path と新しい path(移した中核の 10 個 — storage は下の module も
-#: 移した計算・VM・乱数・測りの 23 個・次に移した file・memo・cache の 11 個・process の 19 個・
-#: http・ws の 6 個・sql の 7 個)。
+#: Old and new paths of the children (10 core ones moved - storage also moved the modules below it;
+#: 23 for compute, VM, random numbers, and measurement; 11 for the next moved files, memo, and cache; 19 for process;
+#: 6 for http and ws; 7 for sql).
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -98,10 +98,10 @@ MOVED = {
     "doeff_core_effects.sql_transaction": "doeff_core_effects._sql_transaction",
 }
 
-#: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
+#: Names exported by both doeff and the entry point (doeff binds them from `_effects` and `_scheduler` at load time).
 SHARED_NAMES = ("Ask", "Get", "Put", "Tell", "Spawn", "Gather", "Wait", "Promise", "Task", "MissingEnvKeyError")
 
-#: 入口が遅延で出す名と、その module(`import doeff` では読まない)。
+#: Names the entry point exports lazily, and their modules (not loaded by `import doeff`).
 LAZY_NAMES = {
     "StepBudget": "doeff_core_effects._scheduler",
     "DurableStorage": "doeff_core_effects._storage",
@@ -135,7 +135,7 @@ LAZY_NAMES = {
     "ClickHouseDatabase": "doeff_core_effects._clickhouse_http_sql",
 }
 
-#: `import doeff` が読まない module(入口の遅延の名だけが読む)。
+#: Modules that `import doeff` does not load (only the entry point's lazy names load them).
 NOT_LOADED_BY_DOEFF = (
     "doeff_core_effects._storage",
     "doeff_core_effects._scheduler_channel",

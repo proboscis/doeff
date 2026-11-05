@@ -1,8 +1,8 @@
-;;; Linux で process の終わりで読める fd(pidfd)を開く — 子 process の終わりの待ち(process_exit.hy の process-exit-handler)の Linux の
-;;; 開き方。macOS の開き方は kqueue_exit.hy の kqueue-fd-of で、どちらも pid → fd | None の同じ形。
+;;; Opens an fd (pidfd) on Linux that becomes readable when a process exits. This is the Linux way to open the fd for waiting on a child process's exit (process-exit-handler in process_exit.hy).
+;;; The macOS way is kqueue-fd-of in kqueue_exit.hy; both have the same shape: pid -> fd | None.
 ;;;
-;;; process の pidfd(Linux 5.3 からの pidfd_open)は、その process が終わると読める fd になる。pidfd は子でない process にも開けるので、
-;;; 待ちの子から分けた子(worker の子ではない)も同じ形で待てる。
+;;; A process's pidfd (pidfd_open, since Linux 5.3) becomes a readable fd when that process exits. A pidfd can also be opened on non-child processes,
+;;; so a child detached from the waiting parent (not a child of the worker) can be waited on in the same way.
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import ctypes)
@@ -10,34 +10,34 @@
 (import os)
 (import platform)
 
-;; pidfd_open の syscall の番号(機体の種類ごと)。この版の Python(3.14 の free-threading の build)は os.pidfd_open を持たないので、
-;; libc の syscall で直に呼ぶ。x86_64 と aarch64 は同じ番号(Linux の共通の表)。表に無い機体は PidfdUnavailable。
+;; Syscall number of pidfd_open (per machine type). This Python build (3.14 free-threading) has no os.pidfd_open,
+;; so we call the libc syscall directly. x86_64 and aarch64 share the same number (Linux's common table). A machine type not in the table raises PidfdUnavailable.
 (val PIDFD-OPEN-SYSCALLS {"x86_64" 434 "aarch64" 434})
 
-;; libc(import の時に 1 度だけ読み込む — 呼ぶたびに ctypes.CDLL を作らない)。CDLL は作るたびに関数の型(_FuncPtr の class)を 1 つ
-;; 作り、free-threading の CPython 3.14 では、主 thread の VM が走る間に await の bridge の thread で作り続けると、放した後も memory が
-;; 戻らない(1 回あたり約 1.8 KB)。worker の周の間の待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に
-;; 0.5 GB を越えて増えた。関数の物(.syscall)は最初の読みで CDLL の上に覚えられる。errno は ctypes が
-;; thread ごとに写すので、thread をまたいで共有してよい。
+;; libc (loaded only once at import time -- do not create a ctypes.CDLL on every call). Each CDLL creation makes one function type (a _FuncPtr class),
+;; and on free-threading CPython 3.14, if these keep being created on an await bridge thread while the main thread's VM is running, memory is not
+;; returned even after release (about 1.8 KB each time). The wait between worker rounds calls pidfd-of per tick and per child, so a worker process with a single child
+;; grew by more than 0.5 GB per day. The function object (.syscall) is cached on the CDLL after the first lookup. errno is mapped by ctypes
+;; per thread, so it is safe to share across threads.
 (val #^ ctypes.CDLL LIBC (ctypes.CDLL None :use-errno True))
 
 
 (defclass PidfdUnavailable [RuntimeError]
-  "この機体では pidfd を開けない(pidfd_open の番号を知らない機体の種類・Linux 5.3 より古い kernel)。")
+  "This machine cannot open a pidfd (a machine type whose pidfd_open number is unknown, or a kernel older than Linux 5.3).")
 
 
 (defk pidfd-of [pid]
   {:pre [(: pid int)] :post [(: % (| int None))] :tags {:context "process" :role "foundation"}}
-  "pid の process の pidfd を開くため(syscall を直に呼ぶのはこの 1 か所 — 頭の註)。答え = fd(閉じるのは呼び手)・居ない pid は None。
-   fd の取り方: libc の syscall(SYS_pidfd_open, pid, 0)。flags 0 = 終わると読める fd(Linux 5.3 から)。kernel が知らない syscall(5.3 より
-   古い)は ENOSYS で PidfdUnavailable。"
+  "Open the pidfd of the process pid (this is the only place that calls the syscall directly -- see the header note). Answer = fd (the caller closes it); a pid that does not exist gives None.
+   How the fd is obtained: libc syscall(SYS_pidfd_open, pid, 0). flags 0 = an fd that becomes readable on exit (since Linux 5.3). A kernel that does not know the syscall (older than 5.3)
+   gives ENOSYS, which raises PidfdUnavailable."
   (val number (.get PIDFD-OPEN-SYSCALLS (platform.machine)))
   (when (is number None)
-    (raise (PidfdUnavailable (.format "pidfd_open の番号を知らない機体の種類: {}" (platform.machine)))))
+    (raise (PidfdUnavailable (.format "Machine type whose pidfd_open number is unknown: {}" (platform.machine)))))
   (val fd (.syscall LIBC number (ctypes.c-int pid) (ctypes.c-uint 0)))
   (val failure (if (< fd 0) (ctypes.get-errno) 0))
   (cond
     (>= fd 0) fd
     (= failure errno.ESRCH) None
-    (= failure errno.ENOSYS) (raise (PidfdUnavailable "この kernel は pidfd_open を持たない(Linux 5.3 から)"))
+    (= failure errno.ENOSYS) (raise (PidfdUnavailable "This kernel has no pidfd_open (requires Linux 5.3 or later)"))
     True (raise (OSError failure (os.strerror failure)))))

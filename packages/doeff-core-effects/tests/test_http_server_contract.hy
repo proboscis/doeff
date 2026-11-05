@@ -1,38 +1,38 @@
-;;; HTTP の待ち受けの契約テスト — 同じ効果(HttpListen・HttpNextRequest・HttpRespond・HttpReadBody・HttpForward・WsAccept・WsSendText・
-;;; WsClose・HttpShutdown・TakeWsSendReport)に答える本物(aiohttp-http-server)と fake(scripted-http-server)が、同じ deftest を通る。
-;;; 解釈器の組み立てと契約の世界は http_server_contract_handlers.hy。どの deftest も同じ Program(serve — 受け口を開き、相手に要求を
-;;; 送らせ、要求に答え、全部に決着が付いたら閉じる)を回し、相手が受け取った物・出来事の並び・閉じた後の答えを見る。
+;;; HTTP listener contract tests - the real implementation (aiohttp-http-server) and the fake (scripted-http-server), both answering the same effects (HttpListen, HttpNextRequest, HttpRespond, HttpReadBody, HttpForward, WsAccept, WsSendText,
+;;; WsClose, HttpShutdown, TakeWsSendReport), go through the same deftests.
+;;; The interpreter assembly and the contract world are in http_server_contract_handlers.hy. Every deftest runs the same Program (serve - opens the listener, makes the peer
+;;; send requests, answers them, and closes once everything is settled) and checks what the peer received, the sequence of events, and the answer after closing.
 ;;;
-;;;   * HttpRespond の status・頭(同じ名の頭も落とさない)・本文(byte 列・file の範囲)がそのまま相手に届く。本文なしの答えは本文が空
-;;;   * HEAD と 204 の答えは本文を送らない(HttpBodyBytes を渡しても)
-;;;   * HttpForward は中継先の status を相手に届け、届かない中継先は 502
-;;;   * WsForward は届かない中継先なら要求を ws に上げずに 502 で断り、ws の出来事は出ない
-;;;   * WsAccept で上げた札は WsOpened・相手の 1 通が WsTextArrived / WsBinaryArrived・WsSendText が相手に届き、WsClose の状態符と理由が
-;;;     相手の受ける close と出来事 WsClosed の両方に載る。相手が閉じれば WsClosed は相手の状態符と理由
-;;;   * Upgrade の無い要求への WsAccept は 426 で断り、ws の出来事は出ない
-;;;   * 送りの上限を超える 1 通は接続をその場で切る(WsClosed 1006 と切りの理由・切りの数)
-;;;   * HttpShutdown は開いている ws へ close 1000 と理由を送り、以後の HttpNextRequest は何度でも HttpServerClosed(その理由)
-;;;   * HttpReadBody は上限ちょうどまで読み、超えれば HttpBodyTooLarge(宣言の長さ・宣言なしは None)・札ごとに 1 度だけ・命令の後は読めない
-;;;   * HttpListen の probes に当たる要求(GET・HEAD と path)は答え手が answer で答え、本体の出来事にならない。answer は答え手の自分の run で
-;;;     走る(本体の run の handler を読む answer は 500)
-;;; 答え手だけの性質は test_http_server.hy(本物: 結んだ port・HTTP の中継の本文と X-Forwarded-Proto・ws の中継・received-at。fake: 中継先の
-;;; 最長の一致・読まない相手の箱・台本の後足し・読みの途中の失敗)。
+;;;   * The status, headers (same-named headers are not dropped) and body (byte string, file range) of HttpRespond reach the peer as-is. An answer without a body has an empty body
+;;;   * HEAD and 204 answers send no body (even if HttpBodyBytes is given)
+;;;   * HttpForward delivers the upstream status to the peer, and an unreachable upstream gives 502
+;;;   * WsForward to an unreachable upstream refuses the request with 502 without upgrading it to ws, and no ws events occur
+;;;   * A ticket upgraded by WsAccept yields WsOpened; the peer's message yields WsTextArrived / WsBinaryArrived; WsSendText reaches the peer; and the status code and reason of WsClose appear in
+;;;     both the close the peer receives and the WsClosed event. If the peer closes, WsClosed carries the peer's status code and reason
+;;;   * WsAccept on a request without Upgrade is refused with 426, and no ws events occur
+;;;   * A message over the send limit cuts the connection on the spot (WsClosed 1006, the cut reason, and the cut count)
+;;;   * HttpShutdown sends close 1000 and a reason to open ws connections, and every later HttpNextRequest gives HttpServerClosed (with that reason)
+;;;   * HttpReadBody reads up to exactly the limit, and beyond it gives HttpBodyTooLarge (declared length; None if undeclared); only once per ticket; cannot read after the command
+;;;   * A request matching the probes of HttpListen (GET/HEAD and a path) is answered by the responder via answer and does not become an event of the body. answer runs in the responder's own run
+;;;     (an answer that reads a handler of the body's run gives 500)
+;;; Properties of the responder alone are in test_http_server.hy (real: bound port, HTTP forwarding body and X-Forwarded-Proto, ws forwarding, received-at. fake: longest match of the
+;;; upstream, a peer that does not read its box, appending to the script later, failure in the middle of a read).
 (require doeff-hy.macros [defk deftest <- val var])
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass])  ; used by the defrecord expansion
 (import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsTextArrived HttpProbe HttpProbeAnswer WsShortcut]
         doeff_core_effects._http_server_effects [WS-CUT-REASON WS-REFUSAL-TEXT WsShortcutAhead WsShortcutCarried])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
-(val SHUTDOWN-REASON "検が閉じた")
+(val SHUTDOWN-REASON "the listener closed")
 (val SEND-LIMIT 64)
 (val BODY-LIMIT 8)
 (val HUGE-DECLARED 100000000)
-(val GREETING (.encode "こんにちは" "utf-8"))
+(val GREETING (.encode "hello" "utf-8"))
 
 
 (defrecord ReadNote
-  "本文の読みの記録: path・1 度目の答え・同じ札への 2 度目の答え。"
+  "Record of a body read: path, first answer, second answer to the same ticket."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ str path)
   (#^ HttpBodyOutcome first)
@@ -40,15 +40,15 @@
 
 
 (defrecord Answered
-  "要求 1 つへ命令を撃った結果: settled = この要求がここで決着したか(ws に上げた札は WsClosed で決着する)・note = 本文の読みの記録。"
+  "Result of firing a command at one request: settled = whether this request was settled here (a ticket upgraded to ws settles with WsClosed), note = record of the body read."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ bool settled)
   (setv #^ (| ReadNote None) note None))
 
 
 (defrecord Served
-  "serve の答え: events = 閉じるまでに受けた出来事(比べる形 — event-shape)・again = 閉じた後にもう 1 度受けた答え・answers = 相手が
-   受け取った物(送った順)・reads = 本文の読みの記録・report = 最後の送りの勘定。"
+  "Answer of serve: events = events received until closing (comparison shape - event-shape), again = the answer received once more after closing, answers = what the peer
+   received (in send order), reads = records of body reads, report = the final tally of sends."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ tuple events)
   (#^ tuple again)
@@ -59,7 +59,7 @@
 
 (defk event-shape [event]
   {:pre [(: event HttpEvent)] :post [(: % tuple)] :tags {:context "http-server-test" :role "judgment"}}
-  "出来事の比べる欄(頭と受けた拍は答え手ごとに違うので外す — 頭は相手の client が足す物を含む)。"
+  "Comparison fields of an event (the header and the received beat differ per responder so they are excluded - the header includes what the peer's client adds)."
   (match event
     (HttpRequestArrived :ticket t :method m :path p :target target :upgrade u) #("request" t m p target u)
     (WsOpened :ticket t) #("opened" t)
@@ -72,15 +72,15 @@
 (defk respond [ticket status headers body]
   {:pre [(: ticket str) (: status int) (: headers tuple) (: body (| HttpBodyBytes HttpBodyFileRange HttpNoBody))] :post [(: % None)]
    :tags {:context "http-server-test" :role "program"}}
-  "札へ答えを送る。"
+  "Send an answer to the ticket."
   (<- (HttpRespond :ticket ticket :status status :headers headers :body body))
   None)
 
 
 (defk read-and-answer [ticket path]
   {:pre [(: ticket str) (: path str)] :post [(: % ReadNote)] :tags {:context "http-server-test" :role "program"}}
-  "本文を BODY-LIMIT まで読み(2 度目の読みも撃つ)、読めた本文は 200・上限超えは 413(宣言の長さ)・読めなければ 400 で答える。
-   答え = 読みの記録。"
+  "Read the body up to BODY-LIMIT (also firing a second read), answer 200 for a readable body, 413 (declared length) when over the limit, and 400 when unreadable.
+   Answer = the record of the read."
   (<- outcome HttpBodyOutcome (HttpReadBody :ticket ticket :max-bytes BODY-LIMIT))
   (<- again HttpBodyOutcome (HttpReadBody :ticket ticket :max-bytes BODY-LIMIT))
   (<- (match outcome
@@ -92,7 +92,7 @@
 
 (defk answer-request [event world]
   {:pre [(: event HttpRequestArrived) (: world World)] :post [(: % Answered)] :tags {:context "http-server-test" :role "program"}}
-  "要求 1 つへ path ごとの命令を撃つ。"
+  "Fire a per-path command at one request."
   (val t event.ticket)
   (match event.path
     "/text" (do (<- (respond t 200 #((HttpHeader :name "X-Contract" :value "a") (HttpHeader :name "X-Contract" :value "b")
@@ -111,43 +111,43 @@
                  (Answered :settled True))
     "/dead" (do (<- (HttpForward :ticket t :url (+ world.dead "/x")))
                 (Answered :settled True))
-    ;; 届かない中継先への ws の中継は断られ、ws の出来事は出ない — ここで決着する。
+    ;; A ws forward to an unreachable upstream is refused and no ws events occur - it settles here.
     "/dead-ws" (do (<- (WsForward :ticket t :url (+ world.dead "/x")))
                    (Answered :settled True))
     "/ws" (do (<- (WsAccept :ticket t))
-              ;; Upgrade の無い要求は断られ、ws の出来事は出ない — ここで決着する。
+              ;; A request without Upgrade is refused and no ws events occur - it settles here.
               (Answered :settled (not event.upgrade)))
     "/late-read" (do (<- (respond t 204 #() (HttpNoBody)))
                      (<- late HttpBodyOutcome (HttpReadBody :ticket t :max-bytes BODY-LIMIT))
                      (Answered :settled True :note (ReadNote :path event.path :first late :again late)))
     path :if (.startswith path "/body") (do (<- note ReadNote (read-and-answer t path))
                                             (Answered :settled True :note note))
-    other (raise (ValueError (+ "契約の Program に無い path: " other)))))
+    other (raise (ValueError (+ "path not in the contract Program: " other)))))
 
 
 (defk answer-ws [event]
   {:pre [(: event (| WsOpened WsTextArrived WsBinaryArrived))] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
-  "ws の 1 通へ答える: \"bye\" = 4001 で閉じる・\"big\" = 送りの上限の 2 倍の 1 通を送る・\"stop\" = 待ち受けを閉じる・他の文字は echo・
-   byte の 1 通は 1003 で閉じる。"
+  "Answer one ws message: \"bye\" = close with 4001, \"big\" = send one message of twice the send limit, \"stop\" = close the listener, other text is echoed,
+   one binary message closes with 1003."
   (match event
-    (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "さようなら"))
+    (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "goodbye"))
     (WsTextArrived :ticket t :text "big") (<- (WsSendText :ticket t :text (* "x" (* 2 SEND-LIMIT))))
-    ;; "each" = 1 通・札の列(この札と知らない札)・1 通の順に送る。"each-big" = 札の列で上限の 2 倍の 1 通を送る。
+    ;; "each" = send one message, a list of tickets (this one and an unknown one), and one message in that order. "each-big" = send one message of twice the limit with a list of tickets.
     (WsTextArrived :ticket t :text "each") (do (<- (WsSendText :ticket t :text "a"))
                                                (<- (WsSendTextEach :tickets #(t "ghost") :text "b"))
                                                (<- (WsSendText :ticket t :text "c")))
     (WsTextArrived :ticket t :text "each-big") (<- (WsSendTextEach :tickets #("ghost" t) :text (* "x" (* 2 SEND-LIMIT))))
     (WsTextArrived :text "stop") (<- (HttpShutdown :reason SHUTDOWN-REASON :drain-seconds 2.0))
     (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ "echo:" text)))
-    (WsBinaryArrived :ticket t) (<- (WsClose :ticket t :code 1003 :reason "text だけ"))
+    (WsBinaryArrived :ticket t) (<- (WsClose :ticket t :code 1003 :reason "text only"))
     (WsOpened) None)
   None)
 
 
 (defk serve [requests]
   {:pre [(: requests tuple)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
-  "契約の Program: 待ち受けを開き、相手に requests を送らせ、要求に答え、全部の要求が決着したら閉じる。閉じた後にもう 1 度受け、相手が
-   受け取った物と送りの勘定を読む。"
+  "Contract Program: open a listener, make the peer send requests, answer them, and close once all requests are settled. After closing, receive once more and read what the peer
+   received and the send tally."
   (<- world World (ContractWorld))
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :ws-send-max-bytes SEND-LIMIT))
   (<- (PeerSend :address bound :requests requests))
@@ -179,13 +179,13 @@
 
 (defk header-values [answer name]
   {:pre [(: answer PeerAnswer) (: name str)] :post [(: % list)] :tags {:context "http-server-test" :role "judgment"}}
-  "相手が受け取った頭のうち name の値の列(名の大小を問わない・届いた順)。"
+  "List of values of header name that the peer received (case-insensitive on the name, in arrival order)."
   (lfor h answer.headers :if (= (.lower h.name) (.lower name)) h.value))
 
 
 (defk request-shapes [requests]
   {:pre [(: requests tuple)] :post [(: % list)] :tags {:context "http-server-test" :role "judgment"}}
-  "要求の列が届いた時の出来事の形(札は 1 から順)。"
+  "Shape of events when a sequence of requests arrives (tickets in order from 1)."
   (lfor [index r] (enumerate requests)
         #("request" (str (+ index 1)) r.method (get (.partition r.target "?") 0) r.target r.ws)))
 
@@ -204,17 +204,17 @@
   (val file (get served.answers 1))
   (val nothing (get served.answers 2))
   (assert (= [text.status text.body] [200 GREETING]) text)
-  ;; 同じ名の頭は 2 つとも届く。
+  ;; Same-named headers both arrive.
   (assert (= (! (header-values text "X-Contract")) ["a" "b"]) text.headers)
   (assert (= (! (header-values text "Content-Type")) ["text/plain; charset=utf-8"]) text.headers)
-  ;; file の範囲は site の 2 byte 目から 5 byte。
+  ;; The file range is 5 bytes from the 2nd byte of site.
   (assert (= [file.status file.body (! (header-values file "Content-Length"))] [206 b"nsole" ["5"]]) file)
   (assert (= [nothing.status nothing.body] [204 b""]) nothing))
 
 
 (deftest test-head-and-no-content-answers-carry-no-body
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  ;; 素の socket で送る — 答えの頭の後に届いた byte は全部本文として見える。
+  ;; Send over a raw socket - every byte arriving after the answer headers is seen as body.
   (val requests #((PeerRequest :method "HEAD" :target "/head" :raw True) (PeerRequest :method "HEAD" :target "/text" :raw True)
                   (PeerRequest :method "GET" :target "/nothing-but-bytes" :raw True) (PeerRequest :method "GET" :target "/text")))
   (<- served Served (serve requests))
@@ -223,7 +223,7 @@
   (val no-content (get served.answers 2))
   (val after (get served.answers 3))
   (assert (= [head.status head.body (! (header-values head "Content-Length"))] [200 b"" ["11"]]) head)
-  ;; HttpBodyBytes を渡しても HEAD と 204 は本文を送らない。
+  ;; Even if HttpBodyBytes is given, HEAD and 204 send no body.
   (assert (= [head-with-bytes.status head-with-bytes.body] [200 b""]) head-with-bytes)
   (assert (= [no-content.status no-content.body] [204 b""]) no-content)
   (assert (= [after.status after.body] [200 GREETING]) after))
@@ -241,7 +241,7 @@
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
   (val requests #((PeerRequest :method "GET" :target "/dead-ws" :ws True)))
   (<- served Served (serve requests))
-  ;; 断った札には ws の出来事が出ない。
+  ;; A refused ticket yields no ws events.
   (assert (= served.events (+ (tuple (! (request-shapes requests))) CLOSED)) served.events)
   (val refused (get served.answers 0))
   (assert (= [refused.status refused.texts refused.closed] [502 #() None]) refused))
@@ -251,11 +251,11 @@
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
   (<- served Served (serve #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("hi" "bye")))))
   (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1") #("text" "1" "hi") #("text" "1" "bye")
-                                #("closed" "1" 4001 "さようなら"))
+                                #("closed" "1" 4001 "goodbye"))
                               CLOSED))
           served.events)
   (val answer (get served.answers 0))
-  (assert (= [answer.status answer.texts answer.closed] [101 #("echo:hi") #(4001 "さようなら")]) answer)
+  (assert (= [answer.status answer.texts answer.closed] [101 #("echo:hi") #(4001 "goodbye")]) answer)
   (assert (= [served.report.queued-frames served.report.queued-bytes served.report.flushed-bytes served.report.dropped-bytes
               served.report.cuts (len served.report.flush-seconds)]
              [1 7 7 0 0 1])
@@ -264,7 +264,7 @@
 
 (deftest test-a-send-to-a-list-of-tickets-keeps-the-order-and-drops-unknown-tickets
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  (<- served Served (serve #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("each") :replies 3 :leave #(4002 "相手が去る")))))
+  (<- served Served (serve #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("each") :replies 3 :leave #(4002 "the peer leaves")))))
   (val answer (get served.answers 0))
   (assert (= answer.texts #("a" "b" "c")) answer)
   (assert (= [served.report.queued-frames served.report.queued-bytes served.report.flushed-bytes served.report.dropped-bytes
@@ -284,26 +284,26 @@
 
 (deftest test-a-peer-close-and-a-binary-close-name-their-code
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  (val requests #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("hi") :replies 1 :leave #(4002 "相手が去る"))
+  (val requests #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("hi") :replies 1 :leave #(4002 "the peer leaves"))
                   (PeerRequest :method "GET" :target "/ws" :ws True :sends #(b"\x01"))))
   (<- served Served (serve requests))
-  (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1") #("text" "1" "hi") #("closed" "1" 4002 "相手が去る")
+  (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1") #("text" "1" "hi") #("closed" "1" 4002 "the peer leaves")
                                 #("request" "2" "GET" "/ws" "/ws" True) #("opened" "2") #("binary" "2" b"\x01")
-                                #("closed" "2" 1003 "text だけ"))
+                                #("closed" "2" 1003 "text only"))
                               CLOSED))
           served.events)
   (val left (get served.answers 0))
   (val binary (get served.answers 1))
-  ;; 相手が閉じた接続は、待ち受けからの close を相手の受けとして数えない。
+  ;; On a connection the peer closed, a close from the listener is not counted as received by the peer.
   (assert (= [left.texts left.closed] [#("echo:hi") None]) left)
-  (assert (= [binary.texts binary.closed] [#() #(1003 "text だけ")]) binary))
+  (assert (= [binary.texts binary.closed] [#() #(1003 "text only")]) binary))
 
 
 (deftest test-a-ws-accept-without-upgrade-is-refused
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
   (val requests #((PeerRequest :method "GET" :target "/ws")))
   (<- served Served (serve requests))
-  ;; 断った札には ws の出来事が出ない。
+  ;; A refused ticket yields no ws events.
   (assert (= served.events (+ (tuple (! (request-shapes requests))) CLOSED)) served.events)
   (val refused (get served.answers 0))
   (assert (= [refused.status refused.body] [426 (.encode WS-REFUSAL-TEXT "utf-8")]) refused))
@@ -317,7 +317,7 @@
           served.events)
   (val cut (get served.answers 0))
   (assert (= [cut.texts cut.closed] [#() None]) cut)
-  ;; 上限を超える 1 通は箱へ積まずに切る — 積んだ・流した・捨てた byte は 0、切りは 1。
+  ;; A message over the limit is cut without being queued - queued, flushed and dropped bytes are 0, and cuts are 1.
   (assert (= [served.report.queued-frames served.report.queued-bytes served.report.flushed-bytes served.report.dropped-bytes
               served.report.cuts]
              [0 0 0 0 1])
@@ -328,13 +328,13 @@
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
   (<- served Served (serve #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("stop")))))
   (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1") #("text" "1" "stop")) CLOSED)) served.events)
-  ;; 閉じた後の HttpNextRequest も同じ理由の HttpServerClosed。
+  ;; HttpNextRequest after closing also gives HttpServerClosed with the same reason.
   (assert (= served.again (get CLOSED 0)) served.again)
   (val answer (get served.answers 0))
   (assert (= answer.closed #(1000 SHUTDOWN-REASON)) answer))
 
 
-;; 境目の要求と 1 度目の答え(2 度目はどれも HttpBodyFailed)。
+;; Boundary requests and the first answer (the second is HttpBodyFailed in every case).
 (val BODY-CASES #(#((PeerRequest :method "POST" :target "/body/exact" :body b"12345678") (HttpBodyRead :data b"12345678") #(200 b"12345678"))
                   #((PeerRequest :method "POST" :target "/body/over" :body b"123456789") (HttpBodyTooLarge :declared 9) #(413 b"9"))
                   #((PeerRequest :method "POST" :target "/body/chunked-fit" :body b"abcdefgh" :chunked True)
@@ -342,7 +342,7 @@
                   #((PeerRequest :method "POST" :target "/body/chunked-over" :body b"abcdefghijkl" :chunked True)
                     (HttpBodyTooLarge :declared None) #(413 b"None"))
                   #((PeerRequest :method "GET" :target "/body/empty") (HttpBodyRead :data b"") #(200 b""))
-                  ;; 上限を大きく超える宣言: 本物の相手は頭だけ送る — 読まずに断らなければ答えが来ない。
+                  ;; A declaration far over the limit: a real peer sends only headers - if it is not refused without reading, no answer comes.
                   #((PeerRequest :method "POST" :target "/body/huge-declared" :declared HUGE-DECLARED)
                     (HttpBodyTooLarge :declared HUGE-DECLARED) #(413 (.encode (str HUGE-DECLARED) "ascii")))))
 
@@ -353,7 +353,7 @@
   (assert (= (tuple (gfor note served.reads #(note.path note.first)))
              (tuple (gfor [request outcome _answer] BODY-CASES #(request.target outcome))))
           served.reads)
-  ;; 札ごとに 1 度だけ — 2 度目は読めない。
+  ;; Only once per ticket - the second cannot read.
   (assert (all (gfor note served.reads (isinstance note.again HttpBodyFailed))) served.reads)
   (assert (= (lfor a served.answers #(a.status a.body)) (lfor c BODY-CASES (get c 2))) served.answers))
 
@@ -366,29 +366,29 @@
   (assert (= (. (get served.answers 0) status) 204) served.answers))
 
 
-;; --- 答え手が自分で答える probe の口-----------------------------------------------------------------------
+;; --- Probe hook where the responder answers by itself -----------------------------------------------------------------------
 
-(val PROBE-FAILED "/peek の probe は答えを出せなかった")
+(val PROBE-FAILED "the probe of /peek could not produce an answer")
 
 
 (defk fixed-probe-answer [status text]
   {:pre [(: status int) (: text str)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
-  "probe の口の答えの Program(閉じている — 何の effect も使わない)。"
+  "Answer Program of the probe hook (closed - uses no effect)."
   (HttpProbeAnswer :status status :headers #((HttpHeader :name "Content-Type" :value "text/plain; charset=utf-8"))
                    :body (.encode text "utf-8")))
 
 
 (defk peek-world []
   {:pre [] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
-  "本体の run の handler(契約の世界)を読もうとする probe の答え — answer は答え手の自分の run で走るので届かず、答えは 500。"
+  "Answer of a probe that tries to read a handler of the body's run (the contract world) - answer runs in the responder's own run so it does not reach, and the answer is 500."
   (<- world World (ContractWorld))
   (HttpProbeAnswer :status 200 :headers #() :body (.encode world.site "utf-8")))
 
 
 (defk serve-probed [requests probes reaching]
   {:pre [(: requests tuple) (: probes tuple) (: reaching int)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
-  "probe の口つきの契約の Program: 待ち受けを開き、相手に requests を送らせ、本体へ届いた要求には 200 \"program\" で答え、reaching 個が
-   届いたら閉じる。閉じた後にもう 1 度受け、相手が受け取った物を読む。"
+  "Contract Program with a probe hook: open a listener, make the peer send requests, answer requests that reach the body with 200 \"program\", and close when `reaching` of them have
+   arrived. After closing, receive once more and read what the peer received."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :probes probes))
   (<- (PeerSend :address bound :requests requests))
   (var events #())
@@ -414,8 +414,8 @@
 
 (deftest test-a-probe-is-answered-by-the-server-and-never-reaches-the-program
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  ;; GET・HEAD で path が当たる要求は答え手が answer で答え、本体の出来事にならない(札は数える)。POST と他の path は本体へ届く。
-  ;; answer は答え手の自分の run で走る — 本体の run の handler(契約の世界)を読む answer は 500 と理由。
+  ;; A request whose path matches with GET/HEAD is answered by the responder via answer and does not become an event of the body (the ticket is counted). POST and other paths reach the body.
+  ;; answer runs in the responder's own run - an answer that reads a handler of the body's run (the contract world) gives 500 and a reason.
   (val probes #((HttpProbe :path "/healthz" :answer (fixed-probe-answer 200 "alive"))
                 (HttpProbe :path "/readyz" :answer (fixed-probe-answer 503 "not ready"))
                 (HttpProbe :path "/peek" :answer (peek-world))))
@@ -434,31 +434,31 @@
   (assert (= (lfor a (cut served.answers 4 None) #(a.status a.body)) [#(200 b"program") #(200 b"program")]) served.answers))
 
 
-;; --- 答え手がその場で答える ws の 1 通の口-------------------------------------------------------
+;; --- Hook for one ws message that the responder answers on the spot -------------------------------------------------------
 
 (defk early-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
-  "ws の口の answer(閉じている — 何の effect も使わない): 当たった 1 通に、本体より先に \"early:\" の 1 通で答える。"
+  "answer of the ws hook (closed - uses no effect): answers a matched message with one \"early:\" message ahead of the body."
   #((+ "early:" text)))
 
 
 (defk no-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
-  "答えの文を持たない ws の口の answer — 何も積まず、当たらなかった 1 通と同じ形で本体へ届く。"
+  "answer of a ws hook with no answer text - queues nothing and reaches the body in the same shape as an unmatched message."
   #())
 
 
 (defk broken-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
-  "落ちる ws の口の answer — 本体の run の handler(契約の世界)を読もうとする(answer は答え手の自分の run で走るので届かない)。"
+  "answer of a failing ws hook - tries to read a handler of the body's run (the contract world) (answer runs in the responder's own run so it does not reach)."
   (<- world World (ContractWorld))
   #(world.site))
 
 
 (defk serve-shortcut [requests shortcuts]
   {:pre [(: requests tuple) (: shortcuts tuple)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
-  "ws の口つきの契約の Program: 待ち受けを開き、相手に requests を送らせ、ws の 1 通には、答え手が先に答えた 1 通なら \"late:\"、他は
-   \"echo:\" で答え(\"bye\" は 4001 で閉じる)、全部の要求が決着したら閉じる。出来事の形には積んだ文の列 answered と運んだ値 carried を足す。"
+  "Contract Program with a ws hook: open a listener, make the peer send requests, and answer a ws message with \"late:\" if the responder answered it first, otherwise
+   \"echo:\" (\"bye\" closes with 4001), and close once all requests are settled. The event shape adds the list of queued texts answered and the carried value carried."
   (<- world World (ContractWorld))
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :ws-send-max-bytes SEND-LIMIT :ws-shortcuts shortcuts))
   (<- (PeerSend :address bound :requests requests))
@@ -475,7 +475,7 @@
       (HttpRequestArrived) (do (<- answered Answered (answer-request event world))
                                (:= settled (+ settled (if answered.settled 1 0))))
       (WsClosed) (:= settled (+ settled 1))
-      (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "さようなら"))
+      (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "goodbye"))
       (WsTextArrived :ticket t :text text :answered answered)
         (<- (WsSendText :ticket t :text (+ (if answered "late:" "echo:") text)))
       _ None)
@@ -489,10 +489,10 @@
 
 (deftest test-a-ws-shortcut-answers-before-the-program-and-keeps-the-order-of-the-connection
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  ;; marker を含む 1 通は答え手が answer で先に答え、同じ 1 通が積んだ文の列 answered と積み終えた拍を載せて本体へ届く(本体の答えは
-  ;; その後ろ)。answer が落ちた 1 通と空の答えの 1 通は何も積まずに answered が空のまま届き、本体がいつもどおり答える。当たらない
-  ;; 1 通は今のまま。
-  ;; 同じ接続の 1 通の順は変わらない。
+  ;; A message containing marker is answered first by the responder via answer, and the same message reaches the body carrying the list of queued texts answered and the beat when queuing finished (the body's answer is
+  ;; after that). A message where answer failed and a message with an empty answer reach the body with nothing queued and answered left empty, and the body answers as usual. An unmatched
+  ;; message stays as it is.
+  ;; The order of messages on the same connection does not change.
   (val shortcuts #((WsShortcut :marker "fast" :answer early-texts) (WsShortcut :marker "boom" :answer broken-texts)
                    (WsShortcut :marker "quiet" :answer no-texts)))
   (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("fast1" "hi" "boom1" "quiet1" "bye")))
@@ -500,53 +500,53 @@
   (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1")
                                 #("text" "1" "fast1" #("early:fast1") None) #("text" "1" "hi" #() None)
                                 #("text" "1" "boom1" #() None) #("text" "1" "quiet1" #() None) #("text" "1" "bye" #() None)
-                                #("closed" "1" 4001 "さようなら"))
+                                #("closed" "1" 4001 "goodbye"))
                               CLOSED))
           served.events)
   (val answer (get served.answers 0))
-  (assert (= [answer.status answer.texts answer.closed] [101 #("early:fast1" "late:fast1" "echo:hi" "echo:boom1" "echo:quiet1") #(4001 "さようなら")])
+  (assert (= [answer.status answer.texts answer.closed] [101 #("early:fast1" "late:fast1" "echo:hi" "echo:boom1" "echo:quiet1") #(4001 "goodbye")])
           answer))
 
 
 (defk staged-rest [text]
   {:pre [(: text str)] :post [(: % WsShortcutCarried)] :tags {:context "http-server-test" :role "program"}}
-  "2 段の ws の口の続きの段(閉じている): \"second:\" の 1 通を積み、値 \"kept:\" を本体へ運ぶ。"
+  "Continuation stage of the 2-stage ws hook (closed): queues a \"second:\" message and carries the value \"kept:\" to the body."
   (WsShortcutCarried :texts #((+ "second:" text)) :carried (+ "kept:" text)))
 
 
 (defk staged-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % WsShortcutAhead)] :tags {:context "http-server-test" :role "program"}}
-  "2 段の ws の口の answer: 先に \"first:\" の 1 通を積み、続きの段 staged-rest を走らせる。"
+  "answer of the 2-stage ws hook: first queues a \"first:\" message, then runs the continuation stage staged-rest."
   (WsShortcutAhead :texts #((+ "first:" text)) :rest (staged-rest text)))
 
 
 (defk broken-rest []
   {:pre [] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
-  "落ちる続きの段 — 本体の run の handler(契約の世界)を読もうとする。"
+  "A failing continuation stage - tries to read a handler of the body's run (the contract world)."
   (<- world World (ContractWorld))
   #(world.site))
 
 
 (defk staged-broken [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % WsShortcutAhead)] :tags {:context "http-server-test" :role "program"}}
-  "1 段目は積み、続きの段が落ちる ws の口の answer。"
+  "answer of a ws hook whose first stage queues and whose continuation stage fails."
   (WsShortcutAhead :texts #((+ "first:" text)) :rest (broken-rest)))
 
 
 (deftest test-a-staged-ws-shortcut-sends-each-stage-before-the-next-and-carries-a-value-to-the-program
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  ;; 2 段の答え: 1 段目の文を積んでから続きの段を走らせ、続きの段の文も積んでから、全部の段の文と終わりの段が
-  ;; 運ぶ値 carried を載せた 1 通が本体へ届く。続きの段が落ちた 1 通は、1 段目に積んだ文を載せ、値は運ばずに届く。同じ接続の 1 通の順は変わらない。
+  ;; 2-stage answer: queue the first stage's text and then run the continuation stage, queue the continuation stage's text too, and then one message carrying the texts of all stages and the value carried
+  ;; by the final stage reaches the body. A message whose continuation stage failed reaches the body carrying the text queued in the first stage, without a carried value. The order of messages on the same connection does not change.
   (val shortcuts #((WsShortcut :marker "stage" :answer staged-texts) (WsShortcut :marker "split" :answer staged-broken)))
   (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("stage1" "hi" "split1" "bye")))
                                     shortcuts))
   (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1")
                                 #("text" "1" "stage1" #("first:stage1" "second:stage1") "kept:stage1") #("text" "1" "hi" #() None)
                                 #("text" "1" "split1" #("first:split1") None) #("text" "1" "bye" #() None)
-                                #("closed" "1" 4001 "さようなら"))
+                                #("closed" "1" 4001 "goodbye"))
                               CLOSED))
           served.events)
   (val answer (get served.answers 0))
   (assert (= [answer.status answer.texts answer.closed]
-             [101 #("first:stage1" "second:stage1" "late:stage1" "echo:hi" "first:split1" "late:split1") #(4001 "さようなら")])
+             [101 #("first:stage1" "second:stage1" "late:stage1" "echo:hi" "first:split1" "late:split1") #(4001 "goodbye")])
           answer))

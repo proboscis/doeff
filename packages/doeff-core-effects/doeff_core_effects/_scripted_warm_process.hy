@@ -1,19 +1,19 @@
-;;; 待ちの子の効果(warm_effects.hy)の I/O なしの答え手 scripted-warm-process-handler。
-;;; 本物の socket と process を使わず、世界の値 WarmScript で答える。業務を知らない: 台本の中身は呼び手(検)が渡す。
+;;; scripted-warm-process-handler, the I/O-free handler for the warm-child effects (warm_effects.hy).
+;;; Instead of real sockets and processes it answers from a world value, WarmScript. It knows no business logic: the content of the script is passed in by the caller (the test).
 ;;;
-;;;   ForkFromWarm     socket-path が WarmScript の sockets に無い = socket が無い断り。在る socket は answer の通りに答える:
-;;;                    ACCEPTS = 仕事を受ける(entry の WarmRun が台本に無ければ台本の誤りとして例外)・REFUSES = refusal の文で断る・
-;;;                    SILENT = 答えの期限切れの断り。受けた子には SCRIPTED-WARM-FIRST-PID からの pid と、SCRIPTED-WARM-FIRST-TICKS からの
-;;;                    start-ticks を配る。
-;;;   PollWarmChild    pid と start-ticks が受けた子と合い、終わっていなければ、WarmRun の polls の回数だけ WarmRunning を答え、その後に終わる。
-;;;                    終わった子は writes-exit なら WarmExited(exit-code)・そうでなければ WarmLost(exit の file を書かずに居なくなった子)。
-;;;                    start-ticks が合わない(pid の使い回し)・知らない pid は、終わって exit の file を書いた子なら WarmExited、それ以外は
-;;;                    WarmLost — 本物が「居ないか使い回された時は exit の file を読む」のと同じ。
-;;;   WriteWarmChildInput pid と start-ticks が合い、hold-input で受けて終わっていない子だけ書いた事にする(WarmInputWritten の delivered)。
-;;;   SignalWarmChild  pid と start-ticks が合い、終わっていない子だけ終わった形にして WarmSignaled。それ以外は WarmGone(他人の process
-;;;                    には送らない)。TERM = 子 A は生き残り、入口の終わり(-15)を exit の file に書く・KILL = A も道連れに死に、exit の
-;;;                    file は書かれない(後の PollWarmChild は WarmLost)— 本物の group の signal と同じ。
-;;; 理由の文と exit の file の値の読みは本物と同じ関数(warm_effects.hy)。本物との契約は tests/test_warm_process_contract.hy。
+;;;   ForkFromWarm     A socket-path not in WarmScript's sockets = a refusal that the socket does not exist. An existing socket answers according to its answer:
+;;;                    ACCEPTS = accept the job (an exception, as a script error, if the script has no WarmRun for the entry) / REFUSES = refuse with the refusal text /
+;;;                    SILENT = a refusal as the answer deadline expiring. An accepted child is given a pid counting up from SCRIPTED-WARM-FIRST-PID and start-ticks counting up from
+;;;                    SCRIPTED-WARM-FIRST-TICKS.
+;;;   PollWarmChild    If the pid and start-ticks match an accepted child that has not ended, answer WarmRunning as many times as the WarmRun's polls count, then it ends.
+;;;                    An ended child is WarmExited(exit-code) if writes-exit, otherwise WarmLost (a child that vanished without writing the exit file).
+;;;                    For mismatched start-ticks (pid reuse) or an unknown pid: WarmExited if it is a child that ended and wrote the exit file, otherwise
+;;;                    WarmLost - the same as the real one reading the exit file when the process is gone or reused.
+;;;   WriteWarmChildInput  Only a child whose pid and start-ticks match, which was accepted with hold-input and has not ended, counts as written (delivered in WarmInputWritten).
+;;;   SignalWarmChild  Only a child whose pid and start-ticks match and has not ended is turned into an ended one and answered WarmSignaled. Otherwise WarmGone (no signal goes to
+;;;                    someone else's process). TERM = child A survives and the entry's ending (-15) is written to the exit file / KILL = A dies along with it and the exit
+;;;                    file is not written (a later PollWarmChild is WarmLost) - the same as the real group signal.
+;;; The reason text and the reading of the exit file's value use the same functions as the real one (warm_effects.hy). The contract with the real one is tests/test_warm_process_contract.hy.
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "process" :role "foundation"})
@@ -24,26 +24,26 @@
                                          WarmLost WarmSignaled WarmGone warm-socket-missing warm-answer-late warm-lost warm-gone
                                          signal-number-of])
 
-;; 台本の世界で配る pid と start-ticks の始まり(本物の値と混ざらない大きさ)。
+;; Starting values for the pid and start-ticks handed out in the script's world (sized so as not to mix with real values).
 (val SCRIPTED-WARM-FIRST-PID 60000)
 (val SCRIPTED-WARM-FIRST-TICKS 900000)
 
 
-;; 台本の socket の答え方(閉じた型): ACCEPTS = 仕事を受ける・REFUSES = 断りを答える・SILENT = 期限まで答えない。
+;; How the script's socket answers (a closed type): ACCEPTS = accept the job / REFUSES = answer a refusal / SILENT = do not answer until the deadline.
 (defenum WarmSocketAnswer ACCEPTS REFUSES SILENT)
-(setv WarmSocketAnswer.__doc__ "台本の socket の答え方: ACCEPTS = 仕事を受ける・REFUSES = 断りを答える・SILENT = 期限まで答えない。")
+(setv WarmSocketAnswer.__doc__ "How the script's socket answers: ACCEPTS = accept the job / REFUSES = answer a refusal / SILENT = do not answer until the deadline.")
 
 
 (defrecord WarmSocket
-  "台本の世界の待ちの子の socket 1 つ(path・答え方 answer・REFUSES の時の断りの文 refusal)。"
+  "One warm-child socket in the script's world (path, answer, and the refusal text refusal used when REFUSES)."
   (#^ str path)
   (setv #^ WarmSocketAnswer answer WarmSocketAnswer.ACCEPTS)
   (setv #^ str refusal ""))
 
 
 (defrecord WarmRun
-  "台本の仕事 1 つの終わり方(entry = 頼みの入口の名・polls = 終わる前に WarmRunning を答える回数・exit-code = 終わった時の exit の
-   file の値・writes-exit = False なら exit の file を書かずに居なくなる)。"
+  "How one scripted job ends (entry = the name of the request entry / polls = how many times WarmRunning is answered before ending / exit-code = the value of the exit
+   file when it ends / writes-exit = if False, vanishes without writing the exit file)."
   {:check [(>= polls 0)]}
   (#^ str entry)
   (setv #^ int polls 0)
@@ -52,13 +52,13 @@
 
 
 (defrecord WarmScript
-  "scripted-warm-process-handler に渡す世界(sockets = 在る待ちの子の socket・runs = 入口の名ごとの終わり方)。"
+  "The world passed to scripted-warm-process-handler (sockets = the existing warm-child sockets / runs = how each entry name ends)."
   (setv #^ (get tuple #(WarmSocket ...)) sockets #())
   (setv #^ (get tuple #(WarmRun ...)) runs #()))
 
 
 (defrecord WarmChildState
-  "受けた子 1 つの今(start-ticks・残りの WarmRunning の回数・終わったか・終わった時の値と exit の file の在否・入力の pipe を握ったか)。"
+  "The current state of one accepted child (start-ticks / remaining WarmRunning count / whether it ended / the value at the end and whether the exit file exists / whether it holds the input pipe)."
   (#^ int start-ticks)
   (#^ int polls-left)
   (#^ bool ended)
@@ -70,7 +70,7 @@
 (defk scripted-fork [script request pid ticks]
   {:pre [(: script WarmScript) (: request ForkFromWarm) (: pid int) (: ticks int)]
    :post [(: % (| WarmChildState WarmRefused))] :tags {:context "process" :role "judgment"}}
-  "台本の世界で仕事を頼んだ答えを決めるため: 断り(WarmRefused)か、受けた子の始めの今(WarmChildState)。"
+  "Decide the answer to a job request in the script's world: a refusal (WarmRefused) or the initial state of the accepted child (WarmChildState)."
   (val found (lfor s script.sockets :if (= s.path request.socket-path) s))
   (<- missing str (warm-socket-missing request.socket-path))
   (<- late str (warm-answer-late request.socket-path))
@@ -83,7 +83,7 @@
     WarmSocketAnswer.ACCEPTS
     (do (val runs (lfor r script.runs :if (= r.entry request.entry) r))
         (when (not runs)
-          (raise (ValueError (.format "台本に入口 {} の WarmRun が無い(検の世界の誤り)" request.entry))))
+          (raise (ValueError (.format "The script has no WarmRun for entry {} (an error in the test's world)" request.entry))))
         (val run (get runs 0))
         (WarmChildState :start-ticks ticks :polls-left run.polls :ended False :exit-code run.exit-code :writes-exit run.writes-exit
                         :holds-input request.hold-input))))
@@ -92,15 +92,15 @@
 (defk ended-answer [pid exit-path state]
   {:pre [(: pid int) (: exit-path str) (: state WarmChildState)] :post [(: % (| WarmExited WarmLost))]
    :tags {:context "process" :role "judgment"}}
-  "終わった子の答えを決めるため: exit の file を書いた子は WarmExited、書かずに居なくなった子は WarmLost。"
+  "Decide the answer for an ended child: a child that wrote the exit file is WarmExited, one that vanished without writing it is WarmLost."
   (<- lost WarmLost (warm-lost pid exit-path))
   (if state.writes-exit (WarmExited :pid pid :exit-code state.exit-code) lost))
 
 
 (defhandler scripted-warm-process-handler [#^ WarmScript script]
-  "待ちの子の effect(ForkFromWarm・PollWarmChild・WriteWarmChildInput・SignalWarmChild)に、台本 SCRIPT(socket と仕事)で答える模擬の答え手。"
-  ;; 引数に残す理由: socket と仕事の台本は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
-  ;; 受けた子の表(pid → WarmChildState)と、次に配る番。
+  "A mock handler that answers the warm-child effects (ForkFromWarm, PollWarmChild, WriteWarmChildInput, SignalWarmChild) from the script SCRIPT (sockets and jobs)."
+  ;; Why it stays an argument: the script of sockets and jobs is a different value per scenario (not a setting but the mock world itself).
+  ;; Table of accepted children (pid -> WarmChildState), and the next number to hand out.
   (session val children ((get dict #(int WarmChildState))))
   (session var forks 0)
   (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env orphan-seconds]
@@ -122,7 +122,7 @@
     (<- lost WarmLost (warm-lost pid exit-path))
     (cond
       (is state None) (resume lost)
-      ;; 使い回された pid(start-ticks が違う)は、本物と同じく exit の file だけで答える。
+      ;; A reused pid (different start-ticks) is answered from the exit file alone, the same as the real one.
       (!= state.start-ticks start-ticks) (resume (if (and state.ended state.writes-exit)
                                                       (WarmExited :pid pid :exit-code state.exit-code)
                                                       lost))

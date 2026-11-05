@@ -1,38 +1,38 @@
-;;; 前もって読み込みを済ませて待っている子(待ちの子)に仕事を頼み、その終わりを読む効果。
-;;; 業務の語を持たない土台の語彙で、子 process の効果(process_effects.hy)の隣。答え手は仕組みごとに差し替える:
-;;;   os-warm-process-handler        本物 — 待ちの子の unix socket に JSON 1 行を送り、/proc と exit の file で終わりを読む(os_warm_process.hy)
-;;;   scripted-warm-process-handler  I/O なし — socket の在否と、仕事ごとの台本で答える(scripted_warm_process.hy)
+;;; Effects to ask a child that has finished loading in advance and is waiting (a warm child) to do a job, and to read its end.
+;;; Foundation vocabulary with no business terms, next to the child process effects (process_effects.hy). The answerer is swapped per mechanism:
+;;;   os-warm-process-handler        real -- sends one JSON line to the warm child's unix socket, and reads the end from /proc and the exit file (os_warm_process.hy)
+;;;   scripted-warm-process-handler  no I/O -- answers from the socket's presence and a per-job script (scripted_warm_process.hy)
 ;;;
-;;; 待ちの子(呼び手の側 — この package の外)は、自分の作業 dir の unix socket で頼みを受け、fork した子 A(setsid して group の先頭・
-;;; log へ dup2・env と cwd を整える)が、さらに fork した子 B で入口を走らせる。A は終わる前に終了 code を exit の file へ置き換えで書く
-;;; (B が signal で終わった時は負の値)。A は頼んだ側の子ではないので、終わりは PollProcess では読めない — 下の PollWarmChild が /proc の
-;;; 始まりの刻(start-ticks)と exit の file で読む。pid は使い回されるので、pid と start-ticks の組で子を名指す。
+;;; The warm child (the caller's side -- outside this package) accepts requests on a unix socket in its own work dir, and a child A it forks (setsid to become group leader,
+;;; dup2 to the log, sets up env and cwd) runs the entry point in a child B that A forks in turn. Before ending, A writes the exit code to the exit file by replacement
+;;; (a negative value when B ended by a signal). A is not a child of the requester, so its end cannot be read by PollProcess -- PollWarmChild below reads it from the /proc
+;;; start time (start-ticks) and the exit file. Pids get reused, so a child is named by the pair of pid and start-ticks.
 ;;;
-;;;   ForkFromWarm     待ちの子に 1 つ仕事を頼む。答え = WarmForked(A の pid と start-ticks)か WarmRefused(socket が無い・接続を断られた・
-;;;                    待ちの子が断りを答えた・答えの期限 WARM-ANSWER-SECONDS が切れた・答えが読めない — 理由の文は下の関数で 1 度だけ作る)。
-;;;                    env は子の環境変数の全部(置き換え)。値はどの答え・断りの文・log にも出さない。
-;;;                    常駐の子の 3 つの欄(どれも既定なら頼みの形は今までと同じ):
-;;;                      hold-input   = 頼み手が子 A だけの入力の pipe を作り、読み口を頼みに添えて(unix socket の fd の受け渡し)A の標準入力に
-;;;                                     させ、書き口を握る。頼み手が消えると A は EOF を読む(入れ物 shim の hold-stdin と同じ働き)・
-;;;                                     頼み手は WriteWarmChildInput で A へ行を書く。
-;;;                      cgroup-procs = A が入口を起こす前に自分を置く cgroup の cgroup.procs(None = 待ちの子の cgroup のまま)。
-;;;                      notice-env   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(None = 中継しない)。
-;;;                      orphan-seconds = A が入力の EOF(頼み手の消失)を退きとして扱い、入口が自分で終わるのを待つ秒(None = EOF ですぐ止める —
-;;;                                     入れ物 shim の --orphan-seconds と同じ働き)。
-;;;   WriteWarmChildInput hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す。答え = WarmInputWritten(delivered = 書いたか —
-;;;                    終わった子・使い回された pid・pipe を握っていない子・読み手の居ない pipe・満ちた pipe は書かない)。
-;;;   PollWarmChild    頼んだ子の様子を 1 度だけ問う。答え = WarmRunning(同じ start-ticks の process が居て、終わっていない)・
-;;;                    WarmExited(exit の file の終了 code)・WarmLost(居ないか使い回されたのに exit の file が無い)。
-;;;   SignalWarmChild  頼んだ子の group へ signal を 1 度だけ送る。答え = WarmSignaled か WarmGone(居ない・終わっている・使い回された —
-;;;                    他人の process には送らない)か ProcessSignalRefused(process_effects.hy — OS が送りを断った・EPERM。子は走ったまま。
-;;;                    例 = AppArmor が container の中の process どうしの signal を拒む機体)。終わりは PollWarmChild で読む: TERM は子 A が受けずに入口の終わり(-15)を exit の
-;;;                    file に書く・KILL は A も道連れにするので exit の file は無く WarmLost。
-;;;   AwaitWarmChildExit 頼んだ子が終わるまで待つ(#3871 — 消費者 = doeff-cluster の worker の周の間の待ち)。答え = ProcessEnded
-;;;                    (process_effects.hy — 終わった・使い回された・居ない。終了 code は後の PollWarmChild が読む)。pid と start-ticks の組で
-;;;                    子を名指す。答え手は process_exit.hy の process-exit-handler(終わると読める fd の開き方が機体ごと — Linux = pidfd・macOS = kqueue)。外側に await-handler と scheduled が要る。
+;;;   ForkFromWarm     Ask the warm child to do one job. Answer = WarmForked (A's pid and start-ticks) or WarmRefused (no socket, connection refused,
+;;;                    the warm child answered with a refusal, the answer deadline WARM-ANSWER-SECONDS expired, or the answer is unreadable -- the reason text is built just once in the functions below).
+;;;                    env is the child's whole set of environment variables (replacement). Values appear in no answer, refusal text, or log.
+;;;                    Three fields for a resident child (when all are default, the request shape is the same as before):
+;;;                      hold-input   = the requester makes an input pipe only for child A, attaches its read end to the request (passing the fd over the unix socket) so that it becomes A's standard input,
+;;;                                     and holds the write end. When the requester disappears, A reads EOF (the same function as hold-stdin of the container shim) --
+;;;                                     the requester writes lines to A with WriteWarmChildInput.
+;;;                      cgroup-procs = the cgroup.procs of the cgroup A puts itself into before starting the entry point (None = stay in the warm child's cgroup).
+;;;                      notice-env   = the name of the environment variable that passes to the entry point the fd number of the read end of the notice pipe through which A relays input lines (None = no relay).
+;;;                      orphan-seconds = the seconds to wait for the entry point to end by itself, treating EOF on A's input (requester gone) as a retreat (None = stop immediately on EOF --
+;;;                                     the same function as --orphan-seconds of the container shim).
+;;;   WriteWarmChildInput Writes text to the input pipe of a child asked with hold-input, and returns without waiting. Answer = WarmInputWritten (delivered = whether it was written --
+;;;                    nothing is written for an ended child, a reused pid, a child whose pipe is not held, a pipe with no reader, or a full pipe).
+;;;   PollWarmChild    Asks about the requested child's state exactly once. Answer = WarmRunning (a process with the same start-ticks exists and has not ended),
+;;;                    WarmExited (the exit code in the exit file), WarmLost (gone or reused, and no exit file).
+;;;   SignalWarmChild  Sends a signal to the requested child's group exactly once. Answer = WarmSignaled, WarmGone (gone, ended, or reused --
+;;;                    never sent to someone else's process), or ProcessSignalRefused (process_effects.hy -- the OS refused the send, EPERM. The child keeps running.
+;;;                    Example = a machine where AppArmor denies signals between processes inside a container). The end is read with PollWarmChild: TERM is not caught by child A, which writes the entry point's end (-15) to the exit
+;;;                    file; KILL takes A down with it, so there is no exit file and the result is WarmLost.
+;;;   AwaitWarmChildExit Waits until the requested child ends (#3871 -- consumer = the wait between rounds of the doeff-cluster worker). Answer = ProcessEnded
+;;;                    (process_effects.hy -- ended, reused, or gone. The exit code is read later by PollWarmChild). The child is named by the pair of pid and start-ticks.
+;;;                    The answerer is process-exit-handler of process_exit.hy (how to open an fd that becomes readable on exit varies per machine -- Linux = pidfd, macOS = kqueue). await-handler and scheduled are needed outside.
 ;;;
-;;; 断り・失った・送らない理由の文と、exit の file の中身の読みは、本物と I/O なしの答え手が同じ関数を呼ぶ(同じ形で答える — 契約テスト
-;;; tests/test_warm_process_contract.hy)。
+;;; The refusal, lost and not-sent reason texts, and the reading of the exit file's contents, are done by the same functions called from both the real and the no-I/O answerer (they answer in the same shape -- contract test
+;;; tests/test_warm_process_contract.hy).
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord])
 (import re)
@@ -40,59 +40,59 @@
 (import doeff [EffectBase])
 (import doeff_core_effects._process_effects [EnvEntry ProcessEnded ProcessSignal ProcessSignalRefused])
 
-;; 待ちの子が答えるまでの期限の秒(接続・送り・答えの 1 行の受けの全部)。
+;; Deadline in seconds until the warm child answers (all of connecting, sending, and receiving the one-line answer).
 (val WARM-ANSWER-SECONDS 5.0)
-;; exit の file の中身の形(符号つきの整数 1 つ)。
+;; Shape of the exit file's contents (a single signed integer).
 (val EXIT-CODE-PATTERN "-?[0-9]+")
 
 
 (defrecord WarmForked
-  "待ちの子が仕事を受け、子 A を立てた(pid と start-ticks の組 = PollWarmChild と SignalWarmChild で子を名指す印)。"
+  "The warm child accepted the job and started child A (the pair of pid and start-ticks = the mark that names the child in PollWarmChild and SignalWarmChild)."
   (#^ int pid)
   (#^ int start-ticks))
 
 
 (defrecord WarmRefused
-  "仕事を頼めなかった(detail = 理由の文 — env の値は含まない)。"
+  "The job could not be requested (detail = reason text -- does not include env values)."
   (#^ str detail))
 
 
 (defrecord WarmRunning
-  "子はまだ走っている。"
+  "The child is still running."
   (#^ int pid))
 
 
 (defrecord WarmExited
-  "子は終わった(exit-code = exit の file の値 — 負の値 = 入口が signal で終わった)。"
+  "The child ended (exit-code = the exit file's value -- a negative value = the entry point ended by a signal)."
   (#^ int pid)
   (#^ int exit-code))
 
 
 (defrecord WarmLost
-  "子の終わりが読めない(detail = 理由 — 居ないか使い回されたのに exit の file が無い・exit の file が読めない)。"
+  "The child's end cannot be read (detail = reason -- gone or reused, and no exit file / the exit file is unreadable)."
   (#^ int pid)
   (#^ str detail))
 
 
 (defrecord WarmSignaled
-  "子の group へ signal を送った。"
+  "Sent a signal to the child's group."
   (#^ int pid))
 
 
 (defrecord WarmInputWritten
-  "WriteWarmChildInput の答え: delivered = 子の入力の pipe へ書いた(True)・書かなかった(False — 頭の註)。"
+  "Answer of WriteWarmChildInput: delivered = wrote to the child's input pipe (True) / did not write (False -- header comment)."
   (#^ int pid)
   (#^ bool delivered))
 
 
 (defrecord WarmGone
-  "signal を送らなかった(detail = 理由 — 居ない・終わっている・使い回された)。"
+  "Did not send a signal (detail = reason -- gone, ended, or reused)."
   (#^ int pid)
   (#^ str detail))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ForkFromWarm [(get EffectBase (| WarmForked WarmRefused))]
-  "待ちの子に仕事を 1 つ頼む(頭の註)。答え = WarmForked か WarmRefused。"
+  "Ask the warm child to do one job (header comment). Answer = WarmForked or WarmRefused."
   #^ str socket-path
   #^ str entry
   #^ (get tuple #(str ...)) args
@@ -115,27 +115,27 @@
 
 
 (defclass [(dataclass :frozen True :kw-only True)] WriteWarmChildInput [(get EffectBase WarmInputWritten)]
-  "hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す(頭の註)。答え = WarmInputWritten。"
+  "Writes text to the input pipe of a child asked with hold-input, and returns without waiting (header comment). Answer = WarmInputWritten."
   #^ int pid
   #^ int start-ticks
   #^ str text)
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PollWarmChild [(get EffectBase (| WarmRunning WarmExited WarmLost))]
-  "頼んだ子の様子を、待たずに 1 度だけ問う(頭の註)。答え = WarmRunning か WarmExited か WarmLost。"
+  "Asks about the requested child's state exactly once, without waiting (header comment). Answer = WarmRunning, WarmExited or WarmLost."
   #^ int pid
   #^ int start-ticks
   #^ str exit-path)
 
 
 (defclass [(dataclass :frozen True :kw-only True)] AwaitWarmChildExit [(get EffectBase ProcessEnded)]
-  "頼んだ子が終わるまで待つ(頭の註)。答え = ProcessEnded。"
+  "Waits until the requested child ends (header comment). Answer = ProcessEnded."
   #^ int pid
   #^ int start-ticks)
 
 
 (defclass [(dataclass :frozen True :kw-only True)] SignalWarmChild [(get EffectBase (| WarmSignaled ProcessSignalRefused WarmGone))]
-  "頼んだ子の group へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = WarmSignaled か ProcessSignalRefused か WarmGone。"
+  "Sends a signal to the requested child's group exactly once and returns without waiting (header comment). Answer = WarmSignaled, ProcessSignalRefused or WarmGone."
   #^ int pid
   #^ int start-ticks
   #^ ProcessSignal signal)
@@ -143,50 +143,50 @@
 
 (defk warm-socket-missing [socket-path]
   {:pre [(: socket-path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
-  "socket が無い時の断りの文を作るため。"
-  (.format "待ちの子の socket が無い: {}" socket-path))
+  "To build the refusal text for when there is no socket."
+  (.format "The warm child's socket does not exist: {}" socket-path))
 
 
 (defk warm-socket-refused [socket-path]
   {:pre [(: socket-path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
-  "socket は在るが接続を断られた時の断りの文を作るため(待ちの子が居ない)。"
-  (.format "待ちの子が接続を受けない: {}" socket-path))
+  "To build the refusal text for when the socket exists but the connection is refused (no warm child is there)."
+  (.format "The warm child does not accept connections: {}" socket-path))
 
 
 (defk warm-answer-late [socket-path]
   {:pre [(: socket-path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
-  "答えの期限が切れた時の断りの文を作るため。"
-  (.format "待ちの子が {} 秒のうちに答えない: {}" WARM-ANSWER-SECONDS socket-path))
+  "To build the refusal text for when the answer deadline expired."
+  (.format "The warm child did not answer within {} seconds: {}" WARM-ANSWER-SECONDS socket-path))
 
 
 (defk warm-answer-unreadable [socket-path]
   {:pre [(: socket-path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
-  "待ちの子の答えが約束の形(JSON 1 行)でない時の断りの文を作るため。"
-  (.format "待ちの子の答えが読めない: {}" socket-path))
+  "To build the refusal text for when the warm child's answer is not in the promised shape (one JSON line)."
+  (.format "The warm child's answer is unreadable: {}" socket-path))
 
 
 (defk warm-lost [pid exit-path]
   {:pre [(: pid int) (: exit-path str)] :post [(: % WarmLost)] :tags {:context "process" :role "judgment"}}
-  "居ないか使い回された子に、exit の file も無い時の答えを作るため。"
-  (WarmLost :pid pid :detail (.format "pid {} の子は居ない(または別の process に使い回された)のに、exit の file が無い: {}" pid exit-path)))
+  "To build the answer for a child that is gone or reused and also has no exit file."
+  (WarmLost :pid pid :detail (.format "The child of pid {} is gone (or reused by another process), yet there is no exit file: {}" pid exit-path)))
 
 
 (defk warm-gone [pid]
   {:pre [(: pid int)] :post [(: % WarmGone)] :tags {:context "process" :role "judgment"}}
-  "居ない・終わっている・使い回された子に signal を送らない時の答えを作るため。"
-  (WarmGone :pid pid :detail (.format "pid {} の子は居ないか終わっている(または別の process に使い回された)ので送らない" pid)))
+  "To build the answer for not sending a signal to a child that is gone, ended, or reused."
+  (WarmGone :pid pid :detail (.format "The child of pid {} is gone or has ended (or was reused by another process), so nothing is sent" pid)))
 
 
 (defk warm-exit-answer [pid exit-path text]
   {:pre [(: pid int) (: exit-path str) (: text str)] :post [(: % (| WarmExited WarmLost))] :tags {:context "process" :role "judgment"}}
-  "exit の file の中身 text を読むため。整数 1 つ(前後の空白は読み飛ばす)なら WarmExited、それ以外は WarmLost。"
+  "To read the exit file's contents text. A single integer (surrounding whitespace skipped) gives WarmExited; anything else gives WarmLost."
   (val word (.strip text))
   (if (re.fullmatch EXIT-CODE-PATTERN word)
       (WarmExited :pid pid :exit-code (int word))
-      (WarmLost :pid pid :detail (.format "pid {} の子の exit の file が整数 1 つでない: {}" pid exit-path))))
+      (WarmLost :pid pid :detail (.format "The exit file of the child of pid {} is not a single integer: {}" pid exit-path))))
 
 
 (defk signal-number-of [signal]
   {:pre [(: signal ProcessSignal)] :post [(: % int)] :tags {:context "process" :role "judgment"}}
-  "閉じた型の signal を番号へ(TERM = 15・KILL = 9 — 子が signal で終わった時の終了 code はこの番号の負)。"
+  "Closed-type signal to number (TERM = 15, KILL = 9 -- the exit code when a child ends by a signal is the negative of this number)."
   (match signal ProcessSignal.TERM 15 ProcessSignal.KILL 9))

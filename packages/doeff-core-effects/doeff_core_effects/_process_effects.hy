@@ -1,96 +1,96 @@
-;;; 汎用の子 process の effect(消費者 = #796 日次の全体検証・#795 webapp の組み立て・doeff-agents の driver 層)。
-;;; 業務の語を持たない土台の語彙で、HttpRequest(http_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
-;;;   subprocess-handler            本物の子 process と os.environ(os_process.hy)。doeff-agents の driver-io-handler も同じ実装を呼ぶ
-;;;   offloaded-subprocess-handler  本物と同じ実装を、呼び 1 つに thread 1 本で回す(os_process.hy)— 子を待つ間も
-;;;                                 scheduler の他の task が回る(並べた RunProcess を Spawn / Gather で同時に走らせる・子の間も拍を回す)。
-;;;                                 外側に scheduled が要る。待っている task が取り消されたら走っている子を止める(#2847 — 下の stop-grace)。
-;;;                                 止めた子を計器で数える形が metered-offloaded-subprocess-handler(計器の答え手を渡す)
-;;;   scripted-process-handler      I/O なし — 命令の名ごとの台本と、決めた環境変数・job ごとの作業 dir(scripted_process.hy)
+;;; Generic child-process effects (consumers = #796 daily full verification, #795 webapp assembly, and the driver layer of doeff-agents).
+;;; A foundation vocabulary with no business terms, at the same level as HttpRequest (http_effects.hy). The handler is swapped per mechanism:
+;;;   subprocess-handler            Real child processes and os.environ (os_process.hy). The driver-io-handler of doeff-agents calls the same implementation
+;;;   offloaded-subprocess-handler  Runs the same implementation as the real one, one thread per call (os_process.hy) -- other tasks of the
+;;;                                 scheduler keep running while waiting for a child (RunProcess calls placed side by side run concurrently with Spawn / Gather; the tick keeps turning during the child).
+;;;                                 Needs scheduled outside. When a waiting task is cancelled, the running child is stopped (#2847 -- stop-grace below).
+;;;                                 metered-offloaded-subprocess-handler is the form that counts the stopped children with a meter (pass it the meter's handler)
+;;;   scripted-process-handler      No I/O -- a script per command name, plus fixed environment variables and a per-job working dir (scripted_process.hy)
 ;;;
-;;; RunProcess・ExecutableAt・ProcessOutcome は doeff-agents の io_effects から移した(定義は 1 つ — io_effects は同じ型を re-export する)。移す時に
-;;; 足した欄は全部既定値つきで、今の使い手の振る舞いは変わらない:
-;;;   RunProcess の env(None = 呼び手の環境を継ぐ・EnvEntry の tuple = env-mode の通り)・output-path(None = 追記しない・path = 子の出力を
-;;;   その file の末尾へ足す — 答えの stdout / stderr も持つ)。
-;;;   RunProcess の env-mode= env の tuple の扱いの閉じた型 EnvMode:
-;;;     REPLACE(既定)  tuple が子の環境変数の全部(前からの振る舞い)
-;;;     EXTEND         呼び手の環境を継いだ上で tuple を足す(同じ名は tuple が勝つ)
-;;;   env が None の時は env-mode を読まない(呼び手の環境を全部継ぐ)。
-;;;   RunProcess の env-drop= EXTEND で継ぐ呼び手の環境から外す名の型(fnmatch — `UV_*` のように)の tuple。既定 #()
-;;;   = 外さない。REPLACE と env None の時は読まない(REPLACE は継がないので外す物が無い)。子に呼び手の venv や道具の設定を持ち込ませない時に使う。
-;;;   ProcessOutcome の started(False = 起こせなかった — OSError を値で)・start-error(その理由)。exit-code は子の returncode を丸めずに
-;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
-;;;   RunProcess の process-group・stop-grace・stream-output(着地の列の窓の門の命令の走らせ方):
-;;;     process-group  True = 子を新しい session(自分の process group)で走らせる。時間切れでは group へ SIGTERM → stop-grace 秒待つ →
-;;;                    SIGKILL(子が起こした孫も止まる)。時間内に終わった後も、group に残った子(背景に回った孫)へ SIGTERM を送る。
-;;;                    既定 False = 前からの振る舞い(時間切れで子だけを止める)
-;;;     stop-grace     子を止める時の SIGTERM から SIGKILL までの猶予の秒(既定 10.0): process-group の時間切れと、offloaded-subprocess-handler
-;;;                    で待っている task が取り消された時(process-group を問わない — group なら group へ、そうでなければ子へ送る・#2847)
-;;;     stream-output  True = 子の出力を、届いた順に output-path へ書きながら走らせる(時間切れで止めた子の出力も file に残る — 走者の log が
-;;;                    指す赤の証拠)。既定 False = 子が終わってから stdout・stderr の順に足す(前からの振る舞い)。output-path が None なら読まない
-;;;   待ち方はどれも subprocess の communicate と同じ = 子の終了に加えて出力の EOF(背景の孫が出力を抱えたままなら期限まで待つ)。
-;;;   ProcessAlive= pid の process が生きているか。0 以下の pid は生きていない(group への signal にしない)。
+;;; RunProcess, ExecutableAt and ProcessOutcome were moved from io_effects of doeff-agents (one definition -- io_effects re-exports the same types). The fields
+;;; added when moving all have default values, so the behavior of current users does not change:
+;;;   env of RunProcess (None = inherit the caller's environment; a tuple of EnvEntry = as per env-mode), output-path (None = do not append; a path = append the child's output to the
+;;;   end of that file -- the answer also carries stdout / stderr).
+;;;   env-mode of RunProcess = EnvMode, a closed type for how the env tuple is treated:
+;;;     REPLACE (default)  the tuple is all of the child's environment variables (the previous behavior)
+;;;     EXTEND             inherit the caller's environment and add the tuple (for the same name, the tuple wins)
+;;;   When env is None, env-mode is not read (the caller's whole environment is inherited).
+;;;   env-drop of RunProcess = a tuple of name patterns (fnmatch -- like `UV_*`) to remove from the caller's environment inherited under EXTEND. Default #()
+;;;   = remove nothing. Not read under REPLACE or env None (REPLACE inherits nothing, so there is nothing to remove). Used to keep the caller's venv and tool settings out of the child.
+;;;   started of ProcessOutcome (False = could not be started -- the OSError as a value) and start-error (its reason). exit-code keeps the child's returncode unrounded
+;;;   (a negative value = signal, 137, etc.). A timeout is timed-out True (exit-code 124); when the child cannot be started, exit-code 127.
+;;;   process-group, stop-grace and stream-output of RunProcess (how to run the commands of the landing-queue window gate):
+;;;     process-group  True = run the child in a new session (its own process group). On timeout: SIGTERM to the group -> wait stop-grace seconds ->
+;;;                    SIGKILL (grandchildren the child started are stopped too). Even after finishing in time, SIGTERM is sent to children left in the group (grandchildren that went to the background).
+;;;                    Default False = the previous behavior (on timeout only the child is stopped)
+;;;     stop-grace     grace seconds from SIGTERM to SIGKILL when stopping a child (default 10.0): on a process-group timeout, and in offloaded-subprocess-handler
+;;;                    when a waiting task is cancelled (regardless of process-group -- sent to the group if it is one, otherwise to the child; #2847)
+;;;     stream-output  True = run while writing the child's output to output-path in arrival order (the output of a child stopped on timeout also stays in the file -- the red evidence
+;;;                    the runner's log points to). Default False = append stdout then stderr after the child ends (the previous behavior). Not read when output-path is None
+;;;   Every way of waiting is the same as subprocess communicate = the child's exit plus EOF of the output (if a background grandchild holds the output, wait until the deadline).
+;;;   ProcessAlive = whether the process pid is alive. A pid of 0 or less is not alive (never turned into a signal to a group).
 ;;;
-;;; 文字列と bytes の約束: RunProcess の stdin と ProcessOutcome の stdout / stderr は、子の bytes を utf-8 と
-;;; surrogateescape で読み書きした文字列(可逆 — Python の os.fsdecode と同じ作法)。有効な utf-8 はふつうの文字列のまま、壊れた bytes は
-;;; surrogate の文字(U+DC80〜U+DCFF)で表す。bytes が要る使い手(git の diff を patch-id へ渡す等)は `.encode "utf-8" "surrogateescape"`
-;;; で元の bytes に戻し、bytes を渡す時は同じ作法で文字列にして stdin に置く。表に出す時(JSON・log)は呼び手が置き換えて読む。
+;;; Convention for strings and bytes: stdin of RunProcess and stdout / stderr of ProcessOutcome are strings that read and write the child's bytes as utf-8 with
+;;; surrogateescape (reversible -- the same practice as Python's os.fsdecode). Valid utf-8 stays an ordinary string; broken bytes are represented by
+;;; surrogate characters (U+DC80 to U+DCFF). Users who need bytes (for example passing a git diff to patch-id) restore the original bytes with `.encode "utf-8" "surrogateescape"`,
+;;; and when passing bytes, turn them into a string by the same practice and put it in stdin. When shown outside (JSON, log), the caller reads them with replacement.
 ;;;
-;;;   RunProcess        子 process を 1 回走らせて終わりを待つ。答え = ProcessOutcome。
-;;;   ExecutableAt      その path に実行できる file が在るか。答え = bool。symlink は辿った先で判じ、dir・無い path・file でない物は実行の bit が
-;;;                     あっても False(判断は executable-file-answer の 1 か所 — 本物と I/O なしの答え手が同じ関数を呼ぶ)。
-;;;   ReadEnvironment   自分の process の環境変数のうち names の分。答え = 在る分だけの EnvEntry の tuple(names の順)。prefixes(#2472・
-;;;                     既定 #())= 頭がどれかで始まる名も拾う(LC_* など — 名を前もって知らない一族)。拾った分は names の分の後に名の順で続く。
-;;;                     答えを組むのは本物と台本が同じ関数 environment-answer。
-;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
-;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
-;;;   ReadInterpreter   自分の process の Python の interpreter の事実。答え = InterpreterFacts(prefix = sys.prefix を symlink まで解いた絶対
-;;;                     path・pid)(消費者 = doeff-cluster の入口の検め。venv の上の root と、報告に載せる pid を読む)。
-;;;   ReadMachineName   自分の process が走る機体の名。答え = 名(str — 本物 = socket.gethostname をそのまま・台本 = ProcessScript の
-;;;                     machine-name)(消費者 = merge-queue の controller の leader の名乗り
-;;;                     <機体の名>/<pid>/<乱数>。pid は ReadInterpreter から読む)。
-;;;   ResolveModule     module の名を、自分の process の import が解く置き場へ(import はしない — 点の付いた名は親の package を import する
-;;;                     のは importlib.util.find_spec と同じ)。答え = ModuleFound(origin = file の絶対 path・file を持たない module〔__init__ の
-;;;                     無い package・built-in・frozen〕は None / search-locations = submodule を探す dir の絶対 path の tuple)か
-;;;                     ModuleNotFound(解けない・名が壊れている)。path は symlink まで解く(#2347 — どの木の code を動かしているかを確かめる)。
+;;;   RunProcess        Run a child process once and wait for its end. Answer = ProcessOutcome.
+;;;   ExecutableAt      Whether an executable file exists at that path. Answer = bool. A symlink is judged by what it points to; a dir, a missing path, or a non-file is False even with the execute bit
+;;;                     (the judgment is in one place, executable-file-answer -- the real handler and the no-I/O handler call the same function).
+;;;   ReadEnvironment   The names of names among this process's environment variables. Answer = a tuple of EnvEntry for only those present (in the order of names). prefixes (#2472;
+;;;                     default #()) = also picks up names starting with any of them (LC_* etc. -- a family whose names are not known beforehand). The picked ones follow those of names, in name order.
+;;;                     The real handler and the script build the answer with the same function, environment-answer.
+;;;   WorkingDirectory  This process's working dir (absolute path).
+;;;   ProcessAlive      Whether the process pid is alive. Answer = bool (real = whether signal 0 can be sent; a process we merely lack permission to signal is alive).
+;;;   ReadInterpreter   Facts about this process's Python interpreter. Answer = InterpreterFacts (prefix = absolute path of sys.prefix resolved through symlinks;
+;;;                     pid) (consumer = the entry check of doeff-cluster: reads the root above the venv and the pid to put in the report).
+;;;   ReadMachineName   The name of the machine this process runs on. Answer = a name (str -- real = socket.gethostname as is; script = machine-name of ProcessScript)
+;;;                     (consumer = the leader's self-name of the merge-queue controller
+;;;                     <machine name>/<pid>/<random>. The pid is read from ReadInterpreter).
+;;;   ResolveModule     Resolve a module name to the place this process's import would resolve it (without importing -- for a dotted name, importing the parent package
+;;;                     is the same as importlib.util.find_spec). Answer = ModuleFound (origin = absolute path of the file, None for a module with no file [a package without
+;;;                     __init__, built-in, frozen] / search-locations = a tuple of absolute dir paths to search for submodules) or
+;;;                     ModuleNotFound (cannot be resolved, or the name is broken). Paths are resolved through symlinks (#2347 -- to confirm which tree's code is running).
 ;;;
-;;; 立てたらすぐ返す子(消費者 = merge-queue の controller の配りの腕。拍は子を待たない):
-;;;   StartProcess      子を立てて、終わりを待たずに返す。答え = ProcessStarted(pid)か ProcessNotStarted(理由の文 — 出力の file が開けない・
-;;;                     cwd が無い・命令が無い。RunProcess の起こせない形と同じ文で、出力の file を先に確かめる)。子の標準入力は無し、標準出力と
-;;;                     標準エラーは stdout-path・stderr-path の file の末尾へ(None = 捨てる)。pipe にしない — 読まずにおくと約 64 KB で子が
-;;;                     止まる。env・env-mode・env-drop・cwd・process-group は RunProcess と同じ。
-;;;                     hold-stdin(#2471・既定 False): 子の標準入力を pipe にし、書く側を答え手が持つ — 子は答え手の process が死ぬと EOF を
-;;;                     読む(doeff-cluster の worker の shim は EOF で job の group を止める — worker が kill -9 で死んでも job が残らない)。
-;;;                     PollProcess / StopProcess が子を回収した時に閉じる。reap-group(#2471・既定 False): process-group で立てた子の終わりを
-;;;                     回収する時に、その group に残った process(背景に回った孫)へ SIGKILL を送る。
-;;;                     lifetime(#3866・閉じた型 ChildLifetime・既定 WITH-STARTER): 起こした process が終わると(SIGKILL・片づけを走らせない
-;;;                     終わりを含む)、子も終わる — process-group の子は group ごと、そうでない子はその process だけ。本物の答え手は
-;;;                     process に 1 つの見張り(doeff-core-effects の doeff_lifeline)を最初の StartProcess の時に起こし、立てた子を知らせる。
-;;;                     見張りは起こした process の終わりを pipe の EOF で知り、TERM → 猶予 10 秒 → KILL。OUTLIVES-STARTER の子は
-;;;                     知らせない(起こした process の後も走る)。
-;;;   PollProcess       立てた子を待たずに 1 度だけ問う。答え = ProcessRunning・ProcessExited(終了 code — 答えた時に回収し、その pid を忘れる)・
-;;;                     ProcessNotChild(この答え手が立てた子でない pid)。
-;;;   StopProcess       立てた子を止めて回収する: process-group なら group へ、そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL。
-;;;                     答え = ProcessExited か ProcessNotChild(他人の process には signal を送らない)。終わっていた子はそのまま回収する。
-;;;                     OS が SIGKILL の送りを断れば(EPERM)終わりを待たずに ProcessSignalRefused — 子は走ったまま表に残す(断られた KILL の
-;;;                     後に終わりを待つと、止めの呼びが返らない)。
-;;;   SignalProcess     立てた子へ signal(ProcessSignal の TERM か KILL)を 1 度だけ送り、待たずに返す(#2461 — 消費者 = doeff-cluster の
-;;;                     worker の子の止め方: 拍ごとに TERM を送り、止まらなければ次の段で KILL を送り、終わりは PollProcess で確かめる)。
-;;;                     process-group で立てた子は group へ、そうでなければ子へ送る(StopProcess と同じ)。答え = ProcessSignalled(delivered =
-;;;                     送ったか — 既に終わっていた子には送らず、回収は PollProcess)か ProcessSignalRefused(OS が送りを断った — EPERM。子は
-;;;                     走ったまま。例 = AppArmor が container の中の signal を拒む機体)か ProcessNotChild(他人の process には送らない)。
-;;;   WriteProcessInput hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(#3672 — 消費者 = doeff-cluster の worker が shim へ
-;;;                     job の退きの知らせの行を送る)。答え = ProcessInputWritten(delivered = 書いたか — 終わっていた子・pipe を握っていない子
-;;;                     〔hold-stdin でない〕・読み手の居ない pipe には書かない)か ProcessNotChild(立てていない pid)。書くのは短い行に限る
-;;;                     (pipe の容量 約 64 KB を超えると、読み手が読むまで書きが待つ)。
-;;;   本物の答え手は、立てた子の表を process に 1 つ持つ(子は OS の process ごとの資源 — 答え手を積み直しても同じ子を問える)。
-;;;   AwaitProcessExit  立てた子が終わるまで待つ(#3871 — 消費者 = doeff-cluster の worker の周の間の待ち。子の終わりで起きる)。答え =
-;;;                     ProcessEnded(終わった — 回収はしない。終了 code は後の PollProcess が答える)か ProcessNotChild。答え手は
-;;;                     subprocess-handler とは別(process_exit.hy の process-exit-handler — fd の開き方が機体ごと: Linux = pidfd・macOS = kqueue)。外側に
-;;;                     await-handler と scheduled が要る。待っている task を取り消すと、待ちの資源(終わると読める fd)を閉じる。
+;;; Children that return as soon as they are started (consumer = the dispatch arm of the merge-queue controller. The tick does not wait for the child):
+;;;   StartProcess      Start a child and return without waiting for its end. Answer = ProcessStarted (pid) or ProcessNotStarted (a reason text -- the output file cannot be opened,
+;;;                     cwd is missing, or the command is missing. The same text as the could-not-start form of RunProcess, and the output file is checked first). The child has no standard input; standard output and
+;;;                     standard error go to the end of the files stdout-path and stderr-path (None = discarded). Not a pipe -- if left unread, the child stops at about 64 KB.
+;;;                     env, env-mode, env-drop, cwd and process-group are the same as RunProcess.
+;;;                     hold-stdin (#2471; default False): make the child's standard input a pipe whose writing side the handler holds -- the child reads EOF when the handler's process dies
+;;;                     (the worker shim of doeff-cluster stops the job's group on EOF -- so no job remains even if the worker dies by kill -9).
+;;;                     Closed when PollProcess / StopProcess reaps the child. reap-group (#2471; default False): when reaping the end of a child started with process-group,
+;;;                     send SIGKILL to the processes left in that group (grandchildren that went to the background).
+;;;                     lifetime (#3866; closed type ChildLifetime; default WITH-STARTER): when the process that started it ends (including an end by SIGKILL that runs no cleanup),
+;;;                     the child ends too -- a process-group child along with its whole group, otherwise only that process. The real handler
+;;;                     starts one watcher per process (doeff_lifeline of doeff-core-effects) at the first StartProcess and tells it the children started.
+;;;                     The watcher learns of the starter's end by EOF on a pipe: TERM -> 10 seconds grace -> KILL. Children of OUTLIVES-STARTER are
+;;;                     not told to it (they keep running after the starting process).
+;;;   PollProcess       Ask about a started child just once, without waiting. Answer = ProcessRunning, ProcessExited (exit code -- reaped when answered, and the pid is forgotten), or
+;;;                     ProcessNotChild (a pid that is not a child this handler started).
+;;;   StopProcess       Stop a started child and reap it: SIGTERM to the group if process-group, otherwise to the child -> wait stop-grace seconds -> SIGKILL.
+;;;                     Answer = ProcessExited or ProcessNotChild (no signal is sent to someone else's process). A child that had already ended is reaped as is.
+;;;                     If the OS refuses to send SIGKILL (EPERM), ProcessSignalRefused without waiting for the end -- the child stays in the table still running (waiting for the end after a
+;;;                     refused KILL would make the stop call never return).
+;;;   SignalProcess     Send a signal (TERM or KILL of ProcessSignal) to a started child just once and return without waiting (#2461 -- consumer = how the doeff-cluster
+;;;                     worker stops its children: send TERM every tick, send KILL at the next stage if it does not stop, and confirm the end with PollProcess).
+;;;                     A child started with process-group gets it at the group, otherwise at the child (same as StopProcess). Answer = ProcessSignalled (delivered =
+;;;                     whether it was sent -- not sent to a child that had already ended; reaping is PollProcess) or ProcessSignalRefused (the OS refused the send -- EPERM. The child
+;;;                     keeps running. Example = a machine where AppArmor denies signals inside a container) or ProcessNotChild (no signal to someone else's process).
+;;;   WriteProcessInput Write text to the standard-input pipe of a child started with hold-stdin and return without waiting (#3672 -- consumer = the doeff-cluster worker sends the shim
+;;;                     the line announcing the job's withdrawal). Answer = ProcessInputWritten (delivered = whether it was written -- not written to a child that had ended, a child not holding a pipe
+;;;                     [not hold-stdin], or a pipe with no reader) or ProcessNotChild (a pid not started here). Only short lines may be written
+;;;                     (beyond the pipe capacity of about 64 KB, the write waits until the reader reads).
+;;;   The real handler keeps one table of started children per process (a child is an OS per-process resource -- the same child can be asked about even after the handler is restacked).
+;;;   AwaitProcessExit  Wait until a started child ends (#3871 -- consumer = the wait between rounds of the doeff-cluster worker. Wakes at the child's end). Answer =
+;;;                     ProcessEnded (ended -- not reaped; the exit code is answered by a later PollProcess) or ProcessNotChild. The handler is separate from
+;;;                     subprocess-handler (process-exit-handler in process_exit.hy -- how the fd is opened differs per machine: Linux = pidfd, macOS = kqueue). Needs
+;;;                     await-handler and scheduled outside. If the waiting task is cancelled, the waiting resource (the fd that becomes readable on exit) is closed.
 ;;;
-;;; 時間切れと起こせない形の答え(timed-out-outcome・not-started-outcome)と、起こせない理由の文(start-refusal — OSError の文と同じ形)は
-;;; ここで 1 度だけ作る。本物(os_process.hy)と I/O なし(scripted_process.hy)の答え手は同じ関数を呼ぶ(同じ形で答える — 契約テスト
-;;; tests/test_process_contract.hy)。
+;;; The answers for a timeout and the could-not-start form (timed-out-outcome, not-started-outcome), and the could-not-start reason text (start-refusal -- the same form as the OSError text), are
+;;; built only once, here. The real (os_process.hy) and no-I/O (scripted_process.hy) handlers call the same functions (answering in the same form -- contract test
+;;; tests/test_process_contract.hy).
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord defenum])
 (import os)
@@ -99,32 +99,32 @@
 (import doeff [EffectBase])
 (import doeff_core_effects._file_effects [PathKind])
 
-;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
+;; exit-code for a timeout (same as coreutils timeout), and exit-code when it cannot be started (same as a shell).
 (val TIMED-OUT-CODE 124)
 (val NOT-STARTED-CODE 127)
 
 
-;; RunProcess の env の tuple の扱い(頭の註): REPLACE = 子の環境変数の全部・EXTEND = 呼び手の環境を継いで足す。
+;; How RunProcess treats the env tuple (header note): REPLACE = all of the child's environment variables; EXTEND = inherit the caller's environment and add.
 (defenum EnvMode REPLACE EXTEND)
-(setv EnvMode.__doc__ "RunProcess の env の扱い: REPLACE = 子の環境変数の全部・EXTEND = 呼び手の環境を継いで足す。")
+(setv EnvMode.__doc__ "How RunProcess treats env: REPLACE = all of the child's environment variables; EXTEND = inherit the caller's environment and add.")
 
 
-;; StartProcess で立てた子が、起こした process の終わりの後にどうなるか(頭の註): WITH-STARTER(既定)= 起こした
-;; process が終わると(SIGKILL を含む)子も終わる・OUTLIVES-STARTER = 起こした process が終わっても子は走り続ける(書くのは理由を持つ
-;; 使い手の 1 か所だけ — merge-queue の着地の窓)。
+;; What happens to a child started by StartProcess after the starting process ends (header note): WITH-STARTER (default) = when the starting
+;; process ends (including SIGKILL), the child ends too; OUTLIVES-STARTER = the child keeps running even after the starting process ends (written only in the one place of a user
+;; that has a reason -- the landing window of merge-queue).
 (defenum ChildLifetime WITH-STARTER OUTLIVES-STARTER)
-(setv ChildLifetime.__doc__ "StartProcess で立てた子が、起こした process の終わりの後にどうなるか: WITH-STARTER = 一緒に終わる(既定)・OUTLIVES-STARTER = 走り続ける。")
+(setv ChildLifetime.__doc__ "What happens to a child started by StartProcess after the starting process ends: WITH-STARTER = ends together (default); OUTLIVES-STARTER = keeps running.")
 
 
 (defrecord EnvEntry
-  "環境変数 1 つ(名と値)。"
+  "One environment variable (name and value)."
   (#^ str name)
   (#^ str value))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ProcessOutcome []
-  "子 process 1 回の結果。判断(成否の解釈)は呼び手が持つので raise しない(頭の註)。stdout / stderr は子の bytes の可逆の文字列
-   (utf-8 と surrogateescape — 頭の註の文字列と bytes の約束)。"
+  "The result of one child process run. The judgment (interpreting success or failure) is the caller's, so it does not raise (header note). stdout / stderr are reversible strings of the child's bytes
+   (utf-8 with surrogateescape -- the strings and bytes convention in the header note)."
   #^ int exit-code
   #^ str stdout
   #^ str stderr
@@ -136,9 +136,9 @@
   (setv start-error ""))
 
 
-;; 各 effect は答えの型を基底 EffectBase[答え] に書く(ADR-DOE-API-001 R2 — 答えの record は、それを答える effect の前に置く)。
+;; Each effect writes its answer type in the base EffectBase[answer] (ADR-DOE-API-001 R2 -- the answer record is placed before the effect that answers it).
 (defclass [(dataclass :frozen True :kw-only True)] RunProcess [(get EffectBase ProcessOutcome)]
-  "子 process を 1 回走らせて終わりを待つ(頭の註)。終了 code は値で返る。"
+  "Run a child process once and wait for its end (header note). The exit code is returned as a value."
   #^ (get tuple #(str ...)) argv
   #^ (| str None) stdin
   (setv stdin None)
@@ -163,12 +163,12 @@
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ExecutableAt [(get EffectBase bool)]
-  "その path に実行できる file が在るか。"
+  "Whether an executable file exists at that path."
   #^ str path)
 
 
 (defclass [(dataclass :frozen True)] ReadEnvironment [(get EffectBase (get tuple #(EnvEntry ...)))]
-  "自分の process の環境変数のうち names の分と、prefixes のどれかで始まる名の分を読む(頭の註)。"
+  "Read the names of names among this process's environment variables, plus the names starting with any of prefixes (header note)."
   (#^ (get tuple #(str ...)) names)
   (setv #^ (get tuple #(str ...)) prefixes #()))
 
@@ -176,8 +176,8 @@
 (defk environment-answer [present names prefixes]
   {:pre [(: present (get tuple #((get tuple #(str str)) ...))) (: names (get tuple #(str ...))) (: prefixes (get tuple #(str ...)))]
    :post [(: % (get tuple #(EnvEntry ...)))] :tags {:context "process" :role "judgment"}}
-  "ReadEnvironment の答えを、本物(os.environ)と台本(ProcessScript の env)が同じ規則で組むため(#2472): present = 在る環境変数の
-   #(名 値) の列。答え = names の順に在る分、続けて prefixes のどれかで始まる名(names に無い物)を名の順に — 同じ名は 1 度だけ。"
+  "To let the real handler (os.environ) and the script (env of ProcessScript) build the answer of ReadEnvironment by the same rule (#2472): present = the sequence of present environment variables as
+   #(name value). Answer = those of names that are present in order, followed by names starting with any of prefixes (those not in names) in name order -- the same name only once."
   (val values (dict present))
   (val named (tuple (gfor name names :if (in name values) (EnvEntry :name name :value (get values name)))))
   (val prefixed (tuple (gfor name (sorted values)
@@ -188,66 +188,66 @@
 
 (defk environment-mapping []
   {:pre [] :post [(: % (get dict #(str str)))] :tags {:context "process" :role "program"}}
-  "この process の環境変数の全部を 名 → 値 の写像で受けるため(子 process の env の元・設定の解決に環境を丸ごと渡す呼び手)。
-   os.environ を直に読まず ReadEnvironment の接頭辞 \"\"(全部の名に当たる)で問う — 答えるのは外側の
-   foundation の handler(本物 = os_process の subprocess-handler・台本 = scripted_process の scripted-process-handler)。"
+  "To receive all of this process's environment variables as a name -> value mapping (the source of a child process's env, for callers that pass the whole environment to resolve settings).
+   Does not read os.environ directly but asks ReadEnvironment with the prefix \"\" (matches every name) -- the one that answers is the outer
+   foundation handler (real = subprocess-handler of os_process; script = scripted-process-handler of scripted_process)."
   (<- entries (get tuple #(EnvEntry ...)) (ReadEnvironment #() #("")))
   (dfor entry entries entry.name entry.value))
 
 
 (defclass [(dataclass :frozen True)] WorkingDirectory [(get EffectBase str)]
-  "自分の process の作業 dir(頭の註)。")
+  "This process's working dir (header note).")
 
 
 (defclass [(dataclass :frozen True)] ProcessAlive [(get EffectBase bool)]
-  "pid の process が生きているか(頭の註)。"
+  "Whether the process pid is alive (header note)."
   (#^ int pid))
 
 
 (defrecord InterpreterFacts
-  "自分の process の Python の interpreter の事実(prefix = sys.prefix を symlink まで解いた絶対 path・pid = この process の id)。"
+  "Facts about this process's Python interpreter (prefix = absolute path of sys.prefix resolved through symlinks; pid = this process's id)."
   (#^ str prefix)
   (#^ int pid))
 
 
 (defclass [(dataclass :frozen True)] ReadInterpreter [(get EffectBase InterpreterFacts)]
-  "自分の process の Python の interpreter の事実を読む(頭の註)。答え = InterpreterFacts。")
+  "Read facts about this process's Python interpreter (header note). Answer = InterpreterFacts.")
 
 
 (defclass [(dataclass :frozen True)] ReadMachineName [(get EffectBase str)]
-  "自分の process が走る機体の名を読む(頭の註)。答え = 名(str)。")
+  "Read the name of the machine this process runs on (header note). Answer = a name (str).")
 
 
 (defrecord ModuleFound
-  "import が解いた module の置き場(origin = file の絶対 path か None — file を持たない module・search-locations = submodule を探す dir の
-   絶対 path の tuple — package でなければ空)。"
+  "The place of a module that import resolved (origin = absolute path of the file, or None -- a module with no file; search-locations = a tuple of absolute dir paths to search for
+   submodules -- empty if it is not a package)."
   (#^ str name)
   (#^ (| str None) origin)
   (#^ (get tuple #(str ...)) search-locations))
 
 
 (defrecord ModuleNotFound
-  "import が解けない module の名(無い・名が壊れている・親の package を読めない)。"
+  "The name of a module that import cannot resolve (missing, a broken name, or the parent package cannot be read)."
   (#^ str name))
 
 
 (defclass [(dataclass :frozen True)] ResolveModule [(get EffectBase (| ModuleFound ModuleNotFound))]
-  "module の名を、自分の process の import が解く置き場へ(頭の註)。答え = ModuleFound か ModuleNotFound。"
+  "Resolve a module name to the place this process's import would resolve it (header note). Answer = ModuleFound or ModuleNotFound."
   (#^ str name))
 
 
 (defrecord ProcessStarted
-  "子を立てた(pid = PollProcess と StopProcess で問う子の印)。"
+  "A child was started (pid = the mark of the child to ask about with PollProcess and StopProcess)."
   (#^ int pid))
 
 
 (defrecord ProcessNotStarted
-  "子を立てられなかった(detail = OSError の文と同じ形の理由 — 出力の file が開けない・cwd が無い・命令が無い)。"
+  "A child could not be started (detail = a reason in the same form as the OSError text -- the output file cannot be opened, cwd is missing, or the command is missing)."
   (#^ str detail))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] StartProcess [(get EffectBase (| ProcessStarted ProcessNotStarted))]
-  "子 process を立てて、終わりを待たずに返す(頭の註)。答え = ProcessStarted か ProcessNotStarted。"
+  "Start a child process and return without waiting for its end (header note). Answer = ProcessStarted or ProcessNotStarted."
   #^ (get tuple #(str ...)) argv
   #^ (| str None) cwd
   (setv cwd None)
@@ -272,100 +272,100 @@
 
 
 (defrecord ProcessRunning
-  "子はまだ走っている。"
+  "The child is still running."
   (#^ int pid))
 
 
 (defrecord ProcessExited
-  "子は終わり、回収した(exit-code = returncode を丸めない — 負の値 = signal)。この後その pid は ProcessNotChild。"
+  "The child ended and was reaped (exit-code = returncode unrounded -- a negative value = signal). After this, that pid is ProcessNotChild."
   (#^ int pid)
   (#^ int exit-code))
 
 
 (defrecord ProcessNotChild
-  "この答え手が立てた子でない pid(立てていない・既に終わりを答えて回収した)— 他人の process に signal を送らないため。"
+  "A pid that is not a child this handler started (never started, or already answered as ended and reaped) -- so that no signal is sent to someone else's process."
   (#^ int pid))
 
 
 (defclass [(dataclass :frozen True)] PollProcess [(get EffectBase (| ProcessRunning ProcessExited ProcessNotChild))]
-  "StartProcess で立てた子の様子を、待たずに 1 度だけ問う(頭の註)。答え = ProcessRunning か ProcessExited か ProcessNotChild。"
+  "Ask about the status of a child started by StartProcess just once, without waiting (header note). Answer = ProcessRunning, ProcessExited or ProcessNotChild."
   (#^ int pid))
 
 
 (defrecord ProcessSignalRefused
-  "SignalProcess・StopProcess・SignalWarmChild の答え: 走っている子へ送ろうとしたが、OS が送りを断った(EPERM — 権限の照合か LSM の
-   拒否)。子は走ったままなので、呼び手は「送った」「止めた」と数えない。"
+  "Answer of SignalProcess, StopProcess and SignalWarmChild: tried to send to a running child, but the OS refused the send (EPERM -- a permission check or an LSM
+   denial). The child keeps running, so the caller does not count it as 'sent' or 'stopped'."
   (#^ int pid))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] StopProcess [(get EffectBase (| ProcessExited ProcessSignalRefused ProcessNotChild))]
-  "StartProcess で立てた子を止めて回収する(頭の註)。答え = ProcessExited か ProcessSignalRefused か ProcessNotChild。"
+  "Stop a child started by StartProcess and reap it (header note). Answer = ProcessExited, ProcessSignalRefused or ProcessNotChild."
   #^ int pid
   #^ float stop-grace
   (setv stop-grace 10.0))
 
 
 (defrecord ProcessEnded
-  "待った process が終わった(AwaitProcessExit・AwaitWarmChildExit の答え — 回収はしない。終了 code は PollProcess・PollWarmChild が答える)。"
+  "The awaited process ended (answer of AwaitProcessExit and AwaitWarmChildExit -- not reaped. The exit code is answered by PollProcess and PollWarmChild)."
   (#^ int pid))
 
 
 (defclass [(dataclass :frozen True)] AwaitProcessExit [(get EffectBase (| ProcessEnded ProcessNotChild))]
-  "StartProcess で立てた子が終わるまで待つ(頭の註)。答え = ProcessEnded か ProcessNotChild。"
+  "Wait until a child started by StartProcess ends (header note). Answer = ProcessEnded or ProcessNotChild."
   (#^ int pid))
 
 
-;; SignalProcess で送る signal の閉じた型(#2461): TERM = 止まってくれと頼む(子は後始末をして終われる)・KILL = 強いて止める。
+;; Closed type of the signal sent by SignalProcess (#2461): TERM = ask it to stop (the child can clean up and end); KILL = force it to stop.
 (defenum ProcessSignal TERM KILL)
-(setv ProcessSignal.__doc__ "SignalProcess で送る signal: TERM = 止まってくれと頼む・KILL = 強いて止める。")
+(setv ProcessSignal.__doc__ "The signal sent by SignalProcess: TERM = ask it to stop; KILL = force it to stop.")
 
 
 (defrecord ProcessSignalled
-  "SignalProcess の答え: delivered = 走っている子へ送った(True)・既に終わっていた子なので送らなかった(False — 終わりは PollProcess が
-   答えて回収する)。送った後に子が終わったかは PollProcess で問う。"
+  "Answer of SignalProcess: delivered = sent to a running child (True); not sent because the child had already ended (False -- PollProcess answers
+   the end and reaps it). Whether the child ended after sending is asked with PollProcess."
   (#^ int pid)
   (#^ bool delivered))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] SignalProcess [(get EffectBase (| ProcessSignalled ProcessSignalRefused ProcessNotChild))]
-  "StartProcess で立てた子へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = ProcessSignalled か ProcessSignalRefused か ProcessNotChild。"
+  "Send a signal just once to a child started by StartProcess and return without waiting (header note). Answer = ProcessSignalled, ProcessSignalRefused or ProcessNotChild."
   #^ int pid
   #^ ProcessSignal signal)
 
 
 (defrecord ProcessInputWritten
-  "WriteProcessInput の答え: delivered = 子の標準入力の pipe へ書いた(True)・書かなかった(False — 終わっていた子・pipe を握っていない子・
-   読み手の居ない pipe。終わりは PollProcess が答えて回収する)。"
+  "Answer of WriteProcessInput: delivered = written to the child's standard-input pipe (True); not written (False -- a child that had ended, a child not holding a pipe,
+   or a pipe with no reader. PollProcess answers the end and reaps it)."
   (#^ int pid)
   (#^ bool delivered))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] WriteProcessInput [(get EffectBase (| ProcessInputWritten ProcessNotChild))]
-  "hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(頭の註)。答え = ProcessInputWritten か ProcessNotChild。"
+  "Write text to the standard-input pipe of a child started with hold-stdin and return without waiting (header note). Answer = ProcessInputWritten or ProcessNotChild."
   #^ int pid
   #^ str text)
 
 
 (defk timed-out-outcome [stdout stderr]
   {:pre [(: stdout str) (: stderr str)] :post [(: % ProcessOutcome)] :tags {:context "process" :role "judgment"}}
-  "時間切れの答え(それまでの出力 stdout / stderr を持つ・exit-code 124・timed-out True)を作るため。"
+  "To build the answer for a timeout (carries the output so far in stdout / stderr; exit-code 124; timed-out True)."
   (ProcessOutcome :exit-code TIMED-OUT-CODE :stdout stdout :stderr stderr :timed-out True :started True :start-error ""))
 
 
 (defk not-started-outcome [detail]
   {:pre [(: detail str)] :post [(: % ProcessOutcome)] :tags {:context "process" :role "judgment"}}
-  "起こせない形の答え(exit-code 127・started False・理由 detail)を作るため。"
+  "To build the answer for the could-not-start form (exit-code 127; started False; reason in detail)."
   (ProcessOutcome :exit-code NOT-STARTED-CODE :stdout "" :stderr "" :timed-out False :started False :start-error detail))
 
 
 (defk start-refusal [error-number path]
   {:pre [(: error-number int) (: path str)] :post [(: % str)] :tags {:context "process" :role "judgment"}}
-  "起こせない理由の文を、本物の subprocess が上げる OSError の文と同じ形(\"[Errno 2] No such file or directory: '/x'\")で作るため。"
+  "To build the could-not-start reason text in the same form as the OSError text the real subprocess raises (\"[Errno 2] No such file or directory: '/x'\")."
   (str (OSError error-number (os.strerror error-number) path)))
 
 
 (defk executable-file-answer [kind runnable]
   {:pre [(: kind PathKind) (: runnable bool)] :post [(: % bool)] :tags {:context "process" :role "judgment"}}
-  "ExecutableAt の答えを決めるため: 辿った先の種類 kind が file で、かつ実行を許されている(runnable)時だけ True。dir・無い path・その他の
-   種類は runnable でも False(dir の実行の bit は「中へ入れる」の意味で、起こせる file ではない)。"
+  "To decide the answer of ExecutableAt: True only when the kind of what it points to is file and execution is permitted (runnable). A dir, a missing path, and other
+   kinds are False even if runnable (the execute bit of a dir means 'may enter', not a file that can be started)."
   (and (= kind PathKind.FILE) runnable))

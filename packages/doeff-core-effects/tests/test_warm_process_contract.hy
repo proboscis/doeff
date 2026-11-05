@@ -1,13 +1,13 @@
-;;; 待ちの子の効果の契約テスト — 同じ効果(ForkFromWarm・PollWarmChild・SignalWarmChild)に答える本物(os-warm-process-handler)と fake
-;;; (scripted-warm-process-handler)が、同じ deftest を通る。解釈器の組み立てと契約の世界は warm_contract_handlers.hy。
+;;; Contract test for the warm child effects -- the real one (os-warm-process-handler) and the fake
+;;; (scripted-warm-process-handler) that answer the same effects (ForkFromWarm, PollWarmChild, SignalWarmChild) pass through the same deftest. The interpreter assembly and the contract world are in warm_contract_handlers.hy.
 ;;;
-;;;   * 頼むと子 A の pid と start-ticks が返り、走っている間は WarmRunning、終わると exit の file の終了 code(WarmExited)
-;;;   * signal は子の group へ送られ、入口が signal で終わった子は負の終了 code。終わった子には送らない(WarmGone)
-;;;   * pid の使い回し(start-ticks が違う)は、exit の file が無ければ WarmLost で、signal は送らない(WarmGone)
-;;;   * exit の file を書かずに消えた子は WarmLost
-;;;   * 断り: socket が無い・待ちの子が断りを答える・答えの期限が切れる(本物は WARM-ANSWER-SECONDS の 5 秒かかる)
-;;;   * env の値は、どの答えにも断りの文にも出ない
-;;;   * 待ちの子との約束の 1 行は、頼みも答えも往復する(形の違う 1 行は読めない断り)
+;;;   * on request, child A's pid and start-ticks come back; while running it is WarmRunning, and once ended, the exit code in the exit file (WarmExited)
+;;;   * the signal is sent to the child's group, and a child whose entry point ended by a signal has a negative exit code. Nothing is sent to an ended child (WarmGone)
+;;;   * a reused pid (different start-ticks) is WarmLost if there is no exit file, and no signal is sent (WarmGone)
+;;;   * a child that vanished without writing the exit file is WarmLost
+;;;   * refusals: no socket, the warm child answers with a refusal, the answer deadline expires (the real one takes 5 seconds of WARM-ANSWER-SECONDS)
+;;;   * env values appear in no answer or refusal text
+;;;   * the one-line promise with the warm child round-trips both the request and the answer (a line of a different shape is an unreadable refusal)
 (require doeff-hy.macros [defk deftest <- val var])
 (import doeff_hy._wire [Malformed])
 (import os)
@@ -25,7 +25,7 @@
 (defk forked-at [paths socket-path entry name [env #()]]
   {:pre [(: paths WarmPaths) (: socket-path str) (: entry str) (: name str) (: env (of tuple EnvEntry ...))]
    :post [(: % (| WarmForked WarmRefused))] :tags {:context "warm-test" :role "program"}}
-  "契約の世界で仕事を 1 つ頼むため(cwd = 根・log と exit の file は根の下の name の名)。"
+  "To request one job in the contract world (cwd = root; the log and exit files are named name under the root)."
   (<- answer (| WarmForked WarmRefused)
       (ForkFromWarm :socket-path socket-path :entry entry :cwd paths.root :env env
                     :log-path (+ paths.root "/" name ".log") :exit-path (+ paths.root "/" name ".exit")))
@@ -34,14 +34,14 @@
 
 (defk exit-path-of [paths name]
   {:pre [(: paths WarmPaths) (: name str)] :post [(: % str)] :tags {:context "warm-test" :role "judgment"}}
-  "forked-at が name の仕事に渡した exit の file の path を引くため。"
+  "To look up the path of the exit file that forked-at gave to the job named name."
   (+ paths.root "/" name ".exit"))
 
 
 (defk done-soon [forked exit-path [ticks None]]
   {:pre [(: forked WarmForked) (: exit-path str) (: ticks (| int None))] :post [(: % (| WarmRunning WarmExited WarmLost))]
    :tags {:context "warm-test" :role "program"}}
-  "頼んだ子を 5 秒の内に終わるまで 0.05 秒ずつ問う — 本物の子はまだ走っていることがあるので。答え = 最後の PollWarmChild の答え。"
+  "Ask the requested child every 0.05 seconds, for up to 5 seconds until it ends -- the real child may still be running. Answer = the last PollWarmChild answer."
   (val start-ticks (if (is ticks None) forked.start-ticks ticks))
   (var seen (WarmRunning :pid forked.pid))
   (var tries 0)
@@ -75,15 +75,15 @@
   (<- sent (SignalWarmChild :pid forked.pid :start-ticks forked.start-ticks :signal ProcessSignal.TERM))
   (assert (= sent (WarmSignaled :pid forked.pid)) sent)
   (<- ended (done-soon forked exit-path))
-  (assert (= ended (WarmExited :pid forked.pid :exit-code -15)) (.format "TERM で終わった入口の終了 code は -15: {}" ended))
+  (assert (= ended (WarmExited :pid forked.pid :exit-code -15)) (.format "The exit code of an entry point ended by TERM is -15: {}" ended))
   (<- again (SignalWarmChild :pid forked.pid :start-ticks forked.start-ticks :signal ProcessSignal.KILL))
   (<- gone WarmGone (warm-gone forked.pid))
   (assert (= again gone) again))
 
 (deftest test-a-signal-the-os-refuses-is-answered-as-refused-and-the-child-keeps-running
-  ;; OS が送りを断る機体(EPERM — 2026-11-01 の helios では AppArmor が container の中の process どうしの signal を拒んだ)。断られた
-  ;; 合図を WarmSignaled と答えない — 答えは ProcessSignalRefused で、子は走ったまま。反例 = PermissionError が上がるか、送った形で
-  ;; 答える形(直す前)は赤。台本の答え手は OS の断りを持たないので本物だけ。
+  ;; A machine where the OS refuses the send (EPERM -- on helios on 2026-11-01, AppArmor denied signals between processes inside a container). A refused
+  ;; signal is not answered as WarmSignaled -- the answer is ProcessSignalRefused, and the child keeps running. Counterexample = a PermissionError being raised, or a shape that answers
+  ;; as if sent (before the fix) is red. The scripted answerer has no OS refusal, so this is for the real one only.
   {:interpreters ["os-warm"]}
   (<- paths WarmPaths (WarmWorldPaths))
   (<- forked (forked-at paths paths.accepting SLEEPER "refused"))
@@ -108,16 +108,16 @@
   (val other-ticks (+ forked.start-ticks 1))
   (<- polled (PollWarmChild :pid forked.pid :start-ticks other-ticks :exit-path exit-path))
   (<- lost WarmLost (warm-lost forked.pid exit-path))
-  (assert (= polled lost) (.format "start-ticks の違う pid は、exit の file が無ければ WarmLost: {}" polled))
+  (assert (= polled lost) (.format "A pid with different start-ticks is WarmLost if there is no exit file: {}" polled))
   (<- refused-signal (SignalWarmChild :pid forked.pid :start-ticks other-ticks :signal ProcessSignal.KILL))
   (<- gone WarmGone (warm-gone forked.pid))
-  (assert (= refused-signal gone) (.format "start-ticks の違う pid には送らない: {}" refused-signal))
-  ;; 後片づけ: 本当の start-ticks で KILL を送って止める(本物の入口は 30 秒眠るので残さない)。KILL は group の先頭の子 A も道連れに
-  ;; するので、exit の file は書かれず WarmLost で終わる。
+  (assert (= refused-signal gone) (.format "Nothing is sent to a pid with different start-ticks: {}" refused-signal))
+  ;; Cleanup: stop it by sending KILL with the true start-ticks (the real entry point sleeps 30 seconds, so do not leave it). KILL also takes down child A at the head of the group,
+  ;; so the exit file is not written and it ends as WarmLost.
   (<- sent (SignalWarmChild :pid forked.pid :start-ticks forked.start-ticks :signal ProcessSignal.KILL))
   (assert (= sent (WarmSignaled :pid forked.pid)) sent)
   (<- ended (done-soon forked exit-path))
-  (assert (= ended lost) (.format "KILL で A ごと止まった子は exit の file が無く WarmLost: {}" ended)))
+  (assert (= ended lost) (.format "A child stopped together with A by KILL has no exit file and is WarmLost: {}" ended)))
 
 
 (deftest test-a-child-that-vanishes-without-an-exit-file-is-lost
@@ -157,7 +157,7 @@
   (<- refused (forked-at paths paths.refusing EXIT-3 "env-refused" env))
   (<- forked (forked-at paths paths.accepting EXIT-3 "env-forked" env))
   (for [answer #(missing refused forked)]
-    (assert (not-in SECRET (repr answer)) (.format "env の値が答えに出た: {}" (type answer))))
+    (assert (not-in SECRET (repr answer)) (.format "An env value appeared in the answer: {}" (type answer))))
   (assert (isinstance forked WarmForked) forked)
   (<- exit-path str (exit-path-of paths "env-forked"))
   (<- ended (done-soon forked exit-path))
@@ -166,7 +166,7 @@
 
 (deftest test-the-request-and-the-answer-lines-round-trip
   {:interpreters ["scripted-warm"]}
-  (val request (ForkFromWarm :socket-path "/s.sock" :entry "e" :args #("a" "b") :cwd "/w" :env #((EnvEntry :name "N" :value "値"))
+  (val request (ForkFromWarm :socket-path "/s.sock" :entry "e" :args #("a" "b") :cwd "/w" :env #((EnvEntry :name "N" :value "value"))
                              :log-path "/w/l" :exit-path "/w/x" :grace-seconds 2.5))
   (<- line bytes (warm-request-line request))
   (<- read-back (| WarmRequestWire Malformed) (warm-request-of line))
@@ -174,10 +174,10 @@
   (assert (= #(read-back.entry read-back.args read-back.cwd read-back.log-path read-back.exit-path read-back.grace-seconds)
              #("e" #("a" "b") "/w" "/w/l" "/w/x" 2.5))
           read-back)
-  (assert (= (tuple (gfor e read-back.env #(e.name e.value))) #(#("N" "値"))) read-back.env)
+  (assert (= (tuple (gfor e read-back.env #(e.name e.value))) #(#("N" "value"))) read-back.env)
   (<- broken (| WarmRequestWire Malformed) (warm-request-of b"{\"entry\": 1}"))
   (assert (isinstance broken Malformed) broken)
-  (for [answer #((WarmForked :pid 12 :start-ticks 34) (WarmRefused :detail "断り"))]
+  (for [answer #((WarmForked :pid 12 :start-ticks 34) (WarmRefused :detail "refusal"))]
     (<- answer-line bytes (warm-answer-line answer))
     (<- answer-back (| WarmForked WarmRefused) (warm-answer-of answer-line "/s.sock"))
     (assert (= answer-back answer) answer-back))

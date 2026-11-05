@@ -18,9 +18,9 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-# 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
-# 既定は Python の核だけ — pip install doeff は doeff・doeff-vm・doeff-core-effects・frozendict の 4 個を入れる。Hy で書いた
-# effect と handler の Hy(doeff-hy)と、HTTP の client の httpx は下の extra で足す(tests/test_core_install_extras.py)。
+# The 5 core packages are released under one version number, and their mutual dependencies are limited to that 2-digit series (tests/test_core_packages_version.py).
+# The default is the Python core only -- pip install doeff installs 4 packages: doeff, doeff-vm, doeff-core-effects and frozendict. Hy (doeff-hy) for the Hy-written
+# effects and handlers, and httpx for the HTTP client, are added by the extras below (tests/test_core_install_extras.py).
 dependencies = [
     "doeff>=0.8.0,<0.9",
     "frozendict>=2.4.0",
@@ -34,23 +34,23 @@ Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
 Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-# Hy で書いた effect と handler(file・process・sql・random・channel・meter など・cache)を読む Hy。
+# Hy that loads the Hy-written effects and handlers (file, process, sql, random, channel, meter, etc., cache).
 hy = ["doeff-hy>=0.8.0,<0.9"]
-# HTTP の client の handler(http_handlers — Hy で書いてあり、httpx で送る)。
+# Handler for the HTTP client (http_handlers -- written in Hy, sends via httpx).
 http = ["doeff-hy>=0.8.0,<0.9", "httpx>=0.27.0"]
-# hy と http — 0.5 までの既定と同じ組。
+# hy and http -- the same combination as the default up to 0.5.
 all = ["doeff-hy>=0.8.0,<0.9", "httpx>=0.27.0"]
-# 汎用の HTTP の待ち受けの本物の答え手 aiohttp-http-server(doeff_core_effects/_aiohttp_http_server.hy)と、
-# 汎用の WebSocket の client の本物の答え手 aiohttp-ws-client(doeff_core_effects/_aiohttp_ws_client.hy)。
-# どちらも Hy で書いてあるので doeff-hy も入れる。
+# The real answerer aiohttp-http-server for the generic HTTP listener (doeff_core_effects/_aiohttp_http_server.hy), and
+# the real answerer aiohttp-ws-client for the generic WebSocket client (doeff_core_effects/_aiohttp_ws_client.hy).
+# Both are written in Hy, so doeff-hy is included too.
 http-server = ["doeff-hy>=0.8.0,<0.9", "aiohttp>=3.14"]
-# 汎用の SQL の本物の PostgreSQL の答え手 postgres-sql-handler(doeff_core_effects/_postgres_sql.hy)。
-# Hy で書いてあるので doeff-hy も入れる。ClickHouse の答え手は stdlib の urllib だけで、sqlite の答え手は stdlib の sqlite3 だけを
-# 使う(どちらも Hy で書いてあるので extra hy で入れる)。
+# The real PostgreSQL answerer postgres-sql-handler for generic SQL (doeff_core_effects/_postgres_sql.hy).
+# Written in Hy, so doeff-hy is included too. The ClickHouse answerer uses only stdlib urllib and the sqlite answerer only stdlib sqlite3
+# (both are written in Hy, so they are installed via the hy extra).
 postgres = ["doeff-hy>=0.8.0,<0.9", "psycopg>=3.1"]
 
 [build-system]
-# license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
+# Writing the license SPDX expression and license-files (PEP 639) into core metadata by default starts with hatchling 1.27 (default version 2.4).
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
