@@ -16,6 +16,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // A label in the page's sans font, placed at (x, y).
 const Label: React.FC<{x: number; y: number; color?: string; size?: number; bold?: boolean; opacity?: number; children: React.ReactNode}> = ({
@@ -689,7 +690,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers PATTERNS.length frames of PATTERNS.Video.
-export const PATTERNS = narrate('patterns', DURATIONS, [
+export const PATTERNS = narrate('patterns', DURATIONS, NARRATION, [
   {length: LAYER, starts: startsOf(LAYER_LINES), ids: ['a1', 'a2', 'a3', 'a4'], node: <LayerScene />},
   {length: RETRY, starts: startsOf(RETRY_LINES), ids: ['b1', 'b2', 'b3', 'b4'], node: <RetryScene />},
   {length: STATE, starts: startsOf(STATE_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <StateScene />},

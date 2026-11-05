@@ -17,6 +17,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // A label in the page's sans font, placed at (x, y).
 const Label: React.FC<{x: number; y: number; color?: string; size?: number; bold?: boolean; opacity?: number; children: React.ReactNode}> = ({
@@ -571,7 +572,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers MCP_TOOLS.length frames of MCP_TOOLS.Video.
-export const MCP_TOOLS = narrate('mcp-tools', DURATIONS, [
+export const MCP_TOOLS = narrate('mcp-tools', DURATIONS, NARRATION, [
   {length: IDEA, starts: startsOf(IDEA_LINES), ids: ['t1', 't2', 't3'], node: <IdeaScene />},
   {length: DEFINE, starts: startsOf(DEFINE_LINES), ids: ['d1', 'd2', 'd3'], node: <DefineScene />},
   {length: LAUNCH, starts: startsOf(LAUNCH_LINES), ids: ['l1', 'l2', 'l3', 'l4', 'l5'], node: <LaunchScene />},

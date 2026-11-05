@@ -17,6 +17,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 type Point = {x: number; y: number};
 
@@ -692,7 +693,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers BASIC_EFFECTS.length frames of BASIC_EFFECTS.Video.
-export const BASIC_EFFECTS = narrate('basic-effects', DURATIONS, [
+export const BASIC_EFFECTS = narrate('basic-effects', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <IntroScene />},
   {length: ASK, starts: startsOf(ASK_LINES), ids: ['r1', 'r2', 'r3'], node: <AskScene />},
   {length: LOCAL, starts: startsOf(LOCAL_LINES), ids: ['l1', 'l2', 'l3'], node: <LocalScene />},

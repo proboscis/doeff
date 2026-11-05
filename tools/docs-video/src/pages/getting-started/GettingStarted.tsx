@@ -14,6 +14,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Opacity that is 1 from `from` on and fades out over `to`..`to + 0.3`.
 const until = (frame: number, from: number, to: number) => fadeAt(frame, from) * (1 - ramp(frame, to, to + 0.3));
@@ -471,7 +472,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers GETTING_STARTED.length frames of GETTING_STARTED.Video.
-export const GETTING_STARTED = narrate('getting-started', DURATIONS, [
+export const GETTING_STARTED = narrate('getting-started', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['g1', 'g2', 'g3'], node: <IntroScene />},
   {length: PROGRAM, starts: startsOf(PROGRAM_LINES), ids: ['p1', 'p2', 'p3'], node: <ProgramScene />},
   {length: EFFECT, starts: startsOf(EFFECT_LINES), ids: ['e1', 'e2'], node: <EffectScene />},

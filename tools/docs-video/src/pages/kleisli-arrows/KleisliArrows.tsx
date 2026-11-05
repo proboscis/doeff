@@ -15,6 +15,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -619,7 +620,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers KLEISLI_ARROWS.length frames of KLEISLI_ARROWS.Video.
-export const KLEISLI_ARROWS = narrate('kleisli-arrows', DURATIONS, [
+export const KLEISLI_ARROWS = narrate('kleisli-arrows', DURATIONS, NARRATION, [
   {length: RETURNS, starts: startsOf(RETURNS_LINES), ids: ['t1', 't2', 't3', 't4'], node: <ReturnsScene />},
   {length: EXPAND, starts: startsOf(EXPAND_LINES), ids: ['e1', 'e2', 'e3', 'e4', 'e5'], node: <ExpandScene />},
   {length: ARGS, starts: startsOf(ARGS_LINES), ids: ['g1', 'g2', 'g3', 'g4'], node: <ArgsScene />},

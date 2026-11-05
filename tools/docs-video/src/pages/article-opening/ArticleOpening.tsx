@@ -11,6 +11,7 @@ import {CodeBlock, Headlines, Lines, lineMid, Pill, startsOf} from '../../kit/pa
 import {ACCENT, BG, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // The rest of the function, k, once it is a value a handler holds.
 export const K = '#7cc4ff';
@@ -403,7 +404,7 @@ const Outro: React.FC = () => {
   );
 };
 
-export const ARTICLE_OPENING = narrate('article-opening', DURATIONS, [
+export const ARTICLE_OPENING = narrate('article-opening', DURATIONS, NARRATION, [
   {length: FN, starts: startsOf(FN_LINES), ids: ['o1', 'o2'], node: <Function />},
   {length: STACK, starts: startsOf(STACK_LINES), ids: ['o3', 'o4'], node: <Stacking />},
   {length: TAPE, starts: startsOf(TAPE_LINES), ids: ['o5'], node: <Taping />},

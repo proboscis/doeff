@@ -15,6 +15,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // A label in the page's sans font, placed at (x, y).
 const Label: React.FC<{x: number; y: number; color?: string; size?: number; bold?: boolean; opacity?: number; children: React.ReactNode}> = ({
@@ -578,7 +579,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers STATIC_TYPING.length frames of STATIC_TYPING.Video.
-export const STATIC_TYPING = narrate('static-typing', DURATIONS, [
+export const STATIC_TYPING = narrate('static-typing', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['a1', 'a2', 'a3', 'a4'], node: <IntroScene />},
   {length: DECLARE, starts: startsOf(DECLARE_LINES), ids: ['b1', 'b2', 'b3'], node: <DeclareScene />},
   {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <YieldScene />},

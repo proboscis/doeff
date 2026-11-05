@@ -18,6 +18,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame, WarpContext} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -758,7 +759,7 @@ const tight = (scene: Scene): Scene => {
 };
 
 // The scenes in order; Root.tsx registers AGENT_TUTORIAL.length frames of AGENT_TUTORIAL.Video.
-export const AGENT_TUTORIAL = narrate('agent-tutorial', DURATIONS, [
+export const AGENT_TUTORIAL = narrate('agent-tutorial', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: PROG, starts: startsOf(PROG_LINES), ids: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'], node: <ProgramScene />},
   {length: HANDLER_SCENE, starts: startsOf(HANDLER_LINES), ids: ['h1', 'h2', 'h3', 'h4', 'h5'], node: <HandlerScene />},
