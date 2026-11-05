@@ -1,8 +1,8 @@
-"""VM の不変条件の検査は、どの build でも実行時の切り替えで有効・無効が決まる。
+"""Whether the VM's invariant checks are enabled or disabled is decided by a run-time switch in every build.
 
-以前は cargo feature で build を分け、同じ venv が最後に組んだ経路(make sync / uv sync)で 15 倍速さを変えた。
-いまは検査がどの build にも入り、DOEFF_VM_INVARIANT_CHECKS(拡張が最初に 1 回読む)か
-effect SetInvariantChecks で決まる。この検は、同じ build が変数だけで両方の状態になることを子 process で見る。
+Before, builds were split by cargo feature, and the same venv changed speed by 15 times depending on the path that built it last (make sync / uv sync).
+Now the check is in every build and is decided by DOEFF_VM_INVARIANT_CHECKS (read once by the extension at first) or
+the effect SetInvariantChecks. This test sees in child processes that the same build is in both states by the variable alone.
 """
 
 import subprocess
@@ -22,8 +22,8 @@ PROBE = (
 
 
 def _probe(value: str | None) -> subprocess.CompletedProcess[str]:
-    """変数を与えた(または外した)子 process で 1 つの program を走らせ、検査の状態を読むため。"""
-    # 子はこの process の環境を継ぐ — 変数を外し(`env -u`)、value が在ればその値で置く。
+    """To run one program in a child process given (or with removed) the variable, and read the state of the check."""
+    # The child inherits this process's environment -- remove the variable (`env -u`), and if value is given, set it to that value.
     setting = [] if value is None else [f"DOEFF_VM_INVARIANT_CHECKS={value}"]
     return subprocess.run(
         ["env", "-u", "DOEFF_VM_INVARIANT_CHECKS", *setting, sys.executable, "-c", PROBE],

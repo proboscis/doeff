@@ -1,25 +1,25 @@
-"""登記の前の入口 scripts/run_changed_tests.py(`make test-changed`)の失敗ケース。
+"""Failure cases for the pre-registration entry point scripts/run_changed_tests.py (`make test-changed`).
 
-t135 の形: doeff-core-effects の `.hy` に公開の名を 1 つ足し、隣の `.pyi` を直さない commit は、書き手が選ぶ検
-(test_sql_effects.hy)では緑のまま通り、契約の検 test_hy_module_stubs だけが赤にする。入口がその検を契約の組から選ぶので
-赤で止まること、表の行を外すとその検は選ばれないこと(表が効いていること)、上限を越えた検と venv の無い作業木は
-「未測」と名指して赤と分けること、表の形が違えば止めることを、一時の模型の repo で確かめる。
+Shape of t135: a commit that adds one public name to a `.hy` of doeff-core-effects and does not fix the neighboring `.pyi` passes green on the test the writer chooses
+(test_sql_effects.hy), and only the contract test test_hy_module_stubs turns red. The entry point selects that test from the contract set, so
+it stops red; removing a table row means that test is not selected (the table is effective); tests over the limit and a work tree without a venv are named
+"unmeasured" and kept apart from red; and a malformed table stops the run -- all verified with a temporary model repo.
 
-模型の repo は本物の file の写し(test_hy_module_stubs.py・doeff_core_effects の .hy と .pyi・executable ADR の pattern の
-定義元)と、表だけを書いた pyproject.toml を持つ。模型は自分の環境を持たず、uv の UV_PROJECT_ENVIRONMENT で今の検の
-環境を指す(入口は `uv run --no-sync --project <作業木>` で pytest を走らせる)。指さない時は「環境が無い作業木」になる。
+The model repo holds copies of real files (test_hy_module_stubs.py, the .hy and .pyi of doeff_core_effects, the source of the executable ADR pattern
+definition) and a pyproject.toml containing only the table. The model has no environment of its own, and UV_PROJECT_ENVIRONMENT of uv points at the current test
+environment (the entry point runs pytest with `uv run --no-sync --project <work tree>`). When it does not point, it becomes a "work tree without an environment".
 
-2 便目(逆依存): 入口は doeff-linter の `--affected-tests` に問う。検では実の linter を呼ばず、決めた答えを返す代役の
-命令(`--linter`)に差し替え、契約の組 → 変えた検 → 逆依存(距離の順)に並ぶこと・linter が答えない時に名指して進むことを
-確かめる。linter 側の選び方そのものの失敗ケースは doeff-linter の Rust の検(project::affected_tests)が持つ。
+Second pass (reverse dependencies): the entry point asks doeff-linter's `--affected-tests`. The tests do not call the real linter but swap in a stand-in
+command (`--linter`) that returns a fixed answer, and verify the order contract set -> changed tests -> reverse dependencies (by distance) and that when the linter does not answer, the run goes on after naming it.
+Failure cases for the linter-side selection itself are held by the Rust tests of doeff-linter (project::affected_tests).
 
-session の境目: 入口は日次と同じ境目(repo の根・`packages/<名>/tests`・Makefile の
-PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest の process で走らせる。`tests/` に `__init__.py` と `conftest.py` を持つ package を
-2 つ同時に選んでも止まらないこと(1 回の pytest では `tests.conftest` の名がぶつかり rc 2 で止まった)・合計の上限を束どうしで
-分け合い、番の来なかった束を未測と名指すこと・束の並びが契約の組を先に保つことを確かめる。
+Session boundaries: the entry point runs each of the same boundaries as the daily run (repo root, `packages/<name>/tests`, PACKAGE_EXTRA_TEST_ROOTS of the Makefile)
+in a separate pytest process. It verifies that selecting two packages that each have `__init__.py` and `conftest.py` under `tests/` at the same time does not stop the run
+(a single pytest run collided on the name `tests.conftest` and stopped with rc 2), that the total limit is shared among bundles and bundles whose turn never came are named unmeasured,
+and that the bundle order keeps the contract set first.
 
-機体の検の枠の待ち: doeff の root の conftest は pytest_configure(収集の前)で機体の検の枠を取り、
-埋まっていれば待つ。入口は configure の間を上限に数えず、数えなかった秒を要約に別の行で出すことを確かめる。
+Waiting for the machine's test slot: the root conftest of doeff takes the machine's test slot in pytest_configure (before collection) and
+waits if it is occupied. It verifies that the entry point does not count the configure interval against the limit and shows the uncounted seconds on a separate line of the summary.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ RUNNER = REPO_ROOT / "scripts" / "run_changed_tests.py"
 STUB_TEST = "packages/doeff-core-effects/tests/test_hy_module_stubs.py"
 CORE_EFFECTS = "packages/doeff-core-effects/doeff_core_effects"
 ADR_PLUGIN = "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
-#: 模型の repo の git の作者(子の環境へ足す分 — 今の環境の受け継ぎは子 process の答え手が行う)。
+#: Git author of the model repo (added to the child's environment -- inheriting the current environment is done by the child-process responder).
 GIT_ENV = (
     EnvEntry(name="GIT_AUTHOR_NAME", value="model"),
     EnvEntry(name="GIT_AUTHOR_EMAIL", value="model@example.invalid"),
@@ -56,7 +56,7 @@ GIT_ENV = (
 
 @dataclass(frozen=True)
 class Row:
-    """模型の表の 1 行(path の接頭辞と検の列)。"""
+    """One row of the model table (path prefix and list of tests)."""
 
     prefix: str
     tests: tuple[str, ...]
@@ -64,14 +64,14 @@ class Row:
 
 @dataclass(frozen=True)
 class Model:
-    """模型の repo と、変える前の commit(入口の分岐点)と、空の答えを返す逆依存の代役(実の linter を呼ばない)。"""
+    """The model repo, the commit before the change (the entry point's branch point), and a reverse-dependency stand-in that returns an empty answer (does not call the real linter)."""
 
     root: Path
     base: str
     linter: Path
 
 
-#: 逆依存の答えの空の形(doeff-linter の `--affected-tests` の JSON)。
+#: The empty form of a reverse-dependency answer (JSON of doeff-linter's `--affected-tests`).
 EMPTY_ANSWER = '{"tests": [], "hubs": [], "not_modules": [], "unreadable": [], "files_read": 0, "max_dependents": 40}'
 
 
@@ -83,20 +83,20 @@ class RunnerOutput:
 
 
 def _git(root: Path, *args: str) -> str:
-    """模型の repo で git を走らせる(作者は固定の名)。子は doeff の子 process の答え手(subprocess_handler)が起こし、
-    今の環境に GIT_ENV を重ねて渡す。"""
+    """Run git in the model repo (fixed author name). The child is started by doeff's child-process responder (subprocess_handler),
+    which overlays GIT_ENV on the current environment."""
     outcome = run(
         with_handlers(
             [subprocess_handler],
             RunProcess(argv=("git", "-C", str(root), *args), env=GIT_ENV, env_mode=EnvMode.EXTEND),
         )
     )
-    assert outcome.exit_code == 0, f"git {args} が rc {outcome.exit_code}: {outcome.stderr}"
+    assert outcome.exit_code == 0, f"git {args} exited with rc {outcome.exit_code}: {outcome.stderr}"
     return outcome.stdout.strip()
 
 
 def _uv_dir(kind: str) -> str:
-    """uv の置き場(`uv cache dir` / `uv python dir`)— HOME を替えた子にも今と同じ置き場を使わせるため。"""
+    """The uv locations (`uv cache dir` / `uv python dir`) -- so that a child with a changed HOME uses the same locations as now."""
     proc = subprocess.run(
         ["uv", kind, "dir"], capture_output=True, text=True, timeout=30, check=True
     )
@@ -104,7 +104,7 @@ def _uv_dir(kind: str) -> str:
 
 
 def _pyproject(rows: tuple[Row, ...], record_dirs: tuple[str, ...] = ()) -> str:
-    """模型の pyproject.toml — pytest の rootdir の印と、契約の検の表と、設計の記録の dir(`[tool.doeff] record-dirs`)だけ。"""
+    """The model pyproject.toml -- only the pytest rootdir mark, the contract test table, and the design-record dirs (`[tool.doeff] record-dirs`)."""
     table = "".join(
         f'\n[[tool.doeff.contract-tests]]\nprefix = "{row.prefix}"\n'
         f"tests = [{', '.join(f'{t!r}' for t in row.tests)}]\n".replace("'", '"')
@@ -119,7 +119,7 @@ def _pyproject(rows: tuple[Row, ...], record_dirs: tuple[str, ...] = ()) -> str:
 
 
 def _fake_linter(place: Path, answer: str, returncode: int = 0) -> Path:
-    """逆依存の代役: 受けた引数を同じ dir の argv に 1 行ずつ書き、決めた答えを返す命令(模型の repo の外に置く — 変えた file に数えない)。"""
+    """The reverse-dependency stand-in: a command that writes the arguments it received, one per line, to an argv file in the same dir and returns a fixed answer (placed outside the model repo -- not counted as a changed file)."""
     place.mkdir(parents=True, exist_ok=True)
     answer_file = place / "answer.json"
     answer_file.write_text(answer, encoding="utf-8")
@@ -142,10 +142,10 @@ def _make_model(
     extra: tuple[tuple[str, str], ...] = (),
     record_dirs: tuple[str, ...] = (),
 ) -> Model:
-    """本物の契約の検と core-effects の .hy / .pyi を写した模型の repo を作り、1 つ目の commit を分岐点にする。
+    """Build a model repo holding copies of the real contract test and the core-effects .hy / .pyi, and make the first commit the branch point.
 
-    extra = 分岐点に含める file(根からの path と中身)。逆依存の代役は空の答えを返す物を repo の外に置く。
-    record_dirs = 模型の pyproject の設計の記録の dir。
+    extra = files to include at the branch point (path from the root and content). The reverse-dependency stand-in returning an empty answer is placed outside the repo.
+    record_dirs = design-record dirs of the model pyproject.
     """
     root = tmp_path / "repo"
     root.mkdir()
@@ -154,7 +154,7 @@ def _make_model(
         root / CORE_EFFECTS,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    # Makefile は入口が session の境目(PACKAGE_EXTRA_TEST_ROOTS)を聞く定義元。
+    # The Makefile is the source of definition where the entry point reads session boundaries (PACKAGE_EXTRA_TEST_ROOTS).
     for rel in (STUB_TEST, ADR_PLUGIN, "Makefile"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / rel, root / rel)
@@ -178,7 +178,7 @@ def _make_model(
 
 
 def _add_public_name_without_stub(model: Model) -> None:
-    """t135 の形の差分: sql_effects.hy に公開の名を 1 つ足し、sql_effects.pyi は直さずに commit する。"""
+    """A diff of the t135 shape: add one public name to sql_effects.hy and commit without fixing sql_effects.pyi."""
     module = model.root / CORE_EFFECTS / "sql_effects.hy"
     module.write_text(
         module.read_text(encoding="utf-8") + "\n(val ADDED-WITHOUT-STUB 1)\n", encoding="utf-8"
@@ -193,15 +193,15 @@ def _run(
     linter: Path | None = None,
     home: Path | None = None,
 ) -> RunnerOutput:
-    """入口を `make test-changed` と同じ `uv run --script` で模型の repo に対して走らせる(分岐点は模型の 1 つ目の commit)。
+    """Run the entry point against the model repo with the same `uv run --script` as `make test-changed` (the branch point is the model's first commit).
 
-    with_environment = 模型の環境として今の検の環境(sys.prefix)を UV_PROJECT_ENVIRONMENT で指すか。
-    linter = 逆依存の代役(既定は模型の空の答え — 実の doeff-linter は呼ばない)。
-    home = 渡すと `--linter` を渡さず、HOME をこの dir にして入口の既定の探し方(断面の置き場)を通す。
+    with_environment = whether to point at the current test environment (sys.prefix) as the model's environment with UV_PROJECT_ENVIRONMENT.
+    linter = the reverse-dependency stand-in (default is the model's empty answer -- the real doeff-linter is not called).
+    home = when given, `--linter` is not passed and HOME is this dir, going through the entry point's default lookup (the snapshot location).
     """
-    # 子はこの process の環境を継ぐ — uv の環境の 2 つの名を外し(`env -u`)、with_environment の時だけ今の環境を指す。
+    # The child inherits this process's environment -- remove the two uv environment names (`env -u`), and point at the current environment only when with_environment.
     environment = [f"UV_PROJECT_ENVIRONMENT={sys.prefix}"] if with_environment else []
-    # HOME を替えても uv の cache と python の置き場は今のまま使う(置き場が空の HOME の下に移ると python を探し直す)。
+    # Even if HOME is changed, the uv cache and python locations are used as now (if the locations moved under an empty HOME, python would be searched for again).
     kept_uv = [
         f"{name}={value}"
         for name, value in (
@@ -244,18 +244,18 @@ def _run(
 
 
 def _counts(output: RunnerOutput) -> str:
-    """入口の出力の最後の行 — 数だけの要約。どの道で終わっても最後の行にちょうど 1 行出る。"""
+    """The last line of the entry point's output -- a summary of counts only. Whatever way it ends, exactly one such line appears as the last line."""
     lines = [line for line in output.stdout.splitlines() if line.strip()]
-    assert lines, f"入口が何も出していない(rc {output.returncode})\n{output.text[-3000:]}"
+    assert lines, f"the entry point printed nothing (rc {output.returncode})\n{output.text[-3000:]}"
     assert lines[-1].startswith("land-focus-counts: "), lines[-5:]
     assert sum(1 for line in lines if line.startswith("land-focus-counts:")) == 1, lines
     return lines[-1]
 
 
 def _summary(output: RunnerOutput) -> str:
-    """入口の出力のうち、最後の要約の節(pytest の出力を除く)。"""
+    """The last summary section of the entry point's output (excluding pytest output)."""
     marker = "== Changed-tests summary"
-    assert marker in output.text, f"要約が無い(rc {output.returncode})\n{output.text[-3000:]}"
+    assert marker in output.text, f"no summary (rc {output.returncode})\n{output.text[-3000:]}"
     return output.text[output.text.index(marker) :]
 
 
@@ -263,20 +263,20 @@ CORE_ROW = Row(prefix="packages/doeff-core-effects/", tests=(STUB_TEST,))
 REPO_ROW = Row(prefix="", tests=("tests/test_ok.py",))
 
 
-# 選ばれた stub の検(doeff-core-effects の test_hy_module_stubs.py)は、stub の型の引数の構文を読める Python 3.12 から走る。
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="選ばれる stub の検は Python 3.12 から")
+# The selected stub test (test_hy_module_stubs.py of doeff-core-effects) runs from Python 3.12, which can read the syntax of arguments of stub types.
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="the selected stub test needs Python 3.12 or later")
 def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Path) -> None:
-    """失敗ケース(t135): .hy に公開の名を足して .pyi を直さない差分は、契約の組から選ばれた stub の検で赤・rc 1。"""
+    """Failure case (t135): a diff that adds a public name to .hy without fixing .pyi is red with rc 1 in the stub test selected from the contract set."""
     model = _make_model(tmp_path, (CORE_ROW, REPO_ROW))
     _add_public_name_without_stub(model)
     output = _run(model)
     summary = _summary(output)
-    assert output.returncode == 1, f"赤なのに rc {output.returncode}\n{output.text[-3000:]}"
+    assert output.returncode == 1, f"expected red but rc {output.returncode}\n{output.text[-3000:]}"
     assert "\nred: 1" in summary, summary
     assert f"{STUB_TEST} — red" in summary, summary
     assert "[sql_effects]" in summary, summary
     assert "宣言に無い公開の名: ADDED_WITHOUT_STUB" in output.text, (
-        "pytest の出力に足した名が出ていない"
+        "the added name does not appear in the pytest output"
     )
     assert "tests/test_ok.py — 1 test(s)" in summary, summary
     assert "running on working tree contents (not the index)" in output.text.splitlines()[0], output.text[
@@ -285,7 +285,7 @@ def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Pa
 
 
 def test_the_stub_check_is_not_selected_without_its_table_row(tmp_path: Path) -> None:
-    """表が効いている確かめ: core-effects の行を外すと、同じ差分でも stub の検は選ばれず、赤にならない。"""
+    """Verifies the table is effective: removing the core-effects row means the stub test is not selected for the same diff, and it does not go red."""
     model = _make_model(tmp_path, (REPO_ROW,))
     _add_public_name_without_stub(model)
     output = _run(model)
@@ -297,7 +297,7 @@ def test_the_stub_check_is_not_selected_without_its_table_row(tmp_path: Path) ->
 
 
 def test_a_set_over_the_budget_is_named_unmeasured_not_red(tmp_path: Path) -> None:
-    """上限(ここでは 8 秒)を越える組: 終わった検は「走った」、終わらなかった検は「未測」と名指し、rc は 0。"""
+    """A set over the limit (8 seconds here): finished tests are "ran", unfinished tests are named "unmeasured", and rc is 0."""
     model = _make_model(
         tmp_path, (Row(prefix="", tests=("tests/test_ok.py", "tests/test_slow.py")),)
     )
@@ -317,7 +317,7 @@ def test_a_set_over_the_budget_is_named_unmeasured_not_red(tmp_path: Path) -> No
 def test_a_worktree_without_an_environment_names_every_selected_test_unmeasured(
     tmp_path: Path,
 ) -> None:
-    """uv の環境(venv)の無い作業木: 黙って通さず、選んだ検の全部を「未測」と名指す(rc 0)。"""
+    """A work tree without a uv environment (venv): it does not pass silently and names all selected tests "unmeasured" (rc 0)."""
     model = _make_model(tmp_path, (CORE_ROW, REPO_ROW))
     _add_public_name_without_stub(model)
     output = _run(model, with_environment=False)
@@ -331,51 +331,51 @@ def test_a_worktree_without_an_environment_names_every_selected_test_unmeasured(
 
 
 def test_a_table_naming_a_missing_test_file_stops(tmp_path: Path) -> None:
-    """表に書いた検の file が木に無ければ止める(rc 2)— 書き損じた行を黙って空の組にしない。"""
+    """If a test file listed in the table is not in the tree, stop (rc 2) -- do not silently turn a mistyped row into an empty set."""
     model = _make_model(tmp_path, (Row(prefix="", tests=("tests/test_gone.py",)),))
     output = _run(model)
     assert output.returncode == 2, output.text[-3000:]
     assert "tests/test_gone.py" in output.text, output.text
-    # 選ぶ前に止まった回も数の要約を 1 行出す(選んだ検 0 本・rc 2)— 1 日の数から止まった回が漏れないように。
+    # A run that stopped before selection also prints one count summary line (0 selected tests, rc 2) -- so that stopped runs are not missing from the daily counts.
     assert " selected=0 ran=0 red=0 unmeasured=0 unmeasured_reverse=0 rc=2 " in _counts(output)
 
 
 def test_the_repository_table_reads_and_names_existing_tests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """本物の表は形どおりで、書いた検の file は全部木に在る(読み手は入口と同じ関数)。"""
+    """The real table has the right shape and every test file it lists is in the tree (the reader is the same function as the entry point)."""
     spec = importlib.util.spec_from_file_location("run_changed_tests", RUNNER)
     assert spec is not None
     assert spec.loader is not None
     runner = importlib.util.module_from_spec(spec)
-    # dataclass は定義した module を sys.modules から引く — 検の間だけ置く。
+    # A dataclass looks up its defining module in sys.modules -- place it only for the duration of the test.
     monkeypatch.setitem(sys.modules, spec.name, runner)
     spec.loader.exec_module(runner)
     table = runner.read_contract_table(REPO_ROOT)
-    assert table.rows, "本物の表が空"
+    assert table.rows, "the real table is empty"
     assert all(
         (REPO_ROOT / test.split("::", 1)[0]).is_file() for row in table.rows for test in row.tests
     )
 
 
 # ---------------------------------------------------------------------------
-# 2 便目: 逆依存(doeff-linter の `--affected-tests`)の検を、契約の組と変えた検の後ろに距離の順で足す
+# Second pass: append the reverse-dependency tests (doeff-linter's `--affected-tests`) after the contract set and changed tests, in order of distance
 # ---------------------------------------------------------------------------
 
 PASSING = "def test_it():\n    pass\n"
 
 
 def _affected(path: str, distance: int) -> dict[str, object]:
-    """代役の答えの tests の 1 つ(道は変えた file から検までの 2 段で足りる)。"""
+    """One of the tests in the stand-in's answer (a route of two steps from the changed file to the test is enough)."""
     return {"path": path, "distance": distance, "via": ["tests/test_changed.py", path]}
 
 
 def test_reverse_dependents_follow_the_contract_set_and_the_changed_test_by_distance(
     tmp_path: Path,
 ) -> None:
-    """並びの失敗ケース: 契約の組 → 変えた検 → 逆依存(距離の近い順・同じ距離は path の順)。代役の答えの順が乱れていても、
-    重なり(契約の組に在る検)・検の file でない物・木に無い物を除いて決まった順に並べ、広すぎた module を名指す。
-    linter には変えた file と、検の file の名の規則(集め手と同じ値)を渡す。"""
+    """Failure case for ordering: contract set -> changed tests -> reverse dependencies (nearer distance first; same distance in path order). Even if the stand-in's answer is out of order,
+    it removes overlaps (tests already in the contract set), things that are not test files, and things not in the tree, orders them in the fixed order, and names modules that were too broad.
+    The linter receives the changed files and the naming rule of test files (the same value as the collector)."""
     model = _make_model(
         tmp_path,
         (REPO_ROW,),
@@ -433,14 +433,14 @@ def test_reverse_dependents_follow_the_contract_set_and_the_changed_test_by_dist
 @pytest.mark.parametrize(
     ("record_dirs", "selected"),
     [(("docs/design/",), False), ((), True)],
-    ids=["記録の dir を宣言した", "宣言が無い(対照)"],
+    ids=["record-dir-declared", "no-declaration-control"],
 )
 def test_a_test_named_file_under_a_record_dir_is_selected_neither_as_changed_nor_by_reverse_dependency(
     tmp_path: Path, record_dirs: tuple[str, ...], selected: bool
 ) -> None:
-    """失敗ケース: 設計の記録の dir(pyproject の `[tool.doeff] record-dirs`)の下の検の名の file は、変えても・逆依存の答えに載っても選ばない。
-    宣言が無い対照では同じ file が選ばれ、集める時に落ちて赤になる(記録の中の改名できない測りの script が、import 先の変更で
-    赤になった — 設計検証の盲検 A)。記録の外の検の名の file は、宣言の有無によらず今までどおり選ぶ。"""
+    """Failure case: a test-named file under a design-record dir (`[tool.doeff] record-dirs` in pyproject) is not selected whether changed or listed in the reverse-dependency answer.
+    In the control with no declaration, the same file is selected, fails at collection and goes red (a measurement script in a record that cannot be renamed went
+    red because of a change in what it imports -- blind A of design verification). Test-named files outside the records are selected as before regardless of the declaration."""
     record = "docs/design/lt-REC/evidence/probe_test.py"
     model = _make_model(
         tmp_path,
@@ -479,7 +479,7 @@ def test_a_test_named_file_under_a_record_dir_is_selected_neither_as_changed_nor
 def test_an_unanswering_linter_is_named_and_the_run_goes_on(
     tmp_path: Path, case: str, answer: str | None, returncode: int, named: str
 ) -> None:
-    """linter が答えない時: 逆依存を足さずに「逆依存を測れなかった」と理由つきで名指し、契約の組は走らせ、赤にしない(rc 0)。"""
+    """When the linter does not answer: do not add reverse dependencies, name "could not measure reverse dependencies" with the reason, run the contract set, and do not go red (rc 0)."""
     model = _make_model(tmp_path, (REPO_ROW,))
     (model.root / "README").write_text("changed\n", encoding="utf-8")
     linter = (
@@ -497,15 +497,15 @@ def test_an_unanswering_linter_is_named_and_the_run_goes_on(
 
 
 # ---------------------------------------------------------------------------
-# linter の命令の決め方: 会話の Pod は PATH に doeff-linter を持たず、commit の hook のために揃えた
-# 断面の置き場にだけ持つ — 既定の探し方が置き場の鍵の linter を見つける事
+# How the linter command is decided: the conversation Pod has no doeff-linter on PATH and has it only in the snapshot location prepared for the commit hook
+# -- the default lookup finds the linter keyed in that location
 # ---------------------------------------------------------------------------
 
 LOCKED_SCRIPT = REPO_ROOT / "scripts" / "doeff_linter_locked.py"
 
 
 def _model_with_linter_crate(tmp_path: Path) -> Model:
-    """linter の crate の印(packages/doeff-linter/Cargo.toml)だけを持つ模型 — 組み立ての入力の鍵が計算できる。"""
+    """A model holding only the mark of the linter crate (packages/doeff-linter/Cargo.toml) -- the key of the build input can be computed."""
     return _make_model(
         tmp_path,
         (REPO_ROW,),
@@ -520,7 +520,7 @@ def _model_with_linter_crate(tmp_path: Path) -> Model:
 
 
 def _input_key(model: Model) -> str:
-    """模型の HEAD の組み立ての入力の鍵(決め方の定義元 doeff_linter_locked.py の `key` の口)。"""
+    """The key of the model HEAD's build input (the entry of the source of definition doeff_linter_locked.py, `key`)."""
     proc = subprocess.run(
         [sys.executable, str(LOCKED_SCRIPT), "key"],
         cwd=model.root,
@@ -533,8 +533,8 @@ def _input_key(model: Model) -> str:
 
 
 def _snapshot(home: Path, sha: str, key: str, answer: str) -> Path:
-    """HOME の下の断面の置き場(~/.cache/doeff-linter-snapshots/<40 桁の sha>/doeff-linter と、組んだ時に書いた鍵 input_key)に
-    代役の linter を置く。"""
+    """Put the stand-in linter in the snapshot location under HOME (~/.cache/doeff-linter-snapshots/<40-digit sha>/doeff-linter, and the key input_key written when it was built)."""
+
     place = home / ".cache" / "doeff-linter-snapshots" / sha
     linter = _fake_linter(place, answer)
     (place / "input_key").write_text(key + "\n", encoding="utf-8")
@@ -548,8 +548,8 @@ OTHER_SHA = "b" * 40
 def test_the_default_linter_is_the_snapshot_locked_to_the_worktrees_build_inputs(
     tmp_path: Path,
 ) -> None:
-    """既定の失敗ケース: `--linter` を渡さず PATH にも linter が無くても、断面の置き場に作業木の組み立ての入力の鍵の linter が
-    在れば、入口はそれに逆依存を問い、答えの検を足す(変更前は「linter 'doeff-linter' が無い」で逆依存を測れなかった)。"""
+    """Default failure case: even without passing `--linter` and with no linter on PATH, if a linter keyed with the work tree's build-input key exists in the snapshot location,
+    the entry point asks it for reverse dependencies and adds the answered tests (before the change, reverse dependencies could not be measured because "linter 'doeff-linter' not found")."""
     model = _model_with_linter_crate(tmp_path)
     (model.root / "README").write_text("changed\n", encoding="utf-8")
     home = tmp_path / "home"
@@ -572,7 +572,7 @@ def test_the_default_linter_is_the_snapshot_locked_to_the_worktrees_build_inputs
 
 
 def test_an_explicit_linter_wins_over_the_snapshot(runner: ModuleType, tmp_path: Path) -> None:
-    """`--linter` で渡した命令は、置き場に鍵の合う linter が在っても使う(渡した物を黙って替えない)。"""
+    """A command passed with `--linter` is used even if a linter with a matching key exists in the location (do not silently replace what was passed)."""
     model = _model_with_linter_crate(tmp_path)
     home = tmp_path / "home"
     _snapshot(home, SNAPSHOT_SHA, _input_key(model), EMPTY_ANSWER)
@@ -586,11 +586,11 @@ def test_an_explicit_linter_wins_over_the_snapshot(runner: ModuleType, tmp_path:
 def test_a_snapshot_with_another_key_is_not_used_and_the_search_is_named(
     runner: ModuleType, tmp_path: Path
 ) -> None:
-    """別の鍵の linter は使わない(黙って別の版で問わない)— PATH の doeff-linter へ落ち、無かった時の理由に探した置き場と
-    作業木の鍵を載せる。"""
+    """A linter with a different key is not used (do not query silently with another version) -- it falls back to doeff-linter on PATH, and when absent the reason carries the searched location and
+    the work tree's key."""
     model = _model_with_linter_crate(tmp_path)
     home = tmp_path / "home"
-    _snapshot(home, OTHER_SHA, "doeff-linter の組み立ての入力 " + "0" * 40, EMPTY_ANSWER)
+    _snapshot(home, OTHER_SHA, "doeff-linter build input " + "0" * 40, EMPTY_ANSWER)
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("HOME", str(home))
         picked = runner.pick_linter(None, model.root)
@@ -603,7 +603,7 @@ def test_a_snapshot_with_another_key_is_not_used_and_the_search_is_named(
 def test_a_worktree_without_the_linter_crate_falls_back_to_path_and_names_it(
     runner: ModuleType, tmp_path: Path
 ) -> None:
-    """linter の crate の無い作業木(鍵が計算できない)は、鍵の linter を探さず PATH の doeff-linter へ落ち、理由を名指す。"""
+    """A work tree without the linter crate (the key cannot be computed) does not look for a keyed linter, falls back to doeff-linter on PATH, and names the reason."""
     model = _make_model(tmp_path, (REPO_ROW,))
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("HOME", str(tmp_path / "home"))
@@ -613,13 +613,13 @@ def test_a_worktree_without_the_linter_crate_falls_back_to_path_and_names_it(
 
 
 # ---------------------------------------------------------------------------
-# 日次と同じ session の境目ごとに別の pytest の process
+# A separate pytest process for each of the same session boundaries as the daily run
 # ---------------------------------------------------------------------------
 
 
 def _package_tests(name: str) -> tuple[tuple[str, str], ...]:
-    """`tests/` に `__init__.py` と `conftest.py` の両方を持つ package 1 つ(doeff の claude-code・cluster・conductor・records の形)。
-    この形の package を 2 つ 1 つの pytest の session に混ぜると、どちらの conftest も `tests.conftest` の名になりぶつかる。"""
+    """One package with both `__init__.py` and `conftest.py` in `tests/` (the shape of claude-code, cluster, conductor, and records in doeff).
+    Mixing two packages of this shape into one pytest session makes both conftest files take the name `tests.conftest` and collide."""
     base = f"packages/{name}/tests"
     return (
         (f"{base}/__init__.py", ""),
@@ -632,7 +632,7 @@ def _package_tests(name: str) -> tuple[tuple[str, str], ...]:
 
 
 def _touch_test(model: Model, rel: str) -> None:
-    """模型の検の file に 1 行足す(その file を「変えた検」にする)。"""
+    """Add one line to a model test file (making that file a "changed test")."""
     path = model.root / rel
     path.write_text(path.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
 
@@ -642,9 +642,9 @@ BETA = "packages/doeff-beta/tests/test_owner.py"
 
 
 def test_tests_of_two_packages_with_their_own_conftest_both_run(tmp_path: Path) -> None:
-    """失敗ケース(#2658 の標本の 12 commit 中 6 本の形): `tests/__init__.py` と `conftest.py` を持つ package 2 つの検が同時に
-    選ばれる変更。1 回の pytest に渡すと `tests.conftest` の名がぶつかり、入口は 1 本も走らせずに止まった(rc 2)。日次と
-    同じ session の境目で process を分けるので、契約の組(repo の根)→ 2 つの package の順に 3 つの process で全部走る。"""
+    """Failure case (the shape of 6 of the 12 commits in the sample of #2658): a change that selects tests of two packages with `tests/__init__.py` and `conftest.py` at the same time.
+    Passing them to one pytest run collided on the name `tests.conftest`, and the entry point stopped without running a single test (rc 2). Processes are split at the same
+    session boundaries as the daily run, so everything runs in 3 processes in the order contract set (repo root) -> the 2 packages."""
     model = _make_model(
         tmp_path, (REPO_ROW,), extra=(*_package_tests("doeff-alpha"), *_package_tests("doeff-beta"))
     )
@@ -664,8 +664,8 @@ def test_tests_of_two_packages_with_their_own_conftest_both_run(tmp_path: Path) 
 
 
 def test_a_batch_left_without_budget_is_named_unmeasured(tmp_path: Path) -> None:
-    """合計の上限は束どうしで分け合う: 先頭の契約の組の束(repo の根)が上限(ここでは 6 秒)を使い切ると、後ろの package の
-    束は pytest を起こさず、その検を「番が来なかった」未測と名指す(赤にしない・rc 0)。"""
+    """The total limit is shared among bundles: when the first contract-set bundle (repo root) uses up the limit (6 seconds here), the later package
+    bundles do not start pytest and name their tests "unmeasured because their turn never came" (not red, rc 0)."""
     model = _make_model(
         tmp_path,
         (Row(prefix="", tests=("tests/test_slow.py",)),),
@@ -681,21 +681,21 @@ def test_a_batch_left_without_budget_is_named_unmeasured(tmp_path: Path) -> None
     assert "pytest processes: 1/2 ran" in summary, summary
 
 
-#: 枠が埋まっている間の待ちの代役の秒 — 上限(8 秒)より長いので、待ちを上限に数える入口は束を集める前に必ず打ち切る。
+#: Stand-in seconds for waiting while the slot is occupied -- longer than the limit (8 seconds), so an entry point that counts the wait against the limit always cuts off before collecting bundles.
 SLOT_WAIT_SECONDS = 10
 
 
 def _slot_wait_conftest(seconds: int) -> str:
-    """模型の root の conftest — doeff の root の conftest が機体の検の枠を取る拍(pytest_configure・収集の前)で、枠が
-    埋まっている間の待ちの代役として seconds 秒待つ。"""
+    """The model root conftest -- at the beat where doeff's root conftest takes the machine's test slot (pytest_configure, before collection), wait `seconds` seconds as a stand-in
+    for the wait while the slot is occupied."""
     return f"import time\n\n\ndef pytest_configure(config):\n    time.sleep({seconds})\n"
 
 
 def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path: Path) -> None:
-    """失敗ケース(load 70 で枠の待ち 19 秒が root の束を打ち切った形): 枠が埋まっていて、root の
-    conftest の pytest_configure が上限(ここでは 8 秒)より長い 10 秒を待つ。待ちを上限に数える入口は束を集める前に打ち切り、
-    検を未測にした。入口は configure の間を数えないので、束は待ちの後に上限の残りで走り切って緑になり、数えなかった秒は
-    所要とは別の行に出る。"""
+    """Failure case (the shape where a 19-second slot wait under load 70 cut off the root bundle): the slot is occupied and the root
+    conftest's pytest_configure waits 10 seconds, longer than the limit (8 seconds here). An entry point that counted the wait against the limit cut off before collecting bundles and
+    made the tests unmeasured. The entry point does not count the configure interval, so the bundle runs to the end with the remainder of the limit after the wait and goes green, and the uncounted seconds appear
+    on a line separate from the elapsed time."""
     model = _make_model(
         tmp_path,
         (REPO_ROW,),
@@ -722,16 +722,16 @@ def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path
     assert " selected=1 ran=1 red=0 unmeasured=0 unmeasured_reverse=0 rc=0 " in counts, counts
 
 
-#: 集める時に止まった検の代役の秒(module の頭で待つ)— 上限(6 秒)と _run の 120 秒の間。収集を数えない入口なら、
-#: 入口はこの秒の後まで子を切らない。
+#: Stand-in seconds for a test that stops at collection (waits at the top of the module) -- between the limit (6 seconds) and the 120 seconds of _run. For an entry point that does not count collection,
+#: the entry point does not cut the child before these seconds have passed.
 SLOW_COLLECTION_SECONDS = 40
 
 
 def test_a_collection_over_the_budget_is_cut_not_excluded(tmp_path: Path) -> None:
-    """失敗ケース(設計検証の盲検 A): 上限に数えないのは configure の間(上限を枠の正本が持つ
-    枠の待ち)だけ。数えない区間は入口が時間で切らない区間でもあるので、収集まで数えない入口は、集める時に止まった子を
-    切れず、上限を越えて待ち続けた。module の頭で 40 秒止まる検は、上限 6 秒で打ち切られ「集め終わらなかった」未測になり、
-    収集の秒は数えなかった秒(待ちの行)に入らない。"""
+    """Failure case (blind A of design verification): the only thing not counted against the limit is the configure interval (the slot wait whose limit is held by the slot's source of truth).
+    Since the uncounted interval is also one that the entry point does not cut by time, an entry point that did not count even collection could not cut a child stopped at collection and
+    kept waiting past the limit. A test that stops for 40 seconds at the top of the module is cut off at the limit of 6 seconds and becomes the unmeasured "did not finish collecting",
+    and the collection seconds do not go into the uncounted seconds (the wait line)."""
     model = _make_model(
         tmp_path,
         (Row(prefix="", tests=("tests/test_slow_collect.py",)),),
@@ -759,7 +759,7 @@ def test_a_collection_over_the_budget_is_cut_not_excluded(tmp_path: Path) -> Non
 
 @pytest.fixture(scope="module")
 def runner() -> Iterator[ModuleType]:
-    """入口の script を module として読む(dataclass は定義した module を sys.modules から引く — 検の間だけ置く)。"""
+    """Load the entry point script as a module (a dataclass looks up its defining module in sys.modules -- place it only for the duration of the test)."""
     spec = importlib.util.spec_from_file_location("run_changed_tests", RUNNER)
     assert spec is not None
     assert spec.loader is not None
@@ -774,8 +774,8 @@ SIM = "packages/doeff-cluster/src/doeff_cluster/_sim"
 
 
 def test_each_test_goes_to_the_session_the_daily_run_uses(runner: ModuleType) -> None:
-    """session の境目は日次と同じ: tests/ の外の根の下はその根・`packages/<名>/tests/` の下はその package・他は repo の根。
-    `::検の名` の付いた引数も file の path で決める。"""
+    """Session boundaries are the same as the daily run: under a root outside tests/ it is that root; under `packages/<name>/tests/` it is that package; otherwise the repo root.
+    An argument with `::test-name` is also decided by the file path."""
     roots = runner.SessionRoots(extra=(SIM,))
     assert runner.session_of(f"{SIM}/test_local.hy", roots) == SIM
     assert runner.session_of(f"{SIM}/deep/test_x.hy::test_y", roots) == SIM
@@ -788,17 +788,17 @@ def test_each_test_goes_to_the_session_the_daily_run_uses(runner: ModuleType) ->
     assert runner.session_of("packages/doeff-records/src/doeff_records/test_x.py", roots) == "."
     assert runner.session_of("tests/test_daily_test_population.py", roots) == "."
     assert runner.session_of("docs/adr/defadr_doeff_domain_001.hy::test_x", roots) == "."
-    # 根の名で始まるだけの別の dir は、その根ではない。
+    # Another dir that merely starts with a root's name is not that root.
     assert runner.session_of(f"{SIM}_other/test_x.hy", roots) == "."
 
 
 def test_batches_keep_the_contract_set_first_and_merge_neighbours(runner: ModuleType) -> None:
-    """束の並び: 組(契約の組 → 変えた検 → 逆依存)の順を保ち、組の中は session ごとに束ねる(session の順は組の中で最初に
-    現れた順)。隣り合う同じ session の束は 1 つの process にする — 契約の組が別の package に在っても、逆依存より先に走る。"""
+    """Bundle order: keep the order of sets (contract set -> changed tests -> reverse dependencies), bundle per session within a set (session order is the order first
+    seen within the set). Adjacent bundles of the same session become one process -- even if the contract set is in another package, it runs before reverse dependencies."""
     origin = runner.Origin
 
     def target(arg: str, kind: object) -> object:
-        return runner.Target(arg=arg, origin=kind, why="検")
+        return runner.Target(arg=arg, origin=kind, why="test")
 
     selection = runner.Selection(
         targets=(
@@ -829,22 +829,22 @@ def test_batches_keep_the_contract_set_first_and_merge_neighbours(runner: Module
         ),
         (".", ["tests/test_far.py"]),
     ]
-    # 1 つの session だけなら 1 つの process(今までと同じ)。
+    # With only one session there is one process (same as before).
     single = runner.Selection(targets=selection.targets[:1])
     assert len(runner.batches_of(single, runner.SessionRoots(extra=()))) == 1
 
 
 def test_the_session_roots_are_read_from_the_makefile(runner: ModuleType) -> None:
-    """本物の木: session の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS(日次の母集団の定義元)から読め、どれも木に在る dir。"""
+    """The real tree: session roots can be read from PACKAGE_EXTRA_TEST_ROOTS of the Makefile (the source of definition of the daily population), and all are dirs in the tree."""
     roots = runner.read_session_roots(REPO_ROOT)
-    assert roots.extra, "tests/ の外の根が 0 個 — Makefile の読みが壊れている"
+    assert roots.extra, "there are 0 roots outside tests/ -- the Makefile reading is broken"
     assert all((REPO_ROOT / root).is_dir() for root in roots.extra), roots
 
 
 def test_the_budget_clock_stops_between_configure_and_the_session_start(runner: ModuleType) -> None:
-    """上限の時計: 起こしてから configure まで(uv・python・conftest の import)と session が始まって
-    からを数え、configure の間(機体の検の枠の待ち)は数えない — 待っている間は時計が止まっている。拍の行が 2 度来ても
-    最初の拍を使い、結末の行は時計を変えない。"""
+    """The limit clock: counts from launch to configure (import of uv, python, conftest) and from the session start onward,
+    and does not count the configure interval (the machine's test slot wait) -- the clock is stopped while waiting. Even if the beat line comes twice,
+    the first beat is used, and the end line does not change the clock."""
     spawned = runner.ChildClock(spawned=100.0, configuring=None, started=None)
     assert (spawned.counted(102.0), spawned.waited(102.0), spawned.paused) == (2.0, 0.0, False)
     configuring = spawned.mark(runner.Configuring(), 102.0)
@@ -860,11 +860,11 @@ def test_the_budget_clock_stops_between_configure_and_the_session_start(runner: 
 
 
 def test_the_counts_split_every_selected_test_once(runner: ModuleType) -> None:
-    """数の要約: 選んだ検の 1 本ずつが走った・赤・未測のどれか 1 つに数えられ(selected = ran + red +
-    unmeasured)、未測のうち逆依存の検を分けて数える。行は頭の印と `名=数` だけ(検の名の一覧は載せない)。"""
+    """Count summary: each selected test is counted as exactly one of ran, red, or unmeasured (selected = ran + red +
+    unmeasured), and reverse-dependency tests among the unmeasured are counted separately. A line has only the leading mark and `name=count` (no list of test names)."""
     origin, verdict = runner.Origin, runner.Verdict
     results = tuple(
-        runner.TargetResult(runner.Target(arg=arg, origin=kind, why="検"), outcome, "理由")
+        runner.TargetResult(runner.Target(arg=arg, origin=kind, why="test"), outcome, "reason")
         for arg, kind, outcome in (
             ("tests/test_contract.py", origin.CONTRACT, verdict.GREEN),
             ("tests/test_changed.py", origin.CHANGED, verdict.RED),

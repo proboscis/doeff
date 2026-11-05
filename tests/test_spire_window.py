@@ -1,6 +1,6 @@
-"""spire.py の窓の handler(drawn と clicked)の検: 同じ seed・同じ手で、ターミナルの handler と同じ戦いになる。
+"""Tests for the spire.py window handlers (drawn and clicked): with the same seed and the same moves, the battle matches the terminal handler.
 
-本物の tkinter の窓を開くので display が要る(無ければ skip)。Xvfb の上で `xvfb-run uv run pytest tests/test_spire_window.py` で走る。
+It opens a real tkinter window, so a display is required (skipped otherwise). Run on Xvfb with `xvfb-run uv run pytest tests/test_spire_window.py`.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _display():
 
 
 def _terminal_fight() -> tuple[list[str], tuple]:
-    """同じ手を script で打った時の Show の行と結末(画面に出さずに集める)。"""
+    """The Show lines and outcome when the same moves are played by script (collected without drawing to the screen)."""
     lines = []
 
     @handler
@@ -42,7 +42,7 @@ def _terminal_fight() -> tuple[list[str], tuple]:
 
 
 def _click_when_asked(moves: list[int]) -> None:
-    """窓が Choose を待つ間に、次の札か End turn の中を本物の event で押す。"""
+    """While the window waits on Choose, press the next card or End turn with a real event."""
     root = tk._default_root
     root.update()  # the events of a window that is not on screen yet are dropped
     board = root.winfo_children()[0]
@@ -60,7 +60,7 @@ def _click_when_asked(moves: list[int]) -> None:
 
 
 def _shown_lines(drawn):
-    """drawn を通った Show の行を集めて、そのまま drawn へ渡す handler。"""
+    """A handler that collects the Show lines that went through drawn and passes them on to drawn as is."""
     lines = []
 
     @handler

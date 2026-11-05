@@ -1,12 +1,12 @@
-"""handler() は @do 関数の partial と、@do の method を束縛した bound method も受ける。
-with_handlers / Spawn は、それで作った handler を受ける。
+"""handler() also accepts a partial of an @do function and a bound method binding an @do method.
+with_handlers / Spawn accept the handlers made from them.
 
-実測(agora-controllers の予算の controller・2026-09-23): runtime の handler が
-functools.partial を返し、handler() が ``raw_handler.__name__`` を読んで
-AttributeError で落ちた(with_handlers と、Spawn の境目で handler を包み直す
-scheduler の両方)。名前は partial なら中の関数・bound method なら method から取る。
+Measured (agora-controllers' budget controller, 2026-09-23): the runtime's handler returned a
+functools.partial, and handler() read ``raw_handler.__name__`` and
+failed with AttributeError (both in with_handlers and in the scheduler that rewraps handlers at the Spawn boundary).
+The name is taken from the inner function for a partial, and from the method for a bound method.
 
-handler の body は def か @do 関数だけ(ADR-DOE-CORE-003)。呼べる instance はどちらでもないので断る。
+A handler body is only a def or an @do function (ADR-DOE-CORE-003). A callable instance is neither, so it is refused.
 """
 
 import functools
@@ -72,7 +72,7 @@ def test_handler_accepts_a_bound_do_method_and_refuses_a_callable_instance() -> 
 
 
 def _installer_name(install: object) -> str:
-    """handler() が作った installer の名を読むため(installer は関数 — 型の ProgramHandler は関数の名を宣言しない)。"""
+    """To read the name of the installer made by handler() (the installer is a function -- the type ProgramHandler does not declare a function name)."""
     assert isinstance(install, types.FunctionType), install
     return install.__name__
 

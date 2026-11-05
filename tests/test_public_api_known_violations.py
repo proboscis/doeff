@@ -32,23 +32,23 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。組「許した物 —
    Hy の macro」(R14・R15・R31 — macro を出す module は公開の境界に置く)に置けるのは、目録の形が Hy の macro の名と、Hy の
    macro だけを出す公開の submodule(macro の module)の行だけ: macro でない名・macro の外の名も出す submodule を置くと赤。
-   組「許した物 — CLI コマンド」(R7・R31)に置けるのは console script と Rust の実行 file の行のうち、ADR の条が名を挙げた物
+   組「Allowed — CLI command」(R7・R31)に置けるのは console script と Rust の実行 file の行のうち、ADR の条が名を挙げた物
    (ADR_COMMANDS — 条の文がその名を挙げる事も確かめる)だけ: ADR に無い命令を置くと赤。組「許した物 — pytest の plugin の
    登録」(R10・R33)に置けるのは pytest11 の entry point の行と、その entry point が読む module が出す名だけ、組「許した物 —
    起動の口」(R36)に置けるのは package が配る .pth が起動ごとに呼ぶ名だけ。組「許した物 — 換算の
    関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
-   program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「許した物 — 例外の型」(R2 — effect と handler が
+   program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「Allowed — exception type」(R2 — effect と handler が
    投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
-   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「許した物 — effect の値の型」(R2)に置けるのは、
+   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「Allowed — effect value type」(R2)に置けるのは、
    同じ package が見せる effect の class の欄の注釈(型引数を含み、package が定義した値の型の欄を辿る — 目録の value_types)に
-   出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。組「許した物 — effect の答えの型」(R2)に置けるのは、
+   出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。組「Allowed — effect answer type」(R2)に置けるのは、
    package の effect の答えの型(EffectBase[T] の T か defeffect の :answer に出る型・本体が名指した型で答える待ちの effect が
    自分の __doeff_bus_events__ に宣言した bus の event と、答えの class の欄の型・子の class・答えの class だけを並べた型の
    別名 — 目録の answer_types)だけ: 答えを docstring だけに書いた effect の答えと、どの effect の答えにも出ない class を
-   置くと赤。組「許した物 — program の形を組む作り手と型」(R37 — doeff-conductor の workflow を書く
+   置くと赤。組「Allowed — program-shape builder and type」(R37 — doeff-conductor の workflow を書く
    agent!・loop ほかと AgentSpec ほか)に置けるのは、目録の形が作り手(換算の形の本体で、同じ package の class の値を返す
    関数)で返す class をその package が見せる名と、組の作り手が返す class だけ: effect を出す・作る・I/O を読む関数・見せない
-   class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。組「許した物 — handler の設定の型」(R2)に
+   class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。組「Allowed — handler setting type」(R2)に
    置けるのは、その package が定義した型で、同じ package が見せる handler・handler の class・工場の引数の注釈(型引数を含み、
    package が定義した設定の型の欄〔Protocol の property を含む〕を辿る — 目録の settings)に出る class と型の別名だけ: どの引数にも出ない class・関数・
    標準の library の型を出し直した名を置くと赤。
@@ -95,37 +95,37 @@ ALLOWED = ROOT / "tests" / "data" / "public_api_allowed.json"
 #: 目録の種類のうち、決まりの外の物(effect と handler の外)。
 OUTSIDE_KINDS = frozenset({"other", "unclassified"})
 #: package の範囲。範囲の外の package は名を突き合わせない(決めが要る)。
-SCOPES = ("決まりの範囲", "範囲の答え待ち", "範囲の外")
+SCOPES = ("in scope", "awaiting scope answer", "out of scope")
 #: 違反の表の名の組の名の頭(分け — 直しの向きか境界の種類)。許した物は許した物の表に置く。
-GROUP_HEADS = ("外れ — ", "境界 — ", "未分け — ")
+GROUP_HEADS = ("Violation — ", "Boundary — ", "Unsorted — ")
 #: 許した物の組の名の頭(許した物の表の欄「組」)。
 ALLOWED_HEAD = "許した物 — "
 #: 決まりが名ごとに許した program の helper の組(ADR-DOE-API-001 R18)— 目録の形が program の helper の名だけを置ける。
-HELPER_GROUP = "許した物 — program の helper"
+HELPER_GROUP = "Allowed — program helper"
 #: 決まりが許した Hy の macro の組(ADR-DOE-API-001 R14・R15・R31)— macro の名と macro の module の行だけを置ける。
-MACRO_GROUP = "許した物 — Hy の macro"
+MACRO_GROUP = "Allowed — Hy macro"
 #: 決まりが許した CLI コマンドの組(ADR-DOE-API-001 R7・R31)— console script と Rust の実行 file の行だけを置ける。
-COMMAND_GROUP = "許した物 — CLI コマンド"
+COMMAND_GROUP = "Allowed — CLI command"
 #: 決まりが名ごとに許した換算の関数の組(ADR-DOE-API-001 R35)— 目録の形が換算の関数の名だけを置ける。
-CONVERSION_GROUP = "許した物 — 換算の関数"
+CONVERSION_GROUP = "Allowed — conversion function"
 #: 決まりが許した ADR を書く関数の組(ADR-DOE-API-001 R14 — docs/adr の file が import して呼ぶ fact・counterexample・interpretation)。
-ADR_WRITER_GROUP = "許した物 — ADR を書く関数"
+ADR_WRITER_GROUP = "Allowed — ADR-writing function"
 #: 決まりが許した effect の答えの型の組(ADR-DOE-API-001 R2 — 呼び手が match で読み分ける effect の結果の型)。
-ANSWER_TYPE_GROUP = "許した物 — effect の答えの型"
+ANSWER_TYPE_GROUP = "Allowed — effect answer type"
 #: 決まりが許した例外の型の組(ADR-DOE-API-001 R2 — effect と handler が投げ、呼び手が受ける例外の class)。
-EXCEPTION_GROUP = "許した物 — 例外の型"
+EXCEPTION_GROUP = "Allowed — exception type"
 #: 決まりが許した effect の値の型の組(ADR-DOE-API-001 R2)— 同じ package が見せる effect の class の欄の型だけを置ける。
-VALUE_TYPE_GROUP = "許した物 — effect の値の型"
+VALUE_TYPE_GROUP = "Allowed — effect value type"
 #: 決まりが許した pytest の plugin の登録の組(ADR-DOE-API-001 R10・R33)— pytest11 の entry point の行と、その entry point が
 #: 読む module(plugin の module)が出す名(使い手の検が書く宣言)だけを置ける。
-PLUGIN_GROUP = "許した物 — pytest の plugin の登録"
+PLUGIN_GROUP = "Allowed — pytest plugin registration"
 #: 決まりが許した起動の口の組(ADR-DOE-API-001 R36)— package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける。
-STARTUP_GROUP = "許した物 — 起動の口"
+STARTUP_GROUP = "Allowed — startup entry"
 #: 決まりが許した、program の形を表す値を組む作り手と、その返す値の型の組(ADR-DOE-API-001 R37 — doeff-conductor の
 #: workflow の言葉)。目録の形が作り手の名と、組の作り手が返す class だけを置ける。
-BUILDER_GROUP = "許した物 — program の形を組む作り手と型"
+BUILDER_GROUP = "Allowed — program-shape builder and type"
 #: 決まりが許した handler の設定の型の組(ADR-DOE-API-001 R2)— 同じ package が見せる handler と工場の引数の型だけを置ける。
-SETTING_GROUP = "許した物 — handler の設定の型"
+SETTING_GROUP = "Allowed — handler setting type"
 #: 目録の pytest11 の entry point の行の形(tools/public_api_inventory.py の _metadata_rows)。
 PYTEST_PLUGIN_FORM = "entry point(pytest11)"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
@@ -157,7 +157,7 @@ ALLOWED_SHAPES: dict[str, str] = {
     "ADR-DOE-API-001 R2)。どの引数にも出ない型と、標準の library か別の package の型を出し直した名は置けない",
 }
 #: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンド(package の dir から、console script か Rust の実行 file の名から
-#: 名を挙げた条へ)。組「許した物 — CLI コマンド」はここに在る名だけを置け、条の文がその名を挙げる事を
+#: 名を挙げた条へ)。組「Allowed — CLI command」はここに在る名だけを置け、条の文がその名を挙げる事を
 #: test_every_command_the_guard_allows_is_named_by_its_rule が確かめる — ADR に無い命令を足すと赤。
 ADR_COMMANDS: dict[str, dict[str, str]] = {
     "doeff-adr": {"doeff-adr": "R33"},
@@ -198,27 +198,27 @@ class AddedName(TypedDict):
     package: str
     module: str
     name: str
-    訳: str
+    reason: str
 
 
 #: 「足した名」の 1 行の欄。
-ADDED_FIELDS = frozenset({"package", "module", "name", "訳"})
+ADDED_FIELDS = frozenset({"package", "module", "name", "reason"})
 
 
 class PackageEntry(TypedDict):
     """1 package の項: 範囲と、組の名(分け — 直しの向きか境界の種類)から module から名の列へ。範囲の外は決めを持つ。"""
 
-    範囲: str
-    名: dict[str, dict[str, list[str]]]
-    決め: NotRequired[str]
+    scope: str
+    names: dict[str, dict[str, list[str]]]
+    basis: NotRequired[str]
 
 
 class KnownTable(TypedDict):
     """既知の表(違反の表)の全体(説明は読む人のための欄)。"""
 
-    説明: NotRequired[list[str]]
+    description: NotRequired[list[str]]
     packages: dict[str, PackageEntry]
-    足した名: list[AddedName]
+    added_names: list[AddedName]
 
 
 class AllowedName(TypedDict):
@@ -227,23 +227,23 @@ class AllowedName(TypedDict):
     package: str
     module: str
     name: str
-    組: str
-    決め: str
+    group: str
+    basis: str
 
 
 #: 許した物の表の 1 行の欄。
-ALLOWED_FIELDS = frozenset({"package", "module", "name", "組", "決め"})
+ALLOWED_FIELDS = frozenset({"package", "module", "name", "group", "basis"})
 
 
 class AllowedTable(TypedDict):
     """許した物の表の全体(説明は読む人のための欄)。行は (package, module, name) の順に並べ、重ねない。"""
 
-    説明: NotRequired[list[str]]
-    許した物: list[AllowedName]
+    description: NotRequired[list[str]]
+    allowed: list[AllowedName]
 
 
 #: 何も許していない許した物の表(使い捨ての package の照合の既定)。
-NOTHING_ALLOWED: AllowedTable = {"許した物": []}
+NOTHING_ALLOWED: AllowedTable = {"allowed": []}
 
 
 def _load() -> ModuleType:
@@ -280,7 +280,7 @@ def listed_names(table: KnownTable) -> set[tuple[str, str, str]]:
     return {
         (package_dir, module, name)
         for package_dir, entry in table["packages"].items()
-        for modules in entry["名"].values()
+        for modules in entry["names"].values()
         for module, names in modules.items()
         for name in names
     }
@@ -290,12 +290,12 @@ def known_names(table: KnownTable, package_dir: str) -> set[Key]:
     """1 package の既知の外れ: 「名」の組の名と「足した名」の名。"""
     listed = {
         (module, name)
-        for modules in table["packages"][package_dir]["名"].values()
+        for modules in table["packages"][package_dir]["names"].values()
         for module, names in modules.items()
         for name in names
     }
     added = {
-        (row["module"], row["name"]) for row in table["足した名"] if row["package"] == package_dir
+        (row["module"], row["name"]) for row in table["added_names"] if row["package"] == package_dir
     }
     return listed | added
 
@@ -303,16 +303,16 @@ def known_names(table: KnownTable, package_dir: str) -> set[Key]:
 def allowed_names(allowed: AllowedTable, package_dir: str) -> set[Key]:
     """1 package の、許した物の表に置いた (module, 名) の全部。"""
     return {
-        (row["module"], row["name"]) for row in allowed["許した物"] if row["package"] == package_dir
+        (row["module"], row["name"]) for row in allowed["allowed"] if row["package"] == package_dir
     }
 
 
 def allowed_groups(allowed: AllowedTable, package_dir: str) -> dict[Key, str]:
     """1 package の、許した物の表に置いた (module, 名) から組へ(目録で形を確かめる組の行だけ)。"""
     return {
-        (row["module"], row["name"]): row["組"]
-        for row in allowed["許した物"]
-        if row["package"] == package_dir and row["組"] in ALLOWED_SHAPES
+        (row["module"], row["name"]): row["group"]
+        for row in allowed["allowed"]
+        if row["package"] == package_dir and row["group"] in ALLOWED_SHAPES
     }
 
 
@@ -508,7 +508,7 @@ def unread_native_modules(
     数えない。決まりの範囲の名は全部を数えるので、そういう package は環境に入れて import で読む。
     """
     if (
-        entry["範囲"] != "決まりの範囲"
+        entry["scope"] != "in scope"
         or not tool.read_layout(repo / "packages" / package["dir"]).maturin
     ):
         return []
@@ -540,7 +540,7 @@ def _diff_against_tables(
 def unlisted_names(package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable) -> list[Key]:
     """表に書かずに足された外れ((module, 名)の列)— 日次の全体検証の後段 tools/public_api_blame.py が、足した commit を引くために読む。"""
     entry = table["packages"].get(package["dir"])
-    if package["error"] is not None or entry is None or entry["範囲"] == "範囲の外":
+    if package["error"] is not None or entry is None or entry["scope"] == "out of scope":
         return []
     return _diff_against_tables(package, table, allowed)[4]
 
@@ -567,7 +567,7 @@ def check_package(
     assert entry is not None, (
         f"{directory} が既知の表 {TABLE.relative_to(ROOT)} に無い — package を足したら範囲と名の組を表に足す"
     )
-    if entry["範囲"] == "範囲の外":
+    if entry["scope"] == "out of scope":
         return
     found, known, permitted, moved, new = _diff_against_tables(package, table, allowed)
     olds = {old for _root, old in moved}
@@ -630,7 +630,7 @@ def _added_row_problems(
         ]
     checks = (
         (row["package"] not in table["packages"], "package が表に無い"),
-        (not row["訳"].strip(), "訳が空"),
+        (not row["reason"].strip(), "訳が空"),
         ((row["package"], row["module"], row["name"]) in listed, "名の組にも在る"),
     )
     return [f"{where}: {text}" for failed, text in checks if failed]
@@ -644,7 +644,7 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
     placements = {
         (package_dir, group, module, name)
         for package_dir, entry in entries
-        for group, modules in entry["名"].items()
+        for group, modules in entry["names"].items()
         for module, names in modules.items()
         for name in names
     }
@@ -655,15 +655,15 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
         *(f"packages/ の下に在るのに表に無い: {name}" for name in sorted(dirs - listed_dirs)),
         *(f"表に在るのに packages/ の下に無い: {name}" for name in sorted(listed_dirs - dirs)),
         *(
-            f"{package_dir}: 範囲 {entry.get('範囲')!r} は {SCOPES} のどれでもない"
+            f"{package_dir}: 範囲 {entry.get('scope')!r} は {SCOPES} のどれでもない"
             for package_dir, entry in entries
-            if entry.get("範囲") not in SCOPES
+            if entry.get("scope") not in SCOPES
         ),
         *(
             f"{package_dir}: 範囲の外の package は決め(ADR の条か許す訳の 1 文)を持ち、名の組を持たない"
             for package_dir, entry in entries
-            if entry.get("範囲") == "範囲の外"
-            and ("決め" not in entry or decision_problem(entry["決め"]) is not None or bool(entry["名"]))
+            if entry.get("scope") == "out of scope"
+            and ("basis" not in entry or decision_problem(entry["basis"]) is not None or bool(entry["names"]))
         ),
         *(
             f"{package_dir}: 許した物の組 {group!r} は既知の表に置かない — 許した物の表 {ALLOWED.relative_to(ROOT)} に"
@@ -671,13 +671,13 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
             if group.startswith(ALLOWED_HEAD)
             else f"{package_dir}: 組の名 {group!r} が {GROUP_HEADS} のどれでも始まらない"
             for package_dir, entry in entries
-            for group in entry["名"]
+            for group in entry["names"]
             if not group.startswith(GROUP_HEADS)
         ),
         *(
             f"{package_dir} {group} {module}: 名は空でなく、並べて重ねない"
             for package_dir, entry in entries
-            for group, modules in entry["名"].items()
+            for group, modules in entry["names"].items()
             for module, names in modules.items()
             if not names or names != sorted(set(names))
         ),
@@ -688,7 +688,7 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
         ),
         *(
             problem
-            for row in table["足した名"]
+            for row in table["added_names"]
             for problem in _added_row_problems(row, table, set(groups_per_name))
         ),
     ]
@@ -704,16 +704,16 @@ def _allowed_row_problems(
     entry = table["packages"].get(row["package"])
     checks = (
         (
-            row["組"] not in ALLOWED_GROUPS,
-            f"組 {row['組']!r} は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)",
+            row["group"] not in ALLOWED_GROUPS,
+            f"組 {row['group']!r} は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)",
         ),
         (
-            (problem := decision_problem(row["決め"])) is not None,
+            (problem := decision_problem(row["basis"])) is not None,
             problem or "",
         ),
         (entry is None, "package が既知の表に無い"),
         (
-            entry is not None and entry["範囲"] == "範囲の外",
+            entry is not None and entry["scope"] == "out of scope",
             "範囲の外の package の名は許さない(名を突き合わせない)",
         ),
         (
@@ -726,9 +726,9 @@ def _allowed_row_problems(
 
 def allowed_problems(allowed: AllowedTable, table: KnownTable) -> list[str]:
     """許した物の表の形の誤り: 行ごとの欄・組・決め・package・既知の表との重なりと、行の並びと重なり。"""
-    rows = allowed["許した物"]
+    rows = allowed["allowed"]
     violations = listed_names(table) | {
-        (row["package"], row["module"], row["name"]) for row in table["足した名"]
+        (row["package"], row["module"], row["name"]) for row in table["added_names"]
     }
     keys = [(row.get("package", ""), row.get("module", ""), row.get("name", "")) for row in rows]
     return [
@@ -1136,28 +1136,28 @@ def _fixture_tree(tmp_path: Path, files: Mapping[str, str]) -> Path:
 def _fixture_table(
     names: Mapping[str, list[str]], added: list[AddedName] | None = None
 ) -> KnownTable:
-    groups = {"外れ — 内側の module へ移す": dict(names)} if names else {}
+    groups = {"Violation — move to an inner module": dict(names)} if names else {}
     return {
-        "packages": {FIXTURE_DIR: {"範囲": "決まりの範囲", "名": groups}},
-        "足した名": added or [],
+        "packages": {FIXTURE_DIR: {"scope": "in scope", "names": groups}},
+        "added_names": added or [],
     }
 
 
 def _fixture_allowed(helpers: Iterable[str], decision: str = FIXTURE_DECISION) -> AllowedTable:
-    """使い捨ての package の入口の名を、組「許した物 — program の helper」で許した物の表。"""
+    """使い捨ての package の入口の名を、組「Allowed — program helper」で許した物の表。"""
     return _fixture_grouped({(FIXTURE_ROOT, name): HELPER_GROUP for name in helpers}, decision)
 
 
 def _fixture_grouped(groups: Mapping[Key, str], decision: str = FIXTURE_DECISION) -> AllowedTable:
     """使い捨ての package の (module, 名) を、それぞれの組で許した物の表。"""
     return {
-        "許した物": [
+        "allowed": [
             {
                 "package": FIXTURE_DIR,
                 "module": module,
                 "name": name,
-                "組": groups[(module, name)],
-                "決め": decision,
+                "group": groups[(module, name)],
+                "basis": decision,
             }
             for module, name in sorted(groups)
         ]
@@ -1201,13 +1201,13 @@ def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
         "package": FIXTURE_DIR,
         "module": FIXTURE_ROOT,
         "name": "helper",
-        "訳": "使い手が値を直に組む所(例)",
+        "reason": "使い手が値を直に組む所(例)",
     }
     table = _fixture_table({}, [row])
     check_package(_read_fixture(repo), table)
     assert shape_problems(table, [FIXTURE_DIR]) == []
 
-    lacking = _fixture_table({}, [{**row, "訳": " "}])
+    lacking = _fixture_table({}, [{**row, "reason": " "}])
     assert shape_problems(lacking, [FIXTURE_DIR]) == [
         f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 訳が空",
     ]
@@ -1251,7 +1251,7 @@ def test_a_native_package_in_scope_that_the_inventory_cannot_import_turns_red(
         check_package(found, _fixture_table({}), repo=tmp_path)
 
     waiting = _fixture_table({})
-    waiting["packages"][FIXTURE_DIR]["範囲"] = "範囲の答え待ち"
+    waiting["packages"][FIXTURE_DIR]["scope"] = "awaiting scope answer"
     check_package(found, waiting, repo=tmp_path)
 
 
@@ -1340,7 +1340,7 @@ def answering(effect, cont):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) -> None:
-    """許した物の表の組「許した物 — program の helper」に置けるのは、目録の形が program の helper の名だけ(ADR-DOE-API-001 R18)。
+    """許した物の表の組「Allowed — program helper」に置けるのは、目録の形が program の helper の名だけ(ADR-DOE-API-001 R18)。
 
     effect を出すだけの program の関数は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。handler を被せる関数
     (handler の値を当てる・WithHandler・中の同じ package の関数が当てる)・effect に答える関数・program を返さない関数を許した物の
@@ -1429,7 +1429,7 @@ def pinged(n: int) -> int:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) -> None:
-    """許した物の表の組「許した物 — 換算の関数」に置けるのは、目録の形が換算の関数の名だけ(ADR-DOE-API-001 R35)。
+    """許した物の表の組「Allowed — conversion function」に置けるのは、目録の形が換算の関数の名だけ(ADR-DOE-API-001 R35)。
 
     値を受けて値を返すだけの関数(中で読む同じ package の関数も同じ)は、許した物の表に置けば緑・どちらの表にも無ければ
     外れのまま赤。中の同じ package の関数が時計を読む・属性で時計を読む・effect を作る関数を置くと赤(組と名と形と読む名を名指す)。
@@ -1487,7 +1487,7 @@ __all__ = ["JSONDecodeError"]
 def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_group(
     tmp_path: Path,
 ) -> None:
-    """許した物の表の組「許した物 — 例外の型」に置けるのは、目録の形が例外の class で、その package が定義した名だけ
+    """許した物の表の組「Allowed — exception type」に置けるのは、目録の形が例外の class で、その package が定義した名だけ
     (ADR-DOE-API-001 R2)。
 
     package が定義した BaseException の子の class は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。例外でない
@@ -1610,7 +1610,7 @@ def step_count(name: str) -> int:
 def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_group(
     tmp_path: Path,
 ) -> None:
-    """許した物の表の組「許した物 — program の形を組む作り手と型」に置けるのは、目録の形が作り手で返す class をその package が
+    """許した物の表の組「Allowed — program-shape builder and type」に置けるのは、目録の形が作り手で返す class をその package が
     見せる名と、組の作り手が返す class だけ(ADR-DOE-API-001 R37)。
 
     作り手(値を受けて同じ package の見せる class の値を返し、中で読む同じ package の関数も effect も I/O も読まない)とその型は、
@@ -1725,7 +1725,7 @@ def send_handler(effect: SendEffect, k):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path: Path) -> None:
-    """許した物の表の組「許した物 — effect の値の型」に置けるのは、同じ package が見せる effect の class の欄の注釈に出る class
+    """許した物の表の組「Allowed — effect value type」に置けるのは、同じ package が見せる effect の class の欄の注釈に出る class
     と型の別名だけ(ADR-DOE-API-001 R2)。
 
     dataclass の effect の欄の型引数(list[Payload])・__init__ で書く effect の引数(Hint | None)・package が定義した値の型の欄
@@ -1836,7 +1836,7 @@ class FactoryEffect(EffectBase[Callable[..., int]]):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
-    """許した物の表の組「許した物 — effect の答えの型」に置けるのは、目録が package の effect の答えの型と読む名だけ
+    """許した物の表の組「Allowed — effect answer type」に置けるのは、目録が package の effect の答えの型と読む名だけ
     (ADR-DOE-API-001 R2)。
 
     EffectBase[T] の T(和の型の別名)とその class・答えの class の欄の型(Enum)・答えの class の子は、許した物の表に置けば
@@ -1922,7 +1922,7 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
     """本体が名指した型で答える待ちの effect は EffectBase[T] に 1 つの型を書けないので、package が bus に出す event を自分の
     __doeff_bus_events__ に宣言し、目録はそれを待ちの答えの型と読む(ADR-DOE-API-001 R2)。
 
-    宣言した event とその欄の型は組「許した物 — effect の答えの型」に置けば緑・どちらの表にも無ければ外れのまま赤。宣言を
+    宣言した event とその欄の型は組「Allowed — effect answer type」に置けば緑・どちらの表にも無ければ外れのまま赤。宣言を
     継ぐだけの子の effect は宣言を読み直さない(答えの場所は宣言した effect だけ)。どの待ちも宣言しない event の class を
     置くと赤(組と名と形を名指す)。
     """
@@ -2036,7 +2036,7 @@ def rooted_ping_handlers(root: Path) -> ProgramHandler:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path: Path) -> None:
-    """許した物の表の組「許した物 — handler の設定の型」に置けるのは、その package が定義した型で、同じ package が見せる
+    """許した物の表の組「Allowed — handler setting type」に置けるのは、その package が定義した型で、同じ package が見せる
     handler と工場の引数の注釈に出る(package が定義した設定の型の欄を辿る)と目録が読む名だけ(ADR-DOE-API-001 R2)。
 
     工場の引数(字の注釈)の型・型引数の中の型(Sequence[Hint])・設定の型の欄の型(Settings.level の Level)・欄が名指す
@@ -2111,7 +2111,7 @@ COMMAND_PYPROJECT = (
 def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
     tmp_path: Path,
 ) -> None:
-    """組「許した物 — Hy の macro」に置けるのは Hy の macro の名と macro だけを出す公開の submodule の行、組「許した物 — CLI
+    """組「Allowed — Hy macro」に置けるのは Hy の macro の名と macro だけを出す公開の submodule の行、組「Allowed — CLI
     コマンド」に置けるのは ADR の条が名を挙げた console script の行だけ(ADR-DOE-API-001 R7・R14・R15・R31)。
 
     macro の module(名に _ の無い submodule)と macro と console script を許した物の表に置けば緑。macro の外の名も出す
@@ -2181,7 +2181,7 @@ FIXTURE_RULES = """
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_command_the_adr_does_not_name_turns_red(tmp_path: Path) -> None:
-    """組「許した物 — CLI コマンド」に置けるのは ADR-DOE-API-001 の条が名を挙げた命令だけ(ADR_COMMANDS)— 使い捨ての package
+    """組「Allowed — CLI command」に置けるのは ADR-DOE-API-001 の条が名を挙げた命令だけ(ADR_COMMANDS)— 使い捨ての package
     の console script は、ADR の条が名を挙げれば緑・挙げなければ形が console script でも赤(名と形を名指す)。命令と条の組の表に
     在っても、条の文がその名を挙げなければ赤(名の一部だけが合う別の名 fixture-command-daemon も挙げた事にしない)。"""
     repo = _fixture_tree(tmp_path, {"__init__.py": EFFECTS_AND_HANDLERS})
@@ -2270,7 +2270,7 @@ def tool_helper(x: int) -> int:
 def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_groups(
     tmp_path: Path,
 ) -> None:
-    """組「許した物 — pytest の plugin の登録」に置けるのは pytest11 の entry point の行と plugin の module が出す名、組「許した物 —
+    """組「Allowed — pytest plugin registration」に置けるのは pytest11 の entry point の行と plugin の module が出す名、組「許した物 —
     起動の口」に置けるのは package が配る .pth が起動ごとに呼ぶ名だけ(ADR-DOE-API-001 R10・R33・R36)。
 
     使い捨ての package の pytest11 の登録と plugin の宣言と .pth が呼ぶ install は、それぞれの組に置けば緑。plugin の module の
@@ -2332,12 +2332,12 @@ def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:
     table = _fixture_table({})
     allowed = _fixture_allowed(["helper"])
     assert allowed_problems(allowed, table) == []
-    allowed["許した物"][0]["組"] = "許した物 — 便利な関数"
+    allowed["allowed"][0]["group"] = "Allowed — handy function"
     assert allowed_problems(allowed, table) == [
-        f"許した物 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 組 '許した物 — 便利な関数' は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)"
+        f"許した物 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 組 'Allowed — handy function' は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)"
     ]
 
-    table["packages"][FIXTURE_DIR]["名"] = {HELPER_GROUP: {FIXTURE_ROOT: ["helper"]}}
+    table["packages"][FIXTURE_DIR]["names"] = {HELPER_GROUP: {FIXTURE_ROOT: ["helper"]}}
     assert shape_problems(table, [FIXTURE_DIR]) == [
         f"{FIXTURE_DIR}: 許した物の組 {HELPER_GROUP!r} は既知の表に置かない — 許した物の表 {ALLOWED.relative_to(ROOT)} に"
         "組と決めつきで置く(既知の表は外れと境界だけを持つ)"
@@ -2368,12 +2368,12 @@ def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
     lacking = cast(
         AllowedTable,
         {
-            "許した物": [
+            "allowed": [
                 {
                     "package": FIXTURE_DIR,
                     "module": FIXTURE_ROOT,
                     "name": "pinging",
-                    "組": HELPER_GROUP,
+                    "group": HELPER_GROUP,
                 }
             ]
         },
@@ -2386,12 +2386,12 @@ def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
         _fixture_allowed(["pinging"]), _fixture_table({FIXTURE_ROOT: ["pinging"]})
     ) == [f"{where}: 既知の表にも在る(1 つの名は 1 つの表だけに置く)"]
     unordered = _fixture_allowed(["pinging", "sequence"])
-    unordered["許した物"].reverse()
+    unordered["allowed"].reverse()
     assert allowed_problems(unordered, table) == [
         "許した物の表の行は (package, module, name) の順に並べ、重ねない"
     ]
     outside = _fixture_table({})
-    outside["packages"][FIXTURE_DIR] = {"範囲": "範囲の外", "名": {}, "決め": FIXTURE_DECISION}
+    outside["packages"][FIXTURE_DIR] = {"scope": "out of scope", "names": {}, "basis": FIXTURE_DECISION}
     assert allowed_problems(_fixture_allowed(["pinging"]), outside) == [
         f"{where}: 範囲の外の package の名は許さない(名を突き合わせない)"
     ]
@@ -2402,8 +2402,8 @@ def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
             "package": FIXTURE_DIR,
             "module": FIXTURE_ROOT,
             "name": "pinging",
-            "訳": "表を足した後に見せる helper(例)",
-            "組": HELPER_GROUP,
+            "reason": "表を足した後に見せる helper(例)",
+            "group": HELPER_GROUP,
         },
     )
     assert shape_problems(_fixture_table({}, [old_path]), [FIXTURE_DIR]) == [

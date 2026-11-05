@@ -1,4 +1,4 @@
-# Ok / Err / Some / Nothing / Maybe の型(抜け 5 — 直った)
+# Types of Ok / Err / Some / Nothing / Maybe (gap 5 — fixed)
 from typing import assert_type
 
 from doeff import Err, Maybe, Nothing, Ok, Some

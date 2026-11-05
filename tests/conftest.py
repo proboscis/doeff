@@ -81,14 +81,14 @@ class RuntimeAdapter:
 
 @dataclass(frozen=True)
 class _ProcessTable:
-    """ps の 1 回の読み: 親の pid → 子の pid の列と、pid → 常駐の大きさ(KiB)。"""
+    """One read of ps: parent pid -> list of child pids, and pid -> resident size (KiB)."""
 
     children_by_parent: dict[int, list[int]]
     rss_kib: dict[int, int]
 
 
 def _read_process_table() -> _ProcessTable:
-    """記憶の見張りが process の木の大きさを数えるため、ps の表を 1 回読む。"""
+    """Read the ps table once, so the memory watcher can count the size of the process tree."""
     result = subprocess.run(
         ["ps", "-axo", "pid=,ppid=,rss="],
         check=True,
@@ -116,7 +116,7 @@ def _read_process_table() -> _ProcessTable:
 
 
 def _collect_process_tree(root_pid: int, children_by_parent: dict[int, list[int]]) -> set[int]:
-    """root_pid とその子孫の pid の集合(記憶の見張りが数える範囲)。"""
+    """The set of pids of root_pid and its descendants (the range the memory watcher counts)."""
     seen: set[int] = set()
     queue: deque[int] = deque([root_pid])
     while queue:
@@ -184,7 +184,7 @@ class _SessionMemoryGuard:
     limit_mb: int
     poll_interval: float
     stop_event: threading.Event = field(default_factory=threading.Event)
-    # 見張りの thread(start で 1 度だけ作る — 生き死にを持つ欄なので可変の名 _mut_)。
+    # The watcher thread (created once at start -- a field with a lifecycle, so the mutable name _mut_).
     _mut_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -216,8 +216,8 @@ class _SessionMemoryGuard:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    # 既定値は定数。変える時は命令行の option で渡す(make は PYTEST_MEM_GUARD_* の変数から渡す・make を通さない時は
-    # pytest 自身が読む PYTEST_ADDOPTS)— この file は環境を読まない(#2896)。
+    # The default values are constants. To change them, pass them as command-line options (make passes them from the PYTEST_MEM_GUARD_* variables; when not going through make,
+    # pytest itself reads PYTEST_ADDOPTS) -- this file does not read the environment (#2896).
     group = parser.getgroup("doeff-memory-guard")
     group.addoption(
         "--mem-guard-mb",

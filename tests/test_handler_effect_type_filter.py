@@ -1,11 +1,11 @@
-"""handler の effect の引数の型注記で、VM が effect を振り分ける(SPEC-WITHHANDLER-TYPE-FILTER)。
+"""The VM dispatches effects by the type annotation of the handler's effect argument (SPEC-WITHHANDLER-TYPE-FILTER).
 
-実測(agora-controllers の実験 2026-09-23): handler の第 1 引数の型注記で振り分ける仕組みが、
-@do で包んだ handler では効かなかった — 実際には VM のどこにも実装が無く、どの handler も全部の
-effect を受けていた(PromptBoundary.types は常に None)。docs/llm_unified_effects.md は効くと書いていた。
+Measured (agora-controllers experiment 2026-09-23): the mechanism that dispatches by the type annotation of the handler's first argument
+did not work for handlers wrapped with @do -- it was in fact implemented nowhere in the VM, and every handler received all
+effects (PromptBoundary.types is always None). docs/llm_unified_effects.md said it worked.
 
-型は isinstance の意味で当てるので、親の型(書き込みの印の型など)で注記した handler は、後から
-足した子の型もそのまま捕まえる(不具合 4: 書き込みの guard を一覧で持つと 8 種目が素通りした)。
+Types are matched with isinstance semantics, so a handler annotated with a parent type (such as a write-marker type) also catches
+child types added later (bug 4: keeping the write guard as a list let the 8th kind slip through).
 """
 
 import functools
@@ -33,7 +33,7 @@ class Beta(EffectBase):
 
 
 class WriteMarker:
-    """書き込みの effect の印(EffectBase の子でなくてよい — isinstance で当たる)。"""
+    """A marker type for write effects (need not be a subclass of EffectBase -- matched by isinstance)."""
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ def test_parent_type_annotation_catches_subclasses_defined_later() -> None:
         yield
 
     @dataclass(frozen=True)
-    class DeleteRow(EffectBase, WriteMarker):  # 8 種目: guard を直さずに断られる
+    class DeleteRow(EffectBase, WriteMarker):  # 8th kind: rejected without fixing the guard
         key: str
 
     @do
@@ -187,7 +187,7 @@ def test_typed_handler_is_reinstalled_with_its_filter_in_spawned_tasks() -> None
     def beta_fallback(effect: Beta, k):
         return (yield Resume(k, f"fallback:Beta:{effect.value}"))
 
-    # scheduled の Spawn / Wait は型の合わない 2 つの handler を素通りして scheduler へ届く。
+    # Spawn / Wait of scheduled pass through the two handlers whose types do not match and reach the scheduler.
     program = scheduled(with_handlers([beta_fallback, alpha_only], spawner()))
     assert run(program) == ("alpha:1", "fallback:Beta:2", "alpha:3")
 

@@ -1,4 +1,4 @@
-"""結果の型の違う task を Gather と Race に渡せる事を、実行時と pyright と mypy で確かめる。"""
+"""Verify at runtime, with pyright, and with mypy that tasks with differing result types can be passed to Gather and Race."""
 
 from __future__ import annotations
 
@@ -42,9 +42,9 @@ def test_gather_and_race_run_tasks_of_different_result_types() -> None:
     assert first in (1, "a")
 
 
-# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 4):
-# Task と Future の型の引数が不変だった時、`Gather(Task[int], Task[str])` は pyright で Task[str] を
-# Task[int] | Future[int] に渡せない error、mypy で「_T を推せない」error になった(実行は通る)。
+# Failure case (measured with pyright 1.1.414 and mypy 2.4.0; gap 4 in the doeff-publish investigation):
+# When the type arguments of Task and Future were invariant, `Gather(Task[int], Task[str])` gave pyright an error that Task[str] cannot be passed to
+# Task[int] | Future[int], and gave mypy a "cannot infer _T" error (execution still worked).
 _SAMPLE = """\
 from collections.abc import Generator
 from typing import Any, assert_type
@@ -104,7 +104,7 @@ _MISTAKES = ["return text", "Gather(number, 42)", "Race(number, 42)"]
 def test_gather_and_race_answer_the_union_of_the_result_types(tmp_path: Path) -> None:
     errors = _pyright_errors(tmp_path, _SAMPLE)
     assert [e for e in errors if e["range"]["start"]["line"] < _FIRST_MISTAKE] == [], errors
-    # 当たらない overload は、pyright が「合う overload が無い」と最後の overload の引数の誤りの 2 つを出す
+    # For the overload that does not match, pyright reports two errors: "no matching overload" and an argument error on the last overload
     flagged = sorted({_LINES[e["range"]["start"]["line"]].strip() for e in errors})
     assert flagged == sorted(_MISTAKES), errors
 
@@ -113,9 +113,9 @@ _MYPY_ERROR = re.compile(r"^[^:]+:(?P<line>\d+): error: (?P<message>.*)  \[(?P<c
 
 
 def test_gather_and_race_answer_the_union_of_the_result_types_under_mypy(tmp_path: Path) -> None:
-    # mypy は型の引数の解を join で広げる(int と str は object)ので、union を答えるのは Gather と Race の
-    # 引数の数ごとの overload — 同じ見本が mypy の既定の設定でも同じ所だけ赤になる
-    pytest.importorskip("mypy", reason="mypy が無い venv(Python Compatibility の CI は dev の group の maturin と pyright だけを入れる)")
+    # mypy widens the solution of type arguments by join (int and str become object), so what answers the union is the per-argument-count
+    # overloads of Gather and Race — the same sample turns red only at the same places under mypy's default settings
+    pytest.importorskip("mypy", reason="venv without mypy (the Python Compatibility CI installs only maturin and pyright of the dev group)")
     sample = tmp_path / "mixed_handles.py"
     sample.write_text(_SAMPLE)
     result = subprocess.run(
@@ -124,7 +124,7 @@ def test_gather_and_race_answer_the_union_of_the_result_types_under_mypy(tmp_pat
          "--no-pretty", str(sample)],
         cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False,
     )
-    # 起動できない時も終了コードは 1 なので、stderr が空である事で「走って赤を出した」と「走れなかった」を分ける
+    # The exit code is 1 even when mypy cannot start, so an empty stderr distinguishes "ran and reported red" from "could not run"
     assert result.stderr == "", result.stderr
     assert result.returncode == 1, result.stdout
     errors = [found.groupdict() for found in map(_MYPY_ERROR.match, result.stdout.splitlines()) if found]

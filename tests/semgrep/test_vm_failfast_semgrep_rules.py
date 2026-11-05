@@ -21,13 +21,13 @@ def _semgrep_results(
         pytest.skip("semgrep is not installed")
 
     completed = subprocess.run(
-        # --metrics=off --disable-version-check: 検査の実行に network(送信・新版照会)を
-        # 混ぜない — 到達性・応答時間という機体の事情が検査に入るのを断つ。
-        # --project-root=project_root(既定 REPO_ROOT。規則の paths を一時の木で見る検だけ別の根を渡す): root を git metadata からの推論に任せない — .git の
-        # 無い検査 tree では root が走査対象 dir 自身に落ち、対象より上のセグメントを
-        # 参照する paths.include だけが無音で死ぬ(zeus 実測 2026-08-17)。root は cwd
-        # (fixture dir)ではなく tree の根 — rule 側の fixtures 写し include
-        # (/tests/semgrep/fixtures/...)は repo-root 相対で書かれている。
+        # --metrics=off --disable-version-check: do not mix the network (sending, querying for a new version)
+        # into the scan -- cut off machine circumstances such as reachability and response time from entering the scan.
+        # --project-root=project_root (default REPO_ROOT; only tests that look at the rule's paths in a temporary tree pass another root): do not leave root to inference from git metadata -- in a scan tree
+        # with no .git, root falls to the scanned dir itself, and only
+        # paths.include that refers to segments above the target silently dies (zeus measurement 2026-08-17). root is the tree's root, not cwd
+        # (the fixture dir) -- the rule side's include of the fixtures copy
+        # (/tests/semgrep/fixtures/...) is written relative to the repo root.
         [
             semgrep_bin,
             "--metrics=off",
@@ -50,9 +50,9 @@ def _semgrep_results(
             f"semgrep failed:\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
 
-    # exit 1 は「findings あり」と「起動時 crash」の両方が返す — JSON が読めた時だけ
-    # scan が走ったと言える(zeus 実測 2026-08-17: interpreter 不整合の crash が
-    # exit 1 + 空 stdout で返り、JSONDecodeError の裸の traceback に化けた)。
+    # exit 1 is returned by both "has findings" and "crash at startup" -- only when the JSON could be read
+    # can we say the scan ran (zeus measurement 2026-08-17: a crash from an interpreter mismatch
+    # returned exit 1 + empty stdout and turned into a bare JSONDecodeError traceback).
     try:
         payload = json.loads(completed.stdout)
     except ValueError as exc:
@@ -503,18 +503,18 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
     )
 
 
-# agentd の tick の順序と、再開した手番の出力の測りの
-# 3 規則(doeff-agents-job-step-reads-the-stream-before-the-step・
-# doeff-agents-recovered-turns-do-not-claim-unread-output・
-# doeff-agents-turn-output-judgment-reads-the-materials-coverage)は、対象の
-# sessionhost/acp/agentd.hy と一緒に rule・fixture・発火 assert ごと退役した。
+# The 3 rules for the order of agentd's tick and for measuring the output of resumed turns
+# (doeff-agents-job-step-reads-the-stream-before-the-step,
+# doeff-agents-recovered-turns-do-not-claim-unread-output, and
+# doeff-agents-turn-output-judgment-reads-the-materials-coverage) were retired, together with the rule, fixtures, and firing asserts, along with their target
+# sessionhost/acp/agentd.hy.
 
-# issue #575 M2: doeff-agentd-repl-ready-wait-must-not-discard-readiness の
-# 発火 assert は rule・fixture(tests/semgrep/fixtures/rust/packages/
-# doeff-agentd/)と 3 点セットで退役した — 対象(退役 Rust crate の src)が
-# M3 で消滅し、include が crate src のみの死に rule になるため。readiness
-# discard の不変量は現役側の同契約(sessionhost/launch.hy)の deftest 群が
-# 引き続き守る。rollback 座標 = git tag agentd-rust-final。
+# issue #575 M2: the firing assert of doeff-agentd-repl-ready-wait-must-not-discard-readiness
+# was retired as a set of three with the rule and fixtures (tests/semgrep/fixtures/rust/packages/
+# doeff-agentd/) -- because the target (the src of the retired Rust crate) disappears
+# in M3 and the rule would be dead, with include being only the crate src. The invariant of readiness
+# discard continues to be guarded by the deftests of the same contract on the active side (sessionhost/launch.hy).
+# Rollback coordinate = git tag agentd-rust-final.
 
 
 def test_gc_traverse_null_guard_rule_reaches_nested_src_directories() -> None:
@@ -539,9 +539,9 @@ def test_gc_traverse_null_guard_rule_reaches_nested_src_directories() -> None:
 
 
 def test_application_vocabulary_rule_fires_on_the_words_and_spares_the_records_field() -> None:
-    # 3 package の tests/test_no_application_vocabulary.hy の写しを 1 つの規則にした。語は大文字小文字を
-    # 区別せず、前が英字でない時だけ当たる(_acp は当たり xacp は当たらない)。size-budget(doeff-records の宣言の欄の名)は外す。
-    # 2026-10-02 に doeff の main を 2 度赤にした形(註に書いた repository の名)も当たる。
+    # Turned the copies of tests/test_no_application_vocabulary.hy of the 3 packages into a single rule. Words match case-
+    # insensitively, and only when not preceded by a letter (_acp matches, xacp does not). size-budget (the name of a declaration field of doeff-records) is excluded.
+    # The shape that turned doeff's main red twice on 2026-10-02 (a repository name written in a note) also matches.
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
@@ -553,7 +553,7 @@ def test_application_vocabulary_rule_fires_on_the_words_and_spares_the_records_f
 
 
 def test_application_vocabulary_rule_reads_type_stubs_too() -> None:
-    # 写しのうち doeff-cluster の検は .pyi を見なかった — 規則は 3 package の .pyi も見る(型の宣言の名も業務の語を持たない)。
+    # Of the copies, doeff-cluster's test did not look at .pyi -- the rule also looks at the .pyi of the 3 packages (names in type declarations also carry no business words).
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",

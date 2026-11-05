@@ -1,12 +1,12 @@
-"""docs の site(mkdocs.yml)の page の組が、docs/index.md の目次と同じである事の検(取り組み doeff-publish)。
+"""Check that the set of pages of the docs site (mkdocs.yml) matches the table of contents of docs/index.md (initiative doeff-publish).
 
-site に入るのは docs/index.md の目次から辿る利用者向けの page だけで、開発の記録(docs/adr・docs/specs ほか)は
-入れない。page の組は mkdocs.yml の 2 か所(exclude_docs の許す一覧と nav)に在り、2 つの食い違いは site の build
-(mkdocs build --strict)が落とす。この検は、目次と nav の食い違いを落とす — 目次に page を足して nav に足し忘れると、その page は
-site に出ない(build は落ちず、hook が GitHub への link に替える)。
+Only user-facing pages reachable from the table of contents of docs/index.md go into the site; development records (docs/adr, docs/specs, etc.) are
+not included. The page set lives in two places in mkdocs.yml (the allow list of exclude_docs and nav), and a mismatch between the two makes the site build
+(mkdocs build --strict) fail. This check fails on a mismatch between the table of contents and nav -- if a page is added to the table of contents but not to nav, that page does not appear in the
+site (the build does not fail; a hook replaces it with a link to GitHub).
 
-目次 = docs/index.md の節「Table of Contents」と「Pages That Need Other Components」。docs/ の外の link(packages/ の README)は
-nav に URL で載せるので、ここでは比べない。
+Table of contents = the sections "Table of Contents" and "Pages That Need Other Components" of docs/index.md. Links outside docs/ (READMEs under packages/) are
+listed in nav as URLs, so they are not compared here.
 """
 
 from __future__ import annotations
@@ -20,15 +20,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 MKDOCS = ROOT / "mkdocs.yml"
 TABLE_SECTIONS = ("## Table of Contents", "## Pages That Need Other Components")
-# docs/ の下の dir に在って site が公開する page(docs/ からの名)。docs/positioning の他の file は内向きの売り方の資料で、
-# 公開しない。説明の軸の定義の page は、公開の文(README・docs・記事)の出典として site に出す(取り組み doeff-publish の
-# 区切り 17)。英語の記事 1 本目は、click で進む図を site で動かすために site に出す。
+# Pages in dirs under docs/ that the site publishes (names relative to docs/). The other files of docs/positioning are internal sales material and
+# are not published. The page defining the axes of explanation is put on the site as the source of public text (README, docs, articles) (section 17 of the
+# initiative doeff-publish). The first English article is put on the site so that the click-through diagram works on the site.
 PUBLISHED_SUBDIR_PAGES = ("positioning/what-doeff-is.md", "articles/algebraic-effects-in-python.md")
 LINK = re.compile(r"\]\(([^)#\s]+\.md)(?:#[^)]*)?\)")
 
 
 class _MkdocsLoader(yaml.SafeLoader):
-    """mkdocs.yml を読むため — `!!python/...` の札(toc の slugify・mermaid の囲み)は値を作らずに読み飛ばす。"""
+    """To read mkdocs.yml -- tags like `!!python/...` (toc slugify, mermaid fences) are skipped without building values."""
 
 
 _MkdocsLoader.add_multi_constructor(
@@ -37,19 +37,19 @@ _MkdocsLoader.add_multi_constructor(
 
 
 def _mkdocs() -> dict:
-    """site の設定(nav と exclude_docs)を、mkdocs を入れずに読むため。"""
+    """To read the site settings (nav and exclude_docs) without installing mkdocs."""
     return yaml.load(MKDOCS.read_text(encoding="utf-8"), Loader=_MkdocsLoader)
 
 
 def _section_lines(lines: list[str], heading: str) -> list[str]:
-    """目次の `## ` の節 1 つの中の行だけを比べに使うため(次の `## ` の見出しの前まで)。"""
+    """To compare using only the lines inside one `## ` section of the table of contents (up to the next `## ` heading)."""
     start = lines.index(heading) + 1
     end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
     return lines[start:end]
 
 
 def _table_pages() -> list[str]:
-    """目次の 2 つの節が link する docs/ の中の page を、出た順に重ねずに返す(site の page の組の定義元)。"""
+    """Return, without duplicates and in order of appearance, the docs/ pages linked from the two sections of the table of contents (the source of the definition of the site page set)."""
     lines = (DOCS / "index.md").read_text(encoding="utf-8").splitlines()
     links = [
         link
@@ -62,7 +62,7 @@ def _table_pages() -> list[str]:
 
 
 def _nav_pages(nav: list) -> list[str]:
-    """nav の木の葉の page を上から順に返す(http の URL の葉は除く)。"""
+    """Return the leaf pages of the nav tree from the top (excluding http URL leaves)."""
     leaves = [
         value for entry in nav for value in (entry.values() if isinstance(entry, dict) else [entry])
     ]
@@ -75,7 +75,7 @@ def _nav_pages(nav: list) -> list[str]:
 
 
 def _allowed_pages(exclude_docs: str) -> list[str]:
-    """exclude_docs の `!/<page>.md` の行の page を返す(最初の行 `*` が他の全部を外す・`!/assets/**` は theme の file)。"""
+    """Return the pages on `!/<page>.md` lines of exclude_docs (the first line `*` excludes everything else; `!/assets/**` is the theme's files)."""
     return [
         line.removeprefix("!/")
         for line in exclude_docs.splitlines()
@@ -84,32 +84,32 @@ def _allowed_pages(exclude_docs: str) -> list[str]:
 
 
 def test_nav_follows_the_index_table() -> None:
-    """目次に足した page が site に出ない(nav に足し忘れる)事を落とすため。"""
+    """To fail when a page added to the table of contents does not appear on the site (forgot to add to nav)."""
     nav = _nav_pages(_mkdocs()["nav"])
-    assert nav[0] == "index.md", "mkdocs.yml の nav の頭は index.md(Home)"
+    assert nav[0] == "index.md", "the head of nav in mkdocs.yml is index.md (Home)"
     assert nav[1:] == _table_pages(), (
-        "mkdocs.yml の nav の page が docs/index.md の目次(Table of Contents と Pages That Need Other Components)と"
-        "同じ順で揃っていない — 目次に page を足したら nav と exclude_docs にも同じ所へ足す"
+        "the pages of nav in mkdocs.yml are not aligned with the table of contents of docs/index.md (Table of Contents and Pages That Need Other Components) in"
+        " the same order -- when adding a page to the table of contents, add it to nav and exclude_docs in the same place"
     )
 
 
 def test_site_holds_only_the_nav_pages() -> None:
-    """nav に無い docs/ の file(開発の記録ほか)が site に出る事を、build を走らせずに落とすため。"""
+    """To fail, without running the build, when a docs/ file not in nav (development records, etc.) would appear on the site."""
     config = _mkdocs()
     exclude_docs = config["exclude_docs"]
     assert exclude_docs.splitlines()[0] == "*", (
-        "exclude_docs の最初の行は `*`(許す一覧の外の docs/ の file を site に入れない)"
+        "the first line of exclude_docs is `*` (do not put docs/ files outside the allow list into the site)"
     )
     assert sorted(_allowed_pages(exclude_docs)) == sorted(_nav_pages(config["nav"])), (
-        "mkdocs.yml の exclude_docs の許す一覧と nav の page が揃っていない"
+        "the allow list of exclude_docs in mkdocs.yml and the pages of nav are not aligned"
     )
 
 
 def test_site_pages_are_top_level_docs() -> None:
-    """開発の記録(docs/adr・docs/specs ほか、docs/ の下の dir)を site に入れないため。"""
+    """To keep development records (dirs under docs/ such as docs/adr and docs/specs) out of the site."""
     pages = _nav_pages(_mkdocs()["nav"])
     assert [page for page in pages if "/" in page and page not in PUBLISHED_SUBDIR_PAGES] == []
     assert [page for page in pages if not (DOCS / page).is_file()] == []
     assert [page for page in PUBLISHED_SUBDIR_PAGES if page not in pages] == [], (
-        "PUBLISHED_SUBDIR_PAGES の page が nav に無い — 外したなら一覧からも消す"
+        "a page of PUBLISHED_SUBDIR_PAGES is not in nav -- if it was removed, remove it from the list too"
     )

@@ -1,4 +1,4 @@
-# class の method に @do を付けた時
+# When @do is applied to a class method
 from collections.abc import Generator
 from typing import Any, assert_type
 

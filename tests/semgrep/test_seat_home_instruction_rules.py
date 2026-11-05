@@ -1,17 +1,17 @@
-"""席の家へ運ぶ共通の指示の 2 規則(D10 / D11)の陽性対照と弁別。
+"""Positive controls and discrimination for the two common-instruction rules carried to the seat's home (D10 / D11).
 
-守る性質は 2 つ:
+Two properties are guarded:
 
-* **D10**(`host-checkout-layout-is-never-spelled-here`)は、宿の checkout の layout を
-  **path の要素として** `dotfiles` と綴るどの書き方にも当たる。引用符の直後だけを見る形は、
-  `(os.path.join home "dotfiles" …)` や `Path(home) / "dotfiles"` や単引用符を見逃し、
-  逆に `my-dotfiles/` `acp.dotfiles/` へ誤って当たる(この file の弁別で実測)。
-* **D11**(`seat-home-instruction-names-have-one-home`)の 3 本目は**行内に閉じる**。
-  `[^"]` は改行を含むので、散文の中の引用符 1 つと数行下の綴りを 1 致に巻き込む。
+* **D10** (`host-checkout-layout-is-never-spelled-here`) matches any way of spelling the host checkout layout
+  with `dotfiles` **as a path element**. A form that looks only right after a quote misses
+  `(os.path.join home "dotfiles" ...)`, `Path(home) / "dotfiles"`, and single quotes,
+  and conversely falsely matches `my-dotfiles/` and `acp.dotfiles/` (measured in this file's discrimination).
+* The 3rd pattern of **D11** (`seat-home-instruction-names-have-one-home`) is **closed within a line**.
+  `[^"]` includes newlines, so it would sweep one quote in prose and a spelling several lines below into a single match.
 
-⚠ 名指しで通す 1 件(`"dotfiles/cron_management"` = 別便で扱う 1 件)
-が、広げた形でも現に通ることをこの対照が押さえる(pattern-not-regex は 1 致の範囲へ当たるので、
-形を広げると黙って効かなくなり得る)。
+Warning: this control pins that the one name that is let through (`"dotfiles/cron_management"` = one item handled in a separate change)
+is in fact still let through even in the widened form (pattern-not-regex applies to the range of a single match,
+so widening the form may silently make it ineffective).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ FIXTURE_DIR = "packages/doeff-agents/src/doeff_agents/_sessionhost"
 D10 = "host-checkout-layout-is-never-spelled-here"
 D11 = "seat-home-instruction-names-have-one-home"
 
-#: 旧形(着地した L247 の綴り)— 弁別のためだけにここで組む。出荷の形は .semgrep.yaml の 1 点。
+#: The old form (the spelling that landed at L247) -- assembled here only for discrimination. The shipped form is the single spot in .semgrep.yaml.
 OLD_SHAPES = """
 rules:
   - id: old-d10
@@ -58,7 +58,7 @@ def _lines(findings: list[dict], rule: str, filename: str) -> list[int]:
 
 @pytest.fixture(scope="module")
 def shipped() -> list[dict]:
-    """出荷の .semgrep.yaml を 3 つの対照 file へ 1 回だけ撃つ。"""
+    """Fire the shipped .semgrep.yaml once at the 3 control files."""
     return _semgrep_results(REPO_ROOT / ".semgrep.yaml", FIXTURE_DIR, cwd=FIXTURE_ROOT)
 
 
@@ -70,9 +70,9 @@ def old(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
 
 
 def test_d10_catches_every_way_of_spelling_the_host_layout(shipped: list[dict]) -> None:
-    # 7〜14 行 = 引用符の直後 / 絶対 path / ~ / f-string / os.path.join / Path の / /
-    # 単引用符 / 要素 1 語。15 行以降(my-dotfiles・dotfiles-base・acp.dotfiles・
-    # 名指しで通す "dotfiles/cron_management")には当たらない。
+    # Lines 7-14 = right after a quote / absolute path / ~ / f-string / os.path.join / Path's / /
+    # single quote / one-word element. Lines 15 onward (my-dotfiles, dotfiles-base, acp.dotfiles,
+    # and the let-through "dotfiles/cron_management") are not matched.
     assert _lines(shipped, D10, "host_checkout_layout_forbidden.py") == [7, 8, 9, 10, 11, 12, 13, 14]
     assert _lines(shipped, D10, "host_checkout_layout_forbidden.hy") == [3, 4, 5, 6]
 
@@ -82,14 +82,14 @@ def test_d11_third_shape_closes_inside_one_line(shipped: list[dict]) -> None:
 
 
 def test_old_shapes_are_the_ones_this_bundle_replaced(old: list[dict]) -> None:
-    """弁別: 旧形は見逃し・誤爆・改行またぎの 3 つを現に持っていた。"""
-    # 見逃し: os.path.join(11)・Path の /(12)・単引用符(13)・要素 1 語(14)
+    """Discrimination: the old form actually had three problems: misses, false hits, and matching across newlines."""
+    # Misses: os.path.join (11), Path's / (12), single quote (13), one-word element (14)
     py = _lines(old, "old-d10", "host_checkout_layout_forbidden.py")
     assert py == [7, 8, 9, 10, 17, 19]
-    # 誤爆: 17 = "my-dotfiles/claude"・19 = "acp.dotfiles/claude"
+    # False hits: 17 = "my-dotfiles/claude", 19 = "acp.dotfiles/claude"
     assert 17 in py
     assert 19 in py
-    # 改行またぎ: 10 行目の散文の引用符から 11 行目の綴りまでを 1 致にする
+    # Across newlines: makes one match from the quote in the prose on line 10 to the spelling on line 11
     straddle = [
         (finding["start"]["line"], finding["end"]["line"])
         for finding in old

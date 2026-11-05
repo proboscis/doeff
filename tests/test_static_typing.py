@@ -1,14 +1,14 @@
-"""doeff の effect と Program が型付きになっていることを、実行時と pyright の両方で確かめる。
+"""Check both at runtime and with pyright that doeff's effects and Programs are typed.
 
-実測(agora-controllers の実験 2026-09-23): doeff には py.typed が無く、EffectBase は Generic で
-なく、@do は戻り値の型を Expand に変えて消していた。利用者は 300 行の型の層(Eff[T] の __iter__・
-Prog[E, T]・program・reply)を手で書いていた。その層の中身を doeff 本体へ入れた:
+Measured (agora-controllers experiment 2026-09-23): doeff had no py.typed, EffectBase was not Generic, and
+@do replaced the return type with Expand, erasing it. Users were hand-writing a 300-line type layer (Eff[T]'s __iter__,
+Prog[E, T], program, reply). The contents of that layer were moved into doeff itself:
 
-- ``class ReadClock(EffectBase[int])`` → ``now = yield from ReadClock()`` の now は int
-- ``@do`` は ``Callable[P, Expand[T, E]]`` を返す(引数・結果・出す effect の和が残る)
-- 生成器の注記 ``Generator[E, Any, T]`` の E が「出してよい effect」の宣言(外の effect は赤)
-- ``typed_resume(effect, k, value)`` は handler の答えの型を effect の T と突き合わせる
-- 実行時の読み口(``effect_result_type`` / ``program_signature``)が同じ注記を読む(Hy の検査の土台)
+- ``class ReadClock(EffectBase[int])`` -> in ``now = yield from ReadClock()``, now is int
+- ``@do`` returns ``Callable[P, Expand[T, E]]`` (the arguments, result, and union of emitted effects are kept)
+- The E of the generator annotation ``Generator[E, Any, T]`` is the declaration of "effects allowed to be emitted" (an outside effect is red)
+- ``typed_resume(effect, k, value)`` checks the type of the handler's answer against the effect's T
+- The runtime readers (``effect_result_type`` / ``program_signature``) read the same annotation (the basis for the Hy checks)
 """
 
 import json
@@ -293,8 +293,8 @@ _MISTAKE_MARKER = "# ---- mistakes"
 
 
 def _pyright_python(tmp_path: Path) -> Path:
-    """pyright に --pythonpath で渡す python(pyright は検索 path を問うためにこれを起こす)。pyright はそれを `-I` で起こし、
-    PYTHONDONTWRITEBYTECODE を読ませないので、この process の python を `-B`(-I の下でも効く)で起こす包みを tmp_path に置いて渡す。"""
+    """The python to pass to pyright via --pythonpath (pyright launches it to ask for the search path). pyright launches it with `-I`
+    and does not let it read PYTHONDONTWRITEBYTECODE, so place in tmp_path a wrapper that launches this process's python with `-B` (effective even under -I) and pass that."""
     wrapper = tmp_path / "python-without-bytecode"
     wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -B "$@"\n')
     wrapper.chmod(0o755)
@@ -302,10 +302,10 @@ def _pyright_python(tmp_path: Path) -> Path:
 
 
 def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
-    # 失敗ケース(日次の全体検証 2026-10-11 00:05 JST の doeff の root の段): pyright は --pythonpath の
-    # python を `-I`(= -E — PYTHON* の環境変数を読まない)で起こすので、呼び手の PYTHONDONTWRITEBYTECODE=1 が効かず、site の起動で
-    # .pth が読む module の .pyc 6 個(.venv の _virtualenv・__editable___doeff_vm_finder と packages/doeff-hy/src/doeff_hy_bytecode_guard の
-    # 4 つ)を checkout へ書いた — 根の conftest の session の終わりの検(_bytecode_settings_pinned)が ERROR。
+    # Failing case (daily full verification 2026-10-11 00:05 JST, doeff root stage): pyright launches the --pythonpath
+    # python with `-I` (= -E -- does not read PYTHON* environment variables), so the caller's PYTHONDONTWRITEBYTECODE=1 has no effect, and at site startup
+    # it wrote 6 .pyc files of modules the .pth reads (_virtualenv and __editable___doeff_vm_finder in .venv, and 4 of
+    # packages/doeff-hy/src/doeff_hy_bytecode_guard) into the checkout -- the root conftest's end-of-session check (_bytecode_settings_pinned) ERRORs.
     python = _pyright_python(tmp_path)
     probe = subprocess.run([str(python), "-I", "-c", "import sys; print(sys.dont_write_bytecode)"],
                            capture_output=True, text=True, timeout=60, check=True)
@@ -313,16 +313,16 @@ def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
 
 
 def test_no_root_test_hands_pyright_the_bare_python() -> None:
-    # 失敗ケース(日次の全体検証の doeff の root の段): 上の包みを使わず、pyright に --pythonpath で素の
-    # sys.executable を渡す検が 2 本残り(test_expand_program_static_types・test_handler_installer_typing)、同じ .pyc 6 個を checkout へ
-    # 書いた。根の conftest の見張りは .venv が新しい時(日次)にしか赤くならないので、書き手の形をここで名指す。
-    # 日次 2026-10-11 16:00 で packages の下の検(doeff-traverse の test_traverse_answer_types)にも同じ形が残っていたので、packages の
-    # 下も見る(包みの定義元は doeff_hy._static_check の python_without_bytecode — doeff-hy-check の run_pyright も同じ包みを使う)。
+    # Failing case (daily full verification, doeff root stage): 2 tests remained that pass a bare
+    # sys.executable to pyright via --pythonpath without using the wrapper above (test_expand_program_static_types, test_handler_installer_typing), and they wrote the same 6 .pyc files into the
+    # checkout. The root conftest's watcher goes red only when .venv is new (daily), so name the writer's shape here.
+    # In daily 2026-10-11 16:00 the same shape remained in a test under packages (doeff-traverse's test_traverse_answer_types), so look under
+    # packages too (the wrapper is defined in doeff_hy._static_check's python_without_bytecode -- doeff-hy-check's run_pyright uses the same wrapper).
     repo = Path(__file__).resolve().parents[1]
     bare = re.compile(r'"--pythonpath",\s*sys\.executable\b')
     places = (*(repo / "tests").rglob("*.py"), *(repo / "packages").glob("*/tests/**/*.py"))
     offenders = sorted(str(path.relative_to(repo)) for path in places if bare.search(path.read_text(encoding="utf-8")))
-    assert offenders == [], f"pyright に素の python を渡している — python_without_bytecode(tmp_path, sys.executable) を渡す: {offenders}"
+    assert offenders == [], f"a bare python is passed to pyright -- pass python_without_bytecode(tmp_path, sys.executable): {offenders}"
 
 
 def _pyright(tmp_path: Path, source: str) -> dict:
@@ -358,7 +358,7 @@ def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> 
         "label: str = yield from elapsed(1)",
         'yield typed_resume(effect, k, "now")',
         'elapsed("1")',
-        # EffectBase は引数を残さない(実行時は TypeError — tests/test_effect_base_refuses_dropped_arguments.py)
+        # EffectBase does not keep arguments (TypeError at runtime -- tests/test_effect_base_refuses_dropped_arguments.py)
         'EffectBase("fetch", url="api.example.com")',
         "yield from Spawn(elapsed(1))",
         "text: str = yield from Wait(task)",
@@ -396,7 +396,7 @@ class ReadShared(EffectBase[dict[str, Row]]):
 
 
 class WriteEffect(EffectBase[T]):
-    '''書きの effect の親。guard は注記でこれを受ける。'''
+    '''Parent of write effects. guard takes this via an annotation.'''
 
 
 @dataclass(frozen=True)

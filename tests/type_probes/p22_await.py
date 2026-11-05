@@ -1,4 +1,4 @@
-# Await は coroutine の結果の型を付ける
+# Await gives the type of the coroutine's result
 from collections.abc import Generator
 from typing import Any, assert_type
 

@@ -1,8 +1,8 @@
-"""型の probe の検の道具 tools/verify_type_probes.py が、印と違う行と埋まった抜けを名指す事の失敗ケース。
+"""Failure cases: the type-probe check tool tools/verify_type_probes.py names lines that differ from their marks and gaps that have been closed.
 
-道具は Python の版ごとに、核の 4 個だけの新しい venv を作って pyright と mypy を起こす(doeff-vm を組むので 1 版 約 1 分かかり、
-開発の環境の検には入れない — CI の workflow Type probes が走らせる)。道具の判じ方が黙って緑を返すと、直した型の抜けが戻っても
-道具は落ちない。ここでは印の読みと判じ方を、型の道具の答えの写しで確かめる。
+For each Python version the tool creates a fresh venv with only the 4 core packages and launches pyright and mypy (it builds doeff-vm, so it takes about 1 minute per version, and
+it is not part of the development-environment checks -- the CI workflow Type probes runs it). If the tool's judgement silently returned green, the tool would not fail even if a fixed type gap came back.
+Here the reading of marks and the judgement are verified with copies of the type tools' answers.
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "type-probes.yml"
-# 型の報告の節「抜け」の行の数(抜けの印の番号は 1 から この数まで)。
+# The number of "gap" lines in the type report section (gap mark numbers run from 1 up to this number).
 REPORTED_GAPS = 11
 
 
 def _load(name: str) -> ModuleType:
-    """tools/ の module を読む(tools/ は package ではない)。道具は隣の module を名で import するので、sys.modules に名で置く。"""
+    """Load a module from tools/ (tools/ is not a package). The tool imports adjacent modules by name, so place it in sys.modules by name."""
     if name in sys.modules:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
@@ -48,13 +48,13 @@ MYPY = frozenset({"mypy"})
 @pytest.mark.parametrize(
     ("comment", "expected"),
     [
-        ("# expect-error (引数の型違い)", tool.Expectation(BOTH)),
-        ("# expect-error[pyright] (付け忘れ)", tool.Expectation(PYRIGHT)),
+        ("# expect-error (argument type mismatch)", tool.Expectation(BOTH)),
+        ("# expect-error[pyright] (forgot to attach)", tool.Expectation(PYRIGHT)),
         ("# expect-error[mypy, pyright]", tool.Expectation(BOTH)),
-        ("# gap-7 want-error (effect に当たらない注記)", tool.Expectation(frozenset(), 7, BOTH)),
+        ("# gap-7 want-error (annotation that does not apply to the effect)", tool.Expectation(frozenset(), 7, BOTH)),
         ("# gap-11 want-error[mypy]", tool.Expectation(PYRIGHT, 11, MYPY)),
         ("# gap-4 want-clean", tool.Expectation(BOTH, 4, BOTH)),
-        ("# gap-5 want-clean[mypy] (型の無い関数の呼び)", tool.Expectation(MYPY, 5, MYPY)),
+        ("# gap-5 want-clean[mypy] (call of an untyped function)", tool.Expectation(MYPY, 5, MYPY)),
     ],
     ids=["both", "pyright-only", "both-named", "gap-error", "gap-error-mypy", "gap-clean", "gap-clean-mypy"],
 )
@@ -72,7 +72,7 @@ def test_a_marker_says_which_checker_errs_on_the_line_now(
     ids=["misspelt", "unknown-want", "unknown-checker", "no-number"],
 )
 def test_an_unreadable_marker_is_a_problem_and_not_a_clean_line(comment: str) -> None:
-    # 黙って印の無い行(誤り無し)として読むと、守っていない行ができる。
+    # Reading it silently as an unmarked line (no error) would create an unguarded line.
     marks = tool.read_marks(f"f()  {comment}\n", "p.py")
     assert marks.lines == ()
     assert len(marks.problems) == 1
@@ -101,7 +101,7 @@ def test_findings_that_match_every_marker_pass_and_count_the_open_gaps() -> None
 
 
 def test_a_marked_error_that_a_checker_no_longer_reports_is_named() -> None:
-    # 直した抜け(handler を付けても結果の型を保つ など)が戻ると、その行の誤りが消える。
+    # When a fixed gap (such as keeping the result type even when a handler is attached) comes back, the error on that line disappears.
     judged = tool.judge((_marked(1, "# expect-error"),), (_finding("pyright", 1),))
     assert judged.failures == ("p.py:1: mypy が印と違う — 印は「誤りを出す」",)
 
@@ -132,7 +132,7 @@ def test_a_gap_that_a_checker_closed_fails_until_the_marker_is_changed(
 
 
 def test_a_checker_that_breaks_the_unnamed_side_of_a_gap_is_a_regression() -> None:
-    # gap-11 want-error[mypy] は「pyright は今も誤りを出す」も言う — pyright の誤りが消えたら、埋まったのでなく戻った事。
+    # gap-11 want-error[mypy] also says "pyright still reports an error" -- if pyright's error disappears, it is a regression, not a closed gap.
     judged = tool.judge((_marked(1, "# gap-11 want-error[mypy]"),), ())
     assert judged.failures == ("p.py:1: pyright が印と違う — 印は「誤りを出す」",)
 
@@ -192,7 +192,7 @@ def test_every_probe_marker_is_readable_and_every_probe_checks_something() -> No
     probes = tool.probe_files()
     assert len(probes) >= 25
     marked = {marked.file for marked in marks.lines}
-    # 印も assert_type も無い probe は import の誤りしか見ない — import を見る probe は名で言う。
+    # A probe with neither marks nor assert_type sees only import errors -- a probe that looks at imports says so by name.
     unchecked = [
         probe.name
         for probe in probes
@@ -239,17 +239,17 @@ def test_ci_runs_the_tool_on_both_ends_of_requires_python() -> None:
 
 
 class _StoppedAfterInstallError(Exception):
-    """install と install_problems の呼びを見た後で、check_python を止める合図。"""
+    """A signal to stop check_python after the calls to install and install_problems have been seen."""
 
 
 def test_the_tool_installs_the_checkout_through_the_core_install_api(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """道具が verify_core_install の install・install_problems を今の引数で呼ぶ事。
+    """The tool calls install and install_problems of verify_core_install with the current arguments.
 
-    81aa4fd9d が両方に引数 source(この checkout か PyPI か)を足した後も、道具は古い 2 引数で呼んでいた。どの版でも venv を
-    作る前に TypeError で落ち、CI の workflow Type probes は probe を 1 つも見ずに赤だった。ここでは本物の install を偽に替え、
-    道具がこの checkout(Checkout)を渡す事を確かめる。"""
+    After 81aa4fd9d added the argument source (this checkout or PyPI) to both, the tool was still calling with the old 2 arguments. For every version it
+    failed with TypeError before creating the venv, and the CI workflow Type probes was red without seeing a single probe. Here the real install is replaced with a fake, and it is verified that
+    the tool passes this checkout (Checkout)."""
     core = sys.modules["verify_core_install"]
     seen: list[tuple[str, object]] = []
     installed = core.Installed(Path("python"), "3.12.0", False, (), ())

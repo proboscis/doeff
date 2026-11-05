@@ -17,7 +17,7 @@ from tests._run_helpers import run_with_defaults
 def test_sa008_sync_await_runs_in_default_handlers() -> None:
     @do
     def prog():
-        # 主張は「既定の handler で coroutine を 1 つ待てる」— loop に 1 度譲る coroutine で足りる(実時間は待たない・#2957)
+        # The claim is "the default handler can await one coroutine" — a coroutine that yields to the loop once is enough (real time is not waited on, #2957)
         _ = yield Await(asyncio.sleep(0))
         return "ok"
 

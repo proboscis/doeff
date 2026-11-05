@@ -1,4 +1,4 @@
-# 検体。doeff-packages-have-no-application-vocabulary が 4 行目で発火し、6 行目では発火しない(.pyi も見る)。
+# Fixture. doeff-packages-have-no-application-vocabulary fires on line 4 and does not fire on line 6 (.pyi is also looked at).
 from collections.abc import Callable
 
 def kanban_rows() -> list[str]: ...

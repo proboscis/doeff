@@ -1,4 +1,4 @@
-# 下の module から取る
+# Take from the module below
 from doeff_core_effects import Ask, Get, Put, Tell
 from doeff_core_effects import reader, state, writer
 from doeff_core_effects import Gather, Spawn, scheduled

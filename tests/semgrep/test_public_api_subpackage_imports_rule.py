@@ -1,12 +1,12 @@
-"""doeff-public-api-no-subpackage-imports の極性の検。
+"""Polarity test for doeff-public-api-no-subpackage-imports.
 
-規則の message は「下の package からの import も許す — top level に在る名は top level から、module 固有の内部の名が要る時は下の
-package から」と言う。型を言葉に合わせた形 = 取り込む名が全部 `_` で始まる内部の名の `from doeff.<下の package> import …` は鳴らさず、
-公開の名を 1 つでも含む形・`import doeff.<下の package>` は鳴らす。
+The rule's message says "imports from a subpackage are also allowed -- names at top level from top level, and from the subpackage when a module-specific internal name is needed". The shape aligned with the wording
+-- `from doeff.<subpackage> import ...` where every imported name is an internal name starting with `_` -- does not fire, while any form containing
+even one public name, or `import doeff.<subpackage>`, does fire.
 
-検体(tests/semgrep/fixtures/python/tests/public_api/)で `# 鳴る` を付けた行だけが当たることを、規則の当たりの行で突き合わせる。
-括弧の中の comment に `#` が多い形も検体に置く — 規則の regex の繰り返しが戻る形だと、semgrep が SemgrepError を出して規則の当たりが
-全部消える(2026-10-12 に旧い非 possessive の regex で実測)ので、鳴る行が残ることがその guard になる。
+Only lines with the "fires" marker comment in the sample (tests/semgrep/fixtures/python/tests/public_api/) must be hit; this is checked against the rule's hit lines.
+The sample also contains a shape with many `#` in comments inside parentheses -- if the rule's regex repetition regressed, semgrep would emit a SemgrepError and all of the rule's hits
+would vanish (measured on 2026-10-12 with the old non-possessive regex), so the firing lines remaining acts as that guard.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = REPO_ROOT / ".semgrep.yaml"
 RULE = "doeff-public-api-no-subpackage-imports"
 FIXTURE = REPO_ROOT / "tests" / "semgrep" / "fixtures" / "python" / "tests" / "public_api" / "internal_name_imports.py"
-FIRES = "# 鳴る"
-# #2857 の最小の失敗ケースが在った検(公開の 2 名は top level から取り、内部の名 _MISSING だけを下の package から取る)
+FIRES = "# fires"
+# The test that had the minimal failing case of #2857 (the two public names are taken from top level; only the internal name _MISSING is taken from the subpackage)
 PUBLIC_API_TEST = REPO_ROOT / "tests" / "public_api" / "test_mcp_tool_def.py"
 
 
@@ -35,13 +35,13 @@ def _hits(target: Path) -> list[int]:
 
 
 def _line_of(text: str) -> int:
-    """検体の中で、行の全部が text に等しい行の番号(複数行の import は `from` の行 — 規則の当たりの行)。"""
+    """Line numbers where the whole line equals text in the sample (for a multi-line import, the `from` line -- the rule's hit line)."""
     numbers = [
         number
         for number, line in enumerate(FIXTURE.read_text().splitlines(), start=1)
         if line.rstrip() == text
     ]
-    assert len(numbers) == 1, f"検体に {text!r} の行が 1 つでない: {numbers}"
+    assert len(numbers) == 1, f"the sample does not have exactly one line {text!r}: {numbers}"
     return numbers[0]
 
 
@@ -52,18 +52,18 @@ def test_only_the_marked_lines_fire() -> None:
         if line.rstrip().endswith(FIRES)
     ]
     hits = _hits(FIXTURE)
-    # 鳴る行が在る(規則が file に届いていること・規則が走査ごと死んでいないことも見る)
+    # There are firing lines (also checks that the rule reaches the file and is not dying on every scan)
     assert expected
     assert hits == expected
 
 
 def test_the_two_examples_of_the_issue() -> None:
     hits = _hits(FIXTURE)
-    # 内部の名だけの import は鳴らず、公開の名の import は鳴る
+    # An import of only internal names does not fire; an import of a public name does
     assert _line_of("from doeff.mcp import _MISSING") not in hits
-    assert _line_of("from doeff.mcp import McpToolDef  # 鳴る") in hits
+    assert _line_of("from doeff.mcp import McpToolDef  # fires") in hits
 
 
 def test_public_api_test_of_mcp_tool_def_is_not_hit() -> None:
-    # 公開の 2 名は top level から取り、_MISSING だけを下の package から取る形 — 規則に当たらない
+    # Takes the two public names from top level and only _MISSING from the subpackage -- not hit by the rule
     assert _hits(PUBLIC_API_TEST) == []

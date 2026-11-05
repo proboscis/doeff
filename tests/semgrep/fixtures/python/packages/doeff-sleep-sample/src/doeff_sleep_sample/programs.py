@@ -1,4 +1,4 @@
-"""doeff-no-sleep-in-programs の検体 — `# 鳴る` の行だけが当たる(tests/semgrep/test_no_sleep_in_programs_rule.py)。"""
+"""Sample for doeff-no-sleep-in-programs -- only lines with the "fires" marker comment are hit (tests/semgrep/test_no_sleep_in_programs_rule.py)."""
 
 import asyncio
 import time
@@ -11,32 +11,32 @@ from doeff_time import Delay
 
 @do
 def waits_with_time_sleep():
-    time.sleep(1.0)  # 鳴る
+    time.sleep(1.0)  # fires
     return "done"
 
 
 @do
 def waits_with_awaited_asyncio_sleep():
-    yield Await(asyncio.sleep(2.0))  # 鳴る
+    yield Await(asyncio.sleep(2.0))  # fires
     return "done"
 
 
 @do
 def waits_with_imported_sleep():
-    sleep(0.5)  # 鳴る
+    sleep(0.5)  # fires
     return "done"
 
 
 @doeff.do
 def waits_under_qualified_decorator():
-    yield Await(asyncio.sleep(1.0))  # 鳴る
+    yield Await(asyncio.sleep(1.0))  # fires
     return "done"
 
 
 @do
 def waits_in_a_nested_helper():
     def settle() -> None:
-        time.sleep(0.1)  # 鳴る
+        time.sleep(0.1)  # fires
 
     settle()
     return "done"

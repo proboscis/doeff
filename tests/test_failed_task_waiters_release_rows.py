@@ -99,7 +99,7 @@ def _counts() -> dict[str, int]:
     return {name: counts[name] for name in WATCHED}
 
 
-def _counts_after(waits: int, wait_once) -> tuple[dict[str, int], int]:  # noqa: DOEFF006 — 検の補助の戻り
+def _counts_after(waits: int, wait_once) -> tuple[dict[str, int], int]:  # noqa: DOEFF006 -- return value of a test helper
     @do
     def job():
         for i in range(waits):

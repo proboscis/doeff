@@ -1,17 +1,17 @@
-"""docs の入門の道の page の例が今の doeff でそのまま走り、書いてある通りに印字する事の検(取り組み doeff-publish)。
+"""Test that the examples in the docs getting-started path pages run as-is on current doeff and print as documented (doeff-publish initiative).
 
-初めての利用者は README から docs の目次(docs/index.md)へ進み、入門の章から順に読む。その道の page の例は、どの検も
-走らせていなかったので、handler の使い方が変わっても誰も気づかなかった: 0.5.0 の時点で、目次から辿る囲み 324 個のうち
-158 個が落ち、入門の章で 13 個中 5 個・エラー処理の章で 12 個中 10 個が古い使い方だった(writer が state の handler を要る・
-Try が try_handler を要る — 下の STALE_EXAMPLES が当時の写し・docs の報告 2026-10-17-doeff-docs-examples-run.html)。
+A first-time user goes from the README to the docs table of contents (docs/index.md) and reads the introductory chapters in order. No test ran the examples of the pages on that path,
+so nobody noticed when the way to use handlers changed: as of 0.5.0, of the 324 fences reachable from the table of contents,
+158 failed; 5 of 13 in the introductory chapter and 10 of 12 in the error-handling chapter used outdated usage (writer needs a state handler;
+Try needs try_handler — STALE_EXAMPLES below are copies from that time; docs report 2026-10-17-doeff-docs-examples-run.html).
 
-囲みは README と同じ約束で読み・走らせ・注記と比べる(約束の 1 点は tools/readme_examples.py — 読み込みと走らせ方は
-tests/test_readme_examples.py の物を借りる)。走らせない断片は、言葉の後に語 `excerpt` を置く(```` ```python excerpt ```` —
-13 章に付けた印と同じ)。page は 1 つずつ別の dir で扱い、`file=` の囲みは後の囲みの前に置く。
+Fences are read, run, and compared with annotations under the same convention as the README (the single definition point is tools/readme_examples.py — loading and running
+are borrowed from tests/test_readme_examples.py). For fragments that are not run, put the word `excerpt` after the language (```` ```python excerpt ```` —
+the same marker as in chapter 13). Each page is handled in its own dir, and `file=` fences are placed before later fences.
 
-入門の道 = 目次の page・目次の Learning Path の For Beginners の page・card の言う 01〜05 の章。14 章(CLI の自動の発見)は
-入れない: 例は doeff-indexer(核の 5 個の外)と、dir を持つ package(`myapp/features/report.py`)を要り、約束の `file=` は
-dir を含まない名だけを書ける。
+The getting-started path = the pages of the table of contents, the For Beginners pages of its Learning Path, and chapters 01 to 05 named by the card. Chapter 14 (CLI auto-discovery) is
+not included: its examples need doeff-indexer (outside the 5 core components) and a package with dirs (`myapp/features/report.py`), and the convention's `file=` can only
+name files without dirs.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ import tomllib
 from tests.test_readme_examples import ROOT, Example, _run, examples
 
 DOCS = ROOT / "docs"
-# この検の file(repo の根からの path — pyproject.toml の契約の表の書き方)。
+# This test's file (a path from the repo root — as written in the contract table of pyproject.toml).
 THIS_CHECK = Path(__file__).resolve().relative_to(ROOT).as_posix()
-# 入門の道の page(docs/ からの名・読む順)。目次の For Beginners に page を足す時は、ここにも足す(下の検が名指す)。
+# Pages of the getting-started path (names relative to docs/, in reading order). When adding a page to For Beginners in the table of contents, add it here too (the test below names it).
 ENTRY_PATH = (
     "index.md",
     "01-getting-started.md",
@@ -36,24 +36,24 @@ ENTRY_PATH = (
     "04-async-effects.md",
     "05-error-handling.md",
 )
-# 目次の中の、初めての利用者が読む順の節の見出し(この節の link の page は全部 ENTRY_PATH に在る)。
+# The heading of the section in the table of contents that lists pages in the order a first-time user reads them (all pages linked in this section are in ENTRY_PATH).
 BEGINNER_SECTION = "### For Beginners"
-# 目次の節の中の、docs/ の page への link(`[名](01-getting-started.md)`・`#節` つきも)。
+# Links to docs/ pages inside a table-of-contents section (`[name](01-getting-started.md)`, also with `#section`).
 _PAGE_LINK = re.compile(r"\]\((?P<page>[^)#/:]+\.md)(?:#[^)]*)?\)")
 
 
 def _fences(page: str) -> list[Example]:
-    """page の囲み(検の名の page は repo の根からの path)。"""
+    """Fences of a page (a page given as this test's name is a path from the repo root)."""
     return examples.fences((DOCS / page).read_text(encoding="utf-8"), f"docs/{page}")
 
 
 def _runnable() -> list[tuple[str, Example]]:
-    """入門の道の、走らせて注記と比べる囲み(page と組にする)。"""
+    """Fences of the getting-started path that are run and compared with annotations (paired with the page)."""
     return [(page, example) for page in ENTRY_PATH for example in _fences(page) if example.runs()]
 
 
 def _example_id(case: tuple[str, Example]) -> str:
-    """parametrize の id — page と行で、落ちた検がどの囲みかを読めるようにする。"""
+    """parametrize id — by page and line, so that a failed test shows which fence it was."""
     page, example = case
     return f"{Path(page).stem}:{example.line}"
 
@@ -64,7 +64,7 @@ def test_entry_path_example_runs_and_prints_what_it_states(
 ) -> None:
     page, example = case
     assert example.problems() == []
-    # 同じ page の前の囲みが書く file(`file=` の module など)を、読み手と同じく先に置く。
+    # Place the files written by earlier fences of the same page (`file=` modules etc.) first, as a reader would.
     for earlier in _fences(page):
         if earlier.line < example.line and earlier.written_as() is not None:
             examples.write(earlier, tmp_path)
@@ -80,15 +80,15 @@ def test_entry_path_fences_keep_the_rules(page: str) -> None:
 
 @pytest.mark.parametrize("page", ENTRY_PATH)
 def test_entry_path_page_has_an_example_that_runs(page: str) -> None:
-    # 全部を excerpt にした page は、何も確かめていない(印を付けて検から外すだけで緑になる)。
-    assert any(example.runs() for example in _fences(page)), f"docs/{page} に、走らせる例が無い"
+    # A page where everything is an excerpt verifies nothing (it would go green just by adding the marker to exclude it from the test).
+    assert any(example.runs() for example in _fences(page)), f"docs/{page} has no example to run"
 
 
 def _beginner_pages(index: str) -> list[str]:
-    """目次の For Beginners の節が link する page(docs/ からの名)。"""
+    """Pages linked by the For Beginners section of the table of contents (names relative to docs/)."""
     _, found, rest = index.partition(f"\n{BEGINNER_SECTION}\n")
     assert found, (
-        f"docs/index.md に節 {BEGINNER_SECTION!r} が無い — 節の名を変えたら BEGINNER_SECTION も直す"
+        f"docs/index.md has no section {BEGINNER_SECTION!r} — if the section is renamed, fix BEGINNER_SECTION too"
     )
     section = re.split(r"^#{1,3} ", rest, maxsplit=1, flags=re.MULTILINE)[0]
     return [link["page"] for link in _PAGE_LINK.finditer(section)]
@@ -96,20 +96,20 @@ def _beginner_pages(index: str) -> list[str]:
 
 def test_entry_path_covers_the_beginner_pages_of_the_index() -> None:
     pages = _beginner_pages((DOCS / "index.md").read_text(encoding="utf-8"))
-    assert pages, f"docs/index.md の {BEGINNER_SECTION} に、page への link が無い"
+    assert pages, f"{BEGINNER_SECTION} in docs/index.md has no link to a page"
     assert [page for page in pages if page not in ENTRY_PATH] == [], (
-        f"docs/index.md の {BEGINNER_SECTION} が link する page が ENTRY_PATH に無い — 足して例を走らせる"
+        f"a page linked by {BEGINNER_SECTION} in docs/index.md is not in ENTRY_PATH — add it so its examples run"
     )
 
 
 def test_contract_table_selects_this_check_for_each_entry_page() -> None:
-    # page を書き換えた便の `make test-changed` がこの検を選ぶ(例は file に書いて走らせるので、import の逆依存では選ばれない)。
+    # `make test-changed` for a change that rewrites a page selects this test (examples are written to files and run, so reverse import dependencies would not select it).
     rows = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["doeff"][
         "contract-tests"
     ]
     selected = {row["prefix"] for row in rows if THIS_CHECK in row.get("tests", [])}
     assert [page for page in ENTRY_PATH if f"docs/{page}" not in selected] == [], (
-        f"pyproject.toml の [[tool.doeff.contract-tests]] に、{THIS_CHECK} を選ぶ行の無い入門の道の page が在る"
+        f"[[tool.doeff.contract-tests]] in pyproject.toml has no row selecting {THIS_CHECK} for some getting-started path page"
     )
 
 
@@ -128,8 +128,8 @@ def test_beginner_pages_are_read_from_the_section_only() -> None:
     assert _beginner_pages(index) == ["01-getting-started.md", "05-error-handling.md"]
 
 
-# 直す前の docs の 2 つの例の写し(この検が名指す事を確かめる失敗ケース)— 03 章の Ask の例(writer の外に state が無い・
-# 直す前)と 05 章の Try の例(try_handler が無い・直す前)。
+# Copies of two pre-fix docs examples (failure cases that confirm this test names them) — the chapter 03 Ask example (no state outside writer,
+# pre-fix) and the chapter 05 Try example (no try_handler, pre-fix).
 STALE_EXAMPLES = {
     "Get": Example(
         "docs/03-basic-effects.md",

@@ -11,8 +11,8 @@
   (setv holders (herdr-label-workspace-ids-io socket-path session-name))
   (herdr-call socket-path "workspace.close" {"workspace_id" (get holders 0)}))
 ;;;
-;;; ⚠ 語彙（deff / defk）はこの検体の争点ではない — rule の pattern は holder 集合の添字
-;;; の regex で、定義の綴りには依存しない。実 code には deff のまま残る関数も在るが、
-;;; この検体は ADR-DOE-HY-004 の台帳（コメント・文字列の中の字面も数える）に載るので
-;;; defk で書く。行番号は test_vm_failfast_semgrep_rules.py が pin しているので、
-;;; 註は必ず file の末尾に置く（deff と defk は同じ 4 文字なので行はずれない）。
+;;; ⚠ The vocabulary (deff / defk) is not the point of this sample -- the rule's pattern is a regex on the holder-set subscript
+;;; and does not depend on how the definition is spelled. Some functions in real code stay as deff, but
+;;; this sample is listed in the ADR-DOE-HY-004 ledger (which also counts text in comments and strings), so
+;;; it is written with defk. Line numbers are pinned by test_vm_failfast_semgrep_rules.py, so
+;;; notes must always go at the end of the file (deff and defk are the same 4 characters, so lines do not shift).

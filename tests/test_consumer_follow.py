@@ -1,8 +1,8 @@
-"""消費者の追従の後段(tools/consumer_follow.py)が、消費者を導き、針の赤を報告の行にする事。
+"""The consumer follow-up stage (tools/consumer_follow.py) must guide consumers and turn needle reds into report lines.
 
-1. 消費者 = 根か 1 段下の pyproject.toml が doeff の配布物に依存する checkout。doeff 自身と、doeff を読まない repo は消費者でない。
-2. 針の赤の検は 1 行ずつ報告の行になり、消費者の conftest の fixture を求める検は「測らない検」に数えて赤にしない(conftest は読まない)。
-3. 針の検が集まらない・針を持つ消費者が無い回は、測りが消えた事を赤の行にし、どの回も最後に数えの行を出す。
+1. Consumer = a checkout whose root or one-level-down pyproject.toml depends on a doeff distribution. doeff itself and repos that do not read doeff are not consumers.
+2. Each red needle check becomes one report line; checks that need a consumer conftest fixture count as "unmeasured checks" and are not red (conftest is not read).
+3. A run where no needle checks are collected, or no consumer has a needle, emits a line saying the measurement disappeared as red, and every run emits a count line at the end.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load() -> types.ModuleType:
-    """tools/ の道具を読む(tools/ は package ではない)。"""
+    """Load the tool from tools/ (tools/ is not a package)."""
     loaded = sys.modules.get("consumer_follow")
     if loaded is not None:
         return loaded
@@ -43,14 +43,14 @@ def test_name_exists():
 
 
 def test_name_missing():
-    assert False, "名 get_adr が doeff_adr に無い"
+    assert False, "name get_adr is missing from doeff_adr"
 
 
 def test_needs_consumer_fixture(consumer_only_fixture):
     pass
 
 
-@pytest.mark.skip(reason="消費者が飛ばした")
+@pytest.mark.skip(reason="skipped by the consumer")
 def test_skipped():
     pass
 """
@@ -70,8 +70,8 @@ def _consumer(home: Path, probe: str = PROBE_BODY) -> Path:
         {
             "agentcli/pyproject.toml": CONSUMER_PYPROJECT,
             tool.PROBE.as_posix(): probe,
-            # 消費者の conftest は消費者の環境の依存を読む — 後段が読めば、どの検も走らない
-            "docs/adr/conftest.py": 'raise ImportError("消費者の環境にしか無い依存")\n',
+            # The consumer conftest reads dependencies of the consumer environment -- if the follow-up stage read it, no check would run
+            "docs/adr/conftest.py": 'raise ImportError("dependency that exists only in the consumer environment")\n',
         },
     )
 
@@ -112,7 +112,7 @@ def test_probe_reds_become_report_lines_and_consumer_fixtures_are_unmeasured(
     assert len(lines) == 2, lines
     assert re.fullmatch(
         rf"{tool.REPORT_PREFIX}dotfiles \S+ docs/adr/test_doeff_adr_api_follows\.py::test_name_missing — "
-        r"AssertionError: 名 get_adr が doeff_adr に無い",
+        r"AssertionError: name get_adr is missing from doeff_adr",
         lines[0],
     ), lines[0]
     assert (

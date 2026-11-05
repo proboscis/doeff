@@ -1,13 +1,13 @@
-"""doeff-agents が外の CLI の行(JSON)の形を自前で解かないことの陽性対照と弁別(設計検証の盲検 B)。
+"""Positive control and discrimination: doeff-agents does not decode the shape of external CLI lines (JSON) itself (blind check B of the design verification).
 
-層の決まり: codex の行の形を知るのは層 2(doeff-codex の lines)だけで、doeff-agents(層 3 の adapter)は層 2 の型つきの記録だけを
-読む。盲検 B は、層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・
-pre-commit・型検査を全部通ることを実測した。規則 doeff-agents-decodes-no-wire-json は、その形(defwire・doeff_hy._wire・
-OpaqueJson・parse-json)を doeff-agents の src で断る。
+Layer rule: only layer 2 (the lines of doeff-codex) knows the shape of codex lines; doeff-agents (a layer 3 adapter) reads only layer 2's typed records.
+Blind check B measured that an implementation where layer 2 carries the tool item without reading its contents and layer 3 decodes codex JSON with its own defwire passes the named test,
+pre-commit, and the type checker. The rule doeff-agents-decodes-no-wire-json rejects that shape (defwire, doeff_hy._wire,
+OpaqueJson, parse-json) in the src of doeff-agents.
 
-- 1 本目: fixture の失敗の形(wire の型の import・OpaqueJson・defwire・parse-json)が、行ごとに断られる。通る形(層 2 の記録の
-  import)は断られない。
-- 2 本目: 実物の codex の adapter(handlers/headless_codex.hy)は層 2 の記録だけを読むので、断られない。
+- Test 1: the failing shapes in the fixture (wire type import, OpaqueJson, defwire, parse-json) are each rejected per line. The passing shape (import of a layer 2
+  record) is not rejected.
+- Test 2: the real codex adapter (handlers/headless_codex.hy) reads only layer 2 records, so it is not rejected.
 """
 
 from __future__ import annotations
@@ -31,15 +31,15 @@ def _hits(findings: list[dict], rule: str) -> list[int]:
 def test_wire_json_decoding_in_doeff_agents_is_rejected() -> None:
     root = Path(__file__).resolve().parents[2]
     findings = _semgrep_results(root / ".semgrep.yaml", FIXTURE, cwd=root / "tests/semgrep/fixtures/python")
-    # 2 行目 = doeff_hy._wire の import / 3 行目 = OpaqueJson / 4 行目 = defwire / 7 行目 = parse-json。
-    # 9 行目(層 2 の記録の import)は通る。
+    # line 2 = import of doeff_hy._wire / line 3 = OpaqueJson / line 4 = defwire / line 7 = parse-json.
+    # Line 9 (import of a layer 2 record) passes.
     assert _hits(findings, RULE) == [2, 3, 4, 7]
 
 
 def test_the_codex_adapter_reads_only_layer_two_records() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / ADAPTER_FILE).read_text(encoding="utf-8")
-    # 対照の前提: 実物の adapter は層 2 の記録(doeff_codex の入口の CodexLine と行の型)を読んでいる(読んでいなければ下の緑は無意味)。
+    # Control premise: the real adapter reads layer 2 records (CodexLine and the line types at the doeff_codex entry); if it did not, the green below would be meaningless.
     assert "(import doeff_codex [" in source and " CodexLine " in source
     findings = _semgrep_results(root / ".semgrep.yaml", ADAPTER_FILE, cwd=root)
     assert _hits(findings, RULE) == []

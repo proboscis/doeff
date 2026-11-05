@@ -561,7 +561,7 @@ class TestDefhandlerMissingRequire:
         import os
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_387_no_require", None)
-        # この固定の file は require を意図して抜いた形 — doeff-hy は読む時に書き足す 1 行を警告で言う。
+        # This fixed file intentionally omits the require — doeff-hy reports in a warning the one line to add when reading.
         with pytest.warns(HyMacroUseWarning, match=r"\(require doeff-hy\.macros \[defhandler\]\)"):
             import fixtures.repro_387_no_require as mod
         return mod
@@ -583,7 +583,7 @@ class TestDefhandlerReExport:
 
     @pytest.fixture
     def mod(self) -> ModuleType:
-        """macros の再輸出の defhandler を使う再現の .hy を、検ごとに読み直した module。"""
+        """A module that re-reads, per test, the reproduction .hy that uses defhandler re-exported from macros."""
         import os
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_387_via_macros", None)

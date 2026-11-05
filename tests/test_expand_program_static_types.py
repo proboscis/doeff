@@ -1,20 +1,20 @@
-"""@do の関数が返す Expand は、pyright がどの順で file を検めても Program として受け取れる。
+"""The Expand returned by an @do function is accepted as a Program regardless of the order in which pyright checks files.
 
-agora-controllers の日次の型検査(pyright 1.1.414・1 process で全 file)で、defk の関数を
-`Callable[..., Program]` の引数へ渡す所が reportArgumentType で落ち、赤になる file が実行のたびに入れ替わっていた。
-同じ形は 2 つの file で再現する(下の _TRIGGER と _PROBE):
+In agora-controllers' daily type check (pyright 1.1.414, all files in 1 process), the place that passes a defk function to an argument of
+`Callable[..., Program]` failed with reportArgumentType and went red, and which files went red changed on every run.
+The same shape is reproduced with two files (_TRIGGER and _PROBE below):
 
-- 先に検める file で、@do の呼びを union の期待型の下で `Program[T, ...]` の引数へ渡す
-  (`answer: str | None = run(make(1))`。doeff-hy の `(<- x (| str None) …)` の展開も同じ形)。
-- 後に検める file で、@do の関数を `tuple[Callable[..., Program], ...]` へ渡す。
+- In the file checked first, an @do call is passed to an argument of `Program[T, ...]` under a union expected type
+  (`answer: str | None = run(make(1))`. The expansion of doeff-hy's `(<- x (| str None) ...)` has the same shape).
+- In the file checked later, an @do function is passed to `tuple[Callable[..., Program], ...]`.
 
-pyright(1.1.411 と 1.1.414 で実測)は、protocol への代入が失敗すると、型引数を外した形
-(`Expand[_T_co, _E_co]` → `Program[_ProgramResult, _ProgramEffects]`)でも試し、それも通らなければ
-「Expand はどの型引数でも Program に合わない」と Expand の class の cache に残す。後の file の代入はこの cache を引いて
-落ちる。後の file だけを検めると 0 件、逆の順でも 0 件。Expand が Program を明示の基底に持てば、pyright は
-protocol の照合でなく継承で判じるので、この cache を通らない。
+pyright (measured on 1.1.411 and 1.1.414), when assignment to a protocol fails, also tries the form with type arguments removed
+(`Expand[_T_co, _E_co]` -> `Program[_ProgramResult, _ProgramEffects]`), and if that also fails,
+records in the Expand class cache that "Expand does not fit Program with any type arguments". Assignments in later files hit this cache and
+fail. Checking only the later file gives 0 findings, and the reverse order also gives 0. If Expand has Program as an explicit base, pyright
+decides by inheritance rather than by protocol matching, so it does not go through this cache.
 
-pyright は引数に並べた順に file を検めるので、ここでは引き金の file を先に並べて 1 process で検める。
+pyright checks files in the order listed in the arguments, so here the trigger file is listed first and checked in 1 process.
 """
 
 import json
@@ -69,7 +69,7 @@ _MISTAKE_MARKER = "# ---- mistakes"
 
 
 def _pyright_in_order(tmp_path: Path, files: tuple[tuple[str, str], ...]) -> dict:
-    """files を並べた順に 1 つの pyright の process で検め、--outputjson の結果を返す。"""
+    """Check files in the listed order in one pyright process and return the --outputjson result."""
     root = Path(__file__).resolve().parents[1]
     original = json.loads((root / "pyrightconfig.json").read_text())
     config = tmp_path / "pyrightconfig.json"

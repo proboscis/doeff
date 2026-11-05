@@ -1,12 +1,12 @@
-"""editable で入れた Rust の部品の組んだ物(native の拡張 module)が、作業木の git の名簿に無い file を消す写し(dotfiles の
-remote_check の段 3 — 日次の全体検証の道)の後の `make sync` でも import できる事の失敗ケース。
+"""Failure case: a natively built Rust part (the native extension module) installed in editable mode must still be importable after `make sync` following a copy that prunes files absent from the working tree's git listing
+(step 3 of dotfiles' remote_check -- the daily full-verification path).
 
-2026-10-07 04:00 の日次: remote_check が手順ごとに pod の木を zeus へ写し、写すたびに名簿に無い file を消す(消さないのは .venv
-だけ)。build の口は editable の入れで .so を source の木の中に置いていたので、次の手順の写しで消え、uv の入れた記録(.venv の中)と
-cache-keys は変わらないので、次の `make sync` は何も組まず、conftest の import doeff_vm.doeff_vm が落ちて pytest が 1 本も走らなかった。
+2026-10-07 04:00 daily run: remote_check copies the pod's tree to zeus at each step, and each copy deletes files absent from the listing (only .venv is kept).
+The build backend placed the .so inside the source tree for an editable install, so the next step's copy removed it; uv's install record (inside .venv) and
+cache-keys were unchanged, so the next `make sync` built nothing, the conftest import of doeff_vm.doeff_vm failed, and not a single pytest test ran.
 
-本物の uv と本物の build の口(tools/doeff_cargo_backend.py)を使い、組み方だけを偽物(組んだ物の代わりの file を持つ wheel を返す)に
-替えた小さな package を入れる。import の探し(find_spec)で組んだ物の代わりが見つかるかを見る(中身は読み込まない)。
+Uses the real uv and the real build backend (tools/doeff_cargo_backend.py), and installs a small package whose only fake part is the build step (it returns a wheel
+carrying a stand-in file for the built artifact). Checks whether the stand-in is found by the import search (find_spec); contents are not loaded.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 BACKEND = REPO / "tools" / "doeff_cargo_backend.py"
 EXT = sysconfig.get_config_var("EXT_SUFFIX")
 
-# 本物の build の口を読み、組み方だけを偽物に替えて hook を渡す包み(package の dir に置く・backend-path = ["."])。
+# A wrapper that loads the real build backend and swaps only the build step for a fake, passing the hooks through (placed in the package dir; backend-path = ["."]).
 WRAPPER = f'''
 import base64, hashlib, importlib.util, sys, zipfile
 from pathlib import Path
@@ -63,30 +63,30 @@ def build_editable(wheel_directory, config_settings=None, metadata_directory=Non
 
 
 def _tool_path() -> str:
-    """子の PATH: build の口が組む時に cargo が呼ぶ rustc と git の dir と、基本の dir(保存先の鍵は rustc を読まない — ADR-DOE-BUILD-001 R4 の追補)。"""
+    """Child PATH: the dirs of rustc and git that cargo calls when the backend builds, plus the base dirs (the slot key does not read rustc -- addendum to ADR-DOE-BUILD-001 R4)."""
     found = [shutil.which(name) for name in ("rustc", "git")]
-    assert all(found), f"rustc と git が探し道に要る: {found}"
+    assert all(found), f"rustc and git must be on the search path: {found}"
     return ":".join(dict.fromkeys([*(str(Path(path).parent) for path in found if path), "/usr/bin", "/bin"]))
 
 
 def _uv_cache_dir() -> str:
-    """呼び手の uv の cache の dir(`uv cache dir` — UV_CACHE_DIR・XDG_CACHE_HOME・HOME の順は uv 自身が解く)。子は UV_OFFLINE で
-    組みの依存(maturin)をこの cache から引くので、HOME の下の既定でなく呼び手と同じ dir を渡す — 日次の task は HOME が回ごとの空の dir で、
-    cache は UV_CACHE_DIR(worker の共有の cache)に在る(atlas の Pod での初回 2026-10-10 20:05 に 2 本が赤)。"""
+    """The caller's uv cache dir (`uv cache dir` -- uv itself resolves the order UV_CACHE_DIR, XDG_CACHE_HOME, HOME). The child runs with UV_OFFLINE and
+    pulls build dependencies (maturin) from this cache, so pass the same dir as the caller instead of the HOME default -- the daily task has an empty per-run HOME dir, and
+    the cache lives in UV_CACHE_DIR (the worker's shared cache) (first seen 2026-10-10 20:05 on the atlas Pod, where 2 tests went red)."""
     uv = shutil.which("uv")
-    assert uv is not None, "uv が探し道に無い"
+    assert uv is not None, "uv is not on the search path"
     return subprocess.run([uv, "cache", "dir"], capture_output=True, text=True, check=True).stdout.strip()
 
 
 def _make_sync() -> list[str]:
-    """Makefile の sync の target の命令(日次の手順ごとの同期と同じ)。"""
+    """The command of the Makefile sync target (same as the per-step sync of the daily run)."""
     found = re.search(r"^sync:\n\t(.+)$", (REPO / "Makefile").read_text(encoding="utf-8"), re.MULTILINE)
-    assert found is not None, "Makefile に sync の target が無い"
+    assert found is not None, "Makefile has no sync target"
     return shlex.split(found.group(1))
 
 
 class Tree:
-    """git の作業木の workspace(根 = root)に、本物の build の口を通す package probe-native を 1 つ持つ。"""
+    """A git working-tree workspace (root = root) holding one package probe-native that goes through the real build backend."""
 
     def __init__(self, root: Path, store: Path) -> None:
         self.root = root
@@ -122,13 +122,13 @@ class Tree:
 
     def run(self, argv: list[str]) -> str:
         uv = shutil.which(argv[0])
-        assert uv is not None, f"{argv[0]} が探し道に無い"
+        assert uv is not None, f"{argv[0]} is not on the search path"
         done = subprocess.run([uv, *argv[1:]], cwd=self.root, env=self.env, capture_output=True, text=True, timeout=25, check=False)
-        assert done.returncode == 0, f"{argv} が rc {done.returncode}: {done.stderr}"
+        assert done.returncode == 0, f"{argv} exited with rc {done.returncode}: {done.stderr}"
         return done.stderr
 
     def prune_like_remote_check(self) -> list[str]:
-        """git の名簿(管理下 + 未追跡の非無視)に無い file を消す(.venv の下は消さない)— remote_check の段 3 と同じ規則。"""
+        """Delete files not in git's listing (tracked + untracked non-ignored); never delete under .venv -- the same rule as step 3 of remote_check."""
         listed = set(self.git("ls-files", "--cached", "--others", "--exclude-standard").splitlines())
         present = [str(p.relative_to(self.root)) for p in self.root.rglob("*") if p.is_file() and ".git" not in p.relative_to(self.root).parts]
         pruned = [name for name in present if name not in listed and ".venv" not in Path(name).parts]
@@ -151,16 +151,16 @@ def tree(tmp_path: Path) -> Tree:
 
 def test_the_native_module_survives_a_prune_of_unlisted_files_and_the_next_make_sync(tree: Tree) -> None:
     tree.run(_make_sync())
-    assert tree.native_found(), "最初の同期の後に組んだ物が import の探しで見つからない"
+    assert tree.native_found(), "the built artifact is not found by the import search after the first sync"
     pruned = tree.prune_like_remote_check()
     tree.run(_make_sync())
-    assert tree.native_found(), f"名簿に無い file を消した後の make sync で組んだ物が見つからない(消した file: {pruned})"
+    assert tree.native_found(), f"the built artifact is not found after make sync following the prune of files absent from the listing (pruned files: {pruned})"
 
 
 def test_rewriting_the_pth_source_line_moves_the_package_and_keeps_the_native_module(tree: Tree) -> None:
-    # 失敗ケース(agora-controllers の固定の版への向け直し scripts/pinned_doeff.hy は venv の .pth の行だけを書き換える):
-    # .pth の 1 行目を別の checkout へ書き換えると、package の Python はその checkout から読まれ、組んだ物は venv から読まれ続ける。直す前の
-    # finder は作業木の path を自分の中に持ち、書き換えた後も元の checkout を読んだ。
+    # Failure case (the retargeting to a pinned version in agora-controllers, scripts/pinned_doeff.hy, rewrites only the line in the venv .pth):
+    # if line 1 of the .pth is rewritten to another checkout, the package's Python is read from that checkout while the built artifact keeps being read from the venv. Before the fix, the
+    # finder held the working-tree path inside itself and kept reading the original checkout even after the rewrite.
     tree.run(_make_sync())
     moved = tree.root.parent / "other-checkout"
     shutil.copytree(tree.root / "packages" / "probe-native", moved)

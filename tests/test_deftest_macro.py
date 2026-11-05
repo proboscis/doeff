@@ -294,13 +294,13 @@ class TestDeftestFileTypes:
 # ---------------------------------------------------------------------------
 
 class TestDeftestTypedBind:
-    """deftest の先頭階の (<- name Type expr) は <- macro と同じ isinstance の保証を出す。
+    """A top-level (<- name Type expr) in deftest emits the same isinstance guarantee as the <- macro.
 
-    deftest は本体の <- を自分で読んで yield へ書き換えるため、型欄が捨てられ
-    (<- x str eff) が実行時に無検査だった。共通の品質検査(dotfiles
-    agent/quality/hy_dsl.py effect_bind)はその実態に合わせて型を object に投影
-    せざるを得ず、ACP の段 0 の法で native-type が 30 件以上出た。定義点は
-    macros.hy の _bind-yield 1 つ(<- macro / do! / defp / for/do と共有)。
+    deftest reads the <- in the body itself and rewrites it to yield, so the type slot was dropped
+    and (<- x str eff) went unchecked at runtime. The shared quality check (dotfiles
+    agent/quality/hy_dsl.py effect_bind) had to project the type to object to match that
+    reality, and ACP's stage-0 law reported 30+ native-type findings. The single definition point is
+    _bind-yield in macros.hy (shared with the <- macro / do! / defp / for/do).
     """
 
     def _import(self, tmp_hy_dir, filename, body):
@@ -324,7 +324,7 @@ class TestDeftestTypedBind:
         mod.test_typed_ok(stub_interpreter)
 
     def test_typed_bind_fails_when_type_mismatches(self, tmp_hy_dir):
-        """型違いは束縛の直後に AssertionError — 後続の assert に届く前に落ちる。"""
+        """A type mismatch raises AssertionError right after the binding -- before reaching the following assert."""
         mod = self._import(tmp_hy_dir, "typed_bad_test.hy", """\
             (deftest test-typed-bad
               (<- price str (GetValue :key "price"))
@@ -334,7 +334,7 @@ class TestDeftestTypedBind:
             mod.test_typed_bad(stub_interpreter)
 
     def test_untyped_bind_is_unchanged(self, tmp_hy_dir):
-        """2 要素・3 要素の形は今日のまま(型検査を足さない)。"""
+        """The 2-element and 3-element forms stay as they are today (no type check is added)."""
         mod = self._import(tmp_hy_dir, "untyped_test.hy", """\
             (deftest test-untyped
               (<- price (GetValue :key "price"))

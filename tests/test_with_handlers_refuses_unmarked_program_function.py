@@ -1,13 +1,13 @@
-"""with_handlers / stacked_handlers / handler() は、handler でない物を組む時に名指しで断る(ADR-DOE-CORE-003)。
+"""with_handlers / stacked_handlers / handler() refuse, by name, anything that is not a handler when composing (ADR-DOE-CORE-003).
 
-handler は ``@handler`` を付けた def で、``@handler`` がそれを ``@do`` 関数にする。
-``with_handlers`` と ``stacked_handlers`` は印 ``_doeff_is_handler_fn`` の無い物を「not a handler」で断り、中で ``handler()`` に通さない。
-``handler()`` は def と ``@do`` 関数(とその partial・bound method)を受け、ほか(lambda・素の method・callable の instance)を
-「not a handler body」で断る。def でも引数を 1 つしか
-取らない物(Program → Program の取り違え)は、前と同じく組む時に断る — 最初の effect で 2 引数で呼ばれて落ちる時期がテストの
-時刻の運で揺れ、失敗ケースのテストが緑に数えられうるため(agora-controllers の日次 t548 の deaf-records-handler)。
+A handler is a def marked ``@handler``, and ``@handler`` turns it into a ``@do`` function.
+``with_handlers`` and ``stacked_handlers`` refuse anything without the marker ``_doeff_is_handler_fn`` with "not a handler" and do not pass it through ``handler()`` internally.
+``handler()`` accepts a def and a ``@do`` function (and their partials and bound methods) and refuses everything else (lambdas, plain methods, callable instances)
+with "not a handler body". A def that takes only one argument
+(the Program -> Program mix-up) is still refused at composition time as before — because the time when it would fail by being called with 2 arguments on the first effect varies with the test's
+timing luck, so a failure-case test could be counted as green (deaf-records-handler in agora-controllers daily t548).
 
-判定は属性の読みだけで行う(``inspect.signature`` を呼ばない — with_handlers は熱い道)。
+The judgment uses attribute reads only (``inspect.signature`` is not called — with_handlers is a hot path).
 """
 
 import functools
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import doeff_hy  # noqa: F401  # Hy の import hook(http の handler と検の部品は Hy)
+import doeff_hy  # noqa: F401  # Hy import hook (the http handler and the test components are Hy)
 import pytest
 import tests.effects.http_request_support as http_support
 from doeff_core_effects import (
@@ -48,7 +48,7 @@ def outer(effect, k):
 
 @handler
 def relay_inner(effect, k):
-    """Ping を外へ 1 度送り直してから答える — 外と内のどちらが先に答えたかが答えの綴りに残る。"""
+    """Re-send Ping outward once and then answer — which of outer and inner answered first remains in the spelling of the answer."""
     if isinstance(effect, Ping):
         answer = yield Ping(f"{effect.value}>inner")
         return (yield Resume(k, answer))
@@ -61,7 +61,7 @@ def body():
 
 
 def wrap_program(program):
-    """印の無い Program → Program の関数(取り違えの形)。"""
+    """An unmarked Program -> Program function (the mix-up shape)."""
     return program
 
 
@@ -109,7 +109,7 @@ class PrefixHandler:
 
 
 class MarkedPassThrough:
-    """印つきの callable の instance — ``__name__`` を持たない installer も束ねられる事を確かめるため。"""
+    """A marked callable instance — to check that an installer without ``__name__`` can also be bundled."""
 
     _doeff_is_handler_fn = True
 
@@ -117,7 +117,7 @@ class MarkedPassThrough:
         return program
 
 
-# --- 組む時に断る形 ---------------------------------------------------------------------------
+# --- Shapes refused at composition ---------------------------------------------------------------------------
 
 
 def test_with_handlers_refuses_an_unmarked_lambda_before_run() -> None:
@@ -204,7 +204,7 @@ def test_with_handlers_refuses_a_do_function_without_the_handler_mark() -> None:
         with_handlers([prefixed], body())
 
 
-# --- 通る形: @handler を付けた @do 関数 ------------------------------------------------------------
+# --- Accepted shape: a @do function marked @handler ------------------------------------------------------------
 
 
 def test_a_handler_installs_through_every_public_way() -> None:
@@ -236,13 +236,13 @@ def test_http_fixture_handler_installs_in_both_modes(
     assert run(scheduled(with_handlers([await_handler, fixture], Pure("ok")))) == "ok"
 
 
-# --- 束ねる公開の口 -----------------------------------------------------------------------------
+# --- Public entry points for bundling -----------------------------------------------------------------------------
 
 
 def test_stacked_handlers_runs_the_first_outermost_and_the_last_innermost() -> None:
     stacked = stacked_handlers(outer, relay_inner)
 
-    # 内の relay_inner が先に Ping を受け、外の outer へ送り直す。
+    # The inner relay_inner receives Ping first and re-sends it to the outer one.
     assert run(with_handlers([stacked], body())) == "start>inner>outer"
     assert run(stacked(body())) == "start>inner>outer"
     assert run(with_handlers([outer, relay_inner], body())) == "start>inner>outer"
@@ -254,12 +254,12 @@ def test_stacked_handlers_is_a_marked_installer_called_with_the_program_only() -
 
     assert getattr(stacked, "_doeff_is_handler_fn", False) is True
     assert handler(stacked) is stacked
-    # 型の ProgramHandler は関数の名を宣言しないので、束ねが関数である事を確かめてから名を読む
+    # The type ProgramHandler does not declare a function name, so confirm the bundle is a function before reading the name
     assert isinstance(stacked, types.FunctionType)
     assert stacked.__name__ == "stacked_handlers"
     assert "outer" in (stacked.__doc__ or "")
     assert "relay_inner" in (stacked.__doc__ or "")
-    # 印が無ければ with_handlers が (effect, k) で呼び、最初の effect で TypeError になる。
+    # Without the marker, with_handlers calls it with (effect, k) and the first effect raises TypeError.
     assert run(with_handlers([outer, stacked], body())) == "start>inner>outer"
 
     with_instance = stacked_handlers(MarkedPassThrough(), outer)
@@ -291,7 +291,7 @@ def test_stacked_handlers_nest() -> None:
     assert run(nested(body())) == "start>inner>outer"
 
 
-# --- 束の宣言の印: 中の全部が __doeff_handles__ / __doeff_effects__ を宣言する時だけ和を付ける(vg-w39 の読み) ----------
+# --- Bundle declaration markers: attach the union only when every member declares __doeff_handles__ / __doeff_effects__ (reading of vg-w39) ----------
 
 
 @dataclass(frozen=True)
@@ -305,13 +305,13 @@ class Tick(EffectBase):
 
 
 def declared_dispatcher(handles: tuple[type, ...], effects: tuple[type, ...]):
-    """答える効果と出す効果を印で宣言した生の dispatcher(節を静的に読めない handler の宣言 — http の handler と同じ形)。"""
+    """A raw dispatcher that declares the effects it answers and emits via markers (a declaration for a handler whose clauses cannot be read statically — the same form as the http handler)."""
 
     @handler
     def dispatch(effect, k):
         yield Pass(effect, k)
 
-    marks = cast(Any, dispatch)  # 宣言の印は installer の属性(http の handler と同じ置き場)
+    marks = cast(Any, dispatch)  # The declaration markers are attributes of the installer (the same place as the http handler)
     marks.__doeff_handles__ = handles
     marks.__doeff_effects__ = effects
     return dispatch
@@ -321,12 +321,12 @@ def test_stacked_handlers_declares_the_union_of_its_declared_handlers() -> None:
     bundle = stacked_handlers(declared_dispatcher((Ping,), (Pong,)), declared_dispatcher((Pong,), (Tick,)))
 
     assert bundle.__doeff_handles__ == (Ping, Pong)
-    # 外の Ping の handler は Pong を出し(束の外へ)、内の Pong の handler は Tick を出す(外の Ping の handler は Tick に答えない)
+    # The outer Ping handler emits Pong (outside the bundle), and the inner Pong handler emits Tick (the outer Ping handler does not answer Tick)
     assert bundle.__doeff_effects__ == (Pong, Tick)
 
 
 def test_stacked_handlers_drops_effects_an_outer_handler_in_the_bundle_answers() -> None:
-    # 内の handler が出す Pong は、束の中の外の handler が答える = 束の外へ出ない
+    # The Pong emitted by the inner handler is answered by the outer handler inside the bundle = it does not leave the bundle
     bundle = stacked_handlers(declared_dispatcher((Pong,), (Tick,)), declared_dispatcher((Ping,), (Pong,)))
 
     assert bundle.__doeff_handles__ == (Pong, Ping)
@@ -340,7 +340,7 @@ def test_stacked_handlers_stays_unreadable_when_one_handler_does_not_declare() -
     assert not hasattr(bundle, "__doeff_effects__")
 
 
-# --- 速さの見張り: 判定は属性の読みだけ ---------------------------------------------------------
+# --- Speed watch: judgment uses attribute reads only ---------------------------------------------------------
 
 
 def test_installing_does_not_call_inspect_signature(monkeypatch: pytest.MonkeyPatch) -> None:

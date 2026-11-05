@@ -1,11 +1,11 @@
-"""doeff run の discovery(doeff/cli/discovery.py)は、doeff-indexer の effect FindSymbols で索引を引く program で、doeff run は
-それを handler rust_indexer(Rust の索引器)の下で回す(ADR-DOE-API-001)。前は class Indexer を直に呼ぶ class IndexerBasedDiscovery だった。
+"""doeff run's discovery (doeff/cli/discovery.py) is a program that queries the index with doeff-indexer's FindSymbols effect, and doeff run
+runs it under the handler rust_indexer (the Rust indexer) (ADR-DOE-API-001). Previously it was class IndexerBasedDiscovery calling class Indexer directly.
 
-- Rust の索引器の下で、印の付いた interpreter のうち program の module の階層で最も近い物と、階層の印の付いた env を根から選ぶ。
-- doeff run の resolve_context が同じ program で既定の interpreter と env を決める(--env が在れば env は探さない)。
-- FindSymbols に test の handler で答えれば、Rust の索引器も拡張も file も無しに同じ program が走る。
-- 索引を作れない失敗は program(discover)の中で受けて warning に出し、何も探さない(doeff run は既定の interpreter へ落ちる)。
-- doeff-indexer が無ければ黙って探さず、在るのに拡張を読めなければ warning を出して探さない。
+- Under the Rust indexer, pick the marked interpreter closest in the program module's hierarchy, and pick the hierarchy-marked envs from the root.
+- doeff run's resolve_context decides the default interpreter and env with the same program (if --env is given, envs are not searched).
+- If FindSymbols is answered by a test handler, the same program runs without the Rust indexer, the extension, or any files.
+- A failure to build the index is caught inside the program (discover), reported as a warning, and nothing is searched (doeff run falls back to the default interpreter).
+- If doeff-indexer is absent, silently do not search; if it is present but the extension cannot be loaded, emit a warning and do not search.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from doeff.cli.run_services import RunContext, _discover, resolve_context
 
 PROGRAM = "myapp.features.auth.login.login_program"
 
-#: 印の付いた interpreter と env の小さな project(env は型の注釈が要る — 注釈の無い変数は索引器が読まない)。
+#: A small project with marked interpreters and envs (envs need type annotations — the indexer does not read unannotated variables).
 PROJECT = {
     "myapp/__init__.py": (
         "# doeff: interpreter, default\n"
@@ -48,7 +48,7 @@ PROJECT = {
         "auth_env: dict = {'auth': 'oauth2'}\n"
     ),
     "myapp/features/auth/login.py": "def login_program():\n    return 'login'\n",
-    # 階層の外の印は選ばない。
+    # Marks outside the hierarchy are not chosen.
     "other/__init__.py": (
         "# doeff: interpreter, default\n"
         "def other_interpreter(program):\n"
@@ -68,7 +68,7 @@ FOUND = Discovered(
 
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """PROJECT を書いた dir を今の dir にし(Rust の索引器は今の dir の下を読む)、import の path に足す。"""
+    """Make the dir where PROJECT was written the current dir (the Rust indexer reads under the current dir) and add it to the import path."""
     for relative, text in PROJECT.items():
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,7 +132,7 @@ INDEX = (
 
 @handler
 def fake_index(effect: FindSymbols, k: K):
-    """FindSymbols に INDEX の表で答える(Rust の索引器と同じく、tags を全部持ち、種類の合う行)。"""
+    """Answer FindSymbols from the INDEX table (like the Rust indexer: rows that have all the tags and match the kind)."""
     rows = tuple(
         row
         for row in INDEX
@@ -159,16 +159,16 @@ def broken_index(effect: FindSymbols, k: K):
 def test_an_index_that_cannot_be_built_is_logged_and_discovers_nothing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """失敗は program の中の 1 か所(discover)で受ける — run は例外を見ず、doeff run は既定の interpreter へ落ちる。"""
+    """The failure is caught in one place inside the program (discover) — run never sees the exception, and doeff run falls back to the default interpreter."""
     with caplog.at_level(logging.WARNING, logger="doeff.cli.discovery"):
         assert run(broken_index(discover(PROGRAM))) == Discovered(None, ())
     assert "cannot index myapp.features.auth.login" in caplog.text
 
 
 def _forget_doeff_indexer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """読み済みの doeff_indexer の内側の module を、この test の間だけ読み直させる(test の後に元へ戻る)。
+    """Make the already-loaded inner modules of doeff_indexer be re-imported only during this test (restored afterwards).
 
-    `from doeff_indexer import _native` は package の属性を先に見るので、sys.modules と一緒に package の属性も外す。
+    `from doeff_indexer import _native` looks at the package attribute first, so remove the package attribute together with sys.modules.
     """
     package = sys.modules["doeff_indexer"]
     for name in [name for name in sys.modules if name.startswith("doeff_indexer.")]:
@@ -179,12 +179,12 @@ def _forget_doeff_indexer(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_effect_and_its_answer_type_are_read_without_the_rust_extension(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FindSymbols と SymbolInfo は拡張の .so 無しに読め(test の handler が答えられる)、rust_indexer だけが拡張を読む。
-    doeff-indexer は在るのに拡張を読めない時、doeff run は黙らずに warning を出して探さない(構成のレビューの所見 A)。"""
+    """FindSymbols and SymbolInfo can be read without the extension .so (a test handler can answer), and only rust_indexer loads the extension.
+    When doeff-indexer is present but the extension cannot be loaded, doeff run does not stay silent: it emits a warning and does not search (finding A of the configuration review)."""
     _forget_doeff_indexer(monkeypatch)
     monkeypatch.setitem(
         sys.modules, "doeff_indexer._native", None
-    )  # import すると ModuleNotFoundError
+    )  # importing raises ModuleNotFoundError
     effects = importlib.import_module("doeff_indexer._effects")
     assert effects.FindSymbols("myapp").module_path == "myapp"
     with pytest.raises(ImportError, match=re.escape("doeff_indexer._native")):
@@ -197,7 +197,7 @@ def test_the_effect_and_its_answer_type_are_read_without_the_rust_extension(
 def test_without_doeff_indexer_doeff_run_discovers_nothing_quietly(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """doeff-indexer が入っていなければ discovery は任意の物なので、warning を出さずに探さない。"""
+    """If doeff-indexer is not installed, discovery is optional, so do not search and emit no warning."""
     _forget_doeff_indexer(monkeypatch)
     monkeypatch.setitem(sys.modules, "doeff_indexer", None)
     with caplog.at_level(logging.WARNING):

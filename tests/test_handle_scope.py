@@ -1,18 +1,18 @@
-"""関数の本体の中に書いた handle・defhandler が、外の関数に局所の名を作らない事の検。
+"""Test that handle / defhandler written inside a function body does not create names local to the enclosing function.
 
-handle と defhandler の実行時の展開は、`_doeff_do`・`_doeff_Resume`・`_doeff_Transfer`・`_doeff_Pass`・`_doeff_WithHandlerType` と
-節の終わり方の検めを書いた場所で import する(node の名は書き手の同じ名の effect を隠さない別名 —
-tests/test_handle_writer_names.py)。defk の本体(関数)の中でそれを import すると、名が関数全体の局所の名になり、同じ関数で先に
-読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちていた(fnk・do! と入れ子の defk の
-不具合と同じ形)。
+The runtime expansion of handle and defhandler imports `_doeff_do`, `_doeff_Resume`, `_doeff_Transfer`, `_doeff_Pass`, `_doeff_WithHandlerType`, and
+the clause-ending check at the place where it is written (node names are aliases that do not shadow an effect of the same name written by the author --
+tests/test_handle_writer_names.py). If that is imported inside the body of a defk (a function), the name becomes local to the whole function, and the `_doeff_do` of a traverse / for/do
+read earlier in the same function failed with UnboundLocalError (the same shape as the
+bugs with fnk, do!, and nested defk).
 
-handle は、import・検め・handler の組み立てをすぐ呼ぶ関数に入れ、本文(第 1 引数)だけを書いた場所で評価する — 本文は
-外の do の文脈に属する(`!` の yield は外の生成器の物)。defhandler は defk と同じく `_scoped-definition` で名だけを
-外へ束ねる。module の段は今までどおり並べる。
+handle puts the import, the check, and the handler assembly into an immediately-called function, and evaluates only the body (first argument) at the place where it is written -- the body
+belongs to the outer do context (the `!` yield belongs to the outer generator). defhandler binds only the names outward with `_scoped-definition`, like defk.
+At the module level, it is laid out as before.
 
-class の本体に直に書いた handle・defhandlerは、import が class の属性になり、節の関数から
-見えなかった。handle は関数の中と同じくすぐ呼ぶ関数に入れ、defhandler は import を handler を組む関数の中へ移す
-(名の定義は class の段に残す)。
+For handle / defhandler written directly in a class body, the import became a class attribute and was not
+visible from the clause functions. handle goes into an immediately-called function as inside a function, and defhandler moves the import into the function that assembles the handler
+(the name definition stays at the class level).
 """
 
 import builtins
@@ -30,8 +30,8 @@ from hy.compiler import hy_compile
 
 from doeff import Program, run
 
-# handle・defhandler の展開が書いた場所で import する名(handle.hy の `_do-import`・`_vm-imports`・`_clause-endings-import`、
-# 節の外の効果を素通しする宣言の `_doeff-declare-passes`、defhandler の宣言の `doeff_hy`)
+# Names that the expansion of handle / defhandler imports at the place where it is written (`_do-import`, `_vm-imports`, `_clause-endings-import` in handle.hy,
+# `_doeff-declare-passes` for the declaration that passes effects outside the clauses straight through, and `doeff_hy` in the defhandler declaration)
 _HANDLE_IMPORT_NAMES = frozenset(
     {
         "_doeff_do",
@@ -46,7 +46,7 @@ _HANDLE_IMPORT_NAMES = frozenset(
     }
 )
 
-# module の段の defk が在る(書き手の module の普通の形)— 外の関数が先に読む `_doeff_do` は module の globals に在る
+# A defk exists at the module level (the ordinary shape of an author's module) -- the `_doeff_do` that the outer function reads first is in the module's globals
 _HEADER = """
 (require doeff-hy.macros [defk do! <- traverse for/do handle defhandler])
 (import dataclasses [dataclass])
@@ -59,7 +59,7 @@ _HEADER = """
 
 
 def _eval_module(code: str, header: str = _HEADER) -> types.ModuleType:
-    """Hy の source を新しい module に読み込む — 検ごとに module の globals を分けるため。"""
+    """Read Hy source into a new module -- to keep each test's module globals separate."""
     mod = types.ModuleType("handle_scope")
     sys.modules["handle_scope"] = mod
     for form in hy.read_many(header + code):
@@ -68,12 +68,12 @@ def _eval_module(code: str, header: str = _HEADER) -> types.ModuleType:
 
 
 def _run(program: Program) -> object:
-    """handle を含む Program を、traverse / for/do の handler の下で走らせる。"""
+    """Run a Program containing handle under the traverse / for/do handler."""
     return run(scheduled(try_handler(fail_handler(sequential(program)))))
 
 
 _CASES = {
-    # 依頼の形: traverse の `_doeff_do` の読みの後に handle が来る
+    # Shape of the request: handle comes after the read of traverse's `_doeff_do`
     "handle-after-traverse": (
         """
         (defk subject [items]
@@ -84,7 +84,7 @@ _CASES = {
         """,
         112,
     ),
-    # 本文の `!` は外の defk の do の文脈で走る(すぐ呼ぶ関数に本文を入れると、その関数が生成器になる)
+    # The `!` in the body runs in the outer defk's do context (if the body goes into the immediately-called function, that function becomes a generator)
     "handle-body-bang-after-traverse": (
         """
         (defk subject [items]
@@ -95,7 +95,7 @@ _CASES = {
         """,
         103,
     ),
-    # 走らない枝の handle の後に traverse が来る(import は走らなくても名を局所にする)
+    # handle in a branch that does not run is followed by traverse (the import makes the name local even if it does not run)
     "handle-in-untaken-branch-then-traverse": (
         """
         (defk subject [items]
@@ -106,7 +106,7 @@ _CASES = {
         """,
         12,
     ),
-    # 節は let の名と、handle の後で代え直した外の局所の名を、走った時の値で読む
+    # The clause reads the let name, and the outer local name rebound after the handle, by the values at the time it ran
     "handle-clause-reads-outer-names": (
         """
         (defk subject [items]
@@ -132,7 +132,7 @@ _CASES = {
         """,
         103,
     ),
-    # 素の defn の for/do の `_doeff_do` の読みの後に handle が来る
+    # handle comes after the read of `_doeff_do` of for/do in a plain defn
     "handle-in-defn-after-for-do": (
         """
         (defn make [items]
@@ -145,7 +145,7 @@ _CASES = {
         """,
         103,
     ),
-    # 入れ子の defhandler(defk と同じ `_scoped-definition` の形)
+    # Nested defhandler (the shape of the same `_scoped-definition` as defk)
     "defhandler-in-defk-after-traverse": (
         """
         (defk subject [items]
@@ -180,7 +180,7 @@ def test_handle_inside_function_runs(source: str, expected: object) -> None:
 
 @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
 def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
-    """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+    """The names that handle / defhandler import do not appear in the outer function's locals (or closure cells) -- if they did, the earlier read would be unbound."""
     mod = _eval_module(source)
     for outer in (mod.subject, getattr(mod, "make", mod.subject)):
         code = getattr(outer, "__doeff_generator_function__", outer).__code__
@@ -188,7 +188,7 @@ def test_outer_function_binds_no_handle_import(source: str, expected: object) ->
 
 
 def _module_globals_view(mod: types.ModuleType) -> dict[str, tuple[int, int | None]]:
-    """module の globals の名ごとの (値の id, 入れ物なら要素の数) — 外の関数を呼んで globals に名や記録が増えたかを比べるため。"""
+    """Per name in module globals, (id of the value, element count if a container) -- to compare whether calling the outer function added names or records to globals."""
     return {
         name: (id(value), len(value) if isinstance(value, list | dict | set | tuple) else None)
         for name, value in vars(mod).items()
@@ -199,8 +199,8 @@ def _module_globals_view(mod: types.ModuleType) -> dict[str, tuple[int, int | No
 def test_handle_inside_function_leaves_module_globals_unchanged(
     source: str, expected: object
 ) -> None:
-    """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
-    呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+    """handle / defhandler inside a function add no name or record to the module globals however many times the outer function is called -- the sequence of wrapped statements is
+    evaluated on every call (the burden of the caller of `_scoped-definition`)."""
     mod = _eval_module(source)
     before = _module_globals_view(mod)
     assert _run(mod.subject([1, 2, 3])) == expected
@@ -217,8 +217,8 @@ _HOSTS = {
 
 @pytest.mark.parametrize(("source", "names"), _HOSTS.values(), ids=_HOSTS.keys())
 def test_host_function_gets_only_its_own_names(source: str, names: list[str]) -> None:
-    """handle・defhandler だけを書いた関数は、Hy が作る一意の名(`_hy_` の頭 — 展開の中の関数の名)と定義した名の外に、
-    局所の名も閉包の cell も持たない(import する名の一覧に依らない検)。"""
+    """A function that contains only handle / defhandler has, besides the unique names Hy creates (prefix `_hy_` -- names of functions inside the expansion) and the defined names,
+    no local names or closure cells (a test that does not depend on the list of imported names)."""
     code = _eval_module(source).host.__code__
     assert [
         name for name in code.co_varnames + code.co_cellvars if not name.startswith("_hy_")
@@ -228,13 +228,13 @@ def test_host_function_gets_only_its_own_names(source: str, names: list[str]) ->
 _HALT = """
 (defclass [(dataclass :frozen True)] Halt [EffectBase]
   (setv __doeff_resumption__ Resumption.NEVER))
-(defn body-evaluated [] (raise (AssertionError "本文が検めより先に評価された")))
+(defn body-evaluated [] (raise (AssertionError "the body was evaluated before the check")))
 """
 
-# 検めの ClauseEndingError は TypeError の子(clause_endings.hy は .hy なので型検査から引けず、基の型と文言で受ける)
-_HALT_RESUMED = r"Halt は再開しない effect\(Resumption\.NEVER\)"
+# The check's ClauseEndingError is a subclass of TypeError (clause_endings.hy is a .hy file so it cannot be looked up for type checking; it is caught by the base type and the wording)
+_HALT_RESUMED = r"Halt is an effect that is never resumed \(Resumption\.NEVER\)"
 
-# 本文の形: 素の式と、Hy が本文の文の部分を本文の式より前の文へ出す形(`do` の前の文・let の束ね)
+# Shapes of the body: a plain expression, and the shape in which Hy lifts the statement part of the body into statements before the body expression (a statement before `do`, a let binding)
 _BODIES = {
     "expression": "(body-evaluated)",
     "statement-before-the-program": "(do (body-evaluated) (bump-n 1))",
@@ -244,17 +244,17 @@ _BODIES = {
 
 @pytest.mark.parametrize("body", _BODIES.values(), ids=_BODIES.keys())
 def test_handle_checks_clause_endings_before_the_body(body: str) -> None:
-    """関数の中の handle も、節の終わり方の検めを本文より前に済ませる — 検めが落ちたら本文は評価されない。本文を先に
-    評価すると `body-evaluated` の AssertionError になる(設計検証の盲検 A — 被せる関数を
-    本文と同じ式の中で作ると、Hy が前へ出した本文の文の部分が検めより先に走った)。"""
+    """handle inside a function also finishes the clause-ending check before the body -- if the check fails, the body is not evaluated. If the body were evaluated
+    first, it would hit the AssertionError of `body-evaluated` (blind test A of the design verification -- when the function to wrap was built
+    in the same expression as the body, the statement part of the body that Hy lifted forward ran before the check)."""
     mod = _eval_module(_HALT + f"(defn subject [] (abs 1) (handle {body} (Halt [] (resume 0))))")
     with pytest.raises(TypeError, match=_HALT_RESUMED):
         mod.subject()
 
 
 def test_handle_checks_clause_endings_before_the_body_performs_an_effect() -> None:
-    """defk の本体の handle の本文の `!` は、検めが落ちる時に外の effect を出さない — 出すと Bump の handler が無いので
-    UnhandledEffect になる。"""
+    """The `!` in the body of a handle in a defk body does not emit an outer effect when the check fails -- if it did, there is no Bump handler, so
+    it would be UnhandledEffect."""
     mod = _eval_module(
         _HALT
         + """
@@ -268,9 +268,9 @@ def test_handle_checks_clause_endings_before_the_body_performs_an_effect() -> No
 
 
 def test_handle_checks_clause_endings_at_every_evaluation() -> None:
-    """節の effect の型は評価のたびに閉包から読むので、同じ handle を評価するたびに検める — 前の評価で通った型の記憶で
-    後の評価の検めを飛ばすと、再開しない effect を resume する handler が黙って作られる(設計検証の
-    盲検 B — 検めを書いた場所ごとに 1 回にする変更)。"""
+    """The type of a clause's effect is read from the closure on every evaluation, so the check runs each time the same handle is evaluated -- if the memory of a type that passed in an earlier evaluation
+    skipped the check of a later evaluation, a handler that resumes an effect that is never resumed would be silently built (blind test B of the design
+    verification -- a change that made the check once per place it is written)."""
     mod = _eval_module(
         _HALT
         + """
@@ -285,8 +285,8 @@ def test_handle_checks_clause_endings_at_every_evaluation() -> None:
 
 
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:
-    """module の段の handle・defhandler と、class の本体の defhandler の定義は包まない — 包むと `__qualname__`(pickle の
-    名の引き)が変わる。class の本体の defhandler は import だけを handler を組む関数の中へ移す。"""
+    """The definitions of handle / defhandler at the module level and of defhandler in a class body are not wrapped -- wrapping would change `__qualname__` (the lookup of the
+    pickle name). defhandler in a class body moves only the import into the function that assembles the handler."""
     mod = _eval_module(
         """
         (defhandler top-h [base] (Bump [n] (resume (+ n base))))
@@ -299,19 +299,19 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     assert run(mod.top_h(5)(mod.bump_n(1))) == 6
     assert run(mod.Holder.inner_h(5)(mod.bump_n(1))) == 6
     assert run(mod.program) == 101
-    # module の段の handle の import は今までどおり module の globals に置く。handle だけの module で確かめる — 同じ module の
-    # defhandler の import も WithHandler を置くので、上の module では handle を包んでも通っていた(設計検証の
-    # S3 の失敗例)
+    # The import of handle at the module level is placed in the module globals as before. Check with a module that has only handle -- the import of defhandler in the same module
+    # also places WithHandler, so in the module above it passed even when handle was wrapped (the failing case of
+    # S3 in the design verification)
     handle_only = _eval_module("(setv program (handle (bump-n 1) (Bump [n] (resume (+ n 100)))))")
     assert run(handle_only.program) == 101
     assert "_doeff_WithHandlerType" in vars(handle_only)
 
 
-# class の本体に直に書いた handle・defhandler。class の本体の import は class の属性になり、展開の
-# 中で作る関数(節の関数・handler を組む関数・本文に被せる関数)は名を引く時に class の段を飛ばすので見えない — 直す前は
-# handle の節の Transfer・Resume・Pass、defhandler の _doeff_do・_doeff_check_clause_endings_once が NameError だった。
-# module の段に defk・handle・defhandler が在ると、その import が module の globals に名を置いて穴を隠すので、class 1 つ
-# だけの module で読む(本文は effect そのもの)。
+# handle / defhandler written directly in a class body. The import in a class body becomes a class attribute, and the functions created inside the expansion
+# (clause functions, the function that assembles the handler, the function that wraps the body) skip the class level when looking up names, so they cannot see it -- before the fix,
+# Transfer, Resume, Pass in handle clauses and _doeff_do, _doeff_check_clause_endings_once in defhandler were NameError.
+# If a defk, handle, or defhandler exists at the module level, its import places names in the module globals and hides the hole, so read it with a module of
+# a single class (the body is the effect itself).
 _CLASS_ONLY_HEADER = """
 (require doeff-hy.handle [handle defhandler])
 (import dataclasses [dataclass])
@@ -321,12 +321,12 @@ _CLASS_ONLY_HEADER = """
 """
 
 _CLASS_BODY_CASES = {
-    # 末尾の resume は Transfer になる(_tail-resume-to-transfer)
+    # A trailing resume becomes Transfer (_tail-resume-to-transfer)
     "handle-transfer": (
         "(defclass C [] (setv program (handle (Bump 1) (Bump [n] (resume (+ n 100))))))",
         lambda mod: mod.C.program,
     ),
-    # try の中の resume は Resume のまま
+    # A resume inside try stays Resume
     "handle-resume": (
         """
         (defclass C []
@@ -335,7 +335,7 @@ _CLASS_BODY_CASES = {
         """,
         lambda mod: mod.C.program,
     ),
-    # :when の外れた節は Pass で外の handler へ渡す
+    # A clause whose :when does not match passes to the outer handler with Pass
     "handle-when-guard-pass": (
         """
         (defclass C []
@@ -352,7 +352,7 @@ _CLASS_BODY_CASES = {
         "(defclass C [] (defhandler h [base] (Bump [n] (resume (+ n base)))))",
         lambda mod: mod.C.h(100)(mod.Bump(1)),
     ),
-    # session var の節は Get・Put・Some と session の鍵を読む
+    # A session var clause reads Get, Put, Some and the session key
     "defhandler-session-var": (
         """
         (defclass C []
@@ -360,7 +360,7 @@ _CLASS_BODY_CASES = {
         """,
         lambda mod: mod.C.h(mod.Bump(1)),
     ),
-    # 節の `<-` は外の handler(同じ class の outer)へ effect を出して答えを束ねる
+    # `<-` in a clause emits an effect to the outer handler (outer in the same class) and binds the answer
     "defhandler-bind": (
         """
         (defclass C []
@@ -373,7 +373,7 @@ _CLASS_BODY_CASES = {
 
 
 def _run_with_state(program: Program) -> object:
-    """class の本体の handle・defhandler の Program を走らせる — session var の Get・Put を state の handler が受ける。"""
+    """Run the Program of handle / defhandler in a class body -- the state handler receives Get and Put of the session var."""
     return run(scheduled(state(initial={})(program)))
 
 
@@ -383,14 +383,14 @@ def _run_with_state(program: Program) -> object:
 def test_class_body_handle_clauses_read_their_operations(
     source: str, program: Callable[[types.ModuleType], Program]
 ) -> None:
-    """class の本体に直に書いた handle・defhandler の節が Transfer・Resume・Pass を読んで走る — 直す前は NameError。"""
+    """The clauses of handle / defhandler directly in a class body run reading Transfer, Resume, Pass -- NameError before the fix."""
     mod = _eval_module(source, header=_CLASS_ONLY_HEADER)
     assert _run_with_state(program(mod)) == 101
 
 
-# 書き手の module が handle の展開と同じ名を別の物に束ねている形(例えば振込の effect の Transfer)
+# A shape where the author's module binds the same names as the handle expansion to something else (for example the Transfer effect of a bank transfer)
 _MODULE_OWN_NAMES = """
-(setv Transfer "書き手の Transfer" Resume "書き手の Resume" Pass "書き手の Pass")
+(setv Transfer "author's Transfer" Resume "author's Resume" Pass "author's Pass")
 """
 
 
@@ -400,30 +400,30 @@ _MODULE_OWN_NAMES = """
 def test_class_body_handle_leaves_module_globals_alone(
     source: str, program: Callable[[types.ModuleType], Program]
 ) -> None:
-    """class の本体の handle・defhandler は、節が読む名を module の globals に置かず、そこから読まない — 書き手の module の
-    同じ名(Transfer など)を変えず、節もそれに左右されない。補助を module の globals へ setdefault で入れる直し(defk の
-    `_install-guard-globals` の形)だと、書き手の Transfer が残って節がそれを読み、import で入れる直しだと書き手の名を
-    上書きする。"""
+    """handle / defhandler in a class body do not place the names the clauses read in the module globals, and do not read from there -- they leave the author's module's
+    same names (Transfer etc.) unchanged, and the clauses are not affected by them. A fix that puts helpers into the module globals with setdefault (the shape of defk's
+    `_install-guard-globals`) would leave the author's Transfer in place and the clauses would read it, and a fix that imports would
+    overwrite the author's names."""
     mod = _eval_module(_MODULE_OWN_NAMES + source, header=_CLASS_ONLY_HEADER)
     bare = _eval_module(_MODULE_OWN_NAMES + "(defclass C [])", header=_CLASS_ONLY_HEADER)
     assert _run_with_state(program(mod)) == 101
     assert sorted(vars(mod)) == sorted(vars(bare))
     assert (mod.Transfer, mod.Resume, mod.Pass) == (
-        "書き手の Transfer",
-        "書き手の Resume",
-        "書き手の Pass",
+        "author's Transfer",
+        "author's Resume",
+        "author's Pass",
     )
 
 
-# class の本体の展開の中で作る関数が global で引いてよい名: builtins と、session の鍵が読む module の `__name__`
-# (_build-lazy-init-forms)。この外は、書き手が handle・defhandler に書いた名(effect の型・節の本文の名)だけ。
+# Names that functions created inside the expansion of a class body may look up as global: builtins, and the module `__name__` that the session key reads
+# (_build-lazy-init-forms). Beyond these, only the names the author wrote in handle / defhandler (effect types and names in clause bodies).
 _GLOBALS_ALWAYS_ALLOWED = frozenset(dir(builtins)) | {"__name__"}
 
-# 構造の検だけで読む形も足す(節の操作・束ね・宣言・session val の展開を通す — 走らせない)
+# Also add shapes read only by the structure tests (go through clause operations, binding, declarations, and the expansion of session val -- not run)
 _CLASS_BODY_SHAPES = {
     **{name: source for name, (source, _) in _CLASS_BODY_CASES.items()},
     "handle-reperform": "(defclass C [] (setv program (handle (Bump 1) (Bump [n] (reperform effect)))))",
-    "defhandler-finish": '(defclass C [] (defhandler h (Bump [n] :finish-reason "期限" (finish n))))',
+    "defhandler-finish": '(defclass C [] (defhandler h (Bump [n] :finish-reason "deadline" (finish n))))',
     "defhandler-declared-session-val": """
         (defclass C []
           (defhandler h {:effects [Scale]} (session val base (abs 1))
@@ -433,8 +433,8 @@ _CLASS_BODY_SHAPES = {
 
 
 def _written_names(source: str) -> frozenset[str]:
-    """source に書き手が書いた名(Python の綴り)。defhandler の定義の名は除く — 展開の中の関数がそれを名で読むと、
-    class の本体では class の属性を飛ばして module の globals を引く。"""
+    """Names (in Python spelling) the author wrote in source. Excludes the defined name of defhandler -- if a function inside the expansion read it by name,
+    in a class body it would skip the class attribute and look up the module globals."""
     names: set[str] = set()
 
     def walk(form: object) -> None:
@@ -453,7 +453,7 @@ def _written_names(source: str) -> frozenset[str]:
 
 
 def _class_body_code(source: str) -> types.CodeType:
-    """class 1 つだけの module を compile し、class C の本体の code を返す(走らせない)。"""
+    """Compile a module with a single class and return the code of the body of class C (not run)."""
     mod = types.ModuleType("handle_scope")
     sys.modules["handle_scope"] = mod
     tree = hy_compile(hy.read_many(_CLASS_ONLY_HEADER + source), mod)
@@ -466,7 +466,7 @@ def _class_body_code(source: str) -> types.CodeType:
 
 
 def _nested_global_loads(code: types.CodeType) -> set[str]:
-    """code の中で作る関数(入れ子の code)が global で引く名。class の本体そのものの名の引きは数えない。"""
+    """Names that functions created inside code (nested code) look up as global. Lookups of the class body itself are not counted."""
     names: set[str] = set()
     for const in code.co_consts:
         if isinstance(const, types.CodeType):
@@ -481,10 +481,10 @@ def _nested_global_loads(code: types.CodeType) -> set[str]:
 
 @pytest.mark.parametrize("source", _CLASS_BODY_SHAPES.values(), ids=_CLASS_BODY_SHAPES.keys())
 def test_class_body_handle_functions_load_only_written_globals(source: str) -> None:
-    """class の本体の handle・defhandler の展開の中で作る関数(節の関数・handler を組む関数・本文に被せる関数)は、builtins・
-    `__name__`・書き手が書いた名の外を global で引かない。展開が名で読む物は組む関数の中で import して閉包から読む —
-    class の本体で並べた import や定義の名は class の属性になり、関数からは class の段を飛ばして module の globals を
-    引く。import の名の一覧に依らない検で、走らせる検が通らない節の形も捉える(設計検証の
-    盲検 B: 節が定義の名 `h` を名で読む変更が、走らせる検を通った)。"""
+    """Functions created inside the expansion of handle / defhandler in a class body (clause functions, the function that assembles the handler, the function that wraps the body) do not look up anything global beyond builtins,
+    `__name__`, and the names the author wrote. What the expansion reads by name is imported inside the assembling function and read from the closure --
+    names imported or defined at the class level become class attributes, and a function skips the class level and looks up the module globals. A test that does not depend on the list of imported names,
+    and also catches clause shapes that the running tests miss (design verification
+    blind B: a change in which a clause reads the defined name `h` by name passed the running tests)."""
     loaded = _nested_global_loads(_class_body_code(source))
     assert loaded - _GLOBALS_ALWAYS_ALLOWED - _written_names(source) == set()

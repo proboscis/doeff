@@ -1,12 +1,12 @@
-"""doeff-claude-judge が Claude の CLI の process を自分で起こさないことの陽性対照と弁別。
+"""Positive control and discrimination: doeff-claude-judge must not start a Claude CLI process itself.
 
-判定の handler は 1 回きりの print の effect(doeff_claude_code の ClaudePrintOnce)を出すだけで、process(argv・資格の置き場・
-待ちの上限・止め方)は doeff-claude-code の handler が持つ。規則 doeff-claude-judge-starts-no-process は、doeff-claude-judge の src で
-process を起こす形(subprocess の import・os.system・asyncio の子 process)を断る — CLI の綴りと資格の渡し方の 2 か所目を作らない。
+The judgement handler only emits a one-shot print effect (ClaudePrintOnce of doeff_claude_code); the process (argv, credential location,
+wait limit, how to stop it) belongs to the doeff-claude-code handler. The rule doeff-claude-judge-starts-no-process rejects, in the src of doeff-claude-judge,
+shapes that start a process (importing subprocess, os.system, asyncio child processes) -- so that a second place for the CLI spelling and credential passing is not created.
 
-- 1 本目: fixture の失敗の形(1・2 行目の subprocess の import・8 行目の os.system・9 行目の asyncio の子 process)が断られ、
-  effect を返すだけの関数は断られない。
-- 2 本目: 実物の package の src は断られない。
+- Test 1: the fixture's failing shapes (the subprocess imports on lines 1 and 2, os.system on line 8, the asyncio child process on line 9) are rejected, and
+  a function that only returns an effect is not rejected.
+- Test 2: the real package's src is not rejected.
 """
 
 from __future__ import annotations

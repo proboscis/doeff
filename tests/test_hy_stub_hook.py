@@ -1,7 +1,7 @@
-"""commit の hook scripts/check_hy_stubs.py の失敗ケース。
+"""Failure cases of the commit hook scripts/check_hy_stubs.py.
 
-.hy だけを変えて隣の .pyi を作り直さない commit は止まり、作り直せば通る。afaf956cd(kube.hy に import を足して kube.pyi を直し忘れた)の
-形を、小さな package の .hy で再現する。
+A commit that changes only .hy and does not regenerate the neighboring .pyi is stopped, and passes once regenerated. Reproduces the shape of afaf956cd (added an import to kube.hy and forgot to fix kube.pyi)
+with a small package of .hy.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ AFTER = BEFORE + "(defn triple [x] (* x 3))\n"
 
 @pytest.fixture(autouse=True)
 def _project_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """hook の script が呼ぶ uv run は、検の repo でなく本物の木の環境(doeff_hy が入った物)を使う。"""
+    """The uv run called by the hook script uses the environment of the real tree (the one with doeff_hy installed), not the repo under test."""
     monkeypatch.setenv("UV_PROJECT", str(ROOT))
 
 

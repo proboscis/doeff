@@ -6,7 +6,7 @@ them into ``\\n``), and recommends no CLI flag to a program run from Python — 
 CLI adds its own ``--hy`` hint (tests/cli/test_cli_missing_env_key_hint.py).
 The error stays a KeyError, so ``except KeyError`` still catches it.
 
-Card: doeff-publish 8 の誤りの表の 7 (e08_reader_missing_key).
+Card: doeff-publish 8 of the error table, 7 (e08_reader_missing_key).
 """
 
 from __future__ import annotations

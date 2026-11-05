@@ -1,4 +1,4 @@
-# Try の答えの型と Ok / Err の読み方
+# The answer type of Try and how to read Ok / Err
 from collections.abc import Generator
 from typing import Any, assert_type
 
@@ -21,6 +21,6 @@ def main() -> Generator[Any, Any, int]:
         assert_type(r.value, int)
         return r.value
     assert_type(r, Err[Exception])
-    assert_type(r.error, Exception)  # 抜け 5 — 直った
-    s: str = r.value  # expect-error (Err に value は無い)
+    assert_type(r.error, Exception)  # gap 5 -- fixed
+    s: str = r.value  # expect-error (Err has no value)
     return 0

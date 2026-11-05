@@ -1,12 +1,12 @@
-"""席の家へ symlink を据える物理が 1 点から漏れないこと(決定 D8)の陽性対照と弁別。
+"""Positive control and discrimination for the physics of placing a symlink in a seat's home not leaking out of one point (decision D8).
 
-規則が守るのは「据え付けは 1 つの動詞(substrate.hy ensure-symlink-outcome)」で、その動詞だけが
-一意な名の仮の symlink を rename(2) 1 手で被せる。外で hand-roll すると、家を同じ拍で共有する
-2 席の片方が落ち(実測 200/200・198/200)、張り替えの間に読んだ席が根の無い瞬間を見る(52〜53 %)。
+What the rule protects is that "installation is one verb (substrate.hy ensure-symlink-outcome)", and only that verb
+covers the target with a temporary symlink of a unique name in a single rename(2) step. If hand-rolled outside, one of two seats sharing a home on the same beat
+drops out (measured 200/200 and 198/200), and a seat reading during the re-pointing sees a moment with no root (52-53 %).
 
-⚠ 弁別が要るのは、この規則が **file 単位の exclude** で出荷の 1 点を通しているから — exclude の
-綴りが動くと、規則は黙って本体ごと沈黙する(陽性対照だけでは気づけない)。下の 2 本目が、
-出荷の動詞の file には現に綴りが在り、exclude がそれを通していることを押さえる。
+⚠ Discrimination is needed because this rule lets the one shipped point through with a **file-level exclude** -- if the exclude's
+spelling moves, the rule silently goes quiet entirely (a positive control alone cannot notice). The 2nd test below pins that
+the shipped verb's file does contain the spelling and that the exclude lets it through.
 """
 
 from __future__ import annotations
@@ -37,16 +37,16 @@ def test_symlink_install_outside_the_one_verb_is_rejected() -> None:
     findings = _semgrep_results(
         root / ".semgrep.yaml", FIXTURE, cwd=root / "tests/semgrep/fixtures/python"
     )
-    # 2 行目 = os.symlink / 3 行目 = Path.symlink_to / 4 行目 = shell の `ln -sfn`
-    # (BSD の ln は原子的でない — 規則の文言が禁じている物理の中で最悪)。
-    # 委ねる形と読みの syscall は外れる。
+    # 2nd line = os.symlink / 3rd line = Path.symlink_to / 4th line = shell `ln -sfn`
+    # (BSD ln is not atomic -- the worst of the physics the rule's wording forbids).
+    # Delegating forms and read syscalls are not matched.
     assert _hits(findings, RULE) == [2, 3, 4]
 
 
 def test_the_one_verb_itself_stays_green() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / VERB_FILE).read_text(encoding="utf-8")
-    # 対照の前提: 出荷の動詞の file には現に綴りが在る(無ければ下の緑は無意味)。
+    # Precondition of the control: the shipped verb's file does contain the spelling (otherwise the green below is meaningless).
     assert "os.symlink" in source
     findings = _semgrep_results(root / ".semgrep.yaml", VERB_FILE, cwd=root)
     assert _hits(findings, RULE) == []

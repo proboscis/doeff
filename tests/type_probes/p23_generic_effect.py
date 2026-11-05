@@ -1,4 +1,4 @@
-# 型の引数を持つ自作の effect の親(docs/23 の WriteEffect を正しく書いた形)
+# Parent of a custom effect with type arguments (the correct way to write WriteEffect of docs/23)
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, assert_type

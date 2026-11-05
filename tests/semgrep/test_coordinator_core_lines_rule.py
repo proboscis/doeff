@@ -1,7 +1,7 @@
-"""coordinator の core が行の送り先を知らない事の陽性対照と弁別(設計検証)。
+"""Positive control and discrimination that the coordinator's core does not know where lines are sent (design verification).
 
-送りの配線(line_stamp の process_lines)は入口 coordinator/entry/main.hy だけが持つ。code-quality の module doeff-cluster-coordinator
-は core と入口を 1 つに持つので、入口のための許しが core にも効く — 規則が core からの import を断る。
+The sending wiring (line_stamp's process_lines) is held only by the entry coordinator/entry/main.hy. The code-quality module doeff-cluster-coordinator
+holds the core and the entry as one, so the allowance made for the entry also applies to the core -- the rule refuses imports from the core.
 """
 
 from __future__ import annotations
@@ -26,13 +26,13 @@ def _hits(findings: list[dict], rule: str) -> list[int]:
 def test_the_core_importing_the_line_shipping_is_rejected() -> None:
     root = Path(__file__).resolve().parents[2]
     findings = _semgrep_results(root / ".semgrep.yaml", FIXTURE, cwd=root / "tests/semgrep/fixtures/python")
-    # 2 行目 = line_stamp の import。4 行目(送りに触れない import)は当たらない。
+    # Line 2 = the import of line_stamp. Line 4 (an import that does not touch sending) is not matched.
     assert _hits(findings, RULE) == [2]
 
 
 def test_the_entry_wires_the_shipping_and_the_core_stays_green() -> None:
     root = Path(__file__).resolve().parents[2]
-    # 対照の前提: 入口には現に綴りが在る(無ければ下の緑は範囲の外れを示さない)。
+    # Premise of the control: the entry does in fact have the spelling (if it did not, the green below would not show that the scope was missed).
     assert "doeff_cluster._worker.entry.line_stamp" in (root / ENTRY).read_text(encoding="utf-8")
     assert _hits(_semgrep_results(root / ".semgrep.yaml", ENTRY, cwd=root), RULE) == []
     assert _hits(_semgrep_results(root / ".semgrep.yaml", CORE, cwd=root), RULE) == []

@@ -1,12 +1,12 @@
-"""commit の hook の doeff-linter と semgrep(Python)の所見を基点と比べる道具(scripts/hook_finding_baseline.py)の検。
+"""Tests for the tool (scripts/hook_finding_baseline.py) that compares doeff-linter and semgrep (Python) findings in the commit hook against a baseline.
 
-失敗ケース(#2848 の決め): 前からの所見の在る file に新しい所見を 1 つ足すと止まる・足さなければ通る・前からの所見を直したのに
-基点が古いと赤。基点の鍵は行番号に依らない。
-doeff-linter(#2906 の 2 便目の失敗ケース): 探し道の linter は呼ばず、基点の鍵と同じ組み立ての入力の binary を land-arm の開発版 →
-断面の置き場から探す・鍵は linter の検だけの変更では動かず path 依存(indexer)の src で動く・置き場に無ければ「測れない」と
-名指して通す・lower は渡した build の鍵を書く・HEAD の鍵の binary が無ければ書かずに止まる。
-semgrep(#2906 の失敗ケース): 探し道の semgrep の版に依らず uv.lock の版を呼ぶ・lock の版が基点と違えば名指して赤・lock に semgrep が
-無ければ探し道へ戻らず止まる。
+Failure cases (decided in #2848): adding one new finding to a file that has pre-existing findings stops; adding none passes; fixing pre-existing findings
+while the baseline is stale is red. The baseline key does not depend on line numbers.
+doeff-linter (failure cases of the 2nd part of #2906): the linter on the search path is not called; the binary with the same build-input key as the baseline is looked up in the land-arm dev build, then
+the snapshot location; the key does not move on linter-test-only changes but moves on the src of path dependencies (indexer); when absent from the location, it names "cannot measure" and passes;
+lower writes the key of the build passed in; when the binary for HEAD's key is absent, it stops without writing.
+semgrep (failure cases of #2906): the uv.lock version is called regardless of the search-path semgrep version; a lock version that differs from the baseline is red, by name; with no semgrep in the lock,
+it stops without falling back to the search path.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ LOCKED: Path = ROOT / "scripts" / "semgrep_locked.py"
 
 
 def _module(name: str, path: Path) -> ModuleType:
-    """script を module として読み、純粋な関数を直に試すため(同じ dir の module を import する script は、先にその module を読む)。"""
+    """Load the script as a module to try its pure functions directly (a script that imports a module in the same dir reads that module first)."""
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module: ModuleType = importlib.util.module_from_spec(spec)
@@ -52,7 +52,7 @@ def test_a_new_finding_in_a_file_with_old_findings_is_red() -> None:
 
 
 def test_the_same_findings_on_moved_lines_pass() -> None:
-    # 鍵は file × 規則の数 — 行がずれただけ(数が同じ)なら比べに出ない。
+    # The key is file x rule count -- if lines only shift (same count), it does not show up in the comparison.
     comparison = TOOL.compare(BASE, {"DOEFF016": {"pkg/a.py": 2, "pkg/b.py": 1}}, None)
     assert comparison.grown == () and comparison.stale == ()
 
@@ -64,7 +64,7 @@ def test_a_fix_without_lowering_the_baseline_is_red() -> None:
 
 
 def test_only_the_measured_files_are_compared() -> None:
-    # commit の hook は commit に入る file だけを測る — 測っていない b.py が 0 に見えても下げ忘れにしない。
+    # The commit hook measures only files that go into the commit -- even if an unmeasured b.py looks like 0, it is not treated as a forgotten lowering.
     comparison = TOOL.compare(BASE, {"DOEFF016": {"pkg/a.py": 2}}, frozenset({"pkg/a.py"}))
     assert comparison.grown == () and comparison.stale == ()
 
@@ -89,10 +89,10 @@ def test_semgrep_results_are_counted_by_the_rule_name(tmp_path: Path) -> None:
     assert TOOL.semgrep_counts(report, tmp_path) == {"doeff-no-sleep-in-tests": {"tests/t.py": 2}}
 
 
-# --- 入口から(一時の git repo と、file の中の BAD の数を error として名乗る偽の linter)-----------------------------------
-# doeff-linter は、基点の鍵と同じ組み立ての入力の binary を land-arm の開発版 → 断面の置き場から探して呼ぶ(#2906)。rig は一時の repo に
-# 偽の crate(linter と path 依存の indexer)を commit し、HOME を一時の dir に向けて偽の開発版・断面の置き場を置く。探し道の
-# doeff-linter は呼ばれたら印を残す。
+# --- From the entrypoint (a temp git repo, and a fake linter that reports the number of BADs in a file as errors) -----------------------------------
+# doeff-linter looks up and calls the binary with the same build-input key as the baseline in the land-arm dev build, then the snapshot location (#2906). The rig commits
+# a fake crate (linter and path-dependency indexer) into a temp repo, points HOME at a temp dir, and places the fake dev build and snapshot location. The search-path
+# doeff-linter leaves a marker when called.
 
 FAKE_LINTER = """\
 import json, sys
@@ -110,14 +110,14 @@ raise SystemExit(1 if violations else 0)
 
 FAKE_PATH_LINTER = """\
 from pathlib import Path
-Path(__file__).with_name("called").write_text("探し道の doeff-linter が呼ばれた\\n")
-raise SystemExit("探し道の doeff-linter が呼ばれた")
+Path(__file__).with_name("called").write_text("the search-path doeff-linter was called\\n")
+raise SystemExit("the search-path doeff-linter was called")
 """
 
 CRATES: dict[str, str] = {
     "packages/doeff-linter/Cargo.toml": '[package]\nname = "doeff-linter"\n\n[dependencies]\ndoeff-indexer = { path = "../doeff-indexer" }\n',
     "packages/doeff-linter/src/main.rs": "fn main() {}\n",
-    "packages/doeff-linter/tests/t.rs": "// 検\n",
+    "packages/doeff-linter/tests/t.rs": "// test\n",
     "packages/doeff-indexer/Cargo.toml": '[package]\nname = "doeff-indexer"\n',
     "packages/doeff-indexer/src/lib.rs": "// indexer\n",
 }
@@ -125,7 +125,7 @@ CRATES: dict[str, str] = {
 
 @dataclass(frozen=True)
 class Rig:
-    """一時の git repo の根・子の環境(呼び手の環境を写さない)・偽の land-arm の開発版と断面の置き場。"""
+    """Root of a temp git repo, the child environment (does not copy the caller's), and the fake land-arm dev build and snapshot location."""
 
     repo: Path
     environment: dict[str, str]
@@ -134,7 +134,7 @@ class Rig:
 
 
 def _commit(rig: Rig, message: str) -> str:
-    """一時の repo の今の木を commit して sha を返すため。"""
+    """Commit the current tree of the temp repo and return the sha."""
     subprocess.run(["git", "add", "-A"], cwd=rig.repo, env=rig.environment, check=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", message],
                    cwd=rig.repo, env=rig.environment, check=True)
@@ -143,7 +143,7 @@ def _commit(rig: Rig, message: str) -> str:
 
 
 def _place_linter(directory: Path, commit: str) -> Path:
-    """偽の linter を directory に置き、commit から組んだ物として名乗らせるため。"""
+    """Place the fake linter in a directory and have it pose as built from a commit."""
     directory.mkdir(parents=True, exist_ok=True)
     linter = directory / "doeff-linter"
     linter.write_text(f"#!{sys.executable}\n{FAKE_LINTER}")
@@ -153,19 +153,19 @@ def _place_linter(directory: Path, commit: str) -> Path:
 
 
 def _install_dev(rig: Rig, commit: str) -> None:
-    """偽の land-arm の開発版を commit の物に置き換えるため(記録 installed.json の commit も)。"""
+    """Replace the fake land-arm dev build with the one for a commit (including the commit in the installed.json record)."""
     _place_linter(rig.dev, commit)
     (rig.dev / "installed.json").write_text(json.dumps({"commit": commit}))
 
 
 def _change_linter_source(rig: Rig, text: str) -> str:
-    """linter の src を変えて commit するため(組み立ての入力の鍵が動く)。"""
+    """Change the linter's src and commit (the build-input key moves)."""
     (rig.repo / "packages" / "doeff-linter" / "src" / "main.rs").write_text(text)
-    return _commit(rig, "linter の src を変える")
+    return _commit(rig, "change linter src")
 
 
 def _rig(tmp_path: Path) -> Rig:
-    """一時の git repo(偽の crate と pkg の Python)と、その HEAD から組んだ偽の開発版を作るため。"""
+    """Create a temp git repo (fake crate and Python for pkg) and a fake dev build made from its HEAD."""
     repo = tmp_path / "repo"
     (repo / "pkg").mkdir(parents=True)
     (repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2\n")
@@ -178,26 +178,26 @@ def _rig(tmp_path: Path) -> Rig:
     path_linter = fake / "doeff-linter"
     path_linter.write_text(f"#!{sys.executable}\n{FAKE_PATH_LINTER}")
     path_linter.chmod(0o755)
-    # 置き場は HOME の下の決まった場所(scripts/doeff_linter_locked.py)— HOME を一時の dir に向けて差し替える。
-    # 子は自前の環境で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 明示で渡し、checkout(script の隣・
-    # .venv の site-packages)へ .pyc を書かない(書くと session の終わりの検 conftest.py が赤 — 新しい .venv で走る日次の実弾 2026-10-10)。
+    # The location is a fixed place under HOME (scripts/doeff_linter_locked.py) -- swap it by pointing HOME at a temp dir.
+    # The child starts with its own environment, so it does not inherit the root conftest's pin (PYTHONDONTWRITEBYTECODE=1) -- pass it explicitly so no .pyc is written
+    # into the checkout (next to the script / .venv site-packages) (if written, the session-end check conftest.py goes red -- the real daily run on a fresh .venv, 2026-10-10).
     environment = {"PATH": f"{fake}{os.pathsep}{os.defpath}", "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(tmp_path),
                    "PYTHONDONTWRITEBYTECODE": "1"}
     subprocess.run(["git", "init", "-q"], cwd=repo, env=environment, check=True)
     rig = Rig(repo=repo, environment=environment, dev=tmp_path / ".local" / "share" / "doeff-linter-dev",
               snapshots=tmp_path / ".cache" / "doeff-linter-snapshots")
-    _install_dev(rig, _commit(rig, "はじめ"))
+    _install_dev(rig, _commit(rig, "initial"))
     return rig
 
 
 def _run(rig: Rig, *argv: str) -> subprocess.CompletedProcess[str]:
-    """script を一時の repo の根で走らせるため。"""
+    """Run the script at the temp repo root."""
     return subprocess.run([sys.executable, str(SCRIPT), "--root", str(rig.repo), *argv],
                           env=rig.environment, capture_output=True, text=True, check=False)
 
 
 def _baseline_version(rig: Rig) -> str:
-    """一時の repo の doeff-linter の基点が名乗る版。"""
+    """The version the temp repo's doeff-linter baseline names."""
     return json.loads((rig.repo / "scripts" / "hook_finding_baseline" / "doeff-linter.json").read_text())["version"]
 
 
@@ -207,14 +207,14 @@ def test_the_hook_stops_only_a_new_finding_and_a_stale_baseline(tmp_path: Path) 
     baseline = json.loads((rig.repo / "scripts" / "hook_finding_baseline" / "doeff-linter.json").read_text())
     assert baseline["counts"] == {"DOEFF999": {"pkg/a.py": 1}}
 
-    # 前からの所見だけ(足さない)→ 通る
+    # Only pre-existing findings (none added) -> passes
     assert _run(rig, "check", "doeff-linter", "pkg/a.py").returncode == 0
-    # 前からの所見の在る file に新しい所見を 1 つ足す → 止まる
+    # Add one new finding to a file with pre-existing findings -> stops
     (rig.repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     added = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert added.returncode == 1
     assert "DOEFF999 pkg/a.py: 基点 1 → 今 2" in added.stderr
-    # 前からの所見を直したのに基点が古い → 赤。lower の後は通る。
+    # Pre-existing findings fixed but baseline stale -> red. Passes after lower.
     (rig.repo / "pkg" / "a.py").write_text("x = 1\ny = 2\n")
     fixed = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert fixed.returncode == 1
@@ -235,23 +235,23 @@ def test_a_tests_only_change_keeps_the_key_and_an_indexer_change_moves_it(tmp_pa
     rig = _rig(tmp_path)
     first = LINTER_LOCKED.input_key(rig.repo, "HEAD")
     assert first is not None
-    (rig.repo / "packages" / "doeff-linter" / "tests" / "t.rs").write_text("// 検を足す\n")
-    assert LINTER_LOCKED.input_key(rig.repo, _commit(rig, "linter の検だけ")) == first
-    (rig.repo / "packages" / "doeff-indexer" / "src" / "lib.rs").write_text("// indexer を変える\n")
-    assert LINTER_LOCKED.input_key(rig.repo, _commit(rig, "indexer の src")) != first
+    (rig.repo / "packages" / "doeff-linter" / "tests" / "t.rs").write_text("// add a test\n")
+    assert LINTER_LOCKED.input_key(rig.repo, _commit(rig, "linter tests only")) == first
+    (rig.repo / "packages" / "doeff-indexer" / "src" / "lib.rs").write_text("// change indexer\n")
+    assert LINTER_LOCKED.input_key(rig.repo, _commit(rig, "indexer src")) != first
 
 
 def test_a_baseline_whose_linter_is_not_built_is_named_as_unmeasured_and_passes(tmp_path: Path) -> None:
     rig = _rig(tmp_path)
     assert _run(rig, "init", "doeff-linter").returncode == 0
     built_for = _baseline_version(rig)
-    _install_dev(rig, _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n"))
+    _install_dev(rig, _change_linter_source(rig, "fn main() { /* rules changed */ }\n"))
     (rig.repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     other = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert other.returncode == 0
     assert "測れない" in other.stderr
     assert built_for in other.stderr
-    # 開発版は基点と別の鍵で在る — main を取り込めば測れる、と添える。
+    # The dev build has a different key from the baseline -- add that merging main makes it measurable.
     assert "main を取り込めば" in other.stderr
 
 
@@ -260,7 +260,7 @@ def test_the_snapshot_store_answers_when_the_dev_build_is_newer(tmp_path: Path) 
     first = subprocess.run(["git", "rev-parse", "HEAD"], cwd=rig.repo, env=rig.environment,
                            capture_output=True, text=True, check=True).stdout.strip()
     assert _run(rig, "init", "doeff-linter").returncode == 0
-    _install_dev(rig, _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n"))
+    _install_dev(rig, _change_linter_source(rig, "fn main() { /* rules changed */ }\n"))
     _place_linter(rig.snapshots / first, first)
     (rig.repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     added = _run(rig, "check", "doeff-linter", "pkg/a.py")
@@ -273,7 +273,7 @@ def test_lower_writes_the_key_of_the_given_build(tmp_path: Path) -> None:
     rig = _rig(tmp_path)
     assert _run(rig, "init", "doeff-linter").returncode == 0
     before = _baseline_version(rig)
-    changed = _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n")
+    changed = _change_linter_source(rig, "fn main() { /* rules changed */ }\n")
     built = _place_linter(tmp_path / "built", changed)
     assert _run(rig, "--linter", str(built), "lower", "doeff-linter").returncode == 0
     assert _baseline_version(rig) == LINTER_LOCKED.input_key(rig.repo, changed)
@@ -282,7 +282,7 @@ def test_lower_writes_the_key_of_the_given_build(tmp_path: Path) -> None:
 
 def test_writing_without_a_built_linter_for_head_is_named_and_stops(tmp_path: Path) -> None:
     rig = _rig(tmp_path)
-    _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n")
+    _change_linter_source(rig, "fn main() { /* rules changed */ }\n")
     missing = _run(rig, "init", "doeff-linter")
     assert missing.returncode != 0
     assert "--linter" in missing.stderr
@@ -297,7 +297,7 @@ def test_init_never_overwrites_a_baseline(tmp_path: Path) -> None:
     assert "書き直さない" in again.stderr
 
 
-# --- semgrep は uv.lock の版を呼ぶ(#2906)— 偽の uv が `tool run --python <版> --from semgrep==<版> semgrep` を答え、探し道の semgrep は別の版 ---
+# --- semgrep calls the uv.lock version (#2906) -- the fake uv answers `tool run --python <version> --from semgrep==<version> semgrep`, and the search-path semgrep is a different version ---
 
 LOCK_TEMPLATE = (
     'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{version}"\nsource = {{ registry = "https://pypi.org/simple" }}\n'
@@ -312,7 +312,7 @@ args = sys.argv[1:]
 with open(here / "uv-calls.jsonl", "a") as out:
     out.write(json.dumps(args) + "\\n")
 if args[:3] != ["tool", "run", "--python"] or args[4] != "--from" or args[6] != "semgrep":
-    raise SystemExit(f"偽の uv が知らない呼び: {args}")
+    raise SystemExit(f"call unknown to the fake uv: {args}")
 version, rest = args[5].split("==")[1], args[7:]
 if "--version" in rest:
     print(version)
@@ -327,12 +327,12 @@ import sys
 if "--version" in sys.argv:
     print("9.9.9")
     raise SystemExit(0)
-raise SystemExit("探し道の semgrep が呼ばれた")
+raise SystemExit("the search-path semgrep was called")
 """
 
 
 def _semgrep_rig(tmp_path: Path) -> Rig:
-    """一時の repo に uv.lock(semgrep 1.2.3)を置き、偽の uv と、別の版を名乗る探し道の semgrep を置くため。"""
+    """Place a uv.lock (semgrep 1.2.3) in a temp repo, plus a fake uv and a search-path semgrep that poses as a different version."""
     rig = _rig(tmp_path)
     (rig.repo / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.2.3"))
     for name, body in (("uv", FAKE_UV), ("semgrep", FAKE_PATH_SEMGREP)):
@@ -344,8 +344,8 @@ def _semgrep_rig(tmp_path: Path) -> Rig:
 
 def test_the_locked_command_names_the_lock_version(tmp_path: Path) -> None:
     (tmp_path / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.169.0"))
-    # 道具の python は、script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 木の .python-version
-    # (3.14t)を uv tool run に選ばせない。
+    # The tool's python is the version of the python running the script (the version the hook config declares with `uv run --python`) -- do not let uv tool run pick the tree's .python-version
+    # (3.14t).
     running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
     assert SEMGREP_LOCKED.locked_command(tmp_path) == [
         "uv", "tool", "run", "--python", running, "--from", "semgrep==1.169.0", "semgrep",
@@ -390,8 +390,8 @@ def test_a_lock_without_semgrep_stops_without_falling_back_to_the_path(tmp_path:
 
 
 def test_a_lock_row_outside_the_index_stops_without_calling_the_tool(tmp_path: Path) -> None:
-    """lock の semgrep の行が index から入れる版でない(git など)と、`semgrep==<版>` は index の別の物を入れるので、読み手が
-    名指して止まり道具を呼ばない(uv.lock の版を読む 1 か所の判定 — Hy の版で測る検と同じ)。"""
+    """If the lock's semgrep line is not a version installed from an index (git etc.), `semgrep==<version>` would install something else from the index, so the reader
+    stops by name and does not call the tool (a single check that reads the uv.lock version -- same as the test measured against the Hy version)."""
     rig = _semgrep_rig(tmp_path)
     assert _run(rig, "init", "semgrep").returncode == 0
     calls = tmp_path / "bin" / "uv-calls.jsonl"
@@ -407,18 +407,18 @@ def test_a_lock_row_outside_the_index_stops_without_calling_the_tool(tmp_path: P
     assert calls.read_text() == before
 
 
-# --- 日次の段(#2906 の 4 便目)— git の無い木(remote_check の写し)で、組んだ時に書いた鍵で照らし、「測れない」を赤にする ---------
+# --- daily stage (4th part of #2906) -- in a tree without git (a copy of remote_check), check against the key written at build time and make "cannot measure" red ---------
 
 
 def _copy_without_git(rig: Rig, tmp_path: Path) -> Path:
-    """一時の repo を .git 抜きで写すため(日次の段の木 = git ls-files の名簿の file だけを写した物)。"""
+    """Copy the temp repo without .git (the daily stage's tree = only the files in the git ls-files list)."""
     copy = tmp_path / "copy"
     shutil.copytree(rig.repo, copy, ignore=shutil.ignore_patterns(".git"))
     return copy
 
 
 def _record_key(rig: Rig, key: str) -> None:
-    """偽の land-arm の開発版の記録に、組んだ時の鍵を書き、記録の commit は git の知らない物にするため。"""
+    """Write the build-time key into the fake land-arm dev build's record, and make the record's commit one git does not know."""
     record = rig.dev / "installed.json"
     record.write_text(json.dumps({"commit": "0" * 40, "input_key": key}))
 
@@ -433,30 +433,30 @@ def test_a_tree_without_git_walks_its_files_and_skips_made_dirs(tmp_path: Path) 
 def test_strict_turns_unmeasured_red(tmp_path: Path) -> None:
     rig = _rig(tmp_path)
     assert _run(rig, "init", "doeff-linter").returncode == 0
-    _install_dev(rig, _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n"))
+    _install_dev(rig, _change_linter_source(rig, "fn main() { /* rules changed */ }\n"))
     strict = _run(rig, "--strict", "check", "doeff-linter")
     assert strict.returncode == TOOL.UNMEASURED_RC
     assert "測れない" in strict.stderr
-    # hook(--strict なし)は同じ木で通す
+    # The hook (without --strict) passes on the same tree
     assert _run(rig, "check", "doeff-linter").returncode == 0
 
 
 def test_strict_names_a_linter_changed_past_the_baseline_and_turns_it_red(tmp_path: Path) -> None:
-    # 失敗ケース(設計検証の盲検 A): linter の src を変えて基点を数え直していない木でも、基点の鍵の
-    # binary が在れば、日次は規則の古い linter で黙って測り、鍵の違いを名乗らなかった(実例: 10-03〜10-11 に linter の入力を変えた
-    # commit 28 本・基点を書いた commit 0 本)。
+    # Failure case (blind A of the design review): even in a tree where the linter's src changed and the baseline was not recounted, if the binary for the
+    # baseline key existed, the daily run measured silently with a linter whose rules were stale and did not name the key difference (actual: 10-03 to 10-11 had 28 commits that changed linter inputs and
+    # 0 commits that wrote the baseline).
     rig = _rig(tmp_path)
     assert _run(rig, "init", "doeff-linter").returncode == 0
     built_for = _baseline_version(rig)
-    changed = _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n")
+    changed = _change_linter_source(rig, "fn main() { /* rules changed */ }\n")
     moved = _run(rig, "--strict", "check", "doeff-linter")
     assert moved.returncode == 1
     assert built_for in moved.stderr
     assert str(LINTER_LOCKED.input_key(rig.repo, changed)) in moved.stderr
     assert "lower doeff-linter" in moved.stderr
-    # hook(--strict なし)は基点の鍵の linter で測って通す — 他人の linter の変更で、その後の全部の commit を止めない。
+    # The hook (without --strict) measures with the linter at the baseline key and passes -- another person's linter change does not stop every later commit.
     assert _run(rig, "check", "doeff-linter").returncode == 0
-    # linter を変えた便が自分の build で数え直せば、日次も通る。
+    # If the change that altered the linter recounts with its own build, the daily run passes too.
     built = _place_linter(tmp_path / "built", changed)
     assert _run(rig, "--linter", str(built), "lower", "doeff-linter").returncode == 0
     _install_dev(rig, changed)
@@ -484,7 +484,7 @@ def test_a_snapshot_with_a_recorded_key_is_found_without_git(tmp_path: Path) -> 
     snapshot = rig.snapshots / ("f" * 40)
     _place_linter(snapshot, "f" * 40)
     (snapshot / "input_key").write_text(_baseline_version(rig) + "\n")
-    _install_dev(rig, _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n"))
+    _install_dev(rig, _change_linter_source(rig, "fn main() { /* rules changed */ }\n"))
     copy = _copy_without_git(rig, tmp_path)
     found = subprocess.run([sys.executable, str(SCRIPT), "--root", str(copy), "--strict", "check", "doeff-linter"],
                            env=rig.environment, capture_output=True, text=True, check=False)
@@ -501,9 +501,9 @@ def test_the_key_entry_prints_the_key_of_a_commit(tmp_path: Path) -> None:
 
 
 def test_the_daily_gate_runs_the_baseline_check_strictly() -> None:
-    # 日次の全体検証の段の列に、hook と同じ基点の比べを repo 全体へ --strict で当てる段が在る(消すと、hook を「測れない」で
-    # 通った commit を測る所が無くなる)。2026-10-10 から段は日次の task の git の作業木で直に走り(ADR-DOE-ENFORCE-001 R10)、
-    # 名簿は git の追跡する file — build の生成物(.venv など)は混ざらない。基点の鍵の linter の用意は tests/test_gate_tools.py。
+    # The daily whole-verification stage list has a stage that applies the same baseline comparison as the hook to the whole repo with --strict (removing it leaves nowhere that measures commits the hook passed with "cannot measure").
+    # Since 2026-10-10 the stage runs directly in the daily task's git work tree (ADR-DOE-ENFORCE-001 R10),
+    # and the list is git-tracked files -- build artifacts (.venv etc.) do not get mixed in. Preparing the baseline-key linter is in tests/test_gate_tools.py.
     stages = tomllib.loads((ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
     lint = [stage for stage in stages if stage["name"] == "lint"]
     assert len(lint) == 1
@@ -512,21 +512,21 @@ def test_the_daily_gate_runs_the_baseline_check_strictly() -> None:
 
 
 def test_the_daily_semgrep_check_declares_the_python_semgrep_installs_on() -> None:
-    # semgrep の比べは uv.lock の版の semgrep を `uv tool run` で呼び、道具の python は走っている python の版
-    # (scripts/semgrep_locked.py)。宣言が無いと木の .python-version(free-threaded の 3.14)になり、`uv tool run` は
-    # pyproject.toml の exclude-dependencies を読まないので、組めない C 加速器 ruamel-yaml-clib を組みに行って落ちる
-    # (「semgrep の JSON に results の列が無い」)。commit の hook の semgrep の項と同じ宣言(2026-10-12 の日次の lint の段)。
+    # The semgrep comparison calls the uv.lock version of semgrep via `uv tool run`, and the tool's python is the version of the running python
+    # (scripts/semgrep_locked.py). Without the declaration it becomes the tree's .python-version (free-threaded 3.14), and `uv tool run` does not read
+    # exclude-dependencies in pyproject.toml, so it tries to build the unbuildable C accelerator ruamel-yaml-clib and fails
+    # ("semgrep JSON has no results list"). The same declaration as the commit hook's semgrep entry (the daily lint stage of 2026-10-12).
     stages = tomllib.loads((ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
     lint = next(stage["run"] for stage in stages if stage["name"] == "lint")
     assert "uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep" in lint, lint
     excluded = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["uv"]["exclude-dependencies"]
-    assert "ruamel-yaml-clib" in excluded, "宣言の理由が無くなった — 3.12 の宣言を外してよいか確かめる"
+    assert "ruamel-yaml-clib" in excluded, "the reason for the declaration is gone -- check whether the 3.12 declaration can be removed"
 
 
 def test_the_script_reads_its_sibling_modules_under_a_safe_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    # PYTHONSAFEPATH=1(作業役の shell に在る)の下では script の dir が sys.path に入らない。それでも隣の module
-    # (doeff_linter_locked・semgrep_locked)を読み、入口まで来る — 引数なしは使い方を出して 2(import で落ちると 1)。
-    # 子は検の process の環境を受け継ぎ、PYTHONSAFEPATH だけを足す(検の後に monkeypatch が戻す)。
+    # Under PYTHONSAFEPATH=1 (present in the worker's shell) the script's dir does not go on sys.path. It still reads the neighboring modules
+    # (doeff_linter_locked, semgrep_locked) and reaches the entrypoint -- with no arguments it prints usage and exits 2 (1 if it fails on import).
+    # The child inherits the test process's environment and adds only PYTHONSAFEPATH (monkeypatch restores it after the test).
     monkeypatch.setenv("PYTHONSAFEPATH", "1")
     ran = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False)
     assert "ModuleNotFoundError" not in ran.stderr, ran.stderr

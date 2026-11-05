@@ -1,27 +1,29 @@
-"""program に handler を被せていた 8 名が、ほかの handler と同じく h1(h2(p)) で当てる工場か handler の値になった事。
+"""The 8 names that used to wrap a program with a handler are now factories (or handler values) applied as h1(h2(p)), like other handlers.
 
-決まり: handler を返す工場は、最小の引数で呼ぶと印 _doeff_is_handler_fn の付いた handler を返す関数(ADR-DOE-API-001 R3)。
-program を包む関数は工場の形へ寄せ(R6)、program には h1(h2(p)) で当てる(R16)。設定も呼びごとの状態も無い handler は、工場でなく
-印の付いた値(ADR-DOE-API-002 R1)。名ごとの行き先:
+Rule: a handler-returning factory is a function that, called with minimal arguments, returns a handler carrying the marker
+_doeff_is_handler_fn (ADR-DOE-API-001 R3). Functions that wrap a program are moved to the factory shape (R6), and handlers are
+applied to a program as h1(h2(p)) (R16). A handler with neither configuration nor per-call state is a marked value, not a
+factory (ADR-DOE-API-002 R1). Where each name went:
 
-- doeff-conductor の make_blocking_scheduled_handler・make_async_scheduled_handler — 名のまま工場(fn を受け、全部の effect に
-  fn(effect) で答える handler を返す。async の方は DeprecationWarning を出す)。
-- doeff-notify の testing_handler・build_testing_handler(同じ関数の 2 つの名)— 名のまま工場(記録の先 capture を受ける)。
-- doeff-core-effects の run_apart — 設定が無いので、名のまま印の付いた handler の値: (run-apart program)。
-- doeff-agentic の with_agentic_effectful_handlers(p, …) — 消して、もう在る工場 agentic_effectful_handlers(…)(p) へ寄せた。
-- doeff-agentic の with_handlers(p, handlers)(doeff_agentic.runtime)— 消して、doeff の stacked_handlers(*handlers)(p) へ寄せた
-  (submodule doeff_agentic.runtime も消した)。
-- doeff-records の ready_handlers — handler を被せる関数でなく、検の殻の用意の program(書き手の名 → handler をそのまま返す)
-  なので、工場にせず内側の _ready_handlers へ移した。
+- doeff-conductor's make_blocking_scheduled_handler and make_async_scheduled_handler: kept as factories under the same names
+  (take fn and return a handler that answers every effect with fn(effect); the async one emits a DeprecationWarning).
+- doeff-notify's testing_handler and build_testing_handler (two names for the same function): kept as factories under the
+  same names (take the capture destination for records).
+- doeff-core-effects' run_apart: no configuration, so kept under the same name as a marked handler value: (run-apart program).
+- doeff-agentic's with_agentic_effectful_handlers(p, ...): removed, moved to the existing factory agentic_effectful_handlers(...)(p).
+- doeff-agentic's with_handlers(p, handlers) (doeff_agentic.runtime): removed, moved to doeff's stacked_handlers(*handlers)(p)
+  (the submodule doeff_agentic.runtime was also removed).
+- doeff-records' ready_handlers: not a function that installs handlers but a program that prepares the check shell (returns the
+  handler for the writer's name as is), so it was moved to the internal _ready_handlers instead of becoming a factory.
 
-1. 目録(tools/public_api_inventory.py)が、工場の名を「呼ぶと handler を返す」handler と、run_apart を印を持つ handler と読み、
-   消した名と内側へ移した名を公開の名に数えない。
-2. 工場を呼ぶと印の付いた handler を返し、その handler(と run_apart)を program に当てると元の関数と同じ答えになる(doeff-notify は root の
-   環境に入らないので、packages/doeff-notify/tests/test_handlers.py が同じ事を確かめる)。
+1. The inventory (tools/public_api_inventory.py) reads the factory names as handlers that "return a handler when called" and
+   run_apart as a handler carrying the marker, and does not count the removed names or the names moved inside as public names.
+2. Calling a factory returns a marked handler, and applying that handler (and run_apart) to a program gives the same answer as the
+   original function (doeff-notify is not in the root environment, so packages/doeff-notify/tests/test_handlers.py checks the same thing).
 
-doeff-conductor・doeff-agentic・doeff-records の分(上の名ごとの行き先の 3 行)は、root の tests が内輪の package を import しないよう
-(2026-11-04)、各 package の tests が確かめる: packages/doeff-conductor/tests/test_scheduled_handler_factories.py・
-packages/doeff-agentic/tests/test_handler_factory_shape.py・packages/doeff-records/tests/test_ready_handlers_inside.py。
+The doeff-conductor, doeff-agentic and doeff-records parts (the 3 lines above) are checked by each package's own tests, so that
+the root tests do not import internal packages (2026-11-04): packages/doeff-conductor/tests/test_scheduled_handler_factories.py,
+packages/doeff-agentic/tests/test_handler_factory_shape.py, packages/doeff-records/tests/test_ready_handlers_inside.py.
 """
 
 from __future__ import annotations
@@ -36,12 +38,12 @@ import pytest
 from doeff import do, run
 
 ROOT = Path(__file__).resolve().parents[1]
-#: 目録の子の process が 1 package を読む秒の上限(tests/test_public_api_known_violations.py と同じ)。
+#: Time limit in seconds for the inventory child process to read one package (same as tests/test_public_api_known_violations.py).
 _PROBE_SECONDS = 100
 
 
 def _load_tool() -> ModuleType:
-    """tools/ の目録の道具を読む(既知の表の test と同じ名で 1 つを共にする)。"""
+    """Load the inventory tool under tools/ (shares one module with the known-violations table test under the same name)."""
     loaded = sys.modules.get("public_api_inventory")
     if loaded is not None:
         return loaded
@@ -56,23 +58,23 @@ def _load_tool() -> ModuleType:
     return module
 
 
-#: 名のまま工場になった名と、もう在る工場へ寄せた行き先: (package の dir, 入口の module, 名)。
+#: Names that became factories under the same name, and destinations moved to an existing factory: (package dir, entry-point module, name).
 FACTORIES = (
     ("doeff-notify", "doeff_notify", "testing_handler"),
     ("doeff-notify", "doeff_notify", "build_testing_handler"),
 )
-#: 設定が無いので工場でなく印の付いた handler の値になった名: (package の dir, 入口の module, 名)。
+#: Names that became marked handler values rather than factories because they have no configuration: (package dir, entry-point module, name).
 VALUES = (("doeff-core-effects", "doeff_core_effects", "run_apart"),)
 PACKAGES = sorted({package for package, _module, _name in (*FACTORIES, *VALUES)})
 
 
 @pytest.fixture(scope="module")
 def inventory_rows() -> dict[str, list[dict[str, str]]]:
-    """2 package の目録の行(package の dir ごと)。"""
+    """Inventory rows of the 2 packages (per package dir)."""
     tool = _load_tool()
     packages = tool.inventory(ROOT, PACKAGES, jobs=len(PACKAGES), timeout=_PROBE_SECONDS)
     for package in packages:
-        assert package["error"] is None, f"{package['dir']} を読めなかった: {package['error']}"
+        assert package["error"] is None, f"could not read {package['dir']}: {package['error']}"
     return {package["dir"]: package["exports"] for package in packages}
 
 
@@ -81,7 +83,7 @@ def inventory_rows() -> dict[str, list[dict[str, str]]]:
 def test_the_inventory_reads_each_factory_as_a_handler_it_called(
     inventory_rows: dict[str, list[dict[str, str]]], package: str, module: str, name: str
 ) -> None:
-    """目録が入口の名を handler と読み、最小の引数で呼んで印の付いた handler が返ったと書く(R3 の確かめ)。"""
+    """The inventory reads the entry-point name as a handler and records that calling it with minimal arguments returned a marked handler (R3 check)."""
     [row] = [
         row
         for row in inventory_rows[package]
@@ -96,7 +98,7 @@ def test_the_inventory_reads_each_factory_as_a_handler_it_called(
 def test_the_inventory_reads_each_value_as_a_marked_handler(
     inventory_rows: dict[str, list[dict[str, str]]], package: str, module: str, name: str
 ) -> None:
-    """目録が入口の名を、印を持つ handler の値と読む(ADR-DOE-API-002 R1)。"""
+    """The inventory reads the entry-point name as a handler value carrying the marker (ADR-DOE-API-002 R1)."""
     [row] = [
         row
         for row in inventory_rows[package]

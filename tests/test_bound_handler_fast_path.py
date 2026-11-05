@@ -1,4 +1,4 @@
-"""@do の bound method でも VM が定義済みの generator を直接実行する (#1384)。"""
+"""The VM directly runs the already-defined generator even for a bound method of @do (#1384)."""
 
 from collections.abc import Generator
 from types import MethodType
@@ -110,8 +110,8 @@ class PathOutcome(NamedTuple):
 def compare_path(legacy: bool, monkeypatch: pytest.MonkeyPatch) -> PathOutcome:
     with monkeypatch.context() as patch:
         if legacy:
-            # @do の Program を作る wrapper 自体は変えず、VM の直接実行
-            # の印だけ外し、変更前と同じ経路で同じ定義を動かす。
+            # Leave the wrapper that builds the @do Program unchanged and remove only
+            # the VM's direct-execution marker, running the same definition via the same path as before the change.
             patch.delitem(Answers.read.__dict__, "__doeff_generator_function__")
             patch.delitem(Answers.translate.__dict__, "__doeff_generator_function__")
 

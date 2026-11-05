@@ -1,5 +1,5 @@
-;;; Cancel が defk の task に TaskCancelledError を投げ込み、except と finally を走らせることの例。
-;;; 呼び口は tests/test_cancel_runs_finally.py(pytest は .hy を集めないので、そこから呼ぶ)。
+;;; Example in which Cancel throws TaskCancelledError into a defk task and runs except and finally.
+;;; The caller is tests/test_cancel_runs_finally.py (pytest does not collect .hy, so it is called from there).
 
 (require doeff-hy.macros [defk <-])
 
@@ -61,7 +61,7 @@
 
 (defk worker-with-effectful-cleanup [gate done events]
   {:pre [(: gate Promise) (: done Promise) (: events list)] :post [(: % "None")]}
-  ;; 取り消された task の待ちはまた取り消されるので、待つ片付けは shielded で囲む。
+  ;; A wait in a cancelled task is cancelled again, so wrap the waiting cleanup in shielded.
   (try
     (<- (Wait gate.future))
     (finally

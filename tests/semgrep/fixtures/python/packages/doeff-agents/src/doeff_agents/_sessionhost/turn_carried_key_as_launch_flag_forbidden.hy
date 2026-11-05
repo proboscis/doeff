@@ -1,12 +1,12 @@
 ;;; semgrep hit fixture: doeff-agents-turn-carried-key-must-not-become-a-launch-flag
-;;; (手番ごとに charter が
-;;;  名乗り直す欄を「行へ写して」解くのは禁止形。正本が 2 つになる)。
+;;; (a charter re-declares the field per turn;
+;;;  resolving it by "copying it into the line" is a forbidden form. It makes two sources of truth).
 
-;; BAD: 手番の荷を旗の集合へ入れる(= 行の launch_overlay に残る)
+;; BAD: put the turn's payload into the flag set (= it remains in the line's launch_overlay)
 (setv LAUNCH-FLAG-KEYS #("auto_compact_window" "memory_dir"))
 
-;; BAD: 行の overlay へ冊を直接積む
+;; BAD: push the volume directly onto the line's overlay
 (setv launch-overlay {"session_env" {} "memory_files" books})
 
-;; BAD: 綴りの順が逆でも同じ形
+;; BAD: the same shape even with the spelling order reversed
 (setv row (replace row :launch-overlay {"memory_dir" home}))

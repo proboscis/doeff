@@ -1,9 +1,9 @@
-"""for/do の実行時の形の検。
+"""Tests for the runtime shape of for/do.
 
-for/do の展開は、件ごとの関数を Traverse 1 つに 1 度だけ @do で包む(件ごとに包み直すと、件 1 つあたり約 7 µs の @do の
-組み立てがかかっていた)。件の Program は前と同じ(件を引数に受ける 1 つの呼び)なので、答え・When で落ちる件・label・件の失敗は
-前と同じでなければならない。最後の検は、Traverse に渡る関数が @do で包んだ 1 つの関数である事を見る — 件ごとに
-包み直す形へ戻ると赤になる。
+The for/do expansion wraps the per-item function with @do just once per Traverse (wrapping again per item cost about 7 us of @do
+construction per item). The item Program is the same as before (a single call taking the item as an argument), so the answer, items that fail on When, labels, and item failures
+must be the same as before. The last test checks that the function passed to Traverse is the one function wrapped with @do -- going back to the
+per-item rewrap shape turns it red.
 """
 
 import sys
@@ -34,7 +34,7 @@ def _half(x: int):
 
 
 def _eval(code: str) -> Program:
-    """for/do を含む Hy の式を、for/do の展開が引く名を import した module で評価した値(最後の式 — Program か effect)。"""
+    """The value (the last expression -- a Program or effect) of a Hy expression containing for/do, evaluated in a module that imports the names the for/do expansion pulls in."""
     mod = types.ModuleType("for_do_runtime")
     sys.modules["for_do_runtime"] = mod
     mod.__dict__["half"] = _half
@@ -42,13 +42,13 @@ def _eval(code: str) -> Program:
     result = None
     for form in hy.read_many(_HEADER + code):
         result = hy.eval(form, mod.__dict__, module=mod)
-    # 実行時の Program は DoExpr で、effect(Traverse)はその外
+    # The runtime Program is a DoExpr, and the effect (Traverse) is outside it
     assert isinstance(result, (Program, EffectBase)), result
     return result
 
 
 def _collect(code: str) -> Collection:
-    """for/do の式(Traverse の effect)を sequential の下で走らせた答え。"""
+    """The answer from running a for/do expression (a Traverse effect) under sequential."""
     return run(sequential(_eval(code)))
 
 
@@ -80,12 +80,12 @@ def test_the_step_is_one_do_function_per_traverse() -> None:
     collection = run(sequential(program_handler(watch)(program)))
     assert collection.valid_values == [0, 0, 1]
     [step] = seen
-    assert hasattr(step, "__doeff_generator_function__"), "Traverse の関数が @do で包まれていない(件ごとに包み直す形)"
+    assert hasattr(step, "__doeff_generator_function__"), "the Traverse function is not wrapped with @do (the shape that rewraps per item)"
 
 
-# for/do に From を 2 つ以上重ねた形。重ねた From は list の内包・SQL の CROSS JOIN と同じく、外の件と
-# 内の件の組ごとに本体の値を 1 件として平らに並べる。前は 2 つ目の From の Traverse を外の件の関数が実行せずに値として返し、
-# valid_values に内側の Traverse の effect が入っていた。
+# A shape with two or more Froms stacked in for/do. Stacked Froms, like a list comprehension or SQL CROSS JOIN, flatly list the body's value as one item for each
+# pair of an outer item and an inner item. Previously the outer item's function returned the second From's Traverse as a value without executing it, and
+# the inner Traverse effect ended up in valid_values.
 
 
 def test_two_froms_give_one_value_per_pair() -> None:
@@ -99,7 +99,7 @@ def test_three_froms_give_one_value_per_triple() -> None:
 
 
 def test_skips_and_failures_of_both_froms_keep_their_places() -> None:
-    # 内の items は外の件から作る。外の When で落ちた件は 1 件のまま外の位置に残り、内の件の失敗は外と内の履歴を続けて持つ。
+    # The inner items are built from the outer item. An item dropped by the outer When stays as one item at the outer position, and an inner item's failure keeps the outer and inner history in sequence.
     collection = _collect(
         '(for/do (<- a (From [0 1 2] :label "outer")) (When (!= a 1))'
         ' (<- b (From (range a 3) :label "inner")) (<- y (half b)) #(a y))'
@@ -127,10 +127,10 @@ def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
     assert collection.valid_values == [11, 21, 12, 22]
 
 
-# Traverse の handler の契約(設計検証の盲検 A): 重ねた From の外の件の program は、内側の Traverse を
-# 同じ handler へもう一度出す。handler は件の program を自分の下で走らせ、Traverse をまたぐ資源(handler に 1 つの枠など)を件の
-# program の間に持ち続けない。持ち続ける handler は、外の件が枠を占めたまま内の件を待って止まる(枠 1 で必ず止まる)。
-# 出荷する handler の全部をここで回し、どれかがこの形に変わると赤になる。
+# The Traverse handler contract (blind A of the design review): the outer item's program of stacked Froms performs the inner Traverse
+# again to the same handler. The handler runs the item program under itself and does not keep resources spanning Traverses (such as a one-slot frame in the handler) across
+# item programs. A handler that keeps them stops waiting for the inner items while the outer item holds the slot (it always stops with one slot).
+# Run all shipped handlers here, so that any change to this shape turns it red.
 _SHIPPED_HANDLERS = {
     "sequential": lambda: sequential,
     "parallel-1": lambda: parallel(concurrency=1),

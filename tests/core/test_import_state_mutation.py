@@ -10,8 +10,8 @@ VM_PYTHONPATH = str(ROOT / "packages" / "doeff-vm")
 
 
 def _run_python(script: str) -> dict[str, object]:
-    """script を別の Python で走らせ、最後に print した JSON を読むため。子は環境を継ぎ(写さない — 環境を読まない)、
-    doeff-vm の source の置き場を import の道の先頭に、命令の中で足す(#2896)。"""
+    """Run the script in a separate Python and read the JSON printed last. The child inherits the environment (not copied -- the environment is not read),
+    and the command adds doeff-vm's source location to the head of the import path (#2896)."""
     prelude = f"import sys; sys.path.insert(0, {VM_PYTHONPATH!r})\n"
     result = subprocess.run(
         [sys.executable, "-c", prelude + script],

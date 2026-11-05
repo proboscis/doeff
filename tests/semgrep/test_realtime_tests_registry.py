@@ -1,21 +1,21 @@
-"""realtime の名簿(tests/realtime_tests.toml)と、検の眠りの規則の外へ出る道の突き合わせ。
+"""Cross-check of the realtime registry (tests/realtime_tests.toml) against the ways out of the test-sleep rule.
 
-.semgrep.yaml の doeff-no-sleep-in-tests は realtime を名乗る検の中の sleep を鳴らさない。名乗ってよいのは実時間そのものが
-対象の検だけなので、名乗る検を名簿に理由と一緒に載せ、名簿と marker が 1 対 1 で合う事をここで見る — 名簿に無い marker も、
-marker の無い名簿の行も赤。数えるのは規則の範囲(名が tests の dir の下の .py と、どこに在っても検の名の .py。規則の検体
-tests/semgrep/fixtures/ と名簿の [suites] の dir を除く)の、関数・method の @pytest.mark.realtime と module の段の
-pytestmark(単独・list・tuple)。
+doeff-no-sleep-in-tests in .semgrep.yaml does not flag sleep inside tests that declare realtime. Only tests whose subject is wall-clock
+time itself may declare it, so those tests are listed in the registry with a reason, and this file checks that the registry and the markers match one to one: a marker not in the registry,
+or a registry row without a marker, is red. What is counted is, within the rule's scope (.py files under a tests dir, and .py files named like tests anywhere; excluding the rule's fixtures
+tests/semgrep/fixtures/ and the [suites] dirs of the registry), the @pytest.mark.realtime on functions and methods and the module-level
+pytestmark (single, list, or tuple).
 
-規則の外へ出る道が名簿の 2 つの表だけである事も見る: 規則の paths.exclude は名簿の [suites] と 1 対 1 で、規則の範囲には
-規則を外す行の注釈が 1 行も無い(規則の名を挙げた注釈も、名を挙げずに全部の規則を外す注釈も赤)。
+It also checks that the registry's two tables are the only ways out of the rule: the rule's paths.exclude matches the registry's [suites] one to one, and the rule's scope
+has no line annotation that switches the rule off (an annotation naming the rule, or one switching off all rules without naming it, is red).
 
-Hy の検は semgrep が読めないので、同じ決まりを doeff-linter の規則 DOEFF211 が持つ(packages/doeff-linter/src/project/test_sleep.rs)。
-Hy の名乗りは 3 つの形 — module の最上位の ``(val pytestmark pytest.mark.realtime)``・deftest の meta の
-``{:marks ["realtime"]}``・素の関数の検の decorator ``(defn [pytest.mark.realtime] 名 [] …)`` — で、ここでは doeff-hy が
-pytest の印を読むのと同じ読み手(``record_module_binding``・``_extract-test-meta``)で数える。範囲は根の pyproject.toml の ``[tool.doeff-linter.test_sleep]``(規則と同じ 1 か所)を読み、その
-exclude の dir の行が「規則の検体の dir と名簿の [suites]」に限られる事を見る。exclude の file の行(検が別の process として起こす
-独立の script — pytest を import しないので印を名乗れない)は名乗りの代わりで、名簿の [tests] の行と 1 対 1。規則と、この読みが同じ形を名乗りと読む事は、同じ検体
-packages/doeff-linter/tests/fixtures/test_sleep/ を両方が読んで確かめる(規則の側は packages/doeff-linter/tests/test_sleep.rs)。
+Semgrep cannot read Hy tests, so the doeff-linter rule DOEFF211 holds the same policy (packages/doeff-linter/src/project/test_sleep.rs).
+A Hy declaration takes one of three forms: a module-top-level ``(val pytestmark pytest.mark.realtime)``, the deftest meta
+``{:marks ["realtime"]}``, or the decorator of a plain test function ``(defn [pytest.mark.realtime] name [] ...)``. Here they are counted with the same reader that doeff-hy uses to
+read pytest marks (``record_module_binding`` and ``_extract-test-meta``). The scope is read from the root pyproject.toml ``[tool.doeff-linter.test_sleep]`` (the same single place as the rule), and
+it checks that the dir lines of that exclude are limited to "the rule's fixture dirs and the registry's [suites]". The file lines of the exclude (independent scripts that a test launches as a separate
+process; they do not import pytest, so they cannot declare the marker) stand in for the declaration and match the registry's [tests] rows one to one. That the rule and this reader read the same forms as declarations is checked by both reading the same fixtures
+in packages/doeff-linter/tests/fixtures/test_sleep/ (the rule side is packages/doeff-linter/tests/test_sleep.rs).
 """
 
 from __future__ import annotations
@@ -40,21 +40,21 @@ REGISTRY = REPO_ROOT / "tests" / "realtime_tests.toml"
 SEMGREP_CONFIG = REPO_ROOT / ".semgrep.yaml"
 RULE = "doeff-no-sleep-in-tests"
 FIXTURES = "tests/semgrep/fixtures"
-# 規則の paths.include と同じ範囲(test_the_rule_reaches_what_this_scan_reads が 2 つを突き合わせる)
+# Same scope as the rule's paths.include (test_the_rule_reaches_what_this_scan_reads compares the two)
 REACH_DIR = "tests"
 REACH_NAMES = ("test_*.py", "*_test.py", "conftest.py")
-# 歩かない dir = 隠しの dir(.git・.venv)と build の出力
+# Dirs not walked = hidden dirs (.git, .venv) and build output
 NOT_WALKED = (".*", "node_modules", "target", "__pycache__", "build", "dist")
-# 行の注釈の 2 つの綴り。語をつなげて作る — この file も規則の範囲に在り、下の見本の行が自分の走査に当たらないようにする
+# The two spellings of a line annotation. Built by joining words, because this file is also in the rule's scope and the sample lines below must not match its own scan
 SWITCH_OFF_SPELLINGS = ("nosem" + "grep", "no" + "sem")
 _SWITCH_OFF = re.compile(rf"#.*\b(?:{'|'.join(SWITCH_OFF_SPELLINGS)})\b(?P<names>.*)")
-# Hy の検の規則(doeff-linter の DOEFF211)の範囲の宣言 — 規則と同じ 1 か所を読む
+# Declaration of the scope of the Hy test rule (DOEFF211 of doeff-linter): reads the same single place as the rule
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 HY_SUFFIXES = (".hy", ".hyk", ".hyp")
 MARK = "realtime"
-# DOEFF211 の exclude の dir の行のうち、名簿の [suites] でない行 = 規則の検体の dir(当たりを持つのが役目・実行しない)
+# Of the dir lines in DOEFF211's exclude, those that are not the registry's [suites] = the rule's fixture dirs (their job is to hold hits; they are not run)
 HY_RULE_SAMPLES = ("packages/doeff-linter/tests/fixtures", FIXTURES)
-# 規則(Rust)とこの読み(Python)が同じ形を名乗りと読む事を確かめる、共有の検体
+# Shared fixtures that confirm the rule (Rust) and this reader (Python) read the same forms as declarations
 HY_SAMPLES = REPO_ROOT / "packages" / "doeff-linter" / "tests" / "fixtures" / "test_sleep"
 HY_DECLARES = "; 名乗る"
 
@@ -120,7 +120,7 @@ def _recorded_marks(head: str, args: list[object]) -> tuple[str, ...]:
     recorded = record_module_binding(head, args)
     if recorded is None:
         return ()
-    # 記録の式 (do (import …) (record-at-import (globals) "<記録の JSON>")) の末尾の文字列が記録
+    # The trailing string of the record expression (do (import ...) (record-at-import (globals) "<record JSON>")) is the record
     [record] = decode_records([str(recorded[-1][-1])])
     return record.names if isinstance(record, ModuleMarks) else ()
 
@@ -191,14 +191,14 @@ def hy_realtime_marks(source: str, key: str) -> set[str]:
 
 @functools.cache
 def _linter_reach() -> dict[str, list[str]]:
-    """根の pyproject.toml の [tool.doeff-linter.test_sleep](DOEFF211 の母集団 — parts・names・exclude)。"""
+    """The root pyproject.toml [tool.doeff-linter.test_sleep] (the population of DOEFF211: parts, names, exclude)."""
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["tool"]["doeff-linter"][
         "test_sleep"
     ]
 
 
 def hy_scripts_named_by_the_rule() -> set[str]:
-    """DOEFF211 の exclude が file で名指した Hy の script(名乗りの代わり — 名簿の [tests] の鍵と同じ形)。"""
+    """Hy scripts that the exclude of DOEFF211 names by file (they stand in for the declaration; same shape as the keys of the registry's [tests])."""
     return {
         place for place in _linter_reach()["exclude"] if PurePosixPath(place).suffix in HY_SUFFIXES
     }
@@ -245,7 +245,7 @@ def _rule_paths() -> dict[str, Any]:
 
 @functools.cache
 def _walked() -> tuple[str, ...]:
-    """repo の file(隠しの dir と build の出力を除く)の、repo の根からの path。"""
+    """Paths of the repo's files (excluding hidden dirs and build output), relative to the repo root."""
     found: list[str] = []
     for current, dirs, files in os.walk(REPO_ROOT):
         dirs[:] = [
@@ -259,7 +259,7 @@ def _walked() -> tuple[str, ...]:
 
 @functools.cache
 def _watched_sources() -> dict[str, str]:
-    """規則が見張る .py(範囲から検体と [suites] の dir を除いた物)の、repo の根からの path → 中身。"""
+    """The .py files the rule watches (the scope minus the fixtures and the [suites] dirs): path relative to the repo root -> contents."""
     outside = (FIXTURES, *_registry()["suites"])
     return {
         relative: (REPO_ROOT / relative).read_text(encoding="utf-8")
@@ -270,7 +270,7 @@ def _watched_sources() -> dict[str, str]:
 
 @functools.cache
 def _watched_hy_sources() -> dict[str, str]:
-    """DOEFF211 が見張る Hy の file(設定の節の母集団)の、repo の根からの path → 中身。"""
+    """The Hy files DOEFF211 watches (the population of the config section): path relative to the repo root -> contents."""
     return {
         relative: (REPO_ROOT / relative).read_text(encoding="utf-8")
         for relative in _walked()
@@ -336,7 +336,7 @@ def test_the_linter_excludes_exactly_the_registered_suites_and_its_own_samples()
 
 
 def test_a_script_the_linter_names_does_not_also_declare() -> None:
-    # file で名指す道は、印を名乗れない script だけの物 — 名乗れる file(pytest を import する検・道具)には使わない。
+    # Naming by file is only for scripts that cannot declare the marker; do not use it for files that can (tests and tools that import pytest).
     assert [
         script
         for script in sorted(hy_scripts_named_by_the_rule())
@@ -389,7 +389,7 @@ def test_the_scan_reads_every_declaration_form() -> None:
 
 
 def _declared_in_sample(source: str, key: str) -> set[str]:
-    """検体の「名乗る」の印の行が定める検(deftest か素の関数)の、名簿の鍵。"""
+    """Registry keys of the tests defined by the declaration-marker lines of a fixture (deftest or plain function)."""
     heads = re.findall(
         rf"^\((?:deftest|defn) (.*){re.escape(HY_DECLARES)}$", source, flags=re.MULTILINE
     )

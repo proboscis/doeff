@@ -1,8 +1,8 @@
-"""Rust の package の wheel の置き場の鍵(tools/doeff_cargo_backend.py の _wheel_slot)を確かめる。
+"""Checks the key of the wheel slot for Rust packages (_wheel_slot in tools/doeff_cargo_backend.py).
 
-置き場は同じ鍵の build で cargo を撃たずに wheel を写して返す(#2364)。鍵に組みを変える物が欠けていると、設定を変えて組んだ wheel や
-ABI の違う Python の wheel を既定の build が黙って引く。ここでは cargo を撃たず、鍵を決める関数を直に呼ぶ。道具の版(maturin の版)は
-固定の文字に差し替える — 鍵の材料のうち、ここで確かめない物を揃えるため。
+The slot copies and returns a wheel without running cargo for a build with the same key (#2364). If the key lacks something that changes the build, the default build silently pulls a wheel built with different settings or a wheel for a Python with a different
+ABI. Here cargo is not run; the function that decides the key is called directly. The tool version (maturin version) is
+replaced with a fixed string -- to hold constant the key ingredients not checked here.
 """
 
 from __future__ import annotations
@@ -17,18 +17,18 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 BACKEND = REPO / "tools" / "doeff_cargo_backend.py"
 
-# 鍵に入る環境変数の名(どれも同じ source の build で中身を変える)。
+# Names of environment variables that enter the key (each changes the output of a build from the same source).
 BUILD_ENV = ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_PROFILE_RELEASE_STRIP", "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_BUILD_TARGET", "MATURIN_PEP517_ARGS", "PYO3_PYTHON")
-# 鍵に入らない環境変数の名(組む場所・並べる数・関係の無い物 — 作業木をまたいで wheel を共有する効き目を保つ)。
+# Names of environment variables that do not enter the key (build location, parallelism, unrelated ones -- preserving the benefit of sharing wheels across working trees).
 PLACE_ENV = ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_BUILD_DIR", "CARGO_BUILD_JOBS", "PATH")
 
 
 def _backend() -> ModuleType:
-    """build の口を module として読む(tools は package でないので path から)。"""
+    """Load the build backend as a module (tools is not a package, so by path)."""
     spec = importlib.util.spec_from_file_location("doeff_cargo_backend_under_test", BACKEND)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    # dataclass は定義の module を sys.modules から引く(口の StoredWheel・WheelEntry)ので、読む前に名で登録する。
+    # dataclass looks up the defining module in sys.modules (StoredWheel and WheelEntry of the backend), so register it by name before loading.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -36,7 +36,7 @@ def _backend() -> ModuleType:
 
 @pytest.fixture
 def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
-    """道具の版を固定し、置き場を tmp に向け、鍵に入る環境変数を全部外した状態の口。"""
+    """The backend with the tool version pinned, the slot pointed at tmp, and every environment variable that enters the key removed."""
     module = _backend()
     monkeypatch.setattr(module, "_tool_versions", lambda: "maturin=fixed")
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "wheels"))
@@ -47,7 +47,7 @@ def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
 
 @pytest.fixture
 def package(tmp_path: Path) -> Path:
-    """組みに効く file だけを持つ package の dir(中身は固定)。"""
+    """A package dir holding only the files that affect the build (contents fixed)."""
     root = tmp_path / "pkg"
     (root / "src").mkdir(parents=True)
     (root / "pyproject.toml").write_text('[project]\nname = "probe"\nversion = "0.1.0"\n')
@@ -58,7 +58,7 @@ def package(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize("name", BUILD_ENV)
 def test_a_build_env_change_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    # 失敗ケース(#2969): 同じ source でも、組みを変える環境変数の値が違えば別の置き場を指す(既定の build が設定を変えた wheel を引かない)。
+    # Failure case (#2969): even with the same source, a different value of an environment variable that changes the build points to a different slot (the default build does not pull a wheel built with changed settings).
     plain = backend._wheel_slot(package, None)
     monkeypatch.setenv(name, "changed")
     assert backend._wheel_slot(package, None) != plain
@@ -67,7 +67,7 @@ def test_a_build_env_change_points_at_another_slot(backend: ModuleType, package:
 
 
 def test_the_strip_setting_alone_splits_the_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # issue の受入: 同じ source で CARGO_PROFILE_RELEASE_STRIP だけを変えた 2 回の build は、別の置き場を指す。
+    # Issue acceptance: two builds of the same source that differ only in CARGO_PROFILE_RELEASE_STRIP point to different slots.
     monkeypatch.setenv("CARGO_PROFILE_RELEASE_STRIP", "true")
     stripped = backend._wheel_slot(package, None)
     monkeypatch.setenv("CARGO_PROFILE_RELEASE_STRIP", "false")
@@ -75,9 +75,9 @@ def test_the_strip_setting_alone_splits_the_slot(backend: ModuleType, package: P
 
 
 def test_another_python_abi_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(#2969): free-threading の cp314t と cp313 のように拡張 module の名の末尾が違う Python で組むと、別の置き場を指す。
+    # Failure case (#2969): building with a Python whose extension module name suffix differs, such as free-threading cp314t versus cp313, points to a different slot.
     here = backend._wheel_slot(package, None)
-    # 走らせている Python と違う末尾を名指す — cp313 の上で cp313 を名指すと同じ置き場のままになる(版の行列の 3.13 で落ちた)。
+    # Name a suffix different from the running Python's -- naming cp313 on cp313 would leave the same slot (failed in the 3.13 row of the version matrix).
     current = backend.sysconfig.get_config_var("EXT_SUFFIX")
     other = next(s for s in (".cpython-313-x86_64-linux-gnu.so", ".cpython-314t-x86_64-linux-gnu.so") if s != current)
     monkeypatch.setattr(backend.sysconfig, "get_config_var", lambda name: other if name == "EXT_SUFFIX" else None)
@@ -85,8 +85,8 @@ def test_another_python_abi_points_at_another_slot(backend: ModuleType, package:
 
 
 def test_another_libc_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補 2): 機体の外の置き場の wheel は CI の glibc で組む。glibc の版が違う
-    # 機体は別の置き場を指す — それより古い glibc の image が取ると import で落ちる。
+    # Failure case (addendum 2 to ADR-DOE-BUILD-001 R4): a wheel in the off-machine slot is built with CI's glibc. Machines with a different glibc
+    # version point to a different slot -- an image with an older glibc would fetch it and fail at import.
     here = backend._wheel_slot(package, None)
     monkeypatch.setattr(backend.platform, "libc_ver", lambda: ("glibc", "2.17"))
     assert backend._wheel_slot(package, None) != here
@@ -94,14 +94,14 @@ def test_another_libc_points_at_another_slot(backend: ModuleType, package: Path,
 
 @pytest.mark.parametrize("name", PLACE_ENV)
 def test_a_place_only_env_keeps_the_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    # 組む場所・並べる数だけを変える値は鍵に入らない — 作業木ごとに target を替えても同じ置き場の wheel を共有する(#2364 の効き目)。
+    # Values that change only the build location or parallelism do not enter the key -- changing the target per working tree still shares the same slot's wheel (the benefit of #2364).
     plain = backend._wheel_slot(package, None)
     monkeypatch.setenv(name, "/somewhere/else")
     assert backend._wheel_slot(package, None) == plain
 
 
 def test_the_same_inputs_give_the_same_slot_and_a_source_change_does_not(backend: ModuleType, package: Path) -> None:
-    # 鍵は決定的(同じ材料なら同じ置き場)で、source の中身の違いは今どおり別の置き場。
+    # The key is deterministic (same ingredients, same slot), and a difference in source contents still points to a different slot as before.
     first = backend._wheel_slot(package, None)
     assert backend._wheel_slot(package, None) == first
     (package / "src" / "lib.rs").write_text("pub fn probe() { let _ = 1; }\n")
@@ -109,7 +109,7 @@ def test_the_same_inputs_give_the_same_slot_and_a_source_change_does_not(backend
 
 
 def test_env_values_do_not_appear_in_the_slot_path(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 値は鍵の hash に入るだけで、置き場の path に字面では出ない。
+    # The value only enters the key's hash and does not appear literally in the slot's path.
     monkeypatch.setenv("RUSTFLAGS", "-C secret-looking-flag")
     assert "secret-looking-flag" not in str(backend._wheel_slot(package, None))
-    assert sys.platform  # 鍵の材料の 1 つ(機体)が読めること
+    assert sys.platform  # one of the key ingredients (the machine) can be read

@@ -143,7 +143,7 @@ class TestDefmcpToolMacro:
         assert list(sig.parameters.keys()) == ["alpha", "beta"]
 
     def test_handler_params_are_annotated_with_the_schema_types(self):
-        """handler の引数は schema の :type を写した型の注記(文字)を持ち、必須でない引数は `| None`。"""
+        """The handler's arguments carry type annotations (as strings) that copy the schema's :type, and non-required arguments are `| None`."""
         import inspect
 
         mod, _ = _eval_mcp("""
@@ -170,8 +170,8 @@ class TestDefmcpToolMacro:
         }
 
     def test_unknown_param_type_raises(self):
-        """schema の :type が JSON Schema の型でなければ、展開の時に誤りにする(handler の引数の型に写せない)。"""
-        with pytest.raises(Exception, match="知らない型"):
+        """If the schema's :type is not a JSON Schema type, it is an error at expansion time (it cannot be mapped to the handler argument's type)."""
+        with pytest.raises(Exception, match="unknown type"):
             _eval_mcp("""
 (defmcp-tool bad-type-tool
   "Bad type"
@@ -180,8 +180,8 @@ class TestDefmcpToolMacro:
 """)
 
     def test_default_with_required_or_enum_builds_the_schema(self):
-        """:default を :required・:enum と一緒に書いても定義でき、schema に全部の欄が載る。既定値が None の引数は必須でない
-        注記(`| None`)になる(設計検証の盲検 B)。"""
+        """Even if :default is written together with :required and :enum, the definition works and the schema carries all the fields. An argument whose default is None gets a non-required
+        annotation (`| None`) (blind B of the design verification)."""
         import inspect
 
         mod, _ = _eval_mcp("""
@@ -211,16 +211,16 @@ class TestDefmcpToolMacro:
         ],
     )
     def test_body_calling_the_tools_own_name_raises(self, body):
-        """本体が tool 自身の名を呼ぶ展開は断る(綴りが - でも _ でも、式の奥でも)。展開はその名を McpToolDef に束ねるので、
-        同じ名の defk が先に在っても本体の呼びは tool を指し、run で TypeError: 'McpToolDef' object is not callable に
-        なっていた(docs 12 章 MCP の道具の例)。"""
+        """An expansion whose body calls the tool's own name is refused (whether spelled with - or _, even deep in an expression). The expansion binds that name to McpToolDef,
+        so even if a defk of the same name exists earlier the call in the body points to the tool, and at run it was
+        TypeError: 'McpToolDef' object is not callable (the MCP tool example in docs chapter 12)."""
 
         @do
         def submit_order(symbol):
             return f"accepted: {symbol}"
 
         with pytest.raises(
-            hy.errors.HyMacroExpansionError, match="tool 自身の名 submit-order を呼んでいます"
+            hy.errors.HyMacroExpansionError, match="the body calls the tool's own name submit-order"
         ):
             _eval_mcp(f"""
 (defmcp-tool submit-order
@@ -230,8 +230,8 @@ class TestDefmcpToolMacro:
 """, submit_order=submit_order)
 
     def test_tool_named_apart_from_its_defk_runs_the_defk(self):
-        """tool の名を defk と分けると、本体は defk を呼び、handler の run は defk の結果を返す(docs 12 章の例の形)。
-        tool の値を読むだけの `(. submit-order-tool name)` や引用の中の名は呼びでないので断らない。"""
+        """If the tool's name is separated from the defk, the body calls the defk, and the handler's run returns the defk's result (the shape of the example in docs chapter 12).
+        `(. submit-order-tool name)`, which only reads the tool's value, and names inside quotes are not calls, so they are not refused."""
 
         @do
         def submit_order(symbol, qty):

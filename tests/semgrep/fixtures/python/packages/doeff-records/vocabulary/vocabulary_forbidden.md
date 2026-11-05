@@ -1,4 +1,4 @@
-検体。doeff-packages-have-no-application-vocabulary が 3・4・5・6・7 行目で発火し、9〜12 行目では発火しない。
+Fixture. doeff-packages-have-no-application-vocabulary fires on lines 3, 4, 5, 6 and 7, and does not fire on lines 9 to 12.
 
 The Agora board reads these rows.
 See agora-redesign for the history.

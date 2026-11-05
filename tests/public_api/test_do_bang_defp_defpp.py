@@ -177,7 +177,7 @@ class TestImportInsideDefpDefk:
 
     @pytest.fixture
     def mod(self) -> ModuleType:
-        """#388 の再現の .hy(fixtures/repro_388)を、検ごとに読み直した module。"""
+        """Module re-reading the #388 reproduction .hy (fixtures/repro_388) for each test."""
         import os
         import sys
 

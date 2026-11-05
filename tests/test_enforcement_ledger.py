@@ -1,16 +1,16 @@
-"""ADR-DOE-ENFORCE-001 R5 / R9: enforcement 台帳の anti-drop ratchet。
+"""ADR-DOE-ENFORCE-001 R5 / R9: anti-drop ratchet for the enforcement ledger.
 
-orch の SpecInventorySpec の pytest 版。enforcement 資産(defadr の file・.semgrep.yaml の規則・
-ADR の law / deftest / defsemgrep)の名の一覧が台帳 docs/adr/enforcement-ledger.json と
-厳密一致しなければ fail する(台帳は生成物 — `make enforcement-ledger` が作る)。
+The pytest version of orch's SpecInventorySpec. The list of enforcement asset names (defadr files, .semgrep.yaml rules,
+ADR law / deftest / defsemgrep) fails unless it exactly matches the ledger docs/adr/enforcement-ledger.json
+(the ledger is generated — `make enforcement-ledger` creates it).
 
-- 台帳に在って木に無い: enforcement の喪失 — 意図した削除なら台帳を生成し直し、差分に残る
-  名前で削除を明示する。
-- 木に在って台帳に無い: 追加の記帳漏れ — 台帳を生成し直す。
+- In the ledger but not in the tree: loss of enforcement — if the deletion is intended, regenerate the ledger and state the deletion explicitly
+  by the name that remains in the diff.
+- In the tree but not in the ledger: an addition was not recorded — regenerate the ledger.
 
-勘定の定義点は scripts/check_enforcement_ledger.py の 1 点(R7 の著述時 git pre-commit hook と
-同じ家)— ここはそれを既定 pytest 収集に載せる面。加えて、その家の ADR の読み(stdlib の
-小さな読み手)が Hy の reader と同じ答えを返すことを、実物の ADR 全部で突き合わせる(R9)。
+The counting is defined at a single point, scripts/check_enforcement_ledger.py (the same home as the R7 authoring-time git pre-commit hook)
+— this is the surface that puts it into default pytest collection. In addition, the ADR reading of that home (a small stdlib
+reader) is checked against all real ADRs to return the same answer as the Hy reader (R9).
 """
 
 import importlib.util
@@ -39,22 +39,22 @@ def test_enforcement_inventory_matches_ledger() -> None:
     actual = checker.worktree_inventory(ROOT)
     drift = checker.difference(ledger, actual)
     assert not drift, (
-        f"enforcement 台帳と木が食い違う — ADR-DOE-ENFORCE-001 R5 / R9。\n"
+        f"The enforcement ledger and the tree disagree — ADR-DOE-ENFORCE-001 R5 / R9.\n"
         f"{checker.describe(drift)}\n"
-        f"台帳は生成物 — `make enforcement-ledger` で作り直し、消えた項目が意図した削除かを確かめる。"
-        f" 台帳: {LEDGER}"
+        f"The ledger is generated — rebuild it with `make enforcement-ledger` and confirm that removed items are intended deletions."
+        f" Ledger: {LEDGER}"
     )
 
 
 def _hy_items(file_name: str, text: str) -> dict[str, list[str]]:
-    """Hy の reader で読んだ形から、勘定の家と同じ規則(持ち主 = 囲む defadr)で項目を集める。"""
+    """Collect items from the form read by the Hy reader, using the same rule as the counting home (owner = enclosing defadr)."""
     keys = {"law": "adr_laws", "deftest": "adr_deftest_enforcements",
             "defsemgrep": "adr_defsemgrep_enforcements"}
     items: dict[str, list[str]] = {key: [] for key in keys.values()}
 
     def name_of(form: Expression) -> str:
         if len(form) < 2 or not isinstance(form[1], (Symbol, String)):
-            return "<名なし>"
+            return "<unnamed>"
         return str(form[1])
 
     def visit(form: object, owner: str) -> None:
@@ -74,24 +74,24 @@ def _hy_items(file_name: str, text: str) -> dict[str, list[str]]:
 
 
 def test_counting_reader_agrees_with_hy_reader_on_every_adr() -> None:
-    # 勘定の家は hook のために stdlib 単独で ADR を読む。その読みが Hy の reader からずれた日に
-    # 台帳は黙って嘘になるので、実物の ADR 全部で Hy の答えと突き合わせる(R9)。
+    # The counting home reads ADRs with the stdlib alone for the hook. On the day that reading drifts from the Hy reader,
+    # the ledger silently becomes false, so compare against the Hy answer on all real ADRs (R9).
     checker = _load_checker()
     paths = sorted(ROOT.glob(checker.ADR_GLOB))
-    assert paths, "ADR が 1 冊も見つからない"
+    assert paths, "no ADR found"
     for path in paths:
         text = path.read_text(encoding="utf-8")
         ours = {key: sorted(names) for key, names in checker.adr_items(path.name, text).items()}
-        assert ours == _hy_items(path.name, text), f"{path.name}: 勘定の家の読みが Hy の reader と違う"
+        assert ours == _hy_items(path.name, text), f"{path.name}: the counting home's reading differs from the Hy reader"
 
 
 def test_semgrep_rule_ids_agree_with_yaml_parser() -> None:
-    # 勘定の家は stdlib 単独なので .semgrep.yaml の規則 id を行の形で拾う。その拾いが YAML の構文で読んだ
-    # rules の id の並びからずれた日(字下げの変更・註や文字列の中の `- id:`)に台帳は黙って嘘になるので、
-    # YAML の parser の答えと突き合わせる(R9)。
+    # The counting home uses the stdlib alone, so it picks up .semgrep.yaml rule ids by line shape. On the day that pickup drifts from the
+    # sequence of rule ids read by YAML syntax (indentation changes, `- id:` inside comments or strings), the ledger silently becomes false, so
+    # compare against the YAML parser's answer (R9).
     checker = _load_checker()
     text = (ROOT / checker.SEMGREP_PATH).read_text(encoding="utf-8")
     parsed = [str(rule["id"]) for rule in yaml.safe_load(text)["rules"]]
     assert sorted(checker._SEMGREP_RULE.findall(text)) == sorted(parsed), (
-        "勘定の家の .semgrep.yaml の規則 id の拾いが YAML の parser と違う"
+        "the counting home's pickup of .semgrep.yaml rule ids differs from the YAML parser"
     )

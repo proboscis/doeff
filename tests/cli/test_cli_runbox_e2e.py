@@ -18,7 +18,7 @@ from tests.cli.cli_child import with_settings
 pytestmark = pytest.mark.cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-# 子の CLI に足す設定: repo の根を import の道に・利用者の既定の env を切り、利用者の DOEFF_PROFILE を外す(出力の雑音を減らす)。
+# Settings added to the child CLI: put the repo root on the import path, cut the user's default env, and drop the user's DOEFF_PROFILE (reduces output noise).
 CHILD_SETTINGS = {
     "PYTHONPATH": str(PROJECT_ROOT),
     "DOEFF_DISABLE_DEFAULT_ENV": "1",
@@ -27,7 +27,7 @@ CHILD_SETTINGS = {
 
 
 def _with_settings(command: list[str], env_override: dict[str, str] | None) -> list[str]:
-    """子の CLI の命令に、検が要る設定と検ごとの上書きを env で足すため(tests/cli/cli_child.py)。"""
+    """Add the settings the test needs and per-test overrides to the child CLI's command via env (tests/cli/cli_child.py)."""
     return with_settings(command, CHILD_SETTINGS | (env_override or {}))
 
 

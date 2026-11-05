@@ -1,14 +1,14 @@
-"""`python -m doeff demo` は `pip install doeff` の直後(核の 4 個だけ)に動き、同じ program を 4 つの handler で走らせ、handler が
-k(continuation)をどう扱うかで effect の意味と答えが変わる様子を見せる(取り組み doeff-publish)。
-IO の本物と偽物の差し替えは 4 つのうちの 1 つ(live_world)で、ほかは effect を見て渡す trace と、途中で k を捨てる budget(1)。
+"""`python -m doeff demo` works right after `pip install doeff` (only the 4 core packages), runs the same program under 4 handlers, and shows how the meaning and the answer of an effect change depending on how the handler treats
+k (the continuation) (initiative doeff-publish).
+Swapping real IO for a fake is one of the 4 (live_world); the others are a trace that inspects and passes effects on, and a budget(1) that discards k midway.
 
-試しの命令は README が `pip install doeff` の後に打つ命令として案内する(最初の 1 画面は入れ方・文書の入口・30 秒の例で、
-案内はその後の節に在る)。核の 4 個(doeff・doeff-vm・doeff-core-effects・
-frozendict)の外の物を 1 つでも import すると、`pip install doeff` の直後には落ちる。開発の環境には Hy も httpx も他の部品も
-入っているので、子の process で標準ライブラリと核の module の外の import を全部塞いでから、`python -m doeff` と同じ道(runpy)で
-走らせる。本物の新しい venv で走らせる検は tools/verify_core_install.py の check_demo(CI の job core-only-install)。
+The command to try is the one the README gives to type after `pip install doeff` (the first screen is how to install, the entry to the docs, and a 30-second example;
+the walkthrough is in a later section). If even one thing outside the 4 core packages (doeff, doeff-vm, doeff-core-effects,
+frozendict) is imported, it fails right after `pip install doeff`. The dev environment has Hy, httpx and other parts installed,
+so in a child process every import outside the standard library and the core modules is blocked, then it is run by the same route as `python -m doeff` (runpy).
+The check that runs in a real fresh venv is check_demo in tools/verify_core_install.py (CI job core-only-install).
 
-live_world が取りに行く頁は file:// の URL で渡す — urlopen は HTTP と同じ道で file を読むので、検は network に出ない。
+The page live_world fetches is passed as a file:// URL -- urlopen reads files by the same route as HTTP, so the check does not touch the network.
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ README = PROJECT_ROOT / "README.md"
 CHILD_DEADLINE_SECONDS = 60
 PAGE = "<h1>Hello, live</h1>"
 
-# 核の 4 個の配布物が入れる top-level の module(doeff-core-effects は doeff_lifeline も入れる)と標準ライブラリの外の import を
-# ModuleNotFoundError にする finder を最前に置き、`python -m doeff` と同じく doeff の __main__ を走らせる子の process の code。
-# 起動で既に読まれた物(site の .pth が読む editable の finder など)は通す。Hy か httpx が既に読まれていれば塞いだ事にならない
-# ので 99、塞いだ後に httpx を import できれば finder が効いていないので 98 で終える。
+# Code of the child process: puts at the front a finder that turns every top-level module outside those installed by the 4 core distributions (doeff-core-effects also installs doeff_lifeline) and the standard library into
+# ModuleNotFoundError, then runs doeff's __main__ the same as `python -m doeff`.
+# Things already loaded at startup (such as the editable finder read by the site .pth) are let through. If Hy or httpx is already loaded the block is meaningless,
+# so exit 99; if httpx can still be imported after blocking, the finder is not effective, so exit 98.
 RUN_DEMO_WITH_THE_CORE_ONLY = """
 import runpy
 import sys
@@ -84,8 +84,8 @@ def test_demo_runs_with_the_core_only_and_each_handler_gives_the_program_another
     assert completed.returncode == 0, completed.stderr
     shown = completed.stdout
     live = f"{len(PAGE)} chars"
-    # 同じ digest の 4 回の答え。canned は頁を読まずに '14 chars'、trace は 2 つの effect を見て渡す、budget(1) は
-    # 2 つ目の effect(Summarize)で k を捨てて digest を止める、live_world は file の頁(20 字)を読む。
+    # 4 answers for the same digest. canned returns '14 chars' without reading the page, trace sees and passes 2 effects, budget(1) discards k at the
+    # 2nd effect (Summarize) and stops the digest, live_world reads the file's page (20 chars).
     runs = (
         ">>> run(handler(canned)(digest(url)))\n'14 chars'\n",
         ">>> run(handler(canned)(handler(trace)(digest(url))))\n"
@@ -98,7 +98,7 @@ def test_demo_runs_with_the_core_only_and_each_handler_gives_the_program_another
     places = [shown.index(run) for run in runs]
     assert places == sorted(places)
     assert f'>>> url = "{page.as_uri()}"' in shown
-    # 締めの行: 同じだった物を 1 行、handler ごとに変わった物(k をどうしたか・答え)を 1 行ずつ。
+    # Closing lines: one line for what was the same, and one line each for what changed per handler (what was done with k, the answer).
     closing = shown[places[-1] :]
     assert "Same in all 4 runs: digest, not one line of it changed.\n" in closing
     for handler_name, answer in (
@@ -110,7 +110,7 @@ def test_demo_runs_with_the_core_only_and_each_handler_gives_the_program_another
         assert re.search(
             rf"^  {re.escape(handler_name)} +\S.* {re.escape(answer)}$", closing, re.MULTILINE
         ), handler_name
-    # 走らせた program と handler の source を見せる(README の handler の例と同じ digest)。
+    # Show the source of the program that was run and of the handlers (the same digest as the README's handler example).
     for source in (
         "def digest(url):",
         "def canned(effect, k):",
@@ -148,8 +148,8 @@ def test_demo_refuses_a_url_without_a_scheme_before_running(
 def test_readme_points_to_the_demo_as_the_command_after_pip_install() -> None:
     readme = README.read_text(encoding="utf-8")
     install = re.search(r"^```bash\n(?:pip install .*\n)+```\n", readme, re.MULTILINE)
-    assert install is not None, "README に pip install の囲みが無い"
+    assert install is not None, "README has no pip install block"
     paragraphs = readme[install.end() :].split("\n\n")
     demo = next((paragraph for paragraph in paragraphs if "`python -m doeff demo`" in paragraph), None)
-    assert demo is not None, "README の最初の pip install の囲みの後に `python -m doeff demo` の案内が無い"
+    assert demo is not None, "README has no `python -m doeff demo` guidance after the first pip install block"
     assert "`pip install doeff`" in demo, demo

@@ -1,8 +1,8 @@
-"""docs/releases/v<版>.md(GitHub の Release に貼る本文の下書き)の版が、CHANGELOG.md の節と一致する事の検。
+"""Test that the version of docs/releases/v<version>.md (the draft of the body to paste into a GitHub Release) matches a section of CHANGELOG.md.
 
-本文は file の名で版を名指す(docs/releases/v0.8.0.md は Release v0.8.0 の本文)。その版には CHANGELOG.md に
-`## <版> — <日付>` の節が在り、本文が名指す版(tag への link・CHANGELOG の節への link)は、どれも file の名の版と同じ
-でなければならない — 前の版の本文を写して直し忘れた所が、別の版の tag や節を指したまま Release に出ないように。
+The body names its version by file name (docs/releases/v0.8.0.md is the body of Release v0.8.0). That version has a section
+`## <version> — <date>` in CHANGELOG.md, and every version the body names (links to tags, links to CHANGELOG sections) must be the same
+as the version in the file name -- so that a spot left unfixed after copying the previous version's body does not go out in a Release still pointing at another version's tag or section.
 """
 
 from __future__ import annotations
@@ -18,23 +18,23 @@ CHANGELOG = REPO / "CHANGELOG.md"
 
 _NOTES_NAME = re.compile(r"v(?P<version>\d+\.\d+\.\d+)\.md")
 _SECTION = re.compile(r"^## (?P<version>\d+\.\d+\.\d+) — (?P<date>\d{4}-\d{2}-\d{2})$", re.MULTILINE)
-# 本文の中の tag への link(blob/v0.8.0/…・tree/v0.8.0/…・releases/tag/v0.8.0)と、CHANGELOG の節への anchor(#080--2026-10-27)。
+# Links to tags in the body (blob/v0.8.0/..., tree/v0.8.0/..., releases/tag/v0.8.0) and anchors to CHANGELOG sections (#080--2026-10-27).
 _TAG_LINK = re.compile(r"/(?:blob|tree|releases/tag)/v(?P<version>\d+\.\d+\.\d+)\b")
 _CHANGELOG_ANCHOR = re.compile(r"CHANGELOG\.md#(?P<anchor>[0-9a-z-]+)")
 
 
 def changelog_sections(changelog: str) -> dict[str, str]:
-    """CHANGELOG の版の節の 版 → 日付。"""
+    """Version -> date of the CHANGELOG's version sections."""
     return {m["version"]: m["date"] for m in _SECTION.finditer(changelog)}
 
 
 def section_anchor(version: str, date: str) -> str:
-    """GitHub が `## 0.8.0 — 2026-10-27` の見出しに付ける anchor(`080--2026-10-27`)。"""
+    """The anchor GitHub gives to the heading `## 0.8.0 — 2026-10-27` (`080--2026-10-27`)."""
     return f"{version.replace('.', '')}--{date}"
 
 
 def mismatches(file_name: str, notes: str, changelog: str) -> list[str]:
-    """本文 1 つが CHANGELOG と食い違う所の一覧(空なら一致)。"""
+    """List of places where one body disagrees with the CHANGELOG (empty if they match)."""
     named = _NOTES_NAME.fullmatch(file_name)
     if named is None:
         return [f"{file_name}: the name is not v<major>.<minor>.<patch>.md"]

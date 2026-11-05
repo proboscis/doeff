@@ -1,5 +1,5 @@
-;;; 検体(違反をわざと書いた file): 設定から本体の引数を service_model.program-arguments の外で作る写し。
-;;; doeff-cluster-program-arguments-are-built-in-one-place が 8 行目と 12 行目で発火する。
+;;; Sample (a file with a deliberately written violation): a copy that builds the body's arguments from settings outside service_model.program-arguments.
+;;; doeff-cluster-program-arguments-are-built-in-one-place fires at line 8 and line 12.
 (import json)
 (import doeff_cluster._shared.entry.service_build [resolve])
 

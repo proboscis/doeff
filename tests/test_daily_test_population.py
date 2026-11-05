@@ -1,25 +1,25 @@
-"""ADR-DOE-ENFORCE-001 R8: 日次の全体検証の母集団の網羅・失敗名の形・test file の置き場。
+"""ADR-DOE-ENFORCE-001 R8: coverage of the daily full-verification population, the shape of failure names, and where test files live.
 
-日次の全体検証(.agents/land-queue.toml の gate.full)の母集団は root の pytest・package ごとの
-pytest(`make test-packages`)・Rust crate ごとの cargo test(`make test-rust`)の 3 つ。宣言の形
-(母集団ごとに別の処理ステージ)は ADR の deftest
-test-adr-doe-enforce-001-daily-populations-are-separate-stages が持ち、ここは挙動の本体を持つ:
+The daily full verification (gate.full in .agents/land-queue.toml) has three populations: root pytest, per-package
+pytest (`make test-packages`), and per-Rust-crate cargo test (`make test-rust`). The declaration shape
+(a separate processing stage per population) is held by the ADR deftest
+test-adr-doe-enforce-001-daily-populations-are-separate-stages; this file holds the behavior itself:
 
-- package の loop は期待の集合と package の tests/ の外の根(Makefile の PACKAGE_EXTRA_TEST_ROOTS)を
-  全部訪ね、赤の後も続け、最後に失敗の package を名指す。
-- package の失敗名は repo の根からの相対で、package をまたいで衝突しない(日次の道具は失敗名を
-  要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。
-- 検の file(`.py` と `.hy` — 定義は `_test_file_patterns` の 1 点)はどれかの母集団の根の下か、
-  理由つきの除外の表に在る。
-- 検のつもりの名(test_*.py・test_*.hy)の file は、どれかの集め手の pattern(root の ini の python_files・
-  doeff_hy_test_files・executable ADR の pattern)に当たり、Hy の集め手を conftest.py に写さない。外す一覧
-  (doeff_hy_test_skips)の行は今の Hy の検の file を名指す。
-- package は自分の pytest の設定を持たない(持つと root の ini と conftest が効かなくなる)。
+- The package loop visits every expected set and every root outside a package's tests/ (the Makefile's PACKAGE_EXTRA_TEST_ROOTS),
+  continues after a red, and names the failing packages at the end.
+- A package's failure names are relative to the repo root and do not collide across packages (the daily tooling takes failure names
+  verbatim from the summary lines and passes them to pytest as-is from the repo root).
+- Test files (`.py` and `.hy` -- defined in the single place `_test_file_patterns`) are under some population's root or
+  in the table of exclusions with reasons.
+- Files named like tests (test_*.py, test_*.hy) match some collector's pattern (the root ini's python_files,
+  doeff_hy_test_files, and the executable ADR pattern), and the Hy collector is not copied into conftest.py. Each row of the skip list
+  (doeff_hy_test_skips) names a current Hy test file.
+- A package has no pytest configuration of its own (if it did, the root ini and conftest would stop applying).
 
-反例の実弾: 2026-09-24 の日次(断面 f271ae39)は root の赤 3 本で `&&` が止まり、package と
-Rust の母集団は 1 本も走らないまま台帳は coverage = complete と記録した。`make test-packages`
-の loop も最初の赤の package で止まり(`|| exit 1`)、package の dir から走らせた失敗名は
-`tests/test_cli.py::…` の形で 4 組の同名 file が衝突した(docs/design/test-population-ki-08ec/)。
+Live counterexample: the 2026-09-24 daily (snapshot f271ae39) stopped at `&&` on 3 root reds, and the package and
+Rust populations did not run a single test while the ledger recorded coverage = complete. The `make test-packages`
+loop also stopped at the first red package (`|| exit 1`), and failure names from running in a package dir
+took the form `tests/test_cli.py::...`, so 4 pairs of same-named files collided (docs/design/test-population-ki-08ec/).
 """
 
 from __future__ import annotations
@@ -45,24 +45,24 @@ from doeff import run, with_handlers
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# pytest の既定の python_files(root の ini が python_files を書けば、そちらを読む)。
+# pytest's default python_files (if the root ini writes python_files, that is read instead).
 _PYTEST_PYTHON_FILES = ("test_*.py", "*_test.py")
-# 「検のつもりの名」の file — どれかの集め手に集められなければ、日次で 1 本も走らない。
+# Files "named like tests" -- if no collector collects them, not one of them runs in the daily.
 _TEST_NAMED_SOURCES = ("test_*.py", "test_*.hy")
 
 
 def _test_file_patterns(repo: Path) -> tuple[str, ...]:
-    """「何が検の file か」の定義の 1 点 — pytest が集める 3 つの経路の名の規則。どれも集め手そのものが読む値。
+    """The single definition of "what is a test file" -- the naming rules of the 3 routes pytest collects through. Each is a value the collector itself reads.
 
-    - Python の検: root の ini の python_files(既定は pytest の既定)。
-    - Hy の検の file: root の ini の doeff_hy_test_files(doeff-adr の plugin の集め手が同じ値を読む・deftest の
-      file も上から順に実行する script も集める)。
-    - executable ADR: doeff-adr の plugin の既定の pattern と root の ini の doeff_adr_hy_files。
+    - Python tests: the root ini's python_files (default is pytest's default).
+    - Hy test files: the root ini's doeff_hy_test_files (the doeff-adr plugin's collector reads the same value; it collects
+      both deftest files and scripts that run top to bottom).
+    - executable ADR: the doeff-adr plugin's default pattern and the root ini's doeff_adr_hy_files.
 
-    `.py` だけを数えていた時は、母集団の外の `.hy` の検が日次で走らなくても赤にならなかった
-    (#2542 の packages/doeff-cluster/src/doeff_cluster/_sim/test_entries_on_sim.hy)。
-    Hy の条件を検の側に `test_*.hy` と写していた時は、集める conftest の無い dir の test_*.hy(packages/doeff-hy/tests
-    の 6 本)を「検の file」と数えながら、どの集め手も集めていなかった。
+    When only `.py` was counted, a `.hy` test outside the population did not turn red even if it did not run in the daily
+    (#2542, packages/doeff-cluster/src/doeff_cluster/_sim/test_entries_on_sim.hy).
+    When the Hy condition was copied into the test side as `test_*.hy`, test_*.hy files in dirs with no collecting conftest (the 6 in packages/doeff-hy/tests)
+    were counted as "test files" while no collector collected them.
     """
     ini = _root_ini(repo)
     return (
@@ -74,17 +74,17 @@ def _test_file_patterns(repo: Path) -> tuple[str, ...]:
 
 
 def _is_test_file(rel: str, patterns: tuple[str, ...]) -> bool:
-    """pytest の照合と同じ: `/` を含まない pattern は file の名に、含む pattern は repo の根からの path に当てる。"""
+    """Same matching as pytest: a pattern without `/` is matched against the file name, one with `/` against the path from the repo root."""
     name = rel.rsplit("/", 1)[-1]
     return any(fnmatch.fnmatchcase(rel if "/" in p else name, p) for p in patterns)
 
 
-# 歩かない dir = pytest の既定の norecursedirs + build の出力(target・__pycache__)。
-# 日次の検査の木には make sync の出力(.venv・target)が在り、2026-10-10 までの遠隔の木(remote_check の写し — git の名簿の
-# file だけを送る)には .git も無かったので、git ではなく file system を歩く(2026-10-10 から段は日次の task の git の作業木で直に走る
+# Dirs not walked = pytest's default norecursedirs + build outputs (target, __pycache__).
+# The daily check's tree contains make sync outputs (.venv, target), and the remote trees up to 2026-10-10 (copies by remote_check -- sending only the git manifest
+# files) had no .git either, so walk the file system rather than git (since 2026-10-10 the stage runs directly in the daily task's git working tree
 # — ADR-DOE-ENFORCE-001 R10)。
-# 2026-09-25 実測: この規則で歩いた test 名の file の集合は、素の worktree(450 本)でも
-# build 済みの checkout(449 本)でも `git ls-files --cached --others --exclude-standard` と一致した。
+# Measured 2026-09-25: the set of test-named files walked by this rule matched `git ls-files --cached --others --exclude-standard` both in a bare worktree (450 files) and
+# in a built checkout (449 files).
 _NOT_WALKED = (
     "*.egg",
     "*.egg-info",
@@ -100,49 +100,49 @@ _NOT_WALKED = (
     "__pycache__",
 )
 
-# どの母集団にも属さない test 名の file の除外の表(path か、`/` で終わる dir の接頭辞 → 理由)。
-# 行を足す時は理由を書く。該当する file が 1 本も無い行は古い行として赤になる。
-# 設計の記録の dir は dir の行で外さない — 記録の中の検の写し・模型は集め手の pattern に当たらない名
-# (`<名>.py.txt`)で置く。行で外すと、make test-changed の選び(名の規則だけを読む)が写しを検として走らせ、本物の
-# 検を記録の中にだけ置いても緑になる(設計検証の盲検 A・B — docs/design/ の
-# 行も同じ形で、seat-home の模型 4 本は 2026-10-12 に .py.txt へ替えて外した)。
-# 記録の中の行は、hash で封をした閉じた記録が名指して改名できない file だけを、1 file ごとの path で書く(dir の行と違い、
-# 新しい検を隠せない — dir の行は test_exclusion_table_has_no_dir_row_over_a_record_dir が禁じる)。記録の dir は root の
-# pyproject.toml の `[tool.doeff] record-dirs` の 1 点で、make test-changed の選び(scripts/run_changed_tests.py)もこの下の file を
-# 検として選ばない。選びが記録の中の file を選ぶと、その file が import する module の変更で「集める時に落ちた」赤になった
-# (設計検証の盲検 A・実測)。
+# Table of exclusions for test-named files that belong to no population (path, or a dir prefix ending in `/` -> reason).
+# State a reason when adding a row. A row matching no file at all turns red as a stale row.
+# Design-record dirs are not excluded by a dir row -- copies and mock-ups of tests inside a record are placed under names that do not match a collector's pattern
+# (`<name>.py.txt`). If excluded by a row, the make test-changed selection (which reads only the naming rule) runs the copies as tests, and it stays green even if a real
+# test is placed only inside a record (blind A/B of the design review -- rows under docs/design/
+# are in the same shape, and the 4 seat-home mock-ups were switched to .py.txt on 2026-10-12 and removed from the table).
+# Rows inside a record are written, one path per file, only for files that a hash-sealed closed record names and so cannot be renamed (unlike a dir row,
+# they cannot hide new tests -- dir rows are forbidden by test_exclusion_table_has_no_dir_row_over_a_record_dir). The record dirs are defined in one place, the root
+# pyproject.toml `[tool.doeff] record-dirs`, and the make test-changed selection (scripts/run_changed_tests.py) also does not select files under it
+# as tests. When the selection picked files inside a record, a change to a module that file imports turned red as "failed at collection"
+# (blind A of the design review, measured).
 EXCLUDED: dict[str, str] = {
     "packages/doeff-agents/conformance/": (
-        "tmux / herdr の実 pane を使う黒箱の交代ゲート(実モデルは使わない)。日次の宿で tmux が"
-        "使えるかが未測定で、母集団へ入れるかは別の便で決める"
+        "A black-box handover gate using real tmux / herdr panes (no real model). Whether tmux is"
+        " usable on the daily host is unmeasured; whether to include it in a population is decided in a separate pass"
     ),
-    "packages/doeff-agentic/examples/": "例示の script(__main__ で走らせる)",
+    "packages/doeff-agentic/examples/": "Example scripts (run via __main__)",
     "examples/test_llm_agent.py": (
-        "利用者が例の llm_agent.py の隣に写して走らせる pytest の検の例。母集団の根(testpaths)の下の "
-        "tests/test_examples_run.py::test_example_tests_pass_with_only_the_example_files が、examples/ の .py だけを写した "
-        "repo の外の dir で日次に走らせる — 根の下に置くと、根の conftest.py と pyproject.toml の pytest の設定の下でも走り、"
-        "核の 4 個と pytest だけで通る事を確かめなくなる"
+        "An example pytest test that users copy next to the example llm_agent.py and run. tests/test_examples_run.py::test_example_tests_pass_with_only_the_example_files "
+        "under the population root (testpaths) runs it daily in a dir outside the repo containing only the .py files of examples/ "
+        "-- placed under the root, it would also run under the root conftest.py and pyproject.toml pytest settings, "
+        "and would stop verifying that it passes with only the 4 core pieces and pytest"
     ),
     "examples/github_repo/": (
-        "README の命令 `pytest examples/github_repo` で利用者が走らせる、HTTP の API の例の pytest の検の例。母集団の根の下の "
-        "tests/test_examples_run.py::test_github_repo_example_tests_run_with_pytest_alone が、その命令の通りに pytest の外の "
-        "plugin 無しの子で日次に走らせる(例の dir の pytest.ini が rootdir を例の dir に留める)— 上の test_llm_agent.py と同じく、"
-        "根の下に置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
+        "An example pytest test of an HTTP API example that users run with the README command `pytest examples/github_repo`. tests/test_examples_run.py::test_github_repo_example_tests_run_with_pytest_alone under the population root "
+        "runs it daily exactly as that command does, in a child outside pytest "
+        "with no plugins (the example dir's pytest.ini pins rootdir to the example dir) -- like test_llm_agent.py above, "
+        "placed under the root it would also run under the root conftest.py and stop verifying that it passes with pytest alone"
     ),
     "examples/testing_without_mocks/": (
-        "紹介の記事の例の dir の README が書く `pytest` で利用者が走らせる、mock.patch と doeff の handler の検の例。例は PyPI の"
-        "版に留めて書く(ADR-DOE-API-002 R3)ので、repo の版では走らせず、毎日の CI(.github/workflows/core-install-from-pypi.yml)"
-        "の tools/verify_core_install.py --pypi が、PyPI の doeff と pytest だけの venv で例の dir を写した所で走らせる"
-        "— 根の下に置くと repo の版と根の conftest.py の下で走る"
+        "An example test of mock.patch and a doeff handler that users run with `pytest` per the README in the introductory article's example dir. The example is written pinned to the PyPI "
+        " version (ADR-DOE-API-002 R3), so it is not run against the repo version; the daily CI (.github/workflows/core-install-from-pypi.yml)'s "
+        "tools/verify_core_install.py --pypi runs it where the example dir is copied into a venv with only PyPI's doeff and pytest"
+        " -- placed under the root it would run against the repo version and under the root conftest.py"
     ),
 }
 
 
 def _expected_packages(repo: Path) -> list[str]:
-    """package の母集団の期待 — `packages/<p>/tests` の下に fixtures 以外の検の file が在る p の全部。
+    """Expected package population -- every p for which `packages/<p>/tests` contains non-fixture test files.
 
-    Makefile の実走からは取らない: 期待を実装から取ると、Makefile が母集団を縮めた時に
-    訪ねた集合と期待が一緒に縮んで緑のまま残る(盲検 B の反例)。
+    Not taken from the Makefile's actual run: if the expectation is taken from the implementation, when the Makefile shrinks the population
+    the visited set and the expectation shrink together and stay green (blind B's counterexample).
     """
     files = _test_named_files(repo)
     return sorted(
@@ -155,7 +155,7 @@ def _expected_packages(repo: Path) -> list[str]:
 
 
 def _test_named_files(repo: Path) -> list[str]:
-    """repo の検の file(`_test_file_patterns` に当たる・fixtures の下を除く)の repo の根からの相対 path。"""
+    """Paths relative to the repo root of the repo's test files (matching `_test_file_patterns`, excluding those under fixtures)."""
     patterns = _test_file_patterns(repo)
     return sorted(
         rel
@@ -166,7 +166,7 @@ def _test_named_files(repo: Path) -> list[str]:
 
 
 def _walk(repo: Path) -> Iterator[tuple[str, list[str], list[str]]]:
-    """`_NOT_WALKED` の dir へ降りない os.walk。"""
+    """An os.walk that does not descend into `_NOT_WALKED` dirs."""
     for current, dirs, files in os.walk(repo):
         dirs[:] = sorted(
             name
@@ -194,15 +194,15 @@ def _root_testpaths(repo: Path) -> list[str]:
 
 
 def _record_dirs(repo: Path) -> list[str]:
-    """設計の記録の dir — 定義は root の pyproject.toml の `[tool.doeff] record-dirs` の 1 点(make test-changed の選びも同じ値を読む)。"""
+    """Design-record dirs -- defined in the single place root pyproject.toml's `[tool.doeff] record-dirs` (the make test-changed selection reads the same value)."""
     config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
     return list(config["tool"]["doeff"]["record-dirs"])
 
 
 def _package_extra_test_roots(repo: Path, overrides: tuple[str, ...] = ()) -> list[str]:
-    """`make test-packages` が package の tests/ の外で走らせる根 — 定義は Makefile の PACKAGE_EXTRA_TEST_ROOTS の 1 点。
+    """Roots that `make test-packages` runs outside a package's tests/ -- defined in the single place Makefile's PACKAGE_EXTRA_TEST_ROOTS.
 
-    検の側に一覧を写さず、本物の Makefile に名を聞く(overrides は make の命令行の変数の上書き)。
+    Do not copy the list into the test side; ask the real Makefile for the names (overrides are variable overrides on make's command line).
     """
     proc = subprocess.run(
         [
@@ -225,7 +225,7 @@ def _package_extra_test_roots(repo: Path, overrides: tuple[str, ...] = ()) -> li
 
 
 def _population_roots(repo: Path, overrides: tuple[str, ...] = ()) -> list[str]:
-    """日次の母集団の根 — root の testpaths・package ごとの tests・package の tests の外の根。"""
+    """Roots of the daily population -- root testpaths, each package's tests, and roots outside a package's tests."""
     return [
         *_root_testpaths(repo),
         *(f"packages/{package}/tests" for package in _expected_packages(repo)),
@@ -241,20 +241,20 @@ def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: lis
         and not any(_is_excluded(path, row) for row in EXCLUDED)
     ]
     assert not orphans, (
-        f"日次のどの母集団にも除外の表にも無い検の file が {len(orphans)} 本: {orphans}"
-        " — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、"
-        "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)。"
-        "設計の記録(root の pyproject.toml の `[tool.doeff] record-dirs`)の中の検の写し・模型は、"
-        "集め手の pattern に当たらない名(元の名に `.txt` を足す: `test_x.py` → `test_x.py.txt`・`test_x.hy` → `test_x.hy.txt`)に替える"
+        f"{len(orphans)} test files belong to no daily population and are not in the exclusion table: {orphans}"
+        " -- put them under a population root (add a root outside a package's tests/ to the Makefile's PACKAGE_EXTRA_TEST_ROOTS), or"
+        " list them in EXCLUDED in tests/test_daily_test_population.py with a reason (a green on a tree with no caller is invisible to the daily). "
+        "Copies and mock-ups of tests inside a design record (root pyproject.toml `[tool.doeff] record-dirs`) should be "
+        "renamed to a name that does not match a collector's pattern (append `.txt` to the original name: `test_x.py` -> `test_x.py.txt`, `test_x.hy` -> `test_x.hy.txt`)"
         "— ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def _assert_every_test_named_source_is_collected(repo: Path) -> None:
-    """検のつもりの名(test_*.py・test_*.hy)の file は、どれかの集め手の pattern に当たる(fixtures の下を除く)。
+    """Files named like tests (test_*.py, test_*.hy) match some collector's pattern (excluding those under fixtures).
 
-    当たらない file は、母集団の根の下に在っても pytest に集められず、日次で 1 本も走らない(
-    packages/doeff-hy/tests の 6 本は、集める conftest の無い dir の test_*.hy だった)。
+    A file that does not match is not collected by pytest even if it is under a population root, and not one of them runs in the daily (
+    the 6 in packages/doeff-hy/tests were test_*.hy in a dir with no collecting conftest).
     """
     patterns = _test_file_patterns(repo)
     uncollected = sorted(
@@ -266,22 +266,22 @@ def _assert_every_test_named_source_is_collected(repo: Path) -> None:
         and "fixtures" not in rel.split("/")
     )
     assert not uncollected, (
-        f"どの集め手にも集められない検の file が {len(uncollected)} 本: {uncollected} — 集め手の pattern"
-        "(root の ini の python_files・doeff_hy_test_files・doeff-adr の executable ADR の pattern)に当たる名にするか、"
-        "集め手の pattern を ini に足す(package ごとの conftest.py に集め手を写さない)— ADR-DOE-ENFORCE-001 R8"
+        f"{len(uncollected)} test files are collected by no collector: {uncollected} -- give them names matching a collector's pattern"
+        " (the root ini's python_files, doeff_hy_test_files, or doeff-adr's executable ADR pattern), or"
+        " add the collector's pattern to the ini (do not copy a collector into each package's conftest.py) -- ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def _named_failed_packages(output: str) -> list[str] | None:
-    """`make test-packages` が最後に名指した失敗の package(`test-packages failed:` の行が無ければ None)。"""
+    """The failing packages `make test-packages` named last (None if there is no `test-packages failed:` line)."""
     summary = [line for line in output.splitlines() if line.startswith("test-packages failed:")]
     return summary[-1].split(":", 1)[1].split() if summary else None
 
 
-# 偽の runner(make の PACKAGE_UV_RUN に置く)— 引数の 1 つが DOEFF_FAKE_RUNNER_FAIL の dir に当たる時だけ 1 で終わり、返す rc・
-# cwd・引数を記録の file へ 1 行(タブ区切り)で足す。引数は runner の cwd から解くので、package の dir から走らせる形でも
-# 同じ package と数える。sh で書く: Python で書くと 1 巡で Python 3.14t を session の数(35)だけ起こし、load 65〜70 で
-# 1 巡 4.75 秒かかった。path は cd と pwd -P で解く(realpath -m は Mac に無い)。
+# Fake runner (placed in make's PACKAGE_UV_RUN) -- exits 1 only when one of its arguments hits a dir in DOEFF_FAKE_RUNNER_FAIL, and appends the rc it returned,
+# cwd, and arguments as one tab-separated line to the record file. Arguments are resolved from the runner's cwd, so even a form that runs from the package dir
+# counts as the same package. Written in sh: in Python, one round started Python 3.14t as many times as there are sessions (35), and at load 65-70
+# one round took 4.75 seconds. Paths are resolved with cd and pwd -P (realpath -m is not on Mac).
 _FAKE_RUNNER = """\
 unset CDPATH
 fail=$(cd -- "$DOEFF_FAKE_RUNNER_FAIL" 2>/dev/null && pwd -P)
@@ -298,36 +298,36 @@ exit $rc
 
 @dataclass(frozen=True)
 class _RunnerCall:
-    """偽の runner の 1 回の呼び — 返した rc と、受けた cwd と引数。"""
+    """One call of the fake runner -- the rc it returned, and the cwd and arguments it received."""
 
     rc: int
     cwd: str
     argv: list[str]
 
     def dirs(self) -> list[Path]:
-        """引数のうち dir を指す物を、runner の cwd から解いた物理の path で(綴り・末尾の `/`・相対か絶対かに依らない)。"""
+        """Those arguments that point to a dir, as physical paths resolved from the runner's cwd (independent of spelling, trailing `/`, and relative vs absolute)."""
         return [path for arg in self.argv if (path := Path(self.cwd, arg).resolve()).is_dir()]
 
 
 @dataclass(frozen=True)
 class _MakeRound:
-    """偽の runner で回した本物の Makefile の `make test-packages` の一巡。"""
+    """One round of the real Makefile's `make test-packages` run with the fake runner."""
 
-    calls: list[_RunnerCall]  # runner が呼ばれた順
+    calls: list[_RunnerCall]  # in the order the runner was called
     output: str
     exit_code: int
     timed_out: bool
 
 
 def _run_test_packages(repo: Path, tmp: Path, fail: Path, *overrides: str) -> _MakeRound:
-    """本物の Makefile の test-packages を repo で偽の runner に回す(fail の dir を受けた session だけ赤)。
+    """Run the real Makefile's test-packages on the repo with the fake runner (only the session that receives the fail dir turns red).
 
-    overrides は make の命令行の変数の上書き。runner と記録は tmp に置く。
+    overrides are variable overrides on make's command line. The runner and record are placed in tmp.
     """
     runner = tmp / "fake_runner.sh"
     runner.write_text(_FAKE_RUNNER, encoding="utf-8")
     record = tmp / "calls.tsv"
-    # 子(make)は doeff の子 process の答え手が起こし、今の環境に偽の runner の 2 つの名を重ねて渡す。
+    # The child (make) is started by doeff's child-process answerer, and the fake runner's 2 names are layered on the current environment and passed.
     proc = run(
         with_handlers(
             [subprocess_handler],
@@ -366,7 +366,7 @@ def _run_test_packages(repo: Path, tmp: Path, fail: Path, *overrides: str) -> _M
 
 @dataclass(frozen=True)
 class _PackagesRound:
-    """この repo の一巡 — 期待の集合の名前順で最初の package(first)だけを赤にした。"""
+    """This repo's round -- only the first package (first) in expected-set name order was made red."""
 
     expected: list[str]
     first: str
@@ -375,16 +375,16 @@ class _PackagesRound:
 
 @pytest.fixture(scope="module")
 def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
-    """この repo の `make test-packages` の一巡を module で 1 回だけ回し、その記録を package の loop の検 2 本が共に読む。
+    """Run this repo's `make test-packages` round once per module, and let the 2 package-loop tests read its record together.
 
-    検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す。
-    この一巡には赤が在るので、「全部が緑なら rc 0」は模型の木の検
-    test_make_test_packages_is_green_when_every_package_is_green が見る。この一巡の模擬の結末は「最初の package だけが赤」の
-    1 つで、別の結末(rc 5・赤 2 つ・時間切れ)を見る検は `_run_test_packages` で自分の一巡を回す — 相乗りすると、訪ねの検の
-    rc≠0 が何の赤から来たかを言えなくなる(訪ねの検が赤にする — 設計検証の盲検 B)。
+    Running it per test would run the same round (starting the runner once per package) twice.
+    This round contains a red, so "rc 0 when everything is green" is checked by the model-tree test
+    test_make_test_packages_is_green_when_every_package_is_green. This round's simulated outcome is the single one "only the first package is red";
+    tests that check other outcomes (rc 5, 2 reds, timeout) run their own round with `_run_test_packages` -- if they piggybacked, the visiting test
+    could no longer say what red the rc != 0 came from (the visiting test turns red -- blind B of the design review).
     """
     expected = _expected_packages(REPO_ROOT)
-    assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
+    assert expected, "no package with Python tests found under packages/*/tests"
     first = expected[0]
     made = _run_test_packages(
         REPO_ROOT,
@@ -395,11 +395,11 @@ def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
 
 
 def test_make_test_packages_is_green_when_every_package_is_green(tmp_path: Path) -> None:
-    """模型の木(package a・b と package の tests/ の外の根 1 つ)で、どの session も緑なら rc 0 で失敗の package を名指さない。
+    """In a model tree (packages a and b, and one root outside a package's tests/), rc is 0 and no failing package is named when every session is green.
 
-    この repo の一巡は最初の package を赤にするので、緑の終わり方(要約の行の if を `[ … ] && …` に書き換えると、緑の時に
-    recipe の最後の命令が 1 を返す)はこの検だけが見る — 一巡を 2 本で共有する前は、秒の flag の検が全部緑の一巡で rc 0 を見ていた。
-    訪ねた根は解いた dir で比べる(Makefile が根を `tests/` や絶対 path で綴っても同じ根と数える — 盲検 A)。
+    This repo's round makes the first package red, so only this test sees the green ending (if the summary line's if is rewritten as `[ ... ] && ...`, the recipe's last
+    command returns 1 when green) -- before the round was shared by 2 tests, the seconds-flag test saw rc 0 in an all-green round.
+    Visited roots are compared as resolved dirs (the Makefile spelling a root as `tests/` or an absolute path still counts as the same root -- blind A).
     """
     roots = ("extra/sim", "packages/a/tests", "packages/b/tests")
     for root in roots:
@@ -409,28 +409,28 @@ def test_make_test_packages_is_green_when_every_package_is_green(tmp_path: Path)
         tmp_path, tmp_path, tmp_path / "no-such-tests", "PACKAGE_EXTRA_TEST_ROOTS=extra/sim"
     )
     output = made.output
-    assert not made.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
+    assert not made.timed_out, f"make test-packages did not finish in 120 seconds\n{output[-2000:]}"
     visited = sorted(path for call in made.calls for path in call.dirs())
     assert visited == sorted((tmp_path / root).resolve() for root in roots), (
-        f"模型の木の session を 1 度ずつ全部訪ねていない: {visited}\n{output[-2000:]}"
+        f"did not visit every session of the model tree exactly once: {visited}\n{output[-2000:]}"
     )
     assert made.exit_code == 0, (
-        f"どの session も緑なのに make test-packages の rc が {made.exit_code}"
-        f" — 日次の段 packages が緑の日に赤になる — R8\n{output[-2000:]}"
+        f"every session is green yet make test-packages rc is {made.exit_code}"
+        f" -- the daily stage packages would turn red on a green day -- R8\n{output[-2000:]}"
     )
     assert _named_failed_packages(output) is None, (
-        f"どの session も緑なのに失敗の package を名指した: {_named_failed_packages(output)} — R8\n{output[-2000:]}"
+        f"every session is green yet a failing package was named: {_named_failed_packages(output)} -- R8\n{output[-2000:]}"
     )
 
 
 def test_make_test_packages_visits_every_package_after_a_red(
     packages_round: _PackagesRound,
 ) -> None:
-    """期待の集合の名前順で最初の package だけを赤にしても、loop は全部を訪ねて最後に名指す。"""
+    """Even if only the first package in expected-set name order is made red, the loop visits all of them and names it at the end."""
     first, expected = packages_round.first, packages_round.expected
     calls, output = packages_round.made.calls, packages_round.made.output
     assert not packages_round.made.timed_out, (
-        f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
+        f"make test-packages did not finish in 120 seconds\n{output[-2000:]}"
     )
 
     packages_dir = (REPO_ROOT / "packages").resolve()
@@ -442,40 +442,40 @@ def test_make_test_packages_visits_every_package_after_a_red(
     }
 
     assert reached == set(expected), (
-        f"make test-packages が訪ねた package が期待と違う: 欠け {sorted(set(expected) - reached)}"
-        f" / 余り {sorted(reached - set(expected))}(runner が呼ばれた回数 {len(calls)}・"
-        f"最初の {first} だけを赤にした)— 欠けた package は日次で 1 本も走らない(赤の後で"
-        f"止めた・または母集団から外した)— ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
+        f"the packages make test-packages visited differ from expected: missing {sorted(set(expected) - reached)}"
+        f" / extra {sorted(reached - set(expected))} (number of runner calls {len(calls)};"
+        f" only the first {first} was made red) -- a missing package runs not a single test in the daily (stopped"
+        f" after the red, or dropped from the population) -- ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
     )
     extra_roots = _package_extra_test_roots(REPO_ROOT)
     passed = {path for call in calls for path in call.dirs()}
     missed_roots = [root for root in extra_roots if (REPO_ROOT / root).resolve() not in passed]
     assert not missed_roots, (
-        f"make test-packages が package の tests/ の外の根 {missed_roots} を訪ねていない(最初の {first}"
-        f" だけを赤にした)— その根の検は日次で 1 本も走らない — R8\n{output[-2000:]}"
+        f"make test-packages did not visit the roots outside a package's tests/ {missed_roots} (only the first {first}"
+        f" was made red) -- that root's tests run not a single test in the daily -- R8\n{output[-2000:]}"
     )
     first_tests = (REPO_ROOT / "packages" / first / "tests").resolve()
     nonzero = [call for call in calls if call.rc != 0]
     assert [first_tests in call.dirs() for call in nonzero] == [True], (
-        f"この一巡で 0 以外を返した session が最初の package {first} の 1 つでない: {[c.argv for c in nonzero]}"
-        " — 下の rc≠0 と名指しの判定は「赤は最初の package だけ」の一巡を前提にする。別の模擬の結末(rc 5・赤 2 つ・"
-        "時間切れ)を見る検は `_run_test_packages` で自分の一巡を回す — R8"
+        f"the sessions that returned non-zero in this round are not just the first package {first}: {[c.argv for c in nonzero]}"
+        " -- the rc != 0 and naming checks below assume a round where \"only the first package is red\". Tests that check other simulated outcomes (rc 5, 2 reds,"
+        " timeout) run their own round with `_run_test_packages` -- R8"
     )
     assert packages_round.made.exit_code != 0, (
-        f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
+        f"the first package {first} was made red yet make test-packages rc is 0 -- R8\n{output[-2000:]}"
     )
     named = _named_failed_packages(output)
     assert named == [first], (
-        f"最後に失敗の package ({first}) だけを `test-packages failed:` の行で名指していない: "
-        f"{named} — R8\n{output[-2000:]}"
+        f"did not name only the failing package ({first}) last in the `test-packages failed:` line: "
+        f"{named} -- R8\n{output[-2000:]}"
     )
 
 
 def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
-    """模型の木で本物の Makefile と本物の pytest を走らせ、失敗名が repo の根からの相対であることを見る。
+    """In a model tree, run the real Makefile and real pytest and check that failure names are relative to the repo root.
 
-    package a・b が同名の失敗 tests/test_cli.py::test_fail を持ち、c は緑。package の dir から
-    走らせる形では 2 つとも `FAILED tests/test_cli.py::test_fail` になって衝突する。
+    Packages a and b both have a same-named failure tests/test_cli.py::test_fail, and c is green. Running from
+    the package dir would make both `FAILED tests/test_cli.py::test_fail` and collide.
     """
     (tmp_path / "pyproject.toml").write_text(
         '[tool.pytest.ini_options]\nmarkers = ["e2e: model marker"]\n', encoding="utf-8"
@@ -488,8 +488,8 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
     green.parent.mkdir(parents=True)
     green.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
-    # 模型の木は root の conftest も外の plugin も持たない — 外の走行の設定を持ち込まない。子(make)は doeff の子 process の
-    # 答え手が起こし、今の環境にこの 3 つの名を重ねて渡す。
+    # The model tree has neither the root conftest nor outside plugins -- do not bring in the outer run's settings. The child (make) is started by doeff's child-process
+    # answerer, and these 3 names are layered on the current environment and passed.
     proc = run(
         with_handlers(
             [subprocess_handler],
@@ -515,7 +515,7 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
         )
     )
     output = proc.stdout + proc.stderr
-    assert not proc.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output}"
+    assert not proc.timed_out, f"make test-packages did not finish in 120 seconds\n{output}"
     lines = output.splitlines()
     failed = sorted(line.split(" - ")[0] for line in lines if line.startswith("FAILED "))
 
@@ -523,33 +523,33 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
         "FAILED packages/a/tests/test_cli.py::test_fail",
         "FAILED packages/b/tests/test_cli.py::test_fail",
     ], (
-        f"package の失敗名が repo の根からの相対でない / package をまたいで衝突する: {failed}"
-        f" — 日次の道具は失敗名を repo の根から pytest へ渡す — ADR-DOE-ENFORCE-001 R8\n{output}"
+        f"package failure names are not relative to the repo root / collide across packages: {failed}"
+        f" -- the daily tooling passes failure names to pytest from the repo root -- ADR-DOE-ENFORCE-001 R8\n{output}"
     )
     assert any("packages/c/tests/test_ok.py" in line for line in lines), (
-        f"赤の後ろの緑の package c が走っていない — R8\n{output}"
+        f"green package c after the red did not run -- R8\n{output}"
     )
-    assert proc.exit_code != 0, f"失敗の package があるのに rc が 0 — R8\n{output}"
+    assert proc.exit_code != 0, f"rc is 0 although there are failing packages -- R8\n{output}"
     named = _named_failed_packages(output)
     assert named == ["a", "b"], (
-        f"最後に失敗の package (a b) を `test-packages failed:` の行で名指していない: {named}"
-        f" — R8\n{output}"
+        f"did not name the failing packages (a b) last in the `test-packages failed:` line: {named}"
+        f" -- R8\n{output}"
     )
 
 
 def test_every_test_file_belongs_to_a_daily_population() -> None:
-    """検の file(.py・.hy)は日次の母集団の根(root の testpaths・package の tests・Makefile の
-    PACKAGE_EXTRA_TEST_ROOTS)の下か、除外の表に在る。"""
+    """Test files (.py, .hy) are under the daily population's roots (root testpaths, package tests, the Makefile's
+    PACKAGE_EXTRA_TEST_ROOTS) or in the exclusion table."""
     _assert_every_test_file_belongs_to_a_daily_population(REPO_ROOT, _population_roots(REPO_ROOT))
 
 
 def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
     tmp_path: Path,
 ) -> None:
-    """失敗ケース: package の tests/ の外に `.hy` の検だけを持つ dir を置くと赤、その dir を本物の
-    Makefile の PACKAGE_EXTRA_TEST_ROOTS に入れると緑(#2542 の sim の dir の形)。
+    """Failing case: a dir that has only `.hy` tests outside a package's tests/ is red, and green once that dir is put in the real
+    Makefile's PACKAGE_EXTRA_TEST_ROOTS (the shape of the #2542 sim dir).
 
-    `.py` だけを数えていた時の規則では、この `.hy` は検の file に数えられず、母集団の外でも緑だった。
+    Under the rule that counted only `.py`, this `.hy` was not counted as a test file and stayed green even outside the population.
     """
     (tmp_path / "pyproject.toml").write_text(
         '[tool.pytest.ini_options]\ntestpaths = ["tests"]\ndoeff_hy_test_files = ["test_*.hy"]\n',
@@ -563,9 +563,9 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
     hy_test.write_text("(deftest test-on-sim (assert True))\n", encoding="utf-8")
 
     assert f"{sim}/test_on_sim.hy" in _test_named_files(tmp_path), (
-        "母集団の外の `.hy` の検が検の file に数えられていない — R8"
+        "a `.hy` test outside the population is not counted as a test file -- R8"
     )
-    # Makefile の既定の根(doeff-cluster の sim)は模型の木に無い — この dir は母集団の外。
+    # The Makefile's default root (doeff-cluster's sim) is not in the model tree -- this dir is outside the population.
     with pytest.raises(AssertionError, match=re.escape(f"{sim}/test_on_sim.hy")):
         _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
     declared = _population_roots(tmp_path, (f"PACKAGE_EXTRA_TEST_ROOTS={sim}",))
@@ -574,11 +574,11 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
 
 
 def test_test_named_copy_in_a_design_check_record_is_red_until_renamed(tmp_path: Path) -> None:
-    """失敗ケース: 設計検証の記録の中に検の名の写し(test_*.py)を置くと赤、集め手の pattern に当たらない名
-    (`.py.txt`)に替えると緑(設計検証)。
+    """Failing case: placing a copy of a test name (test_*.py) inside a design-verification record is red, and green once renamed to a name that does not match a collector's pattern
+    (`.py.txt`) (design verification).
 
-    docs/design-checks/ を除外の行で外した形(77e0eb3f9)では、写しは make test-changed の選びで検として走り(名に `.` を
-    含む写しは集める時に落ちて赤 1)、本物の検を記録の中にだけ置いても緑だった(盲検 A・B)。
+    In the form that excluded docs/design-checks/ with an exclusion row (77e0eb3f9), the copies ran as tests in the make test-changed selection (copies whose names contain `.`
+    fail at collection and give red 1), and it was green even with a real test placed only inside a record (blind A/B).
     """
     (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
     (tmp_path / "tests").mkdir()
@@ -594,12 +594,12 @@ def test_test_named_copy_in_a_design_check_record_is_red_until_renamed(tmp_path:
 
 
 def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path) -> None:
-    """失敗ケース: 設計の記録の dir の中に検の名の file(`test_*.py` の模型・`*_test.py` の測りの script)を置くと赤、集め手の
-    pattern に当たらない名(`.py.txt`)に替えると緑。除外の表に名指しの行がある file の隣に置いた新しい検も赤。
+    """Failing case: placing a file named like a test (a `test_*.py` mock-up, or a `*_test.py` measurement script) inside a design-record dir is red, and green once renamed to a name that does not
+    match a collector's pattern (`.py.txt`). A new test placed next to a file that has a named row in the exclusion table is also red.
 
-    記録の dir を dir の行で外していた形では、模型 4 本(`def test_*` を持たず `t_*` を __main__ から回す script)が
-    make test-changed の選びで検として集められ(0 本集まって「未測」)、本物の検を記録の中にだけ置いても日次が緑だった。
-    記録の dir は模型の木の中の名(今の木に記録の dir は無い)。
+    In the form that excluded record dirs with a dir row, the 4 mock-ups (scripts with no `def test_*` that run `t_*` from __main__) were
+    collected as tests by the make test-changed selection (0 collected and "unmeasured"), and the daily was green even with a real test placed only inside a record.
+    The record dir is a name in the model tree (the current tree has no record dir).
     """
     (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
     (tmp_path / "tests").mkdir()
@@ -621,24 +621,24 @@ def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path)
         _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
     message = str(red.value)
     missing = [path.as_posix() for path in candidates if path.as_posix() not in message]
-    assert not missing, f"母集団の外の検として名指されていない: {missing} — R8"
-    assert named.as_posix() not in message, f"除外の表が名指す {named} まで赤になっている"
+    assert not missing, f"not named as tests outside the population: {missing} -- R8"
+    assert named.as_posix() not in message, f"even {named}, which the exclusion table names, has turned red"
     for path in candidates:
         (tmp_path / path).rename(tmp_path / f"{path}.txt")
     _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
 
 
 def test_every_test_named_file_is_collected_by_some_collector() -> None:
-    """test_*.py・test_*.hy の file はどれも、どれかの集め手の pattern に当たる。"""
+    """Every test_*.py and test_*.hy file matches some collector's pattern."""
     _assert_every_test_named_source_is_collected(REPO_ROOT)
 
 
 def test_hy_test_without_a_collector_is_red_until_the_collector_is_declared(tmp_path: Path) -> None:
-    """失敗ケース: 母集団の根(root の testpaths)の下に、どの集め手にも集められない test_*.hy を 1 本置くと赤、
-    root の ini の doeff_hy_test_files で集め手に当てると緑。
+    """Failing case: placing one test_*.hy that no collector collects under the population root (root testpaths) is red,
+    and green once a collector is pointed at it via the root ini's doeff_hy_test_files.
 
-    検の側に Hy の条件を `test_*.hy` と写していた #2577 の形では、ini に集め手が無くてもこの file は「検の file」と
-    数えられ、母集団の根の下なので緑だった — packages/doeff-hy/tests の 6 本と同じ形。
+    In the #2577 form that copied the Hy condition into the test side as `test_*.hy`, this file counted as a "test file" even with no collector in the ini,
+    and was green because it was under a population root -- the same shape as the 6 in packages/doeff-hy/tests.
     """
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
@@ -647,7 +647,7 @@ def test_hy_test_without_a_collector_is_red_until_the_collector_is_declared(tmp_
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
 
-    # 母集団の根の下に在る — 置き場の検は緑のまま(集められるかは別の事柄)。
+    # It is under the population root -- the placement test stays green (whether it is collected is a separate matter).
     _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
     with pytest.raises(AssertionError, match=re.escape("tests/test_script.hy")):
         _assert_every_test_named_source_is_collected(tmp_path)
@@ -660,10 +660,10 @@ def test_hy_test_without_a_collector_is_red_until_the_collector_is_declared(tmp_
 
 
 def test_hy_test_skips_name_hy_test_files_with_a_reason() -> None:
-    """外す一覧(root の ini の doeff_hy_test_skips)の各行は、今の木の Hy の検の file を名指し、理由を持つ。
+    """Each row of the skip list (the root ini's doeff_hy_test_skips) names a Hy test file in the current tree and has a reason.
 
-    一覧の読み方は集め手(doeff-adr の plugin)と同じ関数 — 理由の無い行はそこで止まる。直した file の行が
-    残ると、その file は緑なのに日次で走らないまま skip に数えられる。
+    The list is read with the same function as the collector (the doeff-adr plugin) -- a row without a reason stops there. If the row of a fixed file
+    remains, that file is green yet counted as a skip without running in the daily.
     """
     rows = parse_hy_test_skips(_root_ini(REPO_ROOT).get("doeff_hy_test_skips", ()))
     patterns = tuple(_root_ini(REPO_ROOT).get("doeff_hy_test_files", ()))
@@ -673,15 +673,15 @@ def test_hy_test_skips_name_hy_test_files_with_a_reason() -> None:
         if not (REPO_ROOT / row.path).is_file() or not _is_test_file(row.path, patterns)
     ]
     assert not stale, (
-        f"doeff_hy_test_skips に Hy の検の file でない行: {stale} — 消すか path を直す — ADR-DOE-ENFORCE-001 R8"
+        f"rows of doeff_hy_test_skips that are not a Hy test file: {stale} -- delete them or fix the path -- ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def test_no_conftest_copies_the_hy_test_collector() -> None:
-    """Hy の検の file の集め手は root の ini の doeff_hy_test_files の 1 点 — conftest.py に写さない。
+    """The collector of Hy test files is the single place root ini's doeff_hy_test_files -- not copied into conftest.py.
 
-    写しが残ると、その dir の外の test_*.hy は集められないまま母集団の検に数えられる(この検を足す前は
-    7 つの conftest.py が同じ条件を書き、conftest の無い packages/doeff-hy/tests の 6 本が日次で走らなかった)。
+    If a copy remains, test_*.hy outside that dir are counted as population tests while uncollected (before this test was added,
+    7 conftest.py files wrote the same condition, and the 6 in packages/doeff-hy/tests, which have no conftest, did not run in the daily).
     """
     copies = sorted(
         Path(current, "conftest.py").relative_to(REPO_ROOT).as_posix()
@@ -690,16 +690,16 @@ def test_no_conftest_copies_the_hy_test_collector() -> None:
         and "DoeffAdrHyFile" in Path(current, "conftest.py").read_text(encoding="utf-8")
     )
     assert not copies, (
-        f"Hy の検の file を自前で集める conftest.py: {copies} — 集める条件は root の ini の doeff_hy_test_files へ"
-        " — ADR-DOE-ENFORCE-001 R8"
+        f"conftest.py files that collect Hy test files themselves: {copies} -- move the collecting condition to the root ini's doeff_hy_test_files"
+        " -- ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def test_exclusion_table_has_no_dir_row_over_a_record_dir() -> None:
-    """除外の表に、設計の記録の dir を dir ごと覆う行(記録の dir・その親・その下の dir)が無い。
+    """The exclusion table has no row covering a design-record dir wholesale (the record dir, its parent, or a dir under it).
 
-    dir の行の下に置いた本物の検は、母集団の検にも古い行の検にも見つからない(設計検証の盲検 B)。
-    記録の中で外せるのは、改名できない file の 1 file ごとの path の行だけ。
+    A real test placed under a dir row is found by neither the population tests nor the stale-row test (blind B of the design review).
+    Within a record, only per-file path rows for files that cannot be renamed may be excluded.
     """
     records = _record_dirs(REPO_ROOT)
     covering = [
@@ -708,22 +708,22 @@ def test_exclusion_table_has_no_dir_row_over_a_record_dir() -> None:
         if row.endswith("/") and any(record.startswith(row) or row.startswith(record) for record in records)
     ]
     assert not covering, (
-        f"除外の表に設計の記録の dir を覆う dir の行がある: {covering} — 消し、中の検の名の file は `.py.txt` に替える"
-        "(改名できない file だけ 1 file ごとの path の行にする)— ADR-DOE-ENFORCE-001 R8"
+        f"the exclusion table has a dir row covering a design-record dir: {covering} -- delete it and rename test-named files inside to `.py.txt`"
+        " (only files that cannot be renamed get a per-file path row) -- ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def test_exclusion_table_has_no_stale_rows() -> None:
-    """除外の表の各行は、今の木の test 名の file を 1 本以上覆う。"""
+    """Each row of the exclusion table covers at least one test-named file in the current tree."""
     files = _test_named_files(REPO_ROOT)
     stale = [row for row in EXCLUDED if not any(_is_excluded(path, row) for path in files)]
     assert not stale, (
-        f"除外の表に該当する file が 1 本も無い古い行: {stale} — 消す — ADR-DOE-ENFORCE-001 R8"
+        f"stale rows in the exclusion table that match no file: {stale} -- delete them -- ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def _declares_pytest_config(directory: Path) -> str | None:
-    """pytest の rootdir の決め方で ini と読まれる設定を directory が持つなら、その file の名前。"""
+    """The name of the config file, if the directory has a setting that pytest's rootdir determination reads as an ini."""
     for name in ("pytest.ini", ".pytest.ini"):
         if (directory / name).is_file():
             return name
@@ -744,11 +744,11 @@ def _declares_pytest_config(directory: Path) -> str | None:
 
 
 def test_no_package_declares_its_own_pytest_ini() -> None:
-    """`pytest packages/<p>/tests` の rootdir は repo の根で、root の ini と conftest が効く。
+    """The rootdir of `pytest packages/<p>/tests` is the repo root, and the root ini and conftest apply.
 
-    package(やその tests)が自分の pytest の設定を持つと rootdir がそこへ移り、root の ini
-    (markers・timeout 等)と root の conftest(締切・受付)が package の母集団に効かなくなり、
-    失敗名も repo の根からの相対でなくなる(盲検 A の副次)。
+    If a package (or its tests) has its own pytest configuration, rootdir moves there and the root ini
+    (markers, timeout, etc.) and root conftest (deadline, acceptance) stop applying to the package population,
+    and failure names stop being relative to the repo root (a side effect found by blind A).
     """
     declared = {
         str(directory.relative_to(REPO_ROOT)): found
@@ -761,22 +761,22 @@ def test_no_package_declares_its_own_pytest_ini() -> None:
         if (found := _declares_pytest_config(directory)) is not None
     }
     assert not declared, (
-        f"package の母集団の path に自分の pytest の設定が在る: {declared}"
-        " — root の pyproject へ寄せる — ADR-DOE-ENFORCE-001 R8"
+        f"a package population path has its own pytest configuration: {declared}"
+        " -- move it to the root pyproject -- ADR-DOE-ENFORCE-001 R8"
     )
 
 
 def test_every_daily_stage_declares_whether_it_runs_pytest() -> None:
-    """日次の全体検証は欄 pytest = true の処理ステージで session が 1 本も答えなければカバレッジの欠けに数え、欄の無い処理ステージは
-    「pytest の実行は未宣言」と記帳する。走らせ器は断らないので、欄の書き忘れはこの repo の宣言の検で赤にする。"""
+    """In the daily full verification, a processing stage with the field pytest = true counts as a coverage gap if no session answers, and a stage without the field records
+    "pytest run not declared". The runner does not refuse, so a forgotten field is turned red by this repo's declaration test."""
     full = tomllib.loads((REPO_ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
-    assert isinstance(full, list) and full, f"[gate] full が処理ステージの列でない(1 本の文字列には欄 pytest を書けない): {full!r}"
+    assert isinstance(full, list) and full, f"[gate] full is not a list of processing stages (a single string cannot carry the field pytest): {full!r}"
     missing = [stage.get("name") for stage in full if not isinstance(stage.get("pytest"), bool)]
-    assert not missing, f"[gate] full の処理ステージ {missing} に欄 pytest(true か false)が無い"
+    assert not missing, f"[gate] full processing stages {missing} lack the field pytest (true or false)"
 
 
-# 日次の pytest の session が終わりに出す秒の一覧の口 — 10 秒以上の検を本数の上限なしで出す。
-# 上限を付けると(旧 --durations=20)、package に 30 秒を越える検が 20 本を越えた時に残りが log に出ない。
+# The hook for the list of seconds that the daily pytest session prints at the end -- prints tests of 10 seconds or more with no cap on the count.
+# With a cap (the old --durations=20), when more than 20 tests over 30 seconds exist in a package the rest do not appear in the log.
 _DAILY_DURATIONS_FLAGS = ("--durations=0", "--durations-min=10")
 
 
@@ -786,28 +786,28 @@ def _stage_run(name: str) -> str:
 
 
 def test_root_stage_lists_every_slow_test() -> None:
-    """処理ステージ root の pytest の命令は、10 秒以上の検を上限なしで出す(日次の log に 1 本ごとの秒を残す)。"""
+    """The pytest command of processing stage root prints tests of 10 seconds or more with no cap (leaving per-test seconds in the daily log)."""
     segments = [shlex.split(part) for part in _stage_run("root").split("&&")]
     pytest_args = [words[words.index("pytest") + 1 :] for words in segments if "pytest" in words]
-    assert len(pytest_args) == 1, f"処理ステージ root に pytest の命令がちょうど 1 本ない: {_stage_run('root')}"
+    assert len(pytest_args) == 1, f"processing stage root does not have exactly one pytest command: {_stage_run('root')}"
     missing = [flag for flag in _DAILY_DURATIONS_FLAGS if flag not in pytest_args[0]]
-    assert not missing, f"処理ステージ root の pytest に {missing} が無い — 30 秒を越える検が日次の log に出ない: {pytest_args[0]}"
+    assert not missing, f"the pytest of processing stage root lacks {missing} -- tests over 30 seconds would not appear in the daily log: {pytest_args[0]}"
 
 
 def test_make_test_packages_lists_every_slow_test(packages_round: _PackagesRound) -> None:
-    """処理ステージ packages の形(`make test-packages` に PACKAGE_UV_RUN だけを渡す)で、package ごとの session が全部
-    10 秒以上の検を上限なしで出す。偽の runner が受けた引数を見る(一巡は上の検と共に読む — 赤は最初の package だけで、
-    loop が全部を訪ねる事は上の検が見る)。"""
+    """The shape of processing stage packages (passing only PACKAGE_UV_RUN to `make test-packages`): every package session
+    prints tests of 10 seconds or more with no cap. Look at the arguments the fake runner received (the round is read together with the test above -- red is only the first package, and
+    the test above checks that the loop visits all of them)."""
     assert "make test-packages PACKAGE_UV_RUN=" in _stage_run("packages"), _stage_run("packages")
     calls, output = packages_round.made.calls, packages_round.made.output
     assert not packages_round.made.timed_out, (
-        f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
+        f"make test-packages did not finish in 120 seconds\n{output[-2000:]}"
     )
-    assert calls, f"make test-packages が runner を 1 度も呼ばなかった\n{output[-2000:]}"
+    assert calls, f"make test-packages never called the runner\n{output[-2000:]}"
     short = [
         call.argv for call in calls if not all(flag in call.argv for flag in _DAILY_DURATIONS_FLAGS)
     ]
     assert not short, (
-        f"package の session {len(short)} / {len(calls)} 本の pytest に {list(_DAILY_DURATIONS_FLAGS)} が揃っていない"
-        f"(Makefile の PACKAGE_PYTEST_DURATIONS)— 30 秒を越える検が日次の log に出ない: {short[:3]}"
+        f"{len(short)} / {len(calls)} package sessions' pytest lack {list(_DAILY_DURATIONS_FLAGS)}"
+        f" (Makefile's PACKAGE_PYTEST_DURATIONS) -- tests over 30 seconds would not appear in the daily log: {short[:3]}"
     )

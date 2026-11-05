@@ -1,15 +1,15 @@
 """MemoDeleteEffect handling: delete-then-get must recompute.
 
 Issue doeff-core-effects-delete-effects-drift:
-MemoDeleteEffect は語彙として定義済みだが handler が処理していなかった。
-この invariant probe 群は、Put(k) → Delete(k) → Get(k) がいかなる handler
-スタック構成でも stale 値を返さないことを固定する。
+MemoDeleteEffect was defined as vocabulary but no handler processed it.
+This group of invariant probes pins that Put(k) -> Delete(k) -> Get(k) never returns a stale value under any handler
+stack configuration.
 
-層状 memo では同一鍵が複数層に存在しうる(MemoPut の _broadcast-put と
-MemoGet MISS 時の write-through — _memo_handlers_impl.hy)。したがって
-Delete は Get が到達しうる全層(同じ cost ガードを通過する全層)から
-削除しなければならない — broadcast delete。再計算は呼び出し回数カウンタで
-直接観測し、実削除は InMemoryStorage.keys() で直接観測する。
+In a layered memo the same key can exist in several layers (MemoPut's _broadcast-put and
+the write-through on a MemoGet MISS -- _memo_handlers_impl.hy). Therefore
+Delete must remove the key from every layer Get can reach (every layer passing the same cost guard)
+-- a broadcast delete. Recomputation is observed directly via a call counter,
+and the actual deletion is observed directly via InMemoryStorage.keys().
 """
 
 from doeff_core_effects import MemoDelete, MemoGet, MemoPut
@@ -61,16 +61,16 @@ def test_memo_delete_single_layer_get_misses_after_delete():
 
     result = run_with_defaults(memo_handler(storage, name="L1")(body()))
 
-    # Delete 後の Get は miss — 単層では外側 storage が無いので KeyError で確定
+    # Get after Delete is a miss -- with a single layer there is no outer storage, so KeyError is certain
     assert result.is_err(), f"expected Err(KeyError) after delete, got {result!r}"
     assert isinstance(result.error, KeyError), f"expected KeyError, got {result.error!r}"
-    # 実削除の直接観測: storage から鍵が消えている
+    # Direct observation of the actual deletion: the key is gone from storage
     assert "k1" not in list(storage.keys())
 
 
 def test_memo_put_broadcasts_to_all_layers_precondition():
-    # 前提の実証: MemoPut は broadcast され、同一鍵が両層に存在する。
-    # (これが Delete も broadcast でなければならない理由。既存動作の固定。)
+    # Premise check: MemoPut is broadcast, and the same key exists in both layers.
+    # (This is why Delete must also be a broadcast. Pins existing behavior.)
     inner, outer = InMemoryStorage(), InMemoryStorage()
 
     @do
@@ -87,7 +87,7 @@ def test_memo_put_broadcasts_to_all_layers_precondition():
 
 
 def test_memo_delete_removes_key_from_all_layers():
-    # 不変量: Delete は Get が到達しうる全層から削除する(単一層のみの削除は不可)。
+    # Invariant: Delete removes the key from every layer Get can reach (deleting from a single layer only is not allowed).
     inner, outer = InMemoryStorage(), InMemoryStorage()
 
     @do
@@ -100,15 +100,15 @@ def test_memo_delete_removes_key_from_all_layers():
         memo_handler(outer, name="outer")(memo_handler(inner, name="inner")(body()))
     )
     assert result.is_ok(), f"program failed: {result.error!r}"
-    # 実削除の直接観測: broadcast put で両層に入った鍵が、両層から消えている
+    # Direct observation of the actual deletion: the key put into both layers by the broadcast put is gone from both layers
     assert "k-layers" not in list(inner.keys())
     assert "k-layers" not in list(outer.keys())
 
 
 def test_memo_put_delete_get_recomputes_across_two_layer_stack():
-    # 必須 probe: 2 層 memo スタックで Put→Delete→Get が再計算になることを
-    # 呼び出し回数カウンタで直接観測する。外側層に stale が残る実装だと
-    # 2 回目は outer HIT になり count が 1 のまま fail する。
+    # Required probe: with a 2-layer memo stack, observe directly via a call counter
+    # that Put->Delete->Get causes a recomputation. An implementation that leaves a stale value in the outer layer
+    # would get an outer HIT on the second call and fail with count staying at 1.
     calls = {"count": 0}
     inner, outer = InMemoryStorage(), InMemoryStorage()
     rewriter = make_memo_rewriter(_ProbeEffect, key_fn=lambda _e: "probe-key")
@@ -136,8 +136,8 @@ def test_memo_put_delete_get_recomputes_across_two_layer_stack():
 
 
 def test_memo_delete_missing_key_is_noop_and_returns_none():
-    # 冪等性: 存在しない鍵の Delete は no-op で成功する。
-    # 返り値は既存 Put との対称性で None。
+    # Idempotence: Delete of a nonexistent key is a no-op and succeeds.
+    # The return value is None, symmetric with the existing Put.
     storage = InMemoryStorage()
 
     @do
@@ -151,7 +151,7 @@ def test_memo_delete_missing_key_is_noop_and_returns_none():
 
 
 def test_memo_delete_returns_none_like_put():
-    # 返り値規約の固定: Put が None を resume するのと対称に Delete も None。
+    # Pin the return value convention: just as Put resumes with None, Delete also resumes with None.
     storage = InMemoryStorage()
 
     @do
@@ -166,9 +166,9 @@ def test_memo_delete_returns_none_like_put():
 
 
 def test_memo_delete_respects_cost_guard_like_get():
-    # cost ガードの整合: Delete は Get と同じ :when ガードを通過する層にだけ
-    # 到達する。CHEAP の Delete は EXPENSIVE 層に触れないので、
-    # Get(EXPENSIVE) が読む値は保持される。
+    # Cost guard consistency: Delete reaches only the layers that pass the same :when guard as Get.
+    # A CHEAP Delete does not touch the EXPENSIVE layer,
+    # so the value Get(EXPENSIVE) reads is retained.
     cheap, expensive = InMemoryStorage(), InMemoryStorage()
 
     @do
@@ -176,7 +176,7 @@ def test_memo_delete_respects_cost_guard_like_get():
         yield MemoPut(
             "k-exp", "v-exp", policy=MemoPolicy(recompute_cost=RecomputeCost.EXPENSIVE)
         )
-        yield MemoDelete("k-exp")  # default cost=CHEAP — EXPENSIVE 層は素通り
+        yield MemoDelete("k-exp")  # default cost=CHEAP -- the EXPENSIVE layer is passed through
         got = yield MemoGet("k-exp", recompute_cost=RecomputeCost.EXPENSIVE)
         return got
 

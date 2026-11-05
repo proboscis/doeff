@@ -1,18 +1,18 @@
-"""handle・defhandler の節の展開の局所名 `effect`・`k` は、書き手の節の欄の名と衝突しない事の検(tests/test_handle_writer_names.py の続き)。
+"""Check that the local names `effect` and `k` in the expansion of handle / defhandler clauses do not collide with the writer's clause field names (continuation of tests/test_handle_writer_names.py).
 
-展開は節を回す関数の引数と節の操作のために、局所名 `effect`(受けた effect)と `k`(続き)を束ねて読む。書き手が節の欄を同じ名にすると
-(KV の `(Kv [k v] …)`)、欄の束ね `(setv k (. effect k))` が続きを上書きし、`(resume …)` が `TypeError: argument 'k': 'int' object is
-not an instance of 'K'` で落ちた。欄を `effect` にした節は、続く欄の束ね `(. effect 次の欄)` が上書き後の値を読み、`:when` の外れた
-節や `(pass)` が外へ渡す effect も欄の値になっていた。
+The expansion binds and reads the local names `effect` (the received effect) and `k` (the continuation) for the arguments of the function that runs the clauses and for clause operations. When a writer gives a clause field the same name
+(`(Kv [k v] ...)` of KV), the field binding `(setv k (. effect k))` overwrote the continuation, and `(resume ...)` failed with `TypeError: argument 'k': 'int' object is
+not an instance of 'K'`. For a clause whose field is `effect`, the following field binding `(. effect next-field)` read the overwritten value, and the effect that a clause whose `:when` did not match, or `(pass)`, forwards outward
+also became the field value.
 
-展開が自分のために束ねて読む局所名は `_doeff_effect`・`_doeff_k`(`_doeff_` の頭の別名)で、書き手の欄・session の名と分け合わない。
-書き手の本体が `effect`・`k` を書いた時(`(reperform effect)`・`:when (isinstance effect X)`)は、同じ名を節の effect・続きとして
-読めるまま — 欄や session の名が同じ名なら、書き手の名が優先する。
+The local names the expansion binds and reads for itself are `_doeff_effect` and `_doeff_k` (aliases with the `_doeff_` prefix), which are not shared with the writer's field and session names.
+When the writer's body writes `effect` or `k` (`(reperform effect)`, `:when (isinstance effect X)`), the same names stay readable as the clause's effect and continuation --
+if a field or session name is the same name, the writer's name takes precedence.
 
-- 欄・session の名を `k`・`effect` にした節が、module の段・defk の本体・素の defn の本体・class の本体の handle・defhandler で、
-  resume・`:when` の外れ・`(pass)` を書き手の意味どおりに通す。
-- 書き手が `effect`・`k` を書かない節では、展開は素の `effect`・`k` を束ねない(実行時と型検査のための展開の両方)。
-- 節を回す関数の引数と、外へ渡す `Pass` の引数は `_doeff_effect`・`_doeff_k`。
+- Clauses whose field or session name is `k` or `effect` pass resume, a `:when` that does not match, and `(pass)` with the writer's meaning, in handle at module level, in a defk body, in a plain defn body, in a class body, and in defhandler.
+
+- For clauses where the writer does not write `effect` or `k`, the expansion does not bind bare `effect` or `k` (both the runtime expansion and the expansion for type checking).
+- The arguments of the function that runs the clauses and of the `Pass` forwarded outward are `_doeff_effect` and `_doeff_k`.
 """
 
 import ast
@@ -41,11 +41,11 @@ _HEADER = """
 (defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
 """
 
-# handle の式。どれも答えは 101。
-# - field-*: 欄の名を k・effect にした節(展開の局所名と同じ名)が resume する
-# - *-guard-pass: その節の :when が外れ、内側の handler が元の effect と元の続きを外の handler へ渡す
-# - both-pass: 欄が k・effect・extra の節の (pass)(旧い形・警告つき)が外へ渡す
-# - bare-*: 欄でなく本体が書いた effect・k を、節の effect・続きとして読む(今までどおり)
+# handle expressions. All of them answer 101.
+# - field-*: a clause whose field name is k or effect (the same name as the expansion's local name) resumes
+# - *-guard-pass: the clause's :when does not match, and the inner handler passes the original effect and original continuation to the outer handler
+# - both-pass: the (pass) (old form, with a warning) of a clause whose fields are k, effect, and extra forwards outward
+# - bare-*: effect and k written by the body, not as fields, are read as the clause's effect and continuation (as before)
 _EXPRESSIONS = {
     "field-k": "(handle (Kv 1 100) (Kv [k v] (resume (+ k v))))",
     "field-effect": "(handle (Note 1 100) (Note [effect extra] (resume (+ effect extra))))",
@@ -74,9 +74,9 @@ _EXPRESSIONS = {
         """,
 }
 
-# defhandler(session の名は var)。答えは 101。
-# - *-session: 欄の名が k・effect の節が session var の := を通す
-# - session-named-*: session の名そのものが k・effect(節の局所名と同じ名)
+# defhandler (the session name is var). Answers 101.
+# - *-session: a clause whose field name is k or effect passes the := of the session var
+# - session-named-*: the session name itself is k or effect (the same name as the clause's local name)
 _DEFHANDLERS = {
     "field-k-session": (
         "(defhandler h (session var calls 99) (Kv [k v] (:= calls (+ calls 1)) (resume (+ k calls))))",
@@ -101,7 +101,7 @@ _HOSTS = ("module", "defk", "defn", "class")
 
 
 def _eval_module(*sources: str) -> types.ModuleType:
-    """Hy の source を順に新しい module に読み込む。旧い形 `(pass)` の警告は検の関心の外。"""
+    """Load Hy sources into fresh modules in order. The warning for the old form `(pass)` is outside what the test cares about."""
     mod = types.ModuleType("handle_clause_local_names")
     sys.modules["handle_clause_local_names"] = mod
     with warnings.catch_warnings():
@@ -113,19 +113,19 @@ def _eval_module(*sources: str) -> types.ModuleType:
 
 
 def _run_with_state(program: object) -> object:
-    """session var の Get・Put を state の handler が受ける。"""
+    """The state handler receives Get and Put of the session var."""
     return run(scheduled(state(initial={})(program)))
 
 
 class _Scenario(NamedTuple):
-    """host に書いた Hy の source と、それを読み込んだ module から Program を取る関数。"""
+    """The Hy source written to the host, and a function that obtains a Program from the module that loaded it."""
 
     source: str
     program: Callable[[types.ModuleType], object]
 
 
 def _host(host: str, definition: str, expression: str) -> _Scenario:
-    """definition(handler の定義。無ければ空)と、答えを出す式 expression を host に書いた source と、Program の取り方。"""
+    """The source with the definition (the handler definition; empty if none) and the answer-producing expression written to the host, and how to obtain the Program."""
     match host:
         case "module":
             return _Scenario(f"{definition}(setv program {expression})", lambda mod: mod.program)
@@ -160,14 +160,14 @@ _SCENARIOS = _scenarios()
 def test_clause_fields_named_like_the_expansions_local_names_are_the_writers(
     source: str, program: Callable[[types.ModuleType], object]
 ) -> None:
-    """欄・session の名を `k`・`effect` にした節は、書き手が書いた意味で答える — 展開の局所名と 1 つの名を分け合うと、欄の束ねが
-    続きを上書きして resume が TypeError になり、次の欄の読みが欄の値の属性になり、外へ渡す effect が欄の値になる。"""
+    """A clause whose field or session name is `k` or `effect` answers with the meaning the writer wrote -- if the expansion's local name shared one name, the field binding would overwrite
+    the continuation so that resume raises TypeError, the next field read would become an attribute of the field value, and the effect forwarded outward would become the field value."""
     mod = _eval_module(_HEADER, source)
     assert _run_with_state(program(mod)) == 101
 
 
 # ---------------------------------------------------------------------------
-# 展開の構造 — 実行時と型検査のための展開が、書き手の書かない素の effect・k を束ねない
+# Expansion structure -- the runtime expansion and the expansion for type checking do not bind a bare effect or k that the writer did not write
 # ---------------------------------------------------------------------------
 
 _STRUCTURE_SOURCES = {
@@ -188,7 +188,7 @@ _FIELD_SOURCES = {
 
 
 def _expand(source: str, *, static: bool) -> ast.Module:
-    """Hy の source を展開して Python の AST にする(評価しない)。static なら型検査のための展開。"""
+    """Expand the Hy source into a Python AST (without evaluating). For static, the expansion for type checking."""
     mod = types.ModuleType("handle_clause_local_names_expand")
     sys.modules["handle_clause_local_names_expand"] = mod
     with static_view() if static else contextlib.nullcontext():
@@ -219,8 +219,8 @@ def _stored_names(tree: ast.Module) -> set[str]:
 def test_expansion_binds_no_bare_effect_or_k_the_writer_did_not_write(
     source: str, static: bool
 ) -> None:
-    """書き手が `effect`・`k` を書いていない節の展開は、素の `effect`・`k` を引数にも代入先にも束ねない — 節を回す関数の引数は
-    `_doeff_effect`・`_doeff_k`(header の定義 Kv・Note・Both は欄の名として書くが、header は展開の対象でなく差し引く)。"""
+    """The expansion of a clause where the writer does not write `effect` or `k` binds neither a bare `effect` nor `k` as arguments or assignment targets -- the arguments of the function that runs the clauses are
+    `_doeff_effect` and `_doeff_k` (the header definitions Kv, Note, and Both write them as field names, but the header is not a target of expansion and is subtracted)."""
     tree = _expand(source, static=static)
     header_tree = _expand("", static=static)
     bound = (_function_parameters(tree) | _stored_names(tree)) - (
@@ -235,7 +235,7 @@ def test_expansion_binds_no_bare_effect_or_k_the_writer_did_not_write(
 def test_expansion_passes_the_clauses_own_effect_and_continuation_on(
     source: str, static: bool
 ) -> None:
-    """`:when` の外れた節が外へ渡す `Pass` の引数は、欄の名が `k`・`effect` でも `_doeff_effect`・`_doeff_k`(欄の値でない)。"""
+    """The `Pass` arguments forwarded outward by a clause whose `:when` did not match are `_doeff_effect` and `_doeff_k` even when the field names are `k` and `effect` (not the field values)."""
     tree = _expand(source, static=static)
     passes = [
         node
@@ -244,7 +244,7 @@ def test_expansion_passes_the_clauses_own_effect_and_continuation_on(
         and isinstance(node.func, ast.Name)
         and node.func.id == "_doeff_Pass"
     ]
-    assert passes, "展開が Pass を出していない"
+    assert passes, "the expansion produced no Pass"
     assert [
         [arg.id if isinstance(arg, ast.Name) else None for arg in call.args] for call in passes
     ] == [["_doeff_effect", "_doeff_k"]] * len(passes)

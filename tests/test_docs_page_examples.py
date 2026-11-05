@@ -1,14 +1,14 @@
-"""入門の道の外の docs の page のうち、例を走る形に直した page の例が今の doeff でそのまま走り、書いてある通りに印字する事の検
-(取り組み doeff-publish)。
+"""Test that, among docs pages outside the introductory path, the examples of pages rewritten to be runnable run as-is on the current doeff and print as written
+(initiative doeff-publish).
 
-入門の道(目次と 01〜05 章)の page は tests/test_docs_entry_path_examples.py が走らせる。その外の page の例は、どの検も
-走らせていなかった: 0.5.0 の時点で、定義だけで通った囲み 137 個を run まで走らせると 25 個が落ちた(137 個の報告
-2026-10-17-doeff-docs-137-run.html)。07 章の API Response Caching の例は、同期の httpx.get の返りを Await に渡していた。
+Pages on the introductory path (table of contents and chapters 01-05) are run by tests/test_docs_entry_path_examples.py. The examples of pages outside it were not run by
+any test: as of 0.5.0, running the 137 fences that passed on definition alone through to run made 25 fail (report of the 137:
+2026-10-17-doeff-docs-137-run.html). The chapter 07 API Response Caching example passed the return of a synchronous httpx.get to Await.
 
-囲みは入門の道と同じ約束で読み・走らせ・注記と比べる(約束の 1 点は tools/readme_examples.py)。走らせない断片は、言葉の
-後に語 `excerpt` を置く。page の例を走る形に直したら、pyproject.toml の契約の表に、その page でこの検を選ぶ行を 1 つ足す。
-走らせる page の一覧(CHECKED_PAGES)はその表から読む — この file に一覧を書いていた間は、並んで page を足す 2 つの commit が
-同じ 1 行で衝突した(着地の列 L2431・L2432)。
+Fences are read, run, and compared with annotations under the same convention as the introductory path (one point of the convention is tools/readme_examples.py). Fragments that are not run
+get the word `excerpt` after the language. When a page's examples are rewritten to be runnable, add one row to the contract table in pyproject.toml that selects this test for that page.
+The list of pages to run (CHECKED_PAGES) is read from that table -- while the list was written in this file, two commits adding pages side by side
+collided on the same line (landing queue L2431, L2432).
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ import tomllib
 from tests.test_docs_entry_path_examples import ENTRY_PATH, _fences
 from tests.test_readme_examples import ROOT, Example, _run, examples
 
-# この検の file(repo の根からの path — pyproject.toml の契約の表の書き方)。
+# This test's file (path from the repo root -- the way the contract table in pyproject.toml writes it).
 THIS_CHECK = Path(__file__).resolve().relative_to(ROOT).as_posix()
-# docs の page の接頭辞(契約の表の prefix の書き方)。
+# Prefix of docs pages (the way the contract table writes prefix).
 DOCS_PREFIX = "docs/"
 
 
 def prefixes_selecting(check: str) -> list[str]:
-    """pyproject.toml の契約の表で、check(repo の根からの path)を選ぶ行の接頭辞(表の順)。"""
+    """Prefixes of the rows in pyproject.toml's contract table that select check (a path from the repo root) (in table order)."""
     rows = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["doeff"][
         "contract-tests"
     ]
@@ -36,25 +36,25 @@ def prefixes_selecting(check: str) -> list[str]:
 
 
 def _prefixes_selecting_this_check() -> list[str]:
-    """pyproject.toml の契約の表で、この検を選ぶ行の接頭辞(表の順)。"""
+    """Prefixes of the rows in pyproject.toml's contract table that select this test (in table order)."""
     return prefixes_selecting(THIS_CHECK)
 
 
-# 例を走る形に直した、入門の道の外の page(docs/ からの名)— 契約の表の、この検を選ぶ行が 1 点の定義。
+# Pages outside the introductory path rewritten to be runnable (names from docs/) -- the rows of the contract table that select this test are the single definition.
 CHECKED_PAGES = tuple(
     prefix.removeprefix(DOCS_PREFIX) for prefix in _prefixes_selecting_this_check()
 )
 
 
 def _runnable() -> list[tuple[str, Example]]:
-    """CHECKED_PAGES の、走らせて注記と比べる囲み(page と組にする)。"""
+    """The fences of CHECKED_PAGES that are run and compared with annotations (paired with the page)."""
     return [
         (page, example) for page in CHECKED_PAGES for example in _fences(page) if example.runs()
     ]
 
 
 def _example_id(case: tuple[str, Example]) -> str:
-    """parametrize の id — page と行で、落ちた検がどの囲みかを読めるようにする。"""
+    """parametrize id -- by page and line, so you can read which fence a failed test is."""
     page, example = case
     return f"{Path(page).stem}:{example.line}"
 
@@ -65,7 +65,7 @@ def test_page_example_runs_and_prints_what_it_states(
 ) -> None:
     page, example = case
     assert example.problems() == []
-    # 同じ page の前の囲みが書く file(`file=` の module など)を、読み手と同じく先に置く。
+    # Put files written by earlier fences of the same page (such as the module for `file=`) in place first, as the reader would.
     for earlier in _fences(page):
         if earlier.line < example.line and earlier.written_as() is not None:
             examples.write(earlier, tmp_path)
@@ -81,17 +81,17 @@ def test_page_fences_keep_the_rules(page: str) -> None:
 
 @pytest.mark.parametrize("page", CHECKED_PAGES)
 def test_page_has_an_example_that_runs(page: str) -> None:
-    # 全部を excerpt にした page は、何も確かめていない(印を付けて検から外すだけで緑になる)。
-    assert any(example.runs() for example in _fences(page)), f"docs/{page} に、走らせる例が無い"
+    # A page where everything is excerpt checks nothing (it would go green just by marking and removing it from the test).
+    assert any(example.runs() for example in _fences(page)), f"docs/{page} has no example to run"
 
 
 def test_checked_pages_are_outside_the_entry_path() -> None:
-    # 入門の道の page は tests/test_docs_entry_path_examples.py が走らせる(同じ例を 2 度走らせない)。
+    # Pages on the introductory path are run by tests/test_docs_entry_path_examples.py (do not run the same example twice).
     assert [page for page in CHECKED_PAGES if page in ENTRY_PATH] == []
 
 
 def prefixes_that_are_not_pages(prefixes: list[str]) -> list[str]:
-    """接頭辞のうち、在る docs の page(docs/<名>.md の file)でない物(dir・書き間違い)。"""
+    """Prefixes that are not an existing docs page (a docs/<name>.md file) (dirs, typos)."""
     return [
         prefix
         for prefix in prefixes
@@ -102,14 +102,14 @@ def prefixes_that_are_not_pages(prefixes: list[str]) -> list[str]:
 
 
 def test_rows_selecting_this_check_name_docs_pages() -> None:
-    # 表の行が page を変えた commit の `make test-changed` にこの検を選ばせ、同じ行が走らせる page を決める。行の接頭辞が
-    # page でないなら、その page の例はどの検も走らせない。
+    # A table row makes `make test-changed` select this test for a commit that changed a page, and decides which page that row runs. If the row's prefix is
+    # not a page, no test runs that page's examples.
     prefixes = _prefixes_selecting_this_check()
-    assert prefixes, f"pyproject.toml の [[tool.doeff.contract-tests]] に、{THIS_CHECK} を選ぶ行が無い"
+    assert prefixes, f"[[tool.doeff.contract-tests]] in pyproject.toml has no row that selects {THIS_CHECK}"
     not_pages = prefixes_that_are_not_pages(prefixes)
     assert not_pages == [], (
-        f"pyproject.toml の [[tool.doeff.contract-tests]] で {THIS_CHECK} を選ぶ行の接頭辞 {not_pages} が、"
-        f"在る docs の page({DOCS_PREFIX}<名>.md)でない"
+        f"In [[tool.doeff.contract-tests]] in pyproject.toml, the prefix(es) {not_pages} of the rows that select {THIS_CHECK} are"
+        f" not an existing docs page ({DOCS_PREFIX}<name>.md)"
     )
 
 

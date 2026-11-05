@@ -1,22 +1,22 @@
-"""ADR-DOE-ENFORCE-001 R7 / R9: enforcement 台帳の著述時(git pre-commit)検査と生成の挙動。
+"""ADR-DOE-ENFORCE-001 R7 / R9: authoring-time (git pre-commit) check and generation behavior of the enforcement ledger.
 
-実弾 = f47f0a4b(ADR-DOE-HY-004 新設・defadr +1 / deftest +2 / law +1)が台帳
-未更新のまま land queue を通らず直接 main へ届き、初検出が翌朝の日次 verify
-(doeff-verify-20260821-065005)まで遅れて無実の 2 便(L43/L44)が容疑に挙がった。
-着地の窓は力学だけを見る決まりなので、記帳漏れを構造的に
-止められる検出点は著述時 = git commit 時だけ。その機構をここで固定する:
+The live incident = f47f0a4b (new ADR-DOE-HY-004, defadr +1 / deftest +2 / law +1) reached main directly
+without the ledger being updated and without going through the land queue; the first detection was delayed until the next morning's daily verify
+(doeff-verify-20260821-065005), and two innocent changes (L43/L44) came under suspicion.
+The landing window is supposed to look only at dynamics, so the only detection point that can structurally stop a missed entry
+is authoring time = git commit time. This pins down that mechanism:
 
-- 勘定の単一の家 scripts/check_enforcement_ledger.py(stdlib 単独・venv 不要)
-- working tree 突合(既定)と staged 断面(index)突合(--staged・hook が使う面)
-- tracked hook 原本 scripts/git-hooks/pre-commit(対象 path が staged の時だけ
-  検査し、作り直し(rebase / cherry-pick / sequencer)中は判定しない)
+- The single home of the counting, scripts/check_enforcement_ledger.py (stdlib only, no venv needed)
+- Working tree comparison (default) and staged snapshot (index) comparison (--staged, the surface the hook uses)
+- The tracked hook original scripts/git-hooks/pre-commit (checks only when target paths are staged,
+  and makes no judgment during a rebuild (rebase / cherry-pick / sequencer))
 
-R9(2026-09-28)で台帳は数から名の一覧(生成物)になった:
+With R9 (2026-09-28) the ledger changed from counts to a list of names (a generated artifact):
 
-- --write が木から台帳を作り、外れた項目を名前で申告する
-- ADR は Hy の形として読む(註・文字列・#_ の中の綴りを数えない)
-- hook は commit 自身の増減が台帳に写っていれば、HEAD に既に在るずれで塞がない
-- 並行する 2 便の追加は git の merge で行ごとに合わさる(数は合わさらなかった)
+- --write builds the ledger from the tree and reports dropped items by name
+- ADRs are read as Hy forms (spellings inside comments, strings, and #_ are not counted)
+- If the commit's own additions and removals are reflected in the ledger, the hook does not block on drift already present in HEAD
+- Additions from two concurrent changes combine line by line in a git merge (counts did not combine)
 """
 
 import json
@@ -39,7 +39,7 @@ def _adr_text(laws: list[str], adr_id: str = "ADR-FIXTURE-001") -> str:
 
 
 def _ledger(adrs: dict[str, tuple[str, list[str]]]) -> str:
-    """{file 名: (ADR id, law 名の並び)} から台帳(生成物と同じ形)を作る。"""
+    """Build a ledger (same shape as the generated artifact) from {file name: (ADR id, sequence of law names)}."""
     laws = sorted(f"{adr_id} {name}" for adr_id, names in adrs.values() for name in names)
     ledger = {
         "_comment": "fixture ledger",
@@ -53,7 +53,7 @@ def _ledger(adrs: dict[str, tuple[str, list[str]]]) -> str:
 
 
 def _write_fixture_tree(root: Path, *, laws: int, ledger_laws: int) -> None:
-    """最小の enforcement 資産一式を敷く(defadr 1 file・semgrep rule 1 本)。"""
+    """Lay down a minimal set of enforcement assets (one defadr file, one semgrep rule)."""
     adr_dir = root / "docs" / "adr"
     adr_dir.mkdir(parents=True, exist_ok=True)
     (adr_dir / ADR).write_text(_adr_text([f"fixture-{i}" for i in range(laws)]), encoding="utf-8")
@@ -84,28 +84,28 @@ def _git(cwd: Path, *args: str) -> str:
 def test_checker_green_on_consistent_tree(tmp_path: Path) -> None:
     _write_fixture_tree(tmp_path, laws=2, ledger_laws=2)
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
-    assert proc.returncode == 0, f"一致する tree で赤: {proc.stderr}"
+    assert proc.returncode == 0, f"red on a matching tree: {proc.stderr}"
 
 
 def test_checker_detects_unrecorded_addition(tmp_path: Path) -> None:
-    # 増加の記帳漏れ(今回の実弾の形)— law が増えたのに台帳が据え置き。
+    # Missed entry for an addition (the shape of this incident) — a law was added but the ledger stayed as is.
     _write_fixture_tree(tmp_path, laws=3, ledger_laws=2)
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
-    assert proc.returncode == 1, "記帳漏れ(木 > 台帳)を検出しない"
-    assert "ADR-FIXTURE-001 fixture-2" in proc.stderr, f"足した項目を名指さない: {proc.stderr}"
+    assert proc.returncode == 1, "does not detect a missed entry (tree > ledger)"
+    assert "ADR-FIXTURE-001 fixture-2" in proc.stderr, f"does not name the added item: {proc.stderr}"
 
 
 def test_checker_detects_silent_drop(tmp_path: Path) -> None:
-    # 黙った喪失(侵食)— R5 の本丸。消えた項目は名前で出る。
+    # Silent loss (erosion) — the core of R5. The removed item appears by name.
     _write_fixture_tree(tmp_path, laws=1, ledger_laws=2)
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
-    assert proc.returncode == 1, "侵食(木 < 台帳)を検出しない"
+    assert proc.returncode == 1, "does not detect erosion (tree < ledger)"
     assert "消えた" in proc.stderr, proc.stderr
-    assert "ADR-FIXTURE-001 fixture-1" in proc.stderr, f"消えた項目を名指さない: {proc.stderr}"
+    assert "ADR-FIXTURE-001 fixture-1" in proc.stderr, f"does not name the removed item: {proc.stderr}"
 
 
 def test_checker_does_not_count_comments_strings_or_discarded_forms(tmp_path: Path) -> None:
-    # 字面の数え(`(law ` の出現数)は註・文字列の中の綴りも数えた(2026-09-28 実測 law 134 / 形 132)。
+    # Literal counting (occurrences of `(law `) also counted spellings inside comments and strings (measured 2026-09-28: law 134 / forms 132).
     _write_fixture_tree(tmp_path, laws=1, ledger_laws=1)
     adr = tmp_path / "docs" / "adr" / ADR
     adr.write_text(
@@ -117,7 +117,7 @@ def test_checker_does_not_count_comments_strings_or_discarded_forms(tmp_path: Pa
         encoding="utf-8",
     )
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
-    assert proc.returncode == 0, f"註・文字列・#_ の中の綴りを law に数えた: {proc.stderr}"
+    assert proc.returncode == 0, f"counted spellings inside comments, strings, and #_ as laws: {proc.stderr}"
 
 
 def test_old_count_ledger_is_refused_with_the_repair_command(tmp_path: Path) -> None:
@@ -127,37 +127,37 @@ def test_old_count_ledger_is_refused_with_the_repair_command(tmp_path: Path) -> 
                                   "adr_deftest_enforcements": 0, "adr_defsemgrep_enforcements": 0}),
                       encoding="utf-8")
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
-    assert proc.returncode == 1, "旧い数の台帳を通した"
-    assert "make enforcement-ledger" in proc.stderr, f"直し方(生成の命令)を示さない: {proc.stderr}"
+    assert proc.returncode == 1, "passed an old count-based ledger"
+    assert "make enforcement-ledger" in proc.stderr, f"does not show the fix (the generation command): {proc.stderr}"
 
 
 def test_write_generates_the_ledger_and_names_removed_items(tmp_path: Path) -> None:
     _write_fixture_tree(tmp_path, laws=1, ledger_laws=2)
     written = _run_checker(tmp_path, f"--root={tmp_path}", "--write")
     assert written.returncode == 0, written.stderr
-    assert "ADR-FIXTURE-001 fixture-1" in written.stderr, f"外した項目を名前で申告しない: {written.stderr}"
-    assert _run_checker(tmp_path, f"--root={tmp_path}").returncode == 0, "生成した台帳が木と一致しない"
+    assert "ADR-FIXTURE-001 fixture-1" in written.stderr, f"does not report the dropped item by name: {written.stderr}"
+    assert _run_checker(tmp_path, f"--root={tmp_path}").returncode == 0, "the generated ledger does not match the tree"
     data = json.loads((tmp_path / "docs" / "adr" / "enforcement-ledger.json").read_text(encoding="utf-8"))
     assert data["adr_laws"] == ["ADR-FIXTURE-001 fixture-0"]
 
 
 def test_staged_mode_catches_stage_forgetting(tmp_path: Path) -> None:
-    # working tree は一致・index は不一致(台帳の直しを stage し忘れた形)。
-    # working tree 突合はこれを素通しする — hook が --staged で index を読む理由。
+    # Working tree matches, index does not (the ledger fix was forgotten to be staged).
+    # The working tree comparison lets this through — the reason the hook reads the index with --staged.
     _write_fixture_tree(tmp_path, laws=2, ledger_laws=2)
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", "-A")
     _write_fixture_tree(tmp_path, laws=3, ledger_laws=3)
-    _git(tmp_path, "add", f"docs/adr/{ADR}")  # 台帳は stage しない
+    _git(tmp_path, "add", f"docs/adr/{ADR}")  # the ledger is not staged
 
     worktree = _run_checker(tmp_path, f"--root={tmp_path}")
-    assert worktree.returncode == 0, f"working tree は一致のはず: {worktree.stderr}"
+    assert worktree.returncode == 0, f"the working tree should match: {worktree.stderr}"
     staged = _run_checker(tmp_path, f"--root={tmp_path}", "--staged")
-    assert staged.returncode == 1, "staged 断面の不一致(stage し忘れ)を検出しない"
+    assert staged.returncode == 1, "does not detect a staged snapshot mismatch (forgot to stage)"
 
 
 def _drifted_head(tmp_path: Path) -> Path:
-    """HEAD 自体が台帳とずれた repo(ずれを持ち込んだ commit が hook を外して入った形)。"""
+    """A repo whose HEAD itself has drifted from the ledger (the shape where the commit that introduced the drift bypassed the hook)."""
     _write_fixture_tree(tmp_path, laws=2, ledger_laws=3)
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", "-A")
@@ -166,7 +166,7 @@ def _drifted_head(tmp_path: Path) -> Path:
 
 
 def test_staged_mode_does_not_blame_a_commit_for_drift_already_on_head(tmp_path: Path) -> None:
-    # 2026-09-26 e15f9516 の後、無関係な 10 便以上がこの形で塞がれ SKIP で外した。
+    # After e15f9516 on 2026-09-26, more than 10 unrelated changes were blocked in this shape and bypassed with SKIP.
     repo = _drifted_head(tmp_path)
     adr = repo / "docs" / "adr" / ADR
     adr.write_text(_adr_text(["fixture-0", "fixture-1", "added-here"]), encoding="utf-8")
@@ -177,30 +177,30 @@ def test_staged_mode_does_not_blame_a_commit_for_drift_already_on_head(tmp_path:
     )
     _git(repo, "add", "-A")
     proc = _run_checker(repo, f"--root={repo}", "--staged")
-    assert proc.returncode == 0, f"自分の増減を記した commit を HEAD のずれで塞いだ: {proc.stderr}"
-    assert "HEAD に既に在った" in proc.stderr, f"残っているずれを申告しない: {proc.stderr}"
-    assert "ADR-FIXTURE-001 fixture-2" in proc.stderr, f"残っているずれを名指さない: {proc.stderr}"
+    assert proc.returncode == 0, f"blocked a commit that recorded its own changes because of drift in HEAD: {proc.stderr}"
+    assert "HEAD に既に在った" in proc.stderr, f"does not report the remaining drift: {proc.stderr}"
+    assert "ADR-FIXTURE-001 fixture-2" in proc.stderr, f"does not name the remaining drift: {proc.stderr}"
 
 
 def test_staged_mode_still_blocks_the_commits_own_unrecorded_change_on_drifted_head(tmp_path: Path) -> None:
     repo = _drifted_head(tmp_path)
     adr = repo / "docs" / "adr" / ADR
     adr.write_text(_adr_text(["fixture-0", "fixture-1", "added-here"]), encoding="utf-8")
-    _git(repo, "add", "-A")  # 台帳は動かさない
+    _git(repo, "add", "-A")  # the ledger is not moved
     proc = _run_checker(repo, f"--root={repo}", "--staged")
-    assert proc.returncode == 1, "この commit 自身の記帳漏れを HEAD のずれに紛れて通した"
-    # 赤の申告は「この commit の分」と「HEAD に既に在った分」を分けて名指す — 分けないと、
-    # 読み手は本線のずれのせいと取って --no-verify で外す(2026-09-28 b32941c3 がこの形で
-    # law 1 本を台帳に載せずに本線へ入れた)。
+    assert proc.returncode == 1, "passed this commit's own missed entry, hidden among the drift in HEAD"
+    # The red report names "this commit's part" and "the part already in HEAD" separately — otherwise
+    # the reader takes it as the mainline's drift and bypasses with --no-verify (in this shape b32941c3 on 2026-09-28
+    # put one law onto the mainline without listing it in the ledger).
     own, _, inherited = proc.stderr.partition("HEAD に既に在ったずれ")
-    assert "この commit 自身の増減" in own, f"赤の出所がこの commit だと言わない: {proc.stderr}"
-    assert "ADR-FIXTURE-001 added-here" in own, f"この commit の記帳漏れを名指さない: {proc.stderr}"
-    assert "ADR-FIXTURE-001 fixture-2" not in own, f"HEAD のずれをこの commit の分に混ぜた: {proc.stderr}"
-    assert "ADR-FIXTURE-001 fixture-2" in inherited, f"HEAD のずれを参考に出さない: {proc.stderr}"
+    assert "この commit 自身の増減" in own, f"does not say the red comes from this commit: {proc.stderr}"
+    assert "ADR-FIXTURE-001 added-here" in own, f"does not name this commit's missed entry: {proc.stderr}"
+    assert "ADR-FIXTURE-001 fixture-2" not in own, f"mixed HEAD's drift into this commit's part: {proc.stderr}"
+    assert "ADR-FIXTURE-001 fixture-2" in inherited, f"does not show HEAD's drift for reference: {proc.stderr}"
 
 
 def test_staged_mode_on_clean_head_names_only_the_commits_own_change(tmp_path: Path) -> None:
-    # 本線が一致している時の赤は、この commit の記帳漏れだけを名指し、HEAD のずれの節を出さない。
+    # When the mainline matches, the red names only this commit's missed entry and does not print the HEAD drift section.
     _write_fixture_tree(tmp_path, laws=2, ledger_laws=2)
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", "-A")
@@ -210,14 +210,14 @@ def test_staged_mode_on_clean_head_names_only_the_commits_own_change(tmp_path: P
     )
     _git(tmp_path, "add", "-A")
     proc = _run_checker(tmp_path, f"--root={tmp_path}", "--staged")
-    assert proc.returncode == 1, "この commit の記帳漏れを通した"
+    assert proc.returncode == 1, "passed this commit's missed entry"
     assert "ADR-FIXTURE-001 added-here" in proc.stderr, proc.stderr
-    assert "HEAD に既に在ったずれ" not in proc.stderr, f"一致している HEAD をずれと言った: {proc.stderr}"
+    assert "HEAD に既に在ったずれ" not in proc.stderr, f"called a matching HEAD drifted: {proc.stderr}"
 
 
 def test_parallel_additions_merge_into_a_consistent_ledger(tmp_path: Path) -> None:
-    # 数の台帳では 2 便が同じ「6 → 7」を刻み、merge が黙って 7 に合わせた(2026-09-17 ed98775a の形)。
-    # 名の一覧なら別々の ADR への追加は行ごとに合わさり、merge の結果が木と一致する。
+    # With a count-based ledger, two changes stamped the same "6 -> 7" and the merge silently settled on 7 (the shape of ed98775a on 2026-09-17).
+    # With a list of names, additions to separate ADRs combine line by line, and the merge result matches the tree.
     repo = tmp_path
     adr_dir = repo / "docs" / "adr"
     adr_dir.mkdir(parents=True)
@@ -242,7 +242,7 @@ def test_parallel_additions_merge_into_a_consistent_ledger(tmp_path: Path) -> No
     _git(repo, "checkout", "-q", "left")
     _git(repo, "merge", "-q", "--no-edit", "right")
     proc = _run_checker(repo, f"--root={repo}")
-    assert proc.returncode == 0, f"並行する 2 便の追加の merge が台帳と一致しない: {proc.stderr}"
+    assert proc.returncode == 0, f"the merge of two concurrent additions does not match the ledger: {proc.stderr}"
     data = json.loads((adr_dir / "enforcement-ledger.json").read_text(encoding="utf-8"))
     assert len(data["adr_laws"]) == 8
 
@@ -266,50 +266,50 @@ def _run_hook(repo: Path) -> subprocess.CompletedProcess:
 def test_hook_blocks_inconsistent_staged_snapshot(tmp_path: Path) -> None:
     repo = _install_fixture_repo_with_hook(tmp_path, laws=3, ledger_laws=2)
     proc = _run_hook(repo)
-    assert proc.returncode == 1, f"不一致の staged 断面を hook が通した: {proc.stderr}"
+    assert proc.returncode == 1, f"the hook passed a mismatching staged snapshot: {proc.stderr}"
 
 
 def test_hook_passes_consistent_staged_snapshot(tmp_path: Path) -> None:
     repo = _install_fixture_repo_with_hook(tmp_path, laws=2, ledger_laws=2)
     proc = _run_hook(repo)
-    assert proc.returncode == 0, f"一致する staged 断面で hook が赤: {proc.stderr}"
+    assert proc.returncode == 0, f"the hook is red on a matching staged snapshot: {proc.stderr}"
 
 
 def test_hook_silent_during_rebase_replay(tmp_path: Path) -> None:
-    # 作り直し(rebase / cherry-pick)中は判定しない — 着地の窓の追随・replay を
-    # 塞がないため(prepare-commit-msg hook と同じ guard)。
+    # No judgment during a rebuild (rebase / cherry-pick) — so as not to block the landing window's follow-up or replay
+    # (same guard as the prepare-commit-msg hook).
     repo = _install_fixture_repo_with_hook(tmp_path, laws=3, ledger_laws=2)
     (repo / ".git" / "rebase-merge").mkdir()
     proc = _run_hook(repo)
-    assert proc.returncode == 0, "rebase 中の replay を hook が塞いだ"
+    assert proc.returncode == 0, "the hook blocked a replay during rebase"
 
 
 def test_hook_skips_commits_not_touching_enforcement_assets(tmp_path: Path) -> None:
-    # enforcement 資産に触れない commit は素通し(index が不一致でも、その commit の
-    # 責任ではない — 検査は触った commit に課す)。
+    # A commit that touches no enforcement assets passes through (even if the index mismatches, it is not that commit's
+    # responsibility — the check is imposed on the commit that touched them).
     repo = _install_fixture_repo_with_hook(tmp_path, laws=2, ledger_laws=2)
     _git(repo, "commit", "-q", "-m", "seed", "--no-verify")
     (repo / "README.md").write_text("x\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     proc = _run_hook(repo)
-    assert proc.returncode == 0, f"無関係な commit を hook が検査した: {proc.stderr}"
+    assert proc.returncode == 0, f"the hook checked an unrelated commit: {proc.stderr}"
 
 
 def test_pytest_ledger_test_uses_the_same_counting_home() -> None:
-    # 勘定の第 2 定義点を作らない — 既定 pytest の R5 検査(tests/test_enforcement_ledger.py)
-    # は hook と同じ家(scripts/check_enforcement_ledger.py)を消費する。
+    # Do not create a second definition point of counting — the default pytest R5 check (tests/test_enforcement_ledger.py)
+    # consumes the same home as the hook (scripts/check_enforcement_ledger.py).
     text = (ROOT / "tests" / "test_enforcement_ledger.py").read_text(encoding="utf-8")
     assert "check_enforcement_ledger" in text, (
-        "R5 検査が勘定の家(scripts/check_enforcement_ledger.py)を消費していない — "
-        "regex が乖離した日から hook 緑 = verify 緑が成立しなくなる(ADR-DOE-ENFORCE-001 R7)"
+        "the R5 check does not consume the counting home (scripts/check_enforcement_ledger.py) — "
+        "from the day the regexes diverge, hook green = verify green no longer holds (ADR-DOE-ENFORCE-001 R7)"
     )
 
 
 def test_checker_is_stdlib_only() -> None:
-    # hook は venv の状態に依存できない(rebase 途中の worktree・未 sync の機体でも
-    # 走る)— 勘定の家が stdlib の外を import したら赤。
+    # The hook cannot depend on the venv state (it runs even in a mid-rebase worktree or an unsynced machine)
+    # — red if the counting home imports anything outside stdlib.
     if not CHECKER.exists():
-        pytest.fail("勘定の家 scripts/check_enforcement_ledger.py が無い")
+        pytest.fail("the counting home scripts/check_enforcement_ledger.py does not exist")
     text = CHECKER.read_text(encoding="utf-8")
     imported = {
         line.split()[1].split(".")[0]
@@ -317,4 +317,4 @@ def test_checker_is_stdlib_only() -> None:
         if line.startswith(("import ", "from "))
     }
     stdlib = {"json", "re", "subprocess", "sys", "pathlib", "argparse", "collections", "dataclasses"}
-    assert imported <= stdlib, f"stdlib 外の import: {sorted(imported - stdlib)}"
+    assert imported <= stdlib, f"imports outside stdlib: {sorted(imported - stdlib)}"

@@ -1,29 +1,29 @@
-"""日次の全体検証が走る所の道具の依存の宣言と準備。
+"""Declaration and preparation of the tools at the place where the daily whole-verification runs.
 
-日次の全体検証(.agents/land-queue.toml の gate.full)は、2026-10-10 から日次の task が走っている所(atlas の doeff-worker の Pod)で
-直に走る(ADR-DOE-ENFORCE-001 R10 — それまでは remote_check で木を zeus の上へ送って走っていた)。本物の Redis の配達の法
-(packages/doeff-events/tests/test_notice_laws_redis.py)は PATH の redis-server を立てるので、走る所に redis-server が無いと 1 本も
-走らない — 2026-10-08 8:00 の回は 14 本とも skip だった(テストは zeus で走り、zeus の PATH に redis-server が無い)。日次の task は
-宣言の版の redis-server を task の HOME の .local/bin(PATH の先頭)に置く。
+The daily whole-verification (gate.full in .agents/land-queue.toml) has run directly since 2026-10-10 at the place where the daily task runs (the doeff-worker Pod on atlas)
+(ADR-DOE-ENFORCE-001 R10 -- until then it sent the tree to zeus with remote_check and ran there). The real-Redis delivery laws
+(packages/doeff-events/tests/test_notice_laws_redis.py) start the redis-server on PATH, so if the place where it runs has no redis-server, not a single one
+runs -- the 2026-10-08 8:00 run skipped all 14 (the tests ran on zeus, and zeus's PATH has no redis-server). The daily task
+places the declared version of redis-server in the task's HOME .local/bin (the head of PATH).
 
-道具の依存の宣言の 1 点 = scripts/gate_tools.sh(名・版・取り寄せ元)。処理ステージ packages はテストの前に
-`sh scripts/gate_tools.sh path` を実行し、答えた dir を PATH の前に載せる。処理ステージ lint は基点の比べの前に
-`sh scripts/gate_tools.sh linter` を実行し、基点の file が名乗る鍵の doeff-linter を、比べの道具が探す断面の置き場に用意する
-(zeus の land-arm の開発版と断面の置き場は、走行ごとに空の task の HOME に無い — 用意しないと --strict の「測れない」で赤)。
+The single point declaring tool dependencies = scripts/gate_tools.sh (name, version, source). The processing stage packages runs
+`sh scripts/gate_tools.sh path` before the tests and puts the dir it answers at the front of PATH. The processing stage lint runs
+`sh scripts/gate_tools.sh linter` before the baseline comparison and prepares the doeff-linter with the key named by the baseline file in the snapshot location the comparison tool looks in
+(the zeus land-arm dev build and snapshot location are absent from the task's HOME, which is empty on every run -- without preparing them, --strict is red with "cannot measure").
 
-- (a) 宣言: packages の処理ステージは make test-packages の前に道具の準備を実行し、準備が失敗すれば make test-packages を
-  実行しない(&&)。
-- (b) 依存を満たせない機体(PATH にも cache にも無く、取り寄せの道具 docker も無い)では、準備が 0 以外で終わり、道具の名・
-  版・image・探した PATH を挙げる — 処理ステージは赤で、黙って skip にならない。
-- (c) PATH に宣言の版の redis-server が在れば何も足さない(日次の task の .local/bin)。cache の dir に在れば、その dir を答える。
-- (d) 版の違う redis-server が PATH に在っても宣言の版として数えない(cache も取り寄せも無ければ (b) と同じ赤)。
-- (e) 取り寄せ: 宣言の image(digest つき)から実行 file 1 つを取り出して cache の dir に置き、その dir を答える。
-- (f) 宣言: lint の処理ステージは doeff-linter の基点の比べ(--strict)の前に linter の準備を実行する(&&)。
-- (g) linter の準備: 呼び手の DOEFF_LINTER_SNAPSHOT_DIR(走行をまたいで残る置き場)を断面の置き場($HOME/.cache/doeff-linter-snapshots
-  — scripts/doeff_linter_locked.py が探す所)へ結び、基点の file を最後に書いた commit の linter を
-  packages/doeff-linter/scripts/linter_snapshot.py でその置き場に用意する(在れば組まない・同じ鍵の linter が在れば写す)。
-- (h) 断面の置き場が既に在る機体・DOEFF_LINTER_SNAPSHOT_DIR の無い呼び手では、置き場を結び替えない。
-- (i) 基点を書いた commit が git に無い・組めない時は、準備が 0 以外で終わって名指す(処理ステージは赤)。
+- (a) Declaration: the packages processing stage runs the tool preparation before make test-packages, and if preparation fails it does not run make test-packages
+  (&&).
+- (b) On a machine that cannot satisfy the dependency (not on PATH, not in the cache, and no docker to fetch the tool), preparation exits nonzero and lists the tool name,
+  version, image, and the PATH searched -- the processing stage is red and never silently becomes a skip.
+- (c) If PATH has a redis-server of the declared version, nothing is added (the daily task's .local/bin). If it is in the cache dir, answer that dir.
+- (d) A redis-server of a different version on PATH is not counted as the declared version (with no cache or fetch, the same red as (b)).
+- (e) Fetch: extract one executable from the declared image (with digest), place it in the cache dir, and answer that dir.
+- (f) Declaration: the lint processing stage runs the linter preparation (&&) before the doeff-linter baseline comparison (--strict).
+- (g) Linter preparation: link the caller's DOEFF_LINTER_SNAPSHOT_DIR (a location that persists across runs) to the snapshot location ($HOME/.cache/doeff-linter-snapshots
+  -- where scripts/doeff_linter_locked.py looks), and prepare in that location the linter of the commit that last wrote the baseline file, using
+  packages/doeff-linter/scripts/linter_snapshot.py (do not build if present; copy if a linter with the same key is present).
+- (h) On a machine where the snapshot location already exists, or for a caller without DOEFF_LINTER_SNAPSHOT_DIR, do not relink the location.
+- (i) If the commit that wrote the baseline is not in git or cannot be built, preparation exits nonzero and names it (the processing stage is red).
 """
 
 from __future__ import annotations
@@ -42,18 +42,18 @@ GATE_TOOLS = REPO_ROOT / "scripts" / "gate_tools.sh"
 LAND_QUEUE = REPO_ROOT / ".agents" / "land-queue.toml"
 
 REDIS_VERSION = "7.4.11"
-# agora の deploy/verify-worker-image/Dockerfile の REDIS_IMAGE と同じ値(本番 deploy/agora-events の redis:7.4.11 と同じ版)。
+# The same value as REDIS_IMAGE in agora's deploy/verify-worker-image/Dockerfile (the same version as redis:7.4.11 in production deploy/agora-events).
 REDIS_IMAGE = (
     "redis:7.4.11-bookworm@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85"
 )
-# 準備の script が使う道具(この機体の物を stand-in の PATH の dir へ link する — docker・redis-server・git・uv は入れない)。
+# Tools the preparation script uses (link this machine's into the stand-in PATH dir -- docker, redis-server, git, and uv are not included).
 SCRIPT_TOOLS = ("chmod", "dirname", "grep", "ln", "mkdir", "mktemp", "mv", "rm", "rmdir")
-# 基点の file を最後に書いた commit の stand-in(git log の答え)。
+# Stand-in for the commit that last wrote the baseline file (the answer of git log).
 BASELINE_COMMIT = "1" * 40
 
 
 def _version_answer(version: str) -> str:
-    """`redis-server --version` に答える stand-in(本物と同じ 1 行の形)。"""
+    """A stand-in that answers `redis-server --version` (the same one-line shape as the real one)."""
     return (
         "#!/bin/sh\n"
         f'echo "Redis server v={version} sha=00000000:0 malloc=libc bits=64 build=0000000000000000"\n'
@@ -61,11 +61,11 @@ def _version_answer(version: str) -> str:
 
 
 def _stand_in_bin(directory: Path, *, redis_version: str | None = None, docker: bool = False) -> Path:
-    """準備の script が要る道具だけを持つ PATH の dir(redis-server と docker は求めた時だけ stand-in を置く)。"""
+    """A PATH dir holding only the tools the preparation script needs (redis-server and docker get a stand-in only when requested)."""
     directory.mkdir(parents=True, exist_ok=True)
     for name in SCRIPT_TOOLS:
         found = shutil.which(name)
-        assert found is not None, f"この機体に {name} が無い(準備の script の前提)"
+        assert found is not None, f"this machine has no {name} (a precondition of the preparation script)"
         (directory / name).symlink_to(found)
     if redis_version is not None:
         _write_tool(directory / "redis-server", _version_answer(redis_version))
@@ -75,7 +75,7 @@ def _stand_in_bin(directory: Path, *, redis_version: str | None = None, docker: 
 
 
 def _docker_stand_in(record: Path) -> str:
-    """create・cp・rm に答える docker の stand-in: create の image を record に書き、cp は宣言の版の stand-in を置く。"""
+    """A docker stand-in answering create, cp, and rm: write create's image to the record, and cp places a stand-in of the declared version."""
     answer = _version_answer(REDIS_VERSION).replace("\n", "\\n").replace('"', '\\"')
     return (
         "#!/bin/sh\n"
@@ -97,7 +97,7 @@ def _write_tool(path: Path, text: str) -> None:
 def _prepare(
     path_dir: Path, home: Path, verb: str = "path", env: tuple[EnvEntry, ...] = ()
 ) -> ProcessOutcome:
-    """`sh scripts/gate_tools.sh <verb>` を、stand-in の PATH と HOME(と env)だけを見る子の process で実行する。"""
+    """Run `sh scripts/gate_tools.sh <verb>` in a child process that sees only the stand-in PATH, HOME (and env)."""
     home.mkdir(parents=True, exist_ok=True)
     done = run(
         with_handlers(
@@ -114,7 +114,7 @@ def _prepare(
             ),
         )
     )
-    assert not done.timed_out, f"準備の script が 30 秒で終わらなかった\n{done.stdout}\n{done.stderr}"
+    assert not done.timed_out, f"the preparation script did not finish in 30 seconds\n{done.stdout}\n{done.stderr}"
     return done
 
 
@@ -170,8 +170,8 @@ def test_e_the_tool_is_fetched_from_the_declared_image_into_the_cache(tmp_path: 
 
 
 def _linter_stand_ins(directory: Path, *, commit: str, uv_rc: int = 0) -> Path:
-    """linter の準備が呼ぶ git と uv の stand-in を置いた PATH の dir: git は `log` に commit を答え(空なら何も答えない)、uv は
-    呼ばれた引数と DOEFF_LINTER_SNAPSHOT_DIR を record に書いて uv_rc で終わる。"""
+    """A PATH dir with stand-ins for the git and uv that the linter preparation calls: git answers `log` with a commit (answers nothing if empty), and uv
+    writes the arguments it was called with and DOEFF_LINTER_SNAPSHOT_DIR to the record and exits with uv_rc."""
     path_dir = _stand_in_bin(directory)
     record = directory.parent / "calls"
     _write_tool(
@@ -190,7 +190,7 @@ def _calls(tmp_path: Path) -> list[str]:
 
 
 def _linter_store(home: Path) -> Path:
-    """scripts/doeff_linter_locked.py が探す断面の置き場(HOME の下の決まった場所)。"""
+    """The snapshot location scripts/doeff_linter_locked.py looks in (a fixed place under HOME)."""
     return home / ".cache" / "doeff-linter-snapshots"
 
 
@@ -208,7 +208,7 @@ def test_g_the_linter_is_prepared_from_the_baseline_commit_into_the_kept_store(t
     path_dir = _linter_stand_ins(tmp_path / "bin", commit=BASELINE_COMMIT)
     done = _prepare(path_dir, home, "linter", (EnvEntry(name="DOEFF_LINTER_SNAPSHOT_DIR", value=str(kept)),))
     assert (done.exit_code, done.stdout) == (0, ""), done
-    # 走行をまたいで残る置き場を、比べの道具が探す置き場へ結ぶ(task の HOME は走行ごとに空)。
+    # Link the location that persists across runs to the location the comparison tool looks in (the task's HOME is empty on every run).
     assert _linter_store(home).is_symlink(), done
     assert _linter_store(home).resolve() == kept.resolve()
     calls = _calls(tmp_path)

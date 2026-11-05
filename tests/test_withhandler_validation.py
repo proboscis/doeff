@@ -37,7 +37,7 @@ def test_handler_accepts_do_handler():
 
 
 def test_handler_makes_a_def_a_handler():
-    # handler は def を @do 関数にして handler にする(ADR-DOE-CORE-003)。
+    # handler turns a def into an @do function and makes it a handler (ADR-DOE-CORE-003).
     def raw_handler(effect, k):
         from doeff import Resume
         return (yield Resume(k, "ok"))

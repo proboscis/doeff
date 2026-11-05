@@ -1,8 +1,8 @@
-;;; 陽性対照(D10)の Hy 側 — 綴りの道具が Python と違っても同じ規則が当たる。
-;;; 当たるのは 3〜6 行ちょうど。
+;;; Hy side of the positive control (D10) -- the same rule fires even though the spelling tools differ from Python.
+;;; Fires on exactly lines 3-6.
 (setv MEMORY "dotfiles/claude/CLAUDE.md")
 (setv ABSOLUTE "/home/user/dotfiles/claude/CLAUDE.md")
 (setv JOINED (os.path.join home "dotfiles" "claude" "CLAUDE.md"))
 (setv INTERPOLATED f"{home}/dotfiles/agent/skills")
-;; 陰性対照(散文): dotfiles の中の置き場は宿ごとに違う、という註は綴りではない
+;; Negative control (prose): the note that the location inside dotfiles differs per host is not a spelling
 (setv NOT-A-SEGMENT "my-dotfiles/claude")

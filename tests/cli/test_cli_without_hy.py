@@ -1,7 +1,7 @@
-"""doeff run は Hy を入れていない核の環境(doeff・doeff-vm・doeff-core-effects・frozendict)で動く。
+"""doeff run works in a core environment without Hy installed (doeff, doeff-vm, doeff-core-effects, frozendict).
 
-子の process に Hy の import だけを塞ぐ finder を入れてから CLI の入口を呼ぶ。Hy が要るのは --hy と .hy の program だけで、
---help・--program(Python の program)・-c・--profile・DOEFF_PROFILE は Hy 無しで通る。
+Install a finder that blocks only the Hy import in a child process, then call the CLI entry point. Hy is needed only for --hy and .hy programs;
+--help, --program (Python programs), -c, --profile, and DOEFF_PROFILE work without Hy.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ pytestmark = pytest.mark.cli
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHILD_DEADLINE_SECONDS = 60
 
-# Hy の import に ModuleNotFoundError を返す finder を最前に置いてから doeff の入口を呼ぶ子の process の code。
-# 塞ぐ前に Hy が読まれていると塞いだことにならないので、その時は 99 で終える。
+# Code for a child process that puts a finder returning ModuleNotFoundError for Hy imports first, then calls the doeff entry point.
+# If Hy was already loaded before blocking, the block is meaningless, so exit with 99 in that case.
 BLOCK_HY_THEN_RUN_CLI = """
 import sys
 
@@ -102,8 +102,8 @@ def test_doeff_run_works_without_hy(
     assert (PROFILE_LINE in completed.stderr) is profile_line
 
 
-# Hy が要る program を Hy 無しで走らせると、足す extra の名を言う文で 1 を返す。文は
-# doeff_core_effects/_extra_hints.py の表 1 つが持つ(Hy の module・HTTP の handler の場面は tests/test_missing_extra_hints.py)。
+# Running a program that needs Hy without Hy returns 1 with a message naming the extra to add. The message is
+# held by a single table in doeff_core_effects/_extra_hints.py (the Hy module and HTTP handler cases are in tests/test_missing_extra_hints.py).
 HY_MODULE = "(import doeff [Pure])\n(setv answer-program (Pure 42))\n"
 USES_HY_MODULE = """
 from doeff import Pure

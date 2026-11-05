@@ -1,10 +1,10 @@
-"""doeff.result の Some・Maybe と Err の error が型を持つ事を、実行時と pyright と mypy で確かめる。
+"""Check at runtime, with pyright, and with mypy that Some, Maybe, and the error of Err in doeff.result carry types.
 
-失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 5):
-``doeff/result.py`` に注記が無く、``Some(1).value`` は pyright で Unknown・mypy で Any だった。``Maybe = Some | _NothingType``
-は型の引数を持たず、``Maybe[int]`` は両方の道具で error。``Err`` は Generic でなく ``Err(...).error`` は Any で、``Try`` の答えの
-``Err`` の中身も Any だった。``Ok`` と ``Err`` の宣言に ``__match_args__`` が無く、docstring の ``case Ok(value):`` も両方の道具で
-error。実行時も ``Maybe[int]``・``Ok[int]``・``Err[ValueError]`` は TypeError で、評価される注記に書けなかった。
+Failure cases (measured with pyright 1.1.414 and mypy 2.4.0; gap 5 of the doeff-publish initiative's investigation):
+``doeff/result.py`` had no annotations, so ``Some(1).value`` was Unknown in pyright and Any in mypy. ``Maybe = Some | _NothingType``
+took no type arguments, so ``Maybe[int]`` was an error in both tools. ``Err`` was not Generic and ``Err(...).error`` was Any, and the contents of the ``Err`` in a ``Try`` answer
+were also Any. The declarations of ``Ok`` and ``Err`` had no ``__match_args__``, so the docstring's ``case Ok(value):`` was also an
+error in both tools. At runtime too, ``Maybe[int]``, ``Ok[int]``, and ``Err[ValueError]`` raised TypeError and could not be written in evaluated annotations.
 """
 
 import pickle
@@ -141,11 +141,11 @@ _MYPY_ERROR = re.compile(r"^[^:]+:(?P<line>\d+): error: (?P<message>.*)  \[(?P<c
 
 
 def test_mypy_reads_the_value_and_error_types(tmp_path: Path) -> None:
-    # mypy は dev の group の道具(make sync で入る)。Python Compatibility の CI の venv には無いので、訳を出して飛ばす
-    # (tests/test_handler_installer_typing.py と同じ)
+    # mypy is a tool in the dev group (installed by make sync). The Python Compatibility CI venv lacks it, so skip with a reason
+    # (same as tests/test_handler_installer_typing.py)
     pytest.importorskip(
         "mypy",
-        reason="mypy が無い venv(Python Compatibility の CI は dev の group の maturin と pyright だけを入れる)",
+        reason="venv without mypy (the Python Compatibility CI installs only maturin and pyright from the dev group)",
     )
     sample = tmp_path / "result_types.py"
     sample.write_text(_SAMPLE)
@@ -174,7 +174,7 @@ def test_mypy_reads_the_value_and_error_types(tmp_path: Path) -> None:
     errors = [
         found.groupdict() for found in map(_MYPY_ERROR.match, result.stdout.splitlines()) if found
     ]
-    # 起動できない時も終了コードは 1 なので、stderr が空である事で「走って赤を出した」と「走れなかった」を分ける
+    # The exit code is 1 even when it cannot start, so an empty stderr distinguishes "ran and reported red" from "could not run"
     assert result.stderr == "", result.stderr
     assert result.returncode == 1, result.stdout
     assert len(errors) == len(result.stdout.splitlines()), result.stdout

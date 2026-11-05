@@ -1,8 +1,8 @@
-"""doeff-linter の置き場(packages/doeff-linter/scripts/linter_snapshot.py)の検。
+"""Test of the doeff-linter store (packages/doeff-linter/scripts/linter_snapshot.py).
 
-偽の cargo(PATH の先頭)で組み立てを模し、本物の git の repo から断面を取り出す。script は各 repo の hook が呼ぶ入口の形
-(`uv run --script <path> <checkout> <commit>`)で撃つ。cargo の target の置き場(#3520)は、script を module として読み、env の
-写像から導く関数の答えだけを見る。
+Simulates the build with a fake cargo (first on PATH) and extracts the snapshot from a real git repo. The script is fired in the entry shape each repo's hook calls
+(`uv run --script <path> <checkout> <commit>`). For the cargo target store (#3520), the script is loaded as a module and only the answer of the function derived from the env
+mapping is checked.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ SCRIPT = Path(__file__).resolve().parent.parent / "packages" / "doeff-linter" / 
 
 
 def _module(name: str, path: Path) -> ModuleType:
-    """script を module として読み、純粋な関数(env の写像から置き場を導く物)を直に試すため。"""
+    """Load the script as a module and directly try the pure function (the one that derives the store from an env mapping)."""
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module: ModuleType = importlib.util.module_from_spec(spec)
@@ -29,7 +29,7 @@ def _module(name: str, path: Path) -> ModuleType:
 
 SNAPSHOT = _module("linter_snapshot", SCRIPT)
 
-# 偽の cargo — 断面の marker を読み、DOEFF_LINTER_BUILD_COMMIT(と FAKE_CARGO_SUFFIX)を名乗る linter を置く。組んだ回数を数える。
+# Fake cargo -- reads the snapshot's marker and places a linter that claims DOEFF_LINTER_BUILD_COMMIT (and FAKE_CARGO_SUFFIX). Counts how many times it built.
 FAKE_CARGO = """#!/bin/sh
 manifest=$5
 marker=$(cat "$(dirname "$manifest")/marker")
@@ -42,14 +42,14 @@ chmod +x "$CARGO_TARGET_DIR/release/doeff-linter"
 
 
 def stage(tmp_path: Path) -> Path:
-    """linter の入力の 2 つの dir を commit した仮の doeff の repo(marker = committed)と、偽の cargo の bin を作る。"""
+    """Make a temporary doeff repo with the linter's 2 input dirs committed (marker = committed), and a fake cargo bin."""
     repo = tmp_path / "doeff"
     for rel in ("packages/doeff-linter", "packages/doeff-indexer"):
         (repo / rel).mkdir(parents=True)
     (repo / "packages/doeff-linter/Cargo.toml").write_text('[package]\nname = "doeff-linter"\n', encoding="utf-8")
     (repo / "packages/doeff-linter/marker").write_text("committed", encoding="utf-8")
     (repo / "packages/doeff-indexer/Cargo.toml").write_text('[package]\nname = "doeff-indexer"\n', encoding="utf-8")
-    # git は最小の環境で撃つ(`env -i` — 外側の GIT_* も、使う人の git の設定も読まない)。
+    # Fire git in a minimal environment (`env -i` -- reads neither the outer GIT_* nor the user's git config).
     git_env = ["env", "-i", f"PATH={os.pathsep.join(os.get_exec_path())}", f"HOME={tmp_path}"]
     for argv in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"]):
         subprocess.run([*git_env, "git", "-C", str(repo), *argv], check=True, capture_output=True)
@@ -61,8 +61,8 @@ def stage(tmp_path: Path) -> Path:
 
 
 def environ(tmp_path: Path, suffix: str) -> list[str]:
-    """子の命令の頭に付ける `env` — 子はこの process の環境を継ぎ、偽の cargo を PATH の先頭に置いて 4 つの名を足す。cache の根
-    (XDG_CACHE_HOME)も tmp_path の下へ向け、偽の cargo が機体の本物の cargo の target に書かないようにする。"""
+    """The `env` prepended to the child command -- the child inherits this process's environment, puts the fake cargo first on PATH, and adds 4 names. The cache root
+    (XDG_CACHE_HOME) is also pointed under tmp_path so the fake cargo does not write to the machine's real cargo target."""
     return [
         "env",
         f"PATH={os.pathsep.join([str(tmp_path / 'bin'), *os.get_exec_path()])}",
@@ -81,8 +81,8 @@ def snapshot(repo: Path, env: list[str]) -> subprocess.Popen[str]:
 
 
 def test_three_concurrent_calls_build_the_snapshot_once(tmp_path: Path) -> None:
-    # 同じ sha を 3 本が同時に求めても組むのは 1 度で、3 本とも同じ置き場の linter を受け取る(錠は sha の単位)。
-    # 作業木の未 commit の変更(marker = moving)を読まず、commit の object の断面(committed)から組む。
+    # Even if 3 callers ask for the same sha simultaneously, it is built only once, and all 3 receive the linter from the same store (the lock is per sha).
+    # Does not read the working tree's uncommitted changes (marker = moving); builds from the snapshot of the commit object (committed).
     repo = stage(tmp_path)
     (repo / "packages/doeff-linter/marker").write_text("moving", encoding="utf-8")
     env = environ(tmp_path, "")
@@ -96,12 +96,12 @@ def test_three_concurrent_calls_build_the_snapshot_once(tmp_path: Path) -> None:
     printed = subprocess.run([next(iter(paths))], capture_output=True, text=True, check=True).stdout
     assert "committed" in printed
     assert "moving" not in printed
-    # 一時の名と組み立ての途中の名は残らない。
+    # Temporary names and mid-build names do not remain.
     assert sorted(p.suffix for p in (tmp_path / "store").iterdir()) == ["", ".lock"]
 
 
 def test_a_built_snapshot_is_reused_without_building(tmp_path: Path) -> None:
-    # 置き場に在る sha は組まずに同じ path を返す。
+    # A sha already in the store returns the same path without building.
     repo = stage(tmp_path)
     env = environ(tmp_path, "")
     first = snapshot(repo, env).communicate(timeout=50)[0].strip()
@@ -112,9 +112,9 @@ def test_a_built_snapshot_is_reused_without_building(tmp_path: Path) -> None:
 
 
 def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
-    # 違う sha の 2 本は cache の根の同じ cargo の target(<XDG_CACHE_HOME>/cargo-target/doeff-linter)で組み、target は組んだ後も残る —
-    # 依存の crate を sha をまたいで使い回すため(#2977)。反例: 一時の dir に組んで消す前の形では、target が残らずこの検が赤。
-    # 置き場の隣(<store の親>/cargo-target)に組む前の形(#3520 の前)でも、cache の根の下に target が無く赤。
+    # 2 different shas build in the same cargo target at the cache root (<XDG_CACHE_HOME>/cargo-target/doeff-linter), and the target remains after building --
+    # to reuse dependency crates across shas (#2977). Counterexample: in the earlier form that built in a temporary dir and deleted it, the target does not remain and this test is red.
+    # In the form before building next to the store (<store's parent>/cargo-target) (before #3520), there is also no target under the cache root and it is red.
     repo = stage(tmp_path)
     env = environ(tmp_path, "")
     first = snapshot(repo, env).communicate(timeout=50)[0].strip()
@@ -131,9 +131,9 @@ def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
 
 
 def test_the_cargo_target_follows_the_cache_root_not_the_snapshot_store(tmp_path: Path) -> None:
-    # 失敗ケース: 置き場を読む側に合わせて DOEFF_LINTER_SNAPSHOT_DIR を <HOME>/.cache に留め、cache の根
-    # (XDG_CACHE_HOME)を別の disk へ向けた機体でも、cargo の target は cache の根の下へ行く。反例: target を置き場の隣
-    # (<store の親>/cargo-target)から導く前の形では <HOME>/.cache/cargo-target/doeff-linter になり赤。
+    # Failing case: even on a machine where DOEFF_LINTER_SNAPSHOT_DIR is kept at <HOME>/.cache to match the store reader and the cache root
+    # (XDG_CACHE_HOME) points to a different disk, the cargo target goes under the cache root. Counterexample: in the earlier form that derived the target from next to the store
+    # (<store's parent>/cargo-target), it would be <HOME>/.cache/cargo-target/doeff-linter and red.
     home = tmp_path / "home"
     xdg = tmp_path / "xdg"
     pinned = {
@@ -143,13 +143,13 @@ def test_the_cargo_target_follows_the_cache_root_not_the_snapshot_store(tmp_path
     }
     assert SNAPSHOT.snapshot_store(pinned) == home / ".cache" / "doeff-linter-snapshots"
     assert SNAPSHOT.shared_cargo_target(pinned) == xdg / "cargo-target" / "doeff-linter"
-    # cache の根の宣言が無い機体では HOME の .cache の下。
+    # On a machine with no cache root declaration, it is under HOME's .cache.
     unset = {"HOME": str(home), "DOEFF_LINTER_SNAPSHOT_DIR": str(home / ".cache" / "doeff-linter-snapshots")}
     assert SNAPSHOT.shared_cargo_target(unset) == home / ".cache" / "cargo-target" / "doeff-linter"
 
 
 def test_a_linter_not_naming_the_sha_is_not_placed(tmp_path: Path) -> None:
-    # 反例: 組んだ linter が sha ちょうどを名乗らなければ(手元の変更の印 +dirty)、置き場に置かず理由を 1 行出して 1 で終わる。
+    # Counterexample: if the built linter does not claim exactly the sha (the local-change marker +dirty), it is not placed in the store, prints one line with the reason, and exits with 1.
     repo = stage(tmp_path)
     proc = snapshot(repo, environ(tmp_path, "+dirty"))
     out, err = proc.communicate(timeout=50)
@@ -163,7 +163,7 @@ KEY_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "doeff_linter_
 
 
 def commit_all(repo: Path, tmp_path: Path, message: str) -> str:
-    """仮の doeff の作業木の変更を全部 commit して、その sha を返すため。"""
+    """Commit all changes to the temporary doeff working tree and return its sha."""
     git_env = ["env", "-i", f"PATH={os.pathsep.join(os.get_exec_path())}", f"HOME={tmp_path}"]
     subprocess.run([*git_env, "git", "-C", str(repo), "add", "."], check=True, capture_output=True)
     subprocess.run([*git_env, "git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message],
@@ -173,7 +173,7 @@ def commit_all(repo: Path, tmp_path: Path, message: str) -> str:
 
 
 def stage_with_key(tmp_path: Path) -> Path:
-    """stage の仮の doeff に、組み立ての入力の鍵の口(本物の scripts/doeff_linter_locked.py)を commit した物 — 鍵で使い回す道を通すため。"""
+    """A temporary doeff at the stage with the build-input key entry (the real scripts/doeff_linter_locked.py) committed -- to exercise the reuse-by-key path."""
     repo = stage(tmp_path)
     (repo / "scripts").mkdir()
     (repo / "scripts" / "doeff_linter_locked.py").write_text(KEY_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
@@ -182,14 +182,14 @@ def stage_with_key(tmp_path: Path) -> Path:
 
 
 def test_a_sha_whose_linter_inputs_did_not_change_is_copied_without_building(tmp_path: Path) -> None:
-    # 失敗ケース: linter の入力(crate の src・data・Cargo.toml・Cargo.lock・build.rs)に触れない commit の sha は、
-    # 置き場に同じ入力の鍵の linter が在れば組まずに写す — pin のたびに同じ linter を組み直さない。反例: sha だけを鍵にする前の形では
-    # 2 度組んで赤。写した linter は最初に組んだ commit を名乗り、2 つの断面の dir に同じ鍵が書かれる。
+    # Failing case: the sha of a commit that touches none of the linter's inputs (crate src, data, Cargo.toml, Cargo.lock, build.rs)
+    # is copied without building if the store has a linter with the same input key -- do not rebuild the same linter on every pin. Counterexample: in the earlier form keyed only by sha,
+    # it builds twice and is red. The copied linter claims the first commit that built it, and the same key is written to the dirs of both snapshots.
     repo = stage_with_key(tmp_path)
     env = environ(tmp_path, "")
     first = Path(snapshot(repo, env).communicate(timeout=50)[0].strip())
     first_sha = first.parent.name
-    (repo / "README.md").write_text("linter の入力の外の変更\n", encoding="utf-8")
+    (repo / "README.md").write_text("change outside the linter's inputs\n", encoding="utf-8")
     second_sha = commit_all(repo, tmp_path, "outside")
     proc = snapshot(repo, env)
     out, err = proc.communicate(timeout=50)
@@ -205,13 +205,13 @@ def test_a_sha_whose_linter_inputs_did_not_change_is_copied_without_building(tmp
 
 
 def test_a_dir_built_before_keys_were_written_is_keyed_from_its_sha_and_reused(tmp_path: Path) -> None:
-    # 鍵の file を書く前の形で組んだ断面の dir(日次の機体の置き場に今ある物)も、dir の名の sha から鍵を問って照らし、鍵を書き足す —
-    # 直した後の最初の 1 回も組み直さない。
+    # A snapshot dir built in the form before the key file was written (what the daily machine's store has now) also gets its key looked up from the dir-name sha, matched, and the key written --
+    # not rebuilt even the first time after the fix.
     repo = stage_with_key(tmp_path)
     env = environ(tmp_path, "")
     first = Path(snapshot(repo, env).communicate(timeout=50)[0].strip())
     (first.parent / "input_key").unlink()
-    (repo / "README.md").write_text("linter の入力の外の変更\n", encoding="utf-8")
+    (repo / "README.md").write_text("change outside the linter's inputs\n", encoding="utf-8")
     commit_all(repo, tmp_path, "outside")
     proc = snapshot(repo, env)
     out, err = proc.communicate(timeout=50)
@@ -222,7 +222,7 @@ def test_a_dir_built_before_keys_were_written_is_keyed_from_its_sha_and_reused(t
 
 
 def test_a_sha_whose_linter_inputs_changed_builds_again(tmp_path: Path) -> None:
-    # 入力(crate の Cargo.toml)に触れる commit の sha は、鍵が変わるので組み直す(写さない)。
+    # The sha of a commit that touches an input (the crate's Cargo.toml) changes the key, so it is rebuilt (not copied).
     repo = stage_with_key(tmp_path)
     env = environ(tmp_path, "")
     first = snapshot(repo, env).communicate(timeout=50)[0].strip()
@@ -236,7 +236,7 @@ def test_a_sha_whose_linter_inputs_changed_builds_again(tmp_path: Path) -> None:
 
 
 def test_a_missing_commit_is_unavailable(tmp_path: Path) -> None:
-    # 反例: doeff に無い commit は組まずに理由を返す。
+    # Counterexample: a commit not in doeff is not built, and the reason is returned.
     repo = stage(tmp_path)
     env = environ(tmp_path, "")
     proc = subprocess.Popen(

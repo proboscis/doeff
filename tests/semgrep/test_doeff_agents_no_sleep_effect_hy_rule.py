@@ -1,10 +1,10 @@
-"""doeff-agents-no-sleep-effect-hy の極性の検。
+"""Polarity test for doeff-agents-no-sleep-effect-hy.
 
-doeff-agents は自前の待ちの効果を持たない — program は doeff_time の Delay を yield する(ADR-DOE-TIME-001 R7)。Python の定義と import は
-doeff-agents-no-sleep-effect が見るが、Hy の定義(io_effects.hy の Sleep・sessionhost/effects.hy の ClockSleep の形)には当たらなかった。
-検体で `; 鳴る` を付けた行だけが当たることを、規則の当たりの行で突き合わせる。鳴るべき形 = 名に Sleep / Delay を含む EffectBase の
-defclass・名が sleep か -sleep で終わる構築子の定義。鳴らないべき形 = 待ちでない効果・EffectBase を継がない型・Delay で待つ program・
-fake の handler の DelayEffect の節。
+doeff-agents has no wait effect of its own -- programs yield doeff_time's Delay (ADR-DOE-TIME-001 R7). Python definitions and imports are
+covered by doeff-agents-no-sleep-effect, but Hy definitions (the Sleep in io_effects.hy and the ClockSleep form in sessionhost/effects.hy) were not hit.
+Only lines with the "fires" marker comment in the sample must be hit, checked against the rule's hit lines. Shapes that should fire = a defclass of an EffectBase whose name contains Sleep / Delay,
+and a constructor definition whose name is sleep or ends in -sleep. Shapes that should not fire = effects that are not waits, types that do not extend EffectBase, programs that wait via Delay,
+and the DelayEffect clause of a fake handler.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ CONFIG = REPO_ROOT / ".semgrep.yaml"
 RULE = "doeff-agents-no-sleep-effect-hy"
 FIXTURE_ROOT = REPO_ROOT / "tests" / "semgrep" / "fixtures" / "python"
 SAMPLE = Path("packages/doeff-agents/src/doeff_agents/own_wait_effect_forbidden.hy")
-FIRES = "; 鳴る"
+FIRES = "; fires"
 
 
 def test_only_the_marked_lines_fire() -> None:

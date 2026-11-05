@@ -1,7 +1,7 @@
-"""doeff-no-sleep-in-tests の極性の検体 — 関数の宣言と sleep(0)・await の無い asyncio.sleep(…)・
-誰も立てない合図を待つ sleep の言い換え threading.Event().wait(秒)。
+"""Polarity sample for doeff-no-sleep-in-tests -- function declarations, sleep(0), asyncio.sleep(...) without await,
+and threading.Event().wait(seconds), a paraphrase of sleep that waits for a signal nobody sets.
 
-`# 鳴る` を付けた行だけが当たる。名が test_ で始まらないので pytest は集めない。
+Only lines with the "fires" marker comment are hit. The names do not start with test_, so pytest does not collect them.
 """
 
 import asyncio
@@ -14,32 +14,32 @@ from doeff import Await, do
 
 
 def test_plain_sleep():
-    time.sleep(0.1)  # 鳴る
+    time.sleep(0.1)  # fires
 
 
 async def test_plain_async_sleep():
-    await asyncio.sleep(0.1)  # 鳴る
+    await asyncio.sleep(0.1)  # fires
 
 
 def test_helper_in_plain_test():
     def worker():
-        time.sleep(0.05)  # 鳴る
+        time.sleep(0.05)  # fires
 
     threading.Thread(target=worker).start()
 
 
 @pytest.mark.slow
 def test_other_mark_is_not_a_declaration():
-    time.sleep(0.1)  # 鳴る
+    time.sleep(0.1)  # fires
 
 
 def _module_helper():
-    time.sleep(0.1)  # 鳴る
+    time.sleep(0.1)  # fires
 
 
 def test_fresh_event_wait_spells_a_sleep():
-    threading.Event().wait(0.1)  # 鳴る
-    threading.Event().wait(timeout=0.1)  # 鳴る
+    threading.Event().wait(0.1)  # fires
+    threading.Event().wait(timeout=0.1)  # fires
 
 
 def test_waiting_for_an_event_someone_sets_is_not_a_sleep():
@@ -86,13 +86,13 @@ class TestInClass:
         time.sleep(0.1)
 
     def test_plain_method(self):
-        time.sleep(0.1)  # 鳴る
+        time.sleep(0.1)  # fires
 
 
 def test_program_awaits_a_sleep():
     @do
     def program():
-        yield Await(asyncio.sleep(0.1))  # 鳴る
+        yield Await(asyncio.sleep(0.1))  # fires
 
     return program
 

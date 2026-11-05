@@ -1,4 +1,4 @@
-# effect の答えの型: yield from は答えの型を付け、yield は Any になる(docs/23 の決まり)
+# Type of an effect's answer: yield from gives the answer a type, and yield makes it Any (the rule of docs/23)
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, assert_type
@@ -22,9 +22,9 @@ def body() -> Generator[ReadClock | ReadKey | Ask, Any, int]:
     assert_type(now, int)
     name = yield from ReadKey("user")
     assert_type(name, str)
-    bad: str = yield from ReadClock()  # expect-error (int を str へ)
+    bad: str = yield from ReadClock()  # expect-error (int to str)
     plain = yield ReadClock()
-    assert_type(plain, Any)  # yield(yield from でない)の答えは Any — docs/23 の決まり
+    assert_type(plain, Any)  # the answer of yield (not yield from) is Any -- the rule of docs/23
     env = yield from Ask("k")
-    assert_type(env, Any)  # Ask の答えは Any — docs/23 の決まり
+    assert_type(env, Any)  # the answer of Ask is Any -- the rule of docs/23
     return now + len(name)

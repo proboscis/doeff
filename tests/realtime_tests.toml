@@ -1,101 +1,101 @@
-# 実時間で待ってよい検の名簿。
+# Registry of tests that may wait in real (wall-clock) time.
 #
-# .semgrep.yaml の規則 doeff-no-sleep-in-tests は、@pytest.mark.realtime を名乗る関数と
-# pytestmark = pytest.mark.realtime を名乗る module の中の sleep を鳴らさない。Hy の検は doeff-linter の規則 DOEFF211 が同じ
-# 決まりを持ち、deftest の meta の {:marks ["realtime"]}・素の関数の検の decorator
-# (defn [pytest.mark.realtime] 名 [] …)・module の最上位の (val pytestmark pytest.mark.realtime) を名乗りと読む。名乗ってよいのは、本物の thread・
-# 本物の asyncio の loop・本物の外の process や library の実時間そのものが対象の検だけ。それ以外の検は、program に
-# doeff-time の Delay を yield させて sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。
+# The semgrep rule doeff-no-sleep-in-tests in .semgrep.yaml does not flag sleep inside functions marked
+# @pytest.mark.realtime or modules marked pytestmark = pytest.mark.realtime. For Hy tests, the doeff-linter rule DOEFF211 applies the same
+# policy, reading the deftest meta {:marks ["realtime"]}, the decorator on a plain test function
+# (defn [pytest.mark.realtime] name [] ...), and a top-level (val pytestmark pytest.mark.realtime) in a module as the marker. Only tests whose subject is real
+# threads, a real asyncio loop, or the wall-clock time of a real external process or library may carry the marker. Every other test
+# makes the program yield doeff-time's Delay and runs on the virtual clock of sim_time_handler, or names the thing (event) it waits for.
 #
-# marker を名乗る検は、ここに「実時間の何が対象か」の理由と一緒に載せる。名簿と marker の食い違い(載っていない
-# marker・marker の無い行)は tests/semgrep/test_realtime_tests_registry.py が赤にする。
+# A test carrying the marker is listed here together with the reason saying what wall-clock behavior is under test. Mismatches between
+# the registry and the markers (a marker not listed, a row without a marker) are turned red by tests/semgrep/test_realtime_tests_registry.py.
 #
-# 鍵 = "<repo の根からの path>::<関数の名>"(class の method は "<path>::<class の名>::<関数の名>")・
-#      module の pytestmark は "<path>"。値 = 理由の 1 行。Hy の検の名は pytest が見せる形(- を _ に直した名)。
+# Key = "<path from repo root>::<function name>" (for a class method, "<path>::<class name>::<function name>");
+#       for a module pytestmark, "<path>". Value = a one-line reason. Hy test names are in the form pytest shows (with - turned into _).
 #
-# 規則の外へ出る道はこの file の 2 つの表だけ:
-# - [tests]: 上の marker。本物の process を待つ検の support の module(pytest が集めない file)も、同じ pytestmark の 1 行で
-#   名乗ってここに載る。Hy の、検が別の process として起こす独立の script(job の本体・替え玉の CLI — pytest を import しないので
-#   marker を名乗れない)は、[tool.doeff-linter.test_sleep] の exclude に file で名指した 1 行が名乗りの代わりで、同じくここに載る。
-# - [suites]: 規則の paths.exclude に書いた dir。どの検も本物の外の process を黒箱で動かす組だけを、dir の 1 行で載せる
-#   (file ごとに同じ理由を並べない)。規則の exclude とこの表は 1 対 1 — semgrep の規則の paths.exclude と、doeff-linter の
-#   [tool.doeff-linter.test_sleep] の exclude の dir の行(規則の検体の dir を除く)の両方が、この表と同じ dir を除く。
-# 行の注釈で規則を外す道(nosemgrep)は無い — 規則の範囲に 1 行でも在れば名簿の検が赤にする。
+# The only ways out of the rule are the two tables in this file:
+# - [tests]: the marker above. A support module (a file pytest does not collect) for tests that wait on a real process is also declared
+#   with the same one-line pytestmark and listed here. For an independent Hy script that a test launches as a separate process (a job body or a stub CLI;
+#   it does not import pytest, so it cannot carry the marker), one line naming the file in the exclude of [tool.doeff-linter.test_sleep] stands in for the marker, and it is also listed here.
+# - [suites]: directories written in the rule's paths.exclude. Only suites in which every test drives a real external process as a black box
+#   are listed, one line per directory (the same reason is not repeated per file). The rule's exclude and this table are one to one: both the semgrep rule's paths.exclude and the
+#   dir lines in the exclude of doeff-linter's [tool.doeff-linter.test_sleep] (except the rule's fixture dirs) exclude the same dirs as this table.
+# There is no way to disable the rule with an inline annotation (nosemgrep): even a single such line in the rule's scope turns the registry test red.
 
 [tests]
-"packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py" = "本物の Claude / Codex の agent の e2e の support — 本物の doeff-agentd の process の起動を締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/agentd_result_retry_e2e_support.py" = "偽の agent を本物の tmux の pane で走らせる e2e の support — 本物の doeff-agentd の process の起動を締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/test_agentd_byte_faithful_transport_e2e.py" = "本物の doeff-agentd の process の起動と、本物の tmux の pane に結果の囲みが出るのを締め切りつきで待つ — 外の process の実時間が対象"
-"packages/doeff-agents/tests/test_l2_session_algebra.py::test_agent_validation_failure_past_deadline_parks_without_follow_up" = "run_agent_task が time.monotonic で測る node の締め切り(L-K4-3)の後に結果が届く — 締め切りの実時間が対象"
-"packages/doeff-conductor/tests/test_k4_parallel_overlap.py" = "offload の本物の thread で走る 2 本の枝の重なりを、経過の実時間で測る(L-K4-2)"
-"packages/doeff-cluster/tests/test_job_log_ship.py" = "本物の子 process・log の送り手・HTTP の /livez を締め切りつきで待つ — 外の process の実時間が対象"
-"packages/doeff-cluster/tests/test_line_stamp.py::test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers" = "本物の shim と job の process の asyncio の loop の拍と、log の file の止まりの間の HTTP の要求の答えを、実時間の timeout で測る"
-"packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "本物の OS の file 監視の library の待ちを、別の task が実時間の後に閉じる"
-"tests/effects/test_effect_combinations.py::TestGatherStoreSharingLaw::test_async_gather_parallel_execution" = "Gather が spawn した task が本物の asyncio の loop の上で重なって走る事を、経過の実時間で測る"
-"tests/test_idle_job_sweeps_terminal_rows.py" = "scheduler が await の bridge の本物の asyncio の loop の thread を待って止まる時の掃除が対象 — 模擬の眠り 1 回に実時間 2 ms を置き、scheduler に走れる物の無い待ちを作る"
-"tests/test_await_concurrency.py" ="Await の並行を、本物の asyncio の loop と経過の実時間で測る"
-"tests/test_core_effects.py::TestAwait::test_await_100_concurrent_tasks" = "100 の task の Await が本物の loop の上で重なる事を、経過の実時間(2 秒未満)で測る"
-"tests/test_scheduler.py::TestRace::test_race_resolves_once_when_waitables_complete_back_to_back" = "本物の thread が競る 2 つの外の約束を続けて満たし、Race が 1 度だけ決まる事"
-"tests/test_scheduler.py::TestExternalPromise::test_100_threads_concurrent" = "100 の本物の thread が外の約束を満たす待ちが重なる事を、経過の実時間で測る"
-"tests/test_scheduler.py::TestExternalPromise::test_resolved_external_wait_not_stalled_behind_unresolved_peer" = "本物の thread が満たした外の待ちが、満たされない隣の待ちの後ろで止まらない事(#490)"
-"tests/test_scheduler.py::TestPrioritySurvivesSuspension::test_completer_not_demoted_behind_pending_external_wait" = "本物の thread の外の待ちが残る間の、完了させた task の優先度(#493)"
-"tests/test_scheduler.py::TestPrioritySurvivesSuspension::test_idle_spawner_not_promoted_above_external_wait_shield" = "本物の thread の外の待ちを盾にした IDLE の task の優先度(#504)"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_holder_awaiting_external_event_blocks_quietly" = "本物の thread が後で満たす外の完了を待つ permit の持ち主を、deadlock と診断しない事"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_runnable_idle_releaser_not_diagnosed_as_deadlock" = "本物の thread の外の待ちの間に、実行できる IDLE の解放役を deadlock と診断しない事"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock" = "本物の thread の外の待ちの間の、task をまたぐ合図の semaphore の診断(#495c)"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_logged_while_blocking_on_external" = "外の完了で長く止まった時の停滞の警告 — 停滞の判定が実時間の閾で決まる(#495b)"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_counts_many_waiters_instead_of_naming_each" = "多くの待ち手を抱えて止まった時の停滞の警告の行の長さ — 停滞の判定が実時間の閾で決まる"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_with_a_live_source_is_not_stalled" = "生きている源を見張る外の待ちを停滞と言わない事 — 源の生死と停滞の閾が実時間"
-"tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_whose_source_ended_is_reported" = "終わった源を見張る外の待ちを報告する事 — 源の生死と停滞の閾が実時間"
-"tests/test_scheduler.py::TestRootCloseOut::test_root_return_dropping_queued_work_warns" = "根が返る時に本物の thread が後で満たす仕事を落とすと警告する事(#501)"
-"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_pending_blocks_idle_task" = "本物の thread の外の待ちが残る Gather が IDLE の task を止める事"
-"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder" = "本物の thread の外の待ちを盾にした Race の決着と負けた側の場所の解放"
-"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_failure_drops_sibling_placeholder" = "本物の thread の外の待ちが失敗した時の Gather の兄弟の場所の解放"
-"tests/test_scheduler.py::TestRaceParkedWithoutShield::test_parked_race_still_blocks_for_the_external_completion" = "park した Race(priority=TaskPriority.IDLE)でも、本物の thread が後で満たす外の完了を待って塞がる事(deadlock と言わない)"
-"packages/doeff-agents/tests/sessionhost_host_deftests.hy" = "本物の session host の daemon の process が lease の行の持ち主になるのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/sessionhost_substrate_deftests.hy" = "fork した本物の子 process の読み手の回り始めと終わりを締め切りつきで待つ(symlink の張り替えの競り — 外の process の実時間が対象)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_capture_preserves_trailing_space" = "本物の herdr の pane で shell が起きて描くのを実時間で待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_external_seat_visible_to_has_session_but_not_killable" = "本物の herdr の pane で shell が起きて描くのを実時間で待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_identity_survives_agent_name_loss" = "本物の herdr の pane で shell が起きて描くのを実時間で待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_lifecycle_smoke" = "本物の herdr の pane で shell が起きて描くのを実時間で待つ(外の process の実時間が対象)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_send_and_capture_roundtrip" = "本物の herdr の pane で shell が起きて描くのを実時間で待つ(外の process の実時間が対象)"
-"packages/doeff-claude-code/tests/stub_cli/claude.hy" = "claude の替え玉の CLI — 検が別の process として起こす独立の script(pytest を import しない)で、考えている秒と hook の秒を実時間で待って本物の CLI の間合いを写す。doeff の時計は別の process に届かない"
-"packages/doeff-cluster/tests/careful_rig.hy" = "検の道具: 本物の git と fake の uv の子 process で進む実行環境の準備の終わりを、ObserveEnvs で締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/fixtures/sleeper.hy" = "worker の smoke 用の job の本体 — 検が別の process として起こす独立の script(pytest を import しない)で、拍を実時間の間隔で file へ書き続け、別の session の孫が pid を書くのを締め切りつきで待つ。実時間で生き続けるのが役目"
-"packages/doeff-cluster/tests/host_rig.hy" = "検の道具: 本物の子 process の job の終わりを ObserveProcesses で締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/probe_rig.hy" = "検の道具: 本物の子 process で走る入口の検めの終わりを ObserveProbes で締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/served_fixtures.hy" = "検の道具: 本物の coordinator の process の起動(HTTP の /state が答えるまで)を締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_cgroup_layout.hy::test_the_kernel_stops_a_runaway_child_while_the_guarded_child_keeps_beating" = "本物の cgroup で kernel が限る子を OOM で止める間、守る子の拍の実時間の間隔を測る(本物の kernel と外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_code_store.hy" = "本物の git の子 process で進むコードの準備の終わりを ObserveCode で締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_coordinator.hy::test_shim_stops_the_job_when_the_worker_goes_away" = "本物の shim の process が job を起こし終えるまでの実時間を置いてから stdin を閉じる(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_entry_probe.hy" = "本物の子 process の入口の検め: 子と孫の pid の file・process の消え・時間切れの片づけを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_env_sweep_nonblocking.hy" = "掃除の prune(本物の子 process の fake の uv)が worker のループを止めない事を、経過の実時間と子が書く印の file で確かめる"
-"packages/doeff-cluster/tests/test_heartbeat_link.hy" = "本番の coordinator への口の heartbeat の切り離し: 生存の窓 400 ms・間隔 100 ms の実時間の中で、偽の coordinator が長い待ちに実時間で答える"
-"packages/doeff-cluster/tests/test_job_exit_lines.hy" = "本物の shim の下で SIGSEGV で落ちる本物の job の process を、本物の調整ループが観測して回収するまでを実時間で回す(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_record_store_wait.hy" = "本物の記録の service の process が、起動の保守を終えて次の期限までの長い待ちに入るまでの実時間を置く(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_retirement_pipe.hy" = "本物の shim と job の process: 退きの知らせが file に書かれるのと、塞がった pipe が空くのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_served_program.hy" = "通しの検: 本物の coordinator と worker の process の間で、返事に job が載るのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_shim_descendants.hy" = "本物の shim の下の job と別の session の孫の process の終わり・生き残りを、締め切りつきで見る(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_task_programs.hy" = "本物の coordinator と worker の process の間で、task が割り当てられて終わるのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-cluster/tests/test_worker_registers.hy" = "本物の worker の process が起きて coordinator に名乗るまでを、HTTP と印の file で締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-core-effects/tests/test_compute_effects.hy::test_thread_pool_runs_as_many_at_once_as_the_pool_allows" = "Compute の本物の thread の pool で同時に回る計算の数の最大を、実時間の重なりで測る(本物の thread が対象)"
-"packages/doeff-core-effects/tests/test_http_edge_lag.hy" = "待ち受けの loop の遅れの計器: 本物の asyncio の loop を実時間で塞いだ寝過ごしと、本物の待ち受けの loop の thread の上で計器が走る事が対象"
-"packages/doeff-core-effects/tests/test_http_inflight_limit.hy" = "本物の socket の待ち受けへ数千の要求を同時に撃ち、答えない要求を放すまで・取り消しと時間切れの後の次の要求を実時間で待つ(本物の asyncio の loop と接続の pool が対象)"
-"packages/doeff-core-effects/tests/test_http_keepalive.hy" ="本物の HTTP の server の keep-alive の持ち時間(実時間の timer)をまたいで 2 回書く・本物の socket の接続が server に載るのを待つ"
-"packages/doeff-core-effects/tests/test_http_server.hy" = "本物の aiohttp の server と socket: 起動・相手の切り・拍の古さ・波の並び・遅い handshake を実時間で待つ(本物の asyncio の loop と thread が対象)"
-"packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy" = "取り消した本物の子 process が居なくなるのと、止めた thread が計器に数を書くのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-core-effects/tests/test_process_exit_wait.hy" = "本物の子 process の終わりの待ち: 子が終わるまでの実時間・本物の asyncio の loop の上の 0.2 秒との競り・取り消しの後片づけの実時間が対象"
-"packages/doeff-core-effects/tests/test_sql_effects.hy" = "本物の PostgreSQL: 別の thread の問い合わせが pg_stat_activity に現れるのを締め切りつきで待って、その backend を切る・本物の子 process が SIGTERM の後に偽の ClickHouse の答えを読み終えるまでの実時間(外の process の実時間が対象)"
-"packages/doeff-core-effects/tests/test_ws_client.hy" = "本物の aiohttp の client の session が、共有の asyncio の loop の上で閉じ終わるのを締め切りつきで待つ(本物の loop の実時間が対象)"
-"packages/doeff-core-effects/tests/ws_client_contract_handlers.hy" = "契約の検の相手役: 本物の aiohttp の server が ws の handshake の答えを実時間で遅らせる(同時に繋ぐ 2 本の重なりを作る — 本物の loop の実時間が対象)"
-"packages/doeff-records/tests/test_memory_watch_wakes.hy::test_a_write_from_another_thread_wakes_a_waiter_on_the_wall_clock" = "別の本物の thread の待ち手が呼び鈴を掛けるのを締め切りつきで待ち、壁の時計の上で書きが待ち手を起こす事を見る(本物の thread が対象)"
-"packages/doeff-records/tests/test_memory_watch_wakes.hy::test_an_append_from_another_thread_wakes_a_stream_waiter_on_the_wall_clock" = "別の本物の thread の待ち手が呼び鈴を掛けるのを締め切りつきで待ち、壁の時計の上で書きが待ち手を起こす事を見る(本物の thread が対象)"
-"packages/doeff-records/tests/test_pg_sql.hy::test_a_write_waits_while_the_version_before_880_holds_the_writer_lock" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-records/tests/test_pg_reconcile_indexes.hy" = "本物の PostgreSQL の lock の待ちと、索引の作りが書きの代役を待つ実時間が対象(外の process の実時間が対象)"
-"packages/doeff-records/tests/test_pg_sql.hy::test_the_readyz_pressure_counts_a_connection_waiting_on_a_held_lock" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待つ(外の process の実時間が対象)"
-"packages/doeff-records/tests/test_pg_wakes_by_name.hy" = "本物の PostgreSQL の LISTEN の thread が合図を数え終えるまでの実時間を置く(外の process と本物の thread の実時間が対象)"
-"packages/doeff-records/tests/test_pg_prepare_deadlock.hy" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待ち、deadlock の見つけ(deadlock_timeout)を待つ(外の process の実時間が対象)"
-"packages/doeff-records/tests/test_pg_table_units.hy" = "本物の PostgreSQL の錠(行の錠・番号の錠)を別の thread の接続が待ち始めるのを締め切りつきで待ち、止めの後ろの書きが答えない窓を置く(外の process と本物の thread の実時間が対象)"
+"packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py" = "Real-agent e2e support: waits, with a deadline, for a real doeff-agentd process to start (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/agentd_result_retry_e2e_support.py" = "E2E support that runs a fake agent in a real tmux pane: waits, with a deadline, for a real doeff-agentd process to start (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/test_agentd_byte_faithful_transport_e2e.py" = "Waits, with a deadline, for a real doeff-agentd process to start and for the result frame to appear in a real tmux pane (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/test_l2_session_algebra.py::test_agent_validation_failure_past_deadline_parks_without_follow_up" = "A result arrives after the node deadline (L-K4-3) that run_agent_task measures with time.monotonic (real wall-clock deadline)"
+"packages/doeff-conductor/tests/test_k4_parallel_overlap.py" = "Measures, in elapsed wall-clock time, the overlap of two branches running on real offload threads (L-K4-2)"
+"packages/doeff-cluster/tests/test_job_log_ship.py" = "Waits, with a deadline, for a real child process, the log shipper, and HTTP /livez (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_line_stamp.py::test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers" = "Measures with a wall-clock timeout the asyncio loop heartbeat of a real shim and job process, and the HTTP request answers while the log file is stalled"
+"packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "Another task closes, after real time passes, a wait on a real OS file-watch library"
+"tests/effects/test_effect_combinations.py::TestGatherStoreSharingLaw::test_async_gather_parallel_execution" = "Measures, in elapsed wall-clock time, that tasks spawned by Gather overlap on a real asyncio loop"
+"tests/test_idle_job_sweeps_terminal_rows.py" = "Covers the cleanup when the scheduler stops while waiting on the real asyncio loop thread of the await bridge: a simulated sleep is given 2 ms of real time to create a wait in which the scheduler has nothing runnable"
+"tests/test_await_concurrency.py" = "Measures Await concurrency with a real asyncio loop and elapsed wall-clock time"
+"tests/test_core_effects.py::TestAwait::test_await_100_concurrent_tasks" = "Measures, in elapsed wall-clock time (under 2 seconds), that Await on 100 tasks overlaps on a real loop"
+"tests/test_scheduler.py::TestRace::test_race_resolves_once_when_waitables_complete_back_to_back" = "Two external promises raced by real threads are fulfilled back to back, and Race must resolve exactly once"
+"tests/test_scheduler.py::TestExternalPromise::test_100_threads_concurrent" = "Measures, in elapsed wall-clock time, that waits overlap while 100 real threads fulfill external promises"
+"tests/test_scheduler.py::TestExternalPromise::test_resolved_external_wait_not_stalled_behind_unresolved_peer" = "An external wait fulfilled by a real thread must not stall behind an unfulfilled neighboring wait (#490)"
+"tests/test_scheduler.py::TestPrioritySurvivesSuspension::test_completer_not_demoted_behind_pending_external_wait" = "Priority of the completing task while an external wait on a real thread remains (#493)"
+"tests/test_scheduler.py::TestPrioritySurvivesSuspension::test_idle_spawner_not_promoted_above_external_wait_shield" = "Priority of an IDLE task that shields itself with an external wait on a real thread (#504)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_holder_awaiting_external_event_blocks_quietly" = "A permit holder waiting for an external completion that a real thread fulfills later must not be diagnosed as a deadlock"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_runnable_idle_releaser_not_diagnosed_as_deadlock" = "A runnable IDLE releaser must not be diagnosed as a deadlock during an external wait on a real thread"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock" = "Diagnosis of a semaphore used as a cross-task signal during an external wait on a real thread (#495c)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_logged_while_blocking_on_external" = "Stall warning when blocked for a long time on an external completion: the stall decision depends on a wall-clock threshold (#495b)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_counts_many_waiters_instead_of_naming_each" = "Line length of the stall warning when stalled with many waiters: the stall decision depends on a wall-clock threshold"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_with_a_live_source_is_not_stalled" = "An external wait watching a live source must not be called stalled: source liveness and the stall threshold are wall-clock"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_whose_source_ended_is_reported" = "An external wait watching an ended source must be reported: source liveness and the stall threshold are wall-clock"
+"tests/test_scheduler.py::TestRootCloseOut::test_root_return_dropping_queued_work_warns" = "Warns when the root returns and drops queued work that a real thread fulfills later (#501)"
+"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_pending_blocks_idle_task" = "A Gather with an outstanding external wait on a real thread blocks IDLE tasks"
+"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder" = "Resolution of a Race shielded by an external wait on a real thread, and release of the losing side's placeholder"
+"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_failure_drops_sibling_placeholder" = "Release of the sibling placeholder of a Gather when an external wait on a real thread fails"
+"tests/test_scheduler.py::TestRaceParkedWithoutShield::test_parked_race_still_blocks_for_the_external_completion" = "Even a parked Race (priority=TaskPriority.IDLE) stays blocked waiting for an external completion that a real thread fulfills later (not called a deadlock)"
+"packages/doeff-agents/tests/sessionhost_host_deftests.hy" = "Waits, with a deadline, for a real session host daemon process to become the owner of the lease row (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/sessionhost_substrate_deftests.hy" = "Waits, with a deadline, for the reader of a forked real child process to start and finish (symlink swap race; real wall-clock time of an external process)"
+"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_capture_preserves_trailing_space" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_external_seat_visible_to_has_session_but_not_killable" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_identity_survives_agent_name_loss" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_lifecycle_smoke" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
+"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_send_and_capture_roundtrip" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
+"packages/doeff-claude-code/tests/stub_cli/claude.hy" = "Stub CLI for claude: an independent script that the test launches as a separate process (does not import pytest); it waits in real time for the thinking seconds and hook seconds to mimic the pacing of the real CLI. doeff's clock does not reach another process"
+"packages/doeff-cluster/tests/careful_rig.hy" = "Test tool: waits, with a deadline via ObserveEnvs, for the end of runtime-environment preparation run by a real git and a fake uv child process (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/fixtures/sleeper.hy" = "Job body for the worker smoke test: an independent script that the test launches as a separate process (does not import pytest); it keeps writing heartbeats to a file at real-time intervals and waits, with a deadline, for a grandchild in another session to write its pid. Staying alive in real time is its purpose"
+"packages/doeff-cluster/tests/host_rig.hy" = "Test tool: waits, with a deadline via ObserveProcesses, for the end of a job in a real child process (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/probe_rig.hy" = "Test tool: waits, with a deadline via ObserveProbes, for the end of the entry check running in a real child process (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/served_fixtures.hy" = "Test tool: waits, with a deadline, for a real coordinator process to start (until HTTP /state answers) (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_cgroup_layout.hy::test_the_kernel_stops_a_runaway_child_while_the_guarded_child_keeps_beating" = "While the kernel stops, via OOM, a child limited by a real cgroup, measures the real-time heartbeat interval of the guarded child (real kernel and real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_code_store.hy" = "Waits, with a deadline via ObserveCode, for the end of code preparation run by a real git child process (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_coordinator.hy::test_shim_stops_the_job_when_the_worker_goes_away" = "Closes stdin after allowing the real time it takes for a real shim process to finish starting the job (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_entry_probe.hy" = "Entry check of a real child process: waits, with a deadline, on the child and grandchild pid files, process disappearance, and timeout cleanup (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_env_sweep_nonblocking.hy" = "Checks, via elapsed wall-clock time and a marker file written by the child, that the cleanup prune (a fake uv in a real child process) does not block the worker loop"
+"packages/doeff-cluster/tests/test_heartbeat_link.hy" = "Detaching the heartbeat to the production coordinator endpoint: within a real-time liveness window of 400 ms and interval of 100 ms, a fake coordinator answers a long wait in real time"
+"packages/doeff-cluster/tests/test_job_exit_lines.hy" = "Runs in real time, under a real shim, a real job process that crashes with SIGSEGV until the real coordination loop observes and reaps it (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_record_store_wait.hy" = "Allows the real time it takes for a real record-service process to finish its startup maintenance and enter the long wait until the next deadline (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_retirement_pipe.hy" = "Real shim and job processes: waits, with a deadline, for the retirement notice to be written to the file and for the blocked pipe to drain (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_served_program.hy" = "End-to-end test: waits, with a deadline, for a job to appear in the reply between real coordinator and worker processes (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_shim_descendants.hy" = "Watches, with a deadline, the end or survival of the job and the other-session grandchild processes under a real shim (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_task_programs.hy" = "Waits, with a deadline, for a task to be assigned and finish between real coordinator and worker processes (real wall-clock time of an external process)"
+"packages/doeff-cluster/tests/test_worker_registers.hy" = "Waits, with a deadline via HTTP and a marker file, for a real worker process to wake up and announce itself to the coordinator (real wall-clock time of an external process)"
+"packages/doeff-core-effects/tests/test_compute_effects.hy::test_thread_pool_runs_as_many_at_once_as_the_pool_allows" = "Measures, through wall-clock overlap, the maximum number of computations running at once in Compute's real thread pool (real threads)"
+"packages/doeff-core-effects/tests/test_http_edge_lag.hy" = "Latency gauge of the listener loop: covers an oversleep caused by blocking a real asyncio loop in real time, and the gauge running on the thread of a real listener loop"
+"packages/doeff-core-effects/tests/test_http_inflight_limit.hy" = "Fires thousands of requests at once at a real socket listener, and waits in real time until the unanswered requests are released and for the next request after cancellation and timeout (real asyncio loop and connection pool)"
+"packages/doeff-core-effects/tests/test_http_keepalive.hy" = "Writes twice across the keep-alive lifetime (a wall-clock timer) of a real HTTP server, and waits for a real socket connection to be registered on the server"
+"packages/doeff-core-effects/tests/test_http_server.hy" = "Real aiohttp server and socket: waits in real time for startup, peer disconnects, heartbeat staleness, wave ordering, and a slow handshake (real asyncio loop and threads)"
+"packages/doeff-core-effects/tests/test_offloaded_process_cancel.hy" = "Waits, with a deadline, for a cancelled real child process to disappear and for the stopped thread to write its count to the gauge (real wall-clock time of an external process)"
+"packages/doeff-core-effects/tests/test_process_exit_wait.hy" = "Waiting for a real child process to exit: covers the real time until the child ends, the race against 0.2 seconds on a real asyncio loop, and the real time of cancellation cleanup"
+"packages/doeff-core-effects/tests/test_sql_effects.hy" = "Real PostgreSQL: waits, with a deadline, for a query from another thread to appear in pg_stat_activity and then disconnects that backend; also the real time until a real child process finishes reading a fake ClickHouse answer after SIGTERM (real wall-clock time of an external process)"
+"packages/doeff-core-effects/tests/test_ws_client.hy" = "Waits, with a deadline, for a real aiohttp client session to finish closing on a shared asyncio loop (real wall-clock time of a real loop)"
+"packages/doeff-core-effects/tests/ws_client_contract_handlers.hy" = "Counterpart for the contract test: a real aiohttp server delays the ws handshake answer in real time (to make two simultaneous connections overlap; real wall-clock time of a real loop)"
+"packages/doeff-records/tests/test_memory_watch_wakes.hy::test_a_write_from_another_thread_wakes_a_waiter_on_the_wall_clock" = "Waits, with a deadline, for a waiter on another real thread to ring the bell, and checks that a write wakes the waiter on the wall clock (real thread)"
+"packages/doeff-records/tests/test_memory_watch_wakes.hy::test_an_append_from_another_thread_wakes_a_stream_waiter_on_the_wall_clock" = "Waits, with a deadline, for a waiter on another real thread to ring the bell, and checks that a write wakes the waiter on the wall clock (real thread)"
+"packages/doeff-records/tests/test_pg_sql.hy::test_a_write_waits_while_the_version_before_880_holds_the_writer_lock" = "Waits, with a deadline, for a connection on another thread to start waiting on a real PostgreSQL lock (real wall-clock time of an external process)"
+"packages/doeff-records/tests/test_pg_reconcile_indexes.hy" = "Covers the wait on a real PostgreSQL lock and the real time an index build waits for the stand-in of writes (real wall-clock time of an external process)"
+"packages/doeff-records/tests/test_pg_sql.hy::test_the_readyz_pressure_counts_a_connection_waiting_on_a_held_lock" = "Waits, with a deadline, for a connection on another thread to start waiting on a real PostgreSQL lock (real wall-clock time of an external process)"
+"packages/doeff-records/tests/test_pg_wakes_by_name.hy" = "Allows the real time it takes for a real PostgreSQL LISTEN thread to finish counting signals (real wall-clock time of an external process and a real thread)"
+"packages/doeff-records/tests/test_pg_prepare_deadlock.hy" = "Waits, with a deadline, for a connection on another thread to start waiting on a real PostgreSQL lock, and waits for deadlock detection (deadlock_timeout) (real wall-clock time of an external process)"
+"packages/doeff-records/tests/test_pg_table_units.hy" = "Waits, with a deadline, for a connection on another thread to start waiting on a real PostgreSQL lock (row lock and advisory lock), and leaves a window in which a write queued behind the stop does not answer (real wall-clock time of an external process and a real thread)"
 
 [suites]
-"packages/doeff-agents/conformance" = "黒箱の交代ゲート: どの検も本物の session host の process を公開の socket 越しに動かし、偽の CLI(別の process)を本物の tmux / herdr の pane で走らせる — doeff の時計は別の process に届かない"
+"packages/doeff-agents/conformance" = "Black-box replacement gate: every test drives a real session host process over a public socket and runs a fake CLI (a separate process) in a real tmux / herdr pane; doeff's clock does not reach another process"

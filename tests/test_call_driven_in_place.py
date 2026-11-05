@@ -1,10 +1,10 @@
-"""effect を出さずに終わる生成器の ``@do`` の定義の呼びを、VM が親の stream の中でその場で回す。
+"""A generator ``@do`` that finishes without emitting an effect has its definition call run in place by the VM inside the parent's stream.
 
-親の生成器が、本体が yield する定義の ``Call`` を yield すると、VM の stream が子の生成器をその場で作って
-``PyIter_Send`` で回し、返った値を親へ送り直す(VM の歩を使わない)。子が更に ``Call`` を yield すれば明示の
-stack に積む。子のどれかが ``Call`` 以外(effect など)を yield した・例外を上げた時は、回し始めた生成器の鎖を
-「最初の答えを持った stream」として VM へ渡す — 枠の順(親 → 子 → 孫)と、例外の時の doeff の traceback は
-VM が全部を回していた時と同じ。``open_bind``(``<-``)と ``Call`` の形は変えない(ADR-DOE-CORE-EFFECTS-003 R5)。
+When a parent generator yields a definition ``Call`` whose body yields, the VM's stream creates the child generator in place and drives it
+with ``PyIter_Send``, then sends the returned value back to the parent (without using a VM step). If the child yields another ``Call``, it is pushed on the explicit
+stack. If any child yields something other than ``Call`` (an effect, etc.) or raises, the chain of generators it started driving is handed to the VM
+as "a stream holding the first answer" -- the frame order (parent -> child -> grandchild) and the doeff traceback on exceptions are
+the same as when the VM drove everything. The ``open_bind`` (``<-``) and ``Call`` shapes are unchanged (ADR-DOE-CORE-EFFECTS-003 R5).
 """
 
 import itertools
@@ -58,8 +58,8 @@ def _counted_run(program: object) -> CountedRun:
 
 
 def _frame_names(error: BaseException) -> list[str]:
-    # VM が例外に置く doeff の traceback(``["frame", 限定名, file, 行]`` の列)— 型の無い属性なので __dict__ から読む。
-    # 名は限定名の最後の部分(検の中の関数は ``<検の名>.<locals>.parent``)。
+    # The doeff traceback the VM puts on the exception (a list of ``["frame", qualified name, file, line]``) -- an untyped attribute, so read it from __dict__.
+    # The name is the last component of the qualified name (a function inside a test is ``<test name>.<locals>.parent``).
     return [
         entry[1].rsplit(".", 1)[-1]
         for entry in vars(error)["__doeff_traceback__"]
@@ -83,7 +83,7 @@ def test_an_effect_at_the_bottom_is_answered_and_each_level_runs_once() -> None:
 
     @do
     def down(n: int) -> Generator[object, int, int]:
-        next(entries)  # 段に入った数 — その場で回し始めた生成器を VM が 2 度回せば増える
+        next(entries)  # number of levels entered -- increases if the VM drives a generator it started in place a second time
         if n == 0:
             return (yield Probe())
         rest = yield down(n - 1)
@@ -112,7 +112,7 @@ def test_an_uncaught_exception_of_an_in_place_callee_keeps_every_frame() -> None
 
     with pytest.raises(BoomError) as info:
         run(parent())
-    # VM が全部を回していた時(#2801 の後)と同じ列 — 続けて同じ関数の枠は VM が畳む
+    # Same sequence as when the VM drove everything (after #2801) -- consecutive frames of the same function are folded by the VM
     assert _frame_names(info.value) == ["parent", "raises_at", "raises_at"]
 
 

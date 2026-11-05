@@ -1,13 +1,13 @@
-"""公開 repo の作者の名義に operator の実名を書かないことを確かめる検。
+"""Test that the operator's real name is not written in the author attribution of the public repo.
 
-実名を許しなしに使わず、どの PR にも書かない決まりにより、package の metadata・作者の欄・使用許諾の文書に
-実名を書かず、名義は Proboscis <3684241+proboscis@users.noreply.github.com> だけにする。
+Under the rule that the real name is not used without permission and is not written in any PR, it is not written in package metadata, author fields, or license documents;
+the only attribution is Proboscis <3684241+proboscis@users.noreply.github.com>.
 
-この検の中にも実名を書かないため、2 つの形で照らす:
-- 作者の欄(pyproject.toml の authors / maintainers・package.json の author / contributors)は、許す名義の一覧に
-  載っている物だけを通す(名を書かずに済む許しの一覧)。
-- 作者の欄の外の文(AUTHORS・LICENSE・CITATION・README・docs/index.md の作者の節)は、語の小文字の sha256 が
-  実名の姓の hash と一致する語が 1 つでも在れば赤にする(hash だけを持ち、名そのものは持たない)。
+Since the real name is not written in this test either, check in two ways:
+- Author fields (authors / maintainers in pyproject.toml, author / contributors in package.json) pass only entries
+  on the allowed-attribution list (an allow list that needs no names written).
+- Text outside author fields (AUTHORS, LICENSE, CITATION, README, the authors section of docs/index.md) goes red if even one word's lowercase sha256
+  matches the hash of the real surname (only the hash is held, never the name itself).
 """
 
 from __future__ import annotations
@@ -23,26 +23,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# 作者の欄に許す名義(これ以外の名と email は赤)。
+# Attributions allowed in author fields (any other name or email is red).
 ALLOWED_NAME = "Proboscis"
 ALLOWED_EMAIL = "3684241+proboscis@users.noreply.github.com"
 
-# 実名の姓の小文字の sha256(名そのものは持たない)。
+# Lowercase sha256 of the real surname (the name itself is not held).
 FORBIDDEN_TOKEN_HASHES = frozenset({"8de42984b32a1d5f161c938ee941f300f7d829049d9dc368c7721d4a4f17051a"})
 
-# 作者の欄の外で名を照らす file(git の追跡している file の名で選ぶ)。
+# Files checked for names outside author fields (selected by the names of git-tracked files).
 PROSE_NAME_PATTERN = re.compile(r"(^|/)(AUTHORS[^/]*|LICENSE[^/]*|CITATION[^/]*|README[^/]*)$")
 PROSE_EXTRA = frozenset({"docs/index.md"})
 WORD = re.compile(r"[A-Za-z]+")
 
 
 def listed_files(root: Path) -> list[str]:
-    """root の照らす file の path の一覧を返すため(作業樹の外の物・無視する物を照らさない)。
+    """Return the list of paths of files to check under root (without checking things outside the working tree or ignored files).
 
-    git の作業樹なら git が追跡している file。.git の無い写し(日次の全体検証は remote_check.py --tree . で .git を運ばずに
-    同期して撃つ)では、空の git の dir を一時に作って写しを作業樹に指し、写しの .gitignore に従う
-    「無視しない file」を数える。写しは元の作業樹の追跡する file と無視しない未追跡の file だけを持つので、同じ集合になる
-    (写しの .venv などの生成物は .gitignore が外す)。root の外の親の repo の index は読まない。
+    In a git working tree, the files git tracks. For a copy without .git (the daily full verification syncs without carrying .git via remote_check.py --tree .),
+    create an empty git dir temporarily, point the working tree at the copy, and count the "non-ignored files" according to the copy's .gitignore.
+    The copy holds only the original working tree's tracked files and non-ignored untracked files, so the set is the same
+    (generated items such as the copy's .venv are excluded by .gitignore). The index of a parent repo outside root is not read.
     """
     if (root / ".git").exists():
         listed = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True)
@@ -57,12 +57,12 @@ def listed_files(root: Path) -> list[str]:
 
 
 def tracked_files() -> list[str]:
-    """この repo の照らす file の path の一覧を返すため(listed_files を repo の root で)。"""
+    """Return the list of paths of files to check in this repo (listed_files at the repo root)."""
     return listed_files(ROOT)
 
 
 def author_entries(path: str) -> list[object]:
-    """metadata の file 1 つから作者の欄の項を全部取り出すため(pyproject.toml と package.json)。"""
+    """Extract all author-field entries from one metadata file (pyproject.toml and package.json)."""
     text = (ROOT / path).read_text(encoding="utf-8")
     if path.endswith("pyproject.toml"):
         project = tomllib.loads(text).get("project", {})
@@ -73,7 +73,7 @@ def author_entries(path: str) -> list[object]:
 
 
 def disallowed_author(entry: object) -> bool:
-    """作者の欄の項 1 つが、許す名義の一覧の外か(package.json の文字列の形 "名 <email>" も読む)。"""
+    """Whether one author-field entry is outside the allowed-attribution list (the package.json string form "name <email>" is also read)."""
     if isinstance(entry, dict):
         return entry.get("name") != ALLOWED_NAME or entry.get("email", ALLOWED_EMAIL) != ALLOWED_EMAIL
     if isinstance(entry, str):
@@ -82,15 +82,15 @@ def disallowed_author(entry: object) -> bool:
 
 
 def test_author_fields_name_only_the_allowed_identity() -> None:
-    # pyproject.toml と package.json の作者の欄の全部の項が、許す名義 Proboscis(と noreply の email)だけ。
+    # All author-field entries in pyproject.toml and package.json are only the allowed attribution Proboscis (and the noreply email).
     metadata = [p for p in tracked_files() if p.endswith(("pyproject.toml", "package.json"))
                 and "/node_modules/" not in p and "/tests/data/" not in p]
     found = [f"{path}: {entry!r}" for path in metadata for entry in author_entries(path) if disallowed_author(entry)]
-    assert found == [], "作者の欄に許す名義の外の項:\n" + "\n".join(found)
+    assert found == [], "Entries in author fields outside the allowed attribution:\n" + "\n".join(found)
 
 
 def test_prose_files_do_not_carry_the_real_name() -> None:
-    # 作者の欄の外の文(AUTHORS・LICENSE・CITATION・README・docs/index.md)に、実名の姓の語が 1 つも無い。
+    # Text outside author fields (AUTHORS, LICENSE, CITATION, README, docs/index.md) contains no word of the real surname.
     prose = [p for p in tracked_files() if (PROSE_NAME_PATTERN.search(p) or p in PROSE_EXTRA) and "/tests/data/" not in p]
     found = []
     for path in prose:
@@ -98,13 +98,13 @@ def test_prose_files_do_not_carry_the_real_name() -> None:
         for number, line in enumerate(text.splitlines(), start=1):
             if any(hashlib.sha256(word.lower().encode()).hexdigest() in FORBIDDEN_TOKEN_HASHES for word in WORD.findall(line)):
                 found.append(f"{path}:{number}")
-    assert found == [], "実名の姓の語が在る行(名は出さない):\n" + "\n".join(found)
+    assert found == [], "Lines containing a word of the real surname (the name is not shown):\n" + "\n".join(found)
 
 
 def test_the_listing_reads_a_copy_without_git() -> None:
-    # 失敗ケース(#1201): 日次の全体検証は .git を運ばない写しで撃つ。写しでも元の作業樹の git ls-files と同じ集合を数え、
-    # .gitignore が外す生成物(写しで作られる .venv の中の README)は数えない。直す前の形(写しで git ls-files)は
-    # 「not a git repository」(status 128)で落ちる。
+    # Failure case (#1201): the daily full verification runs on a copy that does not carry .git. Even on a copy, count the same set as git ls-files of the original working tree,
+    # and do not count generated items excluded by .gitignore (the README inside the .venv built in the copy). The pre-fix form (git ls-files on the copy)
+    # fails with "not a git repository" (status 128).
     with tempfile.TemporaryDirectory(prefix="no-real-name-") as scratch:
         source = Path(scratch) / "source"
         for path, text in {".gitignore": ".venv/\n", "README.md": "doc\n", "packages/a/LICENSE": "license\n",
@@ -124,7 +124,7 @@ def test_the_listing_reads_a_copy_without_git() -> None:
 
 
 def test_the_name_check_catches_a_planted_name() -> None:
-    # 照らしが効くこと: 名の hash と一致する語は赤・許す名義は通る(名そのものは書かず、hash の元の語を作らない)。
+    # The check works: a word matching the name hash is red, and the allowed attribution passes (the name itself is not written, and the word behind the hash is not constructed).
     assert disallowed_author({"name": "Somebody Else", "email": ALLOWED_EMAIL})
     assert disallowed_author({"name": ALLOWED_NAME, "email": "someone@example.com"})
     assert not disallowed_author({"name": ALLOWED_NAME, "email": ALLOWED_EMAIL})

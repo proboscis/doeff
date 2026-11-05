@@ -1,12 +1,12 @@
-"""job の道の module が pydantic を import しない事の規則の検。
+"""Test of the rule that job-path modules must not import pydantic.
 
-規則 doeff-job-path-imports-no-pydantic(Python)と doeff-job-path-imports-no-pydantic-hy(Hy)は、doeff の根と packages/ の module が
-pydantic と pydantic_core を import したら断る。範囲の外は
-LLM の出力を受ける doeff-openai・doeff-gemini・doeff-openrouter と、照らしの道具 doeff_hy/_wire_parity.py と tests。
+The rules doeff-job-path-imports-no-pydantic (Python) and doeff-job-path-imports-no-pydantic-hy (Hy) reject modules in doeff's root and packages/ that
+import pydantic or pydantic_core. Out of scope are
+doeff-openai, doeff-gemini, and doeff-openrouter, which receive LLM output, the parity tool doeff_hy/_wire_parity.py, and tests.
 
-- 1 本目: 検体(tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/)で `fires` を付けた行だけが鳴る(型検査の時だけの
-  import・pydantic が自分で呼ぶ口 __get_pydantic_core_schema__ の中の import・名の似た別の package pydantic_settings は鳴らない)。
-- 2 本目: 実物で pydantic を import したまま残す file(型検査の時だけ・pydantic が呼ぶ口の中・照らしの道具・範囲の外の package)は鳴らない。
+- Test 1: in the sample (tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/) only lines marked `fires` fire (imports only at type-check time,
+  imports inside __get_pydantic_core_schema__ (the hook pydantic itself calls), and the similarly named but different package pydantic_settings do not fire).
+- Test 2: real files that keep importing pydantic (type-check-time only, inside pydantic's hook, the parity tool, out-of-scope packages) do not fire.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ SAMPLE = Path("packages") / "doeff-job-path-pydantic-sample"
 
 
 def _marked_lines(path: Path) -> set[int]:
-    """検体で、当たるべき行(`fires` の印の在る行)の番号 — 規則が何を止めるかを検体の側に書いておくため。"""
+    """Line numbers of the lines that should be hit (those with the `fires` marker) -- so the sample side records what the rule blocks."""
     return {
         number
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
@@ -43,9 +43,9 @@ def test_only_the_marked_pydantic_imports_fire(name: str) -> None:
     assert _rule_start_lines(results, RULES[Path(name).suffix]) == expected
 
 
-#: 実物で pydantic を import したまま鳴らない file: 型検査の時だけの import と pydantic が呼ぶ口の中の import(json_value.py)・
-#: 照らしの道具(wire_parity.py)・範囲の外の LLM の package(doeff-openai)。木の全部は commit の hook と着地の門の semgrep の基点の比べが
-#: 撃つ(木の全部を撃つと 100 秒を越えるので、ここでは撃たない)。
+#: Real files that import pydantic yet do not fire: imports only at type-check time and imports inside pydantic's hook (json_value.py),
+#: the parity tool (wire_parity.py), and the out-of-scope LLM package (doeff-openai). The whole tree is fired on by the commit hook and the landing gate's semgrep baseline
+#: comparison (firing on the whole tree exceeds 100 seconds, so it is not done here).
 KEPT_PYDANTIC_IMPORTS = (
     "packages/doeff-hy/src/doeff_hy/_json_value.py",
     "packages/doeff-hy/src/doeff_hy/_wire_parity.py",
