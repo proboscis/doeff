@@ -227,3 +227,5 @@
 .sf-tasks.is-scored > span.is-loss { background: var(--sf-fail); border-color: var(--sf-fail); }
 .sf-tasks.is-all-win > span, .sf-tasks.is-all-win > span.is-loss { background: var(--sf-handler); border-color: var(--sf-handler); }
 .sf-vars .is-now { background: var(--sf-now); border-radius: .1rem; }
+/* A hundred squares across a whole page are too big to read as one set; these two figures keep them small. */
+[data-step-figure="article-opening"] .sf-tasks, [data-step-figure="hundred-fights"] .sf-tasks { max-width: 22rem; }
