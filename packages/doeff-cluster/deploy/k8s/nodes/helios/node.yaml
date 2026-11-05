@@ -39,3 +39,9 @@ spec:
           # 根の disk(915G)は Longhorn の写しを受けない(allowScheduling false)ので、disk の分け前(../../disk-share)の外 — 空きの最低と
           # roots の上限は boot.sh の既定のまま。
           resources: { requests: { cpu: "2", memory: 25Gi }, limits: { cpu: "12", memory: 48Gi } }
+          volumeMounts:
+            # 作業の root は HostToContainer: nemo の作業場の daemon(DaemonSet nemo-workspace-helios — 上に載る系の
+            # deploy/nemo/workspace.yaml)が host の /var/lib/agent-worker/toolset/worktrees の下に付けた mount が、この container の同じ path に
+            # 見える。この container から外へは広げない(特権が要らない)。daemon の root(/var/lib/agent-worker/nemo-workspace)も /work の下なので、
+            # atlas と違い足す mount は無い。
+            - { name: work, mountPath: /work, mountPropagation: HostToContainer }

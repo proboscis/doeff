@@ -131,6 +131,15 @@ def test_the_nemo_work_areas_reach_the_atlas_worker_through_the_host(rendered: l
     assert "privileged" not in (worker.get("securityContext") or {})
 
 
+def test_the_nemo_work_areas_reach_the_helios_worker_through_the_host(rendered: list[Manifest]) -> None:
+    """helios の daemon の root も作業場の dir も /work の下に在るので、特権の無い worker へは /work の HostToContainer だけで届く。"""
+    helios = next(d for d in rendered if d["kind"] == "Deployment" and d["metadata"]["name"] == "doeff-worker-helios")["spec"]["template"]["spec"]
+    worker = _worker(helios)
+    assert _mount(worker, "/work").get("mountPropagation") == "HostToContainer"
+    assert _volume(helios, "work")["hostPath"]["path"] == "/var/lib/agent-worker"
+    assert "privileged" not in (worker.get("securityContext") or {})
+
+
 def test_sidecar_stacks_nothing_under_the_work_root(pod: Manifest) -> None:
     """係の /work の下に別の volume を重ねない(Bidirectional では重ねた mount まで host へ広がる)。"""
     stacked = [m["mountPath"] for m in _sidecar(pod)["volumeMounts"] if m["mountPath"].startswith("/work/")]
