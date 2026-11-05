@@ -202,5 +202,5 @@ def test_check_names_the_stale_examples(
     example = STALE_EXAMPLES[effect]
     mismatch = examples.mismatch(example, _run(example, tmp_path, deadline_scale_factor))
     assert mismatch is not None
-    assert "落ちた" in mismatch
+    assert "failed" in mismatch
     assert f"UnhandledEffect: no handler found for effect: {effect}" in mismatch

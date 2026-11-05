@@ -638,9 +638,9 @@ def test_the_count_says_how_many_github_examples_pass_on_the_installed_version()
         failures=("…", "…"),
     )
     assert tally.summary() == [
-        "GitHub の README の例 7 個のうち入った版で通るのは 5 個",
-        "  NG  節「Quick Start」(README.md:40): RuntimeError: handler must return",
-        "  NG  節「Handlers」(README.md:80): ImportError: cannot import name 'x'",
+        "README on GitHub: of 7 examples, 5 pass on the installed version",
+        "  NG  section \"Quick Start\" (README.md:40): RuntimeError: handler must return",
+        "  NG  section \"Handlers\" (README.md:80): ImportError: cannot import name 'x'",
     ]
 
 

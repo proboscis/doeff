@@ -218,7 +218,7 @@ def test_the_hook_stops_only_a_new_finding_and_a_stale_baseline(tmp_path: Path) 
     (rig.repo / "pkg" / "a.py").write_text("x = 1\ny = 2\n")
     fixed = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert fixed.returncode == 1
-    assert "下がっていない" in fixed.stderr
+    assert "the baseline was not lowered" in fixed.stderr
     assert _run(rig, "lower", "doeff-linter").returncode == 0
     assert _run(rig, "check", "doeff-linter", "pkg/a.py").returncode == 0
 
@@ -294,7 +294,7 @@ def test_init_never_overwrites_a_baseline(tmp_path: Path) -> None:
     assert _run(rig, "init", "doeff-linter").returncode == 0
     again = _run(rig, "init", "doeff-linter")
     assert again.returncode == 2
-    assert "書き直さない" in again.stderr
+    assert "init does not rewrite it" in again.stderr
 
 
 # --- semgrep calls the uv.lock version (#2906) -- the fake uv answers `tool run --python <version> --from semgrep==<version> semgrep`, and the search-path semgrep is a different version ---
@@ -385,7 +385,7 @@ def test_a_lock_without_semgrep_stops_without_falling_back_to_the_path(tmp_path:
     (rig.repo / "uv.lock").write_text('version = 1\n\n[[package]]\nname = "other"\nversion = "0.1.0"\n')
     missing = _run(rig, "check", "semgrep", "pkg/a.py")
     assert missing.returncode != 0
-    assert "1 つに決まらない" in missing.stderr
+    assert "is not a single one" in missing.stderr
     assert calls.read_text() == before
 
 
@@ -471,7 +471,7 @@ def test_a_recorded_key_measures_a_tree_without_git(tmp_path: Path) -> None:
     run = [sys.executable, str(SCRIPT), "--root", str(copy), "--strict", "check", "doeff-linter"]
     same = subprocess.run(run, env=rig.environment, capture_output=True, text=True, check=False)
     assert same.returncode == 0, same.stderr
-    assert "dir を歩いて" in same.stderr
+    assert "walking the dir" in same.stderr
     (copy / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     grown = subprocess.run(run, env=rig.environment, capture_output=True, text=True, check=False)
     assert grown.returncode == 1

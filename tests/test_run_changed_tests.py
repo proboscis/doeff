@@ -275,7 +275,7 @@ def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Pa
     assert "\nred: 1" in summary, summary
     assert f"{STUB_TEST} — red" in summary, summary
     assert "[sql_effects]" in summary, summary
-    assert "宣言に無い公開の名: ADDED_WITHOUT_STUB" in output.text, (
+    assert "public name not in the declaration: ADDED_WITHOUT_STUB" in output.text, (
         "the added name does not appear in the pytest output"
     )
     assert "tests/test_ok.py — 1 test(s)" in summary, summary
