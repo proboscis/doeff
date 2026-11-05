@@ -1,0 +1,72 @@
+<!-- Layer 4 of docs/articles/algebraic-effects-in-python.md (the video article-monte-carlo, one step per click): monte_carlo answers the second Choose of seed 3.
+     Written by tools/docs_site/figures_measure/article_figures.py from the run of tools/docs-video/src/pages/article-monte-carlo/measure/monte.py. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels">
+    <section class="sf-panel is-program" data-panel="fight">
+      <div class="sf-head"><span>the fight that asked</span><span>seed 3, turn 1</span></div>
+      <div class="sf-vars"><span>hp = 40</span><span>enemy = <span data-slot="enemy"></span></span><span>energy = <span data-slot="energy"></span></span><span data-anchor="f-dice">its dice: <span data-slot="dice"></span></span></div>
+      <div class="sf-vars"><span>hand = <span data-slot="hand"></span></span></div>
+      <div class="sf-code">
+        <div class="sf-line" data-anchor="f-choose">pick = <span class="kw">yield</span> Choose(s, hand, energy)</div>
+        <div class="sf-line" data-anchor="f-card">card = hand[pick]</div>
+        <div class="sf-line" data-anchor="f-hit">s, dmg = hit(s, card)</div>
+        <div class="sf-line" data-anchor="f-played"><span class="kw">yield</span> Played(card, dmg)</div>
+      </div>
+      <div class="sf-waiting" data-anchor="f-wait">Paused: the fight waits inside <code>k</code> and has not moved</div>
+    </section>
+    <section class="sf-panel is-handler" data-panel="handler">
+      <div class="sf-head"><span>the handler: monte_carlo(3)</span><span>3 playouts per move</span></div>
+      <div class="sf-inbox">
+        <div class="sf-slot"><span>effect</span><div data-anchor="in-effect"></div></div>
+        <div class="sf-slot"><span>k</span><div data-anchor="in-k"></div></div>
+      </div>
+      <div class="sf-code">
+        <div class="sf-line"><span class="co"># spire.py, monte_carlo (shortened)</span></div>
+        <div class="sf-line" data-anchor="h-def"><span class="kw">def</span> <span class="fn">choose</span>(effect: Choose, k):</div>
+        <div class="sf-line" data-anchor="h-for">  <span class="kw">for</span> i <span class="kw">in</span> [*affordable(effect), None]:</div>
+        <div class="sf-line" data-anchor="h-n">    <span class="kw">for</span> n <span class="kw">in</span> range(playouts):</div>
+        <div class="sf-line" data-anchor="h-hit">      s = hit(effect.state, effect.hand[i])[0]</div>
+        <div class="sf-line" data-anchor="h-run">      result, _ = run(quiet_stats(silent(</div>
+        <div class="sf-line" data-anchor="h-run2">        dice(n)(random_bot(battle(s))))))</div>
+        <div class="sf-line" data-anchor="h-wins">      wins += result == <span class="st">"win"</span></div>
+        <div class="sf-line" data-anchor="h-best">    <span class="kw">if</span> wins / playouts &gt; best_score: best = i</div>
+        <div class="sf-line" data-anchor="h-resume">  <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, best))</div>
+      </div>
+      <div class="sf-code sf-table">
+        <div class="sf-line is-head"><span>move</span><span>enemy after</span><span>wins</span></div>
+          <div class="sf-line" data-anchor="row0"><span>Bash</span><span data-slot="e0"></span><span data-slot="w0"></span></div>
+          <div class="sf-line" data-anchor="row1"><span>Strike</span><span data-slot="e1"></span><span data-slot="w1"></span></div>
+          <div class="sf-line" data-anchor="row2"><span>Strike</span><span data-slot="e2"></span><span data-slot="w2"></span></div>
+          <div class="sf-line" data-anchor="row3"><span>Defend</span><span data-slot="e3"></span><span data-slot="w3"></span></div>
+          <div class="sf-line" data-anchor="row4"><span>end turn</span><span data-slot="e4"></span><span data-slot="w4"></span></div>
+      </div>
+      <div class="sf-box" data-anchor="p-box">
+        <div><span>a playout: </span><span class="sf-box-stack" data-anchor="p-stack">quiet_stats · silent · dice(<span data-slot="pdice"></span>) · random_bot</span></div>
+        <div>battle(s) from enemy <span data-slot="pfrom"></span> → <span data-slot="pres"></span></div>
+        <div class="sf-box-room" data-anchor="p-room"></div>
+      </div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="choose">Choose</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of the fight</small></div>
+  <div class="sf-token is-value" data-token="playout">battle(s)</div>
+  <div class="sf-token is-value" data-token="answer">0: Bash</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"active": "fight", "now": ["f-choose"], "values": {"call": "run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle())))))", "result": "", "enemy": "38", "energy": "2", "dice": "dice(3)", "hand": "[Bash, Strike, Strike, Defend]", "e0": "", "e1": "", "e2": "", "e3": "", "e4": "", "w0": "", "w1": "", "w2": "", "w3": "", "w4": "", "pdice": "", "pfrom": "", "pres": ""}, "tokens": {"choose": {"at": "f-choose", "place": "end"}}}'>The fight is on seed 3, turn 1, after one Strike: 2 energy and Bash, Strike, Strike, Defend in hand. It pauses at <code>yield Choose</code>.</li>
+  <li data-state='{"active": "handler", "now": ["h-def"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on"}, "tokens": {"choose": {"from": {"at": "f-choose", "place": "end"}, "at": "in-effect"}, "k": {"from": {"at": "f-played", "place": "end"}, "at": "in-k", "delay": 0.2}}}'>The <code>Choose</code> travels out to <code>monte_carlo</code>. The handler holds the rest of the fight as <code>k</code>, and the fight waits inside it.</li>
+  <li data-state='{"active": "handler", "now": ["h-run", "h-run2"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}}}'>To answer, it runs <code>battle</code> itself: the same function a person plays. It needs no model of the game.</li>
+  <li data-state='{"active": "handler", "now": ["h-for", "h-hit", "row0"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on"}, "values": {"e0": "30"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}}}'>For each card it can play, and for ending the turn, it plays that card on the state with <code>hit</code>, a plain function. Bash takes the enemy from 38 to 30.</li>
+  <li data-state='{"active": "handler", "now": ["h-n", "h-run", "h-run2", "row0"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on", "p-box": "is-on"}, "values": {"pdice": "0", "pfrom": "30", "pres": "win", "w0": "1 of 3"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}, "playout": {"from": {"at": "h-run2", "place": "end"}, "at": "p-room"}}}'>Then it runs the rest of the fight from there, under a random bot: playout 1 of 3. It wins.</li>
+  <li data-state='{"active": "handler", "now": ["p-stack", "f-dice", "row0"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on", "p-box": "is-on"}, "values": {"pdice": "1", "w0": "2 of 3"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}, "playout": {"from": {"at": "h-run2", "place": "end"}, "at": "p-room"}}}'>Each run has a stack of its own, here <code>dice(1)</code>, so it does not use up the dice of the paused fight: that fight still has <code>dice(3)</code> to itself.</li>
+  <li data-state='{"active": "handler", "now": ["h-wins", "row0"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on", "p-box": "is-on"}, "values": {"pdice": "2", "w0": "3 of 3"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}, "playout": {"from": {"at": "h-run2", "place": "end"}, "at": "p-room"}}}'>Playout 3, on <code>dice(2)</code>, wins as well. The handler counts the wins: Bash, 3 of 3.</li>
+  <li data-state='{"active": "handler", "now": ["h-for", "h-hit", "row1"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on", "p-box": "is-on"}, "values": {"e1": "32", "w1": "3 of 3", "pfrom": "32"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}, "playout": {"from": {"at": "h-run2", "place": "end"}, "at": "p-room"}}}'>The next move is Strike: the enemy at 32, and the three playouts, on <code>dice(0)</code>, <code>dice(1)</code> and <code>dice(2)</code>, win all three.</li>
+  <li data-state='{"active": "handler", "now": ["row2", "row3", "row4", "f-choose"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on", "p-box": "is-on"}, "values": {"e2": "32", "w2": "3 of 3", "e3": "38", "w3": "3 of 3", "e4": "38", "w4": "3 of 3", "pfrom": "38"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}}}'>Then the other Strike, Defend and ending the turn. Here every move wins all three. The paused fight has not moved: still turn 1, enemy 38.</li>
+  <li data-state='{"active": "handler", "now": ["h-best"], "marks": {"f-card": "is-k", "f-hit": "is-k", "f-played": "is-k", "f-wait": "is-on", "row0": "is-best"}, "tokens": {"choose": {"at": "in-effect"}, "k": {"at": "in-k"}}}'>With a tie it keeps the first move, Bash: <code>best</code> changes only when a move scores higher, and no move beats 3 of 3.</li>
+  <li data-state='{"active": "fight", "now": ["h-resume", "f-card", "f-hit"], "marks": {"row0": "is-best"}, "values": {"enemy": "30", "energy": "0", "hand": "[Strike, Strike, Defend]"}, "tokens": {"answer": {"from": {"at": "h-resume", "place": "end"}, "at": "f-choose", "place": "end", "merge": true}, "k": {"from": "in-k", "at": "f-choose", "place": "end", "merge": true, "delay": 0.3}}}'>It resumes <code>k</code> with that move, and the fight goes on from its <code>yield</code>: Bash hits for 8, and the enemy is at 30.</li>
+  <li data-state='{"active": "run", "values": {"result": "(&#39;win&#39;, 4)"}}'>On seed 3 the bot answers eleven <code>Choose</code> effects this way, with a hundred and sixty-five playouts (3 for each move it could make), and wins on turn 4.</li>
+</ol>
