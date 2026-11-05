@@ -111,11 +111,11 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 | 冷えている | garage の backup だけ(Longhorn の volume は無い) | 冷やした時 | 次に使う時は backup から同じ名で戻してから付ける(節「backup」の戻し方) |
 | 消えた | どこにも無い | 消した時 | — |
 
-- 冷やす: 温かい volume のうち、(1) 使い終わってから warmHours(2 時間)を過ぎた物は全部、(2) それでも札 workspace の disk の線ごとの
+- 冷やす: 温かい volume のうち、(1) 使い終わってから warmHours(4 時間)を過ぎた物は全部、(2) それでも札 workspace の disk の線ごとの
   残りの byte に冷やす物が空ける byte を足して、線のどちらかが spareBytes(16 GiB)に届かなければ、両方が届くまで残りを、使い終わりの
   古い順に(判断 = `cooling-order`・残り = Longhorn の置く線 `room-bytes`)。冷やした volume が空ける byte は線ごとに違う: 名目の予約の線
-  には spec.size、実の空きの線には status.actualSize(snapshot を含む実の使用 — 本番の外れた 2 GiB の volume の多くは約 1 MB で、冷やしても
-  実の空きはほぼ空かない)。(2) を全部足しても届かなければ (1) だけ(温かい volume を冷やしても入らない)。手順(`CoolWorkspaceVolume`)は Snapshot `<名>-cool-<epoch 秒>` を作る → 使えるまで待つ →
+  には spec.size、実の空きの線には status.actualSize(snapshot を含む実の使用 — 2026-11-05 の本番の外れた 91 本は中央 250 MB・和 60 GB で、
+  実の使用は冷やす時の backup の大きさとほぼ同じ — 戻す時にその量を書き直す)。(2) を全部足しても届かなければ (1) だけ(温かい volume を冷やしても入らない)。手順(`CoolWorkspaceVolume`)は Snapshot `<名>-cool-<epoch 秒>` を作る → 使えるまで待つ →
   同じ名の Backup(label backup-volume・backup-target)を作る → Completed まで待つ → その名の束 BackupVolume が在り、status.lastBackupName が
   今回の Backup である事を確かめる(束が無ければ作る・指さなければ同期を 1 度頼む — 節「backup」の「束」)→ 使う ticket が無い事を確かめて
   読んだ版の上で volume を消す → 消え終わるまで待つ。外れている volume は、Longhorn が snapshot と backup の ticket(frontend を問わない)で自分で付けて取る —
@@ -132,11 +132,20 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 
 - 作業場所の dir は 1 日に約 900 個増える(2026-11-01 23:13 JST の zeus の作業場所の dir の数え: 最後の変更が 1 時間以内 25・3 時間 50・
   6 時間 111・12 時間 549・24 時間 891・7 日 7,565・全部で 8,799 個・48 GB)。
-- Longhorn は volume を名目の大きさで数え、disk ごとに (容量 − 予約) × 200%(設定 storage-over-provisioning-percentage)までしか置かない。
+- Longhorn は volume を名目の大きさで数え、disk ごとに (容量 − 予約) × 300%(設定 storage-over-provisioning-percentage — 値の写しは
+  `../disk-share/shares.yaml` の overProvisioningPercent)までしか置かない。
   10 GiB の volume を 7 日温かく置くと約 7,500 本・75 TiB で、どの disk にも収まらない。
-- 今の札 workspace の disk(zeus の USB の SSD の上の 100 GiB の image — 2026-11-03 の読み: storageMaximum 105 GB・予約 0)に置ける
-  volume は名目で、10 GiB なら 19 本・2 GiB なら 97 本(付いている物と温かい物の和)。昼の 1 時間に約 25 個の作業場所が動くので、10 GiB
-  では 2 時間の窓でも数の線(2)が先に効いた。大きさの訳は節「大きさ」。
+- 今の札 workspace の disk(zeus の USB の SSD の上の image — 2026-11-05 の読み: storageMaximum 232 GB・予約 0)に置ける volume は
+  名目で、300% の時 696 GB(2 GiB なら 324 本 — 付いている物と温かい物の和)。2026-11-03 の 105 GB の時は、10 GiB なら 19 本で、
+  昼の 1 時間に約 25 個の作業場所が動くので 2 時間の窓でも数の線(2)が先に効いた。大きさの訳は節「大きさ」。
+- 名目の線を 200% から 300% へ上げた訳(2026-11-05 の zeus の測り — 11-04 14:50〜11-05 17:32 JST): 200% の名目の線(464 GB)は実の空きの
+  線より先に尽き(名目 462 GB を置いた時に実の空きは 96 GB・実の線は 58 GB)、冷やした 1,333 回のうち 1,027 回は空きの不足で、使い終わり
+  から中央 0.44 時間で冷やした(warmHours を過ぎた物は 306 回)。backup から戻した 904 回(255 本 — 1 日に 10 回戻した volume も在る)の
+  backup の和は 290.6 GB で、Longhorn の sync-agent の戻す書き(1 日 241 GB)と合い、zeus の SSD の 1 日の書き(loop1 710 GB)の約 1/3
+  だった。付け外しの記録を 2 つの線と冷やす順で置き直すと(今の値で戻す 914 回・1 日 270 GB と測りに合う)、300% で 1 日 184 GB、300% と
+  warmHours 4 時間で 1 日 158 GB。温かく置く本数はその先で実の空きの線(設定 storage-minimal-available-percentage 25%)に止まる
+  (400% と warmHours 8 時間でも 1 日 105 GB)。名目の線だけが足りない時に実の使用の小さい物から冷やす順は、戻す書きを 1 日 270 → 201 GB に
+  減らすが、戻す回数を 914 → 1,352 回に増やす(戻すたびに会話の始まりが約 20 秒遅れる)ので選ばない。
 - spareBytes = 16 GiB の訳: 次に入りうる一番大きい volume(maxSizeBytes = 16 GiB — 広げた volume を冷やすと backup はその大きさを覚え、
   戻す volume はその大きさで作る)を、次のまとめて冷やす回(数分ごと)を待たずに受けられる量。2026-11-04 17:0x JST の本番の名目の分布は、
   外れた 113 本が 2 GiB 96・4 GiB 7・10 GiB 10、付いた 46 本が 2 GiB 35・4 GiB 3・8 GiB 2・10 GiB 5・16 GiB 1。前の値 spareVolumes(作る時の
@@ -158,7 +167,7 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 
 - 読み方: 前の 10 GiB の volume は、空でも mkfs が journal と inode の表を 0 で埋めて約 228 MiB を使っていた(今は
   `assume_storage_prezeroed` で埋めない — 新しい 1 GiB の volume の mkfs の直後は 680 KB)。64–512 MiB の多くはその上乗せだけの volume。
-- 2 GiB の訳: 名目の線で札の disk に 97 本(200% の時 — 昼の 2 時間の約 50 本と空けておく 4 本を受ける。10 GiB では 19 本)。
+- 2 GiB の訳: 名目の線で札の disk に 97 本(105 GB の disk で 200% の時 — 昼の 2 時間の約 50 本と空けておく 4 本を受ける。10 GiB では 19 本)。
   growBelowPercent 50 なら 1 GiB を使った所で広げ始め、上の分布では 1 度広げるのが約 4 本に 1 本、2 度広げるのが約 20 本に 1 本。
 - 戻す volume は backup を取った時の大きさで作る(Longhorn は backup より小さい volume への戻しを断る)。前に 10 GiB で作った持ち主は、
   戻すたびに名目 10 GiB を持ち続ける。
@@ -253,6 +262,14 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
 - 冷やす回の残りも同じ数え(2 つの線ごと)で読む — 実の空きが線に近づいた時も、残りが spareBytes を割る分を冷やす。
 - 広げる時も同じ数えで、名目の増え(新しい大きさ − 今の大きさ)を札の disk が受けられるかを確かめ、受けられなければ外れた volume を
   冷やしてから広げ、冷やしても足りなければ広げない(節「広げる」)。
+- 設定 storage-over-provisioning-percentage は cluster 全体の値で、札 workspace の disk だけの値は無い。だから 300% へ上げると、ほかの disk
+  の名目の線も 1.5 倍になる。`../disk-share/shares.yaml` が予約を導く機体(k3s の VPS)は、予約を導き直して上限を前と同じに保つ。導かない
+  disk のうち、上限に届いていた atlas の bulk-longhorn(2026-11-05 の読み: 422 GB・予約 214 GB・名目 413 GB = 200% の上限 414 GB)は、
+  予約を 284 GB へ上げて上限を前と同じに保つ。上限から遠い disk(atlas の nvme-longhorn・helios の helios-root-nvme・zeus の default と
+  hot-ssd-sata — 名目は 200% の上限の 10〜40%)は予約を替えない(実の空きの線が残る)。
+- 実の空きの線が先に効く時: 札 workspace の disk は zeus の SSD(sdb — 2026-11-05 に 1.71 TB の 93% を使用・空き 133 GB)の上の image で、
+  温かく置く volume の実の使用はその SSD の空きを使う。冷やす回は実の空きの線の残りも spareBytes で読むので、温かく置く本数は実の空きの線
+  (storageMaximum の 25%)の上で止まる。
 
 ## 広げる
 
