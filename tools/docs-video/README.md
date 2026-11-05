@@ -123,5 +123,8 @@ GitHub and Zenn show the GIF; on the site, `tools/docs_site/hooks.py` puts the f
 
 2. `make docs-site`, then in this directory `node figure-gif.mjs articles/<page>/index.html <name>` (under `agora-browser`, with
    `PLAYWRIGHT_MODULES` naming the `node_modules` that has playwright). The GIF is recorded from the built figure, so the two never differ.
+   It holds every step, at 20 frames a second and 960 px wide, and is at most 10 MB (narrower only when the steps do not fit).
+   A figure with many repeated parts can be written by a script: `tools/docs_site/figures_measure/article_figures.py` writes the
+   three figures of the article's videos (`article-opening`, `monte-carlo`, `hundred-fights`).
 3. Check: `uv run pytest tests/test_docs_site_step_figures.py` (every step names only what the figure has, and every figure has its
    GIF and the other way round) and `make docs-site`.

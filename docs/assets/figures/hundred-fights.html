@@ -1,0 +1,52 @@
+<!-- Layer 5 of docs/articles/algebraic-effects-in-python.md (the video article-hundred-fights, one step per click): win_rate as a hundred tasks under scheduled.
+     Written by tools/docs_site/figures_measure/article_figures.py from the run of tools/docs-video/src/pages/article-hundred-fights/measure/hundred.py. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-rings">
+    <div class="sf-ring" data-anchor="r2"><span class="sf-ring-name" data-anchor="n2"><span data-slot="r2"></span></span><div class="sf-ring-room" data-anchor="m2"></div><div class="sf-ring" data-anchor="r1"><span class="sf-ring-name" data-anchor="n1"><span data-slot="r1"></span></span><div class="sf-ring-room" data-anchor="m1"></div>
+      <div class="sf-core" data-anchor="core">
+        <div class="sf-core-head"><span data-anchor="core-name" data-slot="core"></span><span class="sf-unchanged">battle: 0 lines changed</span></div>
+        <div class="sf-vars"><span>seed = <span data-slot="seed"></span></span><span>tasks = <span data-slot="tasks"></span></span></div>
+        <div class="sf-code">
+          <div class="sf-line" data-anchor="w-def"><span class="kw">def</span> <span class="fn">win_rate</span>(player, fights: int):</div>
+          <div class="sf-line" data-anchor="w-init">    tasks = []</div>
+          <div class="sf-line" data-anchor="w-for">    <span class="kw">for</span> seed <span class="kw">in</span> range(fights):</div>
+          <div class="sf-line" data-anchor="w-spawn">        tasks.append((<span class="kw">yield</span> Spawn(silent(dice(seed)(player(battle()))))))</div>
+          <div class="sf-line" data-anchor="w-gather">    results = <span class="kw">yield</span> Gather(*tasks)</div>
+          <div class="sf-line" data-anchor="w-return">    <span class="kw">return</span> sum(r == <span class="st">"win"</span> <span class="kw">for</span> r, _ <span class="kw">in</span> results) / fights</div>
+        </div>
+        <div class="sf-box" data-anchor="t-box">
+          <div><span>task <span data-slot="tid"></span>: </span><span class="sf-box-stack" data-anchor="t-stack">silent · dice(<span data-slot="tseed"></span>) · <span data-slot="tplayer"></span></span><span> around battle()</span> → <span data-slot="tres"></span></div>
+          <div class="sf-box-room" data-anchor="t-room"></div>
+        </div>
+        <div class="sf-tasks" data-anchor="tasks"><span data-anchor="t0"></span><span data-anchor="t1"></span><span data-anchor="t2"></span><span data-anchor="t3"></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span class="is-loss"></span><span></span><span class="is-loss"></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span class="is-loss" data-anchor="t47"></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span class="is-loss"></span><span class="is-loss"></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span class="is-loss"></span><span></span><span></span><span class="is-loss"></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span class="is-loss"></span><span class="is-loss"></span><span></span><span class="is-loss"></span><span class="is-loss" data-anchor="t92"></span><span class="is-loss"></span><span></span><span class="is-loss"></span><span></span><span></span><span></span><span></span></div>
+      </div>
+    </div></div>
+  </div>
+  <div class="sf-token is-effect" data-token="spawn">Spawn</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of win_rate</small></div>
+  <div class="sf-token is-effect" data-token="roll">Roll</div>
+  <div class="sf-token is-effect" data-token="choose">Choose</div>
+  <div class="sf-token is-effect" data-token="show">Show</div>
+  <div class="sf-token is-effect" data-token="gather">Gather</div>
+  <div class="sf-token is-value" data-token="results">100 results</div>
+  <div class="sf-token is-effect" data-token="played">Played</div>
+  <div class="sf-token is-effect" data-token="played2">Played</div>
+  <div class="sf-token is-effect" data-token="played3">Played</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": ["w-for", "w-spawn"], "marks": {"tasks": "is-on"}, "values": {"call": "run(scheduled(quiet_stats(win_rate(random_bot, 100))))", "result": "", "r1": "quiet_stats", "r2": "scheduled", "core": "win_rate(random_bot, 100)", "seed": "0", "tasks": "[]", "tid": "0", "tseed": "0", "tplayer": "random_bot", "tres": ""}, "tokens": {"spawn": {"from": {"at": "w-spawn", "place": "end"}, "at": "n2", "place": "end"}}}'><code>win_rate</code> is a program too. It yields <code>Spawn</code> once per seed; the first, for seed 0, travels out to <code>scheduled</code>.</li>
+  <li data-state='{"now": ["w-spawn"], "marks": {"tasks": "is-on", "t-box": "is-on", "t0": "is-run"}, "tokens": {"spawn": {"at": "n2", "place": "end"}}}'>Each <code>Spawn</code> starts a <code>battle</code> as a task: here task 0, the fight on seed 0.</li>
+  <li data-state='{"now": ["t-stack"], "marks": {"tasks": "is-on", "t-box": "is-on", "t0": "is-run"}, "tokens": {"spawn": {"at": "n2", "place": "end"}}}'>Each task carries its own stack, so the hundred fights do not share a random generator: task 0 rolls <code>dice(0)</code>, task 1 <code>dice(1)</code>, and so on.</li>
+  <li data-state='{"marks": {"tasks": "is-on", "t-box": "is-on", "w-for": "is-k", "w-spawn": "is-k", "w-gather": "is-k", "w-return": "is-k", "t0": "is-run"}, "values": {"tasks": "[task 0]"}, "tokens": {"k": {"from": {"at": "w-return", "place": "end"}, "at": "n2", "place": "end"}}}'>The tasks take turns on one thread. At the <code>Spawn</code>, <code>scheduled</code> keeps the <code>k</code> of <code>win_rate</code> and runs the new task.</li>
+  <li data-state='{"now": ["t-stack"], "marks": {"tasks": "is-on", "t-box": "is-on", "w-for": "is-k", "w-spawn": "is-k", "w-gather": "is-k", "w-return": "is-k", "t0": "is-done"}, "values": {"tres": "(&#39;win&#39;, 4)"}, "tokens": {"k": {"at": "n2", "place": "end"}, "roll": {"from": "t-room", "at": "t-stack", "place": "end"}, "choose": {"from": "t-room", "at": "t-stack", "place": "end", "delay": 0.2}, "show": {"from": "t-room", "at": "t-stack", "place": "end", "delay": 0.4}}}'>The fight's <code>Roll</code>, <code>Choose</code> and <code>Show</code> are answered by the task's own stack. No effect of a fight reaches <code>scheduled</code>, so the task runs to its end: <code>('win', 4)</code>.</li>
+  <li data-state='{"now": ["w-spawn"], "marks": {"tasks": "is-on", "t-box": "is-on", "t0": "is-done", "t1": "is-done", "t2": "is-done"}, "values": {"seed": "2", "tasks": "[task 0, task 1, task 2]", "tid": "2", "tseed": "2", "tres": "(&#39;win&#39;, 9)"}, "tokens": {"k": {"from": {"at": "n2", "place": "end"}, "at": "w-spawn", "place": "end", "merge": true}}}'>And then <code>win_rate</code> goes on from its <code>yield</code>. Seed 1 runs the same way to <code>('win', 7)</code>, and seed 2 to <code>('win', 9)</code>.</li>
+  <li data-state='{"now": ["w-for", "w-spawn"], "marks": {"tasks": "is-on is-all-done"}, "values": {"seed": "99", "tasks": "[100 tasks]"}}'>So it goes for all 100 seeds: 100 <code>Spawn</code> effects and 99 switches from one task to the next, all on one thread.</li>
+  <li data-state='{"now": ["w-gather"], "marks": {"tasks": "is-on is-all-done"}, "tokens": {"gather": {"from": {"at": "w-gather", "place": "end"}, "at": "n2", "place": "end"}, "results": {"from": {"at": "n2", "place": "end"}, "at": "w-gather", "place": "end", "delay": 0.9}}}'><code>Gather</code> waits for every task and gives back their results. Here every fight has already ended, so the results come back at once.</li>
+  <li data-state='{"now": ["w-return"], "marks": {"tasks": "is-on is-scored"}, "values": {"result": "0.73"}}'>On the same hundred seeds, the random bot wins seventy-three fights.</li>
+  <li data-state='{"now": ["w-return"], "marks": {"tasks": "is-on is-scored is-all-win"}, "values": {"call": "run(scheduled(quiet_stats(win_rate(monte_carlo(PLAYOUTS), 100))))", "core": "win_rate(monte_carlo(PLAYOUTS), 100)", "result": "1.0"}}'>Change one argument, the player, and the Monte Carlo bot wins all one hundred.</li>
+  <li data-state='{"marks": {"r1": "is-new", "tasks": "is-on is-scored"}, "values": {"call": "run(scheduled(damage_stats(totals)(win_rate(random_bot, 100))))", "r1": "damage_stats(totals)", "core": "win_rate(random_bot, 100)", "result": "Strike 3663 · Defend 0 · Bash 632"}, "tokens": {"played": {"from": "t3", "at": "n1", "place": "end"}, "played2": {"from": "t47", "at": "n1", "place": "end", "delay": 0.25}, "played3": {"from": "t92", "at": "n1", "place": "end", "delay": 0.5}}}'>A task's own handlers do not take <code>Played</code>, so it travels out past the <code>Spawn</code>, and one handler hears all hundred fights: with <code>damage_stats</code> in that ring, 1,096 <code>Played</code> from the random bot's fights add up per card.</li>
+</ol>

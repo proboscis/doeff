@@ -135,7 +135,7 @@
 /* k goes back into the program: it travels first, then melts into the code. */
 .sf-token.is-merging { opacity: 0; transition: transform .7s cubic-bezier(.3, .7, .25, 1), opacity .3s .6s; }
 
-/* Handlers around a program (six-stacks, missing-handler): each .sf-ring is one handler, drawn around what it handles, so the
+/* Handlers around a program (six-stacks, missing-handler, article-opening, hundred-fights): each .sf-ring is one handler, drawn around what it handles, so the
    rings read from the inside out like the calls do. A ring a step does not use is "is-off": it takes no room and draws nothing. */
 .sf-call [data-slot="call"] { flex: 1 1 14rem; overflow-wrap: anywhere; }
 .sf-call .sf-result.is-text { padding: 0 .5rem; color: var(--md-default-fg-color); border-style: solid; }
@@ -196,3 +196,34 @@
   .sf-token, .sf-token.is-dropped, .sf-token.is-merging, .sf-line, .sf-panel, .sf-ring { transition: none; }
   .sf-vars [data-slot].is-changed, .sf-head [data-slot].is-changed, .sf-ring-name [data-slot].is-changed, .sf-ring.is-new { animation: none; }
 }
+
+/* Panels named by their role (article-opening, monte-carlo, hundred-fights): "is-program" is the function that yields, "is-handler"
+   the handler that answers it. */
+.sf-panel.is-program.is-active { border-color: var(--sf-effect); }
+.sf-panel.is-handler.is-active { border-color: var(--sf-handler); }
+.sf-panel.is-program .sf-head > :first-child { color: var(--sf-effect); }
+.sf-panel.is-handler .sf-head > :first-child { color: var(--sf-handler); }
+.sf-core .sf-unchanged.is-on { color: var(--sf-on-token); background: var(--sf-handler); padding: 0 .45rem; border-radius: .8rem; font-weight: 700; }
+
+/* A table in a panel (monte-carlo's candidate moves): one .sf-line per row, its cells in columns. */
+.sf-table .sf-line { display: grid; grid-template-columns: 1fr 1fr 1fr; white-space: nowrap; }
+.sf-table .sf-line.is-head { color: var(--md-default-fg-color--light); }
+.sf-table .sf-line.is-best { box-shadow: inset 0 0 0 1.5px var(--sf-handler); }
+.sf-table [data-slot].is-changed, .sf-box [data-slot].is-changed { animation: sf-flash .9s ease-out; }
+
+/* A run inside a handler or a task, with the stack it carries (monte-carlo's playouts, hundred-fights' tasks). */
+.sf-box { margin-top: .35rem; padding: .3rem .45rem; border: 2px dashed var(--md-default-fg-color--lighter); border-radius: .3rem; font-family: var(--md-code-font-family); font-size: .56rem; line-height: 1.5; visibility: hidden; }
+.sf-box.is-on { visibility: visible; }
+.sf-box .sf-box-stack { color: var(--sf-handler); font-weight: 700; border-radius: .1rem; transition: background .3s; }
+.sf-box .sf-box-stack.is-now { background: var(--sf-now); }
+.sf-box .sf-box-room { height: 1.3rem; }
+.sf-box [data-slot] { font-weight: 700; }
+
+/* The hundred fights as squares: "is-done" when a task has run to its end, "is-scored" shows which seeds the random bot lost,
+   "is-all-win" which the Monte Carlo bot lost (none). */
+.sf-tasks > span.is-run { background: var(--sf-now); }
+.sf-tasks > span.is-done, .sf-tasks.is-all-done > span { background: var(--md-default-fg-color--lighter); }
+.sf-tasks.is-scored > span { background: var(--sf-handler); }
+.sf-tasks.is-scored > span.is-loss { background: var(--sf-fail); border-color: var(--sf-fail); }
+.sf-tasks.is-all-win > span, .sf-tasks.is-all-win > span.is-loss { background: var(--sf-handler); border-color: var(--sf-handler); }
+.sf-vars .is-now { background: var(--sf-now); border-radius: .1rem; }
