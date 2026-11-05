@@ -27,6 +27,8 @@ from doeff_events._effects.timers import (
 )
 
 from .events import (
+    CountQueued,
+    CountQueuedEffect,
     Publish,
     PublishEffect,
     PublishGap,
@@ -41,6 +43,7 @@ from .events import (
     WaitForEventEffect,
     WaitForEvents,
     WaitForEventsEffect,
+    count_queued,
     publish,
     publish_effect_type,
     publish_gap,
@@ -68,6 +71,8 @@ __all__ = [
     "BrokerUnreachable",
     "ChannelSubscription",
     "CloseSubscription",
+    "CountQueued",
+    "CountQueuedEffect",
     "DisarmTimer",
     "DisarmTimerEffect",
     "NextAnnouncement",
@@ -89,6 +94,7 @@ __all__ = [
     "WaitForEventEffect",
     "WaitForEvents",
     "WaitForEventsEffect",
+    "count_queued",
     "publish",
     "publish_effect_type",
     "publish_gap",

@@ -7,6 +7,8 @@
   Program of that ``Next`` that performs no effect (``StepYieldedEffectError`` otherwise); the runtime runs each ``Run``
   in a task and gives the step exactly one input for its end — ``Answered``, ``Raised`` or ``Cancelled``; it hands
   each ``Arm`` / ``Disarm`` to the timer handler without a task and gives the step ``TimerFired(tag)`` at the deadline.
+- ``FoldMeasured``: what the fold measured for one input (the queue behind it, the runs running, the step's time),
+  performed only under a caller's handler of it — which writes it where it goes (a counter, a gauge).
 - ``replay``: the test harness. A list of inputs in, the states and effects out.
 - ``simulate_fold``: the fold as a host assembles it, on a virtual clock and a memory bus of its own. A list of
   inputs and the caller's (simulated) handlers in, the fold's value out.
@@ -14,6 +16,7 @@
 
 from doeff_stream._fold import fold
 from doeff_stream._harness import Replay, Stepped, replay
+from doeff_stream._measure import FoldMeasured
 from doeff_stream._sim import simulate_fold
 from doeff_stream._source import Inputs, Source, merge, subscribe, timers
 from doeff_stream._step import (
@@ -38,6 +41,7 @@ __all__ = [
     "Cancelled",
     "Disarm",
     "Finish",
+    "FoldMeasured",
     "Inputs",
     "Next",
     "Raised",
