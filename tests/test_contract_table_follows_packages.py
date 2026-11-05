@@ -327,7 +327,7 @@ def test_removing_a_test_file_named_by_the_table_stops_the_reader(
     copy = _copy_of_real_table(runner, tmp_path)
     removed = copy.test_paths[0]
     (copy.root / removed).unlink()
-    with pytest.raises(runner.StopError, match="書いた検の file が木に無い") as caught:
+    with pytest.raises(runner.StopError, match="listed test file is missing from the tree") as caught:
         runner.read_contract_table(copy.root)
     assert removed in str(caught.value)
 
@@ -337,7 +337,7 @@ def test_removing_a_package_with_a_row_stops_the_reader(runner: ModuleType, tmp_
     copy = _copy_of_real_table(runner, tmp_path)
     removed = next(p for p in copy.contract_prefixes if p.startswith("packages/"))
     shutil.rmtree(copy.root / removed)
-    with pytest.raises(runner.StopError, match="が木に無い") as caught:
+    with pytest.raises(runner.StopError, match="is missing from the tree") as caught:
         runner.read_contract_table(copy.root)
     assert removed in str(caught.value)
 
@@ -345,19 +345,19 @@ def test_removing_a_package_with_a_row_stops_the_reader(runner: ModuleType, tmp_
 @pytest.mark.parametrize(
     ("row", "named"),
     [
-        (f'prefix = "{ADDED}"', "鍵は"),
-        (f'prefix = "{ADDED}"\nreason = ""', "空でない理由"),
-        (f'prefix = "{ADDED}"\nreason = "   "', "空でない理由"),
-        (f'prefix = "{ADDED}"\nreason = 1', "空でない理由"),
+        (f'prefix = "{ADDED}"', "keys must be"),
+        (f'prefix = "{ADDED}"\nreason = ""', "non-empty"),
+        (f'prefix = "{ADDED}"\nreason = "   "', "non-empty"),
+        (f'prefix = "{ADDED}"\nreason = 1', "non-empty"),
         (
             'prefix = "packages/"\nreason = "package でない接頭辞"',
-            "package(uv の workspace の member の dir)でない",
+            "is not a package (a uv workspace member dir)",
         ),
         (
             'prefix = ""\nreason = "repo 全体を外す"',
-            "package(uv の workspace の member の dir)でない",
+            "is not a package (a uv workspace member dir)",
         ),
-        (f'prefix = "{ADDED}"\nreason = "両方"\ntests = ["tests/test_x.py"]', "鍵は"),
+        (f'prefix = "{ADDED}"\nreason = "両方"\ntests = ["tests/test_x.py"]', "keys must be"),
     ],
     ids=[
         "reason-missing",

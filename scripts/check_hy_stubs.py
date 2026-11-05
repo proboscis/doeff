@@ -1,13 +1,13 @@
-"""commit する .hy の隣の .pyi が、今の .hy から作り直した物と同じかを照らす(commit の hook)。
+"""Compare whether the .pyi next to a .hy being committed is the same as one rebuilt from the current .hy (commit hook).
 
-.pyi は doeff_hy._static_stub が .hy から作る生成物で、各 package の test_generated_stubs が「作り直した物 == commit された物」を
-日次に照らす。.hy だけを変えて .pyi を作り直さない commit は、その test が後から failing にするので(afaf956cd — kube.hy)、
-commit の時に同じ照らしを撃って止める。
+A .pyi is a generated artifact made from the .hy by doeff_hy._static_stub, and each package's test_generated_stubs compares "rebuilt == committed" daily.
+A commit that changes only the .hy and does not rebuild the .pyi would be made failing later by that test (afaf956cd -- kube.hy), so
+fire the same comparison at commit time and stop it.
 
-標準の library だけの script(hook の python は 3.12)。doeff_hy は木の環境(uv run)で呼ぶ。
-使い方: python scripts/check_hy_stubs.py <repo の根からの .hy の path>…
-.pyi を持たない .hy・手で書いた .pyi は照らさない(道具の --check が外す)。package の source の dir(packages/<名>/src)の外の
-.hy は渡されても捨てる。
+A script with only the standard library (the hook's python is 3.12). doeff_hy is called in the tree's environment (uv run).
+Usage: python scripts/check_hy_stubs.py <.hy path from the repo root>...
+A .hy without a .pyi, and a hand-written .pyi, are not compared (the tool's --check excludes them). A .hy outside a package's source dir (packages/<name>/src)
+is dropped even if passed.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def source_root_of(path: Path) -> Path | None:
-    """.hy を持つ package の source の dir(packages/<名>/src)。その外なら None。"""
+    """The source dir of a package with .hy (packages/<name>/src). None if outside."""
     parts = path.relative_to(ROOT).parts
     if len(parts) > 3 and parts[0] == "packages" and parts[2] == "src":
         return ROOT / "packages" / parts[1] / "src"
@@ -46,8 +46,8 @@ def main(argv: list[str]) -> int:
         if done.returncode != 0:
             fix = " ".join(str(p.relative_to(ROOT)) for p in paths)
             print(
-                f"doeff の commit の hook: .hy の隣の .pyi が古い。作り直して stage する: "
-                f"(cd {root.relative_to(ROOT)} && uv run python -m doeff_hy._static_stub --write --root . <上に出た .hy>) — 対象の候補: {fix}",
+                f"doeff commit hook: the .pyi next to a .hy is stale. Rebuild and stage: "
+                f"(cd {root.relative_to(ROOT)} && uv run python -m doeff_hy._static_stub --write --root . <the .hy shown above>) -- candidates: {fix}",
                 file=sys.stderr,
             )
     return 1 if failed else 0

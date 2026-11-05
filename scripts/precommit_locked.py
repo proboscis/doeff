@@ -1,11 +1,11 @@
-"""doeff の素の commit の hook(scripts/git-hooks/pre-commit)が呼ぶ pre-commit を、repo の uv.lock が決める版に固定する入口。
+"""An entry point that pins the pre-commit called by doeff's plain commit hook (scripts/git-hooks/pre-commit) to the version the repo's uv.lock decides.
 
-素の hook は作業木の `.venv` に依らない(make sync をしていない作業木・agora の担当の Pod の作業木でも走る)。pre-commit は dev の
-依存なので、semgrep と同じく uv.lock の版を読み、uv の道具の置き場から `uv tool run --from pre-commit==<版> pre-commit` で呼ぶ
-(版の読みは scripts/semgrep_locked.py の 1 か所)。
+The plain hook does not depend on the working tree's `.venv` (it runs in working trees where make sync was not done, and in the agora worker Pod's working tree). pre-commit is a dev
+dependency, so as with semgrep, read the uv.lock version and call it from uv's tool store as `uv tool run --from pre-commit==<version> pre-commit`
+(the version reading is in one place, scripts/semgrep_locked.py).
 
-使い方: uv run --no-project --python <版> python scripts/precommit_locked.py <pre-commit の引数…>(repo の根で。pre-commit の答えと
-終了の値をそのまま返す)。uv.lock に pre-commit が無ければ、理由を名指して 1 で止まる。
+Usage: uv run --no-project --python <version> python scripts/precommit_locked.py <pre-commit arguments...> (at the repo root. Returns pre-commit's output and
+exit value as they are). If uv.lock has no pre-commit, name the reason and stop with 1.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-# 隣の module(semgrep_locked)は、この script の dir を置き場として明示で読む(PYTHONSAFEPATH=1 の下でも読める — hook_finding_baseline と同じ)。
+# The neighboring module (semgrep_locked) is read explicitly using this script's dir as the location (readable even under PYTHONSAFEPATH=1 -- the same as hook_finding_baseline).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from semgrep_locked import locked_command
@@ -23,7 +23,7 @@ PACKAGE: str = "pre-commit"
 
 
 def main(argv: list[str]) -> int:
-    """repo の根(今の dir)の uv.lock の版の pre-commit に引数を渡して置き換わる。"""
+    """Replace the process, passing the arguments to the pre-commit of the version in the uv.lock at the repo root (the current dir)."""
     command: list[str] = locked_command(Path.cwd(), PACKAGE)
     os.execvp(command[0], [*command, *argv])
 

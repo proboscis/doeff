@@ -1,18 +1,18 @@
-"""doeff を読む repo(消費者)の追従の針を、測った doeff の木の環境で回して、赤を報告の行にする(日次の全体検証の後段)。
+"""Run the consumer probe (a repo that reads doeff) in the measured doeff tree's environment and turn reds into report lines (a later stage of the daily full verification).
 
-決まり: doeff の公開名を消す・移す変更は、doeff の検証が緑でも消費者を壊し得る。
-消費者の検証は消費者が固定した doeff の版で回るので、doeff の本線の変更で壊れた事は、消費者が版を上げるまで見えない。この道具は
-消費者の針(PROBE — 消費者の docs/adr の .hy が import する doeff_adr の名が在るかの検)を、この道具を走らせた python(測った doeff の木の
-環境)で回し、赤の検を 1 行ずつ
+Rule: a change that removes or moves a public doeff name can break consumers even when doeff's own verification is green.
+A consumer's verification runs on the doeff version the consumer pinned, so a break caused by a change on doeff's mainline stays invisible until the consumer bumps its version. This tool
+runs the consumer probe (PROBE -- a check for whether the doeff_adr names imported by the .hy files in the consumer's docs/adr exist) with the python that ran this tool (the measured doeff tree's
+environment), and emits each red check as one line
 
-    consumer_follow: 赤 <消費者> <消費者の頭 12 字> <検の id> — <訳の 1 行目>
+    consumer_follow: 赤 <consumer> <first 12 chars of consumer commit> <check id> — <first line of the reason>
 
-として標準出力へ出す。日次の task が後段の報告(agora-controllers の AfterReport)として集めて赤の card に載せる。
+to standard output. The daily task collects them as a later stage report (AfterReport of agora-controllers) and puts them on a red card.
 
-消費者は表に書かず導出する: 探す所(家の dotfiles と、家の repos の下の各 repo)のうち、根か 1 段下の pyproject.toml が doeff の配布物
-(doeff・doeff-*)に依存する repo。針を持つ消費者だけを回す。消費者の conftest は消費者の環境の依存を読むので読まない(--noconftest)—
-消費者の conftest の fixture を求める検は「測らない検」に数え、赤にしない。最後に、後段が最後まで走った印として `consumer_follow: 数え …` を
-出す(報告の行が 0 の回を「直った」と読むため)。針を持つ消費者が 1 つも無い回は、測りが消えた事を赤の行にする(緑と読ませない)。
+Consumers are derived, not listed in a table: among the places to search (home dotfiles and each repo under home repos), repos whose root or one-level-down pyproject.toml depends on a doeff distribution
+(doeff, doeff-*). Only consumers that have the probe are run. The consumer's conftest reads the consumer's environment dependencies, so it is not read (--noconftest) --
+a check that requires a fixture from the consumer's conftest counts as an "unmeasured check" and is not red. Finally, as a marker that the later stage ran to the end, `consumer_follow: 数え …` is
+emitted (so that a run with 0 report lines is read as "fixed"). A run with no consumer that has the probe turns the disappearance of the measurement into a red line (it is not read as green).
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ from typing import Literal
 
 import tomllib
 
-REPORT_PREFIX = "consumer_follow: 赤 "
-COUNT_PREFIX = "consumer_follow: 数え "
+REPORT_PREFIX = "consumer_follow: 赤 "  # wire format: read by the later-stage collector, keep as is
+COUNT_PREFIX = "consumer_follow: 数え "  # wire format, keep as is
 PROBE = Path("docs/adr/test_doeff_adr_api_follows.py")
-# 針 1 回の上限。実測 = 冷えた環境の dotfiles の針 1 回 172 秒(2026-10-30)— その約 7 倍。
+# Upper limit for one probe run. Measured: one probe of dotfiles in a cold environment took 172 seconds (2026-10-30) -- about 7 times that.
 PROBE_TIMEOUT_S = 1200
 _MESSAGE_MAX = 400
 _REQUIREMENT_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
@@ -41,7 +41,7 @@ CaseKind = Literal["red", "measured", "unmeasured"]
 
 @dataclass(frozen=True)
 class ProbeResult:
-    """消費者 1 つの針の結末(red = 赤の検の (id, 訳) の列・measured = 測った検の数・unmeasured = 測らない検の数)。"""
+    """Outcome of one consumer's probe (red = list of (id, reason) of red checks; measured = number of measured checks; unmeasured = number of unmeasured checks)."""
 
     red: tuple[tuple[str, str], ...]
     measured: int
@@ -53,7 +53,7 @@ def _normalized(name: str) -> str:
 
 
 def _requirement_names(pyproject: Path) -> set[str]:
-    """pyproject.toml の依存(project の dependencies・optional-dependencies と dependency-groups)の配布物の名の集合。"""
+    """Set of distribution names in the dependencies of pyproject.toml (project dependencies, optional-dependencies, and dependency-groups)."""
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
@@ -84,7 +84,7 @@ def _project_name(pyproject: Path) -> str:
 
 
 def depends_on_doeff(repo: Path) -> bool:
-    """repo の根か 1 段下の pyproject.toml が doeff の配布物に依存するか。doeff 自身(根の project の名が doeff)は消費者でない。"""
+    """Whether the root or one-level-down pyproject.toml of the repo depends on a doeff distribution. doeff itself (root project named doeff) is not a consumer."""
     if _project_name(repo / "pyproject.toml") == "doeff":
         return False
     return any(
@@ -95,7 +95,7 @@ def depends_on_doeff(repo: Path) -> bool:
 
 
 def candidate_roots(home: Path) -> list[Path]:
-    """消費者を探す所: 家の dotfiles と、家の repos の下の各 repo(git の checkout だけ・同じ実体は 1 度)。"""
+    """Where to look for consumers: home dotfiles and each repo under home repos (git checkouts only; the same entity once)."""
     repos = home / "repos"
     found = [home / "dotfiles", *(sorted(repos.iterdir()) if repos.is_dir() else [])]
     checkouts = [root for root in found if (root / ".git").exists()]
@@ -111,8 +111,8 @@ def consumers(roots: list[Path]) -> list[Path]:
 
 
 def _case_outcome(case: ET.Element) -> tuple[CaseKind, str, str]:
-    """junit の testcase 1 つを (種類, 検の名, 訳) にする。fixture の欠けの error は、消費者の conftest の fixture を求める検 —
-    消費者の環境でしか測れないので「測らない」。"""
+    """Turn one junit testcase into (kind, check name, reason). A missing-fixture error is a check that requires a fixture from the consumer's conftest --
+    it can only be measured in the consumer's environment, so it is "unmeasured"."""
     name = case.get("name", "")
     failure = case.find("failure")
     found = failure if failure is not None else case.find("error")
@@ -122,7 +122,7 @@ def _case_outcome(case: ET.Element) -> tuple[CaseKind, str, str]:
     text = found.text or ""
     if failure is None and _MISSING_FIXTURE_RE.search(message + "\n" + text):
         return ("unmeasured", name, "")
-    # 集めの失敗の message は「collection failure」だけなので、訳は本文の最後の例外の行(pytest の `E   ` の行)から取る
+    # The message of a collection failure is just "collection failure", so take the reason from the last exception line of the body (pytest's `E   ` line)
     raised = [line.removeprefix("E").strip() for line in text.splitlines() if line.startswith("E ")]
     return (
         "red",
@@ -132,7 +132,7 @@ def _case_outcome(case: ET.Element) -> tuple[CaseKind, str, str]:
 
 
 def classify(junit_xml: str) -> ProbeResult:
-    """pytest の junit の XML から、赤の検(failure と、fixture の欠けでない error)と、測った検・測らない検の数を読む。"""
+    """From pytest's junit XML, read the red checks (failures, and errors that are not missing fixtures) and the numbers of measured and unmeasured checks."""
     outcomes = [_case_outcome(case) for case in ET.fromstring(junit_xml).iter("testcase")]
     return ProbeResult(
         red=tuple((name, why) for kind, name, why in outcomes if kind == "red"),
@@ -142,14 +142,14 @@ def classify(junit_xml: str) -> ProbeResult:
 
 
 def _first_line(text: str) -> str:
-    line = next((line.strip() for line in text.splitlines() if line.strip()), "(訳なし)")
+    line = next((line.strip() for line in text.splitlines() if line.strip()), "(no reason)")
     return line if len(line) <= _MESSAGE_MAX else line[: _MESSAGE_MAX - 1] + "…"
 
 
 def run_probe(
     consumer: Path, python: str = sys.executable, timeout_s: float = PROBE_TIMEOUT_S
 ) -> ProbeResult:
-    """消費者の針を、python の環境で 1 度回して結末を読む。走らない・終わらない・検が 1 本も無い時は、その事を赤の 1 件にする。"""
+    """Run the consumer's probe once in the python environment and read the outcome. If it does not run, does not finish, or has no checks at all, turn that into one red item."""
     probe = consumer / PROBE
     with tempfile.TemporaryDirectory(prefix="consumer-follow-") as tmp:
         junit = Path(tmp) / "probe.xml"
@@ -168,22 +168,22 @@ def run_probe(
             )
         except subprocess.TimeoutExpired:
             return ProbeResult(
-                red=(("(針)", f"針が {int(timeout_s)} 秒で終わらなかった"),),
+                red=(("(probe)", f"the probe did not finish in {int(timeout_s)} seconds"),),
                 measured=0,
                 unmeasured=0,
             )
         if not junit.exists():
-            # 走らなかった訳は出力の終わりに在るので、終わりの側から最初の空でない行を取る
+            # The reason it did not run is at the end of the output, so take the first non-empty line from the end
             tail = _first_line("\n".join(reversed((out.stdout + out.stderr).splitlines())))
             return ProbeResult(
-                red=(("(針)", f"針が走らなかった(pytest の終了 {out.returncode})— {tail}"),),
+                red=(("(probe)", f"the probe did not run (pytest exit {out.returncode}) -- {tail}"),),
                 measured=0,
                 unmeasured=0,
             )
         result = classify(junit.read_text(encoding="utf-8"))
     if not result.red and result.measured == 0:
         return ProbeResult(
-            red=(("(針)", "針の検が 1 本も測れなかった"),), measured=0, unmeasured=result.unmeasured
+            red=(("(probe)", "the probe measured no checks at all"),), measured=0, unmeasured=result.unmeasured
         )
     return result
 
@@ -192,11 +192,11 @@ def _head(repo: Path) -> str:
     out = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
     ).stdout
-    return out.strip()[:12] or "(頭不明)"
+    return out.strip()[:12] or "(unknown)"
 
 
 def report_lines(home: Path, python: str = sys.executable) -> list[str]:
-    """消費者ごとの赤の報告の行と、最後の数えの行を作るため。"""
+    """To build the red report line per consumer and the final count line."""
     roots = candidate_roots(home)
     found = consumers(roots)
     probed = [consumer for consumer in found if (consumer / PROBE).is_file()]
@@ -206,24 +206,24 @@ def report_lines(home: Path, python: str = sys.executable) -> list[str]:
         for consumer, head, result in results
         for name, why in result.red
     ]
-    places = "・".join(str(root) for root in roots) or "(探す所なし)"
+    places = "・".join(str(root) for root in roots) or "(no places to search)"
     absent = (
         []
         if probed
         else [
-            f"{REPORT_PREFIX}(消費者なし) - {PROBE.as_posix()} — 針を持つ消費者が見つからない(探した所 = {places})"
+            f"{REPORT_PREFIX}(no consumer) - {PROBE.as_posix()} — no consumer with a probe was found (searched = {places})"
         ]
     )
     lines = [*red, *absent]
     count = (
-        f"{COUNT_PREFIX}赤 {len(lines)} 行(消費者 {len(found)} 個・針のある {len(probed)} 個・"
-        f"測った検 {sum(r.measured for _c, _h, r in results)} 本・測らない検 {sum(r.unmeasured for _c, _h, r in results)} 本)"
+        f"{COUNT_PREFIX}赤 {len(lines)} lines ({len(found)} consumers, {len(probed)} with a probe, "
+        f"{sum(r.measured for _c, _h, r in results)} checks measured, {sum(r.unmeasured for _c, _h, r in results)} unmeasured)"
     )
     return [*lines, count]
 
 
 def main() -> int:
-    """報告の行と、後段が最後まで走った印の数えの行を出すため。後段は結末を変えないので、いつも 0 で終わる。"""
+    """To emit the report lines and the count line that marks that the later stage ran to the end. The later stage does not change the outcome, so it always exits 0."""
     for line in report_lines(Path.home()):
         print(line, flush=True)
     return 0

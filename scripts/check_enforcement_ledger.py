@@ -3,37 +3,41 @@
 # requires-python = ">=3.10"
 # dependencies = []
 # ///
-"""enforcement 台帳 — 生成と突合の単一の家(ADR-DOE-ENFORCE-001 R5 / R7 / R9)。
+"""Enforcement ledger — the single home for generation and reconciliation (ADR-DOE-ENFORCE-001 R5 / R7 / R9).
 
-台帳 docs/adr/enforcement-ledger.json は**生成物**で、手で書かない。このファイルが木から
-enforcement 資産の一覧を作る:
+The ledger docs/adr/enforcement-ledger.json is a **generated artifact**; never write it by hand. This file builds
+the list of enforcement assets from the tree:
 
-- defadr_files                 = docs/adr/defadr_*.hy の file 名
-- semgrep_rules                = .semgrep.yaml の規則 id
-- adr_laws                     = ADR の (law 名 …) — 「<ADR id> <law 名>」
-- adr_deftest_enforcements     = ADR の (deftest 名 …) — 「<ADR id> <deftest 名>」
-- adr_defsemgrep_enforcements  = ADR の (defsemgrep 名 …) — 「<ADR id> <defsemgrep 名>」
+- defadr_files                 = file names of docs/adr/defadr_*.hy
+- semgrep_rules                = rule ids in .semgrep.yaml
+- adr_laws                     = (law name ...) in the ADRs -- "<ADR id> <law name>"
+- adr_deftest_enforcements     = (deftest name ...) in the ADRs -- "<ADR id> <deftest name>"
+- adr_defsemgrep_enforcements  = (defsemgrep name ...) in the ADRs -- "<ADR id> <defsemgrep name>"
 
-ADR は Hy の読みの規則(文字列・`;` の註・`#_` で捨てた形・`#[[…]]` の文字列の中は数えない)で
-形として読む — 字面の数え(`"(law "` の出現数)は註や文字列の中の綴りも数えていた(2026-09-28 実測:
-law 134 に対し形は 132・deftest 82 に対し形は 80)。読みが Hy の reader と同じ答えを返すことは
-tests/test_enforcement_ledger.py が実物の ADR 全部で突き合わせる。
+ADRs are read as forms, following Hy's reading rules (strings, `;` comments, forms dropped with `#_`, and the
+inside of `#[[...]]` strings are not counted) -- a literal-text count (occurrences of `"(law "`) also counted
+spellings inside comments and strings (measured 2026-09-28: 134 laws against 132 forms, 82 deftests against 80
+forms). tests/test_enforcement_ledger.py checks, against every real ADR, that this reader returns the same answer
+as the Hy reader.
 
-台帳は数ではなく項目の名の一覧なので、並行する 2 便が別々の項目を足しても git の merge が行ごとに
-正しく合わせる(数の台帳は 2 便が同じ「104 → 105」を刻むと黙って 105 に合わさった — 2026-09-17
-ed98775a)。減った項目は台帳の差分に名前で残る。stdlib 単独(venv・依存不要 — 呼び口は `uv run --script`。
-機体の python は撃たない)— git の pre-commit hook(scripts/git-hooks/pre-commit・.pre-commit-config.yaml)からも既定 pytest
-(tests/test_enforcement_ledger.py)からも、この同じ勘定を使う。
+The ledger is a list of item names, not counts, so when two parallel changes each add a different item, git merges
+them correctly line by line (a count ledger silently merged to 105 when two changes both wrote the same "104 -> 105"
+-- 2026-09-17 ed98775a). A removed item remains in the ledger diff by name. stdlib only (no venv, no dependencies --
+invoked through `uv run --script`; the machine's python is not used) -- the same accounting is used from the git
+pre-commit hook (scripts/git-hooks/pre-commit, .pre-commit-config.yaml) and from the default pytest run
+(tests/test_enforcement_ledger.py).
 
 modes:
-  (既定)    working tree を台帳と突合する(絶対一致 — 日次の pytest と同じ面)
-  --staged   git index(commit に入る断面)を突合する — hook 用。台帳と一致すれば通す。一致しなくても、
-             この commit が動かした項目(HEAD からの増減)が台帳の増減にそのまま写っていれば通し、
-             HEAD に既に在ったずれは申告だけする(ずれを持ち込んだ commit の責任で、後の commit を塞がない)。
-  --write    working tree から台帳を生成して書く。台帳から外れる項目は名前で申告する。
-  --root=P   repo root の明示(既定 = cwd の git toplevel)
+  (default)  reconcile the working tree against the ledger (exact match -- the same surface as the daily pytest)
+  --staged   reconcile the git index (the cross-section that goes into the commit) -- for the hook. Passes if it
+             matches the ledger. Even if it does not match, passes when the items this commit moved (the
+             additions/removals from HEAD) are reflected as-is in the ledger's additions/removals, and only
+             reports drift that already existed in HEAD (that is the responsibility of the commit that
+             introduced it; it does not block later commits).
+  --write    generate the ledger from the working tree and write it. Items dropped from the ledger are reported by name.
+  --root=P   explicit repo root (default = the git toplevel of cwd)
 
-exit code: 0 = 一致(または --write の成功)/ 1 = 不一致・ADR が読めない / 2 = 実行環境の失敗(git が引けない等)。
+exit code: 0 = match (or --write succeeded) / 1 = mismatch or an ADR cannot be read / 2 = execution environment failure (git cannot be invoked, etc.).
 """
 
 import json
@@ -57,7 +61,7 @@ KEYS = (
     "adr_deftest_enforcements",
     "adr_defsemgrep_enforcements",
 )
-#: ADR の中で数える形の頭 → 台帳の鍵。
+#: Heads of the forms counted inside an ADR -> ledger keys.
 FORM_KEYS = {
     "law": "adr_laws",
     "deftest": "adr_deftest_enforcements",
@@ -76,31 +80,31 @@ _SEMGREP_RULE = re.compile(r"^  - id:\s*['\"]?([^\s'\"#]+)", re.MULTILINE)
 
 
 class UnreadableAdrError(ValueError):
-    """ADR の file が Hy の形として読めない(括弧や文字列が閉じていない)。"""
+    """The ADR file cannot be read as Hy forms (unclosed parenthesis or string)."""
 
 
 # ---------------------------------------------------------------------------
-# Hy の読み(数えるのに要る分だけ)。
+# Hy reading (only as much as is needed for counting).
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Atom:
-    """綴り(symbol・keyword・数・引用の前置き ' ` ~ ~@・`#^` などの前置き)。"""
+    """Spelling (symbol, keyword, number, quote prefixes ' ` ~ ~@, prefixes such as `#^`)."""
 
     text: str
 
 
 @dataclass(frozen=True)
 class Text:
-    """文字列("…" と #[[…]])。中の綴りは形として数えない。"""
+    """String ("..." and #[[...]]). The spelling inside is not counted as forms."""
 
     content: str
 
 
 @dataclass(frozen=True)
 class Form:
-    """括弧の並び。opener = ( [ { #( #{ のどれか。"""
+    """A parenthesized sequence. opener is one of ( [ { #( #{."""
 
     opener: str
     children: list = field(default_factory=list)
@@ -111,17 +115,17 @@ class Form:
         return None
 
     def name(self) -> str:
-        """2 番目の要素(定義の名)の綴り。"""
+        """Spelling of the second element (the defined name)."""
         second = self.children[1] if len(self.children) > 1 else None
         if isinstance(second, Atom):
             return second.text
         if isinstance(second, Text):
             return second.content
-        return "<名なし>"
+        return "<名なし>"  # kept: also used by tests/test_enforcement_ledger.py and recorded in ledger names ("<unnamed>")
 
 
 class _Reader:
-    """1 つの file の字面を頭から読む。_mut_pos は次に読む位置。"""
+    """Reads the text of one file from the top. _mut_pos is the next position to read."""
 
     def __init__(self, text: str, where: str) -> None:
         self.text = text
@@ -157,17 +161,17 @@ class _Reader:
                 return Text(self.text[start:pos])
             else:
                 pos += 1
-        raise self.fail("文字列が閉じていない")
+        raise self.fail("unclosed string")
 
     def bracket_string(self) -> Text:
-        """`#[delim[ … ]delim]`(pos は `#` の位置)。"""
+        """`#[delim[ ... ]delim]` (pos is the position of `#`)."""
         open_end = self.text.find("[", self._mut_pos + 2)
         if open_end < 0:
-            raise self.fail("#[ の文字列の開きが閉じていない")
+            raise self.fail("unclosed opening of a #[ string")
         closer = f"]{self.text[self._mut_pos + 2 : open_end]}]"
         end = self.text.find(closer, open_end + 1)
         if end < 0:
-            raise self.fail(f"{closer} で閉じる文字列が閉じていない")
+            raise self.fail(f"unclosed string that should close with {closer}")
         self._mut_pos = end + len(closer)
         return Text(self.text[open_end + 1 : end])
 
@@ -178,7 +182,7 @@ class _Reader:
         return Atom(self.text[start : self._mut_pos])
 
     def sequence(self, opener: str) -> Form:
-        """開き括弧の直後から、対応する閉じ括弧までの並び。"""
+        """The sequence from just after an opening bracket to the matching closing bracket."""
         closer = _CLOSERS[opener]
         children = []
         while not self.at_end():
@@ -188,10 +192,10 @@ class _Reader:
             child = self.form()
             if child is not None:
                 children.append(child)
-        raise self.fail(f"{opener!r} が閉じていない")
+        raise self.fail(f"{opener!r} is not closed")
 
     def hashed(self) -> Form | Text | Atom | None:
-        """`#` で始まる形。`#(` `#{` は並び・`#[` は文字列・`#_` は次の形を捨てる(None)・他は綴り。"""
+        """A form starting with `#`. `#(` `#{` are sequences, `#[` is a string, `#_` drops the next form (None), anything else is a spelling."""
         following = self.text[self._mut_pos + 1 : self._mut_pos + 2]
         if following in ("(", "{"):
             self._mut_pos += 2
@@ -201,16 +205,16 @@ class _Reader:
         if following == "_":
             self._mut_pos += 2
             if self.at_end():
-                raise self.fail("#_ の後に形が無い")
+                raise self.fail("no form after #_")
             self.form()
             return None
         return self.atom()
 
     def form(self) -> Form | Text | Atom | None:
-        """pos から 1 つの形を読む。捨てた形(`#_`)は None。"""
+        """Reads one form from pos. A dropped form (`#_`) is None."""
         char = self.text[self._mut_pos]
         if char in ")]}":
-            raise self.fail(f"対応の無い閉じ括弧 {char!r}")
+            raise self.fail(f"unmatched closing bracket {char!r}")
         if char in "([{":
             self._mut_pos += 1
             return self.sequence(char)
@@ -219,7 +223,7 @@ class _Reader:
         if char == "#":
             return self.hashed()
         if char in "'`~":
-            # 引用の前置き(' ` ~ ~@)は形そのものではない — 次の形を並びの要素として読む。
+            # Quote prefixes (' ` ~ ~@) are not forms themselves -- read the next form as an element of the sequence.
             step = 2 if self.text.startswith("~@", self._mut_pos) else 1
             self._mut_pos += step
             return Atom(self.text[self._mut_pos - step : self._mut_pos])
@@ -227,7 +231,7 @@ class _Reader:
 
 
 def read_forms(text: str, where: str = "<adr>") -> list:
-    """Hy の file の最上位の形の並び(文字列・註・`#_` の形は数えられる形にならない)。"""
+    """The sequence of top-level forms of a Hy file (strings, comments, and `#_` forms do not become countable forms)."""
     reader = _Reader(text, where)
     if text.startswith("#!"):
         end = text.find("\n")
@@ -241,7 +245,7 @@ def read_forms(text: str, where: str = "<adr>") -> list:
 
 
 def adr_items(file_name: str, text: str) -> dict[str, list[str]]:
-    """1 冊の ADR の law / deftest / defsemgrep の項目(持ち主 = 囲む defadr の id・無ければ file 名)。"""
+    """The law / deftest / defsemgrep items of one ADR (owner = id of the enclosing defadr, or the file name if none)."""
     items: dict[str, list[str]] = {key: [] for key in FORM_KEYS.values()}
 
     def visit(node: object, owner: str) -> None:
@@ -261,7 +265,7 @@ def adr_items(file_name: str, text: str) -> dict[str, list[str]]:
 
 
 def inventory_from_texts(adr_texts: dict[str, str], semgrep_text: str) -> dict[str, list[str]]:
-    """木の enforcement 資産の一覧(鍵ごとに並べた名の list・重複も数として残す)。"""
+    """List of enforcement assets in the tree (a list of names per key; duplicates are kept as counts)."""
     found: dict[str, list[str]] = {key: [] for key in KEYS}
     found["defadr_files"] = list(adr_texts)
     found["semgrep_rules"] = _SEMGREP_RULE.findall(semgrep_text)
@@ -276,17 +280,17 @@ def counts(inventory: dict[str, list[str]]) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# 台帳の読み書きと差。
+# Reading/writing the ledger and diffs.
 # ---------------------------------------------------------------------------
 
 
 def ledger_from_text(text: str) -> dict[str, list[str]]:
-    """台帳の一覧。旧い形(鍵ごとの数)は一覧として読めないので ValueError。"""
+    """The ledger list. The old format (counts per key) cannot be read as a list, so ValueError."""
     data = json.loads(text)
     ledger = {key: value for key, value in data.items() if not key.startswith("_")}
     for key, value in ledger.items():
         if not isinstance(value, list):
-            raise ValueError(f"台帳の {key} が名の一覧でない(旧い数の形)— 生成し直す")
+            raise ValueError(f"ledger {key} is not a list of names (old count format) -- regenerate")
     return {key: sorted(str(item) for item in value) for key, value in ledger.items()}
 
 
@@ -297,14 +301,14 @@ def ledger_text(inventory: dict[str, list[str]]) -> str:
 
 @dataclass(frozen=True)
 class Change:
-    """1 つの鍵の差 — after にだけ在る名(added)と before にだけ在る名(removed)。"""
+    """Diff for one key -- names only in after (added) and names only in before (removed)."""
 
     added: list
     removed: list
 
 
 def difference(before: dict[str, list[str]], after: dict[str, list[str]]) -> dict[str, Change]:
-    """鍵ごとの差(重複も数として比べる)。差の無い鍵は載せない。"""
+    """Diff per key (duplicates are compared as counts). Keys with no diff are omitted."""
     changes = {
         key: Change(
             sorted((Counter(after.get(key, [])) - Counter(before.get(key, []))).elements()),
@@ -316,7 +320,7 @@ def difference(before: dict[str, list[str]], after: dict[str, list[str]]) -> dic
 
 
 # ---------------------------------------------------------------------------
-# 木の断面(working tree / git index / HEAD)。
+# Tree snapshots (working tree / git index / HEAD).
 # ---------------------------------------------------------------------------
 
 
@@ -342,7 +346,7 @@ def _git(root: Path, *args: str) -> str:
 
 
 def _adr_names(listing: str) -> list[str]:
-    """git の一覧から docs/adr の直下の defadr_*.hy だけ(working tree の glob と同じ母集団)。"""
+    """Only defadr_*.hy directly under docs/adr from git's listing (the same population as the working-tree glob)."""
     return sorted(
         name
         for name in listing.splitlines()
@@ -351,7 +355,7 @@ def _adr_names(listing: str) -> list[str]:
 
 
 def _revision_inventory(root: Path, revision: str) -> dict[str, list[str]]:
-    """git の断面の一覧。revision = "" は index、"HEAD" 等は commit。"""
+    """The listing of a git snapshot. revision = "" is the index; "HEAD" etc. are commits."""
     listing = (
         _git(root, "ls-files", "--cached", "--", ADR_DIR)
         if not revision
@@ -376,14 +380,14 @@ def staged_ledger(root: Path) -> dict[str, list[str]]:
 
 @dataclass(frozen=True)
 class HeadSnapshot:
-    """HEAD の断面 — 木の一覧と台帳。"""
+    """The HEAD snapshot -- the tree listing and the ledger."""
 
     actual: dict
     ledger: dict
 
 
 def head_snapshot(root: Path) -> HeadSnapshot | None:
-    """HEAD の断面。HEAD が無い・HEAD の台帳が旧い形・HEAD の ADR が読めない時は None(判じられない)。"""
+    """The HEAD snapshot. None (cannot be judged) when there is no HEAD, the HEAD ledger is in the old format, or an ADR in HEAD cannot be read."""
     try:
         return HeadSnapshot(
             _revision_inventory(root, "HEAD"),
@@ -394,10 +398,10 @@ def head_snapshot(root: Path) -> HeadSnapshot | None:
 
 
 def unrecorded_own_change(head: HeadSnapshot, actual: dict, ledger: dict) -> dict[str, Change]:
-    """この commit の増減(HEAD → index)のうち、台帳の増減に写っていない分。
+    """The part of this commit's changes (HEAD -> index) that is not reflected in the ledger's changes.
 
-    鍵ごとに (木の増減) − (台帳の増減) を符号つきで数え、正 = 木に足したのに台帳に無い、
-    負 = 台帳に残る / 台帳だけ動いた。空ならこの commit の増減は台帳にそのまま写っている。
+    Per key, counts (tree change) - (ledger change) with sign: positive = added to the tree but missing from the ledger,
+    negative = remains in the ledger / only the ledger moved. If empty, this commit's changes are reflected in the ledger as-is.
     """
     changes = {}
     for key in sorted(set(actual) | set(ledger) | set(head.actual) | set(head.ledger)):
@@ -413,7 +417,7 @@ def unrecorded_own_change(head: HeadSnapshot, actual: dict, ledger: dict) -> dic
 
 
 # ---------------------------------------------------------------------------
-# 申告。
+# Reports.
 # ---------------------------------------------------------------------------
 
 _SHOWN = 12
@@ -421,8 +425,8 @@ _SHOWN = 12
 
 def _listing(label: str, names: list) -> list[str]:
     shown = [f"      {name}" for name in names[:_SHOWN]]
-    rest = [f"      … ほか {len(names) - _SHOWN} 件"] if len(names) > _SHOWN else []
-    return [f"    {label} {len(names)} 件:", *shown, *rest] if names else []
+    rest = [f"      ... and {len(names) - _SHOWN} more"] if len(names) > _SHOWN else []
+    return [f"    {label} {len(names)} items:", *shown, *rest] if names else []
 
 
 def describe(diff: dict[str, Change]) -> str:
@@ -431,34 +435,34 @@ def describe(diff: dict[str, Change]) -> str:
         for key, change in diff.items()
         for line in (
             f"  {key}:",
-            *_listing("木に在って台帳に無い(足した・台帳に未記入)", change.added),
-            *_listing("台帳に在って木に無い(消えた)", change.removed),
+            *_listing("in the tree but not in the ledger (added / not yet recorded in the ledger)", change.added),
+            *_listing("in the ledger but not in the tree (removed)", change.removed),
         )
     )
 
 
 def _repair_hint(root: Path) -> str:
     return (
-        "直し方: 台帳は生成物 — `make enforcement-ledger`"
-        "(= scripts/check_enforcement_ledger.py --write)で作り直し、差分の「消えた」項目が"
-        f"意図した削除かを確かめてから台帳を stage する。台帳: {root / LEDGER_PATH}"
+        "How to fix: the ledger is a generated artifact -- regenerate it with `make enforcement-ledger`"
+        "(= scripts/check_enforcement_ledger.py --write), confirm that the \"removed\" items in the diff are"
+        f"intended deletions, then stage the ledger. Ledger: {root / LEDGER_PATH}"
     )
 
 
 def _mismatch_message(face: str, diff: dict[str, Change], root: Path) -> str:
     return (
-        f"enforcement 台帳と木({face})が食い違う — ADR-DOE-ENFORCE-001 R5 / R9。\n"
+        f"The enforcement ledger and the tree ({face}) disagree -- ADR-DOE-ENFORCE-001 R5 / R9.\n"
         f"{describe(diff)}\n{_repair_hint(root)}"
     )
 
 
 def _unreadable_ledger(root: Path, error: ValueError) -> int:
-    print(f"enforcement 台帳が読めない — {error}\n{_repair_hint(root)}", file=sys.stderr)
+    print(f"Cannot read the enforcement ledger -- {error}\n{_repair_hint(root)}", file=sys.stderr)
     return 1
 
 
 # ---------------------------------------------------------------------------
-# 入口。
+# Entry point.
 # ---------------------------------------------------------------------------
 
 
@@ -485,7 +489,7 @@ def check_staged(root: Path) -> int:
         return 0
     head = head_snapshot(root)
     if head is None:
-        print(_mismatch_message("staged 断面", drift, root), file=sys.stderr)
+        print(_mismatch_message("staged snapshot", drift, root), file=sys.stderr)
         return 1
     own = unrecorded_own_change(head, actual, ledger)
     inherited = difference(head.ledger, head.actual)
@@ -495,7 +499,7 @@ def check_staged(root: Path) -> int:
         else ""
     )
     if not own:
-        # この commit の増減は台帳に写っている。残るずれは HEAD に既に在ったもの。
+        # This commit's changes are reflected in the ledger. The remaining drift already existed in HEAD.
         print(
             "enforcement 台帳: この commit の増減は台帳に写っている(通す)。ただし HEAD に既に在った"
             "ずれが残っている — ずれを持ち込んだ commit の直しを待つか、ここで直す。\n"
@@ -503,13 +507,13 @@ def check_staged(root: Path) -> int:
             file=sys.stderr,
         )
         return 0
-    # 赤はこの commit 自身の増減だけから出る(HEAD のずれでは赤にならない — R9)。「本線が前から
-    # ずれているから」と --no-verify で外すと、ずれを本線へ持ち込む側になる(2026-09-28 b32941c3)。
+    # Red comes only from this commit's own changes (HEAD drift does not turn it red -- R9). Bypassing with --no-verify
+    # on the grounds that "the mainline was already drifted" makes you the one who carries drift into the mainline (2026-09-28 b32941c3).
     print(
-        "enforcement 台帳: この commit が動かした enforcement が台帳に写っていない — ADR-DOE-ENFORCE-001 R5 / R9。\n"
-        "この赤は HEAD(本線)のずれではなく、この commit 自身の増減から出ている。--no-verify で外さず、"
-        "`make enforcement-ledger` で台帳を作り直して stage する。\n"
-        f"  この commit の増減のうち台帳に無い分:\n{describe(own)}{inherited_note}\n{_repair_hint(root)}",
+        "enforcement ledger: the enforcement changed by this commit is not reflected in the ledger -- ADR-DOE-ENFORCE-001 R5 / R9.\n"
+        "This red does not come from drift in HEAD (the mainline) but from this commit's own changes. Do not bypass it with --no-verify; "
+        "`make enforcement-ledger` and stage it.\n"
+        f"  Of this commit changes, the part missing from the ledger:\n{describe(own)}{inherited_note}\n{_repair_hint(root)}",
         file=sys.stderr,
     )
     return 1
@@ -524,7 +528,7 @@ def write_ledger(root: Path) -> int:
         previous = {}
     path.write_text(ledger_text(actual), encoding="utf-8")
     summary = ", ".join(f"{key} {value}" for key, value in counts(actual).items())
-    print(f"enforcement 台帳を生成した({summary}): {path}", file=sys.stderr)
+    print(f"Generated the enforcement ledger ({summary}): {path}", file=sys.stderr)
     removed = {
         key: Change([], change.removed)
         for key, change in difference(previous, actual).items()
@@ -532,7 +536,7 @@ def write_ledger(root: Path) -> int:
     }
     if removed:
         print(
-            "⚠ 台帳から外れた項目(木から消えた enforcement)— 意図した削除かを確かめてから stage する:\n"
+            "WARNING: items dropped from the ledger (enforcement that disappeared from the tree) -- confirm the deletion is intended before staging:\n"
             + describe(removed),
             file=sys.stderr,
         )
@@ -555,10 +559,10 @@ def main(argv: list[str]) -> int:
         )
         return run(root)
     except UnreadableAdrError as error:
-        print(f"check_enforcement_ledger: ADR が Hy の形として読めない — {error}", file=sys.stderr)
+        print(f"check_enforcement_ledger: an ADR cannot be read as Hy forms -- {error}", file=sys.stderr)
         return 1
     except (RuntimeError, OSError, json.JSONDecodeError) as error:
-        print(f"check_enforcement_ledger: 突合を実行できない — {error}", file=sys.stderr)
+        print(f"check_enforcement_ledger: cannot run the reconciliation -- {error}", file=sys.stderr)
         return 2
 
 

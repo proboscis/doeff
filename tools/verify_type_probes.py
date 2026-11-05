@@ -1,37 +1,37 @@
-"""核の 4 個だけを入れた新しい venv で、型の probe(tests/type_probes/)と README の Python の例を pyright と mypy にかけ、
-誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12)。
+"""In a fresh venv with only the 4 core packages installed, run the type probes (tests/type_probes/) and the README Python examples through pyright and mypy,
+and check that the lines with errors match the probe marks (section 12 of the doeff-publish initiative).
 
-公開の前の型の報告(使う人の型の check で doeff の型がどこまで効くか)は、核だけの venv に 25 個の probe を当てて効く所と
-抜けを数え、抜けを card に切った。開発の環境の型の検(tests/test_static_typing.py ほか)は workspace の editable な入れ方と
-repo の pyright の設定で読むので、直した抜けが使う人の入れ方(wheel・extra 無し)で戻っても気づけない。この道具は使う人と
-同じ入れ方と、道具の既定の探し方で確かめる:
+The pre-release typing report (how far doeff's types hold up in a user's type check) ran 25 probes in a core-only venv, counted where they hold and where
+there are gaps, and cut the gaps into cards. The development environment's type checks (tests/test_static_typing.py and others) read through the workspace's editable install and
+the repo's pyright configuration, so they cannot notice a fixed gap coming back under the user's way of installing (wheels, no extras). This tool checks with the same
+way of installing as the user and the tools' default discovery:
 
-    uv run --no-project python tools/verify_type_probes.py                  # 既定 3.11 と 3.14+gil
-    uv run --no-project python tools/verify_type_probes.py --python 3.12    # --python は何度でも書ける
+    uv run --no-project python tools/verify_type_probes.py                  # default 3.11 and 3.14+gil
+    uv run --no-project python tools/verify_type_probes.py --python 3.12    # --python can be given any number of times
 
-Python の版ごとに:
+For each Python version:
 
-1. 新しい venv に核の 4 個だけを入れる(tools/verify_core_install.py の install — 入った物がちょうど核の 4 個かも見る)。
-2. probe を pyright(strict)と mypy --strict にかけ、行ごとに誤りが出るかを probe の印と照らす。
-3. doeff と doeff-vm の README(wheel の metadata の本文)の Python の例を pyright(standard)と mypy(既定)にかけ、誤りが 1 つも
-   無い事を確かめる — README を写した人の editor が、既定の強さで赤を出さない事。
+1. Install only the 4 core packages into a fresh venv (install in tools/verify_core_install.py -- it also checks that what got installed is exactly the 4 core packages).
+2. Run the probes through pyright (strict) and mypy --strict, and compare, line by line, whether an error appears against the probe's mark.
+3. Run the Python examples of the doeff and doeff-vm READMEs (the wheel metadata body) through pyright (standard) and mypy (default) and check that there is not a single
+   error -- the editor of someone who copied the README must not show red at the default strictness.
 
-pyright と mypy の版は uv.lock の版に固定する(版が上がると誤りの出方が変わる — uv.lock の版を上げる変更で、この道具も走らせる)。
+The pyright and mypy versions are pinned to the versions in uv.lock (a version bump changes how errors appear -- run this tool too for a change that bumps the uv.lock versions).
 
-probe の印(行の末の注釈 — 印の無い行は、両方の道具が誤りを出さない事を言う):
+Probe marks (annotations at the end of a line -- a line without a mark means that neither tool reports an error):
 
-    # expect-error              両方の道具が、この行に誤りを出す
-    # expect-error[pyright]     pyright だけが出す(mypy に同じ規則が無い)。[mypy] も同じ形
-    # gap-N want-error          望みは誤り。今は両方とも出さない — 型の報告の抜け N。[道具] を付けると、その道具だけが今は出さない
-    # gap-N want-clean          望みは誤り無し。今は両方とも出す。[道具] も同じ形
+    # expect-error              both tools report an error on this line
+    # expect-error[pyright]     only pyright reports one (mypy has no equivalent rule). [mypy] has the same form
+    # gap-N want-error          the wish is an error. Neither reports one now -- gap N of the typing report. With [tool], only that tool does not report one now
+    # gap-N want-clean          the wish is no error. Both report one now. [tool] has the same form
 
-型は typing.assert_type で書く(型が違えば、その行の誤りになる)。file の頭の `# pyright: <強さ>` と `# mypy: <設定>` は、その
-file だけの強さ(注記の無い README の書き方の probe など)。抜けの印の行で、名指した道具が望みの通りになったら落とす — 抜けを
-埋めた変更が、印を expect-error か印無しに替えて守りに入れる。
+Types are written with typing.assert_type (if the type differs, that line gets an error). `# pyright: <strictness>` and `# mypy: <settings>` at the head of a file are the
+strictness for that file alone (e.g. probes of how an un-annotated README is written). On a gap-mark line, when the named tool behaves as wished, the mark fails -- the change that
+fills the gap switches the mark to expect-error or no mark, bringing it under guard.
 
-CI の workflow Type probes(.github/workflows/type-probes.yml)が走らせる。
+It is run by the CI workflow Type probes (.github/workflows/type-probes.yml).
 
-終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install・型の道具の失敗)2。標準ライブラリだけを使う。
+Exit code: 0 if everything passes, 1 if a check fails, 2 if the tool cannot be used (venv, install or type-tool failure). Uses only the standard library.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ from pathlib import Path
 
 import tomllib
 
-# 同じ dir の module — script として走らせると、Python が script の dir を sys.path の頭に置く。
+# A module in the same dir -- when run as a script, Python puts the script's dir at the head of sys.path.
 import verify_core_install
 
 REPO = verify_core_install.REPO
@@ -62,59 +62,59 @@ PYRIGHT = "pyright"
 MYPY = "mypy"
 CHECKERS = (PYRIGHT, MYPY)
 DEFAULT_PYTHONS = verify_core_install.DEFAULT_PYTHONS
-# 子の process 1 つの制限時間(秒)。pyright の初回は、node と pyright の本体の取り寄せを含む。
+# Time limit per child process (seconds). For pyright's first run it includes fetching node and pyright itself.
 CHILD_TIMEOUT_SECONDS = 300
-# 印の形(# の後ろ)。読めない印は、黙って「印無し」にせず落とす — 綴りを誤った印が、守っていない行を作らないため。
+# The shape of a mark (after the #). An unreadable mark is failed rather than silently treated as "no mark" -- so that a misspelled mark does not create an unguarded line.
 _MARK = re.compile(
     r"(?P<kind>expect-error|gap-(?P<gap>\d+) want-(?P<want>error|clean))(?:\[(?P<checkers>[^\]]*)\])?"
 )
-# 印に見える語(_MARK に合わない時、読めない印として落とす)。
+# Words that look like a mark (when _MARK does not match, it is failed as an unreadable mark).
 _MARK_WORDS = re.compile(r"\b(?:expect-\w+|gap-\w+)")
 _MYPY_ERROR = re.compile(r"^(?P<file>.+?\.pyi?):(?P<line>\d+):(?:\d+:)? error: (?P<message>.*)$")
 
 
 @dataclass(frozen=True)
 class Expectation:
-    """probe の 1 行の印 — 今この行に誤りを出す道具と、抜けの行ならその番号と望み。"""
+    """The mark on one line of a probe -- the tools that report an error on this line now and, for a gap line, its number and the wish."""
 
-    # 今この行に誤りを出す道具の名
+    # the names of the tools that report an error on this line now
     erring: frozenset[str]
-    # 型の報告の抜けの番号(抜けでない行は None)
+    # the number of the typing-report gap (None for a line that is not a gap)
     gap: int | None = None
-    # 抜けが今も開いている道具 — この道具が望みの通りになったら、抜けが埋まった事として落とす
+    # the tools for which the gap is still open -- when such a tool behaves as wished, the gap is dropped as filled
     open_in: frozenset[str] = frozenset()
 
 
-# 印の無い行の印 — 両方の道具が誤りを出さない。
+# The mark of a line without a mark -- neither tool reports an error.
 CLEAN = Expectation(frozenset())
 
 
 @dataclass(frozen=True)
 class MarkedLine:
-    """probe の印の在る行 1 つ。"""
+    """One marked line of a probe."""
 
-    # 確かめの dir からの path
+    # the path from the checking dir
     file: str
-    # 1 から数える行
+    # the line, counted from 1
     line: int
     expectation: Expectation
 
 
 @dataclass(frozen=True)
 class Marks:
-    """probe の印 — 印の在る行と、読めなかった印を言う文。"""
+    """The marks of a probe -- the marked lines, and the sentences saying which marks were unreadable."""
 
     lines: tuple[MarkedLine, ...]
     problems: tuple[str, ...]
 
 
 def _read_mark(comment: str, file: str, line: int) -> Marks:
-    """注釈 1 つの印を読む(印が無ければ空)。"""
+    """Read the mark of one annotation (empty if there is no mark)."""
     where = f"{file}:{line}"
     found = _MARK.search(comment)
     if found is None:
         words = _MARK_WORDS.findall(comment)
-        return Marks((), (f"{where}: 読めない印: {' '.join(words)}",) if words else ())
+        return Marks((), (f"{where}: unreadable mark: {' '.join(words)}",) if words else ())
     named = (
         frozenset(CHECKERS)
         if found["checkers"] is None
@@ -123,17 +123,17 @@ def _read_mark(comment: str, file: str, line: int) -> Marks:
     if not named <= frozenset(CHECKERS):
         return Marks(
             (),
-            (f"{where}: 印の [道具] に知らない名が在る: [{found['checkers']}](書けるのは {'・'.join(CHECKERS)})",),
+            (f"{where}: unknown name in the mark's [tool]: [{found['checkers']}] (allowed: {', '.join(CHECKERS)})",),
         )
     if found["gap"] is None:
         return Marks((MarkedLine(file, line, Expectation(named)),), ())
-    # 名指した道具は今は望みと逆。名指さない道具は今も望みの通り。
+    # A named tool is now opposite to the wish. An unnamed tool still behaves as wished.
     erring = frozenset(CHECKERS) - named if found["want"] == "error" else named
     return Marks((MarkedLine(file, line, Expectation(erring, int(found["gap"]), named)),), ())
 
 
 def read_marks(text: str, file: str) -> Marks:
-    """probe の本文から、行ごとの印を読む(文字列の中の # は読まない)。"""
+    """Read the marks of each line from the probe's body (a # inside a string is not read)."""
     reads = tuple(
         _read_mark(token.string, file, token.start[0])
         for token in tokenize.generate_tokens(io.StringIO(text).readline)
@@ -146,7 +146,7 @@ def read_marks(text: str, file: str) -> Marks:
 
 
 def expectation_at(marks: Sequence[MarkedLine], file: str, line: int) -> Expectation:
-    """file の行 1 つの印(印の無い行は CLEAN)。"""
+    """The mark of one line of a file (CLEAN for a line without a mark)."""
     return next(
         (marked.expectation for marked in marks if (marked.file, marked.line) == (file, line)),
         CLEAN,
@@ -155,31 +155,31 @@ def expectation_at(marks: Sequence[MarkedLine], file: str, line: int) -> Expecta
 
 @dataclass(frozen=True)
 class Finding:
-    """型の道具の誤り 1 つ。"""
+    """One error from a type tool."""
 
     checker: str
-    # 確かめの dir からの path
+    # the path from the checking dir
     file: str
-    # 1 から数える行
+    # the line, counted from 1
     line: int
     message: str
 
 
 @dataclass(frozen=True)
 class Checked:
-    """型の道具 1 回の結末 — 誤りと、道具が読んだ file の数(数えられなければ None)。"""
+    """The outcome of one run of a type tool -- the errors, and the number of files the tool read (None if it could not be counted)."""
 
     findings: tuple[Finding, ...]
     files: int | None
 
 
 def pyright_findings(report: object, directory: Path) -> Checked:
-    """pyright --outputjson の答えから、誤り(severity が error の物)と読んだ file の数を取る。"""
+    """From pyright --outputjson's answer, take the errors (those with severity error) and the number of files read."""
     match report:
         case {"generalDiagnostics": list(diagnostics), "summary": {"filesAnalyzed": int(analyzed)}}:
             pass
         case _:
-            raise TypeError(f"pyright の答えの形が違う: {report!r}")
+            raise TypeError(f"unexpected shape of the pyright answer: {report!r}")
     errors = (
         verify_core_install.pyright_finding(diagnostic)
         for diagnostic in diagnostics
@@ -200,7 +200,7 @@ def pyright_findings(report: object, directory: Path) -> Checked:
 
 
 def mypy_findings(output: str) -> Checked:
-    """mypy の出力から、誤りの行(note は除く)と読んだ file の数を取る。"""
+    """From mypy's output, take the error lines (excluding notes) and the number of files read."""
     checked = verify_core_install.MYPY_CHECKED.search(output)
     return Checked(
         tuple(
@@ -214,14 +214,14 @@ def mypy_findings(output: str) -> Checked:
 
 @dataclass(frozen=True)
 class Judgement:
-    """誤りを印と照らした結末 — 印と違う行を言う文と、今も開いている抜けの行ごとの番号。"""
+    """The outcome of comparing errors against marks -- sentences saying which lines differ from the marks, and the number for each still-open gap line."""
 
     failures: tuple[str, ...]
     open_gaps: tuple[int, ...]
 
 
 def judge(marks: Sequence[MarkedLine], findings: Sequence[Finding]) -> Judgement:
-    """誤りを印と照らす — 印の在る行と誤りの出た行の全部を、道具ごとに見る(印の無い行は CLEAN)。"""
+    """Compare errors against marks -- look at every marked line and every line with an error, per tool (a line without a mark is CLEAN)."""
     places = sorted(
         {*((finding.file, finding.line) for finding in findings), *((m.file, m.line) for m in marks)}
     )
@@ -240,7 +240,7 @@ def judge(marks: Sequence[MarkedLine], findings: Sequence[Finding]) -> Judgement
 
 
 def _judge_line(where: str, expectation: Expectation, findings: Sequence[Finding]) -> Judgement:
-    """行 1 つを道具ごとに印と照らす。抜けの行が印の通りなら、開いている抜けとして数える。"""
+    """Compare one line against the marks, per tool. If a gap line is as marked, count it as an open gap."""
     failures = tuple(
         f"{where}: {failure}"
         for checker in CHECKERS
@@ -258,67 +258,67 @@ def _judge_line(where: str, expectation: Expectation, findings: Sequence[Finding
 
 
 def _line_failure(expectation: Expectation, checker: str, messages: Sequence[str]) -> str | None:
-    """道具 1 つの行の結末が印と違う事を言う文(合えば None)。"""
+    """A sentence saying that one tool's outcome on a line differs from the mark (None if it matches)."""
     errs = bool(messages)
     if errs == (checker in expectation.erring):
         return None
-    said = f" — {checker} の誤り: {' / '.join(messages)}" if messages else ""
+    said = f" — {checker} errors: {' / '.join(messages)}" if messages else ""
     if expectation.gap is not None and checker in expectation.open_in:
         return (
-            f"型の報告の抜け {expectation.gap} が {checker} で埋まった — 印を替えて守りに入れる"
-            f"(望みの通り {'誤りになった' if errs else '誤りが消えた'}){said}"
+            f"type-report gap {expectation.gap} is now closed by {checker} — change the mark and put it under guard"
+            f" (as hoped, {'it now errors' if errs else 'the error is gone'}){said}"
         )
-    wanted = "誤りを出す" if not errs else "誤りを出さない"
-    return f"{checker} が印と違う — 印は「{wanted}」{said}"
+    wanted = "reports an error" if not errs else "reports no error"
+    return f"{checker} differs from the mark — the mark says \"{wanted}\"{said}"
 
 
 @dataclass(frozen=True)
 class Suite:
-    """型の道具にかける file の組 1 つ。"""
+    """One set of files to run through the type tools."""
 
-    # 印字の名
+    # the name for printing
     name: str
     directory: Path
-    # dir からの path
+    # the path from the dir
     files: tuple[str, ...]
-    # pyright の typeCheckingMode
+    # pyright's typeCheckingMode
     pyright_mode: str
-    # mypy の強さの引数(既定は空)
+    # mypy's strictness arguments (empty by default)
     mypy_arguments: tuple[str, ...]
-    # 印の在る行(印の無い行は、両方の道具が誤りを出さない)
+    # the marked lines (for an unmarked line, neither tool reports an error)
     marks: tuple[MarkedLine, ...]
 
 
 @dataclass(frozen=True)
 class Versions:
-    """型の道具の版(uv.lock の版)。"""
+    """The versions of the type tools (the uv.lock versions)."""
 
     pyright: str
     mypy: str
 
 
 def locked_version(lock: str, name: str) -> str:
-    """uv.lock の本文から、配布物 1 つの版を読む(版が 1 つに決まらなければ落とす)。"""
+    """From the body of uv.lock, read the version of one distribution (fail if the version is not a single one)."""
     versions = {
         package["version"] for package in tomllib.loads(lock)["package"] if package["name"] == name
     }
     if len(versions) != 1:
-        raise ValueError(f"uv.lock の {name} の版が 1 つに決まらない: {sorted(versions)}")
+        raise ValueError(f"the version of {name} in uv.lock is not a single one: {sorted(versions)}")
     return versions.pop()
 
 
 def checker_command(name: str, version: str) -> tuple[str, ...]:
-    """型の道具を版を固定して起こす命令 — venv の外で uv tool run が起こし、核の venv は引数で指す。"""
+    """The command that starts a type tool with a pinned version -- uv tool run starts it outside the venv, and the core venv is pointed to by an argument."""
     return ("uv", "tool", "run", "--from", f"{name}=={version}", name)
 
 
 def locked_versions(lock: str) -> Versions:
-    """uv.lock の本文から、型の道具の版を読む。"""
+    """From the body of uv.lock, read the versions of the type tools."""
     return Versions(pyright=locked_version(lock, PYRIGHT), mypy=locked_version(lock, MYPY))
 
 
 def run_suite(suite: Suite, python: Path, versions: Versions, timeout: float) -> tuple[Finding, ...]:
-    """組 1 つを pyright と mypy にかけ、誤りを返す(道具が全部の file を読まなければ、道具が使えない事として落とす)。"""
+    """Run one set through pyright and mypy and return the errors (if a tool did not read all the files, fail as the tool being unusable)."""
     config = suite.directory / "pyrightconfig.json"
     config.write_text(json.dumps({"typeCheckingMode": suite.pyright_mode}), encoding="utf-8")
     pyright = verify_core_install.run_checker(
@@ -356,7 +356,7 @@ def run_suite(suite: Suite, python: Path, versions: Versions, timeout: float) ->
     )
     unread = [
         subprocess.CalledProcessError(
-            1, [checker], output, f"{checker} が読んだ file が {result.files} 個で、書いた {len(suite.files)} 個と違う"
+            1, [checker], output, f"{checker} read {result.files} files, which differs from the {len(suite.files)} written"
         )
         for checker, result, output in checked
         if result.files != len(suite.files)
@@ -367,24 +367,24 @@ def run_suite(suite: Suite, python: Path, versions: Versions, timeout: float) ->
 
 
 def check_suite(suite: Suite, python: Path, versions: Versions, timeout: float) -> tuple[str, ...]:
-    """組 1 つを型の道具にかけて印と照らし、結末を印字して、印と違う行を言う文の列を返す。"""
+    """Run one set through the type tools, compare against the marks, print the outcome, and return the list of sentences saying which lines differ from the marks."""
     findings = run_suite(suite, python, versions, timeout)
     judged = judge(suite.marks, findings)
     verify_core_install.print_result(
-        f"{suite.name}(pyright {suite.pyright_mode}・mypy {' '.join(suite.mypy_arguments) or '既定'})"
-        f" — file {len(suite.files)} 個・印の行 {len(suite.marks)}・誤り {len(findings)}",
+        f"{suite.name}(pyright {suite.pyright_mode}, mypy {' '.join(suite.mypy_arguments) or 'default'})"
+        f" -- {len(suite.files)} files, {len(suite.marks)} marked lines, {len(findings)} errors",
         "\n".join(judged.failures) or None,
     )
     if judged.open_gaps:
-        gaps = "・".join(
-            f"抜け {gap} が {count} 行" for gap, count in sorted(Counter(judged.open_gaps).items())
+        gaps = ", ".join(
+            f"gap {gap}: {count} lines" for gap, count in sorted(Counter(judged.open_gaps).items())
         )
-        print(f"        開いている抜け(印の通り): {gaps}", flush=True)
+        print(f"        open gaps (as marked): {gaps}", flush=True)
     return judged.failures
 
 
 def probe_marks() -> Marks:
-    """tests/type_probes の probe の全部の印。"""
+    """All the marks of the probes in tests/type_probes."""
     reads = tuple(
         read_marks(probe.read_text(encoding="utf-8"), probe.name) for probe in probe_files()
     )
@@ -395,50 +395,50 @@ def probe_marks() -> Marks:
 
 
 def probe_files() -> tuple[Path, ...]:
-    """tests/type_probes の probe(名の順)。"""
+    """The probes in tests/type_probes (in name order)."""
     return tuple(sorted(PROBES.glob("*.py")))
 
 
 def probe_suite(directory: Path, marks: Marks) -> Suite:
-    """tests/type_probes の probe を dir に写し、strict の組を返す。"""
+    """Copy the probes in tests/type_probes into the dir and return the strict set."""
     directory.mkdir(parents=True)
     probes = probe_files()
     for probe in probes:
         shutil.copyfile(probe, directory / probe.name)
     files = tuple(probe.name for probe in probes)
-    return Suite("型の probe", directory, files, "strict", ("--strict",), marks.lines)
+    return Suite("type probes", directory, files, "strict", ("--strict",), marks.lines)
 
 
 def readme_suite(installed: verify_core_install.Installed, package: str, directory: Path) -> Suite:
-    """README 1 つの Python の例(核だけで走る物)を dir に書き、既定の強さの組を返す — 例に印は無い(全部の行が誤り無し)。"""
+    """Write the Python examples of one README (those that run on the core alone) into the dir and return the default-strictness set -- the examples have no marks (every line has no error)."""
     directory.mkdir(parents=True)
     paths = tuple(
         verify_core_install.write_example(example, directory)
         for example in verify_core_install.type_checked_examples(installed, package)
     )
     files = tuple(path.relative_to(directory).as_posix() for path in paths)
-    return Suite(f"{package} の README の例", directory, files, "standard", (), ())
+    return Suite(f"README examples of {package}", directory, files, "standard", (), ())
 
 
 def check_python(
     python_request: str, work: Path, versions: Versions, timeout: float
 ) -> tuple[str, ...]:
-    """Python の版 1 つで、新しい venv に核だけを入れ、probe と README の例を型の道具にかけて、落ちた事を言う文の列を返す。"""
+    """For one Python version, install only the core into a fresh venv, run the probes and README examples through the type tools, and return the list of sentences saying what failed."""
     place = work / f"py{python_request.replace('+', '-')}"
     place.mkdir(parents=True)
-    print(f"\n== Python {python_request}: 新しい venv に doeff を extra 無しで入れる", flush=True)
-    # 型の道具にかけるのは、この checkout から組んだ核(出す前の確かめ — CI は main と pull request の木を見る)。
+    print(f"\n== Python {python_request}: install doeff without extras into a fresh venv", flush=True)
+    # What is run through the type tools is the core built from this checkout (a check before release -- CI looks at the trees of main and of pull requests).
     source = verify_core_install.Checkout()
     installed = verify_core_install.install(python_request, place, source)
     build_kind = "free-threading" if installed.free_threaded else "GIL"
-    print(f"  interpreter {installed.version}({build_kind})・{installed.python}", flush=True)
+    print(f"  interpreter {installed.version}({build_kind}), {installed.python}", flush=True)
     problems = verify_core_install.install_problems(installed, source)
     verify_core_install.print_result(
-        "入った物がちょうど核の 4 個で、doeff の 3 個はこの checkout から組んだ wheel",
+        "what got installed is exactly the 4 core packages, and the 3 doeff ones are wheels built from this checkout",
         "\n".join(problems) or None,
     )
     marks = probe_marks()
-    verify_core_install.print_result("probe の印が読める", "\n".join(marks.problems) or None)
+    verify_core_install.print_result("probe marks are readable", "\n".join(marks.problems) or None)
     suites = (
         probe_suite(place / "probes", marks),
         *(
@@ -459,19 +459,19 @@ def check_python(
 
 @dataclass(frozen=True)
 class PythonResult:
-    """Python の版 1 つの結末。"""
+    """The outcome for one Python version."""
 
-    # uv に渡した Python の指定
+    # the Python request passed to uv
     python: str
     failures: tuple[str, ...]
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
-    """引数を読む — Python の版と、作業の dir を残すか。"""
+    """Read the arguments -- the Python versions, and whether to keep the work dir."""
     parser = argparse.ArgumentParser(
         description=(
-            "核の 4 個だけを入れた新しい venv で、型の probe と README の Python の例を pyright と mypy にかけ、"
-            "誤りの出る行が probe の印の通りである事を確かめる。"
+            "In a fresh venv with only the 4 core packages installed, run the type probes and the README Python examples through pyright and mypy, "
+            "and check that the lines with errors match the probe marks."
         ),
     )
     parser.add_argument(
@@ -479,31 +479,31 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         action="append",
         dest="pythons",
         metavar="REQUEST",
-        help=f"uv に渡す Python の指定(何度でも書ける・既定 {' と '.join(DEFAULT_PYTHONS)})",
+        help=f"The Python request passed to uv (can be given any number of times; default {' and '.join(DEFAULT_PYTHONS)})",
     )
-    parser.add_argument("--keep", action="store_true", help="終わった後も作業の dir を消さない")
+    parser.add_argument("--keep", action="store_true", help="Do not delete the work dir when finished")
     parser.add_argument(
         "--timeout",
         type=float,
         default=CHILD_TIMEOUT_SECONDS,
-        help="子の process 1 つの制限時間(秒・既定 %(default)s)",
+        help="Time limit per child process (seconds; default %(default)s)",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """入口 — Python の版ごとに確かめ、結末を印字して終了コードを返す。"""
+    """Entry point -- check for each Python version, print the outcome and return the exit code."""
     verify_core_install.print_in_utf8()
     arguments = _parse(argv)
     pythons = tuple(arguments.pythons or DEFAULT_PYTHONS)
     if shutil.which("uv") is None:
-        print("uv が PATH に無い — https://docs.astral.sh/uv/ の手順で入れる", file=sys.stderr)
+        print("uv is not on PATH -- install it following https://docs.astral.sh/uv/", file=sys.stderr)
         return 2
     versions = locked_versions(LOCK.read_text(encoding="utf-8"))
-    print(f"型の道具: pyright {versions.pyright}・mypy {versions.mypy}(uv.lock の版)", flush=True)
-    # repo の外(型の道具が repo の pyproject.toml・pyrightconfig.json を読まず、例の import が checkout の doeff を拾わない)。
+    print(f"type tools: pyright {versions.pyright}, mypy {versions.mypy} (the uv.lock versions)", flush=True)
+    # Outside the repo (so the type tools do not read the repo's pyproject.toml or pyrightconfig.json, and the examples' imports do not pick up the checkout's doeff).
     work = Path(tempfile.mkdtemp(prefix="doeff-type-probes-"))
-    print(f"作業の dir: {work}", flush=True)
+    print(f"work dir: {work}", flush=True)
     try:
         results = tuple(
             PythonResult(python, check_python(python, work, versions, arguments.timeout))
@@ -511,7 +511,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except subprocess.CalledProcessError as failed:
         print(
-            f"\nvenv・install・型の道具が落ちた(確かめまでは進んでいない・終了コード {failed.returncode}): "
+            f"\nvenv, install or a type tool failed (did not get as far as the checks; exit code {failed.returncode}): "
             f"{' '.join(map(str, failed.cmd))}",
             file=sys.stderr,
         )
@@ -521,18 +521,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     finally:
         if arguments.keep:
-            print(f"\n作業の dir を残した: {work}", flush=True)
+            print(f"\nKept the work dir: {work}", flush=True)
         else:
             shutil.rmtree(work, ignore_errors=True)
-    print("\n== 結末", flush=True)
+    print("\n== Outcome", flush=True)
     for result in results:
         print(
             f"  Python {result.python}: "
-            f"{'通った' if not result.failures else f'NG {len(result.failures)} 個'}",
+            f"{'passed' if not result.failures else f'NG {len(result.failures)}'}",
             flush=True,
         )
     passed = not any(result.failures for result in results)
-    print("\n全部通った" if passed else "\n落ちた所が在る — 上の NG の行を読む", flush=True)
+    print("\nAll passed" if passed else "\nSome failed -- read the NG lines above", flush=True)
     return 0 if passed else 1
 
 

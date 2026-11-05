@@ -1,11 +1,11 @@
 #!/bin/sh
-# make test-packages の PACKAGE_JOBS が 2 以上の時の本体: package ごとの pytest の session を最大 N 本同時に走らせる
-# (日次の処理ステージ packages の短縮)。
-# - 使い方: run_package_sessions.sh <N> <name>=<path> ...   path は repo の根からの tests/ か根の dir。
-#   pytest の命令は環境変数 PACKAGE_SESSION_CMD(例 "uv run --no-sync pytest")と PACKAGE_SESSION_ARGS(例 "-m 'not e2e'")。
-# - 各 session の出力は 1 本の file に溜め、全部終わってから引数の順に `=== Testing <name> ===` つきで出す
-#   (日次の log で package の区切りが混ざらないように)。session は package ごとに独立のまま(同名の test file が衝突しない)。
-# - 赤の session の名を最後に `test-packages failed: <name> ...` の 1 行で出し、1 つでも赤なら 1 で終わる(直列の loop と同じ形)。
+# The body when PACKAGE_JOBS of make test-packages is 2 or more: run up to N per-package pytest sessions at the same time
+# (shortening the daily processing stage packages).
+# - Usage: run_package_sessions.sh <N> <name>=<path> ...   path is tests/ from the repo root or the root dir.
+#   The pytest command is in the environment variable PACKAGE_SESSION_CMD (e.g. "uv run --no-sync pytest") and PACKAGE_SESSION_ARGS (e.g. "-m 'not e2e'").
+# - Each session's output is collected in one file, and after all finish it is printed in argument order with `=== Testing <name> ===`
+#   (so package boundaries do not get mixed in the daily log). Sessions stay independent per package (same-named test files do not collide).
+# - The names of red sessions are printed at the end on one line `test-packages failed: <name> ...`, and it exits 1 if any is red (the same form as the serial loop).
 set -u
 
 if [ "${1:-}" = "--one" ]; then
@@ -16,7 +16,7 @@ if [ "${1:-}" = "--one" ]; then
   start=$(date +%s)
   eval "$PACKAGE_SESSION_CMD \"\$path\" $PACKAGE_SESSION_ARGS" > "$work/$idx.log" 2>&1
   rc=$?
-  printf 'session 所要 %s 秒\n' "$(($(date +%s) - start))" >> "$work/$idx.log"
+  printf 'session took %s seconds\n' "$(($(date +%s) - start))" >> "$work/$idx.log"
   printf '%s\n' "$rc" > "$work/$idx.rc"
   exit 0
 fi

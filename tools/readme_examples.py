@@ -1,29 +1,29 @@
-"""README の例(``` の囲み)を読み、走らせ、印字を注記と比べる 1 点(取り組み doeff-publish)。
+"""One place that reads the README examples (``` fences), runs them, and compares the printed output with the annotations (doeff-publish initiative).
 
-使う所は 2 つ: repo の検 tests/test_readme_examples.py(根の README を開発の環境で走らせ、核の 5 個の README の囲みが下の約束に
-合う事を読む)と、出す前と出した後の確かめの道具 tools/verify_release_install.py(核の 5 個を入れた新しい venv で、5 個の
-README の例を走らせる)。どちらも同じ約束で README を読む:
+Used in two places: the repo test tests/test_readme_examples.py (runs the root README in the development environment and reads that the fences of the READMEs of the 5 core packages follow the
+conventions below), and the tool tools/verify_release_install.py for checks before and after release (runs the examples of the 5
+READMEs in a fresh venv with the 5 core packages installed). Both read READMEs by the same conventions:
 
-- 囲みの言葉(``` の後の最初の語)が扱いを決める。python と hy は file に書いて新しい interpreter で script として走らせ、
-  print の行の末尾の注記(Python は `print(x)  # 値`・Hy は `(print x)  ; 値`)の列と標準出力の行の列を比べる。終了コードだけ
-  では足りないので、注記の無い例は何を確かめたかが無いとして赤にする。bash・text・toml は見せるだけ。どれでもない言葉は赤
-  (```py などに書き換えた囲みが黙って検から外れないため)。
-- 言葉の後の語で扱いを足す(GitHub も PyPI も最初の語だけを言葉として読み、後の語は描かない):
-  - `file=<名>`: 囲みを例の dir の <名> の file に書く(後の囲みが import する module・conftest.py など)。注記の在る print を
-    持てば、書いた後に script として走らせる。
-  - `excerpt`: 大きな file の一部(書いていない名を使う)。走らせない。
-  - `run`(bash だけ): 囲みを `bash -e` で走らせる。命令の行の末尾の注記(`命令  # 文`)の文が、出力(標準出力と標準エラー)の
-    どこかに在る事を確かめる — 道具の出力は時刻や版も印字し、行ごとには比べられないため。
-  - `continues`(python と hy だけ): 上の例の続き。同じ言葉の 1 つ上の囲み(file= も excerpt も無い script)の code の後に
-    書き足した物を 1 つの script として走らせ、注記も上の分から続けて比べる(読み手が上の例の file に書き足して走らせるのと
-    同じ)。上の囲みも続きなら、その全部の続き。
-- 1 つの README の囲みは、上から順に 1 つの dir で扱う(読み手が書いてある順に file を置いて走らせるのと同じ)。
+- The fence's language (the first word after ```) decides the treatment. python and hy are written to a file and run as a script with a fresh interpreter,
+  and the sequence of annotations at the end of print lines (Python `print(x)  # value`, Hy `(print x)  ; value`) is compared with the sequence of lines on standard output. The exit code alone
+  is not enough, so an example with no annotation is red because it has nothing checked. bash, text, and toml are display only. A language that is none of these is red
+  (so that a fence rewritten as ```py or the like is not silently dropped from the check).
+- Words after the language add treatments (GitHub and PyPI both read only the first word as the language and do not render later words):
+  - `file=<name>`: write the fence to the file <name> in the example dir (a module or conftest.py that later fences import). If it has print
+    lines with annotations, it is run as a script after being written.
+  - `excerpt`: a part of a large file (uses names not written). Not run.
+  - `run` (bash only): run the fence with `bash -e`. Checks that the text of the annotation at the end of a command line (`command  # text`) appears
+    somewhere in the output (stdout and stderr) -- tools print times and versions too, so they cannot be compared line by line.
+  - `continues` (python and hy only): a continuation of the example above. The code of the nearest fence above with the same language (a script with neither file= nor excerpt) plus
+    what is added is run as one script, and annotations are compared continuing from the upper part (the same as a reader
+    appending to the file of the example above and running it). If the upper fence is also a continuation, all of that chain.
+- The fences of one README are handled in one dir from top to bottom (the same as a reader placing files in the order written and running them).
 
-interpreter は -E -s -B で起こす: 環境変数の PYTHON* と利用者の site を読まず(repo の木の path にも pytest の conftest にも
-頼らない)、bytecode を書かない(書くと、起動の bytecode が checkout の下に残ったと root の conftest が赤にする)。-I と違い
-script の dir は sys.path に入るので、`file=` で隣に書いた module を import できる。
+The interpreter is started with -E -s -B: it reads neither PYTHON* environment variables nor the user's site (relies on neither the repo tree paths nor pytest's conftest),
+and writes no bytecode (if it did, the root conftest would go red saying startup bytecode was left under the checkout). Unlike -I, the
+script's dir goes into sys.path, so a module written next to it with `file=` can be imported.
 
-標準ライブラリだけを使う(tools/verify_release_install.py は workspace を同期せずに走る)。
+Uses only the standard library (tools/verify_release_install.py runs without syncing the workspace).
 """
 
 from __future__ import annotations
@@ -38,35 +38,35 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Runner:
-    """走らせる言葉の囲みを、どの file に書いてどう起こすか。"""
+    """Which file a runnable-language fence is written to and how it is started."""
 
-    # 例の file の拡張子
+    # extension of the example file
     suffix: str
-    # interpreter の後に置く引数
+    # arguments placed after the interpreter
     arguments: tuple[str, ...]
 
 
-# 走らせる言葉 → 走らせ方。
+# Languages that are run -> how they are run.
 RUNNERS = {
     "python": Runner(".py", ("-E", "-s", "-B")),
     "hy": Runner(".hy", ("-E", "-s", "-B", "-m", "hy")),
 }
-# `run` の語が在れば走らせる shell の言葉。
+# The shell language that is run when the `run` word is present.
 SHELL = "bash"
-# 走らせない言葉(写して打つ shell の命令・図・設定の断片)。
+# Languages that are not run (shell commands to copy and type, diagrams, config fragments).
 SHOWN_ONLY = frozenset({SHELL, "text", "toml"})
-# 言葉の後に書ける語(`file=<名>` の他)。
+# Words that may follow the language (besides `file=<name>`).
 EXCERPT = "excerpt"
 RUN = "run"
 CONTINUES = "continues"
 
 _FENCE = re.compile(r"^```(?P<info>[^\n`]*)\n(?P<code>.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 _SECTION = re.compile(r"^## (?P<title>.+?)[ \t]*$", re.MULTILINE)
-# print の行の末尾の、印字する値の注記(囲みの言葉 → 注記を取る正規表現)。
+# The annotation of the printed value at the end of a print line (fence language -> regex that picks the annotation).
 _STATED_OUTPUT = {
     "python": re.compile(r"\bprint\(.*\)\s+#\s?(?P<output>.*?)\s*$"),
     "hy": re.compile(r"\(print\s.*\)\s+;\s?(?P<output>.*?)\s*$"),
-    # 命令の行(# で始まらない)の、最初の「空白 # 空白」から後。
+    # From the first "space # space" onward in a command line (one not starting with #).
     SHELL: re.compile(r"^\s*[^#\s][^#]*?\s+#\s(?P<output>.*?)\s*$"),
 }
 _FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
@@ -74,35 +74,35 @@ _FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 
 @dataclass(frozen=True)
 class Example:
-    """README の囲み 1 つ。"""
+    """One README fence."""
 
-    # どの README か(印字の名に使う — 例 "README.md"・"doeff-hy の README")
+    # Which README (used for the printed name -- e.g. "README.md", "the README of doeff-hy")
     source: str
-    # 囲みの在る節(`## ` の見出し — 最初の見出しより前なら "")
+    # The section the fence is in (the `## ` heading -- "" if before the first heading)
     section: str
-    # 囲みの言葉(``` の後の最初の語)
+    # The fence's language (the first word after ```)
     language: str
-    # 囲みの中身(continues の囲みは、続く先の囲みの code の後に書き足した物 — 走らせる script の全部)
+    # The fence's content (for a continues fence, what was appended after the code of the fence it continues -- the whole script to run)
     code: str
-    # 囲みの始まりの行(1 から数える)
+    # The line where the fence starts (counted from 1)
     line: int
-    # 言葉の後の語
+    # Words after the language
     words: tuple[str, ...] = ()
-    # continues の囲みが続く先の囲みの始まりの行(continues でないか、続く先が無ければ None)
+    # The start line of the fence that a continues fence continues (None if not continues, or if there is nothing to continue)
     continues_from: int | None = None
 
     @property
     def name(self) -> str:
-        """落ちた事を言う文で、読み手が README の囲みを探し当てるための名。"""
-        return f"{self.source}:{self.line}({self.section} の {self.language})"
+        """A name for a sentence saying something failed, so the reader can find the README fence."""
+        return f"{self.source}:{self.line}({self.language} in {self.section})"
 
     @property
     def file(self) -> str | None:
-        """`file=<名>` の名(無ければ None)。"""
+        """The name of `file=<name>` (None if absent)."""
         return next((word[len("file=") :] for word in self.words if word.startswith("file=")), None)
 
     def stated_output(self) -> list[str]:
-        """行の末尾の注記の列 — 例が印字すると言う物。"""
+        """The sequence of annotations at line ends -- what the example says it prints."""
         pattern = _STATED_OUTPUT.get(self.language)
         if pattern is None:
             return []
@@ -111,7 +111,7 @@ class Example:
         ]
 
     def written_as(self) -> str | None:
-        """例の dir に書く file の名(書かない囲みは None)。"""
+        """The name of the file written to the example dir (None for a fence that is not written)."""
         if self.language in RUNNERS and EXCERPT not in self.words:
             return self.file or f"readme_example_{self.line}{RUNNERS[self.language].suffix}"
         if self.language == SHELL and RUN in self.words:
@@ -119,21 +119,21 @@ class Example:
         return None
 
     def runs(self) -> bool:
-        """走らせて注記と比べる囲みか。"""
+        """Whether this is a fence that is run and compared with its annotations."""
         if self.written_as() is None:
             return False
         return self.file is None or bool(self.stated_output())
 
     def problems(self) -> list[str]:
-        """約束に合わない所(合えば空)。"""
+        """The places that do not follow the conventions (empty if it follows them)."""
         return list(self._problems())
 
     def _problems(self) -> Iterator[str]:
-        """problems の中身 — 約束の 1 条ごとに、合わなければその条を言う文を出す。"""
+        """The content of problems -- for each convention, emit a sentence naming the convention if it is not followed."""
         if self.language not in RUNNERS and self.language not in SHOWN_ONLY:
             yield (
-                f"{self.name} の言葉が、走らせる言葉({sorted(RUNNERS)})にも走らせない言葉"
-                f"({sorted(SHOWN_ONLY)})にも無い — 言葉を直すか、走らせない言葉なら SHOWN_ONLY に足す"
+                f"the language of {self.name} is neither a run language ({sorted(RUNNERS)}) nor"
+                f" a not-run language ({sorted(SHOWN_ONLY)}) -- fix the language, or if it is not run, add it to SHOWN_ONLY"
             )
         unknown = [
             word
@@ -142,42 +142,41 @@ class Example:
         ]
         if unknown:
             yield (
-                f"{self.name} の言葉の後に、知らない語 {unknown} が在る"
-                f"(書ける語: file=<名>・{EXCERPT}・{RUN}・{CONTINUES})"
+                f"{self.name} has an unknown word {unknown} after the language"
+                f" (allowed words: file=<name>, {EXCERPT}, {RUN}, {CONTINUES})"
             )
         if RUN in self.words and self.language != SHELL:
-            yield f"{self.name} の {RUN} は {SHELL} の囲みだけに書ける"
+            yield f"{RUN} of {self.name} can be written only on a {SHELL} fence"
         if EXCERPT in self.words and (self.file is not None or RUN in self.words):
-            yield f"{self.name} の {EXCERPT} は走らせない囲みなので、file= とも {RUN} とも書けない"
+            yield f"{EXCERPT} of {self.name} is a fence that is not run, so it cannot be written with file= or {RUN}"
         if CONTINUES in self.words:
             if self.language not in RUNNERS or self.file is not None or EXCERPT in self.words:
                 yield (
-                    f"{self.name} の {CONTINUES} は python か hy の囲みに書き、file= とも {EXCERPT} とも"
-                    "書けない(上の script に書き足して走らせる囲み)"
+                    f"{CONTINUES} of {self.name} is written on a python or hy fence, and cannot be written with file= or"
+                    f" {EXCERPT} (a fence that is appended to the script above and run)"
                 )
             elif self.continues_from is None:
                 yield (
-                    f"{self.name} の {CONTINUES} の上に、続く先の {self.language} の囲み(file= も {EXCERPT} も"
-                    "無い script)が無い"
+                    f"{self.name}: above {CONTINUES} there is no {self.language} fence to continue into (a script with neither file= nor {EXCERPT})"
                 )
         if self.file is not None and (
             self.language not in RUNNERS or not _FILE_NAME.fullmatch(self.file)
         ):
-            yield f"{self.name} の file={self.file} は、python か hy の囲みに、dir を含まない名で書く"
+            yield f"file={self.file} of {self.name} must be on a python or hy fence, with a name that contains no dir"
         if self.runs() and not self.stated_output():
             yield (
-                f"{self.name} に、印字する値の注記が無い — 何を確かめたかが無いので、"
-                "`print(x)  # 値`(Hy は `(print x)  ; 値`・bash は `命令  # 出力に在る文`)の形で書く"
+                f"{self.name} has no annotation of the printed value -- nothing is checked, so"
+                " write it in the form `print(x)  # value` (Hy `(print x)  ; value`, bash `command  # text in the output`)"
             )
 
 
 def _info(fence: re.Match[str]) -> tuple[str, ...]:
-    """囲みの ``` の後の語の列(言葉が無ければ空の言葉 1 つ)。"""
+    """The sequence of words after the ``` of a fence (one empty language if there is no language)."""
     return tuple(fence["info"].split()) or ("",)
 
 
 def fences(text: str, source: str) -> list[Example]:
-    """README の本文の囲みを上から順に読む(continues の囲みは、続く先の囲みの code を頭に足して読む)。"""
+    """Read the fences of the README body from the top (a continues fence is read with the code of the fence it continues put at the head)."""
     sections = [(found.start(), found["title"]) for found in _SECTION.finditer(text)]
     read: list[Example] = []
     for fence in _FENCE.finditer(text):
@@ -200,7 +199,7 @@ def fences(text: str, source: str) -> list[Example]:
 
 
 def _continued(above: Sequence[Example], language: str) -> Example | None:
-    """continues の囲みが続く先 — 同じ言葉の 1 つ上の囲みが script(file= も excerpt も無い)なら、それ。"""
+    """What a continues fence continues -- the nearest fence above with the same language, if it is a script (neither file= nor excerpt)."""
     same = next((example for example in reversed(above) if example.language == language), None)
     if same is None or same.file is not None or EXCERPT in same.words:
         return None
@@ -208,17 +207,17 @@ def _continued(above: Sequence[Example], language: str) -> Example | None:
 
 
 def write(example: Example, directory: Path) -> Path:
-    """囲みを例の dir の file に書く(書かない囲みには使わない)。"""
+    """Write the fence to a file in the example dir (not used for fences that are not written)."""
     name = example.written_as()
     if name is None:
-        raise ValueError(f"{example.name} は file に書かない囲み")
+        raise ValueError(f"{example.name} is a fence that is not written to a file")
     path = directory / name
     path.write_text(example.code, encoding="utf-8")
     return path
 
 
 def command(example: Example, script: Path, python: Path) -> list[str]:
-    """書いた囲みを走らせる命令。"""
+    """The command that runs a written fence."""
     if example.language == SHELL:
         return ["bash", "-e", script.name]
     return [str(python), *RUNNERS[example.language].arguments, script.name]
@@ -233,13 +232,13 @@ def run(
     environment: Mapping[str, str] | None = None,
     wrap: Callable[[list[str]], list[str]] = list,
 ) -> subprocess.CompletedProcess[str]:
-    """囲みを directory の file に書き、cwd を directory にして走らせる。
+    """Write the fence to a file in the directory and run it with cwd set to the directory.
 
-    python の dir を PATH の頭に置く(bash の囲みの `pytest`・`python` が、その interpreter の環境の物になる)。
-    environment が無ければ、この process の環境を継ぐ。wrap は命令の前に置く物(検の `env …` など)を足す。
+    Put python's dir at the head of PATH (so `pytest` and `python` in a bash fence are those of that interpreter's environment).
+    If environment is None, inherit this process's environment. wrap adds what goes before the command (such as the check's `env ...`).
     """
     script = write(example, directory)
-    inherited = os.environ if environment is None else environment  # noqa: DOEFF004 — 道具が子の process へ今の環境を引き継ぐ 1 か所
+    inherited = os.environ if environment is None else environment  # noqa: DOEFF004 — the one place where the tool passes the current environment to the child process
     path = os.pathsep.join(filter(None, (str(python.parent), inherited.get("PATH"))))
     return subprocess.run(
         wrap(command(example, script, python)),
@@ -253,23 +252,23 @@ def run(
 
 
 def mismatch(example: Example, result: subprocess.CompletedProcess[str]) -> str | None:
-    """走らせた例が落ちたか、注記と違う物を印字したかを言う文(合えば None)。"""
+    """A sentence saying the example failed or printed something different from its annotations (None if it matches)."""
     if result.returncode != 0:
         return (
-            f"{example.name} が終了コード {result.returncode} で落ちた — 例を今の使い方に直す\n"
+            f"{example.name} failed with exit code {result.returncode} — update the example to the current usage\n"
             f"{result.stdout}{result.stderr}"
         )
     if example.language == SHELL:
         output = result.stdout + result.stderr
         missing = [stated for stated in example.stated_output() if stated not in output]
         if missing:
-            return f"{example.name} の出力に、注記の文 {missing} が無い — 出力\n{output}"
+            return f"{example.name}: the output lacks the annotated text {missing} — output\n{output}"
         return None
     printed = result.stdout.splitlines()
     if printed != example.stated_output():
         return (
-            f"{example.name} の印字が print の行の注記と違う — 注記 {example.stated_output()}・"
-            f"印字 {printed}"
+            f"{example.name}: the printed output differs from the annotation on the print line — annotation {example.stated_output()}, "
+            f"printed {printed}"
         )
     return None
 
@@ -283,9 +282,9 @@ def run_in_order(
     environment: Mapping[str, str] | None = None,
     on_result: Callable[[Example, str | None], None] = lambda _example, _failure: None,
 ) -> list[str]:
-    """1 つの README の囲みを上から順に directory で扱い、落ちた事を言う文の列を返す(全部通れば空)。
+    """Handle the fences of one README in a directory from top to bottom and return the sequence of sentences saying what failed (empty if all pass).
 
-    約束に合わない囲みは走らせずに数える。on_result は走らせた囲みごとに(落ちた事を言う文か None で)呼ぶ。
+    Fences that do not follow the conventions are counted without being run. on_result is called for each fence that was run (with a sentence saying it failed, or None).
     """
     return list(
         _failures(
@@ -303,7 +302,7 @@ def _failures(
     environment: Mapping[str, str] | None,
     on_result: Callable[[Example, str | None], None],
 ) -> Iterator[str]:
-    """run_in_order の中身 — 囲みを順に書き・走らせ、落ちた事を言う文を出す。"""
+    """The content of run_in_order -- write and run the fences in order and emit sentences saying what failed."""
     for example in examples:
         problems = example.problems()
         if problems:
@@ -318,7 +317,7 @@ def _failures(
                 example, run(example, directory, python, timeout, environment=environment)
             )
         except subprocess.TimeoutExpired:
-            failure = f"{example.name} が {timeout} 秒で終わらなかった"
+            failure = f"{example.name} did not finish in {timeout} seconds"
         on_result(example, failure)
         if failure is not None:
             yield failure

@@ -117,7 +117,7 @@ def test_probe_reds_become_report_lines_and_consumer_fixtures_are_unmeasured(
     ), lines[0]
     assert (
         lines[1]
-        == f"{tool.COUNT_PREFIX}赤 1 行(消費者 1 個・針のある 1 個・測った検 2 本・測らない検 2 本)"
+        == f"{tool.COUNT_PREFIX}赤 1 lines (1 consumers, 1 with a probe, 2 checks measured, 2 unmeasured)"
     )
 
 
@@ -131,7 +131,7 @@ def test_probe_that_does_not_collect_is_red(tmp_path: Path) -> None:
     assert len(lines) == 2, lines
     assert lines[0].startswith(f"{tool.REPORT_PREFIX}dotfiles "), lines[0]
     assert "name_that_was_removed" in lines[0], lines[0]
-    assert lines[1].startswith(f"{tool.COUNT_PREFIX}赤 1 行"), lines[1]
+    assert lines[1].startswith(f"{tool.COUNT_PREFIX}赤 1 lines"), lines[1]
 
 
 def test_no_consumer_with_a_probe_is_red(tmp_path: Path) -> None:
@@ -143,9 +143,9 @@ def test_no_consumer_with_a_probe_is_red(tmp_path: Path) -> None:
     lines = tool.report_lines(tmp_path)
 
     assert lines[0].startswith(
-        f"{tool.REPORT_PREFIX}(消費者なし) - docs/adr/test_doeff_adr_api_follows.py — "
+        f"{tool.REPORT_PREFIX}(no consumer) - docs/adr/test_doeff_adr_api_follows.py — "
     ), lines
     assert (
         lines[1]
-        == f"{tool.COUNT_PREFIX}赤 1 行(消費者 1 個・針のある 0 個・測った検 0 本・測らない検 0 本)"
+        == f"{tool.COUNT_PREFIX}赤 1 lines (1 consumers, 0 with a probe, 0 checks measured, 0 unmeasured)"
     )

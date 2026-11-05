@@ -198,9 +198,9 @@ def differences(root: Path = ROOT, table: Path = TABLE) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     """List the factories with the table's verdicts, or check the two agree (``--check``)."""
     parser = argparse.ArgumentParser(
-        description="引数の無い handler の factory の一覧(ADR-DOE-API-002)"
+        description="List of handler factories that take no arguments (ADR-DOE-API-002)"
     )
-    parser.add_argument("--check", action="store_true", help="既知の表と突き合わせる")
+    parser.add_argument("--check", action="store_true", help="compare against the known table")
     arguments = parser.parse_args(argv)
     if arguments.check:
         problems = differences()
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     known = read_table()
     for factory in census():
         row = known.get(factory.key)
-        verdict = "(表に無い)" if row is None else f"{row['verdict']} — {row['why']}"
+        verdict = "(not in the table)" if row is None else f"{row['verdict']} — {row['why']}"
         print(f"{factory.key}\t{verdict}")
     return 0
 

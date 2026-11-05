@@ -1,52 +1,52 @@
 #!/bin/sh
-# packages/doeff-cluster の dir で doeff-linter を走らせる(commit の hook と make lint-doeff の両方が呼ぶ 1 か所)。
+# Run doeff-linter in the packages/doeff-cluster dir (one place called by both the commit hook and make lint-doeff).
 #
-# なぜ dir に入るか: doeff-linter は今の dir から上へ [tool.doeff-linter] を探す。doeff の根で走る hook と make lint-doeff は根の
-# pyproject.toml を読み、この package の設定(root = "src"・architecture = "architecture.hy")と service・不変条件の宣言を読まない。
+# Why enter the dir: doeff-linter looks upward from the current dir for [tool.doeff-linter]. The hook and make lint-doeff, which run at doeff's root,
+# read the root pyproject.toml, and do not read this package's settings (root = "src", architecture = "architecture.hy") or the service and invariant declarations.
 #
-# 使い方:
-#   scripts/lint-doeff-cluster.sh                     package を丸ごと当てる(make lint-doeff)
-#   scripts/lint-doeff-cluster.sh <repo の根からの path>…  変えた file を当てる(commit の hook — pre-commit が path を渡す)
-# file を渡す時は architecture.hy を必ず足す: 宣言の規則(DOEFF163 など)は宣言の file を渡した時だけ判じるので、:invariants を
-# 消す commit を止めるには宣言も当てる必要がある(2026-10-01 に確かめた — coordinator.hy だけを渡すと何も出ない)。
+# Usage:
+#   scripts/lint-doeff-cluster.sh                     apply to the whole package (make lint-doeff)
+#   scripts/lint-doeff-cluster.sh <path from repo root>...  apply to changed files (commit hook -- pre-commit passes the paths)
+# When passing files, always add architecture.hy: the declaration rules (DOEFF163 etc.) are judged only when the declaration file is passed, so to stop a commit that
+# removes :invariants the declaration must be applied too (confirmed 2026-10-01 -- passing only coordinator.hy outputs nothing).
 set -eu
 
-# 置き場は script の在り処から求める(make -f で別の dir から呼ばれても package を指す)。
+# The location is derived from where the script is (it points at the package even when called from another dir with make -f).
 TOP="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE="packages/doeff-cluster"
 
-# warning(major)は linter が 0 で終わるので、規則 × file の基点と比べて増えたら赤・減ったのに基点を下げていなければ赤
-# (scripts/doeff_cluster_warning_baseline.py)。error は linter の終了コードで止める。
+# warning (major) exits 0 in the linter, so compare with the rule x file baseline: red if it grew, and red if it fell but the baseline was not lowered
+# (scripts/doeff_cluster_warning_baseline.py). error is stopped by the linter's exit code.
 BASELINE_CHECK="$TOP/scripts/doeff_cluster_warning_baseline.py"
 
 if [ "$#" -eq 0 ]; then
-  # make lint-doeff: 探し道の linter(手で入れた物)で package を丸ごと当てる。
+  # make lint-doeff: apply the whole package with the linter on the search path (the one installed by hand).
   if ! LINTER="$(command -v doeff-linter)"; then
-    echo "doeff-linter が未導入のため $PACKAGE を検査できません。成功として扱いません。" >&2
-    echo "導入: make sync で .venv/bin/doeff-linter が入る — 「uv run make lint-doeff」 で走らせる(uv run が .venv/bin を PATH の先に置く)" >&2
+    echo "doeff-linter is not installed, so $PACKAGE cannot be checked. This is not treated as success." >&2
+    echo "To install: make sync puts .venv/bin/doeff-linter in place -- run with 'uv run make lint-doeff' (uv run puts .venv/bin at the front of PATH)" >&2
     exit 127
   fi
   (cd "$TOP/$PACKAGE" && "$LINTER" --no-log)
-  # warning の基点の比べにも同じ linter を渡す — 渡さないと比べの script は uv run の探し道で linter を引き直し、uv run が
-  # .venv/bin を前に置くので、手で入れた linter で error を判じ .venv の linter で warning を数える 2 つの版の比べになる
-  # (dev の依存に doeff-linter が入った 8ea159c5e から、make lint-doeff の入口の検の偽の linter も比べで本物に替わっていた)。
+  # Pass the same linter to the baseline comparison too -- if not, the comparison script re-resolves the linter on uv run's search path, and since uv run
+  # puts .venv/bin in front, it becomes a comparison of two versions: errors judged by the hand-installed linter and warnings counted by the .venv linter
+  # (since 8ea159c5e, when doeff-linter entered the dev dependencies, even the fake linter of the make lint-doeff entry check was replaced by the real one in the comparison).
   exec uv run --no-project python "$BASELINE_CHECK" --root "$TOP" --linter "$LINTER" check
 fi
 
-# commit の hook: 探し道の linter でなく、HEAD の組み立ての入力の鍵の binary(land-arm の開発版 → 断面の置き場)で測る
-# (scripts/doeff_linter_locked.py)— warning の基点は版を持たないので、木の linter で数えないと版の差で
-# 赤・緑が黙って変わる。置き場に無ければ「測れない」と名指して通す(hook の中では組まない — 根の Python の項と同じ)。
+# commit hook: measure not with the search-path linter but with the binary of the key of HEAD's build inputs (land-arm dev build -> snapshot store)
+# (scripts/doeff_linter_locked.py) -- the warning baseline has no version, so if not counted with the tree's linter, red and green
+# silently change with the version difference. If absent from the stores, name it "unmeasurable" and pass (nothing is built inside the hook -- the same as the root Python entry).
 if ! LINTER="$(cd "$TOP" && uv run --no-project python scripts/doeff_linter_locked.py which)"; then
-  echo "doeff-linter($PACKAGE): 測れない — HEAD の linter の binary が置き場に無い(上の 1 行)。hook の中では組まない" \
-    "— land-arm が main の linter を組み直すのを待つか、main を取り込む" >&2
+  echo "doeff-linter($PACKAGE): 測れない (unmeasurable) -- HEAD's linter binary is not in the stores (see the line above). Nothing is built inside the hook" \
+    "-- wait for land-arm to rebuild main's linter, or merge main" >&2
   exit 0
 fi
 
-# 基点の比べは repo の根からの path をそのまま受ける(package の dir への読み替えは比べの側が持つ)ので、下で path を直す前に当てる。
+# The baseline comparison takes paths from the repo root as they are (the side that compares owns the translation to the package dir), so apply it before fixing the paths below.
 uv run --no-project python "$BASELINE_CHECK" --root "$TOP" --linter "$LINTER" check "$@"
 
-# repo の根からの path を package の dir からの path に直す(package の外の path は捨てる — pre-commit の files が絞るが、手で
-# 呼んだ時のため)。architecture.hy は最後に 1 回だけ足す(渡された分は捨てて重ねない)。
+# Translate paths from the repo root to paths from the package dir (paths outside the package are dropped -- pre-commit's files narrows them, but this
+# is for when called by hand). Add architecture.hy only once at the end (what was passed is dropped, not stacked).
 for path in "$@"; do
   shift
   case "$path" in

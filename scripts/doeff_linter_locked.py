@@ -1,22 +1,22 @@
-"""doeff の commit の hook が呼ぶ doeff-linter を、基点の file が名乗る鍵と同じ組み立ての入力から組まれた binary に固定する入口。
+"""An entry point that pins the doeff-linter called by doeff's commit hook to a binary built from the same build inputs as the key the baseline file declares.
 
-何が壊れていたか: hook は探し道の `doeff-linter`(zeus では各席が手で入れる ~/.cargo/bin の物)を呼び、その版が基点の版と違えば
-「測れない」と名乗って通った。linter の source を変える便のたびに、誰かが共有の binary を入れ直すまで hook の linter の項は
-何も止めなかった(2026-10-02 の夕方)。land-arm は main の linter が変わるたびに開発版を自動で組み直しているが、hook はそれを
-見ていなかった。
+What was broken: the hook called `doeff-linter` on the search path (on zeus, each seat installs it by hand in ~/.cargo/bin), and if its version differed from the baseline's it
+declared itself "unmeasurable" and passed. Every time a change touched the linter's source, the hook's linter item stopped nothing until someone
+reinstalled the shared binary (the evening of 2026-10-02). land-arm automatically rebuilds the dev build whenever main's linter changes, but the hook did
+not look at it.
 
-鍵 = 組み立ての入力だけの木の組: packages/doeff-linter と、その Cargo.toml の path 依存(dependencies・build-dependencies)の
-`src`・`data`(include_str! で取り込む JSON)・`Cargo.toml`・`Cargo.lock`・`build.rs` の git の object id を並べた sha256。tests や
-README だけの変更では動かず、path 依存(doeff-indexer)の src の変更では動く。
+Key = a sha256 over a tree set of build inputs only: the git object ids of packages/doeff-linter and the path dependencies of its Cargo.toml (dependencies, build-dependencies),
+namely `src`, `data` (JSON pulled in with include_str!), `Cargo.toml`, `Cargo.lock`, and `build.rs`. It does not move for changes to tests or
+READMEs only, and does move for changes to the src of a path dependency (doeff-indexer).
 
-探す順(hook の中では組まない — 冷えた組み立ては 3〜5 分で commit を待たせ、land-arm の rustc と重なる):
-  1. land-arm の開発版(~/.local/share/doeff-linter-dev)— 記録 installed.json の commit から鍵を計算する。
-  2. 断面の置き場(~/.cache/doeff-linter-snapshots — packages/doeff-linter/scripts/linter_snapshot.py の既定)— dir の名の sha から。
-  3. どちらにも無ければ None(呼び手が「測れない」と名指す)。
-組んだ時に鍵を書いてある置き場(記録の欄 input_key・断面の dir の file input_key — land-arm が `key <commit>` の口で聞いて書く)は、
-git を引かずにその鍵で照らす — doeff の日次の lint の段は .git の無い木(remote_check の写し)で走るため(#2906 の 4 便目)。
-置き場は HOME の下の決まった場所で、環境変数では替えない(DOEFF004 — 検は HOME を一時の dir に向けて差し替える)。断面の道具を
-XDG_CACHE_HOME や DOEFF_LINTER_SNAPSHOT_DIR で別の場所に置いた機体では断面が見つからず「測れない」になる(黙って別の版で比べない)。
+Search order (nothing is built inside the hook -- a cold build keeps the commit waiting 3-5 minutes and overlaps land-arm's rustc):
+  1. The land-arm dev build (~/.local/share/doeff-linter-dev) -- compute the key from the commit in the record installed.json.
+  2. The snapshot store (~/.cache/doeff-linter-snapshots -- the default of packages/doeff-linter/scripts/linter_snapshot.py) -- from the sha in the dir name.
+  3. If neither has it, None (the caller names it "unmeasurable").
+Stores where the key was written at build time (the record field input_key, the file input_key in a snapshot dir -- land-arm asks through the `key <commit>` entry and writes it) are
+checked against that key without consulting git -- because doeff's daily lint stage runs on a tree without .git (a copy made by remote_check) (4th change of #2906).
+The stores are at fixed places under HOME and are not replaced by environment variables (DOEFF004 -- tests point HOME at a temporary dir). On a machine where the snapshot tool was placed elsewhere with
+XDG_CACHE_HOME or DOEFF_LINTER_SNAPSHOT_DIR, the snapshot is not found and the result is "unmeasurable" (it does not silently compare against a different version).
 """
 
 from __future__ import annotations
@@ -37,16 +37,16 @@ INPUT_ENTRIES: tuple[str, ...] = ("src", "data", "Cargo.toml", "Cargo.lock", "bu
 KEY_PREFIX: str = "doeff-linter の組み立ての入力 "
 BIN_NAME: str = "doeff-linter"
 DEV_RECORD: str = "installed.json"
-#: 組んだ時に書いた鍵 — land-arm の記録(installed.json)の欄の名と、断面の dir の中の file の名。書いてあれば git を引かずに照らせる
-#: (日次の段の木は .git の無い写し — #2906)。書いていない置き場の物は、今どおり記録の commit から git で計算する。
+#: Keys written at build time -- the field name in land-arm's record (installed.json) and the file name inside a snapshot dir. If written, the check needs no git
+#: (the tree of the daily stage is a copy without .git -- #2906). For stores that did not write one, the key is computed with git from the recorded commit as before.
 RECORDED_KEY: str = "input_key"
-# linter の `--version` が名乗る組んだ commit(build.rs の DOEFF_LINTER_COMMIT)。+dirty の付いた物は commit の鍵にしない。
+# The built commit that the linter's `--version` declares (DOEFF_LINTER_COMMIT in build.rs). A +dirty one is not made a commit key.
 BUILT_COMMIT = re.compile(r"\(doeff ([0-9a-f]{40})\)")
 
 
 @dataclass(frozen=True)
 class Located:
-    """鍵の合った binary と、その出どころ(land-arm の開発版 / 断面の置き場)— 名指しの文に載せるため。"""
+    """A binary whose key matched and where it came from (land-arm dev build / snapshot store) -- to put in the naming sentence."""
 
     binary: Path
     source: str
@@ -54,7 +54,7 @@ class Located:
 
 @dataclass(frozen=True)
 class Candidate:
-    """置き場に在る binary・それを組んだ commit・組んだ時に書いた鍵(書いていなければ None)・出どころ。"""
+    """A binary in a store, the commit it was built from, the key written at build time (None if not written), and where it came from."""
 
     binary: Path
     commit: str
@@ -63,12 +63,12 @@ class Candidate:
 
 
 def _git(top: Path, args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    """repo の根で git を撃つため(doeff の hook は doeff の repo の中でだけ動くので、git が渡す GIT_DIR も同じ repo を指す)。"""
+    """To run git at the repo root (doeff's hook runs only inside doeff's repo, so the GIT_DIR git passes points at the same repo)."""
     return subprocess.run(["git", *args], cwd=top, input=stdin, capture_output=True, text=True, check=False)
 
 
 def crates(top: Path, commit: str) -> tuple[str, ...] | None:
-    """commit の linter の crate と、その Cargo.toml の path 依存の dir(repo の根から)。commit か Cargo.toml を git が知らなければ None。"""
+    """The linter crate of a commit and the dirs of the path dependencies of its Cargo.toml (from the repo root). None if git does not know the commit or Cargo.toml."""
     shown: subprocess.CompletedProcess[str] = _git(top, ["show", f"{commit}:{CRATE}/Cargo.toml"])
     if shown.returncode != 0:
         return None
@@ -84,7 +84,7 @@ def crates(top: Path, commit: str) -> tuple[str, ...] | None:
 
 
 def input_key(top: Path, commit: str) -> str | None:
-    """commit の組み立ての入力の鍵。commit を git が知らなければ None(鍵にしない — 黙って別の鍵と照らさない)。"""
+    """The key of a commit's build inputs. None if git does not know the commit (not made a key -- never silently compared against a different key)."""
     found: tuple[str, ...] | None = crates(top, commit)
     if found is None:
         return None
@@ -95,21 +95,21 @@ def input_key(top: Path, commit: str) -> str | None:
     answers: list[str] = checked.stdout.splitlines()
     if checked.returncode != 0 or len(answers) != len(specs):
         return None
-    # 無い入口(build.rs の無い crate など)は「無い」として鍵に入れる — 後から足されれば鍵が動く。
+    # An entry that is absent (such as a crate with no build.rs) goes into the key as "absent" -- the key moves if it is added later.
     objects: list[str] = [answer if not answer.endswith("missing") else "-" for answer in answers]
     lines: str = "\n".join(f"{spec} {obj}" for spec, obj in zip(specs, objects, strict=True))
     return KEY_PREFIX + hashlib.sha256(lines.encode("utf-8")).hexdigest()[:40]
 
 
 def binary_key(top: Path, binary: Path) -> str:
-    """binary の鍵: `--version` が名乗る commit の組み立ての入力の鍵。名乗らない・+dirty・git が知らない commit の時は `--version` の
-    1 行目そのもの(どの置き場の鍵とも合わず「測れない」になる — 黙って別の版で比べない)。"""
+    """The key of a binary: the key of the build inputs of the commit that `--version` declares. When it declares none, is +dirty, or the commit is unknown to git, the first
+    line of `--version` itself (matches no store's key, so it becomes "unmeasurable" -- never silently compared against a different version)."""
     completed: subprocess.CompletedProcess[str] = subprocess.run(
         [str(binary), "--version"], cwd=top, capture_output=True, text=True, check=False,
     )
     lines: list[str] = completed.stdout.strip().splitlines()
     if completed.returncode != 0 or not lines:
-        raise SystemExit(f"{binary} の版を読めなかった(rc {completed.returncode}): {completed.stderr.strip()[:300]}")
+        raise SystemExit(f"could not read the version of {binary} (rc {completed.returncode}): {completed.stderr.strip()[:300]}")
     named: str = lines[0].strip()
     built = BUILT_COMMIT.search(named)
     key: str | None = input_key(top, built.group(1)) if built is not None and "+dirty" not in named else None
@@ -117,17 +117,17 @@ def binary_key(top: Path, binary: Path) -> str:
 
 
 def dev_dir() -> Path:
-    """land-arm の開発版の置き場。"""
+    """The store of the land-arm dev build."""
     return Path.home() / ".local" / "share" / "doeff-linter-dev"
 
 
 def snapshot_dir() -> Path:
-    """断面の置き場(packages/doeff-linter/scripts/linter_snapshot.py の既定)。"""
+    """The snapshot store (the default of packages/doeff-linter/scripts/linter_snapshot.py)."""
     return Path.home() / ".cache" / "doeff-linter-snapshots"
 
 
 def _dev_candidate() -> list[Candidate]:
-    """land-arm の開発版(記録の commit と binary が揃っている時だけ)。"""
+    """The land-arm dev build (only when the recorded commit and the binary are both present)."""
     record: Path = dev_dir() / DEV_RECORD
     binary: Path = dev_dir() / BIN_NAME
     if not (record.is_file() and binary.is_file()):
@@ -136,11 +136,11 @@ def _dev_candidate() -> list[Candidate]:
     if not isinstance(raw, dict) or not isinstance(commit := raw.get("commit"), str):
         return []
     recorded: object = raw.get(RECORDED_KEY)
-    return [Candidate(binary, commit, recorded if isinstance(recorded, str) else None, "land-arm の開発版")]
+    return [Candidate(binary, commit, recorded if isinstance(recorded, str) else None, "land-arm dev build")]
 
 
 def _snapshot_candidates() -> list[Candidate]:
-    """断面の置き場の binary(dir の名 = 40 桁の sha)— 新しい順(よく当たる物から照らす)。"""
+    """Binaries in the snapshot store (dir name = 40-digit sha) -- newest first (check the likely hits first)."""
     store: Path = snapshot_dir()
     if not store.is_dir():
         return []
@@ -148,18 +148,18 @@ def _snapshot_candidates() -> list[Candidate]:
     return [
         Candidate(d / BIN_NAME, d.name,
                   (d / RECORDED_KEY).read_text(encoding="utf-8").strip() if (d / RECORDED_KEY).is_file() else None,
-                  "断面の置き場")
+                  "snapshot store")
         for d in sorted(built, key=lambda d: (d / BIN_NAME).stat().st_mtime, reverse=True)
     ]
 
 
 def candidate_key(top: Path, candidate: Candidate) -> str | None:
-    """置き場の binary の鍵: 組んだ時に書いた鍵があればそれ(git を引かない)、無ければ組んだ commit から git で計算する。"""
+    """The key of a binary in a store: the key written at build time if present (no git), otherwise computed with git from the built commit."""
     return candidate.recorded if candidate.recorded is not None else input_key(top, candidate.commit)
 
 
 def locate(top: Path, key: str) -> Located | None:
-    """鍵の合った binary を、land-arm の開発版 → 断面の置き場の順に探す(組まない)。無ければ None。"""
+    """Search for a binary whose key matches, in the order land-arm dev build -> snapshot store (nothing is built). None if absent."""
     for candidate in (*_dev_candidate(), *_snapshot_candidates()):
         if candidate_key(top, candidate) == key:
             return Located(candidate.binary, candidate.source)
@@ -167,37 +167,37 @@ def locate(top: Path, key: str) -> Located | None:
 
 
 def searched() -> str:
-    """名指しの文に載せる、探した置き場。"""
-    return f"land-arm の開発版 {dev_dir()}・断面の置き場 {snapshot_dir()}"
+    """The stores searched, to put in the naming sentence."""
+    return f"land-arm dev build {dev_dir()}, snapshot store {snapshot_dir()}"
 
 
 def dev_key(top: Path) -> str | None:
-    """land-arm の開発版の鍵(開発版が無い・記録の commit を git が知らない時は None)— 「取り込めば測れる」を言うため。"""
+    """The key of the land-arm dev build (None if there is no dev build or git does not know the recorded commit) -- to say "it becomes measurable once merged"."""
     found: list[Candidate] = _dev_candidate()
     return candidate_key(top, found[0]) if found else None
 
 
 def main(argv: list[str]) -> int:
-    """2 つの口(repo の根で呼ぶ・commit の既定は HEAD):
-    `which [<commit>]` — commit の組み立ての入力の鍵の binary の path を 1 行出す(shell の hook が呼ぶ —
-    scripts/lint-doeff-cluster.sh)。無ければ理由を出して 3(呼び手が「測れない」と名指す)。
-    `key [<commit>]` — commit の組み立ての入力の鍵を 1 行出す(land-arm が組んだ版の記録に書く — 鍵の決め方をここ 1 か所に置く)。
-    git が commit を知らなければ 3。"""
+    """Two entries (called at the repo root; the commit defaults to HEAD):
+    `which [<commit>]` -- print on one line the path of the binary whose key matches the commit's build inputs (called by the shell hook --
+    scripts/lint-doeff-cluster.sh). If absent, print the reason and exit 3 (the caller names it "unmeasurable").
+    `key [<commit>]` -- print on one line the key of the commit's build inputs (written into the record of the version land-arm built -- the key's definition lives in this one place).
+    Exit 3 if git does not know the commit."""
     if argv[:1] not in (["which"], ["key"]) or len(argv) > 2:
-        print("使い方: doeff_linter_locked.py which|key [<commit>]", file=sys.stderr)
+        print("usage: doeff_linter_locked.py which|key [<commit>]", file=sys.stderr)
         return 2
     top: Path = Path.cwd()
     commit: str = argv[1] if len(argv) == 2 else "HEAD"
     key: str | None = input_key(top, commit)
     if argv[0] == "key":
         if key is None:
-            print(f"{commit} の linter の組み立ての入力を git が読めない", file=sys.stderr)
+            print(f"git cannot read the build inputs of the linter at {commit}", file=sys.stderr)
             return 3
         print(key)
         return 0
     located: Located | None = locate(top, key) if key is not None else None
     if located is None:
-        print(f"{commit} の linter の組み立ての入力({key})の binary が {searched()} に無い", file=sys.stderr)
+        print(f"no binary for the linter's build inputs ({key}) at {commit} in {searched()}", file=sys.stderr)
         return 3
     print(located.binary)
     return 0

@@ -251,7 +251,7 @@ def test_a_broken_stored_wheel_is_named_and_built_again(backend: ModuleType, tmp
     compile_second = FakeCompile(second)
     again = backend.stored_wheel(second, None, compile_second)
     err = capsys.readouterr().err
-    assert "保存先の wheel が壊れている" in err and str(stored) in err, err
+    assert "stored wheel is corrupt" in err and str(stored) in err, err
     assert (compile_second.calls, again.built) == (1, True)
     assert backend._wheel_problem(again.path) is None
 

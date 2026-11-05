@@ -1,23 +1,23 @@
-;;; scripts の file の層の宣言。
+;;; Layer declarations for the files under scripts.
 ;;;
-;;; 今は、規則の母集団から外す層 1 つだけを置く(packages/doeff-linter/scripts/architecture.hy・tools/architecture.hy と同じ形)。
-;;; doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い architecture.hy から決める(#2811)。ここで外すのは下の
-;;; 名指しの module だけで、この dir のほかの file の母集団は変わらない(今までどおり DOEFF004 が当たる)。
+;;; For now this holds only one layer that is excluded from the rule population (same form as packages/doeff-linter/scripts/architecture.hy and tools/architecture.hy).
+;;; doeff-linter decides the population of per-statement Python rules from the nearest architecture.hy found walking up from the file (#2811). Only the
+;;; named module below is exempted here; the population for the other files in this dir is unchanged (DOEFF004 still applies as before).
 ;;;
-;;; changed-tests = 変えた所の検の入口 run_changed_tests(PEP 723 の script・依存は空 = stdlib だけ)。書き手が登記の前に
-;;;   `uv run --script` で走らせ、repo の Python の環境が無くても動く — doeff の Program の外で走り、doeff の handler(ReadEnvironment に
-;;;   答える subprocess_handler)を import できない。この module の環境の読みは入口の 1 か所(main(os.environ))だけで、下の関数へは
-;;;   写像として渡す(下の関数は os.environ を読まない)。
-;;;   - 外す規則: DOEFF004(os.environ を直に読む・参照する)— 名指しの module(run_changed_tests)に限る(dir 丸ごとにしない)。
-;;;   - 禁じる import: doeff の module。stdlib だけの約束が崩れると DOEFF032 が赤にする。
-;;; 決め = cisco-c8 2026-10-03 02:4x(束 A の linter_snapshot と同じ扱い — 依存に doeff-core-effects を足して入口の作りを変えない)。
-;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり入口の読みに当たる。この file を消すと、この dir の file の母集団は根の設定へ戻る。
+;;; changed-tests = run_changed_tests, the entry point that tests what changed (a PEP 723 script, with empty dependencies = stdlib only). The author runs it with
+;;;   `uv run --script` before registering, and it works without the repo's Python environment -- it runs outside a doeff Program and cannot import doeff's handlers
+;;;   (the subprocess_handler that answers ReadEnvironment). This module reads the environment in a single place, the entry point (main(os.environ)), and passes
+;;;   it down to the functions below as a mapping (the functions below do not read os.environ).
+;;;   - Exempted rule: DOEFF004 (reading or referencing os.environ directly) -- limited to the named module (run_changed_tests) (not the whole dir).
+;;;   - Forbidden imports: doeff modules. If the stdlib-only promise breaks, DOEFF032 turns red.
+;;; Decision = cisco-c8 2026-10-03 02:4x (treated the same as linter_snapshot in bundle A -- do not add doeff-core-effects to the dependencies and change the entry point's structure).
+;;; How to revert: delete the :exempt line and DOEFF004 applies to the entry point's reads again. If this file is deleted, the population for the files in this dir returns to the root settings.
 (defarchitecture doeff-scripts
   :root "."
   :layers [(layer changed-tests
-             :summary "変えた所の検の入口 — uv run --script で呼ぶ stdlib だけの script・Program の外の code"
-             :knows "git の差分・pytest の打ち切り・環境変数の写像"
-             :does-not-know "doeff の Program・effect・handler"
+             :summary "Entry point that tests what changed -- a stdlib-only script called with uv run --script, code outside a Program"
+             :knows "git diffs, pytest cutoffs, a mapping of environment variables"
+             :does-not-know "doeff Programs, effects, handlers"
              :modules [run_changed_tests]
-             :exempt [(rule DOEFF004 "PEP 723 の stdlib だけの script は doeff の Program の外で走り doeff の handler を import できない。この module の環境の読みは入口の 1 か所(main(os.environ))だけで、写像を下の関数へ渡す")]
+             :exempt [(rule DOEFF004 "A PEP 723 stdlib-only script runs outside a doeff Program and cannot import doeff's handlers. This module reads the environment in a single place, the entry point (main(os.environ)), and passes the mapping to the functions below")]
              :forbid-modules [doeff doeff_core_effects doeff_hy doeff_vm doeff_agents doeff_cluster])])

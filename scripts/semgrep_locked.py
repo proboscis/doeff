@@ -1,19 +1,19 @@
-"""doeff の commit の hook が呼ぶ semgrep を、repo の uv.lock が決める版に固定する入口。
+"""An entry point that pins the semgrep called by doeff's commit hook to the version the repo's uv.lock decides.
 
-hook が探し道の semgrep や作業木の環境の semgrep を呼ぶと、機体の入れ方と作業木の状態で版がずれる(2026-10-02 zeus: 共有の
-uv tool = 1.161.0・lock = 1.169.0。`.venv` の無い作業木では `uv run --no-sync --project <根>` が空の `.venv` をその場に作り、
-探し道の物を呼んでいた — 基点の比べは版の違いで「測れない」と名乗って通り、何も止めていなかった)。ここは uv.lock の semgrep の
-版を読み、uv の道具の置き場から `uv tool run --from semgrep==<版> semgrep` で呼ぶ。版は木の中の uv.lock だけで決まり、置き場は
-機体で 1 つ(作業木が何本あっても 1 度だけ入る・作業木に `.venv` を作らない)。
+If the hook calls the semgrep on the search path or in the working tree's environment, the version drifts with how the machine was set up and the state of the working tree (2026-10-02 zeus: the shared
+uv tool = 1.161.0, lock = 1.169.0. In a working tree without `.venv`, `uv run --no-sync --project <root>` made an empty `.venv` on the spot and
+called the search-path one -- the baseline comparison declared itself "unmeasurable" because of the version difference and passed, stopping nothing). This reads the semgrep version in uv.lock
+and calls it from uv's tool store as `uv tool run --from semgrep==<version> semgrep`. The version is decided only by the uv.lock in the tree, and the store is
+one per machine (installed only once however many working trees there are; no `.venv` is made in the working tree).
 
-使い方: uv run --no-project --python <版> python scripts/semgrep_locked.py <semgrep の引数…>(repo の根で。semgrep の答えと終了の値をそのまま返す)。
-uv.lock に semgrep が無ければ、理由を名指して 1 で止まる(探し道の物へ黙って戻らない)。素の commit の hook が呼ぶ pre-commit も同じ
-読みで版を決める(scripts/precommit_locked.py)。
+Usage: uv run --no-project --python <version> python scripts/semgrep_locked.py <semgrep arguments...> (at the repo root. Returns semgrep's output and exit value as they are).
+If uv.lock has no semgrep, name the reason and stop with 1 (never silently fall back to the search-path one). The pre-commit called by the plain commit hook decides its version
+by the same reading (scripts/precommit_locked.py).
 
-locked_version は doeff で uv.lock の版を読む 1 か所: Hy の版で測る検(ADR-DOE-HY-008 の
-locked-hy-version・packages/doeff-hy/tests/test_bytecode_guard.py)も、この file を path で読んで呼ぶ。hook は doeff の環境の外
-(`uv run --no-project`)で走るので、読み手は標準の library だけで書く。読みを変えたら、uv.lock の Hy の版で測る検が root の
-pyproject.toml の [[tool.doeff.contract-tests]] で選ばれる(tests/test_contract_table_follows_packages.py)。
+locked_version is the one place that reads the uv.lock version in doeff: the check measured by the Hy version (ADR-DOE-HY-008's
+locked-hy-version, packages/doeff-hy/tests/test_bytecode_guard.py) also reads this file by path and calls it. The hook runs outside doeff's environment
+(`uv run --no-project`), so the reader is written with only the standard library. If the reading is changed, the check measured by the Hy version in uv.lock is selected by [[tool.doeff.contract-tests]] in the root
+pyproject.toml (tests/test_contract_table_follows_packages.py).
 """
 
 from __future__ import annotations
@@ -29,12 +29,12 @@ PACKAGE: str = "semgrep"
 
 
 def locked_version(top: Path, package: str = PACKAGE) -> str:
-    """木 top の uv.lock が決める package(既定は semgrep)の版。lock が無い・package の行が 1 つでない・行が index から入れる版でない
-    (git・path など)時は理由を名指して止める(既定の版にしない)— 使い手はどれも `<package>==<版>` を index から入れるので、
-    index の外の行の版の名で入れると lock と違う物を測る。"""
+    """The version of the package (default semgrep) that uv.lock of tree top decides. If there is no lock, the package does not have exactly one row, or the row is not a version installable from an index
+    (git, path, etc.), name the reason and stop (never fall back to a default version) -- every user installs `<package>==<version>` from the index, so
+    installing with the version name of a row outside the index would measure something different from the lock."""
     lock: Path = top / LOCK_FILE
     if not lock.is_file():
-        raise SystemExit(f"{package} の版を決める {lock} が無い — 既定の版や探し道の {package} へは戻らない")
+        raise SystemExit(f"{lock} that decides the version of {package} is missing -- never falls back to a default version or the search-path {package}")
     parsed: dict[str, object] = tomllib.loads(lock.read_text(encoding="utf-8"))
     packages: object = parsed.get("package", [])
     rows: list[dict[str, object]] = (
@@ -43,7 +43,7 @@ def locked_version(top: Path, package: str = PACKAGE) -> str:
     )
     if len(rows) != 1:
         versions: list[object] = [row.get("version") for row in rows]
-        raise SystemExit(f"{lock} の {package} の版が 1 つに決まらない({versions})— 既定の版や探し道の {package} へは戻らない")
+        raise SystemExit(f"the version of {package} in {lock} is not a single one ({versions}) -- not falling back to the default version or the search-path {package}")
     source: object = rows[0].get("source")
     if not (isinstance(source, dict) and "registry" in source):
         raise SystemExit(f"{lock} の {package} が index から入れる版でない({source})— `{package}==<版>` で lock と同じ物を入れられない")
@@ -51,15 +51,15 @@ def locked_version(top: Path, package: str = PACKAGE) -> str:
 
 
 def locked_command(top: Path, package: str = PACKAGE) -> list[str]:
-    """uv.lock の版の package(既定は semgrep)を、uv の道具の置き場から呼ぶ命令(作業木の `.venv` にも探し道にも依らない)。道具の python は、この
-    script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 渡さないと uv は木の .python-version(3.14t)を
-    選び、semgrep の依存の ruamel-yaml-clib が組めない。"""
+    """The command that calls the package (default semgrep) at the uv.lock version from uv's tool store (depends on neither the working tree's `.venv` nor the search path). The tool's python is the version of the python running this
+    script (the version the hook config declared with `uv run --python`) -- if not passed, uv would pick the tree's .python-version (3.14t)
+    and semgrep's dependency ruamel-yaml-clib could not be built."""
     running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
     return ["uv", "tool", "run", "--python", running, "--from", f"{package}=={locked_version(top, package)}", package]
 
 
 def main(argv: list[str]) -> int:
-    """repo の根(今の dir)の uv.lock の版の semgrep に引数を渡して置き換わる。"""
+    """Replace the process, passing the arguments to the semgrep of the version in the uv.lock at the repo root (the current dir)."""
     command: list[str] = locked_command(Path.cwd())
     os.execvp(command[0], [*command, *argv])
 

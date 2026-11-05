@@ -92,7 +92,7 @@ def test_an_install_that_brings_more_than_the_core_four_is_named() -> None:
         tool.Checkout(),
     )
     assert len(problems) == 1
-    assert "余計: ['doeff-hy', 'httpx']・足りない: []" in problems[0]
+    assert "extra: ['doeff-hy', 'httpx'], missing: []" in problems[0]
 
 
 def test_an_editable_or_index_install_of_a_checkout_package_is_named() -> None:
@@ -108,7 +108,7 @@ def test_an_editable_or_index_install_of_a_checkout_package_is_named() -> None:
     )
     assert [problem.split(" ")[0] for problem in problems] == ["doeff", "doeff-vm"]
     assert "(editable)" in problems[0]
-    assert "入れた所: index" in problems[1]
+    assert "installed from: index" in problems[1]
 
 
 @pytest.mark.parametrize("version", [None, "0.6.0"], ids=["latest", "named"])
@@ -128,7 +128,7 @@ def test_a_checkout_or_editable_package_is_not_the_pypi_one() -> None:
         tool.PyPI(None),
     )
     assert [problem.split(" ")[0] for problem in problems] == ["doeff", "doeff-core-effects"]
-    assert all("PyPI から入っていない" in problem for problem in problems)
+    assert all("was not installed from PyPI" in problem for problem in problems)
     assert "(editable)" in problems[1]
 
 
@@ -142,7 +142,7 @@ def test_a_pypi_package_of_another_version_than_the_named_one_is_named() -> None
         ),
         tool.PyPI("0.6.0"),
     )
-    assert problems == ["doeff-vm が名指した版 0.6.0 でない — 入った版: 0.5.0"]
+    assert problems == ["doeff-vm is not the named version 0.6.0 - installed version: 0.5.0"]
 
 
 def test_pypi_installs_take_only_a_wheel_of_the_rust_vm() -> None:

@@ -3,48 +3,47 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""変えた所の検 — 登記(`ai land request`)の前に手元で走らせる入口。
+"""Changed-tests check — the entry point to run locally before registering (`ai land request`).
 
-commit の hook ではテストを走らせない(operator #1122・#794)。この入口は登記の前に書き手が `make test-changed` で走らせ、
-日次と並ぶ。選び方と打ち切りの定義はこの file の 1 点:
+The commit hook does not run tests (operator #1122, #794). This entry point is run by the author with `make test-changed` before registering,
+and sits alongside the daily run. Selection and cutoff are defined in this file, in these points:
 
-1. 変えた file = 分岐点(既定 `git merge-base HEAD origin/main`)から作業木までの差分(commit 済みと未 commit の両方・
-   追跡外の新しい file を含む)。検は index ではなく作業木の中身で走る(一部だけ stage した commit ではずれる)。
-2. 当たる契約の組 = root の pyproject.toml の `[[tool.doeff.contract-tests]]`(path の接頭辞 → 検の列)のうち、
-   接頭辞が変えた file に当たる行の検。表の読み手はここの `read_contract_table` の 1 か所で、形が違う・書いた検の
-   file が無い時は止める(rc 2)。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で持つか木を歩くので、
-   import の逆依存では選べない — だから固定の組で先頭に置く。表は package(uv の workspace の member)ごとに、組か
-   「組の要らない理由」(`reason` の行)のどちらかを持つ。どちらも無い package は `table_gaps` が名指し、日次と表の
-   repo 全体の行で走る検(tests/test_contract_table_follows_packages.py)が赤にする。
-3. 変えた検の file そのもの(検の file かは pytest の集め手と同じ名の規則 — root の ini の python_files・
-   doeff_hy_test_files・doeff_adr_hy_files と doeff-adr の DEFAULT_FILE_PATTERNS)。ただし root の pyproject.toml の
-   `[tool.doeff] record-dirs`(設計の記録の dir)の下は、名の規則に当たっても検に数えない(3 も 4 の答えの絞りも)。
-4. 逆依存の検 = 変えた file を直接・間接に import(Hy は require も)する検の file を、doeff-linter の
-   `--affected-tests`(2 便目)に問い、距離の近い順(同じ距離は path の順)で後ろに足す。検の file の名の規則は 3 と
-   同じ値を `--test-pattern` で渡し、答えも 3 と同じ判定で絞る。直接の使い手が多すぎる module(`doeff-hy.macros`・
-   `doeff/__init__.py` の形)は linter が通り抜けず名を返すので「逆依存が広すぎて辿らなかった」と名指す。linter が無い・
-   答えが読めない時は逆依存を足さずに「逆依存を測れなかった」と名指す(黙って空にしない・赤とは分ける)。
-   linter の命令は、`--linter` で渡した物 → 作業木の組み立ての入力の鍵の linter(commit の hook と同じ探し方
-   scripts/doeff_linter_locked.py の `which`・組まない — 会話の Pod は PATH に doeff-linter を持たず、hook のために揃えた
-   断面の置き場にだけ在る)→ PATH の doeff-linter の順に決める。
-5. 選んだ検を、日次と同じ pytest の session の境目(repo の根・package ごとの `packages/<名>/tests`・package の tests/ の
-   外の根 = Makefile の PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest(`-m "not e2e"`)の process で走らせる。日次の
-   `make test-packages` が package ごとに session を分けるのと同じ理由で、`tests/` に `__init__.py` と `conftest.py` を
-   持つ package の検を 1 つの session に混ぜると `tests.conftest` の名がぶつかり(ImportPathMismatchError)、pytest が
-   1 本も走らせずに止まる(#2658 の標本で 12 commit 中 6 本)。順は組(契約の組 → 変えた検 →
-   逆依存)ごとに session で束ね、隣り合う同じ session の束は 1 つの process にする。束を順に走らせ、合計の上限
-   (既定 60 秒)の残りを次の束に渡す — 番が来なかった束の検は「未測」と名指す。上限は pytest の configure の間(root の
-   conftest が機体の検の枠を取る — 埋まっていれば待つ)を数えず、数えなかった秒は要約に別の行で出す(枠の正本の
-   hold_check_slot の「待ちを変更箇所の検証の 60 秒に数えない」約束)。拍は ReportPlugin が pipe へ書く。
+1. Changed files = the diff from the branch point (default `git merge-base HEAD origin/main`) to the working tree (both committed and
+   uncommitted, including new untracked files). Tests run against the working tree contents, not the index (a partially staged commit would diverge).
+2. Matching contract sets = among the `[[tool.doeff.contract-tests]]` rows of the root pyproject.toml (path prefix -> list of tests),
+   the tests of rows whose prefix matches a changed file. The one reader of the table is `read_contract_table` here, which stops (rc 2) when
+   the shape is wrong or a listed test file is missing. Stub cross-checks, dogfood registration and population checks hold modules as strings or walk the tree,
+   so they cannot be selected by reverse import dependencies — hence a fixed set, placed first. For each package (uv workspace member) the table has either a set or
+   a "reason no set is needed" (a `reason` row). A package with neither is named by `table_gaps` and turned red by the check that runs in the daily run and in the
+   whole-repo row of the table (tests/test_contract_table_follows_packages.py).
+3. Changed test files themselves (whether a file is a test follows the same naming rules as pytest's collectors — the root ini's python_files,
+   doeff_hy_test_files, doeff_adr_hy_files and doeff-adr's DEFAULT_FILE_PATTERNS). However, files under `[tool.doeff] record-dirs`
+   (design record dirs) of the root pyproject.toml are not counted as tests even if they match the naming rules (neither in 3 nor in filtering the answer of 4).
+4. Reverse-dependency tests = test files that import (directly or indirectly; Hy also via require) a changed file are asked of doeff-linter's
+   `--affected-tests` (second pass) and appended afterwards, nearest distance first (same distance in path order). The test-file naming rules are passed
+   with `--test-pattern` using the same values as 3, and the answer is filtered by the same judgment as 3. A module with too many direct users (the shape of `doeff-hy.macros` and
+   `doeff/__init__.py`) is not traversed by the linter, which returns its name, so it is named as "reverse dependencies too broad to follow". When the linter is missing or
+   its answer is unreadable, no reverse dependencies are added and "reverse dependencies could not be measured" is named (not silently empty; kept separate from red).
+   The linter command is decided in this order: what was passed with `--linter` -> the linter keyed by the working tree's build inputs (the same lookup as the commit hook,
+   `which` of scripts/doeff_linter_locked.py; it does not build — a conversation Pod has no doeff-linter on PATH, only in the
+   snapshot store prepared for the hook) -> doeff-linter on PATH.
+5. The selected tests are run in separate pytest (`-m "not e2e"`) processes per the same pytest session boundary as the daily run (repo root, `packages/<name>/tests` per package, and
+   roots outside a package's tests/ = the Makefile's PACKAGE_EXTRA_TEST_ROOTS). For the same reason that the daily
+   `make test-packages` splits sessions per package, mixing tests of packages that have `__init__.py` and `conftest.py` in `tests/` into one session makes the `tests.conftest` names collide (ImportPathMismatchError), and pytest
+   stops without running anything (6 of 12 commits in the #2658 sample). The order is bundled per session within each group (contract set -> changed tests ->
+   reverse dependencies), and adjacent bundles of the same session become one process. Bundles run in order, passing the remainder of the total budget
+   (default 60 seconds) to the next bundle — tests in a bundle that never got a turn are named "unmeasured". The budget does not count pytest's configure phase (the root
+   conftest takes the machine's test slot — it waits if full); the uncounted seconds are shown on a separate line of the summary (the promise in the slot's source of truth
+   hold_check_slot, "waiting is not counted against the 60 seconds of changed-scope verification"). Heartbeats are written to a pipe by ReportPlugin.
 
-出力は 走った(緑)・赤・未測 の 3 つ。終わらなかった file・集めた検が 0 本の file・venv の無い作業木は「未測」と
-名指し、赤と分ける。rc は 赤が在れば 1・表や入力が読めなければ 2・それ以外 0(未測は登記を止めない — 名指すだけ)。
-どの道で終わっても、出力の最後の行は数だけの要約 1 行(`land-focus-counts: selected=… ran=… red=… unmeasured=…
-unmeasured_reverse=… rc=… seconds=… budget=…`・agora の入口と同じ綴り)— 1 日の未測を実数で数える読み手のため。
-検の名の一覧は載せない。この入口は file にも記録の service にも書かない(届ける口は別に持つ)。
+Output has three categories: ran (green), red, unmeasured. Files that did not finish, files with 0 collected tests, and a working tree without a venv are named
+"unmeasured", separate from red. rc is 1 if any red, 2 if the table or inputs cannot be read, otherwise 0 (unmeasured does not block registration — it is only named).
+However it ends, the last line of output is a single counts-only summary line (`land-focus-counts: selected=… ran=… red=… unmeasured=…
+unmeasured_reverse=… rc=… seconds=… budget=…`, same spelling as the agora entry point) — for readers who count a day's unmeasured as real numbers.
+No list of test names is included. This entry point writes neither to a file nor to a record service (the delivery channel is held separately).
 
-pytest の結果は、この同じ file の ReportPlugin を pytest の plugin として渡して行ごとの JSON で受け取る
-— 打ち切った時も、そこまでに終わった検の結末が残る。stdlib 単独(呼び口は `uv run --script`・機体の python は撃たない)。
+pytest results are received as per-line JSON by passing this same file's ReportPlugin as a pytest plugin
+— so even when cut off, the outcomes of tests finished so far remain. stdlib only (invoked via `uv run --script`; the machine's python is not used).
 """
 
 from __future__ import annotations
@@ -68,59 +67,59 @@ from typing import Protocol
 
 import tomllib
 
-#: uv の環境の置き場を指す環境変数(入口が 1 度だけ読む — RunEnvironment)。
+#: Environment variable pointing to the uv environment location (the entry point reads it once — RunEnvironment).
 UV_PROJECT_ENVIRONMENT = "UV_PROJECT_ENVIRONMENT"
-#: pytest の子の process に渡さない環境変数(外の `uv run --script` の環境を渡さない)。
+#: Environment variables not passed to the pytest child process (the outer `uv run --script` environment is not passed).
 CHILD_DROPPED_ENV = frozenset({"VIRTUAL_ENV"})
-#: pytest の既定の python_files(root の ini が書けば、そちらを読む)。
+#: pytest's default python_files (if the root ini sets them, those are read instead).
 PYTEST_DEFAULT_PYTHON_FILES = ("test_*.py", "*_test.py")
-#: doeff-adr の executable ADR の既定の pattern の定義元(ここを ast で読む — 2 つ目の一覧を書かない)。
+#: Source of the default patterns of doeff-adr's executable ADR (read here via ast — no second list is written).
 ADR_PLUGIN_SOURCE = "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
 ADR_PATTERNS_NAME = "DEFAULT_FILE_PATTERNS"
-#: uv の project の環境の既定の置き場(UV_PROJECT_ENVIRONMENT が無い時)。無ければ何も測れない — 未測と名指す
-#: (`uv run --no-sync` は環境が無いと空の環境を作ってしまうので、走らせる前に確かめる)。
+#: Default location of the uv project environment (when UV_PROJECT_ENVIRONMENT is absent). If absent nothing can be measured — named unmeasured
+#: (`uv run --no-sync` would create an empty environment if none exists, so it is checked before running).
 DEFAULT_PROJECT_ENVIRONMENT = ".venv"
-#: pytest の中で、この file の ReportPlugin を渡して pytest を走らせる口(入口が `uv run --project` の環境から呼ぶ・
-#: 次の引数は結末を書く pipe の書き口の番号)。
+#: Hook that runs pytest with this file's ReportPlugin passed in (the entry point calls it from the `uv run --project` environment;
+#: the next argument is the number of the pipe write end that receives the outcomes).
 PYTEST_MODE = "--as-pytest"
 DEFAULT_BUDGET_SECONDS = 60.0
-#: 上限の後、SIGTERM から SIGKILL までの猶予の秒。
+#: Grace seconds from SIGTERM to SIGKILL after the budget.
 KILL_GRACE_SECONDS = 3.0
-#: 表の行の鍵: 契約の組(接頭辞と検の列)か、組の要らない package の除外(接頭辞と理由)のどちらか。
+#: Keys of a table row: either a contract set (prefix and list of tests) or an exemption for a package that needs no set (prefix and reason).
 CONTRACT_ROW_KEYS = frozenset({"prefix", "tests"})
 EXEMPTION_ROW_KEYS = frozenset({"prefix", "reason"})
-#: pytest の rc のうち、検の結末ではなく道具の誤り(3 = 内部の誤り・4 = 命令行の誤り)— 未測に畳まず止める。
+#: pytest rcs that are tool errors rather than test outcomes (3 = internal error, 4 = command-line error) — stop instead of folding into unmeasured.
 PYTEST_TOOL_FAILURES = frozenset({3, 4})
-#: 逆依存を問う linter の最後の砦の命令(PATH の上の doeff-linter — `make lint-doeff` と同じ入れ方)。
+#: Last-resort command for the linter asked about reverse dependencies (doeff-linter on PATH — installed the same way as `make lint-doeff`).
 DEFAULT_LINTER = "doeff-linter"
-#: 作業木の鍵の linter を探す入口(commit の hook と日次の lint の段が使う探し方の定義元 — 2 つ目の探し方を書かない)。
+#: Entry point that locates the linter keyed by the working tree (source of the lookup used by the commit hook and the daily lint stage — no second lookup is written).
 LOCKED_LINTER_SCRIPT = Path(__file__).resolve().with_name("doeff_linter_locked.py")
-#: 鍵の linter を探す命令を待つ上限の秒(git を数回引いて置き場を歩くだけ — 60 秒の検の予算とは別に数える)。
+#: Upper limit in seconds for the command that locates the keyed linter (just a few git calls and a walk of the store — counted separately from the 60-second test budget).
 LOCATE_TIMEOUT_SECONDS = 30.0
-#: linter の答えを待つ上限の秒(doeff で cache が温まって約 0.1 秒・冷えて約 0.2 秒 — 60 秒の検の予算とは別に数える)。
+#: Upper limit in seconds to wait for the linter's answer (about 0.1 s with a warm doeff cache, about 0.2 s cold — counted separately from the 60-second test budget).
 LINTER_TIMEOUT_SECONDS = 30.0
-#: package の tests/ の外の検の根を名指す Makefile の target(日次の母集団の根の定義元 — 2 つ目の一覧を書かない)。
+#: Makefile target that names the test roots outside a package's tests/ (source of the daily population roots — no second list is written).
 EXTRA_ROOTS_TARGET = "print-package-extra-test-roots"
-#: repo の根の session(package の tests/ と、その外の根のどちらにも当たらない検 — 日次の root の `pytest` と同じ)。
+#: Session of the repo root (tests that fall under neither a package's tests/ nor the roots outside it — same as the daily root `pytest`).
 ROOT_SESSION = "."
-#: 入口の出力の最後の 1 行(数だけの要約)の頭 — agora の登記の前の入口(scripts/land_focus_gate.hy)と同じ綴り。
+#: Head of the last line of the entry point's output (the counts-only summary) — same spelling as agora's pre-registration entry point (scripts/land_focus_gate.hy).
 COUNTS_PREFIX = "land-focus-counts:"
-#: Makefile に session の根を聞く命令を待つ上限の秒(変数を 1 つ echo するだけ — 60 秒の検の予算とは別に数える)。
+#: Upper limit in seconds for asking the Makefile for the session roots (just echoes one variable — counted separately from the 60-second test budget).
 MAKE_TIMEOUT_SECONDS = 30.0
 
 
 class StopError(Exception):
-    """表・設定・git の答えが読めない — 既定に倒さず止める(rc 2)。"""
+    """The table, settings or git answer cannot be read — stop instead of falling back to a default (rc 2)."""
 
 
 # ---------------------------------------------------------------------------
-# 契約の検の表
+# Table of contract tests
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ContractRow:
-    """表の 1 行: path の接頭辞(空 = repo 全体)と、当たった時に必ず走らせる検の列。"""
+    """One table row: a path prefix (empty = whole repo) and the list of tests that must run when it matches."""
 
     prefix: str
     tests: tuple[str, ...]
@@ -133,8 +132,8 @@ class ContractRow:
 
 @dataclass(frozen=True)
 class ContractExemption:
-    """表の 1 行: 契約の組の要らない package(接頭辞 = その package の dir)と、要らない理由(空でない文)。
-    黙って外さないための行 — 理由の無い除外・package でない接頭辞の除外は読む時点で止める。"""
+    """One table row: a package that needs no contract set (prefix = that package's dir) and the reason it is not needed (a non-empty sentence).
+    A row so that nothing is dropped silently — an exemption without a reason, or for a prefix that is not a package, stops at read time."""
 
     prefix: str
     reason: str
@@ -148,17 +147,17 @@ class ContractTable:
 
 @dataclass(frozen=True)
 class PackageUnits:
-    """契約の表が覆う単位 — root の `[tool.uv.workspace]` の member の dir(`packages/<名>/` の形の接頭辞・名の順)。
+    """The units covered by the contract table — the dirs of root `[tool.uv.workspace]` members (prefixes of the form `packages/<name>/`, in name order).
 
-    表の package ごとの行の接頭辞は、どれも workspace の member の dir ちょうど(公開の形・stub・自分の pyproject を
-    持つ単位)なので、同じ単位で数える。workspace の宣言を読み、2 つ目の一覧を書かない。"""
+    Every prefix of the per-package rows in the table is exactly a workspace member dir (a unit with a public shape, stubs and its own pyproject),
+    so the same unit is counted. It reads the workspace declaration and writes no second list."""
 
     prefixes: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class TableGaps:
-    """表と木のずれ — 契約の組も理由つきの除外も無い package の接頭辞(名の順)。"""
+    """Drift between table and tree — prefixes (in name order) of packages that have neither a contract set nor an exemption with a reason."""
 
     uncovered: tuple[str, ...]
 
@@ -168,29 +167,29 @@ TableRow = ContractRow | ContractExemption
 
 @dataclass(frozen=True)
 class WorkspaceGlobs:
-    """`[tool.uv.workspace]` の glob の列 1 つ(members か exclude)。"""
+    """One list of globs (members or exclude) of `[tool.uv.workspace]`."""
 
     globs: tuple[str, ...]
 
 
 def _test_path(test: str) -> str:
-    """検の指定(`path` か `path::名`)の path の部分。"""
+    """The path part of a test spec (`path` or `path::name`)."""
     return test.split("::", 1)[0]
 
 
 def _workspace_globs(workspace: dict[str, object], key: str) -> WorkspaceGlobs:
-    """`[tool.uv.workspace]` の glob の列の鍵を 1 つ読む(無い鍵は空の列 — uv と同じ意味・文字列の列でなければ止める)。"""
+    """Read one key of the glob lists of `[tool.uv.workspace]` (a missing key is an empty list — same meaning as uv; stop unless it is a list of strings)."""
     match workspace.get(key, []):
         case list() as values if all(isinstance(v, str) for v in values):
             return WorkspaceGlobs(globs=tuple(values))
         case other:
-            raise StopError(f"[tool.uv.workspace] の {key} が文字列の列でない: {other!r}")
+            raise StopError(f"{key} of [tool.uv.workspace] is not a list of strings: {other!r}")
 
 
 def workspace_packages(repo: Path) -> PackageUnits:
-    """root の pyproject.toml の `[tool.uv.workspace]` の members の glob に当たる dir から exclude に当たる dir を除き、
-    pyproject.toml を持つ物(uv が member と読む物)を package の単位にする。workspace の宣言の無い repo は member が
-    無い(uv と同じ意味)。pyproject.toml の無い dir(退役した crate の追跡外の残り)は package ではない。"""
+    """From the dirs matching the members globs of root pyproject.toml's `[tool.uv.workspace]`, remove those matching exclude,
+    and take those holding a pyproject.toml (what uv reads as a member) as package units. A repo with no workspace declaration has no
+    members (same meaning as uv). A dir without pyproject.toml (the untracked remains of a retired crate) is not a package."""
     config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
     match config.get("tool", {}).get("uv", {}).get("workspace"):
         case None:
@@ -198,7 +197,7 @@ def workspace_packages(repo: Path) -> PackageUnits:
         case dict() as workspace:
             pass
         case other:
-            raise StopError(f"[tool.uv.workspace] が表でない: {other!r}")
+            raise StopError(f"[tool.uv.workspace] is not a table: {other!r}")
     excluded = {
         path
         for pattern in _workspace_globs(workspace, "exclude").globs
@@ -216,24 +215,24 @@ def workspace_packages(repo: Path) -> PackageUnits:
 
 
 def _parse_exemption(where: str, raw: dict[str, object], units: PackageUnits) -> ContractExemption:
-    """除外の行(prefix と reason)を読む — 理由が空・接頭辞が package の単位でない行は止める。"""
+    """Read an exemption row (prefix and reason) — stop on an empty reason or a prefix that is not a package unit."""
     match raw["prefix"], raw["reason"]:
         case str() as prefix, str() as reason if reason.strip():
             pass
         case _:
             raise StopError(
-                f"{where}: 除外の行は prefix が文字列・reason が空でない理由の文: {raw!r}"
+                f"{where}: an exemption row needs prefix as a string and reason as a non-empty sentence: {raw!r}"
             )
     if prefix not in units.prefixes:
         raise StopError(
-            f"{where}: 除外の接頭辞 {prefix!r} が package(uv の workspace の member の dir)でない"
-            f" — 除外は package ごとに書く(package: {list(units.prefixes)})"
+            f"{where}: exemption prefix {prefix!r} is not a package (a uv workspace member dir)"
+            f" — write exemptions per package (packages: {list(units.prefixes)})"
         )
     return ContractExemption(prefix=prefix, reason=reason.strip())
 
 
 def _parse_row(index: int, raw: object, repo: Path, units: PackageUnits) -> TableRow:
-    where = f"[[tool.doeff.contract-tests]] の {index + 1} 行目"
+    where = f"row {index + 1} of [[tool.doeff.contract-tests]]"
     match raw:
         case dict() if set(raw) == CONTRACT_ROW_KEYS:
             pass
@@ -241,51 +240,51 @@ def _parse_row(index: int, raw: object, repo: Path, units: PackageUnits) -> Tabl
             return _parse_exemption(where, raw, units)
         case dict():
             raise StopError(
-                f"{where}: 鍵は {sorted(CONTRACT_ROW_KEYS)}(契約の組)か {sorted(EXEMPTION_ROW_KEYS)}"
-                f"(組の要らない package の理由つきの除外)だけ(実際 {sorted(raw)})"
+                f"{where}: keys must be {sorted(CONTRACT_ROW_KEYS)} (contract set) or {sorted(EXEMPTION_ROW_KEYS)}"
+                f" (exemption with a reason for a package that needs no set) only (actual {sorted(raw)})"
             )
         case _:
-            raise StopError(f"{where}: 表(prefix と tests か、prefix と reason)でない: {raw!r}")
+            raise StopError(f"{where}: not a table (prefix and tests, or prefix and reason): {raw!r}")
     match raw["prefix"], raw["tests"]:
         case str() as prefix, list() as tests if tests and all(isinstance(t, str) for t in tests):
             pass
         case _:
-            raise StopError(f"{where}: prefix は文字列・tests は空でない文字列の列: {raw!r}")
+            raise StopError(f"{where}: prefix must be a string and tests a non-empty list of strings: {raw!r}")
     if prefix and not (
         (prefix.endswith("/") and (repo / prefix).is_dir())
         or (not prefix.endswith("/") and (repo / prefix).is_file())
     ):
         raise StopError(
-            f"{where}: 接頭辞 {prefix!r} が木に無い(dir は `/` で終え、file は名そのものを書く)"
+            f"{where}: prefix {prefix!r} is missing from the tree (end a dir with `/`; write a file by its exact name)"
         )
     missing = [t for t in tests if not (repo / _test_path(t)).is_file()]
     if missing:
-        raise StopError(f"{where}(接頭辞 {prefix!r}): 書いた検の file が木に無い: {missing}")
+        raise StopError(f"{where} (prefix {prefix!r}): listed test file is missing from the tree: {missing}")
     if len(set(tests)) != len(tests):
-        raise StopError(f"{where}(接頭辞 {prefix!r}): 同じ検を 2 度書いている: {tests}")
+        raise StopError(f"{where} (prefix {prefix!r}): the same test is written twice: {tests}")
     return ContractRow(prefix=prefix, tests=tuple(tests))
 
 
 def read_contract_table(repo: Path) -> ContractTable:
-    """root の pyproject.toml の `[[tool.doeff.contract-tests]]` を読む(読み手はこの 1 か所)。組の行と除外の行の接頭辞は
-    重ねない(同じ package に組と除外の両方を書くと、どちらが本当かを黙って決めることになる)。"""
+    """Read `[[tool.doeff.contract-tests]]` of the root pyproject.toml (this is the one reader). Prefixes of contract rows and exemption rows
+    must not overlap (writing both a set and an exemption for one package would silently decide which is true)."""
     pyproject = repo / "pyproject.toml"
     if not pyproject.is_file():
-        raise StopError(f"{pyproject} が無い")
+        raise StopError(f"{pyproject} is missing")
     config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     match config.get("tool", {}).get("doeff", {}).get("contract-tests"):
         case list() as raw_rows if raw_rows:
             pass
         case None:
-            raise StopError(f"{pyproject} に [[tool.doeff.contract-tests]] の表が無い")
+            raise StopError(f"{pyproject} has no [[tool.doeff.contract-tests]] table")
         case other:
-            raise StopError(f"[[tool.doeff.contract-tests]] は空でない表の列: {other!r}")
+            raise StopError(f"[[tool.doeff.contract-tests]] must be a non-empty list of tables: {other!r}")
     units = workspace_packages(repo)
     parsed = tuple(_parse_row(i, raw, repo, units) for i, raw in enumerate(raw_rows))
     prefixes = [row.prefix for row in parsed]
     duplicated = sorted({p for p in prefixes if prefixes.count(p) > 1})
     if duplicated:
-        raise StopError(f"[[tool.doeff.contract-tests]] に同じ接頭辞の行が 2 つ以上: {duplicated}")
+        raise StopError(f"[[tool.doeff.contract-tests]] has two or more rows with the same prefix: {duplicated}")
     return ContractTable(
         rows=tuple(row for row in parsed if isinstance(row, ContractRow)),
         exemptions=tuple(row for row in parsed if isinstance(row, ContractExemption)),
@@ -293,35 +292,35 @@ def read_contract_table(repo: Path) -> ContractTable:
 
 
 def table_gaps(table: ContractTable, units: PackageUnits) -> TableGaps:
-    """package の単位のうち、表に契約の組(接頭辞がその package の dir ちょうどの行)も理由つきの除外も無い物。
-    repo 全体の行("")や package の中の dir の行は、その package の組に数えない — package ごとに「何がその package の
-    公開の形を確かめるか」を決めた行だけを数える。純粋な関数(呼び手が読んだ表と単位を渡す)。"""
+    """Package units that have, in the table, neither a contract set (a row whose prefix is exactly that package's dir) nor an exemption with a reason.
+    The whole-repo row ("") and rows for dirs inside a package are not counted as that package's set — only rows that decide,
+    per package, "what verifies that package's whole public shape" are counted. A pure function (the caller passes the table and units it read)."""
     named = {row.prefix for row in table.rows} | {row.prefix for row in table.exemptions}
     return TableGaps(uncovered=tuple(p for p in units.prefixes if p not in named))
 
 
 # ---------------------------------------------------------------------------
-# 検の file の名の規則(pytest の集め手と同じ値を読む)
+# Naming rules for test files (reads the same values as pytest's collectors)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class TestFilePatterns:
-    """検の file の名の規則の列(pytest の集め手と同じ値 — 逆依存を問う linter にも同じ値を渡す)。
+    """List of naming rules for test files (same values as pytest's collectors — the same values are also passed to the linter asked about reverse dependencies).
 
-    record_dirs = 設計の記録の dir(root の pyproject.toml の `[tool.doeff] record-dirs`)。記録はその時点の証拠で、検の名の file が
-    在っても検ではない — この下の file は、名の規則に当たっても検として選ばない(日次の母集団の検は逆に、この下の検の名の
-    file を赤にして `.py.txt` への改名を求める)。linter へは渡さず、答えを絞る側で使う。"""
+    record_dirs = design record dirs (`[tool.doeff] record-dirs` of the root pyproject.toml). Records are evidence at that point in time; even if
+    a file with a test name exists there, it is not a test — files under these are not selected as tests even if they match the naming rules (conversely, the daily population check turns
+    test-named files under these red and asks for a rename to `.py.txt`). Not passed to the linter; used on the side that filters the answer."""
 
     globs: tuple[str, ...]
     record_dirs: tuple[str, ...] = ()
 
 
 def _adr_default_patterns(repo: Path) -> TestFilePatterns:
-    """executable ADR の既定の名の規則を、定義元の doeff-adr の source から読む(2 つ目の一覧を書かないため)。"""
+    """Read the default naming rules of executable ADRs from their source of truth, the doeff-adr source (so no second list is written)."""
     source = repo / ADR_PLUGIN_SOURCE
     if not source.is_file():
-        raise StopError(f"executable ADR の pattern の定義元 {ADR_PLUGIN_SOURCE} が無い")
+        raise StopError(f"{ADR_PLUGIN_SOURCE}, the source of the executable ADR patterns, is missing")
     tree = ast.parse(source.read_text(encoding="utf-8"))
     values = [
         node.value
@@ -333,40 +332,40 @@ def _adr_default_patterns(repo: Path) -> TestFilePatterns:
         case [value]:
             pass
         case _:
-            raise StopError(f"{ADR_PLUGIN_SOURCE} に {ADR_PATTERNS_NAME} の代入が 1 つでない")
+            raise StopError(f"{ADR_PLUGIN_SOURCE} does not have exactly one assignment of {ADR_PATTERNS_NAME}")
     try:
         patterns = ast.literal_eval(value)
     except ValueError as exc:
-        raise StopError(f"{ADR_PLUGIN_SOURCE} の {ADR_PATTERNS_NAME} が literal でない") from exc
+        raise StopError(f"{ADR_PATTERNS_NAME} in {ADR_PLUGIN_SOURCE} is not a literal") from exc
     match patterns:
         case tuple() if all(isinstance(p, str) for p in patterns):
             return TestFilePatterns(globs=patterns)
         case _:
-            raise StopError(f"{ADR_PATTERNS_NAME} が文字列の tuple でない: {patterns!r}")
+            raise StopError(f"{ADR_PATTERNS_NAME} is not a tuple of strings: {patterns!r}")
 
 
 def _ini_strings(ini: dict[str, object], key: str, default: tuple[str, ...]) -> TestFilePatterns:
-    """root の ini の名の規則の鍵を 1 つ読む(文字列の列でなければ既定に倒さず止める)。"""
+    """Read one naming-rule key of the root ini (stop instead of falling back to the default unless it is a list of strings)."""
     match ini.get(key, default):
         case list() | tuple() as values if all(isinstance(v, str) for v in values):
             return TestFilePatterns(globs=tuple(values))
         case other:
-            raise StopError(f"[tool.pytest.ini_options] の {key} が文字列の列でない: {other!r}")
+            raise StopError(f"{key} in [tool.pytest.ini_options] is not a list of strings: {other!r}")
 
 
 def _record_dirs(config: dict[str, object]) -> tuple[str, ...]:
-    """root の pyproject.toml の `[tool.doeff] record-dirs`(dir は `/` で終える・無ければ空)。形が違えば既定に倒さず止める。"""
+    """`[tool.doeff] record-dirs` of the root pyproject.toml (dirs end with `/`; empty if absent). A wrong shape stops instead of falling back to the default."""
     tool = config.get("tool", {})
     raw = tool.get("doeff", {}).get("record-dirs", []) if isinstance(tool, dict) else []
     match raw:
         case list() if all(isinstance(d, str) and d.endswith("/") for d in raw):
             return tuple(raw)
         case other:
-            raise StopError(f"[tool.doeff] の record-dirs が `/` で終わる dir の文字列の列でない: {other!r}")
+            raise StopError(f"record-dirs in [tool.doeff] is not a list of dir strings ending with `/`: {other!r}")
 
 
 def collector_patterns(repo: Path) -> TestFilePatterns:
-    """pytest が集める 3 つの経路の名の規則(Python・Hy の検・executable ADR)と、検を置かない設計の記録の dir。"""
+    """Naming rules of the three routes pytest collects (Python and Hy tests, executable ADR), and the design record dirs where no tests are placed."""
     config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
     ini = config.get("tool", {}).get("pytest", {}).get("ini_options", {})
     parts = (
@@ -381,9 +380,9 @@ def collector_patterns(repo: Path) -> TestFilePatterns:
 
 
 def is_test_file(path: str, patterns: TestFilePatterns) -> bool:
-    """pytest の照合と同じ: `/` を含まない pattern は file の名に、含む pattern は repo の根からの path に当てる。
-    設計の記録の dir の下は、名の規則に当たっても検ではない(記録の中の改名できない測りの script が、import 先の変更で選ばれ
-    「集める時に落ちた」赤になった — 設計検証の盲検 A)。"""
+    """Same as pytest's matching: a pattern without `/` is matched against the file name, one with `/` against the path from the repo root.
+    Files under design record dirs are not tests even if they match the naming rules (an unrenamable measurement script inside a record was selected by a change to its import target
+    and became a "failed while collecting" red — blind review A of the design verification)."""
     name = path.rsplit("/", 1)[-1]
     return (
         "fixtures" not in path.split("/")
@@ -393,7 +392,7 @@ def is_test_file(path: str, patterns: TestFilePatterns) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 変えた file と選び
+# Changed files and selection
 # ---------------------------------------------------------------------------
 
 
@@ -408,12 +407,12 @@ def _git(repo: Path, *args: str) -> str:
         ["git", "-C", str(repo), *args], capture_output=True, text=True, check=False
     )
     if proc.returncode != 0:
-        raise StopError(f"git {' '.join(args)} が rc {proc.returncode}: {proc.stderr.strip()}")
+        raise StopError(f"git {' '.join(args)} returned rc {proc.returncode}: {proc.stderr.strip()}")
     return proc.stdout
 
 
 def changed_files(repo: Path, base: str | None) -> ChangeSet:
-    """分岐点から作業木までに変えた file(削除を含む・rename は旧名と新名の両方)と追跡外の新しい file。"""
+    """Files changed from the branch point to the working tree (including deletions; for renames both old and new names) plus new untracked files."""
     resolved = base if base is not None else _git(repo, "merge-base", "HEAD", "origin/main").strip()
     sha = _git(repo, "rev-parse", "--verify", f"{resolved}^{{commit}}").strip()
     tracked = _git(repo, "diff", "--name-only", "--no-renames", sha).splitlines()
@@ -422,14 +421,14 @@ def changed_files(repo: Path, base: str | None) -> ChangeSet:
 
 
 class Origin(Enum):
-    CONTRACT = "契約の組"
-    CHANGED = "変えた検"
-    REVERSE = "逆依存"
+    CONTRACT = "contract set"
+    CHANGED = "changed test"
+    REVERSE = "reverse dependency"
 
 
 @dataclass(frozen=True)
 class Target:
-    """1 回の pytest に渡す引数 1 つと、選ばれた理由。"""
+    """One argument to pass to a pytest run, and the reason it was selected."""
 
     arg: str
     origin: Origin
@@ -438,13 +437,13 @@ class Target:
 
 @dataclass(frozen=True)
 class Selection:
-    """1 回の pytest に渡す引数の並び(先頭から走らせ、上限で打ち切られた後ろは未測になる)。"""
+    """The sequence of arguments to pass to pytest (run from the front; whatever is cut off by the budget behind becomes unmeasured)."""
 
     targets: tuple[Target, ...]
 
 
 def _unique(targets: tuple[Target, ...]) -> Selection:
-    """同じ引数を 2 度渡さない(最初に選ばれた理由を残す)。"""
+    """Never pass the same argument twice (keep the reason it was first selected)."""
     return Selection(
         targets=tuple(t for i, t in enumerate(targets) if t.arg not in {u.arg for u in targets[:i]})
     )
@@ -453,15 +452,15 @@ def _unique(targets: tuple[Target, ...]) -> Selection:
 def select_targets(
     table: ContractTable, changes: ChangeSet, patterns: TestFilePatterns, repo: Path
 ) -> Selection:
-    """契約の組(表の順)を先頭に、変えた検の file(名の順)を後ろに — 同じ引数は 1 度だけ。"""
+    """Contract sets (in table order) first, changed test files (in name order) after — each argument only once."""
     contract = [
-        Target(arg=test, origin=Origin.CONTRACT, why=f"接頭辞 {row.prefix or '(repo 全体)'}")
+        Target(arg=test, origin=Origin.CONTRACT, why=f"prefix {row.prefix or '(whole repo)'}")
         for row in table.rows
         if any(row.covers(path) for path in changes.files)
         for test in row.tests
     ]
     changed = [
-        Target(arg=path, origin=Origin.CHANGED, why="変えた検の file")
+        Target(arg=path, origin=Origin.CHANGED, why="changed test file")
         for path in changes.files
         if is_test_file(path, patterns) and (repo / path).is_file()
     ]
@@ -469,13 +468,13 @@ def select_targets(
 
 
 # ---------------------------------------------------------------------------
-# 逆依存(doeff-linter の `--affected-tests`)
+# Reverse dependencies (doeff-linter's `--affected-tests`)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class AffectedTest:
-    """linter が選んだ検の file 1 つ(変えた file からの辺の数と、最短の道)。"""
+    """One test file the linter selected (the number of edges from the changed file, and the shortest path)."""
 
     path: str
     distance: int
@@ -484,7 +483,7 @@ class AffectedTest:
 
 @dataclass(frozen=True)
 class Hub:
-    """直接の使い手が多すぎて linter が通り抜けなかった module。"""
+    """A module the linter did not traverse because it has too many direct users."""
 
     module: str
     root: str
@@ -493,7 +492,7 @@ class Hub:
 
 @dataclass(frozen=True)
 class Affected:
-    """linter の答え(測れた)。"""
+    """The linter's answer (measured)."""
 
     tests: tuple[AffectedTest, ...]
     hubs: tuple[Hub, ...]
@@ -502,7 +501,7 @@ class Affected:
 
 @dataclass(frozen=True)
 class AffectedUnmeasured:
-    """逆依存を測れなかった(linter が無い・止まった・答えが読めない)— 理由を名指す。"""
+    """Reverse dependencies could not be measured (linter missing, stopped, or its answer unreadable) — the reason is named."""
 
     reason: str
 
@@ -511,27 +510,27 @@ AffectedAnswer = Affected | AffectedUnmeasured
 
 
 def _parse_affected_test(raw: object) -> AffectedTest:
-    """答えの tests の 1 つを読む(形が違えば ValueError — 答え全体を「測れなかった」にするため)。"""
+    """Read one of the tests in the answer (ValueError if the shape is wrong — so that the whole answer becomes "could not be measured")."""
     match raw:
         case {"path": str() as path, "distance": int() as distance, "via": list() as via} if all(
             isinstance(step, str) for step in via
         ):
             return AffectedTest(path=path, distance=distance, via=tuple(via))
         case _:
-            raise ValueError(f"tests の 1 つの形が違う: {raw!r}")
+            raise ValueError(f"the shape of one of tests is wrong: {raw!r}")
 
 
 def _parse_hub(raw: object) -> Hub:
-    """答えの hubs の 1 つを読む(広すぎて辿らなかった module を要約で名指すため)。"""
+    """Read one of the hubs in the answer (so that modules not traversed for being too broad are named in the summary)."""
     match raw:
         case {"module": str() as module, "root": str() as root, "dependents": int() as dependents}:
             return Hub(module=module, root=root, dependents=dependents)
         case _:
-            raise ValueError(f"hubs の 1 つの形が違う: {raw!r}")
+            raise ValueError(f"the shape of one of hubs is wrong: {raw!r}")
 
 
 def parse_affected(text: str) -> AffectedAnswer:
-    """`--affected-tests` の JSON を読む — 形が違えば既定に倒さず「測れなかった」にする。"""
+    """Read the JSON of `--affected-tests` — if the shape is wrong, treat it as "could not be measured" instead of falling back to a default."""
     try:
         match json.loads(text):
             case {
@@ -545,23 +544,23 @@ def parse_affected(text: str) -> AffectedAnswer:
                     unreadable=tuple(_parse_unreadable(u) for u in unreadable),
                 )
             case other:
-                return AffectedUnmeasured(f"linter の答えの形が違う: {str(other)[:200]}")
+                return AffectedUnmeasured(f"the shape of the linter's answer is wrong: {str(other)[:200]}")
     except (json.JSONDecodeError, ValueError) as exc:
-        return AffectedUnmeasured(f"linter の答えが読めない: {exc}")
+        return AffectedUnmeasured(f"linter answer unreadable: {exc}")
 
 
 def _parse_unreadable(raw: object) -> str:
-    """依存を読めなかった file の path(選び漏れの在りうる所として要約で数える)。"""
+    """Path of a file whose dependencies could not be read (counted in the summary as a place where selection may have missed something)."""
     match raw:
         case {"path": str() as path}:
             return path
         case _:
-            raise ValueError(f"unreadable の 1 つの形が違う: {raw!r}")
+            raise ValueError(f"the shape of one of unreadable is wrong: {raw!r}")
 
 
 @dataclass(frozen=True)
 class LinterCommand:
-    """逆依存を問う linter の命令と、その命令が実行できなかった時に名指す理由(探した道を載せる)。"""
+    """The command of the linter asked about reverse dependencies, and the reason to name when that command cannot be executed (including the paths searched)."""
 
     command: str
     absent: str
@@ -569,14 +568,14 @@ class LinterCommand:
 
 @dataclass(frozen=True)
 class LockedLinter:
-    """作業木の組み立ての入力の鍵の linter(置き場に在った binary の path)。"""
+    """The linter keyed by the working tree's build inputs (path of the binary found in the store)."""
 
     binary: str
 
 
 @dataclass(frozen=True)
 class LockedLinterAbsent:
-    """鍵の linter を探せなかった — 探した置き場と鍵を名指す理由。"""
+    """The keyed linter could not be found — a reason naming the store searched and the key."""
 
     reason: str
 
@@ -585,8 +584,8 @@ LockedAnswer = LockedLinter | LockedLinterAbsent
 
 
 def locate_locked_linter(repo: Path) -> LockedAnswer:
-    """作業木の HEAD の組み立ての入力の鍵の linter を、commit の hook と同じ探し方(`doeff_linter_locked.py which`)で探す。
-    組まない(冷えた組み立ては 3〜5 分で、会話の Pod では OOM に寄せる — 無ければ呼び手が「測れない」と名指す)。"""
+    """Look for the linter keyed by the working tree's HEAD build inputs with the same lookup as the commit hook (`doeff_linter_locked.py which`).
+    It does not build (a cold build takes 3-5 minutes and risks OOM in a conversation Pod — if absent, the caller names it as "could not be measured")."""
     try:
         proc = subprocess.run(
             [sys.executable, str(LOCKED_LINTER_SCRIPT), "which"],
@@ -597,7 +596,7 @@ def locate_locked_linter(repo: Path) -> LockedAnswer:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return LockedLinterAbsent(f"鍵の linter を探せなかった: {exc}")
+        return LockedLinterAbsent(f"could not look for the keyed linter: {exc}")
     binary = proc.stdout.strip()
     if proc.returncode == 0 and binary:
         return LockedLinter(binary)
@@ -606,28 +605,28 @@ def locate_locked_linter(repo: Path) -> LockedAnswer:
 
 
 def pick_linter(explicit: str | None, repo: Path) -> LinterCommand:
-    """linter の命令を決める: `--linter` で渡した物 → 作業木の鍵の linter(組まない)→ PATH の doeff-linter。
-    後ろの 2 つは、鍵の linter が無い時だけ PATH へ落ちる — 落ちた先の命令も無い時に、探した道の全部を名指せるようにする。"""
+    """Decide the linter command: what was passed with `--linter` -> the linter keyed by the working tree (no build) -> doeff-linter on PATH.
+    The last two fall to PATH only when there is no keyed linter — so that, if that command is missing too, every path searched can be named."""
     if explicit is not None:
         return LinterCommand(
-            command=explicit, absent=f"linter {explicit!r} が無い(--linter で渡した命令)"
+            command=explicit, absent=f"linter {explicit!r} not found (the command passed with --linter)"
         )
     match locate_locked_linter(repo):
         case LockedLinter(binary=binary):
             return LinterCommand(
-                command=binary, absent=f"linter {binary!r} が無い(鍵の linter の置き場から消えた)"
+                command=binary, absent=f"linter {binary!r} not found (it vanished from the keyed linter's store)"
             )
         case LockedLinterAbsent(reason=reason):
             return LinterCommand(
                 command=DEFAULT_LINTER,
-                absent=f"linter が無い — {reason}・PATH にも {DEFAULT_LINTER!r} が無い(--linter で渡す)",
+                absent=f"linter not found — {reason}; {DEFAULT_LINTER!r} is not on PATH either (pass one with --linter)",
             )
 
 
 def ask_affected(
     linter: LinterCommand, repo: Path, changes: ChangeSet, patterns: TestFilePatterns
 ) -> AffectedAnswer:
-    """linter の `--affected-tests` に、変えた file と検の file の名の規則(3 と同じ値)を渡して問う(実 I/O はここだけ)。"""
+    """Ask the linter's `--affected-tests` with the changed files and the test-file naming rules (same values as 3) (the only real I/O is here)."""
     command = [
         linter.command,
         "--root",
@@ -643,18 +642,18 @@ def ask_affected(
     except FileNotFoundError:
         return AffectedUnmeasured(linter.absent)
     except subprocess.TimeoutExpired:
-        return AffectedUnmeasured(f"linter が {LINTER_TIMEOUT_SECONDS:g} 秒の内に答えなかった")
+        return AffectedUnmeasured(f"linter did not answer within {LINTER_TIMEOUT_SECONDS:g} seconds")
     if proc.returncode != 0:
-        last = (proc.stderr.strip().splitlines() or ["(stderr なし)"])[-1]
-        return AffectedUnmeasured(f"linter が rc {proc.returncode} で止まった — {last[:300]}")
+        last = (proc.stderr.strip().splitlines() or ["(no stderr)"])[-1]
+        return AffectedUnmeasured(f"linter stopped with rc {proc.returncode} — {last[:300]}")
     return parse_affected(proc.stdout)
 
 
 def extend_with_reverse(
     selection: Selection, answer: AffectedAnswer, patterns: TestFilePatterns, repo: Path
 ) -> Selection:
-    """選んだ組の後ろに、逆依存の検を距離の近い順(同じ距離は path の順)で足す — 既に在る引数は足さない。
-    検の file かは 3 と同じ判定で絞る。測れなかった答えは何も足さない(要約で名指す)。"""
+    """Append reverse-dependency tests after the chosen sets, nearest distance first (same distance in path order) — arguments already present are not added.
+    Whether something is a test file is filtered by the same judgment as 3. An answer that could not be measured adds nothing (named in the summary)."""
     match answer:
         case AffectedUnmeasured():
             return selection
@@ -664,7 +663,7 @@ def extend_with_reverse(
         Target(
             arg=test.path,
             origin=Origin.REVERSE,
-            why=f"距離 {test.distance}: {' → '.join(test.via)}",
+            why=f"distance {test.distance}: {' → '.join(test.via)}",
         )
         for test in sorted(tests, key=lambda t: (t.distance, t.path))
         if is_test_file(test.path, patterns) and (repo / test.path).is_file()
@@ -673,29 +672,29 @@ def extend_with_reverse(
 
 
 # ---------------------------------------------------------------------------
-# pytest の session の境目(日次と同じ)
+# pytest session boundaries (same as the daily run)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class SessionRoots:
-    """日次の session の境目のうち、package の tests/ の外の検の根(Makefile の PACKAGE_EXTRA_TEST_ROOTS・根からの path)。"""
+    """Among the daily session boundaries, the test roots outside a package's tests/ (the Makefile's PACKAGE_EXTRA_TEST_ROOTS, as paths from the root)."""
 
     extra: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class Batch:
-    """1 つの pytest の process に渡す検の並び — session = その検の session の根(ROOT_SESSION・`packages/<名>/tests`・
-    tests/ の外の根のどれか)。"""
+    """The sequence of tests passed to one pytest process — session = the session root of those tests (one of ROOT_SESSION, `packages/<name>/tests`, or
+    a root outside tests/)."""
 
     session: str
     targets: tuple[Target, ...]
 
 
 def read_session_roots(repo: Path) -> SessionRoots:
-    """package の tests/ の外の検の根を、日次の母集団の定義元(Makefile の target)に聞く(実 I/O はここだけ)。読めなければ
-    止める — 黙って根を 0 個にすると、その根の検が repo の根の session に混ざり、日次と違う session で走る。"""
+    """Ask the source of truth of the daily population (the Makefile target) for the test roots outside a package's tests/ (the only real I/O is here). Stop
+    if it cannot be read — silently making it 0 roots would mix tests of those roots into the repo root session and run them in a session different from the daily run."""
     try:
         proc = subprocess.run(
             ["make", "-s", "--no-print-directory", "-C", str(repo), EXTRA_ROOTS_TARGET],
@@ -705,15 +704,15 @@ def read_session_roots(repo: Path) -> SessionRoots:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise StopError(f"make {EXTRA_ROOTS_TARGET} を走らせられない: {exc}") from exc
+        raise StopError(f"cannot run make {EXTRA_ROOTS_TARGET}: {exc}") from exc
     if proc.returncode != 0:
-        raise StopError(f"make {EXTRA_ROOTS_TARGET} が rc {proc.returncode}: {proc.stderr.strip()}")
+        raise StopError(f"make {EXTRA_ROOTS_TARGET} returned rc {proc.returncode}: {proc.stderr.strip()}")
     return SessionRoots(extra=tuple(root.rstrip("/") for root in proc.stdout.split()))
 
 
 def session_of(arg: str, roots: SessionRoots) -> str:
-    """検の引数 1 つが走る session の根 — 日次の境目と同じ: tests/ の外の根の下はその根・`packages/<名>/tests/` の下は
-    その package の tests・どちらでもない検は repo の根(日次の root の `pytest`)。"""
+    """The session root in which one test argument runs — same as the daily boundary: under a root outside tests/ it is that root; under `packages/<name>/tests/` it is
+    that package's tests; any other test goes to the repo root (the daily root `pytest`)."""
     path = _test_path(arg)
     extra = next((root for root in roots.extra if path.startswith(f"{root}/")), None)
     if extra is not None:
@@ -726,9 +725,9 @@ def session_of(arg: str, roots: SessionRoots) -> str:
 
 
 def batches_of(selection: Selection, roots: SessionRoots) -> tuple[Batch, ...]:
-    """選んだ並びを、組(契約の組 → 変えた検 → 逆依存)の順を保ったまま process の束に分ける。組の中は session ごとに
-    束ね(session の順は組の中で最初に現れた順・束の中は選んだ順)、隣り合う同じ session の束は 1 つの process にする。
-    純粋な関数(session の根は呼び手が読んで渡す)。"""
+    """Split the selected sequence into process bundles while keeping the group order (contract set -> changed tests -> reverse dependencies). Within a group, bundle
+    per session (session order is the order first seen in the group; within a bundle, the selection order), and adjacent bundles of the same session become one process.
+    A pure function (the caller reads and passes the session roots)."""
     keyed = tuple((t, session_of(t.arg, roots)) for t in selection.targets)
     per_origin = tuple(
         Batch(
@@ -745,7 +744,7 @@ def batches_of(selection: Selection, roots: SessionRoots) -> tuple[Batch, ...]:
 
 
 # ---------------------------------------------------------------------------
-# pytest の結末(plugin が書く行ごとの JSON)
+# pytest outcomes (per-line JSON written by the plugin)
 # ---------------------------------------------------------------------------
 
 
@@ -768,13 +767,13 @@ class CollectError:
 
 @dataclass(frozen=True)
 class Configuring:
-    """pytest の main が configure に入る拍 — root の conftest が機体の検の枠を取る(埋まっていれば待つ)のは、この拍と
-    SessionStarted の間(conftest.py の pytest_configure)。"""
+    """The beat at which pytest's main enters configure — the root conftest takes the machine's test slot (waiting if full) between this beat and
+    SessionStarted (pytest_configure in conftest.py)."""
 
 
 @dataclass(frozen=True)
 class SessionStarted:
-    """configure の全部が終わり、session が始まった拍(収集の前)。"""
+    """The beat at which all of configure has finished and the session has started (before collection)."""
 
 
 Event = Collected | ItemReport | CollectError | Configuring | SessionStarted
@@ -784,7 +783,7 @@ def _parse_event(line: str) -> Event:
     try:
         payload = json.loads(line)
     except json.JSONDecodeError as exc:
-        raise StopError(f"pytest の結末の行が JSON でない: {line[:200]!r}") from exc
+        raise StopError(f"a line of pytest outcomes is not JSON: {line[:200]!r}") from exc
     match payload:
         case {"kind": "configuring"}:
             return Configuring()
@@ -802,7 +801,7 @@ def _parse_event(line: str) -> Event:
         case {"kind": "collect_error", "nodeid": str() as nodeid}:
             return CollectError(nodeid=nodeid)
         case other:
-            raise StopError(f"pytest の結末の行が読めない: {other!r}")
+            raise StopError(f"cannot read a line of pytest outcomes: {other!r}")
 
 
 class _Item(Protocol):
@@ -822,32 +821,32 @@ class _Report(Protocol):
 
 @dataclass(frozen=True)
 class ReportPlugin:
-    """pytest の中の口が pytest に渡す plugin — 結末を、入口が命令行で渡した pipe の書き口(report_fd)へ 1 行の JSON
-    ずつ書く(打ち切られても、そこまでの行が残るように 1 行ずつ閉じる)。書き口は子の process の入口
-    (`_main_as_pytest`)が 1 度だけ読んだ値で、環境変数は読まない。"""
+    """The plugin that the hook inside pytest passes to pytest — writes outcomes as one JSON line each to the pipe write end (report_fd) that the entry point passed on the command line
+    (each line is closed individually so the lines so far remain even if cut off). The write end is a value read once by the child process's entry point
+    (`_main_as_pytest`); environment variables are not read."""
 
     report_fd: int
 
     def _write_event(self, payload: dict[str, object]) -> None:
-        """結末 1 つを pipe へ書く(入口の側の `_parse_event` が読む形)。"""
+        """Write one outcome to the pipe (in the shape that the entry point's `_parse_event` reads)."""
         os.write(self.report_fd, (json.dumps(payload, ensure_ascii=False) + "\n").encode())
 
     def pytest_cmdline_main(self, config: object) -> None:
-        """configure に入る拍を残す — ここから session が始まるまで(機体の検の枠の待ち)を、入口は上限に数えない。
-        命令行の口は後に登録した plugin ほど先に呼ばれ、configure と session を起こす pytest の main の口はこの plugin
-        より先に登録された組み込みなので、この拍は configure の前に来る(None を返して main へ渡す)。"""
+        """Record the beat of entering configure — from here until the session starts (the wait for the machine's test slot), the entry point does not count against the budget.
+        Command-line hooks are called first for plugins registered later, and the hook of pytest's main that starts configure and the session is a built-in registered
+        before this plugin, so this beat comes before configure (return None and hand over to main)."""
         self._write_event({"kind": "configuring"})
 
     def pytest_sessionstart(self, session: _Session) -> None:
-        """session が始まった拍を残す — 入口はここから上限の残りを数え直す。"""
+        """Record the beat at which the session started — from here the entry point re-counts the remainder of the budget."""
         self._write_event({"kind": "session_started"})
 
     def pytest_collection_finish(self, session: _Session) -> None:
-        """どの検を集めたか(-m で外した後)を残す — 終わらなかった検を名指すための母数。"""
+        """Record which tests were collected (after -m deselection) — the denominator for naming tests that did not finish."""
         self._write_event({"kind": "collected", "nodeids": [item.nodeid for item in session.items]})
 
     def pytest_runtest_logreport(self, report: _Report) -> None:
-        """検 1 本の段(setup・call・teardown)の結末を残す — teardown が来た検を「終わった」と数える。"""
+        """Record the outcome of one stage (setup, call, teardown) of a test — a test whose teardown arrived is counted as "finished"."""
         self._write_event(
             {
                 "kind": "report",
@@ -858,20 +857,20 @@ class ReportPlugin:
         )
 
     def pytest_collectreport(self, report: _Report) -> None:
-        """集める時に落ちた file を残す — 赤として名指す。"""
+        """Record files that failed while collecting — named as red."""
         if report.failed:
             self._write_event({"kind": "collect_error", "nodeid": report.nodeid})
 
 
 # ---------------------------------------------------------------------------
-# 走らせる・分ける
+# Running and classifying
 # ---------------------------------------------------------------------------
 
 
 class Verdict(Enum):
-    GREEN = "走った"
-    RED = "赤"
-    UNMEASURED = "未測"
+    GREEN = "ran"
+    RED = "red"
+    UNMEASURED = "unmeasured"
 
 
 @dataclass(frozen=True)
@@ -883,7 +882,7 @@ class TargetResult:
 
 @dataclass(frozen=True)
 class PytestRun:
-    """走った束 1 つ — seconds = 上限に数えた秒・waited = 数えなかった configure の間の秒(機体の検の枠の待ち)。"""
+    """One bundle that ran — seconds = seconds counted against the budget; waited = seconds of the configure phase not counted (waiting for the machine's test slot)."""
 
     events: tuple[Event, ...]
     returncode: int | None
@@ -894,7 +893,7 @@ class PytestRun:
 
 @dataclass(frozen=True)
 class NotReached:
-    """合計の上限を前の束が使い切り、pytest を起こさなかった束。"""
+    """A bundle for which pytest was not started because a previous bundle used up the total budget."""
 
 
 BatchRun = PytestRun | NotReached
@@ -902,7 +901,7 @@ BatchRun = PytestRun | NotReached
 
 @dataclass(frozen=True)
 class BatchOutcome:
-    """束 1 つと、その束の走り(走ったか、番が来なかったか)。"""
+    """One bundle, and how it went (it ran, or it never got a turn)."""
 
     batch: Batch
     run: BatchRun
@@ -917,20 +916,20 @@ def _belongs(nodeid: str, arg: str) -> bool:
 
 
 def classify(target: Target, outcome: BatchRun, budget: float) -> TargetResult:
-    """検 1 つを、その束の走りから 3 つ(走った・赤・未測)に分ける — 番が来なかった束の検を、赤と混ぜずに未測と名指すため。"""
+    """Classify one test into three (ran, red, unmeasured) from its bundle's run — so tests in a bundle that never got a turn are named unmeasured without mixing them into red."""
     match outcome:
         case NotReached():
             return TargetResult(
                 target,
                 Verdict.UNMEASURED,
-                f"上限 {budget:g} 秒の内に番が来なかった(前の束が使い切った)",
+                f"did not get a turn within the {budget:g}s budget (the previous bundle used it up)",
             )
         case PytestRun() as run:
             return _classify_run(target, run, budget)
 
 
 def _classify_run(target: Target, run: PytestRun, budget: float) -> TargetResult:
-    """走った束の検 1 つを分ける — 集め終わらなかった・打ち切られた検を、赤と混ぜずに未測と名指すため。"""
+    """Classify one test of a bundle that ran — so tests that did not finish collecting or were cut off are named unmeasured without mixing them into red."""
     collected = next((e for e in run.events if isinstance(e, Collected)), None)
     collect_errors = [
         e
@@ -938,64 +937,64 @@ def _classify_run(target: Target, run: PytestRun, budget: float) -> TargetResult
         if isinstance(e, CollectError) and _belongs(e.nodeid, _test_path(target.arg))
     ]
     if collect_errors:
-        return TargetResult(target, Verdict.RED, "集める時に落ちた")
+        return TargetResult(target, Verdict.RED, "failed while collecting")
     if collected is None:
         if run.timed_out:
-            reason = f"上限 {budget:g} 秒の内に集め終わらなかった"
+            reason = f"did not finish collecting within the {budget:g}s budget"
         elif not any(isinstance(e, SessionStarted) for e in run.events):
             reason = (
-                f"pytest が session を始める前に止まった(rc {run.returncode} — 機体の検の枠の待ちが上限を"
-                "越えたか、configure の誤り・上の出力を読む)"
+                f"pytest stopped before starting a session (rc {run.returncode} — the wait for the machine's test slot exceeded the budget,"
+                " or a configure error; read the output above)"
             )
         else:
-            reason = f"pytest が集める前に止まった(rc {run.returncode})"
+            reason = f"pytest stopped before collecting (rc {run.returncode})"
         return TargetResult(target, Verdict.UNMEASURED, reason)
     items = tuple(n for n in collected.nodeids if _belongs(n, target.arg))
     if not items:
         return TargetResult(
-            target, Verdict.UNMEASURED, "集めた検が 0 本(e2e だけか、集め手に当たらない)"
+            target, Verdict.UNMEASURED, "0 tests collected (e2e only, or not matched by the collectors)"
         )
     reports = [e for e in run.events if isinstance(e, ItemReport) and e.nodeid in items]
     failed = sorted({r.nodeid for r in reports if r.outcome == "failed"})
     finished = {r.nodeid for r in reports if r.when == "teardown"}
     unfinished = [n for n in items if n not in finished]
     if failed:
-        return TargetResult(target, Verdict.RED, f"赤 {len(failed)} 本: {', '.join(failed)}")
+        return TargetResult(target, Verdict.RED, f"{len(failed)} red: {', '.join(failed)}")
     if unfinished:
         reason = (
-            f"上限 {budget:g} 秒で打ち切り"
+            f"cut off at the {budget:g}s budget"
             if run.timed_out
-            else f"pytest が途中で止まった(rc {run.returncode})"
+            else f"pytest stopped midway (rc {run.returncode})"
         )
         return TargetResult(
             target,
             Verdict.UNMEASURED,
-            f"{reason} — {len(items) - len(unfinished)}/{len(items)} 本で止まった",
+            f"{reason} — stopped at {len(items) - len(unfinished)}/{len(items)} tests",
         )
-    return TargetResult(target, Verdict.GREEN, f"{len(items)} 本")
+    return TargetResult(target, Verdict.GREEN, f"{len(items)} test(s)")
 
 
 @dataclass(frozen=True)
 class ChildClock:
-    """pytest の process 1 つの拍(入口の monotonic の秒)— 上限に数える秒と、数えない configure の間の秒を分けるため。
+    """The beats of one pytest process (the entry point's monotonic seconds) — to separate seconds counted against the budget from the uncounted configure phase.
 
-    spawned = 起こした拍・configuring = configure に入った拍・started = session が始まった拍(来ていなければ None)。
-    configure の間は root の conftest が機体の検の枠を取る(埋まっていれば待つ)ので数えない — 枠の正本の hold_check_slot は
-    「待ちを変更箇所の検証の 60 秒に数えない」と約束している。起こしてから configure まで(uv・python・
-    conftest の import)と session が始まってからは今までどおり数える(止まったままの子も上限で切るため)。
+    spawned = the beat it was started; configuring = the beat it entered configure; started = the beat the session started (None if not yet).
+    The configure phase is not counted because the root conftest takes the machine's test slot (waiting if full) — the slot's source of truth hold_check_slot
+    promises "waiting is not counted against the 60 seconds of changed-scope verification". From start to configure (uv, python,
+    conftest import) and from session start onward are counted as before (so a child that stays stuck is also cut by the budget).
 
-    ⚠ 数えない区間は、入口が時間で切らない区間でもある(_ChildProgress.wait_within は paused の間、子の終わりか拍だけを待つ)。
-    だから数えない区間は、上限を別の持ち主が持つ区間 — configure の間の枠の待ち(上限は枠の正本の 1 点が持ち、越えれば
-    pytest が未実行を名乗って終わる)— だけにする。収集や検の本体を数えない区間に足すと、止まった子を誰も切らず入口が
-    終わらない(設計検証の盲検 A — test_a_collection_over_the_budget_is_cut_not_excluded が守る)。
-    区間を足す時は、その区間の上限の持ち主を先に決め、paused と wait_within を一緒に変える。"""
+    WARNING: An uncounted span is also a span the entry point does not cut by time (_ChildProgress.wait_within waits only for the child's end or a beat while paused).
+    So uncounted spans are limited to those whose budget is held by another owner — the slot wait in the configure phase (its upper limit is held at one point by the slot's source of truth, and when exceeded
+    pytest ends declaring it did not run). If collection or the test body is added to an uncounted span, nobody cuts a stuck child and the entry point
+    never ends (blind review A of the design verification — guarded by test_a_collection_over_the_budget_is_cut_not_excluded).
+    When adding a span, first decide who owns that span's budget, and change paused and wait_within together."""
 
     spawned: float
     configuring: float | None
     started: float | None
 
     def mark(self, event: Event, at: float) -> ChildClock:
-        """受けた結末の行が configure か session の拍なら、その時刻を記した時計を返す(他の行は時計を変えない)。"""
+        """If the received outcome line is a configure or session beat, return a clock with that time recorded (other lines leave the clock unchanged)."""
         match event:
             case Configuring() if self.configuring is None:
                 return ChildClock(spawned=self.spawned, configuring=at, started=self.started)
@@ -1006,11 +1005,11 @@ class ChildClock:
 
     @property
     def paused(self) -> bool:
-        """configure の間か — 上限の時計が止まり、入口が時間で切らない区間(上限の持ち主は枠の正本 — class の註)。"""
+        """Whether in the configure phase — the budget clock is stopped and the entry point does not cut by time (the budget owner is the slot's source of truth — see the class note)."""
         return self.configuring is not None and self.started is None
 
     def counted(self, now: float) -> float:
-        """上限に数える秒 — 起こしてから configure までと、session が始まってから now まで。"""
+        """Seconds counted against the budget — from start to configure, and from session start to now."""
         if self.configuring is None:
             return now - self.spawned
         if self.started is None:
@@ -1018,7 +1017,7 @@ class ChildClock:
         return (self.configuring - self.spawned) + (now - self.started)
 
     def waited(self, now: float) -> float:
-        """上限に数えない秒 — configure の間(機体の検の枠の待ちを含む)。"""
+        """Seconds not counted against the budget — the configure phase (including waiting for the machine's test slot)."""
         if self.configuring is None:
             return 0.0
         return (now if self.started is None else self.started) - self.configuring
@@ -1026,15 +1025,15 @@ class ChildClock:
 
 @dataclass(frozen=True)
 class Drained:
-    """pipe を読み終えた子の結末 — 結末の行の全部と、拍を記し終えた時計。"""
+    """The outcome of a child whose pipe was fully read — all outcome lines, and the clock with the beats recorded."""
 
     events: tuple[Event, ...]
     clock: ChildClock
 
 
 class _ChildProgress:
-    """pytest の process 1 つの進み — pipe の読み手(結末の行と拍)と process の待ち手(終わり)の 2 つの thread が書き、
-    入口の thread が上限に数える秒を数えて待つ(拍の時刻は行を受けた入口の側の monotonic)。"""
+    """Progress of one pytest process — written by two threads, the pipe reader (outcome lines and beats) and the process waiter (the end), while
+    the entry point's thread waits counting the seconds that count against the budget (the beat time is the monotonic of the entry-point side that received the line)."""
 
     def __init__(self, clock: ChildClock) -> None:
         self._changed = threading.Condition()
@@ -1045,8 +1044,8 @@ class _ChildProgress:
         self._mut_drained = False
 
     def read(self, fd: int) -> None:
-        """読み手の thread の本体: pipe の読み口を書き手が全員閉じるまで 1 行ずつ読む(plugin が書く結末の行の全部)。
-        読めない行は最初の 1 つを覚えて読み続ける(読むのを止めると、書き手の子が詰まった pipe で止まる)。"""
+        """Body of the reader thread: read line by line until all writers close the pipe's read end (all outcome lines the plugin writes).
+        Remember the first unreadable line and keep reading (if reading stops, the writing child blocks on the full pipe)."""
         with os.fdopen(fd, "r", encoding="utf-8") as fh:
             for line in fh:
                 if line.strip():
@@ -1056,7 +1055,7 @@ class _ChildProgress:
             self._changed.notify_all()
 
     def _receive(self, line: str, at: float) -> None:
-        """結末の行 1 つを受け、拍なら時計に記して待ち手を起こす。"""
+        """Receive one outcome line; if it is a beat, record it in the clock and wake the waiter."""
         try:
             event = _parse_event(line)
         except StopError as exc:
@@ -1069,18 +1068,18 @@ class _ChildProgress:
             self._changed.notify_all()
 
     def watch(self, proc: subprocess.Popen[bytes]) -> None:
-        """待ち手の thread の本体: process の終わりを待ち、入口の thread を起こす。"""
+        """Body of the waiter thread: wait for the process to end and wake the entry point's thread."""
         proc.wait()
         with self._changed:
             self._mut_exited = True
             self._changed.notify_all()
 
     def wait_within(self, budget: float) -> bool:
-        """process が終わるまで待つ — 上限に数える秒が budget に達したら False(呼び手が打ち切る)。configure の間は数えない
-        ので時間を切らずに待つ(枠の待ちは枠の正本の上限が限り、越えれば pytest が未実行を名乗って終わる)。
-        ⚠ この区間に入口の側の上限を置かない — 置くと、待ちを諦める判断が枠の正本(待ちの上限の .json と未実行の名乗り)から
-        入口へ移り、2 つの上限の小さい方が効く(設計検証の盲検 B)。待ちの上限を変える時は
-        正本の値を変える。"""
+        """Wait until the process ends — return False when the seconds counted against the budget reach budget (the caller cuts it off). The configure phase is not counted,
+        so wait without a time limit (the slot wait is bounded by the slot's source-of-truth limit; when exceeded pytest ends declaring it did not run).
+        WARNING: Do not place the entry point's own limit in this span — doing so moves the decision to give up waiting from the slot's source of truth (the wait-limit .json and the declaration of not having run)
+        to the entry point, and the smaller of two limits takes effect (blind review B of the design verification). To change the wait limit,
+        change the source-of-truth value."""
         with self._changed:
             while not self._mut_exited:
                 if self._mut_clock.paused:
@@ -1093,12 +1092,12 @@ class _ChildProgress:
             return True
 
     def drain(self, grace: float) -> Drained:
-        """process が終わった後、pipe を読み終えるのを grace 秒まで待って結末を返す — 読み終えない(検が group の外へ逃がした
-        子が書き口を持つ)・読めない行が在った時は止める。"""
+        """After the process ends, wait up to grace seconds for the pipe to be fully read and return the outcomes — stop if it is not fully read (a child the test
+        let escape the group holds the write end) or if an unreadable line existed."""
         with self._changed:
             if not self._changed.wait_for(lambda: self._mut_drained, timeout=grace):
                 raise StopError(
-                    "pytest が終わった後も結末の pipe を持つ process が残っている(検が group の外へ逃がした子)"
+                    "a process still holds the outcome pipe after pytest ended (a child the test let escape the group)"
                 )
             if self._mut_unreadable is not None:
                 raise self._mut_unreadable
@@ -1106,7 +1105,7 @@ class _ChildProgress:
 
 
 def _stop_group(proc: subprocess.Popen[bytes]) -> None:
-    """上限を越えた pytest を process group ごと止める(SIGTERM・猶予の後 SIGKILL)。"""
+    """Stop a pytest that exceeded the budget together with its process group (SIGTERM, then SIGKILL after the grace)."""
     os.killpg(proc.pid, signal.SIGTERM)
     try:
         proc.wait(timeout=KILL_GRACE_SECONDS)
@@ -1117,14 +1116,14 @@ def _stop_group(proc: subprocess.Popen[bytes]) -> None:
 
 @dataclass(frozen=True)
 class Unset:
-    """環境変数が無い(空の値も uv と同じく無いと読む)。"""
+    """The environment variable is absent (an empty value is also read as absent, as in uv)."""
 
     name: str
 
 
 @dataclass(frozen=True)
 class Setting:
-    """環境変数の空でない値。"""
+    """A non-empty value of an environment variable."""
 
     name: str
     value: str
@@ -1135,7 +1134,7 @@ EnvironmentSetting = Setting | Unset
 
 @dataclass(frozen=True)
 class EnvironmentEntry:
-    """子の process に渡す環境変数 1 つ。"""
+    """One environment variable to pass to the child process."""
 
     name: str
     value: str
@@ -1143,10 +1142,10 @@ class EnvironmentEntry:
 
 @dataclass(frozen=True)
 class RunEnvironment:
-    """入口が 1 度だけ読んだ環境 — 中の関数は環境変数を読まず、この値を受け取る。
+    """The environment the entry point read exactly once — functions inside do not read environment variables; they receive this value.
 
-    uv_project_environment = uv の環境の置き場の指定(UV_PROJECT_ENVIRONMENT)。
-    child = pytest の子の process に渡す環境(外の `uv run --script` の VIRTUAL_ENV は除く)。
+    uv_project_environment = the setting for the uv environment location (UV_PROJECT_ENVIRONMENT).
+    child = the environment passed to the pytest child process (excluding the outer `uv run --script`'s VIRTUAL_ENV).
     """
 
     uv_project_environment: EnvironmentSetting
@@ -1154,7 +1153,7 @@ class RunEnvironment:
 
 
 def _setting(environ: Mapping[str, str], name: str) -> EnvironmentSetting:
-    """環境変数 1 つを、在る(空でない値)か無いかの型で読む。"""
+    """Read one environment variable as a type: present (non-empty value) or absent."""
     match environ.get(name, ""):
         case "":
             return Unset(name=name)
@@ -1163,7 +1162,7 @@ def _setting(environ: Mapping[str, str], name: str) -> EnvironmentSetting:
 
 
 def read_run_environment(environ: Mapping[str, str]) -> RunEnvironment:
-    """入口の 1 か所で、process の環境(呼び手が渡す)から要る値を読む。"""
+    """At the one place of the entry point, read the needed values from the process environment (passed by the caller)."""
     return RunEnvironment(
         uv_project_environment=_setting(environ, UV_PROJECT_ENVIRONMENT),
         child=tuple(
@@ -1175,7 +1174,7 @@ def read_run_environment(environ: Mapping[str, str]) -> RunEnvironment:
 
 
 def project_environment(repo: Path, environment: RunEnvironment) -> Path:
-    """uv が `uv run --project <repo>` で使う環境の置き場(UV_PROJECT_ENVIRONMENT か `<repo>/.venv`)。"""
+    """The location of the environment that uv uses for `uv run --project <repo>` (UV_PROJECT_ENVIRONMENT or `<repo>/.venv`)."""
     match environment.uv_project_environment:
         case Setting(value=value):
             return repo / value
@@ -1186,8 +1185,8 @@ def project_environment(repo: Path, environment: RunEnvironment) -> Path:
 def run_pytest(
     repo: Path, targets: tuple[Target, ...], budget: float, environment: RunEnvironment
 ) -> PytestRun:
-    """1 回の pytest を作業木の uv の環境で上限つきで走らせ、plugin が pipe へ書いた結末を受け取る(file には残さない)。
-    上限(budget)は configure の間(機体の検の枠の待ち)を除いて数える — ChildClock。pipe の書き口の番号は子の命令行で渡す。"""
+    """Run one pytest with a budget in the working tree's uv environment and receive the outcomes the plugin wrote to the pipe (nothing is left in a file).
+    The budget is counted excluding the configure phase (waiting for the machine's test slot) — ChildClock. The pipe's write-end number is passed on the child's command line."""
     read_fd, write_fd = os.pipe()
     env = {entry.name: entry.value for entry in environment.child}
     command = [
@@ -1222,8 +1221,8 @@ def run_pytest(
     events = drained.events
     if not timed_out and (returncode in PYTEST_TOOL_FAILURES or not events):
         raise StopError(
-            f"pytest が rc {returncode} で、検の結末を{'返さずに' if not events else ''}止まった"
-            "(uv・conftest・命令行の誤り)— 上の出力を読む"
+            f"pytest stopped with rc {returncode}{' without returning' if not events else ' after returning'} test outcomes"
+            " (a uv, conftest or command-line error) — read the output above"
         )
     return PytestRun(
         events=events,
@@ -1241,15 +1240,15 @@ def _run_batch(
     remaining: float,
     environment: RunEnvironment,
 ) -> BatchOutcome:
-    """束 1 つを、合計の上限の残りを上限にして 1 つの pytest の process で走らせる — 残りが無ければ起こさない
-    (前の束が使い切った分を後ろの束の「未測」として名指すため)。"""
+    """Run one bundle in one pytest process with the remainder of the total budget as its limit — do not start it if nothing remains
+    (so that bundles behind what the previous bundles used up are named "unmeasured")."""
     batch = batches[index]
     if remaining <= 0:
         return BatchOutcome(batch=batch, run=NotReached())
     print(
-        f"== pytest の process {index + 1}/{len(batches)}: session {batch.session}"
-        f"(検 {len(batch.targets)} 本・残り {remaining:.1f} 秒)==",
-        flush=True,  # pytest の出力より先に出す
+        f"== pytest process {index + 1}/{len(batches)}: session {batch.session}"
+        f" ({len(batch.targets)} test(s), {remaining:.1f}s left) ==",
+        flush=True,  # print before pytest's output
     )
     return BatchOutcome(batch=batch, run=run_pytest(repo, batch.targets, remaining, environment))
 
@@ -1257,8 +1256,8 @@ def _run_batch(
 def run_batches(
     repo: Path, batches: tuple[Batch, ...], budget: float, environment: RunEnvironment
 ) -> tuple[BatchOutcome, ...]:
-    """束を並びの順に 1 つずつ走らせ、合計の上限(budget)を束どうしで分け合う — 契約の組の束がいつも先に走る。
-    各束は、前の束が上限に数えた秒(configure の間 = 機体の検の枠の待ちを除く — ChildClock)を引いた残りを受け取る。"""
+    """Run bundles one at a time in order, sharing the total budget among them — the contract-set bundle always runs first.
+    Each bundle receives the remainder after subtracting the seconds the previous bundles counted against the budget (excluding the configure phase = waiting for the machine's test slot — ChildClock)."""
     outcomes: tuple[BatchOutcome, ...] = ()
     for index in range(len(batches)):
         remaining = budget - _counted_seconds(outcomes)
@@ -1267,40 +1266,40 @@ def run_batches(
 
 
 def _counted_seconds(outcomes: tuple[BatchOutcome, ...]) -> float:
-    """走った束が上限に数えた秒の合計(番の来なかった束は 0)— 束どうしで分け合う上限の使った分と、要約の所要。"""
+    """Total seconds that the bundles which ran counted against the budget (0 for bundles that never got a turn) — the part of the shared budget used, and the elapsed time in the summary."""
     return sum(o.run.seconds for o in outcomes if isinstance(o.run, PytestRun))
 
 
 def _print_waits(outcomes: tuple[BatchOutcome, ...]) -> None:
-    """上限に数えなかった configure の間(機体の検の枠の待ち)の秒を、所要とは別の行で名指す — 待った秒を黙って消さない。"""
+    """Name the seconds of the configure phase not counted against the budget (waiting for the machine's test slot) on a line separate from the elapsed time — never silently drop the waited seconds."""
     total = sum(o.run.waited for o in outcomes if isinstance(o.run, PytestRun))
-    per_session = "・".join(
-        f"session {o.batch.session} {o.run.waited:.1f} 秒"
+    per_session = ", ".join(
+        f"session {o.batch.session} {o.run.waited:.1f}s"
         for o in outcomes
         if isinstance(o.run, PytestRun)
     )
     print(
-        f"上限に数えなかった configure の間(機体の検の枠の待ちを含む): 計 {total:.1f} 秒({per_session})"
+        f"Configure time not counted against the budget (includes waiting for the machine's test slot): total {total:.1f}s ({per_session})"
     )
 
 
 def _print_reverse(answer: AffectedAnswer, added: int) -> None:
-    """逆依存の測り方の結末を名指す — 測れなかった時・広すぎて辿らなかった module を、赤と混ぜずに出す。"""
+    """Name how reverse dependencies were measured — show, without mixing into red, when they could not be measured and which modules were too broad to follow."""
     match answer:
         case AffectedUnmeasured(reason=reason):
-            print(f"逆依存を測れなかった — {reason}(赤ではない・契約の組と変えた検だけを選んだ)")
+            print(f"Reverse dependencies could not be measured — {reason} (not red; only contract sets and changed tests were selected)")
         case Affected(tests=tests, hubs=hubs, unreadable=unreadable):
             print(
-                f"逆依存: 足した検 {added} 本(linter の答え {len(tests)} 本・重なりと検の file でない物を除く)"
+                f"Reverse dependencies: added {added} test(s) (linter answered {len(tests)}; overlaps and non-test files excluded)"
             )
             for hub in hubs:
                 print(
-                    f"  逆依存が広すぎて辿らなかった module: {hub.module}(根 {hub.root or '.'}・直接の使い手"
-                    f" {hub.dependents})— その先は日次の全体の検が測る"
+                    f"  module too widely depended on to trace: {hub.module} (root {hub.root or '.'}, direct dependents"
+                    f" {hub.dependents}) — beyond that, the daily whole-repo run measures it"
                 )
             if unreadable:
                 print(
-                    f"  依存を読めなかった file {len(unreadable)} 本(その先の選び漏れが在りうる):"
+                    f"  {len(unreadable)} file(s) whose dependencies could not be read (selection beyond them may have missed tests):"
                     f" {', '.join(unreadable[:10])}"
                 )
 
@@ -1308,20 +1307,20 @@ def _print_reverse(answer: AffectedAnswer, added: int) -> None:
 def _print_summary(
     results: tuple[TargetResult, ...], seconds: float, budget: float, reverse: AffectedAnswer
 ) -> None:
-    """3 つ(走った・赤・未測)に分けた要約を出す — 未測は理由つきで名指し、赤と混ぜない。逆依存の測り方も名指す。"""
+    """Print the summary split into three (ran, red, unmeasured) — unmeasured is named with reasons and not mixed into red. Also names how reverse dependencies were measured."""
     print()
-    print(f"== 変えた所の検の要約(所要 {seconds:.1f} 秒 / 上限 {budget:g} 秒)==")
+    print(f"== Changed-tests summary (elapsed {seconds:.1f}s / budget {budget:g}s) ==")
     for verdict in Verdict:
         rows = [r for r in results if r.verdict is verdict]
         print(f"{verdict.value}: {len(rows)}")
         for r in rows:
-            print(f"  {r.target.arg} — {r.detail}({r.target.origin.value}・{r.target.why})")
+            print(f"  {r.target.arg} — {r.detail} ({r.target.origin.value}, {r.target.why})")
     _print_reverse(reverse, sum(1 for r in results if r.target.origin is Origin.REVERSE))
 
 
 @dataclass(frozen=True)
 class Finished:
-    """入口の 1 回の結末 — 終了 code と、選んだ検ごとの結果(数の要約の元・止まった時は選んだ検の全部が未測)。"""
+    """The outcome of one run of the entry point — the exit code and the result per selected test (the source of the counts summary; when stopped, all selected tests are unmeasured)."""
 
     rc: int
     results: tuple[TargetResult, ...]
@@ -1329,8 +1328,8 @@ class Finished:
 
 @dataclass(frozen=True)
 class RunCounts:
-    """入口の 1 回を数だけで表す要約(1 日の未測を実数で数えるため・中身の一覧は載せない)。
-    selected = ran + red + unmeasured。unmeasured_reverse = 未測のうち逆依存の検。seconds = 入口の壁時計。"""
+    """A summary of one run of the entry point as counts only (to count a day's unmeasured as real numbers; no list of contents is included).
+    selected = ran + red + unmeasured. unmeasured_reverse = the reverse-dependency tests among the unmeasured. seconds = the entry point's wall clock."""
 
     selected: int
     ran: int
@@ -1343,7 +1342,7 @@ class RunCounts:
 
 
 def counts_of(finished: Finished, seconds: float, budget: float) -> RunCounts:
-    """入口の結末を数だけの要約にする — 機械が 1 行で読める形の元(純粋)。"""
+    """Turn the outcome of the entry point into a counts-only summary — the source of a machine-readable single line (pure)."""
     results = finished.results
     return RunCounts(
         selected=len(results),
@@ -1362,7 +1361,7 @@ def counts_of(finished: Finished, seconds: float, budget: float) -> RunCounts:
 
 
 def counts_line(counts: RunCounts) -> str:
-    """数の要約を、入口の出力の最後の 1 行にする(頭は COUNTS_PREFIX・欄は `名=数` を空白で区切る — agora の入口と同じ綴り)。"""
+    """Make the counts summary the last line of the entry point's output (starts with COUNTS_PREFIX; fields are `name=count` separated by spaces — same spelling as agora's entry point)."""
     return (
         f"{COUNTS_PREFIX} selected={counts.selected} ran={counts.ran} red={counts.red}"
         f" unmeasured={counts.unmeasured} unmeasured_reverse={counts.unmeasured_reverse}"
@@ -1371,24 +1370,24 @@ def counts_line(counts: RunCounts) -> str:
 
 
 def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
-    """登記の前の入口: 変えた file → 契約の組 + 変えた検 + 逆依存の検 → 日次と同じ session ごとの pytest の process → 3 つに分けた
-    要約と rc。どの道で終わっても、出力の最後の行は数だけの要約 1 行(counts_line)。"""
+    """Pre-registration entry point: changed files -> contract sets + changed tests + reverse-dependency tests -> per-session pytest processes as in the daily run -> a summary
+    split into three, and rc. However it ends, the last line of output is a single counts-only summary line (counts_line)."""
     started = time.monotonic()
     parser = argparse.ArgumentParser(
-        description="変えた所の検 — 登記の前に、契約の検の組・変えた検・逆依存の検を 60 秒の上限で走らせる"
+        description="Changed-tests check — before registering, run the contract test sets, changed tests and reverse-dependency tests within a 60-second budget"
     )
     parser.add_argument(
-        "--repo", type=Path, default=Path.cwd(), help="走らせる作業木(既定 = 今の dir)"
+        "--repo", type=Path, default=Path.cwd(), help="working tree to run (default = current dir)"
     )
-    parser.add_argument("--base", help="分岐点(既定 = git merge-base HEAD origin/main)")
+    parser.add_argument("--base", help="branch point (default = git merge-base HEAD origin/main)")
     parser.add_argument(
-        "--budget", type=float, default=DEFAULT_BUDGET_SECONDS, help="合計の壁時計の上限の秒"
+        "--budget", type=float, default=DEFAULT_BUDGET_SECONDS, help="total wall-clock budget in seconds"
     )
     parser.add_argument(
         "--linter",
         default=None,
-        help="逆依存を問う doeff-linter の命令(既定 = 作業木の組み立ての入力の鍵の linter(commit の hook と同じ探し方)、"
-        "無ければ PATH の上の doeff-linter)",
+        help="command of the doeff-linter asked about reverse dependencies (default = the linter keyed by the working tree's build inputs (same lookup as the commit hook),"
+        "otherwise doeff-linter on PATH)",
     )
     args = parser.parse_args(argv)
     finished = _run_entry(args, read_run_environment(environ))
@@ -1397,7 +1396,7 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
 
 
 def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Finished:
-    """入口の本体 — 選んで走らせ、3 つに分けた要約を出し、結末(rc と検ごとの結果)を返す。"""
+    """Body of the entry point — select and run, print the summary split into three, and return the outcome (rc and per-test results)."""
     try:
         repo = Path(_git(args.repo, "rev-parse", "--show-toplevel").strip())
         table = read_contract_table(repo)
@@ -1405,12 +1404,12 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
         changes = changed_files(repo, args.base)
         roots = read_session_roots(repo)
     except StopError as exc:
-        print(f"変えた所の検: 止める — {exc}", file=sys.stderr)
+        print(f"Changed tests: stopping — {exc}", file=sys.stderr)
         return Finished(rc=2, results=())
     print(
-        f"変えた所の検: 作業木の中身で走らせる(index ではない)— {repo}・分岐点 {changes.base[:12]}"
-        f" から作業木までに変えた file {len(changes.files)} 本",
-        flush=True,  # pytest の出力より先に出す
+        f"Changed tests: running on working tree contents (not the index) — {repo}, base {changes.base[:12]}"
+        f" and {len(changes.files)} file(s) changed from there to the working tree",
+        flush=True,  # print before pytest's output
     )
     reverse: AffectedAnswer = (
         ask_affected(pick_linter(args.linter, repo), repo, changes, patterns)
@@ -1422,12 +1421,12 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
     )
     targets = selection.targets
     if not targets:
-        print("当たる契約の組も変えた検の file も逆依存の検も無い — 走らせる検は 0 本")
+        print("No matching contract set, changed test file or reverse-dependency test — 0 tests to run")
         _print_reverse(reverse, 0)
         return Finished(rc=0, results=())
     environment = project_environment(repo, run_environment)
     if not (environment / "pyvenv.cfg").is_file():
-        reason = f"作業木に uv の環境({environment})が無い — `uv sync --frozen --group dev` で作る"
+        reason = f"uv environment ({environment}) not found in the working tree — create it with `uv sync --frozen --group dev`"
         unready = tuple(TargetResult(t, Verdict.UNMEASURED, reason) for t in targets)
         _print_summary(unready, 0.0, args.budget, reverse)
         return Finished(rc=0, results=unready)
@@ -1435,8 +1434,8 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
     try:
         outcomes = run_batches(repo, batches, args.budget, run_environment)
     except StopError as exc:
-        print(f"変えた所の検: 止める — {exc}", file=sys.stderr)
-        stopped = f"入口が止まった — {exc}"
+        print(f"Changed tests: stopping — {exc}", file=sys.stderr)
+        stopped = f"the entry point stopped — {exc}"
         return Finished(
             rc=2, results=tuple(TargetResult(t, Verdict.UNMEASURED, stopped) for t in targets)
         )
@@ -1445,24 +1444,24 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
     )
     _print_summary(results, _counted_seconds(outcomes), args.budget, reverse)
     print(
-        f"pytest の process: {sum(1 for o in outcomes if isinstance(o.run, PytestRun))}/{len(outcomes)} 本が走った"
-        f"(session: {', '.join(o.batch.session for o in outcomes)})"
+        f"pytest processes: {sum(1 for o in outcomes if isinstance(o.run, PytestRun))}/{len(outcomes)} ran"
+        f" (sessions: {', '.join(o.batch.session for o in outcomes)})"
     )
     _print_waits(outcomes)
     return Finished(rc=1 if any(r.verdict is Verdict.RED for r in results) else 0, results=results)
 
 
 def _main_as_pytest(argv: list[str]) -> int:
-    """作業木の環境の中の子の process の入口: 命令行の頭の pipe の書き口の番号を 1 度だけ読み、ReportPlugin を渡して
-    pytest を走らせる(PYTHONPATH を継ぎ足さない・環境変数は読まない)。"""
-    # この口だけが作業木の環境の中で走る(入口の側は stdlib 単独なので module の頭では import しない)。
+    """Entry point of the child process inside the working tree's environment: read the pipe write-end number at the head of the command line exactly once, and run
+    pytest passing ReportPlugin (PYTHONPATH is not appended; environment variables are not read)."""
+    # Only this hook runs inside the working tree's environment (the entry-point side is stdlib only, so it is not imported at the top of the module).
     import pytest
 
     match argv:
         case [fd, *pytest_args] if fd.isdigit():
             return int(pytest.main(pytest_args, plugins=[ReportPlugin(report_fd=int(fd))]))
         case _:
-            print(f"{PYTEST_MODE} の次は結末を書く pipe の番号: {argv[:1]!r}", file=sys.stderr)
+            print(f"after {PYTEST_MODE} comes the pipe number to write outcomes to: {argv[:1]!r}", file=sys.stderr)
             return 2
 
 
@@ -1470,5 +1469,5 @@ if __name__ == "__main__":
     sys.exit(
         _main_as_pytest(sys.argv[2:])
         if sys.argv[1:2] == [PYTEST_MODE]
-        else main(os.environ)  # 環境を読む入口の 1 か所(中へは RunEnvironment で渡す)
+        else main(os.environ)  # the one place that reads the environment (passed inward as RunEnvironment)
     )

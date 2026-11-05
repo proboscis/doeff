@@ -1,21 +1,21 @@
 #!/bin/sh
-# doeff の素の commit の hook — stage した断面に (1) semgrep の規則と
-# (2) doeff-linter の所見の基点の比べと
-# (3) enforcement 台帳の著述時突合(ADR-DOE-ENFORCE-001 R7)を当てる。
-# 導入 = make hooks-install(tracked 原本はこのファイル)。agora の担当の Pod も同じ写しを入れる
-# (agora deploy/agent-worker/worker-prepare.sh)。pre-commit の枠組みを据え付けた機体(make pre-commit-install)は
-# .pre-commit-config.yaml の項が同じ 3 つを撃ち、この file は入らない。
+# doeff's plain commit hook -- applies to the staged snapshot (1) the semgrep rules,
+# (2) the baseline comparison of doeff-linter findings, and
+# (3) the authoring-time reconciliation of the enforcement ledger (ADR-DOE-ENFORCE-001 R7).
+# Installed by make hooks-install (the tracked original is this file). The agora worker Pod also installs the same copy
+# (agora deploy/agent-worker/worker-prepare.sh). On a machine where the pre-commit framework is set up (make pre-commit-install) the
+# .pre-commit-config.yaml entries fire the same 3 and this file is not installed.
 #
-# なぜ著述時か: 着地の窓は力学のみ(mode は focus)で、
-# 直接 push は窓さえ通らない — どの経路でも commit は必ず著述機の git を通るので、
-# 記帳漏れ(2026-08-21 実弾 f47f0a4b: ADR 新設が台帳未更新で main へ)を構造的に
-# 止められる最初で唯一の点はここ。正典ゲートは R1 のとおり既定 pytest のまま
-# (この hook はその別名 — 日次 verify は残る)。
+# Why authoring time: the landing window is mechanics only (mode is focus), and
+# direct pushes do not even pass through the window -- on any route a commit always passes through the authoring machine's git, so
+# this is the first and only point that can structurally stop a bookkeeping omission (2026-08-21 live incident f47f0a4b: a new ADR reached main with the ledger not updated).
+# The canonical gate remains the default pytest as in R1
+# (this hook is an alias of it -- the daily verify remains).
 set -u
 
-# 作り直し(rebase / cherry-pick / revert / sequencer)中は判定しない —
-# 着地の窓の追随・replay は「既に在る中身を運び直す」操作で、著者はこの
-# process ではない(prepare-commit-msg hook と同じ guard)。
+# Do not judge during a rebuild (rebase / cherry-pick / revert / sequencer) --
+# following and replay in the landing window are operations that "carry already-existing content again", and the author is not this
+# process (the same guard as the prepare-commit-msg hook).
 GITDIR="$(git rev-parse --git-dir 2>/dev/null || true)"
 if [ -n "$GITDIR" ]; then
   for _st in CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer; do
@@ -28,68 +28,68 @@ fi
 TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$TOP" ] || exit 0
 
-# (1) semgrep の規則(.semgrep.yaml)を stage した file に当てる。どの file にどの項を当てるかは .pre-commit-config.yaml の
-# semgrep の項(別名 semgrep-rules)の 1 か所 — ここは uv.lock の版の pre-commit でその別名を撃つだけ(作業木の .venv は要らない)。
-# 無いと素の hook だけの機体の commit は semgrep の規則を通らず、所見は翌日の日次(test_semgrep_findings_match_baseline_ratchet)で
-# 初めて赤になる(2026-10-11 の 5 回 — Pod の commit が汎用の package に使い手の系の名を足した)。古い断面(入口の無い木)は塞がない。
+# (1) Apply the semgrep rules (.semgrep.yaml) to the staged files. Which entry applies to which file is in one place, the
+# semgrep entry of .pre-commit-config.yaml (alias semgrep-rules) -- here we only fire that alias with the pre-commit of the uv.lock version (the working tree's .venv is not needed).
+# Without it, a commit on a machine with only the plain hook would not pass the semgrep rules, and the findings would first
+# go red in the next day's daily (test_semgrep_findings_match_baseline_ratchet) (the 5th round of 2026-10-11 -- a Pod commit added a user-side system name to a generic package). Old snapshots (trees without the entry) are not blocked.
 RULES="$TOP/scripts/precommit_locked.py"
 if [ -f "$RULES" ]; then
   (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run semgrep-rules) || {
-    echo "doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。" \
-      "所見を直して stage し直す。" >&2
+    echo "doeff commit hook: the semgrep rules entry is red (findings in the staged files, or it could not run -- see the output above)." \
+      "Fix the findings and stage again." >&2
     exit 1
   }
 fi
 
-# (2) doeff-linter の所見を、規則 × file の基点(scripts/hook_finding_baseline/doeff-linter.json)と比べる。比べる項は
-# .pre-commit-config.yaml の id doeff-linter の 1 つで、ここは同じ pre-commit でその id を撃つだけ(semgrep の項と同じ形)。
-# 無いと素の hook だけの機体(agora の担当の Pod)の commit は linter の基点を通らず、基点を越える所見が着地の窓(衝突の印
-# だけを見る — 決まり land-gate-runs-no-tests)も素通りして main に入り、日次の全体検証の lint の段で初めて赤になる
-# (2026-10-19 04:05 JST の回 — 10-18 の 3 commit が検の file 2 つに DOEFF004 を 9 件足した)。基点の鍵の linter が機体の置き場に
-# 無い時は、項が「測れない」と名指して通す(commit の中で linter を組まない — 通った commit は日次の段が --strict で測る)。
-# 古い断面(入口の無い木)は塞がない。
+# (2) Compare the doeff-linter findings with the baseline per rule x file (scripts/hook_finding_baseline/doeff-linter.json). The comparing entry is
+# the single id doeff-linter in .pre-commit-config.yaml, and here we only fire that id with the same pre-commit (the same form as the semgrep entry).
+# Without it, a commit on a machine with only the plain hook (the agora worker Pod) would not pass the linter baseline, and findings over the baseline would also slip through the landing window (which looks only at conflict marks
+# -- rule land-gate-runs-no-tests) into main, and would first go red in the lint stage of the daily full verification
+# (the round of 2026-10-19 04:05 JST -- 3 commits on 10-18 added 9 DOEFF004 findings to 2 test files). When the linter of the baseline's key is not in the machine's store,
+# the entry names it "unmeasurable" and passes (the linter is not built inside a commit -- the daily stage measures the passed commit with --strict).
+# Old snapshots (trees without the entry) are not blocked.
 if [ -f "$RULES" ]; then
   (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run doeff-linter) || {
-    echo "doeff の commit の hook: doeff-linter の項が赤(基点より増えた所見か、走らせられなかった — 上の出力)。" \
-      "所見を code で直して stage し直す(基点に足さない)。" >&2
+    echo "doeff commit hook: the doeff-linter entry is red (findings that grew over the baseline, or it could not run -- see the output above)." \
+      "Fix the findings in code and stage again (do not add them to the baseline)." >&2
     exit 1
   }
 fi
 
-# (3a) .hy の隣の .pyi の作り直し忘れ。項は .pre-commit-config.yaml の別名 hy-stubs の 1 つ。
-# 木の環境(uv run)で doeff_hy を呼ぶので、入口の無い古い断面は塞がない。
+# (3a) Forgetting to rebuild the .pyi next to a .hy. The entry is the single alias hy-stubs of .pre-commit-config.yaml.
+# It calls doeff_hy in the tree's environment (uv run), so old snapshots without the entry are not blocked.
 if [ -f "$TOP/scripts/check_hy_stubs.py" ]; then
   (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run hy-stubs) || {
-    echo "doeff の commit の hook: .hy の隣の .pyi が古い(上の出力)。作り直して stage し直す。" >&2
+    echo "doeff commit hook: the .pyi next to a .hy is stale (see the output above). Rebuild it and stage again." >&2
     exit 1
   }
 fi
 
-# (3b) 持ち主の chat の言葉を日付つきで写した引用。項は .pre-commit-config.yaml の id no-chat-quotes
-# の 1 つで、stage した file だけを見る。入口の無い古い断面は塞がない。
+# (3b) A quotation that copies the owner's chat words with a date. The entry is the single id no-chat-quotes of .pre-commit-config.yaml,
+# and it looks only at the staged files. Old snapshots without the entry are not blocked.
 if [ -f "$TOP/scripts/check_no_operator_quotes.py" ]; then
   (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run no-chat-quotes) || {
-    echo "doeff の commit の hook: 持ち主の chat の言葉の日付つきの引用が在る(上の出力)。決定と理由を記録の言葉で書き、" \
-      "出自を短い印にして stage し直す。" >&2
+    echo "doeff commit hook: there is a dated quotation of the owner's chat words (see the output above). Write the decision and reason in the record's own words," \
+      "turn the provenance into a short mark, and stage again." >&2
     exit 1
   }
 fi
 
-# (3) enforcement 台帳の著述時突合。
+# (3) Authoring-time reconciliation of the enforcement ledger.
 CHECK="$TOP/scripts/check_enforcement_ledger.py"
-# 古い断面には機構が無い — 塞がない。
+# Old snapshots lack the mechanism -- not blocked.
 [ -f "$CHECK" ] || exit 0
 
-# enforcement 資産に触れない commit は素通し(検査は触った commit に課す)。
+# A commit that does not touch enforcement assets passes through (the check is imposed on the commit that touched them).
 if git diff --cached --quiet -- docs/adr .semgrep.yaml; then
   exit 0
 fi
 
-# staged 断面(index)を突合する — working tree 突合は「台帳も直したが
-# stage し忘れた」を素通しするため。不一致は commit を止める(--no-verify で
-# 意識的に踏み越えた場合も日次 verify が捕まえる)。台帳は生成物で、直しは
-# `make enforcement-ledger`。HEAD に既に在るずれは申告だけで、この commit 自身の
-# 増減が台帳に写っていれば通す(ADR-DOE-ENFORCE-001 R9 — 無関係なずれで塞いで
-# 迂回を常態にしない)。
-# 機体の python は撃たない — script の PEP 723 の宣言を uv が読む(依存なし)。
+# Reconcile the staged snapshot (index) -- reconciling the working tree would let "the ledger was also fixed but
+# forgot to stage" pass. A mismatch stops the commit (if deliberately bypassed with --no-verify,
+# the daily verify still catches it). The ledger is a generated artifact, fixed by
+# `make enforcement-ledger`. A drift already in HEAD is only reported, and if this commit's own
+# additions and removals are reflected in the ledger it passes (ADR-DOE-ENFORCE-001 R9 -- do not block on an unrelated drift
+# and make bypassing the norm).
+# Do not fire the machine's python -- uv reads the script's PEP 723 declaration (no dependencies).
 exec uv run --script "$CHECK" --staged
