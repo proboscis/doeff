@@ -1520,13 +1520,21 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
 
     @do
     def close_out():
-        """Cancel and await (bounded) the unawaited work, then warn (#501/#2684)."""
-        abandoned, parked = core.close_out_report()
-        to_cancel, to_wait = core.close_out_live_tasks()
-        yield _unwind_abandoned(list(to_cancel), list(to_wait))
-        left_abandoned, left_parked = core.close_out_report()
-        _warn_abandoned_work(abandoned, parked, left_abandoned + left_parked)
-        _warn_unretrieved_exceptions(*core.unretrieved_exceptions())
+        """Cancel and await (bounded) the unawaited work, then warn (#501/#2684).
+
+        Then the core lets go of what is still parked in it (``end_run``): its
+        continuations hold the core back, a cycle of Rust references the cycle
+        collector cannot see, so the run's handlers would outlive the run.
+        """
+        try:
+            abandoned, parked = core.close_out_report()
+            to_cancel, to_wait = core.close_out_live_tasks()
+            yield _unwind_abandoned(list(to_cancel), list(to_wait))
+            left_abandoned, left_parked = core.close_out_report()
+            _warn_abandoned_work(abandoned, parked, left_abandoned + left_parked)
+            _warn_unretrieved_exceptions(*core.unretrieved_exceptions())
+        finally:
+            core.end_run()
         return None
 
     return _WithHandlerRaw(core.prompt(), root_close_out(body_program))

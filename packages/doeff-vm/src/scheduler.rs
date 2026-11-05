@@ -4456,6 +4456,26 @@ impl PySchedulerCore {
         Ok((to_cancel, to_wait))
     }
 
+    /// Lets go of what the run left in the scheduler — the tasks, promises,
+    /// waiters, ready entries and the continuations it holds — once the root
+    /// close-out is done. Each held continuation keeps
+    /// its task's prompt (`SchedulerHandler`) and task wrapper, and both hold
+    /// this core: a cycle of `Arc`s the cycle collector cannot see. Without
+    /// this, a run that ended with a parked task (the sim clock's daemon
+    /// driver, a race the close-out cancelled) kept its handler generators
+    /// and everything they reach alive until the process ended.
+    /// The state is dropped after the lock is released: dropping a
+    /// continuation can finalize suspended generators (their `finally`
+    /// blocks), which may touch the scheduler.
+    fn end_run(&self) -> PyResult<()> {
+        let left = {
+            let mut locked = self.core.lock()?;
+            std::mem::replace(&mut *locked, State::new())
+        };
+        drop(left);
+        Ok(())
+    }
+
     /// `(named, total)` of the task exceptions nothing retrieved, for the
     /// run-end warning: the swept tasks' exceptions,
     /// then the entries still holding one, in task order.
