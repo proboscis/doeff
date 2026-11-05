@@ -17,7 +17,7 @@
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster [ClusterState ClusterTiming])
 (import doeff_cluster._worker.core.load_rules [LoadPaths LoadReading MachineLoad CpuTicks Pressure LOAD-READ-EVERY-MS load-read-due cpu-ticks-of
-                                              pressure-of cpu-busy-between machine-load-of])
+                                              pressure-of cpu-busy-between cpu-nice-between machine-load-of])
 (import doeff_cluster._worker.protocol.heartbeat [measured-json])
 (import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat state-view])
 (import doeff_cluster._coordinator.core.resource_policy [worker-row])
@@ -34,6 +34,11 @@
 (val MEMINFO "MemTotal:        8388608 kB\nMemFree:          524288 kB\nMemAvailable:    2097663 kB\nBuffers:           1024 kB\n")
 (val CPU-PSI "some avg10=12.50 avg60=3.00 avg300=1.00 total=123456\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
 (val MEMORY-PSI "some avg10=1.25 avg60=0.50 avg300=0.10 total=9876\nfull avg10=0.75 avg60=0.20 avg300=0.05 total=4321\n")
+;; task の層の cgroup の cpu.pressure(cgroup の file も some と full の行を持つ)。
+(val TASK-PSI "some avg10=3.50 avg60=2.00 avg300=1.00 total=555\nfull avg10=1.00 avg60=0.50 avg300=0.20 total=111\n")
+;; STAT-B の nice の欄に刻みを足した読み(和 2000 → 3000 のうち nice の増え 300・使いの増え 600)。
+(val STAT-NICE (+ "cpu  600 300 250 1600 250 0 0 0 990 0\n"
+                  "cpu0 300 150 125 800 125 0 0 0 495 0\ncpu1 300 150 125 800 125 0 0 0 495 0\nintr 1 2 3\nctxt 9\nbtime 1700000000\n"))
 
 
 (deftest test-the-proc-files-become-the-measured-load
@@ -58,6 +63,23 @@
   (<- idle (| float None) (cpu-busy-between before (CpuTicks :busy 550 :total 3000 :cpus 2)))
   (<- full (| float None) (cpu-busy-between before (CpuTicks :busy 1550 :total 3000 :cpus 2)))
   (assert (= #(none-before same rebooted idle full) #(None None None 0.0 1.0))))
+
+
+(deftest test-the-nice-share-and-the-task-layer-pressure-are-named-apart-from-the-machine-values
+  ;; nice の分 = 和の増えに対する nice の増え(使いの内)。使いを数えられない読みと、nice の刻みが戻った読みは None。
+  (<- b LoadReading (machine-load-of STAT-B MEMINFO CPU-PSI MEMORY-PSI None 1000))
+  (assert (= b.ticks (CpuTicks :busy 550 :total 2000 :cpus 2 :nice 0)) b.ticks)
+  (<- c LoadReading (machine-load-of STAT-NICE MEMINFO CPU-PSI MEMORY-PSI b.ticks 6000 :task-cpu-pressure TASK-PSI))
+  (assert (= #(c.load.cpu-busy c.load.cpu-nice c.load.cpu-some-avg10 c.load.task-cpu-some-avg10) #(0.6 0.3 12.5 3.5)) c.load)
+  (<- first-reading (| float None) (cpu-nice-between None c.ticks))
+  (<- nice-back (| float None) (cpu-nice-between c.ticks (CpuTicks :busy 1500 :total 4000 :cpus 2 :nice 100)))
+  (assert (= #(b.load.cpu-nice first-reading nice-back) #(None None None)))
+  ;; task の層の file を渡さない worker は task の層の PSI を None で名乗る。形の違う中身は訳つきの ValueError。
+  (<- plain LoadReading (machine-load-of STAT-NICE MEMINFO CPU-PSI MEMORY-PSI b.ticks 6000))
+  (assert (is plain.load.task-cpu-some-avg10 None) plain.load)
+  (with [e (pytest.raises ValueError)]
+    (! (machine-load-of STAT-NICE MEMINFO CPU-PSI MEMORY-PSI b.ticks 6000 :task-cpu-pressure "full avg10=1.00\n")))
+  (assert (= (str e.value) "task の層の cpu.pressure に some の avg10 が無いか数でない") e.value))
 
 
 (deftest test-malformed-proc-text-is-refused-with-the-reason
@@ -108,8 +130,10 @@
   (.write-text (/ root "meminfo") MEMINFO)
   (.write-text (/ root "pressure" "cpu") CPU-PSI)
   (.write-text (/ root "pressure" "memory") MEMORY-PSI)
+  (.write-text (/ root "jobs.cpu.pressure") TASK-PSI)
   (val paths (LoadPaths :stat (str (/ root "stat")) :meminfo (str (/ root "meminfo"))
-                        :cpu-pressure (str (/ root "pressure" "cpu")) :memory-pressure (str (/ root "pressure" "memory"))))
+                        :cpu-pressure (str (/ root "pressure" "cpu")) :memory-pressure (str (/ root "pressure" "memory"))
+                        :task-cpu-pressure (str (/ root "jobs.cpu.pressure"))))
   (val link (LinkRig "http://coord" "atlas" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (setv link.state.load-paths paths)
   (val measured (fn [] (.get (get sent -1) "measured")))
@@ -118,14 +142,19 @@
   (val first (measured))
   (assert (= (dfor #(k v) (.items first) :if (!= k "atMs") k v)
              {"cpus" 2 "cpuBusy" None "memoryTotalMiB" 8192 "memoryAvailableMiB" 2048
-              "cpuSomeAvg10" 12.5 "cpuFullAvg10" 0.0 "memorySomeAvg10" 1.25 "memoryFullAvg10" 0.75})
+              "cpuSomeAvg10" 12.5 "cpuFullAvg10" 0.0 "memorySomeAvg10" 1.25 "memoryFullAvg10" 0.75 "taskCpuSomeAvg10" 3.5})
           first)
   (assert (= (get first "atMs") link.state.load-read-ms) first)
   ;; 読み直しの後の拍は前の読みとの間の使いを名乗る。
   (.write-text (/ root "stat") STAT-B)
   (setv link.state.load-read-ms None)
   (.poll link)
-  (assert (= (get (measured) "cpuBusy") 0.4) (measured))
+  (assert (= #((get (measured) "cpuBusy") (get (measured) "cpuNice")) #(0.4 0.0)) (measured))
+  ;; task の層の file を読めない間は、その欄だけを名乗らない(機体の測りは名乗り続ける)。
+  (.unlink (/ root "jobs.cpu.pressure"))
+  (setv link.state.load-read-ms None)
+  (.poll link)
+  (assert (= #((in "taskCpuSomeAvg10" (measured)) (get (measured) "cpuSomeAvg10")) #(False 12.5)) (measured))
   ;; /proc/stat を読めない間は名乗りを外す(前の値を今の値として名乗らない)。
   (.unlink (/ root "stat"))
   (setv link.state.load-read-ms None)
