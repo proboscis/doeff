@@ -69,7 +69,7 @@ def test_every_step_names_only_what_the_figure_has(body: Path) -> None:
 def test_every_figure_has_its_gif(body: Path) -> None:
     gif = body.with_suffix(".gif")
     assert gif.is_file(), f"{gif.name} が無い — tools/docs-video/figure-gif.mjs で作る"
-    assert gif.stat().st_size <= 3_000_000, f"{gif.name} が 3 MB を越える"
+    assert gif.stat().st_size <= 10_000_000, f"{gif.name} が 10 MB を越える"
 
 
 @pytest.mark.parametrize("gif", GIFS, ids=lambda path: path.stem)

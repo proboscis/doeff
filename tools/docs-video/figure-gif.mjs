@@ -16,12 +16,14 @@ const {chromium} = require('playwright');
 
 const [pagePath, name] = process.argv.slice(2);
 if (!name) throw new Error('usage: node figure-gif.mjs <page in the built site> <name>');
-const FPS = 10;
+// 20 frames a second keeps a token's trip smooth. A held step repeats one frame, and the GIF stores a repeat as an all but empty
+// change, so the hold adds little to the size.
+const FPS = 20;
 // A step's frames run until its last move ends (a token that waits its turn, or travels through other anchors, moves for longer).
-const moveFrames = (endMs) => Math.min(60, Math.ceil(endMs / (1000 / FPS)) + 1);
+const moveFrames = (endMs) => Math.min(6 * FPS, Math.ceil(endMs / (1000 / FPS)) + 1);
 const HOLD_SECONDS = (chars) => Math.max(2.5, chars / 25); // long enough to read the caption at about 25 characters a second
-const MAX_BYTES = 3_000_000;
-const width = Number(process.env.FIGURE_WIDTH ?? 760);
+const MAX_BYTES = 10_000_000; // the limit tests/test_docs_site_step_figures.py checks
+const width = Number(process.env.FIGURE_WIDTH ?? 960);
 const site = path.resolve(process.env.DOCS_SITE_DIR ?? '../../site');
 const out = path.resolve('../../docs/assets/figures', `${name}.gif`);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'figure-gif-'));
