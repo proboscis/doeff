@@ -155,7 +155,9 @@
    温かく置く時間・spareBytes = 札の disk に空けておく量(byte — 線ごとの残りがこれを割れば冷やす回が冷やす。次に入りうる一番大きい
    volume を覆う量 — README の節「寿命」。前の版が読んだ spareVolumes は読まない)・keepDays = 最後の backup から backup を消せるまでの日数・
    growBelowPercent = 付いている volume の file system の空きがこの % を割ったら広げる(0 = 広げない)・maxSizeBytes = 広げる上限(byte —
-   0 = 広げない)。広げる 2 つの欄は無い ConfigMap でも読める(無ければ広げない)。"
+   0 = 広げない)・freeFloorBytes = 札の disk の名 → その disk に残す実の空きの床(byte — disk-share/derive.py が shares.yaml の
+   imageDisks から導く。実の空きの線を % の量より上げる — room-bytes)。広げる 2 つの欄と床は無い ConfigMap でも読める(無ければ広げない・
+   床は % の量だけ)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ str storage-class)
   (#^ int size-bytes)
@@ -163,7 +165,8 @@
   (#^ int spare-bytes)
   (#^ int keep-days)
   (setv #^ int grow-below-percent 0)
-  (setv #^ int max-size-bytes 0))
+  (setv #^ int max-size-bytes 0)
+  (setv #^ (| (get dict #(str int)) None) free-floor-bytes None))
 
 
 (defwire ConfigMapWire
@@ -943,15 +946,21 @@
   (tuple (lfor tag (.split (.get parameters "diskSelector" "") ",") :if (.strip tag) (.strip tag))))
 
 
-(defk room-read [site owner doing parameters]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str)))]
+(defk settings-floors [settings]
+  {:pre [(: settings SettingsWire)] :post [(: % (get dict #(str int)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "値 settings の札の disk ごとの空きの床(freeFloorBytes — 無ければ空)を、置き場の数え(room-bytes)に渡す形にするため。"
+  (dict (or settings.free-floor-bytes {})))
+
+
+(defk room-read [site owner doing parameters floors]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: floors (get dict #(str int)))]
    :post [(: % RoomBytes)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "級 parameters の札の disk の残りを、Longhorn の置く線 2 つ(設定の過剰割り当ての % と最小の空きの % — room-bytes)ごとの byte で読むため
-   (読めなければ断る)。"
+  "級 parameters の札の disk の残りを、Longhorn の置く線 2 つ(設定の過剰割り当ての % と最小の空きの % と、値の disk ごとの空きの床 floors —
+   room-bytes)ごとの byte で読むため(読めなければ断る)。"
   (<- rooms tuple (disk-rooms site owner doing (! (class-disk-tags parameters))))
   (<- percentage int (longhorn-percentage site owner doing "storage-over-provisioning-percentage"))
   (<- minimal int (longhorn-percentage site owner doing "storage-minimal-available-percentage"))
-  (! (room-bytes rooms percentage minimal)))
+  (! (room-bytes rooms percentage minimal floors)))
 
 
 (defk warm-volumes [reads]
@@ -963,34 +972,35 @@
                (WarmVolume :name one.name :used-at (if (is one.restore-failure None) one.used-at 0.0) :size one.size :actual one.actual))))
 
 
-(defk room-waited [site owner doing parameters demand]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: demand int) (> demand 0)]
+(defk room-waited [site owner doing parameters floors demand]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: floors (get dict #(str int)))
+         (: demand int) (> demand 0)]
    :post [(: % RoomBytes)] :tags {:context "doeff-cluster" :role "protocol"}}
   "冷やした後に、札の disk の残り(Longhorn が replica を消した後に書き直す storageScheduled と storageAvailable)が需要 demand を両方の
    線で覆うまで読み直すため(detach-seconds の内に覆わなければ、最後の読みを答える — Longhorn の置き方は同じ数えを読むので、覆う前に
    作ると付ける時に置けない)。"
-  (<- first RoomBytes (room-read site owner doing parameters))
+  (<- first RoomBytes (room-read site owner doing parameters floors))
   (<- started float (GetMonotonic))
   (var room first)
   (var waiting (not (! (room-covers? first demand))))
   (while waiting
     (<- (Delay site.poll-seconds))
-    (<- again RoomBytes (room-read site owner doing parameters))
+    (<- again RoomBytes (room-read site owner doing parameters floors))
     (<- now float (GetMonotonic))
     (:= room again)
     (:= waiting (and (not (! (room-covers? again demand))) (<= (- now started) site.detach-seconds))))
   room)
 
 
-(defk room-made [site owner doing parameters demand fresh]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: demand int) (> demand 0)
-         (: fresh bool)]
+(defk room-made [site owner doing parameters floors demand fresh]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: floors (get dict #(str int)))
+         (: demand int) (> demand 0) (: fresh bool)]
    :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
   "Volume を POST する(名目を増やす)前に、札の disk の残りが需要 demand(入る volume の名目の byte — 戻しは backup の大きさ・広げは増え)を
    両方の線で覆う事を確かめるため。覆わなければ、外れた volume を冷やす順(cooling-order — 温かく置く時間を待たず、使い終わりの古い順に、
    両方の線が覆うまで)に冷やし、残りの読みが覆うまで待ってから戻る。外れた volume を全部冷やしても覆えない時と、冷やした後も覆わない時
    だけ、作らずに置き場の不足で断る(Longhorn は置けない Volume も受けて、付ける時に faulted にする — 作る側が先に数える)。"
-  (<- room RoomBytes (room-read site owner doing parameters))
+  (<- room RoomBytes (room-read site owner doing parameters floors))
   (when (! (room-covers? room demand))
     (return None))
   (val short (.format "札の disk が名目 {} byte の volume をもう受けられない(Longhorn の置く線の残り — 名目の予約 {} byte・実の空き {} byte)"
@@ -1011,7 +1021,7 @@
         (:= failed (+ failed #((+ name ": " (str error))))))))
   (<- (slog "作る前に置き場を空けるため、外れた volume を冷やした" :owner owner :doing doing :demand demand :nominal room.nominal
             :actual room.actual :cooled cooled :failed failed))
-  (<- after RoomBytes (room-waited site owner doing parameters demand))
+  (<- after RoomBytes (room-waited site owner doing parameters floors demand))
   (when (not (! (room-covers? after demand)))
     (raise (! (room-short owner doing (.format "{} — 冷やした後も足りない(冷やした {} 本・冷やせなかった {} 本・名目の予約 {} byte・実の空き {} byte)"
                                                short (len cooled) (len failed) after.nominal after.actual)
@@ -1019,14 +1029,15 @@
   None)
 
 
-(defk restore-node-read [site owner doing parameters demand]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: demand int) (> demand 0)]
+(defk restore-node-read [site owner doing parameters floors demand]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: floors (get dict #(str int)))
+         (: demand int) (> demand 0)]
    :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "backup から名目 demand byte の volume を戻す時の spec.nodeID を、級 parameters の札の disk の読みから得るため(restore-node — 覆う disk が無ければ空)。"
   (<- rooms tuple (disk-rooms site owner doing (! (class-disk-tags parameters))))
   (<- percentage int (longhorn-percentage site owner doing "storage-over-provisioning-percentage"))
   (<- minimal int (longhorn-percentage site owner doing "storage-minimal-available-percentage"))
-  (! (restore-node rooms percentage minimal demand)))
+  (! (restore-node rooms percentage minimal floors demand)))
 
 
 (defk replicas-placed [site owner doing name]
@@ -1147,10 +1158,10 @@
           (when (and backups (is source None))
             (raise (! (refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): " (.join "・" (gfor one backups (+ one.name " " (or one.state "?")))))))))
           (val size (if (is source None) settings.size-bytes (max settings.size-bytes source.volume-size)))
-          (<- (room-made site owner doing parameters size (is source None)))
+          (<- (room-made site owner doing parameters (! (settings-floors settings)) size (is source None)))
           (var node "")
           (when (is-not source None)
-            (<- chosen str (restore-node-read site owner doing parameters size))
+            (<- chosen str (restore-node-read site owner doing parameters (! (settings-floors settings)) size))
             (:= node chosen)
             (<- (bundle-ensured site owner doing name target)))
           (var body "")
@@ -1658,7 +1669,7 @@
     (return WorkspaceOutcome.ALREADY))
   (when (not behind)
     (<- parameters dict (class-parameters owner settings.storage-class))
-    (<- (room-made site owner doing parameters (- wanted read.size) False))
+    (<- (room-made site owner doing parameters (! (settings-floors settings)) (- wanted read.size) False))
     (val body (json.dumps {"spec" {"size" (str wanted)}} :ensure-ascii False :sort-keys True))
     (<- answer HttpResponse (kube-answer owner doing "PATCH" (! (volume-path site name)) body MERGE-PATCH-TYPE))
     (when (!= (! (status-field answer.status)) 200)
@@ -1974,7 +1985,7 @@
                  (any (gfor condition (or status.conditions #()) (and (= condition.type "Schedulable") (= condition.status "True")))))
         (:= rooms (+ rooms #((DiskRoom :maximum status.storage-maximum :reserved spec.storage-reserved
                                        :scheduled status.storage-scheduled :available status.storage-available
-                                       :node (if node.metadata node.metadata.name ""))))))))
+                                       :node (if node.metadata node.metadata.name "") :disk disk)))))))
   rooms)
 
 
@@ -1999,7 +2010,7 @@
   (val doing "置き場の読み")
   (<- settings SettingsWire (workspace-settings site owner))
   (<- parameters dict (class-parameters owner settings.storage-class))
-  (<- room RoomBytes (room-read site owner doing parameters))
+  (<- room RoomBytes (room-read site owner doing parameters (! (settings-floors settings))))
   (WorkspaceRoom :nominal room.nominal :actual room.actual :spare settings.spare-bytes))
 
 
@@ -2047,7 +2058,7 @@
   (<- settings SettingsWire (workspace-settings site owner))
   (<- parameters dict (class-parameters owner settings.storage-class))
   (<- reads tuple (volume-reads site owner doing))
-  (<- room RoomBytes (room-read site owner doing parameters))
+  (<- room RoomBytes (room-read site owner doing parameters (! (settings-floors settings))))
   (<- now datetime (GetTime))
   (<- plan CoolingPlan (cooling-order (! (warm-volumes reads)) (.timestamp now) (* settings.warm-hours 3600.0) room settings.spare-bytes))
   (var cooled #())
