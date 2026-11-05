@@ -606,7 +606,7 @@ run(silent(dice(7)(scripted(moves)(battle()))))
 ~~~text
 doeff Traceback (most recent call last):
 
-  battle()  spire.py:103
+  battle()  spire.py:104
     yield Played(card, dmg)
     handlers:
       scripted ↗

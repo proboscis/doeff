@@ -24,7 +24,8 @@ link = markdown の `[文](先)`・`![文](先)`・参照の定義 `[名]: 先`�
   週 1 回と手で起こす時に走らせる): http と https の link に要求を送り、返事が来る事。HEAD で聞き、2xx・3xx で無ければ
   GET で聞き直す。404・410 と名の引けない host は切れた link。429・5xx・403・
   時間切れは、間を置いて聞き直しても同じなら「確かめられない」として出すが、終了コードには数えない(相手の都合で揺れる)。
-  main を指す GitHub の link と、localhost・example.com などの例の host は送らない。
+  main を指す GitHub の link と、localhost・example.com などの例の host は送らない。GitHub の添付(`https://github.com/user-attachments/…`)も
+  送らない — sign in なしの要求には 404 を返すが、GitHub の画面は本文の中で再生できる形に替えて出す。
 
     uv run --no-project python tools/check_links.py               # repo の中の link
     uv run --no-project python tools/check_links.py --external    # 外の link
@@ -67,6 +68,7 @@ ROOT_FILES = ("README.md", "CONTRIBUTING.md", "CHANGELOG.md", "CODE_OF_CONDUCT.m
 # 例として書かれた host(送っても返事の来ない・来ても意味の無い物)。名か、その下の名なら当たる。
 EXAMPLE_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "example.com", "example.org", "example.net")
 EXAMPLE_HOST_SUFFIXES = (".local", ".localhost", ".test", ".invalid", ".example", ".internal")
+GITHUB_ATTACHMENTS = "https://github.com/user-attachments/"
 USER_AGENT = "Mozilla/5.0 (compatible; doeff-link-check; +https://github.com/proboscis/doeff)"
 TIMEOUT_SECONDS = 20
 RETRY_WAITS_SECONDS = (2, 8)
@@ -559,6 +561,7 @@ def check_external(links: Sequence[Link]) -> tuple[list[Problem], list[Problem],
         if (resolved := resolve(link.path, link.target)).kind is Kind.EXTERNAL
         and resolved.url
         and not is_example_host(resolved.url)
+        and not resolved.url.startswith(GITHUB_ATTACHMENTS)
     }
     unique = sorted(set(urls.values()))
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
