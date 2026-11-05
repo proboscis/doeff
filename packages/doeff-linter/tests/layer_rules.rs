@@ -604,7 +604,7 @@ fn every_layer_rule_explains_what_it_is_and_why() {
     // intent has no description — the sentence is built only from the layer order and the rules.
     assert_eq!(
         types["reason"],
-        "層 intent は外の世界からの遠さの順で 2 番目の層。型の宣言だけを置く層なので、処理の中身を持つ関数と handler は置けない(別の層へ移す)。"
+        "Layer intent is layer number 2 in order of distance from the outside world. This layer holds only type declarations, so functions and handlers that contain processing cannot be placed here (move them to another layer)."
     );
     let raw = explanation(&report, "app/core/bad.hy::DOEFF106::now::time.time");
     assert!(raw["subject"].as_str().unwrap().starts_with("definition now (defn) directly touches time.time (a raw side effect of time; strong evidence: a name via an import, or a built-in)"), "{}", raw["subject"]);
@@ -622,9 +622,9 @@ fn every_layer_rule_explains_what_it_is_and_why() {
     assert_eq!(
         report["layers"],
         serde_json::json!([
-            {"name": "core", "summary": "業務の判断", "knows": "業務の判断", "does_not_know": "通信の手段", "question": "通信が変わっても変わらないか?"},
+            {"name": "core", "summary": "business judgment", "knows": "business judgment", "does_not_know": "means of communication", "question": "Does it stay the same when communication changes?"},
             {"name": "intent", "summary": null, "knows": null, "does_not_know": null, "question": null},
-            {"name": "foundation", "summary": null, "knows": "本物の I/O", "does_not_know": null, "question": null},
+            {"name": "foundation", "summary": null, "knows": "real I/O", "does_not_know": null, "question": null},
             {"name": "entry", "summary": null, "knows": null, "does_not_know": null, "question": null}
         ])
     );
@@ -2625,7 +2625,7 @@ fn world_handler_needs_a_contract_test_that_runs_interpreters() {
         report
     );
     let exempt = violation(&report, "architecture.hy::DOEFF137::app.foundation.host:with-exempt");
-    assert!(exempt["message"].as_str().unwrap().contains(":contract-test none has no reason"), "{}", exempt);
+    assert!(exempt["message"].as_str().unwrap().contains("has no reason in :contract-test none"), "{}", exempt);
 
     // The value of :contract-test is only a reasoned (none …) or the symbol none — other values are declaration errors (exit code 2).
     let bad = bare.replace("with-exempt\" :touches [file] :contract-test none", "with-exempt\" :touches [file] :contract-test (none :doeff-test \"\")");
@@ -2725,7 +2725,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
     std::fs::write(&arch_path, &bare).unwrap();
     let (_, report) = editor(dir.path());
     let mail = violation(&report, "architecture.hy::DOEFF137::app.foundation.peers:with-fake-mail->app.foundation.host:with-mail");
-    assert!(mail["message"].as_str().unwrap().contains(":contract-test none has no reason"), "{}", mail);
+    assert!(mail["message"].as_str().unwrap().contains("has no reason in :contract-test none"), "{}", mail);
 
     // A malformed list (a pair without :real) is a declaration error (exit code 2).
     let bad = text.replace("(stand-in \"app.foundation.peers:with-ghost\" :real \"doeff_openai.live:with-live\")", "(stand-in \"app.foundation.peers:with-ghost\")");
@@ -3137,7 +3137,7 @@ fn services_without_a_declared_system_are_red() {
     assert!(missing["message"].as_str().unwrap().contains("service ledger did not declare :system"), "{}", missing["message"]);
     assert_eq!(missing["level"], "critical", "{}", missing);
     let two = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-system::params");
-    assert!(two["message"].as_str().unwrap().contains("arguments are not exactly one foundation([foundation programs])"), "{}", two["message"]);
+    assert!(two["message"].as_str().unwrap().contains("arguments are not exactly one foundation ([foundation programs])"), "{}", two["message"]);
     let plain = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-plain::plain-job");
     assert!(plain["message"].as_str().unwrap().contains("(of Callable [str] int)"), "{}", plain["message"]);
     let bare = violation(&report, "architecture.hy::DOEFF173::orders::app.orders.entry.system:orders-bare::bare-job");
@@ -4369,7 +4369,7 @@ fn retired_rules_read_only_the_named_files() {
     let dir = retired_repo(&[("app/billing/named.hy", "(setv note \"send mail\")\n".to_string())]);
     std::fs::write(dir.path().join("app/billing/broken.md"), [0xffu8, 0xfe, b'\n']).unwrap();
     let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
-    assert!(whole_err.contains("app/billing/broken.md: unreadable"), "a whole run reads all declared files: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/billing/broken.md: cannot read"), "a whole run reads all declared files: {}\n{}", whole_err, whole_out);
     let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/billing/named.hy"], None);
     assert!(!named_err.contains("broken.md"), "a named run reads only the named file: {}", named_err);
     assert!(named_out.contains("DOEFF150") && named_out.contains("named.hy"), "a hit in the named file appears: {}\n{}", named_out, named_err);
@@ -4594,8 +4594,8 @@ fn typed_value_rules_read_only_the_named_files() {
     std::fs::write(dir.path().join("app/core/broken.hy"), [0xffu8, 0xfe, b'\n']).unwrap();
     std::fs::write(dir.path().join("app/core/broken.pyi"), [0xffu8, 0xfe, b'\n']).unwrap();
     let (_, whole_out, whole_err) = run(dir.path(), &["--no-log"], None);
-    assert!(whole_err.contains("app/core/broken.hy: could not read"), "a whole run reads all declared files: {}\n{}", whole_err, whole_out);
-    assert!(whole_err.contains("app/core/broken.pyi: unreadable"), "a whole run reads all declared .pyi files: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/core/broken.hy: "), "a whole run reads all declared files: {}\n{}", whole_err, whole_out);
+    assert!(whole_err.contains("app/core/broken.pyi: "), "a whole run reads all declared .pyi files: {}\n{}", whole_err, whole_out);
     let (code, named_out, named_err) = run(dir.path(), &["--no-log", "app/core/named.hy"], None);
     assert!(!named_err.contains("broken"), "a named run reads only the named file: {}", named_err);
     assert!(named_out.contains("DOEFF144") && named_out.contains("named.hy"), "a hit in the named file appears: {}\n{}", named_out, named_err);

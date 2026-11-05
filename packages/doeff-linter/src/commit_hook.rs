@@ -412,8 +412,8 @@ pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
         Measure::WallBackstop => format!(
             "cut off at the wall backstop limit of {} s ({} times the CPU-seconds limit of {} s; a child that does not finish without using CPU)",
             secs * u64::from(WALL_BACKSTOP_FACTOR),
-            secs,
-            WALL_BACKSTOP_FACTOR
+            WALL_BACKSTOP_FACTOR,
+            secs
         ),
     };
     format!(
