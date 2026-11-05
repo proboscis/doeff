@@ -1,17 +1,17 @@
-"""本番の handler — `Judge` を HttpRequest に写して TypeSafe(または同じ契約の宛先)へ出す。
+"""Production handler: maps `Judge` to an HttpRequest and sends it to TypeSafe (or a destination with the same contract).
 
-この module は HTTP を**呼ばない**。HttpRequest を yield するだけで、実 I/O は積まれた
-`http_production_handler`(doeff-core-effects・httpx)が行う。テストは HttpRequest を台本で
-答える handler を代わりに積む。
+This module does **not** call HTTP. It only yields an HttpRequest, and the stacked
+`http_production_handler` (doeff-core-effects, httpx) does the real I/O. Tests stack a handler that answers HttpRequest
+from a script instead.
 
-答えの cache は `jev_memo_handler`: cacheable な Judge を CacheExists / CacheGet / CachePut で包む
-(sqlite_cache_handler / in_memory_cache_handler が実体)。鍵は宛先・model・state・問いで決まる。
-記録は slog("jev_judge", …) 1 行(journal handler が file へ書く。積まなければ外の slog の出口へ抜ける)。
-行の欄 = host・model・ok・keys(問いの名の列)・caller(呼び手の名)・questions・tokens・ms・proxy(中継の名乗り)・
-cached(手元の cache の当たり)、失敗の行は error・status。
+The answer cache is `jev_memo_handler`: it wraps cacheable Judges in CacheExists / CacheGet / CachePut
+(sqlite_cache_handler / in_memory_cache_handler are the backends). The key is determined by the destination, model, state, and questions.
+The journal is one slog("jev_judge", ...) line (the journal handler writes it to a file; if not stacked, it passes out to the outer slog sink).
+Line fields = host, model, ok, keys (the list of question names), caller (the caller name), questions, tokens, ms, proxy (the relay's self-identification),
+cached (a local cache hit); a failure line has error and status.
 
-handler は答えを返したら用が済むので Transfer / TransferThrow で続きへ渡す(Resume だと
-handler の frame が続きの終わりまで生き残る — doeff の警告)。
+Once the handler has returned its answer it is done, so it hands off to the continuation with Transfer / TransferThrow (with Resume,
+the handler's frame would survive until the end of the continuation; this is a doeff warning).
 """
 
 import time
@@ -27,7 +27,7 @@ from doeff import handler as _program_handler
 from doeff_jev._target import JevTarget, key_required
 from doeff_jev._wire import Prepared, cache_key, parse, prepare, proxy_outcome
 
-#: 1 回の HTTP の再試行(5xx / 通信の失敗)。判定は短い問いなので 1 度だけ。
+#: Retries of one HTTP call (5xx / communication failure). A judgment is a short question, so only once.
 HTTP_RETRIES = 1
 
 
@@ -40,17 +40,17 @@ def _post(prepared: Prepared, timeout_seconds: float) -> Any:
 
 
 def _journal(target: JevTarget, effect: Judge, caller: str, **fields: Any) -> Any:
-    """slog("jev_judge") の 1 行。宛先・問いの key(問いの名の列)・呼び手の名(空でなければ)は全部の行に載せる。"""
+    """One slog("jev_judge") line. The destination, the question keys (the list of question names), and the caller name (if non-empty) go on every line."""
     if caller:
         fields["caller"] = caller
     return slog("jev_judge", host=target.host, keys=list(effect.questions), **fields)
 
 
 def jev_handler(target: JevTarget, *, caller: str = "") -> Callable[[Any], Any]:
-    """`Judge` を宛先 `target` で判定する handler(Program -> Program)。他の effect は Pass。
+    """Handler (Program -> Program) that judges `Judge` against the destination `target`. Other effects are Pass.
 
-    caller = 呼び手の名(例 `rulebook-advisor/Stop`)。空でなければ見出し x-jev-caller で宛先へ送り、jev_judge の行に載せる。
-    答えの Verdict.proxy は中継の名乗り(見出し x-jev-proxy)。
+    caller = the caller name (e.g. `rulebook-advisor/Stop`). If non-empty, sent to the destination in the x-jev-caller header and put in the jev_judge line.
+    The answer's Verdict.proxy is the relay's self-identification (the x-jev-proxy header).
     """
 
     @do
@@ -91,12 +91,12 @@ def jev_handler(target: JevTarget, *, caller: str = "") -> Callable[[Any], Any]:
 
 
 def jev_memo_handler(target: JevTarget, *, caller: str = "") -> Callable[[Any], Any]:
-    """cacheable な `Judge` の答えを cache で包む handler。当たれば宛先を呼ばない。
+    """Handler that wraps the answers of cacheable `Judge`s in a cache. On a hit the destination is not called.
 
-    cache の実体(CacheExists / CacheGet / CachePut を捌く handler)はこの handler の**外**に積む。
-    CacheGet は無い鍵で KeyError を投げるので、Exists で先に確かめる(core の memo と同じ形)。
-    当たった答えは Verdict.cached を真にして返す(proxy は None — この判定は中継を呼んでいない)。
-    caller = jev_judge の行に載せる呼び手の名(jev_handler と同じ値を渡す)。
+    The cache backend (the handler that handles CacheExists / CacheGet / CachePut) is stacked **outside** this handler.
+    CacheGet throws KeyError for a missing key, so check with Exists first (same shape as core's memo).
+    A hit answer is returned with Verdict.cached set to true (proxy is None: this judgment did not call the relay).
+    caller = the caller name to put in the jev_judge line (pass the same value as for jev_handler).
     """
 
     @do
@@ -109,7 +109,7 @@ def jev_memo_handler(target: JevTarget, *, caller: str = "") -> Callable[[Any], 
             try:
                 cached = yield cache_get(key)
             except KeyError:
-                cached = None  # Exists と Get の間に消えた
+                cached = None  # disappeared between Exists and Get
         if isinstance(cached, Verdict):
             yield _journal(target, effect, caller, model=cached.model, ok=True, cached=True,
                            questions=len(effect.questions), tokens=0, ms=0)
@@ -122,6 +122,6 @@ def jev_memo_handler(target: JevTarget, *, caller: str = "") -> Callable[[Any], 
 
 
 def verdict_fields(verdict: Verdict) -> Mapping[str, Any]:
-    """記録・表示用の素の辞書。"""
+    """A plain dict for logging and display."""
     return {name: {"kind": a.kind, "value": a.value, "confidence": a.confidence}
             for name, a in verdict.answers.items()}

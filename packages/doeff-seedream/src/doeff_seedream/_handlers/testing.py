@@ -45,7 +45,7 @@ def _default_value_for_annotation(annotation: Any, field_name: str) -> Any:  # n
     return f"mock-{field_name}"
 
 
-def _color_from_digest(seed_text: str) -> tuple[int, int, int]:  # noqa: DOEFF006 - PIL の色は (r, g, b) の tuple
+def _color_from_digest(seed_text: str) -> tuple[int, int, int]:  # noqa: DOEFF006 - a PIL color is an (r, g, b) tuple
     digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
     return digest[0], digest[1], digest[2]
 

@@ -999,7 +999,7 @@ class _ChunkedTree:
     def tree(self) -> ast.Module:
         """The whole tree, taken from the expansion's store the first time it is asked for (``module_ast``)."""
         if self._tree is None:
-            self._tree = self._whole()  # noqa: DOEFF002 — 遅延して作る木の cache の欄
+            self._tree = self._whole()  # noqa: DOEFF002 — field for the lazily built tree cache
         return self._tree
 
     def _definitions_of(self, chunk: int) -> tuple[ast.AST, ...]:
@@ -1199,14 +1199,14 @@ def _effect_base() -> type:
 
 
 def _bind_opener_class() -> type:
-    """doeff-vm の BindOpener の型 — ``outcomes.open_bind`` の奥の Python の道を読むため(``_function_of``)。"""
+    """The doeff-vm BindOpener type -- used to read the Python path behind ``outcomes.open_bind`` (``_function_of``)."""
     from doeff import BindOpener
 
     return BindOpener
 
 
 def _perform_class() -> type:
-    """doeff-vm の Perform の型 — ``Perform(effect)`` は effect を出す Program を組む(引数に渡れば Program の引数 — ``_is_program_expr``)。"""
+    """The doeff-vm Perform type -- ``Perform(effect)`` builds a Program that yields the effect (when passed as an argument it is a Program argument -- ``_is_program_expr``)."""
     from doeff import Perform
 
     return Perform

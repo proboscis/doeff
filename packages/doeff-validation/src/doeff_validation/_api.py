@@ -1,8 +1,8 @@
-"""doeff-validation の利用者向けの関数 — ``validate``。
+"""User-facing function of doeff-validation — ``validate``.
 
-``validate`` は doeff-traverse の上の薄い層: 項目(検査の指定 ``Check`` か Program)の列を ``Traverse`` で
-走らせ(逐次か並行か fail-fast かは組み立ての根に置いた traverse の handler が決める)、要素ごとの分離で
-項目ごとの失敗を集める。Hy では ``(require doeff-hy.macros [defk validate check])`` で同じ意味のマクロを使う。
+``validate`` is a thin layer on top of doeff-traverse: it runs a sequence of items (a check specification ``Check`` or a Program) with ``Traverse``
+(sequential, concurrent, or fail-fast is decided by the traverse handler placed at the root of the assembly), and collects
+the failure of each item through per-element isolation. In Hy, the macros with the same meaning are used via ``(require doeff-hy.macros [defk validate check])``.
 """
 
 from typing import TYPE_CHECKING
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 @do
 def _evaluate(argument: CheckArgument) -> EffectGenerator[object]:
-    """引数 1 つを項目の中で評価する(効果の印があれば実行して結果の値にする)。"""
+    """Evaluate one argument inside the item (if it has the effect mark, execute it and use the result value)."""
     value = argument.evaluate()
     if argument.perform:
         return (yield value)
@@ -35,22 +35,21 @@ def _evaluate(argument: CheckArgument) -> EffectGenerator[object]:
 
 
 def judge(verdict: object) -> bool:
-    """判定の値を真偽にする。Program か効果なら取り違え(印の付け忘れ)として TypeError を投げる。
+    """Turn the verdict value into a boolean. If it is a Program or an effect, raise TypeError as a mix-up (forgotten mark).
 
-    validate の項目と、defk / do! の契約の check(macros.hy の contract-check-block)の共通の 1 点。
-    Program の値は常に真なので、そのまま真偽にすると検査が黙って通ってしまう。
+    The single point shared by validate items and the contract check of defk / do! (contract-check-block in macros.hy).
+    A Program value is always truthy, so converting it to a boolean as-is would let the check pass silently.
     """
     if _is_program(verdict):
         raise TypeError(
-            f"check: 判定の値が Program です({verdict!r})— 効果の判定なら (! …) / Perform(…) の"
-            " 印を付けた引数にしてください"
+            f"check: the verdict value is a Program ({verdict!r}) — for an effect verdict, make it an argument marked with (! …) / Perform(…)"
         )
     return bool(verdict)
 
 
 @do
 def _run_check(spec: Check) -> EffectGenerator[None]:
-    """check の項目 1 つを走らせる: 引数を左から評価し(Program は実行)、判定し、落ちたら項目を止める。"""
+    """Run one check item: evaluate the arguments from the left (executing Programs), judge, and stop the item if it fails."""
     evaluated: list[EvaluatedArgument] = []
     try:
         for argument in spec.arguments:
@@ -59,7 +58,7 @@ def _run_check(spec: Check) -> EffectGenerator[None]:
         verdict = judge(spec.predicate(*(arg.value for arg in evaluated)))
     except ItemFailedError:
         raise
-    except Exception as error:  # 評価の失敗はこの項目の失敗として集める(捨てない — 下で記録して投げ直す)
+    except Exception as error:  # an evaluation failure is collected as this item's failure (not discarded — recorded below and re-raised)
         raise ItemFailedError(
             CheckError(spec.expression, tuple(evaluated), error, spec.reason)
         ) from error
@@ -68,7 +67,7 @@ def _run_check(spec: Check) -> EffectGenerator[None]:
 
 
 def _as_program(item: object) -> object:
-    """Traverse の f — 項目を 1 要素の処理にする(check は検査の Program に、Program はそのまま)。"""
+    """The f of Traverse — turn an item into the processing of one element (a check becomes a check Program; a Program stays as-is)."""
     match item:
         case Check():
             return _run_check(item)
@@ -78,11 +77,11 @@ def _as_program(item: object) -> object:
 
 @do
 def _validate(items: tuple[object, ...]) -> EffectGenerator[None]:
-    """項目を Traverse で走らせ、要素ごとの結果から失敗を集め、1 つでもあれば例外を投げる。"""
+    """Run the items with Traverse, collect failures from the per-element results, and raise an exception if there is even one."""
     try:
         collection = yield Traverse(_as_program, items, label="validate")
     except ItemFailedError as failed:
-        # fail-fast の traverse の handler(parallel_fail_fast)は最初の失敗をそのまま投げる。
+        # The fail-fast traverse handler (parallel_fail_fast) raises the first failure as-is.
         raise ValidationException((failed.failure,)) from None
     except ValidationException as nested:
         raise ValidationException((nested,)) from None
@@ -97,8 +96,8 @@ def _validate(items: tuple[object, ...]) -> EffectGenerator[None]:
             case ValidationException() as nested:
                 failures.append(nested)
             case BaseException() as abnormal:
-                # Program の項目の中の、検査の失敗ではない異常(プログラムの誤り・続けられない失敗)は
-                # 集めずにそのまま投げる。
+                # An anomaly inside a Program item that is not a check failure (a program bug or an unrecoverable failure) is
+                # raised as-is without being collected.
                 raise abnormal
             case other:
                 raise TypeError(
@@ -109,21 +108,21 @@ def _validate(items: tuple[object, ...]) -> EffectGenerator[None]:
 
 
 def validate(*items: "Check | Program[object]") -> "Program[None]":
-    """独立した項目を全部走らせ、落ちた項目の失敗を全部集める。
+    """Run all independent items and collect the failures of all failed items.
 
-    - 項目は検査の指定 ``Check`` か任意の Program。互いの結果に依らない(並行に走らせてよい)。
-    - check の項目: 引数を左から評価して(効果の印の付いた引数は実行して)判定し、偽なら
-      ``CheckFailure``、評価が例外なら ``CheckError``。
-    - Program の項目: 中で投げられた ``ValidationException`` を 1 件の失敗として受ける
-      (検査のまとまりの使い回しは、helper の中に自分の ``validate`` を持たせる)。
-    - 失敗が 1 つでもあれば ``ValidationException`` を投げる。無ければ ``None``(「確かめて、だめなら
-      投げる」文なので値は返さない。値が要る処理は validate の前か後に書く)。
-    - 逐次か並行か fail-fast かは、組み立ての根に置いた doeff-traverse の handler で選ぶ
+    - Items are a check specification ``Check`` or any Program. They do not depend on each other's results (they may run concurrently).
+    - check item: evaluate the arguments from the left (executing those with the effect mark) and judge; if false,
+        ``CheckFailure``; if evaluation raises, ``CheckError``.
+    - Program item: a ``ValidationException`` raised inside is received as one failure
+        (to reuse a group of checks, give the helper its own ``validate``).
+    - If there is even one failure, raise ``ValidationException``. Otherwise ``None`` (this is a "verify, and raise if bad"
+        statement, so no value is returned. Code that needs a value goes before or after validate).
+    - Sequential, concurrent, or fail-fast is chosen by the doeff-traverse handler placed at the root of the assembly
       (``sequential`` / ``parallel(n)`` / ``parallel_fail_fast(n)``)。
     """
     for item in items:
         if not isinstance(item, Check) and not _is_program(item):
             raise TypeError(
-                f"validate: 項目は check か Program です — {type(item).__name__} が渡されました"
+                f"validate: an item must be a check or Program — got {type(item).__name__}"
             )
     return _validate(items)

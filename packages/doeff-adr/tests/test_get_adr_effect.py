@@ -1,12 +1,12 @@
-"""設計の記録(ADR)を id で引く操作は effect GetAdr で、handler を返す工場 adr_registry が答える。
+"""Looking up a design record (ADR) by id is the effect GetAdr, answered by the handler factory adr_registry.
 
-決め: effect にする。
-移し替えの層だった関数 get_adr は、外の repo の呼び手を書き換えた後に消した。
+Decision: make it an effect.
+The function get_adr, which was a migration shim layer, was removed after rewriting the callers in outside repos.
 
-adr_registry() は process の登録簿から、adr_registry(specs=[spec, …]) はその列だけから答える(列に無い id は登録簿へ
-落ちずに KeyError)。
-内側に据えた handler が先に答えるので、deftest の doeff_interpreter が外に adr_registry() を据えていても、test の中で
-別の表を据えればその表が答える。
+adr_registry() answers from the process registry, and adr_registry(specs=[spec, …]) answers only from that list (an id not in the list
+raises KeyError instead of falling back to the registry).
+The innermost installed handler answers first, so even if the deftest doeff_interpreter installs adr_registry() outside, installing
+a different table inside a test makes that table answer.
 """
 
 import doeff_adr
@@ -30,7 +30,7 @@ def test_get_adr_answers_from_the_process_registry() -> None:
 
 
 def test_the_process_registry_is_read_when_the_effect_is_answered() -> None:
-    """handler を作った後に載った ADR も答える(fixture が handler を作るのは ADR の module の import の前でもよい)。"""
+    """ADRs registered after the handler was created also answer (the fixture may create the handler before the ADR module is imported)."""
     answer = adr_registry()
     with isolated_registry():
         run(
@@ -53,7 +53,7 @@ def test_a_given_table_replaces_the_process_registry() -> None:
 
 
 def test_an_inner_table_answers_before_the_outer_registry() -> None:
-    """外に既定の adr_registry() を据えたまま、program の一部だけを別の表で走らせられる。"""
+    """With the default adr_registry() still installed outside, only part of a program can be run against a different table."""
     table = [_spec("ADR-PROBE-001", "from the table")]
 
     @do
@@ -68,7 +68,7 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
 
 
 def test_an_id_outside_the_table_is_a_key_error_not_the_outer_answer() -> None:
-    """差し替えた表に無い id は、外の登録簿の答えへ落ちない。KeyError は GetAdr を出した所で受けられる。"""
+    """An id missing from the replacement table does not fall back to the outer registry. KeyError can be caught where GetAdr was raised."""
 
     @do
     def body():
@@ -89,30 +89,30 @@ def test_an_unregistered_id_is_a_key_error() -> None:
 
 
 def test_the_factory_refuses_a_program_in_place_of_the_table() -> None:
-    """adr_registry(p) と書き違えたら断る: specs は keyword だけで受け、列でない値も断る(adr_registry()(p) が正しい形)。"""
+    """Reject a mistyped adr_registry(p): specs is accepted only as a keyword, and non-list values are rejected too (adr_registry()(p) is the correct form)."""
     with pytest.raises(TypeError, match="positional"):
-        adr_registry(GetAdr("ADR-PROBE-001"))  # type: ignore[misc] — 書き違いを断る事を見るため、位置の引数で渡す
+        adr_registry(GetAdr("ADR-PROBE-001"))  # type: ignore[misc] — to check that a mistake is rejected, pass it positionally
     with pytest.raises(TypeError, match="takes a list of AdrSpec"):
-        adr_registry(specs=GetAdr("ADR-PROBE-001"))  # type: ignore[arg-type] — 書き違いを断る事を見るため、列でない値を渡す
+        adr_registry(specs=GetAdr("ADR-PROBE-001"))  # type: ignore[arg-type] — to check that a mistake is rejected, pass a non-list value
 
 
 def test_the_table_refuses_a_repeated_id() -> None:
-    """同じ id の ADR が 2 つ在る表は、どちらが答えるかが決まらないので作る時に断る。"""
+    """A table holding two ADRs with the same id is rejected at creation, since which one answers would be undecided."""
     with pytest.raises(ValueError, match="duplicate ADR id in the table: ADR-PROBE-001"):
         adr_registry(specs=[_spec("ADR-PROBE-001", "a"), _spec("ADR-PROBE-001", "b")])
 
 
 def test_the_effect_is_public_and_get_adr_is_gone() -> None:
-    """effect GetAdr と handler の工場 adr_registry は入口に在り、移し替えの層だった関数 get_adr は入口にも registry にも無い。"""
+    """The effect GetAdr and the handler factory adr_registry are in the entry point, and the former shim function get_adr is in neither the entry point nor the registry."""
     assert {"GetAdr", "adr_registry"} <= set(doeff_adr.__all__)
     assert "get_adr" not in doeff_adr.__all__
     with pytest.raises(AttributeError, match="get_adr"):
-        getattr(doeff_adr, "get_adr")  # noqa: B009 — 消えた名を型の検を通さずに引く
+        getattr(doeff_adr, "get_adr")  # noqa: B009 — look up a removed name without going through the type checker
     assert not hasattr(doeff_adr._registry, "get_adr")
 
 
 def test_a_deftest_reads_the_adr_through_the_handler_its_fixture_installs(pytester) -> None:
-    """ADR の deftest は (<- spec (GetAdr ADR-ID)) で読み、answer は doeff_interpreter が据えた adr_registry() が出す。"""
+    """An ADR deftest reads with (<- spec (GetAdr ADR-ID)), and the answer comes from the adr_registry() installed by doeff_interpreter."""
     pytester.makeconftest(
         """\
         import pytest

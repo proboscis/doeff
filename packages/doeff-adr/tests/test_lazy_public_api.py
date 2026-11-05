@@ -1,5 +1,5 @@
-"""``doeff_adr`` の公開 API は最初の利用時に registry から読む— 名・型・値・import の失敗は
-今までと同じで、pytest の plugin を読むだけでは registry と YAML を読まないことを確かめる。"""
+"""The public API of ``doeff_adr`` is loaded from the registry on first use — names, types, values and import failures stay
+the same as before, and we check that merely loading the pytest plugin does not read the registry or YAML."""
 
 import ast
 import subprocess
@@ -14,8 +14,8 @@ import doeff_adr._semgrep_effects
 import doeff_adr._semgrep_hy
 
 INIT = Path(doeff_adr.__file__)
-#: 公開の名を定義する module(registry と、effect と handler の内側の module。
-#: 型・例外と pytest の plugin の名を出す _registry・_semgrep_hy・_pytest_plugin)。
+#: Modules that define the public names (the registry, and the inner modules for effects and handlers.
+#: _registry, _semgrep_hy and _pytest_plugin expose the types, exceptions and pytest plugin names).
 DEFINING_MODULES = {
     "doeff_adr._registry": doeff_adr._registry,
     "doeff_adr._effects": doeff_adr._effects,
@@ -26,7 +26,7 @@ DEFINING_MODULES = {
 
 
 def _type_checking_import_modules() -> dict[str, str]:
-    """``__init__.py`` の ``if TYPE_CHECKING:`` の下で import する名(型の検査器が見る公開の名)から、定義の module の名へ。"""
+    """From the names imported under ``if TYPE_CHECKING:`` in ``__init__.py`` (the public names the type checker sees) to the defining module names."""
     tree = ast.parse(INIT.read_text())
     names: dict[str, str] = {}
     for node in tree.body:
@@ -50,29 +50,29 @@ def _type_checking_imports() -> set[str]:
 
 
 def _run_python(code: str) -> subprocess.CompletedProcess[str]:
-    """新しい interpreter で code を走らせる(sys.modules の汚れを持ち込まない)。"""
+    """Run code in a fresh interpreter (without carrying over sys.modules pollution)."""
     return subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=False
     )
 
 
 def test_the_type_checked_names_are_the_runtime_names() -> None:
-    """型の検査器に見せる名(TYPE_CHECKING の import)と、実行の時に引ける名(``_PUBLIC_API_NAMES``)が同じ。"""
+    """The names shown to the type checker (TYPE_CHECKING imports) and the names resolvable at run time (``_PUBLIC_API_NAMES``) are the same."""
     assert _type_checking_imports() == set(doeff_adr.__all__) - {"doeff_hy"}
     assert set(dir(doeff_adr)) >= _type_checking_imports()
 
 
 def test_every_public_name_is_the_defining_module_value() -> None:
-    """公開の名の値は定義の module(registry か _effects か _semgrep_effects)の物そのもの(写しや包みではない)。"""
+    """A public name's value is the very object from the defining module (registry, _effects or _semgrep_effects), not a copy or wrapper."""
     for name, module in _type_checking_import_modules().items():
         defined = vars(DEFINING_MODULES[module])[name]
         assert getattr(doeff_adr, name) is defined
-        # 1 度引いた名は package の普通の属性になる(2 回目から __getattr__ を通らない)
+        # A name looked up once becomes an ordinary attribute of the package (from the second time it does not go through __getattr__)
         assert vars(doeff_adr)[name] is defined
 
 
 def test_unknown_names_fail_as_before() -> None:
-    """公開でない名は ``AttributeError``、``from doeff_adr import`` では ``ImportError``(黙って None にしない)。"""
+    """A non-public name raises ``AttributeError``, and ``from doeff_adr import`` raises ``ImportError`` (never silently None)."""
     assert not hasattr(doeff_adr, "no_such_name")
     result = _run_python("from doeff_adr import no_such_name")
     assert result.returncode != 0
@@ -80,7 +80,7 @@ def test_unknown_names_fail_as_before() -> None:
 
 
 def test_loading_the_pytest_plugin_reads_neither_the_registry_nor_yaml() -> None:
-    """pytest が plugin を読むだけ(収集)なら registry と YAML は読まない。公開の名を使った時に初めて読む。"""
+    """If pytest merely loads the plugin (collection), the registry and YAML are not read. They are read only when a public name is used."""
     result = _run_python(
         "import sys, doeff_adr._pytest_plugin\n"
         "print('before', 'doeff_adr._registry' in sys.modules, 'yaml' in sys.modules)\n"
@@ -93,7 +93,7 @@ def test_loading_the_pytest_plugin_reads_neither_the_registry_nor_yaml() -> None
 
 
 def test_a_broken_registry_import_raises_its_own_error_at_first_use() -> None:
-    """registry の import が壊れていれば(依存の YAML が無い等)、その例外が最初の利用の場所でそのまま上がる。"""
+    """If the registry import is broken (e.g. the YAML dependency is missing), that exception is raised as is at the place of first use."""
     result = _run_python(
         "import sys\n"
         "class NoYaml:\n"

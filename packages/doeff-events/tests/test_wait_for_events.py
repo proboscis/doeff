@@ -1,14 +1,14 @@
-"""``WaitForEvents`` の検 — 1 つ以上届くまで待ち、届いた時点で自分の列に在る当たる合図を全部、来た順の tuple で答える。
+"""Check of ``WaitForEvents`` — waits until at least one arrives, then answers with all matching signals in its own queue at that moment, as a tuple in arrival order.
 
-``WaitForEvent`` が 1 つずつ答えると、同じ刻に届いた複数の知らせを受け手が 1 つずつ畳み、途中の姿を外へ送る。
-``WaitForEvents`` は届いている物を全部 1 回で受ける。
+If ``WaitForEvent`` answers one at a time, the receiver folds several notices that arrived at the same time one by one and sends intermediate states outward.
+``WaitForEvents`` receives everything that has arrived in one go.
 
-- 待つ前に発した 2 つを、来た順の 2 つの組で受ける(``subscribed_event_handler``)。
-- 待っている間に発した 1 つを、1 つの組で受ける。
-- 購読の型の外を待つと ``ValueError``(``WaitForEvent`` と同じ文)。
-- 列を持たない ``event_handler`` は、届いた 1 つを 1 つの組で答える。
-- ``notice_events_handler`` の包みの中: 自分の源の ``SourceFailed`` で例外になり、別の源の ``SourceFailed`` は組から除く。待ちに源の失敗を
-  足すのは channel を読む(源の task を持つ)包みだけで、送るだけの包みは待ちを受けない。
+- Two emitted before waiting are received as a pair of two in arrival order (``subscribed_event_handler``).
+- One emitted while waiting is received as a pair of one.
+- Waiting for a type outside the subscription raises ``ValueError`` (the same message as ``WaitForEvent``).
+- ``event_handler``, which has no queues, answers the one that arrived as a pair of one.
+- Inside the ``notice_events_handler`` wrapper: a ``SourceFailed`` from its own source raises an exception, and a ``SourceFailed`` from another source is removed from the tuple. Only a wrapper that reads a channel (has a source task)
+  adds source failure to waits; a send-only wrapper does not accept waits.
 """
 
 from dataclasses import dataclass
@@ -34,21 +34,21 @@ from doeff import EffectGenerator, Program, do
 
 @dataclass(frozen=True)
 class Rang:
-    """受け手の待つ合図(``keys`` を持たないので列の中でまとまらない)。"""
+    """A signal the receiver waits for (it has no ``keys``, so it is not merged in the queue)."""
 
     room: str
 
 
 @dataclass(frozen=True)
 class Unrelated:
-    """受け手の購読の型の外の合図。"""
+    """A signal outside the receiver's subscription types."""
 
     note: str
 
 
 @dataclass(frozen=True)
 class Heard:
-    """包みが channel から受ける合図(この検では誰も送らない — 包みに源の task を持たせるためだけの経路の型)。"""
+    """A signal the wrapper receives from the channel (nobody sends it in this check — a route type only to give the wrapper a source task)."""
 
     note: str
 
@@ -57,7 +57,7 @@ HEARD_CHANNEL = "heard"
 
 
 def _heard_encoded(event: object) -> str:
-    """``Heard`` の綴り(経路の表は ``NoticeRoute[object]`` の組で渡すので、受けるのは object)。"""
+    """Spelling of ``Heard`` (the route table is passed as a tuple of ``NoticeRoute[object]``, so what it receives is object)."""
     assert isinstance(event, Heard), event
     return event.note
 
@@ -76,12 +76,12 @@ READS_HEARD: "tuple[NoticeRoute[object], ...]" = (
 
 
 class SourceBrokeError(RuntimeError):
-    """源の task が落ちた時の例外(``SourceFailed`` が運ぶ)。"""
+    """The exception when the source task has failed (carried by ``SourceFailed``)."""
 
 
 @do
 def _publish_all(events: tuple[object, ...]) -> EffectGenerator[None]:
-    """書き手: ``events`` を順に発する。"""
+    """Writer: emit ``events`` in order."""
     for event in events:
         yield Publish(event)
 
@@ -90,14 +90,14 @@ def _publish_all(events: tuple[object, ...]) -> EffectGenerator[None]:
 def _publish_when_listening(
     registered: Promise[object], events: tuple[object, ...]
 ) -> EffectGenerator[None]:
-    """書き手: 受け手が待ちに入った(``announce_listening`` が ``registered`` を完了した)後で、``events`` を順に発する。"""
+    """Writer: after the receiver has entered the wait (``announce_listening`` completed ``registered``), emit ``events`` in order."""
     yield Wait(registered.future)
     yield _publish_all(events)
 
 
 @do
 def _wait_rang() -> EffectGenerator[tuple[object, ...]]:
-    """受け手: ``Rang`` を ``WaitForEvents`` の 1 回で受ける。"""
+    """Receiver: receive ``Rang`` with one ``WaitForEvents``."""
     came: tuple[object, ...] = yield WaitForEvents(Rang)
     return came
 
@@ -105,14 +105,14 @@ def _wait_rang() -> EffectGenerator[tuple[object, ...]]:
 def _received_after(
     published: tuple[object, ...], body: Program[tuple[object, ...]]
 ) -> tuple[object, ...]:
-    """書き手が ``published`` を発し終えた後で、購読者 listener(``Rang`` を購読)が ``body`` を走らせた答え。"""
+    """The answer when subscriber listener (subscribed to ``Rang``) runs ``body`` after the writer has finished emitting ``published``."""
     bus = EventBus()
     receiving = subscribed_event_handler(bus, "listener", (Rang,))
     sending = subscribed_event_handler(bus, "writer")
 
     @do
     def main() -> EffectGenerator[tuple[object, ...]]:
-        """受け手の購読を始めてから書き手を走らせ終え、その後で受け手を走らせる。"""
+        """Start the receiver's subscription, finish running the writer, and then run the receiver."""
         yield Wait((yield Spawn(sending(_publish_all(published)))))
         answer: tuple[object, ...] = yield receiving(body)
         return answer
@@ -133,9 +133,9 @@ def test_wait_for_events_answers_the_one_signal_published_while_it_waits() -> No
 
     @do
     def main() -> EffectGenerator[tuple[object, ...]]:
-        """受け手が待っている間に書き手が 1 つ発する。"""
+        """The writer emits one while the receiver is waiting."""
         registered: Promise[object] = yield CreatePromise()
-        # 書き手を先に Spawn する: 受け手の待ちの後に発する順は、登録の出来事だけが決める。
+        # Spawn the writer first: the order of emitting after the receiver's wait is decided only by the registration event.
         writer = yield Spawn(
             record_wakes(wakes)(sending(_publish_when_listening(registered, (Rang("a"),))))
         )
@@ -145,27 +145,27 @@ def test_wait_for_events_answers_the_one_signal_published_while_it_waits() -> No
 
     received = run_scheduled(main())
     assert received == (Rang("a"),), received
-    # 購読者の列は待つ前の合図も溜めるので、答えだけでは起こされたのか列から取ったのかが分からない: 発した 1 つが待っている受け手を起こした事を見る。
+    # The subscriber's queue also stores signals from before the wait, so the answer alone does not tell whether it was woken or taken from the queue: check that the one emitted woke the waiting receiver.
     assert len(wakes.mut_promises) == 1, wakes.mut_promises
 
 
 def test_wait_for_events_outside_the_subscription_is_rejected_like_wait_for_event() -> None:
     @do
     def wait_unrelated() -> EffectGenerator[tuple[object, ...]]:
-        """購読の型の外の合図を待つ(配線の誤り)。"""
+        """Wait for a signal outside the subscription types (a wiring mistake)."""
         came: tuple[object, ...] = yield WaitForEvents(Unrelated)
         return came
 
-    with pytest.raises(ValueError, match=r"購読者 'listener' は購読の型の外を待った: Unrelated"):
+    with pytest.raises(ValueError, match=r"subscriber 'listener' waited for a type outside its subscription: Unrelated"):
         _received_after((), wait_unrelated())
 
 
 def test_the_handler_without_queues_answers_the_one_signal_as_a_tuple() -> None:
     @do
     def main() -> EffectGenerator[tuple[object, ...]]:
-        """受け手が待っている間に 1 つ発する(列を持たない handler は待ち手にだけ渡す)。"""
+        """The receiver emits one while waiting (a handler without queues passes only to the waiter)."""
         registered: Promise[object] = yield CreatePromise()
-        # 書き手を先に Spawn する: 受け手の待ちの後に発する順は、登録の出来事だけが決める。
+        # Spawn the writer first: the order of emitting after the receiver's wait is decided only by the registration event.
         writer = yield Spawn(_publish_when_listening(registered, (Rang("a"),)))
         answer: tuple[object, ...] = yield announce_listening(registered)(_wait_rang())
         yield Wait(writer)
@@ -176,7 +176,7 @@ def test_the_handler_without_queues_answers_the_one_signal_as_a_tuple() -> None:
 
 
 def _received_in_notice_wrapper(published: tuple[object, ...]) -> tuple[object, ...]:
-    """``notice_events_handler``(源の名 mine・channel を 1 つ読む)の包みの中で ``WaitForEvents(Rang)`` を 1 回した答え。"""
+    """The answer from doing ``WaitForEvents(Rang)`` once inside the ``notice_events_handler`` wrapper (source name mine, reading one channel)."""
     reader = patient_notice_events("mine", READS_HEARD, 30.0)
     return _received_after(published, memory_notice_handler(MemoryBroker())(reader(_wait_rang())))
 

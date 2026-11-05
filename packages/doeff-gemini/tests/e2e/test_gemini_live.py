@@ -100,7 +100,7 @@ def _with_mock_gemini_handler(program: Any, *, mock_client: Any, asked_keys: lis
 
 
 def _get_live_gemini_env_or_skip() -> dict[str, Any]:
-    # 選ばれたかは印 real_gemini で決まる(tests/e2e/conftest.py — 以前の環境変数 DOEFF_GEMINI_RUN_E2E の代わり・#3012)。
+    # Whether it is selected is decided by the marker real_gemini (tests/e2e/conftest.py — replaces the former environment variable DOEFF_GEMINI_RUN_E2E, #3012).
     pytest.importorskip("google.genai")
 
     try:

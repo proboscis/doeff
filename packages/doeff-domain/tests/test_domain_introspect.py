@@ -1,14 +1,14 @@
-"""Handles 宣言と二層の処理集合導出 (ADR-DOE-DOMAIN-001 D5/D6)。
+"""Handles declarations and two-layer derivation of the handled set (ADR-DOE-DOMAIN-001 D5/D6).
 
-導出は effect HandledEffects で読み、domain_registry が答える(ADR-DOE-API-001 R29)。生 Python
-handler は domain の handlers に宣言の型 Handles(handler, effect …) で置く(前の関数 handles() は handler に印を後付けした)。
+Derivation is read with effect HandledEffects, answered by domain_registry (ADR-DOE-API-001 R29). Raw Python
+handlers are placed in a domain's handlers with the declaration type Handles(handler, effect ...) (the former function handles() tagged the handler after the fact).
 
-導出テストは実物の defhandler 産物(無引数形・引数形・lazy 節・:when ガード)
-に対して行う。doeff-hy はテスト環境からのみ import する — doeff-domain 本体は
-属性ダックタイピングで doeff-hy 非依存(D1/D6)。
+The derivation tests run against real defhandler products (no-arg form, arg form, lazy clauses, :when guards).
+doeff-hy is imported only from the test environment -- doeff-domain itself
+is independent of doeff-hy through attribute duck typing (D1/D6).
 """
 
-import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)
+import doeff_hy  # noqa: F401 — import hook registration for the .hy fixture module (test-only)
 import domain_defhandler_fixtures as fixtures
 import pytest
 from doeff_domain import (
@@ -30,7 +30,7 @@ from doeff import run
 
 
 def handled_effects(handler, *, vocabulary=()) -> frozenset[type]:
-    """effect HandledEffects を domain_registry の下で走らせて、handler の処理集合を読む。"""
+    """Run effect HandledEffects under domain_registry and read the handler's handled set."""
     return run(domain_registry(domains=[])(HandledEffects(handler, vocabulary=list(vocabulary))))
 
 
@@ -45,7 +45,7 @@ class TestHandlesDeclaration:
         assert handled_effects(declared) == frozenset({FixtureAlpha, FixtureBeta})
 
     def test_declares_a_foreign_function_without_touching_it(self):
-        # D5: 他モジュールで定義済みの生 handler を、その handler に何も付けずに宣言できる
+        # D5: a raw handler already defined in another module can be declared without attaching anything to it
         declared = Handles(plain_installer, FixtureAlpha)
         assert handled_effects(declared) == frozenset({FixtureAlpha})
         assert not hasattr(plain_installer, "__doeff_handles__")
@@ -72,7 +72,7 @@ class TestDerivationLayers:
         assert handled_effects(handler) == frozenset({FixtureAlpha, FixtureBeta})
 
     def test_the_handlers_own_mark_is_read(self):
-        # core の installer が付ける __doeff_handles__ の印は、宣言の無い handler の処理集合として読む
+        # the __doeff_handles__ mark set by core's installer is read as the handled set of a handler with no declaration
         def marked(body):
             return body
 
@@ -101,7 +101,7 @@ class TestDefhandlerDerivation:
         assert derived == frozenset({FixtureGamma})
 
     def test_lazy_val_clause_skipped(self):
-        # lazy 節 head は 3 種(lazy / lazy-val / lazy-var)— 全て処理宣言ではない
+        # lazy clause heads come in 3 kinds (lazy / lazy-val / lazy-var) -- none are handling declarations
         derived = handled_effects(fixtures.fixture_lazy_val_handler)
         assert derived == frozenset({FixtureAlpha})
 
@@ -110,7 +110,7 @@ class TestDefhandlerDerivation:
         assert derived == frozenset({FixtureBeta})
 
     def test_session_clause_skipped(self):
-        # session val / session var(lazy の後継の書き方)も処理宣言ではない
+        # session val / session var (the successor spelling of lazy) are not handling declarations either
         derived = handled_effects(fixtures.fixture_session_handler)
         assert derived == frozenset({FixtureGamma})
 
@@ -119,8 +119,8 @@ class TestDefhandlerDerivation:
         assert derived == frozenset({FixtureAlpha, FixtureDelta})
 
     def test_vocabulary_fallback_when_module_attr_missing(self, monkeypatch):
-        # D6: sys.modules 属性で解決できない節は照合先 domain の effect クラス名と
-        # 文字列一致でフォールバックする
+        # D6: a clause that cannot be resolved via sys.modules attributes falls back to
+        # a string match against the effect class names of the domain being checked
         monkeypatch.delattr(fixtures, "FixtureAlpha")
         derived = handled_effects(
             fixtures.fixture_plain_handler, vocabulary=[FixtureAlpha, FixtureBeta]
@@ -128,7 +128,7 @@ class TestDefhandlerDerivation:
         assert derived == frozenset({FixtureAlpha, FixtureBeta})
 
     def test_unresolvable_clause_fails_loud(self, monkeypatch):
-        # D6: どちらの解決も失敗したら検査エラー(黙って落とさない)
+        # D6: if both resolutions fail, it is a check error (never dropped silently)
         monkeypatch.delattr(fixtures, "FixtureAlpha")
         with pytest.raises(DomainCheckError) as excinfo:
             handled_effects(fixtures.fixture_plain_handler, vocabulary=[FixtureBeta])

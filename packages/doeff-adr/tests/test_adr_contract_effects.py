@@ -1,12 +1,12 @@
-"""ADR の形を確かめる操作は effect AssertAdrContract・AssertAllAdrContracts、deftest の検を表に載せる操作は effect RegisterDeftest
-で、GetAdr と同じ handler の工場 adr_registry が答える(ADR-DOE-API-001 R30)。
+"""The operation that checks the shape of an ADR is the effect AssertAdrContract / AssertAllAdrContracts, and the operation that puts a deftest check in the table is the effect RegisterDeftest,
+both answered by adr_registry, the same handler factory as GetAdr (ADR-DOE-API-001 R30).
 
-決め: doeff-adr の残りの名を同じ向きで直す。前の関数 assert_adr_contract・assert_all_adr_contracts・register_deftest_enforcement は外の repo に呼び手が無いので、移し替えの
-層を残さずに消した。
+Decision: fix the remaining names in doeff-adr in the same direction. The former functions assert_adr_contract, assert_all_adr_contracts and register_deftest_enforcement have no callers in other repos, so they were removed without leaving a
+migration layer.
 
-adr_registry() は process の登録簿から答え、adr_registry(specs=[…], enforcements={…}) は渡した列と辞書だけから答える(渡さない方は
-空)。内側に据えた handler が先に答えるので、test は欠けた検を持つ ADR を登録簿に触らずに確かめられる。macro defadr の展開も、この
-effect をこの handler の下で走らせる。
+adr_registry() answers from the process registry, and adr_registry(specs=[...], enforcements={...}) answers only from the given list and dict (the one not given is
+empty). The innermost installed handler answers first, so a test can check an ADR with a missing check without touching the registry. The expansion of the macro defadr also runs this
+effect under this handler.
 """
 
 import textwrap
@@ -42,18 +42,18 @@ def _spec(
     status: AdrStatus = "accepted",
     plans: tuple[str, ...] = (),
 ) -> AdrSpec:
-    """検の参照 refs を挙げた ADR の値(表を差し替える test が、登録簿を通さずに渡す)。"""
+    """An ADR value that lists check references refs (a test that swaps the table passes it without going through the registry)."""
     return AdrSpec(id=adr_id, title=adr_id, status=status, enforcement=refs, plans=plans)
 
 
 def _deftest(enforcement_id: str, mode: EnforcementMode = "green") -> EnforcementRef:
-    """deftest の検の参照(ADR が挙げる・表に載る値)を、比べやすい 1 行で作るため。"""
+    """Build a deftest check reference (listed by an ADR / present in the table) as an easy-to-compare single line."""
     return EnforcementRef(id=enforcement_id, kind="deftest", mode=mode)
 
 
 @do
 def _failure_of(effect):
-    """effect を出し、出した所で受けた外れの文を返す(外れなければ "passed")— 失敗が effect を出した所へ返る事を見るため。"""
+    """Raise the effect and return the text of the failure received at the raise site ("passed" if it does not fail) -- to see that a failure returns to the site that raised the effect."""
     try:
         yield effect
     except (AssertionError, KeyError, ValueError) as failed:
@@ -62,7 +62,7 @@ def _failure_of(effect):
 
 
 def test_a_registered_adr_with_its_registered_check_passes() -> None:
-    """process の登録簿: RegisterDeftest で載せた検を挙げる採用済みの ADR は、AssertAdrContract に None で答える。"""
+    """Process registry: an adopted ADR whose listed checks were registered with RegisterDeftest answers AssertAdrContract with None."""
 
     @do
     def body():
@@ -87,7 +87,7 @@ def test_a_registered_adr_with_its_registered_check_passes() -> None:
 
 
 def test_an_adr_whose_check_is_missing_fails_where_the_effect_was_performed() -> None:
-    """欠けた検を持つ ADR: 挙げた検が表に無ければ、AssertAdrContract を出した所へ AssertionError が返る。"""
+    """An ADR with a missing check: if a listed check is not in the table, AssertionError returns to the site that raised AssertAdrContract."""
     registry = adr_registry(specs=[_spec("ADR-PROBE-001", _deftest("test_gone"))])
     with isolated_registry():
         assert run(registry(_failure_of(AssertAdrContract("ADR-PROBE-001")))) == (
@@ -129,7 +129,7 @@ def test_an_expected_red_check_tied_to_a_plan_and_a_proposed_adr_without_checks_
 
 
 def test_an_adr_that_is_not_on_the_table_is_a_key_error() -> None:
-    """渡した列に無い id は、登録簿に在っても KeyError(登録簿へ落ちない)。"""
+    """An id not in the given list is a KeyError even if it exists in the registry (it does not fall through to the registry)."""
     with isolated_registry():
         run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry(specs=[])(_failure_of(AssertAdrContract("ADR-PROBE-001")))) == (
@@ -138,7 +138,7 @@ def test_an_adr_that_is_not_on_the_table_is_a_key_error() -> None:
 
 
 def test_assert_all_checks_every_adr_and_raises_the_first_failure() -> None:
-    """id の順に確かめ、最初の外れを投げる。外れが無ければ None、表が空でも None。"""
+    """Check in id order and raise the first failure. None if there is none; also None if the table is empty."""
     good = _spec("ADR-PROBE-001", _deftest("test_here"))
     bad_b = _spec("ADR-PROBE-002", _deftest("test_gone_b"))
     bad_c = _spec("ADR-PROBE-003", _deftest("test_gone_c"))
@@ -156,7 +156,7 @@ def test_assert_all_checks_every_adr_and_raises_the_first_failure() -> None:
 
 
 def test_register_deftest_writes_to_the_given_table_only() -> None:
-    """enforcements を渡せばその辞書に載せ、登録簿には載せない。載せた検は同じ handler の確かめが読む。"""
+    """If enforcements is given, register into that dict and not into the registry. The registered checks are read by the same handler's check."""
     table: dict[str, EnforcementRef | SemgrepSpec] = {}
 
     @do
@@ -172,7 +172,7 @@ def test_register_deftest_writes_to_the_given_table_only() -> None:
 
 
 def test_specs_alone_registers_on_an_empty_table_made_by_the_factory() -> None:
-    """specs だけを渡すと検の表は空で、RegisterDeftest は工場を呼んだ時に作った辞書へ載せる(同じ handler の値の間は残る)。"""
+    """If only specs is given, the check table is empty, and RegisterDeftest registers into the dict made when the factory was called (it persists while the same handler value is used)."""
     spec = _spec("ADR-PROBE-001", _deftest("test_later"))
     registry = adr_registry(specs=[spec])
     with isolated_registry():
@@ -192,13 +192,13 @@ def test_registering_an_id_twice_or_with_an_unknown_mode_is_a_value_error() -> N
 
     registry = adr_registry(enforcements={})
     assert run(registry(twice())) == "ValueError: duplicate ADR enforcement id: test_twice"
-    assert run(registry(_failure_of(RegisterDeftest("test_odd", mode="amber")))) == (  # type: ignore[arg-type] — 知らない mode を断る事を見る
+    assert run(registry(_failure_of(RegisterDeftest("test_odd", mode="amber")))) == (  # type: ignore[arg-type] — to see that an unknown mode is rejected
         "ValueError: unsupported enforcement mode: 'amber'"
     )
 
 
 def test_an_inner_table_answers_before_the_outer_registry() -> None:
-    """外に既定の adr_registry() を据えたまま、program の一部だけを欠けた検を持つ表で確かめられる。"""
+    """With the default adr_registry() installed outside, only part of the program can be checked with a table that has a missing check."""
     inner = adr_registry(specs=[_spec("ADR-PROBE-001", _deftest("test_gone"))])
 
     @do
@@ -223,14 +223,14 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
 
 def test_the_factory_refuses_a_table_that_is_not_a_dict() -> None:
     with pytest.raises(TypeError, match="positional"):
-        adr_registry(AssertAdrContract("ADR-PROBE-001"))  # type: ignore[misc] — 書き違いを断る事を見るため、位置の引数で渡す
+        adr_registry(AssertAdrContract("ADR-PROBE-001"))  # type: ignore[misc] — to see that a typo is rejected, pass it as a positional argument
     with pytest.raises(TypeError, match="takes a dict"):
-        adr_registry(enforcements=[])  # type: ignore[arg-type] — 書き違いを断る事を見るため、辞書でない値を渡す
+        adr_registry(enforcements=[])  # type: ignore[arg-type] — to see that a typo is rejected, pass a non-dict value
 
 
 def test_the_contract_checks_are_reached_only_through_the_effects() -> None:
-    """effect は入口に在り、前の関数 3 個は入口にも registry にも無い(本体は内側の _assert_adr_contract・
-    _register_deftest_enforcement だけ)。"""
+    """The effects are at the entry point, and the 3 former functions are in neither the entry point nor the registry (only the inner _assert_adr_contract and
+    _register_deftest_enforcement remain as bodies)."""
     assert {"AssertAdrContract", "AssertAllAdrContracts", "RegisterDeftest"} <= set(
         doeff_adr.__all__
     )
@@ -241,7 +241,7 @@ def test_the_contract_checks_are_reached_only_through_the_effects() -> None:
 
 
 def test_defadr_expands_to_the_effects_under_their_handler() -> None:
-    """展開は deftest の載せを RegisterDeftest として、生まれる test の確かめを AssertAdrContract として adr_registry() の下で走らせる。"""
+    """The expansion runs the deftest registration as RegisterDeftest, and the check of the resulting test as AssertAdrContract, under adr_registry()."""
     expanded = hy.macroexpand(
         hy.read(
             """(defadr ADR-PROBE-EXPANSION
@@ -259,8 +259,8 @@ def test_defadr_expands_to_the_effects_under_their_handler() -> None:
 
 
 def test_the_adr_contract_test_needs_no_interpreter_fixture(pytester) -> None:
-    """外の repo の defadr は doeff の版を上げるだけで動く: project が doeff_interpreter fixture を持たなくても、deftest の載せと
-    ADR の形の確かめは自分の handler の下で走る。module が run や AssertAdrContract を定義しても、生まれる test は動く。"""
+    """defadr in another repo works just by bumping the doeff version: even if the project has no doeff_interpreter fixture, the deftest registration and
+    the ADR shape check run under its own handler. The resulting test works even if the module defines run or AssertAdrContract."""
     pytester.mkdir("docs")
     pytester.mkdir("docs/adr")
     pytester.makefile(

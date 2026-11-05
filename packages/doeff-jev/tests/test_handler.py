@@ -1,4 +1,4 @@
-"""jev_handler / jev_memo_handler / journal_handler — HTTP は台本の handler で答える(通信なし)。"""
+"""jev_handler / jev_memo_handler / journal_handler: HTTP is answered by a scripted handler (no communication)."""
 
 import json
 import pickle
@@ -18,7 +18,7 @@ ANSWER = {"answers": {"n": {"type": "noul", "noul": 0.8}, "c": {"type": "choice"
 
 
 class HttpScript:
-    """HttpRequest を記録し、台本(status, text | 例外)で答える handler の作り手。"""
+    """Maker of a handler that records HttpRequests and answers from a script (status, text | exception)."""
 
     def __init__(self, *steps):
         self.steps = list(steps)
@@ -42,7 +42,7 @@ class HttpScript:
 
 
 def _judged(program, layers):
-    """使い手の組み立てと同じ形: 積みを被せ、scheduler の下で doeff の run で回す。"""
+    """Same shape as the caller's assembly: stack the handlers and run with doeff's run under the scheduler."""
     return run(scheduled(with_handlers(layers, program)))
 
 
@@ -84,7 +84,7 @@ def test_cache_hit_skips_the_second_post_but_uncacheable_does_not() -> None:
         return (first.answer("n").value, second.answer("n").value, third.answer("n").value)
 
     assert _run(flow(), DIRECT, script) == (0.8, 0.8, 0.8)
-    assert len(script.requests) == 2  # 2 回目は cache、3 回目は cacheable=False で再送
+    assert len(script.requests) == 2  # the 2nd is from the cache, the 3rd is re-sent with cacheable=False
 
 
 def test_http_error_and_transport_failure_become_judge_errors() -> None:
@@ -169,7 +169,7 @@ def test_caller_header_proxy_outcome_and_cache_mark_reach_the_verdict_and_the_jo
     @do
     def flow():
         asked = yield judge("a", {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))})
-        remembered = yield judge("a", {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))})   # 手元の cache
+        remembered = yield judge("a", {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))})   # local cache
         return asked, remembered
 
     asked, remembered = _run(flow(), DIRECT, script, journal=str(path), caller="rulebook-advisor/Stop")
@@ -177,7 +177,7 @@ def test_caller_header_proxy_outcome_and_cache_mark_reach_the_verdict_and_the_jo
     assert len(script.requests) == 1
     assert (asked.proxy, asked.cached) == ("miss", False)
     assert (remembered.proxy, remembered.cached) == (None, True)
-    assert remembered.input_tokens == asked.input_tokens  # 問うた時の値のまま — 数える側が cached を除く
+    assert remembered.input_tokens == asked.input_tokens  # keeps the values from when it was asked; the counting side excludes cached
     lines = [json.loads(line) for line in path.read_text().splitlines()]
     assert [(line["caller"], line["keys"], line.get("proxy"), line["cached"]) for line in lines] == [
         ("rulebook-advisor/Stop", ["n", "c"], "miss", False),
@@ -218,7 +218,7 @@ def test_without_a_journal_the_row_reaches_the_outer_slog_sink_with_caller_and_k
 
 
 def test_answers_cached_before_the_marks_existed_still_read() -> None:
-    # 前の版の答え(欄 proxy・cached の無い Verdict の pickle)は、欄の既定値で読める。
+    # An answer from a previous version (a pickled Verdict without the proxy / cached fields) can be read with the field defaults.
     old = Verdict.__new__(Verdict)
     old.__dict__.update({"answers": {}, "model": "jev-1.13.0", "input_tokens": 3, "elapsed_ms": 4})
     restored = pickle.loads(pickle.dumps(old))
@@ -226,7 +226,7 @@ def test_answers_cached_before_the_marks_existed_still_read() -> None:
 
 
 def test_without_a_target_the_stack_resolves_it_from_the_process_environment(monkeypatch, tmp_path) -> None:
-    """宛先を渡さない judge_stack は、この process の環境から宛先を解く(前の run_judgment の target 省略と同じ解き方)。"""
+    """A judge_stack that is not passed a destination resolves it from this process's environment (the same resolution as omitting target in the former run_judgment)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     for name in ("JEV_WIRE", "JEV_API_KEY", "JEV_API_KEY_FILE", "TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY"):
         monkeypatch.delenv(name, raising=False)

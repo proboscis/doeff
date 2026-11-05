@@ -1,4 +1,4 @@
-"""doeff-validation の Python の API の検査 — 集める・並行・fail-fast・入れ子・効果の引数。"""
+"""Checks for the doeff-validation Python API — collecting, concurrency, fail-fast, nesting, and effect arguments."""
 
 from __future__ import annotations
 
@@ -33,13 +33,13 @@ ENV = {"seats": 3, "phase": "pending"}
 
 
 def _run(program: Program, traverse_handler: ProgramHandler | None = None) -> object:
-    """検査の Program を、reader と traverse の handler(既定は逐次)の下で走らせる。"""
+    """Run a validation Program under the reader and traverse handlers (sequential by default)."""
     handler = traverse_handler if traverse_handler is not None else sequential
     return run(scheduled(reader(ENV)(handler(program))))
 
 
 def _failures(program: Program, traverse_handler: ProgramHandler | None = None) -> ValidationException:
-    """ValidationException が投げられることを確かめ、その例外を返す。"""
+    """Assert that ValidationException is raised, and return that exception."""
     with pytest.raises(ValidationException) as caught:
         _run(program, traverse_handler)
     return caught.value
@@ -61,7 +61,7 @@ def test_collects_every_failure_in_item_order() -> None:
     first = error.failures[0]
     assert isinstance(first, CheckFailure)
     assert [(a.source, a.value) for a in first.arguments] == [("'k-1'", "k-1"), ("'k-2'", "k-2")]
-    assert "2 件の検査が落ちました" in str(error)
+    assert "2 checks failed" in str(error)
 
 
 @pytest.mark.parametrize("handler_factory", [sequential, lambda: parallel(4)])
@@ -96,7 +96,7 @@ def test_performed_argument_is_run_inside_the_item_and_its_result_recorded() -> 
 
 def test_unmarked_program_argument_is_compared_as_a_value() -> None:
     effect = Ask("seats")
-    # 印の無い引数は実行しない: effect の値そのものを比べる。
+    # An argument without the mark is not executed: the effect value itself is compared.
     assert _run(validate(Check(operator.is_, effect, effect))) is None
     error = _failures(validate(Check(operator.eq, effect, 3)))
     assert error.failures[0].arguments[0].value is effect
@@ -143,12 +143,12 @@ def test_check_alone_is_not_a_program() -> None:
 
 
 def test_check_rejects_a_predicate_that_is_not_callable() -> None:
-    with pytest.raises(TypeError, match="述語"):
+    with pytest.raises(TypeError, match="predicate"):
         Check(1, 1)
 
 
 def test_perform_rejects_a_value_that_is_neither_a_program_nor_an_effect() -> None:
-    with pytest.raises(TypeError, match="Program か効果"):
+    with pytest.raises(TypeError, match="Program or an effect"):
         Perform(3)
 
 
@@ -164,14 +164,14 @@ def test_check_writes_the_expression_from_the_predicate_and_the_arguments() -> N
 
 
 def test_the_types_are_the_only_way_to_write_a_check() -> None:
-    # 決め: 型 Check と Perform を直に書き、関数 check と perform は見せない。
+    # Decision: write the types Check and Perform directly; the functions check and perform are not exposed.
     public = {name for name in dir(doeff_validation) if not name.startswith("_")}
     assert {"Check", "Perform"} <= public
     assert public.isdisjoint({"check", "perform", "CheckSpec", "Performed"})
 
 
 def test_validate_rejects_items_that_are_neither_check_nor_program() -> None:
-    with pytest.raises(TypeError, match="項目は check か Program"):
+    with pytest.raises(TypeError, match="item must be a check or Program"):
         validate(True)
 
 

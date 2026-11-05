@@ -1,4 +1,4 @@
-"""動的な収集記録が読んだproject内sourceの保守的な有効性検査(#1459)。"""
+"""Conservative validity check of the in-project sources read by a dynamic collection record (#1459)."""
 
 import hashlib
 import os
@@ -8,16 +8,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 時刻の粒度の上限(ns)— file の最後の変更(mtime・ctime)が、記録を取った時刻からこの幅の内なら、同じ時刻の区切りの中で
-# 書き換えられても stat が変わらない(git の racy-git と同じ形)。粗い kernel の ctime の区切りは jiffy
-# (atlas の 6.8 で 4 ms)、粗い file system は 1〜2 秒(ext3・HFS+ は 1 秒・FAT は 2 秒)なので 2 秒にする。
+# Upper bound of the timestamp granularity (ns) -- if the last change of a file (mtime, ctime) is within this width of the time the record was taken, it can be
+# rewritten within the same timestamp tick without stat changing (the same shape as git's racy-git). The coarse kernel ctime tick is a jiffy
+# (4 ms on atlas 6.8), and coarse file systems use 1-2 seconds (ext3 and HFS+ 1 second, FAT 2 seconds), so we use 2 seconds.
 RACY_WINDOW_NS: int = 2_000_000_000
 
 
 @dataclass(frozen=True)
 class SourceDependency:
-    """読んだ source 1 つの記録。recorded_ns = 記録を取った壁の時刻(この欄の無い古い記録は 0 — stat を信じず 1 度 hash で確かめ、
-    確かめた時刻で書き直される)。"""
+    """Record of one source that was read. recorded_ns = the wall-clock time the record was taken (an old record without this field has 0 -- stat is not trusted, it is verified once by hash,
+    and rewritten with the verification time)."""
 
     path: str
     digest: str
@@ -30,7 +30,7 @@ class SourceDependency:
 
 
 def snapshot(path: Path, relative: str, digest: str, recorded_ns: int | None = None) -> SourceDependency:
-    """path の今の stat の記録。recorded_ns を渡さなければ、stat を読んだ後の壁の時刻を記録の時刻にする。"""
+    """Record of the current stat of path. If recorded_ns is not passed, the wall-clock time after reading stat is used as the record time."""
     status: os.stat_result = path.stat()
     return SourceDependency(
         relative,
@@ -45,8 +45,8 @@ def snapshot(path: Path, relative: str, digest: str, recorded_ns: int | None = N
 
 
 def stat_is_trusted(dependency: SourceDependency) -> bool:
-    """純粋: 記録の stat が一致した時に hash を読まずに信じてよいか — file の最後の変更が、記録を取った時刻より RACY_WINDOW_NS 以上
-    前の時だけ(同じ時刻の区切りの中の書き換えは stat に出ないので、その幅の内の記録は hash で確かめる — git の racy-git)。"""
+    """Pure: whether a record whose stat matches may be trusted without reading the hash -- only when the last change of the file is at least RACY_WINDOW_NS
+    before the time the record was taken (a rewrite within the same timestamp tick does not show in stat, so records within that width are verified by hash -- git's racy-git)."""
     return max(dependency.mtime_ns, dependency.ctime_ns) + RACY_WINDOW_NS < dependency.recorded_ns
 
 
@@ -56,7 +56,7 @@ class SourceSnapshot:
 
 
 def local_source(origin: str, root: Path) -> Path | None:
-    """純粋でない(path を解く): module の ``__file__`` → root の中の .py / .hy の解いた path(root の外・.venv の下・source でない物は None)。"""
+    """Impure (resolves a path): module ``__file__`` -> the resolved path of a .py / .hy inside root (None if outside root, under .venv, or not a source)."""
     if Path(origin).suffix not in {".py", ".hy"}:
         return None
     path: Path = Path(origin).resolve()
@@ -66,7 +66,7 @@ def local_source(origin: str, root: Path) -> Path | None:
 
 
 def loaded_origins() -> frozenset[str]:
-    """今読込済みの module の file の名(``__file__``)— 読みも path の解きもしない(import の区間の中で呼ぶため)。"""
+    """Names of the files (``__file__``) of the currently loaded modules -- does not read or resolve paths (called inside the import window)."""
     return frozenset(
         origin
         for module in tuple(sys.modules.values())
@@ -76,7 +76,7 @@ def loaded_origins() -> frozenset[str]:
 
 @dataclass(frozen=True)
 class LoadedSource:
-    """読込済みの local source 1 つ — 並べる鍵の解いた path と、その記録。"""
+    """One loaded local source -- the resolved path used as the ordering key, and its record."""
 
     path: Path
     dependency: SourceDependency
@@ -84,14 +84,14 @@ class LoadedSource:
 
 @dataclass(frozen=True)
 class ProviderFound:
-    """macro の提供元の module の今の file の sha256(読めなければ None — どの記録の digest とも合わない)。"""
+    """sha256 of the current file of the macro provider module (None if unreadable -- it matches no record's digest)."""
 
     digest: str | None
 
 
 @dataclass(frozen=True)
 class ProviderMissing:
-    """macro の提供元の module の file が見つからない。"""
+    """The file of the macro provider module cannot be found."""
 
 
 ProviderState = ProviderFound | ProviderMissing
@@ -99,14 +99,14 @@ ProviderState = ProviderFound | ProviderMissing
 
 @dataclass
 class DependencyChecks:
-    """収集1回の観測。重複した依存fileはstatとhashの結果を共有する。
+    """Observations of one collection. Duplicate dependency files share the stat and hash results.
 
-    macro の提供元も同じく、module 名ごとに 1 度だけ調べる — 記録の file の多く(agora では 420 file)が同じ 9 個ほどの
-    提供元を指し、file ごとに調べ直すと 3,700 回の stat と path の生成になっていた。
+    Macro providers are likewise examined only once per module name -- many of the recorded files (420 in agora) point at the same ~9
+    providers, and re-examining per file meant 3,700 stats and path constructions.
 
-    実値の記録に残す読込済みの local source も、module の file ごとに 1 度だけ解いて読み hash を取る(``sources_of``)— 実値の
-    file ごとに全部を読み直すと、読み込んだ module の数(session が進むほど増える)に比例した費用が import の区間に乗り、
-    doeff-hy-pytest の読み込みの上限を session の後ろの file だけが越えた。root は収集 1 回で 1 つ。
+    The loaded local sources kept in a real-value record are also resolved, read and hashed only once per module file (``sources_of``) -- re-reading everything for each
+    real-value file added a cost proportional to the number of loaded modules (growing as the session progresses) to the import window, and
+    only the later files of a session exceeded the doeff-hy-pytest load limit. There is one root per collection.
     """
 
     _mut_files: dict[str, SourceDependency | None] = field(default_factory=dict)
@@ -120,8 +120,8 @@ class DependencyChecks:
     clock: Callable[[], int] = time.time_ns
 
     def macro_provider(self, module: str, find: Callable[[str], ProviderState]) -> ProviderState:
-        """``module``(記録を積む実行時の口の module)の今の file の状態。調べ方(``find``)は記録のキャッシュの側が持つ 1 つだけを
-        使う。"""
+        """State of the current file of ``module`` (the module at the runtime hook that accumulates records). Lookup (``find``) uses only the single implementation held by
+        the record cache side."""
         known = self._mut_providers.get(module)
         if known is None:
             known = find(module)
@@ -129,8 +129,8 @@ class DependencyChecks:
         return known
 
     def sources_of(self, origins: frozenset[str], root: Path) -> SourceSnapshot:
-        """実値を作った時点で読込済みだった module の file(``loaded_origins`` で集めた名)のうち、root の中の local source の記録。
-        importを追加しない。"""
+        """Records of the local sources inside root among the files of modules already loaded when the real value was made (names gathered by ``loaded_origins``).
+        Adds no imports."""
         found: dict[Path, SourceDependency] = {
             loaded.path: loaded.dependency
             for origin in origins
@@ -139,7 +139,7 @@ class DependencyChecks:
         return SourceSnapshot(tuple(found[path] for path in sorted(found)))
 
     def _loaded_source(self, origin: str, root: Path) -> LoadedSource | None:
-        """module の file 1 つの記録(収集 1 回で 1 度だけ解いて読む)。"""
+        """Record of one module file (resolved and read only once per collection)."""
         if origin not in self._mut_loaded:
             path: Path | None = local_source(origin, root)
             self._mut_loaded[origin] = (
@@ -163,8 +163,8 @@ class DependencyChecks:
         refreshed: list[SourceDependency] = []
         root_text: str = str(root)
         for dependency in saved:
-            # 鍵は文字列で作る — 記録の path は rootdir からの正規の posix の相対 path なので ``str(root / path)`` と
-            # 同じ文字列になる。Path を作って文字列へ戻すのを照合ごとにしない(420 file で 1 万回近い)。
+            # The key is built as a string -- the recorded path is a canonical posix path relative to rootdir, so it becomes the same string as ``str(root / path)``.
+            # Avoid building a Path and converting back to a string per check (nearly 10,000 times for 420 files).
             key: str = os.path.join(root_text, dependency.path)
             self._mut_checks += 1
             if key not in self._mut_files:
@@ -175,7 +175,7 @@ class DependencyChecks:
             current: SourceDependency | None = self._mut_files[key]
             if current is None:
                 self._mut_rebuilds += 1
-                return f"実値の依存sourceが無い: {dependency.path}"
+                return f"dependency source of the actual value is missing: {dependency.path}"
             if (
                 current.size,
                 current.mtime_ns,
@@ -197,7 +197,7 @@ class DependencyChecks:
             digest: str = self._mut_hashes[key]
             if digest != dependency.digest:
                 self._mut_rebuilds += 1
-                return f"実値の依存sourceが変わった: {dependency.path}"
+                return f"dependency source of the actual value changed: {dependency.path}"
             refreshed.append(
                 SourceDependency(
                     current.path,
@@ -214,7 +214,7 @@ class DependencyChecks:
 
     def report(self) -> str:
         return (
-            f"doeff-adr: 実値の依存照合 {len(self._mut_files)} file・照合 {self._mut_checks} 回・"
-            f"stat一致 {self._mut_stat_hits} 回・hash {len(self._mut_hashes)} file・"
-            f"{self._mut_seconds:.6f} 秒・依存変更で再作成 {self._mut_rebuilds} file"
+            f"doeff-adr: actual-value dependency check: {len(self._mut_files)} files; checks: {self._mut_checks}; "
+            f"stat matches: {self._mut_stat_hits}; hashed: {len(self._mut_hashes)} files; "
+            f"{self._mut_seconds:.6f} s; rebuilt on dependency change: {self._mut_rebuilds} files"
         )

@@ -1,10 +1,10 @@
-"""opt-in 適合検査 — (a) 被覆と (c) 孤児禁止 (ADR-DOE-DOMAIN-001 D7)。
+"""opt-in conformance checks — (a) coverage and (c) orphan prohibition (ADR-DOE-DOMAIN-001 D7).
 
-検査は effect AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects で、domain_registry が表から
-答える(ADR-DOE-API-001 R29)。ここでは domain_registry(domains=[…]) の別の表で走らせる。
+The checks are effects AssertDomainCovered, AssertRegisteredDomainsCovered and AssertNoOrphanEffects, answered by domain_registry from the registry
+(ADR-DOE-API-001 R29). Here they run on a separate registry via domain_registry(domains=[…]).
 """
 
-import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)
+import doeff_hy  # noqa: F401 — registers the import hook for the .hy fixture module (test-only)
 import domain_defhandler_fixtures as fixtures
 import domain_orphan_scan_fixture as scan_fixture
 import pytest
@@ -25,7 +25,7 @@ from doeff import run
 
 
 def check(effect, *domains: Domain) -> None:
-    """検査の effect 1 つを、渡した domain だけの表で走らせる(外れは例外のまま上がる)。"""
+    """Run one check effect on a registry of only the given domains (failures propagate as exceptions)."""
     run(domain_registry(domains=list(domains))(effect))
 
 
@@ -69,7 +69,7 @@ class TestCoverage:
             check(AssertDomainCovered("c-missing"))
 
     def test_included_vocabulary_not_required(self):
-        # (a) は「導入する」effects のみ対象 — 包含語彙の被覆責務は導入元にある
+        # (a) covers only "introduced" effects — responsibility for covering included vocabulary lies with the introducing domain
         home = Domain(
             name="c-home",
             title="t",
@@ -80,7 +80,7 @@ class TestCoverage:
         check(AssertDomainCovered(including), home, including)
 
     def test_superset_coverage_allowed(self):
-        # handler が domain 導入外の effect を余分に処理していても green(⊇ 検査)
+        # green even if a handler processes extra effects beyond the domain's introductions (⊇ check)
         domain = Domain(
             name="c-super",
             title="t",
@@ -99,7 +99,7 @@ class TestCoverage:
         check(AssertDomainCovered(domain, known_uncovered=[FixtureAlpha, FixtureBeta]), domain)
 
     def test_known_uncovered_stale_entry_fails(self):
-        # ratchet: 実際には被覆済みの known_uncovered は stale として fail
+        # ratchet: a known_uncovered that is actually covered fails as stale
         domain = Domain(
             name="c-stale",
             title="t",
@@ -165,7 +165,7 @@ class TestOrphans:
         check(AssertNoOrphanEffects(["domain_orphan_scan_fixture"]), home)
 
     def test_reexports_not_counted_as_definitions(self):
-        # FixtureAlpha は re-export — 定義モジュールでない走査対象では数えない
+        # FixtureAlpha is a re-export — not counted when scanning a module that does not define it
         own = Domain(
             name="o-own",
             title="t",
@@ -212,7 +212,7 @@ class TestOrphans:
             )
 
     def test_missing_package_fails_loud(self):
-        # 読めない module も check の失敗の型 DomainCheckError で届き、元の例外は __cause__ に残る
+        # an unreadable module also arrives as the check failure type DomainCheckError, with the original exception kept in __cause__
         with pytest.raises(DomainCheckError, match="no_such_package_doeff_domain_xyz") as excinfo:
             check(AssertNoOrphanEffects(["no_such_package_doeff_domain_xyz"]))
         assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)

@@ -1,19 +1,19 @@
-"""Hy の test file の item の記録のキャッシュ — 鍵は source の内容の hash と、展開が使った macro の記録。
+"""Cache of item records for Hy test files -- keyed by the hash of the source content and the record of the macros the expansion used.
 
-item を作る macro は、展開の式で記録を module に積む(``doeff_hy._pytest_items``)。この module は、収集で 1 度 import した
-file の記録を保存し、次の収集からは import せずに引けるようにする。Hy の importer には手を入れない。
+A macro that creates items puts records into the module through its expansion (``doeff_hy._pytest_items``). This module saves the records of files imported once during collection
+and lets later collections look them up without importing. It does not touch the Hy importer.
 
-- 置き場: ``<dir>/<source の sha256>.json``。dir は :func:`items_cache_dir_for` の 1 か所で決める(ini → 環境変数
-  ``DOEFF_ADR_ITEMS_CACHE`` → ``~/.cache/doeff-adr/pytest-items`` の順 — plugin が ini を読んで渡す)。内容の
-  hash が鍵なので、同じ内容の file は worktree をまたいで同じ記録を引く。
-- 有効判定: source の sha256 で引き(鍵)、保存した時の展開が使った macro の記録が今の環境に合い(.pyc と同じ照らし方 —
-  展開で実行された関数の中身だけを覆う)、記録を積む実行時の口(:data:`RECORDING_RUNTIME` の module の file の sha256)が今も
-  同じで、記録の形の版が同じ時だけ有効。item の記録は展開の結果の文字列の定数で、import の時に実行時の口が module に積む
-  だけなので、展開と実行時の口が同じなら同じ記録になる。記録は module 名で macro を引き直すので、絶対 path に縛られない。
-- 展開の記録の取り方と照らし方は、doeff-hy の ``doeff_hy_bytecode_guard._loader_hooks`` の口(``loaded_record`` と
-  ``record_is_current_here`` — 古い bytecode を見つける仕組み #1292 と同じ 1 つの照らし方)を使う。ここに 2 つ目の照らし方を
-  書かない。前は macro の提供元の file の sha256 で照らし、doeff_hy の macros.hy のどの行の変更でも Hy の test file を全部
-  import で収集し直して、doeff の日次が時間の上限を越えた(10-12 04:00・08:00 の回 — #3769 の子)。
+- Location: ``<dir>/<sha256 of source>.json``. The dir is decided in one place, :func:`items_cache_dir_for` (ini -> environment variable
+    ``DOEFF_ADR_ITEMS_CACHE`` -> ``~/.cache/doeff-adr/pytest-items``, in that order; the plugin reads the ini and passes it). The content
+    hash is the key, so files with the same content look up the same record across worktrees.
+- Validity: look up by the sha256 of the source (the key); an entry is valid only when the record of macros the expansion used at save time matches the current environment (checked the same way as .pyc --
+    it covers only the bodies of functions executed during expansion), the runtime entry point that puts records (the sha256 of the file of the :data:`RECORDING_RUNTIME` module) is still
+    the same, and the record format version is the same. An item record is a string constant produced by the expansion, and at import time the runtime entry point just puts it into the module,
+    so if the expansion and the runtime entry point are the same, the record is the same. Records look up macros again by module name, so they are not tied to absolute paths.
+- How to take and check the expansion record uses the entry points of doeff-hy's ``doeff_hy_bytecode_guard._loader_hooks`` (``loaded_record`` and
+    ``record_is_current_here`` -- the same single way of checking as the mechanism that finds stale bytecode, #1292). Do not write a second way of checking here.
+    It used to check by the sha256 of the macro provider file, and any line change in doeff_hy's macros.hy made every Hy test file be
+    collected by import again, so the doeff daily run exceeded its time limit (the 10-12 04:00 and 08:00 runs -- child of #3769).
 """
 
 import hashlib
@@ -47,32 +47,32 @@ from doeff_adr._source_dependencies import (
     loaded_origins,
 )
 
-TYPE_CHECKING = False  # 型検査器はこの名の分岐を真として読む(記録の型は注記だけに使う公開の名)
+TYPE_CHECKING = False  # the type checker reads branches on this name as true (a public name used only for the annotation of the record type)
 if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
 
-# 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
-# 3 = module の fixture の記録を足す。
-# 4 = import後の実値・明示idとproject内sourceの状態を保存する(#1459)。
-# fixture の別名も pytest の登録名で保存する (#1551)。古い記録の名前を使わない。
-# 6 = macro の提供元の file の sha256 の代わりに、展開が使った macro の記録と記録を積む実行時の口の file を保存する(#3769 の子)。
+# Raise this when the record shape or the way of deciding the key changes (caches of older versions are not read). 2 = find the macro provider by the way doeff_hy_bytecode_guard traces.
+# 3 = add module fixture records.
+# 4 = save the actual values after import, explicit ids, and the state of in-project sources (#1459).
+# Fixture aliases are also saved by their pytest registered names (#1551). Do not use names from old records.
+# 6 = instead of the sha256 of the macro provider file, save the record of macros the expansion used and the file of the runtime entry point that puts records (child of #3769).
 CACHE_FORMAT = 6
 
-#: 記録を積む実行時の口の module — 展開の式が import の時に呼ぶ ``record-at-import`` の在処。展開の記録はこの code を覆わない
-#: (展開の間には実行されない)ので、file の sha256 で別に覆う。
+#: The module of the runtime entry point that puts records -- where ``record-at-import``, which the expansion calls at import time, lives. The expansion record does not cover this code
+#: (it is not run during expansion), so it is covered separately by the file sha256.
 RECORDING_RUNTIME = "doeff_hy._pytest_items"
 
-#: 読めなかった file の sha256 の代わり(16 進の sha256 と決して一致しない — 記録はいつも古いと判じられる)。
+#: Stand-in for the sha256 of a file that could not be read (never equals a hex sha256 -- the record is always judged stale).
 _UNREADABLE = "unreadable"
 
 
 def items_cache_dir_for(configured: str, rootpath: Path) -> Path:
-    """記録の置き場の dir を決める唯一の所。``configured`` は pytest の ini ``doeff_adr_items_cache`` の値。
+    """The only place that decides the record directory. ``configured`` is the value of the pytest ini ``doeff_adr_items_cache``.
 
-    順: ini の値が在ればそれ(project の設定が最も狭い)→ 無ければ環境変数 ITEMS_CACHE_ENV(走らせる側が process ごとに渡す)→
-    どちらも無ければ利用者の cache の dir の下(``~/.cache/doeff-adr/pytest-items``)。環境変数の段は、日次の全体検証の task が
-    HOME を回ごとに空の dir に替えるため(既定の置き場では記録が毎回空になり、atlas の日次は収集のために 309 file を import
-    していた)。ini と環境変数の相対の path は rootdir から解く。
+    Order: the ini value if present (the project setting is the narrowest) -> otherwise the environment variable ITEMS_CACHE_ENV (the runner passes it per process) ->
+    if neither, under the user's cache dir (``~/.cache/doeff-adr/pytest-items``). The environment variable step exists because the daily whole-system verification task
+    swaps HOME for an empty dir on every run (with the default location the records were empty every time, and the atlas daily run imported 309 files for collection).
+    Relative paths of the ini and the environment variable are resolved from rootdir.
     """
     named = configured.strip() or (environment_value(ITEMS_CACHE_ENV) or "").strip()
     if not named:
@@ -83,8 +83,8 @@ def items_cache_dir_for(configured: str, rootpath: Path) -> Path:
 
 @dataclass(frozen=True)
 class RuntimeDependency:
-    """保存した、記録を積む実行時の口の module 1 つ(module 名と、保存した時の file の sha256)。file の path は worktree で
-    変わるので鍵にしない — 読む時に module 名から今の file を引く。"""
+    """One saved module of the runtime entry point that puts records (the module name and the file sha256 at save time). The file path
+    changes per worktree, so it is not made a key -- at read time the current file is looked up from the module name."""
 
     module: str
     digest: str
@@ -92,13 +92,13 @@ class RuntimeDependency:
 
 @dataclass(frozen=True)
 class ExpansionUnknown:
-    """import した test file の展開が使った macro の記録が無い(理由の文)— その file の記録は保存しない。"""
+    """There is no record of the macros the expansion of the imported test file used (the reason as a sentence) -- the record of that file is not saved."""
 
     reason: str
 
 
 class MalformedCacheEntryError(ValueError):
-    """キャッシュの file の形が違う(版の違う doeff-adr が書いた・書きかけ等)。"""
+    """The cache file has a different shape (written by a doeff-adr of another version, half-written, etc.)."""
 
 
 MalformedCacheEntry = MalformedCacheEntryError
@@ -108,7 +108,7 @@ FixtureScope = Literal["function", "class", "module", "package", "session"]
 
 
 def fixture_scope(value: object) -> FixtureScope:
-    """fixture の scope の語を閉じた型へ(語彙の外は MalformedCacheEntry — 黙って function にしない)。"""
+    """Turn the fixture scope word into a closed type (outside the vocabulary is MalformedCacheEntry -- do not silently make it function)."""
     match value:
         case "function":
             return "function"
@@ -121,16 +121,16 @@ def fixture_scope(value: object) -> FixtureScope:
         case "session":
             return "session"
         case _:
-            raise MalformedCacheEntry(f"fixture の scope が語彙の外: {value!r}")
+            raise MalformedCacheEntry(f"fixture scope is outside the vocabulary: {value!r}")
 
 
 @dataclass(frozen=True)
 class FixtureRecord:
-    """module の fixture 1 つ — 仮の module に同じ名・scope・引数の仮の fixture を置くための記録。
+    """One module fixture -- a record for placing, in a stand-in module, a stand-in fixture with the same name, scope, and arguments.
 
-    保存の時に本物の module の pytest の fixture の印から作る(fixture の定義元は本物の module のまま — 仮の fixture は
-    setup で本物の関数を呼ぶだけ)。params / autouse つきの fixture は記録しない
-    (収集の結果を変えるので、その file は今までどおり import で集める)。
+    Made at save time from the pytest fixture mark of the real module (the definition source of the fixture stays the real module -- the stand-in fixture
+    only calls the real function at setup). Fixtures with params / autouse are not recorded
+    (they change the collection result, so that file is collected by import as before).
     """
 
     attribute: str
@@ -142,7 +142,7 @@ class FixtureRecord:
 
 @dataclass(frozen=True)
 class CacheEntry:
-    """キャッシュの file 1 つの中身(JSON の境界で解いた形)。"""
+    """The content of one cache file (the shape decoded at the JSON boundary)."""
 
     format: int
     records: tuple[str, ...]
@@ -154,7 +154,7 @@ class CacheEntry:
 
 @dataclass(frozen=True)
 class CacheHit:
-    """有効なキャッシュから引いた記録。"""
+    """A record looked up from a valid cache."""
 
     records: tuple[Record, ...]
     fixtures: tuple[FixtureRecord, ...]
@@ -162,7 +162,7 @@ class CacheHit:
 
 @dataclass(frozen=True)
 class CacheMiss:
-    """キャッシュに使える記録が無い — 理由は収集の終わりに報告する。"""
+    """No usable record in the cache -- the reason is reported at the end of collection."""
 
     reason: str
 
@@ -171,12 +171,12 @@ CacheLookup = CacheHit | CacheMiss
 
 
 def _entry_path(source: Path, cache_dir: Path) -> Path:
-    """source の内容の hash から、キャッシュの file の path を決める。"""
+    """Decide the path of the cache file from the hash of the source content."""
     return cache_dir / f"{hashlib.sha256(source.read_bytes()).hexdigest()}.json"
 
 
 def _module_file(name: str) -> Path | None:
-    """module 名から今の file を引く(import してあればその file、無ければ探す — 提供元の親の package は import 済み)。"""
+    """Look up the current file from the module name (if imported, that file; otherwise search -- the parent package of the provider is already imported)."""
     module = sys.modules.get(name)
     origin = module.__file__ if module is not None else None
     if origin is None:
@@ -193,15 +193,15 @@ def _provider_state(name: str) -> ProviderState:
 
 
 def _parse_entry(text: str) -> CacheEntry:
-    """キャッシュの file の JSON を型へ解く(JSON の境界はここだけ)。形が違えば MalformedCacheEntry。"""
+    """Decode the JSON of a cache file into types (the only JSON boundary). A different shape is MalformedCacheEntry."""
     try:
         raw = json.loads(text)
         format_ = int(raw["format"])
         if format_ != CACHE_FORMAT:
-            raise MalformedCacheEntry(f"キャッシュの形の版が違う({format_} ≠ {CACHE_FORMAT})")
+            raise MalformedCacheEntry(f"cache format version differs ({format_} != {CACHE_FORMAT})")
         expansion = record_from_json(raw["expansion"])
         if expansion is None:
-            raise MalformedCacheEntry("展開の記録の形が違う")
+            raise MalformedCacheEntry("expansion record shape differs")
         return CacheEntry(
             format=format_,
             records=tuple(str(t) for t in raw["records"]),
@@ -228,7 +228,7 @@ def _parse_entry(text: str) -> CacheEntry:
 
 
 def _dump_entry(entry: CacheEntry, source: Path) -> str:
-    """CacheEntry を JSON へ(書く側の境界)。``source`` は人が読むための控え。"""
+    """CacheEntry to JSON (the writing-side boundary). ``source`` is a note for humans to read."""
     return json.dumps(
         {
             "format": entry.format,
@@ -254,33 +254,33 @@ def _dump_entry(entry: CacheEntry, source: Path) -> str:
 
 
 def read_cached(source: Path, cache_dir: Path, root: Path, checks: DependencyChecks) -> CacheLookup:
-    """source の記録をキャッシュから引く。無い・古い(記録を積む実行時の口・展開が使った macro が変わった・形の版が違う)なら
-    CacheMiss とその理由。"""
+    """Look up the record of the source from the cache. If missing or stale (the runtime entry point that puts records or the macros the expansion used changed, or the format version differs),
+    CacheMiss with the reason."""
     entry_path = _entry_path(source, cache_dir)
     try:
         text = entry_path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return CacheMiss("記録なし(この内容の file は収集で import したことが無い)")
+        return CacheMiss("no record (a file with this content has never been imported during collection)")
     try:
         entry = _parse_entry(text)
     except MalformedCacheEntry as exc:
-        return CacheMiss(f"キャッシュの形が違う: {exc}")
+        return CacheMiss(f"cache shape differs: {exc}")
     for dependency in entry.runtime:
         match checks.macro_provider(dependency.module, _provider_state):
             case ProviderMissing():
-                return CacheMiss(f"記録を積む実行時の口 {dependency.module} が見つからない")
+                return CacheMiss(f"runtime entry point that puts records {dependency.module} not found")
             case ProviderFound(digest):
                 if digest != dependency.digest:
-                    return CacheMiss(f"記録を積む実行時の口 {dependency.module} が変わった")
+                    return CacheMiss(f"runtime entry point that puts records {dependency.module} changed")
     if not record_is_current_here(entry.expansion):
-        return CacheMiss("展開が使った macro が変わった")
+        return CacheMiss("the macros used by the expansion changed")
     return _read_runtime_entry(entry_path, entry, source, root, checks)
 
 
 def _read_runtime_entry(
     entry_path: Path, entry: CacheEntry, source: Path, root: Path, checks: DependencyChecks
 ) -> CacheLookup:
-    """macroの版が合う記録の、実値の依存を照合しstatを更新する。"""
+    """For a record whose macro version matches, check the dependencies of the actual values and update stat."""
     refreshed: SourceSnapshot | str = checks.verify(root, entry.sources)
     if isinstance(refreshed, str):
         return CacheMiss(refreshed)
@@ -291,10 +291,10 @@ def _read_runtime_entry(
 
 @dataclass(frozen=True)
 class PendingEntry:
-    """import した直後に照合した記録 1 つ — 書くのは収集の終わり。書き込みと、読込済みの source の読みと hash は、doeff-hy-pytest の
-    読み込みの上限が測る import の区間の外で行う(収集の道具の費用で、検の file の重さではない)。
-    expansion = import した時の展開が使った macro の記録(:func:`expansion_of`)。
-    origins = 実値の記録が依存する、import した時点で読込済みだった module の file(静的な記録は空)。"""
+    """One record checked right after import -- it is written at the end of collection. Writing, and reading and hashing of already-loaded sources, are done outside the import interval measured by the load limit of doeff-hy-pytest
+    (a cost of the collection tooling, not the weight of the test file).
+    expansion = the record of macros the expansion used at import (:func:`expansion_of`).
+    origins = the files of modules that were already loaded at import time on which the actual-value record depends (empty for static records)."""
 
     source: Path
     module: types.ModuleType
@@ -305,12 +305,12 @@ class PendingEntry:
 
 
 def expansion_of(module: types.ModuleType) -> "MacroRecord | ExpansionUnknown":
-    """import した test file の展開が使った macro の記録(読みの口が返した code に載った物 — 無ければ理由)。import の直後に
-    引く(後で同じ file を読み直すと、覚えがその code の記録に替わる)。"""
+    """The record of macros the expansion of the imported test file used (what is attached to the code returned by the loader entry point -- the reason if absent). Look it up right after import
+    (if the same file is read again later, the memo is replaced by the record of that code)."""
     file = vars(module).get("__file__")
     record = loaded_record(file) if isinstance(file, str) else None
     if record is None:
-        return ExpansionUnknown("展開の記録が無い(読みの口を通らなかったか、記録の無い code)")
+        return ExpansionUnknown("no expansion record (did not go through the loader entry point, or the code has no record)")
     return record
 
 
@@ -322,15 +322,15 @@ def pending_entry(
     expansion: "MacroRecord",
     dynamic: bool,
 ) -> PendingEntry:
-    """照合済みの記録を、書くまで持つ形にする。実値の記録なら、この時点で読込済みの module の file の名だけを集める(読まない)。"""
+    """Turn a checked record into a form held until written. For an actual-value record, only collect the names of files of modules already loaded at this point (do not read them)."""
     return PendingEntry(
         source, module, fixtures, records, expansion, loaded_origins() if dynamic else frozenset()
     )
 
 
 def write_cached(pending: PendingEntry, cache_dir: Path, root: Path, checks: DependencyChecks) -> None:
-    """照合済みの記録を保存する。実値の記録には、import した時点で読込済みだった local source も記録する(収集 1 回の観測 checks を
-    通して、同じ source は 1 度だけ読む)。"""
+    """Save a checked record. For an actual-value record, also record the local sources that were already loaded at import time (reading each same source only once through the observation checks of one collection
+    run)."""
     entry_path = _entry_path(pending.source, cache_dir)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     sources: tuple[SourceDependency, ...] = checks.sources_of(pending.origins, root).sources
@@ -346,8 +346,8 @@ def write_cached(pending: PendingEntry, cache_dir: Path, root: Path, checks: Dep
 
 
 def _runtime_dependency(module: str, checks: DependencyChecks) -> RuntimeDependency:
-    """記録を積む実行時の口の module の今の file の sha256(見つからない・読めない file は、どの sha256 とも合わない印で
-    書く — 書かないと、その file の変更を見落とす)。"""
+    """The current file sha256 of the module of the runtime entry point that puts records (a file not found or unreadable is written
+    as a mark that matches no sha256 -- if not written, a change to that file would be missed)."""
     match checks.macro_provider(module, _provider_state):
         case ProviderFound(digest) if digest is not None:
             return RuntimeDependency(module, digest)
@@ -356,7 +356,7 @@ def _runtime_dependency(module: str, checks: DependencyChecks) -> RuntimeDepende
 
 
 def _write_entry(entry_path: Path, entry: CacheEntry, source: Path) -> None:
-    """初回保存と、内容が同一だった依存fileのstat更新を原子的に書く。"""
+    """Write atomically the first save and the stat update of dependency files whose content was identical."""
     handle, temporary = tempfile.mkstemp(dir=entry_path.parent, prefix=".tmp-", suffix=".json")
     with os.fdopen(handle, "w", encoding="utf-8") as out:
         out.write(_dump_entry(entry, source))
@@ -364,5 +364,5 @@ def _write_entry(entry_path: Path, entry: CacheEntry, source: Path) -> None:
 
 
 def forget_cached(source: Path, cache_dir: Path) -> None:
-    """source の記録をキャッシュから消す(setup の照合で実物と食い違った時)。"""
+    """Delete the record of the source from the cache (when setup finds a mismatch with the real thing)."""
     _entry_path(source, cache_dir).unlink(missing_ok=True)

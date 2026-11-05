@@ -1,12 +1,12 @@
-"""event-loop の macro の検(設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
+"""Check of the event-loop macro (design = agora-controllers docs/design/event-waits/README.md section 4).
 
-- 節ごとの結果: 購読者ごとの列(subscribed_event_handler)に出来事を流し、各節の本体の値が次の state になり、(stop 値) で抜ける。
-  出来事ごとの記録(slog)が受けた順に残る。
-- 止めの合図: 処理の途中で止めが来たら、その刻に止めの節で抜ける(列に残る後の出来事を回さない)。ループの前に止めが来ていたら、
-  出来事を 1 つも回さずに止めの節で抜ける。
-- 扱わない型の出来事は来ない: 節の頭の型だけを待つので、同じ購読者の列に積まれた別の型の出来事は節に渡らない。
-- 期限の節: ArmTimer の期限が TimerFired として節に届く。
-- 展開の時に断る形(止めの節が無い・待つ型を導けない節 など)は HyMacroExpansionError。
+- Result per clause: events are fed to the per-subscriber queue (subscribed_event_handler), each clause body's value becomes the next state, and (stop value) exits.
+  A per-event record (slog) remains in the order received.
+- Stop signal: if a stop arrives mid-processing, exit at that moment through the stop clause (later events left in the queue are not run). If the stop arrived before the loop,
+  exit through the stop clause without running any event.
+- Events of types not handled do not arrive: only the types in clause heads are awaited, so events of other types queued in the same subscriber's queue are not passed to a clause.
+- Deadline clause: the deadline of ArmTimer reaches a clause as TimerFired.
+- Forms rejected at expansion (no stop clause, a clause whose awaited type cannot be derived, etc.) raise HyMacroExpansionError.
 """
 
 import types
@@ -52,7 +52,7 @@ class Unrelated:
 
 @dataclass(frozen=True)
 class Moved:
-    """欄の名に区切りを持つ合図(Hy の defrecord の欄 card-key は属性 card_key になる)。"""
+    """A signal with a separator in a field name (a field card-key of Hy's defrecord becomes the attribute card_key)."""
 
     card_key: str
 
@@ -71,7 +71,7 @@ PRELUDE = """
 LOOPS = """
 (defk folded []
   {:pre [] :post [(: % tuple)]}
-  "出来事を state に積み、Done で抜ける(止めの合図なら理由を足して抜ける)。state の型を書いた形。"
+  "Accumulate events into state and exit on Done (on the stop signal, add the reason and exit). The form with the state type written."
   (event-loop [seen tuple #()]
     (:stop reason) #(#* seen reason)
     (Added n)      #(#* seen n)
@@ -80,7 +80,7 @@ LOOPS = """
 
 (defk mistyped []
   {:pre [] :post [(: % tuple)]}
-  "state の型 tuple に str を返す節 — 走らせた時に断る。"
+  "A clause that returns str for a state type of tuple — rejected when run."
   (event-loop [seen tuple #()]
     (:stop reason) seen
     (Added n)      "not a tuple"
@@ -88,7 +88,7 @@ LOOPS = """
 
 (defk stop-on-first []
   {:pre [] :post [(: % tuple)]}
-  "最初の Added の処理の中で止めを起こす — 列に残る後の出来事は回らない。"
+  "Trigger a stop inside the processing of the first Added — later events left in the queue are not run."
   (event-loop [seen #()]
     (:stop reason) #(#* seen reason)
     (Added n)      (do (when (= n 1) (! (RaiseStop "scene"))) #(#* seen n))
@@ -96,12 +96,12 @@ LOOPS = """
 
 (defk doubled-of [n]
   {:pre [(: n int)] :post [(: % int)]}
-  "本体の <- が呼ぶ小さな Program。"
+  "A small Program that the body's <- calls."
   (* n 2))
 
 (defk bound-in-body []
   {:pre [] :post [(: % tuple)]}
-  "本体の (do …) の中で <- で束ねる — 文の位置の <- が出来事ごとに回る。"
+  "Bind with <- inside the body's (do ...) — a <- at statement position runs once per event."
   (event-loop [seen #()]
     (:stop reason) #(#* seen reason)
     (Added n)      (do (<- doubled int (doubled-of n))
@@ -110,7 +110,7 @@ LOOPS = """
 
 (defk stateless []
   {:pre [] :post [(: % str)]}
-  "state を省いた形 — 本体の値は捨て、Done の stop で抜ける。"
+  "The form without state — body values are discarded and it exits on the stop of Done."
   (event-loop
     (:stop reason) reason
     (Added n)      n
@@ -118,7 +118,7 @@ LOOPS = """
 
 (defk until-deadline [at]
   {:pre [(: at datetime)] :post [(: % tuple)]}
-  "初期値の中で期限を掛け、その TimerFired の節で抜ける。"
+  "Arm a deadline in the initial value and exit on its TimerFired clause."
   (event-loop [seen (do (! (ArmTimer "end" at)) #())]
     (:stop reason)        #(#* seen reason)
     (Added n)             #(#* seen n)
@@ -128,7 +128,7 @@ LOOPS = """
 
 (defk stopped-when []
   {:pre [] :post [(: % tuple)]}
-  "止めの節で、止めの理由と、止めが届いた仮想の刻を返す(待っている間に来た止めがその刻に効くかを見る)。"
+  "In the stop clause, return the stop reason and the virtual time the stop arrived (to see whether a stop that arrived while waiting takes effect at that time)."
   (event-loop
     (:stop reason) #(reason (! (GetTime)))
     (Added n)      n
@@ -137,7 +137,7 @@ LOOPS = """
 
 
 def _hy_module(source: str) -> types.ModuleType:
-    """Hy の字面を新しい module に読み込む(出来事の型は Python の側で置く)。"""
+    """Load Hy source into a new module (event types are placed on the Python side)."""
     module = types.ModuleType("event_loop_scene")
     vars(module).update({"Added": Added, "Done": Done, "Unrelated": Unrelated, "Moved": Moved})
     hy.eval(hy.read_many(PRELUDE + source), module=module)
@@ -149,7 +149,7 @@ SCENES = _hy_module(LOOPS)
 
 @dataclass(frozen=True)
 class Ran:
-    """走らせた結末: value = event-loop を含む Program の値 / events = 受けた出来事の型の名(event-loop の slog の順)。"""
+    """Outcome of a run: value = the value of the Program containing event-loop / events = names of the received event types (in the order of event-loop's slog)."""
 
     value: object
     events: tuple[str, ...]
@@ -157,7 +157,7 @@ class Ran:
 
 @do
 def _listened(program: Any) -> Any:
-    """Program の値と、その間の event-loop の slog を値として受け取る(Listen — 記録を書き換えずに集める)。"""
+    """Receive, as values, the Program's value and the event-loop slog during it (Listen — collect without rewriting records)."""
 
     value, logs = yield Listen(program, types=(SlogEffect,))
     events = tuple(str(log.kwargs["event"]) for log in logs if log.msg == "event-loop")
@@ -165,7 +165,7 @@ def _listened(program: Any) -> Any:
 
 
 def _run(program: Any) -> Ran:
-    """仮想の時計・購読者 1 つの列・期限・止めの合図(筋書きから起こす形)の上で走らせる。"""
+    """Run on a virtual clock, a one-subscriber queue, deadlines, and a stop signal (in the form raised from a scenario)."""
 
     bus = EventBus()
     inner = with_handlers([state(), scripted_stop_handler, slog_discard_handler, listen_handler], _listened(program))
@@ -175,7 +175,7 @@ def _run(program: Any) -> Ran:
 
 @do
 def _published_then(events: tuple[object, ...], program: Any) -> Any:
-    """出来事を先に列へ積んでからループを走らせる(購読は handler を組んだ時に始まるので落ちない)。"""
+    """Queue events first and then run the loop (the subscription starts when the handler is built, so none are lost)."""
 
     for event in events:
         yield Publish(event)
@@ -189,7 +189,7 @@ def test_each_clause_returns_the_next_state_and_stop_ends_the_loop() -> None:
 
 
 def test_a_clause_binds_a_field_whose_name_has_a_separator() -> None:
-    # (Moved :card-key key) は属性 card_key に当たる — 欄の名を属性の名へ直さないと _ の枝へ落ちて TypeError。
+    # (Moved :card-key key) matches the attribute card_key — unless the field name is converted to the attribute name it falls to the _ branch and raises TypeError.
     ran = _run(_published_then((Moved("ki-1"), Added(2), Done()), SCENES.folded()))
 
     assert ran == Ran(value=("ki-1", 2), events=("Moved", "Added", "Done"))
@@ -241,7 +241,7 @@ def test_a_deadline_armed_in_the_initial_state_reaches_the_timer_clause() -> Non
 
 @do
 def _stop_raised_after(seconds: float, reason: str) -> Any:
-    """仮想の seconds 秒の後に止めを起こすため(ループの外の task — 本番の signal の受け手の代わり)。"""
+    """To trigger a stop after a virtual seconds seconds (a task outside the loop — stands in for the production signal receiver)."""
 
     yield Delay(seconds)
     yield RaiseStop(reason)
@@ -249,14 +249,14 @@ def _stop_raised_after(seconds: float, reason: str) -> Any:
 
 @do
 def _stopped_later(seconds: float, reason: str, program: Any) -> Any:
-    """後の刻に止めを起こす task を立ててから、何も来ない列で待つループを走らせるため。"""
+    """To spawn a task that triggers a stop at a later time and then run a loop waiting on a queue where nothing arrives."""
 
     yield Spawn(_stop_raised_after(seconds, reason))
     return (yield program)
 
 
 def test_a_stop_that_comes_while_the_loop_waits_ends_it_at_that_moment() -> None:
-    # 待っている間に来た止めは、その刻に止めの節で抜ける(次の出来事や期限を待たない)。
+    # A stop that arrives while waiting exits through the stop clause at that time (it does not wait for the next event or deadline).
     ran = _run(_stopped_later(60.0, "later", SCENES.stopped_when()))
 
     assert ran == Ran(value=("later", T0 + timedelta(seconds=60)), events=())
@@ -264,16 +264,16 @@ def test_a_stop_that_comes_while_the_loop_waits_ends_it_at_that_moment() -> None
 
 @do
 def _spawns_during(program: Any) -> Any:
-    """Program の値と、その間に Program が出した Spawn の数を読むため(Listen — 出した effect を書き換えずに集める)。"""
+    """To read the Program's value and the number of Spawns the Program issued during it (Listen — collect the issued effects without rewriting them)."""
 
     value, spawns = yield Listen(program, types=(Spawn,))
     return (value, len(spawns))
 
 
 def _spawned_by_folding(count: int) -> Any:
-    """Added を count 個と Done を流した folded の値と、その間の Spawn の数を読むため。
+    """To read the folded value after feeding count Added and Done, and the number of Spawns during it.
 
-    _run の Listen(slog を集める)と入れ子にしないため、同じ組み立てを Spawn を数える Listen だけで組む。
+    So as not to nest with _run's Listen (which collects slog), build the same assembly with only a Listen that counts Spawns.
     """
 
     events = (*(Added(n) for n in range(1, count + 1)), Done())
@@ -287,8 +287,8 @@ def _spawned_by_folding(count: int) -> Any:
 
 
 def test_waking_for_each_event_spawns_no_task() -> None:
-    # Spawn は寿命に決まった数(止めの見張りと、終わりのその片づけ)だけで、受けた出来事の数で増えない。起きるたびに待ちを task に
-    # して止めと競わせる形では、出来事 1 つ増えるごとに 1 つ増える(この検は赤)。
+    # Spawns are only the number fixed by the lifetime (the stop watcher and its cleanup at the end) and do not grow with the number of received events. In the form that
+    # makes each wait a task on every wake-up and races it with the stop, it grows by one per extra event (this check goes red).
     one = _spawned_by_folding(1)
     five = _spawned_by_folding(5)
 
@@ -299,20 +299,20 @@ def test_waking_for_each_event_spawns_no_task() -> None:
 @pytest.mark.parametrize(
     ("loop", "message"),
     [
-        ("(event-loop [s 0] (Added n) n)", "止めの節"),
-        ("(event-loop [s 0] (:stop r) r (:stop q) q (Added n) n)", "止めの節は 1 つだけ"),
-        ("(event-loop [s 0] (:stop r) r)", "待つ型の節が無い"),
-        ("(event-loop [s 0] (:stop r) r _ s)", "待つ型を導けない"),
-        ("(event-loop [s 0] (:stop r) r (_ n) s)", "待つ型を導けない"),
-        ("(event-loop [s 0] (:stop r) r ev s)", "待つ型を導けない"),
-        ("(event-loop [s 0] (:stop r) r (Added n) n (Added m) m)", "同じ型の節"),
-        ("(event-loop [s 0] (:stop r) r (Added n))", "本体の無い節"),
-        ("(event-loop [s 0] (:stop r) r (Added 1) s)", "値で絞らず"),
-        ("(event-loop [s 0] (:stop r) r (Added n) (do (stop n) n))", "最後の値の位置"),
-        ("(event-loop [s] (:stop r) r (Added n) n)", "\\[名 初期値\\]"),
+        ("(event-loop [s 0] (Added n) n)", "stop clause"),
+        ("(event-loop [s 0] (:stop r) r (:stop q) q (Added n) n)", "exactly one stop clause"),
+        ("(event-loop [s 0] (:stop r) r)", "no awaited-type clause"),
+        ("(event-loop [s 0] (:stop r) r _ s)", "cannot derive the awaited type"),
+        ("(event-loop [s 0] (:stop r) r (_ n) s)", "cannot derive the awaited type"),
+        ("(event-loop [s 0] (:stop r) r ev s)", "cannot derive the awaited type"),
+        ("(event-loop [s 0] (:stop r) r (Added n) n (Added m) m)", "two clauses of the same type"),
+        ("(event-loop [s 0] (:stop r) r (Added n))", "without a body"),
+        ("(event-loop [s 0] (:stop r) r (Added 1) s)", "do not narrow by value"),
+        ("(event-loop [s 0] (:stop r) r (Added n) (do (stop n) n))", "last-value position"),
+        ("(event-loop [s] (:stop r) r (Added n) n)", "\\[name init\\]"),
     ],
 )
 def test_malformed_loops_are_refused_when_expanded(loop: str, message: str) -> None:
-    source = f'(defk broken [] {{:pre [] :post [(: % int)]}} "壊れた形" {loop})'
+    source = f'(defk broken [] {{:pre [] :post [(: % int)]}} "broken form" {loop})'
     with pytest.raises(hy.errors.HyMacroExpansionError, match=message):
         _hy_module(source)

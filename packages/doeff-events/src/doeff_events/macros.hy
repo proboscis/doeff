@@ -1,22 +1,22 @@
-;;; event-loop — 出来事を待つ係のループの macro(設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
+;;; event-loop — macro for the event-waiting worker's loop (design = agora-controllers docs/design/event-waits/README.md section 4).
 ;;;
 ;;;   (require doeff-events.macros [event-loop])
 ;;;   (event-loop [board (! (ReadBoard))]
-;;;     (:stop reason)          (stop board)                      ; 止めの節(必ず 1 つ)
-;;;     (BoardMoved keys)       (! (read-board-at board keys))    ; 合図の所を読み直した盤 = 次の state
+;;;     (:stop reason)          (stop board)                      ; stop clause (exactly one required)
+;;;     (BoardMoved keys)       (! (read-board-at board keys))    ; the board re-read at the signalled keys = next state
 ;;;     (TimerFired tag)        (if (= tag END) (stop board) board))
 ;;;
-;;; - 節の頭の型の組をそのまま WaitForEvent に渡す — 待つ型と扱う型はずれない。止めの合図(止めの見張りが同じ bus に発する
-;;;   StopArrived)も同じ WaitForEvent で待ち、先に来た方の節を回す(起きるたびに task を立てて競わせない)。
-;;; - 節の本体は do! の中(<- と ! が使える)。本体の値が次の state。(stop 値) は本体の最後の値の位置にだけ書け、ループを抜けて
-;;;   event-loop の値になる。止めの節の値もそのまま event-loop の値になる。state を省いた形(節だけ)も同じ macro。
-;;; - 展開の時に断る形: 止めの節が無い・2 つ在る / 待つ型の節が無い / 型を導けない節(_・名前だけ・| ・値の式)/ 同じ型の節が 2 つ /
-;;;   本体の無い節 / 最後の値の位置でない stop。
-;;; - 待ちの部品(止めの待ち・競わせ・出来事ごとの slog)は doeff_events/_event_loop.py。展開は doeff-hy の <- と do! を
-;;;   hy.R で直に参照する(使う側の require に頼らない)。節の本体と初期値は do! に包むので、defk の本体の ! がその場で
-;;;   (yield …) に書き換わっても、出来事ごとに回る位置は変わらない。
-;;; - この module は名に _ を付けずに公開の境界に置く(ADR-DOE-API-001 R31 — Hy の require が module の path で macro を
-;;;   読むので、R14・R15 と同じく R5 の外の境界)。
+;;; - The tuple of types in each clause head is passed as-is to WaitForEvent, so the awaited types and the handled types cannot drift apart. The stop signal (the stop watcher emits
+;;;   StopArrived on the same bus) is awaited with the same WaitForEvent, and whichever arrives first runs its clause (no task is spawned per wake-up to race them).
+;;; - A clause body lives inside do! (<- and ! are available). The body's value is the next state. (stop value) may be written only at the last-value position of a body; it leaves the loop and
+;;;   becomes the value of event-loop. The value of the stop clause also becomes the value of event-loop as is. The form without state (clauses only) uses the same macro.
+;;; - Forms rejected at expansion: no stop clause or two of them / no awaited-type clause / a clause whose type cannot be derived (_, a bare name, | , a value expression) / two clauses of the same type /
+;;;   a clause without a body / a stop outside the last-value position.
+;;; - The waiting parts (stop wait, racing, per-event slog) are in doeff_events/_event_loop.py. The expansion refers to doeff-hy's <- and do!
+;;;   directly via hy.R (it does not rely on the caller's require). Clause bodies and the initial value are wrapped in do!, so even when the ! in a defk body is rewritten in place to
+;;;   (yield ...), the position that runs once per event does not change.
+;;; - This module is placed at the public boundary without a leading _ in its name (ADR-DOE-API-001 R31 — Hy's require reads macros by module path,
+;;;   so, like R14 and R15, it is a boundary outside R5).
 
 (import hy)
 
@@ -25,31 +25,31 @@
 
 
 (defn _el-fail [message]
-  "展開の時の誤りを、書き手が直せる形(正しい形の 1 行つき)で断るため。"
+  "To reject expansion-time mistakes in a form the author can fix (with one line showing the correct form)."
   (raise (SyntaxError (+ "event-loop: " message
-                         "\n  形: (event-loop [state 初期値] (:stop 理由) 本体 (型 束縛 …) 本体 …)"
-                         " — 止めの節を 1 つ・待つ型の節を 1 つ以上・節ごとに本体を 1 つ"))))
+                         "\n  form: (event-loop [state init] (:stop reason) body (type binding ...) body ...)"
+                         " — one stop clause, one or more awaited-type clauses, and one body per clause"))))
 
 
 (defn _el-symbol? [x]
-  "節の頭や束縛が名前(記号)かを見分けるため。"
+  "To tell whether a clause head or binding is a name (symbol)."
   (isinstance x hy.models.Symbol))
 
 
 (defn _el-head [form]
-  "式の頭の記号の綴り(式でない・頭が記号でない時は None)。"
+  "Spelling of an expression's head symbol (None when it is not an expression or the head is not a symbol)."
   (if (and (isinstance form hy.models.Expression) (> (len form) 0) (_el-symbol? (get form 0)))
       (str (get form 0))
       None))
 
 
 (defn _el-split-state [args]
-  "#(state の名 型 初期値 節の列) — 最初が [名 初期値] か [名 型 初期値] なら state を持つ形(型を書けば state と抜けた値をその型で
-   確かめ、型検査にも見える)、そうでなければ state を省いた形。"
+  "#(state-name type init clauses) — if the first element is [name init] or [name type init] it is the form with state (when a type is given, state and the exited value are checked against it and
+   it is visible to the type checker); otherwise it is the form without state."
   (if (and args (isinstance (get args 0) hy.models.List))
       (let [binding (get args 0)]
         (when (not (and (in (len binding) #{2 3}) (_el-symbol? (get binding 0))))
-          (_el-fail (+ "state の束縛は [名 初期値] か [名 型 初期値] の形で書く: " (hy.repr binding))))
+          (_el-fail (+ "a state binding must be written as [name init] or [name type init]: " (hy.repr binding))))
         (if (= (len binding) 3)
             #((get binding 0) (get binding 1) (get binding 2) (cut args 1 None))
             #((get binding 0) None (get binding 1) (cut args 1 None))))
@@ -57,12 +57,12 @@
 
 
 (defn _el-capture? [x]
-  "型の節の束縛に置ける名前か(属性の綴り .x は値の比べになるので断る)を見分けるため。"
+  "To tell whether a name may be placed in a type clause binding (an attribute spelling .x would become a value comparison, so it is rejected)."
   (and (_el-symbol? x) (not (.startswith (str x) "."))))
 
 
 (defn _el-class-args-ok? [args]
-  "型の節の束縛の並び: 位置の名(記号)と :欄 名 の組だけ — 値で絞る形は書けない(型の出来事は必ずどれかの節に合う)。"
+  "Sequence of bindings in a type clause: only positional names (symbols) and :field name pairs — a form that narrows by value cannot be written (an event of the type always matches some clause)."
   (cond
     (not args) True
     (isinstance (get args 0) hy.models.Keyword)
@@ -72,22 +72,22 @@
 
 
 (defn _el-pattern-kind [pattern]
-  "節の頭の種類: \"stop\"(止めの節)か \"event\"(型の節)。どちらでもない形は展開の時に断る。"
+  "Kind of clause head: \"stop\" (the stop clause) or \"event\" (a type clause). Any other form is rejected at expansion."
   (setv head (if (and (isinstance pattern hy.models.Expression) (> (len pattern) 0)) (get pattern 0) None))
   (cond
     (and (isinstance head hy.models.Keyword) (= head.name "stop"))
       (if (or (= (len pattern) 1) (and (= (len pattern) 2) (_el-symbol? (get pattern 1))))
           "stop"
-          (_el-fail (+ "止めの節は (:stop) か (:stop 理由の名) で書く: " (hy.repr pattern))))
+          (_el-fail (+ "a stop clause must be written as (:stop) or (:stop reason-name): " (hy.repr pattern))))
     (and (_el-symbol? head) (not (in (str head) #{"_" "|"})))
       (if (_el-class-args-ok? (cut pattern 1 None))
           "event"
-          (_el-fail (+ "型の節の束縛は名前(位置)か :欄 名 だけを書く — 値で絞らず、本体で分ける: " (hy.repr pattern))))
-    True (_el-fail (+ "節の頭から待つ型を導けない(_・名前だけ・| ・値の式は書けない — (型 束縛 …) で書く): " (hy.repr pattern)))))
+          (_el-fail (+ "a type clause binding may only be a name (positional) or :field name — do not narrow by value, branch in the body: " (hy.repr pattern))))
+    True (_el-fail (+ "cannot derive the awaited type from the clause head (_, a bare name, | and value expressions cannot be written — write (type binding ...)): " (hy.repr pattern)))))
 
 
 (defn _el-guard-end [items index]
-  "match の pattern の後の :as 名・:if 守り の組を飛ばした位置を返すため(本体の位置を見つける)。"
+  "To return the position after skipping the :as name and :if guard pair that follow a match pattern (to find the body position)."
   (if (and (< (+ index 1) (len items)) (isinstance (get items index) hy.models.Keyword)
            (in (. (get items index) name) #{"as" "if"}))
       (_el-guard-end items (+ index 2))
@@ -95,7 +95,7 @@
 
 
 (defn _el-body-positions [items index]
-  "match の節の列(pattern [:as 名] [:if 守り] 本体 …)の、本体の位置の tuple を返すため。"
+  "To return the tuple of body positions of a match clause list (pattern [:as name] [:if guard] body ...)."
   (if (>= index (len items))
       #()
       (let [body (_el-guard-end items (+ index 1))]
@@ -103,13 +103,13 @@
 
 
 (defn _el-match-bodies [items ctor]
-  "match の節の本体だけを _el-tail で書き換えるため(pattern と守りは触らない)。"
+  "To rewrite only the bodies of match clauses with _el-tail (pattern and guard are left untouched)."
   (setv positions (_el-body-positions items 0))
   (lfor [index item] (enumerate items) (if (in index positions) (_el-tail item ctor) item)))
 
 
 (defn _el-try-part [part ctor]
-  "try の中の except・else の節は最後の form を、finally はそのまま返すため(finally の値は try の値にならない)。"
+  "In a try, the last form of the except and else clauses is returned, and finally as is (the value of finally does not become the value of try)."
   (setv head (_el-head part))
   (if (and (in head #{"except" "else"}) (> (len part) 1))
       (hy.models.Expression [#* (cut part 0 -1) (_el-tail (get part -1) ctor)])
@@ -117,13 +117,13 @@
 
 
 (defn _el-tail [form ctor]
-  "本体の最後の値の位置の (stop 値) を (ctor 値) に書き換える(do・when・unless・let・if・cond・match・try の枝を辿る)。"
+  "Rewrite (stop value) at the last-value position of a body into (ctor value) (following the branches of do, when, unless, let, if, cond, match, try)."
   (setv head (_el-head form))
   (cond
     (= head "stop")
       (if (<= (len form) 2)
           (hy.models.Expression [ctor (if (= (len form) 2) (get form 1) (hy.models.Symbol "None"))])
-          (_el-fail (+ "stop の値は 1 つだけ: " (hy.repr form))))
+          (_el-fail (+ "stop takes exactly one value: " (hy.repr form))))
     (and (in head _STOP-TAIL-HEADS) (> (len form) 1))
       (hy.models.Expression [#* (cut form 0 -1) (_el-tail (get form -1) ctor)])
     (= head "if")
@@ -144,7 +144,7 @@
 
 
 (defn _el-found [form heads]
-  "form の中に頭が heads の式が在れば、その頭の綴りを返すため(引用と入れ子の event-loop の中は見ない)。無ければ None。"
+  "To return the head spelling of an expression whose head is in heads, if any is in form (quotes and nested event-loop are not searched). None if none."
   (setv head (_el-head form))
   (cond
     (in head heads) head
@@ -155,46 +155,46 @@
 
 
 (defn _el-body [body ctor]
-  "節の本体を do! の文の並びにするため: 最後の値の位置の stop を書き換え、ほかの位置に stop が残れば断る。
-   (do …) の本体は中身をそのまま do! の文として並べる(<- を文の位置に書ける)。"
+  "To turn a clause body into a sequence of do! statements: rewrite the stop at the last-value position, and reject if a stop remains at any other position.
+   The body of (do ...) is laid out as do! statements as is (<- may be written at statement position)."
   (setv rewritten (_el-tail body ctor))
   (when (_el-found rewritten #{"stop"})
-    (_el-fail (+ "stop は節の本体の最後の値の位置にだけ書ける(途中で抜けない): " (hy.repr body))))
+    (_el-fail (+ "stop may be written only at the last-value position of a clause body (it does not exit midway): " (hy.repr body))))
   (if (and (= (_el-head rewritten) "do") (> (len rewritten) 1))
       (list (cut rewritten 1 None))
       [rewritten]))
 
 
 (defmacro event-loop [#* args]
-  "出来事を待つ係のループ — (event-loop [state 型 初期値] (:stop 理由) 本体 (型 束縛 …) 本体 …)。
+  "Loop macro for the event-waiting worker — (event-loop [state type init] (:stop reason) body (type binding ...) body ...).
 
-   節の頭の型の組と止めの合図(StopArrived)を 1 つの WaitForEvent で待ち、先に来た方の節を回す。
-   本体は do! の中(<- と ! が使える)。本体の値が次の state。(stop 値) を本体の最後の値の位置(do・if・cond・match・try の枝)に
-   書くとループを抜けて値を返す。止めの節の値もそのまま event-loop の値。初期値も do! の中(読みは (! (Read…)) で書く)。
-   state の型を書くと([名 型 初期値])、初期値・各節の値・抜けた値をその型で確かめ、型検査にも見える(書かない形 [名 初期値] も可)。
-   state を省く形は束縛を書かず節だけを並べる(本体の値は捨てる・抜けるのは stop か止めの節)。本体で外の var を := で書き換えない。
-   - 型の節は書いた順に当たる: 親の型の節を子の型の節より前に書くと、子の型の出来事も親の節が受ける。
-   - 止めの合図で抜ける時、列に残った出来事は回さない(合図は「どこが変わったか」だけなので、次に起きた係が記録を読み直せば揃う)。
-   - 出来事ごとに slog(\"event-loop\" :event 型の名)を出す — 外に slog の handler が要る。
-   - 外の bus の handler は StopArrived を係へ届ける物(subscribed_event_handler は必ず購読する)。
-   待ちの部品 = doeff_events._event_loop(止めの見張りを係の寿命の間 1 つ・待つ前に StopRequested を 1 回)。"
+   Awaits the tuple of clause-head types and the stop signal (StopArrived) with one WaitForEvent, and runs the clause of whichever arrives first.
+   The body is inside do! (<- and ! are available). The body's value is the next state. Writing (stop value) at the last-value position of a body (a branch of do, if, cond, match, try)
+   leaves the loop and returns the value. The value of the stop clause is also the value of event-loop as is. The initial value is also inside do! (write reads as (! (Read...))).
+   Writing the state type ([name type init]) checks the initial value, each clause's value and the exited value against it and makes it visible to the type checker (the untyped form [name init] is also allowed).
+   The form without state lists only clauses with no binding (body values are discarded; the exit is a stop or the stop clause). Do not rewrite an outer var with := in a body.
+   - Type clauses match in the order written: if a parent-type clause is written before a child-type clause, the parent clause also receives events of the child type.
+   - When exiting on the stop signal, events left in the queue are not run (a signal only says \"where it changed\", so the next worker to wake re-reads the records and catches up).
+   - Emits slog(\"event-loop\" :event type-name) per event — an outer slog handler is required.
+   - The outer bus handler delivers StopArrived to the worker (subscribed_event_handler always subscribes to it).
+   Waiting parts = doeff_events._event_loop (one stop watcher for the worker's lifetime, StopRequested once before waiting)."
   (import doeff_hy._match_fields [mangle_match_fields])
   (setv #(state-name state-type state-init clauses) (_el-split-state args))
   (when (% (len clauses) 2)
-    (_el-fail "節は (頭) 本体 の組で並べる — 本体の無い節がある"))
+    (_el-fail "clauses must be listed as (head) body pairs — there is a clause without a body"))
   (setv pairs (lfor index (range 0 (len clauses) 2) #((get clauses index) (get clauses (+ index 1)))))
   (setv kinds (lfor [pattern _body] pairs (_el-pattern-kind pattern)))
   (setv stops (lfor [pair kind] (zip pairs kinds) :if (= kind "stop") pair))
   (setv events (lfor [pair kind] (zip pairs kinds) :if (= kind "event") pair))
   (when (not stops)
-    (_el-fail "止めの節 (:stop 理由) 本体 が無い — 止められない係になる"))
+    (_el-fail "no stop clause (:stop reason) body — the worker could not be stopped"))
   (when (> (len stops) 1)
-    (_el-fail "止めの節は 1 つだけ"))
+    (_el-fail "exactly one stop clause is allowed"))
   (when (not events)
-    (_el-fail "待つ型の節が無い — (型 束縛 …) 本体 を 1 つ以上書く"))
+    (_el-fail "no awaited-type clause — write one or more (type binding ...) body"))
   (setv heads (lfor [pattern _body] events (str (get pattern 0))))
   (when (!= (len heads) (len (set heads)))
-    (_el-fail (+ "同じ型の節が 2 つある: " (.join " " heads))))
+    (_el-fail (+ "two clauses of the same type: " (.join " " heads))))
   (setv bind 'hy.R.doeff_hy/macros.<-
         program 'hy.R.doeff_hy/macros.do!
         begin (hy.gensym "el-begin")
@@ -209,15 +209,15 @@
         result (hy.gensym "el-result"))
   (setv #(stop-pattern stop-body) (get stops 0))
   (setv stop-binding (if (= (len stop-pattern) 2) [`(setv ~(get stop-pattern 1) (. ~got reason))] []))
-  ;; state の型を書いた形: 初期値は state の型・各節の値は state の型か (stop 値)・抜けた値は state の型で確かめる。
-  ;; 節の値は型を注記せずに束ね、実行時は assert で確かめる(静的には、値を state の名へ書き戻す所で state の型として読まれる)。
-  ;; 注記して束ねると、注記の型が Program の答えの型の推論へ逆に流れ込み、使い手の pyright strict に書き手に直せない
-  ;; Unknown の赤が出る(commit の hook が名指した)。
+  ;; Form with state type written: the initial value is checked against the state type; each clause's value against the state type or (stop value); the exited value against the state type.
+  ;; Clause values are bound without type annotation and checked at runtime with assert (statically, they are read as the state type where the value is written back to the state name).
+  ;; If bound with an annotation, the annotated type flows back into inference of the Program's answer type, and the caller's pyright strict reports a red Unknown that the author cannot fix
+  ;; (named by the commit hook).
   (setv state-check (if state-type [state-type] [])
         out-check (if state-type [`(assert (isinstance ~out #(~state-type ~loop-stop))
-                                            (+ "event-loop: 節の値の型が state の型でない: " (repr ~out)))] [])
+                                            (+ "event-loop: clause value type is not the state type: " (repr ~out)))] [])
         result-check (if state-type [`(assert (isinstance ~result ~state-type)
-                                               (+ "event-loop: 抜けた値の型が state の型でない: " (repr ~result)))] []))
+                                               (+ "event-loop: exited value type is not the state type: " (repr ~result)))] []))
   (setv arms (lfor [pattern body] events
                [pattern `(do (~bind ~out (~program ~@(_el-body body loop-stop)))
                              ~@out-check)]))
@@ -242,7 +242,7 @@
          ~(mangle_match_fields
             `(match ~got
                ~@(lfor arm arms part arm part)
-               _ (raise (TypeError (+ "event-loop: どの節にも合わない出来事 " (repr ~got))))))
+               _ (raise (TypeError (+ "event-loop: event matching no clause " (repr ~got))))))
          (when (isinstance ~out ~loop-stop)
            (setv ~result (~value-of ~out))
            ~@result-check

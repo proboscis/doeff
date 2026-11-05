@@ -1,10 +1,10 @@
-"""handler の ``match`` の ``case`` が or の形(``case A(...) | B(...):``)の時、解析器がその各 class を同じ本体の答えとして読む事の検。
+"""Test that when a handler's ``match`` has a ``case`` in or form (``case A(...) | B(...):``), the analyzer reads each of its classes as answered by the same body.
 
-doeff 88834a040(L1806)で、doeff-events の ``subscribed_event_handler`` は ``WaitForEvent`` と ``WaitForEvents`` を 1 つの
-``case WaitForEventEffect(...) | WaitForEventsEffect(...):`` で答える形になった。解析器の ``handler_effects._branches`` は単独の class の
-形(``ast.MatchClass``)だけを読み、or の形(``ast.MatchOr``)を読み飛ばしていたので、この handler が ``WaitForEventEffect`` に答える事が
-解析に見えず、agora の閉じの検(test_delivery_closure ほか 4 本)が「答え手の無い WaitForEventEffect」の隙間で赤になった(T3 の pin・
-2026-10-07)。Python の正しい書き方を読めない解析器の欠けなので、解析器の側で or の形を読む。
+In doeff 88834a040 (L1806), doeff-events' ``subscribed_event_handler`` came to answer ``WaitForEvent`` and ``WaitForEvents`` with a single
+``case WaitForEventEffect(...) | WaitForEventsEffect(...):``. The analyzer's ``handler_effects._branches`` read only the single-class
+form (``ast.MatchClass``) and skipped the or form (``ast.MatchOr``), so the fact that this handler answers ``WaitForEventEffect`` was invisible to the
+analysis, and agora's closure tests (test_delivery_closure and 4 others) went red on the gap "WaitForEventEffect with no responder" (T3 pin,
+2026-10-07). This is a gap in an analyzer that cannot read valid Python, so the analyzer side is fixed to read the or form.
 """
 
 from doeff_effect_analyzer._handler_effects import analyze_handler
@@ -18,7 +18,7 @@ from doeff_events import (
 
 
 class Signal:
-    """検の合図(購読の型)。"""
+    """Signal for the test (the subscribed type)."""
 
 
 def test_an_or_pattern_case_is_read_as_a_clause_for_each_of_its_classes() -> None:

@@ -1,9 +1,9 @@
-"""出来事の handler の effect の引数の型の註の検。
+"""Check of the type annotation on the handler's effect argument for event handlers.
 
-VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
-その handler を Python に入らずに外へ渡す。memory の 2 つの handler(event_handler・subscribed_event_handler)は Publish と WaitForEvent・
-WaitForEvents にだけ答え、ほかは Pass で外へ渡すだけなので、註でその型に絞っても答えと順は変わらず、本体に入る回数だけが減る(註が EffectBase の
-間は、係の本体の全部の effect がこの handler を Pass で通り、agora の手番の筋書き 1 本で 7,000〜11,000 歩を使っていた)。
+The VM reads the type annotation on the handler's effect argument at install time (doeff_vm._effect_types, SPEC-WITHHANDLER-TYPE-FILTER) and, for effects outside the type,
+passes the effect outward without entering that handler in Python. The two memory handlers (event_handler, subscribed_event_handler) answer only Publish, WaitForEvent and
+WaitForEvents and merely pass everything else outward with Pass, so narrowing to those types by annotation does not change answers or order, only the number of times the body is entered (while the annotation was EffectBase,
+all effects of the worker's body passed through this handler via Pass, and a single agora turn scenario used 7,000-11,000 steps).
 """
 
 import sys
@@ -28,26 +28,26 @@ from doeff import do, handler_effect_types
 
 @dataclass(frozen=True)
 class Changed:
-    """検の中だけの合図。"""
+    """A signal used only inside the check."""
 
     key: str
 
 
 def _raw(installed: object) -> Callable[..., object]:
-    """Program -> Program の handler の値が包む、VM が呼ぶ handler の関数(doeff.program.handler が置く欄)。"""
-    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — doeff.program.handler が置く欄(型の無い欄)
+    """The handler function the VM calls, wrapped in the value of the Program -> Program handler (the field doeff.program.handler places)."""
+    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — field placed by doeff.program.handler (an untyped field)
 
 
 @dataclass(frozen=True)
 class Entered:
-    """run の間に code の関数が始まった回数(entered)と、run の答え(result)。"""
+    """The number of times a code function started during the run (entered) and the run's answer (result)."""
 
     entered: int
     result: object
 
 
 def _entries(code: CodeType, run: Callable[[], object]) -> Entered:
-    """run の間に code の関数が始まった回数と、run の答え。本体は generator なので再開ごとにも call の事象が出る — frame の同一性で数える。"""
+    """The number of times a code function started during the run and the run's answer. The body is a generator, so call events also occur on each resumption — count by frame identity."""
     frames: dict[int, FrameType] = {}
 
     def profile(frame: FrameType, event: str, _arg: object) -> None:
@@ -72,8 +72,8 @@ def _asks_then_publish():
 
 
 def _subscriber_code() -> CodeType:
-    """subscribed_event_handler が組み立てる handler の関数の code(閉包ごとに別の関数でも code は 1 つ)。"""
-    return _raw(subscribed_event_handler(EventBus(), "code", (Changed,))).__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
+    """The code of the handler function that subscribed_event_handler builds (even if each closure is a different function, the code is one)."""
+    return _raw(subscribed_event_handler(EventBus(), "code", (Changed,))).__wrapped__.__code__  # type: ignore[attr-defined] — field placed by functools.wraps of @do
 
 
 def test_both_memory_handlers_declare_the_effects_they_answer() -> None:
@@ -86,7 +86,7 @@ def test_both_memory_handlers_declare_the_effects_they_answer() -> None:
 
 
 def test_an_effect_outside_the_types_does_not_enter_the_subscriber() -> None:
-    # 購読者の handler は内側: Ask は購読者の handler を飛ばして外の reader に届き、本体に入るのは Publish の 1 回だけ
+    # The subscriber's handler is inner: Ask skips the subscriber's handler and reaches the outer reader; only Publish enters the body, once
     seen = _entries(
         _subscriber_code(),
         lambda: run_scheduled(
@@ -94,4 +94,4 @@ def test_an_effect_outside_the_types_does_not_enter_the_subscriber() -> None:
         ),
     )
     assert seen.result == 6
-    assert seen.entered == 1, "購読者の handler の本体に入るのは Publish の 1 回だけ(Ask 3 回は飛ばす)"
+    assert seen.entered == 1, "the subscriber handler's body is entered only once, for Publish (the 3 Ask are skipped)"

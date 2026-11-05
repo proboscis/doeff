@@ -1,4 +1,4 @@
-"""テスト用の handler — 台本どおりの Verdict を返し、呼び出しを記録する。通信はしない。"""
+"""Test handler -- returns the scripted Verdict and records the calls. No network."""
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -14,7 +14,7 @@ Script = Callable[[Judge], Verdict | JudgeError] | Mapping[str, Answer] | Verdic
 
 @dataclass
 class ScriptedJudgeState:
-    """記録: 出された Judge の列(state・問いの名前)。"""
+    """Record: the sequence of Judges issued (state and question names)."""
 
     calls: list[Judge] = field(default_factory=list)
 
@@ -36,10 +36,10 @@ def _resolve(script: Script, effect: Judge) -> Verdict | JudgeError:
 
 
 def scripted_judge_handler(script: Script, state: ScriptedJudgeState | None = None) -> Callable[[Any], Any]:
-    """`Judge` を台本で答える handler(Program -> Program)。
+    """Handler (Program -> Program) that answers `Judge` from a script.
 
-    script は 3 形: 問いの名前 → Answer の表 / 固定の Verdict / `Judge -> Verdict | JudgeError`
-    の関数。JudgeError を返す台本は、その例外を Judge の呼び手へ投げる。
+    script takes 3 forms: a table of question name -> Answer / a fixed Verdict / a function `Judge -> Verdict | JudgeError`.
+    A script that returns a JudgeError throws that exception to the caller of the Judge.
     """
     record = state if state is not None else ScriptedJudgeState()
 

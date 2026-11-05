@@ -1,4 +1,4 @@
-"""記録からの収集の最適化と、通常の pytest に戻す互換性の反例(#1551)。"""
+"""Optimization of collection from records, and counterexamples for compatibility with falling back to normal pytest (#1551)."""
 
 import ast
 import subprocess
@@ -38,7 +38,7 @@ def indexed_project(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) 
     return pytester
 
 
-# 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。
+# Per-child time limit, before it is stretched by load (seconds).
 CHILD_DEADLINE_SECONDS = 30
 
 Collect = Callable[[pytest.Pytester], pytest.RunResult]
@@ -46,7 +46,7 @@ Collect = Callable[[pytest.Pytester], pytest.RunResult]
 
 @pytest.fixture
 def child_deadline(deadline_scale_factor: float) -> float:
-    """子 1 つの制限時間。root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸ばす。"""
+    """Per-child time limit. Stretched by the load factor that the root conftest applies to the pytest-timeout deadline."""
     return CHILD_DEADLINE_SECONDS * deadline_scale_factor
 
 
@@ -121,7 +121,7 @@ def test_duplicate_records_keep_last_value_and_first_position(
         "test_repeat[3]",
         "test_middle",
     ]
-    assert "記録から収集 1 file・収集で import 0 file" in warm.stdout.str()
+    assert "collected from record: 1 files; imported during collection: 0 files" in warm.stdout.str()
     project.runpytest_subprocess("-q", "-p", "no:cacheprovider").assert_outcomes(passed=3)
 
 
@@ -171,7 +171,7 @@ def pytest_collection_finish(session):
     assert cold.ret == warm.ret == 0
     assert nodeids(cold) == nodeids(warm)
     assert len(nodeids(warm)) == 3
-    assert "収集で import 1 file" in warm.stdout.str()
+    assert "imported during collection: 1 files" in warm.stdout.str()
     project.runpytest_subprocess("-q", "-p", "no:cacheprovider").assert_outcomes(passed=3)
 
 
@@ -226,8 +226,8 @@ def used(answer):
     warm = collect(project)
     assert cold.ret == warm.ret == 0
     assert nodeids(warm) == nodeids(cold)
-    assert "記録から収集 3 file・収集で import 1 file" in warm.stdout.str()
-    assert "module の引数つきの印" in warm.stdout.str()
+    assert "collected from record: 3 files; imported during collection: 1 files" in warm.stdout.str()
+    assert "a module mark with arguments" in warm.stdout.str()
     project.runpytest_subprocess("-q", "-p", "no:cacheprovider").assert_outcomes(passed=7)
 
 
@@ -259,7 +259,7 @@ def indirect(request):
     warm = collect(project)
     assert cold.ret == warm.ret == 0
     assert nodeids(cold) == nodeids(warm)
-    assert "収集で import 1 file" in warm.stdout.str()
+    assert "imported during collection: 1 files" in warm.stdout.str()
     project.runpytest_subprocess("-q", "-p", "no:cacheprovider").assert_outcomes(
         passed=3, skipped=1
     )
@@ -373,7 +373,7 @@ def test_recollection_in_same_process_owns_new_fixture_cache(
     for _ in range(2):
         result = project.runpytest_inprocess("-q", "-p", "no:cacheprovider")
         result.assert_outcomes(passed=2)
-        assert "記録から収集 1 file・収集で import 0 file" in result.stdout.str()
+        assert "collected from record: 1 files; imported during collection: 0 files" in result.stdout.str()
 
 
 def test_path_patterns_keep_symlink_external_globs_and_collected_files(
@@ -498,7 +498,7 @@ def pytest_make_collect_report(collector):
     )
     result = project.runpytest_subprocess("-q", "-p", "no:cacheprovider", timeout=child_deadline)
     result.assert_outcomes(passed=2)
-    assert "収集で import 1 file" in result.stdout.str()
+    assert "imported during collection: 1 files" in result.stdout.str()
 
 
 def test_lazy_runtime_import_keeps_import_errors(child_deadline: float) -> None:
@@ -530,16 +530,16 @@ else:
 
 @pytest.mark.parametrize("deadline_scale_factor", [2.0])
 def test_child_deadline_follows_the_load_scale(child_deadline: float) -> None:
-    """子の制限時間は、root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸びる。
+    """The child time limit stretches with the load factor that the root conftest applies to the pytest-timeout deadline.
 
-    反例: 子ごとの固定の 30 秒。日次 10-11 20:00 の atlas で worker の Pod が CPU の枠 8 に張り付いた間、
-    test_plain_items_share_closures_without_definition_nodes の 2 回目の子(単独なら 1.5 秒)が 30 秒で殺された。
+    Counterexample: a fixed 30 seconds per child. In the daily 10-11 20:00 atlas run, while the worker Pod was pinned at its CPU limit of 8,
+    the second child of test_plain_items_share_closures_without_definition_nodes (1.5 seconds alone) was killed at 30 seconds.
     """
     assert child_deadline == pytest.approx(2.0 * CHILD_DEADLINE_SECONDS)
 
 
 def test_every_child_deadline_in_this_file_is_scaled() -> None:
-    """この file が子に渡す ``timeout=`` は、数の直書きでなく伸びた child_deadline(反例は上の固定の 30 秒)。"""
+    """The ``timeout=`` this file passes to children is the stretched child_deadline, not a hard-coded number (the counterexample is the fixed 30 seconds above)."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     fixed = [
         keyword.value.lineno
@@ -549,4 +549,4 @@ def test_every_child_deadline_in_this_file_is_scaled() -> None:
         and isinstance(keyword.value, ast.Constant)
         and isinstance(keyword.value.value, (int, float))
     ]
-    assert fixed == [], f"固定の制限時間で子を起こす行: {fixed}"
+    assert fixed == [], f"lines that start a child with a fixed time limit: {fixed}"

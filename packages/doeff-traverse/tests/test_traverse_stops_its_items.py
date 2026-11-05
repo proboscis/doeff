@@ -1,19 +1,19 @@
-"""Traverse の handler が止まる時に自分の始めた件を止め、止めた件を cancelled と知らせる契約の検。
+"""Tests the contract that when the Traverse handler stops it stops the items it started and reports the stopped items as cancelled.
 
-出自: origin/main da660e83e では、parallel_fail_fast は件の
-失敗で抜けた後も残りの件を走らせ続け(失敗の後に走り始める件もあった)、Traverse を走らせる task を外から Cancel すると
-sequential は取り消しを 1 件の失敗として飲み込んで残りの件を走らせ、parallel 系は持ち主だけが抜けて件の task は走り切った。
-止めた件は知らされず、progress_bars の bar は n < total で開いたまま残った。
+Origin: at origin/main da660e83e, parallel_fail_fast kept running the remaining items even after exiting on an item
+failure (some items even started running after the failure), and when the task running Traverse was Cancelled from outside,
+sequential swallowed the cancellation as one item's failure and ran the remaining items, while the parallel handlers had only the owner exit and the item tasks ran to completion.
+Stopped items were not reported, and the progress_bars bar stayed open at n < total.
 
-契約:
-- TaskCancelledError は件の結末にならず、Traverse を終える(3 つの handler とも)。
-- parallel・parallel_fail_fast は Gather が投げたら、残りの件の task を Cancel し、解け終わるのを待ってから投げ直す。
-- 止めた件(走っていて取り消された件・まだ始まっていない件)は ItemOutcome の cancelled で知らせる。件を 1 つ以上走らせる
-  Traverse は、普通に終わっても、fail-fast で止まっても、取り消されても、total ちょうどの知らせを出す。
-- progress_bars は cancelled で n を進めず、数えて total で閉じる(bar は n < total のまま閉じる)。
+Contract:
+- TaskCancelledError does not become an item outcome; it ends Traverse (for all 3 handlers).
+- When Gather throws, parallel and parallel_fail_fast Cancel the remaining item tasks, wait for them to unwind, and then rethrow.
+- Stopped items (items that were running and cancelled, items that had not started yet) are reported with ItemOutcome cancelled. A Traverse that runs one or more
+    items emits exactly total notices whether it finishes normally, stops by fail-fast, or is cancelled.
+- progress_bars does not advance n on cancelled, and counts and closes at total (the bar closes at n < total).
 
-件は時刻ではなく門(Promise の Future)で待たせる: 門が開くまで件は止まっていて、止めた後に門を開けても件が走り続けない
-事を見る。どの検も Python 版と Rust 版の scheduler の両方で走らせる。
+Items are made to wait on a gate (a Promise's Future), not on time: items stay stopped until the gate opens, and we check that items do not keep running
+even if the gate is opened after stopping. Every test runs on both the Python and Rust schedulers.
 """
 
 import io
@@ -65,9 +65,9 @@ _STRATEGIES: dict[str, Callable[[], ProgramHandler]] = {
 
 
 class _Items:
-    """件の Program と、件ごとに起きた事(始まった・取り消しを受けた・終わった)の記録。
+    """A Program for the item, and a record of what happened per item (started, received cancellation, finished).
 
-    件は門が開くまで待ち、failing の件は始まってすぐ失敗する。"""
+    Items wait until the gate opens, and a failing item fails right after it starts."""
 
     def __init__(self, failing: int | None = None) -> None:
         self._failing = failing
@@ -75,19 +75,19 @@ class _Items:
 
     @property
     def events(self) -> tuple[tuple[str, int], ...]:
-        """起きた事(起きた順)。"""
+        """What happened (in the order it happened)."""
         return self._mut_events
 
     def of(self, kind: str) -> list[int]:
-        """kind(started・cancelled・finished)の起きた件(起きた順)。"""
+        """The items where kind (started, cancelled, finished) happened (in the order it happened)."""
         return [x for happened, x in self._mut_events if happened == kind]
 
     def mark(self, name: str) -> None:
-        """検の本体の側で起きた事(取り消しを頼んだ・Traverse が抜けた)の印を、件の記録の間に置く。"""
+        """Places a mark for what happened on the test body's side (asked for cancellation, Traverse exited) among the item records."""
         self._note(name, -1)
 
     def after(self, name: str) -> list[tuple[str, int]]:
-        """印 name の後に件に起きた事(起きた順)。"""
+        """What happened to items after the mark name (in the order it happened)."""
         return list(self._mut_events[self._mut_events.index((name, -1)) + 1 :])
 
     def _note(self, kind: str, x: int) -> None:
@@ -111,14 +111,14 @@ class _Items:
 
 
 class _Reports:
-    """ItemOutcome を名指す受け手 — 受けた順に持ち、外へ渡す。"""
+    """A receiver that names ItemOutcome — keeps what it received in order and passes it outward."""
 
     def __init__(self) -> None:
         self._mut_seen: tuple[ItemOutcome, ...] = ()
 
     @property
     def seen(self) -> tuple[ItemOutcome, ...]:
-        """受けた知らせ(受けた順)。"""
+        """The notices received (in the order received)."""
         return self._mut_seen
 
     def handler(self) -> ProgramHandler:
@@ -131,7 +131,7 @@ class _Reports:
         return _program_handler(watch)
 
     def of(self, label: str | None) -> dict[int, list[str]]:
-        """label の Traverse の件の番号ごとの知らせの結末(受けた順)。"""
+        """The outcomes of notices per item index of the Traverse with label (in the order received)."""
         outcomes: dict[int, list[str]] = {}
         for report in self._mut_seen:
             if report.label == label:
@@ -140,7 +140,7 @@ class _Reports:
 
 
 class _RecordedBar(tqdm):
-    """本物の tqdm(出力は捨てる)に、progress_bars が close を呼んだかを残す。"""
+    """Records, on a real tqdm (output discarded), whether progress_bars called close."""
 
     def __init__(self, *, total: int, desc: str) -> None:
         super().__init__(total=total, desc=desc, file=io.StringIO())
@@ -148,7 +148,7 @@ class _RecordedBar(tqdm):
 
     @property
     def closed_by_handler(self) -> bool:
-        """progress_bars が close を呼んだか。"""
+        """Whether progress_bars called close."""
         return self._mut_closed_by_handler
 
     def close(self) -> None:
@@ -157,7 +157,7 @@ class _RecordedBar(tqdm):
 
 
 class _Bars:
-    """progress_bars の make_bar — 作った bar を作った順に持つ。"""
+    """make_bar of progress_bars — keeps the bars it made in the order made."""
 
     def __init__(self) -> None:
         self._mut_made: tuple[_RecordedBar, ...] = ()
@@ -171,7 +171,7 @@ class _Bars:
         return [(bar.desc, bar.n, bar.total, bar.closed_by_handler) for bar in self._mut_made]
 
     def lines(self) -> list[int]:
-        """作った bar の端末の行(tqdm の位置 — 開いたままの bar が在ると、後の bar は 1 行下になる)。"""
+        """The terminal line of the bar made (tqdm's position — if a bar is left open, later bars go one line down)."""
         return [abs(bar.pos) for bar in self._mut_made]
 
 
@@ -181,7 +181,7 @@ def _run_under(
     program: Program[_T],
     implementation: SchedulerImplementation,
 ) -> _T:
-    """program を inside(内側が先)の下、Traverse の handler strategy の下で、implementation の scheduler で走らせる。"""
+    """Runs program under inside (inner first) and under the Traverse handler strategy, on the implementation scheduler."""
     body: Program[_T] = program
     for install in [*inside, fail_handler, try_handler]:
         body = install(body)
@@ -203,14 +203,14 @@ def _nothing() -> "EffectGenerator[None]":
 
 @do
 def _let_the_others_run(rounds: int = 20) -> "EffectGenerator[None]":
-    """呼んだ task の番を rounds 回譲る — その間に待ち行列の task(件・Traverse の持ち主)が走る。"""
+    """Yields the calling task's turn rounds times — in the meantime the queued tasks (items, the Traverse owner) run."""
     for _ in range(rounds):
         turn = yield Spawn(_nothing())
         yield Wait(turn)
 
 
 def _assert_total_reports(reports: _Reports, label: str | None, total: int) -> None:
-    """label の Traverse が件の 1 つずつに知らせを 1 つずつ、total ちょうど出した。"""
+    """The Traverse with label emitted exactly total notices, one per item."""
     runs = {report.traverse for report in reports.seen if report.label == label}
     assert len(runs) == 1
     assert {report.total for report in reports.seen if report.label == label} == {total}
@@ -223,9 +223,9 @@ def _assert_total_reports(reports: _Reports, label: str | None, total: int) -> N
 def test_parallel_fail_fast_stops_its_items_when_the_run_goes_on(
     implementation: SchedulerImplementation,
 ) -> None:
-    """受入 c717e1a24: 件 2 の失敗を Try で受けて run が続いても、走っていた件は取り消され、残りの件は走り始めない。
+    """Acceptance c717e1a24: even if item 2's failure is caught with Try and run continues, running items are cancelled and the remaining items do not start running.
 
-    件は 8 つ・同時に 4 つ。件 0・1・3 は門で待ち、件 4〜7 は空きを待つ所で件 2 が失敗する。"""
+    There are 8 items, 4 at a time. Items 0, 1, 3 wait on the gate, and items 4 to 7 wait for a free slot when item 2 fails."""
     items = _Items(failing=2)
     reports = _Reports()
 
@@ -234,7 +234,7 @@ def test_parallel_fail_fast_stops_its_items_when_the_run_goes_on(
         gate = yield CreatePromise()
         caught = yield Try(_traversed(items.gated(gate.future), range(8), label="first"))
         items.mark("raised")
-        # run は続く: 門が開き、待ち行列の task に番が回る
+        # run continues: the gate opens, and the queued tasks get their turn
         yield CompletePromise(gate, None)
         yield _let_the_others_run()
         return caught
@@ -247,7 +247,7 @@ def test_parallel_fail_fast_stops_its_items_when_the_run_goes_on(
     assert items.of("started") == [0, 1, 2, 3]
     assert sorted(items.of("cancelled")) == [0, 1, 3]
     assert items.of("finished") == []
-    # Traverse が抜けた時には、件はみな止まっている
+    # By the time Traverse exits, all items are stopped
     assert items.after("raised") == []
     assert reports.of("first") == {
         0: ["cancelled"],
@@ -266,8 +266,8 @@ def test_parallel_fail_fast_stops_its_items_when_the_run_goes_on(
 def test_cancelling_the_task_running_a_traverse_stops_its_items(
     name: str, implementation: SchedulerImplementation
 ) -> None:
-    """受入 c21a5e2a7: Traverse を走らせる task を外から Cancel すると、走っていた件は取り消され、残りの件は走り始めない
-    — 取り消しの後に門を開けても、どの件も走り終わらない。待ち手は TaskCancelledError を受ける。"""
+    """Acceptance c21a5e2a7: when the task running Traverse is Cancelled from outside, running items are cancelled and the remaining items do not start running
+    — no item runs to completion even if the gate is opened after cancellation. The waiter receives TaskCancelledError."""
     items = _Items()
     reports = _Reports()
 
@@ -290,14 +290,14 @@ def test_cancelling_the_task_running_a_traverse_stops_its_items(
     assert items.of("started") == running
     assert sorted(items.of("cancelled")) == running
     assert items.of("finished") == []
-    # 取り消しを頼んだ後に件に起きたのは、取り消しを受けた事だけ
+    # After asking for cancellation, the only thing that happened to items is that they received the cancellation
     assert [kind for kind, _ in items.after("cancel")] == ["cancelled"] * len(running)
     assert reports.of("first") == {index: ["cancelled"] for index in range(8)}
 
 
 @do
 def _ends(items: _Items) -> "EffectGenerator[Collection[int]]":
-    """門を先に開けた Traverse — どの件も待たずに終わる。"""
+    """A Traverse whose gate was opened first — it finishes without any item waiting."""
     gate = yield CreatePromise()
     yield CompletePromise(gate, None)
     return (yield _traversed(items.gated(gate.future), range(8), label="first"))
@@ -348,8 +348,8 @@ def test_a_traverse_reports_exactly_total_outcomes_however_it_ends(
     failing: int | None,
     implementation: SchedulerImplementation,
 ) -> None:
-    """受入 cb8ad96b3: 件を 1 つ以上走らせる Traverse は、普通に終わっても、fail-fast で止まっても、取り消されても、
-    件の 1 つずつに知らせを 1 つずつ — total ちょうど出す。止めた件は cancelled。"""
+    """Acceptance cb8ad96b3: a Traverse that runs one or more items emits one notice per item — exactly total — whether it finishes normally, stops by fail-fast, or is cancelled.
+    Stopped items are cancelled."""
     reports = _Reports()
     _run_under(strategy(), [reports.handler()], ending(_Items(failing=failing)), implementation)
     _assert_total_reports(reports, "first", 8)
@@ -368,11 +368,11 @@ def test_a_traverse_reports_exactly_total_outcomes_however_it_ends(
 def test_cancelling_a_traverse_stops_and_reports_the_traverses_inside_its_items(
     strategy: Callable[[], ProgramHandler], implementation: SchedulerImplementation
 ) -> None:
-    """件の中の Traverse(for/do の重ねた From)も止まる: 外の Traverse を走らせる task を取り消すと、待ち手が起きるまでに
-    内の件も止まり(後で門を開けても走り終わらない)、外の Traverse も内の Traverse も 1 回ごとに total ちょうど知らせる。
+    """A Traverse inside an item (the stacked From of for/do) also stops: when the task running the outer Traverse is cancelled, by the time the waiter wakes up
+    the inner items also stop (they do not run to completion even if the gate is opened later), and both the outer and inner Traverse notify exactly total per run.
 
-    門は待ち手が起きた後に開ける: 取り消しは 1 段ずつ届くので、取り消しの直後に開けると、内の Traverse に届く前に起こされて
-    待ち行列に在った内の件は走り終わる(持ち主が起きる前に待ち行列に在った件)。"""
+    The gate is opened after the waiter wakes up: cancellation arrives one level at a time, so if opened right after cancellation, the waiter is woken before it reaches the inner Traverse and
+    the inner items that were in the queue run to completion (items that were in the queue before the owner woke up)."""
     items = _Items()
     reports = _Reports()
 
@@ -415,8 +415,8 @@ def test_parallel_fail_fast_closes_its_bar_below_total_when_it_stops(
     counted: int,
     implementation: SchedulerImplementation,
 ) -> None:
-    """受入 cf75ceb59: parallel_fail_fast が件の失敗か外からの取り消しで止まると、bar は止めた件で n を進めず、n < total の
-    まま閉じる(tqdm の素の loop が例外で抜けた時と同じ見え方)。失敗した件は数える。"""
+    """Acceptance cf75ceb59: when parallel_fail_fast stops on an item failure or an outside cancellation, the bar does not advance n for stopped items and closes at n < total
+    (the same look as when a bare tqdm loop exits by an exception). Failed items are counted."""
     bars = _Bars()
     _run_under(
         parallel_fail_fast(concurrency=4),
@@ -431,8 +431,8 @@ def test_parallel_fail_fast_closes_its_bar_below_total_when_it_stops(
 def test_a_progress_bars_used_again_after_a_stopped_traverse_keeps_no_bar_open(
     implementation: SchedulerImplementation,
 ) -> None:
-    """同じ progress_bars を、fail-fast で止まった run の後に使い回しても、開いたままの bar が残らない
-    (前は止まった bar が tqdm の位置を持ち続け、後の bar が 1 行ずつ下にずれた)。"""
+    """Even if the same progress_bars is reused after a run stopped by fail-fast, no open bar remains
+    (previously the stopped bar kept tqdm's position, and later bars shifted down one line at a time)."""
     bars = _Bars()
     count = progress_bars(bars.make)
     _run_under(
@@ -446,14 +446,14 @@ def test_a_progress_bars_used_again_after_a_stopped_traverse_keeps_no_bar_open(
 
 @do
 def _blocked() -> "EffectGenerator[None]":
-    """誰も完了しない Promise を待ち続ける task の本体(取り消されるまで終わらない)。"""
+    """The body of a task that keeps waiting on a Promise nobody completes (it does not finish until cancelled)."""
     never = yield CreatePromise()
     yield Wait(never.future)
 
 
 @do
 def _cancelled_task_waited(x: int) -> "EffectGenerator[int]":
-    """件 1 は、取り消した別の task を Wait して TaskCancelledError を受ける(Try で包まない)。"""
+    """Item 1 Waits on another task that was cancelled and receives TaskCancelledError (not wrapped in Try)."""
     if x == 1:
         other = yield Spawn(_blocked())
         yield Cancel(other)
@@ -466,8 +466,8 @@ def _cancelled_task_waited(x: int) -> "EffectGenerator[int]":
 def test_a_task_cancelled_error_out_of_an_item_ends_the_traverse(
     name: str, implementation: SchedulerImplementation
 ) -> None:
-    """件の中から漏れた TaskCancelledError は、その件 1 つの失敗にならず Traverse を終える(耐えたい件は自分の Wait を Try
-    で包む)。止めた件も知らせ、total ちょうどになる。"""
+    """A TaskCancelledError leaking out of an item does not become that single item's failure; it ends Traverse (an item that wants to survive wraps its own Wait in Try).
+    Stopped items are also notified, so it comes to exactly total."""
     reports = _Reports()
 
     @do
@@ -486,7 +486,7 @@ def test_a_task_cancelled_error_out_of_an_item_ends_the_traverse(
 def test_an_item_that_tries_its_wait_on_a_cancelled_task_is_an_item_like_any_other(
     name: str, implementation: SchedulerImplementation
 ) -> None:
-    """件が自分の Wait を Try で包めば、取り消された task を待っても TaskCancelledError を値として受け、件は普通に終わる。"""
+    """If an item wraps its own Wait in Try, even waiting on a cancelled task it receives TaskCancelledError as a value and the item finishes normally."""
 
     @do
     def tolerant(x: int) -> "EffectGenerator[bool]":

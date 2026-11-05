@@ -10,46 +10,46 @@
 (import domain_test_effects [FixtureAlpha FixtureBeta FixtureGamma FixtureDelta])
 
 
-;; 無引数形 — handler 値そのものに __doeff_body__ が付く
+;; no-argument form — __doeff_body__ is attached to the handler value itself
 (defhandler fixture-plain-handler
   (FixtureAlpha [] (resume 1))
   (FixtureBeta [] (resume 2)))
 
 
-;; 引数形 — factory 関数に __doeff_body__ が付く
+;; argument form — __doeff_body__ is attached to the factory function
 (defhandler fixture-factory-handler [limit]
   (FixtureAlpha [] (resume limit))
   (FixtureBeta [] (resume (+ limit 1))))
 
 
-;; lazy 節あり — lazy は処理集合の導出でスキップされる
+;; with a lazy clause — lazy is skipped when deriving the handled set
 (defhandler fixture-lazy-handler
   (lazy token (str "fixture-token"))
   (FixtureGamma [] (resume token)))
 
 
-;; lazy-val 節あり — lazy 節 head は lazy / lazy-val / lazy-var の 3 種
-;; (packages/doeff-hy/src/doeff_hy/handle.hy の _is-lazy-clause)。全てスキップ対象。
+;; with a lazy-val clause — lazy clause heads are three kinds: lazy / lazy-val / lazy-var
+;; (_is-lazy-clause in packages/doeff-hy/src/doeff_hy/handle.hy). All are skipped.
 (defhandler fixture-lazy-val-handler
   (lazy-val token-val (str "fixture-token-val"))
   (FixtureAlpha [] (resume token-val)))
 
 
-;; lazy-var 節あり
+;; with a lazy-var clause
 (defhandler fixture-lazy-var-handler
   (lazy-var token-var (str "fixture-token-var"))
   (FixtureBeta [] (resume token-var)))
 
 
-;; session val / session var 節あり(ADR-DOE-HY-006)— session の値の宣言で、処理宣言ではない
+;; with session val / session var clauses (ADR-DOE-HY-006) — declarations of session values, not handling declarations
 (defhandler fixture-session-handler
   (session val token-session (str "fixture-token-session"))
   (session var count-session 0)
   (FixtureGamma [] (resume token-session)))
 
 
-;; :when ガードあり — ガード付き節も「処理に参加する宣言」として数える
-;; (全域性の保証ではない — ADR-DOE-DOMAIN-001 の意味論)
+;; with a :when guard — guarded clauses also count as "declarations that participate in handling"
+;; (not a totality guarantee — semantics of ADR-DOE-DOMAIN-001)
 (defhandler fixture-guarded-handler [threshold]
   (FixtureAlpha [] :when (> threshold 0) (resume threshold))
   (FixtureDelta [] (resume None)))

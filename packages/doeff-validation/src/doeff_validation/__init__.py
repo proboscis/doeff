@@ -1,5 +1,5 @@
-"""doeff-validation — 独立した検査の項目を全部走らせ、落ちた項目の失敗を全部集めて
-``ValidationException`` で返す(doeff-traverse の上の薄い層)。
+"""doeff-validation — run every independent check item, collect the failures of all failed items, and
+return them as a ``ValidationException`` (a thin layer on top of doeff-traverse).
 
 Python:
 
@@ -7,12 +7,12 @@ Python:
         Check(operator.is_not, Perform(LookupConversation(request.conversation)), None,
               reason=PlacementMismatch.CONVERSATION),
         Check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
-    )   # 失敗が 1 つでもあれば ValidationException(全部の失敗を持つ)
+    )   # ValidationException (holding all failures) if there is even one failure
 
-    run(sequential(program))   # 逐次。並行は parallel(n)、fail-fast は parallel_fail_fast(n)
+    run(sequential(program))   # sequential. Concurrent is parallel(n); fail-fast is parallel_fail_fast(n)
 
 Hy: ``(require doeff-hy.macros [defk validate check])`` → ``(! (validate (check = (! (Eff)) b :reason R) …))``。
-設計の記録: ``docs/design/doeff-validation/design.md``。
+Design record: ``docs/design/doeff-validation/design.md``.
 """
 
 from doeff_validation._api import (

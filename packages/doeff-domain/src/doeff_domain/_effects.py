@@ -1,16 +1,16 @@
-"""語彙のまとまり(domain)の表に置く・引く・check する effect と、表から答える handler を返す工場 domain_registry。
+"""The effects that put, get, and check domains (groups of vocabulary) in a table, and domain_registry, the factory returning the handler that answers from the table.
 
-決め: effect にする(
-ADR-DOE-API-001 R29)。前の関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・
-assert_domain_covered・assert_registered_domains_covered・assert_no_orphan_effects)は公開の名から消した — 本体は内側の
-_registry・_checks・_introspect に在り、handler がそれで答える。isolated_registry は domain_registry(domains=[]) が代わり、
-handles は宣言の型 Handles になった(_introspect の docstring)。
+Decision: make them effects (
+ADR-DOE-API-001 R29). The 8 former functions (register_domain, isolated_registry, get_domain, handles, handled_effects,
+assert_domain_covered, assert_registered_domains_covered, assert_no_orphan_effects) were removed from the public names -- the bodies live in the inner
+_registry, _checks and _introspect, and the handler answers with them. isolated_registry is replaced by domain_registry(domains=[]),
+and handles became the declaration type Handles (see the docstring of _introspect).
 
-宣言 defdomain は今のまま import の時に process の表へ載せる。program は表を effect で読み、domain_registry() は process の表を
-答える時に読み、domain_registry(domains=[domain, …]) は渡した domain だけを載せた別の表から答える(RegisterDomain もその表へ
-載せ、process の表へ落ちない)。内側に据えた方が先に答えるので、test は program の一部だけを別の表で走らせられる。
-check の失敗は DomainError の子(走査で読めない module も DomainCheckError に包む — 元の例外は __cause__)、表に無い名は
-KeyError で、どちらも effect を出した所へ投げ返す。
+The declaration defdomain still registers into the process table at import time. A program reads the table via effects; domain_registry() reads the process table
+when answering, and domain_registry(domains=[domain, ...]) answers from a separate table holding only the given domains (RegisterDomain also
+registers into that table and does not fall through to the process table). The innermost one answers first, so a test can run only part of a program against a separate table.
+A check failure is a child of DomainError (a module that cannot be read during the scan is also wrapped in DomainCheckError -- the original exception is __cause__); a name not in the table is a
+KeyError; both are thrown back to the place that raised the effect.
 """
 
 from dataclasses import dataclass
@@ -27,7 +27,7 @@ from doeff_domain._registry import PROCESS_TABLE, Domain, DomainError, DomainTab
 
 
 def _types(values: object, field: str) -> tuple[type, ...]:
-    """effect の欄に渡した class の並びを tuple に揃える(list でも書けるように — 作る時に形を断る)。"""
+    """Normalize the sequence of classes passed to an effect field into a tuple (so a list also works -- a wrong shape is rejected at construction)."""
     if not isinstance(values, list | tuple):
         raise TypeError(f"{field} takes a list of effect classes, got {type(values).__name__}")
     return tuple(values)
@@ -35,24 +35,24 @@ def _types(values: object, field: str) -> tuple[type, ...]:
 
 @dataclass(frozen=True)
 class RegisterDomain(EffectBase[Domain]):
-    """domain を表に載せる: yield RegisterDomain(domain) → 載せた Domain。同じ名・2 度目の導入は DomainRegistrationError の子。"""
+    """Register a domain in the table: yield RegisterDomain(domain) -> the registered Domain. A duplicate name or a second introduction is a child of DomainRegistrationError."""
 
     domain: Domain
 
 
 @dataclass(frozen=True)
 class GetDomain(EffectBase[Domain]):
-    """名で domain を引く: yield GetDomain("doeff-reader") → Domain。載っていない名は KeyError。"""
+    """Look up a domain by name: yield GetDomain("doeff-reader") -> Domain. A name that is not registered raises KeyError."""
 
     name: str
 
 
 @dataclass(frozen=True)
 class HandledEffects(EffectBase[frozenset[type]]):
-    """domain の handlers の 1 つが答える effect の class を読む: yield HandledEffects(handler, vocabulary=(…)) → frozenset。
+    """Read the classes of the effects that one of the domain's handlers answers: yield HandledEffects(handler, vocabulary=(...)) -> frozenset.
 
-    handler は domain の handlers の 1 つ — Handles(handler, …) の宣言か、__doeff_handles__ の印か defhandler の節を持つ handler。読めなければ
-    DomainCheckError。vocabulary は節の head の名を解く時の控え(普通は照らす domain の effects)。
+    handler is one of the domain's handlers -- a Handles(handler, ...) declaration, a handler with a __doeff_handles__ mark, or a defhandler with clauses. If it cannot be read:
+    DomainCheckError. vocabulary is a fallback for resolving clause head names (normally the effects of the domain being checked).
     """
 
     handler: object
@@ -64,9 +64,9 @@ class HandledEffects(EffectBase[frozenset[type]]):
 
 @dataclass(frozen=True)
 class AssertDomainCovered(EffectBase[None]):
-    """check (a): domain の handlers が、domain の導入する effect を全部答える。外れは DomainCoverageError。
+    """check (a): the domain's handlers answer every effect the domain introduces. A violation is DomainCoverageError.
 
-    domain は Domain か、表から引く名。known_uncovered は申告した穴(もう穴でなければ stale の DomainCheckError)。
+    domain is a Domain or a name looked up from the table. known_uncovered is a declared gap (if it is no longer a gap, a stale DomainCheckError).
     """
 
     domain: Domain | str
@@ -82,7 +82,7 @@ class AssertDomainCovered(EffectBase[None]):
 
 @dataclass(frozen=True)
 class AssertRegisteredDomainsCovered(EffectBase[None]):
-    """check (a) を表の domain の全部に当てる。外れは DomainCoverageError。"""
+    """Apply check (a) to every domain in the table. A violation is DomainCoverageError."""
 
     known_uncovered: tuple[type, ...] = ()
 
@@ -96,10 +96,10 @@ class AssertRegisteredDomainsCovered(EffectBase[None]):
 
 @dataclass(frozen=True)
 class AssertNoOrphanEffects(EffectBase[None]):
-    """check (c): 名指した package の EffectBase の子が、どれも表のどれかの domain に導入されている。外れは OrphanEffectError。
+    """check (c): every EffectBase subclass in the named packages is introduced by some domain in the table. A violation is OrphanEffectError.
 
-    packages は module か package の import の名(package は下まで歩く)。known_orphans は申告した孤児(もう孤児でなければ
-    stale の DomainCheckError)。import できない module も DomainCheckError(元の例外は __cause__)。
+    packages are import names of modules or packages (a package is walked down). known_orphans is a declared orphan (if it is no longer an orphan,
+    a stale DomainCheckError). A module that cannot be imported is also a DomainCheckError (the original exception is __cause__).
     """
 
     packages: tuple[str, ...]
@@ -117,7 +117,7 @@ class AssertNoOrphanEffects(EffectBase[None]):
         )
 
 
-#: handler が答える effect の全部(_answer の match が網羅する)。
+#: All effects the handler answers (covered exhaustively by the match in _answer).
 DomainEffect = (
     RegisterDomain
     | GetDomain
@@ -129,7 +129,7 @@ DomainEffect = (
 
 
 def _table(domains: list[Domain] | tuple[Domain, ...]) -> DomainTable:
-    """渡した domain を載せた別の表を作る(名の重なり・2 度目の導入・Domain でない値は作る時に断る)。"""
+    """Build a separate table holding the given domains (duplicate names, a second introduction, and non-Domain values are rejected at construction)."""
     if not isinstance(domains, list | tuple):
         raise TypeError(
             f"domain_registry(domains=…) takes a list of Domain, got {type(domains).__name__}"
@@ -141,7 +141,7 @@ def _table(domains: list[Domain] | tuple[Domain, ...]) -> DomainTable:
 
 
 def _answer(table: DomainTable, effect: DomainEffect) -> object:
-    """1 つの effect に表から答える(check の外れは例外のまま上げ、handler が出した所へ投げ返す)。"""
+    """Answer one effect from the table (a check violation is raised as the exception itself and thrown back to where the handler raised it)."""
     match effect:
         case RegisterDomain(domain=domain):
             return table.register(domain)
@@ -156,21 +156,21 @@ def _answer(table: DomainTable, effect: DomainEffect) -> object:
         case AssertNoOrphanEffects(packages=packages, known_orphans=known):
             return assert_no_orphan_effects(table, packages, known_orphans=known)
         case _:
-            # handler の注記が上の 6 つの外を飛ばすので来ない — 来たら黙って None を返さず断る。
+            # the handler annotation skips everything outside the 6 above, so this is unreachable -- if it happens, refuse instead of silently returning None.
             raise TypeError(f"domain_registry does not answer {type(effect).__name__}")
 
 
 def domain_registry(*, domains: list[Domain] | tuple[Domain, ...] | None = None) -> ProgramHandler:
-    """domain の表の effect(RegisterDomain・GetDomain・HandledEffects・check 3 つ)に答える handler。
+    """The handler that answers the domain-table effects (RegisterDomain, GetDomain, HandledEffects, and the 3 checks).
 
-    domains が無ければ process の表(defdomain が載せる所)を答える時に読み、domains を渡せばその domain だけを載せた別の表から
-    答える(domains=[] は空の表で、process の表ではない — 前の isolated_registry の代わり)。
+    Without domains, it reads the process table (where defdomain registers) when answering; with domains, it answers from a separate table holding only those
+    domains (domains=[] is an empty table, not the process table -- the replacement for the former isolated_registry).
 
-    別の表は工場を呼んだ時に 1 つ作る: 同じ handler の値を使い回す間は RegisterDomain で載せた domain が残るので、test ごとに
-    新しい表が要るなら工場を呼び直す(pytest の fixture は function の scope)。domains の名の重なり・2 度目の導入・Domain で
-    ない値は、program の中でなく工場を呼んだ時に例外になる(DomainRegistrationError の子か TypeError)。
+    The separate table is created once when the factory is called: as long as the same handler value is reused, domains registered with RegisterDomain remain, so if each test
+    needs a fresh table, call the factory again (a pytest fixture is function-scoped). Overlapping names in domains, a second introduction, and values that are
+    not Domain raise at factory call time rather than inside a program (a child of DomainRegistrationError, or TypeError).
 
-    使い方: domain_registry()(program)・domain_registry(domains=[domain])(program)。
+    Usage: domain_registry()(program), domain_registry(domains=[domain])(program).
     """
     table = PROCESS_TABLE if domains is None else _table(domains)
 

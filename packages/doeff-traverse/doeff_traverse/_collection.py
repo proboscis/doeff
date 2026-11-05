@@ -7,7 +7,7 @@ Users should NOT access items directly. Use Traverse, Reduce, Zip, Inspect.
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-#: 有効な件の値の型。型の宣言は collection.pyi が持ち、実行時は `Collection[T]` と書けるようにだけ Generic を継ぐ。
+#: Type of a valid item's value. The type declaration lives in collection.pyi; at runtime Generic is inherited only so that `Collection[T]` can be written.
 _V = TypeVar("_V", covariant=True)
 
 

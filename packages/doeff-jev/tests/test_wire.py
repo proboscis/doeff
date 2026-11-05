@@ -1,4 +1,4 @@
-"""Judge ⇄ HTTP の写し(純粋)。2 つの通信の形と、答えの読み。"""
+"""Mapping between Judge and HTTP (pure). The two wire formats, and reading the answers."""
 
 import hashlib
 import json
@@ -28,7 +28,7 @@ def test_direct_request_shape() -> None:
 
 
 def test_gateway_request_translates_noul_to_boolean() -> None:
-    judge = Judge(state="これは日本語", questions=QUESTIONS)
+    judge = Judge(state="this is Japanese", questions=QUESTIONS)
     prepared = prepare(GATEWAY, judge)
     assert prepared.headers["ai-model-id"] == "typesafe-ai/jev"
     assert "model" not in prepared.body
@@ -142,9 +142,9 @@ def test_caller_travels_as_a_header_and_not_in_the_body() -> None:
     assert prepared.headers[CALLER_HEADER] == "rulebook-advisor/Stop"
     assert "caller" not in json.dumps(prepared.body)
     assert CALLER_HEADER not in prepare(DIRECT, judge).headers
-    # 見出しの値は ASCII に限る — 日本語の名は %XX に写して要求を壊さない。
-    assert prepare(DIRECT, judge, caller="部品/問い").headers[CALLER_HEADER] == "%E9%83%A8%E5%93%81/%E5%95%8F%E3%81%84"
-    # 呼び手の名は答えの鍵に入らない(同じ問いは呼び手が違っても中継と手元の cache で当たる)。
+    # Header values are limited to ASCII; non-ASCII (e.g. Japanese) names are percent-encoded as %XX so they do not break the request.
+    assert prepare(DIRECT, judge, caller="\u90e8\u54c1/\u554f\u3044").headers[CALLER_HEADER] == "%E9%83%A8%E5%93%81/%E5%95%8F%E3%81%84"  # caller is a Japanese "component/question"
+    # The caller name does not enter the answer key (the same question hits the relay and the local cache even with a different caller).
     assert cache_key(DIRECT, judge) == cache_key(DIRECT, Judge(state="s", questions={"n": Question(kind="noul", instructions="x")}))
 
 

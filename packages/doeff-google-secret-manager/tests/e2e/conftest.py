@@ -1,8 +1,7 @@
-"""本物の Secret Manager を読む e2e の検(印 ``real_secret_manager``)は、印を名指して選んだ時(``pytest -m real_secret_manager``)
-だけ走る。
+"""The e2e test that reads the real Secret Manager (marker ``real_secret_manager``) runs only when the marker is selected by name (``pytest -m real_secret_manager``).
 
-以前は環境変数 SECRET_MANAGER_RUN_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004)。
-本物の Google Cloud に触るので、選ばなければ skip する。宛先(project・secret id・version)の環境変数は検が ReadEnvironment で読む。
+Previously this was switched by the environment variable SECRET_MANAGER_RUN_E2E (the test module read the environment variable directly — DOEFF004).
+It touches the real Google Cloud, so it is skipped unless selected. The environment variables for the target (project, secret id, version) are read by the test via ReadEnvironment.
 """
 
 import pytest
@@ -13,7 +12,7 @@ REAL_SECRET_MANAGER = "real_secret_manager"
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        f"{REAL_SECRET_MANAGER}: 本物の Secret Manager を読む e2e の検(-m {REAL_SECRET_MANAGER} で選んだ時だけ走る)",
+        f"{REAL_SECRET_MANAGER}: e2e test that reads the real Secret Manager (runs only when selected with -m {REAL_SECRET_MANAGER})",
     )
 
 

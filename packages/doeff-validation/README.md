@@ -1,15 +1,15 @@
 # doeff-validation
 
-独立した検査を全部走らせ、落ちた検査の失敗を全部集めて `ValidationException` で知らせる。
-doeff-traverse の上の薄い層で、検査の 1 件が traverse の 1 要素になる。逐次で走らせるか、並行か、
-最初の失敗で止めるかは、組み立ての根に置く traverse の handler で選ぶ。
+Run every independent check, collect the failures of all failed checks, and report them as a `ValidationException`.
+A thin layer on top of doeff-traverse, where one check becomes one element of a traverse. Whether the checks run sequentially, concurrently,
+or stop at the first failure is chosen by the traverse handler placed at the root of the assembly.
 
-Hy の `validate` / `check` マクロは doeff-hy が持つ(`(require doeff-hy.macros [defk validate check])`)。
-この package は実行時の部分(`validate`・検査の指定の型 `Check`・実行の印の型 `Perform`・失敗の型)を持つ。
+The Hy `validate` / `check` macros are provided by doeff-hy (`(require doeff-hy.macros [defk validate check])`).
+This package provides the runtime part (`validate`, the check-specification type `Check`, the execution-mark type `Perform`, and the failure types).
 
-## 書き直しの例
+## Rewrite example
 
-書き直す前(最初の `raise` で抜けるので、2 つ目以降の食い違いは見えない。理由は 1 つの文):
+Before the rewrite (it exits at the first `raise`, so the second and later mismatches are invisible; the reason is a single sentence):
 
 ```hy
 (defk bind-pending-job-to-chosen-node [job spec placement now]
@@ -24,14 +24,14 @@ Hy の `validate` / `check` マクロは doeff-hy が持つ(`(require doeff-hy.m
   (write-of-agent-job-status job (bound-status placement job now)))
 ```
 
-書き直した後。関数の入口で確かめる一致は、契約の `:pre` に `check` で書く。check は全部評価され、
-落ちたものが全部 `ValidationException` に入る:
+After the rewrite. Matches checked at the entrance of the function are written as `check` in the contract `:pre`. Every check is evaluated,
+and all that fail go into the `ValidationException`:
 
 ```hy
 (require doeff-hy.macros [defk check])
 
 (defk bind-pending-job-to-chosen-node [job spec placement now]
-  "Pending の job を、配置で選んだノードと profile に結びつける状態の書き込み(CAS)を作る。"
+  "Build the state write (CAS) that binds a Pending job to the node and profile chosen by placement."
   {:pre [(: job AgentJob) (: spec AgentJobSpec) (: placement AgentPlacement) (: now int)
          (check = job.key placement.request.key :reason PlacementMismatch.KEY)
          (check = spec.subject placement.request.conversation :reason PlacementMismatch.CONVERSATION)
@@ -42,24 +42,24 @@ Hy の `validate` / `check` マクロは doeff-hy が持つ(`(require doeff-hy.m
   (write-of-agent-job-status job (bound-status placement job now)))
 ```
 
-落ちた時のメッセージ(式と各引数の評価した値、理由が並ぶ):
+Message when it fails (the expression, the evaluated value of each argument, and the reason are listed):
 
 ```
-bind-pending-job-to-chosen-node pre-condition: 2 件の検査が落ちました:
+bind-pending-job-to-chosen-node pre-condition: 2 checks failed:
   (= job.key placement.request.key)  job.key = 'k-1'  placement.request.key = 'k-2'  [PlacementMismatch.KEY]
   (= job.phase Phase.PENDING)  job.phase = <Phase.RUNNING: 'running'>  Phase.PENDING = <Phase.PENDING: 'pending'>  [PlacementMismatch.PHASE]
 ```
 
-`:pre` から見えるのは引数だけなので、生の dict から読むのは呼び手の境界で済ませ、型のある値
-(`job`・`spec`)を引数に受ける。
+Only the arguments are visible from `:pre`, so reading from the raw dict is finished at the caller's boundary, and typed values
+(`job`, `spec`) are accepted as arguments.
 
-関数の本体の途中で確かめる時は `validate` を使う。効果を使う検査は、引数に `(! …)` を付ける:
+To check in the middle of a function body, use `validate`. For a check that uses an effect, mark the argument with `(! …)`:
 
 ```hy
 (require doeff-hy.macros [defk validate check])
 
 (defk ensure-conversation-bindable [job request]
-  "配置要求の会話がまだ存在し、job がまだ Pending かを確かめる。"
+  "Check that the conversation of the placement request still exists and the job is still Pending."
   {:pre [(: job AgentJob) (: request PlacementRequest)] :post [(: % NoneType)]}
   (! (validate
        (check is-not (! (LookupConversation request.conversation)) None
@@ -67,39 +67,39 @@ bind-pending-job-to-chosen-node pre-condition: 2 件の検査が落ちました:
        (check = job.phase Phase.PENDING :reason PlacementMismatch.PHASE))))
 ```
 
-## 書き方
+## How to write
 
 ### `validate`
 
-- 直下に並べるのは**独立した項目**だけで、`check` と Program(defk の呼び出し)の 2 種類がある。
-  項目どうしは互いの結果に依らない(並行に走らせてよい単位)。
-- 項目を全部走らせ、落ちた項目の失敗を全部集める。1 つでもあれば `ValidationException` を投げ、
-  無ければ `None` を返す。
-- `validate` は Program を作る式なので、defk の本体では `(! (validate …))` か `(<- _ (validate …))` で実行する。
-- 直下に裸の `(<- …)` や `(! …)` を書くと、展開の時点で誤りになる。前の値に依る処理は、
-  `validate` の前で済ませるか、helper の defk の中に自分の `validate` を持たせる。
+- Only **independent items** are lined up directly under it, of two kinds: `check` and a Program (a defk call).
+    Items do not depend on each other's results (a unit that may run concurrently).
+- Run every item and collect the failures of all failed items. If there is even one, `ValidationException` is raised;
+    otherwise `None` is returned.
+- `validate` is an expression that builds a Program, so in the body of a defk run it with `(! (validate …))` or `(<- _ (validate …))`.
+- Writing a bare `(<- …)` or `(! …)` directly under it is an error at expansion time. Processing that depends on a previous value is
+    finished before `validate`, or the helper defk is given its own `validate`.
 
 ### `check`
 
-- `(check 演算子 引数 … :reason 理由)` か `(check 式 :reason 理由)`。`(check (= x 0))` は
-  `(check = x 0)` と同じに分解し、式と各引数の値を記録する。`and` / `or` のような短絡・制御の形は
-  分解せず、式と真偽だけを記録する(平たい形の `(check and a b)` は展開の時点で誤り)。
-- 各引数は左から評価する。`(! …)` の印を付けた引数だけを効果として実行し、結果の値で比べる
-  (`(check = (! (CountSeats node)) 0)` なら記録は「`(! (CountSeats node))` = 3」)。印の無い引数は、
-  Program の値でもそのまま比べる。
-- 引数か判定の評価が例外になったら、その検査の失敗(`CheckError`)として集める。他の検査は続く。
-- 書ける所は **`validate` の直下と、defk / do! の `:pre` / `:post` の中だけ**。defk の本体・`fn`・
-  内包表記の中に書くと展開の時点で誤りになる。検査がすべて `validate` か契約の所に並んで見え、
-  helper の中に隠れない。
+- `(check operator arg … :reason reason)` or `(check expression :reason reason)`. `(check (= x 0))` is
+    decomposed the same as `(check = x 0)`, recording the expression and the value of each argument. Short-circuit and control forms such as `and` / `or` are
+    not decomposed; only the expression and its truth value are recorded (the flat form `(check and a b)` is an error at expansion time).
+- Each argument is evaluated from the left. Only an argument marked with `(! …)` is executed as an effect, and its result value is compared
+    (for `(check = (! (CountSeats node)) 0)` the record is "`(! (CountSeats node))` = 3"). An argument without the mark is
+    compared as-is, even if it is a Program value.
+- If evaluating an argument or the verdict raises an exception, it is collected as the failure (`CheckError`) of that check. Other checks continue.
+- It can be written **only directly under `validate` and inside `:pre` / `:post` of defk / do!**. Writing it in the body of a defk, in `fn`, or in
+    a comprehension is an error at expansion time. All checks stay visible, lined up under `validate` or in the contract, and
+    are not hidden inside a helper.
 
-### 検査のまとまりを使い回す
+### Reusing a group of checks
 
-helper の defk の中に自分の `validate` を持たせ、その呼び出しを外の `validate` に項目として並べる。
-内側で落ちた `ValidationException` は、外側では 1 件の失敗(中の失敗の一覧を持つ)として数える。
+Give the helper defk its own `validate`, and line up its call as an item in the outer `validate`.
+A `ValidationException` that failed inside is counted as one failure on the outside (holding the list of failures inside).
 
 ```hy
 (defk job-is-bindable [job]
-  "job の種類と状態が、ノードに結びつけられるものかを確かめる。"
+  "Check that the kind and state of the job are such that it can be bound to a node."
   {:pre [(: job AgentJob)] :post [(: % NoneType)]}
   (! (validate
        (check in job.kind #(JobKind.TURN JobKind.SUMMARIZE) :reason PlacementMismatch.KIND)
@@ -121,56 +121,56 @@ yield validate(
     Check(operator.is_not, Perform(LookupConversation(request.conversation)), None,
           reason=PlacementMismatch.CONVERSATION),
     Check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
-    job_is_bindable(job),        # 自分の validate を持つ Program
+    job_is_bindable(job),        # a Program that has its own validate
 )
 ```
 
-Python では型 `Check` と `Perform` を直に書く(関数 `check`・`perform` は無い)。`Check(…)` は `validate` に
-渡す値で、単独では Program にならない(`yield` できない)。これで「check は validate の直下にだけ」を型で
-表す。`Perform(…)` が Hy の `(! …)` に当たる。`Check` の第 1 引数が callable でなければ、`Perform` に
-Program でも効果でもない値を渡せば、作る時に `TypeError` になる。Python の引数は `validate` を呼ぶ時に評価される(Hy のように項目の中へ遅らせない)。
+In Python, write the types `Check` and `Perform` directly (there are no functions `check` or `perform`). `Check(…)` is a value passed to `validate`
+and is not a Program on its own (it cannot be `yield`ed). This expresses "check goes only directly under validate" as a type.
+`Perform(…)` corresponds to Hy `(! …)`. If the first argument of `Check` is not callable, or if a value that is neither a
+Program nor an effect is passed to `Perform`, a `TypeError` is raised at construction. Python arguments are evaluated when `validate` is called (not deferred into the item as in Hy).
 
-### 走らせ方 — 逐次・並行・fail-fast
+### How to run — sequential, concurrent, fail-fast
 
 ```python
 from doeff import run
 from doeff_core_effects import scheduled
 from doeff_traverse import parallel, parallel_fail_fast, sequential
 
-run(sequential(program))                    # 逐次に全部走らせて集める
-run(scheduled(parallel(8)(program)))          # 並行に全部走らせて集める
-run(scheduled(parallel_fail_fast(1)(program)))  # 最初の失敗で止める(失敗は 1 件)
+run(sequential(program))                    # run everything sequentially and collect
+run(scheduled(parallel(8)(program)))          # run everything concurrently and collect
+run(scheduled(parallel_fail_fast(1)(program)))  # stop at the first failure (one failure)
 ```
 
-検査を書く側のコードは同じ。契約(`:pre` / `:post`)の check は関数の中でその場で順に評価するので、
-traverse の handler は要らない。
+The code that writes the checks is the same. The checks in a contract (`:pre` / `:post`) are evaluated in order on the spot inside the function,
+so no traverse handler is needed.
 
-## 失敗を値で受けたい時
+## When you want to receive the failure as a value
 
-`validate` が投げる `ValidationException` は、doeff の `Try` で値に変えられる:
+The `ValidationException` thrown by `validate` can be turned into a value with doeff's `Try`:
 
 ```hy
-(<- result (Try (validate …)))   ; Ok(None) か Err(ValidationException)
+(<- result (Try (validate …)))   ; Ok(None) or Err(ValidationException)
 ```
 
-`ValidationException.failures` は落ちた検査の記録の列(`CheckFailure` = 判定が偽・`CheckError` =
-評価が例外・入れ子の `ValidationException`)、`reasons` は理由の列。
+`ValidationException.failures` is the sequence of records of failed checks (`CheckFailure` = verdict false, `CheckError` =
+evaluation raised an exception, or a nested `ValidationException`); `reasons` is the sequence of reasons.
 
-## 例外の使い分け
+## Choosing how to use exceptions
 
-- **予想できる業務の失敗**(入力や観測の食い違い): `validate` / 契約の `check` で集めるか、値
-  (`Ok` / `Err`)で返す。
-- **続けられない異常**(不変条件の破れ・プログラムの誤り): 例外のまま。`validate` の Program の項目の中で
-  起きた `ValidationException` 以外の例外は、集めずにそのまま投げる。
-- **try-catch は境界でだけ**: 例外を値に変えたい所(呼び手の入口・API の境界)で `Try` を使う。
-  検査のたびに捕まえない。
+- **Foreseeable business failures** (mismatches in input or observation): collect them with `validate` / the contract `check`, or return a value
+    (`Ok` / `Err`).
+- **Unrecoverable anomalies** (broken invariants, program bugs): keep them as exceptions. Exceptions other than `ValidationException`
+    raised inside a Program item of `validate` are thrown as-is without being collected.
+- **try-catch only at boundaries**: use `Try` where you want to turn an exception into a value (the caller's entrance, an API boundary).
+    Do not catch at every check.
 
-## 型
+## Types
 
-| 名前 | 何か |
+| Name | What it is |
 | --- | --- |
-| `Check(predicate, *args, reason=…, expression=…)` | 検査 1 件の指定(`validate` の項目としてだけ意味を持つ) |
-| `CheckFailure` | 判定が偽だった検査の記録(式の字面・評価した引数の値・理由) |
-| `CheckError` | 引数か判定の評価が例外になった検査の記録 |
-| `ValidationException` | 失敗を全部持つ例外(`failures`・`reasons`・`context`) |
-| `Perform(program)` | Python の `Check` の引数を効果として実行する印 |
+| `Check(predicate, *args, reason=…, expression=…)` | Specification of one check (meaningful only as an item of `validate`) |
+| `CheckFailure` | Record of a check whose verdict was false (expression text, evaluated argument values, reason) |
+| `CheckError` | Record of a check where evaluating an argument or the verdict raised an exception |
+| `ValidationException` | Exception holding all failures (`failures`, `reasons`, `context`) |
+| `Perform(program)` | Mark that executes an argument of a Python `Check` as an effect |

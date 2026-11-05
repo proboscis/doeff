@@ -1,22 +1,22 @@
-;;; doeff-secret の層の宣言。
+;;; Layer declaration for doeff-secret.
 ;;;
-;;; doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い architecture.hy(この file)から決める(#2811)。
-;;; 層は foundation の 1 つだけを置き、名指すのは GetSecret に環境変数から答える handler の 1 module に限る。この package の
-;;; ほかの file の母集団は変わらない(今までどおり DOEFF004 が当たる)。
+;;; doeff-linter decides the per-statement rule population for Python from the nearest architecture.hy above the file (this file) (#2811).
+;;; Only one foundation layer is declared, and it names just one module: the handler that answers GetSecret from environment variables. The population of this package's
+;;; other files does not change (DOEFF004 applies as before).
 ;;;
-;;; foundation = 環境変数の読みが許される foundation の handler の層(環境変数の読みは
-;;;   foundation の handler の中だけで、外での読みは違反)。
-;;;   - doeff_secret._handlers: GetSecret に環境変数から答える handler(env_var_handler・env_var_handlers)。写像を渡されなければ
-;;;     この process の環境(os.environ)を読む。DOEFF004 を「os.environ への参照そのもの」へ広げた時に当たった 2 行
-;;;     (63・97 行)がこれ(cisco-c8 2026-10-03 02:0x の決め — 規則が許す場所の宣言で、違反を隠す除外ではない)。
-;;;   - 外す規則: DOEFF004(os.environ を直に読む)— 名指しの 1 module に限り、ほかの file を足さない。
-;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり handlers に当たる。この file を消すと、この package の file の母集団は
-;;;   根の設定へ戻る。
+;;; foundation = the layer of foundation handlers that are allowed to read environment variables (environment reads happen
+;;;   only inside foundation handlers; reads outside are violations).
+;;;   - doeff_secret._handlers: the handler that answers GetSecret from environment variables (env_var_handler, env_var_handlers). If no mapping is passed,
+;;;     it reads this process's environment (os.environ). These are the 2 lines (63 and 97) hit when DOEFF004 was widened to
+;;;     "any reference to os.environ" (decided by cisco-c8 2026-10-03 02:0x — a declaration of where the rule allows it, not an exclusion that hides violations).
+;;;   - Excluded rule: DOEFF004 (reading os.environ directly) — limited to the one named module; do not add other files.
+;;; How to revert: deleting the :exempt line makes DOEFF004 apply to handlers again. Deleting this file returns this package's file population to
+;;;   the root configuration.
 (defarchitecture doeff-secret
   :root "."
   :layers [(layer foundation
-             :summary "環境変数の読みが許される foundation の handler の層 — GetSecret に環境変数から答える handler"
-             :knows "環境変数の名・secret の id から環境変数の名への写し(接頭辞)"
-             :does-not-know "業務の Program・どの業務がどの secret を使うか"
+             :summary "The layer of foundation handlers allowed to read environment variables — the handler that answers GetSecret from environment variables"
+             :knows "environment variable names, the mapping (prefix) from a secret id to an environment variable name"
+             :does-not-know "business Programs, which business uses which secret"
              :modules [doeff_secret._handlers]
-             :exempt [(rule DOEFF004 "foundation の層 — GetSecret に環境変数から答える handler。環境変数の読みは foundation の handler の中だけ可")])])
+             :exempt [(rule DOEFF004 "foundation layer — the handler that answers GetSecret from environment variables. Environment reads are allowed only inside foundation handlers")])])

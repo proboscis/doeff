@@ -1,18 +1,18 @@
-"""Judge ⇄ HTTP の写し(純粋)。通信はしない。
+"""Mapping between Judge and HTTP (pure). No communication happens here.
 
-2 つの通信の形:
-- direct = TypeSafe の `/v1/systemone`。body {state, model, questions:{名: {type, instructions, criteria}}}、
-  答え {answers:{名: {choice|noul|score, confidence?, probabilities?}}, usage.input_tokens, model}。
-- gateway = Vercel AI Gateway の evaluation-model v4(実測 2026-09-22)。種類は choice / score /
-  boolean(noul は boolean に写す)、choice の criteria は record({id: 説明})、答えの確信度は
-  providerMetadata.typesafe.confidence[名]、boolean の答えは probability、usage は camelCase。
+The two wire formats:
+- direct = TypeSafe's `/v1/systemone`. body {state, model, questions:{name: {type, instructions, criteria}}},
+  answer {answers:{name: {choice|noul|score, confidence?, probabilities?}}, usage.input_tokens, model}.
+- gateway = Vercel AI Gateway's evaluation-model v4 (measured 2026-09-22). The kinds are choice / score /
+  boolean (noul is mapped to boolean), the criteria of choice is a record ({id: description}), the answer's confidence is
+  providerMetadata.typesafe.confidence[name], the answer of boolean is probability, and usage is camelCase.
 
-画像(Judge の assets)は direct だけが運ぶ: 本文の根の assets と見出し IMAGES_HEADER(https://docs.typesafe.ai/images.md —
-Jev 1.13 以降。見出しの無い要求を Jev は 400 で断る)。gateway の綴りは画像の形を持たないので、画像つきの Judge は JudgeError。
+Images (Judge's assets) are carried only by direct: the root assets of the body and the header IMAGES_HEADER (https://docs.typesafe.ai/images.md,
+Jev 1.13 and later. Jev rejects a request without the header with 400). The gateway format has no image shape, so a Judge with images is a JudgeError.
 
-中継(jev-proxy)との見出し: 呼び手の名は要求の見出し CALLER_HEADER(例 `rulebook-advisor/Stop`・`doeff-linter/DOEFF205`)で送る —
-本文に入れると中継の答えの鍵が変わるので見出しにする。中継は答えの見出し PROXY_HEADER で答えの出所(hit / miss / coalesced /
-refreshed)を名乗り、parse がそれを Verdict.proxy に写す。どちらの見出しも、中継を通らない宛先には意味を持たない(送っても読まれない)。
+Headers with the relay (jev-proxy): the caller name is sent in the request header CALLER_HEADER (e.g. `rulebook-advisor/Stop`, `doeff-linter/DOEFF205`),
+because putting it in the body would change the relay's answer key. The relay declares the origin of the answer (hit / miss / coalesced /
+refreshed) in the response header PROXY_HEADER, and parse maps it to Verdict.proxy. Neither header has meaning for a destination that does not go through the relay (sent but not read).
 """
 
 import hashlib
@@ -30,7 +30,7 @@ from doeff_jev._target import JevTarget
 IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
 CALLER_HEADER = "x-jev-caller"
 PROXY_HEADER = "x-jev-proxy"
-#: 見出しの値に残す字(ほかは %XX に写す — HTTP の見出しの値は ASCII に限るので、日本語の名でも要求を壊さない)。
+#: Characters kept in header values (the rest become %XX; HTTP header values are limited to ASCII, so even Japanese names do not break the request).
 _CALLER_SAFE = "/:@._-+="
 
 
@@ -42,7 +42,7 @@ class Prepared:
 
 
 def _gateway_question(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """gateway の綴り: noul は boolean。criteria の形(choice = record・score = 列)は direct と同じ。"""
+    """The gateway format: noul is boolean. The shape of criteria (choice = record, score = list) is the same as direct."""
     kind = payload.get("type", "choice")
     out: dict[str, Any] = {"type": "boolean" if kind == "noul" else kind,
                            "instructions": payload.get("instructions", "")}
@@ -53,12 +53,12 @@ def _gateway_question(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def caller_header_value(caller: str) -> str:
-    """呼び手の名を見出しの値に写す(ASCII の英数字と _CALLER_SAFE の字はそのまま・ほかは %XX)。"""
+    """Map the caller name to a header value (ASCII alphanumerics and the characters of _CALLER_SAFE stay as they are; the rest become %XX)."""
     return quote(caller, safe=_CALLER_SAFE)
 
 
 def prepare(target: JevTarget, judge: Judge, *, caller: str = "") -> Prepared:
-    """Judge を宛先の形の request に写す。caller が空でなければ見出し CALLER_HEADER で呼び手の名を送る。"""
+    """Map a Judge to a request in the destination's shape. If caller is non-empty, the caller name is sent in the header CALLER_HEADER."""
     questions = {name: question.as_payload() for name, question in judge.questions.items()}
     headers: dict[str, str] = {"content-type": "application/json"}
     if target.api_key:
@@ -66,7 +66,7 @@ def prepare(target: JevTarget, judge: Judge, *, caller: str = "") -> Prepared:
     if caller:
         headers[CALLER_HEADER] = caller_header_value(caller)
     if judge.assets and target.wire == "gateway":
-        raise JudgeError("unsupported", "gateway の綴りは画像(assets)を運ばない — direct の宛先で問う")
+        raise JudgeError("unsupported", "the gateway format does not carry images (assets); ask a direct destination")
     if target.wire == "gateway":
         headers.update({
             "ai-gateway-protocol-version": "0.0.1",
@@ -101,7 +101,7 @@ def _parse_answer(kind: str, raw: Mapping[str, Any], gateway_confidence: float |
 
 
 def proxy_outcome(headers: Mapping[str, str]) -> str | None:
-    """答えの見出しから中継の名乗った答えの出所を読む(見出しの名の大小は問わない)。名乗りが無ければ None。"""
+    """Read the answer origin declared by the relay from the response headers (header names are case-insensitive). None if not declared."""
     for name, value in headers.items():
         if name.lower() == PROXY_HEADER:
             return value.strip().lower() or None
@@ -110,9 +110,9 @@ def proxy_outcome(headers: Mapping[str, str]) -> str | None:
 
 def parse(target: JevTarget, judge: Judge, status: int, text: str, *,
           elapsed_ms: int = 0, headers: Mapping[str, str] | None = None) -> Verdict:
-    """HTTP の答えを Verdict に写す。状態が 4xx/5xx・本文が壊れている時は JudgeError。
+    """Map an HTTP response to a Verdict. JudgeError when the status is 4xx/5xx or the body is broken.
 
-    headers = 答えの見出し(中継の名乗り PROXY_HEADER を Verdict.proxy に写す)。
+    headers = the response headers (maps the relay's self-identification PROXY_HEADER to Verdict.proxy).
     """
     if status >= 400:
         raise JudgeError("http", f"{status} {text[:160].strip()}", status=status)
@@ -142,12 +142,12 @@ def parse(target: JevTarget, judge: Judge, status: int, text: str, *,
 
 
 def cache_key(target: JevTarget, judge: Judge) -> str:
-    """答えの cache の鍵 — 宛先・model・state・問いの綴りで決まる(process をまたいで安定)。"""
+    """The answer cache key: determined by the destination, model, state, and the shape of the questions (stable across processes)."""
     keyed: dict[str, Any] = {
         "url": target.base_url, "model": target.model, "state": judge.state,
         "questions": {name: q.as_payload() for name, q in judge.questions.items()},
     }
-    # 画像は在る時だけ鍵に入れる(画像の無い判定の鍵は前と同じ — 覚えた答えを外さない)。
+    # Images go into the key only when present (the key of an image-less judgment stays as before, so remembered answers are not invalidated).
     if judge.assets:
         keyed["assets"] = {name: asset.as_payload() for name, asset in judge.assets.items()}
     material = json.dumps(keyed, ensure_ascii=False, sort_keys=True, default=repr).encode("utf-8")

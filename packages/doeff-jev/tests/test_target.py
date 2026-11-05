@@ -1,4 +1,4 @@
-"""宛先の解き方(純粋・環境と file は注入)。"""
+"""How the destination is resolved (pure; environment and files are injected)."""
 
 import json
 

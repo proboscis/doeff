@@ -71,7 +71,7 @@ class SemgrepSpec:
 
 @dataclass(frozen=True)
 class SemgrepResult:
-    """semgrep の --json の結果 1 件のうち、検が読む欄 — JSON の境界で型のある値にして、使い手が dict を引かないため。"""
+    """The fields the checker reads from one entry of the semgrep --json result — typed values at the JSON boundary so callers do not index into a dict."""
 
     check_id: str
     path: str
@@ -96,8 +96,8 @@ class AdrSpec:
 
 _ADRS: dict[str, AdrSpec] = {}
 _ENFORCEMENTS: dict[str, EnforcementRef | SemgrepSpec] = {}
-# installed の defsemgrep の例の組 1 つに当たった規則の id(鍵 = semgrep の版・設定の中身・例の中身の digest — semgrep_verdicts)。
-# 同じ設定を読む規則の例を 1 回の semgrep で確かめ、同じ process の残りの検はここから読む。
+# Ids of the rules that matched one installed defsemgrep example group (key = semgrep version, config contents, example contents digest — semgrep_verdicts).
+# Examples for rules that read the same config are checked in one semgrep run; the remaining checks in the same process read from here.
 _INSTALLED_VERDICTS: dict[str, frozenset[str]] = {}
 
 
@@ -106,22 +106,22 @@ def _clear_registry(
     adrs: dict[str, AdrSpec] | None = None,
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
 ) -> None:
-    """ADR の表と検の表(None = process の登録簿)を空にする。外からは effect ClearRegistry で空にする(handler adr_registry が
-    答える)。"""
+    """Empty the ADR table and the enforcement table (None = the process registry). From outside, empty them with the effect ClearRegistry (answered by the handler adr_registry
+    for it)."""
     (_ADRS if adrs is None else adrs).clear()
     (_ENFORCEMENTS if table is None else table).clear()
 
 
 @contextmanager
 def isolated_registry() -> Generator[None]:
-    """空の登録簿で中を走らせ、出る時に入る前の登録簿へ戻す。
+    """Run the body with an empty registry and restore the previous registry on exit.
 
-    収集で import された ADR は収集の時点で登録簿に載る — 空にしたまま返す test があると、後で走るその ADR の条文の
-    test が KeyError で落ちる。test が登録簿を空にしたい時はこれを使う。
+    ADRs imported during collection are registered in the registry at collection time — if a test returns with the registry left empty, the tests for that ADR's articles that run later
+    fail with KeyError. Use this when a test wants to empty the registry.
 
-    effect だけで読み書きする test は、これでなく別の登録簿を据えた handler adr_registry(specs=[], enforcements={}) で足りる。
-    これが要るのは、macro defadr・defsemgrep の展開が import の時に process の登録簿へ載せる所を試す test だけ(展開は
-    handler を自分で据えるので、外から差し替えられない)。
+    A test that only reads and writes through effects can instead use a separate registry installed with the handler adr_registry(specs=[], enforcements={}).
+    This is needed only by tests that exercise the place where the expansion of the macros defadr and defsemgrep registers into the process registry at import time (the expansion
+    installs its own handler, so it cannot be swapped from outside).
     """
     saved_adrs = dict(_ADRS)
     saved_enforcements = dict(_ENFORCEMENTS)
@@ -209,8 +209,8 @@ def _register_deftest_enforcement(
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
     mode: EnforcementMode = "green",
 ) -> EnforcementRef:
-    """deftest の検を表(None = process の登録簿)に載せる。外からは effect RegisterDeftest で載せる(handler
-    adr_registry が答える)。"""
+    """Register a deftest enforcement in the table (None = the process registry). From outside, register it with the effect RegisterDeftest (answered by the handler
+    adr_registry)."""
     _ensure_new_enforcement_id(enforcement_id, table)
     normalized_mode = _normalize_enforcement_mode(mode)
     ref = EnforcementRef(id=enforcement_id, kind="deftest", mode=normalized_mode)
@@ -236,8 +236,8 @@ def _register_semgrep_enforcement(
     clean_fixtures: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
     mode: EnforcementMode = "green",
 ) -> SemgrepSpec:
-    """Semgrep の検を表(None = process の登録簿)に載せる。外からは effect RegisterSemgrep で載せる(handler
-    semgrep_enforcements が答える)。"""
+    """Register a Semgrep enforcement in the table (None = the process registry). From outside, register it with the effect RegisterSemgrep (answered by the handler
+    semgrep_enforcements)."""
     _ensure_new_enforcement_id(enforcement_id, table)
     if pattern is None and rule_id is None:
         raise ValueError("defsemgrep requires either pattern= or rule_id=")
@@ -278,8 +278,8 @@ def _register_adr(
     adrs: dict[str, AdrSpec] | None = None,
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
 ) -> AdrSpec:
-    """ADR を表(adrs・table が None = process の登録簿)に載せる。enforcement の検の id は検の表 table から種類を読む。
-    外からは effect RegisterAdr で載せる(handler adr_registry が答える・macro defadr の展開も同じ)。"""
+    """Register an ADR in the table (adrs; table None = the process registry). The kind of an enforcement id is read from the enforcement table `table`.
+    From outside, register it with the effect RegisterAdr (answered by the handler adr_registry; the expansion of the macro defadr does the same)."""
     by_id = _ADRS if adrs is None else adrs
     if adr_id in by_id:
         raise ValueError(f"duplicate ADR id: {adr_id}")
@@ -306,7 +306,7 @@ def _register_adr(
 def _coerce_enforcement_ref(
     item: Any, enforcements: dict[str, EnforcementRef | SemgrepSpec]
 ) -> EnforcementRef:
-    """defadr の :enforcement の項 1 つを、ADR に書く検の参照にする(id は enforcements の表から種類を読む)。"""
+    """Turn one :enforcement item of defadr into the enforcement reference written in the ADR (the kind of the id is read from the enforcements table)."""
     if isinstance(item, EnforcementRef):
         return item
     if isinstance(item, SemgrepSpec):
@@ -322,32 +322,32 @@ def _coerce_enforcement_ref(
 
 
 def _adr_ids() -> list[str]:
-    """登録簿の ADR の id を並べる。外からは effect AdrIds で読む(handler adr_registry が答える)。"""
+    """List the ids of the ADRs in the registry. From outside, read them with the effect AdrIds (answered by the handler adr_registry)."""
     return sorted(_ADRS)
 
 
 def _enforcement_ids(table: dict[str, EnforcementRef | SemgrepSpec] | None = None) -> list[str]:
-    """検の表(None = process の登録簿)の id を並べる。外からは effect EnforcementIds で読む(handler adr_registry が答える)。"""
+    """List the ids in the enforcement table (None = the process registry). From outside, read them with the effect EnforcementIds (answered by the handler adr_registry)."""
     return sorted(_ENFORCEMENTS if table is None else table)
 
 
 def _get_adr(adr_id: str) -> AdrSpec:
-    """登録簿の ADR を id で引く。外からは effect GetAdr で引く(handler adr_registry が答える)。"""
+    """Look up an ADR in the registry by id. From outside, look it up with the effect GetAdr (answered by the handler adr_registry)."""
     return _ADRS[adr_id]
 
 
 def _get_enforcement(
     enforcement_id: str, *, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
 ) -> EnforcementRef | SemgrepSpec:
-    """検の表(None = process の登録簿)の検を id で引く。外からは effect GetEnforcement で引く(handler adr_registry が答える)。"""
+    """Look up an enforcement in the enforcement table (None = the process registry) by id. From outside, look it up with the effect GetEnforcement (answered by the handler adr_registry)."""
     return (_ENFORCEMENTS if table is None else table)[enforcement_id]
 
 
 def _assert_adr_contract(
     spec: AdrSpec, *, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
 ) -> None:
-    """ADR の形を確かめる: 採用済みなら検が 1 つ以上在り、挙げた検が表(None = process の登録簿)に載り、expected-red の検は
-    計画に結ばれている。外からは effect AssertAdrContract・AssertAllAdrContracts で確かめる。"""
+    """Check the shape of an ADR: an adopted one has at least one enforcement, the listed enforcements are in the table (None = the process registry), and expected-red enforcements
+    are tied to a plan. From outside, check with the effects AssertAdrContract and AssertAllAdrContracts."""
     enforcements = _ENFORCEMENTS if table is None else table
     if spec.status == "accepted" and not spec.enforcement:
         raise AssertionError(f"{spec.id}: accepted ADR must have executable enforcement")
@@ -366,8 +366,8 @@ def _assert_semgrep_enforcement(
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
     semgrep: str | None = None,
 ) -> None:
-    """表(None = process の登録簿)の Semgrep の検を走らせ、規則が当たる見本に当たり、当たらない見本に当たらない事を
-    確かめる(semgrep = 走らせる実行 file・None は PATH の semgrep)。外からは effect AssertSemgrep で確かめる。"""
+    """Run the Semgrep enforcements in the table (None = the process registry) and check that the rule matches the samples it should match and does not match the ones it should not
+    (semgrep = the executable to run; None means semgrep on PATH). From outside, check with the effect AssertSemgrep."""
     enforcements = _ENFORCEMENTS if table is None else table
     spec = enforcements[enforcement_id]
     if not isinstance(spec, SemgrepSpec):
@@ -375,7 +375,7 @@ def _assert_semgrep_enforcement(
     executable = shutil.which("semgrep") if semgrep is None else semgrep
     if executable is None:
         raise AssertionError("semgrep executable is required for defsemgrep enforcement")
-    # 名指した実行 file が無い時も、subprocess の FileNotFoundError でなく同じ文で断る(構成のレビューの所見 4)。
+    # When the named executable is missing, fail with the same message instead of the subprocess FileNotFoundError (finding 4 of the configuration review).
     if not Path(executable).is_file():
         raise AssertionError(
             f"semgrep executable is required for defsemgrep enforcement: {executable} is not a file"
@@ -469,13 +469,13 @@ def _installed_verdict(
     fixtures: tuple[dict[str, str], ...],
     table: dict[str, EnforcementRef | SemgrepSpec],
 ) -> frozenset[str]:
-    """例の組 1 つに当たった規則の id — 同じ設定を読む規則の例をまとめて 1 回の semgrep で確かめた答えから読む。
+    """Ids of the rules that matched one example group — read from the answer of a single semgrep run that checks the examples of all rules reading the same config together.
 
-    規則の検 1 本ごとに semgrep を起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ重なる
-    (agora-controllers の defadr_turn_boundary は 7 規則で 14 回・約 33 秒)。最初の検の時に、
-    同じ設定を読む表(table — 確かめる検の載る表)の規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。呼び手が置き場を名指して
-    いれば(semgrep_verdicts.verdict_store)、先に置き場から読み、回した答えを置き場に残す — 設定も例も変わらない次の process は
-    semgrep を起こさない(日次は session と設定ごとに 1 回の起動 約 8 秒を毎回払っていた)。
+    Starting semgrep once per rule enforcement multiplies the cost of one launch (about 2.3 seconds) by "number of rules x 2"
+    (agora-controllers' defadr_turn_boundary has 7 rules, so 14 launches, about 33 seconds). At the first enforcement, we
+    collect all the matching and non-matching examples of the rules in the table (`table` — the table holding the enforcement being checked) that read the same config, run them once, and remember the answer. If the caller names a store
+    (semgrep_verdicts.verdict_store), read from the store first and leave the answer of the run in the store — the next process whose config and examples are unchanged
+    does not launch semgrep (the daily run used to pay about 8 seconds for one launch per session and config every time).
     """
     identity = semgrep_identity(semgrep)
     config_digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
@@ -509,8 +509,8 @@ def _installed_verdict(
     return verdicts[key]
 
 
-# 子 process を、git の repo の場所を決める環境変数を外して起こす前置き — 外の repo の hook の中で回っても、
-# 組ごとの git の repo が root になるようにするため(環境を読まずに外すので env -u で渡す)。
+# Prefix that launches a child process with the environment variables that decide the git repo location removed — so that even when run inside the hook of an outer repo,
+# the git repo of each group becomes the root (the variables are removed without reading the environment, so they are passed via env -u).
 _WITHOUT_GIT_ENV: tuple[str, ...] = (
     "env",
     "-u",
@@ -531,26 +531,26 @@ def _run_installed_semgrep_batch(
     config_path: Path,
     fixture_sets: dict[str, tuple[dict[str, str], ...]],
 ) -> dict[str, frozenset[str]]:
-    """例の組ごとに、当たった規則の id を 1 回の semgrep で出す。
+    """Run one semgrep for all example groups and output the ids of the rules that matched, per group.
 
-    組ごとの dir に例を書き、組ごとに git の repo にする — semgrep は対象の dir ごとに一番近い git の root を
-    project root に取るので、root に固定した paths.include(``/controllers/**`` の形)が組ごとに効き、組の間で
-    例の path が重なってもよい。``--project-root`` は 1 つしか渡せないので渡さない。外の git の repo の中に木を
-    置いても、commit の hook が GIT_DIR を渡していても root がそちらへ落ちないよう、git の環境変数を外して回す
-    (落ちると root に固定した include が黙って死ぬ — 実測 2026-10-03: 外の repo の中で 7 規則の当たる例が全部外れた)。
+    Write the examples in a per-group dir and make each a git repo — semgrep takes the nearest git root of each target dir as the
+    project root, so paths.include pinned to the root (the ``/controllers/**`` form) works per group, and example
+    paths may overlap between groups. ``--project-root`` can be passed only once, so it is not passed. Even if the tree is
+    placed inside an outer git repo, or a commit hook passes GIT_DIR, run with the git environment variables removed so the root does not fall to that repo
+    (if it did, an include pinned to the root would silently die — measured 2026-10-03: all matching examples of 7 rules missed inside an outer repo).
     """
     cases = {f"case-{index}": key for index, key in enumerate(fixture_sets)}
     with tempfile.TemporaryDirectory(prefix="doeff-adr-installed-semgrep-") as tmp:
         root = Path(tmp)
         for case, key in cases.items():
             (root / case).mkdir()
-            # 組の根に空の .semgrepignore を置く: 無いと semgrep は dir を歩く時に既定の除外(tests/・test/・build/ ほか)を
-            # 当て、tests/ の下の当たる例を黙って読まずに「規則が当たらない」赤にする(#1201 — 532225d21 で例を名指しから
-            # 組の dir 渡しにして enforce_002 の 4 本が赤)。名指しに戻すと root に固定した include が組の根で効かない。
-            # 例より先に書く — 例が同じ名を持てば _write_semgrep_structured_fixtures が FileExistsError で止める。
+            # Put an empty .semgrepignore at the group root: without it, when walking a dir semgrep applies its default excludes (tests/, test/, build/ and others),
+            # silently skipping the matching examples under tests/ and turning "the rule does not match" red (#1201 — when 532225d21 changed the examples from being named
+            # individually to passing the group dir, 4 of enforce_002 went red). Going back to naming them makes an include pinned to the root ineffective at the group root.
+            # Write it before the examples — if an example has the same name, _write_semgrep_structured_fixtures stops with FileExistsError.
             (root / case / ".semgrepignore").write_text("", encoding="utf-8")
             _write_semgrep_structured_fixtures(root / case, fixture_sets[key])
-            # GIT_DIR が残ると git init は組の dir ではなく GIT_DIR の repo を初期化し直す。
+            # If GIT_DIR remains, git init re-initializes the repo at GIT_DIR instead of the group dir.
             subprocess.run(
                 [*_WITHOUT_GIT_ENV, "git", "init", "-q", str(root / case)],
                 check=True,
@@ -636,10 +636,10 @@ def _write_semgrep_structured_fixtures(
 
 
 def _semgrep_error_report(stdout: str) -> str:
-    """semgrep が失敗した時の stdout(--json の答え)から、理由を読める塊にするため。
+    """Turn the stdout (the --json answer) of a failed semgrep into a readable chunk of reasons.
 
-    errors の各項の種類・規則・file・文言を 1 行ずつ並べる(多い時は頭の 10 件)。JSON でない・errors が無い時は
-    stdout の頭をそのまま出す(何も捨てない)。
+    List the kind, rule, file, and message of each item of errors, one per line (the first 10 when there are many). When it is not JSON or has no errors,
+    output the head of stdout as is (nothing is discarded).
     """
     try:
         payload = json.loads(stdout)
@@ -673,17 +673,17 @@ def _run_semgrep(
         [
             *launcher,
             semgrep,
-            # 検査の意味は tree だけで決まる — scanner に network(metrics 送信・
-            # 新版照会)を許すと、到達性や応答時間という機体の事情が検査の実行に
-            # 混入する(オフライン機で hang、飽和網で timeout)。
+            # The meaning of the check is decided by the tree alone — if we let the scanner use the network (sending metrics,
+            # querying for a new version), machine circumstances such as reachability and response time
+            # leak into the check run (hangs on offline machines, timeouts on saturated networks).
             "--metrics=off",
             "--disable-version-check",
-            # project root は明示宣言する。git metadata からの推論に任せると、
-            # .git の無い検査 tree で root が走査対象 dir 自身に落ち、対象より
-            # 上のセグメントを参照する paths.include だけが無音で死ぬ(zeus 実測
-            # 2026-08-17: 発火する rule としない rule が include の形で割れた)。
-            # None は「対象の dir ごとに git の repo を作って root を固めた」呼び手
-            # (_run_installed_semgrep_batch)だけが渡す — root を 1 つに決められないため。
+            # State the project root explicitly. If we leave it to inference from git metadata,
+            # in a check tree without .git the root falls to the scanned dir itself, and only paths.include that refers to
+            # segments above the target dies silently
+            # (zeus measurement 2026-08-17: rules that fire and rules that do not split by the shape of include).
+            # None is passed only by the caller (_run_installed_semgrep_batch) that "made a git repo per target dir and fixed the root
+            # there" — because the root cannot be decided as a single one.
             *(() if project_root is None else ("--project-root", str(project_root))),
             "--quiet",
             "--json",
@@ -697,19 +697,19 @@ def _run_semgrep(
         text=True,
     )
     if proc.returncode not in (0, 1):
-        # --quiet --json では、規則の読みの失敗・対象の parse の失敗・時間切れの理由は stderr に出ず、
-        # stdout の JSON の errors にだけ載る — stderr だけを名乗ると理由が空のまま落ちる
-        # (agora の日次で「semgrep failed with exit 2:」だけが残り、
-        # 規則の読みか semgrep の版かを名指せなかった)。
+        # With --quiet --json, the reasons for a rule-load failure, a target parse failure, and a timeout do not appear on stderr but
+        # only in the errors of the stdout JSON — naming only stderr leaves the reason empty
+        # (in the agora daily run only "semgrep failed with exit 2:" remained,
+        # and we could not name whether it was the rule load or the semgrep version).
         raise AssertionError(
             f"semgrep failed with exit {proc.returncode}: {proc.stderr}\n"
             f"{_semgrep_error_report(proc.stdout)}"
         )
-    # exit 1 は「findings あり」と「起動時 crash」の両方が返す — JSON の実在だけが
-    # scan が本当に走った証拠。走らなかった scan を「発火なし」と黙読すると、
-    # scanner の故障が『rule が発火しない』という偽の赤/緑に化ける(zeus 実測
-    # 2026-08-17: interpreter 不整合で semgrep が import 時に crash し、installed
-    # rule 全滅が『hit fixture に発火しない』と誤診された)。
+    # exit 1 is returned both for "findings present" and for "crash at startup" — only the existence of JSON is
+    # evidence that the scan really ran. Silently reading a scan that did not run as "no findings" turns
+    # a scanner fault into a false red/green of "the rule does not fire" (zeus measurement
+    # 2026-08-17: an interpreter mismatch made semgrep crash at import time, and all installed
+    # rules were misdiagnosed as "does not fire on the hit fixture").
     try:
         payload = json.loads(proc.stdout)
     except ValueError as exc:
@@ -756,11 +756,11 @@ def _resolve_config_path(config: str) -> Path:
 
 
 def _find_tree_root(start: Path, config: Path) -> Path:
-    """config を実際に持つ最近接の祖先 dir = 検査 tree の root。
+    """The nearest ancestor dir that actually holds the config = the root of the check tree.
 
-    git metadata(.git)を根拠にしない — 検査の意味は tree だけで決まる。
-    遠隔検査 tree は git ls-files の名簿だけを運び .git を持たない(実測
-    2026-08-17 zeus: .git 錨のせいで installed-rule defsemgrep が全滅した)。
+    Do not rely on git metadata (.git) — the meaning of the check is decided by the tree alone.
+    A remote check tree carries only the list from git ls-files and has no .git (measured
+    2026-08-17 zeus: the .git anchor wiped out every installed-rule defsemgrep).
     """
     root = start.resolve()
     while True:

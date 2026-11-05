@@ -1,65 +1,62 @@
 # doeff-stream
 
-入力の source を 1 つの列に merge し、純な step で fold する runtime です。
+A runtime that merges input sources into a single stream and folds it with a pure step.
 
 ```
-host = fold(step, 初期の状態, merge(subscribe(...), timers()))
+host = fold(step, initial_state, merge(subscribe(...), timers()))
 ```
 
-- step は純な関数 `step(state, input) -> Next(state, effects)` か、その `Next` を答える Program を返す関数(別の defk を `<-` で呼ぶだけの defk)です。effect は値で、runtime が実行します。step の Program は effect を 1 つも出せません(節「step を Program で書く」)。
-- runtime は `Run(key, program)` を 1 つずつ自分の task で走らせ、その task の終わりを必ず 1 つの入力として step に戻します。
-  値で終われば `Answered(key, value)`、例外で終われば `Raised(key, error)`、step の `CancelRun(key)` で止まれば `Cancelled(key)`。
-- fold は effect の答えを待ちません。待つのは次の入力だけです。
+- A step is either a pure function `step(state, input) -> Next(state, effects)` or a function that returns a Program answering that `Next` (a defk that only calls other defks with `<-`). Effects are values, and the runtime executes them. A step's Program cannot yield any effect (see the section "Writing a step as a Program").
+- The runtime runs each `Run(key, program)` in its own task, and always returns the end of that task to the step as exactly one input.
+  Finishing with a value gives `Answered(key, value)`, finishing with an exception gives `Raised(key, error)`, and being stopped by the step's `CancelRun(key)` gives `Cancelled(key)`.
+- The fold does not wait for effect answers. It waits only for the next input.
 
-中身は 4 つだけです。map・window・backpressure のような operator の群は持ちません。
+There are only four parts. There is no family of operators such as map, window, or backpressure.
 
-| 部品 | 口 | 中身 |
+| Part | Entry point | Contents |
 |---|---|---|
-| Source | `subscribe(*types)`・`timers()` | 外の task が bus に出す出来事と、step が置いた timer の期限(`TimerFired`)。effect の答えと task の終わり、止めの合図(`StopArrived`)と合図の源の失敗(`SourceFailed`)は runtime 自身の source で、どの merge にも必ず入る |
-| merge | `merge(*sources) -> Inputs` | source を 1 つの入力の列にする。`Inputs.event_types` が fold の待つ型の全部 |
-| fold | `fold(step, initial, inputs)` | 入力を 1 つずつ step に渡し、答えの effect を順に実行する。`Finish(value)` で `value` を答える |
-| test の harness | `replay(step, initial, inputs) -> Replay` | 入力の列を step に与え、状態(`states`・`final`)と effect(`effects`)の列を返す。素の関数の step は VM を使わない。Program を返す step は、fold と同じ評価(effect を全部断る handler)で入力 1 つごとに VM の上で走らせる |
-| 模擬の土台 | `simulate_fold(step, initial, inputs, *, events, handlers, start_time)` | fold を本番と同じ形に組み、時計を仮の時計(`sim_time_handler`)に、bus を memory の `EventBus` にして走らせ、fold の答えを返す(節「模擬の土台で走らせる」) |
+| Source | `subscribe(*types)`, `timers()` | Events that outside tasks publish to the bus, and the deadlines (`TimerFired`) that the step has set. Effect answers, task endings, the stop signal (`StopArrived`), and failures of the signal's source (`SourceFailed`) are the runtime's own sources and are always included in every merge |
+| merge | `merge(*sources) -> Inputs` | Turns sources into a single stream of inputs. `Inputs.event_types` is the full set of types the fold waits for |
+| fold | `fold(step, initial, inputs)` | Passes inputs to the step one at a time and executes the answered effects in order. `Finish(value)` answers `value` |
+| test harness | `replay(step, initial, inputs) -> Replay` | Feeds a sequence of inputs to the step and returns the sequence of states (`states`, `final`) and effects (`effects`). A plain-function step does not use the VM. A step that returns a Program is run on the VM once per input, using the same evaluation as the fold (a handler that rejects every effect) |
+| simulation base | `simulate_fold(step, initial, inputs, *, events, handlers, start_time)` | Assembles the fold in the same shape as production, runs it with a simulated clock (`sim_time_handler`) and an in-memory `EventBus`, and returns the fold's answer (see the section "Running on the simulation base") |
 
-## step が返す effect
+## Effects a step returns
 
-| effect | 振る舞い |
+| effect | Behavior |
 |---|---|
-| `Run(key, program)` | `program`(Program か effect)を新しい task で走らせる。終わりは `key` を持つ入力 1 つで戻る。走っている key の `Run` と、Program でも effect でもない `program` は断る |
-| `CancelRun(key)` | `key` の task を取り消す。終わりはやはり 1 つの入力で戻る(取り消しが効けば `Cancelled`、先に終わっていればその終わり)。走っていない key は何もしない |
-| `Arm(tag, at)` | この fold の期限 `tag` を `at`(時刻帯つきの `datetime`)に置く。task は立てず、fold が timer の handler へ `ArmTimer` を渡す。`at` に `TimerFired(tag)` の入力で戻る。置いてある tag をもう一度置くと期限が動く。`timers()` を source に持たない fold では断る |
-| `Disarm(tag)` | この fold の期限 `tag` を外す。その `TimerFired` は戻らない。置いていない tag(外した・もう戻った物を含む)は何もしない |
-| `Finish(value)` | fold を終える。1 つの答えに 1 つまでで、どこに置いてもほかの effect の後に実行する。走っている task を取り消し、全部が終わるのを待ってから `value` を答える(その終わりは step に渡さない) |
+| `Run(key, program)` | Runs `program` (a Program or an effect) in a new task. Its end comes back as a single input carrying `key`. A `Run` for a key that is already running, and a `program` that is neither a Program nor an effect, are rejected |
+| `CancelRun(key)` | Cancels the task for `key`. Its end still comes back as a single input (`Cancelled` if the cancellation took effect, or its own ending if it had already finished). Does nothing for a key that is not running |
+| `Arm(tag, at)` | Sets this fold's deadline `tag` to `at` (a timezone-aware `datetime`). No task is created; the fold hands `ArmTimer` to the timer handler. It comes back at `at` as a `TimerFired(tag)` input. Setting an existing tag again moves the deadline. Rejected in a fold that does not have `timers()` as a source |
+| `Disarm(tag)` | Removes this fold's deadline `tag`. Its `TimerFired` does not come back. Does nothing for a tag that is not set (including one already removed or already fired) |
+| `Finish(value)` | Ends the fold. At most one per answer, and it is executed after the other effects wherever it is placed. It cancels running tasks, waits for all of them to finish, and then answers `value` (their endings are not passed to the step) |
 
-step が例外を上げた時、または fold の task が取り消された時は、置いたままの期限を外し、走っている task を取り消してから例外を先へ通します。`Finish` の時も置いたままの期限を外します。
+When the step raises an exception, or when the fold's task is cancelled, the fold removes the deadlines that are still set, cancels the running tasks, and then lets the exception propagate. It also removes the remaining deadlines on `Finish`.
 
-`Arm` の期限は、fold が自分の印と `tag` を組にした tag で timer の handler に置きます。`TimerFired` は bus の全部の購読者に届きますが、fold は自分の印の物だけを `TimerFired(tag)` に戻して step に渡し、同じ bus の別の fold の期限は読み捨てます。だから同じ bus の fold どうしが同じ tag を使っても混ざりません。期限 1 つの掛け直しに task も run の終わりも要りません(`Run(key, ArmTimer(tag, at))` は task を 2 つ立て、終わりの入力が 1 つ増えます)。
+The fold sets an `Arm` deadline in the timer handler with a tag that pairs its own mark with `tag`. `TimerFired` reaches every subscriber on the bus, but the fold turns back only the ones with its own mark into `TimerFired(tag)` for the step, and discards the deadlines of other folds on the same bus. So folds on the same bus do not get mixed up even if they use the same tag. Re-arming a single deadline needs neither a task nor a run ending (`Run(key, ArmTimer(tag, at))` creates two tasks and adds one ending input).
 
-## 終わりが必ず入力になる訳
+## Why every ending becomes an input
 
-`Run` 1 つに task を 2 つ立てます。program を走らせる task と、それを `Wait` で見張る task です。見張りは try/except で終わりを
-受けて、値・例外・取り消しのどれでも `Publish` を 1 度します。`CancelRun` が取り消すのは program の task だけで、見張りは
-取り消しません。だから、始まる前に取り消された task の終わりも入力になります。program の task が `TaskCancelledError` で
-終わった時は、step がその key を取り消していれば `Cancelled`、自分で上げた物(取り消された別の task の待ち)なら `Raised` です。
+A single `Run` creates two tasks: the task that runs the program, and a task that watches it with `Wait`. The watcher receives the ending in a try/except and does one `Publish` for any of value, exception, or cancellation. `CancelRun` cancels only the program's task, not the watcher.
+So even the ending of a task cancelled before it started becomes an input. When the program's task ends with `TaskCancelledError`, the result is `Cancelled` if the step cancelled that key, and `Raised` if the error was raised by the program itself (waiting on another task that was cancelled).
 
-見張りの `Publish` は fold の購読者の列に積まれるので、step が別の入力を処理している間に終わった task も落ちません。同じ bus の
-別の fold が走らせた task の終わりは、その fold の物と見分けて読み捨てます。
+The watcher's `Publish` is queued in the fold's subscriber queue, so a task that ends while the step is handling another input is not lost. The ending of a task run by another fold on the same bus
+is told apart from this fold's own and discarded.
 
-## step と run が守る約束
+## Contracts that steps and runs must keep
 
-| 約束 | 訳 |
+| Contract | Reason |
 |---|---|
-| 部品ごとに key を分ける(`("fetch", item)` のように、頭に部品の名を置いた tuple) | 走っている key の `Run` は断られ、run の終わりは key でしか振り分けられない |
-| 同じ bus に fold を 2 つ置き、run で timer を置く(`Run(key, ArmTimer(tag, at))`)時は、その tag を fold ごとに分ける | run が置いた timer の `TimerFired` は bus の全部の購読者にそのまま届き、fold は見分けない(`Arm` の期限は fold が見分けるので分けなくてよい) |
-| step の Program は effect を出さない(`Ask`・時計・読み書き・`Wait`・`Spawn`・`WaitForEvent` のどれも) | fold が step の Program に全部の effect を断る handler を被せ、出した effect を `StepYieldedEffectError` で止める。外の世界は入力で読み、したい仕事は `Run` で頼む |
-| run の program は `WaitForEvent`・`WaitForEvents` をしない | run は fold の bus の handler の下で走るので、その待ちは fold の入力を横取りする |
-| run は取り消されたら終わる。外の世界を待つ run は自分の待ちに期限を付ける(`WaitWithin`) | fold は時計を持たず、`Finish` と例外の道は run が終わるまで待つ |
-| 止めの合図(`StopArrived`)を受けたら、step が止めの順を決めて `Finish` を返す | fold は止めの合図で勝手に止まらない |
+| Separate keys per component (a tuple that begins with the component name, such as `("fetch", item)`) | A `Run` for a key that is already running is rejected, and run endings can only be dispatched by key |
+| When two folds share a bus and a run sets a timer (`Run(key, ArmTimer(tag, at))`), separate the tags per fold | The `TimerFired` of a timer set by a run reaches every subscriber on the bus as is, and the fold cannot tell them apart (a deadline set with `Arm` is told apart by the fold, so it needs no separation) |
+| A step's Program does not yield effects (none of `Ask`, clock, reads and writes, `Wait`, `Spawn`, `WaitForEvent`) | The fold wraps the step's Program in a handler that rejects every effect and stops any yielded effect with `StepYieldedEffectError`. Read the outside world through inputs, and ask for the work you want done with `Run` |
+| A run's program does not do `WaitForEvent` or `WaitForEvents` | A run executes under the fold's bus handler, so such a wait would steal the fold's inputs |
+| A run ends when it is cancelled. A run that waits on the outside world puts a deadline on its own wait (`WaitWithin`) | The fold has no clock, and the `Finish` and exception paths wait until the runs end |
+| On receiving the stop signal (`StopArrived`), the step decides the order of stopping and returns `Finish` | The fold does not stop on its own on the stop signal |
 
-## 組み立て
+## Assembly
 
-fold が被せる handler は、step の Program の周りの 1 つ(effect を全部断る物)だけです。run には被せません。呼び手が、`inputs.event_types` を購読する bus の handler(`subscribed_event_handler`)と、
-`timers()` を使う時は timer の handler をその内側に置き、`scheduled` の下で走らせます。
+The only handler the fold wraps is the single one around the step's Program (the one that rejects every effect). It does not wrap runs. The caller places the bus handler that subscribes to `inputs.event_types` (`subscribed_event_handler`), and, when `timers()` is used, the timer handler inside it, and runs the whole thing under `scheduled`.
 
 ```python
 from doeff_core_effects import scheduled
@@ -82,9 +79,9 @@ host = subscribed_event_handler(EventBus(), "host", inputs.event_types)(
 result = run(scheduled(sim_time_handler(start_time=T0)(host)))
 ```
 
-## step を Program で書く
+## Writing a step as a Program
 
-step は `Next` の値の代わりに、`Next` を答える Program を返してよいです。defk で書いた reducer が、別の defk を `<-` で呼んで答えを組む形です。
+Instead of a `Next` value, a step may return a Program that answers `Next`. This is the shape where a reducer written with defk calls other defks with `<-` to build its answer.
 
 ```python
 @do
@@ -100,14 +97,14 @@ def step(state, event):
             return Next(state)
 ```
 
-- fold は step の答えが Program なら、全部の effect を断る handler の下で評価し、その値を `Next` として検めます。`replay` も同じ評価の道(`step_answer`)を通るので、同じ入力の列から同じ状態と effect の列が出ます。
-- 断るのは列挙した effect ではなく全部です。step の Program が effect を出すと、継続を再開せずにその場で評価を終え、`StepYieldedEffectError`(`effect` = 出した effect・`step` = step の名)を上げます。step の中の `try` はこの断りを受けられません。fold では、ほかの step の例外と同じく走っている run を取り消してから先へ通します。
-- step の答えは `Next` か、`Next` を答える Program のどちらかだけです。Program が `Next` 以外(tuple・別の Program)を答えるか、`effects` に `StepEffect` 以外の値(素の Program など)が混ざれば `TypeError` です。
-- 素の関数の step は今までと同じに動き、`replay` も VM を使いません。
+- When a step's answer is a Program, the fold evaluates it under a handler that rejects every effect and validates the resulting value as a `Next`. `replay` goes through the same evaluation path (`step_answer`), so the same input sequence produces the same sequence of states and effects.
+- What is rejected is every effect, not an enumerated list. When a step's Program yields an effect, evaluation ends on the spot without resuming the continuation, and `StepYieldedEffectError` is raised (`effect` = the effect yielded, `step` = the step's name). A `try` inside the step cannot catch this rejection. In a fold, as with other step exceptions, the running runs are cancelled before the exception propagates.
+- A step's answer is either a `Next` or a Program that answers a `Next`, nothing else. It is a `TypeError` if the Program answers something other than `Next` (a tuple or another Program), or if `effects` contains a value that is not a `StepEffect` (such as a bare Program).
+- A plain-function step behaves as before, and `replay` does not use the VM for it.
 
-費用(2026-11-03・x86_64・Python 3.14・素の関数の step の呼び 1 回は約 0.5 µs): Program の step 1 回の評価は、合成 1 段で fold の中なら約 5 µs、`replay` では入力 1 つごとの `run` を含めて約 6 µs、別の Program を 10 段呼ぶと約 25 µs(1 段ごとに約 2 µs)。1 回の入力で多くの候補を判じる step で上乗せが効くなら、その判じを素の関数のまま step から呼べます。
+Cost (2026-11-03, x86_64, Python 3.14, one call of a plain-function step is about 0.5 µs): evaluating one step as a Program takes about 5 µs inside a fold with one level of composition, about 6 µs in `replay` including the per-input `run`, and about 25 µs when it calls 10 levels of other Programs (about 2 µs per level). If the overhead matters for a step that judges many candidates per input, the step can call that judgment as a plain function.
 
-## test の harness
+## Test harness
 
 ```python
 from doeff_stream import Answered, Finish, Run, replay
@@ -118,13 +115,13 @@ assert trace.effects[-1] == Finish(3)
 assert trace.final == 3
 ```
 
-`replay` は fold と同じ検めで step の答えを確かめ、runtime が渡さない入力(走っていない key の終わり・`Finish` の後の入力)を断ります。
+`replay` validates the step's answers with the same checks as the fold, and rejects inputs the runtime would never deliver (the ending of a key that is not running, and inputs after `Finish`).
 
-`Arm`・`Disarm` もほかの effect と同じく `effects` の列に載ります。期限が来る筋は、test が `TimerFired(tag)` を入力に書きます。`Replay.armed` は、置いて、まだ外しても戻ってもいない tag の集まりです。
+`Arm` and `Disarm` appear in the `effects` sequence like other effects. For the case where a deadline arrives, the test writes `TimerFired(tag)` into the inputs. `Replay.armed` is the set of tags that have been set and have neither been removed nor fired yet.
 
-## 模擬の土台で走らせる
+## Running on the simulation base
 
-`replay` は step だけを測ります。run の program まで含めて fold を走らせて測る時は `simulate_fold` を使います。
+`replay` measures only the step. To measure by running the fold including the run's programs, use `simulate_fold`.
 
 ```python
 from doeff_stream import merge, simulate_fold, subscribe, timers
@@ -133,13 +130,13 @@ result = simulate_fold(
     step,
     None,
     merge(subscribe(Poke), timers()),
-    events=(Poke(),),                 # fold の最初の入力(この順)
-    handlers=(simulated_fetch,),      # run の effect に答える呼び手の模擬の handler(先頭が外側)
-    start_time=T0,                    # 仮の時計の始まり(None なら sim_time_handler の既定)
+    events=(Poke(),),                 # the fold's first inputs (in this order)
+    handlers=(simulated_fetch,),      # the caller's simulated handlers that answer the run's effects (first is outermost)
+    start_time=T0,                    # the start of the simulated clock (None uses sim_time_handler's default)
 )
 ```
 
-- 組み方は節「組み立て」の本番の形と同じです。違いは時計と bus の 2 つだけです: 時計は `sim_time_handler`(全部の task が待つ時にだけ時が進む)、bus はこの呼びだけの memory の `EventBus` です。`scheduled`・`subscribed_event_handler`(`inputs.event_types` を購読)・`timer_handler`・`fold` は本番と同じ物です。
-- `events` は fold が最初に待つ前に bus へ順に出し、step の最初の入力になります。型は `inputs` が購読する型に限ります。その後の入力は run の終わり・step が置いた timer・run が出す出来事から来ます。
-- `handlers` は bus と timer の handler の内側(fold の側)に `with_handlers` の順で被せます。run の program の effect はまずこの handler に届き、handler は `Publish`・timer の設置・仮の時計の待ちを使えます。
-- fold の例外(step の例外・`StepYieldedEffectError` など)は、この呼びからそのまま上がります。
+- The assembly is the same as the production shape in the section "Assembly". There are only two differences, the clock and the bus: the clock is `sim_time_handler` (time advances only when every task is waiting), and the bus is an in-memory `EventBus` used only by this call. `scheduled`, `subscribed_event_handler` (subscribing to `inputs.event_types`), `timer_handler`, and `fold` are the same as in production.
+- `events` are published to the bus in order before the fold first waits, and become the step's first inputs. Their types are limited to the types `inputs` subscribes to. Later inputs come from run endings, timers the step set, and events the runs publish.
+- `handlers` are wrapped inside the bus and timer handlers (on the fold's side) in the order of `with_handlers`. The effects of a run's program reach these handlers first, and the handlers can use `Publish`, timer setting, and waits on the simulated clock.
+- Exceptions from the fold (step exceptions, `StepYieldedEffectError`, and so on) propagate out of this call as they are.

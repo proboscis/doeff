@@ -1,4 +1,4 @@
-"""doeff-validation の Hy のマクロの検査 — defk の中の validate / check と、展開の時点の誤り。"""
+"""Checks for the doeff-validation Hy macros — validate / check inside defk, and errors at expansion time."""
 
 from __future__ import annotations
 
@@ -23,20 +23,20 @@ ENV = {"seats-a": 3, "seats-n1": 5, "seats-empty": 0}
 
 
 def _run(program: Program, traverse_handler: ProgramHandler | None = None) -> object:
-    """検査の Program を、reader と traverse の handler(既定は逐次)の下で走らせる。"""
+    """Run a validation Program under the reader and traverse handlers (sequential by default)."""
     handler = traverse_handler if traverse_handler is not None else sequential
     return run(scheduled(reader(ENV)(handler(program))))
 
 
 def _failures(program: Program, traverse_handler: ProgramHandler | None = None) -> ValidationException:
-    """ValidationException が投げられることを確かめ、その例外を返す。"""
+    """Assert that ValidationException is raised, and return that exception."""
     with pytest.raises(ValidationException) as caught:
         _run(program, traverse_handler)
     return caught.value
 
 
 def _expand(source: str) -> None:
-    """Hy の断片を読み込んで評価する(展開の時点の誤りを確かめる)。"""
+    """Read and evaluate a Hy snippet (to check errors at expansion time)."""
     hy.eval(
         hy.read_many(
             "(require doeff-hy.macros [defk <- validate check])\n" + source
@@ -135,7 +135,7 @@ def test_pre_checks_collect_every_failure_with_function_and_phase() -> None:
     seats = error.failures[2]
     assert seats.arguments[0].source == "(! (count-seats node))"
     assert seats.arguments[0].value == 0
-    assert "bind-seat pre-condition: 3 件の検査が落ちました" in str(error)
+    assert "bind-seat pre-condition: 3 checks failed" in str(error)
 
 
 def test_pre_checks_pass_and_body_runs() -> None:

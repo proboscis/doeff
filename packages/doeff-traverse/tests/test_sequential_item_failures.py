@@ -1,9 +1,9 @@
-"""sequential が要素の失敗を要素に残す契約の検。
+"""Tests the contract that sequential leaves an element's failure on the element.
 
-要素の失敗は、要素ごとの Try effect ではなく handler の中の try で受ける(要素 1 つあたりの費用の 6 割が Try の往復だった)。
-受け方を変えても次の 4 つは前と同じでなければならない: 要素の例外は失敗した要素として例外と履歴を残す・要素の中の
-誰も答えない effect も失敗した要素になる・入れ子の Traverse の失敗は内側の Collection に留まる・要素の中の Try は外に
-try_handler が無くても答えられる(前は要素ごとの Try が try_handler を要素の外側に入れていた)。
+An element's failure is caught by a try inside the handler, not by a per-element Try effect (60% of the per-element cost was the Try round trip).
+Even after changing how it is caught, the following 4 must stay the same as before: an element's exception leaves the exception and history as a failed element; an effect inside the element
+that nobody answers also becomes a failed element; a failure of a nested Traverse stays in the inner Collection; a Try inside an element can be answered even without
+an outer try_handler (previously a per-element Try put try_handler outside the element).
 """
 
 from collections.abc import Callable
@@ -18,7 +18,7 @@ _Answer = TypeVar("_Answer")
 
 
 class _Nobody(EffectBase[int]):
-    """どの handler も答えない effect(要素の中で出すと未処理の失敗になる)。"""
+    """An effect that no handler answers (emitting it inside an element makes an unhandled failure)."""
 
 
 @do
@@ -49,7 +49,7 @@ def _inner(x: int):
 
 
 def _traverse(f: Callable[[int], Program[_Answer]], items: list[int]) -> Collection[_Answer]:
-    """sequential だけを入れて Traverse を 1 回走らせた答え(try_handler を外に入れない)。"""
+    """The answer of running Traverse once with only sequential installed (no try_handler outside)."""
 
     @do
     def program():

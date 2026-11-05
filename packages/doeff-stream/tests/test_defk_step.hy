@@ -1,5 +1,5 @@
-;; step を defk のまま書く(工程 1a・S1): defk が別の defk を <- で呼ぶ step は、素の関数の step と同じ trace を返し、
-;; effect を出す defk の step は StepYieldedEffectError で止まる。
+;; Writing a step as a plain defk (stage 1a, S1): a step that is a defk calling other defks with <- returns the same trace as a plain-function step,
+;; and a defk step that yields an effect stops with StepYieldedEffectError.
 (require doeff-hy.macros [defk <-])
 (import doeff [Ask Pure])
 (import doeff_stream [Answered Finish Next Run StepYieldedEffectError replay])

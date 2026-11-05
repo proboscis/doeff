@@ -1,15 +1,15 @@
-"""installed の defsemgrep の答えを、呼び手が名指す置き場に残し、次の process で semgrep を起こし直さない。
+"""Keep the answers of an installed defsemgrep in a place named by the caller, so that the next process does not start semgrep again.
 
-同じ設定の規則の例は 1 回の semgrep にまとめてある(test_semgrep_installed_batch.py)が、その答えは process の中にしか無かった。
-agora の日次は pytest を 3 つの session に分けて回し、回ごとに空の HOME を作るので、設定も例も変わらない日にも session と設定ごとに
-semgrep の起動(1 回 約 8 秒)を毎回払っていた。置き場は環境変数 ``DOEFF_ADR_SEMGREP_VERDICTS`` で名指す(doeff-adr は日次の名を知らない)。
+The examples of rules with the same configuration are batched into one semgrep run (test_semgrep_installed_batch.py), but that answer existed only inside the process.
+The agora daily run splits pytest into three sessions and creates an empty HOME on each run, so even on days when neither configuration nor examples changed it paid for
+a semgrep startup (about 8 seconds each) per session and per configuration. The place is named by the environment variable ``DOEFF_ADR_SEMGREP_VERDICTS`` (doeff-adr does not know the daily run's name).
 
-鍵は semgrep の版・設定の中身・例の中身で、semgrep と設定の path は入れない — 日次は回ごとに HOME を替え、semgrep(``uv tool install``)も
-設定(clone)も毎回違う path に在る。中身で引くので、規則か例を 1 つ変えた回は semgrep が回り直し、悪い例は赤になる。
+The key is the semgrep version, the configuration contents and the example contents; the paths of semgrep and the configuration are not included — the daily run replaces HOME on each run, and semgrep (``uv tool install``) and
+the configuration (clone) are at different paths every time. Lookup is by contents, so a run in which one rule or example changed runs semgrep again, and a bad example turns red.
 
-別の process は、process の中の答え(``_INSTALLED_VERDICTS``)を空にして写す。別の HOME は、回ごとの uv tool の venv の形
-(``bin/semgrep`` と同じ venv の dist-info・HOME の ``.local/bin`` からの symlink)に入れた semgrep を呼び、同じ中身の設定を
-別の木から読んで写す。
+A separate process empties the answers inside the process (``_INSTALLED_VERDICTS``) and imitates it. A separate HOME calls a semgrep installed in the shape of each run's uv tool venv
+(``bin/semgrep`` and the dist-info of the same venv, a symlink from HOME's ``.local/bin``), and imitates reading a configuration of the same contents
+from a different tree.
 """
 
 import re
@@ -37,12 +37,12 @@ WORDS = ("eval", "exec")
 
 
 def _put_on_registry(effect: RegisterSemgrep) -> None:
-    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep)。"""
+    """Register a Semgrep enforcement in the process registry (effect RegisterSemgrep)."""
     run_doeff(semgrep_enforcements()(effect))
 
 
 def _check(enforcement_id: str) -> None:
-    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep)。"""
+    """Check a Semgrep enforcement in the registry (effect AssertSemgrep)."""
     run_doeff(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
@@ -76,7 +76,7 @@ def _register(hit_source: str = "{word}('1')\n") -> None:
 
 
 class Run:
-    """日次の 1 回を写す: 新しい HOME の木(設定)と、その HOME の下に入れた semgrep の symlink。"""
+    """Imitate one daily run: a tree under a new HOME (the configuration) and a semgrep symlink installed under that HOME."""
 
     def __init__(self, base: Path, monkeypatch: pytest.MonkeyPatch, real_semgrep: str) -> None:
         self.base = base
@@ -87,15 +87,15 @@ class Run:
         )
 
     def start(self, home_name: str, config: str, *, version: str | None = None) -> Path:
-        """新しい回 home_name: 空の登録簿と process の答え・新しい HOME の木・その HOME の semgrep(version = dist-info に書く版・
-        既定は本物の版)。
-        答え = 木の根。"""
+        """A new run home_name: an empty registry and process answers, a tree under a new HOME, and the semgrep under that HOME (version = the version written in the dist-info;
+        default is the real version).
+        answer = the root of the tree."""
         run_doeff(adr_registry()(ClearRegistry()))
         home = self.base / home_name
         tree = home / "repos" / "tree"
         tree.mkdir(parents=True)
         (tree / ".semgrep.yaml").write_text(config, encoding="utf-8")
-        # uv tool install の形: 回ごとの venv の bin/semgrep と同じ venv の dist-info、HOME の .local/bin からの symlink。
+        # The shape of uv tool install: each run's venv bin/semgrep and the dist-info of the same venv, a symlink from HOME's .local/bin.
         venv = home / ".local" / "share" / "uv" / "tools" / "semgrep"
         (venv / "bin").mkdir(parents=True)
         installed = venv / "bin" / "semgrep"
@@ -157,7 +157,7 @@ def test_a_second_run_with_the_same_rules_and_fixtures_does_not_start_semgrep(
         _check(f"store_probe_{word}")
 
     assert _semgrep_runs(spy) == 1, (
-        "設定も例も変わらない 2 回目の回で semgrep を起こし直した(答えは置き場から読む)"
+        "semgrep was started again in the second run with unchanged configuration and examples (the answer should be read from the place)"
     )
 
 
@@ -168,7 +168,7 @@ def test_a_changed_rule_runs_semgrep_again_and_its_hit_fixture_is_red(
     _register()
     _check("store_probe_eval")
 
-    # 規則を 1 つ変えた回: store-probe-no-eval の pattern が当たる例に当たらない形になる。
+    # A run where one rule changed: the pattern of store-probe-no-eval no longer hits the example that should hit.
     run.start("second", _rules(WORDS).replace("pattern: eval(...)", "pattern: evaluate(...)"))
     _register()
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
@@ -181,7 +181,7 @@ def test_a_changed_fixture_runs_semgrep_again_and_is_red(run: Run, spy: mock.Moc
     _register()
     _check("store_probe_eval")
 
-    # 例を 1 つ変えた回: 当たる例が規則の当たらない形になる。
+    # A run where one example changed: the example that should hit becomes a shape the rule does not hit.
     run.start("second", _rules(WORDS))
     _register(hit_source="print('{word}')\n")
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
@@ -194,7 +194,7 @@ def test_another_semgrep_version_runs_semgrep_again(run: Run, spy: mock.Mock) ->
     _register()
     _check("store_probe_eval")
 
-    # semgrep の版を上げた回: 設定も例も同じでも、前の版の答えは読まない。
+    # A run where the semgrep version went up: even with the same configuration and examples, the previous version's answer is not read.
     run.start("second", _rules(WORDS), version="99.0.0")
     _register()
     _check("store_probe_eval")

@@ -1,11 +1,11 @@
-"""載っている ADR の id の一覧を読む操作は effect AdrIds で、GetAdr と同じ handler の工場 adr_registry が答える。
+"""Reading the list of registered ADR ids is the effect AdrIds, answered by adr_registry, the same handler factory as GetAdr.
 
-決め: effect にする(ADR-DOE-API-001 R21)。
-関数 adr_ids は、外の repo の呼び手(agora L6159・custody L74)を AdrIds へ書き換えた後に消した。
+Decision: make it an effect (ADR-DOE-API-001 R21).
+The function adr_ids was removed after rewriting the callers in outside repos (agora L6159, custody L74) to AdrIds.
 
-adr_registry() は process の登録簿の id を、adr_registry(specs=[spec, …]) はその列の id だけを並べて返す。
-内側に据えた handler が先に答えるので、deftest の doeff_interpreter が外に adr_registry() を据えていても、test の中で
-別の表を据えればその表の id が返る。
+adr_registry() returns the ids in the process registry, and adr_registry(specs=[spec, …]) returns only the ids in that list.
+The innermost installed handler answers first, so even if the deftest doeff_interpreter installs adr_registry() outside, installing
+a different table inside a test makes that table's ids be returned.
 """
 
 import doeff_adr
@@ -34,7 +34,7 @@ def test_an_empty_registry_answers_an_empty_list() -> None:
 
 
 def test_the_process_registry_is_read_when_the_effect_is_answered() -> None:
-    """handler を作った後に載った ADR の id も返る(fixture が handler を作るのは ADR の module の import の前でもよい)。"""
+    """ADR ids registered after the handler was created are also returned (the fixture may create the handler before the ADR module is imported)."""
     answer = adr_registry()
     with isolated_registry():
         run(
@@ -46,7 +46,7 @@ def test_the_process_registry_is_read_when_the_effect_is_answered() -> None:
 
 
 def test_a_given_table_replaces_the_process_registry() -> None:
-    """表を据えると、登録簿の id ではなく表の id だけが返る(specs=[] は空の表)。"""
+    """Installing a table returns only the table's ids, not the registry's (specs=[] is an empty table)."""
     table = [_spec("ADR-TABLE-B"), _spec("ADR-TABLE-A")]
     with isolated_registry():
         run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
@@ -55,7 +55,7 @@ def test_a_given_table_replaces_the_process_registry() -> None:
 
 
 def test_an_inner_table_answers_before_the_outer_registry() -> None:
-    """外に既定の adr_registry() を据えたまま、program の一部だけを別の表で走らせられる。GetAdr と AdrIds は同じ表を読む。"""
+    """With the default adr_registry() still installed outside, only part of a program can be run against a different table. GetAdr and AdrIds read the same table."""
     table = [_spec("ADR-TABLE-ONLY")]
 
     @do
@@ -79,7 +79,7 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
 
 
 def test_the_answer_is_a_new_list_each_time() -> None:
-    """返した一覧を書き換えても、登録簿と表は変わらない(次の AdrIds は同じ id を返す)。"""
+    """Mutating the returned list changes neither the registry nor the table (the next AdrIds returns the same ids)."""
     table = [_spec("ADR-TABLE-A")]
 
     @do
@@ -95,7 +95,7 @@ def test_the_answer_is_a_new_list_each_time() -> None:
 
 
 def test_adr_ids_is_read_only_through_the_effect() -> None:
-    """effect AdrIds と工場 adr_registry は入口に在り、関数 adr_ids は入口にも registry にも無い(内側の _adr_ids だけ)。"""
+    """The effect AdrIds and the factory adr_registry are in the entry point, and the function adr_ids is in neither the entry point nor the registry (only the inner _adr_ids)."""
     assert {"AdrIds", "adr_registry"} <= set(doeff_adr.__all__)
     assert "adr_ids" not in doeff_adr.__all__
     assert not hasattr(doeff_adr, "adr_ids")
@@ -103,7 +103,7 @@ def test_adr_ids_is_read_only_through_the_effect() -> None:
 
 
 def test_a_deftest_reads_the_ids_through_the_handler_its_fixture_installs(pytester) -> None:
-    """ADR の deftest は (<- ids (AdrIds)) で読み、答えは doeff_interpreter が据えた adr_registry() が出す。"""
+    """An ADR deftest reads with (<- ids (AdrIds)), and the answer comes from the adr_registry() installed by doeff_interpreter."""
     pytester.makeconftest(
         """\
         import pytest

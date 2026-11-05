@@ -1,11 +1,11 @@
-"""購読者の列を持つ handler(``subscribed_event_handler``)で、待ってから起こされる ``WaitForEvent`` / ``WaitForEvents`` の doeff-vm の歩数の検。
+"""Check of the doeff-vm step count of ``WaitForEvent`` / ``WaitForEvents`` that wait and are then woken, in a handler with per-subscriber queues (``subscribed_event_handler``).
 
-``WaitForEvents`` を足した時(2ae3daeb7)に、2 つの待ちが共有する「列から取る・無ければ約束で待つ」を ``@do`` の下請けの Program にした。
-下請けの Program は待ちのたびに 1 段多く回るので、起こされる待ち 1 回が 3 歩増え、agora の画面の検(test_screen_card_accept_replies)が
-1 本で 573 歩増えて repo の歩の上限を越えた(日次 2026-10-07 08:00)。共有は歩を足さない形(ただの generator を ``yield from`` で委ねる)で書く。
+When ``WaitForEvents`` was added (2ae3daeb7), the "take from the queue; if none, wait via a promise" shared by the two waits was made a ``@do`` helper Program.
+The helper Program runs one extra level on every wait, so each woken wait grew by 3 steps, and agora's screen check (test_screen_card_accept_replies) grew by
+573 steps in one test and exceeded the repo's step limit (daily run 2026-10-07 08:00). The sharing is written in a form that adds no steps (delegating a plain generator with ``yield from``).
 
-比べる相手は列を持たない ``event_handler``(同じ待ちを handler の中でそのまま書く)。2 つの組み立ての違いは、購読者ごとの handler を待ち手の
-task に 1 つ被せる 1 歩だけ(``event_handler`` は 1 つを全員で共有して外側に 1 度だけ被せる)。
+The comparison target is ``event_handler``, which has no queues (the same wait written directly inside the handler). The two assemblies differ only by the one step
+of wrapping a per-subscriber handler over the waiter's task (``event_handler`` shares one among everyone and wraps it only once on the outside).
 """
 
 from dataclasses import dataclass
@@ -24,21 +24,21 @@ from doeff_events import (
     subscribed_event_handler,
 )
 
-# 購読者ごとの handler を待ち手の task に被せる歩(event_handler の組み立てには無い)。
+# The step of wrapping a per-subscriber handler over the waiter's task (absent from the event_handler assembly).
 WAITER_HANDLER_STEPS = 1
-# scheduler の版(scheduled の implementation・環境変数 DOEFF_SCHEDULER の値)。
+# The scheduler version (the scheduled implementation; the value of the environment variable DOEFF_SCHEDULER).
 SCHEDULERS = ("python", "rust")
 
 
 @dataclass(frozen=True)
 class Signal:
-    """検の合図。"""
+    """A signal for the check."""
 
     n: int
 
 
 def steps_of(program: object) -> int:
-    """``program`` を scheduler の下で走らせた doeff-vm の歩数。"""
+    """The number of doeff-vm steps when ``program`` is run under the scheduler."""
     before = _read_vm_steps()
     run(scheduled(program))
     return _read_vm_steps() - before
@@ -46,7 +46,7 @@ def steps_of(program: object) -> int:
 
 @do
 def waiting(many: bool):
-    """合図を 1 つ待つ(``many`` なら ``WaitForEvents``)。"""
+    """Wait for one signal (``WaitForEvents`` if ``many``)."""
     if many:
         got = yield WaitForEvents(Signal)
     else:
@@ -56,13 +56,13 @@ def waiting(many: bool):
 
 @do
 def publishing():
-    """合図を 1 つ出す。"""
+    """Emit one signal."""
     yield Publish(Signal(1))
     return None
 
 
 def subscribed_woken_steps(many: bool) -> int:
-    """購読者の列を持つ handler で、待ち手が先に待ち、別の task の合図で起こされる待ち 1 回の歩数(待ち手の無い同じ組み立てとの差)。"""
+    """With a handler with per-subscriber queues, the steps of one wait where the waiter waits first and is woken by another task's signal (the difference from the same assembly without a waiter)."""
 
     @do
     def tasks(with_waiter: bool):
@@ -79,7 +79,7 @@ def subscribed_woken_steps(many: bool) -> int:
 
 
 def shared_woken_steps() -> int:
-    """列を持たない ``event_handler`` で、同じく待ってから起こされる待ち 1 回の歩数(待ち手の無い同じ組み立てとの差)。"""
+    """With ``event_handler``, which has no queues, the steps of one wait that is likewise woken after waiting (the difference from the same assembly without a waiter)."""
 
     @do
     def tasks(with_waiter: bool):
@@ -99,9 +99,9 @@ def shared_woken_steps() -> int:
 def test_a_woken_wait_for_event_costs_no_more_than_the_shared_handler_and_the_waiters_own_handler(
     scheduler: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 上限で比べる: Python の版は購読者の handler を被せる 1 歩だけ多く、Rust の版は被せる歩を数えず同じ数になる
-    # (既定を Rust の版にした後の日次の回で、等号の比べが 29 == 30 で落ちた)。下請けの Program の 3 歩は
-    # どちらの版でも上限を越える。
+    # Compare by upper bound: the Python version has exactly one extra step for wrapping the subscriber's handler, and the Rust version does not count the wrapping step so the counts are equal
+    # (after making Rust the default, the equality comparison failed at 29 == 30 in the daily run). The 3 steps of the helper Program
+    # exceed the bound in either version.
     monkeypatch.setenv(IMPLEMENTATION_ENV_VAR, scheduler)
     assert subscribed_woken_steps(many=False) <= shared_woken_steps() + WAITER_HANDLER_STEPS
 

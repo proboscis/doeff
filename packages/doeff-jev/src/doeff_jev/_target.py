@@ -1,18 +1,18 @@
-"""宛先(URL・model・通信の形・API キー)の解決。
+"""Resolution of the destination (URL, model, wire format, API key).
 
-決め方はここ 1 点。seimf(zeus の GPU で動く Jev 互換の判定器)へ乗り換える時は環境変数
-`JEV_BASE_URL` を 1 つ変えるだけで、この handler を積む全部の呼び手が付いてくる。
+This is the single place where it is decided. When switching to seimf (a Jev-compatible judge running on zeus's GPU), changing the single environment variable
+`JEV_BASE_URL` is enough, and every caller that stacks this handler follows.
 
-解き方(上が勝つ):
-1. 環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE`
-2. 設定 file `~/.config/jev/client.json`(欄 base_url / model / wire / api_key_file)
-3. 既定 = TypeSafe 直(`/v1/systemone`・model `jev-latest`)。キーは `TYPESAFE_API_KEY` →
-   `~/.config/jev/api_key`。gateway(Vercel AI Gateway の evaluation-model)を名指した時は
-   model `typesafe-ai/jev`・キーは `AI_GATEWAY_API_KEY` → `~/jev_key`。
+Resolution order (the earlier wins):
+1. Environment variables `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE`
+2. Config file `~/.config/jev/client.json` (fields base_url / model / wire / api_key_file)
+3. Default = direct TypeSafe (`/v1/systemone`, model `jev-latest`). The key is `TYPESAFE_API_KEY` ->
+   `~/.config/jev/api_key`. When gateway (the evaluation-model of Vercel AI Gateway) is named explicitly,
+   model `typesafe-ai/jev`, and the key is `AI_GATEWAY_API_KEY` -> `~/jev_key`.
 
-`resolve_target` は純粋(環境と file の読みは引数で受け取る)。process の環境から解く入口は
-`target_from_process_environment`(宛先を渡されない `judge_stack` が積みを作る時だけ呼ぶ I/O)。どちらも handler の中の部品で、
-入口からは出さない(ADR-DOE-API-001 R1 — 使い手は宛先を `judge_stack` に任せるか、型 `JevTarget` を渡す)。
+`resolve_target` is pure (reading the environment and files is received through arguments). The entry that resolves from the process environment is
+`target_from_process_environment` (I/O called only when `judge_stack`, which is not passed a destination, builds its stack). Both are internal parts of the handler and are
+not exposed from the entry point (ADR-DOE-API-001 R1: callers either leave the destination to `judge_stack` or pass the type `JevTarget`).
 """
 
 import json
@@ -47,7 +47,7 @@ class JevTarget:
     model: str
     wire: Wire
     api_key: str | None
-    source: str  # env / file / default(記録用)
+    source: str  # env / file / default (for the journal)
 
     @property
     def host(self) -> str:
@@ -56,7 +56,7 @@ class JevTarget:
 
 
 def key_required(target: JevTarget) -> bool:
-    """TypeSafe と Vercel はキー必須。それ以外(seimf)は無くても送る。"""
+    """TypeSafe and Vercel require a key. Others (seimf) are sent even without one."""
     return target.host in (TYPESAFE_HOST, GATEWAY_HOST)
 
 
@@ -78,7 +78,7 @@ def _config_from_text(text: str | None) -> dict[str, object]:
 
 def resolve_target(env: Mapping[str, str], read_text: ReadText, *,
                    wire: str | None = None) -> JevTarget:
-    """宛先を解く(純粋)。`read_text(path)` は file の中身(無ければ None)を返す注入された読み手。"""
+    """Resolve the destination (pure). `read_text(path)` is an injected reader that returns the file contents (None if absent)."""
     file_cfg = _config_from_text(read_text(CONFIG_FILE))
     declared_wire = env.get("JEV_WIRE") or _str(file_cfg.get("wire")) or wire
     url = env.get("JEV_BASE_URL") or _str(file_cfg.get("base_url"))
@@ -108,7 +108,7 @@ def _str(value: object) -> str | None:
 
 
 def read_text_from_disk(path: str) -> str | None:
-    """`~` を展開して file を読む。無ければ None(組み立て点が resolve_target に渡す読み手)。"""
+    """Expand `~` and read the file. None if absent (the reader the assembly point passes to resolve_target)."""
     try:
         with open(os.path.expanduser(path), encoding="utf-8") as handle:
             value = handle.read().strip()
@@ -118,9 +118,9 @@ def read_text_from_disk(path: str) -> str | None:
 
 
 def target_from_process_environment(*, wire: str | None = None) -> JevTarget:
-    """宛先を渡されない judge_stack(組み立て点の CLI・hook の入口が呼ぶ形)だけが呼ぶ: この process の環境と home の file から宛先を解く。
+    """Called only by judge_stack when no destination is passed (the form called by the assembly-point CLI / hook entry): resolve the destination from this process's environment and home files.
 
-    環境は os.environ を直に読まず、foundation の handler(subprocess_handler)が答える ReadEnvironment の写像で受ける
+    The environment is not read directly from os.environ; it is received through the mapping of ReadEnvironment answered by the foundation handler (subprocess_handler)
     (doeff-linter DOEFF004)。"""
     environ: dict[str, str] = run(with_handlers([subprocess_handler], environment_mapping()))
     return resolve_target(environ, read_text_from_disk, wire=wire)

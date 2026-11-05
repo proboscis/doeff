@@ -1,15 +1,15 @@
-"""出来事の送り出し(``notice_events_handler``)が、経路に無い発行と、送るだけの時の出来事の待ちで doeff-vm の歩数を使わない検
-(通過点 U)。
+"""Check that the event sender (``notice_events_handler``) uses no doeff-vm steps for publishes not on a route and for event waits when it only sends
+(checkpoint U).
 
-送り出しの body の handler は ``Publish`` と ``WaitForEvent`` / ``WaitForEvents`` を型で受け、経路に在るかを受けた後に見ていた。
-経路に無い発行は外へ渡すだけ、送るだけの送り出し(読む channel が無い)の待ちは ``SourceFailed`` を足して外へ渡すだけだが、どちらも
-毎回呼ばれる。agora の模擬の検(test_whole)では ``PROFILE-EVENT-SENDER`` 1 つが関係の無い発行 96 回で 594 歩を使い、送るだけの
-送り出し 11 種の待ちの受けが計 683 回あった。送り出しを足すたびに、歩数の宣言を持つ
-検がこの分だけ宣言を越える。
+The sender's body handler accepted ``Publish`` and ``WaitForEvent`` / ``WaitForEvents`` by type and looked at whether they were on a route only after accepting them.
+A publish not on a route is merely passed outward, and a wait of a send-only sender (no channel to read) merely adds ``SourceFailed`` and passes outward, but both
+are called every time. In agora's simulation check (test_whole), ``PROFILE-EVENT-SENDER`` alone used 594 steps on 96 unrelated publishes, and send-only
+senders of 11 kinds accepted waits 683 times in total. Each time a sender is added, a check
+that has a step-count declaration exceeds its declaration by this amount.
 
-宣言: 送り出しを置いた組み立てと置かない組み立ての歩数の差は、経路に無い発行の数と(送るだけの時は)待ちの数で増えない。
-bus は購読者の列を持つ ``subscribed_event_handler``(body が出した出来事は自分の列にも積まれる)なので、body は出してから待つだけで
-task を起こさない — task を起こすと handler の列を task に被せ直す歩が混ざる。
+Declaration: the step-count difference between an assembly with the sender and one without does not grow with the number of publishes not on a route or (when send-only) the number of waits.
+The bus is a ``subscribed_event_handler`` with per-subscriber queues (events the body emits are also queued in its own queue), so the body only emits and then waits and
+does not spawn a task — spawning a task would mix in steps that re-wrap the handler's queue over the task.
 """
 
 from dataclasses import dataclass
@@ -42,20 +42,20 @@ CHANNEL = "sender-steps"
 
 @dataclass(frozen=True)
 class Routed:
-    """経路に在る出来事(送り出しが知らせに変える)。"""
+    """An event on a route (the sender turns it into a notice)."""
 
     n: int
 
 
 @dataclass(frozen=True)
 class Local:
-    """経路に無い出来事(process の中の bus だけを通る)。"""
+    """An event not on a route (it passes only through the bus inside the process)."""
 
     n: int
 
 
 def _encoded(event: object) -> str:
-    """経路の型の出来事の綴り(経路の表は ``NoticeRoute[object]`` の組で渡すので、受けるのは object)。"""
+    """Spelling of the route-type event (the route table is passed as a tuple of ``NoticeRoute[object]``, so what it receives is object)."""
     assert isinstance(event, Routed), event
     return str(event.n)
 
@@ -84,7 +84,7 @@ READS: "tuple[NoticeRoute[object], ...]" = (
 
 
 def _steps_of(program: Program[object]) -> int:
-    """``program`` を scheduler の下で走らせた doeff-vm の歩数。"""
+    """The number of doeff-vm steps when ``program`` is run under the scheduler."""
     before = _read_vm_steps()
     run(scheduled(program))
     return _read_vm_steps() - before
@@ -92,14 +92,14 @@ def _steps_of(program: Program[object]) -> int:
 
 @do
 def _publishes(count: int) -> EffectGenerator[None]:
-    """body: 経路に無い出来事を ``count`` 回出す。"""
+    """body: emit an event not on a route ``count`` times."""
     for n in range(count):
         yield Publish(Local(n))
 
 
 @do
 def _waits(count: int, many: bool) -> EffectGenerator[None]:
-    """body: 経路に無い出来事を出して自分の列から待つことを ``count`` 回(``many`` なら ``WaitForEvents``)。"""
+    """body: emit an event not on a route and wait for it from its own queue, ``count`` times (``WaitForEvents`` if ``many``)."""
     for n in range(count):
         yield Publish(Local(n))
         if many:
@@ -109,18 +109,18 @@ def _waits(count: int, many: bool) -> EffectGenerator[None]:
 
 
 def _composed(body: Program[object], *inner: ProgramHandler) -> Program[object]:
-    """新しい bus の購読者 1 人の下に ``inner``(外が先)を並べて body を包む。"""
+    """Wrap body with ``inner`` (outer first) under one new bus subscriber."""
     return with_handlers([subscribed_event_handler(EventBus(), "body", (Local,)), *inner], body)
 
 
 def _sender_steps(body: Program[None]) -> int:
-    """送るだけの送り出しを body に被せた時に増える歩数(置かない同じ組み立てとの差)。"""
+    """The number of steps added when a send-only sender is wrapped over the body (the difference from the same assembly without it)."""
     sender = notice_events_handler("steps-sender", SENDS)
     return _steps_of(_composed(body, sender)) - _steps_of(_composed(body))
 
 
 def _reader_steps(body: Program[None]) -> int:
-    """読む送り出し(channel を購読する)を body に被せた時に増える歩数(置かない同じ組み立てとの差)。"""
+    """The number of steps added when a reading sender (subscribing to a channel) is wrapped over the body (the difference from the same assembly without it)."""
     reader = notice_events_handler("steps-reader", READS)
     patience = broker_patience_handler(BrokerPatience(PATIENCE_SECONDS))
     return _steps_of(_composed(body, memory_notice_handler(MemoryBroker()), patience, reader)) - _steps_of(
@@ -143,13 +143,13 @@ def test_a_sender_that_reads_nothing_spends_no_step_on_the_bodys_waits() -> None
 
 @do
 def _sends_directly() -> EffectGenerator[object]:
-    """body: 経路に在る出来事を ``PublishEffect`` を直に作って出す(doeff-records の memory の源が作る形)。"""
+    """body: emit an event on a route by building ``PublishEffect`` directly (the shape doeff-records' memory source builds)."""
     answer: object = yield PublishEffect(Routed(1))
     return answer
 
 
 def test_a_routed_event_made_as_publish_effect_is_still_sent() -> None:
-    # 送り出しが受けるのは経路の型の Publish の class だけ — 直に作った値もその class になるので、外へ漏れずに知らせになる。
+    # The sender accepts only the Publish class of the route type — a directly built value is also that class, so it becomes a notice without leaking outward.
     sender = notice_events_handler("steps-sender", SENDS)
     answer = run(
         scheduled(_composed(_sends_directly(), memory_notice_handler(MemoryBroker()), sender))

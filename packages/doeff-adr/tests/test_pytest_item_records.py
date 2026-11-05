@@ -1,5 +1,5 @@
-"""defadr・defsemgrep と defadr の :enforcement の中の deftest / defsemgrep が、展開の式で pytest の item の記録を module に積む
-(記録の形の定義元 = doeff_hy/_pytest_items.py)。記録は module を import すれば読める。
+"""Within defadr, defsemgrep, and the deftest / defsemgrep inside defadr's :enforcement, the expansion puts pytest item records into the module
+(the record shape is defined in doeff_hy/_pytest_items.py). The records can be read just by importing the module.
 """
 
 import importlib
@@ -39,7 +39,7 @@ ADR = """
 
 
 def test_adr_macros_record_the_items_they_define(tmp_path: Path) -> None:
-    """defadr が作る検の関数と、:enforcement の中と module の直下の deftest / defsemgrep の関数が、全部記録される。"""
+    """The check functions made by defadr, and the functions of deftest / defsemgrep inside :enforcement and directly under the module, are all recorded."""
     (tmp_path / "defadr_sample_records.hy").write_text(ADR)
     sys.path.insert(0, str(tmp_path))
     try:

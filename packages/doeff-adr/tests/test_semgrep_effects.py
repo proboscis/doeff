@@ -1,14 +1,14 @@
-"""Semgrep の検を表に載せる操作は effect RegisterSemgrep、走らせて見本の当たり外れを確かめる操作は effect AssertSemgrep で、
-handler を返す工場 semgrep_enforcements が答える。
+"""The operation that registers a Semgrep check in the table is effect RegisterSemgrep, and the operation that runs it and verifies hits and misses on the samples is effect AssertSemgrep;
+the handler-returning factory semgrep_enforcements answers both.
 
-決め: register-semgrep と assert-semgrep は、どちらも effect にする。前の関数
-register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えた後に
-消した。
+Decision: register-semgrep and assert-semgrep are both effects. The former functions
+register_semgrep_enforcement and assert_semgrep_enforcement were removed after
+rewriting the callers in outside repos.
 
-semgrep_enforcements() は process の登録簿に載せて読み、semgrep_enforcements(table={…}) はその辞書に載せて読む(辞書に無い id は
-登録簿へ落ちずに KeyError)。semgrep_enforcements(semgrep=…) は渡した実行 file で semgrep を起こす。内側に据えた handler が先に
-答えるので、test は program の一部だけを別の表や別の semgrep で走らせられる。macro defsemgrep の展開も、この effect をこの
-handler の下で走らせる。
+semgrep_enforcements() registers to and reads from the process registry, and semgrep_enforcements(table={...}) registers to and reads from that dict (an id not in the dict
+does not fall back to the registry but raises KeyError). semgrep_enforcements(semgrep=...) launches semgrep from the given executable. The innermost installed handler
+answers first, so a test can run only part of a program with a different table or a different semgrep. The expansion of macro defsemgrep also runs this effect under this
+handler.
 """
 
 import stat
@@ -37,19 +37,19 @@ from doeff import do, run
 
 pytest_plugins = ["pytester"]
 
-# 当たる見本(bad の dir の file)にだけ当たったと答える偽の semgrep — semgrep の実行を差し替えた時の当たり外れを見る。
+# A fake semgrep that reports a hit only for the samples that should hit (files in the bad dir) -- checks hits and misses when the semgrep execution is swapped.
 _HITS_ONLY_BAD = """\
 case "$*" in
   */bad/*) echo '{"results":[{"check_id":"probe","path":"bad/fixture_0.txt","start":{"line":1},"extra":{"message":"m"}}]}' ;;
   *) echo '{"results":[]}' ;;
 esac
 """
-# どの見本にも当たらない偽の semgrep。
+# A fake semgrep that hits no sample.
 _HITS_NOTHING = """echo '{"results":[]}'\n"""
 
 
 def _fake_semgrep(tmp_path: Path, script_body: str, name: str = "fake-semgrep") -> str:
-    """semgrep の実行を差し替える test のための、決めた答えを出す実行 file を置く。"""
+    """Place an executable that gives fixed answers, for tests that swap the semgrep execution."""
     path = tmp_path / name
     path.write_text("#!/bin/sh\n" + script_body, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -57,7 +57,7 @@ def _fake_semgrep(tmp_path: Path, script_body: str, name: str = "fake-semgrep") 
 
 
 def _inline(enforcement_id: str) -> RegisterSemgrep:
-    """その場の規則の形の載せ(当たる見本 forbidden-token・当たらない見本 allowed-token)。"""
+    """Registration of an ad hoc rule shape (hit sample forbidden-token, non-hit sample allowed-token)."""
     return RegisterSemgrep(
         enforcement_id,
         pattern="forbidden-token",
@@ -75,7 +75,7 @@ def test_register_semgrep_puts_the_rule_on_the_process_registry() -> None:
 
 
 def test_assert_semgrep_checks_the_fixtures_with_semgrep() -> None:
-    """本物の semgrep で、規則が当たる見本に当たり、当たらない見本に当たらなければ答える。"""
+    """With the real semgrep, answers if the rule hits the hit sample and does not hit the non-hit sample."""
 
     @do
     def body():
@@ -107,7 +107,7 @@ def test_a_rule_that_misses_its_bad_fixture_is_an_assertion_error_where_the_effe
 
 
 def test_a_given_table_replaces_the_process_registry() -> None:
-    """渡した辞書に載せて読み、登録簿には載せない。辞書に無い id は、登録簿に在っても KeyError。"""
+    """Registers to and reads from the given dict, not the registry. An id absent from the dict is a KeyError even if present in the registry."""
     table: dict[str, EnforcementRef | SemgrepSpec] = {}
 
     @do
@@ -128,7 +128,7 @@ def test_a_given_table_replaces_the_process_registry() -> None:
 
 
 def test_the_semgrep_run_can_be_replaced(tmp_path: Path) -> None:
-    """semgrep=… の実行 file(str か Path)が当たり外れを答える: 当たる見本にだけ当たれば緑、何にも当たらなければ赤。"""
+    """The executable given by semgrep=... (str or Path) answers hits and misses: green if only the hit sample is hit, red if nothing is hit."""
     hits_only_bad = _fake_semgrep(tmp_path, _HITS_ONLY_BAD, "hits-only-bad")
     hits_nothing = _fake_semgrep(tmp_path, _HITS_NOTHING, "hits-nothing")
     with isolated_registry():
@@ -143,7 +143,7 @@ def test_the_semgrep_run_can_be_replaced(tmp_path: Path) -> None:
 
 
 def test_a_named_semgrep_that_is_not_a_file_is_refused_like_a_missing_one(tmp_path: Path) -> None:
-    """名指した実行 file が無ければ、subprocess の FileNotFoundError でなく PATH に無い時と同じ文の AssertionError。"""
+    """If the named executable is missing, an AssertionError with the same message as when it is not on PATH, not a subprocess FileNotFoundError."""
     with isolated_registry():
         run(semgrep_enforcements()(_inline("probe_no_file")))
         with pytest.raises(AssertionError, match="semgrep executable is required"):
@@ -155,7 +155,7 @@ def test_a_named_semgrep_that_is_not_a_file_is_refused_like_a_missing_one(tmp_pa
 
 
 def test_an_inner_handler_answers_before_the_outer_one(tmp_path: Path) -> None:
-    """外に既定の semgrep_enforcements() を据えたまま、program の一部だけを別の表と別の semgrep で走らせられる。"""
+    """With the default semgrep_enforcements() installed outside, only part of a program can run with a different table and a different semgrep."""
     fake = _fake_semgrep(tmp_path, _HITS_NOTHING)
     table: dict[str, EnforcementRef | SemgrepSpec] = {}
 
@@ -187,16 +187,16 @@ def test_registering_an_id_twice_or_without_a_rule_is_a_value_error() -> None:
 
 
 def test_the_factory_refuses_a_program_in_place_of_its_settings() -> None:
-    """semgrep_enforcements(p) と書き違えたら断る: 設定は keyword だけで受け、辞書でない表も断る。"""
+    """Mistyping semgrep_enforcements(p) is rejected: configuration is accepted by keyword only, and a non-dict table is rejected too."""
     with pytest.raises(TypeError, match="positional"):
-        semgrep_enforcements(AssertSemgrep("probe"))  # type: ignore[misc] — 書き違いを断る事を見るため、位置の引数で渡す
+        semgrep_enforcements(AssertSemgrep("probe"))  # type: ignore[misc] -- passed positionally to check that the typo is rejected
     with pytest.raises(TypeError, match="takes a dict"):
-        semgrep_enforcements(table=[])  # type: ignore[arg-type] — 書き違いを断る事を見るため、辞書でない値を渡す
+        semgrep_enforcements(table=[])  # type: ignore[arg-type] -- passed a non-dict to check that the typo is rejected
 
 
 def test_the_semgrep_checks_are_reached_only_through_the_effects() -> None:
-    """effect と工場は入口に在り、前の関数 register_semgrep_enforcement・assert_semgrep_enforcement は入口にも registry にも
-    無い(本体は内側の _register_semgrep_enforcement・_assert_semgrep_enforcement だけ)。"""
+    """The effects and factory are at the entry point; the former functions register_semgrep_enforcement and assert_semgrep_enforcement are in neither the entry point nor the registry
+    (only the inner _register_semgrep_enforcement and _assert_semgrep_enforcement remain as the body)."""
     assert {"AssertSemgrep", "RegisterSemgrep", "semgrep_enforcements"} <= set(doeff_adr.__all__)
     for name in ("register_semgrep_enforcement", "assert_semgrep_enforcement"):
         assert name not in doeff_adr.__all__
@@ -205,7 +205,7 @@ def test_the_semgrep_checks_are_reached_only_through_the_effects() -> None:
 
 
 def test_defsemgrep_expands_to_the_effects_under_their_handler() -> None:
-    """展開は RegisterSemgrep を import の時に、AssertSemgrep を生まれる test の中で、semgrep_enforcements() の下で走らせる。"""
+    """The expansion runs RegisterSemgrep at import time and AssertSemgrep inside the generated test, under semgrep_enforcements()."""
     expanded = hy.macroexpand(
         hy.read(
             """(defsemgrep probe-expansion
@@ -222,8 +222,8 @@ def test_defsemgrep_expands_to_the_effects_under_their_handler() -> None:
 
 
 def test_a_defsemgrep_module_with_its_own_run_still_checks_its_rule(tmp_path: Path) -> None:
-    """展開は doeff の run と effect を使い手の module の名と重ならない名(_doeff-adr-run・_doeff-adr.)で読む — module が
-    run や AssertSemgrep を定義しても、生まれる test は動く。"""
+    """The expansion reads doeff's run and effects by names that do not collide with the user module's names (_doeff-adr-run, _doeff-adr.) -- even if the module
+    defines run or AssertSemgrep, the generated test works."""
     (tmp_path / "probe_own_run.hy").write_text(
         textwrap.dedent(
             """\
@@ -243,7 +243,7 @@ def test_a_defsemgrep_module_with_its_own_run_still_checks_its_rule(tmp_path: Pa
     sys.path.insert(0, str(tmp_path))
     try:
         with isolated_registry():
-            import probe_own_run  # type: ignore[import-not-found] — 一時の dir に書いた Hy の module
+            import probe_own_run  # type: ignore[import-not-found] -- a Hy module written in a temporary dir
 
             probe_own_run.test_probe_own_run_defsemgrep()
             assert probe_own_run.run() == "the module's own run"
@@ -254,8 +254,8 @@ def test_a_defsemgrep_module_with_its_own_run_still_checks_its_rule(tmp_path: Pa
 
 
 def test_a_defadr_with_defsemgrep_needs_no_interpreter_fixture(pytester) -> None:
-    """外の repo の defsemgrep は doeff の版を上げるだけで動く: project が doeff_interpreter fixture を持たなくても、
-    defsemgrep の載せと検は自分の handler の下で走って緑になる。"""
+    """defsemgrep in an outside repo works just by bumping the doeff version: even if the project has no doeff_interpreter fixture,
+    the defsemgrep registration and check run under their own handler and turn green."""
     pytester.mkdir("docs")
     pytester.mkdir("docs/adr")
     pytester.makefile(

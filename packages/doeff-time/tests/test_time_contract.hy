@@ -1,8 +1,8 @@
-;;; doeff-time の契約テスト — 同じ effect に答える本物の時計(async-time-handler・sync-time-handler)と仮想の時計
-;;; (sim-time-handler)が、同じ deftest を通る。解釈器の組み立ては time_contract_clocks.hy。
+;;; Contract tests for doeff-time -- the real clocks (async-time-handler, sync-time-handler) and the virtual clock
+;;; (sim-time-handler), which answer the same effects, go through the same deftest. The interpreters are assembled in time_contract_clocks.hy.
 ;;;
-;;; 時間の幅は時計の性質(ClockTraits)で見る: 仮想の時計はちょうど・本物の時計は早起きを early 秒・遅れを late 秒まで許す。
-;;; SetTime は仮想の時計だけの effect なので契約の外(test_sim_time.py)。SpendCpu(手番を譲らずに CPU の秒を使う)は 3 つの時計の契約に入る。本物の時計が壁時計を読むことは test_get_time.py。
+;;; Time spans are judged by the clock traits (ClockTraits): the virtual clock is exact; real clocks may wake up early by up to early seconds and late by up to late seconds.
+;;; SetTime is an effect of the virtual clock only, so it is outside the contract (test_sim_time.py). SpendCpu (use CPU seconds without yielding the turn) is part of the contract of all 3 clocks. That the real clocks read the wall clock is in test_get_time.py.
 (require doeff-hy.macros [defk deftest <- val])
 (import datetime [datetime timedelta])
 (import dataclasses [dataclass])
@@ -10,7 +10,7 @@
 (import doeff_time [Delay GetMonotonic GetTime RaceOutcome RaceWithin ScheduleAt SpendCpu WaitUntil])
 (import time_contract_clocks [ClockTraits ClockUnderTest OuterProbe])
 
-;; 仮想の時計の「ちょうど」の許し — GetMonotonic は仮想の時刻の POSIX の秒(float)で、2024 年の秒数の刻みは 1e-6 より細かい。
+;; Tolerance for "exact" on the virtual clock -- GetMonotonic is the POSIX seconds (float) of the virtual time, and the float step at 2024-scale seconds is finer than 1e-6.
 (val EXACT-TOLERANCE 1e-6)
 (val SHORT 0.05)
 
@@ -21,7 +21,7 @@
 (defk spent-matches [clock wanted spent]
   {:pre [(: clock ClockTraits) (: wanted float) (: spent float)] :post [(: % bool)]
    :tags {:context "doeff-time-test" :role "judgment"}}
-  "待ちに spent 秒かかったことが、wanted 秒の待ちとして時計の性質に合うか。"
+  "Whether taking spent seconds for a wait fits, under the clock traits, as a wait of wanted seconds."
   (if clock.exact
       (<= (abs (- spent wanted)) EXACT-TOLERANCE)
       (<= (- wanted clock.early) spent (+ wanted clock.late))))
@@ -29,14 +29,14 @@
 
 (defk probed-answer []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-time-test" :role "program"}}
-  "ScheduleAt で走らせる Program: 時計の handler の外側の handler(OuterProbe)に答えてもらい、その到着の番号を返す。"
+  "Program run via ScheduleAt: has the handler outside the clock handler (OuterProbe) answer it, and returns its arrival number."
   (<- arrival int (OuterProbe))
   #("ran" arrival))
 
 
 (defk failing-later []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-time-test" :role "program"}}
-  "ScheduleAt で走らせて失敗する Program(失敗が Wait に届くかの検)。"
+  "Program run via ScheduleAt that fails (checks whether the failure reaches Wait)."
   (<- (OuterProbe))
   (raise (ScheduledFailure "scheduled program failed")))
 
@@ -51,9 +51,9 @@
   (<- (Delay 0.0))
   (<- t2 datetime (GetTime))
   (<- m2 float (GetMonotonic))
-  (assert (is-not t0.tzinfo None) "GetTime は時差つきの datetime を返す")
-  (assert (<= t0 t1 t2) (.format "GetTime が後退した: {} {} {}" t0 t1 t2))
-  (assert (<= m0 m1 m2) (.format "GetMonotonic が後退した: {} {} {}" m0 m1 m2)))
+  (assert (is-not t0.tzinfo None) "GetTime returns a timezone-aware datetime")
+  (assert (<= t0 t1 t2) (.format "GetTime went backwards: {} {} {}" t0 t1 t2))
+  (assert (<= m0 m1 m2) (.format "GetMonotonic went backwards: {} {} {}" m0 m1 m2)))
 
 
 (deftest test-delay-advances-by-its-span
@@ -66,8 +66,8 @@
   (<- m1 float (GetMonotonic))
   (<- by-monotonic bool (spent-matches clock SHORT (- m1 m0)))
   (<- by-time bool (spent-matches clock SHORT (.total-seconds (- t1 t0))))
-  (assert by-monotonic (.format "{}: Delay {} の後の GetMonotonic の差 {}" clock.name SHORT (- m1 m0)))
-  (assert by-time (.format "{}: Delay {} の後の GetTime の差 {}" clock.name SHORT (- t1 t0))))
+  (assert by-monotonic (.format "{}: difference of GetMonotonic after Delay {}: {}" clock.name SHORT (- m1 m0)))
+  (assert by-time (.format "{}: difference of GetTime after Delay {}: {}" clock.name SHORT (- t1 t0))))
 
 
 (deftest test-wait-until-reaches-its-target
@@ -78,7 +78,7 @@
   (<- (WaitUntil target))
   (<- t1 datetime (GetTime))
   (<- reached bool (spent-matches clock SHORT (.total-seconds (- t1 t0))))
-  (assert reached (.format "{}: WaitUntil {} の後の時刻 {}" clock.name target t1)))
+  (assert reached (.format "{}: time after WaitUntil {}: {}" clock.name target t1)))
 
 
 (deftest test-wait-until-in-the-past-returns-at-once
@@ -90,14 +90,14 @@
   (<- t1 datetime (GetTime))
   (<- m1 float (GetMonotonic))
   (<- at-once bool (spent-matches clock 0.0 (- m1 m0)))
-  (assert at-once (.format "{}: 過去の WaitUntil に {} 秒かかった" clock.name (- m1 m0)))
-  (assert (<= t0 t1) "過去の WaitUntil で時計が戻った"))
+  (assert at-once (.format "{}: WaitUntil in the past took {} seconds" clock.name (- m1 m0)))
+  (assert (<= t0 t1) "the clock went back on WaitUntil in the past"))
 
 
 (deftest test-other-effects-pass-through
   {:interpreters ["async" "sync" "sim"]}
   (<- arrival int (OuterProbe))
-  (assert (= arrival 1) "時計の handler は自分の effect でない物を外側の handler へ渡す"))
+  (assert (= arrival 1) "the clock handler passes effects that are not its own to the outer handler"))
 
 
 (deftest test-schedule-at-runs-after-its-time-and-wait-answers
@@ -105,12 +105,12 @@
   (<- clock (ClockUnderTest))
   (<- t0 datetime (GetTime))
   (<- task (ScheduleAt (+ t0 (timedelta :seconds SHORT)) (probed-answer)))
-  (assert (isinstance task Task) "ScheduleAt は Spawn した Task を返す")
+  (assert (isinstance task Task) "ScheduleAt returns the Task it spawned")
   (<- answer (Wait task))
   (<- t1 datetime (GetTime))
-  (assert (= answer #("ran" 1)) (.format "{}: Wait の答え {}(Program の答えがそのまま届き、外側の handler が見える)" clock.name answer))
+  (assert (= answer #("ran" 1)) (.format "{}: answer of Wait {} (the Program answer arrives as is, and the outer handler is visible)" clock.name answer))
   (<- after bool (spent-matches clock SHORT (.total-seconds (- t1 t0))))
-  (assert after (.format "{}: 刻の {} 秒後の Task が {} で終わった" clock.name SHORT (- t1 t0))))
+  (assert after (.format "{}: Task at {} seconds after the time finished in {}" clock.name SHORT (- t1 t0))))
 
 
 (deftest test-schedule-at-runs-in-time-order
@@ -121,7 +121,7 @@
   (<- later-answer (Wait later))
   (<- sooner-answer (Wait sooner))
   (assert (= #(sooner-answer later-answer) #(#("ran" 1) #("ran" 2)))
-          (.format "登録の順ではなく刻の順に走る: 早い刻 {}・遅い刻 {}" sooner-answer later-answer)))
+          (.format "runs in time order, not registration order: earlier time {}, later time {}" sooner-answer later-answer)))
 
 
 (deftest test-schedule-at-in-the-past-runs-at-once
@@ -133,8 +133,8 @@
   (<- answer (Wait task))
   (<- m1 float (GetMonotonic))
   (<- at-once bool (spent-matches clock 0.0 (- m1 m0)))
-  (assert (= answer #("ran" 1)) (.format "過去の刻の Task の答え {}" answer))
-  (assert at-once (.format "{}: 過去の刻の Task に {} 秒かかった" clock.name (- m1 m0))))
+  (assert (= answer #("ran" 1)) (.format "answer of a Task at a past time {}" answer))
+  (assert at-once (.format "{}: Task at a past time took {} seconds" clock.name (- m1 m0))))
 
 
 (deftest test-schedule-at-failure-reaches-wait
@@ -146,12 +146,12 @@
     (<- (Wait task))
     (except [failure ScheduledFailure]
       (:= caught (str failure))))
-  (assert (= caught "scheduled program failed") "ScheduleAt の Program の失敗は Wait で上がる"))
+  (assert (= caught "scheduled program failed") "a failure of a ScheduleAt Program is raised at Wait"))
 
 
 (defk completing-later [promise seconds]
   {:pre [(: promise Promise) (: seconds float)] :post [(: % None)] :tags {:context "doeff-time-test" :role "program"}}
-  "seconds 秒の後に promise を None で満たす Program(RaceWithin の検 — 値が None でも期限と取り違えないか)。"
+  "Program that fulfills a promise with None after seconds seconds (test for RaceWithin -- checks a None value is not mistaken for the deadline)."
   (<- (Delay seconds))
   (<- (CompletePromise promise None))
   None)
@@ -168,9 +168,9 @@
   (<- (Wait completer))
   (<- m1 float (GetMonotonic))
   (assert (= outcome (RaceOutcome :value None :timed-out False))
-          (.format "{}: None で満ちた Future が先なら timed-out は偽(答え {})" clock.name outcome))
+          (.format "{}: if the Future fulfilled with None comes first, timed-out is false (answer {})" clock.name outcome))
   (<- in-time bool (spent-matches clock SHORT (- m1 m0)))
-  (assert in-time (.format "{}: {} 秒で満ちた Future の待ちに {} 秒かかった" clock.name SHORT (- m1 m0))))
+  (assert in-time (.format "{}: waiting for a Future fulfilled in {} seconds took {} seconds" clock.name SHORT (- m1 m0))))
 
 
 (deftest test-race-within-times-out-at-its-deadline
@@ -181,20 +181,20 @@
   (<- also-never Promise (CreatePromise))
   (<- outcome RaceOutcome (RaceWithin #(never.future also-never.future) SHORT))
   (<- m1 float (GetMonotonic))
-  (assert (= outcome (RaceOutcome :value None :timed-out True)) (.format "{}: 期限が先(答え {})" clock.name outcome))
+  (assert (= outcome (RaceOutcome :value None :timed-out True)) (.format "{}: deadline comes first (answer {})" clock.name outcome))
   (<- at-deadline bool (spent-matches clock SHORT (- m1 m0)))
-  (assert at-deadline (.format "{}: {} 秒の期限の待ちに {} 秒かかった" clock.name SHORT (- m1 m0))))
+  (assert at-deadline (.format "{}: waiting with a {} second deadline took {} seconds" clock.name SHORT (- m1 m0))))
 
 
-;; DOEFF119 の対象だが defrecord にしない: 刻む task(ticking)が書き、検が読む可変の入れ物。
+;; Subject to DOEFF119 but not made a defrecord: a mutable container written by the ticking task (ticking) and read by the test.
 (defclass [(dataclass)] TickCount []
-  "刻む task が回った数。"
+  "Number of times the ticking task ran."
   (setv #^ int ticks 0))
 
 
 (defk ticking [count every]
   {:pre [(: count TickCount) (: every float)] :post [(: % None)] :tags {:context "doeff-time-test" :role "program"}}
-  "every 秒ごとに count を 1 つ進め続ける Program(同じ scheduler のほかの task が回っているかを見る — 検が Cancel で止める)。"
+  "Program that keeps incrementing count every every seconds (to see whether other tasks of the same scheduler run -- the test stops it with Cancel)."
   (while True
     (setv count.ticks (+ count.ticks 1))
     (<- (Delay every)))
@@ -214,11 +214,11 @@
   (<- m1 float (GetMonotonic))
   (<- by-monotonic bool (spent-matches clock CPU-SPAN (- m1 m0)))
   (<- by-time bool (spent-matches clock CPU-SPAN (.total-seconds (- t1 t0))))
-  (assert by-monotonic (.format "{}: SpendCpu {} の後の GetMonotonic の差 {}" clock.name CPU-SPAN (- m1 m0)))
-  (assert by-time (.format "{}: SpendCpu {} の後の GetTime の差 {}" clock.name CPU-SPAN (- t1 t0))))
+  (assert by-monotonic (.format "{}: difference of GetMonotonic after SpendCpu {}: {}" clock.name CPU-SPAN (- m1 m0)))
+  (assert by-time (.format "{}: difference of GetTime after SpendCpu {}: {}" clock.name CPU-SPAN (- t1 t0))))
 
 
-;; sync の時計は外す: Delay も thread を止める眠りなので、どの待ちの間もほかの task は回らない(刻む task が回る場が無い)。
+;; The sync clock is excluded: Delay is also a sleep that blocks the thread, so no other task runs during any wait (there is no place for the ticking task to run).
 (deftest test-spend-cpu-runs-no-other-task-while-the-clock-moves
   {:interpreters ["async" "sim"]}
   (<- clock (ClockUnderTest))
@@ -233,8 +233,8 @@
   (<- (Delay 0.02))
   (val after (- count.ticks before))
   (<- (Cancel ticker))
-  (assert (>= before 1) (.format "{}: 刻む task が CPU を使う前に回っていない({} 回)" clock.name before))
-  (assert (= during 0) (.format "{}: CPU を使う {} 秒の間に、同じ scheduler の別の task が {} 回回った" clock.name CPU-SPAN during))
+  (assert (>= before 1) (.format "{}: the ticking task did not run before using CPU ({} times)" clock.name before))
+  (assert (= during 0) (.format "{}: while using CPU for {} seconds, another task of the same scheduler ran {} times" clock.name CPU-SPAN during))
   (<- spent bool (spent-matches clock CPU-SPAN (- m1 m0)))
-  (assert spent (.format "{}: CPU を使う {} 秒で時計が {} 秒進んだ" clock.name CPU-SPAN (- m1 m0)))
-  (assert (>= after 1) (.format "{}: CPU を使い終えた後も別の task が回らない({} 回)" clock.name after)))
+  (assert spent (.format "{}: using CPU for {} seconds advanced the clock by {} seconds" clock.name CPU-SPAN (- m1 m0)))
+  (assert (>= after 1) (.format "{}: no other task ran even after using CPU ({} times)" clock.name after)))

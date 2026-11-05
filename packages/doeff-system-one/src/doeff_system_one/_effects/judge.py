@@ -1,4 +1,4 @@
-"""判定の effect。provider を知らない。"""
+"""The judgment effect. Unaware of the provider."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -8,11 +8,11 @@ from doeff_system_one._types import Image, Question, Verdict
 
 
 class Judge(EffectBase[Verdict]):
-    """state について問いの束を判定器へ出し、`Verdict` を受け取る。
+    """Send a bundle of questions about the state to the judge and receive a `Verdict`.
 
-    問いは 1 request に束ねる(独立な問いは同じ state に対して一緒に出す — 順に 1 問ずつ
-    出す形は費用と時間の無駄)。`cacheable=False` の判定は答えの cache に載せない。
-    `assets` は state から鍵で指す画像(鍵 → `Image` — 画像を読める判定器だけが受ける・既定は空)。
+    Questions are bundled into 1 request (independent questions are sent together for the same state -- sending them one at a time
+    wastes cost and time). A judgment with `cacheable=False` is not stored in the answer cache.
+    `assets` are images referenced by key from the state (key -> `Image` -- only judges that can read images accept them; default empty).
     """
 
     def __init__(
@@ -25,13 +25,13 @@ class Judge(EffectBase[Verdict]):
     ) -> None:
         super().__init__()
         if not questions:
-            raise ValueError("Judge には問いが 1 つ以上要る")
+            raise ValueError("Judge requires at least one question")
         for name, question in questions.items():
             if not isinstance(question, Question):
-                raise TypeError(f"questions[{name!r}] は Question であること: {type(question).__name__}")
+                raise TypeError(f"questions[{name!r}] must be a Question: {type(question).__name__}")
         for name, asset in (assets or {}).items():
             if not isinstance(asset, Image):
-                raise TypeError(f"assets[{name!r}] は Image であること: {type(asset).__name__}")
+                raise TypeError(f"assets[{name!r}] must be an Image: {type(asset).__name__}")
         self.state = state
         self.questions: dict[str, Question] = dict(questions)
         self.timeout_seconds = float(timeout_seconds)

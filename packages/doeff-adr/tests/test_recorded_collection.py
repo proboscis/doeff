@@ -1,10 +1,10 @@
-"""記録から item を作る近道(``indexed_pytest``)が、pytest の通常の経路と同じ item を作ることの反例。
+"""Counterexamples showing that the shortcut that builds items from records (``indexed_pytest``) builds the same items as pytest's normal path.
 
-どの test も、1 回目(記録が無いので収集で import する = pytest の通常の Module の収集)と 2 回目以降(記録から収集する =
-近道)を別の process で走らせ、nodeid の並び・結果の数・検の中で確かめる値が同じことを見る。検の中で fixture の値や
-``request.fixturenames`` を確かめるので、fixture の解決が兄弟の item から漏れれば 2 回目が赤になる。
+Every test runs the first time (no records, so modules are imported during collection = pytest's normal Module collection) and the second and later times (collected from records =
+the shortcut) in separate processes, and checks that the order of nodeids, the number of results, and the values checked inside the tests are the same. Fixture values and
+``request.fixturenames`` are checked inside the tests, so if fixture resolution leaks from a sibling item, the second run turns red.
 
-キャッシュと pyc の置き場は tmp の下(test_lazy_collection と同じ)。
+The cache and pyc locations are under tmp (the same as test_lazy_collection).
 """
 
 import json
@@ -67,14 +67,14 @@ class _Registered:
 
 
 def pytest_collectstart(collector):
-    # 収集の前に module 1 つだけへ fixture を追加で登録する(fixture の追加登録の反例)。
+    # Register a fixture additionally in just one module before collection (a counterexample for additional fixture registration).
     if isinstance(collector, pytest.Module) and collector.path.name == "test_registered.hy":
         collector.session._fixturemanager.parsefactories(holder=_Registered(), node=collector)
 """
 
 FILES = {
     "pkg/__init__.py": "",
-    # 同じ conftest の下の 2 file — 片方だけ module の fixture で answer を 41 に上書きする
+    # Two files under the same conftest — only one overrides answer with 41 through a module fixture
     "pkg/registered/__init__.py": "",
     "pkg/registered/conftest.py": REGISTRATION_CONFTEST,
     "pkg/test_fixture_a.hy": PRELUDE
@@ -90,7 +90,7 @@ FILES = {
 (deftest test-conftest-answer [answer] (assert (= answer 42)))
 (deftest test-conftest-answer-again [answer] (assert (= answer 42)))
 """,
-    # 下位の conftest の上書き
+    # Override in a lower conftest
     "pkg/sub/__init__.py": "",
     "pkg/sub/conftest.py": "import pytest\n\n\n@pytest.fixture\ndef answer():\n    return 43\n",
     "pkg/sub/test_fixture_c.hy": PRELUDE
@@ -98,13 +98,13 @@ FILES = {
 (deftest test-sub-answer [answer] (assert (= answer 43)))
 (deftest test-sub-answer-again [answer] (assert (= answer 43)))
 """,
-    # 収集の前に plugin が module へ追加で登録した fixture
+    # A fixture a plugin registered additionally on the module before collection
     "pkg/registered/test_registered.hy": PRELUDE
     + """
 (deftest test-registered-answer [answer] (assert (= answer 99)))
 (deftest test-registered-answer-again [answer] (assert (= answer 99)))
 """,
-    # autouse・ini の usefixtures・module の usefixtures(module の usefixtures の呼び出しは記録できないので import の経路)
+    # autouse, ini usefixtures, module usefixtures (a call of module usefixtures cannot be recorded, so it takes the import path)
     "pkg/test_used.hy": PRELUDE
     + """
 (deftest test-autouse-and-ini [request]
@@ -125,26 +125,26 @@ FILES = {
 
 PARAM_FILES = {
     "pkg/__init__.py": "",
-    # literal の直積・同じ形の parametrize の兄弟(直の parametrize の書き換えが次の item へ漏れない)
+    # Cartesian product of literals, and siblings with the same parametrize shape (a direct parametrize rewrite must not leak into the next item)
     "pkg/test_product.hy": PRELUDE
     + """
 (deftest test-product [left right] {:params {"left" [1 2] "right" [3 4]}} (assert (in (+ left right) [4 5 6])))
 (deftest test-product-again [left right] {:params {"left" [5] "right" [6]}} (assert (= (+ left right) 11)))
 (deftest test-plain [answer] (assert (= answer 42)))
 """,
-    # 動的な値と明示の id(記録は import の後に実値で補って保存する)
+    # Dynamic values and explicit ids (the records are filled in with real values after import and saved)
     "pkg/test_recorded_params.hy": PRELUDE
     + """
 (val VALUES [(pytest.param 21 :id "half") (pytest.param 42 :id "whole")])
 (deftest test-recorded-param-values [value] {:params {"value" VALUES}} (assert (in value [21 42])))
 """,
-    # 個別の印(skip)を持つ値 — 記録で説明できないので毎回 import する
+    # Values with an individual mark (skip) — the records cannot explain them, so they are imported every time
     "pkg/test_marked_params.hy": PRELUDE
     + """
 (val VALUES [(pytest.param 21 :id "half") (pytest.param 42 :id "whole") (pytest.param 0 :id "skip" :marks pytest.mark.skip)])
 (deftest test-param-values [value] {:params {"value" VALUES}} (assert (in value [21 42])))
 """,
-    # 間接の parametrize(params を持つ conftest の fixture)と、直の parametrize との組
+    # Indirect parametrize (a conftest fixture with params), combined with direct parametrize
     "pkg/test_indirect.hy": PRELUDE
     + """
 (deftest test-indirect [base] (assert (in base [10 20])))
@@ -157,8 +157,8 @@ PLUGIN_FILES = {
     "pkg/__init__.py": "",
     "pkg/test_plain.hy": PRELUDE + "(deftest test-plain [answer] (assert (= answer 42)))\n",
     "pkg/custom/__init__.py": "",
-    # 未知の plugin: FunctionDefinition の型を求めて値を足す pytest_generate_tests と、item に情報を付け・module に
-    # item を足す pytest_pycollect_makeitem の包み。makeitem に渡った名を file に書く(汎用の収集なら関数でない名も渡る)
+    # Unknown plugin: pytest_generate_tests that asks for the type of FunctionDefinition and adds values, and a wrapper of
+    # pytest_pycollect_makeitem that attaches information to an item and adds an item to the module. Write the names passed to makeitem into a file (generic collection also passes names that are not functions)
     "pkg/custom/conftest.py": """
 import os
 
@@ -204,7 +204,7 @@ def pytest_runtest_setup(item):
 """,
 }
 
-# 同じ名の deftest が 2 つ — Python の module と同じく、最初の位置に最後の定義が残る(item は 1 本)
+# Two deftests with the same name — as in a Python module, the last definition stays at the first position (one item)
 DUPLICATE_FILES = {
     "pkg/__init__.py": "",
     "pkg/test_duplicate.hy": PRELUDE
@@ -222,7 +222,7 @@ def _write_project(
     monkeypatch: pytest.MonkeyPatch,
     files: dict[str, str],
 ) -> None:
-    """file と conftest・ini を置く。pyc と記録は tmp の下の置き場へ書く。"""
+    """Place files, conftest and ini. pyc and records are written to the place under tmp."""
     for name, text in files.items():
         path = pytester.path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,7 +247,7 @@ def _write_project(
 
 @dataclass(frozen=True)
 class Run:
-    """1 回の走りの結果: 集めた nodeid の並び・結果の数・報告の全文。"""
+    """Result of one run: the order of collected nodeids, the number of results, and the full report text."""
 
     nodeids: list[str]
     outcomes: dict[str, int]
@@ -258,7 +258,7 @@ _VERBOSE_OUTCOMES = frozenset({"PASSED", "FAILED", "SKIPPED", "ERROR", "XFAIL", 
 
 
 def _run(pytester: pytest.Pytester, *args: str) -> Run:
-    """別の process で走らせ、nodeid と結果(-v の行 ``<nodeid> <結果> [..%]``)と結果の数を読む。"""
+    """Run in a separate process, and read the nodeids, the results (the line of -v ``<nodeid> <result> [..%]``) and the number of results."""
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-v", *args, timeout=30)
     rows = [line.split() for line in result.stdout.lines]
     nodeids = [
@@ -270,7 +270,7 @@ def _run(pytester: pytest.Pytester, *args: str) -> Run:
 
 
 def _collect(pytester: pytest.Pytester, *args: str) -> list[str]:
-    """別の process で --collect-only -q の nodeid の並び(順を含む)を読む。"""
+    """Read the order of nodeids (including order) of --collect-only -q in a separate process."""
     result = pytester.runpytest_subprocess(
         "--collect-only", "-q", "-p", "no:cacheprovider", *args, timeout=30
     )
@@ -279,7 +279,7 @@ def _collect(pytester: pytest.Pytester, *args: str) -> list[str]:
 
 @dataclass(frozen=True)
 class ColdAndWarm:
-    """import して収集した走り(cold)と記録から収集した走り(warm)、それぞれの収集の nodeid の並び(順を含む)。"""
+    """The nodeid order (including order) of each collection: the run collected by import (cold) and the run collected from records (warm)."""
 
     cold: Run
     warm: Run
@@ -288,8 +288,8 @@ class ColdAndWarm:
 
 
 def _cold_then_warm(pytester: pytest.Pytester) -> ColdAndWarm:
-    """1 回目(記録が無いので import して収集)と 2 回目(記録から収集)を走らせ、収集の nodeid の並びも
-    記録の無い置き場(import の経路)と記録のある置き場(近道)で取る。"""
+    """Run the first time (no records, so collect by import) and the second time (collect from records), and take the nodeid order of collection
+    in both a place without records (import path) and a place with records (shortcut)."""
     cold = _run(pytester)
     warm = _run(pytester)
     cold_ids = _collect(
@@ -302,8 +302,8 @@ def _cold_then_warm(pytester: pytest.Pytester) -> ColdAndWarm:
 def test_fixture_resolution_is_not_shared_across_modules_conftests_or_registrations(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """module の fixture の上書き(片方の file だけ)・下位の conftest の上書き・収集の前の追加登録・autouse・ini と module の
-    usefixtures・引数の無い usefixtures の印 — どれも記録からの収集で、import した収集と同じ fixture に解決する。"""
+    """Module fixture override (in one file only), lower conftest override, additional registration before collection, autouse, ini and module
+    usefixtures, and a usefixtures mark with no arguments — all collected from records, and resolve to the same fixtures as the imported collection."""
     _write_project(pytester, tmp_path, monkeypatch, FILES)
     runs = _cold_then_warm(pytester)
     cold, warm, cold_ids, warm_ids = runs.cold, runs.warm, runs.cold_ids, runs.warm_ids
@@ -311,17 +311,17 @@ def test_fixture_resolution_is_not_shared_across_modules_conftests_or_registrati
     assert warm.outcomes == cold.outcomes, warm.out
     assert warm.nodeids == cold.nodeids
     assert warm_ids == cold_ids
-    assert "記録から収集 4 file・収集で import 2 file" in warm.out
+    assert "collected from record: 4 files; imported during collection: 2 files" in warm.out
     assert "generic:" not in warm.out
-    # 引数の無い usefixtures の警告は item ごと(近道でも兄弟と共有して 1 本に減らさない)
+    # The warning for usefixtures with no arguments is per item (the shortcut also shares it with siblings and does not reduce it to one)
     assert warm.outcomes.get("warnings") == cold.outcomes.get("warnings")
 
 
 def test_recollection_in_the_same_process_resolves_fixtures_afresh(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """同じ process の中で pytest を 3 回走らせる(1 回目 import・2 回目と 3 回目は記録から)。どの回も同じ結果になる —
-    前の回の fixture の解決や登録を次の回へ持ち越さない。"""
+    """Run pytest three times in the same process (import the first time, from records the second and third times). Every run gives the same result —
+    fixture resolution and registration of a previous run are not carried over to the next run."""
     _write_project(pytester, tmp_path, monkeypatch, FILES)
     script = pytester.makepyfile(
         rerun="""
@@ -360,8 +360,8 @@ def test_recollection_in_the_same_process_resolves_fixtures_afresh(
 def test_parametrize_ids_counts_values_and_skips_match_the_imported_collection(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """literal の直積・動的な値と明示の id・間接の parametrize と直の組・個別の印を持つので import する file — nodeid・
-    数・値(検の中で確かめる)・skip が、import した収集と同じ。"""
+    """A file that is imported because it has a Cartesian product of literals, dynamic values and explicit ids, indirect parametrize combined with direct, and individual marks — nodeids,
+    counts, values (checked inside the tests) and skips are the same as in the imported collection."""
     _write_project(pytester, tmp_path, monkeypatch, PARAM_FILES)
     runs = _cold_then_warm(pytester)
     cold, warm, cold_ids, warm_ids = runs.cold, runs.warm, runs.cold_ids, runs.warm_ids
@@ -373,16 +373,16 @@ def test_parametrize_ids_counts_values_and_skips_match_the_imported_collection(
     assert "pkg/test_recorded_params.hy::test_recorded_param_values[half]" in warm_ids
     assert "pkg/test_marked_params.hy::test_param_values[skip] SKIPPED" in warm.nodeids
     assert sum("test_indirect_and_direct[" in nodeid for nodeid in warm_ids) == 4
-    assert "記録から収集 3 file・収集で import 1 file" in warm.out
+    assert "collected from record: 3 files; imported during collection: 1 files" in warm.out
     assert "import: pkg/test_marked_params.hy" in warm.out
 
 
 def test_unknown_collection_plugins_import_the_real_module_before_collection(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FunctionDefinition の型を求めて値を足す ``pytest_generate_tests`` と、item に情報を付け module に item を足す
-    ``pytest_pycollect_makeitem`` の包みがある dir の file は、本物の module を import して pytest の通常の収集に回る — makeitem は
-    関数でない名(module の fixture の名)にも呼ばれ、足した item も欠けない。その外の file は近道のまま。"""
+    """Files in a dir that has ``pytest_generate_tests`` which asks for the type of FunctionDefinition and adds values, and a wrapper of ``pytest_pycollect_makeitem`` which
+    attaches information to an item and adds an item to the module, import the real module and go to pytest's normal collection — makeitem is
+    also called for names that are not functions (names of module fixtures), and the added items are not missing. Files outside it stay on the shortcut."""
     _write_project(pytester, tmp_path, monkeypatch, PLUGIN_FILES)
     runs = _cold_then_warm(pytester)
     cold, warm, cold_ids, warm_ids = runs.cold, runs.warm, runs.cold_ids, runs.warm_ids
@@ -392,8 +392,8 @@ def test_unknown_collection_plugins_import_the_real_module_before_collection(
     assert warm_ids == cold_ids
     assert "pkg/custom/test_plugin.hy::extra_item" in warm_ids
     assert "pkg/custom/test_plugin.hy::test_generated[three]" in warm_ids
-    assert "記録から収集 1 file・収集で import 1 file" in warm.out
-    assert "未知の収集 hook" in warm.out
+    assert "collected from record: 1 files; imported during collection: 1 files" in warm.out
+    assert "unknown collection hook" in warm.out
     assert "import: pkg/test_plain.hy" not in warm.out
     log = tmp_path / "makeitem.log"
     log.write_text("")
@@ -404,8 +404,8 @@ def test_unknown_collection_plugins_import_the_real_module_before_collection(
 def test_a_name_recorded_twice_becomes_one_item_at_its_first_position_with_its_last_body(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """同じ名の deftest が 2 つある file は、Python の module と同じく最初の位置に最後の定義の item が 1 本だけ並ぶ
-    (試作の 1 つ目は記録を 2 重に集めて 1 本多かった)。"""
+    """A file with two deftests of the same name has only one item of the last definition at the first position, as in a Python module
+    (the first prototype collected the records twice and had one item too many)."""
     _write_project(pytester, tmp_path, monkeypatch, DUPLICATE_FILES)
     runs = _cold_then_warm(pytester)
     cold, warm, cold_ids, warm_ids = runs.cold, runs.warm, runs.cold_ids, runs.warm_ids
@@ -416,7 +416,7 @@ def test_a_name_recorded_twice_becomes_one_item_at_its_first_position_with_its_l
         == cold_ids
         == ["pkg/test_duplicate.hy::test_dup", "pkg/test_duplicate.hy::test_between"]
     )
-    assert "記録から収集 1 file" in warm.out
+    assert "collected from record: 1 files" in warm.out
 
 
 def test_fixture_alias_keeps_the_attribute_used_by_pytest(
@@ -437,7 +437,7 @@ def test_fixture_alias_keeps_the_attribute_used_by_pytest(
     assert runs.cold.outcomes == {"passed": 2}, runs.cold.out
     assert runs.warm.outcomes == runs.cold.outcomes, runs.warm.out
     assert runs.warm_ids == runs.cold_ids
-    assert "記録から収集 1 file・収集で import 0 file" in runs.warm.out
+    assert "collected from record: 1 files; imported during collection: 0 files" in runs.warm.out
 
 
 def test_item_specific_fixture_registration_does_not_reuse_the_sibling_closure(
@@ -471,4 +471,4 @@ def pytest_collect_file(file_path, parent):
     assert runs.cold.outcomes == {"passed": 2}, runs.cold.out
     assert runs.warm.outcomes == runs.cold.outcomes, runs.warm.out
     assert runs.warm_ids == runs.cold_ids
-    assert "記録から収集 2 file・収集で import 0 file" in runs.warm.out
+    assert "collected from record: 2 files; imported during collection: 0 files" in runs.warm.out

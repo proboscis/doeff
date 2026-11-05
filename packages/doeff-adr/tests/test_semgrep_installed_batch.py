@@ -1,12 +1,12 @@
-"""installed の defsemgrep を、同じ設定の組ごとに 1 回の semgrep でまとめて確かめる。
+"""Check an installed defsemgrep with one semgrep run per set of the same configuration.
 
-規則の検 1 本ごとに semgrep を 2 回(当たる例・当たらない例)起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ
-重なる。agora-controllers の defadr_turn_boundary では 7 規則で 14 回・約 33 秒になり、日次の 1 file の上限(60 秒)を越えた。
-同じ設定を読む規則の例は 1 回の semgrep にまとめ、その答えを同じ process の残りの検で使い回す。
+If semgrep is started twice per rule enforcement (an example that hits and an example that does not hit), the cost of one startup (about 2.3 seconds) piles up "number of rules x 2" times.
+In agora-controllers' defadr_turn_boundary, 7 rules meant 14 runs and about 33 seconds, which exceeded the daily limit per file (60 seconds).
+The examples of rules that read the same configuration are batched into one semgrep run, and the answer is reused by the remaining enforcements in the same process.
 
-例は組ごとの dir に置き、組ごとに git の repo にして root を固める。まとめた木が外の git の repo の中に在ると、root が
-その repo に落ちて、root に固定した paths.include(``/pkg/**`` の形)が黙って死ぬ — 当たる例が当たらず、当たらない例は
-黙って緑になる(反例 = 外の repo の中で回す検)。
+Examples are placed in a dir per set, and each set is made a git repo to pin the root. If the batched tree is inside an outside git repo, the root
+falls to that repo, and paths.include pinned to the root (the ``/pkg/**`` shape) silently dies — an example that should hit does not hit, and an example that should not hit
+silently turns green (counterexample = an enforcement run inside an outside repo).
 """
 
 import subprocess
@@ -26,12 +26,12 @@ WORDS = ("eval", "exec", "compile")
 
 
 def _register(effect: RegisterSemgrep) -> None:
-    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep)。"""
+    """Register a Semgrep enforcement in the process registry (effect RegisterSemgrep)."""
     run(semgrep_enforcements()(effect))
 
 
 def _check(enforcement_id: str) -> None:
-    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep)。"""
+    """Check a Semgrep enforcement in the registry (effect AssertSemgrep)."""
     run(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
@@ -52,7 +52,7 @@ def _rules() -> str:
 
 @pytest.fixture
 def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path]:
-    """規則 3 つの設定と、3 規則の例(当たる例の path は 3 規則とも同じ pkg/mod.py)を登録した木。"""
+    """A tree with the configuration of three rules and the examples of the three rules registered (the path of the example that hits is the same pkg/mod.py for all three rules)."""
     root = tmp_path / "tree"
     root.mkdir()
     (root / ".semgrep.yaml").write_text(_rules(), encoding="utf-8")
@@ -66,7 +66,7 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path]:
                     hit_fixtures=[{"relative-path": "pkg/mod.py", "source": f"{word}('1')\n"}],
                     clean_fixtures=[
                         {"relative-path": "pkg/mod.py", "source": "print('1')\n"},
-                        # 規則の include(/pkg/**)の外 — root が正しければ当たらない。
+                        # Outside the rule's include (/pkg/**) — if the root is correct it does not hit.
                         {"relative-path": "other/mod.py", "source": f"{word}('1')\n"},
                     ],
                 )
@@ -89,7 +89,7 @@ def test_specs_sharing_a_config_are_checked_with_one_semgrep_run(
         if any(Path(str(part)).name == "semgrep" for part in call.args[0])
     ]
     assert len(semgrep_runs) == 1, (
-        f"semgrep を {len(semgrep_runs)} 回起こした(同じ設定の 3 規則は 1 回にまとめる)"
+        f"semgrep was started {len(semgrep_runs)} times (the three rules with the same configuration should be batched into one)"
     )
 
 
@@ -100,7 +100,7 @@ def test_the_batch_keeps_root_anchored_paths_inside_an_outer_git_repo(
     outer.mkdir()
     subprocess.run(["git", "init", "-q", str(outer)], check=True)
     monkeypatch.setattr(registry_module.tempfile, "tempdir", str(outer))
-    # commit の hook の中で回る検は GIT_DIR を受け継ぐ — semgrep の root の推論がそれに引かれない。
+    # An enforcement run inside a commit hook inherits GIT_DIR — semgrep's root inference must not be pulled by it.
     monkeypatch.setenv("GIT_DIR", str(outer / ".git"))
     monkeypatch.setenv("GIT_WORK_TREE", str(outer))
 
@@ -109,8 +109,8 @@ def test_the_batch_keeps_root_anchored_paths_inside_an_outer_git_repo(
 
 
 def test_a_hit_fixture_under_a_tests_dir_is_read(tree: Path) -> None:
-    # 失敗ケース(#1201): 組の dir を渡すと、semgrep は dir の中の tests/ を既定で読み飛ばす(.semgrepignore の無い root)—
-    # tests/ の下の当たる例に規則が当たらず赤になった(doeff の enforce_002 の 4 本)。例の file は名指しで読む。
+    # Failure case (#1201): when a set's dir is passed, semgrep skips tests/ inside the dir by default (a root without .semgrepignore) —
+    # the rule did not hit the example that should hit under tests/ and turned red (4 enforcements of doeff's enforce_002). Example files are read by name.
     _register(
         RegisterSemgrep(
             "batch_probe_inside_tests",
@@ -140,7 +140,7 @@ def test_a_rule_that_does_not_fire_on_its_hit_fixture_is_still_red(
 
 
 def test_an_outer_verdict_store_does_not_reach_the_mechanism_checks() -> None:
-    # 失敗ケース(日次 10-11 16:00 の doeff): 日次は子へ DOEFF_ADR_SEMGREP_VERDICTS を渡す。root の処理ステージが同じ置き場に
-    # 答えを書き、packages の段のこの file の検がその答えを読んで semgrep を 0 回しか起こさず、「1 回にまとめる」の検が赤になった。
-    # 仕組みを確かめる検は外の置き場を読まない(置き場を確かめる検は test_semgrep_verdict_store.py が自分の置き場を名指す)。
+    # Failure case (doeff daily 10-11 16:00): the daily run passes DOEFF_ADR_SEMGREP_VERDICTS to the child. The root's processing stage wrote answers to the same place,
+    # and this file's enforcement in the packages stage read those answers and started semgrep only 0 times, so the "batch into one" enforcement turned red.
+    # An enforcement that checks the mechanism does not read an outside place (the enforcement that checks the place names its own place in test_semgrep_verdict_store.py).
     assert verdict_store() is None

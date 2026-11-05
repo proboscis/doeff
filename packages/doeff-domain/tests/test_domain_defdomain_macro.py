@@ -1,13 +1,13 @@
-"""defdomain マクロ (ADR-DOE-DOMAIN-001 D4)。
+"""defdomain macro (ADR-DOE-DOMAIN-001 D4).
 
-defdomain は import(と eval)の時に process の表へ載せる。載った domain は effect GetDomain で読み、domain_registry() が
-process の表から答える(ADR-DOE-API-001 R29)。eval の試しは内側の isolated_registry の空の表で走らせる。
+defdomain registers into the process table at import (and eval) time. A registered domain is read with effect GetDomain, and domain_registry()
+answers from the process table (ADR-DOE-API-001 R29). The eval trials run against the empty table of an inner isolated_registry.
 """
 
 import sys
 import types
 
-import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)
+import doeff_hy  # noqa: F401 — import hook registration for the .hy fixture module (test-only)
 import hy
 import hy.macros
 import pytest
@@ -19,7 +19,7 @@ from doeff import run
 
 
 def get_domain(name):
-    """process の表の domain を名で引く(effect GetDomain)。"""
+    """Look up a domain in the process table by name (effect GetDomain)."""
     return run(domain_registry()(GetDomain(name)))
 
 
@@ -76,7 +76,7 @@ def test_defdomain_requires_title():
 
 
 def test_defdomain_rejects_unknown_keys():
-    # :effect のような typo を黙って捨てない(fail loud)
+    # do not silently drop a typo such as :effect (fail loud)
     with isolated_registry(), pytest.raises(Exception, match="unknown key"):
         _eval_defdomain('(defdomain macro-typo-domain :title "t" :effect [])')
 

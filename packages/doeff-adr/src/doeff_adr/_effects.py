@@ -1,26 +1,26 @@
-"""設計の記録(ADR)を読む effect GetAdr・AdrIds と、ADR の形を確かめる effect AssertAdrContract・AssertAllAdrContracts と、
-deftest の検を表に載せる effect RegisterDeftest と、登録簿を読み書きする effect RegisterAdr・ClearRegistry・EnforcementIds・
-GetEnforcement と、登録簿から答える handler を返す工場 adr_registry。
+"""The effects GetAdr and AdrIds that read design records (ADR), the effects AssertAdrContract and AssertAllAdrContracts that check the shape of an ADR,
+the effect RegisterDeftest that puts a deftest enforcement in the table, the effects RegisterAdr, ClearRegistry, EnforcementIds and
+GetEnforcement that read and write the registry, and the factory adr_registry that returns a handler answering from the registry.
 
-決め: GetAdr は effect にする(ADR-DOE-API-001 R20)。AdrIds も effect にする
-(ADR-DOE-API-001 R21)。前の関数 get_adr は外の repo の呼び手を書き換えた後に
-消した(本体は内側の registry._get_adr)。前の関数 adr_ids は外の repo の呼び手を書き換えた後に消した(本体は内側の registry._adr_ids)。
-AssertAdrContract・AssertAllAdrContracts・RegisterDeftest も、doeff-adr の残りの名を同じ向きで直して
-effect にした(ADR-DOE-API-001 R30)。前の関数
-assert_adr_contract・assert_all_adr_contracts・register_deftest_enforcement は外の repo に呼び手が無いので、移し替えの層を残さずに
-消した(本体は内側の registry._assert_adr_contract・registry._register_deftest_enforcement)。
-RegisterAdr・ClearRegistry・EnforcementIds・GetEnforcement も同じ答え(ADR-DOE-API-001 R32)。前の関数
-register_adr・clear_registry・enforcement_ids・get_enforcement も外の repo に呼び手が無いので、移し替えの層を残さずに消した(本体は
-内側の registry._register_adr・_clear_registry・_enforcement_ids・_get_enforcement)。macro defadr の展開は ADR の載せも
-RegisterAdr として import の時にこの handler の下で走らせる。
+Decision: GetAdr is an effect (ADR-DOE-API-001 R20). AdrIds is also an effect
+(ADR-DOE-API-001 R21). The former function get_adr was removed after the callers in outside repos were
+rewritten (its body is the inner registry._get_adr). The former function adr_ids was removed after the callers in outside repos were rewritten (its body is the inner registry._adr_ids).
+AssertAdrContract, AssertAllAdrContracts and RegisterDeftest were also made effects, fixing the remaining doeff-adr names in the same direction
+(ADR-DOE-API-001 R30). The former functions
+assert_adr_contract, assert_all_adr_contracts and register_deftest_enforcement have no callers in outside repos, so they were removed without leaving a transition layer
+(their bodies are the inner registry._assert_adr_contract and registry._register_deftest_enforcement).
+RegisterAdr, ClearRegistry, EnforcementIds and GetEnforcement get the same answer (ADR-DOE-API-001 R32). The former functions
+register_adr, clear_registry, enforcement_ids and get_enforcement also have no callers in outside repos, so they were removed without leaving a transition layer (their bodies are
+the inner registry._register_adr, _clear_registry, _enforcement_ids and _get_enforcement). The expansion of the macro defadr also runs the ADR registration
+as RegisterAdr under this handler at import time.
 
-確かめと載せは GetAdr と同じ ADR の表と、検(enforcement)の表を読むので、同じ handler が答える(外の process を起こさない —
-semgrep を起こす Semgrep の検は別の工場 semgrep_enforcements)。macro defadr の展開は、deftest の載せを import の時に、ADR の形の
-確かめを生まれる test の中で、この handler の下で走らせる(project の doeff_interpreter fixture に頼らない)。
+Checking and registering read the same ADR table as GetAdr and the enforcement table, so the same handler answers (no outside process is started —
+the Semgrep enforcement that starts semgrep is in another factory, semgrep_enforcements). The expansion of the macro defadr runs the deftest registration at import time and the ADR shape
+check inside the generated test, under this handler (without relying on the project's doeff_interpreter fixture).
 
-deftest で使うには、project の doeff_interpreter fixture が adr_registry() を据える(doeff-adr は handler の組を選ばない —
-README の「doeff_interpreter」の節)。test の中で別の表を使う時は、program の一部に adr_registry(specs=[spec, …], enforcements={…})
-を据える: 内側の handler が先に答え、GetAdr は渡した列に無い id を外の登録簿へ落とさずに KeyError にし、AdrIds は渡した列の id だけを返す。
+To use it with deftest, the project's doeff_interpreter fixture installs adr_registry() (doeff-adr does not choose the handler set —
+see the "doeff_interpreter" section of the README). To use another table inside a test, install adr_registry(specs=[spec, …], enforcements={…}) around part of the program:
+the inner handler answers first, GetAdr raises KeyError for an id not in the given list instead of falling through to the outside registry, and AdrIds returns only the ids of the given list.
 """
 
 from collections.abc import Callable
@@ -47,34 +47,34 @@ from doeff_adr._registry import (
 
 @dataclass(frozen=True)
 class GetAdr(EffectBase[AdrSpec]):
-    """id で ADR を引く: yield GetAdr("ADR-…") → AdrSpec。載っていない id は KeyError(id)。"""
+    """Look up an ADR by id: yield GetAdr("ADR-…") → AdrSpec. An id that is not registered is KeyError(id)."""
 
     adr_id: str
 
 
 @dataclass(frozen=True)
 class AdrIds(EffectBase[list[str]]):
-    """載っている ADR の id の一覧: yield AdrIds() → 並べた list[str](載っていなければ [])。"""
+    """List of registered ADR ids: yield AdrIds() → an ordered list[str] ([] if none are registered)."""
 
 
 @dataclass(frozen=True)
 class AssertAdrContract(EffectBase[None]):
-    """ADR 1 つの形を確かめる: yield AssertAdrContract("ADR-…") → None。採用済みなのに検が無い・挙げた検が表に無い・
-    expected-red の検が計画に結ばれていない時は AssertionError、載っていない id は KeyError(id)。"""
+    """Check the shape of one ADR: yield AssertAdrContract("ADR-…") → None. AssertionError when an adopted ADR has no enforcement, a named enforcement is not in the table, or
+    an expected-red enforcement is not tied to a plan; KeyError(id) for an id that is not registered."""
 
     adr_id: str
 
 
 @dataclass(frozen=True)
 class AssertAllAdrContracts(EffectBase[None]):
-    """載っている ADR の全部の形を確かめる: yield AssertAllAdrContracts() → None。id の順に確かめ、最初の外れを
-    AssertAdrContract と同じ AssertionError にする(載っていなければ何も確かめずに答える)。"""
+    """Check the shape of all registered ADRs: yield AssertAllAdrContracts() → None. Checks in id order and turns the first failure into the
+    same AssertionError as AssertAdrContract (answers without checking anything if none are registered)."""
 
 
 @dataclass(frozen=True)
 class RegisterDeftest(EffectBase[EnforcementRef]):
-    """deftest の検を表に載せる: yield RegisterDeftest("test_…") → EnforcementRef(kind="deftest")。同じ id が表に在る時と、
-    mode が green・expected-red の外の時は ValueError。"""
+    """Put a deftest enforcement in the table: yield RegisterDeftest("test_…") → EnforcementRef(kind="deftest"). ValueError when the same id is already in the table, or when
+    mode is outside green / expected-red."""
 
     enforcement_id: str
     _: KW_ONLY
@@ -83,11 +83,11 @@ class RegisterDeftest(EffectBase[EnforcementRef]):
 
 @dataclass(frozen=True)
 class RegisterAdr(EffectBase[AdrSpec]):
-    """ADR を登録簿に載せる: yield RegisterAdr("ADR-…", title=…, status=…, …) → 載せた AdrSpec。
+    """Put an ADR in the registry: yield RegisterAdr("ADR-…", title=…, status=…, …) → the registered AdrSpec.
 
-    欄は macro defadr の展開と同じ(status = proposed・accepted・superseded・rejected の語、enforcement = EnforcementRef か
-    SemgrepSpec か検の id の列 — id は同じ登録簿の検から種類を読む)。同じ id が載っている時と、status が決まった語でない時は
-    ValueError、enforcement の項が読めない型の時は TypeError。
+    The fields are the same as the expansion of the macro defadr (status = one of the words proposed, accepted, superseded, rejected; enforcement = an EnforcementRef,
+    a SemgrepSpec, or a list of enforcement ids — the kind of an id is read from the enforcements of the same registry). ValueError when the same id is already registered or when status is not one of the fixed words;
+    TypeError when an enforcement item has an unreadable type.
     """
 
     adr_id: str
@@ -106,23 +106,23 @@ class RegisterAdr(EffectBase[AdrSpec]):
 
 @dataclass(frozen=True)
 class ClearRegistry(EffectBase[None]):
-    """登録簿を空にする: yield ClearRegistry() → None。載っている ADR と検の両方を消す。"""
+    """Empty the registry: yield ClearRegistry() → None. Removes both the registered ADRs and the enforcements."""
 
 
 @dataclass(frozen=True)
 class EnforcementIds(EffectBase[list[str]]):
-    """載っている検(defadr の deftest と defsemgrep)の id の一覧: yield EnforcementIds() → 並べた list[str]。"""
+    """List of registered enforcement ids (defadr's deftest and defsemgrep): yield EnforcementIds() → an ordered list[str]."""
 
 
 @dataclass(frozen=True)
 class GetEnforcement(EffectBase[EnforcementRef | SemgrepSpec]):
-    """id で検を引く: yield GetEnforcement("id") → EnforcementRef か SemgrepSpec。載っていない id は KeyError(id)。"""
+    """Look up an enforcement by id: yield GetEnforcement("id") → EnforcementRef or SemgrepSpec. An id that is not registered is KeyError(id)."""
 
     enforcement_id: str
 
 
 def _table(specs: list[AdrSpec] | tuple[AdrSpec, ...]) -> dict[str, AdrSpec]:
-    """渡した ADR の列を id で引く表にする(id の重なりと ADR でない値は作る時に断る)。"""
+    """Turn the given list of ADRs into a table keyed by id (duplicate ids and non-ADR values are rejected at construction)."""
     if not isinstance(specs, list | tuple):
         raise TypeError(
             f"adr_registry(specs=…) takes a list of AdrSpec, got {type(specs).__name__}"
@@ -145,16 +145,16 @@ def adr_registry(
     enforcements: dict[str, EnforcementRef | SemgrepSpec] | None = None,
 ) -> ProgramHandler:
     """GetAdr・AdrIds・AssertAdrContract・AssertAllAdrContracts・RegisterDeftest・RegisterAdr・ClearRegistry・EnforcementIds・
-    GetEnforcement に答える handler。
+    A handler that answers GetEnforcement.
 
-    specs も enforcements も無ければ process の登録簿(defadr・defsemgrep が載せる所)を答える時に読み書きする。どちらかを渡せば
-    別の登録簿で、ADR は specs の列だけ・検は enforcements の辞書だけから読む(渡さない方は空 — specs=[] も空の表で、登録簿では
-    ない)。ADR の表は specs の写しで工場を呼んだ時に 1 つ作り、RegisterAdr はそこへ載せる。RegisterDeftest は渡した辞書に載せ、
-    enforcements を渡さない時は工場を呼んだ時に作る空の辞書に載せる(同じ handler の値を使い回す間は載せが残る)。
-    semgrep_enforcements(table=…) に同じ辞書を渡せば、RegisterSemgrep の載せを GetEnforcement と RegisterAdr の検の id が読む。
-    別の登録簿に無い id は外の登録簿へ落ちずに KeyError、ClearRegistry は別の登録簿の 2 つの表だけを空にする。
+    With neither specs nor enforcements, it reads and writes the process registry (where defadr and defsemgrep register) when answering. If either is given, it uses
+    a separate registry: ADRs are read only from the specs list and enforcements only from the enforcements dict (the one not given is empty — specs=[] is also an empty table, not the
+    registry). The ADR table is a copy of specs made once when the factory is called, and RegisterAdr registers into it. RegisterDeftest registers into the given dict, and
+    when enforcements is not given it registers into an empty dict made when the factory is called (registrations remain while the same handler value is reused).
+    If the same dict is passed to semgrep_enforcements(table=…), the RegisterSemgrep registrations are read by GetEnforcement and by the enforcement ids of RegisterAdr.
+    An id not in the separate registry is KeyError instead of falling through to the outside registry, and ClearRegistry empties only the two tables of the separate registry.
 
-    使い方: adr_registry()(program)・adr_registry(specs=[spec], enforcements={})(program)。
+    Usage: adr_registry()(program), adr_registry(specs=[spec], enforcements={})(program).
     """
     if enforcements is not None and not isinstance(enforcements, dict):
         raise TypeError(
@@ -175,8 +175,8 @@ def adr_registry(
     def write_or_read_entries(
         effect: RegisterAdr | ClearRegistry | EnforcementIds | GetEnforcement,
     ) -> AdrSpec | list[str] | EnforcementRef | SemgrepSpec | None:
-        """登録簿の載せ・空け・検の引きの答えを、この handler の 2 つの表から作る(RegisterAdr の検の id はこの handler の検の表から
-        種類を読む)。"""
+        """Build the answers for registering, clearing and looking up enforcements from this handler's two tables (the enforcement ids of RegisterAdr read the kind
+        from this handler's enforcement table)."""
         match effect:
             case RegisterAdr():
                 return _register_adr(
@@ -212,7 +212,7 @@ def adr_registry(
         | EnforcementIds
         | GetEnforcement,
     ) -> AdrSpec | list[str] | EnforcementRef | SemgrepSpec | None:
-        """effect 1 つの答えを、この handler の表(ADR の列と検の辞書)から作る — 失敗は例外のまま handler へ返す。"""
+        """Build the answer for one effect from this handler's tables (the ADR list and the enforcement dict) — a failure is returned to the handler as an exception."""
         match effect:
             case GetAdr(adr_id=adr_id):
                 return lookup(adr_id)
@@ -242,7 +242,7 @@ def adr_registry(
         | GetEnforcement,
         k: K,
     ):
-        # 引きと確かめと載せの決まった失敗は、effect を出した所へ投げ返す(先例 _semgrep_effects と同じ形)。
+        # Fixed failures of lookup, checking and registering are thrown back to where the effect was raised (the same shape as the precedent _semgrep_effects).
         try:
             value = answer(effect)
         except (AssertionError, KeyError, TypeError, ValueError) as failed:

@@ -186,7 +186,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MemoryFiles": "doeff_events._handlers.memory_files",
     "memory_file_watch_handler": "doeff_events._handlers.memory_files",
     "os_file_watch_handler": "doeff_events._handlers.os_files",
-    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    # Program helpers used by outside repos (ADR-DOE-API-001 R18, R25)
     "begin_watch": "doeff_events._event_loop",
     "end_watch": "doeff_events._event_loop",
     "next_event": "doeff_events._event_loop",

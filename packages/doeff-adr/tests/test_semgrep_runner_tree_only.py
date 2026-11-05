@@ -1,17 +1,17 @@
-"""defsemgrep runner の機体非依存性 — 検査の意味は tree だけで決まる。
+"""Machine independence of the defsemgrep runner -- the meaning of a check is decided by the tree alone.
 
-実測 2026-08-17(zeus 全量検査・route-3da438e018): 遠隔検査 tree は git の
-metadata(.git)を運ばない(remote_check は git ls-files の名簿だけを写す)。
-その tree 上で defsemgrep が 2 つの機体依存で全滅した:
+Measured 2026-08-17 (zeus full check, route-3da438e018): the remote check tree
+does not carry git metadata (.git) (remote_check copies only the git ls-files listing).
+On that tree defsemgrep failed completely due to two machine dependencies:
 
-1. repo root の判定が .git の実在に依存 — .git が無い tree で RuntimeError。
-   検査 tree の意味は tree 自身(config file の実在)が決めるべきで、
-   git metadata の有無で変わってはならない。
-2. semgrep 本体が起動時に crash した時(exit 1・stdout 空)、runner が
-   「発火なし」と黙読した — 壊れた scanner と『rule が発火しない』が
-   区別されず、根因(interpreter 不整合)が『installed rule が hit fixture に
-   発火しない』という偽の診断で報告された。scan が走らなかったことは
-   大声で落ちなければならない。
+1. Repo root detection depended on the existence of .git -- RuntimeError on a tree without .git.
+   The meaning of a check tree must be decided by the tree itself (existence of the config file),
+   and must not change with the presence or absence of git metadata.
+2. When semgrep itself crashed at startup (exit 1, empty stdout), the runner
+   silently read it as "no fire" -- a broken scanner and "the rule does not fire" were
+   not distinguished, and the root cause (interpreter mismatch) was reported as the false diagnosis
+   "the installed rule does not fire on the hit fixture". The fact that the scan did not run
+   must fail loudly.
 """
 
 import json
@@ -38,17 +38,17 @@ def registry():
 
 
 def _register(effect: RegisterSemgrep) -> None:
-    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep)。"""
+    """Register a Semgrep check in the process registry (effect RegisterSemgrep)."""
     run(semgrep_enforcements()(effect))
 
 
 def _check(enforcement_id: str) -> None:
-    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep)。"""
+    """Verify a Semgrep check in the registry (effect AssertSemgrep)."""
     run(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
 def _make_tree_without_git(tmp_path: Path) -> Path:
-    """検査 tree の模型 — config はあるが git metadata は無い。"""
+    """A mock of a check tree -- it has the config but no git metadata."""
     root = tmp_path / "tree"
     (root / "packages" / "sample").mkdir(parents=True)
     (root / ".semgrep.yaml").write_text(
@@ -88,7 +88,7 @@ def test_resolve_config_path_fails_when_no_tree_carries_the_config(tmp_path, mon
 
 
 def test_installed_rule_enforcement_runs_on_tree_without_git(tmp_path, monkeypatch, registry):
-    """installed-rule 形の全経路(config 解決 → fixture 走査)が .git なしで成立する。"""
+    """The whole installed-rule path (config resolution -> fixture scan) works without .git."""
     root = _make_tree_without_git(tmp_path)
     monkeypatch.chdir(root)
     _register(
@@ -121,10 +121,10 @@ def _fake_semgrep(tmp_path: Path, script_body: str) -> Path:
 
 
 def test_run_semgrep_crash_with_exit_1_is_loud_not_empty(tmp_path):
-    """scanner が exit 1 で crash(stdout 非 JSON)→ 空の結果ではなく AssertionError。
+    """If the scanner crashes with exit 1 (stdout is not JSON) -> AssertionError, not an empty result.
 
-    exit 1 は semgrep の『findings あり』とも重なるため、JSON の実在だけが
-    『scan が走った』の根拠になる — 走らなかった scan を緑側の材料にしない。
+    Exit 1 also overlaps with semgrep's "findings present", so only the existence of JSON
+    is evidence that "the scan ran" -- a scan that did not run is never used as green-side material.
     """
     fake = _fake_semgrep(
         tmp_path,
@@ -151,10 +151,10 @@ def test_run_semgrep_empty_stdout_with_exit_0_is_loud(tmp_path):
 
 
 def test_run_semgrep_failure_names_the_json_errors_not_only_stderr(tmp_path: Path) -> None:
-    """--quiet --json の semgrep は、失敗(exit 2)の理由を stdout の JSON の errors にだけ載せ、stderr は空。
+    """With --quiet --json, semgrep puts the reason for a failure (exit 2) only in the stdout JSON errors, and stderr is empty.
 
-    反例: 日次の検で「semgrep failed with exit 2:」だけが残り、規則の読みの失敗か
-    semgrep の版かを名指せなかった。失敗の文は errors の種類・規則・文言を名乗る。
+    Counterexample: the daily check left only "semgrep failed with exit 2:" and could not name whether it was a rule-loading failure
+    or the semgrep version. The failure message names the error kind, rule and wording from errors.
     """
     verdict = {
         "results": [],
@@ -184,7 +184,7 @@ def test_run_semgrep_failure_names_the_json_errors_not_only_stderr(tmp_path: Pat
 
 
 def test_crashing_scanner_is_not_reported_as_rule_not_firing(tmp_path, monkeypatch, registry):
-    """zeus 実測の再演: crash する semgrep が『bad fixture に不一致』と報告されない。"""
+    """Replay of the zeus measurement: a crashing semgrep is not reported as "mismatch on the bad fixture"."""
     fake = _fake_semgrep(
         tmp_path,
         'echo "Traceback (most recent call last): scanner is broken" >&2\nexit 1\n',

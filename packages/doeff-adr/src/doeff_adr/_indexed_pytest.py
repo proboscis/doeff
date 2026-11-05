@@ -1,7 +1,7 @@
-"""記録からの収集専用の pytest 内部境界 (#1551)。
+"""Internal pytest boundary dedicated to collection from records (#1551).
 
-型付きの session 内キャッシュと item 生成をここだけで所有する。pytest の class や関数を
-書き換えない。未知の収集 hook は最適化前に検知して通常の import と収集へ戻す。
+Typed per-session caching and item generation are owned only here. pytest classes and functions are
+not rewritten. Unknown collection hooks are detected before optimizing and we fall back to normal import and collection.
 """
 
 import sys
@@ -21,7 +21,7 @@ from doeff_hy._pytest_items import FunctionItem, Parametrize
 from doeff_adr._item_cache import FixtureRecord
 
 
-# 名前だけで信用せず、既知の実装そのものと照合する。任意 plugin の wrapper も通常経路へ戻す。
+# Do not trust names alone; check against the known implementation itself. Wrappers from arbitrary plugins also fall back to the normal path.
 def supports_indexed_collection(collector: pytest.Module) -> bool:
     manager = collector.session._fixturemanager
     makeitem: list[object] = [python.pytest_pycollect_makeitem, unittest.pytest_pycollect_makeitem]
@@ -44,7 +44,7 @@ def supports_indexed_collection(collector: pytest.Module) -> bool:
         runner.pytest_make_collect_report,
         CaptureManager.pytest_make_collect_report,
     ]
-    # pytest の版によって fixture manager の report wrapper は有無が異なる。
+    # Depending on the pytest version, the fixture manager's report wrapper may or may not exist.
     reports.append(vars(FixtureManager).get("pytest_make_collect_report"))
     return (
         all(impl.function in makeitem for impl in hook.pytest_pycollect_makeitem.get_hookimpls())
@@ -76,10 +76,10 @@ class FixtureKey:
 
 @dataclass
 class FixtureInfoCache:
-    """1 session の登録内容ごとに解決を共有する。各 item へは list/dict のコピーを返す。
+    """Share resolution per registration contents within one session. Each item gets a copy of the list/dict.
 
-    各 module の収集の直前に登録簿を比較するので、下位 conftest と追加登録を見落とさない。
-    内部の fixture 配列がその場で伸びた場合も tuple の snapshot は独立している。
+    The registry is compared right before collecting each module, so lower-level conftest files and additional registrations are not missed.
+    Even if the internal fixture array grows in place, the tuple snapshot stays independent.
     """
 
     _mut_definitions: dict[str, tuple[FixtureDef[object], ...]] = field(default_factory=dict)
@@ -97,8 +97,8 @@ class FixtureInfoCache:
         info = self._mut_entries.get(key)
         if info is None:
             return None
-        # 同じ親 dir でも、特定の module/item だけを対象とする登録は兄弟と見え方が違う。
-        # 解決済みだけでなく closure の欠けている名も照合する (C の lookup の考え方)。
+        # Even in the same parent dir, a registration targeting only a specific module/item looks different from its siblings.
+        # Compare not only resolved names but also names missing from the closure (the idea of C lookup).
         if any(
             tuple(manager.getfixturedefs(name, collector) or ())
             != info.name2fixturedefs.get(name, ())
@@ -124,7 +124,7 @@ _FIXTURE_INFO_KEY = pytest.StashKey[FixtureInfoCache]()
 
 
 class IndexedFunctions:
-    """1 module の記録に限定した item 生成。plugin の呼び出し自体は通常の hook を通す。"""
+    """Item generation limited to the records of one module. The plugin call itself goes through the normal hook."""
 
     def __init__(
         self,
@@ -170,7 +170,7 @@ class IndexedFunctions:
                 if isinstance(decorator, Parametrize)
             ),
         )
-        # 引数なし usefixtures は fixture 解決のたびに警告を出す。共有して警告を省かない。
+        # usefixtures without arguments warns on every fixture resolution. Do not share it and skip the warning.
         shareable = not any(mark.name == "usefixtures" and not mark.args for mark in marks)
         cached = (
             self.cache.get(key, collector.session._fixturemanager, collector) if shareable else None
@@ -185,7 +185,7 @@ class IndexedFunctions:
             info = item._fixtureinfo
             if cached is None and shareable:
                 self.cache.remember(key, info)
-            # 既知の hook だけ: sync 関数で印も fixture の params も無ければ、生成 hook は全て無操作。
+            # Known hooks only: for a sync function with no marks and no fixture params, the generation hooks are all no-ops.
             if not any(
                 fixture.params is not None
                 for definitions in info.name2fixturedefs.values()

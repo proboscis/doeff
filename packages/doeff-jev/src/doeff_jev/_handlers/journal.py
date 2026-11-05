@@ -1,7 +1,7 @@
-"""記録の handler — `slog("jev_judge", …)` を 1 行の JSON として file に追記する。他は Pass。
+"""Journal handler: appends `slog("jev_judge", ...)` to a file as one JSON line. Everything else is Pass.
 
-seimf と Jev の比較(所要・トークン・成否)はこの記録で測る。file への書き込みはこの handler
-の中だけ(観測の I/O 境界)。
+The comparison between seimf and Jev (elapsed time, tokens, success or failure) is measured with this journal. Writing to the file happens only inside this handler
+(the I/O boundary for observation).
 """
 
 import json
@@ -19,7 +19,7 @@ JOURNAL_EVENT = "jev_judge"
 
 
 def journal_handler(path: str, *, caller: str = "") -> Callable[[Any], Any]:
-    """`slog("jev_judge", …)` を `path` に追記して消費する。それ以外の slog・effect は外へ Pass。"""
+    """Append `slog("jev_judge", ...)` to `path` and consume it. Other slogs and effects are passed outward."""
 
     def append(fields: dict[str, Any]) -> None:
         line = {"t": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "caller": caller, **fields}
@@ -28,7 +28,7 @@ def journal_handler(path: str, *, caller: str = "") -> Callable[[Any], Any]:
             with open(path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(line, ensure_ascii=False, default=repr) + "\n")
         except OSError:
-            pass  # 記録が書けないことで判定を止めない
+            pass  # a journal that cannot be written must not stop the judgment
 
     @do
     def handler(effect: Any, k: Any) -> Any:

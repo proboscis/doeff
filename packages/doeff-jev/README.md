@@ -1,33 +1,33 @@
 # doeff-jev
 
-doeff-system-one の `Judge` effect を **TypeSafe の Jev** で判定する handler。doeff-llm に対する
-doeff-openai と同じ位置(provider 側)。
+A handler that judges doeff-system-one's `Judge` effect with **TypeSafe's Jev**. It sits in the same position
+(provider side) as doeff-openai does for doeff-llm.
 
-入口 `doeff_jev` が見せるのは、handler と handler の工場と設定の型だけ(doeff の ADR-DOE-API-001 R1):
-`judge_stack`・`jev_handler`・`jev_memo_handler`・`journal_handler`・`durable_cache` と `JevTarget`。下の module は内側
-(名に `_` を付けた所)に在り、使い手は読まない。
+The entry point `doeff_jev` exposes only handlers, handler factories, and the config type (doeff's ADR-DOE-API-001 R1):
+`judge_stack`, `jev_handler`, `jev_memo_handler`, `journal_handler`, `durable_cache`, and `JevTarget`. The modules below are internal
+(the ones whose names start with `_`) and callers do not read them.
 
-| 部品(内側) | 中身 |
+| Part (internal) | Contents |
 |---|---|
-| `_target.py` | 宛先(URL・model・通信の形・API キー)の解き方 1 点。純粋な `resolve_target(env, read_text)` と、宛先を渡されない `judge_stack` が呼ぶ `target_from_process_environment()` |
-| `_wire.py` | Judge → HTTP の request / HTTP の答え → Verdict の写し(純粋)。TypeSafe 直と Vercel AI Gateway の 2 形式 |
-| `_handlers/production.py` | `jev_handler(target)`: Judge を受けて `HttpRequest` を yield する(HTTP を自分では呼ばない)。`jev_memo_handler(target)`: cacheable な Judge の答えを CacheGet / CachePut で包む |
-| `_handlers/journal.py` | `slog("jev_judge", …)` を 1 行 JSON で file に書く記録の出口 |
-| `_wiring.py` | handler の積み方 1 か所(`judge_stack`)と、process をまたぐ cache の実体(`durable_cache`) |
+| `_target.py` | The single place that resolves the destination (URL, model, wire format, API key). The pure `resolve_target(env, read_text)`, and `target_from_process_environment()`, which `judge_stack` calls when no destination is passed |
+| `_wire.py` | Mapping Judge to an HTTP request and an HTTP response to a Verdict (pure). Two formats: direct TypeSafe and Vercel AI Gateway |
+| `_handlers/production.py` | `jev_handler(target)`: receives Judge and yields an `HttpRequest` (it does not call HTTP itself). `jev_memo_handler(target)`: wraps the answers of cacheable Judges in CacheGet / CachePut |
+| `_handlers/journal.py` | The journal sink that writes `slog("jev_judge", ...)` to a file as one JSON line |
+| `_wiring.py` | The single place that stacks handlers (`judge_stack`), and the cross-process cache backend (`durable_cache`) |
 
-## 宛先の切り替え
+## Switching the destination
 
 ```
-JEV_BASE_URL=http://<host>:8646/v1/systemone JEV_MODEL=<model>  # 自前で動かす Jev 互換の判定器へ
-JEV_WIRE=gateway                                                  # Vercel 経由(既存の呼び手の形)
+JEV_BASE_URL=http://<host>:8646/v1/systemone JEV_MODEL=<model>  # to a self-hosted Jev-compatible judge
+JEV_WIRE=gateway                                                  # via Vercel (the shape existing callers use)
 ```
 
-TypeSafe と Vercel 以外の宛先ではキーが無くても送る。TypeSafe のキーは `TYPESAFE_API_KEY` →
-`~/.config/jev/api_key`、Vercel は `AI_GATEWAY_API_KEY` → `~/jev_key`。
+For destinations other than TypeSafe and Vercel, requests are sent even without a key. The TypeSafe key is read from `TYPESAFE_API_KEY` ->
+`~/.config/jev/api_key`, and the Vercel key from `AI_GATEWAY_API_KEY` -> `~/jev_key`.
 
-## 使い方(組み立て点)
+## Usage (assembly point)
 
-program は effect `Judge` を出すだけで、組み立て点が `judge_stack` の積みを被せて doeff の `run` で回す。
+A program only emits the `Judge` effect; the assembly point wraps it with the `judge_stack` stack and runs it with doeff's `run`.
 
 ```python
 from doeff import do, run, with_handlers
@@ -37,29 +37,29 @@ from doeff_jev import durable_cache, judge_stack
 
 @do
 def is_japanese():
-    return (yield Judge(state="この文章は日本語か。",
-                        questions={"ja": Question(kind="noul", instructions="この文章は日本語で書かれているか。")}))
+    return (yield Judge(state="Is this text Japanese?",
+                        questions={"ja": Question(kind="noul", instructions="Is this text written in Japanese?")}))
 
-stack = judge_stack(            # 宛先を渡さなければ、この process の環境と home の file から解く(上の「宛先の切り替え」)
-    cache=durable_cache(),      # 省くと process 内だけの cache
+stack = judge_stack(            # If no destination is passed, it is resolved from this process's environment and home files (see "Switching the destination" above)
+    cache=durable_cache(),      # If omitted, the cache lives only within the process
     caller="my-hook",
 )
 verdict = run(scheduled(with_handlers(stack, is_japanese())))
 ```
 
-宛先を決めて渡す時は `judge_stack(JevTarget(base_url, model, wire, api_key, source), …)`。
-テストでは `http=` に HttpRequest を台本で答える handler を渡す(`tests/test_handler.py`)。
+To fix and pass a destination explicitly, use `judge_stack(JevTarget(base_url, model, wire, api_key, source), ...)`.
+In tests, pass `http=` a handler that answers HttpRequest from a script (`tests/test_handler.py`).
 
-## 記録
+## Journal
 
-`~/.local/state/doeff-jev/journal.log` に 1 判定 1 行(宛先・model・呼び手 `caller`・問いの key の列 `keys`・問いの数・
-トークン・所要 ms・成否・中継の名乗り `proxy`・手元の cache の当たり `cached`)。Jev と自前の判定器の比較はこの記録で測る。
-journal を積まない組み立て点では、同じ行が外の slog の出口(stderr など)へ抜ける。
+One line per judgment is written to `~/.local/state/doeff-jev/journal.log` (destination, model, caller `caller`, the list of question keys `keys`, number of questions,
+tokens, elapsed ms, success or failure, the relay's self-identification `proxy`, and the local cache hit `cached`). Comparisons between Jev and a self-hosted judge are measured with this journal.
+At assembly points that do not stack the journal, the same line passes out to the outer slog sink (stderr, etc.).
 
-## 呼び手の名と中継の名乗り
+## Caller name and relay self-identification
 
-`caller`(`judge_stack` / `jev_handler` の引数)は、記録の行に載るほか、要求の見出し `x-jev-caller` で宛先へ送る
-(形は `<部品>/<出来事か規則>` — 例 `rulebook-advisor/Stop`・`doeff-linter/DOEFF205`・`messaging/classification`)。
-本文には入れない(中継 jev-proxy の答えの鍵を変えないため)。中継が答えの見出し `x-jev-proxy` で名乗った答えの出所
-(hit / miss / coalesced / refreshed)は `Verdict.proxy` に、手元の cache が答えた判定は `Verdict.cached = True` に印す
-(`input_tokens`・`elapsed_ms` は問うた時の値のまま — 費用を数える時は cached を除く)。
+`caller` (an argument of `judge_stack` / `jev_handler`) is put in the journal line and also sent to the destination in the request header `x-jev-caller`
+(the form is `<component>/<event or rule>`, e.g. `rulebook-advisor/Stop`, `doeff-linter/DOEFF205`, `messaging/classification`).
+It is not put in the body (so the answer key of the jev-proxy relay does not change). The origin of an answer that the relay declares in the response header `x-jev-proxy`
+(hit / miss / coalesced / refreshed) is recorded in `Verdict.proxy`, and a judgment answered by the local cache is marked `Verdict.cached = True`
+(`input_tokens` and `elapsed_ms` keep the values from when it was asked; exclude cached ones when counting cost).

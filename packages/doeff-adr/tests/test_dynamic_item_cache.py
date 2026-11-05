@@ -1,4 +1,4 @@
-"""動的な値と明示idの収集記録、および古い記録を実行しない反例(#1459)。"""
+"""Collection records for dynamic values and explicit ids, and the counterexample of not running stale records (#1459)."""
 
 import hashlib
 import json
@@ -42,7 +42,7 @@ CASES = [SimpleNamespace(label="case-a", answer=42)]
 
 @pytest.fixture
 def dynamic_project(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> pytest.Pytester:
-    """実値を別moduleから読むHy testを独立processで収集・実行する。"""
+    """Collect and run, in an independent process, a Hy test that reads actual values from another module."""
     package: Path = pytester.path / "pkg"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -73,7 +73,7 @@ def dynamic_project(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) 
         """
     )
     monkeypatch.setenv("IMPORT_LOG", str(pytester.path / "imports.log"))
-    # 同じ秒・同じ大きさのprovider変更でもPythonのtimestamp pycを使わない。
+    # Even if the provider changes within the same second and with the same size, do not use Python's timestamp pyc.
     monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
     return pytester
 
@@ -104,9 +104,9 @@ def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project
     cold: pytest.RunResult = collect(project)
     assert len(nodeids(cold)) == 4
     assert imports(project) == ["imported"]
-    # 書いた直後の file は記録の時刻の区切りの内で、stat を信じず hash で確かめる。本物の作業木の file と同じく
-    # 最後の変更から区切りの幅を越えた後に記録を取った形へ、記録の時刻を書き換える(壁の時計で待たない — 収集は別の process なので
-    # 時刻の供給は差し替えられない)。
+    # A file right after being written is inside the record's timestamp window, so check by hash without trusting stat. As with a real working tree file,
+    # rewrite the record timestamp to the form where the record was taken after the window width passed since the last change (do not wait on the wall clock -- collection is another process, so
+    # the time supply cannot be swapped).
     entry: object = json.loads(cache_path(project).read_text())
     assert isinstance(entry, dict) and isinstance(entry["sources"], list) and entry["sources"], entry
     for source in entry["sources"]:
@@ -116,9 +116,9 @@ def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project
     warm: pytest.RunResult = collect(project)
     assert nodeids(warm) == nodeids(cold)
     assert imports(project) == []
-    assert "記録から収集 1 file・収集で import 0 file" in warm.stdout.str()
+    assert "collected from record: 1 files; imported during collection: 0 files" in warm.stdout.str()
     assert "hash 0 file" in warm.stdout.str()
-    assert "依存変更で再作成 0 file" in warm.stdout.str()
+    assert "rebuilt on dependency change: 0 files" in warm.stdout.str()
     collect(project, "-k", "not_selected")
     assert imports(project) == []
     result: pytest.RunResult = project.runpytest_subprocess("pkg/test_dynamic.hy", "-q")
@@ -139,7 +139,7 @@ def test_changed_provider_invalidates_interpreters_values_and_ids(
     provider.write_text(INPUTS.replace("host-a", "host-b").replace("[1, 2]", "[3]").replace("case-a", "case-b"))
     changed: pytest.RunResult = collect(project)
     assert imports(project) == ["imported"]
-    assert "依存変更で再作成 1 file" in changed.stdout.str()
+    assert "rebuilt on dependency change: 1 files" in changed.stdout.str()
     assert any("[host-b]" in name for name in nodeids(changed))
     assert any("[3]" in name for name in nodeids(changed))
     assert any("[case-b]" in name for name in nodeids(changed))
@@ -161,7 +161,7 @@ def test_runtime_mismatch_fails_before_body_and_forgets_cache(
     source.write_text(
         '(require doeff-hy.macros [deftest])\n(import os pytest)\n'
         f'(deftest test-changing [value] {{:params {{"value" [(pytest.param {form})]}}}}\n'
-        '  (assert False "古い記録で本体を実行した"))\n'
+        '  (assert False "stale record executed the body"))\n'
     )
     monkeypatch.setenv("DYNAMIC_VALUE", "1")
     collect(project)
@@ -169,7 +169,7 @@ def test_runtime_mismatch_fails_before_body_and_forgets_cache(
     monkeypatch.setenv("DYNAMIC_VALUE", "2")
     result: pytest.RunResult = project.runpytest_subprocess("pkg/test_dynamic.hy", "-q")
     result.assert_outcomes(errors=1)
-    assert "記録と実物が食い違った" in result.stdout.str()
+    assert "record and real thing disagree" in result.stdout.str()
     assert not cache_path(project).exists()
 
 
@@ -196,7 +196,7 @@ pathlib.Path.read_bytes = _counting_read_bytes
 
 @pytest.hookimpl(wrapper=True)
 def pytest_doeff_import_hy_module(collector):
-    # doeff-hy-pytest の読み込みの上限が測る区間(file 1 本の import)の中の読みを別に数える。
+    # Count separately the reads inside the interval measured by the load limit of doeff-hy-pytest (the import of one file).
     _inside_import["depth"] += 1
     try:
         return (yield)
@@ -205,8 +205,8 @@ def pytest_doeff_import_hy_module(collector):
 
 
 def pytest_terminal_summary(terminalreporter):
-    terminalreporter.write_line(f"inputs.py を読んだ回数 {_reads['inputs.py']}")
-    terminalreporter.write_line(f"import の区間の中で inputs.py を読んだ回数 {_reads['inputs.py@import']}")
+    terminalreporter.write_line(f"times inputs.py was read {_reads['inputs.py']}")
+    terminalreporter.write_line(f"times inputs.py was read inside the import interval {_reads['inputs.py@import']}")
 
 
 @pytest.fixture
@@ -221,8 +221,8 @@ def doeff_interpreter(doeff_interpreter_name):
 
 
 def collect_two_dynamic_files(project: pytest.Pytester) -> pytest.RunResult:
-    """実値の file 2 本を 1 回で収集し、読込済みの pkg/inputs.py を読んだ回数(全体と import の区間の中)を出す。"""
-    (project.path / "pkg/test_dynamic_b.hy").write_text(SOURCE + ";; 2 本目(中身の hash を変えて、記録の cache に当てない)\n")
+    """Collect 2 actual-value files at once and output the number of times the already-loaded pkg/inputs.py was read (in total and inside the import interval)."""
+    (project.path / "pkg/test_dynamic_b.hy").write_text(SOURCE + ";; second file (change the content hash so the record cache does not hit)\n")
     project.makeini(
         """
         [pytest]
@@ -238,33 +238,33 @@ def collect_two_dynamic_files(project: pytest.Pytester) -> pytest.RunResult:
     result: pytest.RunResult = project.runpytest_subprocess(
         "pkg/test_dynamic.hy", "pkg/test_dynamic_b.hy", "--collect-only", "-q"
     )
-    assert "収集で import 2 file" in result.stdout.str(), result.stdout.str()
+    assert "imported during collection: 2 files" in result.stdout.str(), result.stdout.str()
     assert len(list((project.path / "items").glob("*.json"))) == 2
     return result
 
 
 def test_two_dynamic_files_in_one_collection_read_each_loaded_source_once(dynamic_project: pytest.Pytester) -> None:
-    """失敗ケース(agora-controllers の日次 2026-10-11 12:00): 実値の記録を書くたびに、読み込み済みの local source を
-    全部読み直して hash を取っていた。読み込んだ module は session が進むほど増えるので、実値の file の import の区間の CPU が file の位置と
-    ともに増え、doeff-hy-pytest の読み込みの上限 1 秒を負荷の高い回だけ越えた(表の 13 本のうち 9 本)。収集 1 回の中では、同じ source を
-    1 度だけ読む。"""
+    """Failure case (agora-controllers daily 2026-10-11 12:00): every time an actual-value record was written, all already-loaded local sources were
+    re-read and hashed. Loaded modules grow as the session proceeds, so the CPU in the import interval of actual-value files grew with the position of the file, and
+    only in heavily loaded runs exceeded the 1 second load limit of doeff-hy-pytest (9 of the 13 in the table). Within one collection, the same source is
+    read only once."""
     result: pytest.RunResult = collect_two_dynamic_files(dynamic_project)
-    assert "inputs.py を読んだ回数 1" in result.stdout.str(), result.stdout.str()
+    assert "times inputs.py was read 1" in result.stdout.str(), result.stdout.str()
 
 
 def test_the_import_window_of_a_dynamic_file_reads_no_loaded_source(dynamic_project: pytest.Pytester) -> None:
-    """失敗ケース(同じ card): 1 度だけ読む形でも、session の最初の実値の file は、読込済みの全部をその file の import の区間の中で読んだ
-    (手元の 23 本の並びで、最初の実値の file の引いた後の CPU 0.941 秒)。記録の書き込みは収集の道具の費用で、検の file の重さではない —
-    import の区間の中では読込済みの module の file の名を集めるだけにし、読みと hash は区間の外で行う。"""
+    """Failure case (same card): even with the read-once form, the first actual-value file of a session read all already-loaded sources inside the import interval of that file
+    (in a local sequence of 23 files, CPU 0.941 seconds after the first actual-value file's lookup). Writing a record is a cost of the collection tooling, not the weight of the test file --
+    inside the import interval only collect the names of files of loaded modules, and do the reads and hashing outside the interval."""
     result: pytest.RunResult = collect_two_dynamic_files(dynamic_project)
-    assert "import の区間の中で inputs.py を読んだ回数 0" in result.stdout.str(), result.stdout.str()
-    assert "inputs.py を読んだ回数 1" in result.stdout.str(), result.stdout.str()
+    assert "times inputs.py was read inside the import interval 0" in result.stdout.str(), result.stdout.str()
+    assert "times inputs.py was read 1" in result.stdout.str(), result.stdout.str()
 
 
 def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Path) -> None:
-    """stat の速い経路・stamp だけの変化での hash の取り直し・同じ大きさの書き換え。速い経路は、file の最後の変更が記録の時刻より
-    RACY_WINDOW_NS 以上前の記録だけに効く— 記録の時刻は渡して決める(書いた直後の本物の時刻では、どの記録も
-    区切りの内で hash になる)。"""
+    """Fast path of stat, re-taking the hash on a stamp-only change, and same-size rewrites. The fast path applies only to records whose last file change is earlier than the record timestamp by
+    RACY_WINDOW_NS or more -- the record timestamp is decided by passing it in (with the real time right after writing, every record would
+    be inside the window and use the hash)."""
     source: Path = tmp_path / "values.py"
     source.write_text("VALUE = 1\n")
     digest: str = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -285,7 +285,7 @@ def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Pat
     next_collection: DependencyChecks = DependencyChecks()
     assert next_collection.verify(tmp_path, refreshed.sources) == refreshed
     assert next_collection._mut_hashes == {}
-    # 今の時刻で取った記録(区切りの内)は stat を信じず hash で確かめる — 同じ大きさの書き換えを、stamp を戻されても見逃さない。
+    # A record taken at the current time (inside the window) is checked by hash without trusting stat -- a same-size rewrite is not missed even if the stamp is restored.
     honest: tuple[SourceDependency, ...] = (snapshot(source, "values.py", digest),)
     assert not stat_is_trusted(honest[0])
     source.write_text("VALUE = 2\n")
@@ -296,7 +296,7 @@ def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Pat
 
 
 def test_an_old_record_without_a_recorded_time_is_checked_by_hash_once_and_rewritten(tmp_path: Path) -> None:
-    """記録の時刻の欄の無い古い記録(recorded_ns = 0)は、stat が一致しても hash で確かめ、確かめた時刻で書き直す(次から速い経路)。"""
+    """An old record without the record timestamp field (recorded_ns = 0) is checked by hash even if stat matches, and rewritten with the checked time (the fast path from next time)."""
     source: Path = tmp_path / "values.py"
     source.write_text("VALUE = 1\n")
     digest: str = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -314,10 +314,10 @@ def test_an_old_record_without_a_recorded_time_is_checked_by_hash_once_and_rewri
 
 
 def test_a_same_size_edit_within_one_coarse_timestamp_tick_is_not_missed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """失敗ケース(atlas の 2026-10-10 20:05 の日次の赤): 時刻の粗い kernel(atlas の 6.8 — 細かい ctime は 6.13 から)
-    では、記録を取った時刻と同じ区切りの中の書き換えで mtime・ctime が進まない。大きさも同じなら stat が全部一致し、速い経路は hash を
-    読まずに古い記録を信じた(git の racy-git と同じ形)。粗い kernel の代わり = 最初に見た mtime・ctime を返し続ける stat(区切りが
-    終わらない間の kernel)。"""
+    """Failure case (red atlas daily run of 2026-10-10 20:05): on a kernel with coarse timestamps (atlas 6.8 -- fine ctime only from 6.13),
+    a rewrite inside the same window as the time the record was taken does not advance mtime / ctime. If the size is also the same, all of stat matches, and the fast path trusted the stale record without
+    reading the hash (the same shape as git's racy-git). Stand-in for the coarse kernel = a stat that keeps returning the first mtime / ctime seen (a kernel while the window
+    has not ended)."""
     real_stat = Path.stat
     first_seen: dict[str, tuple[int, int]] = {}
 
@@ -334,11 +334,11 @@ def test_a_same_size_edit_within_one_coarse_timestamp_tick_is_not_missed(tmp_pat
     saved: tuple[SourceDependency, ...] = (snapshot(source, "values.py", hashlib.sha256(source.read_bytes()).hexdigest()),)
     source.write_text("VALUE = 2\n")
     checks: DependencyChecks = DependencyChecks()
-    assert checks.verify(tmp_path, saved) == "実値の依存sourceが変わった: values.py"
+    assert checks.verify(tmp_path, saved) == "dependency source of the actual value changed: values.py"
     assert checks._mut_rebuilds == 1
 
 
 def test_individual_parameter_marks_are_not_silently_dropped() -> None:
     case: ParameterSet = pytest.param(1, id="skip-me", marks=pytest.mark.skip)
-    with pytest.raises(UnrecordableError, match="個別の印"):
+    with pytest.raises(UnrecordableError, match="per-item marks"):
         parametrize_record(pytest.mark.parametrize("value", [case]).mark)
