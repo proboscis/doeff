@@ -1,19 +1,19 @@
-;;; 不在と失敗(ADR-DOE-CORE-EFFECTS-003)の展開の時の補助 — <- の :absent・束ねが yield する open-bind の形・
-;;; on-raise と absent-as の展開。
+;;; Helpers for expanding absence and failure (ADR-DOE-CORE-EFFECTS-003) — the :absent of <-, the open-bind form that a bind yields,
+;;; and the expansions of on-raise and absent-as.
 ;;;
-;;; 実行時の意味は doeff_core_effects._outcomes が持ち、ここは形だけを作る:
+;;; The runtime meaning lives in doeff_core_effects._outcomes; this only builds the shapes:
 ;;;
-;;;   (<- x e)              → (setv x (yield (open-bind e)))       宣言を持つ effect の答えを開く・Result / Maybe の値を開く・
-;;;                                                                 ほかは e そのものを yield する(今までと同じ物)
-;;;   (<- x e :absent F)    → (setv x (yield (open-bind e (fn [] F))))   束ねの中で出た Absent を Raise(F) に変える
-;;;   (on-raise body (Conflict d) (WriteConflict :detail d) …)       合う型の Raise だけを業務の答えへ写す(何でも受ける形は断る)
-;;;   (absent-as 0 body)                                             Absent を既定値に畳む(字面の中の <- の不在だけ再開する)
+;;;   (<- x e)              → (setv x (yield (open-bind e)))       open the answer of an effect that has a declaration, open the value of a Result / Maybe,
+;;;                                                                 otherwise yield e itself (the same thing as before)
+;;;   (<- x e :absent F)    → (setv x (yield (open-bind e (fn [] F))))   turn an Absent raised inside the bind into Raise(F)
+;;;   (on-raise body (Conflict d) (WriteConflict :detail d) …)       map only a Raise of a matching type to a domain answer (a match-anything form is refused)
+;;;   (absent-as 0 body)                                             fold Absent into a default value (resume only the absence of a <- inside the literal text)
 ;;;
-;;; on-raise と absent-as の展開先は、呼ぶと handler を返す工場 — ((on-raise 受け…) body)・((absent-as 0 :token 印) body)
+;;; The expansion targets of on-raise and absent-as are factories that return a handler when called — ((on-raise receivers…) body), ((absent-as 0 :token mark) body)
 ;;; (ADR-DOE-API-001 R6)。
 ;;;
-;;; macros.hy と handle.hy は、展開の時に関数の中でこの module を import する(macros.hy を compile している間は deff の
-;;; 展開が呼ぶ補助がまだ無いので、deff で書く補助は macros.hy の外に置く)。
+;;; macros.hy and handle.hy import this module inside a function at expansion time (while macros.hy is being compiled, the helpers that the deff
+;;; expansion calls do not exist yet, so helpers written with deff are placed outside macros.hy).
 
 (require doeff-hy.macros [deff])
 (require doeff-hy.record [defrecord])
@@ -28,36 +28,36 @@
   #^ (| Object None) absent)
 
 
-;; 字面の中の束ねを数えない形(自分の do の文脈を持つ・値として持つ・入れ子の関数)— absent-as は越えない。
+;; Forms that do not count a bind inside the literal text (having their own do context, held as a value, a nested function) — absent-as does not cross them.
 (setv OPAQUE-HEADS
   #{"for/do" "traverse" "fnk" "do!" "defhandler" "defk" "deff" "defp" "defpp" "deftest" "defmcp-tool"
     "defmacro" "quote" "quasiquote" "validate" "absent-as"
     "fn" "fn/a" "defn" "defn/a" "defclass" "lfor" "gfor" "dfor" "sfor"})
 
-;; on-raise のパターンに置けない型の名(何でも受ける形・Python の例外 — R7)。
+;; Type names that cannot be put in an on-raise pattern (match-anything forms, Python exceptions — R7).
 (setv CATCH-ALL-NAMES #{"_" "object" "Exception" "BaseException"})
 
 
-(deff head-name [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff head-name [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Object)] :post [(: % (| str None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "form の頭の symbol の名(式でなければ・頭が symbol でなければ None)— 形で分けるため。"
+  "The name of the head symbol of form (None if it is not an expression or the head is not a symbol) — to dispatch by shape."
   (when (and (isinstance form Expression) (> (len form) 0) (isinstance (get form 0) Symbol))
     (str (get form 0))))
 
 
-(deff source-of [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff source-of [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Object)] :post [(: % str)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "誤りの文に出す form の綴り。"
+  "The spelling of form to show in error messages."
   (.lstrip (hy.repr form) "'"))
 
 
-(deff performs-effect? [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff performs-effect? [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Object)] :post [(: % bool)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "form が効果を出すか(`!`・`<-`・`yield` を含むか — quote の中は数えない)。値の式だけを置く所(`:absent` の失敗・
-   on-raise の写し先)を検めるため。"
+  "Whether form performs an effect (whether it contains `!`, `<-`, or `yield` — inside quote is not counted). To check places that hold only a value expression (the failure of `:absent` and
+   the mapping target of on-raise)."
   (let [head (head-name form)]
     (match form
       (Expression) :if (in head #{"quote" "quasiquote"}) False
@@ -66,17 +66,17 @@
       _ False)))
 
 
-;; 束ねる式の値の位置に書くと、yield した時に VM が TypeError(yield got …)で落とす字面の値の形
-;; (失敗例: `(<- x (if c None (f)))` が c の時に素の None を yield した)。
+;; The shapes of literal values that, written in the value position of a bound expression, make the VM fail with a TypeError (yield got …) when yielded
+;; (failure example: `(<- x (if c None (f)))` yielded a bare None when c held).
 (setv PLAIN-VALUE-SYMBOLS #{"None" "True" "False"})
 
 
-(deff plain-value-of [expr]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff plain-value-of [expr]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: expr Object)] :post [(: % (| Object None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "束ねる式 expr(`<-` の式・`!` の中身)の値になりうる字面の値 1 つ(無ければ None)— effect でも Program でもない値を
-   yield する束ねを展開の時に断るため。見るのは値の位置だけ: 式そのもの・if の 2 つの枝・cond の値の枝(入れ子も)。
-   when / unless は条件が外れると None になるので、式ごと返す。"
+  "One literal value that the bound expression expr (the expression of `<-`, the content of `!`) can evaluate to (None if none) — to refuse at expansion time a bind that
+   yields a value that is neither an effect nor a Program. Only value positions are looked at: the expression itself, the two branches of if, and the value branches of cond (nested too).
+   when / unless become None when the condition fails, so the whole expression is returned."
   (let [head (head-name expr)
         branches (match head
                    "if" (cut expr 2 None)
@@ -90,68 +90,68 @@
       _ None)))
 
 
-(deff plain-value-refusal [expr]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff plain-value-refusal [expr]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: expr Object)] :post [(: % (| str None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "束ねる式 expr の値の位置に字面の値が在れば断りの文、無ければ None — 束ねの形を作る open-form(<- と ! が通る 1 点)が
-   SyntaxError にする。"
+  "The refusal message if there is a literal value in the value position of the bound expression expr, otherwise None — the open-form that builds the bind shape (the one point <- and ! pass through)
+   raises it as a SyntaxError."
   (let [found (plain-value-of expr)]
     (when (is-not found None)
-      (+ "<- / !: 束ねる式の値の位置に字面の値 " (source-of found) " が在る — effect でも Program でもない値を yield すると、"
-         "実行の時に TypeError(yield got …)で落ちる。値をそのまま束ねるなら (Pure " (source-of found)
-         ") で包むか、束ねずに val で置く: " (source-of expr)))))
+      (+ "<- / !: a literal value " (source-of found) " is in the value position of the bound expression — yielding a value that is neither an effect nor a Program fails at runtime with "
+         "TypeError (yield got …). To bind the value as is, wrap it with (Pure " (source-of found)
+         ") or place it with val without binding: " (source-of expr)))))
 
 
-(deff split-absent [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff split-absent [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % SplitBind)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "(<- … :absent 失敗) の末尾の `:absent 失敗` を分けるため(R6)。`:absent` のほかの鍵と、効果を出す失敗の式
-   (失敗は値の式 — 不在の時にだけ評価する)は SyntaxError。"
+  "To separate the trailing `:absent failure` of (<- … :absent failure) (R6). Any key other than `:absent`, and a failure expression that performs an effect
+   (the failure is a value expression — evaluated only when absent) is a SyntaxError."
   (let [suffix? (and (>= (len form) 4)
                      (isinstance (get form -2) Keyword)
                      (= (str (get form -2)) ":absent"))
         core (if suffix? (Expression (cut form 0 -2)) form)]
     (for [item (cut core 1 None)]
       (when (isinstance item Keyword)
-        (raise (SyntaxError (+ "<-: 知らない鍵 " (str item) " — <- が受ける鍵は末尾の :absent <失敗> だけ: "
+        (raise (SyntaxError (+ "<-: unknown key " (str item) " — the only key <- accepts is a trailing :absent <failure>: "
                                (source-of form))))))
     (when (and suffix? (performs-effect? (get form -1)))
-      (raise (SyntaxError (+ "<-: :absent の失敗は値の式(不在の時にだけ評価する — !・<- は使えない): "
+      (raise (SyntaxError (+ "<-: the :absent failure must be a value expression (evaluated only when absent — ! and <- cannot be used): "
                              (source-of (get form -1))))))
     (SplitBind :core core :absent (when suffix? (get form -1)))))
 
 
-(deff open-form [expr absent [helpers None] [bound None]]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff open-form [expr absent [helpers None] [bound None]]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| str None)) (: bound (| Symbol None))]
    :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "束ね 1 つの式(R5・R6): `(open-bind expr)` の答えが `Pure` ならその値、それ以外は yield して VM の答え。
-   open-bind は効果を出さない @do の呼び(本体に yield の無い defk など)をその場で呼んで答えの `Pure` を返すので、
-   その束ねは VM を往復しない。`Pure` を yield しても同じ答えなので、意味は yield する形と同じ。
-   open-bind と `Pure` の引きを形の中に持つ — defhandler の節・利用者の defn など、どこに書いた `<-` / `!` でも名前が
-   解けるように。形は文を持たない 1 つの式(条件式と代入式)にする — `!` は式の中のどこにでも書けるので、
-   `(setv (get (! e) 鍵) 値)` のように代入の的の中にも来る。import の文を持つ `(do (import …) …)` では Hy が的を組めずに
-   compile が落ちる(agora-controllers の kanban_services.hy・2026-09-28)。module の引き(`__import__`)は 1 回の束ねで
-   1 回・約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。
-   helpers = module の globals に在る outcomes の module の名(defk の本体の束ね — defk が globals に置く
-   `_doeff_outcomes`・HELPERS-NAME)。在れば `__import__` の代わりにその名で引く(1 回の束ねの `__import__` 約 0.2µs を
-   消す)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。
-   helpers は名の文字列で受け、差し込む所ごとに新しい Symbol を作る — 展開のあいだで 1 つの model を使い回すと、
-   locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる。
-   値の位置に字面の値を持つ式(`(if c None (f))` など)は、その枝で素の値を yield して実行の時に落ちるので、形を作る前に断る。
-   bound = 答え(Pure か yield する Program)を持つ局所の名。呼び手が渡せば、束ねた後にその名を del して frame から外せる
-   (_bind-yield — 名が Call を次の束ねまで持ち、長い loop で前の周の引数を生かし続けた)。
-   渡さなければ gensym を作り、式の中で名を None に戻してから答える(`!` の式の中 — 文の del を置けない):
-   `(. (get #(b (setx b None)) 0) value)` / `(yield (get #(b (setx b None)) 0))` — 組の 0 番に元の答えを取り、名を外して
-   から値を読むか yield する(yield の間も frame は Call を持たない)。解析器は両方の形を読む
-   (doeff-effect-analyzer の _bind_expression・_released_name)。"
+  "The expression of one bind (R5, R6): if the answer of `(open-bind expr)` is `Pure`, its value; otherwise yield and take the VM's answer.
+   open-bind calls on the spot an @do call that performs no effect (such as a defk with no yield in its body) and returns its answer as `Pure`,
+   so that bind does not round-trip through the VM. Yielding a `Pure` gives the same answer, so the meaning is the same as the yielding form.
+   The lookups of open-bind and `Pure` are held inside the shape — so the names resolve wherever the `<-` / `!` is written, such as a defhandler clause or a user's defn.
+   The shape is one expression with no statements (a conditional expression and an assignment expression) — `!` can be written anywhere inside an expression,
+   so it can also come inside an assignment target such as `(setv (get (! e) key) value)`. With `(do (import …) …)`, which holds an import statement, Hy cannot build the target and
+   compile fails (agora-controllers' kanban_services.hy, 2026-09-28). The module lookup (`__import__`) costs
+   about 0.3µs per bind (the same order as an import statement; hy.I is 4µs — measured 2026-09-28).
+   helpers = the name of the outcomes module present in the module globals (for the binds in a defk body — the
+   `_doeff_outcomes` that defk places in globals, HELPERS-NAME). If present, look it up by that name instead of `__import__` (removes the roughly 0.2µs of `__import__` per
+   bind). Only a defk body is known to have the name, so it stays None elsewhere.
+   helpers is received as a name string and a new Symbol is made at each insertion point — reusing one model across expansions
+   leaves the position that locate-synthesized attached on it, shifting the lines of later binds.
+   An expression with a literal value in a value position (such as `(if c None (f))`) yields a bare value in that branch and fails at runtime, so it is refused before the shape is built.
+   bound = a local name holding the answer (a Pure or a yielded Program). If the caller passes it, after binding the name can be del-ed to release it from the frame
+   (_bind-yield — the name kept the Call until the next bind and kept the previous iteration's arguments alive in a long loop).
+   If not passed, make a gensym and reset the name to None inside the expression before answering (inside the expression of `!` — a del statement cannot be placed):
+   `(. (get #(b (setx b None)) 0) value)` / `(yield (get #(b (setx b None)) 0))` — take the original answer at slot 0 of the tuple, release the name,
+   and then read the value or yield (the frame does not hold the Call during the yield either). The analyzer reads both shapes
+   (_bind_expression and _released_name of doeff-effect-analyzer)."
   (let [refused (plain-value-refusal expr)]
     (when (is-not refused None)
       (raise (SyntaxError refused))))
   (let [module (if (is helpers None) (hy.gensym "outcomes") (Symbol helpers))
         release? (is bound None)
         bound (if release? (hy.gensym "bound") bound)
-        ;; 名を外した後の答え: 呼び手が del しない時は、組の 0 番に元の答えを取って名を None に戻す(枝ごとに新しい形)
+        ;; The answer after releasing the name: when the caller does not del, take the original answer at slot 0 of the tuple and reset the name to None (a new shape per branch)
         answer (fn [] (if release? `(get #(~bound (setx ~bound None)) 0) bound))
         imported (if (is helpers None)
                      `(setx ~module (__import__ "doeff_core_effects._outcomes" :fromlist #("open_bind")))
@@ -159,24 +159,24 @@
         opened (if (is absent None)
                    `(. ~imported (open_bind ~expr))
                    `(. ~imported (open_bind ~expr (fn [] ~absent))))]
-    ;; 組み込みの名(type など)を名で引かない — 呼び手の引数・局所の名が同じ綴りだと、Python はそれを関数全体の
-    ;; 局所の名と見て束ねが壊れる(defhandler の腕の引数 type で UnboundLocalError・L562 の後始末)。
-    ;; 型は属性 __class__ で読み、名で引くのは gensym の束縛だけにする。
+    ;; Do not look up built-in names (such as type) by name — if the caller's argument or local name has the same spelling, Python treats it as a local name of
+    ;; the whole function and the bind breaks (UnboundLocalError with the defhandler arm argument type, the cleanup of L562).
+    ;; Read the type through the attribute __class__, and look up by name only the gensym bindings.
     `(if (is (. (setx ~bound ~opened) __class__) (. ~module Pure))
          (. ~(answer) value)
          (yield ~(answer)))))
 
 
-(deff bind-form [form [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff bind-form [form [helpers None]]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression) (: helpers (| str None))] :post [(: % Object)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "(<- …) の form 1 つの展開 — <- の macro と、本体を先に読む macro(do!・defp・deftest・for/do・defhandler の節・defk)が
-   共有する 1 点。分け方は macros.hy の _bind-parts、形は _bind-yield。helpers は open-form へ渡す(defk の本体だけ)。"
+  "The expansion of one (<- …) form — the one point shared by the <- macro and the macros that read the body first (do!, defp, deftest, for/do, defhandler clauses, defk).
+   The split is _bind-parts in macros.hy, the shape is _bind-yield. helpers is passed to open-form (defk bodies only)."
   (import doeff-hy.macros [_bind-parts _bind-yield])
   (let [parts (_bind-parts form)]
     (when (is parts None)
       (raise (SyntaxError (+ "<-: expected (<- expr) / (<- name expr) / (<- name Type expr), optionally followed by "
-                             ":absent <失敗>, got " (source-of form)))))
+                             ":absent <failure>, got " (source-of form)))))
     (_bind-yield (get parts 0) (get parts 1) (get parts 2) (. (split-absent form) absent) helpers)))
 
 
@@ -184,11 +184,11 @@
 ;; on-raise(R7)
 ;; ---------------------------------------------------------------------------
 
-(deff pattern-types [pattern]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff pattern-types [pattern]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: pattern Object)] :post [(: % list)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "on-raise のパターン 1 つが名指す失敗の型の form の list。型のパターン `(型 …)` と、その or `(| (A …) (B …))` だけを受け、
-   何でも受ける形(`_`・名前 1 つの capture・object・Exception・BaseException)は SyntaxError(R7)。"
+  "The list of forms of the failure types that one on-raise pattern names. Accepts only a type pattern `(Type …)` and its or `(| (A …) (B …))`, and
+   a match-anything form (`_`, a single-name capture, object, Exception, BaseException) is a SyntaxError (R7)."
   (let [head (head-name pattern)]
     (match pattern
       (Expression) :if (= head "|")
@@ -196,37 +196,37 @@
       (Expression) :if (and (is-not head None) (not-in head CATCH-ALL-NAMES))
         [(get pattern 0)]
       _ (raise (SyntaxError
-                 (+ "on-raise: パターン " (source-of pattern) " は受けられない — 失敗の型を名指す (型 欄 …) の形だけを"
-                    "書く(何でも受ける形・Python の例外は受けない: ADR-DOE-CORE-EFFECTS-003 R7)"))))))
+                 (+ "on-raise: pattern " (source-of pattern) " is not accepted — write only the form (Type field …) that names a failure type "
+                    "(match-anything forms and Python exceptions are not accepted: ADR-DOE-CORE-EFFECTS-003 R7)"))))))
 
 
-(deff on-raise-form [program clauses]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff on-raise-form [program clauses]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: program Object) (: clauses tuple)] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "(on-raise 本文 パターン [:if 番] 写し先 …) の展開(R7)。受けごとに、パターンの型と、パターンに合えば Some(写し先)・
-   合わなければ Nothing を返す関数を RaiseCase にする。写し先と番は値の式(効果は使えない)。"
+  "The expansion of (on-raise body pattern [:if guard] target …) (R7). For each receiver, make a RaiseCase of the pattern's type and a function that returns Some(target) if the pattern matches and
+   Nothing if not. The target and guard are value expressions (effects cannot be used)."
   (let [items (list clauses)
         reason (hy.gensym "reason")
         cases []]
     (when (not items)
-      (raise (SyntaxError "on-raise: (on-raise 本文 パターン 写し先 …) — 受けが 1 つも無い")))
+      (raise (SyntaxError "on-raise: (on-raise body pattern target …) — there is no receiver")))
     (while items
       (let [pattern (.pop items 0)
             guard (when (and items (isinstance (get items 0) Keyword) (= (str (get items 0)) ":if"))
                     (.pop items 0)
-                    (if items (.pop items 0) (raise (SyntaxError (+ "on-raise: :if の番が無い: " (source-of pattern))))))
-            mapped (if items (.pop items 0) (raise (SyntaxError (+ "on-raise: パターン " (source-of pattern) " の写し先が無い"))))]
+                    (if items (.pop items 0) (raise (SyntaxError (+ "on-raise: the :if guard is missing: " (source-of pattern))))))
+            mapped (if items (.pop items 0) (raise (SyntaxError (+ "on-raise: pattern " (source-of pattern) " has no target"))))]
         (for [value [guard mapped]]
           (when (and (is-not value None) (performs-effect? value))
-            (raise (SyntaxError (+ "on-raise: 番と写し先は値の式(!・<- は使えない — 効果の要る写しは本文の中で済ませる): "
+            (raise (SyntaxError (+ "on-raise: the guard and target are value expressions (! and <- cannot be used — do a mapping that needs effects inside the body): "
                                    (source-of value))))))
         (.append cases
           `(_doeff-raise-case
              #(~@(pattern-types pattern))
              (fn [#^ object ~reason]
-               ;; この match は defk の本体の欄の名の直し(doeff_hy/_match_fields.py)の後に展開で生まれるので、ここで直す —
-               ;; 直さないと (AppendRefused :idempotency-key k) は属性 idempotency-key を引いて黙って当たらず、型検査の展開も
-               ;; ast.parse の SyntaxError で落ちた。
+               ;; This match is born in the expansion after the field-name rewrite of the defk body (doeff_hy/_match_fields.py), so rewrite here —
+               ;; otherwise (AppendRefused :idempotency-key k) would look up the attribute idempotency-key, silently not match, and the type-check expansion would also
+               ;; fail with a SyntaxError from ast.parse.
                ~(mangle-match-fields
                   `(match ~reason
                      ~pattern ~@(if (is guard None) [] [(Keyword "if") guard]) (_doeff-some ~mapped)
@@ -240,11 +240,11 @@
 ;; absent-as(R8)
 ;; ---------------------------------------------------------------------------
 
-(deff mark-direct-binds [node token]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff mark-direct-binds [node token]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: node Object) (: token Symbol)] :post [(: % Object)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "absent-as の字面の中に直に書いた <- と ! の式を (direct-bind 印 式) で包むため — その束ねが出した Absent だけを absent-as が
-   既定値で再開する(R8)。入れ子の do の文脈・関数・値の形(OPAQUE-HEADS)の中へは入らない(その中の不在は奥の不在)。"
+  "To wrap the <- and ! expressions written directly in the literal text of absent-as with (direct-bind mark expr) — absent-as resumes with the default only the Absent raised by those binds
+   (R8). It does not enter nested do contexts, functions, or value forms (OPAQUE-HEADS) (an absence inside is an absence of the inner scope)."
   (let [head (head-name node)]
     (match node
       (Expression) :if (= head "<-")
@@ -266,11 +266,11 @@
       _ node)))
 
 
-(deff absent-as-form [default program]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff absent-as-form [default program]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: default Object) (: program Object)] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
-  "(absent-as 既定値 本文) の展開(R8)。評価のたびに印を作り、本文が (do! …) ならその字面の中の <- と ! を印で包む。
-   本文そのものも印で包む(宣言を持つ effect を直に渡した時、その不在を既定値で再開する)。"
+  "The expansion of (absent-as default body) (R8). Make a mark at each evaluation, and if the body is (do! …), wrap the <- and ! in its literal text with the mark.
+   The body itself is also wrapped with the mark (when an effect that has a declaration is passed directly, resume its absence with the default)."
   (let [token (hy.gensym "absent_token")
         body (if (= (head-name program) "do!")
                  (Expression [(get program 0) #* (lfor form (cut program 1 None) (mark-direct-binds form token))])

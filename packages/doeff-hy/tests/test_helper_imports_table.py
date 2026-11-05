@@ -1,13 +1,13 @@
-"""`do` を引く macro の実行時の展開が、`do` の置き場を補助の表(macros.hy の `_helper-imports` の `do` の行 `_runtime-do`)から
-取る事の検。
+"""Checks that the runtime expansion of macros that reference `do` takes the location of `do` from the helper table (the `do` row `_runtime-do` of `_helper-imports` in macros.hy).
+Details follow.
 
-表の `do` の行を差し替えると、どの macro の展開も、module・class の本体・関数の本体のどこに書いても、差し替えた置き場の
-`do` だけを引く。引き方は macro ごとに違う — 定義の macro(defk・defp・deftest・defmcp-tool)は表の import の `_doeff_do`、
-handle.hy の defhandler と handle は `_do-import` の `_doeff_do`、fnk は名を束ねない `__import__`(`_do-reference`)、
-validate は `_doeff_validation_do`(`_validation-imports`)。macro が置き場を自分で綴ると(例: 実行時は `doeff.do` を直に
-import する)、型検査のための展開の検(test_static_check.py)と実行の検(tests/public_api/test_mcp_tool_macro.py・
-tests/test_nested_definition_scope.py・tests/test_handle_scope.py)は通ったまま、表を替えた時にその macro だけが古い
-`do` で包み続ける。
+If the `do` row of the table is replaced, every macro expansion -- wherever it is written, in a module, a class body or a function body -- references
+only the `do` at the replaced location. How it is referenced differs per macro: definition macros (defk, defp, deftest, defmcp-tool) use `_doeff_do` from the table import,
+defhandler and handle in handle.hy use `_doeff_do` of `_do-import`, fnk uses an `__import__` that binds no name (`_do-reference`),
+and validate uses `_doeff_validation_do` (`_validation-imports`). If a macro spells the location itself (e.g. importing `doeff.do` directly at runtime), the expansion checks for type checking (test_static_check.py) and the run checks (tests/public_api/test_mcp_tool_macro.py,
+tests/test_nested_definition_scope.py, tests/test_handle_scope.py) still pass, but when the table is replaced
+only that macro keeps wrapping with the old
+`do`.
 """
 
 import ast
@@ -25,8 +25,8 @@ from doeff_traverse import fail_handler, sequential
 
 from doeff import run
 
-# 差し替えた表の `do`: doeff の do で包み、包んだ関数の __qualname__ を WRAPPED に積み、包んだ物に印
-# `__doeff_table_probe__` を付ける
+# The replaced table `do`: wraps with doeff's do, pushes the __qualname__ of the wrapped function to WRAPPED, and marks the wrapped object with
+# `__doeff_table_probe__`
 _PROBE_MODULE = """
 from doeff.do import do as _core_do
 
@@ -47,7 +47,7 @@ _REQUIRE = (
     "(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)\n"
 )
 
-# macro ごとの検体(subject を束ねる)と、展開が `do` を束ねる名(名を束ねない引きは None)
+# Per-macro subject (binds subject), and the name under which the expansion binds `do` (None for references that bind no name)
 _DEFINITIONS: dict[str, tuple[str, frozenset[str | None]]] = {
     "defk": ("(defk subject [x] {:pre [(: x int)] :post [(: % int)]} x)", frozenset({"_doeff_do"})),
     "defp": ("(defp subject {:post [(: % int)]} 1)", frozenset({"_doeff_do"})),
@@ -75,14 +75,14 @@ _PLACES = {
 }
 
 
-# 差し替えた置き場は package の中の module — 本物の `doeff.do` と同じく点を含む名(Hy は点を含む記号を式に読むので、
-# 置き場の名を記号から綴る展開は、点の無い名では通り、点の在る名で壊れる)
+# The replaced location is a module inside a package -- a name containing a dot, like the real `doeff.do` (Hy reads symbols containing dots as expressions, so
+# an expansion that spells the location name from a symbol passes with a dotless name and breaks with a dotted one)
 _PROBE = "doeff_hy_table_probe.table"
 
 
 @pytest.fixture
 def probe_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
-    """表の `do` の行 `_runtime-do` を、doeff_hy_table_probe.table の `do` に差し替える(展開の時に macro が名で引く)。"""
+    """Replace the `do` row `_runtime-do` of the table with `do` of doeff_hy_table_probe.table (the macro looks it up by name at expansion time)."""
     package = tmp_path / "doeff_hy_table_probe"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
@@ -91,13 +91,13 @@ def probe_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.Module
     monkeypatch.delitem(sys.modules, "doeff_hy_table_probe", raising=False)
     monkeypatch.delitem(sys.modules, _PROBE, raising=False)
     monkeypatch.setattr(macros, "_runtime_do", lambda: macros._RuntimeDo(_PROBE, "do"))
-    import doeff_hy_table_probe.table  # type: ignore[import-not-found]  # tmp_path に置いた検の部品
+    import doeff_hy_table_probe.table  # type: ignore[import-not-found]  # test part placed in tmp_path
 
     return doeff_hy_table_probe.table
 
 
 def _do_sources(tree: ast.Module) -> set[tuple[str, str | None]]:
-    """展開が `do` を引く所の #(module 束ねる名) — `from m import do as a` と `__import__("m", fromlist=("do",))`(名は None)。"""
+    """#(module bound-name) of each place where the expansion references `do` -- `from m import do as a` and `__import__("m", fromlist=("do",))` (name is None)."""
     imports = {
         (node.module or "", alias.asname)
         for node in ast.walk(tree)
@@ -127,7 +127,7 @@ def _do_sources(tree: ast.Module) -> set[tuple[str, str | None]]:
 def test_runtime_expansion_takes_do_from_the_table(
     probe_table: types.ModuleType, definition: str, place: str
 ) -> None:
-    """表の `do` の行を差し替えると、展開が `do` を引く所は、どれも差し替えた置き場の物だけになる。"""
+    """When the `do` row of the table is replaced, every place where the expansion references `do` refers only to the replaced location."""
     source, bindings = _DEFINITIONS[definition]
     tree = hy.compiler.hy_compile(
         hy.read_many(_REQUIRE + _PLACES[place].format(definition=source)), "__main__"
@@ -138,30 +138,30 @@ def test_runtime_expansion_takes_do_from_the_table(
 
 
 def _run(program: object) -> object:
-    """validate と handle の Program を、traverse の handler の下で走らせる。"""
+    """Run the Programs of validate and handle under the traverse handler."""
     return run(scheduled(try_handler(fail_handler(sequential(program)))))
 
 
-# 定義した値を返す置き場(関数の本体の中の定義は外の関数の答えで受け取る)
+# Where to return the defined value (a definition inside a function body is received as the outer function's result)
 _RETURNING_PLACES = {
     "module": ("{definition}", lambda mod: mod.subject),
     "class": ("(defclass Box []\n  {definition})", lambda mod: mod.Box.subject),
     "function": ("(defn outer []\n  {definition}\n  subject)", lambda mod: mod.outer()),
 }
 
-# 定義した値を使って `do` を通る所まで進める(定義の時に包む macro は何もしない)
+# Advance until the defined value reaches the point where it goes through `do` (macros that wrap at definition time do nothing)
 _USES: dict[str, Callable[[object], object]] = {
     "defk": lambda value: value,
     "defmcp-tool": lambda value: value,
     "defhandler": lambda value: value,
     "handle": _run,
-    "fnk": lambda value: value(1),  # type: ignore[operator]  # fnk の値は 1 引数の関数
+    "fnk": lambda value: value(1),  # type: ignore[operator]  # the value of fnk is a 1-argument function
     "validate": _run,
 }
 
 
-# validate を class の本体に直に書く組は外す: 展開の import(`_doeff_validation_do`)が class の属性になり、check の thunk の
-# 関数から見えない(表と関わらず NameError — validate は defk の本体に書く物で、class の本体の defk の本体は関数の中)
+# Exclude the combination of writing validate directly in a class body: the expansion import (`_doeff_validation_do`) becomes a class attribute and is invisible to the check thunk's
+# function (a NameError regardless of the table -- validate belongs in a defk body, and the defk body in a class body is inside a function)
 _USE_CASES = [
     (definition, place)
     for definition in _USES
@@ -174,7 +174,7 @@ _USE_CASES = [
 def test_programs_are_built_by_the_tables_do(
     probe_table: types.ModuleType, definition: str, place: str
 ) -> None:
-    """差し替えた表の `do` が、実際に関数を包む — import だけでなく、展開がその `do` を読む事まで確かめる。"""
+    """The replaced table `do` actually wraps the function -- checks not only the import but that the expansion reads that `do`."""
     template, defined = _RETURNING_PLACES[place]
     mod = types.ModuleType("helper_imports_table_subject")
     sys.modules["helper_imports_table_subject"] = mod
@@ -196,7 +196,7 @@ def test_definitions_are_wrapped_by_the_tables_do(
     wrapped: Callable[[object], object],
     place: str,
 ) -> None:
-    """差し替えた表の `do` が、定義した関数(defk の関数・defmcp-tool の handler)そのものを包む。"""
+    """The replaced table `do` wraps the defined function itself (the defk function, the defmcp-tool handler)."""
     template, defined = _RETURNING_PLACES[place]
     mod = types.ModuleType("helper_imports_table_subject")
     sys.modules["helper_imports_table_subject"] = mod

@@ -1,7 +1,7 @@
-"""val・var・lazy val・lazy var・session val・session var と := の検(ADR-DOE-HY-006)。
+"""Tests for val, var, lazy val, lazy var, session val, session var and := (ADR-DOE-HY-006).
 
-Hy の断片を module に展開して動かす。展開の誤りは HyMacroExpansionError、所見(setv の警告・束縛し直し)は
-doeff-hy-check と同じ集め方(static_view.collect_findings の中で型検査のための展開をする)で確かめる。
+Hy fragments are expanded into a module and run. Expansion errors are HyMacroExpansionError; findings (setv warnings, rebinding) are
+checked the same way as doeff-hy-check (static_view.collect_findings expands for type checking).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import types
 import warnings
 from pathlib import Path
 
-import doeff_hy  # noqa: F401 - Hy の import hook を入れる(断片の展開に要る)
+import doeff_hy  # noqa: F401 - installs the Hy import hook (needed to expand the fragments)
 import hy
 import hy.compiler
 import pytest
@@ -32,7 +32,7 @@ PRELUDE = """
 (defclass [(dataclass :frozen True)] Probe [EffectBase] #^ str tag)
 (defclass [(dataclass :frozen True)] Boom [EffectBase] #^ str tag)
 
-;; Probe の実行を log に残して tag を返す。Boom は最初の n 回だけ落ちる。
+;; Log the Probe run and return the tag. Boom fails only the first n times.
 (defhandler probe-handler [log fails]
   (Probe [tag] (.append log tag) (resume tag))
   (Boom [tag]
@@ -52,7 +52,7 @@ PRELUDE = """
 
 
 def _module(code: str, name: str) -> types.ModuleType:
-    """断片を新しい module に展開して実行する(__name__ は name)。"""
+    """Expand the fragment into a fresh module and run it (__name__ is name)."""
     module = types.ModuleType(name)
     module.__file__ = f"<{name}>"
     sys.modules[name] = module
@@ -61,14 +61,14 @@ def _module(code: str, name: str) -> types.ModuleType:
 
 
 def _expansion_error(code: str) -> str:
-    """断片の展開が誤りになることを確かめ、その文を返す。"""
+    """Check that expanding the fragment is an error, and return its message."""
     with pytest.raises(HyMacroExpansionError) as caught:
         _module(code, "_vvl_error")
     return str(caught.value)
 
 
 def _findings(code: str) -> list[Finding]:
-    """doeff-hy-check と同じく、型検査のための展開の中で所見を集める。"""
+    """Collect findings inside the type-checking expansion, the same as doeff-hy-check."""
     module = types.ModuleType("_vvl_findings")
     with static_view(), collect_findings() as found:
         hy.compiler.hy_compile(hy.read_many(PRELUDE + code), module)
@@ -101,11 +101,11 @@ def test_val_binds_once_and_second_val_is_an_expansion_error() -> None:
   y)
 """
     )
-    assert "(val y …) で宣言済み" in message
+    assert "is already declared with (val y …)" in message
 
 
 def test_rebinding_a_val_by_setv_or_colon_equals_is_an_expansion_error() -> None:
-    assert "束縛し直しています" in _expansion_error(
+    assert "it is rebound here" in _expansion_error(
         """
 (defk f [x]
   {:pre [(: x int)] :post [(: % int)]}
@@ -114,7 +114,7 @@ def test_rebinding_a_val_by_setv_or_colon_equals_is_an_expansion_error() -> None
   y)
 """
     )
-    assert "書き換えられません" in _expansion_error(
+    assert "cannot be rewritten" in _expansion_error(
         """
 (defk f [x]
   {:pre [(: x int)] :post [(: % int)]}
@@ -123,7 +123,7 @@ def test_rebinding_a_val_by_setv_or_colon_equals_is_an_expansion_error() -> None
   y)
 """
     )
-    assert "宣言されていません" in _expansion_error(
+    assert "is not declared" in _expansion_error(
         """
 (defk f [x]
   {:pre [(: x int)] :post [(: % int)]}
@@ -150,7 +150,7 @@ def test_var_is_rewritten_with_colon_equals() -> None:
 
 
 def test_bang_written_as_two_tokens_is_the_same_as_the_bang_form() -> None:
-    """Hy の reader は !(f) を ! と (f) の 2 つに読む — 宣言と := の中では (! (f)) と同じ。"""
+    """The Hy reader reads !(f) as two tokens, ! and (f) -- inside a declaration and := it is the same as (! (f))."""
     module = _module(
         """
 (defk a []
@@ -165,7 +165,7 @@ def test_bang_written_as_two_tokens_is_the_same_as_the_bang_form() -> None:
     )
     assert module.result == "onethree"
     assert module.log == ["one", "two", "three"]
-    # 実測の記録: reader は !(f) を Symbol('!') と Expression([f]) の 2 つに読む。
+    # Measured record: the reader reads !(f) as two forms, Symbol('!') and Expression([f]).
     read = hy.read("(val x !(f))")
     assert [type(part).__name__ for part in read] == ["Symbol", "Symbol", "Symbol", "Expression"]
     assert str(read[2]) == "!"
@@ -262,12 +262,12 @@ def test_lazy_reference_inside_fn_or_comprehension_is_an_expansion_error() -> No
   {inner})
 """
         )
-        assert "先に本体で取り出してから" in message
+        assert "Fetch it in the body first" in message
         assert "(val x-value x)" in message
 
 
 def test_shadowing_a_lazy_name_is_an_expansion_error() -> None:
-    assert "影" in _expansion_error(
+    assert "shadow" in _expansion_error(
         """
 (defk bad []
   {:pre [] :post [(: % list)]}
@@ -279,7 +279,7 @@ def test_shadowing_a_lazy_name_is_an_expansion_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 旧い lazy は defk で誤り・session は defk / deftest で誤り
+# The old lazy is an error in defk; session is an error in defk / deftest
 # ---------------------------------------------------------------------------
 
 
@@ -300,12 +300,12 @@ def test_legacy_lazy_in_defk_is_an_expansion_error_that_guides_to_the_new_forms(
   client)
 """
     )
-    assert "(lazy val client 式)" in message
-    assert "(session val client 式)" in message
+    assert "(lazy val client expr)" in message
+    assert "(session val client expr)" in message
 
 
 def test_session_in_defk_and_deftest_is_an_expansion_error() -> None:
-    assert "defhandler にだけ書けます" in _expansion_error(
+    assert "can be written only in defhandler" in _expansion_error(
         """
 (defk f []
   {:pre [] :post [(: % str)]}
@@ -313,7 +313,7 @@ def test_session_in_defk_and_deftest_is_an_expansion_error() -> None:
   client)
 """
     )
-    assert "defhandler にだけ書けます" in _expansion_error(
+    assert "can be written only in defhandler" in _expansion_error(
         """
 (deftest test-f
   (session var n 0)
@@ -323,7 +323,7 @@ def test_session_in_defk_and_deftest_is_an_expansion_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# defhandler: session val / session var と旧い lazy-val / lazy-var / set!
+# defhandler: session val / session var and the old lazy-val / lazy-var / set!
 # ---------------------------------------------------------------------------
 
 SESSION = """
@@ -373,11 +373,11 @@ def test_session_val_and_var_behave_like_the_legacy_lazy_val_and_var() -> None:
     deprecations = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
     assert any("(session val client …)" in text for text in deprecations)
     assert any("(session var count …)" in text for text in deprecations)
-    assert any("(:= count 新しい値)" in text for text in deprecations)
+    assert any("(:= count new-value)" in text for text in deprecations)
 
 
 def test_session_key_is_the_same_as_the_legacy_key() -> None:
-    """旧い形から session へ書き換えても、同じセッションの値は引き継がれる(同じキー)。"""
+    """Even when rewriting from the old form to session, the session value is carried over (same key)."""
     module = _module(
         SESSION
         + """
@@ -412,7 +412,7 @@ def test_outer_handler_answering_get_skips_the_session_initialiser_and_sees_put(
     )
     assert module.result == ["scripted-client", "scripted-client", 1, 2]
     assert module.made == []
-    # 初めて使った時の初期値の書き込み(0)も、以後の := の書き込みも、同じ Put として外から見える。
+    # The initial-value write on first use (0) and the later := writes are both visible from outside as the same Put.
     assert module.writes == [0, 1, 2]
 
 
@@ -462,7 +462,7 @@ def test_clause_local_val_var_and_lazy() -> None:
 
 
 # ---------------------------------------------------------------------------
-# deftest でも同じに効く
+# Works the same in deftest
 # ---------------------------------------------------------------------------
 
 
@@ -488,7 +488,7 @@ def test_deftest_supports_val_var_and_lazy() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 所見: setv の警告・束縛し直し(for の変数は数えない・排他の枝は数えない)
+# Findings: setv warnings and rebinding (a for variable is not counted; exclusive branches are not counted)
 # ---------------------------------------------------------------------------
 
 
@@ -527,7 +527,7 @@ def test_rebinding_is_red_but_loop_variables_and_exclusive_branches_are_not() ->
     )
     rebinds = sorted((f.line, f.message.split("`")[1]) for f in found if f.rule == RULE_REBIND)
     names = [name for _, name in rebinds]
-    assert names.count("total") == 2  # ループの中の setv と +=
+    assert names.count("total") == 2  # setv and += inside the loop
     assert names.count("got") == 1
     assert "x" not in names and "r" not in names
     assert all(f.severity.value == "error" for f in found if f.rule == RULE_REBIND)
@@ -552,12 +552,12 @@ def test_rebinding_is_counted_in_deftest_and_handler_clauses_and_legacy_set_bang
     )
     assert sum(1 for f in found if f.rule == RULE_REBIND) == 2
     legacy = [f for f in found if f.rule == RULE_LEGACY_LAZY]
-    assert any("(lazy-var count …) は (session var count …)" in f.message for f in legacy)
-    assert any("(set! count …) は (:= count 新しい値)" in f.message for f in legacy)
+    assert any("(lazy-var count …) should be moved to (session var count …)" in f.message for f in legacy)
+    assert any("(set! count …) should be moved to (:= count new-value)" in f.message for f in legacy)
 
 
 # ---------------------------------------------------------------------------
-# module の直下の val / var / lazy val
+# val / var / lazy val directly under a module
 # ---------------------------------------------------------------------------
 
 MODULE_PRELUDE = "(require doeff-hy.macros [val var lazy session])\n"
@@ -566,11 +566,11 @@ MODULE_PRELUDE = "(require doeff-hy.macros [val var lazy session])\n"
 def test_module_val_binds_once_and_second_val_is_an_expansion_error() -> None:
     module = _module(MODULE_PRELUDE + "(val limit 3)\n(val doubled (* limit 2))", "_vvl_module_val")
     assert (module.limit, module.doubled) == (3, 6)
-    assert "(val limit …) で宣言済み" in _expansion_error(MODULE_PRELUDE + "(val limit 3)\n(val limit 4)")
+    assert "is already declared with (val limit …)" in _expansion_error(MODULE_PRELUDE + "(val limit 3)\n(val limit 4)")
 
 
 def test_module_val_and_var_take_a_type_annotation() -> None:
-    # 値の型が式から決まらない時(空の dict など)の注記 — `(val #^ 型 名前 式)`。実行時は注記つきの代入。
+    # Annotation for when the value type cannot be decided from the expression (e.g. an empty dict) -- `(val #^ type name expr)`. At runtime it is an annotated assignment.
     module = _module(
         MODULE_PRELUDE
         + """
@@ -599,9 +599,9 @@ def test_an_annotated_module_val_keeps_the_annotation_in_the_type_check_expansio
 
 def test_an_annotation_is_refused_on_lazy_and_session_declarations() -> None:
     for form in ("(lazy val #^ int size 3)", "(lazy var #^ int size 3)", "(session val #^ int size 3)"):
-        assert "型の注記 `#^ 型 名前` は (val …) と (var …) だけが受けます" in _expansion_error(MODULE_PRELUDE + form)
-    # 注記つきでも名前の重ねは今までどおり断る。
-    assert "(val limit …) で宣言済み" in _expansion_error(
+        assert "the type annotation `#^ type name` is accepted only by (val …) and (var …)" in _expansion_error(MODULE_PRELUDE + form)
+    # Even with an annotation, redefining a name is still refused as before.
+    assert "is already declared with (val limit …)" in _expansion_error(
         MODULE_PRELUDE + "(val #^ int limit 3)\n(val limit 4)"
     )
 
@@ -625,27 +625,27 @@ def test_module_lazy_val_is_evaluated_on_first_use_only() -> None:
     assert module.before == []
     assert (module.first, module.second) == (1, 1)
     assert module.made == ["built"]
-    # 他の module からの属性の参照(PEP 562)も同じ値。
+    # Attribute access from another module (PEP 562) gives the same value.
     assert module.table == {"a": 1}
     assert module.made == ["built"]
 
 
 def test_module_lazy_val_with_an_effect_or_lazy_var_is_an_expansion_error() -> None:
     message = _expansion_error(MODULE_PRELUDE + '(lazy val client !(Probe "x"))')
-    assert "(session val client 式)" in message
-    assert "handler が無く" in message
+    assert "(session val client expr)" in message
+    assert "has no handler" in message
     message = _expansion_error(MODULE_PRELUDE + "(lazy var counter 0)")
-    assert "(var counter 式)" in message and "(session var counter 式)" in message
+    assert "(var counter expr)" in message and "(session var counter expr)" in message
 
 
 def test_val_inside_defn_is_an_expansion_error() -> None:
-    assert "defn・fn・class・let の中には書けません" in _expansion_error(
+    assert "not inside defn, fn, class or let" in _expansion_error(
         MODULE_PRELUDE + "(defn f [] (val x 1) x)"
     )
 
 
 def test_colon_equals_on_a_module_var_inside_defk_is_an_expansion_error() -> None:
-    assert "module の var" in _expansion_error(
+    assert "is a module var" in _expansion_error(
         MODULE_PRELUDE
         + """
 (var counter 0)
@@ -675,21 +675,21 @@ def test_module_level_setv_is_warned_and_rebinding_a_module_val_is_red() -> None
         )
     )
     setv = sorted(f.line for f in found if f.rule == RULE_SETV)
-    # limit と flag。var の total・defn の中は警告しない。val の size の setv は警告ではなく赤(下)。
+    # limit and flag. No warning for var total or inside defn. The setv of val size is red (below), not a warning.
     assert setv == [2, 8]
     red = sorted(f.line for f in found if f.rule == RULE_REBIND)
-    assert red == [6, 7]  # val の size の setv・効かない :=
+    assert red == [6, 7]  # setv of val size, and a := that has no effect
 
 
 # ---------------------------------------------------------------------------
-# 節の :when の番と session の値(番は session の値を取り出した後に評価する)
+# The :when guard of a clause and session values (the guard is evaluated after the session values are taken out)
 # ---------------------------------------------------------------------------
 
 GUARDED = """
 (defclass [(dataclass :frozen True)] Take [EffectBase] #^ int n)
 (defclass [(dataclass :frozen True)] Ping [EffectBase])
 
-;; limit(session val)と used(session var)を :when の番で読む。番が外れた効果は外の handler へ渡る。
+;; Read limit (session val) and used (session var) in the :when guard. An effect whose guard fails is passed to the outer handler.
 (defhandler budget-handler [made]
   (session val limit (do (.append made "limit") 2))
   (session var used 0)
@@ -707,7 +707,7 @@ GUARDED = """
     (set! used (+ used n))
     (resume used)))
 
-;; 番が外れた Take を受ける外の handler(-1 を返す)。
+;; The outer handler that receives the Take whose guard failed (returns -1).
 (defhandler overflow []
   (Take [n] (resume -1)))
 
@@ -724,8 +724,8 @@ GUARDED = """
 
 
 def test_when_guard_reads_session_values_taken_before_the_guard() -> None:
-    """:when の番が session val / session var を読めば、番の前に取り出す(旧い形は取り出す前に番を評価し、
-    番の名前は未定義 = UnboundLocalError だった)。3 回目は番が外れて外の handler へ渡る。"""
+    """If the :when guard reads a session val / session var, they are taken out before the guard (the old form evaluated the guard before taking them out,
+    and the guard's name was undefined = UnboundLocalError). The third time the guard fails and the effect is passed to the outer handler."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         module = _module(
@@ -743,7 +743,7 @@ def test_when_guard_reads_session_values_taken_before_the_guard() -> None:
 
 
 def test_session_value_used_only_in_another_clause_is_not_initialised_by_the_guard() -> None:
-    """番が読まない session の値は、今までどおり本体が使う節でだけ初めて作る(番の前には取り出さない)。"""
+    """A session value the guard does not read is, as before, created for the first time only in the clause whose body uses it (not taken out before the guard)."""
     module = _module(
         GUARDED + "(setv made [])\n(setv result (run-state ((budget-handler made) pings)))\n",
         "_vvl_guard_untouched",

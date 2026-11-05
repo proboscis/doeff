@@ -1,8 +1,8 @@
-"""契約 `(: % (get tuple #(X ...)))` / `(: % (of dict K V))` と型付き束縛が実行時に通ること。
+"""The contract `(: % (get tuple #(X ...)))` / `(: % (of dict K V))` and typed bindings must pass at runtime.
 
-要素の型つきの総称型は isinstance に渡せない(`TypeError: isinstance() argument 2 cannot be a
-parameterized generic`)。契約と `<-` の型付き束縛は `doeff_hy._type_forms.runtime_type_form` の 1 点で外側の型(tuple・dict)
-へ写し、実行時には外側の型だけを確かめる(要素の型は静的な型検査が見る — #1790)。
+Generic types with element types cannot be passed to isinstance (`TypeError: isinstance() argument 2 cannot be a
+parameterized generic`). The contract and the typed binding of `<-` map to the outer type (tuple, dict) at the single point `doeff_hy._type_forms.runtime_type_form`,
+and at runtime only the outer type is checked (element types are seen by the static type check — #1790).
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ SOURCE = """\
   {:pre [(: n int)] :post [(: % (of dict str int))]}
   (tuple (range n)))
 
-;; 途中の return も :post と guard を通る。繰り返しの中・分岐の中の return と、入れ子の関数の return(外側の
-;; 出口ではない — 書き換えない)。
+;; A mid-body return also goes through :post and guard. A return inside a loop or branch, and a return of a nested function (not the outer
+;; exit — not rewritten).
 (defk early-names [n]
   {:pre [(: n int)] :post [(: % (get tuple #(str ...)))]}
   (for [i (range n)]
@@ -94,7 +94,7 @@ SOURCE = """\
 
 @pytest.fixture(scope="module")
 def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - register the Hy import hook
 
     root: Path = tmp_path_factory.mktemp("doeff_hy_generic_contract")
     (root / "generic_contract_probe.hy").write_text(SOURCE, encoding="utf-8")
@@ -109,14 +109,14 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
 
 
 def _run(program: object) -> object:
-    """読み込んだ Hy の module の Program を走らせる(module の属性は型の上では object なので Program に絞る)。"""
+    """Run the Program of a loaded Hy module (a module attribute is object in the type system, so narrow it to Program)."""
     from doeff import Program, run
 
     match program:
         case Program():
             return run(program)
         case _:
-            raise TypeError(f"Program でない値を走らせようとした: {program!r}")
+            raise TypeError(f"tried to run a value that is not a Program: {program!r}")
 
 
 def test_generic_tuple_return_contract_accepts_a_tuple(mod: ModuleType) -> None:
@@ -147,14 +147,14 @@ def test_generic_contract_rejects_the_wrong_outer_type(mod: ModuleType) -> None:
 
 
 def test_an_early_return_passes_the_post_condition(mod: ModuleType) -> None:
-    # 途中の return の値も :post に合えば通り、入れ子の関数の return は外側の出口ではない。
+    # A mid-body return value also passes if it fits :post, and a nested function's return is not the outer exit.
     assert _run(mod.early_names(3)) == ("early",)
     assert _run(mod.early_names(1)) == ("0",)
     assert mod.nested_return_is_not_an_exit(1) == "8"
 
 
 def test_an_early_return_is_checked_like_the_last_form(mod: ModuleType) -> None:
-    # 反例: 途中の return で :post と違う型を返すと落ち、defk の途中の return が撃たない effect を返すと guard が落とす。
+    # Counterexample: a mid-body return of a type differing from :post fails, and if a mid-body return in defk returns an effect that is not fired, the guard fails it.
     with pytest.raises(AssertionError):
         _run(mod.early_wrong(3))
     with pytest.raises(AssertionError):

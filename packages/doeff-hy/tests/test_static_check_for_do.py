@@ -1,17 +1,17 @@
-"""for/do を使う module の defk の型(親 #2318)の失敗ケース。
+"""Failure cases for the types of defk in modules that use for/do (parent #2318).
 
-for/do の展開は `_doeff_do`・`_doeff_traverse_Traverse`・`_doeff_traverse_Skip` を名指し、書き手がその名を
-`(import doeff [do :as _doeff-do])` などで import する(for/do の docstring)。型検査のための展開では doeff-hy-check が
-module の頭に static_types の `do` を `_doeff_do` として置くので、同じ名に 2 つの宣言が並ぶ。前は 2 つの型が違い
-(core の `do` に本体に yield の無い関数の overload が無かった)、pyright は後に来る書き手の import の型で defk の投影
-(`<-` が `_doeff_perform` になり yield の無い関数)を読んで、同じ module の全ての defk の定義が赤になり、defk を呼んだ
-答えが Unknown になった(agora の book_rows.hy で 47 件)。加えて、件ごとの関数の引数(`(<- x (From …))` の x)は
-注記の無い def の引数になり、strict の「引数の型が分からない」が出ていた。doeff_traverse には py.typed が無く、
-Traverse の答えの Collection の `valid_values` も Unknown だった。直した後は:
+The for/do expansion names `_doeff_do`, `_doeff_traverse_Traverse` and `_doeff_traverse_Skip`, and the author imports those names with
+`(import doeff [do :as _doeff-do])` or the like (docstring of for/do). In the expansion for type checking, doeff-hy-check places static_types' `do` at the head of the
+module as `_doeff_do`, so two declarations of the same name sit side by side. Previously the two types differed
+(core's `do` had no overload for functions whose body has no yield); pyright read the defk projection from the later author import
+(`<-` became `_doeff_perform` and the function had no yield), so every defk definition in the same module turned red and the results of calls to defk
+became Unknown (47 cases in agora's book_rows.hy). In addition, the per-item function parameter (x in `(<- x (From ...))`) became
+an unannotated def parameter, and strict reported "parameter type is unknown". doeff_traverse has no py.typed, and the Collection
+`valid_values` of the Traverse result was also Unknown. After the fix:
 
-- strict で、for/do を使う defk と、それを呼ぶ defk の検体に赤が 0 件。
-- 答えの型は逃げていない: 件の x(str)に数を足す・for/do の答えの値(int)に文字列を足すと型の取り違えの赤。
-- 実行時の展開は今までどおり(件の引数をそのまま受け、型検査の補助を名指さない)で、走らせた答えも同じ。
+- With strict, 0 errors for the subject defk that uses for/do and the defk that calls it.
+- Result types do not escape: adding a number to the item x (str), or a string to the for/do result value (int), gives a type-mismatch error.
+- The runtime expansion is unchanged (it takes the item parameter as is and names no type-checking helper), and the run result is the same.
 """
 
 import ast
@@ -25,7 +25,7 @@ from pathlib import Path
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 PROBE = """\
 (require doeff-hy.macros [defk val <- for/do])
@@ -81,8 +81,8 @@ def test_for_do_module_has_no_strict_error(tmp_path: Path) -> None:
 
 @needs_pyright
 def test_item_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
-    # 件の text は items(tuple[str, ...])の要素の型 str と読める — 数を足すと型の取り違えの赤
-    # (件の引数が object / Any に逃げていないことの検)。
+    # The item text reads as str, the element type of items (tuple[str, ...]) -- adding a number gives a type-mismatch error
+    # (checks that the item parameter has not escaped to object / Any).
     text = PROBE.replace("(When (> (len text) 0))", "(When (> (+ text 1) 0))")
     errors = _check(tmp_path, text)
     assert ("reportOperatorIssue", _line_of(text, "(+ text 1)")) in [
@@ -92,7 +92,7 @@ def test_item_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
 
 @needs_pyright
 def test_for_do_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
-    # for/do の答えの有効な値は本体の答え(width-of の int)と読める — 文字列を足すと赤。
+    # The valid value of the for/do result reads as the body result (int from width-of) -- adding a string gives an error.
     text = PROBE.replace("(tuple got.valid-values))", '(tuple (+ (get got.valid-values 0) "x")))')
     errors = _check(tmp_path, text)
     assert ("reportOperatorIssue", _line_of(text, '"x"')) in [(d["rule"], d["line"]) for d in errors], errors
@@ -100,15 +100,15 @@ def test_for_do_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
 
 @needs_pyright
 def test_defk_answer_in_a_for_do_module_is_read(tmp_path: Path) -> None:
-    # for/do の module でも、defk を呼んだ答え(widths の tuple[int, ...])が読める — 文字列を足すと赤
-    # (前は答えが Unknown で、足しても赤にならなかった)。
+    # Even in a for/do module, the result of calling defk (a tuple[int, ...] of widths) is readable -- adding a string gives an error
+    # (previously the result was Unknown, and adding did not give an error).
     text = PROBE.replace("(+ (sum each) one)", '(+ each "x")')
     errors = _check(tmp_path, text)
     assert ("reportOperatorIssue", _line_of(text, '"x"')) in [(d["rule"], d["line"]) for d in errors], errors
 
 
-# From を 2 つ重ねた for/do— 答えは組ごとの本体の値を平らに並べた Collection で、有効な値は本体の
-# 答え(int)と読める。前は内側の Traverse を外の件の関数が値として返し、型の上でも有効な値が Traverse だった。
+# for/do with two Froms stacked -- the result is a Collection that flattens the body values of each tuple, and the valid value
+# reads as the body result (int). Previously the outer item function returned the inner Traverse as a value, and the valid value was a Traverse even in the types.
 NESTED_PROBE = """\
 (require doeff-hy.macros [defk <- for/do])
 (import doeff [do :as _doeff-do])
@@ -150,7 +150,7 @@ def test_two_froms_run_to_one_value_per_pair(tmp_path: Path, monkeypatch: pytest
 
 
 def _expand(source: str) -> str:
-    # doeff_hy の import が Hy の importer と macro を用意する(副作用のための import)
+    # importing doeff_hy sets up the Hy importer and macros (an import for its side effects)
     importlib.import_module("doeff_hy")
     return ast.unparse(hy.compiler.hy_compile(hy.read_many(source), "__main__"))
 
@@ -162,7 +162,7 @@ def test_only_the_static_expansion_reads_the_item_through_the_helper() -> None:
     with static_view():
         static = _expand(PROBE)
     assert "_doeff_traverse_item" in static, static
-    # 実行時の展開は件の引数をそのまま受ける(型検査の補助を名指さない)
+    # The runtime expansion takes the item parameter as is (names no type-checking helper)
     assert "_doeff_traverse_item" not in runtime, runtime
     assert "(text):" in runtime, runtime
 

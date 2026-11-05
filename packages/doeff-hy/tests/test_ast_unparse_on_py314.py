@@ -1,7 +1,7 @@
-"""Hy の `ast.unparse` の差し替えが Python 3.14 の注記の文字列化で止まらなくなる不具合の回帰。
+"""Regression for the bug where Hy's `ast.unparse` replacement fails to terminate when stringifying Python 3.14 annotations.
 
-仕組みと直し方は doeff_hy/_ast_unparse.py。暴走するとメモリを秒 150 MB で食うので、確かめは
-子 process の中で行い、子は自分の最大 RSS を見張って 400 MB を超えたら exit 3 で終わる。
+The mechanism and the fix are in doeff_hy/_ast_unparse.py. A runaway eats 150 MB of memory per second, so the check
+runs inside a child process; the child watches its own max RSS and exits with code 3 if it exceeds 400 MB.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 
 needs_314 = pytest.mark.skipif(
-    sys.version_info < (3, 14), reason="annotationlib の STRING 形式は Python 3.14 から"
+    sys.version_info < (3, 14), reason="the annotationlib STRING format exists only from Python 3.14"
 )
 
 WATCHDOG = """
 import os, resource, sys, threading, time
 def _watch():
-    scale = 1 if sys.platform == "darwin" else 1024  # ru_maxrss: macOS は byte・Linux は KiB
+    scale = 1 if sys.platform == "darwin" else 1024  # ru_maxrss: bytes on macOS, KiB on Linux
     while True:
         if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale > 400 * 1024 * 1024:
             os._exit(3)
@@ -48,8 +48,8 @@ def test_signature_string_format_with_list_in_subscript_finishes(tmp_path: Path)
     done = _run_child(
         """
         import inspect
-        import hy  # Hy の差し替えを先に入れる
-        import doeff_hy  # noqa: F401 - 置き換えを当てる
+        import hy  # install the Hy replacement first
+        import doeff_hy  # noqa: F401 - apply the replacement
         from annotationlib import Format
         from collections.abc import Callable
 
@@ -71,7 +71,7 @@ def test_pytest_plugin_protects_a_conftest_that_imports_hy_first(tmp_path: Path)
         textwrap.dedent(
             """
             import pytest
-            import hy  # noqa: F401 - 他の plugin が先に Hy を読む状況
+            import hy  # noqa: F401  # situation where another plugin reads Hy first
             from collections.abc import Callable
 
             class Widget: ...
@@ -103,9 +103,9 @@ def test_keyword_mincing_is_kept_and_constant_values_are_not_copied() -> None:
     import hy.compat
 
     if "rewriting_unparse" not in vars(hy.compat):
-        pytest.skip("この版の Hy は ast.unparse を差し替えない")
+        pytest.skip("this version of Hy does not replace ast.unparse")
     assert ast.unparse is hy.compat.rewriting_unparse
-    # 予約語 def を数学用の文字で綴った名前は、Hy の写しで "\U0001d41def" になる
+    # a name spelling the reserved word def with mathematical characters becomes "\U0001d41def" in Hy's copy
     minced = ast.unparse(ast.parse("x.\U0001d555\U0001d556\U0001d557 = 1"))
     assert "\U0001d41def" in minced
 

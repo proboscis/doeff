@@ -1,40 +1,40 @@
-;;; defhandler / handle の節の操作(resume・transfer・finish・reperform・pass・raise)の表 — 操作の名と性質の唯一の定義元。
+;;; Table of clause operations in defhandler / handle (resume, transfer, finish, reperform, pass, raise) -- the sole source of definition for operation names and properties.
 ;;;
-;;; 操作 1 つの行(ClauseOp)が持つ物:
-;;;   name          節の中で書く頭の名
-;;;   ending        節を終えた後に続きをどうするか(Ending)— effect の再開の宣言と照らす所(clause_endings.hy)
-;;;   arity         書き換える形の引数の数(rewrite が None の操作は問わない)
-;;;   returns       続きが終わると節へ戻るか(resume)— 戻る操作の書き換えの後に、handle.hy が「再開した」の印を立てる
-;;;                 (実行の時の検め。印の名は handle.hy だけが知り、行の rewrite は知らない)
-;;;   tail          節の末尾の位置で替える操作の名(resume → transfer — handler の frame を残さない)。None は替えない
-;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名(別名 `_doeff_<名>` で束ねる — 書き手の同じ名の effect を
-;;;                 隠さない・doeff_hy/_expansion_names.py。rewrite が読む綴りも alias-symbol で同じ別名を引く)
-;;;   static-nodes  型検査のための展開(doeff_hy/_static_view.py)が handler の頭で doeff から import する node の名(同じく別名)
-;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
+;;; What one operation row (ClauseOp) holds:
+;;;   name          the head name written inside a clause
+;;;   ending        what follows after the clause ends (Ending) -- checked against the effect's resumption declaration (clause_endings.hy)
+;;;   arity         number of arguments of the rewritten form (ignored for operations whose rewrite is None)
+;;;   returns       whether control returns to the clause when the continuation finishes (resume) -- after rewriting an operation that returns, handle.hy sets the "resumed" mark
+;;;                 (a run-time check. Only handle.hy knows the mark name; the row's rewrite does not)
+;;;   tail          name of the operation to substitute at the clause tail position (resume -> transfer -- leaves no handler frame). None means no substitution
+;;;   nodes         names of the nodes the run-time expansion imports from doeff at the head of the handler (bundled under the alias `_doeff_<name>` -- so as not to
+;;;                 hide an effect of the same name the author wrote; doeff_hy/_expansion_names.py. The spelling rewrite reads also pulls the same alias via alias-symbol)
+;;;   static-nodes  names of the nodes the type-check expansion (doeff_hy/_static_view.py) imports from doeff at the head of the handler (likewise aliased)
+;;;   rewrite       (a function that rewrites the inside of the rewrite argument list) -> the form handed to the VM. None leaves it as written (Python raise)
 ;;;
-;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
-;;; 写しだった頃、新しい操作を _terminates と書き換えにだけ足すと、Raise の節のその操作を、展開・handle の評価・実行のどの検めも
-;;; 止めなかった(失敗例: (Raise [reason] (throw …)) で Raise の続きが走った)。
-;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換えと戻る操作の印)・_tail-resume-to-transfer
-;;;                      (末尾の替え)・_vm-imports(node の import)
-;;;   clause_endings.hy  ops-in / clause-ops(節が使う操作)・check-clause-by-name / check-clause-endings(ending ごとの照合)
-;;;   doeff-linter       business_fakes.rs の節の判じ(DOEFF143 ほか)— Rust は Hy を評価できないので、表から名・ending・arity だけを
-;;;                      linter-table-json で書き出した packages/doeff-linter/data/clause_ops.json を include_str! で読む。
-;;;                      file は scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が表との食い違いを赤にする。
-;;; doeff_hy のどの module も、表の外に操作の名を文字列か quote した記号で書かない(tests/test_handle_clause_ops.py が全 module を
-;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない)。
-;;; doeff-linter の側も同じ — business_fakes.rs は操作の名を literal で書かない(その file の検が拾う)。
+;;; Where the table is read -- do not copy the list of operation names outside this table. When _terminates in handle.hy and ENDING-OPS / RESUMING-OPS in clause_endings.hy were
+;;; copies, adding a new operation only to _terminates and the rewrite meant none of the checks -- expansion, handle evaluation, or run time -- stopped that operation in a Raise clause
+;;; (failure example: in (Raise [reason] (throw …)) the continuation of the Raise ran).
+;;;   handle.hy          _terminates (do all paths of the clause end), _rewrite-ops (rewrite and the marks of operations that return), _tail-resume-to-transfer
+;;;                      (tail substitution), _vm-imports (node imports)
+;;;   clause_endings.hy  ops-in / clause-ops (the operations a clause uses), check-clause-by-name / check-clause-endings (matching per ending)
+;;;   doeff-linter       the judgment of clauses in business_fakes.rs (DOEFF143 etc.) -- Rust cannot evaluate Hy, so only the name, ending, and arity from the table are
+;;;                      written out by linter-table-json to packages/doeff-linter/data/clause_ops.json, which is read with include_str!.
+;;;                      The file is written by scripts/export_clause_ops.py --write, and tests/test_linter_clause_ops.py turns any mismatch with the table red.
+;;; No module of doeff_hy writes an operation name outside the table as a string or quoted symbol (tests/test_handle_clause_ops.py picks up all
+;;; modules -- a new reader that copies the set of names does not follow additions to or retirements from the table).
+;;; The same goes for doeff-linter -- business_fakes.rs does not write operation names as literals (that file's check picks them up).
 ;;;
-;;; 行を足す前に(操作の名は節の本体の頭の名として予約される): 書き手が同じ名の関数を節の本体(入れ子の fn の中も)で呼んでいると、
-;;; 行を足した瞬間にその呼びが操作へ黙って書き換わる(`throw` の行を足すと、書き手の関数 `throw` の呼びが ResumeThrow になり、
-;;; 検めの関数が generator になって検めごと消えた)。node の名の衝突は
-;;; expansion_names.py の別名が防ぐが、操作の名はこの機構の外 — 機械の検では止められない(足す前の呼びと足した後の呼びを source から見分けられない)ので、
-;;; 足す前に agora・agora-controllers・doeff・dotfiles の origin/main の節の本体で、その名を頭にした呼びを引く(0 件を確かめてから足す)。
-;;; 足す行は packages/doeff-linter/data/clause_ops.json の書き直し(scripts/export_clause_ops.py --write)も要る。
+;;; Before adding a row (operation names are reserved as head names in clause bodies): if an author calls a function of the same name in a clause body (including inside a nested fn),
+;;; the call is silently rewritten into the operation the moment the row is added (adding a `throw` row turned the author's calls to their function `throw` into ResumeThrow,
+;;; and the checking function became a generator and the check disappeared). Collisions of node names are
+;;; prevented by the aliases in expansion_names.py, but operation names are outside that mechanism -- a mechanical check cannot stop it (calls before and after adding cannot be told apart from the source),
+;;; so before adding, search origin/main of agora, agora-controllers, doeff, and dotfiles for calls headed by that name in clause bodies (confirm 0 hits before adding).
+;;; Adding a row also requires regenerating packages/doeff-linter/data/clause_ops.json (scripts/export_clause_ops.py --write).
 ;;;
-;;; handle.hy が module の頭で import する(macros.hy が handle.hy を require する途中で読まれる)ので、doeff-hy.macros も
-;;; doeff-hy.record も require しない — defrecord・deff・val を使わず、declarations.hy の DefinitionTags と同じ素の dataclass と
-;;; module の直下の setv にする。
+;;; handle.hy imports this at the head of the module (it is read while macros.hy is requiring handle.hy), so it requires neither doeff-hy.macros nor
+;;; doeff-hy.record -- it does not use defrecord, deff, or val, and is a plain dataclass like DefinitionTags in declarations.hy plus
+;;; a module-level setv.
 
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
@@ -46,19 +46,19 @@
 
 
 (defclass Ending [StrEnum]
-  "節を終えた後に続きをどうするか(ADR-DOE-CORE-EFFECTS-003 R15)。"
-  ;; 続きを再開する — Raise / Absent の節では断る
+  "What follows after a clause ends (ADR-DOE-CORE-EFFECTS-003 R15)."
+  ;; resume the continuation -- refused in Raise / Absent clauses
   (setv RESUMES "resumes")
-  ;; 続きを捨て、handler を置いたスコープを値で終える — 普通の effect の節は :finish-reason が要る
+  ;; discard the continuation and end the scope where the handler was placed with a value -- a clause for an ordinary effect needs :finish-reason
   (setv FINISHES "finishes")
-  ;; effect と続きを外の handler へ渡す
+  ;; hand the effect and the continuation to the outer handler
   (setv FORWARDS "forwards")
-  ;; 例外で節を抜ける
+  ;; leave the clause with an exception
   (setv RAISES "raises"))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] ClauseOp []
-  "節の操作 1 つ(欄の意味は module の頭)。"
+  "One clause operation (see the head of the module for the meaning of the fields)."
   (#^ str name)
   (#^ Ending ending)
   (#^ (| int None) arity)
@@ -70,10 +70,10 @@
 
 
 (defn _resume [args recur]
-  "(resume 値) → 続きを値で再開する(続きが終わると節へ戻る — 行の returns。戻った後の印は handle.hy が立てる)。型検査のための
-   展開は core の typed-resume で、値を effect の答えの型(EffectBase[T] の T)と突き合わせる(節の effect は節の
-   `(isinstance _doeff_effect EffectType)` で絞られている)。節の effect・続きは `_doeff_effect`・`_doeff_k` — 書き手の欄の名と
-   分け合わない(expansion_names.py)。"
+  "(resume value) -> resume the continuation with the value (control returns to the clause when the continuation finishes -- the row's returns. handle.hy sets the mark after returning). The type-check
+   expansion uses core's typed-resume, matching the value against the effect's answer type (T of EffectBase[T]) (the clause's effect is narrowed by the clause's
+   `(isinstance _doeff_effect EffectType)`). The clause's effect and continuation are `_doeff_effect` and `_doeff_k` -- they do not share names with
+   the author's field names (expansion_names.py)."
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
       `(yield (do ~(import-form ["typed_resume"])
@@ -82,7 +82,7 @@
 
 
 (defn _transfer [args recur]
-  "(transfer 値) → 続きを値で再開し、handler を外す(末尾の呼び)。型検査のための展開は core の typed-transfer。"
+  "(transfer value) -> resume the continuation with the value and remove the handler (a tail call). The type-check expansion uses core's typed-transfer."
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
       `(yield (do ~(import-form ["typed_transfer"])
@@ -91,18 +91,18 @@
 
 
 (defn _finish [args recur]
-  "(finish 値) → 続きを捨て、handler を置いたスコープの答えを値にする(再開しない終わり方)。"
+  "(finish value) -> discard the continuation and make the answer of the scope where the handler was placed the value (an ending that does not resume)."
   `(return ~(recur (get args 0))))
 
 
 (defn _reperform [args recur]
-  "(reperform effect) → effect と続きを外の handler へ渡す(OCaml 5 の reperform)。渡す effect は書き手の式(欄の名が `effect` なら
-   欄の値 — 受けた effect を渡すなら `(pass)`)で、続きは節の続き `_doeff_k`。"
+  "(reperform effect) -> hand the effect and the continuation to the outer handler (OCaml 5 reperform). The effect handed over is the author's expression (if the field name is `effect`, the
+   field value -- to hand over the received effect use `(pass)`), and the continuation is the clause continuation `_doeff_k`."
   `(yield (~(alias-symbol "Pass") ~(recur (get args 0)) ~(continuation-symbol))))
 
 
 (defn _pass [args recur]
-  "(pass) → 節の effect と続きを外の handler へ渡す — 旧い形で、(reperform effect) へ移すよう警告する。"
+  "(pass) -> hand the clause's effect and continuation to the outer handler -- the old form, with a warning to move to (reperform effect)."
   (import warnings)
   (warnings.warn
     "(pass) is deprecated in defhandler — use (reperform effect) instead"
@@ -110,8 +110,8 @@
   `(yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol))))
 
 
-;; 節の操作の表。行の順は handler の頭の import の名の順(node-names)。表を引くのはこの module の関数だけ(呼び手は名で表を
-;; 写さない・引かない)。
+;; The table of clause operations. Row order follows the order of node names imported at the head of the handler (node-names). Only functions of this module look up the table (callers neither
+;; copy nor look up the table by name).
 (setv CLAUSE-OPS
   #((ClauseOp :name "resume" :ending Ending.RESUMES :arity 1 :returns True :tail "transfer"
               :nodes #("Resume") :static-nodes #() :rewrite _resume)
@@ -128,39 +128,39 @@
 
 
 (defn named-op [name]
-  "名の節の操作の行(表に無い名は None)。"
+  "The row of the clause operation for a name (None for a name not in the table)."
   (next (gfor op CLAUSE-OPS :if (= op.name name) op) None))
 
 
 (defn clause-op [form]
-  "form が節の操作の形(頭の名が表に在る式)ならその行、でなければ None。引数の数は問わない — 節を終えるかの検めと、節が
-   使う操作の集まりは頭の名だけで決める(書き換えるかは呼び手が arity と照らす)。"
+  "If form is an expression of clause-operation shape (head name is in the table), its row; otherwise None. The number of arguments is not asked -- the check on whether a clause ends and the
+   set of operations a clause uses are decided by the head name alone (whether to rewrite is for the caller to match against arity)."
   (when (and (isinstance form Expression) (> (len form) 0) (isinstance (get form 0) Symbol))
     (named-op (str (get form 0)))))
 
 
 (defn ops-ending [names ending]
-  "操作の名の集まりのうち、終わり方が ending の物(frozenset)— 節が使う操作と effect の再開の宣言を照らすため。"
+  "Among the set of operation names, those whose ending is ending (a frozenset) -- to match the operations a clause uses against the effect's resumption declaration."
   (frozenset (gfor op CLAUSE-OPS :if (and (in op.name names) (= op.ending ending)) op.name)))
 
 
 (defn node-names [static?]
-  "handler の展開が頭で doeff から import する、節の操作の node の名(表の順・重ねなし)。"
+  "The names of the clause-operation nodes that the handler expansion imports from doeff at the head (in table order, without duplicates)."
   (list (dict.fromkeys (gfor op CLAUSE-OPS
                              name (if static? op.static-nodes op.nodes)
                          name))))
 
 
 (setv _LINTER-ABOUT
-  (+ "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/_clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。"
-     "生成物 — 手で直さない(直す所は表で、書き直しは uv run python scripts/export_clause_ops.py --write)。"
-     "doeff-linter の business_fakes(DOEFF143 ほか)が節の終わりを判じるのに読み、終わり方ごとの読みは src/project/clause_ops.rs と business_fakes.rs が持つ。"))
+  (+ "Names, ending kinds, and argument counts of clause operations, written out from the rows of doeff-hy's CLAUSE-OPS table (packages/doeff-hy/src/doeff_hy/_clause_ops.hy). "
+     "Generated file - do not edit by hand (fix the table, and regenerate with uv run python scripts/export_clause_ops.py --write). "
+     "Read by doeff-linter's business_fakes (DOEFF143 etc.) to judge how a clause ends; the reading per ending kind lives in src/project/clause_ops.rs and business_fakes.rs."))
 
 
 (defn linter-table-json []
-  "doeff-linter が節の判じに読む file(packages/doeff-linter/data/clause_ops.json)の中身 — 表の行から名・終わり方・引数の数だけを
-   書き出す(書き換え・node・returns・tail は実行時と型検査の展開の物で、linter は読まない)。file はこの文字列と 1 字も違わない
-   (scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が照らす)。"
+  "The contents of the file doeff-linter reads for clause judgment (packages/doeff-linter/data/clause_ops.json) -- only the name, ending, and argument count from the table rows are
+   written out (rewrite, node, returns, and tail belong to the run-time and type-check expansions, and the linter does not read them). The file is not one character different from this string
+   (written by scripts/export_clause_ops.py --write and checked by tests/test_linter_clause_ops.py)."
   (setv rows (gfor op CLAUSE-OPS
                    (+ "  " (json.dumps (dict :name op.name :ending op.ending.value :arity op.arity) :ensure-ascii False))))
   (+ "{\n"

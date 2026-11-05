@@ -131,7 +131,7 @@
 (require doeff-hy.macros [defk defhandler <-])
 (import multimod.effects [FetchPrice FetchNews])
 
-;; Mock handlers — 節の外の effect は defhandler が外の handler へ渡す
+;; Mock handlers — defhandler passes effects outside the clauses to the outer handler
 (defhandler mock-price-handler
   (FetchPrice [ticker] (resume [100 101 102])))
 

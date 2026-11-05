@@ -17,7 +17,7 @@
   (<- signal (Pure {"signal" data}))
   signal)
 
-;; Mock handlers — 節の外の effect は defhandler が外の handler へ渡す
+;; Mock handlers — effects outside a clause are passed on by defhandler to the outer handler
 (defhandler mock
   (FetchRaw [] (resume "raw-data"))
   (Enrich [data] (resume (+ "enriched:" (str data)))))

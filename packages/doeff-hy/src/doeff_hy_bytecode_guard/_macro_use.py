@@ -1,85 +1,84 @@
-"""展開が使った macro の記録の作り方と照らし方(:class:`doeff_hy_bytecode_guard._records.MacroRecord`)。
+"""How the record of the macros an expansion used is built and checked (:class:`doeff_hy_bytecode_guard._records.MacroRecord`).
 
-使った macro を拾う: 展開(compile)の間だけ、展開する module の macro の表(``_hy_macros``)を :class:`RecordingTable`(引いた名を
-覚える dict)に替える。Hy 1.3.1 の ``hy.macros.macroexpand`` は展開する module の表を ``名 in 表`` で確かめ ``表[名]`` で引くので、
-引かれた名が使った macro、表に無かった名が「引いて無かった名」になる。macro が展開した先で別の macro を呼んでも同じ表から
-引かれる。関数の中の require の macro は、Hy の展開が module の表より先に引く局所の表(compiler の局所の状態)に入るので、
-compiler が局所の状態を開く口を包んで局所の表を覚え(:func:`_watch_local_tables`)、その中の展開で実行された macro を使った
-macro に入れる。
+Collecting the macros used: only during expansion (compile), the macro table of the module being expanded (``_hy_macros``) is replaced with a
+:class:`RecordingTable` (a dict that remembers the names looked up). Hy 1.3.1's ``hy.macros.macroexpand`` checks the expanded module's table with ``name in table``
+and looks up ``table[name]``, so the names looked up are the macros used, and the names not in the table are the "names looked up but absent". Even when a macro
+expands into a call to another macro, it is looked up from the same table. A macro required inside a function goes into a local table (the compiler's local state)
+that Hy's expansion consults before the module's table, so we wrap the entry point through which the compiler opens local state, remember the local tables
+(:func:`_watch_local_tables`), and count the macros executed during expansion within them as used macros.
 
-macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`):
-- code object の中身(命令・定数 — 入れ子の code は同じ規則で・名の表・引数の数・flags)。行番号と位置(co_firstlineno・
-  co_linetable・co_positions)は入れない — macro の module に行を足しても、他の macro の digest は変わらない。
-- 名で引く大域(code の名の表を関数の ``__globals__`` で引いた値)・既定値・閉包の cell を辿る。関数と class(class はその
-  method)は同じ規則で再帰に辿る。素の値と、中身が素の値の組・集合は値で入れる。module は名と、code の名の表に出る属性
-  (``module.名`` の読み)を入れる。code の文字列の定数は名の候補として、辿った module のその名の属性も入れる
-  (``getattr(module, "名")`` の読み — 読む関数と module の参照が別の関数にあっても覆う)。ただし module の説明の文
-  (``__doc__``)は入れない(展開の code の "__doc__" は展開の結果に説明を書く印で、module の説明の文は展開の結果に効かない)。
-  module の置き場を名指すだけの属性(``__file__``・``__cached__`` — :data:`_LOCATION_NAMES`)は、名で出会っても値(作業木の
-  置き場の path)を入れず印だけを入れる(同じ中身の木を別の dir に置いても digest は変わらない)。
-  置き場を値として読む code か束縛の文(``Path(__file__).with_name(…)`` で隣の file を読む形)の digest は、その file の中身を
-  覆えないので照らせない印にする(環境変数の読みと同じ :data:`doeff_hy_bytecode_guard._records.ENVIRONMENT_READ`)。
-- 関数の code の中身は、その module の展開で実行された関数だけを覆う(defk の閉包の歩みが、defk から
-  届く class(binding_forms._Walker)を method ごと全部辿り、展開で呼ばれない _assign の code の変更で、defk の使い手 1,197 本が
-  作り直された)。歩みは今までどおり全部を辿り(関数の名・class の member の名・値・束縛の文・関数の大域と import の先)、関数に
-  初めて出会った所の code の中身(:attr:`CodeFacts.shape`)だけを、記録が覆うと名指した関数の物にし、他は印 :data:`_UNCOVERED`
-  にする(:class:`ClosureWalk`)。覆う関数 = 展開の間(:class:`MacroRecording` の ``with`` の中)に実行の始まった code の関数
-  (:mod:`doeff_hy_bytecode_guard._called_code` が拾う)と、絞らない関数。記録は覆った関数を、歩みが関数に出会った順の番号の bit
-  (:attr:`doeff_hy_bytecode_guard._records.UsedMacro.covered`)で持ち、照らしは同じ印で今の閉包の digest を作り直して比べる。
-  実行されなかった関数の code は展開の結果を変えないので、中身を外しても照らしは古い展開を合うと判じない — 実行された関数の
-  中身と、それが読む値が記録と同じなら、展開は同じ道を通る(呼ぶ関数を変えるには、実行された関数の中身か読む値が変わる)。
-  絞らない関数:
-  - 束縛の文の先(:meth:`_Walker._bound` の中で出会った関数と class と、そこから届く物)— 値を作った code は展開の外(読み込みの
-    時・前の展開)で実行され、その中身が値を覆う(書き換える関数・束縛の文が呼ぶ関数)。2 度目に出会った物(番号だけ入る)も
-    絞らない — 関数と class ごとに、中身を歩く間に出会った物を覚えて辿る。
-  - 関数の中身を値として読む code(:data:`_CODE_READ_NAMES` — ``__doc__`` ・ ``__code__`` ・ ``inspect.signature`` など)を覆う時は、
-    閉包の関数の中身を全部覆う(実行しない関数の説明の文・引数の形が展開の結果に効く)。
-  - 拾えない環境(Python 3.11 まで・sys.monitoring の道具の番号が空いていない)・``with`` の外で作った記録・macro の外の値の行は全部。
-  見ない形: 別の module の大域の表に、外の module の関数が展開をまたいで書き込む覚え(書き手は束縛の文の先にならず、前の展開で
-  表を埋めた関数の中身を、今の展開が呼ばなければ覆わない — 同じ module の関数や class が書き込む表・``functools.lru_cache`` で包んだ
-  関数は覆う)・文字列で引く ``getattr(f, "__doc__")``(展開の code の文字列の定数 "__doc__" は展開の結果に説明を書く印)・標準
-  library と Hy が中で読む関数の中身。囲みの中で macro の module を初めて読むと、読み込みの時に実行された関数も覆うので、同じ
-  source の記録の印が process で違いうる(どちらの記録も照らしでは合う)。
-- Hy 自身(``hy.*``)と Python の標準 library と組み込みは名だけ入れる(Hy の版・Python の版で覆う)。
-- 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
-  file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
-  .pyc を読む途中(import の途中)に走るので、関数の中の import の先は、展開の時には通らない枝で、循環する import の途中の
-  module を require して落ちうる — 落ちた時は名だけを入れる。
-- import の途中の状態の digest: 歩みが import の途中の module(名前空間がまだ揃って
-  いない)か import できない module に当たった digest は、import の進み具合 — どの process がどの順で何を読んだか — に依る
-  (deff の閉包の doeff_hy._outcome_forms は、doeff_hy.record を .pyc から読む途中では import できず、読み込みの済んだ process
-  では中身ごと辿られる)。その digest は process の覚えに入れず、記録にも入れない(None)。記録は代わりに、閉包が依った
-  module の file の sha256(:attr:`MacroRecord.files`)を持ち、記録か今の歩みのどちらかが import の途中に当たった行は、
-  digest でなくその file で比べる。両方が読み込みの済んだ状態なら digest で比べる(file の行は見ない)。
-- process をまたぐ覚え(条は packages/doeff-hy/architecture.hy の B1): digest は process の中で
-  だけ覚える(:data:`_REMEMBERED`)。digest は生きた値(別の module から来た素の値・環境変数で決まる値)に依り、辿った file の
-  状態だけでは信じられないので、新しい process は閉包を辿り直す。辿り直しの費用の大半だった source の文の読みは、中身で決まる
-  純な読みとして置き場に覚える(:mod:`doeff_hy_bytecode_guard._bound_source`)。
-- 環境変数の読み(基準版 cf7ea9cc0 から在った):
-  標準 library は名だけ入れる(版で覆う)が、``os.environ`` は process の状態で、版も file も
-  覆わない。環境変数から組んだ表は名を束縛する source の文で覆われ、文は環境変数の値を持たないので、環境変数だけを替えた
-  process が古い展開を今に合うと判じた。歩みが環境変数の読み — code か束縛の文が os(posix・nt)の module を大域の名で引いて
-  ``environ`` ・ ``environb`` ・ ``getenv`` ・ ``getenvb`` を読む・関数の中の import の os で読む・それらの object に値として当たる
-  (別名の import・既定値・閉包の cell)— に当たった digest は照らせない: 覚えず、記録の行は印
-  :data:`doeff_hy_bytecode_guard._records.ENVIRONMENT_READ`(照らしはいつも古いと判じ、使い手は process ごとに展開し直す)。
-  環境変数から組んだ素の値の大域(文字列・数)は値で入るので、この規則に当たらない。辿れない値を持ち主の module の file で覆う
-  時(既定値・閉包の cell・束縛を辿れない大域・名で辿れない読みの先 — :meth:`_Walker._fold_opaque`)は、持ち主の source に
-  環境変数を持つ module の名と環境変数を読む属性の名の両方が現れれば印にする — file は読み込みの時に読んだ環境変数を写さない。
- 見ない読み: 標準 library の関数が中で読む環境変数(``os.path.expanduser`` ・
-  ``tempfile`` など)・文字列で引く読み(``getattr(os, "environ")``)・module の表を通す読み(``sys.modules["os"]`` ・
-  ``hy.I.os``)・星の import で束縛した表(持ち主の file で覆い、import の先の source は読まない)。
-- enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
-- 辿れない値を狭く覆う:
-  - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
-    (:mod:`doeff_hy_bytecode_guard._bound_source` — 文が読む名と、本体で書き換えうる top-level の関数も辿る)。
-  - frozen の dataclass の値は class と欄の値で、ContextVar は名と既定値で入れる(今の値は実行の状態なので入れない)。
-  - 拡張の module の class(Python の source の無い class)は、.so の file ではなく名と公開の形(基底・属性の名と種類)で覆う。
-  - 関数の kwdefaults(名 → 既定値の dict)は名の順に値で入れる。
-- 安全側に倒す: 大域の名でなく引いた辿れない値(既定値・閉包の cell・組の中・class の値)・source を読めない module の大域は、
-  その module の file の sha256 を足す。名で辿れない読み(:class:`NamespaceRead`)は、大域の名として読むか属性として読むかで分ける:
-  module の名前空間の読み(``globals()`` ・ ``vars`` ・ ``sys.modules`` ・ ``import_module`` ・ ``eval``)を持つ関数は、その関数の
-  module の file と関数が参照する module の file を、object の名前空間の読み(``x.__dict__`` ・ ``__getattribute__``)を持つ関数は、
-  関数が参照する module の file を足す(欄の名 ``x.vars`` は読みではない)。
+Macro digest = digest of the closure of the macro function's code (:class:`_Walker`):
+- The contents of the code object (instructions, constants — nested code by the same rules, the name tables, argument counts, flags). Line numbers and positions (co_firstlineno,
+  co_linetable, co_positions) are excluded — adding lines to a macro's module does not change the digest of other macros.
+- Follow globals looked up by name (values obtained by looking the code's name table up in the function's ``__globals__``), defaults, and closure cells. Functions and classes (a class
+  through its methods) are walked recursively by the same rules. Plain values, and tuples and sets of plain values, are included by value. A module contributes its name and the attributes that appear in the code's
+  name table (reads of ``module.name``). String constants in code are treated as candidate names, and the same-named attribute of the walked module is included too
+  (reads like ``getattr(module, "name")`` — covered even when the reading function and the module reference live in different functions). However, the module's docstring
+  (``__doc__``) is not included (the "__doc__" in expansion code is a marker for writing a docstring into the expansion result; the module's own docstring does not affect the expansion result).
+  Attributes that merely name a module's location (``__file__``, ``__cached__`` — :data:`_LOCATION_NAMES`) contribute only a marker, not the value (the path of the working
+  tree), even when encountered by name (the same tree placed in a different dir keeps the same digest).
+  The digest of code or a binding statement that reads the location as a value (the form ``Path(__file__).with_name(...)`` that reads a neighboring file) cannot cover the contents of that file,
+  so it is marked as unverifiable (the same as environment variable reads: :data:`doeff_hy_bytecode_guard._records.ENVIRONMENT_READ`).
+- The code of a function is covered only for functions actually executed during that module's expansion (the closure walk of defk walked every method of the classes reachable from defk
+  (binding_forms._Walker), and a change to the _assign code, which expansion never calls, caused 1,197 users of defk to be
+  rebuilt). The walk still follows everything as before (function names, class member names, values, binding statements, function globals and import targets), but the code contents at the place where a function
+  is first encountered (:attr:`CodeFacts.shape`) are kept only for functions the record names as covered; the others get the marker :data:`_UNCOVERED`
+  (:class:`ClosureWalk`). Covered functions = functions of code whose execution started during expansion (inside the ``with`` of :class:`MacroRecording`)
+  (collected by :mod:`doeff_hy_bytecode_guard._called_code`), plus the functions that are not narrowed. The record holds the covered functions as bits indexed by the order in which the walk encountered functions
+  (:attr:`doeff_hy_bytecode_guard._records.UsedMacro.covered`), and verification rebuilds the current closure digest with the same markers and compares.
+  The code of a function that was not executed does not change the expansion result, so dropping its contents does not cause verification to judge an old expansion as matching — if the contents of the functions that were executed
+  and the values they read are the same as in the record, the expansion takes the same path (to change which function is called, the contents of an executed function or a value it reads must change).
+  Functions that are not narrowed:
+  - What lies beyond binding statements (functions and classes encountered inside :meth:`_Walker._bound`, and what is reachable from them) — the code that produced the value ran outside the expansion (at load
+    time or in an earlier expansion), and its contents cover the value (functions that rewrite it, functions that the binding statement calls). Things encountered a second time (only the number is added) are
+    also not narrowed — for each function and class, we remember what was encountered while walking its contents and follow it.
+  - When covering code that reads a function's contents as a value (:data:`_CODE_READ_NAMES` — ``__doc__``, ``__code__``, ``inspect.signature``, etc.),
+    all the contents of the closure's functions are covered (the docstring and argument shape of a function that is not executed affect the expansion result).
+  - All rows in environments where collection is impossible (up to Python 3.11, or the sys.monitoring tool id is not free), records made outside ``with``, and values outside the macro.
+  Forms not looked at: memory in which a function of an outside module writes into another module's global table across expansions (the writer does not fall beyond a binding statement, and if the current expansion does not call the function that filled
+  the table in an earlier expansion, it is not covered — tables written by functions or classes of the same module and functions wrapped by ``functools.lru_cache`` are covered),
+  ``getattr(f, "__doc__")`` with a string lookup (the string constant "__doc__" in expansion code is a marker for writing a docstring into the expansion result), and the contents of functions the standard
+  library and Hy read internally. If the macro's module is first read inside the enclosure, functions executed at load time are also covered, so the markers in a record of the same
+  source can differ between processes (both records match under verification).
+- Hy itself (``hy.*``), the Python standard library, and builtins contribute only the name (covered by the Hy version and the Python version).
+- Import targets inside functions, targets of hy.R calls, and modules under a package: import them and include the attributes named in the name table (covering the whole module
+  by file would also cover doeff_hy.macros, which defhandler imports in its body, and any line change in macros.hy would go cold). Verification
+  runs in the middle of reading the .pyc (in the middle of an import), so an import target inside a function is a branch not taken at expansion time and may fail by requiring a module that is in the middle of a circular
+  import — when it fails, only the name is included.
+- Digest of in-the-middle-of-import state: a digest where the walk hit a module in the middle of an import (its namespace not yet complete)
+  or a module that cannot be imported depends on the progress of imports — which process read what in which order
+  (doeff_hy._outcome_forms in deff's closure cannot be imported while doeff_hy.record is being read from a .pyc, and in a process where loading is finished
+  it is walked including its contents). That digest is not put into the process memory and not into the record (None). Instead the record holds the sha256 of the files of the modules the closure depended on
+  (:attr:`MacroRecord.files`), and for rows where either the record or the current walk hit an in-the-middle-of-import module,
+  the comparison uses those files instead of the digest. When both are in the fully loaded state, the digest is compared (the file rows are not looked at).
+- Memory across processes (clause B1 of packages/doeff-hy/architecture.hy): the digest is remembered only
+  within a process (:data:`_REMEMBERED`). The digest depends on live values (plain values coming from other modules, values determined by environment variables), and the state of the walked files alone
+  is not enough to trust it, so a new process walks the closure again. The reading of source statements, which was most of the cost of walking again, is remembered in storage as
+  a pure read determined by contents (:mod:`doeff_hy_bytecode_guard._bound_source`).
+- Reading environment variables (present since the baseline version cf7ea9cc0):
+  The standard library contributes only the name (covered by the version), but ``os.environ`` is process state and is covered by neither the version nor files. A table built from environment variables is covered by the source statement that binds the name, and the statement does not hold the environment variable values, so
+  a process that changed only the environment variables judged the old expansion as matching the present. A digest where the walk hit an environment variable read — code or a binding statement looking up the os (posix, nt) module by a global name
+  and reading ``environ``, ``environb``, ``getenv``, or ``getenvb``, reading it through an import of os inside a function, or meeting those objects as values
+  (an aliased import, a default, a closure cell) — cannot be verified: it is not remembered, and the record row gets the marker
+  :data:`doeff_hy_bytecode_guard._records.ENVIRONMENT_READ` (verification always judges it stale, and users expand again in each process).
+  Plain-value globals built from environment variables (strings, numbers) enter by value, so this rule does not apply to them. When covering a value that cannot be walked by the file of its owning module
+  (defaults, closure cells, globals whose binding cannot be followed, read targets that cannot be followed by name — :meth:`_Walker._fold_opaque`), it is marked if the owner's source
+  contains both the name of a module holding environment variables and the name of an attribute that reads environment variables — the file does not capture environment variables read at load time.
+  Reads not looked at: environment variables the standard library functions read internally (``os.path.expanduser``,
+  ``tempfile``, etc.), reads by string lookup (``getattr(os, "environ")``), reads through the module table (``sys.modules["os"]``,
+  ``hy.I.os``), and tables bound by a star import (covered by the owner's file; the source of the import target is not read).
+- Tables that enum and namedtuple build from a class definition (``_member_map_``, etc.) are not included (they are followed as the members and the defaults of ``__new__``).
+- Covering values that cannot be walked narrowly:
+  - An unwalkable value looked up by a module global name (list, dict, an object that is none of the above) is covered by the source statements that bind and rewrite that name
+    (:mod:`doeff_hy_bytecode_guard._bound_source` — it also follows the names the statement reads and the top-level functions that may rewrite it in their body).
+  - The value of a frozen dataclass enters as the class and the field values, and a ContextVar as its name and default (the current value is execution state, so it is not included).
+  - A class of an extension module (a class with no Python source) is covered not by the .so file but by its name and public shape (bases, attribute names and kinds).
+  - A function's kwdefaults (a dict of name to default) enter by value in name order.
+- Fail on the safe side: unwalkable values reached not by a global name (defaults, closure cells, inside tuples, class values) and globals of a module whose source cannot be read
+  get the sha256 of that module's file added. Reads that cannot be followed by name (:class:`NamespaceRead`) are split by whether they read as a global name or as an attribute:
+  a function that reads a module namespace (``globals()``, ``vars``, ``sys.modules``, ``import_module``, ``eval``) gets the file of that function's
+  module and the files of the modules the function references added; a function that reads an object namespace (``x.__dict__``, ``__getattribute__``) gets
+  the files of the modules the function references added (a field name ``x.vars`` is not a read).
 """
 
 import bisect
@@ -129,58 +128,58 @@ Sha256Of = Callable[[str], "str | None"]
 
 
 class RecordingTable(dict[str, object]):
-    """展開する module の macro の表の代わり — Hy の展開が引いた名(使った macro)と、引いて無かった名を覚える。require が
-    表に足す macro はそのまま入る(``dict`` の書きの口は替えない)。"""
+    """Stand-in for the module's macro table — remembers the names Hy's expansion looked up (the macros used) and the names it looked up that were absent. Macros that require
+    adds to the table go in as they are (the ``dict`` write entry points are not replaced)."""
 
     def __init__(self, entries: dict[str, object]) -> None:
         super().__init__(entries)
         self.used: set[str] = set()
         self.absent: set[str] = set()
-        #: この表を開いた記録(compile の口の包みが、表から記録を作るため)。
+        #: The recording that opened this table (so the compile entry wrapper can build a record from the table).
         self.recording: MacroRecording | None = None
-        #: この module の展開の間に Hy の compiler が開いた局所の macro の表(:func:`_watch_local_tables` が足す — 関数の中の
-        #: require と defmacro が macro を入れる表。Hy の展開はこの表を module の表より先に引くので、ここから引かれた macro は
-        #: :meth:`__getitem__` を通らない)。
+        #: Local macro tables the Hy compiler opened during this module's expansion (added by :func:`_watch_local_tables` — the tables into which a require
+        #: or defmacro inside a function puts macros. Hy's expansion consults these tables before the module's table, so macros looked up from here
+        #: do not go through :meth:`__getitem__`).
         self.local_tables: tuple[dict[str, object], ...] = ()
 
     def __getitem__(self, name: str) -> object:
-        """Hy の展開が macro を引く口 — 引かれた名を使った macro として覚える。"""
+        """The entry point where Hy's expansion looks up a macro — remembers the looked-up name as a used macro."""
         value = super().__getitem__(name)
         self.used.add(name)
         return value
 
     def __contains__(self, name: object) -> bool:
-        """Hy の展開が macro かを確かめる口 — 無かった名を覚える。"""
+        """The entry point where Hy's expansion checks whether a name is a macro — remembers names that were absent."""
         found = super().__contains__(name)
         if not found and isinstance(name, str):
             self.absent.add(name)
         return found
 
 
-#: Hy の compiler が局所の状態を開く口を包んだか(process に 1 つ)。包みは Hy の compiler の class という process の共有物を
-#: 書き換えるので、持ち主はこの module 1 つ。free-threaded の Python では compile が並ぶので lock の下で 1 度だけ包む。
+#: Whether the entry point through which Hy's compiler opens local state has been wrapped (one per process). The wrapper rewrites Hy's compiler class, a process-wide shared object,
+#: so this module is the single owner. Under free-threaded Python compiles run concurrently, so the wrapping is done only once, under a lock.
 _LOCAL_WATCH = {"installed": False}
 _LOCAL_WATCH_LOCK = threading.Lock()
 
 
 def _watch_local_tables() -> None:
-    """Hy の compiler が局所の状態(関数の本体など)を開くたびに、その macro の表を、展開している module の記録の表
-    (:class:`RecordingTable`)に覚えさせる(process で 1 度だけ包む)。関数の中の require で入れた macro は局所の表から引かれ、
-    module の表を通らないので、覚えないと記録から漏れ、macro を変えても使う側が古い展開のまま動いた。
-    局所の表は dict のまま覚える — Hy の require は局所の表を
-    ``type(target) is dict`` で見分けるので、引いた名を覚える表に替えられない。"""
+    """Each time Hy's compiler opens local state (a function body, etc.), make the recording table of the module being expanded
+    (:class:`RecordingTable`) remember that state's macro table (wrapped once per process). Macros brought in by a require inside a function are looked up from the local table
+    and do not go through the module's table, so without this they would be missing from the record, and users kept running an old expansion even after the macro changed.
+    The local table is remembered as a plain dict — Hy's require tells local tables apart
+    by ``type(target) is dict``, so it cannot be replaced with a table that remembers looked-up names."""
     with _LOCAL_WATCH_LOCK:
         if _LOCAL_WATCH["installed"]:
             return
-        # Hy の source を compile する時だけ読む(起動時に Hy を読まない)。
+        # Read Hy only when compiling Hy source (do not load Hy at startup).
         from hy.compiler import HyASTCompiler
 
         opened = HyASTCompiler.new_local_state
 
         def new_local_state(compiler: HyASTCompiler) -> None:
-            """Hy の局所の状態を開き、その macro の表を展開している module の記録の表に覚えさせる(包んだ口)。"""
+            """Open Hy's local state and make the recording table of the module being expanded remember its macro table (the wrapped entry point)."""
             opened(compiler)
-            # 一番下の状態は compiler が module を置く前に開く(module の直下の require は module の表へ入る)。
+            # The bottom-most state is opened before the compiler places the module (a require directly under the module goes into the module's table).
             module = getattr(compiler, "module", None)
             table = None if module is None else vars(module).get(MACRO_TABLE)
             if isinstance(table, RecordingTable):
@@ -191,10 +190,10 @@ def _watch_local_tables() -> None:
 
 
 class MacroRecording:
-    """展開 1 回の間、module の macro の表を :class:`RecordingTable` に替える(``with`` の中が展開)。抜けた後も
-    :meth:`record` で記録を作れる。同じ module で入れ子に開いた時は外の記録をそのまま使う(表を替えない)。``with`` の中では
-    実行の始まった code も拾う(:mod:`doeff_hy_bytecode_guard._called_code` — digest が覆う関数の code を、展開で実行された関数に
-    絞るため)。"""
+    """For the duration of one expansion, replace the module's macro table with a :class:`RecordingTable` (the body of ``with`` is the expansion). The record can still be built
+    with :meth:`record` after exiting. When opened nested for the same module, the outer recording is used as is (the table is not replaced). Inside ``with``, code whose
+    execution started is also collected (:mod:`doeff_hy_bytecode_guard._called_code` — to narrow the functions whose code the digest covers
+    to those executed during expansion)."""
 
     def __init__(self, module: ModuleType, hy_version: str, sha256_of: Sha256Of) -> None:
         self._module = module
@@ -210,41 +209,41 @@ class MacroRecording:
             if isinstance(present, RecordingTable)
             else RecordingTable(present if isinstance(present, dict) else {})
         )
-        #: 展開の間の実行の拾い(``with`` に入る前は拾っていない — その時の記録は閉包の関数の code を全部覆う)。
+        #: Collection of executions during the expansion (nothing is collected before entering ``with`` — a record made then covers all the code of the closure's functions).
         self._mut_called: called_code.CalledCode | called_code.Uncollectable = (
-            called_code.Uncollectable("展開を囲んでいない(with の外)")
+            called_code.Uncollectable("not enclosing the expansion (outside with)")
         )
         if self._owner:
             self.table.recording = self
 
     def __enter__(self) -> "MacroRecording":
-        """展開の前に、module の表を引いた名を覚える表に替え、実行の始まった code を拾い始める。"""
+        """Before expansion, replace the module's table with one that remembers looked-up names, and start collecting code whose execution starts."""
         if self._owner:
             vars(self._module)[MACRO_TABLE] = self.table
             if isinstance(self._mut_called, called_code.CalledCode):
-                # 同じ囲みに 2 度入った — 表は前の展開が引いた名を持ち続けるので、拾った code も残して続きを足す。
+                # Entered the same enclosure twice — the table keeps the names the earlier expansion looked up, so keep the collected code too and add to it.
                 self._mut_called.reopen()
             else:
                 self._mut_called = called_code.start()
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        """展開の後に、module の表を普通の dict に戻す(展開の外の読みを覚えない)。"""
+        """After expansion, restore the module's table to a plain dict (reads outside the expansion are not remembered)."""
         if self._owner and isinstance(self._mut_called, called_code.CalledCode):
             self._mut_called.close()
         namespace = vars(self._module)
         if not self._owner or namespace.get(MACRO_TABLE) is not self.table:
             return
         if self._had_table or self.table:
-            namespace[MACRO_TABLE] = dict(self.table)  # 展開の後の module には普通の dict を残す
+            namespace[MACRO_TABLE] = dict(self.table)  # leave a plain dict in the module after expansion
         else:
             del namespace[MACRO_TABLE]
 
     def record(self, source: str | bytes, also: tuple[ValueReference, ...] = ()) -> MacroRecord:
-        """展開が使った macro の記録(source = 展開した source の文 — 表を通らない hy.R の呼び出しを読む・also = macro の外で
-        展開の結果を変える値の在処)。"""
+        """The record of macros the expansion used (source = the source statements of what was expanded — reads hy.R calls that do not go through the table; also = where the values that change
+        the expansion result from outside the macro live)."""
         name = self._module.__name__
-        # 展開の間に実行の始まった code(記録を作る歩みの間の実行は入れない — 歩みは閉包の関数を呼ばない)。
+        # Code whose execution started during expansion (executions during the walk that builds the record are not included — the walk does not call the closure's functions).
         match self._mut_called:
             case called_code.CalledCode() as collecting:
                 executed: frozenset[CodeType] | None = collecting.codes()
@@ -256,8 +255,8 @@ class MacroRecording:
             macro = table.get(used)
             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
                 found[_macro_key(MACRO_TABLE, macro)] = macro
-        # 関数の中の require で入った macro(局所の表から引かれ、module の表の引いた名に入らない)— 展開で実行された macro
-        # だけ(拾えない環境では局所の表の全部 — 多く入れても古いと判じやすくなるだけ)。
+        # Macros that came in through a require inside a function (looked up from the local table, so they are not among the names looked up in the module's table) — only the macros
+        # executed during expansion (in environments where collection is impossible, all of the local table — including more only makes it easier to judge stale).
         for local in self.table.local_tables:
             for macro in list(local.values()):
                 if (
@@ -271,7 +270,7 @@ class MacroRecording:
             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
                 found[_macro_key(READER_TABLE, macro)] = macro
         text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
-        # 表を通らない hy.R の呼び出しの先も使った macro(自分の module の macro は source が覆う)。
+        # Targets of hy.R calls that do not go through the table are also used macros (macros of its own module are covered by the source).
         for reference in _source_references(text):
             if reference.module == name or _named_only(reference.module):
                 continue
@@ -310,15 +309,15 @@ class MacroRecording:
 
 
 def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of) -> bool:
-    """記録が今の環境に合うか — Hy の版、使った macro を module 名から今の環境で引き直した digest(定義した module を import
-    する — 使い手の require がどのみち import する module)と macro の外の値の digest、引いて無かった名が今も提供元に無いこと。
-    digest で比べられない行(記録か今の歩みが import の途中の module に当たった)があれば、閉包が依った module の file
-    (import しない)も比べる。"""
+    """Whether the record matches the current environment — the Hy version, digests of the used macros re-looked-up in the current environment by module name (this imports the defining module
+    — the module the user's require imports anyway), digests of values outside the macro, and that names that were looked up but absent are still absent from the provider.
+    If any row cannot be compared by digest (the record or the current walk hit a module in the middle of an import), the files of the modules the closure depended on
+    (not imported) are also compared."""
     if record.hy_version != hy_version:
         return False
     if current_scope() is not None:
-        return _rows_are_current(record, sha256_of)  # 一番外の読み込みの中 — file の状態はその中で 1 度だけ読む
-    scope = ImportScope()  # 読み込みの外(道具が直に照らす)— この照らしの間だけの覚え
+        return _rows_are_current(record, sha256_of)  # inside the outermost load — file state is read only once inside it
+    scope = ImportScope()  # outside a load (the tool verifies directly) — memory only for the duration of this verification
     token = IMPORT_SCOPE.set(scope)
     try:
         return _rows_are_current(record, sha256_of)
@@ -328,7 +327,7 @@ def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of)
 
 
 def _rows_are_current(record: MacroRecord, sha256_of: Sha256Of) -> bool:
-    """記録の行(使った macro・macro の外の値・引いて無かった名・digest で比べられない時の file)が今の環境に合うか。"""
+    """Whether the record rows (used macros, values outside the macro, names looked up but absent, files for when digests cannot be compared) match the current environment."""
     by_files = False
     for check in _row_checks(record, sha256_of):
         match check:
@@ -344,13 +343,12 @@ def _rows_are_current(record: MacroRecord, sha256_of: Sha256Of) -> bool:
 
 
 class RowCheck(enum.Enum):
-    """記録の digest の行 1 つ(使った macro・macro の外の値)の照らしの結末。
+    """Outcome of verifying one digest row of the record (a used macro, or a value outside the macro).
 
-    - SAME = 今の digest が記録と同じ。
-    - STALE = 違う・今の環境で引けない・記録は import の途中の状態で作ったが今は比べられる(作り直した記録は比べられる)・記録か
-      今の歩みが環境変数の読みに当たった(照らせない)。
-    - BY_FILES = 今の歩みが import の途中の module に当たった — 記録の file の行(閉包が依った module の file)で比べる。
-    """
+    - SAME = the current digest equals the record.
+    - STALE = differs, cannot be looked up in the current environment, the record was made in an in-the-middle-of-import state but can now be compared (the rebuilt record can be compared), or the record or
+      the current walk hit an environment variable read (cannot be verified).
+    - BY_FILES = the current walk hit a module in the middle of an import — compare by the record's file rows (the files of the modules the closure depended on)."""
 
     SAME = "same"
     STALE = "stale"
@@ -358,11 +356,11 @@ class RowCheck(enum.Enum):
 
 
 def _row_checks(record: MacroRecord, sha256_of: Sha256Of) -> Iterator[RowCheck]:
-    """記録の digest の行を順に今の環境で照らす(呼び手は古い行に当たったら止める — 残りの macro を import しない)。"""
+    """Verify the record's digest rows in order against the current environment (the caller stops at the first stale row — the remaining macros are not imported)."""
     for used in record.macros:
         macro = _macro_now(used.table, used.module, used.name)
         key = UsedMacroKey(used.table, used.module, used.name)
-        # 記録が中身を覆った関数(と今の歩みの絞らない関数)の中身で、今の閉包の digest を作り直す。
+        # Rebuild the current closure digest from the contents of the functions the record covered (and the functions the current walk does not narrow).
         yield _row_check(
             used.digest,
             None
@@ -375,10 +373,10 @@ def _row_checks(record: MacroRecord, sha256_of: Sha256Of) -> Iterator[RowCheck]:
 
 
 def _row_check(recorded: str | None, now: "ClosureDigest | None") -> RowCheck:
-    """記録の digest(None = 記録の時に import の途中だった)と今の閉包(None = 今の環境で引けない)の照らしの結末。"""
+    """Outcome of verifying the record's digest (None = the record was made while in the middle of an import) against the current closure (None = cannot be looked up in the current environment)."""
     if now is None or ENVIRONMENT_READ in (recorded, now.digest):
-        # 環境変数の読みは、記録の側でも今の側でも照らせない — 今の歩みが import の途中で file の行で比べる形になっても、file は
-        # 環境変数の違いを写さない。
+        # An environment variable read cannot be verified on either the record side or the current side — even if the current walk hit a module in the middle of an import and ends up comparing by file rows, files do not
+        # reflect differences in environment variables.
         return RowCheck.STALE
     if now.digest is None:
         return RowCheck.BY_FILES
@@ -388,14 +386,14 @@ def _row_check(recorded: str | None, now: "ClosureDigest | None") -> RowCheck:
 
 
 def _file_is_current(used: UsedFile, sha256_of: Sha256Of) -> bool:
-    """閉包が依った module の file が記録と同じ中身か(module は import しない)。"""
+    """Whether the files of the modules the closure depended on have the same contents as in the record (modules are not imported)."""
     path = _module_file(used.module)
     return path is not None and sha256_of(path) == used.sha256
 
 
 def _still_absent(provider: WholeRequire, absent: tuple[str, ...]) -> bool:
-    """全部 require した提供元に、引いて無かった名(前置きを外した名)が今も無いか — 足されていれば、使い手の次の展開では
-    その名の呼び出しが macro の展開に変わる。"""
+    """Whether a name that was looked up but absent (with the prefix removed) is still absent from every fully required provider — if it has been added, the user's next expansion
+    would turn calls of that name into macro expansions."""
     module = _imported(provider.module)
     table = None if module is None else vars(module).get(MACRO_TABLE)
     if not isinstance(table, dict):
@@ -405,10 +403,10 @@ def _still_absent(provider: WholeRequire, absent: tuple[str, ...]) -> bool:
 
 
 def _whole_requires(tables: Iterable[dict[str, object]], module_name: str) -> tuple[WholeRequire, ...]:
-    """展開の後の使い手の表(module の表と、関数の中の局所の表)から、提供元の macro を全部 require した形を読む — 提供元
-    (macro を定義した module)ごと・前置きごとに、使い手の表に入った名が提供元の公開の名(``_hy_export_macros`` か、``_`` で
-    始まらない名)を全部含むなら全部の require。名を選んで全部を書き並べた require も全部と数える(表をまたいで足した名も —
-    照らしが古いと判じる側に倒れるだけ)。"""
+    """From the user's tables after expansion (the module's table and local tables inside functions), read the forms that require every macro of a provider — per provider
+    (the module that defined the macros) and per prefix, if the names that entered the user's table include all of the provider's public names (``_hy_export_macros``, or names not
+    starting with ``_``), it is a full require. A require that lists every name by selecting names also counts as full (including names added across tables —
+    this only errs toward judging the verification stale)."""
     entered: dict[WholeRequire, set[str]] = {}
     for key, macro in chain.from_iterable(list(table.items()) for table in tables):
         if not (isinstance(macro, FunctionType) and _from_elsewhere(macro, module_name)):
@@ -435,14 +433,14 @@ def _whole_requires(tables: Iterable[dict[str, object]], module_name: str) -> tu
 
 
 def _exported(module_name: str) -> frozenset[str]:
-    """提供元の公開の macro の名(Hy の require の ``*`` が入れる名 — 名の読みは :func:`records.exported_macro_names`)。"""
+    """Public macro names of a provider (the names Hy's require ``*`` brings in — the names are read by :func:`records.exported_macro_names`)."""
     module = sys.modules.get(module_name)
     return exported_macro_names({} if module is None else vars(module))
 
 
 @dataclass(frozen=True)
 class UsedMacroKey:
-    """使った macro の在処(表の名・定義した module の名・その module の表の中の名)— 照らす時に今の環境で引き直す鍵。"""
+    """Where a used macro lives (table name, defining module name, name within that module's table) — the key for re-looking-up in the current environment at verification time."""
 
     table: str
     module: str
@@ -450,20 +448,20 @@ class UsedMacroKey:
 
     @property
     def sort_key(self) -> str:
-        """記録の行の並びの順(module・表・名)。"""
+        """Order of record rows (module, table, name)."""
         return f"{self.module}\0{self.table}\0{self.name}"
 
 
 @dataclass(frozen=True)
 class ClosureDigest:
-    """閉包 1 つの digest と、閉包が依った module の名(歩みが辿った物の持ち主・import できなかった module — 記録の file の
-    行になる)。digest は、歩みが import の途中の module か import できない module に当たった時は None(その時の材料は
-    import の進み具合に依る — 比べずに file の行で比べる)、環境変数の読みに当たった時は印 ENVIRONMENT_READ(照らせない —
-    いつも古いと判じる)。
+    """Digest of one closure, and the names of the modules the closure depended on (owners of what the walk followed, and modules that could not be imported — they
+    become the file rows of the record). The digest is None when the walk hit a module in the middle of an import or a module that cannot be imported (the material then depends on
+    import progress — compare by file rows instead), and the marker ENVIRONMENT_READ when it hit an environment variable read (cannot be verified —
+    always judged stale).
 
-    digest を持つ時は、閉包の歩みの材料(walk)と、digest が中身を覆った関数の印(covered — 番号 i の関数を覆えば bit i が 1)
-    も持つ。歩みが作る digest は閉包の関数の中身を全部覆い(macro の外の値の行はこの digest)、使った macro の行は
-    :meth:`called` (記録の時)と :meth:`covering` (照らしの時)で覆う関数を絞る。"""
+    When it has a digest, it also holds the material of the closure walk (walk) and the marker of the functions whose contents the digest covers (covered — bit i is 1 if the function numbered i is covered).
+    The digest the walk builds covers all the contents of the closure's functions (rows for values outside the macro use this digest), and rows for used macros
+    narrow the covered functions with :meth:`called` (at record time) and :meth:`covering` (at verification time)."""
 
     digest: str | None
     modules: tuple[str, ...]
@@ -471,15 +469,15 @@ class ClosureDigest:
     covered: int = 0
 
     def called(self, codes: frozenset[CodeType] | None) -> "ClosureDigest":
-        """記録の時の digest — 展開で実行の始まった code(None = 拾えなかった — 全部)の関数と、絞らない関数の中身を覆う。"""
+        """Digest at record time — covers the functions of code whose execution started during expansion (None = could not be collected — all), plus the contents of functions that are not narrowed."""
         if self.walk is None:
             return self
         covered = self.walk.covered_by(codes)
         return ClosureDigest(self.walk.digest(covered), self.modules, self.walk, covered)
 
     def covering(self, covered: int) -> "ClosureDigest":
-        """照らしの時の digest — 記録が中身を覆った関数(covered)と、今の歩みの絞らない関数の中身を覆う(今の歩みで絞らない関数が
-        増えれば、その中身が入って digest は記録と違う — 古いと判じる)。"""
+        """Digest at verification time — covers the functions whose contents the record covered (covered) plus the contents of the functions the current walk does not narrow (if the current walk
+        has more functions that are not narrowed, their contents enter and the digest differs from the record — judged stale)."""
         if self.walk is None:
             return self
         widened = covered | self.walk.forced
@@ -488,40 +486,40 @@ class ClosureDigest:
 
 @dataclass(frozen=True)
 class CodeSlot:
-    """閉包の歩みが初めて出会った関数 1 つ — その code(記録の時に、展開で実行が始まったかを引く)と、code の中身の digest
-    (:attr:`CodeFacts.shape`)。"""
+    """One function the closure walk encountered for the first time — its code (looked up at record time to see whether execution started during expansion), and the digest of the code's contents
+    (:attr:`CodeFacts.shape`)."""
 
     code: CodeType
     shape: str
 
 
-#: 中身を覆わない関数の code の中身の代わりに入れる文(16 進の digest と決して一致しない)。
+#: Text put in place of the code contents of a function whose contents are not covered (never equal to a hex digest).
 _UNCOVERED = "uncovered"
 
 
 @dataclass(frozen=True)
 class ClosureWalk:
-    """閉包の歩み 1 つの材料 — 関数の code の中身の所で切った材料の bytes(関数の数 + 1 個 — 文字列ごとに長さを前に置いた綴り)と、
-    出会った順の関数(slots)・絞らない関数の印(forced — 束縛の文の先)・関数の中身を値として読む関数の印(reads_code)。"""
+    """Material of one closure walk — the bytes of the material split at the function code contents (number of functions + 1 pieces — each string spelled with its length in front),
+    the functions in encounter order (slots), the marker of functions not narrowed (forced — beyond binding statements), and the marker of functions that read a function's contents as a value (reads_code)."""
 
     segments: tuple[bytes, ...]
     slots: tuple[CodeSlot, ...]
     forced: int
     reads_code: int
-    #: 印ごとの digest の覚え(process の中 — 同じ印の使い手を照らす度に、材料を hash し直さない)。
+    #: Cache of digests per marker (within the process — so that the material is not hashed again each time a user with the same marker is verified).
     digests: dict[int, str] = dataclasses.field(default_factory=dict, compare=False, repr=False)
-    #: 閉包に、関数の中身を値として読む関数が在る時の、注釈ごとの読み(:func:`_code_facts` の ``strict``)で歩き直した歩み。覆う関数に
-    #: 読む関数が入る時の digest はこちらで作る(関数の型注釈は、読まない閉包の digest には入らない)。
+    #: The walk redone with per-annotation reads (``strict`` of :func:`_code_facts`) for when the closure has a function that reads a function's contents as a value. The digest for the case where
+    #: a reading function is among the covered functions is built from this (a function's type annotations do not enter the digest of a closure that does not read them).
     strict: "ClosureWalk | None" = dataclasses.field(default=None, compare=False, repr=False)
 
     @property
     def everything(self) -> int:
-        """全部の関数の中身を覆う印。"""
+        """Marker covering the contents of all functions."""
         return (1 << len(self.slots)) - 1
 
     def covered_by(self, codes: frozenset[CodeType] | None) -> int:
-        """記録の時に中身を覆う関数の印 — 展開で実行の始まった code の関数と、絞らない関数。拾えなかった時(None)と、覆う関数の
-        どれかが関数の中身を値として読む時(呼ばない関数の説明の文・引数の形 — 実行しなくても展開に効く)は全部。"""
+        """Marker of functions whose contents are covered at record time — functions of code whose execution started during expansion, plus the functions not narrowed. All of them when collection was impossible (None) or when any of the covered functions
+        reads a function's contents as a value (the docstring and argument shape of a function that is not called — they affect the expansion even without executing)."""
         if codes is None:
             return self.everything
         covered = functools.reduce(
@@ -532,12 +530,12 @@ class ClosureWalk:
         return self.everything if covered & self.reads_code else covered
 
     def digest(self, covered: int) -> str:
-        """covered の関数は code の中身を、他の関数は印 :data:`_UNCOVERED` を入れた digest(16 進)。"""
+        """Digest (hex) with the code contents for covered functions and the marker :data:`_UNCOVERED` for the others."""
         known = self.digests.get(covered)
         if known is not None:
             return known
         if self.strict is not None and covered & self.reads_code:
-            # 覆う関数が中身を値として読む時は全部の関数の中身を覆う(:meth:`covered_by`)— 注釈ごとの読みの歩みの digest。
+            # When a covered function reads a function's contents as a value, cover the contents of all functions (:meth:`covered_by`) — the digest of the per-annotation-read walk.
             return self.digests.setdefault(covered, self.strict.digest(self.strict.everything))
         pieces = [self.segments[0]]
         for index, slot in enumerate(self.slots):
@@ -548,7 +546,7 @@ class ClosureWalk:
 
 @dataclass(frozen=True)
 class FileState:
-    """digest の覚えが有効かを決める file の状態(path・更新時刻・大きさ)。"""
+    """File state that decides whether a remembered digest is still valid (path, modification time, size)."""
 
     path: str
     mtime_ns: int
@@ -557,24 +555,24 @@ class FileState:
 
 @dataclass(frozen=True)
 class RememberedDigest:
-    """process の中の digest の覚え 1 つ — 辿った物の持ち主の file が今も同じ状態で、同じ関数(か module)の時だけ使う。"""
+    """One in-process digest memory — used only when the files of the owners of what was walked are still in the same state and it is for the same function (or module)."""
 
     subject: object
     files: tuple[FileState, ...]
     closure: ClosureDigest
 
 
-#: process の中の digest の覚え(同じ macro の digest を、照らす度に辿り直さないため)。
+#: In-process memory of digests (so that the closure of the same macro is not walked again at every verification).
 _REMEMBERED: dict[UsedMacroKey | ValueReference, RememberedDigest] = {}
 
 
 def macro_digest(key: UsedMacroKey, macro: FunctionType, sha256_of: Sha256Of) -> ClosureDigest:
-    """macro の関数の code の閉包の digest(覚えがあればそれ)。"""
+    """Digest of the closure of a macro function's code (the remembered one if there is one)."""
     return _remembered(key, macro, lambda walker: walker.function(macro), sha256_of)
 
 
 def value_digest(reference: ValueReference, sha256_of: Sha256Of) -> ClosureDigest | None:
-    """macro の外で展開の結果を変える値(module の属性)の閉包の digest(module を import する — 引けなければ None)。"""
+    """Digest of the closure of a value (a module attribute) outside the macro that changes the expansion result (imports the module — None if it cannot be looked up)."""
     module = _imported(reference.module)
     if module is None or reference.name not in vars(module):
         return None
@@ -590,7 +588,7 @@ def _remembered(
     walk: Callable[["_Walker"], None],
     sha256_of: Sha256Of,
 ) -> ClosureDigest:
-    """覚えた digest か、歩いて作った digest(同じ macro を照らす度に閉包を辿り直さないため)。"""
+    """The remembered digest, or the digest made by walking (so the closure is not walked again each time the same macro is verified)."""
     remembered = _REMEMBERED.get(key)
     if remembered is not None and remembered.subject is subject and _confirmed(key, remembered):
         return remembered.closure
@@ -598,25 +596,25 @@ def _remembered(
     stored = _stored_facts(entry) if entry is not None else {}
     walker = _Walker(sha256_of, CodeReadings(stored))
     walk(walker)
-    walked = walker.walked()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
+    walked = walker.walked()  # finish adding the attributes named by string constants (here too a module in the middle of an import may be hit)
     walkers = [walker]
     if walked.reads_code:
-        # 関数の中身を値として読む関数が閉包に在る: 注釈ごとの読みで歩き直し、覆う関数にその関数が入る digest はこちらで作る。
+        # A function that reads a function's contents as a value is in the closure: walk again with per-annotation reads, and build here the digest for when that function is among the covered functions.
         strict_walker = _Walker(sha256_of, CodeReadings(stored, strict=True))
         walk(strict_walker)
         walked = dataclasses.replace(walked, strict=strict_walker.walked())
         walkers.append(strict_walker)
     if entry is not None and any(each.readings.missed for each in walkers):
-        # 次の process の同じ macro の歩みが code を読み直さない
+        # so that the next process's walk of the same macro does not re-read the code
         _write_facts(entry, {sha: facts for each in walkers for sha, facts in each.readings.used.items()})
     modules = tuple(sorted({name for each in walkers for name in (*each.files, *each.unimportable)}))
     if any(each._mut_environment for each in walkers):
-        # 環境変数の読みに当たった digest は環境変数の値を写さない — 照らせない印にし、覚えない。import の途中の状態より先に判じる
-        # (途中の状態の行は file で比べ、環境変数の違いに気づかない)。
+        # A digest that hit an environment variable read does not capture the environment variable values — mark it unverifiable and do not remember it. Decide this before the in-the-middle-of-import state
+        # (rows in an in-the-middle state are compared by file and would not notice a difference in environment variables).
         return ClosureDigest(ENVIRONMENT_READ, modules)
     if any(each._mut_partial for each in walkers):
-        # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
-        # 違う process と置き場の entry を書き直し合う。
+        # Do not remember a digest from an in-the-middle-of-import state — if remembered, this process's verifications and records would all take that value, and
+        # processes with a different import order would keep overwriting each other's entries in storage.
         return ClosureDigest(None, modules)
     closure = ClosureDigest(walked.digest(walked.everything), modules, walked, walked.everything)
     states = tuple(
@@ -629,8 +627,8 @@ def _remembered(
 
 
 def _confirmed(key: UsedMacroKey | ValueReference, remembered: RememberedDigest) -> bool:
-    """覚えた digest を使ってよいか — 依った file が覚えた時の状態のままか。一番外の読み込み 1 つの中では file の状態は変わらない
-    物として扱うので、確かめた覚えを 2 度確かめない(照らしは Hy の module 1 つごとに走り、同じ覚えを数百回確かめていた)。"""
+    """Whether a remembered digest may be used — whether the files it depended on are still in the state they were in when remembered. Within one outermost load the file state is treated as
+    unchanging, so a remembered entry already checked is not checked twice (verification runs per Hy module, and used to check the same entry hundreds of times)."""
     scope = current_scope()
     if scope is not None and scope.confirmed.get(key) is remembered:
         return True
@@ -642,7 +640,7 @@ def _confirmed(key: UsedMacroKey | ValueReference, remembered: RememberedDigest)
 
 
 def _file_state(path: str) -> FileState | None:
-    """file の今の状態(覚えた digest を使ってよいかを決める — 消えた file は None)。"""
+    """Current state of a file (decides whether a remembered digest may be used — a file that has disappeared is None)."""
     try:
         status = os.stat(path)
     except OSError:
@@ -650,14 +648,14 @@ def _file_state(path: str) -> FileState | None:
     return FileState(path, status.st_mtime_ns, status.st_size)
 
 
-#: 一番外の読み込みの覚えに、まだ状態を読んでいない file の印(消えた file の None と分ける)。
+#: Marker in the outermost load's memory for a file whose state has not been read yet (distinct from None for a file that has disappeared).
 _UNREAD = object()
 
 
 def _state_now(path: str) -> FileState | None:
-    """覚えの確かめと覚える時に使う file の今の状態 — 一番外の読み込み 1 つ(:mod:`doeff_hy_bytecode_guard._import_scope`)の中では
-    file ごとに 1 度だけ stat する(検の読み込みで照らし 797 回・stat 9,700 回だった)。読み込みの外で
-    覚える時(記録を作る道具)は毎回 stat する。"""
+    """Current state of a file, used for checking memory and for remembering — within one outermost load (:mod:`doeff_hy_bytecode_guard._import_scope`)
+    each file is stat-ed only once (a check load used to run 797 verifications and 9,700 stats). When remembering
+    outside a load (the tool that makes records), it stats every time."""
     scope = current_scope()
     if scope is None:
         return _file_state(path)
@@ -668,15 +666,15 @@ def _state_now(path: str) -> FileState | None:
 
 
 def _unchanged(state: FileState) -> bool:
-    """file が覚えた時の状態のままか(消えた file は偽)— :func:`_file_state` と同じ判じ。"""
+    """Whether the file is still in the state it was in when remembered (a file that has disappeared is false) — the same judgment as :func:`_file_state`."""
     now = _state_now(state.path)
     return now is not None and now.mtime_ns == state.mtime_ns and now.size == state.size
 
 
 def _closure_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile, ...]:
-    """閉包が依った module の file の sha256 — digest で比べられない行(記録か今の歩みが import の途中の module に当たった)が
-    ある時に、照らしが import せずに比べる。import できなかった module の file も入る(引けない file は毎回違う印 — いつも
-    古いと判じられる)。"""
+    """sha256 of the files of the modules the closure depended on — what verification compares without importing when there are rows that cannot be compared by digest (the record or the current walk
+    hit a module in the middle of an import). The files of modules that could not be imported are included too (a file that cannot be looked up gets a marker that differs every time — always
+    judged stale)."""
     return tuple(
         UsedFile(name, (sha256_of(path) if path is not None else None) or os.urandom(16).hex())
         for name in sorted(names)
@@ -686,8 +684,8 @@ def _closure_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile
 
 
 def _module_file(module_name: str) -> str | None:
-    """module 名の今の環境の file — 読み込み済みなら sys.modules、未だなら import の探索(親の package も含めて何も実行しない —
-    ``importlib.util.find_spec`` は親の package を import し、その本体が別の module を読み込む)。"""
+    """The file of a module name in the current environment — sys.modules if already loaded, otherwise an import search (executing nothing, including the parent packages —
+    ``importlib.util.find_spec`` imports the parent package, whose body loads other modules)."""
     module = sys.modules.get(module_name)
     if module is not None:
         file = vars(module).get("__file__")
@@ -698,8 +696,8 @@ def _module_file(module_name: str) -> str | None:
 
 
 def _spec_without_import(module_name: str) -> importlib.machinery.ModuleSpec | None:
-    """module の spec を import の探索の finder に直に聞く(親の package は読み込み済みなら ``__path__``、未だなら同じく探した
-    場所 — 何も実行しない)。"""
+    """Ask the import search finders directly for a module's spec (the parent package's ``__path__`` if loaded, otherwise the same searched
+    location — nothing is executed)."""
     loaded = sys.modules.get(module_name)
     if loaded is not None:
         spec = vars(loaded).get("__spec__")
@@ -719,17 +717,17 @@ def _spec_without_import(module_name: str) -> importlib.machinery.ModuleSpec | N
     return None
 
 
-# ---- 拾った名から macro を引く -------------------------------------------------------------------------------------
+# ---- Looking up macros from the names collected -------------------------------------------------------------------------------------
 
 
 def _from_elsewhere(macro: FunctionType, module_name: str) -> bool:
-    """展開する module の外で定義された macro か(自分の macro は source が覆う・Hy 自身の macro は Hy の版が覆う)。"""
+    """Whether the macro was defined outside the module being expanded (its own macros are covered by the source; Hy's own macros are covered by the Hy version)."""
     owner = macro.__module__
     return isinstance(owner, str) and owner != module_name and not _named_only(owner)
 
 
 def _macro_key(table: str, macro: FunctionType) -> UsedMacroKey:
-    """macro を定義した module の表の中の名(同じ関数の object を引く名 — require の別名ではなく、定義した名)。"""
+    """The name within the table of the module that defined the macro (the name that looks up the same function object — the defined name, not a require alias)."""
     owner = str(macro.__module__)
     module = sys.modules.get(owner)
     entries = None if module is None else vars(module).get(table)
@@ -741,7 +739,7 @@ def _macro_key(table: str, macro: FunctionType) -> UsedMacroKey:
 
 
 def _macro_now(table: str, module_name: str, name: str) -> FunctionType | None:
-    """今の環境で module 名から引いた macro(module を import する — 引けなければ None)。"""
+    """The macro looked up from a module name in the current environment (imports the module — None if it cannot be looked up)."""
     module = _imported(module_name)
     entries = None if module is None else vars(module).get(table)
     if not isinstance(entries, dict) or name not in entries:
@@ -752,19 +750,19 @@ def _macro_now(table: str, module_name: str, name: str) -> FunctionType | None:
 
 @dataclass(frozen=True)
 class NotImportable:
-    """digest のために import できなかった module(名と、Hy か import の失敗の文)。"""
+    """A module that could not be imported for the digest (the name, and the Hy or import failure text)."""
 
     module: str
     reason: str
 
 
 def _import_for_digest(module_name: str) -> ModuleType | NotImportable:
-    """digest のために module を import する。照らしは .pyc を読む途中(import の途中)に走るので、関数の中の import の先が
-    循環する import の途中の module を require して落ちうる(展開の時はその枝を通らないので落ちない)— 落ちたら値で返す。"""
+    """Import a module for the digest. Verification runs in the middle of reading a .pyc (in the middle of an import), so an import target inside a function
+    may require a module in the middle of a circular import and fail (expansion does not take that branch, so it does not fail) — on failure return a value."""
     loaded = sys.modules.get(module_name)
     if loaded is not None:
         return loaded
-    from hy.errors import HyError  # 照らしは Hy の module に当たった時だけ走る
+    from hy.errors import HyError  # verification runs only when it hits a Hy module
 
     try:
         return importlib.import_module(module_name)
@@ -773,7 +771,7 @@ def _import_for_digest(module_name: str) -> ModuleType | NotImportable:
 
 
 def _imported(module_name: str) -> ModuleType | None:
-    """module 名の module(読み込み済みでなければ import する — import できなければ None。照らす側は古いと判じる)。"""
+    """The module for a module name (imports it if not loaded — None if it cannot be imported. The verifying side judges stale)."""
     match _import_for_digest(module_name):
         case ModuleType() as module:
             return module
@@ -783,18 +781,18 @@ def _imported(module_name: str) -> ModuleType | None:
 
 @dataclass(frozen=True)
 class MacroReference:
-    """``hy.R.<module>.<名>`` の呼び出しが引く macro(module 名と mangle した名)。"""
+    """The macro that a ``hy.R.<module>.<name>`` call looks up (the module name and the mangled name)."""
 
     module: str
     name: str
 
 
-#: source の文の中の ``hy.R.<module>.<名>``(module の部分の / は . の代わり)。
+#: ``hy.R.<module>.<name>`` within a source statement (/ in the module part stands in for .).
 _HY_R = re.compile(r"hy\.R\.([^\s.()\[\]{}\"';]+)\.([^\s()\[\]{}\"';]+)")
 
 
 def _source_references(text: str) -> Iterator[MacroReference]:
-    """source の文が直に書いた hy.R の呼び出し(注釈の行は読まない)。"""
+    """hy.R calls written directly in a source statement (annotation lines are not read)."""
     for line in text.splitlines():
         if line.lstrip().startswith(";") or "hy.R." not in line:
             continue
@@ -803,71 +801,71 @@ def _source_references(text: str) -> Iterator[MacroReference]:
 
 
 def _reference(module_part: str, name_part: str) -> MacroReference:
-    """Hy の macroexpand と同じ読み方で、hy.R の module の部分と名の部分から macro の在処を作る。"""
+    """Build the macro location from the module part and name part of hy.R, reading them the same way as Hy's macroexpand."""
     return MacroReference(
         _reference_module(module_part), ".".join(map(_mangle, name_part.split(".")))
     )
 
 
 def _reference_module(module_part: str) -> str:
-    """hy.R の module の部分(``doeff_hy/record``)の module 名。"""
+    """The module name of the module part of hy.R (``doeff_hy/record``)."""
     from hy.reader.mangling import slashes2dots
 
     return slashes2dots(_mangle(module_part))
 
 
 def _mangle(text: str) -> str:
-    """Hy の名の mangle(Hy は記録を作る時と照らす時には読み込み済み)。"""
+    """Hy's name mangling (Hy is already loaded when a record is made and when it is verified)."""
     import hy
 
     return hy.mangle(text)
 
 
-# ---- code の閉包の digest ------------------------------------------------------------------------------------------
+# ---- Digest of the closure of code ------------------------------------------------------------------------------------------
 
 
-#: 名だけ入れる package(Hy の版・Python の版で覆う物)。標準 library は sys.stdlib_module_names で足す。
-#: doeff_hy_bytecode_guard は記録の作り方そのもの(記録の形は RECORD_TAG で覆う・process の中の覚えを持つ)。
+#: Packages contributing only their name (covered by the Hy version and the Python version). The standard library is added from sys.stdlib_module_names.
+#: doeff_hy_bytecode_guard is the way records are made itself (the record shape is covered by RECORD_TAG; it holds in-process memory).
 _NAMED_ONLY = frozenset({"hy", "builtins", "funcparserlib", "doeff_hy_bytecode_guard"})
 
 
 def _named_only(module_name: str) -> bool:
-    """名だけ入れる module か(Hy 自身・標準 library・組み込み — 版で覆う物)。"""
+    """Whether it is a module contributing only its name (Hy itself, the standard library, builtins — covered by the version)."""
     top = module_name.partition(".")[0]
     return top in _NAMED_ONLY or top in sys.stdlib_module_names
 
 
-#: 環境変数を持つ標準の module(os と、その下の posix・nt)と、環境変数を読む属性の名(表 environ・environb と、それを読む
-#: getenv・getenvb)— 名だけ入れる module のうち、版で覆えない process の状態の読み(module の docstring の「環境変数の読み」)。
+#: Standard modules holding environment variables (os and below it posix and nt), and the attribute names that read environment variables (the tables environ and environb, and the getenv and
+#: getenvb that read them) — among the name-only modules, reads of process state that the version cannot cover (the "environment variable reads" in the module docstring).
 _ENVIRONMENT_MODULES = frozenset({"os", "posix", "nt"})
 _ENVIRONMENT_NAMES = frozenset({"environ", "environb", "getenv", "getenvb"})
 
 
 def _reads_environment(namespace: Mapping[str, object], names: tuple[str, ...]) -> bool:
-    """code か束縛の文が、環境変数を持つ module を大域の名で引いて環境変数を読むか — 照らせない digest を見分けるため。名の並びに
-    環境変数を読む属性の名が在り、並びの名のどれかが大域でその module を指す時(``os.environ.get`` ・ ``(import os :as o)`` の
-    ``o.getenv``)。名の並びは属性の名も含むので、別の object の属性 ``x.environ`` と os の参照が同じ code に在れば読みと数える
-    (安全側 — その macro の使い手が照らせなくなるだけ)。"""
+    """Whether code or a binding statement looks up a module holding environment variables by a global name and reads environment variables — to identify unverifiable digests. When the name list
+    has an attribute name that reads environment variables and any name in the list points to that module as a global (``os.environ.get``, or ``o.getenv`` for ``(import os :as o)``).
+    The name list includes attribute names too, so if an attribute ``x.environ`` of another object and a reference to os are in the same code, it counts as a read
+    (the safe side — the users of that macro just become unverifiable)."""
     if _ENVIRONMENT_NAMES.isdisjoint(names):
         return False
     return any(_environment_module(namespace.get(name)) for name in names)
 
 
 def _source_reads_environment(names: tuple[str, ...]) -> bool:
-    """module の source に現れる名の全部が環境変数の読みを含みうるか — 辿れない値を持ち主の file で覆う時に、照らせない印に
-    するかを決めるため。環境変数を持つ module の名と、環境変数を読む属性の名の両方が現れる時(どこで読むか — 読み込みの時か
-    呼ばれた時か — は分けない。安全側)。"""
+    """Whether all the names appearing in a module's source could include an environment variable read — to decide, when covering an unwalkable value by its owner's file, whether to
+    make it an unverifiable marker. When both the name of a module holding environment variables and the name of an attribute that reads environment variables appear (where it reads — at load time
+    or when called — is not distinguished. The safe side)."""
     return not (_ENVIRONMENT_NAMES.isdisjoint(names) or _ENVIRONMENT_MODULES.isdisjoint(names))
 
 
 def _environment_module(value: object) -> bool:
-    """値が環境変数を持つ標準の module か(別名で import した os も同じ module の object)。"""
+    """Whether the value is a standard module holding environment variables (an os imported under another name is the same module object)."""
     return isinstance(value, ModuleType) and value.__name__ in _ENVIRONMENT_MODULES
 
 
 def _environment_object(value: object) -> bool:
-    """値が環境変数を読む object そのものか(os.environ・os.environb・os.getenv・os.getenvb・posix か nt の environ)— 名で
-    module を引かずに値として当たった読み(別名の import・既定値・閉包の cell)を見分けるため。"""
+    """Whether the value is itself an object that reads environment variables (os.environ, os.environb, os.getenv, os.getenvb, or the environ of posix or nt) — to identify reads that were met as
+    a value without looking up the module by name (an aliased import, a default, a closure cell)."""
     return any(
         value is found
         for module in _ENVIRONMENT_MODULES
@@ -878,15 +876,15 @@ def _environment_object(value: object) -> bool:
 
 
 class NamespaceRead(enum.Enum):
-    """code が名で辿れない読みを持つか、持つならどの広さか。
+    """Whether code has reads that cannot be followed by name, and if so how broad.
 
-    - NONE = 持たない。
-    - OBJECT = 渡された object の名前空間の読み(``x.__dict__`` ・ ``__getattribute__`` ・ ``attrgetter`` ・ ``getattr_static``)。
-      読む名は ``getattr(x, "名")`` と同じく code の文字列の定数として覆う(:attr:`CodeFacts.texts`)。関数の module そのものは、
-      MODULE の読み(``globals()`` ・ ``sys.modules`` ・ ``import_module`` …)なしには object として渡せないので、関数が参照する
-      module の file だけで覆う。
-    - MODULE = module の名前空間・module の表・文字列の式の読み(``globals()`` ・ ``vars`` ・ ``sys.modules`` ・ ``eval`` …)—
-      関数の module と、関数が参照する module の file で覆う。
+    - NONE = it has none.
+    - OBJECT = a read of the namespace of a passed object (``x.__dict__``, ``__getattribute__``, ``attrgetter``, ``getattr_static``).
+      The names read are covered as string constants of the code, as with ``getattr(x, "name")`` (:attr:`CodeFacts.texts`). The function's own module cannot be passed as an object
+      without a MODULE read (``globals()``, ``sys.modules``, ``import_module`` ...), so it is covered only by the files of the
+      modules the function references.
+    - MODULE = a read of a module namespace, a module table, or a string expression (``globals()``, ``vars``, ``sys.modules``, ``eval`` ...) —
+      covered by the function's module and the files of the modules the function references.
     """
 
     NONE = "none"
@@ -894,7 +892,7 @@ class NamespaceRead(enum.Enum):
     MODULE = "module"
 
 
-#: 大域の名として読むと MODULE の読みになる名(``vars`` は大域の組み込みとして呼ぶ時だけ — 欄の名 ``x.vars`` は読みではない)。
+#: Names that become a MODULE read when read as a global name (``vars`` only when called as a global builtin — a field name ``x.vars`` is not a read).
 _MODULE_READ_GLOBALS = frozenset(
     {
         "globals",
@@ -910,7 +908,7 @@ _MODULE_READ_GLOBALS = frozenset(
     }
 )
 
-#: 属性として読むと MODULE の読みになる名(``sys.modules`` ・ ``hy.eval`` ・ ``importlib.import_module`` ・ ``f.__globals__``)。
+#: Names that become a MODULE read when read as an attribute (``sys.modules``, ``hy.eval``, ``importlib.import_module``, ``f.__globals__``).
 _MODULE_READ_ATTRIBUTES = frozenset(
     {
         "eval",
@@ -924,7 +922,7 @@ _MODULE_READ_ATTRIBUTES = frozenset(
     }
 )
 
-#: 大域の名・属性として読むと OBJECT の読みになる名。
+#: Names that become an OBJECT read when read as a global name or an attribute.
 _OBJECT_READ_GLOBALS = frozenset({"attrgetter", "getattr_static"})
 _OBJECT_READ_ATTRIBUTES = frozenset(
     {"__dict__", "__getattribute__", "attrgetter", "getattr_static"}
@@ -935,7 +933,7 @@ _UNTRACEABLE_NAMES = (
 )
 
 
-#: class の中身のうち、振る舞いでない物(行番号・注記・抽象 class の内部の覚え・dataclass の欄の記述)。
+#: Parts of a class's contents that are not behavior (line numbers, annotations, internal memory of abstract classes, dataclass field descriptions).
 _CLASS_SKIP = frozenset(
     {
         "__dict__",
@@ -954,7 +952,7 @@ _CLASS_SKIP = frozenset(
         "__dataclass_fields__",
         "__dataclass_params__",
         "_abc_impl",
-        # enum と namedtuple が class の定義から作る表(member と欄の既定値は member・__new__ の既定値として辿る)。
+        # Tables that enum and namedtuple build from a class definition (members and field defaults are followed as members and the defaults of __new__).
         "_member_map_",
         "_value2member_map_",
         "_member_names_",
@@ -973,7 +971,7 @@ _CLASS_SKIP = frozenset(
 
 @dataclass(frozen=True)
 class ImportReference:
-    """code の中の import の命令 1 つ(module の名と相対の段数)。"""
+    """One import instruction in code (the module name and the relative level)."""
 
     name: str
     level: int
@@ -981,9 +979,9 @@ class ImportReference:
 
 @dataclass(frozen=True)
 class CodeFacts:
-    """code object 1 つ(入れ子の code を含む)から読んだ物 — 行番号と位置を除いた中身の digest・名の表・文字列の定数
-    (``getattr(x, "名")`` と ``d["名"]`` の名の候補)・import・hy.R の呼び出しの module・名で辿れない読みを持つか・module の
-    置き場(:data:`_LOCATION_NAMES`)を値として読むか(大域の読み・属性の読み・文字列の定数の名 — 書くだけなら偽)。"""
+    """What was read from one code object (including nested code) — the digest of its contents without line numbers and positions, the name table, string constants
+    (candidate names for ``getattr(x, "name")`` and ``d["name"]``), imports, the modules of hy.R calls, whether it has reads that cannot be followed by name, and whether it reads a module's
+    location (:data:`_LOCATION_NAMES`) as a value (a global read, an attribute read, or a string constant name — false if it only writes)."""
 
     shape: str
     names: tuple[str, ...]
@@ -994,28 +992,26 @@ class CodeFacts:
     reads_location: bool
 
 
-#: process の中の code の読みの覚え(code object の id → (code・読んだ物) — code を生かしておき id の使い回しを防ぐ)。
-#: 意味に効かない物(関数の型注釈・Hy の一時変数の名の番号)を除いた読み。
+#: In-process memory of code reads (code object id -> (code, what was read) — keeps the code alive to prevent reuse of ids).
+#: Reads with the things that do not affect meaning removed (function type annotations, the numbers in the names of Hy temporary variables).
 _FACTS: dict[int, tuple[CodeType, CodeFacts]] = {}
 
-#: 注釈ごとの読み(:func:`_code_facts` の ``strict``)の覚え。注釈を値として読む閉包(:data:`_CODE_READ_NAMES`)の歩みだけが使う。
+#: Memory of per-annotation reads (``strict`` of :func:`_code_facts`). Used only by the walk of a closure that reads annotations as values (:data:`_CODE_READ_NAMES`).
 _STRICT_FACTS: dict[int, tuple[CodeType, CodeFacts]] = {}
 
 
 def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
-    """code object から digest に要る物を読む(行番号と位置を除く — process の中で code ごとに 1 度だけ読む)。
+    """Read from a code object what the digest needs (excluding line numbers and positions — read only once per code within the process).
 
-    ``strict`` が偽の読みは、展開の結果に効かない 2 つを除く(型注釈を足しただけの変更や、前に関数が増えて
-    Hy の一時変数の番号がずれただけの変更で、macro の閉包の digest が変わり、使い手の module が全部展開し直されていた):
+    A read with ``strict`` false excludes two things that do not affect the expansion result (a change that only added a type annotation, or that only shifted Hy temporary variable numbers because a function was added earlier,
+    used to change the digest of the macro's closure and make all users' modules expand again):
 
-    - 関数の型注釈(3.14 の ``__annotate__`` の入れ子の code と、それを関数に付ける命令 — :func:`_function_annotations`。3.13 までの、
-      関数を作る前に積む注釈の組とそれを付ける旗 — :func:`_inline_function_annotations`)。注釈の中だけに
-      現れる名・import なども、その code の読み(名の表・文字列・import …)に入れない。class の本体の注釈(``__annotate_func__`` を
-      束縛する物 — dataclass の欄)は除かない。
-    - Hy の一時変数の名の番号(``_hy_anon_46`` → ``_hy_anon_48``)。code 1 つごとに、命令の出現順の通し番号へ振り直す
-      (:func:`_numbered_anon_names`)。
+    - Function type annotations (the nested code of 3.14's ``__annotate__`` and the instruction that attaches it to the function — :func:`_function_annotations`. For 3.13 and earlier, the annotation tuple
+      pushed before creating the function and the flag that attaches it — :func:`_inline_function_annotations`). Names and imports that appear only inside an annotation
+      are also left out of that code's reads (name table, strings, imports ...). The annotations in a class body (what binds ``__annotate_func__`` — dataclass fields) are not excluded.
+    - The numbers in the names of Hy temporary variables (``_hy_anon_46`` -> ``_hy_anon_48``). Per code object, renumbered to sequence numbers in order of appearance of instructions
 
-    ``strict`` が真の読みは注釈も入れる(番号の振り直しは同じ)。"""
+    A read with ``strict`` true includes annotations too (the renumbering is the same)."""
     cache = _STRICT_FACTS if strict else _FACTS
     remembered = cache.get(id(code))
     if remembered is not None and remembered[0] is code:
@@ -1028,7 +1024,7 @@ def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
     )
     texts = tuple(
         constant for constant in instructions.constants if isinstance(constant, str)
-    )  # 定数の順のまま
+    )  # keeps the order of the constants
     facts = CodeFacts(
         shape=instructions.shape(strict),
         names=tuple(sorted({*instructions.names, *(name for inner in nested for name in inner.names)})),
@@ -1047,8 +1043,8 @@ def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
 
 
 def _reads_location(code: CodeType, texts: tuple[str, ...]) -> bool:
-    """code(入れ子を除く)が module の置き場を値として読むか — 大域の読み(``__file__``)・属性の読み(``m.__file__``)・文字列の
-    定数の名(``getattr(m, "__file__")``)。作った module に書く(``module.__file__ = …`` — STORE_ATTR)だけなら読みではない。"""
+    """Whether code (excluding nested code) reads a module's location as a value — a global read (``__file__``), an attribute read (``m.__file__``), or a string
+    constant name (``getattr(m, "__file__")``). Merely writing to a module you made (``module.__file__ = ...`` — STORE_ATTR) is not a read."""
     if not _LOCATION_NAMES.isdisjoint(texts):
         return True
     if _LOCATION_NAMES.isdisjoint(code.co_names):
@@ -1059,7 +1055,7 @@ def _reads_location(code: CodeType, texts: tuple[str, ...]) -> bool:
 
 
 def _constant_text(value: object, strict: bool) -> str:
-    """code の定数 1 つの文(入れ子の code は行番号を除いた digest・集合は並びに依らない形)。"""
+    """The text of one constant of code (nested code is a digest without line numbers; sets take a form independent of order)."""
     match value:
         case CodeType():
             return f"code:{_code_facts(value, strict).shape}"
@@ -1068,36 +1064,36 @@ def _constant_text(value: object, strict: bool) -> str:
         case frozenset():
             return "{" + ",".join(sorted(_constant_text(item, strict) for item in value)) + "}"
         case _:
-            # 文字列の定数の中の Hy の一時の名(接頭辞 + ``…_N``)は名でなく値(振り直さない — :func:`_numbered_anon_names` が拾わない
-            # 形にするため、接頭辞の最後の ``_`` の前に NUL を挟む)。
+            # A Hy temporary name inside a string constant (prefix + ``..._N``) is a value, not a name (not renumbered — to make it a form that :func:`_numbered_anon_names` does not pick up,
+            # a NUL is inserted before the last ``_`` of the prefix).
             return f"{type(value).__name__}:{value!r}".replace(
                 GENERATED_NAME_PREFIX, GENERATED_NAME_PREFIX[:-1] + "\0_"
             )
 
 
-#: 関数に付ける注釈の命令(3.14 の ``SET_FUNCTION_ATTRIBUTE`` の旗 — 0x10 = ``__annotate__``・0x08 = 閉包)。
+#: Instruction that attaches annotations to a function (the flags of 3.14's ``SET_FUNCTION_ATTRIBUTE`` — 0x10 = ``__annotate__``, 0x08 = closure).
 _ANNOTATE_ATTRIBUTE = 0x10
 _CLOSURE_ATTRIBUTE = 0x08
-#: 3.13 までの、関数に注釈の組を付ける旗(3.13 の ``SET_FUNCTION_ATTRIBUTE``・3.11 と 3.12 の ``MAKE_FUNCTION``)。
+#: The flag that attaches an annotation tuple to a function in 3.13 and earlier (3.13's ``SET_FUNCTION_ATTRIBUTE``, ``MAKE_FUNCTION`` in 3.11 and 3.12).
 _ANNOTATIONS_ATTRIBUTE = 0x04
-#: 閉包の組を作る前に cell を積む命令(1 つ積む物と 2 つ積む物)。
+#: Instructions that push cells before building the closure tuple (one that pushes one and one that pushes two).
 _CELL_LOADS = frozenset({"LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_FAST_CHECK", "LOAD_DEREF"})
 _CELL_PAIR_LOADS = frozenset({"LOAD_FAST_LOAD_FAST", "LOAD_FAST_BORROW_LOAD_FAST_BORROW"})
-#: 引数が番号でなく、番号の指す名・定数・jump 先に替えて数える命令の類(番号は定数の表・名の表の並びで変わるため)。
+#: The class of instructions whose argument is counted not as an index but replaced by the name, constant, or jump target the index points to (because indexes change with the order of the constant table and name table).
 _NAMED_OPCODES = frozenset((*dis.hasname, *dis.haslocal, *dis.hasfree))
-#: 名の表(``co_names``)の名を指す命令の類。
+#: The class of instructions that point to a name in the name table (``co_names``).
 _NAME_OPCODES = frozenset(dis.hasname)
 _JUMP_OPCODES = frozenset(dis.hasjump) if hasattr(dis, "hasjump") else frozenset((*dis.hasjrel, *dis.hasjabs))
 _CONST_OPCODES = frozenset(dis.hasconst)
 
 
 def _function_annotations(instructions: list[dis.Instruction]) -> tuple[set[int], list[CodeType]]:
-    """命令の並びのうち、関数に型注釈を付ける命令の位置と、その ``__annotate__`` の code を挙げる。
+    """List, from a sequence of instructions, the positions of the instructions that attach a type annotation to a function and the code of that ``__annotate__``.
 
-    3.14 は関数の注釈を、注釈の関数を作る命令(閉包が要れば cell を積んで組にする命令・``LOAD_CONST`` の code・``MAKE_FUNCTION``・
-    閉包なら ``SET_FUNCTION_ATTRIBUTE`` の閉包)を関数本体の作りの前に置き、関数を作ったあと ``SET_FUNCTION_ATTRIBUTE`` の
-    ``__annotate__`` で付ける。この形に完全に合う時だけ挙げ、合わない形(class の本体の ``__annotate_func__`` を束縛する物・
-    型引数の関数・読めない並び)は挙げない — 挙げないと注釈ごと digest に入るだけで、古い展開を合うと判じる向きには倒れない。"""
+    In 3.14, a function's annotations are placed before the construction of the function body as the instructions that make the annotation function (the instruction that pushes cells and makes a tuple if a closure is needed,
+    ``LOAD_CONST`` of the code, ``MAKE_FUNCTION``, and for a closure ``SET_FUNCTION_ATTRIBUTE`` of the closure), and after the function is made they are attached by ``SET_FUNCTION_ATTRIBUTE``
+    of ``__annotate__``. Only a shape that fits this exactly is listed; shapes that do not fit (what binds ``__annotate_func__`` in a class body,
+    functions with type parameters, sequences that cannot be read) are not listed — not listing only means the annotation goes into the digest whole, which never errs toward judging an old expansion as matching."""
     dropped: set[int] = set()
     codes: list[CodeType] = []
     count = len(instructions)
@@ -1128,12 +1124,12 @@ def _function_annotations(instructions: list[dis.Instruction]) -> tuple[set[int]
 
 
 def _sets_attribute(instruction: dis.Instruction, flag: int) -> bool:
-    """命令が関数の属性 ``flag`` を付ける ``SET_FUNCTION_ATTRIBUTE`` か。"""
+    """Whether the instruction is a ``SET_FUNCTION_ATTRIBUTE`` that attaches the function attribute ``flag``."""
     return instruction.opname == "SET_FUNCTION_ATTRIBUTE" and instruction.arg == flag
 
 
 def _closure_tuple_start(instructions: list[dis.Instruction], at: int) -> int:
-    """位置 ``at`` の命令が積む関数の閉包の組を作る命令の始まり(``BUILD_TUPLE n`` と、cell を n 個積む命令。読めなければ -1)。"""
+    """Start of the instructions that build the closure tuple pushed by the instruction at position ``at`` (``BUILD_TUPLE n``, and the instructions that push n cells. -1 if it cannot be read)."""
     last = at - 1
     if last < 0 or instructions[last].opname != "BUILD_TUPLE" or not isinstance(
         instructions[last].arg, int
@@ -1157,8 +1153,8 @@ def _closure_tuple_start(instructions: list[dis.Instruction], at: int) -> int:
 
 
 def _annotate_attachment(instructions: list[dis.Instruction], start: int) -> int:
-    """注釈の関数を積んだ後(位置 ``start``)から、その関数を付ける関数の作り(閉包の組・``LOAD_CONST`` の code・``MAKE_FUNCTION``・
-    閉包の ``SET_FUNCTION_ATTRIBUTE``)を読み、続く ``SET_FUNCTION_ATTRIBUTE`` の ``__annotate__`` の位置を返す(合わなければ -1)。"""
+    """From after the annotation function was pushed (position ``start``), read the function construction that attaches it (closure tuple, the code ``LOAD_CONST``, ``MAKE_FUNCTION``,
+    the closure ``SET_FUNCTION_ATTRIBUTE``) and return the position of the following ``__annotate__`` ``SET_FUNCTION_ATTRIBUTE`` (-1 if it does not fit)."""
     count = len(instructions)
     position = start
     while position < count and instructions[position].opname in (
@@ -1185,12 +1181,12 @@ def _annotate_attachment(instructions: list[dis.Instruction], start: int) -> int
 def _inline_function_annotations(
     instructions: list[dis.Instruction],
 ) -> tuple[set[int], dict[int, dis.Instruction]]:
-    """命令の並びのうち、3.13 までの形で関数に型注釈を付ける命令の位置と、旗を外して数える ``MAKE_FUNCTION`` を挙げる。
+    """List, from a sequence of instructions, the positions of the instructions that attach a type annotation to a function in the form up to 3.13, and the ``MAKE_FUNCTION`` to be counted with the flag removed.
 
-    3.13 までは関数の注釈を、名(文字列の定数)と注釈の式を交互に積んで ``BUILD_TUPLE`` で組にし、関数の本体の code の前
-    (閉包の組が在ればその前)に積む。3.13 は関数を作ったあと ``SET_FUNCTION_ATTRIBUTE`` の旗 0x04 で付け、3.11・3.12 は
-    ``MAKE_FUNCTION`` の旗 0x04 で付ける。組の積みを命令の stack の増減で読み、名がどれも文字列の定数の組に完全に合う時だけ挙げる
-    (合わない形 — 注釈の中の条件式・呼び出しなど — は挙げず、注釈ごと digest に入るだけ)。"""
+    Up to 3.13, a function's annotations are pushed alternately as a name (string constant) and an annotation expression, made into a tuple by ``BUILD_TUPLE``, and pushed before the function body code
+    (before the closure tuple if there is one). 3.13 attaches it after making the function with the flag 0x04 of ``SET_FUNCTION_ATTRIBUTE``, and 3.11 and 3.12 attach it with the flag 0x04 of
+    ``MAKE_FUNCTION``. The tuple push is read through the instructions' stack effects, and only a tuple whose names are all string constants is listed
+    (shapes that do not fit — conditional expressions or calls inside an annotation — are not listed, and the annotation just goes into the digest whole)."""
     dropped: set[int] = set()
     unflagged: dict[int, dis.Instruction] = {}
     for index, instruction in enumerate(instructions):
@@ -1225,7 +1221,7 @@ def _inline_function_annotations(
 
 
 def _attribute_run(instructions: list[dis.Instruction], start: int) -> range:
-    """位置 ``start`` から続く ``SET_FUNCTION_ATTRIBUTE`` の並びの位置(3.12 までは空)。"""
+    """Positions of the run of ``SET_FUNCTION_ATTRIBUTE`` following position ``start`` (empty up to 3.12)."""
     end = next(
         (
             position
@@ -1238,7 +1234,7 @@ def _attribute_run(instructions: list[dis.Instruction], start: int) -> range:
 
 
 def _value_start(instructions: list[dis.Instruction], end: int) -> int:
-    """位置 ``end`` で終わり、値をちょうど 1 つ積む命令の並びの始まり(stack の増減を後ろから足す。jump を含むか読めなければ -1)。"""
+    """Start of the run of instructions that ends at position ``end`` and pushes exactly one value (stack effects are summed from the back. -1 if it contains a jump or cannot be read)."""
     total = 0
     for position in range(end, -1, -1):
         instruction = instructions[position]
@@ -1258,7 +1254,7 @@ def _value_start(instructions: list[dis.Instruction], end: int) -> int:
 
 
 def _is_annotation_pairs(instructions: list[dis.Instruction], start: int, end: int) -> bool:
-    """位置 ``start``〜``end`` の命令が、名(文字列の定数)と注釈を交互に並べた組を積むか(畳まれた定数の組 1 つの形も含む)。"""
+    """Whether the instructions from position ``start`` to ``end`` push a tuple of alternating names (string constants) and annotations (including the form of a single folded constant tuple)."""
     last = instructions[end]
     if start == end:
         value = last.argval
@@ -1274,7 +1270,7 @@ def _is_annotation_pairs(instructions: list[dis.Instruction], start: int, end: i
     return (
         starts is not None
         and starts[-1] == start
-        and all(  # 後ろから数えたので、奇数番目が名
+        and all(  # counted from the back, so the odd-numbered ones are names
             instructions[at].opname == "LOAD_CONST" and isinstance(instructions[at].argval, str)
             for at in starts[1::2]
         )
@@ -1282,7 +1278,7 @@ def _is_annotation_pairs(instructions: list[dis.Instruction], start: int, end: i
 
 
 def _value_starts(instructions: list[dis.Instruction], end: int, count: int) -> tuple[int, ...] | None:
-    """位置 ``end`` から後ろへ並ぶ、値を 1 つずつ積む ``count`` 個の並びの始まり(後ろから。読めなければ None)。"""
+    """Start of a run of ``count`` instructions that each push one value, lined up backward from position ``end`` (counted from the back. None if it cannot be read)."""
     if count == 0:
         return ()
     found = _value_start(instructions, end)
@@ -1291,7 +1287,7 @@ def _value_starts(instructions: list[dis.Instruction], end: int, count: int) -> 
 
 
 class _Instructions:
-    """code 1 つ(入れ子を除く)の命令の並びと、意味に効かない物を除いた中身の digest(:func:`_code_facts`)。"""
+    """The instruction sequence of one code object (excluding nested code) and the digest of its contents with the things that do not affect meaning removed (:func:`_code_facts`)."""
 
     def __init__(self, code: CodeType, drop_annotations: bool) -> None:
         self._code = code
@@ -1311,7 +1307,7 @@ class _Instructions:
             if index not in dropped
         ]
         removed = [listed[index] for index in dropped]
-        # 除いた命令だけが指す名と定数(3.13 までの注釈の名・引数の名の文字列)は、名の表・定数の表の読みからも除く。
+        # Names and constants pointed to only by the removed instructions (annotation names and argument-name strings up to 3.13) are also removed from the reads of the name table and constant table.
         kept_names = {instruction.argval for instruction in self._kept if instruction.opcode in _NAME_OPCODES}
         self._removed_names = {
             instruction.argval for instruction in removed if instruction.opcode in _NAME_OPCODES
@@ -1323,12 +1319,12 @@ class _Instructions:
 
     @property
     def names(self) -> tuple[str, ...]:
-        """名の表のうち、除いた命令だけが指す名を除いた物(表の順のまま)。"""
+        """The name table with the names pointed to only by the removed instructions taken out (in table order)."""
         return tuple(name for name in self._code.co_names if name not in self._removed_names)
 
     @property
     def constants(self) -> list[object]:
-        """定数の表のうち、除いた注釈の code と、除いた命令だけが指す定数を除いた物(表の順のまま)。"""
+        """The constant table with the removed annotation code and the constants pointed to only by the removed instructions taken out (in table order)."""
         return [
             constant
             for index, constant in enumerate(self._code.co_consts)
@@ -1337,12 +1333,12 @@ class _Instructions:
         ]
 
     def dropped(self, constant: CodeType) -> bool:
-        """定数の code が、除いた注釈の code か。"""
+        """Whether the constant code is a removed annotation code."""
         return any(constant is annotation for annotation in self._annotations)
 
     def shape(self, strict: bool) -> str:
-        """行番号と位置を除いた中身の digest。命令は番号でなく指す名・定数・jump 先の命令の順で数え(定数の表と名の表の並びが
-        変わっても変わらない)、除いた注釈の命令と code は入れず、Hy の一時変数の名の番号は出現順に振り直す。"""
+        """Digest of the contents without line numbers and positions. Instructions are counted not by index but by the name, constant, or jump-target instruction they point to (unchanged even when the order of the constant table and
+        name table changes), the removed annotation instructions and code are not included, and the numbers in Hy temporary variable names are renumbered in order of appearance."""
         code = self._code
         offsets = [instruction.offset for instruction in self._kept]
         lines = [self._line(instruction, offsets, strict) for instruction in self._kept]
@@ -1358,7 +1354,7 @@ class _Instructions:
             )
             for start, end, target, depth, lasti in _exception_table(code)
         ]
-        # 定数の表の並びは残す(説明の文は命令に指されず、表の先頭の位置だけが印)— 除く注釈の code と定数の分だけ詰める。
+        # Keep the order of the constant table (the docstring is not pointed to by an instruction; only the position at the head of the table is the marker) — closed up by the removed annotation code and constants.
         constants = [_constant_text(constant, strict) for constant in self.constants]
         document = "\0".join(
             (
@@ -1383,7 +1379,7 @@ class _Instructions:
 
     @staticmethod
     def _line(instruction: dis.Instruction, offsets: list[int], strict: bool) -> str:
-        """命令 1 つの文(名・引数 — 番号の指す物で数える)。"""
+        """The text of one instruction (name and argument — counted by what the index points to)."""
         opcode = instruction.opcode
         if opcode in _JUMP_OPCODES:
             argument = f"@{bisect.bisect_left(offsets, instruction.argval)}"
@@ -1397,7 +1393,7 @@ class _Instructions:
 
 
 def _exception_table(code: CodeType) -> Iterator[tuple[int, int, int, int, bool]]:
-    """code の例外表の行(始まり・終わり・handler の位置・深さ・lasti。位置は byte の offset — ``dis`` の非公開の読みと同じ varint)。"""
+    """Rows of the code's exception table (start, end, handler position, depth, lasti. Positions are byte offsets — the same varint as ``dis``'s private reader)."""
     iterator = iter(code.co_exceptiontable)
 
     def varint() -> int:
@@ -1421,9 +1417,9 @@ def _exception_table(code: CodeType) -> Iterator[tuple[int, int, int, int, bool]
 
 
 def _numbered_anon_names(document: str) -> str:
-    """文の中の Hy の一時変数の名(:data:`doeff_hy_bytecode_guard._records.ANON_VAR_NAME` — ``_hy_anon_46``・``_hy_anon_fn_12``)の番号を、
-    文に現れる順の通し番号へ振り直す。Hy は一時変数の番号を module の通し番号で振るので、前に関数が 1 つ増えるだけで後ろの関数の
-    番号がずれる。同じ名は同じ番号・違う名は違う番号になる(1 対 1 — code の中の変数の同一性は保たれる)。"""
+    """Renumber the numbers of Hy temporary variable names in the text (:data:`doeff_hy_bytecode_guard._records.ANON_VAR_NAME` — ``_hy_anon_46``, ``_hy_anon_fn_12``) into
+    sequence numbers in order of appearance in the text. Hy numbers temporary variables with the module's running count, so just one more function earlier shifts the numbers of the functions after it.
+    The same name gets the same number and different names get different numbers (one to one — the identity of variables within the code is preserved)."""
     ranks: dict[str, str] = {}
 
     def renumber(found: re.Match[str]) -> str:
@@ -1435,41 +1431,41 @@ def _numbered_anon_names(document: str) -> str:
     return ANON_VAR_NAME.sub(renumber, document)
 
 
-# ---- code の読みを process をまたいで覚える-------------------------------------
+# ---- Remembering code reads across processes -------------------------------------
 #
-# code の読み(:class:`CodeFacts`)は code object の中身と、読み方(この module の code・Python の版・hy.R の module の名を作る Hy の
-# mangle の版)だけで決まる純な計算なので、
-# Hy の code の置き場(code_store の種類 FACTS_SUFFIX)に code の中身(marshal の bytes の sha256)で引いて覚える — 新しい process の
-# 照らしが、macro の閉包の code を毎回読み直していた(検の読み込みで歩みの約 3 割・関数 378 個 0.05〜0.06 秒。marshal と sha256 は
-# 0.006 秒)。digest は覚えない(生きた値に依る — packages/doeff-hy/architecture.hy の B1)。entry は歩み 1 つ(macro か値の在処と、
-# その module の file)ごとに、その歩みが使った code の読みを並べる。entry の鍵は当たりやすさだけを決め、正しさは中の code の
-# sha256 で決まる。
+# A code read (:class:`CodeFacts`) is a pure computation determined only by the contents of the code object and the way of reading (this module's code, the Python version, the Hy
+# mangle version that builds the hy.R module names), so
+# it is looked up and remembered in Hy's code storage (code_store kind FACTS_SUFFIX) by the code contents (sha256 of the marshal bytes) — a new process's
+# verification used to re-read the macro closure's code every time (in a check load about 30% of the walk, 378 functions, 0.05-0.06 seconds; marshal and sha256 take
+# 0.006 seconds). Digests are not remembered (they depend on live values — B1 of packages/doeff-hy/architecture.hy). An entry lists, per walk (a macro or the location of a value, and
+# that module's file), the code reads the walk used. The entry key only decides how likely it is to hit; correctness is decided by the sha256 of the code
+# inside.
 
 
-#: code の読みの entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に
-#: 入れるこの module の file の sha256(:func:`_own_digest`)が覆い、読みが呼ぶ Hy の関数(``hy.mangle``・``slashes2dots``)の変更は
-#: 鍵に入れる Hy の版が覆う。
-#: 2 = 置き場を値として読むかの欄を足した形。
-#: 3 = 関数の型注釈と Hy の一時変数の番号を除いた読みと、注釈ごとの読み(行の鍵の末尾に ``!``)を並べる形。
+#: Marker of the code-read entry key (raise the trailing number when the entry shape changes). A change to the way of reading itself (this module's code) is covered by the sha256 of this module's file
+#: that goes into the key (:func:`_own_digest`), and a change to the Hy functions the read calls (``hy.mangle``, ``slashes2dots``) is covered by the Hy version
+#: that goes into the key.
+#: 2 = the shape with the field for whether it reads a location as a value added.
+#: 3 = the shape that lists the reads with function type annotations and Hy temporary variable numbers removed, and the per-annotation reads (``!`` at the end of the row key).
 FACTS_TAG = "doeff-hy/code-facts/3"
 
-#: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
+#: Values for the breadth of reads that cannot be followed by name (for checking rows read from storage).
 _READS = frozenset(read.value for read in NamespaceRead)
 
 
 class CodeReadings:
-    """歩み 1 つが使う code の読み — 置き場から読んだ物(code の sha256 → 読み)・この歩みが使った物・置き場に無く読み直したか。"""
+    """The code reads a walk uses — what was read from storage (code sha256 -> read), what this walk used, and whether anything was re-read because it was not in storage."""
 
     def __init__(self, stored: dict[str, CodeFacts], strict: bool = False) -> None:
         self._stored = stored
-        #: 注釈ごとの読みを使うか(注釈を値として読む閉包の歩み — :func:`_code_facts`)。置き場の行の鍵は、注釈ごとの読みなら
-        #: code の sha256 の末尾に ``!`` を付ける(同じ code の 2 つの読みを 1 つの entry に並べる)。
+        #: Whether to use per-annotation reads (the walk of a closure that reads annotations as values — :func:`_code_facts`). For per-annotation reads the storage row key
+        #: appends ``!`` to the code sha256 (the two reads of the same code are listed in one entry).
         self._strict = strict
         self.used: dict[str, CodeFacts] = {}
         self._mut_missed = False
 
     def facts(self, code: CodeType) -> CodeFacts:
-        """関数の code の読み — process の中の覚え・置き場の覚え(前の process が同じ中身の code を読んだ物)・読み直しの順。"""
+        """The read of a function's code — in-process memory, storage memory (what a previous process read for code with the same contents), and re-reading, in that order."""
         sha = _code_sha256(code) + ("!" if self._strict else "")
         cache = _STRICT_FACTS if self._strict else _FACTS
         remembered = cache.get(id(code))
@@ -1486,21 +1482,21 @@ class CodeReadings:
 
     @property
     def missed(self) -> bool:
-        """置き場に無く読み直した code があったか(あれば歩みの後に entry を書く)。"""
+        """Whether any code was re-read because it was not in storage (if so, write the entry after the walk)."""
         return self._mut_missed
 
 
-#: process の中の code の中身の sha256 の覚え(code object の id → (code・sha256) — code を生かしておき id の使い回しを防ぐ)。
+#: In-process memory of the sha256 of code contents (code object id -> (code, sha256) — keeps the code alive to prevent reuse of ids).
 _CODE_SHAS: dict[int, tuple[CodeType, str]] = {}
 
 
 def _code_sha256(code: CodeType) -> str:
-    """code object の中身の sha256(marshal の bytes — 入れ子の code・定数・名の表・file の名・行番号まで入る。行番号と file の名が
-    違う同じ code は別の鍵になり、読み直すだけ)。"""
+    """sha256 of the contents of a code object (marshal bytes — includes nested code, constants, name table, file name, and even line numbers. The same code with a different line number or file name
+    gets a different key and is simply re-read)."""
     remembered = _CODE_SHAS.get(id(code))
     if remembered is not None and remembered[0] is code:
         return remembered[1]
-    import marshal  # 歩みが関数に当たった時だけ読む
+    import marshal  # read only when the walk meets a function
 
     sha = hashlib.sha256(marshal.dumps(code)).hexdigest()
     _CODE_SHAS[id(code)] = (code, sha)
@@ -1508,12 +1504,12 @@ def _code_sha256(code: CodeType) -> str:
 
 
 def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
-    """歩み 1 つの code の読みの entry の path(置き場を使わない設定・この module の code を読めない時は None)。鍵 = 印・この module
-    の code・Python の版の全部(命令の番号)・Hy の版(hy.R の module の名の mangle
-    の付録)・在処・在処の module の file(作業木ごとに分ける — code の sha256 は file の名を含む)。"""
-    import hy  # 歩みは Hy の module の照らしの中 — 読み込み済み
+    """The path of the code-read entry for one walk (None if the setting does not use storage, or if this module's code cannot be read). Key = the marker, this module's
+    code, the Python version (instruction numbers), the Hy version (an appendix for the mangle of hy.R module names), the location, and the file of the location's module
+    (separated per working tree — the code sha256 includes the file name)."""
+    import hy  # the walk is inside the verification of a Hy module — already loaded
 
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 置き場を使う時だけ読む
+    from doeff_hy_bytecode_guard import _code_store as code_store  # read only when storage is used
 
     store = code_store.store_dir()
     own = None if store is None else _own_digest()
@@ -1530,17 +1526,17 @@ def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
 
 @dataclass(frozen=True)
 class OwnCode:
-    """この module の file の中身の sha256(読めなければ None — 読み方の code が分からないので置き場を使わない)。"""
+    """sha256 of the contents of this module's file (None if it cannot be read — the code of the way of reading is unknown, so storage is not used)."""
 
     sha256: str | None
 
 
-#: この module の code の覚え(process に 1 度 — 鍵は "own" の 1 つだけ)。
+#: Memory of this module's code (once per process — only one key, "own").
 _OWN: dict[str, OwnCode] = {}
 
 
 def _own_digest() -> str | None:
-    """この module の file の中身の sha256 — 読み方の code を変えた版が、前の版の読みを置き場から引かないため。"""
+    """sha256 of the contents of this module's file — so a version with a changed way of reading does not pull the previous version's reads from storage."""
     known = _OWN.get("own")
     if known is None:
         try:
@@ -1552,42 +1548,42 @@ def _own_digest() -> str | None:
     return known.sha256
 
 
-#: 置き場の entry の中身の形(marshal の境界 — 欄の名と型は :class:`CodeFacts` が持ち、ここは書く時と読む時の並びだけ):
-#: code の sha256・digest の形・名の表・文字列の定数・import(名・段数)・hy.R の module・名で辿れない読みの広さ・置き場の読み。
+#: Shape of the contents of a storage entry (the marshal boundary — field names and types are held by :class:`CodeFacts`; here only the order for writing and reading):
+#: code sha256, digest shape, name table, string constants, imports (name, level), hy.R modules, breadth of reads that cannot be followed by name, location read.
 FactsRow = tuple[
     str, str, tuple[str, ...], tuple[str, ...], tuple[tuple[str, int], ...], tuple[str, ...], str, bool
 ]
 
 
 def _stored_facts(entry: str) -> dict[str, CodeFacts]:
-    """置き場の code の読みの entry を読む(無ければ空)。形の違う entry は名指して除き、空(歩みは読み直して足し直す)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 置き場を使う時だけ読む
+    """Read the code-read entry in storage (empty if absent). An entry of the wrong shape is discarded by name, and empty is returned (the walk re-reads and adds again)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # read only when storage is used
 
     data = code_store.read_entry(entry)
     if data is None:
         return {}
-    import marshal  # 当たった時だけ読む
+    import marshal  # read only when it hit
 
     try:
         rows = marshal.loads(data)
     except (EOFError, ValueError, TypeError) as error:
-        code_store.discard_entry(entry, f"marshal で読めない: {error}")
+        code_store.discard_entry(entry, f"cannot read with marshal: {error}")
         return {}
     read = _facts_from_rows(rows)
     if read is None:
-        code_store.discard_entry(entry, "code の読みの形が違う")
+        code_store.discard_entry(entry, "code read has the wrong shape")
         return {}
     return read
 
 
 def _write_facts(entry: str, used: dict[str, CodeFacts]) -> None:
-    """歩みが使った code の読みを置き場へ足す(書かない設定では名指しの置き場だけ — loader_hooks の code の足し方と同じ決め。
-    書けない置き場では黙って足さない — 置き場は速さのためだけ)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 置き場を使う時だけ読む
+    """Add the code reads the walk used to storage (when set not to write, only the named storage — the same rule as how loader_hooks adds code.
+    Where storage cannot be written, silently do not add — storage is only for speed)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # read only when storage is used
 
     if sys.dont_write_bytecode and not code_store.store_is_named():
         return
-    import marshal  # 足す時だけ読む
+    import marshal  # read only when adding
 
     rows: tuple[FactsRow, ...] = tuple(
         (
@@ -1606,7 +1602,7 @@ def _write_facts(entry: str, used: dict[str, CodeFacts]) -> None:
 
 
 def _facts_from_rows(rows: object) -> dict[str, CodeFacts] | None:
-    """置き場から読んだ並びを code の読みに組む(形が違えば None)。"""
+    """Assemble the sequence read from storage into a code read (None if the shape is wrong)."""
     if not isinstance(rows, tuple):
         return None
     read: dict[str, CodeFacts] = {}
@@ -1643,12 +1639,12 @@ def _facts_from_rows(rows: object) -> dict[str, CodeFacts] | None:
 
 
 def _strings(values: tuple[object, ...]) -> bool:
-    """組の中身が全部文字列か(型の集合で判じる — 置き場の entry 1 つに名と文字列が数千ある)。"""
+    """Whether all the contents of the tuple are strings (decided by a set of types — one storage entry has thousands of names and strings)."""
     return set(map(type, values)) <= _STR_TYPE
 
 
 def _import_pair(pair: object) -> bool:
-    """import の行(名・段数)の形か。"""
+    """Whether it has the shape of an import row (name, level)."""
     match pair:
         case (str(), int()):
             return True
@@ -1656,15 +1652,15 @@ def _import_pair(pair: object) -> bool:
             return False
 
 
-#: 文字列だけの組の型の集合(:func:`_strings`)。
+#: The set of types for a tuple of only strings (:func:`_strings`).
 _STR_TYPE = frozenset({str})
 
-#: digest の文字列 1 つの bytes の長さの綴り(8 byte の little endian)と、文字列の bytes の作り方(:meth:`_Walker.digest`)。
+#: The spelling of the byte length of one digest string (8-byte little endian), and how to build the bytes of a string (:meth:`_Walker.digest`).
 _LENGTH = struct.Struct("<Q")
 _ENCODE = operator.methodcaller("encode", "utf-8", "surrogatepass")
 
 _IMPORT_NAME = dis.opmap["IMPORT_NAME"]
-#: IMPORT_NAME の引数から名の表の番号を出す右への shift(3.15 から下の 2 bit は lazy・eager の印 — PEP 810)。
+#: The right shift that gets the name-table index from the argument of IMPORT_NAME (from 3.15 the low 2 bits are the lazy and eager marker — PEP 810).
 _IMPORT_NAME_SHIFT = 2 if sys.version_info >= (3, 15) else 0
 _LOAD_CONST = dis.opmap["LOAD_CONST"]
 _LOAD_SMALL_INT = dis.opmap.get("LOAD_SMALL_INT", -1)
@@ -1673,15 +1669,15 @@ _EXTENDED_ARG = dis.EXTENDED_ARG
 
 @dataclass(frozen=True)
 class _Unit:
-    """命令 1 つ(命令の番号と、EXTENDED_ARG を畳んだ引数)。"""
+    """One instruction (the instruction number, and the argument with EXTENDED_ARG folded in)."""
 
     op: int
     arg: int
 
 
 def _units(code: CodeType) -> Iterator[_Unit]:
-    """code の命令を順に挙げる(``co_code`` は特殊化の前の形で、cache の欄は 0 — 命令として読まない)。dis.get_instructions は
-    macro の閉包の全部の関数で 1 回 0.3 秒かかったので、要る 2 つの命令(import と、その相対の段数)だけを読む軽い読み。"""
+    """List the instructions of code in order (``co_code`` is the form before specialization, and the cache fields are 0 — not read as instructions). dis.get_instructions
+    took 0.3 seconds once over all the functions of a macro's closure, so this is a light reader that reads only the two instructions needed (import and its relative level)."""
     raw = code.co_code
     extended = 0
     for offset in range(0, len(raw), 2):
@@ -1695,9 +1691,9 @@ def _units(code: CodeType) -> Iterator[_Unit]:
 
 
 def _imports(code: CodeType) -> Iterator[ImportReference]:
-    """関数の中の import の命令(macro が展開の時にだけ import する補助を、閉包に入れるため)。相対の段数は import の命令の
-    2 つ前の命令(段数の数・fromlist・import の順に積まれる)。import の命令を持たない code(閉包の関数のほとんど)は、命令の番号の
-    並び(偶数の位置の byte)を C で探すだけで命令を読まない(macro の閉包の歩みの約 1/4 が、ここで全部の命令を読む所だった)。"""
+    """The import instructions inside a function (to put into the closure the helpers that a macro imports only at expansion time). The relative level is the instruction two
+    before the import instruction (pushed in the order level number, fromlist, import). Code that has no import instruction (most functions of a closure) just has the instruction-number
+    sequence (the bytes at even positions) searched in C and no instructions read (reading all the instructions here used to be about 1/4 of the macro closure walk)."""
     if _IMPORT_NAME not in code.co_code[::2]:
         return
     previous: tuple[_Unit | None, _Unit | None] = (None, None)
@@ -1717,12 +1713,12 @@ def _imports(code: CodeType) -> Iterator[ImportReference]:
 
 
 def _opcode(name: str) -> int:
-    """命令の番号(この Python の版に無い命令は -1)。"""
+    """The instruction number (-1 for an instruction that does not exist in this Python version)."""
     return dis.opmap.get(name, -1)
 
 
-#: 名の表の名を大域として読む命令と、引数から名の表の番号を出す右への shift(3.11 から LOAD_GLOBAL は 1 つ・3.12 から LOAD_ATTR は
-#: 1 つ・LOAD_SUPER_ATTR は 2 つ)。
+#: Instructions that read a name-table name as a global, and the right shift that gets the name-table index from the argument (from 3.11 LOAD_GLOBAL is one, from 3.12 LOAD_ATTR is
+#: one, and LOAD_SUPER_ATTR is two).
 _GLOBAL_NAME_LOADS: dict[int, int] = {
     _opcode("LOAD_GLOBAL"): 1 if sys.version_info >= (3, 11) else 0,
     _opcode("LOAD_NAME"): 0,
@@ -1734,8 +1730,8 @@ _ATTRIBUTE_NAME_LOADS: dict[int, int] = {
     _opcode("LOAD_METHOD"): 0,
     _opcode("LOAD_SUPER_ATTR"): 2,
 }
-#: 名の表の名を読みでなく使う命令(書き・消し・import の module の名)と、引数から名の表の番号を出す右への shift — 名で辿れない
-#: 読みの印の名がこれだけに出れば読みではない。
+#: Instructions that use a name-table name without reading it (write, delete, the module name of an import), and the right shift that gets the name-table index from the argument — if the marker name of a read that cannot be followed by name
+#: appears only in these, it is not a read.
 _OTHER_NAME_USES: dict[int, int] = {
     op: shift
     for op, shift in {
@@ -1752,8 +1748,8 @@ _OTHER_NAME_USES: dict[int, int] = {
 
 
 def _namespace_read(code: CodeType) -> NamespaceRead:
-    """code object 1 つ(入れ子は除く)の名で辿れない読みの広さ — 印の名を、大域として読むか属性として読むかで分ける。印の名が
-    分けられる命令のどれにも出ない時(知らない命令の使い)は、安全側に MODULE と判じる。"""
+    """The breadth of reads that cannot be followed by name in one code object (excluding nested code) — the marker names are split by whether they are read as a global or as an attribute. If a marker name
+    appears in none of the instructions that can be split (use by an unknown instruction), it is judged MODULE on the safe side."""
     marks = _UNTRACEABLE_NAMES.intersection(code.co_names)
     if not marks:
         return NamespaceRead.NONE
@@ -1764,7 +1760,7 @@ def _namespace_read(code: CodeType) -> NamespaceRead:
 
 
 class NameWay(enum.Enum):
-    """名の表の名の使い方(大域の読み・属性の読み・それ以外)。"""
+    """How a name-table name is used (a global read, an attribute read, or other)."""
 
     GLOBAL = "global"
     ATTRIBUTE = "attribute"
@@ -1773,14 +1769,14 @@ class NameWay(enum.Enum):
 
 @dataclass(frozen=True)
 class NameUse:
-    """code の中の名の表の名の使い 1 つ(名と使い方)。"""
+    """One use of a name-table name in code (the name and how it is used)."""
 
     name: str
     way: NameWay
 
 
 def _name_uses(code: CodeType) -> Iterator[NameUse]:
-    """code の命令のうち、名の表の名を使う物。"""
+    """The instructions of code that use a name-table name."""
     for unit in _units(code):
         if unit.op in _GLOBAL_NAME_LOADS:
             yield NameUse(code.co_names[unit.arg >> _GLOBAL_NAME_LOADS[unit.op]], NameWay.GLOBAL)
@@ -1793,7 +1789,7 @@ def _name_uses(code: CodeType) -> Iterator[NameUse]:
 
 
 def _mark_read(use: NameUse) -> NamespaceRead:
-    """印の名の使い 1 つの読みの広さ。"""
+    """The breadth of the read for one use of a marker name."""
     match use:
         case NameUse(way=NameWay.GLOBAL, name=name) if name in _MODULE_READ_GLOBALS:
             return NamespaceRead.MODULE
@@ -1808,7 +1804,7 @@ def _mark_read(use: NameUse) -> NamespaceRead:
 
 
 def _widest(reads: tuple[NamespaceRead, ...]) -> NamespaceRead:
-    """読みの広さのうち一番広い物。"""
+    """The widest of the read breadths."""
     if NamespaceRead.MODULE in reads:
         return NamespaceRead.MODULE
     if NamespaceRead.OBJECT in reads:
@@ -1817,9 +1813,9 @@ def _widest(reads: tuple[NamespaceRead, ...]) -> NamespaceRead:
 
 
 def _called_modules(texts: tuple[str, ...]) -> Iterator[str]:
-    """macro が組む ``hy.R.<module>.<名>`` の呼び出しの module — 引用した記号は ``(. hy R <module> <名>)`` の式になり、code の
-    文字列の定数には "R" の直後に <module> が初めて現れる(定数は初めて使った順に並ぶ)。1 つの記号の文字列
-    (``"hy.R.<module>.<名>"``)の形も読む。読めない形(R の後に定数が無い)は空の名(歩みの側が関数の module の file で覆う)。"""
+    """The module of a ``hy.R.<module>.<name>`` call a macro builds — a quoted symbol becomes the expression ``(. hy R <module> <name>)``, and in the code's
+    string constants <module> appears first right after "R" (constants are ordered by first use). The form of a single symbol string
+    (``"hy.R.<module>.<name>"``) is also read. A form that cannot be read (no constant after R) is an empty name (the walk side covers it with the function's module file)."""
     for index, text in enumerate(texts):
         if text == "R" and "hy" in texts:
             yield _reference_module(texts[index + 1]) if index + 1 < len(texts) else ""
@@ -1842,7 +1838,7 @@ _PLAIN_VALUES = (type(None), bool, int, float, complex, str, bytes, type(Ellipsi
 
 
 def _plain(value: object) -> bool:
-    """値で入れる物か — 素の値・中身が素の値の組と frozenset(入れ子も)・中身がそれだけの set。"""
+    """Whether it enters by value — plain values, tuples and frozensets whose contents are plain values (nested too), and sets whose contents are only those."""
     match value:
         case set():
             return all(_frozen_plain(item) for item in value)
@@ -1851,7 +1847,7 @@ def _plain(value: object) -> bool:
 
 
 def _frozen_plain(value: object) -> bool:
-    """書き換えられない素の値か(素の値・中身がそれだけの組と frozenset)。"""
+    """Whether it is a plain value that cannot be rewritten (a plain value, or a tuple or frozenset whose contents are only those)."""
     match value:
         case tuple() | frozenset():
             return all(_frozen_plain(item) for item in value)
@@ -1860,7 +1856,7 @@ def _frozen_plain(value: object) -> bool:
 
 
 def _plain_text(value: object) -> str:
-    """素の値の入れ物の、並びに依らない文(集合は文の順に並べる — str の hash は process ごとに違う)。"""
+    """Text of a container of plain values that does not depend on order (a set is sorted by element text — the hash of str differs per process)."""
     match value:
         case tuple():
             return "(" + ",".join(_plain_text(item) for item in value) + ")"
@@ -1871,47 +1867,47 @@ def _plain_text(value: object) -> str:
 
 
 class _Walker:
-    """code の閉包の digest を 1 つ作る歩み。同じ関数と class は 2 度目から番号で入れる(循環と共有)。"""
+    """A walk that builds one digest of a code closure. The same function or class is entered by number from its second encounter (cycles and sharing)."""
 
     def __init__(self, sha256_of: Sha256Of, readings: CodeReadings) -> None:
-        #: digest に入れる文字列(:meth:`walked` が順に綴る)。
+        #: Strings that go into the digest (spelled in order by :meth:`walked`).
         self._parts: list[str] = []
         self._sha256_of = sha256_of
-        #: 関数の code の読み(置き場に覚えた前の process の読みを使い、この歩みが使った読みを集める)。
+        #: Reads of function code (uses reads a previous process remembered in storage, and collects the reads this walk used).
         self.readings = readings
-        #: 辿った object の id → (順の番号・object — 歩みの間 object を生かし、id の使い回しを防ぐ)。
+        #: Object id of what was followed -> (order number, object — keeps objects alive during the walk to prevent reuse of ids).
         self._seen: dict[int, tuple[int, object]] = {}
-        #: 参照した module(名 → module)と、入れた属性の名。
+        #: Referenced modules (name -> module), and the attribute names entered.
         self._modules: dict[str, ModuleType] = {}
         self._attributes: dict[str, set[str]] = {}
-        #: 辿った関数の code の文字列の定数(``getattr(m, "名")``・``d["名"]`` の名の候補)。
+        #: String constants of the code of the followed functions (candidate names for ``getattr(m, "name")`` and ``d["name"]``).
         self._texts: set[str] = set()
-        #: 辿った物の持ち主の module の名 → file(digest の覚えが有効かを決める・file 単位で覆う module の記録の行)。
+        #: Owner module name of what was followed -> file (decides whether a digest memory is valid; the record rows of modules covered by file).
         self.files: dict[str, str] = {}
-        #: import できなかった module の名(digest には名だけが入り、記録の file の行で覆う)。
+        #: Names of modules that could not be imported (only the name goes into the digest, and it is covered by the record's file rows).
         self.unimportable: set[str] = set()
-        #: import の途中の module か import できない module に出会ったか、今の disk から読む file が module を実行した時から
-        #: 変わっていたか(その digest は import の進み具合か、process の中の古い値に依るので、覚えず記録にも入れない)。
+        #: Whether it met a module in the middle of an import or a module that cannot be imported, or whether a file read from the current disk differs from when the module was executed
+        #: (that digest depends on import progress or on stale in-process values, so it is neither remembered nor put in the record).
         self._mut_partial = False
-        #: 環境変数の読みに当たったか(その digest は環境変数の値を写さないので照らせない — 覚えず、記録の行は印 ENVIRONMENT_READ)。
+        #: Whether it hit an environment variable read (that digest does not capture the environment variable values and so cannot be verified — it is not remembered, and the record row gets the marker ENVIRONMENT_READ).
         self._mut_environment = False
-        #: source の文で覆った大域(module の名・大域の名 — 2 度目は印だけ入れる)。
+        #: Globals covered by source statements (module names, global names — the second time only the marker goes in).
         self._bound_names: set[tuple[str, str]] = set()
-        #: 初めて出会った関数の code の中身の在処(:attr:`_parts` の番号 → 関数の番号・関数・関数の中身を値として読むか — 番号の順)。
+        #: Where the code contents of a function first encountered live (the number in :attr:`_parts` -> function number, function, whether it reads function contents as a value — in number order).
         self._slots: dict[int, _SlotPlace] = {}
-        #: 歩いている途中の関数と class の番号(:attr:`_seen` の順の番号 — 一番後ろが今歩いている物)。
+        #: Numbers of the functions and classes currently being walked (the order number in :attr:`_seen` — the last is the one being walked now).
         self._mut_stack: tuple[int, ...] = ()
-        #: 関数と class の番号 → その中身を歩く間に出会った関数と class の番号(初めて・2 度目のどちらも)。
+        #: Function or class number -> the numbers of the functions and classes encountered while walking its contents (both first and second encounters).
         self._edges: dict[int, set[int]] = {}
-        #: 束縛の文の先(:meth:`_bound` の中)で出会った関数と class の番号 — その物とそこから届く物の関数の中身は絞らない。
+        #: Numbers of functions and classes encountered beyond a binding statement (inside :meth:`_bound`) — the function contents of those and what is reachable from them are not narrowed.
         self._state_roots: set[int] = set()
-        #: :meth:`_bound` の入れ子の深さ(0 = 束縛の文の外)。
+        #: Nesting depth of :meth:`_bound` (0 = outside a binding statement).
         self._mut_state_depth = 0
 
     def walked(self) -> "ClosureWalk":
-        """辿った物の材料 — 参照した module の、文字列の定数の名の属性を入れ終えてから。積んだ文字列は、それぞれの bytes の長さ
-        (8 byte の little endian)を前に置いて綴り(文字列ごとに hash を呼ぶと、検の読み込みで 2.8 万回)、
-        関数の code の中身の所で切る(中身を覆うかは記録と照らしが決める — :meth:`ClosureWalk.digest`)。"""
+        """The material of what was followed — after finishing adding the string-constant-named attributes of the referenced modules. The accumulated strings are spelled with the byte length of each
+        (8-byte little endian) in front (calling hash per string came to 28,000 calls in a check load),
+        and split at the function code contents (whether to cover the contents is decided by the record and verification — :meth:`ClosureWalk.digest`)."""
         self._attributes_named_by_texts()
         encoded = list(map(_ENCODE, self._parts))
         framed = list(
@@ -1932,7 +1928,7 @@ class _Walker:
         )
 
     def _reached_from(self, roots: set[int]) -> frozenset[int]:
-        """roots から、中身を歩く間に出会った物を辿って届く関数と class の番号(roots も入る)。"""
+        """From roots, follow what was encountered while walking contents and return the numbers of the reachable functions and classes (roots included)."""
         reached: frozenset[int] = frozenset()
         frontier = frozenset(roots)
         while frontier:
@@ -1944,12 +1940,12 @@ class _Walker:
         return reached
 
     def _attributes_named_by_texts(self) -> None:
-        """名前で引かない読み(``getattr(m, "名")``・文字列の key)の先 — 歩みで出会った文字列の定数を名として、参照した module の
-        その名の属性を入れる(入れた属性が新しい module と文字列を持ち込む間くり返す)。読みの関数と module の参照が
-        別の関数にあっても(module を引数で渡す)覆う。"""
+        """Beyond reads that do not look up by name (``getattr(m, "name")``, string keys) — take the string constants encountered in the walk as names, and enter the
+        same-named attribute of the referenced modules (repeat while the entered attributes bring in new modules and strings). Covered even when the reading function and the module reference
+        are in different functions (the module is passed as an argument)."""
         while True:
-            # 名前空間に在る文字列だけを集合の積で先に選ぶ(_text_attribute は名前空間に無い名を偽とする — module × 文字列を
-            # 1 つずつ判じると、検の読み込みで 3 万回を越えた)。並びは前と同じ(module の名・文字列の順)。
+            # Pick first, by set intersection, only the strings that are in the namespace (_text_attribute treats a name not in the namespace as false — judging module x string
+            # one by one exceeded 30,000 times in a check load). The order is the same as before (module name, string order).
             pending = tuple(
                 (name, text)
                 for name in sorted(self._modules)
@@ -1965,12 +1961,12 @@ class _Walker:
                     self._attribute(self._modules[name], text, ())
 
     def _feed(self, *parts: str) -> None:
-        """digest に文字列を足す(:meth:`walked` が長さを前に置いて綴る — 切れ目の違う 2 つの並びが同じ digest にならない)。"""
+        """Add a string to the digest (:meth:`walked` spells it with the length in front — two sequences with different breaks do not produce the same digest)."""
         self._parts.extend(parts)
 
     def _first_visit(self, value: object) -> bool:
-        """初めて辿る object か(2 度目からは番号だけを入れる — 循環で止まらず、共有と複製を分ける)。どちらの時も、今歩いている
-        関数か class から出会った事と、束縛の文の先で出会った事を覚える(絞らない関数を決める — :meth:`walked`)。"""
+        """Whether this is the first time following the object (from the second time only the number goes in — it does not stop on cycles, and separates sharing from duplication). In either case it remembers
+        the encounter from the function or class currently being walked, and the encounter beyond a binding statement (decides the functions not narrowed — :meth:`walked`)."""
         seen = self._seen.get(id(value))
         node = len(self._seen) if seen is None else seen[0]
         if self._mut_stack:
@@ -1984,34 +1980,34 @@ class _Walker:
         return True
 
     def _node(self, value: object) -> int:
-        """辿った object の番号(:meth:`_first_visit` の後に引く)。"""
+        """The number of a followed object (looked up after :meth:`_first_visit`)."""
         return self._seen[id(value)][0]
 
     def _note(self, module: ModuleType | None) -> None:
-        """辿った物の持ち主の module の file を覚える(digest の覚えの有効の判じと、file 単位の記録の行に使う)。"""
+        """Remember the file of the owner module of what was followed (used to judge whether a digest memory is valid and for file-level record rows)."""
         file = None if module is None else vars(module).get("__file__")
         if module is not None and isinstance(file, str):
             self.files[module.__name__] = file
 
     def _against_executed(self, file: str) -> None:
-        """今の disk から読む部分(file の sha256・値を覆う文)が、process の中の module の値と同じ時点の物かを確かめる — module を
-        実行した後に file が書き換わっていれば(常駐の process)、この digest は展開が使った値を写さないので、import の途中の状態と
-        同じく覚えず記録にも入れない(記録の行は None — 新しい process は古いと判じて展開し直す)。"""
+        """Check whether the parts read from the current disk (the file sha256, the statements that cover a value) are from the same point in time as the module's values in the process — if the file was
+        rewritten after the module was executed (a resident process), this digest does not reflect the values the expansion used, so as with the in-the-middle-of-import state
+        it is neither remembered nor put in the record (the record row is None — a new process judges it stale and expands again)."""
         if not loader_hooks.executed_source_is_current(file):
             self._mut_partial = True
 
     def _note_environment(self, reads: bool) -> None:
-        """環境変数の読みに当たった事を覚える — この digest を照らせない印にするため(:func:`_remembered`)。"""
+        """Remember that an environment variable read was hit — to make this digest an unverifiable marker (:func:`_remembered`)."""
         if reads:
             self._mut_environment = True
 
     def _note_location(self, reads: bool) -> None:
-        """module の置き場を値として読む code か束縛の文に当たった事を覚える — 置き場から辿る file(隣の data・stub)の中身を歩みは
-        覆わないので、環境変数の読みと同じく照らせない印にする(:data:`_LOCATION_NAMES`)。"""
+        """Remember that code or a binding statement that reads a module's location as a value was hit — the walk does not cover the contents of the files followed from the location (neighboring
+        data, stubs), so as with environment variable reads this makes it an unverifiable marker (:data:`_LOCATION_NAMES`)."""
         self._note_environment(reads)
 
     def _fold(self, module: ModuleType | None) -> None:
-        """安全側: module の file の sha256 を digest に足す(読めなければ毎回違う印 — いつも古いと判じられる)。"""
+        """Safe side: add the sha256 of the module's file to the digest (if it cannot be read, a marker that differs every time — always judged stale)."""
         file = None if module is None else vars(module).get("__file__")
         if module is None or not isinstance(file, str):
             self._feed("file", "none" if module is None else module.__name__)
@@ -2022,9 +2018,9 @@ class _Walker:
         self._feed("file", module.__name__, digest if digest is not None else os.urandom(16).hex())
 
     def _fold_opaque(self, module: ModuleType | None) -> None:
-        """辿れない値(大域の名で引けない値・束縛を辿れない大域・名で辿れない読みの先)を、持ち主の module の file で覆う
-        (:meth:`_fold`)。file は持ち主の source が読み込みの時に読んだ環境変数を写さないので、source が環境変数を読みうるなら
-        照らせない印にする(環境変数から組んだ表を既定値・閉包の cell に持つ形)。"""
+        """Cover a value that cannot be walked (a value not looked up by a global name, a global whose binding cannot be followed, the target of a read that cannot be followed by name) by the owner module's file
+        (:meth:`_fold`). The file does not reflect environment variables the owner's source read at load time, so if the source may read environment variables,
+        make it an unverifiable marker (the form that holds a table built from environment variables in a default or closure cell)."""
         self._fold(module)
         file = None if module is None else vars(module).get("__file__")
         names = bound_source.source_names(file) if isinstance(file, str) else None
@@ -2033,15 +2029,15 @@ class _Walker:
     def _lazy_module(
         self, module_name: str, home: ModuleType | None, names: tuple[str, ...]
     ) -> ModuleType | None:
-        """関数の中の import の先・package の下の module・hy.R の先 — import して、名の表の名の属性を入れる。import できない
-        時(循環する import の途中の module を require する物など)は名だけを入れ、import の途中の状態の digest として扱う
-        (覚えず・記録の行は file で比べる)。読めない名は関数の module の file で覆う。"""
+        """Import targets inside functions, modules under a package, and hy.R targets — import them and enter the attributes named in the name table. When import fails
+        (e.g. requiring a module in the middle of a circular import), enter only the name and treat it as a digest of the in-the-middle-of-import state
+        (not remembered, and the record row is compared by file). Names that cannot be read are covered by the function's module file."""
         if not module_name:
             self._fold(home)
             return None
         if _named_only(module_name):
             self._feed("module", module_name)
-            # 関数の中で import した os で環境変数を読む(大域に os が無くても)。
+            # Read environment variables with an os imported inside a function (even if there is no os among the globals).
             self._note_environment(
                 module_name in _ENVIRONMENT_MODULES and not _ENVIRONMENT_NAMES.isdisjoint(names)
             )
@@ -2057,11 +2053,11 @@ class _Walker:
                 return None
 
     def function(self, function: FunctionType) -> None:
-        """関数の code と、名で引く大域・既定値・閉包の cell を辿る。"""
+        """Follow a function's code, the globals looked up by name, defaults, and closure cells."""
         module_name = function.__module__ if isinstance(function.__module__, str) else ""
         if _named_only(module_name):
             self._feed("function-name", module_name, function.__qualname__)
-            self._note_environment(_environment_object(function))  # os から import した getenv など
+            self._note_environment(_environment_object(function))  # getenv imported from os, etc.
             return
         if not self._first_visit(function):
             return
@@ -2073,7 +2069,7 @@ class _Walker:
             self._mut_stack = outer
 
     def _function_body(self, function: FunctionType, module_name: str) -> None:
-        """初めて出会った関数の中身(code の中身は在処を覚え、覆うかを記録と照らしが決める — :class:`ClosureWalk`)。"""
+        """The contents of a function met for the first time (the location of the code contents is remembered, and the record and verification decide whether to cover them — :class:`ClosureWalk`)."""
         home = sys.modules.get(module_name)
         self._note(home)
         facts = self.readings.facts(function.__code__)
@@ -2085,23 +2081,23 @@ class _Walker:
             _reads_code(facts) or _reads_code_by_alias(function.__globals__, facts.names),
         )
         self._feed(facts.shape)
-        # 展開の時か読み込みの時に、code が環境変数を読む・module の置き場を値として読む。
+        # At expansion time or load time, the code reads environment variables or reads a module's location as a value.
         self._note_environment(_reads_environment(function.__globals__, facts.names))
         self._note_location(facts.reads_location)
         self._value(function.__defaults__, home, facts.names)
-        # keyword だけの引数の既定値は名 → 値の dict(名の順に入れる — dict のまま入れると辿れない値になる)。
+        # The default of a keyword-only argument is a dict of name -> value (entered in name order — entering it as a dict would make it an unwalkable value).
         for keyword, default in sorted((function.__kwdefaults__ or {}).items()):
             self._feed("kwdefault", keyword)
             self._value(default, home, facts.names)
         for cell in function.__closure__ or ():
             try:
                 content = cell.cell_contents
-            except ValueError:  # 束縛の前の cell
+            except ValueError:  # a cell before binding
                 self._feed("empty-cell")
                 continue
             self._value(content, home, facts.names)
         namespace = function.__globals__
-        # 大域の名の在処(関数の大域が module の名前空間そのものの時だけ — 辿れない値を、その名の source の文で覆う)。
+        # Location of a global name (only when the function's globals are the module's namespace itself — covers an unwalkable value by the source statement of that name).
         owner = home if home is not None and vars(home) is namespace else None
         for name in facts.names:
             if name in namespace:
@@ -2136,14 +2132,14 @@ class _Walker:
     def _fold_referenced_modules(
         self, namespace: dict[str, object], names: tuple[str, ...]
     ) -> None:
-        """関数が大域の名で参照する module の file の sha256 を足す(名で辿れない読みの先になりうる module)。"""
+        """Add the sha256 of the files of the modules the function references by global name (modules that can be the target of a read that cannot be followed by name)."""
         for name in names:
             value = namespace.get(name)
             if isinstance(value, ModuleType) and not _named_only(value.__name__):
                 self._fold_opaque(value)
 
     def outside_value(self, module: ModuleType, value: object) -> None:
-        """macro の外で展開の結果を変える値(module の属性)を入れる。"""
+        """Enter a value (a module attribute) outside the macro that changes the expansion result."""
         self._feed("outside", module.__name__)
         self._note(module)
         self._value(value, module, ())
@@ -2151,8 +2147,8 @@ class _Walker:
     def _called_macros(
         self, module_name: str, texts: tuple[str, ...], home: ModuleType | None
     ) -> None:
-        """macro が組む hy.R の呼び出しの先 — module の macro のうち、code の文字列の定数に名が現れる物を全部辿る(定数の並びから
-        名を 1 つに決められない — 前に使った定数と重なると並びに現れない)。"""
+        """Targets of the hy.R calls a macro builds — follow all the module's macros whose names appear in the code's string constants (the name cannot
+        be pinned to one from the constant sequence — if it overlaps a constant used earlier, it does not appear in the sequence)."""
         module = self._lazy_module(module_name, home, ())
         table = None if module is None else vars(module).get(MACRO_TABLE)
         if not isinstance(table, dict):
@@ -2164,7 +2160,7 @@ class _Walker:
                 self.function(macro)
 
     def module_content(self, module: ModuleType) -> None:
-        """module で定義された関数と class と素の値(名の順)。"""
+        """Functions, classes, and plain values defined in the module (in name order)."""
         self._feed("module-content", module.__name__)
         self._note(module)
         if _initializing(module):
@@ -2189,19 +2185,19 @@ class _Walker:
         names: tuple[str, ...],
         bound: "GlobalName | None" = None,
     ) -> None:
-        """値 1 つを入れる(型ごとの規則は module の docstring)。bound = 値が module の大域の名で引かれた時の在処(辿れない値を
-        その名の source の文で覆う)。"""
+        """Enter one value (the rules per type are in the module docstring). bound = where the value lives when it was looked up by a module global name (covers an unwalkable value
+        by the source statement of that name)."""
         match value:
             case None | bool() | int() | float() | complex() | str() | bytes():
                 kind = type(value)
                 self._feed("value", f"{kind.__module__}.{kind.__qualname__}", repr(value))
             case tuple():
-                # 組は object の同一で畳まない — 同じ中身の組が共有されるかは process ごとに違う(定数の組の共有)。
+                # Tuples are not folded by object identity — whether tuples with the same contents are shared differs per process (sharing of constant tuples).
                 self._feed("tuple", str(len(value)))
                 for item in value:
                     self._value(item, home, names)
             case frozenset() | set() if _plain(value):
-                # 中身が素の値だけの集合は値で入れる(Hy の #{…} の定数の表は set になる)。
+                # A set whose contents are only plain values enters by value (the constant table of Hy's #{...} becomes a set).
                 self._feed(type(value).__name__, _plain_text(value))
             case FunctionType():
                 self.function(value)
@@ -2219,7 +2215,7 @@ class _Walker:
         names: tuple[str, ...],
         bound: "GlobalName | None",
     ) -> None:
-        """関数を包む値(staticmethod・property・partial・bound method)・enum・C の関数・Hy の値・辿れない値を入れる。"""
+        """Enter values wrapping a function (staticmethod, property, partial, bound method), enums, C functions, Hy values, and unwalkable values."""
         match value:
             case staticmethod() | classmethod():
                 self._feed(type(value).__name__)
@@ -2245,7 +2241,7 @@ class _Walker:
                 "collections",
                 "_collections",
             ):
-                # namedtuple の欄の読み(``Alias for field number N`` — 欄の番号だけが振る舞い)。
+                # The read of a namedtuple field (``Alias for field number N`` — only the field number is behavior).
                 self._feed("tuplegetter", str(value.__doc__))
             case _ if isinstance(value, _COMPILED_CALLABLES):
                 self._compiled(value, home)
@@ -2262,35 +2258,35 @@ class _Walker:
         names: tuple[str, ...],
         bound: "GlobalName | None",
     ) -> None:
-        """関数を包まない値のうち、中身を値で入れられない物(ContextVar・frozen の dataclass の値・表・辿れない object)。"""
+        """Among values that do not wrap a function, those whose contents cannot be entered by value (ContextVar, a frozen dataclass value, tables, unwalkable objects)."""
         match value:
             case contextvars.ContextVar():
-                # 名と既定値で覆う。今の値は入れない — 実行の状態で、展開の結果を決める表ではない(型検査の展開の印
-                # TYPE_CHECK_EXPANSION が真の間の展開は記録を付けない — loader_hooks)。
+                # Cover by name and default. The current value is not entered — it is execution state, not a table that decides the expansion result (an expansion while the type-check expansion marker
+                # TYPE_CHECK_EXPANSION is true does not attach a record — loader_hooks).
                 self._feed("context-variable", value.name)
                 self._context_default(value, home, names)
             case _ if _environment_object(value):
-                # 環境変数の表そのもの(os から別名で import した environ・既定値・閉包の cell)— 中身は process の状態で、束縛の
-                # 文も file も覆わない。
+                # The environment variable table itself (an environ imported from os under an alias, a default, a closure cell) — its contents are process state, and neither the binding
+                # statement nor the file covers it.
                 self._feed("environment")
                 self._note_environment(True)
             case _ if _frozen_dataclass_instance(value):
-                # frozen の dataclass の値(binding_forms の _TOP・ModuleNames() の既定値など)— class と欄の値で入れる。
+                # A frozen dataclass value (binding_forms' _TOP, the default of ModuleNames(), etc.) — enter it as the class and the field values.
                 self._feed("frozen-instance")
                 self._class(type(value))
                 for field in dataclasses.fields(value):
                     self._feed("field", field.name)
                     self._value(getattr(value, field.name), home, names)
             case _ if bound is not None:
-                # 辿れない値を module の大域の名で引いた — その名を束縛し書き換える source の文で覆う。list と dict もここ。
-                # process の中の覚え(doeff_hy.macros の _RESUME_ANALYSIS_CACHE は object の id の組を鍵に持つ dict・呼ばれた順を
-                # 積む list)の中身は実行の途中で変わり、中身を入れると同じ macro の digest が process ごとに違って照らす度に
-                # 古いと判じる。初めの中身と書き換えは source に書いてある。
+                # An unwalkable value was looked up by a module global name — cover it by the source statement that binds and rewrites that name. Lists and dicts go here too.
+                # The contents of in-process memory (doeff_hy.macros's _RESUME_ANALYSIS_CACHE is a dict keyed by a tuple of object ids, and a list
+                # accumulating the order of calls) change during execution, and entering the contents would make the digest of the same macro differ per process and be judged
+                # stale at every verification. The initial contents and the rewrites are written in the source.
                 self._feed("opaque", type(value).__module__, type(value).__qualname__)
                 self._bound(bound)
             case _:
-                # 辿れない値を大域の名でなく引いた(既定値・閉包の cell・組の中・class の値)— 持ち主の module の file で覆う
-                # (source が環境変数を読みうるなら照らせない印)。
+                # An unwalkable value was looked up not by a global name (a default, a closure cell, inside a tuple, a class value) — cover it by the owner module's file
+                # (an unverifiable marker if the source may read environment variables).
                 self._feed("opaque", type(value).__module__, type(value).__qualname__)
                 self._fold_opaque(home)
 
@@ -2300,8 +2296,7 @@ class _Walker:
         home: ModuleType | None,
         names: tuple[str, ...],
     ) -> None:
-        """ContextVar の既定値(空の Context の中で読む — 既定値が無ければ無いことを入れる)。素の値は値で、そうでなければ型の名で
-        入れる。"""
+        """The default of a ContextVar (read inside an empty Context — if there is no default, enter that fact). A plain value enters by value, otherwise by the type's name."""
         try:
             default = contextvars.Context().run(variable.get)
         except LookupError:
@@ -2314,11 +2309,11 @@ class _Walker:
             self._feed("default-type", kind.__module__, kind.__qualname__)
 
     def _bound(self, bound: "GlobalName") -> None:
-        """module の大域 1 つを、その名を束縛し書き換える source の文で覆う(:mod:`doeff_hy_bytecode_guard._bound_source`)。
-        文が読む名は同じ規則で辿り、本体でその名を書き換えうる top-level の定義はその関数か class を辿り、import で束縛する名は
-        import の先の module で辿る。source を読めない・束縛が見つからない・辿れない束縛がある時は、module の file で覆う。
-        ここで出会う関数と class(と、そこから届く物)は値を作った code — 展開の外(読み込みの時・前の展開)で実行されて値を
-        作るので、その関数の code の中身は絞らない(:meth:`walked`)。"""
+        """Cover one module global by the source statement that binds and rewrites that name (:mod:`doeff_hy_bytecode_guard._bound_source`).
+        The names the statement reads are followed by the same rules, top-level definitions that may rewrite the name in their body have that function or class followed, and names bound by import are
+        followed in the module of the import target. When the source cannot be read, no binding is found, or there is a binding that cannot be followed, cover it by the module's file.
+        The functions and classes met here (and what is reachable from them) are the code that made the value — it ran outside the expansion (at load time or in an earlier expansion) and made the value,
+        so the contents of those functions' code are not narrowed (:meth:`walked`)."""
         module, name = bound.module, bound.name
         self._feed("bound", module.__name__, name)
         if (module.__name__, name) in self._bound_names:
@@ -2331,7 +2326,7 @@ class _Walker:
             self._mut_state_depth -= 1
 
     def _bound_statements(self, module: ModuleType, name: str) -> None:
-        """大域 1 つの束縛の文・書き換える関数・import の先を辿る(:meth:`_bound` の中身)。"""
+        """Follow the binding statement, the rewriting functions, and the import targets of one global (the body of :meth:`_bound`)."""
         self._note(module)
         namespace = vars(module)
         file = namespace.get("__file__")
@@ -2343,12 +2338,12 @@ class _Walker:
             return
         for statement in binding.statements:
             self._feed("statement", statement.text)
-            # 読み込みの時に文が環境変数を読んで値を組む(Hy の文は記号の各部分を loads に持つ)— 文の text は環境変数の値を
-            # 持たない(付録 3 の形)。
+            # At load time the statement reads environment variables to build the value (a Hy statement holds each part of a symbol in loads) — the statement's text does not hold the environment variable values
+            # (the shape of appendix 3).
             self._note_environment(
                 _reads_environment(namespace, (*statement.loads, *statement.attributes))
             )
-            # 読み込みの時に文が置き場から隣の file を読んで値を組む(``TABLE = json.loads(Path(__file__).with_name(…)…)``)。
+            # At load time the statement reads a neighboring file from the location to build the value (``TABLE = json.loads(Path(__file__).with_name(...)...)``).
             self._note_location(
                 not _LOCATION_NAMES.isdisjoint((*statement.loads, *statement.attributes))
             )
@@ -2369,7 +2364,7 @@ class _Walker:
             self._imported_binding(module, imported)
 
     def _imported_binding(self, module: ModuleType, imported: bound_source.ImportedName) -> None:
-        """import で束縛した大域を、import の先の module の同じ名で辿る(module そのものの import は module の参照として)。"""
+        """Follow a global bound by import through the same name in the import target's module (importing a module itself counts as a module reference)."""
         package = vars(module).get("__package__")
         target = _import_target(
             ImportReference(imported.module, imported.level),
@@ -2380,7 +2375,7 @@ class _Walker:
         if not target:
             self._fold_opaque(module)
         elif source is None:
-            # 標準 library・Hy 自身(版で覆う)か、読み込まれていない module(import の名が値と合わない)。
+            # The standard library or Hy itself (covered by the version), or a module that is not loaded (the import name does not match the value).
             if not _named_only(target):
                 self._fold_opaque(module)
         elif not imported.name:
@@ -2391,7 +2386,7 @@ class _Walker:
             self._fold_opaque(module)
 
     def _class(self, cls: type) -> None:
-        """class の基底と中身(method・class の値)を辿る。"""
+        """Follow a class's bases and contents (methods, class values)."""
         module_name = cls.__module__ if isinstance(cls.__module__, str) else ""
         if _named_only(module_name):
             self._feed("class-name", module_name, cls.__qualname__)
@@ -2406,7 +2401,7 @@ class _Walker:
             self._mut_stack = outer
 
     def _class_body(self, cls: type, module_name: str) -> None:
-        """初めて出会った class の基底と中身。"""
+        """The bases and contents of a class met for the first time."""
         home = sys.modules.get(module_name)
         self._note(home)
         self._feed("class", module_name, cls.__qualname__)
@@ -2420,14 +2415,14 @@ class _Walker:
             if name in _CLASS_SKIP:
                 continue
             self._feed("member", name)
-            # 3.15 の dataclass の __doc__ は、初めて読む時に署名から文を作る記述子(dataclasses._AutoDocstring)— class から読んだ
-            # 文で入れる(3.14 までと同じ値・記述子のままでは辿れない値として module の file で覆う)。
+            # In 3.15 a dataclass's __doc__ is a descriptor that builds the text from the signature on first read (dataclasses._AutoDocstring) — enter the text read
+            # from the class (the same value as up to 3.14; left as a descriptor it would be an unwalkable value covered by the module's file).
             value = cls.__doc__ if name == "__doc__" else members[name]
             self._value(value, home, ())
 
     def _extension_class(self, cls: type, home: ModuleType | None) -> None:
-        """拡張の module の class(Python の source の無い class)を、.so の file の全体ではなく名と公開の形で覆う — 基底(同じ
-        規則で辿る)と、属性の名の並びと種類(method・記述子・値 — 素の値はその値・そうでなければ型の名)。"""
+        """Cover a class of an extension module (a class with no Python source) not by the whole .so file but by its name and public shape — the bases (followed by the same
+        rules), and the sequence of attribute names and kinds (method, descriptor, value — a plain value by its value, otherwise by the type's name)."""
         self._feed("extension-class")
         for base in cls.__bases__:
             self._value(base, home, ())
@@ -2438,14 +2433,14 @@ class _Walker:
             self._feed("member", name, *_public_kind(members[name]))
 
     def _module(self, module: ModuleType, names: tuple[str, ...]) -> None:
-        """module の参照 — 名と、code の名の表に出る属性(``module.名`` の読み)。package の下の module は file 単位で覆う
-        (読み込まれたかで属性に現れるかが変わる)。文字列の定数の名の属性は歩みの終わりに入れる。"""
+        """A module reference — the name, and the attributes that appear in the code's name table (reads of ``module.name``). A module under a package is covered by file
+        (whether it appears as an attribute changes depending on whether it was loaded). Attributes named by string constants are entered at the end of the walk."""
         self._feed("module", module.__name__)
         if _named_only(module.__name__):
             return
         if _initializing(module):
-            # import の途中の module(展開する module 自身や、それを import している module)の名前空間はまだ揃っていない —
-            # 属性を読むと、同じ macro の digest が import の進み具合で変わる。file の sha256 で覆い、この digest は覚えない。
+            # The namespace of a module in the middle of an import (the module being expanded itself, or a module importing it) is not yet complete —
+            # reading attributes would make the digest of the same macro change with import progress. Cover it by the sha256 of the file, and do not remember this digest.
             self._feed("initializing")
             self._fold(module)
             self._mut_partial = True
@@ -2466,7 +2461,7 @@ class _Walker:
                 self._attribute(module, name, names)
 
     def _attribute(self, module: ModuleType, name: str, names: tuple[str, ...]) -> None:
-        """module の属性 1 つを入れる(module ごとに 1 度 — 置き場を名指すだけの属性は値でなく印だけ・:data:`_LOCATION_NAMES`)。"""
+        """Enter one module attribute (once per module — an attribute that merely names a location gets only a marker, not the value; :data:`_LOCATION_NAMES`)."""
         self._attributes[module.__name__].add(name)
         self._feed("attribute", module.__name__, name)
         if name in _LOCATION_NAMES:
@@ -2475,7 +2470,7 @@ class _Walker:
         self._value(vars(module)[name], module, names, GlobalName(module, name))
 
     def _compiled(self, value: object, home: ModuleType | None) -> None:
-        """C で書かれた関数と記述子 — 名を入れ、標準 library と組み込みでなければその拡張の module の file の sha256 を足す。"""
+        """C-written functions and descriptors — enter the name, and unless they are standard library or builtins, add the sha256 of the extension module's file."""
         owner = _compiled_owner(value)
         qualname = value.__qualname__ if isinstance(value, _COMPILED_CALLABLES) else ""
         self._feed("compiled", owner or "", str(qualname))
@@ -2487,7 +2482,7 @@ class _Walker:
 
 @dataclass(frozen=True)
 class GlobalName:
-    """値を引いた module の大域の名(辿れない値をその名の source の文で覆うため)。"""
+    """The module global name the value was looked up by (to cover an unwalkable value by that name's source statement)."""
 
     module: ModuleType
     name: str
@@ -2495,18 +2490,18 @@ class GlobalName:
 
 @dataclass(frozen=True)
 class _SlotPlace:
-    """歩みが初めて出会った関数 1 つの在処 — 関数の番号(:attr:`_Walker._seen` の順)・関数の code と中身の digest・関数の中身を
-    値として読む code か(:func:`_reads_code`)。"""
+    """The location of one function the walk met for the first time — the function number (in the order of :attr:`_Walker._seen`), the function's code and contents digest, and whether it is code that reads
+    a function's contents as a value (:func:`_reads_code`)."""
 
     node: int
     slot: CodeSlot
     reads_code: bool
 
 
-#: 関数の中身を値として読む名(属性の読み・大域の名)— 呼ばない関数の code・既定値・説明の文・引数の形・注記を読む。この名を
-#: 持つ関数の中身を覆う(展開で実行された・絞らない)時は、閉包の関数の中身を全部覆う(実行しない関数の中身が展開の結果に効く)。
-#: 文字列の定数(``getattr(f, "__code__")`` の名)としても読む。ただし ``__doc__`` は名の表だけで見る — 展開の code の文字列の
-#: 定数 "__doc__" は展開の結果に説明を書く印(:data:`_TEXT_SKIP` と同じ)。
+#: Names that read a function's contents as a value (attribute reads, global names) — they read the code, defaults, docstring, argument shape, and annotations of a function that is not called. When a function
+#: having such a name is one whose contents are covered (executed at expansion, or not narrowed), cover all the contents of the closure's functions (the contents of a function that is not executed affect the expansion result).
+#: Also read as a string constant (the name in ``getattr(f, "__code__")``). However, ``__doc__`` is looked at only in the name table — the string constant
+#: "__doc__" in expansion code is a marker for writing a docstring into the expansion result (the same as :data:`_TEXT_SKIP`).
 _CODE_READ_NAMES = frozenset(
     {
         "__code__",
@@ -2533,7 +2528,7 @@ _CODE_READ_NAMES = frozenset(
         "Bytecode",
         "code_info",
         "show_code",
-        # 標準 library の中で注釈を読む物(中は歩かない — 名で出会った時に注釈ごとの digest にする)。
+        # Things in the standard library that read annotations (not walked inside — when met by name, they get a per-annotation digest).
         "singledispatch",
         "singledispatchmethod",
         "register",
@@ -2546,15 +2541,15 @@ _CODE_READ_TEXTS = _CODE_READ_NAMES - {"__doc__"}
 
 
 def _reads_code(facts: CodeFacts) -> bool:
-    """関数の code が、関数の中身を値として読むか(:data:`_CODE_READ_NAMES`)。"""
+    """Whether the function's code reads a function's contents as a value (:data:`_CODE_READ_NAMES`)."""
     return not (
         _CODE_READ_NAMES.isdisjoint(facts.names) and _CODE_READ_TEXTS.isdisjoint(facts.texts)
     )
 
 
 def _reads_code_by_alias(namespace: Mapping[str, object], names: tuple[str, ...]) -> bool:
-    """関数が大域の名で呼ぶ関数の本来の名が、関数の中身を読む名(:data:`_CODE_READ_NAMES`)か — ``from inspect import signature as sig``
-    の別名は、名の表に ``sig`` しか現れない。"""
+    """Whether the original name of a function that the function calls by global name is a name that reads a function's contents (:data:`_CODE_READ_NAMES`) — for the alias of ``from inspect import signature as sig``,
+    only ``sig`` appears in the name table."""
     return any(
         isinstance(value := namespace.get(name), (FunctionType, types.BuiltinFunctionType, types.MethodType))
         and getattr(value, "__name__", None) in _CODE_READ_NAMES
@@ -2563,12 +2558,12 @@ def _reads_code_by_alias(namespace: Mapping[str, object], names: tuple[str, ...]
 
 
 def _bits(indexes: Iterator[int]) -> int:
-    """番号の並びを bit にした数(番号 i なら bit i が 1)。"""
+    """The number made by turning a sequence of indexes into bits (for index i, bit i is 1)."""
     return functools.reduce(operator.or_, (1 << index for index in indexes), 0)
 
 
 def _frozen_dataclass_instance(value: object) -> bool:
-    """frozen の dataclass の値か(class ではなく)。"""
+    """Whether it is a frozen dataclass value (not a class)."""
     if isinstance(value, type) or not dataclasses.is_dataclass(value):
         return False
     params = vars(type(value)).get("__dataclass_params__")
@@ -2576,7 +2571,7 @@ def _frozen_dataclass_instance(value: object) -> bool:
 
 
 def _public_kind(member: object) -> tuple[str, ...]:
-    """拡張の class の属性 1 つの種類(method・記述子・値 — 素の値は値の文・そうでなければ型の名)。"""
+    """The kind of one attribute of an extension class (method, descriptor, value — a plain value by its value text, otherwise by the type's name)."""
     match member:
         case (
             FunctionType()
@@ -2599,18 +2594,18 @@ def _public_kind(member: object) -> tuple[str, ...]:
 
 
 def _initializing(module: ModuleType) -> bool:
-    """module が import の途中か(importlib が spec に立てる印 — 本体の実行が終わるまで真)。"""
+    """Whether the module is in the middle of an import (the marker importlib sets on the spec — true until the body finishes executing)."""
     spec = vars(module).get("__spec__")
     return spec is not None and vars(spec).get("_initializing") is True
 
 
-#: package の下の module の名が import の探索で見つかるかの覚え(process の中 — module の名 → 見つかったか)。
+#: Memory of whether the name of a module under a package is found by the import search (within the process — module name -> whether found).
 _SUBMODULES: dict[str, bool] = {}
 
 
 def _submodule(module: ModuleType, name: str) -> str | None:
-    """module が package で、名がその下の module なら、その module の名(読み込み済みかに依らない — 読み込まれた package の
-    下の module だけが属性に現れるので、属性で決めると同じ macro の digest が process の import の順で変わる)。"""
+    """If the module is a package and the name is a module under it, that module's name (independent of whether it is loaded — only modules under a loaded package
+    appear as attributes, so deciding by attribute would make the digest of the same macro change with the process's import order)."""
     if "__path__" not in vars(module) or not name.isidentifier():
         return None
     full = f"{module.__name__}.{name}"
@@ -2622,34 +2617,34 @@ def _submodule(module: ModuleType, name: str) -> str | None:
         try:
             found = (
                 importlib.util.find_spec(full) is not None
-            )  # 本体は実行しない(package は読み込み済み)
+            )  # the body is not executed (the package is already loaded)
         except (ImportError, ValueError):
             found = False
         _SUBMODULES[full] = found
     return full if found and name not in vars(module) else None
 
 
-#: 文字列の定数の名の候補から外す module の属性 — module の説明の文。展開の code の "__doc__" は展開の結果の関数や class に
-#: 説明を書く印で、module の説明の文は展開の結果に効かない(入れると、doeff_hy の record_runtime の docstring の 1 行の変更で
-#: defhandler の使い手が全部古いと判じられた)。
+#: Module attributes excluded from the candidates for string-constant names — the module's docstring. The "__doc__" in expansion code is a marker for writing a docstring onto the function or class of the expansion
+#: result, and the module's docstring does not affect the expansion result (if entered, a one-line change to the docstring of doeff_hy's record_runtime
+#: made all users of defhandler be judged stale).
 _TEXT_SKIP = frozenset({"__doc__"})
 
-#: module の置き場を名指すだけの属性(import の仕組みが入れる source と bytecode の file の path)— 大域の名・module の属性・
-#: 文字列の定数の名のどれで出会っても、値でなく印だけを入れる。値は作業木の置き場で変わり、同じ中身の code の振る舞いは
-#: 変えない(記録は別の木へ引き継いで照らす — #2598)。入れると、日次の全体検証が回ごとに別の dir に置いた doeff で、
-#: 型検査の展開の後処理(static_check の project — `module.__file__ = …` が名の表に __file__ を出す)の digest が回ごとに
-#: 変わり、保存した展開が毎回全部外れた。path の綴りは path の先の file の中身を
-#: 覆わないので、外しても覆う物は減らない(module の code と値は、それを辿る規則が中身で覆う)。
-#: 置き場を値として読む code(大域の読み・属性の読み・文字列の定数の名)か束縛の文は、その先の file(隣の data・stub)を読みうるが、
-#: 歩みはその中身を覆わない — 環境変数の読みと同じく照らせない印にする(_note_location
-#: 盲検 B)。作った module に書くだけ(STORE_ATTR)は読みではない。
+#: Attributes that merely name a module's location (the paths of the source and bytecode files that the import machinery puts in) — whether met as a global name, a module attribute, or a
+#: string-constant name, only a marker is entered, not the value. The value changes with the working tree's location and does not change
+#: the behavior of code with the same contents (records are carried over to another tree and verified — #2598). If entered, the daily full verification, with doeff placed in a different dir each run,
+#: had the digest of the post-processing of the type-check expansion (the static_check project — `module.__file__ = ...` puts __file__ in the name table) change
+#: every run, and every saved expansion missed each time. The spelling of the path does not cover the contents of the file at the path, so dropping it does not reduce what is covered
+#: (the module's code and values are covered by the rules that follow them by contents).
+#: Code that reads a location as a value (a global read, an attribute read, a string-constant name) or a binding statement may read the file it leads to (neighboring data, stubs), but
+#: the walk does not cover those contents — as with environment variable reads, make it an unverifiable marker (_note_location,
+#: blind review B). Merely writing to a module you made (STORE_ATTR) is not a read.
 _LOCATION_NAMES = frozenset({"__file__", "__cached__"})
 
 
 def _text_attribute(module: ModuleType, text: str) -> bool:
-    """文字列の定数の名の属性を入れるか — module の名前空間にあり、module の説明の文(:data:`_TEXT_SKIP`)でも package の下の
-    module でもない物(package の下の module は読み込まれたかで属性に現れるかが変わる — 名の表の名なら :func:`_submodule` が
-    file 単位で覆う)。"""
+    """Whether to enter a string-constant-named attribute — one that is in the module's namespace and is neither the module's docstring (:data:`_TEXT_SKIP`) nor a module under a package
+    (whether a module under a package appears as an attribute changes with whether it was loaded — if it is a name in the name table, :func:`_submodule` covers it by
+    file)."""
     if text in _TEXT_SKIP or text not in vars(module):
         return False
     value = vars(module)[text]
@@ -2657,7 +2652,7 @@ def _text_attribute(module: ModuleType, text: str) -> bool:
 
 
 def _compiled_owner(value: object) -> str | None:
-    """C で書かれた関数・記述子の持ち主の module の名(分からなければ None)。"""
+    """The module name of the owner of a C-written function or descriptor (None if unknown)."""
     match value:
         case (
             types.MethodDescriptorType()
@@ -2680,16 +2675,16 @@ def _compiled_owner(value: object) -> str | None:
 
 
 def _python_source(module: ModuleType | None) -> bool:
-    """module の class を中身(基底・method の本体)で辿れるか — 偽は、拡張の module(file の末尾が標準の
-    importlib.machinery.EXTENSION_SUFFIXES のどれか)と file の無い module だけ。source の拡張子の写しで判じない: Hy の拡張子を
-    定義点(code_store.HY_SOURCE_SUFFIXES)に足した時、写しの直し忘れでその module の class を公開の形だけで覆い、method の本体の
-    変更を見逃した。知らない末尾は中身で辿る側(安全側)に倒す。"""
+    """Whether a module's classes can be followed by their contents (bases, method bodies) — false only for extension modules (the file ends with any of the standard
+    importlib.machinery.EXTENSION_SUFFIXES) and modules with no file. Do not decide by a copy of source extensions: when Hy's extension was added to the
+    definition point (code_store.HY_SOURCE_SUFFIXES), forgetting to fix the copy covered that module's classes by public shape only and missed a change to a method body.
+    An unknown suffix errs toward following by contents (the safe side)."""
     file = None if module is None else vars(module).get("__file__")
     return isinstance(file, str) and not file.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES))
 
 
 def _import_target(reference: ImportReference, package: str | None) -> str:
-    """import の命令が読む module の名(相対なら関数の package から解く — 解けなければ空)。import はしない。"""
+    """The module name an import instruction reads (if relative, resolved from the function's package — empty if it cannot be resolved). Does not import."""
     if reference.level <= 0:
         return reference.name
     if not package:
@@ -2701,7 +2696,7 @@ def _import_target(reference: ImportReference, package: str | None) -> str:
 
 
 def source_text(data: object, path: str) -> str | bytes | None:
-    """compile した source の文 — 渡された bytes / str か、file から読んだ物(読めなければ None)。"""
+    """The compiled source text — the bytes / str that were passed, or what was read from the file (None if it cannot be read)."""
     if isinstance(data, (str, bytes)):
         return data
     try:

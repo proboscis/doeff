@@ -1,46 +1,46 @@
-"""doeff-hy の macro を「型検査のための展開」に切り替える口(1 点)。
+"""Switch for turning doeff-hy macros into the "expansion for type checking" (single entry point).
 
-`doeff-hy-check`(doeff_hy/_static_check.py)は Hy の source を本物の macro で展開し、
-得た Python を pyright に読ませる。実行時の展開のうち、型検査に要る情報を持たない所
-(`(<- x T e)` の `x = yield e` は x の型を e から導けない)だけを、この切替が入っている
-間は型の分かる形で出す。切替は macro の展開の時にだけ読む(実行時には読まない)ので、
-通常の import・bytecode の cache・実行の意味は変わらない。
+`doeff-hy-check` (doeff_hy/_static_check.py) expands Hy source with the real macros and
+feeds the resulting Python to pyright. Among the runtime expansions, only the places that carry
+no type information needed for type checking (`x = yield e` of `(<- x T e)` cannot derive x's type from e)
+are emitted in a type-aware form while this switch is on. The switch is read only at macro
+expansion time (not at runtime), so ordinary imports, the bytecode cache, and runtime semantics are unchanged.
 
-切替で形が変わる所(macros.hy の `_static-view?` を読む所がすべて):
+Places where the shape changes under the switch (all places in macros.hy that read `_static-view?`):
 - `_bind-yield`: `(setv x (yield e))` → `x: T = _doeff_perform(e)`
-  (`_doeff_perform` は e の答えの型を返すと宣言した静的な関数。doeff_hy/_static_types.pyi。
-  Python の `@effectful` の `x = perform(e)` と同じ形)
-- defk / defp / do! / deftest / fnk: `do` を型付きの `doeff_hy._static_types.do` から取る
-  (呼んだ結果が core の `Expand[T, E]` = 答えの型 T を持つ Program になる)
-- defhandler の `resume` / `transfer`: core の `typed_resume` / `typed_transfer`
-  (答えの値を effect の `EffectBase[T]` の T と突き合わせる)
-- defhandler / handle の関数(handle.hy): 節を回す関数の引数 `effect: object`
-  (節の `isinstance` が型を絞る)・`k: Continuation`・答え `ClauseRun`、handler を被せる関数の
-  本文 `HandlerBody[HandledAnswer]` → `HandledScope[HandledAnswer]`、節の終わり方の検めは型付きの
-  static_types の名(HANDLER_STATIC_NAMES)から引く。doeff の node は節の操作の表(clause_ops.hy)の static-nodes と
-  handler 自身の Pass だけを import する(Resume / Transfer は typed_resume / typed_transfer が代わるので使わない)
-- defhandler / handle の節の effect(handle.hy の `_effect-form-binding`): 節が欄を束ねるか typed_resume /
-  typed_transfer で effect を読む時、`isinstance` で絞った後の `_doeff_effect` を `any_specialized(EffectType, *any_args,
-  **any_kwargs)` に束ね直す。pyright は総称 class の絞りの型引数を Unknown にする(`Race[Unknown]`)が、構成子の呼びは型引数を
-  すべて Any で解く(`Race[Any]`)ので、欄の型は effect の定義の型(`tuple[Task[Any] | Future[Any], ...]`)になり、Unknown の赤が出ない
-- deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
-  `_doeff_pytest`(実行時の展開は注記なしで interpreter の答えを返す)
-- defk の返り値: `:post` の `(: % T)` の T を注記する(この展開の defk は yield の無い
-  普通の関数なので、自分を呼び直す defk でも答えの型を推論に頼らず読める。実行時の defk は生成器なので付けない・
-  macros.hy の `_annotates-return?`)
-- defhandler の session val / session var(handle.hy の `_build-lazy-init-forms`): 名は初期化の値に
-  束ねる(Get を使わない)。session var の書き換え(`:=`・旧い `set!`)の Put / Some と初期化のキーの session_key は
-  `_doeff_<名>` で引き、module の頭の補助の import(SESSION_STATIC_IMPORTS)から取る
-- defmcp-tool: import を 1 つも出さない。handler の decorator は module の頭の `_doeff_do`、
-  tool の値の McpToolDef / McpParamSchema は `_doeff_<名>` で引き、module の頭の補助の import(MCP_STATIC_IMPORTS)から取る
+  (`_doeff_perform` is a statically declared function that returns the type of e's answer. doeff_hy/_static_types.pyi.
+  Same shape as `x = perform(e)` of Python's `@effectful`)
+- defk / defp / do! / deftest / fnk: take `do` from the typed `doeff_hy._static_types.do`
+  (the call result becomes a Program carrying the answer type T, i.e. core's `Expand[T, E]`)
+- `resume` / `transfer` of defhandler: core's `typed_resume` / `typed_transfer`
+  (match the answer value against T of the effect's `EffectBase[T]`)
+- defhandler / handle functions (handle.hy): the clause-dispatch function's argument `effect: object`
+  (the clause's `isinstance` narrows the type), `k: Continuation`, the answer `ClauseRun`; the body of
+  the function that wraps the handler `HandlerBody[HandledAnswer]` -> `HandledScope[HandledAnswer]`; the check of how clauses end is taken from the typed
+  static_types names (HANDLER_STATIC_NAMES). The doeff nodes import only static-nodes of the clause operation table (clause_ops.hy) and
+  the handler's own Pass (Resume / Transfer are replaced by typed_resume / typed_transfer, so they are not used)
+- the clause effect of defhandler / handle (`_effect-form-binding` in handle.hy): when a clause binds fields or reads the effect with typed_resume /
+  typed_transfer, `_doeff_effect` after narrowing by `isinstance` is rebound to `any_specialized(EffectType, *any_args,
+  **any_kwargs)`. pyright makes the narrowed type arguments of a generic class Unknown (`Race[Unknown]`), but a constructor call resolves all
+  type arguments to Any (`Race[Any]`), so the field type becomes the type in the effect's definition (`tuple[Task[Any] | Future[Any], ...]`) and no Unknown error appears
+- deftest functions: type annotations for fixture arguments (DEFTEST_FIXTURE_TYPES), return value None, and the pytest decorator is
+  `_doeff_pytest` (the runtime expansion returns the interpreter's answer without annotations)
+- return value of defk: annotate T of `(: % T)` in `:post` (the defk in this expansion is an
+  ordinary function with no yield, so even a defk that calls itself again can read its answer type without relying on inference. The runtime defk is a generator so this is not added;
+  `_annotates-return?` in macros.hy)
+- session val / session var of defhandler (`_build-lazy-init-forms` in handle.hy): names are
+  bound to the initial value (Get is not used). Put / Some for rewriting a session var (`:=` and the old `set!`) and session_key for the initialization key are
+  taken via `_doeff_<name>` and come from the helper imports at the head of the module (SESSION_STATIC_IMPORTS)
+- defmcp-tool: emits no imports at all. The handler's decorator is `_doeff_do` at the head of the module,
+  and the tool values McpToolDef / McpParamSchema are taken via `_doeff_<name>` from the helper imports at the head of the module (MCP_STATIC_IMPORTS)
 
-所見の受け渡し(ADR-DOE-HY-006): val / var の検査のうち展開を止めない物(setv の使用・同じ名前の
-束縛し直し・defhandler の旧い lazy-val / set!)は、macro が `report_findings` に渡す。doeff-hy-check が
-`collect_findings` の中で展開した時だけ集まり、警告 / 赤として出る(通常の import では捨てる)。
+Passing findings (ADR-DOE-HY-006): of the val / var checks, those that do not stop expansion (use of setv, rebinding of the same
+name, the old lazy-val / set! of defhandler) are passed by the macro to `report_findings`. They are collected only when doeff-hy-check
+expands inside `collect_findings`, and are shown as warnings / errors (discarded in ordinary imports).
 
-どちらの展開にも共通で型のための形を持つ所(実行時に評価されない・意味を変えない):
-引数と deff の戻り値の文字列の注記、結果の変数 `_contract_result: T`、補助の import
-(型は macros.pyi)。
+Places common to both expansions that have a shape for types (not evaluated at runtime, no change in meaning):
+string annotations of arguments and the return value of deff, the result variable `_contract_result: T`, and helper imports
+(types are in macros.pyi).
 """
 
 from collections.abc import Iterable, Iterator
@@ -48,8 +48,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-# 型検査のための展開の印は bytecode の包みが持つ — 包みの compile の口が、この展開で作った実行できない code に macro の依存の
-# 記録を付けず、.pyc と共有の code の置き場から普通の import へ渡らないようにするため(doeff_hy_bytecode_guard/_expansion.py)。
+# The mark for the type-checking expansion is held by the bytecode wrapper: so that the wrapper's compile entry does not attach macro dependency
+# records to the non-executable code produced by this expansion and it does not pass from the .pyc and shared code store into ordinary imports (doeff_hy_bytecode_guard/_expansion.py).
 from doeff_hy_bytecode_guard._expansion import TYPE_CHECK_EXPANSION as _STATIC_VIEW
 
 from doeff_hy._binding_forms import Finding
@@ -58,17 +58,17 @@ from doeff_hy._expansion_names import alias, import_source
 
 @dataclass(frozen=True)
 class FixtureType:
-    """pytest の fixture の名 1 つと、その値の型(doeff_hy/_static_types.pyi の型の名)。"""
+    """One pytest fixture name and the type of its value (a type name in doeff_hy/_static_types.pyi)."""
 
     fixture: str
     type_name: str
 
 
-#: deftest が作る検の関数の引数の型— fixture の名と static_types.pyi の型の名の組の唯一の定義元。
-#: 型検査のための展開では、deftest(macros.hy)が `deftest_fixture_annotation` で引数に注記 `_doeff_<型の名>` を付け、
-#: doeff-hy-check がその名を module の頭で static_types から import する(STATIC_HELPER_IMPORTS)。ここに無い名
-#: (利用者が conftest で定義した fixture・:params の引数)は、書き手の `#^ T 名` の注記をそのまま、無ければ `object` を付ける。
-#: pytest の組み込みのうち tmpdir は型(py.path.local)が pytest の公開の名に無いので載せない(object になる)。
+#: Argument types of the test functions deftest produces: the sole source of definition for pairs of fixture name and static_types.pyi type name.
+#: In the expansion for type checking, deftest (macros.hy) attaches the annotation `_doeff_<type name>` to arguments via `deftest_fixture_annotation`,
+#: and doeff-hy-check imports that name from static_types at the head of the module (STATIC_HELPER_IMPORTS). For names not here
+#: (fixtures the user defined in conftest, arguments of :params), the author's `#^ T name` annotation is used as is, or `object` if absent.
+#: Among pytest built-ins, tmpdir is not listed because its type (py.path.local) is not under a public pytest name (it becomes object).
 DEFTEST_FIXTURE_TYPES: tuple[FixtureType, ...] = (
     FixtureType("doeff_interpreter", "DeftestInterpreter"),
     FixtureType("tmp_path", "TmpPath"),
@@ -94,25 +94,25 @@ DEFTEST_FIXTURE_TYPES: tuple[FixtureType, ...] = (
 
 
 def deftest_annotation_name(type_name: str) -> str:
-    """static_types の型の名を、展開の中で使う名(module の頭の import の別名)にする。"""
+    """Turn a static_types type name into the name used inside the expansion (an alias for the import at the head of the module)."""
     return alias(type_name)
 
 
 def deftest_fixture_annotation(fixture: str) -> str:
-    """deftest の引数(mangle した名)に、型検査のための展開で付ける注記の名(表に無い名は `object`)。"""
+    """The annotation name attached to a deftest argument (mangled name) in the type-checking expansion (names not in the table get `object`)."""
     found = [entry.type_name for entry in DEFTEST_FIXTURE_TYPES if entry.fixture == fixture]
     return deftest_annotation_name(found[0]) if found else "object"
 
 
-#: defhandler / handle の型検査のための展開が参照する static_types の名— 展開の中では
-#: `_doeff_<名>` で引き、doeff-hy-check が module の頭で 1 度だけ import する(STATIC_HELPER_IMPORTS)。
-#: - 型: 節を回す関数の答え `ClauseRun`・続き `Continuation`・handler を被せる本文 `HandlerBody[HandledAnswer]` と
-#:   被せた結果 `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ型変数)。
-#: - 関数: 節の終わり方の検め(clause_endings.hy の check-clause-endings・check-clause-endings-once・fell-through)。
-#:   実体は .hy なので pyright から型が見えない — 実行時の展開は今までどおり clause_endings から import する。
-#: - 総称の effect の節: 構成子の呼びで型引数をすべて Any に解く `any_specialized` と、その呼びの引数 `any_args`・`any_kwargs`
-#:   (節の `isinstance` の絞りは総称 class の型引数を Unknown にし、欄の読みと typed_resume の引数が
-#:   一部 Unknown の赤になる。handle.hy の `_effect-form-binding`)。
+#: Names from static_types referenced by the type-checking expansion of defhandler / handle -- inside the expansion they are
+#: taken as `_doeff_<name>`, and doeff-hy-check imports them exactly once at the head of the module (STATIC_HELPER_IMPORTS).
+#: - Types: the clause-dispatch function's answer `ClauseRun`, the continuation `Continuation`, the body that wraps the handler `HandlerBody[HandledAnswer]`, and
+#:   the wrapped result `HandledScope[HandledAnswer]` (a type variable that carries the body's answer type as is).
+#: - Functions: the checks of how clauses end (check-clause-endings, check-clause-endings-once, fell-through in clause_endings.hy).
+#:   The implementation is .hy so pyright cannot see the types -- the runtime expansion imports from clause_endings as before.
+#: - Clauses for generic effects: `any_specialized`, which resolves all type arguments to Any in a constructor call, and its call arguments `any_args`, `any_kwargs`
+#:   (narrowing by a clause's `isinstance` makes the type arguments of a generic class Unknown, so field reads and typed_resume arguments
+#:   become partially-Unknown errors. `_effect-form-binding` in handle.hy).
 HANDLER_STATIC_NAMES: tuple[str, ...] = (
     "ClauseRun",
     "Continuation",
@@ -127,38 +127,38 @@ HANDLER_STATIC_NAMES: tuple[str, ...] = (
     "fell_through",
 )
 
-#: defeffect の型検査のための展開が参照する static_types の名(答えの分けを宣言した effect の `__iter__` の返り値 — declarations.hy)。
+#: Names from static_types referenced by the type-checking expansion of defeffect (the return value of `__iter__` for an effect that declares answer branches -- declarations.hy).
 DEFEFFECT_STATIC_NAMES: tuple[str, ...] = ("BoundRun",)
 
-#: for/do・traverse の型検査のための展開が参照する static_types の名— 件の引数を items の要素の
-#: 型へ読み直す `traverse_item`(macros.hy の _traverse-form)。展開の中では `_doeff_<名>` で引く。
+#: Names from static_types referenced by the type-checking expansion of for/do and traverse -- `traverse_item`, which
+#: re-reads the argument of the clause as the element type of items (_traverse-form in macros.hy). Inside the expansion it is taken as `_doeff_<name>`.
 TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
 
-#: defhandler の session val / session var の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く。
-#: - `Put` と `Some`: session var の書き換え(`:=` — binding_forms.py の `_assign`、旧い `set!` — macros.hy)だけが使う。
-#: - `session_key`: session val / session var の初期化のキーを作る(handle.hy の `_build-lazy-init-forms` — 旧い lazy は使わない)。
-#: handler ごとに import を出すと、:= も set! も無い handler の module で Put / Some が strict の「import が使われていない」の赤に
-#: なり、書き手は直せなかった(agora-controllers の日次 2026-10-11 16:00 の 7 file・14 件)。module の頭の補助の import に載せ、
-#: 読む時だけ置く。名に `_doeff_` を付けるのは、書き手の書いた Put / Some の import と 1 つの名を分け合わないため — 実行時の
-#: 展開も同じ別名を引く(expansion_names.py が別名の綴りと import の唯一の定義元)。
+#: Names referenced by the type-checking expansion of session val / session var of defhandler -- inside the expansion they are taken as `_doeff_<name>`.
+#: - `Put` and `Some`: used only for rewriting a session var (`:=` -- `_assign` in binding_forms.py; the old `set!` -- macros.hy).
+#: - `session_key`: builds the initialization key of session val / session var (`_build-lazy-init-forms` in handle.hy -- the old lazy is not used).
+#: Emitting the imports per handler caused strict "import not used" errors for Put / Some in handler modules with neither := nor set!,
+#: and the authors could not fix them (7 files, 14 instances in agora-controllers' daily run 2026-10-11 16:00). They are put in the helper imports at the head of the module and
+#: placed only when read. The `_doeff_` prefix on names is so that they do not share a single name with the author's own Put / Some imports -- the runtime
+#: expansion takes the same alias (expansion_names.py is the sole source of definition for the alias spelling and the import).
 SESSION_STATIC_IMPORTS: str = (
     import_source(("Some", "Put")) + "from doeff_hy._session import session_key as _doeff_session_key\n"
 )
 
-#: defmcp-tool の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く(macros.hy の defmcp-tool)。
-#: tool ごとに `from doeff.mcp import McpToolDef, McpParamSchema` を出していた頃は、doeff の module なので重ねの畳み
-#: (static_check.without_bookkeeping)にも掛からず、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、
-#: pyright が tool の値を Unknown にして、tool を使う側の型の誤りを黙って通していた。
-#: 名に `_doeff_` を付けるのは、書き手の書いた McpToolDef の import と 1 つの名を分け合わないため。
+#: Names referenced by the type-checking expansion of defmcp-tool -- inside the expansion they are taken as `_doeff_<name>` (defmcp-tool in macros.hy).
+#: When `from doeff.mcp import McpToolDef, McpParamSchema` was emitted per tool, it was a doeff module and so was not caught by the stack folding
+#: (static_check.without_bookkeeping) either; in a module or class with 65 tools, the declarations of McpToolDef exceeded 64,
+#: pyright made the tool values Unknown, and type mistakes on the side using the tools silently passed.
+#: The `_doeff_` prefix on names is so that they do not share a single name with the author's own McpToolDef import.
 MCP_STATIC_IMPORTS: str = "from doeff.mcp import McpToolDef as _doeff_McpToolDef, McpParamSchema as _doeff_McpParamSchema\n"
 
 
-#: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
-#: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
-#: 宣言が積み上がる。pyright は 1 つの名の宣言が 64 を超えると型の推論をやめて Unknown にするので、defk を 65 個
-#: 持つ module では `_doeff_do` が Unknown になり、defk の呼びが Program ではなく :post の型に見えていた
-#: (doeff-cluster の local.hy の `(Spawn (defk の呼び))` 4 か所)。静的な展開の macro は
-#: この import を出さない(macros.hy の `_helper-imports`・`_bind-yield`・defmcp-tool、handle.hy の `_do-import`)。
+#: Imports of helper names that macros reference in the type-checking expansion (once at the head of the module -- doeff-hy-check places them).
+#: The runtime expansion emits the same import for each defk / defhandler / `<-`, but doing the same in the static expansion piles up
+#: declarations on a single name. pyright stops type inference and makes it Unknown when the declarations of a name exceed 64, so in a module
+#: with 65 defks `_doeff_do` became Unknown, and defk calls looked like the :post type rather than a Program
+#: (4 places of `(Spawn (defk call))` in local.hy of doeff-cluster). Macros in the static expansion
+#: do not emit this import (`_helper-imports`, `_bind-yield`, defmcp-tool in macros.hy; `_do-import` in handle.hy).
 STATIC_HELPER_IMPORTS: str = (
     "from doeff_hy._static_types import do as _doeff_do, _doeff_perform"
     + "".join(
@@ -173,14 +173,14 @@ STATIC_HELPER_IMPORTS: str = (
     + "\n"
     "from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, "
     "_doeff_check_program_return\n"
-    # deftest の decorator(@pytest.mark.…)が引く pytest(deftest ごとの import が書き手の import と重ならないように)
+    # pytest pulled by deftest decorators (@pytest.mark.…) (so that the per-deftest import does not overlap with the author's import)
     "import pytest as _doeff_pytest\n" + SESSION_STATIC_IMPORTS + MCP_STATIC_IMPORTS
 )
 
-#: defeffect が答えの分け方(:absent・:failure・:value)を置く時に出す、別名の無い `import <module>`(declarations.hy の
-#: defeffect-form)。型検査のための展開の掃除が、`_doeff_` の別名で束ねる import(持ち主の package の定義の macro — doeff-cluster の
-#: defsystem など — が出す形)と同じく macro が合成する import として畳み、関数・class の本体の中の
-#: 物を module の段へ移す綴り。展開の綴りとの一致は tests/test_nested_definition_scope.py が関数の中の defeffect の投影で検める。
+#: A bare `import <module>` emitted when defeffect places answer branches (:absent, :failure, :value) (defeffect-form in declarations.hy).
+#: The cleanup in the type-checking expansion folds it as an import synthesized by a macro, like the import bound with a `_doeff_` alias (the form
+#: emitted by the owning package's defining macro -- e.g. defsystem in doeff-cluster), and this is the spelling that moves
+#: things inside function / class bodies up to module level. That it matches the expansion's spelling is checked by tests/test_nested_definition_scope.py through the projection of defeffect inside a function.
 DEFEFFECT_OUTCOMES_MODULE: str = "doeff_core_effects._outcomes"
 
 
@@ -201,7 +201,7 @@ _FINDINGS: ContextVar[list[Finding] | None] = ContextVar("doeff_hy_static_findin
 
 
 def report_findings(findings: Iterable[Finding]) -> None:
-    """macro の所見を、集めている doeff-hy-check へ渡す(集めていない時は捨てる — 展開は止めない)。"""
+    """Pass a macro's findings to the running doeff-hy-check (discarded when none is collecting -- expansion is not stopped)."""
     sink = _FINDINGS.get()
     if sink is not None:
         sink.extend(findings)
@@ -209,7 +209,7 @@ def report_findings(findings: Iterable[Finding]) -> None:
 
 @contextmanager
 def collect_findings() -> Iterator[list[Finding]]:
-    """この中で展開した macro の所見を集める(doeff-hy-check が 1 file の展開ごとに使う)。"""
+    """Collect the findings of macros expanded inside this (doeff-hy-check uses it per file expansion)."""
     found: list[Finding] = []
     token = _FINDINGS.set(found)
     try:

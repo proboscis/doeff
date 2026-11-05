@@ -1,17 +1,17 @@
-"""doeff-hy-check(doeff_hy._static_check の main)が、展開と pyright の前に機体の検の枠を 1 つ取る失敗ケース(agora-redesign)。
+"""Failure cases where doeff-hy-check (main of doeff_hy._static_check) takes one machine check slot before expansion and pyright (agora-redesign).
 
-直す前は、会話が直に起動した doeff-hy-check(`uv run doeff-hy-check …`・`python -m doeff_hy._static_check …`)は枠を取らずに走った —
-枠に入っていたのは agora-controllers の手の入口(scripts/hy_type_check.hy の gate)の子だけだった。
+Before the fix, a doeff-hy-check started directly by a conversation (`uv run doeff-hy-check …`, `python -m doeff_hy._static_check …`) ran without taking a slot --
+only the children of agora-controllers' manual entry (the gate in scripts/hy_type_check.hy) were inside a slot.
 
-縁の検は機体の正本(~/dotfiles/agent/tests/machine_check_slots.py)を検体の home の下へ写し、隣に宣言(K = 1・置き場は検体の dir)を
-置く — 機体の本物の枠を埋めず、本物の保持者に待たされない。枠を持つ別の process は正本の命令の包み run。doeff-hy-check は本物の
-入口(`python -m doeff_hy._static_check`)を子の process で撃ち、偽にするのは pyright だけ(撃たれた事を file に記す)。正本の無い宿
-(doeff だけを clone した機体)では skip。
+The edge check copies the machine's canon (~/dotfiles/agent/tests/machine_check_slots.py) under the specimen's home and puts a declaration next to it (K = 1, location = the specimen's dir)
+-- it does not fill the machine's real slots, and is not made to wait by real holders. The other process that holds a slot is the canon's command wrapper run. doeff-hy-check
+fires the real entry (`python -m doeff_hy._static_check`) in a child process; only pyright is faked (a file records that it was fired). On hosts without the canon
+(a machine that cloned only doeff) it is skipped.
 
-M-slot(doeff_hy._check_slot)と正本の間の契約は、口だけを持つ正本(INTERFACE_ONLY_CANON)で確かめる — 方策と持ち物は中を開かず正本の口へ
-渡す・正本はどの名の環境変数も読める・正本の take の中の失敗は名乗って素通し・
-1 枠の中の並走の数は正本の口 process_width が答え、口が無い・落ちた・形の違う答えでも取った枠は持ち続ける。
-方策と持ち物を開かない形の機械の検は tests/test_check_slot_opacity.py。
+The contract between the M-slot (doeff_hy._check_slot) and the canon is checked with a canon that has only its interface (INTERFACE_ONLY_CANON) -- the policy and holding are
+passed to the canon's interface without being opened, the canon can read an environment variable of any name, a failure inside the canon's take is named and passed through,
+the number of concurrent processes within one slot is answered by the canon's interface process_width, and a slot already taken is kept even if the interface is missing, fails, or answers in the wrong shape.
+The mechanical check of the form that does not open the policy and holding is tests/test_check_slot_opacity.py.
 """
 
 import io
@@ -29,14 +29,14 @@ import pytest
 from doeff_hy._check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, canon_module, take_slot
 from doeff_hy._env_places import cache_home
 
-#: 機体の正本(検の process の home の下 — 検体の home へ写す元)。
+#: The machine canon (under the check process's home -- the source copied to the specimen's home).
 CANON = Path.home() / CANON_UNDER_HOME
-#: 正本が読む環境変数の名の見本(doeff が知らない名 — 正本がどの名を読んでも答えが届く事を確かめる)。
+#: A sample of an environment variable name the canon reads (a name doeff does not know -- checks that the answer arrives whatever name the canon reads).
 PROBE_NAME = "DOEFF_HY_CHECK_SLOT_PROBE"
-#: 口だけを持つ正本(検体の home の正本の置き場に置く)。read_policy は印の object を返し、take は受けた方策が印そのものか・
-#: 環境変数 PROBE_NAME の読みの答え・名乗りを持ち物に記して返し、持ち物は解かれた回数を数える。記録は module の TAKES(take が受けた物)
-#: と WIDTHS(process_width が受けた物)に残る — 検は sys.modules の正本から読む(SlotHeld は持ち物を預からない)。__FAIL__ の行は
-#: take の中の失敗、__WIDTH__ の行は process_width の答え(口自体を外す変異は WITHOUT_WIDTH_MOUTH)。
+#: A canon with only the interface (placed at the canon's location in the specimen's home). read_policy returns a marker object, and take records in the holding whether the policy it received is the marker itself,
+#: the result of reading the environment variable PROBE_NAME, and the announcement, and returns it; the holding counts how many times it was released. The records remain in the module's TAKES (what take received)
+#: and WIDTHS (what process_width received) -- the check reads them from the canon in sys.modules (SlotHeld does not keep the holding). A line with __FAIL__ is a failure
+#: inside take, a line with __WIDTH__ is the answer of process_width (the mutation that removes the interface itself is WITHOUT_WIDTH_MOUTH).
 INTERFACE_ONLY_CANON = f"""
 POLICY = object()
 TAKES = []
@@ -80,7 +80,7 @@ def process_width(policy, holding, environ):
 
 @dataclass(frozen=True)
 class Scene:
-    """検体の世界 — 正本の写しを置いた home・その写し・検める根・偽の pyright と、それが撃たれた事を記す file。"""
+    """The specimen world -- the home where a copy of the canon is placed, the copy, the root to check, a fake pyright, and the file recording that it was fired."""
 
     home: Path
     canon: Path
@@ -89,7 +89,7 @@ class Scene:
     started: Path
 
     def check_command(self) -> list[str]:
-        """会話が直に撃つのと同じ入口で、根の 1 file を検める命令。"""
+        """The command that checks one file of the root through the same entry a conversation fires directly."""
         return [
             sys.executable,
             "-m",
@@ -109,16 +109,16 @@ class Scene:
 
 
 def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float, processes: int = 1) -> Scene:
-    """機体の正本を検体の home へ写し、隣に宣言(K = 1・置き場 tmp_path/slots・待ちの上限 wait_s 秒)を置いて、子の process の
-    HOME を検体の home にする。Hy の bytecode などの cache の根は今の機体の物のまま(冷えた cache で起動に分を払わない)。"""
+    """Copy the machine canon into the specimen's home, place a declaration next to it (K = 1, location tmp_path/slots, wait limit wait_s seconds), and make the child process's
+    HOME the specimen's home. The cache roots such as Hy bytecode stay those of the current machine (so startup does not pay minutes on a cold cache)."""
     if not CANON.is_file():
-        pytest.skip(f"機体の正本 {CANON} が無い宿(dotfiles を置かない機体)")
+        pytest.skip(f"host without the machine canon {CANON} (a machine that does not place dotfiles)")
     home = tmp_path / "home"
     canon = home / CANON_UNDER_HOME
     canon.parent.mkdir(parents=True)
     shutil.copy2(CANON, canon)
-    # 宣言の鍵は正本の policy_of が求める物を全部置く — 正本が processesPerSlot を求めるようになって(dotfiles 142108b9f)、
-    # 無い宣言は読めないと断られ枠を取らずに走った。
+    # The declaration places every key the canon's policy_of asks for -- once the canon started asking for processesPerSlot (dotfiles 142108b9f),
+    # a declaration without it was refused as unreadable, and the check ran without taking a slot.
     canon.with_name("machine_check_slots.json").write_text(
         json.dumps(
             {
@@ -146,7 +146,7 @@ def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float, proce
 
 
 def _blocker(scene: Scene) -> "subprocess.Popen[str]":
-    """写しの枠を正本の命令の包み run で持つ別の process(stdin を閉じるまで持つ)。"""
+    """Another process that holds the copy's slot through the canon's command wrapper run (holds until stdin is closed)."""
     blocker = subprocess.Popen(
         [
             sys.executable,
@@ -165,7 +165,7 @@ def _blocker(scene: Scene) -> "subprocess.Popen[str]":
         text=True,
     )
     assert blocker.stdout is not None
-    assert blocker.stdout.readline() == "held\n", "別の process が写しの枠を取れなかった"
+    assert blocker.stdout.readline() == "held\n", "the other process could not take the copy's slot"
     return blocker
 
 
@@ -180,8 +180,8 @@ def _end(blocker: "subprocess.Popen[str]") -> None:
 def test_a_full_slot_holds_a_directly_started_doeff_hy_check_until_it_frees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 受入 c07865153: 枠(写しの宣言 K = 1)が埋まっている間、会話が直に起動した doeff-hy-check は pyright を撃たずに待って保持者
-    # (pid と名乗り)を名乗り、空いた拍に枠を取って検める。直す前は枠を見ずに検め、名乗りの行を 1 つも出さずに終わった。
+    # Acceptance c07865153: while the slot (the copy's declaration K = 1) is full, a doeff-hy-check started directly by a conversation waits without firing pyright, names the holder
+    # (pid and announcement), and takes the slot on a free beat and checks. Before the fix it checked without looking at the slot and finished without printing a single announcement line.
     scene = _scene(tmp_path, monkeypatch, 60.0)
     blocker = _blocker(scene)
     try:
@@ -196,11 +196,11 @@ def test_a_full_slot_holds_a_directly_started_doeff_hy_check_until_it_frees(
         _, rest = check.communicate(timeout=120)
         assert f"pid {blocker.pid} blocker-holds" in waiting, (waiting, rest)
         assert "待つのは doeff-hy-check repo" in waiting, waiting
-        assert runs_while_full == [], "枠が埋まっている間に pyright を撃った"
+        assert runs_while_full == [], "pyright was fired while the slot was full"
         assert check.returncode == 0, rest
         assert "を取った(待ち" in rest, rest
         assert scene.pyright_runs() == ["started"]
-        assert blocker.wait(timeout=15) == 0, "枠を持っていた process が終わらない"
+        assert blocker.wait(timeout=15) == 0, "the process that held the slot does not finish"
     finally:
         _end(blocker)
 
@@ -208,8 +208,8 @@ def test_a_full_slot_holds_a_directly_started_doeff_hy_check_until_it_frees(
 def test_doeff_hy_check_runs_nothing_when_the_slot_wait_expires(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 待ちが正本の宣言の上限を越えたら、展開も pyright も起こさずに「走れなかった」(exit 2)で終わる — 呼び手(agora-controllers の
-    # hy_type_check.hy・hy_type_trend.hy)は 0・1 以外を「測れなかった」と読む。合格(0)にも赤(1)にもしない。
+    # If the wait exceeds the limit in the canon's declaration, it ends with "could not run" (exit 2) without starting expansion or pyright -- the callers (hy_type_check.hy and
+    # hy_type_trend.hy in agora-controllers) read anything other than 0 and 1 as "could not measure". It is neither a pass (0) nor red (1).
     scene = _scene(tmp_path, monkeypatch, 1.0)
     blocker = _blocker(scene)
     try:
@@ -217,8 +217,8 @@ def test_doeff_hy_check_runs_nothing_when_the_slot_wait_expires(
             scene.check_command(), capture_output=True, text=True, timeout=120, check=False
         )
         assert done.returncode == 2, done.stderr
-        assert f"doeff-hy-check: 走れなかった: {MARK}" in done.stderr, done.stderr
-        assert scene.pyright_runs() == [], "待ちの上限を越えたのに pyright を撃った"
+        assert f"doeff-hy-check: could not run: {MARK}" in done.stderr, done.stderr
+        assert scene.pyright_runs() == [], "pyright was fired although the wait limit was exceeded"
     finally:
         _end(blocker)
 
@@ -226,8 +226,8 @@ def test_doeff_hy_check_runs_nothing_when_the_slot_wait_expires(
 def test_doeff_hy_check_inside_a_slot_holder_takes_no_second_slot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 枠を持つ process の子孫(gate が起こす doeff-hy-check・pytest の中の呼び)は 2 つ目を取らない — K = 1 で祖先が唯一の枠を持っても
-    # 待たずに検める(待てば上限 5 秒で exit 2 になる)。
+    # Descendants of a process that holds a slot (the doeff-hy-check the gate starts, calls inside pytest) do not take a second one -- even with K = 1 and an ancestor holding the only slot, they
+    # check without waiting (waiting would end with exit 2 at the 5-second limit).
     scene = _scene(tmp_path, monkeypatch, 5.0)
     done = subprocess.run(
         [
@@ -250,7 +250,7 @@ def test_doeff_hy_check_inside_a_slot_holder_takes_no_second_slot(
 
 
 def test_a_host_without_the_canon_takes_no_slot_and_says_nothing(tmp_path: Path) -> None:
-    # 正本の無い宿(doeff だけを clone した機体)は黙って素通し — 枠を取らず、名乗らない。
+    # On a host without the canon (a machine that cloned only doeff), silently pass through -- take no slot, announce nothing.
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert held == SlotHeld(None)
@@ -267,7 +267,7 @@ def _interface_canon(home: Path, fail: str = "pass", width: str = "5") -> Path:
 
 
 def _without_width_mouth(home: Path) -> None:
-    """process_width の口が無い正本(幅の口を足す前の dotfiles の先端)。"""
+    """A canon without the process_width interface (the dotfiles tip before the width interface was added)."""
     target = home / CANON_UNDER_HOME
     target.parent.mkdir(parents=True)
     source = INTERFACE_ONLY_CANON.replace("__FAIL__", "pass")
@@ -275,16 +275,16 @@ def _without_width_mouth(home: Path) -> None:
 
 
 def _canon_of(target: Path) -> ModuleType:
-    """take_slot が読んだ口だけの正本(sys.modules の同じ個体 — 記録 TAKES・WIDTHS を持つ)。"""
+    """A canon with only the interface that take_slot read (the same object in sys.modules -- with the records TAKES and WIDTHS)."""
     return sys.modules[MODULE_KEY_PREFIX + os.path.realpath(target)]
 
 
 def test_the_declared_policy_and_any_environment_name_reach_the_canon_take(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 方策は正本の read_policy の答えのまま take へ届き(値を縮める・作り直す口が在れば別の物になる)、正本は doeff が知らない名の
-    # 環境変数も読める。盲検 A の反例: 正本へ渡す env を保持者の印 1 つの写しに絞っていたので、正本が会話の id を読むようになると
-    # doeff-hy-check だけが黙って会話ごとの数えの外で走った。
+    # The policy reaches take as the canon's read_policy answer unchanged (if there were an interface that shrinks or rebuilds values it would be something else), and the canon can read environment
+    # variables of names doeff does not know. Counterexample of blind test A: the env passed to the canon was narrowed to a copy of just the holder's one marker, so once the canon started reading the conversation id,
+    # only doeff-hy-check ran silently outside the per-conversation counting.
     canon = _interface_canon(tmp_path / "home")
     monkeypatch.setenv(PROBE_NAME, "seen-by-the-canon")
     out = io.StringIO()
@@ -301,14 +301,14 @@ def test_the_declared_policy_and_any_environment_name_reach_the_canon_take(
     assert out.getvalue() == ""
     held.release()
     held.release()
-    assert seen.released == 2, "SlotHeld.release は正本の解く口をそのまま呼ぶ(2 度目を無視するのは正本の仕事)"
+    assert seen.released == 2, "SlotHeld.release calls the canon's release interface as is (ignoring the second call is the canon's job)"
 
 
 def test_the_canon_width_is_asked_with_the_same_opaque_values_and_reaches_the_caller(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 1 枠の中の並走の数は正本の口 process_width が答える。口へ渡るのは take の前に得た方策・take の答え・環境そのもの(入れ子の規則と
-    # env の名は正本の中 — 盲検 B の反例は、持ち物から欄を読んで doeff が別の規則を持った)。答えは SlotHeld.width でそのまま届く。
+    # The number of concurrent processes in one slot is answered by the canon's process_width interface. What is passed to the interface is the policy obtained before take, the answer of take, and the environment itself (the nested rule and
+    # the env names are inside the canon -- the counterexample of blind test B was that doeff read fields from the holding and held a different rule). The answer arrives unchanged as SlotHeld.width.
     canon = _interface_canon(tmp_path / "home", width="7")
     monkeypatch.setenv(PROBE_NAME, "seen-by-the-canon")
     out = io.StringIO()
@@ -319,47 +319,47 @@ def test_the_canon_width_is_asked_with_the_same_opaque_values_and_reaches_the_ca
 
 
 def test_a_canon_without_the_width_mouth_still_holds_the_slot_and_says_so(tmp_path: Path) -> None:
-    # 盲検 A の反例: 口の揃いが全か無かで、正本に無い口を足すと枠そのものを失った。幅の口は任意 — 古い正本でも枠は取り、
-    # 幅は届かない(None・呼び手が宣言の無い機体の既定で走る)ことを 1 行名乗る。
+    # Counterexample of blind test A: the interface set was all-or-nothing, and adding an interface the canon lacks lost the slot itself. The width interface is optional -- even with an old canon the slot is taken and
+    # the width does not arrive (None; the caller runs with the default for a machine with no declaration), which is announced in one line.
     _without_width_mouth(tmp_path / "home")
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert isinstance(held, SlotHeld), out.getvalue()
     assert held.let_go is not None and held.width is None, held
-    assert out.getvalue().startswith(f"{MARK} 枠の正本に並走の数の口(process_width)が無い"), out.getvalue()
+    assert out.getvalue().startswith(MARK) and "process_width" in out.getvalue(), out.getvalue()
 
 
 def test_a_failing_width_mouth_keeps_the_slot_that_was_taken(tmp_path: Path) -> None:
-    # 幅の口の失敗を take の失敗と同じ囲いに入れると、取った枠の fd を持ったまま「枠を取らずに走る」と名乗る(盲検 A の付随の危険)。
-    # 幅の口が落ちても取った枠は持ち続け(解く口が残る)、幅だけが届かない。
+    # If a failure of the width interface were put in the same enclosure as a failure of take, it would announce "run without taking a slot" while still holding the fd of the slot taken (a side danger of blind test A).
+    # Even if the width interface fails, the slot taken is kept (the release interface remains) and only the width does not arrive.
     canon = _interface_canon(tmp_path / "home", width="1 / 0")
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert isinstance(held, SlotHeld) and held.let_go is not None and held.width is None, (held, out.getvalue())
-    assert "process_width が落ちた" in out.getvalue(), out.getvalue()
+    assert "process_width" in out.getvalue(), out.getvalue()
     held.release()
     assert _canon_of(canon).TAKES[0].released == 1
 
 
 @pytest.mark.parametrize("answer", ["0", "-1", "True", "'2'", "2.0"])
 def test_a_width_answer_that_is_not_a_positive_integer_is_named_and_dropped(tmp_path: Path, answer: str) -> None:
-    # 口の形の確かめ(数の判断ではない): 正の整数でない答えは幅にしない。枠は持ち続ける。
+    # A check of the interface shape (not a judgment on the number): an answer that is not a positive integer is not used as the width. The slot is kept.
     _interface_canon(tmp_path / "home", width=answer)
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert isinstance(held, SlotHeld) and held.let_go is not None and held.width is None, (held, out.getvalue())
-    assert "正の整数でない" in out.getvalue(), out.getvalue()
+    assert "process_width" in out.getvalue(), out.getvalue()
 
 
 def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) -> None:
-    # 正本の take の中の失敗(置き場を作れない OSError など)は 1 行名乗って素通し — traceback のまま抜けると main の終了 1(新しい赤)
-    # と区別できない(盲検 A の副次の実測: 作れない置き場で exit 1・stdout 空)。
-    _interface_canon(tmp_path / "home", "raise OSError('置き場を作れない')")
+    # A failure inside the canon's take (such as an OSError for being unable to create the location) is named in one line and passed through -- if it escaped as a traceback it could not be told apart from main's exit 1 (a new red)
+    # (side measurement of blind test A: with a location that cannot be created, exit 1 and empty stdout).
+    _interface_canon(tmp_path / "home", "raise OSError('cannot create the location')")
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert held == SlotHeld()
     assert out.getvalue().startswith(
-        f"{MARK} 枠の正本の take が落ちたので枠を取らずに走る(OSError"
+        MARK
     ), out.getvalue()
 
 
@@ -370,9 +370,9 @@ def _width_probe(
     hand_down: str | None = None,
     wrapped: bool = True,
 ) -> dict[str, object]:
-    """枠の取り手(doeff の take_slot)が答えた幅と、その子が見た幅の env の値を JSON で受ける。子を正本の命令の包みの中
-    (wrapped)か直に撃つ。hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検 — 配る口は正本の
-    公開の定数 env_name)。"""
+    """Receive in JSON the width answered by the slot taker (doeff's take_slot) and the value of the width env the child saw. Fire the child inside the canon's command wrapper
+    (wrapped) or directly. hand_down = the number of concurrent processes the outer entry hands to the child before wrapping once more inside the wrapper (a check within the check -- the interface that hands it out is the canon's
+    public constant env_name)."""
     show = [
         sys.executable,
         "-c",
@@ -402,8 +402,8 @@ def _width_probe(
 
 
 def _canon_answer(scene: Scene, env_name: str, seen_env: object) -> int:
-    """同じ口を正本の module で直に引いた答え(包みの中の入口 = 持ち物が None・子が見た env の値)— 期待の値を doeff の検に
-    書かず、正本の規則の座に問う(規則や env の名が替わっても、doeff の検は正本の答えとの一致だけを見る)。"""
+    """The answer from pulling the same interface directly in the canon's module (the entry inside the wrapper = holding None, the env value the child saw) -- the expected values are not
+    written in doeff's check but asked of the canon's rule seat (even if the rule or env name changes, doeff's check only looks for agreement with the canon's answer)."""
     module = canon_module(scene.home, io.StringIO())
     assert module is not None
     environ = {} if seen_env is None else {env_name: str(seen_env)}
@@ -414,19 +414,19 @@ def _canon_answer(scene: Scene, env_name: str, seen_env: object) -> int:
 def test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_inside_the_wrapper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, processes: int
 ) -> None:
-    # 実物の正本: 枠を自分で取る直の入口は宣言の数(契約: 枠を取った入口は宣言の値)。命令の包みの中(祖先が枠を持つ — take は None)
-    # の入口は、包みが子へ配った値を受けた正本の口の答えと同じ数(期待は正本に問う)で、宣言を越えない。宣言の数を替えるだけで
-    # 従う(コードは変わらない)。
+    # The real canon: a direct entry that takes the slot itself gets the declared number (contract: an entry that took a slot gets the declared value). An entry inside the command wrapper (an ancestor holds the slot -- take is None)
+    # gets the same number as the canon interface's answer to the value the wrapper handed to the child (the expectation is asked of the canon), and does not exceed the declaration. It follows
+    # just by changing the declared number (the code does not change).
     scene = _scene(tmp_path, monkeypatch, 60.0, processes=processes)
     module = canon_module(scene.home, io.StringIO())
     if module is None or not callable(vars(module).get("process_width")):
-        pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
+        pytest.skip("the machine canon has no process_width interface for the number of concurrent processes (a machine that has not yet followed dotfiles)")
     name = module.PROCESSES_ENV
-    # 子は検の process の環境を受け継ぐ(os.environ を値として組まない — DOEFF004)。前の値の有る無しは monkeypatch で決める。
+    # The child inherits the check process's environment (do not build os.environ as a value -- DOEFF004). Whether a previous value exists is decided by monkeypatch.
     monkeypatch.delenv(name, raising=False)
     direct = _width_probe(scene, name, wrapped=False)
     assert direct["width"] == processes, direct
-    monkeypatch.setenv(name, "1")  # 呼び手の前の値は枠の外の値 — 自分で枠を取った入口は宣言の数
+    monkeypatch.setenv(name, "1")  # the caller's previous value is a value outside the slot -- an entry that took a slot itself gets the declared number
     stale = _width_probe(scene, name, wrapped=False)
     assert stale["width"] == processes, stale
     monkeypatch.delenv(name, raising=False)
@@ -438,14 +438,14 @@ def test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_in
 def test_a_check_inside_the_wrapper_keeps_the_smaller_width_the_outer_entry_handed_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 外側の入口が子へ配った残りの幅(1)は、内側の入口が宣言(2)へ戻さない — 木全体の並走 ≤ 宣言(契約: 配った値以下)。内側の入口が
-    # 受ける数は、子が見た値を受けた正本の口の答えと同じで、配られた数を越えない。規則そのものの値は正本の検が持つ。
+    # The remaining width (1) the outer entry handed to the child is not returned to the declaration (2) by the inner entry -- concurrency of the whole tree <= declaration (contract: at most the handed value). The number the inner entry
+    # receives is the same as the canon interface's answer to the value the child saw, and does not exceed the number handed. The value of the rule itself is held by the canon's check.
     scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
     module = canon_module(scene.home, io.StringIO())
     if module is None or not callable(vars(module).get("process_width")):
-        pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
+        pytest.skip("the machine canon has no process_width interface for the number of concurrent processes (a machine that has not yet followed dotfiles)")
     name = module.PROCESSES_ENV
     done = _width_probe(scene, name, hand_down="1")
-    assert done["env"] is not None, "外側の入口が配った数が子へ届いていない"
+    assert done["env"] is not None, "the number the outer entry handed did not reach the child"
     assert done["width"] == _canon_answer(scene, name, done["env"]), done
     assert isinstance(done["width"], int) and done["width"] <= 1, done

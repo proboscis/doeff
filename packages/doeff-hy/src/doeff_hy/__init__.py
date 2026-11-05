@@ -20,8 +20,8 @@ import hy.importer
 from doeff_hy._ast_unparse import install as _install_ast_unparse
 from doeff_hy._light_stack import install as _install_light_stack
 
-# macro が変わった Hy の module の古い bytecode を使わない。本来の入れ所は venv の起動時の
-# doeff_hy_bytecode_guard.pth で、ここは .pth が読まれない起動(python -S 等)のための 2 つ目(2 度目は何もしない)。
+# Do not use stale bytecode of Hy modules whose macros have changed. The primary place for this is the venv startup
+# doeff_hy_bytecode_guard.pth; this is the second one, for startups where .pth is not read (python -S etc.) (the second call does nothing).
 doeff_hy_bytecode_guard.install()
 
 # Register .hyk and .hyp as Hy source extensions
@@ -40,19 +40,19 @@ def _could_be_hy_src(filename):
 
 hy.importer._could_be_hy_src = _could_be_hy_src
 
-# Hy の `ast.unparse` の差し替えが Python 3.14 の annotationlib と組むと止まらない再帰になる。
-# 定数の値を複製しない同じ変換へ置き換える(理由と上流の報告は doeff_hy/_ast_unparse.py)。
+# Hy's replacement of `ast.unparse` recurses without end when combined with Python 3.14's annotationlib.
+# Replace it with the same conversion that does not duplicate constant values (reason and upstream report: doeff_hy/_ast_unparse.py).
 _install_ast_unparse()
 
-# Hy の require 系が呼ぶ inspect.stack を軽い版へ(Hy 以外の呼び出しは元の関数。理由は doeff_hy/_light_stack.py)。
+# Swap the inspect.stack called by Hy's require family for a lighter version (non-Hy callers get the original function; reason: doeff_hy/_light_stack.py).
 _install_light_stack()
 
 
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
-# defrecord の展開が呼ぶ doeff_hy._record_runtime の部品(RECORD_DOC・record_repr ほか)は入口から出さない — 展開は `_` の
-# path を読む。doeff_hy._ast_unparse の install は doeff-hy-pytest の plugin が `_` の path から読む。
+# The parts of doeff_hy._record_runtime that the defrecord expansion calls (RECORD_DOC, record_repr, etc.) are not exposed from the entry point — the expansion reads the `_`
+# path. The doeff-hy-pytest plugin reads the install of doeff_hy._ast_unparse from the `_` path.
 if TYPE_CHECKING:
     from doeff_hy._http import http_get as http_get
     from doeff_hy._json_lines import jsonl_lines as jsonl_lines
@@ -81,7 +81,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "type_check": "doeff_hy._typecheck",
     "type_checks_off": "doeff_hy._typecheck_handlers",
     "type_checks_on": "doeff_hy._typecheck_handlers",
-    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    # program helpers used by outside repos (ADR-DOE-API-001 R18, R25)
     "http_get": "doeff_hy._http",
     "jsonl_lines": "doeff_hy._json_lines",
     "whole_lines_end": "doeff_hy._json_lines",

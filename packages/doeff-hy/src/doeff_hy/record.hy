@@ -1,26 +1,26 @@
-;;; 記録の足場 — 手番の記録(TurnRecord 相当)の書き手が使う macro(柵 5)。
+;;; Record scaffolding — macros used by writers of turn records (the TurnRecord equivalent) (fence 5).
 ;;;
-;;; 出自 = agora-redesign 段 7 lane 7c(決定 1.4 の柵「記録の足場の macro」・
-;;; 「新しい macro は doeff-hy に投影の規則と一緒に」・
+;;; Origin = agora-redesign stage 7 lane 7c (the fence "record-scaffolding macro" of decision 1.4,
+;;; "new macros go into doeff-hy together with projection rules" ·
 ;;; `docs/plans/decisions-merge-2026-09-12.md`)。
 ;;;
-;;; 何のための足場か: 手番の記録の書き手(agentd)は 1 手番につき 1 行を書く。
-;;; その行を裸の dict で組むと、柵 2(`"value"`・Any・object・裸の dict / list の
-;;; 禁止)を破り、欄の名前の綴り違いも型の違いも実行時まで見えない。
-;;; `defrecord` は欄の名前と型を宣言した凍結の record 型を 1 行で建てる —
-;;; 書き手は dict ではなくその型を作る。
+;;; What the scaffolding is for: the writer of turn records (agentd) writes one row per turn.
+;;; Building that row as a bare dict breaks fence 2 (ban on `"value"`, Any, object, bare dict / list),
+;;; and misspelled field names or wrong types stay invisible until runtime.
+;;; `defrecord` builds a frozen record type that declares field names and types in one line —
+;;; the writer builds that type instead of a dict.
 ;;;
-;;; 記録の**中身**(どの欄が在るか)はここが決めない: 手番の記録の schema の
-;;; 正本は ACP の `docs/contracts/` で、書き手はそこから写した欄を宣言する。
-;;; ここは形の足場だけを持つ(道具の層)。
+;;; The **contents** of a record (which fields exist) are not decided here: the canonical schema of the turn record
+;;; is ACP's `docs/contracts/`, and the writer declares the fields copied from there.
+;;; This holds only the scaffolding of the shape (tool layer).
 ;;;
-;;; 投影の規則(この macro が静的検査を通れる理由): `defrecord` は展開の時に
-;;; 頭の辞書を読む計算をするので template macro ではない(defenum と同じ「fixed」)。
-;;; 共通の品質検査の側に専用の読み方の規則(`quality.hy_record` の
-;;; record_declaration)が在り、この module の頭注の展開と 1 対 1 に対応する。
-;;; 使う側の module 契約に宣言は要らない — 由来が固定表(`doeff_hy.record`)に載っている。
+;;; Projection rule (why this macro can pass static checking): `defrecord` computes by reading
+;;; the header dict at expansion time, so it is not a template macro (the same "fixed" as defenum).
+;;; On the shared quality check side there is a dedicated reading rule (`quality.hy_record`'s
+;;; record_declaration), which corresponds one to one with the expansion in this module's header note.
+;;; The using module's contract needs no declaration — its origin is in the fixed table (`doeff_hy.record`).
 ;;;
-;;; 使い方(頭の辞書の無い形 — 前からの形そのまま):
+;;; Usage (the form without a header dict — the same as before):
 ;;;   (require doeff-hy.record [defrecord])
 ;;;   (import dataclasses [dataclass])
 ;;;
@@ -32,72 +32,72 @@
 ;;;
 ;;;   (TurnRecordRow :conversation-id c :turn-id t :phase "Running" :ended-at None)
 ;;;
-;;; 展開: 型検査の投影(static-view)では (defclass [(dataclass :frozen True :kw-only True)] Name [] 欄 …)。
-;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
-;;; seal-record)— dataclass には欄の表だけを作らせ、__init__(kw-only)・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
-;;; 展開が書く(関数が module の code として .pyc に入り、読み込みの時に dataclass が関数の source を compile しない — 1 型 約 1 ms →
-;;; 約 0.1 ms)。型ごとに書く関数は __init__(注記なし)・__eq__・__hash__ と :check の __post_init__ だけで、
-;;; __repr__ と凍結の __setattr__ / __delattr__ は record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
-;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った)。
-;;; 値は欄を slots に持ち、__dict__ を持たない(値 1 つごとの __dict__ が本番の画面で 約 0.6 GB を持った —
-;;; 欄 35 の型で 1 個 約 2,000 → 約 410 bytes)。弱い参照の口(__weakref__)は残す。欄の既定値は欄の表(__dataclass_fields__)が持ち、
-;;; 型の属性からは読めない(dataclass の slots と同じ)。pickle と copy は共有の __setstate__ が凍結を通らずに値を戻す。
-;;; 振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
-;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
-;;; 本体が __init__ ほかを自分で書く)は投影と同じ展開(dataclass が関数を作る)にする。
-;;; `dataclass` は使う側の scope の名前を指す(使う側が import する)。
-;;; 関数の本体の中に書いた defrecord・defwire の実行の展開は、展開の import(doeff_hy ほか)と型と記帳をすぐ呼ぶ関数に入れて
-;;; (setv Name ((fn [] … Name))) と型の名だけを束ねる(doeff_hy.macros の _scoped-definition — import した名が外の関数の局所の名に
-;;; ならないため・tests/test_nested_definition_scope.py)。型の __qualname__ には包んだ関数の名が入る
-;;; (defwire は中の defrecord がもう 1 度包むので 2 つ)。module と class の本体と型検査の投影は包まない。
+;;; Expansion: in the type-check projection (static-view), (defclass [(dataclass :frozen True :kw-only True)] Name [] fields …).
+;;; At runtime, (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] Name [] fields … functions …) plus finishing (seal-record of record_runtime) —
+;;; dataclass is made to build only the table of fields, and __init__ (kw-only), __repr__, __eq__, __hash__, and the frozen __setattr__ / __delattr__ are
+;;; written by the expansion (the functions go into the .pyc as module code, and dataclass does not compile function source at load time — about 1 ms per type →
+;;; about 0.1 ms). The functions written per type are only __init__ (no annotations), __eq__, __hash__, and the __post_init__ of :check;
+;;; __repr__ and the frozen __setattr__ / __delattr__ point at the one shared set in record_runtime, and the type holds the sequence of field names as a tuple. The docstring is not put in the runtime expansion, and __doc__ is a
+;;; shared descriptor built from the field names (per-type functions and strings held over 10 MB in a job's memory).
+;;; Values hold fields in slots and have no __dict__ (a __dict__ per value held about 0.6 GB on the production screen —
+;;; for a type with 35 fields, about 2,000 → about 410 bytes each). The weak-reference slot (__weakref__) remains. Field defaults live in the field table (__dataclass_fields__) and
+;;; cannot be read from the type's attributes (same as dataclass with slots). pickle and copy restore values with the shared __setstate__ without going through the freeze.
+;;; Behavior is the same as standard dataclass (frozen, kw_only) (tests/defrecord_shape_deftests.hy
+;;; checks this). When the expansion cannot fully read the shape of a field (a field passed through a name, a non-literal :init / :repr / :compare / :hash, a field named self / object,
+;;; or a body that writes __init__ and the like itself), it uses the same expansion as the projection (dataclass builds the functions).
+;;; `dataclass` points at a name in the using side's scope (the using side imports it).
+;;; The runtime expansion of a defrecord or defwire written inside a function body is put in an immediately-called function holding the expansion's imports (doeff_hy and others), the type, and bookkeeping,
+;;; and only the type name is bound with (setv Name ((fn [] … Name))) (_scoped-definition of doeff_hy.macros — so imported names do not
+;;; become locals of the outer function; tests/test_nested_definition_scope.py). The name of the wrapping function goes into the type's __qualname__
+;;; (for defwire there are two, since the inner defrecord wraps once more). Module and class bodies and the type-check projection are not wrapped.
 ;;;
 ;;; ---------------------------------------------------------------------------
-;;; 頭の辞書 {:tags … :check […]} — 定義のタグと作る時の検め(どちらも省ける)
+;;; Header dict {:tags … :check […]} — the definition tags and the checks at construction (both may be omitted)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 決まり: 道具が読む宣言は def*・データの型は defrecord・振る舞いを持つ class は作らない。
-;;; dataclass の `__post_init__` に defn を書いて値を検めていた形を、defrecord の節へ移す。
+;;; Rule: declarations that tools read are def*; data types are defrecord; no classes that carry behavior are made.
+;;; The form that wrote a defn in a dataclass `__post_init__` to check values moves into a defrecord clause.
 ;;;
 ;;;   (setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
 ;;;
 ;;;   (defrecord ChatId
-;;;     "chat の id"
+;;;     "chat id"
 ;;;     {:tags  {:context "chat" :role "type"}
 ;;;      :check [(CHAT-ID-PATTERN.fullmatch value)]}
 ;;;     (#^ str value))
 ;;;
-;;; - 頭の辞書は名前(と docstring)の直後に 1 つ。受ける鍵は :tags・:check・:failure だけ(他の鍵は展開の誤り)。
-;;; - :tags は defk / deff と同じ契約({:context "…" :role "…"}・役は declarations.ROLES)。
-;;;   class の属性 `__doeff_tags__`(DefinitionTags)に残す。
-;;; - :check は真偽の式の list。各式は欄の名前で欄を参照し、作る時に書いた順に評価する。
-;;;   偽なら ValueError「ChatId の欄 value が検め (CHAT-ID-PATTERN.fullmatch value) で落ちた: value='x'」。
-;;;   欄を 1 つも参照しない式・型の (: 欄 型)(型は欄の注記で書く)は展開の誤り。
-;;;   式の綴りの列を class の属性 `__doeff_checks__` に残す。
-;;; - :failure True は「この型は失敗の値」の印(値は字面の True / False だけ)。class の属性 `__doeff_failure__` に残し、
-;;;   doeff-linter が実行せずに読む(手書きの失敗の再送出 DOEFF122 が、match の腕の型を失敗の型と知るため — 型の名から
-;;;   推し量らない。ADR-DOE-HY-007 R10)。effect の答えの失敗は defeffect の :failure / :absent で宣言する(ADR-DOE-CORE-EFFECTS-003
-;;;   R5)— こちらは effect の答えでない値(検めの関数が返す断りなど)のための印。
+;;; - The header dict is one, right after the name (and docstring). The only keys accepted are :tags, :check, and :failure (other keys are an expansion error).
+;;; - :tags has the same contract as defk / deff ({:context "…" :role "…"}; roles are declarations.ROLES).
+;;;   It is kept in the class attribute `__doeff_tags__` (DefinitionTags).
+;;; - :check is a list of boolean expressions. Each expression refers to fields by field name, and is evaluated in the order written at construction.
+;;;   If false, ValueError "ChatId: field value failed check (CHAT-ID-PATTERN.fullmatch value): value='x'".
+;;;   An expression that references no field, or a type (: field type) (types are written in the field annotation), is an expansion error.
+;;;   The sequence of expression spellings is kept in the class attribute `__doeff_checks__`.
+;;; - :failure True marks "this type is a failure value" (the value is only a literal True / False). It is kept in the class attribute `__doeff_failure__`, and
+;;;   doeff-linter reads it without running anything (so that DOEFF122, hand-written failure re-raising, knows the type of a match arm is a failure type — not
+;;;   guessed from the type name. ADR-DOE-HY-007 R10). The failure of an effect answer is declared with defeffect's :failure / :absent (ADR-DOE-CORE-EFFECTS-003
+;;;   R5) — this one is a marker for values that are not effect answers (such as a refusal returned by a check function).
 ;;;
-;;; 検めに使う述語の置き場(設計の要): __post_init__ は Program を実行できないので、
-;;; :check から defk は呼べない(呼ぶと Program が返り、真に見えて黙って通る — だから
-;;; 結果が Program / effect なら TypeError で止める)。述語は関数にせず、
-;;;   1. 式を :check にそのまま書く(`(<= start end)`・`(in kind KINDS)`)。
-;;;   2. 式が使う値は module の定数に置く(正規表現・閉じた集合 — `(setv CHAT-ID-PATTERN …)`)。
-;;;   3. 同じ検めを別の型でも使いたい時は、その欄の型を検め済みの record にする
-;;;      (`#^ ChatId chat` — 文字列の欄に同じ述語を並べない)。
-;;; どうしても名前つきの述語が要る時だけ、純粋な deff に理由の註
-;;; (`; defk にできない: defrecord の :check が作る時に呼ぶ`)と :tags {… :role "judgment"} を付ける。
+;;; Where predicates used in checks live (the key to the design): __post_init__ cannot run a Program, so
+;;; a defk cannot be called from :check (calling it returns a Program that looks true and silently passes — so
+;;; a result that is a Program / effect stops with a TypeError). Do not make predicates functions:
+;;;   1. Write the expression directly in :check (`(<= start end)`, `(in kind KINDS)`).
+;;;   2. Put the values the expression uses in module constants (regular expressions, closed sets — `(setv CHAT-ID-PATTERN …)`).
+;;;   3. When another type wants the same check, make that field's type an already-checked record
+;;;      (`#^ ChatId chat` — do not line up the same predicate on string fields).
+;;; Only when a named predicate is truly needed, add a reason comment to a pure deff
+;;; (`; cannot be a defk: called by defrecord's :check at construction`) and :tags {… :role "judgment"}.
 ;;;
-;;; 展開(頭の辞書つき):
+;;; Expansion (with header dict):
 ;;;   (do (import doeff_hy._declarations doeff_hy.record doeff_hy._record_check)
 ;;;       (defclass [(dataclass :frozen True :kw-only True)] ChatId []
-;;;         "chat の id"
+;;;         "chat id"
 ;;;         ((annotate value str))
 ;;;         (defn __post-init__ [self]
 ;;;           (setv value self.value)
 ;;;           (setv _verdict (CHAT-ID-PATTERN.fullmatch value))
-;;;           (when (is-not _verdict True)   ; 答えが True そのものなら残りは要らない(#2421)
-;;;             (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… Program を返した …")))  ; 実行時の展開だけ
+;;;           (when (is-not _verdict True)   ; if the answer is exactly True the rest is unnecessary (#2421)
+;;;             (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… returned a Program …")))  ; runtime expansion only
 ;;;             (when (not _verdict)
 ;;;               (doeff_hy._record_check.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
 ;;;                                                     (bool _verdict) {"value" value})))
@@ -106,101 +106,101 @@
 ;;;       (setattr ChatId "__doeff_checks__" #("(CHAT-ID-PATTERN.fullmatch value)")))
 ;;;
 ;;; ---------------------------------------------------------------------------
-;;; `defwire` — JSON の境目の型(JSON を解いて確かめる型を 1 つの宣言で建てる)
+;;; `defwire` — a type at the JSON boundary (builds a type that decodes and validates JSON in one declaration)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 決まり: 素の dict を直に使わせず pydantic のように解いて確かめる。そのための def* の macro を置く。
-;;; 決まりの正本 = ADR-DOE-HY-007 R8。
+;;; Rule: do not let bare dicts be used directly; decode and validate like pydantic. The def* macro for that is placed here.
+;;; The canonical source of the rule = ADR-DOE-HY-007 R8.
 ;;;
-;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、
-;;; 欄の名の綴り違いも型の違いも使う所まで見えない。defwire は JSON の形を型として宣言し、解き手
-;;; (doeff_hy._wire の parse / dump — doeff_hy/_wire_codec.py の自前の型の木)で境目の 1 か所で一度に解いて確かめる。
+;;; What the scaffolding is for: if JSON from outside is carried as JsonValue (a renamed bare dict) and taken apart by hand at each reading site,
+;;; misspelled field names and wrong types stay invisible until the point of use. defwire declares the JSON shape as a type, and the decoder
+;;; (parse / dump of doeff_hy._wire — the in-house type tree of doeff_hy/_wire_codec.py) decodes and validates once at one place on the boundary.
 ;;;
 ;;;   (require doeff-hy.record [defwire])
 ;;;   (import dataclasses [dataclass])
 ;;;   (import doeff_hy._wire [parse dump Malformed])
 ;;;
 ;;;   (defwire LandingRow
-;;;     "取り込みの台帳の 1 行(記録の service が返す JSON)"
+;;;     "one row of the ingest ledger (JSON returned by the record service)"
 ;;;     {:tags {:context "land-notice" :role "type"} :names :camel :unknown :reject
 ;;;      :check [(.startswith lane-id "L")]}
 ;;;     (#^ str lane-id)
 ;;;     (#^ LandState state)
 ;;;     (setv #^ (| int None) landed-at None))
 ;;;
-;;;   (<- row (parse LandingRow raw))   ; 答え = LandingRow の値か Malformed(どの型の・どの欄が・なぜ)
-;;;   (<- raw (dump row))               ; JSON の値へ(送り出す foundation だけ)
+;;;   (<- row (parse LandingRow raw))   ; answer = a LandingRow value or Malformed (which type, which field, why)
+;;;   (<- raw (dump row))               ; to a JSON value (only the foundation that sends out)
 ;;;
-;;; - 欄の形は defrecord と同じ(`#^ T x`・`(#^ T x)`・既定値は `(setv #^ T x 値)`)。展開は defrecord をそのまま使う
-;;;   (凍結・キーワード引数だけ・:tags・:check)ので、`dataclass` は defrecord と同じく使う側が import する。
-;;; - 頭の辞書は必須。受ける鍵は :names・:unknown・:tags・:check だけ。
-;;;   :names(必須)= wire の欄の名の写し。:camel(lane-id → laneId)・:snake(lane_id)・:kebab(lane-id)・
-;;;     明示の辞書 {lane-id "LANE" …}(欄を全部ちょうど名指す)。区切りは - と _。Python の欄の名では受けない。
-;;;   :unknown = 知らない欄の扱い。:reject(既定 — Malformed)か :ignore(読み捨てる)。
-;;; - 型の検めは厳しい(文字列を数にしない・真偽を数にしない・配列は tuple の欄・defenum の欄は値の綴り)。
-;;;   入れ子の欄の型も defwire の型にする(素の defrecord は wire の形を持たない)。
+;;; - Field shapes are the same as defrecord (`#^ T x`, `(#^ T x)`, defaults as `(setv #^ T x value)`). The expansion uses defrecord as is
+;;;   (frozen, keyword arguments only, :tags, :check), so `dataclass` is imported by the using side, as with defrecord.
+;;; - The header dict is required. The only keys accepted are :names, :unknown, :tags, and :check.
+;;;   :names (required) = the copy of wire field names. :camel (lane-id → laneId), :snake (lane_id), :kebab (lane-id), or
+;;;     an explicit dict {lane-id "LANE" …} (naming all fields exactly). Separators are - and _. Python field names are not accepted.
+;;;   :unknown = how unknown fields are handled. :reject (default — Malformed) or :ignore (discard).
+;;; - Type checks are strict (a string does not become a number, a bool does not become a number, arrays are tuple fields, defenum fields take the value spelling).
+;;;   Nested field types must also be defwire types (a bare defrecord has no wire shape).
 ;;;
-;;; 展開(上の LandingRow):
+;;; Expansion (LandingRow above):
 ;;;   (do (import typing [ClassVar :as _doeff-ClassVar])
 ;;;       (import doeff_hy._wire)
-;;;       (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […] :class-vars […]} 欄 …)
+;;;       (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […] :class-vars […]} fields …)
 ;;;       (setattr LandingRow "__pydantic_config__" (doeff_hy._wire.wire-config {"lane_id" "laneId" …} "reject"))
 ;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy._wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject")))
 ;;;
-;;; 投影の規則: defrecord と同じ形の class に写す(:names と :unknown は型の形を変えない)— 共通の品質検査の
-;;; `quality.hy_record` の同じ便で持つ。hy-index は kind defrecord として読む(doeff-indexer の record_def)。
+;;; Projection rule: maps to a class of the same shape as defrecord (:names and :unknown do not change the type's shape) — held in the same lane of the shared quality check's
+;;; `quality.hy_record`. hy-index reads it as kind defrecord (record_def of doeff-indexer).
 ;;;
 ;;; ---------------------------------------------------------------------------
-;;; `defenum` — 閉じた値の集合(文字列の Enum)を 1 行で建てる
+;;; `defenum` — build a closed set of values (a string Enum) in one line
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 決まり: enum も macro で建てる。
-;;; 設計の記録 = `docs/design/defenum/design.md`(値の綴り・StrEnum・網羅の確認)。
+;;; Rule: enums are also built with a macro.
+;;; Design record = `docs/design/defenum/design.md` (value spelling, StrEnum, exhaustiveness check).
 ;;;
-;;; 何のための足場か: 「決まった数の名前のどれか」を裸の文字列で持つと、綴り違いが
-;;; 実行時まで見えず、`match` の分岐の漏れも型検査で捕まらない。`defenum` は
-;;; `enum.StrEnum` の class を建てる — 値は文字列なのでそのまま JSON に書け、
-;;; 型検査は member の集合を知っているので `match` の網羅を確かめられる。
+;;; What the scaffolding is for: holding "one of a fixed number of names" as a bare string makes misspellings
+;;; invisible until runtime, and missed `match` branches are not caught by type checking. `defenum`
+;;; builds an `enum.StrEnum` class — values are strings, so they can be written to JSON as is,
+;;; and the type checker knows the set of members, so it can check `match` exhaustiveness.
 ;;;
-;;; 使い方:
+;;; Usage:
 ;;;   (require doeff-hy.record [defenum])
 ;;;   (import enum [StrEnum])
 ;;;
 ;;;   (defenum PlacementMismatch KEY CONVERSATION KIND PHASE CANCELLED GUARANTEED)
-;;;   (defenum Phase (PENDING "Pending") (RUNNING "Running"))   ; 値を明示する形
+;;;   (defenum Phase (PENDING "Pending") (RUNNING "Running"))   ; form with explicit values
 ;;;
-;;; 展開(値は member の名前から作る — 小文字にし、`_` / `-` を `-` にそろえる):
+;;; Expansion (values are derived from member names — lowercased, with `_` / `-` normalized to `-`):
 ;;;   (defclass PlacementMismatch [StrEnum]
 ;;;     (setv KEY "key" CONVERSATION "conversation" … GUARANTEED "guaranteed"))
-;;;   `IN-PROGRESS` / `IN_PROGRESS` → 属性 `IN_PROGRESS`・値 `"in-progress"`。
-;;;   `(NAME "value")` の形の member は値をそのまま使う(k8s の `"Running"` のように
-;;;   外の約束で綴りが決まっている値のため)。
+;;;   `IN-PROGRESS` / `IN_PROGRESS` → attribute `IN_PROGRESS`, value `"in-progress"`.
+;;;   A member of the form `(NAME "value")` uses the value as is (for values whose spelling is fixed
+;;;   by an outside agreement, like k8s `"Running"`).
 ;;;
-;;; 展開の時に拒むもの(Enum が黙って別名にする・読み違える形を先に止める):
-;;;   member が 1 つも無い / 名前が英字で始まる `[A-Za-z][A-Za-z0-9_-]*` でない /
-;;;   同じ名前(mangle した後)が 2 度 / 同じ値が 2 度(StrEnum は後の方を別名に
-;;;   してしまい、member の数が黙って減る)。
+;;; Rejected at expansion time (forms where Enum would silently alias or misread are stopped first):
+;;;   no members at all / a name that does not start with a letter `[A-Za-z][A-Za-z0-9_-]*` /
+;;;   the same name twice (after mangling) / the same value twice (StrEnum would make the later one an
+;;;   alias, and the member count would silently shrink).
 ;;;
-;;; ⚠ `defenum` は template macro ではない: 値を名前から作るので、展開の時に
-;;; 計算が要る(quasiquote の逐語の置換では `KEY` から `"key"` を作れない)。
-;;; だから共通の品質検査の template の検証(`quality.hy_macro`)には載らず、
-;;; 投影の規則は検査器の側に専用の規則として要る(`quality.hy_record` に
-;;; defrecord と並べて置く想定 — 設計の記録の「品質検査の側に要る変更」)。
-;;; 展開の基底の `StrEnum` は、defrecord の `dataclass` と同じく使う側の
-;;; scope の名前を指す(Python 3.11 以上は `enum.StrEnum`)。
+;;; ⚠ `defenum` is not a template macro: values are derived from names, so
+;;; computation is needed at expansion time (a verbatim quasiquote substitution cannot make `"key"` from `KEY`).
+;;; So it is not in the shared quality check's template validation (`quality.hy_macro`),
+;;; and the projection rule needs a dedicated rule on the checker side (expected to sit next to defrecord in `quality.hy_record` —
+;;; the design record's "changes needed on the quality check side").
+;;; The expansion's base `StrEnum` points at a name in the using side's
+;;; scope, like defrecord's `dataclass` (`enum.StrEnum` on Python 3.11 and later).
 
 (import dataclasses [dataclass])
 (import doeff [DoExpr EffectBase])
 
 
-;; 展開の時に頭の辞書を読む計算は macro の本体の中にだけ置く(defenum と同じ — 切り出すと
-;; 展開の時に呼ぶ関数は defk にできず defn になり、quasiquote を持つ defn は型の投影に載らない)。
-;; 欄の読み方(hy-index の record_def・quality.hy_record と同じ): `#^ T x` = (annotate x T)・
-;; `(#^ T x)` = ((annotate x T))・`(setv #^ T x 既定値 #^ U y 既定値 …)`(組ごとに 1 欄)・裸の記号 x。それ以外の form は欄ではない。
-;; 展開の文の並び(import の doeff_hy — record_runtime・頭の辞書の宣言 — と型と記帳)は、doeff_hy.macros の _scoped-definition
-;; (定義の macro が全部通る 1 か所)で書いた所に合わせて組む: 関数の本体の中では、すぐ呼ぶ関数に入れて型の名だけを束ねる —
-;; 並べたままだと import した doeff_hy が外の関数全体の局所の名になり、外の関数で先に読む module の段の doeff_hy が
-;; UnboundLocalError で落ちた。module と class の本体では今までどおり並べる。
+;; The computation that reads the header dict at expansion time is placed only inside the macro body (as with defenum — if split out,
+;; a function called at expansion time cannot be a defk and becomes a defn, and a defn with a quasiquote is not in the type projection).
+;; How fields are read (same as record_def of hy-index and quality.hy_record): `#^ T x` = (annotate x T),
+;; `(#^ T x)` = ((annotate x T)), `(setv #^ T x default #^ U y default …)` (one field per pair), a bare symbol x. Any other form is not a field.
+;; The sequence of statements of the expansion (import of doeff_hy — record_runtime, the declaration of the header dict — and the type and bookkeeping) is assembled to match what _scoped-definition of doeff_hy.macros
+;; (the one place all definition macros pass through) wrote: inside a function body, put them in an immediately-called function and bind only the type name —
+;; if left side by side, the imported doeff_hy becomes a local of the whole outer function, and the module-level doeff_hy that the outer function reads first
+;; failed with UnboundLocalError. In module and class bodies they are laid side by side as before.
 (defmacro defrecord [_hy-compiler name #* forms]
   (import doeff_hy.macros [_scoped-definition])
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
@@ -213,11 +213,11 @@
           rest (cut rest 1 None)))
   (import doeff_hy._static_view [static-view-enabled])
   (setv static-view (static-view-enabled))
-  ;; 実行の展開の class の form(頭注「関数は展開の時に書く」): dataclass には欄の表(__dataclass_fields__・
-  ;; 既定値・field の default-factory・可変の既定の断り)だけを作らせ、関数(__init__・__repr__・__eq__・__hash__・凍結の
-  ;; __setattr__ / __delattr__)は展開がここで書く — 関数は module の code として .pyc に入り、読み込みの時に dataclass が関数の
-  ;; source を exec(compile)しない(1 型 約 1 ms → 約 0.1 ms)。欄の形を展開で読み切れない時(下の断りの条件)は None を返し、
-  ;; 呼び手は今までの展開(dataclass が関数を作る)にする。型検査の投影(static-view)は dataclass のまま(pyright が dataclass として読む)。
+  ;; Class form of the runtime expansion (header note "functions are written at expansion time"): dataclass builds only the field table (__dataclass_fields__,
+  ;; defaults, the default-factory of field, refusal of mutable defaults), and the expansion writes the functions here (__init__, __repr__, __eq__, __hash__, and the frozen
+  ;; __setattr__ / __delattr__) — the functions go into the .pyc as module code, and dataclass does not
+  ;; exec(compile) function source at load time (about 1 ms per type → about 0.1 ms). When the expansion cannot fully read the shape of a field (the refusal conditions below) it returns None,
+  ;; and the caller uses the previous expansion (dataclass builds the functions). The type-check projection (static-view) stays dataclass (pyright reads it as a dataclass).
   (setv class-form
     (fn [docstring class-vars fields post-init]
       (setv generated #("__init__" "__repr__" "__eq__" "__hash__" "__setattr__" "__delattr__" "__post_init__")
@@ -226,15 +226,15 @@
                                       (isinstance (get form 1) Symbol)))
             field-call? (fn [form] (and (isinstance form Expression) form (isinstance (get form 0) Symbol)
                                         (in (str (get form 0)) #("field" "dataclasses.field"))))
-            ;; 本体の form が、展開が書く関数を自分で書くか(defn・defn/a ほか — 名は飾りの list の後ろでも読む)。答えの型の注記つきの名
-            ;; (defn #^ None __post-init__ …)は Hy が (annotate __post-init__ None) と読むので、注記の中の名を読む(
-            ;; 記号の名だけを見た形は本体の __post_init__ を見落とし、展開の __init__ が呼ばなかった)。
+            ;; Whether the body form writes a function the expansion writes (defn, defn/a, and others — the name is read even behind the decorator list). A name with an answer-type annotation
+            ;; (defn #^ None __post-init__ …) is read by Hy as (annotate __post-init__ None), so read the name inside the annotation (
+            ;; a form that looked only at symbol names missed the body's __post_init__, and the expansion's __init__ did not call it).
             own-method? (fn [form] (and (isinstance form Expression) (>= (len form) 2) (isinstance (get form 0) Symbol)
                                         (.startswith (str (get form 0)) "def")
                                         (do (setv written (if (and (isinstance (get form 1) List) (>= (len form) 3)) (get form 2) (get form 1))
                                                   named (if (annotated written) (get written 1) written))
                                             (and (isinstance named Symbol) (in (hy.mangle (str named)) generated)))))
-            ;; 欄の的と既定値の組(的・既定値の form・既定値の有無)を書いた順に(field-targets と同じ読み方)。
+            ;; Pairs of field target and default (target, default form, whether a default exists) in the order written (read the same way as field-targets).
             targets (sum (lfor form fields
                                (cond
                                  (annotated form) [#(form None False)]
@@ -243,14 +243,14 @@
                                    (lfor #(t v) (zip (cut form 1 None 2) (cut form 2 None 2)) :if (annotated t) #(t v True))
                                  True []))
                          [])
-            ;; field の呼びの鍵と値(鍵は mangle した名)。鍵の数が合わない呼びは None。
+            ;; Keys and values of a field call (keys are mangled names). A call whose key count does not match gives None.
             call-args (fn [form] (setv args (list (cut form 1 None)))
                         (if (% (len args) 2)
                             None
                             (lfor #(k v) (zip (cut args None None 2) (cut args 1 None 2))
                                   #((if (isinstance k Keyword) (hy.mangle (str k.name)) None) v))))
-            ;; 欄 1 つの形 — (記号・python の名・注記・種類 required / plain / call・値を持つか・工場を持つか・init・repr・compare・hash)。
-            ;; 展開が読み切れない欄は None(field の呼びの鍵が分からない・旗が字面でない・欄の名が self / object)。
+            ;; Shape of one field — (symbol, python name, annotation, kind required / plain / call, whether it has a value, whether it has a factory, init, repr, compare, hash).
+            ;; A field the expansion cannot fully read gives None (field call keys unknown, flags not literal, field named self / object).
             spec-of (fn [target default has-default]
                       (setv sym (get target 1)
                             py (hy.mangle (str sym))
@@ -277,15 +277,15 @@
       (when (or (any (gfor form fields (isinstance form Symbol))) (any (gfor form fields (own-method? form)))
                 (any (gfor s specs (is s None))))
         (return None))
-      ;; 書く関数は定義した型を名でなく `__class__`(Python が method に作る、定義した class の閉包)と引数なしの super で読む —
-      ;; class の本体に書いた型の名は外の class の属性で、method は名を引く時に class の段を飛ばすので、名で読むと凍結の
-      ;; __setattr__ と default-factory・init を切った欄の __init__ が NameError で落ちた(tests/test_nested_definition_scope.py の
+      ;; The functions it writes read the defined type not by name but by `__class__` (the closure of the defined class that Python makes for a method) and zero-argument super —
+      ;; the name of a type written in a class body is an attribute of the outer class, and a method skips the class level when looking up a name, so reading by name made the frozen
+      ;; __setattr__ and the __init__ of fields with default-factory or init turned off fail with NameError (tests/test_nested_definition_scope.py
       ;; test_class_body_type_methods_read_their_own_class)。
       (setv self-sym (hy.gensym "self")
             missing 'doeff_hy._record_runtime.FACTORY-DEFAULT
             factory (fn [py] `((. (get (. __class__ __dataclass_fields__) ~py) default-factory)))
-            ;; 欄 1 つの __init__ の引数(None = 引数にしない — init を切った欄)と、self に値を置く式(None = 置かない)。
-            ;; 引数に型の注記は書かない(下の class の form の注)。
+            ;; The __init__ argument of one field (None = not an argument — a field with init turned off) and the expression that sets the value on self (None = not set).
+            ;; No type annotation is written on arguments (see the note on the class form below).
             init-of (fn [s]
                       (setv sym (get s "sym") py (get s "py")
                             put (fn [value] `(object.__setattr__ ~self-sym ~py ~value)))
@@ -309,13 +309,13 @@
             plain `#(~@(lfor s specs :if (= (get s "kind") "plain") (String (get s "py"))))
             names-of (fn [names] `#(~@(lfor n names (String n))))
             other (hy.gensym "other"))
-      ;; 型ごとに書くのは __init__・__eq__・__hash__(と :check の __post_init__)。__repr__ と凍結の __setattr__ / __delattr__ は
-      ;; record_runtime の共有の 1 組を指し、型は欄の名の並びを字面の tuple で持つ(型ごとの関数が型 約 1,760 の
-      ;; job で 10 MB を越えた)。__eq__ と __hash__ は値を辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま — 共有の 1 つにすると
-      ;; 欄の名を回す分 1.3〜3 倍遅くなった(Python 3.14t の測り)。__init__ の引数に型の注記を書かない(実行時に読む所が無く、注記ごとに
-      ;; __annotate__ の関数が残る — 欄の型は class の注記と型検査の投影が持つ)。docstring は実行の展開に置かず(実行時に読む所が無い・
-      ;; 型検査の投影と source には残る)、__doc__ は読んだ時に欄の名から組む共有の記述子にする(dataclass が docstring の無い型に
-      ;; 読み込みの時に署名を計算しない)。
+      ;; Written per type are __init__, __eq__, __hash__ (and the __post_init__ of :check). __repr__ and the frozen __setattr__ / __delattr__ point at
+      ;; the one shared set in record_runtime, and the type holds the sequence of field names as a literal tuple (per-type functions exceeded 10 MB in a job with about
+      ;; 1,760 types). __eq__ and __hash__ stay per type because they are called every time a value goes into a dict key or a set — making them one shared function
+      ;; made them 1.3 to 3 times slower because of looping over field names (measured on Python 3.14t). No type annotations are written on __init__ arguments (nothing reads them at runtime, and each annotation leaves
+      ;; an __annotate__ function — field types are held by the class annotations and the type-check projection). The docstring is not put in the runtime expansion (nothing reads it at runtime;
+      ;; it remains in the type-check projection and the source), and __doc__ is a shared descriptor built from the field names when read (so dataclass does not
+      ;; compute a signature at load time for a type without a docstring).
       `(do
        (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] ~name []
          (setv __doc__ doeff_hy._record_runtime.RECORD-DOC
@@ -356,9 +356,9 @@
         tags (declared-value header ":tags")
         failure (declared-value header ":failure")
         class-vars (declared-value header ":class-vars"))
-  ;; :class-vars = defwire の展開だけが渡す内部の口: class の本体に置く ClassVar の注記 `#^ (get ClassVar T) 名` の list。
-  ;; 型検査に属性の型を見せるための注記で、欄の列(fields)と別に運ぶので欄の読み・:check の名・dataclass / pydantic の欄・
-  ;; __match_args__・構築子の引数には混ざらない(dataclass は ClassVar の注記を欄にしない)。
+  ;; :class-vars = an internal port that only the defwire expansion passes: a list of ClassVar annotations `#^ (get ClassVar T) name` placed in the class body.
+  ;; Annotations to show attribute types to the type checker; carried separately from the field sequence (fields), so they do not mix into field reading, the names of :check, dataclass / pydantic fields,
+  ;; __match_args__, or constructor arguments (dataclass does not make ClassVar annotations into fields).
   (when (and (is-not class-vars None)
              (not (and (isinstance class-vars List)
                        (all (gfor form class-vars
@@ -366,20 +366,20 @@
                                        (= (str (get form 0)) "annotate") (isinstance (get form 1) Symbol)
                                        (isinstance (get form 2) Expression) (= (str (get (get form 2) 0)) "get")
                                        (.endswith (hy.repr (get (get form 2) 1)) "ClassVar")))))))
-    (raise (SyntaxError (.format "{}: :class-vars は ClassVar の注記 #^ (get ClassVar 型) 名 の list: {}" where (hy.repr class-vars)))))
+    (raise (SyntaxError (.format "{}: :class-vars must be a list of ClassVar annotations #^ (get ClassVar type) name: {}" where (hy.repr class-vars)))))
   (when (and (is-not failure None) (not (and (isinstance failure Symbol) (in (str failure) #("True" "False")))))
-    (raise (SyntaxError (.format "{}: :failure は字面の True か False(失敗の型の印): {}" where (hy.repr failure)))))
+    (raise (SyntaxError (.format "{}: :failure must be a literal True or False (marker of a failure type): {}" where (hy.repr failure)))))
   (when (and (is-not checks None) (not (isinstance checks List)))
-    (raise (SyntaxError (.format "{}: :check は検めの式の list([(pred 欄) …] の形): {}" where (hy.repr checks)))))
-  ;; 欄の読み方の正本は declarations の field-targets(defwire・hy-index・doeff-linter と揃える)。
+    (raise (SyntaxError (.format "{}: :check must be a list of check expressions (shape [(pred field) …]): {}" where (hy.repr checks)))))
+  ;; The canonical source for how fields are read is field-targets of declarations (kept in line with defwire, hy-index, and doeff-linter).
   (setv names (lfor target (field-targets fields) (hy.mangle target)))
   (setv statements []
         bound [])
   (for [check (or checks [])]
     (when (and (isinstance check Expression) (>= (len check) 3)
                (isinstance (get check 0) Keyword) (= (str (get check 0)) ":"))
-      (raise (SyntaxError (.format "{}: :check の {} — 欄の型は欄の注記 #^ 型 で書く(:check は真偽の式だけ)" where (hy.repr check)))))
-    ;; 式が参照する欄(欄の順)。`value.x` のような dotted の記号は頭の名で読む。
+      (raise (SyntaxError (.format "{}: :check {} — write the field type in the field annotation #^ type (:check is only a boolean expression)" where (hy.repr check)))))
+    ;; The fields the expression refers to (in field order). A dotted symbol such as `value.x` is read by its head name.
     (setv seen (set)
           pending [check])
     (while pending
@@ -390,30 +390,30 @@
         (and (isinstance form Sequence) (not (isinstance form String))) (.extend pending form)))
     (setv used (lfor n names :if (in n seen) n))
     (when (not used)
-      (raise (SyntaxError (.format "{}: :check の {} は欄を 1 つも参照しない(欄 = {})" where (hy.repr check) (.join " " names)))))
+      (raise (SyntaxError (.format "{}: :check {} references no field (fields = {})" where (hy.repr check) (.join " " names)))))
     (.extend bound (lfor n used :if (not-in n bound) n))
-    ;; 結果が Program / effect(defk を :check で呼んだ形)なら TypeError — Program は真に見えて黙って通ってしまうため。
+    ;; If the result is a Program / effect (the form that called a defk from :check), TypeError — a Program looks true and would silently pass.
     (setv verdict (hy.gensym "verdict")
           text (.lstrip (hy.repr check) "'"))
-    ;; 検めの多くは真偽の式(`(<= start end)`)で、答えは True そのもの — その時は Program でも偽でもないので、残りの 2 つの
-    ;; 検め(Program の判定・require-check)を飛ばす。record を 1 つ作るたびに検めの数だけ走る所で、Program の判定
-    ;; (DoExpr の isinstance は Python の metaclass を通る)と require-check の呼び(:pre の isinstance 5 つと値の辞書)を
-    ;; 毎回払っていた。True でない答え(正規表現の Match など)は今までどおり Program を判定し、
-    ;; 偽の時だけ require-check を呼ぶ — require-check は偽の時にしか何もしない(真なら None を返すだけ)ので、断る物と文言は同じ。
-    ;; 型検査の展開では答えを object に広げる — `Match | None` を返す検め式は `is not True` と比べると「常に真」
-    ;; (reportUnnecessaryComparison)の赤になり、書き手は直せない。実行時の展開は答えをそのまま置く。
-    ;; Program の判定は実行時の展開だけに置く: 型検査の展開に置くと、pyright 1.1.414 は
-    ;; `isinstance(v, (DoExpr, EffectBase))`(DoExpr は型検査では program の node の union)の型を、同じ process で前に検めた
-    ;; file によって `tuple[UnionType, type[EffectBase[_Answer]]]` と読み、class_or_tuple の reportArgumentType の赤を出した
-    ;; (agora-controllers の日次 — repo 全体を `--threads 2` で測った時だけ・同じ file の同じ形 2 つのうち 1 つだけ)。書き手は直せない。
-    ;; 判定は実行時に Program を返した :check を断るためだけの物で、型検査の展開の型(答えは object)には何も足さない。
+    ;; Most checks are boolean expressions (`(<= start end)`) whose answer is exactly True — then it is neither a Program nor false, so skip the other two
+    ;; checks (the Program test and require-check). This runs once per check every time a record is built, and it was paying each time for the Program test
+    ;; (isinstance of DoExpr goes through a Python metaclass) and the require-check call (five isinstance checks of :pre and a dict of values).
+    ;; An answer that is not True (such as a regular-expression Match) is tested for Program as before, and
+    ;; require-check is called only when false — require-check does nothing unless false (it just returns None when true), so what it refuses and its wording are the same.
+    ;; The type-check expansion widens the answer to object — a check expression returning `Match | None` compared with `is not True` gives a red "always true"
+    ;; (reportUnnecessaryComparison) that the writer cannot fix. The runtime expansion puts the answer as is.
+    ;; The Program test goes only in the runtime expansion: put in the type-check expansion, pyright 1.1.414 read the type of
+    ;; `isinstance(v, (DoExpr, EffectBase))` (DoExpr is a union of program nodes in type checking), depending on a file checked earlier in the same process,
+    ;; as `tuple[UnionType, type[EffectBase[_Answer]]]` and raised a red reportArgumentType on class_or_tuple
+    ;; (agora-controllers daily run — only when the whole repo was measured with `--threads 2`, and only one of two of the same shape in the same file). The writer cannot fix it.
+    ;; The test exists only to refuse at runtime a :check that returned a Program, and adds nothing to the types of the type-check expansion (the answer is object).
     (.extend statements
       [`(setv ~verdict ~(if static-view `(_doeff-cast object ~check) check))
        `(when (is-not ~verdict True)
           ~@(if static-view
                 []
                 [`(when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
-                    (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))])
+                    (raise (TypeError ~(.format "{} :check {} returned a Program — write :check as a pure expression (a defk cannot be called at construction)" name text))))])
           (when (not ~verdict)
             (doeff_hy._record_check.require-check
               ~(str name) #(~@(lfor n used (String (hy.unmangle n)))) ~text
@@ -427,7 +427,7 @@
   (setv written (when (not static-view) (class-form docstring class-vars fields post-init)))
   (_scoped-definition _hy-compiler name
     [`(do
-        ;; :check の require-check は内側の doeff_hy._record_check に在る(実行時と型検査の両方の展開が読む)。
+        ;; The require-check of :check lives in the inner doeff_hy._record_check (read by both the runtime and type-check expansions).
         (import doeff_hy._declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]) ~@(if statements ['doeff_hy._record_check] []))
         ~@(if (and static-view statements) [(import-form ["cast"])] [])
         ~@(if (is written None)
@@ -443,8 +443,8 @@
     :nested-reads True))
 
 
-;; JSON の境目の型(頭注の「defwire」)。欄の読み方は defrecord と同じ(展開は defrecord をそのまま使う)。
-;; wire の名の計算は展開の時にだけ要るので macro の本体の中に置く(defrecord と同じ理由 — 切り出すと defn になる)。
+  ;; Type at the JSON boundary (the "defwire" of the header note). Fields are read the same way as defrecord (the expansion uses defrecord as is).
+  ;; Computing wire names is needed only at expansion time, so it is placed inside the macro body (same reason as defrecord — splitting it out makes a defn).
 (defmacro defwire [_hy-compiler name #* forms]
   (import re)
   (import hy.models [Dict Expression Keyword List String Symbol])
@@ -452,7 +452,7 @@
   (import doeff_hy._expansion_names [import-form])
   (import doeff_hy.macros [_scoped-definition])
   (when (not (isinstance name Symbol))
-    (raise (SyntaxError (.format "defwire の第 1 引数は型の名前(symbol)ちょうど: {}" (hy.repr name)))))
+    (raise (SyntaxError (.format "defwire's first argument must be exactly one type name (symbol): {}" (hy.repr name)))))
   (setv where (+ "defwire " (str name))
         docstring None
         rest (list forms))
@@ -460,22 +460,22 @@
     (setv docstring (get rest 0)
           rest (cut rest 1 None)))
   (when (not (and rest (isinstance (get rest 0) Dict)))
-    (raise (SyntaxError (.format "{}: 名前(と docstring)の直後に頭の辞書 {{:names … :unknown …}} が要る — wire の欄の名の写しを黙って決めない" where))))
+    (raise (SyntaxError (.format "{}: a header dict {{:names … :unknown …}} is required right after the name (and docstring) — the copy of wire field names is not decided silently" where))))
   (setv header (get rest 0)
         fields (cut rest 1 None))
   (refuse-unknown-keys header #(":tags" ":check" ":names" ":unknown") where)
   (setv names-form (declared-value header ":names")
         unknown-form (declared-value header ":unknown"))
   (when (is names-form None)
-    (raise (SyntaxError (.format "{}: :names が要る — :camel / :snake / :kebab か {{欄 \"wire の名\" …}}(欄を全部)" where))))
+    (raise (SyntaxError (.format "{}: :names is required — :camel / :snake / :kebab or {{field \"wire name\" …}} (all fields)" where))))
   (setv unknown (cond
                   (is unknown-form None) "reject"
                   (and (isinstance unknown-form Keyword) (in (str unknown-form) #(":reject" ":ignore"))) (cut (str unknown-form) 1 None)
-                  True (raise (SyntaxError (.format "{}: :unknown は :reject か :ignore: {}" where (hy.repr unknown-form))))))
-  ;; 欄の名(defrecord と同じ読み方 — 書いた順)。
+                  True (raise (SyntaxError (.format "{}: :unknown must be :reject or :ignore: {}" where (hy.repr unknown-form))))))
+  ;; Field names (read the same way as defrecord — in the order written).
   (setv targets (field-targets fields))
-  ;; 欄の名 → wire の名。:camel = 2 つ目からの区切りの頭を大文字にしてつなぐ(lane-id → laneId)・:snake = 区切りを _(lane_id)・
-  ;; :kebab = 区切りを -(lane-id)。区切り = - と _。明示の辞書は欄を全部ちょうど名指す(黙って既定の写しへ倒さない)。
+  ;; Field name → wire name. :camel = join with the head of each segment after the first capitalized (lane-id → laneId); :snake = separator _ (lane_id);
+  ;; :kebab = separator - (lane-id). Separators = - and _. An explicit dict names all fields exactly (never silently falls back to the default copy).
   (setv wire-names {})
   (cond
     (isinstance names-form Dict)
@@ -483,22 +483,22 @@
         (setv explicit {})
         (for [#(key value) (zip (cut names-form None None 2) (cut names-form 1 None 2))]
           (when (not (and (isinstance key Symbol) (isinstance value String) (str value)))
-            (raise (SyntaxError (.format "{}: :names の辞書は {{欄 \"wire の名\" …}}(欄は記号・wire の名は空でない文字列): {} {}"
+            (raise (SyntaxError (.format "{}: the :names dict must be {{field \"wire name\" …}} (fields are symbols, wire names are non-empty strings): {} {}"
                                          where (hy.repr key) (hy.repr value)))))
           (setv (get explicit (hy.mangle key)) (str value)))
         (setv declared (lfor t targets (hy.mangle t))
               missing (lfor n declared :if (not-in n explicit) (hy.unmangle n))
               extra (lfor n explicit :if (not-in n declared) (hy.unmangle n)))
         (when missing
-          (raise (SyntaxError (.format "{}: :names の辞書に欄が足りない: {}" where (.join " " missing)))))
+          (raise (SyntaxError (.format "{}: the :names dict is missing fields: {}" where (.join " " missing)))))
         (when extra
-          (raise (SyntaxError (.format "{}: :names の辞書に知らない欄: {}" where (.join " " extra)))))
+          (raise (SyntaxError (.format "{}: the :names dict has unknown fields: {}" where (.join " " extra)))))
         (for [t targets]
           (setv (get wire-names (hy.mangle t)) (get explicit (hy.mangle t)))))
     (and (isinstance names-form Keyword) (in (str names-form) #(":camel" ":snake" ":kebab")))
       (for [t targets]
         (when (not (re.fullmatch r"[A-Za-z][A-Za-z0-9_-]*" (str t)))
-          (raise (SyntaxError (.format "{}: 欄 {} の名から wire の名を作れない(英字で始まる [A-Za-z0-9_-] だけ)— :names を辞書で書く" where t))))
+          (raise (SyntaxError (.format "{}: cannot derive a wire name from the name of field {} (only [A-Za-z0-9_-] starting with a letter) — write :names as a dict" where t))))
         (setv parts (lfor p (re.split r"[-_]" (str t)) :if p p)
               (get wire-names (hy.mangle t))
                 (cond
@@ -506,31 +506,31 @@
                   (= (str names-form) ":snake") (.join "_" parts)
                   True (.join "-" parts))))
     True
-      (raise (SyntaxError (.format "{}: :names は :camel / :snake / :kebab か {{欄 \"wire の名\" …}}: {}" where (hy.repr names-form)))))
+      (raise (SyntaxError (.format "{}: :names must be :camel / :snake / :kebab or {{field \"wire name\" …}}: {}" where (hy.repr names-form)))))
   (setv seen {})
   (for [#(field wire) (.items wire-names)]
     (when (in wire seen)
-      (raise (SyntaxError (.format "{}: 欄 {} と {} が同じ wire の名 {!r} になる" where (hy.unmangle (get seen wire)) (hy.unmangle field) wire))))
+      (raise (SyntaxError (.format "{}: fields {} and {} map to the same wire name {!r}" where (hy.unmangle (get seen wire)) (hy.unmangle field) wire))))
     (setv (get seen wire) field))
-  ;; defrecord へ渡す頭の辞書(:tags と :check だけ — :names と :unknown は wire の形)。
-  ;; :class-vars は型の本体に `__doeff_wire__: ClassVar[WireShape]` の注記を置く(下の setattr が置く値の型を型検査に見せる —
-  ;; dump の引数 WireValue を defwire の型が満たすと読める。setattr は記帳として型検査の展開から外れる)。
+  ;; Header dict passed to defrecord (only :tags and :check — :names and :unknown are the wire shape).
+  ;; :class-vars puts the annotation `__doeff_wire__: ClassVar[WireShape]` in the type body (to show the type checker the type of the value the setattr below sets —
+  ;; so the argument WireValue of dump is read as satisfied by a defwire type. setattr drops out of the type-check expansion as bookkeeping).
   (setv record-header (Dict (+ (sum (lfor key #(":tags" ":check")
                                           :if (is-not (declared-value header key) None)
                                           [(Keyword (cut key 1 None)) (declared-value header key)])
                                     [])
                                [(Keyword "class-vars")
                                 `[#^ (get _doeff-ClassVar doeff_hy._wire.WireShape) __doeff-wire__]])))
-  ;; 書いた所に合わせて組む(defrecord と同じ): 関数の本体の中では下の import(`_doeff-ClassVar`・
-  ;; doeff_hy)と型と記帳をすぐ呼ぶ関数に入れ、型の名だけを束ねる。中の defrecord は、その関数の中でもう 1 度自分を包む
-  ;; (型の __qualname__ に包んだ関数の名が 2 つ入る)— 包まない型の組み立てを別の macro に切り出すと、その macro の読み方の
-  ;; 規則が共通の品質検査の固定表(quality.hy_projection の FIXED_MACROS)に無く、record.hy の検査が欠測になる。
+  ;; Assembled to match where it was written (same as defrecord): inside a function body, put the imports below (`_doeff-ClassVar` and
+  ;; doeff_hy), the type, and bookkeeping in an immediately-called function and bind only the type name. The inner defrecord wraps itself once more in that function
+  ;; (two names of wrapping functions go into the type's __qualname__) — if the construction of the unwrapped type is split into another macro, that macro's reading
+  ;; rule is not in the fixed table of the shared quality check (FIXED_MACROS of quality.hy_projection), and the check of record.hy goes unmeasured.
   (_scoped-definition _hy-compiler name [
-     ;; 注記が読む名(Python 3.13 までは class の本体で注記を評価する)を型を建てる前に読む。ClassVar は from-import の別名で読む:
-     ;; pyright は dataclass の欄から外す ClassVar を `ClassVar` の名か `typing.ClassVar` の形でだけ見分け(module の再公開の
-     ;; 名では見分けない)、`import typing` を defwire ごとに出すと strict が同じ import の重ね(reportDuplicateImport)を赤にする。
-     ;; 別名は `__` で始めない(class の本体で名が private の形に書き換わり実行時に読めない)。綴りと置き場は展開の名の表から引く
-     ;; (class の本体に書いた型の投影で、後処理が表の綴りの import を module の段へ移す — static_check._synthesized_import)。
+     ;; Read the names the annotations read (up to Python 3.13 annotations are evaluated in the class body) before building the type. ClassVar is read as a from-import alias:
+     ;; pyright recognizes a ClassVar dropped from dataclass fields only by the name `ClassVar` or the form `typing.ClassVar` (not by the re-exported
+     ;; name of a module), and emitting `import typing` for every defwire makes strict flag the repeated import (reportDuplicateImport) in red.
+     ;; The alias does not start with `__` (the name would be rewritten to private form in a class body and could not be read at runtime). The spelling and location are taken from the expansion's name table
+     ;; (in the projection of a type written in a class body, post-processing moves the import with the table's spelling to the module level — static_check._synthesized_import).
      (import-form ["ClassVar"])
      '(import doeff_hy._wire)
      `(hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
@@ -539,17 +539,17 @@
     :nested-reads True))
 
 
-;; 展開の時に member の名前から値を計算する(template macro の形の外 — 頭注)。
-;; 検査の helper を別の関数に切り出すと、展開の時に呼ばれる関数は defk にできない
-;; (defk は Program を返し、macro は Hy の model を即座に要る)ので defn になる。
-;; それを避けて、計算は macro の本体の中にだけ置く。
+  ;; Compute the value from the member name at expansion time (outside the template-macro form — header note).
+  ;; If a check helper is split into another function, the function called at expansion time cannot be a defk
+  ;; (a defk returns a Program, and a macro needs a Hy model immediately), so it becomes a defn.
+  ;; To avoid that, the computation is placed only inside the macro body.
 (defmacro defenum [name #* members]
   (import re)
   (import hy.models [Expression String Symbol])
   (when (not (isinstance name Symbol))
-    (raise (TypeError f"defenum の第 1 引数は enum の名前(symbol)ちょうど: {(hy.repr name)}")))
+    (raise (TypeError f"defenum's first argument must be an enum name (a symbol): {(hy.repr name)}")))
   (when (not members)
-    (raise (ValueError f"defenum {name} に member が 1 つも無い")))
+    (raise (ValueError f"defenum {name} has no members")))
   (setv pairs []
         seen-names {}
         seen-values {})
@@ -566,17 +566,17 @@
               value (str (get member 1)))
       True
         (raise (TypeError
-                 f"defenum {name} の member は NAME か (NAME \"値\") ちょうど: {(hy.repr member)}")))
+                 f"defenum {name}: a member must be exactly NAME or (NAME \"value\"): {(hy.repr member)}")))
     (when (not (re.fullmatch r"[A-Za-z][A-Za-z0-9_-]*" (str key)))
       (raise (ValueError
-               f"defenum {name} の member の名前は英字で始まる [A-Za-z][A-Za-z0-9_-]* ちょうど: {key}")))
+               f"defenum {name}: a member name must start with a letter and match [A-Za-z][A-Za-z0-9_-]*: {key}")))
     (setv mangled (hy.mangle key))
     (when (in mangled seen-names)
       (raise (ValueError
-               f"defenum {name} の member の名前が重なっている: {(get seen-names mangled)} と {key}")))
+               f"defenum {name}: member names collide: {(get seen-names mangled)} and {key}")))
     (when (in value seen-values)
       (raise (ValueError
-               f"defenum {name} の値 {(hy.repr value)} が {(get seen-values value)} と {key} で重なっている(StrEnum は後の方を黙って別名にする)")))
+               f"defenum {name}: value {(hy.repr value)} collides between {(get seen-values value)} and {key} (StrEnum would silently alias the later one)")))
     (setv (get seen-names mangled) key
           (get seen-values value) key)
     (.extend pairs [(Symbol mangled) (String value)]))

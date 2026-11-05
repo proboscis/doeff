@@ -1,8 +1,8 @@
-"""doeff_hy._wire が pydantic を読まずに解き・書き・JSON Schema を出す事の検。
+"""Check that doeff_hy._wire decodes, encodes, and emits JSON Schema without importing pydantic.
 
-wire.hy の 5 つの API(parse・parse-json・dump・dump-json・json-schema)は自前の解き手(doeff_hy/_wire_codec.py)を呼び、pydantic を
-import しない。defwire の展開(record.hy)が置く __pydantic_config__ も pydantic を読まずに作る設定の辞書。照らしの相手の pydantic は
-doeff_hy._wire_parity だけが読む(この検は読まない)。job の土台の閉包は doeff-cluster の test_job_base_imports_no_pydantic.py が確かめる。
+The five APIs of wire.hy (parse, parse-json, dump, dump-json, json-schema) call the in-house decoder (doeff_hy/_wire_codec.py) and do not
+import pydantic. The __pydantic_config__ that the defwire expansion (record.hy) emits is also a config dict built without importing pydantic. The comparison counterpart, pydantic, is
+imported only by doeff_hy._wire_parity (this check does not import it). The closure of the job base is checked by test_job_base_imports_no_pydantic.py in doeff-cluster.
 """
 
 import subprocess

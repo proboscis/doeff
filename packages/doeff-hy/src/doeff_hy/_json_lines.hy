@@ -1,23 +1,23 @@
-;;; JSON Lines(1 行に JSON の値を 1 つ書いて改行で区切る本文 — CLI の会話の記録・stream の出力など)を行に割る唯一の所。
+;;; The only place that splits JSON Lines (text with one JSON value per line, separated by newlines -- CLI conversation records, stream output, etc.) into lines.
 ;;;
-;;; 割るのは改行(LINE-END)だけ。str.splitlines は JSON の文字列の中に生のまま書かれた U+2028・U+2029(JSON は escape を求めない —
-;;; web の本文に在る)や \x1c〜\x1e・\x85・\v・\f でも割り、正しい JSON の行を読めない 2 行にする(実測: 本番の Claude Code の
-;;; subagent の transcript の U+2028 4 つで、読みが行を JSON でないと断り、呼びの記録を全部落とした)。JSON Lines を読む package は
-;;; 自分で割らず、この module の jsonl-lines で割る。
+;;; It splits only on newlines (LINE-END). str.splitlines also splits on U+2028 and U+2029 written raw inside a JSON string (JSON does not require escaping them --
+;;; they appear in web text) and on \x1c to \x1e, \x85, \v, and \f, turning a valid JSON line into two lines that cannot be read (measured: with four U+2028 in a production Claude Code
+;;; subagent transcript, the reader rejected the line as not JSON and dropped all the call records). Packages that read JSON Lines do not
+;;; split on their own but split with jsonl-lines of this module.
 (require doeff-hy.macros [defk val])
 
-;; JSON Lines の行の終わり(割るのはこの 1 字だけ)。
+;; The end of a JSON Lines line (this one character is the only thing to split on).
 (val LINE-END "\n")
 
 (defk jsonl-lines [#^ str text]
   {:pre [(: text str)] :post [(: % tuple)] :tags {:context "json-lines" :role "foundation"}}
-  "JSON Lines の本文を、JSON の値の行の列にするため(頭の註 — 割るのは LINE-END だけ)。空白だけの行は落とす。最後の改行の後の
-   切れ端も 1 行として答える(書き切ったかは読み手が見る — whole-lines-end)。"
+  "To turn JSON Lines text into a list of lines of JSON values (see the note at the top -- split only on LINE-END). Lines of only whitespace are dropped. The fragment after the last newline
+   is also returned as a line (the reader checks whether it was completely written -- whole-lines-end)."
   (tuple (gfor line (.split text LINE-END) :if (.strip line) line)))
 
 (defk whole-lines-end [#^ bytes data]
   {:pre [(: data bytes)] :post [(: % int)] :tags {:context "json-lines" :role "foundation"}}
-  "書き足されている JSON Lines の byte のうち、改行で閉じた行の終わり(最後の LINE-END の次の byte の位置 — 無ければ 0)を知るため。
-   読み手はここまでを読み終えた所とし、後ろの切れ端(書きの途中の行)は次の読みで頭から読む。UTF-8 の多 byte の字は 0x0A を
-   含まないので、byte で探して字の途中を切らない。"
+  "To find, among the bytes of JSON Lines being appended to, the end of the lines closed by a newline (the position of the byte after the last LINE-END -- 0 if none).
+   The reader treats everything up to here as read, and reads the trailing fragment (a line being written) from its start on the next read. A UTF-8 multi-byte character does not
+   contain 0x0A, so searching by byte does not cut in the middle of a character."
   (+ (.rfind data (.encode LINE-END "utf-8")) 1))

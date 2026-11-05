@@ -1,13 +1,13 @@
-"""doeff-hy の `defenum`(doeff_hy/record.hy)— 閉じた値の集合を StrEnum で建てる macro。
+"""doeff-hy's `defenum` (doeff_hy/record.hy) — a macro that builds a closed set of values as a StrEnum.
 
-確かめること:
-- 展開の形: `(defclass Name [StrEnum] (setv MEMBER "値" …))`。
-- 値の決め方: 名前を小文字にして `_` / `-` を `-` にそろえる。`(NAME "値")` は明示の値。
-- 展開の時に拒む形: member が無い・名前の形・名前の重なり・値の重なり・member の形。
-- JSON への変換: 値の文字列がそのまま書け、読み戻せる。
-- `match` の網羅: 実行時に分岐でき、doeff-hy-check(pyright)が漏れを捕まえ、網羅した形は通す。
+What it checks:
+- Shape of the expansion: `(defclass Name [StrEnum] (setv MEMBER "value" …))`.
+- How values are decided: the name is lowercased and `_` / `-` are normalized to `-`. `(NAME "value")` is an explicit value.
+- Forms refused at expansion time: no member, the shape of a name, colliding names, colliding values, the shape of a member.
+- Conversion to JSON: the value string is written as is and can be read back.
+- `match` exhaustiveness: it can branch at runtime, doeff-hy-check (pyright) catches a missing member, and an exhaustive form passes.
 
-設計の記録 = docs/design/defenum/design.md。
+Design record = docs/design/defenum/design.md.
 """
 
 import json
@@ -18,7 +18,7 @@ from pathlib import Path
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is missing")
 
 PRELUDE = "(require doeff-hy.record [defenum])\n(import enum [StrEnum])\n"
 
@@ -54,7 +54,7 @@ def test_values_come_from_the_member_names() -> None:
         ("GUARANTEED", "guaranteed"),
     ]
     progress = module.Progress
-    # Hy の `IN-PROGRESS` は属性 `IN_PROGRESS` になり、値の綴りは `_` / `-` の両方が `-` にそろう。
+    # Hy's `IN-PROGRESS` becomes the attribute `IN_PROGRESS`, and in the value spelling both `_` and `-` are normalized to `-`.
     assert [(m.name, m.value) for m in progress] == [
         ("IN_PROGRESS", "in-progress"),
         ("DONE_NOW", "done-now"),
@@ -102,15 +102,15 @@ def test_match_dispatches_on_members() -> None:
 @pytest.mark.parametrize(
     ("form", "message"),
     [
-        ("(defenum Empty)", "member が 1 つも無い"),
-        ('(defenum "Name" A)', "第 1 引数は enum の名前"),
-        ("(defenum Twice A B A)", "名前が重なっている"),
-        ("(defenum Mangled IN-PROGRESS IN_PROGRESS)", "名前が重なっている"),
-        ('(defenum SameValue A (B "a"))', "重なっている"),
-        ("(defenum Spelling A-B A_B)", "名前が重なっている"),
-        ("(defenum NotAMember A 1)", "member は NAME か"),
-        ('(defenum Triple (A "a" "b"))', "member は NAME か"),
-        ("(defenum Sunder _A)", "英字で始まる"),
+        ("(defenum Empty)", "has no members"),
+        ('(defenum "Name" A)', "first argument must be an enum name"),
+        ("(defenum Twice A B A)", "member names collide"),
+        ("(defenum Mangled IN-PROGRESS IN_PROGRESS)", "member names collide"),
+        ('(defenum SameValue A (B "a"))', "collides between"),
+        ("(defenum Spelling A-B A_B)", "member names collide"),
+        ("(defenum NotAMember A 1)", "must be exactly NAME or"),
+        ('(defenum Triple (A "a" "b"))', "must be exactly NAME or"),
+        ("(defenum Sunder _A)", "must start with a letter"),
     ],
 )
 def test_malformed_declarations_are_rejected_at_expansion(form: str, message: str) -> None:
@@ -119,8 +119,8 @@ def test_malformed_declarations_are_rejected_at_expansion(form: str, message: st
 
 
 def test_same_value_from_different_spellings_is_rejected() -> None:
-    # `A-B` と `(C "a-b")` は値が同じ — StrEnum は後の方を黙って別名にするので展開で止める。
-    with pytest.raises(hy.errors.HyMacroExpansionError, match="重なっている"):
+    # `A-B` and `(C "a-b")` have the same value — StrEnum would silently make the later one an alias, so the expansion stops it.
+    with pytest.raises(hy.errors.HyMacroExpansionError, match="collides between"):
         _module('(defenum Alias A-B (C "a-b"))')
 
 
@@ -151,14 +151,14 @@ def exhaustiveness(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[d
 
     root: Path = tmp_path_factory.mktemp("defenum_check")
     files = {
-        "網羅": root / "enum_exhaustive.hy",
-        "漏れ": root / "enum_missing.hy",
+        "exhaustive": root / "enum_exhaustive.hy",
+        "missing": root / "enum_missing.hy",
     }
-    files["網羅"].write_text(
+    files["exhaustive"].write_text(
         EXHAUSTIVE.replace("{LAST}", '    PlacementMismatch.GUARANTEED "guaranteed"\n'),
         encoding="utf-8",
     )
-    files["漏れ"].write_text(EXHAUSTIVE.replace("{LAST}", ""), encoding="utf-8")
+    files["missing"].write_text(EXHAUSTIVE.replace("{LAST}", ""), encoding="utf-8")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         main(["--root", str(root), "--json", *map(str, files.values())])
@@ -173,13 +173,13 @@ def exhaustiveness(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[d
 def test_exhaustive_match_passes_the_static_check(
     exhaustiveness: dict[str, list[dict[str, object]]],
 ) -> None:
-    assert exhaustiveness["網羅"] == []
+    assert exhaustiveness["exhaustive"] == []
 
 
 @needs_pyright
 def test_missing_member_is_caught_by_the_static_check(
     exhaustiveness: dict[str, list[dict[str, object]]],
 ) -> None:
-    found = exhaustiveness["漏れ"]
+    found = exhaustiveness["missing"]
     assert [(d["rule"], d["line"]) for d in found] == [("reportArgumentType", 14)], found
     assert "GUARANTEED" in str(found[0]["message"])

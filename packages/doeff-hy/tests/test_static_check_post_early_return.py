@@ -1,26 +1,26 @@
-"""`:post` の型の契約 `(: % T)` と本体の途中の `(return x)` を両方持つ defk / deff の、型検査の赤の失敗ケース(
-親 #3167)。
+"""Failure cases of type-check errors for a defk / deff that has both a `:post` type contract `(: % T)` and a `(return x)` in the middle of the body (
+parent #3167).
 
-doeff 66d4c9428 から、`:post` を持つ定義の途中の `(return x)` は最後の式と同じ出口 — `_contract_result = x` →
-guard → `_hy_let_% = _contract_result` → `:post` の確かめ → `return _contract_result` — に書き換わる。型の注記 `_contract_result: T` は
-最後の式の代入にしか付かず、本体の最後が `while True` の形では最後の代入が到達しない所に置かれて注記がどこにも効かなかった。
-途中の出口の値の型の穴(`tuple[Unknown, ...]` など)が guard の引数・`_hy_let_%`・return へのコピーへ伝わり、書き手の code の側から
-直せない赤が return ごとに 3 つ増えた(`:post` の確かめを合成した位置 = `:post` の行に出る)。展開が関数の頭(`:pre` の確かめの直後)で
-`_contract_result: T` を値なしで宣言し、途中と最後の代入を注記なしの要素 1 つのタプルの代入 `(_contract_result,) = (値,)` にすれば:
+Since doeff 66d4c9428, a `(return x)` in the middle of a definition with `:post` is rewritten into the same exit as the last expression -- `_contract_result = x` ->
+guard -> `_hy_let_% = _contract_result` -> the `:post` check -> `return _contract_result`. The type annotation `_contract_result: T` was attached
+only to the assignment of the last expression, and when the body ended in a `while True` form the last assignment was placed where it is unreachable, so the annotation took effect nowhere.
+Type holes in the value of a mid-body exit (such as `tuple[Unknown, ...]`) propagated to the guard argument, `_hy_let_%`, and the copy into return, and
+errors the author could not fix from their code increased by 3 per return (appearing at the position where the `:post` check was synthesized = the `:post` line). If the expansion declares
+`_contract_result: T` without a value at the head of the function (right after the `:pre` check), and makes the mid-body and last assignments un-annotated one-element tuple assignments `(_contract_result,) = (value,)`:
 
-- strict で、`:post` の行の赤と `_hy_let_*` を文言に含む赤が 0 件(本体の最後が while True の形・最後の式に届く形・途中の return が
-  複数在る形)。`_contract_result` を文言に含む赤は、値に型の穴の在る return の行に 1 つずつだけ残る — 書き手の値の穴そのもの
-  (Python で `return tuple(rows)` と書いた時の「Return type ... is partially unknown」と同じ数・同じ行。pyright は宣言の在る
-  変数への代入でも、代入した値の型の穴を報せる)で、書き手が値に型を付ければ消える。
-- 最後の式が網羅した match の定義は赤が 0 件。素の代入 `(setv _contract_result 値)` だと、Hy が match の一時の名
-  (case の前の `一時の名 = None` を含む)を `_contract_result` へ移し替え、その None が頭の宣言の T と突き合わされて書き手に
-  直せない赤になった(使い手の測定 — 速さを測る module で 18 件)。タプルの代入先には移し替えが起きない。
-- 型は逃げていない: 型の穴の無い定義は赤が 0 件で、途中の return で T と違う型を返すとその return の行が赤。
-- 型検査のための展開と実行時の展開は同じ形(どちらも頭で 1 度だけ宣言し、代入は注記なしのタプルの代入)。
-- `:post` に型の契約が無い定義は今までどおり(宣言を出さない)。
+- In strict, there are 0 errors on the `:post` line and 0 errors whose message contains `_hy_let_*` (a body ending in while True, a form reaching the last expression, and a form with
+  multiple mid-body returns). Errors whose message contains `_contract_result` remain only one per return line whose value has a type hole -- the author's value hole itself
+  (the same count and the same line as "Return type ... is partially unknown" when writing `return tuple(rows)` in Python. pyright reports type holes in the assigned value
+  even for an assignment to a declared variable), and they disappear if the author types the value.
+- A definition whose last expression is an exhaustive match has 0 errors. With a plain assignment `(setv _contract_result value)`, Hy moves the match temporary name
+  (including `temp = None` before the case) over to `_contract_result`, and that None was matched against the head declaration T, becoming an error
+  the author could not fix (a user's measurement -- 18 in a module that measures speed). No such move happens for a tuple assignment target.
+- Types do not escape: a definition with no type holes has 0 errors, and returning a type different from T in a mid-body return makes that return line an error.
+- The type-check expansion and the run-time expansion have the same shape (both declare once at the head, and assignments are un-annotated tuple assignments).
+- A definition with no type contract in `:post` stays as before (no declaration is emitted).
 
-この直しの外: 値の型がまるごと Unknown(型の引数の無い list を回した要素など)の時は、pyright が宣言の在る変数をその Unknown に
-絞るので、guard・`_hy_let_%`・return の赤は残る(最後の式の出口も 66d4c9428 の前から同じ形)。
+Outside this fix: when the value type is entirely Unknown (such as an element from iterating a list with no type arguments), pyright narrows the declared variable to that Unknown,
+so the errors at the guard, `_hy_let_%`, and return remain (the last expression's exit has been the same shape since before 66d4c9428).
 """
 
 import ast
@@ -36,9 +36,9 @@ from pathlib import Path
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not installed")
 
-# 本体の最後が while True で、途中の return だけが出口(最後の式の代入は到達しない所に置かれる)。
+# The body ends in while True and only the mid-body return is an exit (the last expression's assignment is placed where it is unreachable).
 LOOP = """\
 (require doeff-hy.macros [defk])
 
@@ -50,7 +50,7 @@ LOOP = """\
     (.pop rows)))
 """
 
-# 途中の return と、最後の式に届く出口の両方を持つ。
+# Has both a mid-body return and an exit reaching the last expression.
 REACHES_LAST = """\
 (require doeff-hy.macros [defk])
 
@@ -61,8 +61,8 @@ REACHES_LAST = """\
   #(1 2))
 """
 
-# 途中の return が複数在る(繰り返しの中・while True の中)。deff も同じ展開を通る。どの return の値も型の引数の無い list から
-# 作ったタプル(型の穴を持つ)。
+# Multiple mid-body returns (inside a loop, inside while True). deff goes through the same expansion. The value of every return is a tuple made from a list with no type arguments
+# (it has a type hole).
 MANY_RETURNS = """\
 (require doeff-hy.macros [defk deff])
 
@@ -86,7 +86,7 @@ MANY_RETURNS = """\
     (.pop names)))
 """
 
-# 型の穴の無い定義(引数に型の引数を書いた)— 赤は 0 件で、途中の return の型の取り違えだけが赤になる。
+# A definition with no type holes (type arguments written on the argument) -- 0 errors, and only a type mix-up in a mid-body return becomes an error.
 TYPED = """\
 (require doeff-hy.macros [defk])
 
@@ -98,7 +98,7 @@ TYPED = """\
     (.pop rows)))
 """
 
-# 最後の式が網羅した match(Hy は case の前に一時の名へ None を入れる)。
+# A match whose last expression is exhaustive (Hy puts None into a temporary name before the case).
 MATCH_LAST = """\
 (require doeff-hy.macros [defk])
 (import dataclasses [dataclass])
@@ -113,18 +113,18 @@ MATCH_LAST = """\
     (OverHttp) "http"))
 """
 
-# :post に写す型が無い(型が説明の文字列だけ — defk / deff は :post に (: % …) を要る)。
+# There is no type to carry to :post (the type is only a description string -- defk / deff require (: % …) in :post).
 UNTYPED_POST = """\
 (require doeff-hy.macros [defk deff])
 
 (defk nonempty [rows]
-  {:pre [(: rows (get list int))] :post [(: % "空でないタプル") (> (len %) 0)]}
+  {:pre [(: rows (get list int))] :post [(: % "non-empty tuple") (> (len %) 0)]}
   (when (not rows)
     (return (tuple [0])))
   (tuple rows))
 
 (deff nonempty-pure [rows]
-  {:pre [(: rows (get list int))] :post [(: % "空でないタプル") (> (len %) 0)]}
+  {:pre [(: rows (get list int))] :post [(: % "non-empty tuple") (> (len %) 0)]}
   (when (not rows)
     (return (tuple [0])))
   (tuple rows))
@@ -155,13 +155,13 @@ def _line_of(text: str, fragment: str) -> int:
 @pytest.mark.parametrize("probe", [LOOP, REACHES_LAST, MANY_RETURNS], ids=["while-true", "reaches-last", "many-returns"])
 def test_early_returns_add_no_error_of_the_expansion(tmp_path: Path, probe: str) -> None:
     errors = _check(tmp_path, probe)
-    # テスト用の定義が型検査まで届いた事(書き手の値の穴 — 型の引数の無い list の引数 — の赤は書き手の行に残る)。
+    # The test definition reached type checking (the author's value holes -- the argument of a list with no type arguments -- remain as errors on the author's lines).
     assert [d for d in errors if d["rule"] == "reportMissingTypeArgument"], errors
-    # 展開が :post の確かめを合成した位置(guard の引数・`_hy_let_%`・return へのコピー)に赤が無い。
+    # No errors at the positions where the expansion synthesized the :post check (the guard argument, `_hy_let_%`, the copy into return).
     post_lines = _lines_with(probe, ":post")
     assert [d for d in errors if d["line"] in post_lines] == [], errors
     assert [d for d in errors if "_hy_let_" in str(d["message"])] == [], errors
-    # `_contract_result` を文言に含む赤は、return の行にちょうど 1 つずつ — 値の型の穴(書き手の行・書き手が直せる)だけ。
+    # Errors whose message contains `_contract_result` are exactly one per return line -- only the type hole in the value (the author's line, which the author can fix).
     naming_result = Counter(d["line"] for d in errors if "_contract_result" in str(d["message"]))
     assert naming_result == Counter(_lines_with(probe, "(return ")), errors
 
@@ -173,21 +173,21 @@ def test_a_typed_definition_with_early_returns_is_clean(tmp_path: Path) -> None:
 
 @needs_pyright
 def test_a_match_as_the_last_form_is_clean(tmp_path: Path) -> None:
-    # 素の代入だと Hy が match の一時の名(case の前の None)を `_contract_result` へ移し替え、
-    # 「Type "None" is not assignable to declared type "str"」が match の行に出る。
+    # With a plain assignment Hy moves the match temporary name (the None before the case) over to `_contract_result`,
+    # and "Type "None" is not assignable to declared type "str"" appears on the match line.
     assert _check(tmp_path, MATCH_LAST) == []
 
 
 @needs_pyright
 def test_an_early_return_of_the_wrong_type_is_red_at_that_return(tmp_path: Path) -> None:
-    # 頭の宣言が途中の出口の型を逃がしていない事(Any に逃げていれば赤にならない)。
+    # That the head declaration does not let the type of a mid-body exit escape (if it escaped to Any there would be no error).
     text = TYPED.replace("(return (tuple rows))", "(return [1])")
     errors = _check(tmp_path, text)
     assert _line_of(text, "(return [1])") in [d["line"] for d in errors], errors
 
 
 def _expand(source: str) -> str:
-    # doeff_hy の import が Hy の importer と macro を用意する(副作用のための import)
+    # importing doeff_hy sets up the Hy importer and macros (import for side effects)
     importlib.import_module("doeff_hy")
     return ast.unparse(hy.compiler.hy_compile(hy.read_many(source), "__main__"))
 
@@ -207,17 +207,17 @@ def test_both_expansions_declare_the_result_once_at_the_head(view: str) -> None:
     for name in ("drain", "pick"):
         body = text.split(f"def {name}(", 1)[1].split("\ndef ", 1)[0]
         lines = [line.strip() for line in body.splitlines()]
-        # 値なしの宣言がちょうど 1 つ。注記つきの代入・素の代入は無い(出口はタプルの代入)。
+        # Exactly one declaration without a value. No annotated assignment or plain assignment (exits are tuple assignments).
         assert lines.count("_contract_result: 'tuple[int, ...]'") == 1, body
         assert not re.search(r"_contract_result: '[^']*' =", body), body
         assert not re.search(r"^\s*_contract_result = ", body, re.MULTILINE), body
-        # 宣言は最初の代入(途中の出口)より前 — 関数の頭(:pre の確かめの直後・本体の前)。
+        # The declaration comes before the first assignment (a mid-body exit) -- at the function head (right after the :pre check, before the body).
         declared = lines.index("_contract_result: 'tuple[int, ...]'")
         first_assign = next(i for i, line in enumerate(lines) if line.startswith("_contract_result, = ("))
         first_body = next(i for i, line in enumerate(lines) if line.startswith(("while ", "if ")))
         assert declared < first_body < first_assign, body
         if view == "runtime":
-            # 実行時の展開は :pre の isinstance を出す — 宣言はその後(型検査のための展開は引数の isinstance を出さない)。
+            # The run-time expansion emits the :pre isinstance -- the declaration comes after it (the type-check expansion does not emit an argument isinstance).
             pre_check = next(i for i, line in enumerate(lines) if line.startswith("assert isinstance(rows, list)"))
             assert pre_check < declared, body
 
@@ -226,5 +226,5 @@ def test_both_expansions_declare_the_result_once_at_the_head(view: str) -> None:
 def test_a_post_without_a_type_contract_declares_nothing(view: str) -> None:
     text = _both_expansions(UNTYPED_POST)[view]
     assert "_contract_result:" not in text, text
-    # 途中の出口と最後の式の代入(定義 2 つ × 2)は注記なしのタプルの代入。
+    # The mid-body exits and the last expression's assignment (2 definitions x 2) are un-annotated tuple assignments.
     assert text.count("_contract_result, = (") == 4, text

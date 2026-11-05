@@ -1,1 +1,1 @@
-"""型の宣言は static_types.pyi(型検査のための展開だけが参照する。実行時には import しない)。"""
+"""Type declarations live in static_types.pyi (only the expansion for type checking refers to them; never imported at run time)."""

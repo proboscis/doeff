@@ -1,11 +1,10 @@
-"""doeff-hy-check の置き場の読み(doeff_hy._env_places)が、process 全般の答え手の module doeff_core_effects._os_process を
-読み込まない事。
+"""Reading the doeff-hy-check places (doeff_hy._env_places) must not load the process-wide handler module doeff_core_effects._os_process.
 
-env_places は環境変数 2 つ($DOEFF_HY_CHECK_CACHE・$XDG_CACHE_HOME — 今は pyright の thread の数 $DOEFF_HY_CHECK_PYRIGHT_THREADS も)を
-読むだけなのに、ReadEnvironment に答える答え手として
-os_process の subprocess_handler(子 process・thread・signal の答え手を全部持つ大きな Hy の module)を読み込み、その Hy の bytecode の
-確かめが doeff-hy-check の子 process 1 回ごとに走っていた(暖まった状態で 1.8〜1.9 秒・作業木を切った直後は 4.7 秒 — 型検査の検は
-1 件で子 process を 4〜8 回起こす)。読みは新しい Python の process で確かめる(同じ process の前の検が読み込んだ module を数えない)。
+env_places only reads two environment variables ($DOEFF_HY_CHECK_CACHE and $XDG_CACHE_HOME — now also $DOEFF_HY_CHECK_PYRIGHT_THREADS, the pyright thread count),
+yet as a handler answering ReadEnvironment it
+loaded os_process's subprocess_handler (a large Hy module holding all the child-process, thread and signal handlers), and the Hy bytecode
+check ran on every doeff-hy-check child process (1.8-1.9 s when warm, 4.7 s right after cutting a worktree — one type check
+starts 4 to 8 child processes). The read is checked in a fresh Python process (so modules loaded by an earlier check in the same process are not counted).
 """
 
 import subprocess
@@ -24,7 +23,7 @@ PROBE: str = (
 
 
 def probe() -> list[str]:
-    """子の Python(この process の環境を受け継ぐ — Hy の bytecode の置き場なども親と同じ)で PROBE を走らせた出力の行。"""
+    """Output lines from running PROBE in a child Python (inheriting this process's environment — the Hy bytecode location etc. match the parent's)."""
     done = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, check=True, timeout=120)
     return done.stdout.strip().splitlines()
 
@@ -47,8 +46,8 @@ def test_the_cache_places_still_follow_the_environment(monkeypatch: pytest.Monke
 def test_the_pyright_threads_setting_follows_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """pyright の thread の数の素の値も、doeff-hy-check の入口が os.environ を直に読まずにこの module から受ける(展開の子の数の
-    上限と同じ)。値の判じ(1 以上の整数か)は呼び手の pyright_threads。"""
+    """The raw value of the pyright thread count is also received from this module, not read from os.environ directly by the doeff-hy-check entry point (same as the upper bound on
+    expansion child processes). Judging the value (an integer >= 1) is up to the caller, pyright_threads."""
     monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "2")
     named = probe()
     assert named[2] == "2", named

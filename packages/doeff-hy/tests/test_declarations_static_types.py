@@ -1,10 +1,10 @@
-"""deff の :tags・:effects の展開と doeff_hy._declarations の型(declarations.pyi)の失敗ケース(#2324 の子)。
+"""Failure cases for the :tags / :effects expansion of deff and the types of doeff_hy._declarations (declarations.pyi) (child of #2324).
 
-deff は定義の後に `setattr(名, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(…))` と
-`setattr(名, '__doeff_effects__', doeff_hy._declarations.effect_types(…))` を出す。型検査の展開は module の直下の記帳を外すが、
-class の中の deff(method)の記帳は class の本体に残る。declarations.hy は Hy の module で型の宣言が無かったので、使う側の
-method ごとに strict の reportUnknownMemberType が 1 組(`declarations`・`DefinitionTags`)出ていた(agora の
-controllers/screen/tests/world.hy で method 32 本に 64 件)。→ declarations.pyi で宣言する。
+After a definition, deff emits `setattr(name, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(...))` and
+`setattr(name, '__doeff_effects__', doeff_hy._declarations.effect_types(...))`. The expansion for type checking removes module-level bookkeeping,
+but the bookkeeping of a deff inside a class (a method) remains in the class body. declarations.hy is a Hy module with no type declarations, so on the user side
+strict reportUnknownMemberType appeared as one pair (`declarations`, `DefinitionTags`) per method (agora's
+controllers/screen/tests/world.hy: 64 errors for 32 methods). -> Declare them in declarations.pyi.
 """
 
 import ast
@@ -18,36 +18,36 @@ from pathlib import Path
 
 import pytest
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 from doeff_hy import _declarations as declarations
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 MODULE = """\
 (require doeff-hy.macros [deff defeffect])
 
 (defeffect Ping
-  "検体の effect。"
+  "Subject effect."
   {:answer int :tags {:context "probe" :role "intent"}})
 
 (deff shout [text]
   {:pre [(: text str)] :post [(: % str)] :tags {:context "probe" :role "judgment"} :effects [Ping]}
-  "module の直下の deff。"
+  "Module-level deff."
   (.upper text))
 
 (defclass Probe []
-  "deff の method を持つ検体の class。"
+  "Subject class that has a deff method."
   (deff greet [self name]
     {:pre [(: self Probe) (: name str)] :post [(: % str)] :tags {:context "probe" :role "judgment"} :effects [Ping]}
-    "class の中の deff(method)。"
+    "A deff inside a class (a method)."
     (+ "hello " name))
   (deff plain [self]
     {:pre [(: self Probe)] :post [(: % int)] :tags {:context "probe" :role "judgment" :spells "json"}}
-    "spells つきの method。"
+    "A method with spells."
     1))
 """
 
-#: 前に deff の行に出ていた赤の文言(どれも書き手に直せない)。
+#: Messages of the errors that previously appeared on the deff lines (none could be fixed by the author).
 FORMER_ERRORS: tuple[str, ...] = (
     'Type of "_declarations" is unknown',
     'Type of "DefinitionTags" is unknown',
@@ -57,7 +57,7 @@ FORMER_ERRORS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """Result of running doeff-hy-check once (JSON diagnostics)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -89,8 +89,8 @@ def test_deff_tags_and_effects_have_no_unreadable_red(tmp_path: Path) -> None:
 
 
 def test_the_stub_matches_declarations_hy() -> None:
-    # declarations.pyi が宣言する名は declarations.hy に在り、関数の引数の名と順と DefinitionTags の欄は実装と同じ
-    # (宣言だけが先へ行かない)。
+    # The names declared by declarations.pyi exist in declarations.hy, and the function parameter names and order and the DefinitionTags fields are the same as the implementation
+    # (the declarations alone do not get ahead).
     stub = ast.parse(Path(declarations.__file__).with_suffix(".pyi").read_text(encoding="utf-8"))
     constants = [
         node.target.id

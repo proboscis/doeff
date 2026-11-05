@@ -1,20 +1,20 @@
-"""書き換えない表 Table(doeff_hy._table)の検 — 古い表は書きの後も古い行を読み、基の作り直しの後も変わらない。
+"""Checks for the non-mutating table Table (doeff_hy._table) -- an old table keeps reading old rows after writes, and is unchanged after the base is rebuilt.
 
-失敗ケース: 基をその場で書き換える表(下の _InPlaceTable)だと、古い表を持つ読み手が新しい行を読む — 同じ検が赤になる。
+Failure case: with a table that rewrites its base in place (_InPlaceTable below), a reader holding an old table reads the new rows -- the same check turns red.
 """
 
 from collections.abc import Callable
 from itertools import accumulate
 from typing import NamedTuple
 
-import hy  # noqa: F401  # .hy の module の import hook
+import hy  # noqa: F401  # import hook for .hy modules
 import pytest
 
 from doeff_hy._table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, draft_of, table_of
 
 
 def _table(n: int) -> Table[int]:
-    """検の材料の表を作るため(鍵 k0.. → 値 0..)。"""
+    """Build a table as test material (keys k0.. -> values 0..)."""
     return table_of(tuple(TableWrite(key=f"k{i}", value=i) for i in range(n)))
 
 
@@ -29,7 +29,7 @@ def test_an_old_table_keeps_reading_old_rows_after_writes() -> None:
 def test_old_tables_survive_the_rebuild_of_the_base() -> None:
     base_rows = 1000
     old = _table(base_rows)
-    # 差分の上限(max(MIN_DELTA, 基 / COMPACT_RATIO))を越えるまで 1 行ずつ書き、途中の表を全部持っておく。
+    # Write one row at a time until the delta limit (max(MIN_DELTA, base / COMPACT_RATIO)) is exceeded, keeping every intermediate table.
     steps = range(max(MIN_DELTA, base_rows // COMPACT_RATIO) + 5)
     kept = tuple(accumulate(steps, lambda table, i: table.with_writes((TableWrite(key=f"k{i}", value=-i),)), initial=old))[1:]
     assert old.row("k0") == 0 and old.row("k3") == 3
@@ -52,11 +52,11 @@ def test_a_table_cannot_be_changed() -> None:
         setattr(table, "_base", {})
     except AttributeError:
         return
-    raise AssertionError("Table の欄を書き換えられた")
+    raise AssertionError("a field of Table could be rewritten")
 
 
 class _InPlaceTable:
-    """失敗ケースの材料: 基をその場で書き換える表(Table の形を真似るだけ)。"""
+    """Failure-case material: a table that rewrites its base in place (only imitates the shape of Table)."""
 
     def __init__(self, base: dict[str, int]) -> None:
         self._base = base
@@ -76,7 +76,7 @@ class _InPlaceTable:
 def test_the_counterexample_an_in_place_table_leaks_new_rows_to_old_readers() -> None:
     old = _InPlaceTable({"k1": 1})
     old.with_writes((TableWrite(key="k1", value=100),))
-    assert old.row("k1") == 100  # 古い表の読み手が新しい行を見る — Table はこれを起こさない(上の検)
+    assert old.row("k1") == 100  # a reader of the old table sees the new row -- Table does not let this happen (the checks above)
 
 
 def test_table_is_not_a_mapping() -> None:
@@ -87,8 +87,8 @@ def test_table_is_not_a_mapping() -> None:
 
 
 def test_a_table_and_a_draft_refuse_truth_and_len_and_name_size() -> None:
-    """表と下書きを真偽・長さで読むと TypeError で断り、直し方の .size を名指す。
-    数は size で読む(下書きの size は書きを当てた後の行の数)。"""
+    """Reading a table or a draft as a truth value or a length is refused with TypeError, naming .size as the fix.
+    Counts are read with size (the size of a draft is the number of rows after its writes are applied)."""
     empty = table_of(())
     full = _table(3)
     for value in (empty, full, draft_of(empty), draft_of(full)):
@@ -107,18 +107,18 @@ def test_a_table_and_a_draft_refuse_truth_and_len_and_name_size() -> None:
 
 
 def test_the_counterexample_a_table_without_bool_reads_true_when_empty() -> None:
-    """失敗ケース(I0b の前の形): __bool__ も __len__ も持たない class の値は、空でも真と読まれる — `(when (not table) …)` の
-    早い戻りが黙って効かない。Table はこれを断る(上の検)。"""
+    """Failure case (the shape before I0b): a value of a class with neither __bool__ nor __len__ reads as true even when empty -- the early return of `(when (not table) ...)`
+    silently has no effect. Table refuses this (the checks above)."""
 
     class _SilentTable:
         def size(self) -> int:
             return 0
 
     silent = _SilentTable()
-    assert silent.size() == 0 and bool(silent)  # 空なのに真 — 見落としが例外にならない
+    assert silent.size() == 0 and bool(silent)  # true even though empty -- the oversight does not become an exception
 
 
-# ------------------------------------------------------------------ 下書き TableDraft
+# ------------------------------------------------------------------ Draft TableDraft
 
 
 def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
@@ -131,7 +131,7 @@ def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
     draft.put("x", 7)
     assert (draft.row("k1"), draft.row("k2"), draft.row("x"), draft.row("k3")) == (100, None, 7, 3)
     assert sorted(draft.keys()) == sorted(["k0", "k1", "k3", "k4", "x"])
-    # 元の表は下書きの書きで変わらない(古い断面を持つ読み手は古い行を読み続ける)。
+    # The original table does not change from the draft's writes (a reader holding an old snapshot keeps reading old rows).
     assert (table.row("k1"), table.row("k2"), table.row("x"), table.size()) == (1, 2, None, 5)
     frozen = draft.freeze()
     assert (frozen.row("k1"), frozen.row("k2"), frozen.row("x"), frozen.size()) == (100, None, 7, 5)
@@ -148,7 +148,7 @@ def test_a_draft_without_writes_freezes_to_the_same_table() -> None:
 def test_a_draft_takes_many_writes_in_one_freeze() -> None:
     from doeff_hy._table import draft_of
 
-    # 一覧の拍の形: 空の表へ数万件を書き、書いた行を同じ拍の中で読み直す。
+    # The shape of a listing beat: write tens of thousands of rows into an empty table, and re-read the written rows within the same beat.
     draft = draft_of(table_of(()))
     for i in range(20000):
         draft.put(f"k{i}", i)
@@ -168,7 +168,7 @@ def test_removing_then_putting_back_in_a_draft_restores_the_row() -> None:
 
 
 class _ReadThroughDraft:
-    """失敗ケースの材料: 書きを貯めるが、読みは元の表へ素通りする下書き(TableDraft の形を真似るだけ)。"""
+    """Failure-case material: a draft that accumulates writes but passes reads straight through to the original table (only imitates the shape of TableDraft)."""
 
     def __init__(self, table: Table[int]) -> None:
         self._table = table
@@ -184,10 +184,10 @@ class _ReadThroughDraft:
 def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None:
     draft = _ReadThroughDraft(_table(2))
     draft.put("k0", 100)
-    assert draft.row("k0") == 0  # 同じ拍の中で書いた行が読めない — TableDraft はこれを起こさない(上の検)
+    assert draft.row("k0") == 0  # a row written within the same beat cannot be read -- TableDraft does not let this happen (the checks above)
 
 
-# ------------------------------------------------------------------ 値の列 rows
+# ------------------------------------------------------------------ Sequence of values: rows
 
 
 def test_rows_follow_the_keys_after_writes_and_removals() -> None:
@@ -202,11 +202,11 @@ def test_rows_follow_the_keys_after_writes_and_removals() -> None:
     draft.put("y", 8)
     assert sorted(draft.rows()) == sorted([0, 100, 30, 7, 8])
     assert [draft.row(key) for key in draft.keys()] == list(draft.rows())
-    # 失敗ケースの照らし: 消した行(k2・k4)の値を列に残す読み手なら、数えが表の size と食い違う。
+    # Cross-check for the failure case: a reader that leaves the values of removed rows (k2, k4) in the sequence would have a count that disagrees with the table's size.
     assert len(table.rows()) == table.size() and len(draft.rows()) == draft.freeze().size()
 
 
-# ------------------------------------------------------------------ 値としての扱い
+# ------------------------------------------------------------------ Handling as a value
 
 
 def test_tables_compare_by_rows_not_by_layout() -> None:
@@ -214,11 +214,11 @@ def test_tables_compare_by_rows_not_by_layout() -> None:
 
     written = _table(3).with_writes((TableWrite(key="k1", value=10),))
     built = table_of((TableWrite(key="k0", value=0), TableWrite(key="k1", value=10), TableWrite(key="k2", value=2)))
-    # 基と差分の分け方が違っても、行が同じなら等しい。
+    # Even if the split between base and delta differs, tables with the same rows are equal.
     assert written == built
     assert written != built.with_writes((TableWrite(key="k2", value=None),))
     assert written != built.with_writes((TableWrite(key="k2", value=3),))
-    # 写し(copy・deepcopy)は作る口を通して作り直され、元と等しい(欄の書きを断る表でも写せる)。
+    # Copies (copy, deepcopy) are rebuilt through the constructor and equal the original (a table that refuses field writes can still be copied).
     assert copy.deepcopy(written) == written
     assert copy.copy(written) == written
     assert copy.deepcopy(written) is not written
@@ -227,14 +227,14 @@ def test_tables_compare_by_rows_not_by_layout() -> None:
 def test_the_counterexample_an_identity_compared_table_breaks_the_snapshot_check() -> None:
     import copy
 
-    # 失敗ケースの照らし: 比べが同一性(既定の object.__eq__)なら、中身の同じ写しが「違う」と読まれ、畳みの前後の断面の検が赤になる。
+    # Cross-check for the failure case: if comparison were by identity (the default object.__eq__), a copy with the same contents would read as "different", and the snapshot check before and after compaction would turn red.
     table = _table(2)
     assert object.__eq__(copy.deepcopy(table), table) is NotImplemented
     assert copy.deepcopy(table) == table
 
 
 def _reference(base: dict[str, int], writes: list[tuple[str, int | None]]) -> dict[str, int]:
-    """書きを列の順に 1 件ずつ当てた dict(比べの元)— 1 度に当てる形が、同じ鍵の置く・消すの順の意味を変えていない事を確かめるため。"""
+    """A dict with the writes applied one at a time in sequence order (the baseline for comparison) -- to confirm that applying them all at once does not change the meaning of the put/remove order for the same key."""
     out = dict(base)
     for key, value in writes:
         if value is None:
@@ -245,7 +245,7 @@ def _reference(base: dict[str, int], writes: list[tuple[str, int | None]]) -> di
 
 
 def _random_writes(seed: int, keys: int, count: int) -> list[tuple[str, int | None]]:
-    """同じ鍵に置く・消すを混ぜた無作為の書きの列を作るため(鍵は基に在る物と無い物の両方)。"""
+    """Build a random sequence of writes mixing puts and removes for the same keys (keys include both ones in the base and ones not)."""
     import random
 
     rng = random.Random(seed)
@@ -253,14 +253,14 @@ def _random_writes(seed: int, keys: int, count: int) -> list[tuple[str, int | No
 
 
 def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
-    # with-writes と下書きの freeze は書きを 1 度に当てる。基の大きさ・書きの数を変え(作り直しの前と後の両方)、
-    # どの表も、列の順に 1 件ずつ当てた dict と同じ行を持つ。
+    # with-writes and a draft's freeze apply writes all at once. Varying the base size and the number of writes (both before and after a rebuild),
+    # every table has the same rows as a dict with the writes applied one at a time in sequence order.
     from doeff_hy._table import draft_of
 
     for seed in range(20):
         for base_rows, count in ((0, 10), (40, 30), (1000, 50), (200, 400)):
             base = {f"k{i}": i for i in range(base_rows)}
-            # 前の書き(差分の上限より少ない — 表は基と差分の 2 層のまま)を当てた表に重ねて書く。差分に在る行を消す書きも混ざる。
+            # Write on top of a table with earlier writes applied (fewer than the delta limit -- the table stays in two layers, base and delta). Writes that remove rows in the delta are mixed in too.
             earlier = _random_writes(seed + 100, base_rows + 20, 8)
             writes = _random_writes(seed, base_rows + 20, count)
             expected = _reference(_reference(base, earlier), writes)
@@ -281,14 +281,14 @@ def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
                 assert all(got.row(k) == expected.get(k) for k in {k for k, _ in writes} | set(base)), (seed, base_rows, count)
 
 
-# ------------------------------------------------------------------ 速さの道(#2708 の I0a・契約は変えない)
+# ------------------------------------------------------------------ Fast path (I0a of #2708 -- the contract is unchanged)
 
 
 class _UnreadableRow:
-    """検の材料: 比べられると止まる行(同じ表の比べが中身を読まない事を確かめるため)。"""
+    """Check material: a row that stops when compared (to confirm that comparing the same table does not read the contents)."""
 
     def __eq__(self, other: object) -> bool:
-        raise AssertionError("同じ表の比べが行の中身を読んだ")
+        raise AssertionError("comparing the same table read the contents of a row")
 
     __hash__ = None  # type: ignore[assignment]
 
@@ -296,13 +296,13 @@ class _UnreadableRow:
 def test_the_same_table_compares_equal_without_reading_rows() -> None:
     table = table_of((TableWrite(key="k", value=_UnreadableRow()),))
     assert table == table
-    # 失敗ケース: 中身の同じ別の表は行を読んで比べる(同じ object の近道を外すと、上の比べもここと同じく止まる)。
+    # Failure case: a different table with the same contents is compared by reading the rows (without the shortcut for the same object, the comparison above would stop here too).
     copy = table_of((TableWrite(key="k", value=table.row("k")),))
     try:
         _ = table == copy
     except AssertionError:
         return
-    raise AssertionError("別の表の比べが行を読まなかった")
+    raise AssertionError("comparing a different table did not read the rows")
 
 
 def test_a_small_table_keeps_rows_and_order_without_a_delta_layer() -> None:
@@ -312,7 +312,7 @@ def test_a_small_table_keeps_rows_and_order_without_a_delta_layer() -> None:
     assert (new.row("k1"), new.row("k2"), new.row("x"), new.size()) == (100, None, 7, MIN_DELTA - 1)
     assert new.keys() == tuple(key for key in old.keys() if key != "k2") + ("x",)
     assert new.rows() == tuple(new.row(key) for key in new.keys())
-    # 小さな表は差分の層を持たない(書きごとに基を写す — 差分の dict の丸写しを払わない)。
+    # A small table has no delta layer (each write copies the base -- it does not pay for a full copy of the delta dict).
     assert (new._delta, new._removed) == ({}, frozenset())
 
 
@@ -322,14 +322,14 @@ def test_items_pair_the_keys_with_the_rows() -> None:
     for table in (small, big):
         assert table.items() == tuple(zip(table.keys(), table.rows()))
         assert all(table.row(key) == value for key, value in table.items())
-    assert big._delta  # 大きな表は差分の層の道を通っている(items が差分を含めて組む事の確かめ)
+    assert big._delta  # a big table goes through the delta-layer path (confirms that items builds including the delta)
 
 
-# ------------------------------------------------------------------ 基を分け合う表の比べ(盤の写しの比べが card の数に比例していた)
+# ------------------------------------------------------------------ Comparing tables that share a base (comparing copies of the board was proportional to the number of cards)
 
 
 class _CountedRow:
-    """検の材料: 比べられた回数を数える行(基を分け合う表の比べが、書いた鍵の行だけを読む事を確かめるため)。"""
+    """Check material: a row that counts how many times it was compared (to confirm that comparing tables sharing a base reads only the rows of written keys)."""
 
     compared = 0
 
@@ -348,7 +348,7 @@ def _counted_table(n: int) -> Table[_CountedRow]:
 
 
 class _Comparison(NamedTuple):
-    """2 つの表の比べの結果: 等しいか、比べるために読んだ行の数。"""
+    """The result of comparing two tables: whether they are equal, and the number of rows read to compare them."""
 
     equal: bool
     rows_read: int
@@ -364,14 +364,14 @@ def test_tables_sharing_a_base_compare_only_the_written_keys() -> None:
     base = _counted_table(MIN_DELTA * 20)
     moved = base.with_writes((TableWrite(key="k100", value=_CountedRow(-100)),))
     moved_again = moved.with_writes((TableWrite(key="k200", value=_CountedRow(-200)),))
-    assert moved._base is moved_again._base  # 前提: with-writes は基を分け合う(差分が小さい間)
-    # 基を分け合う 2 つの表: 基の 1,280 行を読まず、書いた鍵(k100・k200)の行だけを比べる。
+    assert moved._base is moved_again._base  # premise: with-writes shares the base (while the delta is small)
+    # Two tables sharing a base: does not read the base's 1,280 rows, compares only the rows of the written keys (k100, k200).
     assert _rows_read_by(moved, moved_again) == (False, 1)
     assert _rows_read_by(moved_again, moved).equal is False
-    # 中身の同じ行を書き直した表(別の object)も、書いた鍵の行だけで「等しい」と判じる。
+    # A table in which a row was rewritten with the same contents (a different object) is also judged "equal" from the written key's row alone.
     rewritten = base.with_writes((TableWrite(key="k100", value=_CountedRow(100)),))
     assert _rows_read_by(base, rewritten) == (True, 1)
-    # 失敗ケースの照らし: 基を分け合う道が無ければ(基を作り直した表との比べ)、全行を読んで比べる。
+    # Cross-check for the failure case: without the shared-base path (comparing with a table whose base was rebuilt), all rows are read and compared.
     rebuilt = _counted_table(MIN_DELTA * 20)
     assert rebuilt._base is not base._base
     assert _rows_read_by(base, rebuilt) == (True, MIN_DELTA * 20)
@@ -382,28 +382,28 @@ def test_tables_sharing_a_base_compare_removed_and_added_keys() -> None:
     removed = base.with_writes((TableWrite(key="k3", value=None),))
     added = base.with_writes((TableWrite(key="new", value=1),))
     assert removed._base is added._base is base._base
-    # 片方だけが消した基の行・片方だけが足した行は、鍵の集合が違うので等しくない(行の数が同じでも)。
+    # A base row removed by only one side and a row added by only one side make the key sets differ, so they are not equal (even if the row counts are the same).
     assert removed != added
     assert removed != base
     assert added != base
-    # 消して同じ値で足し直した表は、基と等しい。
+    # A table that removed a key and added it back with the same value equals the base.
     restored = removed.with_writes((TableWrite(key="k3", value=3),))
     assert restored == base
     assert restored != removed
-    # 基を分け合わない表(基を作り直した物)と、基を分け合う表で答えが変わらない。
+    # The answer does not change between a table that does not share a base (one with a rebuilt base) and a table that does.
     assert base == table_of(tuple(TableWrite(key=f"k{i}", value=i) for i in range(MIN_DELTA * 4)))
     assert removed != table_of(tuple(TableWrite(key=f"k{i}", value=i) for i in range(MIN_DELTA * 4)))
 
 
 def test_comparing_tables_agrees_with_comparing_their_rows_for_any_writes() -> None:
-    # 基を分け合う 2 つの表の比べ(差分と消した鍵だけを読む)が、行の全部を dict にして比べた答えと一致する。
-    # 同じ鍵への置く・消す・基と同じ値の置き直しを混ぜ、差分が基の 1/COMPACT-RATIO を越えて基が作り直される書きの数も含める。
+    # Comparing two tables that share a base (reading only the delta and removed keys) agrees with the answer from comparing all rows as dicts.
+    # Mix puts, removes, and re-puts of the same value as the base for the same keys, and include write counts where the delta exceeds 1/COMPACT-RATIO of the base and the base is rebuilt.
     for seed in range(40):
         for base_rows, count in ((MIN_DELTA, 6), (MIN_DELTA * 4, 20), (MIN_DELTA * 4, 400)):
             base = {f"k{i}": i for i in range(base_rows)}
             table = table_of(tuple(TableWrite(key=k, value=v) for k, v in base.items()))
             first = _random_writes(seed, base_rows + 10, count)
-            # 基と同じ値を置き直す書きを混ぜる(中身が変わらない書き)。
+            # Mix in writes that re-put the same value as the base (writes that do not change the contents).
             second = _random_writes(seed + 1000, base_rows + 10, count) + [(f"k{seed % base_rows}", seed % base_rows)]
             left = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in first))
             right = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in second))
@@ -411,17 +411,17 @@ def test_comparing_tables_agrees_with_comparing_their_rows_for_any_writes() -> N
             right_rows = _reference(base, second)
             assert (left == right) is (left_rows == right_rows), (seed, base_rows, count)
             assert (left != right) is (left_rows != right_rows), (seed, base_rows, count)
-            # 書きを足した表と、足す前の表の比べ(基を分け合ったままの物と、基が作り直された物の両方が混じる)。
+            # Comparison of a table with writes added against the table before adding (a mix of ones still sharing the base and ones whose base was rebuilt).
             more = _random_writes(seed + 2000, base_rows + 10, 3)
             longer = left.with_writes(tuple(TableWrite(key=k, value=v) for k, v in more))
             assert (left == longer) is (left_rows == _reference(left_rows, more)), (seed, base_rows, count)
 
 
-# ------------------------------------------------------------------ 行が違う鍵(画面が盤の変わった card の鍵を合図に載せる)
+# ------------------------------------------------------------------ Keys whose rows differ (the screen puts the keys of the board's changed cards into a signal)
 
 
 def _changed_reference(left: dict[str, int], right: dict[str, int]) -> tuple[str, ...]:
-    """2 つの dict で値が違う鍵(片方にだけ在る鍵を含む・鍵の昇順)— changed-keys の答えの比べの元。"""
+    """The keys whose values differ between two dicts (including keys present in only one side, in ascending order) -- the baseline for comparing the answer of changed-keys."""
     return tuple(sorted(key for key in left.keys() | right.keys() if left.get(key) != right.get(key)))
 
 
@@ -429,13 +429,13 @@ def test_changed_keys_names_written_removed_and_added_keys_only() -> None:
     base = _table(MIN_DELTA * 4)
     moved = base.with_writes((
         TableWrite(key="k1", value=-1), TableWrite(key="k2", value=None), TableWrite(key="new", value=7),
-        TableWrite(key="k3", value=3),  # 値の同じ書き直しは名乗らない
+        TableWrite(key="k3", value=3),  # a rewrite with the same value is not reported
     ))
-    assert moved._base is base._base  # 前提: 基を分け合う道
+    assert moved._base is base._base  # premise: the shared-base path
     assert moved.changed_keys(base) == ("k1", "k2", "new")
     assert base.changed_keys(moved) == ("k1", "k2", "new")
     assert base.changed_keys(base) == ()
-    # 等しい表どうしは空(__eq__ と同じ読み)
+    # Equal tables give empty (the same reading as __eq__)
     assert moved.changed_keys(moved.with_writes((TableWrite(key="k1", value=-1),))) == ()
 
 
@@ -445,10 +445,10 @@ def test_changed_keys_of_tables_sharing_a_base_reads_only_the_written_rows() -> 
     moved_again = moved.with_writes((TableWrite(key="k200", value=_CountedRow(-200)), TableWrite(key="k300", value=_CountedRow(300))))
     assert moved._base is moved_again._base
     _CountedRow.compared = 0
-    # k300 は同じ値の書き直し(別の object)— 値で比べて名乗らない。基の 1,280 行は読まない
+    # k300 is a rewrite with the same value (a different object) -- compared by value and not reported. The base's 1,280 rows are not read
     assert moved.changed_keys(moved_again) == ("k200",)
-    assert _CountedRow.compared <= 3, "基を分け合う表の比べが書いた鍵の外の行を読んだ"
-    # 失敗ケースの照らし: 基を作り直した表との比べは、全部の鍵を読む(同一性の近道が効く行は値を読まない)
+    assert _CountedRow.compared <= 3, "comparing tables sharing a base read rows outside the written keys"
+    # Cross-check for the failure case: comparing with a table whose base was rebuilt reads all keys (rows covered by the identity shortcut do not read the value)
     rebuilt = _counted_table(MIN_DELTA * 20)
     _CountedRow.compared = 0
     assert base.changed_keys(rebuilt) == ()
@@ -456,7 +456,7 @@ def test_changed_keys_of_tables_sharing_a_base_reads_only_the_written_rows() -> 
 
 
 def test_changed_keys_agrees_with_comparing_the_rows_for_any_writes() -> None:
-    # 基を分け合う表(差分と消した鍵だけを読む)・基が作り直された表(全部の鍵を読む)のどちらでも、行の全部の dict の違いと一致する。
+    # With both tables sharing a base (reading only the delta and removed keys) and tables whose base was rebuilt (reading all keys), the result agrees with the difference of the full-row dicts.
     for seed in range(40):
         for base_rows, count in ((MIN_DELTA, 6), (MIN_DELTA * 4, 20), (MIN_DELTA * 4, 400)):
             base = {f"k{i}": i for i in range(base_rows)}
@@ -470,7 +470,7 @@ def test_changed_keys_agrees_with_comparing_the_rows_for_any_writes() -> None:
             assert (left.changed_keys(right) == ()) is (left == right), (seed, base_rows, count)
 
 
-# ------------------------------------------------------------------ 単価の直し(card E0 — 行数の数え・全行の読み・空の書き・== の断り)
+# ------------------------------------------------------------------ Per-unit-cost fixes (card E0 -- counting rows, reading all rows, empty writes, refusing ==)
 
 
 def _model_check(table: Table[int], model: dict[str, int], where: object) -> None:
@@ -480,7 +480,7 @@ def _model_check(table: Table[int], model: dict[str, int], where: object) -> Non
     keys, rows, items = table.keys(), table.rows(), table.items()
     assert set(keys) == set(model) and len(keys) == len(model), where
     assert dict(zip(keys, rows)) == model, where
-    # keys・rows・items は同じ並び。
+    # keys, rows, and items are in the same order.
     assert items == tuple(zip(keys, rows)), where
 
 
@@ -492,7 +492,7 @@ def test_random_writes_removes_and_compactions_match_a_dict_model() -> None:
         model: dict[str, int] = {f"k{i}": i for i in range(rng.choice((0, 5, 80, 300)))}
         table = table_of(tuple(TableWrite(key=k, value=v) for k, v in model.items()))
         for step in range(40):
-            # 少ない書き(2 層のまま)と多い書き(基の作り直し)を混ぜる。
+            # Mix small writes (staying in two layers) and large writes (rebuilding the base).
             count = rng.choice((1, 2, 5, 40, 120))
             writes = _random_writes(rng.randrange(10**6), len(model) + 30, count)
             if rng.random() < 0.5:
@@ -528,9 +528,9 @@ def test_all_rows_are_read_from_one_copy_per_table() -> None:
     flat = big._flat
     assert flat is not None and "k4" not in flat and flat["k3"] == -3
     big.rows(), big.items()
-    assert big._flat is flat  # 2 度目からは同じ写し
+    assert big._flat is flat  # from the second time on, the same copy
     assert first == big.keys()
-    # 基だけの表は基そのもの(写さない)。
+    # A table of the base alone is the base itself (not copied).
     plain = _table(MIN_DELTA * 4)
     plain.rows()
     assert plain._flat is plain._base
@@ -544,7 +544,7 @@ def test_writes_that_change_nothing_return_the_same_table() -> None:
         assert table.with_writes((TableWrite(key="absent", value=None),)) is table
         assert table.with_writes((TableWrite(key="k2", value=table.row("k2")), TableWrite(key="k2", value=table.row("k2")))) is table
         assert table.with_writes((TableWrite(key="k2", value=999),)) is not table
-    # 同じ値でも別の object なら新しい表(同一性で見る)。
+    # Even with the same value, a different object gives a new table (judged by identity).
     t = table_of((TableWrite(key="k", value=[1]),))
     assert t.with_writes((TableWrite(key="k", value=[1]),)) is not t
     assert row is not None
@@ -568,7 +568,7 @@ def test_comparing_a_table_with_a_dict_is_refused() -> None:
         for compare in (lambda a, b: a == b, lambda a, b: b == a, lambda a, b: a != b):
             with pytest.raises(TypeError):
                 compare(table, other)
-    # 写像でない物との比べは今まで通り偽。
+    # Comparison with something that is not a mapping is false as before.
     assert (table == None) is False  # noqa: E711
     assert (table == 3) is False
 
@@ -578,17 +578,17 @@ def test_copy_and_pickle_keep_the_rows_and_drop_the_flat_copy() -> None:
     import pickle
 
     table = _table(MIN_DELTA * 4).with_writes((TableWrite(key="k3", value=-3), TableWrite(key="k4", value=None)))
-    table.keys()  # 写しを作った後でも
+    table.keys()  # even after the copy has been made
     for back in (copy.copy(table), copy.deepcopy(table), pickle.loads(pickle.dumps(table))):
         assert back == table and back.keys() == table.keys() and back.items() == table.items()
         assert back._flat is None or back._flat is not table._flat
 
 
-# ------------------------------------------------------------------ 系譜(子孫との比べは書きの数に比例する)
+# ------------------------------------------------------------------ Lineage (comparing with a descendant is proportional to the number of writes)
 
 
 def _rows_looked_up(monkeypatch: pytest.MonkeyPatch, compare: Callable[[], object]) -> int:
-    """比べ compare が表の行を何回引いたかを数えるため(引いた行の数 = 比べの仕事量)。"""
+    """Count how many times comparison compare looked up rows of a table (the number of rows looked up = the work of the comparison)."""
     looked = [0]
     row = Table.row
 
@@ -603,7 +603,7 @@ def _rows_looked_up(monkeypatch: pytest.MonkeyPatch, compare: Callable[[], objec
 
 
 def _grown_chain(rows: int, writes: int) -> Table[int]:
-    """1 鍵ずつの書きを writes 回続けて差分の層を育てた表を作るため(本番の拍ごとの畳みの形)。"""
+    """Build a table whose delta layer is grown by continuing writes of one key at a time, writes times (the shape of per-beat compaction in production)."""
     table = _table(rows)
     for step in range(writes):
         table = table.with_writes((TableWrite(key=f"k{(step * 37) % rows}", value=-step - 1),))
@@ -613,21 +613,21 @@ def _grown_chain(rows: int, writes: int) -> Table[int]:
 def test_comparing_a_descendant_reads_only_the_rows_written_between(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = MIN_DELTA * 20
     grown = _grown_chain(rows, rows // COMPACT_RATIO - 2)
-    assert len(grown._delta) > 100  # 前提: 差分の層が育っている
+    assert len(grown._delta) > 100  # premise: the delta layer has grown
     moved = grown.with_writes((TableWrite(key="k5", value=-5000),))
     assert moved._base is grown._base
-    # 差分の層の 150 行を読まず、2 つの間に書いた 1 鍵だけを引く(前後の 2 つの表で 1 回ずつ)。
+    # Does not read the delta layer's 150 rows; looks up only the 1 key written between the two (once each in the tables before and after).
     assert _rows_looked_up(monkeypatch, lambda: moved.changed_keys(grown)) <= 2
     assert _rows_looked_up(monkeypatch, lambda: moved == grown) <= 2
     assert moved.changed_keys(grown) == ("k5",) and grown.changed_keys(moved) == ("k5",)
     assert (moved == grown) is False
-    # 祖先との比べも、間に書いた鍵だけ。
+    # Comparison with an ancestor also reads only the keys written in between.
     older = _grown_chain(rows, 3)
     assert set(moved.changed_keys(older)) <= {f"k{(step * 37) % rows}" for step in range(rows)} | {"k5"}
 
 
 def test_the_counterexample_a_sibling_compares_the_whole_delta(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 同じ親から作った 2 人目の子は系譜に載らない — 子孫でない表どうしの比べは前の道(差分の層の全部)で、答えは正しい。
+    # A second child made from the same parent is not on the lineage -- comparing tables that are not descendants goes through the former path (the whole delta layer), and the answer is correct.
     rows = MIN_DELTA * 20
     grown = _grown_chain(rows, rows // COMPACT_RATIO - 2)
     first = grown.with_writes((TableWrite(key="k5", value=-5000),))
@@ -641,7 +641,7 @@ def test_comparing_across_the_rebuild_of_the_base_reads_only_the_written_rows(mo
     rows = MIN_DELTA * 20
     grown = _grown_chain(rows, rows // COMPACT_RATIO)
     rebuilt = grown.with_writes((TableWrite(key="k7", value=-7000), TableWrite(key="k8", value=-8000)))
-    assert rebuilt._base is not grown._base  # 前提: この書きで基を作り直した
+    assert rebuilt._base is not grown._base  # premise: this write rebuilt the base
     assert _rows_looked_up(monkeypatch, lambda: rebuilt.changed_keys(grown)) <= 4
     assert rebuilt.changed_keys(grown) == ("k7", "k8")
 
@@ -655,7 +655,7 @@ def test_chains_siblings_drafts_and_line_breaks_compare_like_their_rows() -> Non
         start = table_of(tuple(TableWrite(key=k, value=v) for k, v in model.items()))
         kept: list[tuple[Table[int], dict[str, int]]] = [(start, model)]
         for step in range(120):
-            # 多くは最後の表の子(系譜に載る)・時々は古い表の子(2 人目の子 — 新しい系譜)。
+            # Mostly a child of the last table (on the lineage); sometimes a child of an old table (a second child -- a new lineage).
             table, rows = kept[-1] if rng.random() < 0.8 else rng.choice(kept)
             writes = _random_writes(rng.randrange(10**6), len(rows) + 20, rng.choice((1, 2, 5, 40)))
             if rng.random() < 0.5:
@@ -679,19 +679,19 @@ def test_a_line_keeps_no_more_keys_than_its_table_holds() -> None:
 
 
 def test_small_tables_share_the_empty_layers_and_hold_no_line_until_a_child() -> None:
-    # 行ごとの小さな表(画面に 45 万個)は、空の差分・空の消した鍵・系譜を表 1 つごとに持たない。
+    # Small per-row tables (450,000 on the screen) do not hold an empty delta, empty removed keys, or a lineage per table.
     first, second = _table(3), _table(4)
     assert first._delta is second._delta and first._removed is second._removed
     assert first._line is None and second._line is None
     child = first.with_writes((TableWrite(key="k0", value=-1),))
     assert child._delta is first._delta and child._removed is first._removed
-    # 初めての子で親に系譜ができ、子はそれに載る(比べは書いた鍵だけ)。2 人目の子は載らない。
+    # The first child gives the parent a lineage, and the child is on it (comparison is only the written keys). A second child is not on it.
     assert first._line is not None and child._line is first._line
     sibling = first.with_writes((TableWrite(key="k1", value=-2),))
     assert sibling._line is None
     assert child.changed_keys(sibling) == ("k0", "k1") and (child == sibling) is False
     assert first.changed_keys(second) == ("k3",) and second.changed_keys(_table(4)) == ()
-    # 差分の層を空にした書き(基の作り直し)の答えも、分け合う空の値を持つ。
+    # The answer of a write that emptied the delta layer (rebuilding the base) also holds the shared empty values.
     rebuilt = _grown_chain(MIN_DELTA * 20, MIN_DELTA * 20 // COMPACT_RATIO + 1)
     assert rebuilt._delta is first._delta and rebuilt._removed is first._removed
 

@@ -1,12 +1,12 @@
-"""持ち主の package の定義の macro が `_doeff_` の別名で出す import を、型検査のための展開が「展開の合成した import」と読む事の検
-(defsystem を doeff-cluster へ移した時、doeff-hy から doeff-cluster の module の綴りの表を無くした)。
+"""Check that the type-check expansion reads the import that a macro defined in the owner package emits under a `_doeff_` alias as an "import synthesized by expansion"
+(when defsystem moved to doeff-cluster, doeff-hy lost its table of doeff-cluster module spellings).
 
-doeff-hy の外の定義の macro(doeff-cluster の defsystem など)は、展開の import を `import <module> as _doeff_<名>` の形で置く。
-doeff-hy-check はその綴りの表を持たず、束ねる名の頭 `_doeff_`(expansion_names.PREFIX)だけで読む:
+Macros defined outside doeff-hy (such as doeff-cluster's defsystem) place the expansion's imports in the form `import <module> as _doeff_<name>`.
+doeff-hy-check has no table of those spellings and reads them only by the bundled-name prefix `_doeff_` (expansion_names.PREFIX):
 
-- module の直下で同じ文が繰り返されたら最初の 1 つだけを残す(1 つの module に系を 2 つ書いても reportDuplicateImport を出さない)。
-- 関数・class の本体の中の物は module の段へ移す(入れ子の定義の展開の import を外の関数の局所の名にしない)。
-- 書き手の import(別名の無い `import json`・`_doeff_` の頭でない別名)は畳まず、動かさない。
+- If the same statement is repeated directly under a module, only the first is kept (writing two systems in one module does not produce reportDuplicateImport).
+- Those inside function and class bodies are moved to module level (the expansion's imports of nested definitions do not become local names of the outer function).
+- The author's own imports (a plain `import json` with no alias, an alias not starting with `_doeff_`) are not folded or moved.
 """
 
 import ast
@@ -30,7 +30,7 @@ def test_a_repeated_reserved_alias_import_is_folded_to_one() -> None:
 
 
 def test_a_repeated_writer_import_stays() -> None:
-    # 書き手が自分で 2 度書いた import(別名の無い形・`_doeff_` の頭でない別名)は畳まず、型検査の赤のまま残す。
+    # An import the author wrote twice (the form without an alias, an alias not starting with `_doeff_`) is not folded and stays as a type-check error.
     source = "import json\nimport json\nimport owner.model as model\nimport owner.model as model\nx = (json, model)\n"
     projected = ast.unparse(without_bookkeeping(ast.parse(source))).splitlines()
     assert projected.count("import json") == 2, projected

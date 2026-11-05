@@ -1,13 +1,13 @@
-"""Hy の gensym の名を module の中の順の通し番号にする正準化(doeff_hy_bytecode_guard._records.canonical_gensyms・agora-redesign
-#3667)の反例。
+"""Counterexamples for the canonicalization that renumbers Hy gensym names in module order (doeff_hy_bytecode_guard._records.canonical_gensyms, agora-redesign
+#3667).
 
-Hy の ``hy.gensym`` の数えは process に 1 つで、gensym を呼ぶたびに進む。そのため同じ source でも、先に別の module を compile した
-か・require 先の .pyc が在ったか・別の thread が同時に compile していたかで、局所変数の名(``_hy_gensym_bound_1890`` と ``_3015``)が
-変わり、.pyc・共有の code の置き場・詰めた Program の指紋(doeff-cluster の program_codec)が揺れていた。compile の口(包みの
-source_to_code)が compile の済んだ code の gensym の名を振り直すので、どの道の compile も同じ code になる。
+Hy's ``hy.gensym`` counter is one per process and advances on every gensym call. So even for the same source, the local variable names
+(``_hy_gensym_bound_1890`` vs ``_3015``) changed depending on whether another module was compiled first, whether the .pyc of a required module existed, or
+whether another thread was compiling at the same time, and that made the .pyc, the shared code store, and the packed Program fingerprint (doeff-cluster program_codec) unstable. The compile entry point (the wrapper's
+source_to_code) renames the gensym names in the compiled code, so every compile path yields the same code.
 
-見本の module は tmp_path に書く。別の process の検は .pyc の置き場(PYTHONPYCACHEPREFIX)をこの file の中で共有し(最初の子だけが
-doeff を compile する)、共有の code の置き場は切る(DOEFF_HY_CODE_STORE=off — 置き場から引くと compile が起きない)。
+The sample modules are written to tmp_path. The cross-process checks share the .pyc store (PYTHONPYCACHEPREFIX) within this file (only the first child
+compiles doeff) and turn off the shared code store (DOEFF_HY_CODE_STORE=off, since pulling from the store means no compile happens).
 """
 
 from __future__ import annotations
@@ -29,14 +29,14 @@ from doeff_hy_bytecode_guard import _code_store as code_store
 from doeff_hy_bytecode_guard import _records as records
 from doeff_hy_bytecode_guard._loader_hooks import source_to_code_as_import
 
-#: 直す前の記録の印(gensym の名を正準化していない code の記録)。
+#: Marker of the pre-fix record (a record of code whose gensym names were not canonicalized).
 PREVIOUS_RECORD_TAG = "doeff-hy/macro-dependencies/1"
 
-#: 見本の package の名(子の process と、この process の import の両方で使う)。
+#: Name of the sample package (used both by the child process and by this process's import).
 PACKAGE = "gsprobe"
 
-#: gensym を使う doeff-hy の macro を全部通る見本(<- の束ね・absent-as の let・on-raise の受け・defrecord の :check・defk の契約の
-#: check・validate の check・defhandler の session val — lazy の一時の名)。job は validate を通らずに走れる(validate は Traverse の handler が要る)。
+#: Sample that passes through every doeff-hy macro that uses gensym (<- binds, absent-as let, on-raise handler, defrecord :check, defk contract
+#: check, validate check, defhandler session val - lazy temporary names). The job can run without going through validate (validate needs a Traverse handler).
 EVERYTHING = """\
 (require doeff-hy.macros [defk <- absent-as on-raise validate check])
 (require doeff-hy.handle [defhandler])
@@ -49,23 +49,23 @@ EVERYTHING = """\
   #^ str source)
 
 (defclass [(dataclass :frozen True)] Conflict []
-  "版の負け(on-raise の受けの型)。"
+  "Loses on version (type of the on-raise handler)."
   #^ str detail)
 
 (defrecord Positive
-  "正の数"
+  "positive number"
   {:tags {:context "gensym-probe" :role "type"}
    :check [(> value 0)]}
   (#^ int value))
 
 (defk plus-one [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "judgment"}}
-  "1 を足す(束ねの相手)。"
+  "Add 1 (partner of the binds)."
   (+ n 1))
 
 (defk job [n]
-  {:pre [(: n int) (check > n 0 :reason "正")] :post [(: % int)] :tags {:context "gensym-probe" :role "entry"}}
-  "gensym を使う macro を通る job。"
+  {:pre [(: n int) (check > n 0 :reason "positive")] :post [(: % int)] :tags {:context "gensym-probe" :role "entry"}}
+  "A job that goes through the gensym-using macros."
   (<- a (plus-one n))
   (<- b (absent-as 0 (plus-one a)))
   (<- c (on-raise (plus-one b) (Conflict d) 0))
@@ -73,8 +73,8 @@ EVERYTHING = """\
 
 (defk validated [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "entry"}}
-  "validate の check を通る(compile だけを見る)。"
-  (! (validate (check = n n :reason "同じ")))
+  "Passes the validate check (only compile is observed)."
+  (! (validate (check = n n :reason "same")))
   n)
 
 (defhandler fetch-handler
@@ -83,7 +83,7 @@ EVERYTHING = """\
     (resume (+ client ":" source))))
 """
 
-#: 先に compile して数えを進める別の module(gensym と session val の一時の名の両方)。
+#: Another module that is compiled first to advance the counter (both gensym and the session val temporary names).
 OTHER = """\
 (require doeff-hy.macros [defk <-])
 (require doeff-hy.handle [defhandler])
@@ -96,12 +96,12 @@ OTHER = """\
 
 (defk step [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "judgment"}}
-  "1 を足す。"
+  "Add 1."
   (+ n 1))
 
 (defk other-job [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "entry"}}
-  "束ね 3 つ。"
+  "Three binds."
   (<- a (step n))
   (<- b (step a))
   (<- c (step b))
@@ -113,18 +113,18 @@ OTHER = """\
     (resume (+ connection ":" source))))
 """
 
-#: require される macro の提供元 — 自分の compile でも gensym を使う(require する側の compile の途中で compile される)。
+#: Provider of the macro to be required - it also uses gensym in its own compile (compiled in the middle of the requiring side's compile).
 MYMACROS = """\
 (require doeff-hy.macros [defk <-])
 
 (defk helper-step [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "judgment"}}
-  "1 を足す。"
+  "Add 1."
   (+ n 1))
 
 (defk helper [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "judgment"}}
-  "束ね 1 つ。"
+  "One bind."
   (<- a (helper-step n))
   a)
 
@@ -133,7 +133,7 @@ MYMACROS = """\
   `(do (setv ~g ~x) (+ ~g ~g)))
 """
 
-#: compile の途中で mymacros を require する module。
+#: Module that requires mymacros in the middle of its compile.
 NESTED = f"""\
 (require {PACKAGE}.mymacros [twice])
 (require doeff-hy.macros [defk <-])
@@ -141,13 +141,13 @@ NESTED = f"""\
 
 (defk job [n]
   {{:pre [(: n int)] :post [(: % int)] :tags {{:context "gensym-probe" :role "entry"}}}}
-  "require した macro の gensym を使う job。"
+  "A job that uses the gensym of the required macro."
   (<- a (helper n))
   (twice a))
 """
 
-#: 子の process: 見本の根を sys.path に足し、名指した module を順に import して、的の module の code(import の時に compile か
-#: .pyc から読んだ物)の生成名と、job を走らせた答えと、import の前に .pyc が在った見本の module の名を返す。
+#: Child process: adds the sample root to sys.path, imports the named modules in order, and returns the generated names of the target module's code (what was compiled at import or
+#: read from .pyc), the job's result, and the names of sample modules whose .pyc existed before the import.
 _CHILD = f"""\
 import importlib, importlib.machinery, importlib.util, json, os, re, sys
 root, first, target = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -198,12 +198,12 @@ print(json.dumps({{"names": generated, "value": value, "had_pyc": had_pyc}}))
 
 @pytest.fixture(scope="module")
 def pycache(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """この file の子の process が共有する .pyc の置き場(最初の子だけが doeff と Hy を compile する)。"""
+    """The .pyc store shared by this file's child processes (only the first child compiles doeff and Hy)."""
     return tmp_path_factory.mktemp("gensym-pycache")
 
 
 def _probe(root: Path) -> Path:
-    """root に見本の package を置き、root を返す(同じ中身の package を別の root に置けば、的の .pyc は共有されない)。"""
+    """Place the sample package under root and return root (placing a package with the same content under a different root means the target .pyc is not shared)."""
     package = root / PACKAGE
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
@@ -218,18 +218,18 @@ def _probe(root: Path) -> Path:
 
 
 def _binds_module(binds: int) -> str:
-    """束ねを binds 個並べた defk 1 つの module の source(同じ binds なら同じ source)— 並べて compile する検の材料。"""
+    """Source of a module with one defk that lines up `binds` binds (same binds gives same source) - material for the side-by-side compile check."""
     lines = [f"  (<- v{index} (step {index}))" for index in range(binds)]
     return "\n".join(
         [
             "(require doeff-hy.macros [defk <-])",
             "(defk step [n]",
             '  {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "judgment"}}',
-            '  "1 を足す。"',
+            '  "Add 1."',
             "  (+ n 1))",
             "(defk many [n]",
             '  {:pre [(: n int)] :post [(: % int)] :tags {:context "gensym-probe" :role "entry"}}',
-            '  "束ねを並べる。"',
+            '  "Line up the binds."',
             *lines,
             "  n)",
             "",
@@ -238,9 +238,9 @@ def _binds_module(binds: int) -> str:
 
 
 def _child(root: Path, first: list[str], target: str, pycache: Path) -> dict[str, object]:
-    """この venv の python で別の process を走らせ、first を順に import してから target を import した結果(生成名・job の答え・
-    compile した module)を返す。.pyc は書く(require 先の .pyc の有無を作るため)— 置き場は pycache。"""
-    # 子はこの process の環境を継ぐ — この suite の固定の PYTHONDONTWRITEBYTECODE=1 だけ外し(`env -u`)、置き場の 2 つを足す。
+    """Run a separate process with this venv's python, import `first` in order, then import `target`, and return the result (generated names, job result,
+    compiled modules). .pyc is written (to create the presence or absence of the required module's .pyc) - the store is pycache."""
+    # The child inherits this process's environment - only this suite's fixed PYTHONDONTWRITEBYTECODE=1 is removed (`env -u`), and the two store settings are added.
     done = subprocess.run(
         [
             "env",
@@ -268,7 +268,7 @@ def _child(root: Path, first: list[str], target: str, pycache: Path) -> dict[str
 
 
 def _texts(code: CodeType) -> Iterator[str]:
-    """code の木の名の表と文字列の定数(生成名が現れる所)。"""
+    """Table of names in the code tree and string constants (where generated names appear)."""
     yield from (*code.co_varnames, *code.co_cellvars, *code.co_freevars, *code.co_names)
     for constant in code.co_consts:
         if isinstance(constant, CodeType):
@@ -278,13 +278,13 @@ def _texts(code: CodeType) -> Iterator[str]:
 
 
 def _gensym_names(code: CodeType) -> list[str]:
-    """code の木の gensym の名(Hy が改めた束縛の名に埋まった物は、埋まった gensym の名)を並べる — 名の形は正準化の持ち物
-    (records の GENSYM_NAME・RENAMED_BINDING)で読み、この file に写さない(Hy が形を替えた便が直すのは records だけ)。"""
+    """List the gensym names in the code tree (for names embedded in a renamed binding, the embedded gensym name) - the name shape is read by the canonicalization's
+    own definitions (records GENSYM_NAME, RENAMED_BINDING) and is not copied into this file (if Hy changes the shape, only records needs fixing)."""
     return sorted(records.gensym_renames(_texts(code)))
 
 
 def _numbers(code: CodeType) -> list[int]:
-    """code の木の gensym の名の番号(小さい順 — records.GENSYM_NAME の 2 つ目の組が数え)。"""
+    """Numbers of the gensym names in the code tree (smallest first - the second group of records.GENSYM_NAME is the counter)."""
     return sorted(
         int(match.group(2))
         for name in _gensym_names(code)
@@ -293,7 +293,7 @@ def _numbers(code: CodeType) -> list[int]:
 
 
 def _compile(root: Path, module: str) -> CodeType:
-    """見本の module を、前もって bytecode を作る道具と同じ口(module を置いた中の compile)で compile する。"""
+    """Compile the sample module through the same entry point as the tool that precompiles bytecode (compile inside the module's location)."""
     path = root / PACKAGE / f"{module}.hy"
     loader = importlib.machinery.SourceFileLoader(f"{PACKAGE}.{module}", str(path))
     return source_to_code_as_import(loader, path.read_bytes(), str(path))
@@ -301,7 +301,7 @@ def _compile(root: Path, module: str) -> CodeType:
 
 @pytest.fixture
 def probe_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """この process で import できる見本の package の根(終わったら見本の module を sys.modules から外す)。"""
+    """Root of the sample package importable in this process (removes the sample modules from sys.modules when finished)."""
     root = _probe(tmp_path / "probe")
     monkeypatch.syspath_prepend(str(root))
     yield root
@@ -312,13 +312,13 @@ def probe_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path
 def test_a_module_gets_the_same_names_whether_another_module_was_compiled_first(
     tmp_path: Path, pycache: Path
 ) -> None:
-    """失敗ケース (a)(d): 同じ module を「別の module を先に compile した process」と「単独の process」で compile して、生成名
-    (absent-as の let に埋まった名と defhandler の session val の一時の名を含む)が同じ。直す前は数えの続きの番号になり、名が違った。"""
+    """Failure cases (a)(d): compile the same module in "a process that compiled another module first" and in "a standalone process", and the generated names
+    (including the name embedded in the absent-as let and the defhandler session val temporary name) are the same. Before the fix they continued the counter, so the names differed."""
     after_other = _child(
         _probe(tmp_path / "after"), [f"{PACKAGE}.other"], f"{PACKAGE}.everything", pycache
     )
     alone = _child(_probe(tmp_path / "alone"), [], f"{PACKAGE}.everything", pycache)
-    assert after_other["had_pyc"] == alone["had_pyc"] == [], "見本の .pyc が先に在った(今の compile を測れていない)"
+    assert after_other["had_pyc"] == alone["had_pyc"] == [], "the sample .pyc already existed (the current compile is not being measured)"
     assert after_other["names"] == alone["names"]
     names = alone["names"]
     assert isinstance(names, list)
@@ -334,8 +334,8 @@ def test_a_module_gets_the_same_names_whether_another_module_was_compiled_first(
 def test_a_module_gets_the_same_names_whether_the_required_macro_module_has_bytecode_or_not(
     tmp_path: Path, pycache: Path
 ) -> None:
-    """失敗ケース (b): require 先(mymacros)の .pyc が在る process と無い process で、require する側(nested)の生成名が同じ。
-    直す前は、require 先の compile が require する側の compile の途中で数えを進め、名がずれた。"""
+    """Failure case (b): the requiring side (nested) has the same generated names in a process where the .pyc of the required module (mymacros) exists and one where it does not.
+    Before the fix, compiling the required module advanced the counter in the middle of the requiring side's compile, and the names shifted."""
     warm_root = _probe(tmp_path / "warm")
     _child(warm_root, [], f"{PACKAGE}.mymacros", pycache)
     warm = _child(warm_root, [], f"{PACKAGE}.nested", pycache)
@@ -347,10 +347,10 @@ def test_a_module_gets_the_same_names_whether_the_required_macro_module_has_byte
 
 
 def test_compiles_on_two_threads_at_once_keep_every_name_apart_and_the_same(probe_root: Path) -> None:
-    """失敗ケース (c): 束ね BINDS 個の module 2 つを、2 つの thread で同時に compile する(ROUNDS 回)。片方の thread は先に
-    回ごとに大きさの違う前置きの module を compile してから始めるので、2 つの compile の重なり方が回ごとにずれる。module の中の
-    束ねの名の数が束ねの数と同じ(名がぶつからない)で、名が毎回同じ。直す前は、2 つの compile の gensym が 1 つの数えを取り
-    合い、名が回ごとに変わった。"""
+    """Failure case (c): compile two modules of BINDS binds each at the same time in two threads (ROUNDS times). One thread first
+    compiles a prelude module of a different size each round, so the overlap of the two compiles shifts from round to round. The number of
+    bind names in a module equals the number of binds (no collisions), and the names are the same every time. Before the fix, the gensyms of the two compiles shared one counter
+    and the names changed from round to round."""
     rounds, binds = 4, 80
     for turn in range(rounds):
         for side in ("a", "b"):
@@ -360,7 +360,7 @@ def test_compiles_on_two_threads_at_once_keep_every_name_apart_and_the_same(prob
     results: dict[str, list[str]] = {}
 
     def compile_on_thread(modules_in_order: list[str], start: threading.Barrier) -> None:
-        """start で揃ってから modules_in_order を順に compile し、最後の module の生成名を残す(2 つの compile を重ねるため)。"""
+        """Compile modules_in_order in order after aligning at start, and keep the generated names of the last module (to make the two compiles overlap)."""
         start.wait()
         for module in modules_in_order:
             results[module] = _gensym_names(_compile(probe_root, module))
@@ -390,12 +390,12 @@ def test_compiles_on_two_threads_at_once_keep_every_name_apart_and_the_same(prob
 def test_a_pyc_whose_record_has_the_previous_tag_is_compiled_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """失敗ケース (e): 直す前の記録の印の .pyc(gensym の名を正準化していない code)は、source と時刻が合っていても使わず compile
-    し直す。直す前の印のままだと、古い .pyc の中身がそのまま使われ続ける。"""
+    """Failure case (e): a .pyc with the pre-fix marker (code whose gensym names were not canonicalized) is not used even if source and timestamp match; it is compiled
+    again. With the old marker kept, the contents of the old .pyc would continue to be used."""
     import hy
 
     monkeypatch.setenv(code_store.STORE_ENV, "off")
-    # この suite は PYTHONDONTWRITEBYTECODE=1 で走る — .pyc の読みと書きの道をこの検の中だけ開ける(置き場は tmp_path)。
+    # This suite runs with PYTHONDONTWRITEBYTECODE=1 - the .pyc read and write paths are opened only within this check (store is tmp_path).
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "pyc"))
     package = tmp_path / "oldtagpkg"
@@ -428,9 +428,9 @@ def test_a_pyc_whose_record_has_the_previous_tag_is_compiled_again(
 def test_the_image_build_compile_and_the_prebuild_compile_number_gensyms_from_one(
     probe_root: Path,
 ) -> None:
-    """image の組み立て(agora-controllers の deploy/bytecode.py — ``SourceFileLoader(...).source_to_code`` を直に呼ぶ)と、前もって
-    bytecode を作る道具(source_to_code_as_import)の compile も同じ口を通り、gensym の番号が 1 から隙間なく並ぶ(この process の
-    数えはもう大きい)。直す前は、どちらも process の数えの続きの番号だった。"""
+    """The image build (agora-controllers deploy/bytecode.py - calls ``SourceFileLoader(...).source_to_code`` directly) and the compile of the tool that precompiles
+    bytecode (source_to_code_as_import) also go through the same entry point, and the gensym numbers run from 1 without gaps (this process's
+    counter is already large). Before the fix, both continued from the process counter."""
     path = probe_root / PACKAGE / "everything.hy"
     direct = importlib.machinery.SourceFileLoader(f"{PACKAGE}.everything", str(path)).source_to_code(
         path.read_bytes(), str(path)
@@ -441,8 +441,8 @@ def test_the_image_build_compile_and_the_prebuild_compile_number_gensyms_from_on
 
 
 def test_the_canonical_module_still_runs(probe_root: Path) -> None:
-    """正準化した code の module は今までどおり動く(名の表と定数を 1 対 1 で替えただけ — 束ね・absent-as・on-raise・契約の check・
-    defrecord の :check を通る job の答え)。"""
+    """The module of canonicalized code works as before (names table and constants were only replaced one-to-one - the job result through binds, absent-as, on-raise, contract check,
+    defrecord :check)."""
     from doeff import run
 
     module = importlib.import_module(f"{PACKAGE}.everything")
@@ -450,8 +450,8 @@ def test_the_canonical_module_still_runs(probe_root: Path) -> None:
 
 
 def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalisation_reads() -> None:
-    """Hy の gensym の名の形(``_hy_gensym_<mangle した base>_<数え>``)と、let が改めた束縛の名の形(``_hy_let_<元の名>_<数>``)が、
-    正準化の読む形のまま。Hy を上げて形が変わると、正準化が名を読めずに黙って揺れが戻るので、ここで落とす。"""
+    """The gensym name shape of Hy (``_hy_gensym_<mangled base>_<counter>``) and the let-renamed binding shape (``_hy_let_<original name>_<number>``) remain
+    what the canonicalization reads. If Hy is upgraded and the shape changes, the canonicalization cannot read names and the instability silently returns, so fail here."""
     import hy
     from hy.compiler import hy_compile
     from hy.models import Expression, Integer, List, Symbol
@@ -470,7 +470,7 @@ def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalis
         ]
     )
     compiled = hy_compile(tree, types.ModuleType("gsshape"))
-    assert isinstance(compiled, ast.Module)  # get_expr を渡さない時の答えは module だけ
+    assert isinstance(compiled, ast.Module)  # without get_expr the result is only a module
     renamed = [
         node.id
         for node in ast.walk(compiled)
@@ -483,8 +483,8 @@ def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalis
 
 
 def test_no_gensym_name_is_left_where_the_canonicalisation_cannot_read_it(probe_root: Path) -> None:
-    """gensym を使う doeff-hy の macro を全部通る module の compile の後、gensym の名を含むのに正準化が読めない名・文字列の定数が
-    1 つも無い(文の中に埋まった名などが現れると、その番号は compile の順で変わる)。読めない物を見分けられることも確かめる。"""
+    """After compiling the module that passes through every gensym-using doeff-hy macro, there are no names or string constants that contain a gensym name but that the canonicalization cannot read
+    (if a name embedded in a statement appears, its number would change with compile order). Also confirm that unreadable ones can be told apart."""
     import hy
 
     assert records.unread_gensym_texts(_compile(probe_root, "everything")) == ()

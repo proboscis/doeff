@@ -1,9 +1,9 @@
-"""wire_codec の速い道が、今までの道と同じ答えを返す事の検。
+"""Check that the fast paths of wire_codec return the same answers as the previous paths.
 
-速い道 = Codec.decode が入力を _plain で写し直さずに読む道(_Node.fast・欄を並べ切った読み手・構築子を通さない作り方)と、
-Codec.encode_json が書き出しの木を作らずに直に綴る道(_Node.text・欄を並べ切った書き手)。どちらも、受けない所は今までの道
-(_plain で写してから decode・_json_text(encode(value, True)))へ戻る。ここでは同じ入力を今までの道にも通し、答え(値の型まで・
-Malformed の誤りの列・bytes・投げる例外の型)が同じ事を確かめる。
+Fast paths = the path where Codec.decode reads the input without re-copying it with _plain (_Node.fast, a reader with the fields fully laid out, construction that bypasses the constructor),
+and the path where Codec.encode_json spells out directly without building the encoding tree (_Node.text, a writer with the fields fully laid out). Both fall back to the previous path
+where they do not apply (copy with _plain then decode; _json_text(encode(value, True))). Here the same input is also run through the previous path, and we check that the answers (down to value types,
+the list of Malformed errors, bytes, and the type of exception raised) are the same.
 """
 
 import dataclasses
@@ -13,7 +13,7 @@ import math
 import sys
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 from doeff_hy._frozen import freeze_json
 from doeff_hy._json_value import OpaqueJson
@@ -27,7 +27,7 @@ types = importlib.import_module("wire_codec_types")
 
 
 def _typed(value: object) -> object:
-    """値を (型, 中身) の木へ — == では見分けない 1 と 1.0・tuple と list・str と StrEnum・欄の並びを見分けて比べる。"""
+    """Turn a value into a (type, content) tree -- compare while distinguishing 1 and 1.0, tuple and list, str and StrEnum, and field order, which == does not."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return (type(value), tuple((name, _typed(item)) for name, item in vars(value).items()))
     if isinstance(value, dict):
@@ -41,7 +41,7 @@ def _typed(value: object) -> object:
 
 
 def _old_decode(codec: Codec[object], value: object) -> object:
-    """今までの道の decode(入力を _plain で写してから判じ手の decode — 速い道を足す前の Codec.decode)。"""
+    """The previous path's decode (copy the input with _plain, then the judge's decode -- Codec.decode before the fast path was added)."""
     try:
         return codec.node.decode(_plain(value))
     except _RefusedError as invalid:
@@ -49,7 +49,7 @@ def _old_decode(codec: Codec[object], value: object) -> object:
 
 
 def _same_decode(codec: Codec[object], value: object) -> None:
-    """速い道の decode と今までの道が、同じ値(型まで)か同じ Malformed か同じ型の例外を返す。"""
+    """The fast-path decode and the previous path return the same value (down to type), the same Malformed, or an exception of the same type."""
     try:
         old = _typed(_old_decode(codec, value))
     except Exception as error:
@@ -60,7 +60,7 @@ def _same_decode(codec: Codec[object], value: object) -> None:
 
 
 def _same_text(codec: Codec[object], value: object) -> None:
-    """速い道の encode_json と今までの道(_json_text(encode(value, True)))が、同じ文字列か同じ型の例外を返す。"""
+    """The fast-path encode_json and the previous path (_json_text(encode(value, True))) return the same string or an exception of the same type."""
     try:
         old = _json_text(codec.node.encode(value, True))
     except Exception as error:
@@ -70,7 +70,7 @@ def _same_text(codec: Codec[object], value: object) -> None:
     assert codec.encode_json(value) == old
 
 
-# 素の dict の入力(json.loads の値)と、同じ値の凍らせた形(FrozenMap・tuple)の両方で照らす。
+# Compare on both a plain dict input (the value from json.loads) and the frozen form of the same value (FrozenMap, tuple).
 DECODE_CASES: list[tuple[str, object]] = [
     ("Vocab", {}),
     ("Vocab", {"s": "x", "i": 3, "f": 1, "b": True, "oi": None, "color": "blue", "lit": "y"}),
@@ -147,14 +147,14 @@ def test_fast_decode_answers_like_the_old_path_for_derived_and_deep_values() -> 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _Plain:
-    """構築子を自分で書く(defrecord の展開でない)行の型 — 速い道は構築子を通して作る。"""
+    """A row type whose constructor is written by hand (not a defrecord expansion) -- the fast path builds it through the constructor."""
 
     n: int
     tags: tuple[str, ...] = ()
 
 
 def test_bare_construction_equals_the_constructor_for_records() -> None:
-    # defrecord の展開が書いた構築子の型は、速い道が構築子を通さずに作る — 欄の並び(vars)まで構築子と同じ。
+    # A type whose constructor the defrecord expansion wrote is built by the fast path without the constructor -- down to the field order (vars), the same as via the constructor.
     row = row_codec_of(types.PlainRecord)
     made = row.decode({"n": 3})
     assert _typed(made) == _typed(types.PlainRecord(n=3))
@@ -186,7 +186,7 @@ def test_fast_text_writes_the_same_bytes_as_the_old_path(value: object) -> None:
 ROW_VALUES: list[object] = [
     types.PlainRecord(n=1),
     _Plain(n=2, tags=("a", "日本")),
-    _Plain(n=True, tags=("a", 1)),  # type: ignore[arg-type]  # 型に合わない値も今までの道と同じに書く事の見本
+    _Plain(n=True, tags=("a", 1)),  # type: ignore[arg-type]  # a sample of writing values that do not match the type the same as the previous path
 ]
 
 

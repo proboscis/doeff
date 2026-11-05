@@ -1,30 +1,30 @@
-"""module の大域 1 つを、file の全体ではなく、その名を束縛し書き換える source の文で覆うための読み。
+"""Reading that covers one module global by the source statements that bind and mutate its name, instead of the whole file.
 
-macro の閉包の digest(:mod:`doeff_hy_bytecode_guard._macro_use`)は、中身を値で入れられない大域(dict・list・辿れない
-object)に出会うと、前はその module の file の sha256 で覆っていた。ここでは module の source を読み、その名について:
+When the macro closure digest (:mod:`doeff_hy_bytecode_guard._macro_use`) meets a global whose contents cannot be put in by value (dict, list, an untraceable
+object), it used to cover it with the sha256 of the module's file. Here the module source is read, and for that name:
 
-- top-level の文(関数と class の定義の外)のうち、その名に触れる文 — 束縛する文(代入・import)と、書き換える文(添字の代入・
-  ``.update`` ・ ``.append`` ・ ``del`` ・代入のし直し。top-level の for・if・try の中も同じ)。文は位置を除いた正準の形
-  (Python は ``ast.dump`` ・ Hy は ``hy.repr``)で入れ、文が読む名(:attr:`Statement.loads`)は歩みの側が辿る。
-- top-level の関数と class の定義のうち、import の時に評価される所(decorator・既定値・注記・基底・class の本体)でその名に
-  触れる物は、文として入れる。呼ばれた時に走る本体でその名を書き換えうる物(:attr:`Binding.mutators`)は、歩みの側がその関数
-  (か class)を辿る — import の時に呼ばれる登録の関数でも、閉包から辿られない関数でも、code が digest に入る。
-- その名を import で束縛する文(:attr:`Binding.imports`)は、歩みの側が import の先の module の同じ規則で辿る。Hy の
-  ``(import …)`` も Python の import と同じ形に解く(``(import a.b)`` は a を・``(import a.b :as n)`` は a.b を・
-  ``(import a.b [x :as y])`` は a.b の x を束縛する — 失敗例: 解かずに file で覆うと、
-  import の先の module が環境変数から組んだ表の変化を見落とした)。
+- Top-level statements (outside function and class definitions) that touch the name: statements that bind it (assignment, import) and statements that mutate it (subscript assignment,
+  ``.update``, ``.append``, ``del``, re-assignment; the same inside top-level for/if/try). A statement is included in canonical form with positions removed
+  (``ast.dump`` for Python, ``hy.repr`` for Hy); the names the statement reads (:attr:`Statement.loads`) are followed by the walker.
+- Of top-level function and class definitions, those touching the name in parts evaluated at import time (decorators, defaults, annotations, bases, class body)
+  are included as statements. Those that may mutate the name in a body run at call time (:attr:`Binding.mutators`) have that function
+  (or class) followed by the walker, so its code enters the digest even for registration functions called at import time or functions not reached from the closure.
+- Statements that bind the name by import (:attr:`Binding.imports`) are followed by the walker into the imported module with the same rules. Hy
+  ``(import ...)`` is resolved to the same shape as a Python import (``(import a.b)`` binds a, ``(import a.b :as n)`` binds a.b,
+  ``(import a.b [x :as y])`` binds x of a.b. Failure case: covering by the file without resolving this
+  missed a change in a table the imported module built from an environment variable).
 
-読めない時(source の無い module・読みの誤り・Hy の星の import と読めない import の形)は ``None`` か :attr:`Binding.unresolved` を
-返し、歩みの側は安全側に file の全体で覆う。Hy の定義(defn など)の本体は import の時と呼ばれた時を分けず、その名に触れる定義の
-form を文として入れる。
+When unreadable (a module without source, a read error, a Hy star import or an unreadable import form), it returns ``None`` or :attr:`Binding.unresolved`,
+and the walker covers by the whole file to stay on the safe side. The body of a Hy definition (defn etc.) is not split into import time and call time; the definition
+form touching the name is included as a statement.
 
-:func:`source_names` は module の source に現れる名の全部を読む(同じく純な読み)— 歩みが辿れない値を持ち主の file で覆う時に、
-持ち主の source が file の外で決まる値(環境変数)を読むかを判じる材料。
+:func:`source_names` reads all names appearing in a module's source (likewise a pure read). When a value the walker cannot trace is covered by its owner's file, it
+is the material for judging whether the owner's source reads a value decided outside the file (an environment variable).
 
-読みは source の中身と名(と読み方 — この module の code・Python の版・拡張子・Hy の版と hy.repr の登録)だけで決まる純な計算
-なので、process の中の覚えに加え、置き場(:mod:`doeff_hy_bytecode_guard._code_store` の種類 ``.binding``)に中身で引いて覚える —
-新しい process の照らしが、同じ中身の source を毎回解き直していた(検の読み込みで照らしの
-歩みの約 2/3)。読めない file(OSError)は覚えない。解けない source の読み(None)は中身で決まるので覚える。
+The reading is a pure computation determined only by the source contents and the name (and the way of reading: this module's code, the Python version, the extension, the Hy version and hy.repr registrations),
+so in addition to an in-process memo it is looked up by contents in the store (kind ``.binding`` of :mod:`doeff_hy_bytecode_guard._code_store`) and remembered.
+A fresh process's check had been re-parsing the same source every time (about 2/3 of the check walk at import of the checker).
+Unreadable files (OSError) are not remembered. A read of source that cannot be parsed (None) is determined by contents, so it is remembered.
 """
 
 import ast
@@ -34,37 +34,37 @@ import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
-# Hy の source の拡張子の定義点(標準 library だけを読む軽い module — loader_hooks も起動時に読む)。
+# Definition point of Hy source suffixes (a light module that reads only the standard library; loader_hooks also reads it at startup).
 from doeff_hy_bytecode_guard._code_store import HY_SOURCE_SUFFIXES
 
-#: 中身の覚え(process の中 — file の path → 更新時刻・大きさ・中身)。
+#: In-process memo of contents (file path -> mtime, size, contents).
 _SOURCES: dict[str, "SourceFile"] = {}
 
-#: 解いた物の覚え(process の中 — file の path → (解いた中身・解いた物))。
+#: In-process memo of parse results (file path -> (parsed contents, parse result)).
 _PARSED: dict[str, tuple["SourceFile", "PythonModule | HyModule | None"]] = {}
 
-#: 読んだ束縛の覚え(process の中 — (file の path・大域の名) → (読んだ中身・束縛))。
+#: In-process memo of bindings read ((file path, global name) -> (contents read, binding)).
 _BINDINGS: dict[tuple[str, str], tuple["SourceFile", "Binding | None"]] = {}
 
-#: 呼んでも値そのものを書き換えない method(``名.get(…)`` など)。結果は名から得た値(中の値を指しうる)として、その行き先を
-#: 同じ規則で遡って判じる。
+#: Methods that do not mutate the value itself when called (e.g. ``name.get(...)``). The result is treated as a value obtained from the name (it may point at inner values), and its destination
+#: is judged by tracing back with the same rules.
 _READ_ONLY_METHODS = frozenset(
     {"get", "keys", "values", "items", "copy", "count", "index", "__contains__", "__getitem__"}
 )
 
-#: 引数への参照を外へ出さない組み込みの呼び出し(結果は数・真偽 — ``len(名)`` など)。``list`` ・ ``sorted`` などは中の値を
-#: 指す入れ物を返すので入れない(行き先で書き換えられうる)。
+#: Built-in calls that do not let the argument reference escape (the result is a number or bool, e.g. ``len(name)``). ``list``, ``sorted`` etc. return a container
+#: pointing at inner values, so they are not included (the destination may mutate them).
 _READ_ONLY_CALLS = frozenset({"len", "bool", "isinstance"})
 
-#: Hy の定義の頭(本体の form ごと文として入れる)と、名を束縛する頭。
-#: (doeff-hy の val・var も、対の左の名を module の大域に束縛する。)
+#: Heads of Hy definitions (included as a statement with the whole body form) and heads that bind a name.
+#: (doeff-hy val and var also bind the left name of a pair as a module global.)
 _HY_SETTERS = frozenset({"setv", "setx", "val", "var"})
 _HY_IMPORTS = frozenset({"import"})
 
 
 @dataclass(frozen=True)
 class Statement:
-    """source の文 1 つ — 位置を除いた正準の形・文が読む名・文に出る属性の名(読む名が module の時に入れる属性)。"""
+    """One source statement: its canonical form with positions removed, the names it reads, and the attribute names appearing in it (attributes included when the read name is a module)."""
 
     text: str
     loads: tuple[str, ...]
@@ -73,7 +73,7 @@ class Statement:
 
 @dataclass(frozen=True)
 class ImportedName:
-    """名を束縛する import 1 つ(import の先の module の名・相対の段数・import の先の属性の名 — module そのものなら空)。"""
+    """One import that binds the name (name of the imported module, relative level, name of the attribute in the imported module; empty if it is the module itself)."""
 
     module: str
     level: int
@@ -82,10 +82,10 @@ class ImportedName:
 
 @dataclass(frozen=True)
 class Binding:
-    """大域 1 つについて source が言う事。
+    """What the source says about one global.
 
-    statements = その名に触れる top-level の文・mutators = 本体でその名を書き換えうる top-level の定義の名・imports = その名を
-    束縛する import・bound = top-level の文がその名を束縛するか(import を除く)・unresolved = 辿れない束縛(Hy の import)がある。
+    statements = top-level statements touching the name; mutators = names of top-level definitions that may mutate the name in their body; imports = imports that
+    bind the name; bound = whether a top-level statement binds the name (excluding imports); unresolved = there is an untraceable binding (a Hy import).
     """
 
     statements: tuple[Statement, ...]
@@ -97,21 +97,21 @@ class Binding:
 
 @dataclass(frozen=True)
 class PythonModule:
-    """読んだ Python の source(top-level の文の並び)。"""
+    """Parsed Python source (a sequence of top-level statements)."""
 
     body: tuple[ast.stmt, ...]
 
 
 @dataclass(frozen=True)
 class HyModule:
-    """読んだ Hy の source(top-level の form の並び)。"""
+    """Parsed Hy source (a sequence of top-level forms)."""
 
     forms: tuple[object, ...]
 
 
 @dataclass(frozen=True)
 class SourceFile:
-    """file の状態(更新時刻・大きさ)と、その時に読んだ中身の bytes — process の中の覚えの単位。"""
+    """File state (mtime, size) and the bytes of the contents read at that time; the unit of the in-process memo."""
 
     mtime_ns: int
     size: int
@@ -119,8 +119,8 @@ class SourceFile:
 
 
 def binding_of(path: str, name: str) -> Binding | None:
-    """module の file の source から、大域 ``name`` の束縛と書き換えを読む(読めなければ None — process の中では file の状態ごとに
-    1 度・process をまたいでは source の中身ごとに 1 度)。"""
+    """Read the binding and mutation of global ``name`` from the module file's source (None if unreadable; once per file state
+    within a process, once per source contents across processes)."""
     source = _source(path)
     if source is None:
         return None
@@ -132,15 +132,15 @@ def binding_of(path: str, name: str) -> Binding | None:
     return binding
 
 
-#: source に現れる名の覚え(process の中 — file の path → (読んだ中身・名の全部))。
+#: Memo of names appearing in source (in process: file path -> (contents read, all names)).
 _NAMES: dict[str, tuple["SourceFile", "tuple[str, ...] | None"]] = {}
 
 
 def source_names(path: str) -> tuple[str, ...] | None:
-    """module の file の source に現れる名の全部 — Python は名・属性の名・import の module と別名の各部分、Hy は記号の各部分
-    (mangle した名・点の式の各部分も)。歩みが辿れない値を持ち主の file で覆う時に、持ち主の source が file の外で決まる値
-    (環境変数)を読むかを判じるため。読めない・解けない source は None。process の中で file の状態ごとに 1 度読む(歩みが
-    辿れない値に当たった時だけ呼ぶ — 置き場には覚えない)。"""
+    """All names appearing in the module file's source: for Python, names, attribute names, and each part of import modules and aliases; for Hy, each part of symbols
+    (including mangled names and each part of dotted expressions). Used to judge, when a value the walker cannot trace is covered by its owner's file, whether the owner's source reads a value decided
+    outside the file (an environment variable). None if the source is unreadable or cannot be parsed. Read once per file state within a process (called only when the walker
+    meets an untraceable value; not remembered in the store)."""
     source = _source(path)
     if source is None:
         return None
@@ -153,7 +153,7 @@ def source_names(path: str) -> tuple[str, ...] | None:
 
 
 def _names_in(parsed: "PythonModule | HyModule | None") -> tuple[str, ...] | None:
-    """読んだ source の名の全部(名の順)。"""
+    """All names in the source read (in name order)."""
     match parsed:
         case None:
             return None
@@ -182,7 +182,7 @@ def _names_in(parsed: "PythonModule | HyModule | None") -> tuple[str, ...] | Non
 
 
 def _python_node_names(node: ast.AST) -> tuple[str, ...]:
-    """Python の節 1 つ(中は見ない)の名 — 名の読み書き・属性の名・import の module と別名の各部分。"""
+    """Names of one Python clause (not looking inside): name reads and writes, attribute names, and each part of import modules and aliases."""
     match node:
         case ast.Name(id=found) | ast.Attribute(attr=found):
             return (found,)
@@ -195,7 +195,7 @@ def _python_node_names(node: ast.AST) -> tuple[str, ...]:
 
 
 def _source(path: str) -> SourceFile | None:
-    """file の中身(process の中で file の状態ごとに 1 度読む — 読めなければ None)。"""
+    """File contents (read once per file state within a process; None if unreadable)."""
     try:
         status = os.stat(path)
     except OSError:
@@ -218,9 +218,9 @@ def _source(path: str) -> SourceFile | None:
 
 
 def _stored_binding(source: SourceFile, path: str, name: str) -> Binding | None:
-    """大域 ``name`` の束縛 — 置き場(:mod:`doeff_hy_bytecode_guard._code_store` の種類 BINDING_SUFFIX)に同じ中身の source の読みが
-    あればそれ、無ければ source を解いて読み、置き場へ足す。読みは source の中身と名(と Python・Hy の版とこの module の code)だけで
-    決まる純な計算なので、process・作業木・版をまたいで中身で引いてよい(生きた値は覚えない — 歩みの側が毎回辿る)。"""
+    """Binding of global ``name`` -- if the store (kind BINDING_SUFFIX of :mod:`doeff_hy_bytecode_guard._code_store`) has a read of the same source contents,
+    use it; otherwise parse the source, read it, and add it to the store. The read is a pure computation determined only by the source contents, the name (and the Python and Hy versions and this module's code),
+    so it may be looked up by contents across processes, worktrees, and versions (live values are not remembered; the walker follows them each time)."""
     entry = _binding_entry(source, path, name)
     if entry is not None:
         stored = _read_binding_entry(entry)
@@ -233,7 +233,7 @@ def _stored_binding(source: SourceFile, path: str, name: str) -> Binding | None:
 
 
 def _binding_in(parsed: "PythonModule | HyModule | None", name: str) -> Binding | None:
-    """読んだ source から大域 ``name`` の束縛と書き換えを読む。"""
+    """Read the binding and mutation of global ``name`` from the source already read."""
     match parsed:
         case None:
             return None
@@ -244,7 +244,7 @@ def _binding_in(parsed: "PythonModule | HyModule | None", name: str) -> Binding 
 
 
 def _parsed(source: SourceFile, path: str) -> PythonModule | HyModule | None:
-    """file の中身を解く(process の中で file の状態ごとに 1 度)。Python・Hy の source でない・解けない時は None。"""
+    """Parse the file contents (once per file state within a process). None if it is not Python/Hy source or cannot be parsed."""
     remembered = _PARSED.get(path)
     if remembered is not None and remembered[0] is source:
         return remembered[1]
@@ -254,10 +254,10 @@ def _parsed(source: SourceFile, path: str) -> PythonModule | HyModule | None:
 
 
 def _read(data: bytes, path: str) -> PythonModule | HyModule | None:
-    """source を解く(Python は ast・Hy は Hy の読み — 自前の reader macro などで読めなければ None)。path は種類(拡張子)と誤りの
-    文にだけ使う(解いた物は中身だけで決まる)。"""
+    """Parse source (Python by ast, Hy by Hy's reader; None if unreadable, e.g. due to your own reader macros). The path is used only for the kind (extension) and the error
+    message (the parse result is determined by contents alone)."""
     try:
-        # 文字の file として開いた時と同じ読み(UTF-8・改行の正規化)。
+        # Same reading as opening the file as text (UTF-8, newline normalization).
         text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8").read()
     except UnicodeDecodeError:
         return None
@@ -267,7 +267,7 @@ def _read(data: bytes, path: str) -> PythonModule | HyModule | None:
         except (SyntaxError, ValueError):
             return None
     if path.endswith(_HY_SUFFIXES):
-        import hy  # Hy の source に当たった時だけ
+        import hy  # only when Hy source is encountered
         from hy.errors import HyError
 
         try:
@@ -277,38 +277,38 @@ def _read(data: bytes, path: str) -> PythonModule | HyModule | None:
     return None
 
 
-# ---- 置き場の束縛の entry ------------------------------------------------------------------------------------------------
+# ---- Store binding entry ------------------------------------------------------------------------------------------------
 
 
-#: 束縛の entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に入れる
-#: この module の file の sha256(:func:`_own_digest`)が覆う。
+#: Mark of the binding entry key (bump the trailing number when the entry shape changes). A change to the reading itself (this module's code) is covered by
+#: the sha256 of this module's file (:func:`_own_digest`) that goes into the key.
 BINDING_TAG = "doeff-hy/bound-source/1"
 
-#: Hy の source の拡張子(定義点 code_store の写しを置かない — 拡張子を足した時に読み方と鍵の種類が揃って変わる)。
+#: Hy source suffixes (a copy of the definition point in code_store is not kept, so that when a suffix is added the reading and the key kind change together).
 _HY_SUFFIXES = HY_SOURCE_SUFFIXES
 
-#: hy.repr と登録の表を定義した Hy の module(``hy.repr`` を引くと Hy が遅れて読み込む)。
+#: The Hy module that defines hy.repr and its registration table (Hy loads it lazily when ``hy.repr`` is accessed).
 _HY_REPR_MODULE = "hy.core.hy_repr"
 
 
 @dataclass(frozen=True)
 class _Missing:
-    """置き場に使える entry が無い印(entry の中身の None = 束縛が読めない source、と分けるため)。"""
+    """Mark meaning there is no usable store entry (to distinguish from an entry whose content None = source whose binding is unreadable)."""
 
 
 @dataclass(frozen=True)
 class OwnCode:
-    """この module の file の中身の sha256(読めなければ None — 読み方の code が分からないので置き場を使わない)。"""
+    """sha256 of this module file's contents (None if unreadable: the reading code is unknown, so the store is not used)."""
 
     sha256: str | None
 
 
-#: この module の code の覚え(process に 1 度 — 鍵は "own" の 1 つだけ)。
+#: Memo of this module's code (once per process; only one key, "own").
 _OWN: dict[str, OwnCode] = {}
 
 
 def _own_digest() -> str | None:
-    """この module の file の中身の sha256 — 読み方の code を変えた版が、前の版の読みを置き場から引かないため(読めなければ None)。"""
+    """sha256 of this module file's contents -- so a version that changed the reading code does not pull the previous version's reads from the store (None if unreadable)."""
     known = _OWN.get("own")
     if known is None:
         known = _OWN.setdefault("own", _read_own_code())
@@ -316,8 +316,8 @@ def _own_digest() -> str | None:
 
 
 def _read_own_code() -> OwnCode:
-    """この module の file を読んで sha256 を作る。"""
-    import hashlib  # 置き場を使う時だけ読む
+    """Read this module's file and compute the sha256."""
+    import hashlib  # only when the store is used
 
     try:
         with open(__file__, "rb") as stream:
@@ -327,10 +327,10 @@ def _read_own_code() -> OwnCode:
 
 
 def _binding_entry(source: SourceFile, path: str, name: str) -> str | None:
-    """束縛の entry の path(置き場を使わない設定・この module の code を読めない・Hy の文の形が process の登録で変わりうる時は
-    None)。鍵 = 印・この module の code・Python の版の全部(ast の形)・source の種類(拡張子で読み方が違う)・Hy の読みと文の形
-    (:func:`_hy_reading`)・名・source の中身。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 置き場を使う時だけ読む
+    """Path of the binding entry (None if the store is configured off, this module's code is unreadable, or the shape of Hy statements may change with process registrations).
+    Key = mark, this module's code, the whole Python version (ast shape), source kind (the reading differs by extension), Hy reading and statement shape
+    (:func:`_hy_reading`), name, and source contents."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # only when the store is used
 
     store = code_store.store_dir()
     own = None if store is None else _own_digest()
@@ -348,22 +348,22 @@ def _binding_entry(source: SourceFile, path: str, name: str) -> str | None:
 
 
 def _hy_reading() -> str | None:
-    """Hy の source の読みと文の形(``hy.repr``)を決める物 — Hy の版と、hy.repr の登録の表(process の中の共有の表)の指紋。表に
-    Hy 自身と組み込み以外の関数が登録されている時は None(その関数の code は鍵で覆えない — 置き場を使わない)。Hy の読み
-    (``hy.read_many``)は毎回新しい reader で、process の reader macro に依らない。
+    """What decides the Hy source reading and statement shape (``hy.repr``): a fingerprint of the Hy version and the hy.repr registration table (the in-process shared table). None when the table
+    has registered functions other than Hy's own and built-ins (the code of those functions cannot be covered by the key, so the store is not used). Hy's reading
+    (``hy.read_many``) always uses a fresh reader and does not depend on the process's reader macros.
 
-    表の持ち主の module(:data:`_HY_REPR_MODULE`)がまだ読み込まれていなければ、表は Hy の既定のまま(登録の口 hy.repr_register も
-    同じ module を読み込む)— 鍵は既定の印にし、表を見るためだけに読み込まない(hy.repr を引くと Hy が読み込み、照らしだけが
-    0.055〜0.094 秒を払っていた)。置き場に無い時の読みは :func:`_hy_binding` の hy.repr が
-    読み込む既定の表で文を作るので、既定の印の entry の中身は既定の表の読みになる。"""
-    from types import FunctionType  # Hy の source に当たった時だけ
+    If the module that owns the table (:data:`_HY_REPR_MODULE`) is not yet loaded, the table is still Hy's default (the registration entry point hy.repr_register also
+    loads the same module), so the key uses the default mark and the module is not loaded just to look at the table (accessing hy.repr makes Hy load it, and only the check
+    paid 0.055 to 0.094 s). When the store has nothing, the hy.repr in :func:`_hy_binding` builds statements
+    with the default table it loads, so the contents of an entry with the default mark are the reading with the default table."""
+    from types import FunctionType  # only when Hy source is encountered
 
     import hy
 
     if _HY_REPR_MODULE not in sys.modules:
         return f"{hy.__version__}\0default"
-    # hy.repr の登録の表は hy.repr を定義した Hy の module の大域(型検査器からは見えないので、hy.repr の関数の大域から引く)。
-    # 表の形が違えば読み方が分からない。
+    # The hy.repr registration table is a global of the Hy module that defines hy.repr (not visible to the type checker, so it is fetched from the globals of the hy.repr function).
+    # If the table shape differs, the way of reading is unknown.
     shown = hy.repr
     registry = shown.__globals__.get("_registry") if isinstance(shown, FunctionType) else None
     if not isinstance(registry, dict):
@@ -376,7 +376,7 @@ def _hy_reading() -> str | None:
 
 @dataclass(frozen=True, order=True)
 class ReprRow:
-    """hy.repr の登録の表の行 1 つ(型・登録した関数・入れ子の印の名)— 表の指紋を作るため。"""
+    """One row of the hy.repr registration table (type, registered function, name of the nesting mark) -- to build the table fingerprint."""
 
     kind: str
     function: str
@@ -384,7 +384,7 @@ class ReprRow:
 
 
 def _repr_row(kind: object, entry: object) -> ReprRow:
-    """登録の表の行を名で書く(関数の組の形が違う行は、関数を読めない行として書く — Hy 自身の関数と数えない)。"""
+    """Write a registration table row by name (a row whose function pair has a different shape is written as a row with unreadable functions; it is not counted as Hy's own function)."""
     kind_name = f"{getattr(kind, '__module__', '')}.{getattr(kind, '__qualname__', '')}"
     match entry:
         case (function, placeholder):
@@ -395,38 +395,38 @@ def _repr_row(kind: object, entry: object) -> ReprRow:
 
 
 def _read_binding_entry(entry: str) -> "Binding | None | _Missing":
-    """置き場の束縛の entry を読む(無ければ _Missing)。形の違う entry は名指して除き、_Missing(呼び手は解き直して足し直す)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 置き場を使う時だけ読む
+    """Read a store binding entry (_Missing if absent). An entry of the wrong shape is removed by name and treated as _Missing (the caller re-parses and re-adds it)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # only when the store is used
 
     data = code_store.read_entry(entry)
     if data is None:
         return _Missing()
-    import marshal  # 当たった時だけ読む
+    import marshal  # only when hit
 
     try:
         value = marshal.loads(data)
     except (EOFError, ValueError, TypeError) as error:
-        code_store.discard_entry(entry, f"marshal で読めない: {error}")
+        code_store.discard_entry(entry, f"unreadable by marshal: {error}")
         return _Missing()
     binding = _binding_from_parts(value)
     if isinstance(binding, _Missing):
-        code_store.discard_entry(entry, "束縛の形が違う")
+        code_store.discard_entry(entry, "binding has the wrong shape")
     return binding
 
 
 def _write_binding_entry(entry: str, binding: Binding | None) -> None:
-    """読んだ束縛を置き場へ足す(書かない設定では名指しの置き場だけ — loader_hooks の code の足し方と同じ決め。書けない置き場では
-    黙って足さない — 置き場は速さのためだけ)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 置き場を使う時だけ読む
+    """Add the binding read to the store (with writes configured off, only the named store; a store that cannot be written is
+    silently skipped -- the store exists only for speed). Same rule as loader_hooks for adding code."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # only when the store is used
 
     if sys.dont_write_bytecode and not code_store.store_is_named():
         return
-    import marshal  # 足す時だけ読む
+    import marshal  # only when adding
 
     code_store.write_entry(entry, marshal.dumps(_binding_parts(binding)))
 
 
-#: 置き場の entry の中身の形(marshal の境界 — 欄の名と型は :class:`Binding` が持ち、ここは書く時と読む時の並びだけ)。
+#: Shape of a store entry's contents (marshal boundary: field names and types are held by :class:`Binding`; here only the order for writing and reading).
 BindingParts = (
     tuple[
         tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
@@ -440,7 +440,7 @@ BindingParts = (
 
 
 def _binding_parts(binding: Binding | None) -> BindingParts:
-    """束縛を marshal で書ける組にする(None はそのまま — 読めない source)。:func:`_binding_from_parts` の逆。"""
+    """Turn a binding into a tuple that marshal can write (None stays as is: unreadable source). Inverse of :func:`_binding_from_parts`."""
     if binding is None:
         return None
     return (
@@ -453,7 +453,7 @@ def _binding_parts(binding: Binding | None) -> BindingParts:
 
 
 def _binding_from_parts(value: object) -> "Binding | None | _Missing":
-    """置き場から読んだ組を束縛に組む(形が違えば _Missing)。"""
+    """Build a binding from the tuple read from the store (_Missing if the shape is wrong)."""
     match value:
         case None:
             return None
@@ -485,7 +485,7 @@ def _binding_from_parts(value: object) -> "Binding | None | _Missing":
 
 
 def _statement_from_parts(row: object) -> Statement | None:
-    """束縛の entry の文の行 1 つ(形が違えば None)。"""
+    """One statement row of a binding entry (None if the shape is wrong)."""
     match row:
         case (str() as text, tuple() as loads, tuple() as attributes):
             read_loads = _names_of(loads)
@@ -498,7 +498,7 @@ def _statement_from_parts(row: object) -> Statement | None:
 
 
 def _import_from_parts(row: object) -> ImportedName | None:
-    """束縛の entry の import の行 1 つ(形が違えば None)。"""
+    """One import row of a binding entry (None if the shape is wrong)."""
     match row:
         case (str() as module, int() as level, str() as name):
             return ImportedName(module, level, name)
@@ -507,7 +507,7 @@ def _import_from_parts(row: object) -> ImportedName | None:
 
 
 def _names_of(values: tuple[object, ...]) -> tuple[str, ...] | None:
-    """entry から読んだ並びを名(文字列)の並びとして読む(名でない物があれば None)。"""
+    """Read the sequence from the entry as a sequence of names (strings) (None if any is not a name)."""
     names = tuple(value for value in values if isinstance(value, str))
     return names if len(names) == len(values) else None
 
@@ -517,7 +517,7 @@ def _names_of(values: tuple[object, ...]) -> tuple[str, ...] | None:
 
 @dataclass(frozen=True)
 class StatementFacts:
-    """top-level の文 1 つが大域 1 つについて言う事(入れる文・本体で書き換えうる定義の名・束縛する import・束縛するか)。"""
+    """What one top-level statement says about one global (statements to include, names of definitions that may mutate in their body, imports that bind, whether it binds)."""
 
     statement: Statement | None
     mutator: str | None
@@ -526,7 +526,7 @@ class StatementFacts:
 
 
 def _python_binding(body: tuple[ast.stmt, ...], name: str) -> Binding:
-    """Python の top-level の文から大域 ``name`` の束縛と書き換えを読む。"""
+    """Read the binding and mutation of global ``name`` from Python top-level statements."""
     facts = tuple(_python_statement_facts(statement, name) for statement in body)
     return Binding(
         statements=tuple(fact.statement for fact in facts if fact.statement is not None),
@@ -538,7 +538,7 @@ def _python_binding(body: tuple[ast.stmt, ...], name: str) -> Binding:
 
 
 def _python_statement_facts(statement: ast.stmt, name: str) -> StatementFacts:
-    """top-level の文 1 つを読む — 定義は import の時に評価される所と本体を分け、他の文は文ごと。"""
+    """Read one top-level statement: a definition is split into the parts evaluated at import time and the body; other statements are taken whole."""
     match statement:
         case ast.FunctionDef() | ast.AsyncFunctionDef() | ast.ClassDef():
             named = statement.name == name
@@ -562,7 +562,7 @@ def _python_statement_facts(statement: ast.stmt, name: str) -> StatementFacts:
 
 
 def _python_statement(statement: ast.stmt) -> Statement:
-    """文 1 つの正準の形(位置を除く ``ast.dump``)と、読む名・属性の名。"""
+    """Canonical form of one statement (``ast.dump`` with positions removed) and the names and attribute names it reads."""
     loads = sorted({node.id for node in ast.walk(statement) if isinstance(node, ast.Name)})
     attributes = sorted(
         {node.attr for node in ast.walk(statement) if isinstance(node, ast.Attribute)}
@@ -571,12 +571,12 @@ def _python_statement(statement: ast.stmt) -> Statement:
 
 
 def _mentions(node: ast.AST, name: str) -> bool:
-    """節(とその中)がその名に触れるか(名の読み書き・``global`` ・ import の束縛)。"""
+    """Whether the clause (and its insides) touches the name (name read/write, ``global``, import binding)."""
     return any(_names(inner, name) for inner in ast.walk(node))
 
 
 def _names(node: ast.AST, name: str) -> bool:
-    """節そのもの(中は見ない)がその名に触れるか。"""
+    """Whether the clause itself (not looking inside) touches the name."""
     match node:
         case ast.Name(id=found):
             return found == name
@@ -589,13 +589,13 @@ def _names(node: ast.AST, name: str) -> bool:
 
 
 def _alias_binds(alias: ast.alias, name: str) -> bool:
-    """import の別名 1 つがその名を束縛するか。"""
+    """Whether one import alias binds the name."""
     bound = alias.asname if alias.asname is not None else alias.name.partition(".")[0]
     return bound == name
 
 
 def _binds(statement: ast.stmt, name: str) -> bool:
-    """文がその名を束縛するか(代入・for・with・del の名の書き)— 中の関数の定義の外で。"""
+    """Whether the statement binds the name (name writes in assignment, for, with, del), outside inner function definitions."""
     return any(
         isinstance(node, ast.Name)
         and node.id == name
@@ -609,7 +609,7 @@ def _binds(statement: ast.stmt, name: str) -> bool:
 
 
 def _imports_binding(statement: ast.stmt, name: str) -> tuple[ImportedName, ...]:
-    """文の中(中の関数の定義の外)の import のうち、その名を束縛する物。"""
+    """Imports inside the statement (outside inner function definitions) that bind the name."""
     return tuple(
         imported
         for node in _outside_functions(statement)
@@ -618,7 +618,7 @@ def _imports_binding(statement: ast.stmt, name: str) -> tuple[ImportedName, ...]
 
 
 def _imported_names(node: ast.AST, name: str) -> tuple[ImportedName, ...]:
-    """import の文 1 つのうち、その名を束縛する別名(``import a.b`` は a を、``import a.b as n`` は a.b を束縛する)。"""
+    """The alias that one import statement binds (``import a.b`` binds a, ``import a.b as n`` binds a.b)."""
     match node:
         case ast.Import(names=aliases):
             return tuple(
@@ -639,7 +639,7 @@ def _imported_names(node: ast.AST, name: str) -> tuple[ImportedName, ...]:
 
 
 def _outside_functions(node: ast.AST, top: bool = True) -> Iterator[ast.AST]:
-    """節とその中の節(関数の定義と lambda の本体には入らない — 定義の名・decorator・既定値は入る)。"""
+    """The clause and clauses inside it (does not enter function definition and lambda bodies; definition names, decorators, and defaults are entered)."""
     yield node
     match node:
         case ast.FunctionDef() | ast.AsyncFunctionDef() if not top:
@@ -653,7 +653,7 @@ def _outside_functions(node: ast.AST, top: bool = True) -> Iterator[ast.AST]:
 
 
 def _function_import_time(function: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[ast.AST, ...]:
-    """関数の定義のうち import の時に評価される所(decorator・既定値・注記)。"""
+    """Parts of a function definition evaluated at import time (decorators, defaults, annotations)."""
     arguments = function.args
     every = (
         *arguments.posonlyargs,
@@ -674,7 +674,7 @@ def _function_import_time(function: ast.FunctionDef | ast.AsyncFunctionDef) -> t
 def _import_time_nodes(
     definition: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
 ) -> Iterator[ast.AST]:
-    """top-level の定義のうち import の時に評価される節の全部(class は本体の文も — 関数と lambda の本体には入らない)。"""
+    """All clauses of a top-level definition evaluated at import time (for a class, including the body statements; does not enter function and lambda bodies)."""
     match definition:
         case ast.ClassDef():
             for root in (*definition.decorator_list, *definition.bases, *definition.keywords):
@@ -693,7 +693,7 @@ def _import_time_nodes(
 def _call_time_nodes(
     definition: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
 ) -> list[ast.AST]:
-    """top-level の定義のうち呼ばれた時に走る所(関数の本体 — class は method の本体)。"""
+    """Parts of a top-level definition that run when called (function bodies; for a class, method bodies)."""
     match definition:
         case ast.ClassDef():
             return [
@@ -707,9 +707,9 @@ def _call_time_nodes(
 
 
 def _mutates(node: ast.AST, name: str) -> bool:
-    """節(呼ばれた時に走る本体)がその名を書き換えうるか — ``global`` の宣言か、値の行き先が参照を外へ出さない所で終わらない
-    名の使い(:func:`_stays`)。別名(top-level の ``ALIAS = 名``)を通した書き換えは、別名を束縛する文が名に触れる文として入り、
-    その文が束縛する別名を歩みの側が同じ規則で辿るので覆われる。"""
+    """Whether the clause (a body run at call time) may mutate the name: a ``global`` declaration, or a use of the name whose value destination does not end where the reference does not escape
+    (:func:`_stays`). Mutation through an alias (top-level ``ALIAS = name``) is covered because the statement binding the alias is included as touching the name, and
+    the walker follows the alias that statement binds with the same rules."""
     parents: dict[int, ast.AST] = {}
     for parent in ast.walk(node):
         for child in ast.iter_child_nodes(parent):
@@ -721,17 +721,17 @@ def _mutates(node: ast.AST, name: str) -> bool:
             case ast.Name(id=found) if found == name and not (
                 isinstance(inner.ctx, ast.Load) and _stays(inner, parents)
             ):
-                # 名の書き(代入・del)は、global の無い局所の名かもしれないが、安全側に書き換えと数える。
+                # A name write (assignment, del) may be a local name without global, but is counted as a mutation to stay on the safe side.
                 return True
     return False
 
 
 def _stays(value: ast.expr, parents: dict[int, ast.AST]) -> bool:
-    """名から得た値(名の読み・その添字の読み・読むだけの method の結果・属性の読み)の行き先が、参照を外へ出さない所で
-    終わるか。添字の読み・読むだけの method の結果・属性の読み・or / and ・条件式の枝は、その結果を同じ規則で遡る。
-    終わりで読むだけと認めるのは、比較・if / while / 条件式 / assert の test ・ not ・ :data:`_READ_ONLY_CALLS` の引数・
-    値を捨てる式の文だけ。代入の右辺・return ・ yield ・他の呼び出しの引数・for と内包の繰り返しの元(要素が束縛されて
-    書き換えられうる)・添字や属性への書き・読むだけでない method の呼び出しは、書き換えうると数える(安全側)。"""
+    """Whether the destination of a value obtained from the name (a name read, a subscript read of it, the result of a read-only method, an attribute read) ends where the reference does not escape.
+    The result of a subscript read, a read-only method, an attribute read, or the branches of or / and / a conditional expression is traced back by the same rules.
+    Only these are accepted as read-only at the end: comparison, the test of if / while / conditional expression / assert, not, arguments of :data:`_READ_ONLY_CALLS`, and
+    expression statements that discard the value. Right side of assignment, return, yield, arguments of other calls, the source of for and comprehension iteration (elements are bound and
+    may be mutated), writes to subscripts or attributes, and calls of non-read-only methods are counted as possible mutation (safe side)."""
     parent = parents.get(id(value))
     match parent:
         case ast.Attribute(value=inner, attr=attribute, ctx=ast.Load()) if inner is value:
@@ -743,7 +743,7 @@ def _stays(value: ast.expr, parents: dict[int, ast.AST]) -> bool:
 
 
 def _passes_through(value: ast.expr, parent: ast.AST | None) -> bool:
-    """囲む節が、値(か中の値)をそのまま結果に出すか(添字の読み・or / and ・条件式の枝)。"""
+    """Whether the enclosing clause passes the value (or an inner value) through as its result as is (subscript read, or / and, conditional expression branches)."""
     match parent:
         case ast.Subscript(value=inner, ctx=ast.Load()):
             return inner is value
@@ -756,7 +756,7 @@ def _passes_through(value: ast.expr, parent: ast.AST | None) -> bool:
 
 
 def _ends_inside(value: ast.expr, parent: ast.AST | None) -> bool:
-    """囲む節が、値への参照を外へ出さずに使い終わるか(比較・not ・ test ・読むだけの組み込みの引数・捨てる式の文)。"""
+    """Whether the enclosing clause finishes using the value without letting the reference escape (comparison, not, test, argument of a read-only built-in, discarded expression statement)."""
     match parent:
         case ast.Compare() | ast.UnaryOp(op=ast.Not()) | ast.Expr():
             return True
@@ -771,8 +771,8 @@ def _ends_inside(value: ast.expr, parent: ast.AST | None) -> bool:
 
 
 def _attribute_stays(attribute: ast.Attribute, name: str, parents: dict[int, ast.AST]) -> bool:
-    """名から得た値の属性の読み — 読むだけの method の呼び出しなら結果を遡り、呼ばない読み(``値.欄``)なら欄の値を遡る。
-    それ以外の method の呼び出し(``.append`` ・ ``.update`` …)は書き換えうる。"""
+    """Attribute read of a value obtained from the name: for a read-only method call, trace the result; for a non-call read (``value.field``), trace the field value.
+    Any other method call (``.append``, ``.update`` ...) may mutate."""
     match parents.get(id(attribute)):
         case ast.Call(func=func) as call if func is attribute:
             return name in _READ_ONLY_METHODS and _stays(call, parents)
@@ -784,9 +784,9 @@ def _attribute_stays(attribute: ast.Attribute, name: str, parents: dict[int, ast
 
 
 def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
-    """Hy の top-level の form から大域 ``name``(mangle した名)の束縛と書き換えを読む。その名に触れる form は全部文として入れる
-    (定義の form も — 本体を import の時と呼ばれた時に分けない)。import で束縛する形は import の先へ解き、解けない形(星の
-    import・読めない形)は辿らない(unresolved)。"""
+    """Read the binding and mutation of global ``name`` (mangled name) from Hy top-level forms. All forms touching the name are included as statements
+    (definition forms too: the body is not split into import time and call time). Forms that bind by import are resolved to the imported module, and unresolvable forms (star
+    import, unreadable forms) are not followed (unresolved)."""
     import hy
 
     touched = tuple(
@@ -802,8 +802,8 @@ def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
     )
     return Binding(
         statements=tuple(
-            # import の form は Python の import の文と同じく読む名を持たない(束縛は imports で辿る — 同じ form が import する
-            # 兄弟の名を読む名として辿らない)。
+            # Like a Python import statement, an import form has no names it reads (the binding is followed via imports; the names of siblings that the same form imports
+            # are not followed as names it reads).
             Statement(hy.repr(form), (), ())
             if _hy_head(form) in _HY_IMPORTS
             else Statement(
@@ -822,15 +822,15 @@ def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
 
 @dataclass(frozen=True)
 class HyImportedName:
-    """Hy の import の名の並び ``[x :as y]`` の 1 つ — import の先の属性の名と、束縛する名(どちらも mangle した名)。"""
+    """One entry of a Hy import name list ``[x :as y]``: the attribute name in the imported module and the name it binds (both mangled)."""
 
     imported: str
     bound: str
 
 
 def _hy_import_clauses(items: list[object], name: str) -> tuple[ImportedName, ...] | None:
-    """``(import …)`` の引数を前から読み、その名を束縛する import を返す — module(記号か点の式)の後に ``:as 別名``・名の並び・
-    何も続かない(先頭の package を束縛)のどれか。星の import と読めない形は None(呼び手は辿れない束縛とする)。"""
+    """Read the arguments of ``(import ...)`` from the front and return the imports that bind the name: after the module (a symbol or dotted expression), one of ``:as alias``, a name list, or
+    nothing following (binds the top package). A star import or an unreadable form gives None (the caller treats it as an untraceable binding)."""
     from hy.models import Keyword, List, Symbol
 
     if not items:
@@ -856,22 +856,22 @@ def _hy_import_clauses(items: list[object], name: str) -> tuple[ImportedName, ..
             top = module.name.partition(".")[0]
             here = (ImportedName(top, 0, ""),) if top == name else ()
         case _:
-            return None  # 名の並びも別名も無い相対の import(Hy の読みの形が分からない)
+            return None  # relative import with neither a name list nor an alias (the shape of Hy's reading is unknown)
     rest = _hy_import_clauses(list(after), name)
     return None if rest is None else (*here, *rest)
 
 
 @dataclass(frozen=True)
 class HyModuleName:
-    """Hy の import の module の名(mangle した点の並び)と相対の段数。"""
+    """The name of the Hy import module (mangled dotted sequence) and the relative level."""
 
     name: str
     level: int
 
 
 def _hy_module_name(item: object) -> HyModuleName | None:
-    """import の module の部分 — 記号(``os``)か、Hy の読みが作る点の式(``a.b`` は ``(. a b)``・相対の ``..h`` は
-    ``(.. None h)``)。読めない形は None。"""
+    """The module part of an import: a symbol (``os``) or a dotted expression that Hy's reader builds (``a.b`` is ``(. a b)``, relative ``..h`` is
+    ``(.. None h)``). None for an unreadable form."""
     import hy
     from hy.models import Expression, Symbol
 
@@ -890,7 +890,7 @@ def _hy_module_name(item: object) -> HyModuleName | None:
 
 
 def _hy_import_names(items: list[object]) -> tuple[HyImportedName, ...] | None:
-    """import の名の並び ``[x y :as z]`` を読む(読めない形は None)。"""
+    """Read an import name list ``[x y :as z]`` (None for an unreadable form)."""
     from hy.models import Keyword, Symbol
 
     match items:
@@ -909,7 +909,7 @@ def _hy_import_names(items: list[object]) -> tuple[HyImportedName, ...] | None:
 
 
 def _hy_head(form: object) -> str:
-    """form の頭の名(式でなければ空)。"""
+    """Head name of a form (empty if it is not an expression)."""
     from hy.models import Expression, Symbol
 
     if isinstance(form, Expression) and len(form) > 0 and isinstance(form[0], Symbol):
@@ -918,7 +918,7 @@ def _hy_head(form: object) -> str:
 
 
 def _hy_binds(form: object, name: str) -> bool:
-    """form がその名を束縛するか(``(setv 名 …)`` の対の左・``(defn 名 …)`` などの定義の名 — import は除く)。"""
+    """Whether the form binds the name (the left of a ``(setv name ...)`` pair, the name of a definition such as ``(defn name ...)``; imports excluded)."""
     from hy.models import Expression, Symbol
 
     if not isinstance(form, Expression):
@@ -930,7 +930,7 @@ def _hy_binds(form: object, name: str) -> bool:
                 for target in list(form)[1::2]
             )
         case head if head in _HY_IMPORTS:
-            return False  # import の束縛は Binding.imports(Python の束縛と同じく bound に数えない)
+            return False  # import binding is in Binding.imports (not counted in bound, same as Python bindings)
         case head if head.startswith("def"):
             return any(
                 isinstance(item, Symbol) and _hy_names(item)[0] == name for item in list(form)[1:3]
@@ -940,7 +940,7 @@ def _hy_binds(form: object, name: str) -> bool:
 
 
 def _hy_symbols(form: object) -> Iterator[object]:
-    """form の中の記号(入れ子の並びも)。"""
+    """Symbols in the form (including nested sequences)."""
     from hy.models import Sequence, Symbol
 
     match form:
@@ -954,7 +954,7 @@ def _hy_symbols(form: object) -> Iterator[object]:
 
 
 def _hy_names(symbol: object) -> tuple[str, ...]:
-    """記号の mangle した名の並び(``a.b.c`` は a・b・c — 先頭が大域の名、残りが属性の名)。"""
+    """Mangled names of the parts of a symbol (``a.b.c`` is a, b, c: the first is the global name, the rest are attribute names)."""
     import hy
 
     text = str(symbol)

@@ -1,11 +1,11 @@
-"""doeff-hy-check に名指した path が、根の書き方(symlink を辿らない絶対 path)と食い違っても黙って捨てられないこと。
+"""A path named to doeff-hy-check must not be silently dropped when it differs from how the root is written (an absolute path that does not follow symlinks).
 
-失敗ケース(2026-10-11 agora-controllers の型の赤 22 件): 作業木の根 `/home/ubuntu/.worktrees/<木>` は `/work/toolset/worktrees/<木>` への
-symlink で、`--root "$PWD"` は symlink の側の綴り、相対 path を繋ぐ `Path.cwd()` は辿った先の綴りになる。名指した file は「根の外」として
-黙って捨てられ、赤 22 件の file で 0 件と答えた(絶対 path で渡すと 22 件)。
+Failure case (2026-10-11, 22 type reds in agora-controllers): the worktree root `/home/ubuntu/.worktrees/<tree>` is a symlink to `/work/toolset/worktrees/<tree>`;
+`--root "$PWD"` uses the symlink spelling, while `Path.cwd()`, which joins relative paths, uses the resolved spelling. The named file was treated as "outside the root" and
+silently dropped, so a file with 22 reds reported 0 (passing an absolute path gave 22).
 
-- 相対 path でも絶対 path でも、同じ file には同じ所見を返す(symlink の綴りの違いは根の中へ写す)。
-- 本当に根の外の path を名指したら、黙って 0 件にせず、名指して断る(exit 2)。
+- A relative path and an absolute path give the same findings for the same file (symlink spelling differences are mapped into the root).
+- Naming a path truly outside the root is rejected explicitly (exit 2) instead of silently giving 0 findings.
 """
 
 import contextlib
@@ -17,9 +17,9 @@ from typing import NamedTuple
 
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not installed")
 
-#: 束縛し直しの赤 1 件と setv の警告 2 件を必ず出す検体(test_static_check.py の BINDINGS と同じ形)。
+#: A sample that always yields 1 red for rebinding and 2 setv warnings (same shape as BINDINGS in test_static_check.py).
 BINDINGS = """(require doeff-hy.macros [defk <-])
 
 (defk rebinds [x]
@@ -32,7 +32,7 @@ BINDINGS = """(require doeff-hy.macros [defk <-])
 
 
 class _Checked(NamedTuple):
-    """main を 1 度走らせた結果: 終わりの code・所見(規則・重さ・行)・stderr。"""
+    """Result of running main once: exit code, findings (rule, severity, line), stderr."""
 
     code: int
     found: list[tuple[str, str, int]]
@@ -40,7 +40,7 @@ class _Checked(NamedTuple):
 
 
 def _checked(argv: list[str]) -> _Checked:
-    """main を 1 度走らせ、終わりの code・所見(規則・重さ・行)・stderr を返すため。"""
+    """Run main once and return the exit code, findings (rule, severity, line) and stderr."""
     from doeff_hy._static_check import main
 
     out, err = io.StringIO(), io.StringIO()
@@ -57,7 +57,7 @@ def test_a_relative_path_under_a_symlinked_root_gives_the_same_findings(tmp_path
     (real / "bindings.hy").write_text(BINDINGS, encoding="utf-8")
     linked = tmp_path / "linked"
     linked.symlink_to(real, target_is_directory=True)
-    monkeypatch.chdir(linked)  # os.getcwd() は辿った先(real)を返す — 根は symlink の綴り(linked)のまま渡す
+    monkeypatch.chdir(linked)  # os.getcwd() returns the resolved path (real) — the root is still passed with the symlink spelling (linked)
     absolute = _checked(["--root", str(linked), "--json", "--no-cache", str(linked / "bindings.hy")])
     relative = _checked(["--root", str(linked), "--json", "--no-cache", "bindings.hy"])
     assert ("doeff-hy-rebind", "error", 6) in absolute.found, absolute
@@ -71,4 +71,4 @@ def test_a_named_path_outside_the_root_is_refused_not_dropped(tmp_path: Path) ->
     outside.write_text(BINDINGS, encoding="utf-8")
     code, found, err = _checked(["--root", str(root), "--json", "--no-cache", str(outside)])
     assert code == 2 and found == [], (code, found, err)
-    assert str(outside) in err and "根の外" in err, err
+    assert str(outside) in err and "outside the root" in err, err

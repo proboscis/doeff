@@ -1,16 +1,16 @@
-"""展開(compile)の間に実行の始まった Python の code object を拾う — macro の記録の digest が、閉包の関数のうち、その module の
-展開で実行された関数の code の中身だけを覆うため(:mod:`doeff_hy_bytecode_guard._macro_use` —
-defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手が全部冷えた)。
+"""Collect the Python code objects that started running during an expansion (compile) — so that the macro record's digest covers, among the closure's functions, only the code of those that ran during that module's
+expansion (:mod:`doeff_hy_bytecode_guard._macro_use` —
+a change to binding_forms._Walker._assign, which defk expansion never calls, used to make every defk user go cold).
 
-拾い方: sys.monitoring(Python 3.12 から)の PY_START(関数の実行の始まり)と PY_RESUME(generator の再開 — 拾いを開く前に
-始まった generator)を、拾いを開いている間だけ受ける。受けた code を開いている拾いの全部に足し、その code の場所の知らせを
-止める(DISABLE — 同じ code の 2 度目からは費用が無い)。拾いを 1 つ開くたびに止めた知らせを戻す(restart_events)ので、前の
-拾いの間に止めた code も新しい拾いでは 1 度知らされる。thread を分けない — 別の thread の実行も開いている拾いの全部に入る
-(多く拾うのは、記録が古いと判じやすくなるだけ)。入れ子の拾い(展開の中の require が別の Hy の module を compile する)も同じ:
-内の拾いの間の実行は外の拾いにも入る。
+How it collects: sys.monitoring (Python 3.12+) PY_START (a function starts running) and PY_RESUME (a generator resumes — a generator
+started before the collection was opened) are received only while a collection is open. A received code is added to every open collection, and the event for that code location is
+turned off (DISABLE — no cost from the second time on for the same code). Each time a collection is opened, the disabled events are restored (restart_events), so code disabled during an earlier
+collection is reported once more to the new collection. Threads are not separated — execution in other threads also goes into every open collection
+(collecting more only makes the record more likely to be judged stale). Nested collections (a require inside an expansion compiles another Hy module) work the same way:
+execution during an inner collection also goes into the outer collection.
 
-拾えない環境(Python 3.11 まで・sys.monitoring の道具の番号が空いていない)では :func:`start` が :class:`Uncollectable` を返し、
-記録は閉包の関数の code を全部覆う(今までの形)。
+In environments that cannot collect (Python 3.11 and earlier, or no free sys.monitoring tool id), :func:`start` returns :class:`Uncollectable`, and
+the record covers all the code of the closure's functions (the previous behavior).
 """
 
 import sys
@@ -18,47 +18,47 @@ import threading
 from dataclasses import dataclass
 from types import CodeType
 
-#: sys.monitoring の道具の番号の候補 — 0・1・2・5 は debugger・coverage・profiler・optimizer に名指された番号なので、名指しの
-#: 無い 3 と 4 だけを使う。
+#: Candidate sys.monitoring tool ids — 0, 1, 2 and 5 are ids named for debugger, coverage, profiler and optimizer, so only the unnamed
+#: 3 and 4 are used.
 _TOOL_CANDIDATES = (3, 4)
 _TOOL_NAME = "doeff-hy-called-code"
 
 _LOCK = threading.Lock()
 
-#: 開いている拾いの集合の組(1 つの欄 — 開け閉めは lock の下で組ごと替え、知らせの callback は lock を取らずに読む)。
+#: Tuple of the set of open collections (a single field — opening and closing swap the whole tuple under a lock; the event callback reads it without taking the lock).
 _OPEN: list[tuple[set[CodeType], ...]] = [()]
 
 
 @dataclass(frozen=True)
 class Uncollectable:
-    """この process では拾えない(理由の文 — sys.monitoring が無い・道具の番号が空いていない)。"""
+    """Collection is impossible in this process (a reason string — no sys.monitoring, or no free tool id)."""
 
     reason: str
 
 
-#: 使う道具の番号の決め(鍵 "tool" の 1 つ — 初めて拾いを開く時に決め、process の間変えない)。
+#: Decision of the tool id to use (one "tool" key — decided when a collection is first opened, and not changed for the life of the process).
 _TOOL: dict[str, "int | Uncollectable"] = {}
 
 
 class CalledCode:
-    """開いた拾い 1 つ — :meth:`codes` が今までに拾った code、:meth:`close` が拾いを閉じる(2 度目からは何もしない)。"""
+    """One open collection — :meth:`codes` returns the code collected so far, and :meth:`close` closes the collection (does nothing from the second call)."""
 
     def __init__(self, tool: int) -> None:
         self._tool = tool
         self._codes: set[CodeType] = set()
 
     def codes(self) -> frozenset[CodeType]:
-        """今までに拾った code(閉じる前でも読める — 読んだ後に拾った code は入らない)。"""
+        """The code collected so far (readable even before closing — code collected after reading is not included)."""
         return frozenset(self._codes)
 
     def reopen(self) -> None:
-        """閉じた拾いを開き直す(拾った code は残して続きを足す — 開いている時は何もしない)。"""
+        """Reopen a closed collection (keeps the collected code and continues adding — does nothing while open)."""
         with _LOCK:
             if not any(codes is self._codes for codes in _OPEN[0]):
                 self._open()
 
     def close(self) -> None:
-        """拾いを閉じる — 開いている拾いが無くなれば知らせを受けるのをやめる。"""
+        """Close the collection — when no open collection remains, stop receiving events."""
         with _LOCK:
             remaining = tuple(codes for codes in _OPEN[0] if codes is not self._codes)
             if len(remaining) == len(_OPEN[0]):
@@ -68,7 +68,7 @@ class CalledCode:
                 sys.monitoring.set_events(self._tool, 0)
 
     def _open(self) -> None:
-        """拾いを開く(lock の下で呼ぶ)— 開いた後に止めた知らせを戻し、前の拾いの間に止めた code も知らせを受ける。"""
+        """Open a collection (call under the lock) — restores the events disabled so far, so code disabled during an earlier collection is reported again."""
         first = not _OPEN[0]
         _OPEN[0] = (*_OPEN[0], self._codes)
         if first:
@@ -78,7 +78,7 @@ class CalledCode:
 
 
 def start() -> CalledCode | Uncollectable:
-    """拾いを開く(拾えない環境では :class:`Uncollectable` — 呼び手は閉包の関数の code を全部覆う)。"""
+    """Open a collection (in an environment that cannot collect, :class:`Uncollectable` — the caller covers all the code of the closure's functions)."""
     with _LOCK:
         match _tool():
             case int() as tool:
@@ -90,14 +90,14 @@ def start() -> CalledCode | Uncollectable:
 
 
 def _started(code: CodeType, offset: int) -> object:
-    """sys.monitoring の知らせ — code を開いている拾いの全部に足し、この場所の知らせを止める。"""
+    """A sys.monitoring event — add the code to every open collection and disable the event for this location."""
     for codes in _OPEN[0]:
         codes.add(code)
     return sys.monitoring.DISABLE
 
 
 def _tool() -> "int | Uncollectable":
-    """使う道具の番号(初めての時に空いている番号を取り、知らせの callback を置く — lock の下で呼ぶ)。"""
+    """The tool id to use (take a free id the first time and install the event callback — call under the lock)."""
     known = _TOOL.get("tool")
     if known is None:
         known = _TOOL.setdefault("tool", _take_tool())
@@ -105,21 +105,21 @@ def _tool() -> "int | Uncollectable":
 
 
 def _take_tool() -> "int | Uncollectable":
-    """空いている道具の番号を取り、知らせの callback を置く。"""
+    """Take a free tool id and install the event callback."""
     monitoring = getattr(sys, "monitoring", None)
     if monitoring is None:
         return Uncollectable(
-            f"sys.monitoring が無い(Python {sys.version_info[0]}.{sys.version_info[1]})"
+            f"no sys.monitoring (Python {sys.version_info[0]}.{sys.version_info[1]})"
         )
     for candidate in _TOOL_CANDIDATES:
         if monitoring.get_tool(candidate) is not None:
             continue
         try:
             monitoring.use_tool_id(candidate, _TOOL_NAME)
-        except ValueError:  # 別の道具が先に取った
+        except ValueError:  # another tool took it first
             continue
         monitoring.register_callback(candidate, monitoring.events.PY_START, _started)
         monitoring.register_callback(candidate, monitoring.events.PY_RESUME, _started)
         return candidate
     taken = ", ".join(f"{index}={monitoring.get_tool(index)}" for index in _TOOL_CANDIDATES)
-    return Uncollectable(f"sys.monitoring の道具の番号が空いていない({taken})")
+    return Uncollectable(f"no free sys.monitoring tool id ({taken})")

@@ -1,7 +1,7 @@
-"""on-raise の展開が、受けごとの関数の引数に型の注記を付ける(pyright strict の「引数の型が分からない」を出さない)。
+"""The on-raise expansion annotates the parameters of each handler function with types (so pyright strict does not report "parameter type is unknown").
 
-実行時の意味は doeff-core-effects の test_outcomes.hy が持つ。ここは展開の字面だけを見る: 注記が無いと、on-raise を書いた
-呼び手ごとに「Type of parameter が unknown」「Type annotation is missing」の赤が 5 件ずつ出た。
+The runtime meaning is held by doeff-core-effects' test_outcomes.hy. This test looks only at the text of the expansion: without annotations, each caller that wrote on-raise got
+five errors each of "Type of parameter is unknown" and "Type annotation is missing".
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from types import ModuleType
 import hy
 from hy.models import Expression, Sequence, Symbol
 
-import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+import doeff_hy  # noqa: F401 - register the Hy import hook
 
 
 def _expand(source: str) -> object:
@@ -21,7 +21,7 @@ def _expand(source: str) -> object:
 
 
 def _annotated_object_params(tree: object) -> list[object]:
-    """`(fn [#^ object 名] …)` の引数の並びを集める。"""
+    """Collect the parameter lists of `(fn [#^ object name] ...)`."""
     found: list[object] = []
     if isinstance(tree, Expression) and tree and tree[0] == Symbol("fn"):
         found.append(tree[1])

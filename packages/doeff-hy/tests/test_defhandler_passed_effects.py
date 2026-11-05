@@ -1,9 +1,9 @@
-"""柵の形の defhandler(総受けの節が「X でなければ」の番)を、VM が X の effect で飛ばす事の検。
+"""Check that the VM skips a fence-shaped defhandler (a catch-all clause whose guard is "unless X") for effects of type X.
 
-節が EffectBase の総受けで、番が `(not (isinstance effect X))` の handler は、それより前の節が名指さない X の effect を
-`(Pass effect k)` で外へ渡すだけ。型の註では「X 以外の全部」を言えないので、VM は全部の effect でこの handler に入っていた。
-defhandler はこの形を見つけると、X と前の節の型を install の時に VM へ渡し(doeff_vm._effect_types.declare_passes)、VM は
-そういう effect でこの handler を Python に入らずに飛ばす — 番が外れた時と同じ終わり方なので、答えと順は変わらない。
+A handler whose clause is an EffectBase catch-all with the guard `(not (isinstance effect X))` only passes effects of type X, which no earlier clause names, outward with
+`(Pass effect k)`. A type annotation cannot say "everything except X", so the VM used to enter this handler for every effect.
+When defhandler finds this shape, it hands X and the earlier clauses' types to the VM at install time (doeff_vm._effect_types.declare_passes), and the VM
+skips this handler for such effects without entering Python — it ends the same way as when the guard fails, so the answers and the order are unchanged.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ PRELUDE = """
 (defhandler pongs (Pong [value] (resume (+ value ":pong"))))
 (defhandler pings (Ping [value] (resume (+ value ":outer"))))
 
-;; 柵の形: 前の節 Ping・総受けは passable の外を断る
+;; Fence shape: the earlier clause is Ping; the catch-all rejects anything outside passable
 (defhandler fence [passable]
   (Ping [value] (resume (+ value ":fence")))
   (EffectBase []
@@ -52,12 +52,12 @@ def _eval(code: str) -> dict[str, object]:
 
 
 def _data(handler_fn: object) -> object:
-    """defhandler の値から、VM が据える handler の関数(`__doeff_handler_data__`)。"""
-    return handler_fn.__doeff_handler_data__  # type: ignore[attr-defined] — defhandler の値が持つ欄(handle.hy)
+    """The handler function (`__doeff_handler_data__`) that the VM installs, taken from the defhandler value."""
+    return handler_fn.__doeff_handler_data__  # type: ignore[attr-defined] — a field held by the defhandler value (handle.hy)
 
 
 def _entries(code: CodeType, run: Callable[[], object]) -> tuple[int, object]:
-    """run の間に code の関数が始まった回数と、run の答え。本体は generator なので再開ごとにも call の事象が出る — frame の同一性で数える。"""
+    """The number of times the code function started during the run, and the run's answer. The body is a generator, so a call event also fires on each resume — counted by frame identity."""
     frames: dict[int, FrameType] = {}
 
     def profile(frame: FrameType, event: str, _arg: object) -> None:
@@ -86,7 +86,7 @@ def test_a_passed_effect_does_not_enter_the_fence_and_an_earlier_clause_type_sti
     code = _data(ns["guarded"]).__wrapped__.__code__
     entered, result = _entries(code, lambda: ns["doeff_run"](ns["program"]))
     assert result == ("a:pong", "b:pong", "c:pong", "d:fence")
-    assert entered == 1, "Pong 3 回は柵に入らずに外の pongs へ届く・前の節の型 Ping は柵が答える"
+    assert entered == 1, "3 Pongs do not enter the fence but reach the outer pongs; the fence answers Ping, the earlier clause's type"
 
 
 def test_an_effect_outside_the_passed_types_still_enters_and_is_refused() -> None:
@@ -104,12 +104,12 @@ def test_an_effect_outside_the_passed_types_still_enters_and_is_refused() -> Non
 
 def test_the_passed_types_resolve_at_install_and_other_guard_shapes_are_not_skipped() -> None:
     ns = _eval("""
-;; 番の型が handler より後に書いた定数(install の時に解く)
+;; A constant for the guard type, written after the handler (resolved at install time)
 (defhandler gate
   (EffectBase []
     :when (not (isinstance effect LATER))
     (raise (ValueError "gated"))))
-;; 番が別の形 — 飛ばさない(全部の effect で入る)
+;; The guard has a different shape — not skipped (entered for every effect)
 (defhandler custom
   (EffectBase []
     :when (not (= (. (type effect) __name__) "Pong"))

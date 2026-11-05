@@ -1,12 +1,12 @@
-"""macro の記録が、展開で実行された関数の code だけを覆う形の失敗ケース(#3769 の子 — 日次 10-12 04:00 の 1,197 本の作り直し)。
+"""Failure cases for a macro record that covers only the code of functions actually run during expansion (child of #3769 -- the daily 10-12 04:00 rebuild of 1,197 items).
 
-記録の digest は、閉包の歩みが辿った物(関数の名・class の member の名・値・束縛の文)を今までどおり全部入れ、関数の code の
-中身(:attr:`doeff_hy_bytecode_guard._macro_use.CodeFacts.shape`)だけを、その module の展開で実行された関数に絞る
-(:mod:`doeff_hy_bytecode_guard._called_code` が展開の間に実行の始まった code を拾う)。呼ばれない method の code の変更では
-古いと判じず、呼ばれる method の変更では今までどおり古いと判じる。展開の外(import の時)に実行されて値を作った関数
-(束縛の文が呼ぶ関数・書き換える関数)と、関数の中身を値として読む code(説明の文・引数の形)の先は絞らない。
+The record digest still includes everything the closure walk reached (function names, class member names, values, binding statements) as before, but narrows the contents of
+function code (:attr:`doeff_hy_bytecode_guard._macro_use.CodeFacts.shape`) to the functions run during that module's expansion
+(:mod:`doeff_hy_bytecode_guard._called_code` picks up code whose execution started during expansion). A change to the code of a method that is not called
+is not judged stale, while a change to a method that is called is judged stale as before. Functions run outside expansion (at import time) that produced a value
+(functions called or rewritten by binding statements) and code that reads a function's contents as a value (docstring, signature) are not narrowed.
 
-記録は import と同じ口(``source_to_code_as_import``)で作り、``record_is_current_here`` で照らす(test_macro_use_record.py と同じ)。
+The record is made through the same entry as import (``source_to_code_as_import``) and checked with ``record_is_current_here`` (same as test_macro_use_record.py).
 """
 
 import importlib
@@ -25,9 +25,9 @@ from doeff_hy_bytecode_guard._loader_hooks import (
     source_to_code_as_import,
 )
 
-#: macro の module。rewrites = 引数が真なら Rewriter の assign を、偽なら walk を呼ぶ(defk が := の有無で _Walker._assign を
-#: 通るかが変わる形)・reads-doc = 呼ばない関数の説明の文を読む・reads-signature = 呼ばない関数の引数の形を読む・builds = 表を
-#: 引く関数を呼び、表を作る関数(import の時に呼ばれる)を名で引くが呼ばない・builds-plainly = 表を引く関数だけを呼ぶ。
+#: The macro module. rewrites = if the argument is true, call the Rewriter assign, else walk (whether defk goes through _Walker._assign changes with the presence of :=)
+#: reads-doc = reads the docstring of a function it does not call; reads-signature = reads the signature of a function it does not call; builds = calls a function that looks up a table,
+#: looks up by name (without calling) the function that builds the table (called at import time); builds-plainly = calls only the function that looks up the table.
 MACROS = """\
 (import {pkg}.tables :as tables)
 (import inspect)
@@ -35,7 +35,7 @@ MACROS = """\
   (defn walk [self x] (+ x 1))
   (defn assign [self x] (* x 2)))
 (defmacro rewrites [assign] (if assign (.assign (Rewriter) 1) (.walk (Rewriter) 1)))
-(defn documented-helper [] "説明の一" 1)
+(defn documented-helper [] "doc one" 1)
 (defmacro reads-doc [] (len (. documented-helper __doc__)))
 (defn sig-helper [a] a)
 (defmacro reads-signature [] (len (. (inspect.signature sig-helper) parameters)))
@@ -43,7 +43,7 @@ MACROS = """\
 (defmacro builds-plainly [] (tables.plain-built "k"))
 """
 
-#: macro が展開の時に読む表(Python の module)。BUILT と PLAIN は import の時に呼ぶ関数が作る(展開の間には呼ばれない)。
+#: Tables the macro reads at expansion time (a Python module). BUILT and PLAIN are made by functions called at import time (not called during expansion).
 TABLES = """\
 def _build():
     return {"k": 1}
@@ -74,14 +74,14 @@ USERS = {
     "signature_reader": "(require {pkg}.macros [reads-signature])\n(setv value (reads-signature))\n",
     "builder": "(require {pkg}.macros [builds])\n(setv value (builds))\n",
     "plain_builder": "(require {pkg}.macros [builds-plainly])\n(setv value (builds-plainly))\n",
-    # 表を通らない hy.R の呼び出し(記録は source の文から macro を拾う)。
+    # A hy.R call that does not go through the table (the record picks up macros from the source statements).
     "hy_r_plain": "(setv value (hy.R.{pkg}/macros.rewrites 0))\n",
 }
 
 
 @dataclass(frozen=True)
 class Tree:
-    """sys.path に置いた一時の dir の中の検の package(名は検ごとに違う)。"""
+    """A check package in a temporary dir placed on sys.path (the name differs per check)."""
 
     package: str
     directory: Path
@@ -95,27 +95,27 @@ class Tree:
         return self.directory / "tables.py"
 
     def forget(self) -> None:
-        """検の package の module を sys.modules から外す(次の実行と同じく、次に macro の module を読み直させる)。"""
+        """Remove the check package's modules from sys.modules (as in the next run, so the next time the macro module is re-read)."""
         for name in [
             n for n in sys.modules if n == self.package or n.startswith(f"{self.package}.")
         ]:
             del sys.modules[name]
 
     def record(self, user: str, *, tables_first: bool = False) -> records.MacroRecord:
-        """使う側の module を import と同じ口で compile し、code に載った記録を返す。tables_first = 表の module を先に読む
-        (表を作る関数を展開の外で実行させる — 長く走る process で、先に別の module が読んだ形)。"""
+        """Compile the user module through the same entry as import and return the record attached to the code. tables_first = read the table module first
+        (so the table-building function runs outside expansion -- the shape in a long-running process where another module read it first)."""
         if tables_first:
             importlib.import_module(f"{self.package}.tables")
         path = self.directory / f"{user}.hy"
         loader = importlib.machinery.SourceFileLoader(f"{self.package}.{user}", str(path))
         code = source_to_code_as_import(loader, path.read_bytes(), str(path))
         record = records.record_of(code)
-        assert record is not None, "compile した code に記録が無い"
+        assert record is not None, "no record on the compiled code"
         self.forget()
         return record
 
     def is_current(self, record: records.MacroRecord) -> bool:
-        """今の環境(読み直した macro の module)で記録を照らす。"""
+        """Check the record against the current environment (the re-read macro module)."""
         try:
             return record_is_current_here(record)
         finally:
@@ -141,7 +141,7 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Tree]:
 
 
 def _replace(path: Path, old: str, new: str) -> None:
-    """file の中の old を new に替える(大きさも替える — file の sha256 の覚えは path・更新時刻・大きさで引くため)。"""
+    """Replace old with new in the file (the size changes too -- the file's sha256 memo is keyed by path, mtime and size)."""
     text = path.read_text(encoding="utf-8")
     assert old in text, old
     assert len(old) != len(new)
@@ -149,91 +149,91 @@ def _replace(path: Path, old: str, new: str) -> None:
 
 
 def test_an_imported_module_exposes_the_record_of_its_expansion(tree: Tree) -> None:
-    # Hy の test file の item の記録の cache(doeff-adr の item_cache)は、import した file の展開が使った macro の記録を、
-    # 読みの口の覚え(loaded_record)から引いて保存し、record_is_current_here で照らす(#3769 の子)。
+    # The record cache for a Hy test file item (doeff-adr's item_cache) takes the record of macros used by the expansion of the imported file
+    # from the reader entry's memo (loaded_record), saves it, and checks it with record_is_current_here (child of #3769).
     module = importlib.import_module(f"{tree.package}.plain")
     record = loaded_record(str(module.__file__))
-    assert record is not None, "import した Hy の module の展開の記録を引けない"
+    assert record is not None, "cannot get the expansion record of the imported Hy module"
     assert [row.name for row in record.macros] == ["rewrites"], record.macros
-    assert record_is_current_here(record), "何も変えていないのに古いと判じた"
+    assert record_is_current_here(record), "judged stale although nothing changed"
 
 
 def test_a_record_is_current_while_nothing_changed(tree: Tree) -> None:
     for user in USERS:
         record = tree.record(user)
-        assert tree.is_current(record), f"{user}: 何も変えていないのに古いと判じた"
+        assert tree.is_current(record), f"{user}: judged stale although nothing changed"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="sys.monitoring, which picks up code called during expansion, is Python 3.12+ -- the 3.11 record cannot pick it up and takes broadly (called_code.Uncollectable)")
 def test_a_changed_method_the_expansion_does_not_call_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: 閉包の歩みが class(Rewriter)を method ごと全部辿り、展開で呼ばれない assign の code を digest に入れていた。
+    # Red before the fix: the closure walk traversed the class (Rewriter) with every method and put the code of assign, which is not called in expansion, into the digest.
     record = tree.record("plain")
     _replace(tree.macros, "(* x 2)", "(* x 22)")
-    assert tree.is_current(record), "展開で呼ばれない method を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale just by changing a method not called during expansion"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="sys.monitoring, which picks up code called during expansion, is Python 3.12+ -- the 3.11 record cannot pick it up and takes broadly (called_code.Uncollectable)")
 def test_a_changed_method_a_hy_r_call_does_not_reach_keeps_the_record_current(tree: Tree) -> None:
-    # hy.R で呼ぶ macro も、展開で実行された関数だけを覆う(記録を作る口が、source の文から hy.R の呼び出しを拾う所を通る)。
+    # A macro called via hy.R also covers only the functions run during expansion (the entry that makes the record goes through the place that picks up hy.R calls from the source statements).
     record = tree.record("hy_r_plain")
     assert [row.name for row in record.macros] == ["rewrites"], record.macros
     _replace(tree.macros, "(* x 2)", "(* x 22)")
-    assert tree.is_current(record), "hy.R の展開で呼ばれない method を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale just by changing a method not called during the hy.R expansion"
 
 
 def test_a_changed_method_the_expansion_calls_is_stale(tree: Tree) -> None:
-    # 冷えるべき時(対照): 展開で assign を呼ぶ使い手は、同じ変更で古い。
+    # When it should go cold (contrast): a user that calls assign in expansion is stale under the same change.
     record = tree.record("assigning")
     _replace(tree.macros, "(* x 2)", "(* x 22)")
-    assert not tree.is_current(record), "展開で呼ぶ method を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the method called in expansion was changed"
 
 
 def test_a_method_added_beside_the_called_one_is_stale(tree: Tree) -> None:
-    # 冷えるべき時: class の member の名は今までどおり入る(名の引き方が変わりうる — 足した名が呼ぶ名を覆うなど)。
+    # When it should go cold: class member names go in as before (how names are looked up can change -- an added name can cover the name being called, etc.).
     record = tree.record("plain")
     _replace(
         tree.macros,
         "(defn assign [self x] (* x 2))",
         "(defn assign [self x] (* x 2))\n  (defn added [self] 0)",
     )
-    assert not tree.is_current(record), "呼ぶ method の class に member を足したのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a member was added to the class of the called method"
 
 
 def test_a_changed_docstring_of_an_uncalled_function_the_macro_reads_is_stale(tree: Tree) -> None:
-    # 冷えるべき時: 呼ばない関数の説明の文(__doc__)を展開が値として読む — 関数の中身を読む code の閉包は絞らない。
+    # When it should go cold: expansion reads the docstring (__doc__) of a function it does not call as a value -- the closure of code that reads a function's contents is not narrowed.
     record = tree.record("doc_reader")
-    _replace(tree.macros, '"説明の一"', '"説明の二つ"')
-    assert not tree.is_current(record), "展開が読む関数の説明の文を替えたのに古いと判じない"
+    _replace(tree.macros, '"doc one"', '"doc two and more"')
+    assert not tree.is_current(record), "not judged stale although the docstring of a function read by expansion was changed"
 
 
 def test_a_changed_signature_of_an_uncalled_function_the_macro_reads_is_stale(tree: Tree) -> None:
-    # 冷えるべき時: 呼ばない関数の引数の形(inspect.signature)を展開が読む。
+    # When it should go cold: expansion reads the signature (inspect.signature) of a function it does not call.
     record = tree.record("signature_reader")
     _replace(tree.macros, "(defn sig-helper [a] a)", "(defn sig-helper [a b] a)")
-    assert not tree.is_current(record), "展開が読む関数の引数の形を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the signature of a function read by expansion was changed"
 
 
 def test_a_changed_function_that_built_the_table_at_import_is_stale(tree: Tree) -> None:
-    # 冷えるべき時: 表を作る関数(_build_plain)は表の module を読む時に呼ばれ、展開の間には呼ばれない。表(辿れない dict)は
-    # 束縛の文で覆い、文が呼ぶ関数の code は絞らない。
+    # When it should go cold: the table-building function (_build_plain) is called when the table module is read, not during expansion. The table (an untraceable dict) is
+    # covered by the binding statement, and the code of the function the statement calls is not narrowed.
     record = tree.record("plain_builder", tables_first=True)
     _replace(
         tree.tables,
         'def _build_plain():\n    return {"k": 1}',
         'def _build_plain():\n    return {"k": 10}',
     )
-    assert not tree.is_current(record), "import の時に表を作る関数を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the import-time table-building function was changed"
 
 
 def test_a_changed_function_that_built_the_table_is_stale_when_first_reached_by_name(
     tree: Tree,
 ) -> None:
-    # 冷えるべき時: 表を作る関数(_build)を、macro が先に名で引いて(呼ばずに)辿り、後から表の束縛の文が同じ関数を呼ぶ。2 度目に
-    # 出会った関数(番号だけ入る)も、束縛の文の先として絞らない。
+    # When it should go cold: the macro first looks up (without calling) the table-building function (_build) by name and traverses it, and later the table binding statement calls the same function. The function
+    # met the second time (only its number goes in) is also not narrowed as the target of a binding statement.
     record = tree.record("builder", tables_first=True)
     _replace(
         tree.tables, 'def _build():\n    return {"k": 1}', 'def _build():\n    return {"k": 10}'
     )
     assert not tree.is_current(record), (
-        "名で先に辿った、import の時に表を作る関数を替えたのに古いと判じない"
+        "not judged stale although the import-time table-building function, traversed first by name, was changed"
     )

@@ -1,14 +1,14 @@
-"""自前の解き手(doeff_hy/_wire_codec.py — 読む側)の検。
+"""Tests for the home-grown decoder (doeff_hy/_wire_codec.py — the reading side).
 
-契約は設計の記録 docs/design/defwire-decoder/design.md(節 2 の型ごとの判じ方・節 3 の共通の規則・付録 B の腕の名)。確かめること:
+The contract is the design record docs/design/defwire-decoder/design.md (per-type decision in section 2, common rules in section 3, arm names in appendix B). What it checks:
 
-1. 語彙の型ごとの受ける形・断る形 — 同じ入力をpydantic の解き手(doeff_hy._wire_parity の pydantic_parse_json — 切り替える前の wire.hy と同じ設定)にも通し、受けた値(値と欄の値の型)
-   と断りの (場所, reason) の列が一致する事。試作の 4 つの断り(artifact 2026-10-27-defwire-base-measurements.html の表 3)を含む。
-2. 何でも受ける腕の規則 4(pydantic と違う答えを正とする所)— 単体で確かめる。
-3. JSON の読み(節 3「JSON の読み」)と、JSON の値・凍らせた値・OpaqueJson から解いた答えが文字列から解いた答えと同じ事。
-4. 語彙の外の型・型の輪・解けない前方参照を、木を組む時に TypeError で断る事。
-5. 型の木は最初の使いで 1 度だけ組んで型に覚える事(同時の最初の使いでも 1 つ)。
-6. この module の import の閉包に pydantic が無く、pydantic を読まずに解ける事。
+1. Accepted and refused forms per vocabulary type — the same input is also passed through the pydantic decoder (pydantic_parse_json of doeff_hy._wire_parity — the same settings as wire.hy before the switch), and the accepted values (the value and the types of field values)
+   and the list of refusal (location, reason) must match. This includes the 4 refusals of the prototype (table 3 of artifact 2026-10-27-defwire-base-measurements.html).
+2. Rule 4 of the accept-anything arm (where the answer that differs from pydantic is taken as correct) — checked in isolation.
+3. JSON reading (section 3 "JSON reading"), and that answers decoded from a JSON value, a frozen value, or OpaqueJson equal the answer decoded from a string.
+4. Types outside the vocabulary, type cycles, and unresolvable forward references are refused with TypeError when the tree is built.
+5. The type tree is built only once, at first use, and remembered on the type (one tree even for simultaneous first uses).
+6. pydantic is absent from the import closure of this module, and decoding works without loading pydantic.
 """
 
 
@@ -23,7 +23,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 from doeff_hy._frozen import freeze_json
 from doeff_hy._json_value import OpaqueJson
@@ -39,7 +39,7 @@ types = importlib.import_module("wire_codec_types")
 
 
 def _typed(value: object) -> object:
-    """値を (型, 中身) の木へ — == では見分けない 1 と 1.0・tuple と list・str と StrEnum を見分けて比べる。"""
+    """Turn a value into a (type, content) tree — compared so as to tell apart 1 and 1.0, tuple and list, and str and StrEnum, which == does not distinguish."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return (
             type(value),
@@ -66,7 +66,7 @@ def _both(wire_type: type, text: str) -> tuple[object, object]:
     return codec_of(wire_type).decode_json(text), pydantic_parse_json(wire_type, text)
 
 
-# --- 1. 語彙の型ごとの受ける形・断る形(pydantic と照らす)-------------------------------------------------------------------------
+# --- 1. Accepted and refused forms per vocabulary type (compared against pydantic) ------------------------------------------------------------
 
 ACCEPTED: list[tuple[str, str, dict[str, object]]] = [
     ("Vocab", '{"s":"a"}', {"s": "a"}),
@@ -122,7 +122,7 @@ ACCEPTED: list[tuple[str, str, dict[str, object]]] = [
 ]
 
 REFUSED: list[tuple[str, str, list[tuple[str, str]]]] = [
-    # 試作の 4 つの断り(表 3)— 数の leaseId・定義の外の state・知らない欄 zz・入れ子の float の欄の文字列。
+    # The 4 refusals of the prototype (table 3) — a numeric leaseId, a state outside the definition, an unknown field zz, and a string in a nested float field.
     ("LeaseAnswer", '{"leaseId":1,"state":"held"}', [("leaseId", "string_type")]),
     ("LeaseAnswer", '{"leaseId":"a","state":"x"}', [("state", "enum")]),
     (
@@ -245,7 +245,7 @@ def test_refused_inputs_give_the_places_and_reasons_pydantic_gives(
     assert ours.wire_type == theirs.wire_type == type_name
     assert _kinds(ours) == expected
     if expected == [("", "json_invalid")]:
-        # JSON の読みの誤りの文は Python の例外の文(pydantic の文とは違う — 節 3)。場所と種類だけを比べる。
+        # The error text of JSON reading is a Python exception message (different from pydantic's — section 3). Compare only the location and kind.
         assert _kinds(theirs) == expected
     else:
         assert _problems(ours) == _problems(theirs)
@@ -266,13 +266,13 @@ def test_reasons_are_spelled_as_pydantic_spells_them() -> None:
         fields=(
             MalformedField(
                 field="",
-                reason="Value error, Checked の欄 n が検め (> n 0) で落ちた: n=0 [value_error]",
+                reason="Value error, Checked: field n failed check (> n 0): n=0 [value_error]",
             ),
         ),
     )
 
 
-# --- 2. 何でも受ける腕(節 3 の規則 4)------------------------------------------------------------------------------------------
+# --- 2. The accept-anything arm (rule 4 of section 3) ------------------------------------------------------------
 
 
 def test_a_catch_all_arm_takes_only_what_no_other_arm_takes() -> None:
@@ -283,22 +283,22 @@ def test_a_catch_all_arm_takes_only_what_no_other_arm_takes() -> None:
         assert not isinstance(answer, Malformed), answer
         return getattr(answer, name)
 
-    # 文字列は str の腕(pydantic は OpaqueJson に包む — 規則 4 で替えた所)・str の腕が受けない値は OpaqueJson・null は None の腕。
+    # A string goes to the str arm (pydantic wraps it in OpaqueJson — what rule 4 changed); a value the str arm does not accept is OpaqueJson; null goes to the None arm.
     assert _typed(field('{"so":"s"}', "so")) == (str, "s")
     assert field('{"so":1}', "so") == OpaqueJson.of(1)
     assert field('{"so":{"a":1}}', "so") == OpaqueJson.of({"a": 1})
     assert field('{"so":null}', "so") is None
-    # object は入れ子の defwire の腕が受ければそれ・受けなければ OpaqueJson(腕の書いた順に依らない)。
+    # For object: if a nested defwire arm accepts it, that; otherwise OpaqueJson (independent of the order the arms were written).
     assert field('{"oa":{"x":1}}', "oa") == types.ArmA(x=1)
     assert field('{"oa":{"y":1}}', "oa") == OpaqueJson.of({"y": 1})
     assert field('{"oa":[1]}', "oa") == OpaqueJson.of([1])
-    # object の腕も同じ — 型の腕が受ける値はその腕・受けない値は json.loads の値のまま。
+    # The object arm is the same — a value accepted by a typed arm goes to that arm; a value not accepted stays as the json.loads value.
     assert _typed(field('{"io":1}', "io")) == (int, 1)
     assert field('{"io":"a"}', "io") == "a"
     assert field('{"io":1.5}', "io") == 1.5
 
 
-# --- 3. JSON の読みと、値からの解き ----------------------------------------------------------------------------------------------
+# --- 3. JSON reading, and decoding from values ------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -328,8 +328,8 @@ def test_a_paired_surrogate_escape_is_one_character() -> None:
 
 
 def test_json_read_limits_are_json_invalid() -> None:
-    # 4300 桁を越える整数(json.loads の ValueError — 今の pydantic は受ける。受け入れは狭まるが型の check は弱めない)と、
-    # json.loads が RecursionError で落ちる深い入れ子。
+    # An integer over 4300 digits (a ValueError from json.loads — today's pydantic accepts it. Acceptance narrows, but the type check is not weakened), and
+    # deep nesting on which json.loads fails with RecursionError.
     huge = codec_of(types.Vocab).decode_json('{"i":' + "1" * 5000 + "}")
     deep = codec_of(types.Vocab).decode_json('{"anyValue":' + "[" * 200_000 + "]" * 200_000 + "}")
     for answer in (huge, deep):
@@ -371,21 +371,21 @@ def test_a_value_that_is_not_json_is_a_type_error() -> None:
         codec_of(types.Vocab).decode({"anyValue": {1, 2}})
 
 
-# --- 4. 語彙の外は組む時に断る ------------------------------------------------------------------------------------------------
+# --- 4. Outside the vocabulary is refused when building ------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("type_name", "words"),
     [
-        ("HasDatetime", "語彙の外の型"),
-        ("HasAnnotated", "語彙の外の型"),
-        ("HasPlainRecord", "素の defrecord"),
-        ("HasIntLiteral", "文字列でない Literal"),
-        ("HasIntKeys", "key が文字列でない dict"),
-        ("HasBareList", "語彙の外の型"),
-        ("SelfRef", "型の輪"),
-        ("LoopA", "型の輪"),
-        ("Unresolved", "解けない"),
+        ("HasDatetime", "type outside the vocabulary"),
+        ("HasAnnotated", "type outside the vocabulary"),
+        ("HasPlainRecord", "plain defrecord"),
+        ("HasIntLiteral", "Literal that is not a string"),
+        ("HasIntKeys", "dict whose keys are not strings"),
+        ("HasBareList", "type outside the vocabulary"),
+        ("SelfRef", "type cycle"),
+        ("LoopA", "type cycle"),
+        ("Unresolved", "cannot resolve"),
     ],
 )
 def test_types_outside_the_vocabulary_are_refused_when_the_tree_is_built(
@@ -407,7 +407,7 @@ def test_vocabulary_types_decode_at_the_top_level() -> None:
     assert codec_of(str).decode_json('"s"') == "s"
 
 
-# --- 5. 組むのは最初の使いの 1 度 ----------------------------------------------------------------------------------------------
+# --- 5. Building happens once, at first use ------------------------------------------------------------
 
 
 def test_the_tree_is_built_at_first_use_and_kept_on_the_type() -> None:
@@ -415,7 +415,7 @@ def test_the_tree_is_built_at_first_use_and_kept_on_the_type() -> None:
     first = codec_of(probe)
     assert vars(probe)["__doeff_codec__"] is first
     assert codec_of(probe) is first
-    # 入れ子の型の木は子の型に覚え、親ごとに組み直さない。
+    # The tree of a nested type is remembered on the child type and is not rebuilt per parent.
     outer = codec_of(types.Outer)
     assert isinstance(outer.node, _WireNode)
     inner_field = next(field for field in outer.node.fields if field.wire == "inner")
@@ -438,7 +438,7 @@ def test_concurrent_first_uses_build_one_tree() -> None:
     assert all(codec is seen[0] for codec in seen)
 
 
-# --- 6. pydantic を読まない ----------------------------------------------------------------------------------------------------
+# --- 6. pydantic is not loaded ------------------------------------------------------------
 
 
 def test_the_decoder_imports_no_pydantic_and_decodes_without_it() -> None:

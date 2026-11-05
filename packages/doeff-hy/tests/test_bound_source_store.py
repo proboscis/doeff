@@ -1,9 +1,9 @@
-"""辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard._bound_source.binding_of)を、置き場(DOEFF_HY_CODE_STORE)に覚える形の
-失敗ケース。
+"""Failure cases for remembering, in the store (DOEFF_HY_CODE_STORE), the reading of source statements that cover untraceable globals (doeff_hy_bytecode_guard._bound_source.binding_of).
 
-置き場の読みは、同じ中身・同じ名・同じ読み方の時だけ前の読みを返す — 返す物は、その process で解き直した読みと同じでなければ
-ならない。process をまたぐ形は、process の中の覚えを捨てて同じ口を呼び直すことで作る(子の process の形は
-test_macro_use_record.py の CROSS_CHILD)。
+
+The store returns a previous reading only for the same content, the same name, and the same way of reading - what it returns must equal
+the reading re-solved in that process. The cross-process shape is made by dropping the in-process memory and calling the same entry point again (the child-process shape is
+CROSS_CHILD in test_macro_use_record.py).
 """
 
 import uuid
@@ -16,7 +16,7 @@ from doeff_hy_bytecode_guard import _bound_source as bound_source
 
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """名指しの置き場(検ごとに空)と、解いた回数を数える口。process の中の覚えは検の前後で捨てる。"""
+    """A named store (empty for each check) and an entry point that counts the number of solves. The in-process memory is dropped before and after each check."""
     place = tmp_path / "store"
     place.mkdir()
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(place))
@@ -26,7 +26,7 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 def _forget_process_memory() -> None:
-    """process の中の覚え(中身・解いた物・束縛)を捨てる — 次の呼び出しを新しい process の呼び出しと同じにするため。"""
+    """Drop the in-process memory (contents, solved items, bindings) - to make the next call the same as a call in a new process."""
     for name in ("_SOURCES", "_PARSED", "_BINDINGS"):
         remembered = vars(bound_source).get(name)
         if isinstance(remembered, dict):
@@ -34,7 +34,7 @@ def _forget_process_memory() -> None:
 
 
 def _parses(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """source を解いた path の並び(呼ばれる度に足す)— 置き場が当たったかを、解いたかどうかで見るため。"""
+    """The list of paths whose source was solved (appended on each call) - to see whether the store hit by whether it solved."""
     seen: list[str] = []
     reading = bound_source._read
 
@@ -49,63 +49,63 @@ def _parses(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def _entries(store: Path) -> tuple[Path, ...]:
-    """置き場の束縛の entry(並びは名の順)。"""
+    """Binding entries in the store (listed in name order)."""
     return tuple(sorted(store.glob("*/*.binding")))
 
 
 def test_an_unparsable_source_is_remembered_as_unreadable(
     tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤: 解けない source(構文の誤り)の読み None は覚えず、新しい process が毎回解き直した。
+    # Red before the fix: the reading None for unsolvable source (syntax error) was not remembered, and each new process re-solved it.
     broken = tmp_path / "broken.py"
     broken.write_text("TABLE = {\n", encoding="utf-8")
     parses = _parses(monkeypatch)
     assert bound_source.binding_of(str(broken), "TABLE") is None
     _forget_process_memory()
     assert bound_source.binding_of(str(broken), "TABLE") is None
-    assert len(parses) == 1, f"解けない source を新しい process でも解き直した: {parses}"
+    assert len(parses) == 1, f"unsolvable source was re-solved in a new process too: {parses}"
 
 
 def test_a_file_that_cannot_be_read_is_not_remembered(tmp_path: Path, store: Path) -> None:
-    # 読めない file(無い path)は中身で決まる読みではない — 置き場に何も足さない。
+    # An unreadable file (nonexistent path) has a reading not determined by content - add nothing to the store.
     assert bound_source.binding_of(str(tmp_path / "missing.py"), "TABLE") is None
-    assert _entries(store) == (), "読めない file の読みを置き場に足した"
+    assert _entries(store) == (), "added the reading of an unreadable file to the store"
 
 
 def test_the_same_text_read_as_python_and_as_hy_does_not_share_an_entry(
     tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 拡張子で読み方が違う(Python の ast と Hy の読み)— 同じ中身でも、片方の読みをもう片方に返さない。
+    # The way of reading differs by extension (Python ast vs Hy reading) - even with the same content, do not return one reading to the other.
     text = "TABLE = 1\n"
     python = tmp_path / f"same_{uuid.uuid4().hex[:6]}.py"
     hy = python.with_suffix(".hy")
     python.write_text(text, encoding="utf-8")
     hy.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")  # 置き場を使わない読み(解き直した物)
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")  # reading without the store (the re-solved one)
     fresh_python = bound_source.binding_of(str(python), "TABLE")
     fresh_hy = bound_source.binding_of(str(hy), "TABLE")
-    assert fresh_python != fresh_hy, "Python と Hy の読みが同じになった — 検の前提が崩れた"
+    assert fresh_python != fresh_hy, "the Python and Hy readings became the same - the premise of the check broke"
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
     _forget_process_memory()
     assert bound_source.binding_of(str(python), "TABLE") == fresh_python
     _forget_process_memory()
     assert bound_source.binding_of(str(hy), "TABLE") == fresh_hy, (
-        "Hy の source の読みに、同じ中身の Python の source の読みを返した"
+        "returned the reading of Python source with the same content for the reading of Hy source"
     )
-    assert len(_entries(store)) == 2, f"2 つの読み方の entry が分かれていない: {_entries(store)}"
+    assert len(_entries(store)) == 2, f"entries of the two reading ways are not separated: {_entries(store)}"
 
 
 def test_a_custom_hy_repr_keeps_hy_readings_out_of_the_store(
     tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Hy の文の形(hy.repr)は process の中の共有の登録の表に依る。Hy 自身と組み込みの外の関数が登録された process は、置き場を
-    # 使わない(その関数の code は鍵で覆えない)。
+    # The shape of Hy statements (hy.repr) depends on the in-process shared registration table. A process where functions outside Hy itself and the builtins are registered does not use
+    # the store (the code of those functions cannot be covered by the key).
     import hy
 
     class Probe:
-        """検だけの型。"""
+        """A type used only by the check."""
 
-    # 登録の表(hy.repr を定義した Hy の module の大域)へ、検の後に消える形で登録する(hy.repr-register と同じ行の形)。
+    # Register into the registration table (the globals of the Hy module that defines hy.repr) in a form that disappears after the check (the same line shape as hy.repr-register).
     registry = hy.repr.__globals__["_registry"]
     monkeypatch.setitem(registry, Probe, (lambda _value: "probe", None))
     source = tmp_path / "table.hy"
@@ -114,6 +114,6 @@ def test_a_custom_hy_repr_keeps_hy_readings_out_of_the_store(
     assert binding is not None
     assert binding.statements, binding
     assert _entries(store) == (), (
-        "Hy 自身の外の hy.repr の登録がある process で、Hy の読みを置き場に足した"
+        "Added the Hy reading to the store in a process with hy.repr registrations from outside Hy itself"
     )
     assert hy.repr(Probe()) == "probe"

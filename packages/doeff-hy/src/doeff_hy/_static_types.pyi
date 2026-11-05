@@ -1,23 +1,23 @@
-"""型検査のための展開(doeff_hy/_static_view.py)だけが参照する型の宣言。
+"""Type declarations referenced only by the expansion for type checking (doeff_hy/_static_view.py).
 
-実行時の展開はこの module を import しない。pyright にだけ見せる。型そのものは doeff core
-の物(`Expand[T, E]`・`Program[T, E]`・`EffectBase[T]` — docs/23-static-typing.md)を使い、
-ここは Hy の展開の形に合わせた口だけを持つ。
+The runtime expansion does not import this module; it is shown only to pyright. The types themselves use doeff core's
+(`Expand[T, E]`, `Program[T, E]`, `EffectBase[T]` - docs/23-static-typing.md),
+and this file only holds the entry points that match the shape of the Hy expansion.
 
-- `do`: defk / defp などの関数を包む。core の `doeff.do.do` そのもの(本体に yield の無い関数 —
-  yield の無い defk は普通の関数になる — の overload も core が持つ)。
-- `_doeff_perform(e)`: `(<- x e)` の x の型 = e の答えの型(Python の `@effectful` の
-  `x = perform(e)` と同じ形・docs/24-effectful-perform.md)。effect は `EffectBase[T]` の T、
-  Program(defk を呼んだ結果など)は `Program[T, E]` の T。答えの分け方(:absent・:failure)を宣言した effect は T から
-  その要素を除いた型(下の `BoundRun`)、中継 `Perform(e)` は宣言を開かないので e の答えの全部。
-  宣言は `Program[_T, object] -> _T` の 1 つだけで、`object -> Any` の受け皿を持たない(cisco-c8 2026-10-03 16:3x の決め):
-  受け皿の overload が在ると、module の中で最初の評価が union の期待型の下(`(<- x (| int None) …)`)
-  だった時に pyright 1.1.414 が以後の `_doeff_perform` を全部受け皿へ落とし、答えが Any になって
-  束ねの型の食い違いを黙って通していた(順に依る — tests/test_static_check.py の
-  test_a_bind_after_a_union_bind_keeps_its_answer_type)。Program でない値を `<-` に渡すと赤になる。
-  Hy には effect の集合を宣言する口がまだ無いので、`perform: Effects[E]` の E の突き合わせはしない。
-- deftest の引数の型(`DeftestInterpreter` と pytest の組み込みの fixture の型・下の節)。
-- defhandler / handle の展開の型(節を回す関数・handler を被せる関数・節の終わり方の検め・末尾の節)。
+- `do`: wraps functions such as defk / defp. It is core's `doeff.do.do` itself (core also has the overload for functions with no yield in the body -
+  a defk without yield becomes a plain function).
+- `_doeff_perform(e)`: the type of x in `(<- x e)` = the answer type of e (same shape as Python's `@effectful`
+  `x = perform(e)` - docs/24-effectful-perform.md). For an effect, the T of `EffectBase[T]`;
+  for a Program (such as the result of calling a defk), the T of `Program[T, E]`. For an effect that declares answer splitting (:absent, :failure), the type with those
+  members removed from T (`BoundRun` below); the relay `Perform(e)` does not open the declaration, so it gets the whole answer of e.
+  The declaration is only the single `Program[_T, object] -> _T`, with no `object -> Any` catch-all (decided cisco-c8 2026-10-03 16:3x):
+  with a catch-all overload, when the first evaluation in a module was under a union expected type (`(<- x (| int None) …)`),
+  pyright 1.1.414 dropped every later `_doeff_perform` to the catch-all, the answer became Any, and
+  bind type mismatches passed silently (order-dependent - test_a_bind_after_a_union_bind_keeps_its_answer_type in
+  tests/test_static_check.py). Passing a non-Program value to `<-` becomes an error.
+  Hy has no way yet to declare an effect set, so `perform: Effects[E]` is not matched against E.
+- The argument types of deftest (`DeftestInterpreter` and the types of pytest's builtin fixtures; section below).
+- The types of the defhandler / handle expansion (the function that runs clauses, the function that wraps a handler, the check of how clauses end, and the trailing clause).
 """
 
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
@@ -28,52 +28,52 @@ import pytest
 
 from doeff import K, Program, WithHandlerType
 
-# `do` は core の物をそのまま渡し、2 つ目の宣言を持たない。for/do を使う module は展開が
-# 名指す `(import doeff [do :as _doeff-do])` を自分で書くので、doeff-hy-check が module の頭に置く `_doeff_do` の後に
-# 利用者の `_doeff_do` が来る。2 つの型が違うと pyright は後の方を取り、yield の無い関数の overload を持たない方で
-# defk の投影(本体の `<-` は `_doeff_perform` になり yield が無い)を読んで、defk を呼んだ答えが Unknown になっていた。
-# 型が 1 つなら、どちらの import が後に来ても同じ型になる。
+# `do` is passed through from core as is, with no second declaration. A module that uses for/do writes the `(import doeff [do :as _doeff-do])`
+# named by the expansion itself, so the user's `_doeff_do` comes after the `_doeff_do` that doeff-hy-check places at the top of the module.
+# If the two types differed, pyright took the later one, and read the defk projection (the `<-` in the body becomes `_doeff_perform` with no yield)
+# with the one lacking the overload for functions without yield, so the answer of calling a defk became Unknown.
+# With a single type, it is the same type whichever import comes later.
 from doeff.do import do as do
 
 _T = TypeVar("_T")
 _Bound = TypeVar("_Bound")
 
-#: 答えの分け方(:absent・:failure)を宣言した effect の `__iter__` の返り値。defeffect の型検査のための展開
-#: (declarations.hy)と型の宣言の生成(static_stub.py)が、宣言した effect の class の `__iter__` をこの型に狭める — 型引数 = :answer の
-#: union から :absent と :failure の要素を除いた物。`Program[T, E]` は `__iter__` の返り値から T を読むので、`_doeff_perform(e)` は
-#: 追加の overload なしで `<-` の束ねた名の型(成功と :value の答え)を返す。実行時の `<-` は不在を Absent に・失敗を Raise に変えて
-#: 呼び手のスコープで出すので、束ねた名には来ない(ADR-DOE-CORE-EFFECTS-003 R5・R6)。effect の基底 `EffectBase[Answer]` の Answer は
-#: 宣言の全部のまま(handler は 3 つとも値で答える — R4 — ので `typed_resume` は全部を受ける)。overload にしないのは、注記が合わない時の
-#: 診断が reportAssignmentType から reportCallIssue(No overloads)に変わり、使い手の既知の赤の突き合わせが崩れるため。
+#: The return value of `__iter__` of an effect that declares answer splitting (:absent, :failure). The expansion of defeffect for type checking
+#: (declarations.hy) and the generation of type declarations (static_stub.py) narrow `__iter__` of the declared effect class to this type - the type argument = the :answer
+#: union with the :absent and :failure members removed. `Program[T, E]` reads T from the return value of `__iter__`, so `_doeff_perform(e)` returns
+#: the type of the `<-` bound name (success and the :value answer) without an additional overload. At runtime `<-` turns absence into Absent and failure into Raise and
+#: emits them in the caller's scope, so they never reach the bound name (ADR-DOE-CORE-EFFECTS-003 R5, R6). The Answer of the effect base `EffectBase[Answer]` stays
+#: the whole declaration (handlers answer with values in all three cases - R4 - so `typed_resume` accepts all of them). It is not made an overload because, when the annotation does not match,
+#: the diagnostic would change from reportAssignmentType to reportCallIssue (No overloads), breaking the matching of users' known errors.
 BoundRun: TypeAlias = Generator[Any, Any, _Bound]
 
 def _doeff_perform(effect: Program[_T, object], /) -> _T: ...
 
-# for/do・traverse の件の引数の型。型検査のための展開(macros.hy の _traverse-form)は、
-# 件ごとの関数の引数を `object` で受け、本体の前で `x = _doeff_traverse_item(items, 件)` と読み直す — 件は items の
-# 要素そのもの(Traverse の handler が items の各件を渡す)なので、答えは items の要素の型。
+# The argument type for items of for/do and traverse. The expansion for type checking (_traverse-form in macros.hy)
+# takes the per-item function's argument as `object` and re-reads it before the body as `x = _doeff_traverse_item(items, item)` - the item is
+# the element of items itself (the Traverse handler passes each item of items), so the answer is the element type of items.
 def traverse_item(items: Iterable[_T], item: object, /) -> _T: ...
 
 # ---------------------------------------------------------------------------
-# deftest の展開の引数の型
+# Argument types for the deftest expansion
 # ---------------------------------------------------------------------------
-# 型検査のための展開では、deftest が作る関数の引数に注記を付ける。注記の名は doeff_hy/_static_view.py の
-# DEFTEST_FIXTURE_TYPES(fixture の名 → ここの型の名の表・唯一の定義元)が引き、doeff-hy-check が module の頭で
-# `_doeff_<型の名>` として import する。表に無い fixture(利用者が conftest で定義した物)は、書き手が `#^ T 名`
-# と注記すればそれを、しなければ `object` を付ける。
+# In the expansion for type checking, annotations are attached to the arguments of the function deftest creates. The annotation names are looked up by DEFTEST_FIXTURE_TYPES
+# of doeff_hy/_static_view.py (the table from fixture name to type name here - the single source of truth), and doeff-hy-check imports them at the top of the module
+# as `_doeff_<type name>`. For a fixture not in the table (one the user defined in conftest), the writer's `#^ T name` annotation is used if present,
+# otherwise `object`.
 
 class DeftestInterpreter(Protocol):
-    """fixture `doeff_interpreter` — deftest の Program を走らせる関数(消費 repo の conftest が定義する)。
+    """The fixture `doeff_interpreter` - a function that runs deftest's Program (defined by the consuming repo's conftest).
 
-    展開は `(doeff_interpreter program)` か、`:env` がある時は `(doeff_interpreter program :env {…})` と呼ぶ。
-    答えは展開が使わない(検の関数は None を返す)ので object。Program は答えと effect の両方で共変なので、
-    `Program[object, object]` はどの Program も受ける。"""
+    The expansion calls it as `(doeff_interpreter program)`, or `(doeff_interpreter program :env {…})` when `:env` is present.
+    The answer is unused by the expansion (the test function returns None), so it is object. Program is covariant in both answer and effect,
+    so `Program[object, object]` accepts any Program."""
 
     def __call__(
         self, program: Program[object, object], /, *, env: Mapping[str, object] = ...
     ) -> object: ...
 
-# pytest の組み込みの fixture の型(pytest の公開の名)。
+# Types of pytest's builtin fixtures (pytest's public names).
 TmpPath: TypeAlias = Path
 TmpPathFactory: TypeAlias = pytest.TempPathFactory
 TmpdirFactory: TypeAlias = pytest.TempdirFactory
@@ -90,31 +90,31 @@ RecordProperty: TypeAlias = Callable[[str, object], None]
 DoctestNamespace: TypeAlias = dict[str, object]
 
 # ---------------------------------------------------------------------------
-# defhandler / handle の展開の型
+# Types for the defhandler / handle expansion
 # ---------------------------------------------------------------------------
-# 型検査のための展開(doeff_hy/handle.hy)が、名を doeff_hy/_static_view.py の HANDLER_STATIC_NAMES から
-# `_doeff_<名>` として引く。実行時の展開は注記を付けず、節の終わり方の検めは clause_endings.hy から import する。
+# The expansion for type checking (doeff_hy/handle.hy) looks up names from HANDLER_STATIC_NAMES in doeff_hy/_static_view.py
+# as `_doeff_<name>`. The runtime expansion attaches no annotations, and the check of how clauses end is imported from clause_endings.hy.
 
-#: handler を被せる本文の答えの型。被せた結果は同じ答えの型を運ぶ(handler は本文の答えを変えない)。
+#: The answer type of the body that a handler wraps. The wrapped result carries the same answer type (a handler does not change the body's answer).
 HandledAnswer = TypeVar("HandledAnswer")
 
-#: 節を回す関数の答え: effect・Pass・Resume / Transfer などの node を出し、送り返される値は続きの答えか
-#: 外の handler の答えで、節の答えは handler を置いたスコープの答え(finish)— どれも型の決まらない値なので object。
+#: The answer of the function that runs clauses: it emits nodes such as effects, Pass, and Resume / Transfer; the value sent back is the answer of the continuation or
+#: the answer of the outer handler, and the clause's answer is the answer of the scope where the handler was placed (finish) - all values of undetermined type, so object.
 ClauseRun: TypeAlias = Generator[object, object, object]
-#: 節を回す関数の引数 k(続き)。
+#: The argument k (continuation) of the function that runs clauses.
 Continuation: TypeAlias = K
-#: handler を被せる本文(どの Program・effect も受ける — Program は答えと effect の両方で共変)。
+#: The body that a handler wraps (accepts any Program or effect - Program is covariant in both answer and effect).
 HandlerBody: TypeAlias = Program[HandledAnswer, object]
-#: handler を被せた結果(本文と同じ答えの型)。
+#: The result of wrapping with a handler (the same answer type as the body).
 HandledScope: TypeAlias = WithHandlerType[HandledAnswer]
 
 class Handler(Protocol):
-    """defhandler が作る関数 — 本文に答え手を被せる(答えの型は本文のまま)。型の宣言の生成(static_stub.py)が
-    defhandler の答えの型に使う。"""
+    """The function defhandler creates - wraps the body with a responder (the answer type stays the body's). The generation of type declarations (static_stub.py)
+    uses it for the answer type of defhandler."""
 
     def __call__(self, body: HandlerBody[HandledAnswer], /) -> HandledScope[HandledAnswer]: ...
 
-#: 節 1 つの記述: (effect の型・使う操作の名・終える理由があるか)— handle.hy の ending-spec-form が作る組。
+#: Description of one clause: (the effect's type, the name of the operation used, whether there is a reason for ending) - a tuple made by ending-spec-form in handle.hy.
 _ClauseEnding: TypeAlias = tuple[object, tuple[str, ...], bool]
 
 def check_clause_endings(handler: str, clauses: Sequence[_ClauseEnding], /) -> None: ...
@@ -123,19 +123,19 @@ def check_clause_endings_once(
 ) -> None: ...
 def fell_through(handler: str, effect_label: str, /) -> RuntimeError: ...
 
-# 総称の effect の節の型。節の effect は `object` で受け、節の `isinstance` が絞る。pyright は
-# 総称 class の絞りの型引数を Unknown にする(`Race[Unknown]`・`Spawn[Unknown, Unknown]` — 絞る元の型を `EffectBase[Any]` にしても
-# 基底から解ける型引数だけが埋まり、`Spawn` の `_E` のように基底に無い型引数は Unknown のまま。型変数の既定値は isinstance の
-# 絞りでは使われない)ので、欄の読みと `typed_resume` / `typed_transfer` の引数が一部 Unknown の赤になる。
-# 型引数の数を展開の時に知る手は無い(macro は import した名の class を引けない)ため、構成子の呼びで型引数を解く:
-# `any_specialized(Race, *any_args, **any_kwargs)` は構成子の引数がすべて Any なので、構成子の型引数をすべて Any で解いた
-# 型(`Race[Any]`・`Spawn[Any, Any]`、総称でない class はその class)になる。この呼びは走らせない(型検査のための展開は
-# pyright が読むだけ)ので、effect を作る振る舞いは要らず、型だけが答え。
+# The type of a clause for a generic effect. The clause's effect is taken as `object`, and the clause's `isinstance` narrows it. Pyright
+# makes the type arguments of narrowing to a generic class Unknown (`Race[Unknown]`, `Spawn[Unknown, Unknown]` - even if the narrowed-from type is `EffectBase[Any]`,
+# only the type arguments solvable from the base are filled, and type arguments absent from the base, like `_E` of `Spawn`, stay Unknown. The default values of type variables are not used in isinstance
+# narrowing), so reads of fields and arguments of `typed_resume` / `typed_transfer` become partly-Unknown errors.
+# There is no way to know the number of type arguments at expansion time (a macro cannot look up the class of an imported name), so the type arguments are solved with a constructor call:
+# `any_specialized(Race, *any_args, **any_kwargs)` has all constructor arguments as Any, so it becomes the type with all the constructor's type arguments solved as Any
+# (`Race[Any]`, `Spawn[Any, Any]`; for a non-generic class, that class). This call is never run (the expansion for type checking is only
+# read by pyright), so no behavior to create an effect is needed; only the type is the answer.
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 def any_specialized(factory: Callable[_P, _R], /, *args: _P.args, **kwargs: _P.kwargs) -> _R: ...
 
-#: `any_specialized` の構成子の引数(位置・名前つきのどちらも、数も型も問わない Any)。
+#: The arguments of `any_specialized`'s constructor (both positional and named; Any regardless of count and type).
 any_args: tuple[Any, ...]
 any_kwargs: dict[str, Any]

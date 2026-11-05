@@ -1,17 +1,17 @@
-"""Hy の require 系が呼ぶ `inspect.stack` を、frame だけを持つ軽い版にする回避。
+"""A workaround that replaces the `inspect.stack` called by Hy's require family with a light version that holds only frames.
 
-本家の Hy 1.3.1 は `hy.compiler` と `hy.macros` の中で `inspect.stack()[n][0]`(呼び出し元の frame)だけを
-使うが、`inspect.stack` は全 frame のファイル名・行・ソース文脈を読むので、bytecode からの読み込みでも
-require 系の呼び出しごとに遅い(agora-controllers の模擬のテスト 1 file の import で 5.4 秒)。
-Hy からの呼び出しの時だけ、frame を 1 要素目に持つ tuple の列を返す軽い版へ渡す。Hy 以外からの呼び出しは
-元の関数へそのまま渡す。
+Upstream Hy 1.3.1 uses only `inspect.stack()[n][0]` (the caller's frame) inside `hy.compiler` and `hy.macros`,
+but `inspect.stack` reads the file name, line, and source context of every frame, so even when loading from bytecode
+each require-family call is slow (5.4 seconds to import one agora-controllers simulation test file).
+Only when called from Hy, it hands over a light version that returns a list of tuples with the frame as the first element. Calls from anything other than Hy
+go to the original function as is.
 
-この module は doeff の他の部分を import しない(PyPI の Hy の上でも単独で読めるように)。
+This module imports no other part of doeff (so that it can be loaded alone even on top of PyPI Hy).
 """
 import inspect
 import sys
 
-# Hy 1.3.1 で inspect.stack を呼ぶ module。どれも `[n][0]` の使い方だけ(#1293 の責務の表)。
+# Modules that call inspect.stack in Hy 1.3.1. All use only the `[n][0]` form (the responsibility table of #1293).
 _HY_CALLER_MODULES = frozenset({"hy.compiler", "hy.macros"})
 
 _original_stack = inspect.stack
@@ -30,12 +30,12 @@ def _light_stack(context=1):
 
 
 def install():
-    """差し替えを入れる。すでに入っていれば何もしない(2 重に包まない)。"""
+    """Install the replacement. If already installed, do nothing (do not wrap twice)."""
     if inspect.stack is not _light_stack:
         inspect.stack = _light_stack
 
 
 def uninstall():
-    """差し替えを外して元の `inspect.stack` に戻す。"""
+    """Remove the replacement and restore the original `inspect.stack`."""
     if inspect.stack is _light_stack:
         inspect.stack = _original_stack

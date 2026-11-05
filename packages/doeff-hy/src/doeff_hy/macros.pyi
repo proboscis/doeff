@@ -1,11 +1,11 @@
-"""doeff-hy の macro の展開が参照する実行時の補助の型(macros.hy は Hy なので pyright が読めない)。
+"""Types of the runtime helpers referenced by macro expansions of doeff-hy (macros.hy is Hy, so pyright cannot read it).
 
-macro(defmacro)そのものはここに載せない — Hy の compile の時にだけ使い、Python からは呼ばない。
-`_guard_statement_value`: 文の位置に置いた式(ADR-DOE-HY-001)。値が Program か effect なら
-「作ったが走らない」ので deprecated の overload に当たり、doeff-hy-check が赤にする。
-Program の node の和(doeff の `DoExpr` と同じ並び)は型引数を付けて書く — `DoExpr` は型引数の無い総称の和で
-pyright の strict が partially unknown とし、文を持つ module ごとに書き手に直せない赤 1 件を出していた。
-答えの型で共変な node は `object`、不変な `Perform`・`EffectBase` は型変数で受ける。
+The macros (defmacro) themselves are not listed here — they are used only at Hy compile time and are never called from Python.
+`_guard_statement_value`: an expression placed in statement position (ADR-DOE-HY-001). If the value is a Program or an effect,
+it was "created but never runs", so it hits the deprecated overload and doeff-hy-check turns it red.
+The union of Program nodes (the same order as doeff's `DoExpr`) is written with type arguments — `DoExpr` is a generic union without type arguments, so
+pyright strict treated it as partially unknown and reported one red per module with statements that the writer could not fix.
+Nodes covariant in the answer type are taken as `object`; the invariant `Perform` and `EffectBase` are received through a type variable.
 """
 
 from typing import TypeAlias, TypeVar, overload
@@ -44,7 +44,7 @@ _ProgramNode: TypeAlias = (
 
 @overload
 @deprecated(
-    "文の位置に置いた Program / effect は走らない — (<- _ ...) で束縛するか、本体の最後の式にする"
+    "A Program / effect placed in statement position does not run — bind it with (<- _ ...) or make it the last expression of the body"
     " [ADR-DOE-HY-001]"
 )
 def _guard_statement_value(

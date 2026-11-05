@@ -1,10 +1,9 @@
-;;; handle(一度きりの handler をその場で program に当てる)が、名を付けた defhandler を with-handler で当てた program と同じ物で
-;;; ある事の検。
+;;; Check that handle (applying a one-off handler to a program in place) is equivalent to a program with a named defhandler applied via with-handler.
 ;;;
-;;; 確かめること: 同じ節を handle で書いた program と defhandler + with-handler で書いた program が同じ答えを返す(resume・transfer・
-;;; finish・:when の守りと外への reperform・<- で外へ頼む節)・resume を使えない書き方(Raise の節の resume・resume の抜けた枝)が
-;;; defhandler と同じ SyntaxError になる・handle の直下の session val は defhandler を案内する SyntaxError で断る。
-;;; 公開は test_handle_inline.py(包み直さずそのまま公開する — ADR-DOE-HY-002)。
+;;; What it checks: a program with the same clause written via handle and one written via defhandler + with-handler return the same answer (resume, transfer,
+;;; finish, the :when guard and reperform outward, a clause that asks outward with <-); writings that cannot use resume (resume in a Raise clause, a branch missing resume) give
+;;; the same SyntaxError as defhandler; a session val directly under handle is refused with a SyntaxError that points to defhandler.
+;;; Exposed by test_handle_inline.py (exposed as is without re-wrapping -- ADR-DOE-HY-002).
 
 (require doeff-hy.macros [deftest defeffect defhandler handle with-handler defk <- val])
 (import hy)
@@ -13,27 +12,27 @@
 (import doeff [Pure])
 
 (defeffect Greeting
-  "言語 lang の挨拶を問う。"
+  "Ask for the greeting in language lang."
   {:fields [(: lang str)]
    :answer str
    :tags {:context "doeff-hy" :role "intent"}})
 
 (defeffect Count
-  "数 n を数え直した値を問う(守りつきの節と外への reperform を見る)。"
+  "Ask for the recounted value of number n (exercises a guarded clause and reperform outward)."
   {:fields [(: n int)]
    :answer int
    :tags {:context "doeff-hy" :role "intent"}})
 
 (defk greet-twice [lang]
   {:pre [(: lang str)] :post [(: % str)] :tags {:context "doeff-hy" :role "judgment"}}
-  "lang と英語の挨拶を問い、繋いで返す。"
+  "Ask for the greetings in lang and in English, join them, and return."
   (<- first (Greeting lang))
   (<- second (Greeting "en"))
   (+ first " / " second))
 
 (defk count-both [small large]
   {:pre [(: small int) (: large int)] :post [(: % int)] :tags {:context "doeff-hy" :role "judgment"}}
-  "小さい数と大きい数を数え直し、和を返す。"
+  "Recount a small number and a large number, and return the sum."
   (<- a (Count small))
   (<- b (Count large))
   (+ a b))
@@ -45,7 +44,7 @@
   (Greeting [lang] (transfer (+ "hi " lang))))
 
 (defhandler greeting-finish
-  (Greeting [lang] :finish-reason "最初の問いで答えを決める" (finish (+ "stopped at " lang))))
+  (Greeting [lang] :finish-reason "decide the answer at the first question" (finish (+ "stopped at " lang))))
 
 (defhandler small-count
   (Count [n] :when (< n 10) (resume (* n 2))))
@@ -67,18 +66,18 @@
   (<- by-name-transfer (with-handler [greeting-transfer] (greet-twice "ja")))
   (assert (= by-handle-transfer by-name-transfer) #(by-handle-transfer by-name-transfer))
   (<- by-handle-finish (handle (greet-twice "ja")
-                         (Greeting [lang] :finish-reason "最初の問いで答えを決める" (finish (+ "stopped at " lang)))))
+                         (Greeting [lang] :finish-reason "decide the answer at the first question" (finish (+ "stopped at " lang)))))
   (<- by-name-finish (with-handler [greeting-finish] (greet-twice "ja")))
   (assert (= by-handle-finish by-name-finish "stopped at ja") #(by-handle-finish by-name-finish)))
 
 
 (deftest test-handle-guard-and-outer-delegation-answer-like-defhandler
-  ;; :when が偽の effect は外の handler へ渡る(10 以上は outer-count の +1000)。
+  ;; An effect whose :when is false is passed to the outer handler (10 and above gets outer-count's +1000).
   (<- by-handle (with-handler [outer-count]
                   (handle (count-both 3 20) (Count [n] :when (< n 10) (resume (* n 2))))))
   (<- by-name (with-handler [outer-count small-count] (count-both 3 20)))
   (assert (= by-handle by-name (+ 6 1020)) #(by-handle by-name))
-  ;; <- で外の handler へ頼み、答えを受けて節を続ける。
+  ;; Ask the outer handler with <- and continue the clause with its answer.
   (<- by-handle-delegate (with-handler [outer-count]
                            (handle (count-both 1 2)
                              (Count [n]
@@ -89,7 +88,7 @@
 
 
 (defn expansion-error [form]
-  "form を doeff-hy の macro を require した名前空間で展開し、macro が出した SyntaxError の文を返す(出なければ None)。"
+  "Expand form in a namespace that requires doeff-hy's macros, and return the message of the SyntaxError the macro raised (None if none)."
   (setv module (types.ModuleType "handle_inline_expansion"))
   (hy.eval '(require doeff-hy.macros [defhandler handle with-handler]) :module module)
   (hy.eval '(import doeff-core-effects [Raise]) :module module)
@@ -98,25 +97,25 @@
     (hy.eval form :module module)
     None
     (except [error hy.errors.HyMacroExpansionError]
-      ;; Hy は macro の誤りを「expanding macro 名\n  SyntaxError: 文」の 1 つの文に包む(元の誤りは __cause__ に残さない)。
+      ;; Hy wraps a macro error into a single message "expanding macro NAME\n  SyntaxError: message" (the original error is not kept in __cause__).
       (setv #(_head sep reason) (.partition (str error) "SyntaxError: "))
       (assert sep (str error))
       (.strip reason))))
 
 (defn after-clause [message]
-  "SyntaxError の文から、節の場所の書き出し(`handle clause …:` / `defhandler 名 clause …:`)を外した理由の部分。"
+  "The reason part of a SyntaxError message, with the clause location prefix (`handle clause …:` / `defhandler NAME clause …:`) removed."
   (get (.split message ": " 1) 1))
 
 
 (deftest test-handle-refuses-resume-like-defhandler
   (<- _ (Pure None))
-  ;; Raise の節は resume できない — 理由の文が同じ。
+  ;; A Raise clause cannot resume; the reason text is the same.
   (val by-handle (expansion-error '(handle (Pure 1) (Raise [reason] (resume 1)))))
   (val by-name (expansion-error '(defhandler resumes-raise (Raise [reason] (resume 1)))))
   (assert (is-not by-handle None))
-  (assert (in "Raise の節は resume できない" by-handle) by-handle)
+  (assert (in "A Raise clause cannot resume" by-handle) by-handle)
   (assert (= (after-clause by-handle) (after-clause by-name)) #(by-handle by-name))
-  ;; resume の抜けた枝が在る節 — 文がそのまま同じ。
+  ;; A clause with a branch missing resume -- the message is identical.
   (val missing-handle (expansion-error '(handle (Pure 1) (Greeting [lang] (if lang (resume 1) None)))))
   (val missing-name (expansion-error '(defhandler misses-resume (Greeting [lang] (if lang (resume 1) None)))))
   (assert (is-not missing-handle None))
@@ -128,8 +127,8 @@
   (<- _ (Pure None))
   (val message (expansion-error '(handle (Pure 1) (session val greeting "hello") (Greeting [lang] (resume greeting)))))
   (assert (is-not message None))
-  (assert (in "handle は session val / session var を持たない" message) message)
+  (assert (in "session val / session var" message) message)
   (assert (in "defhandler" message) message)
-  ;; 同じ宣言を defhandler の直下に置くのは受ける。
+  ;; Putting the same declaration directly under defhandler is accepted.
   (assert (is (expansion-error '(defhandler with-session (session val greeting "hello") (Greeting [lang] (resume greeting))))
               None)))

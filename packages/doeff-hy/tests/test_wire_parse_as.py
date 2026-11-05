@@ -1,16 +1,16 @@
-"""doeff_hy._wire の parse-as・parse-json-as の検。
+"""Tests for parse-as and parse-json-as of doeff_hy._wire.
 
-parse-as は defwire でない語彙の型(入れ物 — dict[str, object]・list[str]・str | None・dict[str, OpaqueJson]・defwire の型の tuple)を
-parse と同じ型の木と厳しさで解く。pydantic の TypeAdapter で入れ物を直に解いていた読み手(agora-controllers)の移り先。確かめること:
+parse-as decodes non-defwire vocabulary types (containers -- dict[str, object], list[str], str | None, dict[str, OpaqueJson], tuple of defwire types) with
+the same type tree and strictness as parse. It is the migration target for readers (agora-controllers) that decoded containers directly with pydantic's TypeAdapter. What is checked:
 
-1. 入れ物の型の値を受け、凍らせた値(FrozenMap・tuple)と OpaqueJson も受ける。OpaqueJson の欄は中を読まずに包む。
-2. parse と同じく、文字列を数にしない・真偽を数にしない・object でない物を dict の型に入れない — 形の外は Malformed で、型の名と場所を持つ。
-3. parse-json-as は JSON の文字列(bytes も)から読み、JSON として読めない文字列も Malformed。
+1. It accepts values of the container types, and also frozen values (FrozenMap, tuple) and OpaqueJson. An OpaqueJson field is wrapped without reading its contents.
+2. As with parse, it does not turn strings into numbers, does not turn booleans into numbers, and does not put a non-object into a dict type -- anything outside the shape is Malformed, carrying the type name and location.
+3. parse-json-as reads from a JSON string (bytes too), and a string that cannot be read as JSON is also Malformed.
 """
 
 import importlib
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 from doeff import run
 from doeff_hy._frozen import freeze_json

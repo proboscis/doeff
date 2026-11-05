@@ -1,15 +1,15 @@
-"""自前の書き手と JSON Schema(doeff_hy/_wire_codec.py — 書く側)の検。
+"""Tests for the hand-written writer and JSON Schema (doeff_hy/_wire_codec.py, the writing side).
 
-契約は設計の記録 docs/design/defwire-decoder/design.md(節 2 の表の「書き出し」の列・節 3b)。確かめること:
+The contract is the design record docs/design/defwire-decoder/design.md (the "write" column of the table in section 2, and section 3b). What is checked:
 
-1. 語彙の型ごとの値を、今の pydantic の dump・dump-json と同じ JSON へ書く事(dump は値と値の型・欄の順まで、dump-json は bytes)。
-   既定値と同じ欄を書かない事(入れ子も)・既定値の無い欄は None でも null・union の腕の選び方・欄の型に合わない値・NaN と inf・
-   OpaqueJson の文字列の埋め込みを含む。
-2. float の綴りが今の pydantic と同じ事(乱数の float)。
-3. 解いて書いて解き直すと元の値に戻る事(書いた文字列を解いても・書いた JSON の値を解いても、値と欄の値の型が元のまま)。
-4. JSON Schema が今の pydantic の json-schema と鍵の順まで同じ事と、違う所(入れ子の defwire と OpaqueJson の既定値 — 節 3b)。
-5. 書けない値(孤立した surrogate・JSON でない値)を断る事と、pydantic と違う所(object の欄の defwire の値・OpaqueJson・FrozenMap)。
-6. 書き手と JSON Schema の import の閉包に pydantic が無く、pydantic を読まずに書ける事。
+1. Values of each vocabulary type are written to the same JSON as the current pydantic dump / dump-json (dump matches values, value types and field order; dump-json matches bytes).
+   This includes not writing fields equal to their default (nested too), writing None as null for fields without a default, how a union arm is chosen, values that do not match the field type, NaN and inf, and
+   embedding the string of an OpaqueJson.
+2. float spelling is the same as the current pydantic (random floats).
+3. Decoding, writing and decoding again returns the original value (decoding the written string or the written JSON value keeps both the value and the field value types).
+4. The JSON Schema matches the current pydantic json-schema down to key order, except for the known differences (defaults of nested defwire and OpaqueJson -- section 3b).
+5. Unwritable values (lone surrogates, non-JSON values) are rejected, and the places that differ from pydantic (defwire values in object fields, OpaqueJson, FrozenMap).
+6. The import closure of the writer and the JSON Schema contains no pydantic, so they can write without loading pydantic.
 """
 
 import dataclasses
@@ -26,7 +26,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 from doeff_hy._frozen import freeze_json
 from doeff_hy._json_value import OpaqueJson
@@ -44,7 +44,7 @@ types = importlib.import_module("wire_codec_types")
 
 
 def _shape(value: object) -> object:
-    """JSON の値を (型, 中身) の木へ — 1 と 1.0・True と 1 を見分け、NaN を等しく比べ、object の鍵の順も比べる。"""
+    """JSON value to a (type, content) tree -- tells 1 from 1.0 and True from 1, compares NaN as equal, and compares object key order too."""
     if isinstance(value, dict):
         return (dict, tuple((key, _shape(item)) for key, item in value.items()))
     if isinstance(value, list):
@@ -55,7 +55,7 @@ def _shape(value: object) -> object:
 
 
 def _typed(value: object) -> object:
-    """値を (型, 中身) の木へ — == では見分けない 1 と 1.0・tuple と list・str と StrEnum を見分けて比べる(集合は順に依らない)。"""
+    """Value to a (type, content) tree -- tells apart 1 vs 1.0, tuple vs list, str vs StrEnum that == does not (sets are order-independent)."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return (
             type(value),
@@ -71,18 +71,18 @@ def _typed(value: object) -> object:
 
 
 def _pydantic(value: WireValue) -> tuple[object, str]:
-    """pydantic の書き手(doeff_hy._wire_parity — 切り替える前の wire.hy の dump・dump-json と同じ)の答え。欄の型に合わない値の書き出しの警告は読み捨てる。"""
+    """Answer of the pydantic writer (doeff_hy._wire_parity -- same as dump / dump-json of wire.hy before the switch). Warnings about writing values that do not match the field type are discarded."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return pydantic_dump(value), pydantic_dump_json(value)
 
 
-# --- 1. 今の pydantic と同じ JSON を書く -------------------------------------------------------------------------------------------
+# --- 1. Write the same JSON as the current pydantic -------------------------------------------------------------------------------------------
 
 NAN = math.nan
 INF = math.inf
 
-#: (id, 値を作る関数)。値は型の module を読んだ後に作る(defenum と defwire の型を引数に使うため)。
+#: (id, function that builds the value). Values are built after loading the types module (to use the defenum and defwire types as arguments).
 VALUES: list[tuple[str, Callable[[], WireValue]]] = [
     ("all-defaults", types.Vocab),
     ("str", lambda: types.Vocab(s="a")),
@@ -125,7 +125,7 @@ VALUES: list[tuple[str, Callable[[], WireValue]]] = [
     ("union-enum-str-str", lambda: types.Vocab(cs="x")),
     ("union-arrays-list", lambda: types.Vocab(arr=[1])),
     ("union-arrays-tuple", lambda: types.Vocab(arr=("a",))),
-    # 欄の型に合わない値(作る時に型を確かめない構築子で入る)— 今の pydantic と同じく直すか値の型から書く。
+    # Values that do not match the field type (entered via a constructor that does not check types) -- fix them or write from the value type, same as the current pydantic.
     ("misfit-float-int", lambda: types.Vocab(f=1)),
     ("misfit-float-bool", lambda: types.Vocab(f=True)),
     ("misfit-int-bool", lambda: types.Vocab(i=True)),
@@ -204,7 +204,7 @@ def test_fields_equal_to_their_default_are_not_written_and_fields_without_one_ar
     value = types.Defaults(
         maybe_leaf=None, maybe_color=None, color=types.Color.RED, leaf=types.Leaf(leaf_name="a")
     )
-    # 既定値の無い欄は None でも null・既定値と同じ欄は書かない(入れ子の型の欄も — leaf は既定値と等しい)。NaN は NaN と等しくないので書く。
+    # Fields without a default are written as null even for None; fields equal to the default are not written (nested type fields too -- leaf equals default). NaN is not equal to NaN, so it is written.
     assert (
         codec.encode_json(value)
         == '{"maybeLeaf":null,"maybeColor":null,"color":"red","notANumber":null}'
@@ -216,10 +216,10 @@ def test_fields_equal_to_their_default_are_not_written_and_fields_without_one_ar
 
 
 def test_opaque_json_text_is_embedded_without_reading_it_again() -> None:
-    # 持っている文字列(区切りの空白も綴りも)をそのまま埋める — 読み直して書けば {"a":[1,2]} と 1e-05 は 0.00001 になる所。
+    # Embed the held string as is (separator whitespace and spelling included) -- re-read and written, {"a":[1,2]} and 1e-05 would become 0.00001.
     value = types.Vocab(opaque=OpaqueJson('{"a": [1, 2], "b": 1e-05}'))
     assert codec_of(types.Vocab).encode_json(value) == '{"opaque":{"a": [1, 2], "b": 1e-05}}'
-    # JSON の値へ書く時は読み直す。NaN・Infinity を含む文字列は埋めずに読み直して null にする(今と同じ)。
+    # When writing to a JSON value it is re-read. A string containing NaN or Infinity is not embedded but re-read and becomes null (same as now).
     assert codec_of(types.Vocab).encode(value) == {"opaque": {"a": [1, 2], "b": 1e-05}}
     assert (
         codec_of(types.Vocab).encode_json(types.Vocab(opaque=OpaqueJson.of([NAN])))
@@ -235,11 +235,11 @@ def test_vocabulary_types_are_written_at_the_top_level() -> None:
     assert codec_of(types.Color).encode_json(types.Color.RED) == '"red"'
 
 
-# --- 2. float の綴り -----------------------------------------------------------------------------------------------------------
+# --- 2. float spelling -----------------------------------------------------------------------------------------------------------
 
 
 def _random_floats() -> list[float]:
-    """乱数の 64 bit の並びの float(subnormal も)と、10 の -330 乗から 310 乗の各桁の数(-5 乗の桁と 16 乗の桁の境を含む)。"""
+    """Random 64-bit-pattern floats (subnormals too), and the digits of numbers from 10^-330 to 10^310 (including the boundary between the 10^-5 digit and the 10^16 digit)."""
     chance = random.Random(20261027)
     patterns = [
         struct.unpack("<d", chance.getrandbits(64).to_bytes(8, "little"))[0] for _ in range(4000)
@@ -264,11 +264,11 @@ def test_floats_are_spelled_as_pydantic_spells_them() -> None:
     assert not differing, differing[:10]
 
 
-# --- 3. 解いて書いて解き直す ---------------------------------------------------------------------------------------------------
+# --- 3. decode, write, decode again ---------------------------------------------------------------------------------------------------
 
-#: 書いて解き直すと元の値に戻らない物(VALUES の id): NaN(NaN は NaN と等しくない)・null を書く inf・既定値 0.0 と等しい -0.0
-#: (書かないので 0.0 に戻る)・object の欄の tuple と set(JSON では配列)・欄の型に合わない値・解く時に先の腕が受ける union の値
-#: (str の腕が defenum の腕より先・dict の腕が defwire の腕より先・何でも受ける腕の在る union の OpaqueJson — 設計の記録の節 1 の表)。
+#: Things that do not return to the original value after writing and decoding (ids in VALUES): NaN (NaN is not equal to NaN), inf written as null, -0.0 equal to the default 0.0
+#: (not written, so it returns as 0.0), tuple and set in object fields (arrays in JSON), values that do not match the field type, union values accepted by an earlier arm when decoding
+#: (the str arm before the defenum arm, the dict arm before the defwire arm, OpaqueJson in a union that has a catch-all arm -- table in section 1 of the design record).
 NOT_ROUND_TRIPS = {
     "float-nan",
     "float-inf",
@@ -303,11 +303,11 @@ def test_writing_then_reading_gives_the_value_back(make: Callable[[], WireValue]
         assert back == value
         assert _typed(back) == _typed(
             value
-        )  # 欄の値の型も元のまま(1 と 1.0・tuple と list・str と StrEnum)
+        )  # field value types stay as they were (1 vs 1.0, tuple vs list, str vs StrEnum)
 
 
 def test_defaults_round_trip_where_json_can_hold_the_value() -> None:
-    # NaN と inf の欄(JSON では null・NaN は自分と等しくない)だけを有限の値にした Defaults も往復する。
+    # A Defaults with only the NaN and inf fields (null in JSON; NaN is not equal to itself) replaced by finite values also round-trips.
     codec = codec_of(types.Defaults)
     value = types.Defaults(
         maybe_leaf=types.Leaf(leaf_name="z"),
@@ -344,8 +344,8 @@ SAME_SCHEMA = [
     "Leaf",
 ]
 
-#: pydantic と違う既定値(型の名 → 欄の wire の名 → 書き手の書く形)— pydantic は OpaqueJson を {"text": …}、入れ子の defwire を欄の
-#: Python の名で全部書く(読み手はその JSON を断る — 節 3b)。
+#: Defaults that differ from pydantic (type name -> field wire name -> form the writer writes) -- pydantic writes OpaqueJson as {"text": ...} and nested defwire with all fields under their
+#: Python names (the reader rejects that JSON -- section 3b).
 DIFFERENT_DEFAULTS: dict[str, dict[str, object]] = {
     "Vocab": {"opaque": None, "note": {"noteText": ""}},
     "Mixed": {"oa": None},
@@ -358,24 +358,24 @@ DIFFERENT_DEFAULTS: dict[str, dict[str, object]] = {
 
 
 def _object(value: object) -> dict[str, object]:
-    """JSON Schema の中の object(型の検査に dict と示す — 形が違えば検の失敗)。"""
+    """An object in the JSON Schema (typed as dict -- a failure if the shape differs)."""
     assert isinstance(value, dict), value
     return cast(dict[str, object], value)
 
 
 def _pydantic_schema(wire_type: type) -> dict[str, object]:
-    """pydantic の json-schema(doeff_hy._wire_parity — 切り替える前の wire.hy と同じ)の答え。"""
+    """Answer of the pydantic json-schema (doeff_hy._wire_parity -- same as wire.hy before the switch)."""
     return _object(pydantic_json_schema(wire_type))
 
 
 def _defaults_of(schema: Mapping[str, object], wires: list[str]) -> dict[str, object]:
-    """JSON Schema の欄ごとの default。"""
+    """default of each field of the JSON Schema."""
     properties = _object(schema["properties"])
     return {wire: _object(properties[wire])["default"] for wire in wires}
 
 
 def _with_defaults(schema: Mapping[str, object], defaults: dict[str, object]) -> dict[str, object]:
-    """pydantic の JSON Schema の欄の default を、書き手の書く形に替えた写し(違うと分かっている欄だけ — 節 3b)。"""
+    """Copy of the pydantic JSON Schema field defaults converted to the form the writer writes (only fields known to differ -- section 3b)."""
     properties = _object(schema["properties"])
     return {
         **schema,
@@ -399,7 +399,7 @@ def test_schema_is_the_pydantic_schema_with_the_same_key_order(type_name: str) -
 
 
 def test_pydantic_wrote_nested_defaults_with_python_names() -> None:
-    # 違いの訳: pydantic の既定値は読み手(pydantic 自身の parse)が断る形だった。書き手の形は読み手が受ける。
+    # Reason for the difference: pydantic defaults were a form that the reader (pydantic's own parse) rejects. The writer's form is accepted by the reader.
     theirs = _defaults_of(_pydantic_schema(types.Defaults), ["leaf", "spec"])
     assert theirs == {"leaf": {"leaf_name": "a", "n": 0}, "spec": {"text": '{"k":[1,2]}'}}
     assert codec_of(types.Leaf).decode({"leafName": "a"}) == types.Leaf(leaf_name="a")
@@ -418,7 +418,7 @@ def test_schema_names_types_of_the_same_name_by_module() -> None:
     }
 
 
-# --- 5. 書けない値と、pydantic と違う所 -----------------------------------------------------------------------------------------
+# --- 5. Unwritable values, and where this differs from pydantic -----------------------------------------------------------------------------------------
 
 
 def test_a_lone_surrogate_cannot_be_written_as_json_text() -> None:
@@ -427,7 +427,7 @@ def test_a_lone_surrogate_cannot_be_written_as_json_text() -> None:
         codec_of(types.Vocab).encode_json(value)
     with pytest.raises(
         ValueError, match="surrogates not allowed"
-    ):  # 今の pydantic も書かない(PydanticSerializationError は ValueError)
+    ):  # the current pydantic does not write these either (PydanticSerializationError is a ValueError)
         pydantic_dump_json(value)
     assert codec_of(types.Vocab).encode(value) == {"s": "\ud800"}
 
@@ -440,7 +440,7 @@ def test_a_value_that_is_not_json_is_a_type_error() -> None:
 
 
 def test_wire_values_and_opaque_json_in_object_fields_are_written_in_their_own_form() -> None:
-    # pydantic は object の欄の defwire の値を欄の Python の名で、OpaqueJson を {"text": …} で書き、FrozenMap は書けなかった。
+    # pydantic writes a defwire value in an object field under the field's Python names and OpaqueJson as {"text": ...}, and could not write FrozenMap.
     codec = codec_of(types.Vocab)
     assert codec.encode(types.Vocab(any_value=types.Note(note_text="q"))) == {
         "anyValue": {"noteText": "q"}
@@ -452,7 +452,7 @@ def test_wire_values_and_opaque_json_in_object_fields_are_written_in_their_own_f
     }
 
 
-# --- 6. pydantic を読まない ----------------------------------------------------------------------------------------------------
+# --- 6. Do not load pydantic ----------------------------------------------------------------------------------------------------
 
 
 def test_the_writer_and_schema_import_no_pydantic_and_work_without_it() -> None:

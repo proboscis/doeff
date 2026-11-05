@@ -1,10 +1,10 @@
-"""``SourceFileLoader`` の 2 つの口の包み(file の読み書きをするのはこの module だけ)。
+"""Wrappers for the two entry points of ``SourceFileLoader`` (this module is the only one that reads or writes files).
 
-起動時に読まれるので、import は標準 library の軽い物に限る。記録の形と照合の判断は
-:mod:`doeff_hy_bytecode_guard._records`(純関数)にあり、Hy の source に初めて当たった時に import する。
+It is loaded at startup, so imports are limited to light standard-library modules. The record shape and the matching decisions live in
+:mod:`doeff_hy_bytecode_guard._records` (pure functions), which is imported when a Hy source is first encountered.
 
-包みの外に別の包み(Hy の ``source_to_code``・doeff-hy-pytest の計時)が重なっても、下に入っても効く:
-各包みは呼ばれた時の 1 つ前の関数を呼ぶだけで、この module の包みは「Hy の source か」「compile の直後か」だけを見る。
+It works whether other wrappers (Hy's ``source_to_code``, doeff-hy-pytest timing) are layered outside or inside these:
+each wrapper just calls the previous function at call time, and this module's wrappers only look at "is it Hy source?" and "right after compile?".
 """
 
 import importlib.machinery
@@ -14,17 +14,17 @@ import sys
 from collections.abc import Callable, Iterable
 from types import CodeType, ModuleType
 
-# 型検査のための展開の印(contextvars だけを読む軽い module — 起動時に読んでよい。compile の途中で初めて読むと、その .pyc を
-# bytecode を書く設定の中で書いてしまう)。
+# Marker for expansion done for type checking (a light module that reads only contextvars -- fine to load at startup. If first loaded in the middle of a compile, that .pyc
+# would be written inside a configuration that writes bytecode).
 from doeff_hy_bytecode_guard._expansion import TYPE_CHECK_EXPANSION
 
-# 一番外の読み込み 1 つの間の覚え(contextvars と _thread だけを読む軽い module — 起動時に読んでよい)。
+# Memory kept for the duration of one outermost load (a light module that reads only contextvars and _thread -- fine to load at startup).
 from doeff_hy_bytecode_guard._import_scope import IMPORT_SCOPE, ImportScope, current_scope
 
-# 一番外の読み込みの間の GC の閾値の持ち主(gc・os・_thread だけを読む軽い module — 起動時に読んでよい)。
+# Owner of the GC threshold for the duration of the outermost load (a light module that reads only gc, os and _thread -- fine to load at startup).
 from doeff_hy_bytecode_guard import _import_gc as import_gc
 
-TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査器はこの名の分岐を真として読む
+TYPE_CHECKING = False  # do not load typing at startup (2 ms) -- type checkers read the branch on this name as true
 
 if TYPE_CHECKING:
     import contextlib
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from doeff_hy_bytecode_guard._macro_use import MacroRecording
     from doeff_hy_bytecode_guard._records import MacroRecord, ValueReference
 
-#: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる — doeff_hy/__init__.py)。定義点は保存先の module(code の鍵が
-#: Hy の source かで欄を分ける)— 標準 library だけを読む軽い module なので起動時に読んでよい。
+#: Extensions of Hy source (doeff-hy also has .hyk and .hyp read as Hy -- doeff_hy/__init__.py). The definition site is the store module (the code key
+#: splits fields by whether it is Hy source) -- a light module that reads only the standard library, so fine to load at startup.
 from doeff_hy_bytecode_guard._code_store import HY_SOURCE_SUFFIXES as HY_SOURCE_SUFFIXES
 
 GetCode = Callable[[importlib.machinery.SourceFileLoader, str], "CodeType | None"]
@@ -41,47 +41,47 @@ GetData = Callable[[importlib.machinery.SourceFileLoader, str], bytes]
 SourceToCode = Callable[..., CodeType]
 ExecModule = Callable[[importlib.machinery.SourceFileLoader, ModuleType], None]
 
-#: 包んだかどうか(process に 1 つ)。包みは process の ``SourceFileLoader`` という 1 つの共有物を書き換えるので、
-#: 持ち主はこの module 1 つ。
-#: .pth(起動時の 1 thread)と ``import doeff_hy``(import の lock の中)からしか呼ばれないので lock は持たない。
+#: Whether the wrap has been done (one per process). The wrap rewrites one shared object, the process's ``SourceFileLoader``, so
+#: this module is the sole owner.
+#: Called only from .pth (one thread at startup) and ``import doeff_hy`` (inside the import lock), so it holds no lock.
 _installation = {"installed": False, "dataclasses": False}
 
-#: この thread で Hy の source を compile した回数(path ごと)— get_code が「今の呼び出しの中で compile したか」を
-#: 前後の回数の差で知るため(get_code は入れ子になる — compile の中の require が別の module を import する)。
-#: threading は起動時に読まないため、初めて Hy の source に当たった時に作る。
+#: Number of times Hy source was compiled in this thread (per path) -- so get_code can tell "did I compile within this call?"
+#: from the difference between the counts before and after (get_code nests -- a require inside a compile imports another module).
+#: threading is not loaded at startup, so this is created when Hy source is first encountered.
 _compile_counts: dict[str, object] = {}
 
-#: この thread で最後に読んだ Hy の source の bytes(path ごと)— compile した bytes を、保存先の鍵に使うため。
-#:get_code が終わる時にその path の分を捨てる(source を process の間ずっと持たない)。
+#: Bytes of the Hy source last read in this thread (per path) -- so the compiled bytes can be used for the store key.
+#: Discarded for that path when get_code finishes (the source is not held for the life of the process).
 _source_reads: dict[str, object] = {}
 
-#: file の sha256 — 鍵は (path, 更新時刻 ns, 大きさ)。同じ process で同じ macro の file を何百回も照合するので、
-#: 変わっていない file を読み直さない。
+#: sha256 of a file -- key is (path, mtime ns, size). The same macro file is checked hundreds of times in one process, so
+#: unchanged files are not re-read.
 _digests: dict[tuple[str, int, int], str] = {}
 
-#: 本体を実行した source の file の状態(path → (更新時刻 ns, 大きさ) — 読みの口が本体の実行の直前に読んだ物・process の間)。
-#: .pyc の記録の照らしの歩みは、読み込み済みの module の値を process の中から、その値を覆う文と file の sha256 を今の disk から
-#: 読む。module を実行した後に file が書き換わった常駐の process では 2 つが食い違うので、歩みが確かめる。
+#: State of the source file whose body was executed (path -> (mtime ns, size) -- what the load entry read just before executing the body; lives for the process).
+#: The step that checks .pyc records reads, from inside the process, the values of loaded modules, and from the current disk the statements covering those values and the files' sha256.
+#: In a resident process where a file was rewritten after the module ran, the two disagree, so the step verifies this.
 _executed: dict[str, tuple[int, int]] = {}
 
-#: 読みの口が返した Hy の module の code に載った記録(source の path → 記録 — 記録の無い code は載せない・process の間)。
-#: Hy の test file の item の記録の cache(doeff-adr の item_cache)が、import した test file の展開が使った macro を、file を
-#: 読み直さずに引くため(:func:`loaded_record`)。
+#: Records attached to the code of Hy modules returned by the load entry (source path -> record; code without a record is not stored; lives for the process).
+#: So that the record cache for Hy test-file items (doeff-adr item_cache) can look up the macros used in the expansion of an imported test file
+#: without re-reading the file (:func:`loaded_record`).
 _loaded_records: dict[str, "MacroRecord"] = {}
 
-#: 最後に記録を読んだ code とその記録(鍵 "entry" → (code, 記録 か None))— :func:`_record_of` が同じ code の記録を組み直さないため。
+#: The code whose record was read last and its record (key "entry" -> (code, record or None)) -- so :func:`_record_of` does not rebuild the record of the same code.
 _last_record: dict[str, "tuple[CodeType, MacroRecord | None]"] = {}
 
 
 def installed() -> bool:
-    """この process の ``SourceFileLoader`` が包まれているか(起動時の .pth が効いたかを検査が確かめるため)。"""
+    """Whether this process's ``SourceFileLoader`` is wrapped (so the check can confirm the startup .pth took effect)."""
     return _installation["installed"]
 
 
 def install() -> None:
-    """macro が変わった Hy の module を compile し直すよう ``SourceFileLoader`` の 2 つの口を包む(何度呼んでも 1 度だけ)。
-    module の本体の実行の口も包み、一番外の実行の間、照らしが file の状態を 1 度だけ読む覚え(:mod:`doeff_hy_bytecode_guard._import_scope`)
-    を置く。dataclasses が読み込み済みなら、型ごとの関数の source の compile も覚える(:mod:`doeff_hy_bytecode_guard._dataclass_code`)。"""
+    """Wrap the two entry points of ``SourceFileLoader`` so Hy modules whose macros changed are recompiled (only once however many times it is called).
+    Also wraps the module-body execution entry and sets up a memory (:mod:`doeff_hy_bytecode_guard._import_scope`) so that during the outermost execution the check reads file state only once.
+    If dataclasses is already loaded, it also memoizes the compile of per-type function sources (:mod:`doeff_hy_bytecode_guard._dataclass_code`)."""
     _remember_dataclass_code()
     if _installation["installed"]:
         return
@@ -94,92 +94,92 @@ def install() -> None:
 
 
 def _remember_dataclass_code() -> None:
-    """読み込み済みの dataclasses の関数の source の compile を覚える形にする(1 度だけ)。dataclasses を自分から読まない — 起動時の
-    .pth では大抵まだ無く、Hy の import が読むので、Hy の source を初めて読む時(読みの口)にもう一度呼ぶ。"""
+    """Make the compile of loaded dataclasses function sources memoized (only once). It does not load dataclasses itself -- it is usually not yet present at the startup
+    .pth and is loaded by the Hy import, so it is called again when Hy source is first read (at the load entry)."""
     if _installation["dataclasses"]:
         return
     dataclasses = sys.modules.get("dataclasses")
     if dataclasses is None:
         return
-    from doeff_hy_bytecode_guard import _dataclass_code as dataclass_code  # dataclasses が在る時だけ読む
+    from doeff_hy_bytecode_guard import _dataclass_code as dataclass_code  # load only when dataclasses is present
 
     dataclass_code.install(dataclasses)
     _installation["dataclasses"] = True
 
 
 def is_hy_source(path: object) -> bool:
-    """包みが相手にする source か(Hy の拡張子の文字列の path だけ — それ以外は 1 つ前の関数へそのまま渡す)。"""
+    """Whether this is a source the wrapper handles (only paths whose string has a Hy extension -- anything else is passed straight to the previous function)."""
     return isinstance(path, str) and path.endswith(HY_SOURCE_SUFFIXES)
 
 
 def loaded_record(path: str) -> "MacroRecord | None":
-    """この process で読みの口が返した Hy の module の code に載った記録(path = source の file。読んでいない・記録の無い code は
-    None)— Hy の test file の item の記録の cache(doeff-adr の item_cache)が、import した test file の
-    展開が使った macro を、展開し直さず file も読み直さずに引くための公開の口。照らしは :func:`record_is_current_here`(.pyc と
-    同じ 1 つの照らし方 — 展開で実行された関数の中身だけを覆う。file 単位で照らすと、macro の提供元のどの行の変更でも item の
-    記録が全部冷えた・#3769 の子)。"""
+    """The record attached to the code of a Hy module returned by the load entry in this process (path = source file. None if not loaded or the code has no record)
+    -- the public entry so that the record cache for Hy test-file items (doeff-adr item_cache) can look up the macros used in the expansion of an imported test file
+    without re-expanding or re-reading the file. The check is :func:`record_is_current_here` (the same single check as for .pyc
+    -- it covers only the contents of functions run during expansion. Checking per file made any line change in a macro provider chill every
+    item record; child of #3769)."""
     return _loaded_records.get(path)
 
 
 def macro_recording(module: ModuleType) -> "MacroRecording":
-    """Hy の module の展開(compile)を囲む口 — ``with macro_recording(module) as recording:`` の中の展開が使った macro を拾い、
-    ``recording.record(source)`` が記録を作る。compile の口が code に足す記録(.pyc)と、展開した木の cache(doeff-effect-analyzer)
-    と、型検査の展開の保存(doeff_hy._static_cache)が同じ 1 つの拾い方と作り方を
-    使うための公開の口。``record`` の ``also`` は macro の外で展開の結果を変える値の在処(型検査の展開の後処理)。"""
-    from doeff_hy_bytecode_guard import _macro_use as macro_use  # 起動時に読まない
+    """The context around the expansion (compile) of a Hy module -- collects the macros used by the expansion inside ``with macro_recording(module) as recording:``, and
+    ``recording.record(source)`` builds the record. The public entry so that the record the compile entry adds to code (.pyc), the cache of expanded trees (doeff-effect-analyzer),
+    and the type-check expansion store (doeff_hy._static_cache) all use
+    the same single way of collecting and building. ``also`` of ``record`` is where to find values that change the expansion result outside macros (post-processing of type-check expansion)."""
+    from doeff_hy_bytecode_guard import _macro_use as macro_use  # not loaded at startup
 
     return macro_use.MacroRecording(module, _hy_version(), file_sha256)
 
 
 def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
-    """名の並びに現れる Hy の gensym の名を、数えの小さい順に 1 から振り直す関数(他の名はそのまま返す)— code の木の正準化
-    (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy._static_check)にも当てる
-    公開の口。展開の文が、同じ process で先に何を展開したか・どの process で展開したかに依らなくなる。"""
-    from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
+    """A function that renumbers the Hy gensym names appearing in a sequence of names from 1 in ascending order of their count (other names are returned as is) -- the same rule as canonicalizing a code tree
+    (``records.canonical_gensyms``), applied also to the type-check expansion tree (doeff_hy._static_check). The
+    public entry. The expansion text no longer depends on what was expanded earlier in the same process or in which process it was expanded."""
+    from doeff_hy_bytecode_guard import _records as records  # not loaded at startup
 
     renames = records.gensym_renames(names)
     return lambda name: records.renamed(name, renames)
 
 
 def record_is_current_here(record: "MacroRecord") -> bool:
-    """記録が、今の Hy の版と今の環境の macro に合うか — 使った macro を module 名から今の環境で引き直し(定義した module を
-    import する — 引けなければ古い)、その code の閉包の digest を比べる。記録か今の歩みが import の途中の module に当たった行は、
-    digest でなく閉包が依った module の file の sha256 を import せずに比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
-    準備が前の root から hardlink で引き継ぐ物)や保存先の code も今の木の macro で照らす。.pyc の記録と、
-    展開した木の cache(doeff-effect-analyzer)と、型検査の展開の保存(doeff_hy._static_cache)が同じ 1 つの
-    照らし方を使うための公開の口。"""
-    from doeff_hy_bytecode_guard import _macro_use as macro_use  # 起動時に読まない
+    """Whether the record matches the current Hy version and the macros of the current environment -- look up the used macros again in the current environment by module name (import the defining
+    module -- if it cannot be looked up, it is stale) and compare the digest of that code's closure. For rows where the record or the current step hits a module that is in the middle of importing,
+    compare the sha256 of the files of the modules the closure depended on, without importing, instead of the digest. The record has no file paths, so a .pyc built in another tree (one the runtime environment
+    preparation carries over from the previous root by hardlink) or code in the store is also checked against the macros of the current tree. The public entry so that the .pyc record,
+    the cache of expanded trees (doeff-effect-analyzer), and the type-check expansion store (doeff_hy._static_cache) all use the same single
+    way of checking."""
+    from doeff_hy_bytecode_guard import _macro_use as macro_use  # not loaded at startup
 
     return macro_use.record_is_current(record, _hy_version(), file_sha256)
 
 
 def value_reference(module: str, name: str) -> "ValueReference":
-    """macro の外で展開の結果を変える値の在処(module の名と属性の名)— ``recording.record`` の ``also`` に渡す。記録の形の
-    持ち主(records)を直に import しないための公開の口。"""
-    from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
+    """Where to find values that change the expansion result outside macros (module name and attribute name) -- passed to ``also`` of ``recording.record``. The public entry so that the
+    owner of the record shape (records) is not imported directly."""
+    from doeff_hy_bytecode_guard import _records as records  # not loaded at startup
 
     return records.ValueReference(module, name)
 
 
 def record_fingerprint(record: "MacroRecord") -> str:
-    """記録の中身の指紋 — 展開した木の cache(doeff-effect-analyzer)と型検査の展開の保存(doeff_hy._static_cache)の entry の名が
-    同じ 1 つの作り方を使うための公開の口。"""
-    from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
+    """Fingerprint of the record contents -- the public entry so that the entry names of the cache of expanded trees (doeff-effect-analyzer) and the type-check expansion store (doeff_hy._static_cache)
+    use the same single way of building."""
+    from doeff_hy_bytecode_guard import _records as records  # not loaded at startup
 
     return records.record_fingerprint(record)
 
 
 def record_to_json(record: "MacroRecord") -> list[object]:
-    """記録を JSON に書ける値にする — 記録を file に書いて読み戻す保存(型検査の展開の保存 doeff_hy._static_cache)が、記録の形の
-    持ち主(records)を直に import しないための公開の口。"""
-    from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
+    """Turn a record into a JSON-writable value -- the public entry so that the store that writes records to a file and reads them back (type-check expansion store doeff_hy._static_cache) does not import the owner of
+    the record shape (records) directly."""
+    from doeff_hy_bytecode_guard import _records as records  # not loaded at startup
 
     return records.record_to_json(record)
 
 
 def record_from_json(value: object) -> "MacroRecord | None":
-    """JSON から読んだ値を記録に組む(形が違えば None)— :func:`record_to_json` の逆。"""
-    from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
+    """Build a record from a value read from JSON (None if the shape is wrong) -- the inverse of :func:`record_to_json`."""
+    from doeff_hy_bytecode_guard import _records as records  # not loaded at startup
 
     return records.record_from_json(value)
 
@@ -187,43 +187,43 @@ def record_from_json(value: object) -> "MacroRecord | None":
 def source_to_code_as_import(
     loader: importlib.machinery.SourceFileLoader, data: bytes, path: str
 ) -> CodeType:
-    """import の外で source を compile する口(bytecode を前もって作る道具が使う)— Hy の source は import と同じく、その module を
-    ``sys.modules`` に置いた中で compile し、展開が依った macro の記録を code に足す。
+    """Entry that compiles source outside an import (used by the tool that precompiles bytecode) -- Hy source is compiled, as in an import, with its module placed in
+    ``sys.modules``, and the record of the macros the expansion depended on is added to the code.
 
-    import の外で ``source_to_code`` を直に呼ぶと、Hy は仮の module を作って compile の直後に消すので、compile の口の包みが
-    module を見られず記録を足さない。記録の無い .pyc は import の時に古いかもしれない物として compile し直されるので、前もって
-    作った bytecode が無駄になり、起動の時に macro の展開を全部やり直していた(預かり所の job の起動の
-    CPU 約 46 秒のうち約 43 秒)。Hy 以外の source は ``source_to_code`` をそのまま呼ぶ。"""
+    Calling ``source_to_code`` directly outside an import makes Hy create a temporary module and delete it right after compile, so the compile-entry wrapper cannot
+    see the module and adds no record. A .pyc without a record is recompiled at import as possibly stale, so the bytecode
+    built in advance was wasted and all macro expansion was redone at startup (about 43 of the roughly 46 seconds of CPU
+    at startup of a store job). Non-Hy source calls ``source_to_code`` as is."""
     install()
     if not is_hy_source(path):
         return loader.source_to_code(data, path)
     present = sys.modules.get(loader.name)
     if present is not None and vars(present).get("__file__") == path:
-        with macro_recording(_expansion_or(loader, path, present)):  # 読み込み済みの module の中で compile する(import の途中と同じ)
+        with macro_recording(_expansion_or(loader, path, present)):  # compile inside the loaded module (same as in the middle of an import)
             return loader.source_to_code(data, path)
-    with _PlacedExpansion(loader, path):  # compile の口の包みが、この展開が使った macro の記録を足す
+    with _PlacedExpansion(loader, path):  # the compile-entry wrapper adds the record of the macros this expansion used
         return loader.source_to_code(data, path)
 
 
 class _PlacedExpansion:
-    """module を ``sys.modules`` に置いた中で展開が使った macro を拾う囲み(出る時に置く前へ戻す)— 置く module が無い compile で、
-    Hy が仮の module を作って compile の直後に消すと、compile の口の包みが module を見られず記録を足さないため。
+    """A context that collects the macros used by expansion with the module placed in ``sys.modules`` (restores the previous state on exit) -- in a compile with no module to place,
+    if Hy creates a temporary module and deletes it right after compile, the compile-entry wrapper cannot see the module and adds no record.
 
-    使う所は 2 つ: :func:`source_to_code_as_import`(import の外で bytecode を前もって作る道具)と、import を通らず読みの口が
-    呼ばれる読み(runpy の ``hy <script>``・``hy -m`` — :func:`_expansion_recording`)。後者は .pyc に記録が付かず、次の読みで
-    必ず古い物として compile し直され、保存先にも入らなかった。"""
+    Used in two places: :func:`source_to_code_as_import` (the tool that precompiles bytecode outside an import), and loads where the load entry is called without going through an import
+    (runpy's ``hy <script>`` and ``hy -m`` -- :func:`_expansion_recording`). In the latter, the .pyc got no record, so the next load
+    always recompiled it as stale and it never entered the store."""
 
     def __init__(self, loader: importlib.machinery.SourceFileLoader, path: str) -> None:
         self._loader = loader
         self._path = path
         self._present = sys.modules.get(loader.name)
-        self._mut_recording: MacroRecording | None = None  # 関数の中の注釈は実行時に評価されない(MacroRecording は型検査の時だけ import する)
+        self._mut_recording: MacroRecording | None = None  # annotations inside functions are not evaluated at runtime (MacroRecording is imported only for type checking)
 
     def __enter__(self) -> "MacroRecording":
         loader, path = self._loader, self._path
         spec = importlib.util.spec_from_file_location(loader.name, path, loader=loader)
         if spec is None:
-            raise ImportError(f"{path} の module の spec を作れない", name=loader.name, path=path)
+            raise ImportError(f"cannot create a spec for the module at {path}", name=loader.name, path=path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[loader.name] = module
         try:
@@ -248,8 +248,8 @@ class _PlacedExpansion:
 
 
 def file_sha256(path: str) -> str | None:
-    """file の中身の sha256(読めなければ None)— 記録を作る側と照合する側が同じ 1 つを使うため。"""
-    import hashlib  # 起動時に読まない
+    """sha256 of a file's contents (None if unreadable) -- so the side that builds records and the side that checks them use the same one."""
+    import hashlib  # not loaded at startup
 
     try:
         status = os.stat(path)
@@ -267,10 +267,10 @@ def file_sha256(path: str) -> str | None:
     return digest
 
 
-# 戻り値の型は内側の関数の推論に任せる — ``SourceFileLoader.source_to_code`` と引数の名まで同じ形なので、そのまま口へ戻せる
-# (Callable の別名で書くと引数の名が消え、口への代入が型の食い違いになる)。
+# Leave the return type to inference from the inner function -- it has the same shape as ``SourceFileLoader.source_to_code`` down to argument names, so it can be put straight back into the entry
+# (writing it as a Callable alias would drop the argument names, and assigning to the entry would become a type mismatch).
 def _recording_source_to_code(previous: SourceToCode):
-    """compile の口の包み — Hy の module を compile した直後に、gensym の名を正準化し、展開が依った macro の記録を code に足すため。"""
+    """Wrapper for the compile entry -- right after a Hy module is compiled, canonicalize gensym names and add the record of the macros the expansion depended on to the code."""
 
     def source_to_code(
         self: importlib.machinery.SourceFileLoader,
@@ -282,35 +282,35 @@ def _recording_source_to_code(previous: SourceToCode):
         code = previous(self, data, path, *args, **kwargs)
         if not isinstance(path, str) or not is_hy_source(path):
             return code
-        from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
+        from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
 
-        # Hy の source の compile は import・作り直し・前もって作る道具(source_to_code_as_import)・image の組み立て(source_to_code を
-        # 直に呼ぶ)のどれもこの口を通る — Hy の口の上でも下でも、ここが受けるのは compile の済んだ code。gensym の名を module の
-        # 中の順の通し番号にし、compile の順・process・thread に依らない code にする。
+        # Compiling Hy source -- import, rebuild, the precompile tool (source_to_code_as_import), and image assembly (which calls source_to_code
+        # directly) all pass through this entry -- above or below Hy's entry, what it receives here is already-compiled code. Make gensym names sequential numbers
+        # within the module so the code does not depend on compile order, process, or thread.
         code = records.canonical_gensyms(code)
         counts = _counts()
         counts[path] = counts.get(path, 0) + 1
         module = _module_being_loaded(self, path)
         if module is None:
-            # module の外での compile(py_compile・image の組み立ての warm)— 何の macro を require したかが
-            # 見えないので記録を足さない。記録の無い bytecode は、Python が source と突き合わせる形なら次の読みで
-            # compile し直される(get_code)。突き合わせない形(image の hash 方式)はそのまま信じる。bytecode を前もって
-            # 作る道具は source_to_code_as_import で module の中で compile し、記録を付ける。runpy の読み(``hy <script>``・
-            # ``hy -m``)は読みの口が module を置いて囲むので、ここへ来ない(_expansion_recording)。
+            # A compile outside a module (py_compile, image-assembly warm) -- what macros were required is
+            # not visible, so no record is added. Bytecode without a record is recompiled on the next load when Python matches it against the source (get_code).
+            # Forms that are not matched (image hash mode) are trusted as is. The tool that precompiles bytecode
+            # compiles inside the module via source_to_code_as_import and attaches a record. runpy loads (``hy <script>``, ``hy -m``)
+            # have the load entry place the module and wrap it, so they do not come here (_expansion_recording).
             return code
         if TYPE_CHECK_EXPANSION.get():
-            # 型検査のための展開(doeff_hy._static_view)の code は実行できない(:pre の isinstance と実行の時の import が無い)—
-            # 記録を付けない。記録の無い code は保存先に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
-            # compile し直す(_record_is_current_here)。付けると普通の展開と同じ鍵で残り、普通の import が読んで落ちた(I-3)。
+            # Code from expansion for type checking (doeff_hy._static_view) cannot run (it lacks the isinstance of :pre and the runtime import) --
+            # no record is attached. Code without a record does not enter the store (_to_shared_store), and even if written to .pyc the next normal import
+            # recompiles it (_record_is_current_here). If attached, it would remain under the same key as normal expansion and a normal import would read it and crash (I-3).
             return code
-        from doeff_hy_bytecode_guard import _macro_use as macro_use  # Hy の source に当たった時だけ読む
+        from doeff_hy_bytecode_guard import _macro_use as macro_use  # load only when Hy source is encountered
 
         table = vars(module).get(records.MACRO_TABLE)
         if not isinstance(table, macro_use.RecordingTable):
-            # 使った macro を拾う囲み(get_code・source_to_code_as_import の macro_recording)の外の compile — 何の macro を使ったかが
-            # 見えないので記録を足さない(記録の無い code は次の読みで compile し直される)。
+            # A compile outside the contexts that collect used macros (macro_recording in get_code and source_to_code_as_import) -- what macros were used is
+            # not visible, so no record is added (code without a record is recompiled on the next load).
             return code
-        # 渡された source の文(Hy の口の下では展開した後の木が来る — その時は読みの口が覚えた bytes か file から読む)。
+        # The statements of the passed source (below Hy's entry, the already-expanded tree arrives -- then read from the bytes the load entry remembered, or from the file).
         source = macro_use.source_text(_last_sources().get(path, data), path)
         if source is None:
             return code
@@ -318,8 +318,8 @@ def _recording_source_to_code(previous: SourceToCode):
         if recording is None:
             return code
         record = recording.record(source)
-        # Hy の口の下では展開した後の木が来る — 同じ source を doeff-effect-analyzer が展開し直さないよう、記録と並べて置く。
-        #置き場の dir の持ち主は expansion_trees(木でない物・dir の無い時は何も置かない)。
+        # Below Hy's entry the already-expanded tree arrives -- put it next to the record so doeff-effect-analyzer does not re-expand the same source.
+        # The owner of the placement dir is expansion_trees (not trees; if the dir is absent nothing is placed).
         from doeff_hy_bytecode_guard import _expansion_trees as expansion_trees
 
         expansion_trees.add_import_tree(module.__name__, source, record, data)
@@ -328,11 +328,11 @@ def _recording_source_to_code(previous: SourceToCode):
     return source_to_code
 
 
-# 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
+# Leave the return type to inference from the inner function (same reason as above).
 def _remembering_get_data(previous: GetData):
-    """読みの口の包み — Hy の source を読んだ bytes を、この thread の「最後に読んだ中身」として覚えるため。compile の口は
-    Hy の包みの内側では展開した後の木しか受け取らないので、compile した bytes が見えるのは読みの所だけ。保存先の鍵は
-    この bytes から作り、file を読み直さない。"""
+    """Wrapper for the load entry -- remember the bytes of the Hy source read, as this thread's "last read contents". The compile entry
+    inside Hy's wrapper receives only the expanded tree, so the compiled bytes are visible only at the read site. The store key is
+    built from these bytes, without re-reading the file."""
 
     def get_data(self: importlib.machinery.SourceFileLoader, path: str) -> bytes:
         data = previous(self, path)
@@ -343,12 +343,12 @@ def _remembering_get_data(previous: GetData):
     return get_data
 
 
-# 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
+# Leave the return type to inference from the inner function (same reason as above).
 def _scoped_exec_module(previous: ExecModule):
-    """module の本体の実行の口の包み — 一番外の実行(中の import を含む)の間、.pyc の記録の照らしが file の状態を 1 度だけ読む
-    覚えを置くため(照らしは Hy の module 1 つごとに走り、照らしごとに確かめると同じ file を何百回も stat した — agora-redesign)。
-    入れ子の実行は外の覚えを使う。閉じる時は覚えを閉じる — 中で起きた thread と写した context に値が残る。
-    同じ間、GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard._import_gc` — 読み込みが heap を育てるたびに heap 全体を掃いていた)。"""
+    """Wrapper for the module-body execution entry -- during the outermost execution (including imports inside it), set up a memory so the .pyc record check reads file state only once
+    (the check runs per Hy module, and checking each time stat'ed the same file hundreds of times -- agora-redesign).
+    A nested execution uses the outer memory. On close the memory is closed -- values remain in threads and copied contexts that arose inside.
+    During the same span, raise the GC threshold (:mod:`doeff_hy_bytecode_guard._import_gc` -- loading swept the whole heap each time it grew)."""
 
     def exec_module(self: importlib.machinery.SourceFileLoader, module: ModuleType) -> None:
         _note_executed(self.path)
@@ -368,8 +368,8 @@ def _scoped_exec_module(previous: ExecModule):
 
 
 def _note_executed(path: object) -> None:
-    """本体を実行する source の file の今の状態を覚える(読めない file は覚えを消す)— 照らしの歩みが、module の値と今の file の
-    中身が同じ時点の物かを確かめるため(:func:`executed_source_is_current`)。"""
+    """Remember the current state of the source file whose body is being executed (an unreadable file clears the memory) -- so the check step can verify that the module's values and the current file's
+    contents are from the same point in time (:func:`executed_source_is_current`)."""
     if not isinstance(path, str):
         return
     try:
@@ -381,10 +381,10 @@ def _note_executed(path: object) -> None:
 
 
 def executed_source_is_current(path: str) -> bool:
-    """path の file が今も、この process の読みの口がその module の本体を最後に実行した時の状態(更新時刻 ns・大きさ)か(読めない
-    file は偽)。読みの口を通らずに読み込まれた module(包む前の起動・拡張の module)は確かめる材料が無いので真。読み込み 1 つの
-    写し(照らしの覚えの確かめ)でなく今の disk を stat する — 照らしの歩みは続けて今の disk から文と sha256 を読むので、同じ時点で
-    比べる(歩み 1 回に file 数個 — 照らしごとではない)。"""
+    """Whether the file at path is still in the state (mtime ns, size) it had when this process's load entry last executed that module's body (false if unreadable).
+    A module loaded without going through the load entry (startup before the wrap, extension modules) has nothing to check against, so true. One load
+    stats the current disk rather than a copy (verifying the check's memory) -- the check step then reads statements and sha256 from the current disk, so
+    they are compared at the same point in time (a few files per step -- not per check)."""
     executed = _executed.get(path)
     if executed is None:
         return True
@@ -395,59 +395,59 @@ def executed_source_is_current(path: str) -> bool:
     return (status.st_mtime_ns, status.st_size) == executed
 
 
-# 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
+# Leave the return type to inference from the inner function (same reason as above).
 def _checking_get_code(previous: GetCode):
-    """読みの口の包み — .pyc から読んだ Hy の module の展開が古い macro に依っていれば compile し直すため。"""
+    """Wrapper for the load entry -- if the expansion of a Hy module read from .pyc depends on a stale macro, recompile it."""
 
     def get_code(self: importlib.machinery.SourceFileLoader, fullname: str) -> CodeType | None:
         path = self.get_filename(fullname)
         if not is_hy_source(path):
             return previous(self, fullname)
-        _remember_dataclass_code()  # Hy の import の後なら dataclasses は読み込み済み
+        _remember_dataclass_code()  # after a Hy import, dataclasses is already loaded
         try:
             code = _hy_code(self, fullname, path)
         finally:
-            _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
+            _last_sources().pop(path, None)  # the remembered source is used only during this read
         record = _remember_record(path, code)
         if code is not None and record is not None:
-            # macro を require し忘れた・import で入れた module に、書き足す 1 行を言う(実行の前 — 文は Python が出し、
-            # その frame に doeff の code が無い)。.pyc・保存先から読んだ code にも同じ記録が載る。
-            from doeff_hy_bytecode_guard import _macro_hints as macro_hints  # Hy の source に当たった時だけ読む
+            # Tell the one line to add to a module where a macro was forgotten to be required, or was brought in by import (before execution -- Python emits the statement and
+            # that frame has no doeff code). The same record is attached to code read from .pyc or the store.
+            from doeff_hy_bytecode_guard import _macro_hints as macro_hints  # load only when Hy source is encountered
 
             macro_hints.warn_about_macro_use(code, record, path, fullname)
         return code
 
     def _hy_code(self: importlib.machinery.SourceFileLoader, fullname: str, path: str) -> CodeType | None:
-        """Hy の source の code — 保存先・.pyc・compile のどれかから、展開が今の macro に依る物を返すため。"""
+        """Code for Hy source -- returns, from the store, .pyc, or compile, one whose expansion matches the current macros."""
         header = _bytecode_header(self, path)
         shared = _from_shared_store(self, fullname, path, header)
         if shared is not None:
-            return shared  # 別の作業木で作った同じ中身の code — 記録は今の環境の macro の file で確かめた
+            return shared  # code with the same contents built in another worktree -- the record was verified against the macro files of the current environment
         counts = _counts()
         before = counts.get(path, 0)
         if _bytecode_matches_source(self, path, header):
-            # 作業木の .pyc が source に合う — 標準の口は .pyc を読むだけで compile しないので、展開の module を引かない(引き方は
-            # 読み込み済みの module 全部を歩く。Hy の module ごとに引くと、検の読み込みで CPU 約 0.6 秒の固定費になった)。
-            # .pyc が壊れていて compile した時は記録が無いので、下の照らしが囲みの中で compile し直す。
+            # The worktree .pyc matches the source -- the standard entry only reads .pyc and does not compile, so it does not look up the expansion module (the lookup
+            # walks all loaded modules. Looking up per Hy module was a fixed cost of about 0.6 seconds of CPU in loading a check).
+            # When the .pyc is broken and gets compiled there is no record, so the check below recompiles inside the context.
             code = previous(self, fullname)
         else:
-            # compile し直す時(.pyc が無い・古い)に、展開が使った macro を拾う(compile の口の包みが記録を作る)。
+            # When recompiling (.pyc missing or stale), collect the macros the expansion used (the compile-entry wrapper builds the record).
             with _expansion_recording(self, path):
                 code = previous(self, fullname)
             if code is None or counts.get(path, 0) != before:
                 if code is not None:
                     _to_shared_store(fullname, path, _compiled_source(path), code)
-                return code  # 今 compile した物 — 依った macro は今の file
+                return code  # just compiled -- the macros it depended on are the current files
         if code is None:
             return None
-        from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
+        from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
 
         if header is not None and not records.python_checks_source(
             header, _check_hash_based_pycs()
         ):
-            # Python が source と突き合わせない .pyc(PEP 552 の unchecked-hash — image の組み立てが焼く形)は、
-            # Python が source の変更を信じないのと同じく、macro の変更も信じない(組み立ての中で焼き直す前提)。
-            # 記録を照らしても結末を使わないので、照らす前に返す。
+            # A .pyc that Python does not match against the source (PEP 552 unchecked-hash -- the form image assembly bakes)
+            # does not trust macro changes, just as Python does not trust source changes (on the premise it is rebaked during assembly).
+            # Checking the record would not use the outcome, so return before checking.
             return code
         if _record_is_current_here(code):
             return code
@@ -459,8 +459,8 @@ def _checking_get_code(previous: GetCode):
 def _replacing_stale_pyc(
     self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
 ) -> CodeType:
-    """記録が古い .pyc の代わりの code — 保存先に今の環境の macro で合う entry が在ればそれを使い(compile せず、.pyc を書き直す)、
-    無ければ compile し直して保存先へ足す。"""
+    """Code that replaces a .pyc whose record is stale -- if the store has an entry matching the current environment's macros, use it (without compiling, and rewrite the .pyc),
+    otherwise recompile and add to the store."""
     stored = _from_shared_store_over_stale_pyc(self, fullname, path, header)
     if stored is not None:
         return stored
@@ -471,8 +471,8 @@ def _replacing_stale_pyc(
 
 
 def _remember_record(path: str, code: CodeType | None) -> "MacroRecord | None":
-    """読みの口が返した code に載った記録を覚える(:func:`loaded_record`)— 記録の無い code(module の外の compile・型検査の展開)
-    なら前の覚えを消す(別の code の記録を残さない)。覚えた記録(無ければ None)を返す。"""
+    """Remember the record attached to code returned by the load entry (:func:`loaded_record`) -- for code with no record (a compile outside a module, type-check expansion)
+    clear the previous memory (do not leave another code's record). Returns the remembered record (None if none)."""
     record = None if code is None else _record_of(code)
     if record is None:
         _loaded_records.pop(path, None)
@@ -482,17 +482,17 @@ def _remember_record(path: str, code: CodeType | None) -> "MacroRecord | None":
 
 
 def _record_is_current_here(code: CodeType) -> bool:
-    """code に載った記録が、今の Hy の版と今の環境の macro の file に合うか(記録が無ければ偽・照らし方は
-    record_is_current_here)。"""
+    """Whether the record attached to code matches the current Hy version and the macro files of the current environment (false if there is no record; the check is the same as
+    record_is_current_here)."""
     record = _record_of(code)
     return record is not None and record_is_current_here(record)
 
 
 def _record_of(code: CodeType) -> "MacroRecord | None":
-    """code に載った記録 — 読みの口は同じ code の記録を照らし(:func:`_record_is_current_here`)と覚え(:func:`_remember_record`)で
-    続けて読むので、最後に読んだ code 1 つの記録を使い回す(記録の組み立ては欄の形を全部確かめる — 宣言の道具の import の
-    2,500 module で 2 度ずつ組んでいた)。覚えは (code, 記録) の 1 つの tuple で置き換え、thread をまたいで別の code の記録を返さない。"""
-    from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
+    """The record attached to code -- the load entry reads the record of the same code in succession for the check (:func:`_record_is_current_here`) and the memory (:func:`_remember_record`),
+    so reuse the record of the one code read last (building a record verifies the whole field shape -- the import of declaration tools
+    built it twice for each of 2,500 modules). The memory is replaced as a single (code, record) tuple, so another code's record is never returned across threads."""
+    from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
 
     last = _last_record.get("entry")
     if last is not None and last[0] is code:
@@ -503,13 +503,13 @@ def _record_of(code: CodeType) -> "MacroRecord | None":
 
 
 def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
-    """木に既に在る .pyc の中身 pyc を、今の source と今の環境の macro にそのまま使えるか — bytecode を前もって作る道具が、前の木から
-    引き継いだ .pyc を焼き直さずに残すかを決めるため。
+    """Whether the contents pyc of a .pyc already in the tree can be used as is for the current source and the current environment's macros -- so the tool that precompiles bytecode decides whether to keep a .pyc carried over
+    from a previous tree without rebaking it.
 
-    使えるのは、頭に source の hash を持つ PEP 552 の hash 方式の .pyc で、その hash が今の source と同じ物だけ。Hy の source の
-    .pyc は、さらに記録が今の環境の macro に合うこと(読みの口と同じ照らし方)。前もって作る道具がここで焼き直さないと、
-    macro の変わった版の初回の import が、引き継いだ Hy の module を全部 compile し直す。"""
-    from doeff_hy_bytecode_guard import _records as records  # 道具が引き継いだ .pyc に当たった時だけ読む
+    Usable only if it is a PEP 552 hash-based .pyc with a source hash in its header and that hash equals the current source. For a .pyc of Hy source,
+    the record must also match the current environment's macros (same check as the load entry). If the tool does not rebake here,
+    the first import of a version with changed macros recompiles all carried-over Hy modules."""
+    from doeff_hy_bytecode_guard import _records as records  # load only when the tool hits a carried-over .pyc
 
     if len(pyc) < records.PYC_HEADER_BYTES or pyc[:4] != importlib.util.MAGIC_NUMBER:
         return False
@@ -518,18 +518,18 @@ def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
         return False
     if not is_hy_source(path):
         return True
-    import marshal  # Hy の .pyc に当たった時だけ読む
+    import marshal  # load only when a Hy .pyc is encountered
 
     try:
         code = marshal.loads(pyc[records.PYC_HEADER_BYTES :])
     except (EOFError, ValueError, TypeError):
-        return False  # 中身の壊れた .pyc は使えない(焼き直す)
+        return False  # a .pyc with broken contents is unusable (rebake)
     return isinstance(code, CodeType) and _record_is_current_here(code)
 
 
 def _store_key(fullname: str, path: str, source: bytes) -> str:
-    """source の中身から決まる code の鍵(鍵と並びの定義点は code_store の 1 つ — 鍵 1 つに macro の環境ごとの entry が並ぶ)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 保存先を使う時だけ読む
+    """The code key determined by the source contents (the key and ordering are defined in one place, code_store -- one key holds entries per macro environment)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # load only when using the store
 
     return code_store.code_key(
         path, source, fullname, _hy_version(), sys.implementation.cache_tag or "", sys.flags.optimize
@@ -539,19 +539,19 @@ def _store_key(fullname: str, path: str, source: bytes) -> str:
 def _from_shared_store(
     self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
 ) -> CodeType | None:
-    """作業木の .pyc が使えない時に、別の作業木で作った同じ中身の code を保存先(code_store — 作業木・版をまたいで中身で引く)から
-    引く(当たらなければ None)— 新しい作業木の .pyc は source の絶対 path に結びつくので必ず冷え、同じ中身の file の変換(macro の
-    展開)をやり直していた。
+    """When the worktree .pyc is unusable, look up code with the same contents built in another worktree from the store (code_store -- looked up by contents across worktrees and versions)
+    (None if not found) -- the new worktree's .pyc is tied to the source's absolute path so it is always cold, and the transformation (macro
+    expansion) of files with the same contents was redone.
 
-    鍵の entry(macro の環境ごとに並ぶ — doeff の版の違う書き手の物も)の記録を、使った macro を module 名から今の環境で引き直して
-    照らし、合う物を使う(記録は file の path を持たないので、そのまま作業木の .pyc に書ける)。作業木の .pyc も標準の timestamp の形で
-    書く。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 保存先を使う時だけ読む
+    Check the records of the key's entries (arranged per macro environment -- including those by writers of different doeff versions) by looking up the used macros again by module name in the current environment,
+    and use one that matches (records have no file paths, so they can be written as is to the worktree .pyc). The worktree .pyc is also written in the standard timestamp form
+    ."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # load only when using the store
 
     store = code_store.store_dir()
     if store is None:
         return None
-    from doeff_hy_bytecode_guard import _records as records  # 保存先を使う時だけ読む
+    from doeff_hy_bytecode_guard import _records as records  # load only when using the store
 
     try:
         stats = self.path_stats(path)
@@ -562,18 +562,18 @@ def _from_shared_store(
         records.timestamp_header_matches(header, mtime=mtime, size=size)
         or int.from_bytes(header[4:8], "little") & records.FLAG_HASH_BASED
     ):
-        return None  # 作業木の .pyc が使える(か hash の方式 — Python 自身の判定に任せる)
+        return None  # the worktree .pyc is usable (or is hash mode -- left to Python's own decision)
     return _stored_code(self, fullname, path, mtime=mtime, size=size, previous_header=None)
 
 
 def _from_shared_store_over_stale_pyc(
     self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
 ) -> CodeType | None:
-    """作業木の .pyc は source に合うが、記録が今の環境の macro に合わない時(兄弟の doeff を替えた後に使い回す木)に、compile し直す前に
-    保存先を引く(当たらなければ None で、呼び手が今どおり compile して足す)— 保存先に今の環境で合う entry が在るのに、.pyc が在るという
-    だけで引かずに木の Hy の module を全部 compile し直していた。照らしは :func:`_from_shared_store` と同じ。
-    作業木の .pyc は読んだ .pyc と同じ方式(timestamp か hash)で書き直す。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 保存先を使う時だけ読む
+    """When the worktree .pyc matches the source but its record does not match the current environment's macros (a tree reused after swapping the sibling doeff), look in the store
+    before recompiling (None if not found, and the caller compiles as usual and adds) -- even though the store had an entry matching the current environment, the mere existence of a .pyc
+    meant it was not looked up and all Hy modules in the tree were recompiled. The check is the same as :func:`_from_shared_store`.
+    The worktree .pyc is rewritten in the same mode as the .pyc that was read (timestamp or hash)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # load only when using the store
 
     if code_store.store_dir() is None:
         return None
@@ -595,9 +595,9 @@ def _stored_code(
     size: int,
     previous_header: bytes | None,
 ) -> CodeType | None:
-    """保存先の鍵の entry のうち、記録が今の環境の macro に合う物を使う(無ければ None)。code の file 名を今の source の path に直し、
-    作業木の .pyc を previous_header の方式(None なら標準の timestamp)で書く(bytecode を書かない設定では書かない)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store, _records as records  # 保存先を使う時だけ読む
+    """Of the entries under the store key, use one whose record matches the current environment's macros (None if none). Rewrite the code's file name to the current source path,
+    and write the worktree .pyc in the mode of previous_header (the standard timestamp if None) (not written under a configuration that does not write bytecode)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store, _records as records  # load only when using the store
 
     store = code_store.store_dir()
     if store is None:
@@ -605,11 +605,11 @@ def _stored_code(
     try:
         source = self.get_data(path)
     except OSError:
-        return None  # source を読めなければ標準の get_code が同じ誤りを名乗る
+        return None  # if the source cannot be read, the standard get_code reports the same error
     code = code_store.current_code(store, _store_key(fullname, path, source), _record_is_current_here)
     if code is None:
         return None
-    import _imp  # 標準の _compile_bytecode と同じ口で、code の file 名を今の source の path に直す
+    import _imp  # rewrite the code's file name to the current source path, through the same entry as the standard _compile_bytecode
 
     _imp._fix_co_filename(code, path)
     if not sys.dont_write_bytecode:
@@ -622,25 +622,25 @@ def _stored_code(
 
 
 def _compiled_source(path: str) -> bytes | None:
-    """今 compile した Hy の source の bytes — この thread で compile の直前に読んだ中身(読みの口が覚えた物)。読みの口を
-    通らずに compile した時(覚えが無い)は None で、保存先には足さない(鍵の bytes が compile した物と同じとは言えない)。"""
+    """The bytes of the Hy source just compiled -- the contents this thread read just before compile (what the load entry remembered). When compiled
+    without going through the load entry (no memory), None, and nothing is added to the store (the key bytes cannot be said to equal what was compiled)."""
     data = _last_sources().get(path)
     return data if isinstance(data, bytes) else None
 
 
 def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeType) -> None:
-    """今 compile した Hy の code を、compile した source の bytes を鍵にして保存先(code_store)へ足す(記録の無い code は足さない。
-    bytecode を書かない設定では、保存先を名指した時だけ足す — 書かない設定は木への書きの決めで、名指しの保存先は木の外)
-    — 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
-    からだけ作り、file を読み直さない(読み直すと、間に書き換わった file の中身の鍵に古い code が入る)。
-    書けない保存先では足さない — import の口は venv のすべての Python の起動で走るので、書けない理由を import のたびに出さない
-    (保存先は速さのためだけ・worker の道具は同じ書きの理由を名指して出す)。"""
-    from doeff_hy_bytecode_guard import _code_store as code_store  # 保存先を使う時だけ読む
+    """Add the Hy code just compiled to the store (code_store), keyed by the bytes of the source that was compiled (code without a record is not added.
+    Under a configuration that does not write bytecode, add only when a store is named explicitly -- not writing is a decision about writes to the tree, and an explicitly named store is outside the tree)
+    -- so the next time a file with the same contents is read in another worktree, the transformation is not redone. The key is built only from the
+    compiled bytes, without re-reading the file (re-reading would put old code under the key of the contents of a file rewritten in between).
+    Do not add to an unwritable store -- the import entry runs at startup of every Python in the venv, so the reason it cannot write is not printed on every import
+    (the store is only for speed, and the worker tool names and prints the same write reason)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # load only when using the store
 
     store = code_store.store_dir()
     if store is None or source is None or (sys.dont_write_bytecode and not code_store.store_is_named()):
         return
-    from doeff_hy_bytecode_guard import _records as records  # 保存先を使う時だけ読む
+    from doeff_hy_bytecode_guard import _records as records  # load only when using the store
 
     if records.record_of(code) is None:
         return
@@ -650,8 +650,8 @@ def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeT
 def _recompile(
     self: importlib.machinery.SourceFileLoader, path: str, header: bytes | None
 ) -> CodeType:
-    """古い展開の代わりに source から compile し直し(記録は compile の口の包みが足す)、読んだ .pyc と同じ方式で書き直す。"""
-    from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
+    """Recompile from source in place of the stale expansion (the compile-entry wrapper adds the record), and rewrite in the same mode as the .pyc that was read."""
+    from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
 
     source = self.get_data(path)
     code = self.source_to_code(source, path)
@@ -665,21 +665,21 @@ def _recompile(
         size=int(stats["size"]),
         previous_header=header,
     )
-    import contextlib  # 古い記録に当たった時だけ読む
+    import contextlib  # load only when a stale record is encountered
 
-    # 標準の get_code と同じく、書けない場所(読み取り専用の木)では書かずに compile した code を使う。
+    # As in the standard get_code, in an unwritable place (a read-only tree) use the compiled code without writing.
     with contextlib.suppress(OSError):
         self.set_data(importlib.util.cache_from_source(path), data)
     return code
 
 
 def _bytecode_header(self: importlib.machinery.SourceFileLoader, path: str) -> bytes | None:
-    """source の隣の .pyc の頭(無ければ None)— 方式(timestamp / hash・検めるか)を見て、同じ方式で書き直すため。"""
+    """The header of the .pyc next to the source (None if absent) -- look at the mode (timestamp / hash, whether checked) so it can be rewritten in the same mode."""
     try:
         data = self.get_data(importlib.util.cache_from_source(path))
     except OSError:
         return None
-    from doeff_hy_bytecode_guard import _records as records  # 古い記録に当たった時だけ呼ばれる
+    from doeff_hy_bytecode_guard import _records as records  # called only when a stale record is encountered
 
     return data[: records.PYC_HEADER_BYTES]
 
@@ -687,11 +687,11 @@ def _bytecode_header(self: importlib.machinery.SourceFileLoader, path: str) -> b
 def _bytecode_matches_source(
     self: importlib.machinery.SourceFileLoader, path: str, header: bytes | None
 ) -> bool:
-    """作業木の .pyc(頭 header)が、標準の timestamp の形で今の source の更新時刻と大きさに合うか — 合えば標準の get_code は
-    .pyc を読むだけで compile しない。hash の形は Python 自身の判定に任せ、合うとしない(compile し得る側に数える)。"""
+    """Whether the worktree .pyc (header) matches the current source's mtime and size in the standard timestamp form -- if so the standard get_code only reads the
+    .pyc and does not compile. The hash form is left to Python's own decision and is not deemed a match (counted on the side that may compile)."""
     if header is None or header[:4] != importlib.util.MAGIC_NUMBER:
         return False
-    from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
+    from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
 
     try:
         stats = self.path_stats(path)
@@ -703,15 +703,15 @@ def _bytecode_matches_source(
 def _expansion_recording(
     self: importlib.machinery.SourceFileLoader, path: str
 ) -> "contextlib.AbstractContextManager[object]":
-    """compile し得る読みを囲む口 — 展開が走る module(:func:`_module_being_loaded`)の表で、展開が使った macro を拾う。module は
-    compile し得る時にだけ引く(引き方は読み込み済みの module 全部を歩く)。
+    """A context around a load that may compile -- collect the macros used by expansion in the table of the module where expansion runs (:func:`_module_being_loaded`). The module is
+    looked up only when it may compile (the lookup walks all loaded modules).
 
-    module が無いのは、import を通らず読みの口が呼ばれた時(runpy の ``hy <script>``・``hy -m`` は loader の get_code を、module を
-    ``sys.modules`` に置く前に呼ぶ)。その名の module を置いた中で拾う(:class:`_PlacedExpansion`)— 拾わないと、Hy は仮の module
-    で compile して compile の直後に消すので、記録の無い .pyc が 毎回「古い物」として compile し直され、保存先にも入らない。
-    同じ名を別の file の module が使っていれば(``hy json.hy`` — Hy 自身も既存の module の ``__file__`` を書き換えて消す形)置かず、
-    何も拾わない。"""
-    import contextlib  # compile し得る時だけ読む
+    The module is absent when the load entry is called without going through an import (runpy's ``hy <script>`` and ``hy -m`` call the loader's get_code before putting the module in
+    ``sys.modules``). Collect inside a module placed under that name (:class:`_PlacedExpansion`) -- otherwise Hy compiles with a temporary module
+    and deletes it right after compile, so a .pyc without a record is recompiled every time as "stale" and never enters the store.
+    If a module of another file uses the same name (``hy json.hy`` -- Hy itself also rewrites the ``__file__`` of an existing module and removes it), do not place it and
+    collect nothing."""
+    import contextlib  # load only when it may compile
 
     module = _module_being_loaded(self, path)
     if module is not None:
@@ -724,18 +724,18 @@ def _expansion_recording(
 def _module_being_loaded(
     self: importlib.machinery.SourceFileLoader, path: str
 ) -> ModuleType | None:
-    """Hy の compile の展開が走る module — compile の中の require がここの表へ macro を載せ、展開がここの表を引くので、記録の元になる。
+    """The module in which Hy compile expansion runs -- a require inside the compile puts macros in this module's table, and expansion looks up this table, so it is the source of the record.
 
-    引き方は Hy の compile の口(``hy.importer.loader_module_obj``)と同じ: file の名から読み込み済みの module を引き
-    (``inspect.getmodule`` — 同じ file を別の名で先に読んだ module があればそれ)、無ければ import の途中の module
-    (``sys.modules`` に先に置かれている ``self.name``)。``self.name`` だけで引くと、同じ file を package の名で読んだ process で
-    path から別の名で読み直した時(worker の bytecode の道具の bake_plan.hy)、展開が引かない表から空の記録を作り、照らしが
-    素通りの entry を共有の置き場に入れた(2026-10-11 atlas)。"""
-    import inspect  # Hy の source に当たった時だけ読む(Hy の compile の口も読む)
+    The lookup is the same as Hy's compile entry (``hy.importer.loader_module_obj``): look up the loaded module from the file name
+    (``inspect.getmodule`` -- if a module read the same file earlier under another name, that one), otherwise the module in the middle of importing
+    (``self.name``, placed in ``sys.modules`` beforehand). Looking up by ``self.name`` alone, in a process that read the same file under the package name and then
+    re-read it from the path under another name (bake_plan.hy of the worker bytecode tool), built an empty record from a table that expansion does not consult, and the check
+    put a pass-through entry in the shared place (2026-10-11 atlas)."""
+    import inspect  # load only when Hy source is encountered (Hy's compile entry also loads it)
 
     try:
         module = inspect.getmodule(None, _filename=self.path)
-    except KeyError:  # Hy の口と同じ — 引く途中で sys.modules から消えた module は無いのと同じ
+    except KeyError:  # same as Hy's entry -- a module that vanished from sys.modules during the lookup is treated as absent
         module = None
     if module is None:
         module = sys.modules.get(self.name)
@@ -747,14 +747,14 @@ def _module_being_loaded(
 def _expansion_or(
     loader: importlib.machinery.SourceFileLoader, path: str, placed: ModuleType
 ) -> ModuleType:
-    """import の外の compile で展開が走る module — 置いた module placed より、Hy が file の名から引く読み込み済みの module
-    (:func:`_module_being_loaded`)が先。記録の囲みを、展開が引く表の module に開くため。"""
+    """The module in which expansion runs in a compile outside an import -- the loaded module Hy looks up from the file name (:func:`_module_being_loaded`) takes precedence over the placed module placed.
+    So that the recording context opens on the module of the table that expansion consults."""
     return _module_being_loaded(loader, path) or placed
 
 
 def _last_sources() -> dict[str, bytes]:
-    """この thread で最後に読んだ Hy の source の表(初めてなら作る)。"""
-    import threading  # 起動時に読まない
+    """The table of Hy sources last read in this thread (created if first time)."""
+    import threading  # not loaded at startup
 
     local = _source_reads.get("local")
     if not isinstance(local, threading.local):
@@ -763,8 +763,8 @@ def _last_sources() -> dict[str, bytes]:
 
 
 def _counts() -> dict[str, int]:
-    """この thread の compile の回数の表(初めてなら作る)。"""
-    import threading  # 起動時に読まない
+    """The table of compile counts for this thread (created if first time)."""
+    import threading  # not loaded at startup
 
     local = _compile_counts.get("local")
     if not isinstance(local, threading.local):
@@ -773,14 +773,14 @@ def _counts() -> dict[str, int]:
 
 
 def _hy_version() -> str:
-    """読み込み済みの Hy の版 — Hy を上げたら全部の Hy の module を compile し直すため(Hy が無ければ空)。"""
+    """The loaded Hy version -- so that raising Hy recompiles all Hy modules (empty if there is no Hy)."""
     hy = sys.modules.get("hy")
     version = None if hy is None else vars(hy).get("__version__")
     return version if isinstance(version, str) else ""
 
 
 def _check_hash_based_pycs() -> str:
-    """``--check-hash-based-pycs`` の値 — 標準の get_code が hash 方式の .pyc を検めるかを決める値を同じ所から読むため。"""
-    import _imp  # この値の唯一の定義元(標準の importlib._bootstrap_external も同じ所を読む)
+    """The value of ``--check-hash-based-pycs`` -- so the value that decides whether the standard get_code checks hash-based .pyc is read from the same place."""
+    import _imp  # the sole definition source of this value (the standard importlib._bootstrap_external reads the same place)
 
     return _imp.check_hash_based_pycs

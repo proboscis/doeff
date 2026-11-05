@@ -1,13 +1,13 @@
-"""doeff-hy が配る hy の部分の stub(src/hy-stubs)の失敗ケース。
+"""Failure cases for the stubs of the hy parts that doeff-hy ships (src/hy-stubs).
 
-hy は型の宣言を持たない。Hy の展開は keyword の literal と quote した form を `hy.models.Keyword(…)` などに compile し、
-doeff-hy-check はそれを読む module に `import hy.models` を置くので、前は新しい .hy の file ごとに必ず
-`Stub file not found for "hy.models"`(と "hy")が strict の赤で出ていた(書き手に直せない — agora の基点に 758 file)。
+hy has no type declarations. The Hy expansion compiles keyword literals and quoted forms into `hy.models.Keyword(...)` and the like,
+and doeff-hy-check puts `import hy.models` into the modules that read them, so previously every new .hy file always produced
+`Stub file not found for "hy.models"` (and "hy") as a strict red (the writer could not fix it — 758 files in agora's base).
 
-- hy の名と model を使う小さな .hy に、hy / hy.models の reportMissingTypeStubs も「型が分からない」の赤も出ない。
-- stub が宣言する名は実行時の hy に在る(宣言だけが先へ行かない)・stub は partial(宣言の無い下の module は hy の source)。
-- defmacro を書いた .hy に、展開の `hy.macros.macro('名')(…)` の「型が分からない」「hy の属性に無い」の赤が出ない(hy.macros の
-  stub macros.pyi・controllers/shared/intent/patrols.hy の 6 件)。
+- A small .hy using hy names and models produces neither the reportMissingTypeStubs for hy / hy.models nor the "type unknown" red.
+- The names the stub declares exist in the runtime hy (declarations do not run ahead), and the stub is partial (undeclared lower modules come from hy's source).
+- A .hy that writes defmacro produces neither the "type unknown" nor the "not an attribute of hy" red for the expansion's `hy.macros.macro('name')(...)` (hy.macros's
+  stub macros.pyi; 6 cases in controllers/shared/intent/patrols.hy).
 """
 
 import ast
@@ -23,9 +23,9 @@ import hy.macros
 import hy.models
 import pytest
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enables the Hy import hook
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 STUBS = Path(doeff_hy.__file__).parent.parent / "hy-stubs"
 
@@ -43,14 +43,14 @@ MODULE = """\
 
 MACRO_MODULE = """\
 (defmacro defpoint [#^ hy.models.Symbol name #^ hy.models.Object #* fields]
-  "名と欄から値を 1 つ置く。"
+  "Places one value from a name and fields."
   `(setv ~name [~@fields]))
 """
 
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """The result of running doeff-hy-check once (JSON diagnostics)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -89,7 +89,7 @@ def test_a_defmacro_file_has_no_unknown_hy_macro(tmp_path: Path) -> None:
 
 
 def _names_of(node: ast.stmt) -> tuple[str, ...]:
-    """stub の直下の文 1 つが宣言する名(再公開は `as` の名)。"""
+    """The name declared by one top-level statement of the stub (for a re-export, the `as` name)."""
     match node:
         case ast.ClassDef(name=name) | ast.FunctionDef(name=name) | ast.AnnAssign(target=ast.Name(id=name)):
             return (name,)
@@ -100,7 +100,7 @@ def _names_of(node: ast.stmt) -> tuple[str, ...]:
 
 
 def _declared(stub: Path) -> list[str]:
-    """stub の module の直下で宣言した公開の名(_ で始まる名は stub の中だけの型)。"""
+    """The public names declared at the top level of the stub module (names starting with _ are types only inside the stub)."""
     tree = ast.parse(stub.read_text(encoding="utf-8"))
     return [
         n for node in tree.body for n in _names_of(node) if not n.startswith("_") or n.startswith("__")
@@ -111,5 +111,5 @@ def test_the_stub_names_exist_in_hy() -> None:
     assert [n for n in _declared(STUBS / "__init__.pyi") if not hasattr(hy, n)] == []
     assert [n for n in _declared(STUBS / "models.pyi") if not hasattr(hy.models, n)] == []
     assert [n for n in _declared(STUBS / "macros.pyi") if not hasattr(hy.macros, n)] == []
-    # 宣言の無い下の module(hy.compiler など)は hy の source から読ませる。
+    # Lower modules without declarations (hy.compiler and the like) are read from hy's source.
     assert (STUBS / "py.typed").read_text(encoding="utf-8").strip() == "partial"

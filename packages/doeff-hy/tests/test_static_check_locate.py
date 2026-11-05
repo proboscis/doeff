@@ -1,12 +1,12 @@
-"""doeff-hy-check の位置の戻し(展開した Python の位置 → Hy の位置)の索引の検。
+"""Tests for the index of doeff-hy-check's position mapping (expanded Python position -> Hy position).
 
-locate は以前、診断ごとに展開の全文を行へ割り直し、全部の範囲を頭から調べていた(赤が 1,402 件の file で 26 秒)。今は展開ごとに
-1 度だけ索引(行 → その行に掛かる範囲)を作り、点の行に掛かる範囲だけを元の順で調べる。答えは全部の範囲を調べた時と同じでなければ
-ならない — 下の `naive` は前の locate の写しで、比べの元。
+locate used to re-split the whole expansion into lines for every diagnostic and examine all spans from the start (26 seconds for a file with 1,402 errors). Now it builds an index
+(line -> spans covering that line) once per expansion and examines only the spans covering the point's line, in the original order. The answer must be the same as when all spans are
+examined -- `naive` below is a copy of the previous locate, the baseline for comparison.
 
-- 入れ子・同じ範囲の重なり(後ろの範囲が選ばれる)・幅 0 の範囲(始まり = 点)・複数行の範囲・行の外の点・UTF-16 の列を、決まった
-  乱数で作った範囲と点の全部で比べる。
-- 失敗ケース: 範囲を始まりの行にだけ載せる索引(終わりの行まで載せない)は、複数行の範囲の後ろの行の点で答えが変わる。
+- Nesting, overlapping identical spans (the later span is chosen), zero-width spans (start = point), multi-line spans, points outside lines, and UTF-16 columns are compared over all spans and points built
+  with a fixed random seed.
+- Failure case: an index that puts a span only on its start line (not through its end line) changes the answer for points on later lines of a multi-line span.
 """
 
 import random
@@ -24,12 +24,12 @@ from doeff_hy._static_check import (
 )
 from doeff_hy_bytecode_guard._records import MacroRecord
 
-#: 位置の検は展開が使った macro を読まないので、空の記録を持たせる。
+#: The position tests do not read the macros used by the expansion, so give it an empty record.
 NOTHING_USED = MacroRecord("probe", (), (), (), (), ())
 
 
 def naive(projection: Projection, line: int, character: int) -> HyPosition:
-    """前の locate(全部の範囲を調べる)— 比べの元。"""
+    """The previous locate (examines all spans) -- the baseline for comparison."""
     lines = projection.text.split("\n")
     column = _utf16_to_index(lines[line], character) if line < len(lines) else character
     point = (line, column)
@@ -45,7 +45,7 @@ def naive(projection: Projection, line: int, character: int) -> HyPosition:
 
 
 def random_spans(chooser: random.Random, rows: int) -> Iterator[Span]:
-    """決まった乱数で、入れ子・交わり・幅 0・複数行の範囲と、同じ範囲の重なりを出す。"""
+    """With a fixed random seed, produce nested and crossing spans, zero-width and multi-line spans, and overlapping identical spans."""
     for number in range(chooser.randint(0, 60)):
         first, second = sorted(
             (
@@ -54,14 +54,14 @@ def random_spans(chooser: random.Random, rows: int) -> Iterator[Span]:
             )
         )
         if chooser.random() < 0.1:
-            second = first  # 幅 0 の範囲(始まり = 終わり)
+            second = first  # zero-width span (start = end)
         yield Span(first, second, number + 1, chooser.randint(1, 9))
         if chooser.random() < 0.15:
-            yield Span(first, second, number + 100, 1)  # 同じ範囲の重なり(後ろが選ばれる)
+            yield Span(first, second, number + 100, 1)  # overlapping identical span (the later is chosen)
 
 
 def random_projection(seed: int) -> Projection:
-    """決まった乱数で、入れ子の範囲・同じ範囲の重なり・幅 0 の範囲・複数行の範囲を持つ展開を作る。"""
+    """With a fixed random seed, build an expansion that has nested spans, overlapping identical spans, zero-width spans and multi-line spans."""
     chooser = random.Random(seed)
     rows = chooser.randint(1, 30)
     text = "\n".join(
@@ -92,7 +92,7 @@ def test_the_index_answers_the_same_as_scanning_every_span() -> None:
 
 
 def test_a_multi_line_span_is_found_on_its_last_line() -> None:
-    # 2 行目から 4 行目の 3 列まで掛かる範囲の中の、4 行目の点。内側の範囲は 1 行目だけ。
+    # A point on line 4, inside the span that runs from line 2 to column 3 of line 4. The inner span covers only line 1.
     projection = Projection(
         source=Path("probe.hy"),
         module="probe",
@@ -105,7 +105,7 @@ def test_a_multi_line_span_is_found_on_its_last_line() -> None:
 
 
 def test_an_index_that_lists_spans_only_on_their_first_line_answers_differently() -> None:
-    # 失敗ケース: 範囲を始まりの行にだけ載せた索引は、複数行の範囲の後ろの行で範囲を見落とし、答えが比べの元と変わる。
+    # Failure case: an index that puts a span only on its start line misses the span on a later line of a multi-line span, and the answer differs from the baseline.
     projection = Projection(
         source=Path("probe.hy"),
         module="probe",

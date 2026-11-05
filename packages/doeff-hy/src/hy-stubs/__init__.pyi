@@ -1,20 +1,19 @@
-"""hy の公開面の型(型検査のための宣言 — 実行時は hy を読む・doeff-hy が配る部分の stub)。
+"""Types for the public surface of hy (declarations for type checking — at runtime hy is read; a stub for the parts doeff-hy ships).
 
-hy は型の宣言(py.typed・stub)を持たないので、pyright strict は Hy の展開が必ず出す `import hy`・`import hy.models` に
-「Stub file not found」(reportMissingTypeStubs)を出していた — 書き手に直せない赤が .hy の file ごとに 1〜2 件。
-ここは hy の module の名前空間(`hy.<名>` で読める名)だけを宣言する。hy.models は models.pyi。
-宣言の無い下の module(hy.compiler・hy.macros・hy.reader など)は、この stub の印(py.typed の partial)により
-pyright が hy 本体の source から読む。
+hy has no type declarations (py.typed or stubs), so pyright strict reported "Stub file not found" (reportMissingTypeStubs) on the `import hy` and `import hy.models` that the Hy expansion always emits —
+1 to 2 reds per .hy file that the writer could not fix.
+This declares only the namespace of the hy module (names readable as `hy.<name>`). hy.models is in models.pyi.
+Undeclared lower modules (hy.compiler, hy.macros, hy.reader, and so on) are read by pyright from the hy source itself, thanks to this stub's mark (partial in py.typed).
 
-hy の __init__ は名を読まれた時に下の module から取る(_jit_imports)。ここの宣言はその先の関数の型。
+hy's __init__ fetches names from lower modules when they are read (_jit_imports). The declarations here are the types of the functions behind that.
 """
 
 from collections.abc import Callable
 from types import ModuleType
 from typing import TextIO, TypeVar, overload
 
-# `import hy` が実行時に読み込む下の module(hy/__init__ の hy.importer から連なる)— `import hy` だけで `hy.models.Symbol`・
-# `hy.macros.require` と読めるので、属性として再公開する。models は models.pyi・他は hy の source(partial)。
+# Lower modules that `import hy` loads at runtime (chained from hy.importer in hy/__init__) — `import hy` alone lets you read `hy.models.Symbol` and
+# `hy.macros.require`, so they are re-exported as attributes. models is models.pyi; the others are hy's source (partial).
 from hy import compat as compat
 from hy import compiler as compiler
 from hy import core as core
@@ -40,14 +39,14 @@ nickname: str
 last_version: str
 
 class _Importer:
-    """`hy.I` の型 — `(hy.I.math.sqrt 2)`・`(hy.I "math")` で module を import して返す。"""
+    """The type of `hy.I` — imports and returns a module with `(hy.I.math.sqrt 2)` or `(hy.I "math")`."""
 
     def __call__(self, module_name: str) -> ModuleType: ...
     def __getattr__(self, s: str) -> ModuleType: ...
 
 I: _Importer
 
-#: hy/pyops.hy(Hy の module — 演算子の関数)。
+#: hy/pyops.hy (a Hy module — operator functions).
 pyops: ModuleType
 
 def mangle(s: object) -> str: ...

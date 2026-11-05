@@ -1,4 +1,4 @@
-"""inspect.stack の軽い版(doeff_hy._light_stack)の契約。"""
+"""Contract of the light version of inspect.stack (doeff_hy._light_stack)."""
 import importlib.util
 import inspect
 import subprocess
@@ -17,7 +17,7 @@ _MODULE_PATH = Path(light_stack.__file__)
 def installed():
     light_stack.install()
     yield
-    light_stack.install()  # 他のテストのため、もとの状態(入った状態)に戻す
+    light_stack.install()  # restore the original state (installed) for other tests
 
 
 def test_importing_doeff_hy_installs_the_shim():
@@ -52,7 +52,7 @@ def test_non_hy_caller_gets_the_original_result(installed):
 
 def test_hy_caller_does_not_call_the_original(installed):
     def boom(context=1):
-        raise AssertionError("元の inspect.stack が呼ばれた")
+        raise AssertionError("the original inspect.stack was called")
 
     original = light_stack._original_stack
     light_stack._original_stack = boom

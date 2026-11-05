@@ -1,189 +1,189 @@
-# doeff-hy-check — Hy のコードを静的に型検査する
+# doeff-hy-check — static type checking for Hy code
 
-## 何のためか
+## Purpose
 
-Hy の source は pyright から見えないので、doeff + Hy のコードは静的な型検査が 1 つも効かなかった
-(2026-09-23 に agora-controllers の実験 branch `wt/doeff-worker-pod` で測定: わざと入れた間違いを、
-Python の DI 版は pyright で 7 種中 7 種、型を付けた Python の doeff 版は 10 種中 10 種捕まえたのに、
-Hy 版は静的に 0 種)。`doeff-hy-check` は Hy の source を本物の macro で展開して pyright に読ませ、
-赤を `.hy` の行で返す。
+Hy source is invisible to pyright, so no static type checking applied to doeff + Hy code
+(measured on 2026-09-23 on the agora-controllers experiment branch `wt/doeff-worker-pod`: of the deliberately injected mistakes,
+the Python DI version caught 7 of 7 with pyright, the typed Python doeff version caught 10 of 10,
+and the Hy version caught 0 statically). `doeff-hy-check` expands Hy source with the real macros, feeds the result to pyright,
+and reports the errors at `.hy` lines.
 
-## 使い方
+## Usage
 
 ```sh
-doeff-hy-check [PATH ...] --root <repo の根> [--import-root clients/hy] [--json]
-# 例(agora-controllers)
+doeff-hy-check [PATH ...] --root <repo root> [--import-root clients/hy] [--json]
+# example (agora-controllers)
 PYTHONPATH=.:clients/hy doeff-hy-check --root . --import-root clients/hy controllers/worker
 ```
 
-- `PATH` は `.hy` の file か dir。赤は `path:行:列 - error: 文言 (規則)` の形で出る。
-- 赤があれば exit 1、無ければ 0、道具として走れなければ 2。
-- pyright の設定は根の `pyrightconfig.json`(無ければ `pyproject.toml` の `[tool.pyright]`)を使う。
-  `reportDeprecated` だけを error に上げる(下の「文の位置の Program」のため)。
-- 実行する Python(`--python`、既定は道具を動かしている Python)の `sys.path` で import を解く。
-  `.hy` の依存は、検める file が import する根の下の `.hy` を道具が一緒に展開する。
+- `PATH` is a `.hy` file or a directory. Errors appear in the form `path:line:col - error: message (rule)`.
+- Exit 1 if there are errors, 0 if none, 2 if the tool could not run.
+- The pyright configuration is the root's `pyrightconfig.json` (or `[tool.pyright]` in `pyproject.toml` if absent).
+  Only `reportDeprecated` is raised to error (for "Program in statement position" below).
+- Imports are resolved with the `sys.path` of the Python that runs (`--python`; default is the Python running the tool).
+  For `.hy` dependencies, the tool expands the `.hy` files under the root that the checked file imports.
 
-## 運び(`--carry <file>`)— 入力の変わらない `.hy` を当て直さない
+## Carry (`--carry <file>`) — do not re-check `.hy` files whose inputs are unchanged
 
-repo 全体を毎回検める使い手(agora-controllers の日次の型の段 hy-type-trend — 範囲の `.hy` 約 3,000 本)のための近道。
-`--carry` に名指した file(運びの文書)に、file ごとの「入力の digest」と、その回の pyright の診断を残す。次の回は、入力が
-前の回と同じ `.hy` を pyright に渡さず、前の回の診断を運ぶ。運んだ答えは、全部を当てた答えと同じでなければならない
-(検 = `tests/test_static_check_carry.py` — 本物の pyright で、本体だけの変更・使う名の署名の変更・推移の型の変更・解けなかった
-import が解ける変更の各回を、全部当てた答えと比べる)。
+A shortcut for users who check a whole repo every time (the daily type stage of agora-controllers, hy-type-trend — about 3,000 `.hy` files in range).
+The file named by `--carry` (the carry document) keeps, per file, an "input digest" and the pyright diagnostics from that run. On the next run,
+`.hy` files whose inputs equal the previous run's are not passed to pyright; the previous diagnostics are carried over. The carried answer must equal
+the answer from checking everything
+(test = `tests/test_static_check_carry.py` — with real pyright, it compares against a full check for runs with a body-only change, a change to the signature of a used name, a change to a transitive type, and a change that makes an unresolved
+import resolvable).
 
-入力(`doeff_hy/_static_carry.py` の `InputGraph.inputs_of`)は 4 つ:
+The inputs (`InputGraph.inputs_of` in `doeff_hy/_static_carry.py`) are four:
 
-1. その file 自身 — `.hy` の source・展開した Python・位置の対応表。
-2. その file が使う名の宣言の表面と、表面が使う名の宣言(推移で全部)。表面 = pyright が使い手の側でその名の型を決めるのに読む
-   部分 — 型を全部宣言した関数は decorator と署名だけ(本体は「空か否か」の印)、class は全体(self の属性へ代入しない型付きの
-   method は署名だけ)、型を宣言しない関数・変数・import は文の全体。docstring と行の番号は入れない。module の段の import の文は
-   名ごとに分ける。`__all__` は名ごとに在否だけ(読めない形で書いた `__all__` と star import は文の全部)。名の宣言は根の下の展開と、`--python` の探し道のうち prefix の外の dir(editable で入れた doeff の checkout)の
-   `.py` / `.pyi` を読む — doeff の pin が上がっても、変わった宣言を使う `.hy` だけを当て直す。
-3. その file が import する module の解き先 — pyright と同じ探し道(根・extraPaths・typings・python の探し道・取り込む file の dir
-   からの後退)で当たりうる候補の file のうち、在る物の並び(新しい file が import の行き先を変えれば入力が変わる)と py.typed。
-4. 環境の指紋 — 運びの形の版・pyright の版・pyright の設定・python の版と探し道・prefix の下の dir(site-packages・標準ライブラリ)の
-   中身の名(dist-info の名 = 配布物の版)と `.pth` の中身・診断を作って `.hy` の位置へ戻す関数の source。どれかが替われば全部を当てる。
+1. The file itself — the `.hy` source, the expanded Python, and the position map.
+2. The declaration surface of the names the file uses, and the declarations of the names the surface uses (all transitively). Surface = the part
+   pyright reads to decide the name's type on the user's side — for a fully typed function, only the decorator and signature (the body is just an "empty or not" marker); for a class, the whole thing (for typed
+   methods that do not assign to self attributes, only the signature); for untyped functions, variables, and imports, the whole statement. Docstrings and line numbers are excluded. Module-level import statements are
+   split per name. For `__all__`, only per-name presence (an `__all__` written in an unreadable form, and star imports, use the whole statement). Name declarations are read from expansions under the root and from `.py` / `.pyi` in the `--python` search path that lie outside the prefix (the editable doeff checkout) —
+   so when the doeff pin is bumped, only the `.hy` files that use changed declarations are re-checked.
+3. Where the modules the file imports resolve — among the candidate files that could match under the same search path as pyright (root, extraPaths, typings, the python search path, and the retreat
+   from the importing file's directory), the list of those that exist (a new file that changes an import's destination changes the input), plus py.typed.
+4. The environment fingerprint — the carry format version, pyright version, pyright configuration, python version and search path, the names of the contents of directories under the prefix (site-packages, stdlib)
+   (dist-info names = distribution versions) and the contents of `.pth` files, and the source of the functions that produce diagnostics and map them back to `.hy` positions. If any of these changes, everything is re-checked.
 
-入力の中の path は、根を `@root`・根の親を `@parent` の印に替えて綴る — 日次の回は task ごとの作業 dir の下に根を置き、doeff の
-pin の checkout を根の隣に置く(回ごとに path が違う)ので、同じ木を別の置き場で測っても入力は同じになる。
+Paths inside inputs are spelled with the root replaced by the marker `@root` and the root's parent by `@parent` — the daily run puts the root under a per-task working directory and places the checkout of the doeff
+pin next to the root (so paths differ per run); thus measuring the same tree at a different location yields the same inputs.
 
-安全の側へ倒す所: 構文の誤りで読めない module を使う file は毎回当てる。module を値で使う参照と star import は module の全部の
-名に依る。運びの file が読めなければ名乗って全部を当てる(測りを止めない)。
+Where it errs on the safe side: files that use a module unreadable due to a syntax error are always checked. A reference that uses a module as a value, and star imports, depend on all of the module's
+names. If the carry file is unreadable, it says so and checks everything (the measurement is not halted).
 
-見直し(`--carry-refresh-runs N`・既定 12): 入力の変わらない file のうち、当てた回が一番古い ceil(本数 / N) 本を毎回当て直し、
-運んでいた診断と答えが違った file を数えて名乗る(運びの文書の `summary.refresh_mismatches`)— 入力の決めが見落とす依存があれば
-ここに出る。
+Review (`--carry-refresh-runs N`, default 12): among files with unchanged inputs, the ceil(count / N) files whose last check is oldest are re-checked every run, and the files whose answer differs from the carried
+diagnostics are counted and reported (`summary.refresh_mismatches` in the carry document) — a dependency the input definition overlooks shows up here.
 
-運びの文書の欄 `summary`(`run`・`checked`・`carried`・`reasons`・`refresh_mismatches`・`mismatched`)は使い手が読む欄で、
-ほかの欄は道具の物。
+The carry document's `summary` fields (`run`, `checked`, `carried`, `reasons`, `refresh_mismatches`, `mismatched`) are for users to read;
+the other fields belong to the tool.
 
-## 仕組み
+## How it works
 
-1. 各 `.hy` を Hy の compiler で展開する。doeff-hy の macro はこの時だけ「型検査のための展開」を出す
-   (切替 = `doeff_hy/_static_view.py`)。source の import は実行しない(macro の `require` だけは
-   Hy の compile の常として macro の module を import する)。
-2. 根の中身を symlink で映した一時の木に、展開した Python を `<名>.py` として置き、pyright を撃つ。
-   利用者の repo の file は変えない。
-3. pyright の診断の位置を、展開した Python の node → Hy の式の位置へ戻す。macro が合成した式は、
-   包んでいる利用者の式の位置を持つ(`doeff_hy/_positions.hy`・traceback の直しと同じ仕組み)。
+1. Each `.hy` is expanded with the Hy compiler. doeff-hy macros emit the "expansion for type checking" only at this time
+   (switch = `doeff_hy/_static_view.py`). Source imports are not executed (only a macro `require` imports the macro's module,
+   as is usual in Hy compilation).
+2. In a temporary tree that mirrors the root's contents via symlinks, the expanded Python is placed as `<name>.py` and pyright is run.
+   Files in the user's repo are not modified.
+3. Pyright diagnostic positions are mapped back from the expanded Python node to the Hy expression position. An expression synthesized by a macro
+   carries the position of the user's expression that wraps it (`doeff_hy/_positions.hy`, the same mechanism as the traceback fix).
 
-macro の展開が型のために持つ形:
+The shapes a macro expansion takes for types:
 
-| 展開 | 実行時の展開 | 型検査のための展開 |
+| Expansion | Runtime expansion | Expansion for type checking |
 |---|---|---|
-| `defk` / `deff` の引数 | `def f(x: 'int')`(`:pre` の型を文字列の注記に写す) | 同じ |
-| `deff` の戻り値 | `-> 'T'` | 同じ |
-| `defk` の戻り値 | 注記なし(生成器) | `-> 'T'`(`:post` の `(: % T)` を写す — この展開の defk は yield の無い普通の関数。自分を呼び直す defk でも pyright が答えの型を推論に頼らず読める。本体に yield を直に書いた defk・型が説明の文字列だけの `:post` には付けない) |
-| `defk` / `deff` の契約の `:tp [T]`(型の引数) | 型の引数を出さない(PEP 695 の綴りを実行時の code に出さない)。契約の isinstance では T を `object` に消す — `(of Program T object)` は `Program`・素の `(: % T)` は常に真(外側の型だけを確かめる決め #1790 と同じ向き・失敗の文は書いた型のまま) | `def f[T](body: 'Program[T, object]') -> 'T'`(答えが引数の型で決まる関数 — 本体の答えを返す包みなど — の総称。道具 `doeff_hy._static_stub` の .pyi にも載り、答えが Incomplete にならない)。`defp` は `:tp` を断る |
-| `defeffect` の `:tp [T]`(型の引数) | 型の引数を出さない(class の `__type_params__` は空 — T は module の `(val T (TypeVar "T"))` で読む) | `class E[T](_doeff_effect_base):`(PEP 695 — 欄 `(: program (get Program #(T object)))` と `:answer (\| T …)` が T を読む。道具 `doeff_hy._static_stub` の .pyi は `class E[T](_doeff_effect_base[T \| …])` で、使い手の `<-` の答えに program の答えの T が通る。`:tp` が無いと定義する module の検が欄の T を「この文脈で意味を持たない」の赤にする) |
-| module の `(val #^ 型 名前 式)` / `(var #^ 型 名前 式)`(型の注記) | `名前: 型 = 式`(型が式から決まらない値 — 空の dict・`re.compile` の結果 — に書く。注記は module の段で評価される) | 同じ。.pyi には `名前: 型` が載り、定数が Incomplete にならない。`lazy`・`session` は注記を受けない |
-| 本体の結果(`defk` / `deff`) | 関数の頭(`:pre` の確かめの直後)で `_contract_result: 'T'` を値なしで宣言し、出口(途中の `(return x)` と最後の式)では `(_contract_result,) = (値,)` と注記なしの要素 1 つのタプルで代入する(局所変数の注記は実行時に評価されない。どの出口の値も宣言の T と突き合わされ、本体の最後が `while True` で最後の代入に届かない形でも途中の出口が T で読まれる。タプルで代入するのは、Hy が match・if の値の一時の名を代入先へ移し替え、match が case の前に置く `= None` が T と突き合わされるのを避けるため — CPython はこの代入を素の代入と同じ bytecode にする) | 同じ |
-| 本体の結果(`do!` / `defp`) | `_contract_result: 'T' = 最後の式`(出口は最後の式 1 つ) | 同じ |
-| `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_perform(e)`(Python の `@effectful` の `x = perform(e)` と同じ形・yield を出さない — docs/24-effectful-perform.md) |
-| `(! e)` | `yield e`(open-bind を通す) | `_doeff_perform(e)`(`<-` と同じ — 注記の無い generator の yield の値は Unknown) |
-| defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/_static_types.pyi` の `do` |
-| `defhandler` の `(resume v)` / `(transfer v)` | `_doeff_Resume(k, v)` / `_doeff_Transfer(k, v)` | core の `_doeff_typed_resume(effect, k, v)` / `_doeff_typed_transfer`(v を effect の答えの型と突き合わせる)。どちらも書き手の同じ名の effect を隠さない `_doeff_` の別名(`doeff_hy/_expansion_names.py` が綴りと import の唯一の定義元) |
-| `defhandler` / `handle` の節を回す関数 | `(effect: '節の型の和', k)`(VM の絞り込みのための注記) | `(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun`(節の `isinstance` が型を絞る)。import は `_doeff_Pass` と `_doeff_WithHandlerType` だけ |
-| `defhandler` の本文を受ける関数 | `def __doeff_handler_fn__(__doeff_body__):` | `(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]`(本文の答えの型をそのまま運ぶ・型 = `static_types.pyi`・名の表 = `static_view.py` の `HANDLER_STATIC_NAMES`) |
-| `defhandler` の `session val` / `session var` | `(yield (_doeff_Get key))` の答え(`_doeff_Some` の中身)か初期化の値に名を束ねる(状態に置くのは初期化の値) | 名を初期化の値に束ねる(型は初期化の式の型 — Get の答えには型が無い)。キーの名は `:=` の `Put` が引くので残す。`:=`・旧い `set!` の `Put` / `Some` と初期化のキーの `session_key` は `_doeff_Put`・`_doeff_Some`・`_doeff_session_key` で引き、module の頭の補助の import(`static_view.py` の `SESSION_STATIC_IMPORTS` — 読む時だけ置く)から取る。handler ごとに import を出すと `:=` の無い handler の module で未使用の赤になっていた(再輸出の綴り `Some :as Some` は Hy が同じ名の別名を落とすので効かなかった)・`doeff_hy._session` の型は `session.pyi` |
-| `defeffect` の `:answer` | class の本体の `__doeff_answer__: ClassVar[object] = A \| B`(答えの型の式そのもの) | `__doeff_answer__: ClassVar[object] = cast(object, (A, B))`(union の要素の tuple — 値の位置の `A \| B` を pyright が型として評価して出す赤を避け、名を読むだけにする。記帳の setattr に置くと型検査から消え、答えの型のためだけの import が reportUnusedImport になっていた。`<-` の束ねの型は変えない) |
-| 節の終わり方の検め | `doeff_hy._clause_endings` から import | module の頭で型付きの `static_types` の同じ名を import(clause_endings は .hy なので型が見えない) |
-| 文の位置の式 | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
-| 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
-| `deftest` の関数 | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:`(fixture の名 → 型の表 = `static_view.py` の `DEFTEST_FIXTURE_TYPES`・型 = `static_types.pyi`。表に無い名は書き手の `#^ T 名` を写し、無ければ `object`)。decorator の pytest は module の頭の `_doeff_pytest` |
-| pytest の item の記録 | `doeff_hy._pytest_items.record_at_import(globals(), …)` | 記帳として外す(`static_check.without_bookkeeping`) |
-| `_doeff_` の別名の import(doeff-cluster の `defsystem` など、持ち主の package の定義の macro) | 系ごとに `import doeff_cluster._shared.intent.service_model as _doeff_cluster_service_model`・`import doeff_cluster._shared.entry.service_build as _doeff_cluster_service_build`・`import doeff_hy._declarations` | 同じ文を出し、module の直下の重ねを `static_check.without_bookkeeping` が最初の 1 つに畳む(畳む物 = 束ねる名が展開の名の頭 `_doeff_`(`expansion_names.PREFIX`)の `import <module> as _doeff_<名>` と根 `doeff_hy` の import — doeff-hy は持ち主の module の綴りを持たない)。系を 2 つ持つ module に、書き手の書いていない import の reportDuplicateImport を出さない。書き手が自分で重ねた import は畳まず赤のまま |
+| `defk` / `deff` parameters | `def f(x: 'int')` (maps the `:pre` types to string annotations) | same |
+| `deff` return value | `-> 'T'` | same |
+| `defk` return value | no annotation (generator) | `-> 'T'` (maps `(: % T)` of `:post` — a defk in this expansion is a plain function without yield. Even a defk that calls itself lets pyright read the answer type without relying on inference. Not attached to a defk that writes yield directly in its body, nor to a `:post` whose type is only a description string) |
+| `:tp [T]` (type parameters) in a `defk` / `deff` contract | emits no type parameters (the PEP 695 spelling does not appear in runtime code). In the contract's isinstance, T is erased to `object` — `(of Program T object)` becomes `Program`, and a bare `(: % T)` is always true (same direction as the rule #1790 that checks only the outer type; the failure message keeps the type as written) | `def f[T](body: 'Program[T, object]') -> 'T'` (generic for a function whose answer is determined by the argument type — e.g., a wrapper returning the body's answer. Also listed in the .pyi of the tool `doeff_hy._static_stub`, so the answer does not become Incomplete). `defp` rejects `:tp` |
+| `:tp [T]` (type parameters) of `defeffect` | emits no type parameters (the class's `__type_params__` is empty — T is read from the module's `(val T (TypeVar "T"))`) | `class E[T](_doeff_effect_base):` (PEP 695 — the field `(: program (get Program #(T object)))` and `:answer (\| T …)` read T. The .pyi of the tool `doeff_hy._static_stub` is `class E[T](_doeff_effect_base[T \| …])`, so the program's answer T flows into the user's `<-` answer. Without `:tp`, the check of the defining module flags the field's T as "has no meaning in this context") |
+| module-level `(val #^ type name expr)` / `(var #^ type name expr)` (type annotation) | `name: type = expr` (write it for values whose type is not determined by the expression — an empty dict, the result of `re.compile`. The annotation is evaluated at module level) | same. The .pyi gets `name: type`, so the constant does not become Incomplete. `lazy` and `session` do not accept annotations |
+| body result (`defk` / `deff`) | At the top of the function (right after the `:pre` check), `_contract_result: 'T'` is declared without a value; at exits (an early `(return x)` and the last expression) it is assigned as `(_contract_result,) = (value,)`, a one-element tuple without annotation (local variable annotations are not evaluated at runtime. Every exit value is checked against the declared T, and even when the body ends with `while True` and never reaches the last assignment, early exits are read as T. The tuple assignment is used so that Hy's relocation of the temporary names for match / if values to the assignment target avoids the `= None` that match places before the case being checked against T — CPython compiles this assignment to the same bytecode as a plain assignment) | same |
+| body result (`do!` / `defp`) | `_contract_result: 'T' = last expression` (the exit is the single last expression) | same |
+| `(<- x T e)` | `x = yield e` + isinstance check | `x: 'T' = _doeff_perform(e)` (same shape as Python's `@effectful` `x = perform(e)`; emits no yield — docs/24-effectful-perform.md) |
+| `(! e)` | `yield e` (goes through open-bind) | `_doeff_perform(e)` (same as `<-` — the yield value of an unannotated generator is Unknown) |
+| result of calling a defk | `doeff.do.do` | the `do` of `doeff_hy/_static_types.pyi`: the same type (core's `Expand[T, E]`) plus an overload for functions without yield |
+| `(resume v)` / `(transfer v)` in `defhandler` | `_doeff_Resume(k, v)` / `_doeff_Transfer(k, v)` | core's `_doeff_typed_resume(effect, k, v)` / `_doeff_typed_transfer` (checks v against the effect's answer type). Both are `_doeff_` aliases that do not shadow the writer's own same-named effects (`doeff_hy/_expansion_names.py` is the single source of truth for spelling and import) |
+| the function that runs the clauses of `defhandler` / `handle` | `(effect: 'union of clause types', k)` (annotation for VM narrowing) | `(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun` (the clause's `isinstance` narrows the type). Imports are only `_doeff_Pass` and `_doeff_WithHandlerType` |
+| the function that receives the body in `defhandler` | `def __doeff_handler_fn__(__doeff_body__):` | `(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]` (carries the body's answer type as is — types = `static_types.pyi`; name table = `HANDLER_STATIC_NAMES` in `static_view.py`) |
+| `session val` / `session var` in `defhandler` | binds the name to the answer of `(yield (_doeff_Get key))` (the content of `_doeff_Some`) or to the initial value (what is put into the state is the initial value) | binds the name to the initial value (the type is the type of the initial expression — the answer of Get has no type). The key name is kept because `Put` of `:=` looks it up. `Put` / `Some` of `:=` and the old `set!`, and `session_key` of the initial key, are referenced as `_doeff_Put`, `_doeff_Some`, `_doeff_session_key`, taken from the helper imports at the top of the module (`SESSION_STATIC_IMPORTS` in `static_view.py` — placed only when read). Emitting imports per handler caused an unused-import error in modules whose handlers have no `:=` (the re-export spelling `Some :as Some` did not work because Hy drops an alias with the same name). The types of `doeff_hy._session` are in `session.pyi` |
+| `:answer` of `defeffect` | in the class body, `__doeff_answer__: ClassVar[object] = A \| B` (the answer type expression itself) | `__doeff_answer__: ClassVar[object] = cast(object, (A, B))` (a tuple of the union's members — avoids the error pyright raises when it evaluates `A \| B` in value position as a type, and only reads the names. Putting it in the bookkeeping setattr made it vanish from type checking, and imports used only for the answer type became reportUnusedImport. The type of the `<-` binding is unchanged) |
+| check of how clauses end | imports from `doeff_hy._clause_endings` | imports the same names from the typed `static_types` at the top of the module (clause_endings is .hy, so its types are invisible) |
+| expression in statement position | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
+| attribute on a function | `setattr(f, '__doeff_body__', …)` | same |
+| function of `deftest` | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:` (fixture name → type table = `DEFTEST_FIXTURE_TYPES` in `static_view.py`; types = `static_types.pyi`. Names not in the table copy the writer's `#^ T name`, or `object` if absent). The decorator pytest is the module-head `_doeff_pytest` |
+| recording pytest items | `doeff_hy._pytest_items.record_at_import(globals(), …)` | removed as bookkeeping (`static_check.without_bookkeeping`) |
+| imports of `_doeff_` aliases (macros defined by the owning package, such as `defsystem` of doeff-cluster) | per system, `import doeff_cluster._shared.intent.service_model as _doeff_cluster_service_model`, `import doeff_cluster._shared.entry.service_build as _doeff_cluster_service_build`, `import doeff_hy._declarations` | emits the same statements, and `static_check.without_bookkeeping` collapses the module-level duplicates to the first one (what it collapses = `import <module> as _doeff_<name>` where the bound name starts with the expansion-name prefix `_doeff_` (`expansion_names.PREFIX`), and imports of the root `doeff_hy` — doeff-hy does not hold the owning module's spelling). A module with two systems does not get a reportDuplicateImport error for an import the writer did not write. Imports the writer duplicated themselves are not collapsed and stay as errors |
 
-## 捕まえるもの(2026-09-23 の測定)
+## What it catches (measured 2026-09-23)
 
-同じ 10 種(typed doeff の `pyright_mistakes_main.py` と同じ並び)+ 2 種を、agora-controllers の
-検体(`controllers/worker/lab/turns.hy` の `summarize`・effect `ReadShared` / `WriteShared` /
-`SleepSeconds` / `RemoteJob`・`defservice`)の上に Hy で書いて測った。基準の(間違いの無い)file は 0 件。
+The same 10 kinds (in the same order as `pyright_mistakes_main.py` of typed doeff) + 2 kinds were written in Hy on top of the agora-controllers
+sample (`summarize` in `controllers/worker/lab/turns.hy`, the effects `ReadShared` / `WriteShared` /
+`SleepSeconds` / `RemoteJob`, `defservice`) and measured. The baseline file (with no mistakes) gives 0 findings.
 
-| 間違い | 捕まえるか | 赤 |
+| Mistake | Caught? | Error |
 |---|---|---|
-| 1 task の引数の型違い `(summarize 1 [])` | 捕まえる | `reportArgumentType`(`conv` は `str`) |
-| 2 task の引数の不足 `(summarize conv)` | 捕まえる | `reportCallIssue` |
-| 3 戻り値の型違い(`:post [(: % int)]` で dict を返す) | 捕まえる | `reportAssignmentType`(最後の式の行) |
-| 4a `<-` の書き忘れ(値を使う) | 捕まえる | 使った所で `reportArgumentType` |
-| 4b `<-` の書き忘れ(文だけ) | 捕まえる | `doeff-hy-unperformed` |
-| 5 effect の引数の型違い `(SleepSeconds "1")` | 捕まえる | `reportArgumentType` |
-| 6 env の handler の不足(書く service を読みだけの env に置く) | 捕まえない | — |
-| 7 読みだけの job の書き(書く task を読みだけの env へ送る) | 捕まえない | — |
-| 8 宣言に無い effect を出す | Hy では書けない(effect の集合を宣言する仕組みが無い) | — |
-| 9 handler の答えの型違い `(resume "yes")` | effect が答えの型を宣言していれば捕まえる | `reportArgumentType`(`typed_transfer` の value) |
-| 追加: effect の答えの型違い `(<- rows int (ReadShared …))` | effect が答えの型を宣言していれば捕まえる | `reportAssignmentType` |
-| 追加: 束縛した defk の戻り値の型違い `(<- rows int (summarize …))` | 捕まえる | `reportAssignmentType` |
+| 1 wrong argument type for a task `(summarize 1 [])` | caught | `reportArgumentType` (`conv` is `str`) |
+| 2 missing argument for a task `(summarize conv)` | caught | `reportCallIssue` |
+| 3 wrong return type (returns a dict with `:post [(: % int)]`) | caught | `reportAssignmentType` (at the line of the last expression) |
+| 4a forgot `<-` (value is used) | caught | `reportArgumentType` where it is used |
+| 4b forgot `<-` (statement only) | caught | `doeff-hy-unperformed` |
+| 5 wrong argument type for an effect `(SleepSeconds "1")` | caught | `reportArgumentType` |
+| 6 missing env handler (putting a writing service into a read-only env) | not caught | — |
+| 7 write from a read-only job (sending a writing task to a read-only env) | not caught | — |
+| 8 emitting an effect not in the declaration | cannot be written in Hy (no mechanism to declare the effect set) | — |
+| 9 wrong handler answer type `(resume "yes")` | caught if the effect declares its answer type | `reportArgumentType` (the value of `typed_transfer`) |
+| extra: wrong effect answer type `(<- rows int (ReadShared …))` | caught if the effect declares its answer type | `reportAssignmentType` |
+| extra: wrong return type of a bound defk `(<- rows int (summarize …))` | caught | `reportAssignmentType` |
 
-「答えの型を宣言していれば」= effect を `(defclass [(dataclass :frozen True)] ReadShared [(get EffectBase dict)] …)`
-と書くこと(doeff core の `EffectBase[T]`・docs/23-static-typing.md)。agora-controllers の検体の effect は素の
-`EffectBase` なので、そのままでは 9 と追加の 1 種は捕まらない。同じ欄の effect に答えの型だけを足した写しで測ると
-両方とも捕まった。まとめ: 10 種のうち、そのままの検体で 6 種(1・2・3・4a・4b・5)、effect が答えの型を宣言すれば
-7 種(+9)。追加の 2 種も答えの型の宣言があれば両方。
+"If the answer type is declared" = writing the effect as `(defclass [(dataclass :frozen True)] ReadShared [(get EffectBase dict)] …)`
+(doeff core's `EffectBase[T]`, docs/23-static-typing.md). The effects in the agora-controllers sample are plain
+`EffectBase`, so as they are, 9 and the extra kind are not caught. Measuring a copy with the same fields where only the answer type was added,
+both were caught. Summary: of the 10 kinds, 6 (1, 2, 3, 4a, 4b, 5) are caught with the sample as is, and
+7 (+9) if the effect declares its answer type. Of the 2 extra kinds, both are caught if the answer type is declared.
 
-DI 版の README の 7 種(task の引数の型違い・引数の不足・戻り値の型違い・書き忘れ・時計の引数の型違い・
-guard の method 不足・読みだけの job の書き)に当てると、Hy で書ける 6 種のうち 5 種(書き忘れは 2 形とも)。
+Applied to the 7 kinds in the DI version's README (wrong task argument type, missing argument, wrong return type, forgotten `<-`, wrong clock argument type,
+missing guard method, write from a read-only job), 5 of the 6 that can be written in Hy are caught (forgotten `<-` in both forms).
 
-回帰の検査 = `packages/doeff-hy/tests/test_static_check.py`(自己完結の検体で、捕まえる 9 種と基準 0 件)。
+Regression test = `packages/doeff-hy/tests/test_static_check.py` (self-contained samples; 9 caught kinds and a 0-finding baseline).
 
-## 捕まえないもの・その直し先
+## What it does not catch, and where to fix it
 
-- **env と effect の集合**(6・7・8): service の宣言(`doeff_cluster._shared.intent.service_model.service`)の `:env` と `RemoteJob` の `:env` は import path
-  の文字列で、Program が出す effect の集合も Hy では宣言しない。doeff core の `@do` は
-  `Generator[E, Any, T]` の E を「出してよい effect」と読む(docs/23-static-typing.md)ので、残る仕事は
-  Hy 側に E を書く口を作ること(例: defk の契約に effect の並びを書き、型検査のための展開で生成器の
-  注記にし、`<-` を `yield from` にして呼んだ Program の E を足す)と、agora-controllers の
-  service の宣言の env を型で表すこと。
-- **答えの型を宣言していない effect**: `(<- x T (Eff …))` の突き合わせと handler の答えの突き合わせは、
-  effect が `EffectBase[T]` の T を持つ時だけ効く。宣言の無い effect の答えは Any として通す。
+- **The env and the effect set** (6, 7, 8): `:env` of a service declaration (`doeff_cluster._shared.intent.service_model.service`) and `:env` of `RemoteJob` are import-path
+  strings, and the set of effects a Program emits is also not declared in Hy. doeff core's `@do` reads the E of
+  `Generator[E, Any, T]` as "the effects it may emit" (docs/23-static-typing.md), so the remaining work is
+  to create a way to write E on the Hy side (for example, write the effect list in the defk contract, turn it into a generator
+  annotation in the expansion for type checking, make `<-` a `yield from`, and add the called Program's E) and to express the env of
+  agora-controllers' service declarations as types.
+- **Effects that do not declare an answer type**: the `(<- x T (Eff …))` check and the handler answer check
+  only work when the effect has the T of `EffectBase[T]`. The answer of an effect without a declaration passes as Any.
 
-## 宣言を持つ effect の `<-` と中継 `Perform`(ADR-DOE-CORE-EFFECTS-003)
+## `<-` on an effect with declarations, and the relay `Perform` (ADR-DOE-CORE-EFFECTS-003)
 
-- `(<- x e)` の x の型: 実行時の `<-` は :absent の答えを Absent に・:failure の答えを Raise に変えて呼び手のスコープで出すので、
-  束ねた名には来ない。defeffect が :absent / :failure を宣言した effect の class は、型検査の展開で
-  `def __iter__(self) -> BoundRun[<:answer の union から :absent と :failure の要素を除いた物>]` を持ち(declarations.hy の
-  `bound-answer-methods`・生成する stub も写す)、`_doeff_perform` の overload(static_types.pyi の `BoundRun`)で、`Program[T, E]` が `__iter__` から T を読む(`_doeff_perform` は 1 つの宣言のまま — overload にすると注記が合わない時の診断が reportCallIssue に変わる)。
-  effect の基底 `EffectBase[Answer]` の Answer は宣言の全部のまま(handler は 3 つとも値で答える — R4 — ので `typed_resume` は全部を受ける)。
-  手書きの `.pyi` は同じ method を宣言する(生成する stub と同じ形)。
-- 中継(宣言を開かずに effect を出し直す書き方): `(<- answer (Perform effect))`・`(! (Perform ask))` の 1 つに決める。`Perform[T]` は
-  答えに共変で、effect の union を受け(`Perform(ask)` の ask が `A | B` でよい)、`_doeff_perform` が
-  宣言の全部の答え T を返す。doeff-linter の中継の判定(DOEFF143・157 などが読む節の形 — `clause_shape`)も `(Perform effect)` を
-  `(yield effect)` と同じ出し直しとして読む。生の `(yield effect)` は defhandler の節の中でしか型が付かない(答えが `object`)ので使わない。
+- The type of x in `(<- x e)`: the runtime `<-` turns an :absent answer into Absent and a :failure answer into Raise and emits it in the caller's scope, so
+  they never reach the bound name. For an effect class whose defeffect declares :absent / :failure, the type-checking expansion gives
+  `def __iter__(self) -> BoundRun[<the :answer union minus the :absent and :failure members>]` (`bound-answer-methods` in declarations.hy;
+  the generated stub copies it too), and through the `_doeff_perform` overload (`BoundRun` in static_types.pyi), `Program[T, E]` reads T from `__iter__` (`_doeff_perform` stays a single declaration — making it an overload would change the diagnostic when the annotation does not match to reportCallIssue).
+  The Answer of the effect base `EffectBase[Answer]` stays the whole declaration (handlers answer with values in all three cases — R4 — so `typed_resume` accepts all of them).
+  A hand-written `.pyi` declares the same method (same shape as the generated stub).
+- Relay (re-emitting an effect without opening the declaration): fix on one form, `(<- answer (Perform effect))` or `(! (Perform ask))`. `Perform[T]` is
+  covariant in the answer and accepts a union of effects (the `ask` of `Perform(ask)` may be `A | B`), and `_doeff_perform` returns
+  the whole declared answer T. The doeff-linter's relay judgment (the clause shape read by DOEFF143, 157, etc. — `clause_shape`) also reads `(Perform effect)` as
+  the same re-emission as `(yield effect)`. A raw `(yield effect)` is typed only inside a defhandler clause (the answer is `object`), so do not use it.
 
-## 誤検出を出さないための決め
+## Rules for avoiding false positives
 
-- 文の位置の式(ADR-DOE-HY-001)は `macros.pyi` の deprecated の overload で捕まえる。pyright は型の
-  分からない(Unknown)値でも deprecated の overload を選ぶので、同じ位置の `reveal_type` が
-  Unknown / Any なら道具が赤を落とす(型の分からない値を「走らない Program」と決めつけない)。
-- 型が `object` / Unknown の値を `<-` しても赤にしない(`_doeff_perform` の最後の overload)。
-- `.hy` が実体の module(`doeff_hy.macros` など)の「source が見つからない」警告は落とし、
-  stub の無い `.hy` の module の「解決できない import」は赤でなく注記にする(その module の型は見えない)。
-- macro が同じ利用者の式を 2 か所へ写すと同じ赤が 2 回出るので、同じ位置・同じ文言の赤は 1 つにする(`(<- x e)` は `_doeff_perform(e)` になり e は 1 回だけ現れる)。
+- Expressions in statement position (ADR-DOE-HY-001) are caught by the deprecated overload in `macros.pyi`. Pyright picks the deprecated overload even for values of
+  unknown type (Unknown), so if `reveal_type` at the same position is
+  Unknown / Any, the tool drops the error (a value of unknown type is not presumed to be an "unrun Program").
+- `<-` on a value of type `object` / Unknown is not an error (the last overload of `_doeff_perform`).
+- The "source not found" warning for modules whose implementation is `.hy` (such as `doeff_hy.macros`) is dropped, and
+  the "unresolved import" of a `.hy` module without a stub becomes a note rather than an error (that module's types are invisible).
+- When a macro copies the same user expression to two places, the same error appears twice, so errors with the same position and message are merged into one (`(<- x e)` becomes `_doeff_perform(e)`, where e appears only once).
 
-agora-controllers の `controllers/worker` の 49 file(33 + 検体・テスト)で残った 45 件は、
-利用者のコードの型の穴(`#^ object` の緩い注記・`str | None` をそのまま渡す等)、repo の古い
-`typings/acp_client` の stub との食い違い(19 件)、Hy 本体の compile の形(内包表記の中の `setv` が
-`nonlocal` になる・2 件)だった。doeff-hy の展開に起因する誤検出は 0 件。
+Of the 49 files under `controllers/worker` in agora-controllers (33 + samples and tests), the 45 findings that remained were
+type holes in user code (loose `#^ object` annotations, passing `str | None` as is, etc.), mismatches with the repo's old
+`typings/acp_client` stub (19), and the shape of Hy's own compilation (`setv` inside a comprehension becomes
+`nonlocal`; 2). There were 0 false positives caused by doeff-hy's expansion.
 
-## 決めたこと(戻せる決定・2026-09-23・doeff-hy の作業係)
+## [removed]
 
-| 決めたこと | 理由 | 戻し方 |
+| Decision | Reason | How to revert |
 |---|---|---|
-| 型検査は「本物の macro で展開した Python」を pyright に読ませる | macro の意味の定義点を 1 つに保つ(別の投影器に macro の意味を書き写すと 2 つ目の定義点になる) | `static_check.py` を消す |
-| 型のための形は切替(`static_view`)の間だけ出す(`<-` の形・型付きの `do`・`typed_resume`) | 実行時の展開・bytecode の cache・実行の費用を変えない | `_static-view?` の枝を消す |
-| 引数と結果の変数の注記は実行時の展開にも付ける(文字列) | 2 つの展開の食い違いを減らす。文字列なので定義の時に評価せず、後で定義する名前の型でも落ちない | `_annotate-params` / `_result-binding` を元に戻す |
-| 関数への属性は `setattr` で付ける | 型検査器が関数の未知の属性への代入を赤にするため。実行時の意味は同じ | 元の `(setv (. f attr) …)` に戻す |
+| Type checking has pyright read "the Python expanded by the real macros" | keeps the definition point of macro semantics to one (copying macro semantics into a separate projector would create a second definition point) | delete `static_check.py` |
+| Type-only shapes are emitted only while the switch (`static_view`) is on (the `<-` shape, the typed `do`, `typed_resume`) | does not change the runtime expansion, the bytecode cache, or execution cost | remove the `_static-view?` branch |
+| Annotations of parameters and result variables are also attached in the runtime expansion (as strings) | reduces the divergence between the two expansions. Being strings, they are not evaluated at definition time and do not fail on types of names defined later | revert `_annotate-params` / `_result-binding` |
+| Attributes on functions are attached with `setattr` | type checkers flag assignment to an unknown attribute on a function as an error. Runtime semantics are the same | revert to the original `(setv (. f attr) …)` |
 
-## 束縛の所見(ADR-DOE-HY-006)
+## Binding findings (ADR-DOE-HY-006)
 
-型の診断とは別に、macro が展開の時に出す所見を同じ出力に並べる(`doeff_hy/_static_view.py` の `collect_findings` で集め、
-module の直下は source の一番外の並びを `binding_forms.module_findings` で読む)。
+Separately from type diagnostics, findings that macros emit at expansion time are listed in the same output (collected by `collect_findings` in `doeff_hy/_static_view.py`;
+for module level, the outermost sequence of the source is read by `binding_forms.module_findings`).
 
-| 規則 | 重さ | 何か |
+| Rule | Severity | What |
 |---|---|---|
-| `doeff-hy-setv` | warning | defk・deftest・defhandler の節の本体と module の直下の setv(名前を束縛する物)— val か var を使う |
-| `doeff-hy-rebind` | error | 旧い書き方どうしの同じ名前の束縛し直し(for の変数と互いに排他な枝は数えない)・module の直下の val の名前の setv・効かない module の直下の `(:= …)` |
-| `doeff-hy-legacy-lazy` | warning | defhandler の旧い lazy / lazy-val / lazy-var / set!(session val / session var / := へ移す) |
+| `doeff-hy-setv` | warning | setv (which binds a name) in the bodies of defk, deftest, and defhandler clauses and at module level — use val or var |
+| `doeff-hy-rebind` | error | rebinding the same name among old-style bindings (a for variable and mutually exclusive branches are not counted), setv of a module-level val's name, and a `(:= …)` at module level that has no effect |
+| `doeff-hy-legacy-lazy` | warning | old lazy / lazy-val / lazy-var / set! in defhandler (migrate to session val / session var / :=) |
 
-`doeff-hy-rebind` は束縛し直しの強制の 1 段目で、各 repo の本線で 0 件になってから展開の誤りへ切り替える(設計の記録
-`docs/design/defk-val-var-lazy/design.md` §8.3)。
+`doeff-hy-rebind` is the first stage of enforcing against rebinding; once it reaches 0 findings on each repo's mainline, it will switch to an expansion error (design record
+`docs/design/defk-val-var-lazy/design.md` §8.3).

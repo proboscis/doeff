@@ -1,15 +1,15 @@
-"""自分を呼び直す defk の答えの型(#2279 / #2291 の対)の失敗ケース。
+"""Failure cases for the answer type of a defk that calls itself (the pair #2279 / #2291).
 
-型検査のための展開の defk は `<-` と `(! …)` が `_doeff_perform` になり本体に yield が無い普通の関数で、`do` の型
-(static_types.pyi)が答えを `Expand[T, Never]` にする。前は関数の返り値に注記が無く、pyright が本体から答えの型を
-推していた。自分を呼び直す defk(行ごとに判断を呼んで列を組む再帰)では、推論の途中の自分の呼びが Unknown になり、
-呼び直しの答えを束ねた名と関数の返り値に strict の reportUnknown* の赤が出た(書き手に直せない赤 — #2244 で cc1-w30 が
-実測)。展開が契約の `(: % T)` の T を返り値の注記に写せば:
+The type-check expansion of defk is an ordinary function where `<-` and `(! ...)` become `_doeff_perform` and the body has no yield, and the type of `do`
+(static_types.pyi) makes the answer `Expand[T, Never]`. Previously the function return had no annotation, and pyright inferred the answer type from the body.
+In a self-calling defk (recursion that builds a sequence by calling a judgment per line), the self-call in the middle of inference became Unknown,
+and strict reportUnknown* reds appeared on the name bound to the recursive answer and on the function return (reds the writer cannot fix - measured by cc1-w30 in
+#2244). If the expansion copies the T of the contract `(: % T)` to the return annotation:
 
-- strict で、呼び直しの答えを名に束ねる再帰と、溜めを引数で運ぶ再帰の検体に赤が 0 件。
-- 答えの型は逃げていない: 本体の中の呼び直しの答え(tuple)に数を足せば型の取り違えで赤。
-- 契約の型が説明の文字列だけの `(: % "…")` の再帰は、写す型が無いので今までどおり(Unknown の赤が残る)。
-- 実行時の展開は返り値に注記しない。本体に yield を直に書いた defk は生成器なので、型検査の展開でも注記しない。
+- Under strict, there are 0 reds on the specimens of recursion that binds the recursive answer to a name and of recursion that carries an accumulator in an argument.
+- The answer type is not lost: adding a number to the recursive answer (a tuple) in the body is a red for a type mismatch.
+- Recursion whose contract type is only a descriptive string `(: % "...")` has no type to copy, so it is as before (the Unknown reds remain).
+- The runtime expansion does not annotate the return. A defk that writes yield directly in the body is a generator, so the type-check expansion does not annotate it either.
 """
 
 import ast
@@ -23,7 +23,7 @@ from pathlib import Path
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 PROBE = """\
 (require doeff-hy.macros [defk val <-])
@@ -59,7 +59,7 @@ DESCRIBED = """\
 (require doeff-hy.macros [defk val])
 
 (defk depth [n]
-  {:pre [(: n int)] :post [(: % "呼び直しの深さ")]}
+  {:pre [(: n int)] :post [(: % "depth of the recursion")]}
   (if (<= n 0)
       0
       (do
@@ -91,8 +91,8 @@ def test_recursive_defk_has_no_strict_error(tmp_path: Path) -> None:
 
 @needs_pyright
 def test_recursive_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
-    # 本体の中の呼び直しの答え rest は tuple[str, ...] と読めるので、1 を足すと型の取り違えの赤
-    # — 返り値の注記が答えを Any に逃がしていないことの検(Any なら赤にならない)。
+    # The recursive answer rest in the body reads as tuple[str, ...], so adding 1 is a type-mismatch red
+    # - a check that the return annotation does not let the answer escape to Any (with Any there would be no red).
     text = PROBE.replace("(+ #(head) rest)", "(+ #(head) (+ rest 1))")
     errors = _check(tmp_path, text)
     assert ("reportOperatorIssue", _line_of(text, "(+ rest 1)")) in [
@@ -102,14 +102,14 @@ def test_recursive_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
 
 @needs_pyright
 def test_recursion_with_a_described_answer_keeps_the_unknown(tmp_path: Path) -> None:
-    # 契約の型が説明の文字列だけなら写す型が無い — 呼び直しの答えを束ねた名は今までどおり Unknown の赤。
+    # If the contract type is only a descriptive string there is no type to copy - the name bound to the recursive answer is an Unknown red as before.
     errors = _check(tmp_path, DESCRIBED)
     below = _line_of(DESCRIBED, "(val below")
     assert [d for d in errors if d["line"] == below and str(d["rule"]).startswith("reportUnknown")], errors
 
 
 def _expand(source: str) -> str:
-    # doeff_hy の import が Hy の importer と macro を用意する(副作用のための import)
+    # importing doeff_hy prepares the Hy importer and macros (an import for its side effects)
     importlib.import_module("doeff_hy")
     return ast.unparse(hy.compiler.hy_compile(hy.read_many(source), "__main__"))
 
@@ -132,11 +132,11 @@ def test_only_the_static_expansion_of_a_yield_free_defk_annotates_the_return() -
     with static_view():
         static = _expand(source)
         yielding = _expand(YIELDING)
-    # 型検査のための展開: 契約の (: % T) の T が返り値の注記になる(文字列の注記 — 定義の時に評価しない)
+    # Type-check expansion: the T of the contract (: % T) becomes the return annotation (a string annotation - not evaluated at definition time)
     assert "def labels_of(items: 'tuple[int, ...]') -> 'tuple[str, ...]':" in static, static
     assert "def label_of(n: 'int') -> 'str':" in static, static
-    # 実行時の defk は生成器なので返り値に注記しない
+    # The runtime defk is a generator, so the return is not annotated
     assert "def labels_of(items: 'tuple[int, ...]'):" in runtime, runtime
     assert "-> 'tuple[str, ...]'" not in runtime
-    # 本体に yield を直に書いた defk は型検査の展開でも生成器 — 返り値に T を書かない
+    # A defk with yield written directly in the body is a generator in the type-check expansion too - T is not written on the return
     assert "def raw_step(n: 'int'):" in yielding, yielding

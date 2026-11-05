@@ -1,11 +1,11 @@
-"""doeff-hy-check(doeff_hy/_static_check.py)が、1 file だけを検める時も、import する file の dir の隣の .hy を展開して
-pyright に解かせること。
+"""Even when doeff-hy-check (doeff_hy/_static_check.py) checks only one file, it must expand the .hy next to the importing file's dir and
+have pyright resolve it.
 
-script を `hy scripts/x.hy` で撃つと scripts/ が探し道の先頭に入るので、script は隣の module を top-level の名で読む
-(`(import e2e_wire [...])`)。pyright もこの形を「import する file の dir から根へ向けて親の dir を探す」で解く。前の依存の
-展開は import の根(repo の根と extraPaths)の下だけを探したので、1 file だけを検めると隣の .hy が展開されず、
-`Import "b" could not be resolved` と、そこから来る Unknown の赤(`Type of "helper" is unknown`・`Argument type is unknown`)が
-出た。dir ごと検めると隣の .hy も検める file なので出なかった — 同じ file の答えが検め方で分かれた。
+When a script is run with `hy scripts/x.hy`, scripts/ goes to the head of the search path, so the script reads a sibling module by a top-level name
+(`(import e2e_wire [...])`). pyright also resolves this form by "searching parent dirs from the importing file's dir up to the root". The earlier dependency
+expansion searched only under the import roots (the repo root and extraPaths), so checking a single file did not expand the sibling .hy, and
+`Import "b" could not be resolved` and the resulting Unknown errors (`Type of "helper" is unknown`, `Argument type is unknown`) were
+reported. Checking a whole dir did not show them because the sibling .hy was also a file to check -- the same file got different answers depending on how it was checked.
 """
 
 import contextlib
@@ -18,35 +18,35 @@ import pytest
 
 from doeff_hy._static_check import main
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
-# 隣の module(script が top-level の名で読む側)。
+# The sibling module (the side the script reads by a top-level name).
 SIBLING = """(require doeff-hy.macros [defk])
 
 (defk helper [n]
   {:pre [(: n int)] :post [(: % int)]}
-  "倍にするため。"
+  "To double it."
   (* n 2))
 """
 
-# 隣の module から名を import し、その関数を 2 度呼ぶ script(#2898 の 2 つの形 — 新しい名の import と呼び出しの追加)。
+# A script that imports a name from the sibling module and calls the function twice (the two forms of #2898 -- importing a new name and adding a call).
 SCRIPT = """(require doeff-hy.macros [defk <-])
 (import b [helper])
 
 (defk twice [n]
   {:pre [(: n int)] :post [(: % int)]}
-  "2 度倍にするため。"
+  "To double it twice."
   (<- once (helper n))
   (<- again (helper once))
   again)
 """
 
-# 標準ライブラリと同じ名の隣の .hy(pyright は標準ライブラリを先に解く — 隣を探すのは解けない時だけ)。
+# A sibling .hy with the same name as a standard library module (pyright resolves the standard library first -- it looks at the sibling only when that fails).
 SHADOW = """(require doeff-hy.macros [defk])
 
 (defk dumps [n]
   {:pre [(: n int)] :post [(: % int)]}
-  "標準ライブラリと同じ名の隣の module の関数(読まれてはいけない)。"
+  "A function of the sibling module with the same name as a standard library module (must not be read)."
   n)
 """
 
@@ -55,13 +55,13 @@ USES_STDLIB = """(require doeff-hy.macros [defk])
 
 (defk shown [n]
   {:pre [(: n int)] :post [(: % str)]}
-  "数を JSON の文字列にするため。"
+  "To turn a number into a JSON string."
   (json.dumps n))
 """
 
 
 def _checked(root: Path, *paths: str) -> list[dict[str, object]]:
-    """root の下の paths(file か dir)を strict で検め、--json の答えを読むため。"""
+    """Check paths (files or dirs) under root with strict and read the --json answer."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         main(["--root", str(root), "--strict", "--json", "--no-cache", *(str(root / p) for p in paths)])
@@ -69,7 +69,7 @@ def _checked(root: Path, *paths: str) -> list[dict[str, object]]:
 
 
 def _errors_of(diagnostics: list[dict[str, object]], path: str) -> list[tuple[object, object, object]]:
-    """1 つの file の赤を (行・規則・文言) で並べるため(検め方の違う 2 つの答えを比べる)。"""
+    """List the errors of one file as (line, rule, message) -- to compare two answers obtained in different ways of checking."""
     return sorted(
         (d["line"], d["rule"], d["message"])
         for d in diagnostics
@@ -78,7 +78,7 @@ def _errors_of(diagnostics: list[dict[str, object]], path: str) -> list[tuple[ob
 
 
 def _repo(root: Path, files: dict[str, str]) -> Path:
-    """strict の pyright の設定と、files(根からの相対 path → 中身)を置いた検体の根を作るため。"""
+    """Build the root of a subject holding the strict pyright config and files (path relative to the root -> content)."""
     (root / "pyproject.toml").write_text('[tool.pyright]\ntypeCheckingMode = "strict"\n', encoding="utf-8")
     for relative, text in files.items():
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +93,7 @@ def test_search_dirs_put_the_import_roots_first_then_the_file_dir_up_to_the_root
     extra = root / "clients" / "hy"
     source = root / "scripts" / "deep" / "x.hy"
     assert search_dirs(root, [root, extra], source) == [root, extra, root / "scripts" / "deep", root / "scripts"]
-    # 根の直下の file は根だけ(同じ dir を 2 度探さない)・根の外へは上がらない。
+    # A file directly under the root searches only the root (the same dir is not searched twice); it does not go above the root.
     assert search_dirs(root, [root], root / "x.hy") == [root]
 
 

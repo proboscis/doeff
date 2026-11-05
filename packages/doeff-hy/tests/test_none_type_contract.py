@@ -1,7 +1,7 @@
-"""契約 `(: % None)` と型付き束縛 `(<- x None e)` が実行時に通ること。
+"""The contract `(: % None)` and the typed binding `(<- x None e)` must pass at runtime.
 
-型の注記の `None` は isinstance に渡せない(`TypeError: isinstance() arg 2 must be a type`)。
-契約と `<-` の型付き束縛は `doeff_hy._type_forms.runtime_type_form` の 1 点で `None.__class__` へ写す(名前を引かない形 — #1825・#1845)。
+A type annotation `None` cannot be passed to isinstance (`TypeError: isinstance() arg 2 must be a type`).
+Contracts and the typed binding of `<-` map it to `None.__class__` at the single point `doeff_hy._type_forms.runtime_type_form` (a form that does not look up a name — #1825, #1845).
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ SOURCE = """\
   {:pre [(: x int)] :post [(: % None)]}
   x)
 
-;; 局所の名 type を持つ関数(展開が素の名 type を呼ぶと隠されて TypeError)
+;; A function with a local name type (if the expansion called the bare name type it would be shadowed and raise TypeError)
 (defk shadowed-union [x]
   {:pre [(: x (| int None))] :post [(: % (| str None))]}
   (setv type "kind")
@@ -65,7 +65,7 @@ SOURCE = """\
 
 @pytest.fixture(scope="module")
 def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - registers the Hy import hook
 
     root: Path = tmp_path_factory.mktemp("doeff_hy_none_contract")
     (root / "none_contract_probe.hy").write_text(SOURCE, encoding="utf-8")
@@ -80,14 +80,14 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
 
 
 def _run(program: object) -> object:
-    """読み込んだ Hy の module の Program を走らせる(module の属性は型の上では object なので Program に絞る)。"""
+    """Run the Program of the loaded Hy module (a module attribute is object as far as types go, so narrow it to Program)."""
     from doeff import Program, run
 
     match program:
         case Program():
             return run(program)
         case _:
-            raise TypeError(f"Program でない値を走らせようとした: {program!r}")
+            raise TypeError(f"tried to run a value that is not a Program: {program!r}")
 
 
 def test_none_return_contract_accepts_none(mod: ModuleType) -> None:
@@ -118,24 +118,24 @@ def test_none_return_contract_still_rejects_other_values(mod: ModuleType) -> Non
 
 
 def test_none_contract_expands_without_a_runtime_name_lookup() -> None:
-    """契約の None の写しが実行時の名前の解決(hy.I → hy.__getattr__ → slashes2dots)を通らない。
+    """The contract's None mapping does not go through runtime name resolution (hy.I -> hy.__getattr__ -> slashes2dots).
 
-    以前の `hy.I.types.NoneType` は確かめのたびに名前を変換し直していた。展開した Python に `hy.I` が残らず、
-    写しが `None.__class__` であることを確かめる。
+    The earlier `hy.I.types.NoneType` converted the name again at every check. Check that no `hy.I` remains in the expanded Python and
+    that the mapping is `None.__class__`.
     """
     import ast
 
     import hy
     from hy.compiler import hy_compile
 
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - registers the Hy import hook
 
     compiled = hy_compile(hy.read_many(
         "(require doeff-hy.macros [deff])\n"
         "(deff pure-none [x] {:pre [(: x int)] :post [(: % None)]} None)\n"
         "(deff pure-optional [x] {:pre [(: x #(int None))] :post [(: % #(int None))]} x)\n"
     ), ModuleType("none_contract_expansion_probe"))
-    # hy_compile は get_expr を渡さない時 Module だけを返す(型の上は組との和)— 組の形は呼ばない形なので止める。
+    # hy_compile returns only a Module when get_expr is not passed (a union with a tuple as far as types go) — the tuple shape is a form we do not call, so stop on it.
     assert isinstance(compiled, ast.Module), compiled
     python = ast.unparse(compiled)
     assert "hy.I" not in python

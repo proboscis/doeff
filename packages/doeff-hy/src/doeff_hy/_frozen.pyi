@@ -1,19 +1,19 @@
-"""frozen.hy の公開面の型(型検査のための宣言 — 実行時は frozen.hy を読む)。
+"""Types for the public surface of frozen.hy (declarations for type checking — at runtime frozen.hy is read).
 
-frozen.hy は Hy の module なので、pyright は中を読めず、`FrozenMap` と凍らせる関数が全部 Unknown になる(FrozenMap を返す
-定義の答え・FrozenMap を欄に持つ値の読みに、書き手に直せない reportUnknown* が出る)。ここで型を宣言する。
+frozen.hy is a Hy module, so pyright cannot read inside it, and `FrozenMap` and the freezing functions all become Unknown (definitions whose answer returns a FrozenMap and
+reads of values holding a FrozenMap in a field get reportUnknown* that the writer cannot fix). The types are declared here.
 
-- FrozenMap は文字列の鍵 → 値 V の変えられない写像。実装は `Mapping[str, V]` の部分型(鍵の型は文字列に決まっていて、
-  型引数は値の型 V の 1 つ — `(get FrozenMap TableDecl)` の形)。型引数を書かない `FrozenMap` は FrozenMap[object]
-  (中の値を問わない写像 — 実装の注記の多くがこの形)。変えられない写像なので値の型について共変
-  (FrozenMap[int] は FrozenMap[object] として渡せる — Mapping と同じ)。
-- freeze-json-text は JSON の文字列を読んで深く凍らせる。答えは常に FrozenJson(json.loads の答えの Any を、読む所で型の付いた
-  JSON に決める)。
-- freeze-json / thaw-json は JSON の値を深く凍らせる・戻す。JSON の値(JsonIn)を受けた時の答えは型の付いた JSON
-  (凍らせる = FrozenJson・戻す = ThawedJson)で、写像の中身の型が消えない。JSON でない値は実装が
-  そのまま返すので、その時の答えは object(実行の振る舞いは変えない — 宣言だけ)。
-- frozen-json-object は写像を深く凍らせた FrozenMap。JSON の写像を受けた時の中身は FrozenJson。
-- frozen-map-of は写像を浅く写し取る(中の値はそのまま — 写像の値の型を運ぶ)。写像でない値は実行時に TypeError。
+- FrozenMap is an immutable mapping from string keys to values V. The implementation is a subtype of `Mapping[str, V]` (the key type is fixed to string,
+  and there is one type argument, the value type V — in the form `(get FrozenMap TableDecl)`). A `FrozenMap` written without a type argument is FrozenMap[object]
+  (a mapping regardless of its values — most annotations in the implementation take this form). Being an immutable mapping, it is covariant in the value type
+  (FrozenMap[int] can be passed as FrozenMap[object] — the same as Mapping).
+- freeze-json-text reads a JSON string and freezes it deeply. The answer is always FrozenJson (the Any answer of json.loads is fixed to typed
+  JSON at the point of reading).
+- freeze-json / thaw-json deeply freeze / restore a JSON value. When given a JSON value (JsonIn), the answer is typed JSON
+  (freezing = FrozenJson, restoring = ThawedJson), so the types of the mapping contents are not lost. A non-JSON value is
+  returned as is by the implementation, so the answer then is object (runtime behavior is unchanged — declaration only).
+- frozen-json-object is a FrozenMap with the mapping deeply frozen. When given a JSON mapping, its contents are FrozenJson.
+- frozen-map-of copies a mapping shallowly (the inner values stay as they are — it carries the value type of the mapping). A non-mapping value raises TypeError at runtime.
 """
 
 from collections.abc import ItemsView, Iterable, Iterator, Mapping, Sequence, ValuesView
@@ -25,7 +25,7 @@ _V = TypeVar("_V", covariant=True, default=object)
 _W = TypeVar("_W")
 
 class FrozenMap(Mapping[str, _V]):
-    """文字列の鍵 → 値の変えられない写像(作る時に写し取り、以後は変えられない)。"""
+    """An immutable mapping from string keys to values (copied at construction, immutable afterwards)."""
 
     def __init__(self, source: Mapping[str, _V] | Iterable[tuple[str, _V]] | None = None) -> None: ...
     def __getitem__(self, key: str) -> _V: ...
@@ -36,11 +36,11 @@ class FrozenMap(Mapping[str, _V]):
     def __hash__(self) -> int: ...
     def updated(self, changes: Mapping[str, _W]) -> FrozenMap[_V | _W]: ...
 
-#: freeze-json が受ける JSON の値(写像 = 文字列の鍵・列 = list / tuple・葉)。
+#: The JSON value accepted by freeze-json (mapping = string keys, sequence = list / tuple, leaf).
 JsonIn: TypeAlias = Mapping[str, JsonIn] | Sequence[JsonIn] | str | int | float | bool | None
-#: freeze-json の答え: 写像は FrozenMap・列は tuple に深く凍った JSON の値。
+#: The answer of freeze-json: a JSON value deeply frozen, with mappings as FrozenMap and sequences as tuple.
 FrozenJson: TypeAlias = FrozenMap[FrozenJson] | tuple[FrozenJson, ...] | str | int | float | bool | None
-#: thaw-json の答え: json.dumps が受ける dict / list の JSON の値。
+#: The answer of thaw-json: a JSON value of dict / list that json.dumps accepts.
 ThawedJson: TypeAlias = dict[str, ThawedJson] | list[ThawedJson] | str | int | float | bool | None
 
 @overload

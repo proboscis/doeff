@@ -1,50 +1,50 @@
-"""doeff-hy の置き場のうち環境変数が名指す物 — この package で環境を読む module はここだけ。
+"""The doeff-hy places that environment variables name -- the only module in this package that reads the environment.
 
-doeff-hy-check の cache の置き場(と pyright の thread の数)は、検査の道具(CLI・pytest の収集)がどの Program よりも前に決めるので、
-Ask ではなく環境変数で受ける。この module は読むだけ — 関数は 1 つの変数の素の値(か XDG の cache の根)を返し、
-どの置き場・上限を使うかは呼び手が決める。読みは os.environ を直に読まず、設定の Ask を環境変数から答える foundation の答え手
-env_var_ask の下で問う(環境変数の読みは foundation の handler の中だけ)。
-機体の検の枠の正本が名指して読む変数と、名乗りに足す会話の id(doeff_hy._check_slot)も同じ訳でここで読む。
+The doeff-hy-check cache location (and the pyright thread count) is decided by the checking tools (CLI, pytest collection) before any Program,
+so it is received through environment variables rather than Ask. This module only reads -- each function returns the raw value of one variable (or the XDG cache root),
+and the caller decides which place or limit to use. Reads do not touch os.environ directly; they ask under env_var_ask, the foundation handler that answers configuration Asks from environment variables
+(environment reads happen only inside foundation handlers).
+The variables that the authoritative source of the machine's check slot names and reads, and the conversation id added to the claimant name (doeff_hy._check_slot), are read here for the same reason.
 """
 
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
-#: doeff-hy-check が撃つ pyright の thread の数(pyright の --threads)を呼び手ごとに替える環境変数(値の判じは
+#: Environment variable that varies, per caller, the number of pyright threads doeff-hy-check launches (pyright's --threads) (value judged by
 #: doeff_hy._static_check.pyright_threads)。
 PYRIGHT_THREADS_ENV = "DOEFF_HY_CHECK_PYRIGHT_THREADS"
 
-#: agora が会話の process に渡す会話の id — doeff-hy-check が機体の検の枠の保持者の名乗りに足す(doeff_hy._check_slot)。
+#: The conversation id agora passes to a conversation's process -- doeff-hy-check adds it to the claimant name of the machine's check slot (doeff_hy._check_slot).
 CONVERSATION_ENV = "AGORA_CONVERSATION_ID"
 
 
 def cache_home() -> Path:
-    """XDG の cache の根($XDG_CACHE_HOME、無ければ ~/.cache)— 本物の答え手の下の ReadEnvironment で読む。"""
+    """The XDG cache root ($XDG_CACHE_HOME, else ~/.cache) -- read with ReadEnvironment under the real handler."""
     return Path(_read("XDG_CACHE_HOME") or Path.home() / ".cache")
 
 
 def check_cache_setting() -> str | None:
-    """$DOEFF_HY_CHECK_CACHE の素の値(doeff-hy-check の展開の保存先の dir)— 無い・空なら None。日次の検証のように HOME を
-    走りごとに替える呼び手が、走りをまたいで残る dir を名指すため。"""
+    """The raw value of $DOEFF_HY_CHECK_CACHE (the directory where doeff-hy-check keeps expansions) -- None if unset or empty. So that a caller such as the daily verification, which changes HOME
+    on every run, can name a directory that survives across runs."""
     return _read("DOEFF_HY_CHECK_CACHE") or None
 
 
 def pyright_threads_setting() -> str | None:
-    """$DOEFF_HY_CHECK_PYRIGHT_THREADS の素の値(doeff-hy-check が撃つ pyright の thread の数)— 無い・空なら None。1 以上の整数かは
-    呼び手の pyright_threads が判じる。展開の子の数は環境変数でなく機体の検の枠の宣言が持つ。"""
+    """The raw value of $DOEFF_HY_CHECK_PYRIGHT_THREADS (the number of pyright threads doeff-hy-check launches) -- None if unset or empty. Whether it is an integer of 1 or more is
+    judged by the caller's pyright_threads. The number of expansion children is held by the machine's check-slot declaration, not by an environment variable."""
     return _read(PYRIGHT_THREADS_ENV) or None
 
 
 def conversation_setting() -> str | None:
-    """$AGORA_CONVERSATION_ID の素の値 — 無い・空なら None。機体の検の枠の保持者の名乗りに、どの会話の検かを足すため。"""
+    """The raw value of $AGORA_CONVERSATION_ID -- None if unset or empty. So the claimant name of the machine's check slot can say which conversation the check belongs to."""
     return _read(CONVERSATION_ENV) or None
 
 
 class EnvironmentByName(Mapping[str, str]):
-    """環境変数を名指しで 1 つずつ読む写し(名ごとに _read で問う)。どの名を読むかを知る読み手(機体の検の枠の正本の take)へ渡し、
-    渡す側が名を知らずに済ませるため(doeff_hy._check_slot — 写す名を 1 つに絞ると、正本が新しい名を
-    読んだ時に doeff だけが黙って従わない)。並べる読み(iter・len)は断る — 環境の全部を読む道は持たない(os.environ を値として
-    使わない・DOEFF004)。"""
+    """A mapping that reads environment variables one at a time by name (asking _read for each name). It is handed to the reader that knows which names to read (take of the authoritative source of the machine's check slot),
+    so the passing side does not need to know the names (doeff_hy._check_slot -- if the names to copy were narrowed to one, then when the authoritative source read a new name
+    only doeff would silently fail to follow). Enumerating reads (iter, len) are refused -- there is no path that reads the whole environment (os.environ is not used
+    as a value; DOEFF004)."""
 
     def __getitem__(self, name: str) -> str:
         value = _read(name)
@@ -53,22 +53,22 @@ class EnvironmentByName(Mapping[str, str]):
         return value
 
     def __iter__(self) -> Iterator[str]:
-        raise TypeError("EnvironmentByName は名指しでだけ読む — 環境変数を並べない")
+        raise TypeError("EnvironmentByName is read by name only -- environment variables are not enumerated")
 
     def __len__(self) -> int:
-        raise TypeError("EnvironmentByName は名指しでだけ読む — 環境変数を数えない")
+        raise TypeError("EnvironmentByName is read by name only -- environment variables are not counted")
 
 
 def _read(name: str) -> str | None:
-    """環境変数 1 つの素の値(無ければ None)— 設定の Ask を、環境変数から答える foundation の答え手 env_var_ask(接頭辞なし)の
-    下で問う。無ければ外側の reader の既定 None が答える。
+    """The raw value of one environment variable (None if absent) -- asked under env_var_ask (no prefix), the foundation handler that answers configuration Asks from environment variables, and
+    if absent the default None of the outer reader answers.
 
-    以前は ReadEnvironment を process 全般の答え手 subprocess_handler(doeff_core_effects._os_process)の下で問うていた。読むのは
-    変数 1 つなのに、子 process・thread・signal の答え手を持つ大きな Hy の module とその Hy の bytecode の確かめを読み込み、
-    doeff-hy-check の子 process 1 回ごとに 1.8〜4.7 秒かかった。env_var_ask は Python の
-    foundation の module(doeff_core_effects._handlers — 層の宣言で環境変数の読みを許された所)に在り、読み込みは 0.3 秒前後。
-    env_var_ask は `{module.path}` の形の値を import の名として読むので、置き場の path をその形で書かない。"""
-    # doeff-core-effects は doeff-hy の macro を読むので、この module を読み込む時点ではなく呼ばれた時に読む。
+    Previously ReadEnvironment was asked under subprocess_handler (doeff_core_effects._os_process), the general process handler. Although it reads
+    only one variable, it loaded a large Hy module holding handlers for child processes, threads and signals, plus the check of its Hy bytecode, and
+    cost 1.8 to 4.7 seconds per doeff-hy-check child process. env_var_ask lives in the Python
+    foundation module (doeff_core_effects._handlers -- where the layer declaration allows environment reads), and loading takes about 0.3 seconds.
+    env_var_ask reads a value of the form `{module.path}` as an import name, so a place's path is not written in that form."""
+    # doeff-core-effects reads doeff-hy's macros, so this is read when called, not when this module is loaded.
     from doeff import run, with_handlers
     from doeff_core_effects import Ask
     from doeff_core_effects import env_var_ask, reader

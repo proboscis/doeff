@@ -195,7 +195,7 @@ def test_a_broken_import_names_entry_is_named_and_reread(tmp_path: Path, rig: _R
     _plant(second, _files(tmp_path.name))
     run = _tool(second, store, rig, tmp_path / "second.read.log", write=False)
     assert sorted(run.read) == sorted(_CLOSURE)
-    assert "bytecode の保存先の entry が壊れている" in run.stderr, run.stderr
+    assert "an entry in the bytecode store is broken" in run.stderr, run.stderr
     third = tmp_path / "third"
     _plant(third, _files(tmp_path.name))
     assert _bake(third, store, rig) == []

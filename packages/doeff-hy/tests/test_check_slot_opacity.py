@@ -1,27 +1,27 @@
-"""doeff_hy._check_slot(M-slot)が、機体の検の枠の正本の方策と持ち物を開かない形の機械の検。
+"""A mechanical check that doeff_hy._check_slot (M-slot) does not open the policy and holding of the machine check slot canon.
 
-守る知識: 正本の方策の中身(欄の名・値)・入れ子の時の幅の規則・env の名は正本の持ち物で、M-slot は知らない。M-slot が正本から
-受ける物は、方策(read_policy の答え)と持ち物(take の答え)という **開かない物** と、並走の数(process_width の答え)という整数だけ。
+Knowledge guarded: the contents of the canon's policy (field names, values), the width rule for nesting, and the env names belong to the canon, and M-slot does not know them. What M-slot receives from the canon
+is only the **unopenable things** — the policy (the answer of read_policy) and the holding (the answer of take) — and an integer, the parallel count (the answer of process_width).
 
-直す前の検(test_the_canon_policy_goes_straight_into_take)は「read_policy の答えは take の 1 つ目の引数にしか現れない」を見た。
-守りたい知識より狭く、広かった。
-- 入る向きだけを見た: take の答えから欄を読む実装(`holding.policy.processes_per_slot`)は通った(盲検 B)。
-- 正しい形を断った: 方策を名に束ねて正本の公開の口(process_width)へ渡す形は read_policy の答えが take 以外に現れて赤(盲検 A)。
+The check before the fix (test_the_canon_policy_goes_straight_into_take) looked at "the answer of read_policy appears only as the first argument of take".
+It was narrower and also wider than the knowledge to guard.
+- It looked only at the incoming direction: an implementation reading a field from the answer of take (`holding.policy.processes_per_slot`) passed (blind B).
+- It refused a correct shape: binding the policy to a name and passing it to the canon's public entry (process_width) made the answer of read_policy appear somewhere other than take, and went red (blind A).
 
-この検は「開かない物の使い道」を文法で決める。開かない物(正本の read_policy・take の答え)が現れてよい位置は次の 4 つだけ:
-  1. 正本の宣言した口の呼びの引数 — `module.take(policy, …)`・`module.process_width(policy, holding, …)`。
-  2. 解く口の取り出し — `holding.release`(呼ぶか、SlotHeld に預ける。その先の属性は開かない)。
-  3. None との比較 — `holding is None`(祖先が枠を持つ時の印で、中は見ない)。
-  4. 自分の束縛 — `policy = module.read_policy()`(単純な名への 1 回の代入。別の名への写し・属性や添字への代入は開く道なので断る)。
-さらに、この module が正本の module から読んでよい名は宣言した口と例外だけ(`module.Policy`・`module.PROCESSES_ENV` などを断る)。
-正本の持ち物の名(宣言の鍵・env の名・旧い幅の関数)は doeff_hy のどの source にも現れない。
-並走の数を使う側: 宣言が届かない機体の既定 EXPANDER_LIMIT は、expander_limit(宣言の数)の中でだけ読む — 別の入口(展開の子の pool を
-使う新しい道具)が既定を直に引数の既定や定数として使うと、枠を取らずに宣言と無関係な数で子を起こす。
+This check decides the uses of the unopenable things by grammar. The unopenable things (the answers of the canon's read_policy and take) may appear in only these 4 positions:
+  1. An argument of a call to an entry point the canon declared — `module.take(policy, …)`, `module.process_width(policy, holding, …)`.
+  2. Taking out the release entry — `holding.release` (call it, or keep it in SlotHeld. Attributes beyond that are not opened).
+  3. A comparison with None — `holding is None` (the mark for when an ancestor holds a slot; the content is not looked at).
+  4. Its own binding — `policy = module.read_policy()` (one assignment to a plain name. Copying to another name, or assigning to an attribute or subscript, is a way to open it and is refused).
+In addition, the only names this module may read from the canon module are the declared entry points and exceptions (`module.Policy`, `module.PROCESSES_ENV`, etc. are refused).
+The canon's own names (declaration keys, env names, old width functions) appear in no source of doeff_hy.
+The side that uses the parallel count: the default EXPANDER_LIMIT for machines where no declaration arrives is read only inside expander_limit (the declared count) — if another entry (a new tool that uses the expansion children's pool)
+used the default directly as an argument default or a constant, it would start children with a number unrelated to the declaration without taking a slot.
 
-限界(表現できない物): 新しい入口が pool を使うのに枠を取らない(expander_limit に渡す数が無いので書き手が気づく — 検は取り忘れ自体は見ない)。
-規則の組(OPENED・MOUTHS)を書き換えれば通る — だが組はこの file の固定で、変えるのは意図した契約の変更。
-SlotHeld.let_go を static_check 側で開く道(`slot.let_go.__self__`)と、process_width の答えを使わずに幅を自前で決める形は、この
-検は見ない(後者は幅の持ち主が 2 つになる — 設計の限界として design.md に記した)。
+Limits (what cannot be expressed): a new entry that uses the pool without taking a slot (the writer notices because there is no number to pass to expander_limit — this check does not see the forgotten take itself).
+Rewriting the rule sets (OPENED, MOUTHS) makes it pass — but the sets are fixed in this file, and changing them is an intended contract change.
+The way of opening SlotHeld.let_go on the static_check side (`slot.let_go.__self__`), and the shape of deciding the width on its own without using the answer of process_width, are not seen by this
+check (the latter gives the width two owners — recorded in design.md as a design limit).
 """
 
 import ast
@@ -32,11 +32,11 @@ from pathlib import Path
 import pytest
 from doeff_hy import _check_slot as check_slot
 
-#: 正本の宣言した口(開かない物を渡してよい呼び)・開かない物を返す口・捕まえてよい例外。固定 — 変えるのは契約の変更。
+#: The entry points the canon declared (calls that may be passed unopenable things), the entry points that return unopenable things, and the exceptions that may be caught. Fixed — changing them is a contract change.
 MOUTHS = frozenset({"read_policy", "take", "process_width"})
 OPENED = frozenset({"read_policy", "take"})
 ERRORS = frozenset({"PolicyUnreadable", "SlotWaitExpired"})
-#: 正本が持ち、doeff が持たない名(宣言の鍵・方策の欄・env の名・旧い幅の関数)。検の写しで、正本の変更に追随して足す。
+#: Names the canon holds and doeff does not (declaration keys, policy fields, env names, old width functions). A copy for the check; add to it following changes in the canon.
 CANON_OWNED = frozenset(
     {
         "processesPerSlot",
@@ -59,7 +59,7 @@ def _parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
 
 
 def _canon_modules(tree: ast.AST) -> frozenset[str]:
-    """正本の module を指す名 — `canon_module(…)` の答えを受ける名と、`ModuleType` で注釈した引数。"""
+    """Names pointing at the canon module — the names receiving the answer of `canon_module(…)`, and arguments annotated with `ModuleType`."""
     names: set[str] = set()
     for node in ast.walk(tree):
         if (
@@ -75,7 +75,7 @@ def _canon_modules(tree: ast.AST) -> frozenset[str]:
 
 
 def _mouth_call(node: ast.AST, modules: frozenset[str], names: frozenset[str]) -> bool:
-    """`module.<names のどれか>(…)` の呼びか。"""
+    """Whether this is a call `module.<one of names>(…)`."""
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -96,7 +96,7 @@ def _argument_of(node: ast.AST, call: ast.AST) -> bool:
 
 
 def _release_use_is_closed(release: ast.Attribute, parents: dict[ast.AST, ast.AST]) -> bool:
-    """`holding.release` の使い道: 呼ぶ・None との分岐の枝・SlotHeld への預け・単純な名への代入。その先の属性・添字は開く道。"""
+    """Uses of `holding.release`: calling it, a branch of a None comparison, keeping it in SlotHeld, and assignment to a plain name. Attributes and subscripts beyond that are a way to open it."""
     parent = parents[release]
     if isinstance(parent, ast.Call):
         return parent.func is release or (
@@ -108,15 +108,15 @@ def _release_use_is_closed(release: ast.Attribute, parents: dict[ast.AST, ast.AS
 
 
 def _name_findings(tree: ast.AST, modules: frozenset[str]) -> Iterator[str]:
-    """正本の module から読む名は、宣言した口と例外だけ。"""
+    """The only names read from the canon module are the declared entry points and exceptions."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in modules:
             if node.attr not in MOUTHS | ERRORS:
-                yield f"{node.lineno}: 正本の {node.attr} は宣言した口でも例外でもない"
+                yield f"{node.lineno}: canon's {node.attr} is neither a declared entry point nor an exception"
 
 
 def _bound_names(tree: ast.AST, parents: dict[ast.AST, ast.AST], modules: frozenset[str]) -> frozenset[str]:
-    """開かない物を返す口の答えを受ける名(単純な名への 1 回の代入の左辺)。"""
+    """Names receiving the answer of an entry point that returns unopenable things (the left side of one assignment to a plain name)."""
     calls = (node for node in ast.walk(tree) if _mouth_call(node, modules, OPENED))
     assigns = (parents[call] for call in calls)
     return frozenset(
@@ -127,14 +127,14 @@ def _bound_names(tree: ast.AST, parents: dict[ast.AST, ast.AST], modules: frozen
 
 
 def _answer_findings(tree: ast.AST, parents: dict[ast.AST, ast.AST], modules: frozenset[str]) -> Iterator[str]:
-    """開かない物を返す口の呼びは、単純な名への代入の右辺か、宣言した口の引数のどちらか。"""
+    """A call to an entry point that returns unopenable things is either the right side of an assignment to a plain name or an argument of a declared entry point."""
     for node in ast.walk(tree):
         if not _mouth_call(node, modules, OPENED) or not isinstance(node, ast.Call):
             continue
         parent = parents[node]
         named = isinstance(parent, ast.Assign) and len(parent.targets) == 1 and isinstance(parent.targets[0], ast.Name)
         if not (named or (_mouth_call(parent, modules, MOUTHS) and _argument_of(node, parent))):
-            yield f"{node.lineno}: 正本の {ast.unparse(node.func)} の答えを名に束ねず他へ使っている"
+            yield f"{node.lineno}: canon's {ast.unparse(node.func)} answer is used elsewhere without being bound to a name"
 
 
 def _compare_with_none(node: ast.Name, parent: ast.AST) -> bool:
@@ -148,7 +148,7 @@ def _compare_with_none(node: ast.Name, parent: ast.AST) -> bool:
 def _use_findings(
     tree: ast.AST, parents: dict[ast.AST, ast.AST], modules: frozenset[str], bound: frozenset[str]
 ) -> Iterator[str]:
-    """束ねた名の使い道は、頭の註の 4 つの位置だけ。"""
+    """Uses of a bound name are only the 4 positions in the head note."""
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Name) and node.id in bound and isinstance(node.ctx, ast.Load)):
             continue
@@ -157,20 +157,20 @@ def _use_findings(
             continue
         if isinstance(parent, ast.Attribute) and parent.value is node and parent.attr == "release":
             if not _release_use_is_closed(parent, parents):
-                yield f"{node.lineno}: {node.id}.release の先を開いている"
+                yield f"{node.lineno}: {node.id}.release is opened beyond that point"
             continue
         if _compare_with_none(node, parent):
             continue
-        yield f"{node.lineno}: 正本の答え {node.id} を {type(parent).__name__} の中で開いている({ast.unparse(parent)})"
+        yield f"{node.lineno}: canon's answer {node.id} is opened inside {type(parent).__name__} ({ast.unparse(parent)})"
 
 
 def opened_uses(source: str) -> list[str]:
-    """正本の開かない物(read_policy・take の答え)と、正本の module の使い道の違反(行つき・空 = 閉じている)。"""
+    """Violations in the canon's unopenable things (the answers of read_policy and take) and in the uses of the canon module (with line numbers; empty = closed)."""
     tree = ast.parse(source)
     parents = _parents(tree)
     modules = _canon_modules(tree)
     if not modules:
-        return ["正本の module を受ける名(canon_module の答え)が見つからない — 検が何も見ていない"]
+        return ["no name receiving the canon module (the answer of canon_module) was found — the check sees nothing"]
     bound = _bound_names(tree, parents, modules)
     return [
         *_name_findings(tree, modules),
@@ -180,7 +180,7 @@ def opened_uses(source: str) -> list[str]:
 
 
 def _identifiers_and_strings(source: str) -> Iterator[tuple[int, str]]:
-    """code の中の名(識別子・属性・引数・定義の名)と、docstring でない文字列の定数(行つき)。コメントと docstring は含めない。"""
+    """Names in code (identifiers, attributes, arguments, definition names) and string constants that are not docstrings (with lines). Comments and docstrings are not included."""
     tree = ast.parse(source)
     docstrings = {
         id(node.body[0].value)
@@ -210,7 +210,7 @@ def _identifiers_and_strings(source: str) -> Iterator[tuple[int, str]]:
 
 
 def default_limit_uses(source: str) -> list[str]:
-    """既定の展開の子の数 EXPANDER_LIMIT を読む場所(行と、囲む関数の名)。定義(module の段の代入)は数えない。"""
+    """Where the default number of expansion children EXPANDER_LIMIT is read (the line and the enclosing function name). The definition (an assignment at module level) is not counted."""
     tree = ast.parse(source)
     parents = _parents(tree)
 
@@ -231,17 +231,17 @@ def default_limit_uses(source: str) -> list[str]:
 
 
 def canon_owned_names(source: str) -> list[str]:
-    """正本が持つ名が code に現れる行(空 = 現れない)。"""
+    """Lines where a name the canon holds appears in code (empty = does not appear)."""
     return [f"{line}: {name}" for line, name in _identifiers_and_strings(source) if name in CANON_OWNED]
 
 
-# ─────────────────────────────── 実物
+# ─────────────────────────────── The real thing
 
-#: 既定の展開の子の数を読んでよい場所(static_check.py の関数 expander_limit だけ)。
+#: Where the default number of expansion children may be read (only the function expander_limit in static_check.py).
 DEFAULT_LIMIT_READERS = {"static_check.py": ["expander_limit"]}
 
 def test_the_mouths_this_module_declares_are_the_ones_this_guard_allows() -> None:
-    """宣言した口の組は、この検の固定の組と同じ — 口を足す・替えるのは意図した契約の変更で、この file の組と一緒に変える。"""
+    """The set of declared entry points is the same as this check's fixed set — adding or changing an entry point is an intended contract change, to be changed together with the set in this file."""
     assert frozenset(check_slot.CANON_CALLS) | frozenset(check_slot.CANON_OPTIONAL_CALLS) == MOUTHS
     assert frozenset(check_slot.CANON_ERRORS) == ERRORS
 
@@ -251,8 +251,8 @@ def test_check_slot_opens_neither_the_canon_policy_nor_what_take_returns() -> No
 
 
 def test_the_default_child_count_is_read_only_where_the_slot_width_may_be_missing() -> None:
-    """宣言が届かない機体の既定 EXPANDER_LIMIT は、expander_limit(宣言の数)の中でだけ読まれる — 関数の引数の既定・別の道具の
-    定数・直の import は、宣言と無関係な数で展開の子を起こす 2 つ目の持ち主になる。"""
+    """The default EXPANDER_LIMIT for machines where no declaration arrives is read only inside expander_limit (the declared count) — an argument default, a constant of another tool,
+    or a direct import would become a second owner that starts expansion children with a number unrelated to the declaration."""
     found = {
         path.name: [hit.partition(": ")[2] for hit in default_limit_uses(path.read_text(encoding="utf-8"))]
         for path in sorted(PACKAGE.rglob("*.py"))
@@ -262,7 +262,7 @@ def test_the_default_child_count_is_read_only_where_the_slot_width_may_be_missin
 
 
 def test_no_doeff_hy_source_names_what_the_canon_owns() -> None:
-    """宣言の鍵・方策の欄・env の名・旧い幅の関数は、doeff_hy の code(docstring・コメントを除く)に現れない。.hy は行の文字列で見る。"""
+    """Declaration keys, policy fields, env names, and old width functions do not appear in doeff_hy code (excluding docstrings and comments). .hy is looked at as strings per line."""
     in_python = [
         f"{path.name}:{hit}"
         for path in sorted(PACKAGE.rglob("*.py"))
@@ -279,9 +279,9 @@ def test_no_doeff_hy_source_names_what_the_canon_owns() -> None:
     assert in_python + in_hy == []
 
 
-# ─────────────────────────────── 検の検(正常例と失敗例)— 検が実際に拾い、正しい形を通す事
+# ─────────────────────────────── Checks of the check (good and failing examples) — that the check actually catches and lets correct shapes pass
 
-#: 正しい形の最小(M-slot の骨)。開かない物は口へそのまま渡し、解く口だけを預け、幅は process_width の答えを受ける。
+#: The minimal correct shape (the skeleton of M-slot). Unopenable things are passed as they are to the entry points, only the release entry is kept, and the width receives the answer of process_width.
 OPAQUE_ONLY = '''
 def take_slot(home, label, out):
     module = canon_module(home, out)
@@ -298,8 +298,8 @@ def take_slot(home, label, out):
     return SlotHeld(let_go, width)
 '''
 
-#: 正しい別の形(盲検 A): 方策を束ねず、正本の公開の口の引数の中で作る。直す前の検の形(read_policy の答えは take の引数)と、
-#: 名に束ねて process_width にも渡す形(骨)の両方が通る。
+#: Another correct shape (blind A): do not bind the policy; build it inside the argument of the canon's public entry. Both the shape of the check before the fix (the answer of read_policy is the argument of take) and
+#: the shape that binds it to a name and also passes it to process_width (the skeleton) pass.
 OPAQUE_ONLY_INLINE = OPAQUE_ONLY.replace(
     "policy = module.read_policy()\n        holding = module.take(policy, label, environ, out)",
     "holding = module.take(module.read_policy(), label, environ, out)",
@@ -314,91 +314,91 @@ def test_the_guard_passes_the_opaque_forms() -> None:
 
 
 def test_the_guard_looks_at_something() -> None:
-    """canon_module の答えを受ける名が無い source は『何も見ていない』と断る(検が空振りで緑にならない)。"""
+    """A source with no name receiving the answer of canon_module is refused as 'seeing nothing' (the check does not go green by missing)."""
     assert opened_uses("def f():\n    return 1\n") != []
 
 
-#: 失敗例: 骨の 1 か所を、通常の実装者が機能を実現しようとして書きそうな形へ替える。(名, 替える前, 替えた後, 見つけるべき違反の語)
+#: Failing examples: replace one spot of the skeleton with the shape an ordinary implementer would likely write while trying to realize a feature. (name, before replacement, after replacement, the phrase of the violation that must be found)
 OPENING_MUTANTS = [
-    # 盲検 B: take の答えから方策の欄を読んで幅を決める。
+    # Blind B: read the policy field from the answer of take to decide the width.
     (
         "read-the-field-from-the-holding",
         "width = module.process_width(policy, holding, environ)",
         "width = holding.policy.processes_per_slot",
-        "holding を Attribute の中で開いている",
+        "answer holding is opened inside Attribute",
     ),
     (
         "read-the-field-from-the-policy",
         "width = module.process_width(policy, holding, environ)",
         "width = policy.processes_per_slot",
-        "policy を Attribute の中で開いている",
+        "answer policy is opened inside Attribute",
     ),
     (
         "getattr-the-field",
         "width = module.process_width(policy, holding, environ)",
         "width = getattr(holding, 'policy')",
-        "holding を Call の中で開いている",
+        "answer holding is opened inside Call",
     ),
     (
         "dump-the-policy",
         "width = module.process_width(policy, holding, environ)",
         "width = vars(policy)",
-        "policy を Call の中で開いている",
+        "answer policy is opened inside Call",
     ),
     (
         "rebuild-the-policy",
         "holding = module.take(policy, label, environ, out)",
         "holding = module.take(dataclasses.replace(policy, wait_limit_s=1.0), label, environ, out)",
-        "policy を Call の中で開いている",
+        "answer policy is opened inside Call",
     ),
     (
         "alias-the-policy",
         "holding = module.take(policy, label, environ, out)",
         "spare = policy\n        holding = module.take(spare, label, environ, out)",
-        "policy を Assign の中で開いている",
+        "answer policy is opened inside Assign",
     ),
     (
         "keep-the-holding-on-the-answer",
         "return SlotHeld(let_go, width)",
         "return SlotHeld(holding, width)",
-        "holding を Call の中で開いている",
+        "answer holding is opened inside Call",
     ),
     (
         "open-through-the-release",
         "let_go = None if holding is None else holding.release",
         "let_go = holding.release.__self__.policy",
-        "holding.release の先を開いている",
+        "holding.release is opened beyond that point",
     ),
     (
         "format-the-policy",
         "width = module.process_width(policy, holding, environ)",
         "width = f'{policy}'",
-        "policy を FormattedValue の中で開いている",
+        "answer policy is opened inside FormattedValue",
     ),
     (
         "unpack-into-a-tuple",
         "policy = module.read_policy()",
         "policy, spare = module.read_policy(), 0",
-        "答えを名に束ねず他へ使っている",
+        "used elsewhere without being bound to a name",
     ),
     (
         "use-the-answer-inline-elsewhere",
         "let_go = None if holding is None else holding.release",
         "let_go = module.take(module.read_policy(), label, environ, out).release",
-        "答えを名に束ねず他へ使っている",
+        "used elsewhere without being bound to a name",
     ),
-    # 正本の module から宣言した口以外を読む。
+    # Read something other than a declared entry point from the canon module.
     (
         "read-a-canon-constant",
         "width = module.process_width(policy, holding, environ)",
         "width = int(environ.get(module.PROCESSES_ENV, '2'))",
-        "正本の PROCESSES_ENV は宣言した口でも例外でもない",
+        "canon's PROCESSES_ENV is neither a declared entry point nor an exception",
     ),
     (
         "call-the-old-width-function",
         "width = module.process_width(policy, holding, environ)",
         "width = int(module.width_for_child(policy, holding is None, environ.get('X')))",
-        "正本の width_for_child は宣言した口でも例外でもない",
+        "canon's width_for_child is neither a declared entry point nor an exception",
     ),
 ]
 
@@ -407,14 +407,14 @@ OPENING_MUTANTS = [
 def test_the_guard_refuses_each_way_of_opening_what_the_canon_gave(
     name: str, before: str, after: str, expected: str
 ) -> None:
-    assert before in OPAQUE_ONLY, f"{name}: 骨が変わった(替える前の行が無い)"
+    assert before in OPAQUE_ONLY, f"{name}: the skeleton changed (the line to replace is missing)"
     found = opened_uses(OPAQUE_ONLY.replace(before, after))
     assert any(expected in line for line in found), (name, found)
 
 
 def test_the_guard_refuses_the_blind_b_patch_as_it_was_written() -> None:
-    """盲検 B の差分の核: 持ち物の Protocol に policy を足し、SlotHeld が持ち物から
-    processes_per_slot を読んで幅を決める。持ち物の欄の名は code の名として現れるので、正本の名の検が拒む。"""
+    """The core of blind B's diff: add policy to the holding Protocol, and have SlotHeld read
+    processes_per_slot from the holding to decide the width. The holding's field name appears as a code name, so the canon-name check rejects it."""
     patch = '''
 class SlotPolicy(Protocol):
     processes_per_slot: int
@@ -447,14 +447,14 @@ def test_the_name_guard_catches_what_the_canon_owns_in_any_code_position(written
 
 
 def test_the_name_guard_lets_prose_talk_about_the_canon() -> None:
-    prose = '"""正本の processesPerSlot と AI_CHECK_SLOT_PROCESSES の話(docstring)。"""\n# processes_per_slot の話(コメント)\nx = 1\n'
+    prose = '"""The story of the canon\'s processesPerSlot and AI_CHECK_SLOT_PROCESSES (docstring)."""\n# The story of processes_per_slot (comment)\nx = 1\n'
     assert canon_owned_names(prose) == []
 
 
 @pytest.mark.parametrize(
     ("written", "reader"),
     [
-        # 別の道具(型の宣言の一致の検)が展開の子の pool を使う実装 — 引数の既定として既定の数を読む。
+        # An implementation where another tool (the check of type declaration agreement) uses the expansion children's pool — it reads the default number as an argument default.
         (
             "def project_each(root, roots, sources, limit: int = EXPANDER_LIMIT):\n    return _Expanders(limit)\n",
             "project_each",

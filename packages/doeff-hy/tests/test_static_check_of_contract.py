@@ -1,13 +1,13 @@
-"""契約の型を `(of base arg …)` で書いた引数の、型検査のための注記の失敗ケース。
+"""Failure cases for the annotations used by the type check on arguments whose contract type is written as `(of base arg …)`.
 
-`of` は macro で、契約の型を注記の文字列へ写す `_type-source` は macro を持たない hy-compile に式を渡していた。そのため
-`(: rows (of tuple Row ...))` は呼び出し `of(tuple, Row, ...)` に compile され、注記にならず捨てられていた(引数は注記なし =
-strict で「注記が無い・型が不明」の赤)。`(| (of tuple str ...) None)` は `of(tuple, str, ...) | None` という嘘の注記になっていた。
-`(of …)` を同じ意味の `(get …)` へ写してから compile すれば:
+`of` is a macro, but `_type-source`, which maps a contract type to an annotation string, passed the expression to hy-compile without macros. So
+`(: rows (of tuple Row ...))` compiled to the call `of(tuple, Row, ...)`, produced no annotation, and was dropped (the argument had no annotation =
+a red under strict: "no annotation / unknown type"). `(| (of tuple str ...) None)` became the false annotation `of(tuple, str, ...) | None`.
+If `(of …)` is first mapped to the equivalent `(get …)` and then compiled:
 
-- `(of …)`・入れ子・`|` の中の `(of …)` が、`get` で書いた時と同じ注記になる(単体)。
-- strict で、`(of tuple str ...)` の引数を持つ defk に赤が 0 件。
-- 注記は逃げていない: その引数に数の組を渡せば型の取り違えで赤。
+- `(of …)`, nested forms, and `(of …)` inside `|` yield the same annotation as when written with `get` (unit).
+- Under strict, a defk with a `(of tuple str ...)` argument gets 0 reds.
+- The annotation does not slip away: passing a tuple of numbers to that argument is a red for a type mismatch.
 """
 
 import contextlib
@@ -19,7 +19,7 @@ from pathlib import Path
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not installed")
 
 PROBE = """\
 (require doeff-hy.macros [defk <- val])
@@ -75,7 +75,7 @@ def test_of_forms_project_to_the_same_annotation_as_get() -> None:
         "(get tuple #(str ...))": "tuple[str, ...]",
     }
     assert {src: _type_source(hy.read(src)) for src in cases} == cases
-    # 呼び出しの残る式は注記にしない(嘘の注記より注記なし)。
+    # An expression that still contains a call does not become an annotation (no annotation is better than a false one).
     assert _type_source(hy.read("(| int (type x))")) is None
 
 

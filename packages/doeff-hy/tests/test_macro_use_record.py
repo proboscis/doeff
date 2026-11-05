@@ -1,12 +1,12 @@
-"""Hy の module の macro の記録(doeff_hy_bytecode_guard)を、展開が使った macro 単位で照らす形の失敗ケース。
+"""Failure cases that check a Hy module's macro record (doeff_hy_bytecode_guard) per macro used by the expansion.
 
-記録は「展開が実際に使った macro と、その macro が実行の時に辿る物」が変わった時だけ古いと判じる。前半は冷えるべき時の
-ケース(使った macro・それが呼ぶ補助・それが読む定数・名前で引かない読みの先を替えたら古い)、後半は冷えなくてよい時の
-ケース(使っていない macro を替えても・行がずれただけでも古くない)。
+A record is judged stale only when "the macros the expansion actually used, and what those macros walk at run time" change. The first half
+covers cases that must go cold (changing a used macro, the helper it calls, the constants it reads, or a target read without going by name makes it stale); the second half covers
+cases that need not go cold (changing an unused macro, or merely shifting lines, does not make it stale).
 
-記録は import と同じ口(``source_to_code_as_import`` — module を置いた中で compile し、記録を code に足す)で作り、
-照らすのは ``record_is_current_here``(.pyc・解析器・型検査の展開の保存が使う 1 つの照らし方)。次の実行(別の process)と
-同じにするため、照らす前に検の package の module を sys.modules から外し、macro の module を読み直させる。
+The record is made through the same entry point as import (``source_to_code_as_import`` — compile inside the module's place and add the record to the code),
+and checked with ``record_is_current_here`` (the single check used by .pyc, the analyzer, and the type-check expansion cache). To match the next run (a different process),
+the check package's modules are removed from sys.modules before checking, forcing the macro modules to be re-read.
 """
 
 import importlib.machinery
@@ -20,11 +20,11 @@ import pytest
 from doeff_hy_bytecode_guard import _records as records
 from doeff_hy_bytecode_guard._loader_hooks import record_is_current_here, source_to_code_as_import
 
-#: macro の module。used = 補助の関数(同じ module)と別の module の定数を読む macro・unused = 誰も使わない macro・
-#: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro・
-#: hands = 別の module を引数で渡し、受けた補助が getattr で読む macro・documented = 別の module の定数を読み、展開の結果に
-#: 関数の __doc__ を書く macro(code の文字列の定数に "__doc__" が出る — defhandler の形)・reads-data = 補助が自分の module の
-#: 置き場(__file__)から隣の file(data.txt)を読んで返す macro。
+#: Macro module. used = a macro that reads a helper function (same module) and a constant of another module; unused = a macro nobody uses;
+#: reads = a macro that calls a helper reading its own module's globals by string key; peeks = a macro that calls a helper reading another module's value via getattr;
+#: hands = a macro that passes another module as an argument, which the receiving helper reads via getattr; documented = a macro that reads another module's constant and writes
+#: a function's __doc__ into the expansion result ("__doc__" appears among the code's string constants — the shape of defhandler); reads-data = a macro whose helper reads and returns
+#: a neighboring file (data.txt) from its own module's location (__file__).
 MACROS = """\
 (import {pkg}.consts :as consts)
 (setv FACTOR 3)
@@ -59,10 +59,10 @@ MACROS = """\
 (defmacro reads-data [] (data-of))
 """
 
-CONSTS = '"定数の module。"\n(setv OFFSET 1)\n(setv HIDDEN 5)\n'
+CONSTS = '"Constants module."\n(setv OFFSET 1)\n(setv HIDDEN 5)\n'
 
-#: macro が展開の時に読む大域の表(Python の module)。TABLE は top-level の文と、import の時に呼ぶ登録の関数で行が足される。
-#: OTHER と unrelated は閉包から辿られない。
+#: A table of globals (Python module) that a macro reads at expansion time. TABLE gets rows added by a top-level statement and by a registration function called at import time.
+#: OTHER and unrelated cannot be reached from the closure.
 TABLES = """\
 TABLE = {"a": 1}
 TABLE["b"] = 2
@@ -104,7 +104,7 @@ def unrelated():
     return OTHER
 """
 
-#: 拡張の module の写し(Python の source から作るが、__file__ を .so に向ける — 記録の側からは source の無い拡張の module に見える)。
+#: A copy of an extension module (made from Python source but with __file__ pointing at a .so — to the record it looks like an extension module with no source).
 FAKEEXT = """\
 import pathlib
 
@@ -126,9 +126,9 @@ MODE = ContextVar("mode", default="plain")
 LATER = 1
 """
 
-#: 使う側の module(名 → source)。user = used だけを名指して require する・shadowed = macro の module の全部を require し、
-#: 自分の関数 shadow を呼ぶ(後から macro の module に同じ名の macro が足されると、展開が変わる)・local = shadowed と同じ形を
-#: 関数の中の require で書き、macro を入れ子の関数で使う(Hy の展開は関数の中の局所の macro の表を module の表より先に引く)。
+#: Consumer modules (name -> source). user = requires only used by name; shadowed = requires all of the macro module and
+#: calls its own function shadow (if a macro of the same name is later added to the macro module, the expansion changes); local = the same shape as shadowed
+#: but written with a require inside a function, using the macro in a nested function (Hy expansion looks up a function-local macro table before the module's table).
 USERS = {
     "user": "(require {pkg}.macros [used])\n(setv value (used))\n",
     "reader": "(require {pkg}.macros [reads])\n(setv value (reads))\n",
@@ -149,7 +149,7 @@ USERS = {
 
 @dataclass(frozen=True)
 class Tree:
-    """sys.path に置いた一時の dir の中の検の package(名は検ごとに違う — 読み込み済みの module と混ざらない)。"""
+    """A check package in a temporary dir placed on sys.path (the name differs per check — it does not mix with already-loaded modules)."""
 
     package: str
     directory: Path
@@ -179,22 +179,22 @@ class Tree:
         return self.directory / "contexts.py"
 
     def forget(self) -> None:
-        """検の package の module を sys.modules から外す(次の実行と同じく、次に macro の module を読み直させる)。"""
+        """Remove the check package's modules from sys.modules (so the next load re-reads the macro modules, as the next run would)."""
         for name in [n for n in sys.modules if n == self.package or n.startswith(f"{self.package}.")]:
             del sys.modules[name]
 
     def record(self, user: str) -> records.MacroRecord:
-        """使う側の module を import と同じ口で compile し、code に載った記録を返す。"""
+        """Compile a consumer module through the same entry point as import and return the record carried on the code."""
         path = self.directory / f"{user}.hy"
         loader = importlib.machinery.SourceFileLoader(f"{self.package}.{user}", str(path))
         code = source_to_code_as_import(loader, path.read_bytes(), str(path))
         record = records.record_of(code)
-        assert record is not None, "compile した code に記録が無い"
+        assert record is not None, "the compiled code has no record"
         self.forget()
         return record
 
     def is_current(self, record: records.MacroRecord) -> bool:
-        """今の環境(読み直した macro の module)で記録を照らす。"""
+        """Check the record in the current environment (with the macro modules re-read)."""
         try:
             return record_is_current_here(record)
         finally:
@@ -225,299 +225,299 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Tree]:
 
 
 def _replace(path: Path, old: str, new: str) -> None:
-    """file の中の old を new に替える(大きさも替える — file の sha256 の覚えは path・更新時刻・大きさで引くため)。"""
+    """Replace old with new in a file (also changing its size — the file sha256 memo is keyed by path, mtime, and size)."""
     text = path.read_text(encoding="utf-8")
     assert old in text, old
     assert len(old) != len(new)
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
-# ---- 冷えるべき時 ------------------------------------------------------------------------------------------------
+# ---- When it must go cold ------------------------------------------------------------------------------------------------
 
 
 def test_a_record_is_current_while_nothing_changed(tree: Tree) -> None:
     record = tree.record("user")
-    assert tree.is_current(record), "何も変えていないのに古いと判じた"
+    assert tree.is_current(record), "judged stale although nothing changed"
 
 
 def test_a_changed_body_of_the_used_macro_is_stale(tree: Tree) -> None:
     record = tree.record("user")
     _replace(tree.macros, "(+ (helper 1) consts.OFFSET)", "(+ (helper 20) consts.OFFSET)")
-    assert not tree.is_current(record), "使った macro の本体を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the body of a used macro changed"
 
 
 def test_a_changed_helper_the_used_macro_calls_is_stale(tree: Tree) -> None:
     record = tree.record("user")
     _replace(tree.macros, "(* x FACTOR)", "(* x FACTOR 2)")
-    assert not tree.is_current(record), "使った macro が呼ぶ補助の関数の本体を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the body of a helper function called by a used macro changed"
 
 
 def test_a_changed_constant_the_helper_reads_is_stale(tree: Tree) -> None:
     record = tree.record("user")
     _replace(tree.macros, "(setv FACTOR 3)", "(setv FACTOR 30)")
-    assert not tree.is_current(record), "補助が読む macro の module の定数を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a constant of the macro module read by the helper changed"
 
 
 def test_a_changed_constant_of_another_module_the_used_macro_reads_is_stale(tree: Tree) -> None:
     record = tree.record("user")
     _replace(tree.consts, "(setv OFFSET 1)", "(setv OFFSET 10)")
-    assert not tree.is_current(record), "使った macro が読む別の module の定数を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a constant of another module read by a used macro changed"
 
 
 def test_a_changed_value_a_helper_reads_by_a_string_key_is_stale(tree: Tree) -> None:
     record = tree.record("reader")
     _replace(tree.macros, "(setv LIMIT 7)", "(setv LIMIT 70)")
-    assert not tree.is_current(record), "補助が文字列の key で読む値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value the helper reads by string key changed"
 
 
 def test_a_changed_value_a_helper_reads_by_getattr_is_stale(tree: Tree) -> None:
     record = tree.record("peeker")
     _replace(tree.consts, "(setv HIDDEN 5)", "(setv HIDDEN 50)")
-    assert not tree.is_current(record), "補助が getattr で読む別の module の値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value of another module the helper reads via getattr changed"
 
 
 def test_a_changed_value_read_by_getattr_on_a_module_passed_as_an_argument_is_stale(tree: Tree) -> None:
-    # 読む補助と module の参照が別の関数にある形(module を引数で渡す)。
+    # The shape where the reading helper and the module reference are in different functions (the module is passed as an argument).
     record = tree.record("hander")
     _replace(tree.consts, "(setv HIDDEN 5)", "(setv HIDDEN 50)")
-    assert not tree.is_current(record), "引数で渡した module を getattr で読む値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value read via getattr from a module passed as an argument changed"
 
 
 def test_a_new_macro_named_like_a_called_function_is_stale(tree: Tree) -> None:
-    # 全部を require する使い手が呼ぶ関数と同じ名の macro が足されると、その呼び出しは macro の展開に変わる。
+    # If a macro with the same name as a function called by a consumer that requires everything is added, that call turns into a macro expansion.
     record = tree.record("shadowed")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 100)\n(defmacro shadow [x] 0)")
-    assert not tree.is_current(record), "使い手の呼ぶ名の macro が足されたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a macro with the name called by the consumer was added"
 
 
 def test_a_changed_body_of_a_macro_required_inside_a_function_is_stale(tree: Tree) -> None:
-    # 直す前は赤: 関数の中の require の macro は局所の表から引かれ、module の表を通らないので記録に無かった。
+    # Red before the fix: a macro from a require inside a function is looked up in the local table and does not go through the module table, so it was missing from the record.
     record = tree.record("local")
     _replace(tree.macros, "(+ (helper 1) consts.OFFSET)", "(+ (helper 20) consts.OFFSET)")
-    assert not tree.is_current(record), "関数の中の require で使った macro の本体を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the body of a macro used via a require inside a function changed"
 
 
 def test_a_new_macro_named_like_a_function_called_under_a_local_require_is_stale(tree: Tree) -> None:
-    # 関数の中で全部を require する使い手も、呼ぶ関数と同じ名の macro が足されると展開が変わる。
+    # A consumer that requires everything inside a function also changes expansion when a macro with the same name as a function it calls is added.
     record = tree.record("local")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 100)\n(defmacro shadow [x] 0)")
-    assert not tree.is_current(record), "関数の中の require の使い手の呼ぶ名の macro が足されたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a macro with the name called by a consumer using a require inside a function was added"
 
 
-# ---- 冷えなくてよい時 --------------------------------------------------------------------------------------------
+# ---- When it need not go cold --------------------------------------------------------------------------------------------
 
 
 def test_a_changed_unused_macro_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: 記録は macro の module の file の sha256 なので、使っていない macro を 1 行替えるだけで古いと判じた。
+    # Red before the fix: the record was the sha256 of the macro module's file, so changing one line of an unused macro made it stale.
     record = tree.record("user")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
-    assert tree.is_current(record), "使っていない macro を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because an unused macro changed"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="sys.monitoring, which picks up code called during expansion, exists from Python 3.12 — on 3.11 the record cannot pick it up and takes a wide scope (called_code.Uncollectable)")
 def test_a_changed_unused_macro_under_a_local_require_keeps_the_record_current(tree: Tree) -> None:
-    # 関数の中で全部を require しても、記録に入るのは展開が使った macro だけ。
+    # Even with a require of everything inside a function, only the macros the expansion used go into the record.
     record = tree.record("local")
     assert [used.name for used in record.macros] == ["used"], record.macros
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
-    assert tree.is_current(record), "関数の中の require の使い手で、使っていない macro を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because an unused macro changed, for a consumer using a require inside a function"
 
 
 def test_a_line_shift_of_the_macro_module_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: 先頭に空行を足す(行番号だけがずれる)だけで古いと判じた。
+    # Red before the fix: merely adding a blank line at the top (shifting only line numbers) made it stale.
     record = tree.record("user")
     tree.macros.write_text("\n" + tree.macros.read_text(encoding="utf-8"), encoding="utf-8")
-    assert tree.is_current(record), "行番号がずれただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because line numbers shifted"
 
 
 def test_a_function_named_like_an_unrequired_macro_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤(agora の records_turns.hy・intake_requests.hy が import のたびに compile し直された): 名を選んで require した
-    # 使い手が、提供元にある別の macro(check)と同じ名の関数を呼ぶ。名を選んだ require の使い手の表には、提供元に何が
-    # あっても入らないので、記録は作った直後に今のまま。
+    # Red before the fix (agora's records_turns.hy and intake_requests.hy were recompiled on every import): a consumer that required by selected names
+    # calls a function with the same name as another macro (check) in the provider. The consumer table of a selective require does not include it, whatever
+    # the provider has, so the record stays current right after it is made.
     record = tree.record("chooser")
-    assert tree.is_current(record), "選んで require していない macro と同じ名の関数の呼び出しで古いと判じた"
+    assert tree.is_current(record), "judged stale by a call to a function named like a macro that was not required selectively"
 
 
-# ---- 辿れない値を file の全体でなく狭く覆う-------------------------------------------------------
-# 冷えるべき時(直す前から緑でよい — 直した後も緑であることが要)。
+# ---- Cover untraceable values narrowly, not with the whole file -------------------------------------------------------
+# When it must go cold (green even before the fix — what matters is that it stays green after).
 
 
 def test_a_changed_table_the_macro_reads_is_stale(tree: Tree) -> None:
     record = tree.record("looker")
     _replace(tree.tables, 'TABLE = {"a": 1}', 'TABLE = {"a": 10}')
-    assert not tree.is_current(record), "macro が読む大域の表の中身を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the contents of a global table read by a macro changed"
 
 
 def test_a_changed_top_level_row_of_the_table_is_stale(tree: Tree) -> None:
     record = tree.record("looker")
     _replace(tree.tables, 'TABLE["b"] = 2', 'TABLE["b"] = 20')
-    assert not tree.is_current(record), "top-level の文で表に足す行を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a row added to the table by a top-level statement changed"
 
 
 def test_a_changed_row_added_by_a_registering_function_is_stale(tree: Tree) -> None:
-    # 閉包から辿られない関数(import の時に呼ぶ登録)の中で表に足す行。
+    # A row added to the table inside a function the closure cannot reach (a registration called at import time).
     record = tree.record("looker")
     _replace(tree.tables, 'TABLE["c"] = 3', 'TABLE["c"] = 30')
-    assert not tree.is_current(record), "import の時に呼ぶ関数が表に足す行を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a row added to the table by a function called at import time changed"
 
 
 def test_a_changed_hy_table_the_macro_reads_is_stale(tree: Tree) -> None:
     record = tree.record("hylooker")
     _replace(tree.macros, '(setv HY-TABLE {"a" 1})', '(setv HY-TABLE {"a" 10})')
-    assert not tree.is_current(record), "macro が読む Hy の大域の表の中身を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the contents of a Hy global table read by a macro changed"
 
 
 def test_a_changed_top_level_row_of_the_hy_table_is_stale(tree: Tree) -> None:
     record = tree.record("hylooker")
     _replace(tree.macros, '(setv (get HY-TABLE "b") 2)', '(setv (get HY-TABLE "b") 20)')
-    assert not tree.is_current(record), "top-level の文で Hy の表に足す行を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a row added to a Hy table by a top-level statement changed"
 
 
 def test_a_new_public_attribute_of_an_extension_class_is_stale(tree: Tree) -> None:
-    # 直す前は赤: 拡張の module の class は .so の file の sha256 で覆っていたので、公開の形が変わっても .so が同じなら古くないと判じた
-    # (ここでは .so の写しの中身を替えずに class の属性を足す)。
+    # Red before the fix: a class from an extension module was covered by the .so file's sha256, so it was judged current even if its public shape changed as long as the .so was the same
+    # (here we add a class attribute without changing the contents of the .so copy).
     record = tree.record("thinger")
     _replace(tree.fakeext, '    KIND = "a"\n', '    KIND = "a"\n    EXTRA = 1\n')
-    assert not tree.is_current(record), "拡張の class の公開の属性が増えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the public attributes of an extension class increased"
 
 
 def test_a_removed_public_attribute_of_an_extension_class_is_stale(tree: Tree) -> None:
-    # 直す前は赤(上と同じ訳 — .so の写しの中身は替えない)。
+    # Red before the fix (same reason as above — the contents of the .so copy do not change).
     record = tree.record("thinger")
     _replace(tree.fakeext, "    def run(self):\n        return 1\n", "    pass\n")
-    assert not tree.is_current(record), "拡張の class の公開の属性が減ったのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the public attributes of an extension class decreased"
 
 
 def test_a_changed_default_of_a_context_variable_is_stale(tree: Tree) -> None:
-    # 直す前は赤: ContextVar は読む関数の module(macros.hy)の file で覆っていたので、定義した module で既定値を替えても古くない。
+    # Red before the fix: a ContextVar was covered by the file of the reading function's module (macros.hy), so changing the default in the defining module did not make it stale.
     record = tree.record("moder")
     _replace(tree.contexts, 'default="plain"', 'default="fancy!"')
-    assert not tree.is_current(record), "ContextVar の既定値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the default of a ContextVar changed"
 
 
 def test_a_changed_value_set_into_a_nested_row_is_stale(tree: Tree) -> None:
-    # 直す前は赤(確かめで見つかった後退): 添字の結果の中の値の書き換え(添字の添字への代入)を、読むだけと数えていた。
+    # Red before the fix (a regression found in verification): rewriting a value inside a subscript result (assignment to a subscript of a subscript) was counted as a mere read.
     record = tree.record("looker")
     _replace(tree.tables, 'TABLE["n"]["x"] = 5', 'TABLE["n"]["x"] = 50')
-    assert not tree.is_current(record), "import の時に呼ぶ関数が表の中の行を書き換える値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value that a function called at import time rewrites in a table row changed"
 
 
 def test_a_changed_value_appended_to_a_nested_row_is_stale(tree: Tree) -> None:
-    # 直す前は赤: 添字の結果への .append を読むだけと数えていた。
+    # Red before the fix: .append on a subscript result was counted as a mere read.
     record = tree.record("looker")
     _replace(tree.tables, 'TABLE["l"].append(7)', 'TABLE["l"].append(70)')
-    assert not tree.is_current(record), "import の時に呼ぶ関数が表の中の list に足す値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value that a function called at import time appends to a list in the table changed"
 
 
 def test_a_changed_value_set_through_get_is_stale(tree: Tree) -> None:
-    # 直す前は赤: 読むだけの method(.get)の結果への添字の代入を読むだけと数えていた。
+    # Red before the fix: assignment to a subscript on the result of a read-only method (.get) was counted as a mere read.
     record = tree.record("looker")
     _replace(tree.tables, 'TABLE.get("n")["y"] = 6', 'TABLE.get("n")["y"] = 60')
-    assert not tree.is_current(record), ".get の結果を書き換える値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value rewritten on the result of .get changed"
 
 
 def test_a_changed_value_set_into_iterated_rows_is_stale(tree: Tree) -> None:
-    # 直す前は赤: for の繰り返しの元(.values())の要素は束縛されて書き換えられうる。
+    # Red before the fix: elements of the iteration source of a for loop (.values()) are bound and may be rewritten.
     record = tree.record("looker")
     _replace(tree.tables, 'row["z"] = 8', 'row["z"] = 80')
-    assert not tree.is_current(record), "表の行を回して書き換える値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value rewritten while looping over table rows changed"
 
 
 def test_a_changed_value_set_through_an_alias_is_stale(tree: Tree) -> None:
-    # 直す前は赤: top-level の別名(ALIAS = TABLE)を通した書き換えを、表の名の書き換えと数えていなかった。
+    # Red before the fix: a rewrite through a top-level alias (ALIAS = TABLE) was not counted as a rewrite of the table name.
     record = tree.record("looker")
     _replace(tree.tables, 'ALIAS["d"] = 4', 'ALIAS["d"] = 40')
-    assert not tree.is_current(record), "別名を通して表を書き換える値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value rewriting the table through an alias changed"
 
 
 def test_a_changed_value_set_through_a_hy_alias_is_stale(tree: Tree) -> None:
-    # Hy の別名((setv HY-ALIAS HY-TABLE) の後の defn が HY-ALIAS を書き換える)。
+    # A Hy alias (a defn after (setv HY-ALIAS HY-TABLE) rewrites HY-ALIAS).
     record = tree.record("hylooker")
     _replace(tree.macros, '(setv (get HY-ALIAS "c") 3)', '(setv (get HY-ALIAS "c") 30)')
-    assert not tree.is_current(record), "Hy の別名を通して表を書き換える値を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a value rewriting the table through a Hy alias changed"
 
 
-# 冷えなくてよい時(直す前は赤)。
+# When it need not go cold (red before the fix).
 
 
 def test_a_changed_unrelated_function_beside_the_table_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: 表(dict)を辿ると、その module(tables.py)の file の sha256 で覆っていた。
+    # Red before the fix: following a table (dict) covered it with the sha256 of that module's (tables.py) file.
     record = tree.record("looker")
     _replace(tree.tables, "    return OTHER\n", "    return OTHER, 1\n")
-    assert tree.is_current(record), "閉包から辿られない関数を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because a function the closure cannot reach changed"
 
 
 def test_a_changed_unrelated_global_beside_the_table_keeps_the_record_current(tree: Tree) -> None:
     record = tree.record("looker")
     _replace(tree.tables, 'OTHER = {"z": 0}', 'OTHER = {"z": 100}')
-    assert tree.is_current(record), "閉包から辿られない別の大域を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because another global the closure cannot reach changed"
 
 
 def test_a_changed_unused_macro_beside_a_hy_table_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: Hy の表(macros.hy の HY-TABLE)を辿ると macros.hy の file の sha256 で覆っていた。
+    # Red before the fix: following a Hy table (HY-TABLE in macros.hy) covered it with the sha256 of the macros.hy file.
     record = tree.record("hylooker")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
-    assert tree.is_current(record), "表を名で引く macro の module の別の行を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because another line of the macro module that looks up the table by name changed"
 
 
 def test_a_changed_unrelated_hy_global_beside_a_hy_table_keeps_the_record_current(tree: Tree) -> None:
     record = tree.record("hylooker")
     _replace(tree.macros, '(setv HY-OTHER {"z" 0})', '(setv HY-OTHER {"z" 100})')
-    assert tree.is_current(record), "表を名で引く macro の module の別の大域を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because another global of the macro module that looks up the table by name changed"
 
 
 def test_a_changed_binary_of_an_extension_with_the_same_shape_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: 拡張の module の class は .so の file の sha256 で覆っていた。
+    # Red before the fix: a class from an extension module was covered by the .so file's sha256.
     record = tree.record("thinger")
     tree.fakeext_binary.write_bytes(b"binary two, rebuilt")
-    assert tree.is_current(record), "公開の形が同じ拡張の .so の中身だけが変わって古いと判じた"
+    assert tree.is_current(record), "judged stale merely because only the contents of an extension .so with the same public shape changed"
 
 
 def test_a_changed_unrelated_line_beside_a_context_variable_keeps_the_record_current(tree: Tree) -> None:
     record = tree.record("moder")
     _replace(tree.contexts, "LATER = 1", "LATER = 100")
-    assert tree.is_current(record), "ContextVar の module の別の行を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because another line of the ContextVar module changed"
 
 
 def test_a_changed_unused_macro_beside_a_context_variable_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: ContextVar は読む関数の module(macros.hy)の file で覆っていた。
+    # Red before the fix: a ContextVar was covered by the file of the reading function's module (macros.hy).
     record = tree.record("moder")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
-    assert tree.is_current(record), "ContextVar を読む macro の module の別の行を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because another line of the macro module that reads the ContextVar changed"
 
 
-# ---- module の説明の文----------------------------------------------------------------------
+# ---- Module docstrings ----------------------------------------------------------------------
 
 
 def test_a_changed_docstring_of_a_module_the_macro_reads_keeps_the_record_current(tree: Tree) -> None:
-    # 直す前は赤: macro の code の文字列の定数 "__doc__"(展開の結果の関数に書く説明)を名の候補として、macro が参照する
-    # module(consts)の __doc__ を digest に入れていた。module の説明の文は展開の結果に効かない。
+    # Red before the fix: the string constant "__doc__" in the macro's code (the docstring written on the expansion's function) was taken as a name candidate, and the __doc__ of the
+    # module the macro references (consts) went into the digest. A module docstring has no effect on the expansion result.
     record = tree.record("documenter")
-    _replace(tree.consts, '"定数の module。"', '"定数の module(説明を書き替えた)。"')
-    assert tree.is_current(record), "macro が参照する module の説明の文を替えただけで古いと判じた"
+    _replace(tree.consts, '"Constants module."', '"Constants module (docstring rewritten)."')
+    assert tree.is_current(record), "judged stale merely because the docstring of a module referenced by a macro changed"
 
 
 def test_a_changed_constant_of_a_module_the_documenting_macro_reads_is_stale(tree: Tree) -> None:
-    # 冷えるべき時: 同じ macro が読む同じ module の定数を替えたら古い(__doc__ を外しても module の属性の読みは覆う)。
+    # When it must go cold: if a constant of the same module read by the same macro changes, it is stale (even without __doc__, reading a module attribute is still covered).
     record = tree.record("documenter")
     _replace(tree.consts, "(setv OFFSET 1)", "(setv OFFSET 10)")
-    assert not tree.is_current(record), "macro が読む module の定数を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although a constant of the module read by a macro changed"
 
 
-# ---- module の置き場を値として読む code-----------------
+# ---- Code that reads a module's location as a value -----------------
 
 
 def test_a_changed_file_a_macro_reads_beside_its_module_is_stale(tree: Tree) -> None:
-    # 直す前は赤: 補助が自分の module の __file__ から隣の file を読んで展開の結果を決めると、歩みはその file の中身を覆わない
-    # (置き場の path を digest から外した後は、別の木どうしでも同じ)。置き場を値として読む code の digest は照らせない印になる。
+    # Red before the fix: when a helper reads a neighboring file from its own module's __file__ to decide the expansion result, the walk does not cover that file's contents
+    # (after dropping the location path from the digest, this holds even across different trees). A digest of code that reads the location as a value becomes a mark that cannot be checked.
     record = tree.record("datareader")
     _replace(tree.directory / "data.txt", "one", "two-two")
-    assert not tree.is_current(record), "macro が置き場から読む隣の file を替えたのに古いと判じない"
+    assert not tree.is_current(record), "not judged stale although the neighboring file a macro reads from its location changed"
 
 
-# ---- 実物の doeff_hy の macro(doeff_hy を一時の dir に写し、別の process で記録を作って照らす)------------------------------
+# ---- Real doeff_hy macros (copy doeff_hy to a temp dir, then make and check records in a separate process) ------------------------------
 
-#: defk・val・<-・defrecord・defhandler だけを使う module(agora の controllers の module の形)。
+#: A module that uses only defk, val, <-, defrecord, and defhandler (the shape of agora's controllers modules).
 REAL_USER = """\
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord])
@@ -529,7 +529,7 @@ REAL_USER = """\
   #^ str source)
 
 (defrecord Row
-  "行"
+  "row"
   {:tags {:context "macro-use-probe" :role "type"}}
   (#^ int value))
 
@@ -537,12 +537,12 @@ REAL_USER = """\
 
 (defk step [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "judgment"}}
-  "1 を足す。"
+  "Add 1."
   (+ n base))
 
 (defk job [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "entry"}}
-  "束ね。"
+  "Bundle."
   (<- a (step n))
   a)
 
@@ -551,8 +551,8 @@ REAL_USER = """\
     (resume source)))
 """
 
-#: 子の process: 写した doeff_hy で使い手を import と同じ口で compile して記録を JSON で書く(record)か、書いた記録を照らす
-#: (check)。読んだ doeff_hy の在りかと、digest を持たない(file の行で比べる)macro の行の名も出す。
+#: Child process: with the copied doeff_hy, compile a consumer through the same entry point as import and write the record as JSON (record), or check a record already written
+#: (check). It also reports where the loaded doeff_hy is and the names of macro rows that have no digest (compared by file rows).
 REAL_CHILD = """\
 import importlib.machinery, json, sys
 from pathlib import Path
@@ -577,7 +577,7 @@ else:
 
 @dataclass(frozen=True)
 class RealTree:
-    """一時の dir に写した doeff_hy(lib/doeff_hy)と、それを使う module の根・記録の file。"""
+    """The doeff_hy copied to a temp dir (lib/doeff_hy), the root of the module using it, and the record file."""
 
     lib: Path
     root: Path
@@ -588,7 +588,7 @@ class RealTree:
         return self.lib / "doeff_hy" / "macros.hy"
 
     def run(self, mode: str) -> dict[str, object]:
-        """子の process で 1 度走らせた答え(写した doeff_hy を読んだことも確かめる)。"""
+        """The answer from running once in a child process (also confirms the copied doeff_hy was loaded)."""
         import json
         import subprocess
 
@@ -626,37 +626,37 @@ def real_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RealTree:
 
 
 def test_the_record_of_a_defk_user_does_not_cover_doeff_hy_macros_by_its_file(real_tree: RealTree) -> None:
-    # 直す前は赤(agora の records_turns.hy の記録): defk などの閉包の途中で、関数の中の import の先(outcome_forms・
-    # declarations・defhandler が読む doeff_hy.macros)を module ごと file 単位で覆い、macros.hy が入っていた。記録の file の行
-    # (閉包が依った module の file — macros.hy も入る)は、digest を持たない行がある時だけ比べるので、全部の行が digest を持つ
-    # (読み込みの済んだ状態で作った)ことを確かめる。macros.hy の別の行を替えても古くないことは次の検が確かめる。
+    # Red before the fix (record of agora's records_turns.hy): midway through the closure of defk and others, imports inside functions (outcome_forms,
+    # declarations, and doeff_hy.macros that defhandler reads) were covered per whole module by file, and macros.hy was included. The record's file rows
+    # (files of modules the closure depended on — macros.hy included) are compared only when some rows lack a digest, so confirm that every row has a digest
+    # (made in the fully loaded state). The next test confirms that changing another line of macros.hy does not make it stale.
     by_files = real_tree.run("record")["by_files"]
     assert by_files == [], by_files
 
 
 def test_a_changed_deftest_keeps_the_record_of_a_defk_user_current(real_tree: RealTree) -> None:
-    # 直す前は赤: macros.hy の deftest(使い手が使わない macro)の本体を 1 行替えても古くない。
+    # Red before the fix: changing one line of the body of deftest in macros.hy (a macro the consumer does not use) does not make it stale.
     real_tree.run("record")
     _replace(
         real_tree.macros,
         "Define an effectful test that expands to a pytest-compatible function.",
         "Define an effectful test (changed).",
     )
-    assert real_tree.run("check")["current"] is True, "使わない deftest を替えただけで古いと判じた"
+    assert real_tree.run("check")["current"] is True, "judged stale merely because an unused deftest changed"
 
 
 def test_a_changed_defk_makes_the_record_of_a_defk_user_stale(real_tree: RealTree) -> None:
-    # 冷えるべき時: 使った defk の本体(docstring の定数)を替えたら古い。
+    # When it must go cold: if the body of a used defk (a docstring constant) changes, it is stale.
     real_tree.run("record")
     _replace(
         real_tree.macros,
         '"Define a kleisli function (@do decorator)',
         '"Define a kleisli function (@do decorator, changed)',
     )
-    assert real_tree.run("check")["current"] is False, "使った defk を替えたのに古いと判じない"
+    assert real_tree.run("check")["current"] is False, "not judged stale although the used defk changed"
 
 
-#: defk・val・<- だけを使う module。
+#: A module that uses only defk, val, and <-.
 REAL_DEFK_USER = """\
 (require doeff-hy.macros [defk <- val])
 
@@ -664,55 +664,55 @@ REAL_DEFK_USER = """\
 
 (defk step [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "judgment"}}
-  "1 を足す。"
+  "Add 1."
   (+ n base))
 
 (defk job [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "entry"}}
-  "束ね。"
+  "Bundle."
   (<- a (step n))
   a)
 """
 
-#: 閉包から辿られない、展開に効かない関数(file の末尾に足す)。
+#: A function that the closure cannot reach and that does not affect expansion (appended to the end of the file).
 UNREACHED_PY = "\n\ndef _unreached_probe() -> int:\n    return 1\n"
 UNREACHED_HY = "\n(defn _unreached-probe [] 1)\n"
 
 
 def _append(path: Path, text: str) -> None:
-    """file の末尾に文を足す。"""
+    """Append a statement to the end of the file."""
     path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
 
 
 def test_an_unreached_function_in_binding_forms_and_static_view_keeps_a_defk_user_current(
     real_tree: RealTree,
 ) -> None:
-    # 直す前は赤(agora の Hy の module 414 個のほぼ全部が pin を上げるたびに作り直された): binding_forms の大域の dict・
-    # dataclass の欄の名 vars の読み・kwdefaults の dict・static_view の ContextVar を辿ると、その module の file の sha256 で
-    # 覆っていた。
+    # Red before the fix (nearly all of agora's 414 Hy modules were rebuilt on every pin bump): following the globals dict of binding_forms,
+    # the read of dataclass field-name vars, the kwdefaults dict, and static_view's ContextVar covered them with the sha256 of
+    # those modules' files.
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
     real_tree.run("record")
     _append(real_tree.lib / "doeff_hy" / "_binding_forms.py", UNREACHED_PY)
     _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
-        "binding_forms と static_view に辿られない関数を足しただけで defk・val の使い手を古いと判じた"
+        "judged a defk/val consumer stale merely because a function not reached from binding_forms and static_view was added"
     )
 
 
 def test_an_unreached_function_in_clause_endings_keeps_a_defhandler_user_current(
     real_tree: RealTree,
 ) -> None:
-    # 直す前は赤: defhandler が読む clause_endings.hy の表(NAMED-RESUMPTION)を辿ると clause_endings.hy の file で覆っていた。
+    # Red before the fix: following the table (NAMED-RESUMPTION) of clause_endings.hy that defhandler reads covered it with the clause_endings.hy file.
     real_tree.run("record")
     _append(real_tree.lib / "doeff_hy" / "_clause_endings.hy", UNREACHED_HY)
     _append(real_tree.lib / "doeff_hy" / "_binding_forms.py", UNREACHED_PY)
     _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
-        "clause_endings・binding_forms・static_view に辿られない関数を足しただけで defhandler の使い手を古いと判じた"
+        "judged a defhandler consumer stale merely because a function not reached from clause_endings, binding_forms, and static_view was added"
     )
 
 
-#: defhandler だけを使う module。
+#: A module that uses only defhandler.
 REAL_HANDLER_USER = """\
 (require doeff-hy.handle [defhandler])
 (import dataclasses [dataclass])
@@ -726,29 +726,29 @@ REAL_HANDLER_USER = """\
     (resume source)))
 """
 
-#: defhandler の閉包が辿る、説明の文(module の docstring)を持つ module の file と、その説明の文の頭。
+#: Modules the closure of defhandler walks that have a module docstring (file), and the start of that docstring.
 DOCUMENTED_MODULES = {
     "__init__.py": '"""doeff-hy — Standard Hy macros for doeff effect composition.',
-    "record_runtime.py": '"""defrecord と defeffect の実行の展開が読み込みの時に読む部品',
-    "_type_forms.py": '"""型の式を、実行時に ``isinstance`` の第 2 引数へ渡せる form へ写す',
+    "record_runtime.py": '"""Parts that the expansions of defrecord and defeffect read at load time.',
+    "_type_forms.py": '"""Map a type expression to a form that can be passed as the second argument of ``isinstance`` at run time',
 }
 
 
 def test_changed_module_docstrings_keep_a_defhandler_user_current(real_tree: RealTree) -> None:
-    # 直す前は赤(doeff b44c49c → 0f2fa6f で defhandler の使い手 540 file が Hy の展開の置き場で
-    # 外れた): defhandler の展開の code の文字列の定数 "__doc__" を名の候補として、閉包で辿った module の __doc__ を digest に
-    # 入れていた。digest の材料の違いは record_runtime の docstring の 1 行だけだった。
+    # Red before the fix (doeff b44c49c -> 0f2fa6f: 540 defhandler consumer files dropped out of the Hy expansion cache): taking the string constant "__doc__" of the defhandler expansion code as a name candidate,
+    # the __doc__ of modules walked in the closure went into the digest. The only difference in the digest's inputs was
+    # one line of the record_runtime docstring.
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_HANDLER_USER, encoding="utf-8")
     real_tree.run("record")
     for name, head in DOCUMENTED_MODULES.items():
-        _replace(real_tree.lib / "doeff_hy" / name, head, f"{head}(説明を書き替えた)")
+        _replace(real_tree.lib / "doeff_hy" / name, head, f"{head} (docstring rewritten)")
     assert real_tree.run("check")["current"] is True, (
-        "defhandler の閉包の module の説明の文を替えただけで defhandler の使い手を古いと判じた"
+        "judged a defhandler consumer stale merely because a docstring of a module in defhandler's closure changed"
     )
 
 
 def test_a_changed_table_in_binding_forms_makes_a_defk_user_stale(real_tree: RealTree) -> None:
-    # 冷えるべき時: defk・val が読む binding_forms の表(_KINDS)の行を替えたら古い。
+    # When it must go cold: if a row of the binding_forms table (_KINDS) read by defk and val changes, it is stale.
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
     real_tree.run("record")
     _replace(
@@ -756,10 +756,10 @@ def test_a_changed_table_in_binding_forms_makes_a_defk_user_stale(real_tree: Rea
         '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAL, "var": Mutability.VAR}',
         '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAR, "var": Mutability.VAR, "v": Mutability.VAL}',
     )
-    assert real_tree.run("check")["current"] is False, "binding_forms の _KINDS を替えたのに古いと判じない"
+    assert real_tree.run("check")["current"] is False, "not judged stale although _KINDS of binding_forms changed"
 
 
-#: defk・val・var と、var の書き換え(:=)を使う module — 展開で binding_forms の _Walker._assign を通る。
+#: A module that uses defk, val, var, and var rewriting (:=) — expansion passes through _Walker._assign of binding_forms.
 REAL_ASSIGN_USER = """\
 (require doeff-hy.macros [defk <- val var])
 
@@ -767,17 +767,17 @@ REAL_ASSIGN_USER = """\
 
 (defk step [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "judgment"}}
-  "1 を足す。"
+  "Add 1."
   (var total n)
   (:= total (+ total base))
   total)
 """
 
-#: binding_forms の _Walker._assign(:= の書き換え)の code だけを替える置き換え(誤りの文の定数)。
-ASSIGN_MESSAGE = "の節の本体にだけ書けます(({where.head} …) の中には書けません)。"
+#: A replacement that changes only the code of _Walker._assign of binding_forms (rewriting by :=) (the constant of the error message).
+ASSIGN_MESSAGE = "can be written only in the body of a defk, deftest or defhandler clause (not inside ({where.head} …))."
 
-#: 子の process: 写した doeff_hy で、:= を使わない使い手(user.hy)と使う使い手(assigning.hy)を 1 つの process で記録し(record)、
-#: 書いた 2 つの記録を 1 つの process で照らす(check)— 写した doeff_hy の compile を 1 度で済ませる。
+#: Child process: with the copied doeff_hy, record in one process a consumer that does not use := (user.hy) and one that does (assigning.hy),
+#: and check the two written records in one process (check) — so the copied doeff_hy is compiled only once.
 REAL_PAIR_CHILD = """\
 import importlib.machinery, json, sys
 from pathlib import Path
@@ -803,7 +803,7 @@ else:
 
 
 def _run_pair(real_tree: RealTree, mode: str) -> dict[str, object]:
-    """:data:`REAL_PAIR_CHILD` を子の process で 1 度走らせた答え(写した doeff_hy を読んだことも確かめる)。"""
+    """:data:`REAL_PAIR_CHILD` answer from running once in a child process (also confirms the copied doeff_hy was loaded)."""
     import json
     import subprocess
 
@@ -820,14 +820,14 @@ def _run_pair(real_tree: RealTree, mode: str) -> dict[str, object]:
     return answer
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="sys.monitoring, which picks up code called during expansion, exists from Python 3.12 — on 3.11 the record cannot pick it up and takes a wide scope (called_code.Uncollectable)")
 def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_record_stale(
     real_tree: RealTree,
 ) -> None:
-    # 直す前は赤(#3769 の子・日次 10-12 04:00 で中身の同じ Hy の module 1,197 本を作り直した): defk の閉包の歩みが、defk から
-    # 届く class(binding_forms._Walker)を method ごと全部辿り、展開で呼ばれない _assign の code の変更で、:= を使わない使い手の
-    # 記録まで古いと判じた(doeff 167d38ec2 → 1db4cb7bf の digest の材料の違いは _assign の code の hash だけ)。
-    # 対照(直す前も後も緑): := を使う使い手は、展開で _assign を通るので、同じ変更で古い。
+    # Red before the fix (child of #3769; on the daily run 10-12 04:00 1,197 Hy modules with identical contents were rebuilt): the closure walk of defk walked every method of the class reachable from defk
+    # (binding_forms._Walker), and a change to the code of _assign, which expansion does not call, made even the record of a consumer not using := stale
+    # (the only difference in the digest inputs from doeff 167d38ec2 to 1db4cb7bf was the hash of _assign's code).
+    # Contrast (green before and after): a consumer using := passes through _assign in expansion, so the same change makes it stale.
     probe = real_tree.root / "macro_use_probe"
     (probe / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
     (probe / "assigning.hy").write_text(REAL_ASSIGN_USER, encoding="utf-8")
@@ -835,36 +835,36 @@ def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_reco
     _replace(
         real_tree.lib / "doeff_hy" / "_binding_forms.py",
         ASSIGN_MESSAGE,
-        ASSIGN_MESSAGE.replace("書けます", "書けます(替えた)"),
+        ASSIGN_MESSAGE.replace("can be written only", "can be written only (changed)"),
     )
     current = _run_pair(real_tree, "check")["current"]
     assert current == {"user": True, "assigning": False}, (
-        "binding_forms._Walker._assign だけを替えた時、展開で呼ばない := 無しの使い手は合う・展開で通る := の使い手は古い、の"
-        f"はずが {current}"
+        "when only binding_forms._Walker._assign changes, the consumer without := (which expansion does not call through) should match and the consumer with := (which expansion passes through) should be stale, "
+        f"but got {current}"
     )
 
 
-# ---- import の順に依らない digest(閉包の中の module が循環する import の途中で引けない時)-------------------------------------
+# ---- Digest independent of import order (when a module in the closure cannot be looked up in the middle of a circular import) -------------------------------------
 #
-# deff の閉包は、関数の中の import で doeff_hy._outcome_forms を引く。outcome_forms は doeff_hy.record の defrecord を require し、
-# record.hy は deff を使う。.pyc から record を読む process では、record.hy の記録の照らしが record の本体の実行の前に走るので、
-# outcome_forms を import できない(record の macro の表がまだ空)。直す前は、その時の digest(名だけ)が process の覚えに残り、
-# その process の deff の使い手の照らしと記録が全部その値になって、import の順の違う process と置き場の entry を書き直し合った
-# (日次 10-11 16:03 の回)。
+# The closure of deff looks up doeff_hy._outcome_forms with an import inside a function. outcome_forms requires defrecord from doeff_hy.record,
+# and record.hy uses deff. In a process that reads record from a .pyc, the check of record.hy's record runs before the body of record executes,
+# so outcome_forms cannot be imported (record's macro table is still empty). Before the fix, the digest at that time (names only) stayed in the process's memo,
+# and every check and record of deff consumers in that process took that value, so processes with different import orders kept rewriting each other's entries in the store
+# (the daily run of 10-11 16:03).
 
-#: deff だけを使う module。
+#: A module that uses only deff.
 REAL_DEFF_USER = """\
 (require doeff-hy.macros [deff])
 
 (deff add-one [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "foundation"}}
-  "1 を足す。"
+  "Add 1."
   (+ n 1))
 """
 
-#: 子の process(import の順を変える): 名指した macro(module:名)の digest を順に計算する(digests)・使い手の記録を作る
-#: (record)・名指した macro の digest を先に計算してから記録を照らす(check)・module を順に import して compile し終えた Hy の
-#: file を出す(import — 循環する import の途中で require が落ちた compile は何も作らないので数えない)。
+#: Child process (changes import order): compute in order the digests of the named macros (module:name) (digests); make a consumer's record
+#: (record); compute the named macros' digests first and then check the record (check); import modules in order and list the Hy
+#: files that finished compiling (import — a compile in which require failed in the middle of a circular import produces nothing, so it is not counted).
 ORDER_CHILD = """\
 import importlib, importlib.machinery, json, sys
 from pathlib import Path
@@ -914,15 +914,14 @@ DEFWIRE = "doeff_hy.record:defwire"
 
 @pytest.fixture
 def writing_tree(real_tree: RealTree, monkeypatch: pytest.MonkeyPatch) -> RealTree:
-    """子の process が .pyc を書く real_tree(書く先は検の一時 dir の PYTHONPYCACHEPREFIX の下 — real_tree が置く)。揺れは
-    record を .pyc から読む process(record.hy の記録の照らしが本体の実行の前に走る)でだけ起きるので、検の一式が子へ渡す
-    ``PYTHONDONTWRITEBYTECODE`` を、この検の間だけ外す。"""
+    """The real_tree in which the child process writes .pyc (written under PYTHONPYCACHEPREFIX in the check's temp dir — placed by real_tree). The instability occurs only in a process
+    that reads record from a .pyc (the check of record.hy's record runs before the body executes), so the ``PYTHONDONTWRITEBYTECODE`` that the check suite passes to the child is removed only during this check."""
     monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
     return real_tree
 
 
 def _order_child(real_tree: RealTree, mode: str, *names: str) -> dict[str, object]:
-    """ORDER_CHILD を子の process で 1 度走らせた答え(子は検の環境を継ぐ — 写した doeff_hy を読んだことも確かめる)。"""
+    """The answer from running ORDER_CHILD once in a child process (the child inherits the check's environment — also confirms the copied doeff_hy was loaded)."""
     import json
     import subprocess
 
@@ -940,27 +939,27 @@ def _order_child(real_tree: RealTree, mode: str, *names: str) -> dict[str, objec
 
 
 def _warm_bytecode(real_tree: RealTree) -> None:
-    """record と wire を 1 度 import して .pyc を作る(日次の 2 回目からの形)。作られた事も確かめる — .pyc が無いと record は
-    毎回 compile され、揺れの起きない形で緑になる(検の一式の PYTHONDONTWRITEBYTECODE が子へ渡った時がそうだった)。"""
+    """Import record and wire once to make .pyc files (the shape from the second daily run on). Also confirm they were made — without .pyc, record
+    is compiled every time and the check is green in a shape where the instability cannot occur (that was the case when the check suite's PYTHONDONTWRITEBYTECODE was passed to the child)."""
     _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy._wire")
     pycache = real_tree.stored.parent / "pycache"
-    assert any(pycache.rglob("record.*.pyc")), f"{pycache} に record.hy の .pyc が無い — 検の前提が崩れた"
+    assert any(pycache.rglob("record.*.pyc")), f"no .pyc of record.hy in {pycache} — the check's precondition broke"
 
 
 def test_the_digest_of_deff_does_not_depend_on_computing_defrecord_and_defwire_first(
     writing_tree: RealTree,
 ) -> None:
     real_tree = writing_tree
-    # 直す前は赤: 先に defrecord・defwire の digest を計算した process(record を .pyc から読み、record.hy の照らしの途中で
-    # outcome_forms を import できない)の deff の digest は、単独の process の digest と違った(959a4c15 / f24dde8b)。
+    # Red before the fix: the digest of deff in a process that first computed the digests of defrecord and defwire (reading record from a .pyc and unable to
+    # import outcome_forms midway through the check of record.hy) differed from the digest in a standalone process (959a4c15 / f24dde8b).
     _warm_bytecode(real_tree)
     alone = _order_child(real_tree, "digests", DEFF)["digests"]
     after = _order_child(real_tree, "digests", DEFRECORD, DEFWIRE, DEFF)["digests"]
     assert isinstance(alone, list), alone
     assert isinstance(after, list), after
-    assert alone[0] is not None, "単独の process で deff の digest を作れない"
+    assert alone[0] is not None, "cannot make the digest of deff in a standalone process"
     assert after[-1] == alone[0], (
-        f"先に defrecord・defwire の digest を計算した process の deff の digest {after[-1]} が単独の {alone[0]} と違う"
+        f"the digest of deff {after[-1]} in a process that first computed the digests of defrecord and defwire differs from the standalone {alone[0]}"
     )
 
 
@@ -968,26 +967,26 @@ def test_a_deff_user_stays_current_in_a_process_that_computed_defrecord_and_defw
     writing_tree: RealTree,
 ) -> None:
     real_tree = writing_tree
-    # 直す前は赤: 単独の process では当たる deff の使い手の記録が、先に defrecord・defwire の digest を計算した process では
-    # 古い(deff)と判じられた — 置き場の entry を、import の順の違う process が互いに書き直す元。
+    # Red before the fix: a record of a deff consumer that matches in a standalone process was judged stale (deff) in a process that first computed the digests of defrecord and defwire
+    # — the source of processes with different import orders rewriting each other's store entries.
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFF_USER, encoding="utf-8")
     _warm_bytecode(real_tree)
     _order_child(real_tree, "record")
-    assert _order_child(real_tree, "check")["current"] is True, "単独の process で deff の使い手の記録が古い"
+    assert _order_child(real_tree, "check")["current"] is True, "the record of the deff consumer is stale in a standalone process"
     assert _order_child(real_tree, "check", DEFRECORD, DEFWIRE)["current"] is True, (
-        "先に defrecord・defwire の digest を計算した process で、deff の使い手の記録を古いと判じた"
+        "in a process that first computed the digests of defrecord and defwire, the record of the deff consumer was judged stale"
     )
 
 
-#: import の順の違う 2 つの process の形 — record を先に読む(record.hy の照らしの途中で outcome_forms を import できない)と、
-#: deff の使い手を先に読む(record.hy の照らしの途中で outcome_forms が import の途中)。
+#: The shapes of two processes with different import orders — reading record first (outcome_forms cannot be imported midway through the check of record.hy),
+#: and reading a deff consumer first (outcome_forms is midway through import during the check of record.hy).
 RECORD_FIRST = ("doeff_hy.record", "doeff_hy._wire", "doeff_hy._clause_endings")
 DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy._clause_endings", "doeff_hy._wire", "doeff_hy.record")
 
 
 @dataclass(frozen=True)
 class ImportRound:
-    """import の 1 回 — 最初に import した module と、compile し終えた Hy の file。"""
+    """One import — the first module imported, and the Hy files that finished compiling."""
 
     first: str
     compiled: object
@@ -1000,7 +999,7 @@ def _import_round(
     pycache: Path,
     order: tuple[str, ...],
 ) -> ImportRound:
-    """共有の保存先 store と、この process だけの空の pycache で order の順に import した 1 回。"""
+    """One import in the order given, with the shared store and a pycache empty to this process only."""
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(pycache))
     return ImportRound(order[0], _order_child(real_tree, "import", *order)["compiled"])
@@ -1009,33 +1008,33 @@ def _import_round(
 def test_processes_importing_in_different_orders_share_the_store_without_recompiling(
     writing_tree: RealTree, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤: 共有の置き場 1 つを、import の順の違う process が交互に使うと(pycache は毎回空 — 日次の pytest の段の形)、
-    # 2 巡目からも毎回 record.hy・outcome_forms.hy・wire.hy・clause_endings.hy を作り直して置き場を書き直した。
+    # Red before the fix: when one shared store was used alternately by processes with different import orders (pycache empty every time — the shape of the daily pytest stage),
+    # even from the second round it rebuilt record.hy, outcome_forms.hy, wire.hy, and clause_endings.hy every time and rewrote the store.
     store = tmp_path / "store"
     store.mkdir()
     rounds = tuple(
         _import_round(writing_tree, monkeypatch, store, tmp_path / f"pycache-{index}", order)
         for index, order in enumerate((RECORD_FIRST, DEFF_USER_FIRST) * 2)
     )
-    assert rounds[0].compiled, "1 巡目(冷えた置き場)で何も compile していない — 検の前提が崩れた"
+    assert rounds[0].compiled, "nothing was compiled in round 1 (cold store) — the check's precondition broke"
     again = [(round_.first, round_.compiled) for round_ in rounds[2:] if round_.compiled]
-    assert not again, f"2 巡目からも Hy の module を作り直した: {again}(全部の回: {rounds})"
+    assert not again, f"Hy modules were rebuilt even from round 2: {again} (all rounds: {rounds})"
 
 
-# ---- process をまたぐ覚え----------------------------------------------------------
+# ---- Memo across processes ----------------------------------------------------------
 #
-# 新しい process の照らしの費用の大半は、閉包の歩みが辿れない大域を覆う source の文の読み(bound_source.binding_of — source を
-# 解いて構文木を歩く)だった。中身と名で決まる純な読みは置き場(DOEFF_HY_CODE_STORE)に覚え、次の process は解き直さない。
-# digest そのものは process をまたいで覚えない — digest は生きた値(macro の file・別の module から来た素の値・環境変数で決まる値)に
-# 依る。下の 3 つ(条 1〜3)は、digest を辿った file の状態(path・更新時刻・大きさ)で覚えて次の process が信じる素朴な形で赤になる
-# (依った物が覚えた時と違うのに、前の process の digest で今に合うと判じ、古い展開を使う)。
+# Most of the cost of a new process's check was reading the source statements that cover globals the closure walk cannot trace (bound_source.binding_of — parsing the source and
+# walking the syntax tree). Pure reads determined by contents and name are memoized in the store (DOEFF_HY_CODE_STORE) so the next process does not re-parse.
+# The digest itself is not memoized across processes — a digest depends on live values (macro files, plain values coming from other modules, values determined by environment variables).
+# The three below (clauses 1 to 3) turn red in the naive shape that memoizes a digest by the state (path, mtime, size) of the files it traced and has the next process trust it
+# (what it depended on differs from when it was memoized, yet the previous process's digest is judged to match now, and a stale expansion is used).
 
-#: macro の module(条ごとの macro)。body = 本体だけの macro(条 1 — macro を定義した file の中身)・scaled = 別の module から import
-#: した素の値を返す macro(条 2 — 値は helper.hy の中身で決まるが、macro の閉包が辿る file は macros.hy だけ)・moded = 読み込みの時に
-#: 環境変数から組んだ値を返す macro(条 3 — file の外で決まる値)・looks と rows = 辿れない大域の表を読む macro(Hy と Python の
-#: source の文で覆う — binding_of を通る)・limited = macro と別の top の package から import した素の値を返す macro(条 2 の別の形 —
-#: 記録が名指す module はどれもその package に無い)・placed = 補助が作った module に __file__ を書く macro(code の名の表に
-#: __file__ が出るが、置き場を値として読まない — doeff_hy._static_check の project の形・使い手は placed.hy)。
+#: Macro modules (macros per clause). body = a macro with only a body (clause 1 — contents of the file defining the macro); scaled = a macro returning a plain value imported from another module
+#: (clause 2 — the value is determined by the contents of helper.hy, but the only file the macro's closure traces is macros.hy); moded = a macro returning a value assembled at load time from
+#: an environment variable (clause 3 — a value determined outside files); looks and rows = macros reading untraceable global tables (Hy and Python
+#: covered by source statements — through binding_of); limited = a macro returning a plain value imported from a top-level package separate from the macro (another shape of clause 2 —
+#: none of the modules the record names is in that package); placed = a macro whose helper writes __file__ onto a module it made (__file__ appears in the code's name table,
+#: but the location is not read as a value — the shape of doeff_hy._static_check's project; the consumer is placed.hy).
 CROSS_MACROS = """\
 (import os)
 (import types)
@@ -1064,14 +1063,14 @@ CROSS_FILES = {
     "placed.hy": "(require {pkg}.macros [placed])\n(setv value (placed))\n",
 }
 
-#: macro と別の top の package(limited が返す LIMIT の持ち主)。
+#: A top-level package separate from the macro (the owner of LIMIT returned by limited).
 CROSS_VALUES_PACKAGE = "macro_use_cross_values"
 CROSS_VALUES_FILES = {"__init__.py": "", "limits.hy": "(setv LIMIT 3)\n"}
 
-#: 子の process: 使い手(既定 user.hy・5 つ目の引数で名指す)の記録を作り、同じ process でも照らす(record — 記録を作る歩みと
-#: 照らしの両方を通す)・記録を照らす(check)。
-#: 答えに、照らしの間に source を解いた回数(parsed — bound_source の解き)・code の定数を読んで code の読みを作った回数(facts —
-#: macro_use の _constant_text)・照らしの後に hy.core.hy_repr が読み込まれているか(hy_repr)を出す。
+#: Child process: make the record of a consumer (default user.hy; named by the fifth argument) and also check it in the same process (record — goes through both the record-making walk and
+#: the check), or check a record (check).
+#: The answer includes the number of times source was parsed during the check (parsed — bound_source parsing), the number of times code constants were read to make code readings (facts —
+#: macro_use's _constant_text), and whether hy.core.hy_repr is loaded after the check (hy_repr).
 CROSS_CHILD = """\
 import importlib.machinery, json, sys
 from pathlib import Path
@@ -1106,7 +1105,7 @@ CROSS_PACKAGE = "macro_use_cross"
 
 @dataclass(frozen=True)
 class CrossTree:
-    """子の process で読む検の package の根(作業木 1 つの代わり)と、process をまたいで共有する置き場・記録の file。"""
+    """The root of the check package read in a child process (standing in for one work tree), and the store and record file shared across processes."""
 
     root: Path
     store: Path
@@ -1121,8 +1120,8 @@ class CrossTree:
         return self.root / CROSS_VALUES_PACKAGE
 
     def run(self, mode: str, user: str = "user") -> dict[str, object]:
-        """子の process で 1 度走らせた答え(user = 使い手の file の名・子は検の環境を継ぐ — 置き場と pycache は fixture が
-        monkeypatch で置く)。"""
+        """The answer from running once in a child process (user = file name of the consumer; the child inherits the check's environment — the store and pycache are set by the fixture with
+        monkeypatch)."""
         import json
         import subprocess
 
@@ -1137,7 +1136,7 @@ class CrossTree:
         return json.loads(done.stdout.strip().splitlines()[-1])
 
     def elsewhere(self, name: str) -> "CrossTree":
-        """同じ中身の package を別の根(別の作業木)に写す — 置き場と記録の file は同じ物を使う。"""
+        """Copy a package with the same contents to another root (another work tree) — using the same store and record file."""
         import shutil
 
         root = self.root.parent / name
@@ -1150,7 +1149,7 @@ class CrossTree:
 
 @pytest.fixture
 def cross_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CrossTree:
-    """検の package の根 1 つと、子の process が継ぐ環境(共有の置き場・検の一時 dir の pycache・条 3 の環境変数は無し)。"""
+    """One root of the check package, and the environment the child process inherits (shared store, the check's temp-dir pycache, and no clause 3 environment variable)."""
     root = tmp_path / "tree-a"
     for package, files in ((CROSS_PACKAGE, CROSS_FILES), (CROSS_VALUES_PACKAGE, CROSS_VALUES_FILES)):
         (root / package).mkdir(parents=True)
@@ -1165,34 +1164,34 @@ def cross_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CrossTree:
 
 
 def test_a_second_process_does_not_parse_the_sources_the_first_one_read(cross_tree: CrossTree) -> None:
-    # 直す前は赤: 新しい process の照らしは、前の process と同じ中身の source(macros.hy の TABLE・tables.py の ROWS)を毎回
-    # 解き直した(test_emulated_screen.hy の読み込みで照らしの歩みの約 2/3)。
-    assert cross_tree.run("record")["current"] is True, "記録を作った process で、作った記録を古いと判じた"
+    # Red before the fix: the check of a new process re-parsed the same-content source as the previous process (TABLE in macros.hy, ROWS in tables.py) every time
+    # (about 2/3 of the check walk when loading test_emulated_screen.hy).
+    assert cross_tree.run("record")["current"] is True, "the process that made the record judged the record it made stale"
     answer = cross_tree.run("check")
-    assert answer["current"] is True, "何も変えていないのに 2 つ目の process が古いと判じた"
-    assert answer["parsed"] == 0, f"2 つ目の process が同じ中身の source を {answer['parsed']} 回解き直した"
+    assert answer["current"] is True, "the second process judged stale although nothing changed"
+    assert answer["parsed"] == 0, f"the second process re-parsed the same-content source {answer['parsed']} times"
 
 
 def test_a_macro_changed_in_another_tree_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
-    # 条 1(macro を定義した file の中身): 別の作業木の macros.hy は body の本体が違う。前の process が覚えた digest の file
-    # (前の木の macros.hy)は変わっていないので、file の状態で覚えを信じる形は前の digest を使い、古い展開を今に合うと判じる。
+    # Clause 1 (contents of the file defining the macro): macros.hy in another work tree has a different body for body. The file whose digest the previous process memoized
+    # (macros.hy of the previous tree) has not changed, so the shape that trusts the memo by file state uses the previous digest and judges a stale expansion to match now.
     cross_tree.run("record")
     other = cross_tree.elsewhere("tree-b")
     _replace(other.package / "macros.hy", "(defmacro body [] 1)", "(defmacro body [] 20)")
-    assert other.run("check")["current"] is False, "別の木で macro の本体が違うのに、2 つ目の process が古いと判じない"
+    assert other.run("check")["current"] is False, "the second process did not judge stale although the macro body differs in another tree"
 
 
 def test_a_macro_naming_the_place_of_its_module_is_current_in_another_tree(cross_tree: CrossTree) -> None:
-    # 直す前は赤: macro が呼ぶ補助の code の名の表に __file__ が出ると(作った module に
-    # __file__ を書く)、digest にその module の置き場の path が入り、同じ中身を別の作業木に置いただけで古いと判じた(日次の
-    # 全体検証は回ごとに別の dir に doeff を置き、型検査の展開の保存が毎回全部外れた)。
+    # Red before the fix: when __file__ appears in the name table of the code of a helper a macro calls (writing __file__ onto a module it made),
+    # the module's location path went into the digest, so merely placing the same contents in another work tree made it stale (the daily
+    # full verification places doeff in a different dir every run, and the type-check expansion cache missed entirely every time).
     cross_tree.run("record", "placed")
     other = cross_tree.elsewhere("tree-b")
-    assert other.run("check", "placed")["current"] is True, "同じ中身の macro を別の木に置いただけで古いと判じた"
+    assert other.run("check", "placed")["current"] is True, "judged stale merely because a macro with the same contents was placed in another tree"
 
 
 def test_a_changed_macro_naming_the_place_of_its_module_is_stale_in_another_tree(cross_tree: CrossTree) -> None:
-    # 冷えるべき時: 置き場の path を入れなくても、同じ macro の本体を替えた別の木では古い。
+    # When it must go cold: even without including the location path, a tree where the same macro's body was changed is stale.
     cross_tree.run("record", "placed")
     other = cross_tree.elsewhere("tree-b")
     _replace(
@@ -1200,65 +1199,65 @@ def test_a_changed_macro_naming_the_place_of_its_module_is_stale_in_another_tree
         '(place-of (types.ModuleType "placed")) 1)',
         '(place-of (types.ModuleType "placed")) 20)',
     )
-    assert other.run("check", "placed")["current"] is False, "別の木で macro の本体が違うのに古いと判じない"
+    assert other.run("check", "placed")["current"] is False, "not judged stale although the macro body differs in another tree"
 
 
 def test_a_changed_value_from_another_module_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
-    # 条 2(macro が辿る値の module の file の中身): SCALE は helper.hy の中身で決まるが、scaled の閉包が辿る file は macros.hy
-    # だけ(素の値はどの module から来たかを持たない)。file の状態で覚えを信じる形は、helper.hy を替えても前の digest を使う。
+    # Clause 2 (contents of the file of the module a traced value came from): SCALE is determined by the contents of helper.hy, but the only file scaled's closure traces is macros.hy
+    # (a plain value does not carry which module it came from). The shape that trusts the memo by file state uses the previous digest even if helper.hy is changed.
     cross_tree.run("record")
     _replace(cross_tree.package / "helper.hy", "(setv SCALE 3)", "(setv SCALE 30)")
-    assert cross_tree.run("check")["current"] is False, "macro が返す別の module の値を替えたのに、2 つ目の process が古いと判じない"
+    assert cross_tree.run("check")["current"] is False, "the second process did not judge stale although the value of another module returned by a macro changed"
 
 
 def test_a_changed_environment_value_is_stale_in_a_second_process(
     cross_tree: CrossTree, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 条 3(file の外で決まる値): MODE は読み込みの時に環境変数から組む。どの file も変わらないので、file の状態で覚えを
-    # 信じる形は前の digest を使う。
+    # Clause 3 (a value determined outside files): MODE is assembled from an environment variable at load time. No file changes, so the shape that trusts the memo by file state
+    # uses the previous digest.
     cross_tree.run("record")
-    monkeypatch.setenv("MACRO_USE_PROBE_MODE", "strict")  # 2 つ目の process だけが継ぐ
+    monkeypatch.setenv("MACRO_USE_PROBE_MODE", "strict")  # inherited only by the second process
     answer = cross_tree.run("check")
-    assert answer["current"] is False, "macro が返す環境変数の値が違うのに、2 つ目の process が古いと判じない"
+    assert answer["current"] is False, "the second process did not judge stale although the environment variable value returned by a macro differs"
 
 
 def test_a_changed_value_from_another_top_package_is_stale_after_an_unchanged_check(
     cross_tree: CrossTree,
 ) -> None:
-    # 条 2 の別の形: LIMIT は macro と別の top の package の file で決まり、記録が名指す
-    # module はどれもその package に無い。照らしの答え(合う / 古い)を、記録が名指す package の file と環境を鍵に置き場へ覚えて
-    # 次の process が信じる形は、変えない照らしの答え(合う)を覚え、LIMIT を替えた後も今に合うと判じて古い展開を使った。
+    # Another shape of clause 2: LIMIT is determined by a file of a top-level package separate from the macro, and none of the modules the record names is in that package.
+    # A shape that memoizes the check answer (match / stale) in the store keyed by the files of the packages the record names and the environment, and has the next process trust it,
+    # memoized the unchanged check's answer (match), and after LIMIT was changed still judged it to match and used a stale expansion.
     cross_tree.run("record")
-    assert cross_tree.run("check")["current"] is True, "何も変えていないのに古いと判じた"
+    assert cross_tree.run("check")["current"] is True, "judged stale although nothing changed"
     _replace(cross_tree.values / "limits.hy", "(setv LIMIT 3)", "(setv LIMIT 30)")
     assert cross_tree.run("check")["current"] is False, (
-        "macro が返す別の top の package の値を替えたのに、次の process が古いと判じない"
+        "the next process did not judge stale although the value of a separate top-level package returned by a macro changed"
     )
 
 
-# ---- source の拡張子----------------------------------------------------------
+# ---- Source suffixes ----------------------------------------------------------
 #
-# 「source の無い module の class は公開の形だけで覆う」(#3938)の判じが、Hy の source の拡張子を自前の写しで持っていた。Hy の
-# 拡張子を定義点(code_store.HY_SOURCE_SUFFIXES)に足しても写しが古いまま残ると、その拡張子の module の class は拡張の module の
-# class として名と公開の形だけで覆われ、method の本体を替えても digest が変わらない(古い展開を今に合うと判じる)。
+# The judgment that "a class of a module without source is covered only by its public shape" (#3938) held its own copy of Hy's source suffixes. If a suffix is added to the definition point
+# (code_store.HY_SOURCE_SUFFIXES) while the copy stays old, a class of a module with that suffix is covered as an extension module's class
+# by name and public shape only, and the digest does not change even if a method body changes (a stale expansion is judged to match now).
 
 
 def test_a_class_in_a_source_with_an_unlisted_extension_is_covered_by_its_body(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤: .hym(拡張の module の末尾でも、写しの source の末尾でもない)の module の class は method の本体が digest に入らず、
-    # 3 と 30 で同じ digest になった。
+    # Red before the fix: a class of a module with .hym (neither an extension module suffix nor a copied source suffix) did not include the method body in the digest, and
+    # 3 and 30 gave the same digest.
     import types
 
     from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use
 
-    name = f"macro_use_ext_{uuid.uuid4().hex[:8]}"  # 2 つの版で同じ名(名も digest に入る)
+    name = f"macro_use_ext_{uuid.uuid4().hex[:8]}"  # the same name in the two versions (the name also goes into the digest)
 
     def digest(factor: int) -> str | None:
-        """method の本体の定数だけが違う版の module を置き直し、macro の digest を作る(関数は版ごとに別の object — 覚えは使わない)。"""
+        """Re-place a module whose versions differ only in a constant in a method body, and make the macro's digest (functions are separate objects per version — the memo is not used)."""
         module = types.ModuleType(name)
         module.__file__ = str(tmp_path / "macros.hym")
-        exec(  # 検の module の本体(source の拡張子だけが違う module の代わり)
+        exec(  # the body of the check's module (standing in for a module that differs only in source suffix)
             f"class Scaler:\n    def factor(self):\n        return {factor}\n\n\n"
             "def scaled():\n    return Scaler().factor()\n",
             vars(module),
@@ -1267,38 +1266,38 @@ def test_a_class_in_a_source_with_an_unlisted_extension_is_covered_by_its_body(
         key = macro_use.UsedMacroKey(records.MACRO_TABLE, name, "scaled")
         return macro_use.macro_digest(key, vars(module)["scaled"], loader_hooks.file_sha256).digest
 
-    assert digest(3) != digest(30), "拡張子 .hym の module の class の method の本体を替えても digest が変わらない"
+    assert digest(3) != digest(30), "the digest does not change even when the method body of a class in a module with suffix .hym changes"
 
 
-# ---- 照らしの固定費------------------------------------------------------------------
+# ---- Fixed cost of the check ------------------------------------------------------------------
 #
-# 照らしを常に「今に合う」とした process と比べた差(test_emulated_screen.hy の読み込みで 0.385 秒)の内訳: 照らしの中だけで
-# hy.core.hy_repr を読む(置き場の鍵を作るために hy.repr を引く — Hy が遅れて import する)・code の読み(_code_facts — 命令を
-# Python で読む)を process ごとに作り直す・覚えた digest の確かめが照らし 1 回ごとに file を stat する(照らし 797 回で 9,700 回)。
+# Breakdown of the difference (0.385 seconds when loading test_emulated_screen.hy) from a process that always treats the check as "matches now": reading hy.core.hy_repr only inside the check
+# (hy.repr is looked up to make the store key — Hy imports it lazily), rebuilding the code readings (_code_facts — reading instructions in
+# Python) in every process, and the verification of memoized digests stat-ing files on every check (9,700 times for 797 checks).
 
 
 def test_a_steady_check_process_does_not_import_hy_repr(cross_tree: CrossTree) -> None:
-    # 直す前は赤: 置き場に読みが在っても、鍵を作るために hy.repr を引き、Hy が hy.core.hy_repr を読み込んだ(照らしを常に今に
-    # 合うとした process は読まない — 0.055〜0.094 秒)。
+    # Red before the fix: even when the store had the readings, hy.repr was looked up to make the key and Hy loaded hy.core.hy_repr (a process that always treats the check as
+    # matching now does not load it — 0.055 to 0.094 seconds).
     cross_tree.run("record")
     cross_tree.run("check")
     answer = cross_tree.run("check")
-    assert answer["current"] is True, "何も変えていないのに check の process が古いと判じた"
-    assert answer["parsed"] == 0, f"check の process が同じ中身の source を {answer['parsed']} 回解き直した"
-    assert answer["hy_repr"] is False, "置き場に読みが在るのに、照らしが hy.core.hy_repr を読み込んだ"
+    assert answer["current"] is True, "the check process judged stale although nothing changed"
+    assert answer["parsed"] == 0, f"the check process re-parsed the same-content source {answer['parsed']} times"
+    assert answer["hy_repr"] is False, "the check loaded hy.core.hy_repr although the store had the readings"
 
 
 def test_a_steady_check_process_does_not_read_code_facts_again(cross_tree: CrossTree) -> None:
-    # 直す前は赤: code の読み(名の表・文字列の定数・import・digest の形)は code の中身で決まるのに、process の中でしか覚えず、
-    # check の process が macro の閉包の code を毎回読み直した。
+    # Red before the fix: code readings (name table, string constants, imports, digest shape) are determined by the contents of the code, but were memoized only within a process, and
+    # the check process re-read the code of the macro's closure every time.
     cross_tree.run("record")
     cross_tree.run("check")
     answer = cross_tree.run("check")
-    assert answer["current"] is True, "何も変えていないのに check の process が古いと判じた"
-    assert answer["facts"] == 0, f"check の process が code の読みを作り直した(定数の読み {answer['facts']} 回)"
+    assert answer["current"] is True, "the check process judged stale although nothing changed"
+    assert answer["facts"] == 0, f"the check process rebuilt the code readings (constant readings: {answer['facts']} times)"
 
 
-#: 一番外の読み込み 1 つ(top を import する — 中で使い手を 6 つ import する)の package。使い手はどれも同じ macro を使う。
+#: A package for one outermost load (importing top — importing six consumers inside). All consumers use the same macro.
 SCOPE_USERS = tuple(f"user_{index}" for index in range(6))
 SCOPE_FILES = {
     "__init__.py": "",
@@ -1309,11 +1308,11 @@ SCOPE_FILES = {
     "top.hy": "".join(f"(import {{pkg}}.{user})\n" for user in SCOPE_USERS),
 }
 
-#: 子の process: 名指した module を順に import する(名ごとに一番外の読み込み 1 つ)。間に file を書き換える指図(``edit:<file>:<前>:<後>``)・
-#: module を読み直す指図(``reload:<module>``)・読み込みの中で起きた読み手に import させる指図(``<server の module>:<thread か
-#: context>:<module>`` — server の module が置いた ``requests``・``answers``・``CONTEXT``)を挟める。答え = 覚えた digest の確かめが
-#: file を stat した回数(file 名ごと — macro_use._file_state)と、compile した Hy の file と、import した module の値 ``value``(在れば
-#: — 展開の結果)。
+#: Child process: imports the named modules in order (one outermost load per name). Between them you can insert directives to rewrite a file (``edit:<file>:<before>:<after>``),
+#: to re-read a module (``reload:<module>``), and to make a reader started inside a load import (``<server module>:<thread or
+#: context>:<module>`` — ``requests``, ``answers``, and ``CONTEXT`` placed by the server module). The answer = the number of times the verification of memoized digests
+#: stat-ed files (per file name — macro_use._file_state), the Hy files compiled, and the imported module's value ``value`` (if present
+#: — the expansion result).
 SCOPE_CHILD = """\
 import importlib, importlib.machinery, json, sys
 from pathlib import Path
@@ -1366,13 +1365,13 @@ SCOPE_PACKAGE = "macro_use_scope"
 
 @dataclass(frozen=True)
 class ScopeTree:
-    """子の process で読む検の package の根(.pyc は検の一時 dir の pycache に書く)。"""
+    """The root of the check package read in a child process (.pyc is written to the check's temp-dir pycache)."""
 
     root: Path
     package: str = SCOPE_PACKAGE
 
     def run(self, *steps: str) -> dict[str, object]:
-        """子の process で steps を 1 度走らせた答え。"""
+        """The answer from running steps once in a child process."""
         import json
         import subprocess
 
@@ -1390,8 +1389,8 @@ class ScopeTree:
 def _scope_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package: str, files: dict[str, str]
 ) -> ScopeTree:
-    """検の package 1 つ(files — {pkg} を package の名に替える)と別の top の package を置いた根と、子の process が継ぐ環境(共有の
-    置き場・検の一時 dir の pycache・.pyc を書く)。"""
+    """A root with one check package (files — {pkg} replaced by the package name) and a separate top-level package, and the environment the child process inherits (shared
+    store, the check's temp-dir pycache, writing .pyc)."""
     root = tmp_path / "tree"
     (root / package).mkdir(parents=True)
     for name, text in files.items():
@@ -1413,27 +1412,27 @@ def scope_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ScopeTree:
 
 
 def test_one_import_stats_each_macro_file_once(scope_tree: ScopeTree) -> None:
-    # 直す前は赤: 使い手 6 つの .pyc の記録を照らすたびに、覚えた digest の確かめが macro の file を stat し直した(照らし 1 回の
-    # 中では 1 度 — 検の読み込みで照らし 797 回・stat 9,700 回)。一番外の読み込み 1 つの中では file の状態を 1 度だけ読む。
+    # Red before the fix: each time the .pyc records of six consumers were checked, the verification of memoized digests re-stat-ed the macro files (once within a single check
+    # — in the check's load, 797 checks and 9,700 stats). Within one outermost load, file state is read only once.
     first = scope_tree.run("top")
     assert {f"{user}.hy" for user in SCOPE_USERS} <= set(first["compiled"]), first
     answer = scope_tree.run("top")
-    assert answer["compiled"] == [], f".pyc を読むだけの 2 つ目の process が compile した: {answer['compiled']}"
-    assert answer["stats"].get("macros.hy") == 1, f"一番外の読み込み 1 つの中で macros.hy の状態を読んだ回数: {answer['stats']}"
+    assert answer["compiled"] == [], f"the second process that only reads .pyc compiled: {answer['compiled']}"
+    assert answer["stats"].get("macros.hy") == 1, f"number of times the state of macros.hy was read within one outermost load: {answer['stats']}"
 
 
 def test_a_file_changed_between_two_imports_is_noticed_by_the_second(scope_tree: ScopeTree) -> None:
-    # 緑のまま守る: file の状態を 1 度だけ読むのは一番外の読み込み 1 つの中だけ。読み込みの間に tables.py の ROWS の文が変われば、
-    # 次の読み込みの照らしは覚えた digest を使わず辿り直し、古いと判じて使い手を compile し直す。
+    # Keep green: file state is read only once only within one outermost load. If the ROWS statement of tables.py changes between loads,
+    # the next load's check does not use the memoized digest but traces again, judges it stale, and recompiles the consumer.
     scope_tree.run("top")
     answer = scope_tree.run("user_0", 'edit:tables.py:ROWS["b"] = 2:ROWS["b"] = 20', "user_1")
-    assert answer["compiled"] == ["user_1.hy"], f"読み込みの間に変えた tables.py に気づかない: {answer}"
+    assert answer["compiled"] == ["user_1.hy"], f"did not notice tables.py changed between loads: {answer}"
 
 
 def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
-    # 緑のまま守る: 記録の digest の綴り(歩みが入れた文字列ごとに、UTF-8(surrogatepass)の bytes の長さを 8 byte の little endian で
-    # 前に置いた並びの sha256)。綴りが変わると、全部の .pyc と置き場の code の記録が古いと判じられ、全部の Hy の module が compile
-    # し直される(歩みの文字列の入れ方を速くした変更が、綴りを変えていない証拠)。
+    # Keep green: the spelling of the record's digest (the sha256 of a sequence in which, for each string the walk fed in, the length of its UTF-8 (surrogatepass) bytes as an 8-byte little endian
+    # is placed before it). If the spelling changes, all .pyc files and the store's code records are judged stale and all Hy modules are recompiled
+    # (evidence that the change making the walk's string feeding faster did not change the spelling).
     import hashlib
 
     from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use
@@ -1447,16 +1446,16 @@ def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
         data = part.encode("utf-8", "surrogatepass")
         expected.update(len(data).to_bytes(8, "little"))
         expected.update(data)
-    # 関数の中身を全部覆う digest(macro の外の値の行・拾えない時の行)は、前と同じ綴り。
+    # The digest covering the whole function body (rows for values outside the macro and rows for when it cannot be picked up) has the same spelling as before.
     walked = walker.walked()
     assert walked.digest(walked.everything) == expected.hexdigest(), (
-        "歩みの digest の綴りが、長さを前に置いた文字列の並びの sha256 でない"
+        "the spelling of the walk's digest is not the sha256 of the sequence of strings with their length placed before"
     )
 
 
-# ---- 設計検証の失敗例 A・B----------------------------------------------
+# ---- Failure cases from design verification A and B ----------------------------------------------
 
-#: 盲検 A の package — macro rows が、読み込み済みの値の module tables.py の表の行 "b" を返す(歩みは表を tables.py の文で覆う)。
+#: Blind A package — macro rows returns row "b" of the table in the loaded value module tables.py (the walk covers the table with the tables.py statement).
 LIVE_FILES = {
     "__init__.py": "",
     "tables.py": 'ROWS = {{"a": 1}}\nROWS["b"] = 2\n',
@@ -1469,20 +1468,20 @@ LIVE_FILES = {
 def test_a_record_made_after_the_file_of_a_loaded_module_changed_is_stale_in_a_new_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤(盲検 A — 基準版 cf7ea9cc0 から在った): 常駐の process が tables を読み込んだ後(ROWS["b"] = 2)に tables.py が
-    # 書き換わり(20)、同じ process が user_1 を compile し直すと、展開は process の中の古い表(2)を使うのに、記録の digest は今の
-    # file の文(20)から作られた。新しい process(表は 20)はその記録を今に合うと判じ、展開し直せば 20 になる所で 2 を使った。
+    # Red before the fix (blind A — present since baseline cf7ea9cc0): after a resident process loaded tables (ROWS["b"] = 2), tables.py was
+    # rewritten (20), and when the same process recompiled user_1, the expansion used the old table in the process (2), yet the record's digest was made from the current
+    # file's statement (20). A new process (table is 20) judged that record to match now, and used 2 where re-expansion would give 20.
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_live", LIVE_FILES)
     tree.run("user_0", "user_1")
     edited = tree.run("user_0", 'edit:tables.py:ROWS["b"] = 2:ROWS["b"] = 20', "user_1")
-    assert edited["compiled"] == ["user_1.hy"], f"読み込みの間に変えた tables.py に気づかない: {edited}"
+    assert edited["compiled"] == ["user_1.hy"], f"did not notice tables.py changed between loads: {edited}"
     answer = tree.run("user_1")
     assert answer["values"] == {"user_1": 20}, (
-        f"読み込み済みの表を書き換えた後の process が作った記録を、新しい process が今に合うと判じた: {answer}"
+        f"a new process judged to match now the record made by a process after the loaded table was rewritten: {answer}"
     )
 
 
-#: 盲検 B の package — macro body が展開の時に呼ぶ補助 helper は、別の file の macro defhelper が macros.hy の中に作る関数。
+#: Blind B package — the helper that macro body calls at expansion time is a function that the macro defhelper of another file makes inside macros.hy.
 HELPER_FILES = {
     "__init__.py": "",
     "defs.hy": "(defmacro defhelper [name value] `(defn ~name [] ~value))\n",
@@ -1494,21 +1493,21 @@ HELPER_FILES = {
 def test_a_helper_built_by_a_changed_macro_of_another_file_is_stale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 緑のまま守る(盲検 B): helper の code は macros.hy の中身だけでなく defhelper の展開にも依る。code の読みを置き場に覚える鍵を
-    # source の file の中身と関数の在処にする形は、提示した検を全部通ったのに、defs.hy を替えて macros.hy が compile し直された後も
-    # 前の process の helper の読みを使い、使い手を今に合うと判じた(value 1 のまま)。code の読みは code の中身で引く。
+    # Keep green (blind B): the code of helper depends not only on the contents of macros.hy but also on the expansion of defhelper. A shape that keys the memo of code readings in the store by
+    # the source file's contents and the function's location passed all the checks presented, yet even after defs.hy was changed and macros.hy was recompiled
+    # it used the previous process's reading of helper and judged the consumer to match now (value stayed 1). Code readings are looked up by the contents of the code.
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_helper", HELPER_FILES)
     assert tree.run("user")["values"] == {"user": 1}
-    assert tree.run("user")["compiled"] == [], "2 つ目の process が compile した — 検の前提が崩れた"
+    assert tree.run("user")["compiled"] == [], "the second process compiled — the check's precondition broke"
     _replace(tree.root / "macro_use_helper" / "defs.hy", "[] ~value)", "[] (* ~value 10))")
     answer = tree.run("user")
     assert "user.hy" in answer["compiled"] and answer["values"] == {"user": 10}, (
-        f"helper を作る macro を替えたのに、使い手を今に合うと判じた: {answer}"
+        f"judged the consumer to match now although the macro making helper changed: {answer}"
     )
 
 
-#: 盲検 A の付録の package — server.py は一番外の読み込みの中で user_0 を照らし(覚えと file の状態の写しができる)、読み込みの中で
-#: thread を起こし(free-threaded の 3.14 では起こした側の context を継ぐ — sys.flags.thread_inherit_context)、context を写す。
+#: Blind A addendum package — server.py checks user_0 inside the outermost load (making the memo and a copy of file state), starts a
+#: thread inside the load (on free-threaded 3.14 it inherits the starting side's context — sys.flags.thread_inherit_context), and copies the context.
 SERVED_FILES = {
     "__init__.py": "",
     "tables.py": 'ROWS = {{}}\nROWS["a"] = 1\n',
@@ -1525,7 +1524,7 @@ SERVED_FILES = {
         "threading.Thread(target=serve, daemon=True).start()\n"
         "CONTEXT = contextvars.copy_context()\n"
     ),
-    # 一番外の読み込みの本体が終わらないうちに(app を回す本体の代わり)、表を書き換えて reload し、起こした thread に user_1 を読ませる。
+    # While the outermost load body has not finished (standing in for the body running the app), rewrite the table, reload, and have the started thread read user_1.
     "serving.py": (
         "import importlib, pathlib, queue, threading\n"
         "import {pkg}.tables, {pkg}.user_0\n"
@@ -1548,34 +1547,34 @@ SERVED_FILES = {
 def test_an_import_after_the_outer_import_ended_does_not_use_its_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: str
 ) -> None:
-    # 直す前は赤(盲検 A の付録・基準版 cf7ea9cc0 は緑): 一番外の読み込みの中で
-    # 起きた thread と写した context は、読み込みが終わった後も覚え(file の状態の写しと確かめた digest)を持ち続けた。tables.py を
-    # 書き換えて reload した後(表は 100)に user_1 を読むと、古い写しで覚えを確かめて今に合うと判じた(値 1 のまま・compile しない)。
+    # Red before the fix (blind A addendum; baseline cf7ea9cc0 is green): the thread started and the context copied inside the outermost load
+    # kept holding the memo (the copy of file state and the verified digests) after the load finished. After rewriting tables.py and
+    # reloading (table is 100), reading user_1 verified the memo against the old copy, judged it to match now (value stayed 1, no compile).
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_served", SERVED_FILES)
     tree.run("user_0", "user_1")
     answer = tree.run(
         "server", 'edit:tables.py:ROWS["a"] = 1:ROWS["a"] = 100', "reload:tables", f"server:{reader}:user_1"
     )
     assert "user_1.hy" in answer["compiled"] and answer["values"] == {"user_1": 100}, (
-        f"読み込みの中で起きた {reader} が、読み込みの後に reload した表を古い写しで今に合うと判じた: {answer}"
+        f"a {reader} started inside the load judged the table reloaded after the load to match now by using the old copy: {answer}"
     )
 
 
 def test_a_thread_started_inside_a_running_import_does_not_share_its_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 緑のまま守る(盲検 A の付録): 覚えは置いた thread だけが使う。一番外の読み込みの本体が終わらないうちに起きた thread(本体で
-    # app を回す process の worker)が覚えを共有すると、本体の中で reload した表を、その thread も古い写しで今に合うと判じる。
+    # Keep green (blind A addendum): the memo is used only by the thread that set it. If a thread started while the outermost load body had not finished (a worker of a process
+    # running the app in the body) shared the memo, that thread would also judge a table reloaded inside the body to match now by the old copy.
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_served", SERVED_FILES)
     tree.run("user_0", "user_1")
     answer = tree.run("serving")
     assert "user_1.hy" in answer["compiled"] and answer["values"] == {"serving": 100}, (
-        f"読み込みの本体の中で起きた thread が、本体の中で reload した表を古い写しで今に合うと判じた: {answer}"
+        f"a thread started inside the load body judged the table reloaded inside the body to match now by the old copy: {answer}"
     )
 
 
 def _scope_variable_uses(source: Path) -> tuple[str, ...]:
-    """source の中の IMPORT_SCOPE の使い(set と reset の呼びの受け手を除く)と、別名の import。"""
+    """Uses of IMPORT_SCOPE in a source (excluding receivers of set and reset calls), and aliased imports."""
     import ast
 
     tree = ast.parse(source.read_text(encoding="utf-8"))
@@ -1594,7 +1593,7 @@ def _scope_variable_uses(source: Path) -> tuple[str, ...]:
         if isinstance(node, ast.Name) and node.id == "IMPORT_SCOPE" and id(node) not in receivers
     )
     aliases = tuple(
-        f"{source.name}:{node.lineno}(別名 {node.asname})"
+        f"{source.name}:{node.lineno} (alias {node.asname})"
         for node in ast.walk(tree)
         if isinstance(node, ast.alias) and node.name == "IMPORT_SCOPE" and node.asname not in (None, "IMPORT_SCOPE")
     )
@@ -1602,9 +1601,9 @@ def _scope_variable_uses(source: Path) -> tuple[str, ...]:
 
 
 def test_the_import_scope_variable_is_read_only_through_current_scope() -> None:
-    # 緑のまま守る(盲検 A の付録): 読み込みの覚えの ContextVar は、読み込みの中で起きた thread と写した context に値が残るので、
-    # 値があるだけでは今の読み込みの覚えと決まらない — 読みは import_scope.current_scope() だけが行う(置いた thread の中で、閉じる
-    # 前だけ)。import_scope.py の外では、覚えを置く口の set と reset の呼びにしか使わない(別名で持ち出すと読みを縛れない)。
+    # Keep green (blind A addendum): the load memo's ContextVar leaves its value in threads started inside the load and in copied contexts,
+    # so merely having a value does not establish it as the current load's memo — only import_scope.current_scope() reads it (inside the thread that set it, only before
+    # closing). Outside import_scope.py, it is used only for the set and reset calls at the entry that places the memo (carrying it out under an alias cannot constrain reads).
     import doeff_hy_bytecode_guard
 
     package = Path(doeff_hy_bytecode_guard.__file__).parent
@@ -1614,14 +1613,14 @@ def test_the_import_scope_variable_is_read_only_through_current_scope() -> None:
         if source.name != "_import_scope.py"
         for use in _scope_variable_uses(source)
     )
-    assert not uses, f"import_scope.py の外で IMPORT_SCOPE を set・reset の呼びの外で使う — 読みは current_scope() を通す: {uses}"
+    assert not uses, f"IMPORT_SCOPE is used outside import_scope.py other than in set and reset calls — reads must go through current_scope(): {uses}"
 
 
 def test_the_code_reading_entry_is_keyed_by_the_hy_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤(盲検 A の付録): code の読みの called_modules は hy.R の module の名を Hy の mangle と slashes2dots で作るのに、
-    # 置き場の entry の鍵に Hy の版が無かった — Hy を上げて mangle が変わっても、前の Hy の読みを引く(置き場は作業木と版をまたぐ)。
+    # Red before the fix (blind A addendum): called_modules in the code readings makes hy.R module names with Hy's mangle and slashes2dots, yet
+    # the store entry key had no Hy version — even when Hy was upgraded and mangle changed, it looked up the previous Hy's readings (the store spans work trees and versions).
     import hy
 
     from doeff_hy_bytecode_guard import _macro_use as macro_use
@@ -1631,13 +1630,13 @@ def test_the_code_reading_entry_is_keyed_by_the_hy_version(
     entry = macro_use._facts_entry(key)
     assert entry is not None
     monkeypatch.setattr(hy, "__version__", f"{hy.__version__}+other")
-    assert macro_use._facts_entry(key) != entry, "Hy の版が違うのに、code の読みの entry が同じ"
+    assert macro_use._facts_entry(key) != entry, "the code-readings entry is the same although the Hy version differs"
 
 
 def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers() -> None:
-    # 緑のまま守る(盲検 A の付録): code の読みの entry の鍵は、読み方の code をこの module の file の sha256(_own_digest)で覆う。
-    # 読みが呼ぶ関数を別の file に移して import すると、その file の直しが置き場の entry を冷やさず、前の読み方の読みを引く。読みが
-    # 大域の名で呼ぶ関数は全部この module に在る事を確かめる(Hy の関数は鍵の Hy の版が覆う — 関数の中で import する)。
+    # Keep green (blind A addendum): the key of the code-readings entry covers the reading code with the sha256 of this module's file (_own_digest).
+    # If a function the reading calls is moved to another file and imported, fixing that file does not cool the store entry and the reading by the previous method is looked up. Confirm that
+    # every function the reading calls by global name is in this module (Hy's functions are covered by the Hy version in the key — import inside the function).
     from types import CodeType, FunctionType
 
     from doeff_hy_bytecode_guard import _macro_use as macro_use
@@ -1655,11 +1654,11 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
         seen.add(name)
         value = vars(macro_use)[name]
         assert value.__module__ == macro_use.__name__, (
-            f"code の読みが呼ぶ {name} が {value.__module__} に在る — _own_digest がその file を覆わない"
+            f"{name} called by the code reading is in {value.__module__} — _own_digest does not cover that file"
         )
-        # class(``_Instructions``)は method の code を読む。
+        # A class (``_Instructions``) reads the code of its methods.
         functions = [v for v in vars(value).values() if isinstance(v, FunctionType)] if isinstance(value, type) else [value]
-        # interpreter の組み込みの型(``CodeType``・``FunctionType`` — module は builtins)は file でなく Python の版が覆う。
+        # The interpreter's built-in types (``CodeType``, ``FunctionType`` — module is builtins) are covered by the Python version, not by a file.
         for function in functions:
             pending.extend(
                 called
@@ -1670,26 +1669,26 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
     assert {"_code_facts", "_constant_text", "_called_modules", "_reference_module", "_mangle"} <= seen, seen
 
 
-# ---- 環境変数で決まる値を読む macro---
+# ---- Macros that read values determined by environment variables ---
 #
-# 歩みは標準 library を名だけ入れる(Python の版で覆う)が、os.environ は process の状態で、版も file も覆わない。環境変数から組んだ
-# 素の値の大域(条 3 の MODE)は値で入るので古いと判じるが、環境変数から組んだ表は名を束縛する source の文で覆われ、文は環境変数の
-# 値を持たない。macro が展開の時に直に読む形・補助の関数が読む形も、code の中身と os の名だけが入る。
+# The walk includes standard-library modules by name only (covered by the Python version), but os.environ is process state and neither version nor file covers it. A global of plain values assembled from environment variables
+# (MODE in clause 3) enters by value and so is judged stale, but a table assembled from environment variables is covered by the source statement binding its name, and the statement does not carry the environment variable's
+# value. A shape where a macro reads it directly at expansion time and a shape where a helper function reads it also include only the code's contents and the name os.
 
-#: 環境変数の名(検の子の process だけが継ぐ — monkeypatch で置く)。
+#: Names of environment variables (inherited only by the check's child process — set with monkeypatch).
 ENV_MODE = "MACRO_USE_ENV_MODE"
 
-#: 環境変数で決まる値を形ごとに読む macro。table = 文が直に環境変数を読んで組む dict(付録 3 の形)・listed = 同じく list・
-#: aliased = os から別名で import した environ で組む dict・got = os から import した getenv で組む dict・built = 読み込みの時に
-#: 補助の関数が組む dict・py-table = Python の module の文が組む dict・direct = 展開の時に macro が直に読む・helper = 展開の時に
-#: 補助の関数が読む・local = 関数の中の import で読む(module の大域に os が無い)。body と plain は環境変数を読まない macro と、
-#: 環境変数から組んだ素の値を返す macro(条 3 — 値で入る)。失敗例の形: hy-import = Hy の
-#: import で別の module の表を名で束縛して読む・default = 環境変数から組んだ表を補助の関数の既定値に持つ・cell = 読み込みの時に
-#: 組んだ表を閉包の cell に持つ(どちらも大域の名で引けない値)。
+#: Macros that read values determined by environment variables, per shape. table = a dict a statement assembles by reading the environment variable directly (the shape of addendum 3); listed = likewise a list;
+#: aliased = a dict assembled from environ imported from os under an alias; got = a dict assembled from getenv imported from os; built = a dict a helper function assembles at load
+#: time; py-table = a dict a Python module statement assembles; direct = a macro reads directly at expansion time; helper = a helper
+#: function reads at expansion time; local = read through an import inside a function (the module's globals have no os). body and plain are a macro that does not read environment variables and
+#: a macro that returns a plain value assembled from environment variables (clause 3 — enters by value). Failure-case shapes: hy-import = reads a table of another module bound by name through a Hy
+#: import; default = holds a table assembled from environment variables as the default of a helper function; cell = holds a table assembled at load time
+#: in a closure cell (neither is a value that can be looked up by global name).
 ENV_FORMS = (
     "table", "listed", "aliased", "got", "built", "py-table", "direct", "helper", "local", "hy-import", "default", "cell",
 )
-#: 形ごとの macro の module(書いていない形は macros.hy)。
+#: Macro module per shape (macros.hy for shapes not listed).
 ENV_FORM_MODULES = {
     "local": "local_macros",
     "hy-import": "hy_import_macros",
@@ -1747,40 +1746,40 @@ ENV_FILES = {
 def test_a_macro_reading_a_value_decided_by_the_environment_is_stale_when_it_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str
 ) -> None:
-    # 直す前は赤(付録 3 — 基準版 cf7ea9cc0 から在った): 環境変数だけを替えた新しい process は、使い手の .pyc の記録を今に合うと判じ、
-    # 展開し直せば "fancy" になる所で前の process の展開("plain")を使った。B1 の条(環境変数など file の外で決まる値が違えば古い)。
+    # Red before the fix (addendum 3 — present since baseline cf7ea9cc0): a new process with only the environment variable changed judged the consumer's .pyc record to match now and
+    # used the previous process's expansion ("plain") where re-expansion would give "fancy". The B1 clause (a value determined outside files, such as an environment variable, makes it stale if different).
     monkeypatch.delenv(ENV_MODE, raising=False)
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
     user = f"u_{form.replace('-', '_')}"
     assert tree.run(user)["values"] == {user: "plain"}
-    monkeypatch.setenv(ENV_MODE, "fancy")  # 2 つ目の process だけが継ぐ
+    monkeypatch.setenv(ENV_MODE, "fancy")  # inherited only by the second process
     answer = tree.run(user)
-    assert f"{user}.hy" in answer["compiled"], f"macro({form})が読む環境変数の値が違うのに、使い手を今に合うと判じた: {answer}"
-    assert answer["values"] == {user: "fancy"}, f"展開し直した使い手の値が今の環境変数に合わない: {answer}"
+    assert f"{user}.hy" in answer["compiled"], f"judged the consumer to match now although the environment variable value read by the macro ({form}) differs: {answer}"
+    assert answer["values"] == {user: "fancy"}, f"the value of the re-expanded consumer does not match the current environment variable: {answer}"
 
 
 def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that_do(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 緑のまま守る: 環境変数の読みは、それに当たった macro の照らしだけを変える。同じ module の環境変数を読まない macro(body)と、
-    # 環境変数から組んだ素の値を値で入れる macro(plain — 条 3)と、Hy の import の同じ form で環境変数から組んだ表と並べて
-    # import した表を読む macro(fixed — import の form の兄弟の名を辿らない)は、同じ
-    # 環境の次の process で compile せず、環境変数を替えた時は plain だけを展開し直す。
+    # Keep green: reading an environment variable changes the check of only the macro that hit it. A macro in the same module that does not read environment variables (body),
+    # a macro that enters a plain value assembled from environment variables by value (plain — clause 3), and a macro that reads a table imported in the same Hy import form
+    # alongside a table assembled from environment variables (fixed — names that are siblings in the import form are not traced) do not compile in the next process
+    # with the same environment, and when the environment variable changes, only plain is re-expanded.
     monkeypatch.delenv(ENV_MODE, raising=False)
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
     tree.run("u_body", "u_plain", "u_fixed")
-    assert tree.run("u_body", "u_plain", "u_fixed")["compiled"] == [], "何も変えていないのに 2 つ目の process が compile した"
+    assert tree.run("u_body", "u_plain", "u_fixed")["compiled"] == [], "the second process compiled although nothing changed"
     monkeypatch.setenv(ENV_MODE, "fancy")
     answer = tree.run("u_body", "u_plain", "u_fixed")
     assert answer["compiled"] == ["u_plain.hy"], (
-        f"環境変数を替えた process が、環境変数を読まない macro の使い手まで compile したか、素の値の変化に気づかない: {answer}"
+        f"the process with the changed environment variable either compiled even consumers of macros that do not read environment variables, or did not notice the change in the plain value: {answer}"
     )
     assert answer["values"] == {"u_body": 1, "u_plain": "fancy", "u_fixed": 1}, answer
 
 
 def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_files() -> None:
-    # 緑のまま守る: 環境変数の読みに当たった記録の行は、今の歩みが import の途中の module に当たって file の行で比べる形(digest が
-    # None)になっても古い — file は環境変数の違いを写さない。今の歩みが環境変数の読みに当たった時も、記録の印と同じでも古い。
+    # Keep green: a record row that hit an environment variable read is stale even when the current walk hits a module midway through import and compares by file rows (digest is
+    # None) — a file does not reflect a difference in environment variables. Even when the current walk hit an environment variable read, it is stale even if it has the same mark as the record.
     from doeff_hy_bytecode_guard import _macro_use as macro_use
 
     for recorded, now in (
@@ -1790,15 +1789,15 @@ def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_f
         ("0" * 64, records.ENVIRONMENT_READ),
     ):
         check = macro_use._row_check(recorded, macro_use.ClosureDigest(now, ()))
-        assert check is macro_use.RowCheck.STALE, f"記録 {recorded!r}・今 {now!r} の行を {check} と判じた"
+        assert check is macro_use.RowCheck.STALE, f"judged the row with record {recorded!r} and now {now!r} to be {check}"
 
 
 def test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 緑のまま守る: 環境変数を読む macro の使い手の記録は、環境変数が同じ process
-    # でも照らせない — 共有の置き場から引く路でも。印の行を記録から除いて照らし、環境変数の指紋を鍵に置き場の entry を使い回す
-    # 読み込みの口は、別の作業木で macro の本体を替えた後も、環境変数が同じだけで前の展開("plain")を今に合うと判じた。
+    # Keep green: the record of a consumer of a macro that reads an environment variable cannot be checked
+    # even in a process with the same environment variables — even on the path that looks up the shared store. A load entry that checks with the mark rows removed from the record and reuses a store entry keyed by a fingerprint of environment variables
+    # judged the previous expansion ("plain") to match now merely because the environment variables were the same, even after the macro body was changed in another work tree.
     import shutil
 
     monkeypatch.delenv(ENV_MODE, raising=False)
@@ -1812,14 +1811,14 @@ def test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_i
         f'(defmacro direct [] (.upper (os.environ.get "{ENV_MODE}" "plain")))',
     )
     answer = other.run("u_direct")
-    assert "u_direct.hy" in answer["compiled"], f"macro を替えた木の使い手を、置き場の前の展開で今に合うと判じた: {answer}"
+    assert "u_direct.hy" in answer["compiled"], f"judged the consumer in the tree where the macro was changed to match now by the store's previous expansion: {answer}"
     assert answer["values"] == {"u_direct": "PLAIN"}, answer
 
 
 def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
-    # 緑のまま守る(盲検 B): 印 ENVIRONMENT_READ の意味(閉包の digest 全体の代わり — 照らせない)は、定義点(records.py)と、印を作る
-    # 歩みと印を照らす照らし(macro_use.py)だけが持つ。読み込みの口などが印の行を見分けて記録を作り替えると、照らしの判断がその口へ
-    # 移る(印の行を除いた記録を照らす形)。
+    # Keep green (blind B): the meaning of the mark ENVIRONMENT_READ (instead of the whole closure digest — cannot be checked) is held only by the definition point (records.py) and by the
+    # walk that makes the mark and the check that checks the mark (macro_use.py). If the load entry or similar discerned mark rows and rewrote the record, the check's decision would
+    # move to that entry (the shape of checking a record with mark rows removed).
     import ast
 
     import doeff_hy_bytecode_guard
@@ -1834,15 +1833,15 @@ def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
         or (isinstance(node, ast.Attribute) and node.attr == "ENVIRONMENT_READ")
         or (isinstance(node, ast.alias) and node.name == "ENVIRONMENT_READ")
     )
-    assert not uses, f"records.py・macro_use.py の外で印 ENVIRONMENT_READ を読む — 印の判断は照らし(macro_use)が持つ: {uses}"
+    assert not uses, f"the mark ENVIRONMENT_READ is read outside records.py and macro_use.py — the decision about the mark belongs to the check (macro_use): {uses}"
 
 
-# ---- 関数の中の require の局所の表は、展開している module の記録にだけ入る ----
+# ---- A function-local require table goes only into the record of the module being expanded ----
 
 
 def _expand_on_its_own(name: str, source: str, filename: str, entered, before) -> records.MacroRecord:
-    """解析器の展開(macro_recording の中で hy_compile)と同じ形で source を展開し、記録を返す — entered は展開の囲みに入った知らせ、
-    before は compile の前の待ち(thread の順を決めるため)。"""
+    """Expand a source in the same shape as the analyzer's expansion (hy_compile inside macro_recording) and return the record — entered is a notice that the expansion's wrapper was entered,
+    before is a wait before compile (to fix the thread order)."""
     import types
 
     import hy
@@ -1859,8 +1858,8 @@ def _expand_on_its_own(name: str, source: str, filename: str, entered, before) -
 
 
 def test_a_local_macro_of_a_module_compiled_inside_another_expansion_stays_out_of_its_record(tree: Tree) -> None:
-    # 盲検 B: 局所の表を覚える口を展開の with の間だけ包む形(閉包で記録の表を持つ)は、外の展開の中で compile された module の
-    # 局所の表を外の記録へ入れ、外の使い手が使わない macro の変更で冷えた。局所の表は compile している module の記録にだけ入る。
+    # Blind B: a shape that wraps the entry that remembers the local table only for the duration of the expansion's with (holding the record table in a closure) put the local table of a module compiled inside an outer expansion
+    # into the outer record, and it went cold from a change to a macro the outer consumer does not use. The local table goes only into the record of the module being compiled.
     (tree.directory / "inner.hy").write_text(
         f"(defmacro wrap [x] x)\n(defn f []\n  (require {tree.package}.macros [used])\n  (used))\n", encoding="utf-8"
     )
@@ -1870,12 +1869,12 @@ def test_a_local_macro_of_a_module_compiled_inside_another_expansion_stays_out_o
     record = tree.record("outer")
     assert [(used.module, used.name) for used in record.macros] == [(f"{tree.package}.inner", "wrap")], record.macros
     _replace(tree.macros, "(+ (helper 1) consts.OFFSET)", "(+ (helper 20) consts.OFFSET)")
-    assert tree.is_current(record), "外の使い手が使わない、入れ子に compile された module の局所の macro を替えただけで古いと判じた"
+    assert tree.is_current(record), "judged stale merely because a local macro of a nested-compiled module, which the outer consumer does not use, changed"
 
 
 def test_a_local_require_expanded_while_another_expansion_ends_on_another_thread_is_recorded(tree: Tree) -> None:
-    # 盲検 B: 包みを展開ごとに入れて外す形では、先に始まった別の module の展開が後の展開の途中で終わると、後の展開の局所の表を
-    # 覚える包みまで外し、関数の中の require の macro が記録から漏れた(free-threaded の Python で解析器の展開が並ぶ形)。
+    # Blind B: in a shape that puts the wrapper on and off per expansion, if the expansion of another module that started earlier ends in the middle of a later expansion, it also removes the wrapper
+    # remembering the later expansion's local table, and the macro of a require inside a function leaked out of the record (the shape where the analyzer's expansions run side by side on free-threaded Python).
     import threading
 
     quiet_entered, local_entered, quiet_exited = threading.Event(), threading.Event(), threading.Event()

@@ -1,10 +1,10 @@
-"""defeffect の :pre と defwire / defrecord の :check が、型検査の展開で書き手の直せない赤を出さないことの失敗ケース。
+"""Failure cases showing that the :pre of defeffect and the :check of defwire / defrecord do not produce reds the author cannot fix in the type-check expansion.
 
-- defeffect: `__post_init__` が :pre の検めのために全部の欄を `<欄> = self.<欄>` で束縛していたので、:pre が使わない欄が
-  reportUnusedVariable の赤になっていた。:pre が参照する欄だけを束縛する(defrecord の :check と同じ形)。
-- defwire / defrecord の :check: 検め式の答えを `verdict is not True` で比べるので、答えが `re.Match` の式は
-  reportUnnecessaryComparison の赤になっていた(Match | None と True は重ならない)。型検査の展開では答えを object に広げる。
-- 実行時の意味は変えない: :pre が使わない欄があっても、使う欄の検めは作る時に断る。:check の Match の答えは真偽で読む。
+- defeffect: `__post_init__` bound all fields as `<field> = self.<field>` for the :pre check, so fields :pre does not use became
+  reportUnusedVariable reds. Bind only the fields :pre references (the same shape as defrecord's :check).
+- defwire / defrecord :check: the check compares the verdict with `verdict is not True`, so an expression whose answer is `re.Match` became a
+  reportUnnecessaryComparison red (Match | None and True do not overlap). In the type-check expansion the answer is widened to object.
+- Runtime meaning is unchanged: even if :pre has fields it does not use, the checks on the fields it does use are refused at construction. A Match answer of :check is read as truthiness.
 """
 
 import contextlib
@@ -14,11 +14,11 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is missing")
 
 MODULE = """\
 (require doeff-hy.macros [defeffect])
@@ -27,20 +27,20 @@ MODULE = """\
 (import re)
 
 (defeffect PutProfile
-  "検体の effect(:pre は 2 つの欄のうち name だけを使う)。"
+  "Sample effect (:pre uses only name of the two fields)."
   {:fields [(: name str) (: size int)]
    :pre [(: name str) (> (len name) 0)]
    :answer None
    :tags {:context "probe" :role "intent"}})
 
 (defwire ParkRow
-  "検体の wire(:check は re.Match を返す)。"
+  "Sample wire (:check returns re.Match)."
   {:names :camel
    :check [(re.fullmatch "c-[0-9A-Z]+" conversation-id)]}
   (#^ str conversation-id))
 
 (defrecord Span
-  "検体の record(:check は re.Match を返す)。"
+  "Sample record (:check returns re.Match)."
   {:check [(re.match "[a-z]+" label)]}
   (#^ str label))
 """
@@ -48,7 +48,7 @@ MODULE = """\
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """Result of one run of doeff-hy-check (JSON diagnostics)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -78,7 +78,7 @@ def probe(tmp_path: Path) -> Path:
 
 @needs_pyright
 def test_pre_and_check_add_no_errors_the_author_cannot_fix(probe: Path) -> None:
-    # 直す前は :pre の使わない欄 size の reportUnusedVariable と、:check の 2 つの reportUnnecessaryComparison が赤。
+    # Before the fix, reportUnusedVariable on the field size that :pre does not use, and two reportUnnecessaryComparison from :check, were red.
     assert _check(probe).errors() == []
 
 

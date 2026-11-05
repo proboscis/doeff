@@ -1,11 +1,11 @@
-"""契約 `(: x T)` に、要素の型つきの総称型を含む型の別名を書ける事の失敗ケース(#1790)。
+"""Failure case: a contract `(: x T)` can use a type alias that contains a generic type with element types (#1790).
 
-defk の :pre の型の契約は、実行の時は isinstance で確かめ(要素の型つきの総称型は外側の型へ写す — #1790)、型検査の展開でも同じ
-isinstance を出していた。型の別名(名)はそのまま isinstance へ渡るので、要素の型を書いた別名(例 `Body = Mapping[str, Body] | …`)を
-型検査の時だけ書く形(doeff_hy/_json_value.py と同じ)にしても、型検査で『isinstance の第 2 引数は型でない』の赤になり、別名を素の和
-(`Mapping | tuple | …`)のままにするしか無かった(使い手の strict に『一部不明』の赤が残る)。
-→ 型検査の展開では :pre の型の契約の isinstance を出さない(引数の型は契約から書く注記が運ぶ)。実行の時の確かめは変えない。
-1 本目は型検査の赤が無い事、2 本目は実行の時に契約が今までどおり違う値を断る事を確かめる。
+The :pre type contract of defk is checked with isinstance at run time (a generic type with element types is mapped to its outer type -- #1790), and the type-check expansion also emitted the same
+isinstance. A type alias (a name) is passed to isinstance as is, so even if an alias with element types (e.g. `Body = Mapping[str, Body] | …`) was written
+only at type-check time (the same shape as doeff_hy/_json_value.py), type checking raised the error "isinstance second argument is not a type", and the only option was to leave the alias as a plain union
+(`Mapping | tuple | …`) (leaving a "partially unknown" error in the user's strict).
+-> The type-check expansion does not emit the isinstance for the :pre type contract (the annotation written from the contract carries the argument type). The run-time check is unchanged.
+The first test checks there is no type-check error; the second checks that at run time the contract still rejects the wrong value as before.
 """
 
 import contextlib
@@ -16,26 +16,26 @@ import shutil
 import sys
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 
 from doeff import run
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not installed")
 
 MODULE = """\
 (require doeff-hy.macros [defk val])
 (import collections.abc [Mapping])
 (import typing [TYPE_CHECKING TypeAlias])
 
-;; 型検査の時は要素の型つきの再帰の別名・実行の時は isinstance に渡せる和(doeff_hy/_json_value.py と同じ形)。
+;; At type-check time a recursive alias with element types; at run time a union that can be passed to isinstance (the same shape as doeff_hy/_json_value.py).
 (if TYPE_CHECKING
     (setv #^ TypeAlias Body "Mapping[str, Body] | tuple[Body, ...] | str | int | None")
     (setv Body (| Mapping tuple str int None)))
 
 (defk text-of [body key]
   {:pre [(: body Body) (: key str)] :post [(: % (| str None))] :tags {:context "probe" :role "judgment"}}
-  "中身が object で欄 key が文字列ならその値を読むため(別名の要素の型で読める)。"
+  "To read the value when the content is an object and the field key is a string (readable by the alias element type)."
   (val value (if (isinstance body Mapping) (.get body key) None))
   (if (isinstance value str) value None))
 """

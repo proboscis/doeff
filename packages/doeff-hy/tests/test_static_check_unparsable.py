@@ -1,12 +1,12 @@
-"""doeff-hy-check が、展開した Python が文法に合わない .hy を 1 本含む範囲でも、検査全体を落とさない失敗ケース。
+"""Failure cases: doeff-hy-check does not fail the whole check even when the range contains one .hy whose expanded Python does not parse.
 
-Hy 1.3.1 の match は型の pattern の欄の名を mangle しないので、defk の外の ``(A :foo-bar y)`` は ``case A(foo-bar=y)`` の木に
-なり、型検査の展開の ``ast.parse(ast.unparse(tree))`` が SyntaxError を出す。以前は project が HyLanguageError だけを 1 本の
-file の失敗にし、SyntaxError は展開の子の process から抜けて repo 全体の検査を落とした(agora-controllers の日次の
-hy-type-trend が 10-30 に 2 回 premise-unmet)。
+The Hy 1.3.1 match does not mangle field names in a type pattern, so ``(A :foo-bar y)`` outside defk becomes a ``case A(foo-bar=y)`` tree,
+and ``ast.parse(ast.unparse(tree))`` in the type-checking expansion raises SyntaxError. Previously the project made only HyLanguageError a failure of a single
+file, and SyntaxError escaped from the expansion child process and brought down the check of the whole repo (agora-controllers' daily
+hy-type-trend hit premise-unmet twice on 10-30).
 
-- 直列でも子の process で並べても、その file を名指した診断(hy-expansion・match の行)になり、他の file の展開は揃う。
-- doeff-hy-check の入口は例外で落ちず、その file の診断を出して終わる。
+- Serial or parallel in child processes, it becomes a diagnostic naming that file (hy-expansion, the match line), and other files' expansions are complete.
+- The doeff-hy-check entry does not die on an exception; it emits that file's diagnostic and finishes.
 """
 
 import contextlib
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from doeff_hy._static_check import CompileFailure, Projection, main, project, project_closure
 
-#: 型の pattern の欄の名に `-` を持つ match(defk の外 — 展開が `case A(foo-bar=y)` になる)。match は 5 行目。
+#: A match with `-` in the field name of a type pattern (outside defk -- the expansion becomes `case A(foo-bar=y)`). The match is on line 5.
 UNPARSABLE = """\
 (defclass A []
   (setv foo_bar 1))
@@ -36,7 +36,7 @@ ROOT = """\
 
 
 def _tree(root: Path) -> Path:
-    """根の file(main.hy)と、それが import する alpha・beta・gamma を置く(beta は展開が文法に合わない)。"""
+    """Place the root file (main.hy) and the alpha, beta and gamma it imports (beta's expansion does not parse)."""
     (root / "alpha.hy").write_text(LEAF.format(name="alpha", value=1), encoding="utf-8")
     (root / "beta.hy").write_text(UNPARSABLE, encoding="utf-8")
     (root / "gamma.hy").write_text(LEAF.format(name="gamma", value=3), encoding="utf-8")
@@ -56,13 +56,13 @@ def test_an_unparsable_expansion_is_a_failure_naming_the_file_and_line(tmp_path:
         "hy-expansion",
         "error",
     ), diagnostic
-    assert diagnostic.line == 5, diagnostic  # 文法に合わない一番奥の文 = match
-    assert diagnostic.message.startswith("展開した Python が文法に合わない: "), diagnostic
+    assert diagnostic.line == 5, diagnostic  # the innermost statement that does not parse = match
+    assert diagnostic.message.startswith("the expanded Python is not valid syntax: "), diagnostic
 
 
 def test_an_unparsable_dependency_does_not_stop_its_wave(tmp_path: Path) -> None:
     main_file = _tree(tmp_path)
-    for limit in (1, 3):  # 親で順に・子の process で並べる
+    for limit in (1, 3):  # serially in the parent, and in parallel in child processes
         closure = project_closure(tmp_path, [tmp_path], [main_file], None, limit=limit)
         assert sorted(p.name for p in closure.projections) == ["alpha.hy", "gamma.hy", "main.hy"], (
             limit,

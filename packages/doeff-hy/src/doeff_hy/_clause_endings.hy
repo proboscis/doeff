@@ -1,16 +1,16 @@
-;;; defhandler / handle の節の終わり方(ADR-DOE-CORE-EFFECTS-003 R15)— 終わる節 (finish 値) と、再開の書き忘れを
-;;; 3 つの時点で止める検め。
+;;; How defhandler / handle clauses end (ADR-DOE-CORE-EFFECTS-003 R15): the ending clause (finish value), and checks that stop a forgotten
+;;; resume at three points in time.
 ;;;
-;;;   展開の時   節のすべての道が節の操作(resume・transfer・finish・reperform・raise — 名と性質は clause_ops.hy の表)の
-;;;              どれかで終わる(handle.hy の _terminates)。
-;;;              節が名指す effect の名が Raise / Absent なら、resume・transfer を断る。ほかの effect を finish で打ち切る節は
-;;;              理由 (:finish-reason "…") が要る。
-;;;   定義の時   handler を作る式を評価した時に、節の effect の型が宣言する再開の扱い(__doeff_resumption__ —
-;;;              doeff_core_effects._effects.Resumption)と節の終わり方を照らす(別名で import した Raise も捕まえる)。
-;;;   実行の時   節が resume も finish もせずに抜けたら RuntimeError(黙ってスコープを None で終えない)。
+;;;   Expansion time    Every path of a clause ends in one of the clause operations (resume, transfer, finish, reperform, raise; names and properties are in the clause_ops.hy table)
+;;;                     (_terminates in handle.hy).
+;;;                     If the effect name the clause refers to is Raise / Absent, resume and transfer are refused. A clause that cuts off another effect with finish
+;;;                     needs a reason (:finish-reason "...").
+;;;   Definition time   When the expression that builds the handler is evaluated, the resumption handling that the clause's effect type declares (__doeff_resumption__ --
+;;;                     doeff_core_effects._effects.Resumption) is checked against how the clause ends (this also catches a Raise imported under an alias).
+;;;   Run time          If a clause exits without either resume or finish, RuntimeError (the scope is not silently ended with None).
 ;;;
-;;; handle.hy は展開の時に関数の中でこの module を import する(handle.hy は macros.hy に require されるので、deff を使う
-;;; 補助は handle.hy の外に置く)。展開した handler は定義の時の検めのためにこの module を import する。
+;;; handle.hy imports this module inside a function at expansion time (handle.hy is required by macros.hy, so helpers that use deff
+;;; are placed outside handle.hy). The expanded handler imports this module for the definition-time check.
 
 (require doeff-hy.macros [deff])
 (require doeff-hy.record [defrecord])
@@ -21,13 +21,13 @@
 (import hy)
 (import hy.models [Expression Symbol Keyword String Sequence Object Tuple])
 (import doeff_core_effects._effects [Resumption resumption-of])
-;; 節を終える操作とその終わり方(続きを再開する・打ち切る …)は clause_ops.hy の表から引く — ここに名の一覧を写さない
-;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた)。resume は非末尾なら節へ戻るので、
-;; 実行の時の検めが見る。
+;; The operations that end a clause and how they end it (resume the continuation, cut it off, ...) are looked up from the clause_ops.hy table; the list of names is not copied here
+;; (when a copy was not updated, the Raise check for a new operation silently slipped through). A non-tail resume returns to the clause,
+;; so the run-time check looks at it.
 (import doeff-hy._clause-ops [Ending clause-op ops-ending])
 
 
-;; 名前で分かる effect(展開の時に断れる物)と、その再開の扱い。
+;; Effects identifiable by name (ones that can be refused at expansion time) and their resumption handling.
 (setv NAMED-RESUMPTION {"Raise" Resumption.NEVER "Absent" Resumption.ABSENT-AS-ONLY})
 
 
@@ -44,41 +44,41 @@
 
 
 (defclass ClauseEndingError [TypeError]
-  "節の終わり方が effect の再開の宣言に反する(定義の時に上げる)。")
+  "The way a clause ends contradicts the effect's resumption declaration (raised at definition time).")
 
 
-(deff parse-clause-options [forms where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff parse-clause-options [forms where]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: forms list) (: where str)] :post [(: % ClauseOptions)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "節の本体の頭の鍵 `:when 番` と `:finish-reason \"理由\"`(順は問わない)を分けるため。知らない鍵・理由が空でない文字列の
-   literal でないものは SyntaxError。"
+  "Separates the leading keys of a clause body, `:when guard` and `:finish-reason \"reason\"` (in either order). An unknown key, or a reason that is not a
+   non-empty string literal, is a SyntaxError."
   (let [items (list forms)
         found {}]
     (while (and (>= (len items) 2) (isinstance (get items 0) Keyword))
       (let [key (str (.pop items 0))
             value (.pop items 0)]
         (when (not-in key #{":when" ":finish-reason"})
-          (raise (SyntaxError (+ where ": 節の鍵 " key " は受けない — 受ける鍵は :when と :finish-reason"))))
+          (raise (SyntaxError (+ where ": clause key " key " is not accepted; the accepted keys are :when and :finish-reason"))))
         (when (in key found)
-          (raise (SyntaxError (+ where ": 節の鍵 " key " が 2 回ある"))))
+          (raise (SyntaxError (+ where ": clause key " key " appears twice"))))
         (when (and (= key ":finish-reason") (not (and (isinstance value String) (.strip (str value)))))
-          (raise (SyntaxError (+ where ": :finish-reason は打ち切る理由の文字列(空でない literal): " (.lstrip (hy.repr value) "'")))))
+          (raise (SyntaxError (+ where ": :finish-reason must be a string giving the reason for cutting off (a non-empty literal): " (.lstrip (hy.repr value) "'")))))
         (setv (get found key) value)))
     (ClauseOptions :guard (.get found ":when") :finish-reason (.get found ":finish-reason") :body items)))
 
 
-(deff irrefutable-pattern? [pattern]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff irrefutable-pattern? [pattern]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: pattern Object)] :post [(: % bool)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "match の最後の枝が何でも受ける形(`_` か名前 1 つの capture)かを見るため — 無ければ合わない値が素通りする道が残る。"
+  "Checks whether the last arm of a match is a catch-all (`_` or a single-name capture); without one, a path remains where a non-matching value slips through."
   (and (isinstance pattern Symbol) (not-in "." (str pattern))))
 
 
-(deff match-terminates? [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff match-terminates? [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % bool)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "(match 主題 パターン [:if 番] 本体 …) の節がすべての道で終わるかを見るため: どの枝の本体も終わり、最後の枝が番の無い
-   何でも受ける形であること(合わない値が素通りして黙ってスコープを終える道を作らない — R15)。"
+  "Checks whether a (match subject pattern [:if guard] body ...) clause ends on every path: the body of every arm ends, and the last arm is a catch-all
+   with no guard (so there is no path where a non-matching value slips through and silently ends the scope; R15)."
   (import doeff-hy.handle [_terminates])
   (let [arms (match-arms form)]
     (and (is-not arms None)
@@ -88,12 +88,12 @@
          (all (gfor arm arms (_terminates arm.body))))))
 
 
-(deff match-arms [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff match-arms [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % (| list None))]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "(match 主題 パターン [:if 番] 本体 …) を枝の list に分けるため(本体の欠けた枝があれば None)。枝ごとの番の形も持つ —
-   節の終わり方の検め(match-terminates?)と、末尾の resume を transfer にする書き換え(handle.hy の _match-cases-to-transfer)が
-   同じ分け方を使う(分け方を 2 つにしない)。"
+  "Splits (match subject pattern [:if guard] body ...) into a list of arms (None if any arm lacks a body). It also keeps each arm's guard form;
+   the clause-ending check (match-terminates?) and the rewrite that turns a tail resume into transfer (_match-cases-to-transfer in handle.hy)
+   use the same split (there are not two ways of splitting)."
   (let [items (list (cut form 2 None))
         arms []]
     (while items
@@ -108,11 +108,11 @@
     arms))
 
 
-(deff try-terminates? [form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff try-terminates? [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % bool)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "(try 本体 … (except [...] …) …) の節がすべての道で終わるかを見るため: 本体が終わり、各 except の本体も終わる
-   (例外を受けた道も resume・finish・raise のどれかへ届く)。"
+  "Checks whether a (try body ... (except [...] ...) ...) clause ends on every path: the body ends and each except body also ends
+   (a path that caught an exception also reaches one of resume, finish, raise)."
   (import doeff-hy.handle [_head-name _seq-terminates])
   (let [parts (list (cut form 1 None))
         body (lfor f parts :if (not-in (_head-name f) #{"except" "except*" "else" "finally"}) f)
@@ -121,10 +121,10 @@
          (all (gfor h handlers (_seq-terminates (list (cut h 2 None))))))))
 
 
-(deff ops-in [node]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff ops-in [node]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: node Object)] :post [(: % frozenset)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "form の中で使う終わりの操作の名の集合(quote の中は数えない)— effect の再開の宣言と照らすため。"
+  "The set of names of ending operations used in the form (not counting those inside quote), for checking against the effect's resumption declaration."
   (let [head (when (and (isinstance node Expression) (> (len node) 0) (isinstance (get node 0) Symbol))
                (str (get node 0)))]
     (match node
@@ -134,58 +134,58 @@
       _ (frozenset))))
 
 
-(deff clause-ops [forms]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff clause-ops [forms]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: forms list)] :post [(: % frozenset)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "節の本体が使う終わりの操作の名の集合。"
+  "The set of names of ending operations used by the clause body."
   (| (frozenset) #* (gfor form forms (ops-in form))))
 
 
-(deff effect-name [etype]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff effect-name [etype]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: etype Object)] :post [(: % (| str None))]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "節の頭の effect の型の名(dotted なら最後の綴り)— 名前で分かる effect(Raise / Absent)を見分けるため。"
+  "The name of the effect type at the head of the clause (the last segment if dotted), to identify effects recognizable by name (Raise / Absent)."
   (when (isinstance etype Symbol)
     (get (.split (str etype) ".") -1)))
 
 
-(deff check-clause-by-name [etype ops options where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff check-clause-by-name [etype ops options where]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: etype Object) (: ops frozenset) (: options ClauseOptions) (: where str)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "展開の時に分かる違反を SyntaxError にするため: Raise の節の resume / transfer(失敗したのに成功したかのように続く)、
-   Absent の節の resume / transfer(再開してよいのは absent-as だけ)、ほかの effect を理由なしに finish で打ち切る節、
-   finish の無い節の :finish-reason。再開する操作・打ち切る操作は clause_ops.hy の表の終わり方(Ending)で決める。"
+  "Turns violations detectable at expansion time into SyntaxError: resume / transfer in a Raise clause (it would continue as if a failure had succeeded),
+   resume / transfer in an Absent clause (only absent-as may resume), a clause that cuts off another effect with finish without a reason,
+   and :finish-reason on a clause with no finish. Which operations resume and which cut off is decided by the ending (Ending) in the clause_ops.hy table."
   (let [named (.get NAMED-RESUMPTION (effect-name etype))
         resumes (ops-ending ops Ending.RESUMES)
         finishes (ops-ending ops Ending.FINISHES)]
     (when (and (= named Resumption.NEVER) resumes)
-      (raise (SyntaxError (+ where ": Raise の節は " (.join "/" (sorted resumes)) " できない — Raise は誰も再開しない"
-                             "(失敗したのに成功したかのように続くため)。(finish 値) でスコープを終えるか (reperform effect) で外へ渡す"
+      (raise (SyntaxError (+ where ": A Raise clause cannot " (.join "/" (sorted resumes)) ": nobody resumes a Raise"
+                             " (it would continue as if a failure had succeeded). End the scope with (finish value) or pass it outward with (reperform effect)"
                              " [ADR-DOE-CORE-EFFECTS-003 R15]"))))
     (when (and (= named Resumption.ABSENT-AS-ONLY) resumes)
-      (raise (SyntaxError (+ where ": Absent の節は " (.join "/" (sorted resumes)) " できない — Absent を再開できるのは"
-                             " absent-as だけ。(finish 値) でスコープを終えるか (reperform effect) で外へ渡す"
-                             " [ADR-DOE-CORE-EFFECTS-003 R8・R15]"))))
+      (raise (SyntaxError (+ where ": An Absent clause cannot " (.join "/" (sorted resumes)) ": the only thing that may resume an Absent is"
+                             " absent-as. End the scope with (finish value) or pass it outward with (reperform effect)"
+                             " [ADR-DOE-CORE-EFFECTS-003 R8, R15]"))))
     (when (and (is named None) finishes (is options.finish-reason None))
-      (raise (SyntaxError (+ where ": 普通の effect の節を (finish …) で打ち切るには、節に :finish-reason \"理由\" を書く"
-                             "(時間切れで処理全体を止める等 — 再開の書き忘れと見分けるため) [ADR-DOE-CORE-EFFECTS-003 R15]"))))
+      (raise (SyntaxError (+ where ": to cut off an ordinary effect's clause with (finish ...), write :finish-reason \"reason\" in the clause"
+                             " (e.g. stopping the whole process on timeout; this distinguishes it from a forgotten resume) [ADR-DOE-CORE-EFFECTS-003 R15]"))))
     (when (and (is-not options.finish-reason None) (not finishes))
-      (raise (SyntaxError (+ where ": :finish-reason を書いたが節に (finish …) が無い"))))
+      (raise (SyntaxError (+ where ": :finish-reason is given but the clause has no (finish ...)"))))
     None))
 
 
-(deff ending-spec-form [etype ops options]  ; defk にできない: macro の展開の時に呼ぶ関数
+(deff ending-spec-form [etype ops options]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: etype Object) (: ops frozenset) (: options ClauseOptions)] :post [(: % Tuple)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "定義の時の検めへ渡す節 1 つの記述の form: #(effect の型 使う操作の名の tuple 理由があるか)。"
+  "The form describing one clause, passed to the definition-time check: #(effect type, tuple of names of operations used, whether a reason is present)."
   `#(~etype #(~@(lfor op (sorted ops) (String op))) ~(is-not options.finish-reason None)))
 
 
-(deff check-clause-endings [handler clauses]  ; defk にできない: 展開した handler が定義の時に呼ぶ検め(effect を出さない)
+(deff check-clause-endings [handler clauses]  ; cannot be a defk: a check the expanded handler calls at definition time (performs no effect)
   {:pre [(: handler str) (: clauses list)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "handler の各節の終わり方を、節の effect の型が宣言する再開の扱い(Resumption)と照らすため — 名前では分からない物
-   (別名で import した Raise・__doeff_resumption__ を宣言した型)をここで止める。違反は ClauseEndingError。"
+  "Checks how each clause of the handler ends against the resumption handling (Resumption) declared by the clause's effect type. Cases not identifiable by name
+   (a Raise imported under an alias, a type that declares __doeff_resumption__) are stopped here. A violation is a ClauseEndingError."
   (for [#(etype ops has-reason) clauses]
     (let [types (match etype
                   (type) [etype]
@@ -196,34 +196,34 @@
           resumes (ops-ending ops Ending.RESUMES)]
       (for [effect-type types]
         (let [declared (resumption-of effect-type)
-              where (+ handler " の節 " effect-type.__name__)]
+              where (+ handler " clause " effect-type.__name__)]
           (match declared
             Resumption.NEVER :if resumes
-              (raise (ClauseEndingError (+ where ": " effect-type.__name__ " は再開しない effect(Resumption.NEVER)なのに節が "
-                                           (.join "/" (sorted resumes)) " する [ADR-DOE-CORE-EFFECTS-003 R15]")))
+              (raise (ClauseEndingError (+ where ": " effect-type.__name__ " is an effect that is never resumed (Resumption.NEVER), but the clause does "
+                                           (.join "/" (sorted resumes)) " [ADR-DOE-CORE-EFFECTS-003 R15]")))
             Resumption.ABSENT-AS-ONLY :if resumes
-              (raise (ClauseEndingError (+ where ": " effect-type.__name__ " を再開できるのは absent-as だけなのに節が "
-                                           (.join "/" (sorted resumes)) " する [ADR-DOE-CORE-EFFECTS-003 R8・R15]")))
+              (raise (ClauseEndingError (+ where ": " effect-type.__name__ " may be resumed only by absent-as, but the clause does "
+                                           (.join "/" (sorted resumes)) " [ADR-DOE-CORE-EFFECTS-003 R8, R15]")))
             Resumption.REQUIRED :if (and (ops-ending ops Ending.FINISHES) (not has-reason))
-              (raise (ClauseEndingError (+ where ": 再開する effect を (finish …) で打ち切るのに :finish-reason が無い"
+              (raise (ClauseEndingError (+ where ": an effect that is resumed is cut off with (finish ...) but there is no :finish-reason"
                                            " [ADR-DOE-CORE-EFFECTS-003 R15]")))
             _ None)))))
   None)
 
 
-;; 節の終わり方の照合を済ませた defhandler の定義(節の記述を作る関数 specs の code object — 定義 1 つに 1 つ)。照合は節の effect の型だけで
-;; 決まり、引数の在る handler の引数には依らない。済んだ印を handler の本体(data)に置くと、引数の在る handler は組むたびに本体が新しいので、
-;; 要求ごとに組む handler(記録の service の wait-stamps など)が組むたびに照合をやり直していた(1 要求の
-;; scheduler の thread の CPU の 1 割ほど)。
+;; defhandler definitions whose clause-ending check is done (the code object of the specs function that builds the clause descriptions; one per definition). The check is
+;; determined by the clause's effect types alone and does not depend on the arguments of a handler that takes arguments. When the done-mark was placed on the handler's body (data), a handler with arguments had a new body every time it was built, so
+;; handlers built per request (such as wait-stamps in the record service) redid the check every time (about 10% of the CPU of
+;; the scheduler thread for one request).
 (setv CHECKED-DEFINITIONS (set))
 
 
-(deff check-clause-endings-once [data handler specs]  ; defk にできない: 展開した handler が本文に被さる時に呼ぶ検め(effect を出さない)
+(deff check-clause-endings-once [data handler specs]  ; cannot be a defk: a check called when the expanded handler wraps a body (performs no effect)
   {:pre [(: data Callable) (: handler str) (: specs Callable)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "defhandler の節の終わり方の照合を、定義ごとに、handler を初めて本文に被せた時に 1 回だけ行うため(module を読み終えた後なので、
-   handler より後に定義した effect の型も引ける)。済んだ印は定義の印(CHECKED-DEFINITIONS — specs の code object)に置く。
-   data は展開の呼びの形を変えないために受ける。"
+  "Runs the clause-ending check of a defhandler once per definition, when the handler first wraps a body (the module has been fully loaded by then,
+   so effect types defined after the handler can also be resolved). The done-mark is kept in the definition marker (CHECKED-DEFINITIONS, the code object of specs).
+   data is accepted so as not to change the shape of the expansion's call."
   (setv definition specs.__code__)
   (when (not-in definition CHECKED-DEFINITIONS)
     (check-clause-endings handler (specs))
@@ -231,9 +231,9 @@
   None)
 
 
-(deff fell-through [handler effect-label]  ; defk にできない: 展開した handler の節が実行の時に呼ぶ(例外を作るだけ)
+(deff fell-through [handler effect-label]  ; cannot be a defk: called by the expanded handler's clause at run time (only builds an exception)
   {:pre [(: handler str) (: effect-label str)] :post [(: % RuntimeError)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
-  "節が resume も finish もせずに抜けた時の誤り(黙ってスコープを None で終えない — R15)。"
-  (RuntimeError (+ handler " の節 " effect-label " が resume / transfer / finish / reperform のどれにも届かずに抜けた — "
-                   "黙ってスコープを終えない。すべての道で再開するか (finish 値) で終える [ADR-DOE-CORE-EFFECTS-003 R15]")))
+  "The error for when a clause exits without either resume or finish (the scope is not silently ended with None; R15)."
+  (RuntimeError (+ handler " clause " effect-label " exited without reaching any of resume / transfer / finish / reperform. "
+                   "The scope is not ended silently. Resume on every path, or end with (finish value) [ADR-DOE-CORE-EFFECTS-003 R15]")))

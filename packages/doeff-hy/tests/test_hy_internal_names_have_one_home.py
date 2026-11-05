@@ -1,24 +1,24 @@
-"""Hy の内部の名(macro の表の名・export の名の表の名・Hy が一時の名に振る先頭)の字は、定義元 1 か所だけが持つ。
+"""The spelling of Hy's internal names (macro table names, export-name table names, the prefix Hy gives temporary names) is held by exactly one definition home.
 
-Hy が module の名前空間に置く表の名(``_hy_macros``・``_hy_reader_macros``・``_hy_export_macros``)と、一時の名の先頭(``_hy_``)の定義元は
-``doeff_hy_bytecode_guard._records``(``MACRO_TABLE``・``READER_TABLE``・``EXPORT_NAMES``・``GENERATED_NAME_PREFIX``・
-``ANON_VAR_NAME``)で、使い手は字を持たず、records の定数と関数(``macro_tables``・``exported_macro_names``・
-``fold_anon_var_numbers``)で引く。字を他の file へ写すと、Hy が名を替えた時に直す所が 2 つ以上になり、uv.lock の版の Hy に当てる検
-(test_bytecode_guard.py)が測るのは records の読みだけなので、写しは測られないまま古くなる(見つかった
-3 か所 — doeff_effect_analyzer._result_cache・doeff_hy._static_baseline・macro_use の export の名の表 — の形)。
+The definition home of the table names Hy puts in a module namespace (``_hy_macros``, ``_hy_reader_macros``, ``_hy_export_macros``) and of the temporary-name prefix (``_hy_``) is
+``doeff_hy_bytecode_guard._records`` (``MACRO_TABLE``, ``READER_TABLE``, ``EXPORT_NAMES``, ``GENERATED_NAME_PREFIX``,
+``ANON_VAR_NAME``); users hold no spelling and look names up through records' constants and functions (``macro_tables``, ``exported_macro_names``,
+``fold_anon_var_numbers``). If the spelling is copied to another file, there are two or more places to fix when Hy renames, and the test run against the Hy version in uv.lock
+(test_bytecode_guard.py) measures only records' reading, so copies go stale unmeasured (the form of the
+3 places found — doeff_effect_analyzer._result_cache, doeff_hy._static_baseline, and the export-name table of macro_use).
 
-この検は、repo の production の source(.py と .hy — tests・docs・記録の dir は数えない)から、次の綴りを数え、records の外に 1 つでも在れば
-名指して赤にする。
-- 空白を含まない文字列の定数(名・regex の綴り — bytes・Hy の ``#[[…]]`` の文字列も)が ``_hy_`` で始まる名を含む物。
-- 表の名 3 つ(records の定数の値)を名前・属性・import する名として読む形(Python の ``module._hy_macros``・``from m import _hy_macros``・
-  Hy の symbol ``(. module _hy_macros)``)。
-説明の文(空白を含む文字列)・docstring・注釈は名を書いてよい。``_could_be_hy_src`` のように語の途中に ``_hy_`` が入る名・``__hy_``
-で始まる名は数えない(doeff 自身の ``_hy_symbols`` のような関数の名も、表の名でなければ数えない)。
+This test counts the following spellings in the repo's production source (.py and .hy — tests, docs, and record dirs are not counted), and if even one is outside records it
+names it and goes red.
+- A string constant without whitespace (a name, a regex spelling — bytes and Hy's ``#[[…]]`` strings too) containing a name that starts with ``_hy_``.
+- A form that reads one of the 3 table names (the values of records' constants) as a name, attribute, or imported name (Python's ``module._hy_macros``, ``from m import _hy_macros``,
+  Hy's symbol ``(. module _hy_macros)``).
+Descriptive text (strings containing whitespace), docstrings, and comments may write the names. Names with ``_hy_`` in the middle of a word such as ``_could_be_hy_src``, and names starting with ``__hy_``,
+are not counted (nor are doeff's own function names such as ``_hy_symbols`` unless they are table names).
 
-数えるのは綴られた名だけで、名の別の書き方(``_(?:hy|lazy)_`` のように先頭を分けた regex・名を継ぎ足して作る文字列・計算した名の
-``getattr``)は数えない。依りそのものは test_bytecode_guard.py の検が実物の Hy に当てて測るので、この走査は「字が 2 つ目の定義元に
-なる」素直な形を止める役で、測りの代わりではない(static_baseline の regex は先頭を分けた形
-だったので、この走査では数えられなかった)。
+Only spelled names are counted; other ways of writing a name (a regex with the prefix split such as ``_(?:hy|lazy)_``, a string built by concatenating names, a computed-name
+``getattr``) are not counted. The dependency itself is measured by test_bytecode_guard.py against the real Hy, so this scan serves to stop the plain form in which "the spelling becomes
+a second definition home", not to replace measurement (static_baseline's regex was a form with the prefix split,
+so this scan could not count it).
 """
 
 from __future__ import annotations
@@ -33,28 +33,28 @@ from typing import NamedTuple
 from doeff_hy_bytecode_guard._records import EXPORT_NAMES, MACRO_TABLE, READER_TABLE
 
 ROOT = Path(__file__).resolve().parents[3]
-#: 名の定義元(この file だけが字を持つ)。
+#: The definition home of the names (only this file holds the spelling).
 HOME = ROOT / "packages" / "doeff-hy" / "src" / "doeff_hy_bytecode_guard" / "_records.py"
-#: 降りない dir(隠し dir・build の出力・検・文書・記録 — production の source を持たない)。
+#: Directories not descended into (hidden dirs, build output, tests, docs, records — they hold no production source).
 NOT_WALKED = re.compile(r"^(\..*|node_modules|target|build|dist|__pycache__|tests|docs|notes|sessions|publications)$")
-#: 検の file(dir が tests でない置き場の物)。
+#: Test files (those in places whose dir is not tests).
 TEST_FILE = re.compile(r"^(test_.*|.*_test|conftest)\.(py|hy)$")
-#: Hy が module の名前空間に置く表の名(値は records の定数 — ここに字を持たない)。
+#: The table names Hy puts in a module namespace (the values are records' constants — no spelling is held here).
 TABLE_NAMES = frozenset({MACRO_TABLE, READER_TABLE, EXPORT_NAMES})
-#: Hy が振る名の先頭(語の途中・``__hy_`` の途中の ``_hy_`` — ``_could_be_hy_src``・``__hy_injected__`` など — は数えない)。
+#: The prefix of names Hy assigns (``_hy_`` in the middle of a word or of ``__hy_`` — ``_could_be_hy_src``, ``__hy_injected__``, etc. — is not counted).
 HY_NAME = re.compile(r"(?<![A-Za-z0-9_])_hy_")
-#: Hy の source の文字列の綴り(行をまたぐ物も)と、括弧の文字列 ``#[[…]]``・``#[名[…]名]``。
+#: The spelling of Hy source strings (including those spanning lines), and bracket strings ``#[[…]]`` and ``#[name[…]name]``.
 HY_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 HY_BRACKET_STRING = re.compile(r"#\[([^\[\]]*)\[(.*?)\]\1\]", re.DOTALL)
 HY_COMMENT = re.compile(r";[^\n]*")
-#: Hy の symbol としての表の名(``-`` も symbol の字なので、前後が名の字でない時だけ)。
+#: The table names as Hy symbols (``-`` is also a symbol character, so only when the neighbors are not name characters).
 HY_TABLE_SYMBOL = re.compile(
     r"(?<![A-Za-z0-9_-])(" + "|".join(re.escape(name) for name in sorted(TABLE_NAMES)) + r")(?![A-Za-z0-9_-])"
 )
 
 
 def _production_sources() -> Iterator[Path]:
-    """repo の production の .py と .hy(HOME・検の file・NOT_WALKED の dir の下を除く)。"""
+    """The repo's production .py and .hy (excluding HOME, test files, and under NOT_WALKED dirs)."""
     for current, dirs, files in os.walk(ROOT):
         dirs[:] = sorted(name for name in dirs if not NOT_WALKED.match(name))
         for name in sorted(files):
@@ -64,19 +64,19 @@ def _production_sources() -> Iterator[Path]:
 
 
 def _is_spelling(text: str) -> bool:
-    """文字列の定数が Hy の内部の名の綴りか(名・regex の綴り — 空白を含む説明の文は含まない)。"""
+    """Whether a string constant is a spelling of a Hy internal name (a name or regex spelling — not descriptive text containing whitespace)."""
     return not any(char.isspace() for char in text) and HY_NAME.search(text) is not None
 
 
 class _Spelling(NamedTuple):
-    """Hy の内部の名の綴り 1 つの在りか: 行と綴り。"""
+    """Where one spelling of a Hy internal name is: line and spelling."""
 
     line: int
     text: str
 
 
 def _python_spelling(node: ast.AST) -> _Spelling | None:
-    """木の節 1 つが読む Hy の内部の名の綴り(行・綴り — 文字列の定数・bytes・表の名の名前・属性・import する名)。無ければ None。"""
+    """The spelling of a Hy internal name that one tree node reads (line, spelling — a string constant, bytes, or the name, attribute, or imported name of a table name). None if none."""
     match node:
         case ast.Constant(value=str() as text) as found if _is_spelling(text):
             return _Spelling(found.lineno, text)
@@ -89,12 +89,12 @@ def _python_spelling(node: ast.AST) -> _Spelling | None:
 
 
 def _line_of(text: str, offset: int) -> int:
-    """text の offset 文字目の行(1 始まり)。"""
+    """The line of the character at offset in text (1-based)."""
     return text.count("\n", 0, offset) + 1
 
 
 def _hy_spellings(text: str) -> Iterator[tuple[int, str]]:
-    """Hy の source の中の Hy の内部の名の綴り(行・綴り)— 文字列・括弧の文字列・symbol の表の名。注釈と説明の文は数えない。"""
+    """Spellings of Hy internal names in Hy source (line, spelling) — strings, bracket strings, table-name symbols. Comments and descriptive text are not counted."""
     code = "\n".join("" if line.lstrip().startswith(";") else line for line in text.split("\n"))
     for found in HY_BRACKET_STRING.finditer(code):
         if _is_spelling(found.group(2)):
@@ -102,16 +102,16 @@ def _hy_spellings(text: str) -> Iterator[tuple[int, str]]:
     for found in HY_STRING.finditer(code):
         if _is_spelling(found.group(0)):
             yield _line_of(code, found.start()), found.group(0)
-    # 文字列を空にして(行は保つ)から注釈を外すと、文字列の中の ``;`` に惑わされず、注釈と説明の文の名は数えない。
+    # Emptying strings (keeping lines) and then removing comments avoids being fooled by ``;`` inside a string, and names in comments and descriptive text are not counted.
     bare = HY_BRACKET_STRING.sub(lambda found: "\n" * found.group(0).count("\n"), code)
     bare = HY_STRING.sub(lambda found: '"' + "\n" * found.group(0).count("\n") + '"', bare)
-    uncommented = HY_COMMENT.sub("", bare)  # 注釈は行の中だけなので、行の数えは変わらない
+    uncommented = HY_COMMENT.sub("", bare)  # comments are within a line, so line counting is unchanged
     for found in HY_TABLE_SYMBOL.finditer(uncommented):
         yield _line_of(uncommented, found.start()), found.group(1)
 
 
 def _spellings(path: Path) -> Iterator[tuple[int, str]]:
-    """file の中の Hy の内部の名の綴り(行・綴り — 行の順)。docstring は説明の文なので、空白を含み数えられない。"""
+    """Spellings of Hy internal names in a file (line, spelling — in line order). A docstring is descriptive text, so it contains whitespace and is not counted."""
     text = path.read_text(encoding="utf-8")
     if "_hy_" not in text:
         return
@@ -123,26 +123,26 @@ def _spellings(path: Path) -> Iterator[tuple[int, str]]:
 
 
 def test_no_file_but_records_spells_a_name_hy_gives_its_tables_and_temporaries() -> None:
-    """Hy の内部の名の綴りは、定義元 records.py の外に 0 件。"""
+    """Spellings of Hy internal names: 0 outside the definition home records.py."""
     copies = [
         f"{path.relative_to(ROOT)}:{line}: {text}"
         for path in _production_sources()
         for line, text in _spellings(path)
     ]
     assert copies == [], (
-        f"Hy の内部の名(_hy_ で始まる名・表の名)の綴りが records の外に在る: {copies} — 名は {HOME.relative_to(ROOT)} の定数"
-        "(MACRO_TABLE・READER_TABLE・EXPORT_NAMES・GENERATED_NAME_PREFIX)と関数(macro_tables・exported_macro_names・"
-        "fold_anon_var_numbers)で引く。足りない形なら records に足す(Hy の版上げで測る検は records の読みを測る)"
+        f"Spellings of Hy internal names (names starting with _hy_, table names) exist outside records: {copies} — look names up through the constants of {HOME.relative_to(ROOT)}"
+        "(MACRO_TABLE, READER_TABLE, EXPORT_NAMES, GENERATED_NAME_PREFIX) and functions (macro_tables, exported_macro_names, "
+        "fold_anon_var_numbers). If a form is missing, add it to records (the test that runs on Hy version bumps measures records' reading)"
     )
 
 
 def test_the_scan_sees_a_spelling_in_each_form_a_copy_takes(tmp_path: Path) -> None:
-    """走査が見逃さない確かめ(失敗ケース): 名の字・regex の綴り・f-string の先頭・bytes・属性の読み・import する名・Hy の source の字と
-    symbol が数えられ、説明の文・docstring・注釈・語の途中や ``__hy_`` の途中の ``_hy_``・doeff 自身の ``_hy_`` で始まる関数の名は
-    数えられない。"""
+    """Checks the scan does not miss (failure cases): name spellings, regex spellings, f-string prefixes, bytes, attribute reads, imported names, and Hy source strings and
+    symbols are counted, while descriptive text, docstrings, comments, ``_hy_`` in the middle of a word or of ``__hy_``, and names of doeff's own functions starting with ``_hy_`` are
+    not counted."""
     python = tmp_path / "copy.py"
     python.write_text(
-        '"""説明: _hy_macros を読む。"""\n'
+        '"""Description: reads _hy_macros."""\n'
         "from other import _hy_export_macros\n"
         'A = "_hy_macros"\n'
         'B = r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)"\n'
@@ -160,8 +160,8 @@ def test_the_scan_sees_a_spelling_in_each_form_a_copy_takes(tmp_path: Path) -> N
     hy = tmp_path / "copy.hy"
     hy.write_text(
         '; "_hy_commented" is a comment\n'
-        '(defn f []\n  "docstring: _hy_macros の説明"\n'
-        '  (get (vars module) "_hy_macros")  ; _hy_export_macros を読む\n'
+        '(defn f []\n  "docstring: description of _hy_macros"\n'
+        '  (get (vars module) "_hy_macros")  ; reads _hy_export_macros\n'
         "  (. module _hy_reader_macros)\n"
         "  (setv c _hy_export_macros)\n"
         "  #[[_hy_macros]]\n"

@@ -1,17 +1,17 @@
-"""doeff_hy._frozen の型(frozen.pyi)の検(#2245)。
+"""Check on the types of doeff_hy._frozen (frozen.pyi) (#2245).
 
-frozen.hy は Hy の module で、型の宣言(frozen.pyi)が無いと pyright は `FrozenMap` と凍らせる関数を Unknown として読み、
-FrozenMap を返す定義の答え・FrozenMap の値の読みに、書き手に直せない reportUnknown* が連なる(agora の基点に同じ種類が
-約 1,400 件)。
+frozen.hy is a Hy module, and without a type declaration (frozen.pyi) pyright reads `FrozenMap` and the freezing functions as Unknown,
+so reportUnknown* errors the author cannot fix pile up on definitions that return FrozenMap and on reads of FrozenMap values (about 1,400 of the same kind in agora's
+baseline).
 
-- 失敗ケース: 同じ小さな .hy を、frozen.hy だけを置いた写しと frozen.pyi も置いた写しの 2 通りで doeff-hy-check --strict に
-  かける(写しは別の名の package — doeff_hy の名のままだと、pyright は写しに無い frozen.pyi を入れた doeff_hy から読む)。外すと FrozenMap と答えが Unknown の赤になり、置くと消える。置いた側では値の型の取り違え(int の値に文字列を
-  足す)が赤になる(FrozenMap が値の型を運んでいる)。型引数を書かない `FrozenMap` は FrozenMap[object] で、型引数の
-  書き忘れの赤にならない。
-- freeze-json-text(JSON の文字列 → FrozenJson)の答えは FrozenMap に絞れ、絞った値の中身は JSON の値として渡せる(
-  json.loads の Any を読む所で型に決める口。stub から外すと検体のその行が赤)。
-- 一致: stub が宣言する名は実行時の module に在り、関数の引数の名は実装と同じ。FrozenMap は実装と同じく
-  `Mapping[str, V]`(型引数は値の型 1 つ)。
+- Failure case: run the same small .hy through doeff-hy-check --strict in two copies, one with only frozen.hy and one with frozen.pyi also placed
+  (the copies are packages with a different name; with the doeff_hy name, pyright would read from the doeff_hy that has the frozen.pyi missing from the copy). Without it, FrozenMap and the results are Unknown errors; with it they go away. On the side with it, a type mix-up of values (adding a string to an int value) is an error
+  (FrozenMap carries the value type). A bare `FrozenMap` without type arguments is FrozenMap[object] and does not
+  produce an error for forgetting the type arguments.
+- The result of freeze-json-text (JSON string -> FrozenJson) can be narrowed to FrozenMap, and the contents of the narrowed value can be passed as JSON values (
+  the point where the Any from json.loads is fixed to a type. Removing it from the stub makes that line of the specimen an error).
+- Agreement: the names the stub declares exist in the runtime module, and function argument names match the implementation. FrozenMap is, as in the implementation,
+  `Mapping[str, V]` (one type argument, the value type).
 """
 
 import ast
@@ -29,10 +29,10 @@ from pathlib import Path
 
 import pytest
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 from doeff_hy import _frozen as frozen
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not installed")
 
 PACKAGE = Path(frozen.__file__).parent
 
@@ -85,13 +85,13 @@ MODULE = """\
   (+ (get SHALLOW "a") "x"))
 """
 
-#: frozen.pyi を外すと Unknown になる名。
+#: Names that become Unknown when frozen.pyi is removed.
 UNKNOWN_NAMES: tuple[str, ...] = ('"FrozenMap"', '"frozen_map_of"', '"SHALLOW"', '"m"')
 
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """Result of running doeff-hy-check once (JSON diagnostics)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -104,14 +104,14 @@ class Run:
 
 
 def _line_of(marker: str) -> int:
-    """検体の中で marker を含む行の番号(1 から)。"""
+    """Line number (from 1) of the line containing the marker in the specimen."""
     return next(n for n, line in enumerate(MODULE.splitlines(), start=1) if marker in line)
 
 
 def _check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_stub: bool) -> Run:
-    """frozen.hy(with_stub なら frozen.pyi も)の写しの package frozen_copy を import の根に置き、検体を doeff-hy-check --strict に
-    かける。写しの dir は sys.path にも置く — doeff-hy-check が import 先を「.hy なので型が見えない」module と見分けるのは
-    sys.path の .hy なので、agora が doeff の .hy の module を読む時と同じ扱いになる。"""
+    """Place a copy of frozen.hy (and frozen.pyi if with_stub) as package frozen_copy at the import root, and run the specimen through doeff-hy-check --strict.
+    The copy's dir is also placed on sys.path -- doeff-hy-check tells an import target from a module whose "types are invisible because it is .hy" by the .hy on
+    sys.path, so this matches how agora treats doeff's .hy modules."""
     from doeff_hy._static_check import main
 
     copy = tmp_path / ("stubbed" if with_stub else "bare") / "frozen_copy"
@@ -144,10 +144,10 @@ def test_with_the_stub_nothing_is_unknown_and_a_wrong_value_type_is_red(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     errors = _check(tmp_path, monkeypatch, with_stub=True).errors()
-    # 正しい使い(検体の頭から wrong-sum の前まで)には赤が無い — Unknown も、素の FrozenMap の型引数の書き忘れも。
+    # The correct use (from the head of the specimen to before wrong-sum) has no errors -- neither Unknown nor a forgotten type argument on a bare FrozenMap.
     right = range(1, _line_of("(defk wrong-sum"))
     assert [e for e in errors if e[1] in right] == [], errors
-    # frozen-map-of は写像の値の型を運ぶ: int の値に文字列を足すと赤。
+    # frozen-map-of carries the mapping value type: adding a string to an int value is an error.
     wrong = _line_of('(+ (get SHALLOW "a") "x")')
     assert [e for e in errors if e[1] == wrong and e[0] == "reportOperatorIssue"], errors
 
@@ -160,12 +160,12 @@ def test_the_stub_matches_frozen_hy() -> None:
     for function in functions:
         declared = [a.arg for a in function.args.args]
         assert declared == list(inspect.signature(getattr(frozen, function.name)).parameters), function.name
-    # 実装の FrozenMap は Mapping[str, V](鍵は文字列・型引数は値の型 1 つ)— stub の基底と同じ形。
-    # types.get_original_bases は Python 3.12 から — 3.11 では同じ物(総称の基底の書いたままの形)を class の __orig_bases__ から読む。
+    # The implementation's FrozenMap is Mapping[str, V] (keys are strings, one type argument for the value type) -- the same shape as the stub's base.
+    # types.get_original_bases exists from Python 3.12 -- on 3.11, read the same thing (the generic base as written) from the class's __orig_bases__.
     (base,) = (
         types.get_original_bases(frozen.FrozenMap)
         if sys.version_info >= (3, 12)
-        else frozen.FrozenMap.__orig_bases__  # type: ignore[attr-defined] — 3.11 の型の宣言に無い、総称の class の属性
+        else frozen.FrozenMap.__orig_bases__  # type: ignore[attr-defined] — not in the 3.11 type declarations; an attribute of the generic class
     )
     assert typing.get_origin(base) is Mapping
     key, value = typing.get_args(base)

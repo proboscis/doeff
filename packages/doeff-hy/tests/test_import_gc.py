@@ -1,12 +1,11 @@
-"""一番外の読み込み(module の本体の実行 — 中の import を含む)の間だけ GC の閾値を上げ、終わったら戻す(agora-redesign)
-の検。
+"""Check that the GC threshold is raised only during the outermost load (running a module body, including the imports inside it) and restored when it ends (agora-redesign).
 
-測り(2026-10-12・agora-controllers の test_emulated_screen.hy・CPython 3.14.3 free-threaded): file 全体の秒の中の GC は 7 回・
-0.28〜0.38 秒で、全部 test module の読み込み 1 つの中だった。free-threaded の GC は前の GC から RSS が 10% 超増えると heap 全体を
-掃くので、ごみが 1% 前後でも読み込みが heap を育てるたびに掃く。読み込みの間だけ閾値(前の GC から正味で増えてよい object の数
-— 溜まりうるごみの数の上限でもある)を有限の値へ上げると 2 回・0.15 秒になった。
+Measurement (2026-10-12, agora-controllers test_emulated_screen.hy, CPython 3.14.3 free-threaded): of the file's total seconds, GC was 7 runs and
+0.28-0.38 seconds, all inside the load of a single test module. The free-threaded GC sweeps the whole heap when RSS has grown by more than 10% since the previous GC,
+so even with about 1% garbage it sweeps every time loading grows the heap. Raising the threshold (the number of objects allowed to net-increase since the previous GC
+- also the upper bound on the garbage that can pile up) to a finite value only during loading gave 2 runs and 0.15 seconds.
 
-子の process で、包みを入れて一時の package を読み、module の本体が見た閾値と、読み込みの後の閾値を出す。
+In a child process, install the wrapper, load a temporary package, and output the threshold the module body saw and the threshold after loading.
 """
 
 from __future__ import annotations
@@ -18,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-#: 子の process — 包みを入れ、場面(argv[2])ごとに一時の package(argv[1])を読み、見た閾値を JSON で出す。module の本体は
-#: 見た閾値を自分の名 ``threshold`` に置く(途中で落ちる module は例外に載せる)。
+#: Child process - install the wrapper, load the temporary package (argv[1]) for each scenario (argv[2]), and output the threshold seen as JSON. The module body
+#: puts the threshold it saw in its own name ``threshold`` (a module that fails midway is put into the exception).
 _CHILD = """\
 import gc
 import json
@@ -87,7 +86,7 @@ result["after"] = gc.get_threshold()
 print(json.dumps(result))
 """
 
-#: 一時の package の module(名 → 本体)。
+#: Modules of the temporary package (name -> body).
 _MODULES = {
     "outer": "import gc\nthreshold = gc.get_threshold()\nimport pkg.inner\nthreshold_after_inner = gc.get_threshold()\n",
     "inner": "import gc\nthreshold = gc.get_threshold()\n",
@@ -98,8 +97,8 @@ _MODULES = {
 
 
 def _run(tmp_path: Path, scene: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """子の process で場面を 1 つ走らせ、見た閾値(before・seen・after ほか)を返す。子は検の process の環境を受け継ぎ、.pyc を
-    書かない設定だけを足す(検の後に monkeypatch が戻す)。"""
+    """Run one scenario in a child process and return the seen thresholds (before, seen, after, etc.). The child inherits the check process's environment and adds only the setting that does not write .pyc
+    (monkeypatch restores it after the check)."""
     package = tmp_path / "pkg"
     package.mkdir(exist_ok=True)
     (package / "__init__.py").write_text("")
@@ -120,40 +119,40 @@ def _run(tmp_path: Path, scene: str, monkeypatch: pytest.MonkeyPatch) -> dict[st
 
 
 def test_the_threshold_is_raised_while_the_outermost_import_runs_and_restored_after(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """一番外の読み込みの本体も、中の import の本体も、上げた閾値を見る(下の 2 つの欄は変えない)。終わったら前の閾値に戻る。"""
+    """Both the outermost load body and the inner import bodies see the raised threshold (the lower two fields are unchanged). When it ends, the previous threshold is restored."""
     result = _run(tmp_path, "nested", monkeypatch)
     before = result["before"]
     seen = result["seen"]
     raised = seen["outer"]
-    assert raised[0] > before[0], f"読み込みの間の閾値が上がっていない: 前 {before} → 読み込みの間 {raised}"
+    assert raised[0] > before[0], f"the threshold during loading did not go up: before {before} -> during loading {raised}"
     assert raised[1:] == before[1:]
     assert seen["inner"] == seen["outer-after-inner"] == raised
     assert result["after"] == before
 
 
 def test_the_threshold_is_restored_when_the_import_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """読み込みが例外で終わっても、前の閾値に戻る。"""
+    """Even if loading ends with an exception, the previous threshold is restored."""
     result = _run(tmp_path, "raises", monkeypatch)
     assert result["seen"]["bad"][0] > result["before"][0]
     assert result["after"] == result["before"]
 
 
 def test_a_threshold_set_by_the_imported_module_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """読み込まれた module が自分で決めた閾値は、終わりに上書きしない。"""
+    """A threshold that the loaded module set itself is not overwritten at the end."""
     result = _run(tmp_path, "own", monkeypatch)
     assert result["after"][0] == 500
 
 
 def test_a_zero_threshold_is_left_off_during_the_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """閾値 0(自動の GC を切ってある)は、読み込みの間も 0 のまま(切った GC を動かさない)。"""
+    """Threshold 0 (automatic GC turned off) stays 0 during loading too (a turned-off GC is not started)."""
     result = _run(tmp_path, "off", monkeypatch)
     assert result["seen"] == {"inner": [0, *result["before"][1:]]}
     assert result["after"][0] == 0
 
 
 def test_the_threshold_stays_raised_until_the_last_of_two_concurrent_imports_ends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """閾値は process に 1 つ。別の thread の読み込みが続いている間に 1 つ目の読み込みが終わっても戻さず、最後の読み込みが
-    終わった時に、どちらの読み込みよりも前の閾値へ戻る。"""
+    """The threshold is one per process. If the first load ends while another thread's load is still going, it is not restored, and when the last load
+    ends, it returns to the threshold from before either load."""
     result = _run(tmp_path, "two-threads", monkeypatch)
     raised = result["seen"]["slow"]
     assert raised[0] > result["before"][0]
@@ -162,7 +161,7 @@ def test_the_threshold_stays_raised_until_the_last_of_two_concurrent_imports_end
 
 
 def test_a_child_forked_while_another_thread_imports_gets_the_threshold_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """別の thread の読み込みの途中で fork した子は、その thread を持たない(読み込みは子の中で終わらない)ので、前の閾値に戻る。"""
+    """A child forked in the middle of another thread's load does not have that thread (the load does not end inside the child), so the previous threshold is restored."""
     result = _run(tmp_path, "fork", monkeypatch)
     assert result["seen"]["slow"][0] > result["before"][0]
     assert result["child"] == result["before"]

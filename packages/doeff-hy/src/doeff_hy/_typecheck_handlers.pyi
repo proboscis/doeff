@@ -1,6 +1,6 @@
-"""typecheck_handlers.hy の公開面の型(柵 3 — 果たす 2 つの家)。
+"""Types for the public surface of typecheck_handlers.hy (fence 3 — the two houses that fulfil it).
 
-関数だけを宣言する(共通の品質検査の同名 stub の照合は関数の面だけを読む)。
+Declares functions only (the check against the same-named stub in the shared quality check reads only the function surface).
 """
 
 from doeff import Program

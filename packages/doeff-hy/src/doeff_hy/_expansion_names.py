@@ -1,27 +1,28 @@
-"""handle・defhandler の展開が読む doeff の名の綴りの唯一の定義元。
+"""Single source of truth for the spelling of the doeff names that the handle / defhandler expansions read.
 
-展開は、書き手の module・class・関数の中に import と名の読みを置く。節の操作と handler のために読む `Resume`・`Transfer`・
-`Pass`・`WithHandlerType`(session があれば `Get`・`Put`・`Some`)を素の名で置くと、書き手が自分の effect を同じ名にした時
-(振込の `Transfer`・KV の `Put`)、1 つの名を書き手の物と展開の物が分け合う。節の頭の `isinstance` と注記が展開の名を指して
-effect が外の handler へ黙って抜け、module の段では展開の import が書き手の名を上書きした。
+The expansion places imports and name reads inside the writer's module, class, and function. The `Resume`, `Transfer`,
+`Pass`, and `WithHandlerType` it reads for clause operations and handlers (plus `Get`, `Put`, and `Some` when a session exists), if
+placed under their bare names, are shared between the writer's names and the expansion's names whenever the writer names
+their own effect the same (`Transfer` for a bank transfer, `Put` for a KV store). The clause-head `isinstance` and annotations then pointed at the expansion's name,
+so effects silently slipped through to the outer handler, and at module level the expansion's import overwrote the writer's name.
 
-展開が読む名は、すべて `_doeff_` の頭の別名で import し、読む綴りもここから引く(型検査のための展開が引く補助の名
-`_doeff_<名>` と同じ決め — static_view.py)。書き手の module に `_doeff_` の頭の名を置く書き手は居ない。
+Every name the expansion reads is imported under an alias with the `_doeff_` prefix, and the spelling used to read it is also taken from here (the same convention as the helper names
+`_doeff_<name>` that the expansion for type checking pulls in -- static_view.py). No writer puts a `_doeff_`-prefixed name in their module.
 
-- `alias`・`alias_symbol`: 別名の綴り。展開が名を読む所は、名を直に書かずここから引く。
-- `import_form`: 別名で束ねる Hy の import(実行時の展開が書いた場所に置く)。
-- `import_source`: 別名で束ねる Python の import(型検査のための展開が module の頭に 1 度だけ置く — static_view.py)。
+- `alias`, `alias_symbol`: the alias spelling. Places where the expansion reads a name take it from here instead of writing the name directly.
+- `import_form`: the Hy import that binds the aliases (the runtime expansion places it where it was written).
+- `import_source`: the Python import that binds the aliases (the expansion for type checking places it once at the top of the module -- static_view.py).
 
-- `is_alias_import`: その綴りの import か(型検査の展開の後処理が、関数・class の本体の中の展開の import を module の段へ移すため —
-  static_check.py)。
+- `is_alias_import`: whether an import has that spelling (so the post-processing of the type-checking expansion can move imports from expansions inside
+  function and class bodies up to module level -- static_check.py).
 
-表は閉じている: 展開が読む名はすべて `_HOMES` に置き場とともに載せ、表に無い名は `home` が断る(知らない名を別名の import と
-答えない — for/do の docstring は書き手に `(import doeff [do :as _doeff-do])` を書かせる)。
+The table is closed: every name the expansion reads is listed in `_HOMES` together with its home, and `home` rejects names not in the table (an unknown name is not
+reported as an alias import -- the for/do docstring has the writer write `(import doeff [do :as _doeff-do])`).
 
-読み手: handle.hy(`WithHandlerType`・`Pass`・session の `Get`・`Put`・`Some`、引数の在る defhandler の工場の戻りの型 `ProgramHandler`)・clause_ops.hy(節の操作の node と、型検査のための展開の
-`typed_resume`・`typed_transfer`)・binding_forms.py(`:=` の `Put`・`Some`)・macros.hy(`set!` の `Put`・`Some`)・declarations.hy の
-defeffect-form と record.hy の defrecord(:check)・defwire(型の本体が読む typing の `ClassVar`・`cast` — class の本体に書いた型の
-本体は名を module の段から引くので、型検査の投影はこの import を module の段へ移す)。
+Readers: handle.hy (`WithHandlerType`, `Pass`, the session's `Get`, `Put`, `Some`, and the return type `ProgramHandler` of the factory for a defhandler with arguments), clause_ops.hy (the clause-operation nodes and the type-checking expansion's
+`typed_resume`, `typed_transfer`), binding_forms.py (`Put` and `Some` for `:=`), macros.hy (`Put` and `Some` for `set!`), defeffect-form in declarations.hy and
+defrecord (:check) and defwire in record.hy (typing's `ClassVar` and `cast`, read by the type body -- a type body written in a class body
+looks up names from module level, so the type-checking projection moves this import to module level).
 """
 
 from collections.abc import Iterable
@@ -29,10 +30,10 @@ from dataclasses import dataclass
 
 from hy.models import Expression, Keyword, List, Object, Symbol
 
-#: 別名の頭。型検査のための展開が引く補助の名(static_view.deftest_annotation_name)と同じ。
+#: The alias prefix. Same as the helper names the type-checking expansion pulls in (static_view.deftest_annotation_name).
 PREFIX = "_doeff_"
 
-#: 展開が読む名と、その置き場の module(閉じた表 — 節の操作の node の名は表 clause_ops.hy の nodes が持ち、ここに置き場を書く)。
+#: The names the expansion reads and the module each lives in (a closed table -- the names of clause-operation nodes are held by the nodes table in clause_ops.hy; their homes are written here).
 _HOMES: dict[str, str] = {
     "Resume": "doeff",
     "Transfer": "doeff",
@@ -50,43 +51,43 @@ _HOMES: dict[str, str] = {
 
 
 def alias(name: str) -> str:
-    """展開が name を読む時の綴り(`_doeff_` の頭)。"""
+    """The spelling used when the expansion reads name (the `_doeff_` prefix)."""
     return f"{PREFIX}{name}"
 
 
 def alias_symbol(name: str) -> Symbol:
-    """展開が name を読む Symbol。呼ぶたびに新しい Symbol を作る — 展開のあいだで 1 つの Symbol を使い回すと、位置を付ける
-    macro(`locate-synthesized`)が最初の展開で付けた位置が残り、後の式の行がその行へずれる。"""
+    """The Symbol with which the expansion reads name. Creates a new Symbol on every call -- if one Symbol is reused across expansions, the position that the
+    position-assigning macro (`locate-synthesized`) set in the first expansion remains, and the lines of later expressions shift to that line."""
     return Symbol(alias(name))
 
 
 def effect_symbol() -> Symbol:
-    """節を回す関数が受けた effect を束ねる局所名(引数)と、展開がそれを読む Symbol。呼ぶたびに新しい Symbol を作る(`alias_symbol` の註)。
+    """The local name (argument) that binds the effect received by the clause-dispatch function, and the Symbol with which the expansion reads it. Creates a new Symbol on every call (see the note on `alias_symbol`).
 
-    doeff の名でなく展開の局所名だが、書き手の節の欄・session の名と分け合わないよう、同じ `_doeff_` の別名の決めで綴る。素の `effect` で
-    束ねると、欄を `effect` にした節(`(Note [effect extra] …)`)の欄の束ね `(setv effect (. effect effect))` が受けた effect を上書きし、
-    続く欄の読みと外へ渡す effect が欄の値になった。書き手が本体に `effect` と書いた時に読める名は、別に
-    `WRITER_VISIBLE` が決める(handle.hy の `_clause-aliases`)。"""
+    This is a local name of the expansion, not a doeff name, but it is spelled with the same `_doeff_` alias convention so it does not collide with the writer's clause fields or session names. If bound
+    as a bare `effect`, a clause whose field is named `effect` (`(Note [effect extra] ...)`) has its field binding `(setv effect (. effect effect))` overwrite the received effect,
+    and the following field reads and the effect passed outward became the field's value. The names a writer can read when they write `effect` in a body are decided separately by
+    `WRITER_VISIBLE` (`_clause-aliases` in handle.hy)."""
     return alias_symbol("effect")
 
 
 def continuation_symbol() -> Symbol:
-    """節を回す関数が受けた続きを束ねる局所名(引数)と、展開がそれを読む Symbol。`effect_symbol` と同じ決め — 素の `k` で束ねると、
-    欄を `k` にした節(KV の `(Kv [k v] …)`)の欄の束ね `(setv k (. effect k))` が続きを上書きし、`(resume …)` が
-    `TypeError: argument 'k': 'int' object is not an instance of 'K'` で落ちた。"""
+    """The local name (argument) that binds the continuation received by the clause-dispatch function, and the Symbol with which the expansion reads it. Same convention as `effect_symbol` -- if bound as a bare `k`,
+    a clause whose field is named `k` (`(Kv [k v] ...)` for KV) has its field binding `(setv k (. effect k))` overwrite the continuation, and `(resume ...)` failed with
+    `TypeError: argument 'k': 'int' object is not an instance of 'K'`."""
     return alias_symbol("k")
 
 
 @dataclass(frozen=True)
 class WriterName:
-    """書き手が節の本体・`:when` の番に書いた時、節の effect・続きとして読める名 1 つ。
+    """One name that a writer can read as the clause's effect or continuation when writing a clause body or a `:when` guard.
 
-    - `written`: 書き手が書く名(`effect`・`k`)。
-    - `internal`: それを束ねる展開の局所名(`_doeff_` の別名 — 節を回す関数の引数)。
-    - `declared`: 型検査のための展開が名に宣言する型(節を回す関数の引数と同じ型)。
-    - `narrowed`: 節の `isinstance` が絞る値か。型検査のための展開は、絞る値を節の判定より前に絞る前の値のまま束ね、節の判定が
-      書き手の名も絞る(絞った後に代入すると、絞った総称型 `EffectBase[Unknown]` を代入先の変数が受けて
-      reportUnknownVariableType の赤になる — handle.hy の `_narrowed-alias-bindings`・`_clause-test`)。
+    - `written`: the name the writer writes (`effect`, `k`).
+    - `internal`: the expansion's local name that binds it (a `_doeff_` alias -- an argument of the clause-dispatch function).
+    - `declared`: the type the type-checking expansion declares for the name (the same type as the clause-dispatch function's argument).
+    - `narrowed`: whether this is a value that the clause's `isinstance` narrows. The type-checking expansion binds a narrowed value, before the clause test, as the un-narrowed original,
+      and the clause test narrows the writer's name too (assigning after narrowing would have the destination variable receive the narrowed generic type `EffectBase[Unknown]`,
+      which turns reportUnknownVariableType red -- `_narrowed-alias-bindings` and `_clause-test` in handle.hy).
     """
 
     written: str
@@ -95,7 +96,7 @@ class WriterName:
     narrowed: bool
 
 
-#: 書き手が名を書いた節だけが束ねる、書き手の見える名の表。節の欄・session の名が同じ名なら書き手の名が優先する(束ねない)。
+#: The table of writer-visible names, bound only by clauses where the writer wrote the name. If a clause field or session name is the same name, the writer's name takes precedence (it is not bound).
 WRITER_VISIBLE: tuple[WriterName, ...] = (
     WriterName("effect", alias("effect"), "object", narrowed=True),
     WriterName("k", alias("k"), "_doeff_Continuation", narrowed=False),
@@ -103,14 +104,14 @@ WRITER_VISIBLE: tuple[WriterName, ...] = (
 
 
 def home(name: str) -> str:
-    """name を import する module。表に無い名は KeyError(展開が新しい名を読む時は、表に置き場を足す)。"""
+    """The module from which name is imported. A name not in the table raises KeyError (when the expansion reads a new name, add its home to the table)."""
     if name not in _HOMES:
-        raise KeyError(f"展開の名の表(expansion_names._HOMES)に無い名: {name!r} — 置き場とともに表へ足す")
+        raise KeyError(f"name not in the expansion name table (expansion_names._HOMES): {name!r} -- add it to the table together with its home")
     return _HOMES[name]
 
 
 def _by_home(names: Iterable[str]) -> dict[str, tuple[str, ...]]:
-    """名を置き場ごとにまとめる(置き場も名も、最初に出た順で重ねない)。"""
+    """Group names by home (homes and names are deduplicated, in order of first appearance)."""
     unique = tuple(dict.fromkeys(names))
     return {
         module: tuple(name for name in unique if home(name) == module)
@@ -119,10 +120,10 @@ def _by_home(names: Iterable[str]) -> dict[str, tuple[str, ...]]:
 
 
 def _module_model(module: str) -> Object:
-    """module の名の model。点を含む名は、Hy が読む式の形(`(. a b)`)で組む — 文字 1 つの Symbol にすると名が崩れる。
-    reader(`hy.read`)を通さない: reader が作る model は 1 行目 1 列目の位置を持ち、位置を付ける macro(`locate-synthesized`)が
-    利用者の式の位置と取り違えて、囲む式の範囲を 1 行目へ引く。型検査の診断(未使用の import・未定義の名)の行が、handler の行でなく
-    1:1 になった。ここが作る model は位置を持たない。"""
+    """The model for a module name. A dotted name is built in the form Hy reads (`(. a b)`) -- as a single Symbol the name would break.
+    Do not go through the reader (`hy.read`): the models the reader makes carry a position of line 1, column 1, which the position-assigning macro (`locate-synthesized`)
+    confuses with the position of the user's expression, pulling the range of the enclosing expression to line 1. The lines of type-check diagnostics (unused imports, undefined names)
+    became 1:1 instead of the handler's line. The model built here has no position."""
     parts = module.split(".")
     if len(parts) == 1:
         return Symbol(module)
@@ -130,8 +131,8 @@ def _module_model(module: str) -> Object:
 
 
 def import_form(names: Iterable[str]) -> Expression:
-    """names を別名で束ねる Hy の import(置き場ごとの `(import 置き場 [名 :as 別名 …])` を並べた `(do …)`)。名が無ければ
-    `(do)`。作る model は位置を持たない(`_module_model` の註)。"""
+    """The Hy import that binds names under aliases (a `(do ...)` of `(import home [name :as alias ...])` per home). With no names it is
+    `(do)`. The model it builds has no position (see the note on `_module_model`)."""
     statements: list[Object] = [
         Expression(
             [
@@ -152,13 +153,13 @@ def import_form(names: Iterable[str]) -> Expression:
 
 
 def is_alias_import(module: str, name: str, asname: str | None) -> bool:
-    """`from module import name as asname` が、import_form / import_source が書く別名の import の 1 つの名か(置き場と別名が
-    この表の綴りに合う)— 型検査の展開の後処理が、macro の合成した import を書き手の import と分けるため(static_check.py)。"""
+    """Whether `from module import name as asname` is one name of an alias import written by import_form / import_source (the home and alias
+    match this table's spelling) -- so that the post-processing of the type-checking expansion can tell imports synthesized by macros from the writer's own (static_check.py)."""
     return name in _HOMES and asname == alias(name) and home(name) == module
 
 
 def import_source(names: Iterable[str]) -> str:
-    """names を別名で束ねる Python の import の文(置き場ごとの `from 置き場 import 名 as 別名, …` を 1 行ずつ)。"""
+    """The Python import statements that bind names under aliases (`from home import name as alias, ...` per home, one line each)."""
     return "".join(
         f"from {module} import {', '.join(f'{name} as {alias(name)}' for name in grouped)}\n"
         for module, grouped in _by_home(names).items()

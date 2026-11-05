@@ -1,13 +1,13 @@
-"""defhandler の session val / session var の型検査のための展開(#2214 / #2279 と同じ種類)の失敗ケース。
+"""Failure cases for the type-check expansion of defhandler session val / session var (the same kind as #2214 / #2279).
 
-実行時の展開は名を `(yield (Get key))` の答え(Some の中身)か初期化の値に束ねる。型検査のための展開がこれをそのまま写すと、
-Get の答えに型が無いので名とそれを使う式が全部 Unknown になり、strict で書き手に直せない赤が 1 handler に十数件出た
-(vg-w39 が #2251 で実測 — daily_verify の cache を session val へ移す直しが型検査の hook で止まった)。加えて
-`doeff_hy._session` に stub が無く、import に「stub が無い」の赤が出た。展開が名を初期化の値に束ね、stub を置けば:
+The runtime expansion binds a name to the answer of `(yield (Get key))` (the content of Some) or to the initial value. If the type-check expansion copied this as is,
+the Get answer has no type, so the name and every expression using it became Unknown, and strict gave a dozen reds per handler that the author could not fix
+(vg-w39 measured this in #2251 — the fix moving daily_verify's cache to session val was stopped by the type-check hook). In addition,
+`doeff_hy._session` had no stub, so the import got a "no stub" red. If the expansion binds the name to the initial value and a stub is placed:
 
-- strict で、session val(型のある dict)と session var(:= で書き換える数)を持つ handler と、:= の無い handler に赤が 0 件。
-- 名の型は逃げていない: 文字の session val に数を足せば型の取り違えで赤。
-- 実行時の展開は今までどおり(Get / Put の往復 — tests/test_val_var_lazy.py が見る)。
+- Under strict, 0 reds for a handler with a session val (a typed dict) and a session var (a number rewritten by :=), and for a handler without :=.
+- The name's type has not escaped: adding a number to a string session val is red as a type mix-up.
+- The runtime expansion is as before (the Get / Put round trip — seen by tests/test_val_var_lazy.py).
 """
 
 import contextlib
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is missing")
 
 EFFECTS = """\
 (import dataclasses [dataclass])
@@ -36,7 +36,7 @@ PROBE = """\
 (import probe_effects [Tick Name])
 
 (defhandler remembering
-  "Tick を数え、Name の答えを覚える。"
+  "Count Tick and remember the answer of Name."
   {:tags {:context "probe" :role "protocol"}}
   (session val answered ((get dict #(str str))))
   (session var count 0)
@@ -49,7 +49,7 @@ PROBE = """\
     (resume (get answered prefix))))
 
 (defhandler labelled
-  "Name に固定の前置きで答える(session val だけ — := の無い handler)。"
+  "Answer Name with a fixed prefix (session val only — a handler without :=)."
   {:tags {:context "probe" :role "protocol"}}
   (session val head "x-")
   (Name [prefix]
@@ -58,28 +58,28 @@ PROBE = """\
 
 BASE = {"LABEL": "(+ head prefix)"}
 
-# := の無い handler だけの module。上の PROBE は := を持つ remembering と並べるので、展開が module に出す Put / Some の
-# import を remembering が読み、:= の無い handler の分の「import が使われていない」の赤が隠れていた(agora-controllers の
-# 日次 2026-10-11 16:00 — profile_openings.hy など 7 file・各 Put / Some の 2 件)。
+# A module with only handlers without :=. The PROBE above sits next to remembering, which has :=, so remembering read the Put / Some imports the expansion puts in the module,
+# hiding the "import is unused" red for the handler without := (agora-controllers' daily run
+# 2026-10-11 16:00 — 7 files such as profile_openings.hy, 2 each for Put / Some).
 LABELLED_ONLY = """\
 (require doeff-hy.macros [defhandler])
 (import probe_effects [Name])
 
 (defhandler labelled
-  "Name に固定の前置きで答える(session val だけ — := の無い handler)。"
+  "Answer Name with a fixed prefix (session val only — a handler without :=)."
   {:tags {:context "probe" :role "protocol"}}
   (session val head "x-")
   (Name [prefix]
     (resume (+ head prefix))))
 """
 
-# := を持つ handler だけの module(Put / Some の import を外し過ぎていない事の見張り — 外せば名が未定義の赤)。
+# A module with only handlers that have := (a watch that the Put / Some imports are not dropped too much — dropping them gives an undefined-name red).
 COUNTING_ONLY = """\
 (require doeff-hy.macros [defhandler])
 (import probe_effects [Tick])
 
 (defhandler counting
-  "Tick を数える(session var と := だけ)。"
+  "Count Tick (session var and := only)."
   {:tags {:context "probe" :role "protocol"}}
   (session var count 0)
   (Tick [step]
@@ -87,13 +87,13 @@ COUNTING_ONLY = """\
     (resume count)))
 """
 
-# 旧い lazy-var と set! だけの module。set! は (<- (Put key (Some 名))) に展開するので、:= が無くても Put / Some を使う。
+# A module with only the old lazy-var and set!. set! expands to (<- (Put key (Some name))), so it uses Put / Some even without :=.
 LEGACY_SET_ONLY = """\
 (require doeff-hy.macros [defhandler <- set!])
 (import probe_effects [Tick])
 
 (defhandler counting
-  "Tick を数える(旧い lazy-var と set!)。"
+  "Count Tick (old lazy-var and set!)."
   {:tags {:context "probe" :role "protocol"}}
   (lazy-var count 0)
   (Tick [step]
@@ -138,14 +138,14 @@ def test_strict_has_no_error_from_session_expansions(tmp_path: Path) -> None:
     ids=["no-assign", "assign", "legacy-set"],
 )
 def test_strict_has_no_error_for_one_handler_module(tmp_path: Path, text: str) -> None:
-    # := も set! も無い handler の展開は Put / Some の import を出さない(出せば strict の reportUnusedImport が 2 件)。
-    # := / set! を持つ handler は今までどおり出す(出さなければ Put / Some が未定義の赤)。
+    # The expansion of a handler with neither := nor set! does not emit the Put / Some imports (emitting them gives 2 strict reportUnusedImport).
+    # A handler with := / set! emits them as before (not emitting gives an undefined Put / Some red).
     assert _check(tmp_path, text) == []
 
 
 @needs_pyright
 def test_session_names_keep_their_types(tmp_path: Path) -> None:
-    # head は文字の session val — 数を足せば型の取り違えで赤(名は Unknown へ逃げていない)。
+    # head is a string session val — adding a number is red as a type mix-up (the name has not escaped to Unknown).
     text = _render({"LABEL": "(+ head 1)"})
     errors = _check(tmp_path, text)
     assert _line_of(text, "(resume (+ head 1))") in [d["line"] for d in errors], errors
