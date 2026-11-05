@@ -340,9 +340,9 @@ fn plain_callable_reason_is_accepted_or_rejected_by_jev() {
     assert_eq!(settings["severity"], "warning");
     assert_eq!(settings["source"], "jev");
     assert_eq!(settings["probability"], 0.8);
-    assert!(settings["explanation"]["reason"].as_str().unwrap().contains("this reason is not accepted — the closest type is config-read (設定・環境変数を読む)"), "{}", settings["explanation"]["reason"]);
+    assert!(settings["explanation"]["reason"].as_str().unwrap().contains("this reason is not accepted — the closest type is config-read (reads settings or environment variables)"), "{}", settings["explanation"]["reason"]);
     assert_eq!(settings["hint"], "Make it a defk that receives settings via an effect such as Ask");
-    assert_eq!(settings["explanation"]["subject"], "definition settings (deff) — stated reason \"handler の組み立てが設定を読む\"");
+    assert_eq!(settings["explanation"]["subject"], "definition settings (deff) — stated reason \"handler assembly reads settings\"");
     let handlers = doubt("handlers").expect("none");
     assert_eq!(handlers["severity"], "warning");
     assert!(handlers["explanation"]["reason"].as_str().unwrap().contains("it matches none of the declared accepted reasons"));
