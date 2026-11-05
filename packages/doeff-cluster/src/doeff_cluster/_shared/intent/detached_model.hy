@@ -223,7 +223,10 @@
 ;;   生きている(heartbeat が lease の内)・draining = 新しい task を受けない・task-room = 今この担い手が受けられる task の数(coordinator が
 ;;   task を置くのと同じ数え task-room-of — 使い手の置き手が満杯の担い手を候補から外すため・#3488)・node = 担い手が置かれた k8s の
 ;;   node の名(coordinator の Worker の資源の spec.node の写し — worker の --node。空 = k8s の外か名乗らない。使い手が task の走った
-;;   物理の機体を知るため・#3747)。足すだけの欄なので既定は空(作り手が名乗らない担い手と同じ値)。
+;;   物理の機体を知るため・#3747)。足すだけの欄なので既定は空(作り手が名乗らない担い手と同じ値)。cpu-busy = 担い手が heartbeat で名乗った
+;;   機体の CPU の使いの割合(GET /state の measured.cpuBusy の写し — 0〜1・nice の分も含む機体の全体の値。task-room は nice の分を空きに
+;;   数えるので、優先度を下げた仕事で埋まった機体も task-room では空いて見える。使い手が自分の仕事〔nice で走る会話の手番など〕の置き先を
+;;   CPU の埋まりで決めるため)。測りを名乗らない担い手と、まだ数えられない読みは None(0 と倒さない)。
 ;; RunnersUnreachable = coordinator に届かず名簿を読めなかった(担い手の生死は分からない — 死んだとみなさない)。
 
 (defrecord RunnerFact
@@ -233,7 +236,8 @@
   #^ bool live
   #^ bool draining
   #^ int task-room
-  (setv #^ str node ""))
+  (setv #^ str node ""
+        #^ (| float None) cpu-busy None))
 
 (defrecord RunnersUnreachable
   #^ str detail)

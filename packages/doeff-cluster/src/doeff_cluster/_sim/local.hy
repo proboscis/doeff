@@ -309,15 +309,18 @@
 (defrecord SimMachine
   "sim の worker が載る機体(本番の worker が /proc から測って heartbeat の measured で名乗る機体の空きの代役)。cpus = CPU の数・
    memory-mib = memory の全体(MiB)・base-cores = task の外(常駐の job・他の Pod)が使う CPU・base-mib = task の外が使う memory(MiB)・
-   task-cores / task-mib = 走っている task 1 本が使う CPU と memory。worker は heartbeat を送る刻に、走っている task の数から
-   machine-load-of で今の空きを数えて名乗る(機体の真実 — 名乗りを偽る壊れた worker は SimWorker の claims-cpus)。"
-  {:check [(> cpus 0) (>= memory-mib base-mib 0) (>= base-cores 0) (> task-cores 0) (>= task-mib 0)]}
+   task-cores / task-mib = 走っている task 1 本が使う CPU と memory・nice-cores = task の外で優先度を下げて(nice > 0 で)走る process が
+   使う CPU(base-cores とは別に需要へ足し、CPU の使いの内の nice の分として名乗る — 譲る命令で埋まった機体の代役)。worker は heartbeat を
+   送る刻に、走っている task の数から machine-load-of で今の空きを数えて名乗る(機体の真実 — 名乗りを偽る壊れた worker は SimWorker の
+   claims-cpus)。"
+  {:check [(> cpus 0) (>= memory-mib base-mib 0) (>= base-cores 0) (> task-cores 0) (>= task-mib 0) (>= nice-cores 0)]}
   (#^ int cpus)
   (#^ int memory-mib)
   (setv #^ float base-cores 0.0)
   (setv #^ int base-mib 0)
   (setv #^ float task-cores 1.0)
-  (setv #^ int task-mib 1024))
+  (setv #^ int task-mib 1024)
+  (setv #^ float nice-cores 0.0))
 
 
 ;; SimWorker の既定の機体: 模擬の筋書きが task の空きを気にせず走るための広い機体(task の空きの数え — coordinator/core/measured_room —
@@ -329,15 +332,18 @@
   {:pre [(: machine SimMachine) (: running int) (: at-ms int) (: claims-cpus (| int None)) (: task-ids (| tuple None))] :post [(: % MachineLoad)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の worker が刻 at-ms に heartbeat の measured で名乗る機体の空き(本番の worker/core/load_rules の MachineLoad と同じ形)を、機体
-   machine と走っている task の数 running から作るため。需要 = base-cores + running × task-cores・CPU の使い = min(1, 需要 / cpus)・
+   machine と走っている task の数 running から作るため。需要 = base-cores + nice-cores + running × task-cores・CPU の使い = min(1, 需要 / cpus)・
+   CPU の使いの内の nice の分 = min(CPU の使い, nice-cores / cpus)(nice-cores が 0 の機体は名乗らない — None)・
    CPU の PSI の some avg10 = 需要のうち CPU に載れない割合(%)・memory の空き = memory-mib − base-mib − running × task-mib(0 まで)・
    memory の PSI の some avg10 = 空きが全体の 5% を切ると 20(他は 0)。claims-cpus = 反例の世界だけの壊れた worker が名乗る CPU の数
    (None = 機体の真実 — 名乗った数で CPU の使いを割り、機体を大きく見せる)。task-ids = 走っている task の id(在れば task ごとの memory の
    今の使いを task-mib として名乗る — 本番の見張りの読みの代役・2026-11-02。None = 名乗らない)。"
   (val cpus (if (is claims-cpus None) machine.cpus claims-cpus))
-  (val demand (+ machine.base-cores (* running machine.task-cores)))
+  (val demand (+ machine.base-cores machine.nice-cores (* running machine.task-cores)))
+  (val busy (min 1.0 (/ demand cpus)))
   (val available (max 0 (- machine.memory-mib machine.base-mib (* running machine.task-mib))))
-  (MachineLoad :at-ms at-ms :cpus cpus :cpu-busy (min 1.0 (/ demand cpus)) :memory-total-mib machine.memory-mib
+  (MachineLoad :at-ms at-ms :cpus cpus :cpu-busy busy :memory-total-mib machine.memory-mib
+               :cpu-nice (if (> machine.nice-cores 0) (min busy (/ machine.nice-cores cpus)) None)
                :memory-available-mib available
                :cpu-some-avg10 (if (> demand cpus) (* 100.0 (/ (- demand cpus) demand)) 0.0) :cpu-full-avg10 0.0
                :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0
