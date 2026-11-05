@@ -2,7 +2,7 @@
 対で在る事。
 
 site では本体(<名>.html)が動き、GitHub と Zenn では同じ名の GIF が動く。片方だけが在ると、site か markdown の画面の一方で
-図が欠けるか古い版が残るので、対で無い名を落とす(card [id])。"""
+図が欠けるか古い版が残るので、対で無い名を落とす。"""
 
 from __future__ import annotations
 

@@ -22,7 +22,7 @@ MKDOCS = ROOT / "mkdocs.yml"
 TABLE_SECTIONS = ("## Table of Contents", "## Pages That Need Other Components")
 # docs/ の下の dir に在って site が公開する page(docs/ からの名)。docs/positioning の他の file は内向きの売り方の資料で、
 # 公開しない。説明の軸の定義の page は、公開の文(README・docs・記事)の出典として site に出す(取り組み doeff-publish の
-# 区切り 17)。英語の記事 1 本目は、click で進む図を site で動かすために site に出す(card [id])。
+# 区切り 17)。英語の記事 1 本目は、click で進む図を site で動かすために site に出す。
 PUBLISHED_SUBDIR_PAGES = ("positioning/what-doeff-is.md", "articles/algebraic-effects-in-python.md")
 LINK = re.compile(r"\]\(([^)#\s]+\.md)(?:#[^)]*)?\)")
 

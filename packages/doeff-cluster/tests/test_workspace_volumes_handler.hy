@@ -1382,7 +1382,7 @@
   (for [#(outcomes volumes) #(#(ran.real ran.api.held.volumes) #(ran.held ran.sim.volumes))]
     (assert (= outcomes #("room nominal=4s actual=8s spare=8s" "restored")) outcomes)
     (assert (= (tuple (gfor one volumes one.name)) #("ws-c-w2" "ws-c-w3" "ws-c-m1" NAME)) volumes))
-  ;; [removed]
+  ;; 冷えた volume の backup は「消す」まで残り、w1 の backup が足される。
   (assert (= (lfor one ran.api.held.backups one.volume) [NAME "ws-c-w1"]) ran.api.held.backups)
   (assert (= (lfor one ran.sim.backups one.volume) [NAME "ws-c-w1"]) ran.sim.backups)
   ;; 本番: 戻す volume は backup の大きさ(10 GiB)で、w1 を消した後に POST した。
@@ -1980,7 +1980,7 @@
   (assert (= (! (kinds ran.held)) #("unreachable")) ran.held))
 
 
-;; --- 区画の基盤の止まり(API server に届かない・5xx か 429)と値の ConfigMap の写し(card [id])----------------
+;; --- 区画の基盤の止まり(API server に届かない・5xx か 429)と値の ConfigMap の写し----------------
 
 (val HELD-ROOT "/work/state")
 (val HELD-PATH "/work/state/workspace-volume-held/agent-worker/workspace-volume.json")
@@ -2014,7 +2014,7 @@
 
 
 (deftest test-a-5xx-or-429-from-the-api-server-is-told-apart-as-a-cluster-fault
-  ;; 失敗ケース(card [id]): API server が 503「apiserver not ready」・500・429 で答えた断りは、Longhorn・mount の係の断りと
+  ;; 失敗ケース: API server が 503「apiserver not ready」・500・429 で答えた断りは、Longhorn・mount の係の断りと
   ;; 型で分ける(WorkspaceClusterUnreachable)。呼び手(上に載る系)は文を読まずに型で「時間で晴れる」と読み、間を置いて出し直す。前の形は
   ;; 思わぬ status の断り WorkspaceVolumeRefused と同じ型で、呼び手は置き直しても変わりうる断りと数え、上限を数分で使い切った。
   (for [status #(503 500 429)]
@@ -2069,7 +2069,7 @@
 
 
 (deftest test-the-settings-are-answered-from-the-held-copy-when-the-api-server-is-unreachable
-  ;; 通る例(card [id]): 読めた時に写しを作業の根の下に持ち(0600)、API server に届かない時はその写しで同じ値を答える。
+  ;; 通る例: 読めた時に写しを作業の根の下に持ち(0600)、API server に届かない時はその写しで同じ値を答える。
   (val api (LonghornWorld (fresh)))
   (<- ran tuple (settings-twice api HELD-ROOT go-down))
   (val first (get ran 0)) (val again (get ran 1)) (val left (get ran 2))
@@ -2102,7 +2102,7 @@
   (assert (and (isinstance again str) (.startswith again "refused: ")) again))
 
 
-;; 束 BackupVolume(README の節「寿命」と「backup」・card #[id] の元の 2026-11-04 04:3x〜12:5x UTC — backup の先の全体の同期が
+;; 束 BackupVolume(README の節「寿命」と「backup」・元の不具合 — backup の先の全体の同期が
 ;; 落ち続け、初めて冷やした名の束ができず、冷えた volume を Longhorn の webhook が戻さなかった)。
 
 (defk bundle-before [api path]

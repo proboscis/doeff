@@ -31,7 +31,7 @@
        "Loops and waits use doeff-events so they can wait on events rather than on time. Its handlers have cluster-aware backends such as redis or rabbitmq.")
      (fact
        "Event source = the record service (PostgreSQL LISTEN / NOTIFY and the HTTP WatchChanges long-poll). An event carries only a notification (key) of \"what changed\", and the receiver re-reads the record — even if a notification arrives twice, out of order, or goes missing, the next notification or the read at startup catches up, so state is not corrupted and redelivery after a crash (consumer group, pending, ack) is not needed. Why chosen = nothing new to deploy; a single change log suffices; NOTIFY commits in the same transaction as the write, so there is no \"written but never notified\" gap; no password is added."
-       [removed]
+       :evidence "a reversible decision taken before this ADR was written")
      (fact
        "The 11:4x decision (the Mac coordinator) = the backend is Redis Streams (has a cursor so nothing is missed; runs without a password; 1 Pod; same handler even on a single local cluster. RabbitMQ stayed a candidate only because the product requires a user / password). This was revised at 12:0x. Why not chosen = it yields two change logs, the record-service table and the Redis stream, and the gap between the two writes (write and emit) must be closed with an outbox. The advantage of Redis Streams (events that do not pass through the record service still reach across processes) is not needed, since in today's agora every cross-process event is expected to pass through the record service (not all verified)."
        :evidence "cisco-c8's relay (2026-10-03 11:4x) and the 12:0x revision")
