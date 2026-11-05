@@ -1621,17 +1621,18 @@ def test_workers_keep_scratch_in_an_empty_dir(rendered: list[Manifest], name: st
     assert _volume(worker, str(_mount_at(worker, "/scratch")["name"])) == {"name": "scratch", "emptyDir": {}}
 
 
-# atlas の worker は job の cwd の根を Garage の bay の HDD の下へ出す(boot.sh の jobs_root_link)。根の SSD の寿命を延ばすため。
+# atlas の worker は job の cwd の根を根でない SSD(nvme1 の pool の dataset)へ出す(boot.sh の jobs_root_link)。根の SSD の寿命を
+# 延ばすため。HDD(Garage の bay)には置かない — 小さな file の多い task が Garage と同じ disk を待ち、日次の全体検証が 2〜3 倍に伸びた。
 ATLAS_JOBS_ROOT = "/work/job-scratch"
 
 
-def test_atlas_keeps_the_jobs_of_the_worker_on_the_hdd(rendered: list[Manifest]) -> None:
-    """dir は type Directory: HDD が mount されていない時に黙って根の SSD へ書かず、Pod が起動で止まる。"""
+def test_atlas_keeps_the_jobs_of_the_worker_on_the_second_ssd(rendered: list[Manifest]) -> None:
+    """dir は type Directory: pool が import されていない時に黙って根の SSD へ書かず、Pod が起動で止まる。"""
     worker = _worker_on(rendered, "atlas")
     assert _env_value(worker, "WORKER_JOBS_ROOT")["value"] == ATLAS_JOBS_ROOT
     mount = _mount_at(worker, ATLAS_JOBS_ROOT)
     host_path = _mapping(_volume(worker, str(mount["name"]))["hostPath"], "hostPath")
-    assert host_path == {"path": "/mnt/garage/g5/agent-worker-jobs", "type": "Directory"}
+    assert host_path == {"path": "/mnt/hot_ssd_nvme/agent-worker-jobs", "type": "Directory"}
 
 
 @pytest.mark.parametrize("name", [node for node in NODES if node != "atlas"])

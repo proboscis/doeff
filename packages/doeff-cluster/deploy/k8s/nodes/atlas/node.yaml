@@ -28,8 +28,8 @@ spec:
             # 雛形の値の後ろに足すだけ(道具の cache の置き場は task が WORK_DIR から自分で作る)。
             - name: WORKER_PASS_ENV
               value: "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA),RUSTUP_HOME"
-            # job の cwd の根を HDD へ出す(boot.sh の jobs_root_link)。atlas の worker の根の SSD(nvme0n1)への書きの大半は上に載る系の日次の
-            # 全体検証の task の作業 dir で、次の版の準備や cache と違い走行の終わりに消える。
+            # job の cwd の根を根でない SSD(nvme1)へ出す(boot.sh の jobs_root_link)。atlas の worker の根の SSD(nvme0n1)への書きの大半は上に
+            # 載る系の日次の全体検証の task の作業 dir で、次の版の準備や cache と違い走行の終わりに消える。
             - name: WORKER_JOBS_ROOT
               value: /work/job-scratch
           volumeMounts:
@@ -42,11 +42,13 @@ spec:
             - { name: nemo-workspace, mountPath: /work/nemo-workspace, mountPropagation: HostToContainer }
             - { name: job-scratch, mountPath: /work/job-scratch }
       volumes:
-        # Garage の bay の HDD(g5 = sdh・WD の CMR・xfs)の下の dir。Garage の data とは dir を分ける。type は Directory: HDD が mount されて
-        # いない時は dir が無いので、黙って根の SSD へ書かず、新しい Pod が起動で止まる。atlas の strategy は Recreate で旧い Pod は先に消えるので、
-        # その間は worker が止まる。dir は機体の上に 1 度だけ uid 1000 の持ち物で置く(2026-11-05 03:03 JST に置いた)。
+        # nvme1 の pool hot_ssd_nvme の dataset hot_ssd_nvme/agent-worker-jobs(quota 100G・sync standard — 2026-11-05 16:45 JST に置き、
+        # uid 1000 の持ち物にした)。2026-11-05 04:04〜の Garage の bay の HDD(g5 = sdh)の下では、小さな file の多い処理(npm の install・venv・
+        # 型検査・build)が Garage と同じ disk を待ち、日次の全体検証の秒が 2〜3 倍(shellcheck の取り寄せ 29 倍・venv 70 倍)に伸びた。
+        # type は Directory: pool が import されていない時は dir が無いので、黙って根の SSD へ書かず、新しい Pod が起動で止まる。atlas の
+        # strategy は Recreate で旧い Pod は先に消えるので、その間は worker が止まる。
         - name: job-scratch
-          hostPath: { path: /mnt/garage/g5/agent-worker-jobs, type: Directory }
+          hostPath: { path: /mnt/hot_ssd_nvme/agent-worker-jobs, type: Directory }
         # DirectoryOrCreate: pool が import されていない時も worker を起動で止めない(作業場だけが使えない — daemon の番人が止まる)。
         - name: nemo-workspace
           hostPath: { path: /mnt/hot_ssd_nvme/nemo-workspace, type: DirectoryOrCreate }
