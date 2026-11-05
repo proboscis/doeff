@@ -23,14 +23,14 @@ Constant references in `:interpreters` and expressions in `:params` record their
 real values and explicit ids after the first import. Strings, integers, and the like
 are saved as values. Counterpart objects, records, and the like save only their position,
 and only when they have an explicit id; at setup they are replaced with the real value
-at the same position. For shapes that records cannot reproduce collection for, such as
+at the same position. For shapes whose collection a record cannot reproduce, such as
 per-item marks, indirect fixtures, and multiple arguments, the reason is shown and the
 conventional import collection is kept.
 
 Because the origin of a dynamic value is not guessed, the sources that were loaded under
 the pytest root at save time are recorded conservatively. Changes such as re-exports or a
-value count growing from 0 also rebuild the record on a source change. The record may be
-rebuilt even on an unrelated source change. Warm collection first compares file size and
+value count growing from 0 also rebuild the record on a source change.
+The record may be rebuilt even on an unrelated source change. Warm collection first compares file size and
 mtime, and also uses ctime, device, and inode to tell apart rewrites of the same size and
 different worktrees. Only files whose state changed have their hash computed; if the
 contents are identical, the state record is updated. The comparison does not import modules.
@@ -41,3 +41,301 @@ dependency changes. Changes in values other than source, such as environment var
 rejected by the setup comparison and the stale record is deleted. Because an import can
 cause arbitrary side effects, the record does not guarantee the sameness of an arbitrary
 execution environment.
+
+## Where an installed `defsemgrep` reads its rule
+
+The installed form names a rule id and carries hit / clean fixtures:
+
+```hy
+(defsemgrep worker-files-rule
+  "worker-business-code-touches-files-only-through-effects"
+  [{"relative-path" "app/worker/keeper.hy" "source" "…"}]    ; must fire
+  [{"relative-path" "app/worker/keeper.hy" "source" "…"}]    ; must stay silent
+  :config "worker.semgrep.yaml")
+```
+
+- `:config` absent: the nearest `.semgrep.yaml` found by walking up from
+  pytest's working directory (the original behavior).
+- `:config "relative/path.yaml"`: resolved against the directory of the file
+  that declares the `defsemgrep`, so a rule file can live next to the ADR that
+  owns it and does not depend on where pytest was started.
+- `:config "/absolute/path.yaml"`: used as is.
+
+`doeff_adr._registry.resolved_config_path(spec)` returns the file a spec reads.
+
+## Semgrep over Hy code (macro expansion)
+
+Semgrep has no Hy grammar, and a regular expression over Hy text sees neither
+code a macro writes nor a name brought in under an alias
+(`(import socket :as s) (s.socket)`). `doeff_adr._semgrep_hy` reads Hy the way Hy
+does: it macro-expands each `.hy` file with Hy's compiler (project macros such as
+a `defservice` wrapping `defk` included), writes the Python to a scan tree at the
+same relative path with a `.py` suffix, runs ordinary `languages: [python]`
+rules, and reports findings at the Hy file and line.
+
+```python
+from doeff_adr._semgrep_hy import scan_with_hy_expansion
+
+findings = scan_with_hy_expansion(Path("adr/worker.semgrep.yaml"), repo_root, ["controllers"])
+```
+
+```bash
+doeff-adr semgrep-hy --config adr/worker.semgrep.yaml --root . controllers
+```
+
+For fixtures, add `:expand-hy True` to an installed `defsemgrep`; its `.hy`
+fixtures are expanded the same way before the hit / clean check.
+
+Notes:
+
+- Path filters in the rule file see `.py` names (`lab/keeper.hy` is scanned as
+  `lab/keeper.py`): filter on directories or stems, not on the `.hy` suffix.
+- Expansion runs `require` (and any code a macro runs at expansion time), so
+  project macro modules must be importable: the project root is added
+  automatically; pass `python_path` / `--python-path` for anything else.
+- A file that fails to expand fails the scan (`HyScanExpansionError`); it is never
+  reported as clean.
+- Findings inside code a macro wrote are reported at the macro call's line.
+
+Run executable ADR files directly:
+
+```bash
+uv run pytest docs/adr/defadr_doeff_hy_004_defk_only.hy
+```
+
+## Collection wiring gate
+
+Include every executable ADR directory in the pytest collection roots used by
+CI. For the conventional layout:
+
+```toml
+[tool.pytest.ini_options]
+testpaths = ["tests", "docs/adr"]
+```
+
+Then add the one-line fail-closed gate before the test run:
+
+```bash
+uv run doeff-adr verify-wiring
+```
+
+The command runs pytest collection in `strict` mode and exits nonzero while any
+matching executable ADR is absent from the effective collection. Normal pytest
+runs default to `warn` so targeted local runs remain usable. Set
+`doeff_adr_wiring = "strict"` in pytest configuration when every invocation
+should fail closed, or pass `--doeff-adr-wiring=off` only for an intentional
+local opt-out. `defsemgrep` enforcement separately fails, rather than skips,
+when the `semgrep` executable is unavailable.
+
+Wiring is a property of the collection scope, not of the selection: the
+collected files are measured before `-k` / `-m` / `--deselect` drop items, so a
+default-scope run narrowed with `-m 'not e2e'` still verifies.
+
+### In-session gate test
+
+A repository whose canonical gate is the default pytest run itself can read the
+verdict from inside that run instead of spawning a second collection (a nested
+`pytest --collect-only` is O(suite) work under a per-test deadline):
+
+```python
+from pathlib import Path
+
+import pytest
+from doeff_adr._pytest_plugin import (
+    NotDefaultScope,
+    WiringVerified,
+    default_scope_wiring,
+    wiring_failure_message,
+)
+
+
+def test_all_executable_adrs_are_collected(request: pytest.FixtureRequest) -> None:
+    verdict = default_scope_wiring(request.session)
+    if isinstance(verdict, NotDefaultScope):
+        pytest.skip(f"session collected {list(verdict.args)}, not the default scope")
+    if not isinstance(verdict, WiringVerified):
+        pytest.fail(wiring_failure_message(verdict, Path(request.config.rootpath)))
+```
+
+`default_scope_wiring` answers `WiringVerified`, `WiringUncollected`, or
+`WiringWalkAborted` for a default invocation (no path arguments), reusing the
+one measurement the plugin already took at collection finish. A session aimed
+at explicit paths answers `NotDefaultScope`: it cannot speak for the default
+scope in either direction (narrower paths miss ADRs the default scope reaches;
+wider paths reach ADRs the default scope leaves silent), so the test must not
+report it as a pass.
+
+For proboscis-ema and agent-control-plane follow-ups, add their existing
+`docs/adr` directory to the pytest roots used by the real CI test command,
+install `semgrep` when those ADRs contain `defsemgrep`, and run
+`uv run doeff-adr verify-wiring` as a required step. The gate reports every
+remaining `defadr_*.hy` path, so migration can be completed without maintaining
+a second hand-written ADR file list.
+
+If an ADR uses `deftest`, the consuming project must provide the
+`doeff_interpreter` pytest fixture in its own `conftest.py` or test shim.
+`doeff-adr` intentionally does not choose an interpreter, scheduler, handler
+stack, env source, or runtime policy for the project.
+
+Minimal project-side fixture example:
+
+```python
+from typing import Any
+
+import pytest
+
+
+@pytest.fixture
+def doeff_interpreter() -> Any:
+    def run_program(program: Any, *, env: dict[Any, Any] | None = None) -> Any:
+        from doeff import run
+        from doeff_adr import adr_registry
+
+        if env:
+            raise ValueError("this ADR test runtime does not use env overrides")
+        return run(adr_registry()(program))
+
+    return run_program
+```
+
+An ADR's `deftest` reads a registered ADR with the effect `GetAdr`, answered by
+the handler `adr_registry()` that the fixture installs (it reads the process
+registry `defadr` fills, at the time the effect is answered):
+
+```hy
+(require doeff-hy.macros [deftest <-])
+(import doeff-adr [GetAdr])
+
+(deftest test-every-law-names-a-check
+  (<- spec (GetAdr ADR-ID))
+  (assert (all (gfor law spec.laws (.get law "enforced_by")))))
+```
+
+The same handler answers the effect `AdrIds`, the sorted list of the ids in the
+registry:
+
+```hy
+(<- ids (AdrIds))
+(assert (in ADR-ID ids))
+```
+
+The same handler answers the effects that write and read the rest of the
+registry:
+
+- `RegisterAdr(id, title=…, status=…, …)` puts an ADR on the registry and
+  answers its `AdrSpec` (the fields are those of `defadr`, whose expansion
+  performs this effect under `adr_registry()` at import time). A repeated id or
+  an unknown status is a `ValueError`.
+- `ClearRegistry()` empties the ADRs and the checks.
+- `EnforcementIds()` answers the sorted ids of the checks (`defadr` tests and
+  `defsemgrep` rules), and `GetEnforcement(id)` answers one check, a
+  `KeyError` when it is not on the registry.
+
+A test that wants another registry installs `adr_registry(specs=[spec ...])`,
+`adr_registry(enforcements={...})` or both around the part of the program that
+should read it: the inner handler answers first, and none of these effects
+falls through to the process registry (an id missing from it is a `KeyError`).
+The ADR table starts as a copy of `specs` (empty when omitted) and lives as
+long as the handler value; the checks table is the given dict itself (empty
+when omitted), so passing one dict to `semgrep_enforcements(table=…)` and
+`adr_registry(enforcements=…)` lets `GetEnforcement` read what `RegisterSemgrep`
+put there. `specs=[]` is an empty table, not the registry. The registry is read
+and written only through these effects (there are no public `get_adr`,
+`adr_ids`, `register_adr`, `clear_registry`, `enforcement_ids` or
+`get_enforcement` functions).
+
+## ADR contract checks as effects
+
+The same handler `adr_registry` answers three more effects:
+
+- `AssertAdrContract(id)` checks the shape of one ADR and answers `None`: an
+  accepted ADR names at least one check, every check it names is on the
+  enforcement table, and an `expected-red` check is tied to a plan. A failed
+  check is an `AssertionError`, raised where the effect was performed; an id
+  that is not on the table is a `KeyError`.
+- `AssertAllAdrContracts()` checks every ADR on the table in id order and
+  raises the first failure the same way.
+- `RegisterDeftest(id, mode="green")` puts a `deftest` check on the
+  enforcement table and answers its `EnforcementRef`. A repeated id, or a mode
+  other than `green` and `expected-red`, is a `ValueError`.
+
+The expansion of `defadr` runs `RegisterDeftest` for each inline `deftest` at
+import time and `AssertAdrContract` inside the generated
+`test_<ID>_adr_contract`, each under `adr_registry()` itself, so these checks
+need no `doeff_interpreter` fixture either. There are no public
+`assert_adr_contract`, `assert_all_adr_contracts` or
+`register_deftest_enforcement` functions.
+
+`adr_registry(specs=[spec ...], enforcements={...})` reads the ADRs from that
+list and the checks from that dict, and `RegisterDeftest` writes to the dict.
+Passing only one of them makes the other empty (an `enforcements` dict made
+when the factory is called), so a test can check an ADR whose checks are
+missing without touching the process registry:
+
+```python
+from doeff import do, run
+from doeff_adr import AdrSpec, AssertAdrContract, EnforcementRef, adr_registry
+
+spec = AdrSpec(
+    id="ADR-X",
+    title="x",
+    status="accepted",
+    enforcement=(EnforcementRef(id="test_gone", kind="deftest"),),
+)
+
+
+@do
+def check():
+    try:
+        yield AssertAdrContract("ADR-X")
+    except AssertionError as failed:
+        return str(failed)
+    return "passed"
+
+
+assert run(adr_registry(specs=[spec])(check())) == (
+    "ADR-X: enforcement 'test_gone' is not registered"
+)
+```
+
+## Semgrep checks as effects
+
+`defsemgrep` performs two effects, answered by the handler factory
+`semgrep_enforcements`:
+
+- `RegisterSemgrep(id, rule_id=…, hit_fixtures=[…], clean_fixtures=[…])` (or
+  `pattern=…, bad=[…], good=[…]` for an inline rule) puts the check on the
+  table and answers its `SemgrepSpec`. A repeated id, or neither `pattern` nor
+  `rule_id`, is a `ValueError`.
+- `AssertSemgrep(id)` runs semgrep and answers `None` when the rule fires on a
+  hit fixture and stays silent on every clean fixture. A miss, a missing
+  semgrep, or a scan that did not run is an `AssertionError`, raised where the
+  effect was performed; an id that is not on the table is a `KeyError`.
+
+The expansion of `defsemgrep` runs the registration at import time and the
+check inside the generated test, each under `semgrep_enforcements()` itself,
+so a repository needs no `doeff_interpreter` fixture for its `defsemgrep`
+checks. A `deftest` that performs these effects itself installs the handler
+around its program, as below: `doeff-adr` does not add it to the project's
+fixture.
+
+`semgrep_enforcements()` writes to and reads the process registry, and starts
+the `semgrep` found on `PATH` when it answers `AssertSemgrep`.
+`semgrep_enforcements(table={})` writes to and reads the given dict instead
+(an id missing from it does not fall through to the registry), and
+`semgrep_enforcements(semgrep=path)` starts that executable (a `str` or a
+`Path`; a path that is not a file is the same `AssertionError` as a missing
+semgrep). The inner handler answers first, so a test can run part of a program
+against another table or another semgrep:
+
+```hy
+(require doeff-hy.macros [deftest do! <-])
+(import doeff-adr [RegisterSemgrep AssertSemgrep semgrep-enforcements])
+
+(deftest test-the-rule-stops-its-bad-fixture
+  (<- ((semgrep-enforcements :table {})
+        (do!
+          (<- (RegisterSemgrep "no-eval" :pattern "eval(...)" :languages ["python"]
+                               :bad ["eval('1')"] :good ["print('1')"]))
+          (<- (AssertSemgrep "no-eval"))))))
+```
