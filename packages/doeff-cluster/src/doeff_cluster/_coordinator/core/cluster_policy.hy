@@ -619,6 +619,14 @@
 ;; lost と答える(lease_rules.renew)。前の世代が最後の報告の後に起こした process の担い手は報告に無いので、期限まで残る。
 ;; 例外(AL-D2e): 前の世代がまだ走っている間に起きた世代(heartbeat の overlaps-elder — 同じ機体に 2 つの世代を並べる RollingUpdate で、
 ;; 起動の script が前の世代の dir の錠を持たれていると見た)の名乗りは前の世代の終わりの印でないので、担い手を外さない。
+;;
+;; 退いた世代の止まり(2026-11-05 の zeus): overlaps-elder は「自分の外のどれかの世代の錠が持たれている」で立つので、さらに古い世代が
+;; 退いている間は、直前の世代が突然止まっていても立つ。名乗りで外さなかった直前の世代の担い手は、その後の名乗りの前の世代の報告にも
+;; 載らず、期限の切れたまま行に残る — 行から担い手が外れるのを待つ process(GET /watch?lease=&vacate=)には永久の持ち主になった。
+;; そこで外す時を名乗りの 1 回の出来事だけに結ばず、「その世代は止まった」という判じにも結ぶ: 退いた世代から最後に受けた報告
+;; (ClusterObservations.retired-statuses — 重なりの名乗りで前の世代の最新の報告を置き、退いた世代の heartbeat ごとに置き直す)の刻から
+;; lease の窓(ClusterTiming.lease-ms — 今の世代の生死の窓と同じ)を越えて黙った世代を止まったと判じ、その報告の process の担い手を
+;; 外す(sweep-stopped-generations — 調停の拍ごと)。報告を続ける退いた世代は止まったと判じないので、担い手を外さず延長も通す(AL-D2e)。
 
 (defk generation-holder-prefixes [report]
   {:pre [(: report (| WorkerReport None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
@@ -648,7 +656,13 @@
   {:pre [(: board (get Table BoardRow)) (: report (| WorkerReport None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "worker の前の世代の最新の報告 report の process が持っていた担い手を、盤 board の lease の行から外す書き(TableWrite の列)を求めるため(頭の註)。
    変わった行は版を 1 進める(POST /leases の書きと同じ)。外す物が無ければ空の列。"
-  (val prefixes (! (generation-holder-prefixes report)))
+  (! (board-without-holders board (! (generation-holder-prefixes report)))))
+
+
+(defk board-without-holders [board prefixes]
+  {:pre [(: board (get Table BoardRow)) (: prefixes tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "token が prefixes(担い手の token の頭の列)のどれかで始まる担い手を、盤 board の lease の行から外す書き(TableWrite の列)を求めるため。
+   変わった行は版を 1 進める(POST /leases の書きと同じ)。外す物が無ければ空の列(頭の列が空なら盤を読まない)。"
   (when (not prefixes)
     (return #()))
   (var freed #())
@@ -659,6 +673,31 @@
         None None
         _ (:= freed (+ freed #((TableWrite key (replace row :value value :version (+ row.version 1) :size (value-size value)))))))))
   freed)
+
+
+(deff retired-silence-deadline [#^ WorkerReport report #^ int window-ms]  ; defk にできない: 掃除の期限 sweep-due の内包表記の中から呼ぶ純粋な比べ
+  {:pre [(: report WorkerReport) (: window-ms int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "退いた世代を窓 window-ms の内で生きていると数える最後の刻(その世代から最後に受けた報告 report の刻 + 窓・epoch ms)を求めるため。
+   止まりの判じ(sweep-stopped-generations)と、その答えが変わる最初の刻を求める sweep-due が同じこの値で比べる(今の世代の生死の
+   alive・liveness-deadline と同じ比べ方 — 刻がこれを越えたら止まった)。"
+  (+ report.at window-ms))
+
+
+(defk sweep-stopped-generations [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "純粋: 最後に受けた報告から lease の窓(timing.lease-ms)を越えて黙った退いた世代を止まったと判じ(#3770 の節の頭の註)、その報告の
+   process が持っていた担い手を盤の lease の行から外し、その世代の報告(ClusterObservations.retired-statuses の行)を忘れた状態を
+   求めるため。止まった世代が無ければ同じ object。"
+  (val retired state.observations.retired-statuses)
+  (val stopped (tuple (gfor #(key report) (.items retired) :if (> now (retired-silence-deadline report timing.lease-ms)) key)))
+  (when (not stopped)
+    (return state))
+  (var prefixes #())
+  (for [key stopped]
+    (:= prefixes (+ prefixes (! (generation-holder-prefixes (.row retired key))))))
+  (val written (board-written state (! (board-without-holders state.board prefixes))))
+  (replace written :observations (replace written.observations
+                                          :retired-statuses (.with-writes retired (tuple (gfor key stopped (TableWrite key None)))))))
 
 
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
@@ -2037,8 +2076,9 @@
 
 (defk sweep-due [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
-  "掃除の判断(盤の行・drain・温める表・詰めた Program)が、状態がこのままで答えを変え得る最初の刻を知るため(#3063)。値は各判断が
-   比べに使う期限と同じ: sweep-board = 行の expires-ms・sweep-drains(と advance-drains の drain 中の判定)= until-ms・sweep-warms = until-ms・
+  "掃除の判断(盤の行・止まった退いた世代の担い手・drain・温める表・詰めた Program)が、状態がこのままで答えを変え得る最初の刻を知るため
+   (#3063)。値は各判断が比べに使う期限と同じ: sweep-board = 行の expires-ms・sweep-stopped-generations = 退いた世代の沈黙の窓
+   (retired-silence-deadline)を越える刻・sweep-drains(と advance-drains の drain 中の判定)= until-ms・sweep-warms = until-ms・
    program_policy.sweep-programs = 参照の無い Program の put-ms + PROGRAM-GRACE-MS を過ぎた刻。途絶しても動かし続けてよい印の約束を
    外す sweep-keep-marks の刻は担い手の沈黙の期限(kept-reassign-after-ms)なので liveness-due が求める・冷えた起動の数は数えるだけなので、
    刻を持たない。"
@@ -2046,6 +2086,7 @@
   ;; 盤は期限の下限だけを入れる(全行を読まない — 下限が来ると sweep-board が全行を読んで求め直す。早く起きるのは構わない)。
   (val tally (board-tally state))
   (val deadlines (+ (cond (= tally.expiring 0) [] (is tally.floor None) [now] True [tally.floor])
+                    (lfor r (.rows state.observations.retired-statuses) (+ (retired-silence-deadline r timing.lease-ms) 1))
                     (lfor d (.rows state.drains) d.until-ms)
                     (lfor w (.rows state.warms) w.until-ms)
                     (lfor #(sha row) (.items state.programs) :if (not-in sha used) (+ row.put-ms PROGRAM-GRACE-MS 1))))
@@ -2056,13 +2097,14 @@
 
 (defk reconcile [now given timing]
   {:pre [(: now int) (: given ClusterState) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
-  "1 拍の調停: 期限を過ぎた物(盤の行・drain・温める表の行・沈黙した worker・消えた Worker と沈黙が約束の期限を越えた担い手への約束)を
-   掃いてから、job と task の置き先を決め直し、置き先の変化を出来事の列に足した状態を求めるため。何も変わらなければ掃いた後の状態
-   そのものを返す。"
+  "1 拍の調停: 期限を過ぎた物(盤の行・lease の窓を越えて黙った退いた世代の process の担い手・drain・温める表の行・沈黙した worker・
+   消えた Worker と沈黙が約束の期限を越えた担い手への約束)を掃いてから、job と task の置き先を決め直し、置き先の変化を出来事の列に
+   足した状態を求めるため。何も変わらなければ掃いた後の状態そのものを返す。"
   ;; 消された・忘れた Worker と、沈黙が約束の期限(kept-reassign-after-ms)を越えた担い手への途絶しても動かし続けてよい印の約束は、
   ;; 置き先の判断の前に外す(#2804 — その job を他へ置ける)。
+  (<- swept ClusterState (sweep-stopped-generations (! (sweep-board given now)) now timing))
   (<- state ClusterState
-      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains (! (sweep-board given now)) now)) now)) now timing))
+      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains swept now)) now)) now timing))
                         now timing))
   ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
   ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
@@ -2263,22 +2305,29 @@
         report (! (worker-report statuses now body.endpoint known))
         ;; 新しい世代の名乗りで、前の世代の process が持っていた名前付きの lease を外す(#3770 — 前の世代の最新の報告は、この
         ;; heartbeat で置き換える前の adopted.observations.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
-        ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。
+        ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。前の世代が実は止まっていれば、
+        ;; 黙った窓の後に sweep-stopped-generations が外す(その材料に、前の世代の最新の報告を退いた世代の報告として置く — 刻はその世代から
+        ;; 最後に聞いた刻のまま)。
         previous-report (.row adopted.observations.statuses name)
         freed (if (and (= order GenerationOrder.NEWER) (not body.overlaps-elder))
                   (! (board-without-generation-holders adopted.board previous-report))
                   #())
+        elder (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
+                   (is-not previous-report None))
         board-state (board-written adopted freed)
         ;; absorb-boot は drain だけを変えるので、観測は adopted のまま書いてよい。
         registered (replace (absorb-boot adopted name boot)
                      :workers (.with-writes adopted.workers #((TableWrite name info)))
                      :observations (replace adopted.observations
-                                            :statuses (.with-writes adopted.observations.statuses #((TableWrite name report))))
+                                            :statuses (.with-writes adopted.observations.statuses #((TableWrite name report)))
+                                            :retired-statuses (if elder
+                                                                  (.with-writes adopted.observations.retired-statuses
+                                                                                #((TableWrite (elder-key name previous.boot) previous-report)))
+                                                                  adopted.observations.retired-statuses))
                      :board board-state.board :board-tally board-state.board-tally)
         ;; 前の世代がまだ走っている間に起きた世代の名乗り(AL-D2f): 前の世代の最新の報告の running の常駐の job を、前の世代が動かして
         ;; いる組(SupersededRun)の種にする — 前の世代の次の heartbeat を待たずに、今の世代への最初の返事から印 elder-runs を付ける。
-        seeded (if (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
-                        (is-not previous-report None))
+        seeded (if elder
                    (elder-runs-written registered name previous.boot previous-report.jobs now
                                        ;; 前の世代の最新の報告を、組の job の行として持ち続ける(刻はこの heartbeat の後の知れた刻)。
                                        (replace previous-report :jobs (! (rows-with-known-exits previous-report.jobs known)))
@@ -2296,9 +2345,13 @@
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
    lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。
    その世代が走らせている入れ替えの job の組(SupersededRun — 旧い Pod の preStop が待つ・AL-D2)と、組の job の行(report — この
-   heartbeat の報告を worker-report の形にした物)も書き直す(elder-runs-written)。"
-  (elder-runs-written (replace state :tasks (heard-tasks state name statuses now boot False None))
-                      name boot statuses now report))
+   heartbeat の報告を worker-report の形にした物)も書き直す(elder-runs-written)。report は止まりの判じの材料(退いた世代から最後に
+   受けた報告 — ClusterObservations.retired-statuses)にも置き直す(sweep-stopped-generations — 報告を続ける間は止まったと判じない)。"
+  (setv heard (replace state :tasks (heard-tasks state name statuses now boot False None)
+                             :observations (replace state.observations
+                                                    :retired-statuses (.with-writes state.observations.retired-statuses
+                                                                                    #((TableWrite (elder-key name boot) report))))))
+  (elder-runs-written heard name boot statuses now report))
 
 
 (defn #^ ClusterState elder-runs-written [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now

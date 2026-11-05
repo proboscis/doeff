@@ -219,7 +219,8 @@
    今持っている job の名の列(#2804 — None = 欄の無い古い worker = 印を知らない)・stopping = この世代が止まり始めた
    (drain の頼みを通らない止めの名乗り — 判断はこの世代を drain に載せる・#2819。名乗らない旧い worker は偽)・overlaps-elder = この
    世代は同じ名の前の世代がまだ走っている間に起きた(起動の script が前の世代の dir の錠を持たれていると見た — RollingUpdate・AL-D2e)。
-   判断は新しい世代の名乗りで前の世代の process の lease を外さない(#3770 は前の世代が終わった時だけ)。名乗らない旧い worker は偽。
+   判断は新しい世代の名乗りで前の世代の process の lease を外さない(#3770 は前の世代が終わった時だけ — 前の世代が実は止まっていれば、
+   lease の窓を越えて黙った後に外す・cluster_policy.sweep-stopped-generations)。名乗らない旧い worker は偽。
    account-token = worker の ServiceAccount の token の状態(ok・stale = 置き直しが遅れた・expired・unreadable。
    名乗らない worker(Pod の外・旧い worker)は ok)・room-file = 枠の file の状態(ok・unreadable・malformed — ok でない間 worker は
    前に名乗った枠のまま。file を読まない worker・旧い worker は ok)・doeff-commit = その process の doeff の版
