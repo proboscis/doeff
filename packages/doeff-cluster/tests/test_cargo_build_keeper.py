@@ -25,6 +25,7 @@ import yaml
 PACKAGE = Path(__file__).resolve().parents[1]
 ZEUS = PACKAGE / "deploy" / "k8s" / "nodes" / "zeus"
 SCRIPT = ZEUS / "cargo-build-keeper.sh"
+LINE_FILE = ".keep-available-mib"
 
 KIB_LIMIT = 1000
 ENTRY_KIB = 100
@@ -117,11 +118,56 @@ def test_over_the_high_water_mark_the_oldest_go_first_down_to_the_low_mark(world
 
 
 def test_a_low_machine_memory_evicts_even_under_the_high_water_mark(world: World) -> None:
-    """機体の MemAvailable が下限を割れば、tmpfs に余裕が在っても古い物から返す。下限の上へ戻らなければ消せる物を全部消す。"""
-    world.meminfo.write_text("MemAvailable: 1048576 kB\n")
+    """機体の MemAvailable が turn-host の置いた線を割れば、tmpfs に余裕が在っても古い物から返す。線の上へ戻らなければ消せる物を全部消す。"""
+    (world.root / LINE_FILE).write_text("38000\n")
+    world.meminfo.write_text(f"MemAvailable: {37000 * 1024} kB\n")
     old = _entry(world, "aa11", age=GRACE * 2)
-    _keep(world)
+    done = _keep(world)
     assert not old.exists()
+    assert "線 38000 MiB" in done.stderr
+
+
+def test_above_the_line_nothing_is_removed_for_the_machine_memory(world: World) -> None:
+    """線の上なら、MemAvailable が少なくても機体の memory を理由には消さない(線は turn-host の判断で、この係は別の下限を持たない)。"""
+    (world.root / LINE_FILE).write_text("1000\n")
+    world.meminfo.write_text(f"MemAvailable: {2000 * 1024} kB\n")
+    kept = _entry(world, "aa11", age=GRACE * 2)
+    _keep(world)
+    assert kept.is_dir()
+
+
+@pytest.mark.parametrize("line", [None, "", "not a number\n", "-5\n"])
+def test_without_a_readable_line_the_machine_memory_removes_nothing(world: World, line: str | None) -> None:
+    """失敗ケース: 線の file が無い・数でない間は 0 と読み、機体の memory を理由には消さない(誤った線で使っている build の中間物を返さない)。"""
+    if line is not None:
+        (world.root / LINE_FILE).write_text(line)
+    world.meminfo.write_text("MemAvailable: 1024 kB\n")
+    kept = _entry(world, "aa11", age=GRACE * 2)
+    _keep(world)
+    assert kept.is_dir()
+
+
+def test_the_line_file_is_never_read_as_an_intermediate(world: World) -> None:
+    """失敗ケース: 掃除は線の file と印の file を中間物として消さない(`<2 字>/<16 進>` の形でない)。"""
+    (world.root / LINE_FILE).write_text("38000\n")
+    world.meminfo.write_text(f"MemAvailable: {37000 * 1024} kB\n")
+    _entry(world, "aa11", age=IDLE + 60)
+    _keep(world)
+    assert (world.root / LINE_FILE).read_text() == "38000\n"
+
+
+def test_short_with_nothing_to_remove_says_so_once_per_interval(world: World) -> None:
+    """線を割ったまま消せる物が無ければ 1 行出す(新しいターンが返される訳を log で辿る材料)。10 秒ごとの回で同じ行を重ねない。"""
+    (world.root / LINE_FILE).write_text("38000\n")
+    world.meminfo.write_text(f"MemAvailable: {37000 * 1024} kB\n")
+    in_use = _entry(world, "aa11", age=10)
+    first = _keep(world)
+    second = _keep(world)
+    assert in_use.is_dir()
+    assert "線 38000 MiB を割っていて消せる物が無い" in first.stderr
+    assert "消せる物が無い" not in second.stderr
+    third = _keep(world, CARGO_BUILD_KEEPER_SHORT_SAID_SECONDS="0")
+    assert "消せる物が無い" in third.stderr
 
 
 def test_a_workspace_held_by_cargo_or_just_changed_is_never_removed(world: World) -> None:

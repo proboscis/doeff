@@ -14,8 +14,9 @@
 # 上限 sizeLimit 16Gi: mnemosyne の debug の build と test で 5.6 GiB を越える(11-04 の試し — 大きい build を 2 本と余りが同時に載る)。worker の
 # memory.limit 100Gi を 116Gi へ、層 commands の memory.max 32G を 48G へ、どちらもこの 16G だけ足す(node.yaml・cgroup.yaml)。tmpfs の page は回収
 # されず、書いた process の層に数えられるので、足さないと命令の memory と page cache の取り分がその分だけ減る。job が組むと層 jobs に数えられる
-# (jobs は足さない — 36G に対し 10-24 以降の峰は page cache を含めて 23.7G)。機体の空きの MemAvailable は 7 日の最小で 26.3 GiB なので、全部を
-# 使っても 10 GiB 残り、下の掃除が 12 GiB を割ると古い物から消す。
+# (jobs は足さない — 36G に対し 10-24 以降の峰は page cache を含めて 23.7G)。tmpfs の page は回収されず、そのまま機体の MemAvailable を減らす。
+# 新しいターンを受ける係 turn-host は MemAvailable が床(機体の 20%)の近くまで減るとターンを断るので、掃除の係はその床の上の線を割ると古い物から
+# 消す(線の値は係が置く — cargo-build-keeper.sh の頭の註。作り直せる中間物が、作り直せない会話のターンより先に memory を返す)。
 #
 # 溢れた時・掃除の決まり: cargo-build-keeper.sh の頭の註。越える書きは ENOSPC で build が失敗し、自動では SSD へ戻らない(1 回を SSD に組む手は
 # `env -u CARGO_BUILD_BUILD_DIR cargo …`)。他の仕事の /tmp と /dev/shm は別の tmpfs なので巻き込まない。
