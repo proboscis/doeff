@@ -92,7 +92,7 @@
   (assert (= fell.name "fell-through"))
   (<- form (rewritten "(match r (Rec :a-b 1) :if (g :guard-kw 2) (f :body-kw 3) _ (Rec :call-kw 4))"))
   (<- expected (same-form "(match r (Rec :a_b 1) :if (g :guard-kw 2) (f :body-kw 3) _ (Rec :call-kw 4))"))
-  (assert (= form expected) "only the pattern's field names are rewritten; the keywords in the guard and body calls are unchanged")
+  (assert (= form expected) "only the pattern's field names are rewritten; the keywords in the guard and body calls are unchanged"))
 
 (deftest test-only-class-pattern-field-names-are-rewritten
   {:tags {:context "doeff-hy-match" :role "judgment"}}

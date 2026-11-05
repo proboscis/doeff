@@ -260,7 +260,7 @@
    it becomes a reportUnknownVariableType error (the same even if a type is declared on the target). Bundle it to the pre-narrowing value, and the test of the clause the writer wrote also narrows the writer's name
    (`_clause-test`). We do not adopt the form that bundles inside the test (`isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)`):
    whether the right side of a walrus is narrowed varies by pyright version (1.1.411 only the left, 1.1.414 also the right), and in a version that narrows the right too, the second becomes 'always true'
-   (reportUnnecessaryIsInstance) — one per clause the writer wrote, which the writer cannot fix.'
+   (reportUnnecessaryIsInstance) — one per clause the writer wrote, which the writer cannot fix."
   (lfor row _WRITER-VISIBLE
         :if (and row.narrowed
                  (any (gfor clause clauses (in row (_clause-aliases clause lazy-defs)))))
