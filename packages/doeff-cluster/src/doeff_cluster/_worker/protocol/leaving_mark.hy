@@ -8,7 +8,7 @@
 ;;; 世代つきなので、/tmp が worker の process より長く残る機体でも、前の process の印を新しい process の止まりと読まない。file の I/O は
 ;;; file の効果(答え手 = 入口が並べる os-file-handler)。
 ;;; 書き手と path と形はこの module だけが持つ。依存してよいのは preStop の入口(drain_main)と観測の答え手(leaving_observer)だけで、
-;;; worker の入口(main)は答え手の module だけを読む(module の契約 .agents/code-quality.d/doeff-cluster-worker-leaving-mark.json —
+;;; worker の入口(main)は答え手の module だけを読む(品質検査の module 契約の断片 doeff-cluster-worker-leaving-mark.json(契約は repo の外の置き場) —
 ;;; 失敗例: 入口が印を新しい世代へ引き継ぐ 2 人目の書き手になると、前の process の印を新しい process の
 ;;; 止まりと読む)。
 (require doeff-hy.macros [defk <- val])
