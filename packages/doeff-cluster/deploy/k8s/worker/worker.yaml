@@ -62,9 +62,19 @@ spec:
       enableServiceLinks: false
       # preStop の drain(上限 DRAIN_DEADLINE 秒)+ 子 process を止める猶予(stop-grace 10 秒 + KILL)。
       terminationGracePeriodSeconds: 120
-      # 置く Node は機体の dir の nodeSelector で指定する。その Node の taint はどれも受ける。
+      # 置く Node は機体の dir の nodeSelector で指定する。受ける taint は名で並べる: cordon 中の Node にも置き(unschedulable)、Node が
+      # 落ちても Pod を他へ動かさない(not-ready・unreachable — 置ける Node は 1 つ)。disk-pressure と pid-pressure は受けない — その状態の
+      # Node では kubelet が Pod を入口で断り(Failed・訳 Evicted)、taint を受けると scheduler は断る Node へ置き続け、ReplicaSet は断られた
+      # Pod の代わりを上限なく作る(DiskPressure の zeus で 5 分に数百本)。受けなければ代わりの Pod は Pending の 1 本で待ち、状態が解けると
+      # 置かれる。残る作り直しは、kubelet が状態を API へ送るまで(送る周期 10 秒の内)taint がまだ無い数秒の間だけ。memory-pressure は
+      # 受ける(その taint を受ける Pod を kubelet は断らない)。toleration は「受けない taint」を書けないので、並べていない taint の Node
+      # では Pod は Pending で待つ。
       tolerations:
-        - { operator: Exists }
+        - { key: node.kubernetes.io/unschedulable, operator: Exists }
+        - { key: node.kubernetes.io/not-ready, operator: Exists }
+        - { key: node.kubernetes.io/unreachable, operator: Exists }
+        - { key: node.kubernetes.io/network-unavailable, operator: Exists }
+        - { key: node.kubernetes.io/memory-pressure, operator: Exists }
       securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true, fsGroup: 1000 }
       initContainers:
         # hostPath は root の持ち物で作られるので、worker の uid へ渡す。
