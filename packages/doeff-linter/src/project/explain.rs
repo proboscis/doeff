@@ -843,7 +843,7 @@ impl<'a> Narrator<'a> {
             Explain::BareDefkCall { call } => (
                 format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
                 format!(
-                    "{} は defk なので、素で呼ぶと答えではなく Program が返る。その Program は型の誤りで落ちずに値として流れ、答えを使ったつもりの所で静かに間違う(dict の .get・比べ・文字列への埋め込み)。Program として渡す所 — (<- x …) の右辺・(! …)・(return …)・Program を受ける呼びの引数 — で呼ぶ。",
+                    "{} は defk なので、素で呼ぶと答えではなく Program が返る。その Program は型の誤りで落ちずに値として流れ、答えを使ったつもりの所で静かに間違う(dict の .get・比べ・文字列への埋め込み)。Program として渡す所 — (<- x …) の右辺・(! …)・(return …)・Program を受ける呼びの引数 — で呼ぶ。repo の defk の呼びの引数でも、受ける引数の :pre の型が Program を受け得ない型(組み込みの値の型・None・repo の record)なら答えとして使う所 — 未実行の Call が渡り、:pre の型の検に実行の時に初めて当たって落ちる。(<- x …) で値にしてから渡す。",
                     call.callee
                 ),
             ),
