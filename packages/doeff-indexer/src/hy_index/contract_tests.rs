@@ -1,29 +1,29 @@
-//! 宣言した effect・引数と答えの型・型でない契約・effect 節の解く effect(版 5)のテスト — Hy の source を索引して確かめる。
+//! Tests for declared effects, argument and answer types, non-type contracts, and the effect an effect clause resolves (version 5) -- index Hy source and check.
 
 use std::path::Path;
 
 use super::index_source;
 use super::model::{ContractSide, Definition, HyFileIndex, NameRef, TypeNote};
 
-/// source を `/r/pkg/sample.hy` として索引する(root は `/r`)。
+/// Index the source as `/r/pkg/sample.hy` (root is `/r`).
 fn index(source: &str) -> HyFileIndex {
     index_source(Path::new("/r"), Path::new("/r/pkg/sample.hy"), source)
 }
 
-/// 名と kind で定義を引く。
+/// Look up a definition by name and kind.
 fn def<'a>(file: &'a HyFileIndex, name: &str, kind: &str) -> &'a Definition {
     file.definitions
         .iter()
         .find(|d| d.name == name && d.kind.as_str() == kind)
-        .unwrap_or_else(|| panic!("{kind} {name} が無い"))
+        .unwrap_or_else(|| panic!("{kind} {name} not found"))
 }
 
-/// 名の (綴り, 完全修飾名) の列。
+/// List of (spelling, fully qualified name) for names.
 fn refs(names: &[NameRef]) -> Vec<(&str, Option<&str>)> {
     names.iter().map(|n| (n.name.as_str(), n.target.as_deref())).collect()
 }
 
-/// 型の注記の (綴り, 名の列)。
+/// (spelling, list of names) of a type annotation.
 fn note(note: &TypeNote) -> (&str, Vec<(&str, Option<&str>)>) {
     (note.text.as_str(), refs(&note.names))
 }
@@ -32,14 +32,14 @@ const SAMPLE: &str = r#"(import controllers.messaging.intent.conversation-input 
 (import .model [InputRequest RunOutcome])
 (require doeff-hy.macros [defk defhandler defeffect defrecord])
 
-(defeffect Settle "決着を積む。" {:fields [(: settlement IntakeSettlement) note] :answer (| Landed Refused) :tags {:context "m"}})
+(defeffect Settle "Record a settlement." {:fields [(: settlement IntakeSettlement) note] :answer (| Landed Refused) :tags {:context "m"}})
 
-(defrecord IntakeSettlement "決着。" #^ str request-id #^ (| int None) count plain)
+(defrecord IntakeSettlement "A settlement." #^ str request-id #^ (| int None) count plain)
 
 (defk run-it [request budget]
   {:pre [(: request InputRequest) (> budget 0) (: budget int) (: other.x str)] :post [(: % RunOutcome) (!= % None)]
    :effects [ReadInput WriteInput Settle] :tags {:context "messaging"}}
-  "要求 1 つを実体化するため。"
+  "To materialize one request."
   (<- (ReadInput 1)))
 
 (defk no-effects [] {:pre [] :post [] :effects []} 1)
@@ -58,7 +58,7 @@ fn contract_dict_gives_declared_effects_types_and_non_type_predicates() {
     let file = index(SAMPLE);
     let run = def(&file, "run-it", "defk");
     assert_eq!(
-        refs(run.effects.as_deref().expect(":effects を書いた")),
+        refs(run.effects.as_deref().expect("wrote :effects")),
         vec![
             ("ReadInput", Some("controllers.messaging.intent.conversation_input.ReadInput")),
             ("WriteInput", Some("controllers.messaging.intent.conversation_input.WriteInput")),
@@ -73,9 +73,9 @@ fn contract_dict_gives_declared_effects_types_and_non_type_predicates() {
             ("request", ("InputRequest", vec![("InputRequest", Some("pkg.model.InputRequest"))])),
             ("budget", ("int", vec![("int", None)])),
         ],
-        "引数の順に並べ、相対 import は書いた file の package を基準に解く"
+        "ordered by argument, and relative imports are resolved against the package of the file where they are written"
     );
-    assert_eq!(note(run.answer_type.as_ref().expect("答えの型")), ("RunOutcome", vec![("RunOutcome", Some("pkg.model.RunOutcome"))]));
+    assert_eq!(note(run.answer_type.as_ref().expect("answer type")), ("RunOutcome", vec![("RunOutcome", Some("pkg.model.RunOutcome"))]));
     let contracts: Vec<(ContractSide, &str)> = run.contracts.iter().map(|c| (c.side, c.text.as_str())).collect();
     assert_eq!(
         contracts,
@@ -84,7 +84,7 @@ fn contract_dict_gives_declared_effects_types_and_non_type_predicates() {
             (ContractSide::Pre, "(: other.x str)"),
             (ContractSide::Post, "(!= % None)"),
         ],
-        "型でない述語と、引数でない名への型の注記は契約に残る"
+        "non-type predicates and type annotations on names that are not arguments remain in the contract"
     );
     assert_eq!(run.handles, None);
 }
@@ -92,9 +92,9 @@ fn contract_dict_gives_declared_effects_types_and_non_type_predicates() {
 #[test]
 fn empty_and_missing_effects_are_distinct() {
     let file = index(SAMPLE);
-    assert_eq!(def(&file, "no-effects", "defk").effects.as_deref().map(<[NameRef]>::len), Some(0), "`:effects []` は起こさない宣言");
+    assert_eq!(def(&file, "no-effects", "defk").effects.as_deref().map(<[NameRef]>::len), Some(0), "`:effects []` is a declaration of raising nothing");
     assert!(def(&file, "no-effects", "defk").contracts.is_empty());
-    assert_eq!(def(&file, "undeclared", "defk").effects, None, ":effects を書いていない");
+    assert_eq!(def(&file, "undeclared", "defk").effects, None, ":effects is not written");
     assert_eq!(def(&file, "undeclared", "defk").param_types.len(), 1);
 }
 
@@ -114,12 +114,12 @@ fn defeffect_fields_and_answer_are_types() {
     assert_eq!(
         params,
         vec![("settlement", ("IntakeSettlement", vec![("IntakeSettlement", Some("pkg.sample.IntakeSettlement"))]))],
-        "型の無い欄(note)は入れない"
+        "fields without a type (note) are not included"
     );
     assert_eq!(
         note(settle.answer_type.as_ref().expect(":answer")),
         ("(| Landed Refused)", vec![("Landed", None), ("Refused", None)]),
-        "`|` は構文なので名に数えない"
+        "`|` is syntax so it is not counted as a name"
     );
     assert_eq!(settle.effects, None);
 }
@@ -144,9 +144,9 @@ fn effect_clauses_name_the_effect_they_handle() {
     let file = index(SAMPLE);
     let handles = |name: &str| def(&file, name, "effect-clause").handles.as_ref().map(|h| (h.name.as_str(), h.target.as_deref()));
     assert_eq!(handles("ReadInput"), Some(("ReadInput", Some("controllers.messaging.intent.conversation_input.ReadInput"))));
-    assert_eq!(handles("Settle"), Some(("Settle", Some("pkg.sample.Settle"))), "同じ file の defeffect");
-    assert_eq!(handles("Unknown"), Some(("Unknown", None)), "import も定義も無い effect は target なし");
-    // 解く handler = handles の target が一致する effect 節の container
+    assert_eq!(handles("Settle"), Some(("Settle", Some("pkg.sample.Settle"))), "defeffect in the same file");
+    assert_eq!(handles("Unknown"), Some(("Unknown", None)), "an effect with neither import nor definition has no target");
+    // The resolving handler = the container of the effect clause whose handles target matches
     let handler_of_settle: Vec<&str> = file
         .definitions
         .iter()
@@ -156,7 +156,7 @@ fn effect_clauses_name_the_effect_they_handle() {
     assert_eq!(handler_of_settle, vec!["store"]);
 }
 
-/// 定義の引数の型を (名, 型の綴り) の列にする。
+/// Turn a definition's argument types into a list of (name, type spelling).
 fn typed(definition: &Definition) -> Vec<(&str, &str)> {
     definition.param_types.iter().map(|p| (p.name.as_str(), p.type_note.text.as_str())).collect()
 }
@@ -164,7 +164,7 @@ fn typed(definition: &Definition) -> Vec<(&str, &str)> {
 const CLASSES: &str = r#"(import dataclasses [dataclass field])
 
 (defclass [(dataclass :frozen True)] PlacedVersion []
-  "置いた版。"
+  "The version that was placed."
   (#^ str ref)
   (#^ (| str None) request-id)
   #^ int count
@@ -176,7 +176,7 @@ const CLASSES: &str = r#"(import dataclasses [dataclass field])
            (field   :default   "a  b"
                     :repr False)] Wide [] #^ str x)
 
-(defclass Plain [Base] "素の class。" (defn run [self] 1))
+(defclass Plain [Base] "A plain class." (defn run [self] 1))
 
 (defn [functools.cache] cached [x] x)
 (defn undecorated [x] x)
@@ -189,7 +189,7 @@ fn defclass_field_annotations_are_param_types_like_defrecord() {
     assert_eq!(
         typed(def(&file, "PlacedVersion", "defclass")),
         vec![("ref", "str"), ("request-id", "(| str None)"), ("count", "int"), ("ok", "bool")],
-        "括弧つき・裸・setv の注記の欄を書いた順に。注記の無い setv は型なし(欄の名だけ)"
+        "parenthesized, bare, and setv annotated fields in the order written. A setv without an annotation has no type (field name only)"
     );
     let fields: Vec<&str> = file
         .definitions
@@ -197,7 +197,7 @@ fn defclass_field_annotations_are_param_types_like_defrecord() {
         .filter(|d| d.container.as_deref() == Some("PlacedVersion") && d.kind.as_str() == "field")
         .map(|d| d.name.as_str())
         .collect();
-    assert_eq!(fields, vec!["ref", "request-id", "count", "ok", "plain"], "欄の定義は今までどおり");
+    assert_eq!(fields, vec!["ref", "request-id", "count", "ok", "plain"], "field definitions are as before");
     let request_id = &def(&file, "PlacedVersion", "defclass").param_types[1].type_note;
     assert_eq!(refs(&request_id.names), vec![("str", None), ("None", None)]);
     assert!(def(&file, "Plain", "defclass").param_types.is_empty());
@@ -210,11 +210,11 @@ fn decorators_are_written_spellings_without_outer_parens() {
     assert_eq!(
         def(&file, "Wide", "defclass").decorators,
         vec!["dataclass", r#"field :default "a  b" :repr False"#],
-        "文字列の外の空白の連なり(改行を含む)は 1 つに詰め、文字列の中はそのまま"
+        "runs of whitespace outside strings (including newlines) are collapsed into one, and the inside of strings is left as is"
     );
-    assert_eq!(def(&file, "make", "method").decorators, vec!["staticmethod"], "method の decorator も積む");
+    assert_eq!(def(&file, "make", "method").decorators, vec!["staticmethod"], "a method's decorators are also collected");
     assert_eq!(def(&file, "cached", "defn").decorators, vec!["functools.cache"]);
     for (name, kind) in [("Plain", "defclass"), ("undecorated", "defn"), ("Row", "defrecord"), ("run", "method")] {
-        assert!(def(&file, name, kind).decorators.is_empty(), "{kind} {name} は decorator なし = 空の列");
+        assert!(def(&file, name, kind).decorators.is_empty(), "{kind} {name} has no decorator = an empty list");
     }
 }

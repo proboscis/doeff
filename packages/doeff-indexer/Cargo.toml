@@ -39,5 +39,5 @@ python = ["pyo3"]
 
 [dev-dependencies]
 tempfile = "3.10"
-# 索引の cache の形(hy_index::CachedHyFile)の往復を、linter の cache と同じ binary の形で確かめる。
+# Check the round trip of the index cache shape (hy_index::CachedHyFile) in the same binary form as the linter's cache.
 bincode = "1.3"

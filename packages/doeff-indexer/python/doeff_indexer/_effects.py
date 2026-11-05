@@ -1,11 +1,11 @@
-"""索引を引く effect FindSymbols と、その答えの 1 行の型 SymbolInfo(Rust の拡張を読まない — 答える handler は _handlers)。
+"""The effect FindSymbols that queries the index, and SymbolInfo, the one-row type of its answer (does not load the Rust extension -- the handler that answers is in _handlers).
 
-決め: effect にする(
-ADR-DOE-API-001)。前の口の class Indexer(Indexer.for_module(m).find_symbols(…))は内側の拡張
-doeff_indexer._native に置き、入口から出さない。答えの 1 行の型 SymbolInfo は R2 の effect の結果の型として入口から見せる。
+Decision: make it an effect (
+ADR-DOE-API-001). The previous interface, class Indexer (Indexer.for_module(m).find_symbols(...)), is kept in the inner extension
+doeff_indexer._native and is not exposed from the entry point. The one-row answer type SymbolInfo is exposed from the entry point as the result type of the R2 effect.
 
-この module は Python だけで、拡張の .so を読まない: test は FindSymbols に自分の handler で答えれば、Rust の索引器も拡張も
-file も無しに同じ program を走らせられる。
+This module is pure Python and does not load the extension's .so: a test can answer FindSymbols with its own handler and run the same program without the Rust indexer, the extension, or
+any files.
 """
 
 from dataclasses import dataclass
@@ -16,31 +16,31 @@ from doeff import EffectBase
 
 @dataclass(frozen=True)
 class SymbolInfo:
-    """索引の 1 行: 印(# doeff: … か docstring の doeff:)の付いた関数か変数。"""
+    """One row of the index: a function or variable carrying a marker (# doeff: ... or doeff: in the docstring)."""
 
-    #: 名(例 "auth_interpreter")
+    #: Name (e.g. "auth_interpreter")
     name: str
-    #: 名の在る module(例 "myapp.features.auth")
+    #: Module where the name lives (e.g. "myapp.features.auth")
     module_path: str
-    #: module と名をつないだ path(例 "myapp.features.auth.auth_interpreter")
+    #: Path joining module and name (e.g. "myapp.features.auth.auth_interpreter")
     full_path: str
     #: "function"・"async_function"・"variable"
     symbol_type: Literal["function", "async_function", "variable"]
-    #: 印の語(例 ("interpreter", "default"))
+    #: Marker words (e.g. ("interpreter", "default"))
     tags: tuple[str, ...]
-    #: 定義の行(1 から)
+    #: Line of the definition (from 1)
     line_number: int
-    #: 定義の file(索引の根からの path)
+    #: File of the definition (path from the index root)
     file_path: str
 
 
 @dataclass(frozen=True)
 class FindSymbols(EffectBase[tuple[SymbolInfo, ...]]):
-    """module の階層の印の付いた名を引く: yield FindSymbols("myapp.features.auth", tags=("interpreter", "default"),
+    """Look up marked names in a module hierarchy: yield FindSymbols("myapp.features.auth", tags=("interpreter", "default"),
     symbol_type="function") → tuple[SymbolInfo, ...]。
 
-    tags は全部を持つ名だけ(大文字と小文字を区別しない)、symbol_type が None なら種類を問わない。索引を作れなければ
-    handler が RuntimeError か OSError を effect を出した所へ投げ返す。
+        tags matches only names that have all of them (case-insensitive); if symbol_type is None, any kind is accepted. If the index cannot be built, the
+        handler throws RuntimeError or OSError back to where the effect was raised.
     """
 
     module_path: str

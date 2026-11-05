@@ -385,23 +385,23 @@ All `find-*` commands:
 
 ## Hy Index (`hy-index`)
 
-Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の定義・import・参照・呼び出しを JSON で出す。エディタの定義への移動・参照の検索・目次、effect・handler・defk の間の行き来のためのもの。Python の索引(上の各コマンド)とは独立していて、Python の索引は作らない。実装は `src/hy_index/`。
+Emits the definitions, imports, references, and calls of Hy files (`*.hy` / `*.hyk` / `*.hyp`) as JSON. It is for editor go-to-definition, reference search, outlines, and navigating between effects, handlers, and defk. It is independent of the Python index (the commands above) and does not build a Python index. The implementation is in `src/hy_index/`.
 
-### 使い方
+### Usage
 
 ```
-doeff-indexer hy-index --root <dir>                        # dir 以下の Hy の file を全部
-doeff-indexer hy-index --root <dir> --file <path>…         # 指定した file だけ(root は module 名の基準)
-doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容を stdin から読み、path の file として 1 件出す
+doeff-indexer hy-index --root <dir>                        # all Hy files under dir
+doeff-indexer hy-index --root <dir> --file <path>…         # only the specified files (root is the basis for module names)
+doeff-indexer hy-index --root <dir> --stdin --path <path>  # read unsaved content from stdin and emit it as one file at path
 ```
 
-- 探索では `.venv`・`node_modules`・`target`・`.git`・`__pycache__` の directory に降りない。
-- `--file` と `--path` の相対 path は `--root` を基準に解く。`--output` と `--pretty` は他のコマンドと同じ。
-- 読めない file・閉じていない括弧でも止まらない。読めた分を出し、その file の `errors` に理由(`行:列: …`、1 始まり)を積む。終了コードは 0。引数の誤り(`--stdin` に `--path` が無い・`--root` が directory でない等)だけ 2。
+- Discovery does not descend into the directories `.venv`, `node_modules`, `target`, `.git`, `__pycache__`.
+- Relative paths of `--file` and `--path` are resolved against `--root`. `--output` and `--pretty` are the same as the other commands.
+- It does not stop on unreadable files or unclosed brackets. It emits what could be read and records the reason in that file's `errors` (`line:column: …`, 1-based). The exit code is 0. Only argument errors (`--stdin` without `--path`, `--root` not being a directory, etc.) give 2.
 
-### 出力の形(契約の版 6)
+### Output shape (contract version 6)
 
-版 3 で足した生の副作用の証拠(`raw`・`raw_via`・`raw_catalog_problems`)と定義のタグ(`tags`)は `experiments/hy-highlighter/hy-index-contract-v3.md` にある。版 4 で足した完全修飾名(`qualified_name`・`target`)と、版 5 で足した宣言した effect・型・契約(`effects`・`param_types`・`answer_type`・`contracts`・`handles`)と、版 6 で足した定義の decorator(`decorators`)はこの節が正本。
+The raw side-effect evidence added in version 3 (`raw`, `raw_via`, `raw_catalog_problems`) and the definition tags (`tags`) are in `experiments/hy-highlighter/hy-index-contract-v3.md`. The fully qualified names added in version 4 (`qualified_name`, `target`), the declared effects, types, and contracts added in version 5 (`effects`, `param_types`, `answer_type`, `contracts`, `handles`), and the definition decorators added in version 6 (`decorators`) have this section as their source of truth.
 
 ```jsonc
 {
@@ -409,78 +409,78 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
   "root": "/abs/root",
   "files": [{
     "path": "/abs/root/pkg/mod.hy",
-    "module": "pkg.mod",            // root からの相対 path。__init__.hy は親の package 名
+    "module": "pkg.mod",            // path relative to root. __init__.hy is the parent package name
     "definitions": [{
-      "name": "classifier-peers",   // 書かれたとおりの綴り
-      "mangled": "classifier_peers",// - を _ に(先頭の - は残す)
-      "qualified_name": "pkg.mod.classifier_peers", // 完全修飾名(版 4)= module + 入れ物(在れば)+ 名。どの区切りも mangle した綴り
+      "name": "classifier-peers",   // spelling as written
+      "mangled": "classifier_peers",// - becomes _ (a leading - is kept)
+      "qualified_name": "pkg.mod.classifier_peers", // fully qualified name (version 4) = module + container (if any) + name. Every segment is the mangled spelling
       "kind": "defn",
-      "range": {…},                 // 名前の位置
-      "full_range": {…},            // form 全体
-      "container": null,            // 入れ物の定義の名前(method・field・enum-member・effect-clause・入れ子の law 等)
-      "docstring": "…",             // 無ければ null
+      "range": {…},                 // position of the name
+      "full_range": {…},            // the whole form
+      "container": null,            // name of the containing definition (method, field, enum-member, effect-clause, nested law, etc.)
+      "docstring": "…",             // null if none
       "params": ["jev-script", "store"],
-      "bases": []                   // defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つ)。他の kind は常に []
-      // "checks": ["(>= start 0)"] // defrecord の頭の辞書の :check の式(書かれたとおり・書いた順)。頭の辞書を持つ defrecord だけが持ち、他は欄ごと出さない(版 3 への追加)
-      "effects": [{"name": "ReadInput", "target": "pkg.intent.ReadInput"}],  // 宣言した effect(版 5)。:effects が無ければ null
+      "bases": []                   // base symbols of defclass / defrecord (as written; dotted is one). Always [] for other kinds
+      // "checks": ["(>= start 0)"] // expressions of :check in the head dict of defrecord (as written, in written order). Only a defrecord with a head dict has it; others omit the field (addition to version 3)
+      "effects": [{"name": "ReadInput", "target": "pkg.intent.ReadInput"}],  // declared effects (version 5). null if there is no :effects
       "param_types": [{"name": "request", "type": {"text": "InputRequest", "names": [{"name": "InputRequest", "target": "pkg.types.InputRequest"}]}}],
       "answer_type": {"text": "(| Judgment None)", "names": [{"name": "Judgment", "target": "pkg.types.Judgment"}, {"name": "None", "target": null}]},
-      "contracts": [{"side": "pre", "text": "(> budget 0)"}],          // 型でない契約の述語(版 5)
-      "handles": null,                                                   // effect 節だけ: 解く effect {"name", "target"}(版 5)
-      "decorators": ["dataclass :frozen True"]                           // 定義の decorator の綴り(版 6)。無ければ []
+      "contracts": [{"side": "pre", "text": "(> budget 0)"}],          // non-type contract predicates (version 5)
+      "handles": null,                                                   // effect clause only: the effect it resolves {"name", "target"} (version 5)
+      "decorators": ["dataclass :frozen True"]                           // spellings of the definition's decorators (version 6). [] if none
     }],
     "imports": [{"module": "doeff_records._memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
     "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
     "calls": [{"callee": "PutRow", "mangled": "PutRow", "qualifier": null, "range": {…}, "caller": 12, "performed": true,
-               "target": "pkg.effects.PutRow"}],  // target(版 4)= 呼び先の完全修飾名。解決できなければ null
+               "target": "pkg.effects.PutRow"}],  // target (version 4) = fully qualified name of the callee. null if it cannot be resolved
     "errors": []
   }]
 }
 ```
 
-- 位置は 0 始まりの行と UTF-16 の code unit の列(VS Code の Position と同じ。日本語は 1 文字 1、絵文字は 2)。
-- kind: `defn` `defn/a` `defmacro` `defk` `deff` `defp` `defpp` `fnk-binding`(今は出さない)`defclass` `defrecord` `defenum` `enum-member` `field` `method` `defhandler` `effect-clause` `deftest` `defadr` `defsemgrep` `law` `defpipeline` `defworkflow` `defphase` `defmcp-tool` `deftype` `defmain` `variable`。
-- `definitions` は file の top level の定義と、その直下の入れ子だけ。`(do …)`・`(eval-and-compile …)` の中は top level とみなす。関数の中の局所の束縛は入れない。
-  - defclass の body: `(defn …)` は `method`、`#^ T x`・`(#^ T x 既定値)`・`(setv x …)` は `field`。
-  - defrecord の field、defenum の member(`A` と `(A "値")` の両方)。
-  - defhandler: `(Effect [fields] …)` は `effect-clause`(params = fields)、`(session val|var x …)`・旧い `(lazy-val …)` / `(lazy-var …)` は `variable`。どちらも container = handler 名。
-  - defadr の中の `law`・`defsemgrep`・`deftest`、defworkflow の中の `defphase` は container = 外側の名前。
-  - `variable` = top level の `setv` / `setx`(`[a b]` の分解も)・`val` / `var`・`(lazy val …)`・`(session val|var …)`・`lazy-val` / `lazy-var`。
-- docstring: 関数の形は引数の後(defk / deff の `{:pre … :post …}` の後でもよい)の文字列で、後に form が続く時だけ。class・record・enum は body の先頭の文字列。defhandler は名前の後か引数の後。`law` は `:statement`、`defadr` は `:title`、`defmcp-tool` は説明の文字列。字下げは Python の `inspect.cleandoc` と同じく揃える。
-- `imports`: `(import m)`・`(import m :as a)`・`(import m [x y :as z])`・`(import m *)`・`(require m [names])`・`(require m :macros [..] :readers [..])`。range は alias → name → module の順で在るものを指す。関数の中の import も入れる。
-- `references`: すべての記号の出現を `.` で区切って 1 件ずつ入れる(`a.b.c` は a・b・c、c の qualifier は `"a.b"`)。入れないもの: 先頭に置かれた予約語(Hy の special form と doeff-hy の macro。`val` 等の普通の語の macro は file が require した時だけ予約語)・演算子・定数(`True` / `False` / `None` 等)・`_`・keyword(`:key`)・文字列の中身・註・`#_` で読み捨てた form・quote の中(quasiquote の中の `~x` は入れる)。f 文字列の `{…}` の中の記号は入れる。
-- `bases`(版 2): defclass の `[…]` の中の記号だけを書かれたとおりに入れる(`:metaclass M` のような keyword とその値、`(get Generic T)` のような式は入れない)。defrecord は今の macro が基底を書かない形なので、ふつう `[]`。
-- `checks`(版 3 への追加): `(defrecord Name "doc"? {:tags {…} :check […]} 欄 …)` の頭の辞書の `:check` の各式を書かれたとおりの綴りで書いた順に入れる。頭の辞書を持つ defrecord は `:check` が無ければ `[]`、頭の辞書の無い defrecord と他の kind は欄ごと出さない。頭の辞書の `:tags` は defk / defeffect と同じく `tags` に入る。頭の辞書は欄ではない(欄は辞書の後ろから読む)。
-- `calls`(版 2): `(` の直後の記号が、予約語・演算子・定数でないものを 1 件ずつ入れる(関数の呼び出し・class の生成・effect の生成)。引数の中の入れ子の呼び出しも入れる。
-  - `callee` は頭の記号の最後の区切り、`qualifier` はその前の区切り(`mod.sub.fn` なら `"mod.sub"`)、`range` は最後の区切りの位置。
-  - `caller` は、呼び出しの位置を `full_range` に含む定義のうち最も狭いものの添字(同じ file の `definitions` の添字)。含む定義が無ければ(top level の式)`null`。effect 節の本体の中はその `effect-clause`、`(fn …)` や `let` の中の局所の関数の中は外側の定義になる。`(setv x (f))` の `f` は `x` の `variable` が caller。
-  - `performed` は `(<- (X …))`・`(<- name (X …))`・`(<- name T (X …))` の X と、`yield` / `yield-from` / `!`(doeff-hy の引数の位置での effect の bind、`(! (X …))`)の直下の呼び出しで true。`(! x)` のような記号だけの形は呼び出しではない。その中の引数の入れ子の呼び出しは false。
-  - `target`(版 4): 呼び先の完全修飾名。その file の中身(module・definitions・imports)だけで決める名前の解決の結果で、他の file を見ない。だから `--root`・`--file`・`--stdin` のどの実行でも同じ値になる。解決の順:
-    1. 同じ file の定義 — 修飾の無い名前は top level の定義(`container` が null)、`q.name` は入れ物 q の中の定義(`Store.put` → `pkg.mod.Store.put`)。
-    2. file の import(`require` は除く — macro は呼び先の定義にしない)。最初に束ねた import を使い、相対 import は書いた file の package を基準に直す。`(import m [x :as y])` の `(y)` は `m.x`、`(import m)` の `(m.sub.f)` は `m.sub.f`、`(import pkg [sub])` の `(sub.f)` と `(import m [C])` の `(C.f)` はどちらも `pkg.sub.f` / `m.C.f` の形。
-    3. どれでもない(組み込み・局所の束縛・引数・module そのものを呼ぶ形)は null。
-  - `target` は Hy の定義とは限らない(`json.dumps` のような Python の名前もその完全修飾名になる)。索引の `qualified_name` に一致すれば Hy の定義。`qualified_name` は同じ file の同名の再定義で重なり得るので、一致は複数として扱う。
-  - 呼び手の逆引き(ある定義を呼ぶ定義・deftest の一覧)は索引に持たない。読む側が `target` と `qualified_name` の一致を逆に引く(1 file の実行 `--stdin` で差し替えた file の呼び出しも、他の file の逆引きに正しく効くため)。
-  - 呼び出しは `caller` の定義(最も内側)にだけ割り当てる。外側の定義(defclass・defhandler・defadr 等)の呼び出しは、`full_range` に含まれる入れ子の定義の分を読む側が足す。
-  - 生の副作用の経由の証拠(`raw.via`)も、呼び出しの行き先をこの `target` と `qualified_name` の一致で引く(名前の解決は `src/hy_index/qualify.rs` の 1 か所)。
-  - 版 5 の欄(宣言した effect・型・契約)は、書かれた事実と名前の解決だけを持つ。型の意味の読み方(Union・Maybe・Raise・effect の `:answer` / `:absent` / `:failure`)と**推論した effect** は doeff-linter の editor-json の `signatures` が正本(推論は repo 全体の不動点で、1 file の実行では出せないため・DOEFF127 が `:effects` の宣言と推論の一致を検める)。
-    - `effects`: 契約の辞書を持つ定義(defk・deff・defp・defpp・defhandler)の `:effects [E …]` の名を書いた順に。`:effects` が無ければ null、`[]` は「起こさない」の宣言。他の kind は null。
-    - `param_types`: 契約の辞書の `:pre` の `(: 引数 型)`(引数の名に当たる物だけ・引数の順・同じ引数は最初の 1 つ)、defeffect の `:fields` の `(: 欄 型)`、defrecord / defwire と defclass(版 6 から)の欄の `#^ 型`(どれも fields.rs の読み方 — 括弧つき・裸・`(setv #^ T x v)`)。型を書いていない引数・欄は入れない(欄の定義 kind `field` は今までどおり)。
-    - `answer_type`: `:post` の `(: % 型)`、無ければ名の `#^ 型`(defn / defk / deff)。defeffect は `:answer`。無ければ null。
-    - `contracts`: `:pre` / `:post` の述語のうち上の型の注記にならなかった物(`(> budget 0)`・引数でない名への `(: self.x T)`・同じ引数の 2 つ目の注記)を書かれたとおりに。`side` は `pre` / `post`。
-    - 型の注記は `{"text": 書かれた綴り, "names": [...]}`。`names` は注記の中の記号を書いた順に 1 度ずつ(構文の `|`・`of`・`get`・演算子・keyword・文字列・数は除く)。
-    - `handles`: kind が `effect-clause` の定義だけが `{"name": 節の頭の綴り, "target": effect の完全修飾名}` を持ち、他は null。
-  - `decorators`(版 6): `(defclass [d …] Name …)`・`(defn [d …] name …)`(defn/a・defmacro・defk・deff・class の中の method も)の `[…]` の各要素を書いた順に。綴りは書かれたとおりで、呼びの形は外側の括弧を外し(`[(dataclass :frozen True)]` → `"dataclass :frozen True"`・`[dataclass]` → `"dataclass"`)、文字列の外の空白の連なり(改行を含む)は 1 つに詰める(文字列の中はそのまま)。`#_` で読み捨てた要素は入れない。decorator の無い定義と、decorator を書けない kind は `[]`。
-    - 名の `target` は呼び出しの `target` と同じ名前の解決(同じ file の定義 → `require` 以外の import → null)。Python の effect(`doeff_core_effects.…`)も完全修飾名になる。
-    - 逆引き(その effect を解く handler・その型を受ける / 返す定義・その effect を使う定義)は索引に持たず、読む側が `target` と `qualified_name` の一致を逆に引く(U7 の呼び手と同じ理由 — 1 file の実行で差し替えた file の分が、他の file の逆引きに正しく効くため)。解く handler = `handles.target` が一致する effect 節の `container` の定義。
-  - 入れないもの: 予約語(require した普通の語の macro を含む)、doeff-hy の束縛の構文の頭(`val` / `var` / `lazy` / `session`。defk などの macro が読むので require が無くても構文)、`(.method obj)`、`(. obj (method …))` の method、defhandler / `handle` の effect 節の頭(`(PutRow [table key] …)` の `PutRow`)、型注釈の中(`#^ (of list int) x`)、match の pattern の中(`(Point :x px)`)、quote の中。これらの記号は `references` には今までどおり入る。
+- Positions are 0-based lines and columns in UTF-16 code units (the same as VS Code's Position. A Japanese character is 1, an emoji is 2).
+- kind: `defn` `defn/a` `defmacro` `defk` `deff` `defp` `defpp` `fnk-binding` (not emitted for now) `defclass` `defrecord` `defenum` `enum-member` `field` `method` `defhandler` `effect-clause` `deftest` `defadr` `defsemgrep` `law` `defpipeline` `defworkflow` `defphase` `defmcp-tool` `deftype` `defmain` `variable`.
+- `definitions` are only the top-level definitions of the file and the nested ones directly under them. The inside of `(do …)` and `(eval-and-compile …)` is treated as top level. Local bindings inside a function are not included.
+  - Body of defclass: `(defn …)` is `method`; `#^ T x`, `(#^ T x default)`, and `(setv x …)` are `field`.
+  - Fields of defrecord, members of defenum (both `A` and `(A "value")`).
+  - defhandler: `(Effect [fields] …)` is `effect-clause` (params = fields); `(session val|var x …)` and the old `(lazy-val …)` / `(lazy-var …)` are `variable`. Both have container = the handler name.
+  - `law`, `defsemgrep`, and `deftest` inside defadr, and `defphase` inside defworkflow, have container = the enclosing name.
+  - `variable` = top-level `setv` / `setx` (including `[a b]` destructuring), `val` / `var`, `(lazy val …)`, `(session val|var …)`, `lazy-val` / `lazy-var`.
+- docstring: for function forms, the string after the arguments (it may also come after the `{:pre … :post …}` of defk / deff), only when another form follows. For class, record, and enum, the string at the head of the body. For defhandler, after the name or after the arguments. For `law`, `:statement`; for `defadr`, `:title`; for `defmcp-tool`, the description string. Indentation is aligned the same way as Python's `inspect.cleandoc`.
+- `imports`: `(import m)`, `(import m :as a)`, `(import m [x y :as z])`, `(import m *)`, `(require m [names])`, `(require m :macros [..] :readers [..])`. The range points at whichever exists in the order alias -> name -> module. Imports inside functions are also included.
+- `references`: every occurrence of a symbol is included one by one, split at `.` (`a.b.c` gives a, b, c; the qualifier of c is `"a.b"`). Not included: reserved words placed at the head (Hy special forms and doeff-hy macros; macros with ordinary words such as `val` are reserved words only when the file requires them), operators, constants (`True` / `False` / `None`, etc.), `_`, keywords (`:key`), the content of strings, comments, forms discarded with `#_`, and the inside of quote (`~x` inside quasiquote is included). Symbols inside `{…}` of an f-string are included.
+- `bases` (version 2): only the symbols inside the `[…]` of defclass, as written (keywords such as `:metaclass M` with their values, and expressions such as `(get Generic T)`, are not included). defrecord is a form where the current macro does not write bases, so it is usually `[]`.
+- `checks` (addition to version 3): each expression of `:check` in the head dict of `(defrecord Name "doc"? {:tags {…} :check […]} fields …)`, as spelled and in written order. A defrecord with a head dict gives `[]` if there is no `:check`; a defrecord without a head dict and other kinds omit the field. The `:tags` of the head dict go into `tags` the same as defk / defeffect. The head dict is not a field (fields are read after the dict).
+- `calls` (version 2): each symbol right after `(` that is not a reserved word, operator, or constant is included one by one (function calls, class construction, effect construction). Nested calls inside arguments are also included.
+  - `callee` is the last segment of the head symbol, `qualifier` is the segments before it (`"mod.sub"` for `mod.sub.fn`), and `range` is the position of the last segment.
+  - `caller` is the index (into the same file's `definitions`) of the narrowest definition whose `full_range` contains the position of the call. If no definition contains it (a top-level expression), `null`. Inside the body of an effect clause it is that `effect-clause`; inside a local function within `(fn …)` or `let` it is the enclosing definition. The `f` of `(setv x (f))` has the `variable` of `x` as its caller.
+  - `performed` is true for X in `(<- (X …))`, `(<- name (X …))`, `(<- name T (X …))`, and for the call directly under `yield` / `yield-from` / `!` (doeff-hy's effect bind in argument position, `(! (X …))`). A symbol-only form such as `(! x)` is not a call. Nested calls in its arguments are false.
+  - `target` (version 4): the fully qualified name of the callee. It is the result of name resolution decided only from the file's own contents (module, definitions, imports), and does not look at other files. So it is the same value for any of the `--root`, `--file`, and `--stdin` runs. Resolution order:
+    1. Definitions in the same file -- an unqualified name is a top-level definition (`container` is null); `q.name` is a definition inside container q (`Store.put` -> `pkg.mod.Store.put`).
+    2. Imports of the file (excluding `require` -- macros are not made callee definitions). The first binding import is used, and relative imports are resolved against the package of the file where they are written. `(y)` in `(import m [x :as y])` is `m.x`; `(m.sub.f)` in `(import m)` is `m.sub.f`; `(sub.f)` in `(import pkg [sub])` and `(C.f)` in `(import m [C])` have the shapes `pkg.sub.f` / `m.C.f`.
+    3. Anything else (builtins, local bindings, arguments, forms that call the module itself) is null.
+  - `target` is not necessarily a Hy definition (a Python name such as `json.dumps` also becomes its fully qualified name). If it matches a `qualified_name` of the index, it is a Hy definition. `qualified_name` can overlap because of redefinitions of the same name in the same file, so a match is treated as multiple.
+  - The index does not hold a reverse lookup of callers (definitions that call a given definition, lists of deftest). The reading side reverses the match between `target` and `qualified_name` (so that the calls of a file replaced in a single-file `--stdin` run also correctly affect the reverse lookups of other files).
+  - A call is assigned only to the `caller` definition (the innermost). The calls of outer definitions (defclass, defhandler, defadr, etc.) are added by the reading side for the nested definitions contained in their `full_range`.
+  - The via evidence of raw side effects (`raw.via`) also looks up the call destination by this match of `target` and `qualified_name` (name resolution lives in one place, `src/hy_index/qualify.rs`).
+  - The fields of version 5 (declared effects, types, contracts) hold only the written facts and name resolution. How to read the meaning of types (Union, Maybe, Raise, and effect `:answer` / `:absent` / `:failure`) and the **inferred effects** have `signatures` of doeff-linter's editor-json as their source of truth (inference is a fixed point over the whole repo and cannot be produced by a single-file run; DOEFF127 checks that the `:effects` declaration matches the inference).
+    - `effects`: the names in `:effects [E …]` of definitions that have a contract dict (defk, deff, defp, defpp, defhandler), in written order. null if there is no `:effects`; `[]` is a declaration of "raises nothing". null for other kinds.
+    - `param_types`: `(: arg type)` in the contract dict's `:pre` (only those that correspond to an argument name, in argument order, the first one for the same argument), `(: field type)` in defeffect's `:fields`, and `#^ type` on fields of defrecord / defwire and defclass (from version 6) (all read the fields.rs way -- parenthesized, bare, `(setv #^ T x v)`). Arguments and fields with no written type are not included (the field-definition kind `field` is as before).
+    - `answer_type`: `(: % type)` in `:post`, otherwise the `#^ type` on the name (defn / defk / deff). For defeffect, `:answer`. null if none.
+    - `contracts`: those predicates of `:pre` / `:post` that did not become the type annotations above (`(> budget 0)`, `(: self.x T)` on a name that is not an argument, a second annotation for the same argument), as written. `side` is `pre` / `post`.
+    - A type annotation is `{"text": spelling as written, "names": [...]}`. `names` are the symbols inside the annotation, once each in written order (syntax `|`, `of`, `get`, operators, keywords, strings, and numbers are excluded).
+    - `handles`: only definitions whose kind is `effect-clause` have `{"name": spelling of the clause head, "target": fully qualified name of the effect}`; others are null.
+  - `decorators` (version 6): each element of the `[…]` of `(defclass [d …] Name …)` and `(defn [d …] name …)` (also defn/a, defmacro, defk, deff, and methods inside a class), in written order. The spelling is as written; call forms drop the outer parentheses (`[(dataclass :frozen True)]` -> `"dataclass :frozen True"`, `[dataclass]` -> `"dataclass"`), and runs of whitespace outside strings (including newlines) are collapsed into one (inside strings is left as is). Elements discarded with `#_` are not included. A definition with no decorator, and kinds that cannot have decorators, give `[]`.
+    - The `target` of a name uses the same name resolution as a call's `target` (definition in the same file -> import other than `require` -> null). Python effects (`doeff_core_effects.…`) also become fully qualified names.
+    - The reverse lookups (the handler that resolves that effect, definitions that accept / return that type, definitions that use that effect) are not held in the index; the reading side reverses the match between `target` and `qualified_name` (same reason as U7's callers -- so that the part of a file replaced in a single-file run correctly affects the reverse lookups of other files). Resolving handler = the definition in the `container` of the effect clause whose `handles.target` matches.
+  - Not included: reserved words (including macros of ordinary words that were required), heads of doeff-hy binding syntax (`val` / `var` / `lazy` / `session`; they are syntax even without a require because macros such as defk read them), `(.method obj)`, the method in `(. obj (method …))`, the head of an effect clause of defhandler / `handle` (the `PutRow` of `(PutRow [table key] …)`), inside type annotations (`#^ (of list int) x`), inside match patterns (`(Point :x px)`), and inside quote. These symbols are still included in `references` as before.
 
-### 既知の制限
+### Known limitations
 
-- mangle は契約の単純な形(`-` → `_`)だけで、Hy の `?`・`!` などの記号の変換(`hyx_…`)はしない。
-- `(when …)` など条件の中の定義、`defdomain` など上の一覧に無い定義の形は `definitions` に入れない(参照には入る)。その中の呼び出しの `caller` は外側の定義か `null` になる。
-- `->` / `->>` の中の `(f a)` は書かれた形の頭を呼び出しとして入れる(展開後の引数の並びは見ない)。
-- f 文字列の `{x:>10}` の書式は `:` の前までを名前とみなす。`{x !r}` のように空白で区切る Hy の書き方は正しく読める。
+- mangle is only the simple form of the contract (`-` -> `_`) and does not convert Hy symbols such as `?` and `!` (`hyx_…`).
+- Definitions inside conditions such as `(when …)`, and definition forms not in the list above such as `defdomain`, are not included in `definitions` (they are included in references). The `caller` of calls inside them is the enclosing definition or `null`.
+- `(f a)` inside `->` / `->>` is included as a call with the head of the written form (the argument order after expansion is not looked at).
+- The format of `{x:>10}` in an f-string treats everything before `:` as the name. Hy's style of separating with a space, such as `{x !r}`, is read correctly.
 
 ## Type Filtering Rules
 

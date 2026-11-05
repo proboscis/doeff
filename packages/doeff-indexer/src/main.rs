@@ -255,7 +255,7 @@ fn main() -> Result<()> {
         .ok();
 
     let cli = Cli::parse();
-    // hy-index は Python の索引を作らない(Python の索引とは独立の経路)。
+        // hy-index does not build the Python index (a path independent of the Python index).
     if let Some(Commands::HyIndex { file, stdin, path, raw_catalog_extra }) = &cli.command {
         return run_hy_index(
             &cli.root,
@@ -406,7 +406,7 @@ fn main() -> Result<()> {
             return Ok(());
         }
 
-        // 上の hy-index の分岐で処理して返っている。
+                // Already handled and returned in the hy-index branch above.
         Some(Commands::HyIndex { .. }) => {}
     }
 
@@ -431,7 +431,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// 同梱の目録に `--raw-catalog-extra` の追加を足す。file が読めない・JSON でない時は引数の誤り(終了コード 2)。
+/// Adds the `--raw-catalog-extra` additions to the bundled catalog. If the file cannot be read or is not JSON, it is an argument error (exit code 2).
 fn raw_settings(extra: Option<&Path>) -> hy_index::RawSettings {
     let bundled = match hy_index::RawCatalog::bundled() {
         Ok(catalog) => catalog,
@@ -452,13 +452,13 @@ fn raw_settings(extra: Option<&Path>) -> hy_index::RawSettings {
             hy_index::RawSettings { catalog, problems }
         }
         Err(reason) => {
-            eprintln!("hy-index: --raw-catalog-extra を読めない ({}): {}", extra_path.display(), reason);
+                        eprintln!("hy-index: cannot read --raw-catalog-extra ({}): {}", extra_path.display(), reason);
             std::process::exit(2);
         }
     }
 }
 
-/// `hy-index` を走らせ、契約の JSON を 1 つ出す。root が directory でない時と目録の追加が読めない時だけ終了コード 2。
+/// Runs `hy-index` and emits one contract JSON. Exit code 2 only when root is not a directory or the catalog additions cannot be read.
 fn run_hy_index(
     root: &Path,
     files: &[PathBuf],
@@ -470,7 +470,7 @@ fn run_hy_index(
 ) -> Result<()> {
     let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
     if !root.is_dir() {
-        eprintln!("hy-index: --root が directory ではない: {}", root.display());
+                eprintln!("hy-index: --root is not a directory: {}", root.display());
         std::process::exit(2);
     }
     let raw = raw_settings(raw_catalog_extra);
@@ -483,13 +483,13 @@ fn run_hy_index(
             let mut index = hy_index::index_stdin_source(&root, &resolve(path), &source, &raw);
             if std::str::from_utf8(&bytes).is_err() {
                 for file in &mut index.files {
-                    file.errors.insert(0, "UTF-8 として読めない byte を U+FFFD に置き換えて読んだ".to_string());
+                                        file.errors.insert(0, "read with bytes that are not valid UTF-8 replaced by U+FFFD".to_string());
                 }
             }
             index
         }
         (true, None) => {
-            eprintln!("hy-index: --stdin には --path が要る");
+                        eprintln!("hy-index: --stdin requires --path");
             std::process::exit(2);
         }
         (false, _) if !files.is_empty() => {

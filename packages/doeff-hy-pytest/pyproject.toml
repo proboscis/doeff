@@ -1,5 +1,5 @@
 [build-system]
-# license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
+# Writing the license SPDX expression and license-files (PEP 639) to core metadata by default starts with hatchling 1.27 (default version 2.4).
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
@@ -24,8 +24,8 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
     "Topic :: Software Development :: Testing",
 ]
-# 依存を宣言しない: この plugin は doeff-hy に引かれて入る(doeff-hy → doeff-hy-pytest の向きだけ)。
-# 当て物の本体は doeff_hy._ast_unparse にあり、plugin はそれを import して当てるだけ。
+# No dependency is declared: this plugin is pulled in by doeff-hy (only the direction doeff-hy -> doeff-hy-pytest).
+# The patch itself lives in doeff_hy._ast_unparse; the plugin only imports it and applies it.
 dependencies = []
 
 [project.urls]
@@ -35,9 +35,9 @@ Issues = "https://github.com/proboscis/doeff/issues"
 Documentation = "https://github.com/proboscis/doeff/blob/main/docs/index.md"
 Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 
-# pytest は pytest11 の entry point を持つ配布物の**全 module** に assert の書き換えの印を付ける。doeff-hy 自身がこの
-# entry point を持つと doeff_hy の .hy(macros.hy など)まで Python として書き換えようとして import が落ちる(wheel で
-# 入れた repo だけ — editable の install では印が付かない)。だから plugin は .hy を持たないこの配布物に置く。
+# pytest marks **every module** of a distribution that has a pytest11 entry point for assert rewriting. If doeff-hy itself had this
+# entry point, it would try to rewrite doeff_hy's .hy files (macros.hy etc.) as Python and the import would fail (only in repos
+# installed from a wheel; editable installs do not get the mark). So the plugin lives in this distribution, which has no .hy.
 [project.entry-points.pytest11]
 doeff_hy = "doeff_hy_pytest"
 

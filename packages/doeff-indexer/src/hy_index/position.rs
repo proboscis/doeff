@@ -1,37 +1,37 @@
-//! byte の位置を、契約の位置(0 始まりの行・UTF-16 の code unit の列)へ直す。
+//! Converts byte positions into contract positions (0-based line, column in UTF-16 code units).
 
 use serde::{Deserialize, Serialize};
 
-/// 契約の位置。VS Code の Position と同じ単位(行は 0 始まり、列は UTF-16 の code unit)。
-/// 順序は行、次に列(範囲の包含を比べるため)。
+/// A contract position. The same unit as VS Code's Position (line is 0-based, column is in UTF-16 code units).
+/// Ordered by line, then column (to compare range containment).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Position {
     pub line: u32,
     pub character: u32,
 }
 
-/// 契約の範囲 `[start, end)`。
+/// A contract range `[start, end)`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Range {
     pub start: Position,
     pub end: Position,
 }
 
-/// 行の始まりの byte の位置の表。byte の位置から行と UTF-16 の列を引くためのもの。
+/// Table of byte positions where lines start. Used to look up the line and UTF-16 column from a byte position.
 pub struct LineIndex<'a> {
     src: &'a str,
     line_starts: Vec<usize>,
 }
 
 impl<'a> LineIndex<'a> {
-    /// source の改行の位置から行の表を作る。
+        /// Builds the line table from the newline positions of the source.
     pub fn new(src: &'a str) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(src.match_indices('\n').map(|(at, _)| at + 1));
         LineIndex { src, line_starts }
     }
 
-    /// byte の位置を契約の位置へ直す。文字の境目でない位置は手前の境目へ寄せる(panic しない)。
+        /// Converts a byte position into a contract position. A position that is not on a character boundary is moved to the previous boundary (no panic).
     pub fn position(&self, offset: usize) -> Position {
         let mut offset = offset.min(self.src.len());
         while !self.src.is_char_boundary(offset) {
@@ -43,14 +43,14 @@ impl<'a> LineIndex<'a> {
         Position { line: to_u32(line), character: to_u32(character) }
     }
 
-    /// byte の範囲を契約の範囲へ直す。
+        /// Converts a byte range into a contract range.
     pub fn range(&self, start: usize, end: usize) -> Range {
         Range { start: self.position(start), end: self.position(end) }
     }
 
-    /// 契約の位置を byte の位置へ戻す(`position` の逆)。行が source の外なら source の終わり、列が行の外ならその行の終わりへ寄せる。
-    /// 行の頭は表から引くので、1 回の手間はその行の長さだけ(source の頭から数え直さない — 1 file の多くの位置を戻す呼び手が
-    /// file の長さの 2 乗で重くなっていた)。
+        /// Converts a contract position back into a byte position (the inverse of `position`). If the line is outside the source, moves to the end of the source; if the column is outside the line, to the end of that line.
+        /// The start of a line is looked up from the table, so one call costs only the length of that line (it does not recount from the start of the source — callers converting many positions of one
+        /// file back used to become heavy as the square of the file length).
     pub fn offset(&self, position: Position) -> usize {
         let Some(&line_start) = self.line_starts.get(position.line as usize) else { return self.src.len() };
         let line_end = self.src[line_start..].find('\n').map(|at| line_start + at).unwrap_or(self.src.len());
@@ -65,7 +65,7 @@ impl<'a> LineIndex<'a> {
     }
 }
 
-/// usize を u32 へ直す(4G を越える file は無いが、越えても落とさず上限に丸める)。
+/// Converts usize to u32 (there is no file over 4G, but even if there were, it clamps to the limit instead of failing).
 fn to_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }

@@ -1,5 +1,5 @@
-//! `doeff-indexer hy-index` の CLI の経路の検 — `--stdin --path`・`--file`・root の探索と除く
-//! directory・引数の誤りの終了コード。
+//! Tests for the CLI path of `doeff-indexer hy-index` -- `--stdin --path`, `--file`, root discovery and excluded
+//! directories, and exit codes for argument errors.
 
 use std::fs;
 use std::io::Write;
@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-/// test の file を書く(親の directory も作る)。
+/// Write a test file (also creating the parent directory).
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create parent directories");
@@ -16,7 +16,7 @@ fn write_file(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write test file");
 }
 
-/// binary を引数と stdin で走らせ、(終了コード, stdout) を返す。
+/// Run the binary with arguments and stdin, and return (exit code, stdout).
 fn run(args: &[&str], stdin: &str) -> (i32, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_doeff-indexer"))
         .args(args)
@@ -30,14 +30,14 @@ fn run(args: &[&str], stdin: &str) -> (i32, String) {
     (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// 出力の file の一覧から path の末尾で 1 件引く。
+/// Look up one file from the output's file list by path suffix.
 fn file_entry<'a>(json: &'a Value, suffix: &str) -> &'a Value {
     json["files"]
         .as_array()
         .expect("files")
         .iter()
         .find(|file| file["path"].as_str().is_some_and(|path| path.ends_with(suffix)))
-        .unwrap_or_else(|| panic!("{suffix} が出力に無い"))
+        .unwrap_or_else(|| panic!("{suffix} not found in the output"))
 }
 
 #[test]
@@ -48,12 +48,12 @@ fn stdin_content_is_indexed_as_the_given_path() {
     let root_text = root.to_string_lossy();
     let (code, stdout) = run(
         &["hy-index", "--root", &root_text, "--stdin", "--path", "pkg/editing.hy"],
-        "(defn unsaved-version [x]\n  \"編集中。\"\n  (print x\n",
+        "(defn unsaved-version [x]\n  \"Being edited.\"\n  (print x\n",
     );
     assert_eq!(code, 0);
     let json: Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(json["version"], 6);
-    assert_eq!(json["raw_via"], "not-computed", "1 file の実行は経由を計算しない");
+    assert_eq!(json["raw_via"], "not-computed", "a single-file run does not compute via");
     let files = json["files"].as_array().expect("files");
     assert_eq!(files.len(), 1);
     let file = &files[0];
@@ -63,11 +63,11 @@ fn stdin_content_is_indexed_as_the_given_path() {
     assert_eq!(definition["name"], "unsaved-version");
     assert_eq!(definition["mangled"], "unsaved_version");
     assert_eq!(definition["kind"], "defn");
-    assert_eq!(definition["docstring"], "編集中。");
+    assert_eq!(definition["docstring"], "Being edited.");
     assert_eq!(definition["params"], serde_json::json!(["x"]));
     assert_eq!(definition["container"], Value::Null);
     assert_eq!(definition["range"], serde_json::json!({"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 21}}));
-    assert_eq!(file["errors"].as_array().expect("errors").len(), 2, "閉じていない括弧が 2 つ");
+    assert_eq!(file["errors"].as_array().expect("errors").len(), 2, "two unclosed brackets");
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn root_walk_skips_excluded_directories_and_file_selects() {
     let json: Value = serde_json::from_str(&stdout).expect("json");
     assert_eq!(json["files"].as_array().expect("files").len(), 2);
     let missing = file_entry(&json, "missing.hy");
-    assert_eq!(missing["errors"].as_array().expect("errors").len(), 1, "読めない file は errors に積んで続ける");
+    assert_eq!(missing["errors"].as_array().expect("errors").len(), 1, "an unreadable file is recorded in errors and processing continues");
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn root_run_computes_raw_and_extra_catalog_is_read_from_a_file() {
     assert_eq!(core["raw"]["direct"][0]["category"], "network");
     let web = file["definitions"].as_array().expect("definitions").iter().find(|d| d["name"] == "web").expect("web");
     assert_eq!(web["raw"]["direct"][0]["name"], "httpx.get");
-    assert!(core.get("tier").is_none(), "規則の判定(tier)は出さない — 判定の正本は linter");
+    assert!(core.get("tier").is_none(), "rule verdicts (tier) are not emitted -- the linter is the source of truth for verdicts");
 }
 
 #[test]

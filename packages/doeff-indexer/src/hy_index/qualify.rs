@@ -1,37 +1,37 @@
-//! 完全修飾名(版 4)— 定義の `qualified_name` と、呼び出しの `target`(呼び先の完全修飾名)。版 5 からは同じ名前の解決で、
-//! 宣言した effect(`effects`)・型の注記の中の名(`param_types` / `answer_type` の `names`)・effect 節の解く effect(`handles`)の
-//! `target` も埋める。
+//! Fully qualified names (version 4) — a definition's `qualified_name` and a call's `target` (the fully qualified name of the callee). From version 5, by the same name resolution,
+//! it also fills in the `target` of declared effects (`effects`), names inside type annotations (`names` of `param_types` / `answer_type`), and the effects an effect clause handles (`handles`).
+//! (same as above).
 //!
-//! 完全修飾名 = module の dotted 名 + 入れ物の名(在れば)+ 定義の名。区切りはどれも mangle した綴り
-//! (`pkg.mod.Store.put_row`)。呼び出しの `target` は、その file の中身(module・definitions・imports)だけで決める
-//! 名前の解決の結果で、他の file を見ない。だから `--root` の全体・`--file`・`--stdin` のどの実行でも同じ値になり、
-//! 読む側は `target` と `qualified_name` の文字列の一致で呼び先の定義を引き、同じ一致の逆向きで呼び手を引く。
-//! `target` は Hy の定義とは限らない(Python の関数・外の package の名前もその完全修飾名になる)— 索引の
-//! `qualified_name` に一致すれば Hy の定義。
+//! Fully qualified name = the module's dotted name + the container's name (if any) + the definition's name. Every separator is a mangled spelling
+//! (`pkg.mod.Store.put_row`). A call's `target` is the result of name resolution decided only from that file's contents (module, definitions, imports),
+//! without looking at other files. So it has the same value whether run over the whole `--root`, with `--file`, or with `--stdin`,
+//! and the reader finds the callee's definition by string match between `target` and `qualified_name`, and finds callers by the reverse of the same match.
+//! `target` is not necessarily a Hy definition (a Python function or a name from an external package also becomes its fully qualified name) — if it matches the index's
+//! `qualified_name`, it is a Hy definition.
 //!
-//! 解決の順(doeff-runner の resolve.ts の a / b 段と、raw.rs の経由の証拠が使う規則と同じ):
-//! 1. 同じ file の定義 — 修飾の無い名前は top level の定義、`q.name` は入れ物 q の中の定義。
-//! 2. file の import(`require` は除く — macro は呼び先の定義にしない)— 最初に束ねた import を使う。
-//!    `(import m [x])` の `x` は `m.x`、`(import m)` の `m.sub.f` は `m.sub.f`、`(import m [C])` の `C.f` は `m.C.f`。
-//!    module そのものを呼ぶ形(`(import m)` の `(m)`)は呼び先の定義が無いので null。
-//! 3. どれでもない(組み込み・special form・局所の束縛・引数・値の上の属性)は null。
+//! Resolution order (the same rules as steps a / b of doeff-runner's resolve.ts and the via-evidence in raw.rs):
+//! 1. A definition in the same file — an unqualified name is a top-level definition, `q.name` is a definition inside container q.
+//! 2. The file's imports (`require` excluded — a macro is not made a callee's definition) — the first import that binds is used.
+//!    `x` of `(import m [x])` is `m.x`, `m.sub.f` of `(import m)` is `m.sub.f`, `C.f` of `(import m [C])` is `m.C.f`.
+//!    A form that calls the module itself (`(m)` for `(import m)`) has no callee definition, so null.
+//! 3. Anything else (builtins, special forms, local bindings, arguments, attributes on values) is null.
 
 use std::collections::{HashMap, HashSet};
 
 use super::analyze::mangle;
 use super::model::{Definition, HyFileIndex, Import, NameRef, TypeNote};
 
-/// dotted の名前を区切りごとに mangle する(空の区切りは落とす)。
+/// Mangles a dotted name separator by separator (empty separators are dropped).
 fn mangle_dotted(dotted: &str) -> String {
     dotted.split('.').filter(|part| !part.is_empty()).map(mangle).collect::<Vec<_>>().join(".")
 }
 
-/// 区切りを `.` で繋ぐ(空の区切り — root 直下の `__init__` の module 名 "" — は落とす)。
+/// Joins separators with `.` (empty separators — the module name "" of `__init__` directly under root — are dropped).
 fn join(parts: &[&str]) -> String {
     parts.iter().filter(|part| !part.is_empty()).copied().collect::<Vec<_>>().join(".")
 }
 
-/// 定義の完全修飾名(module + 入れ物 + 名)。
+/// The fully qualified name of a definition (module + container + name).
 pub fn qualified_name(module: &str, definition: &Definition) -> String {
     let module = mangle_dotted(module);
     match &definition.container {
@@ -40,13 +40,13 @@ pub fn qualified_name(module: &str, definition: &Definition) -> String {
     }
 }
 
-/// file が package の `__init__` か(相対 import の基準が変わる)。
+/// Whether the file is a package's `__init__` (the base of relative imports changes).
 fn is_package_init(path: &str) -> bool {
     let base = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     matches!(base.as_str(), "__init__.hy" | "__init__.hyk" | "__init__.hyp")
 }
 
-/// 相対 import を書いた file の module を基準に絶対の dotted 名へ直す。
+/// Turns a relative import into an absolute dotted name, based on the module of the file that wrote it.
 fn absolute_module(file_path: &str, file_module: &str, module: &str) -> String {
     let dots = module.len() - module.trim_start_matches('.').len();
     if dots == 0 {
@@ -63,35 +63,35 @@ fn absolute_module(file_path: &str, file_module: &str, module: &str) -> String {
     parts.join(".")
 }
 
-/// import が file の中に作る名前(別名 > 名前 > module)。
+/// The name an import creates in the file (alias > name > module).
 fn bound_name(import: &Import) -> &str {
     import.alias.as_deref().or(import.name.as_deref()).unwrap_or(&import.module)
 }
 
-/// import 1 つを、解決で引く形にしたもの(`require` は入れない — macro は呼び先の定義にしない)。
+/// One import in the form looked up during resolution (`require` is not included — a macro is not made a callee's definition).
 struct BoundImport {
-    /// import が file の中に作る名(mangle した dotted)。
+        /// The name the import creates in the file (mangled dotted).
     bound: String,
-    /// import の module(相対 import は書いた file の module を基準に絶対へ直し、mangle した dotted)。
+        /// The import's module (a relative import is made absolute based on the module of the file that wrote it, mangled dotted).
     from: String,
-    /// `(import m [x])` の `x`(mangle した名)。`(import m)` — module そのもの — は None。
+        /// The `x` of `(import m [x])` (mangled name). `(import m)` — the module itself — is None.
     imported: Option<String>,
 }
 
-/// 名前の解決の場 — 1 つの file の module・定義・import(他の file は見ない)を、引きやすい表にして持つ。
+/// The place for name resolution — holds one file's module, definitions, and imports (does not look at other files) as an easy-to-look-up table.
 ///
-/// 呼び出しと参照は 1 つの file に数万在り(10,000 行の file で 3 万以上)、1 つごとに定義と import の全部を回して mangle の String を確保していると、
-/// 「呼びの数 × (定義 + import の数)」になる(10,000 行で `index_source` が 4.3 秒)。表は 1 回だけ作り、解決は引くだけにする。
+/// A file has tens of thousands of calls and references (30,000+ in a 10,000-line file); if each one iterated all definitions and imports and allocated mangled Strings,
+/// it would cost "number of calls x (definitions + imports)" (`index_source` took 4.3 seconds for 10,000 lines). The table is built once, and resolution only looks things up.
 struct Scope<'a> {
-    /// この file の module(mangle した dotted)。
+        /// This file's module (mangled dotted).
     own_module: String,
-    /// top level の定義の mangle した名(入れ物の無い物)。
+        /// Mangled names of top-level definitions (those with no container).
     top_level: HashSet<&'a str>,
-    /// 入れ物(mangle した名)→ その中の定義の mangle した名。
+        /// Container (mangled name) -> mangled names of the definitions inside it.
     contained: HashMap<String, HashSet<&'a str>>,
-    /// `require` でない import(書いた順 — 修飾つきの呼びは最初に合う物を使う)。
+        /// Imports that are not `require` (in written order — a qualified call uses the first match).
     imports: Vec<BoundImport>,
-    /// 同じ名を束ねる最初の import の添字(修飾なしの呼びが引く — 最初に当たる物だけを使い、後の import は見ない)。
+        /// Index of the first import that binds the same name (looked up by an unqualified call — only the first hit is used, later imports are not looked at).
     first_by_bound: HashMap<String, usize>,
 }
 
@@ -125,7 +125,7 @@ impl<'a> Scope<'a> {
         Scope { own_module: mangle_dotted(module), top_level, contained, imports, first_by_bound }
     }
 
-    /// 書かれた dotted の名(`ReadInput`・`intent.ReadInput`)の完全修飾名。
+        /// The fully qualified name of a written dotted name (`ReadInput`, `intent.ReadInput`).
     fn resolve_written(&self, written: &str) -> Option<String> {
         let (qualifier, name) = match written.rsplit_once('.') {
             Some((qualifier, name)) if !qualifier.is_empty() && !name.is_empty() => (Some(qualifier), name),
@@ -134,7 +134,7 @@ impl<'a> Scope<'a> {
         self.resolve(qualifier, &mangle(name))
     }
 
-    /// 修飾(書かれた綴り)と mangle した名の完全修飾名(解決の順は module の説明のとおり)。
+        /// The fully qualified name of a qualifier (the written spelling) and a mangled name (resolution order is as in the module description).
     fn resolve(&self, qualifier: Option<&str>, name: &str) -> Option<String> {
         match qualifier {
             None => {
@@ -142,7 +142,7 @@ impl<'a> Scope<'a> {
                     return Some(join(&[&self.own_module, name]));
                 }
                 let import = &self.imports[*self.first_by_bound.get(name)?];
-                let imported = import.imported.as_deref()?; // module そのものは呼び先の定義ではない
+                                let imported = import.imported.as_deref()?; // the module itself is not a callee's definition
                 Some(join(&[&import.from, imported]))
             }
             Some(qualifier) => {
@@ -151,24 +151,24 @@ impl<'a> Scope<'a> {
                     return Some(join(&[&self.own_module, &q, name]));
                 }
                 self.imports.iter().find_map(|import| match import.imported.as_deref() {
-                    // `(import m)` の `m.f`・`m.sub.f`
+                                        // `m.f` and `m.sub.f` of `(import m)`
                     None => {
                         let rest = if q == import.bound { Some("") } else { q.strip_prefix(import.bound.as_str()).and_then(|rest| rest.strip_prefix('.')) };
                         rest.map(|rest| join(&[&import.from, rest, name]))
                     }
-                    // `(import pkg [sub])` の `sub.f` と `(import m [Class])` の `Class.f` — どちらも `from.sub.f`
+                                        // `sub.f` of `(import pkg [sub])` and `Class.f` of `(import m [Class])` — both are `from.sub.f`
                     Some(imported) => (q == import.bound).then(|| join(&[&import.from, imported, name])),
                 })
             }
         }
     }
 
-    /// 名 1 つの target を埋める。
+        /// Fills in the target for one name.
     fn fill(&self, name_ref: &mut NameRef) {
         name_ref.target = self.resolve_written(&name_ref.name);
     }
 
-    /// 型の注記の中の名の target を埋める。
+        /// Fills in the target for names inside type annotations.
     fn fill_type(&self, note: &mut TypeNote) {
         for name_ref in &mut note.names {
             self.fill(name_ref);
@@ -176,12 +176,12 @@ impl<'a> Scope<'a> {
     }
 }
 
-/// file の索引に完全修飾名を埋める — 定義の `qualified_name`、呼び出しの `target`、定義の effect・型・effect 節の名の `target`。
+/// Fills in fully qualified names in a file's index — a definition's `qualified_name`, a call's `target`, and the `target` of names in a definition's effects, types, and effect clauses.
 pub fn link(file: &mut HyFileIndex) {
     for definition in &mut file.definitions {
         definition.qualified_name = qualified_name(&file.module, definition);
     }
-    // 解決は埋める前の定義の写しの上で行う(定義の欄を書きながら同じ定義の列を読まないため)
+        // Resolution is done over a copy of the definitions from before filling (so the definitions list is not read while writing the definitions' fields)
     let definitions = file.definitions.clone();
     let scope = Scope::new(&file.path, &file.module, &definitions, &file.imports);
     for call in &mut file.calls {

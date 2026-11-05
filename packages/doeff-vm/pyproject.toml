@@ -1,7 +1,7 @@
 [build-system]
-# license の SPDX の式と license-files(PEP 639)を License-Expression で書き、sdist にも license-files を入れるのは maturin 1.9.3 から。
+# Writing the license SPDX expression and license-files (PEP 639) with License-Expression, and including license-files in the sdist, require maturin 1.9.3 or later.
 requires = ["maturin>=1.9.3,<2"]
-# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py)
+# Wraps maturin and puts cargo's target in a temporary dir outside the working tree (tools/doeff_cargo_backend.py)
 build-backend = "doeff_cargo_backend"
 backend-path = ["."]
 
@@ -40,25 +40,25 @@ Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 features = ["pyo3/extension-module"]
 module-name = "doeff_vm.doeff_vm"
 python-source = "."
-# sdist は path 依存の crate を持つので crate を doeff-vm/ の下へ移す。build の口は pyproject と同じ根に要る
-# (backend-path = ["."])ので、根に写す — 無いと sdist から組めない。
+# The sdist contains path-dependency crates, so move the crates under doeff-vm/. The build entry point must sit at the same root as pyproject
+# (backend-path = ["."]), so copy it to the root - without it the sdist cannot be built.
 include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 
-# uv が「この package を作り直すか」を決める鍵。uv の既定の鍵は pyproject.toml / setup.py /
-# setup.cfg だけで Rust の source を見ないため、Rust だけが変わった更新の後の `uv sync` /
-# `uv run` は古い doeff_vm/*.so をそのまま使い続ける(2026-09-23 22:42〜23:17 に pod の
-# controller が古い .so で 35 分落ちた)。
-# ここに列挙すると既定の鍵は置き換わるので pyproject.toml も自分で並べる。
-# この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある。python-source
-# (この dir の doeff_vm/)の .py・.pyi・py.typed も並べる — 口はどちらの hook でも Python を保存先の wheel から取らず作業木から
-# 入れる(ADR-DOE-BUILD-001 R2b)が、uv はここに並べた file の変化でだけ非 editable の path の入れを作り直す。wheel の
-# dist-info に入る license-files(LICENSE)は保存先の wheel から渡るので並べる。
-# build の口の file そのもの(editable の組み方を決める)と、口が保存先の鍵に入れる組みを変える環境変数(口の BUILD_ENV_NAMES と、
-# 接頭辞 CARGO_PROFILE_・CARGO_BUILD_・MATURIN_・PYO3_ のうち使う名)も並べる — 取り込みの作業と make sync は
-# --reinstall-package を付けないので、uv が気づかない変化では口が呼ばれない(#3860 の 2)。
-# path 依存の crate(Cargo.toml の path = を推移的にたどった先)の Cargo.toml / Cargo.lock / pyproject.toml / build.rs / *.rs・
-# 口の file・口の環境変数の名が漏れなく載っている事と、どの鍵の変化でも uv が口を呼ぶ事は
-# tests/test_land_install_follows_rust_keys.py が検査する。
+# The key uv uses to decide whether to rebuild this package. uv's default keys are only pyproject.toml / setup.py /
+# setup.cfg and do not look at Rust sources, so after an update that changes only Rust, `uv sync` /
+# `uv run` keep using the old doeff_vm/*.so (from 2026-09-23 22:42 to 23:17 the pod's
+# controller was down for 35 minutes on a stale .so).
+# Listing keys here replaces the default keys, so pyproject.toml is listed explicitly too.
+# This set is also the key for the wheel's storage location in the build entry point (tools/doeff_cargo_backend.py). The .py, .pyi and py.typed of python-source
+# (doeff_vm/ in this dir) are listed too - in either hook the entry point installs Python from the working tree rather than from the stored wheel
+# (ADR-DOE-BUILD-001 R2b), but uv rebuilds a non-editable path install only when the files listed here change. The license-files (LICENSE) that go into the wheel's
+# dist-info are passed in from the stored wheel, so they are listed.
+# Also list the build entry point's own file (it decides how the editable install is assembled) and the environment variables that change what the entry point puts into the storage key (the entry point's BUILD_ENV_NAMES, and
+# the names in use among the prefixes CARGO_PROFILE_, CARGO_BUILD_, MATURIN_, PYO3_) - the intake work and make sync do not pass
+# --reinstall-package, so the entry point is not invoked on changes uv does not notice (#3860 item 2).
+# That the Cargo.toml / Cargo.lock / pyproject.toml / build.rs / *.rs of path-dependency crates (followed transitively via path = in Cargo.toml),
+# the entry-point files, and the entry point's environment variable names are all listed, and that any change to any key makes uv invoke the entry point, are
+# checked by tests/test_land_install_follows_rust_keys.py.
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },

@@ -1,20 +1,20 @@
-//! 索引の file 1 つを disk の cache に置く形。
+//! The form in which one file's index is placed in the disk cache.
 //!
-//! doeff-linter は 1 file の実行でも repo 全体の Hy の索引を組む。その大半は file ごとの読みと名前の解決(`index_file` —
-//! file の中身と path だけで決まる)なので、linter は file ごとにこの形で cache し、変わった file だけ読み直す。
-//! file をまたぐ生の副作用の経由の辿り(`annotate_raw`)は他の file の中身と目録で答えが変わるので cache しない —
-//! この形が持つのは辿りの前の索引。
+//! doeff-linter builds the Hy index of the whole repo even for a single-file run. Most of that is per-file reading and name resolution (`index_file` —
+//! decided only by the file's contents and path), so the linter caches in this form per file and re-reads only changed files.
+//! The trace of raw side-effect via-evidence across files (`annotate_raw`) has an answer that changes with other files' contents and the catalog, so it is not cached —
+//! what this form holds is the index before tracing.
 //!
-//! 索引の型の serde の形は契約の JSON の形で、linter の判定が読む欄のうち次の 2 種はその形では運べない。この形が別に持つ:
-//! - 契約の JSON に出さない欄(`serde(skip)`)— `Reference` の `member`・`target`・`type_only`・`inspected`、`Call` の `form_range`・`keywords`・`arguments`。
-//! - 値の有無で出したり出さなかったりする欄(`skip_serializing_if`)— `Definition` の `checks`。cache は欄の名前を持たない
-//!   binary の形(linter の facts_cache の compact)で置くので、欄の数が値で変わると読み戻しがずれる。索引の側は常に `Some` に
-//!   そろえて書き、読み戻す時に別に持った値へ戻す。
+//! The serde form of the index types is the contract's JSON form, and of the fields the linter's judgments read, the following two kinds cannot be carried in that form. This form carries them separately:
+//! - Fields not emitted in the contract's JSON (`serde(skip)`) — `member`, `target`, `type_only`, `inspected` of `Reference`; `form_range`, `keywords`, `arguments` of `Call`.
+//! - Fields emitted or not depending on whether there is a value (`skip_serializing_if`) — `checks` of `Definition`. The cache is placed in a binary form with no field names
+//!   (the linter's facts_cache compact), so if the number of fields varies with values, reading back goes out of alignment. The index side always
+//!   writes it aligned to `Some`, and on reading back restores the separately held value.
 //!
-//! 欄の足し忘れを compile で止める: `fields_are_accounted_for` が索引の型を全部、欄を名指して分解する(`..` を使わない)。
-//! 型に欄を足すとそこが compile できなくなる — 足した欄が契約の JSON に出る欄(`serde` の skip も skip_serializing_if も
-//! 無い)なら `_` で受け、そうでなければこの形で運んでから名で受ける(本線の ecccbd446 が `Call` に `keywords` を足した時、
-//! 手で数えた一覧から漏れて、cache を使った実行だけが `:transport` を渡した呼びを「渡していない」と数えた)。
+//! Forgetting to add a field is stopped at compile time: `fields_are_accounted_for` destructures every index type, naming the fields (without using `..`).
+//! Adding a field to a type makes that place fail to compile — if the added field is one emitted in the contract's JSON (has neither `serde` skip nor skip_serializing_if),
+//! receive it with `_`; otherwise carry it in this form and then receive it by name (when mainline ecccbd446 added `keywords` to `Call`,
+//! it was missed from a hand-counted list, and only runs using the cache counted calls that passed `:transport` as "not passed").
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ use super::model::{
 };
 use super::position::{Position, Range};
 
-/// 参照 1 つの、契約に出さない欄。
+/// The fields of one reference that are not emitted in the contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReferenceExtra {
     member: bool,
@@ -34,7 +34,7 @@ struct ReferenceExtra {
     call_arity: Option<usize>,
 }
 
-/// 呼び出し 1 つの、契約に出さない欄。
+/// The fields of one call that are not emitted in the contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CallExtra {
     form_range: Range,
@@ -42,7 +42,7 @@ struct CallExtra {
     arguments: Vec<CallArgument>,
 }
 
-/// cache に置く file 1 つの索引(辿りの前)と、契約の JSON の形のままでは運べない欄(参照・呼び出し・定義と同じ順)。
+/// The index of one file placed in the cache (before tracing), and the fields that cannot be carried in the contract's JSON form (in the same order as references, calls, and definitions).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedHyFile {
     file: HyFileIndex,
@@ -51,14 +51,14 @@ pub struct CachedHyFile {
     definition_checks: Vec<Option<Vec<String>>>,
 }
 
-/// cache の形の欄の数が索引と合わない(壊れた cache)— 読み直す file の path を持つ。
+/// The number of fields in the cache form does not match the index (a broken cache) — holds the path of the file to re-read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedHyFileMismatch {
     pub path: String,
 }
 
 impl CachedHyFile {
-    /// 索引 1 つを cache の形にする(契約の形のままでは運べない欄を別に写し、`checks` は常に `Some` にそろえる)。
+        /// Turns one index into the cache form (copies separately the fields that cannot be carried in the contract form, and aligns `checks` to always `Some`).
     pub fn of(mut file: HyFileIndex) -> Self {
         let references = file.references.iter().map(|r| ReferenceExtra { member: r.member, target: r.target.clone(), type_only: r.type_only, inspected: r.inspected, call_arity: r.call_arity }).collect();
         let calls = file.calls.iter().map(|c| CallExtra { form_range: c.form_range, keywords: c.keywords.clone(), arguments: c.arguments.clone() }).collect();
@@ -66,13 +66,13 @@ impl CachedHyFile {
         CachedHyFile { file, references, calls, definition_checks }
     }
 
-    /// 索引の file の path(`HyFileIndex::path` — 根の絶対 path を含む綴り)だけを置き換える。cache は作業木をまたいで分け合うので、
-    /// 置く時は空の path で置き、読んだ後に今の根の file の path を付ける(path 以外の欄は file の中身と根からの path だけで決まる)。
+        /// Replaces only the index file's path (`HyFileIndex::path` — a spelling that includes the root's absolute path). Because the cache is shared across worktrees,
+        /// it is stored with an empty path, and after reading the current root's file path is attached (fields other than path are decided only by the file's contents and the path from the root).
     pub fn set_path(&mut self, path: &str) {
         self.file.path = path.to_string();
     }
 
-    /// cache の形から索引に戻す。欄の数が合わなければ(壊れた cache)読み直す file の path を返す。
+        /// Restores the index from the cache form. If the number of fields does not match (a broken cache), returns the path of the file to re-read.
     pub fn into_file(self) -> Result<HyFileIndex, CachedHyFileMismatch> {
         let CachedHyFile { mut file, references, calls, definition_checks } = self;
         if references.len() != file.references.len() || calls.len() != file.calls.len() || definition_checks.len() != file.definitions.len() {
@@ -97,7 +97,7 @@ impl CachedHyFile {
     }
 }
 
-/// 索引の型の欄の見張り(頭の註)— 契約の JSON が運ぶ欄は `_`、この形が別に運ぶ欄は名で受ける。呼ばれない(compile だけが働く)。
+/// Guard over the index types' fields (the head comment) — fields the contract's JSON carries are `_`, fields this form carries separately are received by name. Never called (only compilation works).
 #[allow(dead_code)]
 fn fields_are_accounted_for(file: &HyFileIndex) {
     let HyFileIndex { path: _, module: _, definitions, imports, references, calls, errors: _ } = file;
@@ -191,7 +191,7 @@ mod tests {
 
 (defk read-it [path]
   {:pre [(: path str)] :post [(: % str)]}
-  "読むため"
+  "to read"
   (<- text (.read-text (Path path)))
   (with-handlers [os-file-handler] (helper text))
   (RecordsEndpoint "http://r" "t" :poll-seconds 0.2 :transport (EffectTransport))
@@ -203,14 +203,14 @@ mod tests {
     #[test]
     fn a_cached_file_reads_back_the_same() {
         let file = index_source(Path::new("/r"), Path::new("/r/pkg/m.hy"), SOURCE);
-        // 別に運ぶ欄が実際に値を持つ file で確かめる(持たなければ検が何も見張らない)。
-        assert!(file.references.iter().any(|r| r.member), "method の区切り(member)が無い");
-        assert!(file.references.iter().any(|r| r.target.is_some()), "名指しの先(target)が無い");
-        assert!(file.calls.iter().any(|c| c.form_range != c.range), "呼び出しの範囲(form_range)が無い");
-        assert!(file.calls.iter().any(|c| !c.keywords.is_empty()), "keyword を渡す呼び出し(keywords)が無い");
-        assert!(file.definitions.iter().any(|d| d.checks.is_some()), ":check を持つ定義が無い");
-        assert!(file.definitions.iter().any(|d| d.checks.is_none()), ":check を持たない定義が無い");
-        // linter の cache と同じ欄の名前を持たない binary の形(bincode)で往復する。
+                // Check with a file where the separately carried fields actually have values (if they had none, the test would guard nothing).
+                assert!(file.references.iter().any(|r| r.member), "no method separator (member)");
+                assert!(file.references.iter().any(|r| r.target.is_some()), "no named destination (target)");
+                assert!(file.calls.iter().any(|c| c.form_range != c.range), "no call range (form_range)");
+                assert!(file.calls.iter().any(|c| !c.keywords.is_empty()), "no call passing keywords (keywords)");
+                assert!(file.definitions.iter().any(|d| d.checks.is_some()), "no definition with :check");
+                assert!(file.definitions.iter().any(|d| d.checks.is_none()), "no definition without :check");
+                // Round-trip in the binary form with no field names (bincode), the same as the linter's cache.
         let bytes = bincode::serialize(&CachedHyFile::of(file.clone())).unwrap();
         let back = bincode::deserialize::<CachedHyFile>(&bytes).unwrap().into_file().unwrap();
         assert_eq!(format!("{:?}", back), format!("{:?}", file));

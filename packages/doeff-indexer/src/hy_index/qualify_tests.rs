@@ -1,4 +1,4 @@
-//! 完全修飾名(版 4)のテスト — 定義の `qualified_name` と呼び出しの `target` を、Hy の source を索引して確かめる。
+//! Tests for fully qualified names (version 4) -- index Hy source and check a definition's `qualified_name` and a call's `target`.
 
 use std::path::Path;
 
@@ -7,22 +7,22 @@ use super::index_source;
 use super::model::{Call, HyFileIndex};
 use super::qualify;
 
-/// source を `/r/<path>` として索引する(root は `/r`)。
+/// Index the source as `/r/<path>` (root is `/r`).
 fn index_at(path: &str, source: &str) -> HyFileIndex {
     index_source(Path::new("/r"), &Path::new("/r").join(path), source)
 }
 
-/// 呼び出しの頭の名前(最後の区切り)と修飾で呼び出しを 1 つ引く。
+/// Look up one call by the call head's name (last segment) and its qualifier.
 fn call<'a>(file: &'a HyFileIndex, qualifier: Option<&str>, callee: &str) -> &'a Call {
     file.calls
         .iter()
         .find(|c| c.callee == callee && c.qualifier.as_deref() == qualifier)
-        .unwrap_or_else(|| panic!("呼び出し {:?}.{callee} が無い", qualifier))
+        .unwrap_or_else(|| panic!("call {:?}.{callee} not found", qualifier))
 }
 
-/// 名前で定義の完全修飾名を引く。
+/// Look up the fully qualified name of a definition by name.
 fn qualified<'a>(file: &'a HyFileIndex, name: &str) -> &'a str {
-    &file.definitions.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("定義 {name} が無い")).qualified_name
+    &file.definitions.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("definition {name} not found")).qualified_name
 }
 
 const SAMPLE: &str = r#"(import doeff-records.memory [MemoryStore put-row :as put])
@@ -61,8 +61,8 @@ fn definitions_carry_module_container_and_mangled_name() {
     assert_eq!(qualified(&file, "local-fn"), "pkg.sub.sample.local_fn");
     assert_eq!(qualified(&file, "run-it"), "pkg.sub.sample.run_it");
     assert_eq!(qualified(&file, "Store"), "pkg.sub.sample.Store");
-    assert_eq!(qualified(&file, "put"), "pkg.sub.sample.Store.put", "method は入れ物の class の名を挟む");
-    assert_eq!(qualified(&file, "PutRow"), "pkg.sub.sample.store_handler.PutRow", "effect 節は handler の名を挟む");
+    assert_eq!(qualified(&file, "put"), "pkg.sub.sample.Store.put", "a method has its container class's name in between");
+    assert_eq!(qualified(&file, "PutRow"), "pkg.sub.sample.store_handler.PutRow", "an effect clause has the handler's name in between");
 }
 
 #[test]
@@ -76,20 +76,20 @@ fn root_package_init_has_no_leading_dot() {
 fn calls_resolve_by_local_definitions_then_imports() {
     let file = index_at("pkg/sub/sample.hy", SAMPLE);
     let target = |qualifier: Option<&str>, callee: &str| call(&file, qualifier, callee).target.clone();
-    // 同じ file の定義 — 修飾なしは top level、`q.name` は入れ物 q の中
+    // Definitions in the same file -- unqualified is top level, `q.name` is inside container q
     assert_eq!(target(None, "local-fn").as_deref(), Some("pkg.sub.sample.local_fn"));
     assert_eq!(target(Some("Store"), "put").as_deref(), Some("pkg.sub.sample.Store.put"));
     assert_eq!(target(None, "Store").as_deref(), Some("pkg.sub.sample.Store"));
-    // import の名前・別名(module の綴りは mangle する)
+    // Names and aliases from import (module spellings are mangled)
     assert_eq!(target(None, "MemoryStore").as_deref(), Some("doeff_records.memory.MemoryStore"));
-    assert_eq!(target(None, "put").as_deref(), Some("doeff_records.memory.put_row"), "別名は元の名へ戻す");
-    // module の import の dotted
+    assert_eq!(target(None, "put").as_deref(), Some("doeff_records.memory.put_row"), "an alias is mapped back to the original name");
+    // dotted module import
     assert_eq!(target(Some("pkg.util"), "fmt").as_deref(), Some("pkg.util.fmt"));
     assert_eq!(target(Some("pkg.util.deep"), "inner").as_deref(), Some("pkg.util.deep.inner"));
-    // `(import pkg [helpers])` の helpers.go と `(import m [Class])` の Class.open は同じ形
+    // `helpers.go` from `(import pkg [helpers])` and `Class.open` from `(import m [Class])` have the same shape
     assert_eq!(target(Some("helpers"), "go").as_deref(), Some("pkg.helpers.go"));
     assert_eq!(target(Some("MemoryStore"), "open").as_deref(), Some("doeff_records.memory.MemoryStore.open"));
-    // 相対 import は書いた file の package を基準に直す
+    // Relative imports are resolved against the package of the file where they are written
     assert_eq!(target(None, "near-fn").as_deref(), Some("pkg.sub.sibling.near_fn"));
     assert_eq!(target(None, "far-fn").as_deref(), Some("pkg.parent_mod.far_fn"));
 }
@@ -97,10 +97,10 @@ fn calls_resolve_by_local_definitions_then_imports() {
 #[test]
 fn unresolvable_calls_have_no_target() {
     let file = index_at("pkg/sub/sample.hy", SAMPLE);
-    assert_eq!(call(&file, None, "f").target, None, "引数の関数");
-    assert_eq!(call(&file, None, "print").target, None, "組み込み");
-    assert_eq!(call(&file, Some("pkg"), "util").target, None, "`(import pkg.util)` の下の `(pkg.util)` は module そのもの");
-    // effect 節の中の呼び出しの PutRow は同じ file の effect 節ではない(入れ物の無い top level の定義だけを引く)
+    assert_eq!(call(&file, None, "f").target, None, "function passed as an argument");
+    assert_eq!(call(&file, None, "print").target, None, "builtin");
+    assert_eq!(call(&file, Some("pkg"), "util").target, None, "`(pkg.util)` under `(import pkg.util)` is the module itself");
+    // PutRow in a call inside an effect clause is not an effect clause in the same file (only top-level definitions with no container are looked up)
     assert_eq!(call(&file, None, "PutRow").target, None);
 }
 
@@ -110,14 +110,14 @@ fn require_is_not_a_call_target_and_module_itself_is_null() {
         "pkg/m.hy",
         "(require doeff-hy.macros [my-macro])\n(import json)\n(defn g [] (my-macro 1) (json 2) (json.dumps 3))\n",
     );
-    assert_eq!(call(&file, None, "my-macro").target, None, "require した macro は呼び先の定義にしない");
-    assert_eq!(call(&file, None, "json").target, None, "module そのものは呼び先の定義ではない");
-    assert_eq!(call(&file, Some("json"), "dumps").target.as_deref(), Some("json.dumps"), "Python の関数も完全修飾名で出す");
+    assert_eq!(call(&file, None, "my-macro").target, None, "a required macro is not treated as a callee definition");
+    assert_eq!(call(&file, None, "json").target, None, "the module itself is not a callee definition");
+    assert_eq!(call(&file, Some("json"), "dumps").target.as_deref(), Some("json.dumps"), "Python functions are also emitted as fully qualified names");
 }
 
 #[test]
 fn target_of_a_caller_matches_qualified_name_across_files() {
-    // 呼び手の file と呼び先の file を別々に索引しても(= `--stdin` の 1 file の実行でも)文字列が一致する
+    // The strings match even when the caller's file and the callee's file are indexed separately (= even in a single-file `--stdin` run)
     let callee = index_at("pkg/screen/react.hy", "(defk view-body [x] x)\n(defclass Panel [] (defn draw [self] 1))\n");
     let caller = index_at(
         "tests/test_react.hy",
@@ -129,13 +129,13 @@ fn target_of_a_caller_matches_qualified_name_across_files() {
     let targets: Vec<Option<&str>> = caller.calls.iter().map(|c| c.target.as_deref()).collect();
     assert_eq!(targets.iter().filter(|t| **t == Some(body)).count(), 2, "{targets:?}");
     assert!(targets.contains(&Some(draw)), "{targets:?}");
-    // 呼び手は deftest の定義(caller の添字)
+    // The caller is a deftest definition (index of caller)
     let from = call(&caller, None, "view-body").caller.expect("caller");
     assert_eq!(caller.definitions[from].name, "renders");
 }
 
-/// 値として名指した handler(呼び出しにならない — `(with-handlers [os-file-handler] …)`)の完全修飾名を、呼び出しと同じ解決で
-/// 参照の `target` に埋める(外の世界に触れる handler の名指しを数えるため)。
+/// The fully qualified name of a handler named as a value (not a call -- `(with-handlers [os-file-handler] ...)`), by the same resolution as calls,
+/// is filled into the reference's `target` (to count handlers that touch the outside world being named).
 #[test]
 fn references_resolve_like_calls() {
     let source = r#"(import doeff-core-effects.os-file [os-file-handler :as files])
@@ -146,38 +146,38 @@ fn references_resolve_like_calls() {
 "#;
     let file = index_at("app/foundation/host.hy", source);
     let target_of = |name: &str| {
-        file.references.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("参照 {name} が無い")).target.clone()
+        file.references.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("reference {name} not found")).target.clone()
     };
     assert_eq!(target_of("files").as_deref(), Some("doeff_core_effects.os_file.os_file_handler"));
     assert_eq!(target_of("with-cluster-handlers").as_deref(), Some("doeff_cluster.cluster_foundation.with_cluster_handlers"));
-    assert_eq!(target_of("local"), None, "解決できない名に target を付けた");
+    assert_eq!(target_of("local"), None, "a target was attached to a name that cannot be resolved");
 }
 
-/// 解決の順の約束(書き換えても変えない): 同じ名を束ねる import は先に書いた方が勝ち、最初に当たる import が module そのものなら未解決。
-/// 同じ file の top level の定義は import に勝つ。
+/// Promise on resolution order (do not change when rewriting): among imports that bind the same name, the one written first wins; if the first matching import is the module itself, it is unresolved.
+/// A top-level definition in the same file wins over an import.
 #[test]
 fn the_first_import_that_binds_a_name_decides_and_a_local_definition_beats_an_import() {
     let file = index_at(
         "pkg/order.hy",
         "(import a.m [x])\n(import b.m [x])\n(import foo)\n(import c.m [foo])\n(import d [y])\n(defn y [] 1)\n(defn g [] (x 1) (foo 2) (y 3))\n",
     );
-    assert_eq!(call(&file, None, "x").target.as_deref(), Some("a.m.x"), "先に書いた import");
-    assert_eq!(call(&file, None, "foo").target, None, "最初に当たる import が module そのもの(後の `[foo]` は見ない)");
-    assert_eq!(call(&file, None, "y").target.as_deref(), Some("pkg.order.y"), "同じ file の定義が import に勝つ");
+    assert_eq!(call(&file, None, "x").target.as_deref(), Some("a.m.x"), "the import written first");
+    assert_eq!(call(&file, None, "foo").target, None, "the first matching import is the module itself (the later `[foo]` is not looked at)");
+    assert_eq!(call(&file, None, "y").target.as_deref(), Some("pkg.order.y"), "a definition in the same file wins over an import");
 }
 
-/// 修飾つきの呼びも、import を書いた順で最初に合う物を使う — module の import は修飾の前方一致(`a.b` の下の `a.b.c.d`)でも合う。
+/// Qualified calls also use the first match in import order -- a module import also matches by qualifier prefix (`a.b.c.d` under `a.b`).
 #[test]
 fn a_qualified_call_uses_the_first_import_in_order_that_fits() {
     let file = index_at("pkg/q.hy", "(import m)\n(import n [m])\n(import a.b)\n(defn g [] (m.f 1) (a.b.c.d 2))\n");
-    assert_eq!(call(&file, Some("m"), "f").target.as_deref(), Some("m.f"), "module の import が先");
-    assert_eq!(call(&file, Some("a.b.c"), "d").target.as_deref(), Some("a.b.c.d"), "修飾の前方一致");
+    assert_eq!(call(&file, Some("m"), "f").target.as_deref(), Some("m.f"), "the module import comes first");
+    assert_eq!(call(&file, Some("a.b.c"), "d").target.as_deref(), Some("a.b.c.d"), "prefix match on the qualifier");
     let swapped = index_at("pkg/q.hy", "(import n [m])\n(import m)\n(defn g [] (m.f 1))\n");
-    assert_eq!(call(&swapped, Some("m"), "f").target.as_deref(), Some("n.m.f"), "`[m]` の import が先");
+    assert_eq!(call(&swapped, Some("m"), "f").target.as_deref(), Some("n.m.f"), "the `[m]` import comes first");
 }
 
-/// 名前の解決の仕事は file の大きさに比例する — 「呼びの数 × (定義 + import の数)」にならない(10,000 行・呼び 5 万の file で `index_source` が 4.3 秒かかっていた:
-/// 呼びごとに定義と import の全部を回し、import ごとに mangle の確保をしていた)。
+/// The name-resolution work is proportional to the file size -- it must not become "calls x (definitions + imports)" (`index_source` took 4.3 seconds on a file of 10,000 lines and 50,000 calls:
+/// it went over all definitions and imports for every call, and allocated a mangle for every import).
 #[test]
 fn linking_costs_the_size_of_the_file_not_calls_times_imports() {
     const IMPORTS: usize = 40;
@@ -199,17 +199,17 @@ fn linking_costs_the_size_of_the_file_not_calls_times_imports() {
     source.push_str(")\n");
     let mut file = index_at("pkg/many.hy", &source);
     let calls = file.calls.len();
-    assert!(calls >= ROUNDS * NAMES * 4, "呼びが少なすぎる: {calls}");
+    assert!(calls >= ROUNDS * NAMES * 4, "too few calls: {calls}");
     let before = analyze::mangle_calls();
     qualify::link(&mut file);
     let spent = analyze::mangle_calls() - before;
     let size = file.imports.len() + file.definitions.len() + NAMES * 4;
     assert!(
         spent <= 8 * size,
-        "link が mangle を {spent} 回呼んだ(file の大きさ {size} の 8 倍 = {} を越えた — 呼び {calls} 個ごとに全部の定義と import を回している)",
+        "link called mangle {spent} times (exceeded 8x the file size {size} = {} -- it is going over all definitions and imports for each of the {calls} calls)",
         8 * size
     );
-    // 答えは変わらない: 同じ名の呼びは、何回目も同じ target。
+    // The answers do not change: calls with the same name always get the same target.
     let targets = |name: &str, qualifier: Option<&str>| -> Vec<Option<String>> {
         file.calls.iter().filter(|c| c.callee == name && c.qualifier.as_deref() == qualifier).map(|c| c.target.clone()).collect()
     };

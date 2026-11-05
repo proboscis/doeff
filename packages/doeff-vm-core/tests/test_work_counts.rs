@@ -1,7 +1,7 @@
-//! process 全体の積み上げの数(`memory_stats::work_counts`)の検。
+//! Test for the process-wide accumulated counts (`memory_stats::work_counts`).
 //!
-//! 数は process の全部の VM を通した和なので、同じ process で他の検が VM を回すと差が混ざる。cargo は統合の検の file ごとに
-//! 別の binary(別の process)を作るので、この file には検を 1 本だけ置き、その中で program を順に 2 回走らせる。
+//! The counts are a sum over every VM in the process, so another test running a VM in the same process would mix in its differences. Cargo builds a
+//! separate binary (separate process) per integration-test file, so this file holds a single test, which runs the program twice in sequence.
 
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use doeff_vm_core::{
     StreamStep, VMError, Value, VM,
 };
 
-/// 何回 effect を撃っても 1 で答える handler(Rust の同期の handler の道 — `call_handler` が DoCtrl を返す)。
+/// A handler that answers 1 no matter how many times the effect is performed (the Rust synchronous handler path - `call_handler` returns a DoCtrl).
 #[derive(Debug)]
 struct AnswerOne;
 
@@ -33,7 +33,7 @@ impl Callable for AnswerOne {
     }
 }
 
-/// effect を `left` 回撃ち、最後に答えた値を返す本体。
+/// A body that performs the effect `left` times and returns the last value answered.
 #[derive(Debug)]
 struct PerformTimes {
     left: u32,
@@ -54,7 +54,7 @@ impl IRStream for PerformTimes {
     }
 }
 
-/// 本体を handler で包む根(1 回目に WithHandler を出し、2 回目に本体の答えで終わる)。
+/// A root that wraps the body in the handler (emits WithHandler the first time, and finishes with the body's answer the second time).
 #[derive(Debug)]
 struct Root {
     body: Option<Box<DoCtrl>>,
@@ -77,7 +77,7 @@ impl IRStream for Root {
 
 const PERFORMS: u32 = 5;
 
-/// 新しい VM で根を最後まで走らせ、その VM の歩数(`VM::steps`)を返す。
+/// Run the root to completion on a fresh VM and return that VM's step count (`VM::steps`).
 fn run_once() -> u64 {
     let body = Box::new(DoCtrl::Expand {
         expr: Box::new(DoCtrl::Pure {
@@ -122,9 +122,9 @@ fn the_same_program_grows_the_counts_by_the_same_amount_every_time() {
         end.steps - middle.steps,
         end.handler_calls - middle.handler_calls,
     );
-    // 決まった program は、2 回とも同じだけ数を増やす(CPU 秒と違い、機体の負荷で揺れない)。
+    // A fixed program increases the counts by the same amount both times (unlike CPU seconds, it does not fluctuate with machine load).
     assert_eq!(first, second);
-    // 歩数の積み上げは、その間に走った唯一の VM の歩数そのもの。handler は effect の数だけ呼ばれる。
+    // The accumulated step count is exactly the step count of the only VM that ran in between. The handler is called once per effect.
     assert_eq!(first.0, first_vm_steps);
     assert_eq!(second.0, second_vm_steps);
     assert_eq!(first.1, u64::from(PERFORMS));

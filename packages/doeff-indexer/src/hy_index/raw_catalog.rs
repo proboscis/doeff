@@ -1,13 +1,13 @@
-//! 生の副作用の目録 — `data/raw_side_effects.json` を build 時に取り込み、型のある表にする。
-//! 利用者の追加(`--raw-catalog-extra <json>`)も同じ表へ足す。判定(`raw.rs`)はこの表だけを見る。
+//! Catalog of raw side effects — takes in `data/raw_side_effects.json` at build time and turns it into a typed table.
+//! User additions (`--raw-catalog-extra <json>`) are added to the same table. The judgment (`raw.rs`) looks only at this table.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// 同梱の目録(宣言の唯一の場所)。
+/// The bundled catalog (the single place of declaration).
 const BUNDLED_CATALOG: &str = include_str!("../../data/raw_side_effects.json");
 
-/// 生の副作用の分類(閉じた集合)。
+/// Classification of raw side effects (a closed set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RawCategory {
@@ -24,7 +24,7 @@ pub enum RawCategory {
 }
 
 impl RawCategory {
-    /// 目録の順(表示の順)。
+        /// Catalog order (display order).
     pub const ALL: [RawCategory; 10] = [
         RawCategory::Http,
         RawCategory::Async,
@@ -38,7 +38,7 @@ impl RawCategory {
         RawCategory::Thread,
     ];
 
-    /// 契約の綴り。
+        /// Spelling of the contract.
     pub fn as_str(self) -> &'static str {
         match self {
             RawCategory::Http => "http",
@@ -54,26 +54,26 @@ impl RawCategory {
         }
     }
 
-    /// 綴りから分類を引く(知らなければ None)。
+        /// Looks up a classification from its spelling (None if unknown).
     pub fn parse(text: &str) -> Option<RawCategory> {
         RawCategory::ALL.into_iter().find(|category| category.as_str() == text)
     }
 }
 
-/// method 名だけで拾う証拠(弱い)と、それを数える条件の module。
+/// Evidence picked up by method name alone (weak), and the module that is the condition for counting it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RawMethod {
     pub name: String,
-    /// この module が file の import か定義の中の参照に見える時だけ数える。空なら常に数える。
+        /// Counted only when this module looks like an import of the file or a reference inside a definition. If empty, always counted.
     pub context: Vec<String>,
-    /// 呼びの受け手を除く引数がこの数より多い呼びは数えない(書かなければ上限なし)。同じ名の別の型の method と見分けるため —
-    /// `Path.replace(target)` は 1 つ・文字列の `(.replace s "/" "_")` は 2 つ。呼びの頭でない参照
-    /// (`(. p replace)` を値として渡す等)は引数が分からないので、今までどおり数える。
+        /// A call with more arguments than this number (excluding the call's receiver) is not counted (no upper limit if unwritten). To tell it apart from a same-named method of another type —
+        /// `Path.replace(target)` takes 1, while the string `(.replace s "/" "_")` takes 2. A reference that is not the head of a call
+        /// (e.g. passing `(. p replace)` as a value) has unknown arguments, so it is counted as before.
     #[serde(default)]
     pub max_args: Option<usize>,
 }
 
-/// 分類 1 つの目録。
+/// The catalog for one classification.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RawCatalogEntry {
     pub category: RawCategory,
@@ -82,17 +82,17 @@ pub struct RawCatalogEntry {
     pub methods: Vec<RawMethod>,
 }
 
-/// 目録の全体。
+/// The whole catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RawCatalog {
     pub categories: Vec<RawCatalogEntry>,
-    /// pattern に合っても副作用でない名前(純粋な module・小文字の例外の型)。
+        /// Names that match a pattern but are not side effects (pure modules, lowercase exception types).
     pub ignored: Vec<String>,
-    /// この語で終わる名前は例外の型として数えない。
+        /// Names ending in these words are not counted as exception types.
     pub exception_suffixes: Vec<String>,
 }
 
-/// 同梱の file の外側の形(説明の欄を読み飛ばすため)。
+/// The outer shape of the bundled file (to skip the description fields).
 #[derive(Deserialize)]
 struct BundledFile {
     categories: Vec<RawCatalogEntry>,
@@ -101,10 +101,10 @@ struct BundledFile {
 }
 
 impl RawCatalog {
-    /// 同梱の目録を読む。同梱の file は build と一緒に検めるので、読めなければ build の誤り(テストが赤にする)。
+        /// Reads the bundled catalog. The bundled file is checked together with the build, so a failure to read it is a build error (tests turn red).
     pub fn bundled() -> Result<RawCatalog, String> {
         let file: BundledFile =
-            serde_json::from_str(BUNDLED_CATALOG).map_err(|error| format!("同梱の目録を読めない: {}", error))?;
+                        serde_json::from_str(BUNDLED_CATALOG).map_err(|error| format!("cannot read the bundled catalog: {}", error))?;
         Ok(RawCatalog {
             categories: file.categories,
             ignored: file.ignored,
@@ -112,30 +112,30 @@ impl RawCatalog {
         })
     }
 
-    /// 利用者の追加(分類 → 名前の配列の JSON)を足す。名前の書き方: `.name` は method 名(弱い・条件なし)、
-    /// `builtin:name` は組み込み、それ以外は dotted の名前。知らない分類・配列でない値は理由を返して飛ばす。
+        /// Adds user additions (JSON of classification -> array of names). Name notation: `.name` is a method name (weak, no condition),
+        /// `builtin:name` is a builtin, anything else is a dotted name. Unknown classifications and non-array values are skipped with a reason returned.
     pub fn with_extra(&self, extra: &serde_json::Value) -> (RawCatalog, Vec<String>) {
         let mut catalog = self.clone();
         let mut problems = Vec::new();
         let Some(object) = extra.as_object() else {
-            problems.push("--raw-catalog-extra は「分類 → 名前の配列」の object であること".to_string());
+                        problems.push("--raw-catalog-extra must be an object of \"classification -> array of names\"".to_string());
             return (catalog, problems);
         };
         let mut added: BTreeMap<RawCategory, Vec<String>> = BTreeMap::new();
         for (key, value) in object {
             let Some(category) = RawCategory::parse(key) else {
                 let known: Vec<&str> = RawCategory::ALL.iter().map(|c| c.as_str()).collect();
-                problems.push(format!("rawSideEffects の分類 \"{}\" は知らない(使える分類: {})", key, known.join(", ")));
+                                problems.push(format!("rawSideEffects classification \"{}\" is unknown (available classifications: {})", key, known.join(", ")));
                 continue;
             };
             let Some(items) = value.as_array() else {
-                problems.push(format!("rawSideEffects.{} が配列でない", key));
+                                problems.push(format!("rawSideEffects.{} is not an array", key));
                 continue;
             };
             for item in items {
                 match item.as_str().filter(|text| !text.trim().is_empty()) {
                     Some(text) => added.entry(category).or_default().push(text.to_string()),
-                    None => problems.push(format!("rawSideEffects.{} に文字列でない値 {}", key, item)),
+                                        None => problems.push(format!("rawSideEffects.{} has a non-string value {}", key, item)),
                 }
             }
         }

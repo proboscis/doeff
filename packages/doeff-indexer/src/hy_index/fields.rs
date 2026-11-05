@@ -1,27 +1,27 @@
-//! defrecord / defwire の欄の読み方の Rust 側の正本 — hy-index の record_def と doeff-linter の DOEFF204(class の欄の一覧)が
-//! この 1 つを呼ぶ。Hy 側の正本は doeff-hy の `doeff_hy.declarations/field-targets`(defrecord と defwire が呼ぶ)。
-//! 2 つの正本が同じ答えを出すことは、同じ入力の表 `packages/doeff-hy/tests/data/record_field_cases.json` を両側の検が読んで確かめる。
+//! The Rust-side source of truth for how defrecord / defwire fields are read — hy-index's record_def and doeff-linter's DOEFF204 (the class field list) both
+//! call this one reader. The Hy-side source of truth is doeff-hy's `doeff_hy.declarations/field-targets` (called by defrecord and defwire).
+//! That the two sources give the same answer is checked by both sides' tests reading the same input table, `packages/doeff-hy/tests/data/record_field_cases.json`.
 //!
-//! 欄として数える形(書いた順): 裸の記号 `x`・`#^ T x`・`(#^ T x)`・`(setv #^ T1 a v1 #^ T2 b v2 …)` の注記つきの的(組ごとに 1 つ)。
-//! 注記の無い `(setv x v)` の的は dataclass の欄ではない(class の属性)ので数えない。それ以外の form は欄ではない。
+//! Forms counted as fields (in written order): a bare symbol `x`, `#^ T x`, `(#^ T x)`, and the annotated targets of `(setv #^ T1 a v1 #^ T2 b v2 …)` (one per pair).
+//! A target of `(setv x v)` with no annotation is not a dataclass field (it is a class attribute), so it is not counted. Any other form is not a field.
 
 use super::reader::{Form, Node, Span};
 
-/// 欄 1 つ(名の範囲と、注記の型の範囲 — 裸の記号は注記なし)。
+/// One field (the range of its name and the range of its type annotation — a bare symbol has no annotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldTarget {
     pub name: Span,
     pub annotation: Option<Span>,
-    /// 欄を書いた form 全体(`(setv …)` に並べた欄はその setv の全体 — 既定値の式の中の証拠を欄に帰すため)。
+        /// The whole form that wrote the field (for a field listed in a `(setv …)`, the whole setv — so evidence inside a default-value expression is attributed to the field).
     pub member: Span,
 }
 
-/// 列の中身から読み捨て(`#_`)を除く。
+/// Drops discards (`#_`) from the contents of a list.
 fn live(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect()
 }
 
-/// `#^ T x` の (名・型)。注記の形でなければ None。
+/// The (name, type) of `#^ T x`. None if it is not an annotation form.
 fn annotated(form: &Form, member: Span) -> Option<FieldTarget> {
     match &form.node {
         Node::Annotated { annotation: Some(annotation), target: Some(target) } if matches!(target.node, Node::Symbol) => {
@@ -31,7 +31,7 @@ fn annotated(form: &Form, member: Span) -> Option<FieldTarget> {
     }
 }
 
-/// record の body の form の列から欄を書いた順に読む。`src` は記号の綴りを見るため(`setv` の頭と、演算子の記号を除くため)。
+/// Reads fields in written order from the list of forms in a record's body. `src` is for looking at symbol spellings (the head of `setv`, and to exclude operator symbols).
 pub fn record_field_targets(src: &str, forms: &[&Form]) -> Vec<FieldTarget> {
     let text = |span: Span| src.get(span.start..span.end).unwrap_or("");
     let mut out = Vec::new();
@@ -60,16 +60,16 @@ mod tests {
     use super::*;
     use crate::hy_index::reader::Reader;
 
-    /// 共通の検の表(Hy 側の正本 doeff_hy.declarations/field-targets の検も同じ表を読む)。
+        /// The shared test table (the Hy-side source of truth, doeff_hy.declarations/field-targets, reads the same table in its tests).
     fn cases() -> Vec<(String, Vec<String>)> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../doeff-hy/tests/data/record_field_cases.json");
-        let table: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("共通の検の表が読めない")).expect("表が JSON でない");
+                let table: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("cannot read the shared test table")).expect("the table is not JSON");
         table["cases"]
             .as_array()
-            .expect("cases が無い")
+                        .expect("no cases")
             .iter()
             .map(|case| {
-                let names = case["names"].as_array().expect("names が無い").iter().map(|n| n.as_str().unwrap_or("").to_string()).collect();
+                                let names = case["names"].as_array().expect("no names").iter().map(|n| n.as_str().unwrap_or("").to_string()).collect();
                 (case["forms"].as_str().unwrap_or("").to_string(), names)
             })
             .collect()
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn hy_index_record_fields_match_the_shared_case_table() {
-        // hy-index の record_def もこの読み手を呼ぶ — 欄(kind field・container R)の名が表と揃う。
+                // hy-index's record_def also calls this reader — the field (kind field, container R) names match the table.
         for (forms, names) in cases() {
             let source = format!("(defrecord R {{:tags {{:context \"c\" :role \"type\"}}}}\n{})\n", forms);
             let index = crate::hy_index::index_source(std::path::Path::new("/r"), std::path::Path::new("/r/m.hy"), &source);

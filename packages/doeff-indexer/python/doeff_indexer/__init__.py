@@ -1,11 +1,11 @@
-"""doeff の印(# doeff: interpreter, default など)の静的な索引。
+"""A static index of doeff markers (such as # doeff: interpreter, default).
 
-Python の口は effect FindSymbols と、Rust の索引器で答える handler rust_indexer、答えの 1 行の型 SymbolInfo
-(ADR-DOE-API-001)。Rust の索引器は内側の拡張 doeff_indexer._native。CLI コマンド doeff-indexer は
-同梱の binary を起こす(_cli)。
+The Python interface is the effect FindSymbols, the handler rust_indexer that answers with the Rust indexer, and SymbolInfo, the one-row answer type
+(ADR-DOE-API-001). The Rust indexer is the inner extension doeff_indexer._native. The CLI command doeff-indexer
+launches the bundled binary (_cli).
 
-名は最初に使う時に読む: CLI コマンドの入口 doeff_indexer._cli はこの package を読むので、doeff と拡張を CLI の起動で読まない。
-拡張を読むのは rust_indexer(_handlers)だけで、FindSymbols と SymbolInfo(_effects)は拡張の .so 無しに読める。
+Names are loaded on first use: the CLI entry point doeff_indexer._cli imports this package, so launching the CLI does not load doeff or the extension.
+Only rust_indexer (_handlers) loads the extension; FindSymbols and SymbolInfo (_effects) can be loaded without the extension's .so.
 """
 
 from typing import TYPE_CHECKING
@@ -15,13 +15,13 @@ if TYPE_CHECKING:
     from doeff_indexer._effects import SymbolInfo as SymbolInfo
     from doeff_indexer._handlers import rust_indexer as rust_indexer
 
-#: 公開の名と、それを定義する内側の module。
+#: Public names and the inner module that defines each.
 _DEFINED_IN = {"FindSymbols": "_effects", "SymbolInfo": "_effects", "rust_indexer": "_handlers"}
 _PUBLIC_API_NAMES = tuple(_DEFINED_IN)
 
 
 def __getattr__(name: str) -> object:
-    """宣言した公開名だけを遅延解決する。import の失敗は呼び手へそのまま伝える。"""
+    """Lazily resolve only the declared public names. An import failure is propagated to the caller as is."""
     if name not in _DEFINED_IN:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     from importlib import import_module
