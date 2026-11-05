@@ -252,10 +252,10 @@ spec:
             # fffb250ee = keeper の版の準備を準備の層で起こし、追い出しの線までの空きが無い間は待つ worker の版。
             # coordinator の process に効く差は無いが、worker の版を coordinator の版より新しくしない約束(版の向き)のため、k3s-0〜2 の
             # worker と同じ commit で上げる。前の版 6e1996649 は fffb250ee の祖先。
-            # af2cf1499 = 手の drain の 1 回の期限を 300 秒までに限る版(card ki-4ec807c68c63)。世代を付けない 300 秒超の頼みは 400 で断り、
+            # af2cf1499 = 手の drain の 1 回の期限を 300 秒までに限る版。世代を付けない 300 秒超の頼みは 400 で断り、
             # 世代つきの頼み(preStop)は 300 秒に縮めて受ける。宣言の Service に publishNotReadyAddresses false を当てる差(cce3e7a81)も入る。
             # worker の版は fa27b4642 のまま(coordinator を先に上げる)。前の版 fa27b4642 は af2cf1499 の祖先。
-            # 6610abc43 = 走らせ直しの次の試行を、積み直した後に連絡のあった worker にだけ置く版(card ki-c3052bed61f1)。担い手が消えた
+            # 6610abc43 = 走らせ直しの次の試行を、積み直した後に連絡のあった worker にだけ置く版。担い手が消えた
             # 切り離しの task を同じ key の次の試行へ戻す差(6e7fface4)と、zeus の mount の係の overlay の差(0abdda785)も入る。
             # worker の版は fa27b4642 のまま(coordinator を先に上げる)。前の版 af2cf1499 は 6610abc43 の祖先。
             # 62dfe5108 = cargo の build の dir を job の子へ渡し、wheel の鍵から外す版。coordinator の process に効く

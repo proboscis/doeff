@@ -1,4 +1,4 @@
-# zeus の worker の cargo の build の中間物を memory(tmpfs の emptyDir)に置く(JSON patch・card ki-1ad278628dab)。
+# zeus の worker の cargo の build の中間物を memory(tmpfs の emptyDir)に置く(JSON patch)。
 #
 # 訳: 2026-11-04 の測りで、cargo の target は file の byte で 約 710 GB/日(会話の Longhorn の volume の中 439・SSD 直 271)と作業場の SSD の書きの
 # 最大だった。volume の中の書きは disk で 約 2.2 倍になる。主は同じ所の build し直しなので、memory に置けば SSD に届かない。

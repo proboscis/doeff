@@ -224,7 +224,7 @@ status.restoreRequired を true のまま残す。戻し直さない(設定 auto
   消さない)、消す途中は消え終わりを待ち、作りは API server が 1 つだけを通す。戻しの待ちの途中に volume が消えたら断らずに読み直し、次の世代の戻しに
   相乗りする。付けが ticket を置けば、節「寿命」の「使う側が勝つ」と同じ順で消さない。
 - 付け先: 戻しの付け先は replica の node でなく、Longhorn が今の node → ticket の多い node → 持ち主 → 名の順の先頭で選ぶ(replica を見ない。v1.13 の
-  pickAttachmentTicketNodeID)。持ち主は作った直後に最初に reconcile した manager で決まるので、2026-11-04 には ws の付け 466 回のうち 101 回が zeus の外だった。
+  pickAttachmentTicketNodeID)。担い手は作った直後に最初に reconcile した manager で決まるので、ある日の測りでは ws の付け 466 回のうち 101 回が zeus の外だった。
   engine が別の node から網越しに replica の状態を読むと、その読みの 1 回の失敗でも戻しが失敗する。だから作る時に spec.nodeID を札の disk の node にする
   (`restore-node`): 持ち主の manager がその node になり、戻しの ticket もその node に付く。dataLocality best-effort が replica を同じ node に寄せる。
   Longhorn は戻し終わると spec.nodeID を空に戻すので、使う時の付け先は使う機体の ticket が決める。戻しの中身は replica が backup の先から直に読むので、これで

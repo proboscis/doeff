@@ -81,10 +81,10 @@ def _tolerates(toleration: dict[str, object], taint: dict[str, str]) -> bool:
         return False
     if toleration.get("key") and toleration["key"] != taint["key"]:
         return False
-    operator = toleration.get("operator") or "Equal"
-    if operator == "Exists":
+    match_op = toleration.get("operator") or "Equal"
+    if match_op == "Exists":
         return True
-    return operator == "Equal" and (toleration.get("value") or "") == taint.get("value", "")
+    return match_op == "Equal" and (toleration.get("value") or "") == taint.get("value", "")
 
 
 @pytest.mark.parametrize("node", NODES)

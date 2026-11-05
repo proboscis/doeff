@@ -14,8 +14,7 @@
 - text の囲みは、spend.py の印字・spire.py の印字の 1 区切り(見出し「<数>. ...」の下。行の頭の `  -> ` を外す)・忘れた時の
   doeff の traceback の頭のどれかと同じ。
 
-記事は全文を card game の battle の例(spire.py)で書く(利用者 2026-11-03 の決定・依頼書 lt-F69PTXMSXTHW0A48M3D26BDQC7・
-監視の例 monitor.py の文を記事に残さない。前半は card ki-4f1ffca5a5f1、後半は card ki-ae150a9a6685)。本文の主張のうち、走らせて確かめられる物も見る: handler 無しでは最初の Roll で
+記事は全文を card game の battle の例(spire.py)で書く(監視の例 monitor.py の文を記事に残さない)。本文の主張のうち、走らせて確かめられる物も見る: handler 無しでは最初の Roll で
 UnhandledEffect になる・同じ seed の戦いは毎回同じ・Monte Carlo の handler の中の run は外の dice を使わない。
 """
 

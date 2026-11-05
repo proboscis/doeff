@@ -10,7 +10,7 @@
 # 載る系の常駐の job が起こす会話の CLI とその子・commands = job の子が自分の子を置く命令の層(zeus と同じ名 — ../zeus/cgroup.yaml の註)。
 # 上に載る系の子は層が無ければ今の cgroup のまま走り、services に居続けて常駐の job の守り(memory.min)を食う — だから会話を受ける前に
 # 層を置く。
-# helios は上に載る系のコアの計算を先にする機体(利用者 2026-11-01)。会話の CLI と命令は余りの空きの分だけを使うので、zeus と違って clis も
+# helios は上に載る系のコアの計算を先にする機体。会話の CLI と命令は余りの空きの分だけを使うので、zeus と違って clis も
 # 限る層(memory.max・cpu.weight 100)に置き、常駐の job の予算(枠の file の memoryMiB)からも外す: 予算 = container の上限 − worker の
 # memory.min − jobs・clis・commands の memory.max(前の予算 31744 MiB のまま — 上限を clis と commands の分だけ上げた)。常駐の job の層の
 # memory.min 30G と CPU の重み 1000 はそのまま。

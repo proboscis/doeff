@@ -1565,7 +1565,7 @@ def test_other_workers_keep_cargo_intermediates_in_target(rendered: list[Manifes
 
 
 # zeus の worker の /dev/shm は memory(tmpfs の emptyDir — 機体の dir の dev-shm-in-memory.yaml の頭の註)。test の使い捨ての PostgreSQL の
-# data の書きを SSD に届けない(card ki-5ab9473f5328)。
+# data の書きを SSD に届けない。
 ZEUS_DEV_SHM_SIZE_LIMIT = "8Gi"
 
 

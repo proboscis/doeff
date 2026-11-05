@@ -76,7 +76,7 @@ name = "doeff"
 # vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、当時は zeus の login
 # shell の node 22 / npm 10 で走った(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。2026-10-10 からは
 # atlas の Pod の node v24.19.0 / npm 11.17.0(/usr/local/bin)で走る。後ろを止めない。
-# 2026-11-04: ide-plugins/ を private repo doeff-ide-plugins へ移したので、段 vscode は外した(card ki-81963364b0bb)。
+# 2026-11-04: ide-plugins/ を private repo doeff-ide-plugins へ移したので、段 vscode は外した。
 # 2026-10-02(cisco-c8 の割り・戻せる): commit の hook と同じ「規則 × file の基点より増えた所見」の比べ
 # (scripts/hook_finding_baseline.py)を repo の全部の Python の file に当てる段 lint を足す — doeff-linter(基点の鍵の binary を
 # land-arm の開発版 → 断面の置き場から探す)と semgrep(uv.lock の版)。hook は binary が見つからない時「測れない」で通すので、
