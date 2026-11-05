@@ -490,16 +490,23 @@
 (defn #^ bool quiet-heartbeat [#^ ClusterState before #^ ClusterState heard #^ str name #^ int now #^ ClusterTiming timing]
   "heartbeat を写した状態 heard が、調停の答えを変えない「静かな heartbeat」か — 静かなら、同じ now で調停を済ませた before の調停を
    繰り返さずに済ませるため(#2655 — 模擬の 1 拍の費用の大半が、変化の無い heartbeat の歩の調停だった)。静か = 前から知っている
-   worker が now に生きていて沈黙の列に無く、名乗り・job の報告・task が、時刻の欄(最後の連絡の時刻・報告の時刻・task の lease の
-   期限の延長)を除いて前と同じ。調停はこの 3 つの欄を「生きているか・期限を過ぎたか」でしか読まず、before の調停の時点で生きていて
-   期限の内だった物は、延びても同じ判断になる。"
+   worker が now に生きていて沈黙の列に無く、名乗り・job の報告・退いた世代の報告(ClusterObservations.retired-statuses)・task が、
+   時刻の欄(最後の連絡の時刻・報告の時刻・task の lease の期限の延長)を除いて前と同じ。調停はこの欄を「生きているか・期限を過ぎたか」
+   でしか読まず、before の調停の時点で生きていて期限の内だった物は、延びても同じ判断になる(退いた世代の報告は、before の調停で
+   止まったと判じた世代なら行が無いので、同じ鍵の行が在る = before の時点で窓の内)。"
   (setv prev (.row before.workers name) info (.row heard.workers name)
-        old-report (.row before.observations.statuses name) new-report (.row heard.observations.statuses name))
+        old-report (.row before.observations.statuses name) new-report (.row heard.observations.statuses name)
+        old-retired before.observations.retired-statuses new-retired heard.observations.retired-statuses)
   (and (is-not prev None) (is-not info None) (is-not old-report None) (is-not new-report None)
        (not-in name before.silent)
        (alive now prev timing.lease-ms)
        (= (replace info :last-seen-ms prev.last-seen-ms) prev)
        (= (replace new-report :at old-report.at) old-report)
+       ;; 退いた世代の報告は、変わった鍵が両方に在り、報告の刻の外が同じ時だけ静か(退いた世代の heartbeat は毎回刻を置き直す)。
+       (= (.size new-retired) (.size old-retired))
+       (all (gfor k (.changed-keys new-retired old-retired)
+              (let [r (.row new-retired k) o (.row old-retired k)]
+                (and (is-not r None) (is-not o None) (= (replace r :at o.at) o)))))
        ;; task は変わった鍵(changed-keys — 基を分け合う表は書いた行だけ読む)だけ比べる(task 387 本で replace が 774 回 → 0〜6 回・Q1)。
        ;; 行の数が違えば静かでない。
        (= (.size heard.tasks) (.size before.tasks))
@@ -507,7 +514,8 @@
               (let [t (.row heard.tasks k) o (.row before.tasks k)]
                 (and (is-not t None) (is-not o None) (= (replace t :lease-until-ms 0) (replace o :lease-until-ms 0))))))
        (= (replace heard :workers before.workers :tasks before.tasks
-                         :observations (replace heard.observations :statuses before.observations.statuses))
+                         :observations (replace heard.observations :statuses before.observations.statuses
+                                                                   :retired-statuses old-retired))
           before)))
 
 

@@ -822,13 +822,17 @@
    他の送り手に押し出されない — resource_policy.keep-report)・statuses = worker の名 → その worker の最新の状態の報告(heartbeat ごとに
    置き換える — #2904)・elder-statuses = 「<名>/<退いた世代>」→ 同じ名の新しい世代が名乗った後も job を動かしている退いた世代の
    最新の状態の報告(その世代の組 SupersededRun が持つ job の行だけ — 受け渡しの間、job を今動かしている process の行を Service の
-   観測に出すため。鍵は保存の superseded/<名>/<世代> と同じで、組が外れた歩で一緒に外す — cluster_policy.elder-statuses-after)。"
+   観測に出すため。鍵は保存の superseded/<名>/<世代> と同じで、組が外れた歩で一緒に外す — cluster_policy.elder-statuses-after)・
+   retired-statuses = 「<名>/<退いた世代>」→ その世代から最後に受けた状態の報告の全部の行(報告の刻 at = その世代から最後に聞いた刻 —
+   退いた世代が lease の窓を越えて黙った時に止まったと判じ、その報告の process の担い手を盤から外すため。外した歩で行も外す —
+   cluster_policy.sweep-stopped-generations)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
   (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #())))
   (setv #^ (get Table WorkerReport) statuses (field :default-factory (partial table-of #())))
-  (setv #^ (get Table WorkerReport) elder-statuses (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table WorkerReport) elder-statuses (field :default-factory (partial table-of #())))
+  (setv #^ (get Table WorkerReport) retired-statuses (field :default-factory (partial table-of #()))))
 
 
 (defrecord ObservedDeployment
