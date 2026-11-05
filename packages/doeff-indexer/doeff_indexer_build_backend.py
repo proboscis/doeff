@@ -14,8 +14,8 @@ from pathlib import Path
 
 import maturin
 
-# build をしない hook は、共通の口のもの(maturin へそのまま渡す)を使う。uv・pip はこの module の属性の名で hook を引くので、
-# `X as X` の形で名指しの再 export にする(__all__ は置かない — DOEFF021)。
+# Hooks that do no building use the ones from the common entry point (passed straight to maturin). uv and pip look up hooks by this module's attribute names,
+# so they are named re-exports in the `X as X` form (no __all__ is placed -- DOEFF021).
 from doeff_cargo_backend import (
     ConfigSettings,
     cargo_target_dir,
@@ -57,7 +57,7 @@ def _binary_source_path(target_dir: Path, binary_name: str) -> Path:
 
 
 def _ensure_cli_binary(target_dir: Path) -> None:
-    """wheel に同梱する CLI の binary を、この build の target(作業木の外)で組んで python/ の下へ写す。"""
+    """Build the CLI binary to bundle in the wheel with this build's target (outside the working tree) and copy it under python/."""
     if os.environ.get("DOEFF_INDEXER_SKIP_CLI_BUILD") == "1":
         return
 
@@ -78,7 +78,7 @@ def _ensure_cli_binary(target_dir: Path) -> None:
 
 
 def _compile_with_cli(target: Path, wheel_directory: str, config_settings: ConfigSettings | None) -> str:
-    """保存先に無い時の組み方: CLI の binary をこの build の target で組んで python/ の下へ写し、maturin で wheel に同梱する。"""
+    """How to build when it is not in the store: build the CLI binary with this build's target, copy it under python/, and bundle it into the wheel with maturin."""
     _ensure_cli_binary(target)
     return maturin.build_wheel(wheel_directory, config_settings, None)
 
@@ -88,7 +88,7 @@ def build_wheel(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """wheel を保存先から渡すため(無ければ CLI の binary を同梱して組んで置く — target は作業木の外)。"""
+    """To hand the wheel over from the store (if absent, build it with the CLI binary bundled and place it -- the target is outside the working tree)."""
     return wheel_from_store(wheel_directory, config_settings, _compile_with_cli)
 
 
@@ -97,11 +97,11 @@ def build_editable(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """editable で入れる時も保存先の wheel から答えるため(CLI の binary と拡張 module を python/ の下へ置く)。"""
+    """To answer from the stored wheel even for an editable install (place the CLI binary and the extension module under python/)."""
     return editable_from_store(wheel_directory, config_settings, _compile_with_cli)
 
 
 def build_sdist(sdist_directory: str, config_settings: ConfigSettings | None = None) -> str:
-    """sdist を組む時も、maturin が cargo に作らせる target を作業木の外に置くため。"""
+    """So that, when building an sdist too, the target that maturin has cargo create is placed outside the working tree."""
     with cargo_target_dir():
         return maturin.build_sdist(sdist_directory, config_settings)

@@ -1,4 +1,4 @@
-# 内側の Rust の拡張 doeff_indexer._native(src/python_api.rs)の型。利用者は入口の FindSymbols と rust_indexer で引く。
+# Types of the inner Rust extension doeff_indexer._native (src/python_api.rs). Users query through the entry points FindSymbols and rust_indexer.
 from typing import Literal
 
 class SymbolInfo:

@@ -1,7 +1,7 @@
 [build-system]
-# 同梱する CLI の binary は .gitignore で python の source から外れ、下の include が wheel に足す。maturin 1.12 以前は足す file を
-# project の根からの path のまま(python/doeff_indexer/bin/)入れ、命令の入口(_cli.py)が探す doeff_indexer/bin/ に無かった
-# (PyPI の 0.1.3 の wheel)。python-source の下の path に直して入れるのは maturin 1.13 から(tools/verify_indexer_wheel.py が見る)。
+# The bundled CLI binary is excluded from the python source by .gitignore, and the include below adds it to the wheel. Up to maturin 1.12, the files to add were
+# placed with their path from the project root unchanged (python/doeff_indexer/bin/), so they were not in doeff_indexer/bin/ where the command entry point (_cli.py) looks
+# (the PyPI 0.1.3 wheel). Placing them at a path under python-source starts with maturin 1.13 (checked by tools/verify_indexer_wheel.py).
 requires = ["maturin>=1.13,<2.0"]
 build-backend = "doeff_indexer_build_backend"
 backend-path = ["."]
@@ -10,11 +10,11 @@ backend-path = ["."]
 name = "doeff-indexer"
 version = "0.2.0"
 description = "Static indexer for doeff programs and Kleisli programs"
-# Python の口は effect FindSymbols(python/doeff_indexer/_effects.py)と handler rust_indexer(_handlers.py)なので doeff を
-# 読み、doeff と同じ版の Python から(ADR-DOE-API-001)。拡張の abi3 は Cargo.toml の pyo3 の
-# abi3-py310 のまま(wheel の tag は cp310-abi3 で、入れられる版はこの requires-python が決める)— py311 へ上げるのは、wheel を
-# 組む CI(.github/workflows/build-indexer.yml)の 3.10 の Python を 3.11 へ替えるのと同じ変更で。
-# 0.2.0 で Python の口が替わった(class Indexer は入口に無い)。
+# The Python interface is the effect FindSymbols (python/doeff_indexer/_effects.py) and the handler rust_indexer (_handlers.py), so it imports doeff
+# and needs the same Python version as doeff (ADR-DOE-API-001). The extension's abi3 stays at pyo3's abi3-py310 in Cargo.toml
+# (the wheel tag is cp310-abi3, and the installable versions are decided by this requires-python) -- raising to py311 is done in the same change that moves the CI
+# that builds the wheel (.github/workflows/build-indexer.yml) from Python 3.10 to 3.11.
+# In 0.2.0 the Python interface changed (class Indexer is no longer at the entry point).
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
@@ -29,7 +29,7 @@ doeff-indexer = "doeff_indexer._cli:main"
 
 [tool.maturin]
 features = ["python"]
-# Rust の索引器の Python の口は内側の拡張 doeff_indexer._native。利用者は入口の effect と handler で引く(ADR-DOE-API-001)。
+# The Python interface of the Rust indexer is the inner extension doeff_indexer._native. Users query through the entry-point effect and handler (ADR-DOE-API-001).
 module-name = "doeff_indexer._native"
 python-source = "python"
 include = [
@@ -39,9 +39,9 @@ include = [
 [tool.uv.sources]
 doeff = { workspace = true }
 
-# uv が「作り直すか」を決める入力(doeff-linter の pyproject の同じ節と同じ訳)。root の dev の組が make sync でこの package を
-# editable で入れ(目録と discovery の検が Rust の拡張を import する)、uv は既定では pyproject.toml が変わった
-# 時にしか作り直さないので、拡張と同梱の binary の入力を全部並べる。python/ の .py は作業木から読むので鍵にしない。
+# Inputs by which uv decides whether to rebuild (same reason as the same section of doeff-linter's pyproject). The root dev group installs this package
+# editable via make sync (the catalog and discovery tests import the Rust extension), and by default uv rebuilds only when pyproject.toml changes,
+# so all inputs of the extension and the bundled binary are listed. The .py files under python/ are read from the working tree, so they are not keys.
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },

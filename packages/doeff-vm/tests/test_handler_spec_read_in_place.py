@@ -1,11 +1,11 @@
-"""据えた事のある素の関数の handler を、VM が Python を呼ばずに据える事の検。
+"""Test that the VM installs a previously installed plain-function handler without calling Python.
 
-VM は handler を据える度に、その handler の据えの形(HandlerSpec — 受ける effect の型・@do の生成器の関数・末尾の
-Resume の行・素通しの effect)を doeff_vm._effect_types.handler_spec から受け取る。素の関数なら答えは関数の __dict__ に
-覚えてあるが、VM は毎回 Python の handler_spec を呼んで覚えた答えを引き、答えの NamedTuple から 4 つの欄を読み、行の
-list を写していた(doeff-traverse の sequential は件ごとに 2 回据える — 1 回あたり Python の側だけで約 220 ns)。
-据えの形は VM の型 doeff_vm.HandlerSpec にし(欄は作る時に 1 度だけ検める)、素の関数の __dict__ に覚えた答えは
-VM が直に読む。規則(何を受け・何を覚えるか)は今までどおり handler_spec の 1 か所にある。
+Each time the VM installs a handler, it receives that handler's install shape (HandlerSpec - the effect types it accepts, the @do generator function, the trailing
+Resume line, and the pass-through effects) from doeff_vm._effect_types.handler_spec. For a plain function the answer is
+remembered in the function's __dict__, but the VM used to call Python's handler_spec every time to fetch the remembered answer, read 4 fields from the NamedTuple answer, and copy the line
+list (doeff-traverse's sequential installs twice per item - about 220 ns per install on the Python side alone).
+The install shape is now the VM type doeff_vm.HandlerSpec (fields are validated only once, at construction), and the answer remembered in a plain function's __dict__ is
+read directly by the VM. The rules (what to accept and what to remember) remain in one place, handler_spec, as before.
 """
 
 import subprocess
@@ -29,7 +29,7 @@ def counting(handler):
     return resolve(handler)
 
 
-et.handler_spec = counting  # VM は規則の関数を最初に据える時に 1 度だけ引く — それより前に差し替える
+et.handler_spec = counting  # The VM fetches the rule function only once, at the first install - replace it before that
 
 from dataclasses import dataclass
 
@@ -83,7 +83,7 @@ def test_the_spec_of_a_handler_is_the_vms_own_type() -> None:
     assert spec.effect_types is None
     assert spec.generator_function is plain.__dict__["__doeff_generator_function__"]
     assert spec.passed is None
-    assert handler_spec(plain) is spec, "素の関数の答えは関数に覚える"
+    assert handler_spec(plain) is spec, "a plain function's answer is remembered on the function"
 
 
 def test_a_plain_function_installed_again_is_installed_without_calling_python() -> None:
@@ -91,8 +91,8 @@ def test_a_plain_function_installed_again_is_installed_without_calling_python() 
     assert done.returncode == 0, done.stderr
     total, plain_calls, method_calls = done.stdout.split()
     assert int(total) == sum(n + 1 for n in range(50)) + sum(n + 2 for n in range(3))
-    assert int(plain_calls) == 1, "素の関数は最初に据える時だけ規則を呼び、2 回目からは関数に覚えた答えを VM が直に読む"
-    assert int(method_calls) == 3, "束ねた method は覚えない(別の instance と共有しない)— 据える度に規則を呼ぶ"
+    assert int(plain_calls) == 1, "a plain function calls the rule only at the first install; from the second time on the VM reads the answer remembered on the function directly"
+    assert int(method_calls) == 3, "a bound method is not remembered (not shared with other instances) - the rule is called on every install"
 
 
 @pytest.mark.parametrize(

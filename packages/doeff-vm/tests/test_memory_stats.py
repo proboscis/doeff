@@ -27,7 +27,7 @@ def _synthetic_query_handler():
 
 
 def _live() -> tuple[int, int, int]:
-    """VM の生きている数を effect ReadVmLiveCounts で読む(読む run は終わってから比べるので、どの読みにも同じだけ入る)。"""
+    """Read the VM live counts via effect ReadVmLiveCounts (the reading run is compared after it ends, so every read includes the same amount)."""
     return run(vm_probe_handler(ReadVmLiveCounts()))
 
 
@@ -116,13 +116,13 @@ def test_arena_slots_reclaimed_when_handler_abandons_continuation() -> None:
     )
 
 
-# ── 積み上げの仕事の量(#2670)────────────────────────────────
-# 検の時間の予算を、機体の負荷で揺れない数で判じるための数。effect ReadVmWorkCounts で読む(拡張の関数は公開の名に無い)。
+# -- Accumulated amount of work (#2670) --------------------------------
+# Counts for judging a test's time budget by a number that does not fluctuate with machine load. Read via effect ReadVmWorkCounts (the extension's function is not among the public names).
 
 
 @dataclass(frozen=True)
 class Work:
-    """積み上げの数の 1 回の読み(か 2 つの読みの差): 歩数と handler を呼んだ回数。"""
+    """One read of the accumulated counts (or the difference of two reads): steps and handler invocations."""
 
     steps: int
     handler_calls: int
@@ -132,7 +132,7 @@ class Work:
 
 
 def _work() -> Work:
-    """積み上げの数を effect で読む(読む run の歩はどの読みにも同じだけ入り、2 つの読みの差では program の分に足される決まった数)。"""
+    """Read the accumulated counts via an effect (the reading run's own steps are included in every read, so in the difference of two reads they add a fixed number on top of the program's share)."""
     steps, handler_calls = run(vm_probe_handler(ReadVmWorkCounts()))
     return Work(steps, handler_calls)
 
@@ -149,14 +149,14 @@ def _handled_scenario():
 
 
 def _work_of_one_run() -> Work:
-    """_handled_scenario を 1 回走らせた間の、積み上げの数の増え(歩数・handler の回数)。"""
+    """Increase in the accumulated counts (steps, handler invocations) while running _handled_scenario once."""
     before = _work()
     assert run(_handled_scenario()) == ["0", "1", "2", "3", "4"]
     return _work().since(before)
 
 
 def test_vm_work_counts_is_cumulative_and_not_a_public_name() -> None:
-    """積み上げの数は減らない・handler を通る program で歩数も handler の回数も増える・package の頭にも拡張の公開の名にも無い。"""
+    """The accumulated counts never decrease; a program through a handler increases both the step count and the handler count; and they appear neither at the package top nor among the extension's public names."""
     from doeff_vm import doeff_vm as ext
 
     grown = _work_of_one_run()
@@ -168,15 +168,15 @@ def test_vm_work_counts_is_cumulative_and_not_a_public_name() -> None:
 
 
 def test_vm_work_counts_grow_by_the_same_amount_for_the_same_program() -> None:
-    """同じ program は 2 回とも同じだけ数を増やす — 機体の負荷に依らない決まった数であること(CPU 秒と違う)。"""
+    """The same program increases the counts by the same amount both times - a fixed number independent of machine load (unlike CPU seconds)."""
     first = _work_of_one_run()
     second = _work_of_one_run()
     assert first == second, (first, second)
 
 
 def test_the_extension_stub_declares_only_functions_the_extension_has() -> None:
-    """compiled の module の型の宣言(doeff_vm/doeff_vm.pyi)が名乗る関数は、拡張に在り、_ で始まる物は拡張の __all__ に無く、
-    _vm_work_counts は int 2 つを返す。"""
+    """Every function named by the compiled module's type declaration (doeff_vm/doeff_vm.pyi) exists in the extension, those starting with _ are absent from the extension's __all__,
+    and _vm_work_counts returns two ints."""
     from doeff_vm import doeff_vm as ext
 
     stub = ast.parse(Path(doeff_vm.__file__).with_name("doeff_vm.pyi").read_text(encoding="utf-8"))

@@ -1,24 +1,24 @@
-//! `hy-index` の解析の検 — 契約の kind・container・docstring・params・import・参照・UTF-16 の列・
-//! 壊れた入力で落ちないことを、source の文字列から確かめる。
+//! Tests for `hy-index` analysis: contract kind, container, docstring, params, import, references, UTF-16 columns,
+//! and not crashing on broken input, all checked from source strings.
 
 use std::path::Path;
 
 use super::*;
 
-/// source を `/r/pkg/sample.hy` として索引する。
+/// Index the source as `/r/pkg/sample.hy`.
 fn index(source: &str) -> HyFileIndex {
     index_source(Path::new("/r"), Path::new("/r/pkg/sample.hy"), source)
 }
 
-/// 名前で定義を引く(無ければ検を落とす)。
+/// Look up a definition by name (fail the test if it is missing).
 fn def<'a>(file: &'a HyFileIndex, name: &str) -> &'a Definition {
     file.definitions
         .iter()
         .find(|definition| definition.name == name)
-        .unwrap_or_else(|| panic!("定義 {name} が無い: {:?}", names(file)))
+        .unwrap_or_else(|| panic!("definition {name} not found: {:?}", names(file)))
 }
 
-/// 定義の (名前, kind, container) の一覧。
+/// List of (name, kind, container) for the definitions.
 fn names(file: &HyFileIndex) -> Vec<(String, &'static str, Option<String>)> {
     file.definitions
         .iter()
@@ -26,7 +26,7 @@ fn names(file: &HyFileIndex) -> Vec<(String, &'static str, Option<String>)> {
         .collect()
 }
 
-/// 契約の位置(行・UTF-16 の列)から source の byte の位置を引く(照合のため)。
+/// Look up the byte position in the source from a contract position (line, UTF-16 column), for cross-checking.
 fn offset_of(source: &str, position: Position) -> usize {
     let line_start: usize = source.split_inclusive('\n').take(position.line as usize).map(str::len).sum();
     let mut units = 0u32;
@@ -39,7 +39,7 @@ fn offset_of(source: &str, position: Position) -> usize {
     source.len()
 }
 
-/// 契約の範囲が指す source の文字列を切り出す。
+/// Cut out the source string that a contract range points at.
 fn slice(source: &str, range: Range) -> &str {
     &source[offset_of(source, range.start)..offset_of(source, range.end)]
 }
@@ -75,13 +75,13 @@ fn every_kind_is_indexed() {
         "defrecord", "defenum", "enum-member", "defhandler", "effect-clause", "deftest", "defadr", "law",
         "defsemgrep", "defpipeline", "defworkflow", "defphase", "defmcp-tool", "deftype", "defmain", "variable",
     ] {
-        assert!(kinds.contains(&kind), "kind {kind} が無い: {:?}", names(&file));
+        assert!(kinds.contains(&kind), "kind {kind} not found: {:?}", names(&file));
     }
     assert!(file.errors.is_empty(), "{:?}", file.errors);
     for definition in &file.definitions {
-        assert_eq!(slice(source, definition.range), definition.name, "{} の range が名前を指さない", definition.name);
+        assert_eq!(slice(source, definition.range), definition.name, "range of {} does not point at the name", definition.name);
         let full = slice(source, definition.full_range);
-        assert!(full.contains(&definition.name), "{} の full_range が名前を含まない", definition.name);
+        assert!(full.contains(&definition.name), "full_range of {} does not contain the name", definition.name);
     }
     assert_eq!(def(&file, "top-var").mangled, "top_var");
     assert!(slice(source, def(&file, "plain").full_range).starts_with("(defn plain"));
@@ -128,7 +128,7 @@ fn containers_of_nested_definitions() {
     assert_eq!(def(&file, "record-writes").params, vec!["store"]);
     assert_eq!(def(&file, "record-writes").docstring.as_deref(), Some("Records writes."));
     assert_eq!(def(&file, "Run").docstring.as_deref(), Some("A run."));
-    // 関数の中の局所の束縛は入れない。
+    // Local bindings inside a function are not included.
     assert!(!file.definitions.iter().any(|definition| definition.name == "table" && definition.kind.as_str() == "variable"));
 }
 
@@ -174,7 +174,7 @@ fn params_as_written() {
     assert!(def(&file, "Weird").params.is_empty());
 }
 
-/// import の照合の 1 行: (module, name, alias, is_require, range が指す文字列)。
+/// One row of import checking: (module, name, alias, is_require, string the range points at).
 type ImportRow = (String, Option<String>, Option<String>, bool, String);
 
 #[test]
@@ -229,19 +229,19 @@ fn references_have_qualifiers_and_skip_non_symbols() {
     assert!(find("obj").iter().all(|reference| reference.qualifier.is_none()));
     assert_eq!(find("strip")[0].qualifier, None);
     for present in ["print", "unquoted-name", "fvalue", "g", "h", "total", "f"] {
-        assert!(!find(present).is_empty(), "参照 {present} が無い");
+        assert!(!find(present).is_empty(), "reference {present} not found");
     }
     for absent in [
         "defn", "comment-name", "string-name", "quoted-name", "tmpl", "discarded-name", "None", "True", "+", "key",
         ":key", "_",
     ] {
-        assert!(find(absent).is_empty(), "参照に {absent} が入っている");
+        assert!(find(absent).is_empty(), "reference {absent} is included");
     }
     for reference in &file.references {
         assert_eq!(slice(source, reference.range), reference.name);
     }
     assert_eq!(find("unquoted-name")[0].mangled, "unquoted_name");
-    assert_eq!(find("val").len(), 1, "require の中の 1 件だけ(先頭の予約語の val は入れない)");
+    assert_eq!(find("val").len(), 1, "only the one inside require (the leading reserved word val is not included)");
 }
 
 #[test]
@@ -249,27 +249,27 @@ fn required_word_macros_are_references_unless_required() {
     let file = index("(check x)\n");
     assert!(file.references.iter().any(|reference| reference.name == "check"));
     let file = index("(require doeff-hy.macros [check])\n(check x)\n");
-    assert_eq!(file.references.iter().filter(|reference| reference.name == "check").count(), 1, "require の中の 1 件だけ");
+    assert_eq!(file.references.iter().filter(|reference| reference.name == "check").count(), 1, "only the one inside require");
 }
 
 #[test]
 fn columns_count_utf16_code_units() {
-    let source = ";; 日本語の註 😀\n(setv 名前 \"😀絵\") (defn 関数 [引数] (print 名前 引数))\n(setv 😀x 1)\n";
+    let source = ";; \u{65e5}\u{672c}\u{8a9e}\u{306e}\u{8a3b} 😀\n(setv \u{540d}\u{524d} \"😀\u{7d75}\") (defn \u{95a2}\u{6570} [\u{5f15}\u{6570}] (print \u{540d}\u{524d} \u{5f15}\u{6570}))\n(setv 😀x 1)\n";
     let file = index(source);
-    let name = def(&file, "名前");
+    let name = def(&file, "\u{540d}\u{524d}");
     assert_eq!(name.range.start, Position { line: 1, character: 6 });
     assert_eq!(name.range.end, Position { line: 1, character: 8 });
-    let function = def(&file, "関数");
-    // `(setv 名前 "😀絵") (defn ` — 😀 は 2 単位。
+    let function = def(&file, "\u{95a2}\u{6570}");
+    // `(setv <name> "<emoji><e>") (defn ` -- the emoji is 2 code units.
     assert_eq!(function.range.start, Position { line: 1, character: 22 });
-    assert_eq!(def(&file, "関数").params, vec!["引数"]);
+    assert_eq!(def(&file, "\u{95a2}\u{6570}").params, vec!["\u{5f15}\u{6570}"]);
     let emoji = def(&file, "😀x");
     assert_eq!(emoji.range.start, Position { line: 2, character: 6 });
     assert_eq!(emoji.range.end, Position { line: 2, character: 9 });
     for definition in &file.definitions {
         assert_eq!(slice(source, definition.range), definition.name);
     }
-    let uses: Vec<_> = file.references.iter().filter(|reference| reference.name == "名前").collect();
+    let uses: Vec<_> = file.references.iter().filter(|reference| reference.name == "\u{540d}\u{524d}").collect();
     assert_eq!(uses.len(), 2);
     assert_eq!(uses[1].range.start, Position { line: 1, character: 37 });
 }
@@ -291,16 +291,16 @@ fn broken_sources_do_not_panic_and_report_errors() {
         "(import m :as",
         "(require m [a :as",
         "\"\\",
-        "\"日本\\",
-        "(setv 名前 \"😀\\",
+        "\"\u{65e5}\u{672c}\\",
+        "(setv \u{540d}\u{524d} \"😀\\",
         "#",
         "#^ #^",
         "~@",
         "(defk f [x] {:pre",
         "(defn [] )",
         "(defadr A :laws [(law",
-        "f\"{名前:}\"",
-        "f\"{名}\"",
+        "f\"{\u{540d}\u{524d}:}\"",
+        "f\"{\u{540d}}\"",
         "(defenum E (",
         "(session var)",
         "(lazy)",
@@ -315,7 +315,7 @@ fn broken_sources_do_not_panic_and_report_errors() {
     assert_eq!(def(&file, "ok").kind.as_str(), "defn");
     assert_eq!(def(&file, "broken").params, vec!["x"]);
     assert_eq!(file.errors.len(), 2, "{:?}", file.errors);
-    assert!(file.errors[0].contains("閉じていない"));
+    assert!(file.errors[0].contains("not closed"));
     let file = index("(foo))\n");
     assert_eq!(file.errors.len(), 1);
 }
@@ -347,17 +347,17 @@ fn top_level_wrappers_and_destructuring() {
     assert!(!file.definitions.iter().any(|definition| definition.name == "hidden" || definition.name.contains("attr")));
 }
 
-/// 呼び出しを callee で引く(1 件もなければ検を落とす)。
+/// Look up calls by callee (fail the test if there are none).
 fn calls_named<'a>(file: &'a HyFileIndex, callee: &str) -> Vec<&'a Call> {
     file.calls.iter().filter(|call| call.callee == callee).collect()
 }
 
-/// 定義の名前から definitions の添字を引く。
+/// Look up the definitions index from a definition name.
 fn index_of(file: &HyFileIndex, name: &str) -> usize {
     file.definitions
         .iter()
         .position(|definition| definition.name == name)
-        .unwrap_or_else(|| panic!("定義 {name} が無い"))
+        .unwrap_or_else(|| panic!("definition {name} not found"))
 }
 
 #[test]
@@ -405,7 +405,7 @@ fn call_callers_are_the_innermost_definition() {
             assert_eq!(call.caller, step, "{callee}");
         }
     }
-    assert_eq!(calls_named(&file, "helper")[0].caller, step, "入れ子の fn の中は外側の定義");
+    assert_eq!(calls_named(&file, "helper")[0].caller, step, "inside a nested fn the caller is the enclosing definition");
     let clause = file
         .definitions
         .iter()
@@ -413,15 +413,15 @@ fn call_callers_are_the_innermost_definition() {
     assert_eq!(calls_named(&file, "log-write")[0].caller, clause);
     assert_eq!(calls_named(&file, "initial-count")[0].caller, Some(index_of(&file, "count")));
     assert_eq!(calls_named(&file, "len")[0].caller, Some(index_of(&file, "size")));
-    // effect 節の頭・予約語・演算子・`(.method obj)` は呼び出しではない。
+    // The head of an effect clause, reserved words, operators, and `(.method obj)` are not calls.
     for absent in ["PutRow", "defk", "defhandler", "<-", "fn", "setv", "resume", "session", ":", "defclass", "defn", "require"] {
-        assert!(calls_named(&file, absent).is_empty(), "{absent} が calls に入っている");
+        assert!(calls_named(&file, absent).is_empty(), "{absent} is included in calls");
     }
     for call in &file.calls {
         assert_eq!(slice(source, call.range), call.callee);
         if let Some(caller) = call.caller {
             let full = file.definitions[caller].full_range;
-            assert!(full.start <= call.range.start && call.range.end <= full.end, "{} の caller の範囲の外", call.callee);
+            assert!(full.start <= call.range.start && call.range.end <= full.end, "{} is outside the caller's range", call.callee);
         }
     }
 }
@@ -453,14 +453,14 @@ fn performed_calls() {
     }
     assert!(calls_named(&file, "method").is_empty());
     assert!(calls_named(&file, "other-method").is_empty());
-    assert!(calls_named(&file, "Point").is_empty(), "match の pattern は呼び出しではない");
-    assert!(calls_named(&file, "of").is_empty(), "型注釈の中は呼び出しではない");
+    assert!(calls_named(&file, "Point").is_empty(), "a match pattern is not a call");
+    assert!(calls_named(&file, "of").is_empty(), "inside a type annotation is not a call");
     let dotted = &calls_named(&file, "fn")[0];
     assert_eq!(dotted.qualifier.as_deref(), Some("mod.sub"));
     assert_eq!(slice(source, dotted.range), "fn");
     assert_eq!(calls_named(&file, "Log")[0].mangled, "Log");
     assert_eq!(calls_named(&file, "key-for")[0].mangled, "key_for");
-    // 参照は今までどおり入る。
+    // References are still included as before.
     assert!(file.references.iter().any(|reference| reference.name == "method"));
     assert!(file.references.iter().any(|reference| reference.name == "Point"));
 }
@@ -474,7 +474,7 @@ fn bang_performs_its_direct_call() {
         assert!(!calls_named(&file, callee)[0].performed, "{callee}");
     }
     assert!(calls_named(&file, "!").is_empty());
-    assert!(calls_named(&file, "x").is_empty(), "(! x) の記号だけの形は呼び出しではない");
+    assert!(calls_named(&file, "x").is_empty(), "the symbol-only form (! x) is not a call");
 }
 
 #[test]
@@ -493,9 +493,9 @@ fn calls_survive_broken_sources() {
 
 #[test]
 fn defeffect_is_a_definition_with_fields_bases_docstring_and_tags() {
-    let source = r#"(defeffect BorrowToken "預かり所から token を借りる" {:fields [#^ str profile ttl] :answer str :tags {:context "custody" :role "intent"}})
+    let source = r#"(defeffect BorrowToken "Borrow a token from the custody" {:fields [#^ str profile ttl] :answer str :tags {:context "custody" :role "intent"}})
 (defeffect Bare {:fields []})
-(defk plan [x] "計画" {:pre [] :tags {:context "billing" :role "program" :n 1}} x)
+(defk plan [x] "plan" {:pre [] :tags {:context "billing" :role "program" :n 1}} x)
 (defhandler h {:tags {}} (E [e k] (k 1)))
 (defn f [] 1)
 "#;
@@ -504,25 +504,25 @@ fn defeffect_is_a_definition_with_fields_bases_docstring_and_tags() {
     assert_eq!(effect.kind.as_str(), "defeffect");
     assert_eq!(effect.bases, vec!["EffectBase"]);
     assert_eq!(effect.params, vec!["profile", "ttl"]);
-    assert_eq!(effect.docstring.as_deref(), Some("預かり所から token を借りる"));
-    let tags = effect.tags.as_ref().expect("タグ");
+    assert_eq!(effect.docstring.as_deref(), Some("Borrow a token from the custody"));
+    let tags = effect.tags.as_ref().expect("tags");
     assert_eq!(tags.get("context").map(String::as_str), Some("custody"));
     assert_eq!(tags.get("role").map(String::as_str), Some("intent"));
     assert!(def(&file, "Bare").tags.is_none());
-    // 契約の辞書の :tags(文字列の値の鍵だけ)。空の辞書と、契約の辞書を持たない定義は null。
-    let plan = def(&file, "plan").tags.as_ref().expect("plan のタグ");
+    // The contract dict's :tags (only keys with string values). An empty dict, or a definition with no contract dict, is null.
+    let plan = def(&file, "plan").tags.as_ref().expect("tags of plan");
     assert_eq!(plan.len(), 2);
     assert!(def(&file, "h").tags.is_none());
     assert!(def(&file, "f").tags.is_none());
-    // defeffect の頭は呼び出しに入れない(予約語)。
+    // The head of defeffect is not included in calls (reserved word).
     assert!(!file.calls.iter().any(|call| call.callee == "defeffect"));
 }
 
 #[test]
 fn defrecord_header_gives_tags_and_checks() {
-    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}。
+    // The head dict {:tags ... :check [...]} of doeff-hy's defrecord.
     let source = r#"(defrecord ChatId
-  "chat の id"
+  "id of a chat"
   {:tags {:context "chat" :role "type"}
    :check [(CHAT-ID-PATTERN.fullmatch value)]}
   (#^ str value))
@@ -532,18 +532,18 @@ fn defrecord_header_gives_tags_and_checks() {
 "#;
     let file = index(source);
     let chat = def(&file, "ChatId");
-    assert_eq!(chat.docstring.as_deref(), Some("chat の id"));
-    let tags = chat.tags.as_ref().expect("ChatId のタグ");
+    assert_eq!(chat.docstring.as_deref(), Some("id of a chat"));
+    let tags = chat.tags.as_ref().expect("tags of ChatId");
     assert_eq!(tags.get("context").map(String::as_str), Some("chat"));
     assert_eq!(tags.get("role").map(String::as_str), Some("type"));
     assert_eq!(chat.checks.as_deref(), Some(&["(CHAT-ID-PATTERN.fullmatch value)".to_string()][..]));
-    // 頭の辞書は欄ではない。欄は辞書の後ろから読む。
+    // The head dict is not a field. Fields are read after the dict.
     assert_eq!(def(&file, "value").container.as_deref(), Some("ChatId"));
     let span = def(&file, "Span");
     assert!(span.tags.is_none());
     assert_eq!(span.checks.as_ref().map(Vec::len), Some(2));
     assert_eq!(def(&file, "end").container.as_deref(), Some("Span"));
-    // :tags だけの頭の辞書は checks が空の列、頭の辞書の無い形は checks を持たない(JSON の欄ごと出さない)。
+    // A head dict with only :tags gives an empty checks list; a form with no head dict has no checks (the JSON field is not emitted at all).
     assert_eq!(def(&file, "Named").checks.as_ref().map(Vec::len), Some(0));
     let plain = def(&file, "Plain");
     assert!(plain.tags.is_none() && plain.checks.is_none());
@@ -553,9 +553,9 @@ fn defrecord_header_gives_tags_and_checks() {
 
 #[test]
 fn defwire_is_read_as_a_record() {
-    // doeff-hy の defwire(JSON の境目の型)は defrecord へ展開する。kind・docstring・欄は defrecord と同じに読む。
+    // doeff-hy's defwire (the type at a JSON boundary) expands to defrecord. kind, docstring, and fields are read the same as defrecord.
     let source = r#"(defwire LandingRow
-  "取り込みの台帳の 1 行"
+  "one row of the intake ledger"
   {:tags {:context "land-notice" :role "type"} :names :camel :unknown :reject}
   (#^ str lane-id)
   (setv #^ (| int None) landed-at None))
@@ -563,21 +563,21 @@ fn defwire_is_read_as_a_record() {
     let file = index(source);
     let row = def(&file, "LandingRow");
     assert_eq!(row.kind.as_str(), "defrecord");
-    assert_eq!(row.docstring.as_deref(), Some("取り込みの台帳の 1 行"));
+    assert_eq!(row.docstring.as_deref(), Some("one row of the intake ledger"));
     assert_eq!(def(&file, "lane-id").container.as_deref(), Some("LandingRow"));
     assert_eq!(def(&file, "landed-at").container.as_deref(), Some("LandingRow"));
-    // 頭の辞書の :tags は defrecord と同じく定義のタグ・:check が無ければ空の列(:names と :unknown は欄ではない)。
-    let tags = row.tags.as_ref().expect("LandingRow のタグ");
+    // The head dict's :tags are the definition's tags just like defrecord, and an empty list if there is no :check (:names and :unknown are not fields).
+    let tags = row.tags.as_ref().expect("tags of LandingRow");
     assert_eq!(tags.get("context").map(String::as_str), Some("land-notice"));
     assert_eq!(row.checks.as_ref().map(Vec::len), Some(0));
-    // defwire の頭は呼び出しに入れない(予約語)。
+    // The head of defwire is not included in calls (reserved word).
     assert!(!file.calls.iter().any(|call| call.callee == "defwire"));
 }
 
 #[test]
 fn format_strings_skip_strings_and_brackets_inside_replacement_fields() {
-    // agora の controllers/durable/protocol/contract.hy(a3f3b062)の形 — 置き換えの欄の中の "; " と入れ子の f 文字列で文字列を
-    // 閉じていた(括弧か文字列が閉じない所が 3 か所と出て、違反が空になった)。Hy の読み手(hy.read_many)と同じく最後まで 1 つの式。
+    // The shape of agora's controllers/durable/protocol/contract.hy (a3f3b062) -- a "; " inside a replacement field and a nested f-string closed the string
+    // early (3 places were reported as unclosed parens or strings, and the violations came out empty). Like Hy's reader (hy.read_many), it is a single expression to the end.
     let cases = [
         r#"(raise (ValueError f"bad: {(.join "; " (gfor f parsed.fields f"{f.field}: {f.reason}"))}"))"#,
         r#"(print f"{{literal}} {x} {(get d "k")} {{ and }}")"#,
@@ -591,7 +591,7 @@ fn format_strings_skip_strings_and_brackets_inside_replacement_fields() {
         assert_eq!(forms.len(), 1, "{:?}", source);
         assert_eq!(forms[0].span.end, source.len(), "{:?}", source);
     }
-    // 閉じない f 文字列は今までどおり読めない所として積む。
+    // An unclosed f-string is still recorded as an unreadable place, as before.
     let broken = r#"(print f"{(get d "k")}"#;
     let mut reader = crate::hy_index::reader::Reader::new(broken, 0, broken.len());
     reader.read_all();
@@ -602,7 +602,7 @@ fn format_strings_skip_strings_and_brackets_inside_replacement_fields() {
 fn defrecord_field_names_are_definitions_not_references() {
     let file = index("(import app.board [old-serving])\n(defrecord Obs (#^ int old-serving) #^ str other bare)\n(defk use [] (old-serving))\n");
     let lines: Vec<_> = file.references.iter().filter(|r| r.name == "old-serving").map(|r| r.range.start.line).collect();
-    // 欄の宣言(1 行目)は参照でない — import(0 行目)と呼ぶ側(2 行目)だけが残る。
+    // The field declaration (line 1) is not a reference -- only the import (line 0) and the caller (line 2) remain.
     assert_eq!(lines, vec![0, 2]);
     assert!(file.definitions.iter().any(|d| d.name == "old-serving" && d.container.as_deref() == Some("Obs")));
 }

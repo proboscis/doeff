@@ -1,17 +1,17 @@
-//! 生の副作用の証拠 — 目録(`raw_catalog.rs`)と索引(imports・references・calls・full_range)だけから、
-//! 定義ごとの直接の証拠と経由の証拠(経路つき)を集める。これは事実であって規則の判定ではない(層の規則の判定の
-//! 正本は agora-controllers の linter)。VS Code の拡張はこの事実を表示するだけで、目録を持たない。
+//! Raw side-effect evidence — from only the catalog (`raw_catalog.rs`) and the index (imports, references, calls, full_range),
+//! collects, per definition, direct evidence and via-evidence (with paths). These are facts, not rule verdicts (the source of truth for layer-rule
+//! verdicts is the agora-controllers linter). The VS Code extension only displays these facts and holds no catalog.
 //!
-//! 規則(doeff-runner の TypeScript の判定から移したもの — 実データで結果が一致することを確かめた):
-//! - 参照は dotted の終端の区切りだけを数え、file の import で完全な名前に直して目録と比べる。
-//! - 例外の型(名前の終わりが Error / Exception / Timeout / Warning)と ignored の名前は数えない。
-//! - 組み込みは import されていない修飾の無い名前を、呼び出しの頭の位置でだけ数える(局所の変数 `open` を拾わない)。
-//! - method 名は弱い証拠で、context の module が file の import か定義の中の参照に見える時だけ数える。数えるのは値の上の
-//!   属性・method として書かれた区切り(`(.m x)`・`x.m`・`(. x m)`)だけで、名前の引き(局所の束縛・引数・定義の名)は
-//!   method の名と同じ綴りでも数えない。
-//! - 経由は、同じ file か import で行き先が決まった呼び出しだけを、深さ 4 まで辿る(循環は止め、同じ証拠は 1 度)。
-//! - 呼び手が「止める」と渡した定義(実 I/O を担うと宣言した定義)には入らない — その先の生の副作用はその定義の責務なので、
-//!   呼び手の経由の証拠に数えない。止める定義を通らない別の経路で届く証拠は今までどおり数える。
+//! Rules (moved from doeff-runner's TypeScript verdicts — confirmed to give identical results on real data):
+//! - Count only the terminal segment of a dotted reference, resolve it to a full name via the file's imports, and compare with the catalog.
+//! - Exception types (names ending in Error / Exception / Timeout / Warning) and ignored names are not counted.
+//! - Builtins are counted only for unimported, unqualified names, and only at the head position of a call (a local variable `open` is not picked up).
+//! - Method names are weak evidence, counted only when the context module is visible as an import of the file or as a reference inside the definition. Only segments written as
+//!   an attribute or method on a value (`(.m x)`, `x.m`, `(. x m)`) are counted; name lookups (local bindings, arguments, definition names)
+//!   are not counted even if spelled the same as a method name.
+//! - Via-evidence follows only calls whose destination is decided within the same file or by an import, up to depth 4 (stopping at cycles, one entry per identical evidence).
+//! - Definitions the caller passed as "stop" (definitions declared to own real I/O) are not entered — raw side effects beyond them are that definition's responsibility,
+//!   so they are not counted as via-evidence of the caller. Evidence reaching by another path that does not go through a stop definition is counted as before.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -21,33 +21,33 @@ use super::model::{
 use super::position::Position;
 use super::raw_catalog::{RawCatalog, RawCategory};
 
-/// 経由の伝播の深さの上限。
+/// Upper limit on the depth of via propagation.
 pub const RAW_VIA_MAX_DEPTH: usize = 4;
-/// 1 つの定義に持つ経由の証拠の上限。
+/// Upper limit on via-evidence held per definition.
 pub const RAW_VIA_MAX_ITEMS: usize = 50;
 
-/// 経由の証拠を辿るか。
+/// Whether to follow via-evidence.
 #[derive(Debug, Clone, Copy)]
 pub enum ViaTrace<'a> {
-    /// 経由を計算しない(1 file の実行 — 経由は file をまたぐ)。
+    /// Do not compute via (a single-file run — via crosses files).
     Skip,
-    /// 経由を辿る。`stops`(完全修飾名 — 定義の `qualified_name` と同じ綴り)の定義には入らない。空なら全部を辿る。
+    /// Follow via. Do not enter definitions in `stops` (fully qualified names — the same spelling as a definition's `qualified_name`). If empty, follow everything.
     Through { stops: &'a BTreeSet<String> },
 }
 
-/// 照合用の名前の規則(doeff-runner の mangle と同じ)— `-` を `_` にし、先頭に続く `-` は残す。
+/// Name rule for matching (same as doeff-runner's mangle) — turns `-` into `_`, keeping leading `-` as is.
 fn match_name(name: &str) -> String {
     let trimmed = name.trim_start_matches('-');
     let leading = &name[..name.len() - trimmed.len()];
     format!("{}{}", leading, trimmed.replace('-', "_"))
 }
 
-/// dotted の名前を区切りごとに照合用の形にする。
+/// Converts a dotted name to matching form, segment by segment.
 fn match_dotted(dotted: &str) -> String {
     dotted.split('.').map(match_name).collect::<Vec<_>>().join(".")
 }
 
-/// dotted の名前が pattern に合うか(区切りの境目での前方一致・末尾 `*` は区切りの中の前方一致)。
+/// Whether a dotted name matches a pattern (prefix match at segment boundaries; a trailing `*` is a prefix match within a segment).
 pub fn matches_pattern(full: &str, pattern: &str) -> bool {
     let name = match_dotted(full);
     if let Some(prefix) = pattern.strip_suffix('*') {
@@ -57,7 +57,7 @@ pub fn matches_pattern(full: &str, pattern: &str) -> bool {
     name == p || name.starts_with(&format!("{}.", p))
 }
 
-/// 範囲が位置を含むか(両端を含む)。
+/// Whether a range contains a position (both ends inclusive).
 fn contains(range: &Range, pos: &Position) -> bool {
     let after_start =
         pos.line > range.start.line || (pos.line == range.start.line && pos.character >= range.start.character);
@@ -65,14 +65,14 @@ fn contains(range: &Range, pos: &Position) -> bool {
     after_start && before_end
 }
 
-/// 照合用の形に直した pattern(末尾 `*` は区切りの中の前方一致)。
+/// A pattern converted to matching form (a trailing `*` is a prefix match within a segment).
 struct CompiledPattern {
     text: String,
     prefix_only: bool,
 }
 
 impl CompiledPattern {
-    /// pattern を照合用の形にする。
+    /// Converts a pattern to matching form.
     fn new(pattern: &str) -> CompiledPattern {
         match pattern.strip_suffix('*') {
             Some(prefix) => CompiledPattern { text: match_dotted(prefix), prefix_only: true },
@@ -80,7 +80,7 @@ impl CompiledPattern {
         }
     }
 
-    /// 照合用の形の名前が合うか(matches_pattern と同じ規則)。
+    /// Whether a name in matching form matches (same rule as matches_pattern).
     fn matches(&self, name: &str) -> bool {
         if self.prefix_only {
             return name.starts_with(&self.text);
@@ -91,16 +91,16 @@ impl CompiledPattern {
     }
 }
 
-/// 分類 1 つの目録を照合用の形にした物。
+/// The catalog of one classification converted to matching form.
 struct CompiledEntry {
     category: super::raw_catalog::RawCategory,
     patterns: Vec<CompiledPattern>,
     builtins: Vec<String>,
-    /// method の名・数える条件の module・受け手を除く引数の上限(目録の RawMethod)。
+    /// Method name, the context module required for counting, and the upper limit on arguments excluding the receiver (the catalog's RawMethod).
     methods: Vec<(String, Vec<String>, Option<usize>)>,
 }
 
-/// 目録の全体を照合用の形にした物(file の走査の前に 1 度だけ作る)。
+/// The whole catalog converted to matching form (built once before scanning files).
 struct CompiledCatalog {
     entries: Vec<CompiledEntry>,
     ignored: Vec<CompiledPattern>,
@@ -109,7 +109,7 @@ struct CompiledCatalog {
 }
 
 impl CompiledCatalog {
-    /// 目録を照合用の形にする。
+    /// Converts the catalog to matching form.
     fn new(catalog: &RawCatalog) -> CompiledCatalog {
         let mut context_modules: Vec<(String, CompiledPattern)> = Vec::new();
         for entry in &catalog.categories {
@@ -139,13 +139,13 @@ impl CompiledCatalog {
     }
 }
 
-/// file の import 1 つを照合用の形にした物。
+/// One import of a file converted to matching form.
 struct CompiledImport {
     bound: Vec<String>,
     head: String,
 }
 
-/// file の import を照合用の形にする(相対 import は目録の外なので除く)。
+/// Converts a file's imports to matching form (relative imports are outside the catalog, so they are dropped).
 fn compile_imports(file: &HyFileIndex) -> Vec<CompiledImport> {
     file.imports
         .iter()
@@ -165,7 +165,7 @@ fn compile_imports(file: &HyFileIndex) -> Vec<CompiledImport> {
         .collect()
 }
 
-/// 参照の書かれた dotted(修飾 + 名前)を照合用の形にする。
+/// Converts the written dotted form of a reference (qualifier + name) to matching form.
 fn chain_of(reference: &Reference) -> String {
     match &reference.qualifier {
         Some(qualifier) => match_dotted(&format!("{}.{}", qualifier, reference.name)),
@@ -173,21 +173,21 @@ fn chain_of(reference: &Reference) -> String {
     }
 }
 
-/// 参照を import で完全な名前に直した結果。
+/// The result of resolving a reference to a full name via imports.
 enum Expanded {
-    /// import を通した名前(`time.sleep`)
+    /// A name resolved through an import (`time.sleep`)
     Import(String),
-    /// import されていない修飾の無い名前の引き(組み込みか、外で決まる名前か、局所の束縛の名)
+    /// An unimported, unqualified name lookup (a builtin, a name decided externally, or a local binding's name)
     Unbound(String),
-    /// file の中の定義の名前の引き
+    /// A lookup of a definition's name inside the file
     Local(String),
-    /// import で決まらない値の上の属性・method の名前(`(.stat p)`・`p.stat`・`(. p stat)`)— method の証拠はここだけ
+    /// An attribute or method name on a value not decided by imports (`(.stat p)`, `p.stat`, `(. p stat)`) — method evidence comes only from here
     Member(String),
 }
 
-/// 参照を file の import で完全な名前に直す(最も長く一致する import を使う・先に見つけた同じ長さの物が勝つ)。
+/// Resolves a reference to a full name via the file's imports (uses the longest matching import; on equal length the one found first wins).
 fn expand(imports: &[CompiledImport], reference: &Reference, local_names: &HashSet<String>) -> Expanded {
-    // `.random rng` や `(. rng (random))` の method 名を、同名の import random と取り違えない。
+    // Do not confuse the method name in `.random rng` or `(. rng (random))` with an import of the same name, random.
     if reference.member && reference.qualifier.is_none() {
         return Expanded::Member(match_name(&reference.name));
     }
@@ -219,16 +219,16 @@ fn expand(imports: &[CompiledImport], reference: &Reference, local_names: &HashS
     }
 }
 
-/// file の走査の結果 — 証拠の候補と、method の証拠を数える条件を決める材料。
+/// Result of scanning a file — candidate evidence, and material for deciding the conditions for counting method evidence.
 pub struct FileScan {
     evidence: Vec<RawEvidence>,
-    /// evidence と同じ添字の、method の証拠に要る context の module(method でなければ None)
+    /// The context module needed for method evidence, at the same index as evidence (None if not a method).
     method_contexts: Vec<Option<Vec<String>>>,
     imported_contexts: HashSet<String>,
     context_refs: HashMap<String, Vec<Range>>,
 }
 
-/// file の参照を 1 度だけ走査して、生の副作用の証拠の候補を集める(目録は照合用の形に前処理した物を使う)。
+/// Scans a file's references once and collects candidate raw side-effect evidence (uses the catalog preprocessed into matching form).
 fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
     let local_names: HashSet<String> =
         file.definitions.iter().filter(|d| d.container.is_none()).map(|d| d.mangled.clone()).collect();
@@ -238,7 +238,7 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
         .filter(|c| c.qualifier.is_none())
         .map(|c| (c.range.start.line, c.range.start.character))
         .collect();
-    // 後ろに `.x` が続く参照(dotted の途中)を見分けるための表
+    // A table for recognizing references followed by `.x` (the middle of a dotted name)
     let continued: HashSet<(u32, i64, String)> = file
         .references
         .iter()
@@ -275,7 +275,7 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
         }
         let end_key = (reference.range.end.line, i64::from(reference.range.end.character), chain_of(reference));
         if continued.contains(&end_key) {
-            continue; // dotted の途中の区切り
+            continue; // a segment in the middle of a dotted name
         }
         let at_call_head = call_heads.contains(&(reference.range.start.line, reference.range.start.character));
         let skip_import = match &expanded {
@@ -288,7 +288,7 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
         };
         for entry in &catalog.entries {
             if entry.category == RawCategory::Random {
-                // import と型の参照は乱数を引かない。種を明示した Random も OS の entropy に触れない。
+                // Imports and type references do not draw random numbers. A Random with an explicit seed does not touch OS entropy either.
                 let imported = file.imports.iter().any(|import| contains(&import.range, &reference.range.start));
                 let seeded = seeded_constructors.contains(&(reference.range.start.line, reference.range.start.character));
                 if reference.type_only || imported || seeded {
@@ -304,7 +304,7 @@ fn scan_compiled(file: &HyFileIndex, catalog: &CompiledCatalog) -> FileScan {
     FileScan { evidence, method_contexts, imported_contexts, context_refs }
 }
 
-/// 参照 1 つを目録の分類 1 つと比べる(method は弱い証拠で、要る context を添える)。
+/// Compares one reference with one classification of the catalog (a method is weak evidence and carries the required context).
 fn match_entry(
     entry: &CompiledEntry,
     expanded: &Expanded,
@@ -325,7 +325,7 @@ fn match_entry(
     match expanded {
         Expanded::Import(full) => (!skip_import && entry.patterns.iter().any(|p| p.matches(full)))
             .then(|| (evidence(full.clone(), RawEvidenceKind::Name, RawStrength::Strong), None)),
-        // 名前の引きは method の証拠にしない(局所の束縛の名 stat は .stat ではない)。
+        // A name lookup is not method evidence (the local binding name stat is not .stat).
         Expanded::Unbound(name) => (at_call_head && entry.builtins.iter().any(|b| b == name))
             .then(|| (evidence(name.clone(), RawEvidenceKind::Builtin, RawStrength::Strong), None)),
         Expanded::Local(_) => None,
@@ -335,8 +335,8 @@ fn match_entry(
     }
 }
 
-/// method 名の一致と、それに要る context。呼びの引数(受け手を除く)が目録の上限より多い呼びは同じ名の別の型の method
-/// として数えない(文字列の `.replace`)。引数の分からない参照(呼びの頭でない)は数える。
+/// Method name match and the context it requires. A call whose arguments (excluding the receiver) exceed the catalog's limit is not counted as a same-named method of another type
+/// (string `.replace`). A reference with unknown arguments (not at the head of a call) is counted.
 fn method_match(entry: &CompiledEntry, name: &str, call_arity: Option<usize>) -> Option<Vec<String>> {
     entry
         .methods
@@ -345,7 +345,7 @@ fn method_match(entry: &CompiledEntry, name: &str, call_arity: Option<usize>) ->
         .map(|(_, context, _)| context.clone())
 }
 
-/// 定義の範囲の中の直接の証拠(method の証拠は context の module が見える時だけ)。
+/// Direct evidence within a definition's range (method evidence only when the context module is visible).
 pub fn direct_evidence(scan: &FileScan, full_range: &Range) -> Vec<RawEvidence> {
     let context_visible = |module: &String| {
         scan.imported_contexts.contains(module)
@@ -365,24 +365,24 @@ pub fn direct_evidence(scan: &FileScan, full_range: &Range) -> Vec<RawEvidence> 
         .collect()
 }
 
-/// 定義を一意に指す番号(file の添字と定義の添字)。
+/// A number that uniquely identifies a definition (file index and definition index).
 type DefId = (usize, usize);
 
-/// 経由の計算のための、索引全体の引き表と覚え書き。
+/// Lookup tables and memo for the whole index, for the via computation.
 struct ViaWorld<'a> {
     files: &'a [HyFileIndex],
-    /// 完全修飾名 → 定義(呼び出しの `target` の行き先 — 名前の解決は qualify.rs の 1 か所)
+    /// Fully qualified name -> definition (the destination of a call's `target` — name resolution lives in one place, qualify.rs)
     by_qualified: HashMap<&'a str, Vec<DefId>>,
     direct: Vec<Vec<Vec<RawEvidence>>>,
     callees: HashMap<DefId, Vec<DefId>>,
-    /// 入らない定義の完全修飾名(`ViaTrace::Through` の `stops`)
+    /// Fully qualified names of definitions not entered (`stops` of `ViaTrace::Through`)
     stops: &'a BTreeSet<String>,
-    /// (定義, 残りの段数) → その段数の中で直接の証拠を持つ定義に届き得るか(訪問中の定義を除かない上限の見積もり)
+    /// (definition, remaining steps) -> whether, within that many steps, it can reach a definition holding direct evidence (an upper-bound estimate that does not exclude definitions being visited)
     reachable: HashMap<(DefId, usize), bool>,
 }
 
 impl<'a> ViaWorld<'a> {
-    /// 索引全体の引き表を作り、全定義の直接の証拠を計算する。
+    /// Builds the lookup tables for the whole index and computes the direct evidence of all definitions.
     fn new(files: &'a [HyFileIndex], direct: Vec<Vec<Vec<RawEvidence>>>, stops: &'a BTreeSet<String>) -> ViaWorld<'a> {
         let mut by_qualified: HashMap<&'a str, Vec<DefId>> = HashMap::new();
         for (fi, file) in files.iter().enumerate() {
@@ -393,7 +393,7 @@ impl<'a> ViaWorld<'a> {
         ViaWorld { files, by_qualified, direct, callees: HashMap::new(), stops, reachable: HashMap::new() }
     }
 
-    /// 定義の範囲の中の呼び出しが行き着く定義(自分の中の入れ子と、入らない定義 `stops` は除く・書いた順・重ねない)。
+    /// Definitions that calls within a definition's range end up at (excluding nested ones inside itself and non-entered definitions `stops`; in written order, without duplicates).
     fn callees_of(&mut self, id: DefId) -> Vec<DefId> {
         if let Some(known) = self.callees.get(&id) {
             return known.clone();
@@ -421,8 +421,8 @@ impl<'a> ViaWorld<'a> {
         found
     }
 
-    /// 定義から `steps` 段以内の呼び出しで、直接の証拠を持つ定義に届き得るか。訪問中の定義を除かない分だけ広く
-    /// 見積もるので、偽なら本当に届かない — 経由の探索はこれが偽の枝を飛ばしても結果が変わらない。
+    /// Whether, by calls within `steps` steps from a definition, it can reach a definition holding direct evidence. Estimates broadly, as it does not exclude definitions being visited,
+    /// so false means it truly cannot reach — skipping branches where this is false does not change the via search result.
     fn can_reach(&mut self, id: DefId, steps: usize) -> bool {
         if steps == 0 {
             return false;
@@ -430,7 +430,7 @@ impl<'a> ViaWorld<'a> {
         if let Some(&known) = self.reachable.get(&(id, steps)) {
             return known;
         }
-        // 問いは 1 段ごとに段数が減るので、同じ (定義, 段数) の問いに戻ることは無い(循環でも止まる)
+        // The remaining steps shrink with each level of the query, so we never return to the same (definition, steps) query (it stops even with cycles)
         let mut found = false;
         for callee in self.callees_of(id) {
             if !self.direct[callee.0][callee.1].is_empty() || self.can_reach(callee, steps - 1) {
@@ -442,7 +442,7 @@ impl<'a> ViaWorld<'a> {
         found
     }
 
-    /// 経由の証拠を深さ優先で集める(循環は経路の中の定義で止め、同じ証拠の位置は 1 度だけ)。
+    /// Collects via-evidence depth-first (stops at cycles by the definitions in the path; one entry per identical evidence position).
     fn collect_via(
         &mut self,
         id: DefId,
@@ -458,7 +458,7 @@ impl<'a> ViaWorld<'a> {
             if visiting.contains(&callee) {
                 continue;
             }
-            // この先の段数で証拠に届き得ない呼び出し先は、訪れても何も足さない
+            // A callee that cannot reach evidence within the remaining steps adds nothing even if visited
             let remaining = RAW_VIA_MAX_DEPTH - (through.len() + 1);
             if self.direct[callee.0][callee.1].is_empty() && !self.can_reach(callee, remaining) {
                 continue;
@@ -487,7 +487,7 @@ impl<'a> ViaWorld<'a> {
     }
 }
 
-/// 全 file の定義の直接の証拠を、file を分けて並列に求める(file ごとに独立なので順は変わらない)。
+/// Computes the direct evidence of definitions in all files in parallel, split by file (each file is independent, so the order does not change).
 fn direct_in_parallel(files: &[HyFileIndex], compiled: &CompiledCatalog) -> Vec<Vec<Vec<RawEvidence>>> {
     let per_file = |file: &HyFileIndex| -> Vec<Vec<RawEvidence>> {
         let scan = scan_compiled(file, compiled);
@@ -502,15 +502,15 @@ fn direct_in_parallel(files: &[HyFileIndex], compiled: &CompiledCatalog) -> Vec<
             .into_iter()
             .zip(files.chunks(chunk))
             .flat_map(|(handle, part)| {
-                // 走査が panic しても全体は止めず、その file の定義は証拠なしとして進む
+                // Even if a scan panics, do not stop the whole run; proceed with that file's definitions having no evidence
                 handle.join().unwrap_or_else(|_| part.iter().map(|f| vec![Vec::new(); f.definitions.len()]).collect())
             })
             .collect()
     })
 }
 
-/// 索引の全 file の定義に、直接の証拠と(`with_via` なら)経由の証拠を埋める。経由は file をまたぐので、
-/// `--root` の全体の実行だけが計算する(1 file や `--file` の実行では `ViaTrace::Skip` で空)。
+/// Fills the definitions of all files in the index with direct evidence and (with `with_via`) via-evidence. Via crosses files, so
+/// only a full `--root` run computes it (a single-file or `--file` run leaves it empty with `ViaTrace::Skip`).
 pub fn annotate(files: &mut [HyFileIndex], catalog: &RawCatalog, trace: ViaTrace) {
     let compiled = CompiledCatalog::new(catalog);
     let direct = direct_in_parallel(files, &compiled);

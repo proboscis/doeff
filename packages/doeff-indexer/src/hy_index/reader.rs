@@ -1,19 +1,19 @@
-//! Hy の読み取り器 — Hy の source を form の木にする。括弧が閉じていなくても落ちない。
+//! Hy reader — turns Hy source into a tree of forms. It does not fail even if parentheses are unclosed.
 //!
-//! 出自: `vscode-semantic-highlighting/rust-highlighter/src/hy.rs` の `Reader`(色付け用)を写し、
-//! 索引のために次を変えた — すべての form に byte の範囲(`Span`)を持たせる(定義の form 全体の
-//! 範囲を出すため)、読めなかった箇所を `ReadIssue` として積む(`errors` に出すため)、
-//! reader macro の tag の範囲を持つ。`#^` 注釈・`#_`・`#(`・`#{`・bracket 文字列・f 文字列・
-//! `#*` / `#**` の扱いは写し元と同じ。
+//! Origin: copied from `Reader` in `vscode-semantic-highlighting/rust-highlighter/src/hy.rs` (for coloring),
+//! with these changes for the index — every form carries a byte range (`Span`) (to report the range of the whole
+//! definition form), unreadable spots are accumulated as `ReadIssue` (to report in `errors`),
+//! and the range of a reader macro's tag is kept. Handling of `#^` annotations, `#_`, `#(`, `#{`, bracket strings, f-strings and
+//! `#*` / `#**` is the same as the original.
 
-/// source の中の byte の範囲 `[start, end)`。境界は必ず UTF-8 の文字の境目に来る。
+/// A byte range `[start, end)` in the source. Boundaries always fall on UTF-8 character boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
 }
 
-/// 括弧の種類。`#(` は tuple、`#{` は set。
+/// Kind of bracket. `#(` is a tuple, `#{` is a set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delim {
     Paren,
@@ -24,7 +24,7 @@ pub enum Delim {
 }
 
 impl Delim {
-    /// 閉じ括弧の byte を返す(括弧の対応を確かめるため)。
+    /// Returns the byte of the closing bracket (to check bracket matching).
     fn closer(self) -> u8 {
         match self {
             Delim::Paren | Delim::Tuple => b')',
@@ -33,7 +33,7 @@ impl Delim {
         }
     }
 
-    /// 開き括弧の綴りを返す(errors の文言のため)。
+    /// Returns the spelling of the opening bracket (for error messages).
     pub fn opener_text(self) -> &'static str {
         match self {
             Delim::Paren => "(",
@@ -45,7 +45,7 @@ impl Delim {
     }
 }
 
-/// 文字列の種類。docstring として読めるのは `Plain` と `Bracket` だけ。
+/// Kind of string. Only `Plain` and `Bracket` can be read as docstrings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrKind {
     Plain,
@@ -56,7 +56,7 @@ pub enum StrKind {
     FormatBracket,
 }
 
-/// form の前に付く記号(quote・unquote・unpack)。
+/// Marks placed before a form (quote, unquote, unpack).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prefix {
     Quote,
@@ -67,14 +67,14 @@ pub enum Prefix {
     UnpackMapping,
 }
 
-/// 読んだ form の 1 つ。`span` は form 全体(前置の記号・括弧を含む)。
+/// One form read. `span` covers the whole form (including prefix marks and brackets).
 #[derive(Debug)]
 pub struct Form {
     pub span: Span,
     pub node: Node,
 }
 
-/// form の中身の種類。
+/// Kind of form content.
 #[derive(Debug)]
 pub enum Node {
     Seq { delim: Delim, items: Vec<Form> },
@@ -89,7 +89,7 @@ pub enum Node {
 }
 
 impl Form {
-    /// `( … )` の中身を返す(それ以外は None)。
+    /// Returns the contents of `( … )` (None for anything else).
     pub fn paren_items(&self) -> Option<&[Form]> {
         match &self.node {
             Node::Seq { delim: Delim::Paren, items } => Some(items),
@@ -97,7 +97,7 @@ impl Form {
         }
     }
 
-    /// `[ … ]` の中身を返す(それ以外は None)。
+    /// Returns the contents of `[ … ]` (None for anything else).
     pub fn bracket_items(&self) -> Option<&[Form]> {
         match &self.node {
             Node::Seq { delim: Delim::Bracket, items } => Some(items),
@@ -105,26 +105,26 @@ impl Form {
         }
     }
 
-    /// `{ … }`(dict)かを返す(defk の `{:pre … :post …}` を読み飛ばすため)。
+    /// Returns whether this is `{ … }` (a dict) (to skip defk's `{:pre … :post …}`).
     pub fn is_brace(&self) -> bool {
         matches!(self.node, Node::Seq { delim: Delim::Brace, .. })
     }
 }
 
-/// 読み取りで見つけた壊れた箇所(読めた分は読み続ける)。
+/// A broken spot found while reading (reading continues for what can be read).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadIssue {
-    /// 開き括弧が file の終わりまで閉じない。
+    /// An opening bracket is not closed by the end of the file.
     Unclosed { delim: Delim, open: usize },
-    /// 対応しない閉じ括弧で列が終わった。
+    /// The sequence ended with a non-matching closing bracket.
     Mismatched { delim: Delim, open: usize, at: usize },
-    /// top level に余った閉じ括弧。
+    /// A stray closing bracket at top level.
     StrayCloser { at: usize },
-    /// 文字列が file の終わりまで閉じない。
+    /// A string is not closed by the end of the file.
     UnterminatedString { start: usize },
 }
 
-/// source の一部 `[pos, end)` を読む読み取り器。
+/// A reader for part of the source `[pos, end)`.
 pub struct Reader<'a> {
     src: &'a str,
     bytes: &'a [u8],
@@ -133,24 +133,24 @@ pub struct Reader<'a> {
     pub issues: Vec<ReadIssue>,
 }
 
-/// 記号の終わりになる byte かを返す。
+/// Returns whether the byte ends a symbol.
 fn is_delimiter(b: u8) -> bool {
     b.is_ascii_whitespace() || matches!(b, b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'"' | b';')
 }
 
-/// 閉じ括弧の byte かを返す。
+/// Returns whether the byte is a closing bracket.
 fn is_closer(b: u8) -> bool {
     matches!(b, b')' | b']' | b'}')
 }
 
 impl<'a> Reader<'a> {
-    /// `src` の `[start, end)` を読む読み取り器を作る(f 文字列の `{…}` の中を読む時は部分を渡す)。
+    /// Creates a reader for `[start, end)` of `src` (a sub-range is passed when reading inside an f-string's `{…}`).
     pub fn new(src: &'a str, start: usize, end: usize) -> Self {
         let end = end.min(src.len());
         Reader { src, bytes: src.as_bytes(), pos: start.min(end), end, issues: Vec::new() }
     }
 
-    /// 今の位置から `offset` 先の byte を返す(範囲の外は None)。
+    /// Returns the byte `offset` ahead of the current position (None outside the range).
     fn peek(&self, offset: usize) -> Option<u8> {
         let at = self.pos + offset;
         if at < self.end {
@@ -160,7 +160,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// 範囲の終わりまで top level の form を全部読む。
+    /// Reads all top-level forms up to the end of the range.
     pub fn read_all(&mut self) -> Vec<Form> {
         let mut forms = Vec::new();
         if self.src[self.pos..self.end].starts_with("#!") {
@@ -184,14 +184,14 @@ impl<'a> Reader<'a> {
         forms
     }
 
-    /// 行末までの註を読み飛ばす。
+    /// Skips a comment to the end of the line.
     fn skip_line_comment(&mut self) {
         while self.pos < self.end && self.bytes[self.pos] != b'\n' {
             self.pos += 1;
         }
     }
 
-    /// 空白と註を読み飛ばす。
+    /// Skips whitespace and comments.
     fn skip_trivia(&mut self) {
         while let Some(b) = self.peek(0) {
             if b == b';' {
@@ -204,7 +204,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// form を 1 つ読む。範囲の終わりか閉じ括弧(消費しない)なら None。
+    /// Reads one form. Returns None at the end of the range or at a closing bracket (not consumed).
     pub fn read_form(&mut self) -> Option<Form> {
         self.skip_trivia();
         let start = self.pos;
@@ -229,7 +229,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// 括弧の列を読む。閉じない・食い違う閉じ括弧は issue に積んで列を終える。
+    /// Reads a sequence of brackets. An unclosed or mismatched closing bracket is accumulated as an issue and ends the sequence.
     fn read_seq(&mut self, start: usize, delim: Delim, open_len: usize) -> Form {
         self.pos += open_len;
         let close = delim.closer();
@@ -260,14 +260,14 @@ impl<'a> Reader<'a> {
         Form { span: Span { start, end: self.pos }, node: Node::Seq { delim, items } }
     }
 
-    /// 前置の記号の付いた form を読む。
+    /// Reads a form with a prefix mark.
     fn read_prefixed(&mut self, start: usize, prefix: Prefix, len: usize) -> Form {
         self.pos += len;
         let inner = self.read_form().map(Box::new);
         Form { span: Span { start, end: self.pos }, node: Node::Prefixed { prefix, inner } }
     }
 
-    /// `#` で始まる form(tuple・set・bracket 文字列・unpack・注釈・読み捨て・reader macro)を読む。
+    /// Reads a form starting with `#` (tuple, set, bracket string, unpack, annotation, discard, reader macro).
     fn read_dispatch(&mut self, start: usize) -> Form {
         match self.peek(1) {
             Some(b'(') => self.read_seq(start, Delim::Tuple, 2),
@@ -295,7 +295,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// reader macro の `#tag form` を読む(tag は記号として数えない)。
+    /// Reads a reader macro `#tag form` (the tag is not counted as a symbol).
     fn read_tagged(&mut self, start: usize) -> Form {
         self.pos = start + 1;
         while let Some(b) = self.peek(0) {
@@ -308,7 +308,7 @@ impl<'a> Reader<'a> {
         Form { span: Span { start, end: self.pos }, node: Node::Tagged { inner } }
     }
 
-    /// `#[delim[ … ]delim]` の bracket 文字列を読む。形が合わなければ reader macro として読む。
+    /// Reads a `#[delim[ … ]delim]` bracket string. If the shape does not match, reads it as a reader macro.
     fn read_bracket_string(&mut self, start: usize) -> Form {
         let delim_start = start + 2;
         let mut cursor = delim_start;
@@ -333,7 +333,7 @@ impl<'a> Reader<'a> {
         Form { span: Span { start, end }, node: Node::Str { kind, body: Span { start: body_start, end: body_end } } }
     }
 
-    /// `"…"` の文字列を読む(`quote` は開きの `"` の位置、`start` は接頭辞を含む始まり)。
+    /// Reads a `"…"` string (`quote` is the position of the opening `"`, `start` is the start including the prefix).
     fn read_string(&mut self, start: usize, quote: usize, kind: StrKind) -> Form {
         let (body_end, after) = self.string_end(quote, kind == StrKind::Format);
         self.pos = after.min(self.end);
@@ -344,13 +344,13 @@ impl<'a> Reader<'a> {
                 self.end
             }
         };
-        // `\` の後の 2 byte 飛ばしが多 byte 文字の途中に落ちても、終わりは `"` か範囲の終わりなので境目に来る。
+        // Even if skipping 2 bytes after `\` lands in the middle of a multibyte character, the end is `"` or the end of the range, so it falls on a boundary.
         Form { span: Span { start, end: self.pos }, node: Node::Str { kind, body: Span { start: quote + 1, end: body_end } } }
     }
 
-    /// 開きの `"` の位置 quote から文字列の終わりを探す — (閉じの `"` の位置・その次の位置)。閉じが無ければ (None・範囲の終わり)。
-    /// f 文字列(format)は、置き換えの欄 `{…}` の中が Hy の式なので、欄の中の文字列(入れ子の `f"…"` も)と括弧を飛ばしてから
-    /// 閉じの `"` を探す — Hy の読み手と同じ(`f"{(.join "; " xs)}"` の中の `"` で文字列を閉じない)。`{{` は字面の `{`。
+    /// Finds the end of a string from the position quote of the opening `"` — (position of the closing `"`, the position after it). If there is no closing, (None, end of range).
+    /// For an f-string (format), the replacement field `{…}` contains a Hy expression, so strings inside the field (including nested `f"…"`) and brackets are skipped
+    /// before searching for the closing `"` — same as Hy's reader (a `"` inside `f"{(.join "; " xs)}"` does not close the string). `{{` is a literal `{`.
     fn string_end(&self, quote: usize, format: bool) -> (Option<usize>, usize) {
         let mut pos = quote + 1;
         while pos < self.end {
@@ -365,8 +365,8 @@ impl<'a> Reader<'a> {
         (None, self.end)
     }
 
-    /// f 文字列の置き換えの欄の中身(`{` の次)から、対応する `}` の次の位置を返す。中の文字列は `string_end` で飛ばし
-    /// (接頭辞 `f` の付いた入れ子の f 文字列も)、`(`・`[`・`{` の入れ子を数える。閉じが無ければ範囲の終わり。
+    /// From the contents of an f-string replacement field (after `{`), returns the position after the matching `}`. Strings inside are skipped with `string_end`
+    /// (including nested f-strings with the `f` prefix), and nesting of `(`, `[`, `{` is counted. If there is no closing, the end of the range.
     fn replacement_end(&self, mut pos: usize) -> usize {
         let mut depth = 0usize;
         while pos < self.end {
@@ -389,7 +389,7 @@ impl<'a> Reader<'a> {
         self.end
     }
 
-    /// 記号・keyword・数・接頭辞つき文字列(`f"…"` など)を読む。
+    /// Reads a symbol, keyword, number, or prefixed string (such as `f"…"`).
     fn read_atom(&mut self) -> Form {
         let start = self.pos;
         while let Some(b) = self.peek(0) {
@@ -422,7 +422,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// 数の literal かを返す(先頭が数字、または符号・`.` の次が数字)。
+/// Returns whether this is a number literal (starts with a digit, or a digit follows a sign or `.`).
 fn is_number(text: &str) -> bool {
     let mut chars = text.chars();
     match chars.next() {
@@ -432,7 +432,7 @@ fn is_number(text: &str) -> bool {
     }
 }
 
-/// f 文字列の中で `open` の `{` を閉じる `}` を探す(入れ子の括弧と文字列を飛ばす)。見つからなければ `end`。
+/// Finds the `}` closing the `{` at `open` inside an f-string (skipping nested brackets and strings). If not found, `end`.
 pub fn matching_brace(bytes: &[u8], open: usize, end: usize) -> usize {
     let mut depth = 0usize;
     let mut i = open;

@@ -1,5 +1,5 @@
 {
-  "_comment": "生の副作用の目録 — 宣言の唯一の場所。hy-index(Rust)が build 時に取り込み(include_str!)、定義ごとの raw(生の副作用の証拠という事実)を出す。規則の判定はしない(判定の正本は agora-controllers の linter)。VS Code の拡張はこの事実を表示するだけで、目録を持たない。pattern は import を通した完全な名前と区切りの境目で前方一致(末尾 * は区切りの中の前方一致)、builtin は import されていない修飾の無い名前を呼び出しの頭の位置でだけ、method は method 名だけの一致で context の module が file の import か定義の中の参照に見える時だけ数える。ignored は pattern に合っても副作用でない名前。",
+  "_comment": "Catalog of raw side effects -- the only place for the declaration. hy-index (Rust) takes it in at build time (include_str!) and emits raw (the fact of raw side-effect evidence) for each definition. It makes no rule verdicts (the source of truth for verdicts is the linter in agora-controllers). The VS Code extension only displays this fact and holds no catalog. A pattern matches by prefix on the full name resolved through imports at a segment boundary (a trailing * is a prefix match within a segment); a builtin is counted only for an unimported, unqualified name at the head position of a call; a method is matched by method name alone and counted only when the context module appears in the file's imports or in a reference inside the definition. ignored lists names that match a pattern but are not side effects.",
   "strength": {
     "pattern": "strong",
     "builtin": "strong",

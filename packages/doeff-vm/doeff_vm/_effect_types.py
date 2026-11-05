@@ -121,7 +121,7 @@ def _passed_effects(handler: types.FunctionType) -> PassedEffects | None:
     try:
         passes, keeps = source()
     except (NameError, AttributeError):
-        # 番の型が install の時に解けない — 今までどおり全部の effect を handler が受ける(番がその場で判じる)
+        # The key types cannot be resolved at install time - as before, the handler accepts every effect (the key decides on the spot)
         return None
     passes = passes if isinstance(passes, tuple) else (passes,)
     if not passes or not all(isinstance(t, type) for t in passes + tuple(keeps)):
@@ -147,9 +147,9 @@ def handler_spec(handler: object) -> HandlerSpec:
         definition = handler.__func__.__dict__
         generator = definition.get("__doeff_generator_function__")
         if isinstance(generator, types.FunctionType):
-            # @do の定義を同じ self / cls に束縛する。型の解決は元の
-            # bound method に対して行い、effect の前の self を読み飛ばす。
-            # self を関数の cache に保存しない: 別 instance と共有しない。
+            # Bind the @do definition to the same self / cls. Type resolution is done on the original
+            # bound method, skipping the self before the effect.
+            # Do not store self in the function's cache: it must not be shared with other instances.
             return HandlerSpec(
                 handler_effect_types(handler),
                 types.MethodType(generator, handler.__self__),
@@ -256,7 +256,7 @@ def _resolve_parameter(function: types.FunctionType, index: int) -> Any:
         return _UNRESOLVED
     try:
         if isinstance(annotation, str):
-            # 文字の註は関数の globals で評価する — code が同じでも globals が違えば答えが違いうるので code で共有しない
+            # String annotations are evaluated with the function's globals - even with the same code, differing globals may give different answers, so do not share by code
             return _types_of(annotation, function)
         return _shared_parameter_types(function, index, annotation)
     except _NoEffectIsInstanceError as refused:
@@ -301,7 +301,7 @@ def _shared_parameter_types(function: types.FunctionType, index: int, annotation
         return shared.effect_types
     resolved = _types_of(annotation, function)
     if resolved is _UNRESOLVED:
-        # 解けない註は共有しない — 後で作る閉包では解けうる(後で定義した名前)
+        # Do not share unresolvable annotations - a closure created later may resolve them (names defined later)
         return _UNRESOLVED
     key = id(code)
     _SHARED_BY_CODE[key] = _SharedResolution(weakref.ref(code, functools.partial(_forget_code, key)), index, annotation, resolved)

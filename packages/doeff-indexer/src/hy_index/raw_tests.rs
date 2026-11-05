@@ -1,4 +1,4 @@
-//! 生の副作用の証拠のテスト — Hy の source を索引してから証拠まで通す(doeff-runner の raw.test.ts の例を移したもの)。
+//! Tests for raw side-effect evidence -- index Hy source and run it through to the evidence (ported from the examples in doeff-runner's raw.test.ts).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -71,9 +71,9 @@ const CLOCK: &str = r#"(import time)
 (defk reads-clock [] (<- (GetTime)))
 "#;
 
-/// 局所の束縛の名が method の名(`stat`・`read-text`)と同じでも証拠にしない反例(agora-controllers の
-/// daily_verify_translate.hy の kind-at で `(<- stat (StatPath …))` の `stat` が `.stat` の弱い証拠になっていた)。method の名は
-/// `(.m x)` の頭・`x.m` の属性・`(. obj m)` / `(. obj (m …))` の属性にある時だけ method の証拠。
+/// Counterexample: even when a local binding's name equals a method name (`stat`, `read-text`), it is not evidence (in agora-controllers'
+/// daily_verify_translate.hy kind-at, the `stat` of `(<- stat (StatPath ...))` was treated as weak evidence of `.stat`). A method name is
+/// method evidence only when it is at the head of `(.m x)`, the attribute of `x.m`, or the attribute of `(. obj m)` / `(. obj (m ...))`.
 const MEMBERS: &str = r#"(import pathlib [PurePosixPath])
 (import doeff_core_effects.file_effects [StatPath])
 (require doeff-hy.macros [defk <- val var])
@@ -100,7 +100,7 @@ const MEMBERS: &str = r#"(import pathlib [PurePosixPath])
 (defk bare-attribute-access [path] (. path stat))
 "#;
 
-/// 3 つの file を索引し、目録(既定か、追加つき)で全体の証拠を集める。
+/// Index three files and gather overall evidence with the catalog (default, or with additions).
 fn judged(extra: Option<serde_json::Value>) -> Vec<HyFileIndex> {
     let root = Path::new("/r");
     let mut files = vec![
@@ -109,7 +109,7 @@ fn judged(extra: Option<serde_json::Value>) -> Vec<HyFileIndex> {
         index_source(root, Path::new("/r/pkg/clock.hy"), CLOCK),
         index_source(root, Path::new("/r/pkg/members.hy"), MEMBERS),
     ];
-    let bundled = RawCatalog::bundled().expect("同梱の目録が読める");
+    let bundled = RawCatalog::bundled().expect("the bundled catalog can be read");
     let catalog = match extra {
         Some(value) => bundled.with_extra(&value).0,
         None => bundled,
@@ -118,12 +118,12 @@ fn judged(extra: Option<serde_json::Value>) -> Vec<HyFileIndex> {
     files
 }
 
-/// 名前の定義を引く。
+/// Look up a definition by name.
 fn def<'a>(files: &'a [HyFileIndex], name: &str) -> &'a super::model::Definition {
-    files.iter().flat_map(|f| &f.definitions).find(|d| d.name == name).unwrap_or_else(|| panic!("{} が無い", name))
+    files.iter().flat_map(|f| &f.definitions).find(|d| d.name == name).unwrap_or_else(|| panic!("{} not found", name))
 }
 
-/// 直接の証拠を「分類 名前(弱いなら ?)」の列にする。
+/// Turn direct evidence into a list of "classification name (? if weak)".
 fn direct(files: &[HyFileIndex], name: &str) -> Vec<String> {
     def(files, name)
         .raw
@@ -133,7 +133,7 @@ fn direct(files: &[HyFileIndex], name: &str) -> Vec<String> {
         .collect()
 }
 
-/// 経由の証拠を「経路 分類 名前」の列にする。
+/// Turn via evidence into a list of "path classification name".
 fn via(files: &[HyFileIndex], name: &str) -> Vec<String> {
     def(files, name)
         .raw
@@ -156,7 +156,7 @@ fn bundled_catalog_is_readable_and_patterns_match_on_segment_boundaries() {
     assert!(matches_pattern("os.environ.get", "os.environ"));
 }
 
-/// #1564: 種を渡す生成とその instance は外部 I/O ではない。cache 往復でも同じ分類にする。
+/// #1564: a generation that takes a seed and its instance are not external I/O. Classified the same across a cache round trip.
 #[test]
 fn seeded_random_is_local_including_variable_seed_and_instance_alias() {
     let cases = [
@@ -190,7 +190,7 @@ fn entropy_random_stays_external_including_missing_or_none_seed() {
         let source = format!("(import random uuid secrets time)\n(defk sample [] {call})");
         let mut files = vec![index_source(Path::new("/r"), Path::new("/r/sample.hy"), &source)];
         annotate(&mut files, &RawCatalog::bundled().unwrap(), ViaTrace::Through { stops: &BTreeSet::new() });
-        assert!(!direct(&files, "sample").is_empty(), "{call} の外部 I/O が消えた");
+        assert!(!direct(&files, "sample").is_empty(), "external I/O of {call} disappeared");
     }
 }
 
@@ -213,16 +213,16 @@ fn names_are_expanded_through_imports() {
 fn builtin_open_counts_only_at_call_head_and_pathlib_methods_are_weak() {
     let files = judged(None);
     assert_eq!(direct(&files, "ReadIt"), vec!["file .read_text?", "file open"]);
-    assert!(direct(&files, "uses-open-var").is_empty(), "局所の変数 open は数えない");
+    assert!(direct(&files, "uses-open-var").is_empty(), "the local variable open is not counted");
 }
 
 #[test]
 fn local_binding_names_are_not_method_evidence() {
     let files = judged(None);
-    assert!(direct(&files, "kind-at").is_empty(), "局所の束縛 stat(<- の名・match の主語・stat.kind の頭)は .stat の証拠でない");
+    assert!(direct(&files, "kind-at").is_empty(), "a local binding stat (the name of <-, a match subject, the head of stat.kind) is not evidence of .stat");
     assert!(
         direct(&files, "local-names").is_empty(),
-        "引数・val・var・setv・for・let の名(read-text・iterdir・glob・rglob・stat・unlink)は method の証拠でない"
+        "names bound by arguments, val, var, setv, for, let (read-text, iterdir, glob, rglob, stat, unlink) are not method evidence"
     );
 }
 
@@ -247,13 +247,13 @@ fn via_follows_calls_stops_cycles_and_depth_four() {
     let files = judged(None);
     assert_eq!(via(&files, "via-handler"), vec!["slow-helper async asyncio.sleep"]);
     assert_eq!(via(&files, "loop-a"), vec!["loop-b process subprocess.run"]);
-    assert_eq!(via(&files, "d1"), vec!["d2>d3>d4>d5 random random.random"], "d6 の uuid は 5 段目なので届かない");
+    assert_eq!(via(&files, "d1"), vec!["d2>d3>d4>d5 random random.random"], "the uuid in d6 is at the 5th level so it is not reached");
 }
 
 #[test]
 fn via_follows_calls_through_aliased_imports_across_files() {
-    // 呼び出しの名(backtest-main)と定義の名(main)が違う別名の import も辿る(版 4 で経由の解決を qualify.rs の
-    // 完全修飾名の引きへ一本化する前は、呼び出しの名が索引のどこにも定義されていないとして捨てていた)
+    // Aliased imports where the call's name (backtest-main) differs from the definition's name (main) are also followed (before version 4 unified via-resolution into qualify.rs's
+    // fully qualified name lookup, they were dropped as the call's name not being defined anywhere in the index)
     let root = Path::new("/r");
     let mut files = vec![
         index_source(root, Path::new("/r/pkg/entry.hy"), "(import time)\n(defn main [] (time.sleep 1))\n"),
@@ -263,7 +263,7 @@ fn via_follows_calls_through_aliased_imports_across_files() {
             "(import pkg.entry [main :as backtest-main])\n(deftest runs-the-entry (backtest-main))\n",
         ),
     ];
-    annotate(&mut files, &RawCatalog::bundled().expect("目録"), ViaTrace::Through { stops: &BTreeSet::new() });
+    annotate(&mut files, &RawCatalog::bundled().expect("catalog"), ViaTrace::Through { stops: &BTreeSet::new() });
     assert_eq!(via(&files, "runs-the-entry"), vec!["main time time.sleep"]);
 }
 
@@ -271,7 +271,7 @@ fn via_follows_calls_through_aliased_imports_across_files() {
 fn partial_runs_do_not_compute_via() {
     let root = Path::new("/r");
     let mut files = vec![index_source(root, Path::new("/r/pkg/io_handlers.hy"), IO)];
-    annotate(&mut files, &RawCatalog::bundled().expect("目録"), ViaTrace::Skip);
+    annotate(&mut files, &RawCatalog::bundled().expect("catalog"), ViaTrace::Skip);
     assert!(def(&files, "via-handler").raw.via.is_empty());
     assert_eq!(direct(&files, "Fetch"), vec!["http httpx.post"]);
 }
@@ -279,19 +279,19 @@ fn partial_runs_do_not_compute_via() {
 #[test]
 fn catalog_extra_adds_names_and_reports_unknown_categories() {
     let extra = serde_json::json!({ "http": ["my_http_lib"], "time": [".tick"], "bogus": ["x"], "env": "os.getcwd" });
-    let (_, problems) = RawCatalog::bundled().expect("目録").with_extra(&extra);
+    let (_, problems) = RawCatalog::bundled().expect("catalog").with_extra(&extra);
     assert_eq!(problems.len(), 2);
-    assert!(problems.iter().any(|p| p.contains("\"bogus\" は知らない")));
-    assert!(problems.iter().any(|p| p.contains("rawSideEffects.env が配列でない")));
+        assert!(problems.iter().any(|p| p.contains("\"bogus\" is unknown")));
+        assert!(problems.iter().any(|p| p.contains("rawSideEffects.env is not an array")));
     let before = judged(None);
     assert!(direct(&before, "custom-program").is_empty());
     let after = judged(Some(serde_json::json!({ "http": ["my_http_lib"], "time": [".tick"] })));
     assert_eq!(direct(&after, "custom-program"), vec!["http my_http_lib.get", "time .tick?"]);
 }
 
-/// 目録の引数の上限(max_args)で、同じ名の別の型の method を数えない(doeff-cluster の process_host.hy の
-/// 文字列の `(.replace name "/" "_")` が、pathlib を import した file の中で Path.replace の弱い証拠になっていた)。Path.replace は
-/// 引数 1 つ(target)・str.replace は 2 つ以上。呼びの頭でない参照は引数が分からないので今までどおり数える。cache を往復しても同じ。
+/// With the catalog's argument cap (max_args), do not count methods of the same name on a different type (in doeff-cluster's process_host.hy,
+/// the string's `(.replace name "/" "_")` was weak evidence of Path.replace inside a file that imports pathlib). Path.replace takes
+/// 1 argument (target); str.replace takes 2 or more. A reference not at the head of a call has unknown arguments, so it is counted as before. The same across a cache round trip.
 #[test]
 fn method_calls_over_the_catalog_argument_limit_are_not_evidence() {
     let source = r#"(import pathlib [Path])
@@ -313,7 +313,7 @@ fn method_calls_over_the_catalog_argument_limit_are_not_evidence() {
         assert!(direct(&files, "string-replace-dotted").is_empty(), "{:?}", direct(&files, "string-replace-dotted"));
         assert_eq!(direct(&files, "path-replace"), vec!["file .replace?"]);
         assert_eq!(direct(&files, "path-replace-dotted"), vec!["file .replace?"]);
-        assert_eq!(direct(&files, "path-replace-keyword"), vec!["file .replace?"], "keyword と値の組は引数 1 つ");
-        assert_eq!(direct(&files, "path-exists"), vec!["file .exists?"], "上限の無い method は今までどおり");
+        assert_eq!(direct(&files, "path-replace-keyword"), vec!["file .replace?"], "a keyword and value pair is 1 argument");
+        assert_eq!(direct(&files, "path-exists"), vec!["file .exists?"], "a method with no cap is as before");
     }
 }

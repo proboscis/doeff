@@ -1,20 +1,20 @@
-"""doeff-hy の pytest plugin(entry point `pytest11` の名 `doeff_hy`)。
+"""pytest plugin for doeff-hy (entry point `pytest11`, name `doeff_hy`).
 
-pytest は起動時に plugin と conftest を読み、fixture の注記を Python 3.14 では
-`annotation_format=Format.STRING` で読む。Hy がそれより前に(他の plugin や conftest から)
-import されていると、Hy の `ast.unparse` の差し替えがそこで止まらない再帰になる
-(doeff_hy/_ast_unparse.py)。`import doeff_hy` を待たず、pytest の起動の時点で置き換えるための plugin。
+pytest loads plugins and conftests at startup, and on Python 3.14 reads fixture annotations with
+`annotation_format=Format.STRING`. If Hy is imported before that (from another plugin or a conftest),
+Hy's replacement of `ast.unparse` recurses without stopping there
+(doeff_hy/_ast_unparse.py). This plugin applies the replacement at pytest startup, without waiting for `import doeff_hy`.
 
-もう 1 つの役目は Hy の検の時間の上限(doeff_hy_pytest/_budget.py — 設定が無ければ何もしない)。hook は
-この module から輸出して、entry point の 1 つ(`doeff_hy`)のまま載せる。
+Its other role is the time limit for Hy tests (doeff_hy_pytest/_budget.py - does nothing when unconfigured). The hooks are
+re-exported from this module so that they ride on the single entry point (`doeff_hy`).
 
-公開の名は検ごとの宣言 2 個(`declare_step_budget`・`declare_process_tree_cpu`)と entry point だけ
-(決まり「doeff の subpackage が利用者に見せる公開 API は effect と handler だけ」の
-doeff-hy-pytest の分)。hook は pytest が module の属性から拾うので `__all__` に載せない。測りの中(`_budget`・
-`_python_calls`・`_tree_cpu`)は内側で、使い手は plugin が出す要約の行を読む。
+The public names are only the two per-test declarations (`declare_step_budget`, `declare_process_tree_cpu`) and the entry point
+(doeff-hy-pytest's share of the rule "the public API a doeff subpackage shows users is only effects and handlers").
+Hooks are picked up by pytest from module attributes, so they are not in `__all__`. The measuring internals (`_budget`,
+`_python_calls`, `_tree_cpu`) are internal; users read the summary lines the plugin prints.
 
-この module が doeff-hy とは別の配布物にある理由は pyproject.toml の註(pytest の assert の書き換えの印が
-配布物の全 module に付き、doeff_hy の .hy を壊す)。
+The reason this module lives in a distribution separate from doeff-hy is the note in pyproject.toml (pytest's assert-rewrite mark is
+put on every module of a distribution and would break doeff_hy's .hy files).
 """
 
 from doeff_hy._ast_unparse import install

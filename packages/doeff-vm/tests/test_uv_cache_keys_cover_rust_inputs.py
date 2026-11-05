@@ -1,15 +1,15 @@
-"""uv の cache-keys が doeff-vm の Rust の build 入力を漏れなく覆うことの検査。
+"""Check that uv cache-keys fully cover the Rust build inputs of doeff-vm.
 
-uv は packages/doeff-vm/pyproject.toml の [tool.uv] cache-keys に載った file だけを見て
-「作り直すか」を決める。Rust の source が鍵から漏れると、その file だけが変わった更新の後の
-`uv sync` / `uv run` は古い doeff_vm/*.so を使い続ける(2026-09-23 22:42〜23:17 に pod の
-controller が古い .so で 35 分落ちた)。
+uv decides "whether to rebuild" by looking only at the files listed in [tool.uv] cache-keys of packages/doeff-vm/pyproject.toml.
+If a Rust source is missing from the keys, then after an update that changes only that file,
+`uv sync` / `uv run` keep using the old doeff_vm/*.so (from 2026-09-23 22:42 to 23:17 the pod's
+controller was down for 35 minutes on a stale .so).
 
-入力の母集団は crate 名を書かずに導く: packages/doeff-vm/Cargo.toml の依存表の path = を
-推移的にたどった crate の集合について、disk の上の Cargo.toml / Cargo.lock / build.rs /
-pyproject.toml と library の *.rs を集める。tests/ benches/ examples/ は Cargo の library
-以外の target の置き場で、maturin が作る cdylib にも path 依存としての build にも入らないので
-母集団から外す。
+The input population is derived without writing crate names: following path = in the dependency tables of packages/doeff-vm/Cargo.toml
+transitively, for the resulting set of crates, collect the Cargo.toml / Cargo.lock / build.rs /
+pyproject.toml and library *.rs on disk. tests/ benches/ examples/ are locations for Cargo's non-library
+targets and enter neither the cdylib maturin builds nor the build as a path dependency, so they are
+excluded from the population.
 """
 
 from __future__ import annotations
@@ -27,24 +27,24 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_DIR.parents[1]
 PACKAGE_PATH = PACKAGE_DIR.relative_to(REPO_ROOT).as_posix()
 
-# 名前で build 入力と分かる file(*.rs は拡張子で別に拾う)。
+# Files recognizable as build inputs by name (*.rs are picked up separately by extension).
 BUILD_INPUT_NAMES = frozenset({"Cargo.toml", "Cargo.lock", "build.rs", "pyproject.toml"})
-# Cargo が library 以外の target(結合テスト・bench・例)を自動で探す置き場。
+# Locations where Cargo automatically looks for non-library targets (integration tests, benches, examples).
 NON_LIBRARY_TARGET_DIRS = frozenset({"tests", "benches", "examples"})
-# Cargo と maturin の build の出力の置き場(入力ではない)。
+# Output locations of Cargo and maturin builds (not inputs).
 BUILD_OUTPUT_DIRS = frozenset({"target"})
-# build に効く依存表。[dev-dependencies] は library の build に入らない。
+# Dependency tables that affect the build. [dev-dependencies] do not enter the library build.
 DEPENDENCY_TABLES = ("dependencies", "build-dependencies")
 _UNSUPPORTED_GLOB_CHARS = frozenset("[]{}")
 
 
 # ---------------------------------------------------------------------------
-# 純粋な判断
+# Pure decisions
 # ---------------------------------------------------------------------------
 
 
 def path_dependency_dirs(manifest: Mapping[str, Any], crate_dir: Path) -> list[Path]:
-    """Cargo.toml 1 枚の依存表から path = の依存先の directory を返す。"""
+    """Return the directories of path = dependencies from the dependency tables of one Cargo.toml."""
     tables: list[Mapping[str, Any]] = [manifest.get(name, {}) for name in DEPENDENCY_TABLES]
     for target in manifest.get("target", {}).values():
         tables.extend(target.get(name, {}) for name in DEPENDENCY_TABLES)
@@ -57,7 +57,7 @@ def path_dependency_dirs(manifest: Mapping[str, Any], crate_dir: Path) -> list[P
 
 
 def is_build_input(path_in_crate: str) -> bool:
-    """crate の directory からの相対 path が build の入力に当たるか。"""
+    """Whether a path relative to the crate directory is a build input."""
     parts = PurePosixPath(path_in_crate).parts
     if parts[0] in NON_LIBRARY_TARGET_DIRS:
         return False
@@ -65,7 +65,7 @@ def is_build_input(path_in_crate: str) -> bool:
 
 
 def declared_file_globs(pyproject: Mapping[str, Any]) -> list[str]:
-    """[tool.uv] cache-keys のうち file を名指す鍵(文字列 / { file = ... })の glob を返す。"""
+    """Return the globs of the keys that name files among [tool.uv] cache-keys (strings / { file = ... })."""
     keys = pyproject.get("tool", {}).get("uv", {}).get("cache-keys", [])
     globs: list[str] = []
     for key in keys:
@@ -94,7 +94,7 @@ def _segments_match(pattern: tuple[str, ...], path: tuple[str, ...]) -> bool:
         return not path
     head, rest = pattern[0], pattern[1:]
     if head == "**":
-        # 0 個以上の directory。uv は package の directory から下へ歩くので '..' は跨がない。
+        # Zero or more directories. uv walks down from the package directory, so '..' is not crossed.
         for taken in range(len(path) + 1):
             if taken > 0 and path[taken - 1] == "..":
                 return False
@@ -105,10 +105,10 @@ def _segments_match(pattern: tuple[str, ...], path: tuple[str, ...]) -> bool:
 
 
 def glob_matches(pattern: str, path: str) -> bool:
-    """正規化済みの posix path が glob に当たるか。
+    """Whether a normalized posix path matches a glob.
 
-    '**' は 0 個以上の directory、'*' / '?' は 1 つの segment の中だけに当たる。
-    [] や {} は解釈を誤るより止まる方を選ぶ(使いたくなったらここを広げる)。
+    '**' matches zero or more directories; '*' / '?' match only within one segment.
+    [] and {} stop rather than be misinterpreted (extend here when they become needed).
     """
     unsupported = _UNSUPPORTED_GLOB_CHARS.intersection(pattern)
     if unsupported:
@@ -119,11 +119,11 @@ def glob_matches(pattern: str, path: str) -> bool:
 def uncovered_inputs(
     inputs: Iterable[str], file_globs: Iterable[str], *, package_path: str
 ) -> list[str]:
-    """どの glob にも当たらない入力を返す。
+    """Return the inputs that match no glob.
 
-    inputs と file_globs はどちらも package の directory からの相対 path で書く。両側を
-    repo の根からの path(package_path を前に付けて normpath)へ揃えてから比べるので、
-    '../doeff-vm/src/lib.rs' と 'src/lib.rs' は同じ file として扱われる。
+    inputs and file_globs are both written as paths relative to the package directory. Both sides are
+    aligned to paths from the repo root (prefix package_path and normpath) before comparing, so
+    '../doeff-vm/src/lib.rs' and 'src/lib.rs' are treated as the same file.
     """
 
     def anchored(relative: str) -> str:
@@ -138,12 +138,12 @@ def uncovered_inputs(
 
 
 # ---------------------------------------------------------------------------
-# 実際の checkout を読む部分
+# Part that reads the actual checkout
 # ---------------------------------------------------------------------------
 
 
 def input_crate_dirs(root_crate_dir: Path) -> list[Path]:
-    """root の crate と、path 依存を推移的にたどった crate の directory(root が先頭)。"""
+    """The root crate and the directories of crates reached by following path dependencies transitively (root first)."""
     ordered: list[Path] = []
     pending = [root_crate_dir.resolve()]
     while pending:
@@ -157,11 +157,11 @@ def input_crate_dirs(root_crate_dir: Path) -> list[Path]:
 
 
 def source_files_under(crate_dir: Path) -> list[str]:
-    """crate の directory の下の file(crate からの相対 posix path)。build の出力と隠し dir は歩かない。
+    """Files under a crate directory (posix paths relative to the crate). Build outputs and hidden dirs are not walked.
 
-    git に聞かずに disk を歩く — uv の build が読むのは disk の file で、日次の検証が受け取る木は
-    git の checkout ではない(remote_check は file の名簿だけを運び、.git を持たない — 2026-09-28 の日次 t97 で
-    `git ls-files` が 128 の赤)。
+    Walk the disk without asking git - uv's build reads files on disk, and the tree the daily verification receives is not
+    a git checkout (remote_check carries only a file roster and has no .git - on 2026-09-28 daily t97 saw
+    128 reds from `git ls-files`).
     """
     found: list[str] = []
     for directory, subdirectories, files in os.walk(crate_dir):
@@ -175,7 +175,7 @@ def source_files_under(crate_dir: Path) -> list[str]:
 
 
 def tracked_build_inputs_by_crate() -> dict[str, list[str]]:
-    """crate(package からの相対 directory)ごとの build 入力の一覧。"""
+    """List of build inputs per crate (directory relative to the package)."""
     return {
         Path(os.path.relpath(crate_dir, PACKAGE_DIR)).as_posix(): sorted(
             Path(os.path.relpath(crate_dir / in_crate, PACKAGE_DIR)).as_posix()
@@ -192,7 +192,7 @@ def _declared_globs() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 検査
+# Checks
 # ---------------------------------------------------------------------------
 
 
@@ -200,20 +200,20 @@ def test_uv_cache_keys_cover_every_rust_build_input() -> None:
     inputs = [path for paths in tracked_build_inputs_by_crate().values() for path in paths]
     uncovered = uncovered_inputs(inputs, _declared_globs(), package_path=PACKAGE_PATH)
     assert not uncovered, (
-        "packages/doeff-vm/pyproject.toml の [tool.uv] cache-keys に載っていない build 入力が"
-        " あります。この file だけが変わると uv は doeff-vm を作り直さず、古い .so が残ります:\n"
+        "Build inputs not listed in cache-keys of [tool.uv] in packages/doeff-vm/pyproject.toml exist."
+        " If only such a file changes, uv does not rebuild doeff-vm and a stale .so remains:\n"
         + "\n".join(f"  {path}" for path in uncovered)
     )
 
 
 def test_checker_reports_dependency_sources_when_their_glob_is_missing() -> None:
-    """較正: 依存 crate の *.rs の glob を抜いた合成の鍵では、その *.rs がちょうど漏れと出る。"""
+    """Calibration: with a synthetic key set lacking the glob for dependency crates' *.rs, exactly those *.rs show up as omissions."""
     by_crate = tracked_build_inputs_by_crate()
     crates_with_inputs = [crate for crate, paths in by_crate.items() if paths]
     assert "." in crates_with_inputs
-    assert len(crates_with_inputs) >= 2, f"母集団が 2 crate 未満: {by_crate}"
+    assert len(crates_with_inputs) >= 2, f"population has fewer than 2 crates: {by_crate}"
     dependency_crates = [crate for crate in by_crate if crate != "."]
-    assert dependency_crates, "path 依存の crate が 1 つも導けていない"
+    assert dependency_crates, "no path-dependency crate could be derived"
     synthetic = [*sorted(BUILD_INPUT_NAMES), "src/**/*.rs"] + [
         f"{crate}/{name}" for crate in dependency_crates for name in sorted(BUILD_INPUT_NAMES)
     ]
@@ -223,7 +223,7 @@ def test_checker_reports_dependency_sources_when_their_glob_is_missing() -> None
         for path in by_crate[crate]
         if path.endswith(".rs") and path != f"{crate}/build.rs"
     )
-    assert expected, "依存 crate の *.rs が母集団に無い — 検査が空回りしている"
+    assert expected, "no dependency-crate *.rs in the population - the check is running idle"
     inputs = [path for paths in by_crate.values() for path in paths]
     assert uncovered_inputs(inputs, synthetic, package_path=PACKAGE_PATH) == expected
 

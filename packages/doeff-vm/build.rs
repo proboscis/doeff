@@ -1,9 +1,9 @@
-//! pyo3 の Python の版の cfg(`Py_3_12` ほか)をこの crate にも渡す — CPython 3.12 からの関数(PyUnstable_Type_AssignVersionTag)は
-//! 3.11 の libpython に無く、無条件に呼ぶと 3.11 で import が undefined symbol で落ちる。
+//! Pass pyo3's Python-version cfgs (`Py_3_12` etc.) to this crate too. A function introduced in CPython 3.12 (PyUnstable_Type_AssignVersionTag)
+//! is missing from the 3.11 libpython, so calling it unconditionally makes the import fail on 3.11 with an undefined symbol.
 //!
-//! Windows では、この crate が自分で宣言する PyUnstable_Type_AssignVersionTag のために Python の import library を link する。
-//! PyO3 0.29 は Windows で import library を link せず、pyo3-ffi が宣言する関数だけを raw-dylib で解くので、pyo3-ffi に無いこの関数は
-//! link が LNK2019 で落ちる(Build doeff-vm run 40220805725 の build-windows)。
+//! On Windows, link the Python import library for PyUnstable_Type_AssignVersionTag, which this crate declares itself.
+//! PyO3 0.29 does not link the import library on Windows and resolves only the functions declared by pyo3-ffi via raw-dylib, so this function, absent from pyo3-ffi,
+//! fails to link with LNK2019 (build-windows of Build doeff-vm run 40220805725).
 fn main() {
     pyo3_build_config::use_pyo3_cfgs();
 

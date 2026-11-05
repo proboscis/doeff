@@ -538,9 +538,9 @@ def interceptor(e: Effect) -> Effect:
     assert_eq!(find_kleisli(&index.entries).len(), 0);
 }
 
-// docs/MARKERS.md の最初の例そのまま: 型の注釈が無く、file のどこにも `Program` も `@do` も無い。
-// marker は利用者が名指しで付けた印なので、file がそれらの語を持たなくても索引に入れる
-// (前は file の頭の絞り込みで file ごと捨てて、find-interpreters が 0 件を返した)。
+// Exactly the first example in docs/MARKERS.md: no type annotation, and neither `Program` nor `@do` anywhere in the file.
+// A marker is a mark the user named explicitly, so the file is indexed even if it has none of those words
+// (before, the file-head prefilter dropped the whole file, and find-interpreters returned 0 results).
 #[test]
 fn test_marker_in_file_without_program_mention_is_indexed() {
     let temp_dir = TempDir::new().unwrap();
@@ -611,7 +611,7 @@ def in_docstring(program):
     assert_eq!(names, vec!["in_docstring", "no_space", "upper_case"]);
 }
 
-// 絞り込みを外したわけではない: marker も `Program` も `@do` も無い file は、前と同じく読まない。
+// The prefilter was not removed: a file with no marker, no `Program`, and no `@do` is still not read, as before.
 #[test]
 fn test_file_without_marker_or_program_mention_is_still_skipped() {
     let temp_dir = TempDir::new().unwrap();

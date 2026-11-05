@@ -1,7 +1,7 @@
-"""FindSymbols に Rust の索引器(内側の拡張 doeff_indexer._native)で答える handler rust_indexer。
+"""The handler rust_indexer that answers FindSymbols with the Rust indexer (the inner extension doeff_indexer._native).
 
-拡張の .so を読むのはこの module だけ(effect と答えの型は _effects)。
-Rust の索引器は、今の dir の下の Python の file を全部読んで索引を作る(module_path は索引の根を決めない — 前の口と同じ)。
+Only this module loads the extension's .so (the effect and the answer type are in _effects).
+The Rust indexer reads all Python files under the current dir to build the index (module_path does not decide the index root -- same as the previous interface).
 """
 
 from doeff import K, Transfer, TransferThrow, handler
@@ -10,7 +10,7 @@ from doeff_indexer._effects import FindSymbols, SymbolInfo
 
 
 def _symbol(row: _native.SymbolInfo) -> SymbolInfo:
-    """拡張の答えの 1 行を入口の型にする。"""
+    """Turn one row of the extension's answer into the entry-point type."""
     return SymbolInfo(
         name=row.name,
         module_path=row.module_path,
@@ -24,10 +24,10 @@ def _symbol(row: _native.SymbolInfo) -> SymbolInfo:
 
 @handler
 def rust_indexer(effect: FindSymbols, k: K):
-    """FindSymbols に Rust の索引器で答える handler。
+    """The handler that answers FindSymbols with the Rust indexer.
 
-    設定も呼びごとの状態も無いので工場にしない(ADR-DOE-API-002 R1)。使い方: rust_indexer(program)。答えるたびに今の dir の
-    下を読んで索引を作り、作れなければ(RuntimeError・OSError)effect を出した所へ投げ返す。
+        It has no settings or per-call state, so it is not a factory (ADR-DOE-API-002 R1). Usage: rust_indexer(program). Each time it answers, it reads under the current dir
+        to build the index, and if that fails (RuntimeError, OSError) it throws the error back to where the effect was raised.
     """
     try:
         index = _native.Indexer.for_module(effect.module_path)

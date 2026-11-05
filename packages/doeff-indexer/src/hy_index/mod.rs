@@ -1,9 +1,9 @@
-//! Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の索引 — `doeff-indexer hy-index` の本体。
+//! Index of Hy files (`*.hy` / `*.hyk` / `*.hyp`) — the body of `doeff-indexer hy-index`.
 //!
-//! 定義・import・参照を契約 `hy-index-contract.md`(版 1)・`hy-index-contract-v2.md`(版 2 = bases・calls)・`hy-index-contract-v3.md`
-//! (版 3 = 定義ごとの生の副作用の証拠 raw)・版 4(完全修飾名 = qualified_name・呼び出しの target)の形で出す。Python の索引
-//! (`indexer.rs`)とは独立で、互いの挙動を変えない。読めない file・壊れた括弧でも止まらず、
-//! 読めた分を出して `errors` に理由を積む。
+//! Emits definitions, imports, and references in the shape of the contracts `hy-index-contract.md` (version 1), `hy-index-contract-v2.md` (version 2 = bases, calls), `hy-index-contract-v3.md`
+//! (version 3 = per-definition raw side-effect evidence `raw`), and version 4 (fully qualified names = qualified_name, call target). It is independent of the Python index
+//! (`indexer.rs`) and does not change each other's behavior. It does not stop on unreadable files or broken parentheses;
+//! it emits what could be read and accumulates reasons in `errors`.
 
 mod analyze;
 mod cache_form;
@@ -13,7 +13,7 @@ mod position;
 mod qualify;
 mod raw;
 pub mod raw_catalog;
-/// Hy の読み取り器(form の木)。doeff-linter が同じ読み取りで `:tags` の辞書と import の式を読むために公開する。
+/// The Hy reader (form tree). Public so doeff-linter can read the `:tags` dictionary and import expressions with the same reader.
 pub mod reader;
 
 #[cfg(test)]
@@ -39,20 +39,20 @@ pub use position::LineIndex;
 pub use raw::{annotate as annotate_raw, matches_pattern, ViaTrace};
 pub use raw_catalog::{RawCatalog, RawCategory};
 
-/// 生の副作用の判定に使う目録と、利用者の追加の中で読めなかった値の理由。
+/// The catalog used to judge raw side effects, and reasons for values in user additions that could not be read.
 #[derive(Debug, Clone)]
 pub struct RawSettings {
     pub catalog: RawCatalog,
     pub problems: Vec<String>,
 }
 
-/// 探索で降りない directory の名前(契約の一覧)。
+/// Names of directories not descended into during traversal (the contract's list).
 pub const SKIPPED_DIRS: &[&str] = &[".venv", "node_modules", "target", ".git", "__pycache__"];
 
-/// 索引の対象の拡張子。
+/// Extensions that are indexed.
 pub const HY_EXTENSIONS: &[&str] = &["hy", "hyk", "hyp"];
 
-/// root 以下の Hy の file を全部集める(除く directory は降りない)。順は path の順で決まる。
+/// Collects all Hy files under root (excluded directories are not descended into). Order is determined by path order.
 pub fn collect_hy_files(root: &Path) -> Vec<PathBuf> {
     let walker = walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_entry(|entry| {
         entry.depth() == 0
@@ -68,12 +68,12 @@ pub fn collect_hy_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// 拡張子が Hy の file かを返す。
+/// Returns whether the extension is that of a Hy file.
 fn is_hy_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| HY_EXTENSIONS.contains(&ext))
 }
 
-/// root 以下の Hy の file を全部索引する。生の副作用の経由の証拠は file をまたぐので、この全体の実行だけが計算する。
+/// Indexes all Hy files under root. Via-evidence for raw side effects spans files, so only this whole-tree run computes it.
 pub fn index_root(root: &Path, raw: &RawSettings) -> HyIndex {
     let files = collect_hy_files(root);
     let mut index = read_paths(root, &files);
@@ -83,7 +83,7 @@ pub fn index_root(root: &Path, raw: &RawSettings) -> HyIndex {
     index
 }
 
-/// 指定した file だけを索引する(root は module 名の基準)。生の副作用は直接の証拠だけ(経由は計算しない)。
+/// Indexes only the specified files (root is the base for module names). Raw side effects have direct evidence only (via is not computed).
 pub fn index_paths(root: &Path, paths: &[PathBuf], raw: &RawSettings) -> HyIndex {
     let mut index = read_paths(root, paths);
     raw::annotate(&mut index.files, &raw.catalog, ViaTrace::Skip);
@@ -91,7 +91,7 @@ pub fn index_paths(root: &Path, paths: &[PathBuf], raw: &RawSettings) -> HyIndex
     index
 }
 
-/// file を並列に読んで索引する(生の副作用の判定の前の段)。
+/// Reads and indexes files in parallel (the stage before judging raw side effects).
 fn read_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
     let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).max(1);
     let chunk = paths.len().div_ceil(workers).max(1);
@@ -104,9 +104,9 @@ fn read_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
             .into_iter()
             .zip(paths.chunks(chunk))
             .flat_map(|(handle, part)| {
-                // 1 つの file の解析が panic しても全体は止めず、その file に理由を積む。
+                                // Even if analysis of one file panics, do not stop the whole run; accumulate a reason on that file.
                 handle.join().unwrap_or_else(|_| {
-                    part.iter().map(|path| failed_file(root, path, "解析の途中で内部の誤りが起きた")).collect()
+                                        part.iter().map(|path| failed_file(root, path, "an internal error occurred during analysis")).collect()
                 })
             })
             .collect()
@@ -120,7 +120,7 @@ fn read_paths(root: &Path, paths: &[PathBuf]) -> HyIndex {
     }
 }
 
-/// 保存前の内容(stdin から読んだもの)を `path` の file として 1 件索引する。生の副作用は直接の証拠だけ。
+/// Indexes the pre-save content (read from stdin) as a single file at `path`. Raw side effects have direct evidence only.
 pub fn index_stdin_source(root: &Path, path: &Path, source: &str, raw: &RawSettings) -> HyIndex {
     let mut files = vec![index_source(root, path, source)];
     raw::annotate(&mut files, &raw.catalog, ViaTrace::Skip);
@@ -133,7 +133,7 @@ pub fn index_stdin_source(root: &Path, path: &Path, source: &str, raw: &RawSetti
     }
 }
 
-/// 1 つの file を disk から読んで索引する。読めなければ `errors` に理由を積んだ空の索引を返す。
+/// Reads and indexes one file from disk. If it cannot be read, returns an empty index with the reason accumulated in `errors`.
 pub fn index_file(root: &Path, path: &Path) -> HyFileIndex {
     match std::fs::read(path) {
         Ok(bytes) => match String::from_utf8(bytes) {
@@ -141,15 +141,15 @@ pub fn index_file(root: &Path, path: &Path) -> HyFileIndex {
             Err(error) => {
                 let source = String::from_utf8_lossy(error.as_bytes()).into_owned();
                 let mut file = index_source(root, path, &source);
-                file.errors.insert(0, "UTF-8 として読めない byte を U+FFFD に置き換えて読んだ".to_string());
+                                file.errors.insert(0, "read with bytes that are not valid UTF-8 replaced by U+FFFD".to_string());
                 file
             }
         },
-        Err(error) => failed_file(root, path, &format!("file を読めない: {}", error)),
+                Err(error) => failed_file(root, path, &format!("cannot read file: {}", error)),
     }
 }
 
-/// source を `path` の file として索引する。
+/// Indexes source as the file at `path`.
 pub fn index_source(root: &Path, path: &Path, source: &str) -> HyFileIndex {
     let analysis = analyze::analyze(source);
     let mut file = HyFileIndex {
@@ -165,7 +165,7 @@ pub fn index_source(root: &Path, path: &Path, source: &str) -> HyFileIndex {
     file
 }
 
-/// 読めなかった file の索引(中身は空、`errors` に理由)。
+/// The index of a file that could not be read (empty contents, reason in `errors`).
 fn failed_file(root: &Path, path: &Path, reason: &str) -> HyFileIndex {
     HyFileIndex {
         path: path.to_string_lossy().into_owned(),
@@ -178,8 +178,8 @@ fn failed_file(root: &Path, path: &Path, reason: &str) -> HyFileIndex {
     }
 }
 
-/// root からの相対 path を dotted の module 名にする(`__init__` は親の package 名)。
-/// root の外の file は file 名だけを module 名にする。
+/// Turns a path relative to root into a dotted module name (`__init__` becomes the parent package name).
+/// For a file outside root, only the file name is the module name.
 pub fn module_name(root: &Path, path: &Path) -> String {
     let relative = relative_to_root(root, path).unwrap_or_else(|| PathBuf::from(path.file_name().unwrap_or_default()));
     let mut parts: Vec<String> = relative
@@ -198,13 +198,13 @@ pub fn module_name(root: &Path, path: &Path) -> String {
     parts.join(".")
 }
 
-/// path の root からの相対 path を返す(symlink の違いは正規化した path でもう一度試す)。
+/// Returns the path's path relative to root (a symlink difference is retried with the normalized path).
 fn relative_to_root(root: &Path, path: &Path) -> Option<PathBuf> {
     if let Ok(relative) = path.strip_prefix(root) {
         return Some(relative.to_path_buf());
     }
     let root = root.canonicalize().ok()?;
-    // stdin の経路では file がまだ disk に無いことがあるので、親の directory を正規化する。
+        // On the stdin path the file may not be on disk yet, so normalize the parent directory.
     let path = match path.canonicalize() {
         Ok(path) => path,
         Err(_) => path.parent()?.canonicalize().ok()?.join(path.file_name()?),

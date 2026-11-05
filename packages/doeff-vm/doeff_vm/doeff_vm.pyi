@@ -1,50 +1,50 @@
-# compiled の拡張 module doeff_vm.doeff_vm(Rust・pyo3 — src/lib.rs)の型の宣言のうち、package の頭(doeff_vm/__init__.py)へ出さない口。
-# 拡張だけに置く口は、古い build の .so で package の import を落とさないため、使い手が doeff_vm.doeff_vm から直に引く
-# (src/lib.rs の gc_traverse_zeroed_visits の註)。拡張のほかの名はこの宣言では型を持たない(__getattr__)— 拡張に
-# 宣言が無かった今までと同じ扱いで、名の全部を写すのはこの宣言の範囲の外。
-# 宣言した関数が拡張に在ることは packages/doeff-vm/tests/test_memory_stats.py が確かめる。
+# Type declarations for the compiled extension module doeff_vm.doeff_vm (Rust/pyo3 - src/lib.rs): the entries that are not exposed from the package top (doeff_vm/__init__.py).
+# Entries that live only in the extension are pulled directly from doeff_vm.doeff_vm by their users, so that an old build's .so does not break the package import
+# (see the note on gc_traverse_zeroed_visits in src/lib.rs). Other names in the extension have no type in this declaration (__getattr__) -
+# same treatment as before when the extension had no declaration; mirroring every name is out of scope here.
+# packages/doeff-vm/tests/test_memory_stats.py checks that the declared functions exist in the extension.
 #
-# _ で始まる関数は VM の数と切り替えで、公開の名ではない(拡張の __all__ に載らない — src/lib.rs の bind_internal)。
-# 利用者は doeff の effect(ReadVmWorkCounts・SetInvariantChecks など)を出し、doeff_core_effects._handlers.vm_probe_handler が
-# これらを呼んで答える。ほかに呼ぶのは doeff_core_effects の scheduler と world_phases だけ。
+# Functions starting with _ are VM counts and switches, not public names (not listed in the extension's __all__ - bind_internal in src/lib.rs).
+# Users emit doeff effects (ReadVmWorkCounts, SetInvariantChecks, etc.), and doeff_core_effects._handlers.vm_probe_handler answers them
+# by calling these. The only other callers are the scheduler and world_phases in doeff_core_effects.
 from _typeshed import Incomplete
 
 def _vm_live_counts() -> tuple[int, int, int]:
-    """VM の中で生きている物の数 (segment, 続き, IR の stream) — run が終われば元の数へ戻る(effect ReadVmLiveCounts)。"""
+    """Number of live objects inside the VM (segments, continuations, IR streams) - returns to the original count once a run ends (effect ReadVmLiveCounts)."""
     ...
 
 def _vm_work_counts() -> tuple[int, int]:
-    """process の全部の VM の積み上げの数 (歩数, handler を呼んだ回数) — 減らない。2 つの読みの差がその間の仕事の量
+    """Accumulated counts across all VMs in the process (steps, handler invocations) - never decreases. The difference between two reads is the amount of work in between
     (effect ReadVmWorkCounts)。"""
     ...
 
 def _vm_scan_counts() -> dict[str, int]:
-    """Rust の版の scheduler の走査が見た entry の数を、見た物ごとに積み上げた表 — 減らない(effect ReadVmScanCounts)。"""
+    """Table accumulating, per kind of thing seen, the number of entries the Rust scheduler scan visited - never decreases (effect ReadVmScanCounts)."""
     ...
 
 def _invariant_checks_enabled() -> bool:
-    """VM の 1 歩ごとの不変条件の検査が、この process で入っているか(effect ReadInvariantChecks)。"""
+    """Whether the per-step VM invariant checks are enabled in this process (effect ReadInvariantChecks)."""
     ...
 
 def _set_invariant_checks(on: bool) -> None:
-    """VM の 1 歩ごとの不変条件の検査を、この process で入れる・切る(effect SetInvariantChecks)。"""
+    """Enable or disable the per-step VM invariant checks in this process (effect SetInvariantChecks)."""
     ...
 
 def _set_scheduler_trace_installed(installed: bool) -> None:
-    """Rust の版の scheduler の測りの口の旗(sink が据えてあるか)を切り替える — 呼び手は
-    doeff_core_effects._scheduler.set_scheduler_trace と effect SetSchedulerTraceInstalled の handler だけ
-    (src/scheduler.rs の TRACE_INSTALLED)。"""
+    """Toggle the flag of the Rust scheduler's measurement hook (whether a sink is installed) - the only callers are
+    doeff_core_effects._scheduler.set_scheduler_trace and the handler of effect SetSchedulerTraceInstalled
+    (TRACE_INSTALLED in src/scheduler.rs)."""
     ...
 
 def _set_scheduler_step_budget_armed(armed: bool) -> None:
-    """Rust の版の scheduler の歩数の上限の旗(上限が入っているか)を切り替える — 呼び手は
-    doeff_core_effects._scheduler.arm_step_budget と disarm_step_budget と effect SetSchedulerStepBudgetArmed の
-    handler だけ(src/scheduler.rs の STEP_BUDGET_ARMED)。"""
+    """Toggle the flag of the Rust scheduler's step-budget limit (whether a limit is set) - the only callers are
+    doeff_core_effects._scheduler.arm_step_budget, disarm_step_budget, and the handler of effect SetSchedulerStepBudgetArmed
+    (STEP_BUDGET_ARMED in src/scheduler.rs)."""
     ...
 
 class StateHandler:
-    """state の答え手(Rust の handler — src/state_handler.rs)。Get / Put(2 つの class の instance)に store から VM の中で答える。
-    作り手は doeff_core_effects._handlers.state だけ。VM が呼ぶ物で、Python から呼ぶと TypeError。"""
+    """Responder for state (a Rust handler - src/state_handler.rs). Answers Get / Put (instances of two classes) from the store inside the VM.
+    The only constructor is doeff_core_effects._handlers.state. Called by the VM; calling it from Python raises TypeError."""
 
     def __init__(self, store: dict[object, object], get_type: type, put_type: type, /) -> None: ...
     @property
@@ -52,7 +52,7 @@ class StateHandler:
     @property
     def __name__(self) -> str: ...
     @property
-    def __qualname__(self) -> str: ...  # pyright: ignore[reportIncompatibleVariableOverride] — 型の __qualname__ でなく、handler の名を答える instance の口
+    def __qualname__(self) -> str: ...  # pyright: ignore[reportIncompatibleVariableOverride] - not the type's __qualname__ but an instance-level entry that answers the handler's name
     def __call__(self, *args: object, **kwargs: object) -> None: ...
 
 def __getattr__(name: str) -> Incomplete: ...

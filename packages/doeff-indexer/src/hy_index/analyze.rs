@@ -1,11 +1,11 @@
-//! Hy の form の木から、定義・import・参照を取り出す。
+//! Extracts definitions, imports and references from a Hy form tree.
 //!
-//! 出自: 予約語の表(`HY_KEYWORDS`・`DOEFF_KEYWORDS`・`DOEFF_REQUIRED_KEYWORDS`・`CONSTANTS`)・
-//! `mangle`・`is_operator`・require した名前の集め方・形ごとの分岐(defn の decorator の判定、
-//! defclass の field、defhandler の docstring / params / effect 節、import の解釈、f 文字列の `{…}`)は
-//! `vscode-semantic-highlighting/rust-highlighter/src/hy.rs` の `HyAnalyzer` から写した。
-//! 写し元は色を付けるための分類を出す。ここは索引の契約(定義の名前と form 全体の範囲・
-//! container・docstring・params、import、参照)を出す。
+//! Origin: the reserved-word tables (`HY_KEYWORDS`, `DOEFF_KEYWORDS`, `DOEFF_REQUIRED_KEYWORDS`, `CONSTANTS`),
+//! `mangle`, `is_operator`, how required names are collected, and the per-shape branches (decorator detection for defn,
+//! defclass fields, defhandler docstring / params / effect clauses, import interpretation, `{…}` in f-strings) are
+//! copied from `HyAnalyzer` in `vscode-semantic-highlighting/rust-highlighter/src/hy.rs`.
+//! The source of the copy emits classifications used for coloring. This module emits the index contract (definition names and whole-form ranges,
+//! container, docstring, params, imports, references).
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -15,7 +15,7 @@ use super::model::{
 use super::position::LineIndex;
 use super::reader::{matching_brace, Delim, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
 
-/// Hy の special form と core の macro — 先頭に置かれた時は予約語(参照に入れない)。
+/// Hy special forms and core macros — reserved words when placed at the head (not counted as references).
 const HY_KEYWORDS: &[&str] = &[
     "if", "when", "unless", "cond", "do", "while", "break", "continue", "return", "yield",
     "yield-from", "await", "and", "or", "not", "raise", "assert", "del", "global", "nonlocal",
@@ -27,34 +27,34 @@ const HY_KEYWORDS: &[&str] = &[
     "defmain", "->", "->>", "as->", "doto", "lif", "branch", "ecase", "case", "ncut", ".",
 ];
 
-/// doeff-hy の form のうち、どこに現れても予約語のもの(定義と束縛の構文)。
+/// doeff-hy forms that are reserved words wherever they appear (definition and binding syntax).
 const DOEFF_KEYWORDS: &[&str] = &[
     "defk", "deff", "defp", "defpp", "fnk", "do!", "<-", "<->", "for/do", "deftest", "defpipeline",
     "defmcp-tool", "set!", "defhandler", "defeffect", "resume", "with-handler", "defrecord", "defwire", "defenum",
     "defworkflow", "defphase", "defadr", "defsemgrep", "law", "lazy-val", "lazy-var",
 ];
 
-/// 名前が普通の語の doeff-hy の macro — file が require した時だけ予約語。
+/// doeff-hy macros whose names are ordinary words — reserved only when the file requires them.
 const DOEFF_REQUIRED_KEYWORDS: &[&str] = &[
     "val", "var", "lazy", "session", "handle", "traverse", "validate", "check", "parallel",
     "parallel-for", "loop", "time!", "random!", "pipeline", "agent!", "gate!", "workspace!",
     "merge!",
 ];
 
-/// 契約の辞書(`{:pre … :post … :tags …}`)を持てる定義の頭。
+/// Heads of definitions that can carry a contract dictionary (`{:pre … :post … :tags …}`).
 const CONTRACT_DEFINERS: &[&str] = &["defk", "deff", "defp", "defpp", "defhandler"];
 
-/// 型の注記の中の構文の記号(名として数えない)。
+/// Syntax symbols inside type annotations (not counted as names).
 const TYPE_SYNTAX: &[&str] = &["|", "of", "get"];
 
-/// doeff-hy の束縛の構文の頭。defk / deftest / defhandler の macro が本体の中で読むので、file が
-/// require していなくても構文であり、呼び出しには入れない。
+/// Heads of doeff-hy binding syntax. The defk / deftest / defhandler macros read them inside their bodies, so they are syntax even when the file does not
+/// require them, and they are excluded from calls.
 const BINDING_SYNTAX: &[&str] = &["val", "var", "lazy", "session"];
 
-/// 定数(参照に入れない)。
+/// Constants (not counted as references).
 const CONSTANTS: &[&str] = &["True", "False", "None", "...", "Ellipsis", "NotImplemented", "Inf", "NaN"];
 
-/// この thread で `mangle` を呼んだ回数(検が、仕事の量が file の大きさに比例するかを数える — `qualify::link`)。
+/// Number of times `mangle` was called on this thread (tests use it to check whether the work is proportional to file size — `qualify::link`).
 #[cfg(test)]
 thread_local! {
     static MANGLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -65,7 +65,7 @@ pub(super) fn mangle_calls() -> usize {
     MANGLES.with(std::cell::Cell::get)
 }
 
-/// Hy の名前を Python の名前へ直す(契約の mangle: `-` を `_` に、先頭の `-` は残す)。
+/// Converts a Hy name to a Python name (contract mangle: `-` becomes `_`, a leading `-` is kept).
 pub fn mangle(name: &str) -> String {
     #[cfg(test)]
     MANGLES.with(|count| count.set(count.get() + 1));
@@ -79,12 +79,12 @@ pub fn mangle(name: &str) -> String {
     }
 }
 
-/// 英数字も `_` も含まない記号(`+`・`<-`・`*` など)を演算子とみなす。
+/// Treats symbols containing neither alphanumerics nor `_` (such as `+`, `<-`, `*`) as operators.
 fn is_operator(text: &str) -> bool {
     !text.chars().any(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// 1 つの file を解析した結果(契約の file の中身のうち、path と module を除く部分)。
+/// Result of analyzing one file (the contents of the contract's file, minus path and module).
 pub struct FileAnalysis {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
@@ -93,7 +93,7 @@ pub struct FileAnalysis {
     pub errors: Vec<String>,
 }
 
-/// source 全体を読み、定義・import・参照・読めなかった箇所を返す。
+/// Reads the whole source and returns definitions, imports, references and the places that could not be read.
 pub fn analyze(src: &str) -> FileAnalysis {
     let mut reader = Reader::new(src, 0, src.len());
     let forms = reader.read_all();
@@ -134,7 +134,7 @@ pub fn analyze(src: &str) -> FileAnalysis {
     }
 }
 
-/// 読み取りの issue を `errors` の文言にする(位置は人が読む 1 始まりの 行:列)。
+/// Turns a read issue into an `errors` message (positions are human-readable 1-based line:column).
 fn describe_issue(lines: &LineIndex, issue: &ReadIssue) -> String {
     let at = |offset: usize| {
         let position = lines.position(offset);
@@ -142,34 +142,34 @@ fn describe_issue(lines: &LineIndex, issue: &ReadIssue) -> String {
     };
     match issue {
         ReadIssue::Unclosed { delim, open } => {
-            format!("{}: `{}` が file の終わりまで閉じていない", at(*open), delim.opener_text())
+            format!("{}: `{}` is not closed before the end of the file", at(*open), delim.opener_text())
         }
         ReadIssue::Mismatched { delim, open, at: close } => format!(
-            "{}: `{}`({} で開いた)を対応しない閉じ括弧で閉じている",
+            "{}: `{}`(opened at {}) is closed by a mismatched closing bracket",
             at(*close),
             delim.opener_text(),
             at(*open)
         ),
-        ReadIssue::StrayCloser { at: close } => format!("{}: 対応する開き括弧の無い閉じ括弧", at(*close)),
-        ReadIssue::UnterminatedString { start } => format!("{}: 文字列が file の終わりまで閉じていない", at(*start)),
+        ReadIssue::StrayCloser { at: close } => format!("{}: closing bracket with no matching opening bracket", at(*close)),
+        ReadIssue::UnterminatedString { start } => format!("{}: string is not closed before the end of the file", at(*start)),
     }
 }
 
-/// file が `(require …)` で持ち込んだ名前の集合(`*` を持ち込んだら全部)。
+/// Set of names a file brought in with `(require …)` (everything if `*` was brought in).
 struct RequiredNames {
     names: HashSet<String>,
     everything: bool,
 }
 
 impl RequiredNames {
-    /// file の全体を歩いて require した名前を集める(予約語の表を file ごとに決めるため)。
+    /// Walks the whole file and collects required names (so the reserved-word table can be decided per file).
     fn collect(forms: &[Form], src: &str) -> Self {
         let mut required = RequiredNames { names: HashSet::new(), everything: false };
         required.visit(forms, src);
         required
     }
 
-    /// form の列の中の `(require …)` を探す。
+    /// Looks for `(require …)` inside a list of forms.
     fn visit(&mut self, forms: &[Form], src: &str) {
         for form in forms {
             let Node::Seq { items, .. } = &form.node else {
@@ -186,7 +186,7 @@ impl RequiredNames {
         }
     }
 
-    /// require の引数の 1 つ(`[names]` か `*`)から名前を取る。
+    /// Takes names from one require argument (`[names]` or `*`).
     fn take(&mut self, item: &Form, src: &str) {
         match &item.node {
             Node::Seq { items, .. } if item.bracket_items().is_some() => {
@@ -201,7 +201,7 @@ impl RequiredNames {
         }
     }
 
-    /// 名前を 1 つ足す(`*` なら全部)。
+    /// Adds one name (everything for `*`).
     fn insert(&mut self, name: &str) {
         if name == "*" {
             self.everything = true;
@@ -210,13 +210,13 @@ impl RequiredNames {
         }
     }
 
-    /// その名前を require したかを返す。
+    /// Returns whether the name was required.
     fn contains(&self, name: &str) -> bool {
         self.everything || self.names.contains(name)
     }
 }
 
-/// 歩いている位置が quote の中か(quote の中の記号は data で、参照ではない)。
+/// Whether the walk position is inside a quote (symbols inside a quote are data, not references).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Quoting {
     None,
@@ -224,48 +224,48 @@ enum Quoting {
     Quasiquote,
 }
 
-/// docstring の置き場の決まり(定義の種類ごとに違う)。
+/// Rules for where the docstring goes (differs per kind of definition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DocRule {
-    /// 名前の直後の文字列(後に form が続く時だけ)。
+    /// A string right after the name (only when a form follows).
     Leading,
-    /// keyword の値(`law` の `:statement`、`defadr` の `:title`)。
+    /// The value of a keyword (`:statement` of `law`, `:title` of `defadr`).
     KeywordValue(&'static str),
-    /// docstring を持たない。
+    /// Has no docstring.
     Absent,
 }
 
-/// 解析の途中の状態。定義・import・参照を積む。
+/// Intermediate state of the analysis. Accumulates definitions, imports and references.
 struct Analyzer<'a> {
     src: &'a str,
     lines: LineIndex<'a>,
     keywords: HashSet<&'static str>,
     definitions: Vec<Definition>,
-    /// definitions と同じ順の、各定義の form 全体の byte の範囲(呼び出しの caller を引くため)。
+    /// Byte range of each definition's whole form, in the same order as definitions (used to look up the caller of a call).
     definition_spans: Vec<Span>,
     imports: Vec<Import>,
     references: Vec<Reference>,
     calls: Vec<Call>,
-    /// 0 より大きい間は呼び出しを積まない(型注釈・match の pattern の中)。
+    /// While greater than 0, calls are not accumulated (inside a type annotation or a match pattern).
     call_suppression: u32,
-    /// 0 より大きい間は、積む参照を値を検めるだけの名指し(`Reference::inspected`)にする(比べの form の被演算子の中)。
+    /// While greater than 0, accumulated references become mere mentions that only inspect a value (`Reference::inspected`) (inside operands of a comparison form).
     inspecting: u32,
-    /// defrecord の欄の名の始まりの byte。宣言する名であって、同じ綴りの import(関数)への名指しではないので参照に積まない。
+    /// Start byte of a defrecord field name. It is a name being declared, not a mention of an imported (function) name with the same spelling, so it is not accumulated as a reference.
     declared_names: HashSet<usize>,
 }
 
-/// 被演算子を検めるだけの form の頭 — 比べ(同一・等しさ・含み)と `assert`(真偽と失敗の時の表示の文を作るだけ)。
-/// 被演算子の値を呼ばず、他の定義へ渡さない。比べの外の属性の読み(`(+ f.__module__ ":" f.__name__)` で handler を名指す
-/// 解釈器の定数 — DOEFF137)は今までどおり届く。
+/// Heads of forms that only inspect their operands — comparisons (identity, equality, containment) and `assert` (it only builds the truth value and the failure message).
+/// They do not call operand values and do not pass them to other definitions. Attribute reads outside the comparison (`(+ f.__module__ ":" f.__name__)` naming a handler
+/// as an interpreter constant — DOEFF137) are still reported as before.
 const COMPARISONS: &[&str] = &["is", "is-not", "=", "!=", "in", "not-in", "assert"];
 
 impl<'a> Analyzer<'a> {
-    /// span の綴りを返す。
+    /// Returns the spelling of the span.
     fn text(&self, span: Span) -> &'a str {
         &self.src[span.start..span.end]
     }
 
-    /// 列の先頭が記号ならその綴りを返す。
+    /// If the head of the list is a symbol, returns its spelling.
     fn head(&self, items: &[Form]) -> Option<&'a str> {
         match items.first() {
             Some(form) if matches!(form.node, Node::Symbol) => Some(self.text(form.span)),
@@ -273,14 +273,14 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 先頭に置かれた時に予約語になる綴りかを返す。
+    /// Returns whether the spelling becomes a reserved word when placed at the head.
     fn is_keyword_head(&self, text: &str) -> bool {
         self.keywords.contains(text)
     }
 
-    // --- 定義 ------------------------------------------------------------------------------
+    // --- Definitions ------------------------------------------------------------------------------
 
-    /// top level の form を 1 つ見る(`do`・`eval-and-compile` の中は top level のまま)。
+    /// Looks at one top-level form (inside `do` and `eval-and-compile` it stays top level).
     fn visit_top(&mut self, form: &Form) {
         let Some(items) = form.paren_items() else {
             return;
@@ -298,12 +298,12 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 先頭の綴りが定義の形なら定義を積む(`container` は入れ物の定義の名前)。
+    /// If the head spelling is a definition form, accumulates the definition (`container` is the name of the container definition).
     fn definition(&mut self, form: &Form, head: &str, items: &[Form], container: Option<&str>) {
         let before = self.definitions.len();
         self.definition_by_head(form, head, items, container);
-        // 契約の辞書を持つ定義(defk・deff・defp・defpp・defhandler)は、その辞書の :tags を定義のタグとして、
-        // :effects を宣言した effect として、:pre / :post を引数と答えの型と型でない契約として控える。
+        // For definitions with a contract dictionary (defk, deff, defp, defpp, defhandler), record the dictionary's :tags as the definition's tags,
+        // :effects as the declared effects, and :pre / :post as the argument and answer types and the non-type contracts.
         if CONTRACT_DEFINERS.contains(&head) && self.definitions.len() > before {
             let dict = self.contract_dict(items);
             let tags = dict.and_then(|d| self.dict_value(d, ":tags")).filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
@@ -314,7 +314,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 先頭の綴りごとに定義を読む。
+    /// Reads a definition according to the head spelling.
     fn definition_by_head(&mut self, form: &Form, head: &str, items: &[Form], container: Option<&str>) {
         match head {
             "defn" => self.function_def(form, items, DefinitionKind::Defn, container),
@@ -323,7 +323,7 @@ impl<'a> Analyzer<'a> {
             "defk" => self.function_def(form, items, DefinitionKind::Defk, container),
             "deff" => self.function_def(form, items, DefinitionKind::Deff, container),
             "defclass" => self.class_def(form, items, container),
-            // defwire(JSON の境目の型 — doeff-hy の record.hy)は defrecord へ展開するので、同じ読み方・同じ kind。
+            // defwire (a JSON-boundary type — record.hy in doeff-hy) expands to defrecord, so it has the same reading and the same kind.
             "defrecord" | "defwire" => self.record_def(form, items, container),
             "defenum" => self.enum_def(form, items, container),
             "defhandler" => self.handler_def(form, items, container),
@@ -389,7 +389,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(session var x …)` / `(lazy val x …)` の `var` / `val` を読み飛ばす。
+    /// Skips the `var` / `val` of `(session var x …)` / `(lazy val x …)`.
     fn skip_val_var<'f>(&self, rest: &'f [Form]) -> &'f [Form] {
         match rest.first() {
             Some(form) if matches!(form.node, Node::Symbol) && matches!(self.text(form.span), "val" | "var") => &rest[1..],
@@ -397,7 +397,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 定義の名前の form から名前の span を取る(`#^ T name` は name)。
+    /// Takes the name span from a definition's name form (for `#^ T name` it is name).
     fn def_name(&self, form: &Form) -> Option<Span> {
         match &form.node {
             Node::Symbol if !is_operator(self.text(form.span)) => Some(form.span),
@@ -406,7 +406,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 定義を 1 つ積み、積んだ名前を返す。
+    /// Accumulates one definition and returns the accumulated name.
     fn push_def(
         &mut self,
         name: Span,
@@ -419,8 +419,8 @@ impl<'a> Analyzer<'a> {
         self.push_def_with_bases(name, kind, full, container, docstring, params, Vec::new())
     }
 
-    /// 基底を持つ定義(defclass / defrecord)を 1 つ積み、積んだ名前を返す。form 全体の byte の範囲も
-    /// 控える(呼び出しの caller を引くため)。
+    /// Accumulates one definition that has bases (defclass / defrecord) and returns the accumulated name. Also records the byte range of the whole form
+    /// (used to look up the caller of a call).
     #[allow(clippy::too_many_arguments)]
     fn push_def_with_bases(
         &mut self,
@@ -436,7 +436,7 @@ impl<'a> Analyzer<'a> {
         self.definitions.push(Definition {
             mangled: mangle(&text),
             name: text.clone(),
-            // module は file の索引が決めるので、解析の後に qualify::link が埋める
+            // module is decided by the file index, so qualify::link fills it in after the analysis
             qualified_name: String::new(),
             kind,
             range: self.lines.range(name.start, name.end),
@@ -445,27 +445,27 @@ impl<'a> Analyzer<'a> {
             docstring,
             params,
             bases,
-            // 生の副作用の証拠は file をまたぐので、全 file の解析の後に raw.rs が埋める
+            // Evidence of raw side effects crosses files, so raw.rs fills it in after analyzing all files
             raw: RawMark::default(),
-            // タグは契約の辞書を持つ定義と defeffect だけ(定義を積んだ後に読む側が埋める)
+            // Tags exist only for definitions with a contract dictionary and for defeffect (the reader fills them in after the definition is accumulated)
             tags: None,
-            // 作る時の検めの式(defrecord の頭の辞書の :check だけ — record_def が埋める)
+            // Check expressions at construction time (only :check in the head dictionary of defrecord — record_def fills them in)
             checks: None,
-            // 宣言した effect・型・契約は契約の辞書を持つ定義と defeffect・defrecord だけ(形ごとの読み手が埋める)
+            // Declared effects, types and contracts exist only for definitions with a contract dictionary and for defeffect / defrecord (the per-shape readers fill them in)
             effects: None,
             param_types: Vec::new(),
             answer_type: None,
             contracts: Vec::new(),
-            // effect 節の解く effect(handler_def が埋める)
+            // The effects resolved by the effect clauses (handler_def fills them in)
             handles: None,
-            // decorator(function_def・class_def が埋める)
+            // decorators (function_def and class_def fill them in)
             decorators: Vec::new(),
         });
         self.definition_spans.push(full);
         text
     }
 
-    /// `[Base other.Base :metaclass M]` の基底の記号を書かれたとおりに取る(keyword とその値は除く)。
+    /// Takes the base symbols of `[Base other.Base :metaclass M]` as written (keywords and their values are excluded).
     fn base_names(&self, bases: &[Form]) -> Vec<String> {
         let mut names = Vec::new();
         let mut index = 0;
@@ -482,7 +482,7 @@ impl<'a> Analyzer<'a> {
         names
     }
 
-    /// `(defn [decorators]? :tp [T]? #^ Ret? name [params] "doc"? body…)` を読む(defk・deff・defmacro も)。
+    /// Reads `(defn [decorators]? :tp [T]? #^ Ret? name [params] "doc"? body…)` (also defk, deff, defmacro).
     fn function_def(&mut self, form: &Form, items: &[Form], kind: DefinitionKind, container: Option<&str>) {
         let rest = skip_type_params(self, skip_decorators(&items[1..]));
         let Some(name) = rest.first().and_then(|first| self.def_name(first)) else {
@@ -495,7 +495,7 @@ impl<'a> Analyzer<'a> {
         let docstring = self.leading_docstring(body);
         let decorators = self.decorators(&items[1..]);
         self.push_def(name, kind, form.span, container, docstring, params);
-        // `#^ T name` の注記は答えの型(契約の辞書の :post が在ればそちらが勝つ — read_contract が上書きする)
+        // The `#^ T name` annotation is the answer type (if the contract dictionary has :post, that wins — read_contract overwrites it)
         let answer = match rest.first().map(|first| &first.node) {
             Some(Node::Annotated { annotation: Some(annotation), .. }) => Some(self.type_note(annotation)),
             Some(_) | None => None,
@@ -506,8 +506,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 定義の頭の decorator の `[…]`(`skip_decorators` が読み飛ばす物)の各要素の綴り — 読む面がバッジに出すため。
-    /// 呼びの形は外側の括弧を外し、文字列の外の空白の連なりは 1 つに詰める。`[…]` が無ければ空の列。
+    /// The spelling of each element of the definition's head decorator `[…]` (what `skip_decorators` skips) — so the reader side can show it as badges.
+    /// For call forms, the outer parentheses are removed and runs of whitespace outside strings are collapsed to one. If there is no `[…]`, an empty list.
     fn decorators(&self, rest: &[Form]) -> Vec<String> {
         if skip_decorators(rest).len() == rest.len() {
             return Vec::new();
@@ -521,7 +521,7 @@ impl<'a> Analyzer<'a> {
             .map(|item| {
                 let written = self.text(item.span);
                 let text = match item.paren_items() {
-                    // `(dataclass :frozen True)` → `dataclass :frozen True`(閉じていない括弧は開きだけを外す)
+                    // `(dataclass :frozen True)` -> `dataclass :frozen True` (for an unclosed parenthesis only the opening one is removed)
                     Some(_) => {
                         let inner = written.strip_prefix('(').unwrap_or(written);
                         inner.strip_suffix(')').unwrap_or(inner)
@@ -534,7 +534,7 @@ impl<'a> Analyzer<'a> {
             .collect()
     }
 
-    /// 欄の `#^ 型` の注記を、定義 `index` の `param_types` に書いた順に積む(defrecord と defclass で同じ読み方)。
+    /// Accumulates the field `#^ type` annotations into `param_types` of definition `index`, in the written order (same reading for defrecord and defclass).
     fn push_field_types(&mut self, index: usize, targets: &[super::fields::FieldTarget]) {
         for target in targets {
             if let (Some(annotation), false) = (target.annotation, is_operator(self.text(target.name))) {
@@ -545,7 +545,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defclass [decorators]? Name [bases]? "doc"? body…)` を読み、method と field を入れ子に積む。
+    /// Reads `(defclass [decorators]? Name [bases]? "doc"? body…)` and accumulates methods and fields as nested items.
     fn class_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let rest = skip_type_params(self, skip_decorators(&items[1..]));
         let Some(name) = rest.first().and_then(|first| self.def_name(first)) else {
@@ -561,8 +561,8 @@ impl<'a> Analyzer<'a> {
         let class_name = self.push_def_with_bases(name, kind, form.span, container, docstring, Vec::new(), bases);
         let class_index = self.definitions.len() - 1;
         self.definitions[class_index].decorators = decorators;
-        // 欄の型は defrecord と同じ読み手(fields.rs)で読む(v9: defclass のカードも欄に型を出す)。欄の定義そのもの
-        // (kind field)は今までどおり class_member が積む。
+        // Field types are read by the same reader as defrecord (fields.rs) (v9: defclass cards also show types on fields). The field definitions themselves
+        // (kind field) are still accumulated by class_member as before.
         let fields: Vec<&Form> = members.iter().collect();
         let targets = super::fields::record_field_targets(self.src, &fields);
         self.push_field_types(class_index, &targets);
@@ -571,7 +571,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// class の body の 1 つを見る: `(defn …)` は method、`#^ T x` / `(#^ T x …)` / `(setv x …)` は field。
+    /// Looks at one item of a class body: `(defn …)` is a method; `#^ T x` / `(#^ T x …)` / `(setv x …)` is a field.
     fn class_member(&mut self, member: &Form, class_name: &str) {
         match &member.node {
             Node::Annotated { .. } => {
@@ -596,7 +596,7 @@ impl<'a> Analyzer<'a> {
                     }
                 }
             }
-            // 記号・keyword・文字列・数などの裸の form は class の欄ではない
+            // Bare forms such as symbols, keywords, strings and numbers are not class fields
             Node::Symbol
             | Node::Keyword
             | Node::Str { .. }
@@ -607,10 +607,10 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defrecord Name [bases]? "doc"? {:tags {…} :check […]}? #^ T field …)` を読む(field は裸・括弧つき・注釈なしの
-    /// 記号のどれでもよい)。今の defrecord の macro は基底を書かない形だけなので、bases はふつう空。
-    /// 頭の辞書(doeff-hy の defrecord)の :tags は定義のタグ(defk / defeffect と同じ読み方)、
-    /// :check の各式は書かれたとおりの綴りで checks に入れる(頭の辞書が無ければ checks は null)。
+    /// Reads `(defrecord Name [bases]? "doc"? {:tags {…} :check […]}? #^ T field …)` (a field may be any of a bare symbol, a parenthesized form,
+    /// or an unannotated symbol). The current defrecord macro only has the form without bases, so bases is normally empty.
+    /// :tags of the head dictionary (doeff-hy's defrecord) are the definition's tags (read the same way as defk / defeffect),
+    /// and each :check expression goes into checks with its spelling as written (if there is no head dictionary, checks is null).
     fn record_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
@@ -640,7 +640,7 @@ impl<'a> Analyzer<'a> {
                 last.checks = Some(checks);
             }
         }
-        // 欄の読み方は defrecord / defwire の正本(fields.rs・Hy 側は doeff_hy.declarations/field-targets)に揃える。
+        // The way fields are read follows the canonical sources of defrecord / defwire (fields.rs; on the Hy side doeff_hy.declarations/field-targets).
         let members: Vec<&Form> = fields.iter().collect();
         let targets = super::fields::record_field_targets(self.src, &members);
         let record_index = self.definitions.len() - 1;
@@ -651,7 +651,7 @@ impl<'a> Analyzer<'a> {
                 self.push_def(target.name, DefinitionKind::Field, target.member, Some(&record), None, Vec::new());
             }
         }
-        // 欄でない body の form(method など)は今までどおり class の body として読む。
+        // Body forms that are not fields (methods and so on) are read as the class body, as before.
         for field in fields.iter().filter(|f| matches!(f.node, Node::Seq { .. })) {
             if let Some(items) = field.paren_items() {
                 if matches!(self.head(items), Some("defn" | "defn/a" | "defk" | "deff" | "defmacro")) {
@@ -661,7 +661,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defenum Name A B (C "value") …)` を読む。
+    /// Reads `(defenum Name A B (C "value") …)`.
     fn enum_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
@@ -679,7 +679,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 辞書の form から、文字列の値を持つ keyword の鍵の組を読む(1 つも無ければ None — 空の辞書は名乗っていない)。
+    /// From a dictionary form, reads the set of keyword keys that have string values (None if there are none — an empty dictionary does not claim anything).
     fn tags_of_dict(&self, dict: &Form) -> Option<BTreeMap<String, String>> {
         let Node::Seq { delim: Delim::Brace, items } = &dict.node else {
             return None;
@@ -702,7 +702,7 @@ impl<'a> Analyzer<'a> {
         (!tags.is_empty()).then_some(tags)
     }
 
-    /// 辞書の form の中の `key` の値の form(無ければ None)。鍵と値の組で読む。
+    /// The value form for `key` in a dictionary form (None if absent). Read as pairs of key and value.
     fn dict_value<'f>(&self, dict: &'f Form, key: &str) -> Option<&'f Form> {
         let Node::Seq { delim: Delim::Brace, items } = &dict.node else {
             return None;
@@ -719,7 +719,7 @@ impl<'a> Analyzer<'a> {
         found
     }
 
-    /// 契約の辞書 — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
+    /// The contract dictionary — the first dictionary after skipping the argument list and docstring that follow the name (up to the 4th item from the name).
     fn contract_dict<'f>(&self, items: &'f [Form]) -> Option<&'f Form> {
         let items: Vec<&'f Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
         for part in items.iter().skip(2).take(4) {
@@ -735,8 +735,8 @@ impl<'a> Analyzer<'a> {
         None
     }
 
-    /// 契約の辞書の :effects・:pre・:post を定義 `index` に控える。`(: 引数 型)` は引数の型、`(: % 型)` は答えの型、
-    /// それ以外の述語(型の注記でも引数でない名への物を含む)は型でない契約として書かれたとおりに残す。
+    /// Records :effects, :pre and :post of the contract dictionary on definition `index`. `(: arg type)` is an argument type, `(: % type)` is the answer type,
+    /// and any other predicate (including type annotations about names that are not arguments) is kept as a non-type contract as written.
     fn read_contract(&mut self, index: usize, dict: &Form) {
         let effects = self.dict_value(dict, ":effects").and_then(Form::bracket_items).map(|names| {
             names
@@ -772,7 +772,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
         }
-        // 型は引数の順に並べる(:pre に書いた順ではない)
+        // Types are ordered by argument order (not the order written in :pre)
         param_types.sort_by_key(|t| params.iter().position(|p| *p == t.name));
         let definition = &mut self.definitions[index];
         definition.effects = effects;
@@ -783,7 +783,7 @@ impl<'a> Analyzer<'a> {
         definition.contracts = contracts;
     }
 
-    /// `(: 名 型)` の形なら (名の綴り, 型の form)。
+    /// If the form is `(: name type)`, returns (spelling of name, type form).
     fn annotation_of<'f>(&self, clause: &'f Form) -> Option<(&'a str, &'f Form)> {
         let items: Vec<&Form> = clause.paren_items()?.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect();
         match items.as_slice() {
@@ -798,14 +798,14 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 型の form の注記(書かれた綴りと、その中の名 — 完全修飾名は qualify::link が埋める)。
+    /// The annotation of a type form (the spelling as written, and the names inside it — fully qualified names are filled in by qualify::link).
     fn type_note(&self, form: &Form) -> TypeNote {
         let mut names: Vec<NameRef> = Vec::new();
         self.type_names(form, &mut names);
         TypeNote { text: self.text(form.span).to_string(), names }
     }
 
-    /// 型の注記の範囲(fields.rs が返す span)から注記を作る。
+    /// Builds an annotation from the range of a type annotation (the span returned by fields.rs).
     fn type_note_of_span(&self, span: Span) -> TypeNote {
         let mut reader = Reader::new(self.src, span.start, span.end);
         match reader.read_form() {
@@ -814,7 +814,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 型の form の中の名を書いた順に集める(構文の記号・keyword・文字列・数は除き、同じ名は 1 度)。
+    /// Collects the names in a type form in written order (syntax symbols, keywords, strings and numbers are excluded; the same name once).
     fn type_names(&self, form: &Form, names: &mut Vec<NameRef>) {
         match &form.node {
             Node::Symbol => {
@@ -843,8 +843,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defeffect Name "doc"? {:fields [a b] :answer T :tags {…}})` を読む(doeff-hy の effect の型 — 常に EffectBase を継ぐ
-    /// frozen の dataclass)。params は :fields の名、bases は EffectBase、タグは辞書の :tags。
+    /// Reads `(defeffect Name "doc"? {:fields [a b] :answer T :tags {…}})` (doeff-hy's effect type — a frozen dataclass that always inherits EffectBase).
+    /// params are the names in :fields, bases is EffectBase, and tags are :tags of the dictionary.
     fn effect_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
@@ -859,7 +859,7 @@ impl<'a> Analyzer<'a> {
             if part.is_brace() {
                 if let Some(fields) = self.dict_value(part, ":fields").and_then(Form::bracket_items) {
                     params = self.param_names(fields);
-                    // `(: 欄 型)` の欄は型つき(裸の記号の欄は型なし)
+                    // A field `(: field type)` is typed (a field that is a bare symbol is untyped)
                     param_types = fields
                         .iter()
                         .filter_map(|field| self.annotation_of(field))
@@ -884,7 +884,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defhandler name "doc"? [params]? "doc"? (session var x init)… (Effect [fields] body…)…)` を読む。
+    /// Reads `(defhandler name "doc"? [params]? "doc"? (session var x init)… (Effect [fields] body…)…)`.
     fn handler_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
@@ -929,7 +929,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 名前が 2 番目に来る定義(`(deftest name …)` など)を積み、名前を返す。
+    /// Accumulates a definition whose name comes second (such as `(deftest name …)`) and returns the name.
     fn named_def(
         &mut self,
         form: &Form,
@@ -949,7 +949,7 @@ impl<'a> Analyzer<'a> {
         Some(self.push_def(name, kind, form.span, container, docstring, Vec::new()))
     }
 
-    /// `(defmain [args] body…)` を読む。名前を持たない形なので、先頭の `defmain` を名前にする。
+    /// Reads `(defmain [args] body…)`. It is a form without a name, so the leading `defmain` is used as the name.
     fn main_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         match items.get(1) {
             Some(params) if params.bracket_items().is_some() => {
@@ -963,7 +963,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defmcp-tool name "description" [params] body…)` を読む(description を docstring にする)。
+    /// Reads `(defmcp-tool name "description" [params] body…)` (description becomes the docstring).
     fn mcp_tool_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
@@ -978,7 +978,7 @@ impl<'a> Analyzer<'a> {
         self.push_def(name, DefinitionKind::DefmcpTool, form.span, container, docstring, params);
     }
 
-    /// 入れ物の定義の中を探し、`heads` の形の定義を入れ子として積む(defadr の law など)。
+    /// Searches inside a container definition and accumulates definitions of the `heads` forms as nested items (such as law in defadr).
     fn nested_defs(&mut self, forms: &[Form], heads: &[&str], container: &str) {
         for form in forms {
             let Node::Seq { items, .. } = &form.node else {
@@ -991,7 +991,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 束縛の的(記号・注釈つき・`[a b]` の分解)の名前を 1 つずつ定義として積む。
+    /// Accumulates each name of a binding target (symbol, annotated, `[a b]` destructuring) as a definition.
     fn binding_targets(&mut self, form: &Form, target: &Form, kind: DefinitionKind, container: Option<&str>) {
         match &target.node {
             Node::Symbol => {
@@ -1013,7 +1013,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 引数の list から引数の名前を書かれたとおりに取る(`#* args`・`[x default]`・`#^ T x` を含む)。
+    /// Takes argument names from an argument list as written (including `#* args`, `[x default]` and `#^ T x`).
     fn param_names(&self, params: &[Form]) -> Vec<String> {
         let mut names = Vec::new();
         for param in params {
@@ -1022,7 +1022,7 @@ impl<'a> Analyzer<'a> {
         names
     }
 
-    /// 引数の 1 つから名前を取る。
+    /// Takes the name from one argument.
     fn param_name(&self, param: &Form, names: &mut Vec<String>) {
         match &param.node {
             Node::Symbol => {
@@ -1044,7 +1044,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 本体の先頭の docstring を取る。`{:pre … :post …}` の後でもよく、後に form が続く時だけ docstring。
+    /// Takes the docstring at the head of the body. It may follow `{:pre … :post …}`, and it is a docstring only when a form follows.
     fn leading_docstring(&self, body: &[Form]) -> Option<String> {
         for (index, form) in body.iter().enumerate() {
             if form.is_brace() {
@@ -1058,7 +1058,7 @@ impl<'a> Analyzer<'a> {
         None
     }
 
-    /// class 型の本体の先頭の文字列を docstring として取り(後に何も無くてもよい)、残りを返す。
+    /// Takes the string at the head of a class-type body as the docstring (nothing needs to follow) and returns the rest.
     fn body_docstring<'f>(&self, body: &'f [Form]) -> (Option<String>, &'f [Form]) {
         match body.first().and_then(string_value(self.src)) {
             Some(doc) => (Some(doc), &body[1..]),
@@ -1066,7 +1066,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `:key "値"` の値を docstring として取る(law の `:statement`、defadr の `:title`)。
+    /// Takes the value of `:key "value"` as the docstring (`:statement` of law, `:title` of defadr).
     fn keyword_value_docstring(&self, body: &[Form], key: &str) -> Option<String> {
         body.windows(2).find_map(|pair| match pair[0].node {
             Node::Keyword if self.text(pair[0].span) == key => string_value(self.src)(&pair[1]),
@@ -1074,9 +1074,9 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    // --- import と参照 ---------------------------------------------------------------------
+    // --- Imports and references ---------------------------------------------------------------------
 
-    /// form を歩き、記号の出現を参照に、`(import …)` / `(require …)` を import に積む。
+    /// Walks a form, accumulating symbol occurrences as references and `(import …)` / `(require …)` as imports.
     fn walk(&mut self, form: &Form, quoting: Quoting) {
         match &form.node {
             Node::Symbol => {
@@ -1110,7 +1110,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Node::Annotated { annotation, target } => {
-                // 型注釈の中の `(of list int)` などは呼び出しではない。
+                // `(of list int)` and the like inside type annotations are not calls.
                 if let Some(annotation) = annotation {
                     self.call_suppression += 1;
                     self.walk(annotation, quoting);
@@ -1128,8 +1128,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `( … )` を歩く。先頭の予約語は参照にも呼び出しにも入れず、import / quote / `<-` / handler の節 /
-    /// `.` / match の形はそれぞれに読む。`performed` = この列が `<-` / `yield` で撃たれている。
+    /// Walks `( … )`. A leading reserved word enters neither references nor calls, and import / quote / `<-` / handler clauses /
+    /// `.` / match forms are each read in their own way. `performed` = this list is fired by `<-` / `yield`.
     fn walk_list(&mut self, items: &[Form], quoting: Quoting, performed: bool) {
         if quoting != Quoting::None {
             for item in items {
@@ -1137,7 +1137,7 @@ impl<'a> Analyzer<'a> {
             }
             return;
         }
-        // doeff の型注記 `(: 値 型)`。型の名前は値の呼び出しではない。
+        // doeff type annotation `(: value type)`. A type name is not a call of the value.
         if let [colon, value, note] = items {
             if self.text(colon.span) == ":" {
                 self.walk(value, Quoting::None);
@@ -1169,9 +1169,9 @@ impl<'a> Analyzer<'a> {
                 return;
             }
             "session" | "lazy" => rest = self.skip_val_var(rest),
-            // (<- (X …)) / (<- name (X …)) / (<- name T (X …)) — 撃たれるのは最後の form。
+            // (<- (X …)) / (<- name (X …)) / (<- name T (X …)) — the last form is the one fired.
             "<-" if (1..=3).contains(&rest.len()) => performed_index = Some(rest.len() - 1),
-            // `(! (X …))` は doeff-hy の引数の位置での effect の bind(ADR-DOE-HY-003)で、`<-` と同じく撃つ形。
+            // `(! (X …))` is an effect bind in argument position in doeff-hy (ADR-DOE-HY-003), and is a firing form like `<-`.
             "yield" | "yield-from" | "!" if !rest.is_empty() => performed_index = Some(0),
             "defhandler" => {
                 self.walk_handler_clauses(rest);
@@ -1208,7 +1208,7 @@ impl<'a> Analyzer<'a> {
             self.reference(items[0].span);
             let keywords = items[1..].iter().filter(|item| matches!(item.node, Node::Keyword)).map(|item| self.text(item.span).to_string()).collect();
             let arguments = self.call_arguments(&items[1..]);
-            // 頭が method(`(.m 受け手 …)` か `(x.m …)`)なら、最後の区切り m に受け手を除く引数の数を添える(model の call_arity)。
+            // If the head is a method (`(.m receiver …)` or `(x.m …)`), attach to the last segment m the number of arguments excluding the receiver (model's call_arity).
             let method_head = self.text(items[0].span).starts_with('.');
             if let Some(last) = self.references[pushed..].last_mut().filter(|r| r.member) {
                 last.call_arity = Some(if method_head { arguments.len().saturating_sub(1) } else { arguments.len() });
@@ -1223,9 +1223,9 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 比べの form の被演算子を歩く: 記号と literal の列・辞書・組・集合の中の記号は値を検めるだけの名指し
-    /// (`Reference::inspected`)。被演算子が呼び出し `( … )` なら、その中はふつうに歩く(呼んだ結果を比べる形 —
-    /// 呼びそのものは届く)。
+    /// Walks the operands of a comparison form: symbols in a list of symbols and literals, dictionary, tuple or set are mere mentions that only inspect the value
+    /// (`Reference::inspected`). If an operand is a call `( … )`, its inside is walked normally (a form that compares the result of a call —
+    /// the call itself is still reported).
     fn walk_inspected(&mut self, operand: &Form) {
         match &operand.node {
             Node::Symbol => {
@@ -1242,8 +1242,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// handler の本体の節を歩く: `(Effect [fields] body…)` の頭は参照だが呼び出しではない。
-    /// それ以外(名前・docstring・引数・`(session …)`)はふつうに歩く。
+    /// Walks the clauses of a handler body: the head of `(Effect [fields] body…)` is a reference but not a call.
+    /// Everything else (name, docstring, arguments, `(session …)`) is walked normally.
     fn walk_handler_clauses(&mut self, clauses: &[Form]) {
         for clause in clauses {
             match clause.paren_items() {
@@ -1263,7 +1263,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(. obj attr (method args))` を歩く: 属性と method の名前は参照だが呼び出しではない。
+    /// Walks `(. obj attr (method args))`: attribute and method names are references but not calls.
     fn walk_attribute_access(&mut self, rest: &[Form]) {
         let Some((object, accessors)) = rest.split_first() else {
             return;
@@ -1283,8 +1283,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// match の節 `pattern [:as name] [:if guard] result` を歩く。pattern の中の `(Point …)` は
-    /// class の型の照合で呼び出しではないので、呼び出しに入れない(参照には入れる)。
+    /// Walks a match clause `pattern [:as name] [:if guard] result`. `(Point …)` inside the pattern is
+    /// a class type check and not a call, so it is not put into calls (it is put into references).
     fn walk_match_clauses(&mut self, forms: &[Form]) {
         let mut index = 0;
         while index < forms.len() {
@@ -1314,15 +1314,15 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 参照は積むが呼び出しは積まずに form を歩く(型注釈・match の pattern のため)。
+    /// Walks a form accumulating references but not calls (for type annotations and match patterns).
     fn walk_without_calls(&mut self, form: &Form) {
         self.call_suppression += 1;
         self.walk(form, Quoting::None);
         self.call_suppression -= 1;
     }
 
-    /// 呼び出しの頭の記号を呼び出しとして積む(`.method` の形・演算子・定数は除く)。caller は
-    /// 呼び出しの位置を form 全体の範囲に含む定義のうち最も狭いもの。
+    /// Accumulates the head symbol of a call as a call (`.method` forms, operators and constants are excluded). The caller is
+    /// the narrowest definition whose whole-form range contains the call position.
     fn record_call(&mut self, head: Span, form_end: usize, keywords: Vec<String>, arguments: Vec<CallArgument>, performed: bool) {
         let text = self.text(head);
         if self.call_suppression > 0
@@ -1367,7 +1367,7 @@ impl<'a> Analyzer<'a> {
             arguments,
             caller,
             performed,
-            // import と定義が全部そろった後に qualify::link が埋める
+            // qualify::link fills it in after all imports and definitions are in place
             target: None,
         });
     }
@@ -1394,7 +1394,7 @@ impl<'a> Analyzer<'a> {
         arguments
     }
 
-    /// f 文字列の `{form}` の中を読んで歩く(`{x:>10}` の書式は名前から外す)。
+    /// Reads and walks inside `{form}` of an f-string (the format of `{x:>10}` is removed from the name).
     fn walk_fstring(&mut self, body: Span, quoting: Quoting) {
         let bytes = self.src.as_bytes();
         let mut i = body.start;
@@ -1426,18 +1426,18 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 記号の出現を `.` で区切って参照に積む(演算子・定数・`_` は除く)。`(.m x)` の頭の `.m` と dotted の 2 つ目
-    /// 以降の区切りは属性・method の名前(member)。
+    /// Accumulates occurrences of a symbol, split on `.`, as references (operators, constants and `_` are excluded). The `.m` at the head of `(.m x)` and the second
+    /// and later segments of a dotted name are attribute / method names (member).
     fn reference(&mut self, span: Span) {
         self.push_reference(span, false);
     }
 
-    /// `(. obj attr (method args))` の属性と method の名前を参照に積む(書き方は裸の記号でも、値の上の member)。
+    /// Accumulates the attribute and method names of `(. obj attr (method args))` as references (even if written as bare symbols, they are members on a value).
     fn member_reference(&mut self, span: Span) {
         self.push_reference(span, true);
     }
 
-    /// 記号の出現を `.` で区切って参照に積む。member = 記号の全部の区切りが値の上の属性・method の名前。
+    /// Accumulates occurrences of a symbol, split on `.`, as references. member = every segment of the symbol is an attribute / method name on a value.
     fn push_reference(&mut self, span: Span, member: bool) {
         let text = self.text(span);
         if text.is_empty() || text == "_" || CONSTANTS.contains(&text) || is_operator(text) || self.declared_names.contains(&span.start) {
@@ -1471,7 +1471,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(import …)` / `(require …)` の引数を読む: `mod`・`mod :as m`・`mod [a b :as c]`・`mod *`・
+    /// Reads the arguments of `(import …)` / `(require …)`: `mod`, `mod :as m`, `mod [a b :as c]`, `mod *`,
     /// `mod :macros [a] :readers [b]`。
     fn parse_import(&mut self, rest: &[Form], is_require: bool) {
         let mut index = 0;
@@ -1514,7 +1514,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `[a b :as c *]` の名前を import に積む。
+    /// Accumulates the names of `[a b :as c *]` as imports.
     fn import_names(&mut self, module: &str, names: &[Form], is_require: bool) {
         let mut index = 0;
         while index < names.len() {
@@ -1545,7 +1545,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// import を 1 つ積む(`range` は名前・module・別名のうち契約が決めた方)。
+    /// Accumulates one import (`range` is whichever of name, module and alias the contract decided).
     fn push_import(&mut self, module: &str, name: Option<String>, alias: Option<String>, range: Span, is_require: bool) {
         self.imports.push(Import {
             module: module.to_string(),
@@ -1557,7 +1557,7 @@ impl<'a> Analyzer<'a> {
     }
 }
 
-/// 文字列の外の空白の連なり(改行を含む)を 1 つの空白に詰め、両端を落とす(decorator の綴りを 1 行にするため)。
+/// Collapses runs of whitespace outside strings (including newlines) into a single space and trims both ends (to make a decorator's spelling one line).
 fn collapse_spaces(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_string = false;
@@ -1590,7 +1590,7 @@ fn collapse_spaces(text: &str) -> String {
     out
 }
 
-/// `(defn [decorators] name …)` の decorator の list を読み飛ばす(次が名前の形の時だけ decorator)。
+/// Skips the decorator list of `(defn [decorators] name …)` (it is a decorator only when a name form follows).
 fn skip_decorators(rest: &[Form]) -> &[Form] {
     match (rest.first().and_then(Form::bracket_items), rest.get(1).map(|next| &next.node)) {
         (Some(_), Some(Node::Symbol | Node::Annotated { .. } | Node::Keyword)) => &rest[1..],
@@ -1598,7 +1598,7 @@ fn skip_decorators(rest: &[Form]) -> &[Form] {
     }
 }
 
-/// `:tp [T …]`(型引数)を読み飛ばす。
+/// Skips `:tp [T …]` (type parameters).
 fn skip_type_params<'f>(analyzer: &Analyzer, rest: &'f [Form]) -> &'f [Form] {
     match rest.first() {
         Some(form) if matches!(form.node, Node::Keyword) && analyzer.text(form.span) == ":tp" => {
@@ -1608,8 +1608,8 @@ fn skip_type_params<'f>(analyzer: &Analyzer, rest: &'f [Form]) -> &'f [Form] {
     }
 }
 
-/// docstring になれる文字列の form から中身を取る関数を返す(普通の文字列は escape を戻し、
-/// bracket 文字列はそのまま。どちらも Python の inspect.cleandoc と同じく字下げを揃える)。
+/// Returns a function that takes the contents from a string form that can be a docstring (ordinary strings have escapes undone,
+/// bracket strings are kept as is. Both align indentation like Python's inspect.cleandoc).
 fn string_value(src: &str) -> impl Fn(&Form) -> Option<String> + '_ {
     move |form: &Form| match &form.node {
         Node::Str { kind: StrKind::Plain, body } => Some(clean_doc(&unescape(&src[body.start..body.end]))),
@@ -1618,7 +1618,7 @@ fn string_value(src: &str) -> impl Fn(&Form) -> Option<String> + '_ {
     }
 }
 
-/// Hy の文字列の escape(`\n`・`\t`・`\"`・`\\`・行末の `\`)を戻す。知らない escape はそのまま残す。
+/// Undoes Hy string escapes (`\n`, `\t`, `\"`, `\\`, and a trailing `\` at end of line). Unknown escapes are left as is.
 fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -1645,7 +1645,7 @@ fn unescape(text: &str) -> String {
     out
 }
 
-/// docstring の字下げを揃える(Python の inspect.cleandoc と同じ: 2 行目以降の共通の字下げを除き、前後の空行を落とす)。
+/// Aligns the indentation of a docstring (same as Python's inspect.cleandoc: remove the common indentation from the 2nd line on, and drop leading and trailing blank lines).
 fn clean_doc(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let indent = lines

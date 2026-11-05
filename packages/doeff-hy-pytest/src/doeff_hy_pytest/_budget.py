@@ -1,95 +1,95 @@
-"""Hy の検の時間の上限(検 1 本の実行・検の file 1 本の収集)。
+"""Time budgets for Hy tests (running one test, collecting one Hy test file).
 
-模擬の handler で回す検は速いことが前提なので、遅くなった検に気づかせる。
-利用側の pyproject の ``[tool.pytest.ini_options]`` に置く設定:
+Tests run on mock handlers are expected to be fast, so this makes a test that has become slow noticeable.
+Settings to put in the consumer repo's ``[tool.pytest.ini_options]``:
 
-- ``doeff_test_call_budget_steps`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の doeff-vm の歩数
-  (正の整数 — 機体の負荷で揺れない決まった数)。実行の判定の本体で、歩数で判じ、CPU 秒は測って報告に出すだけ。
-  doeff-vm に数の口が無い build で在れば、秒へ倒さず ``pytest.UsageError`` で止める。
-- ``doeff_test_call_budget_by_marker`` — 印ごとの実行の上限の壁の時計の秒(1 行 = ``印=秒``・例 ``real_world=10``)。検が持つ印
-  (``item.iter_markers()`` — module の頭の ``pytestmark`` を含む)に当たる行があればその秒、複数当たれば最も長い秒で判じる
-  (本物の I/O を持つ検は歩数に重さが出ないので、歩数の上限があっても秒のまま)。1 つも当たらない検は歩数の上限で判じ、
-  歩数の上限も無ければ実行を測らない。実行の秒の上限は印ごとの設定だけ(印の無い検の既定の秒 ``doeff_test_call_budget_seconds`` は
-  無くなった — 2026-10-04 の決め「後方互換は要らない」。書いても pytest が未登録の設定として警告するだけで、実行は秒で判じない)。
-  収集の上限は file 単位で印を持たないので 1 つの値。
-- ``doeff_test_collect_budget_seconds`` — Hy の検の file 1 本の module の import の上限の CPU 秒。
-- ``doeff_test_budget_mode`` — ``report``(既定・超えても赤にせず、警告と終わりの一覧だけ)か ``fail``(超えたら赤)。
-- ``doeff_test_budget_registry`` — 上限を超えてよい既存の検の登録簿の dir(rootdir からの相対・1 行 = 1 dir・
-  1 つの値の書き方もそのまま読める)。どの dir に載った鍵も赤にしない。上限を超えた文が足し先に挙げるのは 1 行目の dir。
+- ``doeff_test_call_budget_steps`` — upper bound, in doeff-vm steps, on running one test collected from a Hy test file (the pytest call phase)
+  (a positive integer — a fixed number that does not wobble with machine load). This is the core of the run judgment: it judges by steps, and CPU seconds are only measured and shown in the report.
+  If a build has no counter hook in doeff-vm, stop with ``pytest.UsageError`` instead of falling back to seconds.
+- ``doeff_test_call_budget_by_marker`` — per-marker run budget in wall-clock seconds (one line = ``marker=seconds``, e.g. ``real_world=10``). A line that matches a marker the test has
+  (``item.iter_markers()`` — including a module-level ``pytestmark``) gives that many seconds; if several match, the longest wins
+  (a test with real I/O shows no weight in steps, so it stays in seconds even when a step budget exists). A test matching no line is judged by the step budget, and
+  if there is no step budget either, its run is not measured. The run-seconds budget exists only per marker (the default seconds for unmarked tests, ``doeff_test_call_budget_seconds``, was
+  removed — the 2026-10-04 decision "no backward compatibility needed". Writing it only makes pytest warn about an unregistered setting; runs are not judged by seconds).
+  The collect budget is per file and has no marker, so it is a single value.
+- ``doeff_test_collect_budget_seconds`` — CPU-seconds budget for importing the module of one Hy test file.
+- ``doeff_test_budget_mode`` — ``report`` (default: exceeding does not turn red; only a warning and the final list) or ``fail`` (exceeding turns red).
+- ``doeff_test_budget_registry`` — dir of the registry of existing tests allowed to exceed the budget (relative to rootdir; one line = one dir;
+  a single-value form is also read as is). A key listed in any dir is never turned red. The over-budget message names the first dir as where to add.
 
-- 歩数の上限の細目: 登録簿は秒の判定と同じ dir(載った行は、歩数で判じる検なら歩数で判じる)。歩数が 0 の検(VM を回さず木を読むだけの検)は上限の内。
-  歩数で判じる Hy の検は、call の間だけ doeff の scheduler に歩の上限(この値 × ``step_budget_multiplier``(既定 ``DEFAULT_RUNAWAY_STEPS_MULTIPLIER`` = 20))を入れる
-  (#3143)。同じ仮想の刻で task を起こし続ける空回りは走り終わらないので、走り終えた後の判定には届かない — 上限を越えて
-  task を起こそうとした時に scheduler が ``StepBudgetExceeded`` を上げ、その検はその場で赤になる。設定が無い repo・
-  scheduler に口の無い版では入れない(今までどおり)。
-- 検ごとの宣言 ``declare_step_budget(検, 歩数, 理由)`` — 既定の上限は変えず、筋書きの規模に断言が依って縮められない検だけが
-  検の定義の隣で要る歩数と理由 1 行を宣言する(Mac の調整役の決め 2026-10-03 21:5x — 別の file の
-  登録簿の代わり)。歩数で判じる時、宣言のある検は宣言の値で判じる: 超えれば赤・宣言の ``STALE_RATIO``(半分)以下で
-  終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
-- 模擬の世界の走りの歩数だけで判じる(調整役 cisco-c8 の決め 2026-10-12 15:47 JST — #2670 の数え方を改めた):
-  doeff-cluster の ``sim-main`` は、始まり・立ち上がり(宣言の job が全部 起きた後、世界が初めて静まった時)・止め始め・終わりの
-  印を ``doeff_core_effects._world_phases`` に残す。``doeff_test_call_steps_counted = "world-running"`` の repo では(既定 ``call`` は
-  今までどおり call の全部)、歩数で判じる検の call の間はその記録を開き、世界を回した検は、立ち上がりから
-  止め始めまでの走りの歩数だけを上限(宣言)と比べる。起動・止め・世界の外(支度と判定)の歩数は数えず、報告の文に別の値で出す
-  (部品を足すたびに伸びる起動と止めの費用で上限を上げ続けず、空回りを見つける感度を保つため)。世界を回さない検は今までどおり
-  call の全部で判じる。走っている最中の歩の上限(暴走の検出)は call の全部の歩数のまま。設定にしたのは、repo が数え方の
-  切り替えと宣言の測り直しを 1 つの変更で行えるように(doeff が先に入っても利用側の判定が変わらない)と、戻し方を設定 1 行に
-  するため(戻し方 = 設定を ``call`` に戻し、宣言を測り直す)。
+- Step-budget details: the registry is the same dir as the seconds judgment (a listed line is judged by steps if the test is judged by steps). A test with 0 steps (it only reads a tree without running the VM) is within budget.
+  For a Hy test judged by steps, only during the call, a step cap (this value × ``step_budget_multiplier`` (default ``DEFAULT_RUNAWAY_STEPS_MULTIPLIER`` = 20)) is set on the doeff scheduler
+  (#3143). A spin that keeps waking tasks at the same virtual time never finishes, so it never reaches the post-run judgment — when it tries to
+  wake a task past the cap, the scheduler raises ``StepBudgetExceeded`` and that test turns red on the spot. It is not set in a repo with no setting or
+  with a scheduler version that has no hook for it (same as before).
+- Per-test declaration ``declare_step_budget(test, steps, reason)`` — the default budget is unchanged; only a test whose assertions depend on the scale of its scenario and so cannot be shrunk
+  declares the steps it needs and a one-line reason next to the test definition (decision of the Mac coordinator, 2026-10-03 21:5x — in place of a
+  registry in a separate file). When judging by steps, a test with a declaration is judged by the declared value: exceeding it is red; finishing at or below `STALE_RATIO` (half) of the declaration
+  is red as a stale declaration. A test without a declaration is judged by the default budget (and the registry) as before.
+- Judge only by the steps of the simulated world's run (decision of coordinator cisco-c8, 2026-10-12 15:47 JST — revising the #2670 counting):
+  doeff-cluster's ``sim-main`` leaves marks for begin, start-up (the first time the world goes quiet after all declared jobs have woken), start of stopping, and end
+  in ``doeff_core_effects._world_phases``. In a repo with ``doeff_test_call_steps_counted = "world-running"`` (the default ``call`` is
+  all of the call as before), the record is opened during the call of a test judged by steps, and for a test that ran a world, only the steps from start-up to
+  the start of stopping are compared with the budget (declaration). Steps for start, stop, and outside the world (setup and verdict) are not counted and are shown as separate values in the report message
+  (so the ever-growing start/stop cost of adding components does not keep raising the budget, and sensitivity to spins is kept). A test that does not run a world is judged by
+  all of the call as before. The in-flight step cap (runaway detection) stays on the whole call's steps. It is a setting so that a repo can do the switch of counting
+  and the re-measurement of declarations in one change (so the consumer's judgment does not change even if doeff lands first), and so that rolling back is
+  one setting line (rollback = set it back to ``call`` and re-measure declarations).
 
-- Python の呼び出しの数(``doeff_hy_pytest._python_calls``): 命令行の印 ``--doeff-python-calls`` を付けた走りだけ、
-  歩数を宣言した検の call の間に ``sys.monitoring`` の CALL 事象を数え、終わりに 1 行出す(判定はしない)。印の無い走りは枠を取らない。
+- Python call counts (``doeff_hy_pytest._python_calls``): only in runs with the command-line flag ``--doeff-python-calls``,
+  count ``sys.monitoring`` CALL events during the call of tests that declare steps, and print one line at the end (no judgment). A run without the flag takes no slot.
 
-上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
+Does nothing unless at least one of the three budgets (steps, per-marker run seconds, collect seconds) is set. Design decisions:
 
-- 対象は ``.hy`` の検の file(deftest と、同じ file の素の検)だけ。Python の検は模擬の handler の検とは限らないので外す。
-- 印の上限に当たる実行の判定は壁の時計の秒(``time.perf_counter`` — call の段階の区間)で行い、報告には CPU 秒も並べる。印の付いた検
-  (real_world など)は本物の子 process・socket・待ち受けを相手にするので、重さは子 process と待ちに在り、process の CPU 秒
-  (``time.process_time`` — 自分の process の全 thread だけ)には出ない(上限
-  60 秒の頃に 105 秒かかった印 real_world の検が CPU 秒では赤にならなかった)。壁の時計は機体の負荷(並べて走る他の検・席)で
-  伸びるので、日次の Pod の秒は手元より大きく出る。
-- 検ごとの宣言 ``declare_process_tree_cpu(検, 理由)`` — 印の上限に当たる検のうち、重さが子 process(と自分の thread)の CPU に在り
-  外を待たない検(型検査の道具を子で撃つ検など)だけが、壁の時計の代わりに process の木の CPU 秒(自分と子孫の user+sys —
-  ``doeff_hy_pytest._tree_cpu``)を同じ秒の上限で判じると宣言する。壁の時計は機体の混み
-  (CPU の待ちと disk の待ち)で伸び、同じ検が混んだ回だけ赤になる — 日次 2026-10-22 04:00 JST の回で、子で型検査を撃つ検が
-  壁の時計 33 秒・自分の CPU 0.96 秒で上限 30 秒を越え、上限を外すと緑だった。木の CPU 秒は検がした仕事の量で、混みでは
-  ほとんど変わらない。壁の時計は CPU を使わずに止まった検を切る安全弁(上限 × ``TREE_CPU_WALL_BACKSTOP_FACTOR``)に退く
-  (agora-controllers の全体 linter の上限を CPU 秒にした形と同じ — 9c1a6659f7)。木の CPU 秒を読めない機体(``/proc`` の無い
-  macOS)では宣言した検も壁の時計の上限で判じる(今までより緩くならない)。外を待つ検(socket・HTTP・待ち受け)は宣言しない —
-  待ちは CPU 秒に出ない。
-- 収集の判定は CPU 時間(``time.process_time``)のまま行い、壁の時計を併記する。import は子 process も待ちも持たない前提なので、
-  遅さはほぼ CPU 時間に出て、CPU 時間は機体の混み具合で合否が変わりにくい。
-- 実行は call の段階だけを測り、setup と teardown(fixture)は含めない。session / module の範囲の fixture の準備は、
-  その範囲で最初に走った検 1 本に丸ごと乗るので、含めると検の選び方と並び順で同じ検の合否が変わる。deftest の本体
-  (模擬の handler で Program を回す所)は call の段階にある。
-- file の上限は module の import を測り、別の module の初回の import(共有の依存の一度きりの重さ)は変換と同じく引く
-  (2026-09-30・改めた — 以前は依存の import を含めて測り、その重さがその process で最初に import した
-  file に乗るので、同じ file の合否が並び順・1 file だけの実行か・テストの索引が冷えているかで変わった。戻し方 =
-  ``CompileCounter.install`` の ``_find_and_load`` の差し替えを外す)。測る所は doeff-adr の hook
-  ``pytest_doeff_import_hy_module`` の前後 — doeff-adr は記録で説明できる file を import せずに収集し、module の import を
-  item の setup まで待つので(#1225)、import は収集の中か setup の中のどちらかで 1 度起きる。
-  どちらで起きても同じ hook を通るので、同じ鍵(file の path)で測る。超えて赤にする時は、その場で落とす(収集なら
-  収集の誤り、setup ならその item の setup の誤り)。
-- キャッシュ無しを赤にしない: 測った区間から、source から code への変換(``SourceFileLoader.source_to_code`` —
-  バイトコードのキャッシュに当たらなかった時だけ呼ばれる。Hy の import も Hy が差し替えた同じ口を通る)に使った時間を、判じる
-  単位と同じ時計(収集は CPU 時間・印ごとの実行は壁の時計)で引いた値で判定する(変換が入れ子になった時は最も外側の区間だけを引く)。回を丸ごと除く形にしないのは、着地の門と日次の
-  走行が ``PYTHONDONTWRITEBYTECODE=1`` で撃ち、キャッシュが一度も作られないため — 除く形ではそこで一度も判定されない。
-  キャッシュ有りなら引く物は 0 で値はそのまま。キャッシュ無しの値は下限(Hy が変換の中で読む ``require`` 先の module の
-  実行も引かれる)なので、下限で超えた物は本当に超えている。
-- GC(ごみ集め)も引く: 測った区間の中で起きた GC の時間(``gc.callbacks`` — 判じる単位と同じ時計の CPU 秒か壁の時計の秒)は、その検の重さではなく process に生きている
-  object の数の費用で、いつ起きるかは割り当ての数の巡りで決まる(free-threaded の Python の GC は世代を分けず 1 回ごとに heap の
-  全体を回る)。引かないと、長い session の中で GC に当たった検だけが赤になり、落ちる検が回ごとに入れ替わる。
-- 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
-  pytest の nodeid、収集なら rootdir からの file の path。載った鍵は上限を超えても赤にしない。上限の内に戻った鍵は
-  終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
-  ``fail`` の形では、載った鍵が上限の ``STALE_RATIO``(半分)以下で終わった時、その検を古い登録として赤にする
-  (消し忘れた行は、同じ検が遅く戻っても黙って通す。doeff-linter の DOEFF166 と同じ向き)。
-  上限の半分から上限までの間は報告だけ(秒の揺れで同じ検の合否が走りごとに変わらないように)。
-  測った検だけを判じる(走らなかった検・別の検査の鍵が同じ dir に在っても判じない)。
-- 上限は doeff-vm の不変条件の検査が無効な走行を基準にする。検査が有効な走行(doeff 自身の pytest — root の
-  conftest.py が有効にする・今はどの build も検査を持ち実行時に切り替える)は VM の
-  1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに doeff の effect ``ReadInvariantChecks`` を 1 回読み、
-  検査つきなら ``fail`` でも赤にせず報告に留める(基準の違う build で誤った赤を出さない)。終わりの要約の見出しに
-  build の種類を 1 行出す。読めない(import できない・古い VM で答えられない)時は「不明」と出し、判定は今のまま。
+- Only ``.hy`` test files are covered (deftest and plain tests in the same file). Python tests are not necessarily mock-handler tests, so they are excluded.
+- A run that hits a marker budget is judged by wall-clock seconds (``time.perf_counter`` — the span of the call phase), and CPU seconds are shown alongside in the report. Marked tests
+  (real_world etc.) deal with real child processes, sockets, and listeners, so the weight is in child processes and waiting and does not show in the process CPU seconds
+  (``time.process_time`` — only all threads of its own process) (a real_world test that took 105 seconds under a limit of
+  60 seconds did not turn red on CPU seconds). Wall-clock stretches with machine load (other tests and seats running side by side),
+  so the daily Pod's seconds come out larger than local ones.
+- Per-test declaration ``declare_process_tree_cpu(test, reason)`` — among tests that hit a marker budget, only a test whose weight is in the CPU of child processes (and its own threads) and
+  that does not wait on the outside (e.g. a test that fires a type-checking tool in a child) declares that it is judged, instead of by wall-clock, by the CPU seconds of the process tree (own plus descendants, user+sys —
+  ``doeff_hy_pytest._tree_cpu``) against the same seconds budget. Wall-clock stretches with machine congestion
+  (CPU wait and disk wait), so the same test turns red only in congested runs — in the daily run of 2026-10-22 04:00 JST, a test that fires a type check in a child exceeded the 30-second limit with
+  wall-clock 33 seconds and own CPU 0.96 seconds, and was green with the limit removed. Tree CPU seconds are the amount of work the test did and
+  barely change with congestion. Wall-clock retreats to a safety valve that cuts a test that stopped without using CPU (budget × ``TREE_CPU_WALL_BACKSTOP_FACTOR``)
+  (the same shape as making the agora-controllers whole-repo linter budget CPU seconds — 9c1a6659f7). On a machine that cannot read tree CPU seconds (macOS, with no ``/proc``),
+  a declared test is also judged by the wall-clock budget (no looser than before). Tests that wait on the outside (socket, HTTP, listener) do not declare —
+  waiting does not show in CPU seconds.
+- The collect judgment stays on CPU time (``time.process_time``), with wall-clock shown alongside. Import is assumed to have no child processes or waiting,
+  so slowness shows almost entirely in CPU time, and CPU time is less likely to flip pass/fail with machine congestion.
+- Run measures only the call phase and excludes setup and teardown (fixtures). The preparation of a session- or module-scope fixture
+  falls entirely on the first test that runs in that scope, so including it would change the same test's pass/fail with test selection and order. The body of deftest
+  (where a Program is run with mock handlers) is in the call phase.
+- The file budget measures the module import, and the first import of another module (a one-time cost of shared dependencies) is subtracted, like compilation
+  (2026-09-30, revised — before, dependency imports were included, and since that weight lands on the first file imported in the process,
+  the same file's pass/fail changed with order, whether only one file was run, and whether the test index was cold. Rollback =
+  remove the replacement of ``_find_and_load`` in ``CompileCounter.install``). The measured span is before and after doeff-adr's hook
+  ``pytest_doeff_import_hy_module`` — doeff-adr collects files explainable from the record without importing them, and defers the module import
+  to the item's setup (#1225), so the import happens once, either during collection or during setup.
+  Either way it passes through the same hook, so it is measured under the same key (the file path). When it exceeds and turns red, it fails on the spot (a collection
+  error if in collection, a setup error of that item if in setup).
+- Do not turn a missing cache red: from the measured span, the time spent converting source to code (``SourceFileLoader.source_to_code`` —
+  called only when the bytecode cache missed; Hy imports go through the same hook that Hy replaced) is subtracted, on the same clock as the judged unit
+  (CPU time for collect, wall-clock for per-marker runs), and the result is judged (for nested conversions only the outermost span is subtracted). The whole run is not excluded because the landing gate and the daily
+  run fire with `PYTHONDONTWRITEBYTECODE=1` and the cache is never created — the exclusion approach would never judge there.
+  With a cache, the subtracted amount is 0 and the value is unchanged. The no-cache value is a lower bound (the execution of modules that Hy reads for ``require`` during
+  conversion is also subtracted), so anything over the budget at the lower bound truly exceeds it.
+- GC (garbage collection) is also subtracted: GC time that occurred inside the measured span (``gc.callbacks`` — CPU seconds or wall-clock seconds, the same clock as the judged unit) is not that test's weight but a cost of the number of
+  live objects in the process, and when it happens is decided by the cycle of allocation counts (the free-threaded Python GC does not split generations and walks the whole heap
+  every time). Without subtracting, only the test that happens to hit GC in a long session turns red, and the failing tests change from run to run.
+- The registry is one file per key (``<first 12 chars of the key's sha256>.txt``; line 1 is the key, line 2 onward is the reason, and an empty reason is not allowed). The key is
+  the pytest nodeid for runs, and the file path from rootdir for collection. A listed key does not turn red even over the budget. A key back within the budget
+  is reported as "removable" in the final summary (the registry only shrinks — turning an increase red is the consumer repo's git test).
+  In ``fail`` mode, when a listed key finishes at or below ``STALE_RATIO`` (half) of the budget, that test is turned red as a stale registration
+  (so a forgotten line is not silently passed when the same test comes back slow; same direction as doeff-linter's DOEFF166).
+  Between half the budget and the budget it is report-only (so the same test's pass/fail does not change from run to run with jitter in seconds).
+  Only measured tests are judged (tests that did not run, or keys of other checks in the same dir, are not judged).
+- The budget is based on runs where doeff-vm's invariant checks are disabled. Runs with checks enabled (doeff's own pytest — enabled by the root
+  conftest.py; every build now has the checks and switches them at runtime) check invariants at every VM
+  step, and the same test is ten-odd times slower. At session start the doeff effect ``ReadInvariantChecks`` is read once, and
+  with checks on, even ``fail`` does not turn red and stays in the report (so a build with a different baseline does not produce a false red). The heading of the final summary shows
+  the build kind in one line. When it cannot be read (cannot import, or an old VM cannot answer) it shows "unknown" and the judgment stays as is.
 """
 
 import contextlib
@@ -129,56 +129,56 @@ MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
 CALL_STEPS_INI = "doeff_test_call_budget_steps"
 RUNAWAY_MULTIPLIER_INI = "step_budget_multiplier"
-# 歩数で判じる時に数える区間: call = call の全部(既定)・world-running = 模擬の世界を回した検は世界の走りの
-# 歩数だけ。repo が設定で選ぶ — 切り替えはその repo の宣言の測り直しと同じ変更で行い、戻す時もこの 1 行を戻す。
+# Counting span used when judging by steps: call = all of the call (default); world-running = for a test that ran a simulated world, only the steps of the world's run.
+# A repo chooses it by setting — do the switch in the same change as re-measuring that repo's declarations, and revert this one line to roll back.
 STEPS_COUNTED_INI = "doeff_test_call_steps_counted"
 StepsCounted = Literal["call", "world-running"]
-# 歩数の既定の上限(設定に `default` と書いた時)— 前の CPU 1.0 秒の上限に当たる数。
-# 根 = vg-w43 の 65 本の測り(#2853 issuecomment-5952699812)の歩数 ÷ CPU 秒の中央値 95,574 歩/秒 × 1.0 秒を丸めた値。
-# 上限は上げない決め(#2670 issuecomment-5963008183)なので、静かな機体の比(より大きい)ではなく、この比を採る。
+# Default step budget (when `default` is written in the setting) — the number corresponding to the former CPU 1.0 second budget.
+# Root = the median 95,574 steps/second of steps / CPU seconds from the 65 measurements on vg-w43 (#2853 issuecomment-5952699812) × 1.0 second, rounded.
+# The decision is not to raise the budget (#2670 issuecomment-5963008183), so we take this ratio rather than the (larger) ratio of a quiet machine.
 DEFAULT_CALL_BUDGET_STEPS = 100_000
-# 走っている最中の歩の上限の倍率(#3143)— 歩数の上限 × この値を越えた検を、走り終わるのを待たずに doeff の scheduler が
-# 名指しの例外で落とす(同じ仮想の刻での空回りは走り終わらず、1 検 60 秒の上限も VM の歩の loop を止められないため)。
-# 走り終えた後の歩数の判定(上限そのもの)と分けるため大きく取る。既定は 20 — 登録簿に載った重い検(上限の 13.4 倍 = 2,282,746 歩・
-# #2670 issuecomment-5967500669)が 10 倍では赤になったため。空回りは 30 秒で数十億歩まで行くので、20 倍でも 1〜2 秒で捕まる。
-# repo は ini の step_budget_multiplier で替えられる(#3147)。
+# Multiplier for the in-flight step cap (#3143) — a test exceeding the step budget × this value is dropped by the doeff scheduler with a
+# named exception without waiting for it to finish (a spin at the same virtual time never finishes, and the 60-second per-test limit cannot stop the VM step loop either).
+# Large to keep it separate from the post-run step judgment (the budget itself). Default is 20 — a heavy registered test (13.4x the budget = 2,282,746 steps,
+# #2670 issuecomment-5967500669) turned red at 10x. A spin reaches billions of steps in 30 seconds, so even 20x catches it in 1-2 seconds.
+# A repo can change it with ini step_budget_multiplier (#3147).
 DEFAULT_RUNAWAY_STEPS_MULTIPLIER = 20
-# 判定の単位(上限・登録・文の書き方が分かれる)— 収集の上限は CPU 秒・印ごとの実行の上限は壁の時計の秒(木の CPU 秒を宣言した検は
-# process の木の CPU 秒)・印の無い実行は歩数。
+# Judgment unit (budget, registration, and message wording differ by unit) — collect budget is CPU seconds; per-marker run budget is wall-clock seconds (for a test declaring tree CPU seconds,
+# process-tree CPU seconds); unmarked runs are steps.
 Unit = Literal["cpu-seconds", "wall-seconds", "tree-cpu-seconds", "steps"]
 
 Phase = Literal["call", "collect"]
-# 測りから引く区間の種類(CompileCounter)。
+# Kinds of span subtracted from a measurement (CompileCounter).
 SetAside = Literal["compile", "import"]
-# 別の module の初回の import が通る口(import の機構が呼ぶたびに名で引く — CompileCounter が数えるために差し替える)。
+# The hook through which the first import of another module passes (looked up by name on every call of the import machinery — CompileCounter replaces it to count).
 _BOOTSTRAP_MODULE = "importlib._bootstrap"
 _FIND_AND_LOAD = "_find_and_load"
 Mode = Literal["report", "fail"]
-# 登録簿に載った検を古い登録として赤にする秒の割合(上限 × この値以下で終わった時だけ — 上限の近くの揺れで赤と緑を行き来しない)。
-# 検の宣言(StepDeclaration)の古さも同じ割合で判じる。
+# Fraction of seconds at or below which a registered test is turned red as a stale registration (budget × this value — so it does not flip between red and green with jitter near the budget).
+# The staleness of a test declaration (StepDeclaration) is judged by the same fraction.
 STALE_RATIO = 0.5
-# 検の関数に付ける「要る歩数」の宣言の属性 — declare_step_budget が付け、実行の判定が読む。
+# Attribute of the "needed steps" declaration set on a test function — set by declare_step_budget, read by the run judgment.
 DECLARED_STEPS_ATTRIBUTE = "__doeff_step_budget__"
-# 検の関数に付ける「process の木の CPU 秒で判じる」宣言の属性 — declare_process_tree_cpu が付け、実行の判定が読む。
+# Attribute of the "judge by process-tree CPU seconds" declaration set on a test function — set by declare_process_tree_cpu, read by the run judgment.
 DECLARED_TREE_CPU_ATTRIBUTE = "__doeff_process_tree_cpu__"
-# 木の CPU 秒で判じる検の壁の時計の安全弁の倍率 — 印の秒 × この値を壁の時計で越えた検は、CPU 秒が上限の内でも赤(CPU を使わずに
-# 止まった・待った検を通さない)。2 = agora-controllers の全体 linter の安全弁と同じ値(9c1a6659f7 の WALL-BACKSTOP-FACTOR)。
+# Multiplier of the wall-clock safety valve for a test judged by tree CPU seconds — a test exceeding marker seconds × this value in wall-clock is red even if CPU seconds are within budget (so a test that stopped or waited
+# without using CPU is not let through). 2 = same as the safety valve of the agora-controllers whole-repo linter (WALL-BACKSTOP-FACTOR of 9c1a6659f7).
 TREE_CPU_WALL_BACKSTOP_FACTOR = 2
 
 
 @dataclass(frozen=True)
 class CheckedVmBuild:
-    """doeff-vm は invariant-checks つきの build(``make sync``)— 上限の基準と違うので超過を判定しない。"""
+    """doeff-vm is a build with invariant-checks (``make sync``) — different from the budget baseline, so overruns are not judged."""
 
 
 @dataclass(frozen=True)
 class UncheckedVmBuild:
-    """doeff-vm は検査なしの build — 上限の基準の build。"""
+    """doeff-vm is a build without checks — the baseline build for the budget."""
 
 
 @dataclass(frozen=True)
 class UnknownVmBuild:
-    """doeff-vm の build の種類を読めなかった(理由つき)— 判定は検査なしの時と同じ。"""
+    """Could not read the doeff-vm build kind (with a reason) — judged the same as the no-checks case."""
 
     reason: str
 
@@ -187,48 +187,48 @@ VmBuild = CheckedVmBuild | UncheckedVmBuild | UnknownVmBuild
 
 
 def read_vm_build() -> VmBuild:
-    """doeff-vm の build の種類を doeff の effect ``ReadInvariantChecks`` で読む(session の始めに 1 回)。"""
+    """Read the doeff-vm build kind with the doeff effect ``ReadInvariantChecks`` (once at session start)."""
     try:
         from doeff_core_effects import vm_probe_handler
 
         from doeff import ReadInvariantChecks, run
     except ImportError as exc:
-        return UnknownVmBuild(f"doeff の ReadInvariantChecks を import できない(effect より前の doeff か、doeff が無い): {exc}")
+        return UnknownVmBuild(f"cannot import ReadInvariantChecks from doeff (doeff older than the effect, or no doeff): {exc}")
     try:
         enabled = run(vm_probe_handler(ReadInvariantChecks()))
-    except ImportError as exc:  # vm_probe_handler が、doeff より古い doeff-vm の拡張を名指して断った
+    except ImportError as exc:  # vm_probe_handler refused by name a doeff-vm extension older than doeff
         return UnknownVmBuild(str(exc))
     return CheckedVmBuild() if enabled else UncheckedVmBuild()
 
 
 @dataclass(frozen=True)
 class VmWork:
-    """ある時点までに process の全部の doeff-vm が進めた歩数と、handler を呼んだ回数(積み上げ — 機体の負荷で揺れない)。"""
+    """Steps all doeff-vm in the process have advanced up to some point, and the number of handler calls (cumulative — does not wobble with machine load)."""
 
     steps: int
     handler_calls: int
 
     def since(self, before: "VmWork") -> "VmWork":
-        """before からこの時点までの差 — 1 つの測りの区間の中の仕事の量。"""
+        """Difference from before to this point — the amount of work inside one measured span."""
         return VmWork(self.steps - before.steps, self.handler_calls - before.handler_calls)
 
 
 @dataclass(frozen=True)
 class WorkReader:
-    """doeff-vm の積み上げの数を読む口(doeff の effect ``ReadVmWorkCounts`` を 1 回走らせて読む)。
-    読みも run なので、区間の前後の 2 つの読みの差には、読む run の歩(と handler の 1 回)が決まった数だけ入る。"""
+    """Hook that reads doeff-vm's cumulative counts (runs the doeff effect ``ReadVmWorkCounts`` once and reads it).
+    Reading is itself a run, so the difference between the two reads before and after a span contains a fixed number of steps (and one handler call) of the reading run."""
 
     read: Callable[[], tuple[int, int]]
 
     def tally(self) -> VmWork:
-        """今の積み上げの数 — 区間の前後で読み、差をその区間の仕事の量にするため。"""
+        """Current cumulative counts — read before and after a span, and the difference is the span's amount of work."""
         steps, handler_calls = self.read()
         return VmWork(steps, handler_calls)
 
 
 @dataclass(frozen=True)
 class NoWorkReader:
-    """doeff-vm に積み上げの数の口が無い(理由つき — 古い build・import できない)。数は測れないので、歩数の上限があれば止める。"""
+    """doeff-vm has no cumulative-count hook (with a reason — old build, cannot import). Counts cannot be measured, so stop if a step budget exists."""
 
     reason: str
 
@@ -237,31 +237,31 @@ WorkSource = WorkReader | NoWorkReader
 
 
 def read_work_source() -> WorkSource:
-    """積み上げの数の口を session の始めに 1 回探す: doeff の effect ``ReadVmWorkCounts`` と、それに答える ``vm_probe_handler``。
-    1 度読んでみて、doeff-vm の拡張が古くて答えられなければ(handler が ImportError で断る)口は無い。"""
+    """Look up the cumulative-count hook once at session start: the doeff effect ``ReadVmWorkCounts`` and the ``vm_probe_handler`` that answers it.
+    Try reading once; if the doeff-vm extension is too old to answer (the handler refuses with ImportError), there is no hook."""
     try:
         from doeff_core_effects import vm_probe_handler
 
         from doeff import ReadVmWorkCounts, run
     except ImportError as exc:
-        return NoWorkReader(f"doeff の ReadVmWorkCounts を import できない(effect より前の doeff か、doeff が無い): {exc}")
+        return NoWorkReader(f"cannot import ReadVmWorkCounts from doeff (doeff older than the effect, or no doeff): {exc}")
 
     def read() -> tuple[int, int]:
-        """検の区間の前後で、process の全部の VM の積み上げの数 (歩数, handler の回数) を読むため。"""
+        """Read the cumulative counts (steps, handler calls) of all VMs in the process before and after a test span."""
         counts: tuple[int, int] = run(vm_probe_handler(ReadVmWorkCounts()))
         return counts
 
     try:
         read()
-    except ImportError as exc:  # vm_probe_handler が、doeff より古い doeff-vm の拡張を名指して断った
+    except ImportError as exc:  # vm_probe_handler refused by name a doeff-vm extension older than doeff
         return NoWorkReader(str(exc))
     return WorkReader(read)
 
 
 @dataclass(frozen=True)
 class SchedulerStepGuard:
-    """doeff の scheduler の歩の上限の口(``doeff_core_effects._scheduler`` の ``arm_step_budget`` /
-    ``disarm_step_budget`` — #3143)。入れている間、上限を越えて task を起こそうとした走行は ``StepBudgetExceeded`` で落ちる。"""
+    """Hook for the doeff scheduler's step cap (``arm_step_budget`` /
+    ``disarm_step_budget`` in ``doeff_core_effects._scheduler`` — #3143). While armed, a run that tries to wake a task past the cap is dropped with ``StepBudgetExceeded``."""
 
     arm: Callable[[int], object]
     disarm: Callable[[], None]
@@ -269,7 +269,7 @@ class SchedulerStepGuard:
 
 @dataclass(frozen=True)
 class NoSchedulerStepGuard:
-    """scheduler に歩の上限の口が無い(理由つき — import できない・口より前の版)。走っている最中の上限は入れない。"""
+    """The scheduler has no step-cap hook (with a reason — cannot import, or a version older than the hook). The in-flight cap is not armed."""
 
     reason: str
 
@@ -278,20 +278,20 @@ StepGuard = SchedulerStepGuard | NoSchedulerStepGuard
 
 
 def read_step_guard() -> StepGuard:
-    """scheduler の歩の上限の口を session の始めに 1 回探す(この plugin は doeff に依らないので、無ければ入れないだけ)。"""
+    """Look up the scheduler step-cap hook once at session start (this plugin does not depend on doeff, so if absent it simply does not arm)."""
     try:
         import doeff_core_effects._scheduler as scheduler
     except ImportError as exc:
-        return NoSchedulerStepGuard(f"doeff_core_effects._scheduler を import できない: {exc}")
+        return NoSchedulerStepGuard(f"cannot import doeff_core_effects._scheduler: {exc}")
     arm = getattr(scheduler, "arm_step_budget", None)
     disarm = getattr(scheduler, "disarm_step_budget", None)
     if arm is None or disarm is None:
-        return NoSchedulerStepGuard("doeff_core_effects._scheduler に arm_step_budget が無い(歩の上限の口より前の版)")
+        return NoSchedulerStepGuard("doeff_core_effects._scheduler has no arm_step_budget (version older than the step-cap hook)")
     return SchedulerStepGuard(arm, disarm)
 
 
 class PhaseMarkRead(Protocol):
-    """区切りの印の口が返す印 1 つの形(``doeff_core_effects._world_phases.PhaseMark`` — この plugin は doeff に依らないので形だけ読む)。"""
+    """Shape of one mark returned by the phase-mark hook (``doeff_core_effects._world_phases.PhaseMark`` — this plugin does not depend on doeff, so it reads only the shape)."""
 
     @property
     def phase(self) -> str: ...
@@ -302,8 +302,8 @@ class PhaseMarkRead(Protocol):
 
 @dataclass(frozen=True)
 class WorldPhaseLog:
-    """模擬の世界の区切りの印の口(``doeff_core_effects._world_phases`` の ``open_phase_log`` / ``close_phase_log``)。
-    開いている間、doeff-cluster の ``sim-main`` が始まり・立ち上がり・止め始め・終わりの印を、その時の歩数と残す。"""
+    """Hook for the simulated world's phase marks (``open_phase_log`` / ``close_phase_log`` in ``doeff_core_effects._world_phases``).
+    While open, doeff-cluster's ``sim-main`` records marks for begin, start-up, start of stopping, and end together with the step count at that time."""
 
     open: Callable[[], None]
     close: Callable[[], tuple[PhaseMarkRead, ...]]
@@ -311,7 +311,7 @@ class WorldPhaseLog:
 
 @dataclass(frozen=True)
 class NoWorldPhaseLog:
-    """区切りの印の口が無い(理由つき — import できない・口より前の版)。歩数は call の全部で判じる(今までどおり)。"""
+    """No phase-mark hook (with a reason — cannot import, or a version older than the hook). Steps are judged by all of the call (as before)."""
 
     reason: str
 
@@ -320,19 +320,19 @@ PhaseLogSource = WorldPhaseLog | NoWorldPhaseLog
 
 
 def read_phase_log() -> PhaseLogSource:
-    """区切りの印の口を session の始めに 1 回探す(この plugin は doeff に依らないので、無ければ call の全部で判じるだけ)。"""
+    """Look up the phase-mark hook once at session start (this plugin does not depend on doeff, so if absent it simply judges by all of the call)."""
     try:
         from doeff_core_effects import _world_phases as world_phases
     except ImportError as exc:
-        return NoWorldPhaseLog(f"doeff_core_effects._world_phases を import できない: {exc}")
+        return NoWorldPhaseLog(f"cannot import doeff_core_effects._world_phases: {exc}")
     return WorldPhaseLog(world_phases.open_phase_log, world_phases.close_phase_log)
 
 
 @dataclass(frozen=True)
 class WorldSteps:
-    """call の歩数を模擬の世界の出来事で分けた値。running = 立ち上がってから止め始めるまで(判じる値)・
-    starting = 始まってから立ち上がるまで(立ち上がらなかった世界は止め始めまで)・stopping = 止め始めてから終わるまで・outside =
-    世界の外(筋書きの支度・答えの判定)。worlds = 始まった世界の数・up = 立ち上がった世界の数。"""
+    """The call's steps split by events of the simulated world. running = from start-up to start of stopping (the judged value);
+    starting = from begin to start-up (for a world that never started up, until start of stopping); stopping = from start of stopping to end; outside =
+    outside the world (scenario setup and answer verification). worlds = number of worlds begun; up = number of worlds that started up."""
 
     outside: int
     starting: int
@@ -344,7 +344,7 @@ class WorldSteps:
 
 @dataclass(frozen=True)
 class WorldMark:
-    """世界の印 1 つ(区切りの名 — begun・up・stopping・ended)と、その時の process の積み上げの歩数。"""
+    """One world mark (phase name — begun, up, stopping, ended) and the process's cumulative step count at that time."""
 
     phase: str
     steps: int
@@ -354,7 +354,7 @@ Segment = Literal["outside", "starting", "running", "stopping"]
 
 
 def segment_after(mark: WorldMark, segment: Segment) -> Segment:
-    """印の後の区間を決めるため — 立ち上がりは起動の区間の中でだけ区切る(止め始めた後に届いた立ち上がりは区切らない)。"""
+    """To decide the span after a mark — start-up is delimited only inside the startup span (a start-up that arrives after stopping began is not delimited)."""
     match mark.phase:
         case "begun":
             return "starting"
@@ -369,11 +369,11 @@ def segment_after(mark: WorldMark, segment: Segment) -> Segment:
 
 
 def world_steps(marks: Sequence[WorldMark], started_at: int, ended_at: int) -> WorldSteps | None:
-    """call の始まり started_at から終わり ended_at までの歩数を、世界の印 marks(起きた順)で区間に分けるため。世界が 1 つも
-    始まらなかった検(模擬の世界を回さない検)は None — call の全部で判じる。"""
+    """Split the steps from call start started_at to call end ended_at into spans by world marks (in order of occurrence). A test where no world
+    began (a test that does not run a simulated world) gives None — judged by all of the call."""
     if not any(mark.phase == "begun" for mark in marks):
         return None
-    # segments[i] = i 番目の区間(i = 0 は call の始まりから最初の印まで・最後は最後の印から call の終わりまで)。
+    # segments[i] = the i-th span (i = 0 is from call start to the first mark; the last is from the last mark to call end).
     segments = tuple(itertools.accumulate(marks, lambda segment, mark: segment_after(mark, segment), initial="outside"))
     bounds = (started_at, *(mark.steps for mark in marks), ended_at)
     spans = tuple(zip(segments, (end - start for start, end in itertools.pairwise(bounds)), strict=True))
@@ -388,24 +388,24 @@ def world_steps(marks: Sequence[WorldMark], started_at: int, ended_at: int) -> W
 
 
 def vm_build_line(build: VmBuild) -> str:
-    """終わりの要約の見出しに出す build の種類の 1 行。"""
+    """One line of the build kind shown in the heading of the final summary."""
     match build:
         case CheckedVmBuild():
             return (
-                "doeff-vm は検査つきの build(invariant-checks)— 上限は検査なしの build が基準のため、"
-                "この走行の超過は判定しない"
+                "doeff-vm is a build with checks (invariant-checks) — the budget is based on a build without checks, so "
+                "overruns in this run are not judged"
             )
         case UncheckedVmBuild():
-            return "doeff-vm は検査なしの build — 上限の基準の build で判定する"
+            return "doeff-vm is a build without checks — judged on the budget baseline build"
         case UnknownVmBuild(reason=reason):
-            return f"doeff-vm の build の種類は不明({reason})— 判定は設定のまま"
+            return f"doeff-vm build kind unknown ({reason}) — judged as configured"
 
 
 @dataclass(frozen=True)
 class Budgets:
-    """設定から読んだ上限(収集の秒・歩数は None = その段階は測らない)・印ごとの実行の秒の上限・超えた時の扱い・
-    登録簿(全 dir の鍵 → 理由)・登録簿の dir(設定の順)・doeff-vm の build の種類。歩数の上限が在る時は、数の口が
-    在る(``work_source`` が ``WorkReader``)ことを ``pytest_configure`` が保証している。"""
+    """Budgets read from settings (collect seconds; steps — None = that phase is not measured), per-marker run-seconds budgets, what to do on overrun,
+    the registry (key -> reason over all dirs), the registry dirs (in setting order), and the doeff-vm build kind. When a step budget exists, ``pytest_configure`` guarantees the count hook
+    exists (``work_source`` is a ``WorkReader``)."""
 
     call_seconds_by_marker: Mapping[str, float]
     collect_seconds: float | None
@@ -414,14 +414,14 @@ class Budgets:
     registry_dirs: tuple[str, ...]
     vm_build: VmBuild
     call_steps: int | None = None
-    work_source: WorkSource = NoWorkReader("測っていない")
-    step_guard: StepGuard = NoSchedulerStepGuard("探していない")
+    work_source: WorkSource = NoWorkReader("not measured")
+    step_guard: StepGuard = NoSchedulerStepGuard("not looked up")
     runaway_multiplier: int = DEFAULT_RUNAWAY_STEPS_MULTIPLIER
-    phase_log: PhaseLogSource = NoWorldPhaseLog("探していない")
+    phase_log: PhaseLogSource = NoWorldPhaseLog("not looked up")
 
     def runaway_steps_for(self, markers: Sequence[str], declared_steps: int | None = None) -> int | None:
-        """その検の call の間に scheduler へ入れる歩の上限(#3143)— 歩数で判じる検だけ、歩数の上限(宣言のある検は
-        宣言の値と既定の大きい方)× 倍率。印ごとの秒の上限に当たる検(本物の I/O)は秒で判じるので入れない。"""
+        """The step cap to arm on the scheduler during that test's call (#3143) — only for a test judged by steps: the larger of the step budget (the declared value if declared) and
+        the default, × the multiplier. A test hitting a per-marker seconds budget (real I/O) is judged by seconds, so it is not armed."""
         if self.call_steps is None:
             return None
         if any(name in self.call_seconds_by_marker for name in markers):
@@ -430,12 +430,12 @@ class Budgets:
 
     @property
     def fails_over_budget(self) -> bool:
-        """秒の超過を赤にするか — fail の形で、かつ doeff-vm が検査つきの build でない時だけ。"""
+        """Whether a seconds overrun turns red — only in fail mode and when doeff-vm is not a build with checks."""
         return self.mode == "fail" and not isinstance(self.vm_build, CheckedVmBuild)
 
     def fails_for(self, unit: Unit) -> bool:
-        """その単位の超過を赤にするか。歩数は不変条件の検査の有無で変わらない(検査は歩の中で走り、歩を足さない)ので、
-        検査つきの build でも fail の形なら赤にする — 秒では判じられなかった doeff 自身の走行も歩数なら判じられる。"""
+        """Whether an overrun of that unit turns red. Steps do not change with invariant checks (checks run inside a step and add no steps),
+        so in fail mode it turns red even on a build with checks — doeff's own runs, which could not be judged by seconds, can be judged by steps."""
         match unit:
             case "cpu-seconds" | "wall-seconds" | "tree-cpu-seconds":
                 return self.fails_over_budget
@@ -445,14 +445,14 @@ class Budgets:
 
 @dataclass(frozen=True)
 class CompileTally:
-    """ある時点までに数えた source からの変換の回数と、それに使った CPU 秒と壁の時計の秒(最も外側の区間の和)。"""
+    """Number of source-to-code conversions counted up to some point, with the CPU seconds and wall-clock seconds spent on them (sum over outermost spans)."""
 
     count: int
     cpu_seconds: float
     wall_seconds: float
 
     def since(self, before: "CompileTally") -> "CompileTally":
-        """before からこの時点までの差 — 1 つの測りの区間の中で起きた変換。"""
+        """Difference from before to this point — conversions that happened inside one measured span."""
         return CompileTally(
             self.count - before.count,
             self.cpu_seconds - before.cpu_seconds,
@@ -462,14 +462,14 @@ class CompileTally:
 
 @dataclass(frozen=True)
 class ImportTally:
-    """ある時点までに数えた、別の module の初回の import の回数と、それに使った CPU 秒と壁の時計の秒(最も外側の区間の和)。"""
+    """Number of first imports of other modules counted up to some point, with the CPU seconds and wall-clock seconds spent on them (sum over outermost spans)."""
 
     count: int
     cpu_seconds: float
     wall_seconds: float
 
     def since(self, before: "ImportTally") -> "ImportTally":
-        """before からこの時点までの差 — 1 つの測りの区間の中で起きた依存の初回の import。"""
+        """Difference from before to this point — first dependency imports that happened inside one measured span."""
         return ImportTally(
             self.count - before.count,
             self.cpu_seconds - before.cpu_seconds,
@@ -482,15 +482,15 @@ NO_IMPORTS = ImportTally(0, 0.0, 0.0)
 
 @dataclass(frozen=True)
 class GcTally:
-    """ある時点までに数えた GC(ごみ集め)の回数と、それに使った CPU 秒と壁の時計の秒(変換・依存の初回の import の区間の外で
-    起きた分だけ)。"""
+    """Number of GC (garbage collection) runs counted up to some point, with the CPU seconds and wall-clock seconds spent on them (only the part that
+    happened outside the conversion and first-dependency-import spans)."""
 
     count: int
     cpu_seconds: float
     wall_seconds: float
 
     def since(self, before: "GcTally") -> "GcTally":
-        """before からこの時点までの差 — 1 つの測りの区間の中で起きた GC。"""
+        """Difference from before to this point — GC that happened inside one measured span."""
         return GcTally(
             self.count - before.count,
             self.cpu_seconds - before.cpu_seconds,
@@ -503,7 +503,7 @@ NO_GC = GcTally(0, 0.0, 0.0)
 
 @dataclass(frozen=True)
 class Measurement:
-    """測った 1 区間 — CPU 秒と壁の時計の秒(どちらも区間の全体)と、区間の中の変換と依存の初回の import と GC。"""
+    """One measured span — CPU seconds and wall-clock seconds (both for the whole span), and the conversions, first dependency imports, and GC inside the span."""
 
     key: str
     phase: Phase
@@ -511,43 +511,43 @@ class Measurement:
     wall_seconds: float
     compile: CompileTally
     imports: ImportTally = NO_IMPORTS
-    # 区間の doeff-vm の仕事の量(数の口が無い時・収集の段階は None)。
+    # Amount of doeff-vm work in the span (None when there is no count hook, or in the collect phase).
     work: VmWork | None = None
     gc: GcTally = NO_GC
-    # 区間の歩数を模擬の世界の出来事で分けた値(世界を回さない検・収集の段階は None)。
+    # The span's steps split by simulated-world events (None for a test that does not run a world, or in the collect phase).
     world: WorldSteps | None = None
-    # 区間の Python の呼び出しの数(sys.monitoring の CALL 事象 — 印 --doeff-python-calls の走りで歩数を宣言した検だけ・他は None)。
-    # 数えた検の CPU 秒は監視の上乗せ(1.5〜1.7 倍)を含むので、CPU 秒の比べ(CPU 秒 ÷ 歩数)からは除く。
+    # Number of Python calls in the span (sys.monitoring CALL events — only for tests that declared steps in a run with the --doeff-python-calls flag; None otherwise).
+    # The CPU seconds of a counted test include monitoring overhead (1.5-1.7x), so they are excluded from the CPU comparison (CPU seconds / steps).
     python_calls: int | None = None
-    # 区間の process の木の CPU 秒(木の CPU 秒で判じると宣言した検だけ — 他の検・収集は None。読めない機体では測れない訳)。
+    # Process-tree CPU seconds of the span (only for tests declared to be judged by tree CPU seconds — None for other tests and collection. On a machine that cannot read it: the reason it could not be measured).
     tree: TreeCpu | TreeCpuUnmeasured | None = None
 
     @property
     def judged_steps(self) -> int:
-        """歩数で判じる時の値 = 模擬の世界を回した検は世界の走りの歩数(起動と止めは数えない)、それ以外は
-        区間の歩数。"""
+        """Value when judging by steps = for a test that ran a world, the steps of the world's run (start and stop not counted); otherwise
+        the span's steps."""
         if self.work is None:
-            raise AssertionError(f"歩数の無い測りを歩数で判じた: {self.key}")
+            raise AssertionError(f"a measurement without steps was judged by steps: {self.key}")
         return self.world.running if self.world is not None else self.work.steps
 
     @property
     def judged_cpu_seconds(self) -> float:
-        """CPU 秒で判じる時の値 = 区間の CPU 秒から、変換の CPU 秒と依存の初回の import の CPU 秒と GC の CPU 秒を引いた値(どれも
-        無ければ区間の CPU 秒そのもの)。"""
+        """Value when judging by CPU seconds = the span's CPU seconds minus the conversion CPU seconds, first-dependency-import CPU seconds, and GC CPU seconds (if none of them,
+        the span's CPU seconds as is)."""
         return self.cpu_seconds - self.compile.cpu_seconds - self.imports.cpu_seconds - self.gc.cpu_seconds
 
     @property
     def judged_wall_seconds(self) -> float:
-        """壁の時計の秒で判じる時の値 = 区間の壁の時計の秒から、変換と依存の初回の import と GC の壁の時計の秒を引いた値(子 process と
-        待ちの時間は残る — 印の付いた検の重さはそこに在る)。"""
+        """Value when judging by wall-clock seconds = the span's wall-clock seconds minus the wall-clock seconds of conversion, first dependency imports, and GC (time of child processes and
+        waiting remains — the weight of a marked test is there)."""
         return self.wall_seconds - self.compile.wall_seconds - self.imports.wall_seconds - self.gc.wall_seconds
 
     @property
     def judged_tree_cpu_seconds(self) -> float:
-        """木の CPU 秒で判じる時の値 = 自分と子孫の CPU 秒の和から、変換と依存の初回の import と GC の CPU 秒(どれも自分の process の分)
-        を引いた値。木を測っていない測りを木の CPU 秒で判じない。"""
+        """Value when judging by tree CPU seconds = the sum of own and descendants' CPU seconds minus the CPU seconds of conversion, first dependency imports, and GC (all of them own-process amounts).
+        A measurement that did not measure the tree is not judged by tree CPU seconds."""
         if not isinstance(self.tree, TreeCpu):
-            raise AssertionError(f"木の CPU 秒の無い測りを木の CPU 秒で判じた: {self.key}")
+            raise AssertionError(f"a measurement without tree CPU seconds was judged by tree CPU seconds: {self.key}")
         return self.tree.seconds - self.compile.cpu_seconds - self.imports.cpu_seconds - self.gc.cpu_seconds
 
 
@@ -557,8 +557,8 @@ class WithinBudget:
 
 
 def judged_value(measurement: Measurement, unit: Unit) -> float:
-    """判定の単位で見た測りの値 — 変換と import を引いた CPU 秒か壁の時計の秒、歩数なら判じる歩数(模擬の世界は走りの分・数の無い
-    測りを歩数で判じない)。"""
+    """Measurement value in the judged unit — CPU seconds or wall-clock seconds minus conversion and imports; for steps, the judged steps (for a simulated world, the run part; a measurement
+    without counts is not judged by steps)."""
     match unit:
         case "cpu-seconds":
             return measurement.judged_cpu_seconds
@@ -572,7 +572,7 @@ def judged_value(measurement: Measurement, unit: Unit) -> float:
 
 @dataclass(frozen=True)
 class OverBudget:
-    """上限を超えた(登録簿に無い)。budget = 判定した上限(unit の単位)。"""
+    """Exceeded the budget (not in the registry). budget = the judged budget (in the unit of unit)."""
 
     measurement: Measurement
     budget: float
@@ -581,7 +581,7 @@ class OverBudget:
 
 @dataclass(frozen=True)
 class RegisteredOverBudget:
-    """上限を超えたが登録簿に載っている(赤にしない)。"""
+    """Exceeded the budget but is in the registry (not turned red)."""
 
     measurement: Measurement
     unit: Unit = "cpu-seconds"
@@ -589,7 +589,7 @@ class RegisteredOverBudget:
 
 @dataclass(frozen=True)
 class RegisteredWithinBudget:
-    """登録簿に載っているが上限の内に終わった(消せる登録)。budget = 判定した上限(unit の単位)。"""
+    """In the registry but finished within the budget (a removable registration). budget = the judged budget (in the unit of unit)."""
 
     measurement: Measurement
     budget: float
@@ -597,66 +597,66 @@ class RegisteredWithinBudget:
 
     @property
     def stale(self) -> bool:
-        """古い登録として赤にするか — 上限 × STALE_RATIO 以下で終わった時だけ。"""
+        """Whether to turn red as a stale registration — only when finished at or below budget × STALE_RATIO."""
         return judged_value(self.measurement, self.unit) <= self.budget * STALE_RATIO
 
 
 @dataclass(frozen=True)
 class StepDeclaration:
-    """検 1 本に宣言した要る歩数と理由(1 行)— 既定の上限の外に残る検だけが、検の定義の隣に置く。"""
+    """Needed steps declared for one test, and the reason (one line) — only a test that stays outside the default budget puts it next to the test definition."""
 
     steps: int
     reason: str
 
 
 def declare_step_budget(test: Callable[..., object], steps: int, reason: str) -> None:
-    """検 1 本に要る歩数を宣言する — 予算の plugin はその検だけ、既定の上限の代わりに宣言の値で判じる。
+    """Declare the steps one test needs — the budget plugin judges only that test by the declared value instead of the default budget.
 
-    既定の上限は変えず、筋書きの規模に断言が依って縮められない検だけに置く(Mac の調整役の決め 2026-10-03 21:5x・
-    別の file の登録簿の代わり)。宣言の値を超えれば赤、宣言の値の
-    STALE_RATIO(半分)以下で終われば古い宣言として赤(登録簿の古い行と同じ規則)。Hy の検では deftest の直後に
-    ``(declare-step-budget test-名 歩数 "理由")`` と書く。読めない値は import の時に止める。"""
+    The default budget is unchanged; place it only on a test whose assertions depend on the scenario scale and so cannot be shrunk (decision of the Mac coordinator, 2026-10-03 21:5x ·
+    in place of a registry in a separate file). Exceeding the declared value is red; finishing at or below
+    STALE_RATIO (half) of the declared value is red as a stale declaration (same rule as a stale registry line). In a Hy test, right after deftest write
+    ``(declare-step-budget test-name steps "reason")``. An unreadable value stops at import time."""
     if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
-        raise ValueError(f"要る歩数は正の整数: {steps!r}")
+        raise ValueError(f"needed steps must be a positive integer: {steps!r}")
     if not isinstance(reason, str) or not reason.strip() or "\n" in reason.strip():
-        raise ValueError(f"理由は空でない 1 行: {reason!r}")
+        raise ValueError(f"reason must be a non-empty single line: {reason!r}")
     setattr(test, DECLARED_STEPS_ATTRIBUTE, StepDeclaration(steps, reason.strip()))
 
 
 def declared_steps_of(test: object) -> StepDeclaration | None:
-    """検の関数に付いた宣言(無ければ None)。"""
+    """The declaration attached to a test function (None if none)."""
     declaration = getattr(test, DECLARED_STEPS_ATTRIBUTE, None)
     return declaration if isinstance(declaration, StepDeclaration) else None
 
 
 @dataclass(frozen=True)
 class TreeCpuDeclaration:
-    """検 1 本の「印の秒の上限を process の木の CPU 秒で判じる」宣言と理由(1 行 — 重さが子 process の CPU に在り外を待たない訳)。"""
+    """One test's declaration "judge the marker-seconds budget by process-tree CPU seconds" and its reason (one line — why the weight is in child-process CPU and it does not wait on the outside)."""
 
     reason: str
 
 
 def declare_process_tree_cpu(test: Callable[..., object], reason: str) -> None:
-    """印の秒の上限に当たる検 1 本を、壁の時計でなく process の木の CPU 秒(自分と子孫の user+sys)で判じると宣言する
-    (頭の註の「検ごとの宣言 declare_process_tree_cpu」)。上限の値は印の秒のまま変えない。
+    """Declare that one test hitting a marker-seconds budget is judged by process-tree CPU seconds (own plus descendants, user+sys), not wall-clock
+    (the "per-test declaration declare_process_tree_cpu" in the header note). The budget value stays the marker's seconds.
 
-    重さが子 process(と自分の thread)の CPU に在り、外(socket・HTTP・待ち受け)を待たない検だけに置く — 待ちは CPU 秒に出ない。
-    壁の時計は安全弁として残る(印の秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)。印の上限に当たらない検に置いても判定は変わらない。
-    Hy の検では deftest の直後に ``(declare-process-tree-cpu test-名 "理由")`` と書く。読めない値は import の時に止める。"""
+    Place it only on a test whose weight is in the CPU of child processes (and its own threads) and that does not wait on the outside (socket, HTTP, listener) — waiting does not show in CPU seconds.
+    Wall-clock remains as a safety valve (marker seconds × TREE_CPU_WALL_BACKSTOP_FACTOR). Placing it on a test that hits no marker budget does not change the judgment.
+    In a Hy test, right after deftest write ``(declare-process-tree-cpu test-name "reason")``. An unreadable value stops at import time."""
     if not isinstance(reason, str) or not reason.strip() or "\n" in reason.strip():
-        raise ValueError(f"理由は空でない 1 行: {reason!r}")
+        raise ValueError(f"reason must be a non-empty single line: {reason!r}")
     setattr(test, DECLARED_TREE_CPU_ATTRIBUTE, TreeCpuDeclaration(reason.strip()))
 
 
 def declared_tree_cpu_of(test: object) -> TreeCpuDeclaration | None:
-    """検の関数に付いた木の CPU 秒の宣言(無ければ None)。"""
+    """The tree-CPU declaration attached to a test function (None if none)."""
     declaration = getattr(test, DECLARED_TREE_CPU_ATTRIBUTE, None)
     return declaration if isinstance(declaration, TreeCpuDeclaration) else None
 
 
 @dataclass(frozen=True)
 class DeclaredOverBudget:
-    """宣言した要る歩数を超えた(赤)。"""
+    """Exceeded the declared needed steps (red)."""
 
     measurement: Measurement
     declaration: StepDeclaration
@@ -664,7 +664,7 @@ class DeclaredOverBudget:
 
 @dataclass(frozen=True)
 class StaleDeclaration:
-    """宣言した要る歩数の STALE_RATIO 以下で終わった — 古い宣言(赤)。"""
+    """Finished at or below STALE_RATIO of the declared needed steps — a stale declaration (red)."""
 
     measurement: Measurement
     declaration: StepDeclaration
@@ -681,20 +681,20 @@ Verdict = (
 
 
 class RegistryError(Exception):
-    """登録簿の file の形が決まりに合わない。"""
+    """The shape of a registry file does not follow the rules."""
 
 
 class BudgetWarning(pytest.PytestWarning):
-    """報告のみの形で上限を超えた検の警告。"""
+    """Warning for a test that exceeded the budget in report-only mode."""
 
 
 def registry_file_name(key: str) -> str:
-    """登録簿の鍵の file の名を作る(鍵の sha256 の先頭 12 字 + .txt)— 同時に走る便が同じ行を書き換えて衝突しないため。"""
+    """Build the file name of a registry key (first 12 chars of the key's sha256 + .txt) — so that concurrently running workers do not collide by rewriting the same line."""
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12] + ".txt"
 
 
 def load_registry(directory: Path) -> dict[str, str]:
-    """登録簿の dir を 鍵 → 理由 に読む — 載った検を赤にしないため。dir が無ければ空。名が鍵の hash と合わない・理由が空の file は止める。"""
+    """Read a registry dir as key -> reason — so listed tests are not turned red. Empty if the dir is absent. A file whose name does not match the key's hash, or whose reason is empty, stops."""
     if not directory.is_dir():
         return {}
     table: dict[str, str] = {}
@@ -704,10 +704,10 @@ def load_registry(directory: Path) -> dict[str, str]:
         reason = "\n".join(lines[1:]).strip()
         if path.name != registry_file_name(key):
             raise RegistryError(
-                f"{path} の名が鍵の hash と合わない(鍵 {key!r} の名は {registry_file_name(key)})"
+                f"the name of {path} does not match the key hash (the name for key {key!r} is {registry_file_name(key)})"
             )
         if not reason:
-            raise RegistryError(f"{path} に理由が無い(2 行目から理由を書く)")
+            raise RegistryError(f"{path} has no reason (write the reason from line 2)")
         table[key] = reason
     return table
 
@@ -715,8 +715,8 @@ def load_registry(directory: Path) -> dict[str, str]:
 def judge(
     measurement: Measurement, budget: float, registry: Mapping[str, str], unit: Unit = "cpu-seconds"
 ) -> Verdict:
-    """測った 1 区間を、変換と依存の初回の import を引いた秒(unit = CPU 秒か壁の時計の秒)で上限と登録簿に照らす(キャッシュ無しの
-    重さを検の重さにしない)。"""
+    """Check one measured span against the budget and registry in seconds (unit = CPU seconds or wall-clock seconds) minus conversion and first dependency imports (so the weight of a missing cache
+    is not counted as the test's weight)."""
     if judged_value(measurement, unit) <= budget:
         if measurement.key in registry:
             return RegisteredWithinBudget(measurement, budget, unit)
@@ -727,7 +727,7 @@ def judge(
 
 
 def judge_steps(measurement: Measurement, budget_steps: int, registry: Mapping[str, str]) -> Verdict:
-    """測った 1 区間を、歩数の上限と歩数の登録簿に照らす — 機体の負荷に依らず、同じ検は毎回同じ判定になるため(#2670)。"""
+    """Check one measured span against the step budget and step registry — independent of machine load, so the same test gets the same verdict every time (#2670)."""
     steps = judged_value(measurement, "steps")
     if steps <= budget_steps:
         if measurement.key in registry:
@@ -739,7 +739,7 @@ def judge_steps(measurement: Measurement, budget_steps: int, registry: Mapping[s
 
 
 def judge_declared(measurement: Measurement, declaration: StepDeclaration) -> Verdict:
-    """宣言のある検 1 本を、既定の上限でなく宣言の値で判じる — 超えれば赤・宣言の STALE_RATIO 以下なら古い宣言で赤。"""
+    """Judge one test with a declaration by the declared value, not the default budget — exceeding is red; at or below the declaration's STALE_RATIO is a stale declaration and red."""
     steps = judged_value(measurement, "steps")
     if steps > declaration.steps:
         return DeclaredOverBudget(measurement, declaration)
@@ -750,42 +750,42 @@ def judge_declared(measurement: Measurement, declaration: StepDeclaration) -> Ve
 
 @dataclass(frozen=True)
 class SettingError:
-    """設定の値が読めない(文つき)— session の始めに UsageError で止める。"""
+    """A setting value cannot be read (with a message) — stops at session start with UsageError."""
 
     message: str
 
 
 def parse_positive_seconds(raw: str) -> float | SettingError:
-    """秒の文字を正の数に読む。数でない・正でない値は既定へ黙って倒さず誤りにする。"""
+    """Read a seconds string as a positive number. A non-number or non-positive value is an error, not silently defaulted."""
     try:
         value = float(raw)
     except ValueError:
-        return SettingError(f"正の秒の数: {raw!r}")
+        return SettingError(f"a positive number of seconds: {raw!r}")
     if value <= 0:
-        return SettingError(f"正の秒の数: {raw!r}")
+        return SettingError(f"a positive number of seconds: {raw!r}")
     return value
 
 
 def parse_marker_budgets(lines: Sequence[str]) -> Mapping[str, float] | SettingError:
-    """印ごとの実行の上限の行(``印=秒``)を 印 → 秒 に読む。= の無い行・空の印・読めない秒・同じ印の 2 行は誤り。"""
+    """Read per-marker run-budget lines (``marker=seconds``) as marker -> seconds. A line without =, an empty marker, unreadable seconds, or two lines for the same marker is an error."""
     table: dict[str, float] = {}
     for line in lines:
         marker, sep, raw = line.partition("=")
         marker = marker.strip()
         if not sep or not marker:
-            return SettingError(f"{MARKER_CALL_BUDGET_INI} の行は 印=秒 の形: {line!r}")
+            return SettingError(f"a line of {MARKER_CALL_BUDGET_INI} must be in the form marker=seconds: {line!r}")
         if marker in table:
-            return SettingError(f"{MARKER_CALL_BUDGET_INI} に印 {marker} の行が 2 つある")
+            return SettingError(f"{MARKER_CALL_BUDGET_INI} has two lines for marker {marker}")
         match parse_positive_seconds(raw.strip()):
             case SettingError(message=message):
-                return SettingError(f"{MARKER_CALL_BUDGET_INI} の {marker} は{message}")
+                return SettingError(f"{MARKER_CALL_BUDGET_INI}: for {marker}, {message}")
             case float() as seconds:
                 table[marker] = seconds
     return table
 
 
 def call_budget_for(markers: Iterable[str], by_marker: Mapping[str, float]) -> float | None:
-    """検 1 本の実行の秒の上限を選ぶ — 当たる印の秒のうち最も長い物、当たる印が無ければ None(秒では判じない)。"""
+    """Choose the run-seconds budget for one test — the longest of the matching markers' seconds; None if no marker matches (not judged by seconds)."""
     matched = [by_marker[name] for name in markers if name in by_marker]
     return max(matched) if matched else None
 
@@ -797,11 +797,11 @@ def judge_call(
     declaration: StepDeclaration | None,
     tree_cpu: TreeCpuDeclaration | None = None,
 ) -> Verdict | None:
-    """通った検 1 本の実行(call)を判じる(None = 測らない)。印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、
-    歩数に重さが出ないので壁の時計の秒で判じる(重さは子 process と待ちに在り、process の CPU 秒には出ない)。
-    それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も
-    当たらない検は判じない。印の上限に当たり木の CPU 秒を宣言した検(tree_cpu)は、木を測れた時だけ同じ秒を木の CPU 秒で判じ、
-    壁の時計が安全弁(秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)を越えれば CPU 秒に依らず赤。"""
+    """Judge the run (call) of one test that passed (None = not measured). A test hitting a per-marker seconds budget (a test with real I/O — real_world etc.)
+    is judged by wall-clock seconds since its weight shows no steps (the weight is in child processes and waiting and does not show in process CPU seconds).
+    Everything else is judged by the step budget (a test with a declaration by the declared value). A test hitting neither the step budget nor a marker budget
+    is not judged. A test that hits a marker budget and declared tree CPU seconds (tree_cpu) is judged by the same seconds as tree CPU seconds only when the tree could be measured, and
+    if wall-clock exceeds the safety valve (seconds × TREE_CPU_WALL_BACKSTOP_FACTOR) it is red regardless of CPU seconds."""
     marker_seconds = call_budget_for(markers, budgets.call_seconds_by_marker)
     if marker_seconds is not None:
         if tree_cpu is not None and isinstance(measurement.tree, TreeCpu):
@@ -820,7 +820,7 @@ def judge_call(
 
 
 def load_registries(root: Path, directories: Sequence[str]) -> dict[str, str]:
-    """登録簿の dir を順に読み、全 dir の 鍵 → 理由 にまとめる(同じ鍵が 2 つの dir にあれば先の dir の理由)。"""
+    """Read the registry dirs in order and merge into key -> reason over all dirs (if the same key is in two dirs, the earlier dir's reason)."""
     table: dict[str, str] = {}
     for directory in directories:
         for key, reason in load_registry(root / directory).items():
@@ -829,133 +829,133 @@ def load_registries(root: Path, directories: Sequence[str]) -> dict[str, str]:
 
 
 def _seconds_text(measurement: Measurement) -> str:
-    """測りの秒の書き方(変換と import と GC を引いた壁の時計の秒と CPU 秒・引いた区間・歩数)。印ごとの実行は壁の時計の秒・
-    収集は CPU 秒で判じるので、文の頭は判じる側の秒を先に置かず、両方を同じ形で並べる。"""
+    """Wording of a measurement's seconds (wall-clock seconds and CPU seconds minus conversion, imports, and GC; the subtracted spans; steps). Per-marker runs are judged by wall-clock seconds and
+    collect by CPU seconds, so the sentence does not put the judged side's seconds first but lists both in the same form."""
     compile_part = (
-        f"キャッシュ無しの変換 {measurement.compile.count} 回の壁の時計 {measurement.compile.wall_seconds:.3f} 秒・"
-        f"CPU {measurement.compile.cpu_seconds:.3f} 秒を引いた"
+        f"{measurement.compile.count} uncached conversions, wall-clock {measurement.compile.wall_seconds:.3f} s, "
+        f"CPU {measurement.compile.cpu_seconds:.3f} s subtracted"
         if measurement.compile.count
         else None
     )
     imports_part = (
-        f"依存の module の初回の import {measurement.imports.count} 回の壁の時計 {measurement.imports.wall_seconds:.3f} 秒・"
-        f"CPU {measurement.imports.cpu_seconds:.3f} 秒を引いた"
+        f"{measurement.imports.count} first imports of dependency modules, wall-clock {measurement.imports.wall_seconds:.3f} s, "
+        f"CPU {measurement.imports.cpu_seconds:.3f} s subtracted"
         if measurement.imports.count
         else None
     )
     gc_part = (
-        f"GC {measurement.gc.count} 回の壁の時計 {measurement.gc.wall_seconds:.3f} 秒・CPU {measurement.gc.cpu_seconds:.3f} 秒を引いた"
+        f"{measurement.gc.count} GC runs, wall-clock {measurement.gc.wall_seconds:.3f} s, CPU {measurement.gc.cpu_seconds:.3f} s subtracted"
         if measurement.gc.count
         else None
     )
     world = measurement.world
     world_part = (
-        f"(世界の走り {world.running}・起動 {world.starting}・止め {world.stopping}・世界の外 {world.outside}・"
-        f"世界 {world.worlds} 回のうち立ち上がり {world.up} 回 — 判じるのは走り)"
+        f"(world run {world.running}, start {world.starting}, stop {world.stopping}, outside the world {world.outside}, "
+        f"of {world.worlds} worlds {world.up} started up — the run is what is judged)"
         if world is not None
         else ""
     )
     work_part = (
-        f"doeff-vm の歩数 {measurement.work.steps}{world_part}・handler の呼び出し {measurement.work.handler_calls} 回"
+        f"doeff-vm steps {measurement.work.steps}{world_part}, handler calls {measurement.work.handler_calls}"
         if measurement.work is not None
         else None
     )
     match measurement.tree:
         case TreeCpu() as tree:
             tree_part = (
-                f"process の木の CPU {measurement.judged_tree_cpu_seconds:.3f} 秒(自分 {tree.own_seconds:.3f} 秒・"
-                f"子孫 {tree.processes} 本 {tree.descendants_seconds:.3f} 秒)"
+                f"process-tree CPU {measurement.judged_tree_cpu_seconds:.3f} s (own {tree.own_seconds:.3f} s, "
+                f"descendants {tree.processes} procs {tree.descendants_seconds:.3f} s)"
             )
         case TreeCpuUnmeasured(reason=reason):
-            tree_part = f"process の木の CPU 秒は測れない({reason})— 壁の時計で判じた"
+            tree_part = f"process-tree CPU seconds could not be measured ({reason}) — judged by wall-clock"
         case None:
             tree_part = None
     parts = tuple(part for part in (tree_part, compile_part, imports_part, gc_part, work_part) if part is not None) or (
-        "引いた区間なし",
+        "no span subtracted",
     )
     return (
-        f"壁の時計 {measurement.judged_wall_seconds:.3f} 秒・CPU {measurement.judged_cpu_seconds:.3f} 秒("
+        f"wall-clock {measurement.judged_wall_seconds:.3f} s, CPU {measurement.judged_cpu_seconds:.3f} s ("
         + "・".join(parts)
         + ")"
     )
 
 
 def _limit_text(budget: float, unit: Unit) -> str:
-    """上限の書き方(単位つき)— 文の中で CPU 秒・壁の時計の秒・歩数を取り違えないため。"""
+    """Wording of a budget (with its unit) — so CPU seconds, wall-clock seconds, and steps are not confused in a sentence."""
     match unit:
         case "cpu-seconds":
-            return f"CPU {budget:.3f} 秒"
+            return f"CPU {budget:.3f} s"
         case "wall-seconds":
-            return f"壁の時計 {budget:.3f} 秒"
+            return f"wall-clock {budget:.3f} s"
         case "tree-cpu-seconds":
-            return f"process の木の CPU {budget:.3f} 秒"
+            return f"process-tree CPU {budget:.3f} s"
         case "steps":
-            return f"歩数 {int(budget)}"
+            return f"steps {int(budget)}"
 
 
 def over_budget_message(verdict: OverBudget, registry_dirs: Sequence[str]) -> str:
-    """上限を超えた検の文 — 何秒(何歩)かかったか・上限・直し方を読み手に渡すため(足し先は、その単位の登録簿の 1 行目の dir)。"""
+    """Message for a test that exceeded the budget — to give the reader how many seconds (steps) it took, the budget, and how to fix it (the place to add is the first dir of that unit's registry)."""
     m = verdict.measurement
-    what = "実行(call)" if m.phase == "call" else "読み込み(import)"
-    where = registry_dirs[0] if registry_dirs else f"{REGISTRY_INI} で指す dir"
+    what = "run (call)" if m.phase == "call" else "load (import)"
+    where = registry_dirs[0] if registry_dirs else f"the dir named by {REGISTRY_INI}"
     return (
-        f"doeff の検の時間の上限を超えた: {m.key} の{what}が {_seconds_text(m)}・上限 {_limit_text(verdict.budget, verdict.unit)}。"
-        "検を速くする(模擬の世界を小さくする・待ちを書き込みで起こす)か、直せない理由があれば "
-        f"{where} に鍵 {m.key!r} の file {registry_file_name(m.key)} を理由つきで足す(登録簿は縮める向きだけ)。"
+        f"doeff test time limit exceeded: {m.key} {what} took {_seconds_text(m)}; limit {_limit_text(verdict.budget, verdict.unit)}. "
+        "Make the test faster (shrink the mock world; wake waits with writes), or if it cannot be fixed, "
+        f"add a file {registry_file_name(m.key)} for key {m.key!r} to {where} with a reason (the registry may only shrink)."
     )
 
 
 def declared_over_message(verdict: DeclaredOverBudget) -> str:
-    """宣言した要る歩数を超えた検の文(何歩か・宣言の値・宣言の理由)。"""
+    """A message for a test that exceeded its declared required steps (how many steps, the declared value, the declared reason)."""
     m = verdict.measurement
     return (
-        f"doeff の検の宣言した歩数を超えた: {m.key} の実行(call)が {_seconds_text(m)}・宣言 歩数 {verdict.declaration.steps}"
-        f"(理由: {verdict.declaration.reason})。検を速くするか、断言が依る規模が増えた訳を確かめてから宣言の値を直す。"
+        f"doeff test exceeded its declared steps: {m.key} run (call) took {_seconds_text(m)}; declared steps {verdict.declaration.steps}"
+        f" (reason: {verdict.declaration.reason}). Make the test faster, or check why the scale the assertion depends on grew before changing the declared value."
     )
 
 
 def stale_declaration_message(verdict: StaleDeclaration) -> str:
-    """古い宣言を赤にした時の文(どの検が・何歩で・宣言のいくらで)。"""
+    """A message for a stale declaration that turned red (which test, how many steps, how much of the declaration)."""
     m = verdict.measurement
     return (
-        f"{m.key} は歩数 {verdict.declaration.steps} を宣言しているが、実行(call)がその {STALE_RATIO:g} 倍以下"
-        f"({_seconds_text(m)})— 古い宣言なので、宣言を消すか値を下げる(既定の上限の内なら宣言は要らない)"
+        f"{m.key} declares steps {verdict.declaration.steps}, but its run (call) is at most {STALE_RATIO:g} times that"
+        f" ({_seconds_text(m)}); this is a stale declaration, so remove it or lower the value (a declaration is not needed within the default limit)"
     )
 
 
 def stale_registration_message(verdict: RegisteredWithinBudget, registry_dirs: Sequence[str]) -> str:
-    """古い登録を赤にした時の文(どの検が・何秒〔何歩〕で・上限のいくらで・どの file を消すか)。"""
+    """A message for a stale registry entry that turned red (which test, how many seconds [steps], what fraction of the limit, which file to delete)."""
     m = verdict.measurement
     return (
-        f"{m.key} は登録簿に載っているが、{m.phase} が上限 {_limit_text(verdict.budget, verdict.unit)} の"
-        f"{STALE_RATIO:g} 倍以下({_seconds_text(m)})— 古い登録なので登録簿の file "
-        f"{registry_file_name(m.key)} を消す(登録簿は縮める向きだけ)"
+        f"{m.key} is in the registry, but its {m.phase} is at most {STALE_RATIO:g} times the limit of {_limit_text(verdict.budget, verdict.unit)}"
+        f" ({_seconds_text(m)}); this is a stale registry entry, so delete the registry file "
+        f"{registry_file_name(m.key)} (the registry may only shrink)"
     )
 
 
 class CompileCounter:
-    """測りから引く区間(source から code への変換・別の module の初回の import)の回数と CPU 秒を数える — 検の重さに
-    キャッシュ無しの重さと、共有の依存の一度きりの import の重さを入れないため。
+    """Counts, and CPU seconds of, the intervals subtracted from a measurement (conversion from source to code, and the first import of another module), so that a test's weight
+    excludes the uncached weight and the one-time import weight of a shared dependency.
 
-    ``SourceFileLoader.source_to_code`` はバイトコードのキャッシュに当たらない時だけ呼ばれ、Hy の import も Hy が
-    差し替えた同じ口を通る(Hy の差し替えは元の口を呼び直すので、Hy がこの数えの前後どちらで差し替えても数えに乗る)。
-    変換の中で別の module の import と変換が起きる(Hy の ``require``)ので、秒は最も外側の区間だけを、その区間の種類の
-    欄に足す(依存の import の中の変換は依存の import の欄に 1 度だけ入る — 二重に引かない)。
+    ``SourceFileLoader.source_to_code`` is called only on a bytecode cache miss, and Hy's import also goes through the same entry point that Hy
+    replaces (Hy's replacement calls the original again, so it is counted whichever of Hy and this counter replaces it first).
+    Conversion triggers imports and conversions of other modules (Hy's ``require``), so seconds are added only to the outermost interval, in the column for that interval's kind
+    (conversion inside a dependency's import goes into the dependency-import column exactly once, so nothing is subtracted twice).
 
-    別の module の初回の import は ``importlib._bootstrap._find_and_load`` の区間(import 文も ``importlib.import_module`` も、
-    sys.modules に無い名の時にここを通る)。共有の依存の一度きりの重さは、その process で最初に import した検の file に
-    乗るので、引かないと同じ file の合否が並び順・1 file だけの実行か・テストの索引が冷えているかで変わる
-    (索引が冷えた初回の収集だけ赤になっていた)。検の file 自身は doeff-adr が
-    ``module_from_spec`` と ``exec_module`` で読むのでこの区間に入らず、file 自身の本体の重さは測りに残る。
+    The first import of another module is an ``importlib._bootstrap._find_and_load`` interval (both import statements and ``importlib.import_module``
+    pass through here when the name is not in sys.modules). The one-time weight of a shared dependency lands on the first test file imported in that process,
+    so without subtracting it, the same file's verdict changes with ordering, with running only one file, or with whether the test index is cold
+    (only the first collection with a cold index went red). The test file itself is loaded by doeff-adr via
+    ``module_from_spec`` and ``exec_module``, so it is not in this interval, and the weight of the file's own body stays in the measurement.
 
-    doeff-effect-analyzer が入っていれば、その Hy の展開(展開した構文木の cache に当たらない時だけ走る — 同じく
-    キャッシュ無しの重さ)も変換の数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない)。
+    If doeff-effect-analyzer is installed, its Hy expansion (which runs only on an expanded-syntax-tree cache miss, so likewise
+    uncached weight) is also added to the conversion count (via the ``observe_expansions`` entry point; the analyzer does not know who counts).
 
-    GC(``gc.callbacks`` の start から stop まで)も引く区間として数える。GC の費用は process に生きている object の数で決まり
-    (free-threaded の Python の GC は世代を分けず、1 回ごとに heap の全体を回る — 300 万 object で 1 回 約 0.2 秒)、いつ起きるかは
-    割り当ての数の巡りで決まるので、測りに入れると session の中のどの検に当たるかで合否が入れ替わる(agora-controllers の日次で、
-    file 1 本だけなら 0.03 秒の file が 1.0〜1.4 秒になり、落ちる file が回ごとに変わった)。変換・依存の初回の
-    import の区間の中で起きた GC はその区間の秒に入っているので、GC の欄には数えない(二重に引かない)。
+    GC (from the start to the stop of ``gc.callbacks``) is also counted as a subtracted interval. GC cost depends on the number of live objects in the process
+    (a free-threaded Python GC does not split generations and walks the whole heap each time; one run at 3 million objects takes about 0.2 seconds), and when it happens is decided by
+    the cycle of allocation counts, so if it were in the measurement, the verdict would swap depending on which test in the session it hits (in the agora-controllers daily run,
+    a file that takes 0.03 seconds alone took 1.0 to 1.4 seconds, and the failing file changed from run to run). GC that happened inside a conversion or dependency first-import
+    interval is already in that interval's seconds, so it is not counted in the GC column (nothing is subtracted twice).
     """
 
     def __init__(self) -> None:
@@ -968,7 +968,7 @@ class CompileCounter:
         self._mut_gc_count = 0
         self._mut_gc_cpu_seconds = 0.0
         self._mut_gc_wall_seconds = 0.0
-        # 走っている GC 1 回の始めの刻(CPU 秒・壁の時計の秒)— start の合図で置き、stop の合図で欄に足して外す。
+        # Start time of a running GC pass (CPU seconds, wall-clock seconds): set on the start signal, added to the column and removed on the stop signal.
         self._mut_gc_started: tuple[float, float] | None = None
         self._mut_depth = 0
         self._mut_outer: SetAside | None = None
@@ -977,19 +977,19 @@ class CompileCounter:
         self._mut_stop_observing: Callable[[], None] | None = None
 
     def tally(self) -> CompileTally:
-        """今までの変換の数え(区間の前後の差で使う)。"""
+        """The conversion counts so far (used as the difference before and after an interval)."""
         return CompileTally(self._mut_count, self._mut_cpu_seconds, self._mut_wall_seconds)
 
     def import_tally(self) -> ImportTally:
-        """今までの依存の初回の import の数え(区間の前後の差で使う)。"""
+        """The dependency first-import counts so far (used as the difference before and after an interval)."""
         return ImportTally(self._mut_import_count, self._mut_import_cpu_seconds, self._mut_import_wall_seconds)
 
     def gc_tally(self) -> GcTally:
-        """今までの GC の数え(区間の前後の差で使う)。"""
+        """The GC counts so far (used as the difference before and after an interval)."""
         return GcTally(self._mut_gc_count, self._mut_gc_cpu_seconds, self._mut_gc_wall_seconds)
 
     def _on_gc(self, phase: str, info: Mapping[str, object]) -> None:
-        """``gc.callbacks`` の口 — 変換・依存の初回の import の区間の外で起きた GC 1 回の CPU 秒と壁の時計の秒を GC の欄に足すため。"""
+        """The ``gc.callbacks`` entry point: adds the CPU seconds and wall-clock seconds of one GC pass that happened outside conversion and dependency first-import intervals to the GC column."""
         if self._mut_depth:
             return
         match phase:
@@ -1006,8 +1006,8 @@ class CompileCounter:
 
     @contextlib.contextmanager
     def _set_aside(self, kind: SetAside) -> Generator[None]:
-        """引く区間 1 回 — 最も外側の区間なら、その CPU 秒と壁の時計の秒をその区間の種類の欄に足すため(収集は CPU 秒・印ごとの
-        実行は壁の時計の秒で判じるので、両方の単位で引けるように)。"""
+        """One subtracted interval: if outermost, adds its CPU seconds and wall-clock seconds to the column for its kind (collection is judged in CPU seconds and
+        per-marker runs in wall-clock seconds, so it can subtract in both units)."""
         if kind == "compile":
             self._mut_count += 1
         else:
@@ -1033,47 +1033,47 @@ class CompileCounter:
                 self._mut_outer = None
 
     def converting(self) -> contextlib.AbstractContextManager[None]:
-        """キャッシュ無しの変換 1 回の区間。"""
+        """One uncached conversion interval."""
         return self._set_aside("compile")
 
     def importing(self) -> contextlib.AbstractContextManager[None]:
-        """別の module の初回の import 1 回の区間。"""
+        """One first-import interval of another module."""
         return self._set_aside("import")
 
     def install(self) -> None:
-        """数える口を差し込む(session の間だけ — uninstall で戻す)。"""
+        """Install the counting hooks (only for the session; uninstall restores them)."""
         original = importlib.machinery.SourceFileLoader.source_to_code
         self._mut_original = original
         counter = self
 
         def counting_source_to_code(loader: object, *args: object, **kwargs: object) -> object:
-            """元の変換を呼び、キャッシュ無しの変換の区間として数える。"""
+            """Call the original conversion and count it as an uncached conversion interval."""
             with counter.converting():
                 return original(loader, *args, **kwargs)
 
-        importlib.machinery.SourceFileLoader.source_to_code = counting_source_to_code  # type: ignore[method-assign]  # 数えるための差し替え(uninstall で戻す)
+        importlib.machinery.SourceFileLoader.source_to_code = counting_source_to_code  # type: ignore[method-assign]  # replacement for counting (restored by uninstall)
         bootstrap = sys.modules[_BOOTSTRAP_MODULE]
         original_find_and_load = getattr(bootstrap, _FIND_AND_LOAD)
         self._mut_original_find_and_load = original_find_and_load
 
         def counting_find_and_load(name: str, import_: object) -> object:
-            """元の import を呼び、sys.modules に無い名なら依存の初回の import の区間として数える。"""
+            """Call the original import and, if the name is not in sys.modules, count it as a dependency first-import interval."""
             if name in sys.modules:
                 return original_find_and_load(name, import_)
             with counter.importing():
                 return original_find_and_load(name, import_)
 
-        # 数えるための差し替え(uninstall で戻す)— import の機構は呼ぶたびにこの名を module から引くので、import 文にも効く。
+        # Replacement for counting (restored by uninstall); the import machinery looks up this name from the module on every call, so it also affects import statements.
         setattr(bootstrap, _FIND_AND_LOAD, counting_find_and_load)
         self._mut_stop_observing = observe_analyzer_expansions(self.converting)
         gc.callbacks.append(self._on_gc)
 
     def uninstall(self) -> None:
-        """install の前の口へ戻す。"""
+        """Restore the hooks from before install."""
         if self._on_gc in gc.callbacks:
             gc.callbacks.remove(self._on_gc)
         if self._mut_original is not None:
-            importlib.machinery.SourceFileLoader.source_to_code = self._mut_original  # type: ignore[method-assign]  # install の前へ戻す
+            importlib.machinery.SourceFileLoader.source_to_code = self._mut_original  # type: ignore[method-assign]  # restore the state before install
             self._mut_original = None
         if self._mut_original_find_and_load is not None:
             setattr(sys.modules[_BOOTSTRAP_MODULE], _FIND_AND_LOAD, self._mut_original_find_and_load)
@@ -1086,10 +1086,10 @@ class CompileCounter:
 def observe_analyzer_expansions(
     converting: Callable[[], contextlib.AbstractContextManager[None]],
 ) -> Callable[[], None] | None:
-    """doeff-effect-analyzer の Hy の展開も数えに乗せるため(解析器が入っていない環境では何もしない — None)。
+    """So that doeff-effect-analyzer's Hy expansion also counts (does nothing, returning None, in an environment without the analyzer).
 
-    observe_expansions は解析器の内側の名(ADR-DOE-API-001 R24): process に 1 つの口で、program の中で頼む物でないので effect に
-    せず、入口にも出さない。読むのは doeff の中のこの plugin だけ。"""
+    observe_expansions is a name internal to the analyzer (ADR-DOE-API-001 R24): a process-wide entry point that is not something to request inside a program, so it is not an effect
+    and not exposed at the entry. Only this plugin inside doeff reads it."""
     try:
         from doeff_effect_analyzer._program_effects import observe_expansions
     except ImportError:
@@ -1099,7 +1099,7 @@ def observe_analyzer_expansions(
 
 @dataclass(frozen=True)
 class CallMeasured:
-    """call の段階の CPU 秒と壁の時計の秒と、変換と依存の初回の import(makereport で判定するまで item に置く)。"""
+    """The call phase's CPU seconds and wall-clock seconds, plus conversion and dependency first-import (kept on the item until judged in makereport)."""
 
     cpu_seconds: float
     wall_seconds: float
@@ -1116,72 +1116,72 @@ _BUDGETS_KEY = pytest.StashKey[Budgets]()
 _COUNTER_KEY = pytest.StashKey[CompileCounter]()
 _VERDICTS_KEY = pytest.StashKey[list[Verdict]]()
 _CALL_MEASURED_KEY = pytest.StashKey[CallMeasured]()
-# 印 --doeff-python-calls を付けた走りの数え(印の無い走りは置かない)。
+# Counts of a run with the --doeff-python-calls marker (no entry is kept for a run without the marker).
 _PYTHON_CALLS_KEY = pytest.StashKey[CallCounting]()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """設定の名と命令行の印を pytest に登録する。"""
+    """Register the setting names and command-line flag with pytest."""
     parser.addoption(
         PYTHON_CALLS_OPTION,
         dest=PYTHON_CALLS_DEST,
         action="store_true",
         default=False,
-        help="歩数を宣言した検の call の間の Python の呼び出し(sys.monitoring の CALL 事象)を数え、終わりに 1 行出す(日次の 1 回だけ)",
+        help="Count Python calls (sys.monitoring CALL events) during the call phase of tests that declare steps, and print one line at the end (once a day only)",
     )
     parser.addini(
         MARKER_CALL_BUDGET_INI,
-        "印ごとの Hy の検 1 本の実行の上限の壁の時計の秒(1 行 = 印=秒・複数の印に当たれば最も長い秒・当たる検は歩数の上限があっても秒で判じる)",
+        "Per-marker wall-clock-seconds limit for one Hy test run (1 line = marker=seconds; if several markers match, the longest seconds; a matching test is judged in seconds even if a step limit exists)",
         type="linelist",
         default=[],
     )
     parser.addini(
         COLLECT_BUDGET_INI,
-        "Hy の検の file 1 本の module の import の上限の CPU 秒(空 = 測らない)",
+        "CPU-seconds limit for importing one Hy test file's module (empty = not measured)",
         default="",
     )
     parser.addini(
         MODE_INI,
-        "上限を超えた時の扱い: report(警告と一覧だけ・既定)か fail(赤にする)",
+        "What to do when a limit is exceeded: report (warning and list only; default) or fail (turn red)",
         default="report",
     )
     parser.addini(
         REGISTRY_INI,
-        "上限を超えてよい既存の検の登録簿の dir(rootdir からの相対・1 行 = 1 dir)",
+        "Registry dirs of existing tests allowed to exceed the limit (relative to rootdir; 1 line = 1 dir)",
         type="linelist",
         default=[],
     )
     parser.addini(
         CALL_STEPS_INI,
-        "Hy の検 1 本の実行の上限の doeff-vm の歩数(正の整数・default = 既定の上限・空 = 実行は印ごとの秒の上限だけ)",
+        "doeff-vm step limit for one Hy test run (positive integer; default = the default limit; empty = run is limited only by per-marker seconds)",
         default="",
     )
     parser.addini(
         STEPS_COUNTED_INI,
-        "歩数で判じる時に数える区間: call(call の全部・既定)か world-running(模擬の世界を回した検は世界の走りの歩数だけ)",
+        "Span counted when judging by steps: call (the whole call; default) or world-running (for a test that ran a mock world, only the steps of the world run)",
         default="call",
     )
     parser.addini(
         RUNAWAY_MULTIPLIER_INI,
-        "走っている最中に検を落とす歩の上限の倍率(歩数の上限 × この値・正の整数・空 = 既定 20)",
+        "Multiplier of the step limit at which a test is killed while running (step limit x this value; positive integer; empty = default 20)",
         default="",
     )
 
 
 def _seconds(config: pytest.Config, name: str) -> float | None:
-    """上限の秒を読む(空 = 測らない)。数でない・正でない値は既定へ黙って倒さず止める。"""
+    """Read a limit in seconds (empty = not measured). A non-number or non-positive value stops with an error instead of silently falling back to the default."""
     raw = str(config.getini(name)).strip()
     if not raw:
         return None
     match parse_positive_seconds(raw):
         case SettingError(message=message):
-            raise pytest.UsageError(f"{name} は{message}")
+            raise pytest.UsageError(f"{name} must be {message}")
         case float() as value:
             return value
 
 
 def _marker_seconds(config: pytest.Config) -> Mapping[str, float]:
-    """印ごとの実行の上限を読む。読めない行は止める。"""
+    """Read the per-marker run limits. An unreadable line stops with an error."""
     match parse_marker_budgets([str(line) for line in config.getini(MARKER_CALL_BUDGET_INI)]):
         case SettingError(message=message):
             raise pytest.UsageError(message)
@@ -1190,89 +1190,89 @@ def _marker_seconds(config: pytest.Config) -> Mapping[str, float]:
 
 
 def parse_positive_steps(raw: str) -> int | SettingError:
-    """歩数の文字を正の整数に読む(`default` は既定の上限 DEFAULT_CALL_BUDGET_STEPS)。数でない・正でない値は既定へ黙って倒さず誤りにする。"""
+    """Read a step-count string as a positive integer (`default` is the default limit DEFAULT_CALL_BUDGET_STEPS). A non-number or non-positive value is an error instead of silently falling back to the default."""
     if raw == "default":
         return DEFAULT_CALL_BUDGET_STEPS
     try:
         value = int(raw)
     except ValueError:
-        return SettingError(f"正の整数の歩数: {raw!r}")
+        return SettingError(f"a positive integer step count: {raw!r}")
     if value <= 0:
-        return SettingError(f"正の整数の歩数: {raw!r}")
+        return SettingError(f"a positive integer step count: {raw!r}")
     return value
 
 
 def _steps(config: pytest.Config) -> int | None:
-    """歩数の上限を読む(空 = 歩数で判じない)。読めない値は止める。"""
+    """Read the step limit (empty = not judged by steps). An unreadable value stops with an error."""
     raw = str(config.getini(CALL_STEPS_INI)).strip()
     if not raw:
         return None
     match parse_positive_steps(raw):
         case SettingError(message=message):
-            raise pytest.UsageError(f"{CALL_STEPS_INI} は{message}")
+            raise pytest.UsageError(f"{CALL_STEPS_INI} must be {message}")
         case int() as value:
             return value
 
 
 def _runaway_multiplier(config: pytest.Config) -> int:
-    """走っている最中の歩の上限の倍率を読む(空 = 既定)。正の整数でない値は既定へ黙って倒さず止める。"""
+    """Read the multiplier of the in-flight step limit (empty = default). A value that is not a positive integer stops with an error instead of silently falling back to the default."""
     raw = str(config.getini(RUNAWAY_MULTIPLIER_INI)).strip()
     if not raw:
         return DEFAULT_RUNAWAY_STEPS_MULTIPLIER
     try:
         value = int(raw)
     except ValueError:
-        raise pytest.UsageError(f"{RUNAWAY_MULTIPLIER_INI} は正の整数: {raw!r}") from None
+        raise pytest.UsageError(f"{RUNAWAY_MULTIPLIER_INI} must be a positive integer: {raw!r}") from None
     if value <= 0:
-        raise pytest.UsageError(f"{RUNAWAY_MULTIPLIER_INI} は正の整数: {raw!r}")
+        raise pytest.UsageError(f"{RUNAWAY_MULTIPLIER_INI} must be a positive integer: {raw!r}")
     return value
 
 
 def _steps_counted(config: pytest.Config) -> StepsCounted:
-    """歩数で数える区間を読む。語彙の外は既定へ黙って倒さず止める。"""
+    """Read the span counted in steps. A value outside the vocabulary stops with an error instead of silently falling back to the default."""
     raw = str(config.getini(STEPS_COUNTED_INI)).strip()
     if raw == "call":
         return "call"
     if raw == "world-running":
         return "world-running"
-    raise pytest.UsageError(f"{STEPS_COUNTED_INI} は call か world-running: {raw!r}")
+    raise pytest.UsageError(f"{STEPS_COUNTED_INI} must be call or world-running: {raw!r}")
 
 
 def _phase_log(config: pytest.Config, call_steps: int | None) -> PhaseLogSource:
-    """世界の区切りの印の口を、走りの歩数で数える repo でだけ探す(call の全部で数える repo は印を読まない)。"""
+    """Look for the world-boundary marker entry point only in repos that count by run steps (a repo that counts the whole call does not read markers)."""
     if call_steps is None:
-        return NoWorldPhaseLog("歩数の上限の設定が無い")
+        return NoWorldPhaseLog("no step limit is configured")
     if _steps_counted(config) == "call":
-        return NoWorldPhaseLog(f"{STEPS_COUNTED_INI} が call")
+        return NoWorldPhaseLog(f"{STEPS_COUNTED_INI} is call")
     return read_phase_log()
 
 
 def _mode(config: pytest.Config) -> Mode:
-    """超えた時の扱いを読む。語彙の外は止める。"""
+    """Read what to do when a limit is exceeded. A value outside the vocabulary stops with an error."""
     raw = str(config.getini(MODE_INI)).strip()
     if raw == "report":
         return "report"
     if raw == "fail":
         return "fail"
-    raise pytest.UsageError(f"{MODE_INI} は report か fail: {raw!r}")
+    raise pytest.UsageError(f"{MODE_INI} must be report or fail: {raw!r}")
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """上限が 1 つでも設定されていれば、登録簿を読み、変換の数えを差し込む。歩数の上限があるのに doeff-vm に数の口が無い build は、
-    秒へ倒さず名指しで止める。"""
+    """If at least one limit is configured, read the registry and install the conversion counter. A build whose doeff-vm lacks the count entry point while a step limit exists
+    stops with an error naming it, instead of falling back to seconds."""
     call_seconds_by_marker = _marker_seconds(config)
     collect_seconds = _seconds(config, COLLECT_BUDGET_INI)
     call_steps = _steps(config)
     counts_python_calls = bool(config.getoption(PYTHON_CALLS_DEST))
     if not call_seconds_by_marker and collect_seconds is None and call_steps is None:
         if counts_python_calls:
-            config.stash[_PYTHON_CALLS_KEY] = NotCounted("doeff の検の上限の設定が無い — 歩数を測らない")
+            config.stash[_PYTHON_CALLS_KEY] = NotCounted("no doeff test limit is configured; steps are not measured")
         return
     work_source = read_work_source()
     if call_steps is not None and isinstance(work_source, NoWorkReader):
         raise pytest.UsageError(
-            f"{CALL_STEPS_INI} があるが歩数を測れない({work_source.reason})— 実行を歩数で判じられないので止める"
-            "(CPU 秒へは倒さない)。数の口のある doeff-vm の build で走らせるか、歩数の上限の設定を外す"
+            f"{CALL_STEPS_INI} is set but steps cannot be measured ({work_source.reason}); stopping because the run cannot be judged by steps"
+            " (it does not fall back to CPU seconds). Run on a doeff-vm build that has the count entry point, or remove the step-limit setting"
         )
     mode = _mode(config)
     registry_dirs = tuple(str(line) for line in config.getini(REGISTRY_INI))
@@ -1289,7 +1289,7 @@ def pytest_configure(config: pytest.Config) -> None:
         read_vm_build(),
         call_steps=call_steps,
         work_source=work_source,
-        step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("歩数の上限の設定が無い"),
+        step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("no step limit is configured"),
         runaway_multiplier=_runaway_multiplier(config),
         phase_log=_phase_log(config, call_steps),
     )
@@ -1301,12 +1301,12 @@ def pytest_configure(config: pytest.Config) -> None:
         config.stash[_PYTHON_CALLS_KEY] = (
             CallCounter.acquire()
             if isinstance(work_source, WorkReader)
-            else NotCounted(f"歩数を測れない({work_source.reason})")
+            else NotCounted(f"steps cannot be measured ({work_source.reason})")
         )
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    """差し込んだ変換の数えを外し、Python の呼び出しの数えの枠を返す。"""
+    """Remove the installed conversion counter and return the frame for Python call counting."""
     counter = config.stash.get(_COUNTER_KEY, None)
     if counter is not None:
         counter.uninstall()
@@ -1316,7 +1316,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 def _relative_key(path: Path, root: Path) -> str:
-    """収集の鍵(rootdir からの path)。"""
+    """The collection key (path from rootdir)."""
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
@@ -1324,7 +1324,7 @@ def _relative_key(path: Path, root: Path) -> str:
 
 
 def _record(config: pytest.Config, verdict: Verdict) -> bool:
-    """判定を session の一覧に足し、赤にするべきかを返す(報告のみの形なら警告だけ出して赤にしない)。"""
+    """Add the verdict to the session list and return whether it should turn red (in report-only mode, only a warning is emitted and it does not turn red)."""
     config.stash[_VERDICTS_KEY].append(verdict)
     budgets = config.stash[_BUDGETS_KEY]
     match verdict:
@@ -1349,7 +1349,7 @@ def _record(config: pytest.Config, verdict: Verdict) -> bool:
 
 
 def _failure_message(verdict: Verdict, budgets: Budgets) -> str:
-    """赤にした判定の文(足し先・消す先は、判定した単位の登録簿・宣言なら検の定義の隣)。"""
+    """The message for a verdict that turned red (where to add or remove: the registry of the judged unit; for a declaration, next to the test's definition)."""
     match verdict:
         case OverBudget():
             return over_budget_message(verdict, budgets.registry_dirs)
@@ -1360,14 +1360,14 @@ def _failure_message(verdict: Verdict, budgets: Budgets) -> str:
         case StaleDeclaration():
             return stale_declaration_message(verdict)
         case WithinBudget() | RegisteredOverBudget():
-            raise AssertionError(f"赤にしない判定の文を求めた: {verdict}")
+            raise AssertionError(f"asked for the message of a verdict that does not turn red: {verdict}")
 
 
 @pytest.hookimpl(wrapper=True, optionalhook=True)
 def pytest_doeff_import_hy_module(
     collector: pytest.Module,
 ) -> Generator[None, types.ModuleType, types.ModuleType]:
-    """Hy の検の file 1 本の module の import を測って判定する(doeff-adr の hook — 収集の中でも setup の中でも)。"""
+    """Measure and judge the module import of one Hy test file (a doeff-adr hook, both during collection and during setup)."""
     config = collector.config
     budgets = config.stash.get(_BUDGETS_KEY, None)
     if budgets is None or budgets.collect_seconds is None or collector.path.suffix != ".hy":
@@ -1396,9 +1396,9 @@ def pytest_doeff_import_hy_module(
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
-    """call の段階の CPU 秒と変換を測って item に置く(判定は makereport)。歩数で判じる Hy の検は、call の間だけ
-    scheduler に歩の上限(歩数の上限 × 倍率)を入れ、走り終わらない空回りを走っている最中に落とす(#3143)。印
-    --doeff-python-calls の走りでは、歩数を宣言した検の call の間だけ Python の呼び出しを数える(#2854)。"""
+    """Measure the call phase's CPU seconds and conversion and put them on the item (judged in makereport). For a Hy test judged by steps, during the call only,
+    put a step limit (step limit x multiplier) on the scheduler so that a spin that never finishes is killed while running (#3143). In a run with the
+    --doeff-python-calls marker, Python calls are counted only during the call of tests that declare steps (#2854)."""
     counter = item.config.stash.get(_COUNTER_KEY, None)
     if counter is None:
         return (yield)
@@ -1414,7 +1414,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
         if item.path.suffix == ".hy" and isinstance(guard, SchedulerStepGuard)
         else None
     )
-    phase_log = budgets.phase_log if isinstance(source, WorkReader) else NoWorldPhaseLog("歩数を測らない")
+    phase_log = budgets.phase_log if isinstance(source, WorkReader) else NoWorldPhaseLog("steps are not measured")
     work_before = source.tally() if isinstance(source, WorkReader) else None
     compile_before = counter.tally()
     imports_before = counter.import_tally()
@@ -1429,7 +1429,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     calls_counter = python_calls if isinstance(python_calls, CallCounter) and declaration is not None else None
     if calls_counter is not None:
         calls_counter.start()
-    # 木の CPU 秒は、印の秒の上限に当たり木の CPU 秒を宣言した Hy の検の call の間だけ読む(他の検は読みの thread を起こさない)。
+    # The tree's CPU seconds are read only during the call of a Hy test that matches a marker's seconds limit and declares tree CPU seconds (other tests do not wake the reader thread).
     tree_sampler = (
         TreeCpuSampler()
         if item.path.suffix == ".hy"
@@ -1479,7 +1479,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """通った Hy の検 1 本の call の段階を、印ごとの秒の上限か歩数の上限で判定する(落ちた検はその失敗のまま)。"""
+    """Judge the call phase of one passed Hy test by the per-marker seconds limit or the step limit (a failed test stays failed as it is)."""
     report = yield
     config = item.config
     budgets = config.stash.get(_BUDGETS_KEY, None)
@@ -1516,32 +1516,32 @@ def pytest_runtest_makereport(
     return report
 
 
-# ── 検ごとの CPU 秒 ÷ 歩数(µs/歩)の比(設計 #2670 の §2)─────────────
-# 報告だけ(判定・終わりの code・BudgetWarning に入れない)。混んだ日は全部の検が同じ向きに揺れるので、絶対の値でなく、同じ
-# session の検どうしの比(session の中央値に対する倍率)で外れを見る。値の根(zeus 2026-10-12 の実測 — doeff の branch):
-# 歩数 10,000 以上の検は 9.7〜19.7 µs/歩に収まり、同じ走りの中の
-# 比は 5〜95 番目の百分位で 0.85〜1.14。歩数 100 未満の検は固定の費用だけの数(中央値 167・最大 23 万 µs/歩)なので比に入れない。
-# 倍率・床・最低本数は最初の 5 回の日次の行を読んで見直す(値を変えるのはこの 4 行)。
-# 比に入れる歩数の床(未満の検は数だけ出す)。
+# -- Per-test CPU seconds / steps (us/step) ratio (section 2 of design #2670) --
+# Report only (not included in the verdict, the exit code, or BudgetWarning). On a busy day all tests swing in the same direction, so outliers are found not by absolute value but by the ratio
+# between tests in the same session (multiple of the session median). Basis of the values (zeus measurement of 2026-10-12, doeff branch):
+# tests with 10,000 or more steps fall within 9.7 to 19.7 us/step, and the ratio within the same run
+# is 0.85 to 1.14 between the 5th and 95th percentiles. Tests with fewer than 100 steps are numbers of fixed cost only (median 167, max 230,000 us/step), so they are not included in the ratio.
+# Review the multiplier, floor, and minimum count after reading the first 5 daily lines (the 4 lines below are the only place to change the values).
+# Step floor for inclusion in the ratio (tests below it only get a count).
 RATIO_FLOOR_STEPS = 10_000
-# 床を越える検がこの本数未満の session は比を出さない(中央値が意味を持たない)。
+# A session with fewer tests than this above the floor prints no ratio (the median is meaningless).
 RATIO_MIN_TESTS = 8
-# 外れ = 中央値のこの倍を越える・この分の 1 を下回る検。
+# Outlier = a test above this multiple of the median, or below 1/this.
 RATIO_OUTLIER_FACTOR = 2.0
-# 外れを名指す本数(片側ごと — 残りは数だけ)。
+# Number of outliers named (per side; the rest are only counted).
 RATIO_NAMED = 3
-# 名指す検の名の字数の上限(1 行に収めるため)。
+# Maximum characters of a named test's name (to fit on one line).
 RATIO_NAME_CHARS = 56
-# 比の 1 行の頭 — 日次の報告(agora-controllers の controllers/daily_verify/core/pytest_report.hy)がこの頭で行を探して読み戻す。
-# 綴りを変えたら read_step_cost_line と agora-controllers の読み(往復の検)を同じ変更で直す。
-RATIO_LINE_HEAD = "CPU 秒 ÷ 歩数(µs/歩): "
-# Python の呼び出しを数えた検を比から除いた時に括弧の中へ足す文(数 1 つ)。
-RATIO_EXCLUDED_TEXT = "Python の呼び出しを数えた {} 本は監視の上乗せがあるので除く"
+# Head of the one ratio line: the daily report (controllers/daily_verify/core/pytest_report.hy in agora-controllers) finds and reads the line back by this head.
+# If the spelling changes, fix read_step_cost_line and the agora-controllers reader (the round-trip test) in the same change.
+RATIO_LINE_HEAD = "CPU seconds / steps (us/step): "
+# Text added inside the parentheses when tests that counted Python calls are excluded from the ratio (one number).
+RATIO_EXCLUDED_TEXT = "{} tests that counted Python calls are excluded because monitoring adds overhead"
 
 
 @dataclass(frozen=True)
 class StepCost:
-    """検 1 本の CPU 秒 ÷ 歩数(µs/歩)と、その session の中央値に対する倍率。name = 名指しに使う短い名(step_cost_name)。"""
+    """One test's CPU seconds / steps (us/step) and its multiple of the session median. name = the short name used for naming (step_cost_name)."""
 
     name: str
     micros_per_step: float
@@ -1550,8 +1550,8 @@ class StepCost:
 
 @dataclass(frozen=True)
 class StepCostRatios:
-    """session 1 本の比(床を越える検が RATIO_MIN_TESTS 本以上の時)。above = 中央値の RATIO_OUTLIER_FACTOR 倍を越える検(倍率の
-    高い順)・below = その分の 1 を下回る検(倍率の低い順)— どちらも全部を持ち、名指すのは整形で先頭の RATIO_NAMED 本。"""
+    """The ratio for one session (when at least RATIO_MIN_TESTS tests are above the floor). above = tests above RATIO_OUTLIER_FACTOR times the median (in descending
+    order of multiple), below = tests below 1/that (in ascending order of multiple); both hold all of them, and formatting names only the first RATIO_NAMED."""
 
     measured: int
     below_floor: int
@@ -1559,13 +1559,13 @@ class StepCostRatios:
     highest: StepCost
     above: tuple[StepCost, ...]
     below: tuple[StepCost, ...]
-    # Python の呼び出しを数えた検(印 --doeff-python-calls の走り)の数 — 監視の上乗せで CPU 秒が 1.5〜1.7 倍になるので比に入れない。
+    # Number of tests that counted Python calls (runs with the --doeff-python-calls marker): monitoring overhead makes CPU seconds 1.5 to 1.7 times larger, so they are not included in the ratio.
     excluded: int = 0
 
 
 @dataclass(frozen=True)
 class TooFewForRatios:
-    """床を越える検が RATIO_MIN_TESTS 本未満で、比を出さない session。"""
+    """A session where fewer than RATIO_MIN_TESTS tests are above the floor, so no ratio is printed."""
 
     measured: int
     below_floor: int
@@ -1576,16 +1576,16 @@ StepCostReport = StepCostRatios | TooFewForRatios
 
 
 def step_cost_name(key: str) -> str:
-    """名指しに使う検の短い名 — nodeid の最後の ``::`` の後を RATIO_NAME_CHARS 字まで。空白と ``・`` は ``_`` に替える(1 行の中の
-    区切りと取り違えて読み戻しが名を割らないため)。"""
+    """The short name of a test used for naming: the part after the last ``::`` of the nodeid, up to RATIO_NAME_CHARS characters. Whitespace and ``;`` become ``_`` (so that
+    they are not mistaken for the separators within a line, and the reader does not split a name when reading back)."""
     name = key.rsplit("::", 1)[-1][:RATIO_NAME_CHARS]
-    return "".join("_" if char.isspace() or char == "・" else char for char in name)
+    return "".join("_" if char.isspace() or char == ";" else char for char in name)
 
 
 def step_cost_report(measurements: Iterable[Measurement]) -> StepCostReport:
-    """session 1 本の call の測り(歩数を測れた物)から、検ごとの CPU 秒 ÷ 歩数と中央値と外れを求めるため。分母は call の全部の歩数
-    (world-running で判じる検も — CPU 秒を世界の段ごとに分けられないので)。並び順に依らない(同じ値は名の順で決める)。
-    Python の呼び出しを数えた検(``python_calls`` が在る — 監視の上乗せで CPU 秒が 1.5〜1.7 倍)は除き、除いた数を持つ。"""
+    """From the call measurements of one session (those whose steps could be measured), find each test's CPU seconds / steps, the median, and the outliers. The denominator is the whole call's steps
+    (also for tests judged by world-running, since CPU seconds cannot be split per world segment). Independent of ordering (equal values are decided by name).
+    Tests that counted Python calls (``python_calls`` is present; monitoring overhead makes CPU seconds 1.5 to 1.7 times larger) are excluded, and the excluded count is kept."""
     called = tuple(m for m in measurements if m.phase == "call" and m.work is not None)
     worked = tuple(m for m in called if m.python_calls is None)
     excluded = len(called) - len(worked)
@@ -1615,38 +1615,38 @@ def step_cost_report(measurements: Iterable[Measurement]) -> StepCostReport:
 
 
 def _named_costs(costs: tuple[StepCost, ...]) -> str:
-    """外れの片側を 1 行の中に綴るため(0 本なら空・先頭の RATIO_NAMED 本を名と倍率で・残りは数だけ)。"""
+    """Spell out one side of the outliers within one line (empty for 0 tests; the first RATIO_NAMED by name and multiple; the rest only as a count)."""
     if not costs:
         return ""
-    shown = "・".join(f"{c.name} ×{c.ratio:.2f}" for c in costs[:RATIO_NAMED])
+    shown = "; ".join(f"{c.name} ×{c.ratio:.2f}" for c in costs[:RATIO_NAMED])
     rest = len(costs) - RATIO_NAMED
-    return f": {shown}" + (f"・ほか {rest}" if rest > 0 else "")
+    return f": {shown}" + (f"; and {rest} more" if rest > 0 else "")
 
 
 def step_cost_line(report: StepCostReport) -> str:
-    """終わりの要約に出す比の 1 行(session ごと)。外れが 0 の時も中央値と最も高い検を出す(行が消えると「測れていない」と区別
-    できないため)。Python の呼び出しを数えた検を除いた走りは、除いた数を括弧の中に書く(0 本なら書かない)。綴りの読み戻しは
-    read_step_cost_line。"""
-    excluded = f"・{RATIO_EXCLUDED_TEXT.format(report.excluded)}" if report.excluded else ""
+    """The one ratio line shown in the final summary (per session). Even with 0 outliers, the median and the highest test are shown (so the line's absence can be told apart from "not measured").
+    For a run that excluded tests that counted Python calls, the excluded count is written inside the parentheses (not written for 0). Reading the spelling back is
+    done by read_step_cost_line."""
+    excluded = f"; {RATIO_EXCLUDED_TEXT.format(report.excluded)}" if report.excluded else ""
     head = (
-        f"{RATIO_LINE_HEAD}歩数 {RATIO_FLOOR_STEPS} 以上の {report.measured} 本"
-        f"(未満 {report.below_floor} 本は出さない{excluded})"
+        f"{RATIO_LINE_HEAD}{report.measured} tests with at least {RATIO_FLOOR_STEPS} steps"
+        f" ({report.below_floor} below not shown{excluded})"
     )
     match report:
         case TooFewForRatios():
-            return f"{head}・{RATIO_MIN_TESTS} 本未満なので比は出さない"
+            return f"{head}; fewer than {RATIO_MIN_TESTS} tests, so no ratio is shown"
         case StepCostRatios():
             return (
-                f"{head}・中央値 {report.median:.1f}・最も高い {report.highest.name} ×{report.highest.ratio:.2f}"
-                f"・中央値の {RATIO_OUTLIER_FACTOR:g} 倍超 {len(report.above)} 本{_named_costs(report.above)}"
-                f"・{RATIO_OUTLIER_FACTOR:g} 分の 1 未満 {len(report.below)} 本{_named_costs(report.below)}"
+                f"{head}; median {report.median:.1f}; highest {report.highest.name} ×{report.highest.ratio:.2f}"
+                f"; {len(report.above)} above {RATIO_OUTLIER_FACTOR:g}x median{_named_costs(report.above)}"
+                f"; {len(report.below)} below 1/{RATIO_OUTLIER_FACTOR:g} of median{_named_costs(report.below)}"
             )
 
 
 @dataclass(frozen=True)
 class StepCostLineRead:
-    """比の 1 行から読み戻した値(整形で丸めた後の値 — 中央値は小数 1 桁・倍率は小数 2 桁・名指しは片側 RATIO_NAMED 本まで)。
-    比を出さない行は median・highest が None で、外れは 0。"""
+    """Values read back from the ratio line (values after rounding in formatting: the median to 1 decimal, the multiple to 2 decimals, at most RATIO_NAMED named per side).
+    For a line that shows no ratio, median and highest are None and outliers are 0."""
 
     measured: int
     below_floor: int
@@ -1659,41 +1659,41 @@ class StepCostLineRead:
     excluded: int = 0
 
 
-_NAMED_COST = r"[^\s・]+ ×\d+\.\d{2}"
+_NAMED_COST = r"[^\s;]+ ×\d+\.\d{2}"
 
 
 def _named_side_pattern(side: str) -> str:
-    """外れの片側の名指し(``: 名 ×倍率・…・ほか N`` — 0 本なら無い)の正規表現。"""
-    # f 文字列にしない — semgrep の Python の構文解析が rf の中の (?P<{…}> で崩れ、file 全体を測れなくなる。
-    return "(?:: (?P<" + side + "_names>" + _NAMED_COST + "(?:・" + _NAMED_COST + r")*)(?:・ほか \d+)?)?"
+    """Regex for the naming of one side of the outliers (``: name ×multiple; ...; and N more``, absent for 0 tests)."""
+    # Not an f-string: semgrep's Python parser breaks on (?P<{...}> inside an rf string and the whole file can no longer be measured.
+    return "(?:: (?P<" + side + "_names>" + _NAMED_COST + "(?:; " + _NAMED_COST + r")*)(?:; and \d+ more)?)?"
 
 
 STEP_COST_LINE_PATTERN = re.compile(
     re.escape(RATIO_LINE_HEAD)
-    + r"歩数 \d+ 以上の (?P<measured>\d+) 本\(未満 (?P<below_floor>\d+) 本は出さない"
-    + "(?:・"
+    + r"(?P<measured>\d+) tests with at least \d+ steps \((?P<below_floor>\d+) below not shown"
+    + "(?:; "
     + re.escape(RATIO_EXCLUDED_TEXT).replace(re.escape("{}"), r"(?P<excluded>\d+)")
     + r")?\)"
-    + r"(?:・\d+ 本未満なので比は出さない"
-    + r"|・中央値 (?P<median>\d+\.\d)・最も高い (?P<top>[^\s・]+) ×(?P<top_ratio>\d+\.\d{2})"
-    + r"・中央値の \S+ 倍超 (?P<above>\d+) 本"
+    + r"(?:; fewer than \d+ tests, so no ratio is shown"
+    + r"|; median (?P<median>\d+\.\d); highest (?P<top>[^\s;]+) ×(?P<top_ratio>\d+\.\d{2})"
+    + r"; (?P<above>\d+) above \S+x median"
     + _named_side_pattern("above")
-    + r"・\S+ 分の 1 未満 (?P<below>\d+) 本"
+    + r"; (?P<below>\d+) below 1/\S+ of median"
     + _named_side_pattern("below")
     + r")$"
 )
 
 
 def _read_named(text: str | None) -> tuple[tuple[str, float], ...]:
-    """名指しの並び(``名 ×倍率・名 ×倍率``)を名と倍率の組に読むため。"""
+    """Read a list of names (``name ×multiple; name ×multiple``) as pairs of name and multiple."""
     if text is None:
         return ()
-    return tuple((name, float(ratio)) for name, ratio in (part.rsplit(" ×", 1) for part in text.split("・")))
+    return tuple((name, float(ratio)) for name, ratio in (part.rsplit(" ×", 1) for part in text.split("; ")))
 
 
 def read_step_cost_line(line: str) -> StepCostLineRead | None:
-    """比の 1 行を読み戻すため(綴りの定義元は step_cost_line — 往復の検が食い違いを赤にする)。行の前に飾りが在ってもよい。
-    比の行でなければ None。"""
+    """Read the ratio line back (the spelling is defined in step_cost_line; the round-trip test turns any mismatch red). Decoration before the line is allowed.
+    None if it is not a ratio line."""
     found = STEP_COST_LINE_PATTERN.search(line)
     if found is None:
         return None
@@ -1712,22 +1712,22 @@ def read_step_cost_line(line: str) -> StepCostLineRead | None:
 
 
 def judging_line(budgets: Budgets) -> str:
-    """終わりの一覧に、この走行の実行を何で判じたかを 1 行で書く(歩数の上限が在れば歩数・無ければ印ごとの秒だけ)。"""
+    """At the end of the list, write in one line what this run judged execution by (steps if a step limit exists, otherwise only per-marker seconds)."""
     match budgets.call_steps:
         case int() if isinstance(budgets.phase_log, WorldPhaseLog):
-            return "実行は doeff-vm の歩数で判じる(模擬の世界を回した検は世界の走りの歩数だけ・CPU 秒は報告だけ)"
+            return "execution is judged by doeff-vm steps (for a test that ran a mock world, only the steps of the world run; CPU seconds are report only)"
         case int():
-            return "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)"
+            return "execution is judged by doeff-vm steps (CPU seconds are report only)"
         case None:
-            return f"実行の上限は印ごとの秒({MARKER_CALL_BUDGET_INI})だけ — 当たる印の無い検は測らない"
+            return f"the execution limit is only per-marker seconds ({MARKER_CALL_BUDGET_INI}); tests with no matching marker are not measured"
 
 
 def pytest_terminal_summary(
     terminalreporter: pytest.TerminalReporter, config: pytest.Config
 ) -> None:
-    """終わりに、上限を超えた検・登録簿に載った超過・消せる登録を一覧にし、歩数を測れた検の合計(-v なら検ごと)を出す —
-    歩数の上限を決める材料にするため(#2852・#2853)。歩数を測れた検が在れば、検ごとの CPU 秒 ÷ 歩数の比の 1 行
-    (step_cost_line — 報告だけ・判定に入れない・#2854)も出す。印 --doeff-python-calls の走りは Python の呼び出しの 1 行も出す。"""
+    """At the end, list tests that exceeded the limit, overruns listed in the registry, and registry entries that can be deleted, and print the total steps of tests whose steps could be measured (per test with -v),
+    as material for deciding the step limit (#2852, #2853). If any test's steps could be measured, also print the one line of per-test CPU seconds / steps ratio
+    (step_cost_line: report only, not part of the verdict, #2854). A run with the --doeff-python-calls marker also prints one line for Python calls."""
     python_calls_summary(terminalreporter, config)
     verdicts = config.stash.get(_VERDICTS_KEY, None)
     if not verdicts:
@@ -1741,13 +1741,13 @@ def pytest_terminal_summary(
     worked = [v.measurement for v in verdicts if v.measurement.work is not None]
     if not (over or registered or back_in_budget or declared_over or stale_declared or worked):
         return
-    terminalreporter.section("doeff の検の時間の上限")
+    terminalreporter.section("doeff test time limits")
     terminalreporter.line(vm_build_line(budgets.vm_build))
     terminalreporter.line(judging_line(budgets))
     if worked:
         terminalreporter.line(
-            f"歩数を測れた検 {len(worked)} 本・歩数の合計 {sum(m.work.steps for m in worked if m.work is not None)}"
-            "(検ごとは -v)"
+            f"tests with measured steps: {len(worked)}; total steps {sum(m.work.steps for m in worked if m.work is not None)}"
+            " (per test with -v)"
         )
         terminalreporter.line(step_cost_line(step_cost_report(worked)))
         if config.get_verbosity() >= 1:
@@ -1755,32 +1755,32 @@ def pytest_terminal_summary(
                 terminalreporter.line(f"  {m.key}: {_seconds_text(m)}")
     for verdict in over:
         m = verdict.measurement
-        label = "赤" if budgets.fails_for(verdict.unit) else "報告のみ"
+        label = "red" if budgets.fails_for(verdict.unit) else "report only"
         terminalreporter.line(
-            f"上限を超えた({label}・上限 {_limit_text(verdict.budget, verdict.unit)}): {m.key}({m.phase} {_seconds_text(m)})"
+            f"limit exceeded ({label}; limit {_limit_text(verdict.budget, verdict.unit)}): {m.key} ({m.phase} {_seconds_text(m)})"
         )
     for verdict in registered:
         m = verdict.measurement
-        terminalreporter.line(f"登録簿に載った超過: {m.key}({m.phase} {_seconds_text(m)})")
+        f"overrun listed in the registry: {m.key} ({m.phase} {_seconds_text(m)})"
     for key in back_in_budget:
         terminalreporter.line(
-            f"上限の内に戻った登録: {key} — 登録簿の file {registry_file_name(key)} を消せる"
+            f"registry entry back within the limit: {key}; registry file {registry_file_name(key)} can be deleted"
         )
     for verdict in declared_over:
         m = verdict.measurement
-        label = "赤" if budgets.fails_for("steps") else "報告のみ"
+        label = "red" if budgets.fails_for("steps") else "report only"
         terminalreporter.line(
-            f"宣言を超えた({label}・宣言 歩数 {verdict.declaration.steps}): {m.key}({m.phase} {_seconds_text(m)})"
+            f"declaration exceeded ({label}; declared steps {verdict.declaration.steps}): {m.key} ({m.phase} {_seconds_text(m)})"
         )
     for verdict in stale_declared:
         m = verdict.measurement
         terminalreporter.line(
-            f"古い宣言(宣言 歩数 {verdict.declaration.steps} の {STALE_RATIO:g} 倍以下): {m.key}({m.phase} {_seconds_text(m)})"
+            f"stale declaration (at most {STALE_RATIO:g} times declared steps {verdict.declaration.steps}): {m.key} ({m.phase} {_seconds_text(m)})"
         )
 
 
 def called_tests(verdicts: Sequence[Verdict]) -> tuple[CalledTest, ...]:
-    """判定した検のうち、Python の呼び出しを数えた検(通った Hy の検で、歩数を宣言した検)の数と歩数。"""
+    """Among the judged tests, the count and steps of tests that counted Python calls (passed Hy tests that declare steps)."""
     return tuple(
         CalledTest(v.measurement.key, v.measurement.python_calls, v.measurement.work.steps)
         for v in verdicts
@@ -1789,19 +1789,19 @@ def called_tests(verdicts: Sequence[Verdict]) -> tuple[CalledTest, ...]:
 
 
 def python_calls_summary(terminalreporter: pytest.TerminalReporter, config: pytest.Config) -> None:
-    """印 --doeff-python-calls の走りの終わりに、数えた検の呼び出しの合計の 1 行(-v なら検ごと)か、数えなかった理由の 1 行を
-    出す(印の無い走りは何も出さない — 日次の報告は印を付けた回だけ行を載せる)。数えた検は判定した検(通った Hy の検)から読む。"""
+    """At the end of a run with the --doeff-python-calls marker, print one line with the total calls of the counted tests (per test with -v), or one line giving the reason nothing was counted
+    (a run without the marker prints nothing; the daily report includes the line only for the run with the marker). Counted tests are read from the judged tests (passed Hy tests)."""
     python_calls = config.stash.get(_PYTHON_CALLS_KEY, None)
     if python_calls is None:
         return
-    terminalreporter.section("doeff の検の Python の呼び出し")
+    terminalreporter.section("doeff test Python calls")
     match python_calls:
         case NotCounted() as not_counted:
             terminalreporter.line(unmeasurable_line(not_counted))
         case CallCounter(tool_id=tool_id):
             tests = called_tests(config.stash.get(_VERDICTS_KEY, []))
             terminalreporter.line(summary_line(tests))
-            terminalreporter.line(f"sys.monitoring の枠 {tool_id} 番で、歩数を宣言した検の call の間だけ数えた(収集・setup・teardown は数えない)")
+            terminalreporter.line(f"counted with sys.monitoring tool id {tool_id}, only during the call of tests that declare steps (collection, setup, and teardown are not counted)")
             if config.get_verbosity() >= 1:
                 for test in sorted(tests, key=lambda test: test.calls, reverse=True):
                     terminalreporter.line(called_test_line(test))
