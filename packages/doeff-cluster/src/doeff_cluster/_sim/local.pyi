@@ -188,6 +188,8 @@ from doeff_cluster._shared.intent.detached_model import DetachedOutboxAnswer as 
 from doeff_cluster._shared.intent.detached_model import DetachedAckAnswer as DetachedAckAnswer
 from doeff_cluster._worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
 from doeff_cluster._worker.core.drain_client import DRAIN_TTL_MARGIN_SECONDS as DRAIN_TTL_MARGIN_SECONDS
+from doeff_cluster._worker.core.launch import outlives_worker as outlives_worker
+from doeff_cluster._worker.core.launch import orphan_seconds_of as orphan_seconds_of
 from doeff_cluster._worker.protocol.drain_requests import drain_request as drain_request
 from doeff_cluster._worker.core.memory_rules import JobRoot as JobRoot
 from doeff_cluster._worker.core.memory_rules import MIB as MIB
@@ -641,6 +643,10 @@ class DrainGeneration(_doeff_effect_base[dict]):
 class StopElder(_doeff_effect_base[None]):
     name: str
     boot: str
+
+@_doeff_dataclass(frozen=True)
+class LoseWorker(_doeff_effect_base[int]):
+    name: str
 
 @_doeff_dataclass(frozen=True)
 class PreparationsOf(_doeff_effect_base[tuple[SimPreparation, ...]]):
@@ -1378,6 +1384,13 @@ def pause_taken(pausing: SimPauses, kind: str) -> _Program[SimPauses | None, obj
     ...
 
 def next_world_due(intake: SimIntake, hosts: dict, pausing: SimPauses, now_ms: int) -> _Program[int | None, object]:
+    ...
+ORPHAN_EXPIRED: str
+
+def orphan_clock(seconds: float) -> _Program[str, object]:
+    ...
+
+def orphan_expiry(handle: Task, seconds: float) -> _Program[None, object]:
     ...
 ELDER_MARK: str
 ROLLED: str
