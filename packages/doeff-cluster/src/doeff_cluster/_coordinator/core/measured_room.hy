@@ -6,7 +6,8 @@
 ;;; 以前は worker ごとに手で書いた数(枠の file の taskReserve・backgroundRoom)から置いた task を引いた数を空きとした。手の数は機体の
 ;;; 実際の混み(他の Pod の CPU・memory の残り)を見ず、機体を足すたびに書き足し、混みの事故のたびに分け方を直した。今は:
 ;;;   数の空き       = min(CPU の空き − まだ測りに出ていない task, memory の枠, 上限 − 置いた task)
-;;;   CPU の空き     = ⌊(cpus × (1 − cpu-busy) − CPU-FLOOR-CORES) / TASK-CORES⌋
+;;;   CPU の空き     = ⌊(cpus × (1 − 普通の使い) − CPU-FLOOR-CORES) / TASK-CORES⌋
+;;;   普通の使い     = cpu-busy − cpu-nice(nice > 0 の process の分を除いた CPU の使い — normal-busy-of)
 ;;;   memory の枠    = ⌊memory の空き / MEMORY-SLOT-MIB⌋(予約の半分ずつの守りが数で読むための単位 — task の大きさの見込みではない)
 ;;;   上限           = ⌊cpus / TASK-CORES⌋(task-cap-of — 測りが遅れても CPU の数より多くは置かない)
 ;;;   memory の空き  = memory-available − MEMORY-FLOOR-MIB − Σ 置いた task の max(0, 要り − 今の使い)(MiB — memory-room-mib)
@@ -23,7 +24,15 @@
 ;;; 予約する)。要りを名乗らない task(切り離さない task の RemoteJob・欄の前の保存の行)は UNDECLARED-TASK-MIB を要りと見込む。
 ;;;
 ;;; CPU の PSI の some avg10 が CPU-PRESSURE-STOP 以上か、memory の some avg10 が MEMORY-PRESSURE-STOP 以上の間は 0(実行を待つ process が
-;;; もう出ている機体へ足さない)。測った空きを名乗らない worker(/proc の無い機体・測りの前の版の worker)と、CPU の使いをまだ数えられない
+;;; もう出ている機体へ足さない)。CPU の PSI は、task の層の値(task-cpu-some-avg10)を名乗る worker はその値、名乗らない worker は機体の値。
+;;;
+;;; 優先度を下げた process を数えない訳(2026-11-05): 上に載る系は自分の命令を SCHED_IDLE と nice 10 で走らせ、普通の優先度の task に CPU を
+;;; 譲らせる。機体の CPU の使い(cpu-busy)は nice の分を使いに数え、機体の PSI の some は譲る側の process の実行の待ちでも立つので、譲る
+;;; 命令が CPU を埋めると、普通の優先度の task が動ける機体を空き 0 と判じた(zeus: nice 19 core・user と system の和 12〜15 core・機体の
+;;; some 76% の 3 時間、置かれない task が 47 本に積もり、版の配りが止まった。同じ時の task の層の some は 5.6%)。nice の分は、普通の優先度の
+;;; task が起きれば奪える CPU として空きに数える。譲りは機体の中の cgroup の重みにも掛かる(兄弟の層の重みが同じなら、譲る命令の層も層ごとの
+;;; 取り分を持つ)ので、置いた task が本当に動けるかは task の層の PSI で測り、待ちが閾値を越えれば 0 にする。memory の判定(空き・予約・
+;;; memory の PSI)は優先度で分けない。測った空きを名乗らない worker(/proc の無い機体・測りの前の版の worker)と、CPU の使いをまだ数えられない
 ;;; 読み(cpu-busy None — 初めの読み)は 0。
 ;;;
 ;;; memory の空き(memory-available)と総量(memory-total): worker が名乗る値。kubelet の下の worker は、kubelet が Pod を追い出す線までの
@@ -82,11 +91,23 @@
   (if (is measured None) None (- measured.at-ms TASK-RAMP-MS)))
 
 
+(defk normal-busy-of [measured]
+  {:pre [(: measured MeasuredLoad)] :post [(: % (| float None))] :tags {:context "coordinator" :role "judgment"}}
+  "普通の優先度の task が使えない CPU の割合を知るため(頭の註の普通の使い): cpu-busy − cpu-nice(0 未満は 0)。nice の分を名乗らない
+   worker(前の版)は cpu-busy のまま。CPU の使いをまだ数えられない読み(cpu-busy None)は None。"
+  (cond
+    (is measured.cpu-busy None) None
+    (is measured.cpu-nice None) measured.cpu-busy
+    True (max 0.0 (- measured.cpu-busy measured.cpu-nice))))
+
+
 (defk pressured? [measured]
   {:pre [(: measured MeasuredLoad)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "機体に実行や回収を待つ process がもう出ているかを知るため: CPU の some avg10 ≥ CPU-PRESSURE-STOP か memory の some avg10 ≥
-   MEMORY-PRESSURE-STOP。PSI の無い機体(None)は待ちを見ない。"
-  (or (and (is-not measured.cpu-some-avg10 None) (>= measured.cpu-some-avg10 CPU-PRESSURE-STOP))
+   MEMORY-PRESSURE-STOP。CPU の some は task の層の値を名乗る worker はその値(優先度を下げた process の待ちを数えない — 頭の註)、
+   名乗らない worker は機体の値。PSI の無い機体(None)は待ちを見ない。"
+  (val cpu-some (if (is measured.task-cpu-some-avg10 None) measured.cpu-some-avg10 measured.task-cpu-some-avg10))
+  (or (and (is-not cpu-some None) (>= cpu-some CPU-PRESSURE-STOP))
       (and (is-not measured.memory-some-avg10 None) (>= measured.memory-some-avg10 MEMORY-PRESSURE-STOP))))
 
 
@@ -123,7 +144,8 @@
    :tags {:context "coordinator" :role "judgment"}}
   "worker に task をあと幾つ置けるかを機体の測った空きから知るため(頭の註の数の空き — 0 以上): measured = heartbeat の測った空き(None =
    名乗らない)・placed = その worker に置いた task の数・unseen = そのうち測りにまだ出ていない数・reserved = 置いた task の memory の
-   予約の和(MiB)。測りの無い・CPU の使いをまだ数えられない・PSI の待ちが出ている機体は 0。memory の空き(memory-room-mib)は
+   予約の和(MiB)。測りの無い・CPU の使いをまだ数えられない・PSI の待ちが出ている機体は 0。CPU の空きは普通の使い(normal-busy-of)
+   から数える。memory の空き(memory-room-mib)は
    MEMORY-SLOT-MIB の枠の数に写す(測りに出ていない task は引かない — その使いは予約が既に引いている)。置ける task の大きさは
    memory-room-mib が決める。"
   (when (or (is measured None) (is measured.cpu-busy None))
@@ -131,7 +153,8 @@
   (when (! (pressured? measured))
     (return 0))
   (<- memory-room int (memory-room-mib measured reserved))
-  (val idle-cores (- (* measured.cpus (- 1 measured.cpu-busy)) CPU-FLOOR-CORES))
+  (<- busy float (normal-busy-of measured))
+  (val idle-cores (- (* measured.cpus (- 1 busy)) CPU-FLOOR-CORES))
   (val cpu-room (- (floor (/ idle-cores TASK-CORES)) unseen))
   (val memory-slots (// memory-room MEMORY-SLOT-MIB))
   (val cap-room (- (! (task-cap-of measured.cpus)) placed))

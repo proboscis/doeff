@@ -72,7 +72,7 @@
 (import doeff_cluster._worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster._worker.core.env_upkeep [prepare-layer-dir])
 (import doeff_cluster._worker.protocol.process_clock [process-clock])
-(import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT job-cgroup-procs])
+(import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT job-cgroup-procs layer-cpu-pressure])
 (import doeff_cluster._worker.protocol.job_cgroup [job-cgroup-placer])
 (import doeff_cluster._worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
@@ -503,6 +503,8 @@
         ;; 実行環境の準備の process を置く兄弟の cgroup(準備の層 — 機体の配備が名を渡した時だけ・EnvSettings の prepare-procs の註)。
         prepare-procs (run (with-handlers [os-file-handler]
                              (job-cgroup-placed (.get machine-env PREPARE-CGROUP-VAR) cgroup-root PREPARE-CGROUP-VAR)))
+        ;; 子の job を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。測りがこの層の CPU の PSI を読む(load-paths)。
+        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
@@ -558,7 +560,8 @@
                         ;; 自分の doeff の版を heartbeat で名乗る(無ければ名乗らない)。
                         :doeff-commit (.get machine-env commit-var "")
                         ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る(/proc の無い機体は名乗らない)。
-                        :load-paths (LoadPaths)
+                        ;; task の層が在れば、その層の CPU の PSI も名乗る(優先度を下げた process の待ちを除いた、task 自身の待ち)。
+                        :load-paths (LoadPaths :task-cpu-pressure (if (is job-procs None) None (run (layer-cpu-pressure job-procs))))
                         ;; kubelet の下の worker は、見張りの数えた追い出しまでの空きを memory の空きとして名乗る。
                         :eviction memory-cell.eviction
                         ;; job の子へ渡す環境変数の名を heartbeat で名乗る(上に載る系が宣言し直す前に job の読む名と照らす)。
@@ -573,9 +576,7 @@
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
         lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
-  (setv ;; 子の job を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
-        job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
-        ;; 置かれた常駐の job を自分の Pod の label に写す(Pod の uid と node の名が在る worker だけ)。
+  (setv ;; 置かれた常駐の job を自分の Pod の label に写す(Pod の uid と node の名が在る worker だけ)。
         pod-labels (run (pod-label-parts (.get machine-env POD-UID-VAR) args.node))
         ;; 値の写しの係(ADR-DOE-CLUSTER-004 — 区画の CA で API server を検める口 in-cluster-api-routed を組む Pod の worker だけ。Pod の外の
         ;; worker は ServiceAccount を持たず、API server から値を読まない)。
