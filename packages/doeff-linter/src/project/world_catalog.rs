@@ -137,8 +137,8 @@ mod tests {
         let parsed = WorldCatalog::parse(include_str!("../../data/world_handlers.json"));
         let catalog = parsed.unwrap_or_else(|problems| panic!("the bundled catalog cannot be read:\n{}", problems.join("\n")));
         assert!(catalog.handlers.contains_key("doeff_core_effects.os_file.os_file_handler"), "os-file-handler is not in the catalog");
-        // A handler re-exported at its package entry is in the catalog as a real-I/O handler under both spellings.
-        for name in ["doeff_time._handlers.async_time.async_time_handler", "doeff_time.async_time_handler"] {
+        // The layer-2-only entry (starts the child process claude) is also in the catalog as a real-I/O handler (two spellings).
+        for name in ["doeff_agents._handlers.claude_process_layer_handler", "doeff_agents.claude_process_layer_handler"] {
             assert!(catalog.handlers.contains_key(name), "{} is not in the catalog", name);
         }
         // Even after moving the children of doeff_core_effects to _, the old spelling can be written in :wraps while the relocation module remains.
