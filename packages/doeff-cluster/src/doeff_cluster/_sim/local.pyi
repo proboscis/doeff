@@ -395,6 +395,7 @@ class SimMachine:
     base_mib: int = 0
     task_cores: float = 1.0
     task_mib: int = 1024
+    nice_cores: float = 0.0
 
     def __post_init__(self) -> None:
         ...

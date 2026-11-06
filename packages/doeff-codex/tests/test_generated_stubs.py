@@ -18,7 +18,8 @@ from doeff_hy._static_stub import UsedModule, stale_in, unknown_in_users
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
 # 使い手の repo の main が import する名(module ごと・2026-10-11 の数え)。
-USED = (UsedModule("fake", ("FakeReply", "FakeCodexWorld")),)
+# The empty module is the package root (the fake moved to _fake and is imported from the root).
+USED = (UsedModule("", ("FakeReply", "FakeCodexWorld")),)
 
 
 @pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")

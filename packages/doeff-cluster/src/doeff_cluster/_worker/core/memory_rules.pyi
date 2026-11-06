@@ -53,9 +53,15 @@ class NodeMemory:
         ...
 
 @dataclass(frozen=True, kw_only=True)
+class LayerMemory:
+    name: str
+    current_bytes: int | None
+
+@dataclass(frozen=True, kw_only=True)
 class ContainerMemory:
     current_bytes: int | None
     peak_bytes: int | None
+    layers: tuple[LayerMemory, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class JobRoot:
@@ -146,6 +152,9 @@ def _uses_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
 def _job_uses(rows: tuple, roots: tuple) -> _Program[tuple, object]:
+    ...
+
+def largest_outside(rows: tuple, walks: tuple) -> _Program[ProcRow | None, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)

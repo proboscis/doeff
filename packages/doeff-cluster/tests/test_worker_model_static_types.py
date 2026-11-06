@@ -163,6 +163,11 @@ def _declared(module: types.ModuleType) -> set[str]:
         node.targets[0].id
         for node in stub.body
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+    } | {
+        # the generated stubs declare a module value by its type alone (`CHILD_ENTRY_PLACES: tuple[str, ...]`)
+        node.target.id
+        for node in stub.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     }
 
 
