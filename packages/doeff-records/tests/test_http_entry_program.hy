@@ -235,21 +235,26 @@
 (deftest test-every-answer-is-counted-once-by-its-kind-and-status
   ;; 札 5 つ = 数え 5 つ: /healthz(other 200)・書き(write 200)・読み(read 200)・上限を超えた本文(read 400 — 本文の断りの出口)・
   ;; 答えの途中で落ちた札(read 500 — 落ちた時の出口)。閉じた系列(種 3 × status 5)と宣言の表ごとの一覧の読みの系列は全部、断面に在る
-  ;; (起動の時に 0 で置いた — 台本に一覧の読みは無いので、呼び手 × 表の系列は無い)。
+  ;; (起動の時に 0 で置いた — 台本に一覧の読みは無いので、呼び手 × 表の系列は無い)。呼び手 × 操作の系列は本文を読めた記録の操作だけが
+  ;; 最初の要求で足す: 名乗りの無い書きと読みの 1 つずつ(上限を超えた本文と、本文の読みを壊した札は数えない)。
+  (val caller-ops #("records_requests_caller_unnamed_op_put_row" "records_requests_caller_unnamed_op_read_row"))
   (<- script HttpScript (served-script))
   (<- ran MeteredRun (metered-entry script BROKEN-TICKET (handlers-at-once (MemoryStore LAW-SCHEMA))))
   (assert (= ran.code 0) ran)
   (<- list-rows tuple (list-rows-metrics (tuple LAW-SCHEMA.tables) #()))
-  (assert (= (frozenset ran.snapshot.counters) (frozenset (+ ANSWER-METRICS list-rows))) ran.snapshot)
+  (assert (= (frozenset ran.snapshot.counters) (frozenset (+ ANSWER-METRICS list-rows caller-ops))) ran.snapshot)
   (<- answered (get FrozenMap float) (answered-counts ran.snapshot))
   (assert (= answered (FrozenMap {"records_requests_other_200" 1.0 "records_requests_write_200" 1.0 "records_requests_read_200" 1.0
-                                  "records_requests_read_400" 1.0 "records_requests_read_500" 1.0}))
+                                  "records_requests_read_400" 1.0 "records_requests_read_500" 1.0
+                                  "records_requests_caller_unnamed_op_put_row" 1.0 "records_requests_caller_unnamed_op_read_row" 1.0}))
           answered)
   ;; 表の用意の前(store-not-prepared)の記録の操作は 503 で数える(置き場に届かなかった数に入る)。壊す札は無い(読みとして 503)。
   (<- unprepared MeteredRun (metered-entry script None (handlers-after (MemoryStore LAW-SCHEMA) 3600.0)))
   (<- unprepared-answered (get FrozenMap float) (answered-counts unprepared.snapshot))
   (assert (= unprepared-answered (FrozenMap {"records_requests_other_200" 1.0 "records_requests_write_503" 1.0
-                                             "records_requests_read_503" 2.0 "records_requests_read_400" 1.0}))
+                                             "records_requests_read_503" 2.0 "records_requests_read_400" 1.0
+                                             "records_requests_caller_unnamed_op_put_row" 1.0
+                                             "records_requests_caller_unnamed_op_read_row" 2.0}))
           unprepared-answered))
 
 
@@ -269,7 +274,7 @@
 (deftest test-an-answer-that-cannot-be-sent-is-resent-as-500-and-counted-as-500
   ;; 失敗ケース(答えの組み立てが例外になる差し替え): 置き場の代役が、行の値に UTF-8 にできない文字を入れて読みに答える。答えの本文を
   ;; byte にする所(send-answer)で落ち、入口は標準の誤りへ 1 行名指して 500 internal を 1 度だけ送り直し、相手は 500 を受け取る。
-  ;; 計器は実際に送った 500 を 1 つ数え、送れなかった 200 は数えない。
+  ;; 計器は実際に送った 500 を 1 つ数え、送れなかった 200 は数えない。呼び手 × 操作の数は答えの前に数える(名乗りの無い読み 1 つ)。
   (val read (.encode (json.dumps {"table" "parts" "key" ["p1"]}) "utf-8"))
   (val script (HttpScript :arrivals #((! (arrival "t-unsendable" "POST" READ-PATH "maker" (len read))))
                           :bodies #((ScriptedBody :ticket "t-unsendable" :data read))))
@@ -279,7 +284,7 @@
   (assert (= (tuple (gfor served answers served.status)) #(500)) ran.served)
   (assert (= (get (json.loads (. (get answers 0) body)) "reason") "答えを送る途中で落ちた") answers)
   (<- answered (get FrozenMap float) (answered-counts ran.snapshot))
-  (assert (= answered (FrozenMap {"records_requests_read_500" 1.0})) answered))
+  (assert (= answered (FrozenMap {"records_requests_read_500" 1.0 "records_requests_caller_unnamed_op_read_row" 1.0})) answered))
 
 
 ;; --- 表の用意の告知(#3733)------------------------------------------------------------------------------------
