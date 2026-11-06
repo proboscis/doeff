@@ -1,13 +1,27 @@
-# atlas の差: 置く Node と資源の上限・取り分。
+# atlas の差: 置く Node と資源の上限・取り分・入れ替えの形。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: doeff-worker
   namespace: agent-worker
 spec:
+  # 入れ替えは zeus・helios と同じく新しい Pod を先に起こし、Ready になってから旧い Pod を止める(AL-D2 — ../zeus/node.yaml の註)。atlas は
+  # 上に載る系の handoff の service の置き先 pool-atlas-k3s-3(相手の k3s-3 も Recreate)と host-atlas(atlas だけ)を満たす。Recreate では
+  # Pod の雛形を全部の機体に当てる宣言 1 回で atlas と k3s-3 が同時に退き、後継を置く worker が無いまま旧い process が猶予 120 秒の満了で
+  # 落とされ、port を受ける process が約 60 秒・約 20 秒 無かった(11-04 19:02・11-05 00:17 UTC — card ki-6a2ecd7dd5e1)。host-atlas の物は
+  # atlas の作り直しのたびに閉じた。2 つの世代は状態を世代ごとの dir に置き(雛形の WORKER_GENERATION_DIRS・POD_UID)、旧い Pod の preStop の
+  # drain は退いた process が退き終わるまで待つ(上限 DRAIN_DEADLINE — generation.yaml)。取り分 512Mi の 2 つの Pod とほかの Pod の取り分
+  # 約 14.3 GiB は allocatable 19.79 GiB の内(test_rolling_worker_fits_two_generations_on_its_node)。2 つの世代は同じ機体の追い出しまでの
+  # 空き(kubepods の working set — cgroup.yaml の註)から jobs の層を掛け直すので、並ぶ間も追い出しの線は 2 つで分け合う。
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   template:
     spec:
       nodeSelector: { kubernetes.io/hostname: atlas }
+      # preStop の drain の上限(DRAIN_DEADLINE 21900 秒 — generation.yaml)+ 子 process を止める猶予(stop-grace 10 秒 + KILL)の余裕 120 秒
+      # (zeus・helios と同じ値)。旧い Pod はその間 Terminating のまま走るので、token の期限を延ばす(token-lifetime.yaml)。
+      terminationGracePeriodSeconds: 22020
       containers:
         - name: worker
           # atlas は CPU 16・memory の capacity 28.29 GiB(29662296Ki)・allocatable 19.79 GiB(20749400Ki = capacity − systemReserved 7Gi
@@ -50,7 +64,7 @@ spec:
         # uid 1000 の持ち物にした)。2026-11-05 04:04〜の Garage の bay の HDD(g5 = sdh)の下では、小さな file の多い処理(npm の install・venv・
         # 型検査・build)が Garage と同じ disk を待ち、日次の全体検証の秒が 2〜3 倍(shellcheck の取り寄せ 29 倍・venv 70 倍)に伸びた。
         # type は Directory: pool が import されていない時は dir が無いので、黙って根の SSD へ書かず、新しい Pod が起動で止まる。atlas の
-        # strategy は Recreate で旧い Pod は先に消えるので、その間は worker が止まる。
+        # strategy は RollingUpdate なので、旧い Pod は動いたまま残る。
         - name: job-scratch
           hostPath: { path: /mnt/hot_ssd_nvme/agent-worker-jobs, type: Directory }
         # DirectoryOrCreate: pool が import されていない時も worker を起動で止めない(作業場だけが使えない — daemon の番人が止まる)。

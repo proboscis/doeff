@@ -279,7 +279,7 @@ def test_zeus_worker_is_one_deployment_with_116gi_memory_limit(zeus_worker: Mani
 # から旧い Pod を止める。2 つの世代は状態を世代ごとの dir に置き(WORKER_GENERATION_DIRS・POD_UID — boot.sh)、旧い Pod の drain は
 # 退いた process が走り切るまで待つ。世代の dir を知らない版の boot.sh は WORKER_DIR_LOCK の錠で旧い Pod の終わりを待ち続け、入れ替えが
 # 進まない — だから世代の dir を置く worker の版は GENERATION_DIRS_SINCE かその子孫。
-ROLLING_NODES = ("zeus", "helios")
+ROLLING_NODES = ("zeus", "helios", "atlas")
 GENERATION_DIRS_SINCE = "036d47c48a9204214149ccd19b1c6b4ea9ecb33d"
 # 退いた process が走り切る上限(上に載る系の宣言の retiredSeconds)と、worker が子 process を止める猶予(--stop-grace)。
 RETIRED_SECONDS = 21600
@@ -288,7 +288,7 @@ STOP_GRACE_SECONDS = 10
 
 @pytest.mark.parametrize("node", ROLLING_NODES)
 def test_rolling_worker_starts_the_new_generation_before_stopping_the_old(rendered: list[Manifest], node: str) -> None:
-    """zeus と helios の worker は RollingUpdate(maxSurge 1・maxUnavailable 0)で入れ替わり、状態を Pod の uid の dir に置き、旧い Pod の
+    """zeus・helios・atlas の worker は RollingUpdate(maxSurge 1・maxUnavailable 0)で入れ替わり、状態を Pod の uid の dir に置き、旧い Pod の
     drain は退いた process が走り切る上限まで待ち、猶予はその drain と子を止める猶予を含む。失敗ケース(helios — 11-04 19:0x・22:2x・
     11-05 00:1x UTC): Recreate の helios は、Pod の雛形の変更のたびに組の印 pool-helios の常駐の job が全部止まり、受け手の無いまま
     2.5〜4 分 口が閉じた。"""
@@ -306,10 +306,12 @@ def test_rolling_worker_starts_the_new_generation_before_stopping_the_old(render
 # RollingUpdate の機体の Node の memory の allocatable と、worker の外の Pod の memory の取り分の和(kubectl で読んだ値)。入れ替えの間は
 # 同じ機体に worker の Pod が 2 つ並ぶので、取り分の 2 倍とほかの Pod の取り分が allocatable に入らないと、新しい Pod が置けずに入れ替えが
 # 止まる。helios = allocatable 61048136Ki(58.2 GiB)・ほかの 47 本の取り分の和 3.49 GiB、zeus = allocatable 124227388Ki(118.5 GiB)・
-# ほかの Pod の取り分の和 30.0 GiB(どちらも 11-06 06:2x UTC)。
+# ほかの Pod の取り分の和 30.0 GiB(どちらも 11-06 06:2x UTC)、atlas = allocatable 20749400Ki(19.79 GiB)・ほかの 61 本の取り分の和
+# 14.27 GiB(11-06 08:3x UTC)。
 ROLLING_NODE_MEMORY = {
     "zeus": ("124227388Ki", "30Gi"),
     "helios": ("61048136Ki", "3584Mi"),
+    "atlas": ("20749400Ki", "14612Mi"),
 }
 
 
@@ -321,6 +323,36 @@ def test_rolling_worker_fits_two_generations_on_its_node(rendered: list[Manifest
     requests = _mapping(_mapping(_container(_worker_on(rendered, node))["resources"], "resources")["requests"], "requests")
     two = 2 * _bytes(str(requests["memory"])) + _bytes(others)
     assert two <= _bytes(allocatable), f"{node} の worker の 2 つの世代の取り分 {two} が allocatable {_bytes(allocatable)} を越える"
+
+
+# 上に載る系が handoff の service(`:update "handoff"`)を置く置き先の条件(needs — 組の印 pool-<名> は枠の file の pools・機体の印
+# host-<機体の名>)。coordinator の GET /resources/Service の handoff の service の needs から、k8s の worker に置く物の組の印と機体の印を
+# 集めた(2026-11-06 08:2x UTC — 機体の外の host-zeus-native・host-mac-native は除く・agent などほかの印は置ける worker を減らすだけ)。
+# 上に載る系が handoff の service を新しい置き先へ置く時は、ここに足し、置ける worker に RollingUpdate の機体を含める。
+HANDOFF_PLACES = ("pool-atlas-k3s-3", "pool-helios", "host-atlas", "host-helios", "host-zeus")
+
+
+def _workers_at(place: str) -> set[str]:
+    """置き先の条件 place を満たす worker の名。"""
+    if place.startswith("host-"):
+        return {place.removeprefix("host-")} & set(NODES)
+    room = json.loads(ROOM_FILE.read_text(encoding="utf-8"))
+    return {node for node, row in room.items() if place in row.get("pools", [])}
+
+
+@pytest.mark.parametrize("place", HANDOFF_PLACES)
+def test_handoff_place_keeps_a_worker_when_every_worker_is_recreated_at_once(place: str) -> None:
+    """worker の Pod の雛形を 1 回の宣言で全部の機体に当てても(雛形・全部の機体の cgroup の値の変更)、handoff の service の置き先の条件を
+    満たす worker のうち少なくとも 1 つは新しい Pod を先に起こす(RollingUpdate)— 後継が Ready になる前に旧が止まらない。Recreate の
+    worker は旧い Pod が消えてから新しい Pod を作るので、置ける worker が全部 Recreate なら全部が同時に退き、後継を置く worker が無いまま
+    旧は猶予の満了で落とされる。失敗ケース(card ki-6a2ecd7dd5e1): pool-atlas-k3s-3(atlas と k3s-3 の 2 つとも Recreate)の handoff の
+    service は、11-04 19:02 UTC(doeff 05f79f000)と 11-05 00:17 UTC の全部の worker の作り直しで、port を受ける process が約 60 秒・
+    約 20 秒 無かった。host-atlas(atlas だけ)の handoff の service は atlas の作り直しのたびに同じ形で閉じる。"""
+    workers = _workers_at(place)
+    assert workers, f"置き先 {place} を満たす worker が無い"
+    assert workers & set(ROLLING_NODES), (
+        f"置き先 {place} を満たす worker {sorted(workers)} が全部 Recreate — 1 回の宣言で全部が同時に退き、後継の置き場が無い"
+    )
 
 
 # kubelet は止めている途中(Terminating)の Pod の投影の volume を更新しない(desired_state_of_world_populator の findAndAddNewPods が
