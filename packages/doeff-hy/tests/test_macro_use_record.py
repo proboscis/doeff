@@ -26,7 +26,7 @@ from doeff_hy_bytecode_guard._loader_hooks import record_is_current_here, source
 #: a function's __doc__ into the expansion result ("__doc__" appears among the code's string constants — the shape of defhandler); reads-data = a macro whose helper reads and returns
 #: a neighboring file (data.txt) from its own module's location (__file__); slot-reads = a macro reading a field of a class with ``__slots__``; record-reads = a macro reading
 #: a field of a defrecord type (slots, and the shared record functions that read ``vars(cls)``); class-reads = a macro whose helper reads a passed class by ``vars(cls)``;
-#: vars-reads = a macro whose helper reads its own module's namespace by ``vars()`` with a key it computes.
+#: vars-reads = a macro whose helper calls ``vars()`` with no argument (read as a module namespace read on the safe side).
 MACROS = """\
 (import {pkg}.consts :as consts)
 (setv FACTOR 3)
@@ -62,7 +62,7 @@ MACROS = """\
 (import {pkg}.slotted :as slotted)
 (import {pkg}.records :as recs)
 (import {pkg}.inspects :as inspects)
-(defn by-vars [] (get (vars) (.join "" ["LIM" "IT"])))
+(defn by-vars [] (len (vars)))
 (defmacro slot-reads [] (slotted.left-of))
 (defmacro record-reads [] (recs.width-of))
 (defmacro class-reads [] (inspects.box-size))
@@ -619,11 +619,12 @@ def test_a_changed_value_of_a_class_read_by_vars_is_stale(tree: Tree) -> None:
     assert not tree.is_current(record), "not judged stale although a value of the class read by vars(cls) changed"
 
 
-def test_a_changed_global_read_by_vars_without_an_argument_is_stale(tree: Tree) -> None:
-    # When it must go cold: vars() with no argument stays a module namespace read — a global read by a computed key is covered by the module's file.
+def test_a_helper_calling_vars_without_an_argument_is_covered_by_its_module_file(tree: Tree) -> None:
+    # When it must go cold: vars() with no argument stays a module namespace read — the helper's module is covered by its file, so a global the helper
+    # does not name (LIMIT) changing makes it stale.
     record = tree.record("varsreader")
     _replace(tree.macros, "(setv LIMIT 7)", "(setv LIMIT 70)")
-    assert not tree.is_current(record), "not judged stale although a global read by vars() with a computed key changed"
+    assert not tree.is_current(record), "not judged stale although the module of a helper calling vars() changed"
 
 
 def _vars_of_a_name(cls):
