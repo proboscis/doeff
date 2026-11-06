@@ -284,6 +284,9 @@ pub struct CommitHookOptions {
     pub linter: PathBuf,
     /// The root of the store for the HEAD tree's results (the root of facts_cache -- if None, the store is not used and the HEAD tree is measured every time).
     pub cache: Option<PathBuf>,
+    /// The repo's catalogs of real I/O handlers (absolute paths -- the tip config's world_catalogs from its dir, or the --world-catalog arguments).
+    /// Passed to both children as --world-catalog: the HEAD tree is placed outside the checkout, where the config's relative paths do not reach the package's repo.
+    pub world_catalogs: Vec<PathBuf>,
 }
 
 impl CommitHookOptions {
@@ -294,6 +297,10 @@ impl CommitHookOptions {
         if let Some(note) = retired_whole_repo_rules_note(section) {
             eprintln!("{}{}", PREFIX, note);
         }
+        let world_catalogs = config
+            .as_ref()
+            .map(|(c, path)| crate::config::repo_world_catalogs(&[], Some(*c), path.parent().unwrap_or(Path::new("."))))
+            .unwrap_or_default();
         CommitHookOptions {
             declarations: declarations_of(&root, config.as_ref().map(|(c, path)| (*c, path.as_path()))),
             enabled,
@@ -306,6 +313,7 @@ impl CommitHookOptions {
             root,
             linter,
             cache: crate::project::facts_cache::cache_base(),
+            world_catalogs,
         }
     }
 }
@@ -449,6 +457,9 @@ pub fn unbounded_command(options: &CommitHookOptions) -> String {
     }
     if let Some(message) = &options.message {
         words.extend(["--commit-message".to_string(), path(message)]);
+    }
+    for catalog in &options.world_catalogs {
+        words.extend(["--world-catalog".to_string(), path(catalog)]);
     }
     words.extend(["--commit-hook-timeout-s".to_string(), UNBOUNDED_TIMEOUT_S.to_string()]);
     words.iter().map(|w| shell_word(w)).collect::<Vec<_>>().join(" ")
@@ -945,6 +956,7 @@ fn config_args(options: &CommitHookOptions, tree: Option<&Path>) -> Vec<String> 
 fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String], extra: &[String], paths: &[String]) -> LintRun {
     let args = config_args(options, tree)
         .into_iter()
+        .chain(options.world_catalogs.iter().flat_map(|catalog| ["--world-catalog".to_string(), catalog.to_string_lossy().into_owned()]))
         .chain(["--enable".to_string(), rules.join(",")])
         .chain(extra.iter().cloned())
         .chain(std::iter::once("--".to_string()))
@@ -1405,6 +1417,7 @@ mod tests {
             timeout: Some(Duration::from_secs(20)),
             linter: PathBuf::from("/bin/doeff-linter"),
             cache: None,
+            world_catalogs: Vec::new(),
         };
         assert_eq!(unbounded_command(&options), "/bin/doeff-linter --commit-hook --root /repo --config /repo/pyproject.toml --commit-hook-timeout-s 0");
         options.root = PathBuf::from("/my repo/it's");
