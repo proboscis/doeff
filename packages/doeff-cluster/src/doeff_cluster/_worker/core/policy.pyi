@@ -65,6 +65,10 @@ from doeff_cluster._worker.core.warm_rules import warm_child_ready as warm_child
 from doeff_cluster._worker.core.warm_rules import mark_refusal as mark_refusal
 from doeff_cluster._worker.core.warm_rules import warm_launch as warm_launch
 from doeff_cluster._worker.core.warm_rules import warm_child_refused as warm_child_refused
+from doeff_cluster._worker.core.warm_rules import warm_child_killed_out as warm_child_killed_out
+from doeff_cluster._worker.core.warm_rules import warm_child_roomless as warm_child_roomless
+from doeff_cluster._worker.core.warm_rules import warm_child_size as warm_child_size
+from doeff_cluster._worker.core.warm_rules import room_shortage as room_shortage
 from doeff_cluster._worker.core.warm_rules import warm_refusal_failure as warm_refusal_failure
 from doeff_cluster._worker.core.warm_rules import service_warm_keys as service_warm_keys
 from doeff_cluster._worker.core.warm_rules import fork_candidate as fork_candidate
@@ -202,7 +206,7 @@ def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, po
 def warm_stop_step(now: int, view: WarmChildView, policy: WorkerPolicy) -> _Program[tuple, object]:
     ...
 
-def warm_child_step(now: int, key: str, launch: WarmLaunch | None, view: WarmChildView | None, policy: WorkerPolicy, refusal: JobNotStarted | None=None) -> _Program[tuple, object]:
+def warm_child_step(now: int, key: str, launch: WarmLaunch | None, view: WarmChildView | None, policy: WorkerPolicy, refusal: JobNotStarted | None=None, roomless: bool=False) -> _Program[tuple, object]:
     ...
 
 def launch_of(key: str, wanted: frozenset, desired: tuple, world: WorldView, warm: tuple, services: frozenset) -> _Program[WarmLaunch | None, object]:
@@ -276,6 +280,9 @@ def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world:
     ...
 
 def refused_warm_child(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord, policy: WorkerPolicy) -> WarmChildView | None:
+    ...
+
+def cold_start_detail(world: WorldView, want: JobSpec | None, record: JobRecord, policy: WorkerPolicy) -> _Program[str | None, object]:
     ...
 
 def warm_wait_detail(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord, policy: WorkerPolicy, warm_keys: frozenset) -> str | None:
