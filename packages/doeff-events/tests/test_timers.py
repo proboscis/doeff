@@ -259,21 +259,28 @@ def test_deadlines_of_the_same_instant_fire_in_arming_order_on_every_clock() -> 
     }
 
 
+LATER = timedelta(seconds=5)
+
+
 @do
 def earlier_armed_after_later():
-    """Arm a deadline 80 ms away, then one 30 ms away; answer which fires first and the instants relative to now."""
+    """Arm a deadline 5 s away, then one 30 ms away; answer which fires first and whether before 5 s.
+
+    The later deadline is far (not 80 ms) so that on a loaded machine the wall clocks' wake delay stays inside the gap:
+    with 80 ms the sync clock woke for "earlier" 80 ms or more after ``now`` and the check went red (2026-11-06). The
+    run ends when the program answers, so the far deadline costs no wall time."""
     now = yield GetTime()
-    yield ArmTimer("later", now + timedelta(milliseconds=80))
+    yield ArmTimer("later", now + LATER)
     yield ArmTimer("earlier", now + timedelta(milliseconds=30))
     first = yield WaitForEvent(TimerFired)
     at = yield GetTime()
-    return (first.tag, at - now < timedelta(milliseconds=80))
+    return (first.tag, at - now < LATER)
 
 
 def test_an_earlier_deadline_armed_after_a_later_one_fires_at_its_own_instant_on_every_clock() -> (
     None
 ):
-    # A task that kept waiting for the deadline it chose first ("later") would fire "earlier" only at 80 ms,
+    # A task that kept waiting for the deadline it chose first ("later") would fire "earlier" only at 5 s,
     # after "later" or with it.
     assert _on_each_clock(earlier_armed_after_later) == {
         "sim": ("earlier", True),
