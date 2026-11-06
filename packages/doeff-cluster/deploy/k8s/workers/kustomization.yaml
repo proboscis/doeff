@@ -19,6 +19,8 @@ resources:
   - ../disk-share
   # 作業場所の volume の級・backup・名と寿命の値(worker が読む — ../workspace-volumes/README.md)。
   - ../workspace-volumes
+  # OOM の印を container か Pod の上限の OOM にだけ付ける runc の shim を機体へ置く係と、その RuntimeClass(../oom-scope-shim)。
+  - ../oom-scope-shim
 # 機体ごとの worker の枠: 常駐の job の memory の予算 memoryMiB と置ける組の印 pools を、機体の名(= worker の名)ごとに
 # worker-room.json に置く — 枠の定義元はこの 1 file。task の置き先は worker が heartbeat で名乗る機体の測った空きから coordinator が
 # 数える。行に残る task の数の欄(capacity・taskReserve・backgroundRoom)は配備してある版の worker が必ず読むので、worker と

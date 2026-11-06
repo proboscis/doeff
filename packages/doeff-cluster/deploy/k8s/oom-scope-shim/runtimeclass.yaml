@@ -1,0 +1,6 @@
+# handler は機体の containerd の差し込み(../../oom-scope-shim/runtime.toml)が足す runtime の名。
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc-oomscope
+handler: runc-oomscope
