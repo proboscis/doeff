@@ -570,10 +570,12 @@
   "worker 1 つの最新の状態の報告(ClusterObservations.statuses の行 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
    欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。jobs の行の last-exit-at-ms は
-   最後に終わったと知れた刻(WorkerInfo.known-exits の刻と行の刻の大きい方 — cluster_policy.worker-report・#3672)。"
+   最後に終わったと知れた刻(WorkerInfo.known-exits の刻と行の刻の大きい方 — cluster_policy.worker-report・#3672)。pod-ip = 報告した
+   世代の Pod の IP(heartbeat の podIp — 名乗らない worker は空。job の Service の振り先の材料 — core/endpoints_policy)。"
   (#^ int at)
   (#^ (| str None) endpoint)
-  (#^ (get tuple #(StatusRow ...)) jobs))
+  (#^ (get tuple #(StatusRow ...)) jobs)
+  (setv #^ str pod-ip ""))
 
 
 (defrecord ServiceBody
@@ -767,6 +769,75 @@
   (#^ int at))
 
 
+(defrecord JobServicePort
+  "job の Service の口 1 つ(k8s の Service の spec.ports の行 — protocol/kube が JSON から解く): name = 口の名(EndpointSlice の口に同じ名で
+   書く — kube-proxy は Service の口と slice の口を名で結ぶ)・target-port = Pod の中で job が待ち受ける口(数。名の targetPort は解く相手の
+   Pod の口の名が無いので読みで外す)・protocol = TCP・UDP・SCTP。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str name)
+  (#^ int target-port)
+  (#^ str protocol))
+
+
+(defrecord JobService
+  "振り先を coordinator が書く job の Service 1 つ(label kube_service_model.JOB-ENDPOINTS-LABEL を持つ Service — protocol/kube が k8s の
+   JSON から解く): namespace・name・uid = Service の uid(EndpointSlice の ownerReference — Service が消されれば k8s の GC が slice も
+   消す)・job = label の値(振り先にする job の名)・ports = 口の列(Service の宣言の順)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str namespace)
+  (#^ str name)
+  (#^ str uid)
+  (#^ str job)
+  (#^ (get tuple #(JobServicePort ...)) ports))
+
+
+(defrecord JobServicesSeen
+  "読めた namespace 1 つの job の Service の一覧(見張りの今 — core/endpoints_policy の振り先の宛て): services = Service の列(名の順)・
+   at = 受け取った刻(epoch ms)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ (get tuple #(JobService ...)) services)
+  (#^ int at))
+
+
+(defrecord JobServicesUnreadable
+  "読めなかった namespace 1 つの job の Service の一覧(届かない・断られた — その namespace の slice は書き直さず、前に書いた物が残る):
+   error = 理由・at = 受け取った刻(epoch ms)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str error)
+  (#^ int at))
+
+
+(defrecord JobEndpointSlice
+  "coordinator が job の Service の振り先として書く EndpointSlice 1 つの宣言(core/endpoints_policy.wanted-slices が決め、protocol/kube が
+   k8s の JSON へ綴る): namespace・service = Service の名(slice の名と label kubernetes.io/service-name の値)・service-uid = Service の
+   uid(ownerReference)・job = 振り先の job の名・addresses = Ready で active な process の在る worker の世代の Pod の IP(重ねない・順)・
+   ports = Service の口の列。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str namespace)
+  (#^ str service)
+  (#^ str service-uid)
+  (#^ str job)
+  (#^ (get tuple #(str ...)) addresses)
+  (#^ (get tuple #(JobServicePort ...)) ports))
+
+
+(defrecord SliceWritten
+  "書けた slice 1 つ(ClusterObservations.endpoint-slices の行): slice = 書いた宣言・at = 書いた刻(epoch ms — 同じ宣言でも
+   endpoints_policy.RESYNC-MS ごとに書き直し、手で変えた slice を戻す)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ JobEndpointSlice slice)
+  (#^ int at))
+
+
+(defrecord SliceRefused
+  "書けなかった slice 1 つ(ClusterObservations.endpoint-slices の行 — endpoints_policy.RETRY-MS の後に書き直す): slice = 書こうとした
+   宣言・error = 理由・at = 試した刻(epoch ms)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ JobEndpointSlice slice)
+  (#^ str error)
+  (#^ int at))
+
+
 (defrecord NodeLabelsUnreadable
   "読めなかった node の label(その node の worker は前に導いた能力を保つ): error = 理由・at = 試した時刻(epoch ms)。"
   (#^ str error)
@@ -825,14 +896,18 @@
    観測に出すため。鍵は保存の superseded/<名>/<世代> と同じで、組が外れた歩で一緒に外す — cluster_policy.elder-statuses-after)・
    retired-statuses = 「<名>/<退いた世代>」→ その世代から最後に受けた状態の報告の全部の行(報告の刻 at = その世代から最後に聞いた刻 —
    退いた世代が lease の窓を越えて黙った時に止まったと判じ、その報告の process の担い手を盤から外すため。外した歩で行も外す —
-   cluster_policy.sweep-stopped-generations)。"
+   cluster_policy.sweep-stopped-generations)。job-services = namespace → job の Service の一覧の最後の観測(見張りの今 — 名乗りの
+   ClusterNaming.job-service-namespaces の namespace だけ)・endpoint-slices = 「namespace/Service の名」→ coordinator が最後に書いた・
+   書けなかった EndpointSlice(core/endpoints_policy — 書き直しの要否の比べの相手)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
   (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #())))
   (setv #^ (get Table WorkerReport) statuses (field :default-factory (partial table-of #())))
   (setv #^ (get Table WorkerReport) elder-statuses (field :default-factory (partial table-of #())))
-  (setv #^ (get Table WorkerReport) retired-statuses (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table WorkerReport) retired-statuses (field :default-factory (partial table-of #())))
+  (setv #^ (get Table (| JobServicesSeen JobServicesUnreadable)) job-services (field :default-factory (partial table-of #())))
+  (setv #^ (get Table (| SliceWritten SliceRefused)) endpoint-slices (field :default-factory (partial table-of #()))))
 
 
 (defrecord ObservedDeployment
@@ -1068,10 +1143,13 @@
    owner-scope      = その値の頭に付ける、このクラスタの名(「<scope>/Rollout/<名> replicas=<n>」)。
    node-capabilities = node の label から導く能力 #(#(label の鍵 値 能力の名) …)(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。ここに在る能力は
                       worker が自分で名乗っても受けない — coordinator が worker の置かれた node の label を読んで足す(会社の機体の境界を
-                      worker の自己申告に任せない)。既定 = company-machine を label doeff.dev/company-machine=true から。"
+                      worker の自己申告に任せない)。既定 = company-machine を label doeff.dev/company-machine=true から。
+   job-service-namespaces = job の Service(label kube_service_model.JOB-ENDPOINTS-LABEL を持つ Service)を見張り、その振り先の
+                      EndpointSlice を coordinator が書く namespace の列(core/endpoints_policy)。既定 = 空(書かない)。"
   (setv #^ str owner-annotation "doeff-cluster/replicas-owned-by")
   (setv #^ str owner-scope "doeff-cluster")
-  (setv #^ (get tuple #((get tuple #(str str str)) ...)) node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine"))))
+  (setv #^ (get tuple #((get tuple #(str str str)) ...)) node-capabilities #(#("doeff.dev/company-machine" "true" "company-machine")))
+  (setv #^ (get tuple #(str ...)) job-service-namespaces #()))
 
 
 ;; 受け入れる本文の版の範囲(送り手の版 PROTOCOL-FORMAT は shared/intent/protocol.hy)。

@@ -27,6 +27,7 @@
 (import doeff_cluster [kube-services-api]
         doeff_cluster._shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER _ingress-apply-text _ingress-path service-apply-text service-path])
 (import doeff_cluster [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster [JOB-ENDPOINTS-LABEL])
 (import doeff_cluster [held-kube-services]
         doeff_cluster._sim.k8s_services [KubeServiceLog])
 
@@ -52,6 +53,10 @@
 ;; 権限の外の namespace の宣言。
 (val ELSEWHERE (KubeService :namespace "vault" :name "ledger" :type KubeServiceType.CLUSTER-IP :selector ON-NODE
                             :ports #((KubeServicePort :name "http" :port 8621 :target-port 8621))))
+;; job を名指す Service(selector を持たず、振り先を coordinator が job ごとの Ready から書く)。
+(val JOB-INSIDE (KubeService :namespace "apps" :name "ledger" :type KubeServiceType.CLUSTER-IP :selector (FrozenMap {}) :job "ledger"
+                             :ports #((KubeServicePort :name "http" :port 8621 :target-port 8621))
+                             :labels (FrozenMap {"app" "ledger"})))
 ;; TLS を終える Ingress(INSIDE の口へ向ける・class と annotation つき)と、同じ Ingress の TLS の無い宣言。
 (val ENTRY (KubeIngress :namespace "apps" :name "ledger" :ingress-class "entry.example.dev" :backend-service "ledger" :backend-port 8621
                         :tls-hosts #("ledger") :annotations (FrozenMap {"entry.example.dev/tags" "tag:apps"})))
@@ -212,6 +217,15 @@
   (assert (= path "/api/v1/namespaces/apps/services/ledger-lb") path))
 
 
+(deftest test-a-declaration-that-names-a-job-is-spelled-with-the-job-label-and-no-selector
+  ;; job の Service: selector の欄を書かず(前に当てた selector は server-side apply が外す)、label JOB-ENDPOINTS-LABEL に job を書く
+  ;; (coordinator がその Service の振り先の EndpointSlice を書く印)。
+  (<- text str (service-apply-text JOB-INSIDE))
+  (val body (json.loads text))
+  (assert (not-in "selector" (get body "spec")) text)
+  (assert (= (get body "metadata" "labels") {"app" "ledger" JOB-ENDPOINTS-LABEL "ledger"}) text))
+
+
 (deftest test-an-ingress-declaration-is-spelled-as-the-fields-it-holds
   (<- entry str (_ingress-apply-text ENTRY))
   (assert (= (json.loads entry)
@@ -234,6 +248,7 @@
   (val port (KubeServicePort :name "http" :port 8621 :target-port 8621))
   ;; 失敗ケース: 空の selector(namespace の全部の Pod を選ぶ)・口の無い Service・同じ名の口・CLUSTER-IP の class・範囲の外の口。
   (for [build #((fn [] (KubeService :namespace "apps" :name "x" :type KubeServiceType.CLUSTER-IP :selector (FrozenMap {}) :ports #(port)))
+                (fn [] (KubeService :namespace "apps" :name "x" :type KubeServiceType.CLUSTER-IP :selector (FrozenMap {}) :job "" :ports #(port)))
                 (fn [] (KubeService :namespace "apps" :name "x" :type KubeServiceType.CLUSTER-IP :selector ON-NODE :ports #()))
                 (fn [] (KubeService :namespace "apps" :name "x" :type KubeServiceType.CLUSTER-IP :selector ON-NODE :ports #(port port)))
                 (fn [] (KubeService :namespace "apps" :name "x" :type KubeServiceType.CLUSTER-IP :selector ON-NODE :ports #(port)

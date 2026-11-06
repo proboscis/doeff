@@ -406,6 +406,8 @@
   (.add-argument parser "--provides" :default "" :help "提供する能力の名(a,b)")
   (.add-argument parser "--exclusive" :default "" :help "専用の能力(provides の一部・a,b)— このどれかを要る仕事だけを受ける")
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
+  (.add-argument parser "--pod-ip" :default ""
+                 :help "この worker の Pod の IP(k8s の downward API の status.podIP — coordinator が job の Service の振り先に書く)")
   (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
   (.add-argument parser "--memory-mib" :type int :default None
                  :help "常駐の job に使ってよい memory の予算(MiB・0 以上)。coordinator は置いた job の settle の和 + 新しい job の settle が
@@ -567,7 +569,7 @@
         link (LinkState args.name provides (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
-                        :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
+                        :node args.node :pod-ip args.pod-ip :boot-marks boot-marks :overlaps-elder args.overlaps-elder
                         ;; ServiceAccount の token の古さを heartbeat で名乗る(Pod の外の worker は file が無く、名乗らない)。
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; 枠の file を heartbeat の前に読み直す(空 = 読まない)。

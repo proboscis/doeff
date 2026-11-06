@@ -135,6 +135,7 @@
    None = 名乗らない。起動の引数 --memory-mib の値で始め、枠の file を読めば行の値)・fence-ms = 途絶で止める長さ
    (返事の timing が上書きする)・task-dir = task の印と結果の file の置き場・versions = 名乗る版・tools = 名乗る道具(名 → 版)・
    handles-envs = 実行環境の job を扱うか(真なら root の名乗りを heartbeat に載せ、温める表を受ける)・node = k8s の node の名・
+   pod-ip = この世代の Pod の IP(空 = 名乗らない。heartbeat の podIp — coordinator が job の Service の振り先に書く)・
    watch = 名指しの待ちを使うか(本番の入口が真にする)・beat-beside = 拍の外の背景の task でも heartbeat を送るか(既定 真 —
    偽は操作ごとに run を分ける検の道具だけ: 背景の task は run をまたいで生きない)・boot = この process の世代・
    boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡とみなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・
@@ -155,12 +156,13 @@
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
-                          #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
+                          #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ str [pod-ip ""]
+                          #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
                           #^ (| int None) [memory-mib None] #^ (| LoadPaths HostLoad None) [load-paths None]
                           #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]]
-    (setv self.name name self.provides provides self.exclusive exclusive self.node node
+    (setv self.name name self.provides provides self.exclusive exclusive self.node node self.pod-ip pod-ip
           self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
           self.fence-ms fence-ms self.statuses []
@@ -552,7 +554,7 @@
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
                                 :pools state.pools :memory-mib state.memory-mib :measured state.measured
-                                :child-environ state.child-environ))
+                                :child-environ state.child-environ :pod-ip state.pod-ip))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}

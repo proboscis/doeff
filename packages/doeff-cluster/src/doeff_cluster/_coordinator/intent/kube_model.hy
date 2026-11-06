@@ -6,10 +6,13 @@
 ;;; FollowNodes — #4070)。
 ;;; 権限は coordinator の ServiceAccount に、対象の Deployment の get・list・watch と scale を許す Role と、nodes の list・watch を許す
 ;;; ClusterRole で与える(配備する側の manifest)。
+;;; job の Service の振り先(EndpointSlice)も同じ client で書く: label の在る Service を namespace ごとに見張り(FollowJobServices)、
+;;; core/endpoints_policy が決めた slice を当てる(ApplyEndpointSlice)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+(import doeff_cluster._coordinator.intent.cluster_model [JobEndpointSlice])
 
 
 (defclass KubeUnavailable [Exception]
@@ -54,3 +57,21 @@
    Node の object から label の表へ解くのは答え手 coordinator/protocol/kube の 1 点(#2728)。"
   (#^ (get tuple #(str ...)) names)
   (#^ int now-ms))
+
+
+(defclass [(dataclass :frozen True)] FollowJobServices [EffectBase]
+  "namespace(名の tuple)ごとに、label kube_service_model.JOB-ENDPOINTS-LABEL を持つ Service(job の Service — 振り先を coordinator が
+   書く)の一覧を list の後の watch で見張り(時間で読みに行かない — FollowDeployments と同じ)、前の答えの後に変わった namespace の今を
+   待たずに受け取る。namespaces に無くなった namespace の見張りは止める。見張りは変化を伝える時に調停ループの受付を起こす。結果は
+   namespace → cluster_model.JobServicesSeen / JobServicesUnreadable の書き(doeff_hy._table の TableWrite の tuple — 変わった namespace
+   だけ)。観測の時刻 at は受け取った時刻 now-ms。k8s の Service の JSON を型へ解くのは答え手 coordinator/protocol/kube の 1 点。"
+  (#^ (get tuple #(str ...)) namespaces)
+  (#^ int now-ms))
+
+
+(defclass [(dataclass :frozen True)] ApplyEndpointSlice [EffectBase]
+  "job の Service の振り先の EndpointSlice 1 つ(cluster_model.JobEndpointSlice)を server-side apply で宣言どおりにする(field manager は
+   coordinator — 書くのは宣言の欄だけ)。結果は None。届かない・断られた時は KubeUnavailable(呼び手は書けなかった slice として後で
+   書き直す)。権限は coordinator の ServiceAccount に discovery.k8s.io の endpointslices の get・list・watch・create・patch・delete と、
+   Service の get・list・watch を許す Role(配備する側の manifest)。"
+  (#^ JobEndpointSlice slice))

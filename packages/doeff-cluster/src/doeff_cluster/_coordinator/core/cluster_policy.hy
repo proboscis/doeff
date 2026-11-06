@@ -2216,14 +2216,14 @@
                (if (= at row.last-exit-at-ms) row (replace row :last-exit-at-ms at)))))
 
 
-(defk worker-report [rows now endpoint known]
-  {:pre [(: rows tuple) (: now int) (: endpoint (| str None)) (: known tuple)]
+(defk worker-report [rows now endpoint known [pod-ip ""]]
+  {:pre [(: rows tuple) (: now int) (: endpoint (| str None)) (: known tuple) (: pod-ip str)]
    :post [(: % WorkerReport)] :tags {:context "coordinator" :role "judgment"}}
   "今の世代か新しい世代の heartbeat の状態の報告の行 rows から、worker の最新の報告(ClusterObservations.statuses の行)を作るため。行は結果の
    欄 result と task の写しを外し(持ち続けるのは process の姿だけ)、last-exit-at-ms を最後に終わったと知れた刻にする(known =
    この heartbeat の後の WorkerInfo.known-exits — 同じ worker・同じ job の名では前に知っていた刻から戻さない)。result も task も
-   持たない行(service の job の行)は同じ値のまま運ぶ(#3774)。"
-  (WorkerReport :at now :endpoint endpoint
+   持たない行(service の job の行)は同じ値のまま運ぶ(#3774)。pod-ip = その世代の Pod の IP(heartbeat の podIp)。"
+  (WorkerReport :at now :endpoint endpoint :pod-ip pod-ip
                 :jobs (! (rows-with-known-exits (tuple (gfor row rows
                                                              (if (and (is row.result None) (is row.task None))
                                                                  row
@@ -2264,7 +2264,7 @@
                                                                                                       :jobs (! (rows-with-known-exits current-report.jobs known)))))))))
               name boot statuses now
               ;; 退いた世代の報告も今の世代の報告と同じ形で持つ(受け渡しの間、job を今動かしている process の行 — elder-statuses-after)。
-              (! (worker-report statuses now body.endpoint known)))))
+              (! (worker-report statuses now body.endpoint known body.pod-ip)))))
   (setv envs (or body.envs (EnvsReport))
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
         node body.node
@@ -2302,7 +2302,7 @@
                          ;; 最後に終わったと知れた刻と今の世代で process を持つ job(#3672 — 保存の行の knownExits)。
                          :known-exits known)
         ;; job の行の最後に終わったと知れた刻は、known-exits-after が前の知れた刻と世代の比べから数えた known(worker-report — #3672)。
-        report (! (worker-report statuses now body.endpoint known))
+        report (! (worker-report statuses now body.endpoint known body.pod-ip))
         ;; 新しい世代の名乗りで、前の世代の process が持っていた名前付きの lease を外す(#3770 — 前の世代の最新の報告は、この
         ;; heartbeat で置き換える前の adopted.observations.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
         ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。前の世代が実は止まっていれば、
