@@ -403,7 +403,7 @@ def test_worker_token_is_stale_only_after_the_kubelet_would_refresh_it(
     worker: Manifest, doeff_interpreter: Callable[[object], object]
 ) -> None:
     """宣言の期限の token を、worker は kubelet が置き直す刻(kubelet-refresh-after-s)までは stale と名乗らず、その刻 + 余り
-    (REFRESH-SLACK-MS)を越えると stale と名乗る(宣言と判じの突き合わせ)。失敗ケース: 期限を 36 時間へ延ばした機体で、発行から
+    (REFRESH-SLACK-MS)を越えると stale、期限を過ぎると expired と名乗る(宣言と判じの突き合わせ)。失敗ケース: 期限を 36 時間へ延ばした機体で、発行から
     55 分の定数の線は、置き直しの正しい worker に Pod の作成から 55 分で stale を名乗らせた。"""
     import hy  # noqa: F401  — Hy の module を import できるようにする
     from doeff_cluster._worker.core.account_token import (
@@ -426,6 +426,10 @@ def test_worker_token_is_stale_only_after_the_kubelet_would_refresh_it(
     assert late == TokenState.STALE, (
         f"期限 {lifetime} 秒の token が、kubelet の置き直しの刻 + 余りを越えても {late} — 置き直しの止まりを名乗らない"
     )
+    # 期限(exp)の後は、古さより先に expired(API server が断る)。
+    expires_ms = (issued + lifetime) * 1000
+    assert doeff_interpreter(token_state(claims, expires_ms - 1)) == TokenState.STALE
+    assert doeff_interpreter(token_state(claims, expires_ms)) == TokenState.EXPIRED
 
 
 @pytest.mark.parametrize("node", NODES)
