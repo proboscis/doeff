@@ -11,6 +11,7 @@ from collections.abc import Iterable
 
 import pytest
 from doeff_traverse import Collection, ItemResult, Traverse, sequential
+from doeff_traverse import _handlers as traverse_handlers
 
 from doeff import EffectBase, Resume, do, handler_utils, run
 from doeff import handler as program_handler
@@ -42,6 +43,8 @@ def reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return inner_of(handlers)
 
     monkeypatch.setattr(handler_utils, "inner_of", counting)
+    # sequential's module imports the name at its top, so the count is set where it looks it up too.
+    monkeypatch.setattr(traverse_handlers, "inner_of", counting)
     return seen
 
 
