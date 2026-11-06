@@ -533,6 +533,12 @@
   (WsShortcutAhead :texts #((+ "first:" text)) :rest (broken-rest)))
 
 
+(defk texts-starting [texts prefixes]
+  {:pre [(: texts tuple) (: prefixes tuple)] :post [(: % tuple)] :tags {:context "http-server-test" :role "judgment"}}
+  "The texts that start with one of prefixes, in the order sent."
+  (tuple (gfor text texts :if (.startswith text prefixes) text)))
+
+
 (deftest test-a-staged-ws-shortcut-sends-each-stage-before-the-next-and-carries-a-value-to-the-program
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
   ;; 2-stage answer: queue the first stage's text and then run the continuation stage, queue the continuation stage's text too, and then one message carrying the texts of all stages and the value carried
@@ -547,6 +553,15 @@
                               CLOSED))
           served.events)
   (val answer (get served.answers 0))
-  (assert (= [answer.status answer.texts answer.closed]
-             [101 #("first:stage1" "second:stage1" "late:stage1" "echo:hi" "first:split1" "late:split1") #(4001 "goodbye")])
-          answer))
+  (assert (= [answer.status answer.closed] [101 #(4001 "goodbye")]) answer)
+  ;; How the answerer's texts interleave with the body's answers to earlier messages is not fixed: the answerer answers "split1" on its own thread
+  ;; as soon as it reads it, ahead of a body still answering "stage1" and "hi" (the point of the entry) -- the real answerer sent "first:split1"
+  ;; before "late:stage1" on a busy machine. What is fixed: each side keeps the message order, and a matched message's body answer follows its own stages.
+  (val texts answer.texts)
+  (assert (= (sorted texts) (sorted ["first:stage1" "second:stage1" "late:stage1" "echo:hi" "first:split1" "late:split1"])) texts)
+  (<- staged tuple (texts-starting texts #("first:" "second:")))
+  (assert (= staged #("first:stage1" "second:stage1" "first:split1")) texts)
+  (<- bodily tuple (texts-starting texts #("late:" "echo:")))
+  (assert (= bodily #("late:stage1" "echo:hi" "late:split1")) texts)
+  (assert (< (.index texts "second:stage1") (.index texts "late:stage1")) texts)
+  (assert (< (.index texts "first:split1") (.index texts "late:split1")) texts))
