@@ -1,0 +1,115 @@
+1
+00:00:00,250 --> 00:00:05,500
+Why effects? Because a handler gets the rest of your program, called k.
+
+2
+00:00:06,050 --> 00:00:10,850
+What it does with k decides what the effect means.
+
+3
+00:00:11,450 --> 00:00:14,900
+The running example: a summary, then a picture.
+
+4
+00:00:15,450 --> 00:00:19,750
+The workflow yields Chat and Draw. It never says who answers them.
+
+5
+00:00:20,750 --> 00:00:27,400
+Handlers answer by resuming k. Each next example adds one handler around it.
+
+6
+00:00:27,950 --> 00:00:32,750
+Drop it: a cost cap of three cents, around every model call.
+
+7
+00:00:33,300 --> 00:00:37,000
+Chat costs one cent. The cap passes it on.
+
+8
+00:00:37,800 --> 00:00:43,650
+Draw would bring it to five. So the cap answers itself, and drops k.
+
+9
+00:00:44,200 --> 00:00:46,650
+The image model is never called.
+
+10
+00:00:47,500 --> 00:00:53,550
+Ask again: retry performs the effect once more, on the handlers outside it.
+
+11
+00:00:54,100 --> 00:00:58,000
+The provider times out twice. The third attempt answers.
+
+12
+00:00:58,550 --> 00:01:02,350
+Then k resumes once, with the answer that worked.
+
+13
+00:01:03,050 --> 00:01:08,900
+Keep the answers: effects are data, so a recorder can file each answer.
+
+14
+00:01:09,450 --> 00:01:13,700
+Replay runs from the tape, with no provider at all.
+
+15
+00:01:14,250 --> 00:01:18,250
+An effect it has never seen stops the run.
+
+16
+00:01:18,800 --> 00:01:23,750
+Hold it: the scheduler is a handler that keeps the k of each waiting task.
+
+17
+00:01:24,400 --> 00:01:29,800
+Tea sleeps every two hours, stretch every three. The clock parks each k.
+
+18
+00:01:30,350 --> 00:01:34,300
+When every task waits, the clock jumps to the next wake-up.
+
+19
+00:01:36,450 --> 00:01:42,000
+Six hours in under fifteen milliseconds, the same lines every run.
+
+20
+00:01:42,550 --> 00:01:48,300
+With dependency injection, an injected client answers a call, and returns.
+
+21
+00:01:48,850 --> 00:01:53,800
+It never gets the rest, so it cannot drop it, or hold it while others run.
+
+22
+00:01:54,650 --> 00:02:00,250
+Plain async spreads: whatever awaits must be async, and so must its callers.
+
+23
+00:02:01,650 --> 00:02:07,100
+With effects, total size yields Spawn and Gather. No async, no await.
+
+24
+00:02:07,650 --> 00:02:12,900
+A handler decides how Fetch is answered. Both give thirty-six.
+
+25
+00:02:13,550 --> 00:02:19,150
+Effects are rows, and handlers columns. Each handler minds one concern.
+
+26
+00:02:19,750 --> 00:02:24,250
+A new effect is one row. A new concern is one column.
+
+27
+00:02:25,550 --> 00:02:29,850
+With dependency injection, each check mark would be a wrapper class.
+
+28
+00:02:31,050 --> 00:02:36,300
+Effects are not free. For code that runs one way, plain Python is better.
+
+29
+00:02:36,850 --> 00:02:42,550
+When you need to steer the rest of the program, use a handler. pip install doeff.
