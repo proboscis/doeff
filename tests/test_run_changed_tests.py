@@ -273,7 +273,7 @@ def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Pa
     summary = _summary(output)
     assert output.returncode == 1, f"expected red but rc {output.returncode}\n{output.text[-3000:]}"
     assert "\nred: 1" in summary, summary
-    assert f"{STUB_TEST} — red" in summary, summary
+    assert f"{STUB_TEST} — 1 red: " in summary, summary
     assert "[_sql_effects]" in summary, summary
     assert "public name not in the declaration: ADDED_WITHOUT_STUB" in output.text, (
         "the added name does not appear in the pytest output"
