@@ -2818,7 +2818,7 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
 
 /// The catalog of real I/O handlers of a package outside doeff is kept by the package's repo and named by the using repo in `[tool.doeff-linter] world_catalogs`
 /// (from the config file's dir): its rows may be written in :wraps and widen DOEFF131 like the bundled rows. Without it the same :wraps is a config error that names
-/// world_catalogs; a file that cannot be read is a config error; `--world-catalog` replaces the config's list (the commit hook and the merge gate use it for trees placed elsewhere).
+/// world_catalogs; a file that does not exist is read as no rows, and the :wraps that needed it is the config error that names the file; `--world-catalog` replaces the config's list (the commit hook and the merge gate use it for trees placed elsewhere).
 #[test]
 fn a_repo_catalog_adds_handlers_of_packages_outside_doeff() {
     let catalog = r#"{"handlers": [{"handler": "pkg_agents:agent-handler", "touches": ["process"], "why": "starts the agent as a child process"}]}"#;
@@ -2846,7 +2846,7 @@ fn a_repo_catalog_adds_handlers_of_packages_outside_doeff() {
     std::fs::write(&pyproject, format!("{}world_catalogs = [\"catalogs/missing.json\"]\n", base)).unwrap();
     let (code, _, stderr) = run(root, &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("cannot read the repo's catalog of real I/O handlers") && stderr.contains("catalogs/missing.json"), "{}", stderr);
+    assert!(stderr.contains("world_catalogs names files that do not exist") && stderr.contains("catalogs/missing.json"), "{}", stderr);
 
     let flag = root.join("catalogs/agents.json");
     let (code, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log", "--world-catalog", flag.to_str().unwrap()], None);
