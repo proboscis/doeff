@@ -1,0 +1,75 @@
+1
+00:00:00,250 --> 00:00:04,750
+A semaphore is a fixed number of permits that tasks take turns holding.
+
+2
+00:00:05,750 --> 00:00:10,917
+Create Semaphore, Acquire Semaphore and Release Semaphore are effects.
+
+3
+00:00:10,917 --> 00:00:14,450
+The scheduler answers them, like Spawn and Wait.
+
+4
+00:00:15,250 --> 00:00:22,133
+A task that finds no permit is parked: the scheduler holds its k, and the other tasks run on.
+
+5
+00:00:22,133 --> 00:00:23,400
+No thread blocks.
+
+6
+00:00:24,250 --> 00:00:31,750
+Create Semaphore of two: four calls share two permits, so at most two are inside at once.
+
+7
+00:00:32,750 --> 00:00:40,000
+C and D find no permit. Their k's wait in the semaphore's queue, in the order they asked.
+
+8
+00:00:40,750 --> 00:00:48,600
+Each release lets the next one in: C at one second, D at two. All four finish by four seconds.
+
+9
+00:00:50,250 --> 00:00:55,650
+With one permit, a semaphore is a mutex. Waiters are served first come, first served.
+
+10
+00:00:56,750 --> 00:01:04,200
+A release hands the permit straight to the oldest waiter. It never sits free for another task to grab.
+
+11
+00:01:04,750 --> 00:01:09,800
+So late, which asks right after the release, queues behind second and third.
+
+12
+00:01:13,250 --> 00:01:18,550
+Cancel a task while it waits for a permit, and the scheduler takes it out of the queue.
+
+13
+00:01:19,750 --> 00:01:25,750
+w1 resumes with a Task Cancelled Error at its Acquire. It never took a permit.
+
+14
+00:01:26,300 --> 00:01:31,900
+So when the holder releases at two seconds, the permit goes to w2.
+
+15
+00:01:33,800 --> 00:01:41,100
+A semaphore does not track who holds a permit. Fail before Release Semaphore, and that permit is lost.
+
+16
+00:01:42,300 --> 00:01:50,400
+Without try and finally, the next task is still waiting five seconds later, and would wait forever.
+
+17
+00:01:50,950 --> 00:01:57,300
+With try and finally, the release runs on failure too, and the next task enters at once.
+
+18
+00:01:59,450 --> 00:02:06,733
+doeff: permits are effects, and a waiting task is a parked k that the scheduler resumes in order.
+
+19
+00:02:06,733 --> 00:02:13,200
+Another handler can answer the same effects, say, across a cluster. pip install doeff.

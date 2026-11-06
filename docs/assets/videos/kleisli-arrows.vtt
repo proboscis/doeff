@@ -1,0 +1,93 @@
+WEBVTT
+
+t1
+00:00:00.250 --> 00:00:06.250
+Kleisli arrows. An at-do function takes plain values and returns a program.
+
+t2
+00:00:06.850 --> 00:00:13.850
+Calling add one with forty-one runs nothing. It returns a Call node, which is an Expand.
+
+t3
+00:00:14.450 --> 00:00:21.100
+run evaluates the node. Only now does the body run, and forty-two comes back.
+
+t4
+00:00:21.750 --> 00:00:26.650
+The node is a value. Run it again, and the body runs again.
+
+e1
+00:00:27.750 --> 00:00:32.750
+There are two phases. Python builds the program when you call, and the VM runs it later.
+
+e2
+00:00:33.350 --> 00:00:38.450
+Building consults no handler. greeting is built with no handler anywhere.
+
+e3
+00:00:39.050 --> 00:00:45.000
+Running it needs one. With no handler, its Ask is an unhandled effect.
+
+e4
+00:00:45.650 --> 00:00:50.300
+Under reader, the same program runs, and returns Hello, Ada.
+
+e5
+00:00:50.950 --> 00:00:57.250
+That is why a call is a macro, not an effect. An effect would need handlers before the program even exists.
+
+g1
+00:00:58.250 --> 00:01:04.350
+Arguments are passed as given. An effect or a program you pass in stays a value.
+
+g2
+00:01:04.950 --> 00:01:11.250
+echo of Ask x returns the Ask itself, even though x is annotated int.
+
+g3
+00:01:11.850 --> 00:01:18.650
+To use a result, yield it. use values yields both arguments, and gets five and ten.
+
+g4
+00:01:19.250 --> 00:01:25.250
+The usual style: yield in the caller, then pass the plain value on.
+
+n1
+00:01:26.250 --> 00:01:33.450
+There is no map, no flat map. Programs compose by yielding programs inside at-do functions.
+
+n2
+00:01:34.050 --> 00:01:40.250
+fetch user posts yields fetch user of seven. Its value comes back at that yield.
+
+n3
+00:01:40.850 --> 00:01:48.100
+The Ask inside fetch user travels out past both functions, to the reader around the whole run.
+
+n4
+00:01:48.750 --> 00:01:54.450
+Then fetch posts runs the same way, and the outer function returns the posts.
+
+h1
+00:01:55.250 --> 00:02:02.650
+A handler is an at-do function too. The handler decorator makes a function of effect and k into one.
+
+h2
+00:02:03.250 --> 00:02:09.200
+It must take the effect and k. With one parameter, it is refused with a TypeError.
+
+h3
+00:02:09.850 --> 00:02:16.850
+Its annotation must name an effect class. No effect can be an int, so that one is refused too.
+
+h4.1
+00:02:17.450 --> 00:02:22.433
+Both are refused when the handler is built, before any program runs.
+
+h4.2
+00:02:22.433 --> 00:02:25.800
+fetcher keeps the contract, and answers Fetch.
+
+z1
+00:02:26.750 --> 00:02:34.300
+Plain values in, a program out. Handlers give its effects their meaning. That is a Kleisli arrow in doeff.

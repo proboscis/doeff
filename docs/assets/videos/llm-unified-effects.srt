@@ -1,0 +1,91 @@
+1
+00:00:00,250 --> 00:00:01,767
+Unified LLM effects.
+
+2
+00:00:01,767 --> 00:00:09,200
+The doeff-llm package defines the effects of talking to a language model once, for every provider.
+
+3
+00:00:09,750 --> 00:00:17,600
+LLM Chat, LLM Streaming Chat, LLM Structured Query and LLM Embedding name what the program asks for.
+
+4
+00:00:18,150 --> 00:00:24,550
+The provider packages, OpenAI, Gemini and OpenRouter, bring only handlers that answer them.
+
+5
+00:00:25,100 --> 00:00:30,800
+Before doeff-llm, each provider package defined its own, near-identical effects.
+
+6
+00:00:31,350 --> 00:00:37,700
+Those names remain as deprecated aliases: subclasses of LLM Chat that warn when they are built.
+
+7
+00:00:38,250 --> 00:00:44,400
+Now one program yields the same LLM Chat. Only the model name says which provider should answer.
+
+8
+00:00:44,950 --> 00:00:53,950
+Under the same handlers, OpenAI answers gpt-4o, and Gemini answers gemini 1.5 pro.
+
+9
+00:00:54,500 --> 00:01:00,533
+Here is the page's example: one workflow, three models, and three provider handlers in one stack.
+
+10
+00:01:00,533 --> 00:01:04,400
+Mock handlers stand in for the real ones, so no API is called.
+
+11
+00:01:04,950 --> 00:01:07,783
+Each handler reads effect dot model.
+
+12
+00:01:07,783 --> 00:01:14,500
+The structured query for gpt-4o reaches OpenAI first, which supports it, and answers.
+
+13
+00:01:15,050 --> 00:01:18,433
+The chat for gemini 1.5 pro is not OpenAI's.
+
+14
+00:01:18,433 --> 00:01:24,200
+The handler yields Pass, with k, and the next handler out, Gemini, answers.
+
+15
+00:01:24,750 --> 00:01:31,700
+Mistral large passes OpenAI and Gemini, and reaches OpenRouter, the catch-all on the outside.
+
+16
+00:01:33,750 --> 00:01:41,100
+A handler's annotation filters effects too. chat only is annotated effect colon LLM Chat.
+
+17
+00:01:41,650 --> 00:01:48,100
+The structured query does not match, so it skips chat only without a call, and any model answers it.
+
+18
+00:01:48,650 --> 00:01:53,400
+The LLM Chat matches. chat only is called, and answers it.
+
+19
+00:01:55,150 --> 00:02:00,750
+So the order of the stack matters. OpenRouter answers a chat for any model.
+
+20
+00:02:01,300 --> 00:02:10,150
+Install it innermost, and it answers all three effects. OpenAI and Gemini never see one.
+
+21
+00:02:10,700 --> 00:02:17,200
+The catch-all goes outermost, and every handler inside it passes on the models it does not support.
+
+22
+00:02:17,750 --> 00:02:20,650
+One effect says what the program asks for.
+
+23
+00:02:20,650 --> 00:02:25,700
+The handlers decide who answers, by handling it, or passing it on with k.
