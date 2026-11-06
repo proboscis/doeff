@@ -1784,7 +1784,7 @@
   ;; 付いた volume の file system の空きが値の growBelowPercent(50%)を割った(値の大きさの 6 割を使った)。冷やす回は名目を倍(上限の
   ;; 値 maxSizeBytes)に書き、engine が広がる(読み 3 回)のを待ってから、係に file system を広げさせる。付けたまま — mount も
   ;; ticket も触らない。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :engine-settle 3 :used {NAME (* 6 TENTH)}))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP)) :engine-settle 3 :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
   (assert (= (! (size-writes api)) [(str GROWN)]) api.seen)
@@ -1797,7 +1797,7 @@
 (deftest test-a-grown-volume-takes-and-drops-a-snapshot-to-fold-the-expand-snapshot
   ;; 広げた後(係が file system を広げた後)に、snapshot <名>-grow-<刻> を 1 つ取り、使えるのを待ってから Snapshot を消す — Longhorn が
   ;; 消しの purge で expand の snapshot へ小さな子を畳む(毎時の backup の後の purge が膨らんだ子を何度も写し直さない)。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :snapshot-settle 2 :used {NAME (* 6 TENTH)}))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP)) :snapshot-settle 2 :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
   (val steps (! (snapshot-steps api)))
@@ -1814,7 +1814,7 @@
 (deftest test-a-grow-whose-snapshot-fails-is-reported-as-failed
   ;; 広げた後の snapshot が取れない(Longhorn が error を書き続ける)。広げは file system まで済んでいるが、畳めなかった訳を残して
   ;; 失敗と数える(Snapshot は消さない — 次の backup の purge が expand の snapshot を畳む前の形に戻るだけ)。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :snapshot-error True :used {NAME (* 6 TENTH)}))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP)) :snapshot-error True :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed=" NAME)) ran.outcomes)
   (assert (= (get api.fs-sizes NAME) GROWN) api.fs-sizes)
@@ -1826,7 +1826,7 @@
   ;; 空きが線の上(値の大きさの 4 割を使った)の volume と、名目が上限の maxSizeBytes に居る volume(ほぼ満ちていても)は広げない
   ;; (名目の書きも係への頼みも無い)。
   (for [#(sizes used) #(#({} {NAME (* 4 TENTH)}) #({NAME MAX} {NAME (- MAX 1024)}))]
-    (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :sizes sizes :fs-sizes sizes :used used))
+    (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP)) :sizes sizes :fs-sizes sizes :used used))
     (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
     (assert (.endswith (get ran.outcomes 0) " failed=") ran.outcomes)
     (assert (= (! (size-writes api)) []) api.seen)
@@ -1836,7 +1836,7 @@
 (deftest test-a-grow-the-disk-cannot-hold-is-refused-without-writing-the-size
   ;; 札の disk の名目の残りが、広げる分を受けられない(capacity 1 — 付いた 1 本で満ちた)。冷やせる物も無いので、名目を書かずに、訳を
   ;; 残して次へ進む。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :capacity 1) :used {NAME (* 9 TENTH)}))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP) :capacity 1) :used {NAME (* 9 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (= ran.outcomes #((+ "sweep cooled= failed=" NAME " short"))) ran.outcomes)
   (assert (= (! (size-writes api)) []) api.seen)
@@ -1846,19 +1846,19 @@
 (deftest test-a-grow-short-of-room-cools-a-warm-volume-first
   ;; 名目の残り 0(capacity 2 に付いた 1 本と外れた 1 本 — 外れた物は 2 時間の内)。冷やす回は空けておく量に届かないので(全部冷やしても
   ;; 1 本ぶん)冷やさないが、広げる手は増える 2 GiB を需要に外れた volume を冷やし、空いてから名目を書く。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :capacity 2 :volumes #(MOUNTED (HeldVolume :name "ws-c-w1" :formatted True)))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :capacity 2 :volumes #(MOUNTED (HeldVolume :name "ws-c-w1" :formatted True)) :backups #(COLD-BACKUP))
                           :used {NAME (* 9 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (= ran.outcomes #((+ "sweep cooled= failed= short grown=" NAME))) ran.outcomes)
   (assert (= (! (size-writes api)) [(str GROWN)]) api.seen)
   (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
-  (assert (= (lfor one api.held.backups one.volume) ["ws-c-w1"]) api.held.backups))
+  (assert (= (lfor one api.held.backups one.volume) [NAME "ws-c-w1"]) api.held.backups))
 
 
 (deftest test-a-file-system-left-behind-its-volume-is-grown-without-doubling-again
   ;; 前の広げが名目を書いた後、file system を広げる前に止まった(名目は上限・file system は値の大きさのまま)。次の回は名目を書き直さず(倍に
   ;; しない)、係に file system だけを広げさせる。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :sizes {NAME MAX} :used {NAME (* 6 TENTH)}))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP)) :sizes {NAME MAX} :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
   (assert (= (! (size-writes api)) []) api.seen)
@@ -1869,7 +1869,7 @@
 (deftest test-an-engine-that-does-not-grow-is-refused-before-the-file-system
   ;; Longhorn が名目の書きを受けたが、engine が広がらない。上限の秒(検の attach-seconds 5 秒)で断り、係には頼まない(名目は書いた
   ;; まま — 次の回が file system だけを広げ直す)。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :engine-stuck True :used {NAME (* 6 TENTH)}))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP)) :engine-stuck True :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed=" NAME)) ran.outcomes)
   (assert (= (! (size-writes api)) [(str GROWN)]) api.seen)
@@ -2209,3 +2209,40 @@
   (assert (and (.startswith outcome "refused: ") (in "Longhorn が束 BackupVolume を見ない" outcome) (in "cannot get backup volume" outcome))
           refused.outcomes)
   (assert (= stuck.held.volumes #()) stuck.held.volumes))
+
+
+(defk posted-names [api path]
+  {:pre [(: api LonghornWorld) (: path str)] :post [(: % list)]}
+  "相手役が受けた path への POST の本文の metadata.name を、受けた順に得るため。"
+  (lfor seen api.seen :if (and (= seen.method "POST") (= seen.path path)) (get (json.loads seen.body) "metadata" "name")))
+
+
+(deftest test-a-mounted-volume-never-backed-up-gets-its-first-backup-from-the-sweep
+  ;; 付いた volume が 1 度も backup を持たない(束も無い — 直しの前に作った volume か、束を全体の同期に消された volume)。冷やす回は束を
+  ;; 作ってから最初の Snapshot と Backup <名>-first-<刻> を取り、完了は待たない。束が backup の前に在るので、Longhorn は完了に束 1 本の
+  ;; 同期だけを頼み、束は bucket の中身を持つ — 全体の同期に消されない。次の回は途中の Backup を見て重ねて取らない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :backup-settle 3))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep") (Step :verb "sweep"))))
+  (assert (= ran.outcomes #("sweep cooled= failed=" "sweep cooled= failed=")) ran.outcomes)
+  (val backups (! (posted-names api BACKUPS-PATH)))
+  (assert (= (len backups) 1) backups)
+  (assert (.startswith (get backups 0) (+ NAME "-first-")) backups)
+  (assert (= (! (posted-names api SNAPSHOTS-PATH)) backups) api.seen)
+  (assert (! (bundle-before api SNAPSHOTS-PATH)) api.seen)
+  (assert (= api.bundles #{NAME}) api.bundles)
+  (assert (in (get backups 0) api.backups) api.backups)
+  (assert (= api.held.volumes #(MOUNTED)) api.held.volumes))
+
+
+(deftest test-a-mounted-volume-with-a-backup-or-a-failed-one-is-judged-by-its-backups
+  ;; 完了した backup の在る volume には取らない。失敗した backup しか無い volume(backup の先に何も足していない)には取る。
+  (val done (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(COLD-BACKUP))))
+  (<- ran ApiRan (on-api done #((Step :verb "sweep"))))
+  (assert (= ran.outcomes #("sweep cooled= failed=")) ran.outcomes)
+  (assert (= (! (posted-names done BACKUPS-PATH)) []) done.seen)
+  (assert (= (! (posted-names done SNAPSHOTS-PATH)) []) done.seen)
+  (val failed (HeldBackup :volume NAME :name (+ NAME "-cool-0") :created-at 0.0 :state "Error"))
+  (val erred (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :backups #(failed)) :bundle-stalled True))
+  (<- again ApiRan (on-api erred #((Step :verb "sweep"))))
+  (assert (= again.outcomes #("sweep cooled= failed=")) again.outcomes)
+  (assert (= (len (! (posted-names erred BACKUPS-PATH))) 1) erred.seen))
