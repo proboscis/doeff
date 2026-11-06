@@ -56,7 +56,7 @@ The narration never uses a local text-to-speech model, and
 
 | Path | What it holds |
 |---|---|
-| `src/kit/theme.ts` | Size (1280×720), 60 fps, `f(seconds)`, the colours (one per role) and the fonts. |
+| `src/kit/theme.ts` | The layout size (1280×720; the video is drawn at 1920×1080), 60 fps, `f(seconds)`, the colours (one per role) and the fonts. |
 | `src/kit/motion.ts` | `fadeAt`, `ramp`, `mix`: timing in seconds of a scene's design time. |
 | `src/kit/parts.tsx` | `Headlines`, `CodeBlock`, `Pill` (an effect or answer on the move), `glow`, `Clock`, `highlightYield`. |
 | `src/kit/warp.ts` | Narration time: a headline's slot stretches to fit its spoken line; scenes read `useSceneFrame()`. |
@@ -65,7 +65,7 @@ The narration never uses a local text-to-speech model, and
 | `src/pages/<name>/` | One page's video: its scenes, `narration.json`, `durations.json`, and `measure/` (the runs behind its numbers). |
 | `src/Root.tsx` | One `<Composition>` per page, with the id `<name>`: it finds every `narrate(...)` export under `src/pages/` itself, so a new page does not edit it. |
 | `tts.py` | Says `narration.json` through OpenAI's speech endpoint into `public/<name>/`, writes `durations.json`. |
-| `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg`, and writes the same subtitles as `<name>.vtt` and `<name>.srt` (`captions.mjs`). |
+| `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg` at 1920×1080 (1.5 times the layout), and writes the same subtitles as `<name>.vtt` and `<name>.srt` (`captions.mjs`). |
 | `gif.mjs` | Makes `<name>.gif` from the first scenes of `docs/assets/videos/<name>.mp4` plus an end card, the moving trailer for GitHub. |
 | `src/kit/EndCard.tsx` | The end card (the `gif-end-card` composition `gif.mjs` renders as a still). |
 | `stills.mjs` | Renders single frames as PNG, to check a layout without rendering the whole video. |
@@ -89,6 +89,8 @@ The narration never uses a local text-to-speech model, and
 6. Check the layout: `node stills.mjs <name> out/check <frame>…` at the frames where headlines change and
    where things move, and look at every PNG — nothing overlaps, nothing runs off the frame, text is readable.
 7. Render: `node render.mjs <name> <poster frame>`. Choose a poster frame that shows the page's idea at a glance.
+   The narration wavs are not committed: to render a page again whose `narration.json` and `durations.json` have not
+   changed, without saying it again, add `--audio-from ../../docs/assets/videos/<name>.mp4` to take the sound of the committed mp4.
 8. Attach it to the page with the link above, below the page's opening paragraph.
 9. Check: `uv run pytest tests/test_docs_site_videos.py` and `make docs-site`.
 
@@ -96,7 +98,7 @@ The narration never uses a local text-to-speech model, and
 
 | Rule | Why |
 |---|---|
-| 1280×720 at 60 fps, the kit's colours and fonts. | Every page's video looks like one series; 60 fps keeps motion smooth. |
+| Laid out at 1280×720, rendered at 1920×1080 (full HD) and 60 fps, the kit's colours and fonts. | Every page's video looks like one series; full HD keeps code and subtitles sharp, and 60 fps keeps motion smooth. |
 | Show the mechanism moving: effects travel out to handlers, answers come back, `k` waits and resumes. | The point is to see what the text can only describe. |
 | doeff is algebraic effects for Python. Do not present it as only a way to swap I/O. | Swapping I/O is one use of handlers, not what doeff is (`docs/positioning/what-doeff-is.md`). |
 | Each headline stays long enough to read, and its narration fits its slot (`warp.ts` stretches the slot). | The voice never runs into the next headline. |

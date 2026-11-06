@@ -1,4 +1,4 @@
-// The look every docs video shares: 1280x720 at 60 fps, a dark background, and one colour per role.
+// The look every docs video shares: laid out at 1280x720 (render.mjs draws it at 1920x1080) at 60 fps, a dark background, and one colour per role.
 export const FPS = 60;
 export const WIDTH = 1280;
 export const HEIGHT = 720;
