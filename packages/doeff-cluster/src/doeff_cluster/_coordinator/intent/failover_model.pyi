@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = failover_model.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub generated these type declarations; do not edit by hand (source = failover_model.hy; regenerate with python -m doeff_hy._static_stub --write <the .hy next to this .pyi>)
 
 from dataclasses import dataclass as dataclass
 from doeff_cluster._coordinator.intent.cluster_model import WorkerInfo as WorkerInfo

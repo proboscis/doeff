@@ -80,7 +80,7 @@ DECODE_CASES: list[tuple[str, object]] = [
     ("Vocab", {"u": 1.5}),
     ("Vocab", {"i": True}),
     ("Vocab", {"s": "\ud800"}),
-    ("Vocab", {"s": "日本語"}),
+    ("Vocab", {"s": "Grüße €"}),
     ("Vocab", {"color": "RED"}),
     ("Vocab", {"tf": [1]}),
     ("Vocab", {"unknownKey": 1}),
@@ -165,7 +165,7 @@ def test_bare_construction_equals_the_constructor_for_records() -> None:
 
 ENCODE_VALUES: list[object] = [
     types.Vocab(),
-    types.Vocab(s="日本語", f=1e-7, i=True, fi=1e16, oi=None, ti=(1, 2), fs=frozenset({"b", "a"})),
+    types.Vocab(s="Grüße €", f=1e-7, i=True, fi=1e16, oi=None, ti=(1, 2), fs=frozenset({"b", "a"})),
     types.Vocab(f=float("nan"), u="x", cs=types.Color.BLUE, arr=("a",), bare={"k": (1, 2.5e-5)}),
     types.Vocab(any_value={1: "a", None: 2}, di={"a": 1}, opaque=OpaqueJson.of({"x": [1, 2]})),
     types.Vocab(s="\ud800"),
@@ -185,7 +185,7 @@ def test_fast_text_writes_the_same_bytes_as_the_old_path(value: object) -> None:
 
 ROW_VALUES: list[object] = [
     types.PlainRecord(n=1),
-    _Plain(n=2, tags=("a", "日本")),
+    _Plain(n=2, tags=("a", "ü€")),
     _Plain(n=True, tags=("a", 1)),  # type: ignore[arg-type]  # a sample of writing values that do not match the type the same as the previous path
 ]
 

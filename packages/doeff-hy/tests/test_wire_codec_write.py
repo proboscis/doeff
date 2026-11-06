@@ -86,7 +86,7 @@ INF = math.inf
 VALUES: list[tuple[str, Callable[[], WireValue]]] = [
     ("all-defaults", types.Vocab),
     ("str", lambda: types.Vocab(s="a")),
-    ("str-escapes", lambda: types.Vocab(s='あ\u2028\x7f"\\\n\t\x00\x08\x0c\x1f')),
+    ("str-escapes", lambda: types.Vocab(s='€\u2028\x7f"\\\n\t\x00\x08\x0c\x1f')),
     ("int", lambda: types.Vocab(i=-3)),
     ("big-int", lambda: types.Vocab(i=10**30)),
     ("float", lambda: types.Vocab(f=1.5)),

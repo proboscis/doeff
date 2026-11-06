@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _darwin_proc.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub generated these type declarations; do not edit by hand (source = _darwin_proc.hy; regenerate with python -m doeff_hy._static_stub --write <the .hy next to this .pyi>)
 
 from doeff import Program as _Program
 from doeff_core_effects._process_stat import ProcStat as ProcStat

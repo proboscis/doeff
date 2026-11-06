@@ -194,11 +194,12 @@ def test_a_full_slot_holds_a_directly_started_doeff_hy_check_until_it_frees(
         assert blocker.stdin is not None
         blocker.stdin.close()
         _, rest = check.communicate(timeout=120)
+        # The words around the names are the canon's (dotfiles) and are not pinned here: the lines name the holder and this check.
         assert f"pid {blocker.pid} blocker-holds" in waiting, (waiting, rest)
-        assert "待つのは doeff-hy-check repo" in waiting, waiting
+        assert "doeff-hy-check repo" in waiting, waiting
         assert runs_while_full == [], "pyright was fired while the slot was full"
         assert check.returncode == 0, rest
-        assert "を取った(待ち" in rest, rest
+        assert [line for line in rest.splitlines() if MARK in line and "doeff-hy-check repo" in line], rest
         assert scene.pyright_runs() == ["started"]
         assert blocker.wait(timeout=15) == 0, "the process that held the slot does not finish"
     finally:

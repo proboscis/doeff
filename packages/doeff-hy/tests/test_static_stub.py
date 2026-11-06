@@ -173,6 +173,17 @@ def test_a_hand_written_stub_is_not_checked(tmp_path: Path) -> None:
     assert stale_in(tmp_path) == ()
 
 
+def test_a_stub_with_an_older_mark_is_still_the_tools_and_stale(tmp_path: Path) -> None:
+    # Failure case: a .pyi generated before the mark changed (same head, other words after it) read as hand-written,
+    # so the check skipped it and --write refused to regenerate it. It stays the tool's and is named stale.
+    source = _module(tmp_path)
+    made = stub_of(tmp_path, [tmp_path], source).text
+    older = "# doeff_hy._static_stub (an older mark)" + made[made.index("\n") :]
+    source.with_suffix(".pyi").write_text(older, encoding="utf-8")
+    assert generated(source.with_suffix(".pyi"))
+    assert [(s.source.name, s.reason) for s in stale_in(tmp_path)] == [("probe_mod.hy", "differs from the regenerated output")]
+
+
 EFFECTS = """\
 (require doeff-hy.macros [defeffect val])
 
