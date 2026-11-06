@@ -1,7 +1,8 @@
 ;; worker の ServiceAccount の token の古さを heartbeat で名乗る。
 ;; 2026-10-24 の zeus では kubelet が投影の token の置き直しを止め(20:37:48Z に置いた token が最後)、exp 21:37:48Z の 81 秒後から Pod の中で
 ;; API server を呼ぶ物が全部 401 になった。止まった事は 401 が出るまで誰にも見えなかった。
-;;   (1) token-state は発行(iat)から 55 分を越えた token を stale、exp を過ぎた token を expired と読む(10-24 の刻で確かめる)
+;;   (1) token-state は kubelet が置き直す刻(1 時間の token なら発行から 48 分・36 時間の token なら 24 時間)+ 7 分を越えた token を
+;;       stale、exp を過ぎた token を expired と読む(10-24 の刻で確かめる)
 ;;   (2) coordinator への口は token の file を読んで heartbeat の accountToken に名乗る。file を読まない設定・file の無い worker は名乗らない
 ;;   (3) coordinator の Worker の資源の status は accountToken が ok でない間だけ載せる(読み手が GET /resources/Worker で 401 の前に知る)
 ;; 失敗ケース = 古さを読まない(exp まで ok)・heartbeat に載せない・status に載せない(見回りが知らせにできない)。
@@ -14,7 +15,8 @@
 (import httpx)
 (import tests.link_rig [LinkRig])
 (import doeff_cluster [ClusterTiming])
-(import doeff_cluster._worker.core.account_token [TokenClaims TokenState STALE-AFTER-MS token-claims token-state token-read-due])
+(import doeff_cluster._worker.core.account_token [TokenClaims TokenState REFRESH-SLACK-MS kubelet-refresh-after-s token-claims
+                                                   token-state token-read-due])
 (import doeff_cluster._worker.protocol.coordinator_link [token-line])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [responded])
@@ -40,17 +42,36 @@
   (<- text str (jwt-of {"iat" LAST-IAT "exp" LAST-EXP "sub" "system:serviceaccount:w"}))
   (<- claims (| TokenClaims None) (token-claims text))
   (assert (= claims (TokenClaims :issued-at LAST-IAT :expires-at LAST-EXP)) claims)
-  ;; kubelet が置き直す頃(発行から 48 分)は ok・55 分を越えたら stale(期限の 5 分前に分かる)・401 の始まりは expired。
+  ;; kubelet が置き直す頃(発行から 48 分)は ok・55 分ちょうどまで ok・55 分を越えたら stale(期限の 5 分前に分かる)・401 の始まりは expired。
   (<- at-48 TokenState (token-state claims (* (+ LAST-IAT (* 48 60)) 1000)))
-  (<- past-55 TokenState (token-state claims (+ (* LAST-IAT 1000) STALE-AFTER-MS 1)))
+  (<- at-55 TokenState (token-state claims (* (+ LAST-IAT (* 55 60)) 1000)))
+  (<- past-55 TokenState (token-state claims (+ (* (+ LAST-IAT (* 55 60)) 1000) 1)))
   (<- at-401 TokenState (token-state claims FIRST-401-MS))
-  (assert (= #(at-48 past-55 at-401) #(TokenState.OK TokenState.STALE TokenState.EXPIRED))))
+  (assert (= #(at-48 at-55 past-55 at-401) #(TokenState.OK TokenState.OK TokenState.STALE TokenState.EXPIRED))))
+
+
+(deftest test-a-36-hour-token-is-ok-until-the-kubelet-would-refresh-it-at-24-hours
+  ;; 11-06 に zeus・helios・atlas の期限を 36 時間へ延ばした: kubelet は年齢 24 時間で置き直すので、それまで(と余りの 7 分)は ok。
+  ;; 失敗ケース = 55 分の定数の線(Pod の作成から 55 分で、置き直しの正しい worker が stale を名乗る)。
+  (val lifetime (* 36 3600))
+  (<- text str (jwt-of {"iat" LAST-IAT "exp" (+ LAST-IAT lifetime)}))
+  (<- claims (| TokenClaims None) (token-claims text))
+  (<- refresh-s int (kubelet-refresh-after-s lifetime))
+  (assert (= refresh-s (* 24 3600)) refresh-s)
+  (val line-ms (+ (* (+ LAST-IAT (* 24 3600)) 1000) REFRESH-SLACK-MS))
+  (<- at-hour TokenState (token-state claims (* (+ LAST-IAT 3600) 1000)))
+  (<- at-line TokenState (token-state claims line-ms))
+  (<- past-line TokenState (token-state claims (+ line-ms 1)))
+  (assert (= #(at-hour at-line past-line) #(TokenState.OK TokenState.OK TokenState.STALE))))
 
 
 (deftest test-an-extended-token-is-still-stale-when-the-kubelet-stops-refreshing-it
-  ;; 3607 秒の要求の token は exp が 1 年先 — 401 にはならないが、置き直しの止まりは古さで分かる。
-  (<- text str (jwt-of {"iat" LAST-IAT "exp" (+ LAST-IAT (* 365 24 3600))}))
+  ;; 3607 秒の要求の token は exp が 1 年先で、頼んだ期限は kubernetes.io.warnafter に在る — 401 にはならないが、kubelet は頼んだ
+  ;; 期限で置き直すので、置き直しの止まりは warnafter から導いた線で分かる。失敗ケース = exp の 1 年で数える(24 時間まで ok のまま)。
+  (<- text str (jwt-of {"iat" LAST-IAT "exp" (+ LAST-IAT (* 365 24 3600))
+                        "kubernetes.io" {"namespace" "w" "warnafter" (+ LAST-IAT 3607)}}))
   (<- claims (| TokenClaims None) (token-claims text))
+  (assert (= claims.warn-after (+ LAST-IAT 3607)) claims)
   (<- named TokenState (token-state claims FIRST-401-MS))
   (assert (= named TokenState.STALE) named))
 
@@ -90,7 +111,8 @@
     (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" [] "draining" False}))
   (val token (/ tmp-path "token"))
   (val now (int (time.time)))
-  (<- text str (jwt-of {"iat" (- now 3600) "exp" (+ now 3600)}))
+  ;; 1 時間の token の発行から 58 分(置き直しの刻 48 分 + 余り 7 分を越え、期限の 2 分前)。
+  (<- text str (jwt-of {"iat" (- now (* 58 60)) "exp" (+ now (* 2 60))}))
   (.write-text token text)
   (val link (LinkRig "http://coord" "w" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (setv link.state.token-file (str token))
