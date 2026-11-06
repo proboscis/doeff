@@ -84,11 +84,13 @@
    working set(None = 前の回に数えられなかった — 増えを数えない)・growths = 回あたりの外の増え(負は 0・新しい MARGIN-WINDOW 回)・
    margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
-   まだ)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い — jobs-limit との差が調整ループの
+   観測する jobs の層の空き WorldView.jobs-room)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
-          self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None)))
+          self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None
+          self.jobs-current None)))
 
 
 (defrecord LayerMemory
@@ -300,6 +302,7 @@
   (if (isinstance jobs-read str)
       (:= failure jobs-read)
       (do (:= jobs jobs-read) (:= current jobs-read.current-bytes)))
+  (setv cell.jobs-current current)
   (var prepare None)
   (when (is-not settings.prepare-dir None)
     (<- prepare-read (| LayerMemory str) (layer-read "準備" settings.prepare-dir True))

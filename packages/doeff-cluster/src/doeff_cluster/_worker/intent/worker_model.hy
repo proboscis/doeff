@@ -171,6 +171,11 @@
   ;; 判断(policy の plan-job)は終わった process を回収する時にこれを読み、見張りに止められた終わりを数える(続けて止められた job の
   ;; 起こし直しを止める — WorkerPolicy.memory-kill-limit)。既定は空(見張りを持たない呼び手・模擬の環境)。
   (setv #^ frozenset memory-killed (frozenset))
+  ;; jobs の層(job と待ちの子の置かれる cgroup)の今の空き = 見張りの最後の回に掛けた上限 − その回の使い(byte・負もありうる — 上限を
+  ;; 使いより下げた続きの中)。判断(warm_rules の warm-child-roomless)は、待ちの子 1 本が入らない root の待ちの子を起こさず、その root の
+  ;; task を入れ物 shim の冷えた道で起こす(入らない待ちの子は層の上限に当たって kernel の OOM kill で落ち、起こし直しの輪になった —
+  ;; 2026-11-06 の k3s-0〜2)。None = 層が無い・見張りが上限を掛けない・まだ読めていない(空きで縛らない)。既定は None(模擬の環境)。
+  (setv #^ (| int None) jobs-room None)
   ;; 宣言の job のうち、Program の file が手元に無い物(ProgramGap)。判断(policy の program-waits)は揃うまで job を起こさない — 子の入口は file を
   ;; 読めないと終了 code 3 で落ちる。既定は空(Program を取り寄せない呼び手)。
   (setv #^ tuple program-gaps #()))
@@ -245,11 +250,12 @@
    待ちの子は root の venv の版で走るので、印の無い古い版の待ちの子へ service を頼まない)。
    orphans = 頼みの orphan-seconds(worker の消失を退きとして扱い、寿命の上限まで待つ)を受けられる版の待ちの子か
    (印の orphanForks。頼みの形は知らない欄を断るので、印の無い版の待ちの子へ worker より長く生きる service を頼まない — 入れ物 shim で
-   起こす)。"
+   起こす)。pid = 印を書いた process(uv の下の python — 印の pid の欄。宿が準備完了の時の RSS を測る相手。欄の無い印は None)。"
   (#^ int threads)
   (#^ tuple vm-live)
   (setv #^ bool services False)
-  (setv #^ bool orphans False))
+  (setv #^ bool orphans False)
+  (setv #^ (| int None) pid None))
 
 
 (defrecord WarmMarkUnreadable
@@ -271,7 +277,9 @@
    (まだ書いていなければ None)・exit-code = 終わりを観測した code(走っていれば None)・ended-ms = 終わりを観測した刻・detail = 終わりの理由
    (log の最後の 1 行か、worker が止めた訳)・stop = worker が止め始めた後の進み(止めていなければ None)・refusals = この子を起こす前に、
    同じ root の待ちの子が続けて断った(起動を断った・分けるのを断った)回数(warm_rules の refusals-after が数える)・fork-refused = task を
-   分けるのを断ったので worker が止めた子(StopWarmChild の refused)。"
+   分けるのを断ったので worker が止めた子(StopWarmChild の refused)・size-bytes = この root の待ちの子が準備完了の時に測った RSS(byte —
+   宿が印の pid の /proc から読み、同じ root の次の子へ引き継ぐ。まだ測っていなければ None — 判断は WorkerPolicy.warm-child-size-bytes の
+   見積もりで数える)。"
   (#^ str key)
   (#^ int pid)
   (#^ int started-ms)
@@ -281,7 +289,8 @@
   (setv #^ str detail "")
   (setv #^ (| StopProgress None) stop None)
   (setv #^ int refusals 0)
-  (setv #^ bool fork-refused False))
+  (setv #^ bool fork-refused False)
+  (setv #^ (| int None) size-bytes None))
 
 
 (defclass Outcome [Enum]
@@ -384,6 +393,9 @@
   ;; 1 つ約 550 MB 残り(行の期限 1 時間の間)、次の版の先の組みを no-memory-room で断らせた(2026-11-05 の k3s-3: 層の上限 1.5 GiB に
   ;; 誰も使わない待ちの子 2 つで working set 1.07〜1.34 GB・18 時間に task 0 本)。機体の配備が環境変数 DOEFF_WORKER_WARM_TABLE_CHILDREN で切る。
   (setv #^ bool warm-table-children True)
+  ;; 待ちの子 1 本の大きさの見積もり(byte — その root の待ちの子の準備完了の時の RSS をまだ測っていない時に、jobs の層の空きと比べる値)。
+  ;; 2026-11-06 の k3s-0〜2 の見張りの log で準備完了の後の待ちの子は 519〜526 MiB(zeus の測りで約 500 MB)なので、少し上の 560 MiB。
+  (setv #^ int warm-child-size-bytes (* 560 1024 1024))
   ;; 常駐の job が機体の memory の見張りに続けて止められた時に、起こし直しを止めて失敗(phase memory-killed)として報告する回数(正の整数)。
   ;; 起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められ、要求を 1 件も回さずに起き直し続けた(2026-10-19 の本番の
   ;; worker で 1 つの job が起動から約 1 分で止められ、3 時間 13 分に 125 回・43 分に 37 回。失敗の数は約 1 分の走りで 1 に戻り、表に
@@ -406,6 +418,9 @@
     (when (< self.warm-refusal-limit 1)
       (raise (ValueError (.format "warm-refusal-limit は 1 以上: {}" self.warm-refusal-limit))))
     ;; service のために待ちの子を起こす本数の下限が正の整数である事(0 以下では service の無い root にも待ちの子を起こす)。
+    ;; 待ちの子の大きさの見積もりが正である事(0 以下では空きの無い層にも待ちの子を起こす)。
+    (when (< self.warm-child-size-bytes 1)
+      (raise (ValueError (.format "warm-child-size-bytes は 1 以上: {}" self.warm-child-size-bytes))))
     (when (< self.warm-services-min 1)
       (raise (ValueError (.format "warm-services-min は 1 以上: {}" self.warm-services-min))))
     ;; 見張りに止められた回数の上限が正の整数である事(0 以下では 1 度も起こさずに失敗にしてしまう)。

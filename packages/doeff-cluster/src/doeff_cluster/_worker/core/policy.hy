@@ -38,7 +38,8 @@
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
-  warm-launch warm-child-refused warm-refusal-failure service-warm-keys fork-candidate WarmStart warm-start])
+  warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys
+  fork-candidate WarmStart warm-start])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -290,8 +291,9 @@
    :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
   "木が READY の job を起こすため: 入口の検めが通るまで起こさず、Program の file が手元に無い間(program-waits)も起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)と、service を分ける
    root(warm-keys)の service は、道を warm_rules の warm-start が決める: 待ちの子が準備済みになるまで起こさず
-   (待ちの子を起こすのは warm-child-actions)、分ける時は StartJob に root のキーを載せる。黙って入れ物 shim へ倒れない(service が shim で
-   起きるのは warm-start が名指す訳 — 古い版の待ちの子・断りの上限 — の時だけ)。"
+   (待ちの子を起こすのは warm-child-actions)、分ける時は StartJob に root のキーを載せる。黙って入れ物 shim へ倒れない(shim で
+   起きるのは warm-start が名指す訳 — service は古い版の待ちの子・断りの上限、task と service は待ちの子が jobs の層に入らない・層の
+   OOM kill で断りの上限に届いた — の時だけ。訳は状態の行 cold-start-detail)。"
   (val gate (probe-actions now spec tree world policy))
   (val path (warm-start spec world policy warm-keys))
   (cond
@@ -504,13 +506,14 @@
       #((StopWarmChild view.key StopStage.KILL "止めの合図の後も終わらない"))
       #()))
 
-(defk warm-child-step [now key launch view policy [refusal None]]
+(defk warm-child-step [now key launch view policy [refusal None] [roomless False]]
   {:pre [(: now int) (: key str) (: launch (| WarmLaunch None)) (: view (| WarmChildView None)) (: policy WorkerPolicy)
-         (: refusal (| JobNotStarted None))]
+         (: refusal (| JobNotStarted None)) (: roomless bool)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "root のキー 1 つの待ちの子の action を決めるため(判断の表 — tests/test_warm_child_policy.hy が全行を撃つ)。launch = 要る root の待ちの子の
    起こし方(要らない・root が READY でなければ None)・view = 待ちの子の観測・refusal = この root から task を分けるのを断られた最後の答え
-   (無ければ None)。観測が変わらない限り同じ action を 2 度出さない(起こした・止め始めた・忘れた事は次の観測に
+   (無ければ None)・roomless = 起こすなら jobs の層に入らない(warm_rules の warm-child-roomless — 真なら起こさず、その root の task は
+   warm-start が冷えた道で起こす)。観測が変わらない限り同じ action を 2 度出さない(起こした・止め始めた・忘れた事は次の観測に
    出る)。走っている task には何もしない(条 WC2)。"
   (cond
     ;; 要らない root: 走っていれば止め、終わっていれば観測から外す。
@@ -520,13 +523,17 @@
         (is-not view.exit-code None) #((ForgetWarmChild key))
         (is view.stop None) #((StopWarmChild key StopStage.TERM "root の待ちの子が要らなくなった"))
         True (! (warm-stop-step now view policy)))
+    ;; jobs の層に入らない待ちの子は起こさない(起こすと層の上限に当たって OOM kill で落ち、起こし直しの輪になる)。空きが戻った拍に起こす。
+    (and (is view None) roomless) #()
     (is view None) #((StartWarmChild key launch))
-    ;; 起動の断りが上限に達した待ちの子は起こし直さない(分かれる task は phase-of が env-failed で終える)。
+    ;; 起動の断り(層の OOM kill の終わりも — warm_rules の ended-refusing)が上限に達した待ちの子は起こし直さない(分かれる task は、
+    ;; OOM kill なら warm-start が冷えた道で起こし、ほかの断りなら phase-of が env-failed で終える)。
     ;; 観測は残し、task が終わって root が要らなくなった時に上の枝が外す(外すと数えも 0 に戻る)。
     (warm-child-refused view policy) #()
-    ;; 終わった待ちの子は、準備の失敗と同じ間(code-retry-ms)を置いてから起こし直す(落ちる入口を毎拍起こさない)。
+    ;; 終わった待ちの子は、準備の失敗と同じ間(code-retry-ms)を置いてから起こし直す(落ちる入口を毎拍起こさない)。jobs の層に入らない
+    ;; 間は起こし直さない。
     (is-not view.exit-code None)
-      (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key launch)) #())
+      (if (and (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) (not roomless)) #((StartWarmChild key launch)) #())
     (is-not view.stop None) (! (warm-stop-step now view policy))
     ;; 今の子を起こした後に task を分けるのを断った待ちの子は止める。止めた子の終わりは断りに数え(fork-refused —
     ;; warm_rules の ended-refusing)、起こし直しと上限は起動の断りと同じ道(上の枝)。task は shim の道へ倒さず、backoff の後にこの root の
@@ -564,7 +571,8 @@
   "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root
    (温める表は policy.warm-table-children が真の時だけ)と、service を分ける root(service-warm-keys)のうち READY の物。要る root と
    観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める
-   材料 — fork-refusals)。"
+   材料 — fork-refusals)。jobs の層の空きは、同じ拍に先に起こした待ちの子の大きさを引いて次の root に渡す(warm_rules の
+   warm-child-roomless の taken — 2 つの root の待ちの子を 1 本分の空きに並べて起こさない)。"
   (val services (service-warm-keys desired policy))
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
                             (if policy.warm-table-children (tuple (gfor w warm w.key)) #())
@@ -572,9 +580,14 @@
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
   (<- refusals dict (fork-refusals records))
   (var actions #())
+  (var taken 0)
   (for [key keys]
     (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm services))
-    (<- step tuple (warm-child-step now key launch (warm-child-of world key) policy :refusal (.get refusals key)))
+    (val view (warm-child-of world key))
+    (<- step tuple (warm-child-step now key launch view policy :refusal (.get refusals key)
+                                    :roomless (warm-child-roomless key view world policy :taken taken)))
+    (when (any (gfor a step (isinstance a StartWarmChild)))
+      (:= taken (+ taken (warm-child-size view policy))))
     (:= actions (+ actions step)))
   actions)
 
@@ -856,8 +869,9 @@
           ;; Program の file を待っている間は準備の段階のまま(段階の語は足さず、理由は状態の行の文 — warm の待ちと同じ形)。
           (program-waits world want) JobPhase.PREPARING
           (in-backoff now record policy) JobPhase.BACKOFF
-          ;; 待ちの子が起動の断りの上限に達した task は、準備の失敗として終える。
-          (and (forks-from-warm-child want) (warm-child-refused (warm-child-of world (warm-key-of want)) policy)) JobPhase.ENV-FAILED
+          ;; 待ちの子が起動の断りの上限に達した task は、準備の失敗として終える(jobs の層の OOM kill で届いた上限は root の中身の断り
+          ;; でないので終えない — warm-start が冷えた道で起こす)。
+          (and (forks-from-warm-child want) (is-not (refused-warm-child world want None record policy) None)) JobPhase.ENV-FAILED
           ;; 待ちの子から分かれる task と分ける root の service は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は
           ;; 状態の行の文 — #3646)。
           (= (warm-start want world policy warm-keys) WarmStart.WAIT) JobPhase.PREPARING
@@ -868,12 +882,30 @@
 (defn #^ (| WarmChildView None) refused-warm-child [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
                                                    #^ JobRecord record #^ WorkerPolicy policy]
   "起動の断りの上限に達した待ちの子に結ばれた、まだ起きていない task の、その待ちの子の観測(状態の行の理由と準備の失敗の材料)。
-   当たらなければ None。"
+   jobs の層の OOM kill で上限に届いた待ちの子(warm-child-killed-out — task は冷えた道で起こす)は数えない。当たらなければ None。"
   (if (or (is want None) (is-not process None) (not (forks-from-warm-child want)) (is-not record.last-outcome None))
       None
       (do
         (setv view (warm-child-of world (warm-key-of want)))
-        (if (warm-child-refused view policy) view None))))
+        (if (and (warm-child-refused view policy) (not (warm-child-killed-out view policy))) view None))))
+
+(defk cold-start-detail [world want record policy]
+  {:pre [(: world WorldView) (: want (| JobSpec None)) (: record JobRecord) (: policy WorkerPolicy)] :post [(: % (| str None))]
+   :tags {:context "worker" :role "judgment"}}
+  "待ちの子から分かれるはずの task を、待ちの子を使わずに入れ物 shim の冷えた道で起こす訳(状態の行の理由 — warm_rules の warm-start が
+   SHIM を選ぶ 2 つ: 待ちの子が jobs の層に入らない・層の OOM kill で断りの上限に届いた)を綴るため。当たらなければ None。"
+  (if (or (is want None) (not (forks-from-warm-child want)) (is-not record.last-outcome None))
+      None
+      (do
+        (val key (warm-key-of want))
+        (val view (warm-child-of world key))
+        (cond
+          (warm-child-ready view) None
+          (warm-child-roomless key view world policy) (! (room-shortage key view world policy))
+          (warm-child-killed-out view policy)
+            (.format "no-jobs-room: 待ちの子が jobs の層の OOM kill で {} 回続けて落ちた — 起こし直さず冷えた道で起こす(最後の {} MiB)"
+                     (+ view.refusals 1) (// (warm-child-size view policy) (* 1024 1024)))
+          True None))))
 
 (defn #^ (| str None) warm-wait-detail [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
                                         #^ JobRecord record #^ WorkerPolicy policy #^ frozenset warm-keys]
@@ -912,6 +944,7 @@
   (val warm-keys (service-warm-keys desired policy))
   (val warm-wait (warm-wait-detail world want process record policy warm-keys))
   (val refused (refused-warm-child world want process record policy))
+  (<- cold (| str None) (cold-start-detail world want record policy))
   ;; 機体の memory の見張りに続けて止められ、起こし直しを止めた常駐の job(動いている process が無い時だけ — phase-of と同じ述語)。
   (val given-up (and (is process None) (is-not want None) (memory-given-up want record policy)))
   ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
@@ -964,6 +997,8 @@
                    record.not-started.detail (backoff-ms record policy))
         ;; 待ちの子の準備を待っている task(#3646)。
         (is-not warm-wait None) warm-wait
+        ;; 待ちの子が jobs の層に入らない・層の OOM kill で断りの上限に届いた root の task(冷えた道で起こす・走っている間も示す)。
+        (is-not cold None) cold
         ;; 退いた process の空き待ち(AL-D1): 新のコードも入口の検めも揃ったが、退いた process が上限 R に達しているので今の process を
         ;; 退かせずに待っている(handoff-actions)。coordinator はこの文を Service の readyReason と版の判定の訳(Updating)に添え、
         ;; 宣言の道具の待ちの印字(最後の読み)もそれを出す — 「新が起きない」を準備の遅れと取り違えないため。

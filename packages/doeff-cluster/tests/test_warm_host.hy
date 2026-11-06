@@ -88,12 +88,58 @@
           record)
   (assert (= (get record "env") ["HOME" "PATH"]) record)
   ;; 準備完了の印を読んだ観測(判断が準備済みに数える形)。
-  (assert (= (tuple (gfor v ready #(v.key v.mark v.exit-code))) #(#("env-a" (WarmChildMark :threads 1 :vm-live #(0 0 0)) None))) ready)
+  (assert (= (tuple (gfor v ready #(v.key v.mark v.exit-code))) #(#("env-a" (WarmChildMark :threads 1 :vm-live #(0 0 0) :pid 1) None))) ready)
   ;; 止めた待ちの子は TERM で終わり、止めた訳が残る。
   (assert (= (tuple (gfor v stopped #(v.exit-code v.detail (is-not v.stop None)))) #(#(-15 "root の待ちの子が要らなくなった" True))) stopped)
   ;; 忘れた待ちの子は観測から消え、置き場も消える。
   (assert (= forgotten #()) forgotten)
   (assert (= gone.kind PathKind.MISSING) gone))
+
+
+;; --- 待ちの子 1 本の大きさ(準備完了の時の RSS)--------------------------------------------
+;; 判断は、jobs の層の空きに待ちの子 1 本が入るかを、その root の待ちの子が準備完了の時に測った RSS で判じる(warm_rules の
+;; warm-child-roomless)。宿は印の pid の /proc/<pid>/status の VmRSS を読み、同じ root の次の子へ引き継ぐ(次の子が測るまで)。
+
+(defk warm-child-ready-once [commands request]
+  {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "台本の uv: 最初の起動だけ準備完了の印(pid 4321)を書き、2 度目からは書かずに走り続ける(引き継いだ大きさを読むため)。"
+  (val argv (list request.argv))
+  (<- seen (ReadText ARGV-RECORD))
+  (when (not (isinstance seen str))
+    (<- (WriteText ARGV-RECORD "{}" :replace True))
+    (<- (WriteText (get argv (+ (.index argv "--ready") 1)) (json.dumps {"pid" 4321 "threads" 1 "vmLive" [0 0 0]}) :replace True)))
+  (<- running ProcessOutcome (timed-out-outcome "" ""))
+  running)
+
+
+(defk start-stop-start []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "待ちの子を起こして観測し、止めて起こし直し、もう 1 度観測するため。"
+  (<- (StartWarmChild "env-a" LAUNCH))
+  (<- first tuple (ObserveWarmChildren))
+  (<- (StopWarmChild "env-a" StopStage.TERM "検の止め"))
+  (<- (ObserveWarmChildren))
+  (<- (StartWarmChild "env-a" LAUNCH))
+  (<- second tuple (ObserveWarmChildren))
+  #(first second))
+
+
+(deftest test-the-warm-host-measures-the-ready-rss-and-carries-it-to-the-next-child
+  (val status "Name:\tpython\nVmPeak:\t  600000 kB\nVmRSS:\t  532480 kB\nThreads:\t1\n")
+  (val roots (MemoryFiles :dirs #("/roots/env-a" "/record" "/proc/4321")
+                          :files #((MemoryFile :path "/proc/4321/status" :content (.encode status "utf-8")))))
+  (val script (ProcessScript :commands #((ScriptedCommand :name "uv" :run warm-child-ready-once)) :env SCRIPT-ENV))
+  (val seen (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler roots) (scripted-process-handler script)
+                                 (warm-host SETTINGS)]
+                   (start-stop-start))))
+  (val first (get seen 0))
+  (val second (get seen 1))
+  ;; 準備完了の印を読んだ時に、印の pid の VmRSS(532480 kB = 520 MiB)を測る。
+  (assert (= (tuple (gfor v first #(v.mark v.size-bytes)))
+             #(#((WarmChildMark :threads 1 :vm-live #(0 0 0) :pid 4321) (* 520 1024 1024))))
+          first)
+  ;; 起こし直した子は、まだ印を書いていなくても前の子の大きさを持つ。
+  (assert (= (tuple (gfor v second #(v.mark v.size-bytes))) #(#(None (* 520 1024 1024)))) second))
 
 
 ;; --- root へ送る名は root の完成の印の置き場--------------------------------------------

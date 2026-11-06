@@ -1184,6 +1184,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ObserveEnvDisk": "doeff_cluster._worker.protocol.observations",
     "ObserveEnvs": "doeff_cluster._worker.protocol.observations",
     "ObserveJobRoots": "doeff_cluster._worker.protocol.observations",
+    "ObserveJobsRoom": "doeff_cluster._worker.protocol.observations",
     "ObserveLeaving": "doeff_cluster._worker.protocol.observations",
     "ObserveMemoryKills": "doeff_cluster._worker.protocol.observations",
     "ObservePrograms": "doeff_cluster._worker.protocol.observations",

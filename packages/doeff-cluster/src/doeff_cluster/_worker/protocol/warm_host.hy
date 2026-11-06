@@ -20,7 +20,7 @@
 (import doeff_cluster._worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild
                                                   ForgetWarmChild StopProgress StopStage WakeSet WorkerWakes])
 (import doeff_cluster._worker.core.worker_due [wakes-with])
-(import doeff_cluster._worker.core.warm_rules [refusals-after])
+(import doeff_cluster._worker.core.warm_rules [refusals-after vm-rss-bytes])
 (import doeff_cluster._shared.intent.due_model [DueNever])
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_cluster._worker.protocol.observations [ObserveWarmChildren])
@@ -52,13 +52,14 @@
   "準備完了の印の file の中身(入口が書く JSON — threads と vmLive の欄・service の頼みを受けられる版の serviceForks の欄)を、判断が判じる
    印の形に読むため。形が違えば読めない印にする(準備済みに数えず、判断が待ちの子を止める — 黙って起こし中のまま待たない)。serviceForks の
    欄が無いのは、その欄を書く前の版の待ちの子(service を頼まない — 偽)。orphanForks の欄(頼みの orphan-seconds を受けられる版)
-   も同じく、無ければ書く前の版(偽)。"
+   も同じく、無ければ書く前の版(偽)。pid の欄(印を書いた python の process)は、正の整数でなければ None(大きさを測らない)。"
   (try
     (val value (json.loads text))
     (val threads (.get value "threads"))
     (val vm-live (.get value "vmLive"))
     (val services (.get value "serviceForks" False))
     (val orphans (.get value "orphanForks" False))
+    (val pid (.get value "pid"))
     (cond
       (not (and (isinstance threads int) (isinstance vm-live list) (all (gfor n vm-live (isinstance n int)))))
         (WarmMarkUnreadable :detail "threads と vmLive の欄が整数でない")
@@ -67,7 +68,8 @@
       (not (isinstance orphans bool))
         (WarmMarkUnreadable :detail "orphanForks の欄が真偽でない")
       True
-        (WarmChildMark :threads threads :vm-live (tuple vm-live) :services services :orphans orphans))
+        (WarmChildMark :threads threads :vm-live (tuple vm-live) :services services :orphans orphans
+                       :pid (if (and (isinstance pid int) (not (isinstance pid bool)) (> pid 0)) pid None)))
     (except [error [ValueError AttributeError]]
       (WarmMarkUnreadable :detail (.format "JSON でない: {}" (. (type error) __name__))))))
 
@@ -110,6 +112,16 @@
           (WarmChildView :key key :pid answer.pid :started-ms now))))
 
 
+(defk ready-size [mark]
+  {:pre [(: mark (| WarmChildMark WarmMarkUnreadable))] :post [(: % (| int None))] :tags {:context "worker" :role "protocol"}}
+  "待ちの子 1 本の大きさを準備完了の時に測るため(判断が jobs の層の空きと比べる — warm_rules の warm-child-roomless): 印を書いた
+   process(印の pid)の /proc/<pid>/status の VmRSS を読む。印に pid が無い・読めない・欄が無ければ None(判断は見積もりで数える)。"
+  (when (or (not (isinstance mark WarmChildMark)) (is mark.pid None))
+    (return None))
+  (<- text (ReadText (.format "/proc/{}/status" mark.pid)))
+  (if (isinstance text FileFailed) None (! (vm-rss-bytes text))))
+
+
 (defk observed-warm-child [settings view]
   {:pre [(: settings WarmSettings) (: view WarmChildView)] :post [(: % WarmChildView)] :tags {:context "worker" :role "protocol"}}
   "待ちの子 1 つの今の観測を作るため: 終わりを観測した子はそのまま・走っている子は終わりを問い、終わっていれば訳(止めた訳か出力の
@@ -132,7 +144,8 @@
                       (if (isinstance text FileFailed)
                           view
                           (do (<- mark (| WarmChildMark WarmMarkUnreadable) (ready-mark-of text))
-                              (replace view :mark mark)))))))))
+                              (<- size (| int None) (ready-size mark))
+                              (replace view :mark mark :size-bytes (if (is size None) view.size-bytes size))))))))))
 
 
 (defhandler warm-host [#^ WarmSettings settings]
@@ -141,8 +154,11 @@
   (session var table {})
   (StartWarmChild [key launch]
     (<- started WarmChildView (start-warm-child settings key launch))
-    ;; 同じ root の前の子が起動を断っていれば、続けた回数を引き継ぐ(数えの定義点は warm_rules の refusals-after)。
-    (:= table (| table {key (replace started :refusals (refusals-after (.get table key)))}))
+    ;; 同じ root の前の子が起動を断っていれば、続けた回数を引き継ぐ(数えの定義点は warm_rules の refusals-after)。前の子が準備完了の
+    ;; 時に測った大きさも引き継ぐ(判断が jobs の層の空きと比べる — 次の子が測るまで)。
+    (val previous (.get table key))
+    (:= table (| table {key (replace started :refusals (refusals-after previous)
+                                     :size-bytes (if (is previous None) None previous.size-bytes))}))
     (resume None))
   (StopWarmChild [key stage reason refused]
     ;; 待ちの子の group へだけ送る(分けた子 A は別の session — 走っている task に届かない・条 WC2)。止めた訳は観測の detail に残す。

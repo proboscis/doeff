@@ -54,16 +54,22 @@
 
 
 (defn #^ WarmStart warm-start [#^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy #^ frozenset warm-keys]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
-  "宣言の job を起こす道を 1 か所で決めるため(頭の註): 分けうる job でなければ SHIM。task は待ちの子が準備済みなら FORK・それまで WAIT
-   (断りの上限は phase-of が env-failed で終える)。service は待ちの子が断りの上限に届いていれば SHIM・準備済みなら印が service を受けると
-   名乗る時だけ FORK(名乗らない版は SHIM)・それまで WAIT。"
+  "宣言の job を起こす道を 1 か所で決めるため(頭の註): 分けうる job でなければ SHIM。task は待ちの子が準備済みなら FORK・待ちの子が
+   jobs の層に入らない(warm-child-roomless)か、層の OOM kill で落ちて断りの上限に届いた(warm-child-killed-out)root では SHIM(冷えた道 —
+   入らない待ちの子を待たない)・それまで WAIT(ほかの断りの上限は phase-of が env-failed で終える)。service は待ちの子が断りの上限に届いて
+   いるか jobs の層に入らなければ SHIM・準備済みなら印が service を受けると名乗る時だけ FORK(名乗らない版は SHIM)・それまで WAIT。"
   (if (not (fork-candidate spec policy warm-keys))
       WarmStart.SHIM
       (do
-        (setv view (warm-child-of world (warm-key-of spec)))
+        (setv key (warm-key-of spec)
+              view (warm-child-of world key))
         (cond
-          (forks-from-warm-child spec) (if (warm-child-ready view) WarmStart.FORK WarmStart.WAIT)
+          (forks-from-warm-child spec) (cond (warm-child-ready view) WarmStart.FORK
+                                             (or (warm-child-roomless key view world policy) (warm-child-killed-out view policy))
+                                               WarmStart.SHIM
+                                             True WarmStart.WAIT)
           (warm-child-refused view policy) WarmStart.SHIM
+          (warm-child-roomless key view world policy) WarmStart.SHIM
           ;; worker より長く生きる service(outlives-worker)は、頼みの orphan-seconds を受けると名乗る版の待ちの子にだけ頼む。
           (warm-child-ready view) (if (and view.mark.services (or view.mark.orphans (not (outlives-worker spec))))
                                       WarmStart.FORK
@@ -98,10 +104,21 @@
        (not (and (is-not view.mark None) (warm-mark-clean view.mark)))))
 
 
+;; SIGKILL で終わった子の終わりの code: 子 process の答えは負の signal の番号(-9)。uv が python の子の signal の終わりを 128 + 番号の
+;; 終了 code で返す版も同じに読む(待ちの子の pid は uv)。
+(val KILLED-CODES (frozenset #(-9 137)))
+
+
+(defn #^ bool ended-killed [#^ WarmChildView view]  ; defk にできない: 純粋な判断の ended-refusing・warm-child-killed-out(Program の外の関数)が呼ぶ
+  "待ちの子が、worker が止めていないのに SIGKILL で終わったか(jobs の層の memory の上限に当たった kernel の OOM kill — 準備完了の後の子
+   も。2026-11-06 の k3s-0〜2 で、入らない待ちの子が準備完了の後に落ち、30 秒ごとに起こし直された)。"
+  (and (in view.exit-code KILLED-CODES) (is view.stop None) (not view.fork-refused)))
+
+
 (defn #^ bool ended-refusing [#^ WarmChildView view]  ; defk にできない: 純粋な判断の refusals-after・warm-child-refused(Program の外の関数)が呼ぶ
   "待ちの子が断って終わったか(断りの数えの 1 か所): 起動を断った(ended-before-ready)か、task を分けるのを断ったので worker が止め、
-   終わりを観測した(fork-refused)。"
-  (or (ended-before-ready view) (and (is-not view.exit-code None) view.fork-refused)))
+   終わりを観測した(fork-refused)か、worker が止めていないのに SIGKILL で終わった(ended-killed — 起こし直しと上限は起動の断りと同じ道)。"
+  (or (ended-before-ready view) (and (is-not view.exit-code None) view.fork-refused) (ended-killed view)))
 
 
 (defn #^ int refusals-after [#^ (| WarmChildView None) previous]  ; defk にできない: 待ちの子の宿(warm_host・sim の宿)の StartWarmChild の答え手が呼ぶ
@@ -116,6 +133,61 @@
    WorkerPolicy.warm-refusal-limit に届いた。届いたら起こし直さず、その root から分かれる task を env-failed で終える(断りが決定的なら
    起こし直しても同じで、上限が無いと task は PREPARING のまま worker の枠を取り続けた — 2026-10-10)。"
   (and (is-not view None) (ended-refusing view) (>= (+ view.refusals 1) policy.warm-refusal-limit)))
+
+
+(defn #^ bool warm-child-killed-out [#^ (| WarmChildView None) view #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の warm-start・phase-of が呼ぶ
+  "待ちの子が断りの上限に、SIGKILL の終わり(ended-killed — jobs の層の OOM kill)で届いたか。起こし直さない事は他の断りと同じだが、
+   root の中身の断りではないので、その root から分かれる task を env-failed で終えず、入れ物 shim の冷えた道で起こす(warm-start)。"
+  (and (warm-child-refused view policy) (ended-killed view)))
+
+
+(defn #^ int warm-child-size [#^ (| WarmChildView None) view #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の warm-room-of・warm-child-roomless が呼ぶ
+  "root の待ちの子 1 本の大きさ(byte): その root で準備完了の時に測った RSS(WarmChildView.size-bytes)、まだ測っていなければ
+   WorkerPolicy.warm-child-size-bytes の見積もり。"
+  (if (and (is-not view None) (is-not view.size-bytes None)) view.size-bytes policy.warm-child-size-bytes))
+
+
+(defn #^ (| int None) warm-room-of [#^ str key #^ WorldView world #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の warm-child-roomless が呼ぶ
+  "root のキー key の待ちの子に使える jobs の層の空き(byte — None = 空きで縛らない・WorldView.jobs-room): 見張りの読んだ空きから、
+   ほかの root の起こし中の待ちの子(走っていて、止めておらず、まだ準備済みでない — 見張りの読みにまだ全部は載っていない)の大きさを
+   引く。準備済みの子は層の使いに載っているので引かない。"
+  (if (is world.jobs-room None)
+      None
+      (- world.jobs-room
+         (sum (gfor view world.warm-children
+                    :if (and (!= view.key key) (is view.exit-code None) (is view.stop None) (not (warm-child-ready view)))
+                    (warm-child-size view policy))))))
+
+
+(defn #^ bool warm-child-roomless [#^ str key #^ (| WarmChildView None) view #^ WorldView world #^ WorkerPolicy policy #^ int [taken 0]]  ; defk にできない: 純粋な判断の warm-start・phase-of が呼ぶ
+  "root のキー key の待ちの子を起こすなら jobs の層に入らないか(起こす前の判じの 1 か所 — 判断 warm-child-step と道の warm-start が読む):
+   今の子が走っておらず(起こしていない・終わった)、その root の待ちの子 1 本の大きさ(warm-child-size)が使える空き(warm-room-of から、
+   同じ拍に先に起こした待ちの子の大きさ taken を引いた値)を越える。入らない待ちの子を起こすと、層の上限に当たって kernel の OOM kill が
+   層でいちばん大きい process = その待ちの子を落とし、起こし直しの輪になる(2026-11-06 の k3s-0〜2)。空きで縛らない層(None)では偽。"
+  (setv room (warm-room-of key world policy))
+  (and (is-not room None)
+       (or (is view None) (is-not view.exit-code None))
+       (> (warm-child-size view policy) (- room taken))))
+
+
+(defk vm-rss-bytes [text]
+  {:pre [(: text str)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "process の status の中身(/proc/<pid>/status)から、待ちの子 1 本の大きさにする RSS(VmRSS の行・kB)を byte で読むため(宿 warm_host が
+   準備完了の時に読む)。行が無い・数でなければ None。"
+  (var found None)
+  (for [line (.splitlines text)]
+    (val parts (.split line))
+    (when (and (= (len parts) 3) (= (get parts 0) "VmRSS:") (.isdigit (get parts 1)) (= (get parts 2) "kB"))
+      (:= found (* (int (get parts 1)) 1024))))
+  found)
+
+
+(defk room-shortage [key view world policy]
+  {:pre [(: key str) (: view (| WarmChildView None)) (: world WorldView) (: policy WorkerPolicy)] :post [(: % str)]
+   :tags {:context "worker" :role "judgment"}}
+  "jobs の層に入らない待ちの子の訳(状態の行の理由 — 起こさない待ちの子の root の task)を綴るため。"
+  (.format "no-jobs-room: jobs の層の空き {} MiB に待ちの子 {} MiB が入らない — 待ちの子を起こさず冷えた道で起こす"
+           (// (or (warm-room-of key world policy) 0) (* 1024 1024)) (// (warm-child-size view policy) (* 1024 1024))))
 
 
 (defn #^ EnvFailure warm-refusal-failure [#^ WarmChildView view]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ

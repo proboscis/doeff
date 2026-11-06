@@ -12,7 +12,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_cluster [ObserveWorld]
         doeff_cluster._worker.intent.worker_model [EnvDisk])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills ObservePrograms])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills ObserveJobsRoom ObservePrograms])
 (import doeff_cluster [local-host])
 (import doeff_cluster._worker.protocol.leaving_mark [leaving-mark-written])
 (import doeff_cluster [leaving-observer])
@@ -33,6 +33,7 @@
   (ObserveWarmChildren [] (resume #()))
   (ObserveMemoryTight [] (resume False))
   (ObserveMemoryKills [] (resume (frozenset)))
+  (ObserveJobsRoom [] (resume None))
   (ObservePrograms [] (resume #())))
 
 

@@ -64,6 +64,12 @@
    見張りに続けて止められた常駐の job の起こし直しを止める(WorkerPolicy.memory-kill-limit)。")
 
 
+(defclass [(dataclass :frozen True)] ObserveJobsRoom [EffectBase]
+  "jobs の層の今の空き(byte・負もありうる — WorldView.jobs-room。None = 層が無い・見張りが上限を掛けない・まだ読めていない)。世界の
+   観測のまとめ(local-host)が、機体の memory の見張りの観測の答え手(worker/protocol/memory_observer)へ問う。判断は、入らない待ちの子を
+   起こさない(warm_rules の warm-child-roomless)。")
+
+
 (defclass [(dataclass :frozen True)] ObservePrograms [(get EffectBase (get tuple #(ProgramGap ...)))]
   "宣言の job のうち、Program の file が手元に無い物(ProgramGap の tuple — WorldView.program-gaps)。世界の観測のまとめ(local-host)が、
    Program の cache のただ 1 つの書き手である coordinator への口(worker/protocol/coordinator_link)へ問う。")
