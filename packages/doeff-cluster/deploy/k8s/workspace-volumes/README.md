@@ -203,6 +203,13 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 - 束は backup より先に作る: handler は volume を作る時(空で作る時も戻す時も)と、冷やす手順で Snapshot と Backup を作る前に束を作る。
   Longhorn は Backup の完了に、その volume の束が在れば束 1 本の同期を、無ければ BackupTarget の全体の同期を頼む。backup の先にまだ何も
   無い名の束は、束ごとの同期が backup の list を NotFound = 空と読み、volume.cfg が無いので何も書かずに戻る(束を消さない・誤りにしない)。
+- 束を中身の無いまま置かない: 全体の同期は、bucket に dir の無い名の束を CR だけ消す(backup_target_controller.go の
+  cleanupBackupVolumeNotExistOnBackupTarget — 年齢も volume の有無も見ない。2026-11-05T20:58Z に 70 本)。消された volume の次の毎時の
+  backup の完了はまた全体の同期を頼み、その同期がまた中身の無い束を消すので、1 度の全体の同期から連鎖が続く。そこで冷やす回は、機体に
+  付いた volume のうち 1 度も backup の無い物(束が何も指さず、失敗した物の外に Backup が無い)に、束を確かめてから最初の Snapshot と
+  Backup `<名>-first-<刻>` を取る(完了は待たない — Longhorn の backupstore は backup の初めに lock と volume.cfg を書くので、完了の前から
+  bucket の一覧に載る)。全体の同期に消された束も同じ回で作り直す。外れた volume は毎時の backup を受けない(Longhorn の設定
+  allow-recurring-job-while-volume-detached が false)ので、束が消されても冷やす手順が backup の前に作り直し、連鎖にならない。
 - BackupTarget の全体の同期は止めてある(backup.yaml の pollInterval 0 — 引き金の一覧と 0 の扱いは backup.yaml の注)。全体の同期は bucket の
   全部の束を list し、bucket の目録を持つ garage の node(2026-11 は g1・g5)を 30 秒ほど埋めて /health と /metrics を 1.5〜6 秒止める。残る
   引き金は人の操作(credential の Secret の変更・BackupTarget の URL・Secret・pollInterval の変更・UI の同期の釦)だけで、その時の 1 回の
