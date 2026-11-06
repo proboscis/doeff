@@ -470,12 +470,14 @@
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; 走らせ直しを名乗った task(2026-11-04): 担い手が死ぬと、同じ key の次の試行が次の担い手で走り、結末は次の試行の値。知らせ先へ試行が変わった
   ;; 行が届く。担い手が起き直して次の試行が走る順は test_detached_runners.hy の筋書き。lease が生死の窓より短くても、消えた担い手へ次の試行を置かない。
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-rerun" :lease-seconds rig.lease :notify "l:c-a" :rerun True
+  ;; 知らせ先は自分だけの頭 r: — 筋書きの後も task は待ちの行に残り、後で lost で終わった行を、served の rig の盤を分ける
+  ;; outbox-tells-a-lost-task の頭 l: の出口へ積まないため。
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-rerun" :lease-seconds rig.lease :notify "r:c-a" :rerun True
                             :memory-mib 1024))
   (<- (await-observed rig "k-rerun" held-or-none "担い手の task の起こし"))
   (<- lost int (KillWorker RUNNER))
   (assert (= lost 1))
-  (<- told (AwaitDetachedOutbox "l:" (* rig.lease 8) :kinds #(OUTBOX-RERAN)))
+  (<- told (AwaitDetachedOutbox "r:" (* rig.lease 8) :kinds #(OUTBOX-RERAN)))
   (assert (= (lfor e told.entries #(e.key e.kind)) [#("k-rerun" OUTBOX-RERAN)]) told)
   (<- waiting (AwaitDetached "k-rerun" :timeout-seconds 0.0))
   (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)

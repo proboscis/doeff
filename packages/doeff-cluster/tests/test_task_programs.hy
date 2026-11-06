@@ -101,7 +101,9 @@
       (assert (= (get refused 1) 400) #(method extra refused))
       (assert (in word (get refused 2 "error")) #(method extra refused))
       (assert (= (get refused 0) state) #(method extra)))
-    (<- accepted tuple (call state method path (| base {"program" sha}) 10))
+    ;; PUT /detached は memory の要りも名乗る(2026-11-02 から必須 — POST /tasks に名乗る口は無い)。
+    (val need (if (= method "PUT") {"memoryMiB" 1024} {}))
+    (<- accepted tuple (call state method path (| base {"program" sha} need) 10))
     (assert (= (get accepted 1) 200) #(method accepted))
     (val row (next (gfor t (.rows (. (get accepted 0) tasks)) t)))
     (assert (= row.program sha) row)
