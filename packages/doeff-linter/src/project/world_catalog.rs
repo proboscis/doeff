@@ -1,7 +1,9 @@
-//! Catalog of doeff's real-I/O handlers (`data/world_handlers.json`).
+//! Catalog of doeff's real-I/O handlers (`data/world_handlers.json`), plus the catalogs a using repo adds.
 //!
-//! Which handlers touch the outside world is a fact about doeff, so it is not written per user repo in architecture.hy but kept in one place on the doeff side
-//! (the same idea as the raw-I/O catalog doeff-indexer `data/raw_side_effects.json`). The linter:
+//! Which handlers touch the outside world is a fact about the package that defines them, so it is not written per user repo in architecture.hy but kept in one
+//! place next to that package (the same idea as the raw-I/O catalog doeff-indexer `data/raw_side_effects.json`). doeff's own handlers are in the bundled catalog;
+//! handlers of packages outside doeff are in a catalog file kept by the package's repo, which a using repo names in `[tool.doeff-linter] world_catalogs`
+//! (paths from the config file's dir — read on top of the bundled catalog, `WorldCatalog::with_repo_catalogs`). The linter:
 //!   * treats every handler in the catalog as a counterpart of DOEFF131 (naming outside the roster) and DOEFF133 (kinds of tests).
 //!   * allows `:wraps` of `:world-handlers` only for handlers in the catalog (otherwise it is a configuration error).
 //!   * matches the catalog's touch targets (`touches`) against `:edge-touches` in DOEFF133.
@@ -54,7 +56,7 @@ impl CatalogHandler {
 }
 
 /// The catalog (fully qualified name -> handler).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorldCatalog {
     pub handlers: BTreeMap<String, CatalogHandler>,
 }
@@ -75,31 +77,67 @@ impl WorldCatalog {
 
     /// Turns the JSON contents into a catalog (elements that cannot be read become a list of reasons).
     pub fn parse(text: &str) -> Result<WorldCatalog, Vec<String>> {
-        let file: CatalogFile = serde_json::from_str(text).map_err(|e| vec![format!("cannot read world_handlers.json: {}", e)])?;
+        WorldCatalog::parse_named(text, "world_handlers.json")
+    }
+
+    /// Turns the JSON contents of the file `name` into a catalog (the reasons name the file).
+    fn parse_named(text: &str, name: &str) -> Result<WorldCatalog, Vec<String>> {
+        let file: CatalogFile = serde_json::from_str(text).map_err(|e| vec![format!("cannot read {}: {}", name, e)])?;
         let mut problems = Vec::new();
         let mut handlers = BTreeMap::new();
         for entry in file.handlers {
             let Some(definition) = DefinitionRef::parse(&entry.handler) else {
-                problems.push(format!("world_handlers.json: {} is not a \"module.path:name\" spelling", entry.handler));
+                problems.push(format!("{}: {} is not a \"module.path:name\" spelling", name, entry.handler));
                 continue;
             };
             let mut touches = Vec::new();
             for word in &entry.touches {
                 match WorldTouch::parse(word) {
                     Some(touch) if !touches.contains(&touch) => touches.push(touch),
-                    Some(_) => problems.push(format!("world_handlers.json: touches of {} lists {} twice", entry.handler, word)),
-                    None => problems.push(format!("world_handlers.json: {} in touches of {} is not an allowed word", word, entry.handler)),
+                    Some(_) => problems.push(format!("{}: touches of {} lists {} twice", name, entry.handler, word)),
+                    None => problems.push(format!("{}: {} in touches of {} is not an allowed word", name, word, entry.handler)),
                 }
             }
             if touches.is_empty() {
-                problems.push(format!("world_handlers.json: {} has no touches", entry.handler));
+                problems.push(format!("{}: {} has no touches", name, entry.handler));
             }
             if handlers.insert(definition.target(), CatalogHandler { definition, touches, counted: entry.counted }).is_some() {
-                problems.push(format!("world_handlers.json: {} is listed twice", entry.handler));
+                problems.push(format!("{}: {} is listed twice", name, entry.handler));
             }
         }
         if problems.is_empty() {
             Ok(WorldCatalog { handlers })
+        } else {
+            Err(problems)
+        }
+    }
+
+    /// The bundled catalog with the repo's catalog files laid on top (`[tool.doeff-linter] world_catalogs` — the files in the order written).
+    /// A file that cannot be read, or a row that cannot be read, is a reason. A row already in the bundled catalog or an earlier file is not taken again
+    /// (the earlier row stays) — so a package's repo can carry its rows while doeff still bundles them, and doeff can drop them afterwards without a gap.
+    pub fn with_repo_catalogs(paths: &[std::path::PathBuf]) -> Result<WorldCatalog, Vec<String>> {
+        let mut catalog = WorldCatalog::bundled().clone();
+        let mut problems = Vec::new();
+        for path in paths {
+            let name = path.display().to_string();
+            let text = match std::fs::read_to_string(path) {
+                Ok(text) => text,
+                Err(error) => {
+                    problems.push(format!("cannot read the repo's catalog of real I/O handlers {} (world_catalogs): {}", name, error));
+                    continue;
+                }
+            };
+            match WorldCatalog::parse_named(&text, &name) {
+                Ok(read) => {
+                    for (target, handler) in read.handlers {
+                        catalog.handlers.entry(target).or_insert(handler);
+                    }
+                }
+                Err(reasons) => problems.extend(reasons),
+            }
+        }
+        if problems.is_empty() {
+            Ok(catalog)
         } else {
             Err(problems)
         }
@@ -218,6 +256,32 @@ mod tests {
             })
             .collect();
         assert!(missing.is_empty(), "the relocation module remains but the catalog has no row for the old spelling:\n{}", missing.join("\n"));
+    }
+
+    /// A repo's catalog file is laid on top of the bundled catalog: its rows are added, a row the bundled catalog already has stays the bundled row
+    /// (a package's repo can carry its rows before doeff drops them), and a file that cannot be read or a row that cannot be read is a reason naming the file.
+    #[test]
+    fn repo_catalogs_are_laid_on_the_bundled_catalog() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let agents = dir.path().join("agents.json");
+        std::fs::write(
+            &agents,
+            r#"{"handlers": [
+                {"handler": "pkg_agents:agent-handler", "touches": ["process"], "why": "w"},
+                {"handler": "doeff_core_effects.os_file:os-file-handler", "touches": ["clock"], "why": "w"}]}"#,
+        )
+        .unwrap();
+        let catalog = WorldCatalog::with_repo_catalogs(&[agents.clone()]).unwrap_or_else(|problems| panic!("{}", problems.join("\n")));
+        assert_eq!(catalog.handlers["pkg_agents.agent_handler"].touches, vec![WorldTouch::Process]);
+        assert_eq!(catalog.handlers["doeff_core_effects.os_file.os_file_handler"], WorldCatalog::bundled().handlers["doeff_core_effects.os_file.os_file_handler"]);
+        assert_eq!(catalog.handlers.len(), WorldCatalog::bundled().handlers.len() + 1);
+
+        let bad = dir.path().join("bad.json");
+        std::fs::write(&bad, r#"{"handlers": [{"handler": "nocolon", "touches": ["file"], "why": "w"}]}"#).unwrap();
+        let missing = dir.path().join("missing.json");
+        let problems = WorldCatalog::with_repo_catalogs(&[bad.clone(), missing.clone()]).unwrap_err().join("\n");
+        assert!(problems.contains(&format!("{}: nocolon is not", bad.display())), "{}", problems);
+        assert!(problems.contains(&format!("cannot read the repo's catalog of real I/O handlers {}", missing.display())), "{}", problems);
     }
 
     #[test]

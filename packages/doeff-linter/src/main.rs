@@ -132,7 +132,8 @@ struct Args {
     #[arg(long)]
     list_rules: bool,
 
-    /// Prints as JSON, and exits, the split of rules to apply to the changed paths (path arguments; from the repo root) -- {"quick", "whole", "declaration_changed"}.
+    /// Prints as JSON, and exits, the split of rules to apply to the changed paths (path arguments; from the repo root) -- {"quick", "whole", "declaration_changed",
+    /// "baseline_overlay", "world_catalogs" (the repo's catalogs of real I/O handlers as absolute paths -- pass each as --world-catalog to a run on a tree placed elsewhere)}.
     /// The single judgment shared with the commit hook (a change to a declaration file also moves rules decided by one file into whole),
     /// the interface the merge gate reads
     #[arg(long)]
@@ -155,6 +156,12 @@ struct Args {
     /// with the current declarations (config file and architecture.hy) (for a commit that starts to fire a rule)
     #[arg(long)]
     commit_message: Option<PathBuf>,
+
+    /// The repo's catalog of real I/O handlers read on top of doeff's bundled catalog (may be repeated) -- replaces the config's world_catalogs.
+    /// The commit hook and the merge gate pass the tip's catalogs (absolute paths, `--split-rules` prints them) to the run that measures a tree placed outside the
+    /// checkout, where the config's relative paths do not reach the package's repo
+    #[arg(long, value_name = "PATH")]
+    world_catalog: Vec<PathBuf>,
 
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
@@ -459,12 +466,19 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         None => Some(root.join("architecture.hy")).filter(|p| p.is_file()),
     };
     let declaration = architecture_path.clone();
-    let architecture = match architecture_path {
+    let mut architecture = match architecture_path {
         Some(path) => Some(
             project::architecture::Architecture::load(&path, &root).map_err(|problems| format!("architecture.hy errors:\n  {}", problems.join("\n  ")))?,
         ),
         None => None,
     };
+    // The repo's catalogs of real I/O handlers (--world-catalog wins over the config's world_catalogs, which are from the config file's dir).
+    let world_catalogs = config::repo_world_catalogs(&args.world_catalog, config.as_ref(), config_dir.as_deref().unwrap_or(&root));
+    if let (Some(architecture), false) = (architecture.as_mut(), world_catalogs.is_empty()) {
+        let catalog = project::world_catalog::WorldCatalog::with_repo_catalogs(&world_catalogs)
+            .map_err(|problems| format!("config errors:\n  {}", problems.join("\n  ")))?;
+        architecture.repo_catalog = Some(std::sync::Arc::new(catalog));
+    }
     // The population query (`population_of`) re-reads the same declaration with the declaration's dir as the root. When the way of reading is the same, pass what was read so it is not read twice.
     if let (Some(path), Some(architecture)) = (&declaration, &architecture) {
         if path.parent() == Some(root.as_path()) {
@@ -773,6 +787,9 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     };
     let config = loaded.as_ref().map(|l| (&l.config, l.path.canonicalize().unwrap_or_else(|_| l.path.clone())));
     let mut options = doeff_linter::commit_hook::CommitHookOptions::new(root, config, &args.enable, &args.disable, args.commit_hook_timeout_s, linter);
+    if !args.world_catalog.is_empty() {
+        options.world_catalogs = args.world_catalog.iter().map(|path| cwd.join(path)).collect();
+    }
     if let Some(file) = &args.commit_message {
         let message = match std::fs::read_to_string(file) {
             Ok(message) => message,
@@ -788,7 +805,13 @@ fn run_commit_hook(args: &Args) -> ExitCode {
         let changed_declaration = doeff_linter::commit_hook::touches_declaration(&changed, &options.declarations);
         println!(
             "{}",
-            serde_json::json!({ "quick": split.quick, "whole": split.whole, "declaration_changed": changed_declaration, "baseline_overlay": options.overlay })
+            serde_json::json!({
+                "quick": split.quick,
+                "whole": split.whole,
+                "declaration_changed": changed_declaration,
+                "baseline_overlay": options.overlay,
+                "world_catalogs": options.world_catalogs,
+            })
         );
         return ExitCode::SUCCESS;
     }

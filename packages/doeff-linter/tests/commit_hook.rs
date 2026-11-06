@@ -111,11 +111,53 @@ fn a_wraps_outside_the_catalog_is_named_and_stops() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(2), "{}", stderr);
     assert!(output.stdout.is_empty(), "a configuration error must not produce a report of 0 hits: {}", String::from_utf8_lossy(&output.stdout));
-    assert!(stderr.contains(&format!(":wraps {} is not in doeff's catalog of real I/O handlers", stale)), "{}", stderr);
+    assert!(stderr.contains(&format!(":wraps {} is not in the catalog of real I/O handlers", stale)), "{}", stderr);
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 2, "{}", stderr);
     assert!(stderr.contains(stale), "the hook does not name the wrong :wraps: {}", stderr);
+}
+
+/// A repo that names the catalog of a package outside doeff in world_catalogs (a path to the package's repo next to it, `../<repo>/…`) commits as before:
+/// the HEAD tree is placed under the fact cache's root, where that relative path does not reach the package's repo, so the hook passes the tip's catalogs
+/// to both children as absolute paths (without it the HEAD tree's run is a config error and every commit stops with 2). `--split-rules` prints the same paths
+/// for the merge gate.
+#[test]
+fn a_repo_catalog_next_to_the_repo_reaches_the_head_tree() {
+    let outer = tempfile::TempDir::new().unwrap();
+    let root = outer.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    write(
+        outer.path(),
+        "agent-tools/world_handlers.json",
+        r#"{"handlers": [{"handler": "pkg_agents:agent-handler", "touches": ["process"], "why": "starts the agent as a child process"}]}"#,
+    );
+    write(&root, "pyproject.toml", &PYPROJECT.replacen("[tool.doeff-linter]\n", "[tool.doeff-linter]\nworld_catalogs = [\"../agent-tools/world_handlers.json\"]\n", 1));
+    write(&root, "architecture.hy", &ARCHITECTURE.replace("\"doeff_core_effects.os_file:os-file-handler\"", "\"doeff_core_effects.os_file:os-file-handler\" \"pkg_agents:agent-handler\""));
+    write(&root, "app/foundation/host.hy", "(val MODULE-TAGS {:context \"shared\" :role \"foundation\"})\n(defk with-host [body] body)\n");
+    write(&root, "app/queue/main.hy", "(defk cycle [] 1)\n");
+    write(&root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes [writes]\n  {}\n  \"Fencing clause.\"\n  #())\n", JUDGED));
+    write(&root, "app/queue/tool.py", "import os\n");
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "baseline"]);
+
+    write(&root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(&root, &["add", "app/queue/main.hy"]);
+    let (code, stderr) = hook(&root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .args(["--split-rules", "app/queue/main.hy"])
+        .current_dir(&root)
+        .env_remove("GIT_DIR")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let split: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let named: Vec<std::path::PathBuf> = split["world_catalogs"].as_array().unwrap().iter().map(|p| std::path::PathBuf::from(p.as_str().unwrap())).collect();
+    assert_eq!(named.len(), 1, "{}", split);
+    assert!(named[0].is_absolute() && named[0].is_file(), "{}", split);
 }
 
 /// Failure case (ii): a clean change passes with 0. A new error of a rule applied to staged paths (DOEFF016) stops with 1.

@@ -893,9 +893,21 @@ pub struct Architecture {
     /// Keys this binary does not know (the rest was read without them — reported by DOEFF100).
     #[serde(skip)]
     pub notices: Vec<super::notice::ConfigNotice>,
+    /// The catalog of real I/O handlers with the repo's catalog files laid on top (`[tool.doeff-linter] world_catalogs` — set by the run after reading the
+    /// config). None = only the bundled catalog. The declaration does not read it; it only carries it to the rules that match the declaration against the catalog.
+    #[serde(skip)]
+    pub repo_catalog: Option<std::sync::Arc<super::world_catalog::WorldCatalog>>,
 }
 
 impl Architecture {
+    /// The catalog of real I/O handlers this run matches the declaration against (the bundled catalog plus the repo's catalog files).
+    pub fn world_catalog(&self) -> &super::world_catalog::WorldCatalog {
+        match self.repo_catalog.as_deref() {
+            Some(catalog) => catalog,
+            None => super::world_catalog::WorldCatalog::bundled(),
+        }
+    }
+
     /// The layers of a dependency-target service that a module of layer reader may read (the layer's :dependency-layers, or :open-layers if absent).
     pub fn dependency_layers_for(&self, reader: &str) -> &[String] {
         self.layers
@@ -1264,6 +1276,7 @@ impl<'a> Parser<'a> {
             extensions: None,
             path: path.to_path_buf(),
             notices: Vec::new(),
+            repo_catalog: None,
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
         let mut open_given = false;
