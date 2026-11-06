@@ -454,7 +454,7 @@ def test_the_decoder_imports_no_pydantic_and_decodes_without_it() -> None:
             lane_id: str
             n: int = 0
 
-        Row.__doeff_wire__ = types.SimpleNamespace(names={"lane_id": "laneId", "n": "n"}, unknown="reject")
+        Row.__doeff_wire__ = types.SimpleNamespace(names={"lane_id": "laneId", "n": "n"}, unknown="reject", description=None)
         codec = wire_codec.codec_of(Row)
         assert codec.decode_json('{"laneId":"L","n":2}') == Row(lane_id="L", n=2)
         refused = codec.decode_json('{"laneId":1,"zz":0}')
