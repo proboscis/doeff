@@ -30,8 +30,8 @@ POST_PUBLISH_SECTION = "## Checks after publishing"
 # What the root tag publishes: the packages released under one version — `pip install doeff`
 # installs doeff, doeff-vm and doeff-core-effects, and the `hy` extra adds doeff-hy and
 # doeff-hy-pytest (tests/test_core_install_extras.py). The owner chose this range, the current
-# names and Python 3.11-3.14 (2026-10-16; 3.15 added 2026-10-26); doeff-agents,
-# doeff-time and doeff-indexer left the root release then.
+# names and Python 3.11-3.14 (2026-10-16; 3.15 added 2026-10-26); doeff-time, doeff-indexer
+# and the package that launches agents left the root release then.
 CORE_RELEASE_PACKAGES = frozenset(
     {"doeff", "doeff-vm", "doeff-core-effects", "doeff-hy", "doeff-hy-pytest"}
 )
@@ -229,7 +229,7 @@ def test_root_tag_release_is_the_core_five() -> None:
 
 
 def test_publish_workflow_builds_and_uploads_only_the_core_five() -> None:
-    """A package outside the core five must not ride along on a root tag (doeff-agents did)."""
+    """A package outside the core five must not ride along on a root tag (an agent package did)."""
     jobs = _workflow_jobs(PUBLISH_WORKFLOW)
     workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     matrix = jobs[PYTHON_DISTS_JOB]["strategy"]["matrix"]["include"]

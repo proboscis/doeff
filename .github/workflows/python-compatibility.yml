@@ -57,8 +57,6 @@ jobs:
       # read doeff-validation), and maturin and pyright, which the build backend and type tests call in subprocesses (versions are the dev
       # ones in uv.lock). doeff-core-effects is installed with the http, http-server and postgres extras because the handler tests read
       # httpx, aiohttp and psycopg (httpx is in the http extra, not a default dependency).
-      # The examples in docs chapter 19 (agent guide) yield doeff-agents effects, so doeff-agents and its dependencies not on PyPI,
-      # doeff-claude-code and doeff-codex, are also installed from the checkout (tests/test_docs_page_examples.py runs the examples).
       # Put the venv bin on PATH so the python, hy and doeff the tests call are this venv's.
       - name: Install the core packages into a fresh venv
         id: install
@@ -69,17 +67,15 @@ jobs:
           uv pip install --python .venv-ci/bin/python -c .venv-ci/tool-pins.txt \
             ./packages/doeff-vm "./packages/doeff-core-effects[http,http-server,postgres]" ./packages/doeff-hy ./packages/doeff-hy-pytest . \
             ./packages/doeff-adr ./packages/doeff-time ./packages/doeff-traverse ./packages/doeff-validation \
-            ./packages/doeff-agents ./packages/doeff-claude-code ./packages/doeff-codex \
             pytest pytest-asyncio pytest-timeout pytest-xdist cloudpickle pyyaml maturin pyright
 
       - name: Verify doeff-vm import
         run: .venv-ci/bin/python -c "import doeff_vm; import doeff_vm.doeff_vm"
 
       # Tests marked semgrep (checking the repo rules with semgrep) are excluded — they check repo rules, not version differences, and
-      # the daily check owns them. Excluded tests = those needing heavy non-core parts (doeff-gemini, doeff-conductor, doeff-cluster, and
-      # the doeff-agents MCP server tests) or development tools (semgrep, pre-commit, doeff-linter), and timing-ratio tests that are
-      # flaky on shared runners. When adding one, write the reason here with it.
-      # tests/test_public_api_known_violations.py imports all 39 packages under packages/ and compares their public names with a known
+      # the daily check owns them. Excluded tests = those needing heavy non-core parts (doeff-gemini, doeff-cluster) or development
+      # tools (semgrep, pre-commit, doeff-linter), and timing-ratio tests that are flaky on shared runners. When adding one, write the reason here with it.
+      # tests/test_public_api_known_violations.py imports all 32 packages under packages/ and compares their public names with a known
       # table — in a venv with only the 5 core packages the non-core dependencies are missing, modules fail to import and names are read
       # textually, so it diverges from the table (the daily and pre-landing checks own it).
       - name: Run tests (doeff and doeff-vm)
@@ -89,11 +85,8 @@ jobs:
             tests packages/doeff-vm/tests packages/doeff-vm-core/tests \
             --ignore=tests/test_llm_multi_provider_handlers.py \
             --ignore=tests/test_public_api_known_violations.py \
-            --ignore=tests/test_mcp_json_type_table.py \
             --ignore=tests/test_lint_entrypoint_wiring.py \
-            --ignore=tests/test_nested_definition_scope.py \
-            --deselect=tests/test_machine_premise.py::test_real_codex_worker_test_is_outside_the_daily_population \
-            --deselect=tests/test_machine_premise.py::test_real_codex_worker_test_names_a_codex_that_does_not_start
+            --ignore=tests/test_nested_definition_scope.py
 
       - name: Run tests (doeff-core-effects)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}

@@ -3149,10 +3149,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             return (yield TailEval(handle_scheduler_effect(current_tid, effect, k)))
         # The scheduler prompt is execution substrate, not a user handler:
         # exactly one lives in a VM. Stack-capture consumers (e.g.
-        # doeff-agents tool tasks) must not reinstall it — a second
+        # MCP tool tasks) must not reinstall it — a second
         # scheduler prompt inside a spawned task re-routes the exceptions
         # of Transfer-resumed continuations into that task's dynamic scope
-        # (2026-07-07 exit-0 incident; see doeff_agents mcp_server_loop).
+        # (2026-07-07 exit-0 incident in an MCP server loop).
         raw_handler.__doeff_scheduler_prompt__ = True
         return _program_handler(raw_handler)
 

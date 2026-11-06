@@ -871,7 +871,7 @@ dev = [
     "doeff-openrouter",
     "doeff-vm",
     "doeff-traverse",
-    # Came in through doeff-conductor before it left the workspace; listed so their tests keep running in the dev environment.
+    # Listed directly so their tests run in the dev environment (no other dev dependency pulls them in).
     "doeff-flow",
     "doeff-git",
     "doeff-time",

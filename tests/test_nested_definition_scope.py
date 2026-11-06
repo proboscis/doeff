@@ -1,9 +1,8 @@
 """Check that definition macros written nested inside a function body (defk, defp, deftest, defmcp-tool, defeffect, deff and
 every other def-prefixed macro emitted by doeff_hy.macros, plus defrecord, defwire and defenum from doeff_hy.record)
 do not create local names in the enclosing function (every macro is counted via samples; class bodies and the type-check projection are checked too).
-Definition macros emitted by their owning packages (defworkflow in doeff_conductor.macros, defsystem in doeff_cluster.macros)
-get the same checks in packages/doeff-conductor/tests/test_nested_defworkflow_scope.py and
-packages/doeff-cluster/tests/test_nested_defsystem_scope.py (split out on 2026-11-04 because root tests do not
+Definition macros emitted by their owning packages (defsystem in doeff_cluster.macros)
+get the same checks in packages/doeff-cluster/tests/test_nested_defsystem_scope.py (split out on 2026-11-04 because root tests do not
 import internal packages).
 
 The runtime expansion of defk, defp and deftest imports helpers such as `_doeff_do`, `_guard_statement_value` and `_doeff_effect_base` at the head

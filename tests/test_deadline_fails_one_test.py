@@ -2,7 +2,7 @@
 
 pyproject.toml runs pytest-timeout with the signal method, so a test over its deadline fails
 alone and the tests after it still run.  The thread method ended the whole process instead:
-on 2026-09-25 and 09-26 the daily run of the doeff-agents suite stopped at about 6% on one
+on 2026-09-25 and 09-26 the daily run of a package suite stopped at about 6% on one
 slow test, and the other 94% was never measured.
 
 A signal cannot reach code stuck inside a C extension, so the root conftest's watchdog is

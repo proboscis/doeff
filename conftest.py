@@ -207,7 +207,7 @@ with suppress(OSError, ValueError):
 #
 # pytest-timeout runs with the signal method (pyproject.toml): a test over its
 # deadline fails as one test and the run goes on.  (The thread method ended the
-# whole process instead — on 2026-09-25 and 09-26 the doeff-agents suite
+# whole process instead — on 2026-09-25 and 09-26 a package suite
 # stopped at about 6% on one slow test and the rest went unmeasured.)  A signal
 # cannot interrupt code stuck inside a C extension (like the Rust VM), so this
 # watchdog is the last resort.

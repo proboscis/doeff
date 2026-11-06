@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn a_test_file_in_a_directory_without_init_is_not_flagged() {
         let root = tempfile::tempdir().unwrap();
-        let suite = make_dir(&root, "packages/doeff-agents/conformance", false);
+        let suite = make_dir(&root, "packages/doeff-example/conformance", false);
         assert_eq!(check_code(TEST_CODE, &format!("{suite}/test_s1.py")).len(), 0);
     }
 

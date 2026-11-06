@@ -23,11 +23,6 @@
 # There is no way to disable the rule with an inline annotation (nosemgrep): even a single such line in the rule's scope turns the registry test red.
 
 [tests]
-"packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py" = "Real-agent e2e support: waits, with a deadline, for a real doeff-agentd process to start (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/agentd_result_retry_e2e_support.py" = "E2E support that runs a fake agent in a real tmux pane: waits, with a deadline, for a real doeff-agentd process to start (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/test_agentd_byte_faithful_transport_e2e.py" = "Waits, with a deadline, for a real doeff-agentd process to start and for the result frame to appear in a real tmux pane (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/test_l2_session_algebra.py::test_agent_validation_failure_past_deadline_parks_without_follow_up" = "A result arrives after the node deadline (L-K4-3) that run_agent_task measures with time.monotonic (real wall-clock deadline)"
-"packages/doeff-conductor/tests/test_k4_parallel_overlap.py" = "Measures, in elapsed wall-clock time, the overlap of two branches running on real offload threads (L-K4-2)"
 "packages/doeff-cluster/tests/test_job_log_ship.py" = "Waits, with a deadline, for a real child process, the log shipper, and HTTP /livez (real wall-clock time of an external process)"
 "packages/doeff-cluster/tests/test_line_stamp.py::test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers" = "Measures with a wall-clock timeout the asyncio loop heartbeat of a real shim and job process, and the HTTP request answers while the log file is stalled"
 "packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "Another task closes, after real time passes, a wait on a real OS file-watch library"
@@ -52,14 +47,6 @@
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder" = "Resolution of a Race shielded by an external wait on a real thread, and release of the losing side's placeholder"
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_failure_drops_sibling_placeholder" = "Release of the sibling placeholder of a Gather when an external wait on a real thread fails"
 "tests/test_scheduler.py::TestRaceParkedWithoutShield::test_parked_race_still_blocks_for_the_external_completion" = "Even a parked Race (priority=TaskPriority.IDLE) stays blocked waiting for an external completion that a real thread fulfills later (not called a deadlock)"
-"packages/doeff-agents/tests/sessionhost_host_deftests.hy" = "Waits, with a deadline, for a real session host daemon process to become the owner of the lease row (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/sessionhost_substrate_deftests.hy" = "Waits, with a deadline, for the reader of a forked real child process to start and finish (symlink swap race; real wall-clock time of an external process)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_capture_preserves_trailing_space" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_external_seat_visible_to_has_session_but_not_killable" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_identity_survives_agent_name_loss" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_lifecycle_smoke" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
-"packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_send_and_capture_roundtrip" = "Waits in real time for the shell to wake up and draw in a real herdr pane (real wall-clock time of an external process)"
-"packages/doeff-claude-code/tests/stub_cli/claude.hy" = "Stub CLI for claude: an independent script that the test launches as a separate process (does not import pytest); it waits in real time for the thinking seconds and hook seconds to mimic the pacing of the real CLI. doeff's clock does not reach another process"
 "packages/doeff-cluster/tests/careful_rig.hy" = "Test tool: waits, with a deadline via ObserveEnvs, for the end of runtime-environment preparation run by a real git and a fake uv child process (real wall-clock time of an external process)"
 "packages/doeff-cluster/tests/fixtures/sleeper.hy" = "Job body for the worker smoke test: an independent script that the test launches as a separate process (does not import pytest); it keeps writing heartbeats to a file at real-time intervals and waits, with a deadline, for a grandchild in another session to write its pid. Staying alive in real time is its purpose"
 "packages/doeff-cluster/tests/host_rig.hy" = "Test tool: waits, with a deadline via ObserveProcesses, for the end of a job in a real child process (real wall-clock time of an external process)"
@@ -98,4 +85,3 @@
 "packages/doeff-records/tests/test_pg_table_units.hy" = "Waits, with a deadline, for a connection on another thread to start waiting on a real PostgreSQL lock (row lock and advisory lock), and leaves a window in which a write queued behind the stop does not answer (real wall-clock time of an external process and a real thread)"
 
 [suites]
-"packages/doeff-agents/conformance" = "Black-box replacement gate: every test drives a real session host process over a public socket and runs a fake CLI (a separate process) in a real tmux / herdr pane; doeff's clock does not reach another process"

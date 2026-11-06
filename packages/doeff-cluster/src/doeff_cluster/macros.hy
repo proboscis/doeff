@@ -4,7 +4,7 @@
 ;;;   (require doeff-cluster.macros [defsystem])
 ;;;
 ;;; Hy の require は module の path で macro を読むので、根の入口(__init__ の遅延の名)からは出せない。この module は名に _ を
-;;; 付けずに根のすぐ下に置き、R5 の外の境界にする(R14・R31 の doeff_conductor.macros・doeff_domain.macros と同じ)。macro の本体と
+;;; 付けずに根のすぐ下に置き、R5 の外の境界にする(R14・R31 の doeff_domain.macros と同じ)。macro の本体と
 ;;; 形の読みは共有の区画の中(doeff_cluster._shared.entry.macros と _system_form)に在り、この module は defsystem だけを出し直す。
 (require doeff-hy.macros [val])
 (require doeff-cluster._shared.entry.macros [defsystem])

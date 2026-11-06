@@ -112,11 +112,6 @@ _NOT_WALKED = (
 # as tests. When the selection picked files inside a record, a change to a module that file imports turned red as "failed at collection"
 # (blind A of the design review, measured).
 EXCLUDED: dict[str, str] = {
-    "packages/doeff-agents/conformance/": (
-        "A black-box handover gate using real tmux / herdr panes (no real model). Whether tmux is"
-        " usable on the daily host is unmeasured; whether to include it in a population is decided in a separate pass"
-    ),
-    "packages/doeff-agentic/examples/": "Example scripts (run via __main__)",
     "examples/test_llm_agent.py": (
         "An example pytest test that users copy next to the example llm_agent.py and run. tests/test_examples_run.py::test_example_tests_pass_with_only_the_example_files "
         "under the population root (testpaths) runs it daily in a dir outside the repo containing only the .py files of examples/ "

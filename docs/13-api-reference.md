@@ -187,8 +187,8 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 
 | Name | What it is | See |
 |---|---|---|
-| `McpToolDef` | An MCP tool: its name, description, parameters and the `@do` function that runs it. | [MCP Tools](12-mcp-tools.md#mcptooldef) |
-| `McpParamSchema` | The JSON Schema of one MCP tool parameter. | [MCP Tools](12-mcp-tools.md#mcpparamschema) |
+| `McpToolDef` | An MCP tool: its name, description, parameters and the `@do` function that runs it. | [doeff/mcp.py](https://github.com/proboscis/doeff/blob/main/doeff/mcp.py) |
+| `McpParamSchema` | The JSON Schema of one MCP tool parameter. | [doeff/mcp.py](https://github.com/proboscis/doeff/blob/main/doeff/mcp.py) |
 
 ## Core Types
 

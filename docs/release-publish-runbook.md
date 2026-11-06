@@ -23,7 +23,7 @@ After reading this document, a maintainer can:
 | Independently released package | A package not released by the root tag, but by its own per-package tag and release note |
 
 Scope decision: on 2026-10-16 the release scope was set to the core five only, with the current names, supporting
-Python 3.11–3.14. `doeff-agents`, `doeff-time` and `doeff-indexer`, previously released by the root tag, were removed from the root tag by this decision.
+Python 3.11–3.14. `doeff-time`, `doeff-indexer` and the package that launches agents (it has since left this repository), previously released by the root tag, were removed from the root tag by this decision.
 On 2026-10-26, Python 3.15 was added to the supported versions (doeff-vm was moved to PyO3 0.29, which can build for 3.15).
 
 ## Classification of packages
@@ -58,12 +58,9 @@ that package.
 | `doeff-events` | Event effects | `doeff` |
 | `doeff-traverse` | Sequence traversal effects | `doeff-core-effects`, `doeff-time` |
 | `doeff-notify` | Notification effects | `doeff` |
-| `doeff-git` | Git effects (used by the orchestration package) | `doeff` |
+| `doeff-git` | Git effects | `doeff` |
 | `doeff-flow` | Workflow trace package | `doeff` |
 | `doeff-adr` | Executable ADR contract package | `doeff-hy` |
-| `doeff-agents` | Package that launches agents. 0.1.1 and 0.1.2 are on PyPI, both for doeff 0.4 and not working with doeff 0.5. 0.1.2 (2026-10-17, tag `doeff-agents/v0.1.2`) is the same code as 0.1.1 declaring `doeff<0.5`, so an install without a version resolves to the doeff 0.4 set (note in the README). The repo's version is not released for now | `doeff-time`, `doeff-hy`. Its dependencies `doeff-claude-code` and `doeff-codex` are unpublished packages, so a new version cannot be released until they are |
-| `doeff-agentic` | Workflow and session package | `doeff-flow`, `doeff-agents` |
-| `doeff-conductor` | Orchestration package | `doeff-git`, `doeff-agentic`, `doeff-flow` |
 | `doeff-openai` | LLM provider package | `doeff-llm` |
 | `doeff-openrouter` | LLM provider package | `doeff-llm` |
 | `doeff-gemini` | LLM and image provider package | `doeff-llm`, `doeff-image` |
@@ -78,8 +75,6 @@ of the tables above, and the build and metadata checks in the same change.
 
 | Package | Kind | Reason it is not published |
 | --- | --- | --- |
-| `doeff-claude-code` | Agent backend effect package (owns the lifetime of the `claude -p` process) | Created 2026-09-25 (d25172ad). No public install path yet |
-| `doeff-codex` | Agent backend package (owns the lifetime of the `codex app-server` process and reads its stdout lines) | Created 2026-10-10 (3c7c9b87). No public install path yet |
 | `doeff-cluster` | Cluster execution package (coordinator, worker, lease, rollout) | Created 2026-09-25 (eae6a774). No public install path yet |
 | `doeff-records` | Record storage effect package (versioned rows, change and append logs) | Created 2026-09-26 (12f92505). No public install path yet |
 | `doeff-stream` | Runtime package for merging and folding input sources (runs step effects as tasks and feeds their completion back as input) | Created 2026-11-02. No public install path yet |
@@ -87,7 +82,6 @@ of the tables above, and the build and metadata checks in the same change.
 | `doeff-validation` | Package bundling independent checks | Created 2026-09-26 (96b5de54). No public install path yet |
 | `doeff-jev` | Judgment provider package (the TypeSafe Jev handler for `doeff-system-one`) | Created 2026-09-22 (e190a8c6). No public install path yet |
 | `doeff-system-one` | Judgment effect package | Created 2026-09-22 (e190a8c6). No public install path yet |
-| `doeff-claude-judge` | Judgment provider package (answers `doeff-system-one`'s Judge with one run of the Claude Code CLI) | No public install path yet |
 | `doeff-domain` | Domain package for vocabulary cohesion | The E1 package of ADR-DOE-DOMAIN-001 (status proposed). No public install path yet |
 | `doeff-ml-nexus` | Experimental execution adapter | No public install path yet |
 | `doeff-effect-analyzer` | Native analysis tool | A development tool, not part of PyPI's user surface |
@@ -366,11 +360,10 @@ for building only (job `build-doeff-vm`) and uploads the built wheels from its o
 | Matter | Where it is checked |
 | --- | --- |
 | The classification tables; that the publish workflow releases only the core five; the release order; that every upload waits for the same-version check; that the upload jobs are in a shape that can also publish with Trusted Publishing | `tests/test_release_publish_contract.py` |
-| That `doeff-agents` 0.1.1 does not work with doeff 0.5, and that 0.1.2 declared `doeff<0.5` | The README note (0.1.2 was released from a one-off publish.yml on branch `wt/doeff-agents-0.1.2`) |
 | The version of `doeff-vm` and the lower bound of the root `doeff`'s dependency on it | `tests/test_doeff_vm_release_contract.py` |
 | Behaviour of the same-version check | `tools/check_pypi_unpublished.py`, `tests/test_check_pypi_unpublished.py` |
 | The tool that installs the core five into a fresh environment and runs the README examples, and the conventions of those READMEs | `tools/verify_release_install.py`, `tools/readme_examples.py`, `tests/test_readme_examples.py` |
 | That `pip install doeff` installs only 4 of the core, that the README's Python examples pass in that environment, and that the Hy and HTTP usage names the extra to add | `tools/verify_core_install.py` (checks in a fresh venv per Python version; main's CI job `core-only-install` runs it per Python version), `tests/test_verify_core_install.py`, `tests/test_core_install_extras.py` |
 | That PyPI's `doeff` installed without extras into a fresh venv on Linux, macOS and Windows passes the Python examples in the installed version's README (daily) | The workflow `Core install from PyPI` (`.github/workflows/core-install-from-pypi.yml`) runs `tools/verify_core_install.py --pypi latest` (doeff-vm accepted only as a wheel) on 3 OSes and Python 3.11–3.15; `tests/test_verify_core_install.py` |
 | That in an environment with only 4 of the core, users' type checks (pyright, mypy) behave as the type-report probes expect (fixed gaps do not come back), and that the README's Python examples raise no errors at the default strictness | `tools/verify_type_probes.py` (runs the type probes `tests/type_probes/` and the README examples through the uv.lock versions of pyright and mypy; main's CI workflow `Type probes` runs it on 3.11 and 3.14), `tests/test_verify_type_probes.py` |
-| Versions on PyPI (read via PyPI's JSON API on 2026-10-16) | `doeff` 0.4.1, `doeff-vm` 0.2.0, `doeff-core-effects` 0.1.0, `doeff-agents` 0.1.1, `doeff-indexer` 0.1.3. `doeff-hy`, `doeff-hy-pytest` and `doeff-time` are absent |
+| Versions on PyPI (read via PyPI's JSON API on 2026-10-16) | `doeff` 0.4.1, `doeff-vm` 0.2.0, `doeff-core-effects` 0.1.0, `doeff-indexer` 0.1.3. `doeff-hy`, `doeff-hy-pytest` and `doeff-time` are absent |
