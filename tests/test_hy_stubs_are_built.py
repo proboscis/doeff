@@ -96,3 +96,13 @@ def test_the_package_build_runs_the_hook_on_what_the_stubs_depend_on(package: Pa
     probe = [str((package / d / "probe.pyi").relative_to(ROOT)) for d in made.stub_dirs]
     ignored = subprocess.run(["git", "check-ignore", "--no-index", *probe], cwd=ROOT, capture_output=True, text=True, check=False)
     assert ignored.stdout.split() == probe
+
+
+def test_the_worker_turns_the_hook_off_for_the_roots_it_prepares() -> None:
+    # The roots a doeff-cluster worker prepares run programs and are never type-checked; with the hook on, each uv sync there expanded every .hy
+    # (about 100 seconds and four expansion processes for doeff-cluster from a cold cache).
+    from doeff_cluster._shared.core import native_wheel
+
+    hook = (HOOK.read_text(encoding="utf-8").split('STUBS_ENV = "', 1)[1]).split('"', 1)[0]
+    assert hook == native_wheel.STUBS_ENV
+    assert (hook, "off") in {(v.name, v.value) for v in native_wheel.uv_environment("/state", "/cache")}

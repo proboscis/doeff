@@ -40,6 +40,9 @@ UV_DROP = ("UV_*", "PYTHON*", "VIRTUAL_ENV")
 # WHEEL_REPORT_ENV)と同じ。
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
 WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
+# 型の宣言(.pyi)を作る build の hook(tools/doeff_hy_stub_hook.py の STUBS_ENV)を止める env。worker の root は型を検めないので、
+# uv sync の editable の build が .hy を全部展開して宣言を作る時間と memory(doeff-cluster は cache 無しで約 100 秒・展開の子 4 つ)を使わない。
+STUBS_ENV = "DOEFF_HY_STUBS"
 
 
 def current_platform() -> str:
@@ -74,6 +77,7 @@ def uv_environment(state_dir: str, uv_cache: str) -> tuple[UvVariable, ...]:
         UvVariable("UV_PYTHON_INSTALL_DIR", posixpath.join(state_dir, "python")),
         UvVariable("UV_NO_PROGRESS", "1"),
         UvVariable(WHEEL_CACHE_ENV, wheels_root(state_dir)),
+        UvVariable(STUBS_ENV, "off"),
     )
 
 
