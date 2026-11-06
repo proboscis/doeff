@@ -368,7 +368,7 @@
 
 ;; --- Probe hook where the responder answers by itself -----------------------------------------------------------------------
 
-(val PROBE-FAILED "the probe of /peek could not produce an answer")
+(val PROBE-FAILED "probe for /peek could not produce an answer")
 
 
 (defk fixed-probe-answer [status text]

@@ -32,28 +32,28 @@ PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 
 #: Hy modules that have a type declaration (list them here when you add a declaration).
 STUBBED_MODULES = (
-    "sql_effects",
-    "sqlite_sql",
-    "sqlite_file_sql",
-    "http_server_effects",
-    "file_effects",
-    "memory_file",
-    "random_effects",
-    "seeded_random",
-    "scripted_http_server",
-    "scripted_process",
-    "meter_effects",
-    "meter_prometheus",
-    "memory_meter",
-    "memory_latest",
-    "latest_effects",
-    "stack_dump_effects",
-    "memory_stack_dump",
-    "faulthandler_stack_dump",
-    "os_file",
-    "ws_client_effects",
-    "scripted_ws_client",
-    "aiohttp_ws_client",
+    "_sql_effects",
+    "_sqlite_sql",
+    "_sqlite_file_sql",
+    "_http_server_effects",
+    "_file_effects",
+    "_memory_file",
+    "_random_effects",
+    "_seeded_random",
+    "_scripted_http_server",
+    "_scripted_process",
+    "_meter_effects",
+    "_meter_prometheus",
+    "_memory_meter",
+    "_memory_latest",
+    "_latest_effects",
+    "_stack_dump_effects",
+    "_memory_stack_dump",
+    "_faulthandler_stack_dump",
+    "_os_file",
+    "_ws_client_effects",
+    "_scripted_ws_client",
+    "_aiohttp_ws_client",
 )
 
 #: Heads of the Hy forms that define a name directly under the module.
@@ -273,42 +273,42 @@ def _without_field(tree: ast.Module, class_name: str, field: str) -> ast.Module:
 
 def test_a_dropped_stub_field_is_found() -> None:
     # Removing the field rowcount from the declared SqlRows is found as a field mismatch (the test does not pass silently).
-    broken = _without_field(_stub_tree("sql_effects"), "SqlRows", "rowcount")
-    assert [m for m in _mismatches("sql_effects", broken) if m.startswith("SqlRows has different fields")]
+    broken = _without_field(_stub_tree("_sql_effects"), "SqlRows", "rowcount")
+    assert [m for m in _mismatches("_sql_effects", broken) if m.startswith("SqlRows has different fields")]
 
 
 def test_a_dropped_effect_field_is_found() -> None:
     # Removing the field ws_send_max_bytes from the declared effect HttpListen (a defclass dataclass) is found as a field mismatch.
-    broken = _without_field(_stub_tree("http_server_effects"), "HttpListen", "ws_send_max_bytes")
+    broken = _without_field(_stub_tree("_http_server_effects"), "HttpListen", "ws_send_max_bytes")
     assert [
         m
-        for m in _mismatches("http_server_effects", broken)
+        for m in _mismatches("_http_server_effects", broken)
         if m.startswith("HttpListen has different fields")
     ]
 
 
 def test_a_dropped_arrival_remote_is_found() -> None:
     # Removing the sender field remote from the declaration of HttpRequestArrived, an event the script carries, is found as a field mismatch.
-    broken = _without_field(_stub_tree("http_server_effects"), "HttpRequestArrived", "remote")
+    broken = _without_field(_stub_tree("_http_server_effects"), "HttpRequestArrived", "remote")
     assert [
         m
-        for m in _mismatches("http_server_effects", broken)
+        for m in _mismatches("_http_server_effects", broken)
         if m.startswith("HttpRequestArrived has different fields")
     ]
 
 
 def test_a_dropped_handler_parameter_is_found() -> None:
     # Removing the argument script from the declared scripted_http_server is found as an argument mismatch.
-    broken = copy.deepcopy(_stub_tree("scripted_http_server"))
+    broken = copy.deepcopy(_stub_tree("_scripted_http_server"))
     for node in broken.body:
         match node:
-            case ast.FunctionDef(name="scripted_http_server"):
+            case ast.FunctionDef(name="_scripted_http_server"):
                 node.args.args = []
             case _:
                 pass
     assert [
         m
-        for m in _mismatches("scripted_http_server", broken)
+        for m in _mismatches("_scripted_http_server", broken)
         if m.startswith("scripted_http_server has different arguments")
     ]
 
@@ -316,13 +316,13 @@ def test_a_dropped_handler_parameter_is_found() -> None:
 def test_a_module_mark_is_not_a_public_name_but_a_dropped_function_still_is() -> None:
     # The head tag MODULE-TAGS (the mark of doeff-linter) is not counted as a name on the type surface, same as the generation tool static_stub (#2909). memory_file.hy
     # defines MODULE-TAGS, and the declaration has no MODULE_TAGS but it is not a mismatch. Removing one public function from the declaration is still found as before.
-    forms = hy.read_many((PACKAGE / "memory_file.hy").read_text(encoding="utf-8"))
+    forms = hy.read_many((PACKAGE / "_memory_file.hy").read_text(encoding="utf-8"))
     assert "MODULE_TAGS" in {_defined_name(form) for form in forms}
-    assert "MODULE_TAGS" not in _hy_defined_names("memory_file")
-    assert _mismatches("memory_file", _stub_tree("memory_file")) == ()
-    broken = copy.deepcopy(_stub_tree("memory_file"))
+    assert "MODULE_TAGS" not in _hy_defined_names("_memory_file")
+    assert _mismatches("_memory_file", _stub_tree("_memory_file")) == ()
+    broken = copy.deepcopy(_stub_tree("_memory_file"))
     dropped = next(
         node.name for node in broken.body if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
     )
     broken.body = [node for node in broken.body if not (isinstance(node, ast.FunctionDef) and node.name == dropped)]
-    assert f"public name not in the declaration: {dropped}" in _mismatches("memory_file", broken)
+    assert f"public name not in the declaration: {dropped}" in _mismatches("_memory_file", broken)

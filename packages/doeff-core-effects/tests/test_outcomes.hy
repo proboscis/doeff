@@ -200,7 +200,7 @@
 
 (deftest test-on-raise-refuses-catch-all-patterns-at-expansion
   (for [pattern ["_" "reason" "(Exception)" "(object)" "(BaseException e)" "(| (Conflict d) _)"]]
-    (assert (in "cannot be accepted" (! (expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
+    (assert (in "is not accepted" (! (expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
             pattern))
   (assert (in "value expression" (! (expansion-refusal "(require doeff-hy.macros [on-raise]) (on-raise body (Conflict d) (! (f d)))")))
           "the mapped value is a value expression (effects cannot be used)"))
