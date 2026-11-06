@@ -768,22 +768,68 @@ class RealTree:
         return answer
 
 
-@pytest.fixture
-def real_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RealTree:
-    import shutil
-
-    import doeff_hy
-
-    lib = tmp_path / "lib"
-    shutil.copytree(
-        Path(doeff_hy.__file__).parent, lib / "doeff_hy", ignore=shutil.ignore_patterns("__pycache__")
-    )
-    root = tmp_path / "proj"
+def _probe_project(root: Path) -> None:
+    """The project of the module that uses the copied doeff_hy (macro_use_probe/user.hy = :data:`REAL_USER`)."""
     (root / "macro_use_probe").mkdir(parents=True)
     (root / "macro_use_probe" / "__init__.py").write_text("", encoding="utf-8")
     (root / "macro_use_probe" / "user.hy").write_text(REAL_USER, encoding="utf-8")
+
+
+@pytest.fixture(scope="session")
+def compiled_doeff_hy(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A copy of doeff_hy compiled once per session, with its .pyc beside the sources (``__pycache__``). Each check copies it with the bytecode (copytree keeps the
+    sources' mtimes, so the .pyc of an unchanged module stays valid and only the module a check changes is compiled again). When each check compiled its own copy cold,
+    the record of one child process took 37-50 s on a node at load 150 (CPU about 18 s, most of it compiling doeff_hy) and the checks hit their 25 s limit; with the
+    compiled copy it takes 1-4 s."""
+    import os
+    import shutil
+    import subprocess
+
+    import doeff_hy
+
+    base = tmp_path_factory.mktemp("compiled_doeff_hy")
+    lib = base / "lib"
+    shutil.copytree(
+        Path(doeff_hy.__file__).parent, lib / "doeff_hy", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    root = base / "proj"
+    _probe_project(root)
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")
+    }
+    env |= {"PYTHONPATH": str(lib), "DOEFF_HY_CODE_STORE": "off"}
+    # A one-time build for the whole session, not a check — its limit only stops a hung compile.
+    done = subprocess.run(
+        [sys.executable, "-c", REAL_CHILD, str(root), "record", str(base / "record.json")],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+        env=env,
+    )
+    assert done.returncode == 0, done.stderr
+    compiled = lib / "doeff_hy"
+    assert any(compiled.glob("__pycache__/macros.*.pyc")), (
+        f"no .pyc of macros.hy in {compiled} — the compiled copy was not made"
+    )
+    return compiled
+
+
+@pytest.fixture
+def real_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compiled_doeff_hy: Path
+) -> RealTree:
+    import shutil
+
+    lib = tmp_path / "lib"
+    shutil.copytree(compiled_doeff_hy, lib / "doeff_hy")
+    root = tmp_path / "proj"
+    _probe_project(root)
     monkeypatch.setenv("PYTHONPATH", str(lib))
-    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
+    # The child reads the copied .pyc beside the sources (a cache prefix would hide them).
+    monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
     return RealTree(lib, root, tmp_path / "record.json")
 
@@ -1077,9 +1123,11 @@ DEFWIRE = "doeff_hy.record:defwire"
 
 @pytest.fixture
 def writing_tree(real_tree: RealTree, monkeypatch: pytest.MonkeyPatch) -> RealTree:
-    """The real_tree in which the child process writes .pyc (written under PYTHONPYCACHEPREFIX in the check's temp dir — placed by real_tree). The instability occurs only in a process
-    that reads record from a .pyc (the check of record.hy's record runs before the body executes), so the ``PYTHONDONTWRITEBYTECODE`` that the check suite passes to the child is removed only during this check."""
+    """The real_tree in which the child process writes .pyc (written under PYTHONPYCACHEPREFIX in the check's temp dir — so the copied .pyc are not read, and the check
+    confirms the .pyc it makes itself). The instability occurs only in a process that reads record from a .pyc (the check of record.hy's record runs before the body
+    executes), so the ``PYTHONDONTWRITEBYTECODE`` that the check suite passes to the child is removed only during this check."""
     monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(real_tree.stored.parent / "pycache"))
     return real_tree
 
 
