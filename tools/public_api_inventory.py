@@ -2819,7 +2819,7 @@ _METHOD_NOTES = (
     "Hy modules also count macros not starting with `_`. The console scripts and entry points of pyproject, and the Rust executables of the maturin bin,"
     " are counted too.",
     "A submodule with no part of its path starting with `_` is itself counted as one row (shown from `(submodule)`, name = the module's import name,"
-    " form "public submodule", kind other) -- public names are shown only from the import root (ADR-DOE-API-001 R5)."
+    " form 'public submodule', kind other) -- public names are shown only from the import root (ADR-DOE-API-001 R5)."
     " A moved-submodule module whose first line is `# moved-submodule-shim: <old name> -> <new name>` also counts the modules under the package it was moved to"
     " by their old names (the old path stays importable until the moved-submodule module is deleted). The names the old path shows are only the names on the line"
     " `# moved-submodule-shim-names <old name>: <name> ...` under the mark (a fixed list of names written when it was hidden) -- the old path returns"
@@ -2830,9 +2830,9 @@ _METHOD_NOTES = (
     " a callable that takes a program and returns a program, or a set of handlers; or return builds a handler), and a bare"
     " handler function whose arguments are (effect, k).",
     "other: program functions (@do, defk) and functions whose return type is a program, other functions, classes, exceptions, types, constants, macros,"
-    " console scripts and entry points. A function that returns a program gets the form "program helper" when, inside it (and inside the"
+    " console scripts and entry points. A function that returns a program gets the form 'program helper' when, inside it (and inside the"
     " same-package functions it reads), it neither installs a handler (does not read WithHandler, handler values, builders or factories) nor answers an effect (does not read Resume,"
-    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group "Allowed — program helper" (ADR-DOE-API-001 R18).",
+    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group 'Allowed — program helper' (ADR-DOE-API-001 R18).",
     "unclassified: functions with no return type or a type that says nothing about the contents (Any, object, Callable, a list of them) that the shape of return does not decide either,"
     " classes whose name ends in Effect or Handler but have no mark (and functions that return them), and names of modules that cannot be imported.",
     "When both the root and a submodule show the same name, they are merged into one row, and the column \"shown from\" lists the modules showing it relative to the import root,"
