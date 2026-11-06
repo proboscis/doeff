@@ -380,8 +380,8 @@ def test_a_value_that_is_not_json_is_a_type_error() -> None:
         ("HasDatetime", "type outside the vocabulary"),
         ("HasAnnotated", "type outside the vocabulary"),
         ("HasPlainRecord", "plain defrecord"),
-        ("HasIntLiteral", "Literal that is not a string"),
-        ("HasIntKeys", "dict whose keys are not strings"),
+        ("HasIntLiteral", "that is not a string is outside the vocabulary"),
+        ("HasIntKeys", "dict whose key is not a string"),
         ("HasBareList", "type outside the vocabulary"),
         ("SelfRef", "type cycle"),
         ("LoopA", "type cycle"),
@@ -446,7 +446,7 @@ def test_the_decoder_imports_no_pydantic_and_decodes_without_it() -> None:
         """
         import dataclasses, sys, types
         import doeff_hy
-        from doeff_hy import wire_codec
+        from doeff_hy import _wire_codec as wire_codec
         from doeff_hy._wire_malformed import Malformed
 
         @dataclasses.dataclass(frozen=True, kw_only=True)

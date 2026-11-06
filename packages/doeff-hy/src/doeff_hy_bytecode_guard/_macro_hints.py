@@ -73,7 +73,7 @@ MACRO_HOMES: Mapping[str, tuple[str, ...]] = {
         "with-handler",
     ),
     "doeff-hy.handle": ("defhandler", "handle", "with-handler"),
-    "doeff-hy.record": ("defenum", "deff", "defrecord", "defwire"),
+    "doeff-hy.record": ("defenum", "defrecord", "defwire"),
 }
 
 #: Instructions that read a name (without looking up a binding) and instructions that bind one. Local names (LOAD_FAST etc.) are not module-namespace names, so they are not counted.

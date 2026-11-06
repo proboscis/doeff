@@ -142,9 +142,11 @@ def test_an_entry_of_the_current_store_version_is_read_back(
 #: The hash of the version-3 row is that of the source with the import inside gensym_renaming moved to _records (the rules are the same so the version was
 #: not raised; the previous hash 5b4612a4... was replaced). After that only the docstring was rewritten (the moved module's name and the tracker id were
 #: removed), so the hash 75e5ff36... was replaced with the rules unchanged. Version 4 changed the cache format of the position mapping, and the rules are the same as version 3, so
-#: the row of the same hash was set to version 4 (the table compares the version of the row of the current rules with CACHE_VERSION).
+#: the row of the same hash was set to version 4 (the table compares the version of the row of the current rules with CACHE_VERSION). The translation of the
+#: docstrings and comments into English changed only text that is not code (the code of the rules is the same as at 45997ca56 when docstrings are left out),
+#: so the hash 7981e4ad... was replaced with the version unchanged.
 GENSYM_RULE_VERSIONS = {
-    "7981e4ad3c2b2d0f589750610b29f6d53a2dcbac75e1180c84876ed63736f0b5": 4,
+    "8026e542bf87665d31d7308483c61b0a3f637213274bcdcce6f50d5b446a2b32": 4,
 }
 
 
@@ -179,7 +181,7 @@ def test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version() -> None
 
 #: Lines in doeff_hy sources that may touch the module location (__file__, __cached__) (file name, line content) -- just one line of static_check's project
 #: that only writes it into the module it creates.
-PLACE_LINES = {("static_check.py", "    module.__file__ = str(source)")}
+PLACE_LINES = {("_static_check.py","    module.__file__ = str(source)")}
 
 
 def test_doeff_hy_sources_do_not_read_their_place() -> None:
@@ -356,7 +358,7 @@ def test_a_changed_unused_macro_keeps_the_stored_expansion(tree: Tree, expansion
 CHILD = """\
 import json, sys
 from pathlib import Path
-from doeff_hy import static_check
+from doeff_hy import _static_check as static_check
 seen = []
 real = static_check.project
 def counting(root, roots, source):
@@ -436,7 +438,7 @@ def test_a_doeff_hy_file_the_expansion_does_not_go_through_keeps_the_stored_expa
     # Failure case 1: changing a doeff_hy file the expansion does not pass through (the HTTP part http.hy) still pulls from the cache. Previously the fingerprint of the whole doeff_hy
     # package was part of the key, so one unrelated commit forced every expansion to be rebuilt (red before the fix).
     assert copied_doeff_hy.expanded() == 1
-    _append_comment(copied_doeff_hy.package / "http.hy")
+    _append_comment(copied_doeff_hy.package / "_http.hy")
     assert copied_doeff_hy.expanded() == 0
 
 
@@ -444,7 +446,7 @@ def test_a_changed_type_check_post_processing_expands_again(copied_doeff_hy: Cop
     # Failure case 6: the post-processing of the type-checking expansion (static_check's removal of bookkeeping and addition of helper imports) cannot be reached from macros.
     # Rebuild when it changes (the record is the digest of the closure of functions and classes defined in static_check -- add one function).
     assert copied_doeff_hy.expanded() == 1
-    static_check_file = copied_doeff_hy.package / "static_check.py"
+    static_check_file = copied_doeff_hy.package / "_static_check.py"
     static_check_file.write_text(
         static_check_file.read_text(encoding="utf-8") + "\n\ndef _changed() -> int:\n    return 1\n",
         encoding="utf-8",
@@ -495,7 +497,7 @@ def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_agai
     # (__file__) and changes the expansion result, the walk does not cover that file's contents. After removing the location path from the digest,
     # trees in different dirs, and even the same tree, pulled an old expansion after the file was changed. The digest of code that reads the location as a value
     # becomes a mark meaning it cannot be compared, and the user re-expands every time.
-    static_check_file = copied_doeff_hy.package / "static_check.py"
+    static_check_file = copied_doeff_hy.package / "_static_check.py"
     text = static_check_file.read_text(encoding="utf-8")
     assert text.count("    rendered = ast.unparse(tree)\n") == 1
     static_check_file.write_text(
