@@ -470,7 +470,7 @@ def test_the_writer_and_schema_import_no_pydantic_and_work_without_it() -> None:
             spec: OpaqueJson | None = None
 
         Row.__doeff_wire__ = types.SimpleNamespace(
-            names={"lane_id": "laneId", "n": "n", "spec": "spec"}, unknown="reject"
+            names={"lane_id": "laneId", "n": "n", "spec": "spec"}, unknown="reject", description=None
         )
         codec = wire_codec.codec_of(Row)
         row = Row(lane_id="L", spec=OpaqueJson.of({"a": 1}))
