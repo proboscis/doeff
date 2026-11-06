@@ -1,0 +1,7 @@
+# zeus の worker は RuntimeClass runc-oomscope で走る(JSON patch)。containerd の runc の shim は container の cgroup の memory.events(子の
+# cgroup の数を足した値)の oom_kill が増えると container に OOMKilled の印を付け、cgroup.yaml の層(exec・jobs・commands)の上限で 1 本が
+# 殺されても印が残り、後の追い出しや配備の止めも OOMKilled と出た。この RuntimeClass の shim は、上限に当たったのが container の cgroup か
+# その上(Pod の slice)の時だけ印を付ける(../../../oom-scope-shim/README.md)。
+# handler は ../../oom-scope-shim の係が zeus に置いた差し込みを containerd が読んだ後だけ在る(2026-11-06 18:55 JST に k3s-agent を
+# 再起動して読ませた)。機体の k3s を作り直した時は、係の Pod が file を置き直した後に k3s を 1 度再起動するまで worker の Pod が起きない。
+- { op: add, path: /spec/template/spec/runtimeClassName, value: runc-oomscope }

@@ -33,6 +33,9 @@ patches:
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
   - path: dev-shm-in-memory.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+  # 層の上限の OOM で container に OOMKilled の印を付けない runc の shim の RuntimeClass(JSON patch)。
+  - path: runtime-class.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
   # scratch-on-longhorn.yaml(/scratch を Pod ごとの Longhorn の volume へ)は外してある: 2026-11-05 に当てると、札 workspace の disk の予約の
   # 残り(上限 432 GiB のうち 424 GiB 予約済み)が 32 GiB に足りず、新しい Pod の volume が付かずに起動で止まった。余地を作ってから戻す。
 # 名の固定した ConfigMap(機体の接尾辞つき)— 掃除の係の script。中身の hash を名に付けないので、script を替えても Pod は作り直されない。

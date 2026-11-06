@@ -1741,3 +1741,45 @@ def test_atlas_keeps_the_jobs_of_the_worker_on_the_second_ssd(rendered: list[Man
 def test_other_workers_keep_the_jobs_in_the_generation_dir(rendered: list[Manifest], name: str) -> None:
     """atlas 以外の機体の worker は job の cwd の根を動かさない(HDD の無い機体の宣言に紛れないように)。"""
     assert "WORKER_JOBS_ROOT" not in [entry["name"] for entry in _env(_worker_on(rendered, name))]
+
+
+# 層の上限の OOM で container に OOMKilled の印を付けない runc の shim の RuntimeClass(../deploy/oom-scope-shim/README.md)。
+OOM_SCOPE_RUNTIME_CLASS = "runc-oomscope"
+OOM_SCOPE_RUNTIME_NODES = ("zeus",)
+
+
+def _oom_scope_installer_nodes(rendered: list[Manifest]) -> list[str]:
+    found = [
+        doc
+        for doc in rendered
+        if doc["kind"] == "DaemonSet"
+        and _mapping(doc["metadata"], "metadata")["name"] == "oom-scope-shim"
+    ]
+    assert len(found) == 1, f"DaemonSet oom-scope-shim がちょうど 1 つ無い: {found!r}"
+    affinity = _mapping(
+        _mapping(_pod_spec(found[0])["affinity"], "affinity")["nodeAffinity"], "nodeAffinity"
+    )
+    required = _mapping(affinity["requiredDuringSchedulingIgnoredDuringExecution"], "required")
+    terms = _sequence(required["nodeSelectorTerms"], "nodeSelectorTerms")
+    assert len(terms) == 1, f"nodeSelectorTerms は 1 つ: {terms!r}"
+    expressions = _sequence(_mapping(terms[0], "term")["matchExpressions"], "matchExpressions")
+    assert len(expressions) == 1, f"matchExpressions は 1 つ: {expressions!r}"
+    expression = _mapping(expressions[0], "matchExpression")
+    assert (expression["key"], expression["operator"]) == ("kubernetes.io/hostname", "In")
+    return [str(value) for value in _sequence(expression["values"], "values")]
+
+
+def test_workers_run_the_oom_scope_shim_only_on_nodes_it_is_placed_on(rendered: list[Manifest]) -> None:
+    """RuntimeClass runc-oomscope を使う worker は宣言した機体の worker だけで、その機体は全部、shim と containerd の差し込みを置く
+    DaemonSet の nodeAffinity に入っている(置かない機体で使うと、Pod の sandbox が handler 無しで作れず worker が起きない)。"""
+    runtime_classes = [doc for doc in rendered if doc["kind"] == "RuntimeClass"]
+    assert [(_mapping(d["metadata"], "metadata")["name"], d["handler"]) for d in runtime_classes] == [
+        (OOM_SCOPE_RUNTIME_CLASS, OOM_SCOPE_RUNTIME_CLASS)
+    ]
+    using = sorted(
+        _node(doc) or ""
+        for doc in _deployments(rendered, "worker")
+        if _pod_spec(doc).get("runtimeClassName") == OOM_SCOPE_RUNTIME_CLASS
+    )
+    assert using == sorted(OOM_SCOPE_RUNTIME_NODES)
+    assert set(using) <= set(_oom_scope_installer_nodes(rendered))
