@@ -3,6 +3,7 @@
 
 分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 5 つ:
   ../nodes/<機体>/disk-share.yaml        worker の Deployment の env WORKER_ENV_MIN_FREE_GIB・WORKER_ENV_ROOTS_GIB(boot.sh が GiB の整数で読む)
+                                         と、state の上限を宣言した機体の DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB(uv_cache.py の gc が読む)
   ../nodes/<機体>/<機体直の worker>.env  同じ根の disk の機体直の worker(k8s の外 — nativeWorker を宣言した機体だけ)の同じ 2 つの env。
                                          機体直の worker の起動 script が `名=値` の行を読み、boot.sh へ渡す
   ../nodes/<機体>/kubelet-image-gc.conf  kubelet の drop-in(imageGCHighThresholdPercent・imageGCLowThresholdPercent — 機体の
@@ -76,7 +77,17 @@ NODE_KEYS = frozenset(
         "worker",
     }
 )
-WORKER_KEYS = frozenset({"minFreeGiB", "rootsGiB", "stateBytes"})
+WORKER_KEYS = frozenset({"minFreeGiB", "rootsGiB"})
+# roots の外の worker の state の欄 — 2 つの形のどちらか 1 つ(shares.yaml の頭の註の stateBytes と state):
+#   stateBytes  手で測った値(上限を持たない state の機体 — 守る者が居ない)
+#   state       上限の和から導く(STATE_KEYS — 置き場ごとの上限を持つ機体。導いた値を手で書かない)
+MEASURED_STATE_KEY = "stateBytes"
+LIMITED_STATE_KEY = "state"
+# state の上限の 2 つ: uvCacheGiB = uv の cache の片付けの大きさの上限(cache だけが持つ byte — worker の env
+# DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB に導く)・storesBytes = 上に載る系が置き場ごとに決めた上限の和(置き場の名と上限の定義元は上に載る系に
+# 在り、その test が和とこの値を突き合わせる — この package は置き場の名を持たない)。
+STATE_KEYS = frozenset({"uvCacheGiB", "storesBytes"})
+UV_CACHE_LIMIT_ENV = "DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB"
 # 機体直の worker(nativeWorker — 在る機体だけ)の欄。空きの最低は持たない — 同じ根の disk の空きは 1 つなので、機体の worker の
 # minFreeGiB を使う(線を 2 つ置くと、片方だけが near を名乗る帯ができる)。
 NATIVE_KEY = "nativeWorker"
@@ -90,11 +101,14 @@ FLUX_DISK_FIELDS = frozenset({"allowScheduling", "evictionRequested", "tags", "s
 
 @dataclass(frozen=True)
 class WorkerShare:
-    """worker の分のうち、宣言が決める 3 つ(near の幅と戻りの幅は worker の code の定数 — Margins)。"""
+    """worker の分のうち、宣言が決める 3 つ(near の幅と戻りの幅は worker の code の定数 — Margins)。state_bytes = roots の外の
+    state — state の上限を宣言した機体(uv_cache_gib と stores_bytes が在る)では、その 2 つの和から導いた値。"""
 
     min_free_gib: int
     roots_gib: int
     state_bytes: int
+    uv_cache_gib: int | None = None
+    stores_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -301,7 +315,6 @@ def _node_share(name: str, raw: object) -> NodeShare:
         )
     native_key = frozenset({NATIVE_KEY}) & set(raw)
     entry = _keys(raw, NODE_KEYS | present | native_key, where)
-    worker = _keys(entry["worker"], WORKER_KEYS, f"{where}.worker")
     return NodeShare(
         node=name,
         longhorn=_longhorn_disk(entry, where) if present else None,
@@ -311,12 +324,39 @@ def _node_share(name: str, raw: object) -> NodeShare:
         ),
         system_bytes=_count(entry["systemBytes"], f"{where}.systemBytes"),
         other_residents_bytes=_count(entry["otherResidentsBytes"], f"{where}.otherResidentsBytes"),
-        worker=WorkerShare(
-            min_free_gib=_count(worker["minFreeGiB"], f"{where}.worker.minFreeGiB"),
-            roots_gib=_count(worker["rootsGiB"], f"{where}.worker.rootsGiB"),
-            state_bytes=_count(worker["stateBytes"], f"{where}.worker.stateBytes"),
-        ),
+        worker=_worker(entry["worker"], f"{where}.worker"),
         native=_native_worker(entry[NATIVE_KEY], f"{where}.{NATIVE_KEY}") if native_key else None,
+    )
+
+
+def _worker(raw: object, where: str) -> WorkerShare:
+    """機体の行の worker の欄を読む(_node_share の一部)— roots の外の state は、手で測った stateBytes か、上限の state のどちらか 1 つ。
+    上限の形では state の大きさを上限の和から導く(stateBytes を並べて書いた宣言は、2 つの値のどちらを信じるかを推し量らずに断る)。"""
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{where} が mapping でない: {raw!r}")
+    forms = {MEASURED_STATE_KEY, LIMITED_STATE_KEY} & set(raw)
+    if len(forms) != 1:
+        raise ValueError(
+            f"{where} の state は {MEASURED_STATE_KEY}(手で測った値)か {LIMITED_STATE_KEY}(上限)のどちらか 1 つ — 在る欄 {sorted(forms)}"
+        )
+    entry = _keys(raw, WORKER_KEYS | forms, where)
+    min_free_gib = _count(entry["minFreeGiB"], f"{where}.minFreeGiB")
+    roots_gib = _count(entry["rootsGiB"], f"{where}.rootsGiB")
+    if MEASURED_STATE_KEY in forms:
+        return WorkerShare(
+            min_free_gib=min_free_gib,
+            roots_gib=roots_gib,
+            state_bytes=_count(entry[MEASURED_STATE_KEY], f"{where}.{MEASURED_STATE_KEY}"),
+        )
+    limits = _keys(entry[LIMITED_STATE_KEY], STATE_KEYS, f"{where}.{LIMITED_STATE_KEY}")
+    uv_cache_gib = _count(limits["uvCacheGiB"], f"{where}.{LIMITED_STATE_KEY}.uvCacheGiB")
+    stores_bytes = _count(limits["storesBytes"], f"{where}.{LIMITED_STATE_KEY}.storesBytes")
+    return WorkerShare(
+        min_free_gib=min_free_gib,
+        roots_gib=roots_gib,
+        state_bytes=uv_cache_gib * GIB + stores_bytes,
+        uv_cache_gib=uv_cache_gib,
+        stores_bytes=stores_bytes,
     )
 
 
@@ -482,11 +522,22 @@ class Derived:
 
 
 def _node_patch(share: NodeShare) -> str:
-    """機体の worker の Deployment へ、空きの最低と roots の上限の env を足す patch(機体の dir の kustomization が読む)。"""
+    """機体の worker の Deployment へ、空きの最低と roots の上限の env を足す patch(機体の dir の kustomization が読む)。state の上限を
+    宣言した機体には、uv の cache の片付けの大きさの上限の env も足す(env は envFrom の同じ名より先に効く — 全部の機体に共通の値を
+    この機体だけ上書きする)。"""
+    uv = share.worker.uv_cache_gib
+    uv_line = (
+        f'            - {{ name: {UV_CACHE_LIMIT_ENV}, value: "{uv}" }}\n' if uv is not None else ""
+    )
+    uv_head = (
+        "# uv の cache の片付けの大きさの上限(GiB — uv_cache.py の gc が読む)は state の上限の uvCacheGiB。\n"
+        if uv is not None
+        else ""
+    )
     return f"""\
 # 導いた物 — ../../disk-share/derive.py が ../../disk-share/shares.yaml の {share.node} の分け前から書く(手で直さない)。
 # worker の空きの最低と roots の上限(boot.sh が GiB の整数で読む)。分け前の訳は shares.yaml の頭の註。
-apiVersion: apps/v1
+{uv_head}apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: doeff-worker
@@ -499,7 +550,7 @@ spec:
           env:
             - {{ name: WORKER_ENV_MIN_FREE_GIB, value: "{share.worker.min_free_gib}" }}
             - {{ name: WORKER_ENV_ROOTS_GIB, value: "{share.worker.roots_gib}" }}
-"""
+{uv_line}"""
 
 
 def native_env(share: NodeShare) -> dict[str, str]:
