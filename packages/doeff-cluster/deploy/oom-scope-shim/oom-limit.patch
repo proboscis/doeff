@@ -1,0 +1,217 @@
+diff --git a/cmd/containerd-shim-runc-v2/runc/container.go b/cmd/containerd-shim-runc-v2/runc/container.go
+index 730b37f34..a391add82 100644
+--- a/cmd/containerd-shim-runc-v2/runc/container.go
++++ b/cmd/containerd-shim-runc-v2/runc/container.go
+@@ -148,6 +148,7 @@ func NewContainer(ctx context.Context, platform stdio.Platform, r *task.CreateTa
+ 	if pid > 0 {
+ 		if cg, err := loadProcessCgroup(ctx, pid); err == nil {
+ 			container.cgroup = cg
++			container.cgroupDir = processCgroupDir(pid)
+ 		}
+ 	}
+ 	return container, nil
+@@ -235,7 +236,9 @@ type Container struct {
+ 	Bundle string
+ 
+ 	// cgroup is either cgroups.Cgroup or *cgroupsv2.Manager
+-	cgroup          interface{}
++	cgroup interface{}
++	// cgroupDir is the cgroup v2 directory of the container ("" on cgroup v1)
++	cgroupDir       string
+ 	process         process.Process
+ 	processes       map[string]process.Process
+ 	reservedProcess map[string]struct{}
+@@ -490,14 +493,36 @@ func (c *Container) OOMWatch(ctx context.Context, eventf func(string)) error {
+ 	// FIXME: cgroupsv2.Manager does not support closing eventCh routine currently.
+ 	// The routine shuts down when an error happens, mostly when the cgroup is deleted.
+ 	eventCh, errCh := cg.EventChan()
++	dir := c.cgroupDir
+ 	go func() {
+ 		var oomKills uint64
++		// limitOOMs is the sum of the local "oom" counts of the container's
++		// cgroup and its ancestors at the last OOM kill.
++		limitOOMs := limitOOMCount(dir)
+ 		for {
+ 			select {
+ 			case ev := <-eventCh:
+ 				if ev.OOMKill > oomKills {
+ 					oomKills = ev.OOMKill
+-					eventf(c.ID)
++					// memory.events sums oom_kill over the container's cgroup and its
++					// descendants. Report the kill as the container's OOM only when the
++					// limit that was hit belongs to the container's cgroup or to one of
++					// its ancestors (the pod's cgroup): the kernel counts "oom" on the
++					// cgroup whose limit was hit before it kills, so a kill under a
++					// limit set on a cgroup nested inside the container does not raise
++					// the local "oom" of the container's cgroup or of its ancestors.
++					if dir == "" {
++						eventf(c.ID)
++						continue
++					}
++					current := limitOOMCount(dir)
++					if current > limitOOMs {
++						eventf(c.ID)
++					} else {
++						log.L.WithField("container_id", c.ID).WithField("oom_kill", ev.OOMKill).
++							Info("oom kill under a memory limit nested inside the container; not reported as the container's OOM")
++					}
++					limitOOMs = current
+ 				}
+ 			case err := <-errCh:
+ 				// channel is closed when cgroup gets deleted
+diff --git a/cmd/containerd-shim-runc-v2/runc/oom_limit.go b/cmd/containerd-shim-runc-v2/runc/oom_limit.go
+new file mode 100644
+index 000000000..54a3c470c
+--- /dev/null
++++ b/cmd/containerd-shim-runc-v2/runc/oom_limit.go
+@@ -0,0 +1,77 @@
++/*
++   Copyright The containerd Authors.
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
++*/
++
++package runc
++
++import (
++	"bufio"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++
++	"github.com/containerd/cgroups/v3"
++	cgroupsv2 "github.com/containerd/cgroups/v3/cgroup2"
++)
++
++const cgroupV2Root = "/sys/fs/cgroup"
++
++// processCgroupDir returns the cgroup v2 directory of pid, or "" on cgroup v1
++// or when it cannot be read.
++func processCgroupDir(pid int) string {
++	if cgroups.Mode() != cgroups.Unified {
++		return ""
++	}
++	g, err := cgroupsv2.PidGroupPath(pid)
++	if err != nil {
++		return ""
++	}
++	return filepath.Join(cgroupV2Root, g)
++}
++
++// limitOOMCount sums the local "oom" count (memory.events.local) of dir and of
++// each of its ancestors below the cgroup v2 root. The kernel adds to the local
++// "oom" count of the cgroup whose memory limit was hit, so the sum grows when a
++// limit at the container's cgroup or above it is hit, and does not grow when
++// only a limit on a cgroup nested inside the container is hit.
++func limitOOMCount(dir string) uint64 {
++	return limitOOMCountUnder(cgroupV2Root, dir)
++}
++
++func limitOOMCountUnder(root, dir string) uint64 {
++	var sum uint64
++	for d := filepath.Clean(dir); strings.HasPrefix(d, root+"/"); d = filepath.Dir(d) {
++		sum += localOOM(d)
++	}
++	return sum
++}
++
++func localOOM(dir string) uint64 {
++	f, err := os.Open(filepath.Join(dir, "memory.events.local"))
++	if err != nil {
++		return 0
++	}
++	defer f.Close()
++	s := bufio.NewScanner(f)
++	for s.Scan() {
++		name, value, ok := strings.Cut(s.Text(), " ")
++		if ok && name == "oom" {
++			n, _ := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
++			return n
++		}
++	}
++	return 0
++}
+diff --git a/cmd/containerd-shim-runc-v2/runc/oom_limit_test.go b/cmd/containerd-shim-runc-v2/runc/oom_limit_test.go
+new file mode 100644
+index 000000000..83599e80a
+--- /dev/null
++++ b/cmd/containerd-shim-runc-v2/runc/oom_limit_test.go
+@@ -0,0 +1,67 @@
++/*
++   Copyright The containerd Authors.
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
++*/
++
++package runc
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func writeLocalEvents(t *testing.T, dir string, oom int) {
++	t.Helper()
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	body := fmt.Sprintf("low 0\nhigh 0\nmax 3\noom %d\noom_kill 0\noom_group_kill 0\n", oom)
++	if err := os.WriteFile(filepath.Join(dir, "memory.events.local"), []byte(body), 0o644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestLimitOOMCountCountsContainerAndAncestorsOnly(t *testing.T) {
++	root := t.TempDir()
++	pod := filepath.Join(root, "kubepods.slice", "kubepods-pod1.slice")
++	scope := filepath.Join(pod, "cri-containerd-abc.scope")
++	layer := filepath.Join(scope, "exec")
++	writeLocalEvents(t, filepath.Join(root, "kubepods.slice"), 0)
++	writeLocalEvents(t, pod, 1)
++	writeLocalEvents(t, scope, 2)
++	writeLocalEvents(t, layer, 7)
++	// root itself is not read (the cgroup v2 root has no memory.events.local).
++	writeLocalEvents(t, root, 100)
++
++	if got := limitOOMCountUnder(root, scope); got != 3 {
++		t.Fatalf("limitOOMCountUnder(scope) = %d, want 3 (scope 2 + pod 1, not the nested layer)", got)
++	}
++	writeLocalEvents(t, layer, 8)
++	if got := limitOOMCountUnder(root, scope); got != 3 {
++		t.Fatalf("an OOM under the nested layer's limit changed the count to %d", got)
++	}
++	writeLocalEvents(t, pod, 2)
++	if got := limitOOMCountUnder(root, scope); got != 4 {
++		t.Fatalf("an OOM under the pod's limit left the count at %d, want 4", got)
++	}
++}
++
++func TestLimitOOMCountMissingFilesCountZero(t *testing.T) {
++	root := t.TempDir()
++	if got := limitOOMCountUnder(root, filepath.Join(root, "gone.scope")); got != 0 {
++		t.Fatalf("got %d, want 0", got)
++	}
++}

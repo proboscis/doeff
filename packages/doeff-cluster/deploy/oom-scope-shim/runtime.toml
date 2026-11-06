@@ -1,0 +1,11 @@
+# k3s の containerd が読む差し込み(機体の /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/runc-oomscope.toml へ install.sh が置く)。
+# runc と同じ runtime に、OOM の印の判定だけを替えた shim を足す。RuntimeClass runc-oomscope の handler がこの名を指す。
+# containerd は起動の時だけ読む — 置いた後に 1 度 k3s(か k3s-agent)を再起動する(README.md)。
+version = 3
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc-oomscope]
+  runtime_type = "io.containerd.runc.v2"
+  runtime_path = "/opt/doeff-cluster/bin/containerd-shim-runc-oomscope-v2"
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc-oomscope.options]
+  SystemdCgroup = true
