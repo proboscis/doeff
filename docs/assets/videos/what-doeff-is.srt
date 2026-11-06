@@ -1,0 +1,103 @@
+1
+00:00:00,250 --> 00:00:04,750
+What is doeff? Algebraic effects for Python.
+
+2
+00:00:05,450 --> 00:00:11,550
+A program yields effects. A handler receives each one together with k, the rest of the program.
+
+3
+00:00:12,150 --> 00:00:16,600
+What the handler does with k decides what the effect means.
+
+4
+00:00:17,150 --> 00:00:22,550
+research yields one Spend per topic. It knows nothing about what spending means.
+
+5
+00:00:23,150 --> 00:00:28,900
+free answers each Spend and lets the rest run. Notes on both topics.
+
+6
+00:00:29,550 --> 00:00:34,100
+refuse drops k at the first Spend. research stops there.
+
+7
+00:00:34,750 --> 00:00:40,400
+A budget keeps what is left between effects. With ten, both Spends fit.
+
+8
+00:00:41,050 --> 00:00:46,450
+With five, only two is left for the second Spend. The budget drops k.
+
+9
+00:00:47,150 --> 00:00:53,100
+Handlers stack. trace takes every effect first, notes it, and passes it on to the budget.
+
+10
+00:00:57,650 --> 00:01:03,650
+State, exceptions, concurrency, observation and I/O are effects of this same kind.
+
+11
+00:01:04,250 --> 00:01:10,000
+crawl fetches pages in parallel tasks, counts them in state, and logs each fetch.
+
+12
+00:01:10,650 --> 00:01:14,950
+Each effect travels out to the handler that gives it its meaning.
+
+13
+00:01:19,150 --> 00:01:24,800
+The empty page raises in its task. Try turns the error into a value.
+
+14
+00:01:25,650 --> 00:01:31,300
+size, crawl and report name the effects they need. Where they run decides the handlers.
+
+15
+00:01:32,150 --> 00:01:38,900
+Swapping I/O is one use. A handler that calls the network answers Fetch, and the code stays as it is.
+
+16
+00:01:39,650 --> 00:01:46,950
+Leave the Fetch handler out, and nobody answers: each task gets an unhandled effect.
+
+17
+00:01:47,650 --> 00:01:54,300
+It is one use, not what doeff is. research does no I/O at all.
+
+18
+00:01:55,150 --> 00:02:00,400
+Its limits. Continuations are one-shot: each k resumes at most once.
+
+19
+00:02:01,050 --> 00:02:07,050
+Resume k for tea, then again for coffee, and the second Resume raises a RuntimeError.
+
+20
+00:02:07,650 --> 00:02:14,000
+What stands in for it: run the whole program again, once per choice. A program is a value.
+
+21
+00:02:14,550 --> 00:02:19,750
+Effects are not in the types. A missing handler shows only when the program runs.
+
+22
+00:02:20,350 --> 00:02:26,950
+And an effect costs a few microseconds. Nothing next to I/O, but visible in a tight loop.
+
+23
+00:02:27,650 --> 00:02:34,100
+Next to other effect systems: in effect and effectful, a handler never gets the continuation.
+
+24
+00:02:34,750 --> 00:02:41,400
+OCaml 5 is the closest: one-shot continuations, and no effects in the types.
+
+25
+00:02:42,050 --> 00:02:47,900
+Koka resumes many times, and checks effects in its types. doeff has neither.
+
+26
+00:02:48,650 --> 00:02:55,800
+doeff: algebraic effects for Python. Your code yields effects, and handlers decide what they mean.

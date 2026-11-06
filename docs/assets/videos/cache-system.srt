@@ -1,0 +1,91 @@
+1
+00:00:00,250 --> 00:00:07,750
+The cache system of doeff. A program asks for a value it has worked out before, and a handler keeps it.
+
+2
+00:00:08,300 --> 00:00:15,600
+Two effects do the asking. Cache Get asks for the value under a key. Cache Put stores one.
+
+3
+00:00:16,300 --> 00:00:21,000
+Which cache answers them is not in the program. It is up to the handler around it.
+
+4
+00:00:23,300 --> 00:00:29,150
+The first call. Cache Get goes out to the handler, and the cache has nothing under my key.
+
+5
+00:00:29,800 --> 00:00:35,500
+So the handler throws a key error into the program, right at the yield where it was waiting.
+
+6
+00:00:36,300 --> 00:00:38,650
+The program catches it, does the work,
+
+7
+00:00:38,650 --> 00:00:43,350
+which takes four hundred milliseconds, and stores the answer with Cache Put.
+
+8
+00:00:44,300 --> 00:00:50,500
+The second call. This time the handler finds my key, and resumes the program with forty-two.
+
+9
+00:00:51,800 --> 00:00:57,700
+Half a millisecond instead of four hundred. The log shows a miss, then a hit.
+
+10
+00:00:58,300 --> 00:01:05,450
+Cache Put can carry a policy: a time to live, a lifecycle, a storage, and metadata.
+
+11
+00:01:06,300 --> 00:01:12,150
+The policy travels inside the effect, so the handler receives it together with the value.
+
+12
+00:01:12,800 --> 00:01:19,400
+A persistent lifecycle resolves to disk storage. With no hints, the entry belongs in memory.
+
+13
+00:01:20,300 --> 00:01:23,700
+These are hints, and the handler decides what they mean.
+
+14
+00:01:23,700 --> 00:01:31,100
+The in-memory handler keeps every entry the same way: one with a time to live of a tenth of a second is still there later.
+
+15
+00:01:32,300 --> 00:01:37,400
+The page's API example. fetch user is called twice, for the same user.
+
+16
+00:01:38,300 --> 00:01:45,100
+The first call misses, sends the request, and stores the response. The second is served from the cache.
+
+17
+00:01:47,300 --> 00:01:54,250
+Here the handler answer from memory decides what Get Json means, and it got exactly one request.
+
+18
+00:01:54,800 --> 00:01:59,750
+Now the same program, run twice, under different cache handlers.
+
+19
+00:02:00,300 --> 00:02:06,400
+The in-memory handler starts empty in every run, so both runs do the work.
+
+20
+00:02:07,300 --> 00:02:14,050
+The SQLite handler keeps the cache in a file. The second run is a hit, in two milliseconds.
+
+21
+00:02:15,300 --> 00:02:23,650
+With no cache handler at all, Cache Get is unhandled. The program never chose a cache. The handler does.
+
+22
+00:02:24,200 --> 00:02:28,200
+Caching in doeff: the program asks and stores through effects,
+
+23
+00:02:28,200 --> 00:02:32,000
+and the handler you install decides where the answers live.

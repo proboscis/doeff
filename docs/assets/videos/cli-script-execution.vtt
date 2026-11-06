@@ -1,0 +1,97 @@
+WEBVTT
+
+t1
+00:00:00.250 --> 00:00:08.300
+CLI script execution. doeff run can run a program, and then run a script of yours against that run.
+
+t2
+00:00:08.850 --> 00:00:13.850
+First the program runs, and the effects it yields are answered by its handlers.
+
+t3
+00:00:14.400 --> 00:00:20.700
+Then your script runs, with the program, its value, and its interpreter already in hand.
+
+d1
+00:00:21.250 --> 00:00:27.500
+Here is the command: a program path, then a dash, so the script is read from standard input.
+
+d2
+00:00:28.050 --> 00:00:35.500
+No interpreter is given, so doeff takes the closest marked one on the module path: checkout interpreter.
+
+d3
+00:00:36.050 --> 00:00:42.700
+The default envs along the path are merged in order, and the closer one wins: the tax rate is zero point one.
+
+r1
+00:00:43.250 --> 00:00:48.250
+checkout interpreter runs the program under a reader that holds the merged env.
+
+r2
+00:00:48.800 --> 00:00:53.150
+Each Ask travels out to the reader, and its answer comes back to the yield.
+
+r3
+00:00:55.300 --> 00:01:00.550
+The program returns forty six twenty euros. That is the value.
+
+i1
+00:01:01.100 --> 00:01:06.400
+Now the script runs, and doeff has put five names in its globals.
+
+i2
+00:01:06.950 --> 00:01:09.500
+value is what the program returned.
+
+i3
+00:01:10.450 --> 00:01:17.550
+program is the program as it was imported, still a value you can run. interpreter is the one that ran it.
+
+i4
+00:01:18.100 --> 00:01:24.400
+sys and json come along too. Anything else, the script imports itself.
+
+a1
+00:01:24.950 --> 00:01:29.150
+Because program is a value, the script can run it again.
+
+a2
+00:01:29.950 --> 00:01:36.750
+Give the interpreter another env, and the same Asks get new answers: fifty two fifty, in dollars.
+
+a3
+00:01:37.300 --> 00:01:44.850
+Call it with no env, and nothing holds the tax rate. The Ask fails with a missing env key error.
+
+h1
+00:01:45.400 --> 00:01:49.300
+The script can also wrap the program in handlers of its own.
+
+h2
+00:01:49.900 --> 00:01:54.900
+trace receives each Ask, prints its key, and passes it on to the reader.
+
+h3
+00:01:56.900 --> 00:02:02.450
+free answers the tax rate itself, with zero, and passes currency on.
+
+h4
+00:02:03.000 --> 00:02:07.950
+Same program, other handlers, another meaning: forty two euros.
+
+e1
+00:02:08.500 --> 00:02:13.950
+If the script raises, doeff prints the error and exits with status one.
+
+e2
+00:02:14.500 --> 00:02:19.500
+What the script printed before the error stays on standard output.
+
+z1.1
+00:02:20.500 --> 00:02:25.067
+doeff run runs your program with its handlers, then hands the run to your script,
+
+z1.2
+00:02:25.067 --> 00:02:28.850
+where the program is a value you can run again, under any handlers.

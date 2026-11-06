@@ -1,0 +1,97 @@
+WEBVTT
+
+t1
+00:00:00.250 --> 00:00:04.700
+Program architecture: how a doeff program is built, and how it runs.
+
+t2
+00:00:05.250 --> 00:00:14.300
+A program is a value. It is control instructions, a DoExpr, that the Rust VM evaluates.
+
+t3
+00:00:14.850 --> 00:00:19.750
+An effect is plain data. It is dispatched at one place only: Perform.
+
+p1
+00:00:21.250 --> 00:00:27.350
+Calling an at-do function runs nothing. It returns a program, and the body has not run yet.
+
+p2
+00:00:27.950 --> 00:00:35.300
+An effect such as Ask key is a value too. It names an operation, and does nothing by itself.
+
+p3
+00:00:35.950 --> 00:00:43.200
+Yield Ask is lowered to yield Perform of Ask. Both reach the same handler, and both get ada.
+
+p4
+00:00:43.950 --> 00:00:48.100
+run takes that one program, and returns its raw value.
+
+s1
+00:00:49.750 --> 00:00:56.050
+Handler installers take a program and return a program. Calling them nests the handlers.
+
+s2
+00:00:56.750 --> 00:01:01.750
+h2 is innermost, and sees every effect first. It answers Greet.
+
+s3
+00:01:02.550 --> 00:01:07.350
+Lookup is not for h2. It passes outward, and h1 answers it.
+
+s4
+00:01:08.150 --> 00:01:17.100
+Save passes h2 and h1, and reaches h0, the outermost. Dispatch always goes from inside out.
+
+c1
+00:01:18.250 --> 00:01:24.450
+The VM runs the program one step at a time. A program that yields a program calls it.
+
+c2
+00:01:25.050 --> 00:01:30.050
+Each call becomes a frame in the VM, with its function, file and line.
+
+c3
+00:01:30.850 --> 00:01:38.200
+When charge raises, the doeff traceback lists the chain of calls, and the yield each one waits at.
+
+o1
+00:01:41.250 --> 00:01:46.500
+To watch the effects, wrap a program in WithObserve, with an observer.
+
+o2
+00:01:47.250 --> 00:01:54.150
+The observer is called with each effect dispatched in the body: Ask, Get, Put and Tell.
+
+o3
+00:01:54.850 --> 00:02:00.750
+The answer is still forty two. Tell start is outside the body, so the observer does not see it.
+
+o4
+00:02:01.450 --> 00:02:07.750
+run has no trace flag. Observation composes into the program, like a handler.
+
+a1
+00:02:08.300 --> 00:02:13.800
+Async programs run under the scheduler: run of scheduled of the program.
+
+a2
+00:02:14.500 --> 00:02:21.700
+The scheduler is a handler. It answers Spawn and Gather, and switches tasks at each wait.
+
+a3
+00:02:22.400 --> 00:02:31.850
+Two tasks interleave, a1, b1, a2, b2, inside the VM's one step loop, and run returns both results.
+
+a4
+00:02:32.600 --> 00:02:38.600
+Without scheduled, Spawn finds no handler, and the run raises UnhandledEffect.
+
+z1.1
+00:02:39.800 --> 00:02:44.683
+Programs are values. Effects are data, dispatched at Perform.
+
+z1.2
+00:02:44.683 --> 00:02:51.150
+Handlers nest, and the VM steps it all. That is how doeff runs algebraic effects.

@@ -1,0 +1,99 @@
+1
+00:00:00,250 --> 00:00:08,000
+Effect combinations. In doeff, effects nest: a sub-program inside one effect performs other effects.
+
+2
+00:00:08,950 --> 00:00:14,950
+This matrix has the outer effect on each row, and the effect performed inside it on each column.
+
+3
+00:00:15,500 --> 00:00:21,300
+Each cell is a rule. Under Local, Ask is scoped, while Put passes straight through.
+
+4
+00:00:22,000 --> 00:00:27,000
+The same two effects, nested the other way around, give a different answer.
+
+5
+00:00:27,550 --> 00:00:34,150
+Try outside Listen: the error escapes Listen, and the two logs it collected are lost.
+
+6
+00:00:34,700 --> 00:00:43,100
+Listen outside Try: Try turns the error into Err first, so Listen returns that Err with both logs.
+
+7
+00:00:43,650 --> 00:00:47,050
+So the outer effect decides what the caller gets.
+
+8
+00:00:48,850 --> 00:00:52,650
+Scopes restore the environment. They never roll back the store.
+
+9
+00:00:54,050 --> 00:01:01,300
+Inside Local, key reads inner. After it, key is outer again, but the Put to counter stays.
+
+10
+00:01:01,850 --> 00:01:09,450
+The same holds when the sub-program fails inside Try. The environment comes back, and counter is still one.
+
+11
+00:01:10,250 --> 00:01:16,300
+Ask reads the scope you are in. Get and Put read one store that every scope shares.
+
+12
+00:01:17,950 --> 00:01:23,300
+WithObserve sees every effect in its body, including the effects of the children it spawns.
+
+13
+00:01:24,950 --> 00:01:31,200
+The observer only watches. What it returns goes nowhere, and the handlers still answer every effect.
+
+14
+00:01:32,950 --> 00:01:40,400
+It saw Spawn, Ask, Spawn, Ask, and Gather, and both children got the value.
+
+15
+00:01:40,950 --> 00:01:46,450
+Children under Gather share one store, and the scheduler runs one task at a time.
+
+16
+00:01:47,450 --> 00:01:54,450
+A child that does not suspend runs to its end before the next one starts, so each one sees the last write.
+
+17
+00:01:55,450 --> 00:02:00,100
+Gather gives zero, one, two, and counter is three.
+
+18
+00:02:00,650 --> 00:02:05,000
+Now each child suspends on Delay, between its read and its write.
+
+19
+00:02:06,150 --> 00:02:11,450
+While one waits, the others run and read the same zero. Two of the three updates are lost.
+
+20
+00:02:13,650 --> 00:02:18,500
+The Rust scheduler and the Python scheduler give the same results.
+
+21
+00:02:19,650 --> 00:02:24,700
+When a child fails, Gather raises that error in the parent, and Try gives Err.
+
+22
+00:02:27,150 --> 00:02:34,050
+Gather does not cancel the other children. The third one still ran after the failure, and its write stays.
+
+23
+00:02:34,600 --> 00:02:39,650
+side effects is two. If a task must stop, cancel it yourself.
+
+24
+00:02:41,100 --> 00:02:47,083
+Effect combinations in doeff: the outer effect decides, scopes restore the environment,
+
+25
+00:02:47,083 --> 00:02:51,350
+the store is shared, and tasks switch only where they suspend.

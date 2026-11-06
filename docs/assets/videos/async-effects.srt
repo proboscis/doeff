@@ -1,0 +1,71 @@
+1
+00:00:00,250 --> 00:00:07,350
+Async in doeff is made of effects, too: Spawn, Wait, Gather, Race and Cancel.
+
+2
+00:00:07,900 --> 00:00:12,083
+scheduled wraps your program in one more handler layer: the scheduler.
+
+3
+00:00:12,083 --> 00:00:16,250
+Like any handler, it gets each effect, and k, the rest of the program.
+
+4
+00:00:16,900 --> 00:00:21,950
+Spawn travels out to the scheduler, and the scheduler answers with a Task handle.
+
+5
+00:00:23,900 --> 00:00:32,500
+Spawn starts a task and hands back its handle. The task runs until it waits, and then main goes on.
+
+6
+00:00:33,100 --> 00:00:43,500
+Each task waits on the virtual clock, its k parked by wake-up time. They finish in time order: B, C, then A.
+
+7
+00:00:44,100 --> 00:00:50,000
+Gather waits for all three, and returns their values in input order: A, B, C.
+
+8
+00:00:51,900 --> 00:00:55,850
+The scheduler runs one task at a time, on one thread.
+
+9
+00:00:56,400 --> 00:01:02,950
+A task runs until it waits. These two never wait, so A runs all its steps before B starts.
+
+10
+00:01:03,500 --> 00:01:13,000
+Wait after each step, and the scheduler parks that k and resumes the next ready one: A1, B1, A2, B2.
+
+11
+00:01:14,900 --> 00:01:20,250
+Gather is fail-fast. B raises at one second, and Gather raises right then.
+
+12
+00:01:20,900 --> 00:01:26,650
+It cancels nothing. C still finishes at two seconds, and main can still wait for it.
+
+13
+00:01:27,300 --> 00:01:33,900
+Race returns the first value to finish: B. The loser, A, runs on until you cancel it.
+
+14
+00:01:35,400 --> 00:01:42,000
+Cancel is an effect too. yield Cancel, with the task, asks it to stop, and returns at once.
+
+15
+00:01:42,600 --> 00:01:48,500
+The task receives a Task Cancelled Error right where it waits, so its finally block runs.
+
+16
+00:01:49,100 --> 00:01:54,200
+Cleanup may perform effects. Wait on the task answers only after the cleanup is done.
+
+17
+00:01:55,400 --> 00:02:02,783
+doeff: a task is a paused program, and the scheduler is a handler that decides when each one resumes.
+
+18
+00:02:02,783 --> 00:02:04,100
+pip install doeff.
