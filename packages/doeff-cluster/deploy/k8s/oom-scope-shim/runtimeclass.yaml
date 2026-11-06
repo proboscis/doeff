@@ -4,3 +4,11 @@ kind: RuntimeClass
 metadata:
   name: runc-oomscope
 handler: runc-oomscope
+---
+# 同じ shim で GPU を入れる handler(nvidia-container-runtime を呼ぶ)。使えるのは NVIDIA container toolkit を入れた機体だけ
+# (../../oom-scope-shim/README.md の「GPU の機体」)。
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc-oomscope-nvidia
+handler: runc-oomscope-nvidia

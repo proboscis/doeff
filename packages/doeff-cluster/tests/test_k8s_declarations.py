@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -1787,7 +1788,13 @@ def test_other_workers_keep_the_jobs_in_the_generation_dir(rendered: list[Manife
 
 # 層の上限の OOM で container に OOMKilled の印を付けない runc の shim の RuntimeClass(../deploy/oom-scope-shim/README.md)。
 OOM_SCOPE_RUNTIME_CLASS = "runc-oomscope"
+# 同じ shim で runc の代わりに nvidia-container-runtime を呼び、GPU を入れる RuntimeClass(README.md の「GPU の機体」)。
+OOM_SCOPE_GPU_RUNTIME_CLASS = "runc-oomscope-nvidia"
 OOM_SCOPE_RUNTIME_NODES = ("zeus",)
+# NVIDIA container toolkit を入れた機体(GPU の RuntimeClass を使えるのはここだけ)と、その RuntimeClass で worker を走らせる機体。
+GPU_TOOLKIT_NODES = ("zeus",)
+GPU_WORKER_NODES: tuple[str, ...] = ()
+OOM_SCOPE_RUNTIME_TOML = PACKAGE / "deploy" / "oom-scope-shim" / "runtime.toml"
 
 
 def _oom_scope_installer_nodes(rendered: list[Manifest]) -> list[str]:
@@ -1816,12 +1823,61 @@ def test_workers_run_the_oom_scope_shim_only_on_nodes_it_is_placed_on(rendered: 
     DaemonSet の nodeAffinity に入っている(置かない機体で使うと、Pod の sandbox が handler 無しで作れず worker が起きない)。"""
     runtime_classes = [doc for doc in rendered if doc["kind"] == "RuntimeClass"]
     assert [(_mapping(d["metadata"], "metadata")["name"], d["handler"]) for d in runtime_classes] == [
-        (OOM_SCOPE_RUNTIME_CLASS, OOM_SCOPE_RUNTIME_CLASS)
+        (OOM_SCOPE_RUNTIME_CLASS, OOM_SCOPE_RUNTIME_CLASS),
+        (OOM_SCOPE_GPU_RUNTIME_CLASS, OOM_SCOPE_GPU_RUNTIME_CLASS),
     ]
     using = sorted(
         _node(doc) or ""
         for doc in _deployments(rendered, "worker")
-        if _pod_spec(doc).get("runtimeClassName") == OOM_SCOPE_RUNTIME_CLASS
+        if _pod_spec(doc).get("runtimeClassName") in (OOM_SCOPE_RUNTIME_CLASS, OOM_SCOPE_GPU_RUNTIME_CLASS)
     )
     assert using == sorted(OOM_SCOPE_RUNTIME_NODES)
     assert set(using) <= set(_oom_scope_installer_nodes(rendered))
+
+
+def test_oom_scope_runtime_toml_declares_every_runtime_class_handler() -> None:
+    """機体へ置く containerd の差し込みが、RuntimeClass の handler を 2 つとも同じ shim で足し、GPU の handler だけが runc の代わりに
+    nvidia-container-runtime を呼ぶ(handler の無い RuntimeClass を使うと Pod の sandbox が作れない)。"""
+    with OOM_SCOPE_RUNTIME_TOML.open("rb") as stream:
+        runtimes = _mapping(
+            _mapping(
+                _mapping(
+                    _mapping(tomllib.load(stream)["plugins"], "plugins")["io.containerd.cri.v1.runtime"],
+                    "cri runtime",
+                )["containerd"],
+                "containerd",
+            )["runtimes"],
+            "runtimes",
+        )
+    assert sorted(runtimes) == sorted([OOM_SCOPE_RUNTIME_CLASS, OOM_SCOPE_GPU_RUNTIME_CLASS])
+    for name in runtimes:
+        runtime = _mapping(runtimes[name], name)
+        assert runtime["runtime_type"] == "io.containerd.runc.v2"
+        assert runtime["runtime_path"] == "/opt/doeff-cluster/bin/containerd-shim-runc-oomscope-v2"
+        assert _mapping(runtime["options"], f"{name} の options")["SystemdCgroup"] is True
+    plain = _mapping(_mapping(runtimes[OOM_SCOPE_RUNTIME_CLASS], "plain")["options"], "plain の options")
+    gpu = _mapping(_mapping(runtimes[OOM_SCOPE_GPU_RUNTIME_CLASS], "gpu")["options"], "gpu の options")
+    assert "BinaryName" not in plain
+    assert gpu["BinaryName"] == "/usr/bin/nvidia-container-runtime"
+
+
+def test_gpu_runtime_class_runs_only_workers_on_toolkit_nodes(rendered: list[Manifest]) -> None:
+    """GPU の RuntimeClass で走る worker は toolkit を入れた機体だけで、その worker だけが NVIDIA の env で GPU を求める(env の
+    NVIDIA_VISIBLE_DEVICES は「この機体の worker は GPU を持つ」の宣言でもある — GPU の RuntimeClass の無い worker が置くと、GPU を
+    求めて得られない)。graphics の能力が EGL と GBM の lib を入れる。"""
+    using = sorted(
+        _node(doc) or ""
+        for doc in _deployments(rendered, "worker")
+        if _pod_spec(doc).get("runtimeClassName") == OOM_SCOPE_GPU_RUNTIME_CLASS
+    )
+    assert using == sorted(GPU_WORKER_NODES)
+    assert set(using) <= set(GPU_TOOLKIT_NODES)
+    for doc in _deployments(rendered, "worker"):
+        names = [entry["name"] for entry in _env(doc)]
+        if _node(doc) in GPU_WORKER_NODES:
+            assert _env_value(doc, "NVIDIA_VISIBLE_DEVICES")["value"] == "all"
+            capabilities = str(_env_value(doc, "NVIDIA_DRIVER_CAPABILITIES")["value"]).split(",")
+            assert {"graphics", "utility"} <= set(capabilities), capabilities
+        else:
+            assert "NVIDIA_VISIBLE_DEVICES" not in names, _node(doc)
+            assert "NVIDIA_DRIVER_CAPABILITIES" not in names, _node(doc)

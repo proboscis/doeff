@@ -9,3 +9,15 @@ version = 3
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc-oomscope.options]
   SystemdCgroup = true
+
+# 同じ shim で、runc の代わりに機体の NVIDIA container toolkit の nvidia-container-runtime を呼ぶ handler(RuntimeClass runc-oomscope-nvidia)。
+# container の env NVIDIA_VISIBLE_DEVICES が指す GPU の device と driver の lib を入れてから runc を呼ぶ(env の無い container には何も足さない)。
+# k3s が toolkit を見つけて自分で足す handler nvidia は元の runc の shim を使うので、層の OOM の印の直しを持たない。binary は機体に
+# toolkit を入れた機体だけに在る — それ以外の機体でこの handler を使うと container が作れない(README.md の「GPU の機体」)。
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc-oomscope-nvidia]
+  runtime_type = "io.containerd.runc.v2"
+  runtime_path = "/opt/doeff-cluster/bin/containerd-shim-runc-oomscope-v2"
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc-oomscope-nvidia.options]
+  BinaryName = "/usr/bin/nvidia-container-runtime"
+  SystemdCgroup = true
