@@ -271,7 +271,11 @@ spec:
             # 14fd4ae4c = 作業場所の volume を作る時と冷やす Backup の前に束 BackupVolume を作る(worker の側)。zeus・atlas・helios の
             # worker をこの版へ上げるため(worker の版を coordinator より新しくしない約束)に上げる。coordinator の process に効く差は無い。
             # 前の版 4f7cd9f75 は 14fd4ae4c の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 14fd4ae4c2fc92a52bfb72a5011c4278dddcb027 }
+            # b556bdaba = macOS の worker が CPU と memory の空きを mach で測る(worker の側)・worker の token の古さの線を token の
+            # 寿命から導く(9e08f7e25)・warm の子を jobs の層に収まる時だけ起こす(0190b8eee)。zeus・atlas・helios の worker を
+            # この版へ上げるため(worker の版を coordinator より新しくしない約束)に上げる。coordinator の process に効く差: 置き場の
+            # 決まらない volume の消しを版の衝突の後にやり直す(be5de395e)。前の版 14fd4ae4c は b556bdaba の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: b556bdaba54d5d4fbbd745dcff14256bdefd28e9 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
