@@ -60,7 +60,6 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 |---|---|---|
 | `Tell` | Effect: append a message to the writer log. | [Tell](#tellmessage) |
 | `WriterTellEffect` | The effect class `Tell` makes. | [WriterTellEffect](#writertelleffectmsg) |
-| `ReadWriterLog` | Effect: a copy of the messages `Tell` has logged so far. | [ReadWriterLog](#readwriterlog) |
 | `Listen` | Effect: run a program and also answer the effects of given types it performed. | [Listen](#listenprogram-typesnone) |
 | `slog` | Effect: a structured log entry (`slog("event", count=42)`). | [slog](#slogmsg-kwargs) |
 | `SlogEffect` | The effect class `slog` makes. | [slog](#slogmsg-kwargs) |
