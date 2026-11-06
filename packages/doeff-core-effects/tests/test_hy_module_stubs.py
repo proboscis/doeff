@@ -302,7 +302,7 @@ def test_a_dropped_handler_parameter_is_found() -> None:
     broken = copy.deepcopy(_stub_tree("_scripted_http_server"))
     for node in broken.body:
         match node:
-            case ast.FunctionDef(name="_scripted_http_server"):
+            case ast.FunctionDef(name="scripted_http_server"):
                 node.args.args = []
             case _:
                 pass

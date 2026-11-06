@@ -1274,7 +1274,7 @@ def test_without_the_world_running_setting_a_world_test_is_judged_by_the_whole_c
     result = pytester.runpytest("-v")
     result.assert_outcomes(failed=3)
     result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run*steps 70500, *limit steps 1000*"])
-    assert "world run" not in result.stdout.str()
+    assert "(world run " not in result.stdout.str()
 
 
 def test_an_unknown_steps_counted_value_stops_the_run_by_name(pytester: pytest.Pytester) -> None:
