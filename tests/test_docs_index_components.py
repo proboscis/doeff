@@ -1,7 +1,7 @@
 """Test that the docs table of contents separates pages readable with `pip install doeff` alone from pages that need components outside the core installed separately
 (doeff-publish initiative).
 
-`pip install doeff` installs only the 5 core components (CORE in tools/verify_release_install.py); doeff-agents, doeff-llm and others
+`pip install doeff` installs only the 5 core components (CORE in tools/verify_release_install.py); doeff-llm, doeff-time and others
 are not installed. The previous table of contents listed pages that need those components (the agent guide, the Gemini page, etc.) in the same section as core pages, so
 first-time readers copied them in a core-only environment and hit ModuleNotFoundError. From the names of the components that a page's fences import, this test reads
 the following 3 things (fences are not run — running is done by the README test and the getting-started path test):
@@ -73,7 +73,7 @@ def _imports(language: str, body: str) -> list[str]:
 
 
 def _outside_components(page: Path) -> set[str]:
-    """Names of the non-core doeff components imported by the page's python and Hy fences (in the form `doeff-agents`)."""
+    """Names of the non-core doeff components imported by the page's python and Hy fences (in the form `doeff-llm`)."""
     fences = FENCE.findall(page.read_text(encoding="utf-8"))
     modules = {module for language, body in fences for module in _imports(language, body)}
     return {module.replace("_", "-") for module in modules - _core_modules()}

@@ -114,8 +114,6 @@ def test_the_rule_names_the_generic_packages() -> None:
     assert read_rule().packages == (
         "packages/doeff-cluster",
         "packages/doeff-records",
-        "packages/doeff-claude-code",
-        "packages/doeff-codex",
     )
 
 
@@ -135,7 +133,6 @@ def test_the_scan_covers_the_packages() -> None:
     wanted = {
         "packages/doeff-cluster": ["README.md", "pyproject.toml", "src/doeff_cluster/_shared/entry/cluster_foundation.hy"],
         "packages/doeff-records": ["README.md", "pyproject.toml", "src/doeff_records/_values.pyi"],
-        "packages/doeff-claude-code": ["pyproject.toml"],
     }
     for package, names in wanted.items():
         scanned = set(scanned_names(REPO_ROOT, package))

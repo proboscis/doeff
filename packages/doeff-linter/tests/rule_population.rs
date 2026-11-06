@@ -302,7 +302,7 @@ fn business_code_in_the_environment_module_is_red() {
 
 /// Declaration for a package where the named module is in a dir without `__init__.py` (module name = file name) —
 /// placed at the package root, naming a bare module in the tests dir to exempt DOEFF004.
-/// It used to read doeff's repo declarations as is (doeff-agents' runner-env and doeff-openrouter's local-dotenv), but both
+/// It used to read doeff's repo declarations as is (an agent package's runner-env and doeff-openrouter's local-dotenv), but both
 /// came to read environment variables via ReadEnvironment and removed their DOEFF004 exemption. The linter still has the mechanism for naming a bare module to exempt it,
 /// so a declaration of the same form is written here and kept under check.
 const BARE_MODULE_DECLARATION: &str = r#"

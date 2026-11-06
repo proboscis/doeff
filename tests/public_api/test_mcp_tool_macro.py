@@ -213,7 +213,7 @@ class TestDefmcpToolMacro:
     def test_body_calling_the_tools_own_name_raises(self, body):
         """An expansion whose body calls the tool's own name is refused (whether spelled with - or _, even deep in an expression). The expansion binds that name to McpToolDef,
         so even if a defk of the same name exists earlier the call in the body points to the tool, and at run it was
-        TypeError: 'McpToolDef' object is not callable (the MCP tool example in docs chapter 12)."""
+        TypeError: 'McpToolDef' object is not callable (found in a published MCP tool example)."""
 
         @do
         def submit_order(symbol):
@@ -230,7 +230,7 @@ class TestDefmcpToolMacro:
 """, submit_order=submit_order)
 
     def test_tool_named_apart_from_its_defk_runs_the_defk(self):
-        """If the tool's name is separated from the defk, the body calls the defk, and the handler's run returns the defk's result (the shape of the example in docs chapter 12).
+        """If the tool's name is separated from the defk, the body calls the defk, and the handler's run returns the defk's result (the shape of a tool that wraps a defk).
         `(. submit-order-tool name)`, which only reads the tool's value, and names inside quotes are not calls, so they are not refused."""
 
         @do

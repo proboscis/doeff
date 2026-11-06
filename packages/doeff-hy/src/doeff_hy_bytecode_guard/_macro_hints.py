@@ -19,7 +19,7 @@ How to tell them apart (avoiding false warnings comes first):
   Importing the provider module itself, or importing a name that is not a macro, is fine (a test guarantees that table names do not overlap the provider's attributes).
 
 Macro names live in one place, ``MACRO_HOMES`` (provider module name -> names that ``(require provider *)`` brings in); agreement with the real macro tables is measured by
-packages/doeff-hy/tests/test_macro_hints.py. Macros of packages outside doeff-hy (doeff-conductor, doeff-cluster, etc. — published by their owning packages) are not included.
+packages/doeff-hy/tests/test_macro_hints.py. Macros of packages outside doeff-hy (doeff-cluster, etc. — published by their owning packages) are not included.
 
 This is part of :mod:`doeff_hy_bytecode_guard`, which is loaded at startup of every Python in the venv, but this module is loaded
 the first time a Hy module is loaded (not at startup — ``hy`` loads it only when building the name table). For a correct module it finishes with just a comparison of the record's names against co_names and

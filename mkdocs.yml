@@ -31,7 +31,6 @@ exclude_docs: |
   !/07-cache-system.md
   !/09-advanced-effects.md
   !/11-kleisli-arrows.md
-  !/12-mcp-tools.md
   !/12-patterns.md
   !/13-api-reference.md
   !/14-cli-auto-discovery.md
@@ -39,7 +38,6 @@ exclude_docs: |
   !/16-run-program-api.md
   !/17-effect-boundaries.md
   !/18-effect-combinations.md
-  !/19-agent-tutorial.md
   !/20-why-effects-over-di.md
   !/21-semaphore-effects.md
   !/22-capability-classes.md
@@ -96,10 +94,6 @@ nav:
           - CLI Auto-Discovery: 14-cli-auto-discovery.md
           - MARKERS.md: MARKERS.md
           - IDE Plugins: ide-plugins.md
-      - Coding-agent sessions:
-          - Agent Tutorial: 19-agent-tutorial.md
-          - MCP Tools: 12-mcp-tools.md
-          - doeff-agents / session host: https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md
       - LLM and image providers:
           - Unified LLM Effects: llm_unified_effects.md
           - Gemini Setup: gemini_client_setup.md

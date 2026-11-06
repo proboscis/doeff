@@ -8,7 +8,7 @@ anything after a module-level pytestmark = pytest.mark.realtime, sleep(0), and a
 so we also check that the rule reaches the file.
 
 Scope test: the rule reaches files with test names (test_*.py, *_test.py, conftest.py) even outside a tests dir,
-but not files without test names, nor dirs in the rule's paths.exclude (the roster's [suites]).
+but not files without test names.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def test_only_the_marked_lines_fire() -> None:
 def test_the_rule_reaches_test_named_files_outside_a_tests_dir(tmp_path: Path) -> None:
     sleeping = "import time\n\n\ndef wait():\n    time.sleep(0.1)\n"
     fires = ("suite/conftest.py", "suite/scenario_test.py", "suite/test_scenario.py")
-    silent = ("suite/harness.py", "packages/doeff-agents/conformance/test_s1.py")
+    silent = ("suite/harness.py",)
     for relative in (*fires, *silent):
         sample = tmp_path / relative
         sample.parent.mkdir(parents=True, exist_ok=True)

@@ -43,8 +43,8 @@ by the key (module that shows the name, name). A submodule whose name does not s
    placing a class that appears in no effect's fields is red. In the group "Allowed — effect answer type" (R2), only the package's
    effect answer types can be placed (the T of EffectBase[T] or the type in a defeffect :answer, a bus event that an effect waiting on a body-named type declared in its own __doeff_bus_events__, and
    types in the fields of an answer class, child classes, and type aliases that list only answer classes — the inventory's answer_types): an answer written only in a docstring
-   and a class that appears in no effect's answer are red. In the group "Allowed — program-shape builder and type" (R37 — agent!, loop and others that
-   write a doeff-conductor workflow, and AgentSpec and others), only builders (functions of the conversion shape that return a value of a class of the same package) whose returned class is a name the package shows,
+   and a class that appears in no effect's answer are red. In the group "Allowed — program-shape builder and type" (R37 — builders such as merge and
+   subscribe of doeff-stream, and the types they return), only builders (functions of the conversion shape that return a value of a class of the same package) whose returned class is a name the package shows,
    and classes that the group's builders return, can be placed: a function that emits or creates an effect, reads I/O, returns a class that is not shown, or returns outside value types, and a class that no builder of the group returns, are red. In the group "Allowed — handler setting type" (R2), only
    types defined by that package can be placed, and only classes and type aliases that appear in the annotations of the arguments of handlers, handler classes, and factories shown by the same package (including type arguments, following the fields of
    setting types the package defines [including Protocol properties] — the inventory's settings): a class that appears in no argument, a function, or a name that re-exports a standard library type is red.
@@ -59,8 +59,8 @@ by the key (module that shows the name, name). A submodule whose name does not s
    — an old-path import bound the parent's attribute to a module, hid the entry point's function, and the records service fell over at every startup). Checked two ways per package: a literal check (the names the entry file binds against the child names), and
    a check that, in a fresh process, after importing the root and every public module (including old paths) one by one, the entry point's names do not turn into modules. Failure case: where the entry point of a throwaway package
    shows the function serve (lazy) and tool (immediate), placing a forwarding module of the same name makes both red, and removing the shell makes them green.
-   The same is applied to the entry points of packages under the root (including _ packages) (the old path doeff_agents.effects.agent of a moved package imported
-   and overwrote the function agent of doeff_agents._effects with a module). Failure case: the entry point of the package _inner under the root binds the function tool from a child of the same name, tool, and the shell answers the old path inner of the moved package, making both red;
+   The same is applied to the entry points of packages under the root (including _ packages) (the old path effects.agent of a moved package imported
+   and overwrote the function agent of its _effects with a module). Failure case: the entry point of the package _inner under the root binds the function tool from a child of the same name, tool, and the shell answers the old path inner of the moved package, making both red;
    moving the child to _tool makes them green.
 """
 
@@ -115,8 +115,8 @@ VALUE_TYPE_GROUP = "Allowed — effect value type"
 PLUGIN_GROUP = "Allowed — pytest plugin registration"
 #: Group of startup entries the rule allows (ADR-DOE-API-001 R36) — only names that a .pth shipped by the package calls at every startup of the venv's Python can be placed.
 STARTUP_GROUP = "Allowed — startup entry"
-#: Group of builders the rule allows that assemble values representing the shape of a program, and the types of the values they return (ADR-DOE-API-001 R37 — the
-#: workflow vocabulary of doeff-conductor). Only builder names whose inventory shape is a builder, and classes that the group's builders return, can be placed.
+#: Group of builders the rule allows that assemble values representing the shape of a program, and the types of the values they return (ADR-DOE-API-001 R37).
+#: Only builder names whose inventory shape is a builder, and classes that the group's builders return, can be placed.
 BUILDER_GROUP = "Allowed — program-shape builder and type"
 #: Group of handler setting types the rule allows (ADR-DOE-API-001 R2) — only types of the arguments of handlers and factories shown by the same package can be placed.
 SETTING_GROUP = "Allowed — handler setting type"
@@ -128,7 +128,7 @@ ALLOWED_SHAPES: dict[str, str] = {
     MACRO_GROUP: "Only Hy macros and public submodules that show nothing but Hy macros (macro modules) can be placed"
     "(ADR-DOE-API-001 R14, R15, R31)",
     COMMAND_GROUP: "Only console scripts and Rust executables that an ADR-DOE-API-001 rule names and decides to keep can be placed"
-    "(ADR_COMMANDS — R7, R23, R24, R27, R28, R31, R33)",
+    "(ADR_COMMANDS — R7, R23, R24, R27, R31, R33)",
     CONVERSION_GROUP: "Only functions that take a value and return a value, create no effect, handler, or program inside, and do not read the clock, environment, files, processes, or"
     " randomness can be placed (ADR-DOE-API-001 R35)",
     ADR_WRITER_GROUP: "Only functions (plain or conversion functions) shown by a Hy macro module can be placed (an ADR imports and calls them in a defadr body — ADR-DOE-API-001 R14)",
@@ -155,9 +155,6 @@ ALLOWED_SHAPES: dict[str, str] = {
 #: test_every_command_the_guard_allows_is_named_by_its_rule checks that the rule text names each — adding a command not in an ADR is red.
 ADR_COMMANDS: dict[str, dict[str, str]] = {
     "doeff-adr": {"doeff-adr": "R33"},
-    "doeff-agentic": {"doeff-agentic": "R28", "doeff-agentic-tui": "R7"},
-    "doeff-agents": {"doeff-agents": "R7"},
-    "doeff-conductor": {"conductor": "R7"},
     "doeff-effect-analyzer": {"doeff-effects": "R24"},
     "doeff-flow": {"doeff-flow": "R7"},
     "doeff-hy": {"doeff-hy-check": "R31"},
@@ -916,7 +913,7 @@ def entry_packages(root_dir: Path, root: str) -> list[tuple[str, Path]]:
     """The names and dirs of the import root and the packages under it (including _ packages) — dirs that have an entry file (in name order).
 
     The entry of a package under the root shows names like the root's, and an old-path import of a moved package overwrites that package's attribute with a child module of the same name
-    (the import of doeff_agents.effects.agent overwrote the agent of doeff_agents._effects).
+    (the import of the old path effects.agent of a moved package overwrote the agent of its _effects).
     """
     if not root_dir.is_dir():
         return []
@@ -1551,7 +1548,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[EXCEPTION_GROUP] in str(failure.value)
 
-#: The types and builders of values representing the shape of a program (the shape of AgentSpec and agent! of doeff-conductor), and things beyond a builder's shape: functions that emit or
+#: The types and builders of values representing the shape of a program (the shape of a workflow spec and the builder that writes it), and things beyond a builder's shape: functions that emit or
 #: create effects, whose inner functions of the same package read the environment or files, functions that return a class that is not shown, functions that return outside value types, and a class with no builder.
 BUILDERS = '''
 
@@ -2250,7 +2247,7 @@ def unnamed_commands(
 
 
 def test_every_command_the_guard_allows_is_named_by_its_rule() -> None:
-    """Every command in ADR_COMMANDS has a rule text that names it (ADR-DOE-API-001 R7, R23, R24, R27, R28, R31, R33) — adding a command without revising the rule
+    """Every command in ADR_COMMANDS has a rule text that names it (ADR-DOE-API-001 R7, R23, R24, R27, R31, R33) — adding a command without revising the rule
     is red."""
     assert not (
         problems := unnamed_commands(adr_rules(ADR_FILE.read_text(encoding="utf-8")), ADR_COMMANDS)
@@ -3071,7 +3068,7 @@ def test_every_moved_submodule_shim_pins_the_names_of_its_old_paths(package_dir:
     )
 
 
-#: A package whose entry shows the function serve lazily (the shape of aiohttp_http_server in doeff_core_effects) and the function tool immediately (the shape of tmux_handler in doeff_agentic).
+#: A package whose entry shows the function serve lazily (the shape of aiohttp_http_server in doeff_core_effects) and the function tool immediately.
 #: Both functions are in _ modules, and the children serve and tool at the old paths are forwarding modules.
 CLASHING_ENTRY = f"""
 import importlib as _importlib
@@ -3175,7 +3172,7 @@ def test_an_inner_package_entry_name_like_its_child_turns_red_and_moving_the_chi
     both the literal check and the fresh-process check are red (importing the old path inner.tool overwrites the attribute tool of _inner with a module), and
     moving the child to the _ name _tool makes it green (ADR-DOE-API-001 R34).
 
-    The same shape as the child agent of doeff_agents._effects and the old path doeff_agents.effects.agent of the moved package.
+    The same shape as a moved package whose child _effects.agent is shadowed by the old path effects.agent.
     """
     files = {
         "__init__.py": "",

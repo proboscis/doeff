@@ -1,5 +1,5 @@
 ;;; The real responder subprocess-handler for the generic child-process effects (process_effects.hy). It only calls subprocess and os.environ
-;;; and repackages the values, with no judgment of its own. doeff-agents' driver-io-handler also answers RunProcess with the same run-subprocess (one implementation).
+;;; and repackages the values, with no judgment of its own.
 ;;; ReadMachineName answers socket.gethostname as is.
 ;;; The child's stdin, stdout, stderr and output-path are read and written as utf-8 with surrogateescape (reversible - see the header note of process_effects.hy).
 ;;;
@@ -169,8 +169,7 @@
 (defk os-executable-at [path]
   {:pre [(: path str)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
   "To read from the real filesystem whether an executable file exists at path: the kind follows symlinks (os.stat), and permission to execute is os.access with X_OK.
-      A path that cannot be read (a file in the middle, a dir that cannot be entered) is treated the same as nonexistent. The judgment is executable-file-answer (the same function as the responder without I/O).
-      doeff-agents' driver-io-handler also answers ExecutableAt with this."
+      A path that cannot be read (a file in the middle, a dir that cannot be entered) is treated the same as nonexistent. The judgment is executable-file-answer (the same function as the responder without I/O)."
   (<- seen (| PathStat FileFailed) (stat-path path True))
   (val kind (match seen
               (PathStat :kind found) found

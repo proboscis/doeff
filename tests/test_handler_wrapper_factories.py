@@ -1,18 +1,13 @@
-"""The 8 names that used to wrap a program with a handler are now factories (or handler values) applied as h1(h2(p)), like other handlers.
+"""The 4 names that used to wrap a program with a handler are now factories (or handler values) applied as h1(h2(p)), like other handlers.
 
 Rule: a handler-returning factory is a function that, called with minimal arguments, returns a handler carrying the marker
 _doeff_is_handler_fn (ADR-DOE-API-001 R3). Functions that wrap a program are moved to the factory shape (R6), and handlers are
 applied to a program as h1(h2(p)) (R16). A handler with neither configuration nor per-call state is a marked value, not a
 factory (ADR-DOE-API-002 R1). Where each name went:
 
-- doeff-conductor's make_blocking_scheduled_handler and make_async_scheduled_handler: kept as factories under the same names
-  (take fn and return a handler that answers every effect with fn(effect); the async one emits a DeprecationWarning).
 - doeff-notify's testing_handler and build_testing_handler (two names for the same function): kept as factories under the
   same names (take the capture destination for records).
 - doeff-core-effects' run_apart: no configuration, so kept under the same name as a marked handler value: (run-apart program).
-- doeff-agentic's with_agentic_effectful_handlers(p, ...): removed, moved to the existing factory agentic_effectful_handlers(...)(p).
-- doeff-agentic's with_handlers(p, handlers) (doeff_agentic.runtime): removed, moved to doeff's stacked_handlers(*handlers)(p)
-  (the submodule doeff_agentic.runtime was also removed).
 - doeff-records' ready_handlers: not a function that installs handlers but a program that prepares the check shell (returns the
   handler for the writer's name as is), so it was moved to the internal _ready_handlers instead of becoming a factory.
 
@@ -21,9 +16,8 @@ factory (ADR-DOE-API-002 R1). Where each name went:
 2. Calling a factory returns a marked handler, and applying that handler (and run_apart) to a program gives the same answer as the
    original function (doeff-notify is not in the root environment, so packages/doeff-notify/tests/test_handlers.py checks the same thing).
 
-The doeff-conductor, doeff-agentic and doeff-records parts (the 3 lines above) are checked by each package's own tests, so that
-the root tests do not import internal packages (2026-11-04): packages/doeff-conductor/tests/test_scheduled_handler_factories.py,
-packages/doeff-agentic/tests/test_handler_factory_shape.py, packages/doeff-records/tests/test_ready_handlers_inside.py.
+The doeff-records part (the line above) is checked by the package's own tests, so that the root tests do not import
+internal packages (2026-11-04): packages/doeff-records/tests/test_ready_handlers_inside.py.
 """
 
 from __future__ import annotations

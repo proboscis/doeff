@@ -7,7 +7,7 @@ Internal names = 4 kinds — names of the application systems built on top, work
 
 The single source of the word list is INTERNAL_NAMES in this module. It does not read the word list of the semgrep rule doeff-packages-have-no-application-vocabulary:
 that one applies to all contents of generic packages as "application-system words", and includes conversation, budget, artifact and herdr.
-In entry files these 4 words appear with their general meaning (the herdr backend of doeff-agents, the time budget of doeff-hy-pytest),
+In entry files these 4 words appear with their general meaning (a terminal backend named herdr, the time budget of doeff-hy-pytest),
 so the entry-file list is narrowed to names and kept separately.
 """
 
@@ -164,7 +164,7 @@ def test_the_scan_covers_the_entry_files_of_this_repo() -> None:
     assert [name for name in FIXED_ENTRY_FILES if name not in scanned] == []
     for name in (".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/question.yml"):
         assert name in scanned
-    for name in ("packages/doeff-vm/README.md", "packages/doeff-agents/README.md", "packages/doeff-cluster/README.md"):
+    for name in ("packages/doeff-vm/README.md", "packages/doeff-hy/README.md", "packages/doeff-cluster/README.md"):
         assert name in scanned
     assert any(name.startswith("examples/") for name in scanned)
 

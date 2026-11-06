@@ -100,7 +100,7 @@
          [(counterexample
              "The 2026-09-24 daily (snapshot f271ae39): gate.full was a single command chaining the root pytest, make test-packages, and make test-rust with &&; it stopped at 3 root reds (test_effectful 2, test_semgrep_gate 1), and not a single test of the package and Rust populations ran. With only one processing stage in the ledger, full, it recorded coverage = {complete: true, unexecuted: []} — it claimed 'measured everything' while there were populations that had not run")
           (counterexample
-             "A change that overlooked a reader landed while green on a tree with no daily caller (packages/doeff-agents/tests) — reds in that tree appear in nobody's daily")
+             "A change that overlooked a reader landed while green on a tree with no daily caller (one package's tests dir) — reds in that tree appear in nobody's daily")
           (counterexample
              "`|| exit 1` in the make test-packages loop: on a day when the first package in name order is red, none of the 26 packages after it run (measured with a fake runner making only the first package red — called 1 time)")
           (counterexample

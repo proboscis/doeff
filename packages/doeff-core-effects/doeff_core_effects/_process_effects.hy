@@ -1,13 +1,13 @@
-;;; Generic child-process effects (consumers = #796 daily full verification, #795 webapp assembly, and the driver layer of doeff-agents).
+;;; Generic child-process effects (consumers = #796 daily full verification, #795 webapp assembly, and agent driver layers).
 ;;; A foundation vocabulary with no business terms, at the same level as HttpRequest (http_effects.hy). The handler is swapped per mechanism:
-;;;   subprocess-handler            Real child processes and os.environ (os_process.hy). The driver-io-handler of doeff-agents calls the same implementation
+;;;   subprocess-handler            Real child processes and os.environ (os_process.hy)
 ;;;   offloaded-subprocess-handler  Runs the same implementation as the real one, one thread per call (os_process.hy) -- other tasks of the
 ;;;                                 scheduler keep running while waiting for a child (RunProcess calls placed side by side run concurrently with Spawn / Gather; the tick keeps turning during the child).
 ;;;                                 Needs scheduled outside. When a waiting task is cancelled, the running child is stopped (#2847 -- stop-grace below).
 ;;;                                 metered-offloaded-subprocess-handler is the form that counts the stopped children with a meter (pass it the meter's handler)
 ;;;   scripted-process-handler      No I/O -- a script per command name, plus fixed environment variables and a per-job working dir (scripted_process.hy)
 ;;;
-;;; RunProcess, ExecutableAt and ProcessOutcome were moved from io_effects of doeff-agents (one definition -- io_effects re-exports the same types). The fields
+;;; RunProcess, ExecutableAt and ProcessOutcome were moved here from an agent driver package (one definition). The fields
 ;;; added when moving all have default values, so the behavior of current users does not change:
 ;;;   env of RunProcess (None = inherit the caller's environment; a tuple of EnvEntry = as per env-mode), output-path (None = do not append; a path = append the child's output to the
 ;;;   end of that file -- the answer also carries stdout / stderr).

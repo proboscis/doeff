@@ -1,6 +1,6 @@
 """Handler lists a builder splits and puts back together.
 
-agora's ``claude-runtime-handlers`` took doeff-agents' pair apart and put a handler of its
+agora's ``claude-runtime-handlers`` took an agent library's pair apart and put a handler of its
 own between the two halves (a75d84047)::
 
     (setv [lower adapter] (claude-agent-runtime-handlers …))
@@ -64,7 +64,7 @@ HANDLERS_HY = """\
   (Tick [] (resume None)))
 """
 
-# The library side (doeff-agents' shape): a pair the reader can open, and one it cannot —
+# The library side (the agent library's shape): a pair the reader can open, and one it cannot —
 # the list comes from a module it imports when called.
 LIBRARY_PY = """\
 from importlib import import_module

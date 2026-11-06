@@ -18,7 +18,7 @@
        "The bulk gate (baseline 0) cannot distinguish \"zero violations\" from \"rule is dead\"."
        :evidence "tests/test_semgrep_gate.py")]
   :decision
-    [(rule R1 "The 16 P0 rules keep permanent hit/clean fixtures via defsemgrep.")
+    [(rule R1 "The 5 P0 rules keep permanent hit/clean fixtures via defsemgrep.")
      (rule R2 "Extending this to P1 and beyond is decided separately, based on operating experience with P0.")]
   :laws
     [(law p0-rule-liveness
@@ -28,79 +28,7 @@
          [(counterexample
             "A P0 rule's matcher or path condition dies while the bulk gate stays green")])]
   :enforcement
-    [(defsemgrep p0-no-anthropic-api-key-agent-env
-       "doeff-agents-no-anthropic-api-key-agent-env"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_session.py"
-         "source" "session_env = {'ANTHROPIC_API_KEY': 'secret'}\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_session.py"
-         "source" "session_env = {'PYTHONUNBUFFERED': '1'}\n"}])
-     (defsemgrep p0-no-claude-print-mode
-       "doeff-agents-no-claude-print-mode"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
-         "source" "command = 'claude --print'\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
-         "source" "command = 'claude'\n"}])
-     ;; enforcement-ledger raw-counts the deftest opening token in the ADR body.
-     ;; Hy source inside fixtures is not real enforcement, so the token is split.
-     (defsemgrep p0-require-real-claude-result-retry-e2e
-       "doeff-agents-require-real-claude-result-retry-e2e"
-       [{"relative-path"
-         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source"
-           (+ "(def"
-              "test test-agentd-real-codex-result-contract-retries-invalid-output []\n  (assert True))\n")}]
-       [{"relative-path"
-         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source"
-           (+ "(def"
-              "test test-agentd-real-claude-result-contract-retries-invalid-output []\n  (assert True))\n")}])
-     (defsemgrep p0-require-real-codex-result-retry-e2e
-       "doeff-agents-require-real-codex-result-retry-e2e"
-       [{"relative-path"
-         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source"
-           (+ "(def"
-              "test test-agentd-real-claude-result-contract-retries-invalid-output []\n  (assert True))\n")}]
-       [{"relative-path"
-         "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source"
-           (+ "(def"
-              "test test-agentd-real-codex-result-contract-retries-invalid-output []\n  (assert True))\n")}])
-     (defsemgrep p0-real-agent-e2e-must-not-be-skipped
-       "doeff-agents-real-agent-e2e-must-not-be-skipped"
-       [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source" (+ "(def" "test test-real-agent []\n  (pytest.skip))\n")}]
-       [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_deftests.hy"
-         "source" (+ "(def" "test test-real-agent []\n  (assert True))\n")}])
-     (defsemgrep p0-real-agent-e2e-must-not-use-command-override
-       "doeff-agents-real-agent-e2e-must-not-use-command-override"
-       [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py"
-         "source"
-           "def launch(client):\n    return client.launch_session(agent_type='claude', command='fake-agent')\n"}]
-       [{"relative-path"
-           "packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py"
-         "source"
-           "def launch(client):\n    return client.launch_session(agent_type='claude')\n"}])
-     (defsemgrep p0-agentd-request-requires-result-key
-       "doeff-agents-agentd-request-requires-result-key"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
-         "source"
-           "def request(response):\n    return response.get('result')\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
-         "source"
-           "def request(response):\n    return response['result']\n"}])
-     (defsemgrep p0-await-result-requires-protocol-fields
-       "doeff-agents-await-result-requires-protocol-fields"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
-         "source"
-           "def _await_outcome_from_result(result):\n    return result.get('session')\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_agentd_client.py"
-         "source"
-           "def _await_outcome_from_result(result):\n    return result['session']\n"}])
-     (defsemgrep p0-no-return-control-primitives-in-handlers
+    [(defsemgrep p0-no-return-control-primitives-in-handlers
        "doeff-no-return-control-primitives-in-handlers"
        [{"relative-path" "packages/sample/handler.py"
          "source"
@@ -139,34 +67,6 @@
          "source" "boundaries = yield get_inner_handlers(k)\n"}]
        [{"relative-path"
            "packages/doeff-core-effects/doeff_core_effects/_scheduler.py"
-         "source" "boundaries = yield get_inner_boundaries(k)\n"}])
-     (defsemgrep p0-k4-no-blocking-agent-handler
-       "k4-no-blocking-agent-handler"
-       [{"relative-path"
-           "packages/doeff-conductor/src/doeff_conductor/_handlers/agent.py"
-         "source"
-           "handlers = [(AgentEffect, make_blocking_scheduled_handler(handle_agent))]\n"}]
-       [{"relative-path"
-           "packages/doeff-conductor/src/doeff_conductor/_handlers/agent.py"
-         "source"
-           "handlers = [(AgentEffect, _offloaded_scheduled_body(handle_agent))]\n"}])
-     (defsemgrep p0-k4-no-sync-await-result-in-scheduled-handler
-       "k4-no-sync-await-result-in-scheduled-handler"
-       [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/_handlers/agent.py"
-         "source"
-           "handler = make_blocking_scheduled_handler(lambda effect: client.await_result(effect))\n"}]
-       [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/_handlers/agent.py"
-         "source"
-           "handler = _offloaded_scheduled_body(lambda effect: client.await_result(effect))\n"}])
-     (defsemgrep p0-k4-deadline-not-transport-timeout
-       "k4-deadline-not-transport-timeout"
-       [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/_effects/agent.py"
-         "source" "task = AgentTask(prompt='run', timeout_seconds=30)\n"}]
-       [{"relative-path"
-           "packages/doeff-agents/src/doeff_agents/_effects/agent.py"
-         "source" "task = AgentTask(prompt='run', deadline_seconds=30)\n"}])]
+         "source" "boundaries = yield get_inner_boundaries(k)\n"}])]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"
           "docs/semgrep-rules-inventory-2026-07-14.md"])

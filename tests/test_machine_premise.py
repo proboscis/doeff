@@ -44,9 +44,6 @@ ROOT_CONFTEST = REPO_ROOT / "conftest.py"
 CHECK_LAYER_UNDER_HOME = Path("dotfiles") / "agentcli" / "src" / "agentcli" / "ai" / "entry" / "remote_check.py"
 REAL_CHECK_LAYER = Path.home() / CHECK_LAYER_UNDER_HOME
 
-CODEX_FILE = "packages/doeff-conductor/tests/test_agent_effect_c1.py"
-CODEX_TEST = f"{CODEX_FILE}::test_real_codex_worker_returns_schema_valid_json_through_agent"
-
 # Every stand-in counts its probes in $HOME/probes (the premise is probed once per session).
 ROUTER_WITHOUT_BINARY = (
     "#!/bin/sh\n"
@@ -352,56 +349,6 @@ def test_machine_without_the_check_layer_only_summarises_the_skip(
     assert [line for line in result.errlines if line.startswith("test-admission:")] == []
     if check_layer is not None:
         assert _declarations(check_layer, result) == ()
-
-
-def test_real_codex_worker_test_is_outside_the_daily_population(tmp_path: Path) -> None:
-    """The daily selection (``-m 'not e2e'``) never reaches the test that calls a real model."""
-    result = _run_pytest(
-        tmp_path,
-        REPO_ROOT,
-        _home(tmp_path / "home", with_check_layer=False),
-        _stand_in_bin(tmp_path / "bin", ROUTER_WITHOUT_BINARY),
-        "--collect-only",
-        "-q",
-        "-m",
-        "not e2e",
-        CODEX_FILE,
-    )
-
-    assert result.ret == 0, result.stdout.str() + result.stderr.str()
-    assert f"{CODEX_FILE}::test_two_node_workflow_runs_on_scenario_stubs" in result.stdout.str()
-    assert CODEX_TEST not in result.stdout.str()
-
-
-def test_real_codex_worker_test_names_a_codex_that_does_not_start(
-    tmp_path: Path, check_layer: ModuleType | None
-) -> None:
-    """In the e2e population, the real-codex test asks the machine premise, not ``which``."""
-    result = _run_pytest(
-        tmp_path,
-        REPO_ROOT,
-        _home(tmp_path / "home", with_check_layer=True),
-        _stand_in_bin(tmp_path / "bin", ROUTER_WITHOUT_BINARY),
-        "-q",
-        "-m",
-        "e2e",
-        CODEX_TEST,
-    )
-
-    assert result.ret == 0, result.stdout.str() + result.stderr.str()
-    result.assert_outcomes(skipped=1)
-    if check_layer is None:
-        result.stdout.fnmatch_lines([f"1 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: {CODEX_TEST}: *"])
-        return
-    declarations = _declarations(check_layer, result)
-    assert [declaration.kind for declaration in declarations] == ["tool-absent"]
-    reason = declarations[0].reason
-    assert reason.startswith(f"{CODEX_TEST}: codex")
-    # The check layer folds a reason to 300 characters and ends it with "…". The reason names the stand-in's
-    # path, which is as long as the run's tmp dir: under the daily run's long tmp dir only the exit status and
-    # the head of codex's own words are left before the fold.
-    said = "exits 127: codex: router entry point"
-    assert said in reason or (reason.endswith("…") and "exits 127: " in reason), reason
 
 
 # --- A premise other than a tool: a git checkout holding a pinned commit (request K) ----------

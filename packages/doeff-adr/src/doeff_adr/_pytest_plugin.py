@@ -463,7 +463,7 @@ class DoeffAdrHyFile(pytest.Module):
 
     Formerly functions were created directly one by one with ``pytest.Function.from_parent``, so the ``pytest.mark.parametrize`` that deftest ``:interpreters`` /
     ``:params`` attach was not expanded, and the parametrize fixtures ran only once with default values (a violation of ADR-DOE-HY-002 R2 "pass deftest params faithfully to fixtures";
-    found 2026-09-25 in a doeff-claude-code test).
+    found 2026-09-25 in a package test).
     Module collection expands parametrize into callspecs.
 
     No import during collection (#1223): for a file the record written by the item-producing macro can explain, a provisional module built from the record

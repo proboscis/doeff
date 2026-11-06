@@ -64,10 +64,9 @@
     "packages/doeff-hy/src/doeff_hy/handle.hy"
     "packages/doeff-hy/src/doeff_hy/record.hy"
     ;; Move by the R5 ruling (the by-group option):
-    ;; doeff-hy keeps the macros for writing effects, handlers, and tests plus the foundation; the 13 conductor workflow macros (formerly doeff_hy/conductor.hy)
-    ;; go to doeff-conductor, and defsystem, which declares a system (formerly doeff_hy/macros.hy), goes to doeff-cluster — each in its owning package.
-    ;; Rollback = delete these 2 lines and move the macros back into doeff-hy (fix the users' require at the same pin).
-    "packages/doeff-conductor/src/doeff_conductor/macros.hy"
+    ;; doeff-hy keeps the macros for writing effects, handlers, and tests plus the foundation; defsystem, which declares a system
+    ;; (formerly doeff_hy/macros.hy), goes to doeff-cluster — its owning package.
+    ;; Rollback = delete this line and move the macro back into doeff-hy (fix the users' require at the same pin).
     "packages/doeff-cluster/src/doeff_cluster/_shared/entry/macros.hy"
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"

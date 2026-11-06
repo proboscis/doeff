@@ -1139,7 +1139,7 @@ class _TimedWaitWork(NamedTuple):
 def _scheduler_lines_per_timed_wait(parked: int, waits: int, *, traced: bool) -> _TimedWaitWork:
     """Lines of scheduler.py one WaitWithin runs while ``parked`` other tasks wait.
 
-    The production shape (doeff-claude-code's doorbell under the async clock):
+    The production shape (a CLI driver's doorbell under the async clock):
     a task waits on an external promise with ``WaitWithin(bell.future, s,
     park=True)`` — the clock spawns a deadline timer (a daemon task parked on
     an Await), races it against the bell and cancels it when the bell wins.

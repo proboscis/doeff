@@ -582,16 +582,10 @@ See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 
 ## Related packages
 
-This README covers `doeff` and its extras. The add-on packages (LLM clients, agents, workflows and
+This README covers `doeff` and its extras. The add-on packages (LLM clients, workflows and
 more) live in [`packages/`](https://github.com/proboscis/doeff/tree/main/packages); `pip install doeff`
 does not install them, and the guides that use one say so and
 [how to install it](https://github.com/proboscis/doeff/blob/main/docs/index.md#pages-that-need-other-components).
-
-`doeff-agents` on PyPI (0.1.1 and 0.1.2) was built for doeff 0.4 and does not work with doeff 0.5 or
-later (`ImportError: cannot import name 'WithHandler' from 'doeff'`); 0.1.2 declares `doeff<0.5`, so
-pip installs it with the doeff 0.4 line. The `doeff-agents` in
-[`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md)
-is not published to PyPI.
 
 ## Repository map
 
