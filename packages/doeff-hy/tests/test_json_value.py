@@ -229,5 +229,5 @@ def test_dump_json_fails_on_an_opaque_text_that_cannot_be_utf8() -> None:
     """A string containing an unpaired surrogate cannot be written as UTF-8. As with the parsing path (previously), it raises during the write-out before sending
     (it never gets as far as sending broken bytes to the reader)."""
     lone = OpaqueJson.of("\ud800")
-    with pytest.raises(Exception):  # noqa: B017, PT011  # the exception type is pydantic's wrapper (both the parsing path and the embedding path fail inside the write-out)
+    with pytest.raises(ValueError, match="lone surrogate"):
         run(dump_json(_tool_call(lone)))

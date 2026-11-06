@@ -2130,7 +2130,10 @@ class Codec(Generic[_T]):
         except Exception:
             return _json_text(self.node.encode(value, True))
         if not text.isascii() and _has_surrogate(text):
-            return _json_text(self.node.encode(value, True))  # lone surrogate -- the existing path rejects with ValueError
+            # lone surrogate -- the existing path rejects a string field with ValueError; an OpaqueJson string is spliced without re-reading, so check the result once more
+            text = _json_text(self.node.encode(value, True))
+            if _has_surrogate(text):
+                raise ValueError("a string containing a lone surrogate cannot be written as a JSON string (UTF-8)")
         return text
 
     def schema(self) -> Mapping[str, object]:
