@@ -1,5 +1,6 @@
 # 導いた物 — ../../disk-share/derive.py が ../../disk-share/shares.yaml の atlas の分け前から書く(手で直さない)。
 # worker の空きの最低と roots の上限(boot.sh が GiB の整数で読む)。分け前の訳は shares.yaml の頭の註。
+# uv の cache の片付けの大きさの上限(GiB — uv_cache.py の gc が読む)は state の上限の uvCacheGiB。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,3 +14,4 @@ spec:
           env:
             - { name: WORKER_ENV_MIN_FREE_GIB, value: "20" }
             - { name: WORKER_ENV_ROOTS_GIB, value: "16" }
+            - { name: DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB, value: "6" }
