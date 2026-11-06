@@ -13,6 +13,7 @@ from types import CodeType, FrameType
 
 from doeff_core_effects import Ask, reader
 from doeff_events import (
+    CountQueuedEffect,
     EventBus,
     Publish,
     PublishEffect,
@@ -81,6 +82,7 @@ def test_both_memory_handlers_declare_the_effects_they_answer() -> None:
         WaitForEventEffect,
         WaitForEventsEffect,
         PublishEffect,
+        CountQueuedEffect,
     )
     assert handler_effect_types(_raw(event_handler())) == (WaitForEventEffect, WaitForEventsEffect, PublishEffect)
 
