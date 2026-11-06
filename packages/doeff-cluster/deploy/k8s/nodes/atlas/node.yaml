@@ -41,6 +41,10 @@ spec:
             # 在る。daemon と同じ path に見せる(作業場の .git の link と alternates がこの path を指す)。
             - { name: nemo-workspace, mountPath: /work/nemo-workspace, mountPropagation: HostToContainer }
             - { name: job-scratch, mountPath: /work/job-scratch }
+            # /dev/shm を memory に置く(下の dshm)。container の既定の /dev/shm は 64 MiB で、上に載る系の日次の全体検証の browser の検の
+            # chromium は落ちないよう共有メモリを TMPDIR(根の SSD nvme0n1 の /work/dvt)の file に作ってすぐ消し、1 回 2.5〜4.7 GB を書いていた
+            # (2026-11-06 の測り)。上に載る系の起動は、/dev/shm の空きが 256 MiB 以上の時だけ /dev/shm を使う。
+            - { name: dshm, mountPath: /dev/shm }
       volumes:
         # nvme1 の pool hot_ssd_nvme の dataset hot_ssd_nvme/agent-worker-jobs(quota 100G・sync standard — 2026-11-05 16:45 JST に置き、
         # uid 1000 の持ち物にした)。2026-11-05 04:04〜の Garage の bay の HDD(g5 = sdh)の下では、小さな file の多い処理(npm の install・venv・
@@ -52,3 +56,7 @@ spec:
         # DirectoryOrCreate: pool が import されていない時も worker を起動で止めない(作業場だけが使えない — daemon の番人が止まる)。
         - name: nemo-workspace
           hostPath: { path: /mnt/hot_ssd_nvme/nemo-workspace, type: DirectoryOrCreate }
+        # 512Mi: browser 1 本の共有メモリの同時の山は 86〜113 MB で、日次の全体検証は browser を 1 本ずつ起こす(同時の山 0.1 GB の見込み)。
+        # page は書いた process の cgroup の層(jobs)に数えられ、Pod の上限の内に入る。越える書きは ENOSPC で落ちる。上に載る repo の test の
+        # 使い捨ての PostgreSQL は 2 GiB 以上の空きの時だけ /dev/shm を使うので(zeus の dev-shm-in-memory.yaml の註)、ここへは来ない。
+        - { name: dshm, emptyDir: { medium: Memory, sizeLimit: 512Mi } }

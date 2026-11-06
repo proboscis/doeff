@@ -1606,9 +1606,22 @@ def test_zeus_worker_has_a_sized_dev_shm_in_memory(zeus_worker: Manifest) -> Non
     assert _volume(zeus_worker, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ZEUS_DEV_SHM_SIZE_LIMIT}
 
 
-@pytest.mark.parametrize("name", [node for node in NODES if node != "zeus"])
+# atlas の worker の /dev/shm も memory(機体の dir の node.yaml の dshm の註)。上に載る系の browser の検の chromium の共有メモリの
+# file を、TMPDIR の根の SSD に書かない。browser 1 本の同時の山は約 0.1 GB。
+ATLAS_DEV_SHM_SIZE_LIMIT = "512Mi"
+
+
+def test_atlas_worker_has_a_sized_dev_shm_in_memory(rendered: list[Manifest]) -> None:
+    """atlas の worker の container の /dev/shm は medium Memory の emptyDir で、sizeLimit を持つ(既定の 64 MiB では chromium が落ちる)。"""
+    atlas = _worker_on(rendered, "atlas")
+    mount = _mount_at(atlas, "/dev/shm")
+    assert "subPath" not in mount
+    assert _volume(atlas, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ATLAS_DEV_SHM_SIZE_LIMIT}
+
+
+@pytest.mark.parametrize("name", [node for node in NODES if node not in ("zeus", "atlas")])
 def test_other_workers_keep_the_default_dev_shm(rendered: list[Manifest], name: str) -> None:
-    """zeus 以外の機体の worker は /dev/shm を mount しない(container の既定の 64 MiB のまま)。"""
+    """zeus と atlas 以外の機体の worker は /dev/shm を mount しない(container の既定の 64 MiB のまま)。"""
     mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(_worker_on(rendered, name)).get("volumeMounts", []), "volumeMounts")]
     assert not [m for m in mounts if m["mountPath"] == "/dev/shm"], mounts
 
