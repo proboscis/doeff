@@ -4,11 +4,11 @@ Algebraic effects in Python, with doeff, an open-source library whose core is wr
 
 This post stacks such handlers around one small program, one layer at a time; if you know what `yield` does, you know most of what you need.
 
-[![Video (1:28): one card fight as one function, with handlers stacked around it](https://img.youtube.com/vi/CiRgrFVRg2w/maxresdefault.jpg)](https://youtu.be/CiRgrFVRg2w)
+[![Video (1:26): one card fight as one function, with handlers stacked around it](https://img.youtube.com/vi/Y6Q_RVZHNMg/maxresdefault.jpg)](https://youtu.be/Y6Q_RVZHNMg)
 
 [![One card fight as one function, step by step: its effects travel out to handlers stacked around it with k, and the stacks change while the function does not](../assets/figures/article-opening.gif)](../assets/figures/article-opening.gif)
 
-[The same video as an mp4 file (1:28)](../assets/videos/article-opening.mp4)
+[The same video as an mp4 file (1:26)](../assets/videos/article-opening.mp4)
 
 ## The idea: an exception a handler can resume
 
@@ -374,11 +374,11 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 ### Layer 4: a Monte Carlo bot
 
-[![Video (0:52): a Monte Carlo bot in 30 lines, whose handler runs the real battle to answer each Choose](https://img.youtube.com/vi/Ao6Gc1uvmtw/maxresdefault.jpg)](https://youtu.be/Ao6Gc1uvmtw)
+[![Video (0:54): a Monte Carlo bot in 30 lines, whose handler runs the real battle to answer each Choose](https://img.youtube.com/vi/jTKy1J7fuwo/maxresdefault.jpg)](https://youtu.be/jTKy1J7fuwo)
 
 [![The Monte Carlo bot answers one Choose, step by step: the fight that asked waits as k while the handler runs battle itself from each candidate move, counts the wins and resumes k](../assets/figures/monte-carlo.gif)](../assets/figures/monte-carlo.gif)
 
-[The same video as an mp4 file (0:52)](../assets/videos/article-monte-carlo.mp4)
+[The same video as an mp4 file (0:54)](../assets/videos/article-monte-carlo.mp4)
 
 To answer `Choose`, `monte_carlo` runs `battle` itself, many times, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
 
@@ -427,11 +427,11 @@ print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
 ### Layer 5: a hundred fights, one task each
 
-[![Video (0:58): a hundred fights, the same program under different handlers](https://img.youtube.com/vi/hcJ2jz6p4iI/maxresdefault.jpg)](https://youtu.be/hcJ2jz6p4iI)
+[![Video (0:59): a hundred fights, the same program under different handlers](https://img.youtube.com/vi/ob9TehAElgs/maxresdefault.jpg)](https://youtu.be/ob9TehAElgs)
 
 [![A hundred fights as tasks on one thread, step by step: each Spawn runs a battle to its end, Gather gives back the results, the random bot wins 73 and the Monte Carlo bot all 100, and one handler outside hears every Played](../assets/figures/hundred-fights.gif)](../assets/figures/hundred-fights.gif)
 
-[The same video as an mp4 file (0:58)](../assets/videos/article-hundred-fights.mp4)
+[The same video as an mp4 file (0:59)](../assets/videos/article-hundred-fights.mp4)
 
 `win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks take turns on one thread: `scheduled` switches only at an effect it answers itself, such as `Spawn`, so here each fight runs to its end before the next one starts. On the same hundred seeds, the random bot wins 73 fights and the Monte Carlo bot wins all 100.
 

@@ -142,9 +142,9 @@ def test_the_hook_leaves_a_youtube_link_inside_a_sentence_alone() -> None:
 def test_the_three_article_videos_sit_above_their_figures() -> None:
     article = ARTICLE.read_text(encoding="utf-8")
     for video_id, figure in (
-        ("CiRgrFVRg2w", "article-opening"),
-        ("Ao6Gc1uvmtw", "monte-carlo"),
-        ("hcJ2jz6p4iI", "hundred-fights"),
+        ("Y6Q_RVZHNMg", "article-opening"),
+        ("jTKy1J7fuwo", "monte-carlo"),
+        ("ob9TehAElgs", "hundred-fights"),
     ):
         pair = re.compile(
             rf"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/{video_id}/maxresdefault\.jpg\)\]\(https://youtu\.be/{video_id}\)\n\n"
