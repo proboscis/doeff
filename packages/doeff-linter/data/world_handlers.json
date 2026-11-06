@@ -751,11 +751,170 @@
    "why": "assembly — installs detached-cluster under the local tool's identity, and reads DOEFF_RUNTIME_ENV_KEY in os.environ to identify the version (#2782)"
   },
   {
+   "handler": "doeff_agents._io_handlers:driver-io-handler",
+   "touches": [
+    "file",
+    "process",
+    "env",
+    "clock",
+    "network"
+   ],
+   "why": "shutil.which, os.environ, open, socket, subprocess, time"
+  },
+  {
+   "handler": "doeff_agents._sessionhost.substrate:real-substrate",
+   "touches": [
+    "process",
+    "clock",
+    "file",
+    "env"
+   ],
+   "why": "tmux and time.sleep via subprocess.run"
+  },
+  {
+   "handler": "doeff_agents._sessionhost.substrate_herdr:herdr-substrate",
+   "touches": [
+    "network"
+   ],
+   "why": "connects to a unix socket"
+  },
+  {
+   "handler": "doeff_agents._sessionhost.store:sqlite-session-store",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "sqlite3.connect and a single-writer thread"
+  },
+  {
+   "handler": "doeff_agents._handlers.claude:claude-handler",
+   "touches": [
+    "process",
+    "file",
+    "network",
+    "thread"
+   ],
+   "why": "tmux, ~/.claude.json, McpToolServer"
+  },
+  {
+   "handler": "doeff_agents._handlers.codex:codex-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "tmux new-session and send-keys"
+  },
+  {
+   "handler": "doeff_agents._handlers.effectful:tmux-agent-defhandler",
+   "touches": [
+    "process",
+    "network",
+    "clock"
+   ],
+   "why": "tmux, McpToolServer, time.monotonic"
+  },
+  {
+   "handler": "doeff_agents._handlers:daemon_agent_handler",
+   "touches": [
+    "network",
+    "process"
+   ],
+   "why": "the unix socket of agentd; starts the daemon"
+  },
+  {
+   "handler": "doeff_agents._handlers:claude_agent_runtime_handlers",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "assembly — installs claude-code-handler of doeff_claude_code (claude as a child process)"
+  },
+  {
+   "handler": "doeff_agents:claude-agent-runtime-handlers",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "re-export spelling of the above"
+  },
+  {
+   "handler": "doeff_agents._handlers:claude_process_layer_handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "layer 2 only — builds claude-code-handler of doeff_claude_code (claude as a child process)"
+  },
+  {
+   "handler": "doeff_agents:claude-process-layer-handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "re-export spelling of the above"
+  },
+  {
+   "handler": "doeff_claude_code._handler:claude-code-handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "subprocess.Popen, stdin/stdout threads, SIGTERM"
+  },
+  {
    "handler": "doeff_docker._handlers.shell:shell-run-handler",
    "touches": [
     "process"
    ],
    "why": "subprocess.run"
+  },
+  {
+   "handler": "doeff_conductor._handlers:production_handlers",
+   "touches": [
+    "file",
+    "process",
+    "network",
+    "thread",
+    "clock"
+   ],
+   "why": "workspace_handler, exec_handler, agentd"
+  },
+  {
+   "handler": "doeff_conductor._handlers.utils:make_offloaded_scheduled_handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "threading.Thread"
+  },
+  {
+   "handler": "doeff_agentic._handlers.opencode:opencode_handler",
+   "touches": [
+    "http",
+    "process",
+    "clock"
+   ],
+   "why": "httpx, subprocess.Popen, time.sleep"
+  },
+  {
+   "handler": "doeff_agentic._handlers.tmux:tmux_handler",
+   "touches": [
+    "process",
+    "clock"
+   ],
+   "why": "subprocess.run, time.sleep"
+  },
+  {
+   "handler": "doeff_agentic._handlers.production:agentic_effectful_handlers",
+   "touches": [
+    "process",
+    "file",
+    "clock"
+   ],
+   "why": "tmux, state_dir, time.sleep"
   },
   {
    "handler": "doeff_git._handlers.production:production_handlers",
