@@ -13,23 +13,26 @@
 # helios は上に載る系のコアの計算を先にする機体。会話の CLI と命令は余りの空きの分だけを使うので、zeus と違って clis も
 # 限る層(memory.max・cpu.weight 100)に置き、常駐の job の予算(枠の file の memoryMiB)からも外す: 予算 = container の上限 − worker の
 # memory.min − jobs・clis・commands の memory.max(前の予算 31744 MiB のまま — 上限を clis と commands の分だけ上げた)。常駐の job の層の
-# memory.min 30G と CPU の重み 1000 はそのまま。
+# CPU の重み 1000 はそのまま。
 # 値の出どころ:
-# - services の memory.min 30G: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(23〜32 — 2026-11-01 の上に載る系の調べ。
-#   zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79%、job ごとの 5 分の記録の和の 24 時間の最大 22.7 GiB + 記録の外 約 4 GiB)
-#   に 2 GiB を足した値。峰が守る値を越えた分だけが container の上限の回収に掛かる。
+# - services の memory.min 24G: 入れ替えで 2 つの世代の Pod が helios に並べる(node.yaml の入れ替えの形 — 取り分 = 守る層の和 25G の Pod 2 つと
+#   worker の外の Pod の取り分 約 3.5 GiB が allocatable 58.2 GiB の内)最大に近い値。前の 30G(峰の見積もり 約 28 GiB + 2 GiB)では取り分が
+#   31Gi になり、2 つ目の Pod が置けないので Recreate のままで、入れ替えのたびに常駐の job が全部 2.5〜4 分止まった(11-04 19:0x・22:2x・
+#   11-05 00:1x UTC)。swap の無い機体では匿名の memory は回収されず、守る値が効くのは page cache の分だけ: 11-06 06:1x UTC の services の層は
+#   anon 18.5 GiB・file 8.9 GiB で、24G は anon と job ごとの 5 分の記録の和の 24 時間の最大 22.7 GiB(2026-11-01 の上に載る系の調べ)を覆う。
+#   峰の見積もり 約 28 GiB の残り(page cache)は、container の上限の回収に掛かりうる。
 # - worker の memory.min 1G: helios の worker の本体の RSS 104 MiB(11-01 18:3x JST)。keeper の版の入れ替えで 2 つの世代が並び、kubectl exec と
 #   readinessProbe も同じ層に入る。zeus の 2G より小さくし、守る層と限る層の和を container の上限の内に収める。
-# - jobs の memory.max 8G: container の上限 40Gi から守る層の和 31G を引いた残り 9G から、1G を誰にも割り当てない余りに残した値。準備は同じ
+# - jobs の memory.max 8G: container の上限 40Gi から守る層の和 31G(前の値)を引いた残り 9G から、1G を誰にも割り当てない余りに残した値(守る層を 25G に下げた後もそのまま)。準備は同じ
 #   木の検めを 1 本に束ねる(入口の検め)ので、常駐の job の本数で増えない。
 # - clis の memory.max 5G・commands の memory.max 3G: 機体の余り。helios の allocatable 58.2 GiB(61048136Ki)のうち、worker の外の Pod
 #   (取引の記録の系・Longhorn・tailscale など 40 本ほど)が 11-04 07:4x JST に約 9 GiB を使い、container の上限は 48Gi まで(worker の外の
 #   Pod と合わせて allocatable の内 — 越えると kubelet は取り分を最も越えたこの Pod を追い出し、常駐の job が全部止まる)。上限 40Gi → 48Gi の
 #   8G を 2 つに分けた: 会話の CLI 1 本の RSS は約 1 GiB(zeus の clis の層 14827 MiB ÷ 会話 15 本前後 — 11-03)なので 5G で 4〜5 本、命令は
-#   その子の検め(pytest・uv sync)の分。守る層 31G + 限る層 16G = 47G ≤ 48Gi。
+#   その子の検め(pytest・uv sync)の分。守る層 25G + 限る層 16G = 41G ≤ 48Gi。
 # - 予算: 48Gi − worker 1G − jobs 8G − clis 5G − commands 3G = 31744 MiB(前と同じ)。
 # - exec(init の層 — 値の決め方は ../../cgroup-layers の頭の註): 512M = 残りの 1G の半分(要る量 138 MiB と運用の hy 1 本が通る)。
-#   守る層 31G + 限る層 16.5G ≤ 48Gi。
+#   守る層 25G + 限る層 16.5G ≤ 48Gi。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=1G,cpu.weight=1000 services:memory.min=30G,cpu.weight=1000 jobs:memory.max=8G,cpu.weight=100 clis:memory.max=5G,cpu.weight=100 commands:memory.max=3G,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=1G,cpu.weight=1000 services:memory.min=24G,cpu.weight=1000 jobs:memory.max=8G,cpu.weight=100 clis:memory.max=5G,cpu.weight=100 commands:memory.max=3G,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000" }
