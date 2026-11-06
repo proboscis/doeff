@@ -24,6 +24,7 @@ from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects._scheduler import shielded as shielded
 from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects._sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects._sql_effects import SqlBatch as SqlBatch
