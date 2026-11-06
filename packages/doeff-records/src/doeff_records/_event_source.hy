@@ -43,7 +43,7 @@
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
 (import datetime [datetime])
-(import doeff_core_effects [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait shielded])
+(import doeff_core_effects [Cancel CompletePromise CreateExternalPromise CreatePromise Promise ShieldEnter ShieldExit Spawn Task TaskCancelledError Wait shielded])
 (import doeff_events [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time [GetTimeEffect WaitWithinEffect])
@@ -416,11 +416,12 @@
 ;; 源の包み 1 つが本体の周りで出す effect の全部(records-signal-handler の宣言 __doeff_effects__ — 閉じの検の道具が工場の中を読めない
 ;; ので宣言する)。位置の読み(ListRows・ReadStreamEnd)・源の task(Spawn と、その中の WatchChanges・WatchEvents・ReadStreamEnd・
 ;; Publish — 源の失敗・止まり・戻りの合図も)・止まりの待ち(上限の問い ReadSourcePatience・GetTime・見張りの task の Spawn と約束の
-;; CreatePromise / CompletePromise・戻りの問い AwaitRecordsBack・上限つきの待ち WaitWithin)・源と見張りの止め(Cancel・Wait)。本体の
+;; CreatePromise / CompletePromise・戻りの問い AwaitRecordsBack・上限つきの待ち WaitWithin)・源と見張りの止め(Cancel・Wait と、その待ちを
+;; 囲む shielded の ShieldEnter・ShieldExit)。本体の
 ;; WaitForEvent・WaitForEvents は本体の effect のまま外へ出る(型を足して出し直すだけ)ので数えない。実際に出す effect との一致は
 ;; test_event_source_closure.py が確かめる。
 (val SOURCE-EFFECTS #(ListRows ReadStreamEnd WatchChanges WatchEvents PublishEffect ReadSourcePatience GetTimeEffect AwaitRecordsBack
-                      CreatePromise CompletePromise WaitWithinEffect Spawn Cancel Wait))
+                      CreatePromise CompletePromise WaitWithinEffect Spawn Cancel Wait ShieldEnter ShieldExit))
 
 
 ;; 包む関数の型 = BodyWrapper(handler の印を持つ class — subscribed_event_handler・timer_handler と同じ with-handlers の列に並ぶ、doeff の

@@ -15,6 +15,8 @@ from doeff_core_effects import CompletePromise as CompletePromise
 from doeff_core_effects import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects import CreatePromise as CreatePromise
 from doeff_core_effects import Promise as Promise
+from doeff_core_effects import ShieldEnter as ShieldEnter
+from doeff_core_effects import ShieldExit as ShieldExit
 from doeff_core_effects import Spawn as Spawn
 from doeff_core_effects import Task as Task
 from doeff_core_effects import TaskCancelledError as TaskCancelledError
