@@ -185,8 +185,8 @@ def test_dump_json_omits_an_opaque_field_at_its_default_and_keeps_a_null_value()
 
 
 def test_dump_json_resolves_each_opaque_value_in_a_union_that_tries_the_opaque_arm_first() -> None:
-    """For a union whose first arm is OpaqueJson, even a typed row first tries the OpaqueJson arm, fails, and then moves to the next arm. Even if the discarded arm left a marker,
-    no marker remains in the output, and order and content stay correct when OpaqueJson rows and typed rows are mixed."""
+    """For a union whose first arm is OpaqueJson, even a typed row first tries the OpaqueJson arm, fails, and then moves to the next arm. Order and content stay
+    correct when OpaqueJson rows and typed rows are mixed (the writer embeds the opaque text itself; the splice marker of the pydantic path is gone)."""
     rows = (
         _wire.Note(note_text="a"),
         OpaqueJson.of({"i": 1}),
@@ -198,7 +198,6 @@ def test_dump_json_resolves_each_opaque_value_in_a_union_that_tries_the_opaque_a
     assert json.loads(spelled) == {
         "rows": [{"noteText": "a"}, {"i": 1}, {"path": "/p"}, [2, "二"], {"noteText": "b"}]
     }
-    assert json_value._SPLICE_PREFIX not in spelled
 
 
 @pytest.mark.parametrize("spelling", ["NaN", "Infinity", "-Infinity"])
@@ -219,8 +218,8 @@ def test_dump_json_keeps_strict_json_when_an_opaque_text_has_a_non_json_number(
 
 
 def test_a_string_that_only_looks_like_the_marker_is_not_replaced() -> None:
-    """Even if a string in the sent value resembles the marker (the marker prefix is a random value that never leaves the call), it is not mistaken for one and replaced."""
-    lookalike = '"' + json_value._SPLICE_PREFIX[:-2] + '0"'
+    """Even if a string in the sent value resembles a splice marker (the shape the pydantic path used: a 16-digit hex prefix and a number), it is not mistaken for one and replaced."""
+    lookalike = '"' + "0123456789abcdef" + '0"'
     note = _wire.Note(note_text=lookalike)
     text = run(dump_json(_wire.ToolBatch(rows=(note, OpaqueJson.of({"i": 1})))))
     assert json.loads(text) == {"rows": [{"noteText": lookalike}, {"i": 1}]}

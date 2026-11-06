@@ -693,7 +693,7 @@ def test_an_unreached_function_in_binding_forms_and_static_view_keeps_a_defk_use
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
     real_tree.run("record")
     _append(real_tree.lib / "doeff_hy" / "_binding_forms.py", UNREACHED_PY)
-    _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
+    _append(real_tree.lib / "doeff_hy" / "_static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
         "judged a defk/val consumer stale merely because a function not reached from binding_forms and static_view was added"
     )
@@ -706,7 +706,7 @@ def test_an_unreached_function_in_clause_endings_keeps_a_defhandler_user_current
     real_tree.run("record")
     _append(real_tree.lib / "doeff_hy" / "_clause_endings.hy", UNREACHED_HY)
     _append(real_tree.lib / "doeff_hy" / "_binding_forms.py", UNREACHED_PY)
-    _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
+    _append(real_tree.lib / "doeff_hy" / "_static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
         "judged a defhandler consumer stale merely because a function not reached from clause_endings, binding_forms, and static_view was added"
     )
@@ -729,7 +729,7 @@ REAL_HANDLER_USER = """\
 #: Modules the closure of defhandler walks that have a module docstring (file), and the start of that docstring.
 DOCUMENTED_MODULES = {
     "__init__.py": '"""doeff-hy — Standard Hy macros for doeff effect composition.',
-    "record_runtime.py": '"""Parts that the expansions of defrecord and defeffect read at load time.',
+    "_record_runtime.py": '"""Parts that the expansions of defrecord and defeffect read at load time.',
     "_type_forms.py": '"""Map a type expression to a form that can be passed as the second argument of ``isinstance`` at run time',
 }
 

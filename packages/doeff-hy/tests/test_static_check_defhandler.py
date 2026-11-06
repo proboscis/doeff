@@ -202,7 +202,7 @@ def test_every_handler_name_is_declared_in_the_stub() -> None:
     # The names in the table (static_view.HANDLER_STATIC_NAMES) are declared in static_types.pyi (without them annotations and calls become Unknown)
     from doeff_hy import _static_view as static_view
 
-    stub = Path(static_view.__file__).with_name("static_types.pyi")
+    stub = Path(static_view.__file__).with_name("_static_types.pyi")
     body = ast.parse(stub.read_text(encoding="utf-8")).body
     declared = (
         {

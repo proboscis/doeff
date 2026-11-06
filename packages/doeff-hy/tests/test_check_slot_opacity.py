@@ -237,8 +237,8 @@ def canon_owned_names(source: str) -> list[str]:
 
 # ─────────────────────────────── The real thing
 
-#: Where the default number of expansion children may be read (only the function expander_limit in static_check.py).
-DEFAULT_LIMIT_READERS = {"static_check.py": ["expander_limit"]}
+#: Where the default number of expansion children may be read (only the function expander_limit in _static_check.py).
+DEFAULT_LIMIT_READERS = {"_static_check.py": ["expander_limit"]}
 
 def test_the_mouths_this_module_declares_are_the_ones_this_guard_allows() -> None:
     """The set of declared entry points is the same as this check's fixed set — adding or changing an entry point is an intended contract change, to be changed together with the set in this file."""

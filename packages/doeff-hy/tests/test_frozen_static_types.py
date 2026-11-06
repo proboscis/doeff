@@ -117,9 +117,9 @@ def _check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_stub: bool) 
     copy = tmp_path / ("stubbed" if with_stub else "bare") / "frozen_copy"
     copy.mkdir(parents=True)
     (copy / "__init__.py").write_text("", encoding="utf-8")
-    shutil.copy(PACKAGE / "frozen.hy", copy / "frozen.hy")
+    shutil.copy(PACKAGE / "_frozen.hy", copy / "frozen.hy")
     if with_stub:
-        shutil.copy(PACKAGE / "frozen.pyi", copy / "frozen.pyi")
+        shutil.copy(PACKAGE / "_frozen.pyi", copy / "frozen.pyi")
     monkeypatch.setattr(sys, "path", [str(copy.parent), *sys.path])
     root = tmp_path / "root"
     root.mkdir()
@@ -153,7 +153,7 @@ def test_with_the_stub_nothing_is_unknown_and_a_wrong_value_type_is_red(
 
 
 def test_the_stub_matches_frozen_hy() -> None:
-    stub = ast.parse(PACKAGE.joinpath("frozen.pyi").read_text(encoding="utf-8"))
+    stub = ast.parse(PACKAGE.joinpath("_frozen.pyi").read_text(encoding="utf-8"))
     classes = [node.name for node in stub.body if isinstance(node, ast.ClassDef)]
     functions = [node for node in stub.body if isinstance(node, ast.FunctionDef)]
     assert [name for name in [*classes, *(f.name for f in functions)] if not hasattr(frozen, name)] == []

@@ -94,7 +94,7 @@ def test_a_function_declares_what_it_writes_and_nothing_happens_at_run_time() ->
 
 def test_the_writes_of_a_function_are_checked_like_a_system_job() -> None:
     # The form is checked the same way as the :writes of a doeff-cluster defsystem job (declarations.record-names) — a value that is not a set, or a mistaken spelling, is refused by the expansion.
-    assert "set of string literals" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes ["record:turn"]} x)')
+    assert "set of strings" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes ["record:turn"]} x)')
     assert "<store>:<name>" in refused('(defk f [x] {:pre [(: x int)] :post [(: % int)] :writes #{"turn"}} x)')
     assert "<store>:<name>" in refused('(deff f [x] {:pre [(: x int)] :post [(: % int)] :writes #{"a:b:c"}} x)')
     # :reads is not accepted (there is no rule to check reads of non-job definitions). defp does not accept :writes either (a key only for function contracts).

@@ -29,7 +29,7 @@ types = importlib.import_module("wire_codec_types")
 def _typed(value: object) -> object:
     """Turn a value into a (type, content) tree -- compare while distinguishing 1 and 1.0, tuple and list, str and StrEnum, and field order, which == does not."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return (type(value), tuple((name, _typed(item)) for name, item in vars(value).items()))
+        return (type(value), tuple((field.name, _typed(getattr(value, field.name))) for field in dataclasses.fields(value)))
     if isinstance(value, dict):
         return (dict, tuple((key, _typed(item)) for key, item in value.items()))
     if isinstance(value, list | tuple | frozenset):

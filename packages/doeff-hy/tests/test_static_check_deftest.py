@@ -158,7 +158,7 @@ def test_every_fixture_type_is_declared_in_the_stub() -> None:
     # The type names in the table (static_view.DEFTEST_FIXTURE_TYPES) are declared in static_types.pyi (without that the annotation is Unknown)
     from doeff_hy import _static_view as static_view
 
-    stub = Path(static_view.__file__).with_name("static_types.pyi")
+    stub = Path(static_view.__file__).with_name("_static_types.pyi")
     body = ast.parse(stub.read_text(encoding="utf-8")).body
     declared = {
         node.target.id

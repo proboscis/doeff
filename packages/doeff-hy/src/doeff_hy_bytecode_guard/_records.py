@@ -71,6 +71,9 @@ MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
 EXPORT_NAMES = "_hy_export_macros"
 GENERATED_NAME_PREFIX = "_hy_"
+#: The prefix of the name doeff-hy's open-form gives the bind it releases in place (``hy.gensym("bound")`` -- the shape GENSYM_NAME reads,
+#: ``_hy_gensym_bound_<counter>``). doeff_effect_analyzer tells the release ``(b := None)`` of a ``(! e)`` name by this prefix.
+RELEASED_BIND_PREFIX = GENERATED_NAME_PREFIX + "gensym_bound_"
 
 #: The key for the macro table in the local state Hy's compiler opens for function bodies and the like (the dict that ``HyASTCompiler.new_local_state`` pushes onto ``local_state_stack``).
 #: A require or defmacro inside a function puts macros into this table, and Hy's expansion looks it up before the module's table, so

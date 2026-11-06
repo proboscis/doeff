@@ -194,7 +194,7 @@ def test_a_broken_entry_is_named_removed_and_the_next_entry_is_used(tmp_path: Pa
     Path(newest).write_bytes(b"\x00broken")
     assert code_store.current_code(store, key, lambda _code: True) is not None
     assert not Path(newest).exists()
-    assert "bytecode store entry is corrupted" in capsys.readouterr().err
+    assert "an entry in the bytecode store is broken" in capsys.readouterr().err
 
 
 def test_a_key_without_entries_answers_none(tmp_path: Path) -> None:
