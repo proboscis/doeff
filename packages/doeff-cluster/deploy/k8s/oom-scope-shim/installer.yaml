@@ -25,7 +25,7 @@ spec:
         - operator: Exists
       initContainers:
         - name: install
-          image: zeus:5000/containerd-shim-runc-oomscope:v2.2.7-k3s1-b8c43f27
+          image: zeus:5000/containerd-shim-runc-oomscope:v2.2.7-k3s1-9ded89d0
           securityContext: { runAsUser: 0, runAsNonRoot: false }
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
           volumeMounts:
@@ -33,7 +33,7 @@ spec:
             - { name: host-containerd-conf, mountPath: /host/containerd-conf }
       containers:
         - name: sleep
-          image: zeus:5000/containerd-shim-runc-oomscope:v2.2.7-k3s1-b8c43f27
+          image: zeus:5000/containerd-shim-runc-oomscope:v2.2.7-k3s1-9ded89d0
           command: ["/bin/sleep", "2147483647"]
           securityContext: { runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false }
           resources: { requests: { cpu: 1m, memory: 4Mi }, limits: { cpu: 10m, memory: 16Mi } }
