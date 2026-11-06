@@ -1,4 +1,0 @@
-{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
-{"jsonrpc": "2.0", "method": "initialized"}
-{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.worktrees/148d-rec/cwd", "approvalPolicy": "never", "sandbox": "read-only"}}
-{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a1985f-2740-75c3-8a85-c35810d8b9ff", "input": [{"type": "text", "text": "hello"}]}}
