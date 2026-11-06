@@ -11,6 +11,8 @@ link to the mp4, and on the docs site a hook (tools/docs_site/hooks.py) replaces
    in the same change.
 4. At the head of the sections for the 3 article videos, a video service thumbnail link and a one-line click-through figure follow, and the hook replaces the link with a player.
    The README has the GitHub-attached video as a bare single line (the GitHub screen turns it into a player), and has a link to the article.
+5. Every mp4 in docs/assets/videos has its subtitle files (<name>.vtt and <name>.srt) next to it, and they say every line of its narration.json once, in order,
+   within the video.
 """
 
 from __future__ import annotations
@@ -202,11 +204,11 @@ def test_narration_uses_the_openai_speech_api_and_no_local_model() -> None:
     )
 
 
-# The videos whose narration is burned in as subtitles and written next to them as <name>.vtt and <name>.srt
-# (tools/docs-video/render.mjs, from the cues of src/kit/subtitles.tsx).
-CAPTIONED = ("article-opening", "article-monte-carlo", "article-hundred-fights")
 VIDEOS = DOCS / "assets" / "videos"
 PAGES = ROOT / "tools" / "docs-video" / "src" / "pages"
+# Every video of the docs has its narration burned in as subtitles and written next to it as <name>.vtt and <name>.srt
+# (tools/docs-video/render.mjs, from the cues of src/kit/subtitles.tsx).
+CAPTIONED = tuple(sorted(video.stem for video in VIDEOS.glob("*.mp4")))
 VTT_CUE = re.compile(
     r"^(?P<id>[a-z]+\d+(?:\.\d+)?)\n(?P<start>\d\d:\d\d:\d\d\.\d{3}) --> (?P<end>\d\d:\d\d:\d\d\.\d{3})\n(?P<text>.+)$",
     re.MULTILINE,
