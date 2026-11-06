@@ -33,7 +33,7 @@
 //! Category (the last segment of the hit's key detail, and the message): `periodic` (refetches purely on time) and `retry` (refetching after being unreachable — the wait spelling, the deadline's
 //! tag, or the enclosing match clause's type spelling contains retry / unreachable / unavailable. A helper call counts only when all waits inside the helper are retry).
 //!
-//! Reasons that may be written at the place to pass: on the hit's line, or on a comment-only line just before it, `; 時間で取り直す理由: <word>` (placed the same way as DOEFF111's `; defk にできない: <reason>`).
+//! Reasons that may be written at the place to pass: on the hit's line, or on a comment-only line just before it, `; 時間で取り直す理由: <word>` (placed the same way as DOEFF111's `; cannot be a defk: <reason>`).
 //! The words are a closed set — `相手に変更の知らせが無い: <party> — <how it was verified>` (both the party's name and the basis of the verification [a section of the party's API documentation,
 //! a line of the party's code, or a command tried and its result] must be non-empty. A party known to have change notifications [PARTIES_WITH_CHANGE_NOTICE —
 //! Kubernetes, the coordinator's GET /watch, the doeff-events infrastructure, the records service's change signal] is not passed — Mac coordinator's condition 2026-10-07),

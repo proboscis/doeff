@@ -143,7 +143,7 @@
   hello)
 
 
-(defn :async #^ bool all-closed [#^ (get tuple #("aiohttp.ClientSession" ...)) sessions]  ; defk にできない: a coroutine that waits for the client closes on the shared event loop
+(defn :async #^ bool all-closed [#^ (get tuple #("aiohttp.ClientSession" ...)) sessions]  ; cannot be a defk: a coroutine that waits for the client closes on the shared event loop
   "Cancel returns without waiting for the coroutine to unwind, so wait on the shared loop, for up to PEER-SECONDS, for all the created clients to close
    (answer = whether all closed)."
   (setv loop (asyncio.get-running-loop))

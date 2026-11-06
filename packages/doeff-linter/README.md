@@ -94,7 +94,7 @@ skip_test_functions = true
 | DOEFF108 | Environment Name In Business Code | Do not put environment words in the names of business files, handlers, or assembly functions |
 | DOEFF109 | Service Boundary | The judgment and translation layers of service A do not read the same layers of service B (B's intent and the shared location can be read) |
 | DOEFF110 | No defn | Write Hy definitions with defk, not defn / defn/a |
-| DOEFF111 | deff Needs A Reason | A deff needs a `; defk にできない: <reason>` comment (the marker text is configurable via `definitions.deff_reason_marker`) |
+| DOEFF111 | deff Needs A Reason | A deff needs a `; cannot be a defk: <reason>` comment (the marker text is configurable via `definitions.deff_reason_marker`) |
 | DOEFF112 | Definition Tags Required | defk, deff, defp, defhandler and defeffect declare the required keys in :tags |
 | DOEFF113 | Context Matches Service | A tag's :context disagrees with the service of its location (info) |
 | DOEFF119 | Class Touches The World Or Holds State | A class that touches the outside world is an error; a class that rewrites self is a warning; a class with only fields gets an info recommending defrecord |
@@ -212,7 +212,7 @@ A file matching two locations takes the one with more segments (the more specifi
 [tool.doeff-linter.definitions]     # population (if paths is empty, all Hy of the repo)
 paths = ["app", "services"]
 exclude = ["packages/doeff-hy/src/doeff_hy/macros"]   # e.g. the owner of the macros
-deff_reason_marker = "defk にできない:"
+deff_reason_marker = "cannot be a defk:"
 
 [tool.doeff-linter.tags]
 required = ["context", "role"]      # keys required by DOEFF112
@@ -252,7 +252,7 @@ TypeSafe direct, `TYPESAFE_API_KEY`), and if the repo has `proxy_url`, the proxy
 
 ### Reasons for plain functions, and how to write tests (DOEFF110, 111, 118, 203)
 
-Write `; defk にできない: <free-form reason>` on a deff. What is deterministically a violation is: no comment, an empty reason, or only "same as above" (DOEFF111).
+Write `; cannot be a defk: <free-form reason>` on a deff. What is deterministically a violation is: no comment, an empty reason, or only "same as above" (DOEFF111).
 Whether to accept the reason is decided by Jev (DOEFF203), choosing from architecture.hy's `:plain-callable-reasons` (acceptable reasons) and
 `:rejected-plain-callable-reasons` (types of unacceptable reasons and how to fix them). In test locations (`definitions.test_paths`), tests must be deftest only (DOEFF118).
 For details see section 11 of [docs/SPECIFICATION.md](docs/SPECIFICATION.md).
@@ -298,7 +298,7 @@ doeff-linter fix defn-to-defk --path scripts --strict                      # con
   they are added (`!` is a symbol that the defk macro expands, not a macro to require).
 - Places not rewritten (reported as needing judgment): inside comprehensions, inside plain functions (defn, deff, fn), the module top level, inside macros, a `->` step, places that pass the function itself
   as a value, references from Python and toml, and import aliases. A defn that is already passed to `<-` / `!` / `run` returns a Program (it is an assembly), so it is not converted.
-- Forms not applied: dunders, `:async`, a comment of `defk にできない:` (the settings' `definitions.deff_reason_marker`) or "keep as defn", inside `eval-and-compile`,
+- Forms not applied: dunders, `:async`, a comment of `cannot be a defk:` (the settings' `definitions.deff_reason_marker`) or "keep as defn", inside `eval-and-compile`,
   class methods, and excluded paths (the default is `DEFAULT_EXCLUDES` in `src/project/defn_to_defk.rs`; add more with `--exclude`).
 - After the conversion, DOEFF126 is run with the same reader, and the remaining bare calls are reported. Exit code 0 = none remaining, 1 = some remaining, 2 = error.
 

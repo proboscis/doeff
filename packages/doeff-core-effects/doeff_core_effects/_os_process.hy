@@ -91,7 +91,7 @@
     from SIGTERM to SIGKILL (RunProcess's stop-grace), meter = the meter responder that counts stopped children (None = do not count). Reads and writes of the slot are under one lock (the work
     thread and the cancellation thread touch it concurrently). It is a resource handle, not a value type."
 
-  (deff __init__ [self stop-grace meter]  ; defk にできない: initialization of a resource class
+  (deff __init__ [self stop-grace meter]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self ChildWatch) (: stop-grace float) (: meter (| Callable None))] :post [(: % None)]}
     "To hold the stop grace and the meter, and start with an empty child slot."
     (setv self.stop-grace stop-grace
@@ -100,7 +100,7 @@
           self.cancelled False
           self.running None))
 
-  (deff attach [self child process-group]  ; defk にできない: lock entry of a resource class (synchronization between the work thread and the cancellation thread - a lock outside the VM)
+  (deff attach [self child process-group]  ; cannot be a defk: lock entry of a resource class (synchronization between the work thread and the cancellation thread - a lock outside the VM)
     {:pre [(: self ChildWatch) (: child subprocess.Popen) (: process-group bool)] :post [(: % bool)]}
     "To put the started child. Answer = whether it was already cancelled (if True, do not put it - the caller stops it on the spot)."
     (with [self.lock]
@@ -109,13 +109,13 @@
           (do (setv self.running (WatchedChild :child child :process-group process-group))
               False))))
 
-  (deff release [self]  ; defk にできない: lock entry of a resource class (synchronization between the work thread and the cancellation thread - a lock outside the VM)
+  (deff release [self]  ; cannot be a defk: lock entry of a resource class (synchronization between the work thread and the cancellation thread - a lock outside the VM)
     {:pre [(: self ChildWatch)] :post [(: % None)]}
     "To empty the slot after seeing the child end (a later cancellation has no child to stop)."
     (with [self.lock]
       (setv self.running None)))
 
-  (deff cancel [self]  ; defk にできない: lock entry of a resource class (synchronization between the work thread and the cancellation thread - a lock outside the VM)
+  (deff cancel [self]  ; cannot be a defk: lock entry of a resource class (synchronization between the work thread and the cancellation thread - a lock outside the VM)
     {:pre [(: self ChildWatch)] :post [(: % (| WatchedChild None))]}
     "To mark the cancellation and take out the child that is placed (None = not placed yet, or already removed - the work thread stops it when it puts the child)."
     (with [self.lock]

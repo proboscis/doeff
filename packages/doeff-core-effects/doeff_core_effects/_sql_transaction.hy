@@ -51,10 +51,10 @@
   (#^ str reason))
 
 
-(defn #^ Callable transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert #^ (| Callable None) execute-notify]  ; defk にできない: a handler function that discards the continuation (header note)
+(defn #^ Callable transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert #^ (| Callable None) execute-notify]  ; cannot be a defk: a handler function that discards the continuation (header note)
   "Makes the handler of the scope bound to one connection. execute-query / execute-insert = a Program of (effect) -> SqlRows | SqlFailed | SqlUnreachable;
    execute-notify = a Program of (effect) -> SqlRows | SqlFailed | SqlUnreachable, or None (a handler that does not accept signals -- it resumes with None on success)."
-  (defn [program-handler] scope [effect k]  ; defk にできない: a handler function (receives the effect and the continuation k)
+  (defn [program-handler] scope [effect k]  ; cannot be a defk: a handler function (receives the effect and the continuation k)
     (match effect
       (SqlQuery :database name) :if (= name database)
         (do (setv answer (yield (execute-query effect)))
@@ -154,11 +154,11 @@
                                  database)))
 
 
-(defn #^ Callable batched-transaction-scope [#^ str database #^ Callable flush #^ bool accepts-notices #^ TransactionProgress progress]  ; defk にできない: a handler function that discards the continuation (header note)
+(defn #^ Callable batched-transaction-scope [#^ str database #^ Callable flush #^ bool accepts-notices #^ TransactionProgress progress]  ; cannot be a defk: a handler function that discards the continuation (header note)
   "Makes the handler of the scope bound to one connection, for a bundled transaction. flush = a Program of (TransactionFlush) -> a tuple of SqlRows in the same order as requests |
    the first failure (SqlFailed | SqlUnreachable); accepts-notices = whether to remember SqlNotify and run it in the round trip of COMMIT; progress = the progress of this transaction
    (only the scope rewrites it)."
-  (defn [program-handler] #^ (get Generator #(Program ScopeReceived (| TransactionAborted TransactionMisused T))) scope [#^ EffectBase effect #^ K k]  ; defk にできない: a handler function (receives the effect and the continuation k)
+  (defn [program-handler] #^ (get Generator #(Program ScopeReceived (| TransactionAborted TransactionMisused T))) scope [#^ EffectBase effect #^ K k]  ; cannot be a defk: a handler function (receives the effect and the continuation k)
     (match effect
       (| (SqlQuery :database name) (SqlInsertRows :database name) (SqlBatch :database name) (SqlNotify :database name))
         :if (and (= name database) progress.closed)
