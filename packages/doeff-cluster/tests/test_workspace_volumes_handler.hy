@@ -20,7 +20,8 @@
 ;;;   置き場の数え      線ごとの残りの byte。冷やせる物が無く入らなければ作成も戻しも POST せずに置き場の不足で断る(fresh か否か —
 ;;;                     本番と模擬)・入らなければ外れた volume を古い順に、入る大きさの分だけ冷やしてから作る・戻す(10 GiB の戻しは 2 GiB の
 ;;;                     空き 4 本ぶんでは入らない — 本番と模擬)・実の使用 1 MB の volume は実の空きの線を空けない(本番と模擬)・残りの読み・
-;;;                     実の空きの線で断る・付ける時に Longhorn が置けないと答えた空の volume は待たずに消す・replica の置かれた volume は
+;;;                     実の空きの線で断る・付ける時に Longhorn が置けないと答えた空の volume は待たずに消す(読んだ後の書きに負ければ
+;;;                     新しい版の上で消し直し、上限まで負ければ残して kept で答える)・replica の置かれた volume は
 ;;;                     消さない・置けない戻しは消して backup を残す・戻す volume は backup の大きさで作る
 ;;;   広げる            (本番だけ — 模擬の世界は file system の空きを持たない)冷やす回が、付いた volume の空きが線を割れば名目を倍に
 ;;;                     書き、engine を待って係に file system を広げさせる・空きの在る物と上限の物は広げない・置き場が足りなければ
@@ -886,14 +887,14 @@
 (defk run-steps [steps]
   {:pre [(: steps tuple)] :post [(: % tuple)]}
   "筋書き steps を順に effect で出し、結末の組(done・already・restored・refused: <断りの文>・置き場の不足は short-fresh: か
-   short-held: <断りの文> ほか)を得るため(断られても次の手へ進む)。"
+   short-held: <断りの文> — 置けなかった volume を残した断りは後に -kept を足す — ほか)を得るため(断られても次の手へ進む)。"
   (var outcomes #())
   (for [step steps]
     (try
       (<- outcome str (step-outcome step))
       (:= outcomes (+ outcomes #(outcome)))
       (except [error WorkspaceRoomShort]
-        (:= outcomes (+ outcomes #((+ (if error.fresh "short-fresh: " "short-held: ") (str error))))))
+        (:= outcomes (+ outcomes #((+ (if error.fresh "short-fresh" "short-held") (if error.kept "-kept" "") ": " (str error))))))
       (except [error WorkspaceClusterUnreachable]
         (:= outcomes (+ outcomes #((+ "unreachable: " (str error))))))
       (except [error WorkspaceVolumeRefused]
@@ -1463,6 +1464,30 @@
   ;; 次の頼みは、置き場が戻っていれば空で作り直して付く。
   (<- next ApiRan (on-api api START))
   (assert (= next.outcomes #("done" "done" "done")) next.outcomes))
+
+
+(deftest test-an-unplaced-volume-is-deleted-again-on-the-version-read-after-a-conflict
+  ;; 置けない空の volume を消す前の読みの後に書きが入る(DELETE が 409)。attach は読み直し、replica がまだどこにも置かれていないので
+  ;; 新しい版の上で消し直し、volume を消した断り(kept でない)で答える。
+  (val api (LonghornWorld (fresh) :unplaceable 1 :stale-deletes 1))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER) (Step :verb "attach" :owner OWNER))))
+  (assert (= (! (kinds ran.outcomes)) #("done" "short-fresh")) ran.outcomes)
+  (assert (in "中身の無い volume を消した" (get ran.outcomes 1)) ran.outcomes)
+  (assert (= api.held.volumes #()) api.held.volumes)
+  (val versions (lfor seen api.seen :if (= seen.method "DELETE") (get (json.loads seen.body) "preconditions" "resourceVersion")))
+  (assert (= (len versions) 2) versions)
+  (assert (= (len (set versions)) 2) versions))
+
+
+(deftest test-an-unplaced-volume-that-cannot-be-deleted-is-refused-as-kept
+  ;; 読んだ後の書きが上限の回数(3)まで続き、置けない空の volume を消せない。attach は volume を残した事を断りの型の欄 kept で答える
+  ;; (呼び手は文を読まない)。残った volume は次の作るに ALREADY で答える。
+  (val api (LonghornWorld (fresh) :unplaceable 1 :stale-deletes 99))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER) (Step :verb "attach" :owner OWNER) (Step :verb "create" :owner OWNER))))
+  (assert (= (! (kinds ran.outcomes)) #("done" "short-fresh-kept" "already")) ran.outcomes)
+  (assert (in "volume を残した" (get ran.outcomes 1)) ran.outcomes)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
+  (assert (= (len (lfor seen api.seen :if (= seen.method "DELETE") seen)) 3) api.seen))
 
 
 (deftest test-a-warm-volume-whose-replica-is-placed-is-not-deleted

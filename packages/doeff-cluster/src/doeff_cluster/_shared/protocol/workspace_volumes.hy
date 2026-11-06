@@ -53,7 +53,8 @@
 ;;; ない(消さない)か使う ticket が在る(消さない)・使っている volume と戻す途中の volume を冷やす・snapshot か backup が失敗した・束が
 ;;; 上限の秒の内に今回の backup を指さない(消さない)・冷やす途中に使い始めた(消さない)・volume の在る名と最後の backup から keepDays の内の名の backup を消す。置き場の不足は型を分ける
 ;;; (WorkspaceRoomShort — WorkspaceVolumeRefused の子): 作る前の数えで、外れた volume を冷やしても札の disk が受けられない・付ける時か戻す時に Longhorn が replica を
-;;; 置けない(中身の無い volume は消してから断る)。fresh = 持ち主が中身を持たないか(呼び手が空の場所に落としてよいかを決める)。区画の基盤の
+;;; 置けない(中身の無い volume は消してから断る — 読んだ後の書きに負ければ読み直して消し直し、上限まで負け続ければ残して kept で答える)。
+;;; fresh = 持ち主が中身を持たないか(呼び手が空の場所に落としてよいかを決める)・kept = 置けなかった volume を残したか。区画の基盤の
 ;;; 止まりも型を分ける(WorkspaceClusterUnreachable — WorkspaceVolumeRefused の子): API server に届かない・API server が 5xx か 429 で答えた
 ;;; (分けるのは API server の答えを読む 2 か所 kube-answer と status-refusal だけ — 呼び手は文を読まずに型で分け、間を置いて出し直す)。
 ;;;
@@ -149,6 +150,9 @@
 ;; 失敗した戻しを 1 つの作成の中で作り直す上限(1 度の負荷の山をまたぐ回数 — 2026-11-04 の本番の失敗は付けから約 3 分。尽きたら Longhorn の訳を添えて
 ;; 断り、次の頼みが読み直す)。
 (val RESTORE-REBUILDS 3)
+;; Longhorn が置けないと答えた中身の無い volume を、読んだ後の書き(付けの印・Longhorn の status の書き)に負けて消し直す上限(dropped-unplaced —
+;; 尽きたら volume を残した事を WorkspaceRoomShort の kept で答える)。
+(val UNPLACED-DROPS 3)
 ;; Longhorn の webhook が、戻す Volume の束 BackupVolume を見ない時に 422 の訳に書く字(v1.13 の volume mutator の「cannot get backup volume for
 ;; backup target <先> and volume <名>: backupVolumes "" not found」)。束を作った直後は、webhook の読む cache がまだ束を持たない事がある。
 (val BUNDLE-UNSEEN "cannot get backup volume")
@@ -944,12 +948,13 @@
   target)
 
 
-(defk room-short [owner doing reason fresh]
-  {:pre [(: owner str) (: doing str) (: reason str) (: fresh bool)] :post [(: % WorkspaceRoomShort)]
+(defk room-short [owner doing reason fresh kept]
+  {:pre [(: owner str) (: doing str) (: reason str) (: fresh bool) (: kept bool)] :post [(: % WorkspaceRoomShort)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "持ち主 owner の volume を置く場所が足りずに doing できなかった断りを、ほかの断りと同じ綴りで作るため(fresh = 中身を持たない持ち主か)。"
+  "持ち主 owner の volume を置く場所が足りずに doing できなかった断りを、ほかの断りと同じ綴りで作るため(fresh = 中身を持たない持ち主か・
+   kept = 置けなかった volume を消せずに残したか)。"
   (<- refusal WorkspaceVolumeRefused (refused owner doing reason))
-  (WorkspaceRoomShort (str refusal) fresh))
+  (WorkspaceRoomShort (str refusal) fresh :kept kept))
 
 
 (defk class-disk-tags [parameters]
@@ -1021,7 +1026,7 @@
   (<- now datetime (GetTime))
   (<- plan CoolingPlan (cooling-order (! (warm-volumes reads)) (.timestamp now) (float "inf") room demand))
   (when (not plan.covered)
-    (raise (! (room-short owner doing (+ short " — 外れた volume を全部冷やしても足りない") fresh))))
+    (raise (! (room-short owner doing (+ short " — 外れた volume を全部冷やしても足りない") fresh False))))
   (var cooled #())
   (var failed #())
   (for [name plan.names]
@@ -1037,7 +1042,7 @@
   (when (not (! (room-covers? after demand)))
     (raise (! (room-short owner doing (.format "{} — 冷やした後も足りない(冷やした {} 本・冷やせなかった {} 本・名目の予約 {} byte・実の空き {} byte)"
                                                short (len cooled) (len failed) after.nominal after.actual)
-                          fresh))))
+                          fresh False))))
   None)
 
 
@@ -1072,20 +1077,30 @@
    :tags {:context "doeff-cluster" :role "protocol"}}
   "Longhorn が replica を置けないと答えた volume name(訳 note)を、中身を持たない時(replica がどの disk にも置かれていない — 付いた事が
    無い)にその場で消して置き場の不足で断るため(faulted の volume を残さず、付くのを上限の秒まで待たない)。replica の置かれた volume は
-   中身を持ちうるので消さずに戻る(呼び手が待ちを続ける)。消す前に読み直した版の上でだけ消す — 読んだ後に書きが入れば消さずに断る。"
-  (<- placed bool (replicas-placed site owner doing name))
-  (when placed
-    (return None))
-  (<- read (| VolumeRead None) (volume-read site owner doing name))
-  (var deleted (is read None))
-  (when (is-not read None)
-    (<- gone bool (deleted-volume site owner doing name read.version))
-    (:= deleted gone)
+   中身を持ちうるので消さずに戻る(呼び手が待ちを続ける)。読み直して Longhorn がもう置けると答えていても消さずに戻る。消す前に読み直した
+   版の上でだけ消し、読んだ後に書きが入れば(付けの印・Longhorn の status の書き)間を置いて読み直し、まだ置かれていなければ新しい版の上で
+   消し直す(UNPLACED-DROPS 回まで)。それでも消せなければ、volume を残した事を断りの型の欄 kept に載せて断る(呼び手は文を読まない)。"
+  (var tries 0)
+  (while (< tries UNPLACED-DROPS)
+    (<- placed bool (replicas-placed site owner doing name))
+    (when placed
+      (return None))
+    (<- read (| VolumeRead None) (volume-read site owner doing name))
+    (when (and (is-not read None) (not read.placing.failed))
+      (return None))
+    (var gone (is read None))
+    (when (is-not read None)
+      (<- deleted bool (deleted-volume site owner doing name read.version))
+      (:= gone deleted))
     (when gone
-      (<- (waited-gone site owner doing name))))
-  (raise (! (room-short owner doing (+ "Longhorn が replica を置けない(" (or note "訳なし") ")"
-                                       (if deleted " — 中身の無い volume を消した" " — 読んだ後に書きが入ったので消さなかった"))
-                        fresh))))
+      (<- (waited-gone site owner doing name))
+      (raise (! (room-short owner doing (+ "Longhorn が replica を置けない(" (or note "訳なし") ") — 中身の無い volume を消した") fresh False))))
+    (:= tries (+ tries 1))
+    (<- (slog "置けない volume を消す前の読みの後に書きが入った — 読み直して消し直す" :owner owner :volume name :tries tries))
+    (<- (Delay site.poll-seconds)))
+  (raise (! (room-short owner doing (.format "Longhorn が replica を置けない({}) — 読んだ後の書きが {} 回続いたので消さなかった(volume を残した)"
+                                             (or note "訳なし") UNPLACED-DROPS)
+                        fresh True))))
 
 
 (defk dropped-failed-restore [site owner doing name read]

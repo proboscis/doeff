@@ -26,7 +26,8 @@
 ;;;                           割る分(線ごとの byte)を、使い終わりの古い順に冷やす。答え手の機体に付いている volume のうち、file system の
 ;;;                           空きが値の growBelowPercent を割った物は、名目の大きさを倍(上限は値の maxSizeBytes)にして付けたまま広げる
 ;;;   WorkspaceClusterUnreachable 区画の API server に届かない・5xx か 429 で答えた(WorkspaceVolumeRefused の子 — 基盤の止まりで、時間で晴れる)
-;;;   WorkspaceRoomShort      置き場が足りずに作らなかった(WorkspaceVolumeRefused の子 — fresh = 持ち主が中身を持たないか)
+;;;   WorkspaceRoomShort      置き場が足りずに作らなかった(WorkspaceVolumeRefused の子 — fresh = 持ち主が中身を持たないか・kept = 置けなかった
+;;;                           volume を消せずに残したか)
 ;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の線ごとの残りの byte と値の spareBytes
 ;;;   ReadWorkspaceRoom       札の disk の線ごとの残りの byte を読む(何も変えない)
 ;;;   WorkspacePlace          ReadWorkspacePlace の答え: 付ける先の様子(MOUNTED・READY・OUTSIDE・CLASH)
@@ -93,12 +94,16 @@
 (defclass WorkspaceRoomShort [WorkspaceVolumeRefused]
   "札の disk に volume を置く場所が足りず、作らなかった(作る前の数えで、外れた volume を冷やしても入る大きさの分を空けられなかったか、
    作った後に Longhorn が replica を置けなかった — 置けなかった volume は消してから断る)。fresh = 持ち主が中身を持たない(作るのは空の
-   volume だった)か。False = 冷えた中身を backup から戻す所だった — 呼び手は空の場所に落とさない(中身は backup に残る)。"
-  (defn __init__ [self #^ str message #^ bool fresh]
+   volume だった)か。False = 冷えた中身を backup から戻す所だった — 呼び手は空の場所に落とさない(中身は backup に残る)。kept = 置けなかった
+   volume を消せずに残した(消す前の読みの後の書きが上限の回数まで続いた — 中身は無いが、持ち主の volume はまだ在る)か。呼び手は fresh でも、
+   kept なら持ち主が volume を持つと読む(次の作るが ALREADY で答え、付ける先の様子が volume の外の中身と並ぶ)。"
+  (defn __init__ [self #^ str message #^ bool fresh #^ bool [kept False]]
     ;; defk にできない: 例外の作り手(raise が呼ぶ口)
-    "断りの文 message と、中身を持たない持ち主か fresh を持つため。"
+    "断りの文 message と、中身を持たない持ち主か fresh と、置けなかった volume を残したか kept を持つため(作る前の数えの断りは volume を
+     作っていないので kept False)。"
     (.__init__ (super) message)
-    (setv self.fresh fresh)))
+    (setv self.fresh fresh
+          self.kept kept)))
 
 
 (defrecord WorkspaceRoom

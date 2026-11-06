@@ -43,8 +43,9 @@ class WorkspaceClusterUnreachable(WorkspaceVolumeRefused):
 
 class WorkspaceRoomShort(WorkspaceVolumeRefused):
     fresh: bool
+    kept: bool
 
-    def __init__(self, message: str, fresh: bool) -> None:
+    def __init__(self, message: str, fresh: bool, kept: bool=False) -> None:
         ...
 
 @dataclass(frozen=True, kw_only=True)
