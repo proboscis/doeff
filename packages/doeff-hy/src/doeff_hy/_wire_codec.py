@@ -807,6 +807,7 @@ class _WireNode(_Node):
         "_wires",
         "_writer",
         "_writes",
+        "description",
         "fields",
         "wire_type",
     )
@@ -816,6 +817,8 @@ class _WireNode(_Node):
         super().__init__(wire_type.__name__)
         self.wire_type = wire_type
         self.fields: tuple[_WireField, ...] = ()
+        #: The defwire docstring (WireShape.description -- the type's __doc__ is the shared descriptor built from the field names, so the wire shape holds it); None for a table row.
+        self.description: str | None = None
         self._wires: frozenset[str] = frozenset()
         self._reject = False
         self._bare = False
@@ -1145,7 +1148,7 @@ class _WireNode(_Node):
 
     def definition(self, defs: "_Definitions") -> _Schema:
         """Object shape of this type (fields use wire names, required are fields without a default, :unknown :reject gives additionalProperties false, title is
-        the type name) -- the same shape as the current pydantic json_schema (section 3b)."""
+        the type name, and the defwire docstring is the description -- tidied with inspect.cleandoc as pydantic does) -- the same shape as the current pydantic json_schema (section 3b)."""
         properties: _Schema = {field.wire: _field_schema(field, defs) for field in self.fields}
         required: list[_Json] = [field.wire for field in self.fields if field.required]
         shape: _Schema = {
@@ -1154,6 +1157,7 @@ class _WireNode(_Node):
             "type": "object",
         }
         return {
+            **({"description": inspect.cleandoc(self.description)} if self.description else {}),
             **shape,
             **({"required": required} if required else {}),
             **({"additionalProperties": False} if self._reject else {}),
@@ -1634,6 +1638,7 @@ def _wire_node(wire_type: type) -> _WireNode:
                 for field in dataclasses.fields(wire_type)
                 if field.init
             )
+            node.description = cast(str | None, shape.description)
             node.fill(fields, shape.unknown == "reject")
             setattr(wire_type, _CODEC_ATTRIBUTE, Codec(node, wire_type.__name__))
         finally:

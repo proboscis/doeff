@@ -25,12 +25,15 @@ _W = TypeVar("_W")
 UNKNOWN_FIELDS: dict[str, str]
 
 class WireShape:
-    """The wire shape of one defwire type (names = Python field name → wire name, unknown, wire_type, resolver codec)."""
+    """The wire shape of one defwire type (names = Python field name → wire name, unknown, wire_type, description = the defwire docstring, resolver codec)."""
 
     names: dict[str, str]
     unknown: str
     wire_type: type
-    def __init__(self, *, names: dict[str, str], unknown: str, wire_type: type) -> None: ...
+    description: str | None
+    def __init__(
+        self, *, names: dict[str, str], unknown: str, wire_type: type, description: str | None = None
+    ) -> None: ...
     @property
     def codec(self) -> Codec[Any]: ...
 
@@ -41,7 +44,9 @@ class WireValue(Protocol):
     __doeff_wire__: ClassVar[WireShape]
 
 def wire_config(names: dict[str, str], unknown: str) -> dict[str, object]: ...
-def wire_shape(wire_type: type, names: dict[str, str], unknown: str) -> WireShape: ...
+def wire_shape(
+    wire_type: type, names: dict[str, str], unknown: str, description: str | None = None
+) -> WireShape: ...
 def parse(
     wire_type: type[_W], raw: JsonValue | Mapping[str, object] | tuple[object, ...] | OpaqueJson
 ) -> Program[_W | Malformed, Any]: ...

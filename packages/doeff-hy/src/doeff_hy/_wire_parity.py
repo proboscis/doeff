@@ -29,6 +29,7 @@ does not have one, this module sets the same config (from the names and unknown 
 
 import dataclasses
 import importlib
+import inspect
 import json
 import math
 import re
@@ -40,6 +41,8 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import core_schema
 
 from doeff_hy._frozen import thaw_json
 from doeff_hy._json_value import OpaqueJson
@@ -152,9 +155,25 @@ def pydantic_dump_json(value: object) -> str:
     return splice.fill(written)
 
 
+class _WireDocSchema(GenerateJsonSchema):
+    """pydantic's schema writer that takes a defwire type's description from its wire shape (WireShape.description).
+
+    The defrecord runtime expansion keeps no docstring on the type (its __doc__ is the shared descriptor ``Name(*, a, b)``, which pydantic drops as a dataclass
+    signature), so pydantic alone would write no description. The docstring pydantic would have read is the one the wire shape holds; this puts it where pydantic puts a
+    class docstring (tidied with inspect.cleandoc; key order comes from pydantic's sort afterwards)."""
+
+    def dataclass_schema(self, schema: core_schema.DataclassSchema) -> JsonSchemaValue:
+        """pydantic's dataclass schema, plus the wire shape's description when the type is a defwire type that has one."""
+        json_schema = super().dataclass_schema(schema)
+        shape = schema["cls"].__dict__.get("__doeff_wire__")
+        if shape is not None and shape.description and "description" not in json_schema:
+            json_schema["description"] = inspect.cleandoc(shape.description)
+        return json_schema
+
+
 def pydantic_json_schema(wire_type: type) -> object:
     """Same answer as json-schema of the current wire.hy."""
-    return adapter_of(wire_type).json_schema(by_alias=True)
+    return adapter_of(wire_type).json_schema(by_alias=True, schema_generator=_WireDocSchema)
 
 
 # Embedding marker (the same mechanism as OpaqueSplice in the current json_value.py — pydantic_core has no hook to put an already-written JSON string into the output, so
