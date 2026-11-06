@@ -47,7 +47,8 @@
 (import doeff_cluster._worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
 (import doeff_cluster._shared.core.launch_rules [worker-commit-env-name])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
-(import doeff_cluster._worker.core.load_rules [LoadPaths])
+(import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad])
+(import doeff_cluster._worker.entry.host_load [os-host-counters])
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-environ-names])
 (import doeff_cluster._worker.protocol.lease_release [lease-release])
 (import doeff_cluster._foundation.process_versions [this-process-versions clock-ticks])
@@ -331,7 +332,7 @@
   (if (is job-procs None) [] [(job-cgroup-placer job-procs)])
   [os-proc-table-handler
    process-exit-handler
-   os-file-handler offloaded-tree-handler offloaded-file-handler worker-compute-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
+   os-file-handler os-host-counters offloaded-tree-handler offloaded-file-handler worker-compute-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)]
   (if (is pod-labels None) [] [(pod-job-labels (get pod-labels 0) (get pod-labels 1))])
   [(probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
@@ -575,9 +576,12 @@
                         :memory-mib room.memory-mib
                         ;; 自分の doeff の版を heartbeat で名乗る(無ければ名乗らない)。
                         :doeff-commit (.get machine-env commit-var "")
-                        ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る(/proc の無い機体は名乗らない)。
+                        ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る。/proc の無い macOS の機体は
+                        ;; OS の口(印 HostLoad — 答え手 os-host-counters)で CPU と memory を測って名乗る(PSI は無い)。
                         ;; task の層が在れば、その層の CPU の PSI も名乗る(優先度を下げた process の待ちを除いた、task 自身の待ち)。
-                        :load-paths (LoadPaths :task-cpu-pressure (if (is job-procs None) None (run (layer-cpu-pressure job-procs))))
+                        :load-paths (if (.startswith (current-platform) "darwin-")
+                                        (HostLoad :os "macOS")
+                                        (LoadPaths :task-cpu-pressure (if (is job-procs None) None (run (layer-cpu-pressure job-procs)))))
                         ;; kubelet の下の worker は、見張りの数えた追い出しまでの空きを memory の空きとして名乗る。
                         :eviction memory-cell.eviction
                         ;; job の子へ渡す環境変数の名を heartbeat で名乗る(上に載る系が宣言し直す前に job の読む名と照らす)。

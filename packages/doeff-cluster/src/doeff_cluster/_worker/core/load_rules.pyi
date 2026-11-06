@@ -9,6 +9,7 @@ from doeff_cluster._worker.core.memory_rules import TASK_PREFIX as TASK_PREFIX
 from doeff_cluster._worker.core.memory_rules import node_memory_of as node_memory_of
 from doeff_cluster._worker.core.eviction_rules import EvictionLine as EvictionLine
 from doeff_cluster._worker.core.eviction_rules import line_memory as line_memory
+from doeff_cluster._worker.intent.worker_model import HostCounters as HostCounters
 LOAD_READ_EVERY_MS: int
 LINE_FRESH_MS: int
 TASK_USES_FRESH_MS: int
@@ -23,6 +24,10 @@ class LoadPaths:
     cpu_pressure: str = '/proc/pressure/cpu'
     memory_pressure: str = '/proc/pressure/memory'
     task_cpu_pressure: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class HostLoad:
+    os: str
 
 @dataclass(frozen=True, kw_only=True)
 class CpuTicks:
@@ -95,4 +100,7 @@ def cpu_nice_between(before: CpuTicks | None, after: CpuTicks) -> _Program[float
     ...
 
 def machine_load_of(stat: str, meminfo: str, cpu_pressure: str | None, memory_pressure: str | None, before: CpuTicks | None, at_ms: int, line: EvictionLine | None=None, task_cpu_pressure: str | None=None) -> _Program[LoadReading, object]:
+    ...
+
+def host_load_of(counters: HostCounters, before: CpuTicks | None, at_ms: int, line: EvictionLine | None=None) -> _Program[LoadReading, object]:
     ...
