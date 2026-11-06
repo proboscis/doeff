@@ -20,7 +20,8 @@
 (import doeff_records [SweepExpired Swept])
 (import doeff_records._laws [MAKER TICKET-KEEP-SECONDS])
 (import doeff_records [pg-records-handler]
-        doeff_records._pg [drop-records-tables])
+        doeff_records._pg [drop-records-tables]
+        doeff_records._pg_sql [STORED-PAYLOAD])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -32,8 +33,8 @@
 (val EXPIRED-ROWS 3)
 (val FRESH-ROWS 30)
 (val OPEN-ROWS 5)
-;; 回収の候補の読みの文の頭(pg_sql.terminal-rows-statement — 接頭辞の後ろ)。
-(val CANDIDATE-HEAD "SELECT key, payload, version, updated_at FROM ")
+;; 回収の候補の読みの文の頭(pg_sql.terminal-rows-statement — 接頭辞の後ろ)。値は payload と bulk を合わせた綴り(stored-payload-expression)。
+(val CANDIDATE-HEAD (.format "SELECT key, {} AS payload, version, updated_at FROM " STORED-PAYLOAD))
 
 
 (defeffect ReadTally
