@@ -131,6 +131,7 @@ class RunnerFact:
     draining: bool
     task_room: int
     node: str = ''
+    cpu_busy: float | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class RunnersUnreachable:

@@ -53,7 +53,8 @@ EXPECTED: dict[str, dict[str, Declared]] = {
                 # CLI の settings の JSON を深く凍らせた写像。中の値は問わない(写しと同じ object — 型引数を書かない FrozenMap と同じ型を
                 # 名指して書く)。
                 "settings": "FrozenMap[object]",
-                "mcp_servers": "FrozenMap[McpSse | McpStdio]",
+                # McpServer is the alias McpSse | McpStdio in _values.pyi
+                "mcp_servers": "FrozenMap[McpServer]",
                 "permission": "BypassAll | AskHost | DenyUnlisted | HomeSettings",
                 "autocompact": "AutocompactAuto | AutocompactTokens | None",
                 "system_prompt_append": "str | None",
@@ -122,7 +123,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
     "_effects": {
         "ClaudeStartTurn": Declared(
             bases=("EffectBase[StartTurnOutcome]",),
-            fields={"origin": "FreshSession | ResumeSession | ForkSession", "spec": "ClaudeSessionSpec", "input": "TurnInput"},
+            fields={"origin": "SessionOrigin", "spec": "ClaudeSessionSpec", "input": "TurnInput"},
         ),
         # 本番の handler は添付の断り(AttachmentRefused)も答える(handler.hy の inject-input)。
         "ClaudeInjectInput": Declared(
@@ -139,7 +140,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
         ),
         "ClaudeAnswerPermission": Declared(
             bases=("EffectBase[Answered | NoSuchRequest]",),
-            fields={"turn": "ClaudeTurn", "request_id": "str", "answer": "Allow | Deny"},
+            fields={"turn": "ClaudeTurn", "request_id": "str", "answer": "PermissionAnswer"},
         ),
         "ClaudeCloseSession": Declared(
             bases=("EffectBase[SessionClosed | ProcessStillAlive]",), fields={"session_id": "str", "reason": "str"}

@@ -19,6 +19,7 @@ from doeff_cluster._shared.intent.protocol import PROTOCOL_FORMAT as PROTOCOL_FO
 from doeff_cluster._shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster._shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster._shared.core.detached_rules import task_notify_json as task_notify_json
+from doeff_cluster._shared.core.detached_rules import task_rerun_json as task_rerun_json
 from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster._shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
 from doeff_cluster._shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv

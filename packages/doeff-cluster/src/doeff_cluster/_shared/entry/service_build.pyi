@@ -30,6 +30,7 @@ def job(
     peak_mib: int,
     settle_mib: int,
     single_host: str | None = None,
+    filled: frozenset[str] | None = None,
 ) -> Job: ...
 def system_of(name: str, jobs: tuple[Job, ...], *, task_limits: tuple[GroupLimit, ...] = ...) -> System: ...
 def system_declaration(
