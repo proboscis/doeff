@@ -1,21 +1,25 @@
 """Failure cases for the tool (doeff_hy._static_stub) that builds a Hy module's type declarations (.pyi) from the type-checking expansion.
 
 Hand-written .pyi files drift from the implementation, and every time a doeff definition was changed from defn to defk, the consumer's (agora) type gate stopped on Unknown errors
-(4 times on 2026-10-02). The tool builds declarations from the expansion tree, and the consistency check is "regenerated output == committed output".
+(4 times on 2026-10-02). The tool builds declarations from the expansion tree, and each package's build makes them (they are not committed).
 
 - For each definition form (defk, deff, defhandler, defrecord, defenum, constants, type aliases, imports), a declaration the consumer can read is emitted.
 - Where a type cannot be produced it becomes Incomplete and the name is returned (it is not silently left Unknown).
-- When the implementation changes, a stale committed .pyi is named (the failure case of the consistency check). A hand-written .pyi is not compared.
+- The build (build_stubs, run by each package's build hook) makes the .pyi again when the .hy, a macro module it uses, or the tool changes;
+  a hand-written .pyi is left alone and a tool .pyi whose .hy is gone is removed.
 """
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from doeff_hy._static_stub import MARK, UsedModule, generated, stale_in, stub_of, users_probe
+from doeff_hy import _static_stub as static_stub
+from doeff_hy._static_stub import MARK, Built, StubUnmade, UsedModule, build_stubs, generated, stub_of, users_probe
 
 MODULE = """\
 (require doeff-hy.macros [defk deff defhandler val <-])
@@ -151,37 +155,122 @@ def test_what_cannot_be_typed_is_named_not_left_unknown(tmp_path: Path) -> None:
     assert "from _typeshed import Incomplete" in made.text.splitlines()
 
 
-def test_a_current_stub_is_not_stale(tmp_path: Path) -> None:
+#: A macro module and a module that defines its public function through that macro (the stub of the user depends on the macro's .hy, not only its own).
+GREETING_MACROS = """\
+(defmacro defgreeting [name]
+  `(defn #^ str ~name [#^ str who] (+ "hi " who)))
+"""
+GREETING_USER = """\
+(require greeting_pkg.greeting_macros [defgreeting])
+
+(defgreeting greet)
+"""
+
+
+def _build(tmp_path: Path) -> Built:
+    """Build every stub of the probe package with a store of its own (the build reads and fills the expansion cache like a package build does)."""
+    return build_stubs(tmp_path, [tmp_path / "probe_pkg"], cache_dir=tmp_path / "cache")
+
+
+def test_the_build_writes_a_stub_for_each_hy_and_keeps_it_when_nothing_changed(tmp_path: Path) -> None:
     source = _module(tmp_path)
-    source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
-    assert stale_in(tmp_path) == ()
+    first = _build(tmp_path)
+    assert first.written == (source.with_suffix(".pyi"),)
+    assert source.with_suffix(".pyi").read_text(encoding="utf-8") == stub_of(tmp_path, [tmp_path], source).text
+    assert _build(tmp_path).kept == (source.with_suffix(".pyi"),)
 
 
-def test_a_changed_field_makes_the_committed_stub_stale(tmp_path: Path) -> None:
-    # Failure case: adding an implementation field names the committed .pyi as stale.
+def test_a_public_name_added_without_touching_the_stub_is_in_the_built_stub(tmp_path: Path) -> None:
+    # Failure case: a commit added a public function to a .hy and did not regenerate the committed .pyi, and users read the name as Unknown.
+    # The build makes the .pyi from the .hy, so the new name is there after the next build.
     source = _module(tmp_path)
-    source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
-    source.write_text(MODULE.replace("  (#^ int y))", "  (#^ int y)\n  (#^ int z))"), encoding="utf-8")
-    assert [(s.source.name, s.reason) for s in stale_in(tmp_path)] == [("probe_mod.hy", "differs from the regenerated output")]
+    _build(tmp_path)
+    source.write_text(MODULE + '\n(deff tripled [n]\n  {:pre [(: n int)] :post [(: % int)]}\n  "To triple it."\n  (* n 3))\n', encoding="utf-8")
+    assert _build(tmp_path).written == (source.with_suffix(".pyi"),)
+    assert "def tripled(n: int) -> int:" in source.with_suffix(".pyi").read_text(encoding="utf-8").splitlines()
 
 
-def test_a_hand_written_stub_is_not_checked(tmp_path: Path) -> None:
-    # A hand-written .pyi (no mark) is not treated as the tool's -- it is in neither the consistency check nor --write.
+def _build_in_a_process(tmp_path: Path, package: str) -> subprocess.CompletedProcess[str]:
+    """Build the stubs of one package dir in a fresh process, the way a package build runs the tool (sharing the store of tmp_path)."""
+    command = [sys.executable, "-m", "doeff_hy._static_stub", "--build", "--root", str(tmp_path), str(tmp_path / package)]
+    environment = {**os.environ, "DOEFF_HY_CHECK_CACHE": str(tmp_path / "cache")}
+    return subprocess.run(command, env=environment, capture_output=True, text=True, timeout=240, check=False)
+
+
+def test_changing_only_the_macro_module_rebuilds_the_stub_of_its_user(tmp_path: Path) -> None:
+    # Failure case: the commit hook compared only the .pyi next to the committed .hy, so a commit that changed only another .hy the stub depends on
+    # left that stub stale. The expansion cache's record names the macro's .hy, so the next build expands the user again.
+    package = tmp_path / "greeting_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "greeting_macros.hy").write_text(GREETING_MACROS, encoding="utf-8")
+    user = package / "greeting_user.hy"
+    user.write_text(GREETING_USER, encoding="utf-8")
+    assert _build_in_a_process(tmp_path, "greeting_pkg").returncode == 0
+    assert "def greet(who: str) -> str:" in user.with_suffix(".pyi").read_text(encoding="utf-8").splitlines()
+    (package / "greeting_macros.hy").write_text(GREETING_MACROS.replace("#^ str who", "#^ int who"), encoding="utf-8")
+    built = _build_in_a_process(tmp_path, "greeting_pkg")
+    assert built.returncode == 0, built.stderr
+    assert "def greet(who: int) -> str:" in user.with_suffix(".pyi").read_text(encoding="utf-8").splitlines()
+
+
+def test_a_change_of_the_tool_output_rebuilds_every_stub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Failure case: a change of the tool or its macros left every committed .pyi stale without any .hy changing. The build renders every
+    # declaration from the expansion each time, so a different rendering reaches every stub even when every expansion comes from the cache.
+    source = _module(tmp_path)
+    other = _module(tmp_path, "").with_name("other_mod.hy")
+    other.write_text("(require doeff-hy.macros [val])\n(val ANSWER 42)\n", encoding="utf-8")
+    source.write_text(MODULE, encoding="utf-8")
+    _build(tmp_path)
+    monkeypatch.setattr(static_stub, "MARK", MARK + " (a changed tool)")
+    assert set(_build(tmp_path).written) == {source.with_suffix(".pyi"), other.with_suffix(".pyi")}
+
+
+def test_a_hand_written_stub_is_left_alone(tmp_path: Path) -> None:
+    # A hand-written .pyi (no mark) is not the tool's -- neither --write nor the build replaces it.
     source = _module(tmp_path)
     source.with_suffix(".pyi").write_text("GREETING: str\n", encoding="utf-8")
     assert not generated(source.with_suffix(".pyi"))
-    assert stale_in(tmp_path) == ()
+    assert _build(tmp_path).hand_written == (source.with_suffix(".pyi"),)
+    assert source.with_suffix(".pyi").read_text(encoding="utf-8") == "GREETING: str\n"
 
 
-def test_a_stub_with_an_older_mark_is_still_the_tools_and_stale(tmp_path: Path) -> None:
-    # Failure case: a .pyi generated before the mark changed (same head, other words after it) read as hand-written,
-    # so the check skipped it and --write refused to regenerate it. It stays the tool's and is named stale.
+def test_a_stub_with_an_older_mark_is_still_the_tools_and_rebuilt(tmp_path: Path) -> None:
+    # Failure case: a .pyi generated before the mark changed (same head, other words after it) read as hand-written and was never regenerated.
     source = _module(tmp_path)
     made = stub_of(tmp_path, [tmp_path], source).text
     older = "# doeff_hy._static_stub (an older mark)" + made[made.index("\n") :]
     source.with_suffix(".pyi").write_text(older, encoding="utf-8")
     assert generated(source.with_suffix(".pyi"))
-    assert [(s.source.name, s.reason) for s in stale_in(tmp_path)] == [("probe_mod.hy", "differs from the regenerated output")]
+    assert _build(tmp_path).written == (source.with_suffix(".pyi"),)
+
+
+def test_a_tool_stub_whose_hy_is_gone_is_removed(tmp_path: Path) -> None:
+    # Failure case: the .pyi are not tracked, so deleting or renaming a .hy leaves its .pyi in every checkout and type checkers keep reading
+    # the names of a module that no longer exists.
+    source = _module(tmp_path)
+    _build(tmp_path)
+    source.unlink()
+    assert _build(tmp_path).removed == (source.with_suffix(".pyi"),)
+    assert not source.with_suffix(".pyi").exists()
+
+
+def test_two_builds_of_one_checkout_at_once_leave_whole_stubs(tmp_path: Path) -> None:
+    # Two users that take the package by path build the same checkout's src at the same time. Each writes through a temporary name and
+    # renames, so neither leaves a half-written .pyi or a temporary file behind.
+    source = _module(tmp_path)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        done = list(pool.map(lambda _: _build_in_a_process(tmp_path, "probe_pkg"), range(2)))
+    assert [d.returncode for d in done] == [0, 0], [d.stderr for d in done]
+    assert source.with_suffix(".pyi").read_text(encoding="utf-8") == stub_of(tmp_path, [tmp_path], source).text
+    assert [p.name for p in source.parent.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_a_hy_that_does_not_expand_stops_the_build(tmp_path: Path) -> None:
+    # A package whose module cannot be read must not install with a missing or stale declaration.
+    _module(tmp_path, "(defn broken [")
+    with pytest.raises(StubUnmade):
+        _build(tmp_path)
 
 
 EFFECTS = """\

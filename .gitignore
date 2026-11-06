@@ -126,3 +126,11 @@ ORCH_PROMPT.md
 /python/
 
 
+
+# Type declarations (.pyi) of Hy modules: the build hook makes them from the .hy at every install (tools/doeff_hy_stub_hook.py), so they are not
+# committed. Hand-written .pyi that remain are tracked, which an ignore pattern does not change.
+/packages/doeff-cluster/src/**/*.pyi
+/packages/doeff-records/src/**/*.pyi
+/packages/doeff-core-effects/doeff_core_effects/**/*.pyi
+/packages/doeff-core-effects/doeff_lifeline/**/*.pyi
+/packages/doeff-hy/src/doeff_hy/**/*.pyi

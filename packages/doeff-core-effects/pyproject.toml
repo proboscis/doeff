@@ -51,12 +51,36 @@ postgres = ["doeff-hy>=0.8.0,<0.9", "psycopg>=3.1"]
 
 [build-system]
 # Writing the license SPDX expression and license-files (PEP 639) into core metadata by default starts with hatchling 1.27 (default version 2.4).
-requires = ["hatchling>=1.27"]
+# The build hook (hatch_build.py, a link to tools/doeff_hy_stub_hook.py) makes the .pyi of the .hy from the .hy at build time; these are the
+# third-party modules the expansion imports (doeff, doeff-hy and doeff-core-effects are read from the checkout's sources, not required here).
+requires = ["hatchling>=1.27", "hy>=1.3.0,<=1.3.1", "frozendict>=2.4.0", "doeff-vm"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["doeff_core_effects", "doeff_lifeline"]
 
+[tool.hatch.build]
+# The .pyi made by the build hook are git-ignored, and hatchling leaves ignored files out of the wheel and the sdist — artifacts puts them in.
+artifacts = ["*.pyi"]
+
+[tool.hatch.build.hooks.custom]
+# Make the .pyi of every .hy under stub-dirs, with module names taken from stub-root (tools/doeff_hy_stub_hook.py). The .pyi are not committed.
+stub-root = "."
+stub-dirs = ["doeff_core_effects", "doeff_lifeline"]
+
+[tool.uv]
+# uv builds a path install again (and so runs the build hook) only when a file listed here changes: the .hy, the hook, and the tool and macros of
+# doeff-hy that make the .pyi. Listing keys replaces uv's default keys, so pyproject.toml is listed too.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "hatch_build.py" },
+    { file = "doeff_core_effects/**/*.hy" },
+    { file = "doeff_lifeline/**/*.hy" },
+    { file = "../doeff-hy/src/**/*.hy" },
+    { file = "../doeff-hy/src/**/*.py" },
+]
+
 [tool.uv.sources]
+doeff-vm = { workspace = true }
 doeff = { workspace = true }
 doeff-hy = { workspace = true }
