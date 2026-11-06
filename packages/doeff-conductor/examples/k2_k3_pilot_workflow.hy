@@ -2,7 +2,7 @@
 
 (require doeff-conductor.macros [defworkflow defphase agent! gate! workspace! merge! parallel loop <-])
 (import doeff_conductor [artifact prompt ref])
-(import doeff_conductor [REVIEW-VERDICT-RESULT-SCHEMA])
+(import doeff_conductor._effects [REVIEW-VERDICT-RESULT-SCHEMA])
 
 
 (setv IMPLEMENT-SCHEMA

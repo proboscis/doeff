@@ -23,7 +23,7 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
-(import doeff_cluster._worker.protocol.coordinator_link [ready-file-written])
+(import doeff_cluster._worker.protocol.coordinator_link [LifeCell ready-file-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import tests.env_fixtures [LOCK env-of])
 (import doeff_cluster [RuntimeEnv])
@@ -936,8 +936,8 @@
 (defk write-ready-file []
   {:pre [] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
   "書く口(coordinator への口の ready-file-written)を本物の file の答え手(os-file-handler)と環境変数の答え手(subprocess-handler —
-   書く口は ready の file の名を ReadEnvironment で読む・#3014)の下で 1 回走らせるため。"
-  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written)))
+   書く口は ready の file の名を ReadEnvironment で読む・#3014)の下で 1 回走らせるため(生存の合図の thread と分ける値 LifeCell は新しい物)。"
+  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written (LifeCell))))
   None)
 
 

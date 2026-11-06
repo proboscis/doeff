@@ -604,7 +604,7 @@
   ;; 詰める時に手元で解き直して確かめる(encode-program — 本番の declare と同じ)ので、解けない値を持つ Program の系は走らせる前に断る。
   (val broken (system-of "broken" #((job "broken" (holding-unloadable sim-foundation (Unloadable))
                                           :call (CallShape :function holding-unloadable :args [sim-foundation "unloadable"] :kwargs {}) :replicas 1
-                                          :needs #{"cluster-net"}))))
+                                          :needs #{"cluster-net"} :peak-mib 200 :settle-mib 100))))
   (with [raised (pytest.raises UnsendableProgram)]
     (<- (sim-cluster :notice-broker (MemoryBroker) broken (Delay 1.0))))
   (assert (in "解けない値" (str raised.value)) (str raised.value)))

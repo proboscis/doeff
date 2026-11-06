@@ -245,7 +245,7 @@
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]
                   (detached-submitted (route-cell) TEST-ROUTE (detached-sender "r") "job-env" (encode-program (environ-read URL-NAME)) LOCAL
-                                      "env" 60.0 600.0 {URL-NAME URL})))
+                                      "env" 60.0 600.0 {URL-NAME URL} {"memoryMiB" 1024})))
   (assert submitted.created submitted)
   (val desired (.poll link))
   (assert (isinstance desired DesiredJobs) desired)
