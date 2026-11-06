@@ -193,7 +193,14 @@ impl Config {
             if !outside.is_empty() {
                 return Err(outside
                     .into_iter()
-                    .map(|what| format!("{}: {} is not in the catalog of real I/O handlers (doeff-linter data/world_handlers.json and the files of [tool.doeff-linter] world_catalogs) -- add it to the catalog of the package that defines it and name that file in world_catalogs, or remove it from :wraps", arch.path.display(), what))
+                    .map(|what| {
+                    let absent = if catalog.absent.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (world_catalogs names files that do not exist: {} -- is the package's repo checked out next to this one, at a main that has the file?)", catalog.absent.join(", "))
+                    };
+                    format!("{}: {} is not in the catalog of real I/O handlers (doeff-linter data/world_handlers.json and the files of [tool.doeff-linter] world_catalogs) -- add it to the catalog of the package that defines it and name that file in world_catalogs, or remove it from :wraps{}", arch.path.display(), what, absent)
+                })
                     .collect());
             }
         }

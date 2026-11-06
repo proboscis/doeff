@@ -59,6 +59,8 @@ impl CatalogHandler {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorldCatalog {
     pub handlers: BTreeMap<String, CatalogHandler>,
+    /// The repo's catalog files that do not exist (read without them — `with_repo_catalogs`). A config error that names a :wraps outside the catalog names them too.
+    pub absent: Vec<String>,
 }
 
 impl WorldCatalog {
@@ -106,14 +108,16 @@ impl WorldCatalog {
             }
         }
         if problems.is_empty() {
-            Ok(WorldCatalog { handlers })
+            Ok(WorldCatalog { handlers, absent: Vec::new() })
         } else {
             Err(problems)
         }
     }
 
     /// The bundled catalog with the repo's catalog files laid on top (`[tool.doeff-linter] world_catalogs` — the files in the order written).
-    /// A file that cannot be read, or a row that cannot be read, is a reason. A row already in the bundled catalog or an earlier file is not taken again
+    /// A file that does not exist is read as no rows and listed in `absent` (the using repo's checkout of the package's repo can be behind its main for a while,
+    /// and while the bundled catalog still has the rows nothing needs the file — a :wraps that does need it is the config error, and it names the absent file).
+    /// A file that exists but cannot be read, or a row that cannot be read, is a reason. A row already in the bundled catalog or an earlier file is not taken again
     /// (the earlier row stays) — so a package's repo can carry its rows while doeff still bundles them, and doeff can drop them afterwards without a gap.
     pub fn with_repo_catalogs(paths: &[std::path::PathBuf]) -> Result<WorldCatalog, Vec<String>> {
         let mut catalog = WorldCatalog::bundled().clone();
@@ -122,6 +126,10 @@ impl WorldCatalog {
             let name = path.display().to_string();
             let text = match std::fs::read_to_string(path) {
                 Ok(text) => text,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    catalog.absent.push(name);
+                    continue;
+                }
                 Err(error) => {
                     problems.push(format!("cannot read the repo's catalog of real I/O handlers {} (world_catalogs): {}", name, error));
                     continue;
@@ -278,10 +286,13 @@ mod tests {
 
         let bad = dir.path().join("bad.json");
         std::fs::write(&bad, r#"{"handlers": [{"handler": "nocolon", "touches": ["file"], "why": "w"}]}"#).unwrap();
-        let missing = dir.path().join("missing.json");
-        let problems = WorldCatalog::with_repo_catalogs(&[bad.clone(), missing.clone()]).unwrap_err().join("\n");
+        let problems = WorldCatalog::with_repo_catalogs(&[bad.clone()]).unwrap_err().join("\n");
         assert!(problems.contains(&format!("{}: nocolon is not", bad.display())), "{}", problems);
-        assert!(problems.contains(&format!("cannot read the repo's catalog of real I/O handlers {}", missing.display())), "{}", problems);
+        // A file that does not exist is read as no rows and named in absent (not a reason).
+        let missing = dir.path().join("missing.json");
+        let catalog = WorldCatalog::with_repo_catalogs(&[missing.clone(), agents.clone()]).unwrap_or_else(|problems| panic!("{}", problems.join("\n")));
+        assert_eq!(catalog.absent, vec![missing.display().to_string()]);
+        assert!(catalog.handlers.contains_key("pkg_agents.agent_handler"));
     }
 
     #[test]
