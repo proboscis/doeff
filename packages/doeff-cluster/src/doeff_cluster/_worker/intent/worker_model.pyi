@@ -378,6 +378,21 @@ class BootMarks:
 class ProcessStartedMs(EffectBase[int | None]):
     pid: str
 
+@dataclass(frozen=True, kw_only=True)
+class HostCounters:
+    """/proc の無い機体の OS の口で読んだ CPU の刻みと memory の 1 回分。"""
+
+    cpus: int
+    busy_ticks: int
+    total_ticks: int
+    nice_ticks: int
+    memory_total_bytes: int
+    memory_available_bytes: int
+
+@dataclass(frozen=True)
+class ReadHostCounters(EffectBase[HostCounters | str]):
+    """機体の CPU の刻みと memory を OS の口で読む(答え = HostCounters か読めない訳)。"""
+
 # --- action(判断の結果。そのまま effect として実行する) -------------------------
 
 @dataclass(frozen=True)

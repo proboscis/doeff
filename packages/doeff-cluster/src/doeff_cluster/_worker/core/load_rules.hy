@@ -18,13 +18,19 @@
 ;;;                          worker だけが読む(LoadPaths の task-cpu-pressure)。機体の PSI の some は、優先度を下げた process の実行の待ちでも
 ;;;                          立つ(2026-11-05 の zeus: 優先度を下げた命令が nice 19 core を使う間、機体の some 76%・task の層の some 5.6%)。
 ;;;                          task の層の値は、置いた task 自身が実行を待つかを測る。
-;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体(Mac)は測りを名乗らない。
+;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体は測りを名乗らない。
+;;;
+;;; /proc の無い機体(macOS): 入口が LoadPaths の代わりに印 HostLoad を渡し、同じ間ごとに問い ReadHostCounters で OS の口から CPU の
+;;; 刻みと memory を読む(答え手 foundation/host_counters — mach の host_statistics・sysctl)。CPU の使いと nice の分は /proc/stat と同じく
+;;; 前の読みとの間の刻みの増えの比で数え、memory は OS の数えた総量と空き(host-load-of)。PSI は OS に無いので None。測りを名乗らない
+;;; worker の空きを coordinator は 0 と数える(measured_room)ので、/proc の無い機体もこの読みで他の機体と同じ式に載る。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_cluster._worker.core.memory_rules [MIB NodeMemory JobUse TASK-PREFIX node-memory-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory])
+(import doeff_cluster._worker.intent.worker_model [HostCounters])
 
 ;; 測りを読み直す間。PSI の avg10 が 10 秒の平均なので、その半分の間で読めば名乗る値の遅れは avg10 の窓の内に収まる。CPU の使いは
 ;; この間の平均になる。
@@ -51,6 +57,12 @@
   (setv #^ str cpu-pressure "/proc/pressure/cpu")
   (setv #^ str memory-pressure "/proc/pressure/memory")
   (setv #^ (| str None) task-cpu-pressure None))
+
+
+(defrecord HostLoad
+  "測りを /proc の file でなく OS の口(問い ReadHostCounters)で読む印(頭の註 — /proc の無い機体の入口が LoadPaths の代わりに渡す)。
+   os = 名乗りの訳に書く OS の名(読めない訳の log の 1 行)。"
+  (#^ str os))
 
 
 (defrecord CpuTicks
@@ -214,4 +226,24 @@
                                   :memory-some-avg10 memory.some-avg10 :memory-full-avg10 memory.full-avg10
                                   :cpu-nice (if (is nice None) None (min nice busy))
                                   :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10))
+               :ticks ticks))
+
+
+(defk host-load-of [counters before at-ms [line None]]
+  {:pre [(: counters HostCounters) (: before (| CpuTicks None)) (: at-ms int) (: line (| EvictionLine None))]
+   :post [(: % LoadReading)] :tags {:context "worker" :role "judgment"}}
+  "/proc の無い機体の OS の口の読み counters(問い ReadHostCounters の答え)と前の読みの刻み before を、機体の測った空きにするため(頭の
+   註)。CPU の使いと nice の分は machine-load-of と同じく前の読みとの間の増えの比(cpu-busy-between・cpu-nice-between — 初めての読みと、
+   刻みの数え手が一巡りして戻った読みは None)。memory は OS の数えた総量と空き(線 line が在れば線の大きさと追い出しまでの空き —
+   machine-load-of と同じ)。PSI は OS に無いので None。"
+  (val ticks (CpuTicks :busy counters.busy-ticks :total counters.total-ticks :cpus counters.cpus :nice counters.nice-ticks))
+  (<- busy (| float None) (cpu-busy-between before ticks))
+  (<- nice (| float None) (cpu-nice-between before ticks))
+  (<- memory NodeMemory (line-memory (NodeMemory :total-bytes counters.memory-total-bytes
+                                                 :available-bytes counters.memory-available-bytes :some-avg10 None :full-avg10 None)
+                                     line))
+  (LoadReading :load (MachineLoad :at-ms at-ms :cpus ticks.cpus :cpu-busy busy
+                                  :memory-total-mib (// memory.total-bytes MIB) :memory-available-mib (// memory.available-bytes MIB)
+                                  :cpu-some-avg10 None :cpu-full-avg10 None :memory-some-avg10 None :memory-full-avg10 None
+                                  :cpu-nice (if (or (is nice None) (is busy None)) None (min nice busy)))
                :ticks ticks))

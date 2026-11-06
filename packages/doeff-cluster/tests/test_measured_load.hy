@@ -6,18 +6,27 @@
 ;;       測らない worker は measured を名乗らない
 ;;   (3) coordinator は heartbeat の measured を Worker の記録に写し(保存しない)、GET /state の worker の行に出す。Worker の資源の行には
 ;;       入れない(入れると版が拍ごとに進む)。形の誤りは 400
+;;   (4) /proc の無い機体(macOS)は OS の口(問い ReadHostCounters)で CPU の刻みと memory を読み、同じ式で使いを数えて名乗る(PSI は
+;;       None)。coordinator はその測りから、測りを名乗らない worker と違って task の空きを数える(以前の macOS の worker は測りを名乗れず、
+;;       空きがいつも 0 で、置いた task が走らなかった)
 ;; 失敗ケース = 累積の刻みをそのまま使いと読む・初めての読みで使い 0 を名乗る・読めなくなった後も前の値を名乗り続ける・/state に出ない・
 ;; 資源の行の版が heartbeat ごとに進む。
-(require doeff-hy.macros [deff defk deftest <- val])
+(require doeff-hy.macros [deff defk defhandler deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import ctypes)
 (import json)
+(import sys)
 (import httpx)
 (import pytest)
 (import tests.link_rig [LinkRig])
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster [ClusterState ClusterTiming])
-(import doeff_cluster._worker.core.load_rules [LoadPaths LoadReading MachineLoad CpuTicks Pressure LOAD-READ-EVERY-MS load-read-due cpu-ticks-of
-                                              pressure-of cpu-busy-between cpu-nice-between machine-load-of])
+(import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad LoadReading MachineLoad CpuTicks Pressure LOAD-READ-EVERY-MS load-read-due
+                                              cpu-ticks-of pressure-of cpu-busy-between cpu-nice-between machine-load-of host-load-of])
+(import doeff_cluster._worker.core.memory_rules [MIB])
+(import doeff_cluster._worker.intent.worker_model [HostCounters ReadHostCounters])
+(import doeff_cluster._coordinator.core.measured_room [measured-room])
+(import doeff_cluster._foundation.host_counters [VmStatistics64 read-host-counters])
 (import doeff_cluster._worker.protocol.heartbeat [measured-json])
 (import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat state-view])
 (import doeff_cluster._coordinator.core.resource_policy [worker-row])
@@ -39,6 +48,24 @@
 ;; STAT-B の nice の欄に刻みを足した読み(和 2000 → 3000 のうち nice の増え 300・使いの増え 600)。
 (val STAT-NICE (+ "cpu  600 300 250 1600 250 0 0 0 990 0\n"
                   "cpu0 300 150 125 800 125 0 0 0 495 0\ncpu1 300 150 125 800 125 0 0 0 495 0\nintr 1 2 3\nctxt 9\nbtime 1700000000\n"))
+
+
+;; /proc の無い機体(macOS)の OS の口の 2 回の読み: CPU 8 個・刻みの和 10000 → 18000・idle でない刻み 2000 → 6000 で、間の使いは
+;; 4000 / 8000 = 0.5。nice の刻み 500 → 1300 で、nice の分は 800 / 8000 = 0.1。16 GiB の機体に追い出さずに使える量 6 GiB。
+(val HOST-A (HostCounters :cpus 8 :busy-ticks 2000 :total-ticks 10000 :nice-ticks 500
+                          :memory-total-bytes (* 16384 MIB) :memory-available-bytes (* 6144 MIB)))
+(val HOST-B (HostCounters :cpus 8 :busy-ticks 6000 :total-ticks 18000 :nice-ticks 1300
+                          :memory-total-bytes (* 16384 MIB) :memory-available-bytes (* 6144 MIB)))
+;; 刻みの数え手(32 bit)が一巡りして小さい値に戻った読み。
+(val HOST-WRAPPED (HostCounters :cpus 8 :busy-ticks 100 :total-ticks 400 :nice-ticks 0
+                                :memory-total-bytes (* 16384 MIB) :memory-available-bytes (* 6144 MIB)))
+
+
+(defhandler host-counters-from [#^ dict box]
+  {:needs #{} :tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 検の機体の OS の口の代わり: 問い ReadHostCounters に箱の今の答え(HostCounters か読めない訳の str)で答える。
+  (ReadHostCounters []
+    (resume (get box "answer"))))
 
 
 (deftest test-the-proc-files-become-the-measured-load
@@ -198,3 +225,77 @@
   (for [wrong [{"cpus" 0} {"cpuBusy" 1.5} {"memoryAvailableMiB" 9000} {"cpuSomeAvg10" -1.0} {"cpus" "2"}]]
     (with [(pytest.raises ValueError)]
       (! (heartbeat-of (| body {"measured" (| spelled wrong)}))))))
+
+
+(deftest test-the-host-counters-become-the-measured-load
+  ;; /proc の無い機体の OS の口の読みも、初めての読みは使いを数えられず(None)、2 回目は前の読みとの間の増えの比。PSI は None。
+  (<- first LoadReading (host-load-of HOST-A None 1000))
+  (assert (= first.load (MachineLoad :at-ms 1000 :cpus 8 :cpu-busy None :memory-total-mib 16384 :memory-available-mib 6144
+                                     :cpu-some-avg10 None :cpu-full-avg10 None :memory-some-avg10 None :memory-full-avg10 None))
+          first)
+  (<- second LoadReading (host-load-of HOST-B first.ticks 6000))
+  (assert (= #(second.load.cpu-busy second.load.cpu-nice) #(0.5 0.1)) second)
+  ;; 失敗ケース: 起動からの累積をそのまま使いと読む(6000 / 18000)と 0.5 にならない。
+  (assert (!= second.load.cpu-busy (/ 6000 18000)) second)
+  ;; 数え手が一巡りして戻った読みは使いを None(1 回だけ — 次の読みはこの読みを起点に数える)。
+  (<- wrapped LoadReading (host-load-of HOST-WRAPPED second.ticks 11000))
+  (assert (is wrapped.load.cpu-busy None) wrapped))
+
+
+(deftest test-a-worker-without-proc-names-the-os-counters-and-gets-task-room [tmp-path]
+  (setv sent #())
+  (deff handle [#^ httpx.Request request]  ; defk にできない: httpx.MockTransport が呼ぶ callback
+    {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+    "口が送った heartbeat の本文を控え、宣言の空の返事で答えるため。"
+    (nonlocal sent)
+    (setv sent (+ sent #((json.loads request.content))))
+    (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" [] "draining" False}))
+  ;; 検の機体の OS の口の答え(拍ごとに差し替える)。
+  (val #^ (get dict #(str (| HostCounters str))) box {"answer" HOST-A})
+  (val link (LinkRig "http://coord" "mac-native" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)
+                     :answerers #((host-counters-from box))))
+  (setv link.state.load-paths (HostLoad :os "macOS"))
+  (val measured (fn [] (.get (get sent -1) "measured")))
+  ;; 初めての拍: 使いは数えられず null・CPU の数と memory は OS の口の値・PSI は null。
+  (.poll link)
+  (assert (= (dfor #(k v) (.items (measured)) :if (!= k "atMs") k v)
+             {"cpus" 8 "cpuBusy" None "memoryTotalMiB" 16384 "memoryAvailableMiB" 6144
+              "cpuSomeAvg10" None "cpuFullAvg10" None "memorySomeAvg10" None "memoryFullAvg10" None})
+          (measured))
+  ;; 読み直しの後の拍は前の読みとの間の使いを名乗る。
+  (setv (get box "answer") HOST-B)
+  (setv link.state.load-read-ms None)
+  (.poll link)
+  (assert (= #((get (measured) "cpuBusy") (get (measured) "cpuNice")) #(0.5 0.1)) (measured))
+  ;; coordinator はこの測りから task の空きを数える: 普通の使い 0.4 → CPU の空き ⌊8 × 0.6 − 1⌋ = 3・memory の枠 ⌊(6144 − 1536) / 1024⌋ = 4。
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "mac-native" "provides" ["host-mac-native"]
+                                                                    "measured" (measured)}))
+                                    10)))
+  (<- room int (measured-room (. (.row heard.workers "mac-native") measured) 0 0 0))
+  (assert (= room 3) room)
+  ;; 失敗ケース(直す前の macOS の worker): 測りを名乗らない worker の空きは 0 — 置いた task が走らない。
+  (val bare (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "mac-native" "provides" ["host-mac-native"]})) 10)))
+  (<- none-room int (measured-room (. (.row bare.workers "mac-native") measured) 0 0 0))
+  (assert (= none-room 0) none-room)
+  ;; OS の口を読めない間は名乗りを外し(前の値を今の値として名乗らない)、訳を残す。
+  (setv (get box "answer") "host_statistics(HOST_CPU_LOAD_INFO) が 5 で断った")
+  (setv link.state.load-read-ms None)
+  (.poll link)
+  (assert (is (measured) None) (get sent -1))
+  (assert (= link.state.load-reason "macOS の CPU と memory を読めない: host_statistics(HOST_CPU_LOAD_INFO) が 5 で断った")
+          link.state.load-reason)
+  ;; 戻った最初の読みは使いの起点を持たない(読めなかった間の前の起点で数えない)。
+  (setv (get box "answer") HOST-B)
+  (setv link.state.load-read-ms None)
+  (.poll link)
+  (assert (= #((get (measured) "cpuBusy") (get (measured) "cpus") link.state.load-reason) #(None 8 "")) (measured)))
+
+
+(deftest test-the-os-reader-keeps-the-mach-struct-and-names-a-machine-without-mach
+  ;; 生の読み(foundation/host_counters)の struct vm_statistics64 の写しは C の宣言と同じ 152 byte(欄の幅と順を誤ると頁の数が隣の欄に
+  ;; ずれる)。mach の口の無い機体(この検の Linux)は例外でなく訳の str で答える(口が測りを名乗らない訳として log に出す)。
+  (assert (= (ctypes.sizeof VmStatistics64) 152))
+  (val read (read-host-counters))
+  (if (= sys.platform "darwin")
+      (assert (and (isinstance read dict) (> (get read "cpus") 0) (>= (get read "total_ticks") (get read "busy_ticks"))) read)
+      (assert (= read (.format "この OS({})に mach の host_statistics が無い" sys.platform)) read)))

@@ -57,6 +57,7 @@
 (import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster._worker.protocol.observations [ObservePrograms])
 (import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable HeartbeatSent ReadDesired PublishStatus BootMarks WakeSet ProgramGap ProgramUnfetched
+                                                 HostCounters ReadHostCounters
                                                  WorkerWakes])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [earliest-due])
@@ -66,7 +67,8 @@
 (import doeff_cluster._worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
-(import doeff_cluster._worker.core.load_rules [LoadPaths LoadReading load-read-due machine-load-of fresh-line task-uses-of])
+(import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
+                                              task-uses-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
@@ -143,8 +145,9 @@
    accountToken で名乗る)・room-file = 枠の file(None = 読まない — 起動の引数の memory-mib を名乗り続ける。渡すと heartbeat の
    前に読み直し、自分の名の行の値を名乗る)・doeff-commit = この process の doeff の
    版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit)。load-paths = 機体の測った空きを読む
-   file の置き場(worker/core/load_rules の LoadPaths — None = 測らない。本番の入口が機体の /proc を渡し、LOAD-READ-EVERY-MS ごとに
-   読み直して heartbeat の measured で名乗る)。eviction = 機体の memory の見張りの追い出しの線の入れ物(worker/protocol/eviction_line の
+   file の置き場(worker/core/load_rules の LoadPaths・/proc の無い機体は OS の口で読む印 HostLoad — None = 測らない。本番の入口が機体の
+   /proc か印を渡し、LOAD-READ-EVERY-MS ごとに読み直して heartbeat の measured で名乗る)。eviction = 機体の memory の
+   見張りの追い出しの線の入れ物(worker/protocol/eviction_line の
    EvictionCell — 在れば、見張りが最後に数えた新しい線の大きさと追い出しまでの空きを measured の memory の総量と空きとして名乗る)。
    supplied =最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
    読む・ADR-DOE-CLUSTER-004)。child-environ = job の子へ渡す環境変数の名(名の順 — worker/core/launch の child-environ-names。
@@ -155,7 +158,7 @@
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
-                          #^ (| int None) [memory-mib None] #^ (| LoadPaths None) [load-paths None]
+                          #^ (| int None) [memory-mib None] #^ (| LoadPaths HostLoad None) [load-paths None]
                           #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node
           self.tools (or tools {})
@@ -210,7 +213,7 @@
           ;; 常駐の job の memory の予算(None = 名乗らない)。どちらも file を読めない間は前の値のまま。
           self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
           self.pools #() self.memory-mib memory-mib
-          ;; 機体の測った空き: load-paths = 読む file(None = 測らない)・measured = 最後に測れた値(None = まだ測れていない・最後の読みが
+          ;; 機体の測った空き: load-paths = 読む file か OS の口の印(None = 測らない)・measured = 最後に測れた値(None = まだ測れていない・最後の読みが
           ;; 読めなかった — heartbeat に載せない)・load-ticks = 前に読めた /proc/stat(CPU の使いの起点)・load-read-ms = 最後に読んだ刻・
           ;; load-reason = 前の読めない訳("" = 読めた — 同じ訳の 2 度目は log に出さない)。eviction = 機体の memory の見張りの追い出しの
           ;; 線の入れ物(None = 見張らない worker — memory の空きは MemAvailable で名乗る)。
@@ -831,43 +834,65 @@
   None)
 
 
+(defk proc-load-read [paths before now-ms line]
+  {:pre [(: paths LoadPaths) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None))] :post [(: % (| LoadReading str))]}
+  "機体の /proc の file(paths)を読み、測りの 1 回の読みにするため。答え = 読めた時は LoadReading、/proc/stat か /proc/meminfo を
+   読めない・形の違う読みは訳の str。PSI の file を読めない機体は PSI の欄を None で名乗る(task の層の cpu.pressure も
+   同じ — 層の無い worker は読まない)。before = 前に読めた刻み(CPU の使いの起点)・line = 見張りの新しい追い出しの線(None = 無いか古い)。"
+  (<- stat (| str FileFailed) (ReadText paths.stat))
+  (<- meminfo (| str FileFailed) (ReadText paths.meminfo))
+  (<- cpu-pressure (| str FileFailed) (ReadText paths.cpu-pressure))
+  (<- memory-pressure (| str FileFailed) (ReadText paths.memory-pressure))
+  (var task-cpu-pressure None)
+  (when (is-not paths.task-cpu-pressure None)
+    (<- read (| str FileFailed) (ReadText paths.task-cpu-pressure))
+    (:= task-cpu-pressure read))
+  (cond
+    (not (isinstance stat str)) (.format "{} を読めない: {}" paths.stat stat.detail)
+    (not (isinstance meminfo str)) (.format "{} を読めない: {}" paths.meminfo meminfo.detail)
+    True (try
+           (<- reading LoadReading (machine-load-of stat meminfo (if (isinstance cpu-pressure str) cpu-pressure None)
+                                                    (if (isinstance memory-pressure str) memory-pressure None)
+                                                    before now-ms line
+                                                    (if (isinstance task-cpu-pressure str) task-cpu-pressure None)))
+           reading
+           (except [error ValueError]
+             (str error)))))
+
+
+(defk host-load-read [source before now-ms line]
+  {:pre [(: source HostLoad) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None))] :post [(: % (| LoadReading str))]}
+  "/proc の無い機体の OS の口(問い ReadHostCounters — 答え手 foundation/host_counters)で CPU の刻みと memory を読み、測りの 1 回の読みに
+   するため(worker/core/load_rules の host-load-of)。答え = LoadReading か、OS の口が読めない訳の str。"
+  (<- counters (| HostCounters str) (ReadHostCounters))
+  (if (isinstance counters str)
+      (.format "{} の CPU と memory を読めない: {}" source.os counters)
+      (do (<- read LoadReading (host-load-of counters before now-ms line))
+          read)))
+
+
 (defk load-noted [state]
   {:pre [(: state LinkState)] :post [(: % None)]}
   "機体の測った空き(CPU の使い・memory の空き・PSI — worker/core/load_rules)を LOAD-READ-EVERY-MS ごとに読み直し、次の heartbeat で
-   名乗る値(state.measured)にするため。/proc/stat か /proc/meminfo を読めない・形の違う読みは名乗りを外し(古い値を今の値として
-   名乗らない — CPU の使いの起点も捨て、戻った最初の読みは使いを None で名乗る)、訳が変わった時に log へ 1 行出す。PSI の file を
-   読めない機体は PSI の欄を None で名乗る(task の層の cpu.pressure も同じ — 層の無い worker は読まない)。見張りの追い出しの線の入れ物(state.eviction)に新しい線が在れば、memory の総量と空きは線の
-   大きさと追い出しまでの空き(worker/core/load_rules の fresh-line・machine-load-of)。測らない worker(load-paths が None)は何もしない。"
-  (val paths state.load-paths)
-  (when (is-not paths None)
+   名乗る値(state.measured)にするため。読み方は state.load-paths が決める: LoadPaths は機体の /proc の file(proc-load-read)、印
+   HostLoad は /proc の無い機体の OS の口(host-load-read — PSI は None)。読めない・形の違う読みは名乗りを外し(古い値を今の値として
+   名乗らない — CPU の使いの起点も捨て、戻った最初の読みは使いを None で名乗る)、訳が変わった時に log へ 1 行出す。見張りの追い出しの
+   線の入れ物(state.eviction)に新しい線が在れば、memory の総量と空きは線の大きさと追い出しまでの空き(worker/core/load_rules の
+   fresh-line)。測らない worker(load-paths が None)は何もしない。"
+  (val source state.load-paths)
+  (when (is-not source None)
     (<- now-ms int (now-epoch-ms))
     (<- due bool (load-read-due state.load-read-ms now-ms))
     (when due
       (setv state.load-read-ms now-ms)
-      (<- stat (| str FileFailed) (ReadText paths.stat))
-      (<- meminfo (| str FileFailed) (ReadText paths.meminfo))
-      (<- cpu-pressure (| str FileFailed) (ReadText paths.cpu-pressure))
-      (<- memory-pressure (| str FileFailed) (ReadText paths.memory-pressure))
-      (var task-cpu-pressure None)
-      (when (is-not paths.task-cpu-pressure None)
-        (<- read (| str FileFailed) (ReadText paths.task-cpu-pressure))
-        (:= task-cpu-pressure read))
-      (var reading None)
-      (var reason "")
-      (cond
-        (not (isinstance stat str)) (:= reason (.format "{} を読めない: {}" paths.stat stat.detail))
-        (not (isinstance meminfo str)) (:= reason (.format "{} を読めない: {}" paths.meminfo meminfo.detail))
-        True (try
-               (val eviction state.eviction)
-               (<- line (| EvictionLine None)
-                   (if (is eviction None) (fresh-line None None now-ms) (fresh-line eviction.line eviction.line-at-ms now-ms)))
-               (<- read LoadReading (machine-load-of stat meminfo (if (isinstance cpu-pressure str) cpu-pressure None)
-                                                     (if (isinstance memory-pressure str) memory-pressure None)
-                                                     state.load-ticks now-ms line
-                                                     (if (isinstance task-cpu-pressure str) task-cpu-pressure None)))
-               (:= reading read)
-               (except [error ValueError]
-                 (:= reason (str error)))))
+      (val eviction state.eviction)
+      (<- line (| EvictionLine None)
+          (if (is eviction None) (fresh-line None None now-ms) (fresh-line eviction.line eviction.line-at-ms now-ms)))
+      (<- read (| LoadReading str) (if (isinstance source HostLoad)
+                                       (host-load-read source state.load-ticks now-ms line)
+                                       (proc-load-read source state.load-ticks now-ms line)))
+      (val reading (if (isinstance read str) None read))
+      (val reason (if (isinstance read str) read ""))
       (when (!= reason state.load-reason)
         (<- (slog (if reason (+ "worker: 機体の空きを測れない — heartbeat に載せない: " reason) "worker: 機体の空きを測れた — heartbeat に載せる")
                   :level (if reason "warning" "info"))))

@@ -538,6 +538,26 @@
   (#^ str pid))
 
 
+(defrecord HostCounters
+  "/proc の無い機体(macOS)の OS の口で読んだ CPU の刻みと memory の 1 回分(問い ReadHostCounters の答え — 測りの判断
+   worker/core/load_rules の host-load-of が名乗る測りにする): cpus = 今 online の CPU の数・busy-ticks = 起動からの CPU の刻みの和の
+   うち idle でない物・total-ticks = 起動からの CPU の刻みの和・nice-ticks = busy-ticks の内の nice > 0 の process の刻み・
+   memory-total-bytes = 機体の memory の総量・memory-available-bytes = 追い出さずに使える量(使っていない頁と、捨てて取り返せる
+   file の頁の和 — Linux の MemAvailable に当たる)。"
+  {:check [(> cpus 0) (>= total-ticks busy-ticks nice-ticks 0) (>= memory-total-bytes memory-available-bytes 0)]}
+  (#^ int cpus)
+  (#^ int busy-ticks)
+  (#^ int total-ticks)
+  (#^ int nice-ticks)
+  (#^ int memory-total-bytes)
+  (#^ int memory-available-bytes))
+
+
+(defclass [(dataclass :frozen True)] ReadHostCounters [EffectBase]
+  "機体の CPU の刻みと memory を、/proc でなく OS の口で読む(/proc の無い機体 — macOS の worker の測り)。答え = HostCounters か
+   str(読めない訳 — その機体の OS の口が無い・呼びが断った)。")
+
+
 ;; --- action(判断の結果。そのまま effect として実行する) -------------------------
 
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]

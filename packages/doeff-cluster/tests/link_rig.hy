@@ -47,11 +47,12 @@
 
 (defclass LinkRig []
   "検の coordinator への口: state = 本番と同じ入れ物・cell / watch-cell = heartbeat と待ちの宛先・transport = 送り先(None = 本物の網)。
-   measured = heartbeat で名乗る機体の測った空き(既定 ROOMY-LOAD — 検の筋書きが task の空きを気にせず走るため。None = 名乗らない)。"
+   measured = heartbeat で名乗る機体の測った空き(既定 ROOMY-LOAD — 検の筋書きが task の空きを気にせず走るため。None = 名乗らない)。
+   answerers = 口の外側に足す検の答え手(外の世界に触る問いの偽 — 例 OS の口の問い ReadHostCounters)。"
   (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int fence-ms
                           #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None]
                           #^ (| dict None) [tools None] #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""]
-                          #^ bool [watch False] #^ (| MachineLoad None) [measured ROOMY-LOAD]]
+                          #^ bool [watch False] #^ (| MachineLoad None) [measured ROOMY-LOAD] #^ tuple [answerers #()]]
     ;; 最後の連絡とみなす初めの刻は、本番の入口と同じく壁の時計と単調な時計の両方で読む(時計は実時間)。
     (setv now-ms (int (* 1000 (time.time))))
     (setv self.state (LinkState name provides fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
@@ -59,7 +60,8 @@
                                 :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch
                                 :beat-beside False)
           self.cell (run (cell-of url)) self.watch-cell (run (cell-of url))
-          self.transport (or transport (httpx.HTTPTransport)))
+          self.transport (or transport (httpx.HTTPTransport))
+          self.answerers answerers)
     ;; 測らない口(load-paths None)は state.measured を書き換えないので、名乗る値をここで置く。
     (setv self.state.measured measured))
 
@@ -96,8 +98,9 @@
   "program(defk を呼んだ結果の Program か effect)を rig の口の handler と検の答え手の下で回し、その答えを返すため(scheduler は呼び手が
    被せる — LinkRig の method は (run (scheduled …)) で 1 回走らせる)。"
   ;; 環境変数の読み(ReadEnvironment — 準備の file の名 DOEFF_WORKER_READY_FILE)は本番の worker の入口と同じ本物の subprocess-handler(#3014)。
-  (<- answer (with-handlers [await-handler (transport-http rig.transport) os-file-handler subprocess-handler slog-handler (sync-time-handler)
-                             (coordinator-link rig.state rig.cell LINK-ROUTE rig.watch-cell)]
+  (<- answer (with-handlers (+ [await-handler (transport-http rig.transport) os-file-handler subprocess-handler slog-handler (sync-time-handler)]
+                                (list rig.answerers)
+                                [(coordinator-link rig.state rig.cell LINK-ROUTE rig.watch-cell)])
                             program))
   answer)
 
