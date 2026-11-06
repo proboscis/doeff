@@ -250,6 +250,10 @@ def test_flux_applies_the_worker_amounts_of_the_declaration(
             str(share.worker.min_free_gib),
             str(share.worker.roots_gib),
         ), share.node
+        uv = share.worker.uv_cache_gib
+        assert _worker_env(built, share.node, derive.UV_CACHE_LIMIT_ENV) == (
+            str(uv) if uv is not None else None
+        ), share.node
 
 
 def test_longhorn_admits_no_more_than_its_share_as_applied(
@@ -539,3 +543,52 @@ def test_an_image_disk_with_a_misspelled_key_is_refused() -> None:
     text = (derive.SHARES.read_text(encoding="utf-8")).replace("residentsBytes:", "residentBytes:")
     with pytest.raises(ValueError, match="imageDisks.zeus-usb-ssd の鍵が違う"):
         derive.parse(text)
+
+
+# --- worker の state の上限の形 -----------------------------------------------------------------------------------
+
+
+def _limited_shares(declaration: object) -> tuple[object, ...]:
+    """worker の state を上限の形(state — uvCacheGiB と storesBytes)で宣言した機体(atlas)。"""
+    return tuple(share for share in declaration.nodes if share.worker.uv_cache_gib is not None)
+
+
+def test_limited_state_is_the_sum_of_its_limits(declaration: object) -> None:
+    """上限の形の機体の roots の外の state は、uv の cache の上限と上に載る系の上限の和(手で測った値を置かない)。atlas は上限の形を持つ
+    (2026-10-30 の du の和 44.8 GB を写した stateBytes 45 GB は、11-06 の state 75.1 GB の下に在り、誰も守らなかった)。"""
+    shares = _limited_shares(declaration)
+    assert [share.node for share in shares] == ["atlas"], shares
+    for share in shares:
+        assert share.worker.stores_bytes is not None, share.node
+        assert (
+            share.worker.state_bytes
+            == share.worker.uv_cache_gib * derive.GIB + share.worker.stores_bytes
+        ), share.node
+
+
+def test_a_worker_with_both_state_forms_is_refused() -> None:
+    """手で測った stateBytes と上限の state を並べた worker は、どちらを信じるかを推し量らずに読む所で断る。"""
+    text = derive.SHARES.read_text(encoding="utf-8").replace(
+        "      state:\n", "      stateBytes: 45_000_000_000\n      state:\n", 1
+    )
+    with pytest.raises(ValueError, match="どちらか 1 つ"):
+        derive.parse(text)
+
+
+def test_a_limited_state_over_the_disk_is_refused(declaration: object, margins: object) -> None:
+    """atlas の上に載る系の上限の和を、残りより 1 byte 大きくした宣言は、分け前の合計が disk を越えて導かない(上に載る系が置き場の上限を
+    上げた時、この宣言を上げ、ここで disk に収まらない事が分かる)。"""
+    (atlas,) = _limited_shares(declaration)
+    room = derive.longhorn_bytes(atlas, margins)
+    stores = atlas.worker.stores_bytes + room + 1
+    swollen = dataclasses.replace(
+        atlas,
+        worker=dataclasses.replace(
+            atlas.worker,
+            stores_bytes=stores,
+            state_bytes=atlas.worker.uv_cache_gib * derive.GIB + stores,
+        ),
+    )
+    found = derive.faults(dataclasses.replace(declaration, nodes=(swollen,)), margins)
+    assert len(found) == 1, found
+    assert found[0].startswith("atlas: 分け前の合計が disk を越える"), found
