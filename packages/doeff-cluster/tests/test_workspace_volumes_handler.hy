@@ -83,6 +83,7 @@
                                :poll-seconds 0.5))
 (val SIZE (get (json.loads SETTINGS-TEXT) "sizeBytes"))
 (val MAX (get (json.loads SETTINGS-TEXT) "maxSizeBytes"))
+(val WARM-HOURS (get (json.loads SETTINGS-TEXT) "warmHours"))
 (val TARGET (get PARAMETERS "backupTargetName"))
 (val DAY 86400.0)
 (val LONGHORN-HEAD "/apis/longhorn.io/v1beta2/namespaces/longhorn-system")
@@ -1236,21 +1237,22 @@
   (assert (= kept.api.held.backups #(COLD-BACKUP)) kept.api.held.backups))
 
 
-;; まとめて冷やす検の世界を作る関数(筋書きごとに新しい入れ物): 刻 10 時間に、使い終わりが 0・7・9・9.5 時間の外れた volume 4 つと、
-;; 付いている volume 1 つ(名目で capacity 本を受ける disk)。
+;; まとめて冷やす検の世界を作る関数(筋書きごとに新しい入れ物): 刻 10 時間に、使い終わりが 0・(9 − 宣言の warmHours)・9・9.5 時間の
+;; 外れた volume 4 つと、付いている volume 1 つ(名目で capacity 本を受ける disk)。a1・a2 は warmHours を過ぎ、a3・a4 は過ぎない。模擬の
+;; 世界にも宣言の warmHours を渡す(本番の handler は値の ConfigMap の宣言を読む)。
 (val idle-world (fn [capacity]
-                  (WorkspaceVolumeWorld NODE :capacity capacity
+                  (WorkspaceVolumeWorld NODE :capacity capacity :warm-hours WARM-HOURS
                                         :volumes #((HeldVolume :name "ws-c-a1" :formatted True :used-at 0.0)
-                                                   (HeldVolume :name "ws-c-a2" :formatted True :used-at (* 7 3600.0))
+                                                   (HeldVolume :name "ws-c-a2" :formatted True :used-at (* (- 9 WARM-HOURS) 3600.0))
                                                    (HeldVolume :name "ws-c-a3" :formatted True :used-at (* 9 3600.0))
                                                    (HeldVolume :name "ws-c-a4" :formatted True :used-at (* 9.5 3600.0))
                                                    (HeldVolume :name "ws-c-a5" :node NODE :formatted True :used-at 0.0)))))
 
 
 (deftest test-the-idle-sweep-cools-the-stale-and-then-the-oldest-on-both-handlers
-  ;; 値の spareBytes は 16 GiB(値の大きさ 2 GiB の 8 本ぶん)。どの volume も名目 2 GiB。名目の残り 7 本ぶん(12 − 5)に、2 時間を過ぎた
+  ;; 値の spareBytes は 16 GiB(値の大きさ 2 GiB の 8 本ぶん)。どの volume も名目 2 GiB。名目の残り 7 本ぶん(12 − 5)に、warmHours を過ぎた
   ;; a1・a2 の 2 本ぶんを足せば 9 本ぶんで届く — a1・a2 だけ(付いている a5 は古くても冷やさない)。残り 5 本ぶんでは 7 本ぶん → a3 を
-  ;; 古い順に足して 8。残り 4 本ぶんでは外れた物を全部で 8。残り 3 本ぶんでは全部冷やしても 7 本ぶんで届かない → 2 時間を過ぎた物だけ
+  ;; 古い順に足して 8。残り 4 本ぶんでは外れた物を全部で 8。残り 3 本ぶんでは全部冷やしても 7 本ぶんで届かない → warmHours を過ぎた物だけ
   ;; (温かい a3・a4 は冷やしても届かないので残す)。
   (for [#(capacity wanted left) #(#(12 "sweep cooled=ws-c-a1,ws-c-a2 failed=" #("ws-c-a3" "ws-c-a4" "ws-c-a5"))
                                   #(10 "sweep cooled=ws-c-a1,ws-c-a2,ws-c-a3 failed=" #("ws-c-a4" "ws-c-a5"))
