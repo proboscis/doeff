@@ -496,3 +496,112 @@
   (for [#(label policy children) rows]
     (<- got tuple (plan NOW #(new1 new2) (WorldView codes running :probes probes :warm-children children) {} policy))
     (assert (= got stop) (.format "{}: {}" label got))))
+
+
+;; --- jobs の層に入らない待ちの子(2026-11-06 の k3s-0〜2)-------------------------------------------------------------
+;; 待ちの子は jobs の層に置かれ、1 本は準備完了の後に約 520 MiB。層の上限が小さい機体では入らず、層の OOM kill が層でいちばん大きい
+;; process = 待ちの子を落とし、判断は 30 秒ごとに起こし直し続けた(終了 -9 は断りに数えなかった)。直した後は、起こす前に層の空き
+;; (WorldView.jobs-room)と待ちの子 1 本の大きさ(測った RSS か見積もり)を比べ、入らなければ起こさず、その root の task を冷えた道
+;; (入れ物 shim)で起こす。止めの合図を送っていない -9 の終わりは断りに数え、上限と間は起動の断りと同じ道。
+
+(val MIB (* 1024 1024))
+
+
+(deftest test-the-warm-child-table-does-not-start-a-child-that-does-not-fit-the-jobs-layer
+  (val rows
+    #(#("要る・無い・入らない → 起こさない" None True #())
+      #("要る・無い・入る → 起こす" None False #((StartWarmChild KEY-A LAUNCH-A)))
+      #("要る・終わって間が過ぎた・入らない → 起こし直さない" (! (child KEY-A :exit-code -9 :ended-ms (- NOW 30000))) True #())
+      #("要る・終わって間が過ぎた・入る → 起こし直す" (! (child KEY-A :exit-code -9 :ended-ms (- NOW 30000))) False
+        #((StartWarmChild KEY-A LAUNCH-A)))
+      #("要る・起こし中・入らない → 何もしない(走っている子は止めない)" (! (child KEY-A :mark None)) True #())
+      #("要る・準備済み・入らない → 何もしない" (! (child KEY-A)) True #())))
+  (for [#(label view roomless expected) rows]
+    (<- got tuple (warm-child-step NOW KEY-A LAUNCH-A view POLICY :roomless roomless))
+    (assert (= got expected) (.format "{}: {}" label got))))
+
+
+(deftest test-a-task-whose-warm-child-does-not-fit-the-jobs-layer-starts-cold-with-the-reason
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  ;; 層の空き 300 MiB に見積もり 560 MiB の待ちの子は入らない: 待ちの子を起こさず、task は入れ物 shim の道で起こす。
+  (val tight (replace (! (world)) :jobs-room (* 300 MIB)))
+  (<- got tuple (plan NOW #(ta) tight {} POLICY))
+  (assert (= got #((StartJob ta 1 ROOT-A))) got)
+  (<- report tuple (statuses NOW #(ta) tight {} POLICY))
+  (assert (= (tuple (gfor s report #(s.phase s.detail)))
+             #(#(JobPhase.STARTING "no-jobs-room: jobs の層の空き 300 MiB に待ちの子 560 MiB が入らない — 待ちの子を起こさず冷えた道で起こす")))
+          report)
+  ;; 空きが足りれば今までどおり待ちの子を起こし、task は待つ。
+  (val roomy (replace (! (world)) :jobs-room (* 1024 MIB)))
+  (<- warm tuple (plan NOW #(ta) roomy {} POLICY))
+  (assert (= warm #((StartWarmChild KEY-A LAUNCH-A))) warm)
+  ;; 空きを知らない層(None)は縛らない(模擬の環境・見張りの無い worker)。
+  (<- unknown tuple (plan NOW #(ta) (! (world)) {} POLICY))
+  (assert (= unknown #((StartWarmChild KEY-A LAUNCH-A))) unknown)
+  ;; 準備済みの待ちの子は、空きが小さくても分かれ元にする(分ける task は待ちの子の頁を共有する)。
+  (val ready (replace (! (world :children #((! (child KEY-A))))) :jobs-room 0))
+  (<- forked tuple (plan NOW #(ta) ready {} POLICY))
+  (assert (= forked #((StartJob ta 1 ROOT-A :warm-key KEY-A))) forked))
+
+
+(deftest test-the-measured-size-of-the-roots-warm-child-decides-the-fit
+  ;; 前の子が準備完了の時に測った 200 MiB は、見積もり(560 MiB)なら入らない空き 300 MiB に入る。測った 700 MiB は空き 600 MiB に入らない。
+  (val small (replace (! (child KEY-A :exit-code -9 :ended-ms (- NOW 30000))) :size-bytes (* 200 MIB)))
+  (val large (replace (! (child KEY-A :exit-code -9 :ended-ms (- NOW 30000))) :size-bytes (* 700 MIB)))
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (<- fits tuple (warm-child-actions NOW #(ta) (replace (! (world :children #(small))) :jobs-room (* 300 MIB)) #() POLICY))
+  (assert (= fits #((StartWarmChild KEY-A LAUNCH-A))) fits)
+  (<- too-big tuple (warm-child-actions NOW #(ta) (replace (! (world :children #(large))) :jobs-room (* 600 MIB)) #() POLICY))
+  (assert (= too-big #()) too-big))
+
+
+(deftest test-two-roots-are-not-started-into-room-for-one-warm-child
+  ;; 失敗ケース(k3s-0〜2 の 2 つの root — 2 本で約 1040 MiB): 空き 1 GiB に 2 本を同じ拍に起こすと、どちらかが層の上限に当たる。
+  ;; 先の root の子を起こし、その大きさを引いた空きで次の root を判じる。次の拍は起こし中の子の大きさを引くので、後の root の task は
+  ;; 冷えた道で起こす。
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (<- tb JobSpec (task-on "tb" KEY-B))
+  (val bare (replace (! (world)) :jobs-room (* 1024 MIB)))
+  (<- first tuple (plan NOW #(ta tb) bare {} POLICY))
+  (assert (= first #((StartWarmChild KEY-A LAUNCH-A))) first)
+  (val starting (replace (! (world :children #((! (child KEY-A :mark None))))) :jobs-room (* 1024 MIB)))
+  (<- second tuple (plan NOW #(ta tb) starting {} POLICY))
+  (assert (= second #((StartJob tb 1 ROOT-B))) second))
+
+
+(deftest test-a-warm-child-killed-without-a-stop-counts-as-a-refusal
+  ;; 止めの合図を送っていない -9 の終わり(準備完了の後も)は断りに数える。worker が止めた子(KILL まで送った)の -9 は数えない。
+  (val killed-after-ready (! (child KEY-A :exit-code -9 :ended-ms NOW)))
+  (val killed-through-uv (! (child KEY-A :exit-code 137 :ended-ms NOW)))
+  (val stopped (StopProgress :requested-ms NOW :stage StopStage.KILL :signalled-ms NOW))
+  (val killed-by-worker (! (child KEY-A :exit-code -9 :ended-ms NOW :stop stopped)))
+  (val exited-clean (! (child KEY-A :exit-code 0 :ended-ms NOW)))
+  (assert (= #((refusals-after killed-after-ready) (refusals-after (replace killed-after-ready :refusals 1))
+               (refusals-after killed-through-uv) (refusals-after killed-by-worker) (refusals-after exited-clean))
+             #(1 2 1 0 0))))
+
+
+(deftest test-a-warm-child-killed-again-and-again-stops-restarting-and-its-task-starts-cold
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (val limit POLICY.warm-refusal-limit)
+  (val killed (! (child KEY-A :exit-code -9 :ended-ms (- NOW 30000) :detail "warm_child: 準備完了 root=/roots/env-a module=812")))
+  ;; 上限の手前: 起動の断りと同じ間(code-retry-ms)を置いて起こし直し、task は待つ。
+  (val below (replace killed :refusals (- limit 2)))
+  (<- soon tuple (warm-child-step (- NOW 1) KEY-A LAUNCH-A (replace below :ended-ms (- NOW 2)) POLICY))
+  (assert (= soon #()) soon)
+  (<- restart tuple (warm-child-step NOW KEY-A LAUNCH-A below POLICY))
+  (assert (= restart #((StartWarmChild KEY-A LAUNCH-A))) restart)
+  (<- waiting tuple (statuses NOW #(ta) (! (world :children #(below))) {} POLICY))
+  (assert (= (tuple (gfor s waiting s.phase)) #(JobPhase.PREPARING)) waiting)
+  ;; 上限に届いた: 起こし直さない。root の中身の断りではないので task を env-failed で終えず、冷えた道で起こし、訳を状態に出す。
+  (val at-limit (replace killed :refusals (- limit 1)))
+  (<- held tuple (warm-child-step NOW KEY-A LAUNCH-A at-limit POLICY))
+  (assert (= held #()) held)
+  (<- observed WorldView (world :children #(at-limit)))
+  (<- got tuple (plan NOW #(ta) observed {} POLICY))
+  (assert (= got #((StartJob ta 1 ROOT-A))) got)
+  (<- report tuple (statuses NOW #(ta) observed {} POLICY))
+  (assert (= (tuple (gfor s report #(s.phase s.failure s.detail)))
+             #(#(JobPhase.STARTING None
+                 (.format "no-jobs-room: 待ちの子が jobs の層の OOM kill で {} 回続けて落ちた — 起こし直さず冷えた道で起こす(最後の 560 MiB)" limit))))
+          report))
