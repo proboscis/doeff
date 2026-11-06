@@ -46,8 +46,11 @@
 (val IMAGE-PATH "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin")
 ;; task before の長さ(秒)— 版の file の書き換えから新しい世代の名乗りまで(手元で数秒)より長くする。
 (val BEFORE-SECONDS 12.0)
-;; 1 つの待ちの上限(秒)と、読み直しの間隔(秒)。
+;; 1 つの待ちの上限(秒)と、読み直しの間隔(秒)。BEFORE-SECONDS・WAIT-SECONDS・worker の起動の上限は、機体の込み具合の倍率
+;; (deadline-scale-factor — 空いた機体では 1)で伸ばす: 込んだ機体(倍率 x5〜6 の 2026-11-06 の日次の回)では、task before の子が
+;; 走り出して盤に書くまでが 40 秒を越え、盤の行が書かれないと赤になった。
 (val WAIT-SECONDS 40.0)
+(val BOOT-SECONDS 120.0)
 (val PROBE-SECONDS 0.5)
 ;; task の終わっていない phase(GET /detached の phase — 読みの前の空を含む)。
 (val OPEN-PHASES #("" "queued" "preparing" "assigned"))
@@ -84,16 +87,17 @@
   (Versions :old (get shas 0) :new (get shas 1)))
 
 
-(defk swap-machine-of [tmp-path repo versions]
-  {:pre [(: tmp-path Path) (: repo AppRepo) (: versions Versions)] :post [(: % LocalMachine)] :tags {:context "doeff-cluster-test" :role "entry"}}
+(defk swap-machine-of [tmp-path repo versions scale]
+  {:pre [(: tmp-path Path) (: repo AppRepo) (: versions Versions) (: scale float)] :post [(: % LocalMachine)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker 1 つの手元の 1 台を、配備の雛形と同じく版の file と起動の版で組むため(版の file は版 A を持つ)。worker は自分の版を子へ渡す
-   (WORKER_PASS_ENV — 検の task が走らせた世代の版を読む)。"
+   (WORKER_PASS_ENV — 検の task が走らせた世代の版を読む)。scale = 機体の込み具合の倍率(起動の上限を伸ばす)。"
   (<- port int (free-port))
   (val home (/ tmp-path "workers" WORKER))
   (val version-file (/ home "version"))
   (.write-text version-file versions.old :encoding "utf-8")
   (LocalMachine :work-dir (str tmp-path) :port port :workers #((SimWorker :name WORKER :provides (frozenset ["local"])))
-                :boot-seconds 120.0 :stop-grace 15.0 :code-repo repo.url :revision repo.sha
+                :boot-seconds (* BOOT-SECONDS scale) :stop-grace 15.0 :code-repo repo.url :revision repo.sha
                 :worker-env #((EnvEntry :name "PATH" :value IMAGE-PATH)
                               (EnvEntry :name "WORKER_DOEFF_COMMIT" :value versions.old)
                               (EnvEntry :name "WORKER_DOEFF_URL" :value (str (/ home "boot" "doeff.git")))
@@ -137,12 +141,12 @@
   (if (isinstance row dict) (.get row "commit") None))
 
 
-(defk board-commit-within [key]
-  {:pre [(: key str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "盤の行 key が書かれるまで PROBE-SECONDS ごとに読み直し(上限 WAIT-SECONDS)、書かれた版を返すため。"
+(defk board-commit-within [key wait]
+  {:pre [(: key str) (: wait float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "盤の行 key が書かれるまで PROBE-SECONDS ごとに読み直し(上限 wait 秒)、書かれた版を返すため。"
   (var commit None)
   (var waited 0.0)
-  (while (and (is commit None) (< waited WAIT-SECONDS))
+  (while (and (is commit None) (< waited wait))
     (<- seen (| str None) (board-commit key))
     (:= commit seen)
     (when (is commit None)
@@ -152,12 +156,12 @@
   commit)
 
 
-(defk worker-commit-within [commit]
-  {:pre [(: commit str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "coordinator の Worker が版 commit を名乗るまで読み直し(上限 WAIT-SECONDS)、その世代(boot)を返すため。"
+(defk worker-commit-within [commit wait]
+  {:pre [(: commit str) (: wait float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "coordinator の Worker が版 commit を名乗るまで読み直し(上限 wait 秒)、その世代(boot)を返すため。"
   (var view {})
   (var waited 0.0)
-  (while (and (!= (.get view "doeffCommit") commit) (< waited WAIT-SECONDS))
+  (while (and (!= (.get view "doeffCommit") commit) (< waited wait))
     (<- read dict (ReadCoordinator (+ "/workers/" WORKER)))
     (:= view read)
     (when (!= (.get view "doeffCommit") commit)
@@ -167,12 +171,12 @@
   (get view "boot"))
 
 
-(defk finished-phase-within [key]
-  {:pre [(: key str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "GET /detached/<key> の phase が終わりの phase(OPEN-PHASES の外)になるまで読み直し(上限 WAIT-SECONDS)、その phase を返すため。"
+(defk finished-phase-within [key wait]
+  {:pre [(: key str) (: wait float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "GET /detached/<key> の phase が終わりの phase(OPEN-PHASES の外)になるまで読み直し(上限 wait 秒)、その phase を返すため。"
   (var phase "")
   (var waited 0.0)
-  (while (and (in phase OPEN-PHASES) (< waited WAIT-SECONDS))
+  (while (and (in phase OPEN-PHASES) (< waited wait))
     (<- progress dict (ReadCoordinator (+ "/detached/" key)))
     (:= phase (.get progress "phase" ""))
     (when (in phase OPEN-PHASES)
@@ -181,12 +185,12 @@
   phase)
 
 
-(defk log-has-within [log needle]
-  {:pre [(: log str) (: needle str)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "worker の log に needle が出るまで読み直し(上限 WAIT-SECONDS)、出たかを返すため。"
+(defk log-has-within [log needle wait]
+  {:pre [(: log str) (: needle str) (: wait float)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "worker の log に needle が出るまで読み直し(上限 wait 秒)、出たかを返すため。"
   (var found False)
   (var waited 0.0)
-  (while (and (not found) (< waited WAIT-SECONDS))
+  (while (and (not found) (< waited wait))
     (<- text (ReadText log))
     (:= found (and (isinstance text str) (in needle text)))
     (when (not found)
@@ -209,35 +213,39 @@
   (#^ bool elder-left))
 
 
-(defk swapped-during-the-work [versions version-file log]
-  {:pre [(: versions Versions) (: version-file str) (: log str)] :post [(: % SwapSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk swapped-during-the-work [versions version-file log scale]
+  {:pre [(: versions Versions) (: version-file str) (: log str) (: scale float)] :post [(: % SwapSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 版 A の世代が名乗った後に task before を出し、走り出したら版の file を B に書き換え、版 B の名乗りを待って task after を出し、
-   after の始まり・before の終わり・前の世代の退きを順に待って読むため。"
-  (<- old-boot str (worker-commit-within versions.old))
-  (<- _before DetachedSubmitted (submitted-work "before" BEFORE-SECONDS))
-  (<- before-begun str (board-commit-within (+ SWAP-PREFIX "before/begun")))
+   after の始まり・before の終わり・前の世代の退きを順に待って読むため。scale = 機体の込み具合の倍率(待ちの上限と before の長さを
+   伸ばす — 新しい世代の名乗りが込んだ機体で遅れても、before はまだ走っている)。"
+  (val wait (* WAIT-SECONDS scale))
+  (<- old-boot str (worker-commit-within versions.old wait))
+  (<- _before DetachedSubmitted (submitted-work "before" (* BEFORE-SECONDS scale)))
+  (<- before-begun str (board-commit-within (+ SWAP-PREFIX "before/begun") wait))
   (<- wrote (WriteText version-file versions.new))
   (assert (not (isinstance wrote FileFailed)) wrote)
-  (<- new-boot str (worker-commit-within versions.new))
+  (<- new-boot str (worker-commit-within versions.new wait))
   (<- done-at-swap (| str None) (board-commit (+ SWAP-PREFIX "before/done")))
   (<- _after DetachedSubmitted (submitted-work "after" 1.0))
-  (<- after-begun str (board-commit-within (+ SWAP-PREFIX "after/begun")))
-  (<- before-done str (board-commit-within (+ SWAP-PREFIX "before/done")))
-  (<- before-phase str (finished-phase-within "before"))
-  (<- left bool (log-has-within log "が退いた"))
+  (<- after-begun str (board-commit-within (+ SWAP-PREFIX "after/begun") wait))
+  (<- before-done str (board-commit-within (+ SWAP-PREFIX "before/done") wait))
+  (<- before-phase str (finished-phase-within "before" wait))
+  (<- left bool (log-has-within log "が退いた" wait))
   (SwapSeen :old-boot old-boot :new-boot new-boot :before-begun before-begun :before-done before-done
             :before-done-at-swap (is-not done-at-swap None) :after-begun after-begun :before-phase before-phase :elder-left left))
 
 
 ;; coordinator と worker を本物の子 process で起こすので subprocess-bytecode(根の conftest — tests/test_local_machine.hy の註)を取る。
-(deftest test-changing-the-version-file-swaps-the-worker-process-in-place-and-lets-running-work-finish [tmp-path subprocess-bytecode]
+(deftest test-changing-the-version-file-swaps-the-worker-process-in-place-and-lets-running-work-finish [tmp-path subprocess-bytecode
+                                                                                                         #^ float deadline-scale-factor]
   (<- repo AppRepo (app-repo tmp-path))
   (val home (/ tmp-path "workers" WORKER))
   (.mkdir home :parents True)
   (<- versions Versions (prepared-versions home))
-  (<- machine LocalMachine (swap-machine-of tmp-path repo versions))
+  (<- machine LocalMachine (swap-machine-of tmp-path repo versions deadline-scale-factor))
   (val log (str (/ home (+ WORKER ".log"))))
-  (<- seen SwapSeen (local-machine-cluster (with-task-sender machine (swapped-during-the-work versions (str (/ home "version")) log))
+  (<- seen SwapSeen (local-machine-cluster (with-task-sender machine (swapped-during-the-work versions (str (/ home "version")) log deadline-scale-factor))
                                            :machine machine))
   ;; 版 B の世代が名乗り、版 A の世代とは別の process(世代)。その時 before はまだ走っていた(入れ替えが走っている仕事と重なった)。
   (assert (!= seen.old-boot seen.new-boot) seen)
