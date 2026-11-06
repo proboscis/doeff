@@ -12,6 +12,7 @@ from doeff import Program as Program
 from doeff import EffectBase as EffectBase
 from doeff import K as K
 from doeff import WithHandlerType as WithHandlerType
+from doeff_core_effects._scheduler import shielded as shielded
 from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects._sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects._sql_effects import SqlBatch as SqlBatch

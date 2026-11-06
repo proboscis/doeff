@@ -9,6 +9,7 @@ from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
 from doeff_core_effects._http_server_effects import HttpHeader as HttpHeader
+from doeff_core_effects._scheduler import shielded as shielded
 WS_LINK_CLOSE_NORMAL: int
 WS_LINK_CLOSE_GOING_AWAY: int
 WS_LINK_CLOSE_ABNORMAL: int
