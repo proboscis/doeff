@@ -830,10 +830,10 @@
        (.write-text lock (.replace lock-text "registry = \"https://pypi.org/simple\""
                                    "git = \"https://github.com/proboscis/hy.git?rev=adbe989a\"")
                     :encoding "utf-8")
-       (with [(pytest.raises SystemExit :match "index \u304b\u3089\u5165\u308c\u308b\u7248\u3067\u306a\u3044")]
+       (with [(pytest.raises SystemExit :match "is not a version installed from an index")]
          (run (locked-hy-version tmp-path)))
        (.write-text lock (.replace lock-text "name = \"hy\"" "name = \"hyrule\"") :encoding "utf-8")
-       (with [(pytest.raises SystemExit :match "1 \u3064\u306b\u6c7a\u307e\u3089\u306a\u3044")]
+       (with [(pytest.raises SystemExit :match "is not a single one")]
          (run (locked-hy-version tmp-path)))
        ;; Counterexample: no upper bound, a minor-version bound (<1.4), a bound different from uv.lock, and a declaration with no hy row are red; a bound at exactly the uv.lock version is green.
        (assert (= (run (hy-cap-violations ["doeff>=0.2.0" "hy>=1.2.0,<=1.3.1"] "1.3.1")) []))

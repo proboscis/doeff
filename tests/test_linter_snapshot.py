@@ -155,7 +155,7 @@ def test_a_linter_not_naming_the_sha_is_not_placed(tmp_path: Path) -> None:
     out, err = proc.communicate(timeout=50)
     assert proc.returncode == 1, (out, err)
     assert out == ""
-    assert "名乗らない" in err
+    assert "the built linter does not name" in err
     assert [p for p in (tmp_path / "store").iterdir() if p.is_dir()] == []
 
 
@@ -245,5 +245,5 @@ def test_a_missing_commit_is_unavailable(tmp_path: Path) -> None:
     )
     out, err = proc.communicate(timeout=50)
     assert proc.returncode == 1, (out, err)
-    assert "が無い" in err
+    assert "is not in doeff" in err
     assert not (tmp_path / "count").exists()

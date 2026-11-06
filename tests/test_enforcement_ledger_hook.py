@@ -100,7 +100,7 @@ def test_checker_detects_silent_drop(tmp_path: Path) -> None:
     _write_fixture_tree(tmp_path, laws=1, ledger_laws=2)
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
     assert proc.returncode == 1, "does not detect erosion (tree < ledger)"
-    assert "disappeared" in proc.stderr, proc.stderr
+    assert "in the ledger but not in the tree (removed)" in proc.stderr, proc.stderr
     assert "ADR-FIXTURE-001 fixture-1" in proc.stderr, f"does not name the removed item: {proc.stderr}"
 
 
@@ -178,7 +178,7 @@ def test_staged_mode_does_not_blame_a_commit_for_drift_already_on_head(tmp_path:
     _git(repo, "add", "-A")
     proc = _run_checker(repo, f"--root={repo}", "--staged")
     assert proc.returncode == 0, f"blocked a commit that recorded its own changes because of drift in HEAD: {proc.stderr}"
-    assert "HEAD に既に在った" in proc.stderr, f"does not report the remaining drift: {proc.stderr}"
+    assert "Drift already in HEAD" in proc.stderr, f"does not report the remaining drift: {proc.stderr}"
     assert "ADR-FIXTURE-001 fixture-2" in proc.stderr, f"does not name the remaining drift: {proc.stderr}"
 
 
@@ -192,8 +192,8 @@ def test_staged_mode_still_blocks_the_commits_own_unrecorded_change_on_drifted_h
     # The red report names "this commit's part" and "the part already in HEAD" separately — otherwise
     # the reader takes it as the mainline's drift and bypasses with --no-verify (in this shape b32941c3 on 2026-09-28
     # put one law onto the mainline without listing it in the ledger).
-    own, _, inherited = proc.stderr.partition("HEAD に既に在ったずれ")
-    assert "この commit 自身の増減" in own, f"does not say the red comes from this commit: {proc.stderr}"
+    own, _, inherited = proc.stderr.partition("drift already in HEAD")
+    assert "this commit's own changes" in own, f"does not say the red comes from this commit: {proc.stderr}"
     assert "ADR-FIXTURE-001 added-here" in own, f"does not name this commit's missed entry: {proc.stderr}"
     assert "ADR-FIXTURE-001 fixture-2" not in own, f"mixed HEAD's drift into this commit's part: {proc.stderr}"
     assert "ADR-FIXTURE-001 fixture-2" in inherited, f"does not show HEAD's drift for reference: {proc.stderr}"
@@ -212,7 +212,7 @@ def test_staged_mode_on_clean_head_names_only_the_commits_own_change(tmp_path: P
     proc = _run_checker(tmp_path, f"--root={tmp_path}", "--staged")
     assert proc.returncode == 1, "passed this commit's missed entry"
     assert "ADR-FIXTURE-001 added-here" in proc.stderr, proc.stderr
-    assert "HEAD に既に在ったずれ" not in proc.stderr, f"called a matching HEAD drifted: {proc.stderr}"
+    assert "drift already in HEAD" not in proc.stderr, f"called a matching HEAD drifted: {proc.stderr}"
 
 
 def test_parallel_additions_merge_into_a_consistent_ledger(tmp_path: Path) -> None:

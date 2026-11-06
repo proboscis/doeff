@@ -165,7 +165,7 @@ MACRO_FORM = "Hy の macro"
 EXCEPTION_CLASS = "例外の class"
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
 CONSOLE_SCRIPT = "console script"
-RUST_EXECUTABLE = "Rust の実行 file"
+RUST_EXECUTABLE = "Rust executable"
 #: Where a wait whose answer is the event types its caller names declares the events its package defines for the bus
 #: (doeff-events' ``WaitForEventEffect`` — its answer types, R2).
 BUS_EVENTS_ATTRIBUTE = "__doeff_bus_events__"
@@ -2192,7 +2192,7 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
         ),
         *(
             ExportRow(
-                module="(実行 file)",
+                module="(executable file)",
                 name=binary,
                 kind="other",
                 form=RUST_EXECUTABLE,

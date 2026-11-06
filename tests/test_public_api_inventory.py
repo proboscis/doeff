@@ -531,7 +531,7 @@ def test_rust_and_python_less_packages_are_listed(
 ) -> None:
     """A package with only a Rust executable and a package with no Python names are also listed in the inventory."""
     linter = _rows(real_packages["doeff-linter"])
-    assert linter[("(実行 file)", "doeff-linter")]["form"] == "Rust の実行 file"
+    assert linter[("(executable file)", "doeff-linter")]["form"] == "Rust executable"
     core = real_packages["doeff-vm-core"]
     assert core["exports"] == []
     assert core["notes"]

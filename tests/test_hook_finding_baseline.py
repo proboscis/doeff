@@ -403,7 +403,7 @@ def test_a_lock_row_outside_the_index_stops_without_calling_the_tool(tmp_path: P
     )
     outside = _run(rig, "check", "semgrep", "pkg/a.py")
     assert outside.returncode != 0
-    assert "index から入れる版でない" in outside.stderr
+    assert "is not a version installed from an index" in outside.stderr
     assert calls.read_text() == before
 
 
