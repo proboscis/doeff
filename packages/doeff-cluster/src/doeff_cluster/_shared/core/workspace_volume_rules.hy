@@ -15,6 +15,8 @@
 ;;;                         ticket と戻しの ticket を除く)
 ;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
 ;;;   growing-name          volume の名と刻 → 広げた直後に取って消す snapshot の名(<名>-grow-<epoch 秒>)
+;;;   first-name            volume の名と刻 → 1 度も backup の無い付いた volume に取る最初の snapshot と backup の名(<名>-first-<epoch 秒>)
+;;;   first-backup-due?     束の lastBackupName の組と Backup の組 → 最初の backup を取るか(束が何も指さず、失敗した物の外に Backup が無い)
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
 ;;;   backup-volume-name    volume の名と backup の先の名 → その束 BackupVolume の名(Longhorn v1.13 と同じ <名>-<hash> — 手で作る束が
 ;;;                         Longhorn の作る束と同じ名に重なり、2 本にならない)
@@ -60,8 +62,12 @@
 (val COOLING-MARK "-cool-")
 ;; 広げた直後に取って消す snapshot の名の中の印(README の節「広げる」の「expand の snapshot を畳む」)。
 (val GROWING-MARK "-grow-")
+;; 1 度も backup の無い付いた volume に取る最初の snapshot と backup の名の中の印(README の節「backup」の「束を中身の無いまま置かない」)。
+(val FIRST-MARK "-first-")
 ;; backup の様子のうち、戻す元にできる物。
 (val BACKUP-COMPLETED "Completed")
+;; backup の様子のうち、失敗して backup の先に何も足さない物。
+(val BACKUP-ERROR "Error")
 ;; 束 BackupVolume の名の尻の hash の字数(Longhorn v1.13 の util.RandomIDLength — types.GetBackupVolumeNameFromVolumeName が切る長さ)。
 (val BUNDLE-HASH-LENGTH 8)
 
@@ -255,6 +261,22 @@
   "volume name を刻 stamp(epoch 秒)に広げた直後に取って消す snapshot の名を得るため(<名>-grow-<刻> — 名は 40 字までなので k8s の名の
    63 字に収まる)。"
   (+ name GROWING-MARK (str stamp)))
+
+
+(defk first-name [name stamp]
+  {:pre [(: name str) (.startswith name NAME-PREFIX) (: stamp int) (>= stamp 0)] :post [(: % str) (<= (len %) 63)]}
+  "1 度も backup の無い付いた volume name に刻 stamp(epoch 秒)に取る最初の snapshot と backup の名を得るため(<名>-first-<刻> — 名は 40 字
+   までなので k8s の名の 63 字に収まる)。"
+  (+ name FIRST-MARK (str stamp)))
+
+
+(defk first-backup-due? [last-backups backups]
+  {:pre [(: last-backups (get tuple #(str ...))) (: backups (get tuple #(BackupView ...)))] :post [(: % bool)]}
+  "volume の束の lastBackupName の組 last-backups と、その volume の Backup の組 backups から、最初の backup を取るかを得るため: 束がどれも
+   backup を指さず、Backup が失敗した物(BACKUP-ERROR)の外に無い時だけ取る。途中・完了の Backup が在れば、backup の先に volume の dir が
+   もう在る(Longhorn の backupstore は backup の初めに lock と volume.cfg を書く)か、じき在る — 重ねて取らない。"
+  (and (not (any last-backups))
+       (all (gfor backup backups (= backup.state BACKUP-ERROR)))))
 
 
 (defk newest-backup [backups]

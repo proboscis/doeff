@@ -24,8 +24,9 @@
 ;;;                           作って完了を待ち、束 BackupVolume が今回の Backup を指す事(bundle-caught-up — 下の註の束)と使う ticket が無い事を確かめて、読んだ版の上でだけ Volume を消す。戻しに失敗した volume は backup せずに消す(dropped-failed-restore)
 ;;;   purged-volume           PurgeWorkspaceVolume: volume の無い名の BackupVolume を、最後の backup から keepDays を過ぎていれば消す
 ;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の線ごとの残りの byte(room-read)を読み、値の
-;;;                           spareBytes を需要に冷やす順に冷やし、その後にこの機体に付いている volume の空きを 1 つずつ読んで広げる
-;;;                           (mounted-growth)
+;;;                           spareBytes を需要に冷やす順に冷やし、その後にこの機体に付いている volume の空きを 1 つずつ読んで広げ
+;;;                           (mounted-growth)、1 度も backup の無い付いた volume に最初の backup を取る(mounted-first-backups —
+;;;                           first-backup-taken・下の註の束)
 ;;;   grown-volume            付いている volume 1 つの file system の空きが値の growBelowPercent を割っていれば、名目の予約の増えを数えて
 ;;;                           (room-made — 足りなければ冷やす)Volume の spec.size を倍(上限 maxSizeBytes)に書き、engine が広がるのを待ち(waited-engine)、
 ;;;                           係へ grow(resize2fs)を頼む — 付けたまま。名目を書いた後に止まった前の広げは、file system だけを広げ直す。
@@ -80,6 +81,13 @@
 ;;; その volume の束が在れば束 1 本の同期を、無ければ backup の先の全体の同期を頼む(backup_controller.go の syncBackupVolume)。全体の同期は
 ;;; bucket の全部の束を list し、bucket の目録を持つ garage の node を 30 秒ほど埋める(2026-11-05 の測り)。backup の先にまだ何も無い名の束は、
 ;;; Longhorn の束ごとの同期が list を NotFound = 空と読み、volume.cfg の無い束を書かずに戻る(束を消さない・誤りにしない)。
+;;; 束を中身の無いまま置かない: 全体の同期は、bucket に dir の無い名の束を CR だけ消す(backup_target_controller.go の
+;;; cleanupBackupVolumeNotExistOnBackupTarget — 年齢も volume の有無も見ない。2026-11-05T20:58Z に 70 本)。消された volume の次の毎時の
+;;; backup(RecurringJob — 答え手の外)の完了はまた全体の同期を頼み、その同期がまた中身の無い束を消す — 1 度の全体の同期から連鎖が続く。
+;;; そこで冷やす回は、付いた volume のうち 1 度も backup の無い物に最初の backup をすぐ取り(mounted-first-backups)、束が bucket の中身を
+;;; 持つようにする(Longhorn の backupstore は backup の初めに lock と volume.cfg を書くので、完了の前から一覧に載る)。消された束も同じ回で
+;;; 作り直す(bundle-ensured)。外れた volume は毎時の backup を受けない(設定 allow-recurring-job-while-volume-detached が false)ので、
+;;; 束が消されても冷やす手順の bundle-ensured が backup の前に作り直し、連鎖にならない。
 ;;;
 ;;; 冷やす途中の attach(使う側が勝つ): attach は ticket を置いてから Volume に刻の印を書き、冷やす側は Volume を読み(版 R)、次に
 ;;; VolumeAttachment を読んで使う ticket が無い事を確かめ、版 R の上でだけ消す(DELETE の preconditions)。消せたなら印はまだ書かれていない
@@ -105,7 +113,7 @@
                                                            WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BACKUP-COMPLETED BackupView backup-volume-name CoolingPlan DetachStep DiskRoom MountEntry
-                                                         NAME-PREFIX RoomBytes USED-AT-KEY WarmVolume attach-step cooling-name growing-name
+                                                         NAME-PREFIX RoomBytes USED-AT-KEY WarmVolume attach-step cooling-name growing-name first-name first-backup-due?
                                                          cooling-order detach-step mount-entries mounted-at restore-node room-bytes room-covers?
                                                          newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
                                                          volume-mount-points volume-name volume-of-entry])
@@ -1735,6 +1743,61 @@
   (Growth :grown grown :failed failed))
 
 
+(defk first-backup-taken [site owner]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "付いている持ち主 owner の volume が 1 度も backup を持たなければ、束 BackupVolume を確かめてから(bundle-ensured)最初の Snapshot と
+   Backup(名 <名>-first-<刻>・label backup-volume と backup-target)を取るため(取った = DONE・要らない = ALREADY — 頭の註の束の「中身の
+   無いまま置かない」)。取るかは first-backup-due?(束が何も指さず、失敗した物の外に Backup が無い)。snapshot が使えるまで待ち、backup の
+   完了は待たない(Longhorn が backup の初めに backup の先へ volume の dir を書く)。volume が無い・消す途中・戻す途中(戻す元の backup が
+   backup の先に在る)・backupTargetName の無い物は取らない。"
+  (val doing "最初の backup")
+  (<- name str (checked-name owner doing))
+  (<- read (| VolumeRead None) (volume-read site owner doing name))
+  (when (or (is read None) read.deleting read.restoring (not read.backup-target))
+    (return WorkspaceOutcome.ALREADY))
+  (<- bundles tuple (bundle-ensured site owner doing name read.backup-target))
+  (<- backups tuple (backup-views site owner doing name read.backup-target))
+  (when (not (! (first-backup-due? (tuple (gfor bundle bundles bundle.last-backup)) backups)))
+    (return WorkspaceOutcome.ALREADY))
+  (<- now datetime (GetTime))
+  (val mark (! (first-name name (int (.timestamp now)))))
+  (<- (created-object site owner doing "snapshots"
+                      (json.dumps {"apiVersion" "longhorn.io/v1beta2" "kind" "Snapshot"
+                                   "metadata" {"name" mark "namespace" site.longhorn-namespace}
+                                   "spec" {"volume" name "createSnapshot" True}}
+                                  :ensure-ascii False :sort-keys True)))
+  (<- (snapshot-taken site owner doing mark))
+  (<- (created-object site owner doing "backups"
+                      (json.dumps {"apiVersion" "longhorn.io/v1beta2" "kind" "Backup"
+                                   "metadata" {"name" mark "namespace" site.longhorn-namespace
+                                               "labels" {"backup-volume" name "backup-target" read.backup-target}}
+                                   "spec" {"snapshotName" mark "labels" {}}}
+                                  :ensure-ascii False :sort-keys True)))
+  (<- (slog "1 度も backup の無い volume の最初の backup を取った(束を中身の無いまま置かない)" :owner owner :volume name :backup mark))
+  WorkspaceOutcome.DONE)
+
+
+(defk mounted-first-backups [site]
+  {:pre [(: site WorkspaceVolumeSite)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "この機体に付いている作業場所の volume を mount の表から読み、1 度も backup の無い物に最初の backup を 1 つずつ取るため(first-backup-taken
+   — 冷やす回が呼ぶ。作った・戻した volume も、束を全体の同期に消された volume も、次の回で拾う)。取れなかった物の「<名>: <訳>」を返し、
+   次へ進む。"
+  (val owner "全部")
+  (val doing "最初の backup の読み")
+  (<- entries tuple (mount-table site owner doing))
+  (var failed #())
+  (var seen #())
+  (for [entry entries]
+    (<- name (| str None) (volume-of-entry entry))
+    (when (and (is-not name None) (.startswith name NAME-PREFIX) (not-in name seen))
+      (:= seen (+ seen #(name)))
+      (try
+        (<- (first-backup-taken site (cut name (len NAME-PREFIX) None)))
+        (except [error WorkspaceVolumeRefused]
+          (:= failed (+ failed #((+ name ": " (str error)))))))))
+  failed)
+
+
 (defk cooled-volume [site owner]
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "外れている持ち主 owner の volume を冷やすため(README の節「寿命」): 束 BackupVolume が無ければ作り(bundle-ensured — backup の完了が
@@ -2077,7 +2140,8 @@
       (except [error WorkspaceVolumeRefused]
         (:= failed (+ failed #((+ name ": " (str error))))))))
   (<- growth Growth (mounted-growth site))
-  (CoolingSweep :nominal room.nominal :actual room.actual :cooled cooled :failed (+ failed growth.failed) :grown growth.grown
+  (<- unbacked tuple (mounted-first-backups site))
+  (CoolingSweep :nominal room.nominal :actual room.actual :cooled cooled :failed (+ failed growth.failed unbacked) :grown growth.grown
                 :covered plan.covered))
 
 

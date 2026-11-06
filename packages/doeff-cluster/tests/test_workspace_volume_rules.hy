@@ -14,7 +14,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView backup-volume-name DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
                                                          NAME-PREFIX CoolingPlan RoomBytes WarmVolume attach-step cooling-name cooling-order
-                                                         detach-step growing-name mount-entries mounted-at newest-backup owner-refusal restore-node room-bytes
+                                                         detach-step first-backup-due? first-name growing-name mount-entries mounted-at newest-backup owner-refusal restore-node room-bytes
                                                          room-covers? ticket-id using-tickets volume-mount-points volume-name volume-of-entry])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -305,3 +305,20 @@
   (assert (= none "") none)
   (<- empty (restore-node #() 100 0 {} 10))
   (assert (= empty "") empty))
+
+
+(deftest test-the-first-backup-is-due-only-when-nothing-reached-the-backup-target
+  (val going (BackupView :name "b-going" :state "InProgress" :created-at "" :url ""))
+  (val erred (BackupView :name "b-erred" :state "Error" :created-at "" :url ""))
+  (<- empty bool (first-backup-due? #("") #()))
+  (assert empty)
+  (<- none bool (first-backup-due? #() #(erred)))
+  (assert none)
+  (<- pointed bool (first-backup-due? #("b-old") #()))
+  (assert (not pointed))
+  (<- underway bool (first-backup-due? #("") #(erred going)))
+  (assert (not underway))
+  (val longest (+ NAME-PREFIX (* "a" (- NAME-MAX-LENGTH (len NAME-PREFIX)))))
+  (<- first (first-name longest 1793643381))
+  (assert (= first (+ longest "-first-1793643381")) first)
+  (assert (<= (len first) 63) (len first)))
