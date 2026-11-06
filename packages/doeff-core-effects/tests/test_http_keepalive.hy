@@ -237,7 +237,7 @@
   (import doeff_core_effects._aiohttp_http_server :as edge-module)
   (val edge (edge-module.WebEdge))
   (val loop (.edge-loop edge))
-  (val bound (.result (asyncio.run-coroutine-threadsafe (.start edge (HttpAddress :host "127.0.0.1" :port 0) 1024 1024 #() False) loop)
+  (val bound (.result (asyncio.run-coroutine-threadsafe (.start edge (HttpAddress :host "127.0.0.1" :port 0) 1024 1024 #() False #()) loop)
                       EDGE-SECONDS))
   (val peer (socket.create-connection #("127.0.0.1" bound.port) :timeout EDGE-SECONDS))
   (val deadline (+ (time.monotonic) EDGE-SECONDS))

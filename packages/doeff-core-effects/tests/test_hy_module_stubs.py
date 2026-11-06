@@ -279,36 +279,36 @@ def test_a_dropped_stub_field_is_found() -> None:
 
 def test_a_dropped_effect_field_is_found() -> None:
     # Removing the field ws_send_max_bytes from the declared effect HttpListen (a defclass dataclass) is found as a field mismatch.
-    broken = _without_field(_stub_tree("http_server_effects"), "HttpListen", "ws_send_max_bytes")
+    broken = _without_field(_stub_tree("_http_server_effects"), "HttpListen", "ws_send_max_bytes")
     assert [
         m
-        for m in _mismatches("http_server_effects", broken)
+        for m in _mismatches("_http_server_effects", broken)
         if m.startswith("HttpListen has different fields")
     ]
 
 
 def test_a_dropped_arrival_remote_is_found() -> None:
     # Removing the sender field remote from the declaration of HttpRequestArrived, an event the script carries, is found as a field mismatch.
-    broken = _without_field(_stub_tree("http_server_effects"), "HttpRequestArrived", "remote")
+    broken = _without_field(_stub_tree("_http_server_effects"), "HttpRequestArrived", "remote")
     assert [
         m
-        for m in _mismatches("http_server_effects", broken)
+        for m in _mismatches("_http_server_effects", broken)
         if m.startswith("HttpRequestArrived has different fields")
     ]
 
 
 def test_a_dropped_handler_parameter_is_found() -> None:
     # Removing the argument script from the declared scripted_http_server is found as an argument mismatch.
-    broken = copy.deepcopy(_stub_tree("scripted_http_server"))
+    broken = copy.deepcopy(_stub_tree("_scripted_http_server"))
     for node in broken.body:
         match node:
-            case ast.FunctionDef(name="scripted_http_server"):
+            case ast.FunctionDef(name="_scripted_http_server"):
                 node.args.args = []
             case _:
                 pass
     assert [
         m
-        for m in _mismatches("scripted_http_server", broken)
+        for m in _mismatches("_scripted_http_server", broken)
         if m.startswith("scripted_http_server has different arguments")
     ]
 

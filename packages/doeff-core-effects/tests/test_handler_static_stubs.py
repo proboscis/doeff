@@ -24,7 +24,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 #: The declarations this test looks at (not the copy with them removed).
-STUBS: tuple[str, ...] = ("memory_meter.pyi", "memory_latest.pyi", "os_file.pyi", "meter_effects.pyi")
+STUBS: tuple[str, ...] = ("_memory_meter.pyi", "_memory_latest.pyi", "_os_file.pyi", "_meter_effects.pyi")
 
 #: The name of the copied package (a different name from the installed doeff_core_effects -- _copy_renamed).
 COPY_NAME = "copied_core_effects"

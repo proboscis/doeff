@@ -1761,7 +1761,7 @@ def pytest_terminal_summary(
         )
     for verdict in registered:
         m = verdict.measurement
-        f"overrun listed in the registry: {m.key} ({m.phase} {_seconds_text(m)})"
+        terminalreporter.line(f"overrun listed in the registry: {m.key} ({m.phase} {_seconds_text(m)})")
     for key in back_in_budget:
         terminalreporter.line(
             f"registry entry back within the limit: {key}; registry file {registry_file_name(key)} can be deleted"

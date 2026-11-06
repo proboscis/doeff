@@ -266,11 +266,11 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
         [
-            "*BudgetWarning: doeff test time budget exceeded: test_slow.hy::test_slow execution (call)*",
-            "*budget exceeded (report only*test_slow.hy::test_slow(call wall-clock *",
+            "*BudgetWarning: doeff test time limit exceeded: test_slow.hy::test_slow run (call)*",
+            "*limit exceeded (report only*test_slow.hy::test_slow (call wall-clock *",
         ]
     )
-    assert "test_fast(call" not in result.stdout.str()
+    assert "test_fast (call" not in result.stdout.str()
 
 
 # Tests that judge an overrun as red are pinned to the budget's reference build (unchecked) (by swapping the extension function that vm_probe_handler, which answers effect ReadInvariantChecks, reads) —
@@ -289,7 +289,7 @@ def test_fail_mode_fails_the_slow_test_with_time_and_budget(
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow execution (call) took wall-clock *budget wall-clock 0.050 s*"])
+    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow run (call) took wall-clock *limit wall-clock 0.050 s*"])
 
 
 def test_checked_vm_build_reports_but_does_not_fail(
@@ -304,8 +304,8 @@ def test_checked_vm_build_reports_but_does_not_fail(
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
         [
-            "*doeff-vm is an invariant-checks build — the budget is based on the unchecked build, so overruns in this run are not judged*",
-            "*budget exceeded (report only*test_slow.hy::test_slow(call wall-clock *",
+            "*doeff-vm is a build with checks (invariant-checks) — the budget is based on a build without checks, so overruns in this run are not judged*",
+            "*limit exceeded (report only*test_slow.hy::test_slow (call wall-clock *",
         ]
     )
 
@@ -320,7 +320,7 @@ def test_unchecked_vm_build_fails_and_names_the_build(
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(
-        ["*doeff-vm is an unchecked build — judged on the build the budget is based on*", "*budget exceeded (red*"]
+        ["*doeff-vm is a build without checks — judged on the budget baseline build*", "*limit exceeded (red*"]
     )
 
 
@@ -334,7 +334,7 @@ def test_unknown_vm_build_is_named_and_judged_as_configured(
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*doeff-vm build kind is unknown (*_invariant_checks_enabled*"])
+    result.stdout.fnmatch_lines(["*doeff-vm build kind unknown (*_invariant_checks_enabled*"])
 
 
 def _registered_project(pytester: pytest.Pytester, mode: str) -> None:
@@ -360,8 +360,8 @@ def test_registered_test_is_not_failed_and_stale_entries_are_reported(
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
         [
-            "*Registered overrun: test_slow.hy::test_slow(call*",
-            f"*Registration back within budget: test_slow.hy::test_fast — registry file {registry_file_name('test_slow.hy::test_fast')} can be deleted*",
+            "*overrun listed in the registry: test_slow.hy::test_slow (call*",
+            f"*registry entry back within the limit: test_slow.hy::test_fast; registry file {registry_file_name('test_slow.hy::test_fast')} can be deleted*",
         ]
     )
 
@@ -373,7 +373,7 @@ def test_stale_registration_is_red_in_fail_mode(pytester: pytest.Pytester) -> No
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(
-        [f"*test_slow.hy::test_fast is in the registry but*stale registration, so delete registry file {registry_file_name('test_slow.hy::test_fast')}*"]
+        [f"*test_slow.hy::test_fast is in the registry, but*this is a stale registry entry, so delete the registry file {registry_file_name('test_slow.hy::test_fast')}*"]
     )
     (pytester.path / "budget-breaches" / registry_file_name("test_slow.hy::test_fast")).unlink()
     result = pytester.runpytest("-q")
@@ -407,7 +407,7 @@ def test_collect_budget_subtracts_compilation_but_fails_slow_import(
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(
         [
-            "*test_slow_collect.hy load (import) took wall-clock *uncached compilation * times, wall-clock * s and CPU * s subtracted*"
+            "*test_slow_collect.hy load (import) took wall-clock * uncached conversions, wall-clock * s, CPU * s subtracted*"
         ]
     )
     assert "test_slow_compile.hy load (import)" not in result.stdout.str()
@@ -636,8 +636,8 @@ def test_marker_budget_is_chosen_from_the_item_markers(
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
-    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow execution (call) took wall-clock *budget wall-clock 0.050 s*"])
-    assert "test_edge.hy::test_slow_edge execution" not in result.stdout.str()
+    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow run (call) took wall-clock *limit wall-clock 0.050 s*"])
+    assert "test_edge.hy::test_slow_edge run" not in result.stdout.str()
 
 
 def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
@@ -655,9 +655,9 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
-    result.stdout.fnmatch_lines(["*test_edge.hy::test_slow_edge execution (call) took wall-clock *budget wall-clock 0.050 s*"])
+    result.stdout.fnmatch_lines(["*test_edge.hy::test_slow_edge run (call) took wall-clock *limit wall-clock 0.050 s*"])
     # The listing at the end of a run without a step budget says that the execution budget is only the per-marker seconds.
-    result.stdout.fnmatch_lines(["*The execution budget is only the per-marker seconds (doeff_test_call_budget_by_marker)*"])
+    result.stdout.fnmatch_lines(["*the execution limit is only per-marker seconds (doeff_test_call_budget_by_marker)*"])
 
 
 # The weight of a real_world-marked test lies in the child process and the waiting — a test that waits for a 0.3 s
@@ -683,7 +683,7 @@ def test_marked_test_waiting_on_a_child_over_the_wall_clock_budget_is_red(
     _project(pytester, FAIL_MODE_INI, {"test_child": CHILD_WAIT_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(failed=1)
-    result.stdout.fnmatch_lines(["*test_child.hy::test_waits_on_a_child execution (call) took wall-clock *budget wall-clock 0.050 s*"])
+    result.stdout.fnmatch_lines(["*test_child.hy::test_waits_on_a_child run (call) took wall-clock *limit wall-clock 0.050 s*"])
 
 
 def test_marked_test_waiting_on_a_child_within_the_wall_clock_budget_is_green(
@@ -722,7 +722,7 @@ def test_second_registry_dir_is_read_in_a_run(
     (second / registry_file_name(key)).write_text(f"{key}\nexisting slow test\n", encoding="utf-8")
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2)
-    result.stdout.fnmatch_lines(["*Registered overrun: test_slow.hy::test_slow(call*"])
+    result.stdout.fnmatch_lines(["*overrun listed in the registry: test_slow.hy::test_slow (call*"])
 
 
 def test_python_test_files_are_not_measured(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -748,11 +748,11 @@ def test_python_test_files_are_not_measured(pytester: pytest.Pytester, monkeypat
         ('doeff_test_call_budget_by_marker = ["real_world=1"]\ndoeff_test_budget_mode = "loud"\n', "report or fail"),
         (
             'doeff_test_call_budget_by_marker = ["real_world=abc"]\n',
-            "doeff_test_call_budget_by_marker: real_world must be a positive number of seconds: 'abc'",
+            "doeff_test_call_budget_by_marker: for real_world, a positive number of seconds: 'abc'",
         ),
-        ('doeff_test_call_budget_by_marker = ["real_world=0"]\n', "real_world must be a positive number of seconds"),
-        ('doeff_test_call_budget_by_marker = ["real_world"]\n', "marker=seconds form: 'real_world'"),
-        ('doeff_test_call_budget_by_marker = ["=10"]\n', "marker=seconds form: '=10'"),
+        ('doeff_test_call_budget_by_marker = ["real_world=0"]\n', "for real_world, a positive number of seconds"),
+        ('doeff_test_call_budget_by_marker = ["real_world"]\n', "in the form marker=seconds: 'real_world'"),
+        ('doeff_test_call_budget_by_marker = ["=10"]\n', "in the form marker=seconds: '=10'"),
         (
             'doeff_test_call_budget_by_marker = ["real_world=10", "real_world=5"]\n',
             "has two lines for marker real_world",
@@ -917,7 +917,7 @@ def test_default_steps_budget_is_the_documented_number_and_judges_at_its_edge(py
     _steps_project(pytester, ini, {"test_edge": edge})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*test_edge.hy::test_one_over*steps 100001*budget steps 100000*"])
+    result.stdout.fnmatch_lines(["*test_edge.hy::test_one_over*steps 100001*limit steps 100000*"])
 
 
 def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps(pytester: pytest.Pytester) -> None:
@@ -926,8 +926,8 @@ def test_steps_judge_fails_many_steps_and_passes_a_cpu_heavy_test_with_few_steps
     _steps_project(pytester, STEPS_FAIL_INI, {"test_steps": MANY_STEPS, "test_spin": spin_few})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
-    result.stdout.fnmatch_lines(["*test_steps.hy::test_many_steps*steps 10000*budget steps 1000*"])
-    result.stdout.fnmatch_lines(["*Execution is judged by doeff-vm steps*"])
+    result.stdout.fnmatch_lines(["*test_steps.hy::test_many_steps*steps 10000*limit steps 1000*"])
+    result.stdout.fnmatch_lines(["*execution is judged by doeff-vm steps*"])
 
 
 def test_a_steps_budget_without_the_counter_stops_the_run_by_name(
@@ -944,12 +944,12 @@ def test_a_steps_budget_without_the_counter_stops_the_run_by_name(
     result = pytester.runpytest("-q")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(
-        ["*doeff_test_call_budget_steps is set but steps cannot be measured (*_vm_work_counts*)*not falling back to CPU seconds*"]
+        ["*doeff_test_call_budget_steps is set but steps cannot be measured (*_vm_work_counts*)*does not fall back to CPU seconds*"]
     )
     output = result.stdout.str() + result.stderr.str()
     assert "passed" not in output
     assert "failed" not in output
-    assert "budget exceeded" not in output
+    assert "limit exceeded" not in output
 
 
 def test_steps_judge_fails_even_on_the_checked_vm_build(pytester: pytest.Pytester) -> None:
@@ -984,7 +984,7 @@ def test_a_registered_test_is_judged_by_steps_and_a_stale_row_fails(pytester: py
         (registry / registry_file_name(key)).write_text(f"{key}\nexisting heavy test\n", encoding="utf-8")
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*test_few_steps is in the registry but*times the budget steps 1000*"])
+    result.stdout.fnmatch_lines(["*test_few_steps is in the registry, but*times the limit of steps 1000*"])
 
 
 def test_measured_steps_are_summed_and_listed_per_test_with_verbose(pytester: pytest.Pytester) -> None:
@@ -996,7 +996,7 @@ def test_measured_steps_are_summed_and_listed_per_test_with_verbose(pytester: py
     )
     result = pytester.runpytest("-v")
     result.assert_outcomes(passed=2)
-    result.stdout.fnmatch_lines(["*Tests with measured steps: 2, total steps 10010*"])
+    result.stdout.fnmatch_lines(["*tests with measured steps: 2; total steps 10010*"])
     result.stdout.fnmatch_lines(["*test_steps.hy::test_many_steps:*steps 10000*", "*test_steps.hy::test_few_steps:*steps 10*"])
 
 
@@ -1189,10 +1189,10 @@ def test_a_declared_test_is_judged_by_its_declaration_and_the_failure_cases_stay
     _steps_project(pytester, STEPS_FAIL_INI, {"test_declared": DECLARED_STEPS})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=2)
-    result.stdout.fnmatch_lines(["*test_declared.hy::test_undeclared_heavy*steps 10000*budget steps 1000*"])
-    result.stdout.fnmatch_lines(["*test_declared.hy::test_stale_declaration declares steps 12000 but*at most 0.5 times*"])
-    result.stdout.fnmatch_lines(["*Stale declaration (at most 0.5 times declared steps 12000): test_declared.hy::test_stale_declaration*"])
-    assert "test_declared_heavy" not in "\n".join(line for line in result.stdout.lines if "budget exceeded" in line)
+    result.stdout.fnmatch_lines(["*test_declared.hy::test_undeclared_heavy*steps 10000*limit steps 1000*"])
+    result.stdout.fnmatch_lines(["*test_declared.hy::test_stale_declaration declares steps 12000, but*at most 0.5 times*"])
+    result.stdout.fnmatch_lines(["*stale declaration (at most 0.5 times declared steps 12000): test_declared.hy::test_stale_declaration*"])
+    assert "test_declared_heavy" not in "\n".join(line for line in result.stdout.lines if "limit exceeded" in line)
 
 
 def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
@@ -1205,7 +1205,7 @@ def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
     _steps_project(pytester, STEPS_FAIL_INI, {"test_over": over})
     result = pytester.runpytest("-q")
     result.assert_outcomes(failed=1)
-    result.stdout.fnmatch_lines(["*Declared steps exceeded: test_over.hy::test_over*steps 20000*declared steps 12000*"])
+    result.stdout.fnmatch_lines(["*exceeded its declared steps: test_over.hy::test_over*steps 20000*declared steps 12000*"])
 
 
 # ── Judging only by the steps of the simulated world's running ──────────────────────────────────────
@@ -1259,12 +1259,12 @@ def test_a_world_test_is_judged_by_its_running_steps_and_reports_start_and_stop_
     _steps_project(pytester, WORLD_RUNNING_INI, {"test_worlds": WORLD_RUNS})
     result = pytester.runpytest("-v")
     result.assert_outcomes(passed=1, failed=2)
-    result.stdout.fnmatch_lines(["*Tests that ran a simulated world are judged only by the steps of the world's running*"])
+    result.stdout.fnmatch_lines(["*for a test that ran a mock world, only the steps of the world run*"])
     result.stdout.fnmatch_lines(
-        ["*test_worlds.hy::test_light_start_heavy_run*steps 1520 (world running 1500, start-up 10, shutdown 10, outside the world 0, 1 world(s) of which 1 came up — running is judged)*budget steps 1000*"]
+        ["*test_worlds.hy::test_light_start_heavy_run*steps 1520(world run 1500, start 10, stop 10, outside the world 0, of 1 worlds 1 started up — the run is what is judged)*limit steps 1000*"]
     )
-    result.stdout.fnmatch_lines(["*test_worlds.hy::test_no_world*steps 1500, *budget steps 1000*"])
-    result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run:*steps 70500 (world running 500, start-up 50000, shutdown 20000*"])
+    result.stdout.fnmatch_lines(["*test_worlds.hy::test_no_world*steps 1500, *limit steps 1000*"])
+    result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run:*steps 70500(world run 500, start 50000, stop 20000*"])
 
 
 def test_without_the_world_running_setting_a_world_test_is_judged_by_the_whole_call(pytester: pytest.Pytester) -> None:
@@ -1273,8 +1273,8 @@ def test_without_the_world_running_setting_a_world_test_is_judged_by_the_whole_c
     _steps_project(pytester, STEPS_FAIL_INI, {"test_worlds": WORLD_RUNS})
     result = pytester.runpytest("-v")
     result.assert_outcomes(failed=3)
-    result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run*steps 70500, *budget steps 1000*"])
-    assert "world running" not in result.stdout.str()
+    result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run*steps 70500, *limit steps 1000*"])
+    assert "world run" not in result.stdout.str()
 
 
 def test_an_unknown_steps_counted_value_stops_the_run_by_name(pytester: pytest.Pytester) -> None:
@@ -1349,8 +1349,8 @@ def test_a_session_with_fewer_than_the_minimum_tests_over_the_floor_gives_no_rat
     report = step_cost_report((*_even_costs(RATIO_MIN_TESTS - 1), _cost("test_tiny", 9.0, 50)))
     assert report == TooFewForRatios(measured=RATIO_MIN_TESTS - 1, below_floor=1)
     assert step_cost_line(report) == (
-        f"CPU seconds / steps (µs/step): {RATIO_MIN_TESTS - 1} tests with at least 10000 steps (1 below not shown)"
-        f"・fewer than {RATIO_MIN_TESTS} tests, so no ratio is shown"
+        f"CPU seconds / steps (us/step): {RATIO_MIN_TESTS - 1} tests with at least 10000 steps (1 below not shown)"
+        f"; fewer than {RATIO_MIN_TESTS} tests, so no ratio is shown"
     )
 
 
@@ -1391,21 +1391,21 @@ def test_the_line_names_three_outliers_per_side_and_counts_the_rest() -> None:
     many = (*_even_costs(10), *(_cost(f"test_slow_{i}", 30.0 + i) for i in range(5)))
     line = step_cost_line(step_cost_report(many))
     assert line == (
-        "CPU seconds / steps (µs/step): 15 tests with at least 10000 steps (0 below not shown)・median 10.0"
-        "・highest test_slow_4 ×3.40・5 over 2x the median: test_slow_4 ×3.40・test_slow_3 ×3.30・test_slow_2 ×3.20・2 more"
-        "・0 under 1/2 of the median"
+        "CPU seconds / steps (us/step): 15 tests with at least 10000 steps (0 below not shown); median 10.0"
+        "; highest test_slow_4 ×3.40; 5 above 2x median: test_slow_4 ×3.40; test_slow_3 ×3.30; test_slow_2 ×3.20; and 2 more"
+        "; 0 below 1/2 of median"
     )
     quiet = step_cost_line(step_cost_report(_even_costs(RATIO_MIN_TESTS)))
     assert quiet == (
-        "CPU seconds / steps (µs/step): 8 tests with at least 10000 steps (0 below not shown)・median 10.0"
-        "・highest test_00 ×1.00・0 over 2x the median・0 under 1/2 of the median"
+        "CPU seconds / steps (us/step): 8 tests with at least 10000 steps (0 below not shown); median 10.0"
+        "; highest test_00 ×1.00; 0 above 2x median; 0 below 1/2 of median"
     )
 
 
 def test_the_name_is_the_last_part_of_the_node_id_without_separators() -> None:
-    """The name used in naming is the last part of the nodeid, up to 56 chars, with whitespace and ・ replaced by _ (so reading back does not split a name)."""
+    """The name used in naming is the last part of the nodeid, up to 56 chars, with whitespace and ; replaced by _ (so reading back does not split a name)."""
     assert step_cost_name("a/b.hy::test_x") == "test_x"
-    assert step_cost_name("a/b.hy::test_x[a b・c]") == "test_x[a_b_c]"
+    assert step_cost_name("a/b.hy::test_x[a b;c]") == "test_x[a_b_c]"
     assert len(step_cost_name("a.hy::" + "x" * 80)) == RATIO_NAME_CHARS
 
 
@@ -1472,8 +1472,8 @@ def test_an_outlier_changes_neither_the_outcomes_nor_the_exit_code_nor_the_warni
             {"test_ratio": _ratio_tests(hot=hot)},
         )
         result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest._budget.BudgetWarning")
-        result.stdout.fnmatch_lines(["CPU seconds / steps (µs/step): 9 tests with at least 10000 steps (0 below not shown)・median *"])
-        named = "*・1 over 2x the median: test_hot ×*"
+        result.stdout.fnmatch_lines(["CPU seconds / steps (us/step): 9 tests with at least 10000 steps (0 below not shown); median *"])
+        named = "*; 1 above 2x median: test_hot ×*"
         if hot:
             result.stdout.fnmatch_lines([named])
         else:
