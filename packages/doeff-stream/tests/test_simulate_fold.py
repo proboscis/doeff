@@ -2,20 +2,22 @@
 
 Counterexamples these checks name: a tool that publishes its events after the fold's first step (the step sees a run's
 end before them), one that drops the caller's handlers or installs them outside the bus (a run's effect finds no
-answerer, or its answerer cannot publish), and one that runs on the real clock (a run's hour-long wait does not end
-at once and the time it reads is not the start).
+answerer, or its answerer cannot publish), one that runs on the real clock (a run's hour-long wait does not end
+at once and the time it reads is not the start), and a fold that spawns a run's tasks at the default priority whatever
+the ``Run`` names (or its watcher below its runner).
 """
 
 from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
 
+from doeff_core_effects import Spawn, TaskPriority
 from doeff_events import Publish
 from doeff_stream import Answered, Finish, Next, Run, merge, simulate_fold, subscribe
 from doeff_time import Delay, GetTime
 from stream_test_support import T0, Kick
 
-from doeff import EffectBase, K, Resume, do, handler
+from doeff import EffectBase, K, Pass, Pure, Resume, do, handler
 
 
 @dataclass(frozen=True)
@@ -87,3 +89,35 @@ def test_the_fold_runs_on_the_virtual_clock_from_the_start_time() -> None:
 
     now = simulate_fold(step, None, merge(subscribe(Kick)), events=(Kick(),), start_time=T0)
     assert now == T0 + timedelta(hours=1)
+
+
+def test_the_fold_spawns_both_tasks_of_a_run_at_its_priority() -> None:
+    spawned: list[int] = []
+
+    @handler
+    def sees_spawn(effect: Spawn, k: K) -> Generator[object, object, object]:
+        spawned.append(effect.priority)
+        yield Pass(effect, k)
+        return None
+
+    def step(state: object, event: object) -> Next[object]:
+        match event:
+            case Kick():
+                return Next(
+                    state, (Run("screen", Pure(1), TaskPriority.HIGH), Run("plain", Pure(2)))
+                )
+            case Answered(key="screen"):
+                return Next("screen", ())
+            case Answered(key="plain"):
+                return Next(state, (Finish(state),))
+            case _:
+                return Next(state)
+
+    simulate_fold(step, None, merge(subscribe(Kick)), events=(Kick(),), handlers=(sees_spawn,))
+    # The runner and its watcher, per Run in order: the named priority, then the Spawn default.
+    assert spawned == [
+        TaskPriority.HIGH,
+        TaskPriority.HIGH,
+        TaskPriority.NORMAL,
+        TaskPriority.NORMAL,
+    ]

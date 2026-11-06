@@ -25,7 +25,7 @@ There are only four parts. There is no family of operators such as map, window, 
 
 | effect | Behavior |
 |---|---|
-| `Run(key, program)` | Runs `program` (a Program or an effect) in a new task. Its end comes back as a single input carrying `key`. A `Run` for a key that is already running, and a `program` that is neither a Program nor an effect, are rejected |
+| `Run(key, program, priority=TaskPriority.NORMAL)` | Runs `program` (a Program or an effect) in a new task. Its end comes back as a single input carrying `key`. A `Run` for a key that is already running, and a `program` that is neither a Program nor an effect, are rejected. `priority` is the scheduler priority of the run's two tasks (the program and the watcher that publishes its end — see "Why every ending becomes an input"): the `Spawn` default `TaskPriority.NORMAL` unless named (any `int`, higher runs first; a non-`int` is rejected) |
 | `CancelRun(key)` | Cancels the task for `key`. Its end still comes back as a single input (`Cancelled` if the cancellation took effect, or its own ending if it had already finished). Does nothing for a key that is not running |
 | `Arm(tag, at)` | Sets this fold's deadline `tag` to `at` (a timezone-aware `datetime`). No task is created; the fold hands `ArmTimer` to the timer handler. It comes back at `at` as a `TimerFired(tag)` input. Setting an existing tag again moves the deadline. Rejected in a fold that does not have `timers()` as a source |
 | `Disarm(tag)` | Removes this fold's deadline `tag`. Its `TimerFired` does not come back. Does nothing for a tag that is not set (including one already removed or already fired) |
