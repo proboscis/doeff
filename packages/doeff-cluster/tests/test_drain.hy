@@ -23,12 +23,13 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
-(import doeff_cluster._worker.protocol.coordinator_link [LifeCell ready-file-written])
+(import doeff_cluster._worker.protocol.coordinator_link [LifeCell LinkState ready-file-written lifeline-settled lifeline-ready-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import tests.env_fixtures [LOCK env-of])
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [runtime-env->json])
 (import doeff [run])
+(import json)
 (import os)
 (import subprocess)
 (import doeff_cluster._worker.entry.drain_main [read-boot])
@@ -933,12 +934,23 @@
                      :capture-output True) returncode))
 
 
-(defk write-ready-file []
-  {:pre [] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk write-ready-file [life]
+  {:pre [(: life LifeCell)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
   "書く口(coordinator への口の ready-file-written)を本物の file の答え手(os-file-handler)と環境変数の答え手(subprocess-handler —
-   書く口は ready の file の名を ReadEnvironment で読む・#3014)の下で 1 回走らせるため(生存の合図の thread と分ける値 LifeCell は新しい物)。"
-  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written (LifeCell))))
+   書く口は ready の file の名を ReadEnvironment で読む・#3014)の下で 1 回走らせるため(life = 生存の合図の thread と分ける値 —
+   書く口が送りの後の書きの許しの path を置く)。"
+  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written life)))
   None)
+
+
+(defk lifeline-reply-written [link status text]
+  {:pre [(: link LinkState) (: status (| int None)) (: text str)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "生存の合図の thread の送り 1 本の答え(status = HTTP の status・None = 届かなかった・text = 返事の本文)を時計の答え手の下で書かせ、
+   送りの後の書きを求めたなら本物の file の答え手の下で ready の file を書かせて、求めたかを返すため(thread の 2 つの VM の手順を順に)。"
+  (<- wanted bool (with-handlers [(sim-time-handler :clock (SimClock))] (lifeline-settled link status "unreachable" text)))
+  (when wanted
+    (<- (with-handlers [os-file-handler] (lifeline-ready-written link))))
+  wanted)
 
 
 (deftest test-the-readiness-probe-reads-the-file-the-worker-writes [#^ Path tmp-path #^ pytest.MonkeyPatch monkeypatch]
@@ -947,9 +959,34 @@
   (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
   (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" path)
   (assert (= (! (ready-probe-exit boot-sh path)) 1) "worker がまだ書いていない(lock 待ち)は NotReady")
-  (<- (write-ready-file))
+  (<- (write-ready-file (LifeCell)))
   (assert (= (! (ready-probe-exit boot-sh path)) 0))
   ;; drain 中の返事でも書く口は ready を書く(drain は Ready に入れない・#4177 — 返事の drain の印から書く所までは
   ;; test_heartbeat_link.hy の test-a-draining-reply-keeps-the-pod-ready)。
   (os.utime path #(1 1))
   (assert (= (! (ready-probe-exit boot-sh path {"READY_MAX_AGE" "30"})) 1) "heartbeat が途絶えた(file が古い)は NotReady"))
+
+
+(deftest test-the-readiness-probe-stays-ready-while-the-lifeline-is-heard-and-not-otherwise [#^ Path tmp-path #^ pytest.MonkeyPatch monkeypatch]
+  ;; 拍が書いた後に file が古びても(拍が塞がれた間)、生存の合図の thread の送りに ready を許す返事が届けば送りの後の書きが file を
+  ;; 新しくし、probe は Ready のまま。送りが届かなければ書かず、probe は NotReady(ebd009c6d — 返事の形ごとの許しは
+  ;; test_lifeline_through_a_blocked_tick.hy の test-the-lifeline-asks-to-renew-the-ready-file-only-while-the-tick-and-its-own-reply-permit-it)。
+  (val path (str (/ tmp-path "doeff-worker-ready")))
+  (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
+  (val aged {"READY_MAX_AGE" "30"})
+  (val permitting (json.dumps {"jobs" [] "tasks" [] "warm" [] "draining" False "revision" 1
+                               "timing" {"lease_ms" (. T lease-ms) "fence_ms" (. T fence-ms)}}))
+  (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" path)
+  (val link (LinkState "zeus" #("cpu") (. T fence-ms) (str (/ tmp-path "tasks")) "boot" 0 0 0))
+  (<- (write-ready-file link.life))
+  (assert (= link.life.ready-file path) link.life.ready-file)
+  (os.utime path #(1 1))
+  (assert (= (! (ready-probe-exit boot-sh path aged)) 1) "拍が塞がれて file が古びた")
+  (<- heard bool (lifeline-reply-written link 200 permitting))
+  (assert heard link.life.ready-refusal)
+  (assert (= (! (ready-probe-exit boot-sh path aged)) 0) "thread の送りに ready を許す返事が届けば Ready に戻る")
+  (os.utime path #(1 1))
+  (<- unheard bool (lifeline-reply-written link None permitting))
+  (assert (not unheard))
+  (assert (= link.life.failure "unreachable") link.life.failure)
+  (assert (= (! (ready-probe-exit boot-sh path aged)) 1) "thread の送りが届かなければ file は古いまま NotReady"))
