@@ -1,13 +1,24 @@
-# helios の差: 置く Node と資源の上限・取り分。
+# helios の差: 置く Node と資源の上限・取り分・入れ替えの形。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: doeff-worker
   namespace: agent-worker
 spec:
+  # 入れ替えは zeus と同じく新しい Pod を先に起こし、Ready になってから旧い Pod を止める(AL-D2 — ../zeus/node.yaml の註)。helios は組の印
+  # pool-helios のただ 1 台の受け手なので、Recreate では旧い Pod が止まる間に常駐の job の受け手が無く、Pod の雛形が変わるたびに常駐の job が
+  # 全部止まり、口が 2.5〜4 分閉じた(11-04 19:0x・22:2x・11-05 00:1x UTC — env の cgroup の層・prepare の上限・tolerations の 3 つの変更)。
+  # 2 つの世代は状態を世代ごとの dir に置き(雛形の WORKER_GENERATION_DIRS・POD_UID)、旧い Pod の preStop の drain は退いた process が退き
+  # 終わるまで待つ(上限 DRAIN_DEADLINE — generation.yaml)。2 つの Pod が並べるよう、取り分は守る層の和 25G にする(下の resources)。
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   template:
     spec:
       nodeSelector: { kubernetes.io/hostname: helios }
+      # preStop の drain の上限(DRAIN_DEADLINE 21900 秒 — generation.yaml)+ 子 process を止める猶予(stop-grace 10 秒 + KILL)の余裕 120 秒
+      # (zeus と同じ値)。旧い Pod はその間 Terminating のまま走るので、token の期限を延ばす(token-lifetime.yaml)。
+      terminationGracePeriodSeconds: 22020
       # helios(Ubuntu 26.04・kernel 7.0)では、既定の AppArmor の profile の container の label が
       # `cri-containerd.apparmor.d//&unconfined`(重ねた形)になり、container の中の process どうしの signal が全部拒まれる
       # (自分が立てた子への SIGTERM・SIGKILL も EPERM — signal 0 だけ通る)。worker が job を止められず、入れ替えで退いた古い job が
@@ -19,10 +30,12 @@ spec:
       containers:
         - name: worker
           # helios は CPU 15・memory 58Gi(Node の allocatable・2026-10-31 の実測)。組の印 pool-helios の常駐の job を受ける機体。
-          # memory の取り分は cgroup の層の memory.min の和(worker 1G + 常駐の job 30G — cgroup.yaml)。kubelet は Node の memory が
+          # memory の取り分は cgroup の層の memory.min の和(worker 1G + 常駐の job 24G — cgroup.yaml)。kubelet は Node の memory が
           # 足りない時、使いが取り分を最も越えた Pod から追い出す — 守る層の分を取り分に入れないと、この Pod が先に選ばれる。
+          # 入れ替えの間は 2 つの Pod が並ぶ: 取り分 25Gi × 2 + worker の外の Pod の取り分 約 3.5 GiB(11-06 06:1x UTC — 47 本)= 約 53.5 GiB が
+          # allocatable 58.2 GiB の内(前の 31Gi では 2 つ目の Pod が置けない)。
           # 上限は、置く予定の job 24 本の宣言の値の和(起動の山 約 31GiB・落ち着いた値 約 16.5GiB)に余裕を足した 40Gi に、会話の CLI と
           # 命令の限る層(clis 5G・commands 3G — cgroup.yaml)の分を足した大きさ。取り分は守る層の和のまま(限る層は取り分に入れない)。
           # 根の disk(915G)は Longhorn の写しを受けない(allowScheduling false)ので、disk の分け前(../../disk-share)の外 — 空きの最低と
           # roots の上限は boot.sh の既定のまま。
-          resources: { requests: { cpu: "2", memory: 31Gi }, limits: { cpu: "12", memory: 48Gi } }
+          resources: { requests: { cpu: "2", memory: 25Gi }, limits: { cpu: "12", memory: 48Gi } }

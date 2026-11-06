@@ -1,0 +1,6 @@
+# helios の worker の drain の上限(JSON patch — 雛形の env の決まった場所を確かめて改める)。zeus と同じ(../zeus/generation.yaml の頭の註):
+# 入れ替えで同じ機体に並ぶ 2 つの世代のうち、前の世代の drain は退いた process が走り切るまで待つ。上限は、退いた process が走り切る上限
+# (上に載る系の宣言の retiredSeconds 21600 秒)+ 5 分(node.yaml の入れ替えの形と猶予を参照)。雛形の env の並びが変わったら、test の操作が
+# 組み立てを止める。
+- { op: test, path: /spec/template/spec/containers/0/env/9/name, value: DRAIN_DEADLINE }
+- { op: replace, path: /spec/template/spec/containers/0/env/9/value, value: "21900" }

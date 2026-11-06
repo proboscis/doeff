@@ -1,0 +1,7 @@
+# helios の worker の token の期限(JSON patch — 雛形の volume の決まった場所を確かめて改める)。zeus と同じ訳(../zeus/token-lifetime.yaml の
+# 頭の註): 旧い Pod は入れ替えの後、最長 terminationGracePeriodSeconds(22020 秒)Terminating のまま走り、kubelet は止めている途中の Pod の
+# 投影の volume を更新しない。期限 129600 秒(36 時間)なら止め始めた時の残りは最悪でも 43200 秒で、猶予を越える
+# (test_worker_token_outlasts_the_termination_grace_period)。雛形の volume の並びが変わると、test の操作が組み立てを止める。
+- { op: test, path: /spec/template/spec/volumes/4/name, value: account-token }
+- { op: test, path: /spec/template/spec/volumes/4/projected/sources/0/serviceAccountToken/path, value: token }
+- { op: replace, path: /spec/template/spec/volumes/4/projected/sources/0/serviceAccountToken/expirationSeconds, value: 129600 }

@@ -164,8 +164,9 @@ MACHINE_RESOURCES = {
     "atlas": Resources(requests={"cpu": "500m", "memory": "512Mi"}, limits={"cpu": "8", "memory": "22Gi"}),
     "eos": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
     # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。上限は前の 40Gi に
-    # 会話の CLI と命令の限る層(5G + 3G)の分を足した 48Gi(worker の外の Pod の約 9 GiB と合わせて allocatable 58.2 GiB の内)。
-    "helios": Resources(requests={"cpu": "2", "memory": "31Gi"}, limits={"cpu": "12", "memory": "48Gi"}),
+    # 会話の CLI と命令の限る層(5G + 3G)の分を足した 48Gi(worker の外の Pod の約 9 GiB と合わせて allocatable 58.2 GiB の内)。取り分は
+    # 守る層の和 25G — 入れ替えで 2 つの世代の Pod が並べる値(test_rolling_worker_fits_two_generations_on_its_node)。
+    "helios": Resources(requests={"cpu": "2", "memory": "25Gi"}, limits={"cpu": "12", "memory": "48Gi"}),
     "k3s-0": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-1": Resources(requests={"cpu": "100m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-2": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
@@ -278,24 +279,48 @@ def test_zeus_worker_is_one_deployment_with_116gi_memory_limit(zeus_worker: Mani
 # から旧い Pod を止める。2 つの世代は状態を世代ごとの dir に置き(WORKER_GENERATION_DIRS・POD_UID — boot.sh)、旧い Pod の drain は
 # 退いた process が走り切るまで待つ。世代の dir を知らない版の boot.sh は WORKER_DIR_LOCK の錠で旧い Pod の終わりを待ち続け、入れ替えが
 # 進まない — だから世代の dir を置く worker の版は GENERATION_DIRS_SINCE かその子孫。
-ROLLING_NODES = ("zeus",)
+ROLLING_NODES = ("zeus", "helios")
 GENERATION_DIRS_SINCE = "036d47c48a9204214149ccd19b1c6b4ea9ecb33d"
 # 退いた process が走り切る上限(上に載る系の宣言の retiredSeconds)と、worker が子 process を止める猶予(--stop-grace)。
 RETIRED_SECONDS = 21600
 STOP_GRACE_SECONDS = 10
 
 
-def test_zeus_worker_starts_the_new_generation_before_stopping_the_old(zeus_worker: Manifest) -> None:
-    """zeus の worker は RollingUpdate(maxSurge 1・maxUnavailable 0)で入れ替わり、状態を Pod の uid の dir に置き、旧い Pod の drain は
-    退いた process が走り切る上限まで待ち、猶予はその drain と子を止める猶予を含む。"""
-    spec = _mapping(zeus_worker["spec"], "spec")
+@pytest.mark.parametrize("node", ROLLING_NODES)
+def test_rolling_worker_starts_the_new_generation_before_stopping_the_old(rendered: list[Manifest], node: str) -> None:
+    """zeus と helios の worker は RollingUpdate(maxSurge 1・maxUnavailable 0)で入れ替わり、状態を Pod の uid の dir に置き、旧い Pod の
+    drain は退いた process が走り切る上限まで待ち、猶予はその drain と子を止める猶予を含む。失敗ケース(helios — 11-04 19:0x・22:2x・
+    11-05 00:1x UTC): Recreate の helios は、Pod の雛形の変更のたびに組の印 pool-helios の常駐の job が全部止まり、受け手の無いまま
+    2.5〜4 分 口が閉じた。"""
+    worker = _worker_on(rendered, node)
+    spec = _mapping(worker["spec"], "spec")
     assert spec["strategy"] == {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0}}
-    assert _env_value(zeus_worker, "POD_UID")["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.uid"}}
-    assert _env_value(zeus_worker, "WORKER_GENERATION_DIRS")["value"] == "1"
-    drain = int(str(_env_value(zeus_worker, "DRAIN_DEADLINE")["value"]))
+    assert _env_value(worker, "POD_UID")["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.uid"}}
+    assert _env_value(worker, "WORKER_GENERATION_DIRS")["value"] == "1"
+    drain = int(str(_env_value(worker, "DRAIN_DEADLINE")["value"]))
     assert drain >= RETIRED_SECONDS
-    grace = _pod_spec(zeus_worker)["terminationGracePeriodSeconds"]
+    grace = _pod_spec(worker)["terminationGracePeriodSeconds"]
     assert isinstance(grace, int) and grace > drain + STOP_GRACE_SECONDS
+
+
+# RollingUpdate の機体の Node の memory の allocatable と、worker の外の Pod の memory の取り分の和(kubectl で読んだ値)。入れ替えの間は
+# 同じ機体に worker の Pod が 2 つ並ぶので、取り分の 2 倍とほかの Pod の取り分が allocatable に入らないと、新しい Pod が置けずに入れ替えが
+# 止まる。helios = allocatable 61048136Ki(58.2 GiB)・ほかの 47 本の取り分の和 3.49 GiB、zeus = allocatable 124227388Ki(118.5 GiB)・
+# ほかの Pod の取り分の和 30.0 GiB(どちらも 11-06 06:2x UTC)。
+ROLLING_NODE_MEMORY = {
+    "zeus": ("124227388Ki", "30Gi"),
+    "helios": ("61048136Ki", "3584Mi"),
+}
+
+
+@pytest.mark.parametrize("node", ROLLING_NODES)
+def test_rolling_worker_fits_two_generations_on_its_node(rendered: list[Manifest], node: str) -> None:
+    """RollingUpdate の機体では、worker の memory の取り分の 2 倍とほかの Pod の取り分の和が Node の allocatable の内。失敗ケース: helios の
+    取り分 31Gi(守る層 31G)では 31 × 2 + 3.5 = 65.5 GiB が allocatable 58.2 GiB を越え、2 つ目の Pod が Pending のまま入れ替えが進まない。"""
+    allocatable, others = ROLLING_NODE_MEMORY[node]
+    requests = _mapping(_mapping(_container(_worker_on(rendered, node))["resources"], "resources")["requests"], "requests")
+    two = 2 * _bytes(str(requests["memory"])) + _bytes(others)
+    assert two <= _bytes(allocatable), f"{node} の worker の 2 つの世代の取り分 {two} が allocatable {_bytes(allocatable)} を越える"
 
 
 # kubelet は止めている途中(Terminating)の Pod の投影の volume を更新しない(desired_state_of_world_populator の findAndAddNewPods が
@@ -395,9 +420,11 @@ CGROUP_LAYERS = {
     "k3s-2": (set(), {CGROUP_PREPARE_LAYER, CGROUP_INIT_LAYER}),
     "k3s-3": (set(), {CGROUP_INIT_LAYER}),
 }
-# helios の常駐の job の層の memory.min の下限: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(2026-11-01 の上に載る系の
-# 調べ — zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79%)。
-HELIOS_SERVICE_PEAK = "28G"
+# helios の常駐の job の層の memory.min の下限: helios の常駐の job の job ごとの 5 分の記録の和の 24 時間の最大 22.7 GiB(2026-11-01 の上に
+# 載る系の調べ)を切り上げた 23G。swap の無い機体で守る値が効くのは page cache の分だけで、匿名の memory(11-06 06:1x UTC に 18.5 GiB)は
+# 守る値に関わらず回収されない。前の下限 28G(zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79% — page cache を含む峰)
+# では取り分が 2 つ並ばず(test_rolling_worker_fits_two_generations_on_its_node)、helios は Recreate のまま入れ替えのたびに止まった。
+HELIOS_SERVICE_PEAK = "23G"
 # zeus の守る層の memory.min の下限(11-03 13:2x JST — 上に載る系のコアの常駐の job が helios へ移った後の zeus の worker で測った使い):
 # 常駐の job の層 = zeus に残る 10 本の宣言の settle の和 2572 MiB(CLI を起こす job の本体を除く)+ その本体の RSS 929 MiB。会話の CLI の
 # 層 = 層の process の RSS の和 14827 MiB。
@@ -529,7 +556,7 @@ def test_worker_requests_at_least_the_memory_its_layers_guard(rendered: list[Man
 
 
 def test_helios_worker_guards_its_resident_jobs_above_their_estimated_peak(rendered: list[Manifest]) -> None:
-    """helios の常駐の job の層の memory.min は、helios へ移す常駐の job の memory の峰の見積もり(HELIOS_SERVICE_PEAK)以上。失敗ケース:
+    """helios の常駐の job の層の memory.min は、常駐の job の memory の記録の和の最大(HELIOS_SERVICE_PEAK)以上。失敗ケース:
     守る値が峰を下回ると、準備の層が上限まで使った時の container の上限の回収が、峰の常駐の job の memory にも掛かる。"""
     helios = _worker_on(rendered, "helios")
     service = str(_env_value(helios, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
