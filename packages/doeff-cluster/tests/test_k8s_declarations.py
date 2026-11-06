@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -325,13 +325,13 @@ def test_rolling_worker_fits_two_generations_on_its_node(rendered: list[Manifest
 
 # kubelet は止めている途中(Terminating)の Pod の投影の volume を更新しない(desired_state_of_world_populator の findAndAddNewPods が
 # 止める途中の Pod を飛ばす)ので、猶予の間は止め始めた時に file に在る token のまま。token は期限が来ると kubectl が Unauthorized になる
-# (2026-10-12 15:33 JST 以降の zeus の旧い Pod・card ki-916968e7f898)。kubelet は token の年齢が 24 時間を越えるか、残りが期限の 20% を
-# 切ると更新する(token_manager の requiresRefresh)ので、止め始めた時に file に在る token の残りは最悪でも max(期限 - 24 時間, 期限の 20%)。
-KUBELET_TOKEN_MAX_AGE_SECONDS = 24 * 60 * 60
+# (2026-10-12 15:33 JST 以降の zeus の旧い Pod)。kubelet が token を置き直す発行からの秒は worker の判じの
+# kubelet-refresh-after-s(_worker/core/account_token.hy — kubelet の規則はそこ 1 か所)なので、止め始めた時に file に在る token の残りは
+# 最悪でも 期限 - その秒。worker の stale の線も同じ規則から導く(test_worker_token_is_stale_only_after_the_kubelet_would_refresh_it)。
 
 
-def test_worker_token_outlasts_the_termination_grace_period(worker: Manifest) -> None:
-    """止め始めた時に file に在る token の残りの最悪が、猶予を越える(猶予の間も、会話が kubectl で cluster を読める)。"""
+def _token_lifetime(worker: Manifest) -> int:
+    """worker の投影の volume の ServiceAccount の token の期限(expirationSeconds — ちょうど 1 つ)。"""
     mount = _mount_at(worker, TOKEN_DIR)
     sources = _sequence(
         _mapping(_volume(worker, str(mount["name"]))["projected"], "projected")["sources"], "sources"
@@ -343,13 +343,55 @@ def test_worker_token_outlasts_the_termination_grace_period(worker: Manifest) ->
     ]
     assert len(tokens) == 1, f"serviceAccountToken がちょうど 1 つ無い: {tokens!r}"
     lifetime = tokens[0]["expirationSeconds"]
-    grace = _pod_spec(worker)["terminationGracePeriodSeconds"]
     assert isinstance(lifetime, int)
+    return lifetime
+
+
+def test_worker_token_outlasts_the_termination_grace_period(
+    worker: Manifest, doeff_interpreter: Callable[[object], object]
+) -> None:
+    """止め始めた時に file に在る token の残りの最悪が、猶予を越える(猶予の間も、会話が kubectl で cluster を読める)。"""
+    import hy  # noqa: F401  — Hy の module を import できるようにする
+    from doeff_cluster._worker.core.account_token import kubelet_refresh_after_s
+
+    lifetime = _token_lifetime(worker)
+    grace = _pod_spec(worker)["terminationGracePeriodSeconds"]
     assert isinstance(grace, int)
-    left_at_worst = max(lifetime - KUBELET_TOKEN_MAX_AGE_SECONDS, lifetime * 20 // 100)
+    refresh_after = doeff_interpreter(kubelet_refresh_after_s(lifetime))
+    assert isinstance(refresh_after, int)
+    left_at_worst = lifetime - refresh_after
     assert left_at_worst > grace, (
         f"止め始めた時の token の残りの最悪 {left_at_worst} 秒 が猶予 {grace} 秒 以下 — 猶予の途中で token が切れる"
-        f"(期限 {lifetime} 秒)。期限を {min(grace + KUBELET_TOKEN_MAX_AGE_SECONDS, grace * 5) + 1} 秒以上にする"
+        f"(期限 {lifetime} 秒・kubelet は発行から {refresh_after} 秒で置き直す)。期限を延ばす"
+    )
+
+
+def test_worker_token_is_stale_only_after_the_kubelet_would_refresh_it(
+    worker: Manifest, doeff_interpreter: Callable[[object], object]
+) -> None:
+    """宣言の期限の token を、worker は kubelet が置き直す刻(kubelet-refresh-after-s)までは stale と名乗らず、その刻 + 余り
+    (REFRESH-SLACK-MS)を越えると stale と名乗る(宣言と判じの突き合わせ)。失敗ケース: 期限を 36 時間へ延ばした機体で、発行から
+    55 分の定数の線は、置き直しの正しい worker に Pod の作成から 55 分で stale を名乗らせた。"""
+    import hy  # noqa: F401  — Hy の module を import できるようにする
+    from doeff_cluster._worker.core.account_token import (
+        REFRESH_SLACK_MS,
+        TokenClaims,
+        TokenState,
+        kubelet_refresh_after_s,
+        token_state,
+    )
+
+    lifetime = _token_lifetime(worker)
+    issued = 1_800_000_000
+    claims = TokenClaims(issued_at=issued, expires_at=issued + lifetime)
+    refresh_after = doeff_interpreter(kubelet_refresh_after_s(lifetime))
+    assert isinstance(refresh_after, int)
+    refresh_ms = (issued + refresh_after) * 1000
+    assert doeff_interpreter(token_state(claims, refresh_ms)) == TokenState.OK
+    assert doeff_interpreter(token_state(claims, refresh_ms + REFRESH_SLACK_MS)) == TokenState.OK
+    late = doeff_interpreter(token_state(claims, refresh_ms + REFRESH_SLACK_MS + 1))
+    assert late == TokenState.STALE, (
+        f"期限 {lifetime} 秒の token が、kubelet の置き直しの刻 + 余りを越えても {late} — 置き直しの止まりを名乗らない"
     )
 
 
