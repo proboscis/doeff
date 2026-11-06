@@ -46,15 +46,15 @@ Kinds:
 - ``other``: decided to be neither — a program function (``@do``, ``defk``) or a function whose
   return type is a program, a function read as a factory whose call returns a value without the
   marker, any other function, class, exception, type, constant, macro, console script or entry
-  point. A function that returns a program is a program helper (form ``program の helper``) when
+  point. A function that returns a program is a program helper (form ``program helper``) when
   nothing its body reads — and the bodies of its own package's functions it reads, followed
   through — installs a handler (``WithHandler``, a handler value, a handler builder or factory) or
   answers an effect (``Resume``, ``Pass``, ``Transfer`` ...) (ADR-DOE-API-001 R18): a helper stays
   ``other``, and the allowed table (``tests/data/public_api_allowed.json``) allows it by name in
-  the group ``許した物 — program の helper``. A plain function with a value's return type is a
-  conversion (form ``換算の関数`` — R35) when nothing its body reads, followed the same way, makes an
+  the group ``Allowed — program helper``. A plain function with a value's return type is a
+  conversion (form ``conversion function`` — R35) when nothing its body reads, followed the same way, makes an
   effect, a handler or a program or reads the world (a clock, the environment, a file ...), and a
-  builder (form ``作り手`` — R37) when such a function returns a class its own package defines (the
+  builder (form ``builder`` — R37) when such a function returns a class its own package defines (the
   row's ``returns`` names that class);
 - ``unclassified``: what the machine cannot decide — a function with no return type, or one that
   says nothing (``Any``, ``object``, a bare ``Callable``, a list of them), whose ``return``
@@ -69,7 +69,7 @@ names it shows that are a class or a named type alias written in a field annotat
 it shows (a dataclass field or an ``__init__`` parameter, type arguments included), followed through the
 fields of the value types the package defines itself (a Protocol's properties count as its fields — a field a
 value only has to be readable by). The allowed table's group
-``許した物 — effect の値の型`` may hold those names only. A field typed ``object`` or a bare ``tuple`` says
+``Allowed — effect value type`` may hold those names only. A field typed ``object`` or a bare ``tuple`` says
 nothing, so the value types it carries are not found.
 
 It lists its effects' answer types too (``answer_types``, R2): the names it shows that are a class or a
@@ -78,7 +78,7 @@ named type alias an effect class it defines declares as its answer (the ``T`` of
 package defines itself (the cases a caller matches), and a type alias whose classes are all answer types.
 A wait whose answer is whichever event types its caller names has no one ``T``: the events its package
 defines for the bus are the ones it declares in its own ``__doeff_bus_events__``. The allowed table's group
-``許した物 — effect の答えの型`` may hold those names only. An effect that says its answer only in its
+``Allowed — effect answer type`` may hold those names only. An effect that says its answer only in its
 docstring declares none.
 
     uv run python tools/public_api_inventory.py --json inventory.json --markdown inventory.md
@@ -123,8 +123,8 @@ KINDS: tuple[Kind, ...] = ("effect", "handler", "other", "unclassified")
 KIND_LABELS: dict[Kind, str] = {
     "effect": "effect",
     "handler": "handler",
-    "other": "それ以外",
-    "unclassified": "未分類",
+    "other": "other",
+    "unclassified": "unclassified",
 }
 ModuleReadWay = Literal["__all__", "own", "pinned", "text"]
 #: What shows a public submodule's row (as ``(console script)`` shows a console script's).
@@ -143,26 +143,26 @@ _PROGRAM_TYPE_NAMES = frozenset({"Program", "Expand", "DoExpr", "DoCtrl", "Progr
 _PROGRAM_VALUE_TYPE_NAMES = _PROGRAM_TYPE_NAMES | {"Call", "Pure", "Perform"}
 _HANDLER_TYPE_NAMES = frozenset({"ProgramHandler", "_InstalledHandler", "Handler"})
 #: The forms of a function read as a handler factory (ADR-DOE-API-001 R3): called to check what it returns.
-FACTORY_FORMS = frozenset({"handler を返す関数", "handler の組を返す関数"})
+FACTORY_FORMS = frozenset({"function returning a handler", "function returning a handler stack"})
 #: The form of a function read as a factory whose call returns a value without the handler marker.
-NOT_A_FACTORY = "handler を返さない関数"
+NOT_A_FACTORY = "function not returning a handler"
 #: The form of a function that returns a program which only emits effects (ADR-DOE-API-001 R18).
-PROGRAM_HELPER = "program の helper"
+PROGRAM_HELPER = "program helper"
 #: The forms of a function that returns a program and whose body goes past a helper's.
-HELPER_INSTALLS = "handler を被せる program を返す関数"
-HELPER_ANSWERS = "effect に答える program を返す関数"
+HELPER_INSTALLS = "function returning a program that installs a handler"
+HELPER_ANSWERS = "function returning a program that answers an effect"
 #: The form of a plain function that turns a value into a value (ADR-DOE-API-001 R35): its body makes no
 #: effect, handler or program and reads no clock, environment, file, process or randomness.
-CONVERSION = "換算の関数"
+CONVERSION = "conversion function"
 #: The form of a plain function that builds a value of a program's shape (ADR-DOE-API-001 R37): a conversion's
 #: body whose return type is a class its own package defines (the row's ``returns`` names that class).
-BUILDER = "作り手"
+BUILDER = "builder"
 #: The form of a plain function with a value's return type whose body goes past a conversion's.
-PLAIN_FUNCTION = "関数"
+PLAIN_FUNCTION = "function"
 #: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14, R15, R31).
-MACRO_FORM = "Hy の macro"
+MACRO_FORM = "Hy macro"
 #: The form of a class that subclasses ``BaseException`` (an exception type an effect or handler raises — R2).
-EXCEPTION_CLASS = "例外の class"
+EXCEPTION_CLASS = "exception class"
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
 CONSOLE_SCRIPT = "console script"
 RUST_EXECUTABLE = "Rust executable"
@@ -294,8 +294,8 @@ class AnswerType(TypedDict):
     """One name a package shows that a caller reads out of an effect's answer (an effect's answer type).
 
     ``answers`` is where the type is reached: ``<effect class>`` (the effect declares it in its answer),
-    ``<effect class> の bus の event`` (a wait declares it in ``__doeff_bus_events__``), ``<class>.<field>`` (a field
-    of an answer class) or ``<class> の子`` (ADR-DOE-API-001 R2 — ``answer_types``).
+    ``bus event of <effect class>`` (a wait declares it in ``__doeff_bus_events__``), ``<class>.<field>`` (a field
+    of an answer class) or ``child of <class>`` (ADR-DOE-API-001 R2 — ``answer_types``).
     """
 
     module: str
@@ -895,7 +895,7 @@ class _Classifier:
         rules: list[tuple[bool, Verdict]] = [
             (
                 isinstance(obj, self.effect_base),
-                Verdict("effect", "effect の値", f"a {type_name} value (a subclass of EffectBase)"),
+                Verdict("effect", "effect value", f"a {type_name} value (a subclass of EffectBase)"),
             ),
             (
                 _is_handler_marked(obj),
@@ -904,17 +904,17 @@ class _Classifier:
             (isinstance(obj, types.ModuleType), Verdict("other", "module", "module")),
             (
                 from_doeff and type_name.endswith("Handler"),
-                Verdict("handler", "VM の handler の値", f"a {type_name} value"),
+                Verdict("handler", "VM handler value", f"a {type_name} value"),
             ),
-            (_is_type_like(obj), Verdict("other", "型", f"type ({type_name})")),
-            (isinstance(obj, _CONSTANT_TYPES), Verdict("other", "定数", f"constant ({type_name})")),
+            (_is_type_like(obj), Verdict("other", "type", f"type ({type_name})")),
+            (isinstance(obj, _CONSTANT_TYPES), Verdict("other", "constant", f"constant ({type_name})")),
             (
                 from_doeff and type_name in _PROGRAM_VALUE_TYPE_NAMES,
-                Verdict("other", "program の値", f"a {type_name} value"),
+                Verdict("other", "program value", f"a {type_name} value"),
             ),
-            (callable(obj), Verdict("other", "呼べる値", f"a {type_name} value (callable)")),
+            (callable(obj), Verdict("other", "callable value", f"a {type_name} value (callable)")),
         ]
-        fallback = Verdict("other", "値", f"a {type_name} value")
+        fallback = Verdict("other", "value", f"a {type_name} value")
         return next((verdict for matched, verdict in rules if matched), fallback)
 
     def _classify_class(self, cls: type, name: str) -> Verdict:
@@ -923,12 +923,12 @@ class _Classifier:
         rules: list[tuple[bool, Verdict]] = [
             (
                 issubclass(cls, self.effect_base),
-                Verdict("effect", "effect の class", "a class that subclasses EffectBase"),
+                Verdict("effect", "effect class", "a class that subclasses EffectBase"),
             ),
             (
                 _is_handler_marked(cls),
                 Verdict(
-                    "handler", "handler の class", "a class with the handler mark (_doeff_is_handler_fn)"
+                    "handler", "handler class", "a class with the handler mark (_doeff_is_handler_fn)"
                 ),
             ),
             (
@@ -965,16 +965,16 @@ class _Classifier:
         function = _definition(obj)
         if _takes_effect_and_k(function):
             return Verdict(
-                "handler", "素の handler の関数", "takes (effect, k) as arguments (no handler mark)"
+                "handler", "bare handler function", "takes (effect, k) as arguments (no handler mark)"
             )
         if _is_program_function(obj):
             return self._program_verdict(
                 function,
-                Verdict("other", "program 関数", "a @do / defk function (calling it builds a program)"),
+                Verdict("other", "program function", "a @do / defk function (calling it builds a program)"),
             )
         annotation = _return_annotation(function)
         decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
-        if decided is not None and decided.form == "program を返す関数":
+        if decided is not None and decided.form == "function returning a program":
             return self._program_verdict(function, decided)
         if decided is not None:
             return decided
@@ -984,7 +984,7 @@ class _Classifier:
                 if annotation is _MISSING
                 else f"return type {_annotation_text(annotation)} does not decide it, and the shape of return does not either"
             )
-            return self._returns_kind(function) or Verdict("unclassified", "関数", unknown)
+            return self._returns_kind(function) or Verdict("unclassified", "function", unknown)
         return self._conversion_verdict(
             function,
             Verdict("other", PLAIN_FUNCTION, f"return type {_annotation_text(annotation)}"),
@@ -1015,7 +1015,7 @@ class _Classifier:
         outcome = self._factory_calls[key].outcome
         if isinstance(outcome, _CallFailure):
             return Verdict(read.kind, read.form, f"{read.reason}; {how} calling it raises {outcome.error}")
-        if _returns_handlers(outcome, many=read.form == "handler の組を返す関数"):
+        if _returns_handlers(outcome, many=read.form == "function returning a handler stack"):
             return Verdict(read.kind, read.form, f"{read.reason}; {how} calling it returns a handler")
         return Verdict(
             "other",
@@ -1206,27 +1206,27 @@ class _Classifier:
         rules: list[tuple[bool, Verdict]] = [
             (
                 self._is_effect_type(annotation),
-                Verdict("effect", "effect を作る関数", f"return type {text} (a subclass of EffectBase)"),
+                Verdict("effect", "function making an effect", f"return type {text} (a subclass of EffectBase)"),
             ),
             (
                 self._is_handler_type(annotation),
-                Verdict("handler", "handler を返す関数", f"return type {text}"),
+                Verdict("handler", "function returning a handler", f"return type {text}"),
             ),
             (
                 self._is_handler_collection(annotation),
-                Verdict("handler", "handler の組を返す関数", f"return type {text}"),
+                Verdict("handler", "function returning a handler stack", f"return type {text}"),
             ),
             (
                 isinstance(base, type) and base.__name__.endswith("Handler"),
                 Verdict(
                     "unclassified",
-                    "関数",
+                    "function",
                     f"the name of return type {text} ends in Handler but it has no handler mark",
                 ),
             ),
             (
                 _is_program_type(annotation),
-                Verdict("other", "program を返す関数", f"return type {text}"),
+                Verdict("other", "function returning a program", f"return type {text}"),
             ),
         ]
         return next((verdict for matched, verdict in rules if matched), None)
@@ -1271,7 +1271,7 @@ class _Classifier:
             return None
         returned = [statement.value for statement in _own_returns(node)]
         if all(value is None for value in returned):
-            return Verdict("other", "関数", "returns no value")
+            return Verdict("other", "function", "returns no value")
         nested = {
             child.name: child
             for child in ast.walk(node)
@@ -1283,9 +1283,9 @@ class _Classifier:
             if value is not None
         }
         if kinds == {"effect"}:
-            return Verdict("effect", "effect を作る関数", "return calls an effect class")
+            return Verdict("effect", "function making an effect", "return calls an effect class")
         if kinds == {"handler"}:
-            return Verdict("handler", "handler を返す関数", "return builds a handler")
+            return Verdict("handler", "function returning a handler", "return builds a handler")
         return None
 
     def _returned_kind(
@@ -1336,10 +1336,10 @@ def _named_annotation_kind(annotation: str) -> Verdict:
     """The verdict of a return type left as text (one the module's globals cannot evaluate)."""
     head = annotation.split("[", 1)[0].strip().rsplit(".", 1)[-1]
     if head in _HANDLER_TYPE_NAMES:
-        return Verdict("handler", "handler を返す関数", f"return type {annotation}")
+        return Verdict("handler", "function returning a handler", f"return type {annotation}")
     if head in _PROGRAM_TYPE_NAMES:
-        return Verdict("other", "program を返す関数", f"return type {annotation}")
-    return Verdict("unclassified", "関数", f"cannot resolve return type {annotation}")
+        return Verdict("other", "function returning a program", f"return type {annotation}")
+    return Verdict("unclassified", "function", f"cannot resolve return type {annotation}")
 
 
 def _is_function_like(obj: object) -> bool:
@@ -2060,11 +2060,11 @@ def _name_row(
     value = _module_value(module, name)
     if value is _MISSING:
         verdict = Verdict(
-            "unclassified", "名だけ", "listed in __all__ or in the moved-submodule shim's names but absent from the module"
+            "unclassified", "name only", "listed in __all__ or in the moved-submodule shim's names but absent from the module"
         )
         defined_at = module.__name__
     elif isinstance(value, _LazyFailure):
-        verdict = Verdict("unclassified", "名だけ", f"__getattr__ cannot build the name: {value.error}")
+        verdict = Verdict("unclassified", "name only", f"__getattr__ cannot build the name: {value.error}")
         defined_at = module.__name__
     else:
         try:
@@ -2072,7 +2072,7 @@ def _name_row(
             defined_at = _location(value, module.__name__, name, sources)
         except Exception as error:  # the failure is written into the row, not dropped
             verdict = Verdict(
-                "unclassified", "値", f"{type(error).__name__} while deciding the kind: {error}"
+                "unclassified", "value", f"{type(error).__name__} while deciding the kind: {error}"
             )
             defined_at = module.__name__
     row = ExportRow(
@@ -2140,7 +2140,7 @@ def _read_module(
                     module=module_name,
                     name=name,
                     kind="unclassified",
-                    form="import できない module の名",
+                    form="name of a module that cannot be imported",
                     defined_at=location,
                     reason=message,
                 )
@@ -2215,7 +2215,7 @@ def submodule_rows(layout: PackageLayout) -> list[ExportRow]:
             module=SUBMODULE,
             name=name,
             kind="other",
-            form="公開の submodule",
+            form="public submodule",
             defined_at=_place_text(Place(name, str(path))),
             reason="a submodule with no part of its path starting with _ (names are shown from the import root, and submodules are hidden with _)",
         )
@@ -2371,7 +2371,7 @@ def _reached_field_types(
 
 
 def value_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[ValueType]:
-    """The names a package shows that its effect classes' fields are typed with (ADR-DOE-API-001 R2 — effect の値の型).
+    """The names a package shows that its effect classes' fields are typed with (ADR-DOE-API-001 R2 — effect value types).
 
     The types are read from the field annotations of every effect class the package shows, type arguments
     included (``list[Message]``, ``Mode | None``), and followed through the fields of the value types the
@@ -2438,7 +2438,7 @@ def _declared_answer(effect: type) -> Iterator[_FieldType]:
 
     A wait whose answer is whichever event types its caller names (doeff-events' ``WaitForEvent``) has no one ``T``:
     it declares the events its package defines for the bus in its own ``__doeff_bus_events__`` (not inherited), read
-    as its answers at ``<effect> の bus の event`` (ADR-DOE-API-001 R2).
+    as its answers at ``bus event of <effect>`` (ADR-DOE-API-001 R2).
     """
     from doeff_vm._effect_types import effect_result_type
 
@@ -2453,7 +2453,7 @@ def _declared_answer(effect: type) -> Iterator[_FieldType]:
             )
     for event in vars(effect).get(BUS_EVENTS_ATTRIBUTE, ()):
         yield from (
-            _FieldType(found, f"{effect.__name__} の bus の event")
+            _FieldType(found, f"bus event of {effect.__name__}")
             for found in _annotation_types(event, namespace)
         )
 
@@ -2468,7 +2468,7 @@ def _read_out_of_answers(
     found = (
         *(field_type for cls in classes for field_type in _field_types(cls, cls.__name__)),
         *(
-            _FieldType(sub, f"{cls.__name__} の子")
+            _FieldType(sub, f"child of {cls.__name__}")
             for cls in classes
             for sub in _subclasses(cls)
             if _is_own_class(sub, roots)
@@ -2492,7 +2492,7 @@ def _alias_classes(value: object) -> list[type]:
 def answer_types(
     exports: Sequence[ExportRow], roots: tuple[str, ...], effect_base: type
 ) -> list[AnswerType]:
-    """The names a package shows that a caller reads out of its effects' answers (ADR-DOE-API-001 R2 — effect の答えの型).
+    """The names a package shows that a caller reads out of its effects' answers (ADR-DOE-API-001 R2 — effect answer types).
 
     The types are read from the declared answer of every effect class the package defines (shown, or made by
     a function it shows), and followed through the fields and the subclasses of the answer classes the
@@ -2567,7 +2567,7 @@ def _parameter_types(value: object, label: str) -> Iterator[_FieldType]:
 
 
 def setting_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[SettingType]:
-    """The names a package shows that its handlers are built with (ADR-DOE-API-001 R2 — handler の設定の型).
+    """The names a package shows that its handlers are built with (ADR-DOE-API-001 R2 — handler setting types).
 
     The types are read from the parameter annotations of every handler, handler class and factory the package
     shows (the rows of kind handler), type arguments included (``Sequence[ScriptedCommand]``, ``Mode | None``),
@@ -2819,7 +2819,7 @@ _METHOD_NOTES = (
     "Hy modules also count macros not starting with `_`. The console scripts and entry points of pyproject, and the Rust executables of the maturin bin,"
     " are counted too.",
     "A submodule with no part of its path starting with `_` is itself counted as one row (shown from `(submodule)`, name = the module's import name,"
-    " form 「公開の submodule」, kind other) -- public names are shown only from the import root (ADR-DOE-API-001 R5)."
+    " form "public submodule", kind other) -- public names are shown only from the import root (ADR-DOE-API-001 R5)."
     " A moved-submodule module whose first line is `# moved-submodule-shim: <old name> -> <new name>` also counts the modules under the package it was moved to"
     " by their old names (the old path stays importable until the moved-submodule module is deleted). The names the old path shows are only the names on the line"
     " `# moved-submodule-shim-names <old name>: <name> ...` under the mark (a fixed list of names written when it was hidden) -- the old path returns"
@@ -2830,9 +2830,9 @@ _METHOD_NOTES = (
     " a callable that takes a program and returns a program, or a set of handlers; or return builds a handler), and a bare"
     " handler function whose arguments are (effect, k).",
     "other: program functions (@do, defk) and functions whose return type is a program, other functions, classes, exceptions, types, constants, macros,"
-    " console scripts and entry points. A function that returns a program gets the form 「program の helper」 when, inside it (and inside the"
+    " console scripts and entry points. A function that returns a program gets the form "program helper" when, inside it (and inside the"
     " same-package functions it reads), it neither installs a handler (does not read WithHandler, handler values, builders or factories) nor answers an effect (does not read Resume,"
-    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group 「許した物 — program の helper」 (ADR-DOE-API-001 R18).",
+    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group "Allowed — program helper" (ADR-DOE-API-001 R18).",
     "unclassified: functions with no return type or a type that says nothing about the contents (Any, object, Callable, a list of them) that the shape of return does not decide either,"
     " classes whose name ends in Effect or Handler but have no mark (and functions that return them), and names of modules that cannot be imported.",
     "When both the root and a submodule show the same name, they are merged into one row, and the column \"shown from\" lists the modules showing it relative to the import root,"

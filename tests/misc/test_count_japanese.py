@@ -28,12 +28,19 @@ def _load_script() -> ModuleType:
 count_japanese = _load_script()
 
 
+# Japanese letters for the fixtures, written as escapes so that this file stays English: a kanji word (U+65E5 U+672C, "Japan"),
+# a katakana word (U+30AB U+30BF U+30AB U+30CA, "katakana") and a kanji word (U+8A18 U+4E8B, "article").
+KANJI = "\u65e5\u672c"
+KATAKANA = "\u30ab\u30bf\u30ab\u30ca"
+ARTICLE = "\u8a18\u4e8b"
+
+
 def _tree(tmp_path: Path) -> Path:
-    (tmp_path / "a.py").write_text("x = 1\n# 日本語の注\ny = 2\n# カタカナ\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text(f"x = 1\n# {KANJI} note\ny = 2\n# {KATAKANA}\n", encoding="utf-8")
     (tmp_path / "b.md").write_text("English only\n", encoding="utf-8")
-    (tmp_path / "img.png").write_bytes(b"\0\x89PNG" + "日本".encode())
+    (tmp_path / "img.png").write_bytes(b"\0\x89PNG" + KANJI.encode())
     (tmp_path / "publications").mkdir()
-    (tmp_path / "publications" / "c.md").write_text("記事\n", encoding="utf-8")
+    (tmp_path / "publications" / "c.md").write_text(f"{ARTICLE}\n", encoding="utf-8")
     return tmp_path
 
 

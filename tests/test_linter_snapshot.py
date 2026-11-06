@@ -200,7 +200,7 @@ def test_a_sha_whose_linter_inputs_did_not_change_is_copied_without_building(tmp
     printed = subprocess.run([str(second), "--version"], capture_output=True, text=True, check=True).stdout
     assert first_sha in printed and "committed" in printed, printed
     keys = {(d / "input_key").read_text(encoding="utf-8") for d in (first.parent, second.parent)}
-    assert len(keys) == 1 and next(iter(keys)).startswith("doeff-linter の組み立ての入力 "), keys
+    assert len(keys) == 1 and next(iter(keys)).startswith("doeff-linter build inputs "), keys
     assert sorted(p.suffix for p in (tmp_path / "store").iterdir()) == ["", "", ".lock", ".lock"]
 
 
@@ -218,7 +218,7 @@ def test_a_dir_built_before_keys_were_written_is_keyed_from_its_sha_and_reused(t
     assert proc.returncode == 0, err
     assert Path(out.strip()) != first
     assert (tmp_path / "count").read_text(encoding="utf-8") == "built\n"
-    assert (first.parent / "input_key").read_text(encoding="utf-8").startswith("doeff-linter の組み立ての入力 ")
+    assert (first.parent / "input_key").read_text(encoding="utf-8").startswith("doeff-linter build inputs ")
 
 
 def test_a_sha_whose_linter_inputs_changed_builds_again(tmp_path: Path) -> None:

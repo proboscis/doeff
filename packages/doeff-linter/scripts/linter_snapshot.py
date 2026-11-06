@@ -73,6 +73,9 @@ KEY_SCRIPT = "scripts/doeff_linter_locked.py"
 RECORDED_KEY = "input_key"
 KEY_TIMEOUT_S = 60
 SHA_NAME = re.compile(r"[0-9a-f]{40}")
+# A key ends with the 40-digit digest of the build inputs; keys written before 2026-11-06 hold the same digest after the former (Japanese) prefix, so
+# keys are matched by that digest (the same matching as same_key in scripts/doeff_linter_locked.py).
+KEY_DIGEST = re.compile(r"(?:^|\s)([0-9a-f]{40})$")
 
 
 @dataclass(frozen=True)
@@ -205,12 +208,18 @@ def placed_key(checkout: Path, placed: Path, env: dict[str, str]) -> str | None:
     return key
 
 
+def _digest(key: str | None) -> str | None:
+    """The digest a key ends with (the whole key when it ends with none; None stays None)."""
+    found = KEY_DIGEST.search(key) if key is not None else None
+    return found.group(1) if found is not None else key
+
+
 def same_inputs(checkout: Path, store: Path, key: str | None, env: dict[str, str]) -> Path | None:
     """To look in the store for a linter of another sha with the same input key (None if none)."""
     if key is None:
         return None
     for placed in sorted(store.iterdir()):
-        if SHA_NAME.fullmatch(placed.name) and (placed / BIN_NAME).is_file() and placed_key(checkout, placed, env) == key:
+        if SHA_NAME.fullmatch(placed.name) and (placed / BIN_NAME).is_file() and _digest(placed_key(checkout, placed, env)) == _digest(key):
             return placed / BIN_NAME
     return None
 

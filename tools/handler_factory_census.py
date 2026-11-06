@@ -5,9 +5,9 @@ A factory without parameters is right only when each call builds a handler with 
 (``in_memory_cache_handler()`` — a fresh store per call). This tool finds every factory without
 parameters, and ``tests/data/zero_parameter_handler_factories.json`` says for each why it stays:
 
-- ``呼びごとの状態``: each call builds a handler over a new store (the reason is written per row);
-- ``直す``: no settings and no per-call state — to become a handler value (the card that does it);
-- ``factory でない``: the reading took it for a factory, and it is not one (the reason per row).
+- ``per-call state``: each call builds a handler over a new store (the reason is written per row);
+- ``to fix``: no settings and no per-call state — to become a handler value (the card that does it);
+- ``not a factory``: the reading took it for a factory, and it is not one (the reason per row).
 
 The deftest of ADR-DOE-API-002 compares the two: a factory found and not in the table is red, and
 a row of the table no longer found is red too (the table only shrinks with the code).
@@ -38,7 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = ROOT / "tests" / "data" / "zero_parameter_handler_factories.json"
-VERDICTS = ("呼びごとの状態", "直す", "factory でない")
+VERDICTS = ("per-call state", "to fix", "not a factory")
 
 _READ_DIRS = ("doeff/", "packages/", "examples/")
 _SKIPPED_DIRS = ("examples/testing_without_mocks/",)

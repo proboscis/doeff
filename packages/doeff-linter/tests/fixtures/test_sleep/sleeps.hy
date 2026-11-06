@@ -2,7 +2,7 @@
 ;;; their rewordings where not declared, and does not fire inside tests that declare realtime (deftest, plain functions), zero-second yields, event waits, or unread forms.
 ;;; Two tests read the end-of-line markers (on the same fixture; if the rule's reading and the registry's reading disagree, one of them goes red):
 ;;;   "; fires"  ... a line that should fire. packages/doeff-linter/tests/test_sleep.rs compares the set of marked lines with the set of linter hit lines.
-;;;   "; 名乗る" (= declares)  ... the head line of a test that declares realtime (a deftest, or a plain function declaring by decorator). tests/semgrep/test_realtime_tests_registry.py compares it with the set of names the registry's reading picks up.
+;;;   "; declares"  ... the head line of a test that declares realtime (a deftest, or a plain function declaring by decorator). tests/semgrep/test_realtime_tests_registry.py compares it with the set of names the registry's reading picks up.
 ;;; This file is not executed (a fixture that is only read). The fixture for module-level declaration is the neighboring realtime_module.hy.
 (require doeff-hy.macros [deftest defk <- val])
 (import asyncio)
@@ -93,14 +93,14 @@
 ;; ---------------------------------------------------------------------------
 ;; Does not fire: a deftest that declares realtime (real time itself is the subject)
 
-(deftest test-two-threads-overlap  ; 名乗る
+(deftest test-two-threads-overlap  ; declares
   {:marks ["realtime"]}
   (start-two-threads)
   (time.sleep 0.3)
   (assert (= (peak) 2)))
 
 
-(deftest test-a-real-process-ends [tmp-path]  ; 名乗る
+(deftest test-a-real-process-ends [tmp-path]  ; declares
   "The meta after the leading docstring and the parameter list."
   {:interpreters ["sample"] :marks ["slow" "realtime"]}
   (<- child (start tmp-path))
@@ -110,13 +110,13 @@
   (assert True))
 
 
-(deftest test-marks-as-a-tuple-of-symbols  ; 名乗る
+(deftest test-marks-as-a-tuple-of-symbols  ; declares
   {:marks #(realtime)}
   (run-later (fn [] (time.sleep 0.1)))
   (assert True))
 
 
-(defn [pytest.mark.slow pytest.mark.realtime] #^ None test-a-plain-function-declares-by-its-decorator []  ; 名乗る
+(defn [pytest.mark.slow pytest.mark.realtime] #^ None test-a-plain-function-declares-by-its-decorator []  ; declares
   "A plain-function test (not a deftest) declares by the marks in its decorator list. A program's sleep defined inside the function is also inside the declared function."
   (defk counted []
     {:pre [] :post [(: % int)]}

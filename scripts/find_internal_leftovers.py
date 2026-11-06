@@ -75,6 +75,8 @@ SHAPE_DEFINITIONS = frozenset(
         "scripts/check_no_operator_quotes.py",
         "tests/misc/test_check_no_operator_quotes.py",
         "tests/misc/test_find_internal_leftovers.py",
+        # spells this file's Japanese words to keep them out of the Japanese-line count
+        "scripts/count_japanese.py",
     }
 )
 # Directories never walked (only matters when ROOT is not a git work tree, or one is tracked).
@@ -156,7 +158,8 @@ DATED_SOURCE = (
 )
 VERB_SOURCE = re.compile(
     SPEAKER
-    + r"\s*の?\s*(?:決定|裁定|指示|判断|答え|要望|依頼|directive|decision|ruling|verdict|request)"
+    # an optional possessive particle (U+306E) between the speaker and the decision word
+    + r"\s*\u306e?\s*(?:決定|裁定|指示|判断|答え|要望|依頼|directive|decision|ruling|verdict|request)"
 )
 SHORT_MARK = re.compile(r"(?:決定|裁定|decision|directive|ruling)\s*20\d{2}-\d{2}-\d{2}")
 SPEAKER_WORD = re.compile(SPEAKER)
@@ -293,7 +296,8 @@ TOKEN = re.compile(
 
 # ---- kind 5: Japanese-only note ---------------------------------------------------------------
 
-JAPANESE = re.compile(r"[぀-ヿ一-鿿]")
+# Hiragana and katakana (U+3040-U+30FF) and the CJK unified ideographs (U+4E00-U+9FFF).
+JAPANESE = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
 CODE_SUFFIXES = frozenset(
     {
         ".py",

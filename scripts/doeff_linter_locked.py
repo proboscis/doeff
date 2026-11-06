@@ -34,7 +34,10 @@ import tomllib
 
 CRATE: str = "packages/doeff-linter"
 INPUT_ENTRIES: tuple[str, ...] = ("src", "data", "Cargo.toml", "Cargo.lock", "build.rs")
-KEY_PREFIX: str = "doeff-linter の組み立ての入力 "
+KEY_PREFIX: str = "doeff-linter build inputs "
+#: A key ends with the 40-digit digest of the build inputs. Stores written before 2026-11-06 hold the same digest after the former prefix (a Japanese phrase for
+#: "doeff-linter build inputs"), so keys are matched by that digest (same_key) -- a store built before the prefix changed is still found.
+KEY_DIGEST = re.compile(r"(?:^|\s)([0-9a-f]{40})$")
 BIN_NAME: str = "doeff-linter"
 DEV_RECORD: str = "installed.json"
 #: Keys written at build time -- the field name in land-arm's record (installed.json) and the file name inside a snapshot dir. If written, the check needs no git
@@ -153,6 +156,17 @@ def _snapshot_candidates() -> list[Candidate]:
     ]
 
 
+def key_digest(key: str) -> str:
+    """The digest a key ends with (the whole text when it ends with none -- such as the `--version` line binary_key falls back to)."""
+    found = KEY_DIGEST.search(key)
+    return found.group(1) if found is not None else key
+
+
+def same_key(first: str | None, second: str | None) -> bool:
+    """Whether two keys name the same build inputs (by digest, so a key written under the former prefix matches -- KEY_DIGEST). None matches nothing."""
+    return first is not None and second is not None and key_digest(first) == key_digest(second)
+
+
 def candidate_key(top: Path, candidate: Candidate) -> str | None:
     """The key of a binary in a store: the key written at build time if present (no git), otherwise computed with git from the built commit."""
     return candidate.recorded if candidate.recorded is not None else input_key(top, candidate.commit)
@@ -161,7 +175,7 @@ def candidate_key(top: Path, candidate: Candidate) -> str | None:
 def locate(top: Path, key: str) -> Located | None:
     """Search for a binary whose key matches, in the order land-arm dev build -> snapshot store (nothing is built). None if absent."""
     for candidate in (*_dev_candidate(), *_snapshot_candidates()):
-        if candidate_key(top, candidate) == key:
+        if same_key(candidate_key(top, candidate), key):
             return Located(candidate.binary, candidate.source)
     return None
 

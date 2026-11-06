@@ -121,7 +121,7 @@ class Form:
             return second.text
         if isinstance(second, Text):
             return second.content
-        return "<名なし>"  # kept: also used by tests/test_enforcement_ledger.py and recorded in ledger names ("<unnamed>")
+        return "<unnamed>"  # the same spelling as tests/test_enforcement_ledger.py
 
 
 class _Reader:
