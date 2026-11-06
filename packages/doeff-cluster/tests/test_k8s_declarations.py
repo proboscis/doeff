@@ -1797,7 +1797,7 @@ OOM_SCOPE_GPU_RUNTIME_CLASS = "runc-oomscope-nvidia"
 OOM_SCOPE_RUNTIME_NODES = ("zeus",)
 # NVIDIA container toolkit を入れた機体(GPU の RuntimeClass を使えるのはここだけ)と、その RuntimeClass で worker を走らせる機体。
 GPU_TOOLKIT_NODES = ("zeus",)
-GPU_WORKER_NODES: tuple[str, ...] = ()
+GPU_WORKER_NODES: tuple[str, ...] = ("zeus",)
 OOM_SCOPE_RUNTIME_TOML = PACKAGE / "deploy" / "oom-scope-shim" / "runtime.toml"
 
 
