@@ -5,13 +5,13 @@ A consumer's verification runs on the doeff version the consumer pinned, so a br
 runs the consumer probe (PROBE -- a check for whether the doeff_adr names imported by the .hy files in the consumer's docs/adr exist) with the python that ran this tool (the measured doeff tree's
 environment), and emits each red check as one line
 
-    consumer_follow: 赤 <consumer> <first 12 chars of consumer commit> <check id> — <first line of the reason>
+    consumer_follow: red <consumer> <first 12 chars of consumer commit> <check id> — <first line of the reason>
 
 to standard output. The daily task collects them as a later stage report (AfterReport of agora-controllers) and puts them on a red card.
 
 Consumers are derived, not listed in a table: among the places to search (home dotfiles and each repo under home repos), repos whose root or one-level-down pyproject.toml depends on a doeff distribution
 (doeff, doeff-*). Only consumers that have the probe are run. The consumer's conftest reads the consumer's environment dependencies, so it is not read (--noconftest) --
-a check that requires a fixture from the consumer's conftest counts as an "unmeasured check" and is not red. Finally, as a marker that the later stage ran to the end, `consumer_follow: 数え …` is
+a check that requires a fixture from the consumer's conftest counts as an "unmeasured check" and is not red. Finally, as a marker that the later stage ran to the end, `consumer_follow: count …` is
 emitted (so that a run with 0 report lines is read as "fixed"). A run with no consumer that has the probe turns the disappearance of the measurement into a red line (it is not read as green).
 """
 
@@ -28,8 +28,8 @@ from typing import Literal
 
 import tomllib
 
-REPORT_PREFIX = "consumer_follow: 赤 "  # wire format: read by the later-stage collector, keep as is
-COUNT_PREFIX = "consumer_follow: 数え "  # wire format, keep as is
+REPORT_PREFIX = "consumer_follow: red "  # wire format: the later-stage collector (agora-controllers AfterReport) matches this spelling
+COUNT_PREFIX = "consumer_follow: count "  # wire format, same reader
 PROBE = Path("docs/adr/test_doeff_adr_api_follows.py")
 # Upper limit for one probe run. Measured: one probe of dotfiles in a cold environment took 172 seconds (2026-10-30) -- about 7 times that.
 PROBE_TIMEOUT_S = 1200
@@ -216,7 +216,7 @@ def report_lines(home: Path, python: str = sys.executable) -> list[str]:
     )
     lines = [*red, *absent]
     count = (
-        f"{COUNT_PREFIX}赤 {len(lines)} lines ({len(found)} consumers, {len(probed)} with a probe, "
+        f"{COUNT_PREFIX}{len(lines)} red lines ({len(found)} consumers, {len(probed)} with a probe, "
         f"{sum(r.measured for _c, _h, r in results)} checks measured, {sum(r.unmeasured for _c, _h, r in results)} unmeasured)"
     )
     return [*lines, count]

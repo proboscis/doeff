@@ -11,7 +11,8 @@ letter. It only counts; it translates and changes nothing.
 
 Left out: binary files (a NUL byte in the first 8 KiB, which covers images), ``publications/``
 (moving to another repository) and the directories in ``EXCLUDED_DIRS``. Words in ``KEEP`` (proper
-nouns that stay Japanese) are removed from a line before it is tested.
+nouns that stay Japanese) are removed from a line before it is tested, and so are the words in
+``KEEP_IN`` within the one file named for them.
 
 Usage::
 
@@ -34,7 +35,9 @@ from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
-JAPANESE = re.compile("[ぁ-ゖァ-ヺー々㐀-䶿一-鿿]")
+# Hiragana (U+3041-U+3096), katakana (U+30A1-U+30FA), the prolonged sound mark (U+30FC), the iteration mark
+# (U+3005), CJK extension A (U+3400-U+4DBF) and the CJK unified ideographs (U+4E00-U+9FFF).
+JAPANESE = re.compile("[\u3041-\u3096\u30a1-\u30fa\u30fc\u3005\u3400-\u4dbf\u4e00-\u9fff]")
 
 # Words that stay Japanese: proper nouns (a name of a person, a place, a product) and fixed spellings
 # that code matches, each with the reason it cannot be translated.
@@ -45,6 +48,32 @@ KEEP: tuple[str, ...] = (
     # no reason; the reason after the marker is written in English.
     "defk にできない",
 )
+
+# Words that stay Japanese in one file only: the Japanese words that a detector of Japanese provenance matches (its
+# patterns must spell them as they are written) and the test inputs that name them. Kept per file so that the same
+# words left untranslated anywhere else are still counted. Each word is the Japanese for the English beside it in the
+# same pattern; a translated word would stop the detector from finding the Japanese text it is there to find.
+_PROVENANCE_SPEAKERS: tuple[str, ...] = ("利用者", "ユーザー", "オペレーター")  # "user", "user", "operator"
+_VERBATIM_WORDS: tuple[str, ...] = ("逐語", "原文")  # "verbatim", "original text"
+KEEP_IN: dict[str, tuple[str, ...]] = {
+    "scripts/check_no_operator_quotes.py": (*_PROVENANCE_SPEAKERS, *_VERBATIM_WORDS),
+    "tests/misc/test_check_no_operator_quotes.py": (*_PROVENANCE_SPEAKERS, *_VERBATIM_WORDS),
+    "scripts/find_internal_leftovers.py": (
+        *_PROVENANCE_SPEAKERS,
+        "持ち主の会話",  # "the owner's conversation" (a conversation role)
+        "持ち主",  # "owner"
+        # decision words after a speaker: decision, ruling, instruction, judgement, answer, wish, request
+        "決定", "裁定", "指示", "判断", "答え", "要望", "依頼書", "依頼",
+        # conversation roles of the private tooling: secretary's conversation, patrol, deploy owner, reception's
+        # conversation, the assignee's conversation ("依頼書", "request form", is above)
+        "秘書の会話", "見回り", "配備の担当", "受付の会話", "担当の会話",
+        "会社", "社内", "勤め先",  # employer: company, in-house, workplace
+        # personal TODO words: later (twice), to be checked, memo, myself, to remember, forget
+        "あとで", "後で", "要確認", "メモ", "自分", "覚え", "忘れ",
+    ),
+}
+# This file spells every word above.
+KEEP_IN["scripts/count_japanese.py"] = tuple(dict.fromkeys(word for words in KEEP_IN.values() for word in words))
 
 # Moving to another repository, so not counted here.
 EXCLUDED_PREFIXES: tuple[str, ...] = ("publications/",)
@@ -88,7 +117,7 @@ def japanese_lines(root: Path, rel: str) -> list[int]:
         return []
     hits = []
     for number, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
-        for word in KEEP:
+        for word in (*KEEP, *sorted(KEEP_IN.get(rel, ()), key=len, reverse=True)):
             line = line.replace(word, "")
         if JAPANESE.search(line):
             hits.append(number)

@@ -247,34 +247,34 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
 @pytest.mark.parametrize(
     ("name", "kind", "form"),
     [
-        ("PingEffect", "effect", "effect の class"),
-        ("ping", "effect", "effect を作る関数"),
-        ("ping_untyped", "effect", "effect を作る関数"),
+        ("PingEffect", "effect", "effect class"),
+        ("ping", "effect", "function making an effect"),
+        ("ping_untyped", "effect", "function making an effect"),
         ("ping_handler", "handler", "handler"),
-        ("ping_handler_factory", "handler", "handler を返す関数"),
-        ("ping_handler_untyped", "handler", "handler を返す関数"),
-        ("raw_ping", "handler", "素の handler の関数"),
-        ("flow", "other", "program の helper"),
-        ("flow_handled", "other", "handler を被せる program を返す関数"),
-        ("flow_wrapped", "other", "handler を被せる program を返す関数"),
-        ("flow_answering", "other", "effect に答える program を返す関数"),
-        ("flow_with_handlers", "other", "handler を被せる program を返す関数"),
-        ("size", "other", "換算の関数"),
-        ("step", "other", "作り手"),
-        ("LIMIT", "other", "定数"),
+        ("ping_handler_factory", "handler", "function returning a handler"),
+        ("ping_handler_untyped", "handler", "function returning a handler"),
+        ("raw_ping", "handler", "bare handler function"),
+        ("flow", "other", "program helper"),
+        ("flow_handled", "other", "function returning a program that installs a handler"),
+        ("flow_wrapped", "other", "function returning a program that installs a handler"),
+        ("flow_answering", "other", "function returning a program that answers an effect"),
+        ("flow_with_handlers", "other", "function returning a program that installs a handler"),
+        ("size", "other", "conversion function"),
+        ("step", "other", "builder"),
+        ("LIMIT", "other", "constant"),
         ("SessionHandler", "unclassified", "class"),
         ("PongEffect", "unclassified", "class"),
-        ("helper", "unclassified", "関数"),
-        ("raw_ping_program", "handler", "素の handler の関数"),
-        ("ping_handler_vague", "handler", "handler を返す関数"),
-        ("helper_vague", "unclassified", "関数"),
-        ("ping_handler_stack", "handler", "handler の組を返す関数"),
-        ("make_session", "unclassified", "関数"),
-        ("not_a_ping_handler_factory", "other", "handler を返さない関数"),
-        ("not_a_ping_handler_stack", "other", "handler を返さない関数"),
-        ("ping_handler_for", "handler", "handler を返す関数"),
-        ("ping_handler_reading", "handler", "handler を返す関数"),
-        ("not_a_ping_handler_for", "other", "handler を返さない関数"),
+        ("helper", "unclassified", "function"),
+        ("raw_ping_program", "handler", "bare handler function"),
+        ("ping_handler_vague", "handler", "function returning a handler"),
+        ("helper_vague", "unclassified", "function"),
+        ("ping_handler_stack", "handler", "function returning a handler stack"),
+        ("make_session", "unclassified", "function"),
+        ("not_a_ping_handler_factory", "other", "function not returning a handler"),
+        ("not_a_ping_handler_stack", "other", "function not returning a handler"),
+        ("ping_handler_for", "handler", "function returning a handler"),
+        ("ping_handler_reading", "handler", "function returning a handler"),
+        ("not_a_ping_handler_for", "other", "function not returning a handler"),
     ],
 )
 def test_names_are_typed_by_marker_return_type_and_return_shape(
@@ -426,7 +426,7 @@ def test_a_factory_is_called_with_home_and_cwd_in_a_scratch_dir(
     verdict = tool._Classifier().classify(
         sample.ping_handler_with_state_dir, "ping_handler_with_state_dir"
     )
-    assert (verdict.kind, verdict.form) == ("handler", "handler を返す関数")
+    assert (verdict.kind, verdict.form) == ("handler", "function returning a handler")
     assert "with no arguments, calling it returns a handler" in verdict.reason
     assert list(home.iterdir()) == []
     assert list(work.iterdir()) == []
@@ -522,7 +522,7 @@ def test_real_package_scripts_entry_points_and_macros(
     rows = _rows(real_packages["doeff-adr"])
     assert rows[("(console script)", "doeff-adr")]["form"] == "console script"
     assert rows[("(entry point)", "pytest11:doeff_adr")]["form"] == "entry point(pytest11)"
-    assert rows[("doeff_adr.macros", "defadr")]["form"] == "Hy の macro"
+    assert rows[("doeff_adr.macros", "defadr")]["form"] == "Hy macro"
 
 
 @pytest.mark.timeout(_REAL_PACKAGES_BUDGET)

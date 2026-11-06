@@ -56,7 +56,7 @@ MARK = "realtime"
 HY_RULE_SAMPLES = ("packages/doeff-linter/tests/fixtures", FIXTURES)
 # Shared fixtures that confirm the rule (Rust) and this reader (Python) read the same forms as declarations
 HY_SAMPLES = REPO_ROOT / "packages" / "doeff-linter" / "tests" / "fixtures" / "test_sleep"
-HY_DECLARES = "; 名乗る"
+HY_DECLARES = "; declares"
 
 
 def _is_realtime(node: ast.expr) -> bool:

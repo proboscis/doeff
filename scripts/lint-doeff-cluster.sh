@@ -37,7 +37,7 @@ fi
 # (scripts/doeff_linter_locked.py) -- the warning baseline has no version, so if not counted with the tree's linter, red and green
 # silently change with the version difference. If absent from the stores, name it "unmeasurable" and pass (nothing is built inside the hook -- the same as the root Python entry).
 if ! LINTER="$(cd "$TOP" && uv run --no-project python scripts/doeff_linter_locked.py which)"; then
-  echo "doeff-linter($PACKAGE): 測れない (unmeasurable) -- HEAD's linter binary is not in the stores (see the line above). Nothing is built inside the hook" \
+  echo "doeff-linter($PACKAGE): not measurable -- HEAD's linter binary is not in the stores (see the line above). Nothing is built inside the hook" \
     "-- wait for land-arm to rebuild main's linter, or merge main" >&2
   exit 0
 fi

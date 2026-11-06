@@ -39,12 +39,12 @@ checker = _load_checker()
         "(operator 2026-09-28 \"i want it to show more like (dict,str)->JsonAnswer\")",
         '"source": "operator 2026-09-30 \\"show info on hover so i can tell\\""',
         "利用者 2026-10-12 22:38「why not doeff's time effects?」",
-        "利用者の決定 2026-10-07 10:4x(原文・一字も変えない): 「汎用の DB の API を出さない」",
-        "operator 裁定伝言 2026-08-17『テストはk3sでやって』",
-        "ユーザーの答え(2026-10-20 02:20〜02:21)。連載の形は「2つの連載に分ける」",
-        "2026-10-20のユーザーの答え「AIが公開する」",
-        ";; 出自 = operator 2026-09-26「and perhaps we should use macro for enum」。",
-        "operator の直接の指示(会話 x)。逐語: \"go with D\"",
+        "利用者 decision 2026-10-07 10:4x (原文, not one letter changed): 「do not expose a general DB API」",
+        "operator ruling relayed 2026-08-17『run the tests on k3s』",
+        "ユーザー answer (2026-10-20 02:20〜02:21). The series takes the shape「split it into two series」",
+        "2026-10-20 ユーザー answer「the AI publishes it」",
+        ";; source = operator 2026-09-26「and perhaps we should use macro for enum」.",
+        "operator direct instruction (conversation x). 逐語: \"go with D\"",
         "(2026-07-21 maintainer directive: \"all changes land via orch\")",
     ],
 )
@@ -56,16 +56,16 @@ def test_dated_quotes_of_the_maintainer_are_stopped(line: str) -> None:
     "line",
     [
         # provenance as a short mark or a tracker pointer, the reason in the record's own words
-        "operator の決定 2026-09-29(#849): 責務の境界の違反はどの repo でも critical にする。",
+        "operator decision 2026-09-29 (#849): a responsibility-boundary violation is critical in every repo.",
         "decision 2026-09-28 (card ki-94380dba532f): show linter findings where they occur.",
         '"source": "operator 2026-09-30"',
         # a quoted name or message that is not the maintainer's words
-        "claude 2.1.274 が返す誤りの文 \"It must be 'auto', or between 100k and 1M\"",
+        "the error text claude 2.1.274 returns \"It must be 'auto', or between 100k and 1M\"",
         'raise ValueError(f"window {size} must be between 100k and 1M")',
-        "2026-10-10 16:18 の日次の log「doeff-20261010」を読む",
+        "read the daily log of 2026-10-10 16:18「doeff-20261010」",
         # a date, a speaker and a quote char that do not form a quote
         'assert record["operator"] == "2026-09-29", "x"',
-        "利用者 2026-10-04 の決定で、hook は「穴」を塞ぐ",
+        "by the 利用者 decision of 2026-10-04 the hook closes the「x」",
     ],
 )
 def test_lines_without_a_dated_quote_pass(line: str) -> None:
@@ -73,7 +73,7 @@ def test_lines_without_a_dated_quote_pass(line: str) -> None:
 
 
 def test_scan_text_reports_the_line_number() -> None:
-    text = "first\nsecond\n利用者 2026-10-02「頼んでいない token を入れない」\n"
+    text = "first\nsecond\n利用者 2026-10-02「do not put in a token nobody asked for」\n"
     findings = list(checker.scan_text("a.md", text))
     assert [(f.where, f.line_no) for f in findings] == [("a.md", 3)]
 

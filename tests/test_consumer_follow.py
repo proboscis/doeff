@@ -117,7 +117,7 @@ def test_probe_reds_become_report_lines_and_consumer_fixtures_are_unmeasured(
     ), lines[0]
     assert (
         lines[1]
-        == f"{tool.COUNT_PREFIX}赤 1 lines (1 consumers, 1 with a probe, 2 checks measured, 2 unmeasured)"
+        == f"{tool.COUNT_PREFIX}1 red lines (1 consumers, 1 with a probe, 2 checks measured, 2 unmeasured)"
     )
 
 
@@ -131,7 +131,7 @@ def test_probe_that_does_not_collect_is_red(tmp_path: Path) -> None:
     assert len(lines) == 2, lines
     assert lines[0].startswith(f"{tool.REPORT_PREFIX}dotfiles "), lines[0]
     assert "name_that_was_removed" in lines[0], lines[0]
-    assert lines[1].startswith(f"{tool.COUNT_PREFIX}赤 1 lines"), lines[1]
+    assert lines[1].startswith(f"{tool.COUNT_PREFIX}1 red lines"), lines[1]
 
 
 def test_no_consumer_with_a_probe_is_red(tmp_path: Path) -> None:
@@ -147,5 +147,5 @@ def test_no_consumer_with_a_probe_is_red(tmp_path: Path) -> None:
     ), lines
     assert (
         lines[1]
-        == f"{tool.COUNT_PREFIX}赤 1 lines (1 consumers, 0 with a probe, 0 checks measured, 0 unmeasured)"
+        == f"{tool.COUNT_PREFIX}1 red lines (1 consumers, 0 with a probe, 0 checks measured, 0 unmeasured)"
     )

@@ -1309,7 +1309,7 @@ def test_a_factory_whose_call_is_not_a_handler_turns_red(tmp_path: Path) -> None
     package = _read_fixture(repo)
     check_package(package, table)
     [row] = [row for row in package["exports"] if row["name"] == "ping_handlers"]
-    assert (row["kind"], row["form"]) == ("handler", "handler を返す関数")
+    assert (row["kind"], row["form"]) == ("handler", "function returning a handler")
     assert row["reason"].endswith("calling it returns a handler")
 
 
@@ -1864,10 +1864,10 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
     package = _read_fixture(repo)
     forms = {row["name"]: row["form"] for row in package["exports"]}
     assert (forms["ReadAnswer"], forms["Mood"], forms["Settings"], forms["Listener"]) == (
-        "型",
+        "type",
         "Enum",
         "class",
-        "型",
+        "type",
     )
     places = {shown["name"]: shown["answers"] for shown in package["answer_types"]}
     assert places == {
@@ -1875,7 +1875,7 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
         "Reading": ["ReadEffect"],
         "Refused": ["ReadEffect"],
         "Mood": ["Calm.mood", "Reading.mood"],
-        "Calm": ["Reading の子"],
+        "Calm": ["child of Reading"],
     }
     answers = ["Calm", "Mood", "ReadAnswer", "Reading", "Refused"]
     rest = ["Echoed", "Event", "Listener", "Settings"]
@@ -1945,7 +1945,7 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + BUS_EVENTS)
     package = _read_fixture(repo)
     places = {shown["name"]: shown["answers"] for shown in package["answer_types"]}
-    assert places == {"Fired": ["AwaitEventEffect の bus の event"], "Cause": ["Fired.cause"]}
+    assert places == {"Fired": ["bus event of AwaitEventEffect"], "Cause": ["Fired.cause"]}
     events = ["Cause", "Fired"]
 
     def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
@@ -2169,7 +2169,7 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
 
     check_package(package, *tables({}), commands=FIXTURE_COMMANDS)
     misplaced = [
-        ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(public submodule)(公開の submodule・"),
+        ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(public submodule)(public submodule・"),
         ((FIXTURE_ROOT, "helper"), MACRO_GROUP, f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・"),
         (
             ("(console script)", "fixture-command"),

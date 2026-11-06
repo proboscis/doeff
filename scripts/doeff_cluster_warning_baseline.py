@@ -131,7 +131,7 @@ def _package_paths(repo_paths: list[str]) -> list[str]:
 
 def _line(finding: Finding) -> str:
     """To emit one line of the reason for red (rule, file, baseline and current count)."""
-    return f"  {finding.rule} {finding.path}: 基点 {finding.baseline} → 今 {finding.current}"
+    return f"  {finding.rule} {finding.path}: baseline {finding.baseline} → now {finding.current}"
 
 
 def main(argv: list[str]) -> int:

@@ -116,7 +116,7 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
     result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check"], cwd=repo, env=environment,
                             capture_output=True, text=True, check=False)
     assert result.returncode == 1, result.stderr
-    assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in result.stderr
+    assert "DOEFF172 src/a.hy: baseline 2 → now 3" in result.stderr
     # Green when it matches the baseline.
     report_ok = [{"rule": "DOEFF172", "severity": "warning",
                   "violations": [{"file": "src/a.hy"}, {"file": "src/a.hy"}, {"file": "src/b.hy"}]}]
@@ -165,7 +165,7 @@ def test_absolute_paths_from_another_tree_are_keyed_from_the_package(tmp_path: P
     staged = subprocess.run([sys.executable, str(SCRIPT), "--root", str(grown_root), "check", "packages/doeff-cluster/src/a.hy"],
                             env=environment, capture_output=True, text=True, check=False)
     assert staged.returncode == 1, staged.stderr
-    assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in staged.stderr
+    assert "DOEFF172 src/a.hy: baseline 2 → now 3" in staged.stderr
 
 
 def test_the_linter_given_by_the_hook_is_used_instead_of_the_path_one(tmp_path: Path) -> None:
@@ -180,7 +180,7 @@ def test_the_linter_given_by_the_hook_is_used_instead_of_the_path_one(tmp_path: 
     result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root), "--linter", str(given), "check"],
                             env=environment, capture_output=True, text=True, check=False)
     assert result.returncode == 1, result.stderr
-    assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in result.stderr
+    assert "DOEFF172 src/a.hy: baseline 2 → now 3" in result.stderr
     assert "the search-path linter" not in result.stderr
 
 
@@ -277,5 +277,5 @@ def test_the_cluster_hook_names_unmeasured_and_passes_without_a_binary(tmp_path:
     result = subprocess.run(["sh", "scripts/lint-doeff-cluster.sh", "packages/doeff-cluster/src/a.hy"], cwd=rig.repo,
                             env=rig.environment, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert "測れない" in result.stderr
+    assert "not measurable" in result.stderr
     assert not (tmp_path / "path-linter-called").exists()

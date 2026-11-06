@@ -3,11 +3,11 @@
 Rule: tests/test_public_api_known_violations.py is run by neither the merge queue nor the commit-time hook. So a commit that adds a public name without
 updating the table lands on main and only starts failing in the daily full verification. This tool prints each failing name, one per line, as
 
-    public_api_blame: <package> <module>.<name> <first 12 chars of the adding commit> <card or request id> <subject>
+    public_api_blame: added <package> <module>.<name> <first 12 chars of the adding commit> <card or request id> <subject>
 
 to stdout; the daily task collects them as the stage's report (agora-controllers AfterReport) and attaches them to a red card. The adding commit is
 the first hit of `git log -S<name> --reverse` (the commit that first added the name). Matching uses the same function as the test (unlisted_names).
-Finally it prints `public_api_blame: 数え <N> 個` as the mark that the stage ran to the end (so a run with 0 report lines reads as "fixed").
+Finally it prints `public_api_blame: count <N> lines` as the mark that the stage ran to the end (so a run with 0 report lines reads as "fixed").
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORT_PREFIX = "public_api_blame: 足した "
-COUNT_PREFIX = "public_api_blame: 数え "
+REPORT_PREFIX = "public_api_blame: added "  # wire format: the later-stage collector (agora-controllers AfterReport) matches this spelling
+COUNT_PREFIX = "public_api_blame: count "  # wire format, same reader
 _ID_RE = re.compile(r"\b(ki-[0-9a-f]{12}|lt-[0-9A-Z]{26})")
 
 
@@ -78,7 +78,7 @@ def main() -> int:
     lines = report_lines()
     for line in lines:
         print(line)
-    print(f"{COUNT_PREFIX}{len(lines)} 個")
+    print(f"{COUNT_PREFIX}{len(lines)} lines")
     return 0
 
 
