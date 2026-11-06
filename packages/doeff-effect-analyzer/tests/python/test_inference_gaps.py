@@ -532,11 +532,13 @@ def test_residual_through_an_env_and_recursion_through_a_scope(pkg: str) -> None
 
     looping = analyze_program(f"{pkg}.programs:looping")  # terminates
     assert _types(looping.effect_types) == {"Tick"}
-    # A `handle` clause that runs the Program installing it again: read once, then
-    # the inner visit is unread (named, so coverage stays incomplete) — not a hang.
+    # A `handle` clause that runs the Program installing it again: the inner visit is the
+    # same handler (its Tick clause answers there), and what leaves the clause is worked
+    # out until nothing more is added (test_handlers_installed_again.py) — not a hang.
+    # Only Nap leaves, and no handler is left unread.
     recursive = analyze_program(f"{pkg}.programs:recursive_inline")
-    assert "Nap" in _types(recursive.effect_types)
-    assert recursive.residual.unknown_handlers != ()
+    assert _types(recursive.effect_types) == {"Nap"}
+    assert recursive.residual.unknown_handlers == ()
 
 
 # --------------------------------------------------------------------------- 2. defk / deff builders
