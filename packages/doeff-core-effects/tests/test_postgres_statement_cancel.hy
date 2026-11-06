@@ -36,14 +36,14 @@
 (defclass Countdown []
   "A counter that counts things happening across threads and calls done exactly once at the total-th one (the test shell - a resource, so not a value type)."
 
-  (deff __init__ [self total done]  ; defk にできない: initialization of a test-shell resource
+  (deff __init__ [self total done]  ; cannot be a defk: initialization of a test-shell resource
     {:pre [(: self Countdown) (: total int) (: done "callable () -> None")] :post [(: % None)]}
     "To receive the count to reach and the call to make when it is reached."
     (setv self.lock (threading.Lock)
           self.left total
           self.done done))
 
-  (deff tick [self]  ; defk にできない: entry called from the driver's thread (outside the VM)
+  (deff tick [self]  ; cannot be a defk: entry called from the driver's thread (outside the VM)
     {:pre [(: self Countdown)] :post [(: % None)]}
     "To count one and call done if it is the total-th."
     (with [_ self.lock]
@@ -56,7 +56,7 @@
   "The fake connection lease (see the header comment). Permits are counted with the same per-database inter-thread lock (PERMITS of them) as the real acquire, and
    FakeLease is lent instead of a connection. arrivals = the counter of arrivals to lease, cancelled = the cancellation mark, returned = the counter of returns."
 
-  (deff __init__ [self arrivals cancelled returned]  ; defk にできない: initialization of a test-shell resource
+  (deff __init__ [self arrivals cancelled returned]  ; cannot be a defk: initialization of a test-shell resource
     {:pre [(: self StalledConnections) (: arrivals Countdown) (: cancelled threading.Event) (: returned Countdown)] :post [(: % None)]}
     "To receive the counters and the cancellation mark and make a lease of one database with PERMITS permits."
     (PostgresConnections.__init__ self #((PostgresDatabase :name DB :dsn "")) :size PERMITS)
@@ -64,14 +64,14 @@
           self.cancelled cancelled
           self.returned returned))
 
-  (deff acquire [self name]  ; defk にできない: same entry as the real acquire (waits blockingly on the driver's thread)
+  (deff acquire [self name]  ; cannot be a defk: same entry as the real acquire (waits blockingly on the driver's thread)
     {:pre [(: self StalledConnections) (: name str)] :post [(: % FakeLease)]}
     "To count the arrival, wait for a permit, and when obtained write into the token whether the cancellation mark was set and lend it."
     (.tick self.arrivals)
     (.acquire (get self.permits name))
     (FakeLease :granted-after-cancel (.is-set self.cancelled)))
 
-  (deff release [self name connection]  ; defk にできない: same entry as the real release (called on the driver's thread)
+  (deff release [self name connection]  ; cannot be a defk: same entry as the real release (called on the driver's thread)
     {:pre [(: self StalledConnections) (: name str) (: connection FakeLease)] :post [(: % None)]}
     "To return the permit and count the return."
     (.release (get self.permits name))
@@ -82,7 +82,7 @@
   "An Executor that runs the given work on threads the same as ReusedThreads, but only holds the first work (the work of lease, statement, and return of one statement) without starting it (test shell -
    a resource, so not a value type). When it holds it, it completes holding with the held Future. The held work does not run."
 
-  (deff __init__ [self holding]  ; defk にできない: initialization of a test-shell resource
+  (deff __init__ [self holding]  ; cannot be a defk: initialization of a test-shell resource
     {:pre [(: self HoldingFirstCall) (: holding "scheduler ExternalPromise")] :post [(: % None)]}
     "To receive the promise that announces it held, and also place the ReusedThreads field that runs other work."
     (ReusedThreads.__init__ self)
@@ -90,7 +90,7 @@
           self.lock (threading.Lock)
           self.calls 0))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor's entry (a concurrent.futures promise - outside the VM)
+  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self HoldingFirstCall) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
     "To hold only the first work as a Future that does not start, and run the others the same as ReusedThreads."
     (with [_ self.lock]
@@ -106,14 +106,14 @@
 (defclass CountingPool [ReusedThreads]
   "An Executor that runs the given work on threads the same as ReusedThreads and counts the number of works given (test shell - a resource, so not a value type)."
 
-  (deff __init__ [self]  ; defk にできない: initialization of a test-shell resource
+  (deff __init__ [self]  ; cannot be a defk: initialization of a test-shell resource
     {:pre [(: self CountingPool)] :post [(: % None)]}
     "To place the counting field and the ReusedThreads field that runs other work."
     (ReusedThreads.__init__ self)
     (setv self.lock (threading.Lock)
           self.calls 0))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor's entry (a concurrent.futures promise - outside the VM)
+  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self CountingPool) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
     "To count the given work and then run it the same as ReusedThreads."
     (with [_ self.lock]

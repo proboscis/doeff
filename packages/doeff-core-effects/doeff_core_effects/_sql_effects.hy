@@ -399,14 +399,14 @@
 ;; Driver values have different types per driver and look like object to the type checker. Two predicates are placed here that convey the result of checking a value's type at runtime
 ;; as the static type of the checked value (no escape-hatch cast; the check and the type correspond at exactly one point each - #2939).
 
-;; Cannot be a defk: a predicate that provides type narrowing (TypeGuard) - returning a Program would be neither a boolean nor a type narrowing.
+;; cannot be a defk: a predicate that provides type narrowing (TypeGuard) - returning a Program would be neither a boolean nor a type narrowing.
 (defn #^ (get TypeGuard DriverValue) is-driver-value [#^ object value]
   "Check whether a driver value is of a type with a rule for mapping into the closed set (DriverValue). If true, the type checker is told the value is a DriverValue
    (isinstance narrowing would turn the generic memoryview into an unknown type, making the place that passes it to the mapping function red)."
   (isinstance value DriverValue))
 
 
-;; Cannot be a defk: a predicate that provides type narrowing (TypeGuard) - returning a Program would be neither a boolean nor a type narrowing.
+;; cannot be a defk: a predicate that provides type narrowing (TypeGuard) - returning a Program would be neither a boolean nor a type narrowing.
 (defn #^ (get TypeGuard (get Sequence (get Sequence SqlValue))) is-plain-rows
   [#^ (| (get list (get tuple #(object ...))) (get tuple #((get tuple #(object ...)) ...))) rows]
   "Check whether the types of all values in the columns of a driver row are exactly types of the closed set (PLAIN-VALUE-TYPES). If true, the row's columns are conveyed to the type checker as a sequence of sequences of SqlValue

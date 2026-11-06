@@ -578,7 +578,7 @@
       (.close connection))))
 
 
-(deff ask-while-held [address held release box]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff ask-while-held [address held release box]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: address HttpAddress) (: held threading.Event) (: release threading.Event) (: box queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "After the main flow is blocked, wait until the beat is old, send two probe-port requests and one request that reaches the main body, put the answers in box, and release the flow (put the exception on failure)."
@@ -693,7 +693,7 @@
   (- after before))
 
 
-(deff ask-once [box answers]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff ask-once [box answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "To send one GET once the listener is open and put the answer in answers (put the exception on failure)."
@@ -778,7 +778,7 @@
   (- after before))
 
 
-(deff hear-until-closed [box answers]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff hear-until-closed [box answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "To connect by ws once the listener is open, and put the sequence of text messages received up to the close frame and the close status code in answers (put the exception on failure)."
@@ -861,7 +861,7 @@
       (.close connection))))
 
 
-(deff send-once [box answers]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff send-once [box answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "To send one POST with a body once the listener is open and put the answer in answers (put the exception on failure)."
@@ -963,7 +963,7 @@
   #((- after before) taken))
 
 
-(deff ask-in-wave [address path sent answers]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff ask-in-wave [address path sent answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: address HttpAddress) (: path str) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "After finishing sending one GET, put a mark in sent and put the answer #(path body) in answers (put the exception on failure)."
@@ -981,7 +981,7 @@
   None)
 
 
-(deff fire-wave [box sent answers]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff fire-wave [box sent answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "To send WAVE-SIZE GETs at once from separate connections once the listener is open (/w0 ...)."
@@ -1117,7 +1117,7 @@
   listener)
 
 
-(deff answer-ws-late [delay box]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff answer-ws-late [delay box]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: delay float) (: box queue.Queue)] :post [(: % None)] :tags {:context "http-server-test" :role "foundation"}}
   "The target's counterpart: accept the TCP connection at once, delay the ws handshake answer (101) by delay seconds, and after upgrading return each text message with echo: attached.
    It listens on this thread's event loop, puts the bound port in box, and listens until one ws connection ends (at most UPSTREAM-LIFE-SECONDS)."
@@ -1191,7 +1191,7 @@
       (.close loop))))
 
 
-(deff dial-once [box answers texts quiet]  ; defk にできない: a callback that threading.Thread calls on another thread
+(deff dial-once [box answers texts quiet]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue) (: texts tuple) (: quiet float)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "Once the listener is open, connect by ws once and put the result in answers (put the exception on failure), and send /done to make the listener close."

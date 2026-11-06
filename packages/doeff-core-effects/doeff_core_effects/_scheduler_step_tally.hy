@@ -55,14 +55,14 @@
 (setv #^ threading.Lock LOCK (threading.Lock))
 
 
-(deff empty-task-row [run tid parent]  ; defk にできない: used by note-spawned and note-task-step of the sink (step-sink) called from outside the VM
+(deff empty-task-row [run tid parent]  ; cannot be a defk: used by note-spawned and note-task-step of the sink (step-sink) called from outside the VM
   {:pre [(: run int) (: tid (| int None)) (: parent (| int None))] :post [(: % TaskTally)]
    :tags {:context "step-tally" :role "foundation"}}
   "A row for a task whose steps have not been counted yet."
   (TaskTally :run run :tid tid :parent parent :steps 0 :wall-ns 0 :cpu-ns 0 :vm-steps 0 :handler-calls 0))
 
 
-(deff note-spawned [event]  ; defk にできない: called while holding LOCK, inside the sink (step-sink) that the scheduler's measurement port calls from outside the VM
+(deff note-spawned [event]  ; cannot be a defk: called while holding LOCK, inside the sink (step-sink) that the scheduler's measurement port calls from outside the VM
   {:pre [(: event dict)] :post [(: % None)] :tags {:context "step-tally" :role "foundation"}}
   "To write the parent of one spawned event into the tables of all open task windows, as a child born after the opening time."
   (setv run (get event "run"))
@@ -75,7 +75,7 @@
   None)
 
 
-(deff note-task-step [event]  ; defk にできない: called while holding LOCK, inside the sink (step-sink) that the scheduler's measurement port calls from outside the VM
+(deff note-task-step [event]  ; cannot be a defk: called while holding LOCK, inside the sink (step-sink) that the scheduler's measurement port calls from outside the VM
   {:pre [(: event dict)] :post [(: % None)] :tags {:context "step-tally" :role "foundation"}}
   "To add the step of one task-leave event to that task's row in all task windows whose opening time is before the step's start."
   (setv run (get event "run"))
@@ -94,13 +94,13 @@
   None)
 
 
-(deff task-table [window]  ; defk にできない: task-read and task-closed copy the table while holding LOCK -- LOCK must not be carried across an effect
+(deff task-table [window]  ; cannot be a defk: task-read and task-closed copy the table while holding LOCK -- LOCK must not be carried across an effect
   {:pre [(: window TaskWindow)] :post [(: % tuple)] :tags {:context "step-tally" :role "foundation"}}
   "To answer a window's table as a tuple in (run, tid) order (the root task, with tid None, comes first)."
   (tuple (sorted (.values window.rows) :key (fn [row] #(row.run (if (is row.tid None) -1 row.tid))))))
 
 
-(deff sink-claimed []  ; defk にできない: opened and task-opened call it while holding LOCK before adding a window -- LOCK must not be carried across an effect
+(deff sink-claimed []  ; cannot be a defk: opened and task-opened call it while holding LOCK before adding a window -- LOCK must not be carried across an effect
   {:pre [] :post [(: % None)] :tags {:context "step-tally" :role "foundation"}}
   "When opening the first window (neither a step window nor a task window is open), to install the sink on the measurement port. Refuses if another sink is installed."
   (when (and (not WINDOWS) (not TASK-WINDOWS))
@@ -111,7 +111,7 @@
   None)
 
 
-(deff sink-released []  ; defk にできない: closed and task-closed call it while holding LOCK after removing a window -- LOCK must not be carried across an effect
+(deff sink-released []  ; cannot be a defk: closed and task-closed call it while holding LOCK after removing a window -- LOCK must not be carried across an effect
   {:pre [] :post [(: % None)] :tags {:context "step-tally" :role "foundation"}}
   "When the last window is closed, to remove the sink from the measurement port."
   (when (and (not WINDOWS) (not TASK-WINDOWS) (is (scheduler-trace-sink) step-sink))
@@ -119,7 +119,7 @@
   None)
 
 
-(deff step-sink [event]  ; defk にできない: a sink the scheduler's measurement port calls as a plain function per event from outside the VM
+(deff step-sink [event]  ; cannot be a defk: a sink the scheduler's measurement port calls as a plain function per event from outside the VM
   {:pre [(: event dict)] :post [(: % None)] :tags {:context "step-tally" :role "foundation"}}
   "To advance the open windows with one event. Step window = add the task-leave step to every window containing that step (only windows of the same thread whose step started after the window's opening time
    -- the longest step is compared by wall time, and on a tie the earlier step is kept). Task window = write the parent of spawned and the step of task-leave into the

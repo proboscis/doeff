@@ -16,7 +16,7 @@
 
 (defclass HostNotAllowed [ConnectionError]
   "A request whose destination host is not in the allowed set was stopped for a caller that does not receive failures as values (no connection was made) -- names the url and the allowed set."
-  (defn #^ None __init__ [self #^ str url #^ (get frozenset str) hosts]  ; defk にできない: it is the entry Python calls when building the exception type (__init__)
+  (defn #^ None __init__ [self #^ str url #^ (get frozenset str) hosts]  ; cannot be a defk: it is the entry Python calls when building the exception type (__init__)
     (.__init__ (super) (.format "host of destination {} is not in the allowed set {} -- the request was not sent" url (sorted hosts)))
     (setv self.url url
           self.hosts hosts)))

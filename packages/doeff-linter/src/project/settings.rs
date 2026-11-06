@@ -71,7 +71,7 @@ pub struct DefinitionsSection {
     /// Path segments to exclude (exact match of a dir name).
     #[serde(default)]
     pub exclude_parts: Vec<String>,
-    /// The marker of the reason comment for deff (default `defk にできない:`, meaning "cannot be a defk:").
+    /// The marker of the reason comment for deff (default `cannot be a defk:`; the earlier default `defk にできない:` is read as well).
     pub deff_reason_marker: Option<String>,
     /// Test locations (DOEFF118) — globs (`**` is zero or more levels, `*` is any spelling within a level, a spelling without `/` is matched against the file name).
     #[serde(default)]
@@ -368,7 +368,7 @@ impl ProjectSettings {
             paths: section.paths.iter().map(|p| normalize_dir(p)).collect(),
             exclude: section.exclude.iter().map(|p| normalize_dir(p)).collect(),
             exclude_parts: section.exclude_parts.iter().cloned().collect(),
-            deff_reason_marker: section.deff_reason_marker.clone().unwrap_or_else(|| "defk にできない:".to_string()),
+            deff_reason_marker: section.deff_reason_marker.clone().unwrap_or_else(|| super::DEFAULT_REASON_MARKER.to_string()),
             tags: tag_reading(sections.tags, sections.layers.and_then(|l| l.function_definers.as_ref())),
             test_paths: section.test_paths.clone(),
         });

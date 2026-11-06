@@ -131,7 +131,7 @@
   (#^ str path)
   (setv #^ (| int None) limit None)
   (setv #^ int offset 0)
-  (defn #^ None __post-init__ [self]  ; defk にできない: a check that the dataclass calls at construction (a returned Program would not run)
+  (defn #^ None __post-init__ [self]  ; cannot be a defk: a check that the dataclass calls at construction (a returned Program would not run)
     (when (or (not (isinstance self.offset int)) (isinstance self.offset bool) (< self.offset 0))
       (raise (ValueError f"ReadBytes.offset must be an int >= 0, got {self.offset !r}")))))
 

@@ -47,7 +47,7 @@ use super::smells::{children, live, live_items, span_of, Hy, Scope};
 pub const DEFAULT_EXCLUDES: &[&str] = &["clients/hy/acp_client", "docs/design-checks"];
 
 /// The deff reason marker when the settings give none (same as the default in settings.rs).
-pub const DEFAULT_REASON_MARKER: &str = "defk にできない:";
+pub use super::DEFAULT_REASON_MARKER;
 
 /// Other spellings of the marker for the comment giving the reason to leave a defn as is (existing comments in agora).
 const KEEP_MARKERS: &[&str] = &["defn のまま"];
@@ -696,7 +696,8 @@ fn reason_comment(source: &str, form_start: usize, params_end: usize, marker: &s
     let previous = source[..line_start.saturating_sub(1)].rsplit('\n').next().filter(|l| l.trim_start().starts_with(';')).unwrap_or("");
     [own, previous].into_iter().filter_map(|text| {
         let comment = text.find(';').map(|at| text[at..].trim_start_matches(';').trim())?;
-        (comment.contains(marker) || KEEP_MARKERS.iter().any(|m| comment.contains(m))).then(|| comment.to_string())
+        let marked = super::reason_marker_spellings(marker).into_iter().any(|base| comment.contains(base));
+        (marked || KEEP_MARKERS.iter().any(|m| comment.contains(m))).then(|| comment.to_string())
     }).next()
 }
 

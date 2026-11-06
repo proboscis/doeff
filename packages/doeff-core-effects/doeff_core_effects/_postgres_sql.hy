@@ -182,7 +182,7 @@
    (read by pooled-postgres-sql-handler as the number of scheduler permits); timeouts = limits put on connections that are opened; origin = the mark of signals this lease emits
    (the lease rings same-process bells after sending a signal, so the listener does not ring notifications with this mark; see the header comment)."
 
-  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; defk にできない: initialization of a resource class
+  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; cannot be a defk: initialization of a resource class
     "Receives the sequence of database declarations, the limit on connections lent at once per database, and the connection limits. Transaction round trips are sent in pipeline mode
      (see the header comment), so if psycopg and libpq lack pipeline mode this place (built by the assembling side at startup) fails by naming it."
     (import psycopg)
@@ -201,19 +201,19 @@
           self.counts (PostgresTallies :opened 0 :broken 0 :pipeline 0 :large 0 :rollback 0)
           self.counts-lock (threading.Lock)))
 
-  (defn #^ None counted [self #^ str tally]  ; defk にできない: a count called synchronously from the borrowing and returning threads (a lock outside the VM)
+  (defn #^ None counted [self #^ str tally]  ; cannot be a defk: a count called synchronously from the borrowing and returning threads (a lock outside the VM)
     "Counts one event tally (one of the field names of PostgresTallies)."
     (with [_ self.counts-lock]
       (setv self.counts (with-fields self.counts #** {tally (+ (getattr self.counts tally) 1)}))))
 
-  (defn #^ PostgresTallies tallies [self]  ; defk にできない: a resource count read between threads by the meter and tests (a lock outside the VM)
+  (defn #^ PostgresTallies tallies [self]  ; cannot be a defk: a resource count read between threads by the meter and tests (a lock outside the VM)
     "Reads the number of opened connections and of closed connections per reason."
     (with [_ self.counts-lock]
       self.counts))
 
   ;; The return type is written as a string forward reference: PostgresListener is defined after this class, and through Python 3.13 annotations are evaluated at definition time,
   ;; so a bare name would make the module load fail with NameError (PEP 649, which evaluates annotations lazily, is from 3.14).
-  (defn #^ "PostgresListener" listener [self #^ str name #^ str channel]  ; defk にできない: looks up the resource listener (creates it and starts a thread if absent; a lock outside the VM)
+  (defn #^ "PostgresListener" listener [self #^ str name #^ str channel]  ; cannot be a defk: looks up the resource listener (creates it and starts a thread if absent; a lock outside the VM)
     "Looks up the listener (PostgresListener) for channel of database name (creating it for a channel seen for the first time)."
     (with [_ self.listeners-lock]
       (setv key #(name channel))
@@ -221,7 +221,7 @@
         (setv (get self.listeners key) (PostgresListener self name channel)))
       (get self.listeners key)))
 
-  (defn #^ None ring-local [self #^ str name #^ RaisedNotices raised]  ; defk にできない: called synchronously inside the finally where the handler returns the connection (a lock outside the VM; rings without emitting an effect even in the middle of cancellation)
+  (defn #^ None ring-local [self #^ str name #^ RaisedNotices raised]  ; cannot be a defk: called synchronously inside the finally where the handler returns the connection (a lock outside the VM; rings without emitting an effect even in the middle of cancellation)
     "If the signal was sent far enough to be delivered (raised.sent), rings on the spot, among the bells hung per channel in the same process, those that concern the signal's names
      (see the header comment; if there is no listener yet, there are no bells hung either)."
     (when raised.sent
@@ -231,11 +231,11 @@
         (when (is-not listener None)
           (.ring listener topics)))))
 
-  (defn names [self]  ; defk にできない: a read called from the handler's guard (:when) (returning a Program would not be a boolean)
+  (defn names [self]  ; cannot be a defk: a read called from the handler's guard (:when) (returning a Program would not be a boolean)
     "Reads the sequence of database names this lease answers for."
     (tuple self.databases))
 
-  (defn connection-options [self #^ str name]  ; defk にできない: arguments for psycopg read inside the thread that opens the connection (returning a Program could not be passed to psycopg)
+  (defn connection-options [self #^ str name]  ; cannot be a defk: arguments for psycopg read inside the thread that opens the connection (returning a Program could not be passed to psycopg)
     "Reads the limits put on opened connections as a mapping of libpq connection parameters (passed to connect's keywords; if the DSN has the same name, these win).
      However, options (a single value chaining -c) does not win; the engine-limit -c settings are appended to the DSN options of database name. If it won, the DSN's
      -c search_path and the like would silently disappear."
@@ -262,7 +262,7 @@
       (setv (get options "options") (if declared (+ declared " " bound) bound)))
     options)
 
-  (defn acquire [self #^ str name]  ; defk にできない: borrowing a resource (blocks waiting between threads)
+  (defn acquire [self #^ str name]  ; cannot be a defk: borrowing a resource (blocks waiting between threads)
     "Borrows one connection (opens one if none is idle; waits until one is returned if at the limit). If it cannot be opened, the psycopg exception passes through."
     (import psycopg)
     (import psycopg.types.string [TextLoader])
@@ -285,7 +285,7 @@
         (.release (get self.permits name))
         (raise))))
 
-  (defn release [self #^ str name connection]  ; defk にできない: returning a resource (called from with / finally)
+  (defn release [self #^ str name connection]  ; cannot be a defk: returning a resource (called from with / finally)
     "Returns a borrowed connection (discard it if broken; discard it if left in pipeline mode, see the header comment; discard it if it carried a value over the threshold,
      CARRIED-LARGE; if in the middle of a transaction, roll back, and discard it if that fails). The reason for discarding is counted (tallies)."
     (import psycopg)
@@ -307,7 +307,7 @@
               (.counted self dropped)))
       (finally (.release (get self.permits name)))))
 
-  (defn close [self]  ; defk にできない: cleanup of a resource, called when the assembling side shuts down
+  (defn close [self]  ; cannot be a defk: cleanup of a resource, called when the assembling side shuts down
     "Closes all idle connections (connections on loan are not closed when returned, so call this after stopping)."
     (for [idle (.values self.idle)]
       (while (not (.empty idle))
@@ -320,7 +320,7 @@
    every signal; a dict, which rings in the order hung. With a set the order would be decided by object addresses, and the wake-up order would change on every run) / listening = whether LISTEN is
    currently established / listened = whether it was ever established / failure = the reason it is not established / settled = the mark that the first connection attempt has finished."
 
-  (defn #^ None __init__ [self #^ PostgresConnections connections #^ str name #^ str channel]  ; defk にできない: initialization of a resource class
+  (defn #^ None __init__ [self #^ PostgresConnections connections #^ str name #^ str channel]  ; cannot be a defk: initialization of a resource class
     "Creates the listener and starts the LISTEN thread."
     (setv self.connections connections
           self.name name
@@ -333,7 +333,7 @@
           self.settled (threading.Event))
     (.start (threading.Thread :target self.listen :name "doeff-postgres-listen" :daemon True)))
 
-  (defn #^ None ring [self #^ (| (get frozenset str) None) topics]  ; defk にできない: called by the listener's thread and by the handler after it has returned the connection (outside the VM)
+  (defn #^ None ring [self #^ (| (get frozenset str) None) topics]  ; cannot be a defk: called by the listener's thread and by the handler after it has returned the connection (outside the VM)
     "Rings and removes the bells concerning a signal with names topics (see the header comment: topics = None means a signal with unknown names, so all of them; a bell whose waited names are None rings on
      any signal; the others ring only if their names overlap. A rung bell completes with True, to be told apart from the None of a WaitWithin timeout)."
     (with [_ self.lock]
@@ -345,7 +345,7 @@
     (for [bell bells]
       (.complete bell True)))
 
-  (defn #^ (| str None) hang [self #^ (get ExternalPromise (| bool None)) bell #^ (| (get frozenset str) None) topics]  ; defk にできない: runs on a driver thread (waits for the first connection)
+  (defn #^ (| str None) hang [self #^ (get ExternalPromise (| bool None)) bell #^ (| (get frozenset str) None) topics]  ; cannot be a defk: runs on a driver thread (waits for the first connection)
     "If LISTEN has ever been established, hangs a bell waiting for names topics (None = every signal) and returns None; if it has never been established, returns the sentence of the reason
      (waits until the first connection attempt has finished). A bell hung in the middle of a reconnect rings when it reconnects (notifications in between are not delivered, so the waiter
      re-reads after being rung)."
@@ -355,7 +355,7 @@
           (do (setv (get self.bells bell) topics) None)
           (or self.failure "LISTEN is not established"))))
 
-  (defn #^ None drop [self #^ (get ExternalPromise (| bool None)) bell]  ; defk にできない: called by the handler's clause and the cancellation cleanup (a lock outside the VM)
+  (defn #^ None drop [self #^ (get ExternalPromise (| bool None)) bell]  ; cannot be a defk: called by the handler's clause and the cancellation cleanup (a lock outside the VM)
     "Removes a bell that did not ring and finishes its external promise (if it is already removed, there is nothing to remove). There is no waiter any more (this is called after the wait has ended,
      or when hanging was cancelled), so completing with None wakes no one. Without finishing it, the scheduler's promise row would stay
      pending and fall outside the cleanup that removes only finished ones (#3508, #3494). A second completion of a bell that already rang and completed is
@@ -364,7 +364,7 @@
       (.pop self.bells bell None))
     (.complete bell None))
 
-  (defn #^ None listen [self]  ; defk にできない: the body of the daemon thread (blocks waiting for notifications)
+  (defn #^ None listen [self]  ; cannot be a defk: the body of the daemon thread (blocks waiting for notifications)
     "Establishes LISTEN and, for each notification, rings the bells whose names concern it (notifications with its own lease's mark are not rung; same-process bells were already rung by the
      handler that sent the signal), and when the connection breaks, waits LISTEN-RETRY-SECONDS and reconnects (it also rings when it establishes; see the header comment)."
     (import psycopg)
@@ -463,7 +463,7 @@
   failure)
 
 
-;; defk にできない: a pure function called once per row value (returning a Program would round-trip through the VM for every value)
+;; cannot be a defk: a pure function called once per row value (returning a Program would round-trip through the VM for every value)
 (defn #^ int cell-bytes [#^ object value #^ bool doubled]
   "Estimates the bytes one row value takes in a libpq message (str = UTF-8 length; bytes = length, or doubled as hex in text form if doubled;
    other types are not counted)."
@@ -963,13 +963,13 @@
         _ (raise)))))
 
 
-(deff lease-now [connections database]  ; defk にできない: the entry run on a driver thread (outside the VM)
+(deff lease-now [connections database]  ; cannot be a defk: the entry run on a driver thread (outside the VM)
   {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "a psycopg connection | SqlUnreachable")]}
   "Borrows one connection on a driver thread (the wait for a permit is also on this thread; SqlUnreachable if it cannot be opened)."
   (run-detached (postgres-lease connections database)))
 
 
-(deff lease-run-return [connections database claim work]  ; defk にできない: the entry run on a driver thread
+(deff lease-run-return [connections database claim work]  ; cannot be a defk: the entry run on a driver thread
   {:pre [(: connections PostgresConnections) (: database str) (: claim "threading.Lock") (: work "a callable (connection) -> Program")]
    :post [(: % "the answer of work | SqlUnreachable | None")]}
   "In a single driver-thread job, borrows a connection, runs work (connection -> Program) on the borrowed connection, and always returns it (the answer of a single-statement effect;
@@ -1005,7 +1005,7 @@
   (#^ AbstractContextManager guard))
 
 
-(deff drive-leased [driver work closing]  ; defk にできない: the entry run on a driver thread (outside the VM)
+(deff drive-leased [driver work closing]  ; cannot be a defk: the entry run on a driver thread (outside the VM)
   {:pre [(: driver TransactionDriver) (: work (get Callable #([PipelineConnection] Program))) (: closing bool)]
    :post [(: % "the answer of work | SqlUnreachable | None")]}
   "In a single driver-thread job, under the lock guard, borrows a connection if not yet borrowed, runs work (connection -> Program), and, if closing (the last call, which sends COMMIT or
@@ -1030,7 +1030,7 @@
           (setv lease.returned True))))))
 
 
-(deff abandon-lease [driver]  ; defk にできない: the entry for cleanup run on a driver thread
+(deff abandon-lease [driver]  ; cannot be a defk: the entry for cleanup run on a driver thread
   {:pre [(: driver TransactionDriver)] :post [(: % "None")]}
   "Returns a connection that the last call did not return (under the lock guard: after any running call; see the note on offloaded-transaction). It sets the mark abandoned, so calls that have not
    started yet finish without running (a call before borrowing the connection does not even borrow)."
@@ -1098,7 +1098,7 @@
   answer)
 
 
-(deff run-batched-here [driver locks origin raised program]  ; defk にできない: the entry run on a driver thread (starts a new VM from outside the VM)
+(deff run-batched-here [driver locks origin raised program]  ; cannot be a defk: the entry run on a driver thread (starts a new VM from outside the VM)
   {:pre [(: driver TransactionDriver) (: locks tuple) (: origin str) (: raised RaisedNotices) (: program Program)]
    :post [(: % "the answer of program | SqlFailed | SqlUnreachable | None")]}
   "In a single driver-thread job, under the lock guard, runs the whole of a batched transaction (the program and round trips, and ROLLBACK if needed) on a new VM, and returns the borrowed
@@ -1119,7 +1119,7 @@
         (setv lease.returned True)))))
 
 
-(deff abandoned-now [driver]  ; defk にできない: the entry for the stopping method run on an Executor thread (outside the VM)
+(deff abandoned-now [driver]  ; cannot be a defk: the entry for the stopping method run on an Executor thread (outside the VM)
   {:pre [(: driver TransactionDriver)] :post [(: % "None")]}
   "Sets the mark that the waiter left on a running batched transaction (does not take the lock guard: the running job holds the guard and reads the mark before
    the next round trip)."

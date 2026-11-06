@@ -73,21 +73,21 @@
    (None = not hung) / asked = the Future of an effect that was handed over but has no answer yet (finished with ApartClosed on close -
    if the handed-over promise crosses with a cancellation, the other thread would wait forever for the answer) / closed = the mark that the firing task has left. The lock is a Condition between threads."
 
-  (deff __init__ [self]  ; defk にできない: initialization of a resource class
+  (deff __init__ [self]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self ApartLane)] :post [(: % None)]}
     (setv self.condition (threading.Condition)
           self.armed None
           self.asked None
           self.closed False))
 
-  (deff arm [self promise]  ; defk にできない: a synchronous entry where the firing task (on the scheduler thread) hangs the receiver of the message
+  (deff arm [self promise]  ; cannot be a defk: a synchronous entry where the firing task (on the scheduler thread) hangs the receiver of the message
     {:pre [(: self ApartLane) (: promise ExternalPromise)] :post [(: % None)]}
     "To hang the promise that receives the next message, and wake the other thread waiting for a message."
     (with [_ self.condition]
       (setv self.armed promise)
       (.notify-all self.condition)))
 
-  (deff deliver [self message]  ; defk にできない: a synchronous entry where the VM on the other thread puts a message (outside the VM)
+  (deff deliver [self message]  ; cannot be a defk: a synchronous entry where the VM on the other thread puts a message (outside the VM)
     {:pre [(: self ApartLane) (: message (| ApartAsked ApartDone ApartFailed))] :post [(: % bool)]}
     "To hand over one message through the promise hung by the firing task (waits until one is hung). If closed, it hands nothing over and returns False."
     (with [_ self.condition]
@@ -102,7 +102,7 @@
     (.complete promise message)
     True)
 
-  (deff close [self]  ; defk にできない: a synchronous entry for when the firing task leaves (cleanup after cancellation)
+  (deff close [self]  ; cannot be a defk: a synchronous entry for when the firing task leaves (cleanup after cancellation)
     {:pre [(: self ApartLane)] :post [(: % None)]}
     "To close the lane (wake the other thread waiting for a message, hand over no further messages, and finish the effect that has no answer yet with ApartClosed)."
     (with [_ self.condition]
@@ -115,7 +115,7 @@
       (.set-exception asked (ApartClosed "the firing task has left - the lane is closed")))))
 
 
-(deff forwarding-handler [lane]  ; defk にできない: builds a responder to put in the VM on the other thread (waits on a Future outside the VM)
+(deff forwarding-handler [lane]  ; cannot be a defk: builds a responder to put in the VM on the other thread (waits on a Future outside the VM)
   {:pre [(: lane ApartLane)] :post [(: % Callable)]}
   "To build a responder that, in the VM on the other thread, sends every effect the program emits to the lane and resumes with the answer (or exception) the firing task returned."
   (defn forwarded [effect k]
@@ -132,7 +132,7 @@
   (raw-handler forwarded))
 
 
-(deff apart-thread [lane program]  ; defk にできない: the body of the daemon thread (starts a fresh VM from outside the VM)
+(deff apart-thread [lane program]  ; cannot be a defk: the body of the daemon thread (starts a fresh VM from outside the VM)
   {:pre [(: lane ApartLane) (: program Program)] :post [(: % None)]}
   "To run the program in a fresh VM on another thread and put the answer or exception on the lane (Try is answered inside this VM - header note)."
   (try

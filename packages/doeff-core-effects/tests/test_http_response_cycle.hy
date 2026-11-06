@@ -19,7 +19,7 @@
 (val URL "http://api.test/api/v1/nodes")
 
 
-(deff answer-body [seen request]  ; defk にできない: a callback called by httpx's MockTransport (seen is bound with functools.partial)
+(deff answer-body [seen request]  ; cannot be a defk: a callback called by httpx's MockTransport (seen is bound with functools.partial)
   {:pre [(: seen dict) (: request httpx.Request)] :post [(: % httpx.Response)]}
   "The test's counterpart (the MockTransport answer) - answer every request with 200 and BODY, and record a weakref to the first response in seen (httpx returns the response object
    the transport returned after reattaching the body stream, so the recorded one is the response the client returns itself)."

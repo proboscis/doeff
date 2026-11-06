@@ -27,7 +27,7 @@
     (raise (httpcore.ConnectError "refused by the test backend"))))
 
 
-(deff refusing-client []  ; defk にできない: it is a client maker the answerer calls as a plain function outside the Program at the start of the scope
+(deff refusing-client []  ; cannot be a defk: it is a client maker the answerer calls as a plain function outside the Program at the start of the scope
   {:pre [] :post [(: % httpx.AsyncClient)]}
   "To build a real httpx client holding a connection pool with the refusing backend (for each request the pool creates an AsyncHTTPConnection and fails at the connect step)."
   (setv transport (httpx.AsyncHTTPTransport))
