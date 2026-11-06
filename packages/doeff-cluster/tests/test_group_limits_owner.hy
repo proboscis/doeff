@@ -204,7 +204,7 @@
           "SubmitDetached の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   (assert (= (tuple (gfor f (fields TaskBody) f.name))
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
-               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "format"))
+               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "rerun" "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・
   ;; 置いている数・系の宣言の表だけを受ける。task の行を読むのは、置いている task の名乗りを射影する placed-claims と tasks-placed の
