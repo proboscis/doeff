@@ -1,0 +1,44 @@
+# 機体へ shim と containerd の差し込みを置く係。initContainer が image の install.sh を走らせて 2 つの file を置き(同じ中身なら何もしない)、
+# 本体は何もせずに眠る(DaemonSet の Pod が残る間は、image の tag を替えると置き直す)。containerd の再起動はしない(README.md の手順 2)。
+# 置く機体は nodeAffinity の名の機体だけ — 機体を足す時はここに足す。
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: oom-scope-shim
+  namespace: agent-worker
+  labels: { app: oom-scope-shim }
+spec:
+  selector:
+    matchLabels: { app: oom-scope-shim }
+  updateStrategy: { type: RollingUpdate }
+  template:
+    metadata:
+      labels: { app: oom-scope-shim }
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - { key: kubernetes.io/hostname, operator: In, values: [zeus] }
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: install
+          image: zeus:5000/containerd-shim-runc-oomscope:v2.2.7-k3s1-b8c43f27
+          securityContext: { runAsUser: 0, runAsNonRoot: false }
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          volumeMounts:
+            - { name: host-bin, mountPath: /host/bin }
+            - { name: host-containerd-conf, mountPath: /host/containerd-conf }
+      containers:
+        - name: sleep
+          image: zeus:5000/containerd-shim-runc-oomscope:v2.2.7-k3s1-b8c43f27
+          command: ["/bin/sleep", "2147483647"]
+          securityContext: { runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false }
+          resources: { requests: { cpu: 1m, memory: 4Mi }, limits: { cpu: 10m, memory: 16Mi } }
+      volumes:
+        - name: host-bin
+          hostPath: { path: /opt/doeff-cluster/bin, type: DirectoryOrCreate }
+        - name: host-containerd-conf
+          hostPath: { path: /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d, type: DirectoryOrCreate }

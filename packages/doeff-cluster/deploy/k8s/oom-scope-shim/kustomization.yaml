@@ -1,0 +1,9 @@
+# OOM の印を container か Pod の上限の OOM にだけ付ける runc の shim を機体へ置く係(installer.yaml)と、それを指す RuntimeClass
+# (runtimeclass.yaml)。訳・機体を足す手順・image の組み方は ../../oom-scope-shim/README.md。worker の組(../workers)が resources に並べ、
+# Flux は worker と同じ Kustomization で当てる。worker の Deployment が runtimeClassName で使うのは、係が置いた後に機体の k3s を 1 度
+# 再起動した機体だけ(機体の dir が足す)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - runtimeclass.yaml
+  - installer.yaml
