@@ -158,6 +158,13 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 | `GetOuterHandlers` | In a handler: the handlers installed above it. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
 | `GetTraceback` | In a handler: the frames of the suspended program. | [GetHandlers](#gethandlersk-getboundariesk-getouterhandlers-and-gettracebackk) |
 | `GetExecutionContext` | The frames and handler chain of the running program. | [GetExecutionContext](#getexecutioncontext) |
+| `ReadVmLiveCounts` | Effect: the VM objects alive in this process. | [VM counts](#vm-counts-and-switches) |
+| `ReadVmWorkCounts` | Effect: the steps and handler calls every VM of this process has done so far. | [VM counts](#vm-counts-and-switches) |
+| `ReadVmScanCounts` | Effect: the entries the Rust scheduler's scans have looked at so far. | [VM counts](#vm-counts-and-switches) |
+| `ReadInvariantChecks` | Effect: whether the VM checks its invariants at every step. | [VM counts](#vm-counts-and-switches) |
+| `SetInvariantChecks` | Effect: turn the VM's per-step invariant checks on or off. | [VM counts](#vm-counts-and-switches) |
+| `SetSchedulerStepBudgetArmed` | Effect: switch the scheduler's flag for an armed step budget. | [VM counts](#vm-counts-and-switches) |
+| `SetSchedulerTraceInstalled` | Effect: switch the scheduler's flag for an installed trace sink. | [VM counts](#vm-counts-and-switches) |
 
 **Static typing at runtime**
 
@@ -1452,6 +1459,33 @@ Unlike `GetTraceback`, it needs no handler and no `k`.
 
 ```python excerpt
 context = yield GetExecutionContext()
+```
+
+---
+
+### VM counts and switches
+
+Effects that read the counts of the VM of the whole process and set its switches.
+`vm_probe_handler` (`doeff_core_effects._handlers`) answers every one of them by asking the VM.
+
+| Effect | Answers |
+|---|---|
+| `ReadVmLiveCounts()` | The VM objects alive in this process: `(segments, continuations, IR streams)`. |
+| `ReadVmWorkCounts()` | The work every VM of this process has done so far: `(steps, handler calls)`. |
+| `ReadVmScanCounts()` | The entries the Rust scheduler's scans have looked at so far, by what they walked. |
+| `ReadInvariantChecks()` | Whether the VM checks its invariants at every step. |
+| `SetInvariantChecks(enabled)` | Turns the per-step invariant checks on or off (`None`). |
+| `SetSchedulerStepBudgetArmed(armed)` | Switches the flag the scheduler reads at every wake: whether a step budget is armed (`None`). |
+| `SetSchedulerTraceInstalled(installed)` | Switches the flag the scheduler reads at every event: whether a trace sink is installed (`None`). |
+
+The work and scan counts are running totals of the process (they never go down), so the
+difference of two reads is the work done between them.
+
+```python excerpt
+from doeff import ReadVmWorkCounts, run
+from doeff_core_effects._handlers import vm_probe_handler
+
+steps, handler_calls = run(vm_probe_handler(ReadVmWorkCounts()))
 ```
 
 ---

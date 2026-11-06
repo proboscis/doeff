@@ -178,8 +178,8 @@ def _make_model(
 
 
 def _add_public_name_without_stub(model: Model) -> None:
-    """A diff of the t135 shape: add one public name to sql_effects.hy and commit without fixing sql_effects.pyi."""
-    module = model.root / CORE_EFFECTS / "sql_effects.hy"
+    """A diff of the t135 shape: add one public name to _sql_effects.hy and commit without fixing _sql_effects.pyi."""
+    module = model.root / CORE_EFFECTS / "_sql_effects.hy"
     module.write_text(
         module.read_text(encoding="utf-8") + "\n(val ADDED-WITHOUT-STUB 1)\n", encoding="utf-8"
     )
@@ -274,7 +274,7 @@ def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Pa
     assert output.returncode == 1, f"expected red but rc {output.returncode}\n{output.text[-3000:]}"
     assert "\nred: 1" in summary, summary
     assert f"{STUB_TEST} — red" in summary, summary
-    assert "[sql_effects]" in summary, summary
+    assert "[_sql_effects]" in summary, summary
     assert "public name not in the declaration: ADDED_WITHOUT_STUB" in output.text, (
         "the added name does not appear in the pytest output"
     )

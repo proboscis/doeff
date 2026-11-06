@@ -60,7 +60,7 @@
     [(rule R1 "handler(f): if f is a def (a plain function that is not a lambda), it is made a @do function and becomes a handler. If f is a @do function, or a partial or bound method of one, it becomes a handler as is. An already marked installer is returned as is. Anything else (lambda, bound method of a plain method, callable instance, builtin) is refused at construction with TypeError '<name> is not a handler body'. Objects that cannot take (effect, k), and annotations that match no effect, are refused at composition time as before. If a def without yield returns a control expression or an effect without yielding it, it is refused at run time with a TypeError that shows the return (yield …) shape.")
      (rule R2 "with_handlers and stacked_handlers take only handlers carrying the mark _doeff_is_handler_fn (a @handler def, a defhandler, a stacked_handlers bundle), and refuse anything else at composition time with TypeError '<name> is not a handler'. They do not pass anything through handler() internally.")
      (rule R3 "Reinstalling handlers read with GetHandlers(k) is the job of doeff.handler_utils.reinstaller, which installs them directly with the VM's WithHandler. It is not used to create new handlers.")
-     (rule R4 "Writing @do under @handler is deprecated. It stays accepted at run time (for users' code on PyPI 0.7.0, and for the examples in examples/testing_without_mocks and publications/zenn-use-cases-v0 in the doeff-publications repo, which run daily against the PyPI release), and semgrep refuses it inside the repo. Those 2 dirs are rewritten when a release supporting the @handler-only shape is out on PyPI.")
+     (rule R4 "Writing @do under @handler is deprecated. It stays accepted at run time (for users' code on PyPI 0.7.0), and semgrep refuses it inside the repo. The examples in examples/testing_without_mocks and publications/zenn-use-cases-v0 in the doeff-publications repo, which run daily against the PyPI release, were kept outside the rule until a release supporting the @handler-only shape was out on PyPI; doeff 0.8.0 is, so they are written with @handler alone and the rule covers them (2026-10-26).")
      (rule R5 "The 4 rules in .semgrep.yaml refuse these shapes wherever they are written outside tests: @do under @handler; returning a control expression without yield in a @handler def; a lambda passed to handler functions; passing a def without @handler from the same scope into a handler list. Tests are excluded because they build the refused shapes on purpose to check the refusal.")
      (rule R6 "Advice at the moment of writing lives outside doeff (defjevrule). The doeff side holds only R1–R5 and their checks.")]
   :laws
@@ -105,13 +105,14 @@
      (defsemgrep handler-over-do-is-deprecated
        "doeff-handler-over-do-is-deprecated"
        [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/example_handlers.py"
+         "source" "@handler\n@do\ndef answer(effect, k):\n    return (yield Resume(k, 1))\n"}
+        ;; the article examples run against a PyPI release with @handler alone (0.8.0), so they are no longer outside the rule (R4)
+        {"relative-path" "examples/testing_without_mocks/example_pypi.py"
          "source" "@handler\n@do\ndef answer(effect, k):\n    return (yield Resume(k, 1))\n"}]
        [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/example_handlers.py"
          "source" "@handler\ndef answer(effect, k):\n    return (yield Resume(k, 1))\n"}
         {"relative-path" "packages/doeff-core-effects/doeff_core_effects/example_non_tail.py"
-         "source" "@handler\n@do(non_tail=True)\ndef answer(effect, k):\n    return (yield Resume(k, 1))\n"}
-        {"relative-path" "examples/testing_without_mocks/example_pypi.py"
-         "source" "@handler\n@do\ndef answer(effect, k):\n    return (yield Resume(k, 1))\n"}])
+         "source" "@handler\n@do(non_tail=True)\ndef answer(effect, k):\n    return (yield Resume(k, 1))\n"}])
      (defsemgrep handler-yields-its-control
        "doeff-handler-yields-its-control"
        [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/example_handlers.py"

@@ -135,6 +135,12 @@ EXCLUDED: dict[str, str] = {
         "tools/verify_core_install.py --pypi runs it where the example dir is copied into a venv with only PyPI's doeff and pytest"
         " -- placed under the root it would run against the repo version and under the root conftest.py"
     ),
+    "examples/effects_tour/test_spire.py": (
+        "The article's \"Tests are one of the stacks\" test that users run with `pytest` next to spire.py (the dir's pytest.ini makes it the"
+        " pytest root). tools/verify_core_install.py (SPIRE_TEST_FILES) runs it in a dir copied from examples/effects_tour with only doeff and pytest"
+        " installed, daily through tests/test_verify_core_install.py and .github/workflows/core-install-from-pypi.yml"
+        " -- placed under the root it would also run under the root conftest.py and pyproject.toml pytest settings"
+    ),
 }
 
 

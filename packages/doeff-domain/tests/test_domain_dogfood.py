@@ -23,6 +23,7 @@ from doeff_core_effects import (
     MemoGetEffect,
     MemoPutEffect,
     Put,
+    ResolveHost,
 )
 from doeff_domain import (
     AssertDomainCovered,
@@ -117,10 +118,13 @@ def test_http_and_memo_domains_use_defhandler_derivation():
     # real dogfood of two-layer derivation: defhandler-made factories derive from __doeff_body__ without annotations
     http = get_domain("doeff-http")
     assert len(http.handlers) == 3
+    production, *fixtures = http.handlers
     for handler in http.handlers:
         assert not hasattr(handler, "__doeff_handles__")
-        derived = handled_effects(handler, vocabulary=http.effects)
-        assert derived == frozenset({HttpRequest})
+    # only the production handler resolves a host name alone; the fixtures record and replay requests
+    assert handled_effects(production, vocabulary=http.effects) == frozenset({HttpRequest, ResolveHost})
+    for handler in fixtures:
+        assert handled_effects(handler, vocabulary=http.effects) == frozenset({HttpRequest})
 
     memo = get_domain("doeff-memo")
     (memo_handler,) = memo.handlers

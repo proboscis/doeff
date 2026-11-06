@@ -669,6 +669,7 @@ _STAGES = (
     "check_demo",
     "check_llm_example",
     "check_article_examples",
+    "check_tour_examples",
 )
 
 
@@ -709,11 +710,12 @@ def test_only_the_pypi_check_runs_the_article_examples(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # The article example is written to stay on the PyPI version (ADR-DOE-API-002 R3), so it is not run on the checkout version.
-    # --pypi adds pytest to the venv, so it runs last.
+    # --pypi adds pytest to the venv, so the article examples (the testing article's dir, then examples/effects_tour) run last.
     checkout_stages = _stages_run(monkeypatch, tmp_path / "checkout", tool.Checkout())
     pypi_stages = _stages_run(monkeypatch, tmp_path / "pypi", tool.PyPI(None))
     assert "check_article_examples" not in checkout_stages
-    assert pypi_stages[-1] == "check_article_examples"
+    assert "check_tour_examples" not in checkout_stages
+    assert pypi_stages[-2:] == ["check_article_examples", "check_tour_examples"]
 
 
 def test_the_pypi_check_runs_the_github_readmes_besides_the_wheel_ones(
