@@ -109,7 +109,7 @@
 
 (deftest test-declaration-refuses-types-outside-the-answer
   (val head "(require doeff-hy.macros [defeffect]) (defeffect Bad {:answer (| Row Missing) :tags {:context \"t\" :role \"intent\"} ")
-  (assert (in "not a member" (! (expansion-refusal (+ head ":absent [Unreachable]})")))))
+  (assert (in "is not an element of :answer" (! (expansion-refusal (+ head ":absent [Unreachable]})")))))
   (assert (in "in both" (! (expansion-refusal (+ head ":absent [Missing] :failure [Missing]})")))))
   (assert (in "list" (! (expansion-refusal (+ head ":absent Missing})"))))))
 

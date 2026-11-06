@@ -32,7 +32,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 # Names that the users' repo main imports (per module; counted 2026-10-02).
 USED = {
-    "aiohttp_http_server": ("aiohttp-http-server",),
+    "_aiohttp_http_server": ("aiohttp-http-server",),
     "clickhouse_http_sql": ("ClickHouseDatabase", "clickhouse-http-sql-handler", "clickhouse-schema-statements"),
     "gc_freeze": ("gc-freeze-handler",),
     "heap_effects": ("CollectAndFreeze",),

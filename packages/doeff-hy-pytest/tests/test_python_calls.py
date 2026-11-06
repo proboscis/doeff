@@ -268,9 +268,9 @@ def test_counts_only_the_call_of_a_declared_test_and_not_an_undeclared_one(pytes
     assert not any(re.match(r"^  \S*test_undeclared: \d+ calls, \d+ steps", line) for line in result.stdout.lines)
     result.stdout.fnmatch_lines(
         [
-            "*sys.monitoring CALL*2 tests*2000*",
-            "*test_declared.hy::test_threaded *test_declared.hy::test_declared *",
-            "*sys.monitoring*4*",
+            "*Python calls (sys.monitoring CALL): 2 tests with declared step budgets, * calls, 2000 steps, * calls per step, "
+            "top 3 by calls: test_declared.hy::test_threaded *, test_declared.hy::test_declared *",
+            "*counted with sys.monitoring tool id 4, *",
         ]
     )
 
