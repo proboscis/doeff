@@ -13,6 +13,7 @@ doeff depend on doeff-core-effects, whose own build runs this hook, so requiring
 Each package that uses it links its hatch_build.py here (the same shape as tools/doeff_cargo_backend.py) and names, under
 [tool.hatch.build.hooks.custom], the import root (stub-root) and the dirs whose .hy get a .pyi (stub-dirs). An sdist carries the .pyi it made
 (tool.hatch.build artifacts), so a build from an extracted sdist — no sibling packages — finds the tool missing and keeps those.
+The doeff-cluster worker turns the hook off (STUBS_ENV) for the roots it prepares, which run programs and are never type-checked.
 """
 
 import os
@@ -21,6 +22,10 @@ import sys
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+
+#: The variable that turns the hook off (value "off"): the doeff-cluster worker sets it for the uv sync of the roots it runs — they are never
+#: type-checked, and expanding every .hy there costs a cold build about 100 seconds and four expansion processes (native_wheel.STUBS_ENV).
+STUBS_ENV = "DOEFF_HY_STUBS"
 
 #: The sources read in place of build requirements, relative to the checkout root (the doeff package, the tool and the modules it imports).
 SOURCE_PATHS = (
@@ -36,6 +41,8 @@ class HyStubHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict[str, object]) -> None:
         """Make the package's .pyi before hatchling collects the files, so the editable install and the wheel both see what the .hy declare."""
+        if os.environ.get(STUBS_ENV) == "off":
+            return
         package = Path(self.root)
         checkout = package.parents[1]
         if not (
