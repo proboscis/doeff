@@ -28,11 +28,10 @@
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
-(import doeff.handler_utils [reinstaller])
 (import collections.abc [Callable Generator])
 (import typing [Protocol TypeVar])
 (import doeff [Program])
-(import doeff [GetBoundaries K WithObserveRaw Callable :as VmCallable])
+(import doeff [GetBoundaries K WithBoundaries Callable :as VmCallable])
 (import doeff_core_effects [Spawn Wait CreatePromise CompletePromise Promise TaskPriority shielded])
 (import doeff_cluster._foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect
@@ -89,11 +88,10 @@
 
 (defn #^ (get Program T) rewrap [#^ (get Program T) program #^ list chain]
   "GetBoundaries の並び(内側が先・最後は受けた handler 自身)で program を包み直す(scheduler の Spawn と同じ張り直し)。
-   並びの handler は VM が持つ生の受け手なので、作る口(handler)ではなく入れ直しの口(reinstaller)で入れる(ADR-DOE-CORE-003 R3)。"
-  (setv prog program)
-  (for [#(kind cb) chain]
-    (setv prog (if (= kind "handler") ((reinstaller cb) prog) (WithObserveRaw (VmCallable cb) prog))))
-  prog)
+   scheduler と同じく WithBoundaries 1 つで並びの全部を 1 歩で入れる。並びの handler は VM が持つ生の受け手なので、そのまま渡す
+   (作る口 handler を通さない — ADR-DOE-CORE-003 R3)。1 層ごとに WithHandler・WithObserve で包むと、Spawn 1 回ごとに並びの長さの分の
+   歩と空の fiber が足される(柵の Spawn を多く起こす模擬の世界で、世界の走りの歩数が 24% 増えた)。"
+  (WithBoundaries (lfor #(kind cb) chain #(kind (if (= kind "handler") cb (VmCallable cb)))) program))
 
 
 (defn #^ (get Program T) spawn-program [#^ TaskTap tap #^ Callable ended #^ str child #^ (get Program T) program #^ list chain]
