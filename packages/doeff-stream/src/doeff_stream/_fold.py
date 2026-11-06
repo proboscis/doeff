@@ -224,9 +224,10 @@ def fold(
             finish: Finish | None = None
             for effect in answer.effects:
                 match effect:
-                    case Run(key=key, program=program):
-                        runner = yield Spawn(program)
-                        watcher = yield Spawn(_watch(origin, key, runner))
+                    case Run(key=key, program=program, priority=priority):
+                        # The watcher too: a watcher below its runner would hold the end behind the lower work.
+                        runner = yield Spawn(program, priority=priority)
+                        watcher = yield Spawn(_watch(origin, key, runner), priority=priority)
                         running[key] = _Running(runner, watcher)
                     case CancelRun(key=key):
                         entry = running.get(key)

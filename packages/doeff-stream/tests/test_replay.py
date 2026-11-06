@@ -9,6 +9,7 @@ fold could not produce.
 from dataclasses import dataclass
 
 import pytest
+from doeff_core_effects import TaskPriority
 from doeff_stream import (
     Answered,
     Cancelled,
@@ -151,6 +152,27 @@ def test_a_key_may_run_again_once_its_end_came() -> None:
 
     trace = replay(runs, 0, ["go", Answered("k", 0), "go"])
     assert trace.running == frozenset({"k"})
+
+
+def test_replay_keeps_the_priority_of_each_run() -> None:
+    def runs(state: int, event: object) -> Next[int]:
+        return Next(state, (Run("screen", Pure(1), TaskPriority.HIGH), Run("batch", Pure(2), 3)))
+
+    trace = replay(runs, 0, ["once"])
+    assert [
+        (effect.key, effect.priority) for effect in trace.effects if isinstance(effect, Run)
+    ] == [
+        ("screen", TaskPriority.HIGH),
+        ("batch", 3),
+    ]
+    # Unnamed, a run takes the Spawn default.
+    assert Run("k", Pure(1)).priority == TaskPriority.NORMAL
+
+
+@pytest.mark.parametrize("priority", ["high", 1.5, True, None])
+def test_a_run_of_a_priority_that_is_not_an_int_is_refused(priority: object) -> None:
+    with pytest.raises(TypeError, match="int priority"):
+        Run("k", Pure(1), priority)  # type: ignore[arg-type]  # the check under test: not an int
 
 
 def test_a_cancel_of_a_key_that_is_not_running_is_no_error() -> None:

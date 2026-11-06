@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Generic, TypeIs, TypeVar
 
+from doeff_core_effects import TaskPriority
+
 from doeff import DoExpr, EffectBase, K, Program, do, handler
 
 S = TypeVar("S")
@@ -32,10 +34,21 @@ class Run:
 
     Its end comes back to the step as one input with ``key``. A key names one run while it is running: a ``Run``
     of a key whose end has not come back yet is refused. Once the end came back, the key may be used again.
+
+    ``priority`` is the scheduler priority of the run's two tasks (the program and its watcher, which publishes the
+    end): the ``Spawn`` default ``TaskPriority.NORMAL`` unless the step names another (any ``int``, higher first).
     """
 
     key: Hashable
     program: "Program[object]"
+    priority: TaskPriority | int = TaskPriority.NORMAL
+
+    def __post_init__(self) -> None:
+        # Checked here, not at the Spawn: the step's mistake is named where it was made, and the replay sees it too.
+        if isinstance(self.priority, bool) or not isinstance(self.priority, int):
+            raise TypeError(
+                f"Run of the key {self.key!r} takes an int priority, got {type(self.priority).__name__}"
+            )
 
 
 @dataclass(frozen=True)
