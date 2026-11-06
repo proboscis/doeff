@@ -419,7 +419,7 @@
           #(direct deep written present)))
 
 
-(deff resume-anything [effect k]  ; defk にできない: defk reads the arguments (effect k) as a handler and refuses, and defhandler refuses resuming Raise / Absent - a counterexample handler that breaks the rule can only be written as a bare handler function
+(deff resume-anything [effect k]  ; cannot be a defk: defk reads the arguments (effect k) as a handler and refuses, and defhandler refuses resuming Raise / Absent - a counterexample handler that breaks the rule can only be written as a bare handler function
   {:pre [(: effect EffectBase) (: k K)] :post [(: % DoExpr)]
    :tags {:context "outcomes-test" :role "foundation"}}
   "A handler that ends up resuming Raise / Absent (a counterexample that breaks the rule) - to see that the opening side treats it as an error."

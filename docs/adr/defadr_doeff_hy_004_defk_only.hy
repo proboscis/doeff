@@ -3,8 +3,9 @@
 ;;; "cannot be defk" reason comment and :tags. deff without a reason comment is made to decrease monotonically via a frozen
 ;;; ledger (ratchet). :tags is required in the contract dict of defk / deff.
 ;;;
-;;; The "reason comment" is `; <reason marker>: <reason>` on the definition line. The reason marker is DEFF-REASON-MARK below,
-;;; which equals doeff-linter's `definitions.deff_reason_marker` (a Japanese phrase meaning "cannot be defk").
+;;; The "reason comment" is `; <reason marker>: <reason>` on the definition line. The reason markers are DEFF-REASON-MARKS below,
+;;; the spellings doeff-linter reads: its default `definitions.deff_reason_marker` "cannot be a defk", and the earlier default
+;;; (the same phrase in Japanese) that existing comments still use.
 ;;;
 ;;; First version (2026-08-21): forbid all deff via defadr and use only defk.
 ;;; Revision (2026-09-27): forbid defn and allow only defk, allowing deff only where unavoidable
@@ -67,7 +68,7 @@
   #{".git" ".venv" ".claude" ".worktrees" "__pycache__" "node_modules"
     "dist" ".mypy_cache" ".pytest_cache" "scratchpad"})
 
-(setv DEFF-REASON-MARK "defk \u306b\u3067\u304d\u306a\u3044")
+(setv DEFF-REASON-MARKS #("cannot be a defk" "defk \u306b\u3067\u304d\u306a\u3044"))
 (setv DEFF-HEAD-PATTERN (re.compile r"\(deff\s"))
 ;; Tokens used when counting brackets of the argument list: a string or a comment is one token (brackets inside are not counted); brackets are one character each.
 (setv DEFF-HEAD-TOKEN (re.compile r"\"(?:\\.|[^\"\\])*\"|;[^\n]*|[\[\]]"))
@@ -101,7 +102,7 @@
   (var n 0)
   (for [m (.finditer DEFF-HEAD-PATTERN text)]
     (<- head (deff-head text (.start m)))
-    (when (not-in DEFF-REASON-MARK head)
+    (when (not (any (gfor mark DEFF-REASON-MARKS (in mark head))))
       (:= n (+ n 1))))
   n)
 
@@ -251,6 +252,9 @@
        (setv bare (+ "(" "deff on-sort-key [row]\n"))
        (setv detached (+ "; defk \u306b\u3067\u304d\u306a\u3044: a comment on another line\n(" "deff on-sort-key [row]\n"))
        (assert (= (run (count-unexcused-deff reasoned)) 0))
+       ;; The English default marker of doeff-linter is a reason comment as well.
+       (setv english (+ "(" "deff on-sort-key [row]  ; cannot be a defk: sorted's key does not run a Program\n"))
+       (assert (= (run (count-unexcused-deff english)) 0))
        (assert (= (run (count-unexcused-deff bare)) 1))
        (assert (= (run (count-unexcused-deff detached)) 1))
        ;; A deff with a folded argument list: a comment on the line where the list closes is a definition-line comment (the shape of the 6 doeff-cluster definitions).

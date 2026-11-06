@@ -106,7 +106,7 @@
       answer))
 
 
-(defn under? [#^ str path #^ str root]  ; defk にできない: a predicate called inside a comprehension and a condition (returning a Program would not give a boolean)
+(defn under? [#^ str path #^ str root]  ; cannot be a defk: a predicate called inside a comprehension and a condition (returning a Program would not give a boolean)
   "To read whether path is under root (root itself is not included)."
   (.startswith path (if (= root ROOT) ROOT (+ root "/"))))
 

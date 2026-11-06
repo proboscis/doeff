@@ -1040,7 +1040,7 @@ impl<'a> Narrator<'a> {
         const PROGRAM_WAYS: &str = "make an assembly (a list of handlers) `(defk handlers-of [foundation])`, a test a deftest, and a helper that builds values a defk called with `(<- …)`";
         match explain {
             Explain::DefnForbidden { declared_kind: Some(kind), .. } => {
-                Some(format!("Make it a deff (reason {} — {}). On the same line write `; defk にできない: <who calls it and how>` and :tags", kind.name, kind.description))
+                Some(format!("Make it a deff (reason {} — {}). On the same line write `; cannot be a defk: <who calls it and how>` and :tags", kind.name, kind.description))
             }
             Explain::DefnForbidden { declared_kind: None, .. } => {
                 Some(format!("Make it a defk (no reason is visible why it must be a bare function): {}", PROGRAM_WAYS))
@@ -1095,7 +1095,7 @@ impl<'a> Narrator<'a> {
             Explain::PlainCallableDoubt { chosen_accepted: false, fix: Some(fix), .. } => Some(fix.clone()),
             Explain::PlainCallableDoubt { .. } => Some(format!("Check whether it can be a defk: {}", PROGRAM_WAYS)),
             Explain::DeffWithoutReason { problem: DeffReasonProblem::Missing, .. } => {
-                Some(format!("If it must be a bare function, write `; defk にできない: <who calls it and how>`. Otherwise make it a defk: {}", PROGRAM_WAYS))
+                Some(format!("If it must be a bare function, write `; cannot be a defk: <who calls it and how>`. Otherwise make it a defk: {}", PROGRAM_WAYS))
             }
             Explain::DeffWithoutReason { problem: DeffReasonProblem::NoDetail { .. }, .. } => {
                 Some(format!("Write a reason specific to this definition (who calls it and how); do not use \"同上\" (\"ditto\"). If you cannot write one, make it a defk: {}", PROGRAM_WAYS))

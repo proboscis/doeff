@@ -28,7 +28,7 @@
 (val NO-TIME (timedelta 0))
 
 
-(deff world-answer [attempts request]  ; defk にできない: a callback that httpx MockTransport calls synchronously per request
+(deff world-answer [attempts request]  ; cannot be a defk: a callback that httpx MockTransport calls synchronously per request
   {:pre [(: attempts Counter) (: request httpx.Request)] :post [(: % httpx.Response)]
    :tags {:context "http-test" :role "foundation"}}
   "The contract world that httpx MockTransport calls per request. attempts is the attempt count per path (only within one run of the world).
@@ -55,13 +55,13 @@
     response))
 
 
-(deff world-client []  ; defk にできない: a callback called synchronously as the client-factory of http-production-handler
+(deff world-client []  ; cannot be a defk: a callback called synchronously as the client-factory of http-production-handler
   {:pre [] :post [(: % httpx.AsyncClient)] :tags {:context "http-test" :role "foundation"}}
   "An httpx client connected to a fresh contract world (client-factory of http-production-handler -- the mouth to an outside library, hence deff)."
   (httpx.AsyncClient :transport (httpx.MockTransport (partial world-answer (Counter)))))
 
 
-(deff no-wait [delay]  ; defk にできない: a callback called as the sleep of http-production-handler that returns an awaitable handed to Await
+(deff no-wait [delay]  ; cannot be a defk: a callback called as the sleep of http-production-handler that returns an awaitable handed to Await
   {:pre [(: delay float)] :post [(: % "awaitable that finishes without waiting")] :tags {:context "http-test" :role "foundation"}}
   "The wait between retries (the sleep of http-production-handler -- a callback returning an awaitable handed to Await, hence deff)."
   (asyncio.sleep 0))

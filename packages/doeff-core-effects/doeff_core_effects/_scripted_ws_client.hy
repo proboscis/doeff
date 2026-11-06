@@ -148,7 +148,7 @@
     (resume sent)))
 
 
-(deff scripted-ws-client [#^ WsScript script]  ; defk にできない: it is the maker of an installer that installs a responder, called outside a Program
+(deff scripted-ws-client [#^ WsScript script]  ; cannot be a defk: it is the maker of an installer that installs a responder, called outside a Program
   {:pre [(: script WsScript)] :post [(: % (of Callable [(| Program EffectBase)] Program))] :tags {:context "ws-client" :role "foundation"}}
   "To build the installer of the script responder (the opening description): wrap the installed program in closing-links and close the connections left open at the end of the scope."
   (setv install (scripted-ws-link-handler script))

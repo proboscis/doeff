@@ -955,7 +955,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 files: plain_files,
                 accepted: plain_callable_reasons(settings).to_vec(),
                 rejected: settings.architecture.as_ref().map(|a| a.rejected_plain_callable_reasons.clone()).unwrap_or_default(),
-                marker: settings.definitions.as_ref().map(|d| d.deff_reason_marker.clone()).unwrap_or_else(|| "defk にできない:".to_string()),
+                marker: settings.definitions.as_ref().map(|d| d.deff_reason_marker.clone()).unwrap_or_else(|| DEFAULT_REASON_MARKER.to_string()),
                 tags: settings.definitions.as_ref().map(|d| d.tags.clone()),
                 indexes: &indexes,
             };
@@ -5009,11 +5009,30 @@ pub struct ReasonComment {
     pub detail: String,
 }
 
-/// Reads a reason comment from the comment of a line (after `;`). The marker is the settings' deff_reason_marker (compared with the trailing `:` removed).
+/// The deff reason marker when the settings give none (`definitions.deff_reason_marker`).
+pub const DEFAULT_REASON_MARKER: &str = "cannot be a defk:";
+
+/// The earlier default spelling of the marker (Japanese for "cannot be a defk:"). It is read alongside the configured marker, so the
+/// comments written before the English default, and repos whose settings still name it, keep their meaning.
+pub const LEGACY_REASON_MARKER: &str = "defk にできない:";
+
+/// The spellings of the marker a reason comment may use: the configured one, the default, and the earlier default (trailing `:` removed).
+pub fn reason_marker_spellings(marker: &str) -> Vec<&str> {
+    let mut spellings: Vec<&str> = Vec::new();
+    for spelling in [marker, DEFAULT_REASON_MARKER, LEGACY_REASON_MARKER] {
+        let base = spelling.trim_end_matches([':', '：']).trim();
+        if !base.is_empty() && !spellings.contains(&base) {
+            spellings.push(base);
+        }
+    }
+    spellings
+}
+
+/// Reads a reason comment from the comment of a line (after `;`). The marker is the settings' deff_reason_marker or one of the other spellings of
+/// `reason_marker_spellings` (compared with the trailing `:` removed; the earliest one in the comment wins).
 pub fn parse_reason_comment(line: &str, marker: &str) -> Option<ReasonComment> {
-    let base = marker.trim_end_matches([':', '：']).trim();
     let (_, comment) = line.split_once(';')?;
-    let at = comment.find(base)?;
+    let (at, base) = reason_marker_spellings(marker).into_iter().filter_map(|base| comment.find(base).map(|at| (at, base))).min_by_key(|(at, _)| *at)?;
     let rest = comment[at + base.len()..].trim_start();
     let (kind, rest) = match rest.chars().next() {
         Some('(') | Some('\u{ff08}') => {
@@ -6236,6 +6255,23 @@ mod reason_comment_tests {
         );
         assert_eq!(parse_reason_comment("; defk にできない: 同上", marker), Some(ReasonComment { kind: None, detail: "同上".into() }));
         assert_eq!(parse_reason_comment("(deff k [x] x)", marker), None);
+    }
+
+    #[test]
+    fn reads_the_english_default_and_the_earlier_default_under_either_setting() {
+        let english = Some(ReasonComment { kind: Some("library-callback".into()), detail: "key for sorted".into() });
+        for marker in [DEFAULT_REASON_MARKER, LEGACY_REASON_MARKER] {
+            assert_eq!(parse_reason_comment("(deff k [x] x)  ; cannot be a defk(library-callback): key for sorted", marker), english);
+            assert_eq!(
+                parse_reason_comment("; defk にできない: argparse entry", marker),
+                Some(ReasonComment { kind: None, detail: "argparse entry".into() })
+            );
+            assert_eq!(parse_reason_comment("; Cannot be a defk: capitalised is not the marker", marker), None);
+        }
+        assert_eq!(
+            parse_reason_comment("; my marker: custom", "my marker:"),
+            Some(ReasonComment { kind: None, detail: "custom".into() })
+        );
     }
 }
 
