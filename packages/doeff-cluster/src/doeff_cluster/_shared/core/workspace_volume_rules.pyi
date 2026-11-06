@@ -15,7 +15,9 @@ COOLING_TICKET_PREFIXES: tuple[str, ...]
 RESTORE_TICKET_PREFIX: str
 COOLING_MARK: str
 GROWING_MARK: str
+FIRST_MARK: str
 BACKUP_COMPLETED: str
+BACKUP_ERROR: str
 BUNDLE_HASH_LENGTH: int
 
 class AttachStep(StrEnum):
@@ -117,6 +119,12 @@ def cooling_name(name: str, stamp: int) -> _Program[str, object]:
     ...
 
 def growing_name(name: str, stamp: int) -> _Program[str, object]:
+    ...
+
+def first_name(name: str, stamp: int) -> _Program[str, object]:
+    ...
+
+def hyx_first_backup_dueXquestion_markX(last_backups: tuple[str, ...], backups: tuple[BackupView, ...]) -> _Program[bool, object]:
     ...
 
 def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None, object]:

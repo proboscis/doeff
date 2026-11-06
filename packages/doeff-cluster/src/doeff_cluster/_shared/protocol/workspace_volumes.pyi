@@ -66,6 +66,8 @@ from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as Warm
 from doeff_cluster._shared.core.workspace_volume_rules import attach_step as attach_step
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_name as cooling_name
 from doeff_cluster._shared.core.workspace_volume_rules import growing_name as growing_name
+from doeff_cluster._shared.core.workspace_volume_rules import first_name as first_name
+from doeff_cluster._shared.core.workspace_volume_rules import hyx_first_backup_dueXquestion_markX as hyx_first_backup_dueXquestion_markX
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_order as cooling_order
 from doeff_cluster._shared.core.workspace_volume_rules import detach_step as detach_step
 from doeff_cluster._shared.core.workspace_volume_rules import mount_entries as mount_entries
@@ -583,6 +585,12 @@ class Growth:
     failed: tuple[str, ...]
 
 def mounted_growth(site: WorkspaceVolumeSite) -> _Program[Growth, object]:
+    ...
+
+def first_backup_taken(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def mounted_first_backups(site: WorkspaceVolumeSite) -> _Program[tuple[str, ...], object]:
     ...
 
 def cooled_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
