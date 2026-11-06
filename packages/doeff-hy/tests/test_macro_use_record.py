@@ -24,7 +24,9 @@ from doeff_hy_bytecode_guard._loader_hooks import record_is_current_here, source
 #: reads = a macro that calls a helper reading its own module's globals by string key; peeks = a macro that calls a helper reading another module's value via getattr;
 #: hands = a macro that passes another module as an argument, which the receiving helper reads via getattr; documented = a macro that reads another module's constant and writes
 #: a function's __doc__ into the expansion result ("__doc__" appears among the code's string constants — the shape of defhandler); reads-data = a macro whose helper reads and returns
-#: a neighboring file (data.txt) from its own module's location (__file__).
+#: a neighboring file (data.txt) from its own module's location (__file__); slot-reads = a macro reading a field of a class with ``__slots__``; record-reads = a macro reading
+#: a field of a defrecord type (slots, and the shared record functions that read ``vars(cls)``); class-reads = a macro whose helper reads a passed class by ``vars(cls)``;
+#: vars-reads = a macro whose helper reads its own module's namespace by ``vars()`` with a key it computes.
 MACROS = """\
 (import {pkg}.consts :as consts)
 (setv FACTOR 3)
@@ -57,6 +59,14 @@ MACROS = """\
 (import pathlib)
 (defn data-of [] (.read-text (/ (. (pathlib.Path __file__) parent) "data.txt")))
 (defmacro reads-data [] (data-of))
+(import {pkg}.slotted :as slotted)
+(import {pkg}.records :as recs)
+(import {pkg}.inspects :as inspects)
+(defn by-vars [] (get (vars) (.join "" ["LIM" "IT"])))
+(defmacro slot-reads [] (slotted.left-of))
+(defmacro record-reads [] (recs.width-of))
+(defmacro class-reads [] (inspects.box-size))
+(defmacro vars-reads [] (by-vars))
 """
 
 CONSTS = '"Constants module."\n(setv OFFSET 1)\n(setv HIDDEN 5)\n'
@@ -119,6 +129,44 @@ class Thing:
 __file__ = str(pathlib.Path(__file__).with_name("fakeext.cpython-test.so"))
 """
 
+#: A class with ``__slots__`` (its fields are member descriptors the interpreter makes from the names) and a helper that reads one field.
+SLOTTED = """\
+class Pair:
+    __slots__ = ("left",)
+
+    def __init__(self, left):
+        self.left = left
+
+
+def left_of():
+    return Pair(3).left
+"""
+
+#: A defrecord type (slots, and ``__setattr__`` / ``__delattr__`` from doeff_hy's record runtime) and a helper that reads one field.
+RECORDS = """\
+(require doeff-hy.record [defrecord])
+(defrecord Opts
+  #^ int width)
+(defn width-of [] (. (Opts :width 4) width))
+"""
+
+#: A helper that reads a passed class's namespace by ``vars(cls)`` (the shape of the record functions of _record_runtime).
+INSPECTS = '''\
+"""Inspects module."""
+
+
+class Box:
+    size = 2
+
+
+def size_of(cls):
+    return vars(cls)["size"]
+
+
+def box_size():
+    return size_of(Box)
+'''
+
 CONTEXTS = """\
 from contextvars import ContextVar
 
@@ -142,6 +190,10 @@ USERS = {
     "moder": "(require {pkg}.macros [mode])\n(setv value (mode))\n",
     "documenter": "(require {pkg}.macros [documented])\n(setv value (documented))\n",
     "datareader": "(require {pkg}.macros [reads-data])\n(setv value (reads-data))\n",
+    "slotreader": "(require {pkg}.macros [slot-reads])\n(setv value (slot-reads))\n",
+    "recordreader": "(require {pkg}.macros [record-reads])\n(setv value (record-reads))\n",
+    "classreader": "(require {pkg}.macros [class-reads])\n(setv value (class-reads))\n",
+    "varsreader": "(require {pkg}.macros [vars-reads])\n(setv value (vars-reads))\n",
     "local": "(defn run []\n  (require {pkg}.macros *)\n  (defn shadow [x] x)\n  (defn inner [] (shadow (used)))\n  (inner))\n"
     "(setv value (run))\n",
 }
@@ -215,6 +267,9 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Tree]:
     (directory / "fakeext.py").write_text(FAKEEXT, encoding="utf-8")
     (directory / "fakeext.cpython-test.so").write_bytes(b"binary one")
     (directory / "contexts.py").write_text(CONTEXTS, encoding="utf-8")
+    (directory / "slotted.py").write_text(SLOTTED, encoding="utf-8")
+    (directory / "records.hy").write_text(RECORDS, encoding="utf-8")
+    (directory / "inspects.py").write_text(INSPECTS, encoding="utf-8")
     (directory / "data.txt").write_text("one", encoding="utf-8")
     for name, text in USERS.items():
         (directory / f"{name}.hy").write_text(text.format(pkg=package), encoding="utf-8")
@@ -513,6 +568,114 @@ def test_a_changed_file_a_macro_reads_beside_its_module_is_stale(tree: Tree) -> 
     record = tree.record("datareader")
     _replace(tree.directory / "data.txt", "one", "two-two")
     assert not tree.is_current(record), "not judged stale although the neighboring file a macro reads from its location changed"
+
+
+# ---- Slot fields and vars(cls) — covered by name and contents, not by the owner module's file ------------------------------
+
+
+def test_an_unrelated_function_beside_a_slotted_class_keeps_the_record_current(tree: Tree) -> None:
+    # Red before the fix: a slot field (member_descriptor) was taken for a C function and covered by its owner module's file — a function added anywhere in
+    # doeff_hy's _clause_endings.hy (ClauseOptions, MatchArm) made every defhandler user stale.
+    record = tree.record("slotreader")
+    _append(tree.directory / "slotted.py", UNREACHED_PY)
+    assert tree.is_current(record), "judged stale merely because a function was added beside a slotted class a macro reads"
+
+
+def test_an_added_slot_field_is_stale(tree: Tree) -> None:
+    # When it must go cold: adding a field to the slotted class changes its __slots__ row and its members.
+    record = tree.record("slotreader")
+    _replace(tree.directory / "slotted.py", '__slots__ = ("left",)', '__slots__ = ("left", "right")')
+    assert not tree.is_current(record), "not judged stale although a field was added to the slotted class a macro reads"
+
+
+def test_an_unrelated_function_beside_a_defrecord_type_keeps_the_record_current(tree: Tree) -> None:
+    # Red before the fix: the fields of a defrecord type are slots, covered by the file of the module that defines the type.
+    record = tree.record("recordreader")
+    _append(tree.directory / "records.hy", UNREACHED_HY)
+    assert tree.is_current(record), "judged stale merely because a function was added beside a defrecord type a macro reads"
+
+
+def test_an_added_defrecord_field_is_stale(tree: Tree) -> None:
+    # When it must go cold: adding a field to the defrecord type a macro reads makes it stale.
+    record = tree.record("recordreader")
+    _replace(tree.directory / "records.hy", "#^ int width)", "#^ int width\n  #^ int height)")
+    assert not tree.is_current(record), "not judged stale although a field was added to the defrecord type a macro reads"
+
+
+def test_a_rewritten_docstring_beside_a_helper_reading_vars_of_a_class_keeps_the_record_current(tree: Tree) -> None:
+    # Red before the fix: vars(cls) was read as a module namespace read (like vars()) and covered the helper's module by its file — a docstring rewrite in
+    # doeff_hy's _record_runtime (record_setattr reads vars(cls)) made every defhandler user stale.
+    record = tree.record("classreader")
+    _replace(tree.directory / "inspects.py", '"""Inspects module."""', '"""Inspects module (docstring rewritten)."""')
+    _append(tree.directory / "inspects.py", UNREACHED_PY)
+    assert tree.is_current(record), "judged stale merely because the module of a helper reading vars(cls) changed elsewhere"
+
+
+def test_a_changed_value_of_a_class_read_by_vars_is_stale(tree: Tree) -> None:
+    # When it must go cold: the class read through vars(cls) is followed by its contents.
+    record = tree.record("classreader")
+    _replace(tree.directory / "inspects.py", "size = 2", "size = 20")
+    assert not tree.is_current(record), "not judged stale although a value of the class read by vars(cls) changed"
+
+
+def test_a_changed_global_read_by_vars_without_an_argument_is_stale(tree: Tree) -> None:
+    # When it must go cold: vars() with no argument stays a module namespace read — a global read by a computed key is covered by the module's file.
+    record = tree.record("varsreader")
+    _replace(tree.macros, "(setv LIMIT 7)", "(setv LIMIT 70)")
+    assert not tree.is_current(record), "not judged stale although a global read by vars() with a computed key changed"
+
+
+def _vars_of_a_name(cls):
+    return vars(cls)
+
+
+def _vars_of_an_attribute(self):
+    return vars(self.owner.kind)
+
+
+def _vars_without_an_argument():
+    return vars()
+
+
+def _vars_of_a_call(cls):
+    return vars(type(cls))
+
+
+def _vars_of_a_star(args):
+    return vars(*args)
+
+
+def _vars_as_a_value(values):
+    return list(map(vars, values))
+
+
+def _vars_in_a_nested_function(cls):
+    def inner():
+        return vars()
+
+    return vars(cls), inner
+
+
+@pytest.mark.parametrize(
+    ("function", "read"),
+    [
+        (_vars_of_a_name, "object"),
+        (_vars_of_an_attribute, "object"),
+        (_vars_without_an_argument, "module"),
+        (_vars_of_a_call, "module"),
+        (_vars_of_a_star, "module"),
+        (_vars_as_a_value, "module"),
+        (_vars_in_a_nested_function, "module"),
+    ],
+)
+def test_only_vars_with_one_plain_argument_is_an_object_read(function: object, read: str) -> None:
+    # vars(x) with one argument read as a plain value is x.__dict__ (OBJECT); vars() and every shape whose argument cannot be read from the instructions stay MODULE.
+    from types import FunctionType
+
+    from doeff_hy_bytecode_guard._macro_use import _code_facts
+
+    assert isinstance(function, FunctionType)
+    assert _code_facts(function.__code__).reads.value == read
 
 
 # ---- Real doeff_hy macros (copy doeff_hy to a temp dir, then make and check records in a separate process) ------------------------------
