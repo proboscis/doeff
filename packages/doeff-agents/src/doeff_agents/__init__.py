@@ -430,7 +430,6 @@ if TYPE_CHECKING:
     )
     from doeff_agents._handlers import (
         AgentdSessionClient as AgentdSessionClient,
-        ScenarioWorld as ScenarioWorld,
         agent_effectful_handler as agent_effectful_handler,
         agent_effectful_handlers as agent_effectful_handlers,
         codex_agent_handler as codex_agent_handler,
@@ -499,6 +498,7 @@ def __getattr__(name: str) -> Any:
     module_name = _LAZY_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import hy  # noqa: F401 - some modules behind `_` are Hy modules (_io_effects); importing hy lets Python find them
 
     module = import_module(module_name, __name__)
     value = getattr(module, name)

@@ -185,6 +185,7 @@ def test_the_outside_fields_carry_type_arguments() -> None:
     assert sorted(annotations) == [
         "ProcessOutside.effects",
         "ProcessOutside.handlers",
+        "SimOutside.children",
         "SimOutside.effects",
         "SimOutside.handlers",
         "SimOutside.per_process",

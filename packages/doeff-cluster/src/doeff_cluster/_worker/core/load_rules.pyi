@@ -13,6 +13,7 @@ LOAD_READ_EVERY_MS: int
 LINE_FRESH_MS: int
 TASK_USES_FRESH_MS: int
 IDLE_FIELDS: tuple[int, ...]
+NICE_FIELD: int
 TICK_FIELDS: int
 
 @dataclass(frozen=True, kw_only=True)
@@ -21,12 +22,14 @@ class LoadPaths:
     meminfo: str = '/proc/meminfo'
     cpu_pressure: str = '/proc/pressure/cpu'
     memory_pressure: str = '/proc/pressure/memory'
+    task_cpu_pressure: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class CpuTicks:
     busy: int
     total: int
     cpus: int
+    nice: int = 0
 
     def __post_init__(self) -> None:
         ...
@@ -58,6 +61,8 @@ class MachineLoad:
     cpu_full_avg10: float | None
     memory_some_avg10: float | None
     memory_full_avg10: float | None
+    cpu_nice: float | None = None
+    task_cpu_some_avg10: float | None = None
     task_uses: tuple[TaskMemory, ...] | None = None
 
     def __post_init__(self) -> None:
@@ -86,5 +91,8 @@ def pressure_of(text: str, source: str) -> _Program[Pressure, object]:
 def cpu_busy_between(before: CpuTicks | None, after: CpuTicks) -> _Program[float | None, object]:
     ...
 
-def machine_load_of(stat: str, meminfo: str, cpu_pressure: str | None, memory_pressure: str | None, before: CpuTicks | None, at_ms: int, line: EvictionLine | None=None) -> _Program[LoadReading, object]:
+def cpu_nice_between(before: CpuTicks | None, after: CpuTicks) -> _Program[float | None, object]:
+    ...
+
+def machine_load_of(stat: str, meminfo: str, cpu_pressure: str | None, memory_pressure: str | None, before: CpuTicks | None, at_ms: int, line: EvictionLine | None=None, task_cpu_pressure: str | None=None) -> _Program[LoadReading, object]:
     ...
