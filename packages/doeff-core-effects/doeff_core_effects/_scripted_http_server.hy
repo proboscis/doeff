@@ -13,7 +13,10 @@
 ;;;                    The script has no threads, so the shape where the body's flow does not make probes wait is expressed as "does not reach the body and answers without waiting for the body's commands".
 ;;;                    If a one-text message of an opened ticket hits a mouth that answers on the spot (ws-shortcuts of HttpListen -- ws-shortcut-for), the same as the real one,
 ;;;                    ws-shortcut-outcome treats the answer text as sent to that ticket (the same decision as WsSendText -- script-sent), and passes
-;;;                    the message with the accumulated text attached (answered-at stays the script's received-at). A message whose answer fell is passed as is, sending nothing
+;;;                    the message with the accumulated text attached (answered-at stays the script's received-at). A message whose answer fell is passed as is, sending nothing.
+;;;                    A request that hits a mouth answering one request on the spot (http-shortcuts of HttpListen -- http-shortcut-for) and whose body is read in full ahead (a declared length and a body script without failed) has, the same as
+;;;                    the real one, its answer run on its body with http-shortcut-outcome (in script order, one at a time): an HttpProbeAnswer is recorded as the answer and the request is not
+;;;                    passed; None (or a fall) passes the request as usual, its body readable once
 ;;;   HttpTakeQueued   Takes all the events currently in the script's queue (including those added by AppendHttpScript) the same way as HttpNextRequest (script-take -- discards,
 ;;;                    probe answers, bookkeeping). Even if the queue is exhausted it does not claim to be closed (the next HttpNextRequest does). After HttpShutdown, a single
 ;;;                    HttpServerClosed with the close reason
@@ -50,7 +53,8 @@
                                                 HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
                                                 probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader
-                                                WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage])
+                                                WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage
+                                                HttpShortcut HttpShortcutFailed http-shortcut-for http-shortcut-outcome])
 (import doeff_core_effects._file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "the script's request queue is exhausted")
@@ -222,6 +226,26 @@
               :body (if carried (.decode answer.body "utf-8" :errors "replace") "")))
 
 
+(defk shortcut-served [requests bodies event]
+  {:pre [(: requests (of tuple HttpShortcut ...)) (: bodies (of dict str ScriptedBody)) (: event (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened))]
+   :post [(: % (| HttpServed None))] :tags {:context "http-server" :role "foundation"}}
+  "To answer the script's next event on the spot if it is a request that hits a request mouth (http-shortcuts of HttpListen -- http-shortcut-for), the same as the real one: run answer on its
+   body with http-shortcut-outcome and, for an HttpProbeAnswer, the record of the answer the terminal receives (the request is not passed to the body). None = pass it to the body as usual (no
+   mouth hit, the body is not read in full ahead -- no declared length, as with chunked, or the body script has failed -- or the answer was None or fell)."
+  (when (not (isinstance event HttpRequestArrived))
+    (return None))
+  (<- shortcut (| HttpShortcut None) (http-shortcut-for requests event.method event.path event.upgrade))
+  (<- declared (| int None) (declared-length event.headers))
+  (val body (.get bodies event.ticket))
+  (when (or (is shortcut None) (is declared None) (and (is-not body None) (is-not body.failed None)))
+    (return None))
+  (val outcome (http-shortcut-outcome shortcut (if (is body None) b"" body.data)))
+  (if (isinstance outcome HttpProbeAnswer)
+      (do (<- answer HttpServed (probe-served event outcome))
+          answer)
+      None))
+
+
 (defrecord ScriptTake
   "The result of taking one event from the script's queue: the event to pass to the body (None if the queue is exhausted), and the session values after taking (the queue, the record, the opened tickets, the send
    tally, the box accumulation, the tickets whose bodies can be read, and the delivered requests)."
@@ -235,12 +259,13 @@
   (#^ dict arrived))
 
 
-(defk script-take [mouths shortcuts limit stalled listening pending served opened tally backlog readable arrived]
-  {:pre [(: mouths (of tuple HttpProbe ...)) (: shortcuts (of tuple WsShortcut ...)) (: limit int) (: stalled frozenset) (: listening bool)
-         (: pending tuple) (: served tuple) (: opened frozenset) (: tally WsSendReport) (: backlog dict) (: readable dict) (: arrived dict)]
+(defk script-take [mouths shortcuts requests bodies limit stalled listening pending served opened tally backlog readable arrived]
+  {:pre [(: mouths (of tuple HttpProbe ...)) (: shortcuts (of tuple WsShortcut ...)) (: requests (of tuple HttpShortcut ...)) (: bodies dict) (: limit int) (: stalled frozenset)
+         (: listening bool) (: pending tuple) (: served tuple) (: opened frozenset) (: tally WsSendReport) (: backlog dict) (: readable dict) (: arrived dict)]
    :post [(: % ScriptTake)] :tags {:context "http-server" :role "foundation"}}
   "To take the event at the head of the script's queue once (the single way of taking for HttpNextRequest and HttpTakeQueued): after only the listener is closed, discard new requests;
-   a request that hits a probe mouth is not passed to the body but answered and recorded here; attach the head event's bookkeeping (discard the box accumulation of closed tickets, remember the tickets whose bodies can be read and
+   a request that hits a probe mouth, and a request that a request mouth (requests -- its body from the body scripts bodies) answers on the spot (shortcut-served), is not passed to the body but
+   answered and recorded here; attach the head event's bookkeeping (discard the box accumulation of closed tickets, remember the tickets whose bodies can be read and
    the delivered requests). If a one-text message of an opened ticket hits a mouth that answers on the spot (shortcuts), the same as the real one, ws-shortcut-outcome sends the answer text to the ticket
    (script-sent -- send limit limit, non-reading peer stalled), and passes the message with the accumulated text attached (answered-at stays the script's received-at -- the script has no
    clock). If the queue is exhausted, the event is None."
@@ -249,11 +274,14 @@
   (var answering True)
   (while (and answering rest)
     (<- hit (| ProbeHit None) (probe-hit mouths (get rest 0)))
-    (if (is hit None)
-        (:= answering False)
-        (do (<- answer HttpServed (probe-served hit.arrival (probe-answer hit.probe)))
-            (:= record (+ record #(answer)))
-            (:= rest (cut rest 1 None)))))
+    (<- spot (| HttpServed None) (shortcut-served (if (is hit None) requests #()) bodies (get rest 0)))
+    (cond
+      (is-not hit None) (do (<- answer HttpServed (probe-served hit.arrival (probe-answer hit.probe)))
+                            (:= record (+ record #(answer)))
+                            (:= rest (cut rest 1 None)))
+      (is-not spot None) (do (:= record (+ record #(spot)))
+                             (:= rest (cut rest 1 None)))
+      True (:= answering False)))
   (when (not rest)
     (return (ScriptTake :event None :pending rest :served record :opened opened :tally tally :backlog backlog :readable readable
                         :arrived arrived)))
@@ -324,12 +352,15 @@
   (session var mouths #())
   ;; The mouth for one ws message answered on the spot (remembered by HttpListen).
   (session var shortcuts #())
+  ;; The mouth for one request answered on the spot (remembered by HttpListen).
+  (session var requests #())
   ;; Whether new requests are accepted (false after HttpStopListening).
   (session var listening True)
-  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts]
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts http-shortcuts]
     (:= limit ws-send-max-bytes)
     (:= mouths probes)
     (:= shortcuts ws-shortcuts)
+    (:= requests http-shortcuts)
     (resume address))
   (HttpStopListening []
     (:= listening False)
@@ -339,7 +370,7 @@
     ;; mouth's answers; header comment).
     (if (is-not closed None)
         (resume (HttpServerClosed :reason closed))
-        (do (<- took ScriptTake (script-take mouths shortcuts limit script.stalled listening pending served opened tally backlog readable arrived))
+        (do (<- took ScriptTake (script-take mouths shortcuts requests body-table limit script.stalled listening pending served opened tally backlog readable arrived))
             (:= pending took.pending)
             (:= served took.served)
             (:= opened took.opened)
@@ -353,7 +384,7 @@
     (var taken #())
     (var more (is closed None))
     (while more
-      (<- took ScriptTake (script-take mouths shortcuts limit script.stalled listening pending served opened tally backlog readable arrived))
+      (<- took ScriptTake (script-take mouths shortcuts requests body-table limit script.stalled listening pending served opened tally backlog readable arrived))
       (:= pending took.pending)
       (:= served took.served)
       (:= opened took.opened)

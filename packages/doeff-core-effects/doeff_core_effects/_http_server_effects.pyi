@@ -143,6 +143,16 @@ class WsShortcutAnswered:
 class WsShortcutFailed:
     reason: str
 
+@dataclass(frozen=True, kw_only=True)
+class HttpShortcut:
+    method: str
+    path: str
+    answer: Callable[[bytes], Program]
+
+@dataclass(frozen=True, kw_only=True)
+class HttpShortcutFailed:
+    reason: str
+
 @dataclass(frozen=True)
 class HttpListen(EffectBase[HttpAddress]):
     address: HttpAddress
@@ -151,6 +161,7 @@ class HttpListen(EffectBase[HttpAddress]):
     probes: tuple[HttpProbe, ...] = ...
     share_port: bool = False
     ws_shortcuts: tuple[WsShortcut, ...] = ...
+    http_shortcuts: tuple[HttpShortcut, ...] = ...
 
 @dataclass(frozen=True)
 class HttpNextRequest(EffectBase[HttpEvent]):
@@ -250,6 +261,12 @@ def ws_shortcut_outcome(shortcut: WsShortcut, ticket: str, text: str) -> WsShort
     ...
 
 def ws_shortcut_stage(program: Program) -> WsShortcutAnswered | WsShortcutFailed:
+    ...
+
+def http_shortcut_for(shortcuts: tuple[HttpShortcut, ...], method: str, path: str, upgrade: bool) -> _Program[HttpShortcut | None, object]:
+    ...
+
+def http_shortcut_outcome(shortcut: HttpShortcut, data: bytes) -> HttpProbeAnswer | HttpShortcutFailed | None:
     ...
 
 @dataclass(frozen=True, kw_only=True)
