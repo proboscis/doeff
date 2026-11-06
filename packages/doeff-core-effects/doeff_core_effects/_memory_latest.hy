@@ -30,7 +30,7 @@
   (#^ (get dict #(type (get tuple #((get ExternalPromise object) ...)))) bells))
 
 
-(deff drop-bell [bells kind bell]  ; cannot be a defk: it is called as a plain function inside the scheduler by the bell promise's cancel callback (ExternalPromise.on-cancel)
+(deff drop-bell [bells kind bell]  ; defk にできない: it is called as a plain function inside the scheduler by the bell promise's cancel callback (ExternalPromise.on-cancel)
   {:pre [(: bells dict) (: kind type) (: bell ExternalPromise)] :post [(: % None)] :tags {:context "latest" :role "foundation"}}
   "To detach the bell of a finished or cancelled wait from the set of type kind (does nothing if it was already detached by ringing -- bells are compared by object identity)."
   (setv left (tuple (gfor other (.get bells kind #()) :if (is-not other bell) other)))

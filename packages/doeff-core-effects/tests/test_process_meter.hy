@@ -76,7 +76,7 @@
   (val done (threading.Event))
   (val torn [])
   (val reads [0])
-  (defn read-until-done []  ; cannot be a defk: target of threading.Thread (entry of a thread outside the VM)
+  (defn read-until-done []  ; defk にできない: target of threading.Thread (entry of a thread outside the VM)
     (while (not (.is-set done))
       (setv snapshot (run (with_handlers [(state) (process-meter-handler name SETTINGS)] (read-meter))))
       (setv (get reads 0) (+ (get reads 0) 1))

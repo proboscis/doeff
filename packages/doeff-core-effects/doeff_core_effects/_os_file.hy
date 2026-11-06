@@ -53,7 +53,7 @@
 (val IOPRIO-SET-SYSCALL {"x86_64" 251 "aarch64" 30})
 
 
-(deff lower-io-priority []  ; cannot be a defk: an entry called at the start of a thread (on-start of ThreadPerCall -- outside the VM)
+(deff lower-io-priority []  ; defk にできない: an entry called at the start of a thread (on-start of ThreadPerCall -- outside the VM)
   {:pre [] :post [(: % bool)]}
   "To set the IO priority of the calling thread to IDLE so the main body's small IO goes through first (mq-deadline of the zeus scheduler orders by priority class -- it does not look at the level,
    so the lowest BE is not effective). Does nothing and returns False on non-Linux, a platform not in the table, or a syscall failure (the cleanup proceeds even if the priority is not lowered)."
@@ -253,12 +253,12 @@
       answer)))
 
 
-(defn _sync [handle]  ; cannot be a defk: a procedure called from inside the write's with (returning a Program would not run it)
+(defn _sync [handle]  ; defk にできない: a procedure called from inside the write's with (returning a Program would not run it)
   (.flush handle)
   (os.fsync (.fileno handle)))
 
 
-(defn #^ float _timed-sync [handle sync]  ; cannot be a defk: a procedure called from inside the write's with (returning a Program would not run it)
+(defn #^ float _timed-sync [handle sync]  ; defk にできない: a procedure called from inside the write's with (returning a Program would not run it)
   "Flush the contents of handle, fsync if sync, and return the seconds taken (0.0 if not sync)."
   (.flush handle)
   (if sync
@@ -310,13 +310,13 @@
       answer)))
 
 
-(defn _append [path text sync]  ; cannot be a defk: a callback passed to guarded
+(defn _append [path text sync]  ; defk にできない: a callback passed to guarded
   (with [handle (open path "a" :encoding "utf-8")]
     (.write handle text)
     (when sync (_sync handle))))
 
 
-(defn _release [held]  ; cannot be a defk: a callback passed to guarded
+(defn _release [held]  ; defk にできない: a callback passed to guarded
   (try (fcntl.flock held.token fcntl.LOCK-UN) (finally (os.close held.token))))
 
 
@@ -452,7 +452,7 @@
     (resume answer)))
 
 
-(deff release-abandoned [answer]  ; cannot be a defk: the entry of cleanup run in an Executor thread (abandon of offloaded -- outside the VM)
+(deff release-abandoned [answer]  ; defk にできない: the entry of cleanup run in an Executor thread (abandon of offloaded -- outside the VM)
   {:pre [(: answer (| LockHeld FileFailed))] :post [(: % None)]}
   "To release a lock acquired after the waiting task was cancelled (an answer that failed to acquire holds nothing)."
   (when (isinstance answer LockHeld)

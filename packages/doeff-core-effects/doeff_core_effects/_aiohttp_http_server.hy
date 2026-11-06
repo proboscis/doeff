@@ -128,17 +128,17 @@
 (val Carried (TypeVar "Carried"))
 
 
-(defn #^ bool upgrade-asked [#^ web.Request request]  ; cannot be a defk: real I/O at the intake that reads the aiohttp request headers
+(defn #^ bool upgrade-asked [#^ web.Request request]  ; defk にできない: real I/O at the intake that reads the aiohttp request headers
   "To put on the event whether the request asks for an Upgrade to ws."
   (= (.lower (.get request.headers "Upgrade" "")) "websocket"))
 
 
-(defn #^ frozenset hop-names [#^ str connection]  ; cannot be a defk: real I/O of the relay (building aiohttp headers)
+(defn #^ frozenset hop-names [#^ str connection]  ; defk にできない: real I/O of the relay (building aiohttp headers)
   "To decide the names of headers not to mirror (the fixed hop-by-hop ones plus the headers named by the Connection header -- RFC 9110 7.6.1)."
   (| HOP-BY-HOP (frozenset (gfor token (.split connection ",") :if (.strip token) (.lower (.strip token))))))
 
 
-(defn #^ list forwarded-headers [#^ web.Request request #^ bool ws]  ; cannot be a defk: real I/O of the relay (building aiohttp headers)
+(defn #^ list forwarded-headers [#^ web.Request request #^ bool ws]  ; defk にできない: real I/O of the relay (building aiohttp headers)
   "To add X-Forwarded-Proto / X-Forwarded-For to the headers passed to the upstream (excluding hop-by-hop and, for ws, handshake headers). The value is a list of (name value) pairs
    (headers with the same name are not dropped even if there are several)."
   (setv hops (hop-names (.get request.headers "Connection" ""))
@@ -152,7 +152,7 @@
   (+ kept [#("X-Forwarded-Proto" proto) #("X-Forwarded-For" (if chain (+ chain ", " peer) peer))]))
 
 
-(defn #^ int sendable-close [#^ (| int None) code]  ; cannot be a defk: real I/O of the ws relay (building close frames)
+(defn #^ int sendable-close [#^ (| int None) code]  ; defk にできない: real I/O of the ws relay (building close frames)
   "To turn a received close status code into one that can be sent again (no status code is a normal close; abnormal is 1011 -- header note)."
   (cond
     (or (is code None) (= code NO-STATUS-CLOSE)) NORMAL-CLOSE
@@ -161,7 +161,7 @@
 
 
 (defn :async #^ None pump [#^ (| web.WebSocketResponse aiohttp.ClientWebSocketResponse) source
-                           #^ (| web.WebSocketResponse aiohttp.ClientWebSocketResponse) target]  ; cannot be a defk: real I/O of the ws relay (mirrors the aiohttp socket)
+                           #^ (| web.WebSocketResponse aiohttp.ClientWebSocketResponse) target]  ; defk にできない: real I/O of the ws relay (mirrors the aiohttp socket)
   "To mirror frames in one direction: text, bytes, ping, and pong as they are; close is mirrored to the peer together with its status code, and then it ends. It ends if the peer has already closed."
   (while True
     (setv message (await (.receive source)))
@@ -180,7 +180,7 @@
         (return None)))))
 
 
-(defn #^ None relay-failed [#^ str line]  ; cannot be a defk: real I/O of the relay (one line in place of an access log)
+(defn #^ None relay-failed [#^ str line]  ; defk にできない: real I/O of the relay (one line in place of an access log)
   "To announce a relay failure in one line on stderr (no access log is emitted, so which port failed can be told from outside)."
   (print (+ "http-server: " line) :file sys.stderr :flush True)
   None)
@@ -197,7 +197,7 @@
            window-seconds (len ordered) (* 1000.0 (get ordered -1)) (* 1000.0 p99)))
 
 
-(defn :async #^ None meter-edge-lag [#^ float tick-seconds #^ float window-seconds]  ; cannot be a defk: real I/O that sleeps on the listener loop and reads the clock
+(defn :async #^ None meter-edge-lag [#^ float tick-seconds #^ float window-seconds]  ; defk にできない: real I/O that sleeps on the listener loop and reads the clock
   "To keep measuring the listener loop's oversleep and announce one line per window (loop lag in the header note). Runs until the listener loop stops."
   (setv overshoots #()
         window-start (time.monotonic))
@@ -212,7 +212,7 @@
             window-start woke))))
 
 
-(defn #^ int refusal-status [#^ web.Request request]  ; cannot be a defk: real I/O at the intake that reads the aiohttp request headers
+(defn #^ int refusal-status [#^ web.Request request]  ; defk にできない: real I/O at the intake that reads the aiohttp request headers
   "To decide the refusal status returned to a request that cannot be upgraded to ws (a shape refusal is the same ws-refusal-status as the scripted handler -- 405 if not GET,
    426 if there is no Upgrade: websocket. Even if the shape is right, refusing in the remaining handshake validation gives 400)."
   (or (run (ws-refusal-status request.method (upgrade-asked request))) 400))
@@ -686,7 +686,7 @@
     (self.reset-report)
     report)
 
-  (defn :async #^ HttpBodyOutcome read-body [self #^ str ticket #^ int max-bytes]  ; cannot be a defk: real I/O that reads the aiohttp request body (a coroutine on the event loop)
+  (defn :async #^ HttpBodyOutcome read-body [self #^ str ticket #^ int max-bytes]  ; defk にできない: real I/O that reads the aiohttp request body (a coroutine on the event loop)
     "To read the ticket's request body as a stream up to the limit (header note -- if the declaration exceeds the limit, refuse without reading; stop and refuse at the tick when the amount read exceeds the limit).
      Only once per ticket: a ticket already read, one that has received a command, or an unknown ticket gets HttpBodyFailed."
     (setv request (.pop self.unread ticket None))
@@ -698,7 +698,7 @@
       (return (HttpBodyTooLarge :declared declared)))
     (await (self.drain-body ticket request max-bytes)))
 
-  (defn :async #^ (| HttpBodyOutcome None) prefetch [self #^ str ticket #^ web.Request request]  ; cannot be a defk: real I/O that reads the aiohttp request body (a coroutine on the event loop)
+  (defn :async #^ (| HttpBodyOutcome None) prefetch [self #^ str ticket #^ web.Request request]  ; defk にできない: real I/O that reads the aiohttp request body (a coroutine on the event loop)
     "To read in full on the listener loop, before lining up the event, a body whose declared length is PREFETCH-BYTES or less (body reading in the header note). A body with no declaration
      (chunked), a large body, and a ws Upgrade are not read (None -- HttpReadBody reads on the listener loop while watching the limit)."
     (setv declared request.content-length)
@@ -718,7 +718,7 @@
                                     early)
       _ early))
 
-  (defn :async #^ HttpBodyOutcome drain-body [self #^ str ticket #^ web.Request request #^ int max-bytes]  ; cannot be a defk: real I/O that reads the aiohttp request body (a coroutine on the event loop)
+  (defn :async #^ HttpBodyOutcome drain-body [self #^ str ticket #^ web.Request request #^ int max-bytes]  ; defk にできない: real I/O that reads the aiohttp request body (a coroutine on the event loop)
     "To read the ticket's request body in chunks up to max-bytes as a stream (stop and refuse at the tick when the amount read exceeds the limit, and put the ticket into oversized)."
     (setv declared request.content-length)
     (setv chunks [] total 0)

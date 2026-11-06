@@ -144,7 +144,7 @@
       (raise))))
 
 
-(deff http-client-factory [* #^ bool [trust-env True] #^ (| ssl.SSLContext bool) [verify True]]  ; cannot be a defk: the client builder (the client-factory value) that the handler calls as a plain function outside any Program at the start of the scope
+(deff http-client-factory [* #^ bool [trust-env True] #^ (| ssl.SSLContext bool) [verify True]]  ; defk にできない: the client builder (the client-factory value) that the handler calls as a plain function outside any Program at the start of the scope
   {:pre [(: trust-env bool) (: verify (| ssl.SSLContext bool))] :post [(: % httpx.AsyncClient)]}
   "Builds one real HTTP client: how idle connections are held is CLIENT-LIMITS (the contract in the header comment); everything else stays at the httpx defaults.
    trust-env = whether to read proxy env and .netrc; verify = what to check the peer's certificate with (an SSLContext or a boolean) -- both default to the same as httpx.

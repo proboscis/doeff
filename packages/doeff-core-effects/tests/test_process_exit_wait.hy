@@ -260,13 +260,13 @@
 
 (defclass OnStallReport [logging.Handler]
   "Calls on-report when the scheduler writes a stall warning (from any thread)."
-  (deff __init__ [self on-report]  ; cannot be a defk: constructor of a logging.Handler (outside the VM)
+  (deff __init__ [self on-report]  ; defk にできない: constructor of a logging.Handler (outside the VM)
     {:pre [(: self OnStallReport) (: on-report Callable)] :post [(: % None)]}
     "To receive the call to make when a stall warning is seen."
     (.__init__ (super) :level logging.WARNING)
     (setv self.on-report on-report))
 
-  (deff emit [self record]  ; cannot be a defk: callback that logging calls per record
+  (deff emit [self record]  ; defk にできない: callback that logging calls per record
     {:pre [(: self OnStallReport) (: record logging.LogRecord)] :post [(: % None)]}
     "To call on-report if the record is the scheduler's stall warning."
     (when (in "scheduler stalled" (.getMessage record))
@@ -313,7 +313,7 @@
   (val reported (threading.Event))
   (val watcher (OnStallReport (fn [] (.set reported))))
   (val logger (logging.getLogger scheduler-module.__name__))
-  (deff notice-late []  ; cannot be a defk: entry called by threading.Thread on another thread (outside the VM)
+  (deff notice-late []  ; defk にできない: entry called by threading.Thread on another thread (outside the VM)
     {:pre [] :post [(: % None)]}
     "To make the end-notice pipe readable when a stall is reported (after 40 periods if not reported)."
     (.wait reported :timeout (* STALL-INTERVAL 40))

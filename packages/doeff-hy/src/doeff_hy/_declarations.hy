@@ -69,7 +69,7 @@
         (raise (ValueError (.format "DefinitionTags.{} must be one of {}: {!r}" name (.join " / " SPELLS) value)))))))
 
 
-(defn #^ None refuse-unknown-keys [#^ Dict contract #^ tuple allowed #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ None refuse-unknown-keys [#^ Dict contract #^ tuple allowed #^ str where]  ; defk にできない: a function called at macro expansion time
   "Raise SyntaxError if the contract dict has a key outside allowed (so keys are not silently dropped). where = the definition name used in the error message."
   (for [key (cut contract None None 2)]
     (when (not-in (str key) allowed)
@@ -78,7 +78,7 @@
 
 ;; The Hy-side source of truth for how defrecord / defwire fields are read (the Rust-side source of truth is hy_index::fields in doeff-indexer — called by hy-index and doeff-linter).
 ;; That the two sources give the same answer is checked by both sides reading the same table of inputs, tests/data/record_field_cases.json.
-(defn #^ (get list Symbol) field-targets [#^ (get Iterable Object) forms]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ (get list Symbol) field-targets [#^ (get Iterable Object) forms]  ; defk にできない: a function called at macro expansion time
   "From the list of forms in a record body, return the field names (symbols) in the order written — a bare symbol x, #^ T x, (#^ T x), and the
    annotated targets of (setv #^ T1 a v1 #^ T2 b v2 ...) (one per pair). The target of an unannotated (setv x v) is not a dataclass field (it is a class attribute), so it is not counted."
   (import hy.models [Expression])
@@ -97,7 +97,7 @@
   out)
 
 
-(defn #^ (| Object None) declared-value [#^ Dict contract #^ str key]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ (| Object None) declared-value [#^ Dict contract #^ str key]  ; defk にできない: a function called at macro expansion time
   "The form of the value of key in the contract dict (None if absent)."
   (setv found None)
   (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
@@ -106,7 +106,7 @@
   found)
 
 
-(defn #^ Object effects-form [#^ (| Object None) form #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ Object effects-form [#^ (| Object None) form #^ str where]  ; defk にできない: a function called at macro expansion time
   "The form of the `:effects` value -> a form that builds a tuple of effect types at runtime (a None form if absent)."
   (cond
     (is form None) 'None
@@ -120,7 +120,7 @@
         `(doeff_hy._declarations.effect-types ~where (tuple [~@form])))))
 
 
-(defn #^ (| str None) effect-refusal [#^ object item]  ; cannot be a defk: called when the head of a macro-expanded definition loads the module (outside a Program)
+(defn #^ (| str None) effect-refusal [#^ object item]  ; defk にできない: called when the head of a macro-expanded definition loads the module (outside a Program)
   "The reason item cannot be written in :effects (None if it can). What can be written is an effect type, or a function that makes an effect (its return annotation is an effect type —
    the shape of doeff_time's GetTime / Delay and doeff's Tell)."
   (import typing)
@@ -137,7 +137,7 @@
              (.format "function whose return annotation cannot be resolved ({}: {})" (. (type e) __name__) e)))))
 
 
-(defn #^ tuple effect-types [#^ str where #^ tuple items]  ; cannot be a defk: called when the head of a macro-expanded definition loads the module (outside a Program)
+(defn #^ tuple effect-types [#^ str where #^ tuple items]  ; defk にできない: called when the head of a macro-expanded definition loads the module (outside a Program)
   "Check the value of `:effects` at definition time and return it — a name that is neither an effect type nor a function making an effect (a function, a value, a class that is not an effect) is refused
    with a TypeError naming the definition and the reason (#800 — it used to check only that the value was a list of names and silently let anything through)."
   (for [item items]
@@ -148,7 +148,7 @@
   items)
 
 
-(defn #^ Object tags-form [#^ (| Object None) form #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ Object tags-form [#^ (| Object None) form #^ str where]  ; defk にできない: a function called at macro expansion time
   "Check the `:tags` value form at transform time and return a form that builds a DefinitionTags at runtime (a None form if absent)."
   (when (is form None)
     (return 'None))
@@ -189,7 +189,7 @@
 (setv OUTCOME-KEYS #(":absent" ":failure" ":value"))
 
 
-(defn #^ (get dict #(str (get list Object))) outcome-type-forms [#^ Dict contract #^ (| Object None) answer #^ str where]  ; cannot be a defk: a function called at macro expansion time (deff is defined by doeff_hy.macros, and macros.hy imports this module, so it cannot be required)
+(defn #^ (get dict #(str (get list Object))) outcome-type-forms [#^ Dict contract #^ (| Object None) answer #^ str where]  ; defk にできない: a function called at macro expansion time (deff is defined by doeff_hy.macros, and macros.hy imports this module, so it cannot be required)
   "Check :absent / :failure / :value of defeffect and turn them into a per-key list of type forms (empty if not written).
    Elements are type names or None. If :answer is a union form (| A B ...) or a single name, refuse at expansion time elements that are not in it and elements that overlap between keys
    (any other :answer is refused at definition time by Outcomes.declare)."
@@ -216,7 +216,7 @@
   out)
 
 
-(defn #^ (get list Object) bound-answer-methods [#^ Object answer #^ (get dict #(str (get list Object))) outcome-types]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ (get list Object) bound-answer-methods [#^ Object answer #^ (get dict #(str (get list Object))) outcome-types]  ; defk にできない: a function called at macro expansion time
   "For the type-check expansion: a list of forms for a method `__iter__` placed on the class of an effect that declares an answer division (:absent, :failure)
    (empty when not placed). The return type = the :answer union minus the :absent and :failure elements — the type of the name `<-` binds;
    the return type is BoundRun in doeff_hy/_static_types.pyi (`Program[T, E]` reads T from `__iter__`). The runtime `<-` turns absence into Absent and
@@ -238,7 +238,7 @@
       []))
 
 
-(defn #^ (get tuple #((get list Object) (get list str))) effect-field-forms [#^ (| Object None) form #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ (get tuple #((get list Object) (get list str))) effect-field-forms [#^ (| Object None) form #^ str where]  ; defk にできない: a function called at macro expansion time
   "Check `:fields [(: name type) (: name type default) ...]` of defeffect and turn it into a list of dataclass field forms and a list of field names
    (both empty if absent). A field without a default cannot follow a field with a default (the dataclass ordering rule is refused at expansion time)."
   (when (is form None)
@@ -266,7 +266,7 @@
   #(out names))
 
 
-(defn #^ (get list Symbol) type-param-symbols [#^ (| Object None) form #^ str where]  ; cannot be a defk: a function called at macro expansion time (also reads :tp of the defk / deff contract — _type-params in macros.hy)
+(defn #^ (get list Symbol) type-param-symbols [#^ (| Object None) form #^ str where]  ; defk にできない: a function called at macro expansion time (also reads :tp of the defk / deff contract — _type-params in macros.hy)
   "Turn the form of the value of `:tp [T ...]` in the contract dict (None if absent) into a list of type-parameter symbols (empty if not written). The only accepted shape is a non-empty list of
    non-overlapping symbols — a value that is not a sequence of names, or overlapping names, is a SyntaxError (the :tp of defk, deff and defeffect are refused by the same rule)."
   (cond
@@ -279,7 +279,7 @@
       (raise (SyntaxError (.format "{}: :tp must be a sequence of type-parameter names (e.g. `:tp [T]`, non-overlapping names) — got {}" where (hy.repr form))))))
 
 
-(defn #^ (get list str) runs-carried-names [#^ (| Object None) form #^ (get list str) names #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ (get list str) runs-carried-names [#^ (| Object None) form #^ (get list str) names #^ str where]  ; defk にできない: a function called at macro expansion time
   "Check :runs-carried of defeffect and turn it into a sorted list of the names (Python attribute names) of fields holding a Program that the answerer runs at the place where the effect was performed
    (empty if not written). The only accepted shape is a list of :fields field names — a name with no such field is refused at expansion time."
   (when (is form None)
@@ -292,7 +292,7 @@
   (sorted (sfor item form (hy.mangle (str item)))))
 
 
-(defn #^ Object answer-value-form [#^ Object answer]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ Object answer-value-form [#^ Object answer]  ; defk にできない: a function called at macro expansion time
   "Build the form of the value placed in __doeff_answer__ in the body of defeffect. At runtime it is the :answer expression itself (the type of the value a handler returns with resume).
    In the type-check expansion (doeff_hy/_static_view.py) it is `cast(object, (A, B, ...))` (a tuple of the elements of the :answer union; a single
    element if not a union): pyright also evaluates `A | B` in a value position as a type, which turns bare generics (`dict | X` — reportMissingTypeArgument) and
@@ -308,7 +308,7 @@
       answer))
 
 
-(defn #^ Object defeffect-form [#^ Symbol name #^ (| String None) docstring #^ Dict contract #^ str where #^ (get list Object) pre-code]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ Object defeffect-form [#^ Symbol name #^ (| String None) docstring #^ Dict contract #^ str where #^ (get list Object) pre-code]  ; defk にできない: a function called at macro expansion time
   "Expansion of defeffect: build the forms that place a frozen dataclass inheriting EffectBase (with a ClassVar __doeff_answer__ in the body = the type of the value a handler returns with resume),
    and the attributes __doeff_tags__ and __doeff_defeffect__ (a mark that it was made by defeffect — read by the :effects check of defk).
    pre-code = the list of statements made from :pre by the same rules as defk (made by _contract-code in macros.hy). If non-empty, place it in __post_init__
@@ -445,7 +445,7 @@
      ~@outcomes))
 
 
-(defn #^ (get list str) needs-names [#^ Object form #^ str where]  ; cannot be a defk: a function called at macro expansion time (also read by defsystem in doeff-cluster)
+(defn #^ (get list str) needs-names [#^ Object form #^ str where]  ; defk にできない: a function called at macro expansion time (also read by defsystem in doeff-cluster)
   "Check the `:needs` value form at transform time and return a sorted list of capability names. The only accepted shape is a set of string literals #{\"a\" \"b\"}
    (names, expressions and empty strings are refused — so the linter can read it without executing)."
   (when (not (isinstance form Set))
@@ -456,7 +456,7 @@
   (sorted (sfor item form (str item))))
 
 
-(defn #^ (get list str) record-names [#^ Object form #^ str where #^ str key]  ; cannot be a defk: a function called at macro expansion time (also read by defsystem in doeff-cluster)
+(defn #^ (get list str) record-names [#^ Object form #^ str where #^ str key]  ; defk にできない: a function called at macro expansion time (also read by defsystem in doeff-cluster)
   "Check the value form of `:reads` / `:writes` / `:serves` at expansion time and return a sorted list of outside store names — so the linter can read it by spelling without executing,
    the only accepted shape is a set of string literals (an empty set = declared to neither read nor write), spelled <store>:<name> (exactly one `:`, both sides non-empty).
    What a store name means is not checked (it is the vocabulary of the consumer's repo). The readers are the contract :writes of a definition (_extract-contracts in macros.hy) and
@@ -472,14 +472,14 @@
   (sorted (sfor item form (str item))))
 
 
-(defn #^ Object needs-form [#^ (| Object None) form #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ Object needs-form [#^ (| Object None) form #^ str where]  ; defk にできない: a function called at macro expansion time
   "The `:needs` value form -> a form that builds a frozenset at runtime (a None form if absent)."
   (if (is form None)
       'None
       `(frozenset [~@(lfor n (needs-names form where) (String n))])))
 
 
-(defn #^ (get list Object) declaration-setters [#^ Symbol name #^ (| Dict None) contract #^ str where]  ; cannot be a defk: a function called at macro expansion time
+(defn #^ (get list Object) declaration-setters [#^ Symbol name #^ (| Dict None) contract #^ str where]  ; defk にできない: a function called at macro expansion time
   "A list of forms that place the attributes __doeff_effects__ / __doeff_tags__ / __doeff_needs__ of definition name (contract = the header dict or None)."
   (setv effects (if (is contract None) None (declared-value contract ":effects"))
         tags (if (is contract None) None (declared-value contract ":tags"))

@@ -58,13 +58,13 @@
   (bytecode-is-current path existing data))
 
 
-(defn #^ str pyc-path [#^ str source]  ; cannot be a defk: a path computation called inside comprehensions and the process pool
+(defn #^ str pyc-path [#^ str source]  ; defk にできない: a path computation called inside comprehensions and the process pool
   "source path -> the path of the .pyc in __pycache__ in the same dir (the name import looks for -- <name>.<cache tag>.pyc)."
   (setv #(head tail) (posixpath.split source))
   (posixpath.join head "__pycache__" (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc")))
 
 
-(defn #^ (| SourceNotCompiled None) compile-one [#^ str tree #^ str rel #^ str name]  ; cannot be a defk: called by a child of the process pool
+(defn #^ (| SourceNotCompiled None) compile-one [#^ str tree #^ str rel #^ str name]  ; defk にできない: called by a child of the process pool
   "Bake one source of the real tree and place it in __pycache__ (write to a separate file and replace). SourceNotCompiled when it cannot be baked or read."
   (setv source (posixpath.join tree rel))
   (try
@@ -86,7 +86,7 @@
   None)
 
 
-(deff prepare-compile-path [tree roots]  ; cannot be a defk: the initializer of the process pool and the main of the console script (entry points called as plain functions)
+(deff prepare-compile-path [tree roots]  ; defk にできない: the initializer of the process pool and the main of the console script (entry points called as plain functions)
   {:pre [(: tree str) (: roots tuple)] :post [(: % None)]}
   "Add the roots inside the tree to the import path of the baking process (earlier ones first), and keep imports during baking from writing timestamp-based .pyc files."
   (setv sys.dont-write-bytecode True)
@@ -94,13 +94,13 @@
     (.insert sys.path 0 (posixpath.join tree root))))
 
 
-(deff _compile-item [item]  ; cannot be a defk: called as a plain function by a child of the process pool (passed to pool.map)
+(deff _compile-item [item]  ; defk にできない: called as a plain function by a child of the process pool (passed to pool.map)
   {:pre [(: item tuple)] :post [(: % (| SourceNotCompiled None))]}
   "To bake one #(tree relative-path module-name) tuple in a pool child (SourceNotCompiled if it cannot be baked)."
   (compile-one #* item))
 
 
-(defn #^ tuple compile-python-sources [#^ str tree #^ tuple items #^ int jobs #^ tuple roots]  ; cannot be a defk: runs the process pool
+(defn #^ tuple compile-python-sources [#^ str tree #^ tuple items #^ int jobs #^ tuple roots]  ; defk にできない: runs the process pool
   "Bake the tree's sources (a sequence of #(relative-path module-name)) and place them in __pycache__, returning the sequence of SourceNotCompiled for those that could not be baked. Baking is independent
    per file and uses only CPU, so it is split across jobs processes (fork -- with spawn the child cannot resolve the function before re-importing the Hy modules)."
   (setv work (lfor #(rel name) items #(tree rel name)))
