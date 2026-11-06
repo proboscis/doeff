@@ -2675,7 +2675,7 @@ fn definition_graph_with<'h>(
 ) -> DefinitionGraph<'h> {
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
-    let catalog = world_catalog::WorldCatalog::bundled();
+    let catalog = architecture.world_catalog();
     let wrapped = catalog.world_targets(architecture);
     let static_readers: BTreeSet<String> = architecture.static_readers.iter().map(|r| r.target()).collect();
     // What builds a system value = :carriers and the index's defsystem definitions (the foundation of the arguments of their calls is carried as a system value).
@@ -4247,7 +4247,7 @@ struct WorldSpot {
 /// Places that name a catalog real-I/O handler outside the roster definitions (and the nested definitions inside them) (references and calls — import lines are not counted).
 /// The same handler in the same definition is one finding.
 fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<WorldSpot> {
-    let wrapped = world_catalog::WorldCatalog::bundled().world_targets(architecture);
+    let wrapped = architecture.world_catalog().world_targets(architecture);
     let listed = architecture.world_definition_targets();
     let definitions = &hy_file.definitions;
     let in_import = |range: &Range| hy_file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
@@ -4257,7 +4257,7 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
         .filter(|r| !in_import(&r.range))
         .filter_map(|r| r.target.as_ref().map(|t| (t, r.range)))
         .chain(hy_file.calls.iter().filter_map(|c| c.target.as_ref().map(|t| (t, c.range))));
-    let catalog = world_catalog::WorldCatalog::bundled();
+    let catalog = architecture.world_catalog();
     let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
     for (target, range) in spots {
         // Catalog rows that are not counted (migration-period rows that can only be written in :wraps) are not counted.

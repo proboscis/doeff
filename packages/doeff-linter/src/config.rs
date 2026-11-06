@@ -118,6 +118,13 @@ pub struct Config {
     /// Settings for the commit hook (`--commit-hook`) -- `[tool.doeff-linter.commit_hook]`
     #[serde(default)]
     pub commit_hook: Option<CommitHookSection>,
+
+    /// The repo's catalogs of real I/O handlers, read on top of doeff's bundled catalog (paths relative to the config file's dir; the shape of
+    /// doeff-linter `data/world_handlers.json`). For handlers of packages outside doeff: the package's repo keeps the catalog file and the using repo names it here,
+    /// so :wraps of :world-handlers may name those handlers. `--world-catalog` wins (the commit hook and the merge gate pass the tip's catalogs as absolute paths
+    /// when they measure a tree placed outside the checkout).
+    #[serde(default)]
+    pub world_catalogs: Vec<String>,
 }
 
 /// `[tool.doeff-linter.commit_hook]` -- the settings read by the commit hook's entry point (`--commit-hook`).
@@ -174,9 +181,10 @@ impl Config {
             }
         };
         settings.architecture = architecture;
-        // :wraps may contain only handlers that are in doeff's catalog of real I/O handlers (if a handler outside the catalog is wrapped, no rule knows that handler to be real I/O).
+        // :wraps may contain only handlers that are in the catalog of real I/O handlers -- doeff's bundled catalog plus the repo's world_catalogs
+        // (if a handler outside the catalog is wrapped, no rule knows that handler to be real I/O).
         if let Some(arch) = settings.architecture.as_ref() {
-            let catalog = crate::project::world_catalog::WorldCatalog::bundled();
+            let catalog = arch.world_catalog();
             let outside: Vec<String> = arch
                 .world_handlers
                 .iter()
@@ -185,7 +193,7 @@ impl Config {
             if !outside.is_empty() {
                 return Err(outside
                     .into_iter()
-                    .map(|what| format!("{}: {} is not in doeff's catalog of real I/O handlers (doeff-linter data/world_handlers.json) -- add it to the catalog or remove it from :wraps", arch.path.display(), what))
+                    .map(|what| format!("{}: {} is not in the catalog of real I/O handlers (doeff-linter data/world_handlers.json and the files of [tool.doeff-linter] world_catalogs) -- add it to the catalog of the package that defines it and name that file in world_catalogs, or remove it from :wraps", arch.path.display(), what))
                     .collect());
             }
         }
@@ -558,6 +566,15 @@ pub fn rule_list_json() -> serde_json::Value {
             .map(|id| serde_json::json!({ "id": id, "whole_repo": needs_whole_repo(&id), "semantic": is_semantic(&id) }))
             .collect(),
     )
+}
+
+/// The repo's catalog files of real I/O handlers -- the `--world-catalog` arguments if given, otherwise the config's world_catalogs from the config file's dir
+/// (an empty list = only doeff's bundled catalog).
+pub fn repo_world_catalogs(cli: &[PathBuf], config: Option<&Config>, config_dir: &Path) -> Vec<PathBuf> {
+    if !cli.is_empty() {
+        return cli.to_vec();
+    }
+    config.map(|c| c.world_catalogs.iter().map(|path| config_dir.join(path)).collect()).unwrap_or_default()
 }
 
 /// Merge command line arguments with config file settings

@@ -2780,7 +2780,7 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
     let dir = world_repo_with(&[("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-other [body] body)\n")], outside, "[\"DOEFF131\"]");
     let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 2, "{}", stderr);
-    assert!(stderr.contains("somewhere.else:mystery-handler is not in doeff's catalog of real I/O handlers"), "{}", stderr);
+    assert!(stderr.contains("somewhere.else:mystery-handler is not in the catalog of real I/O handlers"), "{}", stderr);
 
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
@@ -2814,6 +2814,45 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
         "a test that reaches only a file is local (unmarked does not hit), and process is an edge: {}",
         report
     );
+}
+
+/// The catalog of real I/O handlers of a package outside doeff is kept by the package's repo and named by the using repo in `[tool.doeff-linter] world_catalogs`
+/// (from the config file's dir): its rows may be written in :wraps and widen DOEFF131 like the bundled rows. Without it the same :wraps is a config error that names
+/// world_catalogs; a file that cannot be read is a config error; `--world-catalog` replaces the config's list (the commit hook and the merge gate use it for trees placed elsewhere).
+#[test]
+fn a_repo_catalog_adds_handlers_of_packages_outside_doeff() {
+    let catalog = r#"{"handlers": [{"handler": "pkg_agents:agent-handler", "touches": ["process"], "why": "starts the agent as a child process"}]}"#;
+    let extra = r#"
+                   (world-handler "app.foundation.host:with-agents" :touches [process] :wraps ["pkg_agents:agent-handler"])"#;
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n(defk with-agents [body] body)\n"),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(import pkg_agents [agent-handler])\n(defk run [body] (with-handlers [agent-handler] body))\n"),
+        ("catalogs/agents.json", catalog.to_string()),
+    ];
+    let dir = world_repo_with(&files, extra, "[\"DOEFF131\"]");
+    let root = dir.path();
+    let (code, _, stderr) = run(root, &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("pkg_agents:agent-handler is not in the catalog of real I/O handlers"), "{}", stderr);
+    assert!(stderr.contains("world_catalogs"), "the error does not name the way to add the catalog: {}", stderr);
+
+    let pyproject = root.join("pyproject.toml");
+    let base = std::fs::read_to_string(&pyproject).unwrap();
+    std::fs::write(&pyproject, format!("{}world_catalogs = [\"catalogs/agents.json\"]\n", base)).unwrap();
+    let (_, report) = editor(root);
+    let key = "app/billing/entry/main.hy::DOEFF131::run::world::pkg_agents:agent-handler";
+    assert!(keys(&report, "DOEFF131").contains(&key.to_string()), "{}", report);
+
+    std::fs::write(&pyproject, format!("{}world_catalogs = [\"catalogs/missing.json\"]\n", base)).unwrap();
+    let (code, _, stderr) = run(root, &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("cannot read the repo's catalog of real I/O handlers") && stderr.contains("catalogs/missing.json"), "{}", stderr);
+
+    let flag = root.join("catalogs/agents.json");
+    let (code, stdout, stderr) = run(root, &["--output-format", "editor-json", "--no-log", "--world-catalog", flag.to_str().unwrap()], None);
+    assert_ne!(code, 2, "{}", stderr);
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
+    assert!(keys(&report, "DOEFF131").contains(&key.to_string()), "{}", report);
 }
 
 /// environ answerers decide real I/O by name — os-environ-reader, which reads this process's os.environ, is env in the inventory,
@@ -5125,7 +5164,7 @@ fn records_clients_cannot_be_declared_as_world_handler_wraps() {
         let dir = world_repo_with(&files, &extra, "[\"DOEFF131\"]");
         let (code, _, stderr) = run(dir.path(), &["--no-log"], None);
         assert_eq!(code, 2, "{}", stderr);
-        assert!(stderr.contains(&format!("{target} is not in doeff's catalog of real I/O handlers")), "{}", stderr);
+        assert!(stderr.contains(&format!("{target} is not in the catalog of real I/O handlers")), "{}", stderr);
     }
 }
 
