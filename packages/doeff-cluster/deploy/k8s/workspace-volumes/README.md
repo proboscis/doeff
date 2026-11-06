@@ -39,6 +39,9 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
   外の場所で始めてよい(その場所に書いた物は、後で volume を付けると隠れる — 呼び手は次から `ReadWorkspacePlace` の OUTSIDE で見分け、
   volume を作らずに同じ場所で続ける)。False = 冷えた中身を backup から戻す所だった(中身は backup に残る)。呼び手は空の場所に落とさず、冷やして場所を
   空けてから出し直す。
+- 置き場の不足 `WorkspaceRoomShort` の `kept`: True = Longhorn が置けないと答えた中身の無い volume を、消す前の読みの後の書き(付けの印・
+  Longhorn の status の書き)に上限の回数まで負け続けて消せず、残した。呼び手は `fresh` でも、持ち主の volume が在ると読む(次の作るは
+  ALREADY で答え、volume の外の場所に書いた後は付ける先の様子が CLASH になる)。False = volume を作っていないか、消した。
 
 - 使う側が勝つ: 冷やす途中に attach が来たら、冷やす側は volume を消さずに退く(attach は待たされない)。冷やす側は Volume を読み(版 R)、
   次に VolumeAttachment に使う ticket(冷やす手順の snapshot と backup の ticket の外)が無い事を確かめ、版 R の上でだけ消す(DELETE の
@@ -276,6 +279,8 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
 - 数えと付けの間の競り: 同じ disk に別の持ち主の作りが並ぶと(Pod の入れ替えで 2 つの世代の worker が並ぶ時も)、数えた後に残りが
   尽きる。負けた側は付ける時に Longhorn の「置けない」を読み、replica がどこにも置かれていない(中身の無い)volume をその場で消して
   `WorkspaceRoomShort` で断る(上限の秒まで待たない・faulted を残さない)。replica の置かれた volume(中身を持ちうる)は消さない。
+  消しは読んだ版の上でだけ通す。読んだ後に書きが入れば(409)読み直し、まだ置かれていなければ新しい版の上で消し直す(3 回まで)。
+  それでも消せなければ、volume を残した事を `kept` で答える。
 - 冷やす回の残りも同じ数え(2 つの線ごと)で読む — 実の空きが線に近づいた時も、残りが spareBytes を割る分を冷やす。
 - 広げる時も同じ数えで、名目の増え(新しい大きさ − 今の大きさ)を札の disk が受けられるかを確かめ、受けられなければ外れた volume を
   冷やしてから広げ、冷やしても足りなければ広げない(節「広げる」)。
