@@ -79,17 +79,6 @@ repos:
         files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
         pass_filenames: true
 
-      # A commit that changes a .hy regenerates the .pyi next to it (generated from the .hy by doeff_hy._static_stub) in the same commit.
-      # Each package's test_generated_stubs fires the same comparison daily, but without stopping it at commit time, a forgotten
-      # regeneration fails only after reaching main (afaf956cd added an import to kube.hy and did not fix kube.pyi). The plain commit hook also fires it by alias hy-stubs.
-      - id: hy-stub-fresh
-        alias: hy-stubs
-        name: the .pyi next to each .hy matches a fresh regeneration
-        entry: uv run --no-project --python 3.12 python scripts/check_hy_stubs.py
-        language: system
-        files: '^packages/[^/]+/src/.*\.hy$'
-        pass_filenames: true
-
       # Do not put dated quotations of the owner's chat words into the public repo. Write decisions and reasons in the record's own
       # words, and give the source as a short dated decision mark or a reference to the internal tracker. CI (.github/workflows/no-chat-quotes.yml)
       # checks the whole tree and the messages of pushed commits with the same script.

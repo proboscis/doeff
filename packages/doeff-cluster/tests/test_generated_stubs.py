@@ -4,9 +4,7 @@
 Unknown の赤で止まった。.pyi は道具が .hy から作る。
 
 - 使い手が import する名を 1 つずつ束ねた検の module に、「型が分からない」の赤が出ない(.pyi を外すと赤になる)。
-- 一致の検 = 作り直した物 == commit された物。.hy の公開面(関数の契約・record の欄・定数)を変えたら、
-  `python -m doeff_hy._static_stub --write <.hy>` で .pyi を作り直して同じ commit に入れる(忘れると、名指された .hy が並んで赤になる)。
-  手で書いた .pyi(先頭に道具の印が無い物)は照らさない。
+- .pyi は commit せず、package を組む時(`uv sync`・wheel の build)に hook が .hy から作る(tools/doeff_hy_stub_hook.py)。
 """
 
 import shutil
@@ -14,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy._static_stub import UsedModule, stale_in, strict_errors, unknown_in_users
+from doeff_hy._static_stub import UsedModule, strict_errors, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
@@ -102,10 +100,6 @@ USED = (
 @pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 def test_names_the_users_import_are_not_unknown(tmp_path: Path) -> None:
     assert unknown_in_users(tmp_path, "doeff_cluster", USED) == ()
-
-
-def test_generated_stubs_are_what_the_tool_makes() -> None:
-    assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []
 
 
 # 使い手の repo の渡し方(置き場の口に WalStore を ByteLog として渡す)を写した検の module(#2972)。

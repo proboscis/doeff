@@ -8,7 +8,7 @@ pyright and mypy (gap 8 in the pre-publication type report, 2026-10-17).
 
 - In a probe module that binds, one by one, the names users import, no "type is unknown" red appears (removing the .pyi makes it red).
 - Every public .hy (name not starting with _) has a tool-generated .pyi next to it (inward-facing ones such as _memo_handlers_impl are excluded).
-- Match check = regenerated output == committed file (after changing a .hy, regenerate with `python -m doeff_hy._static_stub --write <.hy>`).
+- The .pyi are not committed: the build hook makes them from the .hy at every install (`uv sync`, the wheel build — tools/doeff_hy_stub_hook.py).
 """
 
 import json
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy._static_stub import generated, stale_in
+from doeff_hy._static_stub import generated
 
 # The stub (.pyi) is written with the type-parameter syntax (PEP 695 -- `class SqlTransaction[T]`), which the 3.11 ast cannot read. Matching the stub against the module
 # does not depend on the Python version, so it is viewed from 3.12.
@@ -95,12 +95,8 @@ def test_names_the_users_import_are_not_unknown(tmp_path: Path) -> None:
     assert not [e for e in errors if re.search(r"is unknown|could not be resolved|unknown import symbol", e)], errors
 
 
-def test_generated_stubs_are_what_the_tool_makes() -> None:
-    assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []
-
-
 def test_every_public_hy_module_has_a_generated_stub() -> None:
-    # Without a .pyi, the import line cannot be resolved in the users' type check. A tool-generated .pyi is also checked by the match check above.
+    # Without a .pyi, the import line cannot be resolved in the users' type check. The build makes the .pyi of every .hy (tools/doeff_hy_stub_hook.py).
     package = SOURCE / "doeff_core_effects"
     stubless = [
         source.name

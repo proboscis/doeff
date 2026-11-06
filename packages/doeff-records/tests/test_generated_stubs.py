@@ -5,7 +5,7 @@ Unknown の赤で止まった(使い手が import する doeff の module のう
 (http_client は手で書いた .pyi — #2810 — のまま。probe は同じ使い手の名として一緒に束ねる)。
 
 - 使い手が import する名を 1 つずつ束ねた検の module に、「型が分からない」の赤が出ない(.pyi を外すと赤になる)。
-- 一致の検 = 作り直した物 == commit された物(.hy を変えたら `python -m doeff_hy._static_stub --write <.hy>` で作り直す)。
+- .pyi は commit せず、package を組む時(`uv sync`・wheel の build)に hook が .hy から作る(tools/doeff_hy_stub_hook.py)。
 """
 
 import shutil
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy._static_stub import UsedModule, stale_in, strict_errors, unknown_in_users
+from doeff_hy._static_stub import UsedModule, strict_errors, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
@@ -174,6 +174,3 @@ def test_taking_the_prepared_statements_as_another_element_type_is_red(tmp_path:
     errors = strict_errors(tmp_path, PREPARED.replace("BOUND", "(get tuple #(int ...))"))
     assert [e for e in errors if "reportAssignmentType" in e and "tuple[Statement, ...]" in e and "tuple[int, ...]" in e], errors
 
-
-def test_generated_stubs_are_what_the_tool_makes() -> None:
-    assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []
