@@ -104,6 +104,7 @@ HELD_SETTINGS_DIR: str
 JSON_TYPE: str
 MERGE_PATCH_TYPE: str
 RESTORE_REBUILDS: int
+UNPLACED_DROPS: int
 BUNDLE_UNSEEN: str
 RESTORE_FAILURE_REASON: str
 ROBUSTNESS_FAULTED: str
@@ -465,7 +466,7 @@ def backup_views(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, t
 def class_backup_target(owner: str, doing: str, parameters: dict[str, str]) -> _Program[str, object]:
     ...
 
-def room_short(owner: str, doing: str, reason: str, fresh: bool) -> _Program[WorkspaceRoomShort, object]:
+def room_short(owner: str, doing: str, reason: str, fresh: bool, kept: bool) -> _Program[WorkspaceRoomShort, object]:
     ...
 
 def class_disk_tags(parameters: dict[str, str]) -> _Program[tuple[str, ...], object]:
