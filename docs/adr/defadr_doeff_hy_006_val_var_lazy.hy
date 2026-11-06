@@ -141,9 +141,9 @@
                "session var is not read from the state-effect key"))
      (deftest test-adr-doe-hy-006-val-twice-is-an-expansion-error
        (<- message (expansion-error "(defk f [x] {:pre [(: x int)] :post [(: % int)]} (val y 1) (val y 2) y)"))
-       (assert (in "(val y \u2026) \u3067\u5ba3\u8a00\u6e08\u307f" message) message))
+       (assert (in "is already declared with (val y \u2026)" message) message))
      (deftest test-adr-doe-hy-006-legacy-lazy-in-defk-is-an-expansion-error
        (<- message (expansion-error "(defk f [] {:pre [] :post [(: % str)]} (lazy-val c \"c\") c)"))
-       (assert (in "(lazy val c \u5f0f)" message) message)
-       (assert (in "(session val c \u5f0f)" message) message))]
+       (assert (in "(lazy val c expr)" message) message)
+       (assert (in "(session val c expr)" message) message))]
   :plans ["docs/design/defk-val-var-lazy/design.md"])

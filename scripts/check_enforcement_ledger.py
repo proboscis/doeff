@@ -494,15 +494,15 @@ def check_staged(root: Path) -> int:
     own = unrecorded_own_change(head, actual, ledger)
     inherited = difference(head.ledger, head.actual)
     inherited_note = (
-        f"\n  (参考)HEAD に既に在ったずれ — この commit の責任ではない:\n{describe(inherited)}"
+        f"\n  (for reference) drift already in HEAD -- not this commit's responsibility:\n{describe(inherited)}"
         if inherited
         else ""
     )
     if not own:
         # This commit's changes are reflected in the ledger. The remaining drift already existed in HEAD.
         print(
-            "enforcement 台帳: この commit の増減は台帳に写っている(通す)。ただし HEAD に既に在った"
-            "ずれが残っている — ずれを持ち込んだ commit の直しを待つか、ここで直す。\n"
+            "enforcement ledger: this commit's own changes are reflected in the ledger (passing). Drift already in HEAD "
+            "remains -- wait for the fix of the commit that brought it in, or fix it here.\n"
             f"{describe(drift)}\n{_repair_hint(root)}",
             file=sys.stderr,
         )
@@ -513,7 +513,7 @@ def check_staged(root: Path) -> int:
         "enforcement ledger: the enforcement changed by this commit is not reflected in the ledger -- ADR-DOE-ENFORCE-001 R5 / R9.\n"
         "This red does not come from drift in HEAD (the mainline) but from this commit's own changes. Do not bypass it with --no-verify; "
         "`make enforcement-ledger` and stage it.\n"
-        f"  Of this commit changes, the part missing from the ledger:\n{describe(own)}{inherited_note}\n{_repair_hint(root)}",
+        f"  Of this commit's own changes, the part missing from the ledger:\n{describe(own)}{inherited_note}\n{_repair_hint(root)}",
         file=sys.stderr,
     )
     return 1

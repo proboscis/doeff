@@ -759,6 +759,32 @@ def _git(*arguments: str) -> str:
     ).stdout
 
 
+# The keys of the table before it was written in English (2026-11-05): versions read from git history are read with the
+# current keys, so the only-shrinks comparison keeps reading the first version.
+_KEYS_BEFORE_ENGLISH: dict[str, str] = {
+    "\u8aac\u660e": "description",
+    "\u7bc4\u56f2": "scope",
+    "\u540d": "names",
+    "\u8db3\u3057\u305f\u540d": "added_names",
+    "\u8a33": "reason",
+}
+
+
+def _with_current_keys(value: object) -> object:
+    """A table version read from git history, with the keys it had before the English rewrite renamed to the current ones."""
+    match value:
+        case dict():
+            return {_KEYS_BEFORE_ENGLISH.get(key, key): _with_current_keys(item) for key, item in value.items()}
+        case list():
+            return [_with_current_keys(item) for item in value]
+        case _:
+            return value
+
+
+def _version_at(commit: str, relative: str) -> KnownTable:
+    return _with_current_keys(json.loads(_git("show", f"{commit}:{relative}")))
+
+
 def first_version() -> KnownTable | None:
     """The version at the commit that added the known table (the first version in git history). None while it is not yet committed."""
     relative = TABLE.relative_to(ROOT).as_posix()
@@ -768,7 +794,7 @@ def first_version() -> KnownTable | None:
             f"{relative} is tracked but the commit that added it is not in the history — the counterpart for the only-shrinks comparison cannot be read"
         )
         return None
-    return json.loads(_git("show", f"{added[-1]}:{relative}"))
+    return _version_at(added[-1], relative)
 
 
 def first_submodule_version() -> KnownTable | None:
@@ -787,7 +813,7 @@ def first_submodule_version() -> KnownTable | None:
             f"{relative} has submodule rows in its committed version but the commit that added them is not in the history — the counterpart for the only-shrinks comparison cannot be read"
         )
         return None
-    return json.loads(_git("show", f"{added[-1]}:{relative}"))
+    return _version_at(added[-1], relative)
 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
@@ -2401,7 +2427,7 @@ def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
     )
     assert shape_problems(_fixture_table({}, [old_path]), [FIXTURE_DIR]) == [
         f"added names {FIXTURE_DIR} {FIXTURE_ROOT}.pinging: the fields are package, module, name, and reason"
-        f"(allowed things go in the allowed table {ALLOWED.relative_to(ROOT)})"
+        f" (allowed things go in the allowed table {ALLOWED.relative_to(ROOT)})"
     ]
 
 

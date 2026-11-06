@@ -46,7 +46,7 @@ def locked_version(top: Path, package: str = PACKAGE) -> str:
         raise SystemExit(f"the version of {package} in {lock} is not a single one ({versions}) -- not falling back to the default version or the search-path {package}")
     source: object = rows[0].get("source")
     if not (isinstance(source, dict) and "registry" in source):
-        raise SystemExit(f"{lock} の {package} が index から入れる版でない({source})— `{package}==<版>` で lock と同じ物を入れられない")
+        raise SystemExit(f"{package} in {lock} is not a version installed from an index ({source}) -- `{package}==<version>` cannot install the same thing as the lock")
     return str(rows[0]["version"])
 
 

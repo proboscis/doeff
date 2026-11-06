@@ -610,8 +610,7 @@
      (deftest test-adr-doe-core-effects-003-defhandler-clause-must-end-explicitly
        ;; R15 (at expansion): a clause that only returns a value, a clause that resumes on only one branch, a clause that resumes Raise, a cut-off without a reason, and a match without
        ;; a final _ are refused. (finish value) and a cut-off with a reason pass.
-       ;; "Raise \u306e\u7bc0\u306f" / "Absent \u306e\u7bc0\u306f" ("the Raise clause" / "the Absent clause") are kept as \u escapes because
-       ;; packages/doeff-hy/src/doeff_hy/_clause_endings.hy emits that Japanese text.
+       ;; The match texts follow the refusals packages/doeff-hy/src/doeff_hy/_clause_endings.hy emits.
        (var refused False)
        (try
          (_check-clause-terminates "ProbeAbsent" [(hy.models.Symbol "Nothing")])
@@ -625,19 +624,18 @@
        (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))")))) "only one branch")
        (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))")))) "when only")
        (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))")))) "match without a final _")
-       (assert (in "Raise \u306e\u7bc0\u306f" (run (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))")))) "resuming Raise")
-       (assert (in "Absent \u306e\u7bc0\u306f" (run (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))")))) "resuming Absent")
+       (assert (in "A Raise clause cannot" (run (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))")))) "resuming Raise")
+       (assert (in "An Absent clause cannot" (run (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))")))) "resuming Absent")
        (assert (in ":finish-reason" (run (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))")))) "cut-off without a reason")
        (assert (= "" (run (probe-expansion-refusal (+ head "(Raise [reason] (finish reason)) (Absent [why] (finish None)))")))))
        (assert (= "" (run (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"timed out\" (finish None)))"))))))
      (deftest test-adr-doe-core-effects-003-clause-endings-checked-at-install-and-run
        ;; R15 (at install and at run): resuming a Raise imported under an alias is refused when first installed on a body, and a clause that exits without
        ;; resume or finish on a path invisible at expansion is made an error at run time. A cut-off with a reason ends the handler's scope with a value.
-       ;; The match text "\u3069\u308c\u306b\u3082\u5c4a\u304b\u305a\u306b\u629c\u3051\u305f" ("exited without reaching any of them") is kept as \u escapes because
-       ;; packages/doeff-hy/src/doeff_hy/_clause_endings.hy emits that Japanese text.
+       ;; The match text follows the run-time error packages/doeff-hy/src/doeff_hy/_clause_endings.hy raises.
        (with [(pytest.raises ClauseEndingError :match "Resumption.NEVER")]
          (probe-aliased-raise-resumer (probe-one)))
-       (with [(pytest.raises RuntimeError :match "\u3069\u308c\u306b\u3082\u5c4a\u304b\u305a\u306b\u629c\u3051\u305f")]
+       (with [(pytest.raises RuntimeError :match "exited without reaching any of")]
          (run (probe-swallowing-handler (probe-reads-a-row))))
        (assert (= (run ((probe-deadline 1) (probe-reads-a-row))) "read ok"))
        (assert (= (run ((probe-deadline 0) (probe-reads-a-row))) "cut off") "a finish with a reason ends the scope with a value"))
@@ -717,12 +715,11 @@
        (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "a"))))) "Ok('A')")))
      (deftest test-adr-doe-core-effects-003-on-raise-refuses-python-exceptions-and-catch-all
        ;; (d) R7: on-raise does not catch Python exceptions, catch-all patterns are refused at expansion, and a case naming an exception type is refused at construction.
-       ;; "\u53d7\u3051\u3089\u308c\u306a\u3044" ("cannot be caught") is kept as \u escapes because
-       ;; packages/doeff-hy/src/doeff_hy/_outcome_forms.hy emits that Japanese text.
+       ;; The match text follows the refusal packages/doeff-hy/src/doeff_hy/_outcome_forms.hy emits.
        (with [(pytest.raises ValueError :match "boom")]
          (run (probe-raises-python)))
        (for [pattern ["_" "reason" "(Exception)" "(object)"]]
-         (assert (in "\u53d7\u3051\u3089\u308c\u306a\u3044" (run (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
+         (assert (in "is not accepted" (run (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
                  pattern))
        (with [(pytest.raises TypeError)]
          (RaiseCase #(ValueError) (fn [r] (Some r))))

@@ -117,7 +117,7 @@ def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project
     assert nodeids(warm) == nodeids(cold)
     assert imports(project) == []
     assert "collected from record: 1 files; imported during collection: 0 files" in warm.stdout.str()
-    assert "hash 0 file" in warm.stdout.str()
+    assert "hashed: 0 files" in warm.stdout.str()
     assert "rebuilt on dependency change: 0 files" in warm.stdout.str()
     collect(project, "-k", "not_selected")
     assert imports(project) == []
