@@ -1,0 +1,63 @@
+1
+00:00:00,250 --> 00:00:04,550
+Getting started with doeff: algebraic effects for Python.
+
+2
+00:00:05,100 --> 00:00:11,550
+A program yields an effect. A handler gets it, together with k: the rest of the program.
+
+3
+00:00:12,100 --> 00:00:18,850
+What the handler does with k decides what the effect means: resume it, throw into it, pass it on, or drop it.
+
+4
+00:00:19,400 --> 00:00:23,950
+Your first program, counter program, yields Put, Tell, and Get.
+
+5
+00:00:24,500 --> 00:00:30,700
+Each effect goes out to the handler that answers it: state for Get and Put, writer for Tell.
+
+6
+00:00:34,200 --> 00:00:38,550
+Each answer comes back to its yield, and the code goes on. The run returns one.
+
+7
+00:00:39,100 --> 00:00:45,300
+Now your first effect of your own: Progress, a frozen dataclass under EffectBase.
+
+8
+00:00:45,850 --> 00:00:50,850
+shrink all yields Progress after each image. What that report means is up to a handler.
+
+9
+00:00:52,850 --> 00:00:59,750
+The show handler notes each Progress and resumes k. All three images are shrunk.
+
+10
+00:01:00,300 --> 00:01:05,000
+stop after two returns at the second report, without resuming k.
+
+11
+00:01:05,550 --> 00:01:11,550
+So the rest is dropped, and the third image is never shrunk. Same program, another meaning.
+
+12
+00:01:12,100 --> 00:01:18,300
+Handlers can start with values: reader with an environment, and state with an initial state.
+
+13
+00:01:18,850 --> 00:01:23,350
+Ask is answered from the environment, and Get from the initial state.
+
+14
+00:01:24,850 --> 00:01:30,700
+Start state with another user id, and the same program connects as user seven.
+
+15
+00:01:31,250 --> 00:01:35,533
+Programs yield effects, and handlers decide what they mean.
+
+16
+00:01:35,533 --> 00:01:40,400
+Core Concepts lists everything a handler can do. pip install doeff.

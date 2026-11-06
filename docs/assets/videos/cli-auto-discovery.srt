@@ -1,0 +1,107 @@
+1
+00:00:00,250 --> 00:00:06,650
+CLI auto-discovery. doeff run finds the interpreter and the environments for your program.
+
+2
+00:00:07,200 --> 00:00:12,750
+A program only yields effects. Which handlers answer them is decided when it runs.
+
+3
+00:00:13,300 --> 00:00:18,117
+Without discovery, every command names the interpreter and the environments.
+
+4
+00:00:18,117 --> 00:00:20,400
+With markers, the program is enough.
+
+5
+00:00:20,950 --> 00:00:27,750
+Mark a function with the comment: doeff, interpreter, default. It becomes a default interpreter.
+
+6
+00:00:28,300 --> 00:00:35,550
+Mark a variable that has a type annotation with: doeff, default. It becomes a default environment.
+
+7
+00:00:36,100 --> 00:00:43,750
+doeff-indexer scans the source and lists every marked symbol. A variable without an annotation is skipped.
+
+8
+00:00:44,300 --> 00:00:50,700
+doeff run cuts the program's module path into a hierarchy, from the root package down.
+
+9
+00:00:51,250 --> 00:00:58,350
+It keeps only the interpreters marked on that path: in the program's own module, or in a package above it.
+
+10
+00:00:58,900 --> 00:01:06,000
+Two are on the path. base interpreter, at index zero, and auth interpreter, at index two.
+
+11
+00:01:06,550 --> 00:01:12,350
+The closest one, the deepest, wins. auth interpreter will run the program.
+
+12
+00:01:12,900 --> 00:01:19,250
+Environments are not chosen. Every marked environment on the path is collected, root first.
+
+13
+00:01:19,800 --> 00:01:25,000
+They merge from left to right. A later value overrides an earlier one.
+
+14
+00:01:25,550 --> 00:01:31,950
+timeout is ten in base env, twenty in features env, and thirty in auth env. Thirty wins.
+
+15
+00:01:32,500 --> 00:01:36,950
+The merged environment keeps every key from all three.
+
+16
+00:01:37,500 --> 00:01:44,150
+Then doeff run calls auth interpreter with the program, and the merged environment as env.
+
+17
+00:01:44,700 --> 00:01:50,600
+The interpreter installs its handlers around the program. reader holds the merged environment.
+
+18
+00:01:51,150 --> 00:02:00,000
+login yields Ask for the database host, then Ask for the timeout. reader answers each one, and k resumes.
+
+19
+00:02:00,550 --> 00:02:06,950
+The program never named a handler or a config file. It returns: localhost, timeout thirty.
+
+20
+00:02:07,500 --> 00:02:11,700
+To run the same program with something else, say so on the command line.
+
+21
+00:02:12,500 --> 00:02:15,717
+The env flag replaces the discovered environments.
+
+22
+00:02:15,717 --> 00:02:20,100
+auth interpreter is still discovered, and answers from the fake one.
+
+23
+00:02:20,650 --> 00:02:26,650
+The interpreter flag turns off discovery of both. With no env flag, the first Ask fails.
+
+24
+00:02:27,200 --> 00:02:33,650
+Both flags warn that they are deprecated. The hy flag composes the handlers inline instead.
+
+25
+00:02:35,200 --> 00:02:41,800
+And if no marked interpreter is on the path? doeff run does not stop. It uses its fallback interpreter.
+
+26
+00:02:42,350 --> 00:02:49,950
+It ignores environments, so Ask for the timeout finds no handler. format json shows what was chosen.
+
+27
+00:02:50,500 --> 00:02:57,000
+Markers keep handlers next to the code. doeff run finds them by where the program lives.

@@ -1,0 +1,85 @@
+WEBVTT
+
+a1
+00:00:00.250 --> 00:00:06.350
+The Rust scheduler in doeff: one scheduler, with two implementations.
+
+a2.1
+00:00:06.900 --> 00:00:12.000
+In doeff, concurrency is effects too. The program yields Spawn and Gather,
+
+a2.2
+00:00:12.000 --> 00:00:17.250
+and scheduled is the handler that answers them, resuming k with each answer.
+
+a3
+00:00:17.800 --> 00:00:24.650
+That handler comes in Rust and in Python, with the same meaning. Rust is the default; Python is opt-in.
+
+b1
+00:00:26.300 --> 00:00:33.200
+Which one runs? The argument decides first, then the environment variable DOEFF SCHEDULER, then the default.
+
+b2
+00:00:35.800 --> 00:00:41.500
+The default is rust. Any other name is refused with a ValueError.
+
+c1
+00:00:44.300 --> 00:00:49.650
+Same meaning: here is one program, run under both implementations.
+
+c2.1
+00:00:50.200 --> 00:00:54.883
+Tasks a and b wait on one promise, and task b has high priority.
+
+c2.2
+00:00:54.883 --> 00:00:58.400
+Task slow waits on a promise that is never kept.
+
+c3
+00:00:58.950 --> 00:01:06.200
+The opener keeps the promise. Task b wakes first, then task a, in both implementations.
+
+c4
+00:01:06.750 --> 00:01:14.200
+Cancel unwinds task slow: its finally block runs, and then Wait raises TaskCancelledError.
+
+c5
+00:01:14.750 --> 00:01:19.700
+The same result, the same order, and the same sixty-four trace events.
+
+d1.1
+00:01:22.250 --> 00:01:27.800
+What moved to Rust is every decision the scheduler makes for an effect: task state,
+
+d1.2
+00:01:27.800 --> 00:01:31.000
+the ready queue, Cancel, and deadlock detection.
+
+d2.1
+00:01:31.550 --> 00:01:35.800
+What stays in Python is every class your code sees, raises,
+
+d2.2
+00:01:35.800 --> 00:01:40.850
+or subclasses, along with the warnings, the trace, and the step limit.
+
+d3
+00:01:41.400 --> 00:01:48.400
+So under both, a subclass of an effect resolves as its parent, and Spawn still gives back a Python Task.
+
+e1
+00:01:52.400 --> 00:01:59.550
+And it is faster. Here is the page's benchmark, run again: microseconds of CPU time per operation.
+
+e2
+00:02:01.400 --> 00:02:07.500
+Wherever the scheduler does the work, Rust takes six to twelve times less CPU time.
+
+e3
+00:02:09.900 --> 00:02:16.900
+An effect that only passes through gains least, because its time is spent outside the scheduler.
+
+o1
+00:02:19.400 --> 00:02:26.150
+The Rust scheduler: the same effects, the same handler, the same meaning, in a fraction of the time.

@@ -1,0 +1,67 @@
+1
+00:00:00,250 --> 00:00:06,450
+Error handling in doeff. A failure is handled like everything else: with an effect and a handler.
+
+2
+00:00:07,250 --> 00:00:14,150
+First, run itself. It gives back what the program returns, as it is: here, the string DOEFF.
+
+3
+00:00:14,750 --> 00:00:21,100
+When the program raises, run raises the same exception. There is no wrapper around either.
+
+4
+00:00:22,250 --> 00:00:30,050
+To keep a failure as a value, doeff has two kinds of result. Ok holds a value. Err holds an exception.
+
+5
+00:00:30,750 --> 00:00:36,000
+Ok is true and Err is false, and both match by pattern.
+
+6
+00:00:37,250 --> 00:00:42,200
+Try is an effect. app yields Try, with the sub-program it wants to attempt.
+
+7
+00:00:42,750 --> 00:00:47,750
+The try handler catches the effect, and runs parse count inside itself.
+
+8
+00:00:48,300 --> 00:00:54,950
+int raises on the text "not a number". The handler catches the exception and wraps it in Err.
+
+9
+00:00:55,500 --> 00:01:01,650
+Then it resumes k with that Err. app goes on: it logs the failure and returns zero.
+
+10
+00:01:02,300 --> 00:01:08,150
+Without the try handler in the stack, Try is unhandled. It is a handler like any other.
+
+11
+00:01:09,300 --> 00:01:12,900
+Try keeps three promises when it meets other effects.
+
+12
+00:01:13,500 --> 00:01:18,550
+One: no rollback. The Put before the failure stays, so counter is one.
+
+13
+00:01:19,100 --> 00:01:25,900
+Two: when the failure passes through Local, Local still restores the environment. key is outer again.
+
+14
+00:01:26,500 --> 00:01:34,050
+Three: Try inside Try keeps both layers. You get Ok of Ok, or Ok of Err.
+
+15
+00:01:35,300 --> 00:01:39,600
+Err keeps the exception, and the exception keeps its traceback.
+
+16
+00:01:40,300 --> 00:01:46,700
+Its frames lead from inside the try handler, through boom, down to load, where the error was raised.
+
+17
+00:01:48,300 --> 00:01:56,450
+Failures in doeff: Try asks, a handler answers with Ok or Err, and your code decides what comes next.

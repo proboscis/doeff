@@ -1,0 +1,89 @@
+WEBVTT
+
+i1
+00:00:00.250 --> 00:00:03.950
+Basic effects: the batteries that come with doeff.
+
+i2
+00:00:04.500 --> 00:00:10.650
+Each one is an effect your code yields, and a handler that ships with doeff answers it.
+
+r1
+00:00:11.200 --> 00:00:15.500
+Reader. Ask, with a key, reads a value from the environment.
+
+r2
+00:00:16.200 --> 00:00:21.650
+The environment lives in the reader handler. Your code only names the key it wants.
+
+r3
+00:00:22.200 --> 00:00:27.900
+A key that is not there raises a missing env key error, and the message names the close key.
+
+l1
+00:00:28.700 --> 00:00:33.250
+Local runs a sub-program over a changed environment.
+
+l2
+00:00:33.800 --> 00:00:39.450
+Inside it, Ask sees the override. The code inside is the same as ever.
+
+l3
+00:00:40.000 --> 00:00:44.500
+When the sub-program returns, the environment is back as it was.
+
+s1
+00:00:45.500 --> 00:00:49.100
+State. Get and Put read and write a store.
+
+s2
+00:00:50.500 --> 00:00:55.000
+The store lives in the state handler, not in your code.
+
+s3
+00:00:56.000 --> 00:01:02.150
+Get, add one, Put, three times over. The program returns three.
+
+w1
+00:01:02.700 --> 00:01:06.750
+Writer. Tell appends a message to a log.
+
+w2
+00:01:07.700 --> 00:01:14.550
+A handler can perform effects too. Writer keeps its log in state, with its own Get and Put.
+
+w3
+00:01:15.100 --> 00:01:21.400
+ReadWriterLog reads the log back: four lines, in the order they were told.
+
+g1
+00:01:21.950 --> 00:01:26.500
+slog emits a structured entry: a message, plus keyword data.
+
+g2
+00:01:27.050 --> 00:01:32.600
+slog handler prints each entry on standard error. It is a separate effect from Tell.
+
+g3
+00:01:33.150 --> 00:01:37.800
+Listen collects the entries as values, so a test can check them.
+
+c1
+00:01:40.650 --> 00:01:45.600
+Now put them together: one program, three handlers stacked around it.
+
+c2
+00:01:46.150 --> 00:01:53.350
+Each effect travels out to the layer that handles it. Ask to reader, Get and Put to state, Tell to writer.
+
+c3
+00:01:58.650 --> 00:02:04.750
+The second attempt succeeds. The log holds every step, and the result is success.
+
+o1.1
+00:02:06.250 --> 00:02:10.350
+Reader, State, Writer, and slog: effects your code yields,
+
+o1.2
+00:02:10.350 --> 00:02:15.300
+and handlers that come with doeff, stacked the way your program needs.
