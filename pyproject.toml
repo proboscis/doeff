@@ -86,9 +86,6 @@ doeff-indexer = { workspace = true }
 doeff-linter = { workspace = true }
 doeff-core-effects = { workspace = true }
 doeff-flow = { workspace = true }
-doeff-agents = { workspace = true }
-doeff-agentic = { workspace = true }
-doeff-conductor = { workspace = true }
 doeff-git = { workspace = true }
 doeff-vm = { workspace = true }
 doeff-llm = { workspace = true }
@@ -108,13 +105,9 @@ doeff-adr = { workspace = true }
 doeff-domain = { workspace = true }
 doeff-system-one = { workspace = true }
 doeff-jev = { workspace = true }
-doeff-claude-judge = { workspace = true }
 doeff-cluster = { workspace = true }
 doeff-validation = { workspace = true }
-doeff-claude-code = { workspace = true }
-doeff-codex = { workspace = true }
 doeff-records = { workspace = true }
-doeff-run = { workspace = true }
 # Hy comes from PyPI (pinned to 1.3.1 by uv.lock) and is not forked (ADR-DOE-HY-008). The 3 features the fork had
 # live on the doeff side: the test index (doeff-adr item_cache), the check that refuses stale bytecode after a macro change
 # (doeff_hy_bytecode_guard), and the lookup of a require's caller (doeff_hy._light_stack).
@@ -160,13 +153,9 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "YTT", "B", "A", "COM", "C4", "DTZ", "T10", "ISC", "ICN", "PIE", "PT", "Q", "RSE", "RET", "SIM", "TID", "ARG", "PLE", "PLR", "PLW", "RUF"]
-# ×, ❯, › are legitimate recurring characters, not typos: × is used as a
-# typographic multiplication/repeat-count mark in prose comments (e.g.
-# "Down×2"), while ❯ / › are VERBATIM terminal prompt-cursor glyphs captured
-# from real Claude Code / Codex CLI output in conformance test fixtures
-# (packages/doeff-agents/conformance/conformance_agent.py FRAMES) — they must
-# stay byte-identical to the real terminal glyphs, never normalized to `>`.
-allowed-confusables = ["×", "❯", "›"]
+# × is a legitimate recurring character, not a typo: it is used as a
+# typographic multiplication/repeat-count mark in prose comments (e.g. "Down×2").
+allowed-confusables = ["×"]
 ignore = [
     "E501",  # line too long - handled by formatter
     "COM812",  # trailing comma
@@ -216,7 +205,7 @@ paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effect
 # programs live. The same rule for Python is the semgrep rule doeff-no-sleep-in-programs (.semgrep.yaml), and the scope matches it:
 # the main code under doeff/ and packages/, excluding tests (tests/) and examples (examples/) — sleeps in Hy tests are DOEFF211 (the test_sleep section below); examples are another child of the parent card.
 # A separate section from definitions above (the definition-style rules): this rule alone also applies to programs in packages that do not yet
-# get those rules (doeff-agents and others). That it is in effect with 0 hits is checked by packages/doeff-linter/tests/program_sleep.rs (cargo test) — deleting this section
+# get those rules. That it is in effect with 0 hits is checked by packages/doeff-linter/tests/program_sleep.rs (cargo test) — deleting this section
 # or adding DOEFF210 to disable turns that check red.
 [tool.doeff-linter.program_sleep]
 paths = ["doeff", "packages"]
@@ -240,8 +229,6 @@ names = ["test_*.hy", "*_test.hy"]
 exclude = [
     "packages/doeff-linter/tests/fixtures",
     "tests/semgrep/fixtures",
-    "packages/doeff-agents/conformance",
-    "packages/doeff-claude-code/tests/stub_cli/claude.hy",
     "packages/doeff-cluster/tests/fixtures/sleeper.hy",
 ]
 
@@ -443,10 +430,6 @@ tests = [
 prefix = "docs/11-kleisli-arrows.md"
 tests = ["tests/test_docs_page_examples.py", "tests/test_docs_kleisli_arguments.py"]
 
-[[tool.doeff.contract-tests]]
-prefix = "docs/12-mcp-tools.md"
-tests = ["tests/test_docs_page_examples.py"]
-
 # The Layered, Repository, Service Locator, Unit of Work and Resource Management examples of chapter 12 (Patterns) do not call methods on client objects;
 # they are written with domain effects and @handler. The page example check runs them and compares output.
 [[tool.doeff.contract-tests]]
@@ -468,12 +451,6 @@ tests = [
 
 [[tool.doeff.contract-tests]]
 prefix = "docs/18-effect-combinations.md"
-tests = ["tests/test_docs_page_examples.py"]
-
-# Chapter 19 (agent tutorial) runs @do Programs that yield doeff-agents effects with test handlers (initiative doeff-publish, milestone 26).
-# The production-handler step needs a session host, so it is an excerpt.
-[[tool.doeff.contract-tests]]
-prefix = "docs/19-agent-tutorial.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 [[tool.doeff.contract-tests]]
@@ -668,35 +645,6 @@ tests = [
 ]
 
 [[tool.doeff.contract-tests]]
-prefix = "packages/doeff-agents/"
-tests = [
-    "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy::test_adr_doe_agents_013_driver_layer_has_no_direct_io",  # 1.5 s — walks the driver layer tree: 0 lines of direct I/O
-    "packages/doeff-agents/tests/test_sessionhost_transaction_owner.py",  # 6.9 s — walks the sessionhost tree: transactions open and close only in allowed definitions
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-agents]",  # 4.4 s — the public names other than effects and handlers match the known table
-]
-
-[[tool.doeff.contract-tests]]
-prefix = "packages/doeff-codex/"
-tests = [
-    "tests/test_package_file_names_have_no_application_vocabulary.py",  # 1.5 s — file names of the 4 generic packages contain no application vocabulary (semgrep rules stop it in contents at commit)
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-codex]",  # 1.3 s — the public names other than effects and handlers match the known table
-]
-
-[[tool.doeff.contract-tests]]
-prefix = "packages/doeff-claude-code/"
-tests = [
-    "tests/test_package_file_names_have_no_application_vocabulary.py",  # 1.5 s — file names of the 4 generic packages contain no application vocabulary (semgrep rules stop it in contents at commit)
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-claude-code]",  # 1.8 s — the public names other than effects and handlers match the known table
-]
-
-[[tool.doeff.contract-tests]]
-prefix = "packages/doeff-conductor/"
-tests = [
-    "packages/doeff-conductor/tests/test_annotations_resolve.py",  # 2.3 s — walks all modules: every function annotation evaluates at runtime
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-conductor]",  # 3.5 s — the public names other than effects and handlers match the known table
-]
-
-[[tool.doeff.contract-tests]]
 prefix = "packages/doeff-docker/"
 tests = [
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy::test_adr_doe_hy_005_macros_live_only_in_doeff_hy",  # 1.5 s — the frozen macro ledger (including compose.hy) matches the defmacros in the repo's .hy files
@@ -760,18 +708,6 @@ tests = [
 #    comparing all public names with the known table (one case per package in tests/test_public_api_known_violations.py) was added, so the exclusion
 #    lines were rewritten as set lines. The same case was added to the packages on the set lines above too. Seconds are wall clock reading 1 package
 #    in a child process (load about 55, 2026-10-27 conversation Pod).
-[[tool.doeff.contract-tests]]
-prefix = "packages/doeff-agentic/"
-tests = [
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-agentic]",  # 2.2 s — the public names other than effects and handlers match the known table
-]
-
-[[tool.doeff.contract-tests]]
-prefix = "packages/doeff-claude-judge/"
-tests = [
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-claude-judge]",  # 1.3 s — the public names other than effects and handlers match the known table
-]
-
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-effect-analyzer/"
 tests = [
@@ -929,14 +865,15 @@ dev = [
     "pillow>=11.3.0",
     "beartype>=0.19.0",
     "httpx>=0.25.0",
-    "doeff-conductor",
-    "doeff-agents",
     "doeff-llm",
     "doeff-gemini",
     "doeff-openai",
     "doeff-openrouter",
     "doeff-vm",
     "doeff-traverse",
+    # Came in through doeff-conductor before it left the workspace; listed so their tests keep running in the dev environment.
+    "doeff-flow",
+    "doeff-git",
     "doeff-time",
     "pytest-xdist>=3.8.0",
     "pytest-timeout>=2.3.1",
@@ -956,13 +893,9 @@ dev = [
     "doeff-domain[dogfood]",
     "doeff-system-one",
     "doeff-jev",
-    "doeff-claude-judge",
     "doeff-cluster",
     "doeff-validation",
-    "doeff-claude-code",
-    "doeff-codex",
     "doeff-records",
-    "doeff-run",
     "doeff-stream",
     "doeff-docker",
     "doeff-secret",

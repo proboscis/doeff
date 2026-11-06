@@ -12,13 +12,7 @@ resolution-markers = [
 members = [
     "doeff",
     "doeff-adr",
-    "doeff-agentic",
-    "doeff-agents",
-    "doeff-claude-code",
-    "doeff-claude-judge",
     "doeff-cluster",
-    "doeff-codex",
-    "doeff-conductor",
     "doeff-core-effects",
     "doeff-docker",
     "doeff-domain",
@@ -40,7 +34,6 @@ members = [
     "doeff-openai",
     "doeff-openrouter",
     "doeff-records",
-    "doeff-run",
     "doeff-secret",
     "doeff-seedream",
     "doeff-stream",
@@ -632,15 +625,12 @@ dev = [
     { name = "beartype" },
     { name = "cloudpickle" },
     { name = "doeff-adr" },
-    { name = "doeff-agents" },
-    { name = "doeff-claude-code" },
-    { name = "doeff-claude-judge" },
     { name = "doeff-cluster" },
-    { name = "doeff-codex" },
-    { name = "doeff-conductor" },
     { name = "doeff-docker" },
     { name = "doeff-domain", extra = ["dogfood"] },
+    { name = "doeff-flow" },
     { name = "doeff-gemini" },
+    { name = "doeff-git" },
     { name = "doeff-hy", extra = ["parity"] },
     { name = "doeff-indexer" },
     { name = "doeff-jev" },
@@ -650,7 +640,6 @@ dev = [
     { name = "doeff-openai" },
     { name = "doeff-openrouter" },
     { name = "doeff-records" },
-    { name = "doeff-run" },
     { name = "doeff-secret" },
     { name = "doeff-stream" },
     { name = "doeff-system-one" },
@@ -692,15 +681,12 @@ dev = [
     { name = "beartype", specifier = ">=0.19.0" },
     { name = "cloudpickle", specifier = ">=3.0" },
     { name = "doeff-adr", editable = "packages/doeff-adr" },
-    { name = "doeff-agents", editable = "packages/doeff-agents" },
-    { name = "doeff-claude-code", editable = "packages/doeff-claude-code" },
-    { name = "doeff-claude-judge", editable = "packages/doeff-claude-judge" },
     { name = "doeff-cluster", editable = "packages/doeff-cluster" },
-    { name = "doeff-codex", editable = "packages/doeff-codex" },
-    { name = "doeff-conductor", editable = "packages/doeff-conductor" },
     { name = "doeff-docker", editable = "packages/doeff-docker" },
     { name = "doeff-domain", extras = ["dogfood"], editable = "packages/doeff-domain" },
+    { name = "doeff-flow", editable = "packages/doeff-flow" },
     { name = "doeff-gemini", editable = "packages/doeff-gemini" },
+    { name = "doeff-git", editable = "packages/doeff-git" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-hy", extras = ["parity"], editable = "packages/doeff-hy" },
     { name = "doeff-indexer", editable = "packages/doeff-indexer" },
@@ -711,7 +697,6 @@ dev = [
     { name = "doeff-openai", editable = "packages/doeff-openai" },
     { name = "doeff-openrouter", editable = "packages/doeff-openrouter" },
     { name = "doeff-records", editable = "packages/doeff-records" },
-    { name = "doeff-run", editable = "packages/doeff-run" },
     { name = "doeff-secret", editable = "packages/doeff-secret" },
     { name = "doeff-stream", editable = "packages/doeff-stream" },
     { name = "doeff-system-one", editable = "packages/doeff-system-one" },
@@ -757,137 +742,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "doeff-agentic"
-version = "0.1.0"
-source = { editable = "packages/doeff-agentic" }
-dependencies = [
-    { name = "click" },
-    { name = "doeff", extra = ["hy"] },
-    { name = "doeff-flow" },
-    { name = "doeff-time" },
-    { name = "httpx" },
-    { name = "rich" },
-    { name = "textual" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-legacy = [
-    { name = "doeff-agents" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "doeff", extras = ["hy"], editable = "." },
-    { name = "doeff-agents", marker = "extra == 'legacy'", editable = "packages/doeff-agents" },
-    { name = "doeff-flow", editable = "packages/doeff-flow" },
-    { name = "doeff-time", editable = "packages/doeff-time" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "rich", specifier = ">=13.0.0" },
-    { name = "textual", specifier = ">=0.44.0" },
-]
-provides-extras = ["legacy", "dev"]
-
-[[package]]
-name = "doeff-agents"
-version = "0.1.1"
-source = { editable = "packages/doeff-agents" }
-dependencies = [
-    { name = "click" },
-    { name = "doeff" },
-    { name = "doeff-claude-code" },
-    { name = "doeff-codex" },
-    { name = "doeff-hy" },
-    { name = "doeff-time" },
-    { name = "jsonschema" },
-    { name = "psutil" },
-    { name = "rich" },
-    { name = "tzdata" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "doeff-hy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "doeff", editable = "." },
-    { name = "doeff-claude-code", editable = "packages/doeff-claude-code" },
-    { name = "doeff-codex", editable = "packages/doeff-codex" },
-    { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "doeff-hy", marker = "extra == 'dev'", editable = "packages/doeff-hy" },
-    { name = "doeff-time", editable = "packages/doeff-time" },
-    { name = "jsonschema", specifier = ">=4.21" },
-    { name = "psutil", specifier = ">=6.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "rich", specifier = ">=13.0.0" },
-    { name = "tzdata", specifier = ">=2024.1" },
-]
-provides-extras = ["dev"]
-
-[[package]]
-name = "doeff-claude-code"
-version = "0.1.0"
-source = { editable = "packages/doeff-claude-code" }
-dependencies = [
-    { name = "doeff" },
-    { name = "doeff-core-effects" },
-    { name = "doeff-hy" },
-    { name = "doeff-time" },
-    { name = "hy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "doeff", editable = "." },
-    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
-    { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "doeff-time", editable = "packages/doeff-time" },
-    { name = "hy", specifier = ">=1.3" },
-]
-
-[[package]]
-name = "doeff-claude-judge"
-version = "0.1.0"
-source = { editable = "packages/doeff-claude-judge" }
-dependencies = [
-    { name = "doeff" },
-    { name = "doeff-claude-code" },
-    { name = "doeff-core-effects" },
-    { name = "doeff-hy" },
-    { name = "doeff-system-one" },
-    { name = "hy" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "doeff", editable = "." },
-    { name = "doeff-claude-code", editable = "packages/doeff-claude-code" },
-    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
-    { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "doeff-system-one", editable = "packages/doeff-system-one" },
-    { name = "hy", specifier = ">=1.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "doeff-cluster"
 version = "0.1.0"
 source = { editable = "packages/doeff-cluster" }
@@ -915,67 +769,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "hy", specifier = ">=1.3" },
 ]
-
-[[package]]
-name = "doeff-codex"
-version = "0.1.0"
-source = { editable = "packages/doeff-codex" }
-dependencies = [
-    { name = "doeff" },
-    { name = "doeff-hy" },
-    { name = "hy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "doeff", editable = "." },
-    { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "hy", specifier = ">=1.3" },
-]
-
-[[package]]
-name = "doeff-conductor"
-version = "0.1.0"
-source = { editable = "packages/doeff-conductor" }
-dependencies = [
-    { name = "click" },
-    { name = "doeff" },
-    { name = "doeff-agentic" },
-    { name = "doeff-agents" },
-    { name = "doeff-flow" },
-    { name = "doeff-git" },
-    { name = "doeff-hy" },
-    { name = "hy" },
-    { name = "pyyaml" },
-    { name = "rich" },
-    { name = "textual" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "doeff", editable = "." },
-    { name = "doeff-agentic", editable = "packages/doeff-agentic" },
-    { name = "doeff-agents", editable = "packages/doeff-agents" },
-    { name = "doeff-flow", editable = "packages/doeff-flow" },
-    { name = "doeff-git", editable = "packages/doeff-git" },
-    { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
-    { name = "hy", specifier = ">=1.2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rich", specifier = ">=13.0.0" },
-    { name = "textual", specifier = ">=0.50.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "doeff-core-effects"
@@ -1517,27 +1310,6 @@ requires-dist = [
     { name = "psycopg", marker = "extra == 'pg'", specifier = ">=3.1" },
 ]
 provides-extras = ["pg"]
-
-[[package]]
-name = "doeff-run"
-version = "0.1.0"
-source = { editable = "packages/doeff-run" }
-dependencies = [
-    { name = "doeff" },
-    { name = "doeff-core-effects" },
-    { name = "doeff-hy" },
-    { name = "doeff-time" },
-    { name = "hy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "doeff", editable = "." },
-    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
-    { name = "doeff-hy", editable = "packages/doeff-hy" },
-    { name = "doeff-time", editable = "packages/doeff-time" },
-    { name = "hy", specifier = ">=1.3" },
-]
 
 [[package]]
 name = "doeff-secret"
@@ -2319,18 +2091,6 @@ wheels = [
 ]
 
 [[package]]
-name = "linkify-it-py"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "uc-micro-py" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/c9/06ea13676ef354f0af6169587ae292d3e2406e212876a413bf9eece4eb23/linkify_it_py-2.1.0.tar.gz", hash = "sha256:43360231720999c10e9328dc3691160e27a718e280673d444c38d7d3aaa3b98b", size = 29158, upload-time = "2026-03-01T07:48:47.683Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/de/88b3be5c31b22333b3ca2f6ff1de4e863d8fe45aaea7485f591970ec1d3e/linkify_it_py-2.1.0-py3-none-any.whl", hash = "sha256:0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e", size = 19878, upload-time = "2026-03-01T07:48:46.098Z" },
-]
-
-[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2340,11 +2100,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a", size = 91687, upload-time = "2026-05-07T12:08:27.182Z" },
-]
-
-[package.optional-dependencies]
-linkify = [
-    { name = "linkify-it-py" },
 ]
 
 [[package]]
@@ -2391,18 +2146,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a7/a4/d06a303f45997e266f2c228081abe299bbcba216cb806128e2e49095d25f/mcp-1.23.3.tar.gz", hash = "sha256:b3b0da2cc949950ce1259c7bfc1b081905a51916fcd7c8182125b85e70825201", size = 600697, upload-time = "2025-12-09T16:04:37.351Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/c6/13c1a26b47b3f3a3b480783001ada4268917c9f42d78a079c336da2e75e5/mcp-1.23.3-py3-none-any.whl", hash = "sha256:32768af4b46a1b4f7df34e2bfdf5c6011e7b63d7f1b0e321d0fdef4cd6082031", size = 231570, upload-time = "2025-12-09T16:04:35.56Z" },
-]
-
-[[package]]
-name = "mdit-py-plugins"
-version = "0.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markdown-it-py" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/59/fc/f8d0863f8862f25602c0404d75568e89fb6b4109804645e5cdfb1be5cf56/mdit_py_plugins-0.6.1.tar.gz", hash = "sha256:a2bca0f039f39dbd35fb74ae1b5f998608c437463371f0ff7f49a19a17a114d0", size = 56114, upload-time = "2026-05-13T09:03:38.91Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/69/6da5581c6a7fede7dc261bf4e67d6adca4196f176b43288b55b3db395b6e/mdit_py_plugins-0.6.1-py3-none-any.whl", hash = "sha256:214c82fb2ac524472ab6a5bcab1de80f73b50443e187f401bfd77efbc7c6481d", size = 66663, upload-time = "2026-05-13T09:03:37.76Z" },
 ]
 
 [[package]]
@@ -3087,34 +2830,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/ca/25afc144934014700c52e05103c2421997482d561f3101ff352e1292fb81/protobuf-6.33.6-cp39-abi3-manylinux2014_s390x.whl", hash = "sha256:c96c37eec15086b79762ed265d59ab204dabc53056e3443e702d2681f4b39ce3", size = 339381, upload-time = "2026-03-18T19:04:54.616Z" },
     { url = "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593", size = 323436, upload-time = "2026-03-18T19:04:55.768Z" },
     { url = "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl", hash = "sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901", size = 170656, upload-time = "2026-03-18T19:04:59.826Z" },
-]
-
-[[package]]
-name = "psutil"
-version = "7.2.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/aa/c6/d1ddf4abb55e93cebc4f2ed8b5d6dbad109ecb8d63748dd2b20ab5e57ebe/psutil-7.2.2.tar.gz", hash = "sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372", size = 493740, upload-time = "2026-01-28T18:14:54.428Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/08/510cbdb69c25a96f4ae523f733cdc963ae654904e8db864c07585ef99875/psutil-7.2.2-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:2edccc433cbfa046b980b0df0171cd25bcaeb3a68fe9022db0979e7aa74a826b", size = 130595, upload-time = "2026-01-28T18:14:57.293Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/f5/97baea3fe7a5a9af7436301f85490905379b1c6f2dd51fe3ecf24b4c5fbf/psutil-7.2.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:e78c8603dcd9a04c7364f1a3e670cea95d51ee865e4efb3556a3a63adef958ea", size = 131082, upload-time = "2026-01-28T18:14:59.732Z" },
-    { url = "https://files.pythonhosted.org/packages/37/d6/246513fbf9fa174af531f28412297dd05241d97a75911ac8febefa1a53c6/psutil-7.2.2-cp313-cp313t-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1a571f2330c966c62aeda00dd24620425d4b0cc86881c89861fbc04549e5dc63", size = 181476, upload-time = "2026-01-28T18:15:01.884Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/b5/9182c9af3836cca61696dabe4fd1304e17bc56cb62f17439e1154f225dd3/psutil-7.2.2-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:917e891983ca3c1887b4ef36447b1e0873e70c933afc831c6b6da078ba474312", size = 184062, upload-time = "2026-01-28T18:15:04.436Z" },
-    { url = "https://files.pythonhosted.org/packages/16/ba/0756dca669f5a9300d0cbcbfae9a4c30e446dfc7440ffe43ded5724bfd93/psutil-7.2.2-cp313-cp313t-win_amd64.whl", hash = "sha256:ab486563df44c17f5173621c7b198955bd6b613fb87c71c161f827d3fb149a9b", size = 139893, upload-time = "2026-01-28T18:15:06.378Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/61/8fa0e26f33623b49949346de05ec1ddaad02ed8ba64af45f40a147dbfa97/psutil-7.2.2-cp313-cp313t-win_arm64.whl", hash = "sha256:ae0aefdd8796a7737eccea863f80f81e468a1e4cf14d926bd9b6f5f2d5f90ca9", size = 135589, upload-time = "2026-01-28T18:15:08.03Z" },
-    { url = "https://files.pythonhosted.org/packages/81/69/ef179ab5ca24f32acc1dac0c247fd6a13b501fd5534dbae0e05a1c48b66d/psutil-7.2.2-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:eed63d3b4d62449571547b60578c5b2c4bcccc5387148db46e0c2313dad0ee00", size = 130664, upload-time = "2026-01-28T18:15:09.469Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/64/665248b557a236d3fa9efc378d60d95ef56dd0a490c2cd37dafc7660d4a9/psutil-7.2.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:7b6d09433a10592ce39b13d7be5a54fbac1d1228ed29abc880fb23df7cb694c9", size = 131087, upload-time = "2026-01-28T18:15:11.724Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/2e/e6782744700d6759ebce3043dcfa661fb61e2fb752b91cdeae9af12c2178/psutil-7.2.2-cp314-cp314t-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1fa4ecf83bcdf6e6c8f4449aff98eefb5d0604bf88cb883d7da3d8d2d909546a", size = 182383, upload-time = "2026-01-28T18:15:13.445Z" },
-    { url = "https://files.pythonhosted.org/packages/57/49/0a41cefd10cb7505cdc04dab3eacf24c0c2cb158a998b8c7b1d27ee2c1f5/psutil-7.2.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e452c464a02e7dc7822a05d25db4cde564444a67e58539a00f929c51eddda0cf", size = 185210, upload-time = "2026-01-28T18:15:16.002Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/2c/ff9bfb544f283ba5f83ba725a3c5fec6d6b10b8f27ac1dc641c473dc390d/psutil-7.2.2-cp314-cp314t-win_amd64.whl", hash = "sha256:c7663d4e37f13e884d13994247449e9f8f574bc4655d509c3b95e9ec9e2b9dc1", size = 141228, upload-time = "2026-01-28T18:15:18.385Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/fc/f8d9c31db14fcec13748d373e668bc3bed94d9077dbc17fb0eebc073233c/psutil-7.2.2-cp314-cp314t-win_arm64.whl", hash = "sha256:11fe5a4f613759764e79c65cf11ebdf26e33d6dd34336f8a337aa2996d71c841", size = 136284, upload-time = "2026-01-28T18:15:19.912Z" },
-    { url = "https://files.pythonhosted.org/packages/e7/36/5ee6e05c9bd427237b11b3937ad82bb8ad2752d72c6969314590dd0c2f6e/psutil-7.2.2-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:ed0cace939114f62738d808fdcecd4c869222507e266e574799e9c0faa17d486", size = 129090, upload-time = "2026-01-28T18:15:22.168Z" },
-    { url = "https://files.pythonhosted.org/packages/80/c4/f5af4c1ca8c1eeb2e92ccca14ce8effdeec651d5ab6053c589b074eda6e1/psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:1a7b04c10f32cc88ab39cbf606e117fd74721c831c98a27dc04578deb0c16979", size = 129859, upload-time = "2026-01-28T18:15:23.795Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/70/5d8df3b09e25bce090399cf48e452d25c935ab72dad19406c77f4e828045/psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9", size = 155560, upload-time = "2026-01-28T18:15:25.976Z" },
-    { url = "https://files.pythonhosted.org/packages/63/65/37648c0c158dc222aba51c089eb3bdfa238e621674dc42d48706e639204f/psutil-7.2.2-cp36-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b0726cecd84f9474419d67252add4ac0cd9811b04d61123054b9fb6f57df6e9e", size = 156997, upload-time = "2026-01-28T18:15:27.794Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/13/125093eadae863ce03c6ffdbae9929430d116a246ef69866dad94da3bfbc/psutil-7.2.2-cp36-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:fd04ef36b4a6d599bbdb225dd1d3f51e00105f6d48a28f006da7f9822f2606d8", size = 148972, upload-time = "2026-01-28T18:15:29.342Z" },
-    { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
-    { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
 ]
 
 [[package]]
@@ -3862,23 +3577,6 @@ wheels = [
 ]
 
 [[package]]
-name = "textual"
-version = "8.2.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markdown-it-py", extra = ["linkify"] },
-    { name = "mdit-py-plugins" },
-    { name = "platformdirs" },
-    { name = "pygments" },
-    { name = "rich" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/00/21/39a76b01bd5eea82a04baaca7580e105d8c59450df03998345bb2cfb307b/textual-8.2.8.tar.gz", hash = "sha256:3f106a9fbc73e39dd266c9712432087de78a6d644084c7c241d6a25c3169115b", size = 1860502, upload-time = "2026-06-30T06:51:24.495Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/be/35261223d9416a0751cdff1c7b4a6f881387218a12d439fe22fefebc8c04/textual-8.2.8-py3-none-any.whl", hash = "sha256:267375fd402dc8d981457212efa71f0e3365fd17bba144ba9bb3ed7563cb374a", size = 731418, upload-time = "2026-06-30T06:51:26.364Z" },
-]
-
-[[package]]
 name = "tiktoken"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4010,15 +3708,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e4/31/3d74fa778a63b98b7374323befcc0be5ab3bd94afd4096a0124e7379152c/tzdata-2026.4.tar.gz", hash = "sha256:f1b8bd365d8d210c55353f4d7f8d6d8561c0ba50d704b700d195a9424bba0d79", size = 199350, upload-time = "2026-09-12T12:56:03.251Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/bc/8737e8d54cf51106118039b83f485a4783112fab49ea9d044b234978a46e/tzdata-2026.4-py2.py3-none-any.whl", hash = "sha256:c2169a8b0a7a5e9674da5a135ccdfb2b3e671b333ed9fed17b41f73c34476e81", size = 347494, upload-time = "2026-09-12T12:56:01.67Z" },
-]
-
-[[package]]
-name = "uc-micro-py"
-version = "2.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/78/67/9a363818028526e2d4579334460df777115bdec1bb77c08f9db88f6389f2/uc_micro_py-2.0.0.tar.gz", hash = "sha256:c53691e495c8db60e16ffc4861a35469b0ba0821fe409a8a7a0a71864d33a811", size = 6611, upload-time = "2026-03-01T06:31:27.526Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/73/d21edf5b204d1467e06500080a50f79d49ef2b997c79123a536d4a17d97c/uc_micro_py-2.0.0-py3-none-any.whl", hash = "sha256:3603a3859af53e5a39bc7677713c78ea6589ff188d70f4fee165db88e22b242c", size = 6383, upload-time = "2026-03-01T06:31:26.257Z" },
 ]
 
 [[package]]
