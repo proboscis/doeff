@@ -213,7 +213,7 @@ def test_the_hook_stops_only_a_new_finding_and_a_stale_baseline(tmp_path: Path) 
     (rig.repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     added = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert added.returncode == 1
-    assert "DOEFF999 pkg/a.py: 基点 1 → 今 2" in added.stderr
+    assert "DOEFF999 pkg/a.py: baseline 1 → now 2" in added.stderr
     # Pre-existing findings fixed but baseline stale -> red. Passes after lower.
     (rig.repo / "pkg" / "a.py").write_text("x = 1\ny = 2\n")
     fixed = _run(rig, "check", "doeff-linter", "pkg/a.py")
@@ -241,6 +241,23 @@ def test_a_tests_only_change_keeps_the_key_and_an_indexer_change_moves_it(tmp_pa
     assert LINTER_LOCKED.input_key(rig.repo, _commit(rig, "indexer src")) != first
 
 
+def test_a_key_written_under_the_former_prefix_still_finds_its_binary(tmp_path: Path) -> None:
+    # Stores built before 2026-11-06 wrote the same digest after a Japanese prefix; a store is matched by the digest, so
+    # changing the prefix does not leave every machine's linter "unmeasurable" until its inputs change.
+    rig = _rig(tmp_path)
+    key = LINTER_LOCKED.input_key(rig.repo, "HEAD")
+    assert key is not None and key.startswith(LINTER_LOCKED.KEY_PREFIX)
+    former = "doeff-linter \u306e\u7d44\u307f\u7acb\u3066\u306e\u5165\u529b " + LINTER_LOCKED.key_digest(key)
+    assert LINTER_LOCKED.same_key(former, key)
+    assert not LINTER_LOCKED.same_key(former, LINTER_LOCKED.KEY_PREFIX + "0" * 40)
+    assert not LINTER_LOCKED.same_key(None, key)
+    _record_key(rig, former)
+    found = subprocess.run([sys.executable, str(ROOT / "scripts" / "doeff_linter_locked.py"), "which"], cwd=rig.repo,
+                           env=rig.environment, capture_output=True, text=True, check=False)
+    assert found.returncode == 0, found.stderr
+    assert found.stdout.strip() == str(rig.dev / "doeff-linter")
+
+
 def test_a_baseline_whose_linter_is_not_built_is_named_as_unmeasured_and_passes(tmp_path: Path) -> None:
     rig = _rig(tmp_path)
     assert _run(rig, "init", "doeff-linter").returncode == 0
@@ -249,10 +266,10 @@ def test_a_baseline_whose_linter_is_not_built_is_named_as_unmeasured_and_passes(
     (rig.repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     other = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert other.returncode == 0
-    assert "測れない" in other.stderr
+    assert "not measurable" in other.stderr
     assert built_for in other.stderr
     # The dev build has a different key from the baseline -- add that merging main makes it measurable.
-    assert "main を取り込めば" in other.stderr
+    assert "merging main in" in other.stderr
 
 
 def test_the_snapshot_store_answers_when_the_dev_build_is_newer(tmp_path: Path) -> None:
@@ -265,7 +282,7 @@ def test_the_snapshot_store_answers_when_the_dev_build_is_newer(tmp_path: Path) 
     (rig.repo / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     added = _run(rig, "check", "doeff-linter", "pkg/a.py")
     assert added.returncode == 1
-    assert "DOEFF999 pkg/a.py: 基点 1 → 今 2" in added.stderr
+    assert "DOEFF999 pkg/a.py: baseline 1 → now 2" in added.stderr
     assert (rig.snapshots / first / "calls").exists()
 
 
@@ -360,7 +377,7 @@ def test_semgrep_is_called_at_the_lock_version_whatever_the_path_has(tmp_path: P
     (rig.repo / "pkg" / "b.py").write_text("z = 3  # BAD\n")
     added = _run(rig, "check", "semgrep", "pkg/b.py")
     assert added.returncode == 1
-    assert "R1 pkg/b.py: 基点 0 → 今 1" in added.stderr
+    assert "R1 pkg/b.py: baseline 0 → now 1" in added.stderr
     calls = [json.loads(line) for line in (tmp_path / "bin" / "uv-calls.jsonl").read_text().splitlines()]
     assert calls
     assert all(call[:3] == ["tool", "run", "--python"] and call[4:7] == ["--from", "semgrep==1.2.3", "semgrep"] for call in calls)
@@ -436,7 +453,7 @@ def test_strict_turns_unmeasured_red(tmp_path: Path) -> None:
     _install_dev(rig, _change_linter_source(rig, "fn main() { /* rules changed */ }\n"))
     strict = _run(rig, "--strict", "check", "doeff-linter")
     assert strict.returncode == TOOL.UNMEASURED_RC
-    assert "測れない" in strict.stderr
+    assert "not measurable" in strict.stderr
     # The hook (without --strict) passes on the same tree
     assert _run(rig, "check", "doeff-linter").returncode == 0
 
@@ -475,7 +492,7 @@ def test_a_recorded_key_measures_a_tree_without_git(tmp_path: Path) -> None:
     (copy / "pkg" / "a.py").write_text("x = 1  # BAD\ny = 2  # BAD\n")
     grown = subprocess.run(run, env=rig.environment, capture_output=True, text=True, check=False)
     assert grown.returncode == 1
-    assert "DOEFF999 pkg/a.py: 基点 1 → 今 2" in grown.stderr
+    assert "DOEFF999 pkg/a.py: baseline 1 → now 2" in grown.stderr
 
 
 def test_a_snapshot_with_a_recorded_key_is_found_without_git(tmp_path: Path) -> None:

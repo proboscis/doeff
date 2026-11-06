@@ -106,7 +106,7 @@ def test_extract_keeps_line_numbers_and_unescapes_entities() -> None:
             "32-effect-created_at--effectcreationcontext",
         ),
         ("**Bold** and [a link](x.md)", "bold-and-a-link"),
-        ("日本語の見出し・中点", "日本語の見出し中点"),
+        ("Überschrift・Größe", "überschriftgröße"),
     ],
 )
 def test_github_slug_matches_github(heading: str, slug: str) -> None:

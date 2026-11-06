@@ -264,7 +264,7 @@ def test_python_change_with_a_linter_error_not_in_the_baseline_is_stopped(tmp_pa
     report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
     result = _pre_commit(tmp_path, "doeff/example.py", linter_report=report).result
     assert result.exit_code != 0, result.stdout + result.stderr
-    assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in result.stdout + result.stderr
+    assert "DOEFF016 doeff/example.py: baseline 0 → now 1" in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("tool_status", [None, 1, 2])
@@ -494,7 +494,7 @@ def test_plain_hook_stops_a_staged_python_file_with_a_linter_finding_not_in_the_
     result: ProcessOutcome = _plain_hook_with_a_linter(tmp_path, "doeff/example.py", report).result
     output: str = result.stdout + result.stderr
     assert result.exit_code != 0, f"the plain hook let through linter findings above the baseline:\n{output}"
-    assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in output, output
+    assert "DOEFF016 doeff/example.py: baseline 0 → now 1" in output, output
 
 
 def test_plain_hook_runs_the_linter_once_on_only_the_staged_python_file(tmp_path: Path) -> None:

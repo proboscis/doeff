@@ -41,7 +41,7 @@ from pathlib import Path
 # an implicit default; under PYTHONSAFEPATH=1 (present in the worker's shell) it does not, and the commit hook failed on import.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from doeff_linter_locked import binary_key, dev_key, input_key, locate, searched
+from doeff_linter_locked import binary_key, dev_key, input_key, locate, same_key, searched
 from semgrep_locked import locked_command, locked_version
 
 BASELINE_DIR: str = "scripts/hook_finding_baseline"
@@ -266,7 +266,7 @@ def measure(top: Path, tool: str, instrument: Instrument, paths: list[str]) -> C
 
 def _line(finding: Finding) -> str:
     """Emit the one-line reason for red (rule, file, baseline and current counts)."""
-    return f"  {finding.rule} {finding.path}: 基点 {finding.baseline} → 今 {finding.current}"
+    return f"  {finding.rule} {finding.path}: baseline {finding.baseline} → now {finding.current}"
 
 
 def _write(file: Path, baseline: Baseline) -> None:
@@ -278,8 +278,8 @@ def _write(file: Path, baseline: Baseline) -> None:
 def _unmeasured_hint(top: Path, baseline: Baseline) -> str:
     """What to do when "cannot be measured": if the land-arm dev build exists with a key different from the baseline, pulling in main (so the baseline aligns to that key) makes it measurable."""
     dev: str | None = dev_key(top)
-    if dev is not None and dev != baseline.version:
-        return "main を取り込めば land-arm の開発版で測れる"
+    if dev is not None and not same_key(dev, baseline.version):
+        return "merging main in makes it measurable with the land-arm dev build"
     return "wait for land-arm to rebuild the main linter"
 
 
@@ -365,8 +365,8 @@ def _check(top: Path, tool: str, baseline: Baseline, paths: list[str], unmeasure
         # doeff-linter: the binary for the baseline key is not in the store (a worktree cut from a slightly older main, between commits of a change that modifies the linter,
         # a few minutes until land-arm rebuilds). The hook passes without stopping -- the daily stage (--strict) measures the passed commit against the same baseline shape,
         # and makes the inability to measure itself red in daily (#2906).
-        print(f"doeff-linter: 測れない(基点の版 {baseline.version} の binary が {searched()} のどちらにも無い — hook の中では"
-              f"do not build). {_unmeasured_hint(top, baseline)}. A change that modifies the linter passes its own build with "
+        print(f"doeff-linter: not measurable (no binary for the baseline version {baseline.version} in either of {searched()} -- the hook "
+              f"does not build). {_unmeasured_hint(top, baseline)}. A change that modifies the linter passes its own build with "
               "`uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` to recount the baseline"
               + (" (--strict: unmeasured is red)" if unmeasured_rc else ""), file=sys.stderr)
         return unmeasured_rc
@@ -376,7 +376,7 @@ def _check(top: Path, tool: str, baseline: Baseline, paths: list[str], unmeasure
               "recounts the baseline with `uv run --no-project python scripts/hook_finding_baseline.py lower semgrep` and includes it in the same commit",
               file=sys.stderr)
         return 1
-    if tool == "doeff-linter" and unmeasured_rc and (head := input_key(top, "HEAD")) not in (None, baseline.version):
+    if tool == "doeff-linter" and unmeasured_rc and (head := input_key(top, "HEAD")) is not None and not same_key(head, baseline.version):
         # Daily (--strict) only: even if it can be measured with the baseline-key binary, the tree's linter rules are different (the linter changed and the baseline was not recounted).
         # Measuring silently with old rules lets the cost of recounting pile up on the next change that changes the key (between 10-03 and 10-11, 28 commits changed linter input and
         # 0 commits wrote the baseline -- blind check A of the design verification). The hook does not stop (another change's linter change must not
