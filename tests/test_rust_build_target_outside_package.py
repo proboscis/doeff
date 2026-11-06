@@ -89,7 +89,11 @@ def _two_checkouts(tmp_path: Path) -> Checkouts:
 
 def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
     """The `env` prefix for the build process command: the child inherits this process's environment, and it is placed only when passing CARGO_TARGET_DIR removed (`env -u`),
-    pointing the temporary dir location at temp_root."""
+    pointing the temporary dir location at temp_root.
+
+    CARGO_BUILD_BUILD_DIR is removed too: zeus's worker points it at a per-worktree dir (`/cargo-build/{workspace-path-hash}`), which keeps
+    the intermediates of two checkouts apart even when they share a target, so the shared-target counterexample would not reproduce there.
+    A test that needs it passes it after this prefix."""
     # The wheel store is also a per-test dir (do not write to the user's ~/.cache, and tests must not pull each other's wheel of the same source).
     # The store outside the machine is not consulted (this test looks at the local build path -- the store test is tests/test_wheel_remote_store.py).
     settings = [f"TMPDIR={temp_root}", f"DOEFF_WHEEL_CACHE={temp_root / 'wheel-cache'}", "DOEFF_WHEEL_REMOTE="]
@@ -98,7 +102,7 @@ def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
             target: list[str] = []
         case Path() as given:
             target = [f"CARGO_TARGET_DIR={given}"]
-    return ["env", "-u", "CARGO_TARGET_DIR", *settings, *target]
+    return ["env", "-u", "CARGO_TARGET_DIR", "-u", "CARGO_BUILD_BUILD_DIR", *settings, *target]
 
 
 def _start_build(

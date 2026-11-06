@@ -517,7 +517,7 @@ def test_zeus_worker_guards_its_resident_jobs_and_its_clis_above_their_measured_
 
 
 @pytest.mark.parametrize("node", GUEST_NODES)
-def test_guest_worker_keeps_conversation_clis_and_commands_off_its_resident_jobs_guard(rendered: list[Manifest], node: str) -> None:
+def test_guest_worker_keeps_cli_and_command_layers_off_its_resident_jobs_guard(rendered: list[Manifest], node: str) -> None:
     """余りの空きで会話を受ける機体(GUEST_NODES)の会話の CLI の層と命令の層は、memory.max と cpu.weight だけを持つ限る層
     (memory.min を持たない — 守る分を取らない)で、重みは常駐の job の層より低い。worker と常駐の job の層の memory.min と、jobs・clis・
     commands の memory.max の和は container の上限の内で、常駐の job の予算(枠の file の memoryMiB)は会話の 2 つの層の外 — 予算と 2 つの
@@ -529,18 +529,18 @@ def test_guest_worker_keeps_conversation_clis_and_commands_off_its_resident_jobs
     settings = dict(_layout(worker))
     service = str(_env_value(worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
     jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
-    conversation_layers = (CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER)
-    for layer in conversation_layers:
+    cli_layers = (CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER)
+    for layer in cli_layers:
         assert set(settings[layer]) == {"memory.max", "cpu.weight"}, (layer, settings)
         assert int(settings[layer]["cpu.weight"]) < int(settings[service]["cpu.weight"]), settings
     limit = _bytes(str(_mapping(_mapping(_container(worker)["resources"], "resources")["limits"], "limits")["memory"]))
     guarded = _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) + _bytes(settings[service]["memory.min"])
-    limited = sum(_bytes(settings[name]["memory.max"]) for name in (jobs, *conversation_layers))
+    limited = sum(_bytes(settings[name]["memory.max"]) for name in (jobs, *cli_layers))
     assert guarded + limited <= limit, f"{node}: 守る層 {guarded} + 限る層 {limited} が container の上限 {limit} を越える"
-    budget = int(str(_mapping(_room_rows()[node], node)["memoryMiB"])) * 2**20
+    room = int(str(_mapping(_room_rows()[node], node)["memoryMiB"])) * 2**20
     outside = _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) + limited
-    assert budget + outside == limit, f"{node}: 予算 {budget} が会話の層の外の余り {limit - outside} と違う"
-    assert budget >= _bytes(settings[service]["memory.min"]), (node, budget, settings)
+    assert room + outside == limit, f"{node}: 予算 {room} が会話の層の外の余り {limit - outside} と違う"
+    assert room >= _bytes(settings[service]["memory.min"]), (node, room, settings)
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
@@ -1047,7 +1047,7 @@ def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(
         # 準備の層を宣言する機体は、前の準備の分を jobs と prepare に分けた(和は前のまま)— 両方を引く。
         prepare = _bytes(settings[CGROUP_PREPARE_LAYER]["memory.max"]) if CGROUP_PREPARE_LAYER in settings else 0
         # 会話の CLI の層が限る層の機体は、会話の CLI と命令の層も引く(zeus の CLI の層は守る層で、CLI は常駐の job の子として予算に入る)。
-        conversations = (
+        cli_and_commands = (
             _bytes(settings[CGROUP_CLI_LAYER]["memory.max"]) + _bytes(settings[CGROUP_CHILD_LAYER]["memory.max"])
             if "memory.max" in settings.get(CGROUP_CLI_LAYER, {})
             else 0
@@ -1056,7 +1056,7 @@ def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(
         volumes = [_mapping(v, "volume") for v in _sequence(_pod_spec(worker)["volumes"], "volumes")]
         cargo_build = sum(_bytes(str(_mapping(v["emptyDir"], "emptyDir")["sizeLimit"])) for v in volumes if v["name"] == "cargo-build")
         allowance = (
-            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare - conversations - cargo_build
+            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare - cli_and_commands - cargo_build
         ) // 2**20
         assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 

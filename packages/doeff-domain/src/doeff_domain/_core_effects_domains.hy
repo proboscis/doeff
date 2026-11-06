@@ -18,10 +18,10 @@
 (import doeff_domain [DomainLaw DomainTerm Handles])
 
 (import doeff_core_effects [Ask Get Put Local Listen Await Try WriterTellEffect ReadWriterLog SlogEffect])
-(import doeff_core_effects [HttpRequest])
+(import doeff_core_effects [HttpRequest ResolveHost])
 (import doeff_core_effects [MemoGetEffect MemoPutEffect MemoDeleteEffect MemoExistsEffect])
 (import doeff_core_effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect])
-(import doeff_core_effects [Spawn TaskCompleted Gather Wait Cancel Discard Race CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore CreateExternalPromise SchedulerIntrospection scheduled])
+(import doeff_core_effects [Spawn TaskCompleted Gather Wait Cancel Discard Race CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore CreateExternalPromise SchedulerIntrospection ShieldEnter ShieldExit scheduled])
 (import doeff_core_effects [reader state writer slog-handler slog-discard-handler try-handler local-handler listen-handler await-handler lazy-ask env-var-ask])
 (import doeff_core_effects [cache-handler])
 ;; defhandler-made factories are listed directly from the implementation modules (the real
@@ -177,19 +177,19 @@
   :effects [Spawn TaskCompleted Gather Wait Cancel Discard Race
             CreatePromise CompletePromise FailPromise
             CreateSemaphore AcquireSemaphore ReleaseSemaphore
-            CreateExternalPromise SchedulerIntrospection]
+            CreateExternalPromise SchedulerIntrospection ShieldEnter ShieldExit]
   :handlers [(Handles scheduled
                       Spawn TaskCompleted Gather Wait Cancel Discard Race
                       CreatePromise CompletePromise FailPromise
                       CreateSemaphore AcquireSemaphore ReleaseSemaphore
-                      CreateExternalPromise SchedulerIntrospection)]
+                      CreateExternalPromise SchedulerIntrospection ShieldEnter ShieldExit)]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "scheduled covers all scheduler effects as the single execution-foundation prompt.")
 
 
 (defdomain doeff-http
-  :title "HTTP vocabulary - executing, recording, and replaying HttpRequest"
-  :effects [HttpRequest]
+  :title "HTTP vocabulary - executing, recording, and replaying HttpRequest, and resolving a host name alone (ResolveHost)"
+  :effects [HttpRequest ResolveHost]
   :handlers [_http-production-handler
              _http-fixture-record-handler
              _http-fixture-replay-handler]

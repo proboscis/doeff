@@ -21,7 +21,7 @@
 #     (機体の上で動いている build と会話のターンのどちらも、途中で壊さない)。
 #
 # 機体の MemAvailable の線: 置き場の直下の file(既定 .keep-available-mib — 数 1 つ・MiB)を毎回読む。書くのは新しいターンを受ける係 turn-host
-# (agora-controllers の controllers/agent_task/protocol/node_ram.hy の keep-line-published)で、値はその係が新しいターンを断る床の上に、ターン
+# (この worker の上で動く系の側 — この script と繋がるのはこの file の形だけ)で、値はその係が新しいターンを断る床の上に、ターン
 # 数本ぶんを足した物。この script は線の数を持たない: 床は係の判断の一部で、同じ量を 2 か所に宣言すると別々に動く(2026-11-05 に床 25.1 GiB と
 # この script の 12 GiB が離れ、MemAvailable が 12〜25 GiB の間は、ターンが返されるのに中間物は memory を返さなかった)。file が無い・数でない間
 # (係がまだ起きていない Pod の起動の直後)は、機体の memory を理由には消さない。名が `<2 字>/<16 進>` の形でないので中間物とは読まない。

@@ -12,6 +12,7 @@ from uuid import UUID as UUID
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from collections.abc import Sequence as Sequence
+from itertools import groupby as groupby
 from typing import TypeGuard as TypeGuard
 from typing import TypeVar as TypeVar
 from doeff import Program as Program
@@ -170,7 +171,10 @@ class SqlText:
 class SqlPlaceholder:
     name: str
 SPLIT_MEMO_LIMIT: int
+SPLIT_MEMO_STATEMENT_PARTS: int
+SPLIT_MEMO_PART_LIMIT: int
 SPLIT_MEMO: dict[str, tuple[SqlText | SqlPlaceholder, ...]]
+SPLIT_MEMO_PARTS: list[int]
 
 def split_statement(statement: str) -> _Program[tuple[SqlText | SqlPlaceholder, ...], object]:
     ...
