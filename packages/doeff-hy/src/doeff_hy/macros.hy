@@ -682,7 +682,7 @@ defk {name}: :post type annotation cannot be an empty string.
             ~(hy.models.Symbol (. source name))))))
 
 (defn _scoped-definition [compiler name forms [module-forms #()] [nested-reads False]]
-  "Assemble, to fit the place where it is written, the sequence of statements `forms` (including helper imports) of the expansion of a macro that defines the name `name` (defk, deff, defp, deftest, defeffect, defmcp-tool, defhandler of handle.hy, defrecord and defwire of record.hy, and definition macros of the owning package — defworkflow of doeff-conductor (doeff_conductor/macros.hy) and defsystem of doeff-cluster (doeff_cluster/_shared/entry/macros.hy)).
+  "Assemble, to fit the place where it is written, the sequence of statements `forms` (including helper imports) of the expansion of a macro that defines the name `name` (defk, deff, defp, deftest, defeffect, defmcp-tool, defhandler of handle.hy, defrecord and defwire of record.hy, and definition macros of the owning package — defsystem of doeff-cluster (doeff_cluster/_shared/entry/macros.hy)).
    `module-forms` are statements, assumed to run only once at module load, that tell the module about the definition (the recording of deftest's pytest item).
    In module and class bodies they are placed after `forms`, and inside a function body they are emitted in neither the runtime expansion nor the expansion for type checking —
    a definition inside a function is not a module-level definition, and would pile up on every call of the outer function.
@@ -2454,7 +2454,7 @@ defpipeline {pipeline}: no stages defined.
   "The handler argument that receives one MCP argument (the schema's Hy dict `p`) — attach the schema's type annotation to the name (a string annotation —
    not evaluated at runtime, the same as defk's contract annotations).
 
-   The annotation is taken from the row of the table MCP_JSON_TYPES of doeff.mcp (`mcp-param-annotation`). The server (mcp_server_loop of doeff_agents) checks
+   The annotation is taken from the row of the table MCP_JSON_TYPES of doeff.mcp (`mcp-param-annotation`). The MCP server loop checks
    received values with the same table and rejects a mismatched value or an omitted required argument before calling the handler, so the annotation is also true at runtime
    (back when values were passed without checking, `\"100\"` reached an `int` argument).
    A non-required argument is `| None` (the server passes None for an argument that was not sent and has no default). An argument that does not write :required is required

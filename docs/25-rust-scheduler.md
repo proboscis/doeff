@@ -39,8 +39,8 @@ naming the two ways out (rebuild the Rust extension, or set `DOEFF_SCHEDULER=pyt
   the Rust scheduler. A checkout with an old extension can rebuild it, as the `ImportError` message says,
   or set `DOEFF_SCHEDULER=python`.
 - Evidence that the semantics are the same: on 2026-09-23, 1,382 scheduler-related tests (scheduler,
-  Cancel, Semaphore, external Promise, Await, the virtual clock of doeff-time, doeff-agents,
-  doeff-conductor, doeff-traverse and others) and 100 tests of a downstream worker gave the same result
+  Cancel, Semaphore, external Promise, Await, the virtual clock of doeff-time, agent session and
+  orchestration packages, doeff-traverse and others) and 100 tests of a downstream worker gave the same result
   one by one under both implementations (the same set of passed, failed and skipped tests). Since the
   default changed, tests that do not name an implementation run on Rust, and the daily full run catches
   differences between the two. Tests of behavior that depends on the implementation name it.
@@ -142,7 +142,7 @@ with the same result as seen by the VM:
 3. **The scheduler in a captured handler list**: a scheduler obtained from `GetHandlers`,
    `GetOuterHandlers` or a boundary capture is an object whose `__doeff_scheduler_prompt__` is true
    (for the Rust implementation, `doeff_vm.doeff_vm.SchedulerPrompt`). It is a handler already, so it
-   is reinstalled by applying it to a program as it is: `h(program)`. doeff-agents' `mcp_server_loop` recognizes the scheduler by this mark.
+   is reinstalled by applying it to a program as it is: `h(program)`. A downstream MCP server loop recognizes the scheduler by this mark.
 4. **Handlers that cooperate with the scheduler**: a handler such as the virtual clock may perform
    `CreatePromise`, `Spawn(..., priority=TaskPriority.IDLE, daemon=True)` and `Wait` from inside the
    handler. Priorities, daemons and the shield for external waits (#505) behave as in the Python

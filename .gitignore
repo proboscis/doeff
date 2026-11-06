@@ -76,8 +76,6 @@ dmypy.json
 *.jsonl
 # Logs of an old-version coordinator store (a fixture read by the upgrade preview test test_deployed_state_upgrade.hy — not generated logs)
 !packages/doeff-cluster/tests/fixtures/coordinator_state_*/wal/wal.jsonl
-# Recorded real lines of codex's app-server (a fixture read by the line classification test packages/doeff-codex/tests/test_lines.hy — not generated logs)
-!packages/doeff-codex/tests/recorded/codex-*/*.jsonl
 *.db
 *.db-journal
 *.db-shm

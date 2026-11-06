@@ -406,7 +406,7 @@ def _plain_hook(directory: Path, changed: str, source: str, rule_packages: tuple
 @pytest.mark.parametrize(("changed", "source"), [
     pytest.param("packages/doeff-cluster/src/doeff_cluster/example.hy",
                  ";; restart lease (card ki-0 of agora-controllers)\n(setv value 1)\n", id="hy-comment"),
-    pytest.param("packages/doeff-codex/tests/test_example.py",
+    pytest.param("packages/doeff-records/tests/test_example.py",
                  '"""Daily red of the consumer repo (agora-controllers)."""\n\nvalue = 1\n', id="python-docstring"),
     pytest.param("packages/doeff-records/README.md", "declaration field (kanban row of agora)\n", id="document"),
     pytest.param("packages/doeff-records/résumé.md", "declaration field (kanban row of agora)\n", id="document-non-ascii-name"),
@@ -429,7 +429,7 @@ def test_plain_hook_passes_staged_file_without_findings(tmp_path: Path, changed:
 
 
 # Which packages the application-vocabulary rule applies to is decided in one place, the rule's paths.include -- the entry holds no package names. When it did,
-# a change that added a package to the rule (10-10's doeff-codex added the rule and the entry in separate commits) and forgot to fix the entry made the plain hook
+# a change that added a package to the rule (on 10-10 a package was added to the rule and to the entry in separate commits) and forgot to fix the entry made the plain hook
 # silently pass that package's documents (blind A of the design review).
 PACKAGE_ADDED_TO_THE_RULE: str = "doeff-example-generic"
 

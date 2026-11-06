@@ -3,9 +3,6 @@
 
 doeff-git, doeff-openai and doeff-openrouter's ``production_handlers`` are put in a stack as they
 are; the former call answers the same handler with a DeprecationWarning for one release.
-doeff-conductor's ``agent_handler`` and ``git_handler`` are checked the same way in
-packages/doeff-conductor/tests/test_former_factory_handlers.py (the root tests do not import the
-internal agent packages).
 
 former-factory-call-rewrite: keep — the tests call the former form on purpose.
 """

@@ -232,17 +232,17 @@ fn the_sample_of_a_sleeping_test_is_found_under_the_repo_s_own_settings() {
     let root = doeff_root();
     let source = fixture("sleeps.hy");
     for place in [
-        "packages/doeff-agents/tests/sample_waits.hy",
+        "packages/doeff-records/tests/sample_waits.hy",
         "tests/sample_waits.hy",
         "packages/doeff-cluster/tests/fixtures/sample_job.hy",
-        "packages/doeff-claude-code/tests/stub_cli/sample_cli.hy",
+        "packages/doeff-records/tests/stub_cli/sample_cli.hy",
         "examples/sample/test_waits.hy",
     ] {
         let report = editor(&root, &["--stdin", "--path", place], Some(&source));
         assert_eq!(hit_lines(&report), marked_lines(&source), "the hits of the fixture placed at {} differ from the marked lines", place);
     }
     // The body's location (program sleeps belong to DOEFF210) and the rule fixtures' dir are outside this rule's population.
-    for place in ["packages/doeff-agents/src/doeff_agents/sample_waits.hy", "packages/doeff-linter/tests/fixtures/test_sleep/sample_waits.hy", "tests/semgrep/fixtures/sample_waits.hy"] {
+    for place in ["packages/doeff-records/src/doeff_records/sample_waits.hy", "packages/doeff-linter/tests/fixtures/test_sleep/sample_waits.hy", "tests/semgrep/fixtures/sample_waits.hy"] {
         let outside = editor(&root, &["--stdin", "--path", place], Some(&source));
         assert!(violations(&outside).is_empty(), "{}: {:#?}", place, violations(&outside));
     }

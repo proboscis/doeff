@@ -15,8 +15,7 @@
   :scope ["packages/doeff-hy/src/doeff_hy"
           "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
           "docs/adr/conftest.py"
-          "docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy"
-          "packages/doeff-agents/tests"]
+          "docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy"]
   :problem
     [(fact
        "mediagen, one of the largest Python consumers, has the doeff_interpreter fixture wired in conftest, yet 0 of its 260 test functions use deftest. Instead, tests/support/run_test.py reimplements part of the interpreter stack and does manual with_handlers replacement. The fixture's :env path is still NotImplementedError ('deftest :env override is not wired to mediagen_interpreter yet')."
@@ -39,7 +38,7 @@
        :counterexamples
          [(counterexample "The fixture receives :env but does not apply it, and the test runs against the production env and happens to be green")
           (counterexample "A homegrown shim that bypasses deftest reimplements part of the interpreter stack and fails to track changes in stack composition (handler order, etc.)")
-          (counterexample "The consumer exposes a function that re-wraps deftest to pytest, and pytestmark (skipif / marks / parametrize) is lost along with __dict__ — written but ineffective, going red on machines without tmux (2026-09-21, 25 files and 12 :skip-if cases in doeff-agents. Check = packages/doeff-agents/tests/test_deftest_declaration_band.py and test_deftest_skip_canary.py)")])]
+          (counterexample "The consumer exposes a function that re-wraps deftest to pytest, and pytestmark (skipif / marks / parametrize) is lost along with __dict__ — written but ineffective, going red on machines without tmux (2026-09-21, 25 files and 12 :skip-if cases in one package)")])]
   :enforcement
     [(deftest test-adr-doe-hy-002-env-roundtrip
        {:env {"adr.doe.hy.002.probe" 42}}

@@ -1059,7 +1059,7 @@ class _Classifier:
         an effect, a handler or a program, or reads a clock, the environment, a file, a process,
         randomness or the console by name. A builder is such a function whose return type
         (``annotation``) is a class its own package defines — it builds a value of a program's shape,
-        as doeff-conductor's ``agent_bang`` builds an ``AgentSpec``; its row names the class
+        as doeff-stream's ``subscribe`` builds a ``Source``; its row names the class
         (``built_class``), so the table's test can check that the package shows it. A body that cannot
         be read (not a Python function) keeps the verdict ``read`` gave.
         """
@@ -1491,8 +1491,8 @@ def _required_parameters(function: object) -> list[inspect.Parameter] | None:
 def _scratch_home() -> Iterator[None]:
     """HOME, the XDG dirs and the cwd pointed at a scratch dir, for one factory call.
 
-    A factory may make its state dir when called (doeff-agentic's index, doeff-conductor's
-    workspaces); it makes it in the scratch dir, not in the home of whoever lists the API. A path
+    A factory may make its state dir when called (an index or a
+    workspace dir); it makes it in the scratch dir, not in the home of whoever lists the API. A path
     a module computed when imported is not moved — the call keeps writing there.
     """
     saved = {name: os.environ.get(name) for name in _HOME_VARIABLES}

@@ -189,9 +189,9 @@ fn the_sample_of_a_sleeping_program_is_found_under_the_repo_s_own_settings() {
     // That the 0 findings above are not "because the population is empty": with the doeff root's config as is, a fixture placed once in the main code's location (pre-save content) is hit.
     let root = doeff_root();
     let source = fixture();
-    let report = editor(&root, &["--stdin", "--path", "packages/doeff-agents/src/doeff_agents/sample_waits.hy"], Some(&source));
+    let report = editor(&root, &["--stdin", "--path", "packages/doeff-traverse/doeff_traverse/sample_waits.hy"], Some(&source));
     assert_eq!(hit_lines(&report), marked_lines(&source));
     // The tests' location (tests/) is outside this rule's population (sleeping in Hy tests belongs to DOEFF211 -- tests/test_sleep.rs).
-    let in_tests = editor(&root, &["--stdin", "--path", "packages/doeff-agents/tests/sample_waits.hy"], Some(&source));
+    let in_tests = editor(&root, &["--stdin", "--path", "packages/doeff-traverse/tests/sample_waits.hy"], Some(&source));
     assert!(violations(&in_tests).is_empty(), "{:#?}", violations(&in_tests));
 }

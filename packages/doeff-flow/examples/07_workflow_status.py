@@ -72,7 +72,7 @@ def run_outcome_check():
 def pr_review_workflow(pr_url: str):
     """Complete PR review workflow with status updates.
 
-    This workflow demonstrates the pattern used by doeff-agentic-pr-workflow:
+    This workflow demonstrates the pattern of an agent-driven PR workflow:
     - Uses slog to emit human-readable status at each phase
     - Status is captured in traces for monitoring
     - Enables observing workflow progress in real-time

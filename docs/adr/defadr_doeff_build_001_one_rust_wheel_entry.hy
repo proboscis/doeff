@@ -1,7 +1,6 @@
 ;;; Executable ADR: there is one entry that builds and fetches the Rust components (doeff-vm, doeff-vm-core, doeff-linter,
 ;;; doeff-effect-analyzer, doeff-indexer) — the build backend tools/doeff_cargo_backend.py always looks up "the wheel store keyed by the hash of the source contents" before building.
-;;; The Rust CLI component that answered the workflow list was removed on 2026-10-30; the Python CLI doeff-agentic answers the same verbs
-;;; (ADR-DOE-API-001 R28).
+;;; The Rust CLI component that answered the workflow list was removed on 2026-10-30 (ADR-DOE-API-001 R28).
 ;;;
 ;;; Keep one entry, and remove the old path in the same change that replaces it.
 ;;;
@@ -143,7 +142,7 @@
           "docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy"]
   :problem
     [(fact
-       "Every update to some doeff package required building all of doeff and baking it into an image, which makes no sense. A change to doeff-cluster or doeff-agents should almost never need to rebuild doeff's Rust VM.")
+       "Every update to some doeff package required building all of doeff and baking it into an image, which makes no sense. A change to doeff-cluster or another Python package should almost never need to rebuild doeff's Rust VM.")
      (fact
        "Building images also uses a Makefile and cache layers, so as not to waste rebuilds.")
      (fact

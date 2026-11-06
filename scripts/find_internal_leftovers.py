@@ -387,7 +387,6 @@ KEEP: tuple[Keep, ...] = (
     Keep("docs/03-basic-effects.md", "4", "private address", "an example address in a guide"),
     Keep("tools/docs-video/", "4", "private address", "an example address in a guide video"),
     Keep("tools/docs-video/", "6", "draft or log name", "the README names these logs as data"),
-    Keep("packages/doeff-agents/tests/test_headless_adapter.hy", "4", "token shape", "test fake"),
     Keep("packages/doeff-cluster/tests/test_supplied_held.hy", "4", "token shape", "test fake"),
     Keep("packages/doeff-cluster/tests/test_supplied_values.hy", "4", "token shape", "test fake"),
     Keep(

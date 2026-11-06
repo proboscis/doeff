@@ -5,9 +5,6 @@
 ;;;     the per-job working dir, running a script from a script).
 ;;;   - The real file answerer (os-file-handler) checks the repacking of values (kind, mode, copy that preserves symlinks) in a temporary dir.
 ;;;   - A Program of the same scenario is run with both the real one (temporary dir) and the no-I/O one (memory-file-handler), and the answers are checked to be the same (they refuse in the same places).
-;;;   The test that io_effects of doeff-agents re-exports the same types (one definition) is placed on the doeff-agents side
-;;;   (packages/doeff-agents/tests/test_io_effects_reexports.hy) -- what is checked is a property of doeff-agents, and if a test of this package imports the
-;;;   package above, the layer direction is reversed.
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import os)

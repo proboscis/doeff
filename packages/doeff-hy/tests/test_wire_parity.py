@@ -2,7 +2,7 @@
 
 What it checks:
 
-1. Build every defwire type defined in doeff packages (doeff-hy, doeff-cluster, doeff-core-effects, doeff-codex), pass inputs made per type
+1. Build every defwire type defined in doeff packages (doeff-hy, doeff-cluster, doeff-core-effects), pass inputs made per type
    (a correct shape, a different field kind, a missing field, an unknown field, a Python field name, a spelling outside the definition, array length ±1, nesting down to 2 levels, corrupted string
    text itself) through both decoders, and check that accept / refuse, the produced value, the written JSON, and the JSON Schema match (0 mismatches — 0 on the weakening side too).
 2. The test types (wire_codec_types.hy — types with one vocabulary type each, and types outside the vocabulary) also match, and only the types outside the vocabulary cannot be built.
@@ -27,7 +27,7 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 #: The doeff packages that define defwire types (counted by grep over packages/*/src — add here when they grow).
-DOEFF_PACKAGES = ("doeff_hy", "doeff_cluster", "doeff_core_effects", "doeff_codex")
+DOEFF_PACKAGES = ("doeff_hy", "doeff_cluster", "doeff_core_effects")
 
 #: Among the test types, those refused when the tree is built because they are outside the vocabulary (section 2 "outside the vocabulary" of the design record).
 OUT_OF_VOCABULARY = {

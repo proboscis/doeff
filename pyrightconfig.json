@@ -2,13 +2,7 @@
     "include": [
         "doeff",
         "packages/doeff-adr/src",
-        "packages/doeff-agentic/src",
-        "packages/doeff-agents/src",
-        "packages/doeff-claude-code/src",
-        "packages/doeff-claude-judge/src",
         "packages/doeff-cluster/src",
-        "packages/doeff-codex/src",
-        "packages/doeff-conductor/src",
         "packages/doeff-docker/src",
         "packages/doeff-domain/src",
         "packages/doeff-effect-analyzer/src",
@@ -40,12 +34,7 @@
         "packages/doeff-adr/tests"
     ],
     "ignore": [
-        "packages/doeff-agentic/src",
-        "packages/doeff-agents/src",
-        "packages/doeff-claude-code/src",
-        "packages/doeff-claude-judge/src",
         "packages/doeff-cluster/src",
-        "packages/doeff-conductor/src",
         "packages/doeff-events/src",
         "packages/doeff-flow/src",
         "packages/doeff-gemini/src",
@@ -74,7 +63,6 @@
         "packages/doeff-hy/src",
         "packages/doeff-indexer/python",
         "packages/doeff-vm",
-        "packages/doeff-agents/src",
         "packages/doeff-effect-analyzer/python"
     ]
 }

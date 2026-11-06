@@ -39,63 +39,12 @@ attribution clean, write access is governed by **account routing**:
   is a workflow choice, not a write-authority requirement.
 
 ## Project Structure & Module Organization
-Core runtime code lives in `doeff/`: monadic primitives in `program.py`, the `@do` decorator in `do.py`, execution via `run()` in `run.py`, result types in `result.py`, and handler utilities in `handler_utils.py`. CLI commands are in `cli/` with auto-discovery (`discovery.py`) and execution (`run_services.py`). Effect definitions and handlers live in `packages/doeff-core-effects/` (effects in `effects.py`, handlers in `handlers.py`, scheduler in `scheduler.py`). Tests that exercise each capability reside in `tests/`, while runnable samples land in `examples/`. Workspace extensions such as OpenAI, Gemini, agents, and pinjected bridges are published from `packages/`; keep connector-specific assets inside their respective subpackages. Use `docs/` for design notes or long-form guides that support future contributors.
+Core runtime code lives in `doeff/`: monadic primitives in `program.py`, the `@do` decorator in `do.py`, execution via `run()` in `run.py`, result types in `result.py`, and handler utilities in `handler_utils.py`. CLI commands are in `cli/` with auto-discovery (`discovery.py`) and execution (`run_services.py`). Effect definitions and handlers live in `packages/doeff-core-effects/` (effects in `effects.py`, handlers in `handlers.py`, scheduler in `scheduler.py`). Tests that exercise each capability reside in `tests/`, while runnable samples land in `examples/`. Workspace extensions such as OpenAI, Gemini, and pinjected bridges are published from `packages/`; keep connector-specific assets inside their respective subpackages. Use `docs/` for design notes or long-form guides that support future contributors.
 
 ## Build, Test, and Development Commands
 Install everything (including dev tools) with `make sync`. Use `uv run pytest` for the full suite, `uv run pytest tests/test_core_effects.py::test_reader_ask` to target a single scenario, and `uv run pyright` for static typing. Build distributable artifacts via `uv run python -m build` before publishing packages.
 
 **Rust VM builds:** `uv sync` rebuilds the Rust VM extension (`packages/doeff-vm`) when any file in its `tool.uv.cache-keys` changes (the `.rs` sources, `Cargo.toml`/`Cargo.lock` and `doeff-vm-core`), so no `--reinstall-package` flag is needed (`tests/test_land_install_follows_rust_keys.py`). Rust packages build through `tools/doeff_cargo_backend.py`, the one entry for Rust builds (ADR-DOE-BUILD-001): it first looks up the wheel stored under the hash of the Rust sources (`DOEFF_WHEEL_CACHE`, default `$XDG_CACHE_HOME/doeff-cargo-wheels`) and builds only when they changed, in a per-build temporary cargo target outside the checkout — do not run bare `maturin develop` (it bypasses the store and leaves `target/` in the checkout). For incremental Rust builds while editing, run `CARGO_TARGET_DIR=<your dir> make sync`. Use `make sync` (it adds the dev group) instead of bare `uv sync`.
-
-## Agent Authentication Boundary
-`doeff-agents` owns Claude/Codex agent launch, tmux/zellij-style terminal transport,
-schema-result retries, and agent authentication boundaries. Callers may provide
-workspace, prompt, model, MCP tools, result schema, and non-secret runtime hints, but
-must not smuggle LLM provider API keys into agent processes.
-
-Callers must not read files created by an agent to obtain the agent result. The
-only public result boundary for a doeff-agents user is `AwaitResult` returning
-`AwaitOutcome.result` validated against `AgentSpec.result_schema`.
-`doeff-agents` must not ask agents to create JSON files for input, result,
-evidence, or checkpoints; especially do not use `.agentd-result.json`,
-`result.json`, or `helper-result.json` as a transport. If an agent result is
-absent or invalid, doeff-agents owns the schema validation and retry loop before
-returning the final `AwaitOutcome`. If callers need diagnostic or evidence data,
-it must be part of `AgentSpec.result_schema` and returned in
-`AwaitOutcome.result`, not carried through a side-channel file.
-
-Application packages must not import `doeff_agents._tmux` or
-`doeff_agents._handlers.production`, instantiate `TmuxSessionBackend`, or shell
-out to `tmux` directly. The
-public API of doeff-agents is its effects and its handlers: callers emit the
-effects (`Launch` / `LaunchSession`, `AwaitResult`, `Events`, `Send` /
-`FollowUp`, `Stop` / `StopSession`, …) and install a handler factory, all read
-from the `doeff_agents` package root (`claude_agent_runtime_handlers()`,
-`agent_effectful_handler()`, `daemon_agent_handlers()`, …). The session
-procedures and the handler objects are internal. The terminal multiplexer implementation is an internal
-doeff-agents detail so it can move to tmux, zellij, opencode, or another
-transport without changing trading or application code.
-
-Never pass Anthropic API keys to agents through `session_env`,
-`ClaudeRuntimePolicy.bootstrap_exports`, wrappers, shell exports, or equivalent
-transport hooks. In particular, `ANTHROPIC_API_KEY`,
-`anthropic_api_key__personal`, and `anthropic-api-key-personal` are forbidden at
-the agent boundary. Claude agents must use Claude Code's interactive/OAuth
-credential state; Codex agents must use Codex's own credential state. API-key-backed
-LLM calls are allowed only through memoized `LLMStructuredQuery` /
-`StructuredLLMQuery` handlers for a single structured call, never through agents.
-
-Metered (pay-per-use) credentials are not carried by the env boundary above —
-that prohibition is unconditional. When a deployment genuinely needs metered
-billing, it is **declared by the binding kind** and **permitted by host policy**:
-binding kinds `claude-code-metered` (`{config_dir}`) and `codex-metered`
-(`{auth_file, profile_dir}`) say "this home bills per use", and only a session
-host started with `--allow-metered-billing` (off by default) admits them. The
-credential itself lives in the CLI's own home, written by the CLI's own tool
-(`settings.json`'s `apiKeyHelper` or the Vertex `env` pair for Claude;
-`codex login --with-api-key` for Codex). The host never reads the credential
-value: before launch it only checks that the home declares one, and the session
-row keeps the home path plus a `"billing": "metered"` marker — never the value.
-No env var enables metered billing (ADR-DOE-AGENTS-004 R9).
 
 ## Linting & Architectural Enforcement
 Run `make lint` to execute all linters (ruff, pyright, semgrep, doeff-linter). Individual targets: `make lint-ruff`, `make lint-pyright`, `make lint-semgrep`, `make lint-doeff`. Format code with `make format`. Install semgrep via `uv tool install semgrep`. Build doeff-linter with `cd packages/doeff-linter && cargo install --path .`. The `.semgrep.yaml` rules enforce architectural patterns (layer boundaries, effect system conventions); the Rust-based doeff-linter enforces immutability and code quality patterns. Install pre-commit hooks with `make pre-commit-install`. Enforcement assets and their ledger move in the same commit: if you add or remove a `docs/adr/defadr_*.hy` file, a `law`/`deftest`/`defsemgrep` entry inside one, or a `.semgrep.yaml` rule, update `docs/adr/enforcement-ledger.json` in that same commit (ADR-DOE-ENFORCE-001 R5). Install the authoring-time guard once per machine with `make hooks-install` — at `git commit` it runs the `.semgrep.yaml` rules on the staged files (the `semgrep-rules` hooks of `.pre-commit-config.yaml`, through the `uv.lock` version of pre-commit — no `.venv` needed), compares the staged Python files' doeff-linter findings with the per-rule, per-file baseline (`scripts/hook_finding_baseline/doeff-linter.json` — the `doeff-linter` hook; a finding above the baseline stops the commit, and it passes with a "not measurable" notice when no linter built from the baseline's key is in the machine's snapshot store), and checks the staged snapshot against the ledger (R7). The merge gate runs no tests and no lint, so this commit-time hook is the first point that can stop a finding above the baseline.

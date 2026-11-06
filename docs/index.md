@@ -163,7 +163,6 @@ These pages use components that `pip install doeff` does not install. Each page 
 which components it needs and how to install them.
 
 `doeff-time` and `doeff-indexer` are on PyPI: install them by name (`pip install doeff-time`).
-`doeff-agents` is on PyPI only as an old 0.1.1 build that does not import with doeff 0.5 or later.
 The other components are not on PyPI: install them from a checkout of this repository, passing pip
 the path of every such component the page names. pip takes everything else from PyPI.
 
@@ -177,12 +176,6 @@ pip install doeff doeff-time ./doeff/packages/doeff-llm   # the names and paths 
 - **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery for `doeff run`
 - **[MARKERS.md](MARKERS.md)** - Marker comments that `doeff-indexer` and the IDE plugins read
 - **[IDE Plugins](ide-plugins.md)** - PyCharm and VS Code extensions (they also need the `doeff-indexer` command, built from the checkout)
-
-### Coding-agent sessions — `doeff-agents`
-
-- **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
-- **[MCP Tools](12-mcp-tools.md)** - Exposing `defk` functions as MCP tools to agents
-- **[doeff-agents / session host](../packages/doeff-agents/README.md)** - Agent session management, the session host (`python -m doeff_agents._sessionhost.host`), and joining an agent control plane
 
 ### LLM and image providers — `doeff-llm`, `doeff-gemini`, `doeff-openai`, `doeff-openrouter`, `doeff-seedream`
 

@@ -58,32 +58,7 @@
 ;; ---------------------------------------------------------------------------
 
 (setv DEFF-ROSTER
-  {"docs/adr/defadr_doeff_agents_007_koine_session_surface.hy" 4
-   "docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy" 1
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy" 1
-   ;; 38 -> 37: removed clock-sleep, the constructor of the homegrown wait effect ClockSleep (waiting is doeff-time's Delay).
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy" 37
-   ;; 34 -> 33: removed host-binary-path when the session host was changed to be started via an effect (the ledger trim had lagged).
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy" 33
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/channel.hy" 1
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy" 2
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/codex.hy" 5
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy" 30
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy" 5
-   ;; 29 -> 25: moved 4 boundary env vocabulary functions out to agent_env.hy as defn (R1's Python boundary — not a deff burn-down).
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy" 25
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/schema.hy" 3
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy" 34
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate.hy" 15
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate_herdr.hy" 13
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy" 3
-   "packages/doeff-agents/tests/sessionhost_policy_deftests.hy" 1
-   "packages/doeff-agents/tests/sessionhost_resume_cross_binding_deftests.hy" 1
-   "packages/doeff-agents/tests/sessionhost_substrate_deftests.hy" 1
-   "packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy" 1
-   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy" 1
-   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/impls/provider_failure_verbatim_forbidden.hy" 1
-   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/turn_touches_substrate_forbidden.hy" 1})
+  {"docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy" 1})
 
 ;; Trees excluded from the scan: temporary copies (worktree/scratchpad), build outputs, environments,
 ;; packages/doeff-hy (the macro owner — the deff definition and its own tests verifying its
@@ -152,7 +127,6 @@
   :title "The function vocabulary is defk only: defn is forbidden (including at the Python boundary; the only exception is functions called at macro-expansion time), deff is allowed only as an escape hatch where defk is impossible, with a same-line reason comment and :tags, and :tags is required in the contract dict of defk / deff. Existing deff without a reason comment is decreased monotonically via a frozen-ledger ratchet, and conversion ships in one batch including the calling convention (<- bind), trimming the ledger in the same batch — coexisting vocabularies self-propagate by copying in-file practice, and definitions that cannot carry tags cannot be listed and browsed, so it does not converge without a law and a probe"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_004_defk_only.hy"
-          "packages/doeff-agents"
           "docs/adr"
           "tests"
           "packages/doeff-linter"]
