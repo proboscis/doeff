@@ -93,6 +93,8 @@ from doeff_core_effects import (
     CompletePromise,
     CreatePromise,
     Promise,
+    ShieldEnter,
+    ShieldExit,
     Spawn,
     Task,
     TaskCancelledError,
@@ -830,7 +832,8 @@ def broker_patience_handler(patience: BrokerPatience) -> "ProgramHandler":
 # on the bus (``PublishEffect`` — the received events and ``SourceStarted`` / ``SourceStalled`` / ``SourceResumed`` /
 # ``SourceFailed``), getting past an outage (``ReadBrokerPatience`` asked when an outage begins,
 # ``AwaitBrokerBack``, ``GetTimeEffect``, ``WaitWithinEffect``, the watcher task's ``CreatePromise`` /
-# ``CompletePromise``), and running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``).
+# ``CompletePromise``), running and stopping its tasks (``Spawn``, ``Cancel``, ``Wait``), and the ``shielded``
+# cleanup waits (``ShieldEnter``, ``ShieldExit``).
 # The body's own ``WaitForEvent`` and its unrouted ``Publish`` go outward as the body's effects and are not counted.
 # ``tests/test_notice_events_closure.py`` checks that this is what the wrapper really performs.
 NOTICE_EVENTS_EFFECTS = (
@@ -849,6 +852,8 @@ NOTICE_EVENTS_EFFECTS = (
     Spawn,
     Cancel,
     Wait,
+    ShieldEnter,
+    ShieldExit,
 )
 
 # The declaration doeff-effect-analyzer reads for a body wrapper (it cannot read inside the factory): the wrapper
