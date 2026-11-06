@@ -64,11 +64,11 @@
   (<- seen tuple (call ticked "GET" "/state" :now later))
   (assert (in "a" (get seen 2 "unplaced")) seen)
   (assert (= (get seen 2 "unplacedDetail")
-             {"a" {"kind" "no-eligible-worker" "needs" ["gpu" "net"] "missing" ["gpu"] "pin" None "sinceMs" 1000}})
+             {"a" {"kind" "no-eligible-worker" "needs" ["gpu" "net"] "missing" ["gpu"] "pin" None "sinceMs" 1000 "memory" []}})
           (get seen 2 "unplacedDetail"))
   (<- service tuple (call ticked "GET" "/resources/Service/a" :now later))
   (assert (= (get service 2 "status" "unplaced")
-             {"kind" "no-eligible-worker" "needs" ["gpu" "net"] "missing" ["gpu"] "pin" None "sinceMs" 1000})
+             {"kind" "no-eligible-worker" "needs" ["gpu" "net"] "missing" ["gpu"] "pin" None "sinceMs" 1000 "memory" []})
           service))
 
 
