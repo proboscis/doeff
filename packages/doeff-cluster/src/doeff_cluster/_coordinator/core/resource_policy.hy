@@ -41,7 +41,7 @@
 (import doeff_cluster._coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
 (import doeff_cluster._shared.core.readiness_rules [handoff-timeout-ms readiness-refusal])
 (import doeff_cluster._shared.core.readiness_report [reported-readiness])
-(import doeff_cluster._shared.intent.readiness_model [ReadinessClaim])
+(import doeff_cluster._shared.intent.readiness_model [ReadinessClaim ROLE-ACTIVE])
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 (import doeff_cluster._shared.core.capabilities [capabilities-of])
@@ -307,6 +307,21 @@
       (verdict "NotReady" (.format "最後の報告から {} 秒(window {} 秒)" (// age 1000) (// window-ms 1000)))
     (not report.ready) (| (verdict "NotReady" (+ "報告: " report.reason)) {"role" role})
     True (| (verdict "Ready" report.reason) {"role" role})))
+
+
+(defk active-ready-senders [state name now]
+  {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % (| frozenset None))] :tags {:context "coordinator" :role "judgment"}}
+  "Service name の準備の報告のうち、window の内に受けた ready で role active の報告を送った process の #(worker 世代の名) の組 — job の
+   Service の振り先(endpoints_policy.serving-addresses)が、その process の在る worker の世代の Pod へ振るため。置き先の process に限らない
+   (世代をまたぐ受け渡しの間は、退いた世代の process も job を動かしている — 振り先は届く process の在る所で、どれを置き先と数えるかの
+   判断〔running-process〕とは別)。宣言が無い・readiness を持たない Service は None(process が running なら振る)。"
+  (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (if (or (is job None) (is job.readiness None))
+      None
+      (do (val window-ms (int (* 1000 (get job.readiness "windowSeconds"))))
+          (frozenset (gfor r (or (.row state.observations.readiness name) #())
+                           :if (and r.ready (= r.role ROLE-ACTIVE) (< now (report-expired-from r window-ms)))
+                           #(r.origin.worker r.origin.instance))))))
 
 
 ;; --- 版の判定(2026-09-29・#1013)---------------------------------------------------------------

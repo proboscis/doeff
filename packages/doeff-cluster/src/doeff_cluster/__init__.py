@@ -102,6 +102,9 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import SimOutside as SimOutside
     from doeff_cluster._sim.local import SimPreparation as SimPreparation
     from doeff_cluster._sim.local import SimProcess as SimProcess
+    from doeff_cluster._sim.local import SimGeneration as SimGeneration
+    from doeff_cluster._sim.local import CrashGeneration as CrashGeneration
+    from doeff_cluster._sim.local import GenerationsOf as GenerationsOf
     from doeff_cluster._sim.local import SimReport as SimReport
     from doeff_cluster._sim.local import SimWorker as SimWorker
     from doeff_cluster._sim.local import StallCoordinator as StallCoordinator
@@ -578,6 +581,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.protocol.supplied_values import KUBE_API as KUBE_API
     from doeff_cluster._shared.intent.kube_service_model import KubeIngress as KubeIngress
     from doeff_cluster._shared.intent.kube_service_model import KubeService as KubeService
+    from doeff_cluster._shared.intent.kube_service_model import JOB_ENDPOINTS_LABEL as JOB_ENDPOINTS_LABEL
     from doeff_cluster._shared.intent.kube_service_model import KubeServicePort as KubeServicePort
     from doeff_cluster._shared.intent.kube_service_model import KubeServiceType as KubeServiceType
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
@@ -966,6 +970,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SimOutside": "doeff_cluster._sim.local",
     "SimPreparation": "doeff_cluster._sim.local",
     "SimProcess": "doeff_cluster._sim.local",
+    "SimGeneration": "doeff_cluster._sim.local",
+    "CrashGeneration": "doeff_cluster._sim.local",
+    "GenerationsOf": "doeff_cluster._sim.local",
     "SimReport": "doeff_cluster._sim.local",
     "SimWorker": "doeff_cluster._sim.local",
     "StallCoordinator": "doeff_cluster._sim.local",
@@ -1341,6 +1348,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "KUBE_API": "doeff_cluster._shared.protocol.supplied_values",
     "KubeIngress": "doeff_cluster._shared.intent.kube_service_model",
     "KubeService": "doeff_cluster._shared.intent.kube_service_model",
+    "JOB_ENDPOINTS_LABEL": "doeff_cluster._shared.intent.kube_service_model",
     "KubeServicePort": "doeff_cluster._shared.intent.kube_service_model",
     "KubeServiceType": "doeff_cluster._shared.intent.kube_service_model",
     "WorkspaceOutcome": "doeff_cluster._shared.intent.workspace_volume_model",

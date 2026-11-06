@@ -36,6 +36,30 @@ subjects:
   - { kind: ServiceAccount, name: coordinator, namespace: agent-worker }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: agent-worker-coordinator-nodes }
 ---
+# job の Service の振り先(coordinator/core/endpoints_policy): coordinator は label endpoints.doeff.dev/job を持つ Service の一覧を list の後の
+# watch で見張り(services の list・watch)、その振り先の EndpointSlice を server-side apply で書く(endpointslices の get・create・patch。
+# 消すのは k8s の GC — Service の ownerReference。delete と list・watch は手で片づける時と読みのため)。見張る namespace は上に載る系の
+# ConfigMap coordinator-env の CLUSTER_NAMING の jobServiceNamespaces(無ければ書かない)。この Role は agent-worker の中だけを許す。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: coordinator-job-endpoints
+  namespace: agent-worker
+  labels: { app.kubernetes.io/part-of: agent-worker }
+rules:
+  - { apiGroups: [""], resources: [services], verbs: [get, list, watch] }
+  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch, create, patch, delete] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: coordinator-job-endpoints
+  namespace: agent-worker
+  labels: { app.kubernetes.io/part-of: agent-worker }
+subjects:
+  - { kind: ServiceAccount, name: coordinator, namespace: agent-worker }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: coordinator-job-endpoints }
+---
 apiVersion: v1
 kind: Service
 metadata:

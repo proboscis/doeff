@@ -119,6 +119,11 @@
 ;;;                             StopElder で止めるまで抜けない。答え = 退いた世代の boot。
 ;;;   DrainGeneration 名 boot [ttl]  世代 boot の preStop と同じ要求で drain を頼む(退いた世代の旧い Pod の preStop)。答えは DrainWorker と同じ形。
 ;;;   StopElder 名 boot         退いた世代 boot を優雅に止める(旧い Pod の SIGTERM)。抜けるまで待つ。
+;;;   CrashGeneration 名 worker boot  job の process のうち、worker の世代 boot(今の世代か退いた世代)の宿の物だけを exit 1 で落とす
+;;;                             (Crash は全部の世代の process を落とす — 世代をまたぐ受け渡しの間に旧い Pod の process だけが落ちる形)。
+;;;   GenerationsOf 名          worker の今の世代と退いた世代の姿(SimGeneration — 世代・Pod の IP・宿が持つ process の pid・止まったか)。
+;;;   宿の世代は Pod の IP を名乗る(sim-pod-ip — 名と世代から決まる値)。sim-cluster の services(偽の k8s の job の Service)を渡すと、
+;;;   coordinator はその namespace の job の Service の振り先(EndpointSlice)を書き、検は KubeCalls の op slice の行で刻ごとの振り先を読む。
 ;;;   PreparationsOf 名         worker が起こした準備の列(SimPreparation — コードの版か env-<キー>・先読みか・始まり・終わり・失敗)。
 ;;;   WatchFailuresOf 名        worker の名指しの待ちの task が思わぬ例外で止まった記録の列(SimWatchFailure — 本番の「待ちの thread が
 ;;;                             止まった」の 1 行に当たる。止まった世代は拍ごとの heartbeat に戻る — #1933)。
@@ -155,6 +160,7 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import copy [deepcopy])
+(import zlib)
 (import signal)
 (import dataclasses [dataclass replace])
 (import datetime [datetime timedelta])
@@ -414,6 +420,17 @@
   (setv #^ bool steps-wall False)
   (setv #^ bool reads-room False)
   (setv #^ (| SimMemoryWatch None) memory-watch None))
+
+
+(defrecord SimGeneration
+  "worker の世代 1 つの姿(GenerationsOf の答えの要素): boot = 世代の名・pod-ip = その世代が名乗る Pod の IP・pids = その世代の宿が今
+   持つ process の pid・elder = 退いた世代か・down = 死んだか止まった・stopping = 止めを頼まれた。"
+  (#^ str boot)
+  (#^ str pod-ip)
+  (#^ (get tuple #(int ...)) pids)
+  (#^ bool elder)
+  (#^ bool down)
+  (#^ bool stopping))
 
 
 (defrecord SimProcess
@@ -720,6 +737,19 @@
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect CrashGeneration
+  "検の effect: job name の動いている process のうち、worker の世代 boot(今の世代か退いた世代)の宿の物だけを exit 1 で落とす(Crash と
+   同じ落とし方 — 世代をまたぐ受け渡しの間に旧い Pod の process だけが落ちる形)。答え = 落とした数。"
+  {:fields [(: name str) (: worker str) (: boot str)]
+   :answer int
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect GenerationsOf
+  "検の effect: worker name の今の世代と退いた世代の姿(SimGeneration の tuple — 今の世代が先、退いた世代は鍵の順)。"
+  {:fields [(: name str)]
+   :answer tuple
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect LoseWorker
   "検の effect: worker name の今の世代の process だけが同じ Pod の中で消える(頭の註 — 入れ物 shim の --orphan-seconds の写し)。
    outlives-worker の job の process は残して退く知らせを立て、他は exit -9 で止める。答え = 止めた process の数。"
@@ -807,6 +837,8 @@
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
   (setv #^ (| dict None) nodes None)
+  ;; 偽の k8s の job の Service(「namespace/名」→ k8s の Service の object の dict — sim-cluster の services)。
+  (setv #^ (| dict None) services None)
   (setv #^ (| RuntimeEnv None) runtime-env None)
   ;; 比で延ばした世界(sim-cluster に :timing を渡さない筋書き — SIM-TIMING-RATIO)か。真なら worker の死の判断(WorkerGone)を見張り、
   ;; 出たら筋書きを待たずに SimLivenessError で終わる(延ばした窓は生死の判断が起きない前提 — #3865)。
@@ -900,7 +932,9 @@
   ;; 最初の heartbeat の前に読む)。
   (setv #^ (| WorkerRoom None) room None)
   (setv #^ (| RoomState None) room-state None)
-  (setv #^ (| int None) room-read-ms None))
+  (setv #^ (| int None) room-read-ms None)
+  ;; この世代が名乗る Pod の IP(本番の Pod の status.podIP — sim-pod-ip が名と世代から決める。heartbeat の podIp)。
+  (setv #^ str pod-ip ""))
 
 
 (defrecord HostTruthChange
@@ -1222,14 +1256,15 @@
 
 
 (defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [nodes None] * notice-broker
-                start-mono-ms]
+                start-mono-ms [services None]]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
          (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)
-         (: start-mono-ms int)]
+         (: start-mono-ms int) (: services (| dict None))]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。start-mono-ms = 起点
-   start-ms と同じ刻の単調な時計の読み(ms)。"
+   start-ms と同じ刻の単調な時計の読み(ms)。services の namespace を coordinator の見張る namespace(ClusterNaming.job-service-namespaces)
+   にする。"
   (<- fallback tuple (default-workers system))
   (val chosen (if (is workers None) fallback workers))
   (val names (lfor w chosen w.name))
@@ -1242,9 +1277,10 @@
   (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
            :per-process (if (is outside None) None outside.per-process) :children (if (is outside None) None outside.children)
-           :store store :deployments deployments :runtime-env runtime-env :nodes nodes
+           :store store :deployments deployments :runtime-env runtime-env :nodes nodes :services services
            :watches-gone (is timing None)
-           :start-ms start-ms :start-mono-ms start-mono-ms :timing (or timing scaled) :naming (ClusterNaming)
+           :start-ms start-ms :start-mono-ms start-mono-ms :timing (or timing scaled)
+           :naming (ClusterNaming :job-service-namespaces (tuple (sorted (set (gfor key (or services {}) (get (.split key "/" 1) 0))))))
            :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects)) :notice-broker notice-broker))
 
@@ -1257,8 +1293,16 @@
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
-  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})) (deepcopy (or plan.nodes {})))
+  (SimParts :queue (RequestQueue) :store store :stop (StopState)
+            :kube (KubeMemory (deepcopy (or plan.deployments {})) (deepcopy (or plan.nodes {})) (deepcopy (or plan.services {})))
             :broker plan.notice-broker))
+
+
+(defk sim-pod-ip [name generation]
+  {:pre [(: name str) (: generation int)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker name の世代 generation が名乗る Pod の IP を決めるため(本番は Pod ごとに k8s が振る — sim は名と世代から決まる値で、
+   同じ worker の別の世代と重ならない形 10.<名の crc の 1〜250>.<世代の上>.<世代の下>)。"
+  (.format "10.{}.{}.{}" (+ 1 (% (zlib.crc32 (.encode name "utf-8")) 250)) (// generation 256) (% generation 256)))
 
 
 (defk fresh-truth [name generation now now-mono-ms timing]
@@ -1267,7 +1311,8 @@
   "worker name の世代 generation の起きた時の宿の真実を作るため(起きた時刻 — 壁の時計 now と単調な時計 now-mono-ms — を最後の連絡と
    みなす — 本番の coordinator への口 と同じ)。途絶の柵(fence と、印の在る job の長い方の柵)は sim の筋の時間の設定から(返事の
    timing が上書きする)。"
-  (HostTruth :boot (.format "{}-boot{}" name generation) :boot-at now :processes #() :codes {} :probes {} :statuses []
+  (<- pod-ip str (sim-pod-ip name generation))
+  (HostTruth :boot (.format "{}-boot{}" name generation) :boot-at now :pod-ip pod-ip :processes #() :codes {} :probes {} :statuses []
              :last-ok-ms now :last-ok-mono-ms now-mono-ms :fence-ms timing.fence-ms :keep-fence-ms timing.keep-fence-ms
              :last-desired #() :last-warm #() :programs {} :program-failures {} :results {} :task-echo {}))
 
@@ -2149,6 +2194,7 @@
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder
+                                :pod-ip truth.pod-ip
                                 :pools room.pools
                                 :memory-mib (if (is worker.overstates-memory None) room.memory-mib worker.overstates-memory)
                                 :measured measured))
@@ -3767,6 +3813,41 @@
       (<- (Discard task)))
     (<- (settle-process-ends ends True))
     (resume (len victims)))
+  (CrashGeneration [name worker boot]
+    ;; Crash と同じ落とし方を、worker の世代 boot の宿が持つ process だけに(旧い Pod の process だけが落ちる形)。
+    (<- now int (now-epoch-ms))
+    (val key (host-key hosts worker boot))
+    (val held (if (and (in key hosts) (= (. (get hosts key) boot) boot))
+                  (frozenset (gfor v (. (get hosts key) processes) v.pid))
+                  (frozenset)))
+    (val victims (tuple (gfor r log :if (and (= r.job name) (is r.ended-ms None) (in r.pid handles) (in r.pid held)) r)))
+    (val crashed (SimExit :code 1 :result None :detail "Crash"))
+    (val mains (tuple (gfor r victims (get handles r.pid))))
+    (:= kills (| kills (dfor r victims r.pid crashed)))
+    (<- ends ProcessEnds (end-processes (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
+                                                     :end-waiters end-waiters :stopped #() :due #() :bells #())
+                                        victims crashed now))
+    (:= hosts ends.hosts)
+    (:= log ends.log)
+    (:= handles ends.handles)
+    (:= children ends.children)
+    (:= finished ends.finished)
+    (:= end-waiters ends.end-waiters)
+    (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset (gfor r victims r.pid)) None
+                                                     (or (is plan.children None) plan.children.adoption) now))
+    (:= descendants reaped.descendants)
+    (:= descendant-tasks reaped.tasks)
+    (for [task (+ mains reaped.discarded)]
+      (<- (Discard task)))
+    (<- (settle-process-ends ends True))
+    (resume (len victims)))
+  (GenerationsOf [name]
+    (val keys (+ (if (in name hosts) #(name) #())
+                 (tuple (sorted (gfor key hosts :if (.startswith key (+ name ELDER-MARK)) key)))))
+    (resume (tuple (gfor key keys
+                         :setv truth (get hosts key)
+                         (SimGeneration :boot truth.boot :pod-ip truth.pod-ip :pids (tuple (gfor v truth.processes v.pid))
+                                        :elder (!= key name) :down truth.down :stopping truth.stopping)))))
   (KillWorker [name]
     (<- now int (now-epoch-ms))
     (val truth (get hosts name))
@@ -4349,10 +4430,11 @@
 
 
 (defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]
-                       [nodes None] * notice-broker]
+                       [nodes None] * notice-broker [services None]]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)
+         (: services (| dict None))]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
@@ -4360,7 +4442,7 @@
   (<- start-ms int (now-epoch-ms))
   (<- start-mono float (GetMonotonic))
   (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env nodes
-                             :notice-broker notice-broker :start-mono-ms (monotonic-ms-of start-mono)))
+                             :notice-broker notice-broker :start-mono-ms (monotonic-ms-of start-mono) :services services))
   ;; no-business-timers は外の世界の外側: 外の世界に timer-handler を置いた走りでは、それが先に ArmedTimers に答える(#3093)。
   (<- answer (with-handlers [(session-store) no-business-timers #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))
@@ -4368,14 +4450,15 @@
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None] [runtime-env None] [nodes None] [implementation None] notice-broker]
+                  [outside None] [store None] [deployments None] [runtime-env None] [nodes None] [implementation None] notice-broker
+                  [services None]]
   {:tp [A]
    :pre [(: system System) (: scenario (| (of Program A object) (of EffectBase A))) (: workers (| (get tuple #(SimWorker ...)) None))
          (: environ (| (get dict #(str (get dict #(str str)))) None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))
          (: store (| (get Callable #([] MemoryWalStore)) None)) (: deployments (| (get dict #(str (get dict #(str object)))) None))
          (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None))
-         (: implementation (| str None)) (: notice-broker MemoryBroker)]
+         (: implementation (| str None)) (: notice-broker MemoryBroker) (: services (| (get dict #(str (get dict #(str object)))) None))]
    :post [(: % A)]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -4393,23 +4476,26 @@
    待つ(#3871 の単位 5)。notice-broker = 知らせの broker
    (doeff-events の MemoryBroker — coordinator が worker の生死の出来事を出す先。呼び手が作って渡し、筋書きと呼び手の世界の job は同じ
    broker の受け手に成れる。既定は無い — sim は作らない・#3850)。implementation = sim が組む scheduler の版(\"python\" / \"rust\"・
-   既定 None = doeff の既定と環境変数 DOEFF_SCHEDULER — scheduled と同じ。測りの口 set_scheduler_trace の出来事はどちらの版も出す)。"
+   既定 None = doeff の既定と環境変数 DOEFF_SCHEDULER — scheduled と同じ。測りの口 set_scheduler_trace の出来事はどちらの版も出す)。
+   services = 「namespace/名」→ 偽の k8s の job の Service の object の dict(label kube_service_model.JOB-ENDPOINTS-LABEL を持つ物を
+   coordinator が見張り、その namespace の振り先〔EndpointSlice〕を書く — 書きは KubeCalls の op slice の行。deepcopy を作る・既定は空)。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
-                                           :notice-broker notice-broker))
+                                           :notice-broker notice-broker :services services))
                         :implementation implementation))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None] [deployments None] [runtime-env None] [nodes None] [implementation None] notice-broker]
+                       [store None] [deployments None] [runtime-env None] [nodes None] [implementation None] notice-broker
+                       [services None]]
   {:tp [A]
    :pre [(: system System) (: scenario (| (of Program A object) (of EffectBase A))) (: workers (| (get tuple #(SimWorker ...)) None))
          (: environ (| (get dict #(str (get dict #(str str)))) None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))
          (: store (| (get Callable #([] MemoryWalStore)) None)) (: deployments (| (get dict #(str (get dict #(str object)))) None))
          (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None))
-         (: implementation (| str None)) (: notice-broker MemoryBroker)]
+         (: implementation (| str None)) (: notice-broker MemoryBroker) (: services (| (get dict #(str (get dict #(str object)))) None))]
    :post [(: % A)]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -4420,6 +4506,6 @@
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [await-handler (async-time-handler)]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
-                                           :notice-broker notice-broker))
+                                           :notice-broker notice-broker :services services))
                         :implementation implementation))
   answer)

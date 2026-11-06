@@ -5,8 +5,8 @@
 ;;;   KubeServiceType      Service の種類: CLUSTER-IP = cluster の中の宛先・LOAD-BALANCER = load balancer の実装(class で名指す)が外へ出す宛先
 ;;;   KubeServicePort      口 1 つ: name・port(Service の口)・target-port(Pod の中で job が待ち受ける口 — worker の container は口に名を
 ;;;                        付けないので数で書く)
-;;;   KubeService          Service 1 つの宣言: namespace・name・type・selector(Pod の label — 空にしない)・ports・labels・annotations・
-;;;                        load-balancer-class(LOAD-BALANCER の時だけ書ける)
+;;;   KubeService          Service 1 つの宣言: namespace・name・type・selector(Pod の label)か job(振り先を coordinator が書く job の名 —
+;;;                        どちらかは要る)・ports・labels・annotations・load-balancer-class(LOAD-BALANCER の時だけ書ける)
 ;;;   KubeIngress          Ingress 1 つの宣言: namespace・name・ingress-class(Ingress を出す実装の名)・backend-service と backend-port
 ;;;                        (同じ namespace の Service の口 — 全部の求めをそこへ向ける)・tls-hosts(TLS を終える名 — 空 = TLS なし)・labels・
 ;;;                        annotations
@@ -19,8 +19,12 @@
 ;;;
 ;;; 宣言が持つ欄だけを当てる(server-side apply): cluster が埋める欄(clusterIP・status・load balancer の実装が足す finalizer や annotation)と、
 ;;; 他の持ち主が足した欄には触らない。何度当てても同じ宣言なら同じ物になる(job が起動のたびに当て直してよい)。LOAD-BALANCER の Service に
-;;; node の口(NodePort)は開けない(load balancer の実装が Pod へ直に繋ぐ — 宛先を node の外の口へ広げない)。宛先は ready の Pod だけ
-;;; (publishNotReadyAddresses を毎回 false と当てる — 止まりかけ〔Terminating〕と NotReady の Pod へ接続を振らない)。
+;;; node の口(NodePort)は開けない(load balancer の実装が Pod へ直に繋ぐ — 宛先を node の外の口へ広げない)。selector の宛先は ready の Pod
+;;; だけ(publishNotReadyAddresses を毎回 false と当てる — 止まりかけ〔Terminating〕と NotReady の Pod へ接続を振らない)。
+;;; job を名指す宣言(job の Service)は label JOB-ENDPOINTS-LABEL = job を当て、selector を書かない(selector の欄を前に当てていれば、
+;;; server-side apply が外す): 振り先は coordinator が job ごとの Ready から書く EndpointSlice(coordinator/core/endpoints_policy — Pod の
+;;; Ready と label で振ると、世代をまたぐ受け渡しの間に先に移った job へ届かない)。selector と job の両方を書いた宣言は、移る間だけの形
+;;; (selector の slice と coordinator の slice が並ぶ)— coordinator の slice が書かれた後に selector を外す。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
@@ -30,6 +34,11 @@
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_cluster._shared.intent.record_spec [RecordSpec RecordMode])
+
+;; job の Service の印(Service の metadata.labels の鍵 — 値は振り先にする job の名): この label を持つ Service は selector を持たず、振り先
+;; (EndpointSlice)を coordinator が job ごとの Ready から書く(coordinator/core/endpoints_policy — 見張る namespace は coordinator の
+;; ClusterNaming.job-service-namespaces)。
+(val JOB-ENDPOINTS-LABEL "endpoints.doeff.dev/job")
 
 ;; 値は k8s の spec.type の綴り。
 (defenum KubeServiceType (CLUSTER-IP "ClusterIP") (LOAD-BALANCER "LoadBalancer"))
@@ -46,10 +55,11 @@
 
 
 (defrecord KubeService
-  "Service 1 つの宣言(頭の註): namespace・name・type・selector = 宛先の Pod の label(空にしない — 空の selector は namespace の全部の Pod を
-   選ぶ)・ports = 口(1 つ以上・名は重ねない)・labels・annotations = Service 自身の metadata・load-balancer-class = LOAD-BALANCER の宛先を
-   出す実装の名(None = cluster の既定の実装。CLUSTER-IP には書けない)。"
-  {:check [(> (len namespace) 0) (> (len name) 0) (> (len selector) 0) (> (len ports) 0)
+  "Service 1 つの宣言(頭の註): namespace・name・type・selector = 宛先の Pod の label(空 = 書かない — job の無い宣言では空にしない: 空の
+   selector は namespace の全部の Pod を選ぶ)・ports = 口(1 つ以上・名は重ねない)・labels・annotations = Service 自身の metadata・
+   load-balancer-class = LOAD-BALANCER の宛先を出す実装の名(None = cluster の既定の実装。CLUSTER-IP には書けない)・job = 振り先を
+   coordinator が書く job の名(None = selector で振る。名指せば label JOB-ENDPOINTS-LABEL に写す)。"
+  {:check [(> (len namespace) 0) (> (len name) 0) (or (> (len selector) 0) (and (is-not job None) (> (len job) 0))) (> (len ports) 0)
            (= (len (set (gfor port ports port.name))) (len ports))
            (or (is load-balancer-class None) (= type KubeServiceType.LOAD-BALANCER))]}
   (#^ str namespace)
@@ -61,7 +71,8 @@
   (#^ (get tuple #(KubeServicePort ...)) ports)
   (setv #^ (get FrozenMap str) labels (FrozenMap {}))
   (setv #^ (get FrozenMap str) annotations (FrozenMap {}))
-  (setv #^ (| str None) load-balancer-class None))
+  (setv #^ (| str None) load-balancer-class None)
+  (setv #^ (| str None) job None))
 
 
 (defrecord KubeIngress

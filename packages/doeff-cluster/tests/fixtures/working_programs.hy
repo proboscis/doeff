@@ -96,6 +96,21 @@
           :readiness {"windowSeconds" 5}))
 
 
+;; --- 起き上がりの遅い handoff の service と並べた serving-hosts(世代をまたぐ受け渡しを止める形 — job の Service の振り先の検
+;; tests/test_job_endpoints_follow_ready_processes.hy)。slow は起きてから 60 秒 Ready を報告しない(本番の起動の一覧を畳むまで
+;; Ready を名乗らない service の形)ので、新しい世代はその間受け渡しを済ませず、新しい Pod は NotReady のまま(AL-D2k)。server は
+;; すぐ Ready になり、新しい世代の process が Ready と数えられた所で受け渡しの止めから外れる。
+(import tests.fixtures.retirement_programs [retiring-program])
+
+
+(defsystem serving-beside-slow-start [#^ Callable foundation]
+  "見本の系: handoff で入れ替える service 2 つ — server(起きてすぐ Ready)と slow(起きてから 60 秒 Ready を報告しない)"
+  (server (keeping-program foundation "serve") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
+          :readiness {"windowSeconds" 5})
+  (slow (retiring-program foundation "slow" True 1.0 60.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}
+        :update "handoff" :readiness {"windowSeconds" 5}))
+
+
 ;; --- 退きの保ちを持つ handoff の service: 仕事を走らせたまま退く知らせを待ち、受けたら退きの保ち(名前付きの lease
 ;; RETIREMENT-HOLD)を取り、仕事の終わりを待って保ちを返し、退いた刻を書いて自分で終わる(上に載る系が、受付を渡した後に走っている仕事を
 ;; 終わりまで回す形)。保ちを取らない版(hold = 偽)は、寿命の上限で止められる対照。土台は名前付きの lease の担い手を並べた物

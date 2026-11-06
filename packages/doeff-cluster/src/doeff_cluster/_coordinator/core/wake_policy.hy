@@ -15,6 +15,7 @@
 (import doeff_cluster._coordinator.core.resource_policy [readiness-due service-stopped-due])
 (import doeff_cluster._coordinator.core.rollout_policy [rollout-targets rollout-phase-due TERMINAL-PHASES])
 (import doeff_cluster._coordinator.core.watch_policy [all-waiting-unchanged lease-full-at])
+(import doeff_cluster._coordinator.core.endpoints_policy [endpoints-due])
 
 ;; 今すぐ(DueNow)が続いてよい歩の数。1 歩ごとに状態の欄の 1 つが落ち着く(生死の求め直し → task → 掃除 → 置き先)ので、正しい判断なら
 ;; 数歩で落ち着く。越えたら回り続けていると見て落ちる。
@@ -71,11 +72,13 @@
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple)]
    :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "何も変えない歩の後に、調停ループが次に起きる刻を知るため: 要求の無い歩の期限(api_policy.tick-due)・Rollout の期限(rollout-due —
-   Kubernetes を時間で読みに行く刻は無い・#3868)・待ちの期限(watchers-due)のいちばん早い答え。"
+   Kubernetes を時間で読みに行く刻は無い・#3868)・待ちの期限(watchers-due)・job の Service の振り先の期限(endpoints_policy.endpoints-due)の
+   いちばん早い答え。"
   (<- ticking (| DueAt DueNow DueNever) (tick-due state now timing))
   (<- rolling (| DueAt DueNow DueNever) (rollout-due state now timing naming))
   (<- waiting (| DueAt DueNow DueNever) (watchers-due watchers state now))
-  (<- answer (| DueAt DueNow DueNever) (earliest-due #(ticking rolling waiting)))
+  (<- routing (| DueAt DueNow DueNever) (endpoints-due state now timing))
+  (<- answer (| DueAt DueNow DueNever) (earliest-due #(ticking rolling waiting routing)))
   answer)
 
 

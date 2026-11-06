@@ -23,7 +23,7 @@
 (import doeff_core_effects [FileFailed])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster._shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
-                                                        KubeServiceRefused KubeServiceType])
+                                                        KubeServiceRefused KubeServiceType JOB-ENDPOINTS-LABEL])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API REFUSAL-BODY-LIMIT REQUEST-TIMEOUT-SECONDS SERVICE-ACCOUNT-TOKEN-FILE
                                                       kube-headers service-account-text status-field text-field])
 
@@ -42,9 +42,12 @@
 
 (defk _metadata-of [declaration]
   {:pre [(: declaration (| KubeService KubeIngress))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
-  "宣言 declaration の metadata の欄を、server-side apply の本文の JSON の部分として組むため(空の labels・annotations は欄ごと省く)。"
+  "宣言 declaration の metadata の欄を、server-side apply の本文の JSON の部分として組むため(空の labels・annotations は欄ごと省く)。
+   job を名指す Service の宣言は label JOB-ENDPOINTS-LABEL = job を足す(coordinator がその Service の振り先を書く印)。"
+  (val labels (| (dict declaration.labels)
+                 (if (and (isinstance declaration KubeService) (is-not declaration.job None)) {JOB-ENDPOINTS-LABEL declaration.job} {})))
   (| {"name" declaration.name "namespace" declaration.namespace}
-     (if declaration.labels {"labels" (dict declaration.labels)} {})
+     (if labels {"labels" labels} {})
      (if declaration.annotations {"annotations" (dict declaration.annotations)} {})))
 
 
@@ -54,12 +57,13 @@
    空の labels・annotations は欄ごと省き、load-balancer-class は書いた時だけ・LOAD-BALANCER は node の口を開けない — 頭の註は
    kube_service_model.hy)。口の protocol は TCP と書く(server-side apply は口の列を port と protocol の組で見分ける)。
    publishNotReadyAddresses は毎回 false と書く: 止まりかけ(Terminating)と NotReady の Pod を宛先から外す(手で true にした欄も、
-   force の当て直しで field manager を移して戻す — 2026-11-03 に手の true が止まりかけの Pod へ接続を振り、半分が断られた)。"
+   force の当て直しで field manager を移して戻す — 2026-11-03 に手の true が止まりかけの Pod へ接続を振り、半分が断られた)。
+   空の selector は欄ごと省く(job を名指す宣言 — 振り先は coordinator の EndpointSlice。前に当てた selector は server-side apply が外す)。"
   (val metadata (! (_metadata-of service)))
   (val spec (| {"type" service.type.value
-                "selector" (dict service.selector)
                 "publishNotReadyAddresses" False
                 "ports" (lfor port service.ports {"name" port.name "port" port.port "targetPort" port.target-port "protocol" "TCP"})}
+               (if service.selector {"selector" (dict service.selector)} {})
                (if (is service.load-balancer-class None) {} {"loadBalancerClass" service.load-balancer-class})
                (if (= service.type KubeServiceType.LOAD-BALANCER) {"allocateLoadBalancerNodePorts" False} {})))
   (json.dumps {"apiVersion" "v1" "kind" "Service" "metadata" metadata "spec" spec} :ensure-ascii False :sort-keys True))

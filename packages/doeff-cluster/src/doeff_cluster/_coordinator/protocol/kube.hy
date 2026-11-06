@@ -10,6 +10,9 @@
 ;;; 調停ループは待たずに取る。今見張っている相手(Watching の列)も同じ session に持つ。
 ;;; 模擬の kube-memory は、見張り(MemoryFollows — coordinator の process ごと)が見張っている相手の今が最後に伝えた物と違えば伝え、
 ;;; 伝えていない変化が在る間は受付を待たずに返す(本番の見張りが受付を起こすのと同じ刻)。
+;;; job の Service の振り先(core/endpoints_policy): namespace ごとの job の Service の一覧を同じ形で見張り(FollowJobServices — 一覧の
+;;; 今の全部を伝える)、Service の JSON から型へ解くのも(job-services-view)、EndpointSlice の宣言を server-side apply の本文の JSON へ
+;;; 綴るのも(endpoint-slice-apply-text)この module の 1 点。
 (require doeff-hy.macros [val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (require doeff-hy.macros [defhandler defk deff <-])
@@ -25,8 +28,12 @@
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._shared.intent.protocol [NextRequests])
-(import doeff_cluster._coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
-(import doeff_cluster._coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes])
+(import json)
+(import doeff_cluster._coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable
+                                                       JobService JobServicePort JobServicesSeen JobServicesUnreadable JobEndpointSlice])
+(import doeff_cluster._coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes
+                                                    FollowJobServices ApplyEndpointSlice])
+(import doeff_cluster._shared.intent.kube_service_model [JOB-ENDPOINTS-LABEL])
 
 
 (defk deployment-view [body]
@@ -79,14 +86,18 @@
 
 
 (defclass KubeCalls [Protocol]
-  "kube-api が呼ぶ k8s の client の形(foundation/kube_client の KubeClient の 4 つの欄がこの形を持つ — 欄は関数)。届かない時は KubeUnavailable を投げる。"
+  "kube-api が呼ぶ k8s の client の形(foundation/kube_client の KubeClient の 6 つの欄がこの形を持つ — 欄は関数)。届かない時は KubeUnavailable を投げる。"
   ;; follow = Deployment 1 つを list の後の watch で見張る daemon の thread を始める(#3868)。on-body = Deployment の object・on-error = 届かない・
   ;; 断られた・消された理由(どちらも見張りの thread から呼ぶ)。答え = 見張りを止める関数。
   (#^ (get Callable #([str str (get Callable #([OpaqueJson] None)) (get Callable #([str] None))] (get Callable #([] None)))) follow)
   ;; follow-node = Node 1 つを同じ形で見張る(#4070)。on-body = Node の object(中を読まずに運ぶ — label の読みは node-labels-view の 1 点)。
   (#^ (get Callable #([str (get Callable #([OpaqueJson] None)) (get Callable #([str] None))] (get Callable #([] None)))) follow-node)
+  ;; follow-services = namespace の label の selector に合う Service の一覧を同じ形で見張る(on-body = 一覧の今の全部 {"items": [...]})。
+  (#^ (get Callable #([str str (get Callable #([OpaqueJson] None)) (get Callable #([str] None))] (get Callable #([] None)))) follow-services)
   (#^ (get Callable #([str str int bool] int)) scale)
-  (#^ (get Callable #([str str dict] None)) annotate))
+  (#^ (get Callable #([str str dict] None)) annotate)
+  ;; apply-slice = EndpointSlice 1 つ(namespace・名・server-side apply の本文の JSON の字)を当てる。
+  (#^ (get Callable #([str str str] None)) apply-slice))
 
 
 ;; --- 見張り(時間で読みに行かない — 頭の註・#3868・#4070)---------------------------------------------------------
@@ -219,12 +230,98 @@
   writes)
 
 
+(defk job-service-ports [ports]
+  {:pre [(: ports list)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "k8s の Service の spec.ports(JSON の list)を job の Service の口の列にするため: targetPort が数の口はその数・targetPort の無い口は
+   port の数を Pod の口とする。名の targetPort(Pod の口の名 — job の process の口は名を持たない)と形の違う行は外す。"
+  (tuple (gfor row ports
+               :if (isinstance row dict)
+               :setv target (.get row "targetPort" (.get row "port"))
+               :if (and (isinstance target int) (not (isinstance target bool)) (<= 1 target 65535))
+               (JobServicePort :name (str (or (.get row "name") "")) :target-port target :protocol (str (or (.get row "protocol") "TCP"))))))
+
+
+(defk job-service-view [body namespace]
+  {:pre [(: body (get Mapping #(str object))) (: namespace str)] :post [(: % (| JobService None))]
+   :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "k8s の Service の object 1 つ(API の JSON の本文)を job の Service の型にするため。名・uid・label JOB-ENDPOINTS-LABEL の値(job の名)の
+   どれかが無い・形が違えば None(一覧から外す)。"
+  (val meta (.get body "metadata"))
+  (val spec (.get body "spec"))
+  (val labels (if (isinstance meta dict) (.get meta "labels") None))
+  (val name (if (isinstance meta dict) (.get meta "name") None))
+  (val uid (if (isinstance meta dict) (.get meta "uid") None))
+  (val job (if (isinstance labels dict) (.get labels JOB-ENDPOINTS-LABEL) None))
+  (val ports (if (isinstance spec dict) (.get spec "ports") None))
+  (if (and (isinstance name str) name (isinstance uid str) uid (isinstance job str) job (isinstance ports list))
+      (do (<- rows tuple (job-service-ports ports))
+          (JobService :namespace namespace :name name :uid uid :job job :ports rows))
+      None))
+
+
+(defk job-services-observation-of [result at]
+  {:pre [(: result (| KubeBodyRead KubeReadFailed)) (: at int)] :post [(: % (| JobServicesSeen JobServicesUnreadable))]
+   :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "見張りが伝えた namespace 1 つの job の Service の一覧({\"items\": [...]} か読めない理由)を、観測の表に置く観測にするため(名の順)。"
+  (if (isinstance result KubeReadFailed)
+      (JobServicesUnreadable :error result.error :at at)
+      (do (val opened (thaw-json (freeze-json-text result.body.text)))
+          (val items (if (isinstance opened dict) (.get opened "items") None))
+          (if (isinstance items list)
+              (do (var services #())
+                  (for [item items]
+                    (when (isinstance item dict)
+                      (<- service (| JobService None) (job-service-view item result.name))
+                      (when (is-not service None)
+                        (:= services (+ services #(service))))))
+                  (JobServicesSeen :services (tuple (sorted services :key (fn [s] s.name))) :at at))
+              (JobServicesUnreadable :error "k8s の Service の一覧の答えの形が違う(items)" :at at)))))
+
+
+(defk job-service-writes [changes at]
+  {:pre [(: changes tuple) (: at int)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
+  "見張りが伝えた #(namespace 一覧か理由) の tuple を、観測の表への書き(時刻は受け取った時刻 at)にするため。"
+  (var writes #())
+  (for [#(key seen) changes]
+    (<- result (| KubeBodyRead KubeReadFailed) (read-of key seen))
+    (<- observed (| JobServicesSeen JobServicesUnreadable) (job-services-observation-of result at))
+    (:= writes (+ writes #((TableWrite key observed)))))
+  writes)
+
+
+;; coordinator が書く EndpointSlice の印: kube-proxy は label kubernetes.io/service-name で slice を Service に結び、Service の controller は
+;; managed-by が自分の物でない slice に触らない(selector の在る Service でも、controller の slice と並ぶ)。
+(val SLICE-MANAGED-BY "doeff.dev/coordinator")
+
+
+(defk endpoint-slice-apply-text [slice]
+  {:pre [(: slice JobEndpointSlice)] :post [(: % str)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "EndpointSlice の宣言 slice を server-side apply の本文の JSON の字へ綴るため(JSON の境界の 1 点 — 欄は k8s の EndpointSlice と同じ名)。
+   slice の名は Service の名(Service の controller の slice は名に後ろの字を付けるので重ならない)。ownerReference に Service を名指す
+   (Service が消されれば k8s の GC が slice も消す)。endpoints と ports は k8s の側で丸ごと置き換える列(atomic)なので、振り先から外した
+   Pod の IP は書き直しで消える。口の port は Pod の中で job が待ち受ける口(Service の targetPort)。"
+  (json.dumps {"apiVersion" "discovery.k8s.io/v1"
+               "kind" "EndpointSlice"
+               "metadata" {"name" slice.service
+                           "namespace" slice.namespace
+                           "labels" {"kubernetes.io/service-name" slice.service
+                                     "endpointslice.kubernetes.io/managed-by" SLICE-MANAGED-BY
+                                     JOB-ENDPOINTS-LABEL slice.job}
+                           "ownerReferences" [{"apiVersion" "v1" "kind" "Service" "name" slice.service "uid" slice.service-uid}]}
+               "addressType" "IPv4"
+               "ports" (lfor port slice.ports {"name" port.name "port" port.target-port "protocol" port.protocol})
+               "endpoints" (lfor address slice.addresses {"addresses" [address] "conditions" {"ready" True}})}
+              :ensure-ascii False :sort-keys True))
+
+
 (defhandler kube-api [#^ KubeCalls client #^ (get Callable #([] None)) wake]
   ;; 引数に残す理由: k8s の client(HTTP の接続と token)と、受付の箱を起こす関数は composition root が 1 つ作って渡す
   (session val deployment-box (queue.SimpleQueue))
   (session var deployment-watching #())
   (session val node-box (queue.SimpleQueue))
   (session var node-watching #())
+  (session val service-box (queue.SimpleQueue))
+  (session var service-watching #())
   (FollowDeployments [keys now-ms]
     ;; 見張りは調停ループの外の thread(k8s の client が持つ)。変化を受け渡したら受付の箱を起こす(頭の註)。
     (<- aligned tuple (watch-follow deployment-watching keys
@@ -245,8 +342,21 @@
     (<- taken tuple (watch-take node-box node-watching))
     (<- writes tuple (node-writes taken now-ms))
     (resume writes))
+  (FollowJobServices [namespaces now-ms]
+    ;; Deployment と同じ形(頭の註)。見張りの相手は namespace ごとの、label JOB-ENDPOINTS-LABEL を持つ Service の一覧。
+    (<- aligned tuple (watch-follow service-watching namespaces
+                                    (fn [namespace]
+                                      (let [report (watch-reporter service-box namespace wake)]
+                                        (.follow-services client namespace JOB-ENDPOINTS-LABEL report report)))))
+    (:= service-watching aligned)
+    (<- taken tuple (watch-take service-box service-watching))
+    (<- writes tuple (job-service-writes taken now-ms))
+    (resume writes))
   (ScaleDeployment [namespace name replicas dry-run] (resume (.scale client namespace name replicas dry-run)))
-  (AnnotateDeployment [namespace name annotations] (resume (.annotate client namespace name annotations))))
+  (AnnotateDeployment [namespace name annotations] (resume (.annotate client namespace name annotations)))
+  (ApplyEndpointSlice [slice]
+    (<- text str (endpoint-slice-apply-text slice))
+    (resume (.apply-slice client slice.namespace slice.service text))))
 
 
 (defhandler kube-unavailable [#^ str reason]
@@ -255,6 +365,8 @@
   (session var deployment-watching #())
   (session val node-box (queue.SimpleQueue))
   (session var node-watching #())
+  (session val service-box (queue.SimpleQueue))
+  (session var service-watching #())
   (FollowDeployments [keys now-ms]
     ;; 見張りは始めた時にその理由を 1 度だけ伝える(観測は読めなかった観測になり、Rollout はその理由を名指して Unknown と扱う)。
     (<- aligned tuple (watch-follow deployment-watching keys
@@ -271,8 +383,17 @@
     (<- taken tuple (watch-take node-box node-watching))
     (<- writes tuple (node-writes taken now-ms))
     (resume writes))
+  (FollowJobServices [namespaces now-ms]
+    ;; Deployment と同じ(その namespace の slice は書かない)。
+    (<- aligned tuple (watch-follow service-watching namespaces
+                                    (fn [namespace] ((watch-reporter service-box namespace (fn [] None)) reason) (fn [] None))))
+    (:= service-watching aligned)
+    (<- taken tuple (watch-take service-box service-watching))
+    (<- writes tuple (job-service-writes taken now-ms))
+    (resume writes))
   (ScaleDeployment [namespace name replicas dry-run] (raise (KubeUnavailable reason)))
-  (AnnotateDeployment [namespace name annotations] (raise (KubeUnavailable reason))))
+  (AnnotateDeployment [namespace name annotations] (raise (KubeUnavailable reason)))
+  (ApplyEndpointSlice [slice] (raise (KubeUnavailable reason))))
 
 
 (defclass KubeMemory []
@@ -282,11 +403,14 @@
    reads = Deployment の見張り(MemoryFollows)に伝えた「ns/名」の列(伝えた順 — 見張りの始めの list と変化の出来事。時間で読みに行く
    数の検・#3868)。node-reads = Node の見張りが coordinator へ伝えた node の名の列(伝えた順 — 時間で node の label を読みに行く数の検・
    #4070)。stalled-until-ms = この時刻(調停ループの now)までは k8s の API が答えない(見張りは答えない理由を伝える — #2807)。
+   services = 「ns/名」→ k8s の Service の object の dict(job の Service の一覧の見張りが label JOB-ENDPOINTS-LABEL で絞って伝える)・
+   slices = 「ns/名」→ 当てられた EndpointSlice の object の dict(server-side apply の本文を読んだ物 — 置き換え)。当てた書きは calls にも
+   {op slice key addresses at} で積む(検が刻ごとの振り先を読む)。
    欄を書き換えるのは置き場の外(検・模擬の宿・memory-settle・memory-relabel・follows-deployments・follows-nodes・kube-memory)で、この class の
    method は欄から答えを計算するだけ(検の台が歩をまたいで同じ 1 つを読み書きする)。"
-  (defn #^ None __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
+  (defn #^ None __init__ [self #^ dict deployments #^ (| dict None) [nodes None] #^ (| dict None) [services None]]
     (setv self.deployments deployments self.calls [] self.reads #() self.node-reads #() self.down False
-          self.nodes (or nodes {}) self.stalled-until-ms None))
+          self.nodes (or nodes {}) self.stalled-until-ms None self.services (or services {}) self.slices {}))
 
   (defn #^ dict row [self #^ str namespace #^ str name]
     (when self.down (raise (KubeUnavailable "テストの k8s が止まっている")))
@@ -326,7 +450,19 @@
     (cond
       (is-not refusal None) refusal
       (not-in node self.nodes) (+ "無い Node: " node)
-      True (OpaqueJson.of {"metadata" {"name" node "labels" (get self.nodes node)}}))))
+      True (OpaqueJson.of {"metadata" {"name" node "labels" (get self.nodes node)}})))
+
+  (defn #^ (| OpaqueJson str) services-seen-at [self #^ str namespace #^ int now-ms]
+    "job の Service の一覧の見張りが now-ms に namespace について伝える物: 本番の k8s の API と同じ一覧 {items}(label JOB-ENDPOINTS-LABEL を
+     持つ Service だけ・名の順)か、読めない理由(止まっている・答えない)。"
+    (setv refusal (.refusal-at self now-ms))
+    (if (is-not refusal None)
+        refusal
+        (OpaqueJson.of {"items" (lfor key (sorted self.services)
+                                      :setv body (get self.services key)
+                                      :if (and (= (get (.split key "/" 1) 0) namespace)
+                                               (in JOB-ENDPOINTS-LABEL (.get (.get body "metadata" {}) "labels" {})))
+                                      body)}))))
 
 
 (defk memory-relabel [kube node labels]
@@ -391,9 +527,11 @@
 
 (defrecord MemoryFollows
   "模擬の coordinator の process 1 つの見張りの置き場(Deployment と Node の 2 つ — MemoryWatch)。テストの k8s(KubeMemory)を読み、伝えた
-   キーをテストの k8s の記録(reads・node-reads)に積む(follows-deployments・follows-nodes)。"
+   キーをテストの k8s の記録(reads・node-reads)に積む(follows-deployments・follows-nodes)。services = job の Service の一覧の見張り
+   (namespace ごと — follows-job-services)。"
   (setv #^ MemoryWatch deployments (field :default-factory MemoryWatch))
-  (setv #^ MemoryWatch nodes (field :default-factory MemoryWatch)))
+  (setv #^ MemoryWatch nodes (field :default-factory MemoryWatch))
+  (setv #^ MemoryWatch services (field :default-factory MemoryWatch)))
 
 
 (defk follows-deployments [follows kube keys now-ms]
@@ -412,18 +550,27 @@
   changed)
 
 
+(defk follows-job-services [follows kube namespaces now-ms]
+  {:pre [(: follows MemoryFollows) (: kube KubeMemory) (: namespaces tuple) (: now-ms int)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "protocol"}}
+  "見張る namespace を namespaces に揃え、job の Service の一覧の変わった物を伝えるため。答え = 伝えた #(namespace 一覧か理由) の tuple。"
+  (<- changed tuple (memory-watch-follow follows.services (fn [namespace] (.services-seen-at kube namespace now-ms)) namespaces))
+  changed)
+
+
 (defk follows-changed [follows kube now-ms]
   {:pre [(: follows MemoryFollows) (: kube KubeMemory) (: now-ms int)] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
   "見張っている相手のどれかの、テストの k8s の今が最後に伝えた物と違うか(伝えていない変化が在るか)を知るため。"
   (<- deployments tuple (memory-watch-changes follows.deployments (fn [key] (.seen-at kube key now-ms))))
   (<- nodes tuple (memory-watch-changes follows.nodes (fn [name] (.node-seen-at kube name now-ms))))
-  (bool (or deployments nodes)))
+  (<- services tuple (memory-watch-changes follows.services (fn [namespace] (.services-seen-at kube namespace now-ms))))
+  (bool (or deployments nodes services)))
 
 
 (defk follows-change-at [follows kube now-ms]
   {:pre [(: follows MemoryFollows) (: kube KubeMemory) (: now-ms int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "protocol"}}
   "見張っている相手の伝える物が、now-ms の後に時刻で変わる刻(テストの k8s が答えない区間の終わり)を知るため。無ければ None。"
-  (if (and (or follows.deployments.watching follows.nodes.watching)
+  (if (and (or follows.deployments.watching follows.nodes.watching follows.services.watching)
            (is-not kube.stalled-until-ms None) (< now-ms kube.stalled-until-ms))
       kube.stalled-until-ms
       None))
@@ -455,6 +602,21 @@
     (<- followed tuple (follows-nodes follows kube names now-ms))
     (<- writes tuple (node-writes followed now-ms))
     (resume writes))
+  (FollowJobServices [namespaces now-ms]
+    (<- followed tuple (follows-job-services follows kube namespaces now-ms))
+    (<- writes tuple (job-service-writes followed now-ms))
+    (resume writes))
+  (ApplyEndpointSlice [slice]
+    ;; 本番と同じ綴り(endpoint-slice-apply-text)を通して読み戻し、置き換える(server-side apply の endpoints と ports は丸ごとの列)。
+    (<- now int (now-epoch-ms))
+    (val refusal (.refusal-at kube now))
+    (when (is-not refusal None)
+      (raise (KubeUnavailable refusal)))
+    (<- text str (endpoint-slice-apply-text slice))
+    (val key (+ slice.namespace "/" slice.service))
+    (setv (get kube.slices key) (json.loads text))
+    (.append kube.calls {"op" "slice" "key" key "addresses" (list slice.addresses) "at" now})
+    (resume None))
   (NextRequests [timeout-seconds limit]
     ;; 見張りが伝えていない変化が在る間は受付を待たずに取る(本番の見張りが受付の箱を起こすのと同じ刻 — 頭の註)。
     (<- now int (now-epoch-ms))

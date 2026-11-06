@@ -24,7 +24,8 @@
 
 
 (defn #^ ClusterNaming naming-from-json [#^ str text]
-  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・nodeCapabilities([{\"label\" \"value\" \"capability\"} …])。
+  "coordinator の引数(JSON)→ ClusterNaming。欄は ownerAnnotation・ownerScope・nodeCapabilities([{\"label\" \"value\" \"capability\"} …])・
+   jobServiceNamespaces(namespace の名の list — job の Service の振り先を書く namespace)。
    書かなかった欄は既定のまま。消した欄(RETIRED-NAMING-FIELDS)と知らない欄は断る。"
   (import json)
   (setv data (json.loads text))
@@ -33,7 +34,7 @@
   (when (& (set data) RETIRED-NAMING-FIELDS)
     (raise (ValueError (.format "naming の {} は受け付けない — image の版を追う係は消した(Program の job は宣言した commit でだけ解く)"
                                 (sorted (& (set data) RETIRED-NAMING-FIELDS))))))
-  (setv known #{"ownerAnnotation" "ownerScope" "nodeCapabilities"})
+  (setv known #{"ownerAnnotation" "ownerScope" "nodeCapabilities" "jobServiceNamespaces"})
   (setv unknown (sorted (gfor k data :if (not-in k known) k)))
   (when unknown
     (raise (ValueError (+ "naming の知らない欄: " (.join ", " unknown)))))
@@ -48,9 +49,13 @@
   (when pooled
     (raise (ValueError (.format "naming の nodeCapabilities の能力 {} は {} で始まる — {} は worker の枠の file の置ける組の印に取ってある"
                                 pooled POOL-PREFIX POOL-PREFIX))))
+  (setv namespaces (.get data "jobServiceNamespaces" (list base.job-service-namespaces)))
+  (when (not (and (isinstance namespaces list) (all (gfor n namespaces (and (isinstance n str) n)))))
+    (raise (ValueError "naming の jobServiceNamespaces は空でない namespace の名の list")))
   (ClusterNaming :owner-annotation (.get data "ownerAnnotation" base.owner-annotation)
                  :owner-scope (.get data "ownerScope" base.owner-scope)
-                 :node-capabilities derived))
+                 :node-capabilities derived
+                 :job-service-namespaces (tuple (sorted (set namespaces)))))
 
 
 (deff task-record-to-json [#^ TaskRecord task]  ; defk にできない: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り

@@ -1103,11 +1103,24 @@ for amount in "WORKER_ENV_ROOTS_GIB=$env_roots_gib" "WORKER_ENV_MIN_FREE_GIB=$en
       exit 2 ;;
   esac
 done
+# この Pod の IP(worker が heartbeat の podIp で名乗り、coordinator が job の Service の振り先〔EndpointSlice〕に、Ready で active な
+# process の在る世代の Pod の IP を書く)。雛形が downward API の status.podIP を POD_IP で渡せばその値、渡さない雛形(POD_IP を足す前の
+# Pod — 版の file の入れ替えは Pod を作り直さない)は kubelet が /etc/hosts に書く自分の名の行の IP。Pod の外の worker は名乗らない。
+pod_ip=${POD_IP:-}
+if [ -z "$pod_ip" ] && [ -n "${KUBERNETES_SERVICE_HOST:-}" ] && [ -r /etc/hosts ]; then
+  pod_host=$(cat /proc/sys/kernel/hostname 2>/dev/null || true)
+  while read -r hosts_addr hosts_name hosts_rest; do
+    if [ -n "$pod_host" ] && [ "$hosts_name" = "$pod_host" ]; then
+      pod_ip=$hosts_addr
+      break
+    fi
+  done </etc/hosts
+fi
 # worker を exec する刻(起動の内訳の 3 番目の刻・#3676)。
 DOEFF_BOOT_EXEC_MS=$(boot_ms)
 export DOEFF_BOOT_EXEC_MS
 exec hy -m doeff_cluster._worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
-  --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" "$@" \
+  --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --pod-ip "$pod_ip" "$@" \
   --repo "$repo" --state-dir "$state_dir" --shared-dir "$WORK_DIR/state" ${overlaps_elder} --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --repo-access "$repo_access_script" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \

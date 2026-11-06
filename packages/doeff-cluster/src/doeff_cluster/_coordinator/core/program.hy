@@ -31,7 +31,8 @@
 ;;; (SaveState — 答え手の protocol が KV の差分に綴り、追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
 ;;; coordinator が落ちても消えない。永続化に失敗したら返事をせずに落ちる(送り手には失敗として見える)。
 ;;; k8s の Deployment と Node の見張り(FollowDeployments・FollowNodes — 時間で読みに行かず、変化の出来事で受付の箱が起きる・#3868・
-;;; #4070)と台数の変更(ScaleDeployment)も effect。
+;;; #4070)と台数の変更(ScaleDeployment)も effect。job の Service の振り先(EndpointSlice — 見張りは FollowJobServices・書きは
+;;; ApplyEndpointSlice・判断は endpoints_policy)は、歩の返事を置いた後に揃える(endpoints-tick — k8s の API の待ちで返事を遅らせない)。
 ;;; I/O は handler の中だけ。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -42,7 +43,7 @@
 (import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested ServiceReached Request])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
-                                                       DeploymentUnreadable NodeLabelsUnreadable])
+                                                       DeploymentUnreadable NodeLabelsUnreadable JobServicesUnreadable SliceWritten SliceRefused])
 (import doeff_cluster._coordinator.core.watch_policy [watch-of settle-watch watch-answer-body])
 (import doeff_cluster._coordinator.core.cluster_policy [nodes-to-follow with-derived-capabilities])
 (import doeff_cluster._coordinator.core.api_policy [respond tick plan-rollouts deployments-to-follow scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR
@@ -50,7 +51,9 @@
 (import doeff_cluster._coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster._coordinator.core.resource_policy [stamp])
 (import doeff_cluster._coordinator.intent.request_bodies [ReadBody BodyUnreadable HeartbeatBody])
-(import doeff_cluster._coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes])
+(import doeff_cluster._coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes
+                                                    FollowJobServices ApplyEndpointSlice])
+(import doeff_cluster._coordinator.core.endpoints_policy [wanted-slices due-slices slice-writes slice-line slice-key])
 (import doeff_core_effects [slog])
 (import doeff_core_effects [Spawn])
 (import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
@@ -214,6 +217,47 @@
           (except [error KubeUnavailable]
             (:= current (stamp current (record-action current action False (str error) now) who now timing))))))
   current)
+
+
+(defk endpoints-tick [state timing naming now]
+  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: now int)] :post [(: % ClusterState)]
+   :tags {:context "coordinator" :role "program"}}
+  "job の Service の振り先(EndpointSlice — core/endpoints_policy の頭の註)を揃えるため: 名乗りの namespace の job の Service の一覧を
+   見張り(FollowJobServices — 変わった namespace だけ受け取る)、今の振り先の slice のうち書く物を当てる(ApplyEndpointSlice)。書いた・
+   書けなかった結末は観測の表 endpoint-slices に置く(保存しない — 起き直した coordinator は settled-from の後に書き直す)。振り先が
+   変わった slice と書けなかった slice は 1 行出す(同じ振り先の書き直しは出さない)。読めない namespace は理由を 1 行出す(同じ理由は
+   続けて伝わらないので、変わった時に 1 度)。"
+  (<- service-writes tuple (FollowJobServices :namespaces naming.job-service-namespaces :now-ms now))
+  (for [write service-writes]
+    (when (isinstance write.value JobServicesUnreadable)
+      (<- (slog (.format "coordinator: k8s の namespace {} の job の Service を見張れない — {}(その namespace の振り先は書き直さない)"
+                         write.key write.value.error)))))
+  (val seen state.observations)
+  (val observed (if service-writes
+                    (replace state :observations (replace seen :job-services (.with-writes seen.job-services service-writes)))
+                    state))
+  (<- wanted tuple (wanted-slices observed now timing))
+  (<- due tuple (due-slices observed wanted now))
+  (var outcomes #())
+  (for [slice due]
+    (<- key str (slice-key slice.namespace slice.service))
+    (val prior (.row observed.observations.endpoint-slices key))
+    (try
+      (<- (ApplyEndpointSlice slice))
+      (:= outcomes (+ outcomes #((SliceWritten :slice slice :at now))))
+      (when (or (is prior None) (isinstance prior SliceRefused) (!= prior.slice slice))
+        (<- line str (slice-line (SliceWritten :slice slice :at now)))
+        (<- (slog line)))
+      (except [error KubeUnavailable]
+        (val refused (SliceRefused :slice slice :error (str error) :at now))
+        (:= outcomes (+ outcomes #(refused)))
+        (<- line str (slice-line refused))
+        (<- (slog line)))))
+  (<- writes tuple (slice-writes observed outcomes))
+  (if writes
+      (replace observed :observations (replace observed.observations
+                                               :endpoint-slices (.with-writes observed.observations.endpoint-slices writes)))
+      observed))
 
 
 (defk fault-reply [fault]
@@ -419,7 +463,9 @@
         (:= kept (+ kept #(judged.watcher)))
         (do (<- body dict (watch-answer-body watcher judged.answer))
             (<- (Reply watcher.request 200 body)))))
-  #(next (len batch) kept now base))
+  ;; job の Service の振り先は返事の後(k8s の API の待ちで返事を遅らせない — 観測の表だけを書くので保存の外)。
+  (<- routed ClusterState (endpoints-tick next timing naming now))
+  #(routed (len batch) kept now base))
 
 
 (defk release-watchers [state watchers]
