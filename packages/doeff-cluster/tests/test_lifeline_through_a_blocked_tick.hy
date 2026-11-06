@@ -90,11 +90,13 @@
 
 (defclass SteppedClock [SimClock]
   "仮想の時計を、調整ループの scheduler と生存の合図の thread で分けるため(検だけの資源)。scheduler が時計を進めるたびに、thread の
-   待ち(pause)を起こす。塞ぎの間は塞いでいる答え手が step で進め、thread が 1 周を終えて次の待ちに入るまで待つ(段の受け渡し —
-   実時間の眠りでなく、thread の待ちという出来事を待つ)。"
+   待ち(pause)を起こす。塞ぎの間は塞いでいる答え手が step で進め、thread が 1 周を終えて次の待ちに入り、その周が求めた送りの後の
+   書き(ready の file)も終わるまで待つ(段の受け渡し — 実時間の眠りでなく、thread の待ちと書きの終わりという出来事を待つ)。
+   書きの thread は送りの thread を待たせない別の thread なので、書きの終わりを待たないと、負荷の高い機体では時計が書きを置いて
+   進み、書きの刻の間が仮想で 86 秒に開いた(2026-11-06 の日次の回)。asks = 書きの求めの数・served = 書き終えた求めの数。"
   (defn #^ None __post-init__ [self]
     (.__post-init__ (super))
-    (setv self.turns (threading.Condition) self.parked-until None))
+    (setv self.turns (threading.Condition) self.parked-until None self.asks 0 self.served 0))
 
   (defn #^ datetime advance-to [self #^ datetime target-time]
     (with [_ self.turns]
@@ -123,11 +125,29 @@
     (with [_ self.turns]
       (.advance-to self (+ self.current-time (timedelta :seconds seconds)))
       (setv waited 0)
-      (while (not (and (is-not self.parked-until None) (> self.parked-until self.current-time)))
+      (while (not (and (is-not self.parked-until None) (> self.parked-until self.current-time) (>= self.served self.asks)))
         (when (not (.wait self.turns 1.0))
           (setv waited (+ waited 1))
           (when (> waited TURN-LIMIT-SECONDS)
-            (raise (TimeoutError "生存の合図の thread が 1 周を終えない")))))))
+            (raise (TimeoutError "生存の合図の thread が 1 周と送りの後の書きを終えない")))))))
+
+  (defn #^ None aside-asked [self]
+    "送りの thread の 1 周が送りの後の書きを求めた(合図を立てる前に数える)。"
+    (with [_ self.turns]
+      (setv self.asks (+ self.asks 1))
+      (.notify-all self.turns)))
+
+  (defn #^ int aside-started [self]
+    "書きの thread が書きを 1 本始める — 合図を下ろした後なので、ここまでの求めは全部この 1 本に畳まれる。その数を返す。"
+    (with [_ self.turns]
+      (setv upto self.asks))
+    upto)
+
+  (defn #^ None aside-done [self #^ int upto]
+    "書きの thread が、upto までの求めを畳んだ書きを終えた。"
+    (with [_ self.turns]
+      (setv self.served (max self.served upto))
+      (.notify-all self.turns)))
 
   (defn #^ None wake [self]
     "止めの合図を立てた後に、待っている thread を起こす。"
@@ -163,6 +183,28 @@
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "生存の合図の thread の 1 周の間の待ちを、仮想の時計の進みで待つため(本番の event-pause の代わり)。"
   (.pause clock seconds stopped)
+  None)
+
+
+(defk settled-noted [clock link status detail text]
+  {:pre [(: clock SteppedClock) (: link LinkState) (: status (| int None)) (: detail str) (: text str)] :post [(: % bool)]
+   :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "本番の送りの答えの書き(lifeline-settled)を走らせ、送りの後の書きを求めた時は時計に数えさせるため(段の受け渡しが書きの終わりも
+   待てるように)。"
+  (<- wanted bool (lifeline-settled link status detail text))
+  (when wanted
+    (.aside-asked clock))
+  wanted)
+
+
+(defk ready-written-noted [clock link]
+  {:pre [(: clock SteppedClock) (: link LinkState)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "本番の送りの後の書き(lifeline-ready-written)を走らせ、終えた事を時計に知らせるため(書けなかった時も知らせる)。"
+  (val upto (.aside-started clock))
+  (try
+    (<- (lifeline-ready-written link))
+    (finally
+      (.aside-done clock upto)))
   None)
 
 
@@ -303,8 +345,8 @@
   (val link (LinkState WORKER #("cpu") FENCE-MS task-dir BOOT 0 0 0 :watch True))
   (<- transport httpx.MockTransport (thread-coordinator clock heard-by-thread))
   (<- stop (start-lifeline (LifelineSettings :turn (fn [] (lifeline-turn link))
-                                             :settle (fn [status detail text] (lifeline-settled link status detail text))
-                                             :aside (fn [] (lifeline-ready-written link))
+                                             :settle (fn [status detail text] (settled-noted clock link status detail text))
+                                             :aside (fn [] (ready-written-noted clock link))
                                              :handlers [(sim-time-handler :clock clock) os-file-handler (ready-writes-noted clock ready-path writes)]
                                              :period-seconds LIFELINE-PERIOD-SECONDS
                                              :reply-seconds 5.0 :connect-seconds 1.0 :headers {"X-Actor" WORKER}
