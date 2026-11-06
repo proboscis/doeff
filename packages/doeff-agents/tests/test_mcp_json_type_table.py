@@ -96,7 +96,7 @@ def test_annotation_and_server_follow_the_swapped_table(probe_table: None) -> No
 
 def test_unknown_type_is_refused_by_both(probe_table: None) -> None:
     """表に無い型は、展開(注記を作れない)と schema の組み立て(server が検められない)の両方が断る。"""
-    with pytest.raises(Exception, match="知らない型"):
+    with pytest.raises(Exception, match="is an unknown type"):
         _define(
             "(require doeff-hy.macros [defmcp-tool])\n"
             '(defmcp-tool bad-tool "bad" [{:name "x" :type "null" :description "x"}] x)'
