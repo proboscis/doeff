@@ -30,7 +30,7 @@ _wire = importlib.import_module("defwire_deftests")
 _ACCEPTED = [
     {"path": "/a", "n": [1, {"x": None}]},
     [1, 2.5, True, False, None, "s"],
-    "文字列",
+    "a string ü",
     0,
     -3,
     1.5,
@@ -38,13 +38,13 @@ _ACCEPTED = [
     None,
     {},
     [],
-    {1: "int の鍵は文字列になる", None: "null"},
-    {True: "bool の鍵も文字列になる", 2.5: "float の鍵も"},
-    ("tuple", "は配列"),
+    {1: "an int key becomes a string", None: "null"},
+    {True: "a bool key becomes a string too", 2.5: "so does a float key"},
+    ("tuple", "is an array"),
     {"b": 1, "a": 2},  # field order is preserved
     "\ud800",  # json.dumps and json.loads both accept an unpaired surrogate
     float("inf"),
-    {"深い": [[[{"x": [1]}]]]},
+    {"tiefe ü": [[[{"x": [1]}]]]},
 ]
 
 # Rejected values: whatever json.dumps rejects, of also rejects (same exception type).
@@ -52,7 +52,7 @@ _ACCEPTED = [
 _REJECTED = [
     pytest.param({1, 2}, TypeError, id="set"),
     pytest.param(object(), TypeError, id="object"),
-    pytest.param({("tuple", "鍵"): 1}, TypeError, id="tuple-key"),
+    pytest.param({("tuple", "key"): 1}, TypeError, id="tuple-key"),
     pytest.param(b"bytes", TypeError, id="bytes"),
 ]
 
@@ -142,7 +142,7 @@ def test_dump_json_does_not_call_json_loads_for_opaque_values(
 ) -> None:
     """However many OpaqueJson fields there are, dump_json never calls json.loads (the read-back is removed; before the fix it was once per field)."""
     batch = _wire.ToolBatch(
-        rows=tuple(OpaqueJson.of({"i": i, "text": "日本語" * 5}) for i in range(50))
+        rows=tuple(OpaqueJson.of({"i": i, "text": "Grüße €" * 5}) for i in range(50))
     )
     calls: Counter[str] = Counter()
     real_loads = json.loads
@@ -161,9 +161,9 @@ def test_dump_json_does_not_call_json_loads_for_opaque_values(
 
 
 def test_dump_json_means_the_same_json_as_dump() -> None:
-    """The embedded output means the same JSON as dump (writing out to a JSON value) -- including Japanese, emoji, nesting, null, and empty nesting."""
+    """The embedded output means the same JSON as dump (writing out to a JSON value) -- including non-ASCII letters, emoji, nesting, null, and empty nesting."""
     values = [
-        {"path": "/a", "n": [1, {"x": None}], "文": '日本語 "引用" \\ \n 改行 😀'},
+        {"path": "/a", "n": [1, {"x": None}], "ü": 'Grüße "quoted" \\ \n new line 😀'},
         [],
         {},
         "ok",
@@ -191,12 +191,12 @@ def test_dump_json_resolves_each_opaque_value_in_a_union_that_tries_the_opaque_a
         _wire.Note(note_text="a"),
         OpaqueJson.of({"i": 1}),
         _wire.ToolArgs(path="/p"),
-        OpaqueJson.of([2, "二"]),
+        OpaqueJson.of([2, "zwei ü"]),
         _wire.Note(note_text="b"),
     )
     spelled = run(dump_json(_wire.ToolBatch(rows=rows)))
     assert json.loads(spelled) == {
-        "rows": [{"noteText": "a"}, {"i": 1}, {"path": "/p"}, [2, "二"], {"noteText": "b"}]
+        "rows": [{"noteText": "a"}, {"i": 1}, {"path": "/p"}, [2, "zwei ü"], {"noteText": "b"}]
     }
 
 

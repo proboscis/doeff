@@ -19,7 +19,7 @@ SEPARATORS = chr(0x2028) + chr(0x2029) + chr(0x85)
 def test_a_line_separator_inside_a_json_string_does_not_split_the_line() -> None:
     # Failure case: str.splitlines also splits at U+2028 etc. inside a JSON string, turning a valid JSON line into non-JSON pieces.
     text = (
-        json.dumps({"type": "assistant", "text": "web の本文" + SEPARATORS + "終わり"}, ensure_ascii=False)
+        json.dumps({"type": "assistant", "text": "web body ü" + SEPARATORS + "the end"}, ensure_ascii=False)
         + "\n\n  \n"
         + json.dumps({"type": "user"})
         + "\n"
@@ -29,5 +29,5 @@ def test_a_line_separator_inside_a_json_string_does_not_split_the_line() -> None
 
 
 def test_the_reader_stops_at_the_end_of_the_last_whole_line() -> None:
-    cases = [b"", b"ab", b"ab\n", b"ab\ncd", "あ\nい".encode()]
+    cases = [b"", b"ab", b"ab\n", b"ab\ncd", "€\n✓".encode()]
     assert [run(whole_lines_end(data)) for data in cases] == [0, 0, 3, 3, 4]

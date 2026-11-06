@@ -1438,7 +1438,7 @@ def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
     from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use
 
     walker = macro_use._Walker(loader_hooks.file_sha256, macro_use.CodeReadings({}))
-    fed = (("module", "a"), ("値", ""), ("\ud800",))
+    fed = (("module", "a"), ("€", ""), ("\ud800",))
     for parts in fed:
         walker._feed(*parts)
     expected = hashlib.sha256()

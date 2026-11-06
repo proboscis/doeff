@@ -36,8 +36,15 @@ from pathlib import Path, PurePosixPath
 
 JAPANESE = re.compile("[ぁ-ゖァ-ヺー々㐀-䶿一-鿿]")
 
-# Proper nouns that stay Japanese (a name of a person, a place, a product). Empty until one is needed.
-KEEP: tuple[str, ...] = ()
+# Words that stay Japanese: proper nouns (a name of a person, a place, a product) and fixed spellings
+# that code matches, each with the reason it cannot be translated.
+KEEP: tuple[str, ...] = (
+    # The reason marker of a deff (`; defk にできない: <reason>`, "cannot be a defk"). The deff ratchet
+    # of ADR-DOE-HY-004 (DEFF-REASON-MARK) and doeff-linter's DOEFF111 (default of
+    # definitions.deff_reason_marker) match this spelling, so a translated marker reads as a deff with
+    # no reason; the reason after the marker is written in English.
+    "defk にできない",
+)
 
 # Moving to another repository, so not counted here.
 EXCLUDED_PREFIXES: tuple[str, ...] = ("publications/",)

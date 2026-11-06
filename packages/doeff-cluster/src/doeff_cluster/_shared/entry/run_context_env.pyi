@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = run_context_env.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub generated these type declarations; do not edit by hand (source = run_context_env.hy; regenerate with python -m doeff_hy._static_stub --write <the .hy next to this .pyi>)
 
 from doeff import run as run
 from doeff_cluster._foundation.process_versions import this_process_environ as this_process_environ

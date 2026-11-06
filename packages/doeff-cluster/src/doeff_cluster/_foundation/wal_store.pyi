@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = wal_store.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub generated these type declarations; do not edit by hand (source = wal_store.hy; regenerate with python -m doeff_hy._static_stub --write <the .hy next to this .pyi>)
 
 MAX_LOG_BYTES: int
 FSYNC_WINDOW: int
