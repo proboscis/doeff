@@ -29,7 +29,7 @@
 ;;; 完成マーカーなど追跡しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写しは
 ;;; 外の cp を起こさない(GNU の書き方 cp -al --parents -t は macOS の BSD の cp が断り、Mac の worker は毎回全部を展開して、消した root の
 ;;; 中身を APFS の local snapshot が 24 時間持った)。写し元が無い・写せない時は git archive と tar で全部を展開する。
-;;; git archive と tar は StartProcess/PollProcess で起こし、待つ間 WATCH-SECONDS ごとに子の書いた量(archive の大きさ・tar -v の一覧の大きさ)を読んで、
+;;; git archive と tar は StartProcess/PollProcess で起こし、待つ間 FIRST-WATCH-SECONDS から倍にして WATCH-SECONDS までの間隔ごとに子の書いた量(archive の大きさ・tar -v の一覧の大きさ)を読んで、
 ;;; 増えた時だけ進みの印(runtime-env.progress)を触る。量が増えない子は印を触らず、worker が停滞の窓で止める(時間だけで触る heartbeat は入れない)。
 ;;; 子の間の区切りでも触る: git archive の後・tar の展開の前、写しの link-unchanged の後・place-paths の前(stage-trees は repo ごとにも触る)。
 (require doeff-hy.macros [defk deff defhandler <- val var])
@@ -63,8 +63,11 @@
 (val MOUNT-TABLE "/proc/self/mountinfo")
 ;; git archive の 1 回の命令に渡す path の数(命令の引数の長さの上限 — 数千 file の差でも収まる数ずつ分ける)。
 (val PATHS-PER-COMMAND 500)
-;; 木を置く子(git archive・tar)の書いた量を読み直す間隔(秒)。進みの印の停滞の窓(runtime-env の stall-seconds — 数百秒)よりずっと短い。
+;; 木を置く子(git archive・tar)の書いた量を読み直す間隔の上限(秒)。進みの印の停滞の窓(runtime-env の stall-seconds — 数百秒)よりずっと短い。
 (val WATCH-SECONDS 5.0)
+;; 子を起こした後の最初の読み直しの間隔(秒)。読み直すたびに倍にして WATCH-SECONDS まで延ばす — 初めから WATCH-SECONDS で眠ると、
+;; 数十 ms で終わる子(数 file の git archive・tar)も 1 つ 5 秒かかり、準備 1 回の木の段が repo 1 つで 10 秒に延びた。
+(val FIRST-WATCH-SECONDS 0.05)
 ;; 木を置く子が量を進めた時に進みの印へ書く名(木の処理ステージの名と同じ — 印の中身は診断だけで、読む側は時刻しか見ない)。
 (val TREE-STAGE "tree")
 ;; git ls-tree の mode のうち、hardlink で写さない物(symlink・submodule の commit)— 変わらなくても mirror から置く(os.link は symlink を
@@ -474,8 +477,9 @@
 (defk run-watched [argv env out-path err-path watched progress poll-seconds]
   {:pre [(: argv tuple) (: env (| tuple None)) (: out-path str) (: err-path str) (: watched tuple) (: progress str) (: poll-seconds float)]
    :post [(: % CommandResult)]}
-  "子を 1 つ起こし、終わるまで poll-seconds ごとに子の書いた量(watched の file の大きさの合計 — 子の出力 file・子が作る file)を読んで、
-   前の読みより増えた時だけ進みの印(progress — 空なら書かない)を触るため。量が増えない子(止まった git・tar)は印を触らず、worker が停滞の窓で
+  "子を 1 つ起こし、終わるまで子の書いた量(watched の file の大きさの合計 — 子の出力 file・子が作る file)を読んで、
+   前の読みより増えた時だけ進みの印(progress — 空なら書かない)を触るため。読み直しの間隔は FIRST-WATCH-SECONDS から倍にして
+   poll-seconds で止める(すぐ終わる子を poll-seconds 待たない)。量が増えない子(止まった git・tar)は印を触らず、worker が停滞の窓で
    止める。時間だけで触る heartbeat ではない。出力は out-path・err-path の file に集め、終わったら読んで消す。"
   (<- (remove-if-present out-path))
   (<- (remove-if-present err-path))
@@ -486,6 +490,7 @@
     (ProcessNotStarted :detail detail) (:= result (CommandResult :code _NOT-STARTED-CODE :stdout "" :stderr detail))
     _ None)
   (var seen-bytes 0)
+  (var wait (min FIRST-WATCH-SECONDS poll-seconds))
   (while (is result None)
     (<- polled (| ProcessRunning ProcessExited) (PollProcess started.pid))
     (match polled
@@ -497,7 +502,8 @@
             (when (> now-bytes seen-bytes)
               (:= seen-bytes now-bytes)
               (<- (touch-progress progress)))
-            (<- (Delay poll-seconds)))))
+            (<- (Delay wait))
+            (:= wait (min poll-seconds (* wait 2))))))
   (<- (remove-if-present out-path))
   (<- (remove-if-present err-path))
   result)
