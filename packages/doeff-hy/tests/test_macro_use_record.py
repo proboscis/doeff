@@ -145,6 +145,7 @@ def left_of():
 #: A defrecord type (slots, and ``__setattr__`` / ``__delattr__`` from doeff_hy's record runtime) and a helper that reads one field.
 RECORDS = """\
 (require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (defrecord Opts
   #^ int width)
 (defn width-of [] (. (Opts :width 4) width))
@@ -777,7 +778,8 @@ def _probe_project(root: Path) -> None:
 
 @pytest.fixture(scope="session")
 def compiled_doeff_hy(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A copy of doeff_hy compiled once per session, with its .pyc beside the sources (``__pycache__``). Each check copies it with the bytecode (copytree keeps the
+    """A copy of doeff_hy compiled once per session, with its .pyc beside the sources (``__pycache__``). The child writes all its .pyc under a cache prefix in the
+    session's temp dir (never into the checkout — conftest's check), and the copy's own .pyc are moved from there beside its sources. Each check copies it with the bytecode (copytree keeps the
     sources' mtimes, so the .pyc of an unchanged module stays valid and only the module a check changes is compiled again). When each check compiled its own copy cold,
     the record of one child process took 37-50 s on a node at load 150 (CPU about 18 s, most of it compiling doeff_hy) and the checks hit their 25 s limit; with the
     compiled copy it takes 1-4 s."""
@@ -799,7 +801,12 @@ def compiled_doeff_hy(tmp_path_factory: pytest.TempPathFactory) -> Path:
         for name, value in os.environ.items()
         if name not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")
     }
-    env |= {"PYTHONPATH": str(lib), "DOEFF_HY_CODE_STORE": "off"}
+    prefix = base / "pycache"
+    env |= {
+        "PYTHONPATH": str(lib),
+        "PYTHONPYCACHEPREFIX": str(prefix),
+        "DOEFF_HY_CODE_STORE": "off",
+    }
     # A one-time build for the whole session, not a check — its limit only stops a hung compile.
     done = subprocess.run(
         [sys.executable, "-c", REAL_CHILD, str(root), "record", str(base / "record.json")],
@@ -811,6 +818,12 @@ def compiled_doeff_hy(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     assert done.returncode == 0, done.stderr
     compiled = lib / "doeff_hy"
+    # Under a prefix a module's .pyc lies at <prefix>/<absolute dir of the source>/<name>.<tag>.pyc.
+    written = prefix / str(compiled.absolute()).lstrip(os.sep)
+    for pyc in written.rglob("*.pyc"):
+        beside = compiled / pyc.parent.relative_to(written) / "__pycache__" / pyc.name
+        beside.parent.mkdir(exist_ok=True)
+        shutil.move(pyc, beside)
     assert any(compiled.glob("__pycache__/macros.*.pyc")), (
         f"no .pyc of macros.hy in {compiled} — the compiled copy was not made"
     )
