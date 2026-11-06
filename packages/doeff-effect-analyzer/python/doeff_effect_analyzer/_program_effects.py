@@ -3051,15 +3051,13 @@ def _released_name(expr: ast.expr) -> ast.Name | None:
 def _is_release(node: ast.NamedExpr) -> bool:
     """Whether ``node`` is the ``(b := None)`` of a released ``(! e)`` name (``_released_name``):
     not a value ``b`` holds for the reader, so ``b`` stays bound once (to ``W``)."""
+    from doeff_hy_bytecode_guard._records import RELEASED_BIND_PREFIX
+
     match node:
         case ast.NamedExpr(target=ast.Name(id=name), value=ast.Constant(value=None)):
-            return name.startswith(_BIND_NAME_PREFIX)
+            return name.startswith(RELEASED_BIND_PREFIX)
         case _:
             return False
-
-
-# The prefix of the name doeff-hy's open-form gives the bind it releases in place (``hy.gensym("bound")``).
-_BIND_NAME_PREFIX = "_hy_gensym_bound_"
 
 
 def _guard_globals_function() -> Any:

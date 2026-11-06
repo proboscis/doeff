@@ -460,7 +460,7 @@ def test_the_writer_and_schema_import_no_pydantic_and_work_without_it() -> None:
         """
         import dataclasses, sys, types
         import doeff_hy
-        from doeff_hy import wire_codec
+        from doeff_hy import _wire_codec as wire_codec
         from doeff_hy._json_value import OpaqueJson
 
         @dataclasses.dataclass(frozen=True, kw_only=True)
