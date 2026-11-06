@@ -117,7 +117,7 @@
    (a test shell -- a resource, so not a value type). Passes the submitted Future to submitted, and whether the work started after the gate
    (the answer of set_running_or_notify_cancel -- False for a cancelled Future) to decided."
 
-  (deff __init__ [self gate submitted decided]  ; cannot be a defk: initializing the resources of the test shell
+  (deff __init__ [self gate submitted decided]  ; defk にできない: initializing the resources of the test shell
     {:pre [(: self GatedStart) (: gate threading.Event) (: submitted (get ExternalPromise Future)) (: decided (get ExternalPromise bool))]
      :post [(: % None)]}
     "To hold the gate and two promises that receive notifications."
@@ -125,7 +125,7 @@
           self.submitted submitted
           self.decided decided))
 
-  (deff submit [self call #* args]  ; cannot be a defk: the Executor's interface (a concurrent.futures contract -- outside the VM)
+  (deff submit [self call #* args]  ; defk にできない: the Executor's interface (a concurrent.futures contract -- outside the VM)
     {:pre [(: self GatedStart) (: call Callable) (: args tuple)] :post [(: % Future)]}
     "To return a Future that runs call on a new thread after the gate opens, and to pass that Future to submitted."
     (setv future (Future))
@@ -133,7 +133,7 @@
     (.start (threading.Thread :target self.start-after-gate :args #(future call args) :name "doeff-gated-call" :daemon True))
     future)
 
-  (deff start-after-gate [self future call args]  ; cannot be a defk: the body of the work thread (outside the VM)
+  (deff start-after-gate [self future call args]  ; defk にできない: the body of the work thread (outside the VM)
     {:pre [(: self GatedStart) (: future Future) (: call Callable) (: args tuple)] :post [(: % None)]}
     "To wait for the gate to open (up to SCENARIO-LIMIT seconds) and, if the Future was not cancelled, run call and put the answer in the Future."
     (.wait self.gate SCENARIO-LIMIT)
@@ -146,7 +146,7 @@
           (.set-exception future error))))))
 
 
-(deff report-pid [fifo promise]  ; cannot be a defk: the body of a test-shell thread (waits outside the VM for the FIFO writer)
+(deff report-pid [fifo promise]  ; defk にできない: the body of a test-shell thread (waits outside the VM for the FIFO writer)
   {:pre [(: fifo str) (: promise (get ExternalPromise int))] :post [(: % None)]}
   "To read the pid the child wrote to the FIFO and pass it to the promise (the child waits to write until a reader opens, so the pid of the child that started is known without asking again)."
   (try
@@ -156,7 +156,7 @@
       (.fail promise error))))
 
 
-(deff report-pids [fifo promise]  ; cannot be a defk: the body of a test-shell thread (waits outside the VM for the FIFO writer)
+(deff report-pids [fifo promise]  ; defk にできない: the body of a test-shell thread (waits outside the VM for the FIFO writer)
   {:pre [(: fifo str) (: promise (get ExternalPromise tuple))] :post [(: % None)]}
   "To read the whitespace-separated pids the child wrote to the FIFO (the child and, for a process-group, the grandchild) and pass them to the promise (the plural form of report-pid)."
   (try

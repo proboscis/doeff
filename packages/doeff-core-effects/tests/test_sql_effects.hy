@@ -512,7 +512,7 @@
 (defclass CuttingProxy []
   "A TCP relay placed in front of the real PG (test scaffolding) -- cut closes the running connections on both sides (the form where the port closes midway because of the replacement of the DB pod)."
 
-  (defn #^ None __init__ [self #^ str host #^ int port]  ; cannot be a defk: initializing the test scaffolding's resources (socket and thread)
+  (defn #^ None __init__ [self #^ str host #^ int port]  ; defk にできない: initializing the test scaffolding's resources (socket and thread)
     "To open the relay's listener and start, for each accepted connection, a thread that connects to the destination and forwards."
     (setv self.target #(host port)
           self.listener (socket.create-server #("127.0.0.1" 0))
@@ -521,7 +521,7 @@
           self.lock (threading.Lock))
     (.start (threading.Thread :target self.accept :daemon True)))
 
-  (defn #^ None accept [self]  ; cannot be a defk: target of the test scaffolding's thread
+  (defn #^ None accept [self]  ; defk にできない: target of the test scaffolding's thread
     "To connect accepted connections to the destination and forward in both directions (ends when the listener closes)."
     (while True
       (try
@@ -532,7 +532,7 @@
       (for [[a b] [[client upstream] [upstream client]]]
         (.start (threading.Thread :target self.pipe :args #(a b) :daemon True)))))
 
-  (defn #^ socket.socket connect-upstream [self]  ; cannot be a defk: opens the test scaffolding's socket
+  (defn #^ socket.socket connect-upstream [self]  ; defk にできない: opens the test scaffolding's socket
     "To connect to the destination. If host starts with /, connect to the PostgreSQL unix socket dir (the throwaway PostgreSQL does not listen on TCP)."
     (setv #(host port) self.target)
     (if (.startswith host "/")
@@ -542,7 +542,7 @@
         upstream)
       (socket.create-connection self.target)))
 
-  (defn #^ None pipe [self #^ socket.socket a #^ socket.socket b]  ; cannot be a defk: target of the test scaffolding's thread
+  (defn #^ None pipe [self #^ socket.socket a #^ socket.socket b]  ; defk にできない: target of the test scaffolding's thread
     "To forward the bytes read from a to b (ends when either closes)."
     (try
       (while True
@@ -551,7 +551,7 @@
         (.sendall b data))
       (except [OSError] None)))
 
-  (defn #^ None cut [self]  ; cannot be a defk: operation of the test scaffolding
+  (defn #^ None cut [self]  ; defk にできない: operation of the test scaffolding
     "To close all running connections on both sides (the listener stays open -- the next connection is let through)."
     (with [self.lock]
       (for [s self.live]
@@ -559,7 +559,7 @@
         (.close s))
       (.clear self.live)))
 
-  (defn #^ None close [self]  ; cannot be a defk: cleanup of the test scaffolding
+  (defn #^ None close [self]  ; defk にできない: cleanup of the test scaffolding
     "To stop the relay."
     (.cut self)
     (.close self.listener)))
@@ -782,7 +782,7 @@
 
 (defclass SlowClickHouse [http.server.BaseHTTPRequestHandler]
   "A fake ClickHouse HTTP port that answers a query POST with 1 row [1] after delay seconds (for the test that checks whether the handler blocks the scheduler)."
-  (deff do-POST [self]  ; cannot be a defk: a plain callback called by http.server
+  (deff do-POST [self]  ; defk にできない: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
     "To discard the body and answer one JSONCompactEachRow row after 1 second."
     (.read self.rfile (int (.get self.headers "Content-Length" "0")))
@@ -794,7 +794,7 @@
     (.write self.wfile body)
     None)
 
-  (deff log-message [self format #* args]  ; cannot be a defk: a plain callback called by http.server
+  (deff log-message [self format #* args]  ; defk にできない: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
     "To keep request lines out of the test output."
     None))
@@ -851,7 +851,7 @@
      mode \"stuck\"    = a stuck server: does not answer a query until KILL QUERY arrives, and when it receives a KILL (if cancels is true) returns a cancellation answer (500, code 394 QUERY_WAS_CANCELLED)
                        for the named query. If cancels is false, the query does not stop even when a KILL is received.
    Turns each received POST into a Received and puts it into the server's received (a queue across threads)."
-  (deff do-POST [self]  ; cannot be a defk: a plain callback called by http.server
+  (deff do-POST [self]  ; defk にできない: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
     "To record the received POST and answer with the behavior of mode."
     (setv settings (dict (urllib.parse.parse-qsl (. (urllib.parse.urlsplit self.path) query)))
@@ -876,7 +876,7 @@
                                 (.write self.wfile (get failure 1))))
     None)
 
-  (deff log-message [self format #* args]  ; cannot be a defk: a plain callback called by http.server
+  (deff log-message [self format #* args]  ; defk にできない: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
     "To keep request lines out of the test output."
     None))
@@ -998,7 +998,7 @@
   (#^ bool answered-before-close))
 
 
-(deff client-closed [connection seconds]  ; cannot be a defk: socket watching called from a plain callback called by http.server
+(deff client-closed [connection seconds]  ; defk にできない: socket watching called from a plain callback called by http.server
   {:pre [(: connection socket.socket) (: seconds float)] :post [(: % bool)]
    :tags {:context "sql" :role "program"}}
   "To know whether the client closed the query's connection (watched for at most seconds seconds) without reading the byte after the body (a closed connection is readable with 0 bytes)."
@@ -1012,7 +1012,7 @@
      mode \"stuck\" = does not answer a query until KILL QUERY arrives, and when it receives a KILL returns a cancellation answer (500, code 394).
    After the answer it watches for the client's close and records whether the close came after the answer was fully written (answered-before-close) -- before the fix, the close came before the answer was written (the production
    ClickHouse crashed at the point of writing the answer to that closed connection). Turns the events seen into Seen and puts them into the server's seen (a queue across threads)."
-  (deff do-POST [self]  ; cannot be a defk: a plain callback called by http.server
+  (deff do-POST [self]  ; defk にできない: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler)] :post [(: % (type None))]}
     "To record the received POST, answer with the behavior of mode, and record the client's close."
     (setv body (.read self.rfile (int (.get self.headers "Content-Length" "0"))))
@@ -1043,7 +1043,7 @@
     (setv self.close-connection True)
     None)
 
-  (deff log-message [self format #* args]  ; cannot be a defk: a plain callback called by http.server
+  (deff log-message [self format #* args]  ; defk にできない: a plain callback called by http.server
     {:pre [(: self http.server.BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))]}
     "To keep request lines out of the test output."
     None))
@@ -1439,13 +1439,13 @@
   None)
 
 
-(defn #^ (get tuple #(str PostgresConnections)) abandoned-in-its-own-run [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; cannot be a defk: the test's entry point that runs the parent run to completion in another thread (the parent does not end inside this test's own run)
+(defn #^ (get tuple #(str PostgresConnections)) abandoned-in-its-own-run [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; defk にできない: the test's entry point that runs the parent run to completion in another thread (the parent does not end inside this test's own run)
   "To run one run to completion that ends leaving a task midway through a transaction, and return the connection lease afterwards. answerer-of = connection lease -> set of handlers."
   (import warnings)
   (import doeff [run with_handlers])
   (import doeff_core_effects [scheduled])
   (setv connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
-  (defn #^ str ask []  ; cannot be a defk: the body of a run that is run to completion in another thread
+  (defn #^ str ask []  ; defk にできない: the body of a run that is run to completion in another thread
     (with [_ (warnings.catch-warnings)]
       (warnings.simplefilter "ignore")
       (run (scheduled (with_handlers (answerer-of connections) (abandon-mid-transaction))))))
@@ -1477,7 +1477,7 @@
   (.shutdown pool))
 
 
-(defn #^ (| SqlRows SqlFailed SqlUnreachable) answer-while-terminated [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; cannot be a defk: the test's entry point that runs the handler in a run on another thread and cuts the connection from this thread
+(defn #^ (| SqlRows SqlFailed SqlUnreachable) answer-while-terminated [#^ (get Callable #([PostgresConnections] list)) answerer-of]  ; defk にできない: the test's entry point that runs the handler in a run on another thread and cuts the connection from this thread
   "To read the answer when an administrator cut the connection midway through a long query (pg_terminate_backend -- SQLSTATE 57P01).
    answerer-of = connection lease -> set of handlers (a list)."
   (import psycopg)
@@ -1487,7 +1487,7 @@
   (setv marker (.format "doeff_terminate_{}" (. (uuid.uuid4) hex))
         connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1)
         answers [])
-  (defn #^ None ask []  ; cannot be a defk: target of a thread
+  (defn #^ None ask []  ; defk にできない: target of a thread
     (.append answers (run (scheduled (with_handlers (answerer-of connections)
                                                     (SqlQuery DB (.format "SELECT pg_sleep(30) /* {} */" marker) #()))))))
   (setv worker (threading.Thread :target ask))
@@ -1853,10 +1853,10 @@
 
 (defclass CountingPool [ThreadPoolExecutor]
   "A pool that counts the number of jobs submitted to the driver's pool (child (3) of #3688 -- the number of switches to the driver's thread for one transaction)."
-  (defn #^ None __init__ [self]  ; cannot be a defk: initialization of an Executor (a contract of concurrent.futures -- outside the VM)
+  (defn #^ None __init__ [self]  ; defk にできない: initialization of an Executor (a contract of concurrent.futures -- outside the VM)
     (.__init__ (super) :max-workers 2)
     (setv self.submitted 0))
-  (defn #^ Future submit [self #^ (get Callable #(... object)) call #^ object #* args #^ object #** kwargs]  ; cannot be a defk: the entry point of an Executor (a contract of concurrent.futures -- outside the VM)
+  (defn #^ Future submit [self #^ (get Callable #(... object)) call #^ object #* args #^ object #** kwargs]  ; defk にできない: the entry point of an Executor (a contract of concurrent.futures -- outside the VM)
     (setv self.submitted (+ self.submitted 1))
     (.submit (super) call #* args #** kwargs)))
 

@@ -436,7 +436,7 @@
                    :body (.encode (.format "probe for {} could not produce an answer: {}" path reason) "utf-8")))
 
 
-(deff probe-answer [probe]  ; cannot be a defk: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
+(deff probe-answer [probe]  ; defk にできない: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
   {:pre [(: probe HttpProbe)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server" :role "foundation"}}
   "To produce the answer for one probe-entry request without touching the main body's run (scheduler, session values, Await's shared event loop) (header comment): runs answer in
    its own run, and if it failed or the answer's type is wrong, probe-failure's 500. The two answerers answer with this same function."
@@ -456,7 +456,7 @@
   (next (gfor shortcut shortcuts :if (in shortcut.marker text) shortcut) None))
 
 
-(deff ws-shortcut-outcome [shortcut ticket text]  ; cannot be a defk: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
+(deff ws-shortcut-outcome [shortcut ticket text]  ; defk にできない: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
   {:pre [(: shortcut WsShortcut) (: ticket str) (: text str)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))]
    :tags {:context "http-server" :role "foundation"}}
   "To produce the answer texts for one message that hit a ws entry without touching the main body's run (scheduler, session values, Await's shared event loop) (header comment): runs the answer
@@ -464,7 +464,7 @@
   (ws-shortcut-stage (shortcut.answer ticket text)))
 
 
-(deff ws-shortcut-stage [program]  ; cannot be a defk: like ws-shortcut-outcome, an entry where the answerer runs a closed stage in its own run outside the main body's Program
+(deff ws-shortcut-stage [program]  ; defk にできない: like ws-shortcut-outcome, an entry where the answerer runs a closed stage in its own run outside the main body's Program
   {:pre [(: program Program)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))] :tags {:context "http-server" :role "foundation"}}
   "To run one stage of a ws entry's answer (the answer Program, or the previous stage's rest) in its own run and read its answer (the two-stage answer in the header comment): for a tuple of texts it is
    a final stage; for WsShortcutAhead, a stage with continuation rest; for WsShortcutCarried, a WsShortcutAnswered of a final stage with value carried; if it failed or the type was

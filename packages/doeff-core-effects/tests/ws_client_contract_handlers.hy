@@ -108,7 +108,7 @@
   (#^ (get Queue PeerClose) closures))
 
 
-(defn :async #^ "web.WebSocketResponse" echo-peer [#^ (get Queue PeerClose) closures #^ "web.Request" request]  ; cannot be a defk: callback that aiohttp calls per request (a coroutine of the listener's loop)
+(defn :async #^ "web.WebSocketResponse" echo-peer [#^ (get Queue PeerClose) closures #^ "web.Request" request]  ; defk にできない: callback that aiohttp calls per request (a coroutine of the listener's loop)
   "One connection of the real peer (behavior in the header explanation): sends a greeting on connect, a byte message for \"bin\", a close for \"bye\", and echo for the rest. Puts the peer's (client's) close frame into
    closures."
   (import aiohttp [web WSMsgType])
@@ -135,13 +135,13 @@
   ws)
 
 
-(defn :async #^ "web.WebSocketResponse" slow-peer [#^ (get Queue PeerClose) closures #^ "web.Request" request]  ; cannot be a defk: callback that aiohttp calls per request (a coroutine of the listener's loop)
+(defn :async #^ "web.WebSocketResponse" slow-peer [#^ (get Queue PeerClose) closures #^ "web.Request" request]  ; defk にできない: callback that aiohttp calls per request (a coroutine of the listener's loop)
   "Slow connect target: delays the handshake answer by SLOW-SECONDS and then behaves the same as echo-peer (another connect ends in the meantime - for the test of concurrently progressing connects)."
   (await (asyncio.sleep SLOW-SECONDS))
   (await (echo-peer closures request)))
 
 
-(defn :async #^ Listening listen [#^ (get Queue PeerClose) closures]  ; cannot be a defk: aiohttp's real I/O (a coroutine of the listener's loop)
+(defn :async #^ Listening listen [#^ (get Queue PeerClose) closures]  ; defk にできない: aiohttp's real I/O (a coroutine of the listener's loop)
   "To start the listener on a free port of 127.0.0.1."
   (import aiohttp [web])
   (setv app (web.Application))
@@ -180,7 +180,7 @@
   port)
 
 
-(deff client-into [box]  ; cannot be a defk: callback called inside the coroutine (outside the Program) that connects as aiohttp-ws-client's client-factory
+(deff client-into [box]  ; defk にできない: callback called inside the coroutine (outside the Program) that connects as aiohttp-ws-client's client-factory
   {:pre [(: box (get Queue aiohttp.ClientSession))] :post [(: % "aiohttp.ClientSession")] :tags {:context "ws-client-test" :role "foundation"}}
   "To count the clients the real answerer makes: makes the same client as the default maker (new-client-session), puts it in the box, and then passes it on (a test reads later whether it is closed)."
   (import doeff_core_effects._aiohttp_ws_client [new-client-session])

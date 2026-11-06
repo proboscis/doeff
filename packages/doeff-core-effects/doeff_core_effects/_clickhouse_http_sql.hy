@@ -99,7 +99,7 @@
   (setv password (field :repr False))
   #^ float deadline
   (setv deadline 30.0)
-  (defn #^ None __post-init__ [self]  ; cannot be a defk: a check called when the dataclass builds it (it would not run if it returned a Program)
+  (defn #^ None __post-init__ [self]  ; defk にできない: a check called when the dataclass builds it (it would not run if it returned a Program)
     ;; 0 means "no deadline" in ClickHouse -- the server would not refuse, so the client's wait would run out first, making a pair that leaves the query behind.
     (when (or (isinstance self.deadline bool) (not (isinstance self.deadline #(int float))) (not (< 0 self.deadline math.inf)))
       (raise (ValueError f"ClickHouseDatabase.deadline must be a finite number of seconds > 0, got {self.deadline !r}")))))
@@ -112,7 +112,7 @@
   (#^ float deadline)
   (#^ float wait)
   (#^ float grace)
-  (defn #^ None __post-init__ [self]  ; cannot be a defk: a check called when the dataclass builds it (it would not run if it returned a Program)
+  (defn #^ None __post-init__ [self]  ; defk にできない: a check called when the dataclass builds it (it would not run if it returned a Program)
     (when (not (< 0 self.deadline self.wait math.inf))
       (raise (ValueError f"ClickHouseWaits.wait must outlast the deadline, got deadline {self.deadline !r} and wait {self.wait !r}")))
     (when (not (< 0 self.grace math.inf))
@@ -167,14 +167,14 @@
    settling has begun (round trips after that are not put on the ledger = not started). Touched under a lock between the round-trip thread and the end procedure. It is a resource keeper, so it is not
    a value type."
 
-  (deff __init__ [self]  ; cannot be a defk: initialization of a resource class
+  (deff __init__ [self]  ; defk にできない: initialization of a resource class
     {:pre [(: self RoundTrips)] :post [(: % "None")]}
     "To start with an empty ledger."
     (setv self.lock (threading.Lock)
           self.running {}
           self.closing False))
 
-  (deff enter [self request]  ; cannot be a defk: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
+  (deff enter [self request]  ; defk にできない: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
     {:pre [(: self RoundTrips) (: request ClickHouseRequest)] :post [(: % (| threading.Event None))]}
     "To put a round trip on the ledger before starting it, and to receive the marker raised at the end of the round trip (None after settling has begun and nothing is put -- the caller does not start the round trip)."
     (with [_ self.lock]
@@ -184,7 +184,7 @@
               (setv (get self.running request.query-id) #(request done))
               done))))
 
-  (deff leave [self request done]  ; cannot be a defk: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
+  (deff leave [self request done]  ; defk にできない: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
     {:pre [(: self RoundTrips) (: request ClickHouseRequest) (: done threading.Event)] :post [(: % "None")]}
     "To remove a round trip that closed its connection from the ledger and raise the end marker."
     (with [_ self.lock]
@@ -192,7 +192,7 @@
     (.set done)
     None)
 
-  (deff close [self]  ; cannot be a defk: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
+  (deff close [self]  ; defk にできない: the ledger's entry point touched by both the round-trip thread and the finishing procedure (a resource outside the VM)
     {:pre [(: self RoundTrips)] :post [(: % tuple)]}
     "At the start of settling, to refuse later round trips and answer the running round trips (pairs of request and end marker)."
     (with [_ self.lock]
@@ -526,14 +526,14 @@
   answer)
 
 
-(deff submit-exit-kill [request grace]  ; cannot be a defk: a part of the entry point called from outside the VM at process end (atexit, signal receiver)
+(deff submit-exit-kill [request grace]  ; defk にできない: a part of the entry point called from outside the VM at process end (atexit, signal receiver)
   {:pre [(: request ClickHouseRequest) (: grace float)] :post [(: % Future)]
    :tags {:context "sql" :role "foundation"}}
   "In settling at the end of the process, to fire the KILL QUERY of one round trip on a thread of CLICKHOUSE-THREADS and run it in parallel with the KILLs of other round trips."
   (.submit CLICKHOUSE-THREADS (fn [] (run-detached (clickhouse-exit-kill request grace)))))
 
 
-(deff settle-round-trips [settle-seconds grace]  ; cannot be a defk: the entry point called from outside the VM at process end (atexit, signal receiver)
+(deff settle-round-trips [settle-seconds grace]  ; defk にできない: the entry point called from outside the VM at process end (atexit, signal receiver)
   {:pre [(: settle-seconds float) (: grace float)] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
   "To settle running round trips before the process ends (header comment): refuse later round trips, wait settle-seconds for round trips to end by themselves, fire
@@ -552,7 +552,7 @@
   (tuple (gfor #(request done) stuck :if (not (.is-set done)) request)))
 
 
-(deff settle-at-exit []  ; cannot be a defk: a plain callback called by Python's exit (atexit)
+(deff settle-at-exit []  ; defk にできない: a plain callback called by Python's exit (atexit)
   {:pre [] :post [(: % "None")]
    :tags {:context "sql" :role "foundation"}}
   "To settle running round trips when the Program ends and Python ends (header comment -- daemon round-trip threads vanish without being waited for)."
@@ -565,12 +565,12 @@
    A process with a receiver installed (os-signal-stop-handler etc.) replaces the receiver, so this does not work (then atexit settles). It is a resource keeper,
    so it is not a value type."
 
-  (deff __init__ [self]  ; cannot be a defk: initialization of a resource class
+  (deff __init__ [self]  ; defk にできない: initialization of a resource class
     {:pre [(: self SettleThenTerminate)] :post [(: % "None")]}
     "To start with the marker that no signal has been received yet."
     (setv self.received False))
 
-  (deff receive [self number frame]  ; cannot be a defk: Python's signal receiver (a plain callback on the main thread)
+  (deff receive [self number frame]  ; defk にできない: Python's signal receiver (a plain callback on the main thread)
     {:pre [(: self SettleThenTerminate) (: number int) (: frame (| types.FrameType None))] :post [(: % "None")]}
     "On receiving SIGTERM, to settle round trips, return to the default receiver, and end with the same signal (a second SIGTERM that arrives during settling only
      makes settling wait, and does not end it earlier)."
@@ -582,7 +582,7 @@
     None))
 
 
-(deff install-exit-settle []  ; cannot be a defk: the entry point that installs Python's exit hook and the signal receiver just once when the module is loaded
+(deff install-exit-settle []  ; defk にできない: the entry point that installs Python's exit hook and the signal receiver just once when the module is loaded
   {:pre [] :post [(: % "None")]
    :tags {:context "sql" :role "foundation"}}
   "To settle running round trips on the two paths at the end of the process (Python's exit and the default SIGTERM) (header comment). The SIGTERM receiver is installed only in

@@ -38,12 +38,12 @@
    while the receiver holds it. It is a resource handler, so not a value type."
   (setv __slots__ #("_mut_value"))
 
-  (deff __init__ [self value]  ; cannot be a defk: initialization of a resource class
+  (deff __init__ [self value]  ; defk にできない: initialization of a resource class
     {:pre [(: self Delivered) (: value "answer of the job")] :post [(: % "None")]}
     "To start holding the answer."
     (setv self._mut-value value))
 
-  (deff take [self]  ; cannot be a defk: the box's entry touched by the scheduler's thread and the cancellation callback (a resource outside the VM)
+  (deff take [self]  ; defk にできない: the box's entry touched by the scheduler's thread and the cancellation callback (a resource outside the VM)
     {:pre [(: self Delivered)] :post [(: % "answer of the job")]}
     "To hand over the answer once and drop the box's reference (None the second time)."
     (setv value self._mut-value)
@@ -51,19 +51,19 @@
     value))
 
 
-(deff run-detached [program]  ; cannot be a defk: entry run on the Executor's thread (starts a new VM from outside the VM)
+(deff run-detached [program]  ; defk にできない: entry run on the Executor's thread (starts a new VM from outside the VM)
   {:pre [(: program "Program that calls the driver")] :post [(: % "answer of program")]}
   "To turn a Program that holds blocking calls (the driver's statement procedure) into a value in a new VM on the Executor's thread."
   (.run (PyVM) program))
 
 
-(deff keep-nothing [_value]  ; cannot be a defk: entry of cleanup run on the Executor's thread (cleanup for an answer that holds nothing)
+(deff keep-nothing [_value]  ; defk にできない: entry of cleanup run on the Executor's thread (cleanup for an answer that holds nothing)
   {:pre [(: _value "the answer that did not arrive")] :post [(: % "None")]}
   "Cleanup for when the answer that did not reach a cancelled waiter holds no resource (does nothing)."
   None)
 
 
-(deff keep-going []  ; cannot be a defk: entry of a stopping method run on the Executor's thread (the default for work with nothing to stop)
+(deff keep-going []  ; defk にできない: entry of a stopping method run on the Executor's thread (the default for work with nothing to stop)
   {:pre [] :post [(: % "None")]}
   "The way of stopping for when there is no means to stop running work once the waiter is cancelled (does nothing - the work runs to completion and its answer goes to abandon)."
   None)
@@ -72,12 +72,12 @@
 (defclass ThreadPerCall [Executor]
   "An Executor that starts one daemon thread per call (header comment). It is a resource handler, so not a value type."
 
-  (deff __init__ [self [on-start None]]  ; cannot be a defk: initialization of a resource class
+  (deff __init__ [self [on-start None]]  ; defk にできない: initialization of a resource class
     {:pre [(: self ThreadPerCall) (: on-start (| None (get Callable #([] None))))] :post [(: % "None")]}
     "To hold a hand (on-start - lowering the thread's IO priority, etc.) called once before the thread runs the call (None = do nothing)."
     (setv self.on-start on-start))
 
-  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
+  (deff submit [self call #* args]  ; defk にできない: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self ThreadPerCall) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
     "To run call on a new thread and hand over its end as a Future (a Future cancelled before starting is not run; on-start is called inside the thread before call)."
     (setv future (Future))
@@ -98,7 +98,7 @@
   "An Executor that hands a call to an idle daemon thread and starts one thread only when none is idle (header comment). It is a resource handler, so not a value type.
    idle = the number of threads waiting for a call that have not yet been assigned one. started = the number of threads started (read by tests)."
 
-  (deff __init__ [self [idle-seconds _IDLE-SECONDS]]  ; cannot be a defk: initialization of a resource class
+  (deff __init__ [self [idle-seconds _IDLE-SECONDS]]  ; defk にできない: initialization of a resource class
     {:pre [(: self ReusedThreads) (: idle-seconds float)] :post [(: % "None")]}
     "To hold the seconds an idle thread waits for the next call, and start the call queue and the counts empty."
     (setv self.idle-seconds idle-seconds
@@ -107,7 +107,7 @@
           self.idle 0
           self.started 0))
 
-  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
+  (deff submit [self call #* args]  ; defk にできない: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self ReusedThreads) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
     "To put call in the queue, start one thread if there is no idle one, and hand over its end as a Future (a Future cancelled before starting is not run).
      Threads are started outside the lock - the wait to start one does not stall other calls or the count of idle threads."
@@ -122,7 +122,7 @@
       (.start (threading.Thread :target self.serve :name "doeff-offloaded-call" :daemon True)))
     future)
 
-  (deff serve [self]  ; cannot be a defk: the thread's body (outside the VM - takes calls from the queue and runs them)
+  (deff serve [self]  ; defk にできない: the thread's body (outside the VM - takes calls from the queue and runs them)
     {:pre [(: self ReusedThreads)] :post [(: % "None")]}
     "To run the calls in the queue one at a time, and end if idle-seconds pass while idle. When the wait times out, look at the queue once more under the lock - do not drop a call that was
      assigned to this thread at the same moment it timed out (what submit placed after decrementing idle). It is counted as idle before writing the answer to the Future - so that even if the caller that
@@ -170,7 +170,7 @@
    not started is removed, an answer produced before or after the cancellation goes to abandon (cleanup run on the Executor - returning a leased connection, etc.), and work that is running with no answer yet
    goes to interrupt (a way of stopping run on the Executor), exactly once for either one."
 
-  (deff __init__ [self pool abandon interrupt]  ; cannot be a defk: initialization of a resource class
+  (deff __init__ [self pool abandon interrupt]  ; defk にできない: initialization of a resource class
     {:pre [(: self Handoff) (: pool Executor) (: abandon (get Callable #([object] None))) (: interrupt (get Callable #([] None)))]
      :post [(: % "None")]}
     ;; The lock is an RLock that can be re-entered from the same thread: when give-up removes unstarted work while holding the lock, Future.cancel calls the completion
@@ -185,7 +185,7 @@
           self.abandoned False
           self.delivered NOT-DELIVERED))
 
-  (deff deliver [self promise future]  ; cannot be a defk: completion callback called from the job's thread (outside the VM)
+  (deff deliver [self promise future]  ; defk にできない: completion callback called from the job's thread (outside the VM)
     {:pre [(: self Handoff) (: promise "scheduler ExternalPromise") (: future Future)] :post [(: % "None")]}
     "To hand the end of the job to the promise (an answer produced after cancellation goes to cleanup)."
     (with [_ self.lock]
@@ -196,7 +196,7 @@
         True (do (setv self.delivered (Delivered (.result future)))
                  (.complete promise self.delivered)))))
 
-  (deff give-up [self job]  ; cannot be a defk: the scheduler's cancellation callback (on_cancel - outside the VM), and the cleanup for when the wait exits by cancellation
+  (deff give-up [self job]  ; defk にできない: the scheduler's cancellation callback (on_cancel - outside the VM), and the cleanup for when the wait exits by cancellation
     {:pre [(: self Handoff) (: job Future)] :post [(: % "None")]}
     "When the waiter is cancelled, remove work that has not started, send the answer already handed over to cleanup, and send work that is running with no answer yet to the stopping method
      (however many times it is called, either cleanup or the stopping method exactly once). The stopping method is run on the Executor so that even if stopping needs a wait (grace period), it does not

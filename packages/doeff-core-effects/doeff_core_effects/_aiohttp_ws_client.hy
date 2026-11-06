@@ -60,12 +60,12 @@
   (#^ aiohttp.ClientWebSocketResponse ws))
 
 
-(defn #^ aiohttp.ClientSession new-client-session []  ; cannot be a defk: a client maker called inside the connecting coroutine (on the running event loop) (the default of client-factory)
+(defn #^ aiohttp.ClientSession new-client-session []  ; defk にできない: a client maker called inside the connecting coroutine (on the running event loop) (the default of client-factory)
   "To make the aiohttp client for one connection: it holds the limit up to connecting and the limit for the handshake answer, and sets no total (a connected ws is not cut by time)."
   (aiohttp.ClientSession :timeout (aiohttp.ClientTimeout :total None :connect CONNECT-SECONDS :sock-read HANDSHAKE-SECONDS)))
 
 
-(defn #^ str failure-detail [#^ BaseException error]  ; cannot be a defk: called inside an aiohttp coroutine (outside a Program)
+(defn #^ str failure-detail [#^ BaseException error]  ; defk にできない: called inside an aiohttp coroutine (outside a Program)
   "To decide the reason text for a failed connect / a drop: only the exception type name and, if there is an answer, its status (the protocol record boundary in the opening note -- the exception text may carry the request
    url or headers, so it is not included. Not used for branching)."
   (if (isinstance error aiohttp.ClientResponseError)
@@ -74,7 +74,7 @@
 
 
 (defn :async #^ (| OpenLink WsConnectFailed) open-link [#^ (get Callable #([] aiohttp.ClientSession)) client-factory #^ str link #^ str url
-                                                         #^ (get tuple #(HttpHeader ...)) headers]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+                                                         #^ (get tuple #(HttpHeader ...)) headers]  ; defk にできない: real aiohttp I/O (a coroutine on the shared event loop)
   "To connect to url (WsConnect in the opening note): make a client for this connection only and ws_connect. WsConnectFailed when refused or unreachable.
    When leaving without the answer being decided as an OpenLink (refused, unreachable, CancelledError), ws and client are closed in finally and not left open."
   (setv session (client-factory))
@@ -96,7 +96,7 @@
   outcome)
 
 
-(defn :async #^ WsFrame receive-frame [#^ OpenLink open]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+(defn :async #^ WsFrame receive-frame [#^ OpenLink open]  ; defk にできない: real aiohttp I/O (a coroutine on the shared event loop)
   "To wait for the next frame of the connection with the id (WsReceive in the opening note). Wait for the next one during ping / pong / the middle of closing."
   (while True
     (setv message (await (.receive open.ws)))
@@ -109,12 +109,12 @@
       _ None)))
 
 
-(defn #^ (| int None) lost-code [#^ aiohttp.ClientWebSocketResponse ws]  ; cannot be a defk: real I/O reading the state of the aiohttp socket
+(defn #^ (| int None) lost-code [#^ aiohttp.ClientWebSocketResponse ws]  ; defk にできない: real I/O reading the state of the aiohttp socket
   "To read the status code of a connection that ended without a close frame (the close_code aiohttp set -- None if absent)."
   (if (is ws.close-code None) None (int ws.close-code)))
 
 
-(defn :async #^ (| WsSent WsLinkClosed) send-text [#^ OpenLink open #^ str text]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+(defn :async #^ (| WsSent WsLinkClosed) send-text [#^ OpenLink open #^ str text]  ; defk にできない: real aiohttp I/O (a coroutine on the shared event loop)
   "To send one text message to the connection with the id (WsSend in the opening note). A closed or unwritable connection is WsLinkClosed."
   (when open.ws.closed
     (return (WsLinkClosed :link open.link :code (lost-code open.ws) :reason "")))
@@ -125,7 +125,7 @@
   (WsSent :link open.link))
 
 
-(defn :async #^ WsLinkClosed close-link [#^ OpenLink open #^ int code #^ str reason]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+(defn :async #^ WsLinkClosed close-link [#^ OpenLink open #^ int code #^ str reason]  ; defk にできない: real aiohttp I/O (a coroutine on the shared event loop)
   "To close the connection with the id with a status code and reason (WsDisconnect in the opening note): send a close frame, wait up to CLOSE-SECONDS for the peer's close, and close the client too."
   (try
     (await (.close open.ws :code code :message (.encode reason "utf-8")))
@@ -135,7 +135,7 @@
   (WsLinkClosed :link open.link :code code :reason reason))
 
 
-(defn :async #^ None drop-link [#^ OpenLink open]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+(defn :async #^ None drop-link [#^ OpenLink open]  ; defk にできない: real aiohttp I/O (a coroutine on the shared event loop)
   "To close the client of a finished connection (cleanup after the peer closed / it dropped)."
   (await (.close open.session))
   None)
@@ -201,7 +201,7 @@
     (resume closing)))
 
 
-(deff aiohttp-ws-client [* [client-factory new-client-session]]  ; cannot be a defk: called outside a Program, the maker of the installer that wraps the responder on
+(deff aiohttp-ws-client [* [client-factory new-client-session]]  ; defk にできない: called outside a Program, the maker of the installer that wraps the responder on
   {:pre [(: client-factory (get Callable #([] aiohttp.ClientSession)))] :post [(: % (of Callable [(| Program EffectBase)] Program))] :tags {:context "ws-client" :role "foundation"}}
   "To make the installer of the real responder (opening note): wrap the program it is put over with closing-links, closing connections left open at the end of the scope.
    client-factory = the per-connection client maker (default new-client-session)."

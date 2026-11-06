@@ -32,7 +32,7 @@
 (val LOADS-LOCK (threading.Lock))
 
 
-(deff shift-load [pool queued running started waited ran]  ; cannot be a defk: a write outside the VM, also called from pool threads (work entry and exit) and the completion callback
+(deff shift-load [pool queued running started waited ran]  ; defk にできない: a write outside the VM, also called from pool threads (work entry and exit) and the completion callback
   {:pre [(: pool Executor) (: queued int) (: running int) (: started int) (: waited float) (: ran float)] :post [(: % None)]}
   "Add the deltas to the pool's load snapshot and replace it (see the header comment -- the queued and running counts move in the same single replacement)."
   (with [LOADS-LOCK]
@@ -43,14 +43,14 @@
   None)
 
 
-(deff load-of [pool]  ; cannot be a defk: a one-line read of the store by the responder clause (a store outside the VM -- read inside the same lock as the writes)
+(deff load-of [pool]  ; defk にできない: a one-line read of the store by the responder clause (a store outside the VM -- read inside the same lock as the writes)
   {:pre [(: pool Executor)] :post [(: % ComputeLoad)]}
   "Read the current snapshot of the pool's load (a pool that has had no work submitted gets IDLE-LOAD)."
   (with [LOADS-LOCK]
     (.get LOADS pool IDLE-LOAD)))
 
 
-(deff settle [pool promise future]  ; cannot be a defk: the completion callback called from a pool thread (the body of the function passed to add-done-callback, outside the VM)
+(deff settle [pool promise future]  ; defk にできない: the completion callback called from a pool thread (the body of the function passed to add-done-callback, outside the VM)
   {:pre [(: pool Executor) (: promise ExternalPromise) (: future Future)] :post [(: % None)]}
   "Hand the end of the pool's work to the promise (computed turns exceptions into values, so only BaseException can fail here). Work cancelled before starting is
    removed from the queue (it never started running, so it is not in the running and waiting totals)."
@@ -60,7 +60,7 @@
     True (.complete promise (.result future))))
 
 
-(deff run-computed [program pool submitted]  ; cannot be a defk: the entry run on a pool thread (passed to pool.submit -- starts a new VM from outside the VM)
+(deff run-computed [program pool submitted]  ; defk にできない: the entry run on a pool thread (passed to pool.submit -- starts a new VM from outside the VM)
   {:pre [(: program Program) (: pool Executor) (: submitted float)] :post [(: % "the answer of program (what computed turned the exception into a value)")]}
   "Turn the program's answer into a value on a pool thread, and write the start and end to the pool's load (waited seconds = from the submit time `submitted` to the start time,
    ran seconds = from the start time to the finish time)."

@@ -234,7 +234,7 @@
   answers)
 
 
-(deff visit-in-thread [address requests outbox]  ; cannot be a defk: a callback that threading.Thread calls in a separate thread
+(deff visit-in-thread [address requests outbox]  ; defk にできない: a callback that threading.Thread calls in a separate thread
   {:pre [(: address HttpAddress) (: requests tuple) (: outbox queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
   "Run the real peer and put the sequence of answers (or the exception on failure) in outbox."
@@ -262,7 +262,7 @@
                   (resume got))))))
 
 
-(deff upstream-app [environ start-response]  ; cannot be a defk: a WSGI callback that wsgiref calls per request
+(deff upstream-app [environ start-response]  ; defk にできない: a WSGI callback that wsgiref calls per request
   {:pre [(: environ dict) (: start-response Callable)] :post [(: % list)]
    :tags {:context "http-server-test" :role "foundation"}}
   "The real relay target: answers every request with UPSTREAM-STATUS and UPSTREAM-BODY."

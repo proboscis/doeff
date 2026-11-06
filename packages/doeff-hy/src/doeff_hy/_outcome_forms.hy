@@ -38,7 +38,7 @@
 (setv CATCH-ALL-NAMES #{"_" "object" "Exception" "BaseException"})
 
 
-(deff head-name [form]  ; cannot be a defk: a function called at macro expansion time
+(deff head-name [form]  ; defk にできない: a function called at macro expansion time
   {:pre [(: form Object)] :post [(: % (| str None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The name of the head symbol of form (None if it is not an expression or the head is not a symbol) — to dispatch by shape."
@@ -46,14 +46,14 @@
     (str (get form 0))))
 
 
-(deff source-of [form]  ; cannot be a defk: a function called at macro expansion time
+(deff source-of [form]  ; defk にできない: a function called at macro expansion time
   {:pre [(: form Object)] :post [(: % str)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The spelling of form to show in error messages."
   (.lstrip (hy.repr form) "'"))
 
 
-(deff performs-effect? [form]  ; cannot be a defk: a function called at macro expansion time
+(deff performs-effect? [form]  ; defk にできない: a function called at macro expansion time
   {:pre [(: form Object)] :post [(: % bool)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "Whether form performs an effect (whether it contains `!`, `<-`, or `yield` — inside quote is not counted). To check places that hold only a value expression (the failure of `:absent` and
@@ -71,7 +71,7 @@
 (setv PLAIN-VALUE-SYMBOLS #{"None" "True" "False"})
 
 
-(deff plain-value-of [expr]  ; cannot be a defk: a function called at macro expansion time
+(deff plain-value-of [expr]  ; defk にできない: a function called at macro expansion time
   {:pre [(: expr Object)] :post [(: % (| Object None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "One literal value that the bound expression expr (the expression of `<-`, the content of `!`) can evaluate to (None if none) — to refuse at expansion time a bind that
@@ -90,7 +90,7 @@
       _ None)))
 
 
-(deff plain-value-refusal [expr]  ; cannot be a defk: a function called at macro expansion time
+(deff plain-value-refusal [expr]  ; defk にできない: a function called at macro expansion time
   {:pre [(: expr Object)] :post [(: % (| str None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The refusal message if there is a literal value in the value position of the bound expression expr, otherwise None — the open-form that builds the bind shape (the one point <- and ! pass through)
@@ -102,7 +102,7 @@
          ") or place it with val without binding: " (source-of expr)))))
 
 
-(deff split-absent [form]  ; cannot be a defk: a function called at macro expansion time
+(deff split-absent [form]  ; defk にできない: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % SplitBind)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "To separate the trailing `:absent failure` of (<- … :absent failure) (R6). Any key other than `:absent`, and a failure expression that performs an effect
@@ -121,7 +121,7 @@
     (SplitBind :core core :absent (when suffix? (get form -1)))))
 
 
-(deff open-form [expr absent [helpers None] [bound None]]  ; cannot be a defk: a function called at macro expansion time
+(deff open-form [expr absent [helpers None] [bound None]]  ; defk にできない: a function called at macro expansion time
   {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| str None)) (: bound (| Symbol None))]
    :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
@@ -167,7 +167,7 @@
          (yield ~(answer)))))
 
 
-(deff bind-form [form [helpers None]]  ; cannot be a defk: a function called at macro expansion time
+(deff bind-form [form [helpers None]]  ; defk にできない: a function called at macro expansion time
   {:pre [(: form Expression) (: helpers (| str None))] :post [(: % Object)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The expansion of one (<- …) form — the one point shared by the <- macro and the macros that read the body first (do!, defp, deftest, for/do, defhandler clauses, defk).
@@ -184,7 +184,7 @@
 ;; on-raise(R7)
 ;; ---------------------------------------------------------------------------
 
-(deff pattern-types [pattern]  ; cannot be a defk: a function called at macro expansion time
+(deff pattern-types [pattern]  ; defk にできない: a function called at macro expansion time
   {:pre [(: pattern Object)] :post [(: % list)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The list of forms of the failure types that one on-raise pattern names. Accepts only a type pattern `(Type …)` and its or `(| (A …) (B …))`, and
@@ -200,7 +200,7 @@
                     "(match-anything forms and Python exceptions are not accepted: ADR-DOE-CORE-EFFECTS-003 R7)"))))))
 
 
-(deff on-raise-form [program clauses]  ; cannot be a defk: a function called at macro expansion time
+(deff on-raise-form [program clauses]  ; defk にできない: a function called at macro expansion time
   {:pre [(: program Object) (: clauses tuple)] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The expansion of (on-raise body pattern [:if guard] target …) (R7). For each receiver, make a RaiseCase of the pattern's type and a function that returns Some(target) if the pattern matches and
@@ -240,7 +240,7 @@
 ;; absent-as(R8)
 ;; ---------------------------------------------------------------------------
 
-(deff mark-direct-binds [node token]  ; cannot be a defk: a function called at macro expansion time
+(deff mark-direct-binds [node token]  ; defk にできない: a function called at macro expansion time
   {:pre [(: node Object) (: token Symbol)] :post [(: % Object)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "To wrap the <- and ! expressions written directly in the literal text of absent-as with (direct-bind mark expr) — absent-as resumes with the default only the Absent raised by those binds
@@ -266,7 +266,7 @@
       _ node)))
 
 
-(deff absent-as-form [default program]  ; cannot be a defk: a function called at macro expansion time
+(deff absent-as-form [default program]  ; defk にできない: a function called at macro expansion time
   {:pre [(: default Object) (: program Object)] :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "The expansion of (absent-as default body) (R8). Make a mark at each evaluation, and if the body is (do! …), wrap the <- and ! in its literal text with the mark.
