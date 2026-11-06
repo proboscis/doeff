@@ -135,6 +135,7 @@ class WorldView:
     leaving: bool = False
     memory_tight: bool = False
     memory_killed: frozenset[tuple[str, int]] = frozenset()
+    jobs_room: int | None = None
     program_gaps: tuple[ProgramGap, ...] = ()
 
 class StopStage(Enum):
@@ -211,6 +212,7 @@ class WarmChildMark:
     vm_live: tuple[int, ...]
     services: bool = False
     orphans: bool = False
+    pid: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WarmMarkUnreadable:
@@ -240,6 +242,7 @@ class WarmChildView:
     stop: StopProgress | None = None
     refusals: int = 0
     fork_refused: bool = False
+    size_bytes: int | None = None
 
 class Outcome(Enum):
     EXITED = "exited"
@@ -295,6 +298,7 @@ class WorkerPolicy:
     warm_services: bool = False
     warm_services_min: int = 3
     warm_table_children: bool = True
+    warm_child_size_bytes: int = 587202560
     memory_kill_limit: int = 5
     memory_kill_reset_ms: int = 600000
 
