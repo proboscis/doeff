@@ -51,9 +51,9 @@
 
 (deftest test-needs-must-be-a-set-of-string-literals
   (<- a (refusal "(defk f [] {:pre [] :post [(: % int)] :needs [\"pg-network\"]} 1)"))
-  (assert (in ":needs は能力の名の文字列の集合" a) a)
+  (assert (in ":needs must be a set of strings naming capabilities" a) a)
   (<- b (refusal "(defk f [] {:pre [] :post [(: % int)] :needs #{network}} 1)"))
-  (assert (in ":needs の要素は空でない文字列の literal" b) b))
+  (assert (in "elements of :needs must be non-empty string literals" b) b))
 
 
 (deftest test-defsystem-keeps-a-static-description
@@ -272,15 +272,15 @@
   ;; 反例: `:` の無い綴り・2 つある綴り・片側が空の綴り・集合でない値・文字列でない要素・同じ鍵の 2 回目は展開で断る — linter が
   ;; 実行せずに読める綴りだけを通すため(#3495)。置き場の名そのものは照らさない(使い手の語彙)。
   (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{\"orders\"}))"))
-  (assert (in ":reads の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)" a) a)
+  (assert (in "the spelling of :reads is <store>:<name> (exactly one `:`, both sides non-empty)" a) a)
   (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :writes #{\"store:\"}))"))
-  (assert (in ":writes の綴りは <置き場>:<名>" b) b)
+  (assert (in "the spelling of :writes is <store>:<name>" b) b)
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :writes #{\"store:orders:x\"}))"))
-  (assert (in ":writes の綴りは <置き場>:<名>" c) c)
+  (assert (in "the spelling of :writes is <store>:<name>" c) c)
   (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads [\"store:orders\"]))"))
-  (assert (in ":reads は置き場の名の文字列の集合" d) d)
+  (assert (in ":reads must be a set of strings naming stores" d) d)
   (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{orders}))"))
-  (assert (in ":reads の要素は文字列の literal" e) e)
+  (assert (in "elements of :reads must be string literals" e) e)
   (<- f (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{} :reads #{}))"))
   (assert (in "鍵 :reads が 2 回ある" f) f))
 
@@ -305,9 +305,9 @@
 (deftest test-defsystem-refuses-served-entries-that-are-not-store-colon-entry
   ;; 反例: :serves も :reads と同じ綴りの検めを通る — `:` の無い綴り・集合でない値・同じ鍵の 2 回目は展開で断る。
   (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves #{\"http\"}))"))
-  (assert (in ":serves の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)" a) a)
+  (assert (in "the spelling of :serves is <store>:<name> (exactly one `:`, both sides non-empty)" a) a)
   (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves [\"shop:http\"]))"))
-  (assert (in ":serves は置き場の名の文字列の集合" b) b)
+  (assert (in ":serves must be a set of strings naming stores" b) b)
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves #{\"shop:http\"} :serves #{\"shop:http\"}))"))
   (assert (in "鍵 :serves が 2 回ある" c) c))
 
