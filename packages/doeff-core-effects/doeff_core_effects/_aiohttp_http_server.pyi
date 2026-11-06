@@ -6,6 +6,7 @@ from doeff_hy._static_types import Handler as _Handler
 import asyncio as asyncio
 from collections import deque as deque
 from collections.abc import Coroutine as Coroutine
+from concurrent.futures import ThreadPoolExecutor as ThreadPoolExecutor
 from typing import TypeVar as TypeVar
 from pathlib import Path as Path
 import aiohttp as aiohttp
@@ -65,6 +66,11 @@ from doeff_core_effects._http_server_effects import WsShortcutFailed as WsShortc
 from doeff_core_effects._http_server_effects import ws_shortcut_for as ws_shortcut_for
 from doeff_core_effects._http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
 from doeff_core_effects._http_server_effects import ws_shortcut_stage as ws_shortcut_stage
+from doeff_core_effects._http_server_effects import HttpProbeAnswer as HttpProbeAnswer
+from doeff_core_effects._http_server_effects import HttpShortcut as HttpShortcut
+from doeff_core_effects._http_server_effects import HttpShortcutFailed as HttpShortcutFailed
+from doeff_core_effects._http_server_effects import http_shortcut_for as http_shortcut_for
+from doeff_core_effects._http_server_effects import http_shortcut_outcome as http_shortcut_outcome
 from aiohttp.web_protocol import PayloadAccessError as PayloadAccessError
 from doeff import run as run
 FILE_CHUNK_BYTES: int
@@ -167,6 +173,8 @@ class WebEdge:
     ws_send_drain: Incomplete
     probes: Incomplete
     ws_shortcuts: Incomplete
+    http_shortcuts: Incomplete
+    shortcut_worker: Incomplete
     count: Incomplete
     dropped_answers: Incomplete
 
@@ -182,7 +190,7 @@ class WebEdge:
     def across(self, coroutine: Coroutine[object, object, Carried]) -> Carried:
         ...
 
-    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple[HttpProbe, ...], share_port: bool, ws_shortcuts: tuple[WsShortcut, ...]) -> HttpAddress:
+    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple[HttpProbe, ...], share_port: bool, ws_shortcuts: tuple[WsShortcut, ...], http_shortcuts: tuple[HttpShortcut, ...]) -> HttpAddress:
         ...
 
     def take_arrival(self) -> HttpEvent | None:
@@ -198,6 +206,9 @@ class WebEdge:
         ...
 
     def answer_probe(self, probe: HttpProbe) -> web.Response:
+        ...
+
+    def answer_shortcut(self, request: web.Request, early: HttpBodyOutcome | None) -> web.Response | None:
         ...
 
     def settle(self, ticket: str, command: HttpCommand) -> None:

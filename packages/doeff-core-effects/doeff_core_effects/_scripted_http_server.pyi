@@ -59,6 +59,10 @@ from doeff_core_effects._http_server_effects import WsShortcutFailed as WsShortc
 from doeff_core_effects._http_server_effects import ws_shortcut_for as ws_shortcut_for
 from doeff_core_effects._http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
 from doeff_core_effects._http_server_effects import ws_shortcut_stage as ws_shortcut_stage
+from doeff_core_effects._http_server_effects import HttpShortcut as HttpShortcut
+from doeff_core_effects._http_server_effects import HttpShortcutFailed as HttpShortcutFailed
+from doeff_core_effects._http_server_effects import http_shortcut_for as http_shortcut_for
+from doeff_core_effects._http_server_effects import http_shortcut_outcome as http_shortcut_outcome
 from doeff_core_effects._file_effects import ReadBytes as ReadBytes
 from doeff_core_effects._file_effects import FileFailed as FileFailed
 CLOSED_REASON: str
@@ -116,6 +120,9 @@ def probe_hit(probes: tuple[HttpProbe, ...], event: HttpRequestArrived | WsTextA
 def probe_served(arrival: HttpRequestArrived, answer: HttpProbeAnswer) -> _Program[HttpServed, object]:
     ...
 
+def shortcut_served(requests: tuple[HttpShortcut, ...], bodies: dict[str, ScriptedBody], event: HttpRequestArrived | WsTextArrived | WsBinaryArrived | WsClosed | WsOpened) -> _Program[HttpServed | None, object]:
+    ...
+
 @dataclass(frozen=True, kw_only=True)
 class ScriptTake:
     event: HttpRequestArrived | WsTextArrived | WsBinaryArrived | WsClosed | WsOpened | None
@@ -127,7 +134,7 @@ class ScriptTake:
     readable: dict
     arrived: dict
 
-def script_take(mouths: tuple[HttpProbe, ...], shortcuts: tuple[WsShortcut, ...], limit: int, stalled: frozenset, listening: bool, pending: tuple, served: tuple, opened: frozenset, tally: WsSendReport, backlog: dict, readable: dict, arrived: dict) -> _Program[ScriptTake, object]:
+def script_take(mouths: tuple[HttpProbe, ...], shortcuts: tuple[WsShortcut, ...], requests: tuple[HttpShortcut, ...], bodies: dict, limit: int, stalled: frozenset, listening: bool, pending: tuple, served: tuple, opened: frozenset, tally: WsSendReport, backlog: dict, readable: dict, arrived: dict) -> _Program[ScriptTake, object]:
     ...
 
 def scripted_http_server(script: HttpScript) -> _Handler:

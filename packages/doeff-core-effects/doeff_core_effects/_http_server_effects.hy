@@ -86,10 +86,25 @@
 ;;;   failed, the texts queued so far are put in answered and carried is left empty.
 ;;;   The real answerer runs answer on a thread outside the listener's loop (it answers even if the main scheduler has stopped). The scripted answerer runs answer when the head of the queue is a matching
 ;;;   message, records the texts sent in the record (WsTextSent), and then passes the event.
+;;; The request entry that the answerer answers on the spot (so that a stream of small requests the consumer would only drop does not cost the consumer's main
+;;; stream a turn each - a turn that reads the body, judges it, and answers 204):
+;;;   http-shortcuts of HttpListen = a list of HttpShortcut. If a request that does not ask for a ws Upgrade has the method and path (excluding the query) of an HttpShortcut
+;;;   (http-shortcut-for - the first one), and the answerer has read its whole body before lining it up, the answerer runs answer (a function that receives the body's bytes and returns a closed
+;;;   Program) in its own run (http-shortcut-outcome - like probe-answer, it touches neither the main run's handlers nor state). If the Program answers HttpProbeAnswer, the answerer sends that
+;;;   answer and the request never becomes an event (it does not reach HttpNextRequest - the ticket is counted the same way as other requests). If it answers None, the request lines up as
+;;;   before and its body can still be read once with HttpReadBody (the main body answers as usual). If answer failed or its answer's type is wrong, the answerer logs one line of the reason
+;;;   (HttpShortcutFailed) and the request lines up as if it had answered None.
+;;;   The answers run one at a time, in the order the requests arrive (the real answerer: on one thread of their own, outside the listener's loop; the script: in the script's order) - so an
+;;;   answer may read a value that the previous answer placed and place the next one (a tally or a table kept across requests in a latest-value store), and the requests an answer passes on
+;;;   line up in the order they arrived.
+;;;   A request whose body the answerer does not read in full before lining it up (the real answerer: no declared length, or a declared length above its read-ahead size; the script: a body
+;;;   script with failed or without a declared length) lines up without running answer.
 ;;; What the two answerers must decide the same way is decided by both calling the judgment defks here: carries-content (whether the answer carries a body - HEAD, 1xx, 204, 304 are not sent),
 ;;; ws-refusal-status (the status of the WsAccept refusal), send-overflows (whether to cut at the send limit), closing-of (the status code and reason named in WsClosed),
-;;; probe-for (whether a request hits a probe entry), probe-failure (the answer of a probe whose answer failed), ws-shortcut-for (whether a message hits the on-the-spot answer entry).
-;;; The two also run a probe's answer with the same probe-answer, and a ws entry's answer with the same ws-shortcut-outcome (both are entries called from outside a Program).
+;;; probe-for (whether a request hits a probe entry), probe-failure (the answer of a probe whose answer failed), ws-shortcut-for (whether a message hits the on-the-spot answer entry),
+;;; http-shortcut-for (whether a request hits the on-the-spot request entry).
+;;; The two also run a probe's answer with the same probe-answer, a ws entry's answer with the same ws-shortcut-outcome, and a request entry's answer with the same http-shortcut-outcome (all are
+;;; entries called from outside a Program).
 ;;; That the two have the same properties is verified on both answerers by the contract test tests/test_http_server_contract.hy.
 ;;;
 ;;; Script vocabulary (not in the real listener): HttpScript, ScriptedUpstream, ScriptedBody = the script; HttpServed = the commands received and the answer the terminal receives;
@@ -287,15 +302,30 @@
   (#^ str reason))
 
 
+(defrecord HttpShortcut
+  "One request entry that the answerer answers on the spot (header comment): method and path = matches a request with that method and path (excluding the query) that does not ask for a ws
+   Upgrade, answer = a function that receives the whole body's bytes and returns a closed Program answering HttpProbeAnswer (sent on the spot - the request never reaches the main body) or None
+   (the request reaches the main body as usual). The answerer runs it in its own run for each request, one request at a time."
+  (#^ str method)
+  (#^ str path)
+  (#^ (get Callable #([bytes] Program)) answer))
+
+
+(defrecord HttpShortcutFailed
+  "A request entry's answer failed or its answer had the wrong type (reason = a reason sentence - the answerer logs one line, and the request reaches the main body as usual)."
+  (#^ str reason))
+
+
 (defclass [(dataclass :frozen True)] HttpListen [(get EffectBase HttpAddress)]
-  "Opens the listener (header comment). probes = the list of probe entries the answerer answers by itself, ws-shortcuts = the list of ws message entries the answerer answers on the spot. Answer =
-   the bound address, HttpAddress."
+  "Opens the listener (header comment). probes = the list of probe entries the answerer answers by itself, ws-shortcuts = the list of ws message entries the answerer answers on the spot,
+   http-shortcuts = the list of request entries the answerer answers on the spot. Answer = the bound address, HttpAddress."
   (#^ HttpAddress address)
   (setv #^ int ws-max-bytes DEFAULT-WS-MAX-BYTES
         #^ int ws-send-max-bytes DEFAULT-WS-SEND-MAX-BYTES
         #^ (get tuple #(HttpProbe ...)) probes #()
         #^ bool share-port False
-        #^ (get tuple #(WsShortcut ...)) ws-shortcuts #()))
+        #^ (get tuple #(WsShortcut ...)) ws-shortcuts #()
+        #^ (get tuple #(HttpShortcut ...)) http-shortcuts #()))
 
 
 (defclass [(dataclass :frozen True)] HttpNextRequest [(get EffectBase HttpEvent)]
@@ -479,6 +509,30 @@
   (cond (isinstance answer WsShortcutAhead) (WsShortcutAnswered :texts texts :rest answer.rest)
         (isinstance answer WsShortcutCarried) (WsShortcutAnswered :texts texts :carried answer.carried)
         True (WsShortcutAnswered :texts texts)))
+
+
+(defk http-shortcut-for [shortcuts method path upgrade]
+  {:pre [(: shortcuts (of tuple HttpShortcut ...)) (: method str) (: path str) (: upgrade bool)] :post [(: % (| HttpShortcut None))]
+   :tags {:context "http-server" :role "judgment"}}
+  "To decide whether the answerer answers a request on the spot (the request entry in the header comment): for a request that does not ask for a ws Upgrade, the first HttpShortcut whose method
+   and path (excluding the query) equal the request's, otherwise None (passed to the main body as an event)."
+  (if upgrade
+      None
+      (next (gfor shortcut shortcuts :if (and (= shortcut.method method) (= shortcut.path path)) shortcut) None)))
+
+
+(deff http-shortcut-outcome [shortcut data]  ; defk にできない: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
+  {:pre [(: shortcut HttpShortcut) (: data bytes)] :post [(: % (| HttpProbeAnswer HttpShortcutFailed None))] :tags {:context "http-server" :role "foundation"}}
+  "To decide, without touching the main body's run (scheduler, session values, Await's shared event loop), whether one request that hit a request entry is answered on the spot (header comment):
+   runs the answer Program for the body data in its own run - HttpProbeAnswer = send it on the spot, None = pass the request to the main body, and if it failed or the answer's type is wrong,
+   HttpShortcutFailed (the request is passed to the main body). The two answerers answer with this same function."
+  (try
+    (setv answer (run (shortcut.answer data)))
+    (except [error Exception]
+      (return (HttpShortcutFailed :reason (+ (. (type error) __name__) ": " (str error))))))
+  (if (or (is answer None) (isinstance answer HttpProbeAnswer))
+      answer
+      (HttpShortcutFailed :reason (+ "answer's answer is neither HttpProbeAnswer nor None: " (repr answer)))))
 
 
 ;; --- Script vocabulary (scripted-http-server) -----------------------------------------------------------------------------

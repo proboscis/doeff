@@ -11,6 +11,10 @@
 ;;;                 (edge-lag-line). The pong to a ws ping is also returned by this loop, so the listener-side round-trip lag can be read separately from the CPU wait of an external measuring client
 ;;;   Probe ports   A request matching the probes of HttpListen (probe-for -- GET/HEAD and a path) is handed to neither the queue nor the scheduler; the listener loop
 ;;;                 runs the answer Program in its own run on a separate thread (asyncio.to_thread) and answers (probe-answer). It counts one ticket
+;;;   Request ports A request matching the http-shortcuts of HttpListen (http-shortcut-for -- method and path, no ws Upgrade) whose body was read ahead in full (body reading below) has its
+;;;                 answer run on the request ports' own thread (one worker -- answers run one at a time in the order the bodies were read, so an answer may read and replace a value
+;;;                 the previous answer placed) in its own run (http-shortcut-outcome). An HttpProbeAnswer is sent from the listener loop and the request never lines up; None (or a failure,
+;;;                 announced in one line) lines the request up as before with the body read ahead still readable once. It counts one ticket
 ;;;   Listening     Stand up the aiohttp server on the listener loop (HttpListen). Assign a ticket to each request, line up the event
 ;;;                 HttpRequestArrived (containing the headers and the sender's address = request.remote) in the queue, wait for a command (with a ticket), and then fire the real I/O -- the caller only fires and does not wait, so
 ;;;                 a long relay does not stall other requests. Events already in the queue (Arrivals) are taken by the HttpNextRequest clause on the handler clause's thread without waiting
@@ -63,6 +67,7 @@
 (import asyncio)
 (import collections [deque])
 (import collections.abc [Coroutine])
+(import concurrent.futures [ThreadPoolExecutor])
 (import math)
 (import sys)
 (import threading)
@@ -80,7 +85,8 @@
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
                                                 send-overflows closing-of HttpProbe probe-for probe-answer
-                                                WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage])
+                                                WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage
+                                                HttpProbeAnswer HttpShortcut HttpShortcutFailed http-shortcut-for http-shortcut-outcome])
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
@@ -311,6 +317,9 @@
           self.probes #()
           ;; Ports for one ws message that the handler answers on the spot (the ws-shortcuts of HttpListen).
           self.ws-shortcuts #()
+          ;; Ports for one request that the handler answers on the spot (the http-shortcuts of HttpListen), and their one worker thread (created by start when there are ports).
+          self.http-shortcuts #()
+          self.shortcut-worker None
           self.count 0
           ;; Number of answers that did not arrive because the peer disconnected first (since this listener started -- not reset to 0).
           self.dropped-answers 0)
@@ -347,14 +356,19 @@
 
   (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes
                                      #^ (get tuple #(HttpProbe ...)) probes
-                                     #^ bool share-port #^ (get tuple #(WsShortcut ...)) ws-shortcuts]
-    "To open the listener and answer the bound address (requests arriving after opening are all lined up in the queue except those matching a probe port). share-port = open sharing the same port with
-     another listener (SO_REUSEPORT). ws-shortcuts = ports that answer one ws message on the spot (header note)."
+                                     #^ bool share-port #^ (get tuple #(WsShortcut ...)) ws-shortcuts
+                                     #^ (get tuple #(HttpShortcut ...)) http-shortcuts]
+    "To open the listener and answer the bound address (requests arriving after opening are all lined up in the queue except those matching a probe port or answered by a request port).
+     share-port = open sharing the same port with another listener (SO_REUSEPORT). ws-shortcuts = ports that answer one ws message on the spot, http-shortcuts = ports that answer one request on
+     the spot (header note)."
     (setv self.address address
           self.ws-max-bytes ws-max-bytes
           self.ws-send-max-bytes ws-send-max-bytes
           self.probes probes
-          self.ws-shortcuts ws-shortcuts)
+          self.ws-shortcuts ws-shortcuts
+          self.http-shortcuts http-shortcuts)
+    (when (and http-shortcuts (is self.shortcut-worker None))
+      (setv self.shortcut-worker (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "doeff-http-shortcut")))
     (setv self.client (aiohttp.ClientSession :auto-decompress False
                                              :timeout (aiohttp.ClientTimeout :total None :sock-connect CONNECT-SECONDS
                                                                              :sock-read HTTP-READ-SECONDS)))
@@ -416,6 +430,23 @@
     (setv answer (await (asyncio.to-thread probe-answer probe)))
     (web.Response :status answer.status :body answer.body :headers (lfor header answer.headers #(header.name header.value))))
 
+  (defn :async #^ (| web.Response None) answer-shortcut [self #^ web.Request request #^ (| HttpBodyOutcome None) early]
+    "To answer one request on a request port without lining it up (header note): for a request matching a port whose body was read ahead in full, run answer on the ports' one worker
+     thread in its own run, and give the response to send for an HttpProbeAnswer. None = line the request up as before (no port matched, the body was not read ahead in full, the answer was
+     None, or it failed -- a failure is announced in one line)."
+    (setv shortcut (run (http-shortcut-for self.http-shortcuts request.method request.path (upgrade-asked request))))
+    (when (or (is shortcut None) (not (isinstance early HttpBodyRead)))
+      (return None))
+    (setv outcome (await (.run-in-executor (asyncio.get-running-loop) self.shortcut-worker http-shortcut-outcome shortcut early.data)))
+    (match outcome
+      (HttpProbeAnswer :status status :headers headers :body body)
+        (web.Response :status status :body (if (run (carries-content request.method status)) body None)
+                      :headers (lfor header headers #(header.name header.value)))
+      (HttpShortcutFailed :reason reason)
+        (do (relay-failed (.format "could not answer {} {} on the spot (lining it up for the main body): {}" request.method request.path reason))
+            None)
+      None None))
+
   (defn :async #^ None settle [self #^ str ticket #^ HttpCommand command]
     "To hand the main body's command to the ticket's request (handing over to the same ticket twice raises KeyError -- one judgment per request)."
     (self.hand-over ticket command)
@@ -458,6 +489,12 @@
           waiting (.create-future (asyncio.get-running-loop)))
     (setv (get self.waiting ticket) waiting)
     (setv early (await (self.prefetch ticket request)))
+    (setv answered (await (self.answer-shortcut request early)))
+    (when (is-not answered None)
+      ;; Answered on the spot by a request port: the request never lines up (no command will come for this ticket).
+      (.pop self.waiting ticket)
+      (.discard self.oversized ticket)
+      (return answered))
     (if (is early None)
         (setv (get self.unread ticket) request)
         (setv (get self.prefetched ticket) early))
@@ -671,6 +708,9 @@
         (.abort peer.request.transport)))
     (when (is-not self.runner None)
       (await (.cleanup self.runner)))
+    ;; No request arrives after the runner is folded up, so the request ports' worker thread is let go (an answer still running finishes first).
+    (when (is-not self.shortcut-worker None)
+      (.shutdown self.shortcut-worker :wait False))
     (for [client #(self.client self.ws-client)]
       (when (is-not client None)
         (await (.close client))))
@@ -858,8 +898,8 @@
   ;; Real I/O of the listening effects (header note). The listener object is created only once as the session value. Clauses enter the shared event loop of await-handler with Await and
   ;; from there wait on a coroutine of the listener loop with across (await-handler is needed outside the set).
   (session val edge (WebEdge))
-  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts]
-    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts))))
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts http-shortcuts]
+    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts http-shortcuts))))
     (resume bound))
   (HttpNextRequest []
     (<- arrival HttpEvent (next-on-edge edge))

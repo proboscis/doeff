@@ -20,7 +20,7 @@
 (require doeff-hy.macros [defk deftest <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; used by the defrecord expansion
-(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsTextArrived HttpProbe HttpProbeAnswer WsShortcut]
+(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsTextArrived HttpProbe HttpProbeAnswer WsShortcut HttpShortcut]
         doeff_core_effects._http_server_effects [WS-CUT-REASON WS-REFUSAL-TEXT WsShortcutAhead WsShortcutCarried])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
@@ -565,3 +565,74 @@
   (assert (= bodily #("late:stage1" "echo:hi" "late:split1")) texts)
   (assert (< (.index texts "second:stage1") (.index texts "late:stage1")) texts)
   (assert (< (.index texts "first:split1") (.index texts "late:split1")) texts))
+
+
+;; --- Hook for one request that the responder answers on the spot ---------------------------------------------------------
+
+(defk spot-answer [data]
+  {:pre [(: data bytes)] :post [(: % (| HttpProbeAnswer None))] :tags {:context "http-server-test" :role "program"}}
+  "answer of the request hook (closed - uses no effect): a body starting with \"drop\" is answered 204 on the spot, one starting with \"ack\" is answered 202 \"spot:\" and its body, and any
+   other body is passed to the body (None)."
+  (cond
+    (.startswith data b"drop") (HttpProbeAnswer :status 204 :headers #() :body b"")
+    (.startswith data b"ack") (HttpProbeAnswer :status 202 :headers #((HttpHeader :name "Content-Type" :value "text/plain; charset=utf-8"))
+                                               :body (+ b"spot:" data))
+    True None))
+
+
+(defk broken-spot [data]
+  {:pre [(: data bytes)] :post [(: % (| HttpProbeAnswer None))] :tags {:context "http-server-test" :role "program"}}
+  "answer of a failing request hook - tries to read a handler of the body's run (the contract world) (answer runs in the responder's own run so it does not reach)."
+  (<- world World (ContractWorld))
+  (HttpProbeAnswer :status 200 :headers #() :body (.encode world.site "utf-8")))
+
+
+(defk serve-spotted [requests shortcuts reaching]
+  {:pre [(: requests tuple) (: shortcuts tuple) (: reaching int)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
+  "Contract Program with a request hook: open a listener, make the peer send requests, answer each request that reaches the body with 200 \"program:\" and its body (read once), and close when
+   `reaching` of them have arrived. After closing, receive once more and read what the peer received."
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :http-shortcuts shortcuts))
+  (<- (PeerSend :address bound :requests requests))
+  (var events #())
+  (var reached 0)
+  (var open True)
+  (while open
+    (<- event HttpEvent (HttpNextRequest))
+    (<- shape tuple (event-shape event))
+    (:= events (+ events #(shape)))
+    (match event
+      (HttpServerClosed) (:= open False)
+      (HttpRequestArrived :ticket t) (do (<- body HttpBodyOutcome (HttpReadBody :ticket t :max-bytes 64))
+                                         (<- (respond t 200 #() (HttpBodyBytes :data (+ b"program:" (if (isinstance body HttpBodyRead) body.data b"?")))))
+                                         (:= reached (+ reached 1))
+                                         (when (= reached reaching)
+                                           (<- (HttpShutdown :reason SHUTDOWN-REASON :drain-seconds 0.5))))
+      _ None))
+  (<- again HttpEvent (HttpNextRequest))
+  (<- again-shape tuple (event-shape again))
+  (<- answers tuple (PeerAnswers))
+  (<- report WsSendReport (TakeWsSendReport))
+  (Served :events events :again again-shape :answers answers :reads #() :report report))
+
+
+(deftest test-a-request-shortcut-answers-on-the-spot-or-passes-the-request-with-its-body
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  ;; A request with the method and path of an HttpShortcut whose body is read in full ahead has answer run on its body: an HttpProbeAnswer is sent and the request never becomes an event of the
+  ;; body (the ticket is counted); None passes the request to the body with its body still readable once. A failing answer passes the request too. Another method, another path, and a body
+  ;; without a declared length (chunked) reach the body without running answer. The requests that reach the body keep the order they arrived in.
+  (val shortcuts #((HttpShortcut :method "POST" :path "/draft" :answer spot-answer) (HttpShortcut :method "POST" :path "/boom" :answer broken-spot)))
+  (val requests #((PeerRequest :method "POST" :target "/draft" :body b"drop1") (PeerRequest :method "POST" :target "/draft?x=1" :body b"keep1")
+                  (PeerRequest :method "POST" :target "/draft" :body b"ack1") (PeerRequest :method "POST" :target "/boom" :body b"drop2")
+                  (PeerRequest :method "PUT" :target "/draft" :body b"drop3") (PeerRequest :method "POST" :target "/draft" :body b"drop4" :chunked True)
+                  (PeerRequest :method "POST" :target "/draft" :body b"keep2")))
+  (<- served Served (serve-spotted requests shortcuts 5))
+  (assert (= served.events (+ #(#("request" "2" "POST" "/draft" "/draft?x=1" False) #("request" "4" "POST" "/boom" "/boom" False)
+                                #("request" "5" "PUT" "/draft" "/draft" False) #("request" "6" "POST" "/draft" "/draft" False)
+                                #("request" "7" "POST" "/draft" "/draft" False))
+                              CLOSED))
+          served.events)
+  (assert (= (lfor a served.answers #(a.status a.body))
+             [#(204 b"") #(200 b"program:keep1") #(202 b"spot:ack1") #(200 b"program:drop2") #(200 b"program:drop3") #(200 b"program:drop4")
+              #(200 b"program:keep2")])
+          served.answers)
+  (assert (= (! (header-values (get served.answers 2) "Content-Type")) ["text/plain; charset=utf-8"]) served.answers))
