@@ -145,7 +145,8 @@
 ;;;       (import doeff_hy._wire)
 ;;;       (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […] :class-vars […]} fields …)
 ;;;       (setattr LandingRow "__pydantic_config__" (doeff_hy._wire.wire-config {"lane_id" "laneId" …} "reject"))
-;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy._wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject")))
+;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy._wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject" "…")))
+;;;   The docstring stays out of the type (as with defrecord) and is held only by the wire shape, which json-schema reads as description (None when not written).
 ;;;
 ;;; Projection rule: maps to a class of the same shape as defrecord (:names and :unknown do not change the type's shape) — held in the same lane of the shared quality check's
 ;;; `quality.hy_record`. hy-index reads it as kind defrecord (record_def of doeff-indexer).
@@ -535,7 +536,7 @@
      '(import doeff_hy._wire)
      `(hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
      `(setattr ~name "__pydantic_config__" (doeff_hy._wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
-     `(setattr ~name "__doeff_wire__" (doeff_hy._wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))]
+     `(setattr ~name "__doeff_wire__" (doeff_hy._wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown ~(if (is docstring None) 'None docstring)))]
     :nested-reads True))
 
 

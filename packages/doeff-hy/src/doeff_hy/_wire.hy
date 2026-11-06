@@ -64,12 +64,14 @@
 
 (defrecord WireShape
   "One defwire type's wire shape: names = Python field name -> wire field name (an index of all fields, by name) / unknown = how unknown fields are handled
-   (\"reject\" / \"ignore\") / wire-type = that type. The decoder (type tree) is built by codec only once on first use and remembered on the type."
+   (\"reject\" / \"ignore\") / wire-type = that type / description = the docstring written in defwire (None when not written -- the type itself does not hold it, so
+   json-schema reads it from here). The decoder (type tree) is built by codec only once on first use and remembered on the type."
   {:tags {:context "wire" :role "type"}
    :check [(in unknown UNKNOWN-FIELDS)]}
   (#^ (get dict #(str str)) names)
   (#^ str unknown)
   (#^ type wire-type)
+  (setv #^ (| str None) description None)
 
   (defn [property] codec [self]
     "The decoder for that type (Codec in doeff_hy._wire_codec -- builds the type tree once on first use and not again from the second use)."
@@ -97,13 +99,14 @@
    "defer_build" True})
 
 
-(deff wire-shape [wire-type names unknown]  ; defk にできない: called when the defwire expansion loads the module (a place where a Program cannot be run)
-  {:pre [(: wire-type type) (: names dict) (: unknown str)]
+(deff wire-shape [wire-type names unknown [description None]]  ; defk にできない: called when the defwire expansion loads the module (a place where a Program cannot be run)
+  {:pre [(: wire-type type) (: names dict) (: unknown str) (: description (| str None))]
    :post [(: % WireShape)]
    :tags {:context "wire" :role "judgment"}}
   "The defwire type's wire shape (put on the type's __doeff_wire__). The decoder is not built here -- it is built only once, at the first parse / dump / json-schema
-   (the cost of building even unused types is not paid in every process that loads the module)."
-  (WireShape :names names :unknown unknown :wire-type wire-type))
+   (the cost of building even unused types is not paid in every process that loads the module). description is the defwire docstring -- the runtime expansion of
+   defrecord does not put it in the type (its __doc__ is the shared descriptor built from the field names), so the wire shape is its only holder, read by json-schema."
+  (WireShape :names names :unknown unknown :wire-type wire-type :description description))
 
 
 (defk parse [wire-type raw]
