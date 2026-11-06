@@ -883,8 +883,11 @@ class NamespaceRead(enum.Enum):
       The names read are covered as string constants of the code, as with ``getattr(x, "name")`` (:attr:`CodeFacts.texts`). The function's own module cannot be passed as an object
       without a MODULE read (``globals()``, ``sys.modules``, ``import_module`` ...), so it is covered only by the files of the
       modules the function references.
-    - MODULE = a read of a module namespace, a module table, or a string expression (``globals()``, ``vars``, ``sys.modules``, ``eval`` ...) —
+    - MODULE = a read of a module namespace, a module table, or a string expression (``globals()``, ``vars()``, ``sys.modules``, ``eval`` ...) —
       covered by the function's module and the files of the modules the function references.
+
+    ``vars(x)`` called with one argument read as a plain value is ``x.__dict__`` (OBJECT); only ``vars()`` with no argument, and every other use of ``vars`` (passed as a value,
+    called with a computed argument, ``*`` or a keyword), is MODULE (:func:`_one_plain_argument`).
     """
 
     NONE = "none"
@@ -892,7 +895,8 @@ class NamespaceRead(enum.Enum):
     MODULE = "module"
 
 
-#: Names that become a MODULE read when read as a global name (``vars`` only when called as a global builtin — a field name ``x.vars`` is not a read).
+#: Names that become a MODULE read when read as a global name (``vars`` only when called as a global builtin — a field name ``x.vars`` is not a read; ``vars(x)`` with one
+#: plain argument is an OBJECT read — :data:`_OBJECT_READ_CALLS`).
 _MODULE_READ_GLOBALS = frozenset(
     {
         "globals",
@@ -921,6 +925,10 @@ _MODULE_READ_ATTRIBUTES = frozenset(
         "__globals__",
     }
 )
+
+#: Global names that are an OBJECT read when called with one plain argument (``vars(cls)`` reads ``cls.__dict__`` — the record functions of defrecord types read
+#: ``vars(cls)``; as MODULE they covered _record_runtime by its file, and a docstring rewrite there made every defhandler user stale).
+_OBJECT_READ_CALLS = frozenset({"vars"})
 
 #: Names that become an OBJECT read when read as a global name or an attribute.
 _OBJECT_READ_GLOBALS = frozenset({"attrgetter", "getattr_static"})
@@ -1769,17 +1777,25 @@ class NameWay(enum.Enum):
 
 @dataclass(frozen=True)
 class NameUse:
-    """One use of a name-table name in code (the name and how it is used)."""
+    """One use of a name-table name in code (the name, how it is used, and — for a global name of :data:`_OBJECT_READ_CALLS` — whether it is called with one plain
+    argument)."""
 
     name: str
     way: NameWay
+    one_argument: bool = False
 
 
 def _name_uses(code: CodeType) -> Iterator[NameUse]:
     """The instructions of code that use a name-table name."""
-    for unit in _units(code):
+    units = tuple(_units(code))
+    for index, unit in enumerate(units):
         if unit.op in _GLOBAL_NAME_LOADS:
-            yield NameUse(code.co_names[unit.arg >> _GLOBAL_NAME_LOADS[unit.op]], NameWay.GLOBAL)
+            name = code.co_names[unit.arg >> _GLOBAL_NAME_LOADS[unit.op]]
+            yield NameUse(
+                name,
+                NameWay.GLOBAL,
+                name in _OBJECT_READ_CALLS and _one_plain_argument(units, index),
+            )
         elif unit.op in _ATTRIBUTE_NAME_LOADS:
             yield NameUse(
                 code.co_names[unit.arg >> _ATTRIBUTE_NAME_LOADS[unit.op]], NameWay.ATTRIBUTE
@@ -1788,9 +1804,62 @@ def _name_uses(code: CodeType) -> Iterator[NameUse]:
             yield NameUse(code.co_names[unit.arg >> _OTHER_NAME_USES[unit.op]], NameWay.OTHER)
 
 
+#: Instructions that push one value without popping (a local, a cell, a constant, a global or module-level name) — the start of a plain argument.
+_VALUE_LOADS = frozenset(
+    _opcode(name)
+    for name in (
+        "LOAD_FAST",
+        "LOAD_FAST_BORROW",
+        "LOAD_FAST_CHECK",
+        "LOAD_DEREF",
+        "LOAD_CONST",
+        "LOAD_SMALL_INT",
+        "LOAD_NAME",
+        "LOAD_GLOBAL",
+    )
+) - {-1}
+_LOAD_GLOBAL = _opcode("LOAD_GLOBAL")
+_LOAD_ATTR = _opcode("LOAD_ATTR")
+_PUSH_NULL = _opcode("PUSH_NULL")
+_PRECALL = _opcode("PRECALL")
+_CALL = _opcode("CALL")
+
+
+def _one_plain_argument(units: tuple[_Unit, ...], index: int) -> bool:
+    """Whether the global name loaded at ``units[index]`` is the callee of a call with exactly one positional argument that is a plain value read — one load of a local,
+    a cell, a constant or a global, followed by attribute reads (``vars(cls)``, ``vars(self.owner)``). The callee is pinned by the NULL pushed with it (the low bit of
+    LOAD_GLOBAL from 3.11, or a PUSH_NULL beside LOAD_NAME), and the call is ``CALL 1`` (``PRECALL 1`` up to 3.11). Any other shape (no argument, a computed argument,
+    ``*``, a keyword, the name passed as a value) is false — read on the safe side as MODULE."""
+    load = units[index]
+    pushes_null = (load.op == _LOAD_GLOBAL and load.arg & 1 == 1) or any(
+        0 <= at < len(units) and units[at].op == _PUSH_NULL for at in (index - 1, index + 1)
+    )
+    if not pushes_null:
+        return False
+    rest = units[index + 1 :]
+    if rest and rest[0].op == _PUSH_NULL:
+        rest = rest[1:]
+    if not rest or rest[0].op not in _VALUE_LOADS:
+        return False
+    if rest[0].op == _LOAD_GLOBAL and rest[0].arg & 1 == 1:
+        return False
+    position = 1
+    while position < len(rest) and rest[position].op == _LOAD_ATTR:
+        if sys.version_info >= (3, 12) and rest[position].arg & 1 == 1:
+            return False  # a method load (the attribute is called)
+        position += 1
+    return (
+        position < len(rest)
+        and rest[position].op in (_CALL, _PRECALL)
+        and rest[position].arg == 1
+    )
+
+
 def _mark_read(use: NameUse) -> NamespaceRead:
     """The breadth of the read for one use of a marker name."""
     match use:
+        case NameUse(way=NameWay.GLOBAL, name=name, one_argument=True) if name in _OBJECT_READ_CALLS:
+            return NamespaceRead.OBJECT
         case NameUse(way=NameWay.GLOBAL, name=name) if name in _MODULE_READ_GLOBALS:
             return NamespaceRead.MODULE
         case NameUse(way=NameWay.GLOBAL, name=name) if name in _OBJECT_READ_GLOBALS:
@@ -2243,6 +2312,10 @@ class _Walker:
             ):
                 # The read of a namedtuple field (``Alias for field number N`` — only the field number is behavior).
                 self._feed("tuplegetter", str(value.__doc__))
+            case types.MemberDescriptorType() if _python_source(
+                sys.modules.get(value.__objclass__.__module__)
+            ):
+                self._slot(value)
             case _ if isinstance(value, _COMPILED_CALLABLES):
                 self._compiled(value, home)
             case _ if type(value).__module__.partition(".")[0] == "hy":
@@ -2468,6 +2541,14 @@ class _Walker:
             self._feed("location")
             return
         self._value(vars(module)[name], module, names, GlobalName(module, name))
+
+    def _slot(self, value: types.MemberDescriptorType) -> None:
+        """A slot field of a class with Python source (``__slots__`` — the fields of a defrecord type) — the descriptor is made by the interpreter from the field name, so it is
+        entered by the owner type and the field name, and the type is followed by its contents (its ``__slots__`` row gives the order of the fields). Covering it as a C
+        function by the owner module's file made a function added anywhere in _clause_endings.hy make every defhandler user stale."""
+        owner = value.__objclass__
+        self._feed("slot", str(owner.__module__), owner.__qualname__, value.__name__)
+        self._class(owner)
 
     def _compiled(self, value: object, home: ModuleType | None) -> None:
         """C-written functions and descriptors — enter the name, and unless they are standard library or builtins, add the sha256 of the extension module's file."""
