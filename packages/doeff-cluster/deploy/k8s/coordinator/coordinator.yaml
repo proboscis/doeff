@@ -302,7 +302,9 @@ spec:
             # 699218c46 = job の Service の振り先を coordinator が書く EndpointSlice にする(heartbeat に Pod IP・CLUSTER_NAMING の
             # jobServiceNamespaces が無い間は何も書かない)。coordinator を先に上げ、worker をこの版へ続ける。前の版 b556bdaba は
             # 699218c46 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 699218c46575be7fba8b4be66f5f73cf95841e74 }
+            # bdc0dd9c9 = EndpointSlice の label managed-by の値を coordinator.doeff.dev にする(前の値 doeff.dev/coordinator は
+            # / を含み k8s が 422 で断った)。coordinator だけを上げ、worker は 699218c46(bdc0dd9c9 の祖先)のまま。
+            - { name: WORKER_DOEFF_COMMIT, value: bdc0dd9c9f9c4621eebde23e517d7414450f8d3a }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
