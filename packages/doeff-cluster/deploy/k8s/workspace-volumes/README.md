@@ -53,16 +53,23 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 
 | 答え手 | 在りか | 何をするか |
 |---|---|---|
-| 本番 `workspace-volumes-api`(引数 `WORKSPACE-SITE`) | `src/doeff_cluster/_shared/protocol/workspace_volumes.hy` | worker の ServiceAccount で API server の Longhorn の Volume を作り(級の値を写す — 下の写し方の表)、VolumeAttachment に ticket `longhorn-api-<名>`(種類 longhorn-api)を置いて満たされるまで待つ。mount と umount は節「mount の係」の頼み。detach は mount が残っていれば断る |
+| 本番 `workspace-volumes-api`(引数 `WORKSPACE-SITE`) | `src/doeff_cluster/_shared/entry/workspace_volume_api.hy`(手順は `src/doeff_cluster/_shared/protocol/workspace_volumes.hy`) | worker の ServiceAccount で API server の Longhorn の Volume を作り(級の値を写す — 下の写し方の表)、VolumeAttachment に ticket `longhorn-api-<名>`(種類 longhorn-api)を置いて満たされるまで待つ。mount と umount は節「mount の係」の頼み。detach は mount が残っていれば断る |
 | 模擬 `held-workspace-volumes`(引数 `WorkspaceVolumeWorld`) | `src/doeff_cluster/_sim/workspace_volumes.hy` | 同じ契約を memory の世界に当てる(使い手の検のため) |
 | 純粋な判断 | `src/doeff_cluster/_shared/core/workspace_volume_rules.hy` | 名の条件と名・mountinfo の読み・attach と detach の次の一手 |
 
 - 機体の node は機体の事実 NODE_NAME。係の頼みの dir は `WORKSPACE-SITE` の固定の path(job の子は env `WORKER_WORKSPACE_MOUNT_DIR` を
   継がない — 宣言と同じ path である事は `tests/test_workspace_mount.py` が縛る)。dir の無い worker では mount と umount を頼む前に断る。
-- 外側に要る答え手: file(os)・環境(os.environ)・時計(doeff-time)・HTTP と、API server 宛ての要求を区画の CA で検める
-  `in-cluster-api-routed`(job の本番の土台が並べる)。
+- 外側に要る答え手: file(os)・環境(os.environ)・時計(doeff-time)・状態(state — 変わりの知らせの箱を session に持つ)・HTTP と、
+  API server 宛ての要求を区画の CA で検める `in-cluster-api-routed`(job の本番の土台が並べる)。
+- 待ち方: 付け・外し・戻し・消え終わりの待ちと係の答えの待ちは、間隔で読み直さない。答え手は process に 1 つの変わりの知らせの箱
+  (`src/doeff_cluster/_foundation/volume_notices.hy`)を持ち、箱の見張りの thread が Longhorn の Volume と VolumeAttachment を list の後の
+  watch で受けて、変わった名の待ち手だけを起こす(係の答えの file の現れも箱の thread が見る)。知らせが来なくても `recheck-seconds`
+  (本番 10 秒)ごとに読み直す。待つ間の答え手の歩は、待つ秒と並んだ数に比例しない — 変わった回数に比例する(以前は 0.5 秒ごとに
+  GET を出し、待つ volume が 30 本並ぶと job の主の thread の 1 core の大半を使った)。snapshot・backup・engine・置き場の残りの待ちは
+  `poll-seconds` ごとに読み直す(冷やす回と広げる回だけ)。
 - 検: `tests/test_workspace_volumes_handler.hy`(本番の答え手を偽の Longhorn と偽の係の上で回し、模擬の答え手と同じ筋書きで結末と様子が
-  揃う事・失敗ケース・失敗した戻しの作り直し・Spawn で並べた「戻す途中・冷やす途中・消す途中に次の頼みが来る」)と `tests/test_workspace_volume_rules.hy`。
+  揃う事・失敗ケース・失敗した戻しの作り直し・Spawn で並べた「戻す途中・冷やす途中・消す途中に次の頼みが来る」・30 本の付けを並べて待たせても
+  歩の数が待つ秒に比例しない事)と `tests/test_workspace_volume_rules.hy`・`tests/test_volume_notices.hy`(箱の印と鈴・見張り)。
 
 ## 級(StorageClass `longhorn-workspace`)
 

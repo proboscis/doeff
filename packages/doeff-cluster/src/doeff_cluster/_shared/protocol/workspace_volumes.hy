@@ -36,12 +36,22 @@
 ;;;   place-read              ReadWorkspacePlace: mount の表・付ける先の dir・持ち主の volume と backup を読み、付ける先の様子を答える
 ;;;   attached-volumes        ReadAttachedWorkspaceVolumes: VolumeAttachment の一覧からこの答え手の ticket がこの機体の node を指す volume を選び、
 ;;;                           Volume の一覧から使った刻を添えて答える(冷やす手順の snapshot と backup の ticket だけの volume は選ばない)
-;;;   workspace-volumes-api   11 の effect の本番の答え手
+;;;   VolumeNotices           変わりの知らせの箱の形(下の待ち方)
+;;; 11 の effect の本番の答え手 workspace-volumes-api は入口の層(shared/entry/workspace_volume_api — 変わりの知らせの箱を process に 1 つ
+;;; 作って、ここの手順へ渡す。この層は foundation の箱を読めない)。
 ;;;
 ;;; 仕組み: supplied_values・kube_services と同じく、doeff の汎用の effect(token の file の ReadText・HttpRequest・file の effect・doeff-time の
 ;;; Delay と GetMonotonic・機体の事実の ReadEnvironment)で問う。外側に、宛先が API server の要求を区画の CA で検める接続
 ;;; (doeff_cluster._foundation.in_cluster_api の in-cluster-api-routed)と file・時計・環境の答え手を要る(job の本番の土台)。
 ;;; 機体の node は機体の事実 NODE_NAME(worker が子の process へ渡す名)。
+;;;
+;;; 待ち方(変わりの知らせ): 付け・外し・戻し・消え終わりの待ちと係の答えの待ちは、間隔で読み直さない。答え手は変わりの知らせの箱
+;;; (VolumeNotices — 本番は foundation/volume_notices の VolumeNoticeBoard: 機体に 1 つの見張りの thread が Longhorn の Volume と
+;;; VolumeAttachment を list の後の watch で受け、係の答えの file の現れを見る)を受け、読む前に名の印(mark)を取り、読んだ様子がまだ
+;;; 待つ物なら、印の後に変わっていなければ外から満たす鈴(外部の Promise)を掛けて、変わるまで待つ(arm と WaitWithin)。知らせが来なくても
+;;; recheck-seconds ごとに読み直す(取りこぼした知らせと、見張りが止まった間の網)。待つ間の答え手の歩は、待つ秒と並んだ数に比例しない —
+;;; 変わった回数に比例する(以前は poll-seconds ごとに GET を 1〜2 本出し、待つ volume が 30 本並ぶと host の主の thread の 1 core の大半を
+;;; 使った)。snapshot・backup・束・engine・置き場の残りの待ちは知らせを受けず poll-seconds ごとに読み直す(冷やす回と広げる回だけの待ち)。
 ;;;
 ;;; 係への頼み(README の節「mount の係」): 頼みの dir に `<鍵>.tmp` を書いて `<鍵>.req` へ名を替え、`<鍵>.out`(1 行目 = 0 か 1・2 行目から
 ;;; 訳)を待って読み、消す。鍵 = <命令>-<volume の名>-<時計の μ 秒>。係の無い worker(頼みの dir が無い)は頼む前に断る。
@@ -105,7 +115,9 @@
 (import doeff_core_effects [DiskUsage FileFailed ListDirectory MakeDirectory PathKind PathStat ReadDiskUsage ReadText RemoveTree RenamePath WriteBytes
                             StatPath WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse slog])
-(import doeff_time [Delay GetMonotonic GetTime])
+(import doeff_core_effects [CreateExternalPromise ExternalPromise])
+(import doeff_time [Delay GetMonotonic GetTime WaitWithin])
+(import typing [Protocol runtime-checkable])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachedWorkspaceVolume AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
                                                            MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
@@ -128,6 +140,8 @@
 ;; 本番の場所と待つ秒。mount-dir は zeus の node.yaml の頼みの dir(emptyDir の workspace-mount の mountPath)と同じ path — 検が縛る。
 ;; 待つ秒: attach は replica の engine が起きるまで(測りでは数秒)、係は空の 10 GiB の volume の mkfs.ext4 を含む。backup と戻しは中身の
 ;; 量で伸びる(2026-11-03 の zeus の測り: 中身 50 MB で backup 27 秒・戻し 21 秒)— 10 GiB を書き切った volume でも収まる上限にする。
+;; recheck-seconds は変わりの知らせを待つ待ちの網(頭の註の待ち方): 知らせが届けば待たずに読み直すので、付けの速さはこの秒に依らない。
+;; 待つ volume 30 本で毎秒 3 回の読み直し(以前の poll-seconds の 1/20)。
 (val WORKSPACE-SITE (WorkspaceVolumeSite :longhorn-namespace "longhorn-system"
                                          :settings-namespace "agent-worker"
                                          :settings-name "workspace-volume"
@@ -138,7 +152,8 @@
                                          :mount-seconds 180.0
                                          :backup-seconds 1800.0
                                          :restore-seconds 1800.0
-                                         :poll-seconds 0.5))
+                                         :poll-seconds 0.5
+                                         :recheck-seconds 10.0))
 ;; Longhorn の物の API の頭(longhorn.io/v1beta2 — cluster の Longhorn v1.13 の版)。
 (val LONGHORN-API "/apis/longhorn.io/v1beta2")
 ;; 値の ConfigMap の鍵(kustomization の configMapGenerator が file の名をそのまま鍵にする)。
@@ -502,6 +517,17 @@
   (setv #^ (| (get tuple #(AttachmentItemWire ...)) None) items None))
 
 
+(defclass [runtime-checkable] VolumeNotices [Protocol]
+  "変わりの知らせの箱の形(foundation/volume_notices の VolumeNoticeBoard・検の相手役 — 頭の註の待ち方)。mark = Longhorn の物(Volume か
+   VolumeAttachment — 名は volume の名)name が最後に変わった印(読む前に取る)・arm = 印 seen の後に name が変わっていれば真を返して何も
+   掛けない、変わっていなければ鈴 bell を掛けて偽を返す(箱は次に変わった時に bell を True で満たす)・arm-file = path の file が在れば
+   真を返して何も掛けない、無ければ bell を掛けて偽を返す(現れた時に満たす)・disarm = 掛けた鈴を外す(満たされずに待ちを終えた時)。"
+  (defn #^ int mark [self #^ str name] (raise NotImplementedError))
+  (defn #^ bool arm [self #^ str name #^ int seen #^ ExternalPromise bell] (raise NotImplementedError))
+  (defn #^ bool arm-file [self #^ str path #^ ExternalPromise bell] (raise NotImplementedError))
+  (defn #^ None disarm [self #^ str key #^ ExternalPromise bell] (raise NotImplementedError)))
+
+
 (defrecord Placing
   "Volume の condition Scheduled の読み: failed = Longhorn が replica の置き先を見つけられないと答えている(status False・reason が
    …SchedulingFailure — 名目の予約の線か実の空きの線で置けない・札を持つ disk が無いなど)・note = その reason と message(人が読む訳)。
@@ -863,13 +889,62 @@
   read)
 
 
-(defk waited-gone [site owner doing name]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % None)]
+(defk notice-mark [notices name]
+  {:pre [(: notices VolumeNotices) (: name str)] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "volume name の Longhorn の物が最後に変わった印を、読む前に取るため(頭の註の待ち方 — 読んだ後の変わりを name-waited が取りこぼさない)。"
+  (.mark notices name))
+
+
+(defk bell-waited [site notices key bell started limit]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: key str) (: bell ExternalPromise) (: started float) (: limit float)]
+   :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "箱に掛けた鈴 bell(鍵 key — volume の名か file の path)が満たされるか、recheck-seconds か、待ちの上限(started からの limit 秒)の早い方
+   まで待つため。待つのは scheduler の上(外から満たす Promise — 仮想の時計を止めずに待つ park)。待ちの task が取り消されたら鈴を箱から
+   外し、満たされずに終えた鈴も外して満たす(待ち手の居ない外の Promise を scheduler に残さない — 遅れて鳴っても捨てられる)。"
+  (<- now float (GetMonotonic))
+  (val left (- (+ started limit) now))
+  ;; 上限ちょうど(呼び手の「越えたら断る」がまだ断らない刻)からは recheck-seconds を待つ — 0 秒の待ちを繰り返して時計を止めない。
+  (val pause (if (> left 0) (min site.recheck-seconds left) site.recheck-seconds))
+  (.on-cancel bell (fn [] (.disarm notices key bell)))
+  (<- (WaitWithin bell.future pause :park True))
+  (.disarm notices key bell)
+  (.complete bell True)
+  None)
+
+
+(defk name-waited [site notices name seen started limit]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: name str) (: seen int) (: started float) (: limit float)]
+   :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "volume name の Longhorn の物(Volume か VolumeAttachment)が印 seen(読む前に notice-mark で取った)の後に変わるまで待つため(既に
+   変わっていれば待たない。知らせが来なくても recheck-seconds・待ちの上限で戻る — 呼び手が読み直して決める)。"
+  (<- bell ExternalPromise (CreateExternalPromise))
+  (if (.arm notices name seen bell)
+      (.complete bell True)
+      (<- (bell-waited site notices name bell started limit)))
+  None)
+
+
+(defk file-waited [site notices path started limit]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: path str) (: started float) (: limit float)]
+   :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "file path(係の答えの file)が現れるまで待つため(既に在れば待たない。知らせが来なくても recheck-seconds・待ちの上限で戻る — 呼び手が
+   読み直して決める)。"
+  (<- bell ExternalPromise (CreateExternalPromise))
+  (if (.arm-file notices path bell)
+      (.complete bell True)
+      (<- (bell-waited site notices path bell started limit)))
+  None)
+
+
+(defk waited-gone [site notices owner doing name]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "消す途中の volume name が消え終わるまで待つため(detach-seconds の内に消えなければ断る — Longhorn は replica と engine を片付けてから
-   Volume を外す)。消えた後に同じ名で作り直された(消す途中でない)volume が見えても、消え終わったと読む。"
+   Volume を外す)。消えた後に同じ名で作り直された(消す途中でない)volume が見えても、消え終わったと読む。読み直すのは Volume が変わった
+   時だけ(頭の註の待ち方)。"
   (<- started float (GetMonotonic))
   (while True
+    (<- seen int (notice-mark notices name))
     (<- read (| VolumeRead None) (volume-read site owner doing name))
     (when (or (is read None) (not read.deleting))
       (return None))
@@ -877,25 +952,26 @@
     (when (> (- now started) site.detach-seconds)
       (raise (! (refused owner doing (.format "{} 秒の内に消えない(volume {}・消す途中 {})" site.detach-seconds (or read.state "?")
                                               read.deleting)))))
-    (<- (Delay site.poll-seconds)))
+    (<- (name-waited site notices name seen started site.detach-seconds)))
   None)
 
 
-(defk waited-restored [site owner doing name]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % bool)]
+(defk waited-restored [site notices owner doing name]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str)] :post [(: % bool)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "backup から戻す途中の volume name が戻し終わるまで待ち、戻し終わったかを得るため。True = 戻し終わった。False = 待っても戻らない — 戻しが失敗した
    (Longhorn は戻し直さない)か、消す途中か消えた(並んだ付けか冷やす回が消した)。呼び手が読み直す。restore-seconds の内に終わらない時は断る。
    Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ、待たずに volume を消して置き場の不足で断る(中身は backup に残る —
-   fresh False)。"
+   fresh False)。読み直すのは Volume が変わった時だけ(頭の註の待ち方)。"
   (<- started float (GetMonotonic))
   (while True
+    (<- seen int (notice-mark notices name))
     (<- read (| VolumeRead None) (volume-read site owner doing name))
     (when (or (is read None) read.deleting)
       (return False))
     (val failed (is-not read.restore-failure None))
     (when (and (or read.restoring failed) read.placing.failed)
-      (<- (dropped-unplaced site owner doing name read.placing.note False)))
+      (<- (dropped-unplaced site notices owner doing name read.placing.note False)))
     (when failed
       (return False))
     (when (not read.restoring)
@@ -903,7 +979,7 @@
     (<- now float (GetMonotonic))
     (when (> (- now started) site.restore-seconds)
       (raise (! (refused owner doing (.format "{} 秒の内に戻し終わらない(volume {})" site.restore-seconds (or read.state "?"))))))
-    (<- (Delay site.poll-seconds)))
+    (<- (name-waited site notices name seen started site.restore-seconds)))
   False)
 
 
@@ -1009,8 +1085,8 @@
   room)
 
 
-(defk room-made [site owner doing parameters floors demand fresh]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: floors (get dict #(str int)))
+(defk room-made [site notices owner doing parameters floors demand fresh]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: floors (get dict #(str int)))
          (: demand int) (> demand 0) (: fresh bool)]
    :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
   "Volume を POST する(名目を増やす)前に、札の disk の残りが需要 demand(入る volume の名目の byte — 戻しは backup の大きさ・広げは増え)を
@@ -1031,7 +1107,7 @@
   (var failed #())
   (for [name plan.names]
     (try
-      (<- outcome WorkspaceOutcome (cooled-volume site (cut name (len NAME-PREFIX) None)))
+      (<- outcome WorkspaceOutcome (cooled-volume site notices (cut name (len NAME-PREFIX) None)))
       (when (= outcome WorkspaceOutcome.DONE)
         (:= cooled (+ cooled #(name))))
       (except [error WorkspaceVolumeRefused]
@@ -1072,8 +1148,8 @@
   (any (gfor item (or held.items #()) (and (is-not item.spec None) (bool item.spec.node-id)))))
 
 
-(defk dropped-unplaced [site owner doing name note fresh]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str) (: note str) (: fresh bool)] :post [(: % None)]
+(defk dropped-unplaced [site notices owner doing name note fresh]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: note str) (: fresh bool)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "Longhorn が replica を置けないと答えた volume name(訳 note)を、中身を持たない時(replica がどの disk にも置かれていない — 付いた事が
    無い)にその場で消して置き場の不足で断るため(faulted の volume を残さず、付くのを上限の秒まで待たない)。replica の置かれた volume は
@@ -1093,7 +1169,7 @@
       (<- deleted bool (deleted-volume site owner doing name read.version))
       (:= gone deleted))
     (when gone
-      (<- (waited-gone site owner doing name))
+      (<- (waited-gone site notices owner doing name))
       (raise (! (room-short owner doing (+ "Longhorn が replica を置けない(" (or note "訳なし") ") — 中身の無い volume を消した") fresh False))))
     (:= tries (+ tries 1))
     (<- (slog "置けない volume を消す前の読みの後に書きが入った — 読み直して消し直す" :owner owner :volume name :tries tries))
@@ -1103,8 +1179,8 @@
                         fresh True))))
 
 
-(defk dropped-failed-restore [site owner doing name read]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str) (: read VolumeRead) (is-not read.restore-failure None)]
+(defk dropped-failed-restore [site notices owner doing name read]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: read VolumeRead) (is-not read.restore-failure None)]
    :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
   "読み read で戻しに失敗した volume name を、その版の上でだけ消して消え終わりを待ち、消したかを得るため(False = 読んだ後に書きが入った — 呼び手が
    読み直す)。消すのは 1 度も戻し終わっていない volume だけ(restoreRequired の読み — 中身は戻す元の Backup に在るので、Snapshot も Backup も
@@ -1123,12 +1199,12 @@
                                             read.restore-failure)))))
   (<- deleted bool (deleted-volume site owner doing name read.version))
   (when deleted
-    (<- (waited-gone site owner doing name)))
+    (<- (waited-gone site notices owner doing name)))
   deleted)
 
 
-(defk restore-rebuilt [site owner doing name rebuilds]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str) (: rebuilds int) (>= rebuilds 0)] :post [(: % int)]
+(defk restore-rebuilt [site notices owner doing name rebuilds]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: rebuilds int) (>= rebuilds 0)] :post [(: % int)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "戻しの待ちが戻らずに終わった volume name を読み直し、戻しの失敗なら消して次の作りへ渡し、ここまでに消した回数を得るため(rebuilds = 前の回数・
    消した回だけ増やす)。消す途中・消えた・また戻す途中(並んだ付けが作り直した)なら何もしない。既に RESTORE-REBUILDS 回を作り直していれば、
@@ -1138,7 +1214,7 @@
     (return rebuilds))
   (when (>= rebuilds RESTORE-REBUILDS)
     (raise (! (refused owner doing (.format "backup からの戻しが {} 回続けて失敗した(Longhorn の訳: {})" (+ rebuilds 1) read.restore-failure)))))
-  (<- dropped bool (dropped-failed-restore site owner doing name read))
+  (<- dropped bool (dropped-failed-restore site notices owner doing name read))
   (when (not dropped)
     (<- (Delay site.poll-seconds))
     (return rebuilds))
@@ -1147,8 +1223,8 @@
   (+ rebuilds 1))
 
 
-(defk created-volume [site owner]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk created-volume [site notices owner]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume が無ければ、値の ConfigMap の級と大きさで作るため。その名の完了した backup が在れば(冷えている)一番新しい物から
    戻し、戻し終わるまで待つ(RESTORED)。backup が無ければ空で作る(DONE)。在れば ALREADY — 中身に触らない。ただし戻す途中なら戻し
    終わるまで待ち(同じ持ち主の次の頼みが先の戻しに相乗りする)、消す途中(冷やす手順の終わり)なら消え終わってから戻す。同じ名の作成が
@@ -1170,14 +1246,14 @@
   (while True
     (<- read (| VolumeRead None) (volume-read site owner doing name))
     (cond
-      (and (is-not read None) read.deleting) (<- (waited-gone site owner doing name))
+      (and (is-not read None) read.deleting) (<- (waited-gone site notices owner doing name))
       (is-not read None) (do (var settled True)
                              (when (or read.restoring (is-not read.restore-failure None))
-                               (<- ended bool (waited-restored site owner doing name))
+                               (<- ended bool (waited-restored site notices owner doing name))
                                (:= settled ended))
                              (when settled
                                (return WorkspaceOutcome.ALREADY))
-                             (<- count int (restore-rebuilt site owner doing name rebuilds))
+                             (<- count int (restore-rebuilt site notices owner doing name rebuilds))
                              (:= rebuilds count))
       True
       (do (<- backups tuple (backup-views site owner doing name target))
@@ -1185,7 +1261,7 @@
           (when (and backups (is source None))
             (raise (! (refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): " (.join "・" (gfor one backups (+ one.name " " (or one.state "?")))))))))
           (val size (if (is source None) settings.size-bytes (max settings.size-bytes source.volume-size)))
-          (<- (room-made site owner doing parameters (! (settings-floors settings)) size (is source None)))
+          (<- (room-made site notices owner doing parameters (! (settings-floors settings)) size (is source None)))
           (var node "")
           (when (is-not source None)
             (<- chosen str (restore-node-read site owner doing parameters (! (settings-floors settings)) size))
@@ -1201,7 +1277,7 @@
           (match (! (status-field answer.status))
             201 (if (is source None)
                     (return WorkspaceOutcome.DONE)
-                    (do (<- ended bool (waited-restored site owner doing name))
+                    (do (<- ended bool (waited-restored site notices owner doing name))
                         (when ended
                           (return WorkspaceOutcome.RESTORED))))
             409 None
@@ -1303,19 +1379,21 @@
     _ (raise (! (status-refusal owner doing "VolumeAttachment の ticket の書き" answer)))))
 
 
-(defk attached-volume [site owner]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk attached-volume [site notices owner]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume をこの機体の node に attach し、ticket が満たされ volume がその node に付くまで待つため(ticket を置いた = DONE・
    既に付いていた = ALREADY。無い volume・別の node に ticket の在る volume・上限の秒の内に付かない時は断る)。ticket を置いたら Volume に
    使った刻の印を書く — 冷やす途中の volume を冷やす側に消させない(頭の註)。印を書く前に消されていたら、作る(戻す)から出し直すよう断る。
    付くのを待つ間に Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ(初めて付ける空の volume — 作る前の数えと
-   付けの間に置き場が尽きた)、上限の秒まで待たずに volume を消して置き場の不足で断る(fresh True)。"
+   付けの間に置き場が尽きた)、上限の秒まで待たずに volume を消して置き場の不足で断る(fresh True)。待つ間に読み直すのは Volume か
+   VolumeAttachment が変わった時だけ(頭の註の待ち方)。"
   (val doing "attach")
   (<- name str (checked-name owner doing))
   (<- node str (worker-fact WorkerFactName.NODE_NAME))
   (<- started float (GetMonotonic))
   (var put False)
   (while True
+    (<- seen int (notice-mark notices name))
     (<- read (| AttachRead None) (attach-read site owner doing name))
     (when (is read None)
       (raise (! (refused owner doing "volume が無い(先に作る)"))))
@@ -1331,14 +1409,14 @@
                            (when (not marked)
                              (raise (! (refused owner doing "ticket を置いた後に volume が消された(冷やされた — 作る(戻す)から出し直す)"))))))
       AttachStep.WAIT (do (when read.placing.failed
-                            (<- (dropped-unplaced site owner doing name read.placing.note True)))
+                            (<- (dropped-unplaced site notices owner doing name read.placing.note True)))
                           (<- now float (GetMonotonic))
                           (when (> (- now started) site.attach-seconds)
                             (raise (! (refused owner doing (.format "{} 秒の内に node {} に付かない(volume {}・node {}・ticket {})"
                                                                     site.attach-seconds node (or read.view.state "?")
                                                                     (or read.view.current-node "?")
                                                                     (or read.view.message "訳なし"))))))
-                          (<- (Delay site.poll-seconds)))))
+                          (<- (name-waited site notices name seen started site.attach-seconds)))))
   WorkspaceOutcome.DONE)
 
 
@@ -1352,11 +1430,12 @@
   (! (mount-entries (! (text-field text)))))
 
 
-(defk detached-volume [site owner]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk detached-volume [site notices owner]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume の、この機体の node への attach を外し、外れるまで待つため(ticket を外した = DONE・無かった = ALREADY)。
    まだ mount されている volume は外さない(外すと file system が書きの途中で切れる — 先に umount)。別の node に ticket の在る volume・
-   上限の秒の内に外れない時は断る。外したら Volume に使い終わりの刻の印を書く(冷やす順が読む — volume が無ければ書かない)。"
+   上限の秒の内に外れない時は断る。外したら Volume に使い終わりの刻の印を書く(冷やす順が読む — volume が無ければ書かない)。待つ間に読み直すのは Volume か VolumeAttachment が変わった時
+   だけ(頭の註の待ち方)。"
   (val doing "detach")
   (<- name str (checked-name owner doing))
   (<- node str (worker-fact WorkerFactName.NODE_NAME))
@@ -1367,6 +1446,7 @@
   (<- started float (GetMonotonic))
   (var removed False)
   (while True
+    (<- seen int (notice-mark notices name))
     (<- read (| AttachRead None) (attach-read site owner doing name))
     (when (is read None)
       (return (if removed WorkspaceOutcome.DONE WorkspaceOutcome.ALREADY)))
@@ -1384,7 +1464,7 @@
                           (when (> (- now started) site.detach-seconds)
                             (raise (! (refused owner doing (.format "{} 秒の内に node {} から外れない(volume {})"
                                                                     site.detach-seconds node (or read.view.state "?"))))))
-                          (<- (Delay site.poll-seconds)))))
+                          (<- (name-waited site notices name seen started site.detach-seconds)))))
   WorkspaceOutcome.DONE)
 
 
@@ -1397,11 +1477,11 @@
       None))
 
 
-(defk keeper-answer [site owner doing verb name path]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: verb str) (: name str) (: path str)] :post [(: % KeeperAnswer)]
+(defk keeper-answer [site notices owner doing verb name path]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: verb str) (: name str) (: path str)] :post [(: % KeeperAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "mount の係へ頼み `<verb> <name> <path>` を 1 つ出し、答えを得るため(頭の註の頼み方 — 係の無い worker・上限の秒の内に答えない・
-   答えの形が違う時は断る。答えの file は読んだら消す)。"
+   答えの形が違う時は断る。答えの file は読んだら消す)。答えの file を読み直すのは、箱がその file の現れを知らせた時だけ(頭の註の待ち方)。"
   (<- held (| PathStat FileFailed) (StatPath site.mount-dir))
   (when (or (isinstance held FileFailed) (!= held.kind PathKind.DIRECTORY))
     (raise (! (refused owner doing (+ "mount の係が無い worker(頼みの dir " site.mount-dir " が無い)")))))
@@ -1421,7 +1501,7 @@
             (when (> (- now started) site.mount-seconds)
               (<- (RemoveTree (+ base ".req")))
               (raise (! (refused owner doing (.format "mount の係が {} 秒の内に答えない(頼み {}.req)" site.mount-seconds key)))))
-            (<- (Delay site.poll-seconds)))
+            (<- (file-waited site notices (+ base ".out") started site.mount-seconds)))
         (do (<- (RemoveTree (+ base ".out")))
             (<- answer (| KeeperAnswer None) (keeper-answer-of (! (text-field text))))
             (when (is answer None)
@@ -1487,8 +1567,8 @@
   (if held WorkspacePlace.CLASH WorkspacePlace.OUTSIDE))
 
 
-(defk mounted-volume [site owner path]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk mounted-volume [site notices owner path]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume を path に mount するため(付けた = DONE・既に付いていた = ALREADY)。付ける先の dir は作り、外した後も残す。
    付ける先に別の物が付いている・中身の在る dir(volume の外に書かれた物 — 付けると隠す)・係が断った時は断る(attach していない volume は
    係が device の無い事で断る)。"
@@ -1508,14 +1588,14 @@
   (<- made (| FileFailed None) (MakeDirectory target))
   (when (isinstance made FileFailed)
     (raise (! (refused owner doing (+ "付ける先の dir を作れない: " made.detail)))))
-  (<- answer KeeperAnswer (keeper-answer site owner doing "mount" name target))
+  (<- answer KeeperAnswer (keeper-answer site notices owner doing "mount" name target))
   (when (!= answer.code 0)
     (raise (! (refused owner doing (+ "mount の係が断った: " answer.notes)))))
   WorkspaceOutcome.DONE)
 
 
-(defk unmounted-volume [site owner path]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk unmounted-volume [site notices owner path]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "path に付いた持ち主 owner の volume を外すため(外した = DONE・何も付いていなかった = ALREADY)。別の物が付いている・係が断った
    (使っている process が在る)時は断る。付ける先の dir は残す。"
   (val doing "umount")
@@ -1528,7 +1608,7 @@
   (<- found (| str None) (volume-of-entry at))
   (when (!= found name)
     (raise (! (refused owner doing (.format "{} に付いているのは volume {} でない({})" target name at.source)))))
-  (<- answer KeeperAnswer (keeper-answer site owner doing "umount" name target))
+  (<- answer KeeperAnswer (keeper-answer site notices owner doing "umount" name target))
   (when (!= answer.code 0)
     (raise (! (refused owner doing (+ "mount の係が断った: " answer.notes)))))
   WorkspaceOutcome.DONE)
@@ -1662,8 +1742,8 @@
   None)
 
 
-(defk grown-volume [site owner path]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+(defk grown-volume [site notices owner path]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "path に付いた持ち主 owner の volume を、file system の空きが値の growBelowPercent を割っていれば、名目の大きさを倍(上限 maxSizeBytes)に
    広げるため(広げた = DONE・要らない・上限に居る・広げない値 = ALREADY)。名目の予約が増える分を札の disk が受けられなければ、作る時と
    同じく増える byte を需要に外れた volume を冷やし(room-made)、冷やしても足りなければ広げずに置き場の不足で断る(fresh False)。Volume の spec.size を書き、engine が広がるのを待ち、mount の係に file system を device の大きさまで
@@ -1696,13 +1776,13 @@
     (return WorkspaceOutcome.ALREADY))
   (when (not behind)
     (<- parameters dict (class-parameters owner settings.storage-class))
-    (<- (room-made site owner doing parameters (! (settings-floors settings)) (- wanted read.size) False))
+    (<- (room-made site notices owner doing parameters (! (settings-floors settings)) (- wanted read.size) False))
     (val body (json.dumps {"spec" {"size" (str wanted)}} :ensure-ascii False :sort-keys True))
     (<- answer HttpResponse (kube-answer owner doing "PATCH" (! (volume-path site name)) body MERGE-PATCH-TYPE))
     (when (!= (! (status-field answer.status)) 200)
       (raise (! (status-refusal owner doing "Volume の大きさの書き" answer)))))
   (<- (waited-engine site owner doing name wanted))
-  (<- grown KeeperAnswer (keeper-answer site owner doing "grow" name target))
+  (<- grown KeeperAnswer (keeper-answer site notices owner doing "grow" name target))
   (when (!= grown.code 0)
     (raise (! (refused owner doing (+ "mount の係が file system を広げられなかった: " grown.notes)))))
   (<- (folded-expansion site owner doing name))
@@ -1736,8 +1816,8 @@
   (#^ (get tuple #(str ...)) failed))
 
 
-(defk mounted-growth [site]
-  {:pre [(: site WorkspaceVolumeSite)] :post [(: % Growth)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk mounted-growth [site notices]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices)] :post [(: % Growth)] :tags {:context "doeff-cluster" :role "protocol"}}
   "この機体に付いている作業場所の volume を mount の表から読み、file system の空きが値の growBelowPercent を割った物を 1 つずつ広げるため
    (冷やす回 — 上に載る系が数分ごとに出す CoolIdleWorkspaceVolumes の program の回 — が呼ぶ。file system の空きの減りは知らせを
    出さないので、付けている間は冷やす回ごとに読む。広げられなかった物は訳を残して次へ進む)。"
@@ -1750,7 +1830,7 @@
     (<- name (| str None) (volume-of-entry entry))
     (when (and (is-not name None) (.startswith name NAME-PREFIX))
       (try
-        (<- outcome WorkspaceOutcome (grown-volume site (cut name (len NAME-PREFIX) None) entry.mount-point))
+        (<- outcome WorkspaceOutcome (grown-volume site notices (cut name (len NAME-PREFIX) None) entry.mount-point))
         (when (= outcome WorkspaceOutcome.DONE)
           (:= grown (+ grown #(name))))
         (except [error WorkspaceVolumeRefused]
@@ -1813,8 +1893,8 @@
   failed)
 
 
-(defk cooled-volume [site owner]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+(defk cooled-volume [site notices owner]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "外れている持ち主 owner の volume を冷やすため(README の節「寿命」): 束 BackupVolume が無ければ作り(bundle-ensured — backup の完了が
    backup の先の全体の同期でなく束 1 本の同期を頼むように)、Snapshot と Backup(名 <名>-cool-<刻>・label backup-volume と
    backup-target)を作って完了を待ち、その volume の束 BackupVolume が在り lastBackupName が今回の Backup である事を確かめ(無ければ束を
@@ -1827,10 +1907,10 @@
   (<- read (| VolumeRead None) (volume-read site owner doing name))
   (cond
     (is read None) (return WorkspaceOutcome.ALREADY)
-    read.deleting (do (<- (waited-gone site owner doing name))
+    read.deleting (do (<- (waited-gone site notices owner doing name))
                       (return WorkspaceOutcome.ALREADY))
     read.restoring (raise (! (refused owner doing "backup から戻す途中(使い始める volume は冷やさない)")))
-    (is-not read.restore-failure None) (do (<- dropped bool (dropped-failed-restore site owner doing name read))
+    (is-not read.restore-failure None) (do (<- dropped bool (dropped-failed-restore site notices owner doing name read))
                                            (when (not dropped)
                                              (raise (! (refused owner doing "戻しに失敗した volume を読んだ版の上で消せない(読んだ後に書きが入った)"))))
                                            (return WorkspaceOutcome.DONE))
@@ -1874,7 +1954,7 @@
       (raise (! (refused owner doing (.format "冷やす途中に使い始めた(ticket {})— volume を消さない(backup {} は残す)" (.join "・" late) mark)))))
     (<- deleted bool (deleted-volume site owner doing name fresh.version))
     (when deleted
-      (<- (waited-gone site owner doing name))
+      (<- (waited-gone site notices owner doing name))
       (return WorkspaceOutcome.DONE))
     (<- now float (GetMonotonic))
     (when (> (- now started) site.detach-seconds)
@@ -2131,8 +2211,8 @@
                (AttachedWorkspaceVolume :owner (cut one.name (len NAME-PREFIX) None) :used-at one.used-at))))
 
 
-(defk idle-cooling [site]
-  {:pre [(: site WorkspaceVolumeSite)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk idle-cooling [site notices]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "protocol"}}
   "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の線ごとの残りの byte
    (room-read)が値の spareBytes を割る分 — 冷やした volume が線ごとに空ける byte で数える)の物を、古い順に 1 つずつ冷やし、その後に
    機体に付いている volume の空きを読んで広げるため(mounted-growth — 冷やして空けた置き場から広げる。冷やせなかった・広げられなかった
@@ -2149,51 +2229,12 @@
   (var failed #())
   (for [name plan.names]
     (try
-      (<- outcome WorkspaceOutcome (cooled-volume site (cut name (len NAME-PREFIX) None)))
+      (<- outcome WorkspaceOutcome (cooled-volume site notices (cut name (len NAME-PREFIX) None)))
       (when (= outcome WorkspaceOutcome.DONE)
         (:= cooled (+ cooled #(name))))
       (except [error WorkspaceVolumeRefused]
         (:= failed (+ failed #((+ name ": " (str error))))))))
-  (<- growth Growth (mounted-growth site))
+  (<- growth Growth (mounted-growth site notices))
   (<- unbacked tuple (mounted-first-backups site))
   (CoolingSweep :nominal room.nominal :actual room.actual :cooled cooled :failed (+ failed growth.failed unbacked) :grown growth.grown
                 :covered plan.covered))
-
-
-(defhandler workspace-volumes-api [#^ WorkspaceVolumeSite site]
-  ;; 引数に残す理由: 場所と待つ秒は本番(WORKSPACE-SITE)と検で違う(検は memory の file の上の頼みの dir と短い秒)。
-  ;; 本番: Longhorn の物を worker の身元で読み書きし、mount は係へ頼む(頭の註)。外側に file・時計・環境の答え手と、API server 宛ての
-  ;; 要求を区画の CA で検める HTTP の答え手を要る。
-  (CreateWorkspaceVolume [owner]
-    (<- outcome WorkspaceOutcome (created-volume site owner))
-    (resume outcome))
-  (AttachWorkspaceVolume [owner]
-    (<- outcome WorkspaceOutcome (attached-volume site owner))
-    (resume outcome))
-  (MountWorkspaceVolume [owner path]
-    (<- outcome WorkspaceOutcome (mounted-volume site owner path))
-    (resume outcome))
-  (UmountWorkspaceVolume [owner path]
-    (<- outcome WorkspaceOutcome (unmounted-volume site owner path))
-    (resume outcome))
-  (DetachWorkspaceVolume [owner]
-    (<- outcome WorkspaceOutcome (detached-volume site owner))
-    (resume outcome))
-  (CoolWorkspaceVolume [owner]
-    (<- outcome WorkspaceOutcome (cooled-volume site owner))
-    (resume outcome))
-  (PurgeWorkspaceVolume [owner]
-    (<- outcome WorkspaceOutcome (purged-volume site owner))
-    (resume outcome))
-  (CoolIdleWorkspaceVolumes []
-    (<- sweep CoolingSweep (idle-cooling site))
-    (resume sweep))
-  (ReadWorkspaceRoom []
-    (<- room WorkspaceRoom (workspace-room site))
-    (resume room))
-  (ReadWorkspacePlace [owner path]
-    (<- place WorkspacePlace (place-read site owner path))
-    (resume place))
-  (ReadAttachedWorkspaceVolumes []
-    (<- attached tuple (attached-volumes site))
-    (resume attached)))
