@@ -33,14 +33,16 @@
 ;;;   (TurnRecordRow :conversation-id c :turn-id t :phase "Running" :ended-at None)
 ;;;
 ;;; Expansion: in the type-check projection (static-view), (defclass [(dataclass :frozen True :kw-only True)] Name [] fields …).
-;;; At runtime, (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] Name [] fields … functions …) plus finishing (seal-record of record_runtime) —
+;;; At runtime, (defclass [(dataclass :init False :repr False :eq False :kw-only True)] Name [] (setv __slots__ …) fields … functions …) plus finishing (seal-record of record_runtime) —
 ;;; dataclass is made to build only the table of fields, and __init__ (kw-only), __repr__, __eq__, __hash__, and the frozen __setattr__ / __delattr__ are
 ;;; written by the expansion (the functions go into the .pyc as module code, and dataclass does not compile function source at load time — about 1 ms per type →
 ;;; about 0.1 ms). The functions written per type are only __init__ (no annotations), __eq__, __hash__, and the __post_init__ of :check;
 ;;; __repr__ and the frozen __setattr__ / __delattr__ point at the one shared set in record_runtime, and the type holds the sequence of field names as a tuple. The docstring is not put in the runtime expansion, and __doc__ is a
 ;;; shared descriptor built from the field names (per-type functions and strings held over 10 MB in a job's memory).
 ;;; Values hold fields in slots and have no __dict__ (a __dict__ per value held about 0.6 GB on the production screen —
-;;; for a type with 35 fields, about 2,000 → about 410 bytes each). The weak-reference slot (__weakref__) remains. Field defaults live in the field table (__dataclass_fields__) and
+;;; for a type with 35 fields, about 2,000 → about 410 bytes each). The class body declares the slots itself (dataclass with slots=True rebuilt every class — about
+;;; 0.15 ms per type, about 1 second over the 6,300 types one agora-controllers check loads), so a field default is bound to a name of its own in the body and
+;;; seal-record puts it into the field table. The weak-reference slot (__weakref__) remains. Field defaults live in the field table (__dataclass_fields__) and
 ;;; cannot be read from the type's attributes (same as dataclass with slots). pickle and copy restore values with the shared __setstate__ without going through the freeze.
 ;;; Behavior is the same as standard dataclass (frozen, kw_only) (tests/defrecord_shape_deftests.hy
 ;;; checks this). When the expansion cannot fully read the shape of a field (a field passed through a name, a non-literal :init / :repr / :compare / :hash, a field named self / object,
@@ -275,9 +277,27 @@
                                "init" (.get flags "init" True) "repr" (.get flags "repr" True)
                                "compare" (.get flags "compare" True) "hash" (.get flags "hash" None)})))
             specs (lfor #(t d h) targets (spec-of t d h)))
+      ;; A private name `__x` is refused too: Python renames it in the class body and in __slots__, and the expansion writes the plain name.
       (when (or (any (gfor form fields (isinstance form Symbol))) (any (gfor form fields (own-method? form)))
-                (any (gfor s specs (is s None))))
+                (any (gfor s specs (is s None)))
+                (any (gfor s specs (and (.startswith (get s "py") "__") (not (.endswith (get s "py") "__"))))))
         (return None))
+      ;; The class declares its slots in its body (so dataclass does not rebuild the class to add them — about 0.15 ms per type), and a slot cannot share
+      ;; its name with a class attribute, so a field's default is not left as a class attribute: the body keeps the field annotation and binds the default to a
+      ;; class-level name of its own (held — python name → that name, in field order), evaluated where the default was written. __init__ takes its argument defaults
+      ;; from these names, seal-record puts the defaults into the field table, and the names are deleted at the end of the body.
+      (setv paired? (fn [form] (and (isinstance form Expression) (>= (len form) 3) (= (str (get form 0)) "setv") (% (len form) 2)))
+            pairs-of (fn [form] (list (zip (cut form 1 None 2) (cut form 2 None 2))))
+            py-of (fn [target] (hy.mangle (str (get target 1))))
+            held (dfor form fields :if (paired? form) #(t v) (pairs-of form) :if (annotated t)
+                       (py-of t) (hy.gensym (py-of t)))
+            body (sum (lfor form fields
+                            (if (paired? form)
+                                (sum (lfor #(t v) (pairs-of form)
+                                           (if (annotated t) [t `(setv ~(get held (py-of t)) ~v)] [`(setv ~t ~v)]))
+                                     [])
+                                [form]))
+                      []))
       ;; The functions it writes read the defined type not by name but by `__class__` (the closure of the defined class that Python makes for a method) and zero-argument super —
       ;; the name of a type written in a class body is an attribute of the outer class, and a method skips the class level when looking up a name, so reading by name made the frozen
       ;; __setattr__ and the __init__ of fields with default-factory or init turned off fail with NameError (tests/test_nested_definition_scope.py
@@ -296,9 +316,9 @@
                         (get s "has-factory")
                           #(`[~sym ~missing] (put `(if (is ~sym ~missing) ~(factory py) ~sym)))
                         (and (= (get s "kind") "call") (get s "has-value"))
-                          #(`[~sym (. ~sym default)] (put sym))
+                          #(`[~sym (. ~(get held py) default)] (put sym))
                         (= (get s "kind") "plain")
-                          #(`[~sym ~sym] (put sym))
+                          #(`[~sym ~(get held py)] (put sym))
                         True
                           #(sym (put sym))))
             inits (lfor s specs (init-of s))
@@ -318,8 +338,9 @@
       ;; it remains in the type-check projection and the source), and __doc__ is a shared descriptor built from the field names when read (so dataclass does not
       ;; compute a signature at load time for a type without a docstring).
       `(do
-       (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] ~name []
-         (setv __doc__ doeff_hy._record_runtime.RECORD-DOC
+       (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
+         (setv __slots__ ~(names-of [#* (lfor s specs (get s "py")) "__weakref__"])
+               __doc__ doeff_hy._record_runtime.RECORD-DOC
                __doeff-fields__ ~(names-of (lfor s specs (get s "py")))
                __doeff-repr-fields__ ~(names-of shown)
                __repr__ doeff_hy._record_runtime.record-repr
@@ -327,12 +348,14 @@
                __delattr__ doeff_hy._record_runtime.record-delattr
                __setstate__ doeff_hy._record_runtime.record-setstate)
          ~@(or class-vars [])
-         ~@fields
+         ~@body
          ~@post-init
+         ~@(if held [`(setv __doeff-defaults__ #(~@(lfor #(py kept) (.items held) `#(~(String py) ~kept))))] [])
          (defn __init__ [~self-sym ~@(if params ['* #* params] [])]
            ~@sets
            ~@(if post-init [`(.__post-init__ ~self-sym)] [])
            None)
+         ~@(if held [`(del ~@(.values held))] [])
          (defn __eq__ [~self-sym ~other]
            (cond
              (is ~self-sym ~other) True

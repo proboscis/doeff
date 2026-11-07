@@ -9,6 +9,7 @@ each wrapper just calls the previous function at call time, and this module's wr
 
 import importlib.machinery
 import importlib.util
+import io
 import os
 import sys
 from collections.abc import Callable, Iterable
@@ -674,14 +675,16 @@ def _recompile(
 
 
 def _bytecode_header(self: importlib.machinery.SourceFileLoader, path: str) -> bytes | None:
-    """The header of the .pyc next to the source (None if absent) -- look at the mode (timestamp / hash, whether checked) so it can be rewritten in the same mode."""
+    """The header of the .pyc next to the source (None if absent) -- look at the mode (timestamp / hash, whether checked) so it can be rewritten in the same mode.
+    Only the header bytes are read: the whole .pyc is read once more by the standard get_code, and reading it here too cost about 0.4 seconds of CPU over the
+    1,850 Hy modules one agora-controllers check loads."""
+    from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
+
     try:
-        data = self.get_data(importlib.util.cache_from_source(path))
+        with io.open_code(importlib.util.cache_from_source(path)) as pyc:
+            return pyc.read(records.PYC_HEADER_BYTES)
     except OSError:
         return None
-    from doeff_hy_bytecode_guard import _records as records  # called only when a stale record is encountered
-
-    return data[: records.PYC_HEADER_BYTES]
 
 
 def _bytecode_matches_source(

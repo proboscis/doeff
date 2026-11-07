@@ -130,6 +130,29 @@ def record_setstate(self: object, state: object) -> None:
                 object.__setattr__(self, name, f.default_factory())
 
 
+def _put_default(fields: dict[str, dataclasses.Field[object]], name: str, value: object) -> None:
+    """Put the default the class body wrote for one field into the field table, the way dataclass reads a class attribute default.
+
+    The defrecord expansion declares the slots in the class body (so dataclass does not rebuild the class), and a slot cannot share its name with a class
+    attribute, so the body binds the default to a name of its own and dataclass sees a field without a default. A field marker (``(field …)``) replaces the
+    table's field and takes its name, type, and kind (keyword-only unless the marker says otherwise); a plain value becomes the field's default. A mutable default
+    (a value whose type is not hashable) is refused with the same error as dataclass."""
+    made = fields[name]
+    if isinstance(value, dataclasses.Field):
+        value.name = made.name
+        value.type = made.type
+        setattr(value, "_field_type", getattr(made, "_field_type"))
+        if value.kw_only is dataclasses.MISSING:
+            value.kw_only = made.kw_only
+        default = value.default
+        fields[name] = value
+    else:
+        made.default = value
+        default = value
+    if default is not dataclasses.MISSING and type(default).__hash__ is None:
+        raise ValueError(f"mutable default {type(default)} for field {name} is not allowed: use default_factory")
+
+
 def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> None:
     """Finish a record whose functions the expansion wrote: restore __dataclass_params__ to the same value as the previous expansion, and check that the defaults of the plain fields the expansion read as literal values
     are not field markers (a Field with a factory, init, repr, compare, or hash) (the expansion cannot read a field passed through a name and the functions
@@ -138,6 +161,11 @@ def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> Non
     if "__post_init__" in vars(cls) and not calls_post_init:
         raise TypeError(f"The expansion's __init__ does not call __post_init__ of {cls.__name__} — the defrecord expansion overlooked the body's own function")
     fields: dict[str, dataclasses.Field[object]] = getattr(cls, "__dataclass_fields__")
+    defaults: tuple[tuple[str, object], ...] = vars(cls).get("__doeff_defaults__", ())
+    if defaults:
+        delattr(cls, "__doeff_defaults__")
+    for name, value in defaults:
+        _put_default(fields, name, value)
     for name in plain:
         f = fields[name]
         if f.default_factory is not dataclasses.MISSING or not f.init or not f.repr or not f.compare or f.hash is not None:

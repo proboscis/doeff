@@ -133,7 +133,10 @@
   (with [_ (static-view)]
     (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
                "'(do (defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str)))")))
-  (assert (in "(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)" (hy.repr (hy.macroexpand '(defrecord Plain #^ str key))))))
+  ;; The runtime class declares its slots in its body (dataclass does not rebuild the class to add them).
+  (setv runtime (hy.repr (hy.macroexpand '(defrecord Plain #^ str key))))
+  (assert (in "(dataclass :init False :repr False :eq False :kw-only True)" runtime))
+  (assert (in "(setv __slots__ #(\"key\" \"__weakref__\")" runtime)))
 
 
 (deftest test-a-check-that-returns-a-program-is-refused
