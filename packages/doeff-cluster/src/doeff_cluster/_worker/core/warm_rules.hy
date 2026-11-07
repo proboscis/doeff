@@ -14,6 +14,7 @@
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import collections [Counter])
+(import hashlib)
 (import json)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
@@ -228,10 +229,11 @@
 ;; --- 置き場と起動の命令(宿 = worker/protocol/warm_host と process_host が読む)--------------------------------------------
 
 (defrecord WarmPlace
-  "待ちの子 1 つの置き場(root の外 — root の中身と完成の印を汚さない): dir = <待ちの子の根>/<root のキー>・socket = 頼みを受ける unix socket・
-   ready = 準備完了の印の file。"
+  "待ちの子 1 つの置き場(root の外 — root の中身と完成の印を汚さない): dir = <待ちの子の根>/<root のキー>・socket-dir = socket だけを置く
+   持ち主だけの dir(短い根の下 — warm-socket-of)・socket = 頼みを受ける unix socket・ready = 準備完了の印の file。"
   {:tags {:context "worker" :role "type"}}
   (#^ str dir)
+  (#^ str socket-dir)
   (#^ str socket)
   (#^ str ready))
 
@@ -256,13 +258,50 @@
   (+ state "/warm"))
 
 
+(defclass WarmSocketTooLong [ValueError]  ; class にする理由: 上限を越える socket の path を名指して断る例外の型(検が pytest.raises で名指す — 欄も状態も足さない)
+  "待ちの子の socket の path が unix socket の上限(SOCKET-PATH-LIMIT)を越える。args = path と長さを書いた文。")
+
+
+;; unix socket の path の上限(byte・終わりの NUL を除く): sun_path は macOS が 104 byte・Linux が 108 byte(どちらも NUL 込み)。
+;; 狭い macOS の側に合わせる。
+(val SOCKET-PATH-LIMIT 103)
+;; 待ちの子の socket を置く短い根。状態の dir(<state-dir>/warm/<root のキー>)は機体と世代で長さが変わり、Mac の世代の dir では
+;; socket の path が 118 byte になって bind が断った(2026-11-07 の Mac の worker・AF_UNIX path too long)。そこで socket だけを長さの
+;; 決まった根の下に置く。/tmp は macOS(/private/tmp)と Linux の container のどちらにも在り、sticky なので他人が dir を消せない
+;; (他人が先に作った dir は、待ちの子が持ち主と mode を確かめて起動を断る — warm_child)。
+(val WARM-SOCKET-ROOT "/tmp")
+;; socket の dir の名に入れる、置き場の dir の sha256 の頭の桁数(96 bit — 同じ機体の世代と root の置き場が重ならない)。
+(val WARM-SOCKET-DIGITS 24)
+
+
+(defk warm-socket-dir-of [root dir]
+  {:pre [(: root str) (: dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "待ちの子の置き場の dir から、socket だけを置く持ち主だけの dir(<root>/doeff-warm-<dir の sha256 の頭 24 桁>)を導くため。名の長さは
+   dir の長さに依らない。"
+  (.format "{}/doeff-warm-{}" root (cut (.hexdigest (hashlib.sha256 (.encode dir "utf-8"))) 0 WARM-SOCKET-DIGITS)))
+
+
+(defk warm-socket-of [root dir]
+  {:pre [(: root str) (: dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "待ちの子の置き場の dir から、頼みを受ける socket の path(<warm-socket-dir-of>/sock)を導くため。上限を越える組み立て(長すぎる根)は
+   WarmSocketTooLong で名指して断る — 黙って待ちの子の bind の断りまで運ばない。"
+  (<- socket-dir str (warm-socket-dir-of root dir))
+  (val path (+ socket-dir "/sock"))
+  (val size (len (.encode path "utf-8")))
+  (when (> size SOCKET-PATH-LIMIT)
+    (raise (WarmSocketTooLong (.format "待ちの子の socket の path が {} byte で、unix socket の上限 {} byte を越える: {}" size SOCKET-PATH-LIMIT path))))
+  path)
+
+
 (defk warm-place [warm-dir key]
   {:pre [(: warm-dir str) (: key str)] :post [(: % WarmPlace)] :tags {:context "worker" :role "judgment"}}
-  "root のキーの待ちの子の置き場を導くため — 起こす宿(--socket・--ready)と task を分ける宿(ForkFromWarm の socket)が同じ関数で導くので、
-   task は自分の root のキーの socket へだけ頼む(条 WC1 の宿の側の半分)。socket の path は unix socket の上限 107 byte の内に収まる
-   (<state-dir>/warm/env-<24 桁>/sock)。"
+  "root のキーの待ちの子の置き場を導くため — 起こす宿(--socket・--ready)と task を分ける宿(ForkFromWarm の socket)と忘れる時の掃除が
+   同じ関数で導くので、task は自分の root のキーの socket へだけ頼む(条 WC1 の宿の側の半分)。socket は状態の dir の下でなく短い根の下
+   (warm-socket-of — 状態の dir の長さに依らず unix socket の上限の内)。"
   (val dir (+ warm-dir "/" key))
-  (WarmPlace :dir dir :socket (+ dir "/sock") :ready (+ dir "/ready.json")))
+  (<- socket-dir str (warm-socket-dir-of WARM-SOCKET-ROOT dir))
+  (<- socket str (warm-socket-of WARM-SOCKET-ROOT dir))
+  (WarmPlace :dir dir :socket-dir socket-dir :socket socket :ready (+ dir "/ready.json")))
 
 
 (defk warm-child-argv [uv launch place entry-place]

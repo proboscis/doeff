@@ -65,8 +65,9 @@
   (<- forgotten tuple (ObserveWarmChildren))
   (<- place WarmPlace (warm-place SETTINGS.warm-dir "env-a"))
   (<- gone (StatPath place.dir))
+  (<- socket-gone (StatPath place.socket-dir))
   (<- record str (ReadText ARGV-RECORD))
-  #(ready stopped forgotten gone (json.loads record)))
+  #(ready stopped forgotten gone (json.loads record) socket-gone))
 
 
 (deftest test-the-warm-host-starts-observes-stops-and-forgets-a-warm-child
@@ -79,11 +80,11 @@
   (val forgotten (get seen 2))
   (val gone (get seen 3))
   (val record (get seen 4))
-  ;; 起こし方: root の venv の uv run・待ちの子の入口・置き場は root の外の <warm-dir>/<キー>・読む module を名の順に。env は許可表の名だけ
+  ;; 起こし方: root の venv の uv run・待ちの子の入口・印の置き場は root の外の <warm-dir>/<キー>・socket は短い根の下(置き場の dir の hash)・読む module を名の順に。env は許可表の名だけ
   ;; (値の在る資格の名 SECRET_TOKEN は渡さない)。
   (assert (= (get record "argv")
              ["uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-a/app" "python" "-m" "doeff_cluster._worker.entry.warm_child"
-              "--root" "/roots/env-a" "--socket" "/state/warm/env-a/sock" "--ready" "/state/warm/env-a/ready.json"
+              "--root" "/roots/env-a" "--socket" "/tmp/doeff-warm-34cffbd0c0a40c52ba5ecfb6/sock" "--ready" "/state/warm/env-a/ready.json"
               "--preload" "app.jobs" "--preload" "app.models"])
           record)
   (assert (= (get record "env") ["HOME" "PATH"]) record)
@@ -91,9 +92,10 @@
   (assert (= (tuple (gfor v ready #(v.key v.mark v.exit-code))) #(#("env-a" (WarmChildMark :threads 1 :vm-live #(0 0 0) :pid 1) None))) ready)
   ;; 止めた待ちの子は TERM で終わり、止めた訳が残る。
   (assert (= (tuple (gfor v stopped #(v.exit-code v.detail (is-not v.stop None)))) #(#(-15 "root の待ちの子が要らなくなった" True))) stopped)
-  ;; 忘れた待ちの子は観測から消え、置き場も消える。
+  ;; 忘れた待ちの子は観測から消え、置き場も socket の dir も消える。
   (assert (= forgotten #()) forgotten)
-  (assert (= gone.kind PathKind.MISSING) gone))
+  (assert (= gone.kind PathKind.MISSING) gone)
+  (assert (= (. (get seen 5) kind) PathKind.MISSING) (get seen 5)))
 
 
 ;; --- 待ちの子 1 本の大きさ(準備完了の時の RSS)--------------------------------------------

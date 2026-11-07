@@ -15,6 +15,7 @@ macOS = kqueue — doeff_core_effects._process_exit の exit-fd-of)・job の進
 - 約束の形でない頼み(知らない欄を含む)は、合わない欄の場所だけを名乗って断る
 - 待ちの子は env の値を持たない(頼みの env は分かれた子にだけ在り、待ちの子の環境と log と断りの文に出ない)
 - 前もって読めない module は、名を挙げて起動を断る
+- socket の dir が持ち主だけの dir でなければ、dir の名を挙げて起動を断る
 - worker が消えたら(stdin の EOF)待ちの子は終わる
 - 分かれた子の log(task の log)は、shim の道と同じ部品で 1 行ごとに壁の時計の刻の頭を持つ(#3714)
 - 待ちの子は読み込んだ heap を受け付けの前に GC で掃いて凍らせ、分かれた子はその凍った heap を受け継ぐ(#3765)
@@ -91,7 +92,7 @@ class Refused:
 
 @pytest.fixture
 def place() -> Iterator[Path]:
-    """socket の path が AF_UNIX の上限(107 byte)に収まる、短い一時の dir を作って、終わりに消すため。"""
+    """socket の path が AF_UNIX の上限(macOS の 103 byte)に収まる、短い一時の dir を作って、終わりに消すため。"""
     directory = Path(tempfile.mkdtemp(prefix="warm-", dir="/tmp"))
     yield directory
     shutil.rmtree(directory, ignore_errors=True)
@@ -391,6 +392,25 @@ def test_an_unreadable_preload_refuses_the_start_by_name(place: Path, start_warm
         assert not warm.ready.exists()
         assert warm.process.stderr is not None
         assert "tests.fixtures.no_such_module_for_warm_child" in warm.process.stderr.read().decode(errors="replace")
+    finally:
+        stopped(warm)
+
+
+def test_a_socket_dir_open_to_others_refuses_the_start_by_name(place: Path, start_warm_child: StartWarmChild) -> None:
+    """socket の dir は分け合う短い根(/tmp)の下に在る(warm_rules の warm-socket-of)ので、持ち主の外に開いた dir では socket を開かず、
+    dir の名を挙げて起動を断る(準備完了の印を書かない)。"""
+    opened = place / "opened"
+    opened.mkdir()
+    opened.chmod(0o755)
+    root = place / "root"
+    process = start_warm_child(root, opened / "s", place / "ready.json", (JOB,))
+    warm = Warm(process, root, opened / "s", place / "ready.json", place)
+    try:
+        assert warm.process.wait(timeout=READY_SECONDS) == 3
+        assert not warm.ready.exists()
+        assert not warm.socket.exists()
+        assert warm.process.stderr is not None
+        assert f"socket の dir {opened} が持ち主だけの dir でない" in warm.process.stderr.read().decode(errors="replace")
     finally:
         stopped(warm)
 

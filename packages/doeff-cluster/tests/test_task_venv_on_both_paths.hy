@@ -51,7 +51,7 @@
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [runtime-env->json])
-(import doeff_cluster [CodeLayout StartWarmChild StopWarmChild StopStage WorkerPolicy]
+(import doeff_cluster [CodeLayout ForgetWarmChild StartWarmChild StopWarmChild StopStage WorkerPolicy]
         doeff_cluster._worker.intent.worker_model [WarmLaunch WarmChildView])
 (import doeff_cluster [ObserveWarmChildren])
 (import doeff_cluster [warm-host]
@@ -192,6 +192,7 @@
   (<- old-env tuple (venv-dropped plan.entry-env))
   (<- old dict (forked-seen plan old-env warm-at.socket out (+ place "/old")))
   (<- (StopWarmChild key StopStage.TERM "検の終わり"))
+  (<- (ForgetWarmChild key))  ; socket の dir は place の外(短い根の下 — warm_rules の warm-socket-of)なので宿の掃除で消す
   #(cold warm old (+ place "/boot/bin") (+ root "/app/.venv") (dfor e plan.entry-env e.name e.value)))
 
 
@@ -218,7 +219,7 @@
 (deff on-real-processes [#^ str place #^ str warm-dir #^ Program program]  ; defk にできない: 検が自分の scheduler と本物の event loop(子の終わると読める fd)で回す入口
   {:pre [(: place str) (: warm-dir str) (: program Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を本物の答え手の組(外側が先 — 宿の表の state・event loop・実時間・file・子 process・子の終わりの待ち・待ちの子・宿 warm_host)の
-   上で回すため。待ちの子の置き場の根は warm-dir・log は place の下(socket の path は unix socket の上限 107 byte の内)。"
+   上で回すため。待ちの子の置き場の根は warm-dir・log は place の下(socket は短い根の下 — warm_rules の warm-socket-of)。"
   (run (scheduled (with-handlers [(state) await-handler (async-time-handler) slog-handler os-file-handler subprocess-handler process-exit-handler
                                   os-warm-process-handler bytecode-kept-out (worker-path-led-by (+ place "/boot/bin"))
                                   (warm-host (WarmSettings :warm-dir warm-dir :log-dir (+ place "/logs") :generation "0b6f5e2a9c1d" :uv "uv"))]
@@ -226,7 +227,7 @@
 
 
 (deftest test-the-entry-sees-the-same-root-venv-on-the-warm-and-the-cold-path
-  (val place (tempfile.mkdtemp :prefix "venv-" :dir "/tmp"))  ; socket の path を短く保つ(pytest の tmp-path は長い)
+  (val place (tempfile.mkdtemp :prefix "venv-" :dir "/tmp"))
   (val warm-dir (+ place "/warm"))
   (os.makedirs (+ place "/root"))
   (os.symlink (str REPO) (+ place "/root/app"))  ; root の project(repo app の根)はこの checkout を symlink で指す(頭註)

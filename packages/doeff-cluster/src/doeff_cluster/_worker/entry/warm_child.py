@@ -58,6 +58,7 @@ import os
 import select
 import signal
 import socket
+import stat
 import sys
 import traceback
 from collections.abc import Callable
@@ -423,11 +424,20 @@ def main() -> None:
     threads = thread_count()
     if threads != 1:
         refused_start(f"読み込みの後に thread が {threads} 本ある — fork できない")
-    os.makedirs(os.path.dirname(options.socket), mode=0o700, exist_ok=True)
+    socket_dir = os.path.dirname(options.socket)
+    os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+    # socket の dir は分け合う短い根(/tmp)の下に在る(warm_rules の warm-socket-of)。他人が先に作った dir・symlink・持ち主の外に開いた
+    # dir の中では socket を開かない(頼みは task の env を運ぶ)。
+    found = os.lstat(socket_dir)
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid() or stat.S_IMODE(found.st_mode) & 0o077:
+        refused_start(f"socket の dir {socket_dir} が持ち主だけの dir でない(uid={found.st_uid} mode={stat.S_IMODE(found.st_mode):o})")
     with contextlib.suppress(FileNotFoundError):
         os.unlink(options.socket)  # 前の待ちの子が残した socket(同じ root の待ちの子は 1 つだけ)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(options.socket)
+    try:
+        listener.bind(options.socket)
+    except OSError as error:
+        refused_start(f"socket {options.socket}({len(os.fsencode(options.socket))} byte)を開けない: {error}")
     listener.listen(16)
     wake = os.pipe()
     os.set_blocking(wake[0], False)

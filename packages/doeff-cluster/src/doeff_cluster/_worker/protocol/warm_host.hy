@@ -4,8 +4,9 @@
 ;;;
 ;;; 待ちの子(入口 worker/entry/warm_child — A2)は root ごとに 1 つ。root の venv の uv run で、許可表の環境変数だけを持って起こす(値と資格
 ;;; は持たない — task の env は分ける時に頼みに載る)。専用の process group に起こし(process-group)、標準入力の pipe をこの worker が握る
-;;; (hold-stdin — worker が消えると待ちの子は終わる)。置き場(socket と準備完了の印)は root の外の <state-dir>/warm/<root のキー>(warm_rules の
-;;; warm-place)で、起こす前に空にして作り直し、忘れる時に消す。準備完了の印を読むのは宿、準備済みに数えるかを判じるのは判断の層
+;;; (hold-stdin — worker が消えると待ちの子は終わる)。置き場(準備完了の印)は root の外の <state-dir>/warm/<root のキー>、socket は短い根の下の
+;;; 持ち主だけの dir(どちらも warm_rules の warm-place — socket の path を状態の dir の長さに依らず unix socket の上限の内に置く)で、
+;;; 起こす前に空にして作り直し、忘れる時に消す。準備完了の印を読むのは宿、準備済みに数えるかを判じるのは判断の層
 ;;; (warm_rules の warm-mark-clean — 条 WC3)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -91,7 +92,9 @@
    だけで root の venv の待ちの子を専用の group に起こす。起こせなければ、その刻に終わった観測にする(判断が間を置いて起こし直す)。"
   (<- place WarmPlace (warm-place settings.warm-dir key))
   (<- (RemoveTree place.dir))  ; 無い dir の断りは捨てる(前の待ちの子の置き場が在れば消す)
+  (<- (RemoveTree place.socket-dir))  ; socket の dir も(短い根の下 — warm_rules の warm-socket-of)
   (<- (file-done (MakeDirectory place.dir :mode 0o700)))
+  (<- (file-done (MakeDirectory place.socket-dir :mode 0o700)))
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(待ちの子は root の版の doeff で起きる)。
@@ -172,10 +175,11 @@
                                        :stop (StopProgress (if (is view.stop None) now view.stop.requested-ms) stage now))})))
     (resume None))
   (ForgetWarmChild [key]
-    ;; 終わった待ちの子を表から外し、置き場(socket と印)を消す。
+    ;; 終わった待ちの子を表から外し、置き場(印)と socket の dir を消す。
     (when (in key table)
       (<- place WarmPlace (warm-place settings.warm-dir key))
       (<- (RemoveTree place.dir))
+      (<- (RemoveTree place.socket-dir))
       (:= table (dfor #(k v) (.items table) :if (!= k key) k v)))
     (resume None))
   (ObserveWarmChildren []
