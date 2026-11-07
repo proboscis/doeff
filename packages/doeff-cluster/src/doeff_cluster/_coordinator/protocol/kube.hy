@@ -29,6 +29,7 @@
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._shared.intent.protocol [NextRequests])
 (import json)
+(import re)
 (import doeff_cluster._coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable
                                                        JobService JobServicePort JobServicesSeen JobServicesUnreadable JobEndpointSlice])
 (import doeff_cluster._coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes
@@ -290,8 +291,11 @@
 
 
 ;; coordinator が書く EndpointSlice の印: kube-proxy は label kubernetes.io/service-name で slice を Service に結び、Service の controller は
-;; managed-by が自分の物でない slice に触らない(selector の在る Service でも、controller の slice と並ぶ)。
-(val SLICE-MANAGED-BY "doeff.dev/coordinator")
+;; managed-by が自分の物でない slice に触らない(selector の在る Service でも、controller の slice と並ぶ)。値は label の値の字
+;; (英数字・-・_・.。/ は書けない — 前の値 doeff.dev/coordinator は API server が 422 で断った・2026-11-07)。
+(val SLICE-MANAGED-BY "coordinator.doeff.dev")
+;; k8s の label の値の字(空か、英数字で始まり英数字で終わる 63 字までの英数字・-・_・.)— 模擬の k8s が本番の API server と同じく断る。
+(val LABEL-VALUE (re.compile r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$"))
 
 
 (defk endpoint-slice-apply-text [slice]
@@ -614,7 +618,12 @@
       (raise (KubeUnavailable refusal)))
     (<- text str (endpoint-slice-apply-text slice))
     (val key (+ slice.namespace "/" slice.service))
-    (setv (get kube.slices key) (json.loads text))
+    (val body (json.loads text))
+    ;; 本番の API server と同じく、label の値の字に成らない slice は断る(422)。
+    (val bad (sorted (gfor #(k v) (.items (get body "metadata" "labels")) :if (or (> (len v) 63) (not (.match LABEL-VALUE v))) k)))
+    (when bad
+      (raise (KubeUnavailable (+ "k8s の API が 422 を返した: label の値が不正 " (.join "・" bad)))))
+    (setv (get kube.slices key) body)
     (.append kube.calls {"op" "slice" "key" key "addresses" (list slice.addresses) "at" now})
     (resume None))
   (NextRequests [timeout-seconds limit]
