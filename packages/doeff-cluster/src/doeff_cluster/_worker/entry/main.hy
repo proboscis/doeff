@@ -47,7 +47,7 @@
 (import doeff_cluster._worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
 (import doeff_cluster._shared.core.launch_rules [worker-commit-env-name])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
-(import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad])
+(import doeff_cluster._worker.core.load_rules [HostLoad load-paths-under])
 (import doeff_cluster._worker.entry.host_load [os-host-counters])
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-environ-names])
 (import doeff_cluster._worker.protocol.lease_release [lease-release])
@@ -88,6 +88,9 @@
 (val BOOT-FILE-VAR "DOEFF_WORKER_BOOT_FILE")
 ;; 子の job を置く兄弟の cgroup の名(無ければ子を本体と同じ cgroup で起こす・worker/core/job_cgroup)。
 (val JOB-CGROUP-VAR "DOEFF_WORKER_JOB_CGROUP")
+;; 機体の測り(CPU の刻み・memory・PSI)を読む、/proc と同じ並びの代わりの dir(無ければ /proc — worker/core/load_rules の
+;; load-paths-under)。手元の 1 台の cluster が静かな機体の代役を置いて渡す(sim/machine の QuietMachine)。task の層の PSI は替えない。
+(val LOAD-DIR-VAR "DOEFF_WORKER_LOAD_DIR")
 ;; 常駐の job の shim を置く兄弟の cgroup の名(無ければ置き分けない・worker/core/job_cgroup の service の類)。
 (val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
@@ -633,7 +636,8 @@
                         ;; task の層が在れば、その層の CPU の PSI も名乗る(優先度を下げた process の待ちを除いた、task 自身の待ち)。
                         :load-paths (if (.startswith (current-platform) "darwin-")
                                         (HostLoad :os "macOS")
-                                        (LoadPaths :task-cpu-pressure (if (is job-procs None) None (run (layer-cpu-pressure job-procs)))))
+                                        (run (load-paths-under (.get machine-env LOAD-DIR-VAR "/proc")
+                                                               (if (is job-procs None) None (run (layer-cpu-pressure job-procs))))))
                         ;; kubelet の下の worker は、見張りの数えた追い出しまでの空きを memory の空きとして名乗る。
                         :eviction memory-cell.eviction
                         ;; job の子へ渡す環境変数の名を heartbeat で名乗る(上に載る系が宣言し直す前に job の読む名と照らす)。

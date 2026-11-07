@@ -59,6 +59,15 @@
   (setv #^ (| str None) task-cpu-pressure None))
 
 
+(defk load-paths-under [root task-cpu-pressure]
+  {:pre [(: root str) (: task-cpu-pressure (| str None))] :post [(: % LoadPaths)] :tags {:context "worker" :role "judgment"}}
+  "測りの読む file を、/proc と同じ並びの dir root の下に置くため(root = /proc なら既定の LoadPaths と同じ)。入口が環境変数で受けた
+   代わりの dir を渡す — 手元の 1 台の cluster(sim/machine の QuietMachine)が、混んだ機体の上でも静かな機体の測りを worker に読ませる。
+   task-cpu-pressure は LoadPaths と同じ(task の層の cpu.pressure・None = 読まない)。"
+  (LoadPaths :stat (+ root "/stat") :meminfo (+ root "/meminfo") :cpu-pressure (+ root "/pressure/cpu")
+             :memory-pressure (+ root "/pressure/memory") :task-cpu-pressure task-cpu-pressure))
+
+
 (defrecord HostLoad
   "測りを /proc の file でなく OS の口(問い ReadHostCounters)で読む印(頭の註 — /proc の無い機体の入口が LoadPaths の代わりに渡す)。
    os = 名乗りの訳に書く OS の名(読めない訳の log の 1 行)。"

@@ -21,13 +21,14 @@
 (import tests.link_rig [LinkRig])
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster [ClusterState ClusterTiming])
-(import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad LoadReading MachineLoad CpuTicks Pressure LOAD-READ-EVERY-MS load-read-due
+(import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad load-paths-under LoadReading MachineLoad CpuTicks Pressure LOAD-READ-EVERY-MS load-read-due
                                               cpu-ticks-of pressure-of cpu-busy-between cpu-nice-between machine-load-of host-load-of])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.intent.worker_model [HostCounters ReadHostCounters])
 (import doeff_cluster._coordinator.core.measured_room [measured-room])
 (import doeff_cluster._foundation.host_counters [VmStatistics64 read-host-counters])
 (import doeff_cluster._worker.protocol.heartbeat [measured-json])
+(import doeff_cluster._sim.machine [QuietMachine QUIET-PRESSURE-TEXT quiet-stat-text quiet-meminfo-text])
 (import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat state-view])
 (import doeff_cluster._coordinator.core.resource_policy [worker-row])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
@@ -299,3 +300,32 @@
   (if (= sys.platform "darwin")
       (assert (and (isinstance read dict) (> (get read "cpus") 0) (>= (get read "total_ticks") (get read "busy_ticks"))) read)
       (assert (= read (.format "この OS({})に mach の host_statistics が無い" sys.platform)) read)))
+
+
+(deftest test-the-quiet-machine-stand-in-is-read-like-proc-and-gets-task-room
+  ;; 手元の 1 台の cluster の静かな機体の代役(sim/machine の QuietMachine)は、/proc と同じ並びの dir に置かれ、worker は本番と同じ読み
+  ;; (machine-load-of)で読む。刻みの進む 2 回の読みは CPU の使い 0・PSI 0 を名乗り、coordinator はその worker に task を置ける。
+  ;; 失敗ケース = 刻みが進まない代役(使いを数えられず空き 0)・代わりの dir を渡しても /proc を読む・走らせる機体の PSI で空き 0。
+  (val quiet (QuietMachine))
+  (<- paths LoadPaths (load-paths-under "/tmp/quiet-proc" None))
+  (assert (= paths (LoadPaths :stat "/tmp/quiet-proc/stat" :meminfo "/tmp/quiet-proc/meminfo" :cpu-pressure "/tmp/quiet-proc/pressure/cpu"
+                              :memory-pressure "/tmp/quiet-proc/pressure/memory"))
+          paths)
+  ;; 代わりの dir を渡さない worker は今までどおり /proc を読む。
+  (<- proc LoadPaths (load-paths-under "/proc" "/sys/fs/cgroup/jobs/cpu.pressure"))
+  (assert (= proc (LoadPaths :task-cpu-pressure "/sys/fs/cgroup/jobs/cpu.pressure")) proc)
+  (<- stat-0 str (quiet-stat-text quiet 0))
+  (<- stat-1 str (quiet-stat-text quiet 1))
+  (<- meminfo str (quiet-meminfo-text quiet))
+  (<- first LoadReading (machine-load-of stat-0 meminfo QUIET-PRESSURE-TEXT QUIET-PRESSURE-TEXT None 1000))
+  (<- second LoadReading (machine-load-of stat-1 meminfo QUIET-PRESSURE-TEXT QUIET-PRESSURE-TEXT first.ticks 6000))
+  (assert (= second.load (MachineLoad :at-ms 6000 :cpus 8 :cpu-busy 0.0 :memory-total-mib 16384 :memory-available-mib 16384
+                                      :cpu-some-avg10 0.0 :cpu-full-avg10 0.0 :memory-some-avg10 0.0 :memory-full-avg10 0.0
+                                      :cpu-nice 0.0))
+          second)
+  ;; coordinator の数え: CPU の空き ⌊8 × 1 − 1⌋ = 7・memory の枠 ⌊(16384 − 1536) / 1024⌋ = 14・上限 8 → 7 本。
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "quiet" "provides" ["local"]
+                                                                    "measured" (! (measured-json second.load))}))
+                                    10)))
+  (<- room int (measured-room (. (.row heard.workers "quiet") measured) 0 0 0))
+  (assert (= room 7) room))

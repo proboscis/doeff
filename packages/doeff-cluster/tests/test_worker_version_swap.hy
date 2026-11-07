@@ -37,7 +37,7 @@
 (import doeff_cluster._shared.entry.cluster_foundation [coordinator-route-options])
 (import doeff_cluster [SimWorker ReadCoordinator])
 (import doeff_cluster [LocalMachine local-machine-cluster]
-        doeff_cluster._sim.machine [BOOT-SCRIPT coordinator-url])
+        doeff_cluster._sim.machine [BOOT-SCRIPT QuietMachine coordinator-url])
 (import tests.fixtures.machine_app [generation-work machine-foundation SWAP-PREFIX])
 (import tests.test_local_machine [AppRepo app-repo free-port git leftover])
 
@@ -91,13 +91,15 @@
   {:pre [(: tmp-path Path) (: repo AppRepo) (: versions Versions) (: scale float)] :post [(: % LocalMachine)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker 1 つの手元の 1 台を、配備の雛形と同じく版の file と起動の版で組むため(版の file は版 A を持つ)。worker は自分の版を子へ渡す
-   (WORKER_PASS_ENV — 検の task が走らせた世代の版を読む)。scale = 機体の込み具合の倍率(起動の上限を伸ばす)。"
+   (WORKER_PASS_ENV — 検の task が走らせた世代の版を読む)。scale = 機体の込み具合の倍率(起動の上限を伸ばす)。worker は静かな機体の
+   代役(QuietMachine)を測る — この検は置き方を試さないので、検を走らせる機体の CPU の PSI が止めの線を越えていても task は置かれる。"
   (<- port int (free-port))
   (val home (/ tmp-path "workers" WORKER))
   (val version-file (/ home "version"))
   (.write-text version-file versions.old :encoding "utf-8")
   (LocalMachine :work-dir (str tmp-path) :port port :workers #((SimWorker :name WORKER :provides (frozenset ["local"])))
                 :boot-seconds (* BOOT-SECONDS scale) :stop-grace 15.0 :code-repo repo.url :revision repo.sha
+                :quiet (QuietMachine)
                 :worker-env #((EnvEntry :name "PATH" :value IMAGE-PATH)
                               (EnvEntry :name "WORKER_DOEFF_COMMIT" :value versions.old)
                               (EnvEntry :name "WORKER_DOEFF_URL" :value (str (/ home "boot" "doeff.git")))

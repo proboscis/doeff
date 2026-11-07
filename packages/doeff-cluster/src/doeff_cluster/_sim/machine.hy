@@ -7,7 +7,8 @@
 ;;; だけ: ここでは本物の process・本物の HTTP・本物の時計。起こし方は配備と同じ deploy/boot.sh を、配備と同じ環境変数(ROLE・LISTEN_PORT・
 ;;; WORK_DIR・COORDINATOR_URL・WORKER_NAME・WORKER_PROVIDES ほか)で起こす — 2 つ目の起こし方を作らない。worker の顔ぶれは sim と同じ値
 ;;; (SimWorker の name・provides・exclusive・memory-mib・node)で渡し、命令の引数を足さない。本物の worker は機体の /proc を測って
-;;; 空きを名乗る(SimWorker の machine は使わない)。
+;;; 空きを名乗る(SimWorker の machine は使わない)。LocalMachine の quiet(QuietMachine)を渡した筋書きでは、worker は /proc の代わりに
+;;; 静かな機体の代役の dir を測る — 置き方を試さない筋書きの結末を、走らせる機体の混みから切り離すため(読み方は本番と同じ)。
 ;;;
 ;;; 筋書きが出せる effect(machine-answers が答える):
 ;;;   ReadCoordinator path        coordinator の口の GET の本文(sim と同じ)。
@@ -46,7 +47,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers Program EffectBase])
 (import doeff_core_effects [await-handler slog-handler])
-(import doeff_core_effects [scheduled])
+(import doeff_core_effects [scheduled Spawn Cancel Task])
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [MakeDirectory WriteText FileFailed])
@@ -86,6 +87,19 @@
   (#^ str path))
 
 
+(defrecord QuietMachine
+  "手元の 1 台の worker に、機体の測りを本物の /proc でなく静かな機体の代役から読ませる置き方(LocalMachine の quiet)。cpus = 代役が
+   名乗る CPU の数・memory-mib = 代役が名乗る memory の総量と空き(MiB)。代役は CPU の使い 0・PSI 0 を名乗り続ける。
+   何のためか: coordinator は測った空きで task を置き、CPU の PSI の some が止めの線(coordinator/core/measured_room の
+   CPU-PRESSURE-STOP)以上の機体へは置かない。手元の 1 台の worker が走らせる機体の本物の /proc を測ると、置き方を試さない筋書き
+   (版の差し替えなど)の結末が、その機体の他の process の混みで決まる(2026-11-05〜06: 36 core の機体の CPU の PSI some が 63〜69% の間、
+   版の差し替えの検の task が 1 本も置かれずに赤)。代役は coordinator の判断を替えず(本番の道の外の分かれ道を足さない)、worker が
+   読む file の置き場だけを替える(worker/entry/main の DOEFF_WORKER_LOAD_DIR)。"
+  {:check [(> cpus 0) (> memory-mib 0)]}
+  (setv #^ int cpus 8)
+  (setv #^ int memory-mib 16384))
+
+
 (defrecord LocalMachine
   "手元の 1 台の cluster の置き方。work-dir = 作業の dir の親(coordinator は coordinator/・worker は workers/<名>/ — 出力の log も
    その下)・port = coordinator の受け口(127.0.0.1)・workers = worker の顔ぶれ(sim と同じ SimWorker — name・provides・exclusive・
@@ -98,7 +112,8 @@
    宣言の組み立てを手元用に分けない)、この機体の worker の git にだけ url.<path>.insteadOf を環境変数で渡す — 手元の 1 台の worker は
    配備の鍵を持たないので、remote へは取りに行かない。worker-env = どの worker の boot.sh にも足す環境変数(EnvEntry の列 — 空 = 足さない):
    配備の機体の dir が足す値(版の file と keeper — WORKER_VERSION_FILE・WORKER_DOEFF_COMMIT ほか)を、同じ名で
-   渡す。"
+   渡す。quiet = worker が測る機体の代役(QuietMachine — None = 本物の /proc を測る): 在れば work-dir の下に /proc と同じ並びの代役の
+   dir を置き、筋書きの間 CPU の刻みを進め、どの worker にもその dir を渡す。"
   (#^ str work-dir)
   (#^ int port)
   (#^ (get tuple #(SimWorker ...)) workers)
@@ -108,7 +123,8 @@
   (setv #^ str revision "")
   (setv #^ (| RuntimeEnv None) runtime-env None)
   (setv #^ (get tuple #(GitSource ...)) git-sources #())
-  (setv #^ (get tuple #(EnvEntry ...)) worker-env #()))
+  (setv #^ (get tuple #(EnvEntry ...)) worker-env #())
+  (setv #^ (| QuietMachine None) quiet None))
 
 
 (defrecord MachineProcess
@@ -187,7 +203,79 @@
   (<- repos str (repo-key-table machine))
   (<- sources (get tuple #(EnvEntry ...)) (git-source-env machine.git-sources))
   (<- boot (get tuple #(EnvEntry ...)) (worker-boot-env machine worker url home repos))
-  (+ boot sources machine.worker-env))
+  (val quiet (if (is machine.quiet None)
+                 #()
+                 #((EnvEntry :name "DOEFF_WORKER_LOAD_DIR" :value (str (! (quiet-load-dir machine)))))))
+  (+ boot sources quiet machine.worker-env))
+
+
+;; --- 静かな機体の代役(QuietMachine) ------------------------------------------------------------------------
+
+;; 代役の CPU の刻みを書き直す間(秒)。worker は 5 秒ごとに読み、前の読みとの刻みの増えで CPU の使いを数える(増えない読みは使いを
+;; 数えられず、空きを 0 と数えられる)ので、読みの間より短くする。
+(val QUIET-TICK-SECONDS 1.0)
+;; 代役が 1 回の書き直しで CPU 1 つあたり進める idle の刻み(/proc/stat の USER_HZ の 1 秒分)。
+(val QUIET-TICKS 100)
+;; 代役の PSI の file の中身(some と full の avg10 が 0 — 実行や回収を待つ process が居ない機体)。
+(val QUIET-PRESSURE-TEXT "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+
+
+(defk quiet-load-dir [machine]
+  {:pre [(: machine LocalMachine)] :post [(: % Path)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "静かな機体の代役の dir(/proc と同じ並び — stat・meminfo・pressure/cpu・pressure/memory)の置き場を決めるため(work-dir の下 —
+   どの worker も同じ 1 台の代役を読む)。"
+  (/ (Path machine.work-dir) "quiet-proc"))
+
+
+(defk quiet-stat-text [quiet beat]
+  {:pre [(: quiet QuietMachine) (: beat int)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "代役の /proc/stat の中身を作るため: 頭の行 cpu と行 cpuN(cpus 個)の刻みは全部 idle で、書き直しの回 beat ごとに CPU 1 つあたり
+   QUIET-TICKS 進む(worker は前の読みとの増えで CPU の使いを数える — 刻みの進む代役でないと使いを数えられない)。"
+  (val per (* beat QUIET-TICKS))
+  (+ (.format "cpu  0 0 0 {} 0 0 0 0 0 0\n" (* per quiet.cpus))
+     (.join "" (gfor i (range quiet.cpus) (.format "cpu{} 0 0 0 {} 0 0 0 0 0 0\n" i per)))))
+
+
+(defk quiet-meminfo-text [quiet]
+  {:pre [(: quiet QuietMachine)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "代役の /proc/meminfo の中身を作るため(MemTotal・MemFree・MemAvailable が memory-mib — 何も使っていない機体)。"
+  (val kib (* quiet.memory-mib 1024))
+  (.format "MemTotal:       {0} kB\nMemFree:        {0} kB\nMemAvailable:   {0} kB\n" kib))
+
+
+(defk quiet-text-written [path text]
+  {:pre [(: path Path) (: text str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "代役の file 1 つを書くため(別の名に書いて置き換える — worker が書きかけを読まない)。書けなければ止める。"
+  (<- wrote (WriteText (str path) text :replace True))
+  (when (isinstance wrote FileFailed)
+    (raise (RuntimeError (+ "静かな機体の代役を書けない: " (repr wrote)))))
+  None)
+
+
+(defk quiet-machine-placed [machine quiet]
+  {:pre [(: machine LocalMachine) (: quiet QuietMachine)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "worker を起こす前に、代役の dir に初めの中身(刻みの 0 回目・memory・PSI)を置くため。"
+  (val root (! (quiet-load-dir machine)))
+  (<- made (MakeDirectory (str (/ root "pressure"))))
+  (when (isinstance made FileFailed)
+    (raise (RuntimeError (+ "静かな機体の代役の dir を作れない: " (repr made)))))
+  (<- (quiet-text-written (/ root "stat") (! (quiet-stat-text quiet 0))))
+  (<- (quiet-text-written (/ root "meminfo") (! (quiet-meminfo-text quiet))))
+  (<- (quiet-text-written (/ root "pressure" "cpu") QUIET-PRESSURE-TEXT))
+  (<- (quiet-text-written (/ root "pressure" "memory") QUIET-PRESSURE-TEXT))
+  None)
+
+
+(defk quiet-machine-ticking [machine quiet]
+  {:pre [(: machine LocalMachine) (: quiet QuietMachine)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "筋書きの間、代役の /proc/stat の刻みを QUIET-TICK-SECONDS ごとに進めるため(machine-run が背景の task で走らせ、終わりに取り消す)。"
+  (val stat (/ (! (quiet-load-dir machine)) "stat"))
+  (var beat 0)
+  (while True
+    (<- (Delay QUIET-TICK-SECONDS))
+    (:= beat (+ beat 1))
+    (<- (quiet-text-written stat (! (quiet-stat-text quiet beat)))))
+  None)
 
 
 ;; worker の鍵の表の file の置き場(worker の dir からの相対 — 配備の ConfigMap worker-env の dir の mount の WORKER_REPOS の file に当たる)。
@@ -435,9 +523,15 @@
   {:pre [(: scenario (| Program EffectBase)) (: cell MachineCell) (: machine LocalMachine)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
-  "coordinator と worker を起こし、全部が名乗るまで待ってから筋書きを走らせ、終わりに今の顔ぶれを worker・coordinator の順で止めるため。"
+  "coordinator と worker を起こし、全部が名乗るまで待ってから筋書きを走らせ、終わりに今の顔ぶれを worker・coordinator の順で止めるため。
+   静かな機体の代役(machine.quiet)が在れば、worker を起こす前に置き、終わりまで刻みを進める。"
   (<- url str (coordinator-url machine))
   (<- env tuple (coordinator-env machine))
+  (var ticker None)
+  (when (is-not machine.quiet None)
+    (<- (quiet-machine-placed machine machine.quiet))
+    (<- task Task (Spawn (quiet-machine-ticking machine machine.quiet)))
+    (:= ticker task))
   (<- coordinator MachineProcess (started-role "coordinator" (str (/ (Path machine.work-dir) "coordinator")) env))
   (setv cell.roles #(coordinator))
   (try
@@ -453,7 +547,9 @@
     answer
     (finally
       (<- (stopped (tuple (lfor role cell.roles :if (!= role.name "coordinator") role)) machine.stop-grace))
-      (<- (stopped (tuple (lfor role cell.roles :if (= role.name "coordinator") role)) machine.stop-grace)))))
+      (<- (stopped (tuple (lfor role cell.roles :if (= role.name "coordinator") role)) machine.stop-grace))
+      (when (is-not ticker None)
+        (<- (Cancel ticker))))))
 
 
 (defk local-machine-cluster [scenario * machine]
