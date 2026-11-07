@@ -1,43 +1,63 @@
 1
-00:00:00,250 --> 00:00:03,400
-This is one function: a small card fight.
+00:00:00,250 --> 00:00:05,300
+This is one function, battle. It plays a small card fight to the end.
 
 2
-00:00:03,400 --> 00:00:09,250
-It asks for dice, a player, a screen and a count. It never says who answers.
+00:00:06,250 --> 00:00:09,450
+Each turn, it draws a hand of cards,
 
 3
-00:00:09,800 --> 00:00:11,600
-Each question is an effect.
+00:00:10,250 --> 00:00:12,450
+shows the turn on the screen,
 
 4
-00:00:11,600 --> 00:00:17,600
-It travels out to a handler, and the handler also gets the rest of the function, called k.
+00:00:13,250 --> 00:00:16,200
+lets the player choose a card, and plays it.
 
 5
-00:00:19,600 --> 00:00:25,600
-Stack handlers around it. A scripted player and a screen give the same fight on every run.
+00:00:17,050 --> 00:00:20,350
+Then dice decide the enemy's move.
 
 6
-00:00:27,100 --> 00:00:32,350
-Swap in a random bot and take the screen away. The function does not change.
+00:00:21,050 --> 00:00:25,900
+It goes round until one side is out of HP, and returns who won.
 
 7
-00:00:34,600 --> 00:00:40,700
-Add a recorder, and thirty-two answers replay the whole fight, with no dice and no player.
+00:00:26,850 --> 00:00:29,867
+Show, Choose, Played and Roll are effects.
 
 8
-00:00:45,600 --> 00:00:52,250
-A Monte Carlo bot answers a question by running the fight itself, while the fight that asked waits as k.
+00:00:29,867 --> 00:00:36,450
+At each yield, battle pauses and hands the effect out to a handler. It never says which one.
 
 9
-00:00:56,600 --> 00:01:00,133
-Run a hundred fights at once, each with its own dice.
+00:00:37,250 --> 00:00:43,600
+The handler also gets the rest of battle, called k, and resumes it with an answer.
 
 10
-00:01:00,133 --> 00:01:05,200
-The random bot wins seventy-three. The Monte Carlo bot wins all one hundred.
+00:00:45,250 --> 00:00:51,700
+Stack handlers around it. A scripted player and a screen give the same fight on every run.
 
 11
-00:01:13,250 --> 00:01:20,300
+00:00:52,750 --> 00:00:56,600
+Swap in a random bot and take the screen away. The function does not change.
+
+12
+00:01:00,250 --> 00:01:05,900
+Add a recorder, and thirty-two answers replay the whole fight, with no dice and no player.
+
+13
+00:01:11,250 --> 00:01:18,200
+A Monte Carlo bot answers a question by running the fight itself, while the fight that asked waits as k.
+
+14
+00:01:22,250 --> 00:01:25,683
+Run a hundred fights at once, each with its own dice.
+
+15
+00:01:25,683 --> 00:01:30,600
+The random bot wins seventy-three. The Monte Carlo bot wins all one hundred.
+
+16
+00:01:38,650 --> 00:01:45,000
 One function, unchanged, in every stack. That is algebraic effects in Python, with doeff.

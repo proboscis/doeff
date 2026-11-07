@@ -1,10 +1,16 @@
 [
- {"id": "o1", "text": "This is one function: a small card fight. It asks for dice, a player, a screen and a count. It never says who answers."},
- {"id": "o2", "text": "Each question is an effect. It travels out to a handler, and the handler also gets the rest of the function, called k."},
- {"id": "o3", "text": "Stack handlers around it. A scripted player and a screen give the same fight on every run."},
- {"id": "o4", "text": "Swap in a random bot and take the screen away. The function does not change."},
- {"id": "o5", "text": "Add a recorder, and thirty-two answers replay the whole fight, with no dice and no player."},
- {"id": "o6", "text": "A Monte Carlo bot answers a question by running the fight itself, while the fight that asked waits as k."},
- {"id": "o7", "text": "Run a hundred fights at once, each with its own dice. The random bot wins seventy-three. The Monte Carlo bot wins all one hundred."},
- {"id": "o8", "text": "One function, unchanged, in every stack. That is algebraic effects in Python, with doeff."}
+ {"id": "o1", "text": "This is one function, battle. It plays a small card fight to the end."},
+ {"id": "o2", "text": "Each turn, it draws a hand of cards,"},
+ {"id": "o3", "text": "shows the turn on the screen,"},
+ {"id": "o4", "text": "lets the player choose a card, and plays it."},
+ {"id": "o5", "text": "Then dice decide the enemy's move."},
+ {"id": "o6", "text": "It goes round until one side is out of HP, and returns who won."},
+ {"id": "o7", "text": "Show, Choose, Played and Roll are effects. At each yield, battle pauses and hands the effect out to a handler. It never says which one."},
+ {"id": "o8", "text": "The handler also gets the rest of battle, called k, and resumes it with an answer."},
+ {"id": "o9", "text": "Stack handlers around it. A scripted player and a screen give the same fight on every run."},
+ {"id": "o10", "text": "Swap in a random bot and take the screen away. The function does not change."},
+ {"id": "o11", "text": "Add a recorder, and thirty-two answers replay the whole fight, with no dice and no player."},
+ {"id": "o12", "text": "A Monte Carlo bot answers a question by running the fight itself, while the fight that asked waits as k."},
+ {"id": "o13", "text": "Run a hundred fights at once, each with its own dice. The random bot wins seventy-three. The Monte Carlo bot wins all one hundred."},
+ {"id": "o14", "text": "One function, unchanged, in every stack. That is algebraic effects in Python, with doeff."}
 ]

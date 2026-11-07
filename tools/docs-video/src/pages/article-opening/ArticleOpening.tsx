@@ -1,13 +1,13 @@
 // The video at the top of the article "Algebraic effects for Python" (docs/articles/algebraic-effects-in-python.md):
-// the card battle of examples/effects_tour/spire.py as one function whose effects travel out to handlers stacked
-// around it, with k; then the stacks of the article swapped around the same function (a scripted player, a random
+// the card battle of examples/effects_tour/spire.py as one function, read from the top line by line (what one turn
+// does), whose effects then travel out to handlers stacked around it, with k; then the stacks of the article swapped around the same function (a scripted player, a random
 // bot, record and replay, a Monte Carlo bot, a hundred fights). Every code line on screen is a line of spire.py
 // (check_code.py checks it); every result and count is a line of measure/stacks.py's output.
 import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, Headlines, Lines, lineMid, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, Headlines, Lines, lineMid, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, BG, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -26,91 +26,150 @@ export const Moving: React.FC<{text: string; color: string; from: number; to: nu
   return <Pill x={mix(x0, x1, t)} y={mix(y0, y1, t)} text={text} color={color} opacity={fadeAt(frame, from, 0.2)} />;
 };
 
-// 1. The function, its effects, and k.
-const FN_LINES: Lines = [[0, 'One function: a small card fight.'], [9.2, 'Each effect travels out to a handler, with k.']];
+// 1. The function read from the top: what one turn does, in the order of its lines; then its effects, and k.
+const FN_LINES: Lines = [
+  [0, 'battle: one function, a small card fight played to the end.'],
+  [6.0, 'Each turn, it draws a hand of cards,'],
+  [10.0, 'shows the turn on the screen,'],
+  [13.0, 'lets the player choose a card, and plays it.'],
+  [16.8, "Then dice decide the enemy's move."],
+  [20.8, 'Until one side is out of HP. Then it returns who won.'],
+  [26.6, 'Show, Choose, Played, Roll: effects, handed out to a handler.'],
+  [37.0, 'The handler also gets the rest of battle: k.'],
+];
 const FN_CODE = [
   '@do',
   'def battle(s: Fight = Fight()):',
   '    while s.hp > 0 and s.enemy_hp > 0:',
-  '        ...',
+  '        s, hand = yield draw_hand(s)',
+  '        energy = 3',
+  '        while energy > 0 and hand:',
+  '            yield Show(f"T{s.turn} you {s.hp}',
   '            pick = yield Choose(s, hand, energy)',
+  '            ...',
+  '            s, dmg = hit(s, card)',
   '            yield Played(card, dmg)',
   '        ...',
   '        intent = yield Roll(3)',
   '        ...',
-  '            yield Show("   enemy bellows")',
   '    return ("win" if s.enemy_hp <= 0 else "lose"), s.turn',
 ];
-const FN = f(19);
-const CODE_X = 70;
-const CODE_Y = 150;
+const FN = f(45);
+const CODE_X = 60;
+const CODE_Y = 120;
 const CODE_W = 720;
-const LINE = 34;
-// The lines of the effects, what each asks for, and when it lights up (in the order battle's text gives them).
-const ASKS: [number, string, string, number][] = [
-  [7, 'Roll', 'who rolls the dice?', 1.0],
-  [4, 'Choose', 'who plays?', 2.2],
-  [9, 'Show', 'who draws the screen?', 3.4],
-  [5, 'Played', 'who counts?', 4.6],
+const LINE = 30;
+const CHOOSE = 7;
+// The lines lit while the narration reads them: [from, the lines], each entry until the next one.
+const LIT: [number, number[]][] = [
+  [0.3, [0, 1]],
+  [6.0, [3]],
+  [10.0, [6]],
+  [13.0, [CHOOSE]],
+  [15.1, [CHOOSE, 9, 10]],
+  [16.8, [12]],
+  [20.8, [2]],
+  [24.0, [2, 14]],
+  // The effects, in the order the narration names them; then Choose, where battle is paused.
+  [26.8, [6]],
+  [27.3, [6, CHOOSE]],
+  [27.8, [6, CHOOSE, 10]],
+  [28.3, [6, CHOOSE, 10, 12]],
+  [29.8, [CHOOSE]],
 ];
-const HANDLER = {x: 880, y: 230, w: 330, h: 230};
+// What one turn does, one row per line of battle as the narration reaches it: [from, the code, what it does].
+const STEPS: [number, string, string][] = [
+  [6.2, 'draw_hand', 'draw 5 cards'],
+  [10.2, 'Show', 'put the turn on the screen'],
+  [13.2, 'Choose', 'the player picks a card'],
+  [15.1, 'hit, Played', 'play it, count the damage'],
+  [17.0, 'Roll(3)', "dice: the enemy's move"],
+];
+const PANEL_X = 820;
+const PANEL_W = 410;
+const HANDLER = {x: 860, y: 200, w: 360, h: 230};
 
 const Function: React.FC = () => {
   const frame = useSceneFrame();
   const at = (seconds: number) => frame >= f(seconds);
-  // Before 9.2 s the effect lines light up in turn; then Choose is where the function is paused.
-  const lit = ASKS.reduce<number | null>((found, [line, , , from]) => (at(from) && !at(9.2) ? line : found), null);
-  const band = at(9.2) ? (at(16.2) ? 5 : 4) : lit;
-  const kOn = at(10.6) && !at(16.2);
-  const kTop = CODE_Y + 12 + 5 * LINE;
+  const lit = LIT.reduce<[number, number[]] | null>((found, entry) => (at(entry[0]) ? entry : found), null);
+  const kOn = at(37.4);
+  const kTop = CODE_Y + PAD + (CHOOSE + 1) * LINE;
   const handlerX = HANDLER.x + HANDLER.w / 2;
+  const chooseY = lineMid(CODE_Y, LINE, CHOOSE);
+  // The steps of one turn give way to the handler when the effects are named.
+  const steps = fadeAt(frame, 0.2) * (1 - fadeAt(frame, 26.6, 0.5));
+  const latest = STEPS.reduce((found, [from], i) => (at(from) ? i : found), -1);
   return (
     <AbsoluteFill>
       <Headlines lines={FN_LINES} />
-      <div style={{position: 'absolute', left: CODE_X, top: CODE_Y - 32, fontFamily: SANS, fontSize: 19, fontWeight: 700, color: ACCENT, opacity: fadeAt(frame, 0.1)}}>
+      <div style={{position: 'absolute', left: CODE_X, top: CODE_Y - 30, fontFamily: SANS, fontSize: 19, fontWeight: 700, color: ACCENT, opacity: fadeAt(frame, 0.1)}}>
         spire.py: battle
       </div>
-      <CodeBlock lines={FN_CODE} x={CODE_X} y={CODE_Y} w={CODE_W} size={20} line={LINE} band={band} opacity={fadeAt(frame, 0.1)} />
+      <CodeBlock lines={FN_CODE} x={CODE_X} y={CODE_Y} w={CODE_W} size={18} line={LINE} opacity={fadeAt(frame, 0.1)} />
+      {/* The lines the narration is reading. */}
+      {lit &&
+        lit[1].map((i) => (
+          <div
+            key={`${lit[0]}-${i}`}
+            style={{
+              position: 'absolute', left: CODE_X + 2, top: CODE_Y + PAD + i * LINE, width: CODE_W - 4, height: LINE, background: LOOK,
+              opacity: 0.22 * fadeAt(frame, lit[0], 0.25),
+            }}
+          />
+        ))}
       {/* k: everything battle has left to do after the Choose. */}
       <div
         style={{
-          position: 'absolute', left: CODE_X + 4, top: kTop, width: CODE_W - 8, height: 6 * LINE, borderRadius: 10, background: K,
-          opacity: kOn ? 0.16 * fadeAt(frame, 10.6, 0.4) : 0,
+          position: 'absolute', left: CODE_X + 4, top: kTop, width: CODE_W - 8, height: (FN_CODE.length - CHOOSE - 1) * LINE, borderRadius: 10, background: K,
+          opacity: kOn ? 0.16 * fadeAt(frame, 37.4, 0.4) : 0,
         }}
       />
-      {/* What each effect asks for: nothing in battle says who answers. */}
-      {ASKS.map(([, name, what, from], i) => (
-        <div
-          key={name}
-          style={{
-            position: 'absolute', left: HANDLER.x - 20, top: CODE_Y + 40 + i * 64, fontFamily: MONO, fontSize: 22, color: TEXT, whiteSpace: 'nowrap',
-            opacity: fadeAt(frame, from) * (1 - fadeAt(frame, 8.6, 0.5)),
-          }}
-        >
-          <span style={{color: ACCENT, fontWeight: 700}}>{name}</span> <span style={{color: LOOK}}>{what}</span>
+      {/* One turn of battle, row by row as its lines are read. */}
+      <div
+        style={{
+          position: 'absolute', left: PANEL_X, top: CODE_Y, width: PANEL_W, boxSizing: 'border-box', padding: '16px 22px', background: PANEL,
+          borderRadius: 14, border: `2px solid #2a2e40`, opacity: steps,
+        }}
+      >
+        <div style={{fontFamily: SANS, fontSize: 18, fontWeight: 700, color: MUTED, marginBottom: 12}}>one turn of battle</div>
+        {STEPS.map(([from, code, what], i) => (
+          <div key={code} style={{display: 'flex', gap: 14, alignItems: 'baseline', height: 52, opacity: fadeAt(frame, from)}}>
+            <div style={{width: 24, fontFamily: SANS, fontSize: 18, color: MUTED}}>{i + 1}.</div>
+            <div>
+              <div style={{fontFamily: MONO, fontSize: 19, fontWeight: 700, color: i === latest && !at(20.8) ? LOOK : ACCENT}}>{code}</div>
+              <div style={{fontFamily: SANS, fontSize: 17, color: TEXT}}>{what}</div>
+            </div>
+          </div>
+        ))}
+        <div style={{fontFamily: SANS, fontSize: 18, color: at(20.8) && !at(24.0) ? LOOK : MUTED, marginTop: 8, opacity: fadeAt(frame, 21.0)}}>
+          again, while both sides have HP
         </div>
-      ))}
-      <div style={{position: 'absolute', left: HANDLER.x - 20, top: CODE_Y + 300, fontFamily: SANS, fontSize: 20, color: MUTED, opacity: fadeAt(frame, 5.6) * (1 - fadeAt(frame, 8.6, 0.5))}}>
-        battle never says.
+        <div style={{fontFamily: MONO, fontSize: 19, color: at(24.0) ? LOOK : MUTED, marginTop: 10, opacity: fadeAt(frame, 24.0)}}>
+          return ("win" | "lose", turn)
+        </div>
       </div>
       {/* The handler: a function of (effect, k). */}
       <div
         style={{
           position: 'absolute', left: HANDLER.x, top: HANDLER.y, width: HANDLER.w, height: HANDLER.h, boxSizing: 'border-box', borderRadius: 16,
-          border: `3px solid ${TEST}`, background: PANEL, opacity: fadeAt(frame, 9.4), padding: '14px 20px',
+          border: `3px solid ${TEST}`, background: PANEL, opacity: fadeAt(frame, 29.8), padding: '14px 20px',
         }}
       >
         <div style={{fontFamily: MONO, fontSize: 22, fontWeight: 700, color: TEST}}>a handler</div>
         <div style={{fontFamily: MONO, fontSize: 20, color: MUTED, marginTop: 6}}>def choose(effect, k):</div>
-        <div style={{fontFamily: SANS, fontSize: 18, color: TEXT, marginTop: 70, opacity: fadeAt(frame, 13.6)}}>decides how battle goes on</div>
+        <div style={{fontFamily: SANS, fontSize: 18, color: TEXT, marginTop: 70, opacity: fadeAt(frame, 41.0)}}>decides how battle goes on</div>
       </div>
-      <Moving text="Choose" color={ACCENT} from={9.6} to={11.2} until={16.4} x0={CODE_X + 560} y0={lineMid(CODE_Y, LINE, 4)} x1={handlerX - 70} y1={HANDLER.y + 115} />
-      <Moving text="k" color={K} from={10.8} to={12.4} until={14.6} x0={CODE_X + CODE_W - 40} y0={kTop + 3 * LINE} x1={handlerX + 60} y1={HANDLER.y + 115} />
-      <Moving text="Resume(k, 0)" color={TEST} from={14.6} to={16.2} until={17.2} x0={handlerX} y0={HANDLER.y + 115} x1={CODE_X + 560} y1={lineMid(CODE_Y, LINE, 4)} />
+      <div style={{position: 'absolute', left: HANDLER.x, top: HANDLER.y + HANDLER.h + 20, width: HANDLER.w, fontFamily: SANS, fontSize: 20, color: MUTED, opacity: fadeAt(frame, 34.0) * (1 - fadeAt(frame, 37.0, 0.4))}}>
+        which handler? battle never says.
+      </div>
+      <Moving text="Choose" color={ACCENT} from={30.4} to={32.0} until={41.4} x0={CODE_X + 480} y0={chooseY} x1={handlerX - 70} y1={HANDLER.y + 115} />
+      <Moving text="k" color={K} from={38.4} to={40.0} until={41.4} x0={CODE_X + CODE_W - 40} y0={kTop + 3 * LINE} x1={handlerX + 60} y1={HANDLER.y + 115} />
+      <Moving text="Resume(k, 0)" color={TEST} from={41.4} to={43.0} until={44.6} x0={handlerX} y0={HANDLER.y + 115} x1={CODE_X + 480} y1={chooseY} />
       <div
         style={{
-          position: 'absolute', left: CODE_X, top: CODE_Y + 24 + FN_CODE.length * LINE + 26, width: CODE_W, fontFamily: SANS, fontSize: 21, color: K,
-          opacity: kOn ? fadeAt(frame, 11.4) : 0,
+          position: 'absolute', left: CODE_X, top: CODE_Y + PAD * 2 + FN_CODE.length * LINE + 18, width: CODE_W, fontFamily: SANS, fontSize: 21, color: K,
+          opacity: kOn ? fadeAt(frame, 38.4) : 0,
         }}
       >
         k: the rest of battle, paused at the yield, held by the handler
@@ -405,10 +464,10 @@ const Outro: React.FC = () => {
 };
 
 export const ARTICLE_OPENING = narrate('article-opening', DURATIONS, NARRATION, [
-  {length: FN, starts: startsOf(FN_LINES), ids: ['o1', 'o2'], node: <Function />},
-  {length: STACK, starts: startsOf(STACK_LINES), ids: ['o3', 'o4'], node: <Stacking />},
-  {length: TAPE, starts: startsOf(TAPE_LINES), ids: ['o5'], node: <Taping />},
-  {length: MC, starts: startsOf(MC_LINES), ids: ['o6'], node: <Searching />},
-  {length: HUNDRED, starts: startsOf(HUNDRED_LINES), ids: ['o7'], node: <Hundred />},
-  {length: OUTRO, starts: startsOf(OUTRO_LINES), ids: ['o8'], node: <Outro />},
+  {length: FN, starts: startsOf(FN_LINES), ids: ['o1', 'o2', 'o3', 'o4', 'o5', 'o6', 'o7', 'o8'], node: <Function />},
+  {length: STACK, starts: startsOf(STACK_LINES), ids: ['o9', 'o10'], node: <Stacking />},
+  {length: TAPE, starts: startsOf(TAPE_LINES), ids: ['o11'], node: <Taping />},
+  {length: MC, starts: startsOf(MC_LINES), ids: ['o12'], node: <Searching />},
+  {length: HUNDRED, starts: startsOf(HUNDRED_LINES), ids: ['o13'], node: <Hundred />},
+  {length: OUTRO, starts: startsOf(OUTRO_LINES), ids: ['o14'], node: <Outro />},
 ]);
