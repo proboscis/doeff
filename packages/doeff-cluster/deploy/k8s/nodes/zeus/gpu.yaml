@@ -10,11 +10,20 @@
 # device plugin(資源 nvidia.com/gpu)は使わない: 会話は機体に 1 つの worker の Pod の中で走るので Pod の数で割る利点が無く、2 枚を 1 つの
 # Pod に割り当てると同じ機体の別の Pod が GPU を得られない。NVIDIA_VISIBLE_DEVICES=all は割り当てをせず、Pod の中の会話が 2 枚を分け合う。
 #
-# env NVIDIA_VISIBLE_DEVICES は「この機体の worker は GPU を持つ」の宣言でもある。上に載る仕事はこれを読んで GPU で描く事を求め、
-# 得られなければ CPU の描画に落ちずに断る。GPU の無い機体の worker は置かない(tests/test_k8s_declarations.py)。
+# 「この機体の worker は GPU を持つ」の宣言は env WORKER_GPU=nvidia で、job の子へ渡す名(WORKER_PASS_ENV)にも足す。上に載る仕事はこれを
+# 読んで GPU で描く事を求め、得られなければ CPU の描画に落ちずに断る。GPU の無い機体の worker は置かない(tests/test_k8s_declarations.py)。
+# NVIDIA_VISIBLE_DEVICES は宣言にならない: toolkit(CDI の形)が container の PID 1 の環境で void に書き換え(device を入れた後に runc が
+# 入れ直さないため)、job の子へも渡さない(実測 2026-11-07 zeus)。device の注入が壊れて device と lib ごと消えると、GPU の無い機体と
+# 見分けられない — WORKER_GPU は toolkit が触らないので、壊れても残って「在るはずの GPU が無い」を読ませる。
 #
 # runtime-class.yaml の後に当て、runtimeClassName を替える。handler は機体の containerd が差し込みを読んだ後だけ在る — 差し込みを替えた後の
 # k3s-agent の再起動の前に当てると、Pod の sandbox が作れず worker が起きない。env は雛形の並びを動かさないよう末尾へ足す。
 - { op: replace, path: /spec/template/spec/runtimeClassName, value: runc-oomscope-nvidia }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: NVIDIA_VISIBLE_DEVICES, value: all } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: NVIDIA_DRIVER_CAPABILITIES, value: "compute,utility,graphics" } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_GPU, value: nvidia } }
+# 雛形の WORKER_PASS_ENV(6 番)の後ろに WORKER_GPU を足す(雛形の名と $(WORKER_PASS_ENV_EXTRA) は位置も変えない)。
+- { op: test, path: /spec/template/spec/containers/0/env/6/name, value: WORKER_PASS_ENV }
+- op: replace
+  path: /spec/template/spec/containers/0/env/6/value
+  value: "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA),WORKER_GPU"

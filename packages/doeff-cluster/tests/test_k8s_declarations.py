@@ -1020,12 +1020,19 @@ def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manife
 
 def test_atlas_worker_passes_the_rust_toolchain_to_tasks(rendered: list[Manifest]) -> None:
     """atlas の worker は、job の子へ渡す env の名(WORKER_PASS_ENV)に Rust の toolchain の置き場を足す — 雛形の名と使い手の残り
-    $(WORKER_PASS_ENV_EXTRA) はそのまま(位置も同じ — k8s は前の行で定義した env だけを展開する)。ほかの機体は雛形のまま。
+    $(WORKER_PASS_ENV_EXTRA) はそのまま(位置も同じ — k8s は前の行で定義した env だけを展開する)。GPU の機体は GPU の宣言 WORKER_GPU を
+    足し(test_gpu_runtime_class_runs_only_workers_on_toolkit_nodes)、ほかの機体は雛形のまま。
     反例: 足さないと、atlas で Rust の部品を組む task の rustup が toolchain を選べず落ちる。"""
     base = "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
     for node in NODES:
         passed = str(_env_value(_worker_on(rendered, node), "WORKER_PASS_ENV")["value"])
-        expected = ",".join((base, *ATLAS_TASK_PASS_ENV)) if node == "atlas" else base
+        expected = (
+            ",".join((base, *ATLAS_TASK_PASS_ENV))
+            if node == "atlas"
+            else ",".join((base, "WORKER_GPU"))
+            if node in GPU_WORKER_NODES
+            else base
+        )
         assert passed == expected, f"{node} の WORKER_PASS_ENV: {passed!r}"
 
 
@@ -1866,9 +1873,11 @@ def test_oom_scope_runtime_toml_declares_every_runtime_class_handler() -> None:
 
 
 def test_gpu_runtime_class_runs_only_workers_on_toolkit_nodes(rendered: list[Manifest]) -> None:
-    """GPU の RuntimeClass で走る worker は toolkit を入れた機体だけで、その worker だけが NVIDIA の env で GPU を求める(env の
-    NVIDIA_VISIBLE_DEVICES は「この機体の worker は GPU を持つ」の宣言でもある — GPU の RuntimeClass の無い worker が置くと、GPU を
-    求めて得られない)。graphics の能力が EGL と GBM の lib を入れる。"""
+    """GPU の RuntimeClass で走る worker は toolkit を入れた機体だけで、その worker だけが NVIDIA の env で GPU を求める(GPU の
+    RuntimeClass の無い worker が置くと、GPU を求めて得られない)。graphics の能力が EGL と GBM の lib を入れる。
+    「この機体の worker は GPU を持つ」の宣言は WORKER_GPU で、job の子へ渡す名(WORKER_PASS_ENV)にも在る。NVIDIA_VISIBLE_DEVICES は
+    toolkit が container の PID 1 の環境で void に書き換えるので、宣言にならない(実測 2026-11-07 zeus)。
+    反例: WORKER_GPU を渡さないと、job の子は device の注入が壊れた GPU の機体を GPU の無い機体と見分けられず、黙って CPU で描く。"""
     using = sorted(
         _node(doc) or ""
         for doc in _deployments(rendered, "worker")
@@ -1882,6 +1891,10 @@ def test_gpu_runtime_class_runs_only_workers_on_toolkit_nodes(rendered: list[Man
             assert _env_value(doc, "NVIDIA_VISIBLE_DEVICES")["value"] == "all"
             capabilities = str(_env_value(doc, "NVIDIA_DRIVER_CAPABILITIES")["value"]).split(",")
             assert {"graphics", "utility"} <= set(capabilities), capabilities
+            assert _env_value(doc, "WORKER_GPU")["value"] == "nvidia"
+            assert "WORKER_GPU" in str(_env_value(doc, "WORKER_PASS_ENV")["value"]).split(","), _node(doc)
         else:
+            assert "WORKER_GPU" not in names, _node(doc)
+            assert "WORKER_GPU" not in str(_env_value(doc, "WORKER_PASS_ENV")["value"]).split(","), _node(doc)
             assert "NVIDIA_VISIBLE_DEVICES" not in names, _node(doc)
             assert "NVIDIA_DRIVER_CAPABILITIES" not in names, _node(doc)
