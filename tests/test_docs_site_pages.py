@@ -22,8 +22,12 @@ MKDOCS = ROOT / "mkdocs.yml"
 TABLE_SECTIONS = ("## Table of Contents", "## Pages That Need Other Components")
 # Pages in dirs under docs/ that the site publishes (names relative to docs/). The other files of docs/positioning are internal sales material and
 # are not published. The page defining the axes of explanation is put on the site as the source of public text (README, docs, articles) (section 17 of the
-# initiative doeff-publish). The first English article is put on the site so that the click-through diagram works on the site.
-PUBLISHED_SUBDIR_PAGES = ("positioning/what-doeff-is.md", "articles/algebraic-effects-in-python.md")
+# initiative doeff-publish). The English articles are put on the site so that their click-through figures work on the site.
+PUBLISHED_SUBDIR_PAGES = (
+    "positioning/what-doeff-is.md",
+    "articles/algebraic-effects-in-python.md",
+    "articles/yield-and-async.md",
+)
 LINK = re.compile(r"\]\(([^)#\s]+\.md)(?:#[^)]*)?\)")
 
 
