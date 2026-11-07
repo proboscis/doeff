@@ -103,7 +103,7 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
-The same idea in a narrated video (1:26): one card fight is one function, and only the handlers
+The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.
 
 https://github.com/user-attachments/assets/4903154e-2032-4dce-8f17-4c515b2bf912
