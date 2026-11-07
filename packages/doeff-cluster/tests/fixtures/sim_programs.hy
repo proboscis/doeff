@@ -478,6 +478,11 @@
   "見本の系: 準備できたと報告し続けるだけの service 1 つ"
   (pulse (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
+(defsystem pulses-v2 [#^ Callable foundation]
+  "pulses の版 2(environ に STEP を足した — 宣言し直すと入れ替わる・担い手の不在の間の宣言し直しの検 tests/test_redeclare_while_cut_off.hy)"
+  (pulse (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+         :environ {"STEP" "2"}))
+
 (defsystem solo-pulses [#^ Callable foundation]
   "見本の系: 置ける worker が 1 台ずつの service 4 つ(能力 solo-a〜solo-d — 1 台ずつの worker だけが持つ)と、能力 cluster-net を持つ
    worker ならどれにも置ける service 1 つ(#2805 — 置ける worker が 1 台の service が並ぶ形の途絶の筋書き・tests/test_outage_timelines.hy)"
