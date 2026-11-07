@@ -1,0 +1,46 @@
+<!-- The section "Where a yield goes" of docs/articles/yield-and-async.md, one step per click: run(ada(titled(twice()))), where each ReadName goes to the nearest handler around the code that yields it.
+     Written by tools/docs_site/figures_measure/yield_and_async_figures.py; the order is what yield_and_async.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels is-rings-and-code">
+    <div class="sf-rings">
+      <div class="sf-ring" data-anchor="r-ada"><span class="sf-ring-name" data-anchor="n-ada">ada</span><div class="sf-ring-room" data-anchor="m-ada"></div><div class="sf-ring" data-anchor="r-titled"><span class="sf-ring-name" data-anchor="n-titled">titled</span><div class="sf-ring-room" data-anchor="m-titled"></div><div class="sf-core" data-anchor="core"><div class="sf-core-head"><span>twice()</span><span class="sf-unchanged" data-anchor="unchanged">greet: unchanged</span></div><div class="sf-vars"><span>first = <span data-slot="first"></span></span><span>second = <span data-slot="second"></span></span></div><div class="sf-code"><div class="sf-line"><span class="kw">@do</span></div><div class="sf-line"><span class="kw">def</span> <span class="fn">twice</span>():</div><div class="sf-line" data-anchor="t-first">    first = <span class="kw">yield</span> greet()</div><div class="sf-line" data-anchor="t-second">    second = <span class="kw">yield</span> grace(greet())</div><div class="sf-line" data-anchor="t-return">    <span class="kw">return</span> first, second</div></div><div class="sf-pair"><div class="sf-callee" data-anchor="g1"><div class="sf-callee-head">greet(), first call</div><div class="sf-vars"><span>name = <span data-slot="g1-name"></span></span></div><div class="sf-code"><div class="sf-line" data-anchor="g1-yield">name = <span class="kw">yield</span> ReadName()</div><div class="sf-line" data-anchor="g1-return"><span class="kw">return</span> <span class="st">f"Hello, {name}"</span></div></div></div><div class="sf-ring" data-anchor="r-grace"><span class="sf-ring-name" data-anchor="n-grace">grace</span><div class="sf-ring-room" data-anchor="m-grace"></div><div class="sf-callee" data-anchor="g2"><div class="sf-callee-head">greet(), second call</div><div class="sf-vars"><span>name = <span data-slot="g2-name"></span></span></div><div class="sf-code"><div class="sf-line" data-anchor="g2-yield">name = <span class="kw">yield</span> ReadName()</div><div class="sf-line" data-anchor="g2-return"><span class="kw">return</span> <span class="st">f"Hello, {name}"</span></div></div></div></div></div></div></div></div>
+    </div>
+    <section class="sf-panel is-handler" data-panel="handlers">
+      <div class="sf-head"><span>the handlers</span><span>each one is a @handler</span></div>
+      <div class="sf-code">
+        <div class="sf-line" data-anchor="h-ada-def"><span class="kw">def</span> <span class="fn">ada</span>(effect: ReadName, k):</div>
+        <div class="sf-line" data-anchor="h-ada">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, <span class="st">"Ada"</span>))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line" data-anchor="h-titled-def"><span class="kw">def</span> <span class="fn">titled</span>(effect: ReadName, k):</div>
+        <div class="sf-line" data-anchor="h-titled-yield">    name = <span class="kw">yield</span> effect</div>
+        <div class="sf-line" data-anchor="h-titled-resume">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, <span class="st">f"Dr. {name}"</span>))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line" data-anchor="h-grace-def"><span class="kw">def</span> <span class="fn">grace</span>(effect: ReadName, k):</div>
+        <div class="sf-line" data-anchor="h-grace">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, <span class="st">"Grace"</span>))</div>
+      </div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="read">ReadName()</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of greet</small></div>
+  <div class="sf-token is-value" data-token="ada">"Ada"</div>
+  <div class="sf-token is-value" data-token="dr">"Dr. Ada"</div>
+  <div class="sf-token is-effect" data-token="read2">ReadName()</div>
+  <div class="sf-token is-k" data-token="k2">k <small>the rest of greet</small></div>
+  <div class="sf-token is-value" data-token="grace">"Grace"</div>
+  <div class="sf-token is-value" data-token="out">('Hello, Dr. Ada', 'Hello, Grace')</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": ["t-first", "g1-yield", "g1-return"], "marks": {"r-grace": "is-off"}, "values": {"call": "run(ada(titled(twice())))", "result": "", "first": "", "second": "", "g1-name": "", "g2-name": ""}}'><code>yield greet()</code> runs the child as part of <code>twice</code>, like <code>await greet_async()</code>.</li>
+  <li data-state='{"now": ["g1-yield"], "marks": {"r-grace": "is-off", "g1-return": "is-k"}, "tokens": {"read": {"at": "g1-yield", "place": "end"}, "k": {"at": "g1-return", "place": "end"}}}'><code>greet</code> pauses at <code>yield ReadName()</code>. The rest of <code>greet</code> is now a value: <code>k</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["h-titled-def"], "marks": {"r-grace": "is-off", "g1-return": "is-k", "m-titled": "is-on"}, "tokens": {"read": {"from": {"at": "g1-yield", "place": "end"}, "at": "n-titled", "place": "end"}, "k": {"from": {"at": "g1-return", "place": "end"}, "at": "m-titled"}}}'>The nearest handler of <code>ReadName</code> is <code>titled</code>, so it receives the effect and <code>k</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["h-titled-yield"], "marks": {"r-grace": "is-off", "g1-return": "is-k", "m-titled": "is-on"}, "tokens": {"read": {"from": {"at": "n-titled", "place": "end"}, "at": "n-ada", "place": "end"}, "k": {"at": "m-titled"}}}'><code>titled</code> performs the effect again. It goes on out, to <code>ada</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["h-ada"], "marks": {"r-grace": "is-off", "g1-return": "is-k", "m-titled": "is-on"}, "tokens": {"ada": {"from": {"at": "n-ada", "place": "end"}, "at": "n-titled", "place": "end"}, "k": {"at": "m-titled"}}}'><code>ada</code> answers <code>"Ada"</code> to <code>titled</code>, the code that asked it. <code>greet</code> is still waiting.</li>
+  <li data-state='{"active": "handlers", "now": ["h-titled-resume", "g1-return"], "marks": {"r-grace": "is-off"}, "values": {"g1-name": "\"Dr. Ada\"", "first": "&#39;Hello, Dr. Ada&#39;"}, "tokens": {"dr": {"from": {"at": "n-titled", "place": "end"}, "at": "g1-yield", "place": "end", "merge": true}, "k": {"from": "m-titled", "at": "g1-yield", "place": "end", "merge": true, "delay": 0.3}}}'><code>titled</code> resumes <code>k</code> with <code>Dr. </code> in front. <code>greet</code> returns <code>"Hello, Dr. Ada"</code>.</li>
+  <li data-state='{"now": ["t-second", "g2-yield"], "marks": {"r-grace": "is-new", "m-grace": "is-on", "g2-return": "is-k"}, "tokens": {"read2": {"from": {"at": "g2-yield", "place": "end"}, "at": "n-grace", "place": "end"}, "k2": {"from": {"at": "g2-return", "place": "end"}, "at": "m-grace"}}}'>This call alone runs with <code>grace</code> around it, so its <code>ReadName</code> stops at <code>grace</code> and never reaches <code>titled</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["h-grace", "t-return"], "values": {"g2-name": "\"Grace\"", "second": "&#39;Hello, Grace&#39;", "result": "(&#39;Hello, Dr. Ada&#39;, &#39;Hello, Grace&#39;)"}, "tokens": {"grace": {"from": {"at": "n-grace", "place": "end"}, "at": "g2-yield", "place": "end", "merge": true}, "k2": {"from": "m-grace", "at": "g2-yield", "place": "end", "merge": true, "delay": 0.3}, "out": {"from": {"at": "t-return", "place": "end"}, "via": [{"at": "n-titled", "place": "end"}, {"at": "n-ada", "place": "end"}], "at": "result", "merge": true, "delay": 1.1}}}'><code>grace</code> resumes <code>k</code> with <code>"Grace"</code>, and <code>twice</code> returns. Each handler's <code>Resume</code> returns what the rest of the program returned: <code>grace</code>'s first, then <code>titled</code>'s and <code>ada</code>'s: <code>('Hello, Dr. Ada', 'Hello, Grace')</code>.</li>
+  <li data-state='{"now": ["g1-yield", "g1-return", "g2-yield", "g2-return"], "marks": {"r-titled": "is-off", "unchanged": "is-on"}, "values": {"call": "run(ada(twice()))", "result": "(&#39;Hello, Ada&#39;, &#39;Hello, Grace&#39;)", "g1-name": "\"Ada\"", "first": "&#39;Hello, Ada&#39;"}}'>Take <code>titled</code> out, and the first greeting is plain Ada: <code>('Hello, Ada', 'Hello, Grace')</code>. <code>greet</code> is the same function in every run.</li>
+</ol>

@@ -123,17 +123,7 @@ RuntimeError: Task got bad yield: Ask(key='name')
 
 The `Task` that runs a coroutine is the code that calls `send()`, so every request in the program ends up there, and it understands two kinds. At the bottom of each chain of awaits is a `Future`, which yields itself: the Task adds a callback to it, and once the future is done, calls `send(None)`, and the future's `__await__` returns `future.result()`. A bare `yield`, which `asyncio.sleep(0)` uses, means "let the other tasks run first". Anything else is a bad yield. trio works the same way with request objects of its own.
 
-```mermaid
-sequenceDiagram
-    participant loop as the event loop's Task
-    participant twice as twice_async
-    participant greet as greet_async
-    loop->>twice: send(None)
-    twice->>greet: await greet_async(), a plain call
-    greet->>loop: yield a request, straight through twice_async
-    Note over loop: the only receiver
-    loop->>greet: send(None), straight through twice_async
-```
+[![Where an await goes, step by step: each Ask passes straight through twice_async to drive, the one code that calls send(), and asyncio's Task in drive's place understands only a Future or a bare yield](../assets/figures/await-passes-through.gif)](../assets/figures/await-passes-through.gif)
 
 In the words of algebraic effects:
 
@@ -180,18 +170,9 @@ print(run(ada(titled(twice()))))
 
 `yield greet()` is the counterpart of `await greet_async()`: the child runs as part of the parent, and its effects travel out through the parent's handlers. `twice` installs `grace` around its second call only, so the `ReadName` of that call stops at `grace`, and the first one goes on out. In the second run, `titled` sits between `twice` and `ada`. Inside a handler, `yield effect` performs the effect again, and the next handler out answers it; `titled` takes the answer and resumes `k` with `Dr. ` in front. The second call never reaches `titled`, because `grace` is closer. `greet` is the same function in every run.
 
-The first `ReadName` of the second run travels like this:
+Both runs, one step at a time:
 
-```mermaid
-sequenceDiagram
-    participant greet as greet, first call
-    participant titled
-    participant ada
-    greet->>titled: yield ReadName(), paused as k
-    titled->>ada: yield effect
-    ada->>titled: "Ada"
-    titled->>greet: Resume(k, "Dr. Ada")
-```
+[![Where a yield goes, step by step: in run(ada(titled(twice()))) the first ReadName goes to titled, which asks ada and resumes k with Dr. Ada, the second stops at grace, and taking titled out changes the first greeting while greet stays the same](../assets/figures/yield-nearest-handler.gif)](../assets/figures/yield-nearest-handler.gif)
 
 | | `async def` and `await` | `@do` and `yield` |
 |---|---|---|
@@ -274,6 +255,8 @@ Within one run, the two models agree: `k` is one-shot, as a coroutine is. doeff 
 ## I/O through an async library
 
 Python's I/O libraries are often `async`: HTTP clients, database drivers, the SDKs of model providers. doeff does not ask you to rewrite them. `Await(coroutine)` is one more effect, and `await_handler` answers it: it runs the coroutine on a background asyncio loop that the whole process shares, and resumes `k` with the result once it is done, while other doeff tasks run. The event loop is still there, but it has moved from above the program to behind one handler.
+
+[![Where the Awaits of an async library go, step by step: with one Await per chunk, listen_handler writes down five on their way to await_handler and its asyncio loop; with the whole loop in one coroutine, it writes down one](../assets/figures/await-per-step.gif)](../assets/figures/await-per-step.gif)
 
 Where you put the `Await` decides what the handlers see. Here a stream of chunks, of the kind a model's SDK returns, is collected two ways: with the loop as a program and one `Await` per chunk, or with the whole loop in one coroutine and one `Await` around it:
 

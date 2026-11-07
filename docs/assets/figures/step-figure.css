@@ -229,3 +229,28 @@
 .sf-vars .is-now { background: var(--sf-now); border-radius: .1rem; }
 /* A hundred squares across a whole page are too big to read as one set; these two figures keep them small. */
 [data-step-figure="article-opening"] .sf-tasks, [data-step-figure="hundred-fights"] .sf-tasks { max-width: 22rem; }
+
+/* The figures of docs/articles/yield-and-async.md (await-passes-through, yield-nearest-handler, await-per-step). */
+/* A chain of calls with the caller on top (await-passes-through): drive or asyncio's Task, twice_async, greet_async. */
+.sf-chain { display: grid; gap: .5rem; }
+.sf-chain .sf-panel[data-panel="twice"], .sf-chain .sf-panel[data-panel="greet"] { margin-left: 1.2rem; }
+.sf-chain .sf-panel[data-panel="greet"] { margin-left: 2.4rem; }
+.sf-split { display: grid; grid-template-columns: 1fr 11rem; gap: .5rem; align-items: start; }
+@container (max-width: 620px) { .sf-split { grid-template-columns: 1fr; } }
+.sf-inbox.is-one { grid-template-columns: 1fr; margin-bottom: 0; }
+/* One of two versions of a block of code: "sf-alt" shows only with "is-on", and the first version hides with "is-off". */
+.sf-code.is-off { display: none; }
+.sf-code.sf-alt:not(.is-on) { display: none; }
+.sf-call .sf-result.is-fail { color: var(--sf-fail); border-color: var(--sf-fail); }
+/* Rings beside the code of the handlers (yield-nearest-handler), with greet's two calls one under the other inside twice. */
+.sf-panels.is-rings-and-code { grid-template-columns: 1fr 1fr; align-items: start; }
+@container (max-width: 620px) { .sf-panels.is-rings-and-code { grid-template-columns: 1fr; } }
+.sf-pair { display: grid; gap: .4rem; margin-top: .35rem; }
+.sf-callee { padding: .3rem .45rem; border: 1px dashed var(--md-default-fg-color--lighter); border-radius: .25rem; }
+.sf-callee-head { font-weight: 700; color: var(--sf-effect); }
+/* asyncio's loop behind await_handler (await-per-step), and a ring that stands for whatever else a caller stacks. */
+.sf-loop { margin-bottom: .45rem; padding: .3rem .45rem; border: 2px dashed var(--md-default-fg-color--lighter); border-radius: .3rem; font-size: .56rem; }
+.sf-loop-head { font-weight: 700; color: var(--md-default-fg-color--light); }
+.sf-loop .sf-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-ring.is-faint { border-style: dashed; }
+.sf-ring.is-faint > .sf-ring-name { color: var(--md-default-fg-color--light); }

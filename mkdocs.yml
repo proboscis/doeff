@@ -54,6 +54,7 @@ exclude_docs: |
   !/seedream.md
   !/positioning/what-doeff-is.md
   !/articles/algebraic-effects-in-python.md
+  !/articles/yield-and-async.md
 
 nav:
   - Home: index.md
@@ -89,6 +90,7 @@ nav:
       - CLI Architecture: cli-run-command-architecture.md
   - Articles:
       - 'Algebraic effects for Python': articles/algebraic-effects-in-python.md
+      - 'Yield and async': articles/yield-and-async.md
   - Pages That Need Other Components:
       - CLI auto-discovery and IDE plugins:
           - CLI Auto-Discovery: 14-cli-auto-discovery.md

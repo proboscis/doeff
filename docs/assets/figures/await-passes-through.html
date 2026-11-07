@@ -1,0 +1,73 @@
+<!-- The section "Where an await goes" of docs/articles/yield-and-async.md, one step per click: every request that crosses an await goes through twice_async to the one code that calls send(), drive or asyncio's Task.
+     Written by tools/docs_site/figures_measure/yield_and_async_figures.py; the order is what yield_and_async.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-chain">
+    <section class="sf-panel is-handler" data-panel="drive">
+      <div class="sf-head"><span data-slot="driver"></span><span>calls send(), and gets what comes up</span></div>
+      <div class="sf-vars"><span>value = <span data-slot="value"></span></span></div>
+      <div class="sf-split">
+        <div>
+          <div class="sf-code" data-anchor="drive-code">
+            <div class="sf-line" data-anchor="d-def"><span class="kw">def</span> <span class="fn">drive</span>(coroutine, answers):</div>
+            <div class="sf-line">    value = None</div>
+            <div class="sf-line">    <span class="kw">while</span> True:</div>
+            <div class="sf-line">        <span class="kw">try</span>:</div>
+            <div class="sf-line" data-anchor="d-send">            request = coroutine.send(value)</div>
+            <div class="sf-line" data-anchor="d-stop">        <span class="kw">except</span> StopIteration <span class="kw">as</span> stop:</div>
+            <div class="sf-line" data-anchor="d-return">            <span class="kw">return</span> stop.value</div>
+            <div class="sf-line" data-anchor="d-answer">        value = answers[request.key]</div>
+          </div>
+          <div class="sf-code sf-alt" data-anchor="task-code">
+            <div class="sf-line"><span class="co"># asyncio's Task, in outline</span></div>
+            <div class="sf-line" data-anchor="k-send">result = coroutine.send(None)</div>
+            <div class="sf-line" data-anchor="k-future"><span class="kw">if</span> isinstance(result, Future):  <span class="co"># wait for it</span></div>
+            <div class="sf-line" data-anchor="k-callback">    result.add_done_callback(wakeup)  <span class="co"># then send(None)</span></div>
+            <div class="sf-line" data-anchor="k-none"><span class="kw">elif</span> result <span class="kw">is</span> None:  <span class="co"># a bare yield: the others first</span></div>
+            <div class="sf-line">    loop.call_soon(step)</div>
+            <div class="sf-line"><span class="kw">else</span>:</div>
+            <div class="sf-line" data-anchor="k-bad">    error = RuntimeError(<span class="st">f"Task got bad yield: {result!r}"</span>)</div>
+          </div>
+        </div>
+        <div class="sf-inbox is-one"><div class="sf-slot"><span>request</span><div data-anchor="in-request"></div></div></div>
+      </div>
+    </section>
+    <section class="sf-panel is-program" data-panel="twice">
+      <div class="sf-head"><span>twice_async</span><span>one call down from drive</span></div>
+      <div class="sf-vars"><span>returns <span data-slot="pair"></span></span></div>
+      <div class="sf-code">
+        <div class="sf-line" data-anchor="t-def"><span class="kw">async def</span> <span class="fn">twice_async</span>():</div>
+        <div class="sf-line" data-anchor="t-call">    <span class="kw">return</span> (<span class="kw">await</span> greet_async(), <span class="kw">await</span> greet_async())</div>
+      </div>
+    </section>
+    <section class="sf-panel is-program" data-panel="greet">
+      <div class="sf-head"><span>greet_async</span><span>two calls down from drive</span></div>
+      <div class="sf-vars"><span>name = <span data-slot="name"></span></span></div>
+      <div class="sf-code">
+        <div class="sf-line" data-anchor="g-def"><span class="kw">async def</span> <span class="fn">greet_async</span>():</div>
+        <div class="sf-line" data-anchor="g-ask">    name = <span class="kw">await</span> <span data-slot="awaited"></span></div>
+        <div class="sf-line" data-anchor="g-return">    <span class="kw">return</span> <span class="st">f"Hello, {name}"</span></div>
+        <div class="sf-line" data-anchor="g-note"><span class="co" data-slot="note"></span></div>
+      </div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="ask">Ask("name")</div>
+  <div class="sf-token is-effect" data-token="future">a Future</div>
+  <div class="sf-token is-value" data-token="answer">"Ada"</div>
+  <div class="sf-token is-value" data-token="stop">StopIteration</div>
+  <div class="sf-token is-fail" data-token="bad">RuntimeError</div>
+  <div class="sf-token is-value" data-token="wake">send(None)</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"active": "twice", "now": ["d-send", "t-call"], "values": {"call": "drive(twice_async(), {\"name\": \"Ada\"})", "result": "", "driver": "drive, in drive.py", "value": "None", "pair": "", "name": "", "awaited": "Ask(\"name\")", "note": "    # Ask.__await__ is: return (yield self)"}}'><code>drive</code> starts <code>twice_async</code>. <code>await greet_async()</code> is a plain call: the child runs as part of the caller.</li>
+  <li data-state='{"active": "greet", "now": ["g-ask", "g-note"], "tokens": {"ask": {"at": "g-ask", "place": "end"}}}'><code>greet_async</code> awaits <code>Ask("name")</code>, whose <code>__await__</code> yields the <code>Ask</code> itself.</li>
+  <li data-state='{"active": "drive", "now": ["d-send"], "tokens": {"ask": {"from": {"at": "g-ask", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "in-request"}}}'><code>await</code> passes it straight through <code>twice_async</code>, out to whoever called <code>send()</code>: <code>drive</code>.</li>
+  <li data-state='{"active": "greet", "now": ["d-answer", "d-send", "g-ask"], "values": {"value": "\"Ada\"", "name": "\"Ada\""}, "tokens": {"answer": {"from": {"at": "d-answer", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "g-ask", "place": "end", "merge": true}}}'><code>drive</code> answers with <code>send("Ada")</code>, and the value goes straight back to the <code>await</code> that asked.</li>
+  <li data-state='{"active": "drive", "now": ["g-ask", "d-send"], "values": {"pair": "(&#39;Hello, Ada&#39;, …)", "name": ""}, "tokens": {"ask": {"from": {"at": "g-ask", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "in-request"}}}'>The first call returns <code>'Hello, Ada'</code>, and the second call asks again. <code>twice_async</code> never sees either request.</li>
+  <li data-state='{"active": "drive", "now": ["d-stop", "d-return"], "values": {"pair": "(&#39;Hello, Ada&#39;, &#39;Hello, Ada&#39;)", "name": "\"Ada\"", "result": "(&#39;Hello, Ada&#39;, &#39;Hello, Ada&#39;)"}, "tokens": {"answer": {"from": {"at": "d-answer", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "g-ask", "place": "end", "merge": true}, "stop": {"from": {"at": "t-call", "place": "end"}, "at": "d-stop", "place": "end", "delay": 1.2}}}'><code>drive</code> answers it the same way. The coroutine ends with <code>StopIteration</code>, and <code>drive</code> returns its value.</li>
+  <li data-state='{"active": "drive", "now": ["k-send", "k-bad"], "marks": {"drive-code": "is-off", "task-code": "is-on", "result": "is-fail", "k-bad": "is-fail"}, "values": {"call": "asyncio.run(twice_async())", "result": "RuntimeError: Task got bad yield", "driver": "asyncio&#39;s Task, under asyncio.run", "value": "None", "pair": "", "name": ""}, "tokens": {"ask": {"from": {"at": "g-ask", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "in-request"}, "bad": {"from": "in-request", "at": "k-bad", "place": "end", "delay": 1.3}}}'>Put asyncio's <code>Task</code> in <code>drive</code>'s place. It understands a <code>Future</code> and a bare <code>yield</code>. Anything else is a bad yield: <code>RuntimeError: Task got bad yield: Ask(key='name')</code>.</li>
+  <li data-state='{"active": "greet", "now": ["k-future", "k-callback", "g-ask"], "marks": {"drive-code": "is-off", "task-code": "is-on"}, "values": {"result": "", "awaited": "asyncio.sleep(1)", "note": "    # sleep(1) awaits a Future, which yields itself"}, "tokens": {"future": {"from": {"at": "g-ask", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "in-request"}, "wake": {"from": {"at": "k-callback", "place": "end"}, "via": [{"at": "t-call", "place": "end"}], "at": "g-ask", "place": "end", "merge": true, "delay": 1.4}}}'>At the bottom of every real chain is a <code>Future</code>: <code>asyncio.sleep(1)</code> awaits one. The <code>Task</code> adds a callback and calls <code>send(None)</code> once it is done. One receiver at the top answers every request in the program.</li>
+</ol>

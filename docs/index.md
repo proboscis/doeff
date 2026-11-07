@@ -156,6 +156,7 @@ components are listed separately under
 ### Articles
 
 - **[Algebraic effects for Python](articles/algebraic-effects-in-python.md)** - Handlers stacked around one unchanged card-game battle: a scripted player, bots, record and replay, a hundred fights, statistics and tests, with figures you click through
+- **[Yield and async](articles/yield-and-async.md)** - `await` and `yield` side by side: where the request of a paused coroutine goes, who resumes the paused code, and how to reach async libraries through `Await`, with figures you click through
 
 ## Pages That Need Other Components
 
