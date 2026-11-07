@@ -1,5 +1,5 @@
 ;;; 持ち主ごとの作業場所の volume の effect(型は doeff_cluster._shared.intent.workspace_volume_model)の模擬の答え手(模擬の環境)。
-;;; 本番の答え手(doeff_cluster._shared.protocol.workspace_volumes の workspace-volumes-api — Longhorn の物と mount の係)と同じ結末で答え、
+;;; 本番の答え手(doeff_cluster._shared.entry.workspace_volume_api の workspace-volumes-api — Longhorn の物と mount の係)と同じ結末で答え、
 ;;; volume の様子を入れ物に残す(検と模擬の世界が、走らせた後に読む)。
 ;;;
 ;;; 契約(本番と同じ — tests/test_workspace_volumes_handler.hy が両方の答え手で同じ筋書きを回す):

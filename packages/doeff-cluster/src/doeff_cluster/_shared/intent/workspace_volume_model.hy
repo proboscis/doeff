@@ -1,11 +1,12 @@
 ;;; 持ち主(上に載る系が渡す id 1 つ — 例えば会話)ごとの作業場所の volume を、作る・機体の node に attach する・作業場所の path に mount
-;;; する・外す・冷やす・消す effect の型(関数は持たない — 本番の答え手は doeff_cluster._shared.protocol.workspace_volumes の
+;;; する・外す・冷やす・消す effect の型(関数は持たない — 本番の答え手は doeff_cluster._shared.entry.workspace_volume_api の
 ;;; workspace-volumes-api・模擬の答え手は doeff_cluster._sim.workspace_volumes の held-workspace-volumes)。決まり(級・名・寿命・mount の係)は
 ;;; deploy/k8s/workspace-volumes/README.md。
 ;;;
 ;;;   WorkspaceOutcome        effect の結末: DONE = 今した・ALREADY = 既にそうだった(何もしていない)・RESTORED = backup から戻した(作る時だけ)
 ;;;   WorkspaceVolumeSite     本番の答え手が読む場所と待つ秒: Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir・mountinfo の
-;;;                           file・attach と detach と係の答えと backup と戻しを待つ上限の秒・読み直す間の秒
+;;;                           file・attach と detach と係の答えと backup と戻しを待つ上限の秒・読み直す間の秒・変わりの知らせが来ない時に
+;;;                           読み直す間の秒
 ;;;   WorkspaceVolumeRefused  できなかった(持ち主の id と volume の名・何をしようとしたか・理由を文に持つ — token は載せない)
 ;;;   CoolingSweep            CoolIdleWorkspaceVolumes の答え: 冷やす前の線ごとの残りの byte・冷やした volume の名・冷やせなかった(広げられ
 ;;;                           なかった)volume と訳・広げた volume の名・空けておく量を覆えたか
@@ -63,11 +64,13 @@
    settings-name = 値の ConfigMap(workspace-volume.json — 級の名と大きさ)・mount-dir = mount の係の頼みの dir(無い worker には係が
    無い)・mountinfo = 答え手の process から見た mount の表の file・attach-seconds と detach-seconds = Longhorn が付け終わる・外し終わる
    (消え終わる)のを待つ上限・mount-seconds = 係の答えを待つ上限(空の volume の mkfs を含む)・backup-seconds = 冷やす時の snapshot と
-   backup の 1 つずつを待つ上限・restore-seconds = backup から戻し終わるのを待つ上限・poll-seconds = 読み直す間。"
+   backup の 1 つずつを待つ上限・restore-seconds = backup から戻し終わるのを待つ上限・poll-seconds = 読み直す間(変わりの知らせを
+   待たない待ち — snapshot・backup・engine・置き場の残り)・recheck-seconds = 変わりの知らせを待つ待ち(付け・外し・戻し・消え終わり・係の
+   答え)が、知らせが来なくても読み直す間(取りこぼした知らせと、知らせの見張りが止まった間の網)。"
   {:check [(> (len longhorn-namespace) 0) (> (len settings-namespace) 0) (> (len settings-name) 0)
            (.startswith mount-dir "/") (.startswith mountinfo "/")
            (> attach-seconds 0) (> detach-seconds 0) (> mount-seconds 0) (> backup-seconds 0) (> restore-seconds 0)
-           (> poll-seconds 0)]}
+           (> poll-seconds 0) (> recheck-seconds 0)]}
   (#^ str longhorn-namespace)
   (#^ str settings-namespace)
   (#^ str settings-name)
@@ -78,7 +81,8 @@
   (#^ float mount-seconds)
   (#^ float backup-seconds)
   (#^ float restore-seconds)
-  (#^ float poll-seconds))
+  (#^ float poll-seconds)
+  (#^ float recheck-seconds))
 
 
 (defclass WorkspaceVolumeRefused [RuntimeError]

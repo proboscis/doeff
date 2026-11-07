@@ -19,7 +19,7 @@
 (import certifi)
 (import httpx)
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster._foundation.kube_client [KubeClient keepalive-options kube-client])
+(import doeff_cluster._foundation.kube_client [KubeClient follow-names keepalive-options kube-client])
 (import doeff [with-handlers])
 (import pytest)
 (import doeff_cluster [AnnotateDeployment ScaleDeployment])
@@ -534,3 +534,53 @@
           (ScaleDeployment NAMESPACE NAME 2 False))))
   (assert (in "503" (str raised.value)) (str raised.value))
   (assert (in "etcd is down" (str raised.value)) (str raised.value)))
+
+
+(defclass NamesHeard []
+  "名の見張りが伝えた名(None = list した)と訳を順に記録する(別の thread から呼ばれる — 錠の下)。数が揃うのを上限つきで待てる。"
+  (defn #^ None __init__ [self]
+    (setv self.changed (threading.Condition) self.names #() self.errors #()))
+
+  (defn #^ None on-names [self #^ (| str None) name]
+    (with [self.changed]
+      (setv self.names (+ self.names #(name)))
+      (.notify-all self.changed)))
+
+  (defn #^ None on-error [self #^ str reason]
+    (with [self.changed]
+      (setv self.errors (+ self.errors #(reason)))
+      (.notify-all self.changed)))
+
+  (defn #^ bool wait-for [self #^ int names]
+    "名が names 個以上来るまで待つ(上限 WAIT-SECONDS)。揃ったら真。"
+    (with [self.changed]
+      (.wait-for self.changed (fn [] (>= (len self.names) names)) WAIT-SECONDS))))
+
+
+(val VOLUMES-PATH "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes")
+(val VOL-A {"metadata" {"name" "ws-a" "resourceVersion" "11"}})
+(val VOL-B {"metadata" {"name" "ws-b" "resourceVersion" "12"}})
+
+
+(deftest test-a-name-watch-tells-a-list-as-none-and-each-changed-name [tmp-path]
+  ;; 名の見張り(follow-names): 一覧を絞らずに list し、list を None(全部が変わったかもしれない)として伝え、その一覧の版から watch して、
+  ;; 出来事(MODIFIED・DELETED・ADDED)ごとに変わった object の名だけを伝える。しおり(BOOKMARK)は伝えない。
+  (<- first-list httpx.Response (listed "10" #(VOL-A VOL-B)))
+  (<- first-watch httpx.Response (watched #({"type" "MODIFIED" "object" VOL-B} {"type" "BOOKMARK" "object" {"metadata" {"resourceVersion" "13"}}}
+                                            {"type" "DELETED" "object" VOL-A} {"type" "ADDED" "object" VOL-A})
+                                          True))
+  (val kube (FakeKube #(first-list first-watch)))
+  (<- client KubeClient (client-for tmp-path kube RETRY-SECONDS))
+  (val heard (NamesHeard))
+  (<- stop (follow-names client.settings (+ client.settings.base VOLUMES-PATH) "volumes" heard.on-names heard.on-error))
+  (try
+    (assert (.wait-for heard 4) #(heard.names heard.errors))
+    (assert (= heard.names #(None "ws-b" "ws-a" "ws-a")) heard.names)
+    (assert (= heard.errors #()) heard.errors)
+    (val requests (.requests kube))
+    (assert (= (get requests 0) #(VOLUMES-PATH {})) requests)
+    (assert (= (get requests 1) #(VOLUMES-PATH {"watch" "true" "resourceVersion" "10" "allowWatchBookmarks" "true"
+                                                "timeoutSeconds" (str WATCH-SECONDS)}))
+            requests)
+    (finally
+      (stop))))

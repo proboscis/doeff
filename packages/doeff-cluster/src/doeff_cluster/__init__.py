@@ -751,7 +751,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.protocol.job_call_handlers import job_target as job_target
     from doeff_cluster._shared.protocol.kube_services import kube_services_api as kube_services_api
     from doeff_cluster._shared.protocol.workspace_volumes import WORKSPACE_SITE as WORKSPACE_SITE
-    from doeff_cluster._shared.protocol.workspace_volumes import workspace_volumes_api as workspace_volumes_api
+    from doeff_cluster._shared.entry.workspace_volume_api import workspace_volumes_api as workspace_volumes_api
     from doeff_cluster._shared.core.lease_rules import lease_full_until as lease_full_until
     from doeff_cluster._shared.core.lease_rules import lease_holder as lease_holder
     from doeff_cluster._shared.entry.cluster_foundation import lease_holder_of as lease_holder_of
@@ -1471,7 +1471,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "job_target": "doeff_cluster._shared.protocol.job_call_handlers",
     "kube_services_api": "doeff_cluster._shared.protocol.kube_services",
     "WORKSPACE_SITE": "doeff_cluster._shared.protocol.workspace_volumes",
-    "workspace_volumes_api": "doeff_cluster._shared.protocol.workspace_volumes",
+    "workspace_volumes_api": "doeff_cluster._shared.entry.workspace_volume_api",
     "lease_full_until": "doeff_cluster._shared.core.lease_rules",
     "lease_holder": "doeff_cluster._shared.core.lease_rules",
     "lease_holder_of": "doeff_cluster._shared.entry.cluster_foundation",

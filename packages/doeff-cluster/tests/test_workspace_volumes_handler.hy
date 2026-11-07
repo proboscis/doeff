@@ -1,5 +1,5 @@
-;;; 作業場所の volume の effect(doeff_cluster._shared.intent.workspace_volume_model)の検 — 本番の答え手(doeff_cluster._shared.protocol.
-;;; workspace_volumes の workspace-volumes-api)を偽の API server(Longhorn の Volume・VolumeAttachment・値の ConfigMap・級)と偽の mount の係
+;;; 作業場所の volume の effect(doeff_cluster._shared.intent.workspace_volume_model)の検 — 本番の答え手(doeff_cluster._shared.entry.
+;;; workspace_volume_api の workspace-volumes-api — 手順は protocol/workspace_volumes)を偽の API server(Longhorn の Volume・VolumeAttachment・値の ConfigMap・級)と偽の mount の係
 ;;; (頼みの dir の file を読んで答える)の上で回し、模擬の答え手(doeff_cluster._sim.workspace_volumes の held-workspace-volumes)と同じ
 ;;; 筋書きに同じ結末で答え、同じ volume の様子を残す事を確かめる。
 ;;;
@@ -33,6 +33,8 @@
 ;;;   並べて走らせる    (Spawn と模擬の時計)戻す途中に同じ持ち主の次の頼み(メッセージ)が来たら、先の戻しに相乗りして戻し終わりを待つ
 ;;;                     (戻すのは 1 度)・冷やす途中に使い始めたら冷やす側が退き volume が残る・消す途中に使い始めたら消え終わりを待って
 ;;;                     戻す・ticket を置いた直後に消された attach は作り直しを頼む断りを返す
+;;;   待ちの重さ        (本番だけ)30 本の付けを並べて待たせても、変わりの知らせの箱で待つ答え手の主の scheduler の歩の数は待つ秒に比例しない
+;;;                     (失敗ケース: 知らせを出さない箱で間隔ごとに読み直す答え手は比例する)
 ;;; 外の世界は、この file の Longhorn の相手役と mount の係の相手役・memory の file・模擬の時計。級の parameters と値の ConfigMap の中身は
 ;;; 宣言の file(deploy/k8s/workspace-volumes の storageclass.yaml と workspace-volume.json)から読む。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
@@ -53,6 +55,7 @@
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects [Spawn Task Gather])
+(import doeff_core_effects [CloseStepTally OpenStepTally StepTally step-tally-handler])
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
@@ -61,9 +64,11 @@
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
                                                            WorkspaceVolumeSite])
 (import doeff_cluster._shared.core.workspace_volume_rules [USED-AT-KEY ticket-id volume-name])
-(import doeff_cluster._shared.protocol.workspace_volumes [RESTORE-REBUILDS SettingsWire workspace-settings workspace-volumes-api])
+(import doeff_cluster._shared.protocol.workspace_volumes [RESTORE-REBUILDS SettingsWire VolumeNotices workspace-settings])
+(import doeff_cluster._shared.entry.workspace_volume_api [NOTICES-KEY workspace-volumes-api])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster._sim.workspace_volumes [HeldBackup HeldVolume WorkspaceVolumeWorld held-volume held-workspace-volumes put-volume])
+(import doeff_cluster._foundation.volume_notices [VolumeNoticeBoard])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -81,7 +86,7 @@
 (val SITE (WorkspaceVolumeSite :longhorn-namespace "longhorn-system" :settings-namespace "agent-worker" :settings-name "workspace-volume"
                                :mount-dir "/run/workspace-mount" :mountinfo "/proc/self/mountinfo"
                                :attach-seconds 5.0 :detach-seconds 5.0 :mount-seconds 5.0 :backup-seconds 5.0 :restore-seconds 5.0
-                               :poll-seconds 0.5))
+                               :poll-seconds 0.5 :recheck-seconds 0.5))
 (val SIZE (get (json.loads SETTINGS-TEXT) "sizeBytes"))
 (val MAX (get (json.loads SETTINGS-TEXT) "maxSizeBytes"))
 (val WARM-HOURS (get (json.loads SETTINGS-TEXT) "warmHours"))
@@ -107,6 +112,19 @@
 (val CLASS-PATH "/apis/storage.k8s.io/v1/storageclasses/longhorn-workspace")
 (val WORKER-FILES (MemoryFiles :files #((MemoryFile :path SERVICE-ACCOUNT-TOKEN-FILE :content (.encode (+ TOKEN "\n") "utf-8")))
                                :dirs #("/run/workspace-mount" "/work/agent-workspaces")))
+
+
+(defclass QuietNotices []
+  "変わりの知らせを 1 つも出さない箱(VolumeNotices の相手役 — 待ち手は検の recheck-seconds ごとに読み直す)。読みの数で進む相手役の世界は
+   知らせを出さないので、待ちの筋書きは以前の間隔の読み直しと同じ順に進む。答え手の session の箱の鍵 NOTICES-KEY の値として状態に置く
+   (本物の箱を作らせない — 検の機体が Pod の中でも、本物の cluster を見張らない)。"
+  (defn #^ int mark [self #^ str name] 0)
+  (defn #^ bool arm [self #^ str name #^ int seen bell] False)
+  (defn #^ bool arm-file [self #^ str path bell] False)
+  (defn #^ None disarm [self #^ str key bell] None))
+
+
+(val QUIET (QuietNotices))
 
 
 (defrecord SeenRequest
@@ -919,7 +937,7 @@
 (defk on-api [world steps [files WORKER-FILES] [start 0.0]]
   {:pre [(: world LonghornWorld) (: steps tuple) (: files MemoryFiles) (: start float)] :post [(: % ApiRan)]}
   "本番の答え手で、相手役の世界 world に筋書き steps を(模擬の時計の刻 start から)当てた結末の組と、終わりの memory の file を得るため。"
-  (<- ran ApiRan (with_handlers [slog-discard-handler (state) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start))) (node-environ NODE)
+  (<- ran ApiRan (with_handlers [slog-discard-handler (state {NOTICES-KEY QUIET}) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start))) (node-environ NODE)
                                  (longhorn-peer world) (keeper-peer world) (workspace-volumes-api SITE)]
                    (finished-run steps)))
   ran)
@@ -1923,7 +1941,7 @@
 (defk together-on-api [world first second seconds]
   {:pre [(: world LonghornWorld) (: first tuple) (: second tuple) (: seconds float)] :post [(: % tuple)]}
   "本番の答え手で、相手役の世界 world に 2 つの筋書きを並べて当てた結末の組の組を得るため。"
-  (<- done tuple (with_handlers [slog-discard-handler (state) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0)))
+  (<- done tuple (with_handlers [slog-discard-handler (state {NOTICES-KEY QUIET}) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0)))
                                  (node-environ NODE) (longhorn-peer world) (keeper-peer world) (workspace-volumes-api SITE)]
                    (side-by-side first second seconds)))
   done)
@@ -2038,7 +2056,7 @@
 (defk on-status [status steps]
   {:pre [(: status int) (: steps tuple)] :post [(: % tuple)]}
   "本番の答え手で、API server がどの要求にも status で答える世界に筋書き steps を当てた結末の組を得るため。"
-  (<- outcomes tuple (with_handlers [(state) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE)
+  (<- outcomes tuple (with_handlers [(state {NOTICES-KEY QUIET}) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE)
                                      (status-peer status) (workspace-volumes-api SITE)]
                        (run-steps steps)))
   outcomes)
@@ -2068,7 +2086,7 @@
    file を得るため。root = 作業の根(None = 事実の無い worker)。"
   (val environ (if (is root None) (node-environ NODE) (rooted-environ NODE root)))
   (<- ran tuple
-      (with_handlers [slog-discard-handler (state) (memory-file-handler ROOTED-FILES) (sim-time-handler :clock (! (clock-from 1000.0))) environ
+      (with_handlers [slog-discard-handler (state {NOTICES-KEY QUIET}) (memory-file-handler ROOTED-FILES) (sim-time-handler :clock (! (clock-from 1000.0))) environ
                       (longhorn-peer world) (workspace-volumes-api SITE)]
         (do-settings-twice world second)))
   ran)
@@ -2271,3 +2289,89 @@
   (<- again ApiRan (on-api erred #((Step :verb "sweep"))))
   (assert (= again.outcomes #("sweep cooled= failed=")) again.outcomes)
   (assert (= (len (! (posted-names erred BACKUPS-PATH))) 1) erred.seen))
+
+
+;; --- 待ちの重さ(変わりの知らせの箱 — 待つ秒 × 並んだ数に比例しない)------------------------------------------------------
+
+;; 並べて待たせる付けの本数と、その持ち主の id(名の条件の内)。
+(val WAITERS 30)
+(val WAITING-OWNERS (tuple (gfor index (range WAITERS) (.format "c-EXAMPLEWAITER{:013d}" index))))
+;; 知らせを受ける検の場所: 網の読み直しは本番と同じ 10 秒・付けの上限は待たせる秒より長い。
+(val NOTICED-SITE (replace SITE :attach-seconds 60.0 :recheck-seconds 10.0))
+;; 以前の形の検の場所: 0.5 秒ごとに読み直す(知らせを出さない箱と組む)。
+(val POLLED-SITE (replace NOTICED-SITE :recheck-seconds 0.5))
+
+
+(defrecord WaitsRan
+  "並べた付けの走り 1 つ: outcomes = 付けの結末の組・steps = 付けを始めてから全部が終わるまでの主の scheduler の歩の数。"
+  (#^ tuple outcomes)
+  (#^ int steps))
+
+
+(defk waiting-world []
+  {:pre [] :post [(: % LonghornWorld)]}
+  "持ち主 WAITING-OWNERS の外れた volume を持ち、付けの ticket を満たさない(stuck)相手役の世界を作るため。"
+  (var volumes #())
+  (for [owner WAITING-OWNERS]
+    (:= volumes (+ volumes #((HeldVolume :name (! (volume-name owner)))))))
+  (LonghornWorld (WorkspaceVolumeWorld NODE :volumes volumes) :stuck True))
+
+
+(defk longhorn-settles [world ring seconds]
+  {:pre [(: world LonghornWorld) (: ring Callable) (: seconds float)] :post [(: % None)]}
+  "seconds 秒後に相手役の Longhorn が並んだ volume を全部付け終え、変わった名を 1 つずつ ring へ伝えるため(本番の名の見張りの代わり)。"
+  (<- (Delay seconds))
+  (setv world.stuck False)
+  (for [volume world.held.volumes]
+    (ring volume.name))
+  None)
+
+
+(defk attached-together [world ring seconds]
+  {:pre [(: world LonghornWorld) (: ring Callable) (: seconds float)] :post [(: % WaitsRan)]}
+  "持ち主 WAITING-OWNERS の付けを並べて走らせ(Longhorn が付け終えるのは seconds 秒後)、結末の組と、その間の主の scheduler の歩の数を得るため。"
+  (<- (OpenStepTally "waits"))
+  (var tasks #())
+  (for [owner WAITING-OWNERS]
+    (<- task Task (Spawn (step-outcome (Step :verb "attach" :owner owner))))
+    (:= tasks (+ tasks #(task))))
+  (<- settler Task (Spawn (longhorn-settles world ring seconds)))
+  (<- done list (Gather #* tasks settler))
+  (<- tally (| StepTally None) (CloseStepTally "waits"))
+  (assert (is-not tally None) "窓 waits が開いていない")
+  (WaitsRan :outcomes (tuple (cut done 0 WAITERS)) :steps tally.steps))
+
+
+(defk waits-on-api [notices ring site seconds]
+  {:pre [(: notices VolumeNotices) (: ring Callable) (: site WorkspaceVolumeSite) (: seconds float)] :post [(: % WaitsRan)]}
+  "本番の答え手(変わりの知らせの箱 notices・場所 site)で、新しい待ちの世界に付けを並べて走らせた結末と歩の数を得るため。"
+  (<- world LonghornWorld (waiting-world))
+  (<- ran WaitsRan (with_handlers [step-tally-handler slog-discard-handler (state {NOTICES-KEY notices}) (memory-file-handler WORKER-FILES)
+                                   (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE) (longhorn-peer world)
+                                   (workspace-volumes-api site)]
+                     (attached-together world ring seconds)))
+  (assert (all (gfor volume world.held.volumes (= volume.node NODE))) world.held.volumes)
+  ran)
+
+
+(deftest test-waiting-attaches-cost-steps-by-changes-not-by-seconds
+  ;; 30 本の付けを並べ、Longhorn が付け終えるまで 4 秒と 8 秒待たせる。変わりの知らせの箱(本番の VolumeNoticeBoard — 見張りの代わりに
+  ;; 相手役が変わった名を伝える)で待つ答え手の、待つ間の主の scheduler の歩の数は、待つ秒を 2 倍にしてもほぼ変わらない(1.1 倍以内)。
+  (val short-board (VolumeNoticeBoard))
+  (<- short WaitsRan (waits-on-api short-board short-board.changed NOTICED-SITE 4.0))
+  (val long-board (VolumeNoticeBoard))
+  (<- long WaitsRan (waits-on-api long-board long-board.changed NOTICED-SITE 8.0))
+  (assert (= short.outcomes (* #("done") WAITERS)) short.outcomes)
+  (assert (= long.outcomes (* #("done") WAITERS)) long.outcomes)
+  (assert (<= long.steps (* 1.1 short.steps)) #(short.steps long.steps)))
+
+
+(deftest test-a-counterexample-handler-that-reads-again-by-the-interval-costs-steps-by-seconds
+  ;; 失敗ケース: 知らせを出さない箱(QUIET)と 0.5 秒の読み直し(以前の形)では、同じ筋書きの歩の数が待つ秒とともに増える(1.5 倍以上)—
+  ;; 上の検の測りが、待つ秒に比例する待ちを見分ける。
+  (val silent (fn [name] None))
+  (<- short WaitsRan (waits-on-api QUIET silent POLLED-SITE 4.0))
+  (<- long WaitsRan (waits-on-api QUIET silent POLLED-SITE 8.0))
+  (assert (= short.outcomes (* #("done") WAITERS)) short.outcomes)
+  (assert (= long.outcomes (* #("done") WAITERS)) long.outcomes)
+  (assert (>= long.steps (* 1.5 short.steps)) #(short.steps long.steps)))

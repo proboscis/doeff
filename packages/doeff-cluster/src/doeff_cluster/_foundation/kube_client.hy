@@ -9,6 +9,8 @@
 ;;; 思わぬ例外でも見張りの thread は抜けない: 理由を伝え、traceback を stderr に出し、retry-seconds の後に list し直す。
 ;;; 一覧の見張り(follow-services — job の Service の振り先): 名でなく label の selector で絞った一覧を同じ list の後の watch で受け、出来事の
 ;;; たびに一覧の今の全部({"items": [...]})を伝える(見張りの thread が名 → object の写しを持つ)。
+;;; 名の見張り(follow-names — 作業場所の volume の変わりの知らせ・volume_notices): 種類の全部を絞らずに同じ list の後の watch で受け、
+;;; 出来事のたびに変わった object の名だけを伝える(list し直した時は「全部」— 外れた間の変わりを取りこぼさない)。写しは持たない。
 ;;; job の Service の振り先(EndpointSlice)は server-side apply で書く(apply-slice — 宣言の欄だけを、field manager の名で持つ)。
 ;;; 接続の pool は thread の間で分けない: 見張り 1 つごとに自分の httpx.Client を持ち、台数と annotation の書き(本体の thread)は設定の
 ;;; client を使う(1 つの pool を 2 つ以上の thread が使うと、free-threaded の Python では httpcore の
@@ -78,7 +80,8 @@
    中から呼ぶ)・stopped = 止める合図・held = 今受けている watch の stream を入れる 1 つの箱(止める時に閉じて、読みの途中の thread を
    抜けさせる)・http = この見張りだけが使う接続の pool(頭の註。thread の終わりに閉じる)・selector = 一覧の見張りの label の selector
    (None = 名 name の object 1 つの見張り)・known = 一覧の見張りが受けた object の写し(名 → object — 出来事のたびに一覧の今の全部を
-   伝えるため。thread の中だけで書く)。"
+   伝えるため。thread の中だけで書く)・on-names = 名の見張りの伝え先(None でなければ、相手の種類の全部を絞らずに受け、object を
+   伝えずに、変わった object の名だけを伝える — list し直した時は None = 全部が変わったかもしれない。on-body は呼ばない)。"
   (#^ KubeSettings settings)
   (#^ str list-url)
   (#^ str name)
@@ -90,7 +93,8 @@
   (#^ list held)
   (#^ httpx.Client http)
   (setv #^ (| str None) selector None)
-  (setv #^ dict known (field :default-factory dict)))
+  (setv #^ dict known (field :default-factory dict))
+  (setv #^ (| (get Callable #([(| str None)] None)) None) on-names None))
 
 
 (defrecord KubeClient
@@ -248,15 +252,16 @@
 
 ;; --- 見張り(list の後の watch — #3868・#4070)---------------------------------------------------------------------------
 
-(defk watch-place [settings list-url name kind key on-body on-error [selector None]]
+(defk watch-place [settings list-url name kind key on-body on-error [selector None] [on-names None]]
   {:pre [(: settings KubeSettings) (: list-url str) (: name str) (: kind str) (: key str)
-         (: on-body (get Callable #([OpaqueJson] None))) (: on-error (get Callable #([str] None))) (: selector (| str None))]
+         (: on-body (get Callable #([OpaqueJson] None))) (: on-error (get Callable #([str] None))) (: selector (| str None))
+         (: on-names (| (get Callable #([(| str None)] None)) None))]
    :post [(: % WatchPlace)] :tags {:context "doeff-cluster" :role "foundation"}}
   "見張り 1 つの持ち物を作るため(自分の接続の pool と止める合図を新しく持つ)。selector = 一覧の見張りの label の selector(None = 名
-   name の object 1 つ)。"
+   name の object 1 つ)・on-names = 名の見張りの伝え先(None = 名の見張りでない)。"
   (<- http httpx.Client (new-pool settings.sa-dir settings.timeout settings.transport))
   (WatchPlace :settings settings :list-url list-url :name name :kind kind :key key :on-body on-body :on-error on-error
-              :stopped (threading.Event) :held [None] :http http :selector selector))
+              :stopped (threading.Event) :held [None] :http http :selector selector :on-names on-names))
 
 
 (defk stop-watch [watching]
@@ -295,10 +300,12 @@
 
 (defk watch-params [watching]
   {:pre [(: watching WatchPlace)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "list と watch を見張りの相手に絞る query(object 1 つの見張りは名の fieldSelector・一覧の見張りは label の selector)。"
-  (if (is watching.selector None)
-      (dict :fieldSelector (+ "metadata.name=" watching.name))
-      (dict :labelSelector watching.selector)))
+  "list と watch を見張りの相手に絞る query(object 1 つの見張りは名の fieldSelector・一覧の見張りは label の selector・名の見張りは
+   絞らない)。"
+  (cond
+    (is-not watching.on-names None) {}
+    (is watching.selector None) (dict :fieldSelector (+ "metadata.name=" watching.name))
+    True (dict :labelSelector watching.selector)))
 
 
 (defk object-name [body]
@@ -307,6 +314,14 @@
   (val meta (.get body "metadata"))
   (val name (if (isinstance meta dict) (.get meta "name") None))
   (if (isinstance name str) name ""))
+
+
+(defk tell-names [watching name]
+  {:pre [(: watching WatchPlace) (: name (| str None))] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "止められていなければ、名の見張りの伝え先へ変わった object の名(None = list し直した — 全部)を伝えるため。"
+  (when (not (.is-set watching.stopped))
+    (watching.on-names name))
+  None)
 
 
 (defk tell-collection [watching]
@@ -360,6 +375,8 @@
     (<- (tell-error watching (.format "k8s の {} の一覧の形が違う(metadata.resourceVersion・items)" watching.kind)))
     (return None))
   (cond
+    (is-not watching.on-names None)
+      (<- (tell-names watching None))
     (is-not watching.selector None)
       (do (.clear watching.known)
           (for [item items]
@@ -401,6 +418,11 @@
         (when (.strip line)
           (val event (json.loads line))
           (match event
+            {"type" (| "ADDED" "MODIFIED" "DELETED") "object" body} :if (and (isinstance body dict) (is-not watching.on-names None))
+              (do (<- seen (| str None) (version-of body))
+                  (:= current (or seen current))
+                  (<- name str (object-name body))
+                  (<- (tell-names watching name)))
             {"type" (| "ADDED" "MODIFIED" "DELETED") "object" body} :if (and (isinstance body dict) (is-not watching.selector None))
               (do (<- seen (| str None) (version-of body))
                   (:= current (or seen current))
@@ -520,7 +542,20 @@
   stop)
 
 
-(defk kube-client [fail [base API-URL] [sa-dir SA-DIR] [timeout 5.0] [transport None] [retry-seconds 10.0] [watch-seconds 60]]
+(defk follow-names [settings list-url kind on-names on-error]
+  {:pre [(: settings KubeSettings) (: list-url str) (: kind str) (: on-names (get Callable #([(| str None)] None)))
+         (: on-error (get Callable #([str] None)))]
+   :post [(: % (get Callable #([] None)))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "一覧の URL list-url の種類 kind の object の全部を list の後の watch で見張る daemon の thread(名 kube-watch)を始め、止める関数を返すため
+   (待ち手を、時間で読みに行かせず、変わった時だけ起こす)。on-names = 変わった object の名(ADDED・MODIFIED・DELETED の出来事)か None
+   (list した・し直した — 見張りの外れた間に何が変わったか分からない)・on-error = 届かない・断られた・読めない理由。どちらも thread の
+   中から呼ぶ。止めた後はどちらも呼ばない。object の中身は伝えない(読み手が要る時に自分で読む)。"
+  (<- watching WatchPlace (watch-place settings list-url "" kind list-url (fn [_body] None) on-error :on-names on-names))
+  (<- stop (get Callable #([] None)) (start-watch watching))
+  stop)
+
+
+(defk kube-client [fail[base API-URL] [sa-dir SA-DIR] [timeout 5.0] [transport None] [retry-seconds 10.0] [watch-seconds 60]]
   {:pre [(: fail (get Callable #([str] Exception))) (: base str) (: sa-dir str) (: timeout float) (: transport (| httpx.BaseTransport None))
          (: retry-seconds float) (: watch-seconds int)]
    :post [(: % KubeClient)] :tags {:context "doeff-cluster" :role "foundation"}}
