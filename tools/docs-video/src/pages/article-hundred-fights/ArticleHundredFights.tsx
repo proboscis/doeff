@@ -4,10 +4,12 @@
 // runs to its end before win_rate goes on, and Gather finds every fight over. Then the wins of the random bot and of the
 // Monte Carlo bot, and the Played of all hundred fights reaching one damage_stats outside. Every code line on screen is
 // in spire.py and every number is a line of measure/hundred.py's output (check_code.py checks both).
+// The motions of a scene come one at a time, each a pause after the one before it has stopped, so the eye can follow
+// every one while its line is heard; a scene with more motions than its line has time for goes on after the line.
 import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
-import {narrate} from '../../kit/narrated';
+import {LEAD, narrate} from '../../kit/narrated';
 import {CodeBlock, Headlines, Lines, lineMid, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
@@ -25,6 +27,27 @@ const DAMAGE: [string, number][] = [['Strike', 3663], ['Defend', 0], ['Bash', 63
 const RANDOM_EXPR = 'run(scheduled(quiet_stats(win_rate(random_bot, 100))))';
 const MONTE_EXPR = 'run(scheduled(quiet_stats(win_rate(monte_carlo(PLAYOUTS), 100))))';
 const DAMAGE_EXPR = 'run(scheduled(damage_stats(totals)(win_rate(random_bot, 100))))';
+
+// ---- The pace. A motion starts PAUSE s after the one before it has stopped; a scene's next line starts PAUSE s after
+// both the line before it and its motions have stopped, and a scene holds still for HOLD s (its last 0.4 s fade out)
+// after its last line and its last motion.
+const PAUSE = 0.9;
+const HOLD = 1.6;
+type Step = {from: number; to: number};
+// Motions end to end from a time: [name, seconds it lasts, the pause before it when it is not PAUSE].
+const chain = <K extends string>(start: number, motions: [K, number, number?][]): Record<K, Step> => {
+  let at = start;
+  const steps = {} as Record<K, Step>;
+  motions.forEach(([name, seconds, pause = PAUSE], i) => {
+    const from = i === 0 ? at : at + pause;
+    steps[name] = {from, to: from + seconds};
+    at = from + seconds;
+  });
+  return steps;
+};
+const lastOf = (steps: Record<string, Step>) => Math.max(...Object.values(steps).map(({to}) => to));
+// When the line with this id, read from a headline at this time, has been heard.
+const heardBy = (headline: number, id: keyof typeof DURATIONS) => headline + LEAD + DURATIONS[id];
 
 // ---- What every scene shares: win_rate on the left, one box per task on the right.
 const WIN_RATE_CODE = [
@@ -133,10 +156,17 @@ const Scheduled: React.FC<{caption: string}> = ({caption}) => (
 );
 
 // ---- 1, 2. One Spawn per seed, and the stack a task carries.
-const SPAWN_LINES: Lines = [[0, 'win_rate is a program too: one Spawn per seed, one task per Spawn.'], [7, 'Each task carries its own stack: its own dice.']];
-const SPAWN_SECONDS = 13;
+// A Spawn pill's trip from the line to its box, and how long its task then runs.
+const FLIGHT = 0.7;
+const RUN = 1.0;
+const SPAWN_STEPS = chain(0.8, [['line', 0.3], ['spawn0', FLIGHT + RUN], ['spawn1', FLIGHT + RUN], ['spawn2', FLIGHT + RUN], ['spawn3', FLIGHT]]);
+const STACK_AT = Math.max(lastOf(SPAWN_STEPS), heardBy(0, 's1')) + PAUSE;
+// The last box opens into the stack it carries, then the list of tasks and their dice.
+const STACK_STEPS = chain(STACK_AT + PAUSE, [['open', 1.2], ['list', 0.4]]);
+const SPAWN_LINES: Lines = [[0, 'win_rate is a program too: one Spawn per seed, one task per Spawn.'], [STACK_AT, 'Each task carries its own stack: its own dice.']];
+const SPAWN_SECONDS = Math.max(lastOf(STACK_STEPS), heardBy(STACK_AT, 's2')) + HOLD;
 // The first Spawns: [when the pill leaves the line, when its task has ended]. The last task is the one the stack is drawn for.
-const FIRST_SPAWNS: [number, number][] = [[1.2, 2.8], [2.9, 4.5], [4.6, 6.2], [6.3, Infinity]];
+const FIRST_SPAWNS: [number, number][] = [SPAWN_STEPS.spawn0, SPAWN_STEPS.spawn1, SPAWN_STEPS.spawn2, {...SPAWN_STEPS.spawn3, to: Infinity}].map(({from, to}) => [from, to]);
 const ZOOMED = FIRST_SPAWNS.length - 1;
 const STACK_G: Geometry = {cx: 245, cy: 520, bw: 180, bh: 64, gap: 34, font: 16};
 const OWN_STACK: Ring[] = [{label: 'random_bot'}, {label: `dice(${ZOOMED})`, glow: true}, {label: 'silent'}];
@@ -145,31 +175,33 @@ const STACK_BOX = {left: STACK_G.cx - (STACK_G.bw + 6 * STACK_G.gap) / 2, top: S
 const Spawning: React.FC = () => {
   const frame = useSceneFrame();
   const at = (seconds: number) => frame >= f(seconds);
-  const zoom = ramp(frame, 7.3, 8.1);
+  const {open, list} = STACK_STEPS;
+  const opened = open.from + 0.8;
+  const zoom = ramp(frame, open.from, opened);
   const mid = boxMid(ZOOMED);
   const seed = FIRST_SPAWNS.reduce((found, [from], i) => (at(from) ? i : found), 0);
   return (
     <AbsoluteFill>
       <Headlines lines={SPAWN_LINES} />
-      <Code band={at(0.8) ? SPAWN_LINE : null} opacity={fadeAt(frame, 0.1)} />
-      <div style={{position: 'absolute', left: 420, top: lineMid(CODE.y, CODE.line, 3) - 13, fontFamily: MONO, fontSize: 18, color: LOOK, opacity: fadeAt(frame, 1.0)}}>seed = {seed}</div>
+      <Code band={at(SPAWN_STEPS.line.from) ? SPAWN_LINE : null} opacity={fadeAt(frame, 0.1)} />
+      <div style={{position: 'absolute', left: 420, top: lineMid(CODE.y, CODE.line, 3) - 13, fontFamily: MONO, fontSize: 18, color: LOOK, opacity: fadeAt(frame, SPAWN_STEPS.line.from)}}>seed = {seed}</div>
       <Grid cell={(i) => {
         const spawn = FIRST_SPAWNS[i];
-        if (!spawn || !at(spawn[0] + 0.7)) return 'slot';
+        if (!spawn || !at(spawn[0] + FLIGHT)) return 'slot';
         return at(spawn[1]) ? 'ended' : 'run';
       }} />
       {FIRST_SPAWNS.map(([from], i) => (
-        <Moving key={i} text="Spawn" color={ACCENT} from={from} to={from + 0.7} until={from + 0.8} x0={SPAWN_AT.x} y0={SPAWN_AT.y} x1={boxMid(i).x} y1={boxMid(i).y} />
+        <Moving key={i} text="Spawn" color={ACCENT} from={from} to={from + FLIGHT} until={from + FLIGHT + 0.1} x0={SPAWN_AT.x} y0={SPAWN_AT.y} x1={boxMid(i).x} y1={boxMid(i).y} />
       ))}
       {/* The box opens into the stack it carries. */}
       <div
         style={{
           position: 'absolute', boxSizing: 'border-box', borderRadius: 10, border: `3px solid ${LOOK}`, left: mix(mid.x - BOX / 2, STACK_BOX.left, zoom), top: mix(mid.y - BOX / 2, STACK_BOX.top, zoom),
-          width: mix(BOX, STACK_BOX.w, zoom), height: mix(BOX, STACK_BOX.h, zoom), opacity: at(7.3) ? 1 - fadeAt(frame, 8.1, 0.3) : 0,
+          width: mix(BOX, STACK_BOX.w, zoom), height: mix(BOX, STACK_BOX.h, zoom), opacity: at(open.from) ? 1 - fadeAt(frame, opened, 0.3) : 0,
         }}
       />
-      <Tower rings={OWN_STACK} g={STACK_G} opacity={fadeAt(frame, 8.1, 0.4)} />
-      <div style={{position: 'absolute', left: 480, top: 390, width: 350, opacity: fadeAt(frame, 8.5)}}>
+      <Tower rings={OWN_STACK} g={STACK_G} opacity={fadeAt(frame, opened, 0.4)} />
+      <div style={{position: 'absolute', left: 480, top: 390, width: 350, opacity: fadeAt(frame, list.from, list.to - list.from)}}>
         <div style={{fontFamily: SANS, fontSize: 18, fontWeight: 700, color: MUTED, marginBottom: 10}}>each task, its own generator</div>
         {[0, 1, 2, ZOOMED].map((n) => (
           <div key={n} style={{fontFamily: MONO, fontSize: 20, lineHeight: '36px', color: n === ZOOMED ? LOOK : TEXT, whiteSpace: 'pre'}}>
@@ -184,17 +216,25 @@ const Spawning: React.FC = () => {
 
 // ---- 3. The tasks take turns on one thread.
 const TURN_LINES: Lines = [[0, "One thread. scheduled holds win_rate's k; the task runs to its end."]];
-const TURN_SECONDS = 14;
-// The tasks shown one by one, then the rest faster and faster, in the order the run has them (spawn order).
-const SLOW_FROM = FIRST_SPAWNS.length;
-const SLOW_START = 1.5;
-const SLOW_STEP = 1.7;
-const FAST_FROM = SLOW_FROM + 3;
-const FAST_START = SLOW_START + 3 * SLOW_STEP;
-const FAST_END = 11.2;
+// One Spawn step by step, then the rest at once. The task of the last Spawn ends and the thread goes back to win_rate;
+// k shows; the next Spawn leaves the line; scheduled takes k; the thread runs the new task; who answers a fight's
+// effects; none of them is scheduled; the task ends, k comes back and the thread goes on in win_rate (after a longer
+// pause, while the line says the task runs to its end). Then scheduled takes k for the rest of the tasks, which run
+// one after another faster and faster, in the order the run has them (spawn order); k and the thread go on to Gather;
+// what the run counted.
+const TURN_STEPS = chain(0.6, [
+  ['back', 0.5], ['kShown', 0.3], ['spawn', 0.6], ['kHeld', 0.6], ['run', 0.4], ['who', 0.3], ['none', 0.3], ['resumed', 0.5, 2.4],
+  ['kHeldAll', 0.4], ['rest', 5.0], ['gather', 0.4], ['counted', 0.3],
+]);
+const TURN_SECONDS = Math.max(lastOf(TURN_STEPS), heardBy(0, 's3')) + HOLD;
+const SLOW = FIRST_SPAWNS.length;
+const FAST_FROM = SLOW + 1;
+// The rest: the thread leaves the line, then reaches each box in turn.
+const FAST_START = TURN_STEPS.rest.from + 0.3;
+const FAST_END = TURN_STEPS.rest.to;
 const started = (seed: number) =>
-  seed < FAST_FROM ? SLOW_START + (seed - SLOW_FROM) * SLOW_STEP + 0.5 : FAST_START + (FAST_END - FAST_START) * ((seed - FAST_FROM) / (100 - FAST_FROM)) ** 0.7;
-const ended = (seed: number) => (seed < FAST_FROM ? started(seed) + 0.7 : started(seed + 1));
+  seed < FAST_FROM ? TURN_STEPS.run.to : FAST_START + (FAST_END - FAST_START) * ((seed - FAST_FROM) / (100 - FAST_FROM)) ** 0.7;
+const ended = (seed: number) => (seed < FAST_FROM ? TURN_STEPS.resumed.from : started(seed + 1));
 
 type Key = [number, number, number];
 const along = (keys: Key[], t: number) => {
@@ -209,28 +249,31 @@ const along = (keys: Key[], t: number) => {
 
 const AT_LINE: [number, number] = [SPAWN_AT.x + 90, SPAWN_AT.y - 26];
 const aboveBox = (seed: number): [number, number] => [boxMid(seed).x, boxMid(seed).y - 26];
+const {back, kShown, spawn, kHeld, run, who, none, resumed, kHeldAll, rest, gather, counted} = TURN_STEPS;
+const AT_GATHER: [number, number] = [GATHER_AT.x + 90, GATHER_AT.y - 26];
 const THREAD_KEYS: Key[] = [
   [0, ...aboveBox(ZOOMED)],
-  [0.6, ...aboveBox(ZOOMED)],
-  [1.1, ...AT_LINE],
-  ...[0, 1, 2].flatMap((n): Key[] => {
-    const seed = SLOW_FROM + n;
-    return [[started(seed) - 0.2, ...AT_LINE], [started(seed), ...aboveBox(seed)], [ended(seed), ...aboveBox(seed)], [ended(seed) + 0.3, ...AT_LINE]];
-  }),
+  [back.from, ...aboveBox(ZOOMED)],
+  [back.to, ...AT_LINE],
+  [run.from, ...AT_LINE],
+  [run.to, ...aboveBox(SLOW)],
+  [resumed.from, ...aboveBox(SLOW)],
+  [resumed.to, ...AT_LINE],
+  [rest.from, ...AT_LINE],
   ...Array.from({length: 100 - FAST_FROM}, (_, n): Key => [started(FAST_FROM + n), ...aboveBox(FAST_FROM + n)]),
-  [FAST_END, ...aboveBox(99)],
-  [FAST_END + 0.4, GATHER_AT.x + 90, GATHER_AT.y - 26],
+  [gather.from, ...aboveBox(99)],
+  [gather.to, ...AT_GATHER],
 ];
 const K_KEYS: Key[] = [
   [0, K_AT.x, K_AT.y],
-  ...[0, 1, 2].flatMap((n): Key[] => {
-    const seed = SLOW_FROM + n;
-    return [[started(seed) - 0.5, K_AT.x, K_AT.y], [started(seed) - 0.1, PARKED.x, PARKED.y], [ended(seed), PARKED.x, PARKED.y], [ended(seed) + 0.3, K_AT.x, K_AT.y]];
-  }),
-  [FAST_START - 0.1, K_AT.x, K_AT.y],
-  [FAST_START + 0.3, PARKED.x, PARKED.y],
-  [FAST_END, PARKED.x, PARKED.y],
-  [FAST_END + 0.4, K_AT.x, K_AT.y],
+  [kHeld.from, K_AT.x, K_AT.y],
+  [kHeld.to, PARKED.x, PARKED.y],
+  [resumed.from, PARKED.x, PARKED.y],
+  [resumed.to, K_AT.x, K_AT.y],
+  [kHeldAll.from, K_AT.x, K_AT.y],
+  [kHeldAll.to, PARKED.x, PARKED.y],
+  [gather.from, PARKED.x, PARKED.y],
+  [gather.to, K_AT.x, K_AT.y],
 ];
 const WHO: [string, string][] = [['Roll', 'dice(seed)'], ['Choose', 'random_bot'], ['Show', 'silent'], ['Played', 'quiet_stats']];
 
@@ -239,25 +282,25 @@ const Turns: React.FC = () => {
   const t = frame / f(1);
   const at = (seconds: number) => t >= seconds;
   const cell = (i: number): Cell => {
-    if (i < SLOW_FROM) return i === ZOOMED && !at(0.8) ? 'run' : 'ended';
+    if (i < SLOW) return i === ZOOMED && !at(back.from) ? 'run' : 'ended';
     if (!at(started(i))) return 'slot';
     return at(ended(i)) ? 'ended' : 'run';
   };
   const running = Array.from({length: 100}, (_, i) => i).find((i) => cell(i) === 'run');
   const [, threadX, threadY] = along(THREAD_KEYS, t);
   const [, kX, kY] = along(K_KEYS, t);
-  const kHeld = Math.min(1, Math.hypot(kX - K_AT.x, kY - K_AT.y) / 60);
+  const kOn = Math.min(1, Math.hypot(kX - K_AT.x, kY - K_AT.y) / 60);
   return (
     <AbsoluteFill>
       <Headlines lines={TURN_LINES} />
-      <Code band={at(FAST_END + 0.3) ? GATHER_LINE : SPAWN_LINE} kOn={kHeld} />
+      <Code band={at(gather.to) ? GATHER_LINE : SPAWN_LINE} kOn={kOn} />
       <Grid cell={cell} />
-      <div style={{position: 'absolute', left: GRID.x, top: COUNT_Y, fontFamily: MONO, fontSize: 24, color: LOOK}}>{at(FAST_END) ? 'all 100 ended' : running === undefined ? 'win_rate running' : `task ${running} running`}</div>
+      <div style={{position: 'absolute', left: GRID.x, top: COUNT_Y, fontFamily: MONO, fontSize: 24, color: LOOK}}>{at(rest.to) ? 'all 100 ended' : running === undefined ? 'win_rate running' : `task ${running} running`}</div>
       <Scheduled caption="keeps k, the rest of win_rate, while a task runs" />
       <div
         style={{
           position: 'absolute', left: 410, top: SCHEDULED.y, width: 420, height: SCHEDULED.h + 26, boxSizing: 'border-box', borderRadius: 14, padding: '8px 18px',
-          border: '2px solid #2a2e40', background: PANEL, opacity: fadeAt(frame, 2.4),
+          border: '2px solid #2a2e40', background: PANEL, opacity: fadeAt(frame, who.from),
         }}
       >
         <div style={{fontFamily: SANS, fontSize: 16, fontWeight: 700, color: MUTED, marginBottom: 2}}>who answers a fight's effects</div>
@@ -267,17 +310,13 @@ const Turns: React.FC = () => {
             {answer}
           </div>
         ))}
-        <div style={{fontFamily: SANS, fontSize: 17, lineHeight: '28px', fontWeight: 700, color: LOOK, opacity: fadeAt(frame, 4.4)}}>none of them is scheduled</div>
+        <div style={{fontFamily: SANS, fontSize: 17, lineHeight: '28px', fontWeight: 700, color: LOOK, opacity: fadeAt(frame, none.from)}}>none of them is scheduled</div>
       </div>
-      {[0, 1, 2].map((n) => {
-        const seed = SLOW_FROM + n;
-        const from = started(seed) - 0.5;
-        return <Moving key={seed} text="Spawn" color={ACCENT} from={from} to={from + 0.5} until={from + 0.55} x0={SPAWN_AT.x} y0={SPAWN_AT.y} x1={boxMid(seed).x} y1={boxMid(seed).y} />;
-      })}
+      <Moving text="Spawn" color={ACCENT} from={spawn.from} to={spawn.to} until={spawn.to + 0.1} x0={SPAWN_AT.x} y0={SPAWN_AT.y} x1={boxMid(SLOW).x} y1={boxMid(SLOW).y} />
       {/* The thread: where the one running thing is. */}
       <Pill x={threadX} y={threadY} text="thread" color={LOOK} />
-      <Pill x={kX} y={kY} text="k" color={K} opacity={fadeAt(frame, 0.9)} />
-      <div style={{position: 'absolute', left: CODE.x, top: 540, width: 790, fontFamily: MONO, fontSize: 21, lineHeight: '38px', color: TEXT, opacity: fadeAt(frame, FAST_END + 0.1)}}>
+      <Pill x={kX} y={kY} text="k" color={K} opacity={fadeAt(frame, kShown.from)} />
+      <div style={{position: 'absolute', left: CODE.x, top: 540, width: 790, fontFamily: MONO, fontSize: 21, lineHeight: '38px', color: TEXT, opacity: fadeAt(frame, counted.from)}}>
         <div>{MEASURED.effects_in_tasks.toLocaleString('en-US')} effects in the tasks</div>
         <div>{MEASURED.task_changes} changes of task, {MEASURED.threads} thread</div>
         <div style={{color: LOOK}}>reached scheduled: {REACHED.filter(([, n]) => n > 0).map(([name, n]) => `${name} ${n}`).join(', ')}</div>
@@ -287,43 +326,53 @@ const Turns: React.FC = () => {
 };
 
 // ---- 4, 5. Gather, then the count.
-const GATHER_LINES: Lines = [[0, 'Gather gives back the results. Every fight has already ended.'], [4.5, 'On the same hundred seeds: 73 wins for the random bot.']];
-const GATHER_SECONDS = 9;
-const SWEEP = {from: 2.4, to: 4.3};
-const COUNTING = {from: 4.8, to: 7.2};
+// Gather travels to scheduled; the results come back; their first three; the boxes take their outcomes. Then win_rate's
+// call; the count of the wins; what win_rate returns.
+const GATHER_STEPS = chain(0.6, [['gather', 0.8], ['results', 0.9], ['listed', 0.3], ['sweep', 1.9]]);
+const COUNT_AT = Math.max(lastOf(GATHER_STEPS), heardBy(0, 's4')) + PAUSE;
+const COUNT_STEPS = chain(COUNT_AT + PAUSE, [['call', 0.3], ['counting', 2.5], ['rate', 0.3]]);
+const GATHER_LINES: Lines = [[0, 'Gather gives back the results. Every fight has already ended.'], [COUNT_AT, 'On the same hundred seeds: 73 wins for the random bot.']];
+const GATHER_SECONDS = Math.max(lastOf(COUNT_STEPS), heardBy(COUNT_AT, 's5')) + HOLD;
+const SWEEP = GATHER_STEPS.sweep;
+const COUNTING = COUNT_STEPS.counting;
 const swept = (frame: number, {from, to}: {from: number; to: number}) => Math.floor(ramp(frame, from, to) * 100);
 const winsWithin = (wins: string, n: number) => [...wins].slice(0, n).filter((won) => won === 'W').length;
 
 const Gathering: React.FC = () => {
   const frame = useSceneFrame();
   const at = (seconds: number) => frame >= f(seconds);
+  const {gather, results, listed} = GATHER_STEPS;
   const coloured = swept(frame, SWEEP);
   const counted = swept(frame, COUNTING);
   return (
     <AbsoluteFill>
       <Headlines lines={GATHER_LINES} />
-      <Code band={at(4.5) ? RETURN_LINE : GATHER_LINE} />
+      <Code band={at(COUNT_AT) ? RETURN_LINE : GATHER_LINE} />
       <Grid cell={(i) => (i < coloured ? outcome(i) : 'ended')} ring={at(COUNTING.from) && !at(COUNTING.to) ? counted : null} />
       <Scheduled caption="every task is over: nothing to wait for" />
-      <Moving text="Gather" color={ACCENT} from={0.4} to={1.2} until={1.5} x0={GATHER_AT.x} y0={GATHER_AT.y} x1={PARKED.x} y1={PARKED.y} />
-      <Moving text="results" color={TEST} from={1.5} to={2.4} until={2.7} x0={PARKED.x} y0={PARKED.y} x1={GATHER_AT.x} y1={GATHER_AT.y} />
-      <Expr text={`results = [${RESULTS_FIRST_THREE}, ...]`} y={515} opacity={fadeAt(frame, 2.5)} />
-      <Expr text={RANDOM_EXPR} mark="random_bot" y={575} opacity={fadeAt(frame, 4.9)} />
-      <Count wins={winsWithin(RANDOM_WINS, counted)} from={COUNTING.from} rate={MEASURED.random_rate.toFixed(2)} rateFrom={COUNTING.to + 0.1} label="win_rate(random_bot, 100)" />
+      <Moving text="Gather" color={ACCENT} from={gather.from} to={gather.to} until={gather.to + 0.3} x0={GATHER_AT.x} y0={GATHER_AT.y} x1={PARKED.x} y1={PARKED.y} />
+      <Moving text="results" color={TEST} from={results.from} to={results.to} until={results.to + 0.3} x0={PARKED.x} y0={PARKED.y} x1={GATHER_AT.x} y1={GATHER_AT.y} />
+      <Expr text={`results = [${RESULTS_FIRST_THREE}, ...]`} y={515} opacity={fadeAt(frame, listed.from)} />
+      <Expr text={RANDOM_EXPR} mark="random_bot" y={575} opacity={fadeAt(frame, COUNT_STEPS.call.from)} />
+      <Count wins={winsWithin(RANDOM_WINS, counted)} from={COUNTING.from} rate={MEASURED.random_rate.toFixed(2)} rateFrom={COUNT_STEPS.rate.from} label="win_rate(random_bot, 100)" />
     </AbsoluteFill>
   );
 };
 
 // ---- 6. One argument changed.
 const SWAP_LINES: Lines = [[0, 'One argument changed: the Monte Carlo bot wins all 100.']];
-const SWAP_SECONDS = 7;
-const MONTE_SWEEP = {from: 2.0, to: 4.6};
+// The argument changes; the run again, its wins filling the boxes; what win_rate returns; the two counts side by side,
+// one at a time; what did not change.
+const SWAP_STEPS = chain(0.8, [['swap', 0.5], ['rerun', 2.6], ['rate', 0.3], ['random', 0.3], ['monte', 0.3], ['unchanged', 0.3]]);
+const SWAP_SECONDS = Math.max(lastOf(SWAP_STEPS), heardBy(0, 's6')) + HOLD;
+const MONTE_SWEEP = SWAP_STEPS.rerun;
 
 const Swapping: React.FC = () => {
   const frame = useSceneFrame();
-  const swap = fadeAt(frame, 1.2, 0.5);
+  const {swap: swapping, rate, random, monte, unchanged} = SWAP_STEPS;
+  const swap = fadeAt(frame, swapping.from, swapping.to - swapping.from);
   const won = swept(frame, MONTE_SWEEP);
-  const rerun = frame >= f(1.6);
+  const rerun = frame >= f(MONTE_SWEEP.from);
   return (
     <AbsoluteFill>
       <Headlines lines={SWAP_LINES} />
@@ -331,13 +380,13 @@ const Swapping: React.FC = () => {
       <Grid cell={(i) => (rerun ? (i < won ? 'win' : 'slot') : outcome(i))} />
       <Expr text={RANDOM_EXPR} mark="random_bot" y={395} opacity={1 - swap} />
       <Expr text={MONTE_EXPR} mark="monte_carlo(PLAYOUTS)" y={395} opacity={swap} />
-      <div style={{position: 'absolute', left: CODE.x, top: 460, fontFamily: MONO, fontSize: 22, lineHeight: '42px', whiteSpace: 'pre', color: TEXT, opacity: fadeAt(frame, 2.0)}}>
+      <div style={{position: 'absolute', left: CODE.x, top: 460, fontFamily: MONO, fontSize: 22, lineHeight: '42px', whiteSpace: 'pre', color: TEXT, opacity: fadeAt(frame, random.from)}}>
         <div>random_bot             {MEASURED.random_wins} / 100</div>
-        <div style={{color: LOOK, opacity: fadeAt(frame, MONTE_SWEEP.to)}}>monte_carlo(PLAYOUTS)  100 / 100</div>
+        <div style={{color: LOOK, opacity: fadeAt(frame, monte.from)}}>monte_carlo(PLAYOUTS)  100 / 100</div>
       </div>
-      <div style={{position: 'absolute', left: CODE.x, top: 570, fontFamily: SANS, fontSize: 21, color: MUTED, opacity: fadeAt(frame, 2.6)}}>win_rate: 0 lines changed. battle: 0 lines changed.</div>
+      <div style={{position: 'absolute', left: CODE.x, top: 570, fontFamily: SANS, fontSize: 21, color: MUTED, opacity: fadeAt(frame, unchanged.from)}}>win_rate: 0 lines changed. battle: 0 lines changed.</div>
       <div style={{opacity: rerun ? 1 : 0}}>
-        <Count wins={won} from={MONTE_SWEEP.from} rate={MEASURED.monte_carlo_rate.toFixed(1)} rateFrom={MONTE_SWEEP.to + 0.1} label="win_rate(monte_carlo(3), 100)" />
+        <Count wins={won} from={MONTE_SWEEP.from} rate={MEASURED.monte_carlo_rate.toFixed(1)} rateFrom={rate.from} label="win_rate(monte_carlo(3), 100)" />
       </div>
     </AbsoluteFill>
   );
@@ -345,38 +394,44 @@ const Swapping: React.FC = () => {
 
 // ---- 7. One handler outside hears all hundred fights.
 const OUT_LINES: Lines = [[0, 'Played travels past the Spawn: one handler hears every fight.']];
-const OUT_SECONDS = 10.5;
-const FLOW = {from: 1.4, to: 7.4};
 const FLIGHTS = 22;
+// One Played's trip, and the start of one trip after the one before it, while the rest travel.
+const TRIP = 1.0;
+const EVERY = 0.24;
+// What a task's stack holds; the edge of the tasks; the one handler outside; the first Played travels to it alone;
+// then the rest of them, one leaving every EVERY s; how many it heard.
+const OUT_STEPS = chain(0.5, [['stack', 0.3], ['edge', 0.3], ['totals', 0.3], ['first', TRIP], ['rest', (FLIGHTS - 2) * EVERY + TRIP], ['heard', 0.3]]);
+const OUT_SECONDS = Math.max(lastOf(OUT_STEPS), heardBy(0, 's7')) + HOLD;
 const TOTALS = {x: 40, y: 450, w: 500, h: 216};
 // Which boxes the pills leave from: spread over the grid, in no pattern a reader would look for meaning in.
 const flight = (n: number) => {
   const i = (n * 37 + 11) % 100;
-  const from = FLOW.from + (n * (FLOW.to - FLOW.from - 1.0)) / (FLIGHTS - 1);
-  return {i, from, to: from + 1.0};
+  const from = n === 0 ? OUT_STEPS.first.from : OUT_STEPS.rest.from + (n - 1) * EVERY;
+  return {i, from, to: from + TRIP};
 };
 
 const Outside: React.FC = () => {
   const frame = useSceneFrame();
-  const share = ramp(frame, FLOW.from + 0.8, FLOW.to);
+  const {stack, edge, totals, first, rest, heard} = OUT_STEPS;
+  const share = ramp(frame, first.to, rest.to);
   return (
     <AbsoluteFill>
       <Headlines lines={OUT_LINES} />
       <Code opacity={0.45} />
       <Grid cell={outcome} opacity={0.55} />
       <Expr text={DAMAGE_EXPR} mark="damage_stats(totals)" y={345} />
-      <div style={{position: 'absolute', left: CODE.x, top: 392, width: 790, fontFamily: SANS, fontSize: 18, color: MUTED, opacity: fadeAt(frame, 0.8)}}>
+      <div style={{position: 'absolute', left: CODE.x, top: 392, width: 790, fontFamily: SANS, fontSize: 18, color: MUTED, opacity: fadeAt(frame, stack.from)}}>
         A task's stack is <span style={{fontFamily: MONO, color: TEXT}}>random_bot, dice(seed), silent</span>: none of them takes <span style={{fontFamily: MONO, color: ACCENT}}>Played</span>.
       </div>
       {/* The edge of the tasks: past it, the handlers around win_rate. */}
-      <div style={{position: 'absolute', left: 836, top: GRID.y - 8, height: 416, borderLeft: `2px dashed ${MUTED}`, opacity: fadeAt(frame, 0.8)}} />
-      <div style={{position: 'absolute', left: GRID.x, top: COUNT_Y, fontFamily: SANS, fontSize: 18, color: MUTED, opacity: fadeAt(frame, 0.8)}}>
+      <div style={{position: 'absolute', left: 836, top: GRID.y - 8, height: 416, borderLeft: `2px dashed ${MUTED}`, opacity: fadeAt(frame, edge.from)}} />
+      <div style={{position: 'absolute', left: GRID.x, top: COUNT_Y, fontFamily: SANS, fontSize: 18, color: MUTED, opacity: fadeAt(frame, edge.from)}}>
         dashed line: past the <span style={{fontFamily: MONO, color: TEXT}}>Spawn</span>
       </div>
       <div
         style={{
           position: 'absolute', left: TOTALS.x, top: TOTALS.y, width: TOTALS.w, height: TOTALS.h, boxSizing: 'border-box', borderRadius: 14, border: `3px solid ${LOOK}`,
-          boxShadow: `0 0 22px ${LOOK}55`, background: PANEL, padding: '12px 22px', opacity: fadeAt(frame, 0.4),
+          boxShadow: `0 0 22px ${LOOK}55`, background: PANEL, padding: '12px 22px', opacity: fadeAt(frame, totals.from),
         }}
       >
         <div style={{fontFamily: MONO, fontSize: 22, fontWeight: 700, color: LOOK, marginBottom: 8}}>damage_stats(totals)</div>
@@ -386,7 +441,7 @@ const Outside: React.FC = () => {
           </div>
         ))}
       </div>
-      <div style={{position: 'absolute', left: 570, top: TOTALS.y + 70, width: 260, fontFamily: SANS, fontSize: 21, lineHeight: '30px', color: TEXT, opacity: fadeAt(frame, FLOW.to)}}>
+      <div style={{position: 'absolute', left: 570, top: TOTALS.y + 70, width: 260, fontFamily: SANS, fontSize: 21, lineHeight: '30px', color: TEXT, opacity: fadeAt(frame, heard.from)}}>
         <span style={{fontFamily: MONO, fontWeight: 700, color: ACCENT}}>{MEASURED.played_total.toLocaleString('en-US')} Played</span> from 100 fights, in one handler
       </div>
       {Array.from({length: FLIGHTS}, (_, n) => {

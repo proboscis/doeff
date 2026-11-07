@@ -433,7 +433,7 @@ print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
 [![A hundred fights as tasks on one thread, step by step: each Spawn runs a battle to its end, Gather gives back the results, the random bot wins 73 and the Monte Carlo bot all 100, and one handler outside hears every Played](../assets/figures/hundred-fights.gif)](../assets/figures/hundred-fights.gif)
 
-[The same video as an mp4 file (0:59)](../assets/videos/article-hundred-fights.mp4)
+[The same video as an mp4 file (1:24)](../assets/videos/article-hundred-fights.mp4)
 
 `win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks take turns on one thread: `scheduled` switches only at an effect it answers itself, such as `Spawn`, so here each fight runs to its end before the next one starts. On the same hundred seeds, the random bot wins 73 fights and the Monte Carlo bot wins all 100.
 
