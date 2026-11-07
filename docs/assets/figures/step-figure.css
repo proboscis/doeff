@@ -235,8 +235,9 @@
 .sf-chain { display: grid; gap: .5rem; }
 .sf-chain .sf-panel[data-panel="twice"], .sf-chain .sf-panel[data-panel="greet"] { margin-left: 1.2rem; }
 .sf-chain .sf-panel[data-panel="greet"] { margin-left: 2.4rem; }
-.sf-split { display: grid; grid-template-columns: 1fr 11rem; gap: .5rem; align-items: start; }
-@container (max-width: 620px) { .sf-split { grid-template-columns: 1fr; } }
+.sf-split { display: grid; grid-template-columns: minmax(0, 1fr) 11rem; gap: .5rem; align-items: start; }
+/* The outline of the Task is wide: under 760 px the request box goes under the code. */
+@container (max-width: 760px) { .sf-split { grid-template-columns: 1fr; } }
 .sf-inbox.is-one { grid-template-columns: 1fr; margin-bottom: 0; }
 /* One of two versions of a block of code: "sf-alt" shows only with "is-on", and the first version hides with "is-off". */
 .sf-code.is-off { display: none; }
