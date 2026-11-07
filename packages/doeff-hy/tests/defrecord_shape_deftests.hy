@@ -197,6 +197,25 @@
   (assert (= #(back.x back.note) #(1 2))))
 
 
+(deftest test-a-value-pickled-before-a-field-was-added-reads-the-field-default
+  ;; Failure case (red before the fix): a slots type does not keep field defaults as class attributes, so a value pickled before a field with a default
+  ;; was added (its state lacks the field) left the slot unset, and the first read of the field raised AttributeError (agora-controllers' landed-declare
+  ;; job stopped twice on stored reports without pin_asks, then ready_ms). After the fix the restore fills the default and the default factory.
+  (<- _ (Pure None))
+  (val old (.__new__ object Shape))
+  (.__setstate__ old #(None {"a" 1}))
+  (assert (= old (Shape :a 1)) old)
+  (assert (= #(old.b old.c old.d old.e old.f old.job-id) #(2 [] 0 1 9 "j")))
+  ;; Each restored value gets its own fresh default-factory value.
+  (val other (.__new__ object Shape))
+  (.__setstate__ other #(None {"a" 2}))
+  (assert (is-not old.c other.c))
+  ;; A field without a default stays unset (there is no value to give it).
+  (val bare (.__new__ object Bare))
+  (.__setstate__ bare #(None {}))
+  (assert (not (hasattr bare "x"))))
+
+
 (defrecord Checked
   "A record whose body has a __post_init__ with annotations (same style as doeff-cluster's EnvVar, RepoCheckout, RuntimeEnv)."
   #^ int n

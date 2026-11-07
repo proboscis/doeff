@@ -112,12 +112,22 @@ def record_delattr(self: object, name: str) -> None:
 def record_setstate(self: object, state: object) -> None:
     """For pickle and copy to restore a value (sets without going through the frozen __setattr__ — the same role as __setstate__ of dataclass frozen with slots).
     state has the shape of object.__getstate__: a slots-only type is ``(None, {field: value})``; a child type with __dict__ is ``(dict, {field: value})``.
-    It also accepts the state of a value pickled before slots were used (a ``{field: value}`` dict)."""
+    It also accepts the state of a value pickled before slots were used (a ``{field: value}`` dict).
+    A field the state lacks (the value was pickled before the field was added to the type) gets the field's default or default factory, the same value
+    a value without slots read from the class attribute before; a field without a default stays unset. Without this, a stored value of the older shape
+    raises AttributeError on the first read of the new field (agora-controllers' landed-declare job read a stored report without ready_ms and pin_asks)."""
     parts = state if isinstance(state, tuple) else (state, None)
     for part in parts:
         if part:
             for name, value in part.items():
                 object.__setattr__(self, name, value)
+    fields: dict[str, dataclasses.Field[object]] = getattr(type(self), "__dataclass_fields__", {})
+    for name, f in fields.items():
+        if not hasattr(self, name):
+            if f.default is not dataclasses.MISSING:
+                object.__setattr__(self, name, f.default)
+            elif f.default_factory is not dataclasses.MISSING:
+                object.__setattr__(self, name, f.default_factory())
 
 
 def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> None:
