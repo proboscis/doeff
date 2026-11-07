@@ -4,7 +4,7 @@ Algebraic effects in Python, with doeff, an open-source library whose core is wr
 
 This post stacks such handlers around one small program, one layer at a time; if you know what `yield` does, you know most of what you need.
 
-[![Video (1:51): one card fight as one function, with handlers stacked around it](https://img.youtube.com/vi/WaLFlWe4obs/maxresdefault.jpg)](https://youtu.be/WaLFlWe4obs)
+[![Video (1:51): one card fight as one function, with handlers stacked around it](https://img.youtube.com/vi/BRYMn0aoiEk/maxresdefault.jpg)](https://youtu.be/BRYMn0aoiEk)
 
 [![One card fight as one function, step by step: its effects travel out to handlers stacked around it with k, and the stacks change while the function does not](../assets/figures/article-opening.gif)](../assets/figures/article-opening.gif)
 
@@ -374,7 +374,7 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 ### Layer 4: a Monte Carlo bot
 
-[![Video (0:57): a Monte Carlo bot in 30 lines, whose handler runs the real battle to answer each Choose](https://img.youtube.com/vi/tqdLeDZpeOM/maxresdefault.jpg)](https://youtu.be/tqdLeDZpeOM)
+[![Video (0:57): a Monte Carlo bot in 30 lines, whose handler runs the real battle to answer each Choose](https://img.youtube.com/vi/jnhtpUeLQLg/maxresdefault.jpg)](https://youtu.be/jnhtpUeLQLg)
 
 [![The Monte Carlo bot answers one Choose, step by step: the fight that asked waits as k while the handler runs battle itself from each candidate move, counts the wins and resumes k](../assets/figures/monte-carlo.gif)](../assets/figures/monte-carlo.gif)
 
@@ -429,7 +429,7 @@ print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
 ### Layer 5: a hundred fights, one task each
 
-[![Video (1:24): a hundred fights, the same program under different handlers](https://img.youtube.com/vi/rmzj6AWnlKQ/maxresdefault.jpg)](https://youtu.be/rmzj6AWnlKQ)
+[![Video (1:24): a hundred fights, the same program under different handlers](https://img.youtube.com/vi/ioJ5E_XrGNg/maxresdefault.jpg)](https://youtu.be/ioJ5E_XrGNg)
 
 [![A hundred fights as tasks on one thread, step by step: each Spawn runs a battle to its end, Gather gives back the results, the random bot wins 73 and the Monte Carlo bot all 100, and one handler outside hears every Played](../assets/figures/hundred-fights.gif)](../assets/figures/hundred-fights.gif)
 

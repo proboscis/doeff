@@ -106,7 +106,7 @@ pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.
 
-https://github.com/user-attachments/assets/4903154e-2032-4dce-8f17-4c515b2bf912
+https://github.com/user-attachments/assets/ff86b076-b18a-4082-9319-6b5c9f21e712
 
 For the whole walk-through, read
 [Algebraic effects for Python](https://github.com/proboscis/doeff/blob/main/docs/articles/algebraic-effects-in-python.md),
