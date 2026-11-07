@@ -1,9 +1,9 @@
 [
  {"id": "m1", "text": "The fight pauses at a Choose. The handler holds the rest of the fight as k."},
  {"id": "m2", "text": "To answer, it runs battle itself: the same function a person plays. It needs no model of the game."},
- {"id": "m3", "text": "For each card it can play, and for ending the turn, it plays that card on the state, then runs the rest of the fight three times."},
- {"id": "m4", "text": "Each run has a stack of its own, so it does not use up the dice of the paused fight."},
+ {"id": "m3", "text": "For each card it can play, and for ending the turn, it plays that card on the state. Then it starts a new battle from that state, three times."},
+ {"id": "m4", "text": "Each new battle runs on a stack of its own. None of them touches k, so the paused fight keeps its dice."},
  {"id": "m5", "text": "The handler counts the wins. Here every move wins all three. The paused fight has not moved."},
- {"id": "m6", "text": "With a tie it keeps the first move, Bash. It resumes k with it, and the fight goes on."},
+ {"id": "m6", "text": "With a tie it keeps the first move, Bash. It resumes k with it, once: in doeff, k can be resumed only one time. The fight goes on."},
  {"id": "m7", "text": "On seed 3, the bot answers eleven Chooses with a hundred and sixty-five playouts, in about a fifth of a second."}
 ]

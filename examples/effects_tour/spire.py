@@ -200,10 +200,12 @@ def replay(tape: list):
 
 # ---- Layer 4: a Monte Carlo bot.
 def monte_carlo(playouts: int):
-    """Try each move by running the rest of the fight `playouts` times, and pick the best.
+    """Try each move by running a new `battle` from the state after it, `playouts` times.
 
-    The handler runs `battle` itself, under dice and a random bot. A playout starts from the next
-    turn's draw, which is a cheap approximation of "the rest of this turn".
+    The handler runs `battle` itself, under dice and a random bot, and picks the move with the
+    most wins. The paused fight's `k` is not run by the playouts: it is resumed once, with that
+    move. A playout starts from the next turn's draw, which is a cheap approximation of "the
+    rest of this turn".
     """
 
     @handler

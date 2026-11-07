@@ -327,7 +327,8 @@ MONTE_STEPS = [
         tokens=IN_HAND,
     ),
     step(
-        "Then it runs the rest of the fight from there, under a random bot: playout 1 of 3. It wins.",
+        "Then it starts a new <code>battle</code> from there, under a random bot: playout 1 of 3. It wins. <code>k</code> "
+        "is not run.",
         active="handler",
         now=["h-n", "h-run", "h-run2", "row0"],
         marks={**HELD, **BOX},
@@ -378,8 +379,8 @@ MONTE_STEPS = [
         tokens=IN_HAND,
     ),
     step(
-        "It resumes <code>k</code> with that move, and the fight goes on from its <code>yield</code>: Bash hits for 8, and "
-        "the enemy is at 30.",
+        "It resumes <code>k</code> with that move, the one time <code>k</code> is resumed, and the fight goes on from its "
+        "<code>yield</code>: Bash hits for 8, and the enemy is at 30.",
         active="fight",
         now=["h-resume", "f-card", "f-hit"],
         marks={"row0": "is-best"},

@@ -1,7 +1,8 @@
 // The video at the head of Layer 4 of the article "Algebraic effects for Python" (docs/articles/algebraic-effects-in-python.md):
 // the Monte Carlo bot of examples/effects_tour/spire.py answering one Choose. The fight that asked stays paused as k
-// on the left while the handler, on the right, plays each candidate move and runs battle itself three times from
-// there, each run under a stack of its own; then it counts the wins and resumes k. The Choose shown is the 2nd one of
+// on the left while the handler, on the right, plays each candidate move and starts a new battle from there three
+// times, each on a stack of its own; k is not touched by those runs. Then it counts the wins and resumes k, once (a k
+// in doeff resumes only one time). The Choose shown is the 2nd one of
 // the fight on dice(3). Every code line on screen is a line of spire.py (check_code.py checks it); every state, win
 // count and total is a line of measure/monte.py's output.
 import React from 'react';
@@ -141,7 +142,7 @@ const Pause: React.FC = () => {
           }}
         >
           <div style={{fontFamily: MONO, fontSize: 28, fontWeight: 700, color: TEXT}}>battle(s)</div>
-          <div style={{fontFamily: SANS, fontSize: 16, color: MUTED, marginTop: 6}}>from the paused state s</div>
+          <div style={{fontFamily: SANS, fontSize: 16, color: MUTED, marginTop: 6}}>a new run, from the state s</div>
         </div>
         <div style={{position: 'absolute', left: RIGHT.x, width: RIGHT.w, top: RIGHT.y + 340, textAlign: 'center', fontFamily: SANS, fontSize: 21, color: LOOK, opacity: fadeAt(frame, 7.2)}}>
           the real battle, not a model of the game
@@ -165,7 +166,7 @@ const Rows: React.FC<{shown: number; ran: number; wins: number; pick: number; di
   return (
     <div style={{position: 'absolute', left: 0, top: 0, opacity: dim}}>
       <div style={{position: 'absolute', left: RIGHT.x + 20, top: ROW_Y - 30, fontFamily: SANS, fontSize: 15, color: MUTED, whiteSpace: 'nowrap'}}>move: hit(s, card)</div>
-      <div style={{position: 'absolute', left: BOX_X, top: ROW_Y - 30, fontFamily: SANS, fontSize: 15, color: MUTED, whiteSpace: 'nowrap'}}>3 playouts of the rest of the fight</div>
+      <div style={{position: 'absolute', left: BOX_X, top: ROW_Y - 30, fontFamily: SANS, fontSize: 15, color: MUTED, whiteSpace: 'nowrap'}}>3 playouts: a new battle(s) each</div>
       <div style={{position: 'absolute', left: RIGHT.x + 560, top: ROW_Y - 30, fontFamily: SANS, fontSize: 15, color: MUTED, whiteSpace: 'nowrap', opacity: wins}}>wins</div>
       {MOVES.map(([move, enemy, won], i) => {
         const y = ROW_Y + i * ROW_H;
@@ -217,8 +218,8 @@ const Rows: React.FC<{shown: number; ran: number; wins: number; pick: number; di
   );
 };
 
-// 2. For each move, the playouts; each one under a stack of its own.
-const RUN_LINES: Lines = [[0, 'For each move it can make, it plays the move, then runs the rest three times.'], [8.6, 'Each run has its own stack: the paused fight keeps its dice.']];
+// 2. For each move, the playouts: each a new battle(s) on a stack of its own, while k stays parked.
+const RUN_LINES: Lines = [[0, 'For each move: play it, then start a new battle from there, 3 times.'], [8.6, 'Each new battle has its own stack. k is not touched.']];
 const RUNS = f(16);
 const OWN: Ring[] = [{label: 'random_bot'}, {label: 'dice(n)', glow: true}, {label: 'silent'}, {label: 'quiet_stats'}];
 const SMALL: Geometry = {cx: RIGHT.x + RIGHT.w / 2, cy: RIGHT.y + 270, bw: 190, bh: 74, gap: 30, font: 15};
@@ -234,13 +235,16 @@ const Runs: React.FC = () => {
       <Handler>
         <Rows shown={0.4} ran={0} wins={0} pick={0} dim={1 - 0.85 * stack} />
         <Tower rings={OWN} g={SMALL} opacity={stack} title="battle(s)" />
+        <div style={{position: 'absolute', left: RIGHT.x, width: RIGHT.w, top: SMALL.cy + 175, textAlign: 'center', fontFamily: SANS, fontSize: 19, color: LOOK, opacity: fadeAt(frame, 9.8)}}>
+          each playout: a new battle(s) on a new stack, not k
+        </div>
       </Handler>
     </AbsoluteFill>
   );
 };
 
-// 3. The wins, then Resume(k, 0): the fight goes on with Bash.
-const WIN_LINES: Lines = [[0, 'It counts the wins: every move wins 3 of 3. The paused fight has not moved.'], [7.2, 'With a tie it keeps the first move, Bash, and resumes k.']];
+// 3. The wins, then Resume(k, 0), the one time k is resumed: the fight goes on with Bash.
+const WIN_LINES: Lines = [[0, 'It counts the wins: every move wins 3 of 3. The paused fight has not moved.'], [7.2, 'A tie keeps the first move, Bash. It resumes k once: k is single-shot.']];
 const WINS = f(14);
 
 const Wins: React.FC = () => {
@@ -260,7 +264,7 @@ const Wins: React.FC = () => {
       </Handler>
       <Moving text="Resume(k, 0)" color={TEST} from={8.6} to={9.8} until={10.4} x0={K_PARK.x - 60} y0={K_PARK.y} x1={CHOOSE_AT.x - 40} y1={CHOOSE_AT.y} />
       <div style={{position: 'absolute', left: CODE.x, top: CODE.y + 250, width: CODE.w, fontFamily: SANS, fontSize: 20, fontWeight: 700, color: LOOK, opacity: fadeAt(frame, 10.6)}}>
-        Bash is played: the fight goes on
+        k resumed once: Bash is played
       </div>
     </AbsoluteFill>
   );

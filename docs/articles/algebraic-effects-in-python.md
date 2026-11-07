@@ -380,7 +380,7 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 [The same video as an mp4 file (0:54)](../assets/videos/article-monte-carlo.mp4)
 
-To answer `Choose`, `monte_carlo` runs `battle` itself, many times, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
+To answer `Choose`, `monte_carlo` runs `battle` itself, many times, each time as a new run from the state after a candidate move, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight, and none of them runs `k`: the handler resumes `k` once, with the move it picks. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
 
 <details markdown="1">
 <summary><code>monte_carlo</code>, the run and what it prints</summary>
@@ -388,10 +388,12 @@ To answer `Choose`, `monte_carlo` runs `battle` itself, many times, while the fi
 ~~~python
 # spire.py (excerpt)
 def monte_carlo(playouts: int):
-    """Try each move by running the rest of the fight `playouts` times, and pick the best.
+    """Try each move by running a new `battle` from the state after it, `playouts` times.
 
-    The handler runs `battle` itself, under dice and a random bot. A playout starts from the next
-    turn's draw, which is a cheap approximation of "the rest of this turn".
+    The handler runs `battle` itself, under dice and a random bot, and picks the move with the
+    most wins. The paused fight's `k` is not run by the playouts: it is resumed once, with that
+    move. A playout starts from the next turn's draw, which is a cheap approximation of "the
+    rest of this turn".
     """
 
     @handler
