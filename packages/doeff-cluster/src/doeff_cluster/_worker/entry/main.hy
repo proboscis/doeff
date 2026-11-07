@@ -60,8 +60,9 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster._worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings])
-(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max layout-layer-names pods-dir-of])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings CliLayerSettings])
+(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max layout-held-bytes layout-layer-names
+                                                  pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster._worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster._worker.core.places [worker-places])
@@ -104,6 +105,13 @@
 (val PREPARE-CGROUP-VAR "DOEFF_WORKER_PREPARE_CGROUP")
 (val PREPARE-ROOM-FILE-VAR "DOEFF_WORKER_PREPARE_ROOM_FILE")
 (val EVICTION-MARGIN-VAR "WORKER_EVICTION_MARGIN")
+;; 会話の CLI の層(上に載る系の仕事を余りの空きで受ける機体の限る層 — 層の名は上に載る系の会話の受け手と同じ clis)の天井の機体の
+;; 宣言(kernel の memory の綴り)。在る機体だけ、worker は見張りの回ごとに clis の層の memory.max を宣言の静的な値(床)と天井の間で
+;; 掛け直す(worker/core/eviction_rules の頭の註の会話の CLI の層)。天井は job の子へ CLI-CEILING-CHILD-VAR(byte の数)で渡す — turn-host が
+;; 生かす CLI の本数の上限を天井から導く(起動の時の clis の memory.max は、その刻の空きで決まった値なので本数の元にならない)。
+(val CLI-LAYER "clis")
+(val CLI-CEILING-VAR "WORKER_CLI_LAYER_CEILING")
+(val CLI-CEILING-CHILD-VAR "DOEFF_WORKER_CLI_CEILING")
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
 ;; (無ければ枠の file の自分の行の warmServices・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
@@ -125,6 +133,45 @@
                           :namespace-file (+ SERVICE-ACCOUNT-DIR "/namespace") :node node :pod-uid pod-uid)
         (PodLabelCell))
       None))
+
+
+(defk cli-ceiling-bytes [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % (| int None))] :tags {:context "worker" :role "main"}}
+  "機体の宣言の会話の CLI の層の天井(CLI-CEILING-VAR)を byte の数にするため(None = 宣言が無い — 掛け直さない)。max・読めない綴りは
+   起動を断る(ValueError — 天井の無いまま貸さない)。"
+  (val declared (.get machine-env CLI-CEILING-VAR))
+  (when (not declared)
+    (return None))
+  (<- read (| int None) (kernel-bytes-of declared))
+  (when (is read None)
+    (raise (ValueError (.format "{} は byte の数で書く(max は天井にならない)" CLI-CEILING-VAR))))
+  read)
+
+
+(defk cli-layer-settings-of [machine-env cgroup-dir layout jobs]
+  {:pre [(: machine-env dict) (: cgroup-dir str) (: layout str) (: jobs (| str None))] :post [(: % (| CliLayerSettings None))]
+   :tags {:context "worker" :role "main"}}
+  "会話の CLI の層の掛け直しの設定を作るため(CLI-CEILING-VAR の註): 天井の宣言が無ければ None。天井が在るのに、層の宣言に clis の
+   memory.max(床)か jobs の層が無い・天井が床より小さい起動は断る(ValueError)。ほかの限る層の上限の和は jobs と clis の外の層の
+   memory.max の宣言の和。"
+  (<- ceiling (| int None) (cli-ceiling-bytes machine-env))
+  (when (is ceiling None)
+    (return None))
+  (<- floor (| int None) (layer-memory-max layout CLI-LAYER))
+  (when (or (is floor None) (not jobs))
+    (raise (ValueError (.format "{} を宣言した機体は、{} に {} の層の memory.max と jobs の層を置く" CLI-CEILING-VAR CGROUP-LAYOUT-VAR CLI-LAYER))))
+  (when (< ceiling floor)
+    (raise (ValueError (.format "{} {} が {} の層の memory.max {} より小さい" CLI-CEILING-VAR ceiling CLI-LAYER floor))))
+  (<- held int (layout-held-bytes layout #(jobs CLI-LAYER)))
+  (CliLayerSettings :dir (+ cgroup-dir "/" CLI-LAYER) :floor-bytes floor :ceiling-bytes ceiling :container-dir cgroup-dir
+                    :held-bytes held))
+
+
+(defk cli-ceiling-environ [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % dict)] :tags {:context "worker" :role "main"}}
+  "会話の CLI の層の天井を job の子へ渡す env にするため(CLI-CEILING-VAR の註 — byte の数)。宣言が無ければ渡さない。"
+  (<- ceiling (| int None) (cli-ceiling-bytes machine-env))
+  (if (is ceiling None) {} {CLI-CEILING-CHILD-VAR (str ceiling)}))
 
 
 (defk eviction-settings-of [machine-env node in-pod]
@@ -153,7 +200,8 @@
     (when (is read None)
       (raise (ValueError (.format "{} は byte の数で書く(max は余裕にならない)" EVICTION-MARGIN-VAR))))
     (:= margin read))
-  (EvictionSettings :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
+  (<- clis (| CliLayerSettings None) (cli-layer-settings-of machine-env cgroup-dir layout jobs))
+  (EvictionSettings :clis clis :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
                     :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap
                     :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
                     :room-file (if (is prepare-cap None) None (.get machine-env PREPARE-ROOM-FILE-VAR)) :margin-bytes margin))
@@ -490,7 +538,7 @@
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
-                                                     PREPARE-ROOM-FILE-VAR EVICTION-MARGIN-VAR commit-var)
+                                                     PREPARE-ROOM-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
@@ -508,10 +556,12 @@
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
                           (read-boot-marks machine-env imported-ms)))
-        ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。書ける cgroup の見えの根が在れば子へも渡す。
+        ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。書ける cgroup の見えの根と会話の CLI の層の天井が
+        ;; 在れば子へも渡す。
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name))
-                    (run (cgroup-dir-environ (.get machine-env CGROUP-DIR-VAR))))
+                    (run (cgroup-dir-environ (.get machine-env CGROUP-DIR-VAR)))
+                    (run (cli-ceiling-environ machine-env)))
         ;; job の子へ渡す環境変数の名(許可表の名のうち worker の環境に在る物 + 上の host-env の名 — heartbeat の childEnviron で名乗る)。
         child-environ (run (child-environ-names (run (with-handlers [subprocess-handler] (allowed-environment))) host-env))
         ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層が置く・無ければ /sys/fs/cgroup)。

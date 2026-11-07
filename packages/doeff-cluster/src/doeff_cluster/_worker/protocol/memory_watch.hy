@@ -256,6 +256,7 @@
                     :jobs-not-listed (- (len jobs) (len listed))
                     :node-min-available-mib (// merged.min-available (* 1024 1024)) :node-total-mib (// node.total-bytes (* 1024 1024))
                     :line (! (line-name cell.eviction.line)) :jobs-limit-mib (! (mib-or-none cell.eviction.jobs-limit))
+                    :clis-limit-mib (! (mib-or-none cell.eviction.clis-limit))
                     :margin-mib (! (mib-or-none cell.eviction.margin)) :max-full-avg10 merged.max-full
                     :container-current-mib (if (is reading.container.current-bytes None) None (// reading.container.current-bytes (* 1024 1024)))
                     :container-peak-mib (if (is reading.container.peak-bytes None) None (// reading.container.peak-bytes (* 1024 1024)))

@@ -7,8 +7,11 @@
 ;;;                   jobs の上限から引き(取り置き)、「空き − 余裕 − 取り置き」と準備の層の上限を keeper の読む file(room-file)に
 ;;;                   書く。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
 ;;;                   eviction_rules の margin-of)。
+;;;                   会話の CLI の層(clis)に天井の宣言が在る機体は、jobs の層より先に clis の層の memory.max を床(宣言の静的な値)と天井の
+;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、広げた上限は jobs の層を縮めて
+;;;                   残す)、床を越えて貸した量を jobs の上限から引き、jobs の上限を container の中の空きの内にも収める。
 ;;; 線を読めない間(Node の宣言をまだ読めない・cgroup の file を読めない・Node と cgroup が食い違う)は、jobs の層を宣言の静的な値に戻す
-;;; (古い空きで決めた上限を残さない)。guard が偽の見張り(起動の引数 --memory-guard off)は数えて log に出すだけで書かない。
+;;; (古い空きで決めた上限を残さない)。clis の層は床と clis の今の使いの大きい方に戻す(使いを読めない回は書かない)。guard が偽の見張り(起動の引数 --memory-guard off)は数えて log に出すだけで書かない。
 ;;;
 ;;; log の行(名 + 欄の形):
 ;;;   EVICTION-LINE-LOG      線を読めるようになった時と、Node の宣言の値が替わった時に 1 行: capacity・allocatable・導いた E・kubepods の
@@ -18,6 +21,7 @@
 ;;;                          回収し、足りなければ jobs の中の process を止める)に、その続きの 1 回につき 1 行: 線・空き・jobs の使いと上限。
 ;;;   JOBS-LIMIT-FAILED-LOG  jobs の層の memory.max を書けない・jobs と準備の層の使いを読めない・keeper の file を書けない訳が変わった
 ;;;                          時に 1 行。
+;;;   CLIS-LENT-LOG          clis の層の上限が床を越えた(貸し始めた)時と、床へ戻った時に 1 行: 上限・床・天井・clis の使い・線の空き。
 ;;;   MARGIN-LOG             測りから導いた余裕が宣言の床を越えた時と、床へ戻った時に 1 行: 余裕・床・測った増えの数。
 ;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備の層の上限 MiB>」(空きは負もありうる)。線を読めない回は
 ;;; 書かない(keeper は古い file を読まない — deploy/boot.sh の keeper_swap)。
@@ -36,16 +40,30 @@
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
-                                                  prepare-reserve prepare-room margin-of])
+                                                  prepare-reserve prepare-room margin-of kernel-bytes-of clis-limit clis-lent box-free
+                                                  jobs-box-limit])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
 (val EVICTION-UNREAD-LOG "worker: 追い出しの線を読めない")
 (val JOBS-SQUEEZE-LOG "worker: 追い出しまでの空きが余裕を割ったので jobs の層の上限を jobs の使いより下げた")
 (val JOBS-LIMIT-FAILED-LOG "worker: jobs の層の memory の上限を掛け直せない")
 (val MARGIN-LOG "worker: 追い出しの線の手前に残す余裕を、測った jobs と準備の層の外の伸びから替えた")
+(val CLIS-LENT-LOG "worker: 会話の CLI の層の memory の上限を、空きから床の上へ広げた・床へ戻した")
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒)。
 (val REFUSAL-BODY-LIMIT 300)
 (val REQUEST-TIMEOUT-SECONDS 5.0)
+
+
+(defrecord CliLayerSettings
+  "会話の CLI の層(clis)の掛け直しの設定(入口が起動の時に 1 度だけ作る — worker/core/eviction_rules の頭の註の会話の CLI の層): dir = clis の
+   層の dir・floor-bytes = 宣言の静的な memory.max(床)・ceiling-bytes = 機体の宣言の天井・container-dir = worker の container の cgroup の
+   dir(memory.max と working set を読む)・held-bytes = jobs と clis の外の限る層の宣言の memory.max の和(container の中の空きから引く)。"
+  {:check [(>= floor-bytes 0) (>= ceiling-bytes floor-bytes) (>= held-bytes 0)]}
+  (#^ str dir)
+  (#^ int floor-bytes)
+  (#^ int ceiling-bytes)
+  (#^ str container-dir)
+  (setv #^ int held-bytes 0))
 
 
 (defrecord EvictionSettings
@@ -57,9 +75,11 @@
    後に試し直す間・margin-bytes = jobs の層の上限に残す余裕の床(機体の宣言 WORKER_EVICTION_MARGIN — 無ければ worker/core/
    eviction_rules の EVICTION-MARGIN-BYTES)・prepare-dir = 準備の層の dir(None = 層が無い — keeper は準備を jobs の層で起こす)・
    prepare-cap-bytes = 準備の層の memory.max の宣言の静的な値(prepare-dir が在る時は必ず在る)・room-file = keeper の読む準備の空きの
-   file(None = keeper の無い worker か準備の層が無い — 書かない)。"
+   file(None = keeper の無い worker か準備の層が無い — 書かない)・clis = 会話の CLI の層の掛け直しの設定(None = 掛け直さない — 天井の
+   宣言が無い機体)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
-           (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))]}
+           (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
+           (or (is clis None) (is-not jobs-dir None))]}
   (#^ str api)
   (#^ str token-file)
   (#^ str node)
@@ -72,7 +92,8 @@
   (setv #^ (| str None) room-file None)
   (setv #^ float node-read-seconds 300.0)
   (setv #^ float node-retry-seconds 30.0)
-  (setv #^ int margin-bytes EVICTION-MARGIN-BYTES))
+  (setv #^ int margin-bytes EVICTION-MARGIN-BYTES)
+  (setv #^ (| CliLayerSettings None) clis None))
 
 
 (defclass EvictionCell []
@@ -85,12 +106,15 @@
    margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
    まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い — jobs-limit との差が調整ループの
-   観測する jobs の層の空き WorldView.jobs-room)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   観測する jobs の層の空き WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
+   clis-current = 最後の回に読んだ clis の層の memory.current(None = 読めなかった)・lent = 最後の回に clis に床を越えて貸した量
+   (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None
-          self.jobs-current None)))
+          self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
+          self.box None)))
 
 
 (defrecord LayerMemory
@@ -285,6 +309,66 @@
       ""))
 
 
+(defk container-max-read [dir]
+  {:pre [(: dir str)] :post [(: % (| int None str))] :tags {:context "worker" :role "protocol"}}
+  "worker の container の cgroup の memory.max を読むため(None = max — 上限が無い)。読めない・綴りが違う時は訳の文。"
+  (<- text (| str FileFailed) (ReadText (+ dir "/memory.max")))
+  (when (isinstance text FileFailed)
+    (return (.format "container の memory.max を読めない: {}" text.detail)))
+  (try
+    (<- found (| int None) (kernel-bytes-of text))
+    found
+    (except [error ValueError]
+      (.format "container の memory.max を読めない: {}" error))))
+
+
+(defk clis-limited [clis cell line margin reserve jobs-current]
+  {:pre [(: clis CliLayerSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: margin int) (: reserve int)
+         (: jobs-current (| int None))]
+   :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "会話の CLI の層の memory.max を掛け直し、床を越えて貸した量と container の中の空きを入れ物に残すため(worker/core/eviction_rules の
+   clis-limit): 線と jobs の使いと container を読めた回は空きから決めた上限(床と天井の間・使いより下げない)、線が無いか読めない回は
+   床と clis の今の使いの大きい方。clis の使いを読めない・書けない回は前の上限を残し、その上限 − 床を貸しのまま引く。上限が床を越えた
+   時と床へ戻った時に 1 行言う。答え = 書けない・読めない訳(\"\" = 書いた)。"
+  (setv cell.box None)
+  (<- read (| LayerMemory str) (layer-read "clis" clis.dir False))
+  (when (isinstance read str)
+    (setv cell.clis-current None
+          cell.lent (if (is cell.clis-limit None) 0 (max 0 (- cell.clis-limit clis.floor-bytes))))
+    (return read))
+  (val current read.current-bytes)
+  (setv cell.clis-current current)
+  (var failure "")
+  (var free None)
+  (var box None)
+  (when (and (is-not line None) (is-not jobs-current None))
+    (<- container (| LayerMemory str) (layer-read "container" clis.container-dir False))
+    (<- container-max (| int None str) (container-max-read clis.container-dir))
+    (cond
+      (isinstance container str) (:= failure container)
+      (isinstance container-max str) (:= failure container-max)
+      True (do (:= free (- line.room-bytes margin reserve))
+               (<- found (| int None) (box-free container-max container.working-set-bytes margin clis.held-bytes))
+               (:= box found))))
+  (var limit (max current clis.floor-bytes))
+  (when (is-not free None)
+    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes cell.clis-limit jobs-current))
+    (:= limit found))
+  (<- written (| FileFailed None) (WriteText (+ clis.dir "/memory.max") (str limit)))
+  (when (isinstance written FileFailed)
+    (setv cell.lent (if (is cell.clis-limit None) 0 (max 0 (- cell.clis-limit clis.floor-bytes))))
+    (return (or failure (.format "clis の層の memory.max に {} を書けない: {}" limit written.detail))))
+  (val before cell.clis-limit)
+  (setv cell.clis-limit limit cell.box box)
+  (<- lent int (clis-lent limit current clis.floor-bytes))
+  (setv cell.lent lent)
+  (when (!= (> limit clis.floor-bytes) (and (is-not before None) (> before clis.floor-bytes)))
+    (<- (slog CLIS-LENT-LOG :level "info" :clis-limit-mib (// limit MIB) :floor-mib (// clis.floor-bytes MIB)
+              :ceiling-mib (// clis.ceiling-bytes MIB) :clis-current-mib (// current MIB)
+              :free-mib (if (is free None) None (// free MIB)) :box-free-mib (if (is box None) None (// box MIB)))))
+  failure)
+
+
 (defk jobs-limited [settings cell line guard]
   {:pre [(: settings EvictionSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: guard bool)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
@@ -318,10 +402,19 @@
         (do (<- held int (prepare-reserve settings.prepare-cap-bytes prepare.current-bytes prepare.populated))
             (:= reserve held))))
   (setv cell.reserve reserve)
+  ;; 会話の CLI の層を先に掛け直し、床を越えて貸した量を jobs の上限から引く(同じ空きを 2 つの層に重ねて貸さない)。
+  (var lent 0)
+  (when (is-not settings.clis None)
+    (<- clis-failure str (clis-limited settings.clis cell line margin reserve current))
+    (:= failure (or failure clis-failure))
+    (:= lent cell.lent))
   (var limit settings.jobs-cap-bytes)
   (when (and (is-not line None) (is-not current None))
-    (<- found int (jobs-limit current line margin settings.jobs-cap-bytes reserve))
-    (:= limit found))
+    (<- found int (jobs-limit current line margin settings.jobs-cap-bytes (+ reserve lent)))
+    (:= limit found)
+    (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))
+      (<- boxed int (jobs-box-limit current cell.box cell.clis-limit cell.clis-current))
+      (:= limit (min limit boxed))))
   (when (is-not line None)
     (<- room-failure str (room-written settings line margin reserve))
     (:= failure (or failure room-failure)))
