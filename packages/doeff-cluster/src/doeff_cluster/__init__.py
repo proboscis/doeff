@@ -347,6 +347,7 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.intent.cluster_model import WorkerInfo as WorkerInfo
     from doeff_cluster._coordinator.intent.cluster_model import WorkerLoad as WorkerLoad
     from doeff_cluster._coordinator.protocol.store import durable_states as durable_states
+    from doeff_cluster._shared.core.runtime_env_rules import dependency_key as dependency_key
     from doeff_cluster._shared.core.runtime_env_rules import env_key as env_key
     from doeff_cluster._coordinator.core.failover_policy import (
         failover_refusals as failover_refusals,
@@ -1123,6 +1124,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkerLoad": "doeff_cluster._coordinator.intent.cluster_model",
     "coordinator_faults": "doeff_cluster._coordinator.protocol.faults",
     "durable_states": "doeff_cluster._coordinator.protocol.store",
+    "dependency_key": "doeff_cluster._shared.core.runtime_env_rules",
     "env_key": "doeff_cluster._shared.core.runtime_env_rules",
     "failover_refusals": "doeff_cluster._coordinator.core.failover_policy",
     "hyx_per_machineXquestion_markX": "doeff_cluster._coordinator.core.failover_policy",

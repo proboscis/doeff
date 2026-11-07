@@ -42,7 +42,7 @@
 (val PLATFORM "linux-x86_64")
 (val NOW-MS 1759600000000)          ; 模擬の時計の初めの刻(epoch ミリ秒)
 (val LAUNCH-LEAD-MS 2500)           ; 準備の process を起こしてから準備の Program が始まるまで(模擬)
-(val STAGE-NAMES ["disk" "mirror" "tree" "lock" "native" "sync" "wheels" "roots" "bytecode" "probe"])
+(val STAGE-NAMES ["disk" "mirror" "tree" "lock" "venv" "native" "sync" "wheels" "roots" "bytecode" "probe"])
 
 
 ;; --- 1 準備の印の計時 -------------------------------------------------------------------------
@@ -82,7 +82,7 @@
   (assert (= (get files "roots") 1) files)
   (assert (= (get files "bytecode") (+ (get baked "rebuilt") (get baked "stored"))) #(files baked))
   (assert (> (get files "bytecode") 0) files)
-  (assert (all (gfor n ["disk" "mirror" "lock" "native" "sync" "wheels" "probe"] (is (get files n) None))) files)
+  (assert (all (gfor n ["disk" "mirror" "lock" "venv" "native" "sync" "wheels" "probe"] (is (get files n) None))) files)
   ;; 木の処理ステージの repo ごとの秒と置き方(冷たい準備は両方とも展開)と、書いた file の数(木の file の全部 — #3677)。
   (<- app-1 WorldCommit (app-commit "app-1" LOCK "V = 1\n"))
   (<- lib-1 WorldCommit (lib-commit "lib-1" "fn a() {}\n"))

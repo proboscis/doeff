@@ -10,11 +10,11 @@
 (import doeff_cluster._worker.core.load_rules [MachineLoad])
 
 
-(deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: views (get tuple #(CodeView ...))) (: capacity str) (: unmeasured (get frozenset str))] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
+(deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured #^ (get frozenset str) [ready-deps (frozenset)]]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: views (get tuple #(CodeView ...))) (: capacity str) (: unmeasured (get frozenset str)) (: ready-deps (get frozenset str))] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
   "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
    失敗のキーを env- を外して・disk の条件)にするため。unmeasured = 先の組みを memory を測らずに始めた root のキー(#3748 — 観測に在る root だけを
-   memoryUnmeasured に名乗る)。"
+   memoryUnmeasured に名乗る)・ready-deps = 準備済みの root の依存のキー(readyDeps — coordinator が温める表の行の依存の部分の揃いを照らす)。"
   (let [roots (lfor v views :if (.startswith v.revision ENV-KEY-PREFIX) v)
         bare (fn [k] (cut k (len ENV-KEY-PREFIX) None))]
     {"ready" (sorted (gfor v roots :if (= v.state CodeState.READY) (bare v.revision)))
@@ -23,6 +23,7 @@
                     {"key" (bare v.revision) "kind" v.failure.kind.value "detail" v.failure.detail
                      "retryable" v.failure.retryable})
      "memoryUnmeasured" (sorted (gfor v roots :if (in v.revision unmeasured) (bare v.revision)))
+     "readyDeps" (sorted ready-deps)
      "capacity" capacity}))
 
 
@@ -31,7 +32,7 @@
   "root の姿(env-report)を heartbeat の本文に足す欄(platform・envs・envCapacity)にするため。"
   {"platform" platform
    "envs" {"ready" (get report "ready") "preparing" (get report "preparing") "failed" (get report "failed")
-           "memoryUnmeasured" (get report "memoryUnmeasured")}
+           "memoryUnmeasured" (get report "memoryUnmeasured") "readyDeps" (get report "readyDeps")}
    "envCapacity" (get report "capacity")})
 
 

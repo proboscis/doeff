@@ -7,7 +7,7 @@
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster._shared.intent.warm_model [WARM-KEY-LENGTH WarmFailure WarmState WarmRuntimeEnv WarmAnswer WarmUnreachable
                                                 WarmReady WarmFailed WarmWaitExpired])
-(import doeff_cluster._shared.core.runtime_env_rules [env-key])
+(import doeff_cluster._shared.core.runtime_env_rules [dependency-key])
 (import doeff_cluster._shared.core.capabilities [effect-needs-problem])
 
 
@@ -26,9 +26,11 @@
 
 (defk warm-key [env needs]
   {:pre [(: env RuntimeEnv) (: needs tuple)] :post [(: % str) (= (len %) WARM-KEY-LENGTH)]}
-  "温める表の行のキー(定義点はここ 1 つ)= 宣言のキー(platform を含まない)と needs の組の sha256 の頭 24 桁。
-   worker の root のキーは platform を含むので別の物(coordinator は worker の platform ごとに root のキーを計算して照らす)。"
-  (<- declared str (env-key env ""))
+  "温める表の行のキー(定義点はここ 1 つ)= 宣言の依存のキー(dependency-key・platform を含まない)と needs の組の sha256 の頭 24 桁。
+   project の repo の commit だけが違う宣言(同じ uv.lock の版を rebase し直した commit など)は同じ行になるので、前の commit の宣言で
+   頼んだ温めを後の commit の宣言が「先に組んだ」と読める(行の宣言は後の頼みで置き換わる)。worker の root のキーは platform と
+   commit を含むので別の物(coordinator は worker の platform ごとに root のキーと依存のキーを計算して照らす)。"
+  (<- declared str (dependency-key env ""))
   (val text (json.dumps {"env" declared "needs" (sorted needs)} :sort-keys True :separators #("," ":")))
   (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 WARM-KEY-LENGTH))
 
@@ -38,12 +40,13 @@
   "WarmState → 通信の本文。"
   {"key" state.key "ready" (list state.ready) "preparing" (list state.preparing)
    "failed" (lfor f state.failed {"worker" f.worker "kind" f.kind "detail" f.detail "retryable" f.retryable})
-   "untilMs" state.until-ms "memoryUnmeasured" state.memory-unmeasured})
+   "untilMs" state.until-ms "memoryUnmeasured" state.memory-unmeasured "depsReady" (list state.deps-ready)})
 
 
 (defn #^ WarmState warm-state-of-json [#^ dict value]  ; defk にできない: coordinator の純粋な判断と HTTP の handler の境界で読む
-  "通信の本文 → WarmState。"
+  "通信の本文 → WarmState。欄 depsReady の無い本文(依存のキーを照らす前の coordinator)は ready を依存の部分も揃った worker と読む。"
   (WarmState :key (get value "key") :ready (tuple (get value "ready")) :preparing (tuple (get value "preparing"))
+             :deps-ready (tuple (.get value "depsReady" (get value "ready")))
              :failed (tuple (gfor f (get value "failed")
                                   (WarmFailure :worker (get f "worker") :kind (get f "kind") :detail (get f "detail")
                                                :retryable (bool (get f "retryable")))))

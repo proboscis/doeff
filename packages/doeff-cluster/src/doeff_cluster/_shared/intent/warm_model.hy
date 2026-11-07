@@ -38,13 +38,17 @@
    合い、生きていて drain 中でない worker のうち準備済み / 準備中の worker の名・failed = 準備に失敗した worker(WarmFailure)・
    until-ms = 行の期限(coordinator の時計の epoch ミリ秒)・memory-unmeasured = 行の needs に合う worker のどれかが、この行の root の先の組みを
    memory を測らずに始めた(cgroup v1・memory の file が無い・上限が無い — 組みの前の memory の判じ〔no-memory-room〕が効いていない。
-   本番だけ黙って読めない形を頼み手が見えるように・#3748)。"
+   本番だけ黙って読めない形を頼み手が見えるように・#3748)・deps-ready = 同じ worker のうち、行の宣言と依存のキー(dependency-key — project
+   の repo の commit を除いた uv.lock・他の repo の commit・python・native の組)の同じ root を準備済みの worker の名(ready を含む)。
+   そこでは行の宣言の root は venv を使い回し、source の木と bytecode だけを置く。頼み手は ready(root そのもの)と deps-ready(依存の部分)の
+   どちらを待つかを選ぶ。"
   (#^ str key)
   (#^ tuple ready)
   (#^ tuple preparing)
   (#^ tuple failed)
   (#^ int until-ms)
-  (setv #^ bool memory-unmeasured False))
+  (setv #^ bool memory-unmeasured False)
+  (setv #^ tuple deps-ready #()))
 
 
 (defrecord WarmUnreachable

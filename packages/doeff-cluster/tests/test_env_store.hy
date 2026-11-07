@@ -29,7 +29,7 @@
 (import doeff_cluster._worker.protocol.env_translation [request-of-json])
 (import doeff_cluster [env-marker->json])
 (import doeff_cluster [EnvMarker])
-(import doeff_cluster [RuntimeEnv])
+(import doeff_cluster [RuntimeEnv runtime-env->json dependency-key])
 (import tests.env_fixtures [LOCK env-of])
 
 (val READY-NAME "0123456789abcdef01234567")
@@ -170,3 +170,19 @@
   (assert (.exists kept-used) "使った entry を消した")
   (assert (.exists fresh) "作ったばかりの空の dir を消した")
   (assert (.exists store) "保存先の dir そのものを消した"))
+
+
+;; 失敗ケース(依存のキー): heartbeat の名乗りの readyDeps は、完成した root の印の宣言から計算した依存のキー(coordinator が温める表の行の
+;; 依存の部分の揃いを照らす)。印の宣言の形が違う root は依存のキーを名乗らない(root の観測と ready の名乗りは止めない)。
+(deftest test-the-report-names-the-dependency-key-of-each-ready-root [tmp-path]
+  (<- settings EnvSettings (settings-in tmp-path))
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- declared dict (runtime-env->json env))
+  (val good "fedcba9876543210fedcba98")
+  (.mkdir (/ tmp-path "state" "roots" good))
+  (.write-text (/ tmp-path "state" "roots" good ENV-MARKER) (json.dumps {"env" declared}))
+  (<- wanted str (dependency-key env "test"))
+  (val got (! (on-envs settings (observed-and-reported))))
+  (val report (get got 1))
+  (assert (= (get report "ready") (sorted [READY-NAME good])) report)
+  (assert (= (get report "readyDeps") [wanted]) #("印の形が違う root は依存のキーを名乗らない" report)))

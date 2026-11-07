@@ -44,7 +44,8 @@
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._shared.core.native_wheel [wheels-root])
 (import doeff_cluster._shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure RuntimeEnv RuntimeEnvInvalid])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json dependency-key])
 (import doeff_cluster._worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport WakeSet WorkerWakes])
 (import doeff_cluster._worker.core.worker_due [wakes-with prepare-stop-due sweep-interval-due])
 (import doeff_cluster._shared.core.due_policy [earliest-due])
@@ -319,6 +320,35 @@
   {:pre [(: views (| tuple None))] :post [(: % frozenset)]}
   "最後の観測(ObserveEnvs)の完成した root のキーの集合を返すため(まだ観測していなければ空)— 掃除の数えを起こすかの比べ(#3732)。"
   (frozenset (gfor view (or views #()) :if (= view.state CodeState.READY) view.revision)))
+
+
+(defk ready-dependencies [settings views known]
+  {:pre [(: settings EnvSettings) (: views (| tuple None)) (: known dict)] :post [(: % dict)]}
+  "最後の観測の完成した root の依存のキー(dependency-key — heartbeat の readyDeps で名乗り、coordinator が温める表の行の依存の部分の揃いを
+   照らすため)を、root のキー(env-<キー>)→ 依存のキーの dict で返す。known = 前の拍までに読んだ dict(完成した root の印は変わらないので、
+   新しく完成した root の印だけを読む)。印を読めない・宣言の形が違う root は入れない(次の拍で読み直す)。"
+  (var out {})
+  (<- ready frozenset (ready-keys views))
+  (for [revision (sorted ready)]
+    (if (in revision known)
+        (:= out (| out {revision (get known revision)}))
+        (do (<- root str (env-root settings revision))
+            (<- marker (| dict None) (read-marker root))
+            (when (and (is-not marker None) (isinstance (.get marker "env") dict))
+              (<- declared (| RuntimeEnv None) (declared-env-or-none (get marker "env")))
+              (when (is-not declared None)
+                (<- dependency str (dependency-key declared settings.platform))
+                (:= out (| out {revision dependency})))))))
+  out)
+
+
+(defk declared-env-or-none [value]
+  {:pre [(: value dict)] :post [(: % (| RuntimeEnv None))]}
+  "完成の印の宣言の JSON を宣言に戻すため(形の違う印は None — 依存のキーを名乗らないだけで、root の観測は止めない)。"
+  (try
+    (<- env RuntimeEnv (runtime-env-of-json value))
+    env
+    (except [RuntimeEnvInvalid] None)))
 
 
 (defk modified-ms [path]
@@ -797,6 +827,8 @@
   ;; キーの集合(heartbeat の memoryUnmeasured — 測って始め直した root は外す)。
   (session var measured-infos #())
   (session var unmeasured (frozenset))
+  ;; 完成した root の依存のキー(root のキー → 依存のキー — heartbeat の readyDeps・印を読み直さないため最後の名乗りの値を持つ)。
+  (session var dependencies {})
   (PrepareEnv [key runtime-env compile-jobs warm]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
     ;; 先読みと同じ停滞の長さ・走っている焼きの並べる数は変えない)、待っていれば job の頼み(焼きの並べる数も)に置き換える。先の組み(warm)は
@@ -855,7 +887,9 @@
     (<- free int (disk-free settings))
     (<- capacity str (env-capacity free settings.min-free-bytes disk-named))
     (:= disk-named capacity)
-    (resume (env-report (or views #()) capacity unmeasured)))
+    (<- read dict (ready-dependencies settings views dependencies))
+    (:= dependencies read)
+    (resume (env-report (or views #()) capacity unmeasured (frozenset (.values dependencies)))))
   (SweepEnvs [pinned]
     ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
     ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・空きの状態が変わったか割ったまま固定が

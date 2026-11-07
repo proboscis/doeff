@@ -26,7 +26,7 @@
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_cluster [RepoCheckout NativeWheel PythonProject EnvVar RuntimeEnv RuntimeEnvInvalid InvalidKind]
         doeff_cluster._shared.intent.runtime_env_model [ToolRequirement EnvFailure EnvFailureKind])
-(import doeff_cluster [env-key runtime-env->json runtime-env-of-json]
+(import doeff_cluster [env-key dependency-key runtime-env->json runtime-env-of-json]
         doeff_cluster._shared.core.runtime_env_rules [repo-source-material key-material])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue])
 (import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]
@@ -180,7 +180,7 @@
   (assert (= (get marker "key") ready.key))
   (assert (= (get marker "interpreter") ready.interpreter))
   (assert (= (lfor s (get marker "stages") (get s "name"))
-             ["disk" "mirror" "tree" "lock" "native" "sync" "wheels" "roots" "bytecode" "probe"]))
+             ["disk" "mirror" "tree" "lock" "venv" "native" "sync" "wheels" "roots" "bytecode" "probe"]))
   True)
 
 
@@ -289,6 +289,7 @@
 ;; 反例(2026-09-27 の本番): 宣言の import の根は業務の repo だけで、venv に editable で入る依存の package(lib の木の中)は焼かれず、
 ;; 子と入口の検めが毎回 source から compile した(Hy の macro の展開で import が壁時計 240 秒)。editable の .pth が root の中の
 ;; repo を指すなら、その dir も焼く範囲に入る。
+(val LOCK-2 (+ LOCK "anyio==4.0.0 top=anyio\n"))
 (val EDITABLE-LOCK (+ LOCK "lib==0.1.0 editable=../lib\nlib-extra==0.1.0 editable=../lib/extra/src\n"))
 
 
@@ -410,8 +411,9 @@
 
 (defk commit-only-scenario []
   {:pre [] :post [(: % bool)]}
-  "筋書き 2・4: project の repo の commit だけ変える(同じ lock)→ 新しい root・sync は増えるが download も build も 0・
-   木は前の root から写して変わった file だけ置く・中身の同じ source の bytecode は保存先から書く。"
+  "筋書き 2・4: project の repo の commit だけ変える(同じ lock)→ 新しい root・依存のキーは同じで、venv は前の root から写して使い回す
+   (sync も download も build も 0 — venv を作らない)・木は前の root から写して変わった file だけ置く・中身の同じ source の bytecode は
+   保存先から書く。"
   (<- first-env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- first EnvReady (prepare first-env #()))
   (<- before EnvWorldLog (read-world-log))
@@ -424,7 +426,12 @@
   (assert (isinstance second EnvReady) second)
   (assert (!= second.root first.root) "新しい commit は新しい root")
   (assert (= #(second.downloaded second.built) #(0 0)))
-  (assert (= (- after.syncs before.syncs) 1))
+  (<- first-deps str (dependency-key first-env PLATFORM))
+  (<- second-deps str (dependency-key second-env PLATFORM))
+  (assert (= first-deps second-deps) "project の commit だけが違う宣言は同じ依存のキー")
+  (assert (= (- after.syncs before.syncs) 0) "同じ依存のキーの root の venv を写すので、uv sync で venv を作らない")
+  (<- venv-stage dict (stage-of second "venv"))
+  (assert (= (get venv-stage "files") 1) #("書き換えて置いたのは import の根の .pth の 1 つ(hardlink は数えない)" venv-stage))
   (<- app-part tuple (part-of second "app"))
   (<- lib-part tuple (part-of second "lib"))
   (assert (= #((get app-part 0) (get lib-part 0)) #("copy" "copy")) #("app も lib も前の root の木から写す" app-part lib-part))
@@ -435,7 +442,95 @@
   (<- files dict (files-under second.root))
   (assert (= (get files (.format "{}/app/app/__init__.py" second.root)) "V = 2\n"))
   (assert (not (any (gfor p files (and (in "/.venv/wheels/" p) (in first.root p))))) "写しは元の root の venv を持ち越さない")
+  (assert (in (.format "{}/app/.venv/bin/python" second.root) files) "venv は新しい root の下に在る")
+  (assert (not (any (gfor #(p text) (.items files) (and (in "/.venv/" p) (.endswith p ".pth") (in first.root text)))))
+          #("写した venv の .pth は前の root の path を持たない(.pth は新しい root を指す)" (lfor #(p text) (.items files) :if (and (in "/.venv/" p) (.endswith p ".pth") (in first.root text)) #(p text))))
   True)
+
+
+(defk stage-of [ready name]
+  {:pre [(: ready EnvReady) (: name str)] :post [(: % dict)]}
+  "完成した root の印の処理ステージ name の行(秒と書いた file の数)を読むため。"
+  (<- files tuple (world-files ready.root))
+  (val marker (json.loads (next (gfor f files :if (= f.path (.format "{}/{}" ready.root ENV-MARKER)) f.text))))
+  (next (gfor s (get marker "stages") :if (= (get s "name") name) s)))
+
+
+(defk editable-venv-scenario []
+  {:pre [] :post [(: % bool)]}
+  "editable で入る依存の在る宣言で project の commit だけ変える: 写した venv の editable の .pth と import の根の .pth は新しい root の木を
+   指し、前の root の venv の file は前の root を指したまま(写し元をその場で書き換えない)・前の root を消しても新しい root の
+   venv の file は残る(hardlink)。"
+  (<- first EnvReady (prepare-app "app-editable" "lib-1" #() EDITABLE-LOCK))
+  (<- before EnvWorldLog (read-world-log))
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-editable-2" "lib-1" known EDITABLE-LOCK))
+  (<- after EnvWorldLog (read-world-log))
+  (assert (isinstance second EnvReady) second)
+  (assert (= (- after.syncs before.syncs) 0) "venv を写すので sync しない")
+  (<- files dict (files-under second.root))
+  (<- earlier dict (files-under first.root))
+  (val site (.format "{}/app/.venv/lib/python3.14/site-packages" second.root))
+  (val old-site (.format "{}/app/.venv/lib/python3.14/site-packages" first.root))
+  (assert (= (get files (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) files)
+  (assert (= (get files (+ site "/_editable_impl_lib_extra.pth")) (.format "{}/lib/extra/src" second.root)))
+  (assert (= (get files (+ site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" second.root)))
+  (assert (= (get earlier (+ old-site "/_editable_impl_lib.pth")) (.format "{}/lib" first.root)) "写し元の .pth は前のまま")
+  (assert (= (get earlier (+ old-site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" first.root)) "写し元の根の .pth は前のまま")
+  (<- (RemoveTree first.root))
+  (<- left dict (files-under second.root))
+  (assert (= (get left (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) "前の root を消しても写した venv は残る")
+  True)
+
+
+(deftest test-a-commit-only-change-reuses-the-venv-with-paths-rewritten
+  (<- world EnvWorld (base-world))
+  (<- a1 WorldCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))
+  (<- a2 WorldCommit (app-commit "app-editable-2" EDITABLE-LOCK "V = 6\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(a1 a2))) r))))
+                            (editable-venv-scenario)))
+  (assert ok))
+
+
+;; 反例: lock が違えば依存のキーが違い、venv を写さず uv sync で作る(写すと前の lock の依存で走る)。pyproject.toml が違う時も写さない
+;; (editable で入る project の入口の script は lock に出ない所が在る)。
+(defk venv-not-reused-scenario []
+  {:pre [] :post [(: % bool)]}
+  "lock か project の pyproject.toml の違う版は venv を写さず、sync で作る事を確かめるため。"
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- s1 EnvWorldLog (read-world-log))
+  (<- known tuple (known-of first))
+  (<- other (prepare-app "app-lock-2" "lib-1" known LOCK-2))
+  (assert (isinstance other EnvReady) other)
+  (<- s2 EnvWorldLog (read-world-log))
+  (assert (= (- s2.syncs s1.syncs) 1) "lock が違えば sync で作る")
+  (<- first-env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- other-env RuntimeEnv (env-of "app-lock-2" "lib-1" LOCK-2))
+  (<- k1 str (dependency-key first-env PLATFORM))
+  (<- k2 str (dependency-key other-env PLATFORM))
+  (assert (!= k1 k2))
+  (<- lib-env RuntimeEnv (env-of "app-1" "lib-2" LOCK))
+  (<- k3 str (dependency-key lib-env PLATFORM))
+  (assert (!= k1 k3) "project でない repo の commit は依存のキーに入る")
+  (<- renamed (prepare-app "app-pyproject-2" "lib-1" known))
+  (assert (isinstance renamed EnvReady) renamed)
+  (<- s3 EnvWorldLog (read-world-log))
+  (assert (= (- s3.syncs s2.syncs) 1) "pyproject.toml が違えば写さず sync で作る")
+  True)
+
+
+(deftest test-a-different-lock-or-pyproject-does-not-reuse-the-venv
+  (<- world EnvWorld (base-world))
+  (<- l2 WorldCommit (app-commit "app-lock-2" LOCK-2 "V = 1\n"))
+  (<- p2 WorldCommit (app-commit "app-pyproject-2" LOCK "V = 1\n"))
+  (val renamed (replace p2 :files (tuple (gfor f p2.files (if (= f.path "pyproject.toml")
+                                                               (WorldFile :path f.path :text "[project]\nname = \"app\"\n[project.scripts]\nrun = \"app:main\"\n")
+                                                               f)))))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(l2 renamed))) r))))
+                            (venv-not-reused-scenario)))
+  (assert ok))
 
 
 (deftest test-changing-only-the-project-commit-makes-a-warm-root
@@ -993,7 +1088,7 @@
                                                                                        :commits #(tools-commit)))))))
   (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (+ handlers [(seen-stages marks)]) (one-bake-scenario)))))
   (assert ok)
-  (assert (= marks.names #("disk" "mirror" "tree" "tree" "tree" "tree" "lock" "native" "sync" "wheels" "roots" "bytecode" "bytecode" "bytecode" "probe"))
+  (assert (= marks.names #("disk" "mirror" "tree" "tree" "tree" "tree" "lock" "venv" "native" "sync" "wheels" "roots" "bytecode" "bytecode" "bytecode" "probe"))
           marks.names))
 
 

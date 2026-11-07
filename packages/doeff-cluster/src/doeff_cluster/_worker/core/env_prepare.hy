@@ -12,6 +12,9 @@
 ;;;                                                          変わった path だけ新しく置く(追跡しない .venv・__pycache__・マーカーは写さない)・
 ;;;                                                          写し元が無ければ展開 — #3677
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
+;;;   4b venv     FileSha256 / CopyVenv                      依存のキー(dependency-key)の同じ完成済みの root が在り、project の pyproject.toml が
+;;;                                                          同じなら、その venv を hardlink で写して絶対 path を書き換える(写せば 5〜7 を走らせない —
+;;;                                                          新しい commit の root は source の木と bytecode だけを置く)。写せなければ 5〜7 へ
 ;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
@@ -41,10 +44,10 @@
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
-(import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material])
+(import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material dependency-key])
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -290,6 +293,49 @@
           failure)))
 
 
+(defk venv-source [request]
+  {:pre [(: request PrepareRequest)] :post [(: % (| KnownRoot None))] :tags {:context "worker" :role "judgment"}}
+  "venv を写す元の root を選ぶため: 同じ platform の完成済みの root のうち、宣言の依存のキー(dependency-key — project の repo の commit を
+   除いた uv.lock・他の repo の commit・python・組・native)が新しい root と同じ物で、最も新しく完成した物(同じ時刻なら root の path の
+   大きい方 — tree-source と同じ順)。無ければ None(venv は uv sync で作る)。"
+  (<- wanted str (dependency-key request.env request.platform))
+  (var best None)
+  (for [k request.known]
+    (when (and (!= k.root request.root) (= k.platform request.platform)
+               (or (is best None) (> #(k.made-ms k.root) #(best.made-ms best.root))))
+      (<- held str (dependency-key k.env request.platform))
+      (when (= held wanted) (:= best k))))
+  best)
+
+
+(defk stage-venv [request state]
+  {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
+  "同じ依存のキーの完成済みの root が在れば、その venv を写して使い回す(写した準備は native・依存・wheel の処理ステージを走らせない)。
+   依存のキーは uv.lock と他の repo の commit で venv の中身を決めるが、project 自身の pyproject.toml(editable で入る project の入口の
+   script など)は lock に出ない所が在るので、写し元と新しい木の pyproject.toml の中身が同じ時だけ写す。写し元が無い・pyproject.toml が
+   違う・写せない時は記録を 1 行残して uv sync の道へ戻る(写しは最適化 — 準備を止めない)。書いた file の数は書き換えて置いた数。"
+  (<- source (| KnownRoot None) (venv-source request))
+  (when (is source None)
+    (return state))
+  (<- pdir str (project-dir request.env request.root))
+  (<- from-dir str (project-dir source.env source.root))
+  (<- own (| str None) (FileSha256 (.format "{}/pyproject.toml" pdir)))
+  (<- theirs (| str None) (FileSha256 (.format "{}/pyproject.toml" from-dir)))
+  (when (or (is own None) (!= own theirs))
+    (<- (PrepareNote (.format "venv を root {} から写さない: project の pyproject.toml が違う(写し元 {}・新しい木 {})" source.root theirs own)))
+    (return state))
+  (<- copied (| VenvCopied VenvRefused)
+      (CopyVenv (.format "{}/.venv" from-dir) (.format "{}/.venv" pdir) source.root request.root))
+  (match copied
+    (VenvRefused :reason reason)
+    (do (<- (PrepareNote (.format "venv を root {} から写せず uv sync で作る: {}" source.root reason)))
+        state)
+    (VenvCopied :linked linked :rewritten rewritten :symlinks symlinks)
+    (do (<- (PrepareNote (.format "venv を同じ依存のキーの root {} から写した(hardlink {}・書き換え {}・symlink {})"
+                                  source.root linked rewritten symlinks)))
+        (replace state :venv-from source.root :written rewritten))))
+
+
 (defk built-count [counted origin]
   {:pre [(: counted (| int None)) (: origin WheelOrigin)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
   "組んだ native の wheel の数に、wheel 1 つの用意の観測(origin)を足すため。口の報告の無い wheel が 1 つでも在れば数えられない(None —
@@ -304,7 +350,9 @@
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
   "native の package を、build の口(Rust の部品を組む・引く入口の 1 つ)を通した wheel で用意する — 口が source の中身の鍵で引くので、
    source が同じなら build し直さない(自前の鍵は持たない・#3860)。入れる wheel は uv build が root の下の --out-dir に出した file
-   (wheel-out-dir — どの版の口でも出る)。"
+   (wheel-out-dir — どの版の口でも出る)。venv を写した準備(venv-from)は wheel が venv に入っているので用意しない。"
+  (when (is-not state.venv-from None)
+    (return state))
   (var wheels [])
   (var built 0)
   (var failure None)
@@ -323,7 +371,10 @@
 
 (defk stage-sync [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "依存を lock どおりに入れる(native は wheel で後から入れるので除く)。依存を入れるのはここだけ(子の起動は --no-sync)。"
+  "依存を lock どおりに入れる(native は wheel で後から入れるので除く)。依存を入れるのはここだけ(子の起動は --no-sync)。venv を写した
+   準備(venv-from)は依存が入っているので入れない。"
+  (when (is-not state.venv-from None)
+    (return state))
   (<- pdir str (project-dir request.env request.root))
   (val project request.env.project)
   (<- report (| SyncReport EnvFailure)
@@ -463,6 +514,7 @@
 
 (val STAGES #((Stage :name "disk" :run stage-disk) (Stage :name "mirror" :run stage-mirrors)
                (Stage :name "tree" :run stage-trees) (Stage :name "lock" :run stage-lock)
+               (Stage :name "venv" :run stage-venv)
                (Stage :name "native" :run stage-native) (Stage :name "sync" :run stage-sync)
                (Stage :name "wheels" :run stage-wheels) (Stage :name "roots" :run stage-roots)
                (Stage :name BYTECODE-STAGE :run stage-bytecode) (Stage :name "probe" :run stage-probe)))

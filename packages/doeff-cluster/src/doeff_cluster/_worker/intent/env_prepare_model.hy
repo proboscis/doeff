@@ -64,6 +64,20 @@
   (#^ str commit))
 
 
+(defrecord VenvCopied
+  "venv を写した結果(依存のキー — dependency-key — の同じ完成済みの root の venv を使い回した)。linked = hardlink で写した file の数・
+   rewritten = 写し元の root の絶対 path を新しい root の path に書き換えて新しく置いた file の数(script の頭・.pth・direct_url.json など)・
+   symlinks = 置き直した symlink の数。"
+  (#^ int linked)
+  (#^ int rewritten)
+  (#^ int symlinks))
+
+
+(defrecord VenvRefused
+  "venv を写せなかった訳(写しかけの venv は消してある — 準備は uv sync で venv を作る道へ戻る)。"
+  (#^ str reason))
+
+
 (defrecord TreePlaced
   "木 1 つを置いた結果。how = 置き方(TREE-COPY = 写し元の木を hardlink で写し、変わった path だけ新しく置いた・TREE-EXPAND = mirror から
    全部展開した — 写し元が在っても、写し元の commit が mirror に無い・差が読めない・写せない時は展開し、その理由を reason に書く)・
@@ -212,7 +226,10 @@
   ;; root の venv の Hy の compiler の版(bytecode の処理ステージが読み、引き継ぎ元の選びと完成マーカーへ渡す — #3706)。
   (setv #^ (| str None) hy-version None)
   ;; root の中で子の入口の解ける置き場(準備の確かめが読み、完成マーカーへ渡す)。
-  (setv #^ (| str None) entry-place None))
+  (setv #^ (| str None) entry-place None)
+  ;; venv を写した元の root(同じ依存のキーの完成済みの root — None = 写していない。写した準備は native・依存・wheel の処理ステージを
+  ;; 走らせない)。
+  (setv #^ (| str None) venv-from None))
 
 
 ;; --- effect ------------------------------------------------------------------------------
@@ -266,6 +283,16 @@
   (#^ (| TreeSource None) source))
 
 
+
+
+(defclass [(dataclass :frozen True)] CopyVenv [EffectBase]
+  "同じ依存のキーの完成済みの root の venv(source)を、新しい root の venv(dest)へ写す。file は hardlink で写し、写し元の root の絶対 path
+   (source-root)を持つ file(bin の script の頭・.pth・direct_url.json・editable の印)と symlink の先は新しい root(dest-root)の path に
+   書き換えて新しく置く(写し元の file をその場で書き換えない)。答え = VenvCopied か VenvRefused(写しかけの dest は消す)。"
+  (#^ str source)
+  (#^ str dest)
+  (#^ str source-root)
+  (#^ str dest-root))
 
 
 (defclass [(dataclass :frozen True)] EnsureNativeWheel [EffectBase]

@@ -81,6 +81,31 @@
   key)
 
 
+(defk dependency-material [env platform]
+  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
+  "依存のキーの材料(venv の中身を決める物だけ)= キーの材料から project の repo の commit を外した物。project の repo の commit は source の
+   木と bytecode だけを変え、venv の中身(uv.lock どおりの依存・editable で入る他の repo の木・native の wheel)は uv.lock の sha256 と
+   他の repo の commit と python と組で決まる。native の wheel を project の repo から組む宣言は、wheel が project の commit で変わるので
+   commit を外さない。"
+  (<- material dict (key-material env platform))
+  (val own (and (not (any (gfor w env.project.native (= w.repo env.project.repo))))
+                env.project.repo))
+  (| material
+     {"repos" (lfor r (get material "repos")
+                    (if (= (get r "name") own) {"name" (get r "name") "url" (get r "url")} r))
+      "part" "dependencies"}))
+
+
+(defk dependency-key [env platform]
+  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
+  "依存のキー(定義点はここ 1 つ)= 依存のキーの材料(dependency-material)の正規化した JSON の sha256 の頭 24 桁。project の repo の commit
+   だけが違う 2 つの宣言は同じ依存のキーになる(後の root は前の root の venv を使い回せる — env_prepare.venv-source)。env のキーとは
+   材料の欄 part で分けるので、同じ値にならない。"
+  (<- material dict (dependency-material env platform))
+  (<- key str (material-digest material))
+  key)
+
+
 (defk location-material [location]
   {:pre [(: location RepoLocation)] :post [(: % dict)]}
   "repo の正体(url-location の答え)を鍵の材料の JSON の値にするため。"

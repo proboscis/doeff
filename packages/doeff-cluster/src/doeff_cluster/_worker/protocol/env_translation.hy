@@ -42,12 +42,12 @@
 (import re)
 (import sys)
 (import datetime [datetime])
-(import doeff [Program])
+(import doeff [Program Pure])
 (import doeff_time [GetTime Delay])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted ProcessRunning ProcessExited]
         doeff_core_effects._process_effects [NOT_STARTED_CODE :as _NOT-STARTED-CODE])
-(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText MakeDirectory ListDirectory WalkTree LinkFile RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
+(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree LinkFile MakeSymlink RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
 (import doeff_cluster._shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
@@ -56,7 +56,7 @@
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -460,6 +460,98 @@
         (:= refused (CopyRefused :reason (.format "{} から {} へ hardlink で写せない: {} — {}" source dest path detail)))
         _ None)))
   refused)
+
+
+;; venv の file のうち、写し元の root の絶対 path を持ちうる物(uv が書く — bin の script の頭と activate・editable の .pth・direct_url.json・
+;; pyvenv.cfg・editable の印 __editable__*)。これだけを読んで書き換え、ほかは hardlink で写す。
+(val VENV-REWRITTEN-NAMES #("direct_url.json" "pyvenv.cfg"))
+(val VENV-SCRIPT-MODE 0o755)
+
+
+(defk venv-rewrites [name]
+  {:pre [(: name str)] :post [(: % bool)]}
+  "venv の中の相対 path name が、写し元の root の絶対 path を持ちうる file か(読んで書き換える候補か)を決めるため。"
+  (val base (posixpath.basename name))
+  (or (.startswith name "bin/") (.endswith base ".pth") (in base VENV-REWRITTEN-NAMES) (.startswith base "__editable__")))
+
+
+(defk venv-entry [entry source dest source-root dest-root]
+  {:pre [(: entry DirEntry) (: source str) (: dest str) (: source-root str) (: dest-root str)] :post [(: % (| str VenvRefused))]}
+  "venv の歩きの答えの 1 つ(相対 path と種類)を dest へ写し、どう置いたか(dir・link・rewrite・symlink)を返すため: dir は作り、普通の
+   file は hardlink で写す — 写し元の root の絶対 path を持つ file(venv-rewrites の候補のうち中身に path が在る物)だけ path を書き換えた
+   中身を新しく置き(bin の下は実行できる mode)、symlink は辿った先の path を書き換えて置き直す(venv の中を指す lib64 などが写し元を
+   指したまま残らないため)。置けなければ VenvRefused。"
+  (val from (posixpath.join source entry.name))
+  (val to (posixpath.join dest entry.name))
+  (val old (.encode (+ source-root "/") "utf-8"))
+  (var how "dir")
+  (var done None)
+  (match entry.kind
+    PathKind.DIRECTORY
+    (do (<- made (| None FileFailed) (MakeDirectory to))
+        (:= done made))
+    PathKind.SYMLINK
+    (do (<- seen (| PathStat FileFailed) (StatPath from))
+        (match seen
+          (FileFailed) (:= done seen)
+          (PathStat :real-path real)
+          (do (val inside (.startswith real (+ source-root "/")))
+              (<- made (| None FileFailed)
+                  (MakeSymlink to (if inside (+ dest-root "/" (cut real (+ (len source-root) 1) None)) real)))
+              (:= how "symlink")
+              (:= done made))))
+    PathKind.FILE
+    (do (<- rewrites bool (venv-rewrites entry.name))
+        (<- content (| bytes FileFailed None) (if rewrites (ReadBytes from) (Pure None)))
+        (match content
+          (FileFailed) (:= done content)
+          (bytes) :if (in old content)
+          (do (<- written (| None FileFailed)
+                  (WriteBytes to (.replace content old (.encode (+ dest-root "/") "utf-8"))
+                              :mode (if (.startswith entry.name "bin/") VENV-SCRIPT-MODE None)))
+              (:= how "rewrite")
+              (:= done written))
+          _ (do (<- linked (| None FileFailed) (LinkFile from to))
+                (:= how "link")
+                (:= done linked))))
+    _ (:= done (VenvRefused :reason (.format "{} は普通の file・dir・symlink のどれでもない" from))))
+  (match done
+    (FileFailed :path path :detail detail) (VenvRefused :reason (.format "{}: {}" path detail))
+    (VenvRefused) done
+    _ how))
+
+
+(defk venv-entries [source dest source-root dest-root entries]
+  {:pre [(: source str) (: dest str) (: source-root str) (: dest-root str) (: entries tuple)] :post [(: % (| VenvCopied VenvRefused))]}
+  "venv の歩きの答え entries を path の順に dest へ写し(venv-entry — dir は中身より先に来る)、置き方ごとの数を数えるため。最初の失敗で止める。"
+  (var counts {"dir" 0 "link" 0 "rewrite" 0 "symlink" 0})
+  (var refused None)
+  (for [entry (sorted entries :key (fn [e] e.name))]
+    (when (is refused None)
+      (<- placed (| str VenvRefused) (venv-entry entry source dest source-root dest-root))
+      (match placed
+        (VenvRefused) (:= refused placed)
+        _ (:= counts (| counts {placed (+ (get counts placed) 1)})))))
+  (if (is refused None)
+      (VenvCopied :linked (get counts "link") :rewritten (get counts "rewrite") :symlinks (get counts "symlink"))
+      refused))
+
+
+(defk copied-venv [source dest source-root dest-root]
+  {:pre [(: source str) (: dest str) (: source-root str) (: dest-root str)] :post [(: % (| VenvCopied VenvRefused))]}
+  "CopyVenv の答え: 写し元の venv を歩いて dest へ写す(venv-entries)。写し元を歩けない・写しの途中で失敗した時は写しかけの dest を消して
+   VenvRefused を返す(準備は uv sync で venv を作る道へ戻る)。"
+  (<- (RemoveTree dest))     ; 前の途中で止まった準備の残り(無い dir の断りは捨てる)
+  (<- listed (| tuple FileFailed) (WalkTree source))
+  (<- made (| None FileFailed) (MakeDirectory dest))
+  (<- answer (| VenvCopied VenvRefused)
+      (match #(listed made)
+        #((FileFailed :path path :detail detail) _) (VenvRefused :reason (.format "写し元の venv を歩けない: {}: {}" path detail))
+        #(_ (FileFailed :path path :detail detail)) (VenvRefused :reason (.format "venv の dir を作れない: {}: {}" path detail))
+        _ (venv-entries source dest source-root dest-root listed)))
+  (when (isinstance answer VenvRefused)
+    (<- (RemoveTree dest)))
+  answer)
 
 
 (defk written-bytes [paths]
@@ -899,6 +991,10 @@
   (MaterializeTree [mirror commit dest source]
     (<- placed TreePlaced (materialize mirror commit dest source progress))
     (resume placed))
+
+  (CopyVenv [source dest source-root dest-root]
+    (<- copied (| VenvCopied VenvRefused) (copied-venv source dest source-root dest-root))
+    (resume copied))
 
   (FileSha256 [path]
     (<- digest (| str None) (file-sha256 path))

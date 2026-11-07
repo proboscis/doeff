@@ -102,6 +102,10 @@
   ;; 先の組みを memory を測らずに始めた root のキー(heartbeat の envs.memoryUnmeasured — 温める表の行の memory-unmeasured の材料・#3748)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前 — どちらも名で渡す)。
   (setv #^ (get frozenset str) env-memory-unmeasured (frozenset))
+  ;; 準備済みの root の依存のキー(heartbeat の envs.readyDeps — 温める表の行が依存の部分まで揃ったか〔WarmState の deps-ready〕を
+  ;; 照らす材料・名乗らない旧い worker は空 = 依存のキーで照らさず root のキーだけで照らす)。保存しない(次の heartbeat で埋まる)。
+  ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前 — どちらも名で渡す)。
+  (setv #^ (get frozenset str) env-ready-deps (frozenset))
   ;; ServiceAccount の token の状態(heartbeat の accountToken — ok・stale = kubelet の置き直しが遅れた・expired・unreadable)。
   ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str account-token "ok")

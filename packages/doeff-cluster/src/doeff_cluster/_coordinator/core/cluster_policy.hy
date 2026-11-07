@@ -36,7 +36,7 @@
 (import doeff_cluster._shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnvInvalid])
-(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key dependency-key child-environ-refusal])
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib])
@@ -1080,6 +1080,17 @@
 (defn #^ str root-key-on [#^ dict declared #^ WorkerInfo worker]
   "宣言の root を worker の上で呼ぶキー(worker の platform で計算 — worker が heartbeat で名乗るキーと同じ形)。"
   (_root-key (json.dumps declared :sort-keys True :ensure-ascii False) worker.platform))
+
+
+(defn [(functools.lru-cache :maxsize 4096)] _dependency-key [#^ str declared-text #^ str platform]
+  ;; 同じ宣言と platform の依存のキーを拍ごとに計算し直さないための cache(_root-key と同じ形)。
+  (run (dependency-key (run (runtime-env-of-json (json.loads declared-text))) platform)))
+
+
+(defn #^ str dependency-key-on [#^ dict declared #^ WorkerInfo worker]
+  "宣言の依存の部分(venv)を worker の上で呼ぶキー — 温める表の行が worker の上で依存まで揃ったかを、worker が heartbeat で名乗る
+   準備済みの root の依存のキー(env-ready-deps)と照らすため。"
+  (_dependency-key (json.dumps declared :sort-keys True :ensure-ascii False) worker.platform))
 
 
 (defn #^ bool env-ready-on [#^ (| dict None) declared #^ WorkerInfo worker]
@@ -2278,6 +2289,7 @@
                          :env-preparing (frozenset envs.preparing)
                          :env-failed (tuple (gfor f envs.failed (EnvFailed f.key f.kind f.detail f.retryable)))
                          :env-memory-unmeasured (frozenset envs.memory-unmeasured)
+                         :env-ready-deps (frozenset envs.ready-deps)
                          :env-capacity body.env-capacity
                          :account-token body.account-token
                          :room-file body.room-file

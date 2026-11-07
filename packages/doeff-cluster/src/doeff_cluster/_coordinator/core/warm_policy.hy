@@ -11,7 +11,7 @@
 (import doeff [run])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState WarmEntry ErrorReply])
-(import doeff_cluster._coordinator.core.cluster_policy [alive placeable needs-named tools-cover root-key-on draining-workers])
+(import doeff_cluster._coordinator.core.cluster_policy [alive placeable needs-named tools-cover root-key-on dependency-key-on draining-workers])
 (import doeff_cluster._coordinator.intent.request_bodies [WarmBody])
 (import doeff_cluster._shared.core.board_rules [BOARD-MAX-TTL-SECONDS])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnvInvalid])
@@ -22,15 +22,19 @@
 
 (defn #^ WarmState warm-view [#^ ClusterState state #^ WarmEntry entry #^ int now #^ ClusterTiming timing]
   "行 1 つの今の姿: 行の needs に合い(能力)、生きていて drain 中でない worker を、その worker の platform の root のキーで照らして分ける
-   (送り手が「1 台以上で準備済み」を読んで Ready を決めるため)。そのうち 1 台でも先の組みを memory を測らずに始めていれば memory-unmeasured。"
+   (送り手が「1 台以上で準備済み」を読んで Ready を決めるため)。そのうち 1 台でも先の組みを memory を測らずに始めていれば memory-unmeasured。
+   root そのものが準備済みでなくても、同じ依存のキー(dependency-key-on)の root を準備済みと名乗る worker は deps-ready に入れる(送り手が
+   依存の部分の揃いだけを待てるため — project の repo の commit だけが違う宣言の root は、そこで venv を使い回す)。"
   (setv draining (draining-workers state now)
-        ready [] preparing [] failed [] unmeasured False)
+        ready [] preparing [] failed [] deps-ready [] unmeasured False)
   (for [w (sorted (.rows state.workers) :key (fn [w] w.name))]
     (when (and (alive now w timing.lease-ms) (not-in w.name draining) w.platform
                (placeable entry.needs w) (tools-cover entry.runtime-env w))
       (setv key (root-key-on entry.runtime-env w))
       ;; 先の組みを memory を測らずに始めた worker が在れば行に印を立てる(#3748)。
       (when (in key w.env-memory-unmeasured) (setv unmeasured True))
+      (when (or (in key w.env-ready) (in (dependency-key-on entry.runtime-env w) w.env-ready-deps))
+        (.append deps-ready w.name))
       (cond
         (in key w.env-ready) (.append ready w.name)
         (in key w.env-preparing) (.append preparing w.name)
@@ -38,7 +42,7 @@
                (when (= f.key key)
                  (.append failed (WarmFailure :worker w.name :kind f.kind :detail f.detail :retryable f.retryable)))))))
   (WarmState :key entry.key :ready (tuple ready) :preparing (tuple preparing) :failed (tuple failed) :until-ms entry.until-ms
-             :memory-unmeasured unmeasured))
+             :memory-unmeasured unmeasured :deps-ready (tuple deps-ready)))
 
 
 (defn #^ tuple warm-write [#^ ClusterState state #^ WarmBody body #^ int now #^ str actor #^ ClusterTiming timing]

@@ -24,7 +24,8 @@
 (import doeff_time [Delay])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json runtime-env-of-json env-key])
+(import doeff_cluster [runtime-env->json runtime-env-of-json env-key dependency-key])
+(import doeff_cluster._worker.protocol.heartbeat [env-report])
 (import doeff_cluster [current-platform])
 (import doeff_cluster [AwaitDetached DetachedSucceeded])
 (import httpx)
@@ -354,6 +355,52 @@
                                                                               "memoryUnmeasured" [key-linux]}}))) 3000)))
   (val read-2 (warm-state-of-json (get (responded unmeasured (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 3000 TIMING) 2)))
   (assert (= #(read-2.preparing read-2.memory-unmeasured) #(#("w1") True)) read-2))
+
+
+;; 失敗ケース(依存のキー): 温める表の行のキーは依存のキー(project の repo の commit を除く)で決まる。前の commit(枝の先端)の宣言で
+;; 頼んだ行を、project の commit だけが違う後の commit(rebase した後の版)の宣言で頼み直すと同じ行になり、前の commit の root を準備済みと
+;; 名乗る worker(heartbeat の readyDeps)は deps-ready に入る(後の commit の root そのものはまだ無いので ready には入らない)。行のキーに
+;; commit を混ぜる作り方(直す前の env-key)では、後の宣言は別の行になり、先に組んだ worker を読めない。readyDeps を名乗らない旧い worker は
+;; 依存のキーで照らさない。lock の違う宣言は別の行。
+(defk deps-key-on [declared platform]
+  {:pre [(: declared dict) (: platform str)] :post [(: % str)]}
+  "宣言の JSON と worker の platform → 依存のキー(worker が readyDeps に名乗る値)。"
+  (<- env RuntimeEnv (runtime-env-of-json declared))
+  (<- key str (dependency-key env platform))
+  key)
+
+
+(deftest test-a-rebased-declaration-reads-the-row-warmed-for-the-branch-tip
+  (<- tip dict (declared-of "app-1"))
+  (<- landed dict (declared-of "app-2"))
+  (<- other-env RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (<- other-lock dict (runtime-env->json other-env))
+  (<- tip-root str (key-on tip "linux-x86_64"))
+  (<- landed-root str (key-on landed "linux-x86_64"))
+  (<- tip-deps str (deps-key-on tip "linux-x86_64"))
+  (<- landed-deps str (deps-key-on landed "linux-x86_64"))
+  (assert (!= tip-root landed-root) "root のキーは commit ごとに違う")
+  (assert (= tip-deps landed-deps) "依存のキーは commit だけの違いでは変わらない")
+  (val body {"needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
+  (val first (responded (ClusterState) (! (http-request "POST" "/warm" {} (| body {"runtimeEnv" tip}) :actor "svc-a")) 1000 TIMING))
+  (val hb {"name" "w1" "provides" ["agent-cli"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" "b1" "platform" "linux-x86_64"
+           "envs" {"ready" [tip-root] "preparing" [] "failed" [] "readyDeps" [tip-deps]} "envCapacity" "ok"})
+  (val built (! (register-heartbeat (get first 0) (! (heartbeat-of hb)) 2000)))
+  (val again (responded built (! (http-request "POST" "/warm" {} (| body {"runtimeEnv" landed}) :actor "svc-a")) 3000 TIMING))
+  (val tip-state (warm-state-of-json (get first 2)))
+  (val landed-state (warm-state-of-json (get again 2)))
+  (assert (= tip-state.key landed-state.key) #("rebase した後の宣言は枝の先端の行と同じ行" tip-state landed-state))
+  (assert (= #(landed-state.ready landed-state.deps-ready) #(#() #("w1"))) landed-state)
+  (val reread (warm-state-of-json (get (responded (get again 0) (! (http-request "GET" (+ "/warm/" landed-state.key) {} None)) 3000 TIMING) 2)))
+  (assert (= reread.deps-ready #("w1")) "通信の本文(depsReady)を往復しても残る")
+  (val old-worker (! (register-heartbeat (get first 0) (! (heartbeat-of (| hb {"envs" {"ready" [tip-root] "preparing" [] "failed" []}}))) 2000)))
+  (val old-read (warm-state-of-json (get (responded old-worker (! (http-request "POST" "/warm" {} (| body {"runtimeEnv" landed}) :actor "svc-a")) 3000 TIMING) 2)))
+  (assert (= old-read.deps-ready #()) "readyDeps を名乗らない worker は依存のキーで照らさない")
+  (val other (warm-state-of-json (get (responded built (! (http-request "POST" "/warm" {} (| body {"runtimeEnv" other-lock}) :actor "svc-a")) 3000 TIMING) 2)))
+  (assert (!= other.key tip-state.key) "lock の違う宣言は別の行")
+  (assert (= other.deps-ready #()) other)
+  (val report (env-report #((CodeView (+ "env-" tip-root) CodeState.READY :path "/r")) "ok" (frozenset) (frozenset [tip-deps])))
+  (assert (= (get report "readyDeps") [tip-deps]) "worker は準備済みの root の依存のキーを heartbeat で名乗る"))
 
 
 ;; --- 本物の client(warm-cluster): coordinator に届かない頼みは値で答える(2026-09-28)---------------------------
