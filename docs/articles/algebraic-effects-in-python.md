@@ -378,7 +378,7 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 [![The Monte Carlo bot answers one Choose, step by step: the fight that asked waits as k while the handler runs battle itself from each candidate move, counts the wins and resumes k](../assets/figures/monte-carlo.gif)](../assets/figures/monte-carlo.gif)
 
-[The same video as an mp4 file (0:54)](../assets/videos/article-monte-carlo.mp4)
+[The same video as an mp4 file (0:57)](../assets/videos/article-monte-carlo.mp4)
 
 To answer `Choose`, `monte_carlo` runs `battle` itself, many times, each time as a new run from the state after a candidate move, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight, and none of them runs `k`: the handler resumes `k` once, with the move it picks. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
 
