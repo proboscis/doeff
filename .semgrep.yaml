@@ -126,13 +126,14 @@ rules:
       conversation, budget, artifact, herdr, hypha, mediagen, sporocarp, acp, controllers/, controllers., clients/hy (case-
       insensitive, when not preceded by a letter). When a general-purpose part names a business system, the boundary erodes starting from the text of the file. The same holds for repo names
       and issue references in comments, docstrings and READMEs (write an issue reference that carries a repo name as just "#<number>"). This rule is the single definition of the word list (it was copied in
-      tests/test_no_application_vocabulary.hy of 3 packages; differences from the copies: all .pyi files are checked, and the declaration field name size-budget of
-      doeff-records is allowed everywhere). semgrep only sees file contents, so file names are checked by
+      tests/test_no_application_vocabulary.hy of 3 packages; differences from the copies: all .pyi files are checked, and the declaration field names size-budget of
+      doeff-records and idle-budget of doeff-cluster are allowed everywhere). semgrep only sees file contents, so file names are checked by
       tests/test_package_file_names_have_no_application_vocabulary.py, which reads this rule's word list.
     patterns:
       - pattern-regex: '(?i)(?<![a-z])(agora|kanban|conversation|budget|artifact|herdr|hypha|mediagen|sporocarp|acp|controllers/|controllers\.|clients/hy)'
-      # The declaration field name of doeff-records (size-budget / size_budget) is not a business word.
-      - pattern-not-regex: '(?i)size[-_]budget'
+      # The declaration field names size-budget (doeff-records) and idle-budget (doeff-cluster — a job's resource ceiling when idle; also
+      # size_budget / idle_budget) are not business words.
+      - pattern-not-regex: '(?i)(size|idle)[-_]budget'
       # The hatch build key `artifacts` (pyproject.toml) is a name hatchling fixes, not a business word; only the key at the start of a line is spared.
       - pattern-not-regex: '(?m)^artifacts\s*='
     paths:

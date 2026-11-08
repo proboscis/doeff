@@ -85,6 +85,12 @@
   (tally (tally-program foundation 2) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"TALLY_BASE" "1"}))
 
 
+(defsystem lab-idle [#^ Callable foundation]
+  "見本の系: 暇な時の予算(:idle-budget)を宣言した tally 1 つ"
+  (tally (tally-program foundation 2) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}
+         :idle-budget {:cpu-cores 1 :pss-mb 600 :from-cpu-cores 0.25 :from-pss-mb 480}))
+
+
 (defsystem lab-pair [#^ Callable foundation]
   "見本の系: tally と greeter"
   (tally (tally-program foundation 2) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})

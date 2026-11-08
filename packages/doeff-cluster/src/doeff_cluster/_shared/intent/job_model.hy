@@ -2,6 +2,7 @@
 ;;; 模擬の環境が同じ型を読む共有の部品(worker_model から分けた・#2025 の 1 本目・#2021 の決め 1)。
 ;;; 指紋 spec-hash は doeff_cluster._shared.core.job_rules。worker だけが使う型(観測・記録・action)は doeff_cluster._worker.intent.worker_model。
 (require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "type"})
 (import dataclasses [dataclass field])
 (import enum [Enum])
@@ -18,6 +19,17 @@
 ;; 完成の印に置き場の欄の無い root の置き場: 欄を足す前の worker が準備した root で、その頃の doeff はどれも 2 つ目の置き場の名を解く
 ;; (_worker の在る版も、移し替えの module worker.py が 2 つ目の名を _worker の module に解く)。
 (val LEGACY-ENTRY-PLACE "doeff_cluster.worker.entry")
+
+
+(defrecord IdleBudget
+  "常駐の job の暇な時の予算(job の宣言の任意の欄 — defsystem の :idle-budget・宣言の行と Service の spec の idleBudget)。
+   cpu-cores・pss-mb = 暇な時の上限(core の数・MB)、from-cpu-cores・from-pss-mb = 上限を出した元の暇な時の値(同じ単位・上限以下)。
+   規則と JSON の綴りは job_rules(idle-budget-read・idle-budget-json)。doeff-cluster は運んで保存するだけで、読むのは Service の spec を
+   読む使う側(置き方と process の形には入らない — JobSpec の外・指紋 spec-hash の外)。"
+  (#^ float cpu-cores)
+  (#^ int pss-mb)
+  (#^ float from-cpu-cores)
+  (#^ int from-pss-mb))
 
 
 (defclass [(dataclass :frozen True)] JobSpec []

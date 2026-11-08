@@ -204,3 +204,29 @@
   (assert (= (len (.rows (get stored 1))) 0) stored)
   (assert (= #((. (get jobs 0) peak-mib) (. (get jobs 0) settle-mib) (. (get jobs 0) single-host)) #(None None None)) jobs)
   (assert (not-in "peakMiB" (job-to-json (get jobs 0))) jobs))
+
+
+(deftest test-the-service-body-carries-the-idle-budget
+  ;; 暇な時の予算 idleBudget(任意)は Service の資源の本文から ClusterJob へ写り、spec と保存の綴り(job-to-json)と保存の読み直し
+  ;; (read-service-rows)を同じ形で通る。鍵の欠け・余り・型の違い・上限を越える元の値は判断の前に 400 で、欄を名指して断る
+  ;; (規則は宣言の構成子と同じ job_rules.idle-budget-read)。
+  (val bare {"revision" "r" "run" SAMPLE-RUN "needs" ["net"] "peakMiB" 900 "settleMiB" 400})
+  (val wire {"cpuCores" 0.5 "pssMB" 600 "fromCpuCores" 0.25 "fromPssMB" 480})
+  (for [#(ceiling word) [#({"cpuCores" 0.5 "pssMB" 600 "fromCpuCores" 0.25} "idleBudget は鍵")
+                        #((| wire {"rssMB" 1}) "idleBudget は鍵")
+                        #("0.5" "idleBudget は鍵")
+                        #((| wire {"pssMB" 600.5}) "idleBudget の pssMB は 0 以上の数")
+                        #((| wire {"cpuCores" True}) "idleBudget の cpuCores は 0 以上の数")
+                        #((| wire {"fromPssMB" 700}) "fromPssMB 700 が pssMB 600 を越える")]]
+    (<- refused (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" (| bare {"idleBudget" ceiling})}))))
+    (assert (isinstance refused BodyMalformed) #(ceiling refused))
+    (assert (in "Service web" refused.reason) refused)
+    (assert (in word refused.reason) #(ceiling refused)))
+  (<- full (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" (| bare {"idleBudget" wire})}))))
+  (assert (= (get (job-to-json full.job) "idleBudget") wire) full)
+  (val stored (read-service-rows [(| (job-to-json full.job) {"name" "web"})]))
+  (assert (= (len (.rows (get stored 1))) 0) stored)
+  (assert (= (. (get stored 0 0) idle-budget) full.job.idle-budget) stored)
+  (<- plain (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" bare}))))
+  (assert (is plain.job.idle-budget None) plain)
+  (assert (not-in "idleBudget" (job-to-json plain.job)) plain))

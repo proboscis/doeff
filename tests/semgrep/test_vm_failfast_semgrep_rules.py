@@ -314,6 +314,7 @@ def test_application_vocabulary_rule_fires_on_the_words_and_spares_the_records_f
 
 def test_application_vocabulary_rule_reads_type_stubs_too() -> None:
     # Of the copies, doeff-cluster's test did not look at .pyi -- the rule also looks at the .pyi of the 3 packages (names in type declarations also carry no business words).
+    # idle-budget (the name of a declaration field of doeff-cluster) is excluded like size-budget; the bare word still fires.
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
@@ -321,7 +322,7 @@ def test_application_vocabulary_rule_reads_type_stubs_too() -> None:
         cwd=fixture_root,
     )
 
-    assert _rule_start_lines(results, "doeff-packages-have-no-application-vocabulary") == {4}
+    assert _rule_start_lines(results, "doeff-packages-have-no-application-vocabulary") == {4, 10}
 
 
 def test_application_vocabulary_rule_spares_the_hatch_build_key() -> None:

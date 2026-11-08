@@ -252,6 +252,41 @@
   (assert (= (get jobs 1) {"name" "plain" "function" "notice" "replicas" 1 "peakMiB" 0 "settleMiB" 0}) jobs))
 
 
+(deftest test-defsystem-keeps-the-idle-budget-in-the-static-description-and-the-job
+  ;; 暇な時の予算(:idle-budget — 任意)は静的な記述と job の値に、書いた job にだけ載る(記述は宣言の行と同じ綴り idleBudget・
+  ;; cpu は小数)。失敗ケース = 書かない job に既定の予算を足す・整数で書いた cpu を整数のまま運ぶ。
+  (<- ns (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem watched [foundation]
+  (busy (notice foundation) :needs #{\"net\"} :replicas 1 :peak-mib 900 :settle-mib 400
+        :idle-budget {:cpu-cores 1 :pss-mb 600 :from-cpu-cores 0.25 :from-pss-mb 480})
+  (plain (notice foundation) :needs #{\"net\"} :replicas 1 :peak-mib 0 :settle-mib 0))
+"))
+  (val jobs (get (. (get ns "watched") __doeff_system__) "jobs"))
+  (val ceiling (get jobs 0 "idleBudget"))
+  (assert (= ceiling {"cpuCores" 1.0 "pssMB" 600 "fromCpuCores" 0.25 "fromPssMB" 480}) jobs)
+  (assert (isinstance (get ceiling "cpuCores") float) ceiling)
+  (assert (= (get jobs 1) {"name" "plain" "function" "notice" "needs" ["net"] "replicas" 1 "peakMiB" 0 "settleMiB" 0}) jobs))
+
+
+(deftest test-defsystem-refuses-a-broken-idle-budget
+  ;; 予算の map は 4 つの鍵をちょうど 1 回ずつ・cpu は数・pss は整数の literal で、値の規則(0 以上・元の値は上限以下)は
+  ;; coordinator の読みと同じ job_rules.idle-budget-read。外れれば系と job を名指して展開の時に断る。
+  (val head "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :idle-budget ")
+  (for [#(form word) [#("{:cpu-cores 0.5 :pss-mb 300 :from-cpu-cores 0.1}" "ちょうど 1 回ずつ")
+                      #("{:cpu-cores 0.5 :pss-mb 300 :from-cpu-cores 0.1 :from-pss-mb 200 :rss-mb 1}" "ちょうど 1 回ずつ")
+                      #("{\"cpuCores\" 0.5 \"pssMB\" 300 \"fromCpuCores\" 0.1 \"fromPssMB\" 200}" "ちょうど 1 回ずつ")
+                      #("[0.5 300 0.1 200]" ":idle-budget は")
+                      #("{:cpu-cores 0.5 :pss-mb 300.5 :from-cpu-cores 0.1 :from-pss-mb 200}" ":pss-mb は整数の literal")
+                      #("{:cpu-cores \"0.5\" :pss-mb 300 :from-cpu-cores 0.1 :from-pss-mb 200}" ":cpu-cores は数の literal")
+                      #("{:cpu-cores -0.5 :pss-mb 300 :from-cpu-cores 0.1 :from-pss-mb 200}" "0 以上の数")
+                      #("{:cpu-cores 0.1 :pss-mb 300 :from-cpu-cores 0.5 :from-pss-mb 200}" "fromCpuCores 0.5 が cpuCores 0.1 を越える")
+                      #("{:cpu-cores 0.5 :pss-mb 200 :from-cpu-cores 0.1 :from-pss-mb 300}" "fromPssMB 300 が pssMB 200 を越える")]]
+    (<- refused (refusal (+ head form "))")))
+    (assert (in "defsystem s の job job" refused) refused)
+    (assert (in word refused) #(form refused))))
+
+
 (deftest test-defsystem-keeps-the-store-reads-and-writes-in-the-static-description
   ;; job が外の置き場から読む・書く物(:reads / :writes — 任意の欄・#3495)は静的な記述の job の dict に整列した名の列で載り
   ;; (doeff-linter が綴りで読む)、書かない job の dict には鍵が無い。空の集合は「読み書きしない」の宣言として載る。

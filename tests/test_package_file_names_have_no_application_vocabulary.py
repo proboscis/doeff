@@ -122,10 +122,11 @@ def test_a_name_with_an_application_word_is_found_and_a_generic_name_is_not() ->
     assert words_in_name(rule, "src/doeff_cluster/kanban_view.hy") == ["kanban"]
     assert words_in_name(rule, "tests/test_Agora_reads.py") == ["agora"]
     assert words_in_name(rule, "docs/_acp.md") == ["acp"]
-    # Spellings preceded by a letter, and size-budget (the name of a declaration field of doeff-records), do not match.
+    # Spellings preceded by a letter, and size-budget / idle-budget (names of declaration fields of doeff-records / doeff-cluster), do not match.
     assert words_in_name(rule, "src/doeff_cluster/xacp.hy") == []
     assert words_in_name(rule, "src/doeff_records/size_budget.hy") == []
     assert words_in_name(rule, "src/size-budget/budget.hy") == ["budget"]
+    assert words_in_name(rule, "tests/test_idle_budget.hy") == []
 
 
 def test_the_scan_covers_the_packages() -> None:

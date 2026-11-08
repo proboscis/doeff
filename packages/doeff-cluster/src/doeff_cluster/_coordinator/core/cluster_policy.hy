@@ -15,7 +15,7 @@
 (import typing [TypeGuard])
 
 (import doeff_cluster._shared.intent.job_model [JobSpec LEGACY-ENTRY-PLACE])
-(import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal])
+(import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal idle-budget-read idle-budget-json])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
@@ -224,9 +224,11 @@
   "宣言の行(送られた行と保存の行)→ ClusterJob。memory の欄は在れば検め、無ければ None で読む — 旧い coordinator は memory を持たずに
    job を保存したので、新しい coordinator が置き場を読み直す時に欄の無い行を断らない(断ると RefusedJob になり job が止まる)。
    欄を必ず求めるのは送り手の書く口(declared-job-from-json)だけ。"
-  (setv peak (.get item "peakMiB") settle (.get item "settleMiB") single-host (.get item "singleHost"))
+  (setv peak (.get item "peakMiB") settle (.get item "settleMiB") single-host (.get item "singleHost")
+        idle-budget (if (is (.get item "idleBudget") None) None (idle-budget-read (.get item "idleBudget"))))
   (setv memory-problem (or (if (and (is peak None) (is settle None)) None (memory-refusal peak settle))
-                           (single-host-refusal single-host)))
+                           (single-host-refusal single-host)
+                           (if (isinstance idle-budget str) idle-budget None)))
   (when (is-not memory-problem None)
     (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") memory-problem))))
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
@@ -255,7 +257,9 @@
               ;; memory-refusal が整数と確かめた後なので、ここは型を絞るだけ。
               :peak-mib (if (isinstance peak int) peak None)
               :settle-mib (if (isinstance settle int) settle None)
-              :single-host (if (isinstance single-host str) single-host None)))
+              :single-host (if (isinstance single-host str) single-host None)
+              ;; 読めない予算(理由の文)は上で断った後なので、ここは型を絞るだけ。
+              :idle-budget (if (isinstance idle-budget str) None idle-budget)))
 
 
 (defn #^ dict job-to-json [#^ ClusterJob job]
@@ -270,7 +274,9 @@
                  (if (is job.spec.content None) {} {"content" job.spec.content})
                  ;; memory は知っている時だけ書く(旧い coordinator の保存から読んだ job は次の宣言し直しまで知らない)・訳は在る時だけ。
                  (if (is job.peak-mib None) {} {"peakMiB" job.peak-mib "settleMiB" job.settle-mib})
-                 (if (is job.single-host None) {} {"singleHost" job.single-host})))
+                 (if (is job.single-host None) {} {"singleHost" job.single-host})
+                 ;; 暇な時の予算は宣言した job にだけ書く(書かない宣言の spec の形・版は以前と同じ)。
+                 (if (is job.idle-budget None) {} {"idleBudget" (idle-budget-json job.idle-budget)})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
   (| base extra {"run" job.run}))
 

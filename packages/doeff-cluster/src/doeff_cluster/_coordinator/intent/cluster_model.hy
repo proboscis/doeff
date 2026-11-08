@@ -22,7 +22,7 @@
 (import doeff [EffectBase])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._table [Table table-of])
-(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [IdleBudget JobSpec])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow MeasuredLoad])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
@@ -54,7 +54,10 @@
   ;; 欄の無いまま保存した行は None で読む(次の宣言し直しで知る)。process の形ではない — JobSpec に入れず、指紋 spec-hash に入らない。
   (setv #^ (| int None) peak-mib None)
   (setv #^ (| int None) settle-mib None)
-  (setv #^ (| str None) single-host None))  ; job を 1 台の worker に縛ってよい訳(無ければ None)
+  (setv #^ (| str None) single-host None)  ; job を 1 台の worker に縛ってよい訳(無ければ None)
+  ;; 暇な時の予算(宣言の行の idleBudget・規則は job_rules.idle-budget-read — 無ければ None)。読むのは Service の spec を読む使う側で、
+  ;; coordinator は運んで保存し Service の spec に載せるだけ(置き方と process の形は読まない — 指紋 spec-hash に入らない)。
+  (setv #^ (| IdleBudget None) idle-budget None))
 
 
 (defenum GenerationOrder CURRENT OLDER NEWER)

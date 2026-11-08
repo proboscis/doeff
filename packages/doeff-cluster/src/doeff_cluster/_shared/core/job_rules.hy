@@ -3,8 +3,10 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import dataclasses [replace])
+(import math)
 (import re)
-(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import typing [TypeGuard])
+(import doeff_cluster._shared.intent.job_model [IdleBudget JobSpec])
 
 
 (defn #^ str spec-hash [#^ JobSpec spec]
@@ -47,6 +49,51 @@
   (if (or (is value None) (and (isinstance value str) (.strip value)))
       None
       (.format "singleHost は 1 台に縛る訳の空でない文字列か null: {!r}" value)))
+
+
+;; 常駐の job の暇な時の予算 idleBudget(任意の欄 — 書かない job には無い・型は job_model.IdleBudget): 暇な時の上限 cpuCores(core の数)・
+;; pssMB(MB の整数)と、上限を出した元の暇な時の値 fromCpuCores・fromPssMB(同じ単位・上限以下)。doeff-cluster は運ぶだけ。
+(val IDLE-BUDGET-KEYS #("cpuCores" "pssMB" "fromCpuCores" "fromPssMB"))
+
+
+(defn #^ (get TypeGuard (| int float)) core-count? [#^ object value] ; defk にできない: idle-budget-read の型を絞る判定(TypeGuard)
+  "暇な時の予算の cpu の値(0 以上の有限の数 — 真偽は数と読まない)か。"
+  (and (isinstance value #(int float)) (not (isinstance value bool)) (math.isfinite value) (>= value 0)))
+
+
+(defn #^ (get TypeGuard int) megabytes? [#^ object value] ; defk にできない: idle-budget-read の型を絞る判定(TypeGuard)
+  "暇な時の予算の pss の値(0 以上の整数の MB — 真偽は整数と読まない)か。"
+  (and (isinstance value int) (not (isinstance value bool)) (>= value 0)))
+
+
+(defn #^ (| IdleBudget str) idle-budget-read [#^ object value]  ; defk にできない: 宣言の値を作る時(defsystem の展開と構成子)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+  "宣言の行の idleBudget の object を、送り手と coordinator が同じ 1 つの規則で読むため: 受けられれば IdleBudget、受けられなければ理由の
+   文。鍵は IDLE-BUDGET-KEYS のちょうど 4 つ・cpu は 0 以上の有限の数・pss は 0 以上の整数・元の値は上限以下。"
+  (when (not (and (isinstance value dict) (= (set value) (set IDLE-BUDGET-KEYS))))
+    (return (.format "idleBudget は鍵 {} の object か null: {!r}" (.join "・" IDLE-BUDGET-KEYS) value)))
+  (setv cpu (get value "cpuCores") pss (get value "pssMB") from-cpu (get value "fromCpuCores") from-pss (get value "fromPssMB"))
+  (if (and (core-count? cpu) (core-count? from-cpu) (megabytes? pss) (megabytes? from-pss))
+      (cond
+        (> from-cpu cpu) (.format "idleBudget の fromCpuCores {} が cpuCores {} を越える — 元の暇な時の値は上限以下" from-cpu cpu)
+        (> from-pss pss) (.format "idleBudget の fromPssMB {} が pssMB {} を越える — 元の暇な時の値は上限以下" from-pss pss)
+        True (IdleBudget :cpu-cores (float cpu) :pss-mb pss :from-cpu-cores (float from-cpu) :from-pss-mb from-pss))
+      (.format "idleBudget の {} は 0 以上の数(cpu は core の数・pss は MB の整数): {!r}"
+               (.join "・" (+ (lfor #(f v) #(#("cpuCores" cpu) #("fromCpuCores" from-cpu)) :if (not (core-count? v)) f)
+                              (lfor #(f v) #(#("pssMB" pss) #("fromPssMB" from-pss)) :if (not (megabytes? v)) f)))
+               value)))
+
+
+(defn #^ (| str None) idle-budget-refusal [#^ object value]  ; defk にできない: 宣言の値を作る時と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+  "job の暇な時の予算 idleBudget(無い = None)を受けられない理由(受けられれば None — 規則は idle-budget-read)。"
+  (if (is value None)
+      None
+      (let [read (idle-budget-read value)]
+        (if (isinstance read str) read None))))
+
+
+(defn #^ (get dict #(str (| int float))) idle-budget-json [#^ IdleBudget ceiling]  ; defk にできない: 宣言の行の組み立てと coordinator の spec の綴り(Program の外の純粋な変換)が呼ぶ
+  "IdleBudget → 宣言の行と Service の spec の idleBudget の object(idle-budget-read の逆)。"
+  {"cpuCores" ceiling.cpu-cores "pssMB" ceiling.pss-mb "fromCpuCores" ceiling.from-cpu-cores "fromPssMB" ceiling.from-pss-mb})
 
 
 (defn #^ bool spec-hash-matches [#^ JobSpec spec #^ (| str None) reported]  ; defk にできない: coordinator の純粋な判断(Program の外 — running-process・new-generation-live)が spec-hash と並べて呼ぶ

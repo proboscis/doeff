@@ -38,7 +38,9 @@
 (import doeff_cluster [declaring-refusal])
 (import doeff_cluster [checkout-reads])
 (import doeff_cluster [spec-hash])
-(import tests.fixtures.services [lab lab-pair lab-record tally-program greeter-program holding-program tally-on PairFoundation
+(import doeff_cluster._shared.intent.job_model [IdleBudget])
+(import doeff_cluster._coordinator.core.cluster_policy [job-to-json])
+(import tests.fixtures.services [lab lab-idle lab-pair lab-record tally-program greeter-program holding-program tally-on PairFoundation
                                  LooseFoundation])
 (import tests.fixtures.envs [plain-foundation greeting-foundation])
 (import tests.fixtures [declared_system :as declared-fixture])
@@ -303,6 +305,46 @@
   (<- plain-row dict (only-row (system-of "lab" #(plain))))
   (assert (= #((get plain-row "peakMiB") (get plain-row "settleMiB")) #(200 100)) plain-row)
   (assert (not-in "singleHost" plain-row) plain-row))
+
+
+(deftest test-the-declaration-row-carries-the-idle-budget-without-changing-the-spec
+  ;; defsystem の :idle-budget は job の値の IdleBudget になり、宣言の行に idleBudget で載り、coordinator の読み(job-from-json)が
+  ;; ClusterJob に写し、Service の spec と保存の綴り(job-to-json)が同じ形で書き戻す。書かない job の行と spec には鍵が無く、
+  ;; 予算は process の形ではない(spec と指紋 spec-hash は書かない job と同じ)。
+  ;; 失敗ケース = 予算を JobSpec に入れて数の直しで process を起こし直す・書かない job に既定の予算を足す・読みで欄を落とす。
+  (val tally (job-named (lab-idle plain-foundation) "tally"))
+  (val ceiling (IdleBudget :cpu-cores 1.0 :pss-mb 600 :from-cpu-cores 0.25 :from-pss-mb 480))
+  (assert (= tally.idle-budget ceiling) tally)
+  (<- row dict (only-row (lab-idle plain-foundation)))
+  (val wire {"cpuCores" 1.0 "pssMB" 600 "fromCpuCores" 0.25 "fromPssMB" 480})
+  (assert (= (get row "idleBudget") wire) row)
+  (val read (job-from-json row))
+  (assert (= read.idle-budget ceiling) read)
+  (assert (= (get (job-to-json read) "idleBudget") wire) read)
+  (<- plain Job (tally-job {}))
+  (<- plain-row dict (only-row (system-of "lab" #(plain))))
+  (assert (not-in "idleBudget" plain-row) plain-row)
+  (val plain-read (job-from-json plain-row))
+  (assert (is plain-read.idle-budget None) plain-read)
+  (assert (not-in "idleBudget" (job-to-json plain-read)) plain-read)
+  (assert (= plain-read.spec read.spec))
+  (assert (= (spec-hash plain-read.spec) (spec-hash read.spec))))
+
+
+(deftest test-the-job-constructor-refuses-a-broken-idle-budget
+  ;; 構成子 job も展開・coordinator の読みと同じ規則(job_rules.idle-budget-read)で、job を名指して断る。IdleBudget でない値は事前条件で断る。
+  (for [#(ceiling word) [#((IdleBudget :cpu-cores -0.5 :pss-mb 300 :from-cpu-cores 0.0 :from-pss-mb 0) "0 以上の数")
+                        #((IdleBudget :cpu-cores (float "nan") :pss-mb 300 :from-cpu-cores 0.0 :from-pss-mb 0) "0 以上の数")
+                        #((IdleBudget :cpu-cores 0.1 :pss-mb 300 :from-cpu-cores 0.5 :from-pss-mb 0) "fromCpuCores 0.5 が cpuCores 0.1 を越える")
+                        #((IdleBudget :cpu-cores 0.5 :pss-mb 200 :from-cpu-cores 0.1 :from-pss-mb 300) "fromPssMB 300 が pssMB 200 を越える")]]
+    (with [error (pytest.raises ValueError)]
+      (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"net"}
+           :idle-budget ceiling))
+    (assert (in "job tally の :idle-budget" (str error.value)) error.value)
+    (assert (in word (str error.value)) error.value))
+  (with [error (pytest.raises AssertionError :match "idle-budget")]
+    (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"net"}
+         :idle-budget {"cpuCores" 0.5 "pssMB" 300 "fromCpuCores" 0.1 "fromPssMB" 200})))
 
 
 (deftest test-changing-the-memory-does-not-change-the-spec

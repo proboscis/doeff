@@ -38,6 +38,8 @@
 (import .detached_model [GroupLimit])
 ;; job の environ の要素の型(子の環境変数 1 つ)。
 (import .runtime_env_model [EnvVar])
+;; 暇な時の予算の型(defsystem の展開が service_model の名で引く — GroupLimit と同じ)。
+(import .job_model [IdleBudget])
 
 (val UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として受ける値(coordinator の Service の replicas と同じ — 0 = 取り下げ・1 = 動かす)。
@@ -57,7 +59,8 @@
    frozenset — R4b)・replicas = 望む台数(0 = 取り下げ・1 = 動かす — 宣言し直しが Service に書く値)・readiness = {\"windowSeconds\" n …}
    か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)・peak-mib = 起動の memory の山(MiB)・
    settle-mib = 落ち着いた memory(MiB・山以下 — どちらも必ず宣言する)・single-host = 1 台の worker に縛ってよい訳
-   (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)・filled = environ の名のうち宣言の時に埋める名(defsystem の印
+   (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)・idle-budget = 暇な時の予算(job_model.IdleBudget —
+   規則は job_rules.idle-budget-read。無ければ None。読むのは Service の spec を読む使う側で、置き方と process の形は読まない)・filled = environ の名のうち宣言の時に埋める名(defsystem の印
    (filled) — 既定を持たず、宣言する者が上書きで値を渡す。上書きの後も空なら断るのは宣言する者の確かめ)。"
   (#^ str name)
   (#^ object program)
@@ -70,6 +73,7 @@
   (#^ int peak-mib)
   (#^ int settle-mib)
   (setv #^ (| str None) single-host None)
+  (setv #^ (| IdleBudget None) idle-budget None)
   (setv #^ (get frozenset str) filled (frozenset)))
 
 
@@ -109,6 +113,7 @@
   #^ (get NotRequired str) update
   #^ (get NotRequired (get dict #(str object))) runtimeEnv
   #^ (get NotRequired str) singleHost
+  #^ (get NotRequired (get dict #(str (| int float)))) idleBudget
   #^ (get NotRequired str) content)
 
 

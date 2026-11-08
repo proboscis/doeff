@@ -115,6 +115,11 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   欄の無い宣言を 400 で断ります。process の形ではないので、数を直して宣言し直しても job は入れ替わりません。
 - `:single-host "<訳>"` は job を 1 台の worker に縛ってよい訳で、任意です(空の文字列は断ります)。書いた job は N+1 の照らしの
   「置ける worker が 2 台以上」を当てません。宣言の行に `singleHost` で載ります。
+- `:idle-budget {:cpu-cores <数> :pss-mb <整数> :from-cpu-cores <数> :from-pss-mb <整数>}` は job の暇な時の予算で、任意です。
+  `cpu-cores`・`pss-mb` は暇な時の上限(core の数・MB)、`from-*` は上限を出した元の暇な時の値です(0 以上・元の値は上限以下 —
+  外れれば展開の時・構成子・coordinator の宣言の読みが同じ規則 `job_rules.idle-budget-read` で断ります)。宣言の行と Service の spec に
+  `idleBudget`(`{"cpuCores" … "pssMB" … "fromCpuCores" … "fromPssMB" …}`)で載り、書かない job には鍵がありません。
+  doeff-cluster は運んで保存するだけで、置き方にも process の形(指紋)にも入りません — 読むのは Service の spec を読む使う側です。
 - `:reads` / `:writes` は job が外の置き場から読む・書く物の文字列の集合で、任意です(綴りは `<置き場>:<名>` — `:` がちょうど 1 つ・
   両側が空でない。空の集合 `#{}` は「読み書きしない」の宣言)。静的な記述 `__doeff_system__` の job にだけ載り、Job と宣言の行には
   載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。

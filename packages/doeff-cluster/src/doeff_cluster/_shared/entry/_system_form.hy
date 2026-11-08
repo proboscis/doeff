@@ -26,6 +26,10 @@
 ;;;   (置き方の照らしの材料 — process の形ではないので、数を直しても job は入れ替わらない)。
 ;;;   :single-host は job を 1 台の worker に縛ってよい訳の空でない文字列の literal で、任意の欄 — 書いた job は置ける worker が 2 台以上を
 ;;;   求める照らし(failover_policy の規則 1)の外になる。静的な記述と宣言の行に singleHost で載る(書かない job には鍵が無い)。
+;;;   :idle-budget は job の暇な時の予算の literal の map `{:cpu-cores <数> :pss-mb <整数> :from-cpu-cores <数> :from-pss-mb <整数>}` で、任意の欄
+;;;   — cpu-cores・pss-mb = 暇な時の上限(core の数・MB)、from-* = 上限を出した元の暇な時の値(上限以下)。規則は job_rules.idle-budget-refusal
+;;;   (coordinator の宣言の読みと同じ)。静的な記述と宣言の行に idleBudget(鍵 cpuCores・pssMB・fromCpuCores・fromPssMB)で載る(書かない
+;;;   job には鍵が無い)。doeff-cluster は運ぶだけで、読むのは Service の spec を読む使う側(置き方と process の形は読まない)。
 ;;;   :reads / :writes は job が外の置き場(記録の service など)から読む・書く物の集合で、任意の欄 — 文字列の literal の集合で、綴りは
 ;;;   <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。置き場の名の集合は使い手の repo の語彙なので doeff は持たない。静的な記述の
 ;;;   job の dict にだけ載り、job の値(doeff-cluster の Job)と宣言の行には載らない(実行時に読む物が無い)。使い手の系の job に欄を
@@ -47,6 +51,8 @@
 ;; :update の綴りと job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)は、
 ;; 系の型の module が持つ(展開の時の検めと、構成子 service_build.job の実行時の検めが 1 つの定義を読む)。
 (import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES])
+;; 暇な時の予算の規則(展開の時の検めと、構成子 service_build.job・coordinator の宣言の読みが 1 つの定義を読む)。
+(import doeff_cluster._shared.core.job_rules [idle-budget-refusal])
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 
@@ -58,13 +64,15 @@
 (setv DEFSYSTEM-BUILD #("doeff_cluster._shared.entry.service_build" "_doeff_cluster_service_build"))
 (setv DEFSYSTEM-IMPORTS #(DEFSYSTEM-MODEL DEFSYSTEM-BUILD))
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12)。
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host" ":idle-budget"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12)。
 (setv SYSTEM-KEYS #(":task-limits"))
 ;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ —
 ;; 誤りの文に並べる順を持つので写しを持ち、規則との一致は tests/test_group_limits_owner.hy が検める)。
 (setv LIMIT-KEYS #("scope" "limit" "perPart"))
 (setv LIMIT-SCOPES #("worker" "cluster"))
 (setv CONSTANT-SYMBOLS #("True" "False" "None"))
+;; :idle-budget の map の鍵 → 宣言の行の idleBudget の鍵(job_rules.IDLE-BUDGET-KEYS と同じ並び)。
+(setv IDLE-BUDGET-FIELDS {":cpu-cores" "cpuCores" ":pss-mb" "pssMB" ":from-cpu-cores" "fromCpuCores" ":from-pss-mb" "fromPssMB"})
 ;; :environ の値の印(頭の註): 宣言の時に埋める名 = (filled)・空を「無し」と読む既定 = (empty)。
 (setv FILLED-MARK "filled")
 (setv EMPTY-MARK "empty")
@@ -121,6 +129,31 @@
     (sorted (get marks EMPTY-MARK))))
 
 
+(defn #^ (get dict #(str (| int float))) idle-budget-value [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "job の :idle-budget の map の literal(頭の註)を展開の時に検め、宣言の行の idleBudget の形の dict(cpu は float・pss は int)を返すため。
+   鍵の綴りと literal の型はここで、値の規則(0 以上・元の値は上限以下)は job_rules.idle-budget-refusal で検める。"
+  (when (not (isinstance form Dict))
+    (raise (SyntaxError (.format "{}: :idle-budget は {} の map の literal: {}" where (.join " " IDLE-BUDGET-FIELDS) (hy.repr form)))))
+  (setv pairs (list (zip (cut form None None 2) (cut form 1 None 2)))
+        keys (lfor #(k _) pairs (str k)))
+  (when (not (and (all (gfor #(k _) pairs (isinstance k Keyword))) (= (sorted keys) (sorted IDLE-BUDGET-FIELDS))))
+    (raise (SyntaxError (.format "{}: :idle-budget の鍵は {} をちょうど 1 回ずつ: {}" where (.join " " IDLE-BUDGET-FIELDS) (hy.repr form)))))
+  (setv value {})
+  (for [#(k v) pairs]
+    (setv field (get IDLE-BUDGET-FIELDS (str k)))
+    (if (in field #("pssMB" "fromPssMB"))
+        (if (isinstance v Integer)
+            (setv (get value field) (int v))
+            (raise (SyntaxError (.format "{}: :idle-budget の {} は整数の literal(MB): {}" where (str k) (hy.repr v)))))
+        (if (isinstance v #(Integer Float))
+            (setv (get value field) (float v))
+            (raise (SyntaxError (.format "{}: :idle-budget の {} は数の literal(core の数): {}" where (str k) (hy.repr v)))))))
+  (setv problem (idle-budget-refusal value))
+  (when (is-not problem None)
+    (raise (SyntaxError (.format "{}: :idle-budget: {}" where problem))))
+  value)
+
+
 (defn #^ (| str int float) static-value [#^ Object form]  ; defk にできない: macro の展開の時に呼ぶ関数
   "literal の form → 静的な記述(__doeff_system__)に載せる Python の値。"
   (cond
@@ -166,6 +199,13 @@
               (raise (SyntaxError (.format "{}: :single-host は 1 台の worker に縛ってよい訳の空でない文字列の literal: {}"
                                            where (hy.repr v)))))
             (setv (get values key) v (get static "singleHost") (str v)))
+      ":idle-budget"
+        (do (setv ceiling (idle-budget-value v where))
+            ;; 構成子 job へは型 IdleBudget(service_model が引き渡す)の値で、静的な記述へは宣言の行と同じ綴りの dict で渡す。
+            (setv (get values key) `(~(in-module DEFSYSTEM-MODEL "IdleBudget")
+                                      :cpu-cores ~(Float (get ceiling "cpuCores")) :pss-mb ~(Integer (get ceiling "pssMB"))
+                                      :from-cpu-cores ~(Float (get ceiling "fromCpuCores")) :from-pss-mb ~(Integer (get ceiling "fromPssMB")))
+                  (get static "idleBudget") ceiling))
       (| ":reads" ":writes" ":serves")
         (setv (get static (cut key 1 None)) (record-names v where key))
       ":needs"

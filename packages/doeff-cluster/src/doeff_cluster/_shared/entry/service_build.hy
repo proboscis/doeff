@@ -11,27 +11,29 @@
 (import doeff [DoExpr run])
 (import doeff_cluster._shared.core.capabilities [capabilities-of])
 (import doeff_cluster._shared.core.service_rules [identity-of describe-identity environ-overlay-refusal])
-(import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal])
+(import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal idle-budget-refusal idle-budget-json])
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal readiness-environ-refusal readiness-from-environ])
 (import doeff_cluster._shared.protocol.program_codec [encode-program])
 (import doeff_cluster._shared.core.remote_rules [program-sha])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvVar])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape Job System Declaration DeclarationRow])
+(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape IdleBudget Job System Declaration DeclarationRow])
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-spec])
 
 
 (deff job [#^ str name #^ object program * #^ CallShape call needs #^ int replicas #^ (| (get dict #(str (| float str))) None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-           #^ (| (get dict #(str str)) None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None] #^ (| (get frozenset str) None) [filled None]]
+           #^ (| (get dict #(str str)) None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None]
+           #^ (| IdleBudget None) [idle-budget None] #^ (| (get frozenset str) None) [filled None]]
   {:pre [(: name str) (: call CallShape) (: needs (| (get frozenset str) (get set str) (get list str) (get tuple #(str ...)) None)) (: replicas int) (: readiness (| (get dict #(str (| float str))) None)) (: update str) (: environ (| (get dict #(str str)) None))
-         (: peak-mib int) (: settle-mib int) (: single-host (| str None)) (: filled (| (get frozenset str) None))]
+         (: peak-mib int) (: settle-mib int) (: single-host (| str None)) (: idle-budget (| IdleBudget None)) (: filled (| (get frozenset str) None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "main" :reads "env"}}
   "job 1 つを検めて作る(defsystem の展開が呼ぶ)。replicas = 望む台数(必ず渡す — 0 = 取り下げ・1 = 動かす)。旧い引数(:env・:config・
    :env-config・:requires)はこの関数に無いので TypeError。readiness の欄を :environ の名で書いた時(readiness_model の註)は、宣言の
    :environ の既定の値で読んだ形を検める(job の readiness は名のまま持ち、system-declaration が上書きを重ねた値で読み直す)。
    peak-mib・settle-mib = 起動の memory の山と落ち着いた値(MiB — 必ず渡す・既定の値は無い)・single-host = 1 台に縛ってよい訳(無ければ
-   None)。規則は coordinator の宣言の読みと同じ job_rules.memory-refusal・single-host-refusal。
+   None)・idle-budget = 暇な時の予算(無ければ None)。規則は coordinator の宣言の読みと
+   同じ job_rules.memory-refusal・single-host-refusal・idle-budget-refusal(予算は宣言の行の綴りで検める)。
    filled = :environ の名のうち宣言の時に埋める名(defsystem の印 (filled) — 既定の値は空の文字列で渡る)。"
   (when (not (isinstance program DoExpr))
     (raise (TypeError (.format "job {}: Program の値(defk の関数を呼んだ結果)を渡す: {!r}" name program))))
@@ -42,6 +44,9 @@
   (setv memory-problem (or (memory-refusal peak-mib settle-mib) (single-host-refusal single-host)))
   (when (is-not memory-problem None)
     (raise (ValueError (.format "job {} の :peak-mib・:settle-mib・:single-host: {}" name memory-problem))))
+  (setv idle-problem (if (is idle-budget None) None (idle-budget-refusal (idle-budget-json idle-budget))))
+  (when (is-not idle-problem None)
+    (raise (ValueError (.format "job {} の :idle-budget: {}" name idle-problem))))
   (setv caps (capabilities-of (if (is needs None) [] needs) (.format "job {} の :needs" name)))
   (when (not caps)
     (raise (ValueError (.format "job {} の :needs が空 — 要る能力の名を 1 つ以上書く(ADR-DOE-CLUSTER-001 R4b)" name))))
@@ -66,7 +71,8 @@
     (raise (ValueError (.format "job {} の :readiness: {}" name refusal))))
   (identity-of call (.format "job {}" name))
   (Job :name name :program program :call call :needs (frozenset caps) :replicas replicas :readiness readiness :update update
-       :environ env-vars :peak-mib peak-mib :settle-mib settle-mib :single-host single-host :filled filled-given))
+       :environ env-vars :peak-mib peak-mib :settle-mib settle-mib :single-host single-host
+       :idle-budget idle-budget :filled filled-given))
 
 
 (deff system-of [#^ str name #^ (get tuple #(Job ...)) jobs * #^ (get tuple #(GroupLimit ...)) [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
@@ -154,6 +160,9 @@
     ;; 在る時だけの鍵(行の型 DeclarationRow の NotRequired)。
     (when (is-not j.single-host None)
       (setv (get row "singleHost") j.single-host))
+    ;; 暇な時の予算も memory と同じく置き方・process の形ではない(spec-of-declaration は読まず、指紋 spec-hash に入らない)。
+    (when (is-not j.idle-budget None)
+      (setv (get row "idleBudget") (idle-budget-json j.idle-budget)))
     (setv readiness (if j.readiness (readiness-from-environ j.readiness job-environ) None))
     (when (isinstance readiness dict)
       (setv (get row "readiness") readiness))
