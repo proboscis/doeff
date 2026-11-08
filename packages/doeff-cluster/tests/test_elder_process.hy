@@ -113,3 +113,37 @@
   (assert (= (get after "lastExitAtMs") exited-at) after)
   (assert (= (get after "process" "lastExitAtMs") exited-at) after)
   (assert (> exited-at known) #(known exited-at)))
+
+
+(defn #^ (| bool None) elder-mark [#^ dict reply]
+  "新しい世代への返事の r の印 elderRuns(印が無ければ None — worker は起こす)。"
+  (.get (next (gfor j (get reply "jobs") :if (= (get j "name") "r") j)) "elderRuns"))
+
+
+(deftest test-the-new-generation-waits-while-the-old-generation-is-still-stopping-the-job
+  ;; 失敗ケース(11-07 06:42 JST の helios): 前の世代が r を止め始めた(stopping — 止めの合図を送り、まだ刈っていない)だけで、新しい世代への
+  ;; 返事から印 elderRuns が外れた。新しい世代は 2 秒後に r を起こし、前の世代の process が持ったままの port の bind で落ちた(前の世代の
+  ;; 刈りはその 12 秒後)。印は、前の世代が r の process を刈り終える(報告から r の行が消えるか、process の無い行になる)まで外さない。
+  (<- #(c old-row waiting) (recreate-job-on-old))
+  (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas")
+  (c.advance 1)
+  (generation-beat c "old" [(| old-row {"phase" "stopping"})])
+  (assert (elder-mark (generation-beat c "new" [waiting] :overlaps True)) "止めの途中は前の世代が port を持っている")
+  (c.advance 6)
+  (generation-beat c "old" [(| old-row {"phase" "stop-unconfirmed"})])
+  (assert (elder-mark (generation-beat c "new" [waiting] :overlaps True)) "止めを確かめられない間も持っている")
+  (c.advance 6)
+  (generation-beat c "old" [(| old-row {"phase" "stopped" "pid" None "lastExitCode" 0 "lastExitAtMs" (- c.now 500)})])
+  (assert (is (elder-mark (generation-beat c "new" [waiting] :overlaps True)) None) "刈り終えたら起こす"))
+
+
+(deftest test-the-new-generation-waits-out-the-old-generation-self-stop-while-the-old-generation-is-silent
+  ;; 失敗ケース(同じ朝の helios — 両方の世代が coordinator に届かなくなった): 前の世代は途絶の柵(fence)で自分の job を止め始めるが、
+  ;; その間は報告が届かない。沈黙が生死の窓(lease)を越えた所で印を外すと、新しい世代は前の世代の止め(と刈り)より先に起こす。
+  ;; 沈黙した世代が自分で止まり切るまでの上限は移し替えの期限(reassign-after-ms — 条 C4 timing-outlasts-the-self-stop)なので、
+  ;; 印はそれまで外さない。
+  (<- #(c old-row waiting) (recreate-job-on-old))
+  (c.advance (// (+ T.lease-ms T.fence-ms) 1000))
+  (assert (elder-mark (generation-beat c "new" [waiting] :overlaps True)) "柵の後の止めの間は前の世代が port を持ちうる")
+  (c.advance (// T.reassign-after-ms 1000))
+  (assert (is (elder-mark (generation-beat c "new" [waiting] :overlaps True)) None) "自分で止まり切る上限を過ぎたら起こす"))

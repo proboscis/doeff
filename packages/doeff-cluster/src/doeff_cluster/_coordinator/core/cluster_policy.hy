@@ -2411,7 +2411,8 @@
   "純粋: 退いた世代 boot の報告 statuses の後の、退いた世代の走らせている常駐の job の組の列(AL-D2)。この世代の行を、報告の
    running の job の名で置き直す(空なら外す)。数える job は handoff の job、組が overlapped(新しい世代が重なりを名乗った — 名乗りの
    時に overlapped = 真で種を置く・それ以外の報告は前の組の印を引き継ぐ)なら recreate の job も(task は除く)— recreate の job は
-   新しい世代が起こせると報告するまで退いた世代に残す(AL-D2f — heartbeat-reply の印 elder-runs と superseded-reply)。名 name の行の
+   新しい世代が起こせると報告するまで退いた世代に残す(AL-D2f — heartbeat-reply の印 elder-runs と superseded-reply)。recreate の job は
+   止めの途中(stopping・stop-unconfirmed — 前の世代の process がまだ刈られていない)の行も数える(holding-names)。名 name の行の
    うち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。"
   (setv info (.row state.workers name)
         kept (if (is info None) #() info.retired)
@@ -2422,7 +2423,10 @@
         ;; 組を初めて書いた刻(受け渡しの待ちの始まり)も引き継ぐ。欄の前に保存した組は、次の報告の刻から数える。
         since (if (and (is-not prior None) (is-not prior.since-ms None)) prior.since-ms now)
         counted (frozenset (gfor j state.jobs :if (if overlap (not j.spec.once) j.spec.handoff) j.spec.name))
-        jobs (tuple (sorted (& (running-names statuses) counted)))
+        ;; 止めの途中の recreate の job も前の世代が持っている(11-07 06:42 JST の helios — running の行だけを数えると、止めの合図の直後に
+        ;; 新しい世代の印 elder-runs が外れ、前の世代の process が持ったままの port の bind で新しい process が落ちた)。
+        recreated (frozenset (gfor j state.jobs :if (and overlap (not j.spec.once) (not j.spec.handoff)) j.spec.name))
+        jobs (tuple (sorted (| (& (running-names statuses) counted) (& (holding-names statuses) recreated))))
         others (tuple (gfor r state.superseded-runs
                             :if (not (and (= r.worker name) (or (= r.boot boot) (not-in r.boot kept))))
                             r)))
@@ -2573,7 +2577,10 @@
   (<- marked frozenset (keep-marked now state name timing))
   ;; elder = 同じ名の前の世代がまだ動かしている常駐の job(AL-D2f)。その recreate の job には印 elder-runs を付ける — worker は準備と
   ;; 入口の検めだけをして起こさず、揃ったら状態の行を elder-runs にする(superseded-reply が前の世代から外す)。
-  (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.lease-ms) (frozenset)))
+  ;; 黙った前の世代を数える窓は移し替えの期限(reassign-after-ms — 条 C4 timing-outlasts-the-self-stop): 黙った世代は途絶の柵で job を
+  ;; 自分で止め始めるが、刈り終えるまでは process が port を持つ。生死の窓(lease-ms)で外すと、両方の世代が coordinator に届かない
+  ;; 途絶の後に、新しい世代が前の世代の刈りより先に起こす(11-07 06:42 JST の helios)。
+  (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.reassign-after-ms) (frozenset)))
   ;; 前の世代の job をまだ受け取れない間は、worker が Pod の ready の file を書かない(AL-D2k — handover-pending)。
   (val pending (and (is-not boot None) (> now 0) (handover-pending state name boot now timing ready-instances)))
   ;; 退きの保ち(readiness_model の RETIREMENT-HOLD): 入れ替えの job ごとに、期限の内の保ちの持ち手の世代の名を
@@ -2677,8 +2684,8 @@
 (defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]
   ;; defk にできない: coordinator の純粋な判断(heartbeat-reply の内包表記の前の値)が呼ぶ
   "純粋: 名 name の worker の、送り手の世代 boot と違う前の世代がまだ動かしている常駐の job の名(AL-D2f — その世代の最後の報告が
-   window-ms 以内の、新しい世代が重なりを名乗った(overlapped)SupersededRun の行だけ。黙った世代の行は数えない — 前の世代が止まれば
-   今の世代が起こす)。"
+   window-ms 以内の、新しい世代が重なりを名乗った(overlapped)SupersededRun の行だけ。window-ms を越えて黙った世代の行は数えない —
+   前の世代が止まれば今の世代が起こす)。"
   (frozenset (gfor r state.superseded-runs
                    :if (and r.overlapped (= r.worker name) (!= r.boot boot) (< (- now r.seen-ms) window-ms))
                    job r.jobs
@@ -2690,6 +2697,19 @@
    よい job を選ぶため。"
   (frozenset (gfor row statuses
                    :if (= row.phase "running")
+                   (or row.retired-from row.name))))
+
+
+;; 退いた世代の process がまだ刈られていない job の phase: 動いているか、止めの合図を送った後で刈りの前(止めを確かめられない間も含む)。
+(val HOLDING-PHASES #{"running" "stopping" "stop-unconfirmed"})
+
+
+(defn #^ frozenset holding-names [#^ tuple statuses]
+  ;; defk にできない: coordinator の純粋な判断(superseded-runs-after の setv の中 — defn)が呼ぶ
+  "退いた世代の報告のうち、その process がまだ在る(HOLDING-PHASES — 刈りの前の)job の名(入れ替えで退いた process の行は元の名で
+   数える)。前の世代が持っている port や置き場を、新しい世代が起こす process と取り合わせないため(heartbeat-reply の印 elder-runs)。"
+  (frozenset (gfor row statuses
+                   :if (in row.phase HOLDING-PHASES)
                    (or row.retired-from row.name))))
 
 
