@@ -20,7 +20,8 @@ The .pyi are not committed: each package's build (tools/doeff_hy_stub_hook.py, t
 build_stubs (CLI --build), so a .hy change cannot reach main with a stale .pyi (committed .pyi lagged their .hy more than 10 times).
 build_stubs reads the expansion cache (static_cache), whose record already names what an expansion depended on (the .hy, the macros it used and the
 modules they read, the post-processing), so only the .hy whose expansion changed are expanded again; the declarations are rendered from every expansion
-each time, so a change of this file reaches every .pyi. A hand-written .pyi (one without MARK_HEAD at the top) is never overwritten unless --replace is given.
+each time, so a change of this file reaches every .pyi. A hand-written .pyi (one without MARK_HEAD at the top) is never overwritten unless --replace is given;
+the few kept because this tool cannot make their shape are listed in packages/doeff-hy/tests/test_hand_written_stubs.py.
 """
 
 import argparse
@@ -63,7 +64,7 @@ _BUILTIN_TYPES = frozenset(
 #: Type constructors kept in a declaration in their value form (for TypeVar and similar, the assignment form itself is the type declaration).
 _TYPE_MAKERS = frozenset({"TypeVar", "ParamSpec", "TypeVarTuple", "NewType"})
 #: Method decorators kept in a declaration (only those that carry type meaning).
-_METHOD_DECORATORS = frozenset({"staticmethod", "classmethod", "property", "overload", "abstractmethod"})
+_METHOD_DECORATORS = frozenset({"staticmethod", "classmethod", "property", "cached_property", "overload", "abstractmethod"})
 #: Names of the decorator that wraps a defk (`_doeff_do` in the type-checking expansion, and `do` as written by users).
 _DO_DECORATORS = frozenset({"_doeff_do", "do"})
 #: Module-level names that are not exposed on the type surface (module markers, Hy gensyms, macro bookkeeping).
@@ -415,6 +416,8 @@ def _keeps(decorator: ast.expr) -> bool:
             return name in _METHOD_DECORATORS
         case ast.Attribute(attr=("setter" | "getter" | "deleter")):
             return True
+        case ast.Attribute(value=ast.Name(id=("functools" | "typing" | "abc")), attr=name):
+            return name in _METHOD_DECORATORS
         case _:
             return False
 

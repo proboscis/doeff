@@ -559,3 +559,27 @@ def test_a_constant_built_by_a_class_reached_through_its_module_has_that_class_t
     lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, MODULE_CLASS_CONSTANT)).text.splitlines()
     assert "ONE: decimal.Decimal" in lines
     assert "import decimal as decimal" in lines
+
+
+CACHED_PROPERTY = """\
+(import functools)
+(import functools [cached-property])
+
+(defclass Shape []
+  (defn [functools.cached-property] #^ int area [self]
+    1)
+  (defn [cached-property] #^ str name [self]
+    "x"))
+"""
+
+
+def test_a_cached_property_stays_an_attribute(tmp_path: Path) -> None:
+    # Failure case: the tool dropped the cached_property decorator, so RowType.codec of doeff-records (`functools.cached-property`) became a method in the
+    # .pyi and every user's `(.decode X.codec …)` read a bound method -- the hand-written _typed.pyi was kept for that alone.
+    lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, CACHED_PROPERTY)).text.splitlines()
+    assert [line.strip() for line in lines if "cached" in line] == [
+        "from functools import cached_property as cached_property",
+        "@functools.cached_property",
+        "@cached_property",
+    ]
+    assert "import functools as functools" in lines
