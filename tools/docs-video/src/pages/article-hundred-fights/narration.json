@@ -1,4 +1,6 @@
 [
+ {"id": "i1", "text": "This video shows doeff running one battle a hundred times, one task per fight. doeff is algebraic effects for Python."},
+ {"id": "i2", "text": "We look at win_rate, and at scheduled, the handler that runs the tasks. We follow Spawn and Gather."},
  {"id": "s1", "text": "win_rate is a program too. It yields Spawn once per seed, and each Spawn starts a battle as a task."},
  {"id": "s2", "text": "Each task carries its own stack, so the hundred fights do not share a random generator."},
  {"id": "s3", "text": "The tasks take turns on one thread. At each Spawn, scheduled keeps the k of win_rate and runs the new task. No effect of a fight reaches scheduled, so the task runs to its end, and then win_rate goes on."},

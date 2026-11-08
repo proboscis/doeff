@@ -1,5 +1,7 @@
 // The video at the head of Layer 5 of the article "Algebraic effects for Python" (docs/articles/algebraic-effects-in-python.md):
 // win_rate of examples/effects_tour/spire.py running a hundred fights under scheduled, in the order a run has them.
+// It opens still, on its title, the code of win_rate and the run under scheduled, while the narration says what the
+// video shows and which functions it follows.
 // Each Spawn starts a task while scheduled keeps the k of win_rate; no effect of a fight reaches scheduled, so the task
 // runs to its end before win_rate goes on, and Gather finds every fight over. Then the wins of the random bot and of the
 // Monte Carlo bot, and the Played of all hundred fights reaching one damage_stats outside. Every code line on screen is
@@ -153,6 +155,30 @@ const Scheduled: React.FC<{caption: string}> = ({caption}) => (
     <div style={{fontFamily: MONO, fontSize: 22, fontWeight: 700, color: TEST}}>scheduled</div>
     <div style={{fontFamily: SANS, fontSize: 16, color: MUTED, marginTop: 2}}>{caption}</div>
   </div>
+);
+
+// ---- 0. What the video is about, held still: its title, the code of win_rate and the handler it runs under.
+const INTRO_AT = heardBy(0, 'i1') + PAUSE;
+const INTRO_LINES: Lines = [[0, 'This video: one battle a hundred times, one task per fight.'], [INTRO_AT, 'win_rate starts the fights; scheduled runs them. We follow Spawn and Gather.']];
+const INTRO_SECONDS = heardBy(INTRO_AT, 'i2') + HOLD;
+const INTRO_CODE = {x: 90, y: 234, w: 1100, size: 19, line: 32};
+
+const Intro: React.FC = () => (
+  <AbsoluteFill>
+    <Headlines lines={INTRO_LINES} />
+    <div style={{position: 'absolute', left: 0, right: 0, top: 76, textAlign: 'center'}}>
+      <div style={{fontFamily: SANS, fontSize: 46, fontWeight: 700, color: TEXT}}>A hundred fights, one task each</div>
+      <div style={{fontFamily: SANS, fontSize: 21, color: ACCENT, marginTop: 4}}>doeff: algebraic effects for Python</div>
+    </div>
+    <div style={{position: 'absolute', left: INTRO_CODE.x, top: INTRO_CODE.y - 32, fontFamily: SANS, fontSize: 19, fontWeight: 700, color: ACCENT}}>spire.py: win_rate</div>
+    <CodeBlock lines={WIN_RATE_CODE} x={INTRO_CODE.x} y={INTRO_CODE.y} w={INTRO_CODE.w} size={INTRO_CODE.size} line={INTRO_CODE.line} />
+    <div style={{position: 'absolute', left: INTRO_CODE.x, top: 524, fontFamily: SANS, fontSize: 19, fontWeight: 700, color: TEST}}>run under the handler scheduled</div>
+    <div style={{position: 'absolute', left: INTRO_CODE.x, top: 558, fontFamily: MONO, fontSize: 19, color: TEXT, whiteSpace: 'pre'}}>
+      {RANDOM_EXPR.split('scheduled')[0]}
+      <span style={{color: TEST, fontWeight: 700}}>scheduled</span>
+      {RANDOM_EXPR.split('scheduled')[1]}
+    </div>
+  </AbsoluteFill>
 );
 
 // ---- 1, 2. One Spawn per seed, and the stack a task carries.
@@ -453,6 +479,7 @@ const Outside: React.FC = () => {
 };
 
 export const ARTICLE_HUNDRED_FIGHTS = narrate('article-hundred-fights', DURATIONS, NARRATION, [
+  {length: f(INTRO_SECONDS), starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <Intro />},
   {length: f(SPAWN_SECONDS), starts: startsOf(SPAWN_LINES), ids: ['s1', 's2'], node: <Spawning />},
   {length: f(TURN_SECONDS), starts: startsOf(TURN_LINES), ids: ['s3'], node: <Turns />},
   {length: f(GATHER_SECONDS), starts: startsOf(GATHER_LINES), ids: ['s4', 's5'], node: <Gathering />},

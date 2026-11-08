@@ -1,4 +1,6 @@
 [
+ {"id": "i1", "text": "This video shows a doeff handler choosing a move by running battle itself. doeff is algebraic effects for Python."},
+ {"id": "i2", "text": "We look at battle, the card fight, and the handler monte_carlo, as it answers one Choose."},
  {"id": "m1", "text": "The fight pauses at a Choose. The handler holds the rest of the fight as k."},
  {"id": "m2", "text": "To answer, it runs battle itself: the same function a person plays. It needs no model of the game."},
  {"id": "m3", "text": "For each card it can play, and for ending the turn, it plays that card on the state. Then it starts a new battle from that state, three times."},

@@ -1,5 +1,6 @@
 // The video at the head of Layer 4 of the article "Algebraic effects for Python" (docs/articles/algebraic-effects-in-python.md):
-// the Monte Carlo bot of examples/effects_tour/spire.py answering one Choose. The fight that asked stays paused as k
+// the Monte Carlo bot of examples/effects_tour/spire.py answering one Choose. It opens still, on its title and the code of
+// monte_carlo, while the narration says what the video shows and which functions it follows. The fight that asked stays paused as k
 // on the left while the handler, on the right, plays each candidate move and starts a new battle from there three
 // times, each on a stack of its own; k is not touched by those runs. Then it counts the wins and resumes k, once (a k
 // in doeff resumes only one time). The Choose shown is the 2nd one of
@@ -9,7 +10,7 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, Headlines, Lines, lineMid, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, Headlines, Lines, lineMid, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import {Geometry, K, Moving, Ring, Tower} from '../article-opening/ArticleOpening';
@@ -118,6 +119,41 @@ const Parked: React.FC = () => (
     <Pill x={CHOOSE_PARK.x} y={CHOOSE_PARK.y} text="Choose" color={ACCENT} />
     <Pill x={K_PARK.x} y={K_PARK.y} text="k" color={K} />
   </>
+);
+
+// 0. What the video is about, held still: its title and the code of monte_carlo, before the fight starts moving.
+const INTRO_LINES: Lines = [[0, 'This video: a doeff handler that answers by running battle itself.'], [6.0, 'battle is the card fight; monte_carlo is the handler. We follow one Choose.']];
+const INTRO = f(12);
+const MONTE_CARLO_CODE = [
+  'def monte_carlo(playouts: int):',
+  '    @handler',
+  '    def choose(effect: Choose, k):',
+  '        best, best_score = None, -1.0',
+  '        for i in [*affordable(effect), None]:',
+  '            wins = 0',
+  '            for n in range(playouts):',
+  '                s = effect.state if i is None else hit(effect.state, effect.hand[i])[0]',
+  '                ...',
+  '                result, _ = run(quiet_stats(silent(dice(n)(random_bot(battle(s))))))',
+  '                wins += result == "win"',
+  '            ...',
+  '        return (yield Resume(k, best))',
+];
+const INTRO_CODE = {x: 90, y: 214, w: 1100, size: 17, line: 28};
+
+const Intro: React.FC = () => (
+  <AbsoluteFill>
+    <Headlines lines={INTRO_LINES} />
+    <div style={{position: 'absolute', left: 0, right: 0, top: 76, textAlign: 'center'}}>
+      <div style={{fontFamily: SANS, fontSize: 46, fontWeight: 700, color: TEXT}}>The Monte Carlo bot</div>
+      <div style={{fontFamily: SANS, fontSize: 21, color: ACCENT, marginTop: 4}}>doeff: algebraic effects for Python</div>
+    </div>
+    <div style={{position: 'absolute', left: INTRO_CODE.x, top: INTRO_CODE.y - 30, fontFamily: SANS, fontSize: 18, fontWeight: 700, color: TEST}}>spire.py: monte_carlo, the handler</div>
+    <CodeBlock lines={MONTE_CARLO_CODE} x={INTRO_CODE.x} y={INTRO_CODE.y} w={INTRO_CODE.w} size={INTRO_CODE.size} line={INTRO_CODE.line} />
+    <div style={{position: 'absolute', left: INTRO_CODE.x, top: INTRO_CODE.y + 2 * PAD + MONTE_CARLO_CODE.length * INTRO_CODE.line + 18, fontFamily: SANS, fontSize: 18, color: MUTED}}>
+      <span style={{fontFamily: MONO, color: ACCENT, fontWeight: 700}}>battle</span>: the card fight, which pauses at each Choose until a handler answers it
+    </div>
+  </AbsoluteFill>
 );
 
 // 1. The fight pauses at a Choose; the handler holds k and runs battle itself.
@@ -326,6 +362,7 @@ const Cost: React.FC = () => {
 };
 
 export const ARTICLE_MONTE_CARLO = narrate('article-monte-carlo', DURATIONS, NARRATION, [
+  {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <Intro />},
   {length: PAUSE, starts: startsOf(PAUSE_LINES), ids: ['m1', 'm2'], node: <Pause />},
   {length: RUNS, starts: startsOf(RUN_LINES), ids: ['m3', 'm4'], node: <Runs />},
   {length: WINS, starts: startsOf(WIN_LINES), ids: ['m5', 'm6'], node: <Wins />},
