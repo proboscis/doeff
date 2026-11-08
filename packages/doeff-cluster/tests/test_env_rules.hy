@@ -64,18 +64,20 @@
   (val declared {"project" {"lockSha256" "L" "python" "3.12" "repo" "r" "path" "p"} "repos" [{"name" "r" "url" "git@x:r"}]})
   (<- project str (root-project {"env" declared}))
   (assert (= project "git@x:r:p") project)
-  (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "linux-x86_64"))
+  (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "linux-x86_64" "/m"))
   ;; Linux の準備は SCHED_IDLE と nice 10 で起きる(service より必ず後)。
   (assert (= (cut argv 0 9) #("chrt" "--idle" "0" "nice" "-n" "10" "/hy" "-m" "tool")) argv)
   ;; chrt の無い機体(macOS の worker)は nice 10 だけ。
-  (<- mac-argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "darwin-arm64"))
+  (<- mac-argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "darwin-arm64" "/m"))
   (assert (= (cut mac-argv 0 6) #("nice" "-n" "10" "/hy" "-m" "tool")) mac-argv)
   ;; worker の uv の cache の dir(main の --uv-cache)は準備の process へそのまま渡る(state の下に固定しない)。
   (assert (in #("--uv-cache" "/uc") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
   ;; 世代ごとの state と、世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)は別の引数で渡る。
   (assert (in #("--state" "/s") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
   (assert (in #("--shared" "/shared") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
-  (assert (= (cut argv -2 None) #("--progress" "/p")) argv))
+  (assert (in #("--progress" "/p") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
+  ;; 組みの間の層の読みの file(memory.peak の無い kernel の組みの山)も渡る。
+  (assert (= (cut argv -2 None) #("--memory" "/m")) argv))
 
 
 (import json)

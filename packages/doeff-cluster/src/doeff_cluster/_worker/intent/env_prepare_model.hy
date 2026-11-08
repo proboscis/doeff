@@ -30,7 +30,9 @@
   "root 1 つの準備の要求。root = 最終の path(tmp から rename しない — venv が絶対 path を持つので)・known = 完成済みの root・
    min-free-bytes = 準備を始めてよい空きの下限・launched-ms = 準備の process を起こした刻(epoch ミリ秒 — 入口が要求の JSON の
    mtime から読む・None = 読めない。起こしてから最初の処理ステージまでの秒を印に載せるため・#3676)・compile-jobs = bytecode を焼く
-   道具の並べる数(CompileTrees の jobs — recreate の job の旧い process が動いている間の準備だけ値を持つ・None = 道具の既定・2026-10-08)。"
+   道具の並べる数(CompileTrees の jobs — recreate の job の旧い process が動いている間の準備だけ値を持つ・None = 道具の既定・2026-10-08)・
+   memory-file = worker が組みの間の層の読みを置く file(入口が --memory から添える・None = 渡されない — memory.peak の無い kernel の
+   組みの山の元・ReadLayerSample)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -38,7 +40,8 @@
   (#^ (| int None) compile-jobs)
   (setv #^ tuple known #())
   (setv #^ int min-free-bytes 0)
-  (setv #^ (| int None) launched-ms None))
+  (setv #^ (| int None) launched-ms None)
+  (setv #^ (| str None) memory-file None))
 
 
 (defrecord StagePart
@@ -257,6 +260,12 @@
   "worker の container の cgroup(v2)の memory の file 1 つ(name = memory.current か memory.peak)の値(byte)を読む(組みの山を測る — #3748)。
    答え = int か None(cgroup v1・file が無い・数でない)。"
   (#^ str name))
+
+
+(defclass [(dataclass :frozen True)] ReadLayerSample [EffectBase]
+  "worker が組みの間に読んだ組みの置かれる層の回収できない使い(path = 要求の memory-file — worker が拍ごとに置き換えで書く)を読む
+   (memory.peak の無い kernel の組みの山)。答え = env_upkeep の LayerSample か None(file が無い・読めない・形が違う)。"
+  (#^ str path))
 
 
 (defclass [(dataclass :frozen True)] ReadVolume [EffectBase]

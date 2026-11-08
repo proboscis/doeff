@@ -20,7 +20,7 @@
 (import doeff [Program with-handlers])
 (import doeff_core_effects [os-file-handler])
 (import doeff_cluster._worker.protocol.env_translation [editable-dirs hy-dist-version])
-(import doeff_core_effects [ListDirectory WriteText RemoveTree])
+(import doeff_core_effects [ListDirectory WriteText RemoveTree MakeDirectory])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
@@ -28,7 +28,7 @@
         doeff_cluster._shared.intent.runtime_env_model [ToolRequirement EnvFailure EnvFailureKind])
 (import doeff_cluster [env-key dependency-key runtime-env->json runtime-env-of-json]
         doeff_cluster._shared.core.runtime_env_rules [repo-source-material key-material])
-(import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue])
+(import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue LayerSample layer-sample->json])
 (import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]
                                                                              doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster [ENV-MARKER])
 (import doeff_cluster._sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
@@ -226,11 +226,56 @@
 
 (deftest test-the-build-memory-is-unknown-when-the-peak-did-not-move
   ;; container の前の山の方が高く、準備の間に memory.peak が上がらなかった時は測れなかった(None)— 前の山を組みの山と読まない。
-  (<- moved (| int None) (build-memory-of 100 500 900))
+  (<- moved (| int None) (build-memory-of 100 500 900 None))
   (assert (= moved 800) moved)
-  (<- still (| int None) (build-memory-of 100 900 900))
+  (<- still (| int None) (build-memory-of 100 900 900 None))
   (assert (is still None) still)
-  (<- unread (| int None) (build-memory-of None 900 950))
+  (<- unread (| int None) (build-memory-of None 900 950 None))
+  (assert (is unread None) unread)
+  ;; memory.peak の在る kernel は、worker の層の読みが在っても今のまま container の memory.peak で読む。
+  (<- peak-kernel (| int None) (build-memory-of 100 900 900 (LayerSample :base 0 :peak 400)))
+  (assert (is peak-kernel None) peak-kernel))
+
+
+;; 失敗ケース(2026-11-08 の k3s-0〜3 — kernel 5.15 には memory.peak が無い): 組みの山を一度も測れず、完成の印の buildMemoryBytes は
+;; k3s-1 の root 10 個で全部 null、先の組みの見積もりは毎回既定の 512 MiB だった。memory.peak の読めない kernel では、worker が組みの間に
+;; 拍ごとに読んだ組みの置かれる層の回収できない使いの最大 − 起こす前の読みを組みの山と読む。
+(deftest test-the-build-memory-on-a-kernel-without-memory-peak-is-the-rise-of-the-sampled-layer
+  (<- rose (| int None) (build-memory-of None None None (LayerSample :base (* 20 1024 1024) :peak (* 470 1024 1024))))
+  (assert (= rose (* 450 1024 1024)) rose)
+  (<- flat (| int None) (build-memory-of None None None (LayerSample :base (* 20 1024 1024) :peak (* 20 1024 1024))))
+  (assert (is flat None) flat)
+  (<- unsampled (| int None) (build-memory-of None None None None))
+  (assert (is unsampled None) unsampled))
+
+
+(val SAMPLE-FILE "/state/env-requests/sampled.memory")
+
+
+(defk marked-build-memory-with-sample [sample]
+  {:pre [(: sample (| LayerSample None))] :post [(: % (| int None))]}
+  "worker が層の読みの file を置いた(sample — None なら置かない)台で冷たい準備を 1 回して、印の buildMemoryBytes を返すため。"
+  (when (is-not sample None)
+    (<- (MakeDirectory "/state/env-requests"))
+    (<- body dict (layer-sample->json sample))
+    (<- (WriteText SAMPLE-FILE (json.dumps body))))
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- key str (env-key env PLATFORM))
+  (<- ready (prepare-env (PrepareRequest :env env :key key :platform PLATFORM :root (.format "/state/roots/{}" key)
+                                         :compile-jobs None :min-free-bytes 1024 :memory-file SAMPLE-FILE)))
+  (assert (isinstance ready EnvReady) ready)
+  (<- files dict (files-under ready.root))
+  (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
+  (get marker "buildMemoryBytes"))
+
+
+(deftest test-the-ready-marker-carries-the-sampled-build-memory-where-memory-peak-is-missing
+  ;; memory.peak の file の無い台(base-world — kernel 5.15 と同じ)で、worker が層の読み(起こす前 20 MiB・最大 470 MiB)を置いた: 印の
+  ;; buildMemoryBytes = 450 MiB。file が無い(層の無い機体)は null。反例 = 層の読みを読まない形は 1 本目が null で赤。
+  (<- base EnvWorld (base-world))
+  (<- measured (| int None) (run-for-value base (marked-build-memory-with-sample (LayerSample :base (* 20 1024 1024) :peak (* 470 1024 1024)))))
+  (assert (= measured (* 450 1024 1024)) measured)
+  (<- unread (| int None) (run-for-value base (marked-build-memory-with-sample None)))
   (assert (is unread None) unread))
 
 

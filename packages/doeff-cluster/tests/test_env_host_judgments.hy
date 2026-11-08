@@ -800,9 +800,10 @@
   (WarmRun :seen seen :launches (len runs.launches) :lines notes.lines))
 
 
-(defn layer-files [current limit inactive]  ; defk にできない: 検の値を組むだけの素の関数
-  "cgroup の層の memory の file の中身(byte の数から)。"
-  {"memory.current" (str current) "memory.max" (str limit) "memory.stat" (.format "anon 1\ninactive_file {}\nfile {}" inactive inactive)})
+(defn layer-files [current limit file [slab 0]]  ; defk にできない: 検の値を組むだけの素の関数
+  "cgroup の層の memory の file の中身(byte の数から): file = page cache(全部 inactive に置く)・slab = 回収できる slab。"
+  {"memory.current" (str current) "memory.max" (str limit)
+   "memory.stat" (.format "anon 1\ninactive_file {}\nfile {}\nslab_reclaimable {}" file file slab)})
 
 
 (deftest test-a-warm-build-is-judged-by-the-layer-it-runs-in-not-by-the-whole-container [tmp-path]
@@ -816,7 +817,7 @@
 
 
 (deftest test-a-warm-build-is-refused-when-the-layer-cannot-hold-it [tmp-path]
-  ;; 層の working set 1 GiB(動く組みか task)+ 山 1 GiB > 層の memory.max 1.5 GiB: 断る。log の行は層の読み(page cache 200 MiB を除く)。
+  ;; 層の回収できない使い 1 GiB(動く組みか task)+ 山 1 GiB > 層の memory.max 1.5 GiB: 断る。log の行は層の読み(page cache 200 MiB を除く)。
   (<- run WarmRun (layer-room tmp-path (layer-files (+ GIB (* 200 MIB)) (+ GIB (* 512 MIB)) (* 200 MIB)) GIB))
   (<- kind (| str None) (refused-kind run.seen))
   (assert (= kind EnvFailureKind.NO-MEMORY-ROOM.value) run.seen)
@@ -824,6 +825,32 @@
   (assert (= (lfor #(name fields) run.lines #(name (get fields "memory_current") (get fields "memory_max") (get fields "peak_bytes")))
              [#(WARM-REFUSED-LOG GIB (+ GIB (* 512 MIB)) GIB)])
           run.lines))
+
+
+(val MB 1000000)
+
+
+(deftest test-a-layer-holding-only-reclaimable-leftovers-admits-a-build-and-real-use-is-refused [tmp-path]
+  ;; 失敗ケース(2026-11-08 の k3s-1 の準備の層 640M — process 0・anon 0): memory.current 234.8 MB = file 127.2 MB(active 64.9・inactive
+  ;; 62.2)+ slab_reclaimable 107.6 MB。memory.current − inactive_file で数えると 172.5 MB > 上限の 4 分の 1(160 MiB)で、見積もり
+  ;; 512 MiB(上限 × 0.75 = 480 MiB で切る)と足して上限を越え、名残だけで先の組みを永く断った。page cache と回収できる slab は、組みが
+  ;; 要る時に kernel が回収するので数えない — 通す。回収できない使い(anon など)が上限の 4 分の 1 を越える層は今までどおり断る。
+  (val limit (* 640 MIB))
+  (val stat (.format "anon 0\nfile {}\nactive_file {}\ninactive_file {}\nslab_reclaimable {}\nslab_unreclaimable 0"
+                     (int (* 127.2 MB)) (int (* 64.9 MB)) (int (* 62.2 MB)) (int (* 107.6 MB))))
+  (val leftovers {"memory.current" (str (int (* 234.8 MB))) "memory.max" (str limit) "memory.stat" stat})
+  (<- idle WarmRun (layer-room (/ tmp-path "idle") leftovers DEFAULT-BUILD-MEMORY-BYTES))
+  (<- idle-kind (| str None) (refused-kind idle.seen))
+  (assert (is idle-kind None) idle.seen)
+  (assert (= idle.launches 1) idle.launches)
+  ;; 同じ名残に anon 200 MiB(上限の 4 分の 1 = 160 MiB を越える)を足した層: 200 MiB + 480 MiB > 640 MiB で断る。
+  (val anon (* 200 MIB))
+  (val busy {"memory.current" (str (+ (int (* 234.8 MB)) anon)) "memory.max" (str limit) "memory.stat" (.replace stat "anon 0" (.format "anon {}" anon))})
+  (<- used WarmRun (layer-room (/ tmp-path "busy") busy DEFAULT-BUILD-MEMORY-BYTES))
+  (<- used-kind (| str None) (refused-kind used.seen))
+  (assert (= used-kind EnvFailureKind.NO-MEMORY-ROOM.value) used.seen)
+  (assert (= used.launches 0) used.launches)
+  (assert (= (lfor #(name fields) used.lines #(name (get fields "memory_current"))) [#(WARM-REFUSED-LOG anon)]) used.lines))
 
 
 (deftest test-an-idle-layer-admits-a-build-whose-estimate-is-above-the-layer-limit [tmp-path]
@@ -859,6 +886,58 @@
   (<- kind (| str None) (refused-kind run.seen))
   (assert (= kind EnvFailureKind.NO-MEMORY-ROOM.value) run.seen)
   (assert (= run.launches 0) run.launches))
+
+
+(defk write-layer [layer held]
+  {:pre [(: layer Path) (: held int)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "組みの置かれる層の memory の file を、回収できない使い held と page cache 100 MiB の読みに置くため(準備の間の層の動きの代わり)。"
+  (.mkdir layer :parents True :exist-ok True)
+  (for [#(name text) (.items (layer-files (+ held (* 100 MIB)) (* 640 MIB) (* 100 MIB)))]
+    (.write-text (/ layer name) (+ text "\n")))
+  None)
+
+
+(defk sampled-while-running [runs layer key text]
+  {:pre [(: runs ToolRuns) (: layer Path) (: key str) (: text str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "回収できない使い 20 MiB の層で job の準備を起こし、走っている間の拍で層を 300 → 470 → 100 MiB と動かして観測し、終わらせてからもう
+   1 回観測するため。答え = #(準備の道具に渡した memory の file の path 終わった後の観測)。"
+  (<- (write-layer layer (* 20 MIB)))
+  (<- (PrepareEnv key text None))
+  (for [held [(* 300 MIB) (* 470 MIB) (* 100 MIB)]]
+    (<- (write-layer layer held))
+    (<- (ObserveEnvs)))
+  (val argv (get runs.argvs 0))
+  (val memory (get argv (+ (.index argv "--memory") 1)))
+  (setv runs.released True)
+  (<- after tuple (ObserveEnvs))
+  #(memory after))
+
+
+(deftest test-the-host-samples-the-layer-of-a-running-preparation-for-its-build-peak [tmp-path]
+  ;; 失敗ケース(2026-11-08 の k3s-0〜3 — kernel 5.15 に memory.peak が無い): 組みの山を測る物が無く、完成の印の buildMemoryBytes が全部 null
+  ;; だった。worker は準備を起こす前と、走っている間の拍ごとに組みの置かれる層の回収できない使いを読み、起こす前の読みと最大を準備の
+  ;; process へ渡す file に書く(最大は戻らない — 100 MiB へ下がった拍の後も 470 MiB)。層の無い機体は file を書かない。
+  (<- env RuntimeEnv (declared 1))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (val layer (/ tmp-path "cgroup" "prepare"))
+  (val runs (ToolRuns))
+  (<- base EnvSettings (settings-at (/ tmp-path "layer")))
+  (val settings (replace base :prepare-layer-dir (str layer)))
+  (<- seen tuple (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                (env-host settings)]
+                  (sampled-while-running runs layer key text)))
+  (setv #(memory after) seen)
+  (assert (= (json.loads (.read-text (Path memory))) {"baseBytes" (* 20 MIB) "peakBytes" (* 470 MIB)}) memory)
+  (<- ready (| CodeView None) (view-of after key))
+  (assert (and (is-not ready None) (= ready.state CodeState.READY)) ready)
+  (val bare-runs (ToolRuns))
+  (<- bare EnvSettings (settings-at (/ tmp-path "bare")))
+  (<- bare-seen tuple (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool bare-runs)
+                                     (env-host bare)]
+                       (sampled-while-running bare-runs (/ tmp-path "unused") key text)))
+  (val bare-memory (get bare-seen 0))
+  (assert (not (.exists (Path bare-memory))) bare-memory))
 
 
 (deftest test-the-prepare-layer-wins-over-the-jobs-layer-and-no-layer-means-the-container []

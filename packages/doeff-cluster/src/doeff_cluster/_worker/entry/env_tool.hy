@@ -60,15 +60,17 @@
   (.add-argument parser "--code-prepare" :required True)
   (.add-argument parser "--uv" :default "uv")
   (.add-argument parser "--progress" :default "" :help "処理ステージの進みの印の file(worker が停滞を見分ける)")
+  (.add-argument parser "--memory" :default "" :help "worker が組みの間の層の読みを置く file(memory.peak の無い kernel の組みの山)")
   (setv args (.parse-args parser))
   ;; 渡された file は本物の file の答え手(os-file-handler)の下で読む。
   (setv keys (if args.repo-keys (run (with-handlers [os-file-handler] (json-file args.repo-keys))) {}))
   (setv settings {"runtime-env.state" args.state "runtime-env.shared" args.shared "runtime-env.uv-cache" args.uv-cache "runtime-env.repo-keys" keys
                   "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
                   "runtime-env.progress" args.progress "runtime-env.notes" "/dev/stderr"})
-  ;; 要求の JSON を書いた刻を準備の起こしの刻として要求に添える(印の startupSeconds — #3676)。
+  ;; 要求の JSON を書いた刻を準備の起こしの刻として要求に添える(印の startupSeconds — #3676)。worker が層の読みを置く file も添える。
   (setv request (replace (run (request-of-json (run (with-handlers [os-file-handler] (json-file args.request)))))
-                         :launched-ms (run (with-handlers [os-file-handler] (requested-ms args.request)))))
+                         :launched-ms (run (with-handlers [os-file-handler] (requested-ms args.request)))
+                         :memory-file (or args.memory None)))
   (run (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                       (prepared-to-file request args.result)))
   None)

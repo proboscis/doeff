@@ -29,8 +29,9 @@
 (val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import json)
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
-(import doeff_cluster._worker.core.eviction_rules [stat-bytes working-set])
+(import doeff_cluster._worker.core.eviction_rules [stat-bytes])
 
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
@@ -249,11 +250,19 @@
 
 
 (defrecord LayerMemoryUse
-  "組みの process が置かれる cgroup の層の memory の読み: working = 層の working set(memory.current − memory.stat の inactive_file — 回収できる
-   page cache を数えない)・limit = 層の memory.max(byte — 機体の memory の見張りが掛け直した今の値)。"
+  "組みの process が置かれる cgroup の層の memory の読み: unreclaimable = 層の回収できない使い(unreclaimable-of — memory.current から
+   page cache と回収できる slab を除いた分)・limit = 層の memory.max(byte — 機体の memory の見張りが掛け直した今の値)。"
   {:tags {:context "worker" :role "type"}}
-  (#^ int working)
+  (#^ int unreclaimable)
   (#^ int limit))
+
+
+(defrecord LayerSample
+  "組みの間に worker が読んだ層の回収できない使い(byte — 準備の process が完成の印の組みの山に読む・memory.peak の無い kernel のため):
+   base = 準備を起こす前の読み・peak = 準備の間の読みの最大。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int base)
+  (#^ int peak))
 
 
 (defrecord MemoryUnread
@@ -302,11 +311,53 @@
   (when (or (isinstance use MemoryUnread) (is stat None))
     (return (if (isinstance use MemoryUnread) use (MemoryUnread :reason "memory.stat が読めない(file が無い)"))))
   (try
-    (<- inactive int (stat-bytes stat "inactive_file"))
+    (<- held int (unreclaimable-of use.current stat))
     (except [error ValueError]
       (return (MemoryUnread :reason (str error)))))
-  (<- working int (working-set use.current inactive))
-  (LayerMemoryUse :working working :limit use.limit))
+  (LayerMemoryUse :unreclaimable held :limit use.limit))
+
+
+(defk unreclaimable-of [current stat]
+  {:pre [(: current int) (: stat str)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
+  "cgroup の層の回収できない使い(byte)を、memory.current と memory.stat の中身から求めるため: memory.current − file − slab_reclaimable
+   (anon・shmem・回収できない slab・kernel の stack と表 — 負は 0)。file(active も inactive も)と slab_reclaimable(組みが触れた多数の
+   小さな file の dentry と inode)は、層の memory.max の下で組みが memory を要る時に kernel が回収する。memory.current − inactive_file で
+   数えると、process 0・anon 0 の層にも組みの名残の active_file と slab が使いとして残り(2026-11-08 の k3s-1 の準備の層 640M: memory.current
+   234.8 MB・file 127.2 MB・slab_reclaimable 107.6 MB で 172.5 MB)、名残の量は触れた file の数で決まって層の大きさと関わらない。行が無い・
+   数でないなら ValueError。"
+  (<- file int (stat-bytes stat "file"))
+  (<- slab int (stat-bytes stat "slab_reclaimable"))
+  (max 0 (- current file slab)))
+
+
+(defk layer-sample->json [sample]
+  {:pre [(: sample LayerSample)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "worker が準備の process へ渡す層の読みの JSON(準備の要求の dir の <キー>.memory — 書くのは worker・読むのは準備の process)。"
+  {"baseBytes" sample.base "peakBytes" sample.peak})
+
+
+(defk layer-sample-of-text [text]
+  {:pre [(: text (| str None))] :post [(: % (| LayerSample None))] :tags {:context "worker" :role "judgment"}}
+  "layer-sample->json の書いた中身(読めなければ None)を読みに戻すため。読めない・形の違う中身は None(組みの山を測れなかった側)。"
+  (when (is text None)
+    (return None))
+  (try
+    (val data (json.loads text))
+    (except [json.JSONDecodeError]
+      (return None)))
+  (match data
+    {"baseBytes" (int base) "peakBytes" (int peak)} :if (and (not (isinstance base bool)) (not (isinstance peak bool)) (>= base 0) (>= peak 0))
+      (LayerSample :base base :peak peak)
+    _ None))
+
+
+(defk sampled-layer [sample now]
+  {:pre [(: sample (| LayerSample None)) (: now (| int None))] :post [(: % (| LayerSample None))] :tags {:context "worker" :role "judgment"}}
+  "準備の間の層の読み 1 つ now(読めなければ None)を、前の読み sample の最大へ足すため。読めない回は前のまま。前が無ければ(起こす前の
+   読みが無い)測らない — 準備の間の最大だけでは、組みが足した量にならない。"
+  (match #(sample now)
+    #((LayerSample :base base :peak peak) (int)) (LayerSample :base base :peak (max peak now))
+    _ sample))
 
 
 (defk prepare-layer-dir [cgroup-root prepare jobs]
@@ -353,14 +404,16 @@
    始めてよければ None。順は disk の空き → roots の上限 → memory:
      no-disk-room    空き < 空きの最低 + root 1 つの見積もり
      over-roots-cap  roots の合計 + root 1 つの見積もり − 掃除で空けられる分 > 上限(まだ数えていなければ判じない)
-     no-memory-room  組みの置かれる層が読める時: 層の working set + 組みの山の見積もり(層の上限 × MEMORY-ROOM-RATIO を上限に)
-                     > 層の memory.max。層の上限は組みの子だけを抑えるので(常駐の job と worker は別の層で守る)、層の外の使いでは断らない —
-                     準備が同じ層で組むのに断ると宣言の後に待ちが移るだけになる。見積もりを層の上限の 4 分の 3 で切るので、使いが上限の 4 分の 1 の
-                     内の層(組みの名残の page cache と小さな process だけ)はいつも通す(組みは層の上限の内で走る)。切る訳: 見積もりは準備の間の
-                     層の memory.peak の上がりで、同じ間に層で起きた待ちの子や別の組みを含む。memory.peak は層の始まりからの最大で戻らないので、
-                     それを越えない組みは印を残さず(None)、含みの大きい値が project の最新の実測として残り続ける(2026-11-05 の eos: 層 1.5 GiB に
-                     見積もり 1.59 GB が残り、層の working set 48 MB でも全部の先の組みを断った)。機体の見張りが層の上限を使いの下まで下げた時と、
-                     ほかの組みや待ちの子が層の 4 分の 1 を越えて使う時は断る。
+     no-memory-room  組みの置かれる層が読める時: 層の回収できない使い(unreclaimable-of)+ 組みの山の見積もり(層の上限 ×
+                     MEMORY-ROOM-RATIO を上限に)> 層の memory.max。層の上限は組みの子だけを抑えるので(常駐の job と worker は別の層で守る)、
+                     層の外の使いでは断らない — 準備が同じ層で組むのに断ると宣言の後に待ちが移るだけになる。page cache と回収できる slab は
+                     使いに数えない: 層の memory.max の下で組みが要る時に kernel が回収するので、process の無い層に残った組みの名残(量は触れた
+                     file の数で決まり、層の大きさと関わらない)では断らない。見積もりを層の上限の 4 分の 3 で切るので、回収できない使いが上限の
+                     4 分の 1 の内の層はいつも通す(組みは層の上限の内で走る)。切る訳: memory.peak の在る kernel の見積もりは準備の間の container の
+                     memory.peak の上がりで、同じ間に起きた待ちの子や別の組みを含む。memory.peak は始まりからの最大で戻らないので、それを越えない
+                     組みは印を残さず(None)、含みの大きい値が project の最新の実測として残り続ける(2026-11-05 の eos: 層 1.5 GiB に見積もり
+                     1.59 GB が残り、層の使い 48 MB でも全部の先の組みを断った)。機体の見張りが層の上限を使いの下まで下げた時と、ほかの組みや
+                     待ちの子が層の 4 分の 1 を越えて回収できない memory を持つ時は断る。
                      層が無い時: memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO。memory を測れなければ判じない(呼び手が
                      測っていない印を立てる)"
   (val need-free (+ room.min-free room.root-bytes))
@@ -374,11 +427,11 @@
       (EnvFailure :kind EnvFailureKind.OVER-ROOTS-CAP :retryable False
                   :detail (.format "先の組みを断った: roots の合計 {} byte + root 1 つの見積もり {} byte − 掃除で空けられる {} byte > 上限 {} byte"
                                    total extra freed cap))
-    (WarmRoom :memory (LayerMemoryUse :working working :limit limit) :peak peak)
-      :if (> (+ working (min peak (int (* limit MEMORY-ROOM-RATIO)))) limit)
+    (WarmRoom :memory (LayerMemoryUse :unreclaimable held :limit limit) :peak peak)
+      :if (> (+ held (min peak (int (* limit MEMORY-ROOM-RATIO)))) limit)
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
-                  :detail (.format "先の組みを断った: 層の working set {} byte + 組みの山の見積もり {} byte > 層の memory.max {} byte"
-                                   working (min peak (int (* limit MEMORY-ROOM-RATIO))) limit))
+                  :detail (.format "先の組みを断った: 層の回収できない使い {} byte + 組みの山の見積もり {} byte > 層の memory.max {} byte"
+                                   held (min peak (int (* limit MEMORY-ROOM-RATIO))) limit))
     (WarmRoom :memory (MemoryUse :current current :limit limit) :peak peak) :if (> (+ current peak) (* limit MEMORY-ROOM-RATIO))
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
                   :detail (.format "先の組みを断った: memory.current {} byte + 組みの山の見積もり {} byte > memory.max {} byte × {}"

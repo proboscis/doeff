@@ -56,7 +56,7 @@
 (import doeff_cluster._worker.core.job_cgroup [placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse LayerMemoryUse MemoryUnread WarmRoom
-                                              memory-use-of layer-memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
+                                              LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
 (import doeff_cluster._worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project declared-project])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
@@ -130,12 +130,15 @@
 
 (defrecord PendingEnv
   "走っている準備 1 本の記録: pid = 準備の子・started-ms = 起こした時刻・result = 答えの file・progress = 進みの印の file・
-   warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)。"
+   warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)・memory = 層の読みを準備の process へ渡す file・sample = 組みの
+   置かれる層の回収できない使いの、起こす前の読みと準備の間の最大(層の無い・読めない機体は None — sample-layers)。"
   (#^ int pid)
   (#^ int started-ms)
   (#^ str result)
   (#^ str progress)
-  (#^ bool warm))
+  (#^ bool warm)
+  (setv #^ str memory "")
+  (setv #^ (| LayerSample None) sample None))
 
 
 (defrecord WaitingEnv
@@ -253,8 +256,12 @@
   (val result (+ requests "/" key ".result.json"))
   (val progress (+ requests "/" key ".progress"))
   (val log (+ requests "/" key ".log"))
+  (val memory (+ requests "/" key ".memory"))
   (<- (RemoveTree result))     ; 無い file の断りは捨てる
   (<- (RemoveTree progress))
+  (<- (RemoveTree memory))
+  ;; 組みの山の元(memory.peak の無い kernel — sample-layers): 起こす前の層の回収できない使い。
+  (<- base (| int None) (layer-held settings))
   (<- known tuple (known-roots settings))
   (<- body dict (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) settings.platform root known settings.min-free-bytes
                                  compile-jobs))
@@ -262,7 +269,7 @@
   (<- (refreshed-repo-access settings))
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
                                settings.uv-cache settings.repo-keys
-                               settings.code-prepare settings.uv progress settings.platform))
+                               settings.code-prepare settings.uv progress settings.platform memory))
   ;; 準備の層が在れば、準備の process(と、それが起こす git・uv・焼く道具の子)をそこへ置く(EnvSettings の prepare-procs の註)。
   (var placed argv)
   (when (is-not settings.prepare-procs None)
@@ -272,7 +279,46 @@
   (<- started (StartProcess :argv placed :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
     (raise (OSError started.detail)))
-  (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm))
+  (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm :memory memory
+              :sample (if (is base None) None (LayerSample :base base :peak base))))
+
+
+(defk layer-held [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % (| int None))]}
+  "組みの置かれる cgroup の層(prepare-layer-dir)の回収できない使い(byte — unreclaimable-of)を読むため。層の無い機体・file が読めない・
+   中身が数でない時は None。"
+  (when (is settings.prepare-layer-dir None)
+    (return None))
+  (<- current (ReadText (+ settings.prepare-layer-dir "/memory.current")))
+  (<- stat (ReadText (+ settings.prepare-layer-dir "/memory.stat")))
+  (when (not (and (isinstance current str) (isinstance stat str) (.isdigit (.strip current))))
+    (return None))
+  (try
+    (<- held int (unreclaimable-of (int (.strip current)) stat))
+    (except [ValueError]
+      (return None)))
+  held)
+
+
+(defk sample-layers [settings pending]
+  {:pre [(: settings EnvSettings) (: pending dict)] :post [(: % dict)]}
+  "走っている準備の組みの山を、memory.peak の無い kernel(5.19 より前 — k3s-0〜3 の 5.15)でも測るため: 拍ごとに組みの置かれる層の
+   回収できない使いを 1 度読み、準備ごとの最大を上げ、上がった準備の memory の file(layer-sample->json)を置き換えで書く。準備の
+   process は完成の印を書く前にこの file を読み、memory.peak を読めない時の組みの山(最大 − 起こす前の読み)にする(env_prepare の
+   build-memory-of)。層は同時に走る準備と待ちの子で分け合うので、山はその間の層の上がり(組みが足した量の上の端)。答え = 記録を
+   上げた準備中の表。"
+  (when (not pending)
+    (return pending))
+  (<- now (| int None) (layer-held settings))
+  (var running pending)
+  (for [#(key p) (.items pending)]
+    (<- raised (| LayerSample None) (sampled-layer p.sample now))
+    (when (and (is-not raised None) (!= raised p.sample))
+      (<- body dict (layer-sample->json raised))
+      ;; 書けなくても準備は止めない — 準備の process が前の中身か無い file を読み、測れなかった(None)側になる。
+      (<- (WriteText p.memory (json.dumps body) :replace True))
+      (:= running (| running {key (replace p :sample raised)}))))
+  running)
 
 
 (defk progressed-ms [pending]
@@ -731,7 +777,7 @@
                       :cap settings.roots-cap-bytes :memory memory :peak peak))
   (<- refused (| EnvFailure None) (warm-refusal room))
   ;; 行の欄の memory の読み(測れなければ -1)と、測れなかった訳。
-  (val memory-current (match memory (MemoryUse :current current) current (LayerMemoryUse :working working) working _ -1))
+  (val memory-current (match memory (MemoryUse :current current) current (LayerMemoryUse :unreclaimable held) held _ -1))
   (val memory-max (match memory (MemoryUse :limit limit) limit (LayerMemoryUse :limit limit) limit _ -1))
   (val unmeasured (match memory (MemoryUnread :reason reason) reason _ None))
   (match refused
@@ -765,9 +811,10 @@
   {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: failed dict)] :post [(: % tuple)]}
   "準備の子の終わりと期限を見て記録を進め、待ちを起こし、root の観測を返すため。答え = #(待ち 準備中 失敗 観測の tuple)。"
   (<- now-ms int (now-epoch-ms))
-  (var running pending)
+  (<- sampled dict (sample-layers settings pending))
+  (var running sampled)
   (var failures failed)
-  (for [#(key p) (.items pending)]
+  (for [#(key p) (.items sampled)]
     (<- polled (PollProcess p.pid))
     ;; 答えの file は期限を判じる前に読む: 完成を書き終えて終わりの処理の途中の準備を、期限の拍で止めない(#3515 — 完成を書いた
     ;; 0.4 秒後に prepare-timeout にしていた)。答えの file が無い・読めない = 答えを書いていない(None)。

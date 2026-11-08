@@ -54,9 +54,10 @@
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
 (import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json url-location])
+(import doeff_cluster._worker.core.env_upkeep [LayerSample layer-sample-of-text])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -965,6 +966,11 @@
                  (str) :if (.isdigit (.strip text)) (int (.strip text))
                  _ None))
     (resume value))
+  (ReadLayerSample [path]
+    ;; 組みの山(memory.peak の無い kernel): worker が置き換えで書いた層の読み。無い・読めない file は None。
+    (<- text (| str FileFailed) (ReadText path))
+    (<- sample (| LayerSample None) (layer-sample-of-text (if (isinstance text str) text None)))
+    (resume sample))
   (ReadVolume [path]
     ;; 置き場の disk の種類(#3676): mount の表(/proc/self/mountinfo)を読み、path の実の path(symlink を解く — 無い path はそのまま)を含む
     ;; 最も深い mount の行を引く。表を読めない機体(macOS 等)は None — 読めない表は行の無い表として引く(当たる行が無く None)。

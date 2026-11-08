@@ -47,7 +47,8 @@
 (import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material dependency-key])
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster._worker.core.env_upkeep [LayerSample])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -215,14 +216,18 @@
            counts.compile-seconds counts.closure-seconds))
 
 
-(defk build-memory-of [current-before peak-before peak-after]
-  {:pre [(: current-before (| int None)) (: peak-before (| int None)) (: peak-after (| int None))] :post [(: % (| int None))]}
+(defk build-memory-of [current-before peak-before peak-after sampled]
+  {:pre [(: current-before (| int None)) (: peak-before (| int None)) (: peak-after (| int None)) (: sampled (| LayerSample None))]
+   :post [(: % (| int None))]}
   "組みの山の memory(byte)を、準備の前後の cgroup の読みから求めるため(#3748)。memory.peak は container の始まりからの最大で戻せない
    (同じ file を別に開いて読むので fd ごとの reset は使えない)ので、準備の間に memory.peak が上がった時だけ、上がった後の peak − 準備の前の
    current を組みの山と読む(組みが足した量の上の端 — 見積もりは早めに断る側)。上がらなかった(前の山の方が高い)・どれかが読めない時は
-   None(測れなかった — 次の組みは既定の値か、前の実測で見積もる)。"
-  (match #(current-before peak-before peak-after)
-    #((int) (int) (int)) :if (> peak-after peak-before) (- peak-after current-before)
+   None(測れなかった — 次の組みは既定の値か、前の実測で見積もる)。memory.peak の無い kernel(5.19 より前 — 準備の前の peak が読めない)は、
+   worker が組みの間に拍ごとに読んだ組みの置かれる層の回収できない使い sampled(env_store の sample-layers)の最大 − 起こす前の読みを
+   組みの山と読む(上がらなかった・読みが無い時は None)。memory.peak の在る kernel は sampled を読まない。"
+  (match #(current-before peak-before peak-after sampled)
+    #((int) (int) (int) _) :if (> peak-after peak-before) (- peak-after current-before)
+    #(_ None _ (LayerSample :base base :peak peak)) :if (> peak base) (- peak base)
     _ None))
 
 
@@ -571,7 +576,12 @@
   (<- line str (timing-line done volume startup))
   (<- (PrepareNote line))
   (<- peak-after (| int None) (ReadCgroupMemory "memory.peak"))
-  (<- build-memory (| int None) (build-memory-of current-before peak-before peak-after))
+  ;; memory.peak の無い kernel の組みの山の元(worker が組みの間に読んだ層の読み — 渡されなければ読まない)。
+  (var sampled None)
+  (when (is-not request.memory-file None)
+    (<- read (| LayerSample None) (ReadLayerSample request.memory-file))
+    (:= sampled read))
+  (<- build-memory (| int None) (build-memory-of current-before peak-before peak-after sampled))
   (match outcome
     (EnvFailure) outcome
     _ (do (<- (WriteEnvMarker request.root
