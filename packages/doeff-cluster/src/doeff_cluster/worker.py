@@ -161,6 +161,7 @@
 # moved-submodule-shim-names doeff_cluster.worker.entry.env_tool:
 #   MODULE_TAGS PrepareRequest answer_json env_translation json_file main prepared_once
 #   prepared_to_file request_of_json requested_ms
+# moved-submodule-shim-names doeff_cluster.worker.entry.host_load:
 # moved-submodule-shim-names doeff_cluster.worker.entry.job_entry:
 #   MODULE_TAGS RemoteJobFailed RunContext TaskFailed TaskSucceeded VersionMismatch context_from_env
 #   decode_program decoded_program diffs_text encode_outcome failed_from main parsed_program_row

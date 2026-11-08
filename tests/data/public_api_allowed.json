@@ -311,6 +311,13 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "dependency_key",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.api_policy",
    "name": "BodyInvalid",
    "group": "Allowed — exception type",
@@ -894,13 +901,6 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.core.service_rules",
    "name": "foundation_needs_refusal",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.warm_rules",
-   "name": "env_key",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },

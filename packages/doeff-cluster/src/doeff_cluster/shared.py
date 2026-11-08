@@ -93,7 +93,7 @@
 #   timing_outlasts_the_self_stop
 # moved-submodule-shim-names doeff_cluster.shared.core.warm_rules:
 #   MODULE_TAGS RuntimeEnv WARM_KEY_LENGTH WarmAnswer WarmFailed WarmFailure WarmReady
-#   WarmRuntimeEnv WarmState WarmUnreachable WarmWaitExpired effect_needs_problem env_key
+#   WarmRuntimeEnv WarmState WarmUnreachable WarmWaitExpired effect_needs_problem
 #   hyx_warm_state_XgreaterHthan_signXjson warm_key warm_runtime_env warm_state_of_json
 #   warm_wait_answer
 # moved-submodule-shim-names doeff_cluster.shared.core.workspace_volume_rules:
@@ -143,6 +143,7 @@
 #   hyx_runtime_env_XgreaterHthan_signXjson identity_of job memory_refusal program_sha
 #   readiness_environ_refusal readiness_from_environ readiness_refusal resolve resolve_value
 #   single_host_refusal system_declaration system_of
+# moved-submodule-shim-names doeff_cluster.shared.entry.workspace_volume_api:
 # moved-submodule-shim-names doeff_cluster.shared.intent.checkout_model:
 #   CheckoutRoot CheckoutState LocalCheckout MODULE_TAGS ProjectOfCheckout ReadCheckout
 #   SenderSourceRoot

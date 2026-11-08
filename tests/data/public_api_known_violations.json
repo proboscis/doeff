@@ -6261,6 +6261,18 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.shared.entry.workspace_volume_api",
+   "reason": "Module added by ordinary development after the shared section was hidden as _shared in step 1 of R15 (the production handler workspace-volumes-api that holds the process's box of volume change notices). As with workspace_volumes, shared.py also exposes it at the old path, so it is counted in the inventory (the fixed name list is empty — no name is exported from the old path; users read workspace_volumes_api from the entry point). It disappears from the inventory when shared.py is removed"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.worker.entry.host_load",
+   "reason": "Module added by ordinary development after the worker section was hidden as _worker in step 1 of R15 (the worker's answer to ReadHostCounters — /proc on Linux, mach on macOS). As with eviction_line, worker.py also exposes it at the old path, so it is counted in the inventory (the fixed name list is empty). It disappears from the inventory when worker.py is removed"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.intent.detached_model",
    "name": "OUTBOX_RERAN",
    "reason": "Row kind (reran) of the notification-destination outbox added by re-running a detached task. As with OUTBOX_ENDED and OUTBOX_QUEUED_OVERDUE of the same module, it is a value passed to :kinds of AwaitDetachedOutbox, and users read it from the entry point (it is not listed in the fixed name list of the old path)"
