@@ -444,14 +444,32 @@ def test_a_doeff_hy_file_the_expansion_does_not_go_through_keeps_the_stored_expa
 
 def test_a_changed_type_check_post_processing_expands_again(copied_doeff_hy: CopiedDoeffHy) -> None:
     # Failure case 6: the post-processing of the type-checking expansion (static_check's removal of bookkeeping and addition of helper imports) cannot be reached from macros.
-    # Rebuild when it changes (the record is the digest of the closure of functions and classes defined in static_check -- add one function).
+    # Rebuild when it changes (the record is the digest of the closure of POST_PROCESSING, following the functions ``project`` calls by name -- change a constant
+    # (docstring) in the code of without_bookkeeping).
+    assert copied_doeff_hy.expanded() == 1
+    static_check_file = copied_doeff_hy.package / "_static_check.py"
+    old = '"""From the type-checking expansion, remove the bookkeeping'
+    text = static_check_file.read_text(encoding="utf-8")
+    assert old in text
+    static_check_file.write_text(
+        text.replace(old, '"""From the type-checking expansion (changed), remove the bookkeeping', 1),
+        encoding="utf-8",
+    )
+    assert copied_doeff_hy.expanded() == 1
+
+
+def test_a_function_the_post_processing_does_not_call_keeps_the_stored_expansion(
+    copied_doeff_hy: CopiedDoeffHy,
+) -> None:
+    # When it need not go cold: pull from the cache even if a function ``project`` does not reach is added to static_check. Before 542f1cbbf the
+    # closure read ``vars(node)`` as a module namespace read and covered static_check by its file, so any edit of the file rebuilt every expansion.
     assert copied_doeff_hy.expanded() == 1
     static_check_file = copied_doeff_hy.package / "_static_check.py"
     static_check_file.write_text(
         static_check_file.read_text(encoding="utf-8") + "\n\ndef _changed() -> int:\n    return 1\n",
         encoding="utf-8",
     )
-    assert copied_doeff_hy.expanded() == 1
+    assert copied_doeff_hy.expanded() == 0
 
 
 def test_a_changed_doeff_hy_macro_expands_again(copied_doeff_hy: CopiedDoeffHy) -> None:
