@@ -109,6 +109,55 @@ def test_the_worker_turns_the_hook_off_for_the_roots_it_prepares() -> None:
     assert (hook, "off") in {(v.name, v.value) for v in native_wheel.uv_environment("/state", "/cache")}
 
 
+class _Started(Exception):
+    """Raised by the recorded subprocess.run in place of starting the expansion process (carries the command)."""
+
+    def __init__(self, command: list[str]) -> None:
+        super().__init__(command)
+        self.command = tuple(command)
+
+
+def _started(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+    raise _Started(command)
+
+
+def _hook_command(monkeypatch: pytest.MonkeyPatch, package: Path) -> tuple[str, ...] | None:
+    """The command the hook's initialize starts for package (None when it starts none). subprocess.run is replaced and never runs; hatchling,
+    which the hook subclasses, is only in the build environment, so a stand-in module takes its place."""
+    import importlib.util
+    import sys
+    import types
+
+    interface = types.ModuleType("hatchling.builders.hooks.plugin.interface")
+    interface.BuildHookInterface = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, interface.__name__, interface)
+    spec = importlib.util.spec_from_file_location("doeff_hy_stub_hook_probe", HOOK)
+    assert spec is not None and spec.loader is not None
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    monkeypatch.setattr(hook, "subprocess", types.SimpleNamespace(run=_started))
+    made = _stub_packages()[package]
+    probe = types.SimpleNamespace(root=str(package), config={"stub-root": made.stub_root, "stub-dirs": list(made.stub_dirs)})
+    try:
+        hook.HyStubHook.initialize(probe, "editable", {})
+    except _Started as started:
+        return started.command
+    return None
+
+
+def test_the_hook_starts_no_expansion_when_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With STUBS_ENV=off the hook returns before it starts doeff_hy._static_stub --build, so no expansion process is started; without it the
+    # same call does start one (the probe sees the command — only the hook module's subprocess is replaced).
+    from doeff_cluster._shared.core import native_wheel
+
+    package = ROOT / "packages" / "doeff-cluster"
+    monkeypatch.delenv(native_wheel.STUBS_ENV, raising=False)
+    command = _hook_command(monkeypatch, package)
+    assert command is not None and command[2:4] == ("doeff_hy._static_stub", "--build")
+    monkeypatch.setenv(native_wheel.STUBS_ENV, "off")
+    assert _hook_command(monkeypatch, package) is None
+
+
 def test_the_boot_script_turns_the_hook_off_for_the_root_it_prepares() -> None:
     # The boot script's own uv sync of the worker root is the other path that builds a root: with the hook on there, the prepare layer's
     # expansion processes went over its memory limit and the build died with BrokenProcessPool (k3s-0, 2026-11-07).
