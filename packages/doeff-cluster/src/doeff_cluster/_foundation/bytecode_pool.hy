@@ -78,13 +78,16 @@
   (posixpath.join head "__pycache__" (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc")))
 
 
-(defn #^ bytes checked-hash-pyc [#^ CodeType code #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ素の組み立て
-  "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 = magic・flags・source の hash 8 byte、
-   続けて marshal した code)。"
+(defn #^ bytes pyc-head [#^ bytes data]  ; defk にできない: process の pool の子が呼ぶ素の組み立て
+  "source の中身 data の、import が source の hash で検める .pyc の頭(PEP 552 — magic・flags・source の hash 8 byte の PYC-HEAD-BYTES)。"
   (+ importlib.util.MAGIC-NUMBER
      (.to-bytes CHECKED-HASH-FLAGS 4 "little")
-     (importlib.util.source-hash data)
-     (marshal.dumps code)))
+     (importlib.util.source-hash data)))
+
+
+(defn #^ bytes checked-hash-pyc [#^ CodeType code #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ素の組み立て
+  "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 pyc-head、続けて marshal した code)。"
+  (+ (pyc-head data) (marshal.dumps code)))
 
 
 (defn #^ tuple compiled-pyc [#^ str name #^ str path #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ焼き
@@ -102,6 +105,22 @@
   "焼く process の import の路の先頭に木の根を足し(前が先)、焼く途中の import が timestamp 方式の .pyc を書かないようにするため。"
   (setv sys.dont-write-bytecode True)
   (setv (cut sys.path 0 0) (list paths))
+  (share-file-states)
+  None)
+
+
+(defn #^ None share-file-states []  ; defk にできない: process の pool の initializer から呼ぶ素の関数
+  "この process の照らし(bytecode-is-current と焼き)の全部で、macro の提供元の file の状態を 1 度だけ読むため — root の guard の import の
+   範囲の memo(持ち主の module の IMPORT_SCOPE と ImportScope — doeff-hy の _import_scope)を 1 つ置き、焼きの間は file を変わらない物と
+   扱う(焼きの間に変わるのは .pyc だけで、macro の提供元の source は変わらない)。memo が無いと照らし 1 回ごとに提供元を stat し直し、
+   保存先に当たる 3,180 本の照らしで stat が 5 万 7 千回になった(2026-11-08)。2 つの名を出さない古い root の guard では何もしない
+   (照らしは今までどおり 1 回ごとに読む — 答えは変わらない)。"
+  (setv guard (guard-module)
+        holder (getattr guard "IMPORT_SCOPE" None)
+        scope-of (getattr guard "ImportScope" None))
+  ;; process ごとに新しい memo を置く(fork の子は親の memo を持ち越さない — 子の照らしは子の読みで決める)。
+  (when (and (is-not holder None) (callable scope-of))
+    (.set holder (scope-of)))
   None)
 
 
@@ -161,10 +180,10 @@
 (defn #^ tuple bake-one [#^ (| str None) store #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
   "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を置いた — 置き方の理由は place-pyc)・
    \"rebuilt\"(焼いて .pyc を置き、code を保存先へ足した — 足せなかった・hardlink で置けなかった時は理由)・\"failed\"(焼けない・
-   読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。保存先の code から置く .pyc の bytes は code_store の entry-pyc が
+   読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。保存先の code から置く .pyc の bytes は code_store の data-pyc が
    組む(頭の後ろに entry の中身をそのまま — 同じ entry から置く .pyc が root をまたいで同じ bytes になり、保存先の 1 つの file を分け合う。
    組み方は code_store だけが知る)。
-   保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-code)。今の source の hash と
+   保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-data)。今の source の hash と
    今の環境の macro に合う entry だけを使い、無ければ焼き直して今の環境の entry を鍵に足す(他の環境の entry は上書きしない —
    鍵 1 つに entry 1 つの形では、版の違う書き手と同じ鍵を交互に上書きし、同じ版の準備でも 1 回に 100〜600 本を
    焼き直した)。"
@@ -177,12 +196,16 @@
   (setv key (if (is store None)
                 None
                 (.code-key code-store source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize)))
+  ;; 保存先の entry は bytes のまま照らす(code_store の current-data — 頭の後ろに entry の中身を足した .pyc を、置く物そのままで照らす)。
+  ;; 前は entry を code に戻し(marshal.loads)、照らすために .pyc へ組み直し(marshal.dumps)、照らしの中で guard がもう 1 度戻していた。
+  ;; Python の source は guard が頭の hash しか読まないので、壊れた entry を code_store が code に戻して除く(check-code)。
   (when (is-not key None)
     (setv guard (guard-module)
-          found (.current-entry code-store store key (fn [c] (.bytecode-is-current guard source (checked-hash-pyc c data) data))))
+          head (pyc-head data)
+          found (.current-data code-store store key (fn [d] (.bytecode-is-current guard source (.data-pyc code-store head d) data))
+                               :check-code (not (.endswith source (. code-store HY-SOURCE-SUFFIXES)))))
     (when (is-not found None)
-      (setv head (cut (checked-hash-pyc found.code data) 0 PYC-HEAD-BYTES))
-      (return #("stored" (place-pyc store source (.entry-pyc code-store head found))))))
+      (return #("stored" (place-pyc store source (.data-pyc code-store head found))))))
   (setv #(compiled reason) (compiled-pyc name source data))
   (when (is compiled None)
     (return #("failed" reason)))

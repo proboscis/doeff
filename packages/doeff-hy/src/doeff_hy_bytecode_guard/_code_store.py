@@ -46,7 +46,7 @@ Trees (``.tree``) follow the same layout — a single-key directory holds an ent
 634 expansion-tree pickles averaged about 196 KB, 1,306 code objects averaged about 30 KB), so the writer (expansion_trees) adds them compressed. The key is determined by the tree-side tag, the module name, and the source content, and lines up in a
 different directory from the code keys (the two do not share a directory).
 
-Used mark: every hit refreshes the entry's timestamp to now (for source code, only the entry that is checked and used). The worker's sweep (env_store's
+Used mark: a hit refreshes the entry's timestamp to now when it is older than :data:`TOUCH_AFTER_SECONDS` (for source code, only the entry that is checked and used, and always when another entry of the key is ahead of it). The worker's sweep (env_store's
 sweep-leftovers) removes entries unused for 7 days and directories whose contents have all been idle for 7 days — the same 7-day convention as the native wheel store (a .used mark
 advances the directory's timestamp). Writes go to a temporary file in the same directory and are then swapped in (so they do not mix with another process writing at the same time, and a half-written file is never read).
 
@@ -78,6 +78,11 @@ CODE_ENTRIES_PER_KEY = 16
 #: Lower bound for placing a just-added entry's timestamp ahead of the key's other entries (never place it further back than this from now). Much shorter than the sweep's 7 days — so that an added
 #: entry that was never checked and used is not placed at a timestamp past the sweep threshold and deleted immediately.
 NEW_ENTRY_FLOOR_SECONDS = 24 * 3600
+
+#: A hit advances an entry's used time only when the time is older than this (the used mark is read by the sweep's 7 days and by the order of the key's entries — an hour
+#: does not move either). Advancing it on every hit wrote the file's metadata twice per placed .pyc: the worker tools place about 3,000 .pyc for one root, and on a busy
+#: disk the writes were a large part of the bytecode stage (2026-11-08 — 6,500 utime calls for one root).
+TOUCH_AFTER_SECONDS = 3600
 
 #: Cap on the number of entries held per key for trees expanded by import-time compilation (when adding goes over it, the oldest by timestamp are removed — removed the same way as code entries).
 #: A tree is several times the size of the code for the same source (about as large as the code even when stored compressed), and its user does one lookup to avoid re-expanding the same source, so
@@ -235,12 +240,45 @@ def current_entry(store: str, key: str, is_current: Callable[[CodeType], bool]) 
     """The code and content bytes (marshaled code) of the entry chosen by the same check as :func:`current_code` — so the worker tools can place the content as-is after the .pyc header, and the .pyc placed from the same entry across roots has identical bytes
     (re-marshaling can change the bytes depending on in-process reference counts,
     and :func:`link_pyc` could not share them)."""
-    for path in code_entries(store, key):
+    for place, (at, path) in enumerate(_stamped_entries(store, key)):
         found = _stored_entry(path, touch=False)
         if found is not None and is_current(found.code):
-            touch_entry(path)
+            _mark_used(path, at, first=place == 0)
             return found
     return None
+
+
+def current_data(store: str, key: str, is_current: Callable[[bytes], bool], *, check_code: bool) -> bytes | None:
+    """The content bytes (marshaled code) of the first source-code entry of key key for which is_current is true — the same order and used mark as :func:`current_entry`, but
+    is_current reads the bytes, not a code object, so a caller that checks the .pyc it is about to place (the worker's baking tool — header plus these bytes) neither unmarshals
+    the entry here nor marshals it again to build the .pyc (2026-11-08: that round trip was about a fifth of placing one stored .pyc). check_code = also unmarshal the entry here
+    and remove one that is not code (:func:`stored_code`'s handling of a broken entry) — for a caller whose is_current does not read the code (a Python source: only the
+    header's source hash is checked); a caller whose is_current unmarshals (a Hy source: the macro record) passes false, and a broken entry is just not current."""
+    for place, (at, path) in enumerate(_stamped_entries(store, key)):
+        data = read_entry(path, touch=False)
+        if data is None or (check_code and _stored_code_of(path, data) is None):
+            continue
+        if is_current(data):
+            _mark_used(path, at, first=place == 0)
+            return data
+    return None
+
+
+def _mark_used(path: str, at: int, *, first: bool) -> None:
+    """Put the used mark on a source-code entry that was checked and used (its time was at, ns): an entry behind another of the key always comes to the head (the order of the
+    key's entries — an added entry waits at the back until it is used); the head entry is advanced only when older than :data:`TOUCH_AFTER_SECONDS`."""
+    if not first:
+        touch_entry(path)
+    else:
+        _touch_if_older(path, at)
+
+
+def _touch_if_older(path: str, at: int) -> None:
+    """Advance the used time of an entry read at time at (ns) only when it is older than :data:`TOUCH_AFTER_SECONDS`."""
+    import time  # loaded only on a hit
+
+    if time.time_ns() - at > TOUCH_AFTER_SECONDS * 1_000_000_000:
+        touch_entry(path)
 
 
 def add_code(store: str, key: str, code: CodeType, data: bytes | None = None) -> str | None:
@@ -364,6 +402,11 @@ def _stored_entry(path: str, *, touch: bool) -> StoredCode | None:
     data = read_entry(path, touch=touch)
     if data is None:
         return None
+    return _stored_code_of(path, data)
+
+
+def _stored_code_of(path: str, data: bytes) -> StoredCode | None:
+    """The code of the content data read from the entry path (an entry unreadable as code is removed with discard_entry and gives None)."""
     import marshal  # loaded only on a hit
 
     try:
@@ -385,7 +428,7 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
 
     The hardlink target is never overwritten in place: the store's file is made by swapping in from a temporary file and is read-only. The hands that rewrite a tree's .pyc (the worker's
     baking tool, the import hook, and Python's import) all write to a temporary file and then swap it in (they never open and write in place), so other trees' .pyc and the
-    store's content do not change. The used mark is the same as for .code (the time is set to now on every use — the sweep removes what is unused for 7 days. The tree's name remains)."""
+    store's content do not change. The used mark is the same as for .code (the time is set to now on a use when older than :data:`TOUCH_AFTER_SECONDS` — the sweep removes what is unused for 7 days. The tree's name remains)."""
     import errno  # loaded only when placing from the store
     import hashlib
 
@@ -397,7 +440,7 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
     except OSError as error:
         return f"cannot read the .pyc in the store: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     if seen is not None and seen.st_size == len(pyc):
-        touch_entry(path)
+        _touch_if_older(path, seen.st_mtime_ns)
     else:
         problem = write_entry(path, pyc)
         if problem is not None:
@@ -410,7 +453,7 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
             return f"cannot make the .pyc in the store read-only: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     try:
         # If the tree's .pyc already has this file's name, do not place it again (a rename onto the same inode does nothing and leaves the temporary link behind).
-        if os.path.samestat(os.lstat(target), os.stat(path)):
+        if os.path.samestat(os.lstat(target), os.stat(path) if seen is None else seen):
             return None
     except (FileNotFoundError, NotADirectoryError):
         pass  # the tree has no .pyc yet — place it below (the link below answers with the reason if it cannot be placed)
@@ -433,7 +476,12 @@ def entry_pyc(head: bytes, entry: StoredCode) -> bytes:
     (no re-marshaling). The same entry and the same header give the same bytes across roots, and :func:`link_pyc` shares one file in the store. Only this function knows how to build it — the baking tool and
     any other writer that brings a .pyc over call this function and :func:`link_pyc` (
     when the build lived only in the baking tool, a second writer re-marshaled and could not share)."""
-    return head + entry.data
+    return data_pyc(head, entry.data)
+
+
+def data_pyc(head: bytes, data: bytes) -> bytes:
+    """The .pyc bytes to place from the content bytes of an entry (:func:`current_data`) — the same build as :func:`entry_pyc`."""
+    return head + data
 
 
 def link_entry_pyc(store: str, head: bytes, entry: StoredCode, target: str) -> str | None:

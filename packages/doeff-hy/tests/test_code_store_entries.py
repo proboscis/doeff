@@ -202,3 +202,47 @@ def test_a_key_without_entries_answers_none(tmp_path: Path) -> None:
     store, key = str(tmp_path), _key()
     assert code_store.code_entries(store, key) == ()
     assert code_store.current_code(store, key, lambda _code: True) is None
+
+
+def test_current_data_checks_the_entry_bytes_in_the_same_order_as_current_code(tmp_path: Path) -> None:
+    """current_data hands the check the entry's bytes (the worker's baking tool checks the .pyc it is about to place — header plus these bytes, with no unmarshal and
+    marshal round trip) and answers the bytes of the same entry current_code would choose."""
+    import marshal
+
+    store, key = str(tmp_path), _key()
+    code_store.add_code(store, key, _code(RECORD_FIVE))
+    code_store.add_code(store, key, _code(RECORD_SIX))
+    found = code_store.current_data(store, key, lambda data: marshal.loads(data).co_consts[-1] == RECORD_SIX, check_code=False)
+    assert found is not None and marshal.loads(found).co_consts[-1] == RECORD_SIX
+    assert code_store.current_data(store, key, lambda _data: False, check_code=False) is None
+
+
+def test_current_data_with_check_code_removes_a_broken_entry_and_uses_the_next(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """For a caller whose check does not read the code (a Python source — only the header's source hash), check_code removes an entry that is not code with the named line
+    instead of handing its bytes over (a broken .pyc would fail at import)."""
+    store, key = str(tmp_path), _key()
+    code_store.add_code(store, key, _code(RECORD_FIVE))
+    code_store.add_code(store, key, _code(RECORD_SIX))
+    newest = code_store.code_entries(store, key)[0]
+    Path(newest).write_bytes(b"\x00broken")
+    found = code_store.current_data(store, key, lambda _data: True, check_code=True)
+    assert found is not None and found != b"\x00broken"
+    assert not Path(newest).exists()
+    assert "an entry in the bytecode store is broken" in capsys.readouterr().err
+
+
+def test_a_recently_used_head_entry_is_not_touched_but_an_old_one_is(tmp_path: Path) -> None:
+    """The head entry of the key used within TOUCH_AFTER_SECONDS keeps its time (one metadata write per placed .pyc was a large part of the bytecode stage on a busy disk —
+    2026-11-08); an older one is advanced (the sweep's 7 days), and an entry behind another always comes to the head
+    (test_a_new_entry_waits_behind_the_entries_in_use_until_it_is_used)."""
+    store, key = str(tmp_path), _key()
+    code_store.add_code(store, key, _code(RECORD_FIVE))
+    entry = _entry_of(store, key, RECORD_FIVE)
+    _age(entry, 60)
+    before = os.stat(entry).st_mtime_ns
+    assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
+    assert os.stat(entry).st_mtime_ns == before, "a head entry used a minute ago was written again"
+    _age(entry, code_store.TOUCH_AFTER_SECONDS + 60)
+    stale = os.stat(entry).st_mtime_ns
+    assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
+    assert os.stat(entry).st_mtime_ns > stale, "an entry not used for over an hour did not get the used mark"
