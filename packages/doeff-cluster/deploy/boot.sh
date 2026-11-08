@@ -234,7 +234,10 @@ doeff_prepare() {
     # 焼く物から外す・下の doeff_bake)。uv の焼きの子も venv の .pth を読んで doeff_hy_bytecode_guard を import する(立てないと、その
     # 3 file が焼く前に timestamp の方式で書かれていた — 2026-10-06 の docker の空の /work の回で測った)。uv 自身の焼き(site-packages)は
     # 明示の compile なので、この変数で止まらない。
-    (cd "$root" && PYTHONDONTWRITEBYTECODE=1 uv sync --locked --compile-bytecode --package doeff-cluster --no-dev \
+    # root は型を検めないので、editable の build の型の宣言(.pyi)の hook を止める(DOEFF_HY_STUBS=off — 実行環境の準備の uv の子と
+    # 同じ綴り・native_wheel.STUBS_ENV)。止めないと hook が .hy を全部展開し、展開の子が準備の層の memory を越えて殺され、準備が
+    # BrokenProcessPool で落ちた(2026-11-07 k3s-0)。export せずこの uv sync だけに置く — worker と job の子の uv sync へ継がない。
+    (cd "$root" && PYTHONDONTWRITEBYTECODE=1 DOEFF_HY_STUBS=off uv sync --locked --compile-bytecode --package doeff-cluster --no-dev \
       --no-install-package doeff-vm >&2)
     synced=$(date +%s)
     # 答え = 1 行「<組んだ|使った|組んだかは不明で用意した> <wheel の path>」(path は uv build が root の下の --out-dir に出した wheel・

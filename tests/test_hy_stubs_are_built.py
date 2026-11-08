@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 #: Line 1 of a .pyi the tool makes (doeff_hy._static_stub.MARK_HEAD — kept as text so this check does not import Hy).
 MARK_HEAD = "# doeff_hy._static_stub "
 HOOK = ROOT / "tools" / "doeff_hy_stub_hook.py"
+BOOT = ROOT / "packages" / "doeff-cluster" / "deploy" / "boot.sh"
 
 
 @dataclass(frozen=True)
@@ -106,3 +107,14 @@ def test_the_worker_turns_the_hook_off_for_the_roots_it_prepares() -> None:
     hook = (HOOK.read_text(encoding="utf-8").split('STUBS_ENV = "', 1)[1]).split('"', 1)[0]
     assert hook == native_wheel.STUBS_ENV
     assert (hook, "off") in {(v.name, v.value) for v in native_wheel.uv_environment("/state", "/cache")}
+
+
+def test_the_boot_script_turns_the_hook_off_for_the_root_it_prepares() -> None:
+    # The boot script's own uv sync of the worker root is the other path that builds a root: with the hook on there, the prepare layer's
+    # expansion processes went over its memory limit and the build died with BrokenProcessPool (k3s-0, 2026-11-07).
+    from doeff_cluster._shared.core import native_wheel
+
+    syncs = [line for line in BOOT.read_text(encoding="utf-8").splitlines() if " uv sync " in line and not line.lstrip().startswith("#")]
+    roots = [line for line in syncs if "--package doeff-cluster" in line]
+    assert len(roots) == 1, syncs
+    assert f" {native_wheel.STUBS_ENV}=off " in roots[0].split(" uv sync ", 1)[0] + " "
