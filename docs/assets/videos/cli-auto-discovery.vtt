@@ -1,109 +1,113 @@
 WEBVTT
 
 t1
-00:00:00.250 --> 00:00:06.650
+00:00:00.250 --> 00:00:05.700
 CLI auto-discovery. doeff run finds the interpreter and the environments for your program.
 
 t2
-00:00:07.200 --> 00:00:12.750
+00:00:06.250 --> 00:00:12.200
 A program only yields effects. Which handlers answer them is decided when it runs.
 
 t3.1
-00:00:13.300 --> 00:00:18.117
+00:00:12.750 --> 00:00:18.250
 Without discovery, every command names the interpreter and the environments.
 
 t3.2
-00:00:18.117 --> 00:00:20.400
+00:00:18.250 --> 00:00:20.850
 With markers, the program is enough.
 
 m1
-00:00:20.950 --> 00:00:27.750
+00:00:21.400 --> 00:00:27.950
 Mark a function with the comment: doeff, interpreter, default. It becomes a default interpreter.
 
 m2
-00:00:28.300 --> 00:00:35.550
+00:00:28.500 --> 00:00:35.600
 Mark a variable that has a type annotation with: doeff, default. It becomes a default environment.
 
 m3
-00:00:36.100 --> 00:00:43.750
+00:00:36.150 --> 00:00:43.900
 doeff-indexer scans the source and lists every marked symbol. A variable without an annotation is skipped.
 
 i1
-00:00:44.300 --> 00:00:50.700
+00:00:44.450 --> 00:00:50.550
 doeff run cuts the program's module path into a hierarchy, from the root package down.
 
 i2
-00:00:51.250 --> 00:00:58.350
+00:00:51.100 --> 00:00:57.650
 It keeps only the interpreters marked on that path: in the program's own module, or in a package above it.
 
 i3
-00:00:58.900 --> 00:01:06.000
+00:00:58.200 --> 00:01:04.900
 Two are on the path. base interpreter, at index zero, and auth interpreter, at index two.
 
 i4
-00:01:06.550 --> 00:01:12.350
+00:01:05.450 --> 00:01:11.200
 The closest one, the deepest, wins. auth interpreter will run the program.
 
 e1
-00:01:12.900 --> 00:01:19.250
+00:01:11.750 --> 00:01:17.650
 Environments are not chosen. Every marked environment on the path is collected, root first.
 
 e2
-00:01:19.800 --> 00:01:25.000
+00:01:18.200 --> 00:01:22.550
 They merge from left to right. A later value overrides an earlier one.
 
 e3
-00:01:25.550 --> 00:01:31.950
+00:01:23.700 --> 00:01:29.300
 timeout is ten in base env, twenty in features env, and thirty in auth env. Thirty wins.
 
 e4
-00:01:32.500 --> 00:01:36.950
+00:01:29.850 --> 00:01:33.850
 The merged environment keeps every key from all three.
 
 r1
-00:01:37.500 --> 00:01:44.150
+00:01:34.850 --> 00:01:41.750
 Then doeff run calls auth interpreter with the program, and the merged environment as env.
 
 r2
-00:01:44.700 --> 00:01:50.600
+00:01:42.300 --> 00:01:48.150
 The interpreter installs its handlers around the program. reader holds the merged environment.
 
-r3
-00:01:51.150 --> 00:02:00.000
-login yields Ask for the database host, then Ask for the timeout. reader answers each one, and k resumes.
+r3.1
+00:01:48.700 --> 00:01:53.283
+login yields Ask for the database host, then Ask for the timeout.
+
+r3.2
+00:01:53.283 --> 00:01:57.300
+reader answers each one, and that yield's k resumes once.
 
 r4
-00:02:00.550 --> 00:02:06.950
+00:01:57.850 --> 00:02:03.800
 The program never named a handler or a config file. It returns: localhost, timeout thirty.
 
 o1
-00:02:07.500 --> 00:02:11.700
+00:02:04.350 --> 00:02:08.650
 To run the same program with something else, say so on the command line.
 
 o2.1
-00:02:12.500 --> 00:02:15.717
+00:02:09.350 --> 00:02:12.633
 The env flag replaces the discovered environments.
 
 o2.2
-00:02:15.717 --> 00:02:20.100
+00:02:12.633 --> 00:02:17.100
 auth interpreter is still discovered, and answers from the fake one.
 
 o3
-00:02:20.650 --> 00:02:26.650
+00:02:17.650 --> 00:02:24.050
 The interpreter flag turns off discovery of both. With no env flag, the first Ask fails.
 
 o4
-00:02:27.200 --> 00:02:33.650
+00:02:24.600 --> 00:02:30.900
 Both flags warn that they are deprecated. The hy flag composes the handlers inline instead.
 
 f1
-00:02:35.200 --> 00:02:41.800
+00:02:32.600 --> 00:02:39.900
 And if no marked interpreter is on the path? doeff run does not stop. It uses its fallback interpreter.
 
 f2
-00:02:42.350 --> 00:02:49.950
+00:02:40.450 --> 00:02:47.850
 It ignores environments, so Ask for the timeout finds no handler. format json shows what was chosen.
 
 z1
-00:02:50.500 --> 00:02:57.000
+00:02:48.450 --> 00:02:54.500
 Markers keep handlers next to the code. doeff run finds them by where the program lives.
