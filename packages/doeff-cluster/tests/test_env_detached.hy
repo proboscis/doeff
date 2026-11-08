@@ -249,6 +249,33 @@
   (assert (in "memory の逼迫" ended.detail) ended.detail))
 
 
+(defk tight-scenario []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "逼迫したまま続く機体の worker の上で、実行環境の宣言の無い task を 1 本送り、答えを待つ。"
+  (<- (submit-detached-task (slow-add 0.0 7) :needs LOCAL :key "job" :memory-mib 1024))
+  (<- outcome (AwaitDetached "job"))
+  (<- state dict (ReadCoordinator "/state"))
+  (val ids (lfor t (get state "tasks") :if (= (.get t "key") "job") (get t "id")))
+  (<- found tuple (ProcessesOf (+ "task/" (get ids 0))))
+  {"outcome" outcome "processes" found})
+
+
+(deftest test-a-task-on-a-worker-whose-memory-stays-tight-ends-with-the-reason-on-the-sim
+  ;; 機体の memory が逼迫したまま続く worker(SimWorker の memory-tight)しか置き先の無い task は、上限(WorkerPolicy の既定 10 分)を越えた所で
+  ;; 起こされないまま env-failed・種類 memory-tight・retryable で終わる(「終わらない」で残らない)。逼迫しない worker が
+  ;; 並べば、そちらで走る。
+  (<- seen dict (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (tight-scenario)
+                             :workers #((SimWorker :name "w1" :provides LOCAL :memory-tight True))))
+  (val outcome (get seen "outcome"))
+  (assert (isinstance outcome DetachedEnvUnavailable) outcome)
+  (assert (= #(outcome.kind outcome.retryable) #(EnvFailureKind.MEMORY-TIGHT.value True)) outcome)
+  (assert (in "memory の逼迫" outcome.detail) outcome)
+  (assert (= (get seen "processes") #()) "逼迫で見送った task の Program は走らない")
+  (<- moved dict (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (tight-scenario)
+                              :workers #((SimWorker :name "w1" :provides LOCAL :memory-tight True) (SimWorker :name "w2" :provides LOCAL))))
+  (assert (= (get moved "outcome") (DetachedSucceeded 107)) moved))
+
+
 (deftest test-a-bad-declaration-or-format-is-refused-with-400
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))

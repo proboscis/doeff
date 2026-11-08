@@ -392,7 +392,10 @@
    room-noted と同じ間 room-read-due で読み直して、file の行の memory の予算・置ける組の印 pools を名乗る。組の
    印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の memory-mib・組の印は無し)のまま)・
    memory-watch = 機体の memory の見張りを回す worker(SimMemoryWatch — 世代ごとに本物の見張りの 1 回を模擬の process の表の上で回し、
-   1 回の手間を処理の止まりに換える・sim/memory_watch_world。None = 回さない — 本番の入口だけが回す見張りを模擬で持たない既定)。"
+   1 回の手間を処理の止まりに換える・sim/memory_watch_world。None = 回さない — 本番の入口だけが回す見張りを模擬で持たない既定)・
+   memory-tight = 機体の memory が逼迫したまま続く worker(観測 ObserveWorld の WorldView.memory-tight を真にする — 本番の見張りの様子が
+   TIGHT か DANGER のまま続く機体の代役。worker は task を見送り、上限 WorkerPolicy.memory-tight-hold-limit-ms を越えたら env-failed・種類
+   memory-tight で報告する。偽 = 逼迫しない)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
   (setv #^ str doeff-commit "")
@@ -419,7 +422,8 @@
   (setv #^ bool silent-notices False)
   (setv #^ bool steps-wall False)
   (setv #^ bool reads-room False)
-  (setv #^ (| SimMemoryWatch None) memory-watch None))
+  (setv #^ (| SimMemoryWatch None) memory-watch None)
+  (setv #^ bool memory-tight False))
 
 
 (defrecord SimGeneration
@@ -2460,10 +2464,11 @@
     (<- now int (now-epoch-ms))
     (<- view WorldView (view-of truth now))
     ;; 壊れた worker hides-retired(条 C14 の反例)は、入れ替えで名から外した旧の process を観測に載せない — worker の判断は退いた
-    ;; process が無いと読み、旧を止める前に次の新を並べる。
+    ;; process が無いと読み、旧を止める前に次の新を並べる。逼迫したまま続く機体の worker(memory-tight)は、観測に逼迫を載せる。
+    (val seen (replace view :memory-tight worker.memory-tight))
     (resume (if worker.hides-retired
-                (replace view :processes (tuple (gfor p view.processes :if (is p.retired-from None) p)))
-                view)))
+                (replace seen :processes (tuple (gfor p seen.processes :if (is p.retired-from None) p)))
+                seen)))
   (PrepareCode [revision]
     (<- (prepare worker boot revision False False))
     (resume None))
