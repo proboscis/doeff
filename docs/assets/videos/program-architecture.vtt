@@ -1,97 +1,109 @@
 WEBVTT
 
 t1
-00:00:00.250 --> 00:00:04.700
+00:00:00.250 --> 00:00:05.150
 Program architecture: how a doeff program is built, and how it runs.
 
 t2
-00:00:05.250 --> 00:00:14.300
+00:00:05.700 --> 00:00:12.650
 A program is a value. It is control instructions, a DoExpr, that the Rust VM evaluates.
 
 t3
-00:00:14.850 --> 00:00:19.750
+00:00:15.300 --> 00:00:20.650
 An effect is plain data. It is dispatched at one place only: Perform.
 
 p1
-00:00:21.250 --> 00:00:27.350
+00:00:21.700 --> 00:00:28.500
 Calling an at-do function runs nothing. It returns a program, and the body has not run yet.
 
 p2
-00:00:27.950 --> 00:00:35.300
+00:00:29.050 --> 00:00:35.850
 An effect such as Ask key is a value too. It names an operation, and does nothing by itself.
 
 p3
-00:00:35.950 --> 00:00:43.200
+00:00:37.050 --> 00:00:43.400
 Yield Ask is lowered to yield Perform of Ask. Both reach the same handler, and both get ada.
 
 p4
-00:00:43.950 --> 00:00:48.100
+00:00:45.050 --> 00:00:48.850
 run takes that one program, and returns its raw value.
 
 s1
-00:00:49.750 --> 00:00:56.050
+00:00:50.850 --> 00:00:57.050
 Handler installers take a program and return a program. Calling them nests the handlers.
 
 s2
-00:00:56.750 --> 00:01:01.750
+00:00:57.850 --> 00:01:03.200
 h2 is innermost, and sees every effect first. It answers Greet.
 
 s3
-00:01:02.550 --> 00:01:07.350
+00:01:03.750 --> 00:01:08.750
 Lookup is not for h2. It passes outward, and h1 answers it.
 
 s4
-00:01:08.150 --> 00:01:17.100
+00:01:09.350 --> 00:01:17.700
 Save passes h2 and h1, and reaches h0, the outermost. Dispatch always goes from inside out.
 
 c1
-00:01:18.250 --> 00:01:24.450
+00:01:19.450 --> 00:01:26.250
 The VM runs the program one step at a time. A program that yields a program calls it.
 
 c2
-00:01:25.050 --> 00:01:30.050
+00:01:26.800 --> 00:01:32.200
 Each call becomes a frame in the VM, with its function, file and line.
 
 c3
-00:01:30.850 --> 00:01:38.200
+00:01:32.750 --> 00:01:38.550
 When charge raises, the doeff traceback lists the chain of calls, and the yield each one waits at.
 
 o1
-00:01:41.250 --> 00:01:46.500
-To watch the effects, wrap a program in WithObserve, with an observer.
+00:01:43.150 --> 00:01:48.600
+To watch effects, take bump. It asks for a key, and gets that key's count.
 
 o2
-00:01:47.250 --> 00:01:54.150
-The observer is called with each effect dispatched in the body: Ask, Get, Put and Tell.
+00:01:49.250 --> 00:01:53.300
+Then it puts the count plus one, logs it, and returns it.
 
 o3
-00:01:54.850 --> 00:02:00.750
-The answer is still forty two. Tell start is outside the body, so the observer does not see it.
+00:01:53.950 --> 00:01:56.000
+watched first logs start.
 
 o4
-00:02:01.450 --> 00:02:07.750
+00:01:56.750 --> 00:02:01.200
+Then it runs bump inside WithObserve, with an observer.
+
+o5
+00:02:01.850 --> 00:02:08.050
+The observer is called with each effect in the body. Ask, Get, Put, and Tell.
+
+o6
+00:02:08.650 --> 00:02:14.800
+The answer is still forty two. Tell start is outside the body, so it is not seen.
+
+o7
+00:02:15.350 --> 00:02:21.000
 run has no trace flag. Observation composes into the program, like a handler.
 
 a1
-00:02:08.300 --> 00:02:13.800
+00:02:22.150 --> 00:02:26.800
 Async programs run under the scheduler: run of scheduled of the program.
 
 a2
-00:02:14.500 --> 00:02:21.700
+00:02:28.350 --> 00:02:35.750
 The scheduler is a handler. It answers Spawn and Gather, and switches tasks at each wait.
 
 a3
-00:02:22.400 --> 00:02:31.850
+00:02:36.300 --> 00:02:45.250
 Two tasks interleave, a1, b1, a2, b2, inside the VM's one step loop, and run returns both results.
 
 a4
-00:02:32.600 --> 00:02:38.600
+00:02:46.500 --> 00:02:52.000
 Without scheduled, Spawn finds no handler, and the run raises UnhandledEffect.
 
 z1.1
-00:02:39.800 --> 00:02:44.683
+00:02:53.700 --> 00:02:58.583
 Programs are values. Effects are data, dispatched at Perform.
 
 z1.2
-00:02:44.683 --> 00:02:51.150
+00:02:58.583 --> 00:03:05.050
 Handlers nest, and the VM steps it all. That is how doeff runs algebraic effects.

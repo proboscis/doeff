@@ -1,109 +1,121 @@
 WEBVTT
 
 i1
-00:00:00.250 --> 00:00:03.900
+00:00:00.250 --> 00:00:04.950
 This is doeff: algebraic effects for Python.
 
 i2
-00:00:04.450 --> 00:00:10.900
+00:00:05.500 --> 00:00:10.550
 Your code says what it wants. Handlers, stacked around it, decide how it happens.
 
 y1
-00:00:11.450 --> 00:00:15.450
+00:00:11.100 --> 00:00:17.150
 A doeff program is a Python generator, marked with at-do.
 
 y2
-00:00:16.450 --> 00:00:23.100
-yield Fetch fetches nothing by itself. It hands a request, called an effect, outward.
+00:00:17.700 --> 00:00:21.950
+This one, size_of, returns the length of the page at a URL.
 
 y3
-00:00:23.650 --> 00:00:30.150
+00:00:22.500 --> 00:00:26.500
+It asks for the page with yield Fetch,
+
+y4
+00:00:27.100 --> 00:00:29.750
+and returns the length of that page.
+
+y5
+00:00:30.300 --> 00:00:37.050
+But yield Fetch fetches nothing by itself. It hands a request, called an effect, outward.
+
+y6
+00:00:37.700 --> 00:00:42.300
 A handler answers it. The answer comes back as page, and the code goes on.
 
 w1
-00:00:30.700 --> 00:00:36.700
+00:00:43.100 --> 00:00:50.000
 Here is monitor. It only says what it wants: a page, a line, and a thirty-minute wait.
 
 w2
-00:00:37.250 --> 00:00:42.450
+00:00:50.550 --> 00:00:55.750
 Each yield hands an effect outward. The code never says how it is done.
 
 l1
-00:00:43.000 --> 00:00:47.450
+00:00:56.300 --> 00:01:01.250
 Handlers wrap the program in layers. You choose the stack when you run it.
 
 l2
-00:00:48.000 --> 00:00:52.150
+00:01:01.800 --> 00:01:06.150
 An effect travels outward until a layer that handles it catches it.
 
 l3
-00:00:52.700 --> 00:00:56.250
+00:01:06.700 --> 00:01:10.600
 Delay reaches the virtual clock. What does that layer get?
 
 r1
-00:00:57.300 --> 00:01:02.850
+00:01:11.300 --> 00:01:16.250
 Along with the effect, the handler also gets k: the rest of your program.
 
 r2
-00:01:03.400 --> 00:01:10.550
+00:01:16.800 --> 00:01:23.300
 Holding k, it decides when the rest runs: now, later, at nine thirty, or never.
 
 r3
-00:01:11.100 --> 00:01:17.150
+00:01:23.850 --> 00:01:30.750
 The virtual clock sets the time to nine thirty and resumes k at once. No real wait.
 
 s1
-00:01:17.700 --> 00:01:22.950
+00:01:31.300 --> 00:01:35.850
 A scheduler is a layer too. Spawn starts two monitors at once.
 
 s2
-00:01:23.500 --> 00:01:28.450
+00:01:36.400 --> 00:01:41.400
 Each Delay parks its k. The virtual clock keeps them in wake-up order.
 
 s3
-00:01:29.000 --> 00:01:35.400
+00:01:41.950 --> 00:01:47.650
 No task is ready, so the clock jumps to nine ten, and b's k runs.
 
 s4
-00:01:35.950 --> 00:01:41.500
+00:01:48.200 --> 00:01:54.750
 Then nine thirty for a. The same four lines, in the same order, every run.
 
 n1
-00:01:42.050 --> 00:01:45.250
+00:01:55.300 --> 00:01:58.300
 Now swap the stack, and keep the code.
 
 n2
-00:01:45.800 --> 00:01:50.750
+00:01:58.850 --> 00:02:02.900
 Test handlers on the left. Production handlers on the right.
 
 n3
-00:01:51.300 --> 00:01:55.150
+00:02:03.450 --> 00:02:06.800
 yield Fetch: the program asks for the page.
 
 n4
-00:01:56.400 --> 00:01:59.900
+00:02:08.550 --> 00:02:11.250
 yield Log: it writes a line.
 
 n5
-00:02:01.500 --> 00:02:06.050
+00:02:13.650 --> 00:02:19.450
 yield Delay, thirty minutes: each clock decides what waiting means.
 
 n6
-00:02:06.600 --> 00:02:11.750
+00:02:20.000 --> 00:02:25.650
 Test skips the wait. Production really waits, shown in fast-forward.
 
 n7
-00:02:12.300 --> 00:02:16.850
+00:02:26.200 --> 00:02:30.550
 Test is done. Production is still waiting out the thirty minutes.
 
 n8
-00:02:17.400 --> 00:02:20.350
+00:02:31.100 --> 00:02:35.050
 The wait is over. Production checks again.
 
 n9
-00:02:23.000 --> 00:02:29.900
+00:02:36.700 --> 00:02:43.350
 Same code, same output. Test: a few milliseconds. Production: thirty real minutes.
 
 o1
-00:02:30.450 --> 00:02:38.250
+00:02:43.900 --> 00:02:51.650
 doeff: algebraic effects for Python. Stack the layers you need around the same code. pip install doeff.

@@ -1,89 +1,113 @@
 WEBVTT
 
 i1
-00:00:00.250 --> 00:00:03.950
+00:00:00.250 --> 00:00:04.000
 Basic effects: the batteries that come with doeff.
 
 i2
-00:00:04.500 --> 00:00:10.650
+00:00:04.550 --> 00:00:10.500
 Each one is an effect your code yields, and a handler that ships with doeff answers it.
 
 r1
-00:00:11.200 --> 00:00:15.500
+00:00:11.050 --> 00:00:15.900
 Reader. Ask, with a key, reads a value from the environment.
 
 r2
-00:00:16.200 --> 00:00:21.650
+00:00:16.450 --> 00:00:21.650
 The environment lives in the reader handler. Your code only names the key it wants.
 
 r3
-00:00:22.200 --> 00:00:27.900
+00:00:22.200 --> 00:00:27.700
 A key that is not there raises a missing env key error, and the message names the close key.
 
 l1
-00:00:28.700 --> 00:00:33.250
-Local runs a sub-program over a changed environment.
+00:00:28.700 --> 00:00:33.800
+Next, with_custom_config runs fetch_data with a staging URL.
 
 l2
-00:00:33.800 --> 00:00:39.450
-Inside it, Ask sees the override. The code inside is the same as ever.
+00:00:34.400 --> 00:00:39.750
+First, Ask reads api_url, and Tell logs the default.
 
 l3
-00:00:40.000 --> 00:00:44.500
-When the sub-program returns, the environment is back as it was.
+00:00:40.400 --> 00:00:44.350
+Then Local runs fetch_data over a changed environment.
+
+l4
+00:00:45.000 --> 00:00:50.600
+Inside, Ask sees the override. The code of fetch_data is the same as ever.
+
+l5
+00:00:51.300 --> 00:00:55.450
+When Local returns, Ask reads the default URL again.
 
 s1
-00:00:45.500 --> 00:00:49.100
+00:00:57.200 --> 00:01:00.550
 State. Get and Put read and write a store.
 
 s2
-00:00:50.500 --> 00:00:55.000
+00:01:02.200 --> 00:01:06.000
 The store lives in the state handler, not in your code.
 
 s3
-00:00:56.000 --> 00:01:02.150
+00:01:07.700 --> 00:01:12.750
 Get, add one, Put, three times over. The program returns three.
 
 w1
-00:01:02.700 --> 00:01:06.750
+00:01:13.300 --> 00:01:16.850
 Writer. Tell appends a message to a log.
 
 w2
-00:01:07.700 --> 00:01:14.550
+00:01:18.300 --> 00:01:24.600
 A handler can perform effects too. Writer keeps its log in state, with its own Get and Put.
 
 w3
-00:01:15.100 --> 00:01:21.400
+00:01:25.150 --> 00:01:30.500
 ReadWriterLog reads the log back: four lines, in the order they were told.
 
 g1
-00:01:21.950 --> 00:01:26.500
+00:01:31.150 --> 00:01:35.800
 slog emits a structured entry: a message, plus keyword data.
 
 g2
-00:01:27.050 --> 00:01:32.600
+00:01:36.350 --> 00:01:41.700
 slog handler prints each entry on standard error. It is a separate effect from Tell.
 
 g3
-00:01:33.150 --> 00:01:37.800
+00:01:42.250 --> 00:01:45.950
 Listen collects the entries as values, so a test can check them.
 
 c1
-00:01:40.650 --> 00:01:45.600
-Now put them together: one program, three handlers stacked around it.
+00:01:49.750 --> 00:01:56.700
+Now put them together. application_workflow retries an operation and logs each try.
 
 c2
-00:01:46.150 --> 00:01:53.350
-Each effect travels out to the layer that handles it. Ask to reader, Get and Put to state, Tell to writer.
+00:01:57.350 --> 00:02:02.500
+It reads max_retries, logs it, and sets attempt to zero.
 
 c3
-00:01:58.650 --> 00:02:04.750
+00:02:03.150 --> 00:02:07.600
+Each round, it counts and logs the attempt, then tries.
+
+c4
+00:02:08.250 --> 00:02:14.100
+On success it returns. Otherwise it logs the failure, and goes round again.
+
+c5
+00:02:14.650 --> 00:02:19.150
+Stack three handlers around it: reader, state, and writer.
+
+c6
+00:02:19.750 --> 00:02:28.350
+Each effect goes out to the layer that handles it. Ask to reader, Tell to writer, Put and Get to state.
+
+c7
+00:02:35.450 --> 00:02:42.050
 The second attempt succeeds. The log holds every step, and the result is success.
 
 o1.1
-00:02:06.250 --> 00:02:10.350
+00:02:43.050 --> 00:02:47.317
 Reader, State, Writer, and slog: effects your code yields,
 
 o1.2
-00:02:10.350 --> 00:02:15.300
+00:02:47.317 --> 00:02:52.450
 and handlers that come with doeff, stacked the way your program needs.
