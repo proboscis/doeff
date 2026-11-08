@@ -23,7 +23,7 @@
 (import doeff_hy._wire_codec [Codec row-codec-of])
 (import doeff_hy._wire_malformed [Malformed])
 (import doeff_records._values [Row Missing Page Written RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
-                              ExpectVersion ExpectAny checked-table-name])
+                              ExpectVersion ExpectAny Expectation Reset Unreachable checked-table-name])
 (import doeff_records._effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
 
 (setv M (TypeVar "M"))
@@ -56,13 +56,13 @@
 
 (defclass [(dataclass :frozen True)] TypedRow [(get Generic M)]
   "行 1 つ: key = 鍵 / value = 行の型の値 / version = 版。"
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ M value)
   (#^ int version))
 
 (defclass [(dataclass :frozen True)] TypedPage [(get Generic M)]
   "list-typed の 1 頁: rows = TypedRow の tuple / next-cursor・epoch・sequence は Page と同じ。"
-  (#^ tuple rows)
+  (#^ (get tuple #((get TypedRow M) ...)) rows)
   (#^ (| ListCursor None) next-cursor)
   (#^ int epoch)
   (#^ int sequence))
@@ -76,12 +76,12 @@
 
 (defclass [(dataclass :frozen True)] TypedConflict [(get Generic M)]
   "put-typed の期待が今の行と合わない(Conflict の今の行を行の型にした物)。current = TypedRow | Missing。"
-  (#^ (| TypedRow Missing) current))
+  (#^ (| (get TypedRow M) Missing) current))
 
 (defclass [(dataclass :frozen True)] TypedRowChanged [(get Generic M)]
   "変更 1 つ(RowChanged の行の値を行の型にした物)。"
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ int version)
   (#^ M value)
   (#^ int sequence)
@@ -90,7 +90,7 @@
 
 ;; --- 写し(純関数)------------------------------------------------------------------------------------------
 
-(defn [functools.cache] #^ tuple model-field-names [#^ type model]
+(defn [functools.cache] #^ (get tuple #(str ...)) model-field-names [#^ type model]
   "純粋: 行の型の欄の名(dataclass の欄の名)。
    型ごとに 1 回だけ数える(行を型へ写す読みのたびに dataclasses.fields を回すと、2026-09-28 の実測で自動処理の係の模擬の検 1 本
    26 万回・本体の 1 割になった — 型の欄は作った後に変わらない)。"
@@ -123,12 +123,12 @@
   (TypedRow row.key (value-of-fields row-type row.value) row.version))
 
 
-(defn #^ (| TypedRow Missing) typed-current [#^ (get RowType M) row-type #^ (| Row Missing) current]
+(defn #^ (| (get TypedRow M) Missing) typed-current [#^ (get RowType M) row-type #^ (| Row Missing) current]
   "Conflict の今の行(Row | Missing)を行の型へ(TypedConflict の current)。"
   (if (isinstance current Row) (typed-row row-type current) current))
 
 
-(defn #^ (| TypedRowChanged RowRemoved) typed-change [#^ (get RowType M) row-type #^ (| RowChanged RowRemoved) change]
+(defn #^ (| (get TypedRowChanged M) RowRemoved) typed-change [#^ (get RowType M) row-type #^ (| RowChanged RowRemoved) change]
   "WatchChanges の変更 1 つを行の型へ: RowChanged → TypedRowChanged・RowRemoved はそのまま。
    別の表の変更は ValueError(表ごとに行の型を選ぶのは呼び手)。"
   (when (!= change.table row-type.table)
@@ -141,17 +141,17 @@
 
 ;; --- 読み書き(汎用の effect の上の Program)----------------------------------------------------------------
 
-(defk read-typed [#^ RowType row-type #^ tuple key]
-  {:pre [(: row-type RowType) (: key tuple)] :post [(: % "TypedRow | Missing | Unreachable")]}
+(defk read-typed [#^ (get RowType M) row-type #^ (get tuple #(str ...)) key]
+  {:pre [(: row-type (get RowType M)) (: key (get tuple #(str ...)))] :post [(: % (| (get TypedRow M) Missing Unreachable))]}
   "行を鍵で 1 つ読み、行の型で返す。答え = TypedRow | Missing | Unreachable。"
   (<- answer (ReadRow row-type.table key))
   (if (isinstance answer Row) (typed-row row-type answer) answer))
 
 
-(defk list-typed [#^ RowType row-type * [where None] [cursor None] [limit DEFAULT-LIST-LIMIT] [where-any None]]
-  {:pre [(: row-type RowType) (: where (| FrozenMap NoneType)) (: cursor (| ListCursor NoneType)) (: limit int)
+(defk list-typed [#^ (get RowType M) row-type * [where None] [cursor None] [limit DEFAULT-LIST-LIMIT] [where-any None]]
+  {:pre [(: row-type (get RowType M)) (: where (| FrozenMap NoneType)) (: cursor (| ListCursor NoneType)) (: limit int)
          (: where-any (| FrozenMap NoneType))]
-   :post [(: % "TypedPage | Reset")]}
+   :post [(: % (| (get TypedPage M) Reset))]}
   "表の行を 1 頁読み、行の型で返す。where = 欄 → 値(索引の欄の等号の AND・None = 絞らない)/ where-any = 欄 → 値の組(行の欄の値が組の
    どれかに等しい行 — ListRows.where-any と同じ・None = 絞らない)/ cursor・limit は ListRows と同じ。
    行の型は欄を全部読むので、返す欄の絞り(ListRows.fields)は使わない。答え = TypedPage | Reset(cursor の位置の世代が置き場の版と違う —
@@ -164,9 +164,9 @@
       answer))
 
 
-(defk put-typed [#^ (get RowType M) row-type #^ tuple key #^ M value #^ object expect]
-  {:pre [(: row-type RowType) (: key tuple) (: value row-type.model) (: expect (| ExpectAbsent ExpectVersion ExpectAny))]
-   :post [(: % "TypedWritten | TypedConflict")]}
+(defk put-typed [#^ (get RowType M) row-type #^ (get tuple #(str ...)) key #^ M value #^ Expectation expect]
+  {:pre [(: row-type (get RowType M)) (: key (get tuple #(str ...))) (: value row-type.model) (: expect Expectation)]
+   :post [(: % (| (get TypedWritten M) (get TypedConflict M)))]}
   "行の全体の像を書く: value = 行の型の値(値が None の欄は消す)/ expect = ExpectAbsent | ExpectVersion | ExpectAny。
    答え = TypedWritten | TypedConflict(期待が今の行と合わない — PutRow の値の答えをそのまま返す。呼び手が読み直して撃ち直す)。
    PutRow が失敗と宣言した Refused・Unreachable は <- が Raise にして呼び手へ逃がす(値で受けたい呼び手は on-raise か result で包む)。"

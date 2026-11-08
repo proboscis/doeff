@@ -100,7 +100,8 @@
 (defclass StoredGroup []
   "組で数える列(ByKeySuffix)の組 1 つ: last-at = 組の最後の出来事を積んだ刻(保持を数え始める刻)/ events = 組の出来事(積んだ順)。"
   (defn #^ None __init__ [self #^ int last-at]
-    (setv self.last-at last-at self.events [])))
+    (setv self.last-at last-at)
+    (setv #^ (get list Event) self.events [])))
 
 
 ;; 保持の期限の索引の項(3 種)— 索引(MemoryStore.expiry)は期限の刻で並ぶ heap で、刈りは期限の来た項だけを取り出す。
@@ -133,7 +134,7 @@
 
 
 (deff new-store-lock []  ; defk にできない: 置き場を同期に組む呼び(MemoryStore の組み立てと、pickle・copy から戻す所が呼ぶ — 錠は thread の間の取り決めで effect にならない)
-  {:pre [] :post [(: % AbstractContextManager)] :tags {:context "records" :role "foundation"}}
+  {:pre [] :post [(: % (get AbstractContextManager #(bool None)))] :tags {:context "records" :role "foundation"}}
   "置き場 1 つの錠を作るため(同じ thread の入れ子は通す RLock)。thread に触るのはこの関数だけで、MemoryStore の class は作らずに
    make-lock として受ける(既定がこの関数 — 頭の註の最後の段)。"
   (threading.RLock))
@@ -155,56 +156,56 @@
    (2) 使い手は番号の頭と版(head・event-head・epoch)を、動く値として置き場の欄から直に読むので、凍らせた defrecord の欄では動きが見えない/
    (3) 検は pickle と copy の後の錠が新しい錠であることを求める(test_memory_threads)— 錠は置き場ごとに持つ/
    (4) make-lock の既定で `(MemoryStore schema)` の字面を変えずに済み、使い手の repo(2 つ)の pin を替えずに着地できる。"
-  (defn #^ None __init__ [self #^ RecordsSchema schema #^ Callable [make-lock new-store-lock]]
-    (setv self.schema schema
-          self.make-lock make-lock
-          self.lock (make-lock)
-          self.bells {}
-          self.epoch 1
-          self.floor 0
-          self.head 0
-          self.rows (dfor name schema.tables name {})
-          self.changes []
-          ;; 変更の番号 → 積んだ刻(epoch ミリ秒)— 刈り取り(PruneChanges)が古さを測るため。
-          self.changed-at {}
-          self.event-head 0
-          self.events []
-          self.by-idempotency {}
-          ;; 保持の期限で出来事を消した冪等キーの覚え(#(列 冪等キー) → values.RetiredKey — 番号と本文の指紋だけ)。消した後の同じ鍵の
-          ;; 追記を生きた出来事と同じ規則で判じるため(#3022)。外すのは列の覚え方が限る時だけ(頭の註の「鍵の覚えの外し」)。
-          self.retired-keys {}
-          ;; 覚えた刻(#(列 冪等キー) → epoch ミリ秒 — retired-keys と同じ鍵)と、覚えの外しの索引(heap — 項は #(外してよい刻 積んだ順 #(列 冪等キー)))。
-          self.remembered-at {}
-          self.key-forgets []
-          ;; 届かない状態(検の口 faults.SetStoreOutage の値 — None = 届く)。
-          self.outage None
-          ;; 置いた故障の列(検の口 faults.AddStoreFault の値 — 置いた順・空 = 故障なし)。
-          self.faults #()
-          ;; 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 消え得る物が無い)— purge-expired はこの刻より前なら索引を見ない。
-          self.purge-due-ms None
-          ;; 保持の期限の索引(heap — 項は #(期限の刻 積んだ順 項)・項 = RowDue | EventDue | GroupDue)と、積んだ順の番号(同じ刻の項を
-          ;; 比べるための一意の番号 — heap は項そのものを比べない)。
-          self.expiry []
-          self.expiry-order 0
-          ;; 組で数える列の組(#(列 組) → StoredGroup)。
-          self.groups {}
-          ;; 行の書きの冪等キーの覚え(鍵 → values.RememberedWrite)と、覚えた刻(鍵 → epoch ミリ秒)と、覚えの外しの
-          ;; 索引(heap — 項は #(外してよい刻 積んだ順 鍵))。頭の註の「行の書きの冪等キー」。
-          self.write-keys {}
-          self.write-remembered-at {}
-          self.write-forgets []
-          ;; 書きの控え(頭の註の「書きの控え」): 変更の番号 → 行の書きの変更の WriteNote と、出来事の番号 → 積んだ時の
-          ;; 変更の番号の頭。
-          self.written-by {}
-          self.appended-at-head {}
-          ;; 表の名 → 鍵の綴りを並べた list の覚え(鍵の順の頁 memory-key-page-texts が頁ごとに表の全部の鍵を並べ直さないため)。
-          ;; 置き場の中身から導ける物なので、錠と同じく pickle と copy は運ばず、戻した側は空から作る。
-          self.sorted-texts {}
-          ;; 表の名 → 宣言の index の欄 → 欄の値の印(admission.json-equal-token — 印を作れない値は None)→ その値の行の鍵の綴りを並べた
-          ;; list の覚え(絞りの読み memory-candidate-texts が表の全部の行を照らさず、合う行の候補だけを見るため — 本番の置き場が index で
-          ;; 引くのと同じ形)。読みが欄ごとに初めて使う時に作り、書きが直す。並べた鍵の覚え(sorted-texts)の無い表の覚えは古い物として
-          ;; 作り直す — 置き場の行を直に置く使い手は sorted-texts の表の覚えを外すだけで両方を外せる。sorted-texts と同じく運ばない。
-          self.indexed-texts {}))
+  (defn #^ None __init__ [self #^ RecordsSchema schema #^ (get Callable #([] (get AbstractContextManager #(bool None)))) [make-lock new-store-lock]]
+    (setv self.schema schema)
+    (setv #^ (get Callable #([] (get AbstractContextManager #(bool None)))) self.make-lock make-lock)
+    (setv #^ (get AbstractContextManager #(bool None)) self.lock (make-lock))
+    (setv #^ (get dict #((get ExternalPromise None) (get frozenset (get tuple #(str str))))) self.bells {})
+    (setv #^ int self.epoch 1)
+    (setv #^ int self.floor 0)
+    (setv #^ int self.head 0)
+    (setv #^ (get dict #(str (get dict #(str StoredRow)))) self.rows (dfor name schema.tables name {}))
+    (setv #^ (get list (| RowChanged RowRemoved)) self.changes [])
+    ;; 変更の番号 → 積んだ刻(epoch ミリ秒)— 刈り取り(PruneChanges)が古さを測るため。
+    (setv #^ (get dict #(int int)) self.changed-at {})
+    (setv #^ int self.event-head 0)
+    (setv #^ (get list Event) self.events [])
+    (setv #^ (get dict #((get tuple #(str str)) Event)) self.by-idempotency {})
+    ;; 保持の期限で出来事を消した冪等キーの覚え(#(列 冪等キー) → values.RetiredKey — 番号と本文の指紋だけ)。消した後の同じ鍵の
+    ;; 追記を生きた出来事と同じ規則で判じるため(#3022)。外すのは列の覚え方が限る時だけ(頭の註の「鍵の覚えの外し」)。
+    (setv #^ (get dict #((get tuple #(str str)) RetiredKey)) self.retired-keys {})
+    ;; 覚えた刻(#(列 冪等キー) → epoch ミリ秒 — retired-keys と同じ鍵)と、覚えの外しの索引(heap — 項は #(外してよい刻 積んだ順 #(列 冪等キー)))。
+    (setv #^ (get dict #((get tuple #(str str)) int)) self.remembered-at {})
+    (setv #^ (get list (get tuple #(int int (get tuple #(str str))))) self.key-forgets [])
+    ;; 届かない状態(検の口 faults.SetStoreOutage の値 — None = 届く)。
+    (setv #^ (| SetStoreOutage None) self.outage None)
+    ;; 置いた故障の列(検の口 faults.AddStoreFault の値 — 置いた順・空 = 故障なし)。
+    (setv #^ (get tuple #(StoreFault ...)) self.faults #())
+    ;; 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 消え得る物が無い)— purge-expired はこの刻より前なら索引を見ない。
+    (setv #^ (| int None) self.purge-due-ms None)
+    ;; 保持の期限の索引(heap — 項は #(期限の刻 積んだ順 項)・項 = RowDue | EventDue | GroupDue)と、積んだ順の番号(同じ刻の項を
+    ;; 比べるための一意の番号 — heap は項そのものを比べない)。
+    (setv #^ (get list (get tuple #(int int (| RowDue EventDue GroupDue)))) self.expiry [])
+    (setv #^ int self.expiry-order 0)
+    ;; 組で数える列の組(#(列 組) → StoredGroup)。
+    (setv #^ (get dict #((get tuple #(str str)) StoredGroup)) self.groups {})
+    ;; 行の書きの冪等キーの覚え(鍵 → values.RememberedWrite)と、覚えた刻(鍵 → epoch ミリ秒)と、覚えの外しの
+    ;; 索引(heap — 項は #(外してよい刻 積んだ順 鍵))。頭の註の「行の書きの冪等キー」。
+    (setv #^ (get dict #(str RememberedWrite)) self.write-keys {})
+    (setv #^ (get dict #(str int)) self.write-remembered-at {})
+    (setv #^ (get list (get tuple #(int int str))) self.write-forgets [])
+    ;; 書きの控え(頭の註の「書きの控え」): 変更の番号 → 行の書きの変更の WriteNote と、出来事の番号 → 積んだ時の
+    ;; 変更の番号の頭。
+    (setv #^ (get dict #(int WriteNote)) self.written-by {})
+    (setv #^ (get dict #(int int)) self.appended-at-head {})
+    ;; 表の名 → 鍵の綴りを並べた list の覚え(鍵の順の頁 memory-key-page-texts が頁ごとに表の全部の鍵を並べ直さないため)。
+    ;; 置き場の中身から導ける物なので、錠と同じく pickle と copy は運ばず、戻した側は空から作る。
+    (setv #^ (get dict #(str (get list str))) self.sorted-texts {})
+    ;; 表の名 → 宣言の index の欄 → 欄の値の印(admission.json-equal-token — 印を作れない値は None)→ その値の行の鍵の綴りを並べた
+    ;; list の覚え(絞りの読み memory-candidate-texts が表の全部の行を照らさず、合う行の候補だけを見るため — 本番の置き場が index で
+    ;; 引くのと同じ形)。読みが欄ごとに初めて使う時に作り、書きが直す。並べた鍵の覚え(sorted-texts)の無い表の覚えは古い物として
+    ;; 作り直す — 置き場の行を直に置く使い手は sorted-texts の表の覚えを外すだけで両方を外せる。sorted-texts と同じく運ばない。
+    (setv #^ (get dict #(str (get dict #(str (get dict #(object (get list str))))))) self.indexed-texts {}))
   ;; 錠と呼び鈴は置き場の中身ではなく、この process の thread と実行の間の取り決め — pickle と copy は錠と呼び鈴を除いた中身だけを運び、
   ;; 戻した側で新しい錠と空の呼び鈴を作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を壊さないため。
   ;; 呼び鈴は掛けた実行の中でしか意味を持たない)。
@@ -270,7 +271,7 @@
 
 
 (defk hang-bell [store tables streams]
-  {:pre [(: store MemoryStore) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...)))] :post [(: % ExternalPromise)]
+  {:pre [(: store MemoryStore) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...)))] :post [(: % (get ExternalPromise None))]
    :tags {:context "records" :role "foundation"}}
   "置き場 store の表 tables か列 streams への書きで鳴る呼び鈴を掛けて返すため — 置き場の外の待ち手(模擬の世界の落ち着きの見張りなど)が、
    置き場の内側(呼び鈴の名の形・錠)に触らずに書きを待つ口(#3028)。鳴った呼び鈴は書きが外す。鳴らずに待ちを終える時は drop-bell。"
@@ -281,7 +282,7 @@
 
 
 (defk drop-bell [store bell]
-  {:pre [(: store MemoryStore) (: bell ExternalPromise)] :post [(: % None)]
+  {:pre [(: store MemoryStore) (: bell (get ExternalPromise None))] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
   "掛けた呼び鈴 bell を置き場 store から外し、その外の promise を終わらせるため(鳴らずに待ちを終える時 — 鳴った呼び鈴は書きが外し済み・
    外し済みでも効かずに返る)。待ち手はもう居ないので None で完了しても誰も起きない — 終わらせないと scheduler の promise の行が pending の
@@ -580,7 +581,7 @@
        (not (stored-row-expired? decl stored now-ms))))
 
 
-(defn #^ list memory-sorted-texts [#^ MemoryStore store #^ str table-name]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get list str) memory-sorted-texts [#^ MemoryStore store #^ str table-name]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の鍵の綴りを綴りの順に並べた list を返すため(覚えが無ければ並べて覚える)。覚えは行の鍵が増える・消える書き
    (memory-store-row・remove-stored-row)が並びを保ったまま直すので、頁ごとに並べ直さない。返した list は呼び手が変えない。"
   (setv texts (.get store.sorted-texts table-name))
@@ -645,7 +646,7 @@
   None)
 
 
-(defn #^ dict memory-field-index [#^ MemoryStore store #^ str table-name #^ str field]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get dict #(object (get list str))) memory-field-index [#^ MemoryStore store #^ str table-name #^ str field]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の宣言の index の欄 field の値の覚え(印 → 鍵の綴りの並び)を返すため(覚えが無ければ表の行から作って覚える)。返した dict と
    並びは呼び手が変えない。"
   (setv texts (memory-sorted-texts store table-name)
@@ -659,7 +660,7 @@
   index)
 
 
-(defn #^ (| list None) memory-indexed-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (| (get list str) None) memory-indexed-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "絞り(where の等号・where-any の値の組)が名指す宣言の index の欄のうち、合い得る行の最も少ない欄の値の覚えから、その欄の値に合い得る
    行の鍵の綴りを綴りの順に返すため(None = index の欄の絞りが無いか、どの欄の絞りの値にも印を作れない — 呼び手は並べた鍵を辿る)。
    候補は欄の値の印が絞りの値の印と同じ行と、値の印を作れない行(json-equal? で照らすまで分からない)— 呼び手が候補に全部の絞りと期限を
@@ -680,7 +681,7 @@
     _ (list (heapq.merge #* runs))))
 
 
-(defn #^ tuple memory-candidate-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get tuple #((get list str) FrozenMap)) memory-candidate-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "絞り(where・where-any)を当てる候補の鍵の綴り(綴りの順)と、候補に当てる where-any を #(texts rest) で返すため(一覧・数え・鍵の順の頁の
    1 点): 鍵の欄の値の組の絞りは鍵で直に引いた行(memory-keyed-texts — rest は鍵の欄を除いた組)/ 宣言の index の欄の等しさの絞りは
    その欄の値の覚え(memory-indexed-texts)/ ほかは並べた鍵の覚え(memory-sorted-texts)。返した list は呼び手が変えない。"
@@ -691,7 +692,7 @@
   #((if (is indexed None) (memory-sorted-texts store table-name) indexed) where-any))
 
 
-(defn #^ list memory-key-page-texts [#^ MemoryStore store #^ TableDecl decl #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get list str) memory-key-page-texts [#^ MemoryStore store #^ TableDecl decl #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "鍵の順の頁(ListRows の並べる欄の無い読み)に出す行の鍵の綴りを、cursor の位置の後から綴りの順に最大 limit + 1 件返すため(limit 件を
    越える 1 件は続きの有無の判じだけに使う)。cursor の位置は並べた鍵の上を二分探しで探し、絞りは位置の後から綴りの順に当てて limit + 1 件
    見つけた所で止める — 頁ごとに表の全行を並べて絞りを当てると、頭からの頁送りの全読みが表の行の数の 2 乗になる(2026-10-31 の実測:
@@ -765,7 +766,7 @@
                           (if (isinstance one ReadRow) (memory-read-row store one now-ms) (memory-list-rows store one now-ms))))))
 
 
-(defn #^ (| Row None) memory-current-row [#^ MemoryStore store #^ str table #^ tuple key]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ読み
+(defn #^ (| Row None) memory-current-row [#^ MemoryStore store #^ str table #^ (get tuple #(str ...)) key]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ読み
   "書きの判定に渡す今の行(無ければ None)を置き場から引く。"
   (setv stored (.get (get store.rows table) (key-text key)))
   (if (is stored None) None stored.row))
@@ -971,7 +972,7 @@
       (<- (drop-bell store bell)))))
 
 
-(val CLOCK-TICK (timedelta :microseconds 1))
+(val #^ timedelta CLOCK-TICK (timedelta :microseconds 1))
 
 
 (defk wait-span [seconds]
@@ -1084,7 +1085,7 @@
     True (do (memory-append store writer single now-ms) fault.answer)))
 
 
-(defn #^ AppendedEvents memory-append-events [#^ MemoryStore store #^ str writer #^ AppendEvents ask #^ tuple faults #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-append と同じ作法)
+(defn #^ AppendedEvents memory-append-events [#^ MemoryStore store #^ str writer #^ AppendEvents ask #^ (get tuple #((| StoreFault None) ...)) faults #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-append と同じ作法)
   "AppendEvents の束に答えるため: 錠の内で束の順に追記 1 つずつを memory-append-one で判じて積む(間に他の書きは
    入らない — 番号は束の順に増え、断られた追記は他の追記を止めない)。faults = 追記ごとに当たる故障(append-faults の答え — 無ければ None)。"
   (AppendedEvents (tuple (gfor #(one fault) (zip ask.appends faults :strict True) (memory-append-one store writer one fault now-ms)))))
@@ -1291,7 +1292,8 @@
 (defn #^ (| Unreachable None) unreachable-for [#^ MemoryStore store #^ tuple names]  ; defk にできない: handler の節の頭で同期に置き場の状態を読む(guarded と同じ位置)
   "names(effect が触る表と列の名)のどれかが届かない状態なら Unreachable、でなければ None(faults.SetStoreOutage)。"
   (setv outage store.outage)
-  (if (and (is-not outage None) (or (is outage.names None) (any (gfor name names (in name outage.names)))))
+  ;; 置いた不達は detail を持つ(detail が None の SetStoreOutage は不達を外す — memory-records-handler の節)。
+  (if (and (is-not outage None) (is-not outage.detail None) (or (is outage.names None) (any (gfor name names (in name outage.names)))))
       (Unreachable outage.detail)
       None))
 
@@ -1307,7 +1309,7 @@
   None)
 
 
-(defn #^ None memory-clear-faults [#^ MemoryStore store #^ (| frozenset None) names]  ; defk にできない: handler の節と、doeff の実行の外で同期に筋書きを組む使い手が呼ぶ置き場の書き
+(defn #^ None memory-clear-faults [#^ MemoryStore store #^ (| (get frozenset str) None) names]  ; defk にできない: handler の節と、doeff の実行の外で同期に筋書きを組む使い手が呼ぶ置き場の書き
   "names と名が 1 つでも重なる故障を外す(None = 全部 — ClearStoreFaults の節と同じ書き)。"
   (with [store.lock]
     (setv store.faults (if (is names None)
@@ -1341,7 +1343,7 @@
 
 
 (defk answered [store operation names ask program]
-  {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
+  {:pre [(: store MemoryStore) (: operation StoreOperation) (: names (get tuple #(str ...))) (: ask EffectBase) (: program Program)]
    ;; 答え = 公開 effect 10 個と WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
                   Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty Event EventAbsent EventRetired Count BatchRead))]
@@ -1463,7 +1465,7 @@
 
 
 (defk at-now [store operation]
-  {:pre [(: store MemoryStore) (: operation Callable)]
+  {:pre [(: store MemoryStore) (: operation (get Callable #([int] object)))]
    ;; 答え = 置き場の操作の答え(公開 effect の答えの型のどれか)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
                   Changes Appended AppendedEvents Events StreamEnd StreamEmpty WrittenAndAppended AppendRefused))]
@@ -1477,7 +1479,7 @@
 
 
 (defk read-at-now [store operation]
-  {:pre [(: store MemoryStore) (: operation Callable)]
+  {:pre [(: store MemoryStore) (: operation (get Callable #([int] object)))]
    ;; 答え = 置き場の読みの答え(読みの公開 effect の答えの型のどれか)。
    :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty Event EventAbsent EventRetired BatchRead Count))]
    :tags {:context "records" :role "foundation"}}
@@ -1622,7 +1624,7 @@
 ;; --- 置き場の選び(records-serving に渡す値)----------------------------------------------------------------
 
 (defk memory-prepared [store schema prefix host]
-  {:pre [(: store MemoryStore) (: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % Callable)]
+  {:pre [(: store MemoryStore) (: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] (get Callable #(... object)))))]
    :tags {:context "records" :role "foundation"}}
   "memory の置き場 store で表を用意したことにし、「書き手の名 → 記録の handler の関数」を返すため(表の宣言は置き場が持つ — 接頭辞と
    機体の名は PostgreSQL の表の名と行の刻みにだけ効くので使わない・I/O なし)。"
@@ -1660,7 +1662,7 @@
 
 (defrecord MemorySignals
   "模擬の源が位置より後の書きを読んだ答え: signals = 発する合図(結びの順)/ mark = 読み終えた位置。"
-  #^ tuple signals
+  #^ (get tuple #(object ...)) signals
   #^ MemoryMark mark)
 
 
@@ -1672,7 +1674,7 @@
 
 
 (deff binding-keys [binding changes events]  ; defk にできない: 錠の外で同期に組む純粋な判断(memory-signals-since が内包表記の中で呼ぶ)
-  {:pre [(: binding SignalTables) (: changes tuple) (: events tuple)] :post [(: % tuple)]}
+  {:pre [(: binding SignalTables) (: changes (get tuple #((| RowChanged RowRemoved) ...))) (: events (get tuple #(Event ...)))] :post [(: % (get tuple #(ChangedRow ...)))]}
   "結び 1 つの合図の keys を組むため: 結んだ表の変わった行(ChangedRow(表, 行の鍵の綴り)— 初めて出た順・同じ行は 1 つ)と、結んだ列の
    追記の頭(ChangedRow(列, 頭の番号の綴り))。記録の置き場の源と同じ keys の形。"
   (setv rows (tuple (gfor change changes :if (in change.table binding.tables) (ChangedRow :table change.table :key (key-text change.key))))
@@ -1686,7 +1688,7 @@
 
 
 (deff memory-signals-since [store bindings mark]  ; defk にできない: 錠の内で同期に置き場を読む(置き場の書きと同じ作法)
-  {:pre [(: store MemoryStore) (: bindings tuple) (: mark MemoryMark)] :post [(: % MemorySignals)]}
+  {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: mark MemoryMark)] :post [(: % MemorySignals)]}
   "位置 mark より後の書きを、結びごとの合図にするため(結んだ表と列の書きの無い結びは出さない)。置き場の版が変わった・保持の刈りで位置が床より
    前になった時は、結びごとに keys の空な合図を 1 つ発する(受け手は読み直す — 記録の置き場の源が Reset で読み直すのと同じ)。"
   (with [store.lock]
@@ -1703,7 +1705,7 @@
 
 
 (defk memory-publish [store bindings subscriber tables streams mark]
-  {:pre [(: store MemoryStore) (: bindings tuple) (: subscriber str) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...)))
+  {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: subscriber str) (: tables (get tuple #(str ...))) (: streams (get tuple #(str ...)))
          (: mark MemoryMark)]
    :post [(: % None)] :tags {:context "records" :role "foundation"}}
   "模擬の源の task: 結んだ表と列の呼び鈴を掛けてから位置より後の書きを読み(掛ける前の書きも拾う — 読みと待ちの間の書きを落とさない)、

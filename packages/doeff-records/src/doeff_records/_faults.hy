@@ -20,7 +20,7 @@
    本番の記録の口(http_client)が service に届かない時に返す答えと同じ。答え = None。memory の置き場が答える(PostgreSQL の置き場は
    本物の不達が起きるので答えない)。"
   (#^ (| str None) detail)
-  (setv #^ (| frozenset None) names None))
+  (setv #^ (| (get frozenset str) None) names None))
 
 
 ;; --- 断りの故障 ----------------------------------------------------------------------------------
@@ -42,11 +42,11 @@
    受けて当たるかを返す関数(None = 名と操作に当たる effect の全部)/ times = 当たる回数(None = 外すまで当たり続ける。数を持つ故障は
    当たるたびに 1 減り、尽きた拍に故障の列から外れる — lands と組むと「書きは確定したが答えが 1 度だけ切れた」形になり、撃ち直す
    client の 2 度目の要求は置き場に届く)。"
-  (#^ frozenset names)
+  (#^ (get frozenset str) names)
   (#^ StoreOperation operation)
   (#^ (| Refused Unreachable) answer)
   (setv #^ bool lands False)
-  (setv #^ (| Callable None) matching None)
+  (setv #^ (| (get Callable #([object] bool)) None) matching None)
   (setv #^ (| int None) times None)
   (defn #^ None __post-init__ [self]
     ;; 誤った値を黙って受けない(名の綴りを 1 つの str で渡すと文字の集合になる等)。
@@ -75,7 +75,7 @@
 
 (defeffect ClearStoreFaults
   "故障を外す: names = 外す故障の名(故障の names と 1 つでも重なる故障を外す)/ None = 全部。"
-  {:fields [(: names (| frozenset None) None)]
-   :pre [(: names (| frozenset None))]
+  {:fields [(: names (| (get frozenset str) None) None)]
+   :pre [(: names (| (get frozenset str) None))]
    :answer None
    :tags {:context "records" :role "foundation"}})

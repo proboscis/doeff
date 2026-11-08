@@ -11,6 +11,7 @@
 (import hashlib)
 (import json)
 (import collections.abc [Mapping])
+(import typing [TypeIs])
 (import doeff_hy._frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
                               RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused Written WrittenRows
@@ -313,7 +314,7 @@
              (and (in name value) (any (gfor wanted members (json-equal? (get value name) wanted)))))))
 
 
-(defn #^ bool descending-value? [#^ object value]
+(defn #^ (get TypeIs int) descending-value? [#^ object value]
   "上から読む ListRows(descending-by)が並べる値か — JSON の整数だけ(真偽・小数・文字列・欄の無い行は並べない)。memory と PostgreSQL の
    置き場が同じ行を出すための 1 点(PostgreSQL の文の条件は pg_sql の top-rows-statement)。"
   (and (isinstance value int) (not (isinstance value bool))))

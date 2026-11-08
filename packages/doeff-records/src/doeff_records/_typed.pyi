@@ -1,3 +1,4 @@
+# Hand-written stub kept: doeff_hy._static_stub drops the functools.cached_property decorator, so RowType.codec would become a method instead of a Codec[M] attribute
 """_typed.hy の公開面の型(型検査のための宣言 — 実行時は _typed.hy を読む)。
 
 _typed.hy は Hy の module なので、pyright は中を読めず、`from doeff_records._typed import RowType` の名・`typed-change` の答え・

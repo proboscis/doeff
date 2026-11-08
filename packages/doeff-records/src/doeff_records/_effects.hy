@@ -48,7 +48,7 @@
 (setv READ-BATCH-MAX 64)
 
 
-(defn #^ tuple checked-key [#^ object key #^ str what]
+(defn #^ (get tuple #(str ...)) checked-key [#^ object key #^ str what]
   (when (not (and (isinstance key tuple) key (all (gfor part key (isinstance part str)))))
     (raise (TypeError (.format "{} は文字列の空でない tuple: {!r}" what key))))
   key)
@@ -93,7 +93,7 @@
 (defclass [(dataclass :frozen True)] ReadRow [(get EffectBase ReadRowAnswer)]
   "行を鍵で 1 つ読む。答え = Row | Missing | Unreachable。"
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.table "ReadRow.table")
     (checked-key self.key "ReadRow.key")))
@@ -163,7 +163,7 @@
    Raise(Unreachable) を出す)/ NotIndexed = 失敗(<- は Raise(NotIndexed) を出す — 索引の無い欄で絞った誤りで、読み直しても同じ答えに
    なり続きが無い。索引の用意が終わるまでの断りも失敗で、撃ち直す呼び手は on-raise で受ける)。不在は無い。答える handler は今までどおり
    4 つとも値で答える(R4)。"
-  {:fields [(: table str) (: where FrozenMap (FrozenMap)) (: fields (| tuple None) None) (: cursor (| ListCursor None) None)
+  {:fields [(: table str) (: where FrozenMap (FrozenMap)) (: fields (| (get tuple #(str ...)) None) None) (: cursor (| ListCursor None) None)
             (: limit int DEFAULT-LIST-LIMIT) (: descending-by (| str None) None) (: where-any FrozenMap (FrozenMap))
             (: ascending-by (| str None) None)]
    :pre [(checked-list-rows self)]
@@ -192,7 +192,7 @@
   (#^ str table)
   (setv #^ FrozenMap where (field :default-factory FrozenMap))
   (setv #^ FrozenMap where-any (field :default-factory FrozenMap))
-  (setv #^ (| tuple None) at-least None)
+  (setv #^ (| (get tuple #(str int)) None) at-least None)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.table "CountRows.table")
     (freeze-field self "where" "CountRows.where")
@@ -219,7 +219,7 @@
    束の i 番目の読みの答えは、同じ読みを 1 つだけ撃った答えと同じ(読みの意味・保持の期限の除き・索引の断り NotIndexed・頁の続きの位置は
    読みごとに変わらない)。束は 1 つの断面とは限らない(置き場によっては読みの間に他の書きが入り得る — 断面が要る呼び手は行の版で照らす)。
    届かない(Unreachable)時は束の全部が届かない(読みの一部だけの答えは返さない — 読みは置き場を変えないので、同じ束を撃ち直してよい)。"
-  (#^ tuple reads)
+  (#^ (get tuple #((| ReadRow ListRows) ...)) reads)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.reads tuple) self.reads (all (gfor one self.reads (isinstance one #(ReadRow ListRows))))))
       (raise (TypeError (.format "ReadBatch.reads は ReadRow | ListRows の空でない tuple: {!r}" self.reads))))
@@ -251,7 +251,7 @@
    読み直して撃ち直す CAS の繰り返しで普通に扱う答え — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Refused = 失敗
    (宣言が許さない書き・同じ冪等キーの別の本文 — <- は Raise(Refused) を出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。
    不在は無い。答える handler は今までどおり 4 つとも値で答える(R4)。"
-  {:fields [(: table str) (: key tuple) (: value FrozenMap) (: expect Expectation) (: idempotency-key (| str None) None)]
+  {:fields [(: table str) (: key (get tuple #(str ...))) (: value FrozenMap) (: expect Expectation) (: idempotency-key (| str None) None)]
    :pre [(checked-put-row self)]
    :answer (| Written Conflict Refused Unreachable)
    :failure [Refused Unreachable]
@@ -263,7 +263,7 @@
   "PutRows の束の書き 1 つ。欄と意味は PutRow と同じ(table・key・value = 欄の差分・expect = ExpectAbsent | ExpectVersion | ExpectAny)。
    effect ではない(束の data)— 束ごと PutRows で撃つ。"
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ FrozenMap value)
   (#^ Expectation expect)
   (defn #^ None __post_init__ [self]
@@ -307,13 +307,13 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defn #^ tuple write-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
+(defn #^ (get tuple #((| PutRow RowWrite) ...)) write-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
   "行の書き ask を、冪等キーの判じ(admission.write-digest・judge-write-replay)が読む書きの並びにするため(PutRow は自分 1 つ・PutRows と
    PutRowsAppendEvents は行の束 — どれも欄 table・key・value・expect を持つ)。"
   (if (isinstance ask #(PutRows PutRowsAppendEvents)) ask.writes #(ask)))
 
 
-(defn #^ (| tuple None) append-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: write-parts と同じ
+(defn #^ (| (get tuple #(EventAppend ...)) None) append-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: write-parts と同じ
   "行の書き ask の、冪等キーの本文の指紋(admission.write-digest)に含める追記の束を読むため(PutRowsAppendEvents は追記の束・PutRow と PutRows は
    None — 前からの書きの指紋の綴りを変えない)。"
   (if (isinstance ask PutRowsAppendEvents) ask.appends None))
@@ -345,7 +345,7 @@
    答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): Changes = 成功 / Reset = 値(cursor の世代が置き場の版と違うという普通の答えで、
    呼び手が (epoch, floor) から読み直して続ける — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Unreachable = 失敗(<- は
    Raise(Unreachable) を出す)。不在は無い。答える handler は今までどおり 3 つとも値で答える(R4)。"
-  {:fields [(: tables tuple) (: cursor WatchCursor) (: timeout float 0.0) (: limit int DEFAULT-WATCH-LIMIT)
+  {:fields [(: tables (get tuple #(str ...))) (: cursor WatchCursor) (: timeout float 0.0) (: limit int DEFAULT-WATCH-LIMIT)
             (: streams (get tuple #(str ...)) #())]
    :pre [(checked-watch-changes tables cursor timeout limit streams)]
    :answer (| Changes Reset Unreachable)
@@ -408,7 +408,7 @@
    再送は前の番号・別の本文と上限は Refused)で、断られた追記は束の他の追記を止めない(PutRows と違い全部か 0 ではない)。今積んだ追記の
    番号は束の順に増える。届かない(Unreachable)時は束の全部が積まれたか、どれも積まれていない(どの置き場も束を 1 つの書きで積む —
    冪等キーつきなので同じ束を撃ち直してよい)。書き手の名は欄に無い(AppendEvent と同じく handler を組む時に入る)。"
-  (#^ tuple appends)
+  (#^ (get tuple #(EventAppend ...)) appends)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.appends tuple) self.appends (all (gfor a self.appends (isinstance a EventAppend)))))
       (raise (TypeError (.format "AppendEvents.appends は EventAppend の空でない tuple: {!r}" self.appends))))

@@ -218,14 +218,14 @@
    compute-workers = 組み立てが開いた計算の pool の thread の数(GET /metrics の records_compute_workers — 利用率の割る数・None = 名乗らない)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
-  (#^ (| Program EffectBase) prepare)
-  (#^ tuple request-handlers)
+  (#^ (| (get Program #(object object)) (get EffectBase object)) prepare)
+  (#^ (get tuple #((get Callable #(... object)) ...)) request-handlers)
   (#^ int max-bytes)
   (#^ (| MaintenancePlan None) maintenance)
   (#^ float stop-poll-seconds)
   (#^ float drain-seconds)
-  (setv #^ (| Callable None) readiness None)
-  (setv #^ (| Callable None) pressure None)
+  (setv #^ (| (get Callable #(... (get Program #(bool object)))) None) readiness None)
+  (setv #^ (| (get Callable #(... (get Program #((| StorePressure PressureUnread) object)))) None) pressure None)
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| ServedBuild None) served None)
   (setv #^ (get tuple #(str ...)) callers #())
@@ -283,11 +283,11 @@
 
 (defeffect KeepPreparedHandlers
   "表の用意が済んだ — 書き手の名 → 記録の handler の関数を置く。答えは None。"
-  {:fields [(: handler-for Callable)] :answer None :tags {:context "records" :role "entry"}})
+  {:fields [(: handler-for (get Callable #([str] object)))] :answer None :tags {:context "records" :role "entry"}})
 
 (defeffect PreparedHandlers
   "用意で置いた 書き手の名 → 記録の handler の関数を読む(用意の前は None)。"
-  {:fields [] :answer (| Callable None) :tags {:context "records" :role "entry"}})
+  {:fields [] :answer (| (get Callable #([str] object)) None) :tags {:context "records" :role "entry"}})
 
 (defclass MarkBook []
   "要求 1 つの刻の帳面(頭の註の要求ごとの計時): 要求の task が自分で読んだ刻と、記録の handler の包みが StampRequest で打たせた刻を、
@@ -298,7 +298,7 @@
   (deff __init__ [self]  ; defk にできない: 帳面の class の初期化
     {:pre [(: self MarkBook)] :post [(: % None)]}
     "刻の無い帳面にするため。"
-    (setv self.marks #()))
+    (setv #^ (get tuple #(MarkAt ...)) self.marks #()))
 
   (deff stamp [self mark at]  ; defk にできない: 要求の task と StampRequest の答え手の節が刻を打つ帳面の口
     {:pre [(: self MarkBook) (: mark RequestMark) (: at float)] :post [(: % None)]}
@@ -938,20 +938,20 @@
    宣言の呼び手の名(RecordsServing の callers へそのまま渡す)/ maintenance = 手入れの周期(RecordsServing の maintenance へそのまま
    渡す・None = 手入れを立てない — 手入れが要求の答えを待たせない事を殻の上で確かめる検が渡す)。"
   (#^ RecordsSchema schema)
-  (#^ Callable handler-for)
-  (setv #^ tuple request-handlers #())
+  (#^ (get Callable #([str] object)) handler-for)
+  (setv #^ (get tuple #((get Callable #(... object)) ...)) request-handlers #())
   (setv #^ str host "127.0.0.1")
   (setv #^ int port 0)
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| ServedBuild None) served None)
-  (setv #^ tuple callers #())
+  (setv #^ (get tuple #(str ...)) callers #())
   (setv #^ (| MaintenancePlan None) maintenance None))
 
 
 (defk records-server-config [schema handler-for [request-handlers #()] [host "127.0.0.1"] [port 0] [meter None] [served None]
                              [callers #()] [maintenance None]]
-  {:pre [(: schema RecordsSchema) (: handler-for Callable) (: request-handlers tuple) (: host str) (: port int)
-         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None)) (: callers tuple)
+  {:pre [(: schema RecordsSchema) (: handler-for (get Callable #([str] object))) (: request-handlers (get tuple #((get Callable #(... object)) ...))) (: host str) (: port int)
+         (: meter (| (get Callable #(... object)) None)) (: served (| ServedBuild None)) (: callers (get tuple #(str ...)))
          (: maintenance (| MaintenancePlan None))] :post [(: % RecordsServerConfig)]}
   "名簿を取らずに RecordsServerConfig を組む(引数を並べて組む・#3008)。
    引数は RecordsServerConfig の欄と同じ順。"
@@ -961,7 +961,7 @@
 (defclass [(dataclass :frozen True)] RunningServer []
   "開いた HTTP の口: url = 基の URL(http://host:port)/ stop = 殻の止めの口 / close() = 止めて port を返す(受けている要求を答え終えてから)。"
   (#^ str url)
-  (#^ Callable stop)
+  (#^ (get Callable #([] None)) stop)
   (deff close [self]  ; defk にできない: 検の殻を閉じる同期の口(Program の外の検の try / finally が呼ぶ)
     {:pre [(: self RunningServer)] :post [(: % None)] :tags {:context "records" :role "entry"}}
     "口を止める(止めの合図を立て、入口の run が待ち受けを閉じて終わるのを待つ)。2 度目は何もしない。"

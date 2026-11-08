@@ -23,22 +23,22 @@
 (import doeff [Program])
 (import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
 
-(setv TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
-(setv FIELD-NAME-PATTERN (re.compile "^[A-Za-z_][A-Za-z0-9_]{0,62}$"))
+(setv #^ (get re.Pattern str) TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
+(setv #^ (get re.Pattern str) FIELD-NAME-PATTERN (re.compile "^[A-Za-z_][A-Za-z0-9_]{0,62}$"))
 ;; 組で数える列の区切り(ByKeySuffix.separator)の字 — PostgreSQL の置き場は区切りを組の名の式の索引と文の式に文字列の literal で直に置く
 ;; (pg_sql.key-suffix-of・#3614)ので、引用符・逆斜線・空白・%・$・波括弧・ASCII の外を含まない 1〜16 字だけを許す(欄の名の FIELD-NAME-PATTERN と
 ;; 同じ考え — 宣言で断り、文の組み立ては検めた値だけを受ける)。
-(val SEPARATOR-PATTERN (re.compile "^[A-Za-z0-9_.:;,/|#@=+~^!?*&<>-]{1,16}$"))
+(val #^ (get re.Pattern str) SEPARATOR-PATTERN (re.compile "^[A-Za-z0-9_.:;,/|#@=+~^!?*&<>-]{1,16}$"))
 
 
 (defclass UndeclaredTable [ValueError]
   "宣言に無い表・追記の列を名指した(組み立ての誤り — 値の失敗ではない)。tables・streams = 宣言に無いと分かった表・追記の列の名
    (分からない時は空 — 文だけで作った旧い形・どの名か決められない断り)。読み手はどの表の断りかを欄で照らし、文の綴りを読まない
    (使い手が、無くても仕事を続けられる表の断りだけを「出していない」答えに畳み、他の表の断りでは落ちるため)。"
-  (defn #^ None __init__ [self #^ str message * #^ tuple [tables #()] #^ tuple [streams #()]]
+  (defn #^ None __init__ [self #^ str message * #^ (get tuple #(str ...)) [tables #()] #^ (get tuple #(str ...)) [streams #()]]
     (.__init__ (super) message)
-    (setv self.tables (tuple tables)
-          self.streams (tuple streams)))
+    (setv #^ (get tuple #(str ...)) self.tables (tuple tables))
+    (setv #^ (get tuple #(str ...)) self.streams (tuple streams)))
   (defn #^ tuple __reduce__ [self]
     ;; 欄は __init__ の引数(キーワードだけ)なので、例外の既定の写し(args だけで作り直す)では落ちる — 欄を状態として運ぶ。
     #(UndeclaredTable #((get self.args 0)) {"tables" self.tables "streams" self.streams})))
@@ -65,7 +65,7 @@
   None)
 
 
-(defn #^ tuple checked-names [#^ object names #^ str what]
+(defn #^ (get tuple #(str ...)) checked-names [#^ object names #^ str what]
   (when (not (isinstance names tuple))
     (raise (TypeError (.format "{} は tuple: {!r}" what names))))
   (for [name names] (checked-field-name name what))
@@ -132,7 +132,7 @@
 (setv KeyMemory (| RememberKeysForever RememberKeysFor RememberNoKeys))
 
 
-(defn #^ (| int None) key-memory-ms [#^ object memory]  ; defk にできない: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ値の読み
+(defn #^ (| int None) key-memory-ms [#^ KeyMemory memory]  ; defk にできない: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ値の読み
   "置き場の覚えの外し(memory・PG の回収と出来事の外し)が覚え方を 1 つの数で読めるように、覚えを残す長さ(ミリ秒 — 切り捨て)にするため。
    None = 外さない(RememberKeysForever)・0 = 残さない(RememberNoKeys)。"
   (match memory
@@ -159,8 +159,8 @@
    founders = 行の誕生の書き(行がまだ無い時)に限ってその欄を書いてよい書き手(空でない文字列の tuple・既定 = 無し)。
    writers と founders は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
   (#^ str name)
-  (#^ tuple writers)
-  (setv #^ tuple founders #())
+  (#^ (get tuple #(str ...)) writers)
+  (setv #^ (get tuple #(str ...)) founders #())
   (defn #^ None __post_init__ [self]
     (checked-field-name self.name "FieldDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
@@ -198,19 +198,19 @@
    大きい欄にできない — どれも置き場が SQL の式で payload から読む欄。大きい欄の where・where-any は索引の欄でないので NotIndexed
    (admission.where-refusal)。repr は空なら出さない(空の表の要約〔schema_digest〕を変えない — 要約は空でない bulk を足して綴る)。"
   (#^ str name)
-  (#^ tuple key-fields)
-  (#^ tuple fields)
-  (setv #^ tuple indexes #())
-  (setv #^ tuple descending (field :default #() :repr False))
-  (setv #^ tuple descending-within (field :default #() :repr False))
+  (#^ (get tuple #(str ...)) key-fields)
+  (#^ (get tuple #(FieldDecl ...)) fields)
+  (setv #^ (get tuple #(str ...)) indexes #())
+  (setv #^ (get tuple #(str ...)) descending (field :default #() :repr False))
+  (setv #^ (get tuple #(DescendingWithin ...)) descending-within (field :default #() :repr False))
   (setv #^ str state-field "state")
-  (setv #^ tuple states #())
-  (setv #^ tuple terminal #())
+  (setv #^ (get tuple #(str ...)) states #())
+  (setv #^ (get tuple #(str ...)) terminal #())
   (setv #^ (| str None) initial None)
-  (setv #^ tuple operator-paths #())
-  (setv #^ object retention (KeepForever))
+  (setv #^ (get tuple #(str ...)) operator-paths #())
+  (setv #^ Retention retention (KeepForever))
   (setv #^ (| int None) size-budget None)
-  (setv #^ tuple bulk (field :default #() :repr False))
+  (setv #^ (get tuple #(str ...)) bulk (field :default #() :repr False))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "TableDecl.name")
     (checked-names self.key-fields "TableDecl.key_fields")
@@ -276,7 +276,7 @@
       (when (and self.states (= name self.state-field))
         (raise (ValueError (.format "状態の欄 {!r} を大きい欄にはできない" name))))))
 
-  (defn #^ tuple field-names [self]
+  (defn #^ (get tuple #(str ...)) field-names [self]
     "宣言した欄の名(宣言の順)。"
     (tuple (gfor f self.fields f.name)))
 
@@ -290,14 +290,14 @@
     "name が宣言した欄か。"
     (in name self._by-name))
 
-  (defn #^ tuple writers-of [self #^ str name]
+  (defn #^ (get tuple #(str ...)) writers-of [self #^ str name]
     "欄 name を書いてよい書き手の名(宣言の外の欄は UndeclaredField)。"
     (setv found (.get self._by-name name))
     (when (is found None)
       (raise (UndeclaredField (.format "表 {} の宣言の外の欄: {!r}" self.name name))))
     found.writers)
 
-  (defn #^ tuple founders-of [self #^ str name]
+  (defn #^ (get tuple #(str ...)) founders-of [self #^ str name]
     "欄 name を行の誕生の書きに限って書いてよい書き手の名(FieldDecl.founders・宣言の外の欄は UndeclaredField)。"
     (setv found (.get self._by-name name))
     (when (is found None)
@@ -315,7 +315,7 @@
    key-memory = 置き場を去った出来事の冪等キーの覚え方(RememberKeysForever | RememberKeysFor | RememberNoKeys — 既定は外さない・
    外す 2 つは KeepFor の列だけ。上の KeyMemory の註)。"
   (#^ str name)
-  (#^ tuple writers)
+  (#^ (get tuple #(str ...)) writers)
   (setv #^ Retention retention (KeepForever))
   (setv #^ (| int None) size-budget None)
   (setv #^ RetentionGroup retention-group (EachEvent))
@@ -353,7 +353,7 @@
    operators と表の operator-paths は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
   (setv #^ (get FrozenMap TableDecl) tables (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap StreamDecl) streams (field :default-factory FrozenMap))
-  (setv #^ tuple operators #())
+  (setv #^ (get tuple #(str ...)) operators #())
   (defn #^ None __post_init__ [self]
     (object.__setattr__ self "tables" (frozen-map-of self.tables "RecordsSchema.tables"))
     (object.__setattr__ self "streams" (frozen-map-of self.streams "RecordsSchema.streams"))
@@ -456,7 +456,7 @@
   value)
 
 
-(defn #^ (| str None) stored-text [#^ object holder]  ; defk にできない: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
+(defn #^ (| str None) stored-text [#^ (| Row RowChanged) holder]  ; defk にできない: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
   "答え holder(Row・RowChanged)が持つ保存の綴り(持たなければ None — 綴りの無い答えは呼び手が値から綴る)。"
   (.get (vars holder) STORED-TEXT))
 
@@ -470,7 +470,7 @@
 (defclass [(dataclass :frozen True)] Row []
   "行 1 つ: key = 鍵(key-fields の順)/ value = 欄 → 値の凍らせた写像(鍵の欄を含む)/
    version = 書かれるたびに 1 増える版(生まれた行は 1)。"
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ FrozenMap value)
   (#^ int version)
   (defn #^ None __post_init__ [self] (freeze-field self "value" "Row.value"))
@@ -485,7 +485,7 @@
         self
         (Row (copy.deepcopy self.key memo) self.value self.version))))
 
-(defn #^ Row stored-row [#^ tuple key #^ str text #^ int version]  ; defk にできない: pg.row-of(頁の行を内包表記で組む純粋な綴り)が行ごとに同期に呼ぶ作り手
+(defn #^ Row stored-row [#^ (get tuple #(str ...)) key #^ str text #^ int version]  ; defk にできない: pg.row-of(頁の行を内包表記で組む純粋な綴り)が行ごとに同期に呼ぶ作り手
   "置き場が保存した値の綴り text だけを持つ行を作るため(値は読まれた時に解く — 頭の註の保存の綴り。欄を絞らない一覧の行は解かれずに
    答えへ綴りのまま継がれる)。"
   (setv row (object.__new__ Row))
@@ -493,7 +493,7 @@
   (object.__setattr__ row "version" version)
   (with-stored-text row text))
 
-(defn #^ Row spelled-row [#^ tuple key #^ FrozenMap value #^ str text #^ int version]  ; defk にできない: memory の置き場の書き(錠の内の同期の defn)が呼ぶ作り手
+(defn #^ Row spelled-row [#^ (get tuple #(str ...)) key #^ FrozenMap value #^ str text #^ int version]  ; defk にできない: memory の置き場の書き(錠の内の同期の defn)が呼ぶ作り手
   "値 value と、その値を書いた時に 1 度だけ綴った text を一緒に持つ行を作るため(値を持つ置き場 — memory — の行)。"
   (with-stored-text (Row key value version) text))
 
@@ -503,7 +503,7 @@
 (defclass [(dataclass :frozen True)] Page []
   "ListRows の 1 頁: rows = 鍵の綴りの順の Row の tuple / next-cursor = 次の頁の位置(None = 終わり)/
    epoch・sequence = この頁を読んだ時の置き場の版と変更の番号(最初の頁の値から WatchChanges を始めると取りこぼしが無い)。"
-  (#^ tuple rows)
+  (#^ (get tuple #(Row ...)) rows)
   (#^ (| ListCursor None) next-cursor)
   (#^ int epoch)
   (#^ int sequence))
@@ -531,7 +531,7 @@
   "PutRows の束が全部確定した: items = 束の順の Written の tuple(束の i 番目の書きの答え = items の i 番目 — 各項の position は
    その行の変更の位置で、束の中で番号が 1 つずつ増える。束の最後の変更の位置は最後の項の position)/ replayed = 冪等キーつきの束の
    送り直しで、置き場が覚えた前の答えを返したか(真なら各項の replayed も真 — Written.replayed と同じ名乗り)。"
-  (#^ tuple items)
+  (#^ (get tuple #(Written ...)) items)
   (setv #^ bool replayed False)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.items tuple) (all (gfor item self.items (isinstance item Written)))))
@@ -543,7 +543,7 @@
   "変更 1 つ: 行が書かれた(作られた・更新された)。value(凍らせた写像)と version は確定した後の値 /
    at = その変更が置き場に確定した刻(epoch ミリ秒)。"
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ int version)
   (#^ FrozenMap value)
   (#^ int sequence)
@@ -553,21 +553,21 @@
     "綴りだけを持って作った変更(stored-change)の value を、初めて読んだ時に保存の綴りから解くため(頭の註の保存の綴り)。"
     (stored-value self name "RowChanged.value")))
 
-(defn #^ RowChanged stored-change [#^ str table #^ tuple key #^ int version #^ str text #^ int sequence #^ int at]  ; defk にできない: stored-row と同じ — pg.changes-of の内包表記が呼ぶ
+(defn #^ RowChanged stored-change [#^ str table #^ (get tuple #(str ...)) key #^ int version #^ str text #^ int sequence #^ int at]  ; defk にできない: stored-row と同じ — pg.changes-of の内包表記が呼ぶ
   "置き場が保存した値の綴り text だけを持つ変更を作るため(stored-row と同じ — 値は読まれた時に解く)。"
   (setv change (object.__new__ RowChanged))
   (for [#(name value) #(#("table" table) #("key" key) #("version" version) #("sequence" sequence) #("at" at))]
     (object.__setattr__ change name value))
   (with-stored-text change text))
 
-(defn #^ RowChanged spelled-change [#^ str table #^ tuple key #^ int version #^ FrozenMap value #^ str text #^ int sequence #^ int at]  ; defk にできない: spelled-row と同じ
+(defn #^ RowChanged spelled-change [#^ str table #^ (get tuple #(str ...)) key #^ int version #^ FrozenMap value #^ str text #^ int sequence #^ int at]  ; defk にできない: spelled-row と同じ
   "値 value と、その値を書いた時に 1 度だけ綴った text を一緒に持つ変更を作るため(spelled-row と同じ)。"
   (with-stored-text (RowChanged table key version value sequence at) text))
 
 (defclass [(dataclass :frozen True)] RowRemoved []
   "変更 1 つ: 行が保持の期限で消えた。積むのは回収(期限の後の SweepExpired か、その行への書き)— 期限の刻でも読みの時でもない(KeepFor の註)。"
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ int sequence))
 
 (defrecord StreamTail
@@ -605,7 +605,7 @@
 (defclass [(dataclass :frozen True)] AppendedEvents []
   "AppendEvents の束の答え: items = 束の順の、追記 1 つごとの答え(Appended | Refused — 束の i 番目の追記の答え =
    items の i 番目)。断られた追記が在っても他の追記は積まれている(全部か 0 ではない — AppendEvents の註)。"
-  (#^ tuple items)
+  (#^ (get tuple #((| Appended Refused) ...)) items)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.items tuple) self.items (all (gfor item self.items (isinstance item #(Appended Refused))))))
       (raise (TypeError (.format "AppendedEvents.items は Appended | Refused の空でない tuple: {!r}" self.items))))))
@@ -635,7 +635,7 @@
    追記の各項も今は積んでいないと名乗る — WrittenRows.replayed と同じ名乗り)。今積んだ出来事は rows の最後の項の position を
    Event.position に持つ。"
   (#^ WrittenRows rows)
-  (#^ tuple appends)
+  (#^ (get tuple #(Appended ...)) appends)
   (setv #^ bool replayed False)
   (defn #^ None __post_init__ [self]
     (when (not (isinstance self.rows WrittenRows))
@@ -669,7 +669,7 @@
   "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。
    items が上限 limit より少なければ、この答えを作った時に after より後の出来事は items の他に無い(上限より短い頁は列の終わり —
    法 law-short-page-ends-the-stream・#3986)。上限ちょうどの頁の後には出来事が残っていてよい。"
-  (#^ tuple items)
+  (#^ (get tuple #(Event ...)) items)
   (#^ int last-sequence))
 
 (defclass [(dataclass :frozen True)] EventsMoved []
@@ -788,7 +788,7 @@
    current = その行の今の値(Row | Missing)。期待の合わない行が 2 つ以上あれば、束の順で最初の行。"
   (#^ int index)
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ (| Row Missing) current))
 
 (defclass [(dataclass :frozen True)] RowsRefused []
@@ -796,7 +796,7 @@
    reason = PutRow の Refused と同じ理由の文。断られる行が 2 つ以上あれば、束の順で最初の行。"
   (#^ int index)
   (#^ str table)
-  (#^ tuple key)
+  (#^ (get tuple #(str ...)) key)
   (#^ str reason))
 
 (defclass [(dataclass :frozen True)] AppendRefused []
@@ -814,7 +814,7 @@
 
 (defclass [(dataclass :frozen True)] NotIndexed []
   "ListRows の where が索引の無い欄を名指した。"
-  (#^ tuple fields))
+  (#^ (get tuple #(str ...)) fields))
 
 (defclass [(dataclass :frozen True)] Reset []
   "位置の epoch が置き場の版と違う(置き場が作り直された・変更の列が刈られた)— 一覧から読み直す。
@@ -826,7 +826,7 @@
 (defclass [(dataclass :frozen True)] BatchRead []
   "ReadBatch の束の答え: items = 束の順の、読み 1 つごとの答え(ReadRow の Row | Missing・ListRows の
    Page | Reset | NotIndexed — 束の i 番目の読みの答え = items の i 番目)。届かない読みは在らない(届かなければ束の答えが Unreachable)。"
-  (#^ tuple items)
+  (#^ (get tuple #((| Row Missing Page Reset NotIndexed) ...)) items)
   (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.items tuple) self.items
                     (all (gfor item self.items (isinstance item #(Row Missing Page Reset NotIndexed))))))

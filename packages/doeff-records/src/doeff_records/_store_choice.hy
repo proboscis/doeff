@@ -5,6 +5,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import collections.abc [Callable])
+(import doeff [Program])
 
 
 (defrecord StorePressure
@@ -23,6 +24,6 @@
   "記録の置き場の選び: prepare-of = (schema prefix host) → 表を用意して「書き手の名 → 記録の handler」の関数を返す Program を作る関数
    (入口の用意の task が 1 度だけ撃つ)・readiness = () → 置き場に届けば True の Program(/readyz が撃つ・None = 用意が済めば ready)・
    pressure = () → StorePressure | PressureUnread の Program(/readyz が届いた後に撃つ・None = 詰まりの無い置き場 — memory は 0 と答える)。"
-  (#^ Callable prepare-of)
-  (setv #^ (| Callable None) readiness None)
-  (setv #^ (| Callable None) pressure None))
+  (#^ (get Callable #(... (get Program #(object object)))) prepare-of)
+  (setv #^ (| (get Callable #(... (get Program #(bool object)))) None) readiness None)
+  (setv #^ (| (get Callable #(... (get Program #((| StorePressure PressureUnread) object)))) None) pressure None))
