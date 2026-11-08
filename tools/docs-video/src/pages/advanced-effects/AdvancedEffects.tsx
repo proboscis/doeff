@@ -14,11 +14,15 @@ import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
+import {heardBy, lastOf, LINE_FADE, PAUSE, sequence, Step, STILL} from '../../kit/pace';
 import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, FPS, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
+
+// When a line (by id) has been heard, read from a headline at a second.
+const heard = heardBy(DURATIONS);
 
 type Point = {x: number; y: number};
 
@@ -28,12 +32,13 @@ const between = (frame: number, a: Point, b: Point, from: number, to: number): P
   return {x: mix(a.x, b.x, t), y: mix(a.y, b.y, t)};
 };
 
-// An effect or answer that travels from a to b over [from, to] seconds and fades out on arrival.
+// An effect or answer that travels from a to b over [from, to] seconds and fades out on arrival, over LAND s.
+const LAND = 0.25;
 const Trip: React.FC<{a: Point; b: Point; from: number; to: number; text: string; color: string; left?: boolean}> = ({a, b, from, to, text, color, left = false}) => {
   const frame = useSceneFrame();
-  if (frame < f(from) || frame >= f(to + 0.25)) return null;
+  if (frame < f(from) || frame >= f(to + LAND)) return null;
   const p = between(frame, a, b, from, to);
-  return <Pill x={p.x} y={p.y} text={text} color={color} left={left} opacity={fadeAt(frame, from, 0.12) * (1 - ramp(frame, to, to + 0.25))} />;
+  return <Pill x={p.x} y={p.y} text={text} color={color} left={left} opacity={fadeAt(frame, from, 0.12) * (1 - ramp(frame, to, to + LAND))} />;
 };
 
 // A named thing on the screen: a task, a program, a continuation.
@@ -76,14 +81,24 @@ const Layer: React.FC<{box: Box; name: string; handles: string; color: string; o
   </div>
 );
 
-// Scene 1 — the page's effects, and the stack of handlers that answers them.
+// Scene 1 — the page's effects, and the stack of handlers that answers them. The effects come in by what the line
+// names (tasks, shared state, observation, time, control flow), then the stack, then each effect of the program goes
+// out to its handler and its answer comes back, one trip at a time.
 
+const INTRO_EFFECTS: string[][] = [['Spawn', 'Gather'], ['Get', 'Put'], ['WithObserve'], ['Delay'], ['Abort']];
+const PAGE_EFFECTS = INTRO_EFFECTS.flat();
+// The group each pill comes in with.
+const GROUP_OF = INTRO_EFFECTS.flatMap((group, g) => group.map(() => g));
+const INTRO_IN = sequence(0, [[0.6], ...INTRO_EFFECTS.map((): [number] => [0.5]), [0.4]]);
+const [TITLE_IN, CAPTION_IN] = [INTRO_IN[0], INTRO_IN[INTRO_IN.length - 1]];
+const GROUP_IN = INTRO_IN.slice(1, -1);
+// The second headline comes as the title, the pills and the caption fade out.
+const STACK_AT = Math.max(lastOf(INTRO_IN), heard(0, 'i1')) + PAUSE;
+const INTRO_OUT = {from: STACK_AT, to: STACK_AT + 0.5};
 const INTRO_LINES: Lines = [
   [0, 'Advanced effects are still effects.'],
-  [8.6, 'Each one is answered by a handler. Stack the handlers; they work on one program together.'],
+  [STACK_AT, 'Each one is answered by a handler. Stack the handlers; they work on one program together.'],
 ];
-const INTRO = f(16.5);
-const PAGE_EFFECTS = ['Spawn', 'Gather', 'Get', 'Put', 'WithObserve', 'Delay', 'Abort'];
 // The pills' centres, spaced evenly by their widths (19 px bold mono is about 11.4 px a letter, plus padding).
 const PILL_W = PAGE_EFFECTS.map((name) => 28 + name.length * 11.4);
 const PILL_GAP = 30;
@@ -97,42 +112,60 @@ const STACK: {box: Box; name: string; handles: string; color: string}[] = [
 ];
 const PROGRAM = ['@do', 'def program():', '    yield Get("count")', '    yield Spawn(task())', '    yield Delay(1)', '    yield Abort("out of stock")'];
 const PC = {x: 254, y: 352, w: 430, size: 17, line: 26};
-// Each effect of the program: its code line, the layer that handles it, its answer, and the second it leaves.
+// Each effect of the program: its code line, the layer that handles it, and its answer (Abort has none).
 const SENDS = [
-  {line: 2, effect: 'Get("count")', layer: 0, answer: '0', leave: 9.8},
-  {line: 3, effect: 'Spawn(task())', layer: 1, answer: 'Task', leave: 11.4},
-  {line: 4, effect: 'Delay(1)', layer: 2, answer: 'None', leave: 13.0},
-  {line: 5, effect: 'Abort(...)', layer: 3, answer: '', leave: 14.6},
+  {line: 2, effect: 'Get("count")', layer: 0, answer: '0'},
+  {line: 3, effect: 'Spawn(task())', layer: 1, answer: 'Task'},
+  {line: 4, effect: 'Delay(1)', layer: 2, answer: 'None'},
+  {line: 5, effect: 'Abort(...)', layer: 3, answer: ''},
 ];
+// The stack and its call, the program, then each effect's trip out and its answer's trip back (a trip is a motion until
+// its pill has faded out).
+const OUT = 0.8;
+const BACK = 0.6;
+const STACK_IN = sequence(INTRO_OUT.to + PAUSE, [[0.6], [0.4], ...SENDS.flatMap((s): [number][] => (s.answer ? [[OUT + LAND], [BACK + LAND]] : [[OUT + LAND]]))]);
+const [LAYERS_IN, PROGRAM_IN] = STACK_IN;
+// Each send's trip out, its answer's trip back (or the pause after it lands), in the order they come.
+const TRIPS = SENDS.reduce<{out: Step; back: Step | null}[]>((trips, s) => {
+  const at = 2 + trips.reduce((n, t) => n + (t.back ? 2 : 1), 0);
+  return [...trips, {out: STACK_IN[at], back: s.answer ? STACK_IN[at + 1] : null}];
+}, []);
+// When a send lands; until when its line is lit and its layer is at work: its answer has come back, or a pause after.
+const landAt = (i: number) => TRIPS[i].out.from + OUT;
+const doneAt = (i: number) => TRIPS[i].back?.to ?? TRIPS[i].out.to + PAUSE;
+const INTRO = f(Math.max(lastOf(STACK_IN), heard(STACK_AT, 'i2')) + STILL);
 
 const IntroScene: React.FC = () => {
   const frame = useSceneFrame();
-  const first = 1 - ramp(frame, 8.0, 8.5);
-  const sending = SENDS.findIndex((s) => frame >= f(s.leave - 0.2) && frame < f(s.leave + 1.5));
+  const t = frame / FPS;
+  const first = 1 - ramp(frame, INTRO_OUT.from, INTRO_OUT.to);
+  const sending = TRIPS.findIndex((trip, i) => t >= trip.out.from && t < doneAt(i));
   const band = sending >= 0 ? SENDS[sending].line : null;
   return (
     <AbsoluteFill>
       <Headlines lines={INTRO_LINES} />
-      <div style={{position: 'absolute', left: 0, right: 0, top: 130 + mix(16, 0, ramp(frame, 0.2, 0.8)), textAlign: 'center', opacity: fadeAt(frame, 0.2, 0.5) * first}}>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 130 + mix(16, 0, ramp(frame, TITLE_IN.from, TITLE_IN.to)), textAlign: 'center', opacity: fadeAt(frame, TITLE_IN.from, 0.5) * first}}>
         <div style={{fontFamily: SANS, fontSize: 80, fontWeight: 700, color: TEXT}}>Advanced Effects</div>
         <div style={{fontFamily: SANS, fontSize: 28, color: MUTED, marginTop: 6}}>docs/09-advanced-effects.md</div>
       </div>
-      {PAGE_EFFECTS.map((name, i) => (
-        <Pill key={name} x={PILL_X[i]} y={400 + mix(14, 0, ramp(frame, 1.4 + i * 0.5, 1.9 + i * 0.5))} text={name} color={ACCENT} opacity={fadeAt(frame, 1.4 + i * 0.5) * first} />
-      ))}
-      {centred(460, 'tasks · shared state · observation · time · control flow of your own', TEXT, fadeAt(frame, 5.0) * first, 24, false)}
-      <CodeBlock lines={STACK_CALL} x={250} y={110} w={780} size={17} line={32} opacity={fadeAt(frame, 8.7)} />
+      {PAGE_EFFECTS.map((name, i) => {
+        const {from, to} = GROUP_IN[GROUP_OF[i]];
+        return <Pill key={name} x={PILL_X[i]} y={400 + mix(14, 0, ramp(frame, from, to))} text={name} color={ACCENT} opacity={fadeAt(frame, from, to - from) * first} />;
+      })}
+      {centred(460, 'tasks · shared state · observation · time · control flow of your own', TEXT, fadeAt(frame, CAPTION_IN.from, CAPTION_IN.to - CAPTION_IN.from) * first, 24, false)}
+      <CodeBlock lines={STACK_CALL} x={250} y={110} w={780} size={17} line={32} opacity={fadeAt(frame, LAYERS_IN.from, 0.4)} />
       {STACK.map((layer, i) => (
-        <Layer key={layer.name} {...layer} on={sending === i && frame >= f(SENDS[i].leave + 0.8)} opacity={fadeAt(frame, 8.9 + i * 0.25, 0.4)} />
+        <Layer key={layer.name} {...layer} on={sending === i && t >= landAt(i) && t < (TRIPS[i].back?.from ?? doneAt(i))} opacity={fadeAt(frame, LAYERS_IN.from, LAYERS_IN.to - LAYERS_IN.from)} />
       ))}
-      <CodeBlock lines={PROGRAM} {...PC} band={band} opacity={fadeAt(frame, 9.0)} />
-      {SENDS.map((s) => {
+      <CodeBlock lines={PROGRAM} {...PC} band={band} opacity={fadeAt(frame, PROGRAM_IN.from, PROGRAM_IN.to - PROGRAM_IN.from)} />
+      {SENDS.map((s, i) => {
         const from = {x: PC.x + PC.w + 12, y: lineMid(PC.y, PC.line, s.line)};
         const to = {x: 900, y: STACK[s.layer].box.y + 20};
+        const {out, back} = TRIPS[i];
         return (
           <React.Fragment key={s.effect}>
-            <Trip a={from} b={to} from={s.leave} to={s.leave + 0.8} text={s.effect} color={ACCENT} left />
-            {s.answer && <Trip a={{x: to.x + 40, y: to.y}} b={from} from={s.leave + 1.0} to={s.leave + 1.6} text={s.answer} color={TEST} left />}
+            <Trip a={from} b={to} from={out.from} to={out.from + OUT} text={s.effect} color={ACCENT} left />
+            {back && <Trip a={{x: to.x + 40, y: to.y}} b={from} from={back.from} to={back.from + BACK} text={s.answer} color={TEST} left />}
           </React.Fragment>
         );
       })}
@@ -140,15 +173,10 @@ const IntroScene: React.FC = () => {
   );
 };
 
-// Scene 2 — three tasks share one count; where a task waits decides whether updates are lost.
+// Scene 2 — three tasks share one count; where a task waits decides whether updates are lost. Each phase shows three
+// Gets and three Puts, one at a time: a Get goes to the store and its value comes back, a Put goes to the store and the
+// count changes as it lands.
 
-const SS_LINES: Lines = [
-  [0, 'Three tasks share one count. The state handler sits outside the scheduler: one store for all.'],
-  [8.4, 'A task runs until it waits, so a Get and its Put with no wait between are never split.'],
-  [18.8, 'Wait between Get and Put, and the others read the same old value: updates are lost.'],
-  [28.5, 'Hold a CreateSemaphore(1) across the read and the write: 300 again.'],
-];
-const SS = f(37.5);
 const ADD_ONE = [
   '@do',
   'def add_one(name):',
@@ -165,64 +193,89 @@ const TASKS: Task[] = ['a', 'b', 'c'];
 const LANE_Y: Record<Task, number> = {a: 318, b: 390, c: 462};
 const STORE: Box = {x: 650, y: 104, w: 590, h: 120};
 const STORE_AT: Point = {x: 1010, y: 196};
-// One step of a phase, from the steps measure/shared_state.log prints for 3 tasks x 2: a Get (and the value it
-// read) or a Put (and the value it wrote), at a second of the scene.
-type Step = {at: number; task: Task; kind: 'get' | 'put'; value: number};
-const STEP = 0.5;
-// The log's steps as [task, read, wrote], turned into Gets and Puts in the order the tasks performed them.
-const sequential = (from: number, steps: [Task, number, number][], gap: number): Step[] =>
-  steps.flatMap(([task, read, wrote], i): Step[] => [
-    {at: from + i * (2 * STEP + gap), task, kind: 'get', value: read},
-    {at: from + i * (2 * STEP + gap) + STEP + gap, task, kind: 'put', value: wrote},
-  ]);
-// Without a lock and with a wait, every task reads before any task writes: reads a, b, c, the wait, writes a, b, c.
-const interleaved = (from: number, rounds: [number, number][], wait: number): Step[] =>
-  rounds.flatMap(([read, wrote], r): Step[] => {
-    const at = from + r * (6 * STEP + wait);
-    return TASKS.flatMap((task, i): Step[] => [
-      {at: at + i * STEP, task, kind: 'get', value: read},
-      {at: at + 3 * STEP + wait + i * STEP, task, kind: 'put', value: wrote},
-    ]);
-  });
-const PHASES = [
-  // no wait between Get and Put: a read 0, wrote 1 · a read 1, wrote 2 · b 2→3 · b 3→4 · c 4→5 · c 5→6.
-  {from: 8.4, to: 18.8, wait: false, locked: false, steps: sequential(9.4, [['a', 0, 1], ['a', 1, 2], ['b', 2, 3], ['b', 3, 4], ['c', 4, 5], ['c', 5, 6]], 0)},
-  // Delay(1) between them: a, b and c all read 0 and wrote 1, then all read 1 and wrote 2.
-  {from: 18.8, to: 28.5, wait: true, locked: false, steps: interleaved(19.4, [[0, 1], [1, 2]], 0.6)},
-  // inside CreateSemaphore(1): a 0→1 · b 1→2 · c 2→3 · … (the first three of the log's six steps).
-  {from: 28.5, to: 37.5, wait: true, locked: true, steps: sequential(29.0, [['a', 0, 1], ['b', 1, 2], ['c', 2, 3]], 0.4)},
+// A Get goes out and its value comes back in one motion; a Put goes out, and the count changes as it lands.
+const GET_OUT = 0.5;
+const GET_BACK = 0.5;
+const PUT_OUT = 0.6;
+// The stage, the three tasks, the note on what is shown, one after another.
+const SS_IN = sequence(0, [[0.4], [0.4], [0.4]]);
+// One Get (and the value it read) or one Put (and the value it wrote) of a task, from the steps measure/shared_state.log
+// prints for 3 tasks x 2, with the pause before it when it is not PAUSE.
+type Move = {task: Task; kind: 'get' | 'put'; value: number; pause?: number};
+type Timed = Move & Step;
+const timed = (from: number, moves: Move[]): Timed[] => {
+  const steps = sequence(from, moves.map((m): [number, number?] => [m.kind === 'get' ? GET_OUT + GET_BACK + LAND : PUT_OUT + LAND, m.pause]));
+  return moves.map((m, i) => ({...m, ...steps[i]}));
+};
+// The log's steps as [task, read, wrote]: each task's Get, then its Put.
+const inTurn = (steps: [Task, number, number][]): Move[] =>
+  steps.flatMap(([task, read, wrote]): Move[] => [{task, kind: 'get', value: read}, {task, kind: 'put', value: wrote}]);
+// The pause in the second phase while every task waits on Delay(1).
+const WAITED = 1.5;
+type Phase = {line: string; id: keyof typeof DURATIONS; wait: boolean; locked: boolean; moves: Move[]; result: {text: string; count: number; color: string}};
+// The counts of the results are those of measure/shared_state.log, 3 tasks x 100, the same on its 3 runs.
+const PHASE_PLANS: Phase[] = [
+  // no wait between Get and Put: a read 0, wrote 1 · a read 1, wrote 2 · b read 2, wrote 3 (the log's first three steps).
+  {
+    line: 'A task runs until it waits, so a Get and its Put with no wait between are never split.', id: 's2', wait: false, locked: false,
+    moves: inTurn([['a', 0, 1], ['a', 1, 2], ['b', 2, 3]]), result: {text: 'no wait between Get and Put', count: 300, color: TEST},
+  },
+  // Delay(1) between them: a, b and c all read 0, wait, and all wrote 1 (the log's first round).
+  {
+    line: 'Wait between Get and Put, and the others read the same old value: updates are lost.', id: 's3', wait: true, locked: false,
+    moves: [
+      ...TASKS.map((task): Move => ({task, kind: 'get', value: 0})),
+      ...TASKS.map((task, i): Move => ({task, kind: 'put', value: 1, pause: i === 0 ? WAITED : undefined})),
+    ],
+    result: {text: 'Delay(1) between Get and Put', count: 100, color: FAIL},
+  },
+  // inside CreateSemaphore(1): a 0→1 · b 1→2 · c 2→3 (the first three of the log's six steps).
+  {
+    line: 'Hold a CreateSemaphore(1) across the read and the write: 300 again.', id: 's4', wait: true, locked: true,
+    moves: inTurn([['a', 0, 1], ['b', 1, 2], ['c', 2, 3]]), result: {text: 'Delay(1) inside CreateSemaphore(1)', count: 300, color: TEST},
+  },
 ];
-// The counts of measure/shared_state.log, 3 tasks x 100, the same on its 3 runs.
-const RESULTS = [
-  {at: 17.0, text: 'no wait between Get and Put', count: 300, color: TEST},
-  {at: 27.2, text: 'Delay(1) between Get and Put', count: 100, color: FAIL},
-  {at: 33.4, text: 'Delay(1) inside CreateSemaphore(1)', count: 300, color: TEST},
-];
+// Each phase from its headline: the headline, its Gets and Puts, its result; the next headline after its line is heard.
+const PHASES = PHASE_PLANS.reduce<(Phase & {from: number; steps: Timed[]; shown: Step})[]>((done, plan, i) => {
+  const before = done[i - 1];
+  const from = before ? Math.max(before.shown.to, heard(before.from, before.id)) + PAUSE : Math.max(lastOf(SS_IN), heard(0, 's1')) + PAUSE;
+  const steps = timed(from + LINE_FADE + PAUSE, plan.moves);
+  const at = lastOf(steps) + PAUSE;
+  return [...done, {...plan, from, steps, shown: {from: at, to: at + 0.4}}];
+}, []);
+const LAST = PHASES[PHASES.length - 1];
+// The closing note, after the last result.
+const SS_CLOSE = {from: LAST.shown.to + PAUSE, to: LAST.shown.to + PAUSE + 0.4};
+const SS_LINES: Lines = [[0, 'Three tasks share one count. The state handler sits outside the scheduler: one store for all.'], ...PHASES.map((p): [number, string] => [p.from, p.line])];
+const SS = f(Math.max(SS_CLOSE.to, heard(LAST.from, LAST.id)) + STILL);
 
 const SharedStateScene: React.FC = () => {
   const frame = useSceneFrame();
   const now = frame / FPS;
-  const phase = PHASES.reduce((found, p, i) => (now >= p.from ? i : found), 0);
-  const {steps, wait, locked} = PHASES[phase];
-  const arrived = (s: Step) => now >= s.at + STEP * 0.6;
-  const count = steps.filter((s) => s.kind === 'put' && arrived(s)).reduce((v, s) => s.value, 0);
-  const read = (task: Task) => steps.filter((s) => s.task === task && s.kind === 'get' && now >= s.at + STEP).reduce<number | null>((v, s) => s.value, null);
-  // A task waits on Delay(1) between its Get answer and its Put.
+  const phase = PHASES.reduce((found, p, i) => (now >= p.from ? i : found), -1);
+  const {steps, wait, locked} = phase < 0 ? {steps: [] as Timed[], wait: false, locked: false} : PHASES[phase];
+  // When a Get's value is back, and when a Put lands.
+  const back = (s: Timed) => s.from + GET_OUT + GET_BACK;
+  const lands = (s: Timed) => s.from + PUT_OUT;
+  const count = steps.filter((s) => s.kind === 'put' && now >= lands(s)).reduce((v, s) => s.value, 0);
+  const read = (task: Task) => steps.filter((s) => s.task === task && s.kind === 'get' && now >= back(s)).reduce<number | null>((v, s) => s.value, null);
+  // A task waits on Delay(1) between its Get's answer and its Put.
   const waiting = (task: Task) =>
-    wait && steps.some((s, i) => s.task === task && s.kind === 'get' && now >= s.at + STEP && now < (steps.slice(i).find((p) => p.task === task && p.kind === 'put')?.at ?? 0));
-  // Under the lock, the task between its first Get and its Put holds it.
-  const holder = locked ? steps.find((s, i) => s.kind === 'get' && now >= s.at - 0.15 && now < steps[i + 1].at + STEP) : undefined;
+    wait && steps.some((s, i) => s.task === task && s.kind === 'get' && now >= back(s) && now < (steps.slice(i).find((p) => p.task === task && p.kind === 'put')?.from ?? 0));
+  // Under the lock, the task between its Get and its Put's landing holds it.
+  const holder = locked ? steps.find((s, i) => s.kind === 'get' && now >= s.from && now < lands(steps[i + 1])) : undefined;
   // The optional lines of add_one: the semaphore lines in the last phase, the Delay line in the last two.
   const dim = (i: number) => (i === 3 || i === 7 ? (locked ? 1 : 0.18) : i === 5 ? (wait ? 1 : 0.18) : 1);
-  const flash = steps.some((s) => s.kind === 'put' && now >= s.at + STEP * 0.6 && now < s.at + STEP * 0.6 + 0.25);
+  const flash = steps.some((s) => s.kind === 'put' && now >= lands(s) && now < lands(s) + 0.25);
+  const [stage, tasks, note] = SS_IN;
   return (
     <AbsoluteFill>
       <Headlines lines={SS_LINES} />
-      <CodeBlock lines={ADD_ONE} {...SC} band={null} dim={dim} opacity={fadeAt(frame, 0)} />
+      <CodeBlock lines={ADD_ONE} {...SC} band={null} dim={dim} opacity={fadeAt(frame, stage.from, 0.4)} />
       <div
         style={{
           position: 'absolute', left: STORE.x, top: STORE.y, width: STORE.w, height: STORE.h, boxSizing: 'border-box', borderRadius: 18, background: PANEL,
-          border: `3px solid ${TEST}`, ...glow(flash, TEST), opacity: fadeAt(frame, 0.3),
+          border: `3px solid ${TEST}`, ...glow(flash, TEST), opacity: fadeAt(frame, stage.from, 0.4),
         }}
       >
         <div style={{position: 'absolute', left: 18, top: 10, fontFamily: SANS, fontSize: 18, fontWeight: 700, color: TEST, whiteSpace: 'nowrap'}}>
@@ -234,7 +287,7 @@ const SharedStateScene: React.FC = () => {
       <div
         style={{
           position: 'absolute', left: 650, top: 250, width: 590, height: 250, boxSizing: 'border-box', borderRadius: 18, border: `3px solid ${ACCENT}`,
-          opacity: fadeAt(frame, 0.6),
+          opacity: fadeAt(frame, stage.from, 0.4),
         }}
       >
         <div style={{position: 'absolute', left: 18, top: 8, fontFamily: SANS, fontSize: 18, fontWeight: 700, color: ACCENT, whiteSpace: 'nowrap'}}>
@@ -242,12 +295,12 @@ const SharedStateScene: React.FC = () => {
           <span style={{color: MUTED, fontWeight: 400}}>{'  runs one task at a time'}</span>
         </div>
       </div>
-      {TASKS.map((task, i) => {
+      {TASKS.map((task) => {
         const r = read(task);
         return (
           <React.Fragment key={task}>
-            <Card label={`task ${task}`} p={{x: 750, y: LANE_Y[task]}} w={150} on={holder?.task === task} opacity={fadeAt(frame, 1.0 + i * 0.4)} />
-            {label(845, LANE_Y[task] - 13, r === null ? '' : `current = ${r}`, TEXT, fadeAt(frame, 1.0 + i * 0.4), 19, true)}
+            <Card label={`task ${task}`} p={{x: 750, y: LANE_Y[task]}} w={150} on={holder?.task === task} opacity={fadeAt(frame, tasks.from, 0.4)} />
+            {label(845, LANE_Y[task] - 13, r === null ? '' : `current = ${r}`, TEXT, 1, 19, true)}
             {waiting(task) && label(1040, LANE_Y[task] - 12, 'Delay(1)', PROD, 1, 18, true)}
             {holder?.task === task && <Pill x={1190} y={LANE_Y[task]} text="lock" color={PROD} />}
           </React.Fragment>
@@ -256,23 +309,23 @@ const SharedStateScene: React.FC = () => {
       {steps.map((s) => {
         const lane = {x: 830, y: LANE_Y[s.task]};
         return s.kind === 'get' ? (
-          <React.Fragment key={`${s.at}-g`}>
-            <Trip a={lane} b={STORE_AT} from={s.at} to={s.at + STEP * 0.5} text="Get" color={ACCENT} />
-            <Trip a={STORE_AT} b={{x: 900, y: lane.y}} from={s.at + STEP * 0.5} to={s.at + STEP} text={String(s.value)} color={TEST} />
+          <React.Fragment key={`${s.from}-g`}>
+            <Trip a={lane} b={STORE_AT} from={s.from} to={s.from + GET_OUT} text="Get" color={ACCENT} />
+            <Trip a={STORE_AT} b={{x: 900, y: lane.y}} from={s.from + GET_OUT} to={back(s)} text={String(s.value)} color={TEST} />
           </React.Fragment>
         ) : (
-          <Trip key={`${s.at}-p`} a={lane} b={STORE_AT} from={s.at} to={s.at + STEP * 0.6} text={`Put ${s.value}`} color={ACCENT} />
+          <Trip key={`${s.from}-p`} a={lane} b={STORE_AT} from={s.from} to={lands(s)} text={`Put ${s.value}`} color={ACCENT} />
         );
       })}
-      {label(40, 372, 'shown: 3 tasks × 2 steps · measured: 3 tasks × 100', MUTED, fadeAt(frame, 2.0), 16)}
-      {RESULTS.map((r, i) => (
-        <div key={r.text} style={{position: 'absolute', left: 40, top: 412 + i * 56, width: 560, opacity: fadeAt(frame, r.at, 0.4)}}>
-          <div style={{fontFamily: SANS, fontSize: 19, color: TEXT, lineHeight: '44px'}}>{r.text}</div>
-          <Pill x={410} y={22} text={`count = ${r.count}`} color={r.color} left />
+      {label(40, 372, 'shown: 3 Gets and 3 Puts a phase · measured: 3 tasks × 100', MUTED, fadeAt(frame, note.from, 0.4), 16)}
+      {PHASES.map((p, i) => (
+        <div key={p.result.text} style={{position: 'absolute', left: 40, top: 412 + i * 56, width: 560, opacity: fadeAt(frame, p.shown.from, 0.4)}}>
+          <div style={{fontFamily: SANS, fontSize: 19, color: TEXT, lineHeight: '44px'}}>{p.result.text}</div>
+          <Pill x={410} y={22} text={`count = ${p.result.count}`} color={p.result.color} left />
         </div>
       ))}
-      {centred(600, 'Where a task waits decides what it can miss.', TEST, fadeAt(frame, 34.6))}
-      {centred(642, 'All counts from measure/shared_state.py, the same on every run.', MUTED, fadeAt(frame, 35.2), 16, false)}
+      {centred(600, 'Where a task waits decides what it can miss.', TEST, fadeAt(frame, SS_CLOSE.from, 0.4))}
+      {centred(642, 'All counts from measure/shared_state.py, the same on every run.', MUTED, fadeAt(frame, SS_CLOSE.from, 0.4), 16, false)}
     </AbsoluteFill>
   );
 };
@@ -539,3 +592,12 @@ export const ADVANCED_EFFECTS = narrate('advanced-effects', DURATIONS, NARRATION
   {length: TM, starts: startsOf(TM_LINES), ids: ['t1', 't2'], node: <TimeScene />},
   {length: OUTRO, starts: [0], ids: ['o1'], node: <Outro />},
 ]);
+
+// The motions of the scenes paced one at a time, in order, and each scene's seconds: pace.mjs prints the gaps between them.
+export const PACED: Record<string, {motions: Step[]; seconds: number}> = {
+  Intro: {motions: [...INTRO_IN, INTRO_OUT, ...STACK_IN], seconds: INTRO / FPS},
+  SharedState: {
+    motions: [...SS_IN, ...PHASES.flatMap((p) => [{from: p.from, to: p.from + LINE_FADE}, ...p.steps, p.shown]), SS_CLOSE],
+    seconds: SS / FPS,
+  },
+};

@@ -12,11 +12,15 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
+import {heardBy, lastOf, LINE_FADE, PAUSE, sequence, Step, STILL} from '../../kit/pace';
 import {CodeBlock, glow, Headlines, highlightYield, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
-import {ACCENT, f, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
+import {ACCENT, f, FPS, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
+
+// When a line (by id) has been heard, read from a headline at a second.
+const heard = heardBy(DURATIONS);
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -386,15 +390,10 @@ const ContractScene: React.FC = () => {
   );
 };
 
-// Scene 5 — handlers compose by nesting, and the order matters (measure/composition.py).
+// Scene 5 — handlers compose by nesting, and the order matters (measure/composition.py). One motion at a time: the layers
+// from the inside out, then each effect's trip out and its answer's trip back, writer's own Get and Put, the swap, and
+// writer's Get finding no handler.
 
-const COMPOSE_LINES: Lines = [
-  [0, 'Handlers compose by nesting. Each one wraps the program the next one returns.'],
-  [5.5, 'Ask stops at reader. Get and Put pass reader and writer, and reach state.'],
-  [11, 'writer answers Tell by yielding a Get and a Put of its own. They travel out to state.'],
-  [17.5, "So the order matters. Put state inside writer, and writer's Get finds no handler."],
-];
-const COMPOSE = f(25);
 const UPDATE = [
   '@do',
   'def update_counter():',
@@ -414,37 +413,66 @@ const IN_ORDER = [
   {name: 'state(initial={"count": 0})', handles: 'handles Get · Put'},
 ];
 const REVERSED = [IN_ORDER[0], IN_ORDER[2], IN_ORDER[1]];
+// A pill's trip, and the fade after it lands (part of its motion).
+const LANDED = 0.2;
+const trip = (seconds: number): [number] => [seconds + LANDED];
+// The headline after the one at a second, once its line (by id) is heard and the motions before it have stopped.
+const lineAfter = (headline: number, id: keyof typeof DURATIONS, motions: Step[]) => Math.max(lastOf(motions), heard(headline, id)) + PAUSE;
+// o1: the three layers from the inside out, then the expression that nests them.
+const NEST = sequence(0, [[0.5], [0.5], [0.5], [0.4]]);
+// o2: Ask out to reader and "count" back, Get out to state and 0 back, Put out to state.
+const O2 = lineAfter(0, 'o1', NEST);
+const [ASK, ASKED, GET, GOT, PUT] = sequence(O2 + LINE_FADE + PAUSE, [trip(0.6), trip(0.5), trip(0.8), trip(0.5), trip(0.8)]);
+// o3: Tell out to writer; writer's own Get and Put out to state; the run's value and log.
+const O3 = lineAfter(O2, 'o2', [PUT]);
+const [TELL, W_GET, W_PUT, VALUE] = sequence(O3 + LINE_FADE + PAUSE, [trip(0.6), trip(0.5), trip(0.5), [0.4]]);
+// o4: the swap, Tell out to writer (now outermost), writer's Get out past every layer, the error.
+const O4 = lineAfter(O3, 'o3', [VALUE]);
+const [SWAP, TELL2, LOST, RAISED] = sequence(O4 + LINE_FADE + PAUSE, [[0.8], trip(0.8), [1.0], [0.4]]);
+const COMPOSE_LINES: Lines = [
+  [0, 'Handlers compose by nesting. Each one wraps the program the next one returns.'],
+  [O2, 'Ask stops at reader. Get and Put pass reader and writer, and reach state.'],
+  [O3, 'writer answers Tell by yielding a Get and a Put of its own. They travel out to state.'],
+  [O4, "So the order matters. Put state inside writer, and writer's Get finds no handler."],
+];
+const COMPOSE_END = Math.max(RAISED.to, heard(O4, 'o4')) + STILL;
+const COMPOSE = f(COMPOSE_END);
 // One trip out from a code line (or from a layer's edge) to a layer, and the answer back.
-type Out = {y: number; from: number; to: number; text: string; leave: number; land: number; back?: string};
+type Out = {y: number; from: number; to: number; text: string; out: Step; back?: {text: string; at: Step}};
 
 const ComposeScene: React.FC = () => {
   const frame = useSceneFrame();
+  const t = frame / FPS;
   const startX = C.cx + C.w / 2;
   const edge = (i: number) => C.cx + cLayer(i).w / 2;
   const at = (i: number) => lineMid(cCode.y, C.line, i);
-  const swap = ramp(frame, 17.8, 18.6);
+  const swap = ramp(frame, SWAP.from, SWAP.to);
   const trips: Out[] = [
-    {y: at(2), from: startX, to: edge(0), text: 'Ask', leave: 6.0, land: 6.6, back: '"count"'},
-    {y: at(3), from: startX, to: edge(2), text: 'Get', leave: 7.8, land: 8.6, back: '0'},
-    {y: at(4), from: startX, to: edge(2), text: 'Put', leave: 9.6, land: 10.4},
-    {y: at(5), from: startX, to: edge(1), text: 'Tell', leave: 11.4, land: 12.0},
-    {y: at(5) + 34, from: edge(1), to: edge(2), text: 'Get', leave: 12.6, land: 13.1},
-    {y: at(5) + 34, from: edge(1), to: edge(2), text: 'Put', leave: 13.9, land: 14.4},
-    {y: at(5), from: startX, to: edge(2), text: 'Tell', leave: 19.0, land: 19.8},
+    {y: at(2), from: startX, to: edge(0), text: 'Ask', out: ASK, back: {text: '"count"', at: ASKED}},
+    {y: at(3), from: startX, to: edge(2), text: 'Get', out: GET, back: {text: '0', at: GOT}},
+    {y: at(4), from: startX, to: edge(2), text: 'Put', out: PUT},
+    {y: at(5), from: startX, to: edge(1), text: 'Tell', out: TELL},
+    {y: at(5) + 34, from: edge(1), to: edge(2), text: 'Get', out: W_GET},
+    {y: at(5) + 34, from: edge(1), to: edge(2), text: 'Put', out: W_PUT},
+    {y: at(5), from: startX, to: edge(2), text: 'Tell', out: TELL2},
   ];
   // The line the program is on: Ask, Get, Put, Tell, then the return; after the swap it stops at the Tell.
-  const steps: [number, number][] = [[5.5, 2], [7.6, 3], [9.4, 4], [11.2, 5], [15.9, 6]];
+  const steps: [number, number][] = [[ASK.from, 2], [GET.from, 3], [PUT.from, 4], [TELL.from, 5], [VALUE.from, 6]];
   const stepped = steps.reduce((line, [from, to], i) => (i === 0 ? to : mix(line, to, ramp(frame, from, from + 0.3))), 2);
-  const band = frame < f(5.5) ? null : frame < f(17.4) ? stepped : frame < f(18.8) ? null : 5;
+  const band = t < ASK.from ? null : t < SWAP.from ? stepped : t < TELL2.from ? null : 5;
+  // A layer is at work from when a trip lands on it until its answer leaves (or a pause after), and writer is at work
+  // while it answers Tell with a Get and a Put of its own.
+  const landed = (trip: Out) => trip.out.to - LANDED;
   const working = (layer: number) =>
-    trips.some((trip) => trip.to === edge(layer) && frame >= f(trip.land) && frame < f(trip.land + 0.7)) || (frame >= f(11.4) && frame < f(15.4) && layer === 1 && swap === 0);
-  const unhandled = ramp(frame, 20.4, 21.4);
+    trips.some((trip) => trip.to === edge(layer) && t >= landed(trip) && t < (trip.back?.at.from ?? trip.out.to + PAUSE)) ||
+    (layer === 1 && t >= landed(trips[3]) && t < W_PUT.to + PAUSE && swap === 0);
+  const unhandled = ramp(frame, LOST.from, LOST.to);
   return (
     <AbsoluteFill>
       <Headlines lines={COMPOSE_LINES} />
       {IN_ORDER.map((_, i) => {
         const r = cLayer(i);
-        const on = working(i) || (frame >= f(19.8) && frame < f(20.6) && i === 2);
+        const on = working(i);
         const normal = IN_ORDER[i];
         const reversed = REVERSED[i];
         return (
@@ -452,7 +480,7 @@ const ComposeScene: React.FC = () => {
             key={i}
             style={{
               position: 'absolute', left: r.x, top: r.y, width: r.w, height: r.h, boxSizing: 'border-box', borderRadius: 22,
-              border: `3px solid ${TEST}`, ...glow(on, TEST), opacity: fadeAt(frame, 0.6 + i * 0.7, 0.5),
+              border: `3px solid ${TEST}`, ...glow(on, TEST), opacity: fadeAt(frame, NEST[i].from, 0.5),
             }}
           >
             {[normal, reversed].map((layer, j) => (
@@ -472,29 +500,35 @@ const ComposeScene: React.FC = () => {
       })}
       <CodeBlock lines={UPDATE} x={cCode.x} y={cCode.y} w={C.w} size={C.size} line={C.line} band={band} />
       {trips.map((trip, i) => {
-        const out = frame >= f(trip.leave) && frame < f(trip.land + 0.6);
-        const back = trip.back !== undefined && frame >= f(trip.land + 0.6) && frame < f(trip.land + 1.3);
+        const land = landed(trip);
+        const out = t >= trip.out.from && t < trip.out.to;
+        const back = trip.back !== undefined && t >= trip.back.at.from && t < trip.back.at.to;
+        const backLand = trip.back ? trip.back.at.to - LANDED : 0;
         return (
           <React.Fragment key={i}>
-            {out && <Pill x={mix(trip.from, trip.to, ramp(frame, trip.leave, trip.land))} y={trip.y} text={trip.text} color={ACCENT} opacity={1 - ramp(frame, trip.land + 0.4, trip.land + 0.6)} />}
-            {back && <Pill x={mix(trip.to, trip.from, ramp(frame, trip.land + 0.6, trip.land + 1.1))} y={trip.y} text={trip.back ?? ''} color={TEST} opacity={1 - ramp(frame, trip.land + 1.1, trip.land + 1.3)} />}
+            {out && <Pill x={mix(trip.from, trip.to, ramp(frame, trip.out.from, land))} y={trip.y} text={trip.text} color={ACCENT} opacity={1 - ramp(frame, land, trip.out.to)} />}
+            {back && trip.back && (
+              <Pill x={mix(trip.to, trip.from, ramp(frame, trip.back.at.from, backLand))} y={trip.y} text={trip.back.text} color={TEST} opacity={1 - ramp(frame, backLand, trip.back.at.to)} />
+            )}
           </React.Fragment>
         );
       })}
-      {frame >= f(20.3) && (
-        <Pill x={mix(edge(2), 1222, unhandled)} y={at(5) + 34} text="Get" color={unhandled < 1 ? ACCENT : PROD} />
-      )}
+      {t >= LOST.from && <Pill x={mix(edge(2), 1222, unhandled)} y={at(5) + 34} text="Get" color={unhandled < 1 ? ACCENT : PROD} />}
       <div style={{position: 'absolute', left: 0, right: 0, top: 646, textAlign: 'center', fontFamily: MONO, fontSize: 17, color: TEXT}}>
-        <div style={{position: 'absolute', left: 0, right: 0, opacity: fadeAt(frame, 1.0) * (1 - swap)}}>{'state(initial={"count": 0})(writer(reader(env=...)(update_counter())))'}</div>
+        <div style={{position: 'absolute', left: 0, right: 0, opacity: fadeAt(frame, NEST[3].from, 0.4) * (1 - swap)}}>{'state(initial={"count": 0})(writer(reader(env=...)(update_counter())))'}</div>
         <div style={{position: 'absolute', left: 0, right: 0, opacity: swap}}>{'writer(state(initial={"count": 0})(reader(env=...)(update_counter())))'}</div>
       </div>
       <div style={{position: 'absolute', left: 0, right: 0, top: 680, textAlign: 'center', fontFamily: MONO, fontSize: 19, fontWeight: 700}}>
-        <div style={{position: 'absolute', left: 0, right: 0, color: ACCENT, opacity: fadeAt(frame, 16.0) * (1 - swap)}}>{'→ 1 · log: counter updated: 0 -> 1'}</div>
-        <div style={{position: 'absolute', left: 0, right: 0, color: PROD, opacity: fadeAt(frame, 21.4)}}>{'raises UnhandledEffect: unhandled effect: Get'}</div>
+        <div style={{position: 'absolute', left: 0, right: 0, color: ACCENT, opacity: fadeAt(frame, VALUE.from, 0.4) * (1 - swap)}}>{'→ 1 · log: counter updated: 0 -> 1'}</div>
+        <div style={{position: 'absolute', left: 0, right: 0, color: PROD, opacity: fadeAt(frame, RAISED.from, 0.4)}}>{'raises UnhandledEffect: unhandled effect: Get'}</div>
       </div>
     </AbsoluteFill>
   );
 };
+
+// The motions of the scenes paced one at a time, in order, and each scene's seconds: pace.mjs prints the gaps between them.
+const lineFade = (from: number): Step => ({from, to: from + LINE_FADE});
+const COMPOSE_MOTIONS = [...NEST, lineFade(O2), ASK, ASKED, GET, GOT, PUT, lineFade(O3), TELL, W_GET, W_PUT, VALUE, lineFade(O4), SWAP, TELL2, LOST, RAISED];
 
 // Scene 6 — run: calling a @do function builds a program, and run evaluates it yield by yield (measure/run_flow.py).
 
@@ -649,3 +683,5 @@ export const CORE_CONCEPTS = narrate('core-concepts', DURATIONS, NARRATION, [
   {length: RUN, starts: startsOf(RUN_LINES), ids: ['r1', 'r2', 'r3', 'r4', 'r5'], node: <RunScene />},
   {length: OUTRO, starts: [0], ids: ['z1'], node: <OutroScene />},
 ]);
+
+export const PACED: Record<string, {motions: Step[]; seconds: number}> = {Compose: {motions: COMPOSE_MOTIONS, seconds: COMPOSE / FPS}};

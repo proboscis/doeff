@@ -5,85 +5,85 @@ i1
 Advanced effects are still effects: tasks, shared state, observation, time, and control flow of your own.
 
 i2
-00:00:08.850 --> 00:00:15.100
+00:00:10.050 --> 00:00:16.300
 Each one is answered by a handler. Stack the handlers, and they work on one program together.
 
 s1.1
-00:00:16.750 --> 00:00:18.650
+00:00:28.000 --> 00:00:29.900
 Three tasks share one counter.
 
 s1.2
-00:00:18.650 --> 00:00:24.450
+00:00:29.900 --> 00:00:35.700
 The state handler sits outside the scheduler, so every task reads and writes the same store.
 
 s2.1
-00:00:25.150 --> 00:00:32.167
+00:00:36.850 --> 00:00:43.867
 A task runs until it waits. A Get and its Put, with no wait between them, are never split.
 
 s2.2
-00:00:32.167 --> 00:00:34.900
+00:00:43.867 --> 00:00:46.600
 A hundred each makes three hundred.
 
 s3.1
-00:00:35.550 --> 00:00:41.083
+00:00:51.050 --> 00:00:56.583
 Wait between the Get and the Put, and the other tasks read the same old value.
 
 s3.2
-00:00:41.083 --> 00:00:44.550
+00:00:56.583 --> 00:01:00.050
 Two of every three updates are lost: one hundred.
 
 s4
-00:00:45.250 --> 00:00:51.600
+00:01:05.850 --> 00:01:12.200
 Hold a semaphore of one across the read and the write, and the count is three hundred again.
 
 w1
-00:00:54.250 --> 00:01:00.350
+00:01:22.050 --> 00:01:28.150
 WithObserve shows you every effect that part of a program yields, without handling any of them.
 
 w2
-00:01:01.250 --> 00:01:07.350
+00:01:29.050 --> 00:01:35.150
 It sees the effects of tasks spawned inside its scope, and nothing yielded outside it.
 
 w3
-00:01:08.250 --> 00:01:14.350
+00:01:36.050 --> 00:01:42.150
 Each effect still goes on to its handler. The result and the log are the same as without the observer.
 
 c1
-00:01:16.750 --> 00:01:23.600
+00:01:44.550 --> 00:01:51.400
 Control flow of your own is a handler for an effect of your own. Audit and Abort are plain data classes.
 
 c2
-00:01:24.350 --> 00:01:29.000
+00:01:52.150 --> 00:01:56.800
 The Audit handler resumes k, so checkout goes on after the Audit.
 
 c3.1
-00:01:29.750 --> 00:01:31.883
+00:01:57.550 --> 00:01:59.683
 The Abort handler never resumes k.
 
 c3.2
-00:01:31.883 --> 00:01:37.000
+00:01:59.683 --> 00:02:04.800
 The body ends right where it yielded Abort, and the handler's value is the result.
 
 c4
-00:01:37.750 --> 00:01:44.600
+00:02:05.550 --> 00:02:12.400
 With stock, checkout returns ordered. Without, the result is: aborted, out of stock.
 
 t1
-00:01:46.250 --> 00:01:52.200
+00:02:14.050 --> 00:02:20.000
 Time is effects too. Delay and GetTime mean what the time handler says.
 
 t2.1
-00:01:52.950 --> 00:01:57.533
+00:02:20.750 --> 00:02:25.333
 Under the sync handler, a one and a half second Delay sleeps for real.
 
 t2.2
-00:01:57.533 --> 00:02:04.100
+00:02:25.333 --> 00:02:31.900
 Under the simulated clock, the clock moves, and the run takes under a millisecond, even for an hour.
 
 o1.1
-00:02:05.250 --> 00:02:11.600
+00:02:33.050 --> 00:02:39.400
 doeff: tasks, state, observation, time and your own control flow are all effects,
 
 o1.2
-00:02:11.600 --> 00:02:17.250
+00:02:39.400 --> 00:02:45.050
 and the handlers you stack decide what each one does. pip install doeff.

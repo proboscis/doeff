@@ -39,53 +39,53 @@ That is why a call is a macro, not an effect. An effect would need handlers befo
 Arguments are passed as given. An effect or a program you pass in stays a value.
 
 11
-00:01:04,950 --> 00:01:11,250
+00:01:05,500 --> 00:01:11,800
 echo of Ask x returns the Ask itself, even though x is annotated int.
 
 12
-00:01:11,850 --> 00:01:18,650
+00:01:13,000 --> 00:01:19,800
 To use a result, yield it. use values yields both arguments, and gets five and ten.
 
 13
-00:01:19,250 --> 00:01:25,250
+00:01:23,900 --> 00:01:29,900
 The usual style: yield in the caller, then pass the plain value on.
 
 14
-00:01:26,250 --> 00:01:33,450
+00:01:35,500 --> 00:01:42,700
 There is no map, no flat map. Programs compose by yielding programs inside at-do functions.
 
 15
-00:01:34,050 --> 00:01:40,250
+00:01:43,300 --> 00:01:49,500
 fetch user posts yields fetch user of seven. Its value comes back at that yield.
 
 16
-00:01:40,850 --> 00:01:48,100
+00:01:50,100 --> 00:01:57,350
 The Ask inside fetch user travels out past both functions, to the reader around the whole run.
 
 17
-00:01:48,750 --> 00:01:54,450
+00:01:58,000 --> 00:02:03,700
 Then fetch posts runs the same way, and the outer function returns the posts.
 
 18
-00:01:55,250 --> 00:02:02,650
+00:02:04,500 --> 00:02:11,900
 A handler is an at-do function too. The handler decorator makes a function of effect and k into one.
 
 19
-00:02:03,250 --> 00:02:09,200
+00:02:12,500 --> 00:02:18,450
 It must take the effect and k. With one parameter, it is refused with a TypeError.
 
 20
-00:02:09,850 --> 00:02:16,850
+00:02:19,100 --> 00:02:26,100
 Its annotation must name an effect class. No effect can be an int, so that one is refused too.
 
 21
-00:02:17,450 --> 00:02:22,433
+00:02:26,700 --> 00:02:31,683
 Both are refused when the handler is built, before any program runs.
 
 22
-00:02:22,433 --> 00:02:25,800
+00:02:31,683 --> 00:02:35,050
 fetcher keeps the contract, and answers Fetch.
 
 23
-00:02:26,750 --> 00:02:34,300
+00:02:36,000 --> 00:02:43,550
 Plain values in, a program out. Handlers give its effects their meaning. That is a Kleisli arrow in doeff.

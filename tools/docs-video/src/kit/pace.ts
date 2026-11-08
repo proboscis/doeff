@@ -22,8 +22,21 @@ export const chain = <K extends string>(start: number, motions: [K, number, numb
   return steps;
 };
 
+// The same without names: [seconds it lasts, the pause before it when it is not PAUSE].
+export const sequence = (start: number, motions: [number, number?][]): Step[] => {
+  let at = start;
+  return motions.map(([seconds, pause = PAUSE], i) => {
+    const from = i === 0 ? at : at + pause;
+    at = from + seconds;
+    return {from, to: at};
+  });
+};
+
+// A headline is a motion too: it fades in over LINE_FADE s (Headlines in parts.tsx).
+export const LINE_FADE = 0.3;
+
 // The second the last of some motions has stopped.
-export const lastOf = (steps: Record<string, Step>) => Math.max(...Object.values(steps).map(({to}) => to));
+export const lastOf = (steps: Step[] | Record<string, Step>) => Math.max(...Object.values(steps).map(({to}) => to));
 
 // When a line has been heard, read from a headline at this time: heardBy(DURATIONS)(headline, id).
 export const heardBy = (said: Said) => (headline: number, id: string) => headline + LEAD + said[id];

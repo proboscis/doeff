@@ -30,7 +30,11 @@ if (ids.length === 0) throw new Error('usage: node gif.mjs <composition id>... |
 const ffmpeg = (...args) => execFileSync('npx', ['remotion', 'ffmpeg', '-y', '-loglevel', 'error', ...args], {stdio: 'inherit'});
 const lengthOf = (file) =>
   Number(execFileSync('npx', ['remotion', 'ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString());
-const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+// Rounded to the second first, so that 179.6 s reads 3:00, not 2:60.
+const clock = (s) => {
+  const whole = Math.round(s);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
 
 // The frames the page's scenes end on, read from its narrate() export.
 const sceneEnds = async (id) => {

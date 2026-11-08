@@ -73,37 +73,37 @@ o1
 Handlers compose by nesting. Each one wraps the program the next one returns.
 
 o2
-00:01:51.900 --> 00:01:57.750
+00:01:52.500 --> 00:01:58.350
 Ask stops at reader. Get and Put pass reader and writer, and reach state.
 
 o3
-00:01:58.300 --> 00:02:04.100
+00:02:02.400 --> 00:02:08.200
 writer answers Tell by yielding a Get and a Put of its own, which travel out to state too.
 
 o4
-00:02:04.800 --> 00:02:12.100
+00:02:09.800 --> 00:02:17.100
 So the order matters. Put state inside writer, and writer's Get finds no handler: an unhandled effect.
 
 r1
-00:02:12.650 --> 00:02:19.250
+00:02:18.950 --> 00:02:25.550
 Calling an at-do function runs nothing yet. It builds a program, an Expand node.
 
 r2
-00:02:19.800 --> 00:02:24.250
+00:02:26.100 --> 00:02:30.550
 run takes that one program, evaluates it, and returns its value.
 
 r3
-00:02:24.800 --> 00:02:31.150
+00:02:31.100 --> 00:02:37.450
 Each yield splits the program in two: the expression, and the rest, waiting for its result.
 
 r4
-00:02:31.700 --> 00:02:38.500
+00:02:38.000 --> 00:02:44.800
 A control node, the VM evaluates itself. An effect goes to the handlers, with the rest as k.
 
 r5
-00:02:39.050 --> 00:02:43.500
+00:02:45.350 --> 00:02:49.800
 The answer is sent back into the generator until it returns, here with Ada.
 
 z1
-00:02:44.550 --> 00:02:52.300
+00:02:50.850 --> 00:02:58.600
 Effects name operations. Handlers decide what they mean, by what they do with k. That is the core of doeff.

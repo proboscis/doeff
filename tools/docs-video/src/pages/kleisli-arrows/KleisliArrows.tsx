@@ -11,11 +11,15 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
+import {heardBy, lastOf, LINE_FADE, PAUSE, sequence, Step, STILL} from '../../kit/pace';
 import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
-import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
+import {ACCENT, f, FAIL, FPS, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
+
+// When a line (by id) has been heard, read from a headline at a second.
+const heard = heardBy(DURATIONS);
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -284,82 +288,102 @@ const ExpandScene: React.FC = () => {
   );
 };
 
-// Scene 3 — arguments are passed as given (measure/arguments.py).
+// Scene 3 — arguments are passed as given (measure/arguments.py). One motion at a time: the call and its arguments, then
+// each column's code, the trips of its effects and programs and their answers, and its result.
 
-const ARGS_LINES: Lines = [
-  [0, 'Arguments are passed as given. An effect or a program you pass in stays a value.'],
-  [6.7, 'echo(Ask("x")) returns the Ask itself, though x is annotated int.'],
-  [13.6, 'To use a result, yield it. use_values yields both arguments: it gets 5 and 10.'],
-  [21.0, 'The usual style: yield in the caller, then pass the plain value on.'],
-];
-const ARGS = f(28);
 const COL = {y: 290, w: 370, size: 16, line: 26};
 const colX = (i: number) => 60 + i * (COL.w + 25);
 const ENV = {x: 60, y: 610, w: 1160, h: 60};
-const COLUMNS = [
-  {code: ['@do', 'def echo(x: int):', '    return x'], run: 'echo(Ask("x"))', answer: "Ask('x')", note: 'the effect itself, not 5', at: 6.7},
-  {code: ['@do', 'def use_values(x, raw_program):', '    x_value = yield x', '    y = yield raw_program', '    return f"{x_value}:{y}"'], run: 'call_expr', answer: "'5:10'", note: 'each yielded in the body', at: 13.6},
-  {code: ['@do', 'def caller():', '    x = yield Ask("x")', '    return (yield add_one(x))'], run: 'caller()', answer: '6', note: 'add_one gets the int 5', at: 21.0},
+// A Fly's trip, and the fade after it lands (part of its motion).
+const LANDED = 0.3;
+const fly = (seconds: number): [number] => [seconds + LANDED];
+// The headline after the one at a second, once its line (by id) is heard and the motions before it have stopped.
+const lineAfter = (headline: number, id: keyof typeof DURATIONS, motions: Step[]) => Math.max(lastOf(motions), heard(headline, id)) + PAUSE;
+// g1: the call, its arguments dropping into call_expr.args, the args line, what is kept, the reader of every run.
+const [CALL, DROP, ARGS_LINE, KEPT, ENV_IN] = sequence(0, [[0.4], [1.0], [0.4], [0.4], [0.4]]);
+// g2, g3, g4: each column comes in, its trips go one at a time, then its result and what it shows.
+const G2 = lineAfter(0, 'g1', [ENV_IN]);
+const [ECHO, ECHO_BIND, ECHO_RETURN, ECHO_RESULT] = sequence(G2 + LINE_FADE + PAUSE, [[0.4], fly(0.8), fly(0.5), [0.4]]);
+const G3 = lineAfter(G2, 'g2', [ECHO_RESULT]);
+const [USE, USE_ASK, USE_FIVE, USE_PURE, USE_TEN, USE_RESULT] = sequence(G3 + LINE_FADE + PAUSE, [[0.4], fly(0.6), fly(0.6), fly(0.5), fly(0.6), [0.4]]);
+const G4 = lineAfter(G3, 'g3', [USE_RESULT]);
+const [CALLER, CALLER_ASK, CALLER_FIVE, CALLER_ADD, CALLER_SIX, CALLER_RESULT] = sequence(G4 + LINE_FADE + PAUSE, [[0.4], fly(0.6), fly(0.6), fly(0.5), fly(0.6), [0.4]]);
+const ARGS_LINES: Lines = [
+  [0, 'Arguments are passed as given. An effect or a program you pass in stays a value.'],
+  [G2, 'echo(Ask("x")) returns the Ask itself, though x is annotated int.'],
+  [G3, 'To use a result, yield it. use_values yields both arguments: it gets 5 and 10.'],
+  [G4, 'The usual style: yield in the caller, then pass the plain value on.'],
 ];
+const ARGS = f(Math.max(CALLER_RESULT.to, heard(G4, 'g4')) + STILL);
+const COLUMNS = [
+  {code: ['@do', 'def echo(x: int):', '    return x'], run: 'echo(Ask("x"))', answer: "Ask('x')", note: 'the effect itself, not 5', shown: ECHO, result: ECHO_RESULT},
+  {code: ['@do', 'def use_values(x, raw_program):', '    x_value = yield x', '    y = yield raw_program', '    return f"{x_value}:{y}"'], run: 'call_expr', answer: "'5:10'", note: 'each yielded in the body', shown: USE, result: USE_RESULT},
+  {code: ['@do', 'def caller():', '    x = yield Ask("x")', '    return (yield add_one(x))'], run: 'caller()', answer: '6', note: 'add_one gets the int 5', shown: CALLER, result: CALLER_RESULT},
+];
+
+// A Fly over a motion's step: it lands LANDED s before the step ends, and has faded out when it ends.
+const Trip: React.FC<{step: Step; from: Point; to: Point; text: string; color: string}> = ({step, ...rest}) => <Fly {...rest} at={step.from} until={step.to - LANDED} />;
 
 const ArgsScene: React.FC = () => {
   const frame = useSceneFrame();
-  const argsIn = ramp(frame, 1.4, 2.4);
+  const t = frame / FPS;
+  const argsIn = ramp(frame, DROP.from, DROP.to);
   const envY = ENV.y + ENV.h / 2;
   const right = (i: number) => colX(i) + COL.w;
   const at = (line: number) => lineMid(COL.y, COL.line, line);
   const bands = [
-    bandAt(frame, [[7.0, 2], [9.4, null]]),
-    bandAt(frame, [[14.0, 2], [16.2, 3], [18.0, 4], [18.8, null]]),
-    bandAt(frame, [[21.3, 2], [23.4, 3], [25.4, null]]),
+    bandAt(frame, [[ECHO_BIND.from, 2], [ECHO_RESULT.from, null]]),
+    bandAt(frame, [[USE_ASK.from, 2], [USE_PURE.from, 3], [USE_RESULT.from, 4], [USE_RESULT.to + PAUSE, null]]),
+    bandAt(frame, [[CALLER_ASK.from, 2], [CALLER_ADD.from, 3], [CALLER_RESULT.to + PAUSE, null]]),
   ];
-  const envOn = [[15.0, 15.8], [16.8, 17.0], [22.2, 23.0]].some(([a, b]) => frame >= f(a) && frame < f(b));
+  // reader is at work from when an Ask lands on it until its 5 leaves.
+  const envOn = [[USE_ASK, USE_FIVE], [CALLER_ASK, CALLER_FIVE]].some(([ask, five]) => t >= ask.to - LANDED && t < five.from);
   return (
     <AbsoluteFill>
       <Headlines lines={ARGS_LINES} />
-      <div style={{position: 'absolute', left: 0, right: 0, top: 120, textAlign: 'center', fontFamily: MONO, fontSize: 24, color: TEXT, opacity: fadeAt(frame, 0.4)}}>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 120, textAlign: 'center', fontFamily: MONO, fontSize: 24, color: TEXT, opacity: fadeAt(frame, CALL.from, 0.4)}}>
         call_expr = use_values(Ask("x"), Pure(10))
       </div>
-      <div style={{position: 'absolute', left: 0, right: 0, top: 172, textAlign: 'center', fontFamily: MONO, fontSize: 24, color: TEXT, opacity: fadeAt(frame, 2.4)}}>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 172, textAlign: 'center', fontFamily: MONO, fontSize: 24, color: TEXT, opacity: fadeAt(frame, ARGS_LINE.from, 0.4)}}>
         call_expr.args<span style={{color: ACCENT, marginLeft: 14}}>{"# (Ask('x'), Pure(10))"}</span>
       </div>
-      <Pill x={mix(717, 560, argsIn)} y={mix(136, 236, argsIn)} text={'Ask("x")'} color={ACCENT} opacity={between(frame, 1.2, 5.6)} />
-      <Pill x={mix(866, 720, argsIn)} y={mix(136, 236, argsIn)} text="Pure(10)" color={ACCENT} opacity={between(frame, 1.2, 5.6)} />
-      <Label x={640} y={250} size={19} center opacity={between(frame, 3.0, 6.4)}>
+      <Pill x={mix(717, 560, argsIn)} y={mix(136, 236, argsIn)} text={'Ask("x")'} color={ACCENT} opacity={between(frame, DROP.from, G2)} />
+      <Pill x={mix(866, 720, argsIn)} y={mix(136, 236, argsIn)} text="Pure(10)" color={ACCENT} opacity={between(frame, DROP.from, G2)} />
+      <Label x={640} y={250} size={19} center opacity={between(frame, KEPT.from, G2)}>
         kept as they were passed: not run, not resolved, not converted
       </Label>
       {COLUMNS.map((col, i) => {
-        const now = frame >= f(col.at) && (i === 2 || frame < f(COLUMNS[i + 1].at));
-        const shown = fadeAt(frame, col.at, 0.4);
+        const now = t >= col.shown.from && (i === 2 || t < COLUMNS[i + 1].shown.from);
+        const shown = fadeAt(frame, col.shown.from, 0.4);
         const bottom = COL.y + PAD * 2 + col.code.length * COL.line;
         return (
           <React.Fragment key={col.run}>
             <div style={{position: 'absolute', left: colX(i) - 6, top: COL.y - 6, width: COL.w + 12, height: bottom - COL.y + 12, borderRadius: 18, ...glow(now, '#0000'), opacity: shown}} />
             <CodeBlock lines={col.code} x={colX(i)} y={COL.y} w={COL.w} size={COL.size} line={COL.line} band={bands[i]} opacity={shown} />
             <div style={{position: 'absolute', left: colX(i) + 4, top: bottom + 12, fontFamily: MONO, fontSize: 15, color: MUTED, whiteSpace: 'nowrap', opacity: shown}}>{`run(with_env(${col.run}))`}</div>
-            <div style={{position: 'absolute', left: colX(i) + 4, top: bottom + 38, fontFamily: MONO, fontSize: 22, fontWeight: 700, color: ACCENT, whiteSpace: 'nowrap', opacity: fadeAt(frame, col.at + [2.2, 5.6, 4.4][i])}}>
+            <div style={{position: 'absolute', left: colX(i) + 4, top: bottom + 38, fontFamily: MONO, fontSize: 22, fontWeight: 700, color: ACCENT, whiteSpace: 'nowrap', opacity: fadeAt(frame, col.result.from, 0.4)}}>
               {`→ ${col.answer}`}
             </div>
-            <Label x={colX(i) + 4} y={bottom + 72} size={17} color={TEXT} opacity={fadeAt(frame, col.at + [3.0, 6.0, 5.0][i])}>
+            <Label x={colX(i) + 4} y={bottom + 72} size={17} color={TEXT} opacity={fadeAt(frame, col.result.from, 0.4)}>
               {col.note}
             </Label>
           </React.Fragment>
         );
       })}
-      <Fly from={[right(0) - 60, at(1) - 6]} to={[right(0) - 60, at(2)]} at={7.4} until={8.2} text={'x = Ask("x")'} color={ACCENT} />
-      <Fly from={[right(0) - 60, at(2)]} to={[colX(0) + 120, COL.y + PAD * 2 + 3 * COL.line + 50]} at={8.4} until={8.9} text={"Ask('x')"} color={ACCENT} />
-      <Fly from={[right(1) - 60, at(2)]} to={[right(1) - 60, envY]} at={14.4} until={15.0} text={'Ask("x")'} color={ACCENT} />
-      <Fly from={[right(1) - 60, envY]} to={[right(1) - 60, at(2)]} at={15.4} until={16.0} text="5" color={TEST} />
-      <Fly from={[right(1) - 60, at(3)]} to={[right(1) + 90, at(3)]} at={16.4} until={16.9} text="Pure(10)" color={ACCENT} />
-      <Fly from={[right(1) + 90, at(3)]} to={[right(1) - 60, at(3)]} at={17.0} until={17.6} text="10" color={TEST} />
-      <Label x={right(1) + 90} y={at(3) + 22} size={14} center opacity={between(frame, 16.6, 17.8)}>
+      <Trip from={[right(0) - 60, at(1) - 6]} to={[right(0) - 60, at(2)]} step={ECHO_BIND} text={'x = Ask("x")'} color={ACCENT} />
+      <Trip from={[right(0) - 60, at(2)]} to={[colX(0) + 120, COL.y + PAD * 2 + 3 * COL.line + 50]} step={ECHO_RETURN} text={"Ask('x')"} color={ACCENT} />
+      <Trip from={[right(1) - 60, at(2)]} to={[right(1) - 60, envY]} step={USE_ASK} text={'Ask("x")'} color={ACCENT} />
+      <Trip from={[right(1) - 60, envY]} to={[right(1) - 60, at(2)]} step={USE_FIVE} text="5" color={TEST} />
+      <Trip from={[right(1) - 60, at(3)]} to={[right(1) + 90, at(3)]} step={USE_PURE} text="Pure(10)" color={ACCENT} />
+      <Trip from={[right(1) + 90, at(3)]} to={[right(1) - 60, at(3)]} step={USE_TEN} text="10" color={TEST} />
+      <Label x={right(1) + 90} y={at(3) + 22} size={14} center opacity={between(frame, USE_PURE.from, USE_TEN.to)}>
         the VM evaluates it
       </Label>
-      <Fly from={[right(2) - 60, at(2)]} to={[right(2) - 60, envY]} at={21.6} until={22.2} text={'Ask("x")'} color={ACCENT} />
-      <Fly from={[right(2) - 60, envY]} to={[right(2) - 60, at(2)]} at={22.6} until={23.2} text="5" color={TEST} />
-      <Fly from={[right(2) - 60, at(3)]} to={[right(2) - 60, at(3) + 60]} at={23.6} until={24.1} text="add_one(5)" color={ACCENT} />
-      <Fly from={[right(2) - 60, at(3) + 60]} to={[right(2) - 60, at(3)]} at={24.3} until={24.9} text="6" color={TEST} />
-      <Box x={ENV.x} y={ENV.y} w={ENV.w} h={ENV.h} color={TEST} on={envOn} opacity={fadeAt(frame, 6.0)}>
+      <Trip from={[right(2) - 60, at(2)]} to={[right(2) - 60, envY]} step={CALLER_ASK} text={'Ask("x")'} color={ACCENT} />
+      <Trip from={[right(2) - 60, envY]} to={[right(2) - 60, at(2)]} step={CALLER_FIVE} text="5" color={TEST} />
+      <Trip from={[right(2) - 60, at(3)]} to={[right(2) - 60, at(3) + 60]} step={CALLER_ADD} text="add_one(5)" color={ACCENT} />
+      <Trip from={[right(2) - 60, at(3) + 60]} to={[right(2) - 60, at(3)]} step={CALLER_SIX} text="6" color={TEST} />
+      <Box x={ENV.x} y={ENV.y} w={ENV.w} h={ENV.h} color={TEST} on={envOn} opacity={fadeAt(frame, ENV_IN.from, 0.4)}>
         <div style={{position: 'absolute', left: 20, top: 14, fontFamily: MONO, fontSize: 20, color: envOn ? LOOK : TEST}}>
           {'with_env = reader(env={"x": 5})'}
           <span style={{fontFamily: SANS, color: MUTED, marginLeft: 16}}>answers Ask around each run</span>
@@ -368,6 +392,15 @@ const ArgsScene: React.FC = () => {
     </AbsoluteFill>
   );
 };
+
+// The motions of the scenes paced one at a time, in order, and each scene's seconds: pace.mjs prints the gaps between them.
+const lineFade = (from: number): Step => ({from, to: from + LINE_FADE});
+const ARGS_MOTIONS = [
+  CALL, DROP, ARGS_LINE, KEPT, ENV_IN,
+  lineFade(G2), ECHO, ECHO_BIND, ECHO_RETURN, ECHO_RESULT,
+  lineFade(G3), USE, USE_ASK, USE_FIVE, USE_PURE, USE_TEN, USE_RESULT,
+  lineFade(G4), CALLER, CALLER_ASK, CALLER_FIVE, CALLER_ADD, CALLER_SIX, CALLER_RESULT,
+];
 
 // Scene 4 — programs compose by yielding programs inside @do (measure/nested.py).
 
@@ -628,3 +661,5 @@ export const KLEISLI_ARROWS = narrate('kleisli-arrows', DURATIONS, NARRATION, [
   {length: CONTRACT, starts: startsOf(CONTRACT_LINES), ids: ['h1', 'h2', 'h3', 'h4'], node: <ContractScene />},
   {length: OUTRO, starts: [0], ids: ['z1'], node: <OutroScene />},
 ]);
+
+export const PACED: Record<string, {motions: Step[]; seconds: number}> = {args: {motions: ARGS_MOTIONS, seconds: ARGS / FPS}};
