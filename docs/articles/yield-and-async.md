@@ -8,6 +8,10 @@ If you write asyncio code, the first question is why. Python already has syntax 
 
 Both are coroutines, and they pause the same way. They differ in two things, and algebraic effects has a name for each. One is where the request goes when the code pauses: which handler receives the operation. The other is how the paused code goes on: what the receiver can do with the continuation. This post takes them one at a time, with code you can run.
 
+[![Video (1:18): at an await the call names the code that answers, and at a yield it names an operation that the nearest handler answers](https://img.youtube.com/vi/DHo_GVBgwO8/maxresdefault.jpg)](https://youtu.be/DHo_GVBgwO8)
+
+[The same video as an mp4 file (1:18)](../assets/videos/article2-opening.mp4)
+
 ## The same function, written twice
 
 ~~~python
@@ -184,6 +188,10 @@ Both runs, one step at a time:
 asyncio does have a tool for "this call alone": a `contextvars.ContextVar`, set around a call and copied into each task. It scopes a value, which can be a function to call. That function answers and returns. It does not receive the rest of the caller, so it cannot decide whether, when or how the caller goes on. That is the second difference.
 
 ## How the paused code goes on
+
+[![Video (1:11): how the paused code goes on is the decision of the handler that holds k](https://img.youtube.com/vi/f0EJno4YhTg/maxresdefault.jpg)](https://youtu.be/f0EJno4YhTg)
+
+[The same video as an mp4 file (1:11)](../assets/videos/article2-paused-code.mp4)
 
 A task that waits on a future goes on when the future is done: the loop calls `send(None)`, and the coroutine reads the result from the future. The loop's only other move is to throw into it: `task.cancel()` raises `CancelledError` at the `await`. A handler holds `k`, so how the code goes on is the handler's decision:
 

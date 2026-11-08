@@ -11,6 +11,8 @@ link to the mp4, and on the docs site a hook (tools/docs_site/hooks.py) replaces
    in the same change.
 4. At the head of the sections for the 3 article videos, a video service thumbnail link and a one-line click-through figure follow, and the hook replaces the link with a player.
    The README has the GitHub-attached video as a bare single line (the GitHub screen turns it into a player), and has a link to the article.
+   The second article ("Yield and async") has its 2 video service thumbnail links at the head of the post and of its section on how the paused
+   code goes on, each followed by a link to the same video as an mp4 file.
 5. Every mp4 in docs/assets/videos has its subtitle files (<name>.vtt and <name>.srt) next to it, and they say every line of its narration.json once, in order,
    within the video.
 """
@@ -28,6 +30,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 ARTICLE = DOCS / "articles" / "algebraic-effects-in-python.md"
+ARTICLE_2 = DOCS / "articles" / "yield-and-async.md"
 README = ROOT / "README.md"
 TTS = ROOT / "tools" / "docs-video" / "tts.py"
 VIDEO_LINK = re.compile(r"\[!\[[^\]]*\]\(([^)\s]+\.(?:jpg|gif))\)\]\(([^)\s]+\.mp4)\)")
@@ -154,6 +157,27 @@ def test_the_three_article_videos_sit_above_their_figures() -> None:
             re.MULTILINE,
         )
         assert pair.search(article), f"the article has no line for video {video_id} above figure {figure}"
+
+
+def test_the_two_videos_of_the_second_article_sit_at_their_section_heads() -> None:
+    article = ARTICLE_2.read_text(encoding="utf-8")
+    for video_id, name, before in (
+        ("DHo_GVBgwO8", "article2-opening", "## The same function, written twice"),
+        ("f0EJno4YhTg", "article2-paused-code", None),
+    ):
+        lines = (
+            rf"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/{video_id}/maxresdefault\.jpg\)\]\(https://youtu\.be/{video_id}\)\n\n"
+            rf"\[The same video as an mp4 file \(\d:\d\d\)\]\(\.\./assets/videos/{name}\.mp4\)\n"
+        )
+        where = (
+            rf"{lines}\n{re.escape(before)}$"
+            if before
+            else rf"^## How the paused code goes on\n\n{lines}"
+        )
+        assert re.search(where, article, re.MULTILINE), (
+            f"the second article has no line for video {video_id} ({name}) at its section head"
+        )
+        assert (VIDEOS / f"{name}.mp4").is_file()
 
 
 def test_the_readme_has_the_attached_video_and_the_article_link() -> None:
