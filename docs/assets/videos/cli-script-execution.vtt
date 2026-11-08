@@ -1,97 +1,121 @@
 WEBVTT
 
 t1
-00:00:00.250 --> 00:00:08.300
+00:00:00.250 --> 00:00:07.450
 CLI script execution. doeff run can run a program, and then run a script of yours against that run.
 
 t2
-00:00:08.850 --> 00:00:13.850
+00:00:08.000 --> 00:00:13.400
 First the program runs, and the effects it yields are answered by its handlers.
 
 t3
-00:00:14.400 --> 00:00:20.700
+00:00:13.950 --> 00:00:20.700
 Then your script runs, with the program, its value, and its interpreter already in hand.
 
 d1
-00:00:21.250 --> 00:00:27.500
+00:00:21.250 --> 00:00:27.300
 Here is the command: a program path, then a dash, so the script is read from standard input.
 
 d2
-00:00:28.050 --> 00:00:35.500
+00:00:27.850 --> 00:00:35.200
 No interpreter is given, so doeff takes the closest marked one on the module path: checkout interpreter.
 
 d3
-00:00:36.050 --> 00:00:42.700
+00:00:35.750 --> 00:00:42.500
 The default envs along the path are merged in order, and the closer one wins: the tax rate is zero point one.
 
 r1
-00:00:43.250 --> 00:00:48.250
-checkout interpreter runs the program under a reader that holds the merged env.
+00:00:43.050 --> 00:00:49.150
+The program is total. It returns a price of forty two, with tax.
 
 r2
-00:00:48.800 --> 00:00:53.150
-Each Ask travels out to the reader, and its answer comes back to the yield.
+00:00:49.700 --> 00:00:52.100
+First it asks for the tax rate.
 
 r3
-00:00:55.300 --> 00:01:00.550
+00:00:52.700 --> 00:00:54.900
+Then it asks for the currency.
+
+r4
+00:00:55.450 --> 00:01:00.150
+It returns forty two plus tax, with the currency, as text.
+
+r5
+00:01:00.700 --> 00:01:05.600
+Now checkout interpreter runs it. A reader holds the merged env.
+
+r6
+00:01:06.150 --> 00:01:10.450
+Each Ask travels out to the reader. Its answer comes back to the yield.
+
+r7
+00:01:12.650 --> 00:01:17.050
 The program returns forty six twenty euros. That is the value.
 
 i1
-00:01:01.100 --> 00:01:06.400
+00:01:18.150 --> 00:01:22.850
 Now the script runs, and doeff has put five names in its globals.
 
 i2
-00:01:06.950 --> 00:01:09.500
+00:01:23.400 --> 00:01:25.500
 value is what the program returned.
 
 i3
-00:01:10.450 --> 00:01:17.550
+00:01:26.900 --> 00:01:34.150
 program is the program as it was imported, still a value you can run. interpreter is the one that ran it.
 
 i4
-00:01:18.100 --> 00:01:24.400
+00:01:34.700 --> 00:01:40.300
 sys and json come along too. Anything else, the script imports itself.
 
 a1
-00:01:24.950 --> 00:01:29.150
+00:01:40.850 --> 00:01:44.950
 Because program is a value, the script can run it again.
 
 a2
-00:01:29.950 --> 00:01:36.750
+00:01:45.850 --> 00:01:53.550
 Give the interpreter another env, and the same Asks get new answers: fifty two fifty, in dollars.
 
 a3
-00:01:37.300 --> 00:01:44.850
+00:01:54.100 --> 00:02:01.250
 Call it with no env, and nothing holds the tax rate. The Ask fails with a missing env key error.
 
 h1
-00:01:45.400 --> 00:01:49.300
+00:02:01.800 --> 00:02:05.700
 The script can also wrap the program in handlers of its own.
 
 h2
-00:01:49.900 --> 00:01:54.900
+00:02:06.300 --> 00:02:11.450
 trace receives each Ask, prints its key, and passes it on to the reader.
 
 h3
-00:01:56.900 --> 00:02:02.450
+00:02:13.300 --> 00:02:18.850
 free answers the tax rate itself, with zero, and passes currency on.
 
 h4
-00:02:03.000 --> 00:02:07.950
+00:02:19.400 --> 00:02:24.550
 Same program, other handlers, another meaning: forty two euros.
 
 e1
-00:02:08.500 --> 00:02:13.950
-If the script raises, doeff prints the error and exits with status one.
+00:02:25.100 --> 00:02:27.700
+First, the script prints value.
 
 e2
-00:02:14.500 --> 00:02:19.500
-What the script printed before the error stays on standard output.
+00:02:29.100 --> 00:02:34.050
+Then it reads value of amount. value is text, so this line raises.
+
+e3
+00:02:34.600 --> 00:02:38.950
+doeff prints the error, and exits with status one.
+
+e4
+00:02:39.500 --> 00:02:43.700
+What it printed before the error stays on standard output.
 
 z1.1
-00:02:20.500 --> 00:02:25.067
+00:02:45.500 --> 00:02:50.617
 doeff run runs your program with its handlers, then hands the run to your script,
 
 z1.2
-00:02:25.067 --> 00:02:28.850
+00:02:50.617 --> 00:02:54.850
 where the program is a value you can run again, under any handlers.
