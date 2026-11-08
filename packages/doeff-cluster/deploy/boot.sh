@@ -133,6 +133,10 @@ role=${ROLE:-worker}
 # 名を引く)。worker の永続の dir の下に置き、自分の子(実行環境の準備・焼く道具・job)へ継ぐ。呼び手が値を置けばそれを使う(日次の全体
 # 検証の task と、手元の 1 台の cluster を起こすテストは件をまたいで同じ dir を渡す)。7 日使われない entry は worker の掃除が消す。
 export DOEFF_HY_CODE_STORE="${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code-store}"
+# 分け合う保存先(ADR-DOE-BUILD-002 R8 — 機体の保存先の source の code の entry を cluster で分け合う S3 の口の bucket): 既定は置かない。
+# 呼び手(上に載る系の worker-env)が DOEFF_HY_CODE_SHARE(http(s)://<host>/<bucket>[/<prefix>][?region=])と DOEFF_HY_CODE_SHARE_KEYS
+# (鍵の file の path — 1 行目 鍵の id・2 行目 秘密の鍵)を置いた時だけ、焼く道具が焼く前に取り寄せ、焼いた物を置く。worker の環境のまま
+# 実行環境の準備の子へ継がれる(準備の uv の子は worker の環境を EXTEND で継ぐ)。job の子へは継がない(worker/core/launch の許可表に無い)。
 # uv の cache の dir(root の準備の uv と、worker の実行環境の準備の uv の子の UV_CACHE_DIR — worker へは --uv-cache で渡す)。既定は
 # worker の永続の dir の下。呼び手が値を置けばそれを使う(手元の 1 台の cluster を件ごとに起こすテストは、件をまたいで同じ dir を渡して
 # 依存を件ごとに取り直さない・#3858)。

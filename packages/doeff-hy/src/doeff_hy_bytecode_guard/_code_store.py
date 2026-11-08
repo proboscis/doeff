@@ -52,6 +52,16 @@ advances the directory's timestamp). Writes go to a temporary file in the same d
 
 A broken entry (unreadable as code, or import names in the wrong shape) is not used: one line naming it goes to stderr and the entry is removed, and the caller rebuilds and
 adds it again (a broken entry is neither used silently nor discarded silently).
+
+Shared store (the cluster-wide copy of the source-code entries — ADR-DOE-BUILD-002 R8): the store directory is per machine, so before it every worker baked the same
+entries again (2026-11-07: four nodes each baked the same 245 files for the same root, in 166 to 979 seconds; a small node baking all ~3,150 files one at a time took ~2,190
+seconds). The shared store is a bucket of an S3-API object store (environment variable :data:`SHARE_ENV`, access key file :data:`SHARE_KEYS_ENV`) holding the
+source-code entries under the same names as the directory: object ``<prefix>/<first 2 chars of key>/<rest of key>/<record fingerprint>.code``. The worker's baking tool
+fetches the key's entries (newest first) before it bakes and puts each entry it baked (:func:`fetch_shared_code`, :func:`publish_code`). A fetched entry is used only after
+the same check as a local one (the caller's is_current — the macro record against the current environment), and it is kept in the directory as the local copy. An entry whose
+content is not code or whose name is not the fingerprint of its code is not used (named; the next writer of that environment overwrites it under the right content). A shared
+store that cannot be reached, refuses the key, or answers with a server error raises :class:`ShareUnusable` — the caller stops using it for the run and bakes on the machine.
+Only the worker's baking tool uses the shared store (the import hook does not — it looks up the machine's directory only).
 """
 
 import os
@@ -488,3 +498,219 @@ def link_entry_pyc(store: str, head: bytes, entry: StoredCode, target: str) -> s
     """Place the .pyc of a looked-up entry (:func:`entry_pyc`) at target as a hardlink to the file in the store with the same content. The answer is the same as :func:`link_pyc`'s
     (the reason it could not be placed — the caller writes the bytes of :func:`entry_pyc`)."""
     return link_pyc(store, entry_pyc(head, entry), target)
+
+
+# --- Shared store (S3 API) ---------------------------------------------------------------------
+
+#: Environment variable naming the shared store: ``http(s)://<host>[:<port>]/<bucket>[/<prefix>][?region=<region>]`` (path-style addressing; unset or empty = no shared
+#: store — the tool bakes on the machine as before).
+SHARE_ENV = "DOEFF_HY_CODE_SHARE"
+
+#: Environment variable naming the file holding the shared store's access key — line 1 the key id, line 2 the secret key (a file, not the environment, so the secret is not
+#: copied into every child's environment or a process listing).
+SHARE_KEYS_ENV = "DOEFF_HY_CODE_SHARE_KEYS"
+
+#: Region used in the signature when the URL names none (the S3 default; an S3-compatible store checks the region it was configured with).
+SHARE_DEFAULT_REGION = "us-east-1"
+
+#: Seconds one request to the shared store may take (connect and read). Requests stay inside the cluster (milliseconds); a store that does not answer within this is treated as
+#: unusable for the run, so that baking on the machine is not delayed by every lookup.
+SHARE_TIMEOUT_SECONDS = 5.0
+
+#: How many of a key's shared entries are fetched and checked, newest first. The entry of the environment being prepared is normally the newest (every worker preparing the same
+#: root writes the same name), and older entries belong to earlier roots.
+SHARE_FETCHES_PER_KEY = 4
+
+#: Namespace of the S3 ListObjectsV2 answer.
+_S3_XML = "{http://s3.amazonaws.com/doc/2006-03-01/}"
+
+
+@dataclass(frozen=True)
+class Share:
+    """Where the shared store is and how to sign for it: scheme and host (``host[:port]``) of the endpoint, bucket, prefix of the object names (empty or ending without ``/``),
+    region of the signature, and the access key."""
+
+    scheme: str
+    host: str
+    bucket: str
+    prefix: str
+    region: str
+    key_id: str
+    secret: str
+
+
+class ShareUnusable(Exception):
+    """The shared store cannot be used for this run (not reachable, refused the key, answered with a server error) — the message names why. The caller stops asking it and
+    bakes on the machine."""
+
+
+def share_from_env() -> Share | str | None:
+    """The shared store named by :data:`SHARE_ENV` and :data:`SHARE_KEYS_ENV` — None when none is named, or the reason the named one cannot be used (a malformed URL, an
+    unreadable key file)."""
+    from urllib.parse import parse_qs, urlsplit  # loaded only when a shared store is named
+
+    configured = os.environ.get(SHARE_ENV, "").strip()
+    if not configured:
+        return None
+    parts = urlsplit(configured)
+    names = [part for part in parts.path.split("/") if part]
+    if parts.scheme not in ("http", "https") or not parts.netloc or not names:
+        return f"{SHARE_ENV} is not http(s)://<host>/<bucket>[/<prefix>]: {configured}"
+    keys = os.environ.get(SHARE_KEYS_ENV, "").strip()
+    if not keys:
+        return f"{SHARE_ENV} is set but {SHARE_KEYS_ENV} (the access key file) is not"
+    try:
+        with open(keys, encoding="utf-8") as handle:
+            lines = [line.strip() for line in handle.read().splitlines() if line.strip()]
+    except OSError as error:
+        return f"cannot read the shared store's access key file {keys}: {error}"
+    if len(lines) < 2:
+        return f"the shared store's access key file {keys} does not hold a key id and a secret key on two lines"
+    region = parse_qs(parts.query).get("region", [SHARE_DEFAULT_REGION])[0]
+    return Share(parts.scheme, parts.netloc, names[0], "/".join(names[1:]), region, lines[0], lines[1])
+
+
+def share_label(share: Share) -> str:
+    """The shared store as one line for reports (no key material)."""
+    return f"{share.scheme}://{share.host}/{share.bucket}" + (f"/{share.prefix}" if share.prefix else "")
+
+
+def _shared_dir(share: Share, key: str) -> str:
+    """Object name prefix of one source-code key in the shared store (the same split as :func:`_code_dir`), ending in ``/``."""
+    head = f"{share.prefix}/" if share.prefix else ""
+    return f"{head}{key[:2]}/{key[2:]}/"
+
+
+def signature_v4(
+    share: Share, method: str, path: str, query: tuple[tuple[str, str], ...], payload_sha256: str, amz_date: str
+) -> str:
+    """The Authorization header of an AWS Signature Version 4 request signing the headers host, x-amz-content-sha256 and x-amz-date (path = the URI path,
+    already in its final spelling; query = name and value pairs; amz_date = ``YYYYMMDDTHHMMSSZ``)."""
+    import hashlib  # loaded only when the shared store is used
+    import hmac
+    from urllib.parse import quote
+
+    def encoded(text: str) -> str:
+        return quote(text, safe="-_.~")
+
+    canonical_query = "&".join(f"{encoded(name)}={encoded(value)}" for name, value in sorted(query))
+    headers = f"host:{share.host}\nx-amz-content-sha256:{payload_sha256}\nx-amz-date:{amz_date}\n"
+    signed = "host;x-amz-content-sha256;x-amz-date"
+    request = "\n".join((method, quote(path, safe="/-_.~"), canonical_query, headers, signed, payload_sha256))
+    scope = f"{amz_date[:8]}/{share.region}/s3/aws4_request"
+    to_sign = "\n".join(("AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(request.encode("utf-8")).hexdigest()))
+    signing = ("AWS4" + share.secret).encode("utf-8")
+    for part in (amz_date[:8], share.region, "s3", "aws4_request"):
+        signing = hmac.new(signing, part.encode("utf-8"), hashlib.sha256).digest()
+    signature = hmac.new(signing, to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"AWS4-HMAC-SHA256 Credential={share.key_id}/{scope}, SignedHeaders={signed}, Signature={signature}"
+
+
+def _share_request(share: Share, method: str, name: str, query: tuple[tuple[str, str], ...] = (), body: bytes = b"") -> bytes | None:
+    """One signed request to the shared store (name = object name — empty for the bucket itself). Answer = the response body, or None when the object does not exist (404).
+    Any other failure (not reachable, timeout, refused, server error) raises :class:`ShareUnusable` naming it."""
+    import hashlib  # loaded only when the shared store is used
+    import http.client
+    import time
+    import urllib.error
+    import urllib.request
+    from urllib.parse import quote, urlencode
+
+    path = f"/{share.bucket}/{name}" if name else f"/{share.bucket}"
+    payload = hashlib.sha256(body).hexdigest()
+    amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    url = f"{share.scheme}://{share.host}{quote(path, safe='/-_.~')}" + (f"?{urlencode(sorted(query))}" if query else "")
+    request = urllib.request.Request(url, data=body if method == "PUT" else None, method=method)
+    request.add_header("Host", share.host)
+    request.add_header("x-amz-date", amz_date)
+    request.add_header("x-amz-content-sha256", payload)
+    request.add_header("Authorization", signature_v4(share, method, path, query, payload, amz_date))
+    try:
+        with urllib.request.urlopen(request, timeout=SHARE_TIMEOUT_SECONDS) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise ShareUnusable(f"the shared store answered {method} with HTTP {error.code} {error.reason}") from error
+    except (OSError, http.client.HTTPException) as error:  # URLError, timeouts and resets are OSError; a cut-off answer is HTTPException
+        raise ShareUnusable(f"cannot reach the shared store ({type(error).__name__}: {error})") from error
+
+
+def share_problem(share: Share) -> str | None:
+    """Whether the shared store answers a listing with this key (one small request before baking starts — so a store that is down costs one timeout, not one per file).
+    Answer = the reason it cannot be used, or None."""
+    try:
+        found = _share_request(share, "GET", "", (("list-type", "2"), ("max-keys", "1"), ("prefix", f"{share.prefix}/" if share.prefix else "")))
+    except ShareUnusable as error:
+        return str(error)
+    return f"the bucket {share.bucket} does not exist in the shared store" if found is None else None
+
+
+def shared_code_names(share: Share, key: str) -> tuple[str, ...]:
+    """Entry names (record fingerprints) of the source-code key in the shared store, newest first. Raises :class:`ShareUnusable`."""
+    import xml.etree.ElementTree as ElementTree  # loaded only when the shared store is used
+
+    directory = _shared_dir(share, key)
+    listing = _share_request(share, "GET", "", (("list-type", "2"), ("prefix", directory)))
+    if listing is None:
+        raise ShareUnusable(f"the bucket {share.bucket} does not exist in the shared store")
+    try:
+        root = ElementTree.fromstring(listing)
+    except ElementTree.ParseError as error:
+        raise ShareUnusable(f"the shared store's listing is not XML: {error}") from error
+    found: list[tuple[str, str]] = []
+    for item in root.iter(f"{_S3_XML}Contents"):
+        name = item.findtext(f"{_S3_XML}Key") or ""
+        rest = name[len(directory):]
+        if name.startswith(directory) and rest.endswith(CODE_SUFFIX) and "/" not in rest:
+            found.append((item.findtext(f"{_S3_XML}LastModified") or "", rest[: -len(CODE_SUFFIX)]))
+    return tuple(name for _, name in sorted(found, key=lambda pair: (pair[0], pair[1]), reverse=True))
+
+
+@dataclass(frozen=True)
+class SharedFetch:
+    """Answer of :func:`fetch_shared_code`: data = content bytes (marshaled code) of the shared entry that passed the check and was kept in the directory, or None; problems =
+    named reasons for entries not used (broken, or not keepable in the directory)."""
+
+    data: bytes | None
+    problems: tuple[str, ...]
+
+
+def fetch_shared_code(share: Share, store: str, key: str, is_current: Callable[[bytes], bool]) -> SharedFetch:
+    """Fetch the source-code key's entries from the shared store, newest first (at most :data:`SHARE_FETCHES_PER_KEY`, skipping names the directory already holds — those
+    were checked by :func:`current_data` already), and return the first for which is_current (the same check as :func:`current_data`) is true. That entry is kept in the
+    directory under the same name with the used mark (the next preparation finds it locally). An entry that is not code or whose name is not its code's fingerprint is not
+    used (named in problems). Raises :class:`ShareUnusable`."""
+    import marshal  # loaded only when the shared store is used
+
+    local = {os.path.basename(path)[: -len(CODE_SUFFIX)] for path in code_entries(store, key)}
+    problems: list[str] = []
+    for name in [name for name in shared_code_names(share, key) if name not in local][:SHARE_FETCHES_PER_KEY]:
+        shared = _shared_dir(share, key) + name + CODE_SUFFIX
+        data = _share_request(share, "GET", shared)
+        if data is None:
+            continue  # removed between the listing and the fetch
+        try:
+            code = marshal.loads(data)
+        except (EOFError, ValueError, TypeError) as error:
+            problems.append(f"an entry in the shared store is broken (cannot be read by marshal: {error}) — not using {shared}")
+            continue
+        if not isinstance(code, CodeType) or code_fingerprint(code) != name:
+            problems.append(f"an entry in the shared store is broken (its content is not the code named {name}) — not using {shared}")
+            continue
+        if not is_current(data):
+            continue
+        path = os.path.join(_code_dir(store, key), name + CODE_SUFFIX)
+        problem = _add_entry(store, key, name, CODE_SUFFIX, CODE_ENTRIES_PER_KEY, data)
+        if problem is None:
+            touch_entry(path)
+        else:
+            problems.append(f"cannot keep a shared entry in the bytecode store ({problem})")
+        return SharedFetch(data, tuple(problems))
+    return SharedFetch(None, tuple(problems))
+
+
+def publish_code(share: Share, key: str, code: CodeType, data: bytes) -> None:
+    """Put a baked source-code entry into the shared store under its record fingerprint (data = the marshaled bytes of code — the same bytes as the directory's entry). An
+    entry with the same name is overwritten (same record — and a broken one is replaced). Raises :class:`ShareUnusable`."""
+    _share_request(share, "PUT", _shared_dir(share, key) + code_fingerprint(code) + CODE_SUFFIX, body=data)

@@ -88,11 +88,13 @@
 ;; signal 9(SIGKILL)での子の終わりの番号(子 process の答えは負の signal の番号)。
 (val KILLED-CODE -9)
 ;; 焼く道具(worker/entry/code_prepare.hy)の stderr の報告の行: 全体の行(stored=… rebuilt=… reused=… failed=… compile_s=… closure_s=…
-;; scan_s=… — 全部の欄を読む・#3607 の H2・#3675・#3858)と、木ごとの行(tree=<--tree の綴り> stored=… rebuilt=… reused=… failed=…
-;; problem=<文|->)。行の頭には slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。秒は道具が小数 2 桁に丸めて書く。
+;; scan_s=… fetched=… — 全部の欄を読む・#3607 の H2・#3675・#3858)と、木ごとの行(tree=<--tree の綴り> stored=… rebuilt=… reused=… failed=…
+;; fetched=… problem=<文|->)。行の頭には slog の印(INFO など)が付く。木の綴りは root の下の path(空白を含まない)。秒は道具が小数 2 桁に丸めて書く。
+;; fetched(分け合う保存先から書いた数 — ADR-DOE-BUILD-002 R8)の無い行は 0 と読む(分け合う保存先を知らない道具の行)。
 (val COMPILED-PATTERN
-  (re.compile r"stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) compile_s=([0-9.]+) closure_s=([0-9.]+) scan_s=([0-9.]+)"))
-(val TREE-PATTERN (re.compile r"(?m)tree=(\S+) stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) problem=(.*)$"))
+  (re.compile r"stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) compile_s=([0-9.]+) closure_s=([0-9.]+) scan_s=([0-9.]+)(?: fetched=(\d+))?"))
+(val TREE-PATTERN
+  (re.compile r"(?m)tree=(\S+) stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+)(?: fetched=(\d+))? problem=(.*)$"))
 ;; 焼いた並列数の行(bake_plan の jobs-line — 無ければ並列数を None と読む)。
 (val BAKE-JOBS-PATTERN (re.compile r"bake_jobs=(\d+)"))
 (val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
@@ -874,6 +876,7 @@
       None
       (do (val lines (tuple (.finditer TREE-PATTERN text)))
           (BytecodeCounts :stored (int (.group total 1)) :rebuilt (int (.group total 2)) :reused (int (.group total 3))
+                          :fetched (int (or (.group total 8) 0))
                           :bake-jobs (if (is jobs None) None (int (.group jobs 1)))
                           :failed (int (.group total 4))
                           :compile-seconds (float (.group total 5))
@@ -881,7 +884,7 @@
                           :trees (tuple (gfor t trees m lines :if (= (.group m 1) t.tree)
                                               (TreeCounts :name (posixpath.basename t.tree) :stored (int (.group m 2))
                                                           :rebuilt (int (.group m 3)) :reused (int (.group m 4))
-                                                          :failed (int (.group m 5)))))))))
+                                                          :failed (int (.group m 5)) :fetched (int (or (.group m 6) 0)))))))))
 
 
 (defk compile-answer [result trees project-dir]
@@ -894,7 +897,7 @@
   (<- detail str (tail-of result))
   (cond
     (and (in result.code #(0 1)) (is-not counts None))
-      (do (val said (tuple (gfor m (.finditer TREE-PATTERN result.stderr) #((.group m 1) (.strip (.group m 6))))))
+      (do (val said (tuple (gfor m (.finditer TREE-PATTERN result.stderr) #((.group m 1) (.strip (.group m 7))))))
           (<- interpreter str (interpreter-of project-dir))
           (BytecodeReport :interpreter interpreter :counts counts
                           :problems (tuple (gfor t trees

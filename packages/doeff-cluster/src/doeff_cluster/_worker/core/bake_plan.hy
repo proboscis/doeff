@@ -50,25 +50,28 @@
 
 (defrecord TreeOutcome
   "木 1 つの結果(報告の行): 焼く計画の file のうち stored = 保存先の code から .pyc を書いた数・rebuilt = 焼いた数・reused = 在った .pyc が
-   今の source と macro に合い焼かずに残した数・failed = 焼けなかった数(stored + rebuilt + reused + failed = 焼く計画の数)・problem =
-   検めが通らない理由(印を置いていない)か None。"
+   今の source と macro に合い焼かずに残した数・failed = 焼けなかった数・fetched = 分け合う保存先の code から .pyc を書いた数(ほかの機体が
+   焼いた物 — stored + fetched + rebuilt + reused + failed = 焼く計画の数)・problem = 検めが通らない理由(印を置いていない)か None。"
   (#^ str named)
   (#^ int stored)
   (#^ int rebuilt)
   (#^ int reused)
   (#^ int failed)
-  (#^ (| str None) problem))
+  (#^ (| str None) problem)
+  (setv #^ int fetched 0))
 
 
 (defrecord BakeAnswer
   "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・stored = 保存先の code から .pyc を書いた物の
    #(木の path 相対 path) の列・reused = 在った .pyc が今の source と今の環境の macro に合うので pool へ送らなかった物の
    #(木の path 相対 path) の列(#3675)・unstored = 焼いた code を保存先へ書けなかった理由と、保存先の .pyc を木へ hardlink で置けなかった
-   理由(その .pyc は書いた)の列(重ねない)。"
+   理由(その .pyc は書いた)と、分け合う保存先を使えなかった理由の列(重ねない)・fetched = 分け合う保存先の code から .pyc を書いた物の
+   #(木の path 相対 path) の列(ADR-DOE-BUILD-002 R8)。"
   (#^ tuple failed)
   (#^ tuple stored)
   (#^ tuple reused)
-  (#^ tuple unstored))
+  (#^ tuple unstored)
+  (setv #^ tuple fetched #()))
 
 
 (defrecord BakeSummary
@@ -328,12 +331,13 @@
 (defk bake-answer [text]
   {:pre [(: text str)] :post [(: % BakeAnswer)] :tags {:context "worker" :role "judgment"}}
   "焼きの道具の標準出力(1 つ 1 行 — 焼けなかった物は `failed\\t<木の path>\\t<相対 path>\\t<理由>`・保存先の code から書いた物は
-   `stored\\t<木の path>\\t<相対 path>`・焼かずに残した物は `reused\\t<木の path>\\t<相対 path>`・保存先へ書けなかった理由は
-   `unstored\\t<理由>`)を BakeAnswer にするため。"
+   `stored\\t<木の path>\\t<相対 path>`・分け合う保存先の code から書いた物は `fetched\\t<木の path>\\t<相対 path>`・焼かずに残した物は
+   `reused\\t<木の path>\\t<相対 path>`・保存先へ書けなかった理由は `unstored\\t<理由>`)を BakeAnswer にするため。"
   (val rows (tuple (gfor line (.splitlines text) (.split line "\t" 3))))
   (BakeAnswer :failed (tuple (gfor r rows :if (and (= (len r) 4) (= (get r 0) "failed")) (tuple (cut r 1 None))))
               :stored (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "stored")) (tuple (cut r 1 None))))
               :reused (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "reused")) (tuple (cut r 1 None))))
+              :fetched (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "fetched")) (tuple (cut r 1 None))))
               :unstored (tuple (gfor line (.splitlines text) :if (.startswith line "unstored\t") (cut line (len "unstored\t") None)))))
 
 
@@ -341,16 +345,19 @@
 
 (defk tree-line [outcome]
   {:pre [(: outcome TreeOutcome)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "木 1 つの報告の行を作るため(呼び手が木ごとの問題を読む形 — 問題の文の改行は空白にして 1 行に収める)。"
-  (.format "tree={} stored={} rebuilt={} reused={} failed={} problem={}" outcome.named outcome.stored outcome.rebuilt outcome.reused
-           outcome.failed
+  "木 1 つの報告の行を作るため(呼び手が木ごとの問題を読む形 — 問題の文の改行は空白にして 1 行に収める)。fetched は failed の後ろ —
+   読み手(worker/protocol/env_translation の TREE-PATTERN)は欄の無い行も読む。"
+  (.format "tree={} stored={} rebuilt={} reused={} failed={} fetched={} problem={}" outcome.named outcome.stored outcome.rebuilt
+           outcome.reused outcome.failed outcome.fetched
            (if (is outcome.problem None) "-" (.replace outcome.problem "\n" " "))))
 
 
 (defk total-line [summary]
   {:pre [(: summary BakeSummary)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "全体の報告の行を作るため(頭は stored=… rebuilt=… reused=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。"
-  (.format "stored={} rebuilt={} reused={} failed={} compile_s={} closure_s={} scan_s={}"
+  "全体の報告の行を作るため(頭は stored=… rebuilt=… reused=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。fetched
+   (分け合う保存先から書いた数)は末尾 — 読み手(env_translation の COMPILED-PATTERN)は欄の無い行も読む。"
+  (.format "stored={} rebuilt={} reused={} failed={} compile_s={} closure_s={} scan_s={} fetched={}"
            (sum (gfor t summary.trees t.stored)) (sum (gfor t summary.trees t.rebuilt)) (sum (gfor t summary.trees t.reused))
            (sum (gfor t summary.trees t.failed))
-           (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)))
+           (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)
+           (sum (gfor t summary.trees t.fetched))))

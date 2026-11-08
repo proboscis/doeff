@@ -209,10 +209,11 @@
 
 (defk bake-line [counts]
   {:pre [(: counts BytecodeCounts)] :post [(: % str)]}
-  "焼きの 1 行(準備の記録 — env_tool の log へ出る): 焼いた数・保存先から書いた数と、焼いた並列数・焼きの秒を並べ、小さい node の焼きが
-   並列数のせいで段の上限に近づいたかを記録から読ませるため。並列数を名乗らない古い道具の回は `-`。"
-  (.format "焼き: rebuilt={} stored={} reused={} failed={} bake_jobs={} compile_s={:.2f} closure_s={:.2f}"
-           counts.rebuilt counts.stored counts.reused counts.failed (if (is counts.bake-jobs None) "-" counts.bake-jobs)
+  "焼きの 1 行(準備の記録 — env_tool の log へ出る): 焼いた数・保存先から書いた数・分け合う保存先から取り寄せた数と、焼いた並列数・焼きの
+   秒を並べ、小さい node の焼きが並列数のせいで段の上限に近づいたか、ほかの機体が焼いた物を取り寄せて焼かずに済んだかを、機体ごとに記録から
+   読ませるため(ADR-DOE-BUILD-002 R8)。並列数を名乗らない古い道具の回は `-`。"
+  (.format "焼き: rebuilt={} stored={} fetched={} reused={} failed={} bake_jobs={} compile_s={:.2f} closure_s={:.2f}"
+           counts.rebuilt counts.stored counts.fetched counts.reused counts.failed (if (is counts.bake-jobs None) "-" counts.bake-jobs)
            counts.compile-seconds counts.closure-seconds))
 
 

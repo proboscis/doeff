@@ -24,19 +24,22 @@
 (defwire TreeCounts
   "1 回の焼きの木 1 つの数: name = repo の木の名(root の下の dir の名 — path は載せない)・用意する計画の file のうち stored = source の
    中身で引く保存先の code から .pyc を書いた・rebuilt = 焼いた・reused = 在った .pyc が今の source と macro に合い焼かずに残した・
-   failed = 焼けなかった file の数(stored + rebuilt + reused + failed = 計画の数 — #3675・#3858)。"
+   failed = 焼けなかった file の数・fetched = 分け合う保存先の code から .pyc を書いた(ほかの機体が焼いた物 — ADR-DOE-BUILD-002 R8・
+   欄の無い前の印は 0)(stored + fetched + rebuilt + reused + failed = 計画の数 — #3675・#3858)。"
   {:tags {:context "doeff-cluster" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (#^ str name)
   (#^ int stored)
   (#^ int rebuilt)
   (#^ int reused)
-  (#^ int failed))
+  (#^ int failed)
+  (setv #^ int fetched 0))
 
 
 (defwire BytecodeCounts
   "準備の bytecode の処理ステージの 1 回の用意の数と秒(焼く道具の全体の報告の行の値): stored・rebuilt・reused・failed = 全部の木の合計
    (欄の意味は TreeCounts)・scan-seconds = 木の走査・closure-seconds = 閉包の歩み・compile-seconds = 保存先の引きと焼き・trees = 木ごとの数
-   (TreeCounts の列・要求の木の順)・bake-jobs = 焼いた並列数(焼く道具の bake_jobs= の行 — 行を出さない古い道具・欄の無い印は None)。
+   (TreeCounts の列・要求の木の順)・bake-jobs = 焼いた並列数(焼く道具の bake_jobs= の行 — 行を出さない古い道具・欄の無い印は None)・
+   fetched = 全部の木の分け合う保存先から書いた数の合計(欄の無い印は 0)。
    準備が長い時に、どの処理で時間を使ったかと、何本並べて焼いたかを印から読むため。"
   {:tags {:context "doeff-cluster" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (#^ int stored)
@@ -47,7 +50,8 @@
   (#^ float closure-seconds)
   (#^ float compile-seconds)
   (#^ (get tuple #(TreeCounts ...)) trees)
-  (setv #^ (| int None) bake-jobs None))
+  (setv #^ (| int None) bake-jobs None)
+  (setv #^ int fetched 0))
 
 
 (defeffect FileSha256

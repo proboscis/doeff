@@ -38,10 +38,10 @@
 ;;;   4 検めと印   木ごとに用意した後を走査し直し、用意するべき source ごとに .pyc が在ること(焼けなかった file は理由つきで印に載せる)を
 ;;;               検めてから、木の根に完成の印(MARKER)を置く。検めが通らない木には印を置かない。
 ;;;
-;;; 報告(stderr の slog の行): 木ごとに `tree=<--tree の綴り> stored=N rebuilt=N reused=N failed=N problem=<文|->`、最後に全体の
-;;; `stored=N rebuilt=N reused=N failed=N compile_s=… closure_s=… scan_s=…`(用意する計画の file のうち stored = 保存先の code から書いた・
-;;; rebuilt = 焼いた・reused = 焼かずに残した・failed = 焼けなかった — 4 つの和が計画の数・scan_s = 木の走査・closure_s = 閉包の歩み・
-;;; compile_s = 保存先の引きと焼き)。--entries の在る時は閉包の歩みの後に `closure_modules=N closure_reread=N`(閉包の source の数・そのうち
+;;; 報告(stderr の slog の行): 木ごとに `tree=<--tree の綴り> stored=N rebuilt=N reused=N failed=N fetched=N problem=<文|->`、最後に全体の
+;;; `stored=N rebuilt=N reused=N failed=N compile_s=… closure_s=… scan_s=… fetched=N`(用意する計画の file のうち stored = 保存先の code から
+;;; 書いた・fetched = 分け合う保存先の code から書いた(ほかの機体が焼いた物 — ADR-DOE-BUILD-002 R8)・rebuilt = 焼いた・reused = 焼かずに
+;;; 残した・failed = 焼けなかった — 5 つの和が計画の数・scan_s = 木の走査・closure_s = 閉包の歩み・compile_s = 保存先の引きと焼き)。--entries の在る時は閉包の歩みの後に `closure_modules=N closure_reread=N`(閉包の source の数・そのうち
 ;;; 構文を読み直した数)。検めの通らない木が 1 つでも在れば終わり 1(ほかの木の印は置く)。
 ;;; 実行環境の準備(worker/protocol/env_translation)は木ごとの行を読み、版ごとのコードの木の準備(worker/core/code_rules の script)は印の
 ;;; 有無を確かめる。
@@ -355,8 +355,10 @@
             (<- (WriteMarker tree.path marker)))
         (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem))))
     (<- stored int (plan.tree-count answer.stored tree.path))
+    (<- fetched int (plan.tree-count answer.fetched tree.path))
     (<- reused int (plan.tree-count answer.reused tree.path))
-    (val outcome (plan.TreeOutcome :named tree.named :stored stored :rebuilt (- (len tree-plan) (len failed) reused stored)
+    (val outcome (plan.TreeOutcome :named tree.named :stored stored :fetched fetched
+                                   :rebuilt (- (len tree-plan) (len failed) reused stored fetched)
                                    :reused reused :failed (len failed) :problem problem))
     (<- line str (plan.tree-line outcome))
     (<- (Note line))

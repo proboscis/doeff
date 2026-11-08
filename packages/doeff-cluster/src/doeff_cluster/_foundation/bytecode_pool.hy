@@ -11,9 +11,16 @@
 ;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を置く(stored)。無い・合わない物は焼いて .pyc を置き、今の環境の code を
 ;;; 鍵に足す(rebuilt — 他の環境の code は上書きしない)。.pyc は、保存先に置いた中身の同じ file への hardlink で置く(code_store の link-pyc —
 ;;; root ごとに同じ中身を新しく書かない。置けなければ今どおり書く)。
+;;; 分け合う保存先(code_store の share-from-env — 環境変数 DOEFF_HY_CODE_SHARE と鍵の file DOEFF_HY_CODE_SHARE_KEYS・ADR-DOE-BUILD-002 R8)が
+;;; 名指されていれば、機体の保存先に合う code が無い物は、焼く前に分け合う保存先から鍵の entry を取り寄せ、同じ照らしに合えばその code から
+;;; .pyc を置き(fetched — entry は機体の保存先へ手元の写しとして置く)、焼いた code はすぐ分け合う保存先へも置く。並びの多い機体が焼いて
+;;; 置いた物を、同じ root を準備する並びの少ない機体が取り寄せて焼かない(前は機体ごとに同じ物を焼き直した — 2026-11-07 に 4 台が同じ root の
+;;; 同じ 245 本をそれぞれ 166〜979 秒かけて焼いた)。用意は 2 回り: 1 回り目は焼かずに書けるだけ書き、2 回り目に残りを焼く(bake の註)。
+;;; 分け合う保存先が届かない・鍵を断る・誤りを返す時は、名乗ってその回(子の process では残り)は機体の中で焼く — 準備は落とさない。
 ;;; 木に既に在る .pyc(同じ commit の木を hardlink で写した root)が今の source と macro に合う物は、pool へ渡さずに残す(reused)。
 ;;; 標準出力 = 1 つ 1 行で、焼けなかった物は `failed\t<木の path>\t<相対 path>\t<理由>`(理由の tab と改行は空白)、保存先の code から書いた
-;;; 物は `stored\t<木の path>\t<相対 path>`、焼かずに残した物は `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由と、保存先の
+;;; 物は `stored\t<木の path>\t<相対 path>`、分け合う保存先の code から書いた物は `fetched\t<木の path>\t<相対 path>`、焼かずに残した物は
+;;; `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由と、分け合う保存先を使えなかった理由と、保存先の
 ;;; .pyc を木へ hardlink で置けなかった理由は `unstored\t<理由>`(理由ごとに 1 行 — 読み手は worker/core/bake_plan.hy の bake-answer)。焼いた
 ;;; 物は行を持たない(数は呼び手が引き算)。
 ;;; --store-module = worker の版の doeff-hy の code_store.py(root の版の doeff-hy は保存先の入口を持たない版でありうるので、worker の版の
@@ -59,6 +66,9 @@
 ;; root の guard が包む SourceFileLoader の口(持ち主の module を引く手がかり — 前が先)と、持ち主の module から呼ぶ名(頭の註)。
 (setv GUARD-HOOKS #("get_code" "source_to_code"))
 (setv GUARD-NAMES #("bytecode_is_current" "source_to_code_as_import"))
+;; この process で分け合う保存先が使えなくなった理由(None = まだ使える)。process ごとの値 — fork の子は起こされた時の値を持ち、子で
+;; 使えなくなっても他の子と親へは伝わらない(子ごとに 1 度だけ期限まで待つ)。
+(setv SHARE-DOWN {"reason" None})
 
 
 (defn #^ ModuleType guard-module []  ; defk にできない: root の版の doeff の macro を使わない道具の素の関数(頭の註)
@@ -177,10 +187,48 @@
   None)
 
 
-(defn #^ tuple bake-one [#^ (| str None) store #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
+(defn #^ (| str None) share-reason [#^ str problem]  ; defk にできない: process の pool の子が呼ぶ素の関数
+  "分け合う保存先を使えなかった理由を、この process の以後の焼きで分け合う保存先を引かない印にして、報告の理由の文にするため
+   (SHARE-DOWN — 届かない保存先へ 1 本ごとに期限まで待たない)。"
+  (setv (get SHARE-DOWN "reason") problem)
+  (.format "分け合う保存先を使えない(この process の残りは機体の中で焼く): {}" problem))
+
+
+(defn #^ (| str None) joined-reasons [#* reasons]  ; defk にできない: process の pool の子が呼ぶ素の関数
+  "理由の文(空と None を除く)を 1 つの文につなぐため(1 本の答えの理由は 1 つ — 報告は理由ごとに 1 行)。"
+  (or (.join "; " (gfor r reasons :if r r)) None))
+
+
+(defn #^ tuple shared-entry [share #^ str store #^ str key is-current]  ; defk にできない: process の pool の子が呼ぶ素の関数
+  "分け合う保存先から鍵の entry を取り寄せ、今の環境に合う物の中身と理由の文を #(中身か None 理由か None) で返すため(code_store の
+   fetch-shared-code — 合う entry は機体の保存先へ手元の写しとして置かれる)。保存先が使えなければ、この process では以後引かない。"
+  (setv code-store (get sys.modules STORE-MODULE-NAME))
+  (try
+    (setv fetched (.fetch-shared-code code-store share store key is-current))
+    #(fetched.data (joined-reasons #* fetched.problems))
+    (except [error code-store.ShareUnusable]
+      #(None (share-reason (str error))))))
+
+
+(defn #^ (| str None) published [share #^ str key code #^ bytes body]  ; defk にできない: process の pool の子が呼ぶ素の関数
+  "焼いた code を分け合う保存先へ置くため(code_store の publish-code — ほかの機体が同じ鍵の同じ記録の code を取り寄せて焼かない)。
+   答え = 置けなかった理由か None(保存先が使えなければ、この process では以後引かない)。"
+  (setv code-store (get sys.modules STORE-MODULE-NAME))
+  (try
+    (.publish-code code-store share key code body)
+    None
+    (except [error code-store.ShareUnusable]
+      (share-reason (str error)))))
+
+
+(defn #^ tuple bake-one [#^ (| str None) store share #^ bool look-only #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
   "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を置いた — 置き方の理由は place-pyc)・
+   \"fetched\"(分け合う保存先の code から .pyc を置いた — ほかの機体が焼いた物)・
    \"rebuilt\"(焼いて .pyc を置き、code を保存先へ足した — 足せなかった・hardlink で置けなかった時は理由)・\"failed\"(焼けない・
-   読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。保存先の code から置く .pyc の bytes は code_store の data-pyc が
+   読めない — 理由)・\"missed\"(look-only の時だけ — どちらの保存先にも合う code が無く、焼かずに返した)。store = 保存先の dir
+   (None = 引かず足さない)。share = 分け合う保存先(code_store の Share・None = 使わない — この process で使えなくなった後も引かない)。
+   機体の保存先に合う code が無ければ分け合う保存先から取り寄せ、それにも無ければ焼いて、機体の保存先と分け合う保存先の両方へ足す。
+   保存先の code から置く .pyc の bytes は code_store の data-pyc が
    組む(頭の後ろに entry の中身をそのまま — 同じ entry から置く .pyc が root をまたいで同じ bytes になり、保存先の 1 つの file を分け合う。
    組み方は code_store だけが知る)。
    保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-data)。今の source の hash と
@@ -199,22 +247,35 @@
   ;; 保存先の entry は bytes のまま照らす(code_store の current-data — 頭の後ろに entry の中身を足した .pyc を、置く物そのままで照らす)。
   ;; 前は entry を code に戻し(marshal.loads)、照らすために .pyc へ組み直し(marshal.dumps)、照らしの中で guard がもう 1 度戻していた。
   ;; Python の source は guard が頭の hash しか読まないので、壊れた entry を code_store が code に戻して除く(check-code)。
+  (setv sharing (and (is-not key None) (is-not share None) (is (get SHARE-DOWN "reason") None))
+        fetch-reason None)
   (when (is-not key None)
     (setv guard (guard-module)
           head (pyc-head data)
-          found (.current-data code-store store key (fn [d] (.bytecode-is-current guard source (.data-pyc code-store head d) data))
+          current (fn [d] (.bytecode-is-current guard source (.data-pyc code-store head d) data))
+          found (.current-data code-store store key current
                                :check-code (not (.endswith source (. code-store HY-SOURCE-SUFFIXES)))))
     (when (is-not found None)
-      (return #("stored" (place-pyc store source (.data-pyc code-store head found))))))
+      (return #("stored" (place-pyc store source (.data-pyc code-store head found)))))
+    ;; 機体の保存先に合う code が無い — ほかの機体が焼いて分け合う保存先へ置いた code を取り寄せる(照らしは機体の保存先と同じ current)。
+    (when sharing
+      (setv #(shared fetch-reason) (shared-entry share store key current))
+      (when (is-not shared None)
+        (return #("fetched" (joined-reasons fetch-reason (place-pyc store source (.data-pyc code-store head shared))))))))
+  (when look-only
+    (return #("missed" fetch-reason)))
   (setv #(compiled reason) (compiled-pyc name source data))
   (when (is compiled None)
     (return #("failed" reason)))
   (setv placed (place-pyc store source compiled))
   ;; entry の中身は焼いた .pyc の頭の後ろの bytes そのもの — 次の root が entry から置く .pyc が今置いた .pyc と同じ bytes になり、保存先の
   ;; 1 つの file を分け合う(marshal し直すと bytes が変わり得る)。
-  (setv body (cut compiled PYC-HEAD-BYTES None))
-  (setv problem (if (is key None) None (.add-code code-store store key (marshal.loads body) body)))
-  #("rebuilt" (or problem placed)))
+  (setv body (cut compiled PYC-HEAD-BYTES None)
+        code (marshal.loads body))
+  (setv problem (if (is key None) None (.add-code code-store store key code body)))
+  ;; 焼いたらすぐ分け合う保存先へ置く — 同じ root を同時に準備している機体が、この後の取り寄せで同じ物を焼かない。
+  (setv shared-problem (if (and sharing (is (get SHARE-DOWN "reason") None)) (published share key code body) None))
+  #("rebuilt" (joined-reasons fetch-reason problem placed shared-problem)))
 
 
 (defn #^ tuple pooled [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; defk にできない: process の pool を回す
@@ -247,28 +308,66 @@
   result)
 
 
-(defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress]  ; defk にできない: process の pool を回す
+(defn #^ tuple pass-results [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; defk にできない: process の pool を回す
+  "work を 1 回り用意し、work の順の one の答えの列を返すため(jobs が 1 か 1 本だけならこの process で順に・それ以外は pool で)。"
+  (if (or (<= jobs 1) (<= (len work) 1))
+      (tuple (gfor #(tree rel name) work
+                   :setv result (one tree rel name)
+                   :do (mark-progress progress)
+                   result))
+      (pooled work jobs paths one progress)))
+
+
+(defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress share]  ; defk にできない: process の pool を回す
   "items(#(木の path 相対 path module 名) の列)のうち、在る .pyc が今の source と macro に合わない物をこの順に用意し、#(焼けなかった物の
    #(木の path 相対 path 理由) の列 保存先から書いた物の #(木の path 相対 path) の列 焼かずに残した物の #(木の path 相対 path) の列
-   保存先へ書けなかった理由の列(重ねない・名の順))を返すため。jobs 個の process に 1 つずつ渡す。fork で起こす(spawn では子が Hy の module を
+   保存先へ書けなかった理由の列(重ねない・名の順) 分け合う保存先から書いた物の #(木の path 相対 path) の列)を返すため。jobs 個の
+   process に 1 つずつ渡す。fork で起こす(spawn では子が Hy の module を
    import し直す前に関数を解けない・worker の版の code_store も fork で子へ引き継ぐ)。1 つ用意し終えるたびに(終わった順に)進みの印
-   progress を進める(頭の註 --progress — 渡す順の先の遅い 1 file を待つ間も、ほかの process の終わりで印が進む)。"
+   progress を進める(頭の註 --progress — 渡す順の先の遅い 1 file を待つ間も、ほかの process の終わりで印が進む)。
+   share = 分け合う保存先(code_store の Share・None = 使わない)。在れば 2 回りで用意する: 1 回り目は焼かずに機体の保存先と
+   分け合う保存先から書けるだけ書き(焼く 1 本の秒の間に取り寄せは数十本進む)、2 回り目に残りを、焼く直前にもう 1 度取り寄せを試してから
+   焼く。同じ root を同時に準備する並びの多い機体が先へ進んで置いた物を、並びの少ない機体が焼かずに取り寄せるため — 1 回りだけでは、
+   準備を早く始めた機体は、遅れて始めた並びの多い機体が置く物を待たずに焼いてしまう。"
   (prepare-path paths)
   (setv kept (tuple (gfor i items (current-pyc (get i 0) (get i 1))))
-        work (tuple (gfor #(i k) (zip items kept) :if (not k) i))
-        one (partial bake-one store))
+        work (tuple (gfor #(i k) (zip items kept) :if (not k) i)))
   (mark-progress progress)
-  (setv results
-    (if (or (<= jobs 1) (<= (len work) 1))
-        (tuple (gfor #(tree rel name) work
-                     :setv result (one tree rel name)
-                     :do (mark-progress progress)
-                     result))
-        (pooled work jobs paths one progress)))
+  (setv first-results (if (is share None) #() (pass-results work jobs paths (partial bake-one store share True) progress))
+        answered (dict (gfor #(item result) (zip work first-results) :if (!= (get result 0) "missed") #(item result)))
+        rest (tuple (gfor item work :if (not-in item answered) item))
+        rest-results (pass-results rest jobs paths (partial bake-one store share False) progress)
+        answered (| answered (dict (zip rest rest-results)))
+        results (tuple (gfor item work (get answered item))))
+  ;; 保存先を使えなかった理由は、1 回り目で焼かずに返した物の理由(取り寄せの断り)も残す。焼けなかった理由は焼けなかった物の列に載る。
   #((tuple (gfor #(item result) (zip work results) :if (= (get result 0) "failed") #((get item 0) (get item 1) (get result 1))))
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "stored") #((get item 0) (get item 1))))
     (tuple (gfor #(i k) (zip items kept) :if k #((get i 0) (get i 1))))
-    (tuple (sorted (sfor result results :if (and (in (get result 0) #("stored" "rebuilt")) (get result 1)) (get result 1))))))
+    (tuple (sorted (sfor r (+ first-results results) :if (and (!= (get r 0) "failed") (get r 1)) (get r 1))))
+    (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "fetched") #((get item 0) (get item 1))))))
+
+
+(defn shared-store [#^ ModuleType code-store #^ (| str None) store]  ; defk にできない: 入口が pool を起こす前に 1 度だけ呼ぶ素の関数
+  "この回に使う分け合う保存先(code_store の Share か None)を決め、どうしたかを stderr の 1 行で名乗るため(呼び手の入口が報告の行と
+   並べて出す)。名指しが無い・機体の保存先を使わない回は None。名指しが在っても形が誤り・鍵の file が読めない・焼く前の 1 回の一覧の
+   問いに答えない時は、理由を名乗って None(準備は機体の中で焼く — 届かない保存先へ 1 本ごとに期限まで待たない)。"
+  (setv share (.share-from-env code-store))
+  (cond
+    (is share None) None
+    (is store None)
+      (do (print "分け合う保存先: 機体の保存先を使わない回なので使わない" :file sys.stderr :flush True)
+          None)
+    (isinstance share str)
+      (do (print (.format "分け合う保存先: 使えない(機体の中で焼く): {}" share) :file sys.stderr :flush True)
+          None)
+    True
+      (do (setv problem (.share-problem code-store share))
+          (if (is problem None)
+              (do (print (.format "分け合う保存先: {} から取り寄せ、焼いた物を置く" (.share-label code-store share)) :file sys.stderr :flush True)
+                  share)
+              (do (print (.format "分け合う保存先: {} を使えない(機体の中で焼く): {}" (.share-label code-store share) problem)
+                         :file sys.stderr :flush True)
+                  None)))))
 
 
 (defn #^ None main []  ; defk にできない: console の入口(素の関数として呼ばれる)
@@ -285,14 +384,17 @@
   ;; そこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
-  (store-module-at args.store-module)
+  (setv code-store (store-module-at args.store-module))
   (guard-module)  ; guard の口の無い root は焼く前に落とす(焼いても記録を付けられない)
   (setv items (tuple (gfor line (.splitlines (.read sys.stdin)) :setv parts (.split line "\t" 2) :if (= (len parts) 3) (tuple parts))))
-  (setv #(failed stored reused unstored) (bake items args.jobs (tuple (or args.path [])) args.store args.progress))
+  (setv share (shared-store code-store args.store))
+  (setv #(failed stored reused unstored fetched) (bake items args.jobs (tuple (or args.path [])) args.store args.progress share))
   (for [#(tree rel reason) failed]
     (print (.format "failed\t{}\t{}\t{}" tree rel (.join " " (.split reason))) :flush True))
   (for [#(tree rel) stored]
     (print (.format "stored\t{}\t{}" tree rel) :flush True))
+  (for [#(tree rel) fetched]
+    (print (.format "fetched\t{}\t{}" tree rel) :flush True))
   (for [#(tree rel) reused]
     (print (.format "reused\t{}\t{}" tree rel) :flush True))
   (for [reason unstored]
