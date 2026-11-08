@@ -35,7 +35,7 @@ packages = ["src/doeff_records"]
 dev-mode-dirs = ["src"]
 
 [tool.hatch.build]
-# The .pyi made by the build hook are git-ignored, and hatchling leaves ignored files out of the wheel and the sdist — artifacts puts them in.
+# The .pyi made by the build hook are git-ignored, and hatchling leaves ignored files out of the wheel and the sdist — the key below puts them back in.
 artifacts = ["*.pyi"]
 
 [tool.hatch.build.hooks.custom]

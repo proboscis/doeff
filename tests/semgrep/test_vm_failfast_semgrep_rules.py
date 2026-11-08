@@ -322,3 +322,16 @@ def test_application_vocabulary_rule_reads_type_stubs_too() -> None:
     )
 
     assert _rule_start_lines(results, "doeff-packages-have-no-application-vocabulary") == {4}
+
+
+def test_application_vocabulary_rule_spares_the_hatch_build_key() -> None:
+    # The hatch key `artifacts = [...]` puts the git-ignored .pyi made at build time into the wheel; its name is fixed by hatchling (a90aa30b0 turned the
+    # baseline red with it). Only the key at the start of a line is spared -- the word in a comment, or inside another key, still fires.
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-records/vocabulary/vocabulary_hatch_build_key.toml",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(results, "doeff-packages-have-no-application-vocabulary") == {5, 7}

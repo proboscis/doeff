@@ -1,0 +1,7 @@
+# Fixture. doeff-packages-have-no-application-vocabulary fires on lines 5 and 7, and does not fire on line 6.
+
+[tool.hatch.build]
+# The hatch build key on the next line is a name hatchling fixes.
+# The artifact store of the system is a business word.
+artifacts = ["*.pyi"]
+build-artifacts = ["*.pyi"]

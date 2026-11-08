@@ -133,6 +133,8 @@ rules:
       - pattern-regex: '(?i)(?<![a-z])(agora|kanban|conversation|budget|artifact|herdr|hypha|mediagen|sporocarp|acp|controllers/|controllers\.|clients/hy)'
       # The declaration field name of doeff-records (size-budget / size_budget) is not a business word.
       - pattern-not-regex: '(?i)size[-_]budget'
+      # The hatch build key `artifacts` (pyproject.toml) is a name hatchling fixes, not a business word; only the key at the start of a line is spared.
+      - pattern-not-regex: '(?m)^artifacts\s*='
     paths:
       include:
         - "/packages/doeff-cluster/**"
