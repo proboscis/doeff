@@ -1,41 +1,53 @@
 WEBVTT
 
+i1.1
+00:00:00.250 --> 00:00:05.033
+This video shows a doeff handler choosing a move by running battle itself.
+
+i1.2
+00:00:05.033 --> 00:00:07.500
+doeff is algebraic effects for Python.
+
+i2
+00:00:08.050 --> 00:00:13.850
+We look at battle, the card fight, and the handler monte_carlo, as it answers one Choose.
+
 m1
-00:00:00.250 --> 00:00:05.350
+00:00:14.400 --> 00:00:19.500
 The fight pauses at a Choose. The handler holds the rest of the fight as k.
 
 m2
-00:00:05.900 --> 00:00:12.850
+00:00:20.050 --> 00:00:27.000
 To answer, it runs battle itself: the same function a person plays. It needs no model of the game.
 
 m3.1
-00:00:13.400 --> 00:00:18.317
+00:00:27.550 --> 00:00:32.467
 For each card it can play, and for ending the turn, it plays that card on the state.
 
 m3.2
-00:00:18.317 --> 00:00:21.650
+00:00:32.467 --> 00:00:35.800
 Then it starts a new battle from that state, three times.
 
 m4
-00:00:22.200 --> 00:00:29.300
+00:00:36.350 --> 00:00:43.450
 Each new battle runs on a stack of its own. None of them touches k, so the paused fight keeps its dice.
 
 m5
-00:00:29.850 --> 00:00:37.350
+00:00:44.000 --> 00:00:51.500
 The handler counts the wins. Here every move wins all three. The paused fight has not moved.
 
 m6.1
-00:00:37.900 --> 00:00:40.917
+00:00:52.050 --> 00:00:55.067
 With a tie it keeps the first move, Bash.
 
 m6.2
-00:00:40.917 --> 00:00:47.400
+00:00:55.067 --> 00:01:01.550
 It resumes k with it, once: in doeff, k can be resumed only one time. The fight goes on.
 
 m7.1
-00:00:47.950 --> 00:00:53.733
+00:01:02.100 --> 00:01:07.883
 On seed 3, the bot answers eleven Chooses with a hundred and sixty-five playouts,
 
 m7.2
-00:00:53.733 --> 00:00:55.800
+00:01:07.883 --> 00:01:09.950
 in about a fifth of a second.
