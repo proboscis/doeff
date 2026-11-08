@@ -100,8 +100,12 @@
 #   CPU の重み: 子ごとに cpu.weight(1〜10000)と cpu.idle(0 か 1)も掛けられる。CPU が埋まった時に、遅れに
 #   敏感な層(worker の本体・常駐の job)の thread を、一括の仕事の層(task・CLI・命令)より先に CPU へ載せるため — 子に cpu を掛けない
 #   と、層の中の nice や SCHED_IDLE は層どうしの取り分を変えず、起きた常駐の thread が一括の仕事の後ろで実行待ちの列に並ぶ。
+#   CPU の枠: 子ごとに cpu.max(<quota>/<period> の µ 秒・quota は max も可)も掛けられる。container の cpu.max に当たると、kernel は
+#   その周期の残りの間 container の中の thread を層によらず全部止める(重みは止めを分けない)— 一括の仕事の層だけに枠を掛け、枠の和を
+#   container の上限から守る層の取り分を引いた値以下にすれば、上限に当たって止められるのは枠を掛けた層だけになる(和は機体の宣言が守る)。
 #   WORKER_CGROUP_LAYOUT = 空白で並べた「<名>:<file>=<値>,…」(名は英小文字・数字・-。file は memory.min・memory.low・memory.high・
-#   memory.max・cpu.weight・cpu.idle のどれか。memory の値は kernel の書式のまま・cpu.weight は 1〜10000 の整数・cpu.idle は 0 か 1)。
+#   memory.max・cpu.weight・cpu.idle・cpu.max のどれか。memory の値は kernel の書式のまま・cpu.weight は 1〜10000 の整数・cpu.idle は
+#   0 か 1・cpu.max は <quota>/<period>(quota は 1000 以上の整数か max・period は 1000〜1000000 の整数)で、kernel へは空白で区切って書く)。
 #   最初の層に、今 worker の cgroup に居る process を全部移す(tini・この script・準備の残り)— cgroup v2 は process の居る cgroup の子に
 #   controller を掛けられないため。子には memory をいつも、cpu は cpu の file を書く層が在る時だけ掛ける。例:
 #     worker:memory.min=2G,cpu.weight=1000 services:memory.min=24G,cpu.weight=1000 jobs:memory.max=36G,cpu.weight=100
@@ -465,7 +469,28 @@ cgroup_layout() {
             0|1) ;;
             *) problems="$problems 層 $name の cpu.idle の値 '$value' は 0 か 1 で書く。" ;;
           esac ;;
-        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max・cpu.weight・cpu.idle のどれかで書く。" ;;
+        cpu.max)
+          controllers="+memory +cpu"
+          quota=${value%/*}
+          period=${value#*/}
+          ok=1
+          case "$value" in
+            */*/*|/*|*/) ok=0 ;;
+            */*) ;;
+            *) ok=0 ;;
+          esac
+          case "$quota" in
+            max) ;;
+            ''|*[!0-9]*|0*) ok=0 ;;
+            *) [ "${#quota}" -le 9 ] && [ "$quota" -ge 1000 ] || ok=0 ;;
+          esac
+          case "$period" in
+            ''|*[!0-9]*|0*) ok=0 ;;
+            *) [ "${#period}" -le 7 ] && [ "$period" -ge 1000 ] && [ "$period" -le 1000000 ] || ok=0 ;;
+          esac
+          [ "$ok" = 1 ] ||
+            problems="$problems 層 $name の cpu.max の値 '$value' は <quota>/<period>(quota は 1000 以上の整数か max・period は 1000〜1000000 の整数)で書く。" ;;
+        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max・cpu.weight・cpu.idle・cpu.max のどれかで書く。" ;;
       esac
     done
     IFS=$old_ifs
@@ -542,8 +567,11 @@ cgroup_layout() {
     old_ifs=$IFS
     IFS=,
     for setting in $settings; do
-      printf '%s\n' "${setting#*=}" >"$cgroup_dir/$name/${setting%%=*}" 2>/dev/null ||
-        cgroup_refused "層 $name の ${setting%%=*} に ${setting#*=} を書けない"
+      value=${setting#*=}
+      # cpu.max の kernel の書式は「<quota> <period>」(宣言は空白で層を区切るので / で書く)。
+      [ "${setting%%=*}" != cpu.max ] || value="${value%/*} ${value#*/}"
+      printf '%s\n' "$value" >"$cgroup_dir/$name/${setting%%=*}" 2>/dev/null ||
+        cgroup_refused "層 $name の ${setting%%=*} に $value を書けない"
     done
     IFS=$old_ifs
   done

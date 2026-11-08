@@ -132,12 +132,39 @@
   (assert (= (sorted (gfor p (.iterdir scope) p.name)) ["cgroup.procs" "cgroup.subtree_control"]) "層を作らない"))
 
 
+(deftest test-a-layout-with-cpu-max-writes-the-kernel-form-of-each-cap [#^ Path tmp-path]
+  ;; CPU の枠(boot.sh の「CPU の枠」): cpu.max を書く層が在れば、子に cpu を掛けてから、宣言の <quota>/<period> を kernel の書式
+  ;; 「<quota> <period>」で書く。失敗ケース(11-08 の helios): 枠を掛けられないと、会話の層が container の上限 12 core を埋めた周期ごとに
+  ;; 常駐の job の thread も周期の残りの間止められ、常駐の service の答えの組みが 0.1 秒から 4.2 秒に伸びた。
+  (<- scope Path (fake-container tmp-path))
+  (<- done subprocess.CompletedProcess
+      (run-layout tmp-path scope "worker:memory.min=1G services:memory.min=24G jobs:memory.max=8G,cpu.max=200000/100000 clis:cpu.max=max/100000"))
+  (assert (= done.returncode 0) done.stderr)
+  (assert (= (.strip (.read-text (/ scope "cgroup.subtree_control"))) "+memory +cpu"))
+  (val written (dfor layer #("jobs" "clis") layer (.strip (.read-text (/ scope layer "cpu.max")))))
+  (assert (= written {"jobs" "200000 100000" "clis" "max 100000"}) written)
+  (assert (not (.exists (/ scope "services" "cpu.max"))) "枠を宣言しない層には書かない"))
+
+
+(deftest test-a-bad-cpu-max-is-refused-before-any-layer-is-made [#^ Path tmp-path]
+  ;; 失敗ケース: kernel の書式の空白を宣言に書けず(層の区切り)、周期の範囲(1 ms〜1 秒)の外や 1 ms 未満の quota を、層を作った後の書きで
+  ;; 初めて知ると、起動が層を半端に作ったまま止まる。宣言を読む段で全部を名指して断る。
+  (<- scope Path (fake-container tmp-path))
+  (val bad #("600000" "600000/" "/100000" "600000/100/1" "999/100000" "600000/999" "600000/1000001" "6x/100000" "060000/100000"))
+  (<- done subprocess.CompletedProcess
+      (run-layout tmp-path scope (.join " " (lfor #(i value) (enumerate bad) (.format "l{}:cpu.max={}" i value)))))
+  (assert (= done.returncode 2) done)
+  (for [value bad]
+    (assert (in (.format "cpu.max の値 '{}'" value) done.stderr) #(value done.stderr)))
+  (assert (= (sorted (gfor p (.iterdir scope) p.name)) ["cgroup.procs" "cgroup.subtree_control"]) "層を作らない"))
+
+
 (deftest test-a-bad-layout-is-refused-with-every-problem-and-touches-nothing [#^ Path tmp-path]
   ;; 失敗ケース: 宣言の誤りを 1 つずつ直して起こし直すと、その度に Pod が起動で止まる。全部の誤りを 1 度に名指し、層は作らない。
   (<- scope Path (fake-container tmp-path))
-  (<- done subprocess.CompletedProcess (run-layout tmp-path scope "Worker:memory.min=2G jobs:cpu.max=1 x:memory.max=lots"))
+  (<- done subprocess.CompletedProcess (run-layout tmp-path scope "Worker:memory.min=2G jobs:cpu.burst=1 x:memory.max=lots"))
   (assert (= done.returncode 2) done)
-  (for [part #("'Worker'" "cpu.max" "'lots'")]
+  (for [part #("'Worker'" "cpu.burst" "'lots'")]
     (assert (in part done.stderr) done.stderr))
   (assert (= (sorted (gfor p (.iterdir scope) p.name)) ["cgroup.procs" "cgroup.subtree_control"]) "層を作らない"))
 
