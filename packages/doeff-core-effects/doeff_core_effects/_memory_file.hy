@@ -20,7 +20,7 @@
                                          StatPath MakeSymlink Appended AppendBytes TruncateFile SyncDirectory
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
-                                         MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
+                                         MeasureTree LinkFile LinkFiles CompilePythonSources SourceNotCompiled])
 (import doeff_core_effects._python_bytecode [compiled-pyc kept-pyc pyc-path])
 
 ;; The root of the store, and the refusal messages (the same form as OSError messages).
@@ -447,6 +447,22 @@
   (LinkFile [source target]
     (<- answer (on-pair store source target False link-in))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
+  (LinkFiles [pairs]
+    ;; The same steps as MakeDirectory of the parent and LinkFile, in order; the links made before the first refusal stay (the same as the real one).
+    (var refusal None)
+    (for [#(source target) pairs]
+      (when (is refusal None)
+        (val parent (posixpath.dirname target))
+        (var grown store)
+        (when parent
+          (<- made (on-path store parent True with-dirs))
+          (:= grown made))
+        (if (isinstance grown FileFailed)
+            (:= refusal grown)
+            (do (:= store grown)
+                (<- linked (on-pair store source target False link-in))
+                (if (isinstance linked FileFailed) (:= refusal linked) (:= store linked))))))
+    (resume refusal))
   (CopyTree [source target]
     (<- answer (on-pair store source target True copy-tree-in))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))

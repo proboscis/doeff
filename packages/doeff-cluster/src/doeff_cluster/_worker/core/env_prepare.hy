@@ -47,7 +47,7 @@
 (import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material dependency-key])
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -235,11 +235,14 @@
 (defk stage-mirrors [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
   "宣言した repo ごとに mirror を用意して commit を揃える(clone / fetch できない repo と、worker が取れない commit はここで止める —
-   URL そのものは断らない)。"
+   URL そのものは断らない)。repo ごとの秒と揃え方(在った・取った)を区切りとして印へ渡す(取り済みの commit でも段が 14〜18 秒かかった
+   訳を repo ごとに読むため)。"
   (var mirrors [])
   (var failure None)
+  (var parts #())
   (for [repo request.env.repos]
     (when (is failure None)
+      (<- started float (GetMonotonic))
       (<- ready (| MirrorReady EnvFailure) (EnsureMirror repo.url))
       (match ready
         (EnvFailure) (:= failure ready)
@@ -252,8 +255,11 @@
                       (env-failure EnvFailureKind.COMMIT-MISSING
                                    (.format "repo {} の commit {} が remote に無い(push していない?)" repo.name repo.commit)))
                   (:= failure missing))
-              _ (.append mirrors (RepoMirror :name repo.name :mirror path)))))))
-  (if (is failure None) (replace state :mirrors (tuple mirrors)) failure))
+              _ (do (<- ended float (GetMonotonic))
+                    (.append mirrors (RepoMirror :name repo.name :mirror path))
+                    (:= parts (+ parts #((StagePart :name repo.name :how (if (= fetched FetchState.PRESENT) MIRROR-PRESENT MIRROR-FETCHED)
+                                                    :seconds (- ended started) :copied 0 :removed 0 :replaced 0))))))))))
+  (if (is failure None) (replace state :mirrors (tuple mirrors) :parts parts) failure))
 
 
 (defk stage-trees [request state]

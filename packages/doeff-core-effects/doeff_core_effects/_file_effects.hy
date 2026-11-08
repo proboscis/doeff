@@ -32,6 +32,9 @@
 ;;;                  put them in __pycache__ (the real one runs in parallel across jobs processes; roots = the import roots while baking -- #2463). Answer = a tuple of
 ;;;                  SourceNotCompiled for those that could not be baked
 ;;;   LinkFile       Give one file another name (a hard link -- refused if the destination exists, refused across file systems; #2462). Answer = None
+;;;   LinkFiles      Give many files another name each (pairs = #(source target) in order -- each is the same hard link as LinkFile; the missing parent dirs of the
+;;;                  targets are made first). Stops at the first refusal (the links made before it stay). Answer = None. For a writer that places a tree of many
+;;;                  files by hard links in one call (a LinkFile and a MakeDirectory per file would emit as many effects as there are files)
 ;;;   CopyTree       Copy the contents of a dir over the target (the target may exist; same names are overwritten; symlinks stay symlinks). Answer = None
 ;;;   MakeSymlink    Create a symlink at path pointing to target (same as os.symlink -- refused if path exists; a relative target is read from the dir containing the link;
 ;;;                  it is created even if the target is missing). Answer = None. For a writer that switches the contents of a dir to another tree in one step (create a link under another name and replace it with RenamePath
@@ -219,6 +222,11 @@
   "Give one file another name (header note)."
   (#^ str source)
   (#^ str target))
+
+
+(defclass [(dataclass :frozen True)] LinkFiles [(get EffectBase (| FileFailed None))]
+  "Give many files another name each, making the missing parent dirs of the targets (header note)."
+  (#^ (get tuple #((get tuple #(str str)) ...)) pairs))
 
 
 (defclass [(dataclass :frozen True)] CopyTree [(get EffectBase (| FileFailed None))]

@@ -71,7 +71,7 @@
 (val GIT-FATAL 128)
 (val BAD-USAGE 129)
 (val UNREACHABLE-TEXT "fatal: Could not read from remote repository.\n")
-(val LOG-FIELDS #("clones" "fetches" "archives" "diffs" "expanded" "syncs" "downloads" "builds" "compiles" "stored"))
+(val LOG-FIELDS #("clones" "fetches" "head-fetches" "archives" "diffs" "expanded" "syncs" "downloads" "builds" "compiles" "stored"))
 ;; 模擬の焼く道具の保存先(source の中身で引く — 本物の code_store の代役・木の相対 path と中身の組を印の file の名にする)。
 (val CODE-STORE-PATH "/world/code-store")
 
@@ -146,9 +146,10 @@
    ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・stored = 保存先の
    code から書いた .pyc の数(木ごとに足す・#3858)・entries = 最後の bytecode の焼く範囲の入口・rebuilt = 木ごとに焼いた source の
    相対 path(#(木 path の tuple) の列・焼いた順)・diffed = git diff で読んだ 2 つの commit(#(旧 新) の列・読んだ順 — どの root を写し元に
-   選んだかを commit で確かめる)・notes = 準備の記録の行。"
+   選んだかを commit で確かめる)・head-fetches = 全部の head を取り直す git fetch の呼び・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
+  (setv #^ int head-fetches 0)
   (setv #^ int archives 0)
   (setv #^ int diffs 0)
   (setv #^ int expanded 0)
@@ -358,7 +359,8 @@
   (<- unreachable tuple (unreachable-now))
   (cond
     (in url unreachable) (ProcessOutcome :stdout "" :stderr UNREACHABLE-TEXT :exit-code GIT-FATAL)
-    (.startswith ref "+refs/") (ProcessOutcome :stdout "" :stderr "" :exit-code 0)
+    (.startswith ref "+refs/") (do (<- (bump {"head-fetches" 1}))
+                                   (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
     (is commit None) (ProcessOutcome :stdout "" :stderr (.format "fatal: couldn't find remote ref {}\n" ref) :exit-code GIT-FATAL)
     (in ref (.splitlines fetched)) (ProcessOutcome :stdout "" :stderr "" :exit-code 0)
     True (do (<- (WriteText (posixpath.join mirror "fetched") (+ fetched ref "\n")))

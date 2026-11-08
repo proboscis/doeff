@@ -8,7 +8,8 @@
 ;;; is blocked, and the lock-holding task cannot return to release the lock (found when making the entry of the landing service a Program of one scheduler).
 ;;; offloaded-lock-handler calls only the lock acquisition and waits with one thread per call (ThreadPerCall in offloaded_call.hy), keeping other tasks running --
 ;;; it sits inside os-file-handler and needs scheduled outside. A lock acquired after the waiting task was cancelled is released on the spot (no ownerless lock is left).
-;;; offloaded-tree-handler likewise calls the tree measuring (MeasureTree), removal (RemoveTree), and stat-carrying walk (StatTree) and waits with one thread per call
+;;; offloaded-tree-handler likewise calls the tree measuring (MeasureTree), removal (RemoveTree), stat-carrying walk (StatTree), and many-file hard linking (LinkFiles)
+;;; and waits with one thread per call
 ;;; (while the worker cleanup measures and removes a tree of thousands of files, other tasks (the worker coordination loop) keep running even on a clogged disk.
 ;;; The same while the cleanup walks the bytecode store of 100 thousand files). The placement is the same as offloaded-lock-handler (inside os-file-handler,
 ;;; scheduled outside).
@@ -38,7 +39,7 @@
                                          WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory
                                          WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
-                                         CompilePythonSources MakeSymlink])
+                                         LinkFiles CompilePythonSources MakeSymlink])
 (import doeff_core_effects._python_bytecode [compile-python-sources])
 (import doeff_core_effects._darwin_volume [darwin-volume-free])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
@@ -212,6 +213,28 @@
     None
     (except [error OSError]
       (<- answer FileFailed (failed path error))
+      answer)))
+
+
+(defk link-files [pairs]
+  {:pre [(: pairs tuple)] :post [(: % (| FileFailed None))]}
+  "To hard link each #(source target) of pairs in order, making the missing parent dirs of the targets first (each dir once -- a dir made for one
+   target is not made again for the next). Stops at the first refusal and names its path (the source of a link, or the dir that could not be made --
+   the same path as LinkFile and MakeDirectory name)."
+  (var made (set))
+  (var at "")
+  (try
+    (for [#(source target) pairs]
+      (val parent (os.path.dirname target))
+      (when (and parent (not-in parent made))
+        (:= at parent)
+        (os.makedirs parent :exist-ok True)
+        (.add made parent))
+      (:= at source)
+      (os.link source target))
+    None
+    (except [error OSError]
+      (<- answer FileFailed (failed at error))
       answer)))
 
 
@@ -421,6 +444,9 @@
   (LinkFile [source target]
     (<- answer (guarded source (fn [] (os.link source target))))
     (resume answer))
+  (LinkFiles [pairs]
+    (<- answer (link-files pairs))
+    (resume answer))
   (CompilePythonSources [tree items jobs roots]
     (resume (compile-python-sources tree items jobs roots)))
   (CopyTree [source target]
@@ -480,7 +506,10 @@
     (resume answer))
   (StatTree [path]
     (<- stats (| tuple FileFailed) (offloaded TREE-THREADS (fn [] (run-detached (stat-tree path))) keep-nothing))
-    (resume stats)))
+    (resume stats))
+  (LinkFiles [pairs]
+    (<- answer (| FileFailed None) (offloaded TREE-THREADS (fn [] (run-detached (link-files pairs))) keep-nothing))
+    (resume answer)))
 
 
 (defhandler offloaded-file-handler

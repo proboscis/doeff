@@ -165,6 +165,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._file_effects import EntryStat as EntryStat
     from doeff_core_effects._file_effects import FileFailed as FileFailed
     from doeff_core_effects._file_effects import LinkFile as LinkFile
+    from doeff_core_effects._file_effects import LinkFiles as LinkFiles
     from doeff_core_effects._file_effects import ListDirectory as ListDirectory
     from doeff_core_effects._file_effects import LockHeld as LockHeld
     from doeff_core_effects._file_effects import MakeDirectory as MakeDirectory
@@ -613,6 +614,7 @@ _LAZY_EXPORTS = {
     "EntryStat": "doeff_core_effects._file_effects",
     "FileFailed": "doeff_core_effects._file_effects",
     "LinkFile": "doeff_core_effects._file_effects",
+    "LinkFiles": "doeff_core_effects._file_effects",
     "ListDirectory": "doeff_core_effects._file_effects",
     "LockHeld": "doeff_core_effects._file_effects",
     "MakeDirectory": "doeff_core_effects._file_effects",

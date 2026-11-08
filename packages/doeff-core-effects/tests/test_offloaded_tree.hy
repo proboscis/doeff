@@ -15,7 +15,7 @@
 (import pytest)
 (import doeff [Program with_handlers])
 (import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
-(import doeff_core_effects [MeasureTree RemoveTree StatTree FileFailed PathKind])
+(import doeff_core_effects [MeasureTree RemoveTree StatTree LinkFiles FileFailed PathKind])
 (import doeff_core_effects [os-file-handler offloaded-tree-handler]
         doeff_core_effects._os_file [TREE-THREADS])
 (import doeff_core_effects [scheduled CreateExternalPromise Spawn Wait Task])
@@ -38,6 +38,13 @@
   (<- missing (MeasureTree (+ root "/none")))
   (<- (RemoveTree (+ root "/t")))
   (Measured :whole whole :missing missing :removed (not (os.path.exists (+ root "/t")))))
+
+
+(defk linked-files [pairs]
+  {:pre [(: pairs tuple)] :post [(: % (| FileFailed None))] :tags {:context "file-test" :role "program"}}
+  "To return the answer of linking many files at once (a Program passed to in-thread)."
+  (<- answer (LinkFiles pairs))
+  answer)
 
 
 (defk walked-with-stats [path]
@@ -117,6 +124,17 @@
           offloaded)
   (assert (= (tuple (gfor e offloaded :if (= e.kind PathKind.FILE) e.size)) #(3 5)) offloaded)
   (assert (isinstance missing FileFailed) missing))
+
+
+(deftest test-the-offloaded-link-files-links-like-the-os-file-handler [tmp-path]
+  ;; Linking many files at once (LinkFiles -- the env tree copy) also waits on a thread: the links and the made parent dirs are the same as
+  ;; os-file-handler's, and a missing source is the same refusal.
+  (<- root str (tree-at tmp-path))
+  (<- linked (in-thread (linked-files #(#((+ root "/t/a") (+ root "/u/a")) #((+ root "/t/sub/b") (+ root "/u/sub/b"))))))
+  (<- missing (in-thread (linked-files #(#((+ root "/t/none") (+ root "/v/none"))))))
+  (assert (is linked None) linked)
+  (assert (= (. (os.stat (+ root "/t/sub/b")) st-ino) (. (os.stat (+ root "/u/sub/b")) st-ino)) "a hard link into a made parent dir")
+  (assert (and (isinstance missing FileFailed) (= missing.path (+ root "/t/none"))) missing))
 
 
 (deftest test-another-task-runs-while-a-tree-is-walked-with-stats [tmp-path monkeypatch]

@@ -19,11 +19,12 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled Spawn Wait])
 (import doeff_core_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName ReadEnvironment])
-(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile CompilePythonSources MakeSymlink])
+(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile LinkFiles CompilePythonSources MakeSymlink])
 (import doeff_core_effects._python_bytecode [pyc-path])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [rooted-file-handler])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler scripted-command-peer run-scripted]
         doeff_core_effects._scripted_process [SCRIPTED-COMMAND-EFFECTS])
 
@@ -558,3 +559,35 @@
   (assert (= (int.from-bytes (cut (get real 2) 4 8) "little") 0b11) real)
   (assert (= (get real 3) PathKind.MISSING) real)
   (assert (= (lfor f parallel f.path) ["pkg/bad.py"]) parallel))
+
+
+(defk links-journey [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "A scenario that gives 3 files another name each in one LinkFiles (2 of them into dirs not there yet), reads from the given names, then links a
+   batch whose second pair has no source and returns that refusal (path with root removed) and whether the first pair of that batch stayed."
+  (<- (MakeDirectory (+ root "/s/deep")))
+  (<- (WriteText (+ root "/s/a") "a"))
+  (<- (WriteText (+ root "/s/deep/b") "b"))
+  (<- (WriteText (+ root "/s/c") "c"))
+  (<- linked (LinkFiles #(#((+ root "/s/a") (+ root "/t/a"))
+                          #((+ root "/s/deep/b") (+ root "/t/deep/b"))
+                          #((+ root "/s/c") (+ root "/t/c")))))
+  (<- a str (ReadText (+ root "/t/a")))
+  (<- b str (ReadText (+ root "/t/deep/b")))
+  (<- refused (LinkFiles #(#((+ root "/s/a") (+ root "/u/a")) #((+ root "/s/none") (+ root "/u/none")) #((+ root "/s/c") (+ root "/u/c")))))
+  (<- kept PathStat (StatPath (+ root "/u/a")))
+  (<- after PathStat (StatPath (+ root "/u/c")))
+  #(linked a b (.replace refused.path root "") kept.kind after.kind))
+
+
+(deftest test-link-files-links-every-pair-and-makes-the-parents-the-same-on-the-real-memory-and-rooted-file-systems [tmp-path]
+  ;; One LinkFiles places a whole tree (the env tree copy -- one effect per file emitted 20 thousand effects). The first refusal stops the batch,
+  ;; names the source, and the links made before it stay.
+  (val root (os.path.realpath (str tmp-path)))
+  (<- real tuple (with_handlers [os-file-handler] (links-journey root)))
+  (assert (= (. (os.stat (+ root "/s/deep/b")) st-ino) (. (os.stat (+ root "/t/deep/b")) st-ino)) "a hard link, not a copy")
+  (assert (= real #(None "a" "b" "/s/none" PathKind.FILE PathKind.MISSING)) real)
+  (<- memory tuple (with_handlers [(state) (memory-file-handler (MemoryFiles :dirs #("/m")))] (links-journey "/m")))
+  (assert (= memory real) #(memory real))
+  (<- rooted tuple (with_handlers [(state) (memory-file-handler (MemoryFiles :dirs #("/r/in"))) (rooted-file-handler "/r")] (links-journey "/in")))
+  (assert (= rooted real) #(rooted real)))

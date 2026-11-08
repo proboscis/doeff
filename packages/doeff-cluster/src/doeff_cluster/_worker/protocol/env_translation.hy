@@ -25,7 +25,7 @@
 ;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
 ;;; process の間の錠を持つ。mirror は URL ごと、native の wheel は package ごとに file の錠(AcquireLock)で排他にする(wheel の鍵と保存先は build の口の物)。
 ;;; 木は、写し元(同じ repo を持つ完成済みの root の、その repo の木)が在れば、その commit の追跡する普通の file のうち新しい commit まで変わらない
-;;; 物だけを LinkFile(os.link — hardlink)で写し、変わった path と symlink の新しい中身を git archive と tar で置く — .venv・__pycache__・
+;;; 物だけを LinkFiles(os.link — hardlink・1 回の効果)で写し、変わった path と symlink の新しい中身を git archive と tar で置く — .venv・__pycache__・
 ;;; 完成マーカーなど追跡しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写しは
 ;;; 外の cp を起こさない(GNU の書き方 cp -al --parents -t は macOS の BSD の cp が断り、Mac の worker は毎回全部を展開して、消した root の
 ;;; 中身を APFS の local snapshot が 24 時間持った)。写し元が無い・写せない時は git archive と tar で全部を展開する。
@@ -47,7 +47,7 @@
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted ProcessRunning ProcessExited]
         doeff_core_effects._process_effects [NOT_STARTED_CODE :as _NOT-STARTED-CODE])
-(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree LinkFile MakeSymlink RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
+(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree LinkFile LinkFiles MakeSymlink RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
 (import doeff_cluster._shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
@@ -361,7 +361,9 @@
 
 (defk fetch-commit [mirror commit repo-keys]
   {:pre [(: mirror str) (: commit str) (: repo-keys dict)] :post [(: % (| FetchState EnvFailure))]}
-  "commit を mirror に揃える(在れば PRESENT・fetch して在れば FETCHED・remote に無ければ MISSING・届かなければ一時の repo-unreachable)。"
+  "commit を mirror に揃える(在れば PRESENT・fetch して在れば FETCHED・remote に無ければ MISSING・届かなければ一時の repo-unreachable)。
+   先に commit 1 つを fetch し、それで取れれば終える。取れない時だけ全部の head を取り直す(commit で引けない remote のため)— 前は取れても
+   全部の head を取り、head の多い repo(1 万 5 千本)の新しい版の度に網の往復と ref の書きが 1 回増えた。"
   (<- first CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
   (if (= first.code 0)
       FetchState.PRESENT
@@ -369,15 +371,18 @@
           (val url (.strip url-read.stdout))
           (<- env tuple (git-environment (.get repo-keys url "")))
           (<- (git #("-C" mirror "fetch" "--quiet" "origin" commit) env))
-          (<- all-heads CommandResult (git #("-C" mirror "fetch" "--quiet" "origin" "+refs/heads/*:refs/heads/*") env))
-          (<- again CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
-          (<- detail str (tail-of all-heads))
-          (cond
-            (= again.code 0) FetchState.FETCHED
-            (and (!= all-heads.code 0) (.search NETWORK-PATTERN detail))
-            (EnvFailure :kind EnvFailureKind.REPO-UNREACHABLE :retryable True
-                        :detail (.format "{} から fetch できない: {}" url detail))
-            True FetchState.MISSING))))
+          (<- by-commit CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
+          (if (= by-commit.code 0)
+              FetchState.FETCHED
+              (do (<- all-heads CommandResult (git #("-C" mirror "fetch" "--quiet" "origin" "+refs/heads/*:refs/heads/*") env))
+                  (<- again CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
+                  (<- detail str (tail-of all-heads))
+                  (cond
+                    (= again.code 0) FetchState.FETCHED
+                    (and (!= all-heads.code 0) (.search NETWORK-PATTERN detail))
+                    (EnvFailure :kind EnvFailureKind.REPO-UNREACHABLE :retryable True
+                                :detail (.format "{} から fetch できない: {}" url detail))
+                    True FetchState.MISSING))))))
 
 
 (defrecord PathChange
@@ -445,21 +450,17 @@
 (defk link-unchanged [source dest paths]
   {:pre [(: source str) (: dest str) (: paths tuple)] :post [(: % (| None CopyRefused))]}
   "写し元の木 source の path(追跡する普通の file で、新しい commit まで変わらない物)を、dest の同じ相対 path に hardlink で置くため
-   (LinkFile — os.link。dir は先に作る)。外の cp を起こさないので、GNU の cp の無い機体(macOS)でも同じに写す。
+   (LinkFiles — os.link。親の dir も作る)を 1 回の効果で。外の cp を起こさないので、GNU の cp の無い機体(macOS)でも同じに写す。
    追跡しない物(.venv・__pycache__・完成マーカー・焼いた印)は path に無いので写さない。変わる path は渡されないので、dest にはその hardlink が
-   無く、あとで新しい中身を書いても写し元の file には届かない。写せない file が 1 つでも在れば、写せない理由を答える。"
-  (for [directory (sorted (frozenset (gfor p paths :setv d (posixpath.dirname p) :if d d)))]
-    (<- made (| None FileFailed) (MakeDirectory (posixpath.join dest directory)))
-    (<- (settled made "写す木の dir を作れない")))
-  (var refused None)
-  (for [path paths]
-    (when (is refused None)
-      (<- linked (| None FileFailed) (LinkFile (posixpath.join source path) (posixpath.join dest path)))
-      (match linked
-        (FileFailed :detail detail)
-        (:= refused (CopyRefused :reason (.format "{} から {} へ hardlink で写せない: {} — {}" source dest path detail)))
-        _ None)))
-  refused)
+   無く、あとで新しい中身を書いても写し元の file には届かない。写せない file が 1 つでも在れば、写せない理由を答える。
+   file ごとに LinkFile と MakeDirectory を出すと、約 2 万 file の木で効果が 2 万回を超え(答え手は 1 回ごとに thread を起こす)、load の高い
+   機体で 22〜26 秒かかった — 素の os.link なら同じ木が約 1 秒。"
+  (<- linked (| None FileFailed)
+      (LinkFiles (tuple (gfor path paths #((posixpath.join source path) (posixpath.join dest path))))))
+  (match linked
+    (FileFailed :path path :detail detail)
+    (CopyRefused :reason (.format "{} から {} へ hardlink で写せない: {} — {}" source dest path detail))
+    _ None))
 
 
 ;; venv の file のうち、写し元の root の絶対 path を持ちうる物(uv が書く — bin の script の頭と activate・editable の .pth・direct_url.json・

@@ -19,7 +19,7 @@
                                          AppendBytes TruncateFile SyncDirectory
                                          MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
-                                         CompilePythonSources MakeSymlink])
+                                         LinkFiles CompilePythonSources MakeSymlink])
 
 ;; Effects with one path, and effects with two paths (copy source and copy target).
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory
@@ -87,6 +87,16 @@
   (LinkFile [source target]
     (<- answer (moved root effect))
     (resume answer))
+  (LinkFiles [pairs]
+    ;; Both paths of every pair are moved under root; the refusal names the inner path (the same as LinkFile).
+    (var outer #())
+    (for [#(source target) pairs]
+      (<- from str (outer-path root source))
+      (<- to str (outer-path root target))
+      (:= outer (+ outer #(#(from to)))))
+    (<- answer (LinkFiles outer))
+    (<- inner ANSWER (inner-answer root answer))
+    (resume inner))
   (CompilePythonSources [tree items jobs roots]
     ;; The answer is a relative path inside the tree, so only the tree's path is mapped outward.
     (<- outer str (outer-path root tree))

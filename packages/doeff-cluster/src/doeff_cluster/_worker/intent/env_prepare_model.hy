@@ -42,9 +42,10 @@
 
 
 (defrecord StagePart
-  "処理ステージの中の 1 区切りの秒と数(#3676 — 木の処理ステージの repo ごと)。name = repo の名・how = 置き方(TREE-COPY = 同じ repo を持つ
-   別の root からの写し・TREE-EXPAND = mirror からの展開)・seconds = 経過の秒・copied・removed・replaced = 木の file の数の内訳
-   (TreePlaced と同じ意味・#3677)。"
+  "処理ステージの中の 1 区切りの秒と数(#3676 — 木の処理ステージと mirror の処理ステージの repo ごと)。name = repo の名・how = 置き方(木は
+   TREE-COPY = 同じ repo を持つ別の root からの写し・TREE-EXPAND = mirror からの展開、mirror は MIRROR-PRESENT = commit が在った・
+   MIRROR-FETCHED = 取った)・seconds = 経過の秒・copied・removed・replaced = 木の file の数の内訳(TreePlaced と同じ意味・#3677 — mirror の
+   区切りは 0)。"
   (#^ str name)
   (#^ str how)
   (#^ float seconds)
@@ -55,6 +56,8 @@
 
 (val TREE-COPY "copy")
 (val TREE-EXPAND "expand")
+(val MIRROR-PRESENT "present")
+(val MIRROR-FETCHED "fetched")
 
 
 (defrecord TreeSource
