@@ -520,3 +520,42 @@ def test_a_defk_declared_to_perform_no_effect_has_a_never_effect_position(tmp_pa
     assert "from typing import Never as _Never" in lines
     # A definition with no declaration is object as before (it does not claim that no effect is emitted).
     assert "def asking(x: int) -> _Program[int, object]:" in lines
+
+
+OVERLOADED = """\
+(import typing [overload])
+
+(defn [overload] #^ str shown [#^ int value] ...)
+(defn [overload] #^ object shown [#^ object value] ...)
+(defn #^ object shown [#^ object value]
+  "To show an int as text and pass anything else through."
+  (if (isinstance value int) (str value) value))
+"""
+
+
+def test_an_overloaded_function_keeps_every_overload_and_drops_the_implementation(tmp_path: Path) -> None:
+    # Failure case: the tool kept only the last definition of a name, so a function declared with @overload lost every overload and kept the
+    # implementation's wide `(value: object) -> object` -- the hand-written .pyi of frozen.hy and wire.hy kept the overloads by hand for that reason.
+    lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, OVERLOADED)).text.splitlines()
+    assert [line for line in lines if line.startswith(("def shown", "@overload"))] == [
+        "@overload",
+        "def shown(value: int) -> str:",
+        "@overload",
+        "def shown(value: object) -> object:",
+    ]
+    assert "from typing import overload as overload" in lines
+
+
+MODULE_CLASS_CONSTANT = """\
+(import decimal)
+
+(setv ONE (decimal.Decimal "1"))
+"""
+
+
+def test_a_constant_built_by_a_class_reached_through_its_module_has_that_class_type(tmp_path: Path) -> None:
+    # Failure case: `(val CLIENT-LIMITS (httpx.Limits …))` in doeff-core-effects became `CLIENT_LIMITS: Incomplete` (Any to users), while the
+    # hand-written .pyi declared httpx.Limits -- only a class named bare (`(Limits …)`) was read as the constant's type.
+    lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, MODULE_CLASS_CONSTANT)).text.splitlines()
+    assert "ONE: decimal.Decimal" in lines
+    assert "import decimal as decimal" in lines

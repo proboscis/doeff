@@ -21,6 +21,7 @@
 (import dataclasses [dataclass])
 (import hy)
 (import collections.abc [Iterable])
+(import typing [TypeVar])
 (import hy.models [Dict List Object Set Symbol String Keyword])
 (import doeff_hy._expansion_names [import-form])
 
@@ -69,7 +70,7 @@
         (raise (ValueError (.format "DefinitionTags.{} must be one of {}: {!r}" name (.join " / " SPELLS) value)))))))
 
 
-(defn #^ None refuse-unknown-keys [#^ Dict contract #^ tuple allowed #^ str where]  ; defk にできない: a function called at macro expansion time
+(defn #^ None refuse-unknown-keys [#^ Dict contract #^ (get tuple #(str ...)) allowed #^ str where]  ; defk にできない: a function called at macro expansion time
   "Raise SyntaxError if the contract dict has a key outside allowed (so keys are not silently dropped). where = the definition name used in the error message."
   (for [key (cut contract None None 2)]
     (when (not-in (str key) allowed)
@@ -137,7 +138,10 @@
              (.format "function whose return annotation cannot be resolved ({}: {})" (. (type e) __name__) e)))))
 
 
-(defn #^ tuple effect-types [#^ str where #^ tuple items]  ; defk にできない: called when the head of a macro-expanded definition loads the module (outside a Program)
+;; The type of the :effects tuple effect-types hands back unchanged (a TypeVar, not `:tp` — a `def f[T]` would not load on Python 3.11).
+(setv _Items (TypeVar "_Items" :bound (get tuple #(object ...))))
+
+(defn #^ _Items effect-types [#^ str where #^ _Items items]  ; defk にできない: called when the head of a macro-expanded definition loads the module (outside a Program)
   "Check the value of `:effects` at definition time and return it — a name that is neither an effect type nor a function making an effect (a function, a value, a class that is not an effect) is refused
    with a TypeError naming the definition and the reason (#800 — it used to check only that the value was a list of names and silently let anything through)."
   (for [item items]

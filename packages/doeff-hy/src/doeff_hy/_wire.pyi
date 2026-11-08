@@ -1,3 +1,4 @@
+# Hand-written stub kept: parse / parse-json answer the type passed in (type[_W] -> _W | Malformed) and parse-as / parse-json-as are @overload sets -- a defk cannot carry overloads, and its body's codec answer is not the caller's _W without a cast.
 """Types for the public surface of wire.hy (declarations for type checking — at runtime wire.hy is read; child of #2279).
 
 wire.hy is a Hy module, so pyright cannot read inside it, and every name in `from doeff_hy._wire import parse` becomes Unknown

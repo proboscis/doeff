@@ -1,3 +1,4 @@
+# Hand-written stub kept: the recursive JSON aliases (JsonIn, FrozenJson, ThawedJson) differ from frozen.hy's runtime FrozenJson, which must stay a one-level union isinstance accepts (#4257), and FrozenMap's value TypeVar is covariant with default=object (TypeVar defaults need typing_extensions at runtime below 3.13).
 """Types for the public surface of frozen.hy (declarations for type checking — at runtime frozen.hy is read).
 
 frozen.hy is a Hy module, so pyright cannot read inside it, and `FrozenMap` and the freezing functions all become Unknown (definitions whose answer returns a FrozenMap and

@@ -1,3 +1,4 @@
+# Hand-written stub kept: macros.hy is a macro module -- this declares only the runtime helpers macro expansions call (with the deprecated overload that turns a dropped Program red); the tool's declaration of macros.hy would expose its 100+ compile-time functions, many as Incomplete.
 """Types of the runtime helpers referenced by macro expansions of doeff-hy (macros.hy is Hy, so pyright cannot read it).
 
 The macros (defmacro) themselves are not listed here — they are used only at Hy compile time and are never called from Python.

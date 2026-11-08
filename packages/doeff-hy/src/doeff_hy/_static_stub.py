@@ -363,6 +363,9 @@ def _value_type(node: ast.expr, scan: _Scan) -> ast.expr | None:
             return answer
         case ast.Call(func=ast.Name(id=maker)) if _camel(maker):
             return _name(maker)
+        case ast.Call(func=ast.Attribute(value=ast.Name(), attr=maker) as made) if _camel(maker) and not _reads_hidden(made):
+            # A class built through its module (`(val CLIENT-LIMITS (httpx.Limits …))`) is an instance of `module.Class` (the module import is then read and kept).
+            return ast.Attribute(value=made.value, attr=maker, ctx=ast.Load())
         case _:
             return None
 
@@ -734,10 +737,23 @@ def _unread_module_import(line: ast.stmt, reads: set[str]) -> bool:
             return False
 
 
+def _overload(node: ast.stmt) -> bool:
+    """Whether a declaration is one `@overload` of a function — a name declared with overloads keeps every overload and drops the implementation
+    (otherwise the later-wins rule kept only the implementation's wide signature and the overloads were lost)."""
+    return isinstance(node, ast.FunctionDef) and any(
+        isinstance(d, ast.Name) and d.id == "overload" or isinstance(d, ast.Attribute) and d.attr == "overload" for d in node.decorator_list
+    )
+
+
 def _render(state: _Scan, source_name: str) -> StubText:
     """Assemble the .pyi body from the final state (helper type imports only for those a declaration reads; the same import only once)."""
     declared = state.declarations
-    body = [d.node for index, d in enumerate(declared) if d.name not in {e.name for e in declared[index + 1 :]}]
+    overloaded = {d.name for d in declared if _overload(d.node)}
+    body = [
+        d.node
+        for index, d in enumerate(declared)
+        if (_overload(d.node) if d.name in overloaded else d.name not in {e.name for e in declared[index + 1 :]})
+    ]
     keys = [ast.unparse(line) for line in state.imports]
     reads = {n.id for statement in body for n in ast.walk(statement) if isinstance(n, ast.Name)}
     imports = [
