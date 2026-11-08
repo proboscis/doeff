@@ -13,15 +13,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
-from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, do, handler, run
+from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, TaskPriority, do, handler, run
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import (
-    PRIORITY_IDLE,
-    CompletePromise,
-    CreatePromise,
-    Wait,
-    scheduled,
-)
+from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Wait, scheduled
 
 
 # ---- Effects: what a strategy needs from the outside world.
@@ -230,7 +224,7 @@ def virtual_clock(start: datetime):  # waits take no time: the clock jumps to th
         heapq.heappush(sleepers, (now + timedelta(seconds=effect.seconds), next(order), promise))
         if not advancing:
             advancing = True
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)
         yield Wait(promise.future)
         return (yield Resume(k, None))
 
@@ -329,10 +323,10 @@ if __name__ == "__main__":
 
     print("7. the wall clock: the same strategy, 60 bars 10 ms apart, really waited for")
     started = time.monotonic()
-    pnl, _ = run(scheduled(await_handler()(wall_clock(quiet(timed_backtest(BARS[:60], 0.01))))))
+    pnl, _ = run(scheduled(await_handler(wall_clock(quiet(timed_backtest(BARS[:60], 0.01))))))
     print(f"  -> pnl {pnl} after at least 0.6 s: {time.monotonic() - started >= 0.6}")
     same, _ = run(scheduled(virtual_clock(OPEN)(quiet(timed_backtest(BARS[:60], 0.01)))))
     print(f"  -> the virtual clock gives pnl {same}, the same: {pnl == same}")
 
     print("8. live: the same strategy over an async exchange on the wall clock (60 bars)")
-    print("  -> pnl", run(scheduled(await_handler()(printed(live(FakeExchange(BARS[:60]))(sma_cross(5, 20)))))))
+    print("  -> pnl", run(scheduled(await_handler(printed(live(FakeExchange(BARS[:60]))(sma_cross(5, 20)))))))
