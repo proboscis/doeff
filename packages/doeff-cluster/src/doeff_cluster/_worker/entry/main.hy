@@ -631,6 +631,8 @@
                         :room-file (or args.room-file None)
                         ;; 起動の時に名乗る memory の予算(枠の file の行か --memory-mib — None = 名乗らない)。
                         :memory-mib room.memory-mib
+                        ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — 空 = 読まない。heartbeat の前に枠の file と一緒に読み直す)。
+                        :keep-line-file room.keep-line-file
                         ;; 自分の doeff の版を heartbeat で名乗る(無ければ名乗らない)。
                         :doeff-commit (.get machine-env commit-var "")
                         ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る。/proc の無い macOS の機体は

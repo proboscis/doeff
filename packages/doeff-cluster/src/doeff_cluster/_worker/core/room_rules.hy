@@ -17,6 +17,10 @@
 ;;; shared/core/capabilities の pool-refusal)。worker は起動の引数の能力(--provides)との和を heartbeat の provides で名乗る — 常駐の job を
 ;;; 2 台以上の機体の組の印で宣言でき、組を替えるのに Pod を作り直さない。
 ;;;   {"atlas": {"memoryMiB": 16384, "pools": ["pool-a", "pool-b"]}}
+;;; 行は省ける欄 keepLineFile(枠と同じく heartbeat の前に読み直す)も持てる: 会話のターンに残す MemAvailable の線の file の絶対 path
+;;; (worker/core/load_rules の頭の註の「会話のターンに残す線」— 上に載る系のターンを受ける係が書く)。worker は測りのたびにその file を
+;;; 読み、名乗る memory の空きを線の上に絞る。欄が無い行は線を読まない。
+;;;   {"zeus": {"memoryMiB": 63488, "keepLineFile": "/cargo-build/.keep-available-mib"}}
 ;;;
 ;;; 読めた状態(heartbeat の roomFile で名乗る):
 ;;;   ok          自分の行を読めた
@@ -49,10 +53,11 @@
 (defrecord WorkerRoom
   "worker の枠: memory-mib = 常駐の job に使ってよい memory の予算(MiB — None = 名乗らない。枠の file を読まない機体の worker
    (Mac・zeus-native)が --memory-mib を渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 —
-   heartbeat の provides に足す)。"
-  {:check [(or (is memory-mib None) (>= memory-mib 0))]}
+   heartbeat の provides に足す)・keep-line-file = 会話のターンに残す線の file(頭の註の keepLineFile — 空 = 読まない)。"
+  {:check [(or (is memory-mib None) (>= memory-mib 0)) (or (= keep-line-file "") (.startswith keep-line-file "/"))]}
   (#^ (| int None) memory-mib)
-  (setv #^ (get tuple #(str ...)) pools #()))
+  (setv #^ (get tuple #(str ...)) pools #())
+  (setv #^ str keep-line-file ""))
 
 
 (defrecord RoomReading
@@ -65,8 +70,8 @@
 (defk room-of-text [text name]
   {:pre [(: text str) (: name str)] :post [(: % RoomReading)] :tags {:context "worker" :role "judgment" :reads "json"}}
   "枠の file の中身から worker name の枠を読むため。JSON でない・name の行が無い・memoryMiB が無いか 0 以上の整数でない(真偽は整数と
-   読まない — ROOM-FIELDS)・pools の形の誤り(row-pools)は malformed とその訳。行の手書きの task の枠(capacity・taskReserve・
-   backgroundRoom)は読まない。"
+   読まない — ROOM-FIELDS)・pools の形の誤り(row-pools)・keepLineFile の形の誤り(row-keep-line-file)は malformed とその訳。行の
+   手書きの task の枠(capacity・taskReserve・backgroundRoom)は読まない。"
   ;; 解けた値を 1 つの組に包む(空の組 = JSON でない — 中身の null と分ける)。
   (val decoded (try #((json.loads text)) (except [json.JSONDecodeError] #())))
   (val parsed (if decoded (get decoded 0) None))
@@ -75,6 +80,7 @@
   ;; 0 以上の整数でない最初の欄の名(None = 全部受けられる)。
   (val wrong (next (gfor #(k v) (zip ROOM-FIELDS fields) :if (not (and (isinstance v int) (not (isinstance v bool)) (>= v 0))) k) None))
   (<- pools (| tuple str) (row-pools (if (isinstance row dict) row {}) name))
+  (<- keep-line (| tuple str) (row-keep-line-file (if (isinstance row dict) row {}) name))
   (val malformed (fn [reason] (RoomReading :state RoomState.MALFORMED :room None :reason reason)))
   (cond
     (not decoded) (malformed "JSON でない")
@@ -83,9 +89,20 @@
     (is-not wrong None)
       (malformed (.format "worker {} の行の {} が 0 以上の整数でない: {!r}" name wrong (.get row wrong)))
     (isinstance pools str) (malformed pools)
+    (isinstance keep-line str) (malformed keep-line)
     True (RoomReading :state RoomState.OK
-                      :room (WorkerRoom :memory-mib (get fields 0) :pools pools)
+                      :room (WorkerRoom :memory-mib (get fields 0) :pools pools :keep-line-file (get keep-line 0))
                       :reason "")))
+
+
+(defk row-keep-line-file [row name]
+  {:pre [(: row dict) (: name str)] :post [(: % (| (get tuple #(str)) str))] :tags {:context "worker" :role "judgment" :reads "json"}}
+  "枠の file の worker name の行から会話のターンに残す線の file(頭の註の keepLineFile)を読むため。答え = 1 つ組(欄が無ければ空の
+   path)か malformed の訳の文(文字列でない・/ で始まらない値 — 黙って線を読まない側へ倒れない)。"
+  (val value (.get row "keepLineFile" ""))
+  (if (and (isinstance value str) (or (= value "") (.startswith value "/")))
+      #(value)
+      (.format "worker {} の行の keepLineFile は / で始まる file の path で書く: {!r}" name value)))
 
 
 (defk row-pools [row name]
@@ -150,7 +167,8 @@
   "枠の file を読んだ結果の移り(値が変わった・読めなくなった・戻った)を、worker の log の 1 行にするため。before = 前に名乗った枠・
    after = 次に名乗る枠(読めなければ before と同じ)。組の印は名乗る時だけ添える。"
   (val said (fn [r] (+ (if (is r.memory-mib None) "memory の予算なし" (.format "memory {} MiB" r.memory-mib))
-                       (if r.pools (.format "・pools {}" (.join "," r.pools)) ""))))
+                       (if r.pools (.format "・pools {}" (.join "," r.pools)) "")
+                       (if r.keep-line-file (.format "・ターンに残す線 {}" r.keep-line-file) ""))))
   (if (= reading.state RoomState.OK)
       (.format "worker: 枠の file から {} → {} を名乗る" (said before) (said after))
       (.format "worker: 枠の file を読めない({}: {})— 前の値 {} のまま名乗る" reading.state.value reading.reason (said before))))

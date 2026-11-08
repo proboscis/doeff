@@ -20,6 +20,19 @@
 ;;;                          task の層の値は、置いた task 自身が実行を待つかを測る。
 ;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体は測りを名乗らない。
 ;;;
+;;; 会話のターンに残す線(2026-11-08): 機体の memory を、作り直せない会話のターンと作り直せる task が分け合う機体(zeus)では、
+;;; 上に載る系の新しいターンを受ける係が、MemAvailable を保たせたい線(MiB の数 1 つ)を file に書く(cargo の中間物の掃除の係
+;;; deploy/k8s/nodes/zeus/cargo-build-keeper.sh が読むのと同じ file — 枠の file の行の keepLineFile が名指す)。その file が読める間は、
+;;; 名乗る memory の空きを min(追い出しまでの空き, MemAvailable − 線)にする(kept-memory)。訳: 追い出しの線は kubepods の working set
+;;; から数え、係がターンを断る MemAvailable の線より 25 GiB ほど遠い。追い出しまでの空きだけで名乗ると、係が「足りない」と新しいターンを
+;;; 返している memory にも coordinator は task を置き、伸びた task がその memory を取る(11-08 03:00〜04:06 UTC — 追い出しまでの空き
+;;; 34,901〜50,313 MiB・係の余白 3,301〜23,579 MiB)。線の数はこの worker が持たない(同じ量を 2 か所に宣言すると別々に動く)。線は係が
+;;; ターンを断る所より数本ぶん上なので、task が先に置かれなくなり、ターンは係の余白で受け続けられる。
+;;; 線を割った worker には新しい task が置かれず、needs の合う別の worker へ置かれる。その機体でしか走れない task は、MemAvailable が線 +
+;;; 要り + 床へ戻るまで待つ(TASK-NO-ROOM の文で待ちに残る — 作り直せる task が待ち、作り直せないターンを先に通す)。総量(線の大きさ —
+;;; 積む時に要りを断る上限)は替えない: 線は今の取り合いの順で、機体が空いた時に受けうる大きさではない。file が無い・数でない間(係が
+;;; まだ起きていない)と、keepLineFile の無い機体は、今までどおり追い出しまでの空き(か MemAvailable)で名乗る。
+;;;
 ;;; /proc の無い機体(macOS): 入口が LoadPaths の代わりに印 HostLoad を渡し、同じ間ごとに問い ReadHostCounters で OS の口から CPU の
 ;;; 刻みと memory を読む(答え手 foundation/host_counters — mach の host_statistics・sysctl)。CPU の使いと nice の分は /proc/stat と同じく
 ;;; 前の読みとの間の刻みの増えの比で数え、memory は OS の数えた総量と空き(host-load-of)。PSI は OS に無いので None。測りを名乗らない
@@ -144,6 +157,28 @@
   (if (and (is-not line None) (is-not line-at-ms None) (<= 0 (- now-ms line-at-ms) LINE-FRESH-MS)) line None))
 
 
+(defk keep-line-of [text]
+  {:pre [(: text (| str None))] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "会話のターンに残す線の file の中身 text(頭の註 — None = 読まない・読めない)を MiB の数にするため。前後の空白を除いて 1 以上の
+   10 進の数でなければ None(線が無いと読む — 0 や既定の値で埋めない)。"
+  (val value (if (is text None) "" (.strip text)))
+  (if (and (.isdigit value) (.isascii value) (> (int value) 0)) (int value) None))
+
+
+(defk kept-memory [memory machine keep-text]
+  {:pre [(: memory NodeMemory) (: machine NodeMemory) (: keep-text (| str None))] :post [(: % NodeMemory)]
+   :tags {:context "worker" :role "judgment"}}
+  "名乗る memory(memory — line-memory の答え)の空きを、会話のターンに残す線(頭の註 — keep-text = 線の file の中身・None = 読まない)の
+   上だけに絞るため: 空き = min(memory の空き, max(0, 機体の MemAvailable − 線))。総量と PSI は memory のまま。線が無い(keep-line-of が
+   None)時は memory のまま。"
+  (<- keep (| int None) (keep-line-of keep-text))
+  (if (is keep None)
+      memory
+      (NodeMemory :total-bytes memory.total-bytes
+                  :available-bytes (min memory.available-bytes (max 0 (- machine.available-bytes (* keep MIB))))
+                  :some-avg10 memory.some-avg10 :full-avg10 memory.full-avg10)))
+
+
 (defk task-uses-of [uses uses-at-ms now-ms]
   {:pre [(: uses tuple) (: uses-at-ms (| int None)) (: now-ms int)] :post [(: % (| tuple None))]
    :tags {:context "worker" :role "judgment"}}
@@ -206,20 +241,22 @@
       (min 1.0 (/ (- after.nice before.nice) (- after.total before.total)))))
 
 
-(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None] [task-cpu-pressure None]]
+(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None] [task-cpu-pressure None] [keep-line None]]
   {:pre [(: stat str) (: meminfo str) (: cpu-pressure (| str None)) (: memory-pressure (| str None)) (: before (| CpuTicks None)) (: at-ms int)
-         (: line (| EvictionLine None)) (: task-cpu-pressure (| str None))]
+         (: line (| EvictionLine None)) (: task-cpu-pressure (| str None)) (: keep-line (| str None))]
    :post [(: % LoadReading)] :tags {:context "worker" :role "judgment"}}
   "/proc/stat・/proc/meminfo・PSI の 2 つの file の中身(読めない PSI の file は None)と前の /proc/stat の読み before を、機体の測った
    空きにするため。line = 機体の memory の見張りが最後に数えた追い出しの線(worker/core/eviction_rules — None = 線が無いか古い)。
    線が在れば memory の総量と空きは線の大きさと追い出しまでの空き(見張りの DANGER と同じ量 — coordinator はこの空きで task を置く)、
-   無ければ MemTotal と MemAvailable。task-cpu-pressure = task の層の cpu.pressure の中身(None = 層が無いか読めない)。形の違う中身は
-   ValueError(読みの訳 — 呼び手が名乗りを外す)。"
+   無ければ MemTotal と MemAvailable。task-cpu-pressure = task の層の cpu.pressure の中身(None = 層が無いか読めない)。keep-line = 会話の
+   ターンに残す線の file の中身(頭の註 — None = 読まない・読めない。読めれば空きを MemAvailable − 線の上に絞る — kept-memory)。形の
+   違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
   (<- ticks CpuTicks (cpu-ticks-of stat))
   (<- busy (| float None) (cpu-busy-between before ticks))
   (<- nice (| float None) (cpu-nice-between before ticks))
   (<- machine NodeMemory (node-memory-of meminfo memory-pressure))
-  (<- memory NodeMemory (line-memory machine line))
+  (<- by-line NodeMemory (line-memory machine line))
+  (<- memory NodeMemory (kept-memory by-line machine keep-line))
   (var cpu None)
   (when (is-not cpu-pressure None)
     (<- read Pressure (pressure-of cpu-pressure "/proc/pressure/cpu"))

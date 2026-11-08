@@ -160,7 +160,7 @@
                           #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
-                          #^ (| int None) [memory-mib None] #^ (| LoadPaths HostLoad None) [load-paths None]
+                          #^ (| int None) [memory-mib None] #^ str [keep-line-file ""] #^ (| LoadPaths HostLoad None) [load-paths None]
                           #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.pod-ip pod-ip
           self.tools (or tools {})
@@ -215,6 +215,8 @@
           ;; 常駐の job の memory の予算(None = 名乗らない)。どちらも file を読めない間は前の値のまま。
           self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
           self.pools #() self.memory-mib memory-mib
+          ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — worker/core/load_rules の頭の註。空 = 読まない)。file を読めない間は前の値のまま。
+          self.keep-line-file keep-line-file
           ;; 機体の測った空き: load-paths = 読む file か OS の口の印(None = 測らない)・measured = 最後に測れた値(None = まだ測れていない・最後の読みが
           ;; 読めなかった — heartbeat に載せない)・load-ticks = 前に読めた /proc/stat(CPU の使いの起点)・load-read-ms = 最後に読んだ刻・
           ;; load-reason = 前の読めない訳("" = 読めた — 同じ訳の 2 度目は log に出さない)。eviction = 機体の memory の見張りの追い出しの
@@ -826,21 +828,23 @@
       (when (isinstance text str)
         (<- read RoomReading (room-of-text text state.name))
         (:= reading read))
-      (val before (WorkerRoom :memory-mib state.memory-mib :pools state.pools))
+      (val before (WorkerRoom :memory-mib state.memory-mib :pools state.pools :keep-line-file state.keep-line-file))
       (val after (if (is reading.room None) before reading.room))
       (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
         (<- line str (room-line before after reading))
         (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
-      (setv state.pools after.pools state.memory-mib after.memory-mib
+      (setv state.pools after.pools state.memory-mib after.memory-mib state.keep-line-file after.keep-line-file
             state.room-state reading.state state.room-reason reading.reason)))
   None)
 
 
-(defk proc-load-read [paths before now-ms line]
-  {:pre [(: paths LoadPaths) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None))] :post [(: % (| LoadReading str))]}
+(defk proc-load-read [paths before now-ms line [keep-line-file ""]]
+  {:pre [(: paths LoadPaths) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None)) (: keep-line-file str)]
+   :post [(: % (| LoadReading str))]}
   "機体の /proc の file(paths)を読み、測りの 1 回の読みにするため。答え = 読めた時は LoadReading、/proc/stat か /proc/meminfo を
    読めない・形の違う読みは訳の str。PSI の file を読めない機体は PSI の欄を None で名乗る(task の層の cpu.pressure も
-   同じ — 層の無い worker は読まない)。before = 前に読めた刻み(CPU の使いの起点)・line = 見張りの新しい追い出しの線(None = 無いか古い)。"
+   同じ — 層の無い worker は読まない)。before = 前に読めた刻み(CPU の使いの起点)・line = 見張りの新しい追い出しの線(None = 無いか古い)。
+   keep-line-file = 会話のターンに残す線の file(worker/core/load_rules の頭の註 — 空 = 読まない。読めない間は線が無いと読む)。"
   (<- stat (| str FileFailed) (ReadText paths.stat))
   (<- meminfo (| str FileFailed) (ReadText paths.meminfo))
   (<- cpu-pressure (| str FileFailed) (ReadText paths.cpu-pressure))
@@ -849,6 +853,10 @@
   (when (is-not paths.task-cpu-pressure None)
     (<- read (| str FileFailed) (ReadText paths.task-cpu-pressure))
     (:= task-cpu-pressure read))
+  (var keep-line None)
+  (when keep-line-file
+    (<- read (| str FileFailed) (ReadText keep-line-file))
+    (:= keep-line read))
   (cond
     (not (isinstance stat str)) (.format "{} を読めない: {}" paths.stat stat.detail)
     (not (isinstance meminfo str)) (.format "{} を読めない: {}" paths.meminfo meminfo.detail)
@@ -856,7 +864,8 @@
            (<- reading LoadReading (machine-load-of stat meminfo (if (isinstance cpu-pressure str) cpu-pressure None)
                                                     (if (isinstance memory-pressure str) memory-pressure None)
                                                     before now-ms line
-                                                    (if (isinstance task-cpu-pressure str) task-cpu-pressure None)))
+                                                    (if (isinstance task-cpu-pressure str) task-cpu-pressure None)
+                                                    :keep-line (if (isinstance keep-line str) keep-line None)))
            reading
            (except [error ValueError]
              (str error)))))
@@ -880,7 +889,8 @@
    HostLoad は /proc の無い機体の OS の口(host-load-read — PSI は None)。読めない・形の違う読みは名乗りを外し(古い値を今の値として
    名乗らない — CPU の使いの起点も捨て、戻った最初の読みは使いを None で名乗る)、訳が変わった時に log へ 1 行出す。見張りの追い出しの
    線の入れ物(state.eviction)に新しい線が在れば、memory の総量と空きは線の大きさと追い出しまでの空き(worker/core/load_rules の
-   fresh-line)。測らない worker(load-paths が None)は何もしない。"
+   fresh-line)。枠の file の行が会話のターンに残す線の file(state.keep-line-file)を名指す worker は、空きをその線の上に絞る
+   (worker/core/load_rules の kept-memory)。測らない worker(load-paths が None)は何もしない。"
   (val source state.load-paths)
   (when (is-not source None)
     (<- now-ms int (now-epoch-ms))
@@ -892,7 +902,7 @@
           (if (is eviction None) (fresh-line None None now-ms) (fresh-line eviction.line eviction.line-at-ms now-ms)))
       (<- read (| LoadReading str) (if (isinstance source HostLoad)
                                        (host-load-read source state.load-ticks now-ms line)
-                                       (proc-load-read source state.load-ticks now-ms line)))
+                                       (proc-load-read source state.load-ticks now-ms line state.keep-line-file)))
       (val reading (if (isinstance read str) None read))
       (val reason (if (isinstance read str) read ""))
       (when (!= reason state.load-reason)
