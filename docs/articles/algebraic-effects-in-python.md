@@ -4,6 +4,12 @@ Algebraic effects in Python, with doeff, an open-source library whose core is wr
 
 This post stacks such handlers around one small program, one layer at a time; if you know what `yield` does, you know most of what you need.
 
+First, the idea of doeff in a minute: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
+
+[![Video (1:04): what doeff is: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](../assets/videos/article-concept.jpg)](../assets/videos/article-concept.mp4)
+
+Then the card fight this post builds on, as one function with handlers stacked around it:
+
 [![Video (1:51): one card fight as one function, with handlers stacked around it](https://img.youtube.com/vi/BRYMn0aoiEk/maxresdefault.jpg)](https://youtu.be/BRYMn0aoiEk)
 
 [![One card fight as one function, step by step: its effects travel out to handlers stacked around it with k, and the stacks change while the function does not](../assets/figures/article-opening.gif)](../assets/figures/article-opening.gif)

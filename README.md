@@ -103,6 +103,12 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
+What doeff is, in a narrated video (1:04): a function yields effects, handlers stacked outside it
+answer them with the rest of the function as `k`, and the same function runs under many stacks.
+
+<!-- The GitHub-attached copy of article-concept.mp4 goes on the line below this one. -->
+[The video as an mp4 file (1:04)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
+
 The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.
 

@@ -300,3 +300,17 @@ def test_the_hook_gives_a_captioned_video_its_track(tmp_path: Path) -> None:
     out = _hooks().videos_to_players(content, tmp_path)
     assert '<track kind="captions" srclang="en" label="English" src="../assets/videos/home.vtt" default>' in out
     assert "<track" not in _hooks().videos_to_players(content, tmp_path / "elsewhere")
+
+
+def test_the_concept_video_comes_before_the_card_fight_video() -> None:
+    article = ARTICLE.read_text(encoding="utf-8")
+    concept = article.find("](../assets/videos/article-concept.mp4)")
+    assert 0 <= concept < article.find("https://youtu.be/BRYMn0aoiEk"), (
+        "the first article does not link the article-concept video above the article-opening video"
+    )
+    readme = README.read_text(encoding="utf-8")
+    concept = readme.find("docs/assets/videos/article-concept.mp4")
+    assert 0 <= concept < readme.find("https://github.com/user-attachments/assets/"), (
+        "README does not link the article-concept video above the attached card fight video"
+    )
+    assert (VIDEOS / "article-concept.mp4").is_file()
