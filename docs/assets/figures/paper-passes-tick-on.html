@@ -1,0 +1,59 @@
+<!-- The section "Layer 1: a backtest over recorded bars" of docs/articles/time-and-clocks.md, one step per click: paper passes each Tick on to recorded and keeps the close, and answers Order itself.
+     Written by tools/docs_site/figures_measure/time_and_clocks_figures.py; the values are what time_and_clocks.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels is-rings-and-code">
+    <div class="sf-rings">
+      <div class="sf-ring" data-anchor="r-printed"><span class="sf-ring-name" data-anchor="n-printed">printed</span><div class="sf-ring-room" data-anchor="m-printed"></div><div class="sf-ring" data-anchor="r-recorded"><span class="sf-ring-name" data-anchor="n-recorded">recorded(BARS) · 300 bars</span><div class="sf-ring-room" data-anchor="m-recorded"></div><div class="sf-ring" data-anchor="r-paper"><span class="sf-ring-name" data-anchor="n-paper">paper(0.0005) · last close: <span data-slot="last"></span></span><div class="sf-ring-room" data-anchor="m-paper"></div><div class="sf-core" data-anchor="core"><div class="sf-core-head"><span>sma_cross(5, 20)</span><span>the strategy</span></div><div class="sf-vars"><span>bar = <span data-slot="bar"></span></span><span>price = <span data-slot="price"></span></span></div><div class="sf-code"><div class="sf-line"><span class="kw">@do</span></div><div class="sf-line"><span class="kw">def</span> <span class="fn">sma_cross</span>(fast: int, slow: int):</div><div class="sf-line">    closes: list[float] = []</div><div class="sf-line">    position = 0</div><div class="sf-line">    cash = 0.0</div><div class="sf-line" data-anchor="s-tick">    <span class="kw">while</span> (bar := (<span class="kw">yield</span> Tick())) <span class="kw">is not</span> <span class="kw">None</span>:</div><div class="sf-line">        closes.append(bar.close)</div><div class="sf-line">        <span class="kw">if</span> len(closes) &lt; slow:</div><div class="sf-line">            <span class="kw">continue</span></div><div class="sf-line">        f = sum(closes[-fast:]) / fast</div><div class="sf-line">        s = sum(closes[-slow:]) / slow</div><div class="sf-line">        <span class="kw">if</span> f &gt; s <span class="kw">and</span> position == 0:</div><div class="sf-line" data-anchor="s-buy">            price = <span class="kw">yield</span> Order(<span class="st">"buy"</span>, 1)</div><div class="sf-line">            position, cash = 1, cash - price</div><div class="sf-line" data-anchor="s-log">            <span class="kw">yield</span> Log(<span class="st">f"t={bar.t} buy  {price:.2f}"</span>)</div><div class="sf-line">        <span class="kw">elif</span> f &lt; s <span class="kw">and</span> position == 1:</div><div class="sf-line">            price = <span class="kw">yield</span> Order(<span class="st">"sell"</span>, 1)</div><div class="sf-line">            position, cash = 0, cash + price</div><div class="sf-line">            <span class="kw">yield</span> Log(<span class="st">f"t={bar.t} sell {price:.2f}"</span>)</div><div class="sf-line">    <span class="kw">if</span> position:</div><div class="sf-line">        cash += <span class="kw">yield</span> Order(<span class="st">"sell"</span>, 1)</div><div class="sf-line">    <span class="kw">return</span> round(cash, 2)</div></div></div></div></div></div>
+    </div>
+    <section class="sf-panel is-handler is-wrap" data-panel="handlers">
+      <div class="sf-head"><span>the handlers</span><span>from trading.py</span></div>
+      <div class="sf-code">
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">paper</span>(slippage: float):</div>
+        <div class="sf-line">    last = [<span class="kw">None</span>]</div>
+        <div class="sf-line"></div>
+        <div class="sf-line">    <span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="p-def">    <span class="kw">def</span> <span class="fn">fill</span>(effect: Tick | Order, k):</div>
+        <div class="sf-line">        <span class="kw">if</span> isinstance(effect, Tick):</div>
+        <div class="sf-line" data-anchor="p-yield">            bar = <span class="kw">yield</span> effect  <span class="co"># the data feed outside answers</span></div>
+        <div class="sf-line" data-anchor="p-last">            last[0] = bar.close <span class="kw">if</span> bar <span class="kw">else</span> last[0]</div>
+        <div class="sf-line" data-anchor="p-resume">            <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, bar))</div>
+        <div class="sf-line" data-anchor="p-price">        price = last[0] * (1 + slippage <span class="kw">if</span> effect.side == <span class="st">"buy"</span> <span class="kw">else</span> 1 - slippage)</div>
+        <div class="sf-line" data-anchor="p-fill">        <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, price))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">recorded</span>(bars: list[Bar]):</div>
+        <div class="sf-line">    it = iter(bars)</div>
+        <div class="sf-line"></div>
+        <div class="sf-line">    <span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="r-def">    <span class="kw">def</span> <span class="fn">tick</span>(effect: Tick, k):</div>
+        <div class="sf-line" data-anchor="r-resume">        <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, next(it, <span class="kw">None</span>)))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line"><span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="pr-def"><span class="kw">def</span> <span class="fn">printed</span>(effect: Log, k):</div>
+        <div class="sf-line" data-anchor="pr-print">    print(<span class="st">"   "</span>, effect.line)</div>
+        <div class="sf-line">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, <span class="kw">None</span>))</div>
+      </div>
+      <div class="sf-screen" data-anchor="screen"><span>the screen</span><code data-slot="screen"></code></div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="tick">Tick()</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of sma_cross</small></div>
+  <div class="sf-token is-value" data-token="bar">Bar(t=0, close=101.34)</div>
+  <div class="sf-token is-effect" data-token="order">Order("buy", 1)</div>
+  <div class="sf-token is-k" data-token="k2">k <small>the rest of sma_cross</small></div>
+  <div class="sf-token is-value" data-token="price">102.49122</div>
+  <div class="sf-token is-effect" data-token="log">Log("t=20 buy  102.49")</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": ["s-tick"], "marks": {"m-paper": "is-on"}, "values": {"call": "run(printed(recorded(BARS)(paper(0.0005)(sma_cross(5, 20)))))", "result": "", "bar": "", "price": "", "last": "None", "screen": ""}, "tokens": {"tick": {"from": {"at": "s-tick", "place": "end"}, "at": "n-paper", "place": "end"}, "k": {"from": {"at": "s-tick", "place": "end"}, "at": "m-paper"}}}'><code>sma_cross</code> yields <code>Tick()</code>. The nearest handler of <code>Tick</code> is <code>paper</code>, and it gets the strategy's <code>k</code> with it.</li>
+  <li data-state='{"active": "handlers", "now": ["p-def", "p-yield"], "marks": {"m-paper": "is-on"}, "tokens": {"tick": {"from": {"at": "n-paper", "place": "end"}, "at": "n-recorded", "place": "end"}, "k": {"at": "m-paper"}}}'><code>paper</code> yields the same <code>Tick</code> again, so it goes on out to <code>recorded</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["r-resume", "p-yield"], "marks": {"m-paper": "is-on"}, "tokens": {"bar": {"from": {"at": "n-recorded", "place": "end"}, "at": "n-paper", "place": "end"}, "k": {"at": "m-paper"}}}'><code>recorded</code> answers with the first bar, back to <code>paper</code>, the code that asked.</li>
+  <li data-state='{"active": "handlers", "now": ["p-last"], "marks": {"m-paper": "is-on"}, "values": {"last": "101.34"}, "tokens": {"bar": {"at": "n-paper", "place": "end"}, "k": {"at": "m-paper"}}}'><code>paper</code> writes down the close. It needs it to fill an <code>Order</code> later.</li>
+  <li data-state='{"active": "handlers", "now": ["p-resume", "s-tick"], "values": {"bar": "Bar(t=0, close=101.34)"}, "tokens": {"bar": {"from": {"at": "n-paper", "place": "end"}, "at": "s-tick", "place": "end", "merge": true}, "k": {"from": "m-paper", "at": "s-tick", "place": "end", "merge": true, "delay": 0.3}}}'><code>paper</code> resumes the strategy's <code>k</code> with the bar. That <code>k</code> is now used.</li>
+  <li data-state='{"now": ["s-buy"], "marks": {"m-paper": "is-on"}, "values": {"bar": "Bar(t=20, close=102.44)", "last": "102.44"}, "tokens": {"order": {"from": {"at": "s-buy", "place": "end"}, "at": "n-paper", "place": "end"}, "k2": {"from": {"at": "s-buy", "place": "end"}, "at": "m-paper"}}}'>At bar 20 the fast average is above the slow one: <code>Order("buy", 1)</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["p-price", "p-fill", "s-buy"], "marks": {"r-recorded": "is-skip"}, "values": {"price": "102.49122"}, "tokens": {"price": {"from": {"at": "n-paper", "place": "end"}, "at": "s-buy", "place": "end", "merge": true}, "k2": {"from": "m-paper", "at": "s-buy", "place": "end", "merge": true, "delay": 0.3}}}'><code>paper</code> answers <code>Order</code> itself, at the last close plus 0.05%: 102.44 × 1.0005. <code>recorded</code> never sees it.</li>
+  <li data-state='{"active": "handlers", "now": ["s-log", "pr-def", "pr-print"], "marks": {"screen": "is-on"}, "values": {"screen": "    t=20 buy  102.49"}, "tokens": {"log": {"from": {"at": "s-log", "place": "end"}, "via": [{"at": "n-paper", "place": "end"}, {"at": "n-recorded", "place": "end"}], "at": "n-printed", "place": "end"}}}'><code>Log</code> passes <code>paper</code> and <code>recorded</code>, and <code>printed</code> writes the line.</li>
+</ol>

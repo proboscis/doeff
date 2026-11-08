@@ -55,6 +55,7 @@ exclude_docs: |
   !/positioning/what-doeff-is.md
   !/articles/algebraic-effects-in-python.md
   !/articles/yield-and-async.md
+  !/articles/time-and-clocks.md
 
 nav:
   - Home: index.md
@@ -91,6 +92,7 @@ nav:
   - Articles:
       - 'Algebraic effects for Python': articles/algebraic-effects-in-python.md
       - 'Yield and async': articles/yield-and-async.md
+      - 'Time is an effect': articles/time-and-clocks.md
   - Pages That Need Other Components:
       - CLI auto-discovery and IDE plugins:
           - CLI Auto-Discovery: 14-cli-auto-discovery.md

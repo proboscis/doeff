@@ -81,6 +81,8 @@ def sma_cross(fast: int, slow: int):
 
 `recorded(BARS)` answers `Tick` from a list of 300 one-minute bars, made by a random walk with a fixed seed, so every run prints the same lines. `paper(0.0005)` fills each `Order` at the last close plus 0.05% slippage. It knows the last close because it also takes `Tick`: it passes the `Tick` on to the feed outside with `yield effect`, looks at the bar that comes back, and resumes `k` with it.
 
+[![Layer 1, step by step: paper passes each Tick on to recorded, writes down the close of the bar that comes back and resumes the strategy with it, and fills Order itself at the last close plus 0.05%, so recorded never sees it](../assets/figures/paper-passes-tick-on.gif)](../assets/figures/paper-passes-tick-on.gif)
+
 <details markdown="1">
 <summary>The handlers of Layer 1, the run and what it prints</summary>
 
@@ -271,6 +273,8 @@ print("  ->", first, again, "same:", first == again, "tape:", len(tape), "answer
 
 So far a bar comes the moment the strategy asks for one. A market sends one a minute, and a backtest that should behave like the market has to make the strategy wait. The strategy does not change for that. A layer goes between it and the feed: `bar_clock(60)` takes each `Tick`, yields `Delay(60)` of its own, then passes the `Tick` on to the feed and resumes `k` with the bar. What waiting a minute means is up to the clock outside, and there are two of them: a virtual clock and the wall clock.
 
+[![The virtual clock, step by step: bar_clock yields Delay(60), which goes out to virtual_clock; the clock puts a promise on the heap, spawns advance at idle priority and parks the task with its k; advance runs only when every other task waits, jumps the time to 09:01 and wakes the task](../assets/figures/virtual-clock-jumps.gif)](../assets/figures/virtual-clock-jumps.gif)
+
 ### Layer 5: a virtual clock
 
 `virtual_clock(OPEN)` answers `GetTime` with a time it keeps, starting at 09:00, and it does not resume `k` at once on `Delay`. It creates a promise, puts it on a heap of sleepers ordered by the time to wake them, and yields `Wait` on it, so the task that asked waits in the scheduler with its `k`. If no `advance` task is running, it also spawns one at idle priority, so the scheduler runs it only when every other task is waiting. At that point nothing can happen until some sleeper wakes, so `advance` takes the earliest one off the heap, sets the time to its wake-up time and completes its promise. The time jumps from one wake-up to the next, and five hours of market go by in well under a second.
@@ -373,6 +377,8 @@ The trades and the result are those of Layer 1, now with times. Bar 20 comes at 
 ### Layer 6: the wall clock
 
 `wall_clock` answers `Delay` by awaiting `asyncio.sleep`, and `GetTime` with the machine's time. `await_handler` runs those awaitables on an asyncio loop. Everything else in the stack is what the virtual clock ran: the same `timed_backtest`, the same `bar_clock`, the same strategy. Here it gets 60 bars 10 ms apart, so the run really waits for at least 0.6 seconds, and then the same bars go through the virtual clock for comparison.
+
+[![The wall clock, step by step: with wall_clock and await_handler outside in place of virtual_clock, the same Delay(0.01) becomes an awaited asyncio.sleep, sixty bars take over 0.6 seconds, and both stacks see the same effects in the same order and give pnl 6.85](../assets/figures/wall-clock-waits.gif)](../assets/figures/wall-clock-waits.gif)
 
 <details markdown="1">
 <summary><code>wall_clock</code>, the runs and what they print</summary>

@@ -1,0 +1,82 @@
+<!-- The sections "A clock is a handler" and "Layer 5: a virtual clock" of docs/articles/time-and-clocks.md, one step per click: bar_clock's Delay(60) reaches virtual_clock, which parks the task, and the idle advance task jumps the time.
+     Written by tools/docs_site/figures_measure/time_and_clocks_figures.py; the counts are what time_and_clocks.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels is-state-and-code">
+    <div>
+      <div class="sf-rings">
+        <div class="sf-ring" data-anchor="r-sched"><span class="sf-ring-name" data-anchor="n-sched">scheduled · its tasks wait here</span><div class="sf-ring-room" data-anchor="m-sched"></div><div class="sf-ring" data-anchor="r-clock"><span class="sf-ring-name" data-anchor="n-clock">virtual_clock(OPEN)</span><div class="sf-ring-room" data-anchor="m-clock"></div><div class="sf-ring" data-anchor="r-stamped"><span class="sf-ring-name" data-anchor="n-stamped">stamped</span><div class="sf-ring-room" data-anchor="m-stamped"></div><div class="sf-ring" data-anchor="r-recorded"><span class="sf-ring-name" data-anchor="n-recorded">recorded(BARS)</span><div class="sf-ring-room" data-anchor="m-recorded"></div><div class="sf-ring" data-anchor="r-paper"><span class="sf-ring-name" data-anchor="n-paper">paper(0.0005)</span><div class="sf-ring-room" data-anchor="m-paper"></div><div class="sf-ring" data-anchor="r-finished"><span class="sf-ring-name" data-anchor="n-finished">finished_at</span><div class="sf-ring-room" data-anchor="m-finished"></div><div class="sf-ring" data-anchor="r-bar"><span class="sf-ring-name" data-anchor="n-bar">bar_clock(60)</span><div class="sf-ring-room" data-anchor="m-bar"></div><div class="sf-core" data-anchor="core"><div class="sf-core-head"><span>sma_cross(5, 20)</span><span>the strategy</span></div><div class="sf-code"><div class="sf-line" data-anchor="s-tick"><span class="kw">while</span> (bar := (<span class="kw">yield</span> Tick())) <span class="kw">is not</span> <span class="kw">None</span>:</div><div class="sf-line"><span class="co">    # … the averages, Order</span></div><div class="sf-line" data-anchor="s-log">    <span class="kw">yield</span> Log(<span class="st">f"t={bar.t} buy  {price:.2f}"</span>)</div></div></div></div></div></div></div></div></div></div>
+      </div>
+      <div class="sf-clock"><div class="sf-vars"><span>now = <span data-slot="time"></span></span><span>sleepers = <span data-slot="heap"></span></span></div><div class="sf-chips"><span>tasks:</span><span class="sf-chip" data-anchor="task-main">the strategy · <span data-slot="main"></span></span><span class="sf-chip" data-anchor="task-adv">advance · idle · <span data-slot="adv"></span></span></div><div class="sf-screen is-on" data-anchor="screen"><span>stamped prints</span><code data-slot="screen"></code></div></div>
+    </div>
+    <section class="sf-panel is-handler is-wrap" data-panel="handlers">
+      <div class="sf-head"><span>the clock layers</span><span>from trading.py</span></div>
+      <div class="sf-code">
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">bar_clock</span>(seconds: float):</div>
+        <div class="sf-line">    <span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="b-def">    <span class="kw">def</span> <span class="fn">wait_for_bar</span>(effect: Tick, k):</div>
+        <div class="sf-line" data-anchor="b-delay">        <span class="kw">yield</span> Delay(seconds)  <span class="co"># the clock outside decides what waiting means</span></div>
+        <div class="sf-line" data-anchor="b-pass">        <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, (<span class="kw">yield</span> effect)))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">virtual_clock</span>(start: datetime):</div>
+        <div class="sf-line">    now = start</div>
+        <div class="sf-line">    sleepers = []  <span class="co"># (wake-up time, order, promise), earliest first</span></div>
+        <div class="sf-line">    order = count()</div>
+        <div class="sf-line">    advancing = <span class="kw">False</span></div>
+        <div class="sf-line"></div>
+        <div class="sf-line">    <span class="kw">@do</span></div>
+        <div class="sf-line" data-anchor="a-def">    <span class="kw">def</span> <span class="fn">advance</span>():  <span class="co"># idle priority: runs while every other task waits</span></div>
+        <div class="sf-line">        <span class="kw">nonlocal</span> now, advancing</div>
+        <div class="sf-line" data-anchor="a-while">        <span class="kw">while</span> sleepers:</div>
+        <div class="sf-line" data-anchor="a-pop">            now, _, promise = heapq.heappop(sleepers)</div>
+        <div class="sf-line" data-anchor="a-complete">            <span class="kw">yield</span> CompletePromise(promise, <span class="kw">None</span>)</div>
+        <div class="sf-line" data-anchor="a-done">        advancing = <span class="kw">False</span></div>
+        <div class="sf-line"></div>
+        <div class="sf-line">    <span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="v-def">    <span class="kw">def</span> <span class="fn">clock</span>(effect: Delay | GetTime, k):</div>
+        <div class="sf-line">        <span class="kw">nonlocal</span> advancing</div>
+        <div class="sf-line" data-anchor="v-if-get">        <span class="kw">if</span> isinstance(effect, GetTime):</div>
+        <div class="sf-line" data-anchor="v-get">            <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, now))</div>
+        <div class="sf-line" data-anchor="v-create">        promise = <span class="kw">yield</span> CreatePromise()</div>
+        <div class="sf-line" data-anchor="v-push">        heapq.heappush(sleepers, (now + timedelta(seconds=effect.seconds), next(order), promise))</div>
+        <div class="sf-line" data-anchor="v-if">        <span class="kw">if not</span> advancing:</div>
+        <div class="sf-line" data-anchor="v-adv">            advancing = <span class="kw">True</span></div>
+        <div class="sf-line" data-anchor="v-spawn">            <span class="kw">yield</span> Spawn(advance(), priority=TaskPriority.IDLE, daemon=<span class="kw">True</span>)</div>
+        <div class="sf-line" data-anchor="v-wait">        <span class="kw">yield</span> Wait(promise.future)</div>
+        <div class="sf-line" data-anchor="v-resume">        <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, <span class="kw">None</span>))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line"><span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="st-def"><span class="kw">def</span> <span class="fn">stamped</span>(effect: Log, k):</div>
+        <div class="sf-line" data-anchor="st-get">    now = <span class="kw">yield</span> GetTime()</div>
+        <div class="sf-line" data-anchor="st-print">    print(<span class="st">f"    {now:%H:%M} {effect.line}"</span>)</div>
+        <div class="sf-line">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, <span class="kw">None</span>))</div>
+      </div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="tick">Tick()</div>
+  <div class="sf-token is-effect" data-token="delay">Delay(60)</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of bar_clock</small></div>
+  <div class="sf-token is-value" data-token="bar">Bar(t=0, close=101.34)</div>
+  <div class="sf-token is-effect" data-token="delay2">Delay(60)</div>
+  <div class="sf-token is-k" data-token="k2">k <small>the rest of bar_clock</small></div>
+  <div class="sf-token is-effect" data-token="log">Log(…)</div>
+  <div class="sf-token is-effect" data-token="get">GetTime()</div>
+  <div class="sf-token is-value" data-token="at">09:21</div>
+  <div class="sf-token is-effect" data-token="get2">GetTime()</div>
+  <div class="sf-token is-value" data-token="ended">14:01</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"active": "handlers", "now": ["s-tick", "b-def", "b-delay"], "marks": {"task-adv": "is-off", "m-bar": "is-on"}, "values": {"call": "run(scheduled(virtual_clock(OPEN)(stamped(timed_backtest(BARS, 60)))))", "result": "", "time": "09:00", "heap": "[]", "main": "runs", "adv": "", "screen": ""}, "tokens": {"tick": {"from": {"at": "s-tick", "place": "end"}, "at": "m-bar"}, "delay": {"at": "n-bar", "place": "end"}}}'><code>bar_clock</code> takes <code>Tick</code> first. Before passing it on, it yields <code>Delay(60)</code> of its own.</li>
+  <li data-state='{"active": "handlers", "now": ["v-def"], "marks": {"task-adv": "is-off", "m-bar": "is-on", "m-clock": "is-on"}, "tokens": {"tick": {"at": "m-bar"}, "delay": {"from": {"at": "n-bar", "place": "end"}, "via": [{"at": "n-finished", "place": "end"}, {"at": "n-paper", "place": "end"}, {"at": "n-recorded", "place": "end"}, {"at": "n-stamped", "place": "end"}], "at": "n-clock", "place": "end"}, "k": {"from": {"at": "n-bar", "place": "end"}, "via": [{"at": "n-finished", "place": "end"}, {"at": "n-paper", "place": "end"}, {"at": "n-recorded", "place": "end"}, {"at": "n-stamped", "place": "end"}], "at": "m-clock", "delay": 0.3}}}'>No layer in between handles <code>Delay</code>, so it goes out to the clock, with the <code>k</code> of <code>bar_clock</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["v-create", "v-push"], "marks": {"task-adv": "is-off", "m-bar": "is-on", "m-clock": "is-on"}, "values": {"heap": "[(09:01, promise)]"}, "tokens": {"tick": {"at": "m-bar"}, "k": {"at": "m-clock"}}}'>The clock creates a promise and puts it on the heap, to wake at 09:01.</li>
+  <li data-state='{"active": "handlers", "now": ["v-if", "v-adv", "v-spawn"], "marks": {"m-bar": "is-on", "m-clock": "is-on", "task-adv": "is-new"}, "values": {"adv": "waits its turn"}, "tokens": {"tick": {"at": "m-bar"}, "k": {"at": "m-clock"}}}'>No <code>advance</code> task runs yet, so the clock spawns one at idle priority.</li>
+  <li data-state='{"active": "handlers", "now": ["v-wait"], "marks": {"m-bar": "is-on", "m-sched": "is-on", "core": "is-parked", "task-main": "is-parked"}, "values": {"main": "waits"}, "tokens": {"tick": {"at": "m-bar"}, "k": {"from": "m-clock", "at": "m-sched"}}}'><code>Wait</code> parks the strategy's task in the scheduler, together with its <code>k</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["a-while", "a-pop", "a-complete"], "marks": {"m-bar": "is-on", "m-sched": "is-on", "core": "is-parked", "task-main": "is-parked", "task-adv": "is-now"}, "values": {"time": "09:01", "heap": "[]", "adv": "runs"}, "tokens": {"tick": {"at": "m-bar"}, "k": {"at": "m-sched"}}}'>Every other task waits, so <code>advance</code> runs. It pops 09:01, sets the time and completes the promise.</li>
+  <li data-state='{"active": "handlers", "now": ["v-resume", "b-pass", "s-tick"], "values": {"main": "runs", "adv": "waits its turn"}, "tokens": {"k": {"from": "m-sched", "at": "n-bar", "place": "end", "merge": true}, "tick": {"from": "m-bar", "via": [{"at": "n-paper", "place": "end"}], "at": "n-recorded", "place": "end", "delay": 0.7}, "bar": {"from": {"at": "n-recorded", "place": "end"}, "via": [{"at": "n-paper", "place": "end"}, {"at": "n-bar", "place": "end"}], "at": "s-tick", "place": "end", "merge": true, "delay": 2.0}}}'>The task wakes first. The clock resumes its <code>k</code>, and <code>bar_clock</code> passes the <code>Tick</code> on to the feed.</li>
+  <li data-state='{"active": "handlers", "now": ["s-tick", "b-delay", "v-push", "v-if"], "marks": {"m-clock": "is-on"}, "values": {"heap": "[(09:02, promise)]"}, "tokens": {"delay2": {"from": {"at": "n-bar", "place": "end"}, "via": [{"at": "n-finished", "place": "end"}, {"at": "n-paper", "place": "end"}, {"at": "n-recorded", "place": "end"}, {"at": "n-stamped", "place": "end"}], "at": "n-clock", "place": "end"}, "k2": {"from": {"at": "n-bar", "place": "end"}, "via": [{"at": "n-finished", "place": "end"}, {"at": "n-paper", "place": "end"}, {"at": "n-recorded", "place": "end"}, {"at": "n-stamped", "place": "end"}], "at": "m-clock", "delay": 0.3}}}'>The next <code>Tick</code> puts 09:02 on the heap. <code>advance</code> is still running, so no new task starts.</li>
+  <li data-state='{"active": "handlers", "now": ["s-log", "st-def", "st-get", "v-if-get", "v-get", "st-print"], "values": {"time": "09:21", "heap": "[]", "screen": "    09:21 t=20 buy  102.49"}, "tokens": {"log": {"from": {"at": "s-log", "place": "end"}, "via": [{"at": "n-bar", "place": "end"}, {"at": "n-paper", "place": "end"}], "at": "n-stamped", "place": "end"}, "get": {"from": {"at": "n-stamped", "place": "end"}, "at": "n-clock", "place": "end", "delay": 1.3}, "at": {"from": {"at": "n-clock", "place": "end"}, "at": "n-stamped", "place": "end", "merge": true, "delay": 2.0}}}'><code>stamped</code> yields <code>GetTime</code> while it handles <code>Log</code>. The clock says 09:21.</li>
+  <li data-state='{"active": "handlers", "now": ["a-done", "v-get"], "marks": {"task-adv": "is-done"}, "values": {"time": "14:01", "heap": "[]", "adv": "done", "screen": "    12:53 t=232 buy  127.63", "result": "pnl 50.79 at 14:01"}, "tokens": {"get2": {"from": {"at": "n-finished", "place": "end"}, "via": [{"at": "n-paper", "place": "end"}, {"at": "n-recorded", "place": "end"}, {"at": "n-stamped", "place": "end"}], "at": "n-clock", "place": "end"}, "ended": {"from": {"at": "n-clock", "place": "end"}, "via": [{"at": "n-stamped", "place": "end"}, {"at": "n-recorded", "place": "end"}, {"at": "n-paper", "place": "end"}], "at": "n-finished", "place": "end", "merge": true, "delay": 2.0}}}'>The last <code>Tick</code> waits its minute too and gets <code>None</code>. Five hours and a minute of market time pass in well under a second.</li>
+</ol>
