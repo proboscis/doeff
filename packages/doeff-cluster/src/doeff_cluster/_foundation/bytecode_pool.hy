@@ -11,7 +11,7 @@
 ;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を置く(stored)。無い・合わない物は焼いて .pyc を置き、今の環境の code を
 ;;; 鍵に足す(rebuilt — 他の環境の code は上書きしない)。.pyc は、保存先に置いた中身の同じ file への hardlink で置く(code_store の link-pyc —
 ;;; root ごとに同じ中身を新しく書かない。置けなければ今どおり書く)。
-;;; 分け合う保存先(code_store の share-from-env — 環境変数 DOEFF_HY_CODE_SHARE と鍵の file DOEFF_HY_CODE_SHARE_KEYS・ADR-DOE-BUILD-002 R8)が
+;;; 分け合う保存先(code_store の share-from-env — 環境変数 DOEFF_HY_CODE_SHARE の指す file・ADR-DOE-BUILD-002 R8)が
 ;;; 名指されていれば、機体の保存先に合う code が無い物は、焼く前に分け合う保存先から鍵の entry を取り寄せ、同じ照らしに合えばその code から
 ;;; .pyc を置き(fetched — entry は機体の保存先へ手元の写しとして置く)、焼いた code はすぐ分け合う保存先へも置く。並びの多い機体が焼いて
 ;;; 置いた物を、同じ root を準備する並びの少ない機体が取り寄せて焼かない(前は機体ごとに同じ物を焼き直した — 2026-11-07 に 4 台が同じ root の

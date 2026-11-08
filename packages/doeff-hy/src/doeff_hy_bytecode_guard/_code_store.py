@@ -55,7 +55,7 @@ adds it again (a broken entry is neither used silently nor discarded silently).
 
 Shared store (the cluster-wide copy of the source-code entries — ADR-DOE-BUILD-002 R8): the store directory is per machine, so before it every worker baked the same
 entries again (2026-11-07: four nodes each baked the same 245 files for the same root, in 166 to 979 seconds; a small node baking all ~3,150 files one at a time took ~2,190
-seconds). The shared store is a bucket of an S3-API object store (environment variable :data:`SHARE_ENV`, access key file :data:`SHARE_KEYS_ENV`) holding the
+seconds). The shared store is a bucket of an S3-API object store (named by the file :data:`SHARE_ENV` points at — endpoint and access key) holding the
 source-code entries under the same names as the directory: object ``<prefix>/<first 2 chars of key>/<rest of key>/<record fingerprint>.code``. The worker's baking tool
 fetches the key's entries (newest first) before it bakes and puts each entry it baked (:func:`fetch_shared_code`, :func:`publish_code`). A fetched entry is used only after
 the same check as a local one (the caller's is_current — the macro record against the current environment), and it is kept in the directory as the local copy. An entry whose
@@ -502,13 +502,11 @@ def link_entry_pyc(store: str, head: bytes, entry: StoredCode, target: str) -> s
 
 # --- Shared store (S3 API) ---------------------------------------------------------------------
 
-#: Environment variable naming the shared store: ``http(s)://<host>[:<port>]/<bucket>[/<prefix>][?region=<region>]`` (path-style addressing; unset or empty = no shared
-#: store — the tool bakes on the machine as before).
+#: Environment variable naming the shared store's file — three lines: the endpoint ``http(s)://<host>[:<port>]/<bucket>[/<prefix>][?region=<region>]`` (path-style
+#: addressing), the access key id, and the secret key. Unset, or a file that does not exist = no shared store (the tool bakes on the machine as before). A file and not the
+#: environment: the secret is not copied into every child's environment or a process listing, and a mounted secret's file is replaced in place, so a worker that is already
+#: running takes a new or changed store at its next preparation (the environment of a running container never changes).
 SHARE_ENV = "DOEFF_HY_CODE_SHARE"
-
-#: Environment variable naming the file holding the shared store's access key — line 1 the key id, line 2 the secret key (a file, not the environment, so the secret is not
-#: copied into every child's environment or a process listing).
-SHARE_KEYS_ENV = "DOEFF_HY_CODE_SHARE_KEYS"
 
 #: Region used in the signature when the URL names none (the S3 default; an S3-compatible store checks the region it was configured with).
 SHARE_DEFAULT_REGION = "us-east-1"
@@ -545,29 +543,28 @@ class ShareUnusable(Exception):
 
 
 def share_from_env() -> Share | str | None:
-    """The shared store named by :data:`SHARE_ENV` and :data:`SHARE_KEYS_ENV` — None when none is named, or the reason the named one cannot be used (a malformed URL, an
-    unreadable key file)."""
+    """The shared store named by the file :data:`SHARE_ENV` points at — None when no file is named or the named file does not exist (no shared store is set up), or the
+    reason the named one cannot be used (an unreadable file, a malformed endpoint, a missing key)."""
     from urllib.parse import parse_qs, urlsplit  # loaded only when a shared store is named
 
-    configured = os.environ.get(SHARE_ENV, "").strip()
-    if not configured:
+    named = os.environ.get(SHARE_ENV, "").strip()
+    if not named:
         return None
-    parts = urlsplit(configured)
+    try:
+        with open(named, encoding="utf-8") as handle:
+            lines = [line.strip() for line in handle.read().splitlines() if line.strip()]
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        return f"cannot read the shared store's file {named}: {error}"
+    if len(lines) < 3:
+        return f"the shared store's file {named} does not hold the endpoint, the key id and the secret key on three lines"
+    parts = urlsplit(lines[0])
     names = [part for part in parts.path.split("/") if part]
     if parts.scheme not in ("http", "https") or not parts.netloc or not names:
-        return f"{SHARE_ENV} is not http(s)://<host>/<bucket>[/<prefix>]: {configured}"
-    keys = os.environ.get(SHARE_KEYS_ENV, "").strip()
-    if not keys:
-        return f"{SHARE_ENV} is set but {SHARE_KEYS_ENV} (the access key file) is not"
-    try:
-        with open(keys, encoding="utf-8") as handle:
-            lines = [line.strip() for line in handle.read().splitlines() if line.strip()]
-    except OSError as error:
-        return f"cannot read the shared store's access key file {keys}: {error}"
-    if len(lines) < 2:
-        return f"the shared store's access key file {keys} does not hold a key id and a secret key on two lines"
+        return f"the first line of the shared store's file {named} is not http(s)://<host>/<bucket>[/<prefix>]"
     region = parse_qs(parts.query).get("region", [SHARE_DEFAULT_REGION])[0]
-    return Share(parts.scheme, parts.netloc, names[0], "/".join(names[1:]), region, lines[0], lines[1])
+    return Share(parts.scheme, parts.netloc, names[0], "/".join(names[1:]), region, lines[1], lines[2])
 
 
 def share_label(share: Share) -> str:

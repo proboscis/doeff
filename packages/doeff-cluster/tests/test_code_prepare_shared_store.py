@@ -176,7 +176,7 @@ def _handler(bucket: _Bucket) -> type[BaseHTTPRequestHandler]:
 
 @dataclass(frozen=True)
 class _Share:
-    """1 件の模擬の S3: url = 道具へ渡す DOEFF_HY_CODE_SHARE の値・bucket = 中身と受けた要求。"""
+    """1 件の模擬の S3: url = 道具へ渡す分け合う保存先の file の 1 行目・bucket = 中身と受けた要求。"""
 
     url: str
     bucket: _Bucket
@@ -228,10 +228,14 @@ class _Bake:
 
 def _tool(tree: Path, store: Path, rig: _Rig, compiled: Path, share_url: str | None, keys: Path | None, *, write: bool) -> subprocess.CompletedProcess[str]:
     """本番の準備と同じ引数の形で道具を起こす(分け合う保存先は環境変数で名指す — 本番の worker の環境と同じ口)。"""
-    shared = ([f"DOEFF_HY_CODE_SHARE={share_url}"] if share_url else []) + ([f"DOEFF_HY_CODE_SHARE_KEYS={keys}"] if keys else [])
+    shared: list[str] = []
+    if share_url:
+        named = compiled.parent / f"{compiled.stem}.share"
+        named.write_text(f"{share_url}\n{(keys or rig.keys).read_text()}")
+        shared = [f"DOEFF_HY_CODE_SHARE={named}"]
     return subprocess.run(
         [
-            "env", "-u", "DOEFF_HY_CODE_SHARE", "-u", "DOEFF_HY_CODE_SHARE_KEYS",
+            "env", "-u", "DOEFF_HY_CODE_SHARE",
             *(["-u", "PYTHONDONTWRITEBYTECODE"] if write else ["PYTHONDONTWRITEBYTECODE=1"]),
             f"PYTHONPYCACHEPREFIX={rig.prefix}", f"DOEFF_HY_CODE_STORE={store}",
             f"PYTHONPATH={rig.hook}", f"BAKE_COMPILED_LOG={compiled}", *shared,
