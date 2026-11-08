@@ -8,7 +8,7 @@
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [reader])
-(import doeff_core_effects [Discard Spawn Task Wait TaskCancelledError shielded])
+(import doeff_core_effects [Cancel Discard Spawn Task Wait TaskCancelledError shielded])
 (import doeff_time [Delay RaceOutcome RaceWithin SpendCpu TicksOutcome WaitTicks])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ProcessesOf])
@@ -330,6 +330,44 @@
   (<- n int (foundation (discarding-body key)))
   n)
 
+(defk shielded-cleanup [key]
+  {:pre [(: key str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "待つ後始末(lease を返す型): 0.5 秒待ってから、待ち終えたと盤に書く。"
+  (<- (Delay 0.5))
+  (<- (WriteShared (+ key "cleaned") (OpaqueJson.of {"cleaned" True})))
+  None)
+
+(defk cleaning-child [key]
+  {:pre [(: key str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起きたと盤に書いて長く待ち、取り消されたら待つ後始末を shielded で囲んで走らせる子の task(柵の下の shielded の検)。"
+  (<- (WriteShared (+ key "started") (OpaqueJson.of {"started" True})))
+  (try
+    (<- (Delay 600.0))
+    (except [TaskCancelledError]
+      (<- (shielded (shielded-cleanup key)))
+      (raise)))
+  None)
+
+(defk cancelling-body [key]
+  {:pre [(: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "子の task(cleaning-child)を起こし、Cancel で取り消して巻き戻し終わるまで待ってから、長く待ち続ける本体(抜けない — 抜けると
+   worker が起こし直し、筋書きの終わりに次の回の後始末が shielded の待ちの途中で残る)。"
+  (<- child Task (Spawn (cleaning-child key)))
+  (<- (Delay 0.5))
+  (<- (Cancel child))
+  (try
+    (<- (Wait child))
+    (except [TaskCancelledError]
+      None))
+  (<- (Delay 600.0))
+  1)
+
+(defk cancelling-program [foundation key]
+  {:pre [(: foundation Callable) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: cancelling-body を土台で包む。"
+  (<- n int (foundation (cancelling-body key)))
+  n)
+
 (defk spawning-program [foundation prefix beats]
   {:pre [(: foundation Callable) (: prefix str) (: beats int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "service: spawning-body を土台で包む。"
@@ -465,6 +503,10 @@
 (defsystem discarders [#^ Callable foundation]
   "見本の系: 子の task を Discard で捨ててから値で抜ける service 1 つ"
   (discarder (discarding-program foundation "drop/") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
+
+(defsystem cancellers [#^ Callable foundation]
+  "見本の系: 子の task を Cancel で取り消し、その shielded の後始末を待ってから待ち続ける service 1 つ"
+  (canceller (cancelling-program foundation "shield/") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 (defsystem quitters [#^ Callable foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 3 拍で値を返して抜ける service 1 つ"

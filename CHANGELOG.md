@@ -262,6 +262,13 @@
   `absent_as(default, prog)` raise `TypeError`. Hy bytecode compiled from an older expansion of `absent-as` is
   compiled again on import, since the doeff-hy bytecode guard sees that the macro changed.
 
+### Fixed
+
+- **doeff-cluster:** the sim cluster's fence lets `ShieldEnter` and `ShieldExit` through (`SIM_PASSABLE`). It sent
+  them back as `UnhandledEffect`, so `shielded` read that as "no scheduler" and ran its program unshielded: under
+  `sim_cluster`, the cleanup a cancelled task waits for inside `shielded` (a lease given back, a subscription closed,
+  a stop source waited on) was cut by the cancellation, while in production it runs to the end.
+
 ## 0.8.0 — 2026-10-27
 
 ### Changed

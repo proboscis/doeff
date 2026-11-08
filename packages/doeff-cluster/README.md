@@ -328,7 +328,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
   出す知らせの broker。呼び手が作って渡すので、筋書きと呼び手の世界の job は同じ broker の受け手に成れます(sim は作りません)。
 
 - 偽の実行先は、`/programs` の詰めた文字列を解き直して(テストの object と共有しない)job ごとに別のスコープで走らせます。
-  許可表(`host_contract.SIM-PASSABLE` — scheduler と時計の effect)の外の effect は、Program と実行先のどちらも答えなければ本番の子と
+  許可表(`host_contract.SIM-PASSABLE` — scheduler の effect(取り消しを受けない区間の `ShieldEnter`・`ShieldExit` を含む)と時計の effect)の外の effect は、Program と実行先のどちらも答えなければ本番の子と
   同じ `UnhandledEffect` で落とします(テストの handler が本番に無い答えを黙って返さない)。
 - `environ` は job ごとに宣言の `:environ` を上書きします(宣言に無い名は断ります)。
 - `outside`(`SimOutside :handlers [...] :effects #(...)`)= sim の外の世界。本番では job の土台の handler が外の系(業務の store・外部の

@@ -35,7 +35,7 @@
 (import tests.fixtures.event_programs [stop-minders stop-ignorers])
 (import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 late-handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     lingering-handoff-beacons lingering-handoff-beacons-v2 lingering-handoff-beacons-v3
-                                    holding-unloadable Unloadable spawners quitters discarders pulses detaching context-env-readers])
+                                    holding-unloadable Unloadable spawners quitters discarders cancellers pulses detaching context-env-readers])
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [runtime-env->json])
 (import doeff_cluster._coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
@@ -714,6 +714,26 @@
   (assert (= first.exit-code 0) seen.processes)
   (assert (in "drop/started" seen.later) seen.later)
   (assert (not-in "drop/unwound" seen.later) seen.later))
+
+
+(defk watch-canceller []
+  {:pre [] :post [(: % Spawned)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: process が子を取り消し、その後始末が終わるまで待ち、盤を読む。"
+  (<- (Delay 5.0))
+  (<- rows dict (SharedRows "shield/"))
+  (<- processes tuple (ProcessesOf "canceller"))
+  (Spawned :before {} :just-after rows :later rows :processes processes))
+
+
+(deftest test-a-shielded-cleanup-under-the-fence-is-not-cut-by-the-cancellation
+  ;; 柵の下でも shielded は取り消しを受けない区間を作る(本番の子 process で scheduler が直に答えるのと同じ): 取り消された子の task が
+  ;; except で shielded に囲んだ後始末は、0.5 秒の待ちを越えて盤に cleaned を書き終える。反例: SIM-PASSABLE に ShieldEnter・ShieldExit が
+  ;; 無かった時は、柵が 2 つを UnhandledEffect で投げ返し、shielded は囲まずに走り、後始末の待ちが取り消しで切られて cleaned を書かなかった。
+  (<- seen Spawned (sim-cluster :notice-broker (MemoryBroker) (cancellers sim-foundation) (watch-canceller)))
+  (assert (= (len seen.processes) 1) seen.processes)
+  (assert (is (. (get seen.processes 0) exit-code) None) seen.processes)
+  (assert (in "shield/started" seen.later) seen.later)
+  (assert (in "shield/cleaned" seen.later) seen.later))
 
 
 (defk ended-reader []

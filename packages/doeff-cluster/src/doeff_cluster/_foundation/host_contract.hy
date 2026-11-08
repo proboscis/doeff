@@ -32,7 +32,8 @@
 ;;; 時計のうち SetTime(仮想の時計を系ごと動かす)と ScheduleAt(時計の handler が外側で Spawn する = 柵の外で走る)は通さない。CPU の秒
 ;;; SpendCpu(手番を譲らずに時計を今から秒の分だけ進める — 本番の子では壁の時計の handler が thread を止める)は通す。
 ;;; 期限つきの待ち WaitWithin は通す — 期限は時計の handler が持ち(模擬の時計は列の 1 項・task を起こさない)、待つのは Program の
-;;; future だけ(#2618)。
+;;; future だけ(#2618)。取り消しを受けない区間の出入り ShieldEnter・ShieldExit(doeff_core_effects の shielded が出す)も scheduler の
+;;; effect なので通す — 柵が投げ返すと shielded は「scheduler が無い」と読んで囲まずに走り、取り消された task の待つ後始末が sim でだけ切られる。
 ;;; 柵は Program の Spawn を包み直して(process の中の task として覚える — process の終わりで一緒に止める)外へ送り、その包みが出す
 ;;; 登録(local.hy の KeepChild — sim の仕組みの effect)だけは表の外でも通す。
 (require doeff-hy.macros [defhandler defk val])
@@ -41,7 +42,7 @@
 (import os)
 (import collections.abc [Mapping])
 (import doeff_core_effects [Ask])
-(import doeff_core_effects [Spawn TaskCompleted Gather Wait Race Cancel Discard CreatePromise CompletePromise FailPromise CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
+(import doeff_core_effects [Spawn TaskCompleted Gather Wait Race Cancel Discard CreatePromise CompletePromise FailPromise CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore ShieldEnter ShieldExit])
 (import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect SpendCpuEffect])
 
 
@@ -70,9 +71,11 @@
 ;; WaitTicks が欠けていて、上に載る系の job が止めの拍に出す RaceWithin が模擬でだけ落ちた)。task を巻き戻さずに捨てる Discard も
 ;; scheduler の effect なので通す(欠けていて、期限と競わせた task を Discard で捨てる job の process が模擬でだけ落ちた)。手番を譲らずに CPU の
 ;; 秒を使う SpendCpu も通す — 時計を今から先へだけ進め(系ごとの SetTime と違い、刻を置き換えない)、その間ほかの task を回さない形を、検が
-;; job の effect に掛けて模せるようにする(1 周が CPU を使う間、同じ process の出来事の受け取りが回らない型)。
+;; job の effect に掛けて模せるようにする(1 周が CPU を使う間、同じ process の出来事の受け取りが回らない型)。取り消しを受けない区間の
+;; 出入り ShieldEnter・ShieldExit も scheduler の effect なので通す(欠けていて、柵は 2 つを UnhandledEffect で投げ返し、shielded はそれを
+;; 「scheduler が無い」と読んで囲まずに走った — 取り消された task の shielded の後始末の待ちが模擬でだけ取り消しで切られた)。
 (val SIM-PASSABLE #(Spawn TaskCompleted Gather Wait Race Cancel Discard CreatePromise CompletePromise FailPromise CreateExternalPromise
-                    CreateSemaphore AcquireSemaphore ReleaseSemaphore
+                    CreateSemaphore AcquireSemaphore ReleaseSemaphore ShieldEnter ShieldExit
                     DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect SpendCpuEffect))
 
 
