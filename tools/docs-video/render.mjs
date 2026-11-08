@@ -55,8 +55,9 @@ const raw = path.join(work, `${id}.mp4`);
 let shown = -1;
 await renderMedia({
   ...options, composition, scale, muted: Boolean(sound), codec: 'h264', crf: Number(crf), audioBitrate: '96k', pixelFormat: 'yuv420p', outputLocation: raw,
-  // Remotion refuses more than the cores this process may use (a container's CPU quota can be below the machine's).
-  concurrency: Math.min(12, os.availableParallelism()),
+  // Remotion refuses more than the cores this process may use (a container's CPU quota can be below the machine's);
+  // DOCS_VIDEO_CONCURRENCY lowers it further where memory is short, since each browser tab holds its own frames.
+  concurrency: Math.min(Number(process.env.DOCS_VIDEO_CONCURRENCY ?? 12), os.availableParallelism()),
   onProgress: ({progress}) => {
     const percent = Math.floor(progress * 4) * 25;
     if (percent > shown) console.log(`${(shown = percent)}%`);

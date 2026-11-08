@@ -89,6 +89,7 @@ The narration never uses a local text-to-speech model, and
 6. Check the layout: `node stills.mjs <name> out/check <frame>…` at the frames where headlines change and
    where things move, and look at every PNG — nothing overlaps, nothing runs off the frame, text is readable.
 7. Render: `node render.mjs <name> <poster frame>`. Choose a poster frame that shows the page's idea at a glance.
+   Where memory is short, set `DOCS_VIDEO_CONCURRENCY` (e.g. 4) to render with fewer browser tabs at once.
    The narration wavs are not committed: to render a page again whose `narration.json` and `durations.json` have not
    changed, without saying it again, add `--audio-from ../../docs/assets/videos/<name>.mp4` to take the sound of the committed mp4.
 8. Attach it to the page with the link above, below the page's opening paragraph.
