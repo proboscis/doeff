@@ -45,6 +45,8 @@
 
 
 (import doeff_cluster._coordinator.core.program [run-coordinator])
+;; 主の thread の CPU を関数ごとに・GC の回収の回数と秒を、1 分ごとに 1 行 log へ書く標本(debug の Pod を立てずに CPU の持ち主を読む)。
+(import doeff_cluster._foundation.cpu_samples [COORDINATOR-SAMPLES with-cpu-samples])
 
 
 (defk board-file-rows [board-dir]
@@ -211,8 +213,9 @@
   (print (.format "coordinator: :{} で受けます(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {}・doeff {})"
                   args.port (len state.jobs) (.size state.tasks) (.size state.board) (.size state.rollouts) state.revision
                   (if in-cluster "あり" "なし") (or state.running-commit "版を読めない")) :file sys.stderr :flush True)
-  ;; handler の組は coordinator_handler_sets の値(本番の組)。
-  (run (scheduled (with_handlers (production-handlers inbox store stop kube notices) (run-coordinator state (ClusterTiming) naming))))
+  ;; handler の組は coordinator_handler_sets の値(本番の組)。調停ループは主の thread の CPU の標本(cpu_samples)の下で回す。
+  (run (scheduled (with_handlers (production-handlers inbox store stop kube notices)
+                    (with-cpu-samples COORDINATOR-SAMPLES (run-coordinator state (ClusterTiming) naming)))))
   (print "coordinator: 止まりました" :file sys.stderr :flush True))
 
 
