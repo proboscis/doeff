@@ -1,0 +1,127 @@
+1
+00:00:00,250 --> 00:00:04,050
+This video shows time as an effect, in one strategy.
+
+2
+00:00:04,600 --> 00:00:09,250
+doeff runs Python functions that yield effects to handlers.
+
+3
+00:00:09,800 --> 00:00:14,650
+First we read sma_cross, then we put clocks around it.
+
+4
+00:00:16,000 --> 00:00:19,500
+This is sma_cross, a small trading strategy.
+
+5
+00:00:20,050 --> 00:00:24,250
+It reads one bar at a time and trades on two averages.
+
+6
+00:00:24,800 --> 00:00:28,950
+It starts with no closes, no position and no cash.
+
+7
+00:00:29,500 --> 00:00:34,700
+It yields Tick to get the next bar, until it gets None.
+
+8
+00:00:35,250 --> 00:00:38,750
+It keeps the close, and skips until it has slow of them.
+
+9
+00:00:39,300 --> 00:00:44,500
+Then it averages the last fast and the last slow closes.
+
+10
+00:00:45,050 --> 00:00:50,400
+Fast above slow: it yields Order to buy, then Log.
+
+11
+00:00:50,950 --> 00:00:55,550
+Fast below slow: it yields Order to sell, then Log.
+
+12
+00:00:56,100 --> 00:01:00,450
+When Tick gives None, it sells what it still holds.
+
+13
+00:01:01,000 --> 00:01:04,500
+It returns the cash: the profit of the session.
+
+14
+00:01:05,850 --> 00:01:10,300
+Tick, Order and Log are values, not calls.
+
+15
+00:01:10,850 --> 00:01:13,700
+The handlers around it give them their meaning.
+
+16
+00:01:15,050 --> 00:01:18,850
+recorded answers Tick from 300 saved bars.
+
+17
+00:01:19,400 --> 00:01:23,500
+paper fills each Order at the last close.
+
+18
+00:01:24,050 --> 00:01:28,950
+The backtest prints its trades at once: pnl 50.79.
+
+19
+00:01:30,300 --> 00:01:32,650
+A market sends one bar a minute.
+
+20
+00:01:33,200 --> 00:01:37,450
+bar_clock first yields Delay(60) for each Tick.
+
+21
+00:01:38,000 --> 00:01:43,350
+Then it passes that Tick on, and resumes its k with the bar.
+
+22
+00:01:44,700 --> 00:01:48,950
+virtual_clock answers GetTime with the time it keeps.
+
+23
+00:01:49,500 --> 00:01:53,350
+For Delay, it parks the task until its wake-up time.
+
+24
+00:01:53,900 --> 00:01:57,600
+When every task waits, it jumps to that time.
+
+25
+00:01:58,150 --> 00:02:03,300
+stamped asks GetTime and writes 09:21 on the first trade.
+
+26
+00:02:03,850 --> 00:02:08,750
+Five hours of bars end at 14:01, in under a second.
+
+27
+00:02:10,100 --> 00:02:14,250
+wall_clock answers GetTime with the machine's time.
+
+28
+00:02:14,800 --> 00:02:20,000
+For Delay, it awaits asyncio.sleep, then resumes its k.
+
+29
+00:02:20,550 --> 00:02:24,400
+await_handler runs that sleep on an asyncio loop.
+
+30
+00:02:24,950 --> 00:02:30,300
+Sixty bars, 10 ms apart, now take over 0.6 seconds.
+
+31
+00:02:30,850 --> 00:02:36,200
+Both clocks give the same pnl, 6.85.
+
+32
+00:02:37,550 --> 00:02:42,250
+sma_cross never changed. Only the clock around it did.
