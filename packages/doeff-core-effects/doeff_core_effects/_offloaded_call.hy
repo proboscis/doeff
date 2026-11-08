@@ -18,6 +18,11 @@
 ;;;     made the start-up wait (a few ms on the caller's thread) proportional to the number of statements, and it took 20% of the custody's ordinary CPU. The number of concurrently running threads is the same as ThreadPerCall
 ;;;     (the peak number of calls), and a thread that stays idle past _IDLE-SECONDS ends. After finishing a call, a thread drops its references to the call and the answer
 ;;;     before waiting for the next (a waiting thread does not keep holding the answer - the same reason as Delivered above).
+;;;     A call goes to the thread that went idle last (each idle thread waits on its own inbox, kept in a stack). When idle threads took calls in turn from one shared queue,
+;;;     a burst of calls waiting for connection permits left one thread per call, and a later trickle of calls (one every few hundred ms) reached every one of them within its
+;;;     idle limit, so none ended: a service kept 74 to 116 idle driver threads for hours, and under the free-threaded build each thread keeps its own allocator
+;;;     heap, so its idle RSS grew with the thread count (about 4 MB per thread, 170 MB at 9 threads to 590 MB at 116). With the last idle thread taking the call, a
+;;;     trickle runs on one thread and the rest of the burst ends after _IDLE-SECONDS.
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 (import collections.abc [Callable])
@@ -95,51 +100,46 @@
 
 
 (defclass ReusedThreads [Executor]
-  "An Executor that hands a call to an idle daemon thread and starts one thread only when none is idle (header comment). It is a resource handler, so not a value type.
-   idle = the number of threads waiting for a call that have not yet been assigned one. started = the number of threads started (read by tests)."
+  "An Executor that hands a call to the idle daemon thread that went idle last and starts one thread only when none is idle (header comment). It is a resource handler, so not a value type.
+   waiters = the inboxes of the idle threads, the one that went idle last at the end. idle = the number of idle threads not yet assigned a call. started = the number of threads started (read by tests)."
 
   (deff __init__ [self [idle-seconds _IDLE-SECONDS]]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self ReusedThreads) (: idle-seconds float)] :post [(: % "None")]}
-    "To hold the seconds an idle thread waits for the next call, and start the call queue and the counts empty."
+    "To hold the seconds an idle thread waits for the next call, and start the idle threads and the counts empty."
     (setv self.idle-seconds idle-seconds
           self.idle-lock (threading.Lock)
-          self.jobs (SimpleQueue)
+          self.waiters []
           self.idle 0
           self.started 0))
 
   (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self ReusedThreads) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
-    "To put call in the queue, start one thread if there is no idle one, and hand over its end as a Future (a Future cancelled before starting is not run).
-     Threads are started outside the lock - the wait to start one does not stall other calls or the count of idle threads."
-    (setv future (Future))
+    "To hand call to the thread that went idle last, or start one thread if none is idle, and hand over its end as a Future (a Future cancelled before starting is not run).
+     The call is put in the inbox and threads are started outside the lock - the wait to start one does not stall other calls or the count of idle threads."
+    (setv future (Future)
+          job #(future call args))
     (with [_ self.idle-lock]
-      (.put self.jobs #(future call args))
-      (setv fresh (= self.idle 0))
+      (setv inbox (when self.waiters (.pop self.waiters))
+            fresh (is inbox None))
       (if fresh
           (setv self.started (+ self.started 1))
           (setv self.idle (- self.idle 1))))
+    ;; A new thread gets the call through its own inbox too, not as an argument of Thread: Thread keeps its arguments until the thread ends, and they would
+    ;; keep the Future and its answer alive while the thread is idle (header comment).
     (when fresh
-      (.start (threading.Thread :target self.serve :name "doeff-offloaded-call" :daemon True)))
+      (setv inbox (SimpleQueue)))
+    (.put inbox job)
+    (when fresh
+      (.start (threading.Thread :target self.serve :args #(inbox) :name "doeff-offloaded-call" :daemon True)))
     future)
 
-  (deff serve [self]  ; cannot be a defk: the thread's body (outside the VM - takes calls from the queue and runs them)
-    {:pre [(: self ReusedThreads)] :post [(: % "None")]}
-    "To run the calls in the queue one at a time, and end if idle-seconds pass while idle. When the wait times out, look at the queue once more under the lock - do not drop a call that was
-     assigned to this thread at the same moment it timed out (what submit placed after decrementing idle). It is counted as idle before writing the answer to the Future - so that even if the caller that
-     received the answer immediately issues the next call, this thread is counted as idle and a new thread is not started."
+  (deff serve [self inbox]  ; cannot be a defk: the thread's body (outside the VM - runs the calls handed to its inbox)
+    {:pre [(: self ReusedThreads) (: inbox SimpleQueue)] :post [(: % "None")]}
+    "To run the calls handed to this thread's inbox one at a time (the first is already there when the thread starts), and end if idle-seconds pass while idle. When the wait times out, look under the lock whether this
+     thread is still idle - if submit took it at the same moment it timed out, the call is on its way to the inbox and is not dropped. It is counted as idle before writing the answer to the
+     Future - so that even if the caller that received the answer immediately issues the next call, this thread takes it and a new thread is not started."
+    (setv job (.get-nowait inbox))
     (while True
-      (setv job
-        (try
-          (.get self.jobs :timeout self.idle-seconds)
-          (except [Empty]
-            (with [_ self.idle-lock]
-              (try
-                (.get-nowait self.jobs)
-                (except [Empty]
-                  (setv self.idle (- self.idle 1))
-                  None))))))
-      (when (is job None)
-        (return None))
       (setv #(future call args) job
             job None
             value None
@@ -154,6 +154,7 @@
       (setv call None
             args None)
       (with [_ self.idle-lock]
+        (.append self.waiters inbox)
         (setv self.idle (+ self.idle 1)))
       (cond
         (not ran) None
@@ -162,7 +163,20 @@
       ;; Do not hold the call and the answer while waiting (header comment).
       (setv future None
             value None
-            error None))))
+            error None)
+      (setv job
+        (try
+          (.get inbox :timeout self.idle-seconds)
+          (except [Empty]
+            (with [_ self.idle-lock]
+              (setv taken (not (any (gfor waiter self.waiters (is waiter inbox)))))
+              (when (not taken)
+                (.remove self.waiters inbox)
+                (setv self.idle (- self.idle 1))))
+            (when taken
+              (.get inbox)))))
+      (when (is job None)
+        (return None)))))
 
 
 (defclass Handoff []

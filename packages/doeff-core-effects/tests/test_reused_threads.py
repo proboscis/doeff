@@ -98,3 +98,31 @@ def test_an_idle_thread_keeps_no_answer() -> None:
     gc.collect()
 
     assert ref() is None, "the idle thread still holds the last answer"
+
+
+def test_threads_left_from_a_burst_end_while_calls_keep_coming_one_at_a_time() -> None:
+    # A burst of calls that wait on each other starts one thread per call. Afterwards calls come one
+    # at a time, more often than idle_seconds divided by the number of threads. If an idle thread
+    # were picked in turn, every thread of the burst would get a call within its idle limit and none
+    # would end: the pool would keep the burst's threads (and each thread's allocator heap) for as
+    # long as calls keep coming. The custody service kept 74 to 116 driver threads this way and its
+    # idle memory grew with them. The thread that went idle last must take the next call, so the
+    # other threads stay idle and end.
+    calls = 16
+    idle_seconds = 0.5
+    barrier = threading.Barrier(calls, timeout=SETTLE_SECONDS)
+    pool = ReusedThreads(idle_seconds=idle_seconds)
+
+    def wait_for_all() -> threading.Thread:
+        barrier.wait()
+        return threading.current_thread()
+
+    burst = [future.result(SETTLE_SECONDS) for future in [pool.submit(wait_for_all) for _ in range(calls)]]
+    trickle = threading.Event()
+    for _ in range(int(4 * idle_seconds / 0.01)):
+        pool.submit(lambda: None).result(SETTLE_SECONDS)
+        trickle.wait(0.01)
+
+    alive = [thread for thread in burst if thread.is_alive()]
+    assert len(alive) <= 2, f"{len(alive)} of the burst's {calls} threads still alive"
+    assert pool.started == calls
