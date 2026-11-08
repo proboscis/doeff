@@ -36,7 +36,8 @@
 (defwire BytecodeCounts
   "準備の bytecode の処理ステージの 1 回の用意の数と秒(焼く道具の全体の報告の行の値): stored・rebuilt・reused・failed = 全部の木の合計
    (欄の意味は TreeCounts)・scan-seconds = 木の走査・closure-seconds = 閉包の歩み・compile-seconds = 保存先の引きと焼き・trees = 木ごとの数
-   (TreeCounts の列・要求の木の順)。準備が長い時に、どの処理で時間を使ったかを印から読むため。"
+   (TreeCounts の列・要求の木の順)・bake-jobs = 焼いた並列数(焼く道具の bake_jobs= の行 — 行を出さない古い道具・欄の無い印は None)。
+   準備が長い時に、どの処理で時間を使ったかと、何本並べて焼いたかを印から読むため。"
   {:tags {:context "doeff-cluster" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (#^ int stored)
   (#^ int rebuilt)
@@ -45,7 +46,8 @@
   (#^ float scan-seconds)
   (#^ float closure-seconds)
   (#^ float compile-seconds)
-  (#^ (get tuple #(TreeCounts ...)) trees))
+  (#^ (get tuple #(TreeCounts ...)) trees)
+  (setv #^ (| int None) bake-jobs None))
 
 
 (defeffect FileSha256

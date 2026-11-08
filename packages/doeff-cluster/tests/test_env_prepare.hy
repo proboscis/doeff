@@ -32,7 +32,7 @@
 (import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]
                                                                              doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster [ENV-MARKER])
 (import doeff_cluster._sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
-                                set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS
+                                set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS BAKE-JOBS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
 
 (setv PLATFORM "linux-x86_64")
@@ -393,7 +393,7 @@
   (assert (= (get marker "bytecode")
              {"stored" 0 "rebuilt" 4 "reused" 0 "failed" 0
               "scanSeconds" BAKE-SCAN-SECONDS "closureSeconds" BAKE-CLOSURE-SECONDS
-              "compileSeconds" BAKE-COMPILE-SECONDS
+              "compileSeconds" BAKE-COMPILE-SECONDS "bakeJobs" BAKE-JOBS
               "trees" [{"name" "app" "stored" 0 "rebuilt" 2 "reused" 0 "failed" 0}
                        {"name" "lib" "stored" 0 "rebuilt" 2 "reused" 0 "failed" 0}]})
           (get marker "bytecode"))

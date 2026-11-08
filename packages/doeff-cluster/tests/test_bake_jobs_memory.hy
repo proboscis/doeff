@@ -3,7 +3,7 @@
 ;; 約 450 MiB)で焼く子を 2 本並べ、子が層の上限で殺されて準備が落ちた(測り: 子 1 本の山 198〜316 MiB・入口の山 191 MiB)。
 ;; 並列数は CPU の数を上限に、居る cgroup とその上の層の 上限 − 今の使い の最小から、子 1 本の見積もりで入る数へ絞る。
 (require doeff-hy.macros [deftest val <-])
-(import doeff_cluster._worker.core.bake_plan [memory-room-of bake-jobs-of cgroup-levels-of BAKE-CHILD-BYTES BAKE-FIXED-BYTES])
+(import doeff_cluster._worker.core.bake_plan [memory-room-of bake-jobs-of jobs-line cgroup-levels-of BAKE-CHILD-BYTES BAKE-FIXED-BYTES])
 
 (val MIB (* 1024 1024))
 
@@ -35,6 +35,15 @@
   (assert (= big 4))
   (<- two int (bake-jobs-of 4 (+ BAKE-FIXED-BYTES (* 2 BAKE-CHILD-BYTES))))
   (assert (= two 2)))
+
+
+(deftest test-the-jobs-line-names-the-jobs-on-every-bake
+  ;; 失敗ケース(2026-11-07 の k3s-2): 絞った時だけ名乗る行は準備の記録に出ず、2333 本を 1639 秒で焼いた回の並列数が読めなかった。
+  ;; 行は絞らなかった回も並列数・上限・空き・子の見積もりを名乗り、上限の無い層だけの空きは `-`。
+  (<- narrowed str (jobs-line 1 2 (* 353 MIB)))
+  (assert (= narrowed "bake_jobs=1 asked_jobs=2 room_mib=353 child_mib=320") narrowed)
+  (<- unlimited str (jobs-line 8 8 None))
+  (assert (= unlimited "bake_jobs=8 asked_jobs=8 room_mib=- child_mib=320") unlimited))
 
 
 (deftest test-the-levels-run-from-the-own-cgroup-up-to-the-root

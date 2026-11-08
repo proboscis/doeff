@@ -661,6 +661,8 @@
 (val BAKE-COMPILE-SECONDS 1.5)
 (val BAKE-CLOSURE-SECONDS 0.75)
 (val BAKE-SCAN-SECONDS 0.5)
+;; 模擬の焼く道具が並列数の行(bake_plan の jobs-line の形)で名乗る並列数(1 でない値 — 既定の写し間違いと区別する)。
+(val BAKE-JOBS 3)
 
 
 (defk store-mark [rel text]
@@ -712,7 +714,8 @@
                                   (if under-roots "-" "木に焼くべき source が 1 つも無い"))))))
   (val total (.format "stored={} rebuilt={} reused=0 failed=0 compile_s={} closure_s={} scan_s={}" stored rebuilt
                       BAKE-COMPILE-SECONDS BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS))
-  (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ lines #(total)) (+ line "\n")))
+  (val jobs (.format "bake_jobs={} asked_jobs={} room_mib=- child_mib=320" BAKE-JOBS BAKE-JOBS))
+  (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ #(jobs) lines #(total)) (+ line "\n")))
                   :exit-code (if (any (gfor line lines (not (.endswith line "problem=-")))) 1 0)))
 
 

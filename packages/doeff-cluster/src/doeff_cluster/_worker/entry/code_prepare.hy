@@ -487,13 +487,12 @@
   (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped))))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
   ;; 焼きの並列数: CPU から決めた数(か --jobs)を上限に、この process の居る cgroup の memory の空きで絞る(焼く子が層の上限で殺され、
-  ;; pool が壊れて準備が落ちた — 2026-11-02 の k3s-0・頭の註の手順 3)。絞った時は 1 行で名乗る(worker の log の準備の行に並ぶ)。
+  ;; pool が壊れて準備が落ちた — 2026-11-02 の k3s-0・頭の註の手順 3)。絞らなかった回も並列数を 1 行で名乗る(plan.jobs-line — 実行環境の
+  ;; 準備が完成の印と準備の記録に載せる。前は絞った時だけ名乗り、準備はその行を記録に出さなかったので、2333 本を 1639 秒で焼いた回の
+  ;; 並列数が読めなかった — 2026-11-07 の k3s-2)。
   (setv room (run (with-handlers [os-file-handler] (usable-memory)))
         jobs (run (plan.bake-jobs-of (max 1 args.jobs) room)))
-  (when (< jobs args.jobs)
-    (print (.format "焼きの並列数を memory の空きで {} から {} に絞った(空き {} MiB・子 1 本の見積もり {} MiB)" args.jobs jobs
-                    (// room (* 1024 1024)) (// plan.BAKE-CHILD-BYTES (* 1024 1024)))
-           :file sys.stderr :flush True))
+  (print (run (plan.jobs-line jobs args.jobs room)) :file sys.stderr :flush True)
   ;; 木の効果は言い換え tree-files(worker/protocol/tree_files)が汎用の file の効果へ出し直し、本物の os-file-handler が答える(#2468)。
   ;; Note の行は slog-handler が stderr へ出す(worker が木ごとの問題と合計を読む)。
   ;; 保存先の dir は環境変数で決まる(code_store の store-dir — import の読みの口と同じ 1 つの解き方)。import の名の entry の鍵は、この root の

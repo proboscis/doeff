@@ -47,7 +47,7 @@
 (import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material dependency-key])
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -135,7 +135,7 @@
                     None
                     {"stored" counts.stored "rebuilt" counts.rebuilt "reused" counts.reused "failed" counts.failed
                      "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
-                     "compileSeconds" counts.compile-seconds
+                     "compileSeconds" counts.compile-seconds "bakeJobs" counts.bake-jobs
                      "trees" (lfor t counts.trees {"name" t.name "stored" t.stored "rebuilt" t.rebuilt "reused" t.reused
                                                    "failed" t.failed})}))
   ;; 処理ステージの files(root に書いた file の数 — 数えない処理ステージは null)・parts(区切りの秒)・volume(disk の種類)・
@@ -204,6 +204,15 @@
            (if (is startup None) "-" (.format "{:.3f}" startup))
            (if (is volume None) "-" (.format "{} {} ({})" volume.fs-type volume.device volume.mount))
            (.join " " parts)))
+
+
+(defk bake-line [counts]
+  {:pre [(: counts BytecodeCounts)] :post [(: % str)]}
+  "焼きの 1 行(準備の記録 — env_tool の log へ出る): 焼いた数・保存先から書いた数と、焼いた並列数・焼きの秒を並べ、小さい node の焼きが
+   並列数のせいで段の上限に近づいたかを記録から読ませるため。並列数を名乗らない古い道具の回は `-`。"
+  (.format "焼き: rebuilt={} stored={} reused={} failed={} bake_jobs={} compile_s={:.2f} closure_s={:.2f}"
+           counts.rebuilt counts.stored counts.reused counts.failed (if (is counts.bake-jobs None) "-" counts.bake-jobs)
+           counts.compile-seconds counts.closure-seconds))
 
 
 (defk build-memory-of [current-before peak-before peak-after]
@@ -449,6 +458,9 @@
               (do (for [p problems]
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
+                  ;; 焼きの秒を並列数と並べて準備の記録の 1 行に残す(小さい node で並列数が memory で 1 本に絞られ、2333 本の焼きが
+                  ;; 段の上限に近い 1639 秒かかった回の並列数が読めなかった — 2026-11-07)。
+                  (<- (PrepareNote (bake-line counts)))
                   ;; 書いた file の数 = 焼いて置いた .pyc(rebuilt)と保存先の code から置いた .pyc(stored)(#3676・#3858 — どちらも
                   ;; 保存先の中身の同じ file への hardlink で置き、置けない時だけ中身を書く)。焼かずに残した
                   ;; .pyc(reused)は置いていないので足さない(#3675)。

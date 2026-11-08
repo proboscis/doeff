@@ -92,6 +92,8 @@
 (val COMPILED-PATTERN
   (re.compile r"stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) compile_s=([0-9.]+) closure_s=([0-9.]+) scan_s=([0-9.]+)"))
 (val TREE-PATTERN (re.compile r"(?m)tree=(\S+) stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+) problem=(.*)$"))
+;; 焼いた並列数の行(bake_plan の jobs-line — 無ければ並列数を None と読む)。
+(val BAKE-JOBS-PATTERN (re.compile r"bake_jobs=(\d+)"))
 (val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
 ;; file system の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
@@ -863,12 +865,15 @@
 (defk reported-counts [text trees]
   {:pre [(: text str) (: trees tuple)] :post [(: % (| BytecodeCounts None))]}
   "焼く道具の stderr の全体の行と木ごとの行を、完成マーカーに載せる数と秒にするため(全体の行が無い・欄が欠けていれば None — 0 で
-   埋めない)。木ごとの数は要求の木の順で、木の名は root の下の dir の名(path は載せない)。"
+   埋めない)。木ごとの数は要求の木の順で、木の名は root の下の dir の名(path は載せない)。焼いた並列数は bake_jobs= の行から読む
+   (行の無い古い道具は None)。"
   (val total (.search COMPILED-PATTERN text))
+  (val jobs (.search BAKE-JOBS-PATTERN text))
   (if (is total None)
       None
       (do (val lines (tuple (.finditer TREE-PATTERN text)))
           (BytecodeCounts :stored (int (.group total 1)) :rebuilt (int (.group total 2)) :reused (int (.group total 3))
+                          :bake-jobs (if (is jobs None) None (int (.group jobs 1)))
                           :failed (int (.group total 4))
                           :compile-seconds (float (.group total 5))
                           :closure-seconds (float (.group total 6)) :scan-seconds (float (.group total 7))

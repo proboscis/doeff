@@ -130,6 +130,15 @@
       (max 1 (min jobs (// (- room BAKE-FIXED-BYTES) BAKE-CHILD-BYTES)))))
 
 
+(defk jobs-line [jobs asked room]
+  {:pre [(: jobs int) (: asked int) (: room (| int None))] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "焼きの並列数の報告の行を作るため(焼くたびに 1 行 — 絞らなかった回も出す): bake_jobs = 焼いた並列数(bake-jobs-of の答え)・asked_jobs =
+   CPU から決めた数か呼び手の --jobs・room_mib = memory の空き(memory-room-of — 上限の無い層だけなら `-`)・child_mib = 焼く子 1 本の山の
+   見積もり。呼び手(実行環境の準備)はこの行の bake_jobs を完成の印と準備の記録に載せ、焼きの秒を並列数と並べて読ませる。"
+  (.format "bake_jobs={} asked_jobs={} room_mib={} child_mib={}" jobs asked
+           (if (is room None) "-" (// room (* 1024 1024))) (// BAKE-CHILD-BYTES (* 1024 1024))))
+
+
 (defk cgroup-levels-of [own-cgroup root]
   {:pre [(: own-cgroup (| str None)) (: root str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "/proc/self/cgroup の中身(cgroup v2 の行 `0::<path>` — 読めなければ None)から、この process の cgroup とその上の層の dir(root の下 —
