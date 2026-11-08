@@ -228,7 +228,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._http_server_effects import HttpServerClosed as HttpServerClosed
     from doeff_core_effects._http_server_effects import HttpShutdown as HttpShutdown
     from doeff_core_effects._http_server_effects import HttpShortcut as HttpShortcut
-    from doeff_core_effects._http_server_effects import HttpShortcutFailed as HttpShortcutFailed
     from doeff_core_effects._http_server_effects import HttpStopListening as HttpStopListening
     from doeff_core_effects._http_server_effects import HttpTakeQueued as HttpTakeQueued
     from doeff_core_effects._http_server_effects import ReadHttpServed as ReadHttpServed
@@ -715,7 +714,6 @@ _LAZY_EXPORTS = {
     "HttpServerClosed": "doeff_core_effects._http_server_effects",
     "HttpShutdown": "doeff_core_effects._http_server_effects",
     "HttpShortcut": "doeff_core_effects._http_server_effects",
-    "HttpShortcutFailed": "doeff_core_effects._http_server_effects",
     "HttpStopListening": "doeff_core_effects._http_server_effects",
     "HttpTakeQueued": "doeff_core_effects._http_server_effects",
     "ReadHttpServed": "doeff_core_effects._http_server_effects",
