@@ -14,11 +14,15 @@ import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp, smooth} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
+import {chain, heardBy, nextLine, sceneEnd, Step} from '../../kit/pace';
 import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
+
+// When a line, read from a headline at this time, has been heard.
+const heard = heardBy(DURATIONS);
 
 type Point = {x: number; y: number};
 type Box = {x: number; y: number; w: number; h: number};
@@ -147,12 +151,23 @@ const Travel: React.FC<{trip: Trip}> = ({trip}) => {
 
 // Scene 1 — two zones: the handler stack inside doeff, Python's event loop outside it, and Await crossing.
 
+// One motion at a time, PAUSE s apart: the title; inside doeff; the line; outside doeff. Then the stage (the zones, the
+// code, the stack and the event loop) in place of the title; each of the four effects' round trips (out to its
+// handler, which lights, and its answer back); then Await, step by step: to await_handler; across the line to the
+// event loop as a coroutine; the loop awaiting it; its answer back across and in; what it means.
+const INTRO_STEPS = chain(0.2, [['title', 0.6], ['inside', 0.4], ['line', 0.3], ['outside', 0.4]]);
+const T2 = nextLine(heard(0, 't1'), INTRO_STEPS);
+// A round trip: the effect out over 0.5 s, the answer back from 0.25 s after it lands until 0.85 s, then gone.
+const ROUND = 1.65;
+const TRIP_STEPS = chain(T2, [['stage', 0.6], ['trip0', ROUND], ['trip1', ROUND], ['trip2', ROUND], ['trip3', ROUND]]);
+const T3 = nextLine(heard(T2, 't2'), TRIP_STEPS);
+const AWAIT_STEPS = chain(T3, [['toBand', 1.2], ['across', 1.2], ['loop', 1.4], ['back', 1.6], ['caption', 0.3]]);
 const TITLE_LINES: Lines = [
   [0, 'A doeff program runs in two zones: inside doeff, and outside it.'],
-  [6.5, "Inside, handlers answer each effect, with k. Outside, Python's event loop runs coroutines."],
-  [15, 'Almost every effect stays inside. Await is the one that crosses the line.'],
+  [T2, "Inside, handlers answer each effect, with k. Outside, Python's event loop runs coroutines."],
+  [T3, 'Almost every effect stays inside. Await is the one that crosses the line.'],
 ];
-const TITLE = f(23);
+const TITLE = f(sceneEnd(heard(T3, 't3'), AWAIT_STEPS));
 const T_IN: Box = {x: 40, y: 110, w: 700, h: 470};
 const T_OUT: Box = {x: 820, y: 110, w: 420, h: 470};
 const T_LINE = 780;
@@ -177,12 +192,15 @@ const T_BANDS = [
 const tBand = (i: number): Box => ({x: 424, y: 170 + i * 60, w: 300, h: 50});
 const tBandIn = (i: number): Point => ({x: tBand(i).x + 240, y: tBand(i).y + 25});
 const tCodeOut = (line: number): Point => ({x: TC.x + TC.w - 6, y: lineMid(TC.y, TC.line, line)});
-// The effects the scene sends in: code line, band, and the seconds it leaves.
+const roundTrip = ({from}: Step, effect: string, line: number, band: number, answer: string): Trip => ({
+  effect, from: tCodeOut(line), to: tBandIn(band), leave: from, land: from + 0.5, answer, back: from + 1.35,
+});
+// The effects the scene sends in: code line, band, and when each leaves.
 const T_TRIPS: Trip[] = [
-  {effect: 'Ask', from: tCodeOut(2), to: tBandIn(0), leave: 8.6, land: 9.1, answer: "'Ada'", back: 9.7},
-  {effect: 'Get', from: tCodeOut(3), to: tBandIn(2), leave: 9.9, land: 10.4, answer: '0', back: 11.0},
-  {effect: 'Tell', from: tCodeOut(4), to: tBandIn(1), leave: 11.2, land: 11.7, answer: 'None', back: 12.3},
-  {effect: 'Spawn', from: tCodeOut(5), to: tBandIn(4), leave: 12.5, land: 13.0, answer: 'Task', back: 13.6},
+  roundTrip(TRIP_STEPS.trip0, 'Ask', 2, 0, "'Ada'"),
+  roundTrip(TRIP_STEPS.trip1, 'Get', 3, 2, '0'),
+  roundTrip(TRIP_STEPS.trip2, 'Tell', 4, 1, 'None'),
+  roundTrip(TRIP_STEPS.trip3, 'Spawn', 5, 4, 'Task'),
 ];
 // The band each of T_TRIPS lands on.
 const T_TRIP_BANDS = [0, 2, 1, 4];
@@ -190,83 +208,96 @@ const T_LOOP: Point = {x: 1030, y: 360};
 
 const TitleScene: React.FC = () => {
   const frame = useSceneFrame();
-  const first = 1 - ramp(frame, 6.0, 6.4);
-  const zones = fadeAt(frame, 6.5, 0.5);
-  const lit = (i: number) => T_TRIPS.some((t, j) => T_TRIP_BANDS[j] === i && frame >= f(t.land) && frame < f(t.land + 0.4));
-  const crossing = frame >= f(17.3) && frame < f(18.3);
-  const toBand = ramp(frame, 15.8, 16.4);
-  const across = ramp(frame, 16.9, 18.1);
-  const backAcross = ramp(frame, 19.6, 20.6);
-  const backIn = ramp(frame, 20.7, 21.2);
+  const at = (seconds: number) => frame >= f(seconds);
+  const {title, inside, line, outside} = INTRO_STEPS;
+  const {stage} = TRIP_STEPS;
+  const {toBand: toStep, across: acrossStep, loop, back, caption} = AWAIT_STEPS;
+  const first = 1 - ramp(frame, stage.from, stage.from + 0.3);
+  const zones = fadeAt(frame, stage.from + 0.2, 0.4);
+  const lit = (i: number) => T_TRIPS.some((t, j) => T_TRIP_BANDS[j] === i && at(t.land) && !at(t.land + 0.4));
+  const crossing = (at(acrossStep.from) && !at(acrossStep.to)) || (at(back.from) && !at(back.from + 1.0));
+  const toBand = ramp(frame, toStep.from, toStep.from + 0.6);
+  const across = ramp(frame, acrossStep.from, acrossStep.to);
+  const backAcross = ramp(frame, back.from, back.from + 1.0);
+  const backIn = ramp(frame, back.from + 1.1, back.to);
   const awaitAt = tBandIn(3);
   const awaitOut = {x: tBand(3).x + tBand(3).w, y: awaitAt.y};
   // The code line of the latest effect sent, then the Await's line.
-  const band = frame < f(8.4) ? null : frame < f(15.6) ? T_TRIPS.reduce((found, t, i) => (frame >= f(t.leave - 0.2) ? 2 + i : found), 2) : 6;
-  const spin = interpolate(frame, [f(18.0), f(19.6)], [0, 540], clamp);
+  const band = !at(T_TRIPS[0].leave) ? null : !at(toStep.from) ? T_TRIPS.reduce((found, t, i) => (at(t.leave) ? 2 + i : found), 2) : 6;
+  const spin = interpolate(frame, [f(loop.from), f(loop.to)], [0, 540], clamp);
   return (
     <AbsoluteFill>
       <Headlines lines={TITLE_LINES} />
-      <div style={{position: 'absolute', left: 0, right: 0, top: 170 + mix(16, 0, ramp(frame, 0.2, 0.8)), textAlign: 'center', opacity: fadeAt(frame, 0.2, 0.5) * first}}>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 170 + mix(16, 0, ramp(frame, title.from, title.to)), textAlign: 'center', opacity: fadeAt(frame, title.from, 0.5) * first}}>
         <div style={{fontFamily: SANS, fontSize: 80, fontWeight: 700, color: TEXT}}>Effect Boundaries</div>
         <div style={{fontFamily: SANS, fontSize: 28, color: MUTED, marginTop: 6}}>docs/17-effect-boundaries.md</div>
       </div>
       <div style={{opacity: first}}>
-        {label(250, 430, 'inside doeff', TEST, fadeAt(frame, 2.2), 34)}
-        {label(250, 478, 'handlers answer effects', MUTED, fadeAt(frame, 2.6), 20, false)}
-        <Boundary x={640} top={410} bottom={530} lit={false} opacity={fadeAt(frame, 3.0)} />
-        {label(760, 430, 'outside doeff', PROD, fadeAt(frame, 3.4), 34)}
-        {label(760, 478, "Python's event loop", MUTED, fadeAt(frame, 3.8), 20, false)}
+        {label(250, 430, 'inside doeff', TEST, fadeAt(frame, inside.from), 34)}
+        {label(250, 478, 'handlers answer effects', MUTED, fadeAt(frame, inside.from + 0.1), 20, false)}
+        <Boundary x={640} top={410} bottom={530} lit={false} opacity={fadeAt(frame, line.from)} />
+        {label(760, 430, 'outside doeff', PROD, fadeAt(frame, outside.from), 34)}
+        {label(760, 478, "Python's event loop", MUTED, fadeAt(frame, outside.from + 0.1), 20, false)}
       </div>
       <Zone box={T_IN} title="inside doeff" sub="the handler stack, innermost first" color={TEST} opacity={zones} />
       <Zone box={T_OUT} title="outside doeff" sub="Python's event loop" color={PROD} opacity={zones} />
       <Boundary x={T_LINE} top={100} bottom={590} lit={crossing} opacity={zones} />
-      <CodeBlock lines={T_CODE} {...TC} band={band} opacity={fadeAt(frame, 7.0)} />
+      <CodeBlock lines={T_CODE} {...TC} band={band} opacity={zones} />
       {T_BANDS.map((b, i) => (
-        <Band key={b.name} box={tBand(i)} name={b.name} answers={b.answers} color={b.color} on={lit(i) || (i === 3 && frame >= f(16.4) && frame < f(17.0))} opacity={fadeAt(frame, 7.2 + i * 0.25)} />
+        <Band key={b.name} box={tBand(i)} name={b.name} answers={b.answers} color={b.color} on={lit(i) || (i === 3 && at(toStep.from + 0.6) && !at(toStep.to))} opacity={zones} />
       ))}
-      {label(T_IN.x + 20, T_IN.y + 400, <>each handler receives the effect and <span style={{color: ACCENT}}>k</span>, the rest of the program</>, TEXT, fadeAt(frame, 8.2), 19, false)}
+      {label(T_IN.x + 20, T_IN.y + 400, <>each handler receives the effect and <span style={{color: ACCENT}}>k</span>, the rest of the program</>, TEXT, zones, 19, false)}
       {T_TRIPS.map((trip) => (
         <Travel key={trip.effect} trip={trip} />
       ))}
-      <div style={{position: 'absolute', left: T_LOOP.x - 90, top: T_LOOP.y - 90, width: 180, height: 180, opacity: fadeAt(frame, 7.4)}}>
+      <div style={{position: 'absolute', left: T_LOOP.x - 90, top: T_LOOP.y - 90, width: 180, height: 180, opacity: zones}}>
         <svg width={180} height={180} viewBox="0 0 180 180">
           <circle cx={90} cy={90} r={78} fill="none" stroke={PROD} strokeWidth={4} strokeDasharray="22 12" transform={`rotate(${spin} 90 90)`} />
         </svg>
         <div style={{position: 'absolute', left: 0, right: 0, top: 70, textAlign: 'center', fontFamily: MONO, fontSize: 17, color: MUTED}}>event loop</div>
       </div>
-      {label(T_OUT.x + 24, T_OUT.y + 400, 'thread: doeff-await-bridge', MUTED, fadeAt(frame, 7.6), 18, false)}
-      {frame >= f(15.8) && frame < f(18.4) && (
+      {label(T_OUT.x + 24, T_OUT.y + 400, 'thread: doeff-await-bridge', MUTED, zones, 18, false)}
+      {at(toStep.from) && !at(acrossStep.to) && (
         <Pill
-          x={frame < f(16.9) ? mix(tCodeOut(6).x, awaitAt.x, toBand) : mix(awaitOut.x, T_LOOP.x, across)}
-          y={frame < f(16.9) ? mix(tCodeOut(6).y, awaitAt.y, toBand) : mix(awaitOut.y, T_LOOP.y, across)}
-          text={frame < f(16.9) ? 'Await(fetch())' : 'fetch() coroutine'}
-          color={frame < f(16.9) ? ACCENT : PROD}
-          opacity={1 - ramp(frame, 18.1, 18.4)}
+          x={!at(acrossStep.from) ? mix(tCodeOut(6).x, awaitAt.x, toBand) : mix(awaitOut.x, T_LOOP.x, across)}
+          y={!at(acrossStep.from) ? mix(tCodeOut(6).y, awaitAt.y, toBand) : mix(awaitOut.y, T_LOOP.y, across)}
+          text={!at(acrossStep.from) ? 'Await(fetch())' : 'fetch() coroutine'}
+          color={!at(acrossStep.from) ? ACCENT : PROD}
         />
       )}
-      {frame >= f(18.1) && frame < f(19.8) && <Pill x={T_LOOP.x} y={T_LOOP.y + 30} text="await …" color={PROD} opacity={between(frame, 18.1, 19.5, 0.2)} />}
-      {frame >= f(19.6) && frame < f(21.5) && (
+      {at(loop.from) && !at(loop.to) && <Pill x={T_LOOP.x} y={T_LOOP.y + 30} text="await …" color={PROD} opacity={between(frame, loop.from, loop.to - 0.2, 0.2)} />}
+      {at(back.from) && !at(back.to) && (
         <Pill
-          x={frame < f(20.7) ? mix(T_LOOP.x, awaitOut.x, backAcross) : mix(awaitAt.x, tCodeOut(6).x, backIn)}
-          y={frame < f(20.7) ? mix(T_LOOP.y, awaitOut.y, backAcross) : mix(awaitAt.y, tCodeOut(6).y, backIn)}
+          x={!at(back.from + 1.1) ? mix(T_LOOP.x, awaitOut.x, backAcross) : mix(awaitAt.x, tCodeOut(6).x, backIn)}
+          y={!at(back.from + 1.1) ? mix(T_LOOP.y, awaitOut.y, backAcross) : mix(awaitAt.y, tCodeOut(6).y, backIn)}
           text="'<page>'"
           color={TEST}
-          opacity={1 - ramp(frame, 21.2, 21.5)}
         />
       )}
-      {centred(612, 'Await: the one effect that leaves doeff, and comes back with its answer.', LOOK, fadeAt(frame, 19.0))}
+      {centred(612, 'Await: the one effect that leaves doeff, and comes back with its answer.', LOOK, fadeAt(frame, caption.from))}
     </AbsoluteFill>
   );
 };
 
 // Scene 2 — the page's pipeline: 15 effects, each answered by a handler inside doeff, on one thread.
 
+// One motion at a time, PAUSE s apart: the stage; the code read line by line; the list's label; each of the 15 effects
+// observed sees, from its line through observed to the handler that answers it (one motion each); the thread and the
+// event loop; the result.
+const READ = [9, 10, 11, 12, 13, 14, 15];
+const READ_STEPS = chain(0.2, [['stage', 0.6], ...READ.map((line): [string, number] => [`read${line}`, 0.2])]);
+const I2 = nextLine(heard(0, 'i1'), READ_STEPS);
+// One effect's trip: to observed over 0.2 s, on to its handler over 0.2 s, then it fades over 0.2 s.
+const SEEN_TRIP = 0.6;
+const SEEN_STEPS = chain(I2, [['label', 0.3], ...Array.from({length: 15}, (_, i): [string, number] => [`seen${i}`, SEEN_TRIP])]);
+const I3 = nextLine(heard(I2, 'i2'), SEEN_STEPS);
+const RESULT_STEPS = chain(I3 + 0.7, [['threads', 0.3], ['result', 0.3]]);
 const IN_LINES: Lines = [
   [0, "The page's pipeline: Ask, Spawn, Gather, Wait, Try, and each worker's Get, Put and Tell."],
-  [7.5, 'An observer sees all 15 effects. Each one is answered by a handler inside doeff.'],
-  [17.5, "One thread, no event loop at all. Even the tasks are the scheduler's work."],
+  [I2, 'An observer sees all 15 effects. Each one is answered by a handler inside doeff.'],
+  [I3, "One thread, no event loop at all. Even the tasks are the scheduler's work."],
 ];
-const INSIDE = f(26);
+const INSIDE = f(sceneEnd(heard(I3, 'i3'), RESULT_STEPS));
 const PIPELINE = [
   '@do',
   'def worker(name):',
@@ -301,15 +332,19 @@ const inBand = (i: number): Box => ({x: 620, y: 142 + i * 56, w: 600, h: 46});
 const SEEN = [
   ['Ask', 9], ['Spawn', 10], ['Get', 2], ['Put', 3], ['WriterTellEffect', 4], ['Spawn', 11], ['Get', 2], ['Put', 3],
   ['WriterTellEffect', 4], ['Gather', 12], ['Wait', 13], ['Try', 14], ['Get', 2], ['Put', 3], ['WriterTellEffect', 4],
-].map(([name, line], i) => ({name: name as string, line: line as number, at: 8.2 + i * 0.6}));
+].map(([name, line], i) => ({name: name as string, line: line as number, at: SEEN_STEPS[`seen${i}`].from}));
 const pillText = (name: string) => (name === 'WriterTellEffect' ? 'Tell' : name);
 const bandOf = (name: string) => IN_BANDS.findIndex((b) => b.kinds.includes(name));
 
 const InsideScene: React.FC = () => {
   const frame = useSceneFrame();
   const current = SEEN.reduce((found, s, i) => (frame >= f(s.at) ? i : found), -1);
-  const reading = frame < f(1.2) ? null : frame < f(7.6) ? Math.min(15, 9 + Math.floor((frame - f(1.2)) / f(0.9))) : null;
-  const band = current >= 0 && frame < f(SEEN[SEEN.length - 1].at + 0.8) ? SEEN[current].line : reading;
+  const {stage} = READ_STEPS;
+  // The code read line by line: the band slides to each line as its step starts.
+  const read = READ.reduce((found, line, i) => (frame >= f(READ_STEPS[`read${line}`].from) ? i : found), -1);
+  const readStep = read >= 0 ? READ_STEPS[`read${READ[read]}`] : null;
+  const reading = readStep === null ? null : mix(READ[Math.max(read - 1, 0)], READ[read], ramp(frame, readStep.from, readStep.to));
+  const band = current >= 0 ? (frame < f(I3) ? SEEN[current].line : null) : reading;
   // How many of a kind have been answered so far, as the band's counter shows them.
   const answered = (kind: string) => SEEN.filter((s, i) => i <= current && s.name === kind).length;
   const counter = (i: number) =>
@@ -317,42 +352,42 @@ const InsideScene: React.FC = () => {
   return (
     <AbsoluteFill>
       <Headlines lines={IN_LINES} />
-      <CodeBlock lines={PIPELINE} {...PC} band={band} opacity={fadeAt(frame, 0.2)} />
-      <div style={{position: 'absolute', left: IN_STACK.x, top: IN_STACK.y, width: IN_STACK.w, height: IN_STACK.h, boxSizing: 'border-box', borderRadius: 18, background: PANEL, border: `3px solid ${TEST}`, opacity: fadeAt(frame, 0.4)}}>
+      <CodeBlock lines={PIPELINE} {...PC} band={band} opacity={fadeAt(frame, stage.from, stage.to - stage.from)} />
+      <div style={{position: 'absolute', left: IN_STACK.x, top: IN_STACK.y, width: IN_STACK.w, height: IN_STACK.h, boxSizing: 'border-box', borderRadius: 18, background: PANEL, border: `3px solid ${TEST}`, opacity: fadeAt(frame, stage.from, stage.to - stage.from)}}>
         <div style={{position: 'absolute', left: 18, top: 8, fontFamily: SANS, fontSize: 19, fontWeight: 700, color: TEST}}>
           inside doeff
           <span style={{color: MUTED, fontWeight: 400, fontSize: 16}}>{'  the stack of measure/inside.py, innermost first'}</span>
         </div>
       </div>
       {IN_BANDS.map((b, i) => {
-        const on = current >= 0 && frame < f(SEEN[current].at + 0.55) && (i === 0 ? frame < f(SEEN[current].at + 0.3) && frame >= f(SEEN[current].at + 0.1) : bandOf(SEEN[current].name) === i && frame >= f(SEEN[current].at + 0.35));
-        return <Band key={b.name} box={inBand(i)} name={b.name} answers={b.answers} color={b.color} on={on} opacity={fadeAt(frame, 0.6 + i * 0.2)} count={current >= 0 ? counter(i) || undefined : undefined} />;
+        const on = current >= 0 && frame < f(SEEN[current].at + 0.5) && (i === 0 ? frame < f(SEEN[current].at + 0.25) && frame >= f(SEEN[current].at + 0.05) : bandOf(SEEN[current].name) === i && frame >= f(SEEN[current].at + 0.3));
+        return <Band key={b.name} box={inBand(i)} name={b.name} answers={b.answers} color={b.color} on={on} opacity={fadeAt(frame, stage.from, stage.to - stage.from)} count={current >= 0 ? counter(i) || undefined : undefined} />;
       })}
       {SEEN.map((s, i) => {
-        if (frame < f(s.at) || frame >= f(s.at + 0.75)) return null;
+        if (frame < f(s.at) || frame >= f(s.at + SEEN_TRIP)) return null;
         const from = {x: PC.x + PC.w - 10, y: lineMid(PC.y, PC.line, s.line)};
         const obs = {x: inBand(0).x + 440, y: inBand(0).y + 23};
         const target = inBand(bandOf(s.name));
         const to = {x: target.x + 330, y: target.y + 23};
-        const p = along(frame, [[s.at, from], [s.at + 0.2, obs], [s.at + 0.45, to]]);
-        return <Pill key={i} x={p.x} y={p.y} text={pillText(s.name)} color={ACCENT} opacity={1 - ramp(frame, s.at + 0.5, s.at + 0.75)} />;
+        const p = along(frame, [[s.at, from], [s.at + 0.2, obs], [s.at + 0.4, to]]);
+        return <Pill key={i} x={p.x} y={p.y} text={pillText(s.name)} color={ACCENT} opacity={1 - ramp(frame, s.at + 0.4, s.at + SEEN_TRIP)} />;
       })}
-      {label(40, 512, 'measure/inside.py · the effects observed sees, in order', MUTED, fadeAt(frame, 8.0), 16, false)}
+      {label(40, 512, 'measure/inside.py · the effects observed sees, in order', MUTED, fadeAt(frame, SEEN_STEPS.label.from), 16, false)}
       <div style={{position: 'absolute', left: 40, top: 540, width: 1200, display: 'flex', gap: 6, flexWrap: 'nowrap'}}>
         {SEEN.map((s, i) => (
           <div
             key={i}
             style={{
               fontFamily: MONO, fontSize: 13, fontWeight: 700, padding: '4px 8px', borderRadius: 8, background: bandOf(s.name) === 5 ? ACCENT : TEST, color: '#0f1117',
-              opacity: fadeAt(frame, s.at + 0.45, 0.2), whiteSpace: 'nowrap',
+              opacity: fadeAt(frame, s.at + 0.35, 0.2), whiteSpace: 'nowrap',
             }}
           >
             {s.name}
           </div>
         ))}
       </div>
-      {centred(596, "threads: ['MainThread']   ·   event loop running: [False]", TEST, fadeAt(frame, 18.2), 24)}
-      {centred(640, "result ('pipeline', ['A', 'B'], 'A', Ok('C')) · 3 runs, the same 15 effects in the same order", MUTED, fadeAt(frame, 19.2), 17, false)}
+      {centred(596, "threads: ['MainThread']   ·   event loop running: [False]", TEST, fadeAt(frame, RESULT_STEPS.threads.from), 24)}
+      {centred(640, "result ('pipeline', ['A', 'B'], 'A', Ok('C')) · 3 runs, the same 15 effects in the same order", MUTED, fadeAt(frame, RESULT_STEPS.result.from), 17, false)}
     </AbsoluteFill>
   );
 };

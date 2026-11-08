@@ -17,11 +17,15 @@ import React from 'react';
 import {AbsoluteFill, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
+import {chain, heardBy, nextLine, sceneEnd, Step} from '../../kit/pace';
 import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
+
+// When a line, read from a headline at this time, has been heard.
+const heard = heardBy(DURATIONS);
 
 // The running example, as on the page.
 const SUMMARY = [
@@ -294,60 +298,76 @@ const DropScene: React.FC = () => {
 
 // Scene 4 — ask again: retry performs the effect on the handlers outside it until one answers, then resumes k once.
 
+// One motion at a time, PAUSE s apart: the stage; Chat reaches retry; retry holds k (and stays lit while it does, the
+// rest of the code dimmed); each attempt goes out to flaky_chat, which lights while it answers, and comes back with
+// what it got, which retry notes; then k resumes with the answer; the counts; what it means.
+const RETRY_STEPS = chain(0, [['stage', 0.6], ['chat', 0.6], ['held', 0.4]]);
+const R2 = nextLine(heard(0, 'r1'), RETRY_STEPS);
+// An attempt: Chat out to flaky_chat over 0.5 s, flaky_chat answering, the answer back to retry and noted.
+const ATTEMPT = 1.2;
+const ATTEMPT_STEPS = chain(R2, [['attempt0', ATTEMPT], ['attempt1', ATTEMPT], ['attempt2', ATTEMPT]]);
+const R3 = nextLine(heard(R2, 'r2'), ATTEMPT_STEPS);
+const RESUME_STEPS = chain(R3, [['resume', 0.7], ['calls', 0.3], ['note', 0.3]]);
 const RETRY_LINES: Lines = [
   [0, 'Ask again: retry performs the effect once more, on the handlers outside it.'],
-  [6.1, 'The provider times out twice. The third attempt answers.'],
-  [10.5, 'Then k resumes once, with the answer that worked.'],
+  [R2, 'The provider times out twice. The third attempt answers.'],
+  [R3, 'Then k resumes once, with the answer that worked.'],
 ];
-const RETRY = f(15);
+const RETRY = f(sceneEnd(heard(R3, 'r3'), RESUME_STEPS));
 const RETRY_X = 840;
-// The three attempts of measure/continuation.py: the second each one leaves retry, and what came back.
+// The three attempts of measure/continuation.py: when each one leaves retry, and what came back.
 const ATTEMPTS = [
-  {at: 6.2, back: 'ConnectionError', color: FAIL, line: 'attempt 1: timed out'},
-  {at: 7.5, back: 'ConnectionError', color: FAIL, line: 'attempt 2: timed out'},
-  {at: 8.8, back: '"summary by gpt-4o"', color: TEST, line: 'attempt 3: summary by gpt-4o'},
+  {at: ATTEMPT_STEPS.attempt0.from, back: 'ConnectionError', color: FAIL, line: 'attempt 1: timed out'},
+  {at: ATTEMPT_STEPS.attempt1.from, back: 'ConnectionError', color: FAIL, line: 'attempt 2: timed out'},
+  {at: ATTEMPT_STEPS.attempt2.from, back: '"summary by gpt-4o"', color: TEST, line: 'attempt 3: summary by gpt-4o'},
 ];
 
 const RetryScene: React.FC = () => {
   const frame = useSceneFrame();
-  const band = frame < f(0.8) ? null : frame < f(11.4) ? 2 : mix(2, 3, ramp(frame, 11.4, 11.7));
-  const held = frame >= f(1.4) && frame < f(11.0);
+  const {stage, chat, held} = RETRY_STEPS;
+  const {resume, calls, note} = RESUME_STEPS;
+  const band = frame < f(chat.from) ? null : frame < f(resume.from) ? 2 : mix(2, 3, ramp(frame, resume.from, resume.from + 0.3));
+  const holding = frame >= f(held.from) && frame < f(resume.from);
+  const shown = fadeAt(frame, stage.from, stage.to - stage.from);
   return (
     <AbsoluteFill>
       <Headlines lines={RETRY_LINES} />
-      <CodeBlock lines={SUMMARY} {...CODE} band={band} dim={(i) => (i >= 3 ? interpolate(frame, [f(1.4), f(1.8), f(11.0), f(11.4)], [1, 0.35, 0.35, 1], clamp) : 1)} opacity={fadeAt(frame, 0)} />
-      <Wall x={RETRY_X} name="retry" note="Chat · Draw" on={held && !ATTEMPTS.some((a) => during(frame, a.at, a.at + 1.2))} opacity={fadeAt(frame, 0.4)} />
-      <Wall x={IMAGES_X} name="canned_images" note="handles Draw" opacity={fadeAt(frame, 0.8)} />
+      <CodeBlock
+        lines={SUMMARY} {...CODE} band={band} opacity={shown}
+        dim={(i) => (i >= 3 ? interpolate(frame, [f(held.from), f(held.to), f(resume.from), f(resume.from + 0.4)], [1, 0.35, 0.35, 1], clamp) : 1)}
+      />
+      <Wall x={RETRY_X} name="retry" note="Chat · Draw" on={holding} opacity={shown} />
+      <Wall x={IMAGES_X} name="canned_images" note="handles Draw" opacity={shown} />
       <Wall
         x={CHAT_X} name="flaky_chat" note="times out twice" noteColor={PROD} color={PROD}
-        on={ATTEMPTS.some((a) => during(frame, a.at + 0.5, a.at + 0.8))} opacity={fadeAt(frame, 1.2)}
+        on={ATTEMPTS.some((a) => during(frame, a.at + 0.5, a.at + 0.8))} opacity={shown}
       />
-      {during(frame, 0.8, 1.5) && <Pill x={along(frame, 0.8, 1.4, OUT_X, RETRY_X)} y={CHAT_Y} text="Chat" color={ACCENT} opacity={fadeOut(frame, 1.35, 0.15)} />}
-      {frame >= f(1.4) && (
-        <KCard x={RETRY_X} y={300} label="k · held" w={110} opacity={fadeAt(frame, 1.4) * (frame < f(11.0) ? 1 : fadeOut(frame, 11.0))} />
+      {during(frame, chat.from, chat.to) && <Pill x={along(frame, chat.from, chat.to, OUT_X, RETRY_X)} y={CHAT_Y} text="Chat" color={ACCENT} />}
+      {frame >= f(held.from) && (
+        <KCard x={RETRY_X} y={300} label="k · held" w={110} opacity={fadeAt(frame, held.from, held.to - held.from) * (frame < f(resume.from) ? 1 : fadeOut(frame, resume.from))} />
       )}
       {ATTEMPTS.map((attempt) => (
         <React.Fragment key={attempt.at}>
-          {during(frame, attempt.at, attempt.at + 0.55) && <Pill x={along(frame, attempt.at, attempt.at + 0.5, RETRY_X, CHAT_X)} y={CHAT_Y} text="Chat" color={ACCENT} />}
-          {during(frame, attempt.at + 0.8, attempt.at + 1.25) && (
-            <Pill x={along(frame, attempt.at + 0.8, attempt.at + 1.2, inFrame(CHAT_X, attempt.back), RETRY_X)} y={CHAT_Y} text={attempt.back} color={attempt.color} opacity={fadeOut(frame, 1.1 + attempt.at)} />
+          {during(frame, attempt.at, attempt.at + 0.5) && <Pill x={along(frame, attempt.at, attempt.at + 0.5, RETRY_X, CHAT_X)} y={CHAT_Y} text="Chat" color={ACCENT} />}
+          {during(frame, attempt.at + 0.8, attempt.at + ATTEMPT) && (
+            <Pill x={along(frame, attempt.at + 0.8, attempt.at + ATTEMPT, inFrame(CHAT_X, attempt.back), RETRY_X)} y={CHAT_Y} text={attempt.back} color={attempt.color} />
           )}
         </React.Fragment>
       ))}
-      {during(frame, 10.7, 11.5) && (
-        <Pill x={along(frame, 10.7, 11.3, inFrame(RETRY_X, '"summary by gpt-4o"'), OUT_X)} y={CHAT_Y} text={'"summary by gpt-4o"'} color={TEST} opacity={fadeOut(frame, 11.2)} />
+      {during(frame, resume.from, resume.to) && (
+        <Pill x={along(frame, resume.from, resume.to, inFrame(RETRY_X, '"summary by gpt-4o"'), OUT_X)} y={CHAT_Y} text={'"summary by gpt-4o"'} color={TEST} />
       )}
       <Output
-        x={60} y={410} w={720} opacity={fadeAt(frame, 0.4)}
+        x={60} y={410} w={720} opacity={shown}
         call="retry saw:"
-        lines={ATTEMPTS.map((attempt) => ({text: attempt.line, color: attempt.color, opacity: fadeAt(frame, attempt.at + 1.2)}))}
+        lines={ATTEMPTS.map((attempt) => ({text: attempt.line, color: attempt.color, opacity: fadeAt(frame, attempt.at + ATTEMPT - 0.2, 0.2)}))}
       />
       <Output
-        x={820} y={410} w={400} opacity={fadeAt(frame, 11.6)}
+        x={820} y={410} w={400} opacity={fadeAt(frame, calls.from)}
         call="provider calls:"
         lines={[{text: '3', color: TEXT}, {text: 'k resumed: once', color: TEST}]}
       />
-      <div style={{position: 'absolute', left: 60, top: 590, width: 1160, fontFamily: SANS, fontSize: 19, color: MUTED, opacity: fadeAt(frame, 12.2)}}>
+      <div style={{position: 'absolute', left: 60, top: 590, width: 1160, fontFamily: SANS, fontSize: 19, color: MUTED, opacity: fadeAt(frame, note.from)}}>
         Each attempt is a new effect. k resumes at most once, so a retry performs the effect again; it never resumes k twice.
       </div>
     </AbsoluteFill>
@@ -357,12 +377,24 @@ const RetryScene: React.FC = () => {
 // Scene 5 — keep the answers: effects are data, so a recorder files each answer under its effect, and replay answers
 // from the tape alone.
 
+// One motion at a time, PAUSE s apart. Recording: the stage; for each effect, it goes out through the recorder to the
+// providers and its answer comes back to the recorder, which files the row (one motion), then the answer goes on to
+// the code (the next); the result. Replay: the handlers change; each effect goes to replay, its row lights and the
+// answer comes back (one motion); the result. Then an effect the tape has not seen: the call changes, the effect goes
+// to replay and finds no row; the run stops.
+const RECORD_STEPS = chain(0, [['stage', 0.6], ['chatOut', 1.7], ['chatBack', 0.5], ['drawOut', 1.7], ['drawBack', 0.5], ['result', 0.3]]);
+const P2 = nextLine(heard(0, 'p1'), RECORD_STEPS);
+// A replay trip: the effect to replay over 0.5 s, its row lit, the answer back over 0.5 s.
+const REPLAY = 1.5;
+const REPLAY_STEPS = chain(P2, [['swap', 0.5], ['chat', REPLAY], ['draw', REPLAY], ['result', 0.3]]);
+const P3 = nextLine(heard(P2, 'p2'), REPLAY_STEPS);
+const MISS_STEPS = chain(P3, [['waves', 0.3], ['miss', REPLAY], ['stopped', 0.3]]);
 const TAPE_LINES: Lines = [
   [0, 'Keep the answers: effects are data, so a recorder can file each answer.'],
-  [5.8, 'Replay runs from the tape, with no provider at all.'],
-  [9.8, 'An effect it has never seen stops the run.'],
+  [P2, 'Replay runs from the tape, with no provider at all.'],
+  [P3, 'An effect it has never seen stops the run.'],
 ];
-const TAPE = f(14);
+const TAPE = f(sceneEnd(heard(P3, 'p3'), MISS_STEPS));
 const TAPE_CODE = {x: 60, y: 120, w: 700, size: 17, line: 28};
 const TAPE_CHAT_Y = lineMid(TAPE_CODE.y, TAPE_CODE.line, 2);
 const TAPE_DRAW_Y = lineMid(TAPE_CODE.y, TAPE_CODE.line, 3);
@@ -370,57 +402,80 @@ const RECORDER_X = 860;
 const PROVIDERS_X = 1120;
 // The tape of measure/continuation.py, and the second each row is filed.
 const ROWS = [
-  {at: 2.5, effect: "Chat(model='gpt-4o', prompt='Summarize tides')", answer: "'summary by gpt-4o'"},
-  {at: 4.9, effect: "Draw(model='imagen-3', prompt='summary by gpt-4o')", answer: "'image by imagen-3'"},
+  {at: RECORD_STEPS.chatOut.to - 0.3, effect: "Chat(model='gpt-4o', prompt='Summarize tides')", answer: "'summary by gpt-4o'"},
+  {at: RECORD_STEPS.drawOut.to - 0.3, effect: "Draw(model='imagen-3', prompt='summary by gpt-4o')", answer: "'image by imagen-3'"},
 ];
 
-// One trip of an effect from the code out to the recorder, on to the providers and back, filing the answer.
-const recordTrip = (frame: number, start: number, y: number, effect: string, answer: string) => (
+// An effect from the code out through the recorder to the providers, and its answer back to the recorder.
+const recordOut = (frame: number, {from}: Step, y: number, effect: string, answer: string) => (
   <>
-    {during(frame, start, start + 1.0) && (
-      <Pill x={frame < f(start + 0.5) ? along(frame, start, start + 0.5, OUT_X, RECORDER_X) : along(frame, start + 0.5, start + 1.0, RECORDER_X, PROVIDERS_X)} y={y} text={effect} color={ACCENT} />
+    {during(frame, from, from + 1.0) && (
+      <Pill x={frame < f(from + 0.5) ? along(frame, from, from + 0.5, OUT_X, RECORDER_X) : along(frame, from + 0.5, from + 1.0, RECORDER_X, PROVIDERS_X)} y={y} text={effect} color={ACCENT} />
     )}
-    {during(frame, start + 1.2, start + 1.75) && <Pill x={along(frame, start + 1.2, start + 1.7, inFrame(PROVIDERS_X, answer), RECORDER_X)} y={y} text={answer} color={TEST} />}
-    {during(frame, start + 1.8, start + 2.35) && <Pill x={along(frame, start + 1.8, start + 2.3, RECORDER_X, OUT_X)} y={y} text={answer} color={TEST} opacity={fadeOut(frame, start + 2.2)} />}
+    {during(frame, from + 1.2, from + 1.7) && <Pill x={along(frame, from + 1.2, from + 1.7, inFrame(PROVIDERS_X, answer), RECORDER_X)} y={y} text={answer} color={TEST} />}
   </>
 );
 
-// One trip of an effect from the code to replay and back with the answer the tape gives.
-const replayTrip = (frame: number, start: number, y: number, effect: string, answer: string, color: string) => (
+// The answer the recorder has filed, on to the code.
+const recordBack = (frame: number, {from, to}: Step, y: number, answer: string) =>
+  during(frame, from, to) && <Pill x={along(frame, from, to, RECORDER_X, OUT_X)} y={y} text={answer} color={TEST} />;
+
+// An effect from the code to replay, and back with the answer the tape gives.
+const replayTrip = (frame: number, {from}: Step, y: number, effect: string, answer: string, color: string) => (
   <>
-    {during(frame, start, start + 0.55) && <Pill x={along(frame, start, start + 0.5, OUT_X, RECORDER_X)} y={y} text={effect} color={ACCENT} />}
-    {during(frame, start + 1.0, start + 1.6) && <Pill x={along(frame, start + 1.0, start + 1.5, RECORDER_X, OUT_X)} y={y} text={answer} color={color} opacity={fadeOut(frame, start + 1.4)} />}
+    {during(frame, from, from + 0.5) && <Pill x={along(frame, from, from + 0.5, OUT_X, RECORDER_X)} y={y} text={effect} color={ACCENT} />}
+    {during(frame, from + 1.0, from + REPLAY) && <Pill x={along(frame, from + 1.0, from + REPLAY, RECORDER_X, OUT_X)} y={y} text={answer} color={color} />}
   </>
 );
 
 const TapeScene: React.FC = () => {
   const frame = useSceneFrame();
-  const replaying = frame >= f(5.9);
-  const waves = frame >= f(9.9);
-  const band = frame < f(0.8) ? null : frame < f(3.2) ? 2 : frame < f(5.6) ? 3 : frame < f(6.1) ? null : frame < f(7.6) ? 2 : frame < f(9.4) ? 3 : frame < f(10.1) ? null : 2;
-  const lookedUp = (row: number) => (row === 0 && during(frame, 6.6, 7.3)) || (row === 1 && during(frame, 8.1, 8.8));
-  const missed = during(frame, 10.6, 11.6);
+  const at = (seconds: number) => frame >= f(seconds);
+  const {stage, chatOut, chatBack, drawOut, drawBack} = RECORD_STEPS;
+  const {swap, chat, draw} = REPLAY_STEPS;
+  const {waves: wavesStep, miss, stopped} = MISS_STEPS;
+  const replaying = at(swap.from);
+  const waves = at(wavesStep.from);
+  // The code line of the effect on its way, from when it leaves until its answer is back.
+  const band = at(wavesStep.from)
+    ? 2
+    : at(draw.from) && !at(draw.to)
+      ? 3
+      : at(chat.from) && !at(chat.to)
+        ? 2
+        : at(swap.from)
+          ? null
+          : at(drawOut.from)
+            ? 3
+            : at(chatOut.from)
+              ? 2
+              : null;
+  const lookedUp = (row: number) => (row === 0 && during(frame, chat.from + 0.5, chat.from + 1.0)) || (row === 1 && during(frame, draw.from + 0.5, draw.from + 1.0));
+  const missed = at(miss.from + 0.5);
   const call = waves ? 'run(replay(tape)(illustrated_summary("waves")))' : replaying ? 'run(replay(tape)(illustrated_summary("tides")))' : 'run(providers(record(tape)(illustrated_summary("tides"))))';
   const result = waves
-    ? {text: "not recorded: Chat(model='gpt-4o', prompt='Summarize waves')", color: FAIL, opacity: fadeAt(frame, 11.8)}
+    ? {text: "not recorded: Chat(model='gpt-4o', prompt='Summarize waves')", color: FAIL, opacity: fadeAt(frame, stopped.from)}
     : replaying
-      ? {text: 'summary by gpt-4o | image by imagen-3', color: TEST, opacity: fadeAt(frame, 9.2)}
-      : {text: 'summary by gpt-4o | image by imagen-3', color: TEST, opacity: fadeAt(frame, 5.4)};
+      ? {text: 'summary by gpt-4o | image by imagen-3', color: TEST, opacity: fadeAt(frame, REPLAY_STEPS.result.from)}
+      : {text: 'summary by gpt-4o | image by imagen-3', color: TEST, opacity: fadeAt(frame, RECORD_STEPS.result.from)};
+  const shown = fadeAt(frame, stage.from, stage.to - stage.from);
   return (
     <AbsoluteFill>
       <Headlines lines={TAPE_LINES} />
-      <CodeBlock lines={SUMMARY} {...TAPE_CODE} band={band} opacity={fadeAt(frame, 0)} />
-      <Wall x={RECORDER_X} name={replaying ? 'replay(tape)' : 'record(tape)'} note="Chat · Draw" on={lookedUp(0) || lookedUp(1) || missed} opacity={fadeAt(frame, 0.4)} />
+      <CodeBlock lines={SUMMARY} {...TAPE_CODE} band={band} opacity={shown} />
+      <Wall x={RECORDER_X} name={replaying ? 'replay(tape)' : 'record(tape)'} note="Chat · Draw" on={lookedUp(0) || lookedUp(1) || (missed && !at(miss.to))} opacity={shown} />
       <Wall
         x={PROVIDERS_X} name="providers" note={replaying ? 'not installed' : 'canned_chat · canned_images'}
-        opacity={fadeAt(frame, 0.6) * interpolate(frame, [f(5.9), f(6.4)], [1, 0.4], clamp)}
+        opacity={shown * interpolate(frame, [f(swap.from), f(swap.to)], [1, 0.4], clamp)}
       />
-      {recordTrip(frame, 0.8, TAPE_CHAT_Y, 'Chat', "'summary by gpt-4o'")}
-      {recordTrip(frame, 3.2, TAPE_DRAW_Y, 'Draw', "'image by imagen-3'")}
-      {replayTrip(frame, 6.1, TAPE_CHAT_Y, 'Chat', "'summary by gpt-4o'", TEST)}
-      {replayTrip(frame, 7.6, TAPE_DRAW_Y, 'Draw', "'image by imagen-3'", TEST)}
-      {replayTrip(frame, 10.1, TAPE_CHAT_Y, 'Chat(..."Summarize waves")', 'LookupError', FAIL)}
-      <div style={{position: 'absolute', left: 60, top: 400, width: 1160, height: 132, boxSizing: 'border-box', borderRadius: 14, background: PANEL, border: `2px solid ${missed ? FAIL : '#2a2e40'}`, opacity: fadeAt(frame, 0.4)}}>
+      {recordOut(frame, chatOut, TAPE_CHAT_Y, 'Chat', "'summary by gpt-4o'")}
+      {recordBack(frame, chatBack, TAPE_CHAT_Y, "'summary by gpt-4o'")}
+      {recordOut(frame, drawOut, TAPE_DRAW_Y, 'Draw', "'image by imagen-3'")}
+      {recordBack(frame, drawBack, TAPE_DRAW_Y, "'image by imagen-3'")}
+      {replayTrip(frame, chat, TAPE_CHAT_Y, 'Chat', "'summary by gpt-4o'", TEST)}
+      {replayTrip(frame, draw, TAPE_DRAW_Y, 'Draw', "'image by imagen-3'", TEST)}
+      {replayTrip(frame, miss, TAPE_CHAT_Y, 'Chat(..."Summarize waves")', 'LookupError', FAIL)}
+      <div style={{position: 'absolute', left: 60, top: 400, width: 1160, height: 132, boxSizing: 'border-box', borderRadius: 14, background: PANEL, border: `2px solid ${missed ? FAIL : '#2a2e40'}`, opacity: shown}}>
         <div style={{position: 'absolute', left: 18, top: 8, fontFamily: SANS, fontSize: 17, fontWeight: 700, color: MUTED}}>tape: the effect → the answer it got</div>
         {ROWS.map((row, i) => (
           <div
@@ -435,7 +490,7 @@ const TapeScene: React.FC = () => {
           </div>
         ))}
       </div>
-      <Output x={60} y={556} w={1160} call={call} lines={[result]} opacity={fadeAt(frame, 0.4)} />
+      <Output x={60} y={556} w={1160} call={call} lines={[result]} opacity={shown} />
     </AbsoluteFill>
   );
 };

@@ -10,11 +10,15 @@ import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
+import {chain, heardBy, nextLine, sceneEnd, Step} from '../../kit/pace';
 import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
+
+// When a line, read from a headline at this time, has been heard.
+const heard = heardBy(DURATIONS);
 
 // Opacity that is 1 from `from` on and fades out over `to`..`to + 0.3`.
 const until = (frame: number, from: number, to: number) => fadeAt(frame, from) * (1 - ramp(frame, to, to + 0.3));
@@ -123,12 +127,24 @@ const IntroScene: React.FC = () => {
 
 // Scene 2 — the first program: each effect goes out to the handler that answers it, and the answer comes back.
 
+// The code, the run line, the two handlers and how they nest come one at a time; then each of the seven effects makes
+// its round trip (out to its handler, which answers, and the answer back to its yield) as one motion, PAUSE s apart;
+// then the code goes on to its return and the result shows.
+const PROGRAM_STEPS = chain(0, [['code', 0.3], ['run', 0.3], ['handlers', 0.4], ['nesting', 0.3]]);
+const P2 = nextLine(heard(0, 'p1'), PROGRAM_STEPS);
+// One round trip: the pill out to its handler, the handler at work, the answer back to the yield.
+const OUT = 0.5;
+const BACK_AT = 0.7;
+const TRIP = 1.15;
+const TRIP_STEPS = chain(P2, [['list', 0.3], ...Array.from({length: 7}, (_, i): [string, number] => [`trip${i}`, TRIP])]);
+const P3 = nextLine(heard(P2, 'p2'), TRIP_STEPS);
+const RETURN_STEPS = chain(P3, [['ret', 0.3], ['result', 0.3]]);
 const PROGRAM_LINES: Lines = [
   [0, 'Your first program: counter_program yields Put, Tell and Get.'],
-  [4.5, 'Each effect goes out to the handler that answers it: state() for Get and Put, writer for Tell.'],
-  [14.2, 'Each answer comes back to its yield, and the code goes on. The run returns 1.'],
+  [P2, 'Each effect goes out to the handler that answers it: state() for Get and Put, writer for Tell.'],
+  [P3, 'Each answer comes back to its yield, and the code goes on. The run returns 1.'],
 ];
-const PROGRAM = f(19);
+const PROGRAM = f(sceneEnd(heard(P3, 'p3'), RETURN_STEPS));
 const COUNTER = [
   '@do',
   'def counter_program():',
@@ -152,9 +168,7 @@ const STEPS: Step[] = [
   {line: 7, effect: "Get('counter')", answer: '1', to: 'state'},
   {line: 8, effect: "Tell('Final count: 1')", answer: 'None', to: 'writer', log: 'Final count: 1'},
 ];
-const STEP_FROM = 5.0;
-const STEP_EVERY = 1.3;
-const leaves = (i: number) => STEP_FROM + i * STEP_EVERY;
+const leaves = (i: number) => TRIP_STEPS[`trip${i}`].from;
 const STATE_BOX = {x: 650, y: 110, w: 580, h: 330};
 const WRITER_BOX = {x: 672, y: 162, w: 270, h: 258};
 const LANDS = {writer: {x: WRITER_BOX.x + 150, y: 245}, state: {x: 1100, y: 245}};
@@ -162,27 +176,29 @@ const LANDS = {writer: {x: WRITER_BOX.x + 150, y: 245}, state: {x: 1100, y: 245}
 const ProgramScene: React.FC = () => {
   const frame = useSceneFrame();
   const code = {x: 50, y: 110, w: 560, size: 19, line: 30};
+  const {code: shown, run, handlers, nesting} = PROGRAM_STEPS;
+  const {ret, result} = RETURN_STEPS;
   const reached = STEPS.reduce((found, _, i) => (frame >= f(leaves(i)) ? i : found), -1);
   const band =
-    frame >= f(13.9) ? mix(8, 9, ramp(frame, 13.9, 14.2)) : reached < 0 ? null : mix(STEPS[Math.max(reached - 1, 0)].line, STEPS[reached].line, ramp(frame, leaves(reached), leaves(reached) + 0.2));
-  const done = STEPS.filter((_, i) => frame >= f(leaves(i) + 0.5));
+    frame >= f(ret.from) ? mix(8, 9, ramp(frame, ret.from, ret.to)) : reached < 0 ? null : mix(STEPS[Math.max(reached - 1, 0)].line, STEPS[reached].line, ramp(frame, leaves(reached), leaves(reached) + 0.2));
+  const done = STEPS.filter((_, i) => frame >= f(leaves(i) + OUT));
   const log = done.filter((s) => s.log).map((s) => s.log as string);
   const stores = done.filter((s) => s.store !== undefined);
-  const working = (to: 'writer' | 'state') => STEPS.some((s, i) => s.to === to && frame >= f(leaves(i) + 0.5) && frame < f(leaves(i) + 0.75));
+  const working = (to: 'writer' | 'state') => STEPS.some((s, i) => s.to === to && frame >= f(leaves(i) + OUT) && frame < f(leaves(i) + BACK_AT));
   const startX = code.x + code.w + 14;
   return (
     <AbsoluteFill>
       <Headlines lines={PROGRAM_LINES} />
-      <CodeBlock lines={COUNTER} {...code} band={band} opacity={fadeAt(frame, 0)} />
-      <CodeBlock lines={['result = run(state()(writer(counter_program())))']} x={code.x} y={452} w={code.w} size={17} line={28} opacity={fadeAt(frame, 1.6)} />
-      <Label x={code.x} y={528} text="Result: 1" color={ACCENT} bold mono size={26} opacity={fadeAt(frame, 14.6)} />
-      <Panel box={STATE_BOX} on={working('state')} opacity={fadeAt(frame, 1.0)} fill={false}>
+      <CodeBlock lines={COUNTER} {...code} band={band} opacity={fadeAt(frame, shown.from)} />
+      <CodeBlock lines={['result = run(state()(writer(counter_program())))']} x={code.x} y={452} w={code.w} size={17} line={28} opacity={fadeAt(frame, run.from)} />
+      <Label x={code.x} y={528} text="Result: 1" color={ACCENT} bold mono size={26} opacity={fadeAt(frame, result.from)} />
+      <Panel box={STATE_BOX} on={working('state')} opacity={fadeAt(frame, handlers.from, 0.4)} fill={false}>
         <Label x={18} y={10} text="state()" color={working('state') ? LOOK : TEST} bold mono size={21} />
         <Label x={124} y={13} text="handles Get · Put" size={17} />
         <Label x={312} y={168} text="store" size={17} />
         <Label x={312} y={196} text={stores.length ? `counter = ${stores[stores.length - 1].store}` : '(empty)'} color={stores.length ? TEXT : MUTED} mono size={21} />
       </Panel>
-      <Panel box={WRITER_BOX} on={working('writer')} opacity={fadeAt(frame, 1.8)}>
+      <Panel box={WRITER_BOX} on={working('writer')} opacity={fadeAt(frame, handlers.from, 0.4)}>
         <Label x={16} y={10} text="writer" color={working('writer') ? LOOK : TEST} bold mono size={21} />
         <Label x={16} y={40} text="handles Tell" size={17} />
         <Label x={16} y={116} text="log" size={17} />
@@ -190,8 +206,8 @@ const ProgramScene: React.FC = () => {
           <Label key={line} x={16} y={144 + i * 28} text={line} color={TEXT} mono size={15} />
         ))}
       </Panel>
-      <Label x={STATE_BOX.x} y={STATE_BOX.y + STATE_BOX.h + 12} text="writer inside, state() outside: state()(writer(...))" size={17} opacity={fadeAt(frame, 2.6)} />
-      <Label x={STATE_BOX.x} y={500} text="effects in order, with their answers" size={17} opacity={fadeAt(frame, 4.6)} />
+      <Label x={STATE_BOX.x} y={STATE_BOX.y + STATE_BOX.h + 12} text="writer inside, state() outside: state()(writer(...))" size={17} opacity={fadeAt(frame, nesting.from)} />
+      <Label x={STATE_BOX.x} y={500} text="effects in order, with their answers" size={17} opacity={fadeAt(frame, TRIP_STEPS.list.from)} />
       {done.map((step, i) => (
         <div key={i} style={{position: 'absolute', left: STATE_BOX.x, top: 530 + i * 25, fontFamily: MONO, fontSize: 16, color: TEXT, whiteSpace: 'pre'}}>
           <span style={{color: ACCENT}}>{step.effect}</span>
@@ -269,12 +285,22 @@ const EffectScene: React.FC = () => {
 
 // Scene 4 — the same program under two handlers: show resumes k each time, stop_after(2) drops k.
 
+// Each lane comes in as one motion; then, per image, the image halves and its Progress goes out to the handler (one
+// motion), and the handler's Resume goes back (the next), PAUSE s apart, with no fade in or out of the pills. In the
+// stop lane the handler keeps k at the second report and returns; then k is dropped and the third image is never shrunk.
+const SHOW_STEPS = chain(0.2, [
+  ['lane', 0.4], ['report0', 0.9], ['resume0', 0.45], ['report1', 0.9], ['resume1', 0.45], ['report2', 0.9], ['resume2', 0.45], ['result', 0.3],
+]);
+const T2 = nextLine(heard(0, 't1'), SHOW_STEPS);
+const STOP_STEPS = chain(T2, [['lane', 0.4], ['report0', 0.9], ['resume0', 0.45], ['report1', 0.9], ['kept', 0.3], ['result', 0.3]]);
+const T3 = nextLine(heard(T2, 't2'), STOP_STEPS);
+const DROP_STEPS = chain(T3, [['dropped', 0.6], ['never', 0.3]]);
 const TWO_LINES: Lines = [
   [0, 'show notes each Progress and resumes k. All three images are shrunk.'],
-  [7.0, 'stop_after(2) returns at the second report, without resuming k.'],
-  [12.0, 'The rest is dropped: the third image is never shrunk. Same program, another meaning.'],
+  [T2, 'stop_after(2) returns at the second report, without resuming k.'],
+  [T3, 'The rest is dropped: the third image is never shrunk. Same program, another meaning.'],
 ];
-const TWO = f(18);
+const TWO = f(sceneEnd(heard(T3, 't3'), DROP_STEPS));
 // The three images and their halves (measure/first_handler.log), drawn at 0.17 of their size.
 const IMAGES = [
   {w: 640, h: 480, x: 60},
@@ -283,30 +309,38 @@ const IMAGES = [
 ];
 const SCALE = 0.17;
 const LANES = {show: 104, stop: 384} as const;
-// When each lane's i-th image is shrunk; its Progress leaves 0.4 s later.
-const stepAt = (lane: 'show' | 'stop', i: number) => (lane === 'show' ? 1.0 : 7.6) + i * 1.7;
+// A report: the image halves over HALVING s, then its Progress travels to the handler.
+const HALVING = 0.4;
+const lanes = {show: SHOW_STEPS, stop: STOP_STEPS} as const;
 
 const Lane: React.FC<{lane: 'show' | 'stop'}> = ({lane}) => {
   const frame = useSceneFrame();
+  const at = (seconds: number) => frame >= f(seconds);
+  const steps: Record<string, Step> = lanes[lane];
   const y0 = LANES[lane];
-  const steps = lane === 'show' ? 3 : 2;
+  const reports = lane === 'show' ? 3 : 2;
+  const report = (i: number) => steps[`report${i}`];
+  const resume = (i: number): Step | undefined => steps[`resume${i}`];
   const base = y0 + 182;
   const box = {x: 760, y: y0 + 30, w: 460, h: 170};
-  const seen = Array.from({length: steps}, (_, i) => i).filter((i) => frame >= f(stepAt(lane, i) + 0.9));
-  const working = Array.from({length: steps}, (_, i) => i).some((i) => frame >= f(stepAt(lane, i) + 0.9) && frame < f(stepAt(lane, i) + 1.15));
-  const stopAt = stepAt('stop', 1) + 0.9;
-  const dropped = lane === 'stop' && frame >= f(12.3);
+  const seen = Array.from({length: reports}, (_, i) => i).filter((i) => at(report(i).to));
+  // The handler is at work from a report's arrival until its Resume is back; stop_after(2) until it has kept k.
+  const working = Array.from({length: reports}, (_, i) => i).some((i) => at(report(i).to - 0.1) && !at((resume(i) ?? STOP_STEPS.kept).to));
+  const {dropped, never: neverShrunk} = DROP_STEPS;
+  const isDropped = lane === 'stop' && at(dropped.from);
   const handlerCode = lane === 'show' ? 'shown.append(...)\nreturn (yield Resume(k, None))' : 'if effect.done >= limit:\n    return f"stopped after ..."\nreturn (yield Resume(k, None))';
+  const shown = fadeAt(frame, steps.lane.from, 0.4);
   return (
     <>
-      <Label x={60} y={y0} text={lane === 'show' ? 'run(show(shrink_all(images)))' : 'run(stop_after(2)(shrink_all(images)))'} color={TEXT} mono size={19} opacity={fadeAt(frame, lane === 'show' ? 0.2 : 7.0)} />
+      <Label x={60} y={y0} text={lane === 'show' ? 'run(show(shrink_all(images)))' : 'run(stop_after(2)(shrink_all(images)))'} color={TEXT} mono size={19} opacity={shown} />
       {IMAGES.map((image, i) => {
-        const shrinkAt = stepAt(lane, i);
-        const shrunk = i < steps ? ramp(frame, shrinkAt, shrinkAt + 0.4) : 0;
+        const shrinkAt = i < reports ? report(i).from : Infinity;
+        const shrunk = i < reports ? ramp(frame, shrinkAt, shrinkAt + HALVING) : 0;
         const w = image.w * SCALE * mix(1, 0.5, shrunk);
         const h = image.h * SCALE * mix(1, 0.5, shrunk);
-        const busy = i < steps && frame >= f(shrinkAt) && frame < f(shrinkAt + 0.5);
+        const busy = at(shrinkAt) && !at(shrinkAt + HALVING);
         const never = lane === 'stop' && i === 2;
+        const dim = never && at(neverShrunk.from) ? 1 - 0.65 * ramp(frame, neverShrunk.from, neverShrunk.to) : 1;
         const size = shrunk > 0.5 ? `${image.w / 2}×${image.h / 2}` : `${image.w}×${image.h}`;
         return (
           <React.Fragment key={i}>
@@ -314,40 +348,38 @@ const Lane: React.FC<{lane: 'show' | 'stop'}> = ({lane}) => {
               style={{
                 position: 'absolute', left: image.x, top: base - h, width: w, height: h, boxSizing: 'border-box', borderRadius: 6,
                 background: `linear-gradient(160deg, #26304a, ${PANEL})`, border: `2px solid ${busy ? LOOK : '#3a3f55'}`,
-                boxShadow: busy ? `0 0 16px ${LOOK}aa` : 'none', opacity: fadeAt(frame, lane === 'show' ? 0.4 : 7.2) * (never && dropped ? 0.35 : 1),
+                boxShadow: busy ? `0 0 16px ${LOOK}aa` : 'none', opacity: shown * dim,
               }}
             />
-            <Label x={image.x} y={base + 6} text={size} color={shrunk > 0.5 ? TEST : MUTED} mono size={15} opacity={fadeAt(frame, lane === 'show' ? 0.4 : 7.2) * (never && dropped ? 0.35 : 1)} />
-            {never && <Label x={image.x} y={base + 28} text="never shrunk" color={LOOK} bold size={17} opacity={fadeAt(frame, 12.5)} />}
+            <Label x={image.x} y={base + 6} text={size} color={shrunk > 0.5 ? TEST : MUTED} mono size={15} opacity={shown * dim} />
+            {never && <Label x={image.x} y={base + 28} text="never shrunk" color={LOOK} bold size={17} opacity={fadeAt(frame, neverShrunk.from)} />}
           </React.Fragment>
         );
       })}
-      <Panel box={box} on={working || (lane === 'stop' && frame >= f(stopAt) && frame < f(11.4))} opacity={fadeAt(frame, lane === 'show' ? 0.3 : 7.1)}>
+      <Panel box={box} on={working} opacity={shown}>
         <Label x={18} y={10} text={lane === 'show' ? 'show' : 'stop_after(2)'} color={TEST} bold mono size={21} />
         <Label x={18} y={44} text={handlerCode} color={MUTED} mono size={14} />
         <Label x={18} y={128} text={`seen: ${seen.map((i) => `${i + 1}/3`).join('  ')}`} color={TEXT} mono size={17} />
       </Panel>
-      {Array.from({length: steps}, (_, i) => {
-        const s = stepAt(lane, i);
+      {Array.from({length: reports}, (_, i) => {
+        const out = report(i);
+        const back = resume(i);
         const image = IMAGES[i];
         const from = {x: image.x + (image.w * SCALE) / 2 + 20, y: base - (image.h * SCALE) / 2 - 10};
         const to = {x: box.x - 10, y: box.y + 60};
-        const resumes = lane === 'show' || i < 1;
         return (
           <React.Fragment key={i}>
-            {frame >= f(s + 0.4) && frame < f(s + 0.95) && (
-              <Pill x={mix(from.x, to.x, ramp(frame, s + 0.4, s + 0.9))} y={mix(from.y, to.y, ramp(frame, s + 0.4, s + 0.9))} text={`Progress(${i + 1}, 3)`} color={ACCENT} opacity={1 - ramp(frame, s + 0.85, s + 0.95)} />
+            {at(out.from + HALVING) && !at(out.to) && (
+              <Pill x={mix(from.x, to.x, ramp(frame, out.from + HALVING, out.to))} y={mix(from.y, to.y, ramp(frame, out.from + HALVING, out.to))} text={`Progress(${i + 1}, 3)`} color={ACCENT} />
             )}
-            {resumes && frame >= f(s + 1.1) && frame < f(s + 1.6) && (
-              <Pill x={mix(to.x, from.x + 120, ramp(frame, s + 1.1, s + 1.5))} y={to.y + 40} text="Resume(k, None)" color={TEST} opacity={1 - ramp(frame, s + 1.45, s + 1.6)} />
-            )}
+            {back && at(back.from) && !at(back.to) && <Pill x={mix(to.x, from.x + 120, ramp(frame, back.from, back.to))} y={to.y + 40} text="Resume(k, None)" color={TEST} />}
           </React.Fragment>
         );
       })}
-      {lane === 'stop' && frame >= f(stopAt + 0.3) && (
+      {lane === 'stop' && at(STOP_STEPS.kept.from) && (
         <>
-          <KCard x={box.x + 200} y={box.y + 118} w={240} text="k: rest of shrink_all" opacity={fadeAt(frame, stopAt + 0.3) * (1 - 0.7 * ramp(frame, 11.0, 11.6))} />
-          <Label x={box.x + 200} y={box.y + 176} text="dropped, never resumed" color={MUTED} bold size={16} opacity={fadeAt(frame, 11.3)} />
+          <KCard x={box.x + 200} y={box.y + 118} w={240} text="k: rest of shrink_all" opacity={fadeAt(frame, STOP_STEPS.kept.from) * (1 - 0.7 * ramp(frame, dropped.from, dropped.to))} />
+          <Label x={box.x + 200} y={box.y + 176} text="dropped, never resumed" color={MUTED} bold size={16} opacity={fadeAt(frame, dropped.from, dropped.to - dropped.from)} />
         </>
       )}
       <Label
@@ -358,7 +390,7 @@ const Lane: React.FC<{lane: 'show' | 'stop'}> = ({lane}) => {
         bold
         mono
         size={19}
-        opacity={fadeAt(frame, lane === 'show' ? 6.0 : 10.8)}
+        opacity={fadeAt(frame, steps.result.from)}
       />
     </>
   );
@@ -370,7 +402,7 @@ const TwoScene: React.FC = () => {
     <AbsoluteFill>
       <Headlines lines={TWO_LINES} />
       <Lane lane="show" />
-      <div style={{position: 'absolute', left: 60, right: 60, top: 366, height: 2, background: '#2a2e40', opacity: fadeAt(frame, 6.6)}} />
+      <div style={{position: 'absolute', left: 60, right: 60, top: 366, height: 2, background: '#2a2e40', opacity: fadeAt(frame, STOP_STEPS.lane.from, 0.4)}} />
       <Lane lane="stop" />
     </AbsoluteFill>
   );
