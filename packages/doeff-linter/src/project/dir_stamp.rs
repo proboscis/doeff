@@ -63,6 +63,11 @@ impl Fnv {
 
 /// Fingerprint of all of `files` (the two kinds in the header comment: by blob id if it can be built, otherwise by stat). None if it cannot be remembered.
 fn fingerprint(root: &Path, files: &[PathBuf]) -> Option<u64> {
+    fingerprint_at(root, files, SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_nanos())
+}
+
+/// `fingerprint` judged at the instant `now_ns` (ns since the epoch): the `SETTLE_NS` guard compares mtimes with this, so a test decides "just written" without depending on how long the machine took.
+fn fingerprint_at(root: &Path, files: &[PathBuf], now_ns: u128) -> Option<u64> {
     if files.is_empty() {
         return None;
     }
@@ -72,7 +77,7 @@ fn fingerprint(root: &Path, files: &[PathBuf]) -> Option<u64> {
     }
     // A cold stat is also a wait, so overlap them (even if 449 take 0.02 seconds, under heavy IO pressure each waits one at a time).
     let metas = bulk_read::fan_out(files, |file| std::fs::metadata(file).ok());
-    by_blobs(root, files, &metas).or_else(|| by_stamps(files, &metas))
+    by_blobs(root, files, &metas, now_ns).or_else(|| by_stamps(files, &metas, now_ns))
 }
 
 /// Fingerprint of (path from the root, blob id of the contents): the same value across working trees. For a file whose stat equals the git index row it uses the index's id (without reading contents),
@@ -80,7 +85,7 @@ fn fingerprint(root: &Path, files: &[PathBuf]) -> Option<u64> {
 /// it reads the contents to build the id. None if many files deviate (more than `UNTRUSTED_AT_MOST`) or it is not a git working tree (leave it to the stat fingerprint: remembering per working tree
 /// is lighter than reading everything every time). None if a deviating file was updated less than `SETTLE_NS` ago (the id of a file that may be written while being read is not used as a fingerprint).
 /// A kind marker is mixed into the head so that it never equals the value of a stat fingerprint.
-fn by_blobs(root: &Path, files: &[PathBuf], metas: &[Option<Metadata>]) -> Option<u64> {
+fn by_blobs(root: &Path, files: &[PathBuf], metas: &[Option<Metadata>], now_ns: u128) -> Option<u64> {
     let index = GitIndex::of(root)?;
     let rels: Vec<String> = files.iter().map(|file| paths::relative_path(root, file)).collect::<Option<_>>()?;
     let known: Vec<Option<[u8; 20]>> = rels.iter().zip(metas).map(|(rel, meta)| index.blob_of(rel, meta.as_ref()?)).collect();
@@ -88,8 +93,7 @@ fn by_blobs(root: &Path, files: &[PathBuf], metas: &[Option<Metadata>]) -> Optio
     if untrusted.len() > UNTRUSTED_AT_MOST.max(files.len() / 8) {
         return None;
     }
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_nanos();
-    let settled = |at: &usize| metas[*at].as_ref().and_then(stamp).is_some_and(|(_, mtime_ns, _)| mtime_ns.saturating_add(SETTLE_NS) <= now);
+    let settled = |at: &usize| metas[*at].as_ref().and_then(stamp).is_some_and(|(_, mtime_ns, _)| mtime_ns.saturating_add(SETTLE_NS) <= now_ns);
     if !untrusted.iter().all(settled) {
         return None;
     }
@@ -123,13 +127,12 @@ fn by_vouched(root: &Path, files: &[PathBuf]) -> Option<u64> {
 }
 
 /// Fingerprint of (path, size, mtime, inode). None if there is a file updated less than `SETTLE_NS` ago or an unreadable file.
-fn by_stamps(files: &[PathBuf], metas: &[Option<Metadata>]) -> Option<u64> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_nanos();
+fn by_stamps(files: &[PathBuf], metas: &[Option<Metadata>], now_ns: u128) -> Option<u64> {
     let mut hash = Fnv::new();
     hash.mix(&(files.len() as u64).to_le_bytes());
     for (file, meta) in files.iter().zip(metas) {
         let (len, mtime_ns, inode) = stamp(meta.as_ref()?)?;
-        if mtime_ns.saturating_add(SETTLE_NS) > now {
+        if mtime_ns.saturating_add(SETTLE_NS) > now_ns {
             return None;
         }
         hash.mix(file.to_string_lossy().as_bytes());
@@ -245,8 +248,13 @@ mod tests {
         assert!(git(main.path(), &["worktree", "add", "-q", "--detach", other.to_str().unwrap()]));
         let shared = fingerprint(main.path(), &files(main.path()));
         assert!(shared.is_some());
-        // A file in a just-made working tree is within 2 seconds of its update (it may also be a racy row at the same instant as the index), and may be written while being read, so it is not remembered.
-        assert_eq!(fingerprint(&other, &files(&other)), None, "built a fingerprint for a just-written file");
+        // A file written a moment ago (here: its mtime moved off the index row, judged at the instant of that write) may be written while being read, so it is not remembered.
+        // "A moment ago" is fixed by the judging instant, not by how long `git worktree add` took (on a busy machine that alone passed `SETTLE_NS`).
+        for file in files(&other) {
+            set_age(&file, 0);
+        }
+        let written_ns = files(&other).iter().filter_map(|file| stamp(&std::fs::metadata(file).ok()?)).map(|(_, mtime_ns, _)| mtime_ns).max().unwrap();
+        assert_eq!(fingerprint_at(&other, &files(&other), written_ns), None, "built a fingerprint for a just-written file");
         // A file whose mtime deviates from the index row has its contents read to build the blob id; with the same contents it gets the same fingerprint as another working tree.
         for file in files(&other) {
             set_age(&file, 3600);
@@ -276,8 +284,9 @@ mod tests {
             set_age(file, 7200);
         }
         let metas: Vec<Option<Metadata>> = files.iter().map(|file| std::fs::metadata(file).ok()).collect();
-        assert_eq!(by_blobs(main.path(), &files, &metas), None, "built a fingerprint by reading contents even though 40 of 40 files deviate from the index");
-        assert_eq!(fingerprint(main.path(), &files), by_stamps(&files, &metas));
+        let now_ns = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        assert_eq!(by_blobs(main.path(), &files, &metas, now_ns), None, "built a fingerprint by reading contents even though 40 of 40 files deviate from the index");
+        assert_eq!(fingerprint_at(main.path(), &files, now_ns), by_stamps(&files, &metas, now_ns));
         assert_ne!(fingerprint(main.path(), &files), trusted);
     }
 
