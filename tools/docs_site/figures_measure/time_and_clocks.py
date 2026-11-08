@@ -15,6 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "examples" / "effects_tour"))
 
+from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.scheduler import scheduled
 from trading import (
     BARS,
     OPEN,
@@ -33,8 +35,6 @@ from trading import (
 )
 
 from doeff import Pass, Resume, Spawn, handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
 
 
 @dataclass
@@ -88,30 +88,55 @@ def traced_backtest(bars, seconds: float, heard: Heard):
 
 
 if __name__ == "__main__":
-    print("-- paper-passes-tick-on: printed(recorded(BARS)(paper(0.0005)(sma_cross(5, 20)))), quiet in place of printed")
+    print(
+        "-- paper-passes-tick-on: printed(recorded(BARS)(paper(0.0005)(sma_cross(5, 20)))), quiet in place of printed"
+    )
     heard = Heard()
-    run(quiet(recorded(BARS)(answers("outside paper", heard)(paper(0.0005)(answers("inside paper", heard)(sma_cross(5, 20)))))))
+    run(
+        quiet(
+            recorded(BARS)(
+                answers("outside paper", heard)(
+                    paper(0.0005)(answers("inside paper", heard)(sma_cross(5, 20)))
+                )
+            )
+        )
+    )
     for event in heard.events[:4]:
         print(" ", event)
     print(" ", next(event for event in heard.events if "Order" in event))
-    print("  an Order outside paper:", any(e.startswith("outside") and "Order" in e for e in heard.events))
+    print(
+        "  an Order outside paper:",
+        any(e.startswith("outside") and "Order" in e for e in heard.events),
+    )
     print(f"  the close of bar 20: {BARS[20].close}, the fill: {BARS[20].close * 1.0005}")
 
-    print("-- virtual-clock-jumps: scheduled(virtual_clock(OPEN)(stamped(timed_backtest(BARS, 60)))), quiet in place of stamped")
+    print(
+        "-- virtual-clock-jumps: scheduled(virtual_clock(OPEN)(stamped(timed_backtest(BARS, 60)))), quiet in place of stamped"
+    )
     seen, spawned = Heard(), Heard()
     started = time.monotonic()
-    pnl, ended = run(scheduled(spawns(spawned)(virtual_clock(OPEN)(quiet(traced_backtest(BARS, 60, seen))))))
+    pnl, ended = run(
+        scheduled(spawns(spawned)(virtual_clock(OPEN)(quiet(traced_backtest(BARS, 60, seen)))))
+    )
     print(f"  pnl {pnl} at {ended:%H:%M}, after {time.monotonic() - started:.3f} s")
-    print(f"  {seen.events.count('Delay')} Delay, {seen.events.count('Tick')} Tick; the clock spawned {len(spawned.events)} task")
+    print(
+        f"  {seen.events.count('Delay')} Delay, {seen.events.count('Tick')} Tick; the clock spawned {len(spawned.events)} task"
+    )
     print("  the first effects:", seen.events[:4])
 
     print("-- wall-clock-waits: the same 60 bars, 10 ms apart, on each clock")
     on_wall, on_virtual = Heard(), Heard()
     started = time.monotonic()
-    wall, _ = run(scheduled(await_handler(wall_clock(quiet(traced_backtest(BARS[:60], 0.01, on_wall))))))
+    wall, _ = run(
+        scheduled(await_handler(wall_clock(quiet(traced_backtest(BARS[:60], 0.01, on_wall)))))
+    )
     waited = time.monotonic() - started
-    virtual, clock_end = run(scheduled(virtual_clock(OPEN)(quiet(traced_backtest(BARS[:60], 0.01, on_virtual)))))
+    virtual, clock_end = run(
+        scheduled(virtual_clock(OPEN)(quiet(traced_backtest(BARS[:60], 0.01, on_virtual))))
+    )
     print(f"  wall clock: pnl {wall} after {waited:.3f} s")
-    print(f"  virtual clock: pnl {virtual}, {(clock_end - OPEN).total_seconds():.2f} s on its clock")
+    print(
+        f"  virtual clock: pnl {virtual}, {(clock_end - OPEN).total_seconds():.2f} s on its clock"
+    )
     counts = {name: on_wall.events.count(name) for name in ("Delay", "Tick", "Order", "Log")}
     print(f"  the same effects in the same order: {on_wall.events == on_virtual.events}; {counts}")

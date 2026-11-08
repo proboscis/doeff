@@ -71,7 +71,10 @@ PAPER_HANDLERS = [
     line(None, f"    {kw('@handler')}"),
     line("p-def", f"    {kw('def')} {fn('fill')}(effect: Tick | Order, k):"),
     line(None, f"        {kw('if')} isinstance(effect, Tick):"),
-    line("p-yield", f"            bar = {kw('yield')} effect  {co('# the data feed outside answers')}"),
+    line(
+        "p-yield",
+        f"            bar = {kw('yield')} effect  {co('# the data feed outside answers')}",
+    ),
     line("p-last", f"            last[0] = bar.close {kw('if')} bar {kw('else')} last[0]"),
     line("p-resume", f"            {kw('return')} ({kw('yield')} Resume(k, bar))"),
     line(
@@ -135,7 +138,10 @@ PAPER_STEPS = [
             "last": "None",
             "screen": "",
         },
-        tokens={"tick": {"from": end("s-tick"), **end("n-paper")}, "k": {"from": end("s-tick"), "at": "m-paper"}},
+        tokens={
+            "tick": {"from": end("s-tick"), **end("n-paper")},
+            "k": {"from": end("s-tick"), "at": "m-paper"},
+        },
     ),
     step(
         "<code>paper</code> yields the same <code>Tick</code> again, so it goes on out to <code>recorded</code>.",
@@ -174,7 +180,10 @@ PAPER_STEPS = [
         now=["s-buy"],
         marks=HOLDS,
         values={"bar": "Bar(t=20, close=102.44)", "last": "102.44"},
-        tokens={"order": {"from": end("s-buy"), **end("n-paper")}, "k2": {"from": end("s-buy"), "at": "m-paper"}},
+        tokens={
+            "order": {"from": end("s-buy"), **end("n-paper")},
+            "k2": {"from": end("s-buy"), "at": "m-paper"},
+        },
     ),
     step(
         "<code>paper</code> answers <code>Order</code> itself, at the last close plus 0.05%: 102.44 × 1.0005. "
@@ -194,7 +203,13 @@ PAPER_STEPS = [
         now=["s-log", "pr-def", "pr-print"],
         marks={"screen": "is-on"},
         values={"screen": "    t=20 buy  102.49"},
-        tokens={"log": {"from": end("s-log"), "via": [end("n-paper"), end("n-recorded")], **end("n-printed")}},
+        tokens={
+            "log": {
+                "from": end("s-log"),
+                "via": [end("n-paper"), end("n-recorded")],
+                **end("n-printed"),
+            }
+        },
     ),
 ]
 
@@ -221,7 +236,11 @@ CLOCK_RINGS = ring(
             ring(
                 "recorded",
                 "recorded(BARS)",
-                ring("paper", "paper(0.0005)", ring("finished", "finished_at", ring("bar", "bar_clock(60)", CLOCK_CORE))),
+                ring(
+                    "paper",
+                    "paper(0.0005)",
+                    ring("finished", "finished_at", ring("bar", "bar_clock(60)", CLOCK_CORE)),
+                ),
             ),
         ),
     ),
@@ -241,7 +260,10 @@ CLOCK_CODE = [
     line(None, f"{kw('def')} {fn('bar_clock')}(seconds: float):"),
     line(None, f"    {kw('@handler')}"),
     line("b-def", f"    {kw('def')} {fn('wait_for_bar')}(effect: Tick, k):"),
-    line("b-delay", f"        {kw('yield')} Delay(seconds)  {co('# the clock outside decides what waiting means')}"),
+    line(
+        "b-delay",
+        f"        {kw('yield')} Delay(seconds)  {co('# the clock outside decides what waiting means')}",
+    ),
     line("b-pass", f"        {kw('return')} ({kw('yield')} Resume(k, ({kw('yield')} effect)))"),
     line(None, ""),
     line(None, f"{kw('def')} {fn('virtual_clock')}(start: datetime):"),
@@ -251,7 +273,10 @@ CLOCK_CODE = [
     line(None, f"    advancing = {kw('False')}"),
     line(None, ""),
     line(None, f"    {kw('@do')}"),
-    line("a-def", f"    {kw('def')} {fn('advance')}():  {co('# idle priority: runs while every other task waits')}"),
+    line(
+        "a-def",
+        f"    {kw('def')} {fn('advance')}():  {co('# idle priority: runs while every other task waits')}",
+    ),
     line(None, f"        {kw('nonlocal')} now, advancing"),
     line("a-while", f"        {kw('while')} sleepers:"),
     line("a-pop", "            now, _, promise = heapq.heappop(sleepers)"),
@@ -270,7 +295,10 @@ CLOCK_CODE = [
     ),
     line("v-if", f"        {kw('if not')} advancing:"),
     line("v-adv", f"            advancing = {kw('True')}"),
-    line("v-spawn", f"            {kw('yield')} Spawn(advance(), priority=TaskPriority.IDLE, daemon={kw('True')})"),
+    line(
+        "v-spawn",
+        f"            {kw('yield')} Spawn(advance(), priority=TaskPriority.IDLE, daemon={kw('True')})",
+    ),
     line("v-wait", f"        {kw('yield')} Wait(promise.future)"),
     line("v-resume", f"        {kw('return')} ({kw('yield')} Resume(k, {NONE}))"),
     line(None, ""),
@@ -372,7 +400,13 @@ CLOCK_STEPS = [
         "Every other task waits, so <code>advance</code> runs. It pops 09:01, sets the time and completes the promise.",
         active="handlers",
         now=["a-while", "a-pop", "a-complete"],
-        marks={"m-bar": "is-on", "m-sched": "is-on", "core": "is-parked", "task-main": "is-parked", "task-adv": "is-now"},
+        marks={
+            "m-bar": "is-on",
+            "m-sched": "is-on",
+            "core": "is-parked",
+            "task-main": "is-parked",
+            "task-adv": "is-now",
+        },
         values={"time": "09:01", "heap": "[]", "adv": "runs"},
         tokens={"tick": {"at": "m-bar"}, "k": {"at": "m-sched"}},
     ),
@@ -385,7 +419,13 @@ CLOCK_STEPS = [
         tokens={
             "k": {"from": "m-sched", **end("n-bar"), "merge": True},
             "tick": {"from": "m-bar", "via": [end("n-paper")], **end("n-recorded"), "delay": 0.7},
-            "bar": {"from": end("n-recorded"), "via": [end("n-paper"), end("n-bar")], **end("s-tick"), "merge": True, "delay": 2.0},
+            "bar": {
+                "from": end("n-recorded"),
+                "via": [end("n-paper"), end("n-bar")],
+                **end("s-tick"),
+                "merge": True,
+                "delay": 2.0,
+            },
         },
     ),
     step(
@@ -405,7 +445,11 @@ CLOCK_STEPS = [
         now=["s-log", "st-def", "st-get", "v-if-get", "v-get", "st-print"],
         values={"time": "09:21", "heap": "[]", "screen": "    09:21 t=20 buy  102.49"},
         tokens={
-            "log": {"from": end("s-log"), "via": [end("n-bar"), end("n-paper")], **end("n-stamped")},
+            "log": {
+                "from": end("s-log"),
+                "via": [end("n-bar"), end("n-paper")],
+                **end("n-stamped"),
+            },
             "get": {"from": end("n-stamped"), **end("n-clock"), "delay": 1.3},
             "at": {"from": end("n-clock"), **end("n-stamped"), "merge": True, "delay": 2.0},
         },
@@ -424,7 +468,11 @@ CLOCK_STEPS = [
             "result": "pnl 50.79 at 14:01",
         },
         tokens={
-            "get2": {"from": end("n-finished"), "via": [end("n-paper"), end("n-recorded"), end("n-stamped")], **end("n-clock")},
+            "get2": {
+                "from": end("n-finished"),
+                "via": [end("n-paper"), end("n-recorded"), end("n-stamped")],
+                **end("n-clock"),
+            },
             "ended": {
                 "from": end("n-clock"),
                 "via": [end("n-stamped"), end("n-recorded"), end("n-paper")],
@@ -452,7 +500,13 @@ def stack(side: str, outside: str) -> str:
         ring(
             f"{side}-recorded",
             "recorded(BARS[:60])",
-            ring(f"{side}-paper", "paper(0.0005)", ring(f"{side}-finished", "finished_at", ring(f"{side}-bar", "bar_clock(0.01)", core))),
+            ring(
+                f"{side}-paper",
+                "paper(0.0005)",
+                ring(
+                    f"{side}-finished", "finished_at", ring(f"{side}-bar", "bar_clock(0.01)", core)
+                ),
+            ),
         ),
     )
     return ring(f"{side}-sched", "scheduled", outside.replace("INNER", inner))
@@ -567,7 +621,13 @@ SWAP_STEPS = [
         values={"loop": "asyncio.sleep(0.01), 10 ms"},
         tokens={
             "aw": {"from": end("n-R-await"), **end("R-loop-head"), "merge": True},
-            "kR": {"from": "m-R-wall", "via": INWARD_R, **end("n-R-bar"), "merge": True, "delay": 1.0},
+            "kR": {
+                "from": "m-R-wall",
+                "via": INWARD_R,
+                **end("n-R-bar"),
+                "merge": True,
+                "delay": 1.0,
+            },
         },
     ),
     step(
