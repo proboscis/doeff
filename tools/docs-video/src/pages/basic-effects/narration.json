@@ -21,15 +21,23 @@
  },
  {
   "id": "l1",
-  "text": "Local runs a sub-program over a changed environment."
+  "text": "Next, with_custom_config runs fetch_data with a staging URL."
  },
  {
   "id": "l2",
-  "text": "Inside it, Ask sees the override. The code inside is the same as ever."
+  "text": "First, Ask reads api_url, and Tell logs the default."
  },
  {
   "id": "l3",
-  "text": "When the sub-program returns, the environment is back as it was."
+  "text": "Then Local runs fetch_data over a changed environment."
+ },
+ {
+  "id": "l4",
+  "text": "Inside, Ask sees the override. The code of fetch_data is the same as ever."
+ },
+ {
+  "id": "l5",
+  "text": "When Local returns, Ask reads the default URL again."
  },
  {
   "id": "s1",
@@ -69,14 +77,30 @@
  },
  {
   "id": "c1",
-  "text": "Now put them together: one program, three handlers stacked around it."
+  "text": "Now put them together. application_workflow retries an operation and logs each try."
  },
  {
   "id": "c2",
-  "text": "Each effect travels out to the layer that handles it. Ask to reader, Get and Put to state, Tell to writer."
+  "text": "It reads max_retries, logs it, and sets attempt to zero."
  },
  {
   "id": "c3",
+  "text": "Each round, it counts and logs the attempt, then tries."
+ },
+ {
+  "id": "c4",
+  "text": "On success it returns. Otherwise it logs the failure, and goes round again."
+ },
+ {
+  "id": "c5",
+  "text": "Stack three handlers around it: reader, state, and writer."
+ },
+ {
+  "id": "c6",
+  "text": "Each effect goes out to the layer that handles it. Ask to reader, Tell to writer, Put and Get to state."
+ },
+ {
+  "id": "c7",
   "text": "The second attempt succeeds. The log holds every step, and the result is success."
  },
  {

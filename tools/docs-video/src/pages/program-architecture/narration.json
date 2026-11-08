@@ -57,18 +57,30 @@
  },
  {
   "id": "o1",
-  "text": "To watch the effects, wrap a program in WithObserve, with an observer."
+  "text": "To watch effects, take bump. It asks for a key, and gets that key's count."
  },
  {
   "id": "o2",
-  "text": "The observer is called with each effect dispatched in the body: Ask, Get, Put and Tell."
+  "text": "Then it puts the count plus one, logs it, and returns it."
  },
  {
   "id": "o3",
-  "text": "The answer is still forty two. Tell start is outside the body, so the observer does not see it."
+  "text": "watched first logs start."
  },
  {
   "id": "o4",
+  "text": "Then it runs bump inside WithObserve, with an observer."
+ },
+ {
+  "id": "o5",
+  "text": "The observer is called with each effect in the body. Ask, Get, Put, and Tell."
+ },
+ {
+  "id": "o6",
+  "text": "The answer is still forty two. Tell start is outside the body, so it is not seen."
+ },
+ {
+  "id": "o7",
   "text": "run has no trace flag. Observation composes into the program, like a handler."
  },
  {

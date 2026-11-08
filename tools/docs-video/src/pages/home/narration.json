@@ -13,10 +13,22 @@
  },
  {
   "id": "y2",
-  "text": "yield Fetch fetches nothing by itself. It hands a request, called an effect, outward."
+  "text": "This one, size_of, returns the length of the page at a URL."
  },
  {
   "id": "y3",
+  "text": "It asks for the page with yield Fetch,"
+ },
+ {
+  "id": "y4",
+  "text": "and returns the length of that page."
+ },
+ {
+  "id": "y5",
+  "text": "But yield Fetch fetches nothing by itself. It hands a request, called an effect, outward."
+ },
+ {
+  "id": "y6",
   "text": "A handler answers it. The answer comes back as page, and the code goes on."
  },
  {

@@ -77,24 +77,31 @@ const IntroScene: React.FC = () => {
   );
 };
 
-// Opening — what yield does in a doeff program: it hands an effect outward and gets the answer back.
+// Opening — what yield does in a doeff program. size_of is read from the top first, one line per headline (what it
+// returns, then each line), and only then does yield Fetch hand its effect outward and get the answer back.
 
 const YIELD_LINES: Lines = [
   [0, 'A doeff program is a Python generator, marked with @do.'],
-  [5, 'yield Fetch(url) fetches nothing by itself. It hands an effect outward.'],
-  [10, 'A handler answers it. The answer comes back as page, and the code goes on.'],
+  [6.6, 'This one, size_of, returns the length of the page at a URL.'],
+  [11.4, 'It asks for the page with yield Fetch(url),'],
+  [16.0, 'and returns the length of that page.'],
+  [19.2, 'yield Fetch(url) fetches nothing by itself. It hands an effect outward.'],
+  [26.6, 'A handler answers it. The answer comes back as page, and the code goes on.'],
 ];
-const YIELD = f(15);
+const YIELD = f(32);
 const SIZE_OF = ['@do', 'def size_of(url):', '    page = yield Fetch(url)', '    return len(page)'];
+// The line the band is on: [second, line] steps, each move taking 0.3 s; null before the first step.
+const YIELD_BAND: [number, number][] = [[6.9, 1], [11.7, 2], [16.3, 3], [19.5, 2], [28.6, 3]];
 
 const YieldScene: React.FC = () => {
   const frame = useSceneFrame();
   const code = {x: 90, y: 190, w: 600, size: 26, line: 46};
   const box = {x: 830, y: 230, w: 360, h: 150};
-  const band = frame < f(5.0) ? null : frame < f(12.0) ? 2 : mix(2, 3, ramp(frame, 12.0, 12.3));
-  const out = ramp(frame, 5.6, 6.6);
-  const back = ramp(frame, 10.6, 11.6);
-  const working = frame >= f(6.6) && frame < f(10.6);
+  const step = YIELD_BAND.reduce((found, [at], j) => (frame >= f(at) ? j : found), -1);
+  const band = step < 0 ? null : mix(step > 0 ? YIELD_BAND[step - 1][1] : YIELD_BAND[0][1], YIELD_BAND[step][1], ramp(frame, YIELD_BAND[step][0], YIELD_BAND[step][0] + 0.3));
+  const out = ramp(frame, 22.4, 23.4);
+  const back = ramp(frame, 27.2, 28.2);
+  const working = frame >= f(23.4) && frame < f(27.2);
   return (
     <AbsoluteFill>
       <Headlines lines={YIELD_LINES} />
@@ -102,35 +109,38 @@ const YieldScene: React.FC = () => {
       <div
         style={{
           position: 'absolute', left: code.x + 14, top: code.y + PAD - 2, width: 74, height: code.line + 4, boxSizing: 'border-box',
-          borderRadius: 8, border: `3px solid ${LOOK}`, boxShadow: `0 0 16px ${LOOK}88`, opacity: fadeAt(frame, 0.8) * (1 - ramp(frame, 4.6, 5.0)),
+          borderRadius: 8, border: `3px solid ${LOOK}`, boxShadow: `0 0 16px ${LOOK}88`, opacity: fadeAt(frame, 0.8) * (1 - ramp(frame, 6.2, 6.6)),
         }}
       />
-      <div style={{position: 'absolute', left: code.x, top: code.y + 230, width: 640, fontFamily: SANS, fontSize: 22, lineHeight: '32px', color: MUTED, opacity: fadeAt(frame, 1.2) * (1 - ramp(frame, 4.6, 5.0))}}>
+      <div style={{position: 'absolute', left: code.x, top: code.y + 230, width: 640, fontFamily: SANS, fontSize: 22, lineHeight: '32px', color: MUTED, opacity: fadeAt(frame, 1.2) * (1 - ramp(frame, 6.2, 6.6))}}>
         @do makes this generator a doeff program. It pauses at each yield.
       </div>
-      <div style={{position: 'absolute', left: code.x, top: code.y + 230, width: 640, fontFamily: SANS, fontSize: 22, lineHeight: '32px', color: MUTED, opacity: fadeAt(frame, 6.8) * (1 - ramp(frame, 11.6, 12.0))}}>
+      <div style={{position: 'absolute', left: code.x, top: code.y + 230, width: 640, fontFamily: SANS, fontSize: 22, lineHeight: '32px', color: MUTED, opacity: fadeAt(frame, 7.4) * (1 - ramp(frame, 18.8, 19.2))}}>
+        size_of(url) → the length of the page at url
+      </div>
+      <div style={{position: 'absolute', left: code.x, top: code.y + 230, width: 640, fontFamily: SANS, fontSize: 22, lineHeight: '32px', color: MUTED, opacity: fadeAt(frame, 23.6) * (1 - ramp(frame, 28.2, 28.6))}}>
         size_of() is paused here, waiting for the answer.
       </div>
       <div
         style={{
           position: 'absolute', left: box.x, top: box.y, width: box.w, height: box.h, boxSizing: 'border-box', borderRadius: 18, background: PANEL,
-          border: `3px solid ${TEST}`, ...glow(working, TEST), opacity: fadeAt(frame, 5.2),
+          border: `3px solid ${TEST}`, ...glow(working, TEST), opacity: fadeAt(frame, 22.0),
         }}
       >
         <div style={{position: 'absolute', left: 20, top: 16, fontFamily: SANS, fontSize: 26, fontWeight: 700, color: working ? LOOK : TEST}}>a handler</div>
         <div style={{position: 'absolute', left: 20, top: 58, fontFamily: SANS, fontSize: 19, color: MUTED}}>answers Fetch, for example</div>
         <div style={{position: 'absolute', left: 20, top: 86, fontFamily: SANS, fontSize: 19, color: MUTED}}>with a page from the web</div>
       </div>
-      {frame >= f(5.6) && frame < f(6.9) && (
-        <Pill x={mix(code.x + code.w + 70, box.x, out)} y={mix(lineMid(code.y, code.line, 2), box.y + 60, out)} text="Fetch(url)" color={ACCENT} opacity={1 - ramp(frame, 6.6, 6.9)} />
+      {frame >= f(22.4) && frame < f(23.7) && (
+        <Pill x={mix(code.x + code.w + 70, box.x, out)} y={mix(lineMid(code.y, code.line, 2), box.y + 60, out)} text="Fetch(url)" color={ACCENT} opacity={1 - ramp(frame, 23.4, 23.7)} />
       )}
-      {frame >= f(10.6) && frame < f(12.0) && (
-        <Pill x={mix(box.x, code.x + code.w + 70, back)} y={mix(box.y + 60, lineMid(code.y, code.line, 2), back)} text={'"<p>up</p>"'} color={TEST} opacity={1 - ramp(frame, 11.7, 12.0)} />
+      {frame >= f(27.2) && frame < f(28.6) && (
+        <Pill x={mix(box.x, code.x + code.w + 70, back)} y={mix(box.y + 60, lineMid(code.y, code.line, 2), back)} text={'"<p>up</p>"'} color={TEST} opacity={1 - ramp(frame, 28.3, 28.6)} />
       )}
       <div
         style={{
           position: 'absolute', left: code.x + 390, top: lineMid(code.y, code.line, 3), transform: 'translateY(-50%)', fontFamily: MONO, fontSize: 24,
-          fontWeight: 700, color: ACCENT, opacity: fadeAt(frame, 12.6),
+          fontWeight: 700, color: ACCENT, opacity: fadeAt(frame, 29.2),
         }}
       >
         → 9
@@ -496,7 +506,7 @@ const shownSpeedup = (slots: Slot[]) => {
 // The scenes in order; Root.tsx registers HOME.length frames of HOME.Video.
 export const HOME = narrate('home', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <IntroScene />},
-  {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['y1', 'y2', 'y3'], node: <YieldScene />},
+  {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['y1', 'y2', 'y3', 'y4', 'y5', 'y6'], node: <YieldScene />},
   {length: WANT, starts: startsOf(WANT_LINES), ids: ['w1', 'w2'], node: <WantScene />},
   {length: LAYER, starts: startsOf(LAYER_LINES), ids: ['l1', 'l2', 'l3'], node: <LayerScene />},
   {length: REST, starts: startsOf(REST_LINES), ids: ['r1', 'r2', 'r3'], node: <RestScene />},

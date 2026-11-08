@@ -220,14 +220,18 @@ const AskScene: React.FC = () => {
   );
 };
 
-// Scene 3 — Local: a sub-program over a changed env; the env is back after it (measure/reader.py).
+// Scene 3 — Local: a sub-program over a changed env; the env is back after it (measure/reader.py). with_custom_config
+// is read from the top, one headline per step: what it does, the lines before Local, Local and fetch_data inside it,
+// then the lines after it.
 
 const LOCAL_LINES: Lines = [
-  [0, 'Local runs a sub-program over a changed environment.'],
-  [5, 'Inside, Ask sees the override. The code inside is the same as ever.'],
-  [10, 'When the sub-program returns, the env is back as it was.'],
+  [0, 'Next, with_custom_config runs fetch_data with a staging URL.'],
+  [5.7, 'First, Ask reads api_url, and Tell logs the default.'],
+  [11.7, 'Then Local runs fetch_data over a changed environment.'],
+  [16.3, 'Inside, Ask sees the override. The code of fetch_data is the same as ever.'],
+  [22.6, 'When Local returns, Ask reads the default URL again.'],
 ];
-const LOCAL = f(15.5);
+const LOCAL = f(28.5);
 const OUTER = [
   '@do',
   'def with_custom_config():',
@@ -246,13 +250,14 @@ const LocalScene: React.FC = () => {
   const outer = {x: 40, y: 110, w: 640, size: 17, line: 27};
   const inner = {x: 40, y: 400, w: 640, size: 17, line: 27};
   const env = {x: 740, y: 110, w: 490, h: 250};
-  const outerBand = bandAt(frame, [[0.8, 2], [1.8, 3], [3.0, 4], [10.4, 7], [11.6, 8]]);
-  const insideBand = frame >= f(4.4) && frame < f(9.4) ? bandAt(frame, [[4.4, 2], [6.6, 3]]) : null;
-  const overlayIn = ramp(frame, 3.4, 4.2);
-  const overlayOut = ramp(frame, 9.4, 10.1);
+  const outerBand = bandAt(frame, [[0.6, 1], [6.0, 2], [8.6, 3], [12.0, 4], [22.9, 7], [25.0, 8]]);
+  const inside = frame >= f(13.4) && frame < f(22.6);
+  const insideBand = frame >= f(13.6) && frame < f(22.4) ? bandAt(frame, [[13.6, 1], [16.6, 2], [19.4, 3]]) : null;
+  const overlayIn = ramp(frame, 12.6, 13.4);
+  const overlayOut = ramp(frame, 22.6, 23.3);
   const overlay = overlayIn * (1 - overlayOut);
-  const baseLit = (frame >= f(0.9) && frame < f(2.0)) || (frame >= f(10.5) && frame < f(11.7));
-  const overLit = frame >= f(5.0) && frame < f(6.8);
+  const baseLit = (frame >= f(6.4) && frame < f(8.4)) || (frame >= f(23.3) && frame < f(25.0));
+  const overLit = frame >= f(16.9) && frame < f(19.0);
   const card = (y: number, text: string, lit: boolean, extra: React.CSSProperties) => (
     <div
       style={{
@@ -268,8 +273,8 @@ const LocalScene: React.FC = () => {
   return (
     <AbsoluteFill>
       <Headlines lines={LOCAL_LINES} />
-      <CodeBlock lines={OUTER} {...outer} band={outerBand} dim={(i) => (frame >= f(4.4) && frame < f(9.4) && i !== 4 ? 0.45 : 1)} opacity={fadeAt(frame, 0)} />
-      <CodeBlock lines={INNER} {...inner} band={insideBand} opacity={fadeAt(frame, 0.3) * (frame >= f(4.2) && frame < f(9.6) ? 1 : 0.55)} />
+      <CodeBlock lines={OUTER} {...outer} band={outerBand} dim={(i) => (inside && i !== 4 ? 0.45 : 1)} opacity={fadeAt(frame, 0)} />
+      <CodeBlock lines={INNER} {...inner} band={insideBand} opacity={fadeAt(frame, 0.3) * (frame >= f(13.2) && frame < f(22.8) ? 1 : 0.55)} />
       <Handler {...env} name="the env Ask sees" on={baseLit || overLit} opacity={fadeAt(frame, 0.4)}>
         {card(180, 'https://api.example.com', baseLit, {opacity: 1 - 0.6 * overlay})}
         {card(mix(40, 112, overlayIn), 'https://staging.example.com', overLit, {
@@ -280,12 +285,12 @@ const LocalScene: React.FC = () => {
       <Output
         x={740} y={400} w={490} h={150} title="writer log" size={16} opacity={fadeAt(frame, 0.4)}
         lines={[
-          [2.2, 'Default URL: https://api.example.com'],
-          [7.0, 'Fetching from https://staging.example.com'],
-          [12.0, 'Back to: https://api.example.com'],
+          [9.0, 'Default URL: https://api.example.com'],
+          [19.8, 'Fetching from https://staging.example.com'],
+          [25.4, 'Back to: https://api.example.com'],
         ]}
       />
-      <Caption x={40} y={540} w={640} color={TEST} opacity={fadeAt(frame, 12.6)}>
+      <Caption x={40} y={540} w={640} color={TEST} opacity={fadeAt(frame, 26.0)}>
         Local returned "data from https://staging.example.com", and the env is as it was.
       </Caption>
     </AbsoluteFill>
@@ -561,12 +566,21 @@ const SlogScene: React.FC = () => {
 };
 
 // Scene 7 — one program under reader, state and writer: each effect reaches its layer (measure/combined.py).
+// application_workflow is read from the top first (what it does, then its lines in order); only then are the
+// handlers stacked around it and the effects sent out, in the order the code yields them.
 
 const COMBINED_LINES: Lines = [
-  [0, 'Put them together: one program, three handlers stacked around it.'],
-  [5, 'Each effect travels out to the layer that handles it.'],
-  [17.5, 'Attempt 2 succeeds. The log holds every step; the result is success.'],
+  [0, 'application_workflow retries an operation and logs each try.'],
+  [7.6, 'It reads max_retries, logs it, and sets attempt to 0.'],
+  [13.4, 'Each round, it counts and logs the attempt, then tries.'],
+  [18.5, 'On success it returns. Otherwise it logs the failure, and goes round again.'],
+  [24.9, 'Stack three handlers around it: reader, state, and writer.'],
+  [30.0, 'Ask to reader, Tell to writer, Put and Get to state.'],
+  [45.7, 'Attempt 2 succeeds. The log holds every step; the result is success.'],
 ];
+// The lines read before the stack is shown: [second, line] steps.
+const READ_STEPS: [number, number][] = [[2.0, 1], [7.9, 2], [9.6, 3], [11.2, 4], [13.7, 5], [14.7, 6], [15.6, 7], [16.5, 8], [17.4, 9], [18.8, 10], [19.7, 11], [21.0, 12], [23.0, 5]];
+const READ_END = 24.9;
 const WORKFLOW = [
   '@do',
   'def application_workflow():',
@@ -606,7 +620,7 @@ const TRIPS: {effect: string; line: number; told?: string}[] = [
   {effect: 'Get', line: 9},
   {effect: 'Tell', line: 10, told: 'Operation succeeded'},
 ];
-const TRIP_FROM = 5.4;
+const TRIP_FROM = 33.6;
 const TRIP_EVERY = 0.9;
 const tripAt = (i: number) => TRIP_FROM + i * TRIP_EVERY;
 const COMBINED = f(tripAt(TRIPS.length) + 8);
@@ -618,7 +632,10 @@ const CombinedScene: React.FC = () => {
   const col = {y: 150, w: 160, h: 340};
   const done = tripAt(TRIPS.length);
   const at = TRIPS.reduce((found, _, i) => (frame >= f(tripAt(i)) ? i : found), -1);
-  const band = at < 0 ? null : frame >= f(done + 0.2) ? mix(TRIPS[TRIPS.length - 1].line, 11, ramp(frame, done + 0.2, done + 0.5)) : TRIPS[at].line;
+  const band =
+    at < 0
+      ? frame < f(READ_END) ? bandAt(frame, READ_STEPS) : null
+      : frame >= f(done + 0.2) ? mix(TRIPS[TRIPS.length - 1].line, 11, ramp(frame, done + 0.2, done + 0.5)) : TRIPS[at].line;
   const on = (layer: number) =>
     TRIPS.some((trip, i) => LAYER_OF[trip.effect] === layer && frame >= f(tripAt(i) + 0.55) && frame < f(tripAt(i) + 0.85)) ||
     (layer === 1 && TRIPS.some((trip, i) => trip.effect === 'Tell' && frame >= f(tripAt(i) + 0.8) && frame < f(tripAt(i) + 0.95)));
@@ -626,7 +643,7 @@ const CombinedScene: React.FC = () => {
   return (
     <AbsoluteFill>
       <Headlines lines={COMBINED_LINES} />
-      <div style={{position: 'absolute', left: code.x, top: 100, fontFamily: MONO, fontSize: 17, color: TEXT, whiteSpace: 'nowrap', opacity: fadeAt(frame, 1.0)}}>
+      <div style={{position: 'absolute', left: code.x, top: 100, fontFamily: MONO, fontSize: 17, color: TEXT, whiteSpace: 'nowrap', opacity: fadeAt(frame, 25.2)}}>
         <span style={{color: TEST}}>reader(env={'{"max_retries": 3}'})</span>(<span style={{color: TEST}}>state()</span>(<span style={{color: TEST}}>writer</span>(application_workflow())))
       </div>
       <CodeBlock lines={WORKFLOW} {...code} band={band} opacity={fadeAt(frame, 0)} />
@@ -635,7 +652,7 @@ const CombinedScene: React.FC = () => {
           key={column.name}
           style={{
             position: 'absolute', left: colX(i), top: col.y, width: col.w, height: col.h, boxSizing: 'border-box', borderRadius: 16, background: PANEL,
-            border: `3px solid ${TEST}`, ...glow(on(i), TEST), opacity: fadeAt(frame, 1.4 + i * 0.6, 0.5),
+            border: `3px solid ${TEST}`, ...glow(on(i), TEST), opacity: fadeAt(frame, 28.8 - i * 0.9, 0.5),
           }}
         >
           <div style={{position: 'absolute', left: 14, top: 10, fontFamily: MONO, fontSize: 20, fontWeight: 700, color: on(i) ? LOOK : TEST}}>{column.name}</div>
@@ -660,10 +677,10 @@ const CombinedScene: React.FC = () => {
           </React.Fragment>
         );
       })}
-      <Caption x={code.x} y={515} w={650} opacity={fadeAt(frame, 7.0) * (1 - ramp(frame, done, done + 0.3))}>
+      <Caption x={code.x} y={515} w={650} opacity={fadeAt(frame, TRIP_FROM + 1.6) * (1 - ramp(frame, done, done + 0.3))}>
         For each Tell, writer sends its own Get on to state (and a Put the first time).
       </Caption>
-      <Output x={720} y={510} w={510} h={190} title="writer log" size={17} opacity={fadeAt(frame, 2.0)} lines={told} />
+      <Output x={720} y={510} w={510} h={190} title="writer log" size={17} opacity={fadeAt(frame, 29.4)} lines={told} />
       <div style={{position: 'absolute', left: code.x, top: code.y + 13 * code.line + 50, fontFamily: MONO, fontSize: 26, fontWeight: 700, color: ACCENT, opacity: fadeAt(frame, done + 0.6)}}>
         → "success"
       </div>
@@ -696,10 +713,10 @@ const Outro: React.FC = () => {
 export const BASIC_EFFECTS = narrate('basic-effects', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <IntroScene />},
   {length: ASK, starts: startsOf(ASK_LINES), ids: ['r1', 'r2', 'r3'], node: <AskScene />},
-  {length: LOCAL, starts: startsOf(LOCAL_LINES), ids: ['l1', 'l2', 'l3'], node: <LocalScene />},
+  {length: LOCAL, starts: startsOf(LOCAL_LINES), ids: ['l1', 'l2', 'l3', 'l4', 'l5'], node: <LocalScene />},
   {length: STATE, starts: startsOf(STATE_LINES), ids: ['s1', 's2', 's3'], node: <StateScene />},
   {length: WRITER, starts: startsOf(WRITER_LINES), ids: ['w1', 'w2', 'w3'], node: <WriterScene />},
   {length: SLOG, starts: startsOf(SLOG_LINES), ids: ['g1', 'g2', 'g3'], node: <SlogScene />},
-  {length: COMBINED, starts: startsOf(COMBINED_LINES), ids: ['c1', 'c2', 'c3'], node: <CombinedScene />},
+  {length: COMBINED, starts: startsOf(COMBINED_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7'], node: <CombinedScene />},
   {length: OUTRO, starts: [0], ids: ['o1'], node: <Outro />},
 ]);

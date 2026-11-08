@@ -432,31 +432,42 @@ const CallsScene: React.FC = () => {
   );
 };
 
-// Scene 5 — WithObserve(observer, body) sees each effect dispatched in its body (measure/observe.py).
+// Scene 5 — WithObserve(observer, body) sees each effect dispatched in its body (measure/observe.py). Both functions
+// are read from the top first, bump and then watched, one headline per step; only then do the effects fly to the observer.
 
 const OBSERVE_LINES: Lines = [
-  [0, 'To watch the effects, wrap a program in WithObserve(observer, body).'],
-  [6, 'The observer gets each effect dispatched in the body: Ask, Get, Put, Tell.'],
-  [13.6, 'The answer is still 42. Tell("start") is outside the body, so it is not seen.'],
-  [20.2, 'run has no trace flag. Observation composes into the program, like a handler.'],
+  [0, 'To watch effects, take bump. It asks for a key, and gets its count.'],
+  [6.1, 'Then it puts the count plus one, logs it, and returns it.'],
+  [10.8, 'watched first logs "start".'],
+  [13.6, 'Then it runs bump inside WithObserve, with an observer.'],
+  [18.7, 'The observer is called with each effect in the body: Ask, Get, Put, Tell.'],
+  [25.5, 'The answer is still 42. Tell("start") is outside the body, so it is not seen.'],
+  [32.2, 'run has no trace flag. Observation composes into the program, like a handler.'],
 ];
-const OBSERVE = f(27);
+const OBSERVE = f(39);
+// The lines of bump read from the top before anything flies: [second, line] steps, each move taking 0.3 s.
+const BUMP_READ: [number, number][] = [[0.6, 1], [2.6, 2], [4.2, 3], [6.4, 4], [7.9, 5], [9.3, 6]];
+const BUMP_READ_END = 10.8;
 const BUMP = ['@do', 'def bump():', '    key = yield Ask("key")', '    current = yield Get(key)', '    yield Put(key, current + 1)', '    yield Tell(f"{key} is {current + 1}")', '    return current + 1'];
 const WATCHED = ['@do', 'def watched():', '    yield Tell("start")', '    return (yield WithObserve(seen.append, bump()))'];
 const OB = {x: 60, w: 620, size: 18, line: 28, bump: 118, watched: 362};
 const OBS = {x: 720, y: 118, w: 500, h: 330};
 const SEEN = [
-  {line: 2, text: "Ask('key')", at: 6.4},
-  {line: 3, text: "Get('count')", at: 7.8},
-  {line: 4, text: "Put('count', 42)", at: 9.2},
-  {line: 5, text: "Tell('count is 42')", at: 10.6},
+  {line: 2, text: "Ask('key')", at: 22.0},
+  {line: 3, text: "Get('count')", at: 22.9},
+  {line: 4, text: "Put('count', 42)", at: 23.8},
+  {line: 5, text: "Tell('count is 42')", at: 24.7},
 ];
 
 const ObserveScene: React.FC = () => {
   const frame = useSceneFrame();
   const current = SEEN.reduce((found, s, i) => (frame >= f(s.at) ? i : found), -1);
-  const bumpBand = frame >= f(6.4) && frame < f(12.6) ? SEEN[current].line : null;
-  const watchedBand = frame >= f(15.4) && frame < f(19.6) ? 2 : frame >= f(1.6) && frame < f(6.4) ? 3 : null;
+  const read = BUMP_READ.reduce((found, [at], j) => (frame >= f(at) ? j : found), -1);
+  const bumpBand =
+    read >= 0 && frame < f(BUMP_READ_END)
+      ? mix(BUMP_READ[Math.max(read - 1, 0)][1], BUMP_READ[read][1], ramp(frame, BUMP_READ[read][0], BUMP_READ[read][0] + 0.3))
+      : current >= 0 && frame < f(25.6) ? SEEN[current].line : null;
+  const watchedBand = during(frame, 11.1, 18.7) ? mix(2, 3, ramp(frame, 13.9, 14.2)) : during(frame, 28.2, 31.8) ? 2 : null;
   const rowY = (i: number) => OBS.y + 78 + i * 56;
   return (
     <AbsoluteFill>
@@ -465,17 +476,17 @@ const ObserveScene: React.FC = () => {
       <div
         style={{
           position: 'absolute', left: OB.x - 8, top: OB.bump - 8, width: OB.w + 16, height: codeH(BUMP.length, OB.line) + 16, boxSizing: 'border-box', borderRadius: 18,
-          border: `3px dashed ${LOOK}`, opacity: fadeAt(frame, 2.6),
+          border: `3px dashed ${LOOK}`, opacity: fadeAt(frame, 14.8),
         }}
       />
-      <Label x={OB.x + OB.w - 200} y={OB.bump + 10} size={16} bold color={LOOK} opacity={fadeAt(frame, 2.6)}>
+      <Label x={OB.x + OB.w - 200} y={OB.bump + 10} size={16} bold color={LOOK} opacity={fadeAt(frame, 14.8)}>
         the body: observed
       </Label>
-      <CodeBlock lines={WATCHED} x={OB.x} y={OB.watched} w={OB.w} size={OB.size} line={OB.line} band={watchedBand} opacity={fadeAt(frame, 0.8)} />
-      <Label x={OB.x} y={OB.watched + codeH(WATCHED.length, OB.line) + 8} size={17} bold color={MUTED} opacity={between(frame, 15.6, 20.0)}>
+      <CodeBlock lines={WATCHED} x={OB.x} y={OB.watched} w={OB.w} size={OB.size} line={OB.line} band={watchedBand} opacity={fadeAt(frame, 10.8)} />
+      <Label x={OB.x} y={OB.watched + codeH(WATCHED.length, OB.line) + 8} size={17} bold color={MUTED} opacity={between(frame, 28.4, 32.0)}>
         ↑ Tell("start") is before the body: not observed
       </Label>
-      <Box x={OBS.x} y={OBS.y} w={OBS.w} h={OBS.h} color={ACCENT} dashed opacity={fadeAt(frame, 3.4, 0.5)}>
+      <Box x={OBS.x} y={OBS.y} w={OBS.w} h={OBS.h} color={ACCENT} dashed opacity={fadeAt(frame, 16.0, 0.5)}>
         <div style={{position: 'absolute', left: 20, top: 14, fontFamily: SANS, fontSize: 20, fontWeight: 700, color: ACCENT}}>
           the observer: <span style={{fontFamily: MONO}}>seen.append</span>
         </div>
@@ -491,7 +502,7 @@ const ObserveScene: React.FC = () => {
             <div
               style={{
                 position: 'absolute', left: OBS.x + 24, top: rowY(i), width: OBS.w - 48, height: 40, boxSizing: 'border-box', borderRadius: 10, background: '#0b0d13',
-                border: `2px solid ${i === current && frame < f(12.6) ? LOOK : '#3a3f58'}`, fontFamily: MONO, fontSize: 18, lineHeight: '36px', paddingLeft: 14,
+                border: `2px solid ${i === current && frame < f(25.6) ? LOOK : '#3a3f58'}`, fontFamily: MONO, fontSize: 18, lineHeight: '36px', paddingLeft: 14,
                 color: TEXT, opacity: fadeAt(frame, s.at + 0.8),
               }}
             >
@@ -500,22 +511,22 @@ const ObserveScene: React.FC = () => {
           </React.Fragment>
         );
       })}
-      <Box x={OBS.x} y={470} w={OBS.w} h={110} color={TEST} opacity={fadeAt(frame, 13.9, 0.4)}>
+      <Box x={OBS.x} y={470} w={OBS.w} h={110} color={TEST} opacity={fadeAt(frame, 25.8, 0.4)}>
         <div style={{position: 'absolute', left: 22, top: 14, fontFamily: MONO, fontSize: 21, lineHeight: '40px', color: TEXT}}>
-          <div style={{opacity: fadeAt(frame, 14.0)}}>
+          <div style={{opacity: fadeAt(frame, 25.9)}}>
             run(... plain())   <span style={{color: MUTED}}>→</span> <span style={{color: TEST}}>42</span>
           </div>
-          <div style={{opacity: fadeAt(frame, 14.6)}}>
+          <div style={{opacity: fadeAt(frame, 26.5)}}>
             run(... watched()) <span style={{color: MUTED}}>→</span> <span style={{color: TEST}}>42</span>
           </div>
         </div>
       </Box>
-      <div style={{position: 'absolute', left: 0, right: 0, top: 606, textAlign: 'center', fontFamily: MONO, fontSize: 23, color: TEXT, opacity: fadeAt(frame, 20.6)}}>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 606, textAlign: 'center', fontFamily: MONO, fontSize: 23, color: TEXT, opacity: fadeAt(frame, 32.6)}}>
         <span style={{color: MUTED, textDecoration: 'line-through'}}>run(program, trace=True)</span>
         <span style={{color: MUTED, margin: '0 22px'}}>→</span>
         <span style={{color: ACCENT, fontWeight: 700}}>run(WithObserve(observer, program))</span>
       </div>
-      <Label x={640} y={650} size={19} center opacity={fadeAt(frame, 21.6)}>
+      <Label x={640} y={650} size={19} center opacity={fadeAt(frame, 33.6)}>
         observation is part of the program, wrapped around it like a handler
       </Label>
     </AbsoluteFill>
@@ -672,7 +683,7 @@ export const PROGRAM_ARCHITECTURE = narrate('program-architecture', DURATIONS, N
   {length: DATA, starts: startsOf(DATA_LINES), ids: ['p1', 'p2', 'p3', 'p4'], node: <DataScene />},
   {length: STACK, starts: startsOf(STACK_LINES), ids: ['s1', 's2', 's3', 's4'], node: <StackScene />},
   {length: CALLS, starts: startsOf(CALLS_LINES), ids: ['c1', 'c2', 'c3'], node: <CallsScene />},
-  {length: OBSERVE, starts: startsOf(OBSERVE_LINES), ids: ['o1', 'o2', 'o3', 'o4'], node: <ObserveScene />},
+  {length: OBSERVE, starts: startsOf(OBSERVE_LINES), ids: ['o1', 'o2', 'o3', 'o4', 'o5', 'o6', 'o7'], node: <ObserveScene />},
   {length: ASYNC, starts: startsOf(ASYNC_LINES), ids: ['a1', 'a2', 'a3', 'a4'], node: <AsyncScene />},
   {length: OUTRO, starts: [0], ids: ['z1'], node: <OutroScene />},
 ]);
