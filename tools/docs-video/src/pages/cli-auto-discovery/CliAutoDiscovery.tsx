@@ -373,7 +373,7 @@ const EnvScene: React.FC = () => {
 const RUN_LINES: Lines = [
   [0, 'Then doeff run calls auth_interpreter with the program, and the merged env as env.'],
   [6, 'The interpreter installs its handlers around the program. reader holds the merged env.'],
-  [11, 'login() yields Ask("db_host"), then Ask("timeout"). reader answers each, and k resumes.'],
+  [11, 'login() yields Ask("db_host"), then Ask("timeout"). reader answers each, and that yield\'s k resumes once.'],
   [17.5, 'The program never named a handler or a config file. It returns "localhost, timeout 30".'],
 ];
 const RUN = f(24);
@@ -439,9 +439,11 @@ const RunScene: React.FC = () => {
           )}
         </React.Fragment>
       ))}
-      <Label x={rCode.x} y={rCode.y + rH + 4} size={16} bold color={ACCENT} opacity={between(frame, 12.4, 16.4)}>
-        <span style={{fontFamily: MONO}}>k</span> resumes with the answer
-      </Label>
+      {trips.map((trip) => (
+        <Label key={trip.ask} x={rCode.x} y={rCode.y + rH + 4} size={16} bold color={ACCENT} opacity={between(frame, trip.leave + 1.6, trip.leave + 2.6)}>
+          the <span style={{fontFamily: MONO}}>k</span> of <span style={{fontFamily: MONO}}>yield {trip.ask}</span> resumes once
+        </Label>
+      ))}
       <div style={{position: 'absolute', left: 0, right: 0, top: 676, textAlign: 'center', fontFamily: MONO, fontSize: 22, fontWeight: 700, color: ACCENT, opacity: fadeAt(frame, 17.6)}}>
         {"→ 'localhost, timeout 30'"}
       </div>

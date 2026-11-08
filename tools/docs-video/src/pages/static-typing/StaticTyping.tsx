@@ -78,55 +78,73 @@ const Box: React.FC<{x: number; y: number; w: number; h: number; name: string; n
 
 // Scene 1 — the three things a checker checks, on one round trip of an effect.
 
+// The scene's motions one at a time, each starting 0.9 s after the one before it has stopped: the two boxes, one
+// round trip of ReadClock (out, then the answer back), the note on the shipped types, the note clearing, and the
+// three checks. A check waits longer when its line needs the time.
+const PAUSE = 0.9;
+type Step = {from: number; to: number};
+const chain = <K extends string>(start: number, motions: [K, number, number?][]): Record<K, Step> => {
+  let at = start;
+  const steps = {} as Record<K, Step>;
+  motions.forEach(([name, seconds, pause = PAUSE], i) => {
+    const from = i === 0 ? at : at + pause;
+    steps[name] = {from, to: from + seconds};
+    at = from + seconds;
+  });
+  return steps;
+};
+const STEPS = chain(0.3, [
+  ['program', 0.3], ['handler', 0.3], ['out', 1.4], ['back', 1.4], ['note', 0.3], ['clear', 0.4],
+  ['check1', 0.5], ['check2', 0.5, 5.5], ['check3', 0.5, 3.1],
+]);
+
 const INTRO_LINES: Lines = [
   [0, 'Static typing in doeff: the checker follows your effects out and back.'],
-  [6.5, '1. The value each effect answers with.'],
-  [12.5, '2. The effects a program may yield.'],
-  [16, '3. The value a handler answers with.'],
+  [STEPS.check1.from, '1. The value each effect answers with.'],
+  [STEPS.check2.from, '2. The effects a program may yield.'],
+  [STEPS.check3.from, '3. The value a handler answers with.'],
 ];
-const INTRO = f(20);
+const INTRO = f(STEPS.check3.from + 4);
 const CHECKS = [
-  {n: '1', what: 'what ReadClock answers', type: 'int', at: 6.5, color: ACCENT},
-  {n: '2', what: 'what elapsed may yield', type: 'ReadClock', at: 12.5, color: TEXT},
-  {n: '3', what: 'what clock answers with', type: 'int', at: 16, color: TEST},
+  {n: '1', what: 'what ReadClock answers', type: 'int', at: STEPS.check1.from, color: ACCENT},
+  {n: '2', what: 'what elapsed may yield', type: 'ReadClock', at: STEPS.check2.from, color: TEXT},
+  {n: '3', what: 'what clock answers with', type: 'int', at: STEPS.check3.from, color: TEST},
 ];
 
 const IntroScene: React.FC = () => {
   const frame = useSceneFrame();
   const prog = {x: 90, y: 170, w: 330, h: 190};
   const hand = {x: 860, y: 170, w: 330, h: 190};
-  // One round trip every 4 s: ReadClock out (0.6 to 1.8), the answer back (2.2 to 3.4).
-  const t = (frame / f(1)) % 4;
-  const out = interpolate(t, [0.6, 1.8], [0, 1], clamp);
-  const back = interpolate(t, [2.2, 3.4], [0, 1], clamp);
+  // One round trip: ReadClock out (1.2 s, then 0.2 s fading), the answer back the same way.
+  const {program, handler, out, back, note, clear} = STEPS;
   const which = CHECKS.reduce((found, c, i) => (frame >= f(c.at) ? i : found), -1);
   const fromX = prog.x + prog.w + 20;
   const toX = hand.x - 20;
   return (
     <AbsoluteFill>
       <Headlines lines={INTRO_LINES} />
-      <Box {...prog} name="elapsed(400)" note="a program" color={ACCENT} on={which === 1} opacity={fadeAt(frame, 0.3)} />
-      <div style={{position: 'absolute', left: prog.x + 16, top: prog.y + 80, fontFamily: MONO, fontSize: 17, lineHeight: '28px', color: TEXT, opacity: fadeAt(frame, 0.6)}}>
+      <Box {...prog} name="elapsed(400)" note="a program" color={ACCENT} on={which === 1} opacity={fadeAt(frame, program.from)} />
+      <div style={{position: 'absolute', left: prog.x + 16, top: prog.y + 80, fontFamily: MONO, fontSize: 17, lineHeight: '28px', color: TEXT, opacity: fadeAt(frame, program.from)}}>
         <div>now = <span style={{color: ACCENT, fontWeight: 700}}>yield</span> from ReadClock()</div>
         <div>return now - since</div>
       </div>
-      <Box {...hand} name="clock" note="a handler" color={TEST} on={which === 2} opacity={fadeAt(frame, 0.6)} />
-      <div style={{position: 'absolute', left: hand.x + 16, top: hand.y + 80, fontFamily: MONO, fontSize: 17, lineHeight: '28px', color: TEXT, opacity: fadeAt(frame, 0.9)}}>
+      <Box {...hand} name="clock" note="a handler" color={TEST} on={which === 2} opacity={fadeAt(frame, handler.from)} />
+      <div style={{position: 'absolute', left: hand.x + 16, top: hand.y + 80, fontFamily: MONO, fontSize: 17, lineHeight: '28px', color: TEXT, opacity: fadeAt(frame, handler.from)}}>
         <div style={{whiteSpace: 'pre'}}>typed_resume(effect, k,</div>
         <div style={{whiteSpace: 'pre'}}>             now_ms())</div>
       </div>
-      {t >= 0.6 && t < 2.0 && frame >= f(1) && (
-        <Pill x={mix(fromX, toX, out)} y={prog.y + 60} text="ReadClock()" color={ACCENT} opacity={1 - interpolate(t, [1.8, 2.0], [0, 1], clamp)} />
+      {frame >= f(out.from) && frame < f(out.to) && (
+        <Pill x={mix(fromX, toX, ramp(frame, out.from, out.to - 0.2))} y={prog.y + 60} text="ReadClock()" color={ACCENT} opacity={1 - ramp(frame, out.to - 0.2, out.to)} />
       )}
-      {t >= 2.2 && t < 3.6 && frame >= f(1) && (
-        <Pill x={mix(toX, fromX, back)} y={prog.y + 140} text="1000" color={TEST} opacity={1 - interpolate(t, [3.4, 3.6], [0, 1], clamp)} />
+      {frame >= f(back.from) && frame < f(back.to) && (
+        <Pill x={mix(toX, fromX, ramp(frame, back.from, back.to - 0.2))} y={prog.y + 140} text="1000" color={TEST} opacity={1 - ramp(frame, back.to - 0.2, back.to)} />
       )}
-      <Label x={fromX + 40} y={prog.y - 4} size={17} bold={false} opacity={fadeAt(frame, 1.2) * (which === 0 ? 1 : 0.6)}>the effect travels out</Label>
-      <Label x={fromX + 40} y={prog.y + 170} size={17} bold={false} opacity={fadeAt(frame, 1.6) * (which === 2 ? 1 : 0.6)}>the answer comes back</Label>
-      <Label x={90} y={470} size={22} color={TEXT} opacity={fadeAt(frame, 2.4) * (1 - ramp(frame, 6.0, 6.4))}>
+      <Label x={fromX + 40} y={prog.y - 4} size={17} bold={false} opacity={fadeAt(frame, out.from) * (which === 0 ? 1 : 0.6)}>the effect travels out</Label>
+      <Label x={fromX + 40} y={prog.y + 170} size={17} bold={false} opacity={fadeAt(frame, back.from) * (which === 2 ? 1 : 0.6)}>the answer comes back</Label>
+      <Label x={90} y={470} size={22} color={TEXT} opacity={fadeAt(frame, note.from) * (1 - ramp(frame, clear.from, clear.to))}>
         doeff ships its types (py.typed): pyright and mypy read them.
       </Label>
-      <Label x={90} y={508} size={22} bold={false} opacity={fadeAt(frame, 3.4) * (1 - ramp(frame, 6.0, 6.4))}>
+      <Label x={90} y={508} size={22} bold={false} opacity={fadeAt(frame, note.from) * (1 - ramp(frame, clear.from, clear.to))}>
         The types travel with the effect, and with the answer that comes back.
       </Label>
       {CHECKS.map((c, i) => {

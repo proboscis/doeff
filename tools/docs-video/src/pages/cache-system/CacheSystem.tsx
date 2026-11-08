@@ -235,10 +235,10 @@ const MissScene: React.FC = () => {
         rows={[{key: '"my_key"', value: '42', at: 18.8, lit: [[18.8, 19.8], [23.4, 24.6]]}]}
       />
       <Label x={cache.x} y={cache.y + cache.h + 12} size={17} color={FAIL} opacity={between(frame, 7.4, 12.6)}>
-        ResumeThrow(k, KeyError("my_key"))
+        ResumeThrow(k of call 1, KeyError("my_key"))
       </Label>
       <Label x={cache.x} y={cache.y + cache.h + 12} size={17} color={TEST} opacity={between(frame, 24.4, 28.2)}>
-        Resume(k, 42)
+        Resume(k of call 2, 42)
       </Label>
       {/* First call: the ask, the miss thrown back in, the work, and the store. */}
       <Travel from={out} to={into} at={1.6} text='CacheGet("my_key")' color={ACCENT} />

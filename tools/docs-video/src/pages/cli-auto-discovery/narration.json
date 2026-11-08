@@ -65,7 +65,7 @@
  },
  {
   "id": "r3",
-  "text": "login yields Ask for the database host, then Ask for the timeout. reader answers each one, and k resumes."
+  "text": "login yields Ask for the database host, then Ask for the timeout. reader answers each one, and that yield's k resumes once."
  },
  {
   "id": "r4",
