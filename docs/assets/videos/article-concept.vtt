@@ -1,0 +1,41 @@
+WEBVTT
+
+c1
+00:00:00.250 --> 00:00:05.100
+Here is the idea of doeff, a Python library, in a minute.
+
+c2
+00:00:06.250 --> 00:00:10.350
+doeff lets you write algebraic effects in Python.
+
+c3
+00:00:12.250 --> 00:00:17.650
+A function asks for what it needs by yielding an effect. It never says who will answer.
+
+c4
+00:00:21.250 --> 00:00:24.950
+The answer comes from handlers stacked outside the function.
+
+c5
+00:00:27.250 --> 00:00:31.050
+A handler gets the effect and k, the rest of the function.
+
+c6
+00:00:32.250 --> 00:00:36.700
+It can resume k, keep k for later, or never resume it.
+
+c7
+00:00:37.250 --> 00:00:40.550
+Whatever it picks, k is resumed at most once.
+
+c8
+00:00:41.750 --> 00:00:49.850
+So one function runs unchanged under many stacks. Tests, replay, bots, many at once, production.
+
+c9
+00:00:51.750 --> 00:00:58.650
+To start, pip install doeff. Then you need three things: @do, yield, and a handler.
+
+c10
+00:00:59.250 --> 00:01:03.400
+This article runs one card fight function under six stacks.
