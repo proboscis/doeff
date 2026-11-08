@@ -109,7 +109,7 @@ def test_the_worker_turns_the_hook_off_for_the_roots_it_prepares() -> None:
     assert (hook, "off") in {(v.name, v.value) for v in native_wheel.uv_environment("/state", "/cache")}
 
 
-class _Started(Exception):
+class _StartedError(Exception):
     """Raised by the recorded subprocess.run in place of starting the expansion process (carries the command)."""
 
     def __init__(self, command: list[str]) -> None:
@@ -118,7 +118,7 @@ class _Started(Exception):
 
 
 def _started(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
-    raise _Started(command)
+    raise _StartedError(command)
 
 
 def _hook_command(monkeypatch: pytest.MonkeyPatch, package: Path) -> tuple[str, ...] | None:
@@ -132,7 +132,8 @@ def _hook_command(monkeypatch: pytest.MonkeyPatch, package: Path) -> tuple[str, 
     interface.BuildHookInterface = object  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, interface.__name__, interface)
     spec = importlib.util.spec_from_file_location("doeff_hy_stub_hook_probe", HOOK)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     monkeypatch.setattr(hook, "subprocess", types.SimpleNamespace(run=_started))
@@ -140,7 +141,7 @@ def _hook_command(monkeypatch: pytest.MonkeyPatch, package: Path) -> tuple[str, 
     probe = types.SimpleNamespace(root=str(package), config={"stub-root": made.stub_root, "stub-dirs": list(made.stub_dirs)})
     try:
         hook.HyStubHook.initialize(probe, "editable", {})
-    except _Started as started:
+    except _StartedError as started:
         return started.command
     return None
 
@@ -153,7 +154,8 @@ def test_the_hook_starts_no_expansion_when_turned_off(monkeypatch: pytest.Monkey
     package = ROOT / "packages" / "doeff-cluster"
     monkeypatch.delenv(native_wheel.STUBS_ENV, raising=False)
     command = _hook_command(monkeypatch, package)
-    assert command is not None and command[2:4] == ("doeff_hy._static_stub", "--build")
+    assert command is not None
+    assert command[2:4] == ("doeff_hy._static_stub", "--build")
     monkeypatch.setenv(native_wheel.STUBS_ENV, "off")
     assert _hook_command(monkeypatch, package) is None
 
