@@ -281,6 +281,7 @@ doeff_prepare() {
   doeff_root_hold
   exec 8>&-
   doeff_boot_roots_gc
+  doeff_python_installs_gc
   doeff_uv_cache_upkeep
   export PATH="$root/.venv/bin:$PATH"
 }
@@ -309,6 +310,22 @@ doeff_boot_roots_gc() {
   nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$gc_tool" gc "$@" </dev/null \
     >"$boot/.doeff-boot-roots.log" 2>&1 &
   echo "boot: 古い版の root の片付けを背後で起こした(log $boot/.doeff-boot-roots.log)" >&2
+}
+
+# uv の入れた Python の置き場(UV_PYTHON_INSTALL_DIR)の片付けを、起動の待ちの外で 1 度起こす(役 worker・coordinator・records・prepare —
+# 起動と版の入れ替えのたび。決まりは deploy/python_installs.py の頭の註 — 同じ minor の新しい patch の版に追い越された版の dir を、その版への
+# link に置き換える)。uv の置き場の錠を道具が待つので、boot.lock とは別に背後で起こす。出力は置き場の .doeff-python-installs.log へ
+# 書き直す。落ちても起動は止めない。
+doeff_python_installs_gc() {
+  case "$role" in worker|coordinator|records|prepare) ;; *) return 0 ;; esac
+  installs_tool=$root/packages/doeff-cluster/deploy/python_installs.py
+  if [ ! -f "$installs_tool" ] || [ ! -x "$root/.venv/bin/python" ] || [ ! -d "$UV_PYTHON_INSTALL_DIR" ]; then
+    return 0
+  fi
+  # uv の cache の錠を持たない(--no-cache — doeff_boot_roots_gc と同じ)。道具は標準の library だけを使う。
+  nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$installs_tool" gc \
+    --dir "$UV_PYTHON_INSTALL_DIR" </dev/null >"$UV_PYTHON_INSTALL_DIR/.doeff-python-installs.log" 2>&1 &
+  echo "boot: uv の Python の置き場の片付けを背後で起こした(log $UV_PYTHON_INSTALL_DIR/.doeff-python-installs.log)" >&2
 }
 
 # uv の cache の用意(seed — 新しい node の空の cache に、置き場の写しを入れる)と片付け(gc — 古い項目と使われない venv を消す)を、
