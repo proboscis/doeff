@@ -1,10 +1,11 @@
 // The video on the Patterns page (docs/12-patterns.md): every pattern is a program that yields effects and a handler
 // stack that gives them their meaning. Five scenes and an outro, each with headlines a synthetic voice reads
 // (narration.json):
-//   1. Layered architecture: the layers' effects travel outward to the handler stack; for order 8 the in-memory
-//      handler raises KeyError and Try keeps it as a value.
+//   1. Layered architecture: the layers read from the top (API, service, domain); their effects travel outward to the
+//      handler stack; for order 8 the in-memory handler raises KeyError and Try keeps it as a value.
 //   2. Retry with backoff: Try, Tell and Delay in one loop; the time handler decides what a second is.
-//   3. State: the store lives in the state handler; the state machine steps; Try does not roll back, a snapshot does.
+//   3. State: the state machine read from the top; the store lives in the state handler; the state machine steps; Try
+//      does not roll back, a snapshot does.
 //   4. Testing: a test is the same program under the stack it chooses, reading what its handlers kept.
 //   5. Anti-patterns: a blocking sleep behind the time handler's back; a side effect done in place.
 // Every value on screen is printed by a program in measure/ (its output is in the .log next to it).
@@ -12,7 +13,7 @@ import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, glow, Headlines, lineMid, Lines, litAt, PAD, Pill, Reading, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -45,11 +46,13 @@ const Terminal: React.FC<{x: number; y: number; w: number; lines: {text: string;
   </div>
 );
 
-// An effect or an answer flying from one point to another between at and at + length seconds, then fading.
-const Fly: React.FC<{from: [number, number]; to: [number, number]; at: number; length?: number; text: string; color: string}> = ({
-  from, to, at, length = 1.0, text, color,
+// An effect or an answer flying from one point to another between at and at + length seconds, then fading. now is the
+// frame of a scene's own clock, for a part of a scene that does not run on the scene's frame (default: the scene's frame).
+const Fly: React.FC<{from: [number, number]; to: [number, number]; at: number; length?: number; text: string; color: string; now?: number}> = ({
+  from, to, at, length = 1.0, text, color, now,
 }) => {
-  const frame = useSceneFrame();
+  const scene = useSceneFrame();
+  const frame = now ?? scene;
   if (frame < f(at) || frame >= f(at + length + 0.25)) return null;
   const t = ramp(frame, at, at + length);
   return <Pill x={mix(from[0], to[0], t)} y={mix(from[1], to[1], t)} text={text} color={color} opacity={fadeAt(frame, at, 0.15) * (1 - ramp(frame, at + length, at + length + 0.25))} />;
@@ -73,15 +76,31 @@ const HandlerBox: React.FC<{x: number; y: number; w: number; h?: number; name: s
 // Whether the frame is between two times in seconds.
 const between = (frame: number, from: number, to: number) => frame >= f(from) && frame < f(to);
 
-// Scene 1 — layered architecture: the layers yield, the handler stack answers.
+// Scene 1 — layered architecture: the layers read from the top, as the screen shows them (API, service, domain); then
+// the layers yield, the handler stack answers.
 
+// The layers are read from READ_FROM to READ_TO; the effects then go on from the design second RESUME.
+const READ_FROM = 9.5;
+const READ_TO = 27;
+const RESUME = 19;
 const LAYER_LINES: Lines = [
   [0, 'Patterns: a program yields effects; a handler stack gives them meaning.'],
-  [9.5, 'Layered architecture: the domain computes, the service yields, the API tries.'],
-  [19.1, 'No layer reaches for its dependencies: the effects travel outward.'],
-  [31.3, 'No order 8: the handler raises KeyError. Try keeps the failure as a value.'],
+  [READ_FROM, 'Layered architecture. On top, the API layer handles a request.'],
+  [13, 'It logs the request, tries order_service, and logs the response.'],
+  [17.5, 'order_service gets the order, totals it, saves it, and caches it.'],
+  [23.5, 'The domain layer only computes the total, with tax.'],
+  [READ_TO + 0.1, 'No layer reaches for its dependencies: the effects travel outward.'],
+  [READ_TO + 12.3, 'No order 8: the handler raises KeyError. Try keeps the failure as a value.'],
 ];
-const LAYER = f(40);
+const LAYER = f(READ_TO + 21);
+// Each layer read line by line, from the top, while the narration names what the line does.
+const LAYER_READING: Reading[] = [
+  [[9.7, [0]], [13.2, [1]], [14.4, [2]], [15.6, [3]], [17.5, []]],
+  [[17.7, [0, 1]], [19.3, [2]], [20.9, [3]], [21.9, [4]], [23.5, []]],
+  [[23.7, [0, 1, 2]]],
+];
+// When each layer is named: [from, to].
+const NAMED: [number, number][] = [[READ_FROM, 17.5], [17.5, 23.5], [23.5, READ_TO]];
 const API = [
   'def get_order_handler(order_id):',
   '    yield Tell(f"Request: GET /orders/{order_id}")',
@@ -122,7 +141,9 @@ const YIELDS: [number, string, number, number, number][] = [
 ];
 
 const LayerScene: React.FC = () => {
-  const frame = useSceneFrame();
+  const read = useSceneFrame();
+  // The effects' part: held while the layers are read, then on from RESUME.
+  const frame = read < f(READ_FROM) ? read : read < f(READ_TO) ? f(READ_FROM) : read - f(READ_TO - RESUME);
   const code = {x: 50, w: 656, size: 15, line: 24};
   const apiY = 124;
   const serviceY = 276;
@@ -134,8 +155,8 @@ const LayerScene: React.FC = () => {
   const stackY = (i: number) => 128 + i * 50;
   const boxMid = (i: number) => stackY(i) + boxH / 2;
   const failing = frame >= f(31.3);
-  // Which layer is being named in the second headline: domain, then service, then API.
-  const named = between(frame, 10.4, 13.2) ? 2 : between(frame, 13.2, 16.0) ? 1 : between(frame, 16.0, 19.1) ? 0 : -1;
+  // Which layer is being read: API, then service, then domain, in the order the screen shows them.
+  const named = NAMED.findIndex(([from, to]) => between(read, from, to));
   const roles = ['logs the request, tries the service', 'yields GetOrder, SaveOrder, CachePut', 'a plain function: yields nothing'];
   const layers = [
     {name: 'API layer', y: apiY, lines: API},
@@ -170,10 +191,10 @@ const LayerScene: React.FC = () => {
         <React.Fragment key={layer.name}>
           <Label x={code.x + 4} y={layer.y - 28} size={18} color={named === i ? LOOK : TEXT} opacity={fadeAt(frame, 0.6 + i * 0.4)}>
             {layer.name}
-            <span style={{fontWeight: 400, fontSize: 16, color: MUTED, marginLeft: 14, opacity: frame >= f(10.4 + (2 - i) * 2.8) ? 1 : 0}}>{roles[i]}</span>
+            <span style={{fontWeight: 400, fontSize: 16, color: MUTED, marginLeft: 14, opacity: read >= f(NAMED[i][0] + 0.2) ? 1 : 0}}>{roles[i]}</span>
           </Label>
           <CodeBlock
-            lines={layer.lines} x={code.x} y={layer.y} w={code.w} size={code.size} line={code.line} band={i < 2 ? bandOf(i) : null} opacity={fadeAt(frame, 0.6 + i * 0.4)}
+            lines={layer.lines} x={code.x} y={layer.y} w={code.w} size={code.size} line={code.line} band={i < 2 ? bandOf(i) : null} lit={litAt(read, LAYER_READING[i], READ_TO)} opacity={fadeAt(frame, 0.6 + i * 0.4)}
           />
           <div
             style={{
@@ -195,13 +216,13 @@ const LayerScene: React.FC = () => {
       </div>
       {/* The effects of order 7, each to the handler that answers it. */}
       {YIELDS.map(([at, text, layer, line, h], i) => (
-        <Fly key={i} at={at} from={[code.x + code.w - 60, lineMid(codeYs[layer], code.line, line)]} to={[stackX + stackW / 2, boxMid(h)]} text={text} color={ACCENT} />
+        <Fly now={frame} key={i} at={at} from={[code.x + code.w - 60, lineMid(codeYs[layer], code.line, line)]} to={[stackX + stackW / 2, boxMid(h)]} text={text} color={ACCENT} />
       ))}
       {/* Order 8: in_memory_orders has no such order and raises KeyError; the handler stands inside try_handler, which
           catches it, and the API layer gets it back as Err. */}
-      <Fly at={32.2} length={0.9} from={[code.x + code.w - 60, lineMid(serviceY, code.line, 1)]} to={[stackX + stackW / 2, boxMid(ORDERS)]} text="GetOrder(8)" color={ACCENT} />
-      <Fly at={33.2} length={0.9} from={[stackX + stackW / 2, boxMid(ORDERS)]} to={[stackX + stackW / 2, boxMid(TRY)]} text="KeyError(8)" color={FAIL} />
-      <Fly at={34.3} length={1.0} from={[stackX + stackW / 2, boxMid(TRY)]} to={[code.x + code.w - 100, lineMid(apiY, code.line, 2)]} text="Err(KeyError(8))" color={FAIL} />
+      <Fly now={frame} at={32.2} length={0.9} from={[code.x + code.w - 60, lineMid(serviceY, code.line, 1)]} to={[stackX + stackW / 2, boxMid(ORDERS)]} text="GetOrder(8)" color={ACCENT} />
+      <Fly now={frame} at={33.2} length={0.9} from={[stackX + stackW / 2, boxMid(ORDERS)]} to={[stackX + stackW / 2, boxMid(TRY)]} text="KeyError(8)" color={FAIL} />
+      <Fly now={frame} at={34.3} length={1.0} from={[stackX + stackW / 2, boxMid(TRY)]} to={[code.x + code.w - 100, lineMid(apiY, code.line, 2)]} text="Err(KeyError(8))" color={FAIL} />
       <Terminal x={stackX} y={440} w={stackW} size={15} line={25} lines={[{text: 'log', color: MUTED}, ...logLines]} opacity={fadeAt(frame, 19.6)} />
       <Label x={code.x + 4} y={576} size={17} color={TEXT} opacity={fadeAt(frame, 19.6)}>
         effects yielded, in order <span style={{fontWeight: 400, color: MUTED}}>(measure/layers.log)</span>
@@ -347,15 +368,23 @@ const RetryScene: React.FC = () => {
   );
 };
 
-// Scene 3 — state lives in the state handler.
+// Scene 3 — the state machine read from the top, line by line; then state lives in the state handler.
 
+// The seconds the state machine is read for; the rest of the scene is designed from 0 after it.
+const STATE_READ = 14;
 const STATE_LINES: Lines = [
-  [0, 'State lives in a handler, not in the program: Get and Put ask its store.'],
-  [8.3, 'Each run of the state machine moves order 7 one step.'],
-  [16.3, 'A fourth run finds no step left: Try gives back Err.'],
-  [22.7, 'Try never rolls the store back. The snapshot pattern does.'],
+  [0, 'order_state_machine moves an order one step.'],
+  [3.5, "It gets the order's state from the store."],
+  [6.5, 'pending → paid, paid → shipped, shipped → completed.'],
+  [10.5, 'Any other state raises ValueError.'],
+  [STATE_READ, 'Get and Put are effects: the store lives in the state handler.'],
+  [STATE_READ + 8.3, 'Each run of the state machine moves order 7 one step.'],
+  [STATE_READ + 16.3, 'A fourth run finds no step left: Try gives back Err.'],
+  [STATE_READ + 22.7, 'Try never rolls the store back. The snapshot pattern does.'],
 ];
-const STATE = f(31.5);
+const STATE = f(STATE_READ + 31.5);
+// The lines of the state machine as the narration reads them.
+const STATE_READING: Reading = [[0.3, [0, 1]], [3.7, [2]], [6.7, [3, 4]], [7.9, [5, 6]], [9.1, [7, 8]], [10.7, [9, 10]]];
 const MACHINE = [
   '@do',
   'def order_state_machine(order_id):',
@@ -378,7 +407,9 @@ const RUNS = [
 ];
 
 const StateScene: React.FC = () => {
-  const frame = useSceneFrame();
+  const read = useSceneFrame();
+  // The state handler's part, designed from 0 after the state machine has been read.
+  const frame = read - f(STATE_READ);
   const code = {x: 40, y: 96, w: 640, size: 15, line: 24};
   const box = {x: 730, y: 100, w: 500, h: 150};
   const away = ramp(frame, 22.7, 23.3);
@@ -405,7 +436,7 @@ const StateScene: React.FC = () => {
     <AbsoluteFill>
       <Headlines lines={STATE_LINES} />
       <div style={{opacity: 1 - away}}>
-        <CodeBlock lines={MACHINE} {...code} band={band} opacity={fadeAt(frame, 0.2)} />
+        <CodeBlock lines={MACHINE} {...code} band={band} lit={litAt(read, STATE_READING, STATE_READ)} opacity={fadeAt(read, 0.2)} />
         <div
           style={{
             position: 'absolute', left: box.x, top: box.y, width: box.w, height: box.h, boxSizing: 'border-box', borderRadius: 16, background: PANEL,
@@ -427,13 +458,13 @@ const StateScene: React.FC = () => {
         {/* Get goes out and the value comes back; then Put goes out with the next state. */}
         {RUNS.map((r, i) => (
           <React.Fragment key={i}>
-            <Fly at={r.at} length={0.5} from={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} to={[box.x + 40, box.y + 92]} text="Get" color={ACCENT} />
-            <Fly at={r.at + 0.8} length={0.4} from={[box.x + 40, box.y + 92]} to={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} text={`"${STEPS[i]}"`} color={TEST} />
-            <Fly at={r.at + 1.35} length={0.4} from={[code.x + code.w - 40, lineMid(code.y, code.line, r.put)]} to={[box.x + 40, box.y + 92]} text={`Put "${STEPS[i + 1]}"`} color={ACCENT} />
+            <Fly now={frame} at={r.at} length={0.5} from={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} to={[box.x + 40, box.y + 92]} text="Get" color={ACCENT} />
+            <Fly now={frame} at={r.at + 0.8} length={0.4} from={[box.x + 40, box.y + 92]} to={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} text={`"${STEPS[i]}"`} color={TEST} />
+            <Fly now={frame} at={r.at + 1.35} length={0.4} from={[code.x + code.w - 40, lineMid(code.y, code.line, r.put)]} to={[box.x + 40, box.y + 92]} text={`Put "${STEPS[i + 1]}"`} color={ACCENT} />
           </React.Fragment>
         ))}
-        <Fly at={16.8} length={0.5} from={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} to={[box.x + 40, box.y + 92]} text="Get" color={ACCENT} />
-        <Fly at={17.6} length={0.4} from={[box.x + 40, box.y + 92]} to={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} text='"completed"' color={TEST} />
+        <Fly now={frame} at={16.8} length={0.5} from={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} to={[box.x + 40, box.y + 92]} text="Get" color={ACCENT} />
+        <Fly now={frame} at={17.6} length={0.4} from={[box.x + 40, box.y + 92]} to={[code.x + code.w - 40, lineMid(code.y, code.line, 2)]} text='"completed"' color={TEST} />
         <div style={{position: 'absolute', left: box.x, top: 280, display: 'flex', alignItems: 'center', gap: 8, opacity: fadeAt(frame, 8.6)}}>
           {STEPS.map((s, i) => (
             <React.Fragment key={s}>
@@ -691,9 +722,9 @@ const Outro: React.FC = () => {
 
 // The scenes in order; Root.tsx registers PATTERNS.length frames of PATTERNS.Video.
 export const PATTERNS = narrate('patterns', DURATIONS, NARRATION, [
-  {length: LAYER, starts: startsOf(LAYER_LINES), ids: ['a1', 'a2', 'a3', 'a4'], node: <LayerScene />},
+  {length: LAYER, starts: startsOf(LAYER_LINES), ids: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7'], node: <LayerScene />},
   {length: RETRY, starts: startsOf(RETRY_LINES), ids: ['b1', 'b2', 'b3', 'b4'], node: <RetryScene />},
-  {length: STATE, starts: startsOf(STATE_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <StateScene />},
+  {length: STATE, starts: startsOf(STATE_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'], node: <StateScene />},
   {length: TESTING, starts: startsOf(TEST_LINES), ids: ['d1', 'd2', 'd3'], node: <TestScene />},
   {length: AVOID, starts: startsOf(AVOID_LINES), ids: ['e1', 'e2', 'e3', 'e4', 'e5'], node: <AvoidScene />},
   {length: OUTRO, starts: [0], ids: ['o1'], node: <Outro />},

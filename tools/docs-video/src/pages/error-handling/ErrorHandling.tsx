@@ -2,15 +2,17 @@
 // Five scenes and an outro, each with headlines a synthetic voice reads (narration.json):
 //   1. run() returns the program's value as it is, or raises its exception: no wrapper.
 //   2. Ok holds a value, Err holds an exception; they test as true / false and match by pattern.
-//   3. Try is an effect: try_handler runs the sub-program, catches the raise, and resumes k with Err.
+//   3. app read from the top; then Try is an effect: try_handler runs the sub-program, catches the raise, and resumes
+//      k with Err.
 //   4. The three Try composition guarantees: no rollback, Local restores env, nested Try keeps both layers.
-//   5. The exception inside Err keeps its traceback, down to the frame that raised.
+//   5. load, boom and app read from the top; the exception inside Err keeps its traceback, its frames read from the
+//      top down to the frame that raised.
 // Every value on screen is printed by a program in measure/ (its output is in the .log next to it).
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, glow, Headlines, lineMid, Lines, litAt, PAD, Pill, Reading, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -189,16 +191,31 @@ const ValueScene: React.FC = () => {
   );
 };
 
-// Scene 3 — Try is an effect: try_handler runs the sub-program and resumes k with Ok or Err.
+// Scene 3 — app read from the top, line by line; then Try is an effect: try_handler runs the sub-program and resumes
+// k with Ok or Err.
 
+// The seconds app is read for before Try is named as an effect; the scene after it is designed from 0.
+const TRY_READ = 16;
 const TRY_LINES: Lines = [
-  [0, 'Try is an effect. app yields Try, with the sub-program it wants to attempt.'],
-  [5.5, 'try_handler catches the effect and runs parse_count inside itself.'],
-  [11, 'int raises on "not-a-number". The handler catches it and wraps it in Err.'],
-  [18.2, 'It resumes k with that Err. app goes on: it logs the failure and returns 0.'],
-  [25, 'Without try_handler, Try is unhandled. It is a handler like any other.'],
+  [0, 'app(raw): turn the text raw into a count.'],
+  [4, 'It tries parse_count(raw); the result is parsed.'],
+  [8, 'If parsed is Ok: log the count and return it.'],
+  [12, 'If parsed is Err: log the failure and return 0.'],
+  [TRY_READ, 'Try is an effect. At the yield, app hands Try to a handler.'],
+  [TRY_READ + 5.5, 'try_handler runs parse_count inside itself.'],
+  [TRY_READ + 11, 'int raises on "not-a-number". The handler catches it and wraps it in Err.'],
+  [TRY_READ + 18.2, 'It resumes k with that Err. app takes the Err case and returns 0.'],
+  [TRY_READ + 25, 'Without try_handler, Try is unhandled. It is a handler like any other.'],
 ];
-const TRY = f(32);
+const TRY = f(TRY_READ + 32);
+// The lines of app as the narration reads them.
+const TRY_READING: Reading = [[0.3, [0, 1]], [4.2, [2]], [8.2, [3, 4, 5, 6]], [12.2, [7, 8, 9]]];
+// What app does, one row per part of it as the narration reaches it: [from, the code, what it does].
+const TRY_STEPS: [number, string, string][] = [
+  [4.4, 'Try(parse_count(raw))', 'try to parse raw: parsed'],
+  [8.4, 'case Ok(value=count)', 'log the count, return it'],
+  [12.4, 'case Err(error=exc)', 'log the failure, return 0'],
+];
 const APP = [
   '@do',
   'def app(raw):',
@@ -214,7 +231,9 @@ const APP = [
 const PARSE = ['@do', 'def parse_count(raw):', '    return int(raw)'];
 
 const TryScene: React.FC = () => {
-  const frame = useSceneFrame();
+  const read = useSceneFrame();
+  // The handler's part, designed from 0 after app has been read.
+  const frame = read - f(TRY_READ);
   const code = {x: 50, y: 100, w: 590, size: 18, line: 29};
   const box = {x: 720, y: 100, w: 510, h: 330};
   const sub = {x: box.x + 24, y: box.y + 96, w: box.w - 48, size: 17, line: 28};
@@ -236,7 +255,25 @@ const TryScene: React.FC = () => {
   return (
     <AbsoluteFill>
       <Headlines lines={TRY_LINES} />
-      <CodeBlock lines={APP} {...code} band={band} dim={(i) => (i >= 3 ? restDim : 1)} opacity={fadeAt(frame, 0)} />
+      <CodeBlock lines={APP} {...code} band={band} lit={litAt(read, TRY_READING, TRY_READ)} dim={(i) => (i >= 3 ? restDim : 1)} opacity={fadeAt(read, 0)} />
+      {/* What app does, row by row as its lines are read; it gives way to try_handler. */}
+      <div
+        style={{
+          position: 'absolute', left: box.x, top: box.y, width: box.w, boxSizing: 'border-box', padding: '16px 22px', background: PANEL, borderRadius: 14,
+          border: '2px solid #2a2e40', opacity: fadeAt(read, 0.3) * (1 - fadeAt(read, TRY_READ - 0.6, 0.5)),
+        }}
+      >
+        <div style={{fontFamily: SANS, fontSize: 18, fontWeight: 700, color: MUTED, marginBottom: 12}}>what app does</div>
+        {TRY_STEPS.map(([from, text, what], i) => (
+          <div key={text} style={{display: 'flex', gap: 14, alignItems: 'baseline', height: 60, opacity: fadeAt(read, from)}}>
+            <div style={{width: 24, fontFamily: SANS, fontSize: 18, color: MUTED}}>{i + 1}.</div>
+            <div>
+              <div style={{fontFamily: MONO, fontSize: 18, fontWeight: 700, color: ACCENT}}>{text}</div>
+              <div style={{fontFamily: SANS, fontSize: 17, color: TEXT}}>{what}</div>
+            </div>
+          </div>
+        ))}
+      </div>
       <Label x={code.x} y={code.y + PAD * 2 + APP.length * code.line + 10} color={ACCENT} size={19} opacity={fadeAt(frame, 3.6) * (away ? 1 : 0)}>
         k = the rest of app()  <span style={{color: MUTED, fontWeight: 400}}>paused, waiting for the answer</span>
       </Label>
@@ -425,33 +462,46 @@ const PromiseScene: React.FC = () => {
   );
 };
 
-// Scene 5 — the exception inside Err keeps its traceback.
+// Scene 5 — the program read from the top, load, boom, app and the run; then the exception inside Err keeps its
+// traceback, its frames read from the top.
 
 const TRACE_LINES: Lines = [
-  [0, 'Err keeps the exception, and the exception keeps its traceback.'],
-  [5, 'Its frames lead from inside try_handler, through boom, down to load.'],
+  [0, 'load(path) raises FileNotFoundError.'],
+  [3.5, 'boom() yields load("config.toml").'],
+  [7, 'app() yields Try(boom()).'],
+  [10.5, 'run runs app() under try_handler.'],
+  [14, 'The result is an Err. Its exception still has its traceback.'],
+  [18.5, 'Its frames, from the top: attempt, inside try_handler,'],
+  [21.5, 'then boom,'],
+  [24, 'then load, where the error was raised.'],
 ];
-const TRACE = f(13);
-const BOOM = ['@do', 'def load(path):', '    raise FileNotFoundError(path)', ' ', '@do', 'def boom():', '    return (yield load("config.toml"))', ' ', 'result = run(try_handler(app()))  # app: Try(boom())'];
-// traceback.extract_tb(result.error.__traceback__) in measure/traceback_on_err.py: the frame names, outermost first.
+const TRACE = f(29);
+// measure/traceback_on_err.py.
+const BOOM = [
+  '@do', 'def load(path):', '    raise FileNotFoundError(path)', ' ', '@do', 'def boom():', '    return (yield load("config.toml"))', ' ',
+  '@do', 'def app():', '    return (yield Try(boom()))', ' ', 'result = run(try_handler(app()))',
+];
+// The lines the narration reads: the program from the top, then each frame's line as its frame is named.
+const TRACE_READING: Reading = [[0.3, [1, 2]], [3.7, [5, 6]], [7.2, [9, 10]], [10.7, [12]], [14.0, []], [18.8, [12]], [21.8, [6]], [24.3, [2]]];
+// traceback.extract_tb(result.error.__traceback__) in measure/traceback_on_err.py: the frame names, outermost first,
+// and the second each is named.
 const FRAMES = [
-  {name: 'attempt', where: "inside try_handler, where Try's sub-program runs"},
-  {name: 'boom', where: 'yield load("config.toml")'},
-  {name: 'load', where: 'raise FileNotFoundError(path)  ← raised here'},
+  {name: 'attempt', where: "inside try_handler, where Try's sub-program runs", at: 18.8},
+  {name: 'boom', where: 'yield load("config.toml")', at: 21.8},
+  {name: 'load', where: 'raise FileNotFoundError(path)  ← raised here', at: 24.3},
 ];
 
 const TraceScene: React.FC = () => {
   const frame = useSceneFrame();
-  const code = {x: 50, y: 110, w: 620, size: 16, line: 27};
-  const band = frame < f(9.4) ? null : 2;
+  const code = {x: 50, y: 110, w: 620, size: 16, line: 25};
   return (
     <AbsoluteFill>
       <Headlines lines={TRACE_LINES} />
-      <CodeBlock lines={BOOM} {...code} band={band} opacity={fadeAt(frame, 0.2)} />
+      <CodeBlock lines={BOOM} {...code} lit={litAt(frame, TRACE_READING, TRACE)} opacity={fadeAt(frame, 0)} />
       <div
         style={{
           position: 'absolute', left: 720, top: 110, width: 510, height: 96, boxSizing: 'border-box', borderRadius: 16, background: PANEL,
-          border: `3px solid ${FAIL}`, boxShadow: `0 0 18px ${FAIL}55`, padding: '12px 18px', opacity: fadeAt(frame, 0.8),
+          border: `3px solid ${FAIL}`, boxShadow: `0 0 18px ${FAIL}55`, padding: '12px 18px', opacity: fadeAt(frame, 14.3),
         }}
       >
         <div style={{fontFamily: MONO, fontSize: 19, fontWeight: 700, color: FAIL}}>Err(FileNotFoundError('config.toml'))</div>
@@ -460,7 +510,7 @@ const TraceScene: React.FC = () => {
         </div>
       </div>
       {FRAMES.map((frameOf, i) => {
-        const at = 5.6 + i * 1.6;
+        const at = frameOf.at;
         const last = i === FRAMES.length - 1;
         return (
           <React.Fragment key={frameOf.name}>
@@ -485,7 +535,7 @@ const TraceScene: React.FC = () => {
           {text: "  names: ['attempt', 'boom', 'load']"},
           {text: 'result.captured_traceback: None', color: MUTED},
         ]}
-        opacity={fadeAt(frame, 10.4)}
+        opacity={fadeAt(frame, 26.3)}
       />
     </AbsoluteFill>
   );
@@ -532,8 +582,8 @@ const Outro: React.FC = () => {
 export const ERROR_HANDLING = narrate('error-handling', DURATIONS, NARRATION, [
   {length: RUN, starts: startsOf(RUN_LINES), ids: ['a1', 'a2', 'a3'], node: <RunScene />},
   {length: VALUE, starts: startsOf(VALUE_LINES), ids: ['b1', 'b2'], node: <ValueScene />},
-  {length: TRY, starts: startsOf(TRY_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5'], node: <TryScene />},
+  {length: TRY, starts: startsOf(TRY_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9'], node: <TryScene />},
   {length: PROMISE, starts: startsOf(PROMISE_LINES), ids: ['d1', 'd2', 'd3', 'd4'], node: <PromiseScene />},
-  {length: TRACE, starts: startsOf(TRACE_LINES), ids: ['e1', 'e2'], node: <TraceScene />},
+  {length: TRACE, starts: startsOf(TRACE_LINES), ids: ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'], node: <TraceScene />},
   {length: OUTRO, starts: [0], ids: ['o1'], node: <Outro />},
 ]);

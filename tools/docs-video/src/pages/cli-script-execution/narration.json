@@ -25,14 +25,30 @@
  },
  {
   "id": "r1",
-  "text": "checkout interpreter runs the program under a reader that holds the merged env."
+  "text": "The program is total. It returns a price of forty two, with tax."
  },
  {
   "id": "r2",
-  "text": "Each Ask travels out to the reader, and its answer comes back to the yield."
+  "text": "First it asks for the tax rate."
  },
  {
   "id": "r3",
+  "text": "Then it asks for the currency."
+ },
+ {
+  "id": "r4",
+  "text": "It returns forty two plus tax, with the currency, as text."
+ },
+ {
+  "id": "r5",
+  "text": "Now checkout interpreter runs it. A reader holds the merged env."
+ },
+ {
+  "id": "r6",
+  "text": "Each Ask travels out to the reader. Its answer comes back to the yield."
+ },
+ {
+  "id": "r7",
   "text": "The program returns forty six twenty euros. That is the value."
  },
  {
@@ -81,11 +97,19 @@
  },
  {
   "id": "e1",
-  "text": "If the script raises, doeff prints the error and exits with status one."
+  "text": "First, the script prints value."
  },
  {
   "id": "e2",
-  "text": "What the script printed before the error stays on standard output."
+  "text": "Then it reads value of amount. value is text, so this line raises."
+ },
+ {
+  "id": "e3",
+  "text": "doeff prints the error, and exits with status one."
+ },
+ {
+  "id": "e4",
+  "text": "What it printed before the error stays on standard output."
  },
  {
   "id": "z1",

@@ -3,11 +3,12 @@
 // (narration.json):
 //   1. The idea: the program runs first, its effects answered by handlers; then the script runs.
 //   2. The command, and auto-discovery: the closest marked interpreter, and the default envs merged in path order.
-//   3. The run: each Ask travels out to the reader holding the merged env; the program returns its value.
+//   3. The program total() read from the top; the run: each Ask travels out to the reader holding the merged env;
+//      the program returns its value.
 //   4. The script's globals: program, value, interpreter, sys and json — nothing else.
 //   5. program is a value: the script runs it again with another env, and with none.
 //   6. The script wraps the program in handlers of its own: trace passes each Ask on, free answers one itself.
-//   7. A script that raises: doeff prints the error and exits with status 1.
+//   7. A script that prints, then raises: doeff prints the error and exits with status 1.
 //   8. The outro.
 // Every output, order and error on screen is printed by measure/run.sh (runs.log), from measure/project and
 // measure/scripts.
@@ -15,7 +16,7 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, glow, Headlines, lineMid, Lines, litAt, PAD, Pill, Reading, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -231,14 +232,23 @@ const DiscoverScene: React.FC = () => {
   );
 };
 
-// Scene 3 — the run: each Ask travels out to the reader holding the merged env (runs.log, the first run).
+// Scene 3 — the program total() read from the top, line by line; then the run: each Ask travels out to the reader
+// holding the merged env (runs.log, the first run).
 
+// The seconds total() is read for before the run; the run is designed from 0 after it.
+const RUN_READ = 12;
 const RUN_LINES: Lines = [
-  [0, 'checkout_interpreter runs the program under a reader holding the merged env.'],
-  [5, 'Each Ask travels out to the reader, and its answer comes back to the yield.'],
-  [11.5, 'The program returns "46.20 EUR". That is value.'],
+  [0, 'The program is total(): a price of 42, with tax.'],
+  [3.5, 'It asks for the tax rate,'],
+  [6.5, 'then for the currency,'],
+  [9, 'and returns 42 plus tax, with the currency.'],
+  [RUN_READ, 'checkout_interpreter runs it. A reader holds the merged env.'],
+  [RUN_READ + 5, 'Each Ask travels out to the reader; its answer comes back to the yield.'],
+  [RUN_READ + 11.5, 'The program returns "46.20 EUR". That is value.'],
 ];
-const RUN = f(17);
+const RUN = f(RUN_READ + 17);
+// The lines of total() as the narration reads them.
+const RUN_READING: Reading = [[0.3, [0, 1]], [3.7, [2]], [6.7, [3]], [9.2, [4]]];
 const T = {cx: 640, cy: 402, w: 560, size: 18, line: 30, margin: 80};
 const tH = PAD * 2 + TOTAL.length * T.line;
 const tCode = {x: T.cx - T.w / 2, y: T.cy - tH / 2};
@@ -250,7 +260,9 @@ const tLayer = (i: number) => {
 const RUN_LAYERS = ['reader(env={"currency": "EUR", "tax_rate": 0.1})', 'scheduled'];
 
 const RunScene: React.FC = () => {
-  const frame = useSceneFrame();
+  const read = useSceneFrame();
+  // The run, designed from 0 after total() has been read.
+  const frame = read - f(RUN_READ);
   const startX = T.cx + T.w / 2;
   const edge = T.cx + tLayer(0).w / 2;
   const band = frame < f(5) ? null : frame < f(8.4) ? 2 : frame < f(10.9) ? mix(2, 3, ramp(frame, 8.4, 8.7)) : mix(3, 4, ramp(frame, 10.9, 11.2));
@@ -280,7 +292,7 @@ const RunScene: React.FC = () => {
           </div>
         );
       })}
-      <CodeBlock lines={TOTAL} x={tCode.x} y={tCode.y} w={T.w} size={T.size} line={T.line} band={band} opacity={fadeAt(frame, 0)} />
+      <CodeBlock lines={TOTAL} x={tCode.x} y={tCode.y} w={T.w} size={T.size} line={T.line} band={band} lit={litAt(read, RUN_READING, RUN_READ)} opacity={fadeAt(read, 0)} />
       {trips.map((trip) => (
         <React.Fragment key={trip.ask}>
           {frame >= f(trip.leave) && frame < f(trip.land + 0.5) && (
@@ -531,23 +543,25 @@ const HandleScene: React.FC = () => {
   );
 };
 
-// Scene 7 — a script that raises (runs.log, scripts/fails.py).
+// Scene 7 — a script that raises (runs.log, scripts/fails.py), read from the top: it prints, then raises.
 
 const FAIL_LINES: Lines = [
-  [0, 'If the script raises, doeff prints the error and exits with status 1.'],
-  [6, 'What the script printed before the error stays on stdout.'],
+  [0, 'First, the script prints value.'],
+  [4, 'Then it reads value["amount"]. value is a str, so this line raises.'],
+  [8, 'doeff prints the error and exits with status 1.'],
+  [12, 'What the script printed before the error stays on stdout.'],
 ];
-const FAILS = f(12);
+const FAILS = f(18);
 const FAILS_SCRIPT = [COMMAND, 'print("value:", value)', 'print(value["amount"])', 'PY'];
 const FAILS_OUT: Printed[] = [
-  [1.6, 'value: 46.20 EUR', TEXT, 'stdout'],
-  [3.0, "Error executing script: string indices must be integers, not 'str'", FAIL, 'stderr'],
-  [4.2, 'exit status 1', FAIL],
+  [1.4, 'value: 46.20 EUR', TEXT, 'stdout'],
+  [8.4, "Error executing script: string indices must be integers, not 'str'", FAIL, 'stderr'],
+  [9.4, 'exit status 1', FAIL],
 ];
 
 const FailScene: React.FC = () => {
   const frame = useSceneFrame();
-  const band = frame < f(1.0) ? null : frame < f(2.4) ? 1 : 2;
+  const band = frame < f(0.4) ? null : frame < f(4.2) ? 1 : 2;
   return (
     <AbsoluteFill>
       <Headlines lines={FAIL_LINES} />
@@ -556,10 +570,10 @@ const FailScene: React.FC = () => {
       <div
         style={{
           position: 'absolute', left: 64, top: 330 + 34 - 2, width: 1152, height: 44, boxSizing: 'border-box', border: `3px solid ${LOOK}`, borderRadius: 10,
-          opacity: between(frame, 6.4, 11.0),
+          opacity: between(frame, 12.4, 17.0),
         }}
       />
-      <Label x={640} y={560} size={21} color={MUTED} center opacity={fadeAt(frame, 7.0)}>
+      <Label x={640} y={560} size={21} color={MUTED} center opacity={fadeAt(frame, 13.0)}>
         so a script can print a report, or fail a check, after the run
       </Label>
     </AbsoluteFill>
@@ -605,10 +619,10 @@ const OutroScene: React.FC = () => {
 export const CLI_SCRIPT_EXECUTION = narrate('cli-script-execution', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: DISCOVER, starts: startsOf(DISCOVER_LINES), ids: ['d1', 'd2', 'd3'], node: <DiscoverScene />},
-  {length: RUN, starts: startsOf(RUN_LINES), ids: ['r1', 'r2', 'r3'], node: <RunScene />},
+  {length: RUN, starts: startsOf(RUN_LINES), ids: ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'], node: <RunScene />},
   {length: INJECT, starts: startsOf(INJECT_LINES), ids: ['i1', 'i2', 'i3', 'i4'], node: <InjectScene />},
   {length: AGAIN, starts: startsOf(AGAIN_LINES), ids: ['a1', 'a2', 'a3'], node: <AgainScene />},
   {length: HANDLE, starts: startsOf(HANDLE_LINES), ids: ['h1', 'h2', 'h3', 'h4'], node: <HandleScene />},
-  {length: FAILS, starts: startsOf(FAIL_LINES), ids: ['e1', 'e2'], node: <FailScene />},
+  {length: FAILS, starts: startsOf(FAIL_LINES), ids: ['e1', 'e2', 'e3', 'e4'], node: <FailScene />},
   {length: OUTRO, starts: [0], ids: ['z1'], node: <OutroScene />},
 ]);

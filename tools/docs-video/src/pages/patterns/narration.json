@@ -5,14 +5,26 @@
  },
  {
   "id": "a2",
-  "text": "Layered architecture. The domain layer computes, the service layer yields effects for its orders and its cache, and the API layer logs and tries."
+  "text": "Layered architecture. On top, the API layer handles a request for an order."
  },
  {
   "id": "a3",
-  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Get Order, Save Order, Cache Put, and Tell."
+  "text": "It logs the request, then tries the order service. Last, it logs the response."
  },
  {
   "id": "a4",
+  "text": "The service layer gets the order and works out its total. Then it saves the order and caches it."
+ },
+ {
+  "id": "a5",
+  "text": "Below, the domain layer only computes the total, with tax."
+ },
+ {
+  "id": "a6",
+  "text": "No layer reaches for its dependencies. Their effects travel outward, in this order: Tell, Try, Get Order, Save Order, Cache Put, and Tell."
+ },
+ {
+  "id": "a7",
   "text": "There is no order eight, so the in-memory handler raises a KeyError. Try keeps the failure as a value, and the API layer answers with an error."
  },
  {
@@ -33,18 +45,34 @@
  },
  {
   "id": "c1",
-  "text": "State lives in a handler, not in the program. Get and Put ask the state handler for its store."
+  "text": "This is order state machine. It moves an order one step."
  },
  {
   "id": "c2",
-  "text": "Each run of the state machine moves order seven one step: pending, paid, shipped, completed."
+  "text": "First it gets the order's state from the store."
  },
  {
   "id": "c3",
-  "text": "A fourth run finds no step left. Try gives back Err, with the invalid state."
+  "text": "If it is pending, it puts paid. Paid becomes shipped, and shipped becomes completed."
  },
  {
   "id": "c4",
+  "text": "Any other state raises a ValueError."
+ },
+ {
+  "id": "c5",
+  "text": "Get and Put are effects. The store lives in the state handler, not in the program."
+ },
+ {
+  "id": "c6",
+  "text": "Each run of the state machine moves order seven one step: pending, paid, shipped, completed."
+ },
+ {
+  "id": "c7",
+  "text": "A fourth run finds no step left. Try gives back Err, with the invalid state."
+ },
+ {
+  "id": "c8",
   "text": "Try never rolls the store back: after the failure, the balance stays at zero. The snapshot pattern puts one hundred back."
  },
  {

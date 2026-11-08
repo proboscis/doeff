@@ -21,22 +21,38 @@
  },
  {
   "id": "c1",
-  "text": "Try is an effect. app yields Try, with the sub-program it wants to attempt."
+  "text": "This is app. It turns the text raw into a count."
  },
  {
   "id": "c2",
-  "text": "The try handler catches the effect, and runs parse count inside itself."
+  "text": "First it tries parse count on raw. The result is parsed."
  },
  {
   "id": "c3",
-  "text": "int raises on the text \"not a number\". The handler catches the exception and wraps it in Err."
+  "text": "If parsed is Ok, it logs the count and returns it."
  },
  {
   "id": "c4",
-  "text": "Then it resumes k with that Err. app goes on: it logs the failure and returns zero."
+  "text": "If parsed is Err, it logs the failure and returns zero."
  },
  {
   "id": "c5",
+  "text": "Try is an effect. At the yield, app pauses and hands Try to a handler."
+ },
+ {
+  "id": "c6",
+  "text": "The try handler runs parse count inside itself."
+ },
+ {
+  "id": "c7",
+  "text": "int raises on the text \"not a number\". The handler catches the exception and wraps it in Err."
+ },
+ {
+  "id": "c8",
+  "text": "Then it resumes k with that Err. app takes the Err case, logs the failure, and returns zero."
+ },
+ {
+  "id": "c9",
   "text": "Without the try handler in the stack, Try is unhandled. It is a handler like any other."
  },
  {
@@ -57,11 +73,35 @@
  },
  {
   "id": "e1",
-  "text": "Err keeps the exception, and the exception keeps its traceback."
+  "text": "load raises FileNotFoundError for the path it is given."
  },
  {
   "id": "e2",
-  "text": "Its frames lead from inside the try handler, through boom, down to load, where the error was raised."
+  "text": "boom yields load of config.toml, and returns what it gives."
+ },
+ {
+  "id": "e3",
+  "text": "app yields Try of boom, to keep a failure as a value."
+ },
+ {
+  "id": "e4",
+  "text": "run runs app under the try handler, and returns the result."
+ },
+ {
+  "id": "e5",
+  "text": "The result is an Err. Its exception still has its traceback."
+ },
+ {
+  "id": "e6",
+  "text": "Read its frames from the top. The first is attempt, inside the try handler."
+ },
+ {
+  "id": "e7",
+  "text": "Next is boom, at its yield of load."
+ },
+ {
+  "id": "e8",
+  "text": "Last is load, where the error was raised."
  },
  {
   "id": "o1",

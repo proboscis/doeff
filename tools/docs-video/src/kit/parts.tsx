@@ -11,6 +11,12 @@ export type Lines = [number, string][];
 // The design frames where a scene's headlines appear, for its narrated scene (narrated.tsx).
 export const startsOf = (lines: Lines) => lines.map(([seconds]) => f(seconds));
 
+// The code lines the narration reads, in the order of the code: [the second they light up, the lines], each entry
+// until the next one, and none from `until` on.
+export type Reading = [number, number[]][];
+export const litAt = (frame: number, reading: Reading, until: number): number[] =>
+  frame >= f(until) ? [] : reading.reduce<number[]>((found, [from, lines]) => (frame >= f(from) ? lines : found), []);
+
 // The story line at the top: the latest line whose time has come, faded in at that time.
 export const Headlines: React.FC<{lines: Lines}> = ({lines}) => {
   const frame = useSceneFrame();
@@ -46,11 +52,12 @@ export const PAD = 12;
 
 type CodeProps = {
   lines: string[]; x: number; y: number; w: number; size: number; line: number;
-  band?: number | null; dim?: (i: number) => number; opacity?: number;
+  band?: number | null; lit?: number[]; dim?: (i: number) => number; opacity?: number;
 };
 
-// A code box. The band marks the line (possibly between two lines while it moves) the program is on.
-export const CodeBlock: React.FC<CodeProps> = ({lines, x, y, w, size, line, band = null, dim, opacity = 1}) => (
+// A code box. The band marks the line (possibly between two lines while it moves) the program is on; lit marks the
+// lines the narration is reading, in the same colour.
+export const CodeBlock: React.FC<CodeProps> = ({lines, x, y, w, size, line, band = null, lit = [], dim, opacity = 1}) => (
   <div
     style={{
       position: 'absolute', left: x, top: y, width: w, height: PAD * 2 + lines.length * line, background: '#0b0d13',
@@ -58,6 +65,7 @@ export const CodeBlock: React.FC<CodeProps> = ({lines, x, y, w, size, line, band
     }}
   >
     {band !== null && <div style={{position: 'absolute', left: 0, right: 0, top: PAD + band * line, height: line, background: LOOK, opacity: 0.2}} />}
+    {lit.map((i) => <div key={i} style={{position: 'absolute', left: 0, right: 0, top: PAD + i * line, height: line, background: LOOK, opacity: 0.2}} />)}
     <div style={{position: 'absolute', top: PAD, left: 24, fontFamily: MONO, fontSize: size, lineHeight: `${line}px`}}>
       {lines.map((text, i) => (
         <div key={i} style={{whiteSpace: 'pre', color: text.startsWith('@') ? ACCENT : TEXT, opacity: dim ? dim(i) : 1}}>
