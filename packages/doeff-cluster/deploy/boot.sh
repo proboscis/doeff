@@ -56,6 +56,10 @@
 #   uv の cache は DOEFF_UV_CACHE_DIR(既定 $WORK_DIR/state/uv-cache — 実行環境の root と同じ dir)、Python は $WORK_DIR/state/python。crate の取得先は $WORK_DIR/state/cargo。
 #   uv の cache の用意(置き場の写しを空の cache へ — DOEFF_UV_CACHE_SEED_URL)と片付け(DOEFF_UV_CACHE_GC_DAYS)は、準備の終わりに背後で
 #   起こす(doeff_uv_cache_upkeep・deploy/uv_cache.py)。
+#   古い版の root の片付け(doeff_boot_roots_gc・deploy/boot_roots.py): root で起こす process は、root の印 .doeff-boot-use を付け直して
+#   その印に共有の錠(fd 7 — exec した worker・coordinator・records が終わるまで持つ)を持つ(doeff_root_hold — boot.lock の下で取るので、
+#   片付けが判じる間に錠の無い使い手は現れない)。準備の終わりに背後で、今の版・最後に使った新しい DOEFF_BOOT_ROOTS_KEEP 本(既定は
+#   boot_roots.py の DEFAULT_KEEP・今の版を含む・0 = 消さない)・錠の持たれた物・この名前空間の process が使う物の外の root を消す。
 #   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
 #   版の file(WORKER_VERSION_FILE)を渡す worker は Pod を入れ替えず、下の keeper が同じ container の中で worker の process を入れ替える。
@@ -267,9 +271,37 @@ doeff_prepare() {
         exit 1 ;;
     esac
   fi
+  doeff_root_hold
   exec 8>&-
+  doeff_boot_roots_gc
   doeff_uv_cache_upkeep
   export PATH="$root/.venv/bin:$PATH"
+}
+
+# この process がこの root を使う印と錠(頭の註の「古い版の root の片付け」)。boot.lock を持ったまま呼ぶ。最後に使った刻を印の変更の刻に
+# 付け、印に共有の錠を fd 7 で持つ — exec した役の process が継ぎ、終わるまで離さない(job の子へは渡らない — subprocess の close_fds)。
+doeff_root_hold() {
+  touch "$root/.doeff-boot-use"
+  exec 7<"$root/.doeff-boot-use"
+  flock -s 7
+}
+
+# 古い版の root の片付けを、起動の待ちの外で 1 度起こす(役 worker・coordinator・records・prepare — 起動と版の入れ替えのたび。決まりは
+# deploy/boot_roots.py の頭の註)。boot.lock を離した後に呼ぶ(道具は自分で boot.lock を取る)。出力は $boot/.doeff-boot-roots.log へ
+# 書き直す — 役 prepare の標準出力(root の path の 1 行)に混ぜない。落ちても起動は止めない。
+doeff_boot_roots_gc() {
+  case "$role" in worker|coordinator|records|prepare) ;; *) return 0 ;; esac
+  [ "${DOEFF_BOOT_ROOTS_KEEP:-}" != 0 ] || return 0
+  gc_tool=$root/packages/doeff-cluster/deploy/boot_roots.py
+  if [ ! -f "$gc_tool" ] || [ ! -x "$root/.venv/bin/python" ]; then
+    return 0
+  fi
+  set -- --boot "$boot" --current "$sha"
+  [ -z "${DOEFF_BOOT_ROOTS_KEEP:-}" ] || set -- "$@" --keep "$DOEFF_BOOT_ROOTS_KEEP"
+  # uv の cache の錠を持たない(--no-cache — doeff_uv_cache_upkeep と同じ)。道具は標準の library だけを使う。
+  nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$gc_tool" gc "$@" </dev/null \
+    >"$boot/.doeff-boot-roots.log" 2>&1 &
+  echo "boot: 古い版の root の片付けを背後で起こした(log $boot/.doeff-boot-roots.log)" >&2
 }
 
 # uv の cache の用意(seed — 新しい node の空の cache に、置き場の写しを入れる)と片付け(gc — 古い項目と使われない venv を消す)を、
