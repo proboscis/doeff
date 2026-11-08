@@ -47,7 +47,7 @@
 (import pathlib [Path])
 (import urllib.parse [parse-qs urlsplit])
 (import yaml)
-(import doeff [with_handlers])
+(import doeff [Some with_handlers])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects [state])
 (import doeff_core_effects [memory-file-handler slog-discard-handler])
@@ -56,7 +56,7 @@
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects [Spawn Task Gather])
 (import doeff_core_effects [CloseStepTally OpenStepTally StepTally step-tally-handler])
-(import doeff_time [Delay GetTime SimClock sim-time-handler])
+(import doeff_time [Delay GetMonotonic GetTime SimClock sim-time-handler])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
                                                            MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
@@ -125,6 +125,14 @@
 
 
 (val QUIET (QuietNotices))
+
+
+(defk notices-state [notices]
+  {:pre [(: notices VolumeNotices)] :post [(: % Callable)]}
+  "答え手の session の箱を notices にする状態の handler を作るため。session val は状態の値を Some で包んで持つ — 素の値を置くと答え手は
+   それを読まずに本物の箱を作り(検の機体が Pod の中なら本物の cluster の見張りを立て、その list が実時間の刻に全部の鈴を鳴らす)、
+   相手役の箱は使われない。"
+  (state {NOTICES-KEY (Some notices)}))
 
 
 (defrecord SeenRequest
@@ -937,7 +945,7 @@
 (defk on-api [world steps [files WORKER-FILES] [start 0.0]]
   {:pre [(: world LonghornWorld) (: steps tuple) (: files MemoryFiles) (: start float)] :post [(: % ApiRan)]}
   "本番の答え手で、相手役の世界 world に筋書き steps を(模擬の時計の刻 start から)当てた結末の組と、終わりの memory の file を得るため。"
-  (<- ran ApiRan (with_handlers [slog-discard-handler (state {NOTICES-KEY QUIET}) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start))) (node-environ NODE)
+  (<- ran ApiRan (with_handlers [slog-discard-handler (! (notices-state QUIET)) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start))) (node-environ NODE)
                                  (longhorn-peer world) (keeper-peer world) (workspace-volumes-api SITE)]
                    (finished-run steps)))
   ran)
@@ -1941,7 +1949,7 @@
 (defk together-on-api [world first second seconds]
   {:pre [(: world LonghornWorld) (: first tuple) (: second tuple) (: seconds float)] :post [(: % tuple)]}
   "本番の答え手で、相手役の世界 world に 2 つの筋書きを並べて当てた結末の組の組を得るため。"
-  (<- done tuple (with_handlers [slog-discard-handler (state {NOTICES-KEY QUIET}) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0)))
+  (<- done tuple (with_handlers [slog-discard-handler (! (notices-state QUIET)) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0)))
                                  (node-environ NODE) (longhorn-peer world) (keeper-peer world) (workspace-volumes-api SITE)]
                    (side-by-side first second seconds)))
   done)
@@ -2056,7 +2064,7 @@
 (defk on-status [status steps]
   {:pre [(: status int) (: steps tuple)] :post [(: % tuple)]}
   "本番の答え手で、API server がどの要求にも status で答える世界に筋書き steps を当てた結末の組を得るため。"
-  (<- outcomes tuple (with_handlers [(state {NOTICES-KEY QUIET}) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE)
+  (<- outcomes tuple (with_handlers [(! (notices-state QUIET)) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE)
                                      (status-peer status) (workspace-volumes-api SITE)]
                        (run-steps steps)))
   outcomes)
@@ -2086,7 +2094,7 @@
    file を得るため。root = 作業の根(None = 事実の無い worker)。"
   (val environ (if (is root None) (node-environ NODE) (rooted-environ NODE root)))
   (<- ran tuple
-      (with_handlers [slog-discard-handler (state {NOTICES-KEY QUIET}) (memory-file-handler ROOTED-FILES) (sim-time-handler :clock (! (clock-from 1000.0))) environ
+      (with_handlers [slog-discard-handler (! (notices-state QUIET)) (memory-file-handler ROOTED-FILES) (sim-time-handler :clock (! (clock-from 1000.0))) environ
                       (longhorn-peer world) (workspace-volumes-api SITE)]
         (do-settings-twice world second)))
   ran)
@@ -2303,9 +2311,11 @@
 
 
 (defrecord WaitsRan
-  "並べた付けの走り 1 つ: outcomes = 付けの結末の組・steps = 付けを始めてから全部が終わるまでの主の scheduler の歩の数。"
+  "並べた付けの走り 1 つ: outcomes = 付けの結末の組・steps = 付けを始めてから全部が終わるまでの主の scheduler の歩の数・seconds = その
+   間の模擬の時計の秒。"
   (#^ tuple outcomes)
-  (#^ int steps))
+  (#^ int steps)
+  (#^ float seconds))
 
 
 (defk waiting-world []
@@ -2329,7 +2339,9 @@
 
 (defk attached-together [world ring seconds]
   {:pre [(: world LonghornWorld) (: ring Callable) (: seconds float)] :post [(: % WaitsRan)]}
-  "持ち主 WAITING-OWNERS の付けを並べて走らせ(Longhorn が付け終えるのは seconds 秒後)、結末の組と、その間の主の scheduler の歩の数を得るため。"
+  "持ち主 WAITING-OWNERS の付けを並べて走らせ(Longhorn が付け終えるのは seconds 秒後)、結末の組と、その間の主の scheduler の歩の数と
+   模擬の時計の秒を得るため。"
+  (<- began float (GetMonotonic))
   (<- (OpenStepTally "waits"))
   (var tasks #())
   (for [owner WAITING-OWNERS]
@@ -2339,14 +2351,15 @@
   (<- done list (Gather #* tasks settler))
   (<- tally (| StepTally None) (CloseStepTally "waits"))
   (assert (is-not tally None) "窓 waits が開いていない")
-  (WaitsRan :outcomes (tuple (cut done 0 WAITERS)) :steps tally.steps))
+  (<- ended float (GetMonotonic))
+  (WaitsRan :outcomes (tuple (cut done 0 WAITERS)) :steps tally.steps :seconds (- ended began)))
 
 
 (defk waits-on-api [notices ring site seconds]
   {:pre [(: notices VolumeNotices) (: ring Callable) (: site WorkspaceVolumeSite) (: seconds float)] :post [(: % WaitsRan)]}
   "本番の答え手(変わりの知らせの箱 notices・場所 site)で、新しい待ちの世界に付けを並べて走らせた結末と歩の数を得るため。"
   (<- world LonghornWorld (waiting-world))
-  (<- ran WaitsRan (with_handlers [step-tally-handler slog-discard-handler (state {NOTICES-KEY notices}) (memory-file-handler WORKER-FILES)
+  (<- ran WaitsRan (with_handlers [step-tally-handler slog-discard-handler (! (notices-state notices)) (memory-file-handler WORKER-FILES)
                                    (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE) (longhorn-peer world)
                                    (workspace-volumes-api site)]
                      (attached-together world ring seconds)))
@@ -2357,12 +2370,15 @@
 (deftest test-waiting-attaches-cost-steps-by-changes-not-by-seconds
   ;; 30 本の付けを並べ、Longhorn が付け終えるまで 4 秒と 8 秒待たせる。変わりの知らせの箱(本番の VolumeNoticeBoard — 見張りの代わりに
   ;; 相手役が変わった名を伝える)で待つ答え手の、待つ間の主の scheduler の歩の数は、待つ秒を 2 倍にしてもほぼ変わらない(1.1 倍以内)。
+  ;; 付けが Longhorn の付け終えた刻ちょうどに終わる事で、待ちを起こしたのが相手役の箱の鈴だと確かめる(箱が答え手に届かないと、待ちは
+  ;; recheck-seconds の 10 秒で起き、歩の数はどちらの秒でも同じになって測りが何も見ない)。
   (val short-board (VolumeNoticeBoard))
   (<- short WaitsRan (waits-on-api short-board short-board.changed NOTICED-SITE 4.0))
   (val long-board (VolumeNoticeBoard))
   (<- long WaitsRan (waits-on-api long-board long-board.changed NOTICED-SITE 8.0))
   (assert (= short.outcomes (* #("done") WAITERS)) short.outcomes)
   (assert (= long.outcomes (* #("done") WAITERS)) long.outcomes)
+  (assert (= #(short.seconds long.seconds) #(4.0 8.0)) #(short.seconds long.seconds))
   (assert (<= long.steps (* 1.1 short.steps)) #(short.steps long.steps)))
 
 
