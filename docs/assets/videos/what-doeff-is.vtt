@@ -17,89 +17,89 @@ m1
 research yields one Spend per topic. It knows nothing about what spending means.
 
 m2
-00:00:23.150 --> 00:00:28.900
+00:00:23.700 --> 00:00:29.450
 free answers each Spend and lets the rest run. Notes on both topics.
 
 m3
-00:00:29.550 --> 00:00:34.100
+00:00:34.400 --> 00:00:38.950
 refuse drops k at the first Spend. research stops there.
 
 m4
-00:00:34.750 --> 00:00:40.400
+00:00:40.100 --> 00:00:45.750
 A budget keeps what is left between effects. With ten, both Spends fit.
 
 m5
-00:00:41.050 --> 00:00:46.450
+00:00:50.800 --> 00:00:56.200
 With five, only two is left for the second Spend. The budget drops k.
 
 s1
-00:00:47.150 --> 00:00:53.100
+00:01:01.100 --> 00:01:07.050
 Handlers stack. trace takes every effect first, notes it, and passes it on to the budget.
 
 o1
-00:00:57.650 --> 00:01:03.650
+00:01:14.800 --> 00:01:20.800
 State, exceptions, concurrency, observation and I/O are effects of this same kind.
 
 o2
-00:01:04.250 --> 00:01:10.000
+00:01:23.400 --> 00:01:29.150
 crawl fetches pages in parallel tasks, counts them in state, and logs each fetch.
 
 o3
-00:01:10.650 --> 00:01:14.950
+00:01:30.300 --> 00:01:34.600
 Each effect travels out to the handler that gives it its meaning.
 
 o4
-00:01:19.150 --> 00:01:24.800
+00:01:45.800 --> 00:01:51.450
 The empty page raises in its task. Try turns the error into a value.
 
 o5
-00:01:25.650 --> 00:01:31.300
+00:01:53.350 --> 00:01:59.000
 size, crawl and report name the effects they need. Where they run decides the handlers.
 
 u1
-00:01:32.150 --> 00:01:38.900
+00:02:00.850 --> 00:02:07.600
 Swapping I/O is one use. A handler that calls the network answers Fetch, and the code stays as it is.
 
 u2
-00:01:39.650 --> 00:01:46.950
+00:02:08.350 --> 00:02:15.650
 Leave the Fetch handler out, and nobody answers: each task gets an unhandled effect.
 
 u3
-00:01:47.650 --> 00:01:54.300
+00:02:16.350 --> 00:02:23.000
 It is one use, not what doeff is. research does no I/O at all.
 
 l1
-00:01:55.150 --> 00:02:00.400
+00:02:23.850 --> 00:02:29.100
 Its limits. Continuations are one-shot: each k resumes at most once.
 
 l2
-00:02:01.050 --> 00:02:07.050
+00:02:29.750 --> 00:02:35.750
 Resume k for tea, then again for coffee, and the second Resume raises a RuntimeError.
 
 l3
-00:02:07.650 --> 00:02:14.000
+00:02:36.350 --> 00:02:42.700
 What stands in for it: run the whole program again, once per choice. A program is a value.
 
 l4
-00:02:14.550 --> 00:02:19.750
+00:02:43.250 --> 00:02:48.450
 Effects are not in the types. A missing handler shows only when the program runs.
 
 l5
-00:02:20.350 --> 00:02:26.950
+00:02:49.050 --> 00:02:55.650
 And an effect costs a few microseconds. Nothing next to I/O, but visible in a tight loop.
 
 w1
-00:02:27.650 --> 00:02:34.100
+00:02:56.350 --> 00:03:02.800
 Next to other effect systems: in effect and effectful, a handler never gets the continuation.
 
 w2
-00:02:34.750 --> 00:02:41.400
+00:03:03.450 --> 00:03:10.100
 OCaml 5 is the closest: one-shot continuations, and no effects in the types.
 
 w3
-00:02:42.050 --> 00:02:47.900
+00:03:10.750 --> 00:03:16.600
 Koka resumes many times, and checks effects in its types. doeff has neither.
 
 z1
-00:02:48.650 --> 00:02:55.800
+00:03:17.350 --> 00:03:24.500
 doeff: algebraic effects for Python. Your code yields effects, and handlers decide what they mean.
