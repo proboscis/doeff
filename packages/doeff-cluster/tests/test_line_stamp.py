@@ -41,6 +41,8 @@ LINUX_ONLY = pytest.mark.skipif(
 SHIM = "doeff_cluster._worker.entry.shim"
 # 刻の頭の形: ISO 8601 の日時・ms・時差(+09:00 など)・空白 1 つ。検は形を自分で綴る(部品の定義を写さない)。
 STAMP = re.compile(rb"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}) ")
+# 捨てた知らせの中身の形(捨てた byte の数を取り出す)。
+DROPPED = re.compile("line_stamp: log の file への書きが詰まり、溜めの上限を越えた (\\d+) byte を捨てた".encode())
 END_LIMIT_SECONDS = 30.0
 MIB = 1 << 20
 S = b"<S> "
@@ -228,7 +230,9 @@ def full_pipe(target: int) -> int:
 @LINUX_ONLY
 def test_the_feed_does_not_wait_for_a_stalled_file_and_writes_a_notice_where_it_dropped() -> None:
     """file への write が止まった間(読まない pipe — 容量 64 KiB)も、put は待たずに返る。上限を越えた塊は捨て、止まりが解けた後の
-    file には、受けた順の塊と、捨てた位置の刻つきの 1 行(捨てた byte の数)が在る。pipe は先に満たしておく(最初の write から止まる)。"""
+    file には、受けた順の塊と、捨てた位置の刻つきの知らせ(捨てた byte の数)が在る。pipe は先に満たしておく(最初の write から止まる)。
+    知らせは 1 行とは限らない — 書きの thread が捨ての途中で溜めを取り出すと、続く捨ては新しい知らせになる(取り出す時は負荷で決まる —
+    2026-11-08 の会話の Pod で 2 行に分かれた)。どの知らせも受けた塊の後に在り、数の和が捨てた byte になる。"""
     source, target = os.pipe()
     drain = Drain(source)
     filled = full_pipe(target)
@@ -245,8 +249,10 @@ def test_the_feed_does_not_wait_for_a_stalled_file_and_writes_a_notice_where_it_
     assert not stalled, "put が止まった file の書きを待った"
     lines = drain.read()[filled:].split(b"\n")[:-1]
     assert lines[:256] == [chunk[:-1] for chunk in chunks[:256]], "上限の内の塊は受けた順のまま file に在る"
-    assert len(lines) == 257, len(lines)
-    assert payload_of(lines[256]) == f"line_stamp: log の file への書きが詰まり、溜めの上限を越えた {768 * 1024} byte を捨てた".encode()
+    notices = [DROPPED.fullmatch(payload_of(line)) for line in lines[256:]]
+    assert notices, "捨てた知らせが無い"
+    assert all(notices), lines[256:]
+    assert sum(int(found.group(1)) for found in notices if found) == 768 * 1024
 
 
 LOOP_AND_SERVER = """
