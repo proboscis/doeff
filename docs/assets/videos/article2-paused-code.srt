@@ -1,0 +1,47 @@
+1
+00:00:00,250 --> 00:00:07,167
+When an asyncio task pauses, the loop has two moves: send the result once the future is done,
+
+2
+00:00:07,167 --> 00:00:09,550
+or throw CancelledError into it.
+
+3
+00:00:10,650 --> 00:00:18,800
+A doeff handler receives k, the rest of the paused function. What happens next is the handler's decision.
+
+4
+00:00:19,850 --> 00:00:24,400
+Resume k with a value, and the function goes on from its yield.
+
+5
+00:00:25,850 --> 00:00:32,600
+Throw into k, and the function sees the exception at its yield, where its own except clause can catch it.
+
+6
+00:00:33,850 --> 00:00:36,850
+Keep k for later, and you have concurrency.
+
+7
+00:00:36,850 --> 00:00:42,350
+scheduled holds the k of each task and goes back to it when the task can go on.
+
+8
+00:00:43,650 --> 00:00:44,900
+Or never resume k.
+
+9
+00:00:44,900 --> 00:00:52,450
+The run ends with the handler's own value, and the paused generators are closed, so their finally blocks run.
+
+10
+00:00:53,650 --> 00:00:59,150
+Neither model goes on twice. k is one-shot, like a coroutine object.
+
+11
+00:01:00,650 --> 00:01:03,867
+But greet() gives a program, not a paused run.
+
+12
+00:01:03,867 --> 00:01:09,550
+Each run starts a new generator, so one program runs under ada, then under grace.

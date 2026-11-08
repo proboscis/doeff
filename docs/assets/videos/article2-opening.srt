@@ -1,0 +1,63 @@
+1
+00:00:00,250 --> 00:00:04,217
+Python already has functions that pause: async def and await.
+
+2
+00:00:04,217 --> 00:00:08,900
+doeff pauses with yield instead. Both print the same line. So why yield?
+
+3
+00:00:09,850 --> 00:00:13,150
+At an await, the call names the code that answers.
+
+4
+00:00:13,150 --> 00:00:17,300
+That code runs right there, as part of the same chain of calls.
+
+5
+00:00:18,450 --> 00:00:23,850
+At a yield, the call names an operation. ReadName is a value, not code.
+
+6
+00:00:23,850 --> 00:00:28,100
+greet pauses, and the nearest handler around it answers.
+
+7
+00:00:29,050 --> 00:00:33,717
+In asyncio, every request goes to one place: the event loop at the top.
+
+8
+00:00:33,717 --> 00:00:36,800
+The coroutines in between only pass it through.
+
+9
+00:00:37,850 --> 00:00:42,900
+In doeff, each caller installs handlers around any part of a program.
+
+10
+00:00:42,900 --> 00:00:48,900
+Add titled in between, and the first greeting says Dr. Ada. greet does not change.
+
+11
+00:00:50,050 --> 00:00:53,333
+A handler also holds the rest of the function, k.
+
+12
+00:00:53,333 --> 00:00:57,750
+It can resume it, keep it to run tasks, or end the run without it.
+
+13
+00:00:58,850 --> 00:01:02,883
+Async libraries still work. Await hands one coroutine to a handler,
+
+14
+00:01:02,883 --> 00:01:07,150
+and the event loop moves from above the program to behind that handler.
+
+15
+00:01:08,450 --> 00:01:13,250
+async and await are an effect system with one handler, fixed at the top.
+
+16
+00:01:13,250 --> 00:01:16,050
+doeff lets every caller install their own.

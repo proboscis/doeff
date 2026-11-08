@@ -1,0 +1,10 @@
+[
+ {"id": "o1", "text": "Python already has functions that pause: async def and await. doeff pauses with yield instead. Both print the same line. So why yield?"},
+ {"id": "o2", "text": "At an await, the call names the code that answers. That code runs right there, as part of the same chain of calls."},
+ {"id": "o3", "text": "At a yield, the call names an operation. ReadName is a value, not code. greet pauses, and the nearest handler around it answers."},
+ {"id": "o4", "text": "In asyncio, every request goes to one place: the event loop at the top. The coroutines in between only pass it through."},
+ {"id": "o5", "text": "In doeff, each caller installs handlers around any part of a program. Add titled in between, and the first greeting says Dr. Ada. greet does not change."},
+ {"id": "o6", "text": "A handler also holds the rest of the function, k. It can resume it, keep it to run tasks, or end the run without it."},
+ {"id": "o7", "text": "Async libraries still work. Await hands one coroutine to a handler, and the event loop moves from above the program to behind that handler."},
+ {"id": "o8", "text": "async and await are an effect system with one handler, fixed at the top. doeff lets every caller install their own."}
+]
