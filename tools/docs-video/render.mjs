@@ -9,6 +9,7 @@
 // Usage: node render.mjs <composition id> [<poster frame>] [<crf>] [--audio-from <mp4>]
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {bundle} from '@remotion/bundler';
 import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
@@ -53,7 +54,9 @@ const captions = writeCaptions(videos, id, composition.props.cues, composition.f
 const raw = path.join(work, `${id}.mp4`);
 let shown = -1;
 await renderMedia({
-  ...options, composition, scale, muted: Boolean(sound), codec: 'h264', crf: Number(crf), audioBitrate: '96k', pixelFormat: 'yuv420p', outputLocation: raw, concurrency: 12,
+  ...options, composition, scale, muted: Boolean(sound), codec: 'h264', crf: Number(crf), audioBitrate: '96k', pixelFormat: 'yuv420p', outputLocation: raw,
+  // Remotion refuses more than the cores this process may use (a container's CPU quota can be below the machine's).
+  concurrency: Math.min(12, os.availableParallelism()),
   onProgress: ({progress}) => {
     const percent = Math.floor(progress * 4) * 25;
     if (percent > shown) console.log(`${(shown = percent)}%`);

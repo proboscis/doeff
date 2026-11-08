@@ -1,0 +1,12 @@
+[
+ {"id": "c1", "text": "Here is the idea of doeff, a Python library, in a minute."},
+ {"id": "c2", "text": "doeff lets you write algebraic effects in Python."},
+ {"id": "c3", "text": "A function asks for what it needs by yielding an effect. It never says who will answer."},
+ {"id": "c4", "text": "The answer comes from handlers stacked outside the function."},
+ {"id": "c5", "text": "A handler gets the effect and k, the rest of the function."},
+ {"id": "c6", "text": "It can resume k, keep k for later, or never resume it."},
+ {"id": "c7", "text": "Whatever it picks, k is resumed at most once."},
+ {"id": "c8", "text": "So one function runs unchanged under many stacks. Tests, replay, bots, many at once, production."},
+ {"id": "c9", "text": "To start, pip install doeff. Then you need three things: @do, yield, and a handler."},
+ {"id": "c10", "text": "This article runs one card fight function under six stacks."}
+]
