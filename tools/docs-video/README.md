@@ -59,6 +59,7 @@ The narration never uses a local text-to-speech model, and
 | `src/kit/theme.ts` | The layout size (1280×720; the video is drawn at 1920×1080), 60 fps, `f(seconds)`, the colours (one per role) and the fonts. |
 | `src/kit/motion.ts` | `fadeAt`, `ramp`, `mix`: timing in seconds of a scene's design time. |
 | `src/kit/parts.tsx` | `Headlines`, `CodeBlock`, `Pill` (an effect or answer on the move), `glow`, `Clock`, `highlightYield`. |
+| `src/kit/pace.ts` | `chain`, `nextLine`, `sceneEnd`: a scene's motions one at a time, each `PAUSE` (0.9 s) after the one before it has stopped, and its next line after both its line and its motions. |
 | `src/kit/warp.ts` | Narration time: a headline's slot stretches to fit its spoken line; scenes read `useSceneFrame()`. |
 | `src/kit/narrated.tsx` | `narrate(page, durations, narration, scenes)`: plays the scenes in order with their narration, and shows each line's words as subtitles while it is heard. |
 | `src/kit/subtitles.tsx` | The subtitles: each narration line as `narration.json` writes it, cut at its sentences into parts of at most two rows, at the frames its sound plays. |
@@ -102,6 +103,7 @@ The narration never uses a local text-to-speech model, and
 | Laid out at 1280×720, rendered at 1920×1080 (full HD) and 60 fps, the kit's colours and fonts. | Every page's video looks like one series; full HD keeps code and subtitles sharp, and 60 fps keeps motion smooth. |
 | Show the mechanism moving: effects travel out to handlers, answers come back, `k` waits and resumes. | The point is to see what the text can only describe. |
 | doeff is algebraic effects for Python. Do not present it as only a way to swap I/O. | Swapping I/O is one use of handlers, not what doeff is (`docs/positioning/what-doeff-is.md`). |
+| Motions come one at a time: each starts 0.9 s after the one before it has stopped (`src/kit/pace.ts`). A round trip of an effect and its answer can be one motion; a scene with more motions than its line has time for goes on after the line. | The eye can follow every motion while the line is heard. |
 | Each headline stays long enough to read, and its narration fits its slot (`warp.ts` stretches the slot). | The voice never runs into the next headline. |
 | The narration is burned in as subtitles at the bottom, on a dark band, and the scenes are drawn smaller against the top so the band covers nothing (`narrated.tsx`). The subtitles are the words of `narration.json`, never a summary; `tts.py`'s respellings are for the voice only. | A video played without sound still explains itself, and a GitHub attachment cannot carry a subtitle track. The `.vtt` is the site player's captions track (`tools/docs_site/hooks.py`); the `.srt` is for a video service. |
 | Numbers on screen come from a run in `measure/`. | The video must hold true for anyone who runs the same code. |

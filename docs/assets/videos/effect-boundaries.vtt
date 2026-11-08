@@ -5,105 +5,105 @@ t1
 Effect boundaries. A doeff program runs in two zones: inside doeff, and outside it.
 
 t2.1
-00:00:07.300 --> 00:00:12.283
+00:00:07.900 --> 00:00:12.883
 Inside, the handler stack answers each effect, with k, the rest of the program.
 
 t2.2
-00:00:12.283 --> 00:00:15.450
+00:00:12.883 --> 00:00:16.050
 Outside, Python's event loop runs your coroutines.
 
 t3
-00:00:16.000 --> 00:00:20.950
+00:00:19.600 --> 00:00:24.550
 Almost every effect stays inside. Await is the one that crosses the line.
 
 i1
-00:00:24.000 --> 00:00:32.050
+00:00:30.500 --> 00:00:38.550
 Here is the page's pipeline: Ask, Spawn, Gather, Wait and Try, and each worker's Get, Put and Tell.
 
 i2
-00:00:32.600 --> 00:00:40.350
+00:00:39.900 --> 00:00:47.650
 An observer handler sees all fifteen effects go by. Each one is answered by a handler inside doeff.
 
 i3
-00:00:42.600 --> 00:00:50.200
+00:01:03.600 --> 00:01:11.200
 All of it runs on one thread, with no event loop at all. Even the tasks are just the scheduler handler's work.
 
 e1
-00:00:51.100 --> 00:00:56.700
+00:01:13.050 --> 00:01:18.650
 Await is different. Python's await is syntax, and it only runs under an event loop.
 
 e2.1
-00:00:57.600 --> 00:01:02.333
+00:01:19.550 --> 00:01:24.283
 await handler hands each coroutine to an event loop on its own thread,
 
 e2.2
-00:01:02.333 --> 00:01:06.050
+00:01:24.283 --> 00:01:28.000
 the await bridge, and the scheduler parks the task's k.
 
 e3.1
-00:01:06.600 --> 00:01:12.150
+00:01:28.550 --> 00:01:34.100
 While A and B are outside, task C's steps are still answered inside doeff,
 
 e3.2
-00:01:12.150 --> 00:01:14.850
+00:01:34.100 --> 00:01:36.800
 all before either coroutine returns.
 
 e4.1
-00:01:15.400 --> 00:01:19.967
+00:01:37.350 --> 00:01:41.917
 B's coroutine returns at about a hundred milliseconds, and its k resumes.
 
 e4.2
-00:01:19.967 --> 00:01:23.850
+00:01:41.917 --> 00:01:45.800
 A follows at two hundred: about two hundred in all, not three.
 
 s1
-00:01:26.400 --> 00:01:32.950
+00:01:48.350 --> 00:01:54.900
 Waiting inside doeff is scheduler suspension: a handler holds the task's k, and resumes it later.
 
 s2.1
-00:01:33.500 --> 00:01:38.333
+00:01:55.450 --> 00:02:00.283
 A Wait on a promise another task completes takes under two milliseconds.
 
 s2.2
-00:01:38.333 --> 00:01:41.900
+00:02:00.283 --> 00:02:03.850
 A three second Delay on the virtual clock, under one.
 
 s3.1
-00:01:42.450 --> 00:01:48.050
+00:02:04.400 --> 00:02:10.000
 An Await of a point three second sleep takes three hundred milliseconds of real time,
 
 s3.2
-00:01:48.050 --> 00:01:51.950
+00:02:10.000 --> 00:02:13.900
 answered on the bridge thread. Only that wait leaves doeff.
 
 h1
-00:01:52.500 --> 00:01:59.050
+00:02:14.450 --> 00:02:21.000
 Your own handlers keep the boundary strict. Here is one program, Fetch a URL, under two handlers.
 
 h2
-00:01:59.600 --> 00:02:07.550
+00:02:21.550 --> 00:02:29.500
 from table answers inside doeff. over async needs Python async, so it performs Await itself.
 
 h3
-00:02:08.100 --> 00:02:14.650
+00:02:30.050 --> 00:02:36.600
 That Await travels outward, so await handler goes outside over async, and scheduled outside both.
 
 h4
-00:02:17.100 --> 00:02:22.300
+00:02:39.050 --> 00:02:44.250
 Leave await handler out, or put it on the inside, and the Await finds no handler.
 
 h5.1
-00:02:24.100 --> 00:02:28.733
+00:02:46.050 --> 00:02:50.683
 So answer domain effects in handlers, cross only for real async work,
 
 h5.2
-00:02:28.733 --> 00:02:31.550
+00:02:50.683 --> 00:02:53.500
 and leave task switching to the scheduler.
 
 o1.1
-00:02:33.100 --> 00:02:37.450
+00:02:55.050 --> 00:02:59.400
 doeff: effects are answered by handlers, inside doeff.
 
 o1.2
-00:02:37.450 --> 00:02:43.000
+00:02:59.400 --> 00:03:04.950
 Await is the one door out, to Python's event loop. pip install doeff.

@@ -41,77 +41,77 @@ r1
 Ask again: retry performs the effect once more, on the handlers outside it.
 
 r2
-00:00:54.100 --> 00:00:58.000
+00:00:54.700 --> 00:00:58.600
 The provider times out twice. The third attempt answers.
 
 r3
-00:00:58.550 --> 00:01:02.350
+00:01:01.000 --> 00:01:04.800
 Then k resumes once, with the answer that worked.
 
 p1
-00:01:03.050 --> 00:01:08.900
+00:01:06.650 --> 00:01:12.500
 Keep the answers: effects are data, so a recorder can file each answer.
 
 p2
-00:01:09.450 --> 00:01:13.700
+00:01:17.350 --> 00:01:21.600
 Replay runs from the tape, with no provider at all.
 
 p3
-00:01:14.250 --> 00:01:18.250
+00:01:24.750 --> 00:01:28.750
 An effect it has never seen stops the run.
 
 h1
-00:01:18.800 --> 00:01:23.750
+00:01:30.600 --> 00:01:35.550
 Hold it: the scheduler is a handler that keeps the k of each waiting task.
 
 h2
-00:01:24.400 --> 00:01:29.800
+00:01:36.200 --> 00:01:41.600
 Tea sleeps every two hours, stretch every three. The clock parks each k.
 
 h3
-00:01:30.350 --> 00:01:34.300
+00:01:42.150 --> 00:01:46.100
 When every task waits, the clock jumps to the next wake-up.
 
 h4
-00:01:36.450 --> 00:01:42.000
+00:01:48.250 --> 00:01:53.800
 Six hours in under fifteen milliseconds, the same lines every run.
 
 i1
-00:01:42.550 --> 00:01:48.300
+00:01:54.350 --> 00:02:00.100
 With dependency injection, an injected client answers a call, and returns.
 
 i2
-00:01:48.850 --> 00:01:53.800
+00:02:00.650 --> 00:02:05.600
 It never gets the rest, so it cannot drop it, or hold it while others run.
 
 a1
-00:01:54.650 --> 00:02:00.250
+00:02:06.450 --> 00:02:12.050
 Plain async spreads: whatever awaits must be async, and so must its callers.
 
 a2
-00:02:01.650 --> 00:02:07.100
+00:02:13.450 --> 00:02:18.900
 With effects, total size yields Spawn and Gather. No async, no await.
 
 a3
-00:02:07.650 --> 00:02:12.900
+00:02:19.450 --> 00:02:24.700
 A handler decides how Fetch is answered. Both give thirty-six.
 
 c1
-00:02:13.550 --> 00:02:19.150
+00:02:25.350 --> 00:02:30.950
 Effects are rows, and handlers columns. Each handler minds one concern.
 
 c2
-00:02:19.750 --> 00:02:24.250
+00:02:31.550 --> 00:02:36.050
 A new effect is one row. A new concern is one column.
 
 c3
-00:02:25.550 --> 00:02:29.850
+00:02:37.350 --> 00:02:41.650
 With dependency injection, each check mark would be a wrapper class.
 
 o1
-00:02:31.050 --> 00:02:36.300
+00:02:42.850 --> 00:02:48.100
 Effects are not free. For code that runs one way, plain Python is better.
 
 o2
-00:02:36.850 --> 00:02:42.550
+00:02:48.650 --> 00:02:54.350
 When you need to steer the rest of the program, use a handler. pip install doeff.
