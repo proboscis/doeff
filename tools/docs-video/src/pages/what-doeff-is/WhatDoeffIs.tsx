@@ -13,7 +13,7 @@
 import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
-import {narrate} from '../../kit/narrated';
+import {LEAD, narrate} from '../../kit/narrated';
 import {CodeBlock, glow, Headlines, highlightYield, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
@@ -133,63 +133,106 @@ const TitleScene: React.FC = () => {
   );
 };
 
+// ---- The pace of scenes 2, 3 and 4. A motion starts PAUSE s after the one before it has stopped, so the eye can follow
+// every one; a scene's next line starts PAUSE s after both the line before it and its motions have stopped, and a scene
+// holds still for HOLD s after its last line and its last motion.
+const PAUSE = 0.9;
+const HOLD = 1.6;
+type Step = {from: number; to: number};
+// Motions end to end from a time: [name, seconds it lasts].
+const chain = <K extends string>(start: number, motions: [K, number][]): Record<K, Step> => {
+  let at = start;
+  const steps = {} as Record<K, Step>;
+  motions.forEach(([name, seconds], i) => {
+    const from = i === 0 ? at : at + PAUSE;
+    steps[name] = {from, to: from + seconds};
+    at = from + seconds;
+  });
+  return steps;
+};
+const lastOf = (steps: object) => Math.max(...(Object.values(steps) as Step[]).map(({to}) => to));
+// When the line with this id, read from a headline at this time, has been heard.
+const heardBy = (headline: number, id: keyof typeof DURATIONS) => headline + LEAD + DURATIONS[id];
+
 // Scene 2 — research under four handlers (measure/research.py).
 
-const MECH_LINES: Lines = [
-  [0, 'research yields one Spend per topic. It knows nothing about what spending means.'],
-  [6, 'free answers each Spend and lets the rest run: notes on both topics.'],
-  [12.4, 'refuse drops k at the first Spend. research stops there.'],
-  [17.6, 'budget keeps what is left between effects. With 10, both Spends fit.'],
-  [23.9, 'With 5, only 2 is left for the second Spend. budget drops k: "over budget".'],
-];
-const MECH = f(30);
 const RESEARCH = ['@do', 'def research(topics):', '    notes = []', '    for topic in topics:', '        yield Spend(3)', '        notes.append(f"notes on {topic}")', '    return notes'];
 const M = {x: 60, y: 120, w: 540, size: 19, line: 31};
 const MH = {x: 650, y: 120, w: 570, h: 214};
-type Run = {name: string; at: number; kind: 'resume' | 'drop' | 'budget'; limit: number; body: string[]; result: string};
+// A Spend's trip from the yield to the handler, the handler's glow as it takes it, an answer's trip back, one move of
+// the line band, and k dropped (the code after the yield dims, then the result goes to its row of the table).
+const M_FLY = 0.7;
+const M_GLOW = 0.5;
+const M_BACK = 0.5;
+const MOVE = 0.3;
+const M_DROP = 0.3 + M_FLY + 0.3;
+// The handler's code shows as its line comes; the first motion follows.
+const SHOWN = 0.3;
+// A run's motions, in seconds from its line: each Spend goes out and the handler glows as it takes it; None comes back
+// and research steps on to its next line; at the end the result goes to the table, or the handler drops k.
+type RunSteps = {spend1: Step; back1?: Step; spend2?: Step; back2?: Step; result?: Step; drop?: Step};
+const RESUMES: RunSteps = chain(SHOWN + PAUSE, [['spend1', M_FLY + M_GLOW], ['back1', M_BACK + MOVE], ['spend2', MOVE + M_FLY + M_GLOW], ['back2', M_BACK + MOVE], ['result', MOVE + 0.4]]);
+const REFUSES: RunSteps = chain(SHOWN + PAUSE, [['spend1', M_FLY + M_GLOW], ['drop', M_DROP]]);
+const RUNS_OUT: RunSteps = chain(SHOWN + PAUSE, [['spend1', M_FLY + M_GLOW], ['back1', M_BACK + MOVE], ['spend2', MOVE + M_FLY + M_GLOW], ['drop', M_DROP]]);
+type RunId = 'm2' | 'm3' | 'm4' | 'm5';
+type Run = {name: string; id: RunId; line: string; at: number; limit: number; steps: RunSteps; body: string[]; result: string};
+const BUDGET_BODY = ['def on_spend(effect: Spend, k):', '    if effect.cost > left:', '        return "over budget"', '    left -= effect.cost', '    return (yield Resume(k, None))'];
 // The four handlers of measure/research.py and what run(...) returned under each (research.log).
-const RUNS: Run[] = [
-  {name: 'free', at: 6, kind: 'resume', limit: 0, body: ['@do', 'def free(effect: Spend, k):', '    yield Transfer(k, None)'], result: "['notes on tides', 'notes on moons']"},
-  {name: 'refuse', at: 12.4, kind: 'drop', limit: 0, body: ['@do', 'def refuse(effect: Spend, k):', '    return "refused"'], result: "'refused'"},
+const RUN_DEFS: Omit<Run, 'at'>[] = [
   {
-    name: 'budget(10)', at: 17.6, kind: 'budget', limit: 10,
-    body: ['def on_spend(effect: Spend, k):', '    if effect.cost > left:', '        return "over budget"', '    left -= effect.cost', '    return (yield Resume(k, None))'],
-    result: "['notes on tides', 'notes on moons']",
+    name: 'free', id: 'm2', line: 'free answers each Spend and lets the rest run: notes on both topics.', limit: 0, steps: RESUMES,
+    body: ['@do', 'def free(effect: Spend, k):', '    yield Transfer(k, None)'], result: "['notes on tides', 'notes on moons']",
   },
-  {
-    name: 'budget(5)', at: 23.9, kind: 'budget', limit: 5,
-    body: ['def on_spend(effect: Spend, k):', '    if effect.cost > left:', '        return "over budget"', '    left -= effect.cost', '    return (yield Resume(k, None))'],
-    result: "'over budget'",
-  },
+  {name: 'refuse', id: 'm3', line: 'refuse drops k at the first Spend. research stops there.', limit: 0, steps: REFUSES, body: ['@do', 'def refuse(effect: Spend, k):', '    return "refused"'], result: "'refused'"},
+  {name: 'budget(10)', id: 'm4', line: 'budget keeps what is left between effects. With 10, both Spends fit.', limit: 10, steps: RESUMES, body: BUDGET_BODY, result: "['notes on tides', 'notes on moons']"},
+  {name: 'budget(5)', id: 'm5', line: 'With 5, only 2 is left for the second Spend. budget drops k: "over budget".', limit: 5, steps: RUNS_OUT, body: BUDGET_BODY, result: "'over budget'"},
 ];
+// Before the first run: the code, its yield, the handler box, what it is for, and the table of results.
+const MECH_INTRO = chain(0, [['code', 0.4], ['band', MOVE], ['handler', 0.4], ['meaning', 0.4], ['table', 0.4]]);
+const RUNS: Run[] = RUN_DEFS.reduce<Run[]>((runs, def) => {
+  const before = runs[runs.length - 1];
+  const at = before ? Math.max(before.at + lastOf(before.steps), heardBy(before.at, before.id)) : Math.max(lastOf(MECH_INTRO), heardBy(0, 'm1'));
+  return [...runs, {...def, at: at + PAUSE}];
+}, []);
+const LAST_RUN = RUNS[RUNS.length - 1];
+const MECH_LINES: Lines = [[0, 'research yields one Spend per topic. It knows nothing about what spending means.'], ...RUNS.map((run): [number, string] => [run.at, run.line])];
+const MECH = f(Math.max(LAST_RUN.at + lastOf(LAST_RUN.steps), heardBy(LAST_RUN.at, LAST_RUN.id)) + HOLD);
 const ROWS_Y = 446;
 const rowY = (i: number) => ROWS_Y + 44 + i * 46 + 18;
+// When a run's row of the table shows: as research returns, or as the result the handler returned arrives.
+const rowAt = (run: Run) => run.at + (run.steps.result ? run.steps.result.from + MOVE : (run.steps.drop?.from ?? 0) + 0.3 + M_FLY);
+const NO_STEPS: RunSteps = {spend1: {from: Infinity, to: Infinity}};
 
 const MechScene: React.FC = () => {
   const frame = useSceneFrame();
   const current = RUNS.reduce((found, run, i) => (frame >= f(run.at) ? i : found), -1);
   const run = current >= 0 ? RUNS[current] : null;
   const s = run ? run.at : 0;
+  const st = run ? run.steps : NO_STEPS;
   const t = (from: number, to: number) => ramp(frame, s + from, s + to);
-  const on = (from: number, to = Infinity) => run !== null && frame >= f(s + from) && frame < f(s + to);
-  // Whether k is dropped: at the first Spend under refuse, at the second under budget(5).
-  const dropAt = run?.kind === 'drop' ? 1.0 : run?.limit === 5 ? 3.3 : Infinity;
-  const dropped = run && dropAt !== Infinity ? t(dropAt, dropAt + 0.5) : 0;
-  const goesOn = run !== null && dropAt === Infinity;
+  const past = (seconds: number | undefined) => run !== null && seconds !== undefined && frame >= f(s + seconds);
+  const within = (from: number | undefined, length: number) => run !== null && from !== undefined && during(frame, s + from, s + from + length);
+  // The Spends leave the yield; the answers leave the handler.
+  const leaves = [st.spend1.from, st.spend2 && st.spend2.from + MOVE];
+  const backs = [st.back1?.from, st.back2?.from];
+  const arrived = leaves.map((from) => (from === undefined ? undefined : from + M_FLY));
+  const answered = backs.map((from) => (from === undefined ? undefined : from + M_BACK));
+  const drop = st.drop?.from;
+  const dropped = drop === undefined ? 0 : t(drop, drop + 0.3);
+  const moves: [number | undefined, number][] = [[answered[0], 5], [st.spend2?.from, 4], [answered[1], 5], [st.result?.from, 6]];
   const band = !run
-    ? bandAt(frame, [[1.0, 4]])
-    : bandAt(frame, goesOn ? [[s + 0.2, 4], [s + 1.9, 5], [s + 2.4, 4], [s + 4.2, 5], [s + 4.6, 6]] : run.kind === 'drop' ? [[s + 0.2, 4]] : [[s + 0.2, 4], [s + 1.9, 5], [s + 2.4, 4]]);
-  const topic = !run || frame < f(s + 2.4) ? 'tides' : 'moons';
-  const notes = !run ? '[]' : on(4.3) && goesOn ? "['notes on tides', 'notes on moons']" : on(2.0) && run.kind !== 'drop' ? "['notes on tides']" : '[]';
-  const left = !run ? 0 : run.limit - (on(1.2) ? 3 : 0) - (goesOn && on(3.5) ? 3 : 0);
-  const spends = [0.3, 2.6].filter((at) => !(run?.kind === 'drop' && at > 1));
-  const working = run !== null && spends.some((at) => on(at + 0.7, at + 1.3));
-  const over = run?.limit === 5 && on(3.0);
+    ? bandAt(frame, [[MECH_INTRO.band.from, 4]])
+    : bandAt(frame, [[s, 4], ...moves.filter((move): move is [number, number] => move[0] !== undefined).map(([at, line]): [number, number] => [s + at, line])]);
+  const topic = past(st.spend2?.from) ? 'moons' : 'tides';
+  const notes = past(answered[1]) ? "['notes on tides', 'notes on moons']" : past(answered[0]) ? "['notes on tides']" : '[]';
+  const left = !run ? 0 : run.limit - (past(arrived[0]) ? 3 : 0) - (st.back2 && past(arrived[1]) ? 3 : 0);
+  const working = arrived.some((at) => within(at, M_GLOW));
+  const over = run?.limit === 5 && past(arrived[1]);
   return (
     <AbsoluteFill>
       <Headlines lines={MECH_LINES} />
-      <CodeBlock lines={RESEARCH} x={M.x} y={M.y} w={M.w} size={M.size} line={M.line} band={band} dim={(i) => (i >= 5 ? 1 - 0.7 * dropped : 1)} opacity={fadeAt(frame, 0)} />
-      <div style={{position: 'absolute', left: M.x, top: M.y + PAD * 2 + RESEARCH.length * M.line + 14, fontFamily: MONO, fontSize: 18, lineHeight: '28px', color: TEXT, opacity: fadeAt(frame, 0.6)}}>
+      <CodeBlock lines={RESEARCH} x={M.x} y={M.y} w={M.w} size={M.size} line={M.line} band={band} dim={(i) => (i >= 5 ? 1 - 0.7 * dropped : 1)} opacity={fadeAt(frame, MECH_INTRO.code.from, 0.4)} />
+      <div style={{position: 'absolute', left: M.x, top: M.y + PAD * 2 + RESEARCH.length * M.line + 14, fontFamily: MONO, fontSize: 18, lineHeight: '28px', color: TEXT, opacity: fadeAt(frame, MECH_INTRO.code.from, 0.4)}}>
         <div>
           topic = <span style={{color: ACCENT}}>'{topic}'</span>
         </div>
@@ -197,13 +240,13 @@ const MechScene: React.FC = () => {
           notes = <span style={{color: TEST}}>{notes}</span>
         </div>
       </div>
-      <Box x={MH.x} y={MH.y} w={MH.w} h={MH.h} color={TEST} on={working} opacity={fadeAt(frame, 0.4)}>
+      <Box x={MH.x} y={MH.y} w={MH.w} h={MH.h} color={TEST} on={working} opacity={fadeAt(frame, MECH_INTRO.handler.from, 0.4)}>
         <div style={{position: 'absolute', left: 20, top: 12, fontFamily: SANS, fontSize: 22, fontWeight: 700, color: working ? LOOK : TEST}}>
           {run ? <span style={{fontFamily: MONO}}>{run.name}</span> : 'a handler of Spend'}
         </div>
-        {!run && <div style={{position: 'absolute', left: 20, top: 56, fontFamily: SANS, fontSize: 19, color: MUTED, opacity: fadeAt(frame, 2.4)}}>gives Spend its meaning: research does not</div>}
+        {!run && <div style={{position: 'absolute', left: 20, top: 56, fontFamily: SANS, fontSize: 19, color: MUTED, opacity: fadeAt(frame, MECH_INTRO.meaning.from, 0.4)}}>gives Spend its meaning: research does not</div>}
         {RUNS.map((r, i) => (
-          <div key={r.name} style={{position: 'absolute', left: 20, top: 50, fontFamily: MONO, fontSize: 16, lineHeight: '29px', color: TEXT, whiteSpace: 'pre', opacity: i === current ? fadeAt(frame, r.at, 0.3) : 0}}>
+          <div key={r.name} style={{position: 'absolute', left: 20, top: 50, fontFamily: MONO, fontSize: 16, lineHeight: '29px', color: TEXT, whiteSpace: 'pre', opacity: i === current ? fadeAt(frame, r.at, SHOWN) : 0}}>
             {r.body.map((line, j) => (
               <div key={j} style={{color: line.startsWith('@') ? ACCENT : TEXT}}>
                 {line.includes('yield') ? highlightYield(line) : line}
@@ -212,8 +255,8 @@ const MechScene: React.FC = () => {
           </div>
         ))}
       </Box>
-      {run?.kind === 'budget' && (
-        <div style={{position: 'absolute', left: MH.x, top: MH.y + MH.h + 14, width: MH.w, height: 70, opacity: fadeAt(frame, s, 0.3)}}>
+      {run && run.limit > 0 && (
+        <div style={{position: 'absolute', left: MH.x, top: MH.y + MH.h + 14, width: MH.w, height: 70, opacity: fadeAt(frame, s, SHOWN)}}>
           <div style={{position: 'absolute', left: 0, top: 0, fontFamily: SANS, fontSize: 19, color: MUTED}}>
             left <span style={{fontFamily: MONO, fontSize: 22, fontWeight: 700, color: over ? FAIL : TEXT, marginLeft: 8}}>{left}</span>
             {over && <span style={{fontFamily: MONO, fontSize: 20, fontWeight: 700, color: FAIL, marginLeft: 22}}>cost 3 &gt; left 2</span>}
@@ -223,40 +266,36 @@ const MechScene: React.FC = () => {
           ))}
         </div>
       )}
-      {spends.map((at) =>
-        on(at, at + 1.0) ? (
-          <Pill key={at} x={mix(M.x + M.w + 20, MH.x + 120, t(at, at + 0.7))} y={mix(lineMid(M.y, M.line, 4), MH.y + MH.h - 26, t(at, at + 0.7))} text="Spend(3)" color={ACCENT} opacity={1 - t(at + 0.7, at + 1.0)} />
+      {/* A pill shows only while it travels: the box it reaches glows, or the line band steps on, as it arrives. */}
+      {leaves.map((from, i) =>
+        from !== undefined && within(from, M_FLY) ? (
+          <Pill key={`spend${i}`} x={mix(M.x + M.w + 20, MH.x + 120, t(from, from + M_FLY))} y={mix(lineMid(M.y, M.line, 4), MH.y + MH.h - 26, t(from, from + M_FLY))} text="Spend(3)" color={ACCENT} />
         ) : null,
       )}
-      {run &&
-        [0.3, 2.6]
-          .filter((at) => s + at + 1.0 < s + dropAt)
-          .map((at) =>
-            on(at + 0.9, at + 1.6) ? (
-              <Pill key={`back${at}`} x={mix(MH.x + 120, M.x + M.w + 20, t(at + 0.9, at + 1.4))} y={mix(MH.y + MH.h - 26, lineMid(M.y, M.line, 4), t(at + 0.9, at + 1.4))} text="None" color={TEST} opacity={1 - t(at + 1.4, at + 1.6)} />
-            ) : null,
-          )}
-      {run && dropAt !== Infinity && on(dropAt + 0.3, dropAt + 1.3) && (
-        <Pill x={mix(MH.x + 200, 420, t(dropAt + 0.3, dropAt + 1.0))} y={mix(MH.y + MH.h - 26, rowY(current), t(dropAt + 0.3, dropAt + 1.0))} text={run.result} color={TEST} opacity={1 - t(dropAt + 1.0, dropAt + 1.3)} />
+      {backs.map((from, i) =>
+        from !== undefined && within(from, M_BACK) ? (
+          <Pill key={`back${i}`} x={mix(MH.x + 120, M.x + M.w + 20, t(from, from + M_BACK))} y={mix(MH.y + MH.h - 26, lineMid(M.y, M.line, 4), t(from, from + M_BACK))} text="None" color={TEST} />
+        ) : null,
       )}
-      {run && dropAt !== Infinity && (
-        <Label x={M.x + 330} y={M.y + PAD * 2 + RESEARCH.length * M.line + 16} size={18} bold color={FAIL} opacity={fadeAt(frame, s + dropAt + 0.2)}>
+      {run && drop !== undefined && (
+        <Label x={M.x + 330} y={M.y + PAD * 2 + RESEARCH.length * M.line + 16} size={18} bold color={FAIL} opacity={fadeAt(frame, s + drop)}>
           k dropped: never runs
         </Label>
       )}
-      <div style={{position: 'absolute', left: 60, top: ROWS_Y, width: 1160, height: 236, boxSizing: 'border-box', padding: '10px 18px', background: '#0b0d13', borderRadius: 12, opacity: fadeAt(frame, 5.0)}}>
+      <div style={{position: 'absolute', left: 60, top: ROWS_Y, width: 1160, height: 236, boxSizing: 'border-box', padding: '10px 18px', background: '#0b0d13', borderRadius: 12, opacity: fadeAt(frame, MECH_INTRO.table.from, 0.4)}}>
         <div style={{fontFamily: SANS, fontSize: 16, lineHeight: '22px', color: MUTED}}>what research(["tides", "moons"]) returns under each handler</div>
-        {RUNS.map((r, i) => {
-          const shownAt = r.at + (r.kind === 'drop' ? 2.1 : r.limit === 5 ? 4.4 : 4.9);
-          return (
-            <div key={r.name} style={{display: 'flex', height: 46, alignItems: 'center', opacity: fadeAt(frame, shownAt)}}>
-              <div style={{width: 190, fontFamily: MONO, fontSize: 20, fontWeight: 700, color: i === current ? LOOK : TEST}}>{r.name}</div>
-              <div style={{fontFamily: MONO, fontSize: 20, color: TEXT, whiteSpace: 'nowrap'}}>{r.result}</div>
-              <div style={{marginLeft: 24, fontFamily: SANS, fontSize: 17, color: MUTED}}>{r.kind === 'drop' || r.limit === 5 ? 'k dropped' : 'k resumed twice: one k per Spend'}</div>
-            </div>
-          );
-        })}
+        {RUNS.map((r, i) => (
+          <div key={r.name} style={{display: 'flex', height: 46, alignItems: 'center', opacity: fadeAt(frame, rowAt(r))}}>
+            <div style={{width: 190, fontFamily: MONO, fontSize: 20, fontWeight: 700, color: i === current ? LOOK : TEST}}>{r.name}</div>
+            <div style={{fontFamily: MONO, fontSize: 20, color: TEXT, whiteSpace: 'nowrap'}}>{r.result}</div>
+            <div style={{marginLeft: 24, fontFamily: SANS, fontSize: 17, color: MUTED}}>{r.steps.drop ? 'k dropped' : "each Spend's k resumed once"}</div>
+          </div>
+        ))}
       </div>
+      {/* Over the table: the result the handler returned goes to its row. */}
+      {run && drop !== undefined && within(drop + 0.3, M_FLY) && (
+        <Pill x={mix(MH.x + 200, 420, t(drop + 0.3, drop + 0.3 + M_FLY))} y={mix(MH.y + MH.h - 26, rowY(current), t(drop + 0.3, drop + 0.3 + M_FLY))} text={run.result} color={TEST} />
+      )}
     </AbsoluteFill>
   );
 };
@@ -264,7 +303,6 @@ const MechScene: React.FC = () => {
 // Scene 3 — handlers stack: trace inside budget(5) (measure/research.py, the last run).
 
 const STACK_LINES: Lines = [[0, 'Handlers stack. trace takes every effect first, notes it, and passes it on to budget.']];
-const STACK = f(10.5);
 const ST = {cx: 470, cy: 372, w: 470, size: 16, line: 25, margin: 52};
 const stH = PAD * 2 + RESEARCH.length * ST.line;
 const stCode = {x: ST.cx - ST.w / 2, y: ST.cy - stH / 2};
@@ -273,19 +311,28 @@ const ST_LAYERS = [
   {name: 'handler(trace)', handles: 'takes every effect'},
   {name: 'budget(5)', handles: 'takes Spend'},
 ];
+// A pill's trip from one ring to the next; the ring that takes it glows as it arrives.
+const ST_FLY = 0.6;
+// Both rings; each Spend out to trace, which notes it, and passed on to budget; None back to research, which goes on to
+// the second topic; budget drops k at the second Spend.
+const STACK_STEPS = chain(0.2, [['rings', 0.4], ['out1', ST_FLY + M_GLOW], ['pass1', ST_FLY + M_GLOW], ['back1', ST_FLY + MOVE], ['out2', MOVE + ST_FLY + M_GLOW], ['pass2', ST_FLY + M_GLOW], ['drop', 0.5]]);
+const STACK = f(Math.max(lastOf(STACK_STEPS), heardBy(0, 's1')) + HOLD);
 
 const StackScene: React.FC = () => {
   const frame = useSceneFrame();
+  const {rings, out1, pass1, back1, out2, pass2, drop} = STACK_STEPS;
   const startX = ST.cx + ST.w / 2;
   const edge = (i: number) => ST.cx + stLayer(i).w / 2;
   const y = lineMid(stCode.y, ST.line, 4);
-  // Each Spend: out to trace, noted, passed on to budget.
-  const trips = [0.9, 4.2];
-  const seen = trips.filter((at) => frame >= f(at + 0.8)).length;
-  const left = frame >= f(trips[0] + 1.9) ? 2 : 5;
-  const dropped = ramp(frame, trips[1] + 1.9, trips[1] + 2.4);
-  const working = [trips.some((at) => during(frame, at + 0.6, at + 1.1)), trips.some((at) => during(frame, at + 1.6, at + 2.2))];
-  const band = bandAt(frame, [[0.5, 4], [trips[0] + 2.6, 5], [trips[0] + 3.0, 4]]);
+  const outs = [out1.from, out2.from + MOVE];
+  const passes = [pass1.from, pass2.from];
+  const seenAt = outs.map((at) => at + ST_FLY);
+  const seen = seenAt.filter((at) => frame >= f(at)).length;
+  const left = frame >= f(pass1.from + ST_FLY) ? 2 : 5;
+  const over = frame >= f(pass2.from + ST_FLY);
+  const dropped = ramp(frame, drop.from, drop.to);
+  const working = [seenAt.some((at) => during(frame, at, at + M_GLOW)), passes.some((at) => during(frame, at + ST_FLY, at + ST_FLY + M_GLOW))];
+  const band = bandAt(frame, [[rings.from, 4], [back1.from + ST_FLY, 5], [out2.from, 4]]);
   return (
     <AbsoluteFill>
       <Headlines lines={STACK_LINES} />
@@ -296,7 +343,7 @@ const StackScene: React.FC = () => {
             key={layer.name}
             style={{
               position: 'absolute', left: r.x, top: r.y, width: r.w, height: r.h, boxSizing: 'border-box', borderRadius: 22,
-              border: `3px solid ${TEST}`, ...glow(working[i], TEST), opacity: fadeAt(frame, 0.2 + i * 0.3, 0.4),
+              border: `3px solid ${TEST}`, ...glow(working[i], TEST), opacity: fadeAt(frame, rings.from, 0.4),
             }}
           >
             <div style={{position: 'absolute', left: 16, top: 12, fontSize: 17, fontWeight: 700, color: working[i] ? LOOK : TEST, whiteSpace: 'nowrap'}}>
@@ -307,28 +354,25 @@ const StackScene: React.FC = () => {
         );
       })}
       <CodeBlock lines={RESEARCH} x={stCode.x} y={stCode.y} w={ST.w} size={ST.size} line={ST.line} band={band} dim={(i) => (i >= 5 ? 1 - 0.7 * dropped : 1)} />
-      {trips.map((at) => (
-        <React.Fragment key={at}>
-          {during(frame, at, at + 1.0) && <Pill x={mix(startX + 10, edge(0) - 10, ramp(frame, at, at + 0.6))} y={y} text="Spend(3)" color={ACCENT} opacity={1 - ramp(frame, at + 0.8, at + 1.0)} />}
-          {during(frame, at + 1.0, at + 2.0) && <Pill x={mix(edge(0) + 6, edge(1) - 10, ramp(frame, at + 1.0, at + 1.6))} y={y} text="Pass: Spend(3)" color={ACCENT} opacity={1 - ramp(frame, at + 1.8, at + 2.0)} />}
-        </React.Fragment>
-      ))}
-      {during(frame, trips[0] + 2.1, trips[0] + 2.9) && <Pill x={mix(edge(1) - 10, startX + 10, ramp(frame, trips[0] + 2.1, trips[0] + 2.7))} y={y} text="None" color={TEST} opacity={1 - ramp(frame, trips[0] + 2.7, trips[0] + 2.9)} />}
-      <Box x={960} y={140} w={260} h={250} color={ACCENT} opacity={fadeAt(frame, 0.8)}>
+      {/* A pill shows only while it travels. */}
+      {outs.map((at) => during(frame, at, at + ST_FLY) && <Pill key={`out${at}`} x={mix(startX + 10, edge(0) - 10, ramp(frame, at, at + ST_FLY))} y={y} text="Spend(3)" color={ACCENT} />)}
+      {passes.map((at) => during(frame, at, at + ST_FLY) && <Pill key={`pass${at}`} x={mix(edge(0) + 6, edge(1) - 10, ramp(frame, at, at + ST_FLY))} y={y} text="Pass: Spend(3)" color={ACCENT} />)}
+      {during(frame, back1.from, back1.from + ST_FLY) && <Pill x={mix(edge(1) - 10, startX + 10, ramp(frame, back1.from, back1.from + ST_FLY))} y={y} text="None" color={TEST} />}
+      <Box x={960} y={140} w={260} h={250} color={ACCENT} opacity={fadeAt(frame, rings.from, 0.4)}>
         <div style={{position: 'absolute', left: 16, top: 12, fontFamily: MONO, fontSize: 18, fontWeight: 700, color: ACCENT}}>seen</div>
         {Array.from({length: seen}, (_, i) => (
-          <div key={i} style={{position: 'absolute', left: 16, top: 52 + i * 34, fontFamily: MONO, fontSize: 18, color: TEXT, opacity: fadeAt(frame, trips[i] + 0.8)}}>
+          <div key={i} style={{position: 'absolute', left: 16, top: 52 + i * 34, fontFamily: MONO, fontSize: 18, color: TEXT, opacity: fadeAt(frame, seenAt[i])}}>
             Spend(cost=3)
           </div>
         ))}
         <div style={{position: 'absolute', left: 16, top: 150, fontFamily: SANS, fontSize: 18, color: MUTED}}>
-          budget: left <span style={{fontFamily: MONO, fontWeight: 700, color: dropped > 0 ? FAIL : TEXT}}>{left}</span>
+          budget: left <span style={{fontFamily: MONO, fontWeight: 700, color: over ? FAIL : TEXT}}>{left}</span>
         </div>
-        <div style={{position: 'absolute', left: 16, top: 184, fontFamily: MONO, fontSize: 17, fontWeight: 700, color: FAIL, opacity: fadeAt(frame, trips[1] + 1.8)}}>cost 3 &gt; left 2</div>
+        <div style={{position: 'absolute', left: 16, top: 184, fontFamily: MONO, fontSize: 17, fontWeight: 700, color: FAIL, opacity: fadeAt(frame, pass2.from + ST_FLY)}}>cost 3 &gt; left 2</div>
       </Box>
-      <div style={{position: 'absolute', left: 0, right: 0, top: 640, textAlign: 'center', fontFamily: MONO, fontSize: 19, color: TEXT, opacity: fadeAt(frame, 0.6)}}>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 640, textAlign: 'center', fontFamily: MONO, fontSize: 19, color: TEXT, opacity: fadeAt(frame, rings.from, 0.4)}}>
         run(budget(5)(handler(trace)(research(["tides", "moons"]))))
-        <span style={{color: ACCENT, fontWeight: 700, opacity: fadeAt(frame, trips[1] + 2.6)}}>{"  → 'over budget'"}</span>
+        <span style={{color: ACCENT, fontWeight: 700, opacity: fadeAt(frame, drop.from, drop.to - drop.from)}}>{"  → 'over budget'"}</span>
       </div>
     </AbsoluteFill>
   );
@@ -336,14 +380,6 @@ const StackScene: React.FC = () => {
 
 // Scene 4 — one mechanism: crawl's effects, each to the handler that gives it its meaning (measure/one_mechanism.py).
 
-const ONE_LINES: Lines = [
-  [0, 'State, exceptions, concurrency, observation, I/O: effects of one kind.'],
-  [6.6, 'crawl fetches pages in parallel tasks, counts them, and logs each fetch.'],
-  [13, 'Each effect travels out to the handler that gives it its meaning.'],
-  [21.5, 'The empty page raises in its task. Try turns the error into a value.'],
-  [28, 'The code names its effects. Where it runs decides the handlers.'],
-];
-const ONE = f(34.5);
 const CRAWL = [
   '@do',
   'def size(url):',
@@ -377,24 +413,52 @@ const STACK_ROWS = [
 const RW = {x: 760, y: 98, w: 460, h: 58, gap: 6};
 const rowTop = (i: number) => RW.y + i * (RW.h + RW.gap);
 const rowMid = (i: number) => rowTop(i) + RW.h / 2;
-// The effects in the order the run yielded them (one_mechanism.log): the code line, the handler row, the second.
-type Trip = {text: string; line: number; row: number; at: number; color?: string};
-const TRIPS: Trip[] = [
-  {text: 'Listen', line: 16, row: 2, at: 13.3},
-  {text: 'Spawn', line: 12, row: 5, at: 14.1},
-  {text: 'Try', line: 12, row: 1, at: 14.9},
-  {text: "Fetch('…a.example')", line: 2, row: 0, at: 15.7},
-  {text: "Get('fetched')", line: 5, row: 4, at: 16.5},
-  {text: "Put('fetched', 1)", line: 5, row: 4, at: 17.3},
-  {text: 'Tell', line: 6, row: 3, at: 18.1},
-  {text: 'Spawn', line: 12, row: 5, at: 18.9},
-  {text: 'Try', line: 12, row: 1, at: 19.7},
-  {text: "Fetch('…b.example')", line: 2, row: 0, at: 20.5},
-  {text: 'ValueError', line: 4, row: 1, at: 22.0, color: FAIL},
-  {text: 'Gather', line: 13, row: 5, at: 23.4},
-  {text: "Get('fetched')", line: 17, row: 4, at: 24.2},
-];
+// The pace of the scene: the handler rows come one by one; each effect's trip out to its row is one motion, and the next
+// trip leaves TRIP_PAUSE s after it has arrived (the row stays lit in between). The empty page's raise is a motion of
+// its own before its ValueError travels.
 const FLY = 0.55;
+const TRIP_PAUSE = 1.0;
+const RAISE = 0.4;
+const ROWS_AT = STACK_ROWS.map((_, i) => 0.8 + i * (0.4 + PAUSE));
+const O2 = Math.max(ROWS_AT[ROWS_AT.length - 1] + 0.4, heardBy(0, 'o1')) + PAUSE;
+const O3 = heardBy(O2, 'o2') + PAUSE;
+// The effects in the order the run yielded them (one_mechanism.log): the code line, the handler row, and the second
+// it leaves.
+type Trip = {text: string; line: number; row: number; at: number; color?: string; raised?: boolean};
+const TRIP_DEFS: Omit<Trip, 'at'>[] = [
+  {text: 'Listen', line: 16, row: 2},
+  {text: 'Spawn', line: 12, row: 5},
+  {text: 'Try', line: 12, row: 1},
+  {text: "Fetch('…a.example')", line: 2, row: 0},
+  {text: "Get('fetched')", line: 5, row: 4},
+  {text: "Put('fetched', 1)", line: 5, row: 4},
+  {text: 'Tell', line: 6, row: 3},
+  {text: 'Spawn', line: 12, row: 5},
+  {text: 'Try', line: 12, row: 1},
+  {text: "Fetch('…b.example')", line: 2, row: 0},
+  {text: 'ValueError', line: 4, row: 1, color: FAIL, raised: true},
+  {text: 'Gather', line: 13, row: 5},
+  {text: "Get('fetched')", line: 17, row: 4},
+];
+const TRIPS: Trip[] = TRIP_DEFS.reduce<Trip[]>((trips, def) => {
+  const before = trips[trips.length - 1];
+  const free = before ? before.at + FLY + TRIP_PAUSE : O3 + 0.3;
+  return [...trips, {...def, at: def.raised ? free + RAISE + TRIP_PAUSE : free}];
+}, []);
+const arrives = (i: number) => TRIPS[i].at + FLY;
+const RAISED = TRIPS.findIndex((trip) => trip.raised);
+const RAISE_AT = TRIPS[RAISED].at - TRIP_PAUSE - RAISE;
+const O4 = Math.max(RAISE_AT - 0.3, heardBy(O3, 'o3') + PAUSE);
+const RESULTS_AT = arrives(TRIPS.length - 1) + PAUSE;
+const O5 = Math.max(RESULTS_AT + 0.4, heardBy(O4, 'o4')) + PAUSE;
+const ONE_LINES: Lines = [
+  [0, 'State, exceptions, concurrency, observation, I/O: effects of one kind.'],
+  [O2, 'crawl fetches pages in parallel tasks, counts them, and logs each fetch.'],
+  [O3, 'Each effect travels out to the handler that gives it its meaning.'],
+  [O4, 'The empty page raises in its task. Try turns the error into a value.'],
+  [O5, 'The code names its effects. Where it runs decides the handlers.'],
+];
+const ONE = f(Math.max(O5 + 0.4 + 0.3, heardBy(O5, 'o5')) + HOLD);
 const RESULTS = {x: 40, y: 542, w: 1180, h: 142};
 
 // The handler rows on the right of scenes 4 and 5. notes: what each row shows next to its name at this frame.
@@ -417,31 +481,34 @@ const HandlerRows: React.FC<{frame: number; working: (row: number) => boolean; n
 const OneScene: React.FC = () => {
   const frame = useSceneFrame();
   const fromX = O.x + O.w + 8;
-  const working = (row: number) => TRIPS.some((trip) => trip.row === row && during(frame, trip.at + FLY, trip.at + FLY + 0.45));
-  const lineOf = TRIPS.reduce((found: number | null, trip) => (frame >= f(trip.at - 0.1) ? trip.line : found), null);
-  const task = during(frame, 15.5, 18.8) ? 'task a' : during(frame, 19.6, 23.2) ? 'task b' : '';
+  const past = (seconds: number) => frame >= f(seconds);
+  // A row is lit from the arrival of a trip to it until the next trip leaves.
+  const working = (row: number) => TRIPS.some((trip) => trip.row === row && during(frame, trip.at + FLY, trip.at + FLY + TRIP_PAUSE));
+  const lineOf = TRIPS.reduce((found: number | null, trip) => (past(trip.at - 0.1) ? trip.line : found), null);
+  // Each task runs from its Try, the first effect it yields, until the next Spawn or the Gather.
+  const task = during(frame, TRIPS[2].at, TRIPS[7].at) ? 'task a' : during(frame, TRIPS[8].at, TRIPS[11].at) ? 'task b' : '';
   const notes = (row: number): React.ReactNode =>
     row === 0
-      ? frame >= f(21.0) ? "b → ''" : frame >= f(16.2) ? "a → '<p>hello</p>'" : ''
+      ? past(arrives(9)) ? "b → ''" : past(arrives(3)) ? "a → '<p>hello</p>'" : ''
       : row === 1
-        ? frame >= f(22.6) ? 'b → Err(ValueError)' : ''
+        ? past(arrives(RAISED)) ? 'b → Err(ValueError)' : ''
         : row === 3
-          ? frame >= f(18.6) ? "'fetched https://a.example'" : ''
+          ? past(arrives(6)) ? "'fetched https://a.example'" : ''
           : row === 4
-            ? `fetched = ${frame >= f(17.8) ? 1 : 0}`
+            ? `fetched = ${past(arrives(5)) ? 1 : 0}`
             : row === 5
-              ? frame >= f(23.9) ? 'gathered a, b' : frame >= f(19.4) ? 'tasks a, b' : frame >= f(14.6) ? 'task a' : ''
+              ? past(arrives(11)) ? 'gathered a, b' : past(arrives(7)) ? 'tasks a, b' : past(arrives(1)) ? 'task a' : ''
               : '';
-  const named = fadeAt(frame, 28.4);
+  const named = fadeAt(frame, O5 + 0.4);
   return (
     <AbsoluteFill>
       <Headlines lines={ONE_LINES} />
-      <CodeBlock lines={CRAWL} x={O.x} y={O.y} w={O.w} size={O.size} line={O.line} band={frame >= f(13.2) && frame < f(25) ? lineOf : null} opacity={fadeAt(frame, 0.3)} />
-      {frame >= f(21.6) && frame < f(23.4) && (
+      <CodeBlock lines={CRAWL} x={O.x} y={O.y} w={O.w} size={O.size} line={O.line} band={past(TRIPS[0].at - 0.1) && !past(RESULTS_AT) ? lineOf : null} opacity={fadeAt(frame, 0.3)} />
+      {during(frame, RAISE_AT, TRIPS[RAISED + 1].at) && (
         <div
           style={{
             position: 'absolute', left: O.x + 6, top: O.y + PAD + 4 * O.line - 2, width: O.w - 12, height: O.line + 4, boxSizing: 'border-box', borderRadius: 6,
-            border: `3px solid ${FAIL}`, boxShadow: `0 0 14px ${FAIL}`, opacity: between(frame, 21.6, 23.1),
+            border: `3px solid ${FAIL}`, boxShadow: `0 0 14px ${FAIL}`, opacity: between(frame, RAISE_AT, TRIPS[RAISED + 1].at - 0.3, RAISE),
           }}
         />
       )}
@@ -449,16 +516,17 @@ const OneScene: React.FC = () => {
         {task}
       </Label>
       <div style={{position: 'absolute', left: O.x - 4, top: O.y - 4, width: O.w + 8, height: PAD * 2 + CRAWL.length * O.line + 8, boxSizing: 'border-box', borderRadius: 16, border: `3px solid ${ACCENT}`, boxShadow: `0 0 18px ${ACCENT}88`, opacity: named}} />
-      <HandlerRows frame={frame} working={working} notes={notes} first={STACK_ROWS[0].name} at={(i) => 0.8 + i * 0.7} />
-      {[0, 1, 2, 3, 4, 5].map((i) => (
-        <div key={i} style={{position: 'absolute', left: RW.x - 10, top: rowTop(i) + 4, width: RW.w + 20, height: RW.h - 8, borderRadius: 14, border: `3px solid ${LOOK}`, opacity: between(frame, 0.8 + i * 0.7, 6.4) * 0.55}} />
+      <HandlerRows frame={frame} working={working} notes={notes} first={STACK_ROWS[0].name} at={(i) => ROWS_AT[i]} />
+      {ROWS_AT.map((at, i) => (
+        <div key={i} style={{position: 'absolute', left: RW.x - 10, top: rowTop(i) + 4, width: RW.w + 20, height: RW.h - 8, borderRadius: 14, border: `3px solid ${LOOK}`, opacity: between(frame, at, O2 - 0.3) * 0.55}} />
       ))}
+      {/* A pill shows only while it travels; the row it reaches lights as it arrives. */}
       {TRIPS.map((trip) =>
-        during(frame, trip.at, trip.at + FLY + 0.25) ? (
-          <Pill key={`${trip.text}${trip.at}`} left x={mix(fromX, RW.x + 10, ramp(frame, trip.at, trip.at + FLY))} y={mix(lineMid(O.y, O.line, trip.line), rowMid(trip.row), ramp(frame, trip.at, trip.at + FLY))} text={trip.text} color={trip.color ?? ACCENT} opacity={1 - ramp(frame, trip.at + FLY, trip.at + FLY + 0.25)} />
+        during(frame, trip.at, trip.at + FLY) ? (
+          <Pill key={`${trip.text}${trip.at}`} left x={mix(fromX, RW.x + 10, ramp(frame, trip.at, trip.at + FLY))} y={mix(lineMid(O.y, O.line, trip.line), rowMid(trip.row), ramp(frame, trip.at, trip.at + FLY))} text={trip.text} color={trip.color ?? ACCENT} />
         ) : null,
       )}
-      <div style={{position: 'absolute', left: RESULTS.x, top: RESULTS.y, width: RESULTS.w, height: RESULTS.h, boxSizing: 'border-box', padding: '12px 20px', background: '#0b0d13', borderRadius: 12, opacity: fadeAt(frame, 24.9)}}>
+      <div style={{position: 'absolute', left: RESULTS.x, top: RESULTS.y, width: RESULTS.w, height: RESULTS.h, boxSizing: 'border-box', padding: '12px 20px', background: '#0b0d13', borderRadius: 12, opacity: fadeAt(frame, RESULTS_AT, 0.4)}}>
         <div style={{fontFamily: SANS, fontSize: 16, color: MUTED, marginBottom: 8}}>sizes, log, fetched = run(scheduled(state(writer(listen_handler(try_handler(local_pages(report(urls))))))))</div>
         <div style={{fontFamily: MONO, fontSize: 19, lineHeight: '32px', color: TEXT, whiteSpace: 'nowrap'}}>
           <div>

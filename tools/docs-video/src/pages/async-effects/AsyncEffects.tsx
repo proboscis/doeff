@@ -318,7 +318,10 @@ const TimelineScene: React.FC = () => {
       const running = steps.reduce((found, s) => (frame >= f(s.at - 0.05) ? s.step[0] : found), steps[0].step[0]) === name;
       const shown = frame >= f(enter) && frame < f(leave + 0.3);
       const opacity = fadeAt(frame, enter, 0.3) * (1 - ramp(frame, leave, leave + 0.3));
-      return {key: `${phase}-${name}`, name, shown, opacity, p: along(frame, keys), state: running ? 'running' : phase === 0 ? 'ready' : 'parked on Delay(0)'};
+      // A k is resumed once: each park holds a new k, the rest of the task after the step it has just run.
+      const done = mine.filter((s) => frame >= f(s.at - 0.05));
+      const label = running ? `task ${name} · running` : done.length > 0 ? `k after ${done[done.length - 1].step} · parked on Delay(0)` : `k of ${name} · ready`;
+      return {key: `${phase}-${name}`, name, shown, opacity, p: along(frame, keys), label};
     }),
   );
   const chip = (s: {step: string; at: number}, i: number, y: number) => (
@@ -339,7 +342,7 @@ const TimelineScene: React.FC = () => {
         <div style={{position: 'absolute', left: 20, top: 208, fontFamily: SANS, fontSize: 16, color: MUTED}}>parked or ready, waiting for the thread</div>
         <div style={{position: 'absolute', left: 18, top: 238, width: 364, height: 210, boxSizing: 'border-box', borderRadius: 12, border: '2px dashed #3a3f55'}} />
       </div>
-      {cards.map((card) => card.shown && <KCard key={card.key} label={`k of ${card.name} · ${card.state}`} p={card.p} w={320} color={TASK_COLOR[card.name]} opacity={card.opacity} />)}
+      {cards.map((card) => card.shown && <KCard key={card.key} label={card.label} p={card.p} w={320} color={TASK_COLOR[card.name]} opacity={card.opacity} />)}
       <KCard label="k of main" p={{x: 240, y: 500}} w={320} color={TEXT} opacity={fadeAt(frame, 0.8)} />
       {label(480, 106, 'tasks that never wait', TEXT, fadeAt(frame, 4.6))}
       <CodeBlock lines={BUSY} x={480} y={138} w={430} size={17} line={26} opacity={fadeAt(frame, 4.6)} />

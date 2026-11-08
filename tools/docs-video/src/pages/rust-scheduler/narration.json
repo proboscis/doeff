@@ -1,6 +1,6 @@
 [
  {"id": "a1", "text": "The Rust scheduler in doeff: one scheduler, with two implementations."},
- {"id": "a2", "text": "In doeff, concurrency is effects too. The program yields Spawn and Gather, and scheduled is the handler that answers them, resuming k with each answer."},
+ {"id": "a2", "text": "In doeff, concurrency is effects too. The program yields Spawn and Gather, and scheduled is the handler that answers them: it resumes each effect's own k once, with its answer."},
  {"id": "a3", "text": "That handler comes in Rust and in Python, with the same meaning. Rust is the default; Python is opt-in."},
  {"id": "b1", "text": "Which one runs? The argument decides first, then the environment variable DOEFF SCHEDULER, then the default."},
  {"id": "b2", "text": "The default is rust. Any other name is refused with a ValueError."},
