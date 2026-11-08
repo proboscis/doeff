@@ -5,7 +5,8 @@
 ;;;   plan-due            policy.hy の時刻の比べ: 準備の作り直し(code の failed-ms + code-retry-ms)・検めの撃ち直し(probe の failed-ms +
 ;;;                       code-retry-ms)・起こし直しの間(last-exit-ms + backoff-ms)・TERM から KILL(signalled-ms + stop-grace-ms)・
 ;;;                       止まりを確かめられない(KILL の signalled-ms + kill-grace-ms)・待ちの子の KILL(stop の signalled-ms + stop-grace-ms)・
-;;;                       待ちの子の起こし直し(ended-ms + code-retry-ms)・長く動いた後の報告(last-start-ms + stable-run-ms)
+;;;                       待ちの子の起こし直し(ended-ms + code-retry-ms)・長く動いた後の報告(last-start-ms + stable-run-ms)・
+;;;                       逼迫での task の見送りの上限(memory-tight-since-ms + memory-tight-hold-limit-ms — policy.memory-tight-lapsed)
 ;;;   beat-due            heartbeat を送る間隔(最後に届いた返事 + 間隔 — beat_policy.heartbeat-due の時刻の条件)
 ;;;   fence-due           途絶の柵(最後に届いた返事 + fence-ms + 1・+ keep-fence-ms + 1 — heartbeat_rules と policy.kept-when-cut-off?)
 ;;;   prepare-stop-due    準備の停滞の止め(進みの印 + stall-seconds + 1 ms — env_upkeep.prepare-overdue)
@@ -45,7 +46,7 @@
 (defk plan-due [now world records policy]
   {:pre [(: now int) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % (| DueAt DueNever))]
    :tags {:context "worker" :role "judgment"}}
-  "policy.hy の判断(plan・statuses)の答えが時刻だけで変わる最初の刻を知るため(頭の註の 8 種の刻)。world = 周の後の観測・
+  "policy.hy の判断(plan・statuses)の答えが時刻だけで変わる最初の刻を知るため(頭の註の 9 種の刻)。world = 周の後の観測・
    records = 周の後の job ごとの記憶。"
   (val codes (tuple (gfor code world.codes :if (= code.state CodeState.FAILED) (+ (or code.failed-ms 0) policy.code-retry-ms))))
   (val probes (tuple (gfor probe world.probes :if (= probe.state ProbeState.FAILED) (+ (or probe.failed-ms 0) policy.code-retry-ms))))
@@ -64,7 +65,10 @@
   ;; 起動の断りの上限に達した待ちの子は起こし直さないので、起こし直しの刻で起きない。
   (val warm-restarts (tuple (gfor view world.warm-children :if (and (is-not view.exit-code None) (not (warm-child-refused view policy)))
                                   (+ (or view.ended-ms 0) policy.code-retry-ms))))
-  (<- due (| DueAt DueNever) (due-after now (+ codes probes backoffs stops stables warm-stops warm-restarts)))
+  ;; 逼迫で起動を見送っている task が上限を越える刻(越えた拍に env-failed を報告する — 逼迫が続く間は他の刻で起きないかもしれない)。
+  (val tight-lapses (tuple (gfor record (.values records) :if (is-not record.memory-tight-since-ms None)
+                                 (+ record.memory-tight-since-ms policy.memory-tight-hold-limit-ms))))
+  (<- due (| DueAt DueNever) (due-after now (+ codes probes backoffs stops stables warm-stops warm-restarts tight-lapses)))
   due)
 
 

@@ -127,6 +127,17 @@
   (assert (= due (DueAt :at (+ 1000 POLICY.stop-grace-ms))) due))
 
 
+
+(deftest test-plan-due-is-the-memory-tight-hold-limit-boundary
+  ;; 逼迫で起動を見送っている task が上限を越える刻(memory-tight-since-ms + memory-tight-hold-limit-ms — statuses が env-failed を報告し、
+  ;; plan も起こさなくなる)。逼迫が続く間は他の刻で起きないかもしれない。
+  (val task (JobSpec "task/heavy" "jobs.heavy" #("task") "rev1" :once True))
+  (val world (replace (WorldView #(READY1) #()) :memory-tight True))
+  (val records {"task/heavy" (JobRecord "task/heavy" :memory-tight-since-ms 1000)})
+  (<- due (plan-due NOW world records POLICY))
+  (<- at int (boundary due (! (policy-judged #(task) world records)) NOW))
+  (assert (= at (+ 1000 POLICY.memory-tight-hold-limit-ms)) at))
+
 ;; --- heartbeat・途絶の柵 --------------------------------------------------------------------------
 
 (deftest test-beat-due-is-the-heartbeat-interval-boundary

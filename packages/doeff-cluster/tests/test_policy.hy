@@ -746,3 +746,57 @@
   (assert (= (! (plan 0 #(A1) tight {} POLICY)) #((StartJob A1 1 "/c/rev1"))) "service は逼迫でも起こす")
   (val cold (replace (! (world :codes #())) :memory-tight True))
   (assert (= (! (plan 0 #(HEAVY) cold {} POLICY)) #((PrepareCode "rev1" None))) "task の木の準備は逼迫でも撃つ"))
+
+
+;; --- 逼迫での task の見送りの上限: 逼迫が続いて上限を越えた task は、この worker では起こさず、一時の準備の失敗
+;; (env-failed・種類 memory-tight・retryable)として報告する。coordinator はその worker を避けて置き直す(absorb-env-failure)。
+
+(import doeff_cluster._worker.core.policy [held-records memory-tight-lapsed])
+
+(setv TIGHT-POLICY (replace POLICY :memory-tight-hold-limit-ms 600000))
+
+(defk tight-tick [now records world]
+  {:pre [(: now int) (: records dict) (: world WorldView)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "拍の終わりの見送りの訳を記憶へ書く所までを 1 拍ぶん回すため(program の worker-tick と同じ順: start-holds → held-records)。"
+  (<- holds tuple (start-holds now #(HEAVY) world records TIGHT-POLICY))
+  (<- held dict (held-records now records holds))
+  held)
+
+(deftest test-a-task-held-by-memory-tightness-past-the-limit-is-reported-as-a-retryable-env-failure
+  ;; 失敗ケース: atlas の worker は逼迫の続く 80 分のあいだ見回りの task を起こさず、task は状態の行に何の訳も出さないまま 15 分を
+  ;; 越えて残った(2026-11-08 05:50・06:36)。上限の手前では待ち(訳と上限を出す)、上限を越えた拍から env-failed・memory-tight・
+  ;; retryable を報告する。
+  (val tight (replace (! (world)) :memory-tight True))
+  (<- first dict (tight-tick 1000 {} tight))
+  (assert (= (. (get first "task/heavy") memory-tight-since-ms) 1000) "初めて見送った刻を記憶に書く")
+  (<- later dict (tight-tick 300000 first tight))
+  (assert (= (. (get later "task/heavy") memory-tight-since-ms) 1000) "見送りが続く間は数え始めを動かさない")
+  (setv #(waiting) (! (statuses 600999 #(HEAVY) tight later TIGHT-POLICY)))
+  (assert (!= waiting.phase JobPhase.ENV-FAILED) "上限の手前では失敗にしない")
+  (assert (is waiting.failure None))
+  (assert (in "逼迫で起動を見送っている" waiting.detail) waiting.detail)
+  (setv #(lapsed) (! (statuses 601000 #(HEAVY) tight later TIGHT-POLICY)))
+  (assert (= lapsed.phase JobPhase.ENV-FAILED))
+  (assert (= lapsed.failure.kind EnvFailureKind.MEMORY-TIGHT))
+  (assert (is lapsed.failure.retryable True) "一時の失敗 — coordinator がこの worker を避けて置き直す")
+  (assert (in "600 秒" lapsed.detail) lapsed.detail))
+
+(deftest test-a-task-past-the-memory-tight-limit-is-not-started-here-even-when-memory-eases
+  ;; 守りの範囲: 上限を越えて env-failed を報告した task は、逼迫が解けてもこの worker では起こさない(coordinator が別の worker へ
+  ;; 置き直すので、起こすと 2 か所で走る)。見送りの訳は memory-tight-timeout に替わる。
+  (val tight (replace (! (world)) :memory-tight True))
+  (<- held dict (tight-tick 0 {} tight))
+  (assert (= (! (plan 600000 #(HEAVY) (! (world)) held TIGHT-POLICY)) #()) "上限を越えた後は逼迫が解けても起こさない")
+  (<- holds tuple (start-holds 600000 #(HEAVY) (! (world)) held TIGHT-POLICY))
+  (assert (= (lfor h holds #(h.name h.hold)) [#("task/heavy" StartHold.MEMORY-TIGHT-TIMEOUT)]))
+  (assert (= (! (plan 599999 #(HEAVY) (! (world)) held TIGHT-POLICY)) #((StartJob HEAVY 1 "/c/rev1"))) "上限の手前で逼迫が解ければ起こす"))
+
+(deftest test-starting-a-task-clears-the-memory-tight-wait
+  ;; 起こした task は数え始めを None に戻す(短い逼迫の後に起きた task を、後の観測で失敗に数えない)。常駐の job は見送らないので当たらない。
+  (val tight (replace (! (world)) :memory-tight True))
+  (<- held dict (tight-tick 0 {} tight))
+  (<- started dict (records-after 1000 held #((StartJob HEAVY 1 "/c/rev1")) TIGHT-POLICY))
+  (assert (is (. (get started "task/heavy") memory-tight-since-ms) None))
+  (assert (not (memory-tight-lapsed 10000000 HEAVY (get started "task/heavy") TIGHT-POLICY)))
+  (assert (not (memory-tight-lapsed 10000000 A1 (JobRecord "a" :memory-tight-since-ms 0) TIGHT-POLICY)) "常駐の job は当たらない"))
+

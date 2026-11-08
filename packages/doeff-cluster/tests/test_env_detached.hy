@@ -232,6 +232,23 @@
   (assert (= (outcome-of-view view) (DetachedEnvUnavailable "repo-unreachable" "d" True))))
 
 
+(deftest test-a-task-held-past-the-memory-tight-limit-moves-to-another-worker-or-ends-with-the-reason
+  ;; 逼迫での見送りが上限を越えた worker の報告(env-failed・memory-tight・retryable)は、その worker を避けて
+  ;; 置き直す。置き直せる別の worker が無ければ、逼迫の訳のまま env-failed で終える(「終わらない」で残さない)。
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- task TaskRecord (env-task env))
+  (val report (StatusRow :name "task/t1" :phase "env-failed" :failure-kind "memory-tight" :retryable True
+                         :detail "機体の memory の逼迫で起動を見送り続け、上限 600 秒を越えた — この worker では起こさない"))
+  (val moved (absorb-env-failure (replace task :phase "assigned" :worker "atlas") "atlas" report 10))
+  (assert (= moved.phase "queued") moved)
+  (assert (= moved.avoid #("atlas")) moved)
+  (val cluster (ClusterState :workers (! (table-from-rows {"atlas" (WorkerInfo "atlas" #("net") 10 #() :measured (get ROOM-LOADS 1))}))
+                             :tasks (! (table-from-rows {"t1" moved}))))
+  (val ended (.row (! (tasks-placed 20 cluster (table-of #()) (ClusterTiming))) "t1"))
+  (assert (= ended.phase "env-failed") ended)
+  (assert (in "memory の逼迫" ended.detail) ended.detail))
+
+
 (deftest test-a-bad-declaration-or-format-is-refused-with-400
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))

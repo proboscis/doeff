@@ -231,11 +231,13 @@
 ;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)・
 ;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)・
 ;;   MEMORY-TIGHT = 機体の memory が逼迫(TIGHT か DANGER)の間、task を起こさない(WorldView.memory-tight — 常駐の job は見送らない)
+;;   ・MEMORY-TIGHT-TIMEOUT = 逼迫での task の見送りが上限(WorkerPolicy.memory-tight-hold-limit-ms)を越えた。この worker では起こさず、
+;;   一時の準備の失敗(env-failed・種類 memory-tight)として報告する(coordinator がこの worker を避けて置き直すか、回数が尽きたら終える)
 ;;   ・MEMORY-KILLED = 常駐の job が機体の memory の見張りに続けて止められた(WorkerPolicy.memory-kill-limit 回 —
 ;;   起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められる。宣言の spec が変わるまで起こさない)
 ;;   ・PROGRAM-WAIT = Program の file がまだ手元に無い(WorldView.program-gaps — 取れた次の拍で起こす)。
 (defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING MEMORY-TIGHT
-         MEMORY-KILLED PROGRAM-WAIT)
+         MEMORY-TIGHT-TIMEOUT MEMORY-KILLED PROGRAM-WAIT)
 
 
 ;; --- 待ちの子(#3646)-------------------------------------------------------------
@@ -343,7 +345,10 @@
   ;; backoff の後に起こし直す)。
   (setv #^ (| JobNotStarted None) not-started None)
   ;; 最後に名乗った起こしの見送りの訳(#3713 — 同じ訳が続く間は行を出さない・None = 見送っていない)。拍の Program が拍の終わりに書く。
-  (setv #^ (| StartHold None) held None))
+  (setv #^ (| StartHold None) held None)
+  ;; 機体の memory の逼迫で task の起動を最初に見送った刻(拍の終わりの held-records が書く・起こした StartJob で None に戻す)。
+  ;; 逼迫が続いて WorkerPolicy.memory-tight-hold-limit-ms を越えた task は、この worker では起こさず一時の準備の失敗として報告する。
+  (setv #^ (| int None) memory-tight-since-ms None))
 
 
 (defclass [(dataclass :frozen True)] WorkerPolicy []
@@ -406,6 +411,12 @@
   ;; 見張りに止められる前にこれ以上動いた job は、止められた数を 1 から数え直す(仕事を回せた job)。stable-run-ms は起動から約 1 分で
   ;; 止められる job を「長く動いた」と数えてしまうので、別に長く持つ。見張りに止められた終わりの backoff と失敗の数もこの境で数え直す。
   (setv #^ int memory-kill-reset-ms 600000)
+  ;; 機体の memory の逼迫で task(once)の起動を見送る上限(ms)。越えた task はこの worker では起こさず、一時の準備の失敗(env-failed・
+  ;; 種類 memory-tight・retryable)として報告する — coordinator はこの worker を避けて別の worker へ置き直し、置き直しの回数が尽きたら
+  ;; 理由つきで終える。上限が無いと、逼迫の続く worker に置かれた task は起こされずに何時間も残った(2026-11-08 の atlas: 日次の全体検証が
+  ;; 動く間、見回りの task が 2 回続けて 15 分を越えて起こされなかった。10-24 にも同じ事例)。既定 10 分 = 見回りが
+  ;; 「終わらない」と数える 15 分より前に別の worker へ回る長さ。
+  (setv #^ int memory-tight-hold-limit-ms 600000)
 
   (defn #^ None __post-init__ [self]
     ;; 焼く道具の並べる数が正の整数である事を、方策を作る時に確かめるため(0 以下は道具が受けない — 準備が使い方の誤りで落ち続ける)。
@@ -427,7 +438,10 @@
     (when (< self.memory-kill-limit 1)
       (raise (ValueError (.format "memory-kill-limit は 1 以上: {}" self.memory-kill-limit))))
     (when (< self.memory-kill-reset-ms 0)
-      (raise (ValueError (.format "memory-kill-reset-ms は 0 以上: {}" self.memory-kill-reset-ms))))))
+      (raise (ValueError (.format "memory-kill-reset-ms は 0 以上: {}" self.memory-kill-reset-ms))))
+    ;; 逼迫での見送りの上限が 0 以上である事(負では見送りの初めの拍に失敗にする)。
+    (when (< self.memory-tight-hold-limit-ms 0)
+      (raise (ValueError (.format "memory-tight-hold-limit-ms は 0 以上: {}" self.memory-tight-hold-limit-ms))))))
 
 
 (defclass [(dataclass :frozen True)] JobStatus []

@@ -183,6 +183,23 @@
        (>= record.memory-kills policy.memory-kill-limit)
        (= record.memory-killed-spec (spec-hash spec))))
 
+(defn #^ bool memory-tight-lapsed [#^ int now #^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "機体の memory の逼迫での task の起動の見送りが上限を越えたか(起こしの段 start-step と状態の行の phase-of・job-status・期限の
+   worker_due.plan-due が同じ述語を読む): task(once)で、まだ起こしておらず(last-outcome が無い)、逼迫で最初に
+   見送った刻から memory-tight-hold-limit-ms 以上経った。越えた task はこの worker では起こさない(coordinator が置き直した先と 2 か所で
+   走らせない)。"
+  (and spec.once
+       (is record.last-outcome None)
+       (is-not record.memory-tight-since-ms None)
+       (>= (- now record.memory-tight-since-ms) policy.memory-tight-hold-limit-ms)))
+
+(defn #^ EnvFailure memory-tight-failure [#^ WorkerPolicy policy]
+  "逼迫での見送りが上限を越えた task の一時の準備の失敗(coordinator がこの worker を避けて置き直す形 — 種類 memory-tight・retryable)。
+   訳は上限の長さ(経った秒は書かない — 報告のたびに変わらないよう)。"
+  (EnvFailure :kind EnvFailureKind.MEMORY-TIGHT :retryable True
+              :detail (.format "機体の memory の逼迫で起動を見送り続け、上限 {} 秒を越えた — この worker では起こさない"
+                               (// policy.memory-tight-hold-limit-ms 1000))))
+
 (defn #^ tuple stop-actions [#^ int now #^ ProcessView process #^ JobRecord record #^ WorkerPolicy policy #^ StopReason reason]
   "止める action(reason = 止め始める訳 — 止め始めた後は記憶の訳を持ち回り、KILL も TERM と同じ訳を名乗る・#3713)。"
   (setv stopping record.stopping)
@@ -329,6 +346,9 @@
     ;; 機体の memory の見張りに続けて止められた常駐の job は起こし直さない(起動のたびに同じ memory の山を作る job は、起こし直しても
     ;; 同じ所で止められる)。状態の行は memory-killed(coordinator は版の判定を Blocked にする)。宣言の spec が変われば起こす。
     (memory-given-up spec record policy) (StartStep :actions #() :hold StartHold.MEMORY-KILLED)
+    ;; 機体の memory の逼迫で見送り続けて上限を越えた task は、この worker では起こさない(逼迫が解けても — 状態の行の env-failed を読んだ
+    ;; coordinator が別の worker へ置き直すので、ここで起こすと 2 か所で走る)。宣言から外れるまで待つ。
+    (memory-tight-lapsed now spec record policy) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT-TIMEOUT)
     ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)で焼く。
     (is tree None) (StartStep :actions (prepare-actions now spec world policy None) :hold (! (prepare-hold code record)))
     True (! (ready-tree-step now spec tree world record policy warm-keys))))
@@ -707,7 +727,8 @@
     (and (isinstance action StartJob) (is-not not-started None))
       (replace record :attempts action.attempt :stopping None :not-started not-started
                :failures (+ record.failures 1) :unexpected-exits (+ record.unexpected-exits 1))
-    (isinstance action StartJob) (replace record :attempts action.attempt :stopping None :last-start-ms now :not-started None)
+    (isinstance action StartJob) (replace record :attempts action.attempt :stopping None :last-start-ms now :not-started None
+                                          :memory-tight-since-ms None)
     (isinstance action SignalJob)
       (replace record :stopping
         (JobStop :requested-ms (if (is record.stopping None) now record.stopping.requested-ms) :stage action.stage :signalled-ms now
@@ -836,13 +857,16 @@
                :if (and (is-not h.hold None) (!= h.hold (. (.get records h.name (JobRecord h.name)) held)))
                h)))
 
-(defk held-records [records holds]
-  {:pre [(: records dict) (: holds tuple)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
-  "拍の終わりの見送りの訳を job の記憶へ書いた後の記憶を求めるため(次の拍の noted-holds が比べる元)。訳の変わった job の記憶だけ置き換える。"
+(defk held-records [now records holds]
+  {:pre [(: now int) (: records dict) (: holds tuple)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "拍の終わりの見送りの訳を job の記憶へ書いた後の記憶を求めるため(次の拍の noted-holds が比べる元)。訳の変わった job の記憶だけ置き換える。
+   機体の memory の逼迫で初めて見送った拍は、その刻 now も書く(上限の数え始め — 起こした StartJob の record-after が None に戻す)。"
   (| records (dfor h holds
                    :setv record (.get records h.name (JobRecord h.name))
-                   :if (!= record.held h.hold)
-                   h.name (replace record :held h.hold))))
+                   :setv since (if (and (= h.hold StartHold.MEMORY-TIGHT) (is record.memory-tight-since-ms None))
+                                   now record.memory-tight-since-ms)
+                   :if (or (!= record.held h.hold) (!= record.memory-tight-since-ms since))
+                   h.name (replace record :held h.hold :memory-tight-since-ms since))))
 
 (defn #^ JobPhase phase-of [#^ int now #^ (| JobSpec None) want #^ (| ProcessView None) process
                             #^ WorldView world #^ JobRecord record #^ WorkerPolicy policy #^ frozenset warm-keys]
@@ -855,6 +879,8 @@
         True JobPhase.STOPPING)
     (is want None) JobPhase.STOPPED
     (and want.once (is-not record.last-outcome None)) JobPhase.FINISHED
+    ;; 逼迫での見送りが上限を越えた task は一時の準備の失敗(coordinator がこの worker を避けて置き直す)。
+    (memory-tight-lapsed now want record policy) JobPhase.ENV-FAILED
     (and want.handoff want.handoff-abandoned) JobPhase.HANDOFF-ABANDONED
     (memory-given-up want record policy) JobPhase.MEMORY-KILLED
     True
@@ -947,6 +973,9 @@
   (<- cold (| str None) (cold-start-detail world want record policy))
   ;; 機体の memory の見張りに続けて止められ、起こし直しを止めた常駐の job(動いている process が無い時だけ — phase-of と同じ述語)。
   (val given-up (and (is process None) (is-not want None) (memory-given-up want record policy)))
+  ;; 機体の memory の逼迫で起動を見送っている task と、見送りが上限を越えた task(phase-of と同じ述語)。
+  (val lapsed (and (is process None) (is-not want None) (memory-tight-lapsed now want record policy)))
+  (val tight-held (and (is process None) (is-not want None) want.once (= record.held StartHold.MEMORY-TIGHT)))
   ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
   ;; 同じ境 ran-stably? — 拍ごとに組む報告から導くので、動いている間は記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。記憶を
   ;; 0 に戻すのは、その process が終わった時(ReapJob)と名から外した時(RetireJob)の record-after。
@@ -968,6 +997,10 @@
         held "drain 中 — 新しい版は drain の後"
         ;; 機体の memory の見張りに続けて止められた(起こし直さない — 宣言が変わるまで)。
         given-up (.format "機体の memory の見張りに {} 回続けて止められた — 起こし直さない(宣言の spec が変わるまで)" record.memory-kills)
+        lapsed (. (memory-tight-failure policy) detail)
+        ;; 逼迫の間の見送り(訳と上限を出す — 「起こされない」を準備の遅れと取り違えないため。経った秒は書かない: 拍ごとに報告が変わる)。
+        tight-held (.format "機体の memory の逼迫で起動を見送っている(上限 {} 秒 — 越えたら別の worker へ回す)"
+                            (// policy.memory-tight-hold-limit-ms 1000))
         ;; recreate の job の新しい版の準備の失敗・入口を読み込めない・検めの間・準備の間は、旧い版が動いている事を頭に示す(2026-10-08)。
         (and replacing (is-not code None) (= code.state CodeState.FAILED))
           (.format "旧い版を動かしたまま — 新しい版を準備できない: {}" code.detail)
@@ -1028,6 +1061,7 @@
       ;; (coordinator がやり直さずに終える)。
       :failure (cond (and (or (is process None) replacing) (is-not code None) (= code.state CodeState.FAILED)) code.failure
                      (is-not refused None) (warm-refusal-failure refused)
+                     lapsed (memory-tight-failure policy)
                      True None)
       ;; 宣言の spec の入口の検めの姿(走っている・待っている・失敗した間 — 入れ替えで旧が動いている行も)。
       :probe probing))

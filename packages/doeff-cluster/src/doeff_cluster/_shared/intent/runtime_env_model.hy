@@ -243,7 +243,7 @@
 
 ;; --- 準備の失敗(worker の側・値で返す) ----------------------------------------------------
 
-;; 準備の失敗の種類(答えの 15 種。宣言の誤りの env-invalid は答えではなく送り手の例外 RuntimeEnvInvalid)。どれも子 process を
+;; 準備の失敗の種類(答えの 16 種。宣言の誤りの env-invalid は答えではなく送り手の例外 RuntimeEnvInvalid)。どれも子 process を
 ;; 起こす前に起きるので、置き直しても同じ task を 2 度実行しない。worker は URL を断らない — 鍵の表に無い URL は鍵なしで clone し、
 ;; 読めない非公開の repo は clone の失敗(repo-unreachable)で返る(2026-10-05 に断る種類 repo-denied を外した)。
 ;;   repo-unreachable    clone / fetch の失敗(一時 — network・読む資格の無い非公開の repo)
@@ -255,6 +255,8 @@
 ;;   memory-killed       組みの子(uv の build・sync)が cgroup の memory の上限で殺された: signal 9 で終わり、cgroup の memory.events の
 ;;                       oom_kill が子を起こす前より増えた(恒久 — 同じ上限の下で組み直しても同じく殺される。増えていない signal 9 は
 ;;                       今までどおり native-build-failed / sync-failed の一時の失敗・#3668・cisco-c8 の可 2026-10-06 00:3x)
+;;   memory-tight        task の起動を機体の memory の逼迫で見送り続け、上限(WorkerPolicy.memory-tight-hold-limit-ms)を越えた(一時 —
+;;                       子 process を起こす前なので、coordinator はこの worker を避けて置き直せる)
 ;; 先の組み(温める表の行 — PrepareEnv :warm)だけを、組みを始める前に worker が断る 3 種(#3748・cisco-c8 の名指しの可 2026-10-06)。判じは
 ;; worker/core/env_upkeep の warm-refusal 1 つ。宣言された job の準備は断らない(今までどおり disk-full の判じだけ)。どれも恒久に数える
 ;; (RETRYABLE-KINDS に入れない — 先の組みは回の前の用意なので、回の Program の AwaitWarm に期限まで待たせず即座に WarmFailed で名乗る。
@@ -265,12 +267,12 @@
 (defenum EnvFailureKind
   REPO-UNREACHABLE COMMIT-MISSING LOCK-MISMATCH LOCK-STALE SYNC-FAILED NATIVE-BUILD-FAILED
   PYTHON-UNAVAILABLE TOOL-MISSING DISK-FULL ENV-INCOMPATIBLE PREPARE-TIMEOUT MEMORY-KILLED
-  NO-DISK-ROOM OVER-ROOTS-CAP NO-MEMORY-ROOM)
+  NO-DISK-ROOM OVER-ROOTS-CAP NO-MEMORY-ROOM MEMORY-TIGHT)
 
 
 ;; kind の既定の「一時か」。sync-failed と native-build-failed は起きた所の handler が値で決める。
 (val RETRYABLE-KINDS (frozenset #(EnvFailureKind.REPO-UNREACHABLE EnvFailureKind.PYTHON-UNAVAILABLE
-                                   EnvFailureKind.DISK-FULL EnvFailureKind.PREPARE-TIMEOUT)))
+                                   EnvFailureKind.DISK-FULL EnvFailureKind.PREPARE-TIMEOUT EnvFailureKind.MEMORY-TIGHT)))
 
 
 (defrecord EnvFailure
