@@ -13,7 +13,7 @@
 (import dataclasses [dataclass field])
 (import enum [Enum StrEnum])  ; StrEnum = defenum の展開が名指す
 (import doeff [EffectBase])
-(import doeff_core_effects [Future])
+(import doeff_core_effects [Future AwaitProcessExit AwaitWarmChildExit])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster._shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
@@ -27,8 +27,8 @@
 ;;                と base-paths だけで、worker の process の PYTHONPATH は継がない(宣言の外の路が黙って混ざらない)。
 ;; 定義点はここ 1 つ(worker のコードの木・入口の検め・子 process の言い換えが同じ値を読む。値は worker の composition root が引数から作る)。
 (defclass [(dataclass :frozen True)] CodeLayout []
-  (setv #^ tuple import-roots #("."))
-  (setv #^ tuple base-paths #())
+  (setv #^ (get tuple #(str ...)) import-roots #("."))
+  (setv #^ (get tuple #(str ...)) base-paths #())
 
   (defn #^ None __post-init__ [self]
     (when (not self.import-roots)
@@ -127,7 +127,7 @@
    変わった時と、sweep-wanted が真の時に SweepEnvs を撃つ。"
   (#^ int free)
   (#^ bool sweep-wanted)
-  (#^ frozenset pinned))
+  (#^ (get frozenset str) pinned))
 
 
 (defclass [(dataclass :frozen True)] WarmEnv []
@@ -152,14 +152,14 @@
 
 
 (defclass [(dataclass :frozen True)] WorldView []
-  (#^ tuple codes)
-  (#^ tuple processes)
+  (#^ (get tuple #(CodeView ...)) codes)
+  (#^ (get tuple #(ProcessView ...)) processes)
   ;; 入口の検めの観測(ProbeView)。既定は空(検めを知らない呼び手の WorldView をそのまま通す)。
-  (setv #^ tuple probes #())
+  (setv #^ (get tuple #(ProbeView ...)) probes #())
   ;; 実行環境の root の置き場の disk(EnvDisk)。実行環境の job を扱わない worker は None(掃除をしない)。
   (setv #^ (| EnvDisk None) env-disk None)
   ;; root ごとの待ちの子の観測(WarmChildView — #3646)。起こした待ちの子が無ければ空。
-  (setv #^ tuple warm-children #())
+  (setv #^ (get tuple #("WarmChildView" ...)) warm-children #())
   ;; この Pod の止まり(preStop の drain)が始まった(AL-D2p): preStop の入口が世代の file の隣に置いた印の世代が、この process の世代と
   ;; 同じ(worker/protocol/leaving_mark)。真の間、worker は handoff の job の新しい試行を起こさない(coordinator の返事の印 supersededBy に
   ;; 依らない — policy.start-step)。既定は偽(印を読まない呼び手・Pod の外の worker)。
@@ -170,7 +170,7 @@
   ;; 機体の memory の見張りが止めた job の process の印(#(process の名 根の pid) の frozenset — 見張りが止めた単位の属する job の根)。
   ;; 判断(policy の plan-job)は終わった process を回収する時にこれを読み、見張りに止められた終わりを数える(続けて止められた job の
   ;; 起こし直しを止める — WorkerPolicy.memory-kill-limit)。既定は空(見張りを持たない呼び手・模擬の環境)。
-  (setv #^ frozenset memory-killed (frozenset))
+  (setv #^ (get frozenset (get tuple #(str int))) memory-killed (frozenset))
   ;; jobs の層(job と待ちの子の置かれる cgroup)の今の空き = 見張りの最後の回に掛けた上限 − その回の使い(byte・負もありうる — 上限を
   ;; 使いより下げた続きの中)。判断(warm_rules の warm-child-roomless)は、待ちの子 1 本が入らない root の待ちの子を起こさず、その root の
   ;; task を入れ物 shim の冷えた道で起こす(入らない待ちの子は層の上限に当たって kernel の OOM kill で落ち、起こし直しの輪になった —
@@ -178,7 +178,7 @@
   (setv #^ (| int None) jobs-room None)
   ;; 宣言の job のうち、Program の file が手元に無い物(ProgramGap)。判断(policy の program-waits)は揃うまで job を起こさない — 子の入口は file を
   ;; 読めないと終了 code 3 で落ちる。既定は空(Program を取り寄せない呼び手)。
-  (setv #^ tuple program-gaps #()))
+  (setv #^ (get tuple #(ProgramGap ...)) program-gaps #()))
 
 
 (defclass StopStage [Enum]
@@ -254,7 +254,7 @@
    (印の orphanForks。頼みの形は知らない欄を断るので、印の無い版の待ちの子へ worker より長く生きる service を頼まない — 入れ物 shim で
    起こす)。pid = 印を書いた process(uv の下の python — 印の pid の欄。宿が準備完了の時の RSS を測る相手。欄の無い印は None)。"
   (#^ int threads)
-  (#^ tuple vm-live)
+  (#^ (get tuple #(int ...)) vm-live)
   (setv #^ bool services False)
   (setv #^ bool orphans False)
   (setv #^ (| int None) pid None))
@@ -271,7 +271,7 @@
    launch.env-project-dir)・preload = 起動で読み込む module の名(名の順)。"
   (#^ str root)
   (#^ str project)
-  (#^ tuple preload))
+  (#^ (get tuple #(str ...)) preload))
 
 
 (defrecord WarmChildView
@@ -489,19 +489,19 @@
 
 
 (defclass [(dataclass :frozen True)] DesiredJobs []
-  (#^ tuple jobs)
+  (#^ (get tuple #(JobSpec ...)) jobs)
   ;; 温める env の列(WarmEnv — coordinator の温める表のうち、この worker の label に合う行)。宣言の file で動く worker は空。
-  (setv #^ tuple warm #())
+  (setv #^ (get tuple #(WarmEnv ...)) warm #())
   ;; coordinator との途絶で宣言を絞った(#3713 — 絞りで外れた job を止める訳 CutOff)。None = 返事の宣言そのまま。
   (setv #^ (| CutOff None) cut-off None)
   ;; 宣言の変化の呼び鈴(#2692): この読みの後に宣言が変わった(名指しの待ちが「変わった」と答えた)時に満ちる Future。周の間の待ちは
   ;; これで起きる(#3871 の単位 4)。None = 変化を知らせる口が無い(待ちの口の無い coordinator — 周の間の待ちは heartbeat の期限で起きる)。
   ;; 値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
-  (setv #^ (| Future None) changed (field :default None :compare False))
+  (setv #^ (| (get Future bool) None) changed (field :default None :compare False))
   ;; 前の読みの後からこの読みまでに送った heartbeat の事実(HeartbeatSent)の列 — 送った順。この読みの送りと、拍の外の背景の task の
   ;; 送り。空 = 送らなかった(前の返事の desired を使い続けた・途絶で送らずに絞った)。値の比べには入れない
   ;; (同じ宣言は送りの刻が違っても同じ)。
-  (setv #^ tuple sends (field :default #() :compare False))
+  (setv #^ (get tuple #(HeartbeatSent ...)) sends (field :default #() :compare False))
   ;; 返事がこの世代を退いた世代と名指した(返事の superseded — 同じ名の新しい世代が名乗った後)。Pod の job の
   ;; label の答え手(worker/protocol/pod_labels)は、退いた世代では label に触らない。途絶で絞った宣言は偽。値の比べには入れない。
   (setv #^ bool superseded (field :default False :compare False)))
@@ -511,7 +511,7 @@
   "宣言が読めない。空の宣言と取り違えて全 job を止めてはいけない。sends = 前の読みの後からこの読みまでに送った heartbeat(DesiredJobs.sends
    と同じ — 送ったが返事が読めなかった送りも数える)。"
   (#^ str reason)
-  (setv #^ tuple sends (field :default #() :compare False)))
+  (setv #^ (get tuple #(HeartbeatSent ...)) sends (field :default #() :compare False)))
 
 
 ;; --- effect ----------------------------------------------------------------------
@@ -520,7 +520,7 @@
   "結果は DesiredJobs | DesiredUnreadable。env-report = heartbeat に載せる root の姿(拍の Program が EnvReport で問うて渡す — None = 実行環境の
    root を名乗らない。#2427)・stopping = この worker が止まり始めた(拍の Program が核の StopRequested で読んで渡す — heartbeat で名乗り、
    coordinator はこの世代へ新しく置かない。止まり始めの拍は送る間隔を待たずに送る — #2819)。"
-  (setv #^ (| dict None) env-report None)
+  (setv #^ (| (get dict #(str object)) None) env-report None)
   (setv #^ bool stopping False))
 
 
@@ -529,7 +529,7 @@
 
 
 (defclass [(dataclass :frozen True)] PublishStatus [EffectBase]
-  (#^ tuple statuses)
+  (#^ (get tuple #(JobStatus ...)) statuses)
   (setv #^ str note ""))
 
 
@@ -594,7 +594,7 @@
 (defclass [(dataclass :frozen True)] SweepEnvs [EffectBase]
   "実行環境の root の掃除の係へ固定の集合(root のキー env-<キー> — 走っている job・宣言の job・準備中・温める表)を渡し、roots の
    合計が上限を越えていれば掃除させる(消す root の選びは env_upkeep.sweep-choice・#3732)。root の置き場を上限の内に保つため。"
-  (#^ frozenset pinned))
+  (#^ (get frozenset str) pinned))
 
 
 (defclass [(dataclass :frozen True)] StartJob [EffectBase]
@@ -660,7 +660,7 @@
   "入口の検めの持ち主へ今の宣言の spec の指紋(spec-hash)の集合を渡し、集合に無い spec の検めの記録(答え・回数・前の回の失敗の
    理由・時間切れの印・待ち)を落とさせる(2026-09-27)。走っている検めの process は止めない(終わった後の答えを次の拍で落とす)。
    宣言から消えた spec の記録が worker の寿命の間ずっと増え続けないため。"
-  (#^ frozenset keep))
+  (#^ (get frozenset str) keep))
 
 (defclass [(dataclass :frozen True)] ReleaseLeases [EffectBase]
   "終了を確かめた process(job の名 job・世代の名 instance)が持っていた名前付きの lease を返す。process はもう書けないので、期限(TTL)を
@@ -702,8 +702,8 @@
 
 (defrecord DeclarationRead
   "最後に読めた宣言: jobs = JobSpec の列・warm = 温める env の列(WarmEnv)。宣言が読めない拍もこれを使い続ける。"
-  (#^ tuple jobs)
-  (#^ tuple warm))
+  (#^ (get tuple #(JobSpec ...)) jobs)
+  (#^ (get tuple #(WarmEnv ...)) warm))
 
 
 (defrecord TickMarks
@@ -720,7 +720,7 @@
 
 (defclass [(dataclass :frozen True)] WorkerState []
   (setv #^ (| NotYetRead DeclarationRead) declaration (field :default-factory NotYetRead))
-  (setv #^ dict records (field :default-factory dict))
+  (setv #^ (get dict #(str JobRecord)) records (field :default-factory (fn [] {})))
   ;; heartbeat の間の計り(#3850): last-marks = 前の拍で読んだ単調な時計の読み(None = まだ拍が無い)・last-sent-mono-ms = 最後に
   ;; heartbeat を送った単調な時計の読み(HeartbeatSent.mono-ms — None = まだ送っていない)。値の比べには入れない(同じ宣言と記憶は
   ;; 時刻が違っても同じ)。
@@ -735,8 +735,8 @@
    (掃除の task の終わりなど)・exits = 終わったら起こす子 process の待ちの効果の列(AwaitProcessExit・AwaitWarmChildExit の値)。"
   {:tags {:context "worker" :role "type"}}
   (#^ (| DueAt DueNow DueNever) due)
-  (#^ tuple bells)
-  (#^ tuple exits))
+  (#^ (get tuple #((get Future object) ...)) bells)
+  (#^ (get tuple #((| AwaitProcessExit AwaitWarmChildExit) ...)) exits))
 
 
 (defclass [(dataclass :frozen True)] WorkerWakes [EffectBase]
@@ -768,7 +768,7 @@
    (heartbeat_rules.silent-ms — 壁の時計と単調な時計の長い方)で数えて待ちの長さにする: 期限を組み立てた後・答え手が時計を読む前に
    壁の時計が戻っても、戻った分だけ待ちが延びない(延びると、途絶の柵の判断が戻った分だけ遅れる)。"
   (#^ WorkerPolicy policy)
-  (#^ (| Future None) changed)
+  (#^ (| (get Future bool) None) changed)
   (#^ WakeSet wakes)
   (#^ int began)
   (#^ int began-mono-ms)

@@ -43,12 +43,12 @@
    そこでは行の宣言の root は venv を使い回し、source の木と bytecode だけを置く。頼み手は ready(root そのもの)と deps-ready(依存の部分)の
    どちらを待つかを選ぶ。"
   (#^ str key)
-  (#^ tuple ready)
-  (#^ tuple preparing)
-  (#^ tuple failed)
+  (#^ (get tuple #(str ...)) ready)
+  (#^ (get tuple #(str ...)) preparing)
+  (#^ (get tuple #(WarmFailure ...)) failed)
   (#^ int until-ms)
   (setv #^ bool memory-unmeasured False)
-  (setv #^ tuple deps-ready #()))
+  (setv #^ (get tuple #(str ...)) deps-ready #()))
 
 
 (defrecord WarmUnreachable
@@ -66,7 +66,7 @@
    ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)。
    答え = WarmAnswer(WarmState か、coordinator に届かなかった WarmUnreachable)。"
   (#^ RuntimeEnv env)
-  (#^ frozenset needs)
+  (#^ (get frozenset str) needs)
   (#^ float ttl-seconds)
   ;; needs の検め(空・旧い形)は型の外 — 作り手は構築関数 doeff_cluster._shared.core.warm_rules.warm-runtime-env を通す
   ;; (intent は core を読まない・#2564)。

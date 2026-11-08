@@ -25,8 +25,11 @@
    (送り手が「1 台以上で準備済み」を読んで Ready を決めるため)。そのうち 1 台でも先の組みを memory を測らずに始めていれば memory-unmeasured。
    root そのものが準備済みでなくても、同じ依存のキー(dependency-key-on)の root を準備済みと名乗る worker は deps-ready に入れる(送り手が
    依存の部分の揃いだけを待てるため — project の repo の commit だけが違う宣言の root は、そこで venv を使い回す)。"
-  (setv draining (draining-workers state now)
-        ready [] preparing [] failed [] deps-ready [] unmeasured False)
+  (setv draining (draining-workers state now) unmeasured False)
+  (setv #^ (get list str) ready [])
+  (setv #^ (get list str) preparing [])
+  (setv #^ (get list WarmFailure) failed [])
+  (setv #^ (get list str) deps-ready [])
   (for [w (sorted (.rows state.workers) :key (fn [w] w.name))]
     (when (and (alive now w timing.lease-ms) (not-in w.name draining) w.platform
                (placeable entry.needs w) (tools-cover entry.runtime-env w))

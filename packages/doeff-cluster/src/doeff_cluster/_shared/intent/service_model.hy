@@ -32,10 +32,12 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
-(import dataclasses [dataclass])
-(import typing [ClassVar Protocol runtime-checkable])
+(import dataclasses [dataclass Field])
+(import typing [Any ClassVar NotRequired Protocol TypedDict runtime-checkable])
 ;; 系の task-limits の要素の型(defsystem の展開はこの module から引く — 展開の import の綴りを増やさない)。
 (import .detached_model [GroupLimit])
+;; job の environ の要素の型(子の環境変数 1 つ)。
+(import .runtime_env_model [EnvVar])
 
 (val UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として受ける値(coordinator の Service の replicas と同じ — 0 = 取り下げ・1 = 動かす)。
@@ -45,9 +47,9 @@
 (defrecord CallShape
   "Program を作った呼び出しの形(defsystem の展開が残す — defk の呼び出しの結果からは引数を読めないため)。
    function = 呼んだ関数・args = 位置の引数の値・kwargs = 名の引数の値(Hy の名 → 値)。identity と describe の材料。"
-  (#^ Callable function)
-  (#^ list args)
-  (#^ dict kwargs))
+  (#^ (get Callable #(... object)) function)
+  (#^ (get list object) args)
+  (#^ (get dict #(str object)) kwargs))
 
 
 (defrecord Job
@@ -60,11 +62,11 @@
   (#^ str name)
   (#^ object program)
   (#^ CallShape call)
-  (#^ frozenset needs)
+  (#^ (get frozenset str) needs)
   (#^ int replicas)
-  (#^ (| dict None) readiness)
+  (#^ (| (get dict #(str (| float str))) None) readiness)
   (#^ str update)
-  (#^ tuple environ)
+  (#^ (get tuple #(EnvVar ...)) environ)
   (#^ int peak-mib)
   (#^ int settle-mib)
   (setv #^ (| str None) single-host None)
@@ -75,19 +77,45 @@
   "系 = job の組(defsystem の関数が返す値)。name = 系の名・jobs = Job の tuple(名は重ならない)・task-limits = 系が宣言する組の同時数の
    上限(GroupLimit の tuple — 組の名は重ならない。task は組の名だけを名乗り、値と範囲はここが持つ)。"
   (#^ str name)
-  (#^ tuple jobs)
+  (#^ (get tuple #(Job ...)) jobs)
   (setv #^ (get tuple #(GroupLimit ...)) task-limits #()))
 
 
 (defclass [runtime-checkable] RecordArgument [Protocol]
   "系の引数に渡せる record(defrecord・dataclass の値)の印 — 欄の宣言 __dataclass_fields__ を持つ値。"
-  (setv #^ (get ClassVar dict) __dataclass_fields__ {}))
+  (setv #^ (get ClassVar (get dict #(str (get Field Any)))) __dataclass_fields__ {}))
+
+
+(defclass RunSpec [TypedDict]
+  "宣言の行の run(service の Program の参照と表示)— identity = 呼び出しの形の正規 JSON(service_rules.identity-of の答え)。"
+  #^ str kind
+  #^ str program
+  #^ (get dict #(str object)) identity
+  #^ (get dict #(str str)) versions
+  #^ str describe)
+
+
+(defclass DeclarationRow [TypedDict]
+  "coordinator へ渡す宣言の行 1 つ(service_build.system-declaration が job ごとに書く鍵 — readiness 以下の NotRequired は在る時だけの鍵)。"
+  #^ str name
+  #^ str revision
+  #^ (get list str) needs
+  #^ int replicas
+  #^ RunSpec run
+  #^ (get dict #(str str)) environ
+  #^ int peakMiB
+  #^ int settleMiB
+  #^ (get NotRequired (get dict #(str float))) readiness
+  #^ (get NotRequired str) update
+  #^ (get NotRequired (get dict #(str object))) runtimeEnv
+  #^ (get NotRequired str) singleHost
+  #^ (get NotRequired str) content)
 
 
 (defrecord Declaration
   "system-declaration の答え: rows = coordinator へ渡す宣言の行(Service ごと)・programs = 行が参照する詰めた Program(sha → 文字列)・
    limits = 組の上限(系の task-limits — 資源 GroupLimit 1 つずつに書く。本文の形は declaration_requests が綴る)。declare は limits を
    書き、programs を /programs へ置いてから rows を書く。"
-  (#^ list rows)
-  (#^ dict programs)
+  (#^ (get list DeclarationRow) rows)
+  (#^ (get dict #(str str)) programs)
   (setv #^ (get tuple #(GroupLimit ...)) limits #()))

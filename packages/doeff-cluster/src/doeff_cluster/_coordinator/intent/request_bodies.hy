@@ -342,7 +342,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed dict))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed (get dict #(str object))))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]

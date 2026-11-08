@@ -4,6 +4,7 @@
 ;;; 型と定数は doeff_cluster._shared.intent.runtime_env_model。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(import collections.abc [Mapping])
 (import hashlib)
 (import json)
 (import doeff_cluster._shared.core.native_wheel [ENV-KEY-LENGTH])
@@ -29,7 +30,7 @@
 ;; --- 純粋な換算 ---------------------------------------------------------------------------
 
 (defk root-split [root]
-  {:pre [(: root str)] :post [(: % tuple)]}
+  {:pre [(: root str)] :post [(: % (get tuple #(str str)))]}
   "import の根 \"<repo>/<相対の dir>\" → #(repo の名 相対の dir)。"
   (val parts (.partition root "/"))
   #((get parts 0) (get parts 2)))
@@ -55,7 +56,7 @@
 
 
 (defk key-material [env platform]
-  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
+  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % (get dict #(str object)))]}
   "キーの材料(root の中身を決める物だけ)。env-vars・tools・準備の手順の版は入れない。"
   {"format" env.format
    "platform" platform
@@ -67,7 +68,7 @@
 
 
 (defk material-digest [material]
-  {:pre [(: material dict)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
+  {:pre [(: material (get Mapping #(str object)))] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
   "鍵の材料を正規化した JSON の sha256 の頭 24 桁にするため(env-key の digest の綴りの 1 点)。"
   (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
   (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
@@ -76,18 +77,18 @@
 (defk env-key [env platform]
   {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
   "env のキー(定義点はここ 1 つ)= 正規化した JSON の sha256 の頭 24 桁。"
-  (<- material dict (key-material env platform))
+  (<- material (get dict #(str object)) (key-material env platform))
   (<- key str (material-digest material))
   key)
 
 
 (defk dependency-material [env platform]
-  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
+  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % (get dict #(str object)))]}
   "依存のキーの材料(venv の中身を決める物だけ)= キーの材料から project の repo の commit を外した物。project の repo の commit は source の
    木と bytecode だけを変え、venv の中身(uv.lock どおりの依存・editable で入る他の repo の木・native の wheel)は uv.lock の sha256 と
    他の repo の commit と python と組で決まる。native の wheel を project の repo から組む宣言は、wheel が project の commit で変わるので
    commit を外さない。"
-  (<- material dict (key-material env platform))
+  (<- material (get dict #(str object)) (key-material env platform))
   (val own (and (not (any (gfor w env.project.native (= w.repo env.project.repo))))
                 env.project.repo))
   (| material
@@ -101,13 +102,13 @@
   "依存のキー(定義点はここ 1 つ)= 依存のキーの材料(dependency-material)の正規化した JSON の sha256 の頭 24 桁。project の repo の commit
    だけが違う 2 つの宣言は同じ依存のキーになる(後の root は前の root の venv を使い回せる — env_prepare.venv-source)。env のキーとは
    材料の欄 part で分けるので、同じ値にならない。"
-  (<- material dict (dependency-material env platform))
+  (<- material (get dict #(str object)) (dependency-material env platform))
   (<- key str (material-digest material))
   key)
 
 
 (defk location-material [location]
-  {:pre [(: location RepoLocation)] :post [(: % dict)]}
+  {:pre [(: location RepoLocation)] :post [(: % (get dict #(str str)))]}
   "repo の正体(url-location の答え)を鍵の材料の JSON の値にするため。"
   (match location
     (LocalPath :path path) {"local" path}
@@ -115,18 +116,18 @@
 
 
 (defk repo-source-material [repo]
-  {:pre [(: repo RepoCheckout)] :post [(: % dict)]}
+  {:pre [(: repo RepoCheckout)] :post [(: % (get dict #(str object)))]}
   "宣言の repo 1 つの木の同一性(名と url の正体 — commit は入れない)を作るため。準備は、これが同じ repo を持つ完成済みの root から
    木を写す(env_prepare.tree-source)。"
   (<- location RepoLocation (url-location repo.url))
-  (<- located dict (location-material location))
+  (<- located (get dict #(str str)) (location-material location))
   {"name" repo.name "location" located})
 
 
 (defk runtime-env->json [env]
-  {:pre [(: env RuntimeEnv)] :post [(: % dict)]}
+  {:pre [(: env RuntimeEnv)] :post [(: % (get dict #(str object)))]}
   "宣言 → 通信の本文と子の環境変数(DOEFF_RUNTIME_ENV)に載せる JSON の値。"
-  (<- material dict (key-material env ""))
+  (<- material (get dict #(str object)) (key-material env ""))
   (del (get material "platform"))
   (| material
      {"envVars" (lfor v env.env-vars {"name" v.name "value" v.value})
@@ -135,7 +136,7 @@
 
 
 (defk runtime-env-of-json [value]
-  {:pre [(: value dict)] :post [(: % RuntimeEnv)]}
+  {:pre [(: value (get Mapping #(str object)))] :post [(: % RuntimeEnv)]}
   "JSON の値 → 宣言。形が違えば RuntimeEnvInvalid(bad-json)、中身の誤りは型の検査の RuntimeEnvInvalid。"
   (try
     (val project (get value "project"))

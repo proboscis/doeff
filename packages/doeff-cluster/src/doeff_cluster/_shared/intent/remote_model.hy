@@ -36,9 +36,9 @@
    sim は sim の宿が同じ名の Ask に答える(Program は名の Ask で読む — 本番の土台は host_contract.os-environ-reader・sim の宿は同じ答え方の environ-table-reader で字面どおり返す)。
    結果 = Program の戻り値。Program が投げた例外はそのまま呼び手へ届く。"
   (#^ (| Program EffectBase) program)
-  (setv #^ frozenset needs (frozenset))
+  (setv #^ (get frozenset str) needs (frozenset))
   (setv #^ str name "")
-  (setv #^ dict environ (field :default-factory dict))
+  (setv #^ (get dict #(str str)) environ (field :default-factory (fn [] {})))
   (defn #^ None __post-init__ [self]
     "environ を作る時に検める(名の形・予約・秘密の名を断る — EnvVar.environ-refusal)。needs の検め(空・旧い形)は型の外 —
      作り手は構築関数 doeff_cluster._shared.core.remote_rules.remote-job を通す(intent は core を読まない・#2564)。"
@@ -64,7 +64,7 @@
 (defclass VersionMismatch [RemoteJobFailed]
   "送り手と受け側の Python / cloudpickle / doeff の版が違う。受け側は復元せずに断る。
    diffs = 食い違った欄(VersionDiff の tuple)・env-key = 実行する側の env のキー(env の task でなければ空)。"
-  (defn #^ None __init__ [self #^ str message #^ tuple [diffs #()] #^ str [env-key ""]]  ; defk にできない: 例外の class の初期化
+  (defn #^ None __init__ [self #^ str message #^ (get tuple #(VersionDiff ...)) [diffs #()] #^ str [env-key ""]]  ; defk にできない: 例外の class の初期化
     (.__init__ (super) message)
     (setv self.diffs diffs self.env-key env-key)))
 

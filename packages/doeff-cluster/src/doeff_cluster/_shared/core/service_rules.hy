@@ -5,15 +5,15 @@
 ;;; 値を作る構成子と宣言の行の組み立て(job・system-of・system-declaration・resolve)は doeff_cluster._shared.entry.service_build。
 (require doeff-hy.macros [defk deff <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
-(import collections.abc [Callable])
+(import collections.abc [Callable Mapping])
 (import dataclasses)
 (import sys)
 (import json)
 (import doeff_cluster._shared.intent.service_model [CallShape Job System RecordArgument])
 
 
-(deff function-reference [#^ Callable function #^ str where]  ; defk にできない: 宣言の値を作る時(module の読み込み・declare)に呼ぶ純粋な判断
-  {:pre [(: function Callable) (: where str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff function-reference [#^ (get Callable #(... object)) function #^ str where]  ; defk にできない: 宣言の値を作る時(module の読み込み・declare)に呼ぶ純粋な判断
+  {:pre [(: function (get Callable #(... object))) (: where str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "module の最上位の関数 → `module:qualname`。入れ子の関数・lambda・handler の値は実行先で import しても引けない(または値として
    詰めることになる)ので断る — 土台を最上位の関数で渡す決まり(計画 6 節)の検め。"
   (setv module (getattr function "__module__" None) qualname (getattr function "__qualname__" None))
@@ -29,7 +29,7 @@
 
 
 (deff canonical-record [value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
-  {:pre [(: value RecordArgument) (: where str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: value RecordArgument) (: where str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "系の引数の record 1 つ → identity の正規の値 {\"record\": \"module:qualname\", \"fields\": {欄: 正規の値}}。土台を欄の名と型を持つ 1 つの
    値で渡せるようにするため(汎用の模擬のテストが土台の型から模擬の土台を組める)。型は関数と同じく module の最上位に
    在ること(実行先で import して引く)・凍った record であること(宣言の後に欄が変わると identity が値を表さない)を検める。欄は名で整列し、
@@ -43,31 +43,35 @@
                   name (canonical-argument (getattr value name) where))})
 
 
-(deff canonical-argument [value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
-  {:pre [(: value (| Callable str int float bool list tuple dict RecordArgument None)) (: where str)]
-   :post [(: % (| dict str int float bool list None))]
+(deff canonical-argument [#^ object value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+  {:pre [(: value (| (get Callable #(... object)) str int float bool list tuple dict RecordArgument None)) (: where str)]
+   :post [(: % (| (get dict #(str object)) str int float bool (get list object) None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "Program の引数 1 つ → identity に載せる正規の値。関数は {\"ref\": \"module:qualname\"}、record は canonical-record、JSON にできる値は
    そのまま(dict は鍵を整列・tuple は list)。それ以外(object・handler の値)は断る — identity が引数の値を表せないと、宣言し直すたびの
    入れ替えの要否を決められない。"
   (cond
     (isinstance value RecordArgument) (canonical-record value where)
-    (callable value) {"ref" (function-reference value where)}
-    (isinstance value dict) (dfor k (sorted value) k (canonical-argument (get value k) where))
-    (isinstance value #(list tuple)) (lfor v value (canonical-argument v where))
-    True value))
+    (callable value) (do (setv #^ (get dict #(str object)) ref {"ref" (function-reference value where)}) ref)
+    (isinstance value dict) (do (setv #^ (get dict #(str object)) fields (dfor k (sorted value) k (canonical-argument (get value k) where)))
+                                fields)
+    (isinstance value #(list tuple)) (do (setv #^ (get list object) items (lfor v value (canonical-argument v where))) items)
+    (isinstance value #(str int float bool)) value
+    (is value None) None
+    ;; :pre が実行時に断る形(ここへは来ない — 型の上で値の種類を尽くすため)。
+    True (raise (TypeError (.format "{}: identity に載せられない値 {!r}" where value)))))
 
 
 (deff identity-of [#^ CallShape call #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
-  {:pre [(: call CallShape) (: where str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: call CallShape) (: where str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "呼び出しの形 → identity(関数の参照・位置の引数・名の引数の正規 JSON)。spec-hash の材料(改訂 1 の A)。"
   {"function" (function-reference call.function where)
    "args" (lfor a call.args (canonical-argument a where))
    "kwargs" (dfor k (sorted call.kwargs) k (canonical-argument (get call.kwargs k) where))})
 
 
-(deff describe-identity [#^ dict identity]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
-  {:pre [(: identity dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff describe-identity [#^ (get dict #(str object)) identity]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+  {:pre [(: identity (get dict #(str object)))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "identity → 表示の 1 行 `module:qualname(引数, 名=値)`(関数の引数は参照の名で・record は `module:型(欄=値, …)`)。"
   (defn #^ str show [#^ object v]
     (match v
@@ -75,9 +79,10 @@
       {"record" kind "fields" fields} :if (and (isinstance v dict) (= (len v) 2) (isinstance fields dict))
       (.format "{}({})" kind (.join ", " (lfor #(k f) (.items fields) (.format "{}={}" k (show f)))))
       _ (json.dumps v :ensure-ascii False :sort-keys True)))
+  (setv args (get identity "args") kwargs (get identity "kwargs"))
   (.format "{}({})" (get identity "function")
-           (.join ", " (+ (lfor a (get identity "args") (show a))
-                          (lfor #(k v) (.items (get identity "kwargs")) (.format "{}={}" k (show v)))))))
+           (.join ", " (+ (if (isinstance args list) (lfor a args (show a)) [])
+                          (if (isinstance kwargs dict) (lfor #(k v) (.items kwargs) (.format "{}={}" k (show v))) [])))))
 
 
 
@@ -88,7 +93,7 @@
 
 
 (defk foundation-needs-refusal [system foundation]
-  {:pre [(: system System) (: foundation (| Callable RecordArgument))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: system System) (: foundation (| (get Callable #(... object)) RecordArgument))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "土台の関数の頭の :needs(__doeff_needs__)が系の各 job の :needs の一部かを検め、外れた job と足りない能力を並べた理由の文を
    返すため(外れが無ければ None)。foundation = 系に渡した土台 — 土台の関数か、土台の関数を欄に持つ record(系の引数の型の値 — 型から
    本番の土台を引く宣言の道具が渡す・#3030。record は欄の中の関数を全部見る)。declare が宣言の前に断る(計画 9 節の P・ADR-DOE-CLUSTER-001 R4b。doeff-linter の照合が来るまでは
@@ -114,7 +119,7 @@
 
 
 (defk callables-in [values]
-  {:pre [(: values list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
+  {:pre [(: values (get list object))] :post [(: % (get list (get Callable #(... object))))] :tags {:context "doeff-cluster" :role "judgment"}}
   "呼び出しの引数の値の中の関数(list と dict と土台の record の欄の中も)を並べるため — 土台の :needs の検めが、系の引数に渡した土台の
    全部を見る(土台を record 1 つで渡す系でも、欄の土台を見落とさない)。"
   (var found [])
@@ -129,8 +134,8 @@
   found)
 
 
-(deff environ-overlay-refusal [#^ System system #^ dict environ]  ; defk にできない: 宣言の値を作る時(declare の CLI・sim-cluster の宣言)に呼ぶ純粋な判断
-  {:pre [(: system System) (: environ dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+(deff environ-overlay-refusal [#^ System system #^ (get Mapping #(str object)) environ]  ; defk にできない: 宣言の値を作る時(declare の CLI・sim-cluster の宣言)に呼ぶ純粋な判断
+  {:pre [(: system System) (: environ (get Mapping #(str object)))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "job ごとの environ の上書き(job 名 → {名: 文字列})を検め、断る理由の文を返す(無ければ None)。系に無い job・宣言の :environ に
    無い名・文字列でない値は断る — 上書きは宣言に書いた名の値だけを変え、黙って名を足さない(本番の declare と sim-cluster が同じ規則)。"
   (setv declared (dfor j system.jobs j.name (sfor v j.environ v.name)))

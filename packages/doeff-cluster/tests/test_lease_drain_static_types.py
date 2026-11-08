@@ -75,6 +75,13 @@ def test_users_of_lease_answer_and_ask_drain_get_no_unknown_types(tmp_path: Path
     assert not [e for e in errors if "unknown" in e[2].lower()], errors
 
 
+def _class_var(statement: ast.AnnAssign) -> bool:
+    """A `ClassVar[...]` annotation (a class attribute such as `__record_spec__`, not a dataclass field — the tool's .pyi keeps it)."""
+    annotation = statement.annotation
+    head = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+    return isinstance(head, ast.Name) and head.id == "ClassVar"
+
+
 @pytest.mark.parametrize("name", sorted(MODULES))
 def test_each_stub_matches_its_hy_module(name: str) -> None:
     # 宣言の名は実装に在り、関数の引数の名と順・dataclass の欄の名と順は実装と同じ(宣言だけが先へ行かない)。
@@ -92,6 +99,10 @@ def test_each_stub_matches_its_hy_module(name: str) -> None:
         assert stub_parameters == list(inspect.signature(actual).parameters), (name, function.name)
     for class_name, node in classes.items():
         actual = getattr(module, class_name)
-        stub_fields = [item.target.id for item in node.body if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)]
+        stub_fields = [
+            item.target.id
+            for item in node.body
+            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and not _class_var(item)
+        ]
         if hasattr(actual, "__dataclass_fields__"):
             assert stub_fields == [f.name for f in fields(actual)], (name, class_name)

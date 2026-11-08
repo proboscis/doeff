@@ -18,7 +18,7 @@
 (defclass [(dataclass :frozen True)] ReportMetrics [EffectBase]
   "結果は None。metrics = その時点の累計(counter)と値(gauge)。報告が届かなくても業務は止めない。"
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT :unexecuted Unexecuted.NOTHING))
-  (#^ dict metrics))
+  (#^ (get dict #(str object)) metrics))
 
 
 (defclass [(dataclass :frozen True)] ReadProcessGauges [EffectBase]

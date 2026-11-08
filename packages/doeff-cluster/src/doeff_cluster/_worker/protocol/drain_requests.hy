@@ -11,22 +11,26 @@
 
 
 (deff drain-request [#^ str name #^ float ttl-seconds #^ (| str None) own-boot]  ; defk にできない: 答え手 drain-requests と手元の sim-cluster の宿(local.hy)が同じ形を作る純粋な言い換え
-  {:pre [(: name str) (: ttl-seconds float) (: own-boot (| str None))] :post [(: % tuple) (= (len %) 4)]
+  {:pre [(: name str) (: ttl-seconds float) (: own-boot (| str None))] :post [(: % (get tuple #(str str (get dict #(str str)) (get dict #(str object))))) (= (len %) 4)]
    :tags {:context "worker" :role "protocol" :spells "http"}}
   "drain の頼みを要求 #(method path query 本文) にするため。ttl-seconds = drain の期限・own-boot = 頼み手の worker の process の世代
    (在れば、同じ名の別の世代には drain を付けない — drain_policy.request-drain)。"
-  #("POST" (+ (worker-path name) "/drain") {} (| {"ttlSeconds" ttl-seconds} (if own-boot {"boot" own-boot} {}))))
+  (setv #^ (get dict #(str object)) body {"ttlSeconds" ttl-seconds})
+  (when own-boot
+    (setv (get body "boot") own-boot))
+  #("POST" (+ (worker-path name) "/drain") {} body))
 
 
 (defk call-answer [answer]
-  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
+  {:pre [(: answer (| HttpResponse HttpFailed None))] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
   "要求の答えを drain の Program が読む形にするため: 返事 = {\"status\" 番号 \"body\" 本文の JSON の dict(dict でなければ空)}・
    届かない = {\"error\" 理由}。"
+  (var #^ (get dict #(str object)) reply {"error" "coordinator の宛先が無い"})
   (match answer
     (HttpResponse) (do (val parsed (try (json.loads answer.text) (except [ValueError] {})))
-                       {"status" answer.status "body" (if (isinstance parsed dict) parsed {})})
-    (HttpFailed) {"error" (.format "{}: {}" answer.url answer.detail)}
-    _ {"error" "coordinator の宛先が無い"}))
+                       (:= reply {"status" answer.status "body" (if (isinstance parsed dict) parsed {})}))
+    (HttpFailed) (:= reply {"error" (.format "{}: {}" answer.url answer.detail)}))
+  reply)
 
 
 (defhandler coordinator-calls [#^ RouteCell cell #^ RouteOptions options]

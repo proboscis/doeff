@@ -13,7 +13,7 @@
 (import doeff_cluster._coordinator.protocol.replies [reply-json])
 
 
-(defn #^ (| type None) body-type-of [#^ str method #^ tuple parts]  ; defk にできない: 道の振り分けの純粋な表(内包と条件の中で読む)
+(defn #^ (| type None) body-type-of [#^ str method #^ (get tuple #(str ...)) parts]  ; defk にできない: 道の振り分けの純粋な表(内包と条件の中で読む)
   "道(method と path の区切り)→ 本文の型(まだ型にしていない道は None — JSON の object のまま運ぶ)。"
   (cond
     (and (= method "POST") (= (len parts) 2) (= (get parts 0) "leases")) LeaseBody
@@ -36,7 +36,7 @@
 
 
 (defk service-body-of [body parts]
-  {:pre [(: body ResourceBody) (: parts tuple)] :post [(: % (| ServiceBody BodyMalformed))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  {:pre [(: body ResourceBody) (: parts (get tuple #(str ...)))] :post [(: % (| ServiceBody BodyMalformed))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "Service の資源の本文 → 宣言の型(#2448 — 前は core の資源の判断が spec の JSON を job-from-json で読んでいた)。名は PUT なら path の名・POST なら
    本文の name。宣言の行が読めなければ(memory の欄 peakMiB・settleMiB の無い宣言を含む — declared-job-from-json)BodyMalformed(400)。所有者は本文の owner のまま運び、決めるのは判断。"
   (val name (if (= (len parts) 3) (get parts 2) body.name))
@@ -104,7 +104,7 @@
     (resume body)))
 
 
-(defn #^ tuple responded [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]  ; defk にできない: 判断を直に呼ぶ検と模擬の世界(Program の外)が呼ぶ
+(defn #^ (get tuple #(ClusterState int object)) responded [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]  ; defk にできない: 判断を直に呼ぶ検と模擬の世界(Program の外)が呼ぶ
   "要求 1 件の本文を道の型に解いてから判断(api_policy.respond)に答えさせ、返事の本文を JSON の形に綴る — 本番の調停ループの ReadBody と
    返事の答え手 reply-bodies と同じ解きと綴り。読みの中で上がった例外は、調停ループ(program.readable-body)と同じく値 BodyUnreadable にして
    判断に渡す(#2796)。"

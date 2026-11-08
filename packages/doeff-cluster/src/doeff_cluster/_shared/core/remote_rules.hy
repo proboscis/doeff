@@ -3,6 +3,7 @@
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import dataclasses [replace])
+(import typing [cast])
 (import hashlib)
 (import traceback)
 (import doeff [EffectBase Program])
@@ -11,8 +12,9 @@
 
 
 (defk remote-job [program * [needs (frozenset)] [name ""] [environ None]]
-  {:pre [(: program (| Program EffectBase)) (: needs (| frozenset tuple list set dict str None)) (: name str) (: environ (| dict None))]
-   :post [(: % "program の戻り値(型は program ごと)")]
+  {:tp [T]
+   :pre [(: program (| (of Program T object) (of EffectBase T))) (: needs (| (get frozenset str) (get tuple #(object ...)) (get list object) (get set object) (get dict #(object object)) str None)) (: name str) (: environ (| (get dict #(str str)) None))]
+   :post [(: % T)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "RemoteJob の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
    tuple・label の形の名)送る前に TypeError で断る(ADR-DOE-CLUSTER-001 R4b)。environ の名の検めは型が作る時に断る(EnvVar の規則 1 つ)。
@@ -23,11 +25,12 @@
   (when problem (raise (TypeError (+ "RemoteJob.needs: " problem))))
   (val job (RemoteJob program :needs needs :name name))
   (<- answer (if (is environ None) job (replace job :environ environ)))
-  answer)
+  ;; RemoteJob の答えは program の答え(effect の型は答えの型を運ばないので、型の上で program の T と名指す)。
+  (cast "T" answer))
 
 
 ;; この process の版の識別(process-versions)を綴るのは io の層の process_versions.hy(#1630)。ここは突き合わせの判断だけ。
-(defn #^ tuple version-diffs [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ (get tuple #(VersionDiff ...)) version-diffs [#^ (get dict #(str str)) expected #^ (get dict #(str str)) actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "送り手の版(expected)と受け側の版(actual)の食い違った欄(VersionDiff の tuple・欄の名の順)。env のキー(envKey)は両方が名乗る
    時だけ比べて先頭に置く(送り手が env の外 — 開発の checkout — で動く時は、残りの欄と宣言の組み立ての「汚れたツリーを断る」が
    source の一致を保つ)。"
@@ -38,12 +41,12 @@
                (VersionDiff key (.get expected key) (.get actual key)))))
 
 
-(defn #^ str diffs-text [#^ tuple diffs]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ str diffs-text [#^ (get tuple #(VersionDiff ...)) diffs]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "版の違いの列(version-diffs の答え)を 1 行で名指す。違いが在ると分かっている呼び手が使う — 答えに None を含まない(#1690)。"
   (.join "・" (gfor d diffs (.format "{}: 送り手 {} / 受け側 {}" d.field d.sender d.env))))
 
 
-(defn #^ (| str None) version-mismatch [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ (| str None) version-mismatch [#^ (get dict #(str str)) expected #^ (get dict #(str str)) actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "違いを 1 行で名指す。同じなら None。"
   (setv diffs (version-diffs expected actual))
   (if diffs (diffs-text diffs) None))

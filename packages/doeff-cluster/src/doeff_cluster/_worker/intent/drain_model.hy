@@ -9,7 +9,7 @@
   "coordinator へ要求を 1 つ送る。結果 = {\"status\" int \"body\" dict}、届かなければ {\"error\" 理由の文}。"
   (#^ str method)
   (#^ str path)
-  (setv #^ (| dict None) body None))
+  (setv #^ (| (get dict #(str object)) None) body None))
 
 
 (defclass [(dataclass :frozen True)] AskDrain [EffectBase]

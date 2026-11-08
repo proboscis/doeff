@@ -63,7 +63,7 @@
   (defn #^ (| (get dict #(str (| int str))) None) recovery [self] (raise NotImplementedError))
   (defn #^ None note-recovered [self #^ int kept #^ int size #^ str reason] (raise NotImplementedError))
   (defn #^ None note-fsync [self #^ float seconds] (raise NotImplementedError))
-  (defn #^ dict fsync-stats [self] (raise NotImplementedError)))
+  (defn #^ (get dict #(str (| float int))) fsync-stats [self] (raise NotImplementedError)))
 
 
 (defclass DeltaStore [MethodShape]
@@ -167,7 +167,7 @@
     (resume None)))
 
 
-(defhandler memory-store [#^ list log]
+(defhandler memory-store [#^ (get list (get dict #(str object))) log]
   ;; テスト: まとまりごとの差分(キー → 新しい値)を list に積む(耐久の置き場の代わり)。
   ;; 引数に残す理由: 積んだ差分の列は検が持って読む
   (Persist [writes]

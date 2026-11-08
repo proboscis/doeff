@@ -53,7 +53,7 @@
 
 
 (defk process-versions [environ]
-  {:pre [(: environ Mapping)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  {:pre [(: environ (get Mapping #(str str)))] :post [(: % (get dict #(str str)))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "この process の版の識別を綴るため — 送り手が blob と heartbeat に添え、受け側が突き合わせる(remote_model.version-diffs)。入っている版
    (_installed-versions)に、environ の RUNTIME-ENV-KEY-VAR を名乗り envKey として添える。environ は呼び手が渡す: process の入口と宿の
    handler は os.environ(環境変数は process の中で変わり得るので読むたびに渡す)・env の root の外として名乗る呼び手(sim の送り手)は空。
@@ -65,7 +65,7 @@
 
 
 (defk this-process-versions []
-  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  {:pre [] :post [(: % (get dict #(str str)))] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "この process の版の識別を、この process の環境変数から綴るため — 宿を持たない呼び手(手元の道具の送り手・宣言の道具・子の入口の
    突き合わせ)が使う。os.environ の読みを foundation の層に閉じる(入口と protocol の層は os.environ に触らない — DOEFF106・#3014)。"
   (<- versions dict (process-versions os.environ))
@@ -73,7 +73,7 @@
 
 
 (defk this-process-environ []
-  {:pre [] :post [(: % Mapping)] :tags {:context "doeff-cluster" :role "foundation"}}
+  {:pre [] :post [(: % (get Mapping #(str str)))] :tags {:context "doeff-cluster" :role "foundation"}}
   "この process の環境変数の写像を返すため — 入口が Program の外で読む実行先の文脈(shared/entry/run_context_env の context-from-env)の
    材料。os.environ の読みを foundation の層に閉じ、写像は組まずにそのまま渡す(読みの規則は core の context-of-environ の 1 つ — #3014)。"
   os.environ)

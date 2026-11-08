@@ -1,9 +1,9 @@
 """系の宣言の 3 つの module の型の宣言(.pyi)と実装の食い違いの失敗ケース。
 
-service_model.hy の判断と構成子を、層に合わせて core/service_rules.hy と entry/service_build.hy へ分けた。型の宣言は手書きなので、
-関数を移す・引数を変えると、宣言だけが古い置き場に黙って残る(使い手の strict では Unknown か、実行時に無い名を型が通す)。
-(worker/protocol/declared.hy・worker/protocol/heartbeat.hy・shared/entry/declare.hy の .pyi は道具 doeff_hy._static_stub が .hy の契約から
-作るので、ここでは照らさない — 作り直した物と commit された物の一致は tests/test_generated_stubs.py が検める・#2824。)
+service_model.hy の判断と構成子を、層に合わせて core/service_rules.hy と entry/service_build.hy へ分けた。型の宣言が手書きだった頃は、
+関数を移す・引数を変えると、宣言だけが古い置き場に黙って残った(使い手の strict では Unknown か、実行時に無い名を型が通す)。
+今は 3 つとも .pyi を道具 doeff_hy._static_stub が package を組む時に .hy の契約から作る(tools/doeff_hy_stub_hook.py)— この検は
+作った宣言が .hy の公開面を写す事を照らす。
 ここで .hy の source を読み、module の直下で定義した公開の名と宣言の名を照らし、さらに:
 
 - defrecord の型は dataclass の欄の名と順が宣言の欄と同じ。
@@ -27,7 +27,7 @@ from doeff_cluster._shared.intent import service_model
 PACKAGE = Path(__file__).resolve().parents[1]
 SOURCE = PACKAGE / "src"
 
-#: 手で書いた型の宣言を持つ系の宣言の module。
+#: 型の宣言(.pyi)を照らす系の宣言の module。
 MODULES = (service_model, service_rules, service_build)
 
 #: module の直下で名を定義する Hy の form の頭。

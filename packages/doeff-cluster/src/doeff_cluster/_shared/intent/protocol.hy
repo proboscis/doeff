@@ -95,9 +95,9 @@
    前の歩で止まっていた待ちも数えるため。箱を通らない要求は 0)。"
   (#^ str method)
   (#^ str path)
-  (#^ dict query)
+  (#^ (get dict #(str object)) query)
   (#^ object body)
-  (#^ tuple parts)
+  (#^ (get tuple #(str ...)) parts)
   (setv #^ object slot None)
   (setv #^ (| str None) actor None)
   (setv #^ str peer "")

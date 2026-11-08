@@ -8,7 +8,7 @@
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import importlib)
-(import doeff [DoExpr Program run])
+(import doeff [DoExpr run])
 (import doeff_cluster._shared.core.capabilities [capabilities-of])
 (import doeff_cluster._shared.core.service_rules [identity-of describe-identity environ-overlay-refusal])
 (import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal])
@@ -17,15 +17,15 @@
 (import doeff_cluster._shared.core.remote_rules [program-sha])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvVar])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape Job System Declaration])
+(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape Job System Declaration DeclarationRow])
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-spec])
 
 
-(deff job [#^ str name program * #^ CallShape call needs #^ int replicas #^ (| dict None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-           #^ (| dict None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None] #^ (| frozenset None) [filled None]]
-  {:pre [(: name str) (: program (| Program int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: replicas int) (: readiness (| dict None)) (: update str) (: environ (| dict None))
-         (: peak-mib int) (: settle-mib int) (: single-host (| str None)) (: filled (| frozenset None))]
+(deff job [#^ str name #^ object program * #^ CallShape call needs #^ int replicas #^ (| (get dict #(str (| float str))) None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+           #^ (| (get dict #(str str)) None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None] #^ (| (get frozenset str) None) [filled None]]
+  {:pre [(: name str) (: call CallShape) (: needs (| (get frozenset str) (get set str) (get list str) (get tuple #(str ...)) None)) (: replicas int) (: readiness (| (get dict #(str (| float str))) None)) (: update str) (: environ (| (get dict #(str str)) None))
+         (: peak-mib int) (: settle-mib int) (: single-host (| str None)) (: filled (| (get frozenset str) None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "main" :reads "env"}}
   "job 1 つを検めて作る(defsystem の展開が呼ぶ)。replicas = 望む台数(必ず渡す — 0 = 取り下げ・1 = 動かす)。旧い引数(:env・:config・
    :env-config・:requires)はこの関数に無いので TypeError。readiness の欄を :environ の名で書いた時(readiness_model の註)は、宣言の
@@ -45,11 +45,14 @@
   (setv caps (capabilities-of (if (is needs None) [] needs) (.format "job {} の :needs" name)))
   (when (not caps)
     (raise (ValueError (.format "job {} の :needs が空 — 要る能力の名を 1 つ以上書く(ADR-DOE-CLUSTER-001 R4b)" name))))
-  (when (and (is-not environ None) (not (isinstance environ dict)))
-    (raise (TypeError (.format "job {} の :environ は文字列の鍵と値の dict: {!r}" name environ))))
+  ;; 型の外から来た値(展開の外で組んだ引数)も断る — match は型の上で尽きていても実行時の形を見る。
+  (match environ
+    (dict) None
+    None None
+    _ (raise (TypeError (.format "job {} の :environ は文字列の鍵と値の dict: {!r}" name environ))))
   (setv environ-given (if (is environ None) {} environ))
+  (setv #^ (get frozenset str) filled-given (if (is filled None) (frozenset) filled))
   (setv env-vars (tuple (gfor k (sorted environ-given) (EnvVar :name k :value (get environ-given k))))
-        filled-given (if (is filled None) (frozenset) filled)
         strangers (sorted (gfor n filled-given :if (not-in n environ-given) n))
         defaulted (sorted (gfor n filled-given :if (and (in n environ-given) (get environ-given n)) n)))
   (when strangers
@@ -66,8 +69,8 @@
        :environ env-vars :peak-mib peak-mib :settle-mib settle-mib :single-host single-host :filled filled-given))
 
 
-(deff system-of [#^ str name #^ tuple jobs * #^ tuple [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-  {:pre [(: name str) (: jobs tuple) (: task-limits tuple)] :post [(: % System)] :tags {:context "doeff-cluster" :role "main"}}
+(deff system-of [#^ str name #^ (get tuple #(Job ...)) jobs * #^ (get tuple #(GroupLimit ...)) [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+  {:pre [(: name str) (: jobs (get tuple #(Job ...))) (: task-limits (get tuple #(GroupLimit ...)))] :post [(: % System)] :tags {:context "doeff-cluster" :role "main"}}
   "job の組と組の同時数の上限を系にする(job の名の重なり・組の名の重なり・受けられない上限は断る — 上限の規則は coordinator の
    受け口と同じ group-limit-refusal)。名の無い組の上限には宣言する系の名 name を付ける(GroupLimit の system — coordinator は別の系が
    宣言した組の書き直しを断る)。既に名の付いた上限(作った系の値を繋ぐ時 — 宣言の道具が 1 度に宣言する系を名「a+b」の 1 つの系に
@@ -77,8 +80,9 @@
     (when (> (.count names n) 1)
       (raise (ValueError (.format "系 {} に job {} が 2 つある" name n)))))
   (for [l task-limits]
-    (when (not (isinstance l GroupLimit))
-      (raise (TypeError (.format "系 {} の :task-limits は GroupLimit の tuple: {!r}" name l)))))
+    (match l
+      (GroupLimit) None
+      _ (raise (TypeError (.format "系 {} の :task-limits は GroupLimit の tuple: {!r}" name l)))))
   (setv named (tuple (gfor l task-limits (if l.system l (replace l :system name)))))
   (for [l named]
     (setv refusal (group-limit-refusal l.group (group-limit-spec l)))
@@ -91,9 +95,9 @@
   (System :name name :jobs jobs :task-limits named))
 
 
-(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions  ; defk にできない: declare の CLI が呼ぶ
-                          #^ (| dict None) [contents None]]
-  {:pre [(: system System) (: revision str) (: versions dict) (: runtime-env (| RuntimeEnv None)) (: environ (| dict None)) (: contents (| dict None))]
+(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| (get dict #(str (get dict #(str str)))) None) [environ None] * #^ (get dict #(str str)) versions  ; defk にできない: declare の CLI が呼ぶ
+                          #^ (| (get dict #(str str)) None) [contents None]]
+  {:pre [(: system System) (: revision str) (: versions (get dict #(str str))) (: runtime-env (| RuntimeEnv None)) (: environ (| (get dict #(str (get dict #(str str)))) None)) (: contents (| (get dict #(str str)) None))]
    :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "系 → coordinator へ渡す宣言(改訂 1 の A・F・G)。job ごとに Program を詰めて sha を鍵に programs へ、行は sha と identity・
    versions・describe・environ と、job の望む台数 replicas を持つ(宣言し直しは書く Service の台数を job の値にする — #3487)。versions = 送り手の版の識別(キーワード専用の必須 — 呼び手が io の層の process_versions.process-versions で綴って渡す —
@@ -119,43 +123,52 @@
       (raise (ValueError (.format "job {} の {}" name problem)))))
   (setv env-json (if (is runtime-env None) None (run (runtime-env->json runtime-env)))
         declared-vars (if (is runtime-env None) #() (sfor v runtime-env.env-vars v.name))
-        rows [] programs {})
+        programs {})
+  (setv #^ (get list DeclarationRow) rows [])
   (for [j system.jobs]
     (setv clash (sorted (gfor v j.environ :if (in v.name declared-vars) v.name)))
     (when clash
       (raise (ValueError (.format "job {} の :environ {} は実行環境の env-vars と同じ名 — 子の環境変数はどちらか 1 つで宣言する"
                                   j.name clash))))
-    (setv environ (| (dfor v j.environ v.name v.value) (.get overlay j.name {}))
-          readiness-problem (or (readiness-environ-refusal j.readiness environ)
-                                (readiness-refusal (readiness-from-environ j.readiness environ) j.update)))
+    (setv job-environ (| (dfor v j.environ v.name v.value) (.get overlay j.name {}))
+          readiness-problem (or (readiness-environ-refusal j.readiness job-environ)
+                                (readiness-refusal (readiness-from-environ j.readiness job-environ) j.update)))
     (when (is-not readiness-problem None)
       (raise (ValueError (.format "job {} の :readiness(environ の上書きを重ねた後): {}" j.name readiness-problem))))
     (setv blob (encode-program j.program)
           sha (program-sha blob)
           identity (identity-of j.call (.format "job {}" j.name)))
     (setv (get programs sha) blob)
-    (.append rows
-             (| {"name" j.name
-                 "revision" revision
-                 "needs" (sorted j.needs)
-                 "replicas" j.replicas
-                 "run" {"kind" "service" "program" sha "identity" identity "versions" versions
-                        "describe" (describe-identity identity)}
-                 "environ" environ
-                 ;; memory は置き方の照らしの材料で、process の形ではない — spec-of-declaration は読まず、指紋 spec-hash に入らない
-                 ;; (数を直して宣言し直しても process を起こし直さない)。
-                 "peakMiB" j.peak-mib
-                 "settleMiB" j.settle-mib}
-                (if (is j.single-host None) {} {"singleHost" j.single-host})
-                (if j.readiness {"readiness" (readiness-from-environ j.readiness environ)} {})
-                (if (= j.update "recreate") {} {"update" j.update})
-                (if (in j.name keys) {"content" (get keys j.name)} {})
-                (if (is env-json None) {} {"runtimeEnv" env-json}))))
+    (setv #^ DeclarationRow row
+          {"name" j.name
+           "revision" revision
+           "needs" (sorted j.needs)
+           "replicas" j.replicas
+           "run" {"kind" "service" "program" sha "identity" identity "versions" versions
+                  "describe" (describe-identity identity)}
+           "environ" job-environ
+           ;; memory は置き方の照らしの材料で、process の形ではない — spec-of-declaration は読まず、指紋 spec-hash に入らない
+           ;; (数を直して宣言し直しても process を起こし直さない)。
+           "peakMiB" j.peak-mib
+           "settleMiB" j.settle-mib})
+    ;; 在る時だけの鍵(行の型 DeclarationRow の NotRequired)。
+    (when (is-not j.single-host None)
+      (setv (get row "singleHost") j.single-host))
+    (setv readiness (if j.readiness (readiness-from-environ j.readiness job-environ) None))
+    (when (isinstance readiness dict)
+      (setv (get row "readiness") readiness))
+    (when (!= j.update "recreate")
+      (setv (get row "update") j.update))
+    (when (in j.name keys)
+      (setv (get row "content") (get keys j.name)))
+    (when (is-not env-json None)
+      (setv (get row "runtimeEnv") env-json))
+    (.append rows row))
   (Declaration :rows rows :programs programs :limits system.task-limits))
 
 
 (deff resolve-value [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
-  {:pre [(: path str)] :post [(: % (| Callable System))] :tags {:context "doeff-cluster" :role "main"}}
+  {:pre [(: path str)] :post [(: % (| (get Callable #(... object)) System))] :tags {:context "doeff-cluster" :role "main"}}
   "`module:attr` の import path を値に解くため(名を解く口はここ 1 つ — 契約の dynamic_imports で名指す・#1692)。答えは系の関数・
    土台の関数か、旧い形の系の値(呼び手の declare が形を見て、理由つきで断る)。"
   (when (not-in ":" path)
@@ -165,7 +178,7 @@
 
 
 (deff resolve [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
-  {:pre [(: path str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "main"}}
+  {:pre [(: path str)] :post [(: % (get Callable #(... object)))] :tags {:context "doeff-cluster" :role "main"}}
   "`module:attr` の import path を関数に解く(declare の系の関数と土台の関数)。旧い形の系の値(System)は関数ではないので、
    名指しで断る(declare はその前に理由つきで断るので、ここへ来るのは呼び手の誤り)。"
   (setv value (resolve-value path))

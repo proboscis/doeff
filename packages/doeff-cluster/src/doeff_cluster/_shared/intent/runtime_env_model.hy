@@ -32,10 +32,10 @@
 (val CHILD-PROTOCOL 1)
 (val SUPPORTED-CHILD-PROTOCOLS (frozenset #(1)))
 
-(val NAME-PATTERN (re.compile r"[a-z0-9][a-z0-9._-]*"))
-(val COMMIT-PATTERN (re.compile r"[0-9a-f]{40}"))
-(val SHA256-PATTERN (re.compile r"[0-9a-f]{64}"))
-(val ENV-VAR-PATTERN (re.compile r"[A-Z][A-Z0-9_]*"))
+(val #^ (get re.Pattern str) NAME-PATTERN (re.compile r"[a-z0-9][a-z0-9._-]*"))
+(val #^ (get re.Pattern str) COMMIT-PATTERN (re.compile r"[0-9a-f]{40}"))
+(val #^ (get re.Pattern str) SHA256-PATTERN (re.compile r"[0-9a-f]{64}"))
+(val #^ (get re.Pattern str) ENV-VAR-PATTERN (re.compile r"[A-Z][A-Z0-9_]*"))
 ;; 子の環境変数のうち、宣言で置けない物(worker が組む・interpreter と uv の挙動を変える)。
 (val RESERVED-ENV-PREFIXES #("PYTHON" "HY_" "UV_" "LD_" "DOEFF_"))
 (val RESERVED-ENV-NAMES (frozenset #("PATH" "HOME" "VIRTUAL_ENV")))
@@ -128,7 +128,7 @@
    paths = wheel の中身を決める repo の中の dir(キー = 各 dir の git の tree hash)。"
   (#^ str package)
   (#^ str repo)
-  (#^ tuple paths)
+  (#^ (get tuple #(str ...)) paths)
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (RuntimeEnvInvalid.check-name "native の package" self.package)
     (RuntimeEnvInvalid.check-name "native の repo" self.repo)
@@ -144,8 +144,8 @@
   (#^ str path)
   (#^ str lock-sha256)
   (#^ str python)
-  (setv #^ tuple groups #())
-  (setv #^ tuple native #())
+  (setv #^ (get tuple #(str ...)) groups #())
+  (setv #^ (get tuple #(NativeWheel ...)) native #())
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (RuntimeEnvInvalid.check-name "project の repo" self.repo)
     (RuntimeEnvInvalid.check-relative "project の path" self.path)
@@ -200,16 +200,16 @@
 (defrecord RuntimeEnv
   "実行環境の宣言。repos = 1 つ以上・project = 依存の正本の uv の project・
    import-roots = \"<repo の名>/<repo の中の相対の dir>\"(前が先。project の venv の .pth に並ぶ)。"
-  (#^ tuple repos)
+  (#^ (get tuple #(RepoCheckout ...)) repos)
   (#^ PythonProject project)
-  (#^ tuple import-roots)
-  (setv #^ tuple env-vars #())
-  (setv #^ tuple tools #())
+  (#^ (get tuple #(str ...)) import-roots)
+  (setv #^ (get tuple #(EnvVar ...)) env-vars #())
+  (setv #^ (get tuple #(ToolRequirement ...)) tools #())
   (setv #^ int format RUNTIME-ENV-FORMAT)
   ;; 焼く範囲の入口の module の名(空 = import の根の下を全部焼く)。準備はこの module たちの import の閉包だけを焼き、閉包の外の
   ;; module は子が import した時に作られる。root の file の中身を変えないのでキーに入れない(2026-09-26・#664 の実測: 焼く 1,063 file の
   ;; うち task が読むのは約 2 割)。
-  (setv #^ tuple bytecode-entries #())
+  (setv #^ (get tuple #(str ...)) bytecode-entries #())
   (defn #^ None __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (RuntimeEnvInvalid.check-tuple "RuntimeEnv.repos" self.repos RepoCheckout)
     (RuntimeEnvInvalid.check-tuple "RuntimeEnv.bytecode-entries" self.bytecode-entries str)

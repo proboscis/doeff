@@ -23,7 +23,7 @@
 
 
 (defk report-metrics-of [snapshot]
-  {:pre [(: snapshot MeterSnapshot)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: snapshot MeterSnapshot)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "protocol"}}
   "計器の断面を、ReportMetrics の報告の形(counters・gauges・durations の sum と count — metrics_model の頭の註)に綴るため。断面の秒の
    観測は total と count を持つので、報告の綴り(sum)へ名を替える。"
   {"counters" (dict snapshot.counters)
@@ -50,7 +50,7 @@
 
 
 (defk with-meter-report [body [seconds DEFAULT-REPORT-SECONDS]]
-  {:pre [(: body (| Program EffectBase)) (: seconds float)] :post [(: % "body の答え")] :tags {:context "doeff-cluster" :role "protocol"}}
+  {:tp [A] :pre [(: body (| (of Program A object) (of EffectBase A))) (: seconds float)] :post [(: % A)] :tags {:context "doeff-cluster" :role "protocol"}}
   "本体 body を走らせる間、計器の断面を seconds ごとに coordinator へ送り、本体が終わった時にも 1 回送るため(本体の答えをそのまま返す)。
    最初の報告は本体の前に送る(本体を待たずに、service の計器の行が coordinator に載る)。"
   (<- (report-meter-once))

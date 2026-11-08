@@ -1,3 +1,4 @@
+# Hand-written stub kept: ByteLog and DeltaStore are ABCs whose membership is structural at run time (MethodShape.__subclasshook__), and doeff_hy._static_stub renders them as nominal classes, so WalStore / MemoryWalStore (which do not inherit them) would not type as DurableStore; this stub declares them as Protocols.
 """coordinator/protocol/store.hy の公開面の型(型検査のための宣言 — 実行時は store.hy を読む・#2446)。
 
 store.hy は Hy の module なので、pyright は中を読めず、名が全部 Unknown になる。調停ループの組を自分で組む使い手(使い手の repo の

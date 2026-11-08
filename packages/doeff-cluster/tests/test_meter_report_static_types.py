@@ -99,7 +99,9 @@ def _class_mismatch(module: ModuleType, node: ast.ClassDef) -> str | None:
     """宣言の class 1 つが実装と食い違えば理由、一致すれば None — dataclass は欄の名と順、ほか(例外)は親の class の名で照らす。"""
     actual = getattr(module, node.name)
     if dataclasses.is_dataclass(actual):
-        declared = [s.target.id for s in node.body if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)]
+        declared = [
+            s.target.id for s in node.body if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name) and not _class_var(s)
+        ]
         fields = [f.name for f in dataclasses.fields(actual)]
         return None if declared == fields else f"record {node.name} の欄 {declared} が実装 {fields} と違う"
     bases = [b.id for b in node.bases if isinstance(b, ast.Name)]
@@ -124,6 +126,13 @@ def _mismatch(module: ModuleType, node: ast.stmt) -> str | None:
             return _class_mismatch(module, node)
         case _:
             return None
+
+
+def _class_var(statement: ast.AnnAssign) -> bool:
+    """A `ClassVar[...]` annotation (a class attribute such as `__record_spec__`, not a dataclass field — the tool's .pyi keeps it)."""
+    annotation = statement.annotation
+    head = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+    return isinstance(head, ast.Name) and head.id == "ClassVar"
 
 
 def _mismatches(module: ModuleType, stub: ast.Module) -> list[str]:

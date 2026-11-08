@@ -2,6 +2,7 @@
 ;;; 型と effect は doeff_cluster._shared.intent.warm_model。coordinator の表(warm_policy)と送り手の handler(detached.hy の warm-cluster)が同じ形を使う。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(import collections.abc [Mapping])
 (import hashlib)
 (import json)
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
@@ -12,7 +13,7 @@
 
 
 (defk warm-runtime-env [env needs ttl-seconds holder]
-  {:pre [(: env RuntimeEnv) (: needs (| frozenset tuple list set dict str None)) (: ttl-seconds float) (: holder str)]
+  {:pre [(: env RuntimeEnv) (: needs (| (get frozenset str) (get tuple #(object ...)) (get list object) (get set object) (get dict #(object object)) str None)) (: ttl-seconds float) (: holder str)]
    :post [(: % WarmAnswer)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "WarmRuntimeEnv の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(空・旧い形・label の形の名)
@@ -25,7 +26,7 @@
 
 
 (defk warm-key [env needs]
-  {:pre [(: env RuntimeEnv) (: needs tuple)] :post [(: % str) (= (len %) WARM-KEY-LENGTH)]}
+  {:pre [(: env RuntimeEnv) (: needs (get tuple #(str ...)))] :post [(: % str) (= (len %) WARM-KEY-LENGTH)]}
   "温める表の行のキー(定義点はここ 1 つ)= 宣言の依存のキー(dependency-key・platform を含まない)と needs の組の sha256 の頭 24 桁。
    project の repo の commit だけが違う宣言(同じ uv.lock の版を rebase し直した commit など)は同じ行になるので、前の commit の宣言で
    頼んだ温めを後の commit の宣言が「先に組んだ」と読める(行の宣言は後の頼みで置き換わる)。worker の root のキーは platform と
@@ -36,14 +37,14 @@
 
 
 (defk warm-state->json [state]
-  {:pre [(: state WarmState)] :post [(: % dict)]}
+  {:pre [(: state WarmState)] :post [(: % (get dict #(str object)))]}
   "WarmState → 通信の本文。"
   {"key" state.key "ready" (list state.ready) "preparing" (list state.preparing)
    "failed" (lfor f state.failed {"worker" f.worker "kind" f.kind "detail" f.detail "retryable" f.retryable})
    "untilMs" state.until-ms "memoryUnmeasured" state.memory-unmeasured "depsReady" (list state.deps-ready)})
 
 
-(defn #^ WarmState warm-state-of-json [#^ dict value]  ; defk にできない: coordinator の純粋な判断と HTTP の handler の境界で読む
+(defn #^ WarmState warm-state-of-json [#^ (get Mapping #(str object)) value]  ; defk にできない: coordinator の純粋な判断と HTTP の handler の境界で読む
   "通信の本文 → WarmState。欄 depsReady の無い本文(依存のキーを照らす前の coordinator)は ready を依存の部分も揃った worker と読む。"
   (WarmState :key (get value "key") :ready (tuple (get value "ready")) :preparing (tuple (get value "preparing"))
              :deps-ready (tuple (.get value "depsReady" (get value "ready")))
