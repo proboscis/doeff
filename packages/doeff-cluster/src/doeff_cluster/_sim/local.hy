@@ -747,7 +747,7 @@
 (defeffect GenerationsOf
   "検の effect: worker name の今の世代と退いた世代の姿(SimGeneration の tuple — 今の世代が先、退いた世代は鍵の順)。"
   {:fields [(: name str)]
-   :answer tuple
+   :answer (get tuple #(SimGeneration ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect LoseWorker

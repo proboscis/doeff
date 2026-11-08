@@ -27,7 +27,7 @@
 (import doeff_cluster [kube-services-api]
         doeff_cluster._shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER _ingress-apply-text _ingress-path service-apply-text service-path])
 (import doeff_cluster [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
-(import doeff_cluster [JOB-ENDPOINTS-LABEL])
+(import doeff_cluster._shared.intent.kube_service_model [JOB-ENDPOINTS-LABEL])
 (import doeff_cluster [held-kube-services]
         doeff_cluster._sim.k8s_services [KubeServiceLog])
 

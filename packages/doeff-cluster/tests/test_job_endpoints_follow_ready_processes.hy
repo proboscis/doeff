@@ -35,7 +35,7 @@
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [PlainText])
-(import doeff_cluster [JOB-ENDPOINTS-LABEL])
+(import doeff_cluster._shared.intent.kube_service_model [JOB-ENDPOINTS-LABEL])
 (import doeff_cluster [sim-cluster SimWorker SimGeneration RollWorker CrashGeneration GenerationsOf ProcessesOf ReportsOf ReadCoordinator
                        KubeCalls StopCoordinator KillWorker])
 (import tests.fixtures.envs [sim-foundation])

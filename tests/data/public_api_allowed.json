@@ -228,6 +228,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "SimGeneration",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "SimMemoryRead",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"

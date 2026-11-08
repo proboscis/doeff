@@ -582,7 +582,6 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.protocol.supplied_values import KUBE_API as KUBE_API
     from doeff_cluster._shared.intent.kube_service_model import KubeIngress as KubeIngress
     from doeff_cluster._shared.intent.kube_service_model import KubeService as KubeService
-    from doeff_cluster._shared.intent.kube_service_model import JOB_ENDPOINTS_LABEL as JOB_ENDPOINTS_LABEL
     from doeff_cluster._shared.intent.kube_service_model import KubeServicePort as KubeServicePort
     from doeff_cluster._shared.intent.kube_service_model import KubeServiceType as KubeServiceType
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
@@ -1350,7 +1349,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "KUBE_API": "doeff_cluster._shared.protocol.supplied_values",
     "KubeIngress": "doeff_cluster._shared.intent.kube_service_model",
     "KubeService": "doeff_cluster._shared.intent.kube_service_model",
-    "JOB_ENDPOINTS_LABEL": "doeff_cluster._shared.intent.kube_service_model",
     "KubeServicePort": "doeff_cluster._shared.intent.kube_service_model",
     "KubeServiceType": "doeff_cluster._shared.intent.kube_service_model",
     "WorkspaceOutcome": "doeff_cluster._shared.intent.workspace_volume_model",
