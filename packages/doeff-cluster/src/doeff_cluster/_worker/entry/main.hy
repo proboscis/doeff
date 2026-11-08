@@ -603,10 +603,12 @@
         probes (ProbeSettings :python interpreter :hy-command hy-command :layout layout
                               :probe-dir places.probe :shim shim))
   ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(機体の上で
-  ;; 直に動く worker の log は機体の file にしか無かった)。job の名 worker/<名>・世代 boot で名乗る。送り先が在り、stdout と stderr が
-  ;; 同じ file の時だけ差し替え、以後の行は file に刻つきで書く(Pod の worker は今のまま)。fd 1・2 は替えない — 子孫は元の file を継ぐ。
+  ;; 直に動く worker の log は機体の file にしか無く、Pod の worker の log は Pod の入れ替えで消えた)。job の名 worker/<名>・世代 boot で
+  ;; 名乗る。送り先が在り、stdout と stderr が同じ file の時(機体の形)か、Pod の中(POD-UID-VAR が在る — k8s の container の stdout と
+  ;; stderr は別の 2 本の pipe で、同じ container の log に入る)の時に差し替え、以後の行を stdout の file へ刻つきで書く(Pod は 2 つを
+  ;; 1 本にまとめる — coordinator の入口と同じ merged)。fd 1・2 は替えない — 子孫は元の file を継ぐ。
   ;; 終わりは process の終わり — 下の断りの traceback も送る。
-  (process-lines (worker-log-plan machine-env args.name boot))
+  (process-lines (worker-log-plan machine-env args.name boot) :merged (in POD-UID-VAR machine-env))
   ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と

@@ -48,7 +48,8 @@ worker の process 自身の行(機体の上で直に動く worker(zeus-native�
 出力先の file にしか無く、会話から読めなかった): worker の入口(worker/entry/main)も同じ刻の付け方と送り手で、自分の Python の
 出力(sys.stdout と sys.stderr)を刻つきの書き手へ差し替えて送る(process_lines・stamped_streams)。job の文脈は worker が自分で
 置く(worker_log_plan — job の名 worker/<worker の名>・試み 0・世代 = worker の boot)。差し替えるのは送り先が使えて、stdout と
-stderr が同じ file を指す時だけ(機体の形 — 送り先の無い Pod の worker は今のまま)。
+stderr が同じ file を指す時(機体の形)か、Pod の中の worker(入口が merged を渡す — k8s の container の 2 本の pipe を 1 本に
+まとめる。下の coordinator と同じ形。前は Pod の worker を差し替えず、Pod の log は Pod の入れ替えで消えた)の時。
 - fd 1・2 は替えない(job の shim と違う所): worker の子孫(lifeline の見張りのように worker より長く生きる子)は fd 2 を継ぐので、
   fd を pipe にすると、worker が終わった後の子孫の書きは読み手の居ない pipe へ行き、行が消えて子孫が止まる。
   替えるのは Python の流れの物だけで、子孫と、fd へ直に書く物(Rust の panic など)は

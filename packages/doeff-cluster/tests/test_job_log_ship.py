@@ -749,6 +749,30 @@ def test_a_worker_whose_stdout_and_stderr_are_two_files_keeps_them_and_names_why
     assert collector.records() == []
 
 
+POD_WORKER_PROCESS = """
+import os, sys
+from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
+process_lines(worker_log_plan(os.environ, "zeus", "b0"), merged="POD_UID" in os.environ)
+print("worker: 拍の遅れ elapsed_ms=31000", file=sys.stderr, flush=True)
+print("worker: job ごとの memory", flush=True)
+"""
+
+
+def test_a_pod_worker_ships_its_own_lines_from_two_pipes(tmp_path: Path, collector: Collector) -> None:
+    """Pod の中の worker(入口と同じく、POD_UID が在る時に merged を渡す)は、stdout と stderr が別の先(k8s の container の 2 本の
+    pipe)でも 2 つを 1 本にまとめ、自分の行を刻つきで stdout へ書き、同じ行を job の名 worker/<名> で送る(前は送らない訳を 1 行
+    出して送らず、Pod の log は Pod の入れ替えで消えた)。"""
+    env = {JOB_LOG_OTLP_VAR: collector.base(), JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal", "POD_UID": "uid-1"}
+    ran = worker_run(tmp_path, env, same_file=False, script=POD_WORKER_PROCESS)
+    assert ran.code == 0, ran.err
+    assert ran.err == b"", ran.err
+    lines = file_lines(ran.out)
+    assert [x.body for x in lines] == ["worker: 拍の遅れ elapsed_ms=31000".encode(), "worker: job ごとの memory".encode()]
+    records = received_until(collector, len(lines))
+    assert [r.body for r in records] == [x.body.decode() for x in lines]
+    assert {dict(r.resource)["doeff.job"] for r in records} == {"worker/zeus"}
+
+
 OUTLIVING_DESCENDANT = """
 import os, subprocess, sys
 from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
