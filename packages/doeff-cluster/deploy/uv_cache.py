@@ -46,8 +46,19 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
                          --venvs と --links の外に在ると守れないので、置き場を必ずどちらかに渡す。索引が指す項目を消しても、uv は
                          取り寄せ直すだけで壊れない(2026-11-01 に uv 0.12.19 で確かめた — 索引の指す項目を消した後の install は
                          「uncached distribution」として取り寄せ直した)。
-           予算(--size-budget-gib)を渡すと、期限の消しの後に、cache だけが持つ byte(cache の項目 — 展開済みの wheel・環境・一時の物 — の
-           file のうち、hardlink の全部が cache の項目の中に在る物と dir の byte)の和を数え、予算を越えていれば、最後に使った刻の古い
+             git の checkout  git-v*/checkouts/<repo>/<commit> のうち、作った刻が --idle-days 日より前で、残る venv と環境と --links の
+                         dir の下の venv のどれも symlink か .pth の行(editable の install)で指さず、走っている process(組みの作業 dir・
+                         引数・読み込んだ file)が使っていない物(proc が読めなければ消さない)。uv がその repo に持つ錠(git-v*/locks/<repo>)
+                         を待たずに取れた時だけ、印 <commit>.ok を先に退けてから消す。venv は git の依存を checkout から組んだ wheel で
+                         持ち、checkout を指さない。uv は checkout を bare の repo(git-v*/db — 消さない)から作り直す。2026-11-08 の atlas
+                         では 09-26 から 1 本も消えずに 211 本・25 GB 溜まっていた(doeff の checkout は 1 本 720〜845 MB)。
+             組んだ物    sdists-v*/<種類>/… の、source 1 つの dir(版の索引 revision.* と版の dir — editable・path・pypi)と git の
+                         依存の commit 1 つの dir のうち、最後の変更が --idle-days 日より前で、走っている process が使っていない物。
+                         消えた worktree の path の editable の dir は誰も使わずに残り、atlas で 26,488 個溜まっていた。uv は索引か版が
+                         無ければ組み直し、展開済みの wheel(別の項目)を指す venv は壊れない。
+           予算(--size-budget-gib)を渡すと、期限の消しの後に、cache の dir の全部の byte — cache だけが持つ byte(消す単位 — 展開済みの
+           wheel・環境・一時の物・git の checkout・組んだ wheel の dir — の file のうち、hardlink の全部が単位の中に在る物と dir の byte)と、
+           単位の外の消せない byte(git の bare の repo・索引・interpreter の控え・印と錠)の和を数え、予算を越えていれば、最後に使った刻の古い
            順に、--floor-days 日(既定 1)より前で、cache の外の venv が hardlink で指さず(展開済みの wheel)、上の決まり(残る venv の
            symlink・走っている process)に当たらない項目を、和が予算に収まるまで消す。venv が hardlink で持つ byte は venv の持ち分で、
            消しても disk が戻らないので数えない。
@@ -123,6 +134,19 @@ ARCHIVE_PREFIX = "archive-v"
 ENVIRONMENTS_PREFIX = "environments-v"
 BUILDS_PREFIX = "builds-v"
 TMP_PREFIX = ".tmp"
+# git の依存の bucket(git-v*/db = 取り寄せた bare の repo・checkouts/<repo>/<commit> = 組みに使う checkout とその印 <commit>.ok・
+# locks/<repo> = uv が取り寄せと checkout の間に持つ錠)と、source から組んだ wheel の bucket(sdists-v*/<種類>/… — 組んだ物の
+# dir は、版の索引 revision.*(editable・path は revision.rev・pypi は revision.http)と版の dir を持つ source 1 つの dir か、git の
+# 依存の commit 1 つの dir(組みの控え metadata.msgpack を持つ))。
+GIT_PREFIX = "git-v"
+GIT_CHECKOUTS = "checkouts"
+GIT_LOCKS = "locks"
+CHECKOUT_MARK = ".ok"
+SDISTS_PREFIX = "sdists-v"
+SDIST_INDEX = "revision."
+SDIST_BUILT = "metadata.msgpack"
+# 組んだ物の dir を探す深さ(sdists-v*/<種類> の下 — pypi/<package>/<版> が最も深い)。
+SDIST_DEPTH = 3
 SA_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 CHUNK = 1 << 20
@@ -755,15 +779,16 @@ class Tally:
 
 @dataclass
 class Unit:
-    """消すかを判じる単位 1 つ(展開済みの wheel・環境・一時の物・venv)。"""
+    """消すかを判じる単位 1 つ(展開済みの wheel・環境・一時の物・venv・git の checkout・組んだ wheel の dir)。"""
 
     path: Path
     kind: str
     tally: Tally
     shared: bool  # 中の file のどれかが hardlink の数 2 以上
     last_used: float
-    # 中の symlink が指す展開済みの wheel の項目(cache の archive-v*/<id> の path)。UV_LINK_MODE=symlink の venv は中身を cache の項目への
-    # symlink で持ち、項目の hardlink の数を増やさない — 項目を消すと venv が壊れるので、残す venv の指す項目は消さない。
+    # 中の symlink と .pth の path が指す cache の項目(展開済みの wheel archive-v*/<id> と git の checkout git-v*/checkouts/<repo>/<commit>
+    # の path)。UV_LINK_MODE=symlink の venv は中身を cache の項目への symlink で持ち、項目の hardlink の数を増やさない — 項目を消すと venv
+    # が壊れるので、残す venv の指す項目は消さない。
     links: frozenset[str] = frozenset()
 
 
@@ -831,9 +856,9 @@ class Ledger:
 def measure(
     path: Path, archive_roots: tuple[str, ...] = (), ledger: Ledger | None = None
 ) -> tuple[Tally, bool, float, frozenset[str]]:
-    """path の下の file を数え、hardlink を持つ file が在るか・最後の変更の刻・中の symlink が指す展開済みの wheel の項目を返す
-    (link は辿らない)。archive_roots = cache の archive-v* の dir の path(末尾の / つき)。ledger を渡すと、予算の数えに path の
-    持ち分を載せる。"""
+    """path の下の file を数え、hardlink を持つ file が在るか・最後の変更の刻・中の symlink と .pth の path が指す cache の項目を返す
+    (link は辿らない)。archive_roots = 項目を並べる cache の dir の path(末尾の / つき — entry_roots_of)。ledger を渡すと、予算の
+    数えに path の持ち分を載せる。"""
     walked = list(os.walk(path))
     dirs = list(_lstats([path, *(Path(top, name) for top, names, _ in walked for name in names)]))
     files = list(_lstats(Path(top, name) for top, _, names in walked for name in names))
@@ -847,23 +872,39 @@ def measure(
         freeable=sum(st.st_blocks * 512 for st in files) - sum(st.st_blocks * 512 for st in linked),
     )
     entries = [Path(top, name) for top, names, others in walked for name in [*names, *others]]
+    pths = [Path(top, name) for top, _, names in walked for name in names if name.endswith(".pth")]
     links = frozenset(
         entry
-        for link in entries
-        if archive_roots
-        for entry in [_archive_entry(link, archive_roots)]
+        for target in [*(_link_target(link) for link in entries), *_pth_paths(pths)]
+        if archive_roots and target
+        for entry in [_archive_entry(target, archive_roots)]
         if entry
     )
     return tally, bool(linked), (dirs[0].st_mtime if dirs else 0.0), links
 
 
-def _archive_entry(link: Path, archive_roots: tuple[str, ...]) -> str | None:
-    """link が symlink で、指す先が展開済みの wheel の項目の中なら、その項目の path(archive-v*/<id>)。"""
+def _link_target(link: Path) -> str | None:
+    """link が symlink なら、指す先の正規の絶対 path。"""
     try:
         target = os.readlink(link)
     except OSError:  # symlink でない・消えた
         return None
-    resolved = os.path.normpath(os.path.join(link.parent, target))
+    return os.path.normpath(os.path.join(link.parent, target))
+
+
+def _pth_paths(pths: Iterable[Path]) -> Iterator[str]:
+    """.pth の file の行のうち絶対 path の物(editable の install は source の dir を .pth の行で指す)。"""
+    for pth in pths:
+        with contextlib.suppress(OSError):
+            yield from (
+                os.path.normpath(line.strip())
+                for line in pth.read_text(errors="replace").splitlines()
+                if line.startswith("/")
+            )
+
+
+def _archive_entry(resolved: str, archive_roots: tuple[str, ...]) -> str | None:
+    """resolved(正規の絶対 path)が cache の項目の中なら、その項目の path(archive-v*/<id> か git-v*/checkouts/<repo>/<commit>)。"""
     for root in archive_roots:
         if resolved.startswith(root):
             return root + resolved[len(root) :].split("/", 1)[0]
@@ -959,6 +1000,8 @@ class Survey:
     environments: list[Unit] = field(default_factory=list)
     temporaries: list[Unit] = field(default_factory=list)
     venvs: list[Unit] = field(default_factory=list)
+    checkouts: list[Unit] = field(default_factory=list)
+    sdists: list[Unit] = field(default_factory=list)
     holders: list[Unit] = field(default_factory=list)
 
     def groups(self) -> tuple[tuple[str, list[Unit]], ...]:
@@ -967,6 +1010,8 @@ class Survey:
             ("environments", self.environments),
             ("temporaries", self.temporaries),
             ("venvs", self.venvs),
+            ("checkouts", self.checkouts),
+            ("sdists", self.sdists),
         )
 
     def tallies(self, cutoff: float, used: list[str] | None) -> dict[str, object]:
@@ -998,18 +1043,67 @@ def _unit(
     return Unit(path, kind, tally, shared, newest if last_used is None else last_used, links)
 
 
-def archive_roots_of(cache: Path) -> tuple[str, ...]:
-    """cache の archive-v* の dir の path(末尾の / つき — symlink の指す先と頭で比べる)。"""
-    return tuple(
-        f"{bucket}/" for bucket in sorted(cache.glob(ARCHIVE_PREFIX + "*")) if bucket.is_dir()
-    )
+def _real_dirs(path: Path) -> list[Path]:
+    """path の直下の dir(link でない・名が . で始まらない — gc の消しの一時の名と uv の作りかけ .tmp* を除く)を名の順に(path が dir
+    でなければ空)。"""
+    try:
+        return sorted(p for p in path.iterdir() if _is_real_dir(p) and not p.name.startswith("."))
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
+def checkout_repos(cache: Path) -> list[Path]:
+    """git の checkout を並べる dir(git-v*/checkouts/<repo>)。"""
+    return [
+        repo
+        for bucket in sorted(cache.glob(GIT_PREFIX + "*"))
+        if _is_real_dir(bucket)
+        for repo in _real_dirs(bucket / GIT_CHECKOUTS)
+    ]
+
+
+def is_sdist_unit(path: Path) -> bool:
+    """path が組んだ物の dir か(版の索引 revision.* か組みの控え metadata.msgpack を直下に持つ)。"""
+    try:
+        return any(p.name.startswith(SDIST_INDEX) or p.name == SDIST_BUILT for p in path.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+def sdist_walk(path: Path, depth: int) -> Iterator[tuple[Path, bool]]:
+    """path(sdists-v*/<種類> か、その下の組んだ物を並べる dir)の下を、組んだ物の dir に当たるまで深さ depth まで降り、
+    (dir, 組んだ物の dir か) を渡す(組んだ物の dir の中へは降りない)。"""
+    for child in _real_dirs(path):
+        unit = is_sdist_unit(child)
+        yield child, unit
+        if not unit and depth > 1:
+            yield from sdist_walk(child, depth - 1)
+
+
+def sdist_paths(cache: Path) -> list[Path]:
+    """組んだ物の dir の全部(消す単位)。"""
+    return [
+        path
+        for bucket in sorted(cache.glob(SDISTS_PREFIX + "*"))
+        if _is_real_dir(bucket)
+        for kind in _real_dirs(bucket)
+        for path, unit in sdist_walk(kind, SDIST_DEPTH)
+        if unit
+    ]
+
+
+def entry_roots_of(cache: Path) -> tuple[str, ...]:
+    """venv の symlink と .pth が指しうる項目を並べる cache の dir の path(archive-v* と git-v*/checkouts/<repo> — 末尾の / つき。
+    指す先と頭で比べる)。"""
+    archives = (bucket for bucket in sorted(cache.glob(ARCHIVE_PREFIX + "*")) if bucket.is_dir())
+    return tuple(f"{root}/" for root in [*archives, *checkout_repos(cache)])
 
 
 def survey(
     cache: Path, venv_roots: list[Path], depth: int, link_roots: list[Path] | None = None
 ) -> Survey:
     temporaries = [*sorted(cache.glob(TMP_PREFIX + "*")), *children(cache, BUILDS_PREFIX)]
-    archive_roots = archive_roots_of(cache)
+    archive_roots = entry_roots_of(cache)
     return Survey(
         archives=[_unit(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)],
         environments=[
@@ -1022,6 +1116,10 @@ def survey(
             for root in venv_roots
             for venv in find_venvs(root, depth)
         ],
+        checkouts=[
+            _unit(entry, "checkout") for repo in checkout_repos(cache) for entry in _real_dirs(repo)
+        ],
+        sdists=[_unit(path, "sdist") for path in sdist_paths(cache)],
         holders=[
             _unit(venv, "holder", venv_last_used(venv), archive_roots)
             for root in link_roots or []
@@ -1030,16 +1128,57 @@ def survey(
     )
 
 
+def _rest_of(child: Path) -> Iterator[tuple[Path, bool]]:
+    """cache の直下の child のうち、消す単位の外の物を (path, 中まで数えるか) で渡す(中まで数えない物は dir それ自身の byte だけ —
+    単位を並べる dir)。この道具の印・錠・log と作りかけ(.doeff-uv-*)は数えない — gc の回ごとに印を書き直し、和が回ごとに揺れる。"""
+    units = (ARCHIVE_PREFIX, ENVIRONMENTS_PREFIX, BUILDS_PREFIX, TMP_PREFIX, ".doeff-uv-")
+    if child.name.startswith(units):
+        return
+    if child.name.startswith(GIT_PREFIX) and _is_real_dir(child):
+        yield child, False
+        yield from ((p, p.name != GIT_CHECKOUTS) for p in child.iterdir())
+        for repo in _real_dirs(child / GIT_CHECKOUTS):
+            yield repo, False
+            yield from ((p, True) for p in repo.iterdir() if not _is_real_dir(p))
+    elif child.name.startswith(SDISTS_PREFIX) and _is_real_dir(child):
+        yield child, False
+        yield from ((p, True) for p in child.iterdir() if not _is_real_dir(p))
+        for kind in _real_dirs(child):
+            yield kind, False
+            yield from ((p, True) for p in kind.iterdir() if not _is_real_dir(p))
+            for path, unit in sdist_walk(kind, SDIST_DEPTH):
+                if not unit:
+                    yield path, False
+                    yield from ((p, True) for p in path.iterdir() if not _is_real_dir(p))
+    else:
+        yield child, True
+
+
+def rest_bytes(cache: Path) -> int:
+    """cache の中で、消す単位(展開済みの wheel・環境・一時の物・git の checkout・組んだ wheel の dir)の外の disk の byte(git の bare の
+    repo・索引・interpreter の控え・uv の印と錠と、単位を並べる dir — 予算の数えの消せない分)。"""
+    rest = [item for child in sorted(cache.iterdir()) for item in _rest_of(child)]
+    return sum(st.st_blocks * 512 for st in _lstats(p for p, deep in rest if not deep)) + sum(
+        measure(p)[0].bytes for p, deep in rest if deep
+    )
+
+
 def is_doomed(
     unit: Unit, cutoff: float, used: list[str] | None, kept: frozenset[str] = frozenset()
 ) -> bool:
-    """unit を消すか: 最後に使った刻が cutoff より前で、種類ごとの決まりに合う物。kept = 残る venv が symlink で指す展開済みの wheel の
-    項目(展開済みの wheel だけが読む)。"""
-    if unit.last_used >= cutoff:
+    """unit を消すか: 最後に使った刻が cutoff より前で、種類ごとの決まりに合う物。kept = 残る venv が symlink か .pth で指す cache の
+    項目(展開済みの wheel と git の checkout だけが読む)。"""
+    if (
+        unit.last_used >= cutoff or unit.kind == "holder"
+    ):  # symlink だけを読む置き場の venv は消さない
         return False
     # venv と環境は使っている process が無い事を確かめる(proc が読めなければ消さない)。venv は venv を持つ dir(作業木)を作業 dir に
     # する process も使っていると見る。展開済みの wheel は、どの venv も hardlink で指さず、残る venv が symlink で指さず、走っている
-    # process が読み込んでいない物(symlink の venv の拡張 module は、読み込んだ process の maps に項目の中の path で出る)。
+    # process が読み込んでいない物(symlink の venv の拡張 module は、読み込んだ process の maps に項目の中の path で出る)。git の
+    # checkout は、残る venv が指さず、走っている process(組みの作業 dir・引数・読み込んだ file)が使っていない物(proc が読めなければ
+    # 消さない — venv は git の依存を checkout から組んだ wheel で持ち、checkout を指さない。指すのは editable の install だけ)。組んだ
+    # 物は、走っている process が使っていない物(展開済みの wheel は別の項目で、組んだ物を消しても venv は壊れない — uv は索引か
+    # 版が無ければ組み直す)。
     match unit.kind:
         case "archive":
             return (
@@ -1047,26 +1186,60 @@ def is_doomed(
                 and str(unit.path) not in kept
                 and not (used is not None and used_under(used, unit.path))
             )
-        case "holder":
-            return False
         case "temporary":
             return True
         case "venv":
             return used is not None and not used_under(used, unit.path.parent)
-        case "environment":
-            return used is not None and not used_under(used, unit.path)
+        case "environment" | "checkout":  # kept は環境の path を持たない
+            return (
+                str(unit.path) not in kept and used is not None and not used_under(used, unit.path)
+            )
+        case "sdist":
+            return not (used is not None and used_under(used, unit.path))
         case other:
             raise ValueError(f"知らない単位の種類 {other!r}")
 
 
 def remove(unit: Unit) -> bool:
-    """unit を同じ dir の中の別の名へ rename してから消す(rename できなければ消さない)。"""
+    """unit を同じ dir の中の別の名へ rename してから消す(rename できなければ消さない)。git の checkout は remove_checkout。"""
+    if unit.kind == "checkout":
+        return remove_checkout(unit)
     trash = unit.path.with_name(f"{GC_TRASH}{os.getpid()}-{unit.path.name}")
     try:
         unit.path.rename(trash)
     except OSError as error:
         say(f"gc: {unit.path} を退けられない({error})— 残す")
         return False
+    shutil.rmtree(trash, ignore_errors=True)
+    return True
+
+
+def remove_checkout(unit: Unit) -> bool:
+    """git の checkout(git-v*/checkouts/<repo>/<commit>)を消す: uv がその repo の取り寄せと checkout の間に持つ錠(git-v*/locks/<repo>
+    — flock)を待たずに取れた時だけ、先に印 <commit>.ok を退け(uv は印の無い checkout を作り直す — 印だけが残って中身の無い
+    checkout を uv が使う事が無い)、続けて dir を退けてから消す。"""
+    repo = unit.path.parent
+    lock = repo.parent.parent / GIT_LOCKS / repo.name
+    mark = unit.path.with_name(unit.path.name + CHECKOUT_MARK)
+    with held(lock, wait=False) as got:
+        if not got:
+            say(f"gc: {unit.path} の repo の錠を uv が持っている — 残す")
+            return False
+        trashed_mark = mark.with_name(f"{GC_TRASH}{os.getpid()}-{mark.name}")
+        try:
+            mark.rename(trashed_mark)
+        except FileNotFoundError:  # 印の無い checkout(作りかけか前の消しの残り)— uv は使わない
+            pass
+        except OSError as error:
+            say(f"gc: {mark} を退けられない({error})— 残す")
+            return False
+        trash = unit.path.with_name(f"{GC_TRASH}{os.getpid()}-{unit.path.name}")
+        try:
+            unit.path.rename(trash)
+        except OSError as error:
+            say(f"gc: {unit.path} を退けられない({error})— 印を外したまま残す(uv は作り直す)")
+            return False
+    trashed_mark.unlink(missing_ok=True)
     shutil.rmtree(trash, ignore_errors=True)
     return True
 
@@ -1078,14 +1251,22 @@ def trim(
     floor_cutoff: float,
     used: list[str] | None,
     kept: frozenset[str],
+    fixed: int,
 ) -> dict[str, object]:
     """cache だけが持つ byte の和が size_budget を越えていれば、最後に使った刻の古い項目から、和が size_budget に収まるまで消す(頭の註の予算)。
-    消せる項目は is_doomed の決まりを floor_cutoff で当て、展開済みの wheel は cache の外の venv が hardlink で指さない物に限る
-    (cache の中の環境だけが指す物は消せる — 戻る byte は指す項目を全部消した時に数える)。"""
-    start = ledger.usage()
+    和は消す単位の持ち分(ledger)と、単位の外の消せない byte(fixed — rest_bytes)を足した物。消せる項目は is_doomed の決まりを
+    floor_cutoff で当て、展開済みの wheel は cache の外の venv が hardlink で指さない物に限る(cache の中の環境だけが指す物は消せる —
+    戻る byte は指す項目を全部消した時に数える)。"""
+    start = ledger.usage() + fixed
     usage = start
-    removed = {"archives": 0, "environments": 0, "temporaries": 0}
-    plural = {"archive": "archives", "environment": "environments", "temporary": "temporaries"}
+    plural = {
+        "archive": "archives",
+        "environment": "environments",
+        "temporary": "temporaries",
+        "checkout": "checkouts",
+        "sdist": "sdists",
+    }
+    removed = dict.fromkeys(plural.values(), 0)
     for unit in sorted(units, key=lambda u: u.last_used):
         if usage <= size_budget:
             break
@@ -1095,6 +1276,7 @@ def trim(
             removed[plural[unit.kind]] += 1
     return {
         "bytes": size_budget,
+        "fixed": fixed,
         "usage-before": start,
         "usage-after": usage,
         "freed": start - usage,
@@ -1166,17 +1348,24 @@ def gc(
         gone = {
             kind: [unit for unit in units if is_doomed(unit, cutoff, used) and remove(unit)]
             for kind, units in before.groups()
-            if kind != "archives"
+            if kind in ("environments", "temporaries", "venvs")
         }
         # venv と環境を消すと、同じ中身を指していた展開済みの wheel の hardlink の数が減る — 数え直してから判じる。残る(消さなかった・
-        # 消せなかった)venv と環境と、symlink だけを読む置き場の venv が symlink で指す項目は消さない。
-        removed_paths = {unit.path for units in gone.values() for unit in units}
+        # 消せなかった)venv と環境と、symlink だけを読む置き場の venv が symlink か .pth で指す項目(展開済みの wheel と git の
+        # checkout)は消さない。
+        first = {unit.path for units in gone.values() for unit in units}
         kept = frozenset(
             entry
             for unit in [*before.venvs, *before.environments, *before.holders]
-            if unit.path not in removed_paths
+            if unit.path not in first
             for entry in unit.links
         )
+        gone |= {
+            kind: [unit for unit in units if is_doomed(unit, cutoff, used, kept) and remove(unit)]
+            for kind, units in before.groups()
+            if kind in ("checkouts", "sdists")
+        }
+        removed_paths = {unit.path for units in gone.values() for unit in units}
         # 予算を数える時は、venv を消して変わった hardlink の数で、残る cache の項目の持ち分を数え直す。
         ledger = Ledger() if size_budget is not None else None
         archives = [
@@ -1192,13 +1381,24 @@ def gc(
                 *(unit for unit in archives if unit.path not in expired_paths),
                 *(
                     _unit(unit.path, unit.kind, unit.last_used, ledger=ledger)
-                    for unit in [*before.environments, *before.temporaries]
+                    for unit in [*before.environments, *before.temporaries, *before.checkouts]
+                    if unit.path not in removed_paths
+                ),
+                *(
+                    _unit(unit.path, unit.kind, ledger=ledger)
+                    for unit in before.sdists
                     if unit.path not in removed_paths
                 ),
             ]
             ledger.close(unit.path for unit in survivors)
             trimmed = trim(
-                survivors, ledger, size_budget, time.time() - floor_days * 86400, used, kept
+                survivors,
+                ledger,
+                size_budget,
+                time.time() - floor_days * 86400,
+                used,
+                kept,
+                rest_bytes(cache),
             )
             trimmed["floor-days"] = floor_days
             result["size-budget"] = trimmed

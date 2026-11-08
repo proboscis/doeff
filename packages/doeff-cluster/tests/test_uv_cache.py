@@ -7,8 +7,11 @@
   HEAD と違えば入れない。
 - gc: 消すのは、最後に使った刻が日数より前で — 展開済みの wheel は hardlink の数が 1 の物・venv と環境はどの process も使っていない物・
   一時の物。同じ回に venv を消して hardlink の数が 1 に戻った展開済みの wheel も消す。count は何も消さない。前の gc から間が無ければ消さない。
-  予算を渡すと、cache だけが持つ byte(venv が hardlink で持つ中身を除き、cache の中で共に持つ中身は 1 度)が予算を越える分を、
-  floor を過ぎた古い項目から消し、venv が hardlink か symlink で指す項目・process が読み込んだ項目は消さない。
+  git の checkout は、残る venv が .pth で指さず、process が使わず、uv がその repo の錠を持たない古い物を印ごと消し、bare の repo
+  は消さない。組んだ wheel の dir は、古く process が使わない物を索引ごと消す。
+  予算を渡すと、cache の dir の全部の byte(venv が hardlink で持つ中身を除き、cache の中で共に持つ中身は 1 度・消す単位の外の bare の
+  repo も数える)が予算を越える分を、floor を過ぎた古い項目から消し、venv が hardlink か symlink で指す項目・process が読み込んだ
+  項目は消さない。
 - 置き場: s3://<bucket>/<key> の URL は Secret の鍵 endpoint(Secret が無ければ AWS_ENDPOINT_URL_S3)へ送り、upkeep は Secret の名
   だけを替えると別の置き場から入れ、戻すと元の置き場から入れる。endpoint が無ければ断る。http(s) の URL と file の path はそのまま。
 - upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。refresh は名指した node でだけ撃つ。
@@ -21,6 +24,7 @@ from __future__ import annotations
 
 import datetime
 import email.utils
+import fcntl
 import http.server
 import importlib.util
 import json
@@ -41,6 +45,8 @@ PACKAGE = Path(__file__).resolve().parents[1]
 TOOL = PACKAGE / "deploy" / "uv_cache.py"
 BOOT = PACKAGE / "deploy" / "boot.sh"
 OLD = time.time() - 30 * 86400
+# gc の答えの removed のうち、git の checkout と組んだ wheel の版を消さなかった回の欄。
+NO_GIT = {"checkouts": 0, "sdists": 0}
 
 
 def _load():
@@ -292,7 +298,13 @@ def test_gc_removes_only_old_unshared_and_unused_units(
     assert (worktrees / "wt-idle").is_dir()
     assert (worktrees / "wt-young" / ".venv").is_dir()
     assert (busy / ".venv").is_dir()
-    assert result["removed"] == {"venvs": 1, "environments": 1, "temporaries": 1, "archives": 2}
+    assert result["removed"] == {
+        "venvs": 1,
+        "environments": 1,
+        "temporaries": 1,
+        "archives": 2,
+        **NO_GIT,
+    }
     assert result["before"]["archives"]["all"]["items"] == 4
     assert result["after"]["archives"]["all"]["items"] == 2
     assert not list(cache.glob(uv_cache.GC_TRASH + "*"))
@@ -354,7 +366,13 @@ def test_gc_keeps_entries_that_kept_symlink_venvs_point_at(tmp_path: Path) -> No
     assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == ["ENV", "HELD", "YOUNGV"]
     assert not idle.exists()
     assert holder.is_dir()
-    assert result["removed"] == {"venvs": 1, "environments": 0, "temporaries": 0, "archives": 1}
+    assert result["removed"] == {
+        "venvs": 1,
+        "environments": 0,
+        "temporaries": 0,
+        "archives": 1,
+        **NO_GIT,
+    }
     assert (
         worktrees / "wt-young" / ".venv" / "lib" / "python3.14" / "site-packages" / "m.py"
     ).read_text() == "YOUNGV\n"
@@ -444,7 +462,7 @@ def test_gc_size_budget_counts_only_bytes_the_cache_alone_holds(
     size_budget = result["size-budget"]
     assert size_budget["usage-before"] < 4 << 20
     assert 7 * 65536 <= size_budget["usage-before"] < 7 * 65536 + 64 * 4096
-    assert size_budget["removed"] == {"archives": 0, "environments": 0, "temporaries": 0}
+    assert size_budget["removed"] == {"archives": 0, "environments": 0, "temporaries": 0, **NO_GIT}
     assert size_budget["freed"] == 0
     assert size_budget["within"] is True
     assert size_budget["floor-days"] == 1.0
@@ -469,7 +487,7 @@ def test_gc_size_budget_removes_the_oldest_first_until_within(tmp_path: Path, lo
         "SYMLINKED",
         "YOUNG",
     ]
-    assert size_budget["removed"] == {"archives": 1, "environments": 0, "temporaries": 0}
+    assert size_budget["removed"] == {"archives": 1, "environments": 0, "temporaries": 0, **NO_GIT}
     assert size_budget["freed"] == usage - size_budget["usage-after"] > 0
     assert size_budget["within"] is True
 
@@ -489,7 +507,7 @@ def test_gc_size_budget_never_removes_held_or_young_units(tmp_path: Path, loaded
         "YOUNG",
     ]
     assert not list((cache / "environments-v2").iterdir())
-    assert size_budget["removed"] == {"archives": 4, "environments": 1, "temporaries": 0}
+    assert size_budget["removed"] == {"archives": 4, "environments": 1, "temporaries": 0, **NO_GIT}
     assert size_budget["freed"] >= 4 * 65536
     assert size_budget["within"] is False
     venv = worktrees / "wt-young" / ".venv" / "lib" / "python3.14" / "site-packages"
@@ -511,6 +529,150 @@ def test_gc_keeps_venvs_when_processes_are_unreadable(tmp_path: Path, busy: Path
     )
     assert (worktrees / "wt-idle" / ".venv").is_dir()
     assert sorted(p.name for p in (cache / "environments-v2").iterdir()) == ["idle", "inuse"]
+
+
+def _checkout(cache: Path, commit: str, size: int = 4096, *, repo: str = "REPO") -> Path:
+    """uv の git の checkout の形: git-v1/checkouts/<repo>/<commit> とその印 <commit>.ok と、bare の repo git-v1/db/<repo>。"""
+    path = cache / "git-v1" / "checkouts" / repo / commit
+    _write(path / "pyproject.toml", "x" * size)
+    _write(path.with_name(commit + ".ok"), "")
+    _write(cache / "git-v1" / "db" / repo / "HEAD", "ref: refs/heads/main\n")
+    return path
+
+
+def test_gc_removes_old_unused_checkouts_and_keeps_used_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """git の checkout は期限を過ぎ、残る venv が .pth で指さず、走っている process が使っていない物だけを印ごと消す。bare の repo は
+    消さない(2026-11-08 の atlas では 09-26 から 1 本も消えずに 25 GB 溜まった)。"""
+    cache, worktrees = tmp_path / "cache", tmp_path / "worktrees"
+    old = _checkout(cache, "0ld0000")
+    busy = _checkout(cache, "b05y000")
+    pointed = _checkout(cache, "p01nted")
+    _checkout(cache, "y0un900")
+    venv = _venv(worktrees / "wt-young" / ".venv")
+    _write(venv / "lib" / "python3.14" / "site-packages" / "_editable.pth", f"{pointed}\n")
+    for path in (old, busy, pointed):
+        _age(path)
+        _age(path.with_name(path.name + ".ok"))
+    monkeypatch.setattr(uv_cache, "process_paths", lambda _proc=None: [str(busy / "build")])
+
+    result = uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=None)
+
+    repo = cache / "git-v1" / "checkouts" / "REPO"
+    assert sorted(p.name for p in repo.iterdir()) == [
+        "b05y000",
+        "b05y000.ok",
+        "p01nted",
+        "p01nted.ok",
+        "y0un900",
+        "y0un900.ok",
+    ]
+    assert (cache / "git-v1" / "db" / "REPO" / "HEAD").is_file()
+    assert result["removed"]["checkouts"] == 1
+    assert result["before"]["checkouts"]["all"]["items"] == 4
+    assert result["after"]["checkouts"]["all"]["items"] == 3
+
+
+def test_gc_keeps_checkouts_while_uv_holds_the_repo_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uv がその repo の錠(git-v1/locks/<repo>)を持つ間(取り寄せ・checkout の最中)は、checkout も印も触らない。"""
+    cache = tmp_path / "cache"
+    old = _checkout(cache, "0ld0000")
+    _age(old)
+    monkeypatch.setattr(uv_cache, "process_paths", lambda _proc=None: [])
+    lock = _write(cache / "git-v1" / "locks" / "REPO", "")
+    with lock.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        result = uv_cache.gc(cache, [], 7.0, 3, dry_run=False, every_seconds=None)
+
+    assert old.is_dir()
+    assert old.with_name("0ld0000.ok").is_file()
+    assert result["removed"]["checkouts"] == 0
+
+
+def test_gc_keeps_checkouts_when_processes_are_unreadable(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    old = _checkout(cache, "0ld0000")
+    _age(old)
+    uv_cache.gc(cache, [], 7.0, 3, dry_run=False, every_seconds=None, proc=tmp_path / "no-proc")
+    assert old.is_dir()
+
+
+def _built(path: Path) -> Path:
+    """uv の組んだ物の版の dir の形(組みの控えと wheel)。"""
+    _write(path / "metadata.msgpack", "m")
+    _write(path / "m-0.1-py3-none-any.whl", "w")
+    return path
+
+
+def test_gc_removes_old_built_wheels_with_their_index_and_keeps_young_or_used_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """組んだ物は、source 1 つの dir(索引 revision.* と版 — editable・path・pypi)と git の依存の commit 1 つの dir を単位に、
+    古く使われていない物を索引ごと消す(消えた worktree の editable の dir は誰も使わずに残る)。新しい物と、走っている process が
+    使う物は残す。単位を並べる dir と索引の外の file は残す。"""
+    sdists = tmp_path / "cache" / "sdists-v9"
+    _write(sdists / ".gitignore", "")
+    gone = sdists / "editable" / "0123456789abcdef"
+    _write(gone / "revision.rev", "rev")
+    _built(gone / "OLDrevision")
+    young = sdists / "path" / "1111111111111111"
+    _write(young / "revision.rev", "rev")
+    _built(young / "NEWrevision")
+    used = sdists / "editable" / "2222222222222222"
+    _write(used / "revision.rev", "rev")
+    _built(used / "USEDrevision")
+    released = sdists / "pypi" / "sgmllib3k" / "1.0.0"
+    _write(released / "revision.http", "http")
+    _built(released / "XdpFm4DftrIlPG9V")
+    commit = _built(sdists / "git" / "fedcba9876543210" / "0ldc0mm1t")
+    for path in (gone, used, released, commit):
+        _age(path)
+    monkeypatch.setattr(
+        uv_cache, "process_paths", lambda _proc=None: [str(used / "USEDrevision" / "x")]
+    )
+
+    result = uv_cache.gc(tmp_path / "cache", [], 7.0, 3, dry_run=False, every_seconds=None)
+
+    assert not gone.exists()
+    assert not released.exists()
+    assert not commit.exists()
+    assert (young / "NEWrevision" / "metadata.msgpack").is_file()
+    assert (used / "USEDrevision" / "metadata.msgpack").is_file()
+    assert (sdists / "pypi" / "sgmllib3k").is_dir()
+    assert (sdists / "git" / "fedcba9876543210").is_dir()
+    assert (sdists / ".gitignore").is_file()
+    assert result["removed"]["sdists"] == 3
+    assert result["before"]["sdists"]["all"]["items"] == 5
+
+
+def test_gc_size_budget_counts_the_whole_cache_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """予算は cache の dir の全部を数える: 消す単位の外の bare の repo も和に入れ(消さない)、和が予算を越えれば、floor を過ぎた
+    git の checkout を消す。"""
+    cache = tmp_path / "cache"
+    checkout = _checkout(cache, "c0ffee0", size=1 << 20)
+    _write(cache / "git-v1" / "db" / "REPO" / "pack.bin", "d" * (2 << 20))
+    _age(checkout, time.time() - 3 * DAY)
+    _age(checkout.with_name("c0ffee0.ok"), time.time() - 3 * DAY)
+    monkeypatch.setattr(uv_cache, "process_paths", lambda _proc=None: [])
+
+    kept = _size_budget_gc(cache, tmp_path / "worktrees", 1 << 40)["size-budget"]
+    assert kept["fixed"] >= 2 << 20
+    assert kept["usage-before"] >= kept["fixed"] + (1 << 20)
+    assert checkout.is_dir()
+
+    trimmed = _size_budget_gc(cache, tmp_path / "worktrees", kept["fixed"] + 65536)["size-budget"]
+
+    assert not checkout.exists()
+    assert not checkout.with_name("c0ffee0.ok").exists()
+    assert (cache / "git-v1" / "db" / "REPO" / "pack.bin").is_file()
+    assert trimmed["removed"]["checkouts"] == 1
+    assert trimmed["freed"] >= 1 << 20
+    assert trimmed["within"] is True
 
 
 # ── upkeep ────────────────────────────────────────────────────────────────
