@@ -33,14 +33,30 @@
  },
  {
   "id": "c2",
-  "text": "Inside Local, key reads inner. After it, key is outer again, but the Put to counter stays."
+  "text": "Here, changes asks for key, puts one into counter, and returns the key it read."
  },
  {
   "id": "c3",
-  "text": "The same holds when the sub-program fails inside Try. The environment comes back, and counter is still one."
+  "text": "Run it inside Local, where key is inner. Ask reads inner, and Put sets counter to one."
  },
  {
   "id": "c4",
+  "text": "After Local, key is outer again, but counter stays one."
+ },
+ {
+  "id": "c5",
+  "text": "changes_then_fails asks and puts in the same way, and then raises an error."
+ },
+ {
+  "id": "c6",
+  "text": "Run it inside Local, under Try. Ask reads inner, Put sets counter to one, and the error leaves Local."
+ },
+ {
+  "id": "c7",
+  "text": "Try gives Err. The environment comes back, and counter is still one."
+ },
+ {
+  "id": "c8",
   "text": "Ask reads the scope you are in. Get and Put read one store that every scope shares."
  },
  {

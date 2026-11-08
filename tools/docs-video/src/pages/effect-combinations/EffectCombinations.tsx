@@ -2,7 +2,8 @@
 // performed inside it. Six scenes and an outro, each with headlines a synthetic voice reads (narration.json):
 //   1. The matrix: the outer effect on each row, the inner one on each column; each cell is a rule.
 //   2. Try and Listen nested both ways around a failing program: the outer one decides what the caller gets.
-//   3. Local and Try restore the environment; the store keeps every write.
+//   3. Local and Try restore the environment; the store keeps every write. Each sub-program is read from the top
+//      before it runs.
 //   4. WithObserve sees every effect in its body, spawned children included, and changes none of them.
 //   5. Gather: one store, one task at a time; a read-modify-write across a suspension loses updates.
 //   6. A failing child: Gather raises its error, the siblings are not cancelled and their writes stay.
@@ -303,39 +304,57 @@ const NestScene: React.FC = () => {
   );
 };
 
-// Scene 3 — scopes restore the environment; the store keeps every write.
+// Scene 3 — scopes restore the environment; the store keeps every write. Each sub-program is read from the top
+// first (what it does, line by line), and then run inside its scope, its lines lit in the order the narration names them.
 
 const SCOPE_LINES: Lines = [
   [0, 'Scopes restore the environment. They never roll back the store.'],
-  [5.2, 'Local: key is "inner" inside, "outer" after. The Put to counter stays.'],
-  [12.4, 'Try around a failing Local: key comes back; counter is still 1.'],
-  [20.8, 'Ask reads the scope you are in. Get and Put read one shared store.'],
+  [5.2, 'changes: Ask for key, Put 1 into counter, return the key.'],
+  [11.1, 'Inside Local: Ask reads "inner", Put sets counter to 1.'],
+  [18.7, 'After Local: key is "outer" again, and counter stays 1.'],
+  [23.1, 'changes_then_fails: Ask and Put the same way, then raise.'],
+  [29.4, 'Under Try, inside Local: Ask, Put, and the error leaves Local.'],
+  [38.9, 'Try gives Err: key comes back; counter is still 1.'],
+  [45.2, 'Ask reads the scope you are in. Get and Put read one shared store.'],
 ];
-const SCOPE = f(28.5);
+const SCOPE = f(52.3);
+const SWAP = 23.1;
 const LOCAL_CODE = ['@do', 'def changes():', '    inside = yield Ask("key")', '    yield Put("counter", 1)', '    return inside', ' ', 'yield Local({"key": "inner"}, changes())'];
 const TRY_CODE = ['@do', 'def changes_then_fails():', '    _ = yield Ask("key")', '    yield Put("counter", 1)', '    raise ValueError("boom")', ' ', 'yield Try(Local({"key": "inner"}, changes_then_fails()))'];
-// The steps of each run in design seconds: the scope opens, Ask, Put, the end of the sub-program, the scope closes.
+// The steps of each run in design seconds: the call lit, the scope opens, Ask, Put, the end of the sub-program
+// (its return, or its raise leaving Local), the scope closes, and what stays (the store's note and the run's line
+// in the terminal). Every step starts at least 0.9 s after the one before it has stopped.
 const RUNS = [
-  {open: 6.0, ask: 6.8, put: 7.8, end: 8.8, close: 9.6},
-  {open: 13.4, ask: 14.2, put: 15.2, end: 16.2, close: 17.2},
+  {call: 11.3, open: 12.3, ask: 14.4, put: 16.2, end: 18.8, close: 19.7, stays: 21.0},
+  {call: 29.6, open: 30.6, ask: 32.3, put: 33.8, end: 36.0, close: 40.0, stays: 41.5},
+];
+// When Try's Err arrives: the second run lights its call again, and the raise's pill says what Try gave.
+const CAUGHT = 39.1;
+// The line lit from each time on: first the sub-program from the top, then its run; at the end, Ask, then Put.
+const BANDS: [number, number | null][] = [
+  [0, null], [5.6, 1], [6.4, 2], [7.4, 3], [8.9, 4],
+  [RUNS[0].call, 6], [RUNS[0].ask, 2], [RUNS[0].put, 3], [RUNS[0].end, 4], [RUNS[0].close, 6],
+  [SWAP, 1], [24.6, 2], [25.5, 3], [27.3, 4],
+  [RUNS[1].call, 6], [RUNS[1].ask, 2], [RUNS[1].put, 3], [RUNS[1].end, 4], [CAUGHT, 6],
+  [45.2, null], [45.8, 2], [47.6, 3],
 ];
 
 const ScopeScene: React.FC = () => {
   const frame = useSceneFrame();
-  const second = frame >= f(12.4);
-  const run = second ? RUNS[1] : RUNS[0];
+  const second = frame >= f(SWAP);
   const code = {x: 40, y: 110, w: 620, size: 16, line: 28};
-  const band =
-    frame < f(run.open - 0.4) ? null : frame < f(run.ask) ? 6 : frame < f(run.put) ? 2 : frame < f(run.end) ? 3 : frame < f(run.close + 0.6) ? 4 : 6;
-  const scope = ramp(frame, run.open, run.open + 0.4) * (1 - ramp(frame, run.close, run.close + 0.4));
+  const band = BANDS.reduce<number | null>((lit, [at, line]) => (frame >= f(at) ? line : lit), null);
+  const scopeOf = (run: (typeof RUNS)[number]) => ramp(frame, run.open, run.open + 0.4) * (1 - ramp(frame, run.close, run.close + 0.4));
+  const scope = second ? scopeOf(RUNS[1]) : scopeOf(RUNS[0]);
   const env = {x: 730, y: 140, w: 500};
   const store = {x: 730, y: 330, w: 500};
-  const raiseOut = ramp(frame, RUNS[1].end + 0.2, RUNS[1].close + 0.6);
+  const raised = RUNS[1].end + 0.3;
+  const raiseOut = ramp(frame, raised, raised + 1.3);
   return (
     <AbsoluteFill>
       <Headlines lines={SCOPE_LINES} />
-      <CodeBlock lines={LOCAL_CODE} {...code} band={second ? null : band} opacity={fadeAt(frame, 0.2) * (1 - ramp(frame, 12.4, 12.8))} />
-      <CodeBlock lines={TRY_CODE} {...code} band={second ? band : null} opacity={ramp(frame, 12.6, 13.0)} />
+      <CodeBlock lines={LOCAL_CODE} {...code} band={second ? null : band} opacity={fadeAt(frame, 0.2) * (1 - ramp(frame, SWAP, SWAP + 0.3))} />
+      <CodeBlock lines={TRY_CODE} {...code} band={second ? band : null} opacity={ramp(frame, SWAP + 0.1, SWAP + 0.4)} />
       {/* The scope: drawn around the environment only, opening when Local starts and closing when it ends. */}
       <div
         style={{
@@ -348,33 +367,33 @@ const ScopeScene: React.FC = () => {
       <Tile
         x={env.x} y={env.y} w={env.w} title="environment — what Ask reads" name="key" color={ACCENT} opacity={fadeAt(frame, 0.6)}
         keys={[[0, '"outer"'], [RUNS[0].open + 0.3, '"inner"'], [RUNS[0].close + 0.3, '"outer"'], [RUNS[1].open + 0.3, '"inner"'], [RUNS[1].close + 0.3, '"outer"']]}
-        note={frame >= f(RUNS[0].close + 0.4) && frame < f(RUNS[1].open) ? <span style={{color: ACCENT}}>restored</span> : frame >= f(RUNS[1].close + 0.4) ? <span style={{color: ACCENT}}>restored</span> : null}
+        note={(frame >= f(RUNS[0].close + 0.4) && frame < f(RUNS[1].open)) || frame >= f(RUNS[1].close + 0.4) ? <span style={{color: ACCENT}}>restored</span> : null}
       />
       <Tile
         x={store.x} y={store.y} w={store.w} title="store — what Get and Put use" name="counter" color={PROD} opacity={fadeAt(frame, 0.8)}
-        keys={[[0, '0'], [RUNS[0].put + 0.3, '1'], [12.8, '0'], [RUNS[1].put + 0.3, '1']]}
-        note={(frame >= f(RUNS[0].close + 0.4) && frame < f(12.8)) || frame >= f(RUNS[1].close + 0.4) ? <span style={{color: PROD}}>stays</span> : null}
+        keys={[[0, '0'], [RUNS[0].put + 0.3, '1'], [SWAP + 0.3, '0'], [RUNS[1].put + 0.3, '1']]}
+        note={(frame >= f(RUNS[0].stays) && frame < f(SWAP + 0.3)) || frame >= f(RUNS[1].stays) ? <span style={{color: PROD}}>stays</span> : null}
       />
       {/* The second run fails: the raise leaves Local, Try catches it. */}
-      {frame >= f(RUNS[1].end + 0.2) && frame < f(20.8) && (
+      {frame >= f(raised) && frame < f(45.2) && (
         <Pill
           x={mix(code.x + 380, store.x + store.w / 2, raiseOut)} y={mix(lineMid(code.y, code.line, 4), 470, raiseOut)}
-          text={raiseOut < 1 ? "ValueError('boom')" : "Try gives Err(ValueError('boom'))"} color={FAIL} opacity={fadeAt(frame, RUNS[1].end + 0.2, 0.15)}
+          text={frame < f(CAUGHT) ? "ValueError('boom')" : "Try gives Err(ValueError('boom'))"} color={FAIL} opacity={fadeAt(frame, raised, 0.15)}
         />
       )}
       {/* measure/scopes.log: (key, counter) before and after each scope. */}
       <Terminal
         x={40} y={526} w={1190} size={17} line={28}
         lines={[
-          {text: frame >= f(10.2) ? 'Local, success:     before ("outer", 0)   inside key "inner"              after ("outer", 1)' : '', color: TEXT},
-          {text: frame >= f(18.2) ? "Try(Local), raise:  before (\"outer\", 0)   caught Err(ValueError('boom'))  after (\"outer\", 1)" : '', color: TEXT},
+          {text: frame >= f(RUNS[0].stays) ? 'Local, success:     before ("outer", 0)   inside key "inner"              after ("outer", 1)' : '', color: TEXT},
+          {text: frame >= f(RUNS[1].stays) ? "Try(Local), raise:  before (\"outer\", 0)   caught Err(ValueError('boom'))  after (\"outer\", 1)" : '', color: TEXT},
         ]}
-        opacity={fadeAt(frame, 10.0)}
+        opacity={fadeAt(frame, RUNS[0].stays)}
       />
-      <Label x={40} y={632} size={18} color={ACCENT} opacity={fadeAt(frame, 21.4)}>
+      <Label x={40} y={632} size={18} color={ACCENT} opacity={fadeAt(frame, 45.8)}>
         Ask: the scope you are in
       </Label>
-      <Label x={360} y={632} size={18} color={PROD} opacity={fadeAt(frame, 22.4)}>
+      <Label x={360} y={632} size={18} color={PROD} opacity={fadeAt(frame, 47.6)}>
         Get / Put: one store, shared by every scope, never rolled back
       </Label>
     </AbsoluteFill>
@@ -738,7 +757,7 @@ const Outro: React.FC = () => {
 export const EFFECT_COMBINATIONS = narrate('effect-combinations', DURATIONS, NARRATION, [
   {length: MATRIX, starts: startsOf(MATRIX_LINES), ids: ['a1', 'a2', 'a3'], node: <MatrixScene />},
   {length: NEST, starts: startsOf(NEST_LINES), ids: ['b1', 'b2', 'b3', 'b4'], node: <NestScene />},
-  {length: SCOPE, starts: startsOf(SCOPE_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <ScopeScene />},
+  {length: SCOPE, starts: startsOf(SCOPE_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'], node: <ScopeScene />},
   {length: OBSERVE, starts: startsOf(OBSERVE_LINES), ids: ['d1', 'd2', 'd3'], node: <ObserveScene />},
   {length: GATHER, starts: startsOf(GATHER_LINES), ids: ['e1', 'e2', 'e3', 'e4', 'e5', 'e6'], node: <GatherScene />},
   {length: ERROR, starts: startsOf(ERROR_LINES), ids: ['f1', 'f2', 'f3'], node: <ErrorScene />},

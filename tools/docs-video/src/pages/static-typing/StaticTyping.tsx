@@ -2,7 +2,8 @@
 // handler and back. Six scenes and an outro, each with headlines a synthetic voice reads (narration.json):
 //   1. The three things a checker checks: what an effect answers, what a program yields, what a handler answers.
 //   2. An effect declares its answer type (EffectBase[int]); the type is readable at run time too.
-//   3. yield from gives the answer its type; a bare yield gives Any; yield from a sub-program gives its result type.
+//   3. elapsed read from the top; yield from gives the answer its type; a bare yield gives Any; yield from a
+//      sub-program gives its result type.
 //   4. @do keeps the parameters (P), the effects (E) and the result (T): wrong arguments and stray effects are errors.
 //   5. typed_resume checks a handler's answer against the effect's type; a handler no effect can reach is refused.
 //   6. The runtime readers, and what is not typed: Ask / Get answer Any, handler coverage is checked at run time.
@@ -232,15 +233,18 @@ const DeclareScene: React.FC = () => {
   );
 };
 
-// Scene 3 — yield from gives the answer its type (measure/check_types.log: reveal_type in pyright and mypy).
+// Scene 3 — yield from gives the answer its type (measure/check_types.log: reveal_type in pyright and mypy). elapsed is
+// read from the top first (what it takes, reads and returns); then its two reads of the clock are run, one at a time.
 
 const YIELD_LINES: Lines = [
-  [0, 'yield from an effect: the program pauses, a handler sends back the answer.'],
-  [7, 'The checker knows the answer\'s type: now is an int.'],
-  [13.5, 'A bare yield runs the same, but the checker sees Any.'],
-  [20, 'yield from a sub-program gives its result type: spent is an int.'],
+  [0, 'elapsed(since): its result is an int.'],
+  [5.1, 'It reads the clock, reads it again, and returns now - since.'],
+  [11.1, 'yield from an effect: the program pauses, a handler sends back the answer.'],
+  [18.5, 'The checker knows the answer\'s type: now is an int.'],
+  [24.5, 'A bare yield runs the same, but the checker sees Any.'],
+  [31.4, 'label: yield from a sub-program gives its result type, int.'],
 ];
-const YIELD = f(26);
+const YIELD = f(39.5);
 const ELAPSED = [
   '@do',
   'def elapsed(since: int)',
@@ -255,6 +259,9 @@ const ELAPSED = [
   '    spent = yield from elapsed(since)',
   '    return f"{spent} ms"',
 ];
+// The line lit from each time on (the band slides there over 0.3 s): elapsed from the top, then the line of each
+// read as it runs, then label. Every motion starts at least 0.9 s after the one before it has stopped.
+const BANDS: [number, number][] = [[0.4, 1], [2.8, 2], [5.5, 3], [6.6, 4], [9.0, 5], [11.3, 3], [24.6, 4], [31.6, 8], [32.9, 10]];
 
 const YieldScene: React.FC = () => {
   const frame = useSceneFrame();
@@ -262,17 +269,17 @@ const YieldScene: React.FC = () => {
   const hand = {x: 900, y: 140, w: 320, h: 120};
   // Two round trips: ReadClock from line 3 (yield from) and from line 4 (bare yield).
   const trips = [
-    {line: 3, out: 1.4, back: 3.0},
-    {line: 4, out: 14.4, back: 16.0},
+    {line: 3, out: 13.6, back: 16.3},
+    {line: 4, out: 25.5, back: 27.6},
   ];
-  const band = frame < f(1.0) ? null : frame < f(13.5) ? 3 : frame < f(20) ? mix(3, 4, ramp(frame, 13.5, 13.8)) : mix(4, 10, ramp(frame, 20, 20.4));
+  const band = BANDS.reduce<number | null>((lit, [at, line]) => (frame >= f(at) ? mix(lit ?? line, line, ramp(frame, at, at + 0.3)) : lit), null);
   const handling = trips.some((trip) => frame >= f(trip.out + 1.0) && frame < f(trip.back + 0.4));
   const tagX = code.x + code.w + 24;
   return (
     <AbsoluteFill>
       <Headlines lines={YIELD_LINES} />
       <CodeBlock lines={ELAPSED} {...code} band={band} opacity={fadeAt(frame, 0.2)} />
-      <Box {...hand} name="clock" note="answers ReadClock with now_ms()" color={TEST} on={handling} opacity={fadeAt(frame, 0.5)} />
+      <Box {...hand} name="clock" note="answers ReadClock with now_ms()" color={TEST} on={handling} opacity={fadeAt(frame, 12.2)} />
       {trips.map((trip) => {
         const y = lineMid(code.y, code.line, trip.line);
         const out = ramp(frame, trip.out, trip.out + 1.0);
@@ -288,19 +295,19 @@ const YieldScene: React.FC = () => {
           </React.Fragment>
         );
       })}
-      <Label x={hand.x} y={hand.y + hand.h + 16} size={16} bold={false} opacity={fadeAt(frame, 4.2)}>the same value comes back both times</Label>
-      <TypeTag x={tagX} y={lineMid(code.y, code.line, 3)} name="now" type="int" color={TEST} at={7.6} />
-      <TypeTag x={tagX} y={lineMid(code.y, code.line, 4)} name="loose" type="Any" color={PROD} at={17.2} />
-      <TypeTag x={tagX} y={lineMid(code.y, code.line, 10)} name="spent" type="int" color={TEST} at={20.6} />
+      <Label x={hand.x} y={hand.y + hand.h + 16} size={16} bold={false} opacity={fadeAt(frame, trips[1].back)}>the same value comes back both times</Label>
+      <TypeTag x={tagX} y={lineMid(code.y, code.line, 3)} name="now" type="int" color={TEST} at={20.9} />
+      <TypeTag x={tagX} y={lineMid(code.y, code.line, 4)} name="loose" type="Any" color={PROD} at={29.7} />
+      <TypeTag x={tagX} y={lineMid(code.y, code.line, 10)} name="spent" type="int" color={TEST} at={36.6} />
       {/* What reveal_type printed in measure/check_types.log. */}
       <Terminal
         x={50} y={520} w={1180} size={17} line={27}
         lines={[
-          {text: frame >= f(8.2) ? 'reveal_type(now)     pyright: "int"    mypy: "int"' : '', color: TEST},
-          {text: frame >= f(17.8) ? 'reveal_type(loose)   pyright: "Any"    mypy: "Any"     (yield gives Any; yield from gives the type)' : '', color: PROD},
-          {text: frame >= f(21.2) ? 'reveal_type(spent)   pyright: "int"    mypy: "int"' : '', color: TEST},
+          {text: frame >= f(22.2) ? 'reveal_type(now)     pyright: "int"    mypy: "int"' : '', color: TEST},
+          {text: frame >= f(31.0) ? 'reveal_type(loose)   pyright: "Any"    mypy: "Any"     (yield gives Any; yield from gives the type)' : '', color: PROD},
+          {text: frame >= f(37.9) ? 'reveal_type(spent)   pyright: "int"    mypy: "int"' : '', color: TEST},
         ]}
-        opacity={fadeAt(frame, 7.8)}
+        opacity={fadeAt(frame, 22.2)}
       />
     </AbsoluteFill>
   );
@@ -600,7 +607,7 @@ const Outro: React.FC = () => {
 export const STATIC_TYPING = narrate('static-typing', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['a1', 'a2', 'a3', 'a4'], node: <IntroScene />},
   {length: DECLARE, starts: startsOf(DECLARE_LINES), ids: ['b1', 'b2', 'b3'], node: <DeclareScene />},
-  {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <YieldScene />},
+  {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'], node: <YieldScene />},
   {length: DO, starts: startsOf(DO_LINES), ids: ['d1', 'd2', 'd3', 'd4'], node: <DoScene />},
   {length: HANDLER, starts: startsOf(HANDLER_LINES), ids: ['e1', 'e2', 'e3', 'e4'], node: <HandlerScene />},
   {length: LIMIT, starts: startsOf(LIMIT_LINES), ids: ['f1', 'f2', 'f3'], node: <LimitScene />},

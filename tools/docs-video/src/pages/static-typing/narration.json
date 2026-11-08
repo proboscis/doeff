@@ -29,19 +29,27 @@
  },
  {
   "id": "c1",
-  "text": "Yield from an effect: the program pauses, the effect travels out, and a handler sends back the answer."
+  "text": "elapsed takes a start time, since, and its result is an int."
  },
  {
   "id": "c2",
-  "text": "The checker knows that answer's type. now is an int, in pyright and in mypy."
+  "text": "It reads the clock, reads it again with a bare yield, and returns now minus since."
  },
  {
   "id": "c3",
-  "text": "A bare yield runs exactly the same way, but the checker only sees Any."
+  "text": "Yield from an effect: the program pauses, the effect travels out, and the clock handler sends back the answer."
  },
  {
   "id": "c4",
-  "text": "Yield from a sub-program gives its result type: spent is an int."
+  "text": "The checker knows that answer's type. now is an int, in pyright and in mypy."
+ },
+ {
+  "id": "c5",
+  "text": "The bare yield runs exactly the same way, but the checker only sees Any."
+ },
+ {
+  "id": "c6",
+  "text": "label runs elapsed with yield from. A sub-program gives its result type: spent is an int."
  },
  {
   "id": "d1",
