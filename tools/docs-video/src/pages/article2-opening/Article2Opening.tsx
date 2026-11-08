@@ -88,6 +88,20 @@ export const Frame: React.FC<{l: number; t: number; r: number; b: number; label:
   );
 };
 
+// 0. What the video is about, said over the title and the function it follows, shown still from the first frame.
+const INTRO_CODE = ['@do', 'def greet():', '    name = yield ReadName()', '    return f"Hello, {name}"'];
+const INTRO_BOX: Box = {x: 340, y: 330, w: 600, line: 30};
+const INTRO_LINES: Lines = [[0, '']];
+const INTRO = f(10.0);
+const Intro: React.FC = () => (
+  <AbsoluteFill>
+    <Say x={0} w={1280} y={92} from={-1} size={60} center>Yield and async</Say>
+    <Say x={0} w={1280} y={186} from={-1} size={24} color={MUTED} center>doeff: algebraic effects for Python</Say>
+    <Label x={INTRO_BOX.x} y={INTRO_BOX.y - 34} text="greet: reads a name and returns a greeting" color={ACCENT} from={-1} />
+    <CodeBlock lines={INTRO_CODE} x={INTRO_BOX.x} y={INTRO_BOX.y} w={INTRO_BOX.w} size={20} line={INTRO_BOX.line} />
+  </AbsoluteFill>
+);
+
 // 1-3. The same greeting written twice, with async def and await (left) and with @do and yield (right).
 const ASYNC_CODE = [
   'async def read_name_async() -> str:',
@@ -420,6 +434,7 @@ const Close: React.FC = () => {
 };
 
 export const ARTICLE2_OPENING = narrate('article2-opening', DURATIONS, NARRATION, [
+  {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['o0'], node: <Intro />},
   {length: BOTH, starts: startsOf(BOTH_LINES), ids: ['o1'], node: <Both />},
   {length: AWAIT, starts: startsOf(AWAIT_LINES), ids: ['o2'], node: <Await />},
   {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['o3'], node: <Yield />},

@@ -1,4 +1,5 @@
 [
+ {"id": "p0", "text": "This video shows that in doeff, a library for algebraic effects in Python, a handler decides how a paused function goes on. A doeff handler receives k, the rest of that function. We compare it with an asyncio task."},
  {"id": "p1", "text": "When an asyncio task pauses, the loop has two moves: send the result once the future is done, or throw CancelledError into it."},
  {"id": "p2", "text": "A doeff handler receives k, the rest of the paused function. What happens next is the handler's decision."},
  {"id": "p3", "text": "Resume k with a value, and the function goes on from its yield."},

@@ -1,4 +1,5 @@
 [
+ {"id": "o0", "text": "This video shows how yield in doeff, a library for algebraic effects in Python, differs from async and await. We follow one small function that reads a name and returns a greeting: greet. We write it two ways and compare them."},
  {"id": "o1", "text": "Python already has functions that pause: async def and await. doeff pauses with yield instead. Both print the same line. So why yield?"},
  {"id": "o2", "text": "At an await, the call names the code that answers. That code runs right there, as part of the same chain of calls."},
  {"id": "o3", "text": "At a yield, the call names an operation. ReadName is a value, not code. greet pauses, and the nearest handler around it answers."},

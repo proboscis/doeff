@@ -7,7 +7,7 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, Headlines, Lines, PAD, startsOf} from '../../kit/parts';
+import {CodeBlock, Headlines, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import {K, Moving} from '../article-opening/ArticleOpening';
@@ -119,7 +119,34 @@ const KBand: React.FC<{box: Box; i: number; rows: number; from: number; until?: 
   );
 };
 
-const HAND_LINES: Lines = [[0, 'doeff: the handler receives k, and decides']];
+// 0. What the video is about, said over the title and the figure of k, shown still from the first frame: greet paused
+// at its yield, the rest of it drawn as k, and k held by a handler.
+const INTRO_GREET: Box = {x: 70, y: 300, w: 620, line: 30};
+const INTRO_LINES: Lines = [[0, '']];
+const INTRO = f(10.0);
+const Intro: React.FC = () => (
+  <AbsoluteFill>
+    <Say x={0} w={1280} y={92} from={-1} size={52} center>How the paused code goes on</Say>
+    <Say x={0} w={1280} y={176} from={-1} size={24} color={MUTED} center>doeff: algebraic effects for Python</Say>
+    <CodeBlock lines={GREET_CODE} x={INTRO_GREET.x} y={INTRO_GREET.y} w={INTRO_GREET.w} size={20} line={INTRO_GREET.line} />
+    <Lit box={INTRO_GREET} i={2} from={-1} />
+    <KBand box={INTRO_GREET} i={3} rows={1} from={-1} />
+    <Say x={INTRO_GREET.x + 10} y={INTRO_GREET.y + 160} from={-1} size={20} color={K}>k: the rest of greet, paused at the yield</Say>
+    <div
+      style={{
+        position: 'absolute', left: 820, top: 300, width: 390, height: 140, boxSizing: 'border-box', padding: '14px 20px', borderRadius: 14,
+        border: `3px solid ${TEST}`, background: PANEL,
+      }}
+    >
+      <div style={{fontFamily: MONO, fontSize: 22, fontWeight: 700, color: TEST}}>a handler</div>
+      <div style={{fontFamily: SANS, fontSize: 19, color: TEXT, marginTop: 10}}>holds k, and decides how greet goes on</div>
+    </div>
+    <div style={{position: 'absolute', left: INTRO_GREET.x + INTRO_GREET.w, top: mid(INTRO_GREET, 3), width: 820 - INTRO_GREET.x - INTRO_GREET.w, height: 0, borderTop: `3px dashed ${K}`}} />
+    <Pill x={760} y={mid(INTRO_GREET, 3)} text="k" color={K} />
+  </AbsoluteFill>
+);
+
+const HAND_LINES: Lines =[[0, 'doeff: the handler receives k, and decides']];
 const HAND = f(9.2);
 const Hand: React.FC = () => {
   const frame = useSceneFrame();
@@ -375,6 +402,7 @@ const Again: React.FC = () => {
 };
 
 export const ARTICLE2_PAUSED_CODE = narrate('article2-paused-code', DURATIONS, NARRATION, [
+  {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['p0'], node: <Intro />},
   {length: LOOP, starts: startsOf(LOOP_LINES), ids: ['p1'], node: <LoopMoves />},
   {length: HAND, starts: startsOf(HAND_LINES), ids: ['p2'], node: <Hand />},
   {length: RESUME, starts: startsOf(RESUME_LINES), ids: ['p3'], node: <ResumeK />},

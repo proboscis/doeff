@@ -1,63 +1,75 @@
 1
-00:00:00,250 --> 00:00:04,217
-Python already has functions that pause: async def and await.
+00:00:00,250 --> 00:00:07,083
+This video shows how yield in doeff, a library for algebraic effects in Python, differs from async and await.
 
 2
-00:00:04,217 --> 00:00:08,900
-doeff pauses with yield instead. Both print the same line. So why yield?
+00:00:07,083 --> 00:00:11,917
+We follow one small function that reads a name and returns a greeting: greet.
 
 3
-00:00:09,850 --> 00:00:13,150
-At an await, the call names the code that answers.
+00:00:11,917 --> 00:00:14,300
+We write it two ways and compare them.
 
 4
-00:00:13,150 --> 00:00:17,300
-That code runs right there, as part of the same chain of calls.
+00:00:14,850 --> 00:00:18,817
+Python already has functions that pause: async def and await.
 
 5
-00:00:18,450 --> 00:00:23,850
-At a yield, the call names an operation. ReadName is a value, not code.
+00:00:18,817 --> 00:00:23,500
+doeff pauses with yield instead. Both print the same line. So why yield?
 
 6
-00:00:23,850 --> 00:00:28,100
-greet pauses, and the nearest handler around it answers.
+00:00:24,450 --> 00:00:27,750
+At an await, the call names the code that answers.
 
 7
-00:00:29,050 --> 00:00:33,717
-In asyncio, every request goes to one place: the event loop at the top.
+00:00:27,750 --> 00:00:31,900
+That code runs right there, as part of the same chain of calls.
 
 8
-00:00:33,717 --> 00:00:36,800
-The coroutines in between only pass it through.
+00:00:33,050 --> 00:00:38,450
+At a yield, the call names an operation. ReadName is a value, not code.
 
 9
-00:00:37,850 --> 00:00:42,900
-In doeff, each caller installs handlers around any part of a program.
+00:00:38,450 --> 00:00:42,700
+greet pauses, and the nearest handler around it answers.
 
 10
-00:00:42,900 --> 00:00:48,900
-Add titled in between, and the first greeting says Dr. Ada. greet does not change.
+00:00:43,650 --> 00:00:48,317
+In asyncio, every request goes to one place: the event loop at the top.
 
 11
-00:00:50,050 --> 00:00:53,333
-A handler also holds the rest of the function, k.
+00:00:48,317 --> 00:00:51,400
+The coroutines in between only pass it through.
 
 12
-00:00:53,333 --> 00:00:57,750
-It can resume it, keep it to run tasks, or end the run without it.
+00:00:52,450 --> 00:00:57,500
+In doeff, each caller installs handlers around any part of a program.
 
 13
-00:00:58,850 --> 00:01:02,883
-Async libraries still work. Await hands one coroutine to a handler,
+00:00:57,500 --> 00:01:03,500
+Add titled in between, and the first greeting says Dr. Ada. greet does not change.
 
 14
-00:01:02,883 --> 00:01:07,150
-and the event loop moves from above the program to behind that handler.
+00:01:04,650 --> 00:01:07,933
+A handler also holds the rest of the function, k.
 
 15
-00:01:08,450 --> 00:01:13,250
-async and await are an effect system with one handler, fixed at the top.
+00:01:07,933 --> 00:01:12,350
+It can resume it, keep it to run tasks, or end the run without it.
 
 16
-00:01:13,250 --> 00:01:16,050
+00:01:13,450 --> 00:01:17,483
+Async libraries still work. Await hands one coroutine to a handler,
+
+17
+00:01:17,483 --> 00:01:21,750
+and the event loop moves from above the program to behind that handler.
+
+18
+00:01:23,050 --> 00:01:27,850
+async and await are an effect system with one handler, fixed at the top.
+
+19
+00:01:27,850 --> 00:01:30,650
 doeff lets every caller install their own.
