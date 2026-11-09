@@ -512,13 +512,6 @@
    "why": "entry spelling of host_reader (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_cluster.shared.entry.host_reader:host-reader",
-   "touches": [
-    "env"
-   ],
-   "why": "DOEFF_WORKER_PROGRAM in os.environ and the child's context (passes the foundation read — host-reader at the old location foundation/host_contract was removed on 2026-10-03)"
-  },
-  {
    "handler": "doeff_cluster._foundation.host_contract:os-environ-reader",
    "touches": [
     "env"
@@ -561,13 +554,6 @@
    "why": "entry spelling of readiness_http (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_cluster.shared.protocol.readiness_handlers:readiness-http",
-   "touches": [
-    "cluster"
-   ],
-   "why": "POSTs to the coordinator with httpx"
-  },
-  {
    "handler": "doeff_cluster._shared.protocol.metrics_handlers:metrics-http",
    "touches": [
     "cluster"
@@ -580,13 +566,6 @@
     "cluster"
    ],
    "why": "entry spelling of metrics_http (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_cluster.shared.protocol.metrics_handlers:metrics-http",
-   "touches": [
-    "cluster"
-   ],
-   "why": "POSTs to the coordinator with httpx"
   },
   {
    "handler": "doeff_cluster._shared.protocol.shared_handlers:shared-http",
@@ -605,14 +584,6 @@
    "why": "entry spelling of shared_http (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_cluster.shared.protocol.shared_handlers:shared-http",
-   "touches": [
-    "cluster",
-    "clock"
-   ],
-   "why": "httpx to the coordinator's board and leases, with time.sleep retries"
-  },
-  {
    "handler": "doeff_cluster._shared.protocol.remote:remote-cluster",
    "touches": [
     "cluster"
@@ -625,13 +596,6 @@
     "cluster"
    ],
    "why": "entry spelling of remote_cluster (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_cluster.shared.protocol.remote:remote-cluster",
-   "touches": [
-    "cluster"
-   ],
-   "why": "to the coordinator via TaskClient"
   },
   {
    "handler": "doeff_cluster._shared.protocol.detached:detached-cluster",
@@ -648,13 +612,6 @@
    "why": "entry spelling of detached_cluster (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_cluster.shared.protocol.detached:detached-cluster",
-   "touches": [
-    "cluster"
-   ],
-   "why": "DetachedClient(httpx)"
-  },
-  {
    "handler": "doeff_cluster._shared.protocol.detached:warm-cluster",
    "touches": [
     "cluster"
@@ -667,13 +624,6 @@
     "cluster"
    ],
    "why": "entry spelling of warm_cluster (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_cluster.shared.protocol.detached:warm-cluster",
-   "touches": [
-    "cluster"
-   ],
-   "why": "/warm of WarmClient"
   },
   {
    "handler": "doeff_cluster._foundation.coordinator_inbox:http-requests",
@@ -706,21 +656,7 @@
    "why": "entry spelling of with_cluster_handlers (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_cluster.shared.entry.cluster_foundation:with-cluster-handlers",
-   "touches": [
-    "cluster"
-   ],
-   "why": "assembly — installs real I/O handlers such as readiness-http, shared-http, remote-cluster"
-  },
-  {
    "handler": "doeff_cluster._shared.entry.cluster_foundation:cluster-handlers",
-   "touches": [
-    "cluster"
-   ],
-   "why": "assembly — the above list itself"
-  },
-  {
-   "handler": "doeff_cluster.shared.entry.cluster_foundation:cluster-handlers",
    "touches": [
     "cluster"
    ],
@@ -741,14 +677,6 @@
     "env"
    ],
    "why": "entry spelling of with_detached_client (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_cluster.shared.entry.client_foundation:with-detached-client",
-   "touches": [
-    "cluster",
-    "env"
-   ],
-   "why": "assembly — installs detached-cluster under the local tool's identity, and reads DOEFF_RUNTIME_ENV_KEY in os.environ to identify the version (#2782)"
   },
   {
    "handler": "doeff_docker._handlers.shell:shell-run-handler",

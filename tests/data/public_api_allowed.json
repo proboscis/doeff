@@ -136,13 +136,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "(submodule)",
-   "name": "doeff_cluster.shared.entry.macros",
-   "group": "Allowed — Hy macro",
-   "basis": "Hy macro module of doeff-cluster (defsystem): Hy code requires macros by module path, so it stays public."
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "AttachedWorkspaceVolume",
    "group": "Allowed — effect answer type",
@@ -966,13 +959,6 @@
    "name": "readiness_awaited",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.entry.macros",
-   "name": "defsystem",
-   "group": "Allowed — Hy macro",
-   "basis": "Hy macro module of doeff-cluster (defsystem): Hy code requires macros by module path, so it stays public."
   },
   {
    "package": "doeff-cluster",
