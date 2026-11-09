@@ -1,109 +1,117 @@
 WEBVTT
 
 a1
-00:00:00.250 --> 00:00:06.150
+00:00:00.250 --> 00:00:06.650
 Static typing in doeff. A type checker follows your effects out to the handler, and back.
 
 a2
-00:00:10.050 --> 00:00:14.950
+00:00:10.050 --> 00:00:14.800
 It checks three things. First, the value each effect answers with.
 
 a3
-00:00:16.050 --> 00:00:19.300
+00:00:16.050 --> 00:00:19.150
 Second, the effects a program may yield.
 
 a4
-00:00:19.850 --> 00:00:23.350
+00:00:19.700 --> 00:00:23.500
 And third, the value a handler answers with.
 
 b1
-00:00:23.900 --> 00:00:31.100
+00:00:24.050 --> 00:00:30.800
 An effect declares its answer type. ReadClock is an EffectBase of int: its handler answers with an int.
 
 b2
-00:00:31.650 --> 00:00:38.650
+00:00:31.550 --> 00:00:35.900
 A generic parent works too, and the same type can be read at run time: WriteShared answers a bool.
 
 b3
-00:00:39.200 --> 00:00:44.300
+00:00:38.550 --> 00:00:43.950
 An effect on plain EffectBase leaves its answer type unknown: Any.
 
 c1
-00:00:45.700 --> 00:00:52.050
-Yield from an effect: the program pauses, the effect travels out, and a handler sends back the answer.
+00:00:45.050 --> 00:00:49.600
+elapsed takes a start time, since, and its result is an int.
 
 c2
-00:00:52.700 --> 00:00:58.350
-The checker knows that answer's type. now is an int, in pyright and in mypy.
+00:00:50.150 --> 00:00:55.550
+It reads the clock, reads it again with a bare yield, and returns now minus since.
 
 c3
-00:00:59.200 --> 00:01:03.900
-A bare yield runs exactly the same way, but the checker only sees Any.
+00:00:56.150 --> 00:01:02.950
+Yield from an effect: the program pauses, the effect travels out, and the clock handler sends back the answer.
 
 c4
-00:01:05.700 --> 00:01:10.300
-Yield from a sub-program gives its result type: spent is an int.
+00:01:03.550 --> 00:01:09.000
+The checker knows that answer's type. now is an int, in pyright and in mypy.
+
+c5
+00:01:09.550 --> 00:01:15.300
+The bare yield runs exactly the same way, but the checker only sees Any.
+
+c6
+00:01:16.450 --> 00:01:22.950
+label runs elapsed with yield from. A sub-program gives its result type: spent is an int.
 
 d1
-00:01:11.700 --> 00:01:18.600
+00:01:24.550 --> 00:01:32.450
 The at-do decorator keeps three things of the function it wraps: its parameters, its effects, and its result.
 
 d2
-00:01:19.700 --> 00:01:23.650
+00:01:33.000 --> 00:01:37.200
 The parameters. Calling elapsed with a string is a type error.
 
 d3
-00:01:25.200 --> 00:01:30.350
+00:01:38.500 --> 00:01:43.300
 The effects. Yielding an effect outside the declared set is a type error too.
 
 d4
-00:01:31.200 --> 00:01:36.500
+00:01:44.500 --> 00:01:48.750
 And the result. Running the program under its handler gives an int.
 
 e1
-00:01:37.700 --> 00:01:42.500
+00:01:51.000 --> 00:01:57.300
 A handler answers an effect by resuming k, the rest of the program, with a value.
 
 e2.1
-00:01:44.200 --> 00:01:48.583
+00:01:57.850 --> 00:02:02.683
 typed resume checks that value against the effect's answer type.
 
 e2.2
-00:01:48.583 --> 00:01:52.350
+00:02:02.683 --> 00:02:06.850
 One thousand is an int, so elapsed returns six hundred.
 
 e3
-00:01:52.900 --> 00:01:57.400
+00:02:07.400 --> 00:02:11.350
 Answering ReadClock with a string is refused by the checker.
 
 e4.1
-00:01:58.400 --> 00:02:03.283
+00:02:12.900 --> 00:02:17.017
 A handler that no effect can reach is refused twice: by the checker,
 
 e4.2
-00:02:03.283 --> 00:02:06.300
+00:02:17.017 --> 00:02:19.550
 and by the handler decorator when it runs.
 
 f1.1
-00:02:06.900 --> 00:02:11.033
+00:02:21.400 --> 00:02:26.133
 The same types can be read at run time, so tools that cannot run pyright,
 
 f1.2
-00:02:11.033 --> 00:02:13.800
+00:02:26.133 --> 00:02:29.300
 such as the Hy checker, read one source of truth.
 
 f2
-00:02:15.900 --> 00:02:22.850
+00:02:30.400 --> 00:02:37.650
 What is not typed: Ask and Get answer Any, because the environment and the state are dynamic.
 
 f3.1
-00:02:23.400 --> 00:02:28.317
+00:02:38.200 --> 00:02:42.767
 And whether the handlers cover a program's effects is not a type error.
 
 f3.2
-00:02:28.317 --> 00:02:32.050
+00:02:42.767 --> 00:02:46.250
 Without the clock handler, run raises UnhandledEffect.
 
 o1
-00:02:32.900 --> 00:02:39.450
+00:02:47.700 --> 00:02:53.450
 In doeff, effects carry their types. The checker follows them out to the handler, and back.
