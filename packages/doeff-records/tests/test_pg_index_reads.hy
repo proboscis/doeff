@@ -18,7 +18,7 @@
                               touched-events-statement prune-bound-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement list-rows-statement top-rows-statement table-field-index-name
                               ordered-index-name ordered-expression ordered-within-index-name ordered-within-index table-field-expression
-                              declared-indexes retired-index?])
+                              keyed-within-index-name keyed-within-index declared-indexes retired-index? table-shaped-index?])
 (import doeff_records._laws [LAW-SCHEMA])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
@@ -895,3 +895,106 @@
   (assert (in index declared) (repr (lfor d declared d.name)))
   (<- retired (retired-index? "records_" index.name))
   (assert (not retired) index.name))
+
+
+;; --- 等号で絞った鍵の順の頁読みは、等号の欄 × 鍵の綴りの順の索引を 1 頁 + 1 行だけ辿る ---------------------------------------------
+;; 2026-11-06: 本番の表で、状態の値 1 つに合う行(表の 3〜6 割)を鍵の順に読む頁が、表の欄の式の索引 (式, updated_at) で合う行を全部引き
+;; (Bitmap Heap Scan)、全部の行を鍵で並べ替えて(Sort)上から 1 頁を取った — 頁ごとに heap の 2.5〜3.3 万頁を読み、postgres の起こし直しの後の
+;; 冷えた buffer で文の上限 60 秒を越えた。表 parts の鍵の順に読む等号の欄(LAW-SCHEMA の keyed-within — color)の索引で、color = "hot" の
+;; 頭からの 1 頁と続きの位置(真ん中)からの 1 頁が、組の索引の Index Scan だけで答え(Bitmap も Sort も無い)、置き場を TOP-ROWS 行と 2 倍の行で
+;; 作っても読んだ行が 1 頁 + 1 行を越えない事を確かめる。組の索引が無い形では、表の欄の式の索引の Bitmap Heap Scan と Sort で赤になり、
+;; 読んだ行は絞りに合う行の数(置き場の大きさに比例)になる。
+(val KEYED-PAGE 50)
+
+
+(defk keyed-ranked [count]
+  {:pre [(: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "置いた count 行のうち color = hot の行(HOT-EVERY の倍数の g)の鍵の綴りを、符号点の順(COLLATE \"C\")に並べるため。"
+  (tuple (sorted (gfor g (range 1 (+ count 1)) :if (= (% g HOT-EVERY) 0) (json.dumps [(.format "w{}" g)])))))
+
+
+(defk keyed-reads-on-seeded-store [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix に count 行を置いて統計を取り、color = hot の鍵の順の頭からの 1 頁と真ん中からの 1 頁の
+   #(走査の節 引いた索引の名 節の種類 返した鍵 期待の鍵) を {名 …} で返すため。"
+  (<- seed (within-seed-statement prefix count))
+  (for [statement #(seed (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
+    (<- seeded (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  (val hot {"color" (canonical-json "hot")})
+  (<- ranked (keyed-ranked count))
+  (val middle (// (len ranked) 2))
+  (<- head (list-rows-statement prefix "parts" #("id") PARTS-SCOPED None hot {} KEYED-PAGE None))
+  (<- below (list-rows-statement prefix "parts" #("id") PARTS-SCOPED (get ranked middle) hot {} KEYED-PAGE None))
+  (val head-expected (cut ranked (+ KEYED-PAGE 1)))
+  (val below-expected (cut ranked (+ middle 1) (+ middle KEYED-PAGE 2)))
+  (var reads {})
+  (for [#(name statement expected) #(#("頭から" head head-expected) #("真ん中から" below below-expected))]
+    (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+    (assert (isinstance answer SqlRows) (repr answer))
+    (val plan (get answer.rows 0 0))
+    (val explained (if (isinstance plan str) (json.loads plan) plan))
+    (<- scans (table-scans prefix explained))
+    (<- names (index-names explained))
+    (<- kinds (plan-node-types explained))
+    (<- listed (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance listed SqlRows) (repr listed))
+    (:= reads (| reads {name #(scans names kinds (tuple (gfor record listed.rows (get record 0))) expected)})))
+  reads)
+
+
+(defk keyed-reads-at [connections count]
+  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して count 行を置き、等号で絞った鍵の順の頁読みを測るため(終わりに表を消す)。
+   答え = #(読みごとの測り parts の color × 鍵の順の索引の名)。"
+  (val store (prepared-store connections (fresh-prefix)))
+  (var reads {})
+  (try
+    (:= reads (run-sql connections (keyed-reads-on-seeded-store store.prefix count)))
+    (finally
+      (run-sql connections (drop-records-tables store))))
+  (<- keyed-index (keyed-within-index-name store.prefix "parts" "color"))
+  #(reads keyed-index))
+
+
+(deftest test-a-key-order-page-within-an-equal-field-reads-through-the-keyed-index-on-a-store-twice-as-large
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (try
+    (<- small (keyed-reads-at connections TOP-ROWS))
+    (<- large (keyed-reads-at connections (* 2 TOP-ROWS)))
+    (for [#(reads keyed-index) #(small large)
+          name #("頭から" "真ん中から")]
+      (setv [scans names kinds keys expected] (get reads name))
+      ;; 絞りに合う行だけを、鍵の綴りの符号点の順に 1 頁 + 1 行。
+      (assert (= keys expected) (repr #(name keys expected)))
+      ;; 組の索引の Index Scan で答え、合う行を全部引く節(Bitmap Heap Scan)も並べ替えの節(Sort)も置き場の表を頭から読む節も無い。
+      (assert (= names (frozenset #(keyed-index))) (repr #(name keyed-index names scans)))
+      (assert (in "Index Scan" kinds) (repr #(name kinds)))
+      (assert (not (& kinds (frozenset #("BitmapAnd" "Bitmap Heap Scan" "Sort" "Incremental Sort" "Seq Scan")))) (repr #(name kinds scans)))
+      ;; 読んだ行は 1 頁 + 1 行だけ(絞りに合う行の数に依らない)。
+      (<- read (total-read scans))
+      (assert (<= read (+ KEYED-PAGE 1)) (repr #(name read scans))))
+    (finally
+      (.close connections))))
+
+
+(deftest test-the-keyed-index-uses-the-same-expression-as-the-key-order-read-within-an-equal-field
+  ;; 組の索引の式は、読みの文の等号の条件(表の欄の式)と同じ字面で、鍵の綴りの順(COLLATE "C")を後ろに持つ(文を変えずに planner が選ぶ —
+  ;; pg_sql の頭の註)。
+  (<- index (keyed-within-index "records_" "parts" "color"))
+  (<- equal (table-field-expression "" "parts" "color"))
+  (assert (in (.format "state_rows ({}, key COLLATE \"C\") WHERE {} IS NOT NULL" equal equal) index.text) index.text)
+  (<- read (list-rows-statement "records_" "parts" #("id") (frozenset #("color")) None {"color" (canonical-json "hot")} {} 10 None))
+  (assert (in (+ equal " = :w0::jsonb") read.text) read.text)
+  (assert (in "ORDER BY key COLLATE \"C\"" read.text) read.text)
+  ;; 置き場に在るべき索引に、宣言の欄ごとに 1 つ入り、宣言の形の索引の名として見分けられる(旧い形の索引の名の形には当たらない)。
+  (<- declared (declared-indexes "records_" LAW-SCHEMA))
+  (assert (in index declared) (repr (lfor d declared d.name)))
+  (<- retired (retired-index? "records_" index.name))
+  (assert (not retired) index.name)
+  (<- shaped (table-shaped-index? "records_" index.name))
+  (assert shaped index.name))

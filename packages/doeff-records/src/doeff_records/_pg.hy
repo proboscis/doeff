@@ -164,7 +164,8 @@
   "engine が答えた失敗(SqlFailed)— 文か表の形の食い違いで、実装の誤り。sqlstate = SQLSTATE(5 文字か None)。"
   (defn #^ None __init__ [self #^ (| str None) sqlstate #^ str reason]  ; defk にできない: 例外の class の初期化
     (.__init__ (super) (.format "PostgreSQL が断った({}): {}" sqlstate reason))
-    (setv self.sqlstate sqlstate)))
+    (setv self.sqlstate sqlstate)
+    (setv self.reason reason)))
 
 
 ;; 表の用意の transaction を deadlock(40P01)の後に流し直す回数の上限(prepare-records-store)。
@@ -1332,9 +1333,33 @@
   (<- plan (| Statement NotIndexed) (list-rows-plan store ask now-ms))
   (when (isinstance plan NotIndexed)
     (return plan))
-  (<- records (query-rows store.database plan))
+  ;; engine の断り(文の上限 57014 など)は読みの形を名乗って上げる — service の log の「答えの途中で落ちた」の行が、どの表のどの読みが
+  ;; 落ちたかを持つ(前は表の名が無く、落ちた読みの読み手を他の log の刻から探した)。
+  (try
+    (<- records (query-rows store.database plan))
+    (except [error RecordsSqlFailed]
+      (<- shape (list-rows-shape ask))
+      (raise (RecordsSqlFailed error.sqlstate (.format "{} — {}" error.reason shape)))))
   (<- page Page (list-rows-page store ask records head))
   page)
+
+
+(defk list-rows-shape [ask]
+  {:pre [(: ask ListRows)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の読みの形(表・絞りの欄の名・並べる欄・続きの位置の有無・頁の行の数・返す欄の数)を log の 1 句に綴るため(pg-list-rows-at が
+   engine の断りに添える)。絞りの値は綴らない(行の値を log に出さない)。"
+  (val ordered (cond (is-not ask.descending-by None) (+ "上から " ask.descending-by)
+                     (is-not ask.ascending-by None) (+ "下から " ask.ascending-by)
+                     True "鍵の順"))
+  (.format "読み ListRows 表 {}・等号の欄 [{}]・値の組の欄 [{}]・並べ {}・続きの位置 {}・頁 {} 行・返す欄 {}"
+           ask.table
+           (.join "," (sorted ask.where))
+           (.join "," (gfor #(name members) (sorted (.items ask.where-any)) (.format "{}×{}" name (len members))))
+           ordered
+           (if (is ask.cursor None) "無し" "有り")
+           ask.limit
+           (if (is ask.fields None) "全部" (len ask.fields))))
 
 
 (defk list-rows-plan [store ask now-ms]

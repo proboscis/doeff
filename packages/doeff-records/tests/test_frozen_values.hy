@@ -79,6 +79,19 @@
   (assert (refuses? (fn [] (DescendingWithin "color" "no-te")) ValueError) "欄の名の形"))
 
 
+(deftest test-a-keyed-within-field-is-an-indexed-field-and-stays-out-of-the-repr
+  ;; 鍵の順に読む等号の欄(TableDecl.keyed-within)は索引の欄だけ。速さだけの宣言なので repr(表の要約 schema_digest の元)に出さない —
+  ;; 宣言を足しても使い手の表の要約が変わらない。等しさには入る。
+  (setv decl (LAW-SCHEMA.table "parts"))
+  (assert (= decl.keyed-within #("color")) decl)
+  (setv plain (dataclasses.replace decl :keyed-within #()))
+  (assert (= (repr plain) (repr decl)) "鍵の順に読む等号の欄は repr に出ない")
+  (assert (!= plain decl) "等しさには入る")
+  (assert (refuses? (fn [] (dataclasses.replace decl :keyed-within #("state"))) ValueError) "索引の欄でない欄")
+  (assert (refuses? (fn [] (dataclasses.replace decl :keyed-within #("color" "color"))) ValueError) "重なる欄")
+  (assert (refuses? (fn [] (dataclasses.replace decl :keyed-within ["color"])) TypeError) "tuple でない並び"))
+
+
 (deftest test-the-field-index-answers-like-scanning-every-field
   ;; #2670 根 E: 表の宣言は欄の名の索引を宣言 1 つに 1 度だけ作り、declares・writers-of・founders-of はそれで答える(書きの判断が
   ;; 行ごと・欄ごとに欄の tuple を全部なめ直さない)。失敗ケース = 索引の答えが欄の tuple を全部なめた答えと違う(宣言の内・外の

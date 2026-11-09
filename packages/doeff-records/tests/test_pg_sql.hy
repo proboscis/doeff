@@ -33,6 +33,9 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [ExpectAbsent Written])
 (import doeff_records [PutRow])
+(import doeff_hy._frozen [FrozenMap])
+(import doeff_records [ListRows ListCursor])
+(import doeff_records._pg [list-rows-shape])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records [pg-records-handler]
         doeff_records._pg [drop-records-tables])
@@ -93,6 +96,7 @@
    "CREATE INDEX IF NOT EXISTS records_fp_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END), updated_at) WHERE (CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_op_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_wp_0b920c6b8d1d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) IS NOT NULL"
+   "CREATE INDEX IF NOT EXISTS records_kp_6dd0fe800114_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), key COLLATE \"C\") WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
    "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"
    "CREATE INDEX IF NOT EXISTS records_write_keys_remembered ON records_write_keys (remembered_at)"])
@@ -359,3 +363,19 @@
       (.close old)
       (run-sql connections (drop-records-tables store))
       (.close connections))))
+
+
+(deftest test-a-failed-list-read-names-its-table-and-shape-without-the-values
+  ;; engine が断った ListRows(文の上限 57014 など)は、service の log の 1 行に表と読みの形を名乗る(pg-list-rows-at — 前は表の名が無く、
+  ;; どの表の読みが落ちたかを他の log の刻から探した)。絞りの値は綴らない。
+  (<- keyed (list-rows-shape (ListRows "parts" :where (FrozenMap {"color" "hot-secret"}) :cursor (ListCursor 1 "[\"w7\"]") :limit 5000)))
+  (assert (in "表 parts" keyed) keyed)
+  (assert (in "等号の欄 [color]" keyed) keyed)
+  (assert (in "並べ 鍵の順" keyed) keyed)
+  (assert (in "続きの位置 有り" keyed) keyed)
+  (assert (in "頁 5000 行" keyed) keyed)
+  (assert (not-in "hot-secret" keyed) keyed)
+  (<- ordered (list-rows-shape (ListRows "parts" :where-any (FrozenMap {"color" #("a" "b")}) :descending-by "note" :limit 50 :fields #("id"))))
+  (assert (in "値の組の欄 [color×2]" ordered) ordered)
+  (assert (in "並べ 上から note" ordered) ordered)
+  (assert (in "返す欄 1" ordered) ordered))

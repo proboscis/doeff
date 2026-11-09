@@ -56,6 +56,8 @@
                                 :descending #("note")
                                 ;; 等号の欄 × 上から読む欄の組(color で絞って note の大きい順 — PostgreSQL の置き場は組の索引で辿る)。
                                 :descending-within #((DescendingWithin "color" "note"))
+                                ;; 鍵の順に読む等号の欄(color で絞って鍵の綴りの順 — PostgreSQL の置き場は組の索引で辿る)。
+                                :keyed-within #("color")
                                 :states #("open" "held" "closed") :terminal #("closed") :initial "open"
                                 :operator-paths #("grant") :size-budget 400)
              "tickets" (TableDecl :name "tickets" :key-fields #("group" "id")

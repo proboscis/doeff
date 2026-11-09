@@ -131,7 +131,7 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
 
 ## 表の定義
 
-`TableDecl(name, key_fields, fields, indexes, descending, descending_within, state_field, states, terminal, initial, operator_paths, retention, size_budget, bulk)`
+`TableDecl(name, key_fields, fields, indexes, descending, descending_within, keyed_within, state_field, states, terminal, initial, operator_paths, retention, size_budget, bulk)`
 
 - `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書く書き手の名の tuple)の tuple。定義した欄はこれで全部
   (載っていない欄への書きは断る)。`writers` は宣言だけで、置き場の書きの判断は書き手の名では断らない(#2994)。
@@ -142,6 +142,9 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
   (`equal` は `indexes` の欄・`descending` は `descending` の欄)で、PostgreSQL の置き場は組ごとに等号の欄の式を前に置いた並べる式の
   索引を張り、絞りに合う行の 1 頁だけを辿る(組の無い読みは、絞りの欄の索引と上から読む欄の索引を組んで位置より下の当たる行を全部
   読み、並べ替える)。
+- `keyed_within`: 速さだけの宣言(repr に出さない)。等号の欄で絞って鍵の綴りの順に頁を読む読み(`where` の等号・並べる欄の無い
+  `ListRows`)の等号の欄の tuple(`indexes` の欄)で、PostgreSQL の置き場は欄ごとに等号の欄の式と鍵の綴りの順の索引を張り、絞りに合う行の
+  1 頁 + 1 行だけを辿る(宣言の無い読みは、絞りに合う行を全部読んで鍵で並べ替える — 頁の行の数でなく合う行の数だけ読む)。
 - `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
   終端の行はもう書けない。
 - `operator_paths`: operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)。

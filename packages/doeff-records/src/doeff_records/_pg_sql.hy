@@ -56,6 +56,8 @@
 ;;;   state_rows (等号の欄の表の欄の式, 並べる式 DESC NULLS LAST, key DESC)  表の等号の欄 × 上から読む欄の組
 ;;;                                  (TableDecl.descending-within)ごとに 1 つ — 等号で絞った上から読む読みが、絞った行の索引の順に 1 頁だけ
 ;;;                                  辿る(下の註)
+;;;   state_rows (等号の欄の表の欄の式, key COLLATE "C")  表の鍵の順に読む等号の欄(TableDecl.keyed-within)ごとに 1 つ — 等号で絞った
+;;;                                  鍵の綴りの順の頁読みが、絞った行の鍵の順に 1 頁 + 1 行だけ辿る(下の註)
 ;;;   state_rows (ledger, key COLLATE "C")  鍵の綴りの順の頁読み(list-rows-statement の ledger = :ledger と key COLLATE "C" > :after・
 ;;;                                  ORDER BY key COLLATE "C")が索引の範囲を 1 頁 + 1 行だけ辿る(下の註)
 ;;; 欄の式の索引は表の欄の式の索引: 宣言した表 1 つ × 欄 1 つに、表の欄の式
@@ -99,6 +101,15 @@
 ;;; (2026-10-23 — 6 万行の表の 9 千行の値 1 つの続きの頁が 1.6 秒・本番の冷えた buffer で読みの期限を越えた)。等号の欄の表の欄の式
 ;;; (table-field-expression)を前に置いた組の索引は、等号の値の範囲を並べる式の順に 1 頁 + 1 行だけ辿る(同じ置き場で 18 ms)。式は読みの文の
 ;;; 等号の条件と並べる式と同じ 1 か所から作る(字面が揃うので、文を変えずに planner が選ぶ)。
+;;; 等号の欄 × 鍵の綴りの順の索引(2026-11-10): 等号の欄で絞った鍵の綴りの順の頁読み(list-rows-statement の `<表の欄の式> = :w` と
+;;; ORDER BY key COLLATE "C")は、表の欄の式の索引 (式, updated_at) では鍵の順に辿れず、頁ごとに絞りに合う行を全部 heap から読んで並べ替えた
+;;; (本番の 474 万行の置き場の 9.7 万行の表で、状態の値 1 つに合う 6.1 万行の 1 頁が heap の 3.3 万頁・別の値の 3.2 万行の 1 頁が 2.5 万頁を
+;;; 読み、頁の数だけ同じ読みを繰り返した。置き場の volume の読みは 1 頁約 5 ms なので、postgres を起こし直した後の冷えた buffer では 1 頁が
+;;; 文の上限 60 秒を越えた)。state_rows は全部の表の行を 1 つの heap に混ぜて持つので、表 1 つの行の読みは行ごとにばらばらの頁の読みに
+;;; なり、読む行の数がそのまま読みの秒になる。組の索引は等号の値の範囲を鍵の順に 1 頁 + 1 行だけ辿り、読む行を絞りに合う行の数でなく
+;;; 頁の行の数で縛る。表の欄の式の索引を (式, key) に替えない訳: 終端の行の読み(terminal-rows-statement)が後ろの列 updated_at の範囲で
+;;; 引き、全部の宣言の索引の作り直しは置き場の heap を索引の数だけ読み直す。鍵の順に読む欄だけを宣言で選んで足す(上から読む欄と同じ形)。
+;;; 値の組の絞り(where-any の IN)は値ごとの範囲を鍵の順に繋げないので、この索引では辿らない(前と同じ読み)。
 ;;; 上から読む索引を部分索引にする(2026-10-24): 上から読む欄の索引と組の索引は述語 `<並べる式> IS NOT NULL` の部分索引(名 = op_・wp_)。
 ;;; 前の形(ox_・ow_)は全部の行の索引で、他の表の行の項 (NULL, key) が鍵の綴りの位置に入るので、どの表の行の書きも 1 本ごとに索引の
 ;;; 葉の 1 頁をばらばらの位置で触った(本番の 150 万行の置き場で 9 本・2.5 GB — 同じ置き場の表ごとの索引の 3 割・読みは 2 日で 47 回。
@@ -216,12 +227,13 @@
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
 ;; 旧い形の索引の名の接頭辞の後ろ(index-name の ix_<欄の指紋> と table-index-name の ix_<欄の指紋>_<表の指紋> — retired-index?)。
 (val RETIRED-INDEX-PATTERN (re.compile "ix_[0-9a-f]{12}(_[0-9a-f]{12})?"))
-;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fp_・ordered-index-name の op_・ordered-within-index-name の wp_ —
+;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fp_・ordered-index-name の op_・ordered-within-index-name の wp_・
+;; keyed-within-index-name の kp_ —
 ;; どれも <形>_<欄か欄の組の指紋>_<表の指紋>。bulk-pending-index-name の bp_<表の指紋> — table-shaped-index?)。ox_・ow_ は上から読む索引の前の形(全部の行の索引 — 頭の註の
 ;; 「上から読む索引を部分索引にする」)の名、fx_・ft_ は表の欄の式の索引の前の形(式 1 つの索引と全部の行の 2 列の索引 — 頭の註の
 ;; 「表の欄の式の索引の項を書きの刻の順に並べる」「表の欄の式の索引を部分索引にする」)の名で、今の宣言は作らないので、索引の用意が今の
 ;; 宣言に無い物として外す。
-(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fp|ft|fx|ox|ow|op|wp)_[0-9a-f]{12}_[0-9a-f]{12}|bp_[0-9a-f]{12}"))
+(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fp|ft|fx|ox|ow|op|wp|kp)_[0-9a-f]{12}_[0-9a-f]{12}|bp_[0-9a-f]{12}"))
 (val DEFAULT-PREFIX "records_")
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
@@ -591,6 +603,32 @@
                  :sampled True))
 
 
+(defk keyed-within-index-name [prefix table equal-field]
+  {:pre [(: prefix str) (: table str) (: equal-field str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の等号の欄 equal-field × 鍵の綴りの順の索引(頭の註)の名を作るため(接頭辞 31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
+  (<- field-digest (digest-of equal-field))
+  (<- table-digest (digest-of table))
+  (.format "{}kp_{}_{}" prefix field-digest table-digest))
+
+
+(defk keyed-within-index [prefix table equal-field]
+  {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: equal-field str)] :post [(: % DeclaredIndex)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の等号の欄 equal-field で絞って鍵の綴りの順に読む欄(TableDecl.keyed-within)の索引 state_rows (表の欄の式, key COLLATE \"C\")
+   WHERE <表の欄の式> IS NOT NULL を作るため(頭の註 — 速さだけの索引: 無くても同じ行を返すので、ListRows を待たせない)。式は読みの文の
+   等号の条件(where-condition の table-field-expression)と同じ 1 か所から作る。見積もりは欄の索引の式の統計(sampled — 表の標本が取る)。"
+  (<- name (keyed-within-index-name prefix table equal-field))
+  (<- equal (table-field-expression "" table equal-field))
+  (DeclaredIndex :name name :relation "state_rows"
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({q}, key COLLATE \"C\") WHERE {q} IS NOT NULL"
+                                :i name :p prefix :q equal)
+                 :serves #()
+                 :scoped #()
+                 :aliases #()
+                 :sampled True))
+
+
 (defk bulk-pending-condition [table]
   {:pre [(: table str) (.match TABLE-NAME-PATTERN table)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
@@ -815,7 +853,8 @@
    データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・表の名の順の状態の欄の式。状態の欄の索引は、
    保持の期限の在る表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄が、その表の索引の欄に
    無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。続いて表の名の順・欄の名の順の上から読む欄の索引(頭の註)。
-   続いて表の名の順・(等号の欄, 上から読む欄) の順の等号の欄 × 上から読む欄の組の索引(頭の註)。
+   続いて表の名の順・(等号の欄, 上から読む欄) の順の等号の欄 × 上から読む欄の組の索引(頭の註)。続いて表の名の順・欄の名の順の等号の欄 ×
+   鍵の綴りの順の索引(頭の註)。
    続いて鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。続いて覚えの外しの索引 retired_keys (ledger, remembered_at)
    (頭の註の retired_keys — forget-keys-statement が引く)。続いて行の書きの冪等キーの覚えの外しの索引 write_keys (remembered_at)
    (頭の註の write_keys — forget-write-keys-statement が引く)。最後に大きい欄を宣言した表の名の順の分けていない行の索引(頭の註の
@@ -852,6 +891,12 @@
   (for [#(table equal field) within-pairs]
     (<- within-made (ordered-within-index p table equal field))
     (:= ordered (+ ordered #(within-made))))
+  (val keyed-fields (lfor table (sorted schema.tables)
+                          field (sorted (. (get schema.tables table) keyed-within))
+                          #(table field)))
+  (for [#(table field) keyed-fields]
+    (<- keyed-made (keyed-within-index p table field))
+    (:= ordered (+ ordered #(keyed-made))))
   (var pending #())
   (for [table (sorted schema.tables)]
     (when (. (get schema.tables table) bulk)

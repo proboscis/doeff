@@ -190,11 +190,14 @@
    descending-within = 等号の欄で絞って上から読む欄で並べる読み(ListRows の where の等号 + descending-by)の欄の組
    (DescendingWithin)の tuple(速さだけの宣言 — PostgreSQL の置き場が組ごとに、等号の欄の式を前に置いた並べる式の索引を張り、絞った行の 1 頁だけを辿る。
    等号の欄は indexes に・上から読む欄は descending に在る欄。答えを変えないので repr に出さない — 表の要約を変えない)/
+   keyed-within = 等号の欄で絞って鍵の綴りの順に頁を読む読み(ListRows の where の等号・並べる欄の無い読み)の等号の欄の tuple(速さだけの
+   宣言 — PostgreSQL の置き場が欄ごとに、等号の欄の式を前に置いた鍵の綴りの順の索引を張り、絞った行の 1 頁 + 1 行だけを辿る。欄は indexes に
+   在る欄。答えを変えないので repr に出さない — 表の要約を変えない)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
    operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)/
    bulk = 大きい欄の名の tuple(既定 = 空): 置き場が行の値のうちその欄を別の所(PostgreSQL の state_rows の列 bulk)に置いてよい欄で、
    ListRows の fields が大きい欄を 1 つも含まなければ置き場はその本体を読まない。読みの答え(ReadRow・ReadBatch・fields の無い ListRows・
-   WatchChanges)は分けても同じ値。鍵の欄・索引の欄・上から読む欄・等号の欄(descending-within)・状態の欄(states が在る時の state-field)は
+   WatchChanges)は分けても同じ値。鍵の欄・索引の欄・上から読む欄・等号の欄(descending-within・keyed-within)・状態の欄(states が在る時の state-field)は
    大きい欄にできない — どれも置き場が SQL の式で payload から読む欄。大きい欄の where・where-any は索引の欄でないので NotIndexed
    (admission.where-refusal)。repr は空なら出さない(空の表の要約〔schema_digest〕を変えない — 要約は空でない bulk を足して綴る)。"
   (#^ str name)
@@ -203,6 +206,7 @@
   (setv #^ (get tuple #(str ...)) indexes #())
   (setv #^ (get tuple #(str ...)) descending (field :default #() :repr False))
   (setv #^ (get tuple #(DescendingWithin ...)) descending-within (field :default #() :repr False))
+  (setv #^ (get tuple #(str ...)) keyed-within (field :default #() :repr False))
   (setv #^ str state-field "state")
   (setv #^ (get tuple #(str ...)) states #())
   (setv #^ (get tuple #(str ...)) terminal #())
@@ -242,6 +246,12 @@
         (raise (ValueError (.format "組 {!r} の等号の欄が indexes に無い" pair))))
       (when (not-in pair.descending self.descending)
         (raise (ValueError (.format "組 {!r} の上から読む欄が descending に無い" pair)))))
+    (checked-names self.keyed-within "TableDecl.keyed_within")
+    (when (!= (len self.keyed-within) (len (set self.keyed-within)))
+      (raise (ValueError (.format "TableDecl.keyed_within の欄が重なる: {!r}" self.keyed-within))))
+    (for [name self.keyed-within]
+      (when (not-in name self.indexes)
+        (raise (ValueError (.format "鍵の順に読む等号の欄 {!r} が indexes に無い" name)))))
     (checked-names self.operator-paths "TableDecl.operator_paths")
     (for [name self.operator-paths]
       (when (not (self.declares name)) (raise (ValueError (.format "承認の欄 {!r} が fields に無い" name))))
