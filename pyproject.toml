@@ -484,7 +484,10 @@ tests = ["tests/test_docs_page_examples.py"]
 # not select it. 2.0 s (14 tests, 6 children, pytest time, load about 39, 2026-10-22 conversation Pod).
 [[tool.doeff.contract-tests]]
 prefix = "docs/articles/algebraic-effects-in-python.md"
-tests = ["tests/test_docs_article_algebraic_effects.py"]
+tests = [
+    "tests/test_docs_article_algebraic_effects.py",
+    "tests/test_docs_article_yield_and_async.py",
+]
 
 [[tool.doeff.contract-tests]]
 prefix = "examples/effects_tour/"
@@ -500,17 +503,14 @@ tests = ["tests/test_docs_article_algebraic_effects.py"]
 
 # A change to the second English post (yield and async) or to any of its example files (examples/yield_and_async/) runs the
 # test that the post's code blocks match the example files as printed. The test also reads the first post (each links the
-# other), so a change to the first post selects it too. The test reads the examples by path, so import reverse-deps miss it.
+# other), so a change to the first post selects it too (listed in the first post's row above: the table allows one row per
+# prefix). The test reads the examples by path, so import reverse-deps miss it.
 [[tool.doeff.contract-tests]]
 prefix = "docs/articles/yield-and-async.md"
 tests = ["tests/test_docs_article_yield_and_async.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "examples/yield_and_async/"
-tests = ["tests/test_docs_article_yield_and_async.py"]
-
-[[tool.doeff.contract-tests]]
-prefix = "docs/articles/algebraic-effects-in-python.md"
 tests = ["tests/test_docs_article_yield_and_async.py"]
 
 # Runs the examples of the page defining doeff's explanatory axis (what is algebraic effects and what is a usage example — initiative doeff-publish, milestone 17).
