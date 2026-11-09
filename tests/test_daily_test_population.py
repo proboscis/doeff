@@ -136,6 +136,12 @@ EXCLUDED: dict[str, str] = {
         " installed, daily through tests/test_verify_core_install.py and .github/workflows/core-install-from-pypi.yml"
         " -- placed under the root it would also run under the root conftest.py and pyproject.toml pytest settings"
     ),
+    "examples/effects_tour/test_trading.py": (
+        "The tests of trading.py, the example of the third article \"Time\", that users run with `pytest` next to trading.py (the dir's pytest.ini makes it the"
+        " pytest root). tools/verify_core_install.py (TOUR_TEST_FILES) runs it in a dir copied from examples/effects_tour with only doeff and pytest"
+        " installed, daily through .github/workflows/core-install-from-pypi.yml"
+        " -- placed under the root it would also run under the root conftest.py and pyproject.toml pytest settings"
+    ),
 }
 
 

@@ -41,7 +41,8 @@ For each Python version:
 
 9. Of the examples of the article "Algebraic effects for Python", run monitor.py, which includes the article's production stack (`real` - real time and await_handler), and
    spend.py in the copied dir, and check that they exit with 0 and that monitor.py prints the production stack output (the `-- real: ...` heading and the answer) last.
-   Run trading.py (virtual clock and wall clock layers), the example of the third article "Time", the same way and check the output of the last layer.
+   Run trading.py (virtual clock and wall clock layers), the example of the third article "Time", the same way and check the output of the last layer, and run
+   its tests (test_trading.py) with the pytest that 8 added, in the same copied dir.
    The article says "every example runs with doeff 0.8.0 alone", so this also runs on the PyPI version (a version that does not match the
    await_handler call style fails with TypeError).
 
@@ -362,6 +363,8 @@ TOUR_SCRIPTS = {
     # Example of the third article "Time": the heading of the last three layers (virtual clock, wall clock, async exchange) and the last line (PnL with a fixed seed)
     "trading.py": ("8. live: the same strategy over an async exchange on the wall clock (60 bars)", "  -> pnl 6.96"),
 }
+# The tests run with pytest in the copied dir (the dir's pytest.ini makes it pytest's root). test_spire.py runs in its own dir (SPIRE_TEST_FILES).
+TOUR_TEST_FILES = ("test_trading.py",)
 
 
 @dataclass(frozen=True)
@@ -1186,13 +1189,13 @@ def article_tests_failure(result: subprocess.CompletedProcess[str]) -> str | Non
     )
 
 
-def spire_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """Sentence saying the pytest outcome of test_spire.py did not end with 0 and a last line that is a passed summary with no failures, skips, or warnings (None when it did)."""
+def example_tests_failure(test_file: Path, result: subprocess.CompletedProcess[str]) -> str | None:
+    """Sentence saying the pytest outcome of one example test file did not end with 0 and a last line that is a passed summary with no failures, skips, or warnings (None when it did)."""
     lines = result.stdout.splitlines()
     if result.returncode == 0 and lines and PASSED_SUMMARY.fullmatch(lines[-1]):
         return None
     return (
-        f"pytest of {SPIRE_TEST_FILES[0]} did not pass everything with exit code 0 (exit code {result.returncode})\n"
+        f"pytest of {test_file} did not pass everything with exit code 0 (exit code {result.returncode})\n"
         f"{result.stdout}{result.stderr}"
     )
 
@@ -1304,7 +1307,7 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         place / SPIRE_FILE.stem,
         ["-m", "pytest", "-q", "-W", "error", "-p", "no:cacheprovider"],
         environment,
-        spire_tests_failure,
+        functools.partial(example_tests_failure, SPIRE_TEST_FILES[0]),
         timeout,
     )
     print_result("test_spire.py next to spire.py passes everything with only the four core packages and pytest", spire_tests)
@@ -1338,7 +1341,10 @@ def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> 
 
 
 def check_tour_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """Run two scripts from the first article's example dir, from a copy in the core-only venv, and return sentences naming what failed (empty when it passes)."""
+    """Run the scripts of TOUR_SCRIPTS and the tests of TOUR_TEST_FILES from a copy of the article example dir in the core-only venv, and return sentences naming what failed (empty when it passes).
+
+    The tests use the pytest that check_article_examples added to the venv, so call it after that.
+    """
     directory = place / TOUR_DIRECTORY.name
     shutil.copytree(REPO / TOUR_DIRECTORY, directory, ignore=shutil.ignore_patterns("__pycache__"))
     print(
@@ -1356,6 +1362,17 @@ def check_tour_examples(installed: Installed, place: Path, timeout: float) -> li
             timeout,
         )
         print_result(f"{name} passes and prints through the article's production stack", failure)
+        failures.extend([] if failure is None else [failure])
+    for name in TOUR_TEST_FILES:
+        failure = _article_run_failure(
+            installed,
+            directory,
+            ["-m", "pytest", "-q", "-W", "error", "-p", "no:cacheprovider", name],
+            environment,
+            functools.partial(example_tests_failure, TOUR_DIRECTORY / name),
+            timeout,
+        )
+        print_result(f"{name} passes everything with only the four core packages and pytest", failure)
         failures.extend([] if failure is None else [failure])
     return failures
 

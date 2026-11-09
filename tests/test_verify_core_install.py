@@ -422,6 +422,13 @@ def test_the_tour_check_runs_the_files_whose_production_stack_the_article_shows(
     assert "run(real(" in main
 
 
+def test_the_tool_runs_every_test_file_of_the_tour_dir() -> None:
+    # The tour dir is outside the daily populations (tests/test_daily_test_population.py EXCLUDED), so a test file the tool does not name has no runner.
+    tour = ROOT / tool.TOUR_DIRECTORY
+    named = {*tool.TOUR_TEST_FILES, *(path.name for path in tool.SPIRE_TEST_FILES)}
+    assert {path.name for path in tour.glob("test_*.py")} <= named
+
+
 @pytest.mark.parametrize("page", ["README.md", "docs/index.md"])
 def test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it(page: str) -> None:
     # The page that states the promise the tool checks (it runs with just pip install doeff) must point to the very example being checked.
