@@ -6,7 +6,9 @@ This post stacks such handlers around one small program, one layer at a time; if
 
 First, the idea of doeff in a minute: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
 
-[![Video (1:04): what doeff is: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](../assets/videos/article-concept.jpg)](../assets/videos/article-concept.mp4)
+[![Video (1:04): what doeff is: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/aYGCqwXx0hk/maxresdefault.jpg)](https://youtu.be/aYGCqwXx0hk)
+
+[The same video as an mp4 file (1:04)](../assets/videos/article-concept.mp4)
 
 Then the card fight this post builds on, as one function with handlers stacked around it:
 
@@ -380,7 +382,7 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 ### Layer 4: a Monte Carlo bot
 
-[![Video (1:11): a Monte Carlo bot in 30 lines, whose handler runs the real battle to answer each Choose](https://img.youtube.com/vi/jnhtpUeLQLg/maxresdefault.jpg)](https://youtu.be/jnhtpUeLQLg)
+[![Video (1:11): a Monte Carlo bot in 30 lines, whose handler runs the real battle to answer each Choose](https://img.youtube.com/vi/FYihcZ_6cVc/maxresdefault.jpg)](https://youtu.be/FYihcZ_6cVc)
 
 [![The Monte Carlo bot answers one Choose, step by step: the fight that asked waits as k while the handler runs battle itself from each candidate move, counts the wins and resumes k](../assets/figures/monte-carlo.gif)](../assets/figures/monte-carlo.gif)
 
@@ -435,7 +437,7 @@ print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
 ### Layer 5: a hundred fights, one task each
 
-[![Video (1:42): a hundred fights, the same program under different handlers](https://img.youtube.com/vi/ioJ5E_XrGNg/maxresdefault.jpg)](https://youtu.be/ioJ5E_XrGNg)
+[![Video (1:42): a hundred fights, the same program under different handlers](https://img.youtube.com/vi/45ue4QQt4PQ/maxresdefault.jpg)](https://youtu.be/45ue4QQt4PQ)
 
 [![A hundred fights as tasks on one thread, step by step: each Spawn runs a battle to its end, Gather gives back the results, the random bot wins 73 and the Monte Carlo bot all 100, and one handler outside hears every Played](../assets/figures/hundred-fights.gif)](../assets/figures/hundred-fights.gif)
 

@@ -8,7 +8,7 @@ If you write asyncio code, the first question is why. Python already has syntax 
 
 Both are coroutines, and they pause the same way. They differ in two things, and algebraic effects has a name for each. One is where the request goes when the code pauses: which handler receives the operation. The other is how the paused code goes on: what the receiver can do with the continuation. This post takes them one at a time, with code you can run.
 
-[![Video (1:33): at an await the call names the code that answers, and at a yield it names an operation that the nearest handler answers](https://img.youtube.com/vi/DHo_GVBgwO8/maxresdefault.jpg)](https://youtu.be/DHo_GVBgwO8)
+[![Video (1:33): at an await the call names the code that answers, and at a yield it names an operation that the nearest handler answers](https://img.youtube.com/vi/TOjCbKqjIEM/maxresdefault.jpg)](https://youtu.be/TOjCbKqjIEM)
 
 [The same video as an mp4 file (1:33)](../assets/videos/article2-opening.mp4)
 
@@ -189,7 +189,7 @@ asyncio does have a tool for "this call alone": a `contextvars.ContextVar`, set 
 
 ## How the paused code goes on
 
-[![Video (1:27): how the paused code goes on is the decision of the handler that holds k](https://img.youtube.com/vi/f0EJno4YhTg/maxresdefault.jpg)](https://youtu.be/f0EJno4YhTg)
+[![Video (1:27): how the paused code goes on is the decision of the handler that holds k](https://img.youtube.com/vi/uBHmF58UqGE/maxresdefault.jpg)](https://youtu.be/uBHmF58UqGE)
 
 [The same video as an mp4 file (1:27)](../assets/videos/article2-paused-code.mp4)
 

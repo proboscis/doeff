@@ -9,8 +9,10 @@ link to the mp4, and on the docs site a hook (tools/docs_site/hooks.py) replaces
 2. The hook replaces the link with a video element that uses that image as the poster.
 3. Narration voice is made with the OpenAI text-to-speech API, not a local speech-synthesis model. If this is reverted, fix this test and tools/docs-video/tts.py
    in the same change.
-4. At the head of the sections for the 3 article videos, a video service thumbnail link and a one-line click-through figure follow, and the hook replaces the link with a player.
-   The README has the GitHub-attached video as a bare single line (the GitHub screen turns it into a player), and has a link to the article.
+4. At the head of the first article, the concept video (a video service thumbnail link and a link to the same video as an mp4 file) comes before the
+   card fight video. At the head of the sections for the 3 article videos, a video service thumbnail link and a one-line click-through figure follow, and the hook replaces the link with a player.
+   The README has the GitHub-attached videos (the concept video, then the card fight video) as bare single lines (the GitHub screen turns each into
+   a player), and has a link to the article.
    The second article ("Yield and async") has its 2 video service thumbnail links at the head of the post and of its section on how the paused
    code goes on, each followed by a link to the same video as an mp4 file.
 5. Every mp4 in docs/assets/videos has its subtitle files (<name>.vtt and <name>.srt) next to it, and they say every line of its narration.json once, in order,
@@ -148,8 +150,8 @@ def test_the_three_article_videos_sit_above_their_figures() -> None:
     article = ARTICLE.read_text(encoding="utf-8")
     for video_id, figure in (
         ("BRYMn0aoiEk", "article-opening"),
-        ("jnhtpUeLQLg", "monte-carlo"),
-        ("ioJ5E_XrGNg", "hundred-fights"),
+        ("FYihcZ_6cVc", "monte-carlo"),
+        ("45ue4QQt4PQ", "hundred-fights"),
     ):
         pair = re.compile(
             rf"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/{video_id}/maxresdefault\.jpg\)\]\(https://youtu\.be/{video_id}\)\n\n"
@@ -162,8 +164,8 @@ def test_the_three_article_videos_sit_above_their_figures() -> None:
 def test_the_two_videos_of_the_second_article_sit_at_their_section_heads() -> None:
     article = ARTICLE_2.read_text(encoding="utf-8")
     for video_id, name, before in (
-        ("DHo_GVBgwO8", "article2-opening", "## The same function, written twice"),
-        ("f0EJno4YhTg", "article2-paused-code", None),
+        ("TOjCbKqjIEM", "article2-opening", "## The same function, written twice"),
+        ("uBHmF58UqGE", "article2-paused-code", None),
     ):
         lines = (
             rf"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/{video_id}/maxresdefault\.jpg\)\]\(https://youtu\.be/{video_id}\)\n\n"
@@ -304,13 +306,19 @@ def test_the_hook_gives_a_captioned_video_its_track(tmp_path: Path) -> None:
 
 def test_the_concept_video_comes_before_the_card_fight_video() -> None:
     article = ARTICLE.read_text(encoding="utf-8")
-    concept = article.find("](../assets/videos/article-concept.mp4)")
-    assert 0 <= concept < article.find("https://youtu.be/BRYMn0aoiEk"), (
+    concept = re.search(
+        r"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/aYGCqwXx0hk/maxresdefault\.jpg\)\]\(https://youtu\.be/aYGCqwXx0hk\)\n\n"
+        r"\[The same video as an mp4 file \(\d:\d\d\)\]\(\.\./assets/videos/article-concept\.mp4\)\n",
+        article,
+        re.MULTILINE,
+    )
+    assert concept and concept.start() < article.find("https://youtu.be/BRYMn0aoiEk"), (
         "the first article does not link the article-concept video above the article-opening video"
     )
     readme = README.read_text(encoding="utf-8")
-    concept = readme.find("docs/assets/videos/article-concept.mp4")
-    assert 0 <= concept < readme.find("https://github.com/user-attachments/assets/"), (
-        "README does not link the article-concept video above the attached card fight video"
+    attached = re.findall(r"^https://github\.com/user-attachments/assets/([0-9a-f-]+)$", readme, re.MULTILINE)
+    assert attached[:2] == ["be50116f-4af5-4925-a4ec-7045dc589b07", "ff86b076-b18a-4082-9319-6b5c9f21e712"], (
+        "README does not attach the article-concept video above the attached card fight video"
     )
+    assert 0 <= readme.find("docs/assets/videos/article-concept.mp4") < readme.find(f"assets/{attached[1]}")
     assert (VIDEOS / "article-concept.mp4").is_file()
