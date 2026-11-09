@@ -832,9 +832,9 @@
   #(left running))
 
 
-(defk observe-envs [settings waiting pending failed]
-  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: failed dict)] :post [(: % tuple)]}
-  "準備の子の終わりと期限を見て記録を進め、待ちを起こし、root の観測を返すため。答え = #(待ち 準備中 失敗 観測の tuple)。"
+(defk observe-envs [settings waiting pending failed refused]
+  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: failed dict) (: refused dict)] :post [(: % tuple)]}
+  "準備の子の終わりと期限を見て記録を進め、待ちを起こし、root の観測を返すため(refused = 先の組みの断りの記録 — 読むだけ)。答え = #(待ち 準備中 失敗 観測の tuple)。"
   (<- now-ms int (now-epoch-ms))
   (<- sampled dict (sample-layers settings pending))
   (var running sampled)
@@ -873,10 +873,12 @@
   (<- launched tuple (launch-waiting settings waiting running))
   (val left (get launched 0))
   (val now-running (get launched 1))
-  (<- ready tuple (ready-views settings (frozenset (+ (list now-running) (list failures)))))
+  (<- ready tuple (ready-views settings (frozenset (+ (list now-running) (list failures) (list refused)))))
   (val views (tuple (+ (lfor key (+ (list now-running) (list left)) (CodeView key CodeState.PREPARING))
                        (lfor #(key #(failure failed-ms)) (.items failures)
                              (CodeView key CodeState.FAILED :detail failure.detail :failed-ms failed-ms :failure failure))
+                       (lfor #(key #(refusal refused-ms)) (.items refused)
+                             (CodeView key CodeState.REFUSED :detail refusal.detail :failed-ms refused-ms :failure refusal))
                        (list ready))))
   #(left now-running failures views))
 
@@ -884,12 +886,13 @@
 (defhandler env-host [#^ EnvSettings settings]
   ;; 引数に残す理由: root の置き場と準備の道具は worker の process ごとの設定(main が引数から作る)。
   ;; 記録: 待ち(キー → WaitingEnv — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
-  ;; 固定の集合 pinned-roots(最後に受けた SweepEnvs の固定 — 判断の側の statuses の held と別の物)・最後の掃除の終わりの時刻・
+  ;; 先の組みの断り(キー → #(EnvFailure 時刻) — 組みを始めていないので失敗と別に持つ)・固定の集合 pinned-roots(最後に受けた SweepEnvs の固定 — 判断の側の statuses の held と別の物)・最後の掃除の終わりの時刻・
   ;; 走っている掃除(数えか消し — 同時に 1 つ)・最後の数えの結び tally(RootsTally — まだ数えていなければ None・#3732)・prune の記録・
   ;; 最後の観測(heartbeat の名乗りが読む)・最後に名乗った disk の条件(None = まだ名乗っていない — env-capacity の戻りの幅が読む)。
   (session var waiting {})
   (session var pending {})
   (session var failed {})
+  (session var refused {})
   (session var pinned-roots (frozenset))
   (session var swept-ms 0)
   (session var sweeping None)
@@ -907,8 +910,8 @@
   (PrepareEnv [key runtime-env compile-jobs warm]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
     ;; 先読みと同じ停滞の長さ・走っている焼きの並べる数は変えない)、待っていれば job の頼み(焼きの並べる数も)に置き換える。先の組み(warm)は
-    ;; 始める前に空き・roots の上限・memory で断るかを判じ(warm-admission — #3748)、断れば失敗の記録に種類つきで置く(heartbeat の env-failed
-    ;; → 温める表の WarmFailure)。job の準備は断らない。
+    ;; 始める前に空き・roots の上限・memory で断るかを判じ(warm-admission — #3748)、断れば断りの記録に種類つきで置く(heartbeat の env-failed
+    ;; → 温める表の WarmFailure)。job の準備は断らない。断りの記録は完成の印の有無によらず頼みのたびに消す(他の世代が組んだ root を断りで隠さない)。
     (val wanted (WaitingEnv :runtime-env runtime-env :compile-jobs compile-jobs :warm warm))
     (cond
       (in key pending)
@@ -918,7 +921,8 @@
         (when (not warm)
           (:= waiting (| waiting {key wanted})))
       True
-        (do (<- root str (env-root settings key))
+        (do (:= refused (dfor #(k v) (.items refused) :if (!= k key) k v))
+            (<- root str (env-root settings key))
             (<- marker (read-marker root))
             (when (is marker None)
               (:= failed (dfor #(k v) (.items failed) :if (!= k key) k v))
@@ -931,14 +935,14 @@
               (match admission.refused
                 (EnvFailure)
                   (do (<- now-ms int (now-epoch-ms))
-                      (:= failed (| failed {key #(admission.refused now-ms)})))
+                      (:= refused (| refused {key #(admission.refused now-ms)})))
                 None
                   (do (<- launched tuple (launch-waiting settings (| waiting {key wanted}) pending))
                       (:= waiting (get launched 0))
                       (:= pending (get launched 1)))))))
     (resume None))
   (ObserveEnvs []
-    (<- observed tuple (observe-envs settings waiting pending failed))
+    (<- observed tuple (observe-envs settings waiting pending failed refused))
     (:= waiting (get observed 0))
     (:= pending (get observed 1))
     (:= failed (get observed 2))
@@ -954,7 +958,7 @@
     ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件
     ;; (形は env-report — sim の宿と同じ関数)。
     (when (is views None)
-      (<- observed tuple (observe-envs settings waiting pending failed))
+      (<- observed tuple (observe-envs settings waiting pending failed refused))
       (:= waiting (get observed 0))
       (:= pending (get observed 1))
       (:= failed (get observed 2))

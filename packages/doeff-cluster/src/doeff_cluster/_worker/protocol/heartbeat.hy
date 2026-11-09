@@ -19,7 +19,8 @@
         bare (fn [k] (cut k (len ENV-KEY-PREFIX) None))]
     {"ready" (sorted (gfor v roots :if (= v.state CodeState.READY) (bare v.revision)))
      "preparing" (sorted (gfor v roots :if (= v.state CodeState.PREPARING) (bare v.revision)))
-     "failed" (lfor v roots :if (and (= v.state CodeState.FAILED) (is-not v.failure None))
+     ;; 先の組みの断り(REFUSED)も種類つきで名乗る(温める表の WarmFailure — 回の Program が AwaitWarm で読む)。
+     "failed" (lfor v roots :if (and (in v.state #(CodeState.FAILED CodeState.REFUSED)) (is-not v.failure None))
                     {"key" (bare v.revision) "kind" v.failure.kind.value "detail" v.failure.detail
                      "retryable" v.failure.retryable})
      "memoryUnmeasured" (sorted (gfor v roots :if (in v.revision unmeasured) (bare v.revision)))

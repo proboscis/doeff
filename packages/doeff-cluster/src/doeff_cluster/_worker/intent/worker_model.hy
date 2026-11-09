@@ -50,17 +50,19 @@
 
 
 (defclass CodeState [Enum]
-  (setv PREPARING "preparing" READY "ready" FAILED "failed"))
+  ;; REFUSED = 先の組みを始める前に worker が断った root(core/env_upkeep の warm-refusal)。組みを始めていないので準備の失敗ではなく、
+  ;; 宣言された job の準備は断りの撃ち直しの間を待たない。
+  (setv PREPARING "preparing" READY "ready" FAILED "failed" REFUSED "refused"))
 
 
 (defclass [(dataclass :frozen True)] CodeView []
-  "revision ごとに展開したコードの観測。path は READY の時だけ在る。failed-ms = FAILED になった時刻(epoch ms)。"
+  "revision ごとに展開したコードの観測。path は READY の時だけ在る。failed-ms = FAILED か REFUSED になった時刻(epoch ms)。"
   (#^ str revision)
   (#^ CodeState state)
   (setv #^ (| str None) path None)
   (setv #^ str detail "")
   (setv #^ (| int None) failed-ms None)
-  ;; 実行環境の root の準備の失敗(env の job だけ)。kind と一時かを coordinator へ運ぶ(置き直しと答えの型)。
+  ;; 実行環境の root の準備の失敗か先の組みの断り(env の job だけ)。kind と一時かを coordinator へ運ぶ(置き直しと答えの型)。
   (setv #^ (| EnvFailure None) failure None)
 
   (defn #^ None __post-init__ [self]

@@ -710,9 +710,9 @@
 
 (defk refused-kind [seen]
   {:pre [(: seen WarmSeen)] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "観測が恒久の失敗なら種類の綴りを返すため(失敗でなければ None)。"
+  "観測が恒久の入口の断りなら種類の綴りを返すため(断りでなければ None)。"
   (match seen.view
-    (CodeView :state CodeState.FAILED :failure failure) :if (and (is-not failure None) (not failure.retryable)) failure.kind.value
+    (CodeView :state CodeState.REFUSED :failure failure) :if (and (is-not failure None) (not failure.retryable)) failure.kind.value
     _ None))
 
 
@@ -737,6 +737,68 @@
   (val job-runs (ToolRuns))
   (<- (run-warm settings job-runs (LogLines) key text False))
   (assert (= (len job-runs.launches) 1) job-runs.launches))
+
+
+(defrecord AskedAfterRefusal
+  "先の組みの断りの後に job が同じ root を頼んだ見え方: refused / asked = 断りの直後と job の頼みの後の root の観測。"
+  (#^ (| CodeView None) refused)
+  (#^ (| CodeView None) asked))
+
+
+(defk ask-after-refusal [settings key text made]
+  {:pre [(: settings EnvSettings) (: key str) (: text str) (: made (| RuntimeEnv None))] :post [(: % AskedAfterRefusal)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "先の組みを断らせてから同じ root を job の準備として頼み、前後の観測を返すため(made = 断りの後に他の世代が組み上げた root の宣言 — None = 組まれていない)。"
+  (<- (swept-rounds (frozenset)))
+  (<- (PrepareEnv key text None :warm True))
+  (<- before tuple (ObserveEnvs))
+  (when (is-not made None)
+    (<- (made-root settings (cut key (len "env-") None) made 100 1000)))
+  (<- (PrepareEnv key text None :warm False))
+  (<- after tuple (ObserveEnvs))
+  (<- refused (| CodeView None) (view-of before key))
+  (<- asked (| CodeView None) (view-of after key))
+  (AskedAfterRefusal :refused refused :asked asked))
+
+
+(defk run-ask-after-refusal [settings runs key text made]
+  {:pre [(: settings EnvSettings) (: runs ToolRuns) (: key str) (: text str) (: made (| RuntimeEnv None))] :post [(: % AskedAfterRefusal)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "本物の file system の上の env-host 1 つで ask-after-refusal を回すため(断りと job の頼みが同じ記録を見る)。"
+  (<- seen AskedAfterRefusal (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler
+                                                        (inline-env-tool runs) (env-host settings)]
+                                          (ask-after-refusal settings key text made))))
+  seen)
+
+
+(deftest test-a-job-asking-for-a-refused-root-starts-preparing-at-once [tmp-path]
+  ;; 先の組みの断りは準備の失敗の記録に入らない(観測は REFUSED)。同じ env-host に job が同じ root を頼めば、その頼みで組みが始まる(観測は
+  ;; 準備中・準備の道具は 1 回だけ起きる)。
+  (val free (. (shutil.disk-usage tmp-path) free))
+  (<- settings EnvSettings (settings-at tmp-path :min-free-bytes (- free (// DEFAULT-ROOT-BYTES 2))))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val runs (ToolRuns))
+  (<- seen AskedAfterRefusal (run-ask-after-refusal settings runs key text None))
+  (assert (= seen.refused.state CodeState.REFUSED) seen)
+  (assert (= seen.asked.state CodeState.PREPARING) seen)
+  (assert (= (len runs.launches) 1) runs.launches))
+
+
+(deftest test-a-refusal-does-not-hide-a-root-another-generation-finished [tmp-path]
+  ;; 断りの後に他の世代が同じ root を組み上げた(完成の印が在る)台で job が頼めば、断りの記録は消えて READY と読める。印の有無で断りを
+  ;; 消し分けると REFUSED のまま残り、job は拍ごとに準備を撃ち続けて起きない。組み直しはしない(準備の道具は起きない)。
+  (val free (. (shutil.disk-usage tmp-path) free))
+  (<- settings EnvSettings (settings-at tmp-path :min-free-bytes (- free (// DEFAULT-ROOT-BYTES 2))))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val runs (ToolRuns))
+  (<- seen AskedAfterRefusal (run-ask-after-refusal settings runs key text fresh))
+  (assert (= seen.refused.state CodeState.REFUSED) seen)
+  (assert (= seen.asked.state CodeState.READY) seen)
+  (assert (= (len runs.launches) 0) runs.launches))
 
 
 (defk three-roots [settings small big]

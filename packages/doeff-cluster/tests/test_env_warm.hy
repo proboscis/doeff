@@ -50,8 +50,9 @@
 (import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs StartWarmChild]
         doeff_cluster._worker.intent.worker_model [WarmEnv WarmChildView WarmChildMark EnvDisk NotYetRead DeclarationRead] doeff_cluster [JobSpec] doeff_cluster [code-key])
-(import doeff_cluster [plan]
-        doeff_cluster._worker.core.policy [pinned-env-keys sweep-actions])
+(import doeff_cluster [plan statuses JobPhase]
+        doeff_cluster._worker.core.policy [pinned-env-keys sweep-actions]
+        doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.protocol.declared [task-spec])
 (import doeff_cluster._worker.core.bake_plan [BAKE-JOBS-CEILING cpu-limit-of])
 (import doeff_cluster [submit-detached-task])
@@ -550,7 +551,30 @@
   (val failed (WorldView #((CodeView warm.key CodeState.FAILED :detail "d" :failed-ms 0)) #()))
   (assert (= (! (plan 10 #() failed {} policy :warm #(warm))) #()) "失敗の直後は撃ち直さない")
   (assert (= (! (plan policy.code-retry-ms #() failed {} policy :warm #(warm)))
+             #((PrepareEnv warm.key warm.runtime-env None :warm True))))
+  ;; 入口の断りの撃ち直しの間は失敗と同じ(断りの判じ直しの間隔は変えない)。
+  (val refused (WorldView #((CodeView warm.key CodeState.REFUSED :detail "d" :failed-ms 0)) #()))
+  (assert (= (! (plan 10 #() refused {} policy :warm #(warm))) #()) "断りの直後は撃ち直さない")
+  (assert (= (! (plan policy.code-retry-ms #() refused {} policy :warm #(warm)))
              #((PrepareEnv warm.key warm.runtime-env None :warm True)))))
+
+
+(deftest test-a-job-on-a-warm-refused-root-prepares-at-once-but-a-failed-root-waits
+  ;; 先の組みの入口の断り(REFUSED)は job の準備の失敗ではない: 断りの直後でも job の準備を撃ち、job の行は env-failed でなく準備中を名乗る
+  ;; (恒久の env-failed を運ぶと coordinator が版の判定を Blocked にする)。反例: 本当の準備の失敗(FAILED)の job は今までどおり code-retry-ms を待つ。
+  (<- job-declared dict (declared-of "app-1"))
+  (<- spec (task-spec {"id" "t1" "revision" "" "versions" {} "program" SAMPLE-TASK-PROGRAM "runtimeEnv" job-declared}
+                       (Path "/tmp/tasks")))
+  (val policy (WorkerPolicy))
+  (val refusal (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :detail "断り" :retryable False))
+  (val refused (WorldView #((CodeView (code-key spec) CodeState.REFUSED :detail "断り" :failed-ms 0 :failure refusal)) #()))
+  (assert (= (! (plan 10 #(spec) refused {} policy)) #((PrepareEnv (code-key spec) spec.runtime-env None)))
+          "断りの直後でも job の準備を撃つ")
+  (val status (get (! (statuses 10 #(spec) refused {} policy)) 0))
+  (assert (= status.phase JobPhase.PREPARING) status)
+  (assert (is status.failure None) status)
+  (val failed (WorldView #((CodeView (code-key spec) CodeState.FAILED :detail "失敗" :failed-ms 0)) #()))
+  (assert (= (! (plan 10 #(spec) failed {} policy)) #()) "本当の失敗は間を置く"))
 
 
 (deftest test-the-worker-pins-running-desired-warm-and-preparing-roots-for-the-sweep

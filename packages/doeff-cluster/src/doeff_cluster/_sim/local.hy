@@ -1350,9 +1350,11 @@
 
 (defk code-view-of [preparation now]
   {:pre [(: preparation SimPreparation) (: now int)] :post [(: % CodeView)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "準備 1 つ → worker の観測(揃うまで PREPARING・失敗なら FAILED と失敗の kind・揃えば READY と path)にするため。"
+  "準備 1 つ → worker の観測(揃うまで PREPARING・先の組みの断りなら REFUSED と断りの kind・失敗なら FAILED と失敗の kind・揃えば READY と path)にするため。"
   (cond
     (< now preparation.ready-ms) (CodeView preparation.key CodeState.PREPARING)
+    preparation.refused (CodeView preparation.key CodeState.REFUSED :detail preparation.failure.detail
+                                  :failed-ms preparation.ready-ms :failure preparation.failure)
     (is-not preparation.failure None) (CodeView preparation.key CodeState.FAILED :detail preparation.failure.detail
                                                 :failed-ms preparation.ready-ms :failure preparation.failure)
     True (CodeView preparation.key CodeState.READY (+ "/sim/code/" preparation.key))))

@@ -48,7 +48,7 @@
    :tags {:context "worker" :role "judgment"}}
   "policy.hy の判断(plan・statuses)の答えが時刻だけで変わる最初の刻を知るため(頭の註の 9 種の刻)。world = 周の後の観測・
    records = 周の後の job ごとの記憶。"
-  (val codes (tuple (gfor code world.codes :if (= code.state CodeState.FAILED) (+ (or code.failed-ms 0) policy.code-retry-ms))))
+  (val codes (tuple (gfor code world.codes :if (in code.state #(CodeState.FAILED CodeState.REFUSED)) (+ (or code.failed-ms 0) policy.code-retry-ms))))
   (val probes (tuple (gfor probe world.probes :if (= probe.state ProbeState.FAILED) (+ (or probe.failed-ms 0) policy.code-retry-ms))))
   ;; backoff の起点は終わりの刻か、起こせなかった刻(policy の backoff-from)。
   (val backoffs (tuple (gfor record (.values records)

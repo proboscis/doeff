@@ -118,8 +118,8 @@
 
 
 ;; 先の組みの入口の断りは先の組みだけの判じで、宣言された job の準備は断られない(#3748)。断られた root の job を宣言すれば、その拍に
-;; 準備が撃たれる。失敗ケース: 断りを準備の失敗と同じ状態で読むと、job の準備が失敗の待ち(WorkerPolicy.code-retry-ms = 30 秒)に入り、
-;; 宣言の後 5 秒を過ぎても撃たれない(断りの直後に宣言した本番の回で 28〜77 秒待った)。
+;; 準備が撃たれる。失敗ケース: 断りを準備の失敗と同じ状態で読むと、job の行が恒久の env-failed になって AwaitReadiness が ServiceFailed で
+;; 返り、準備は失敗の待ち(WorkerPolicy.code-retry-ms = 30 秒)の間撃たれない(断りの直後に宣言した本番の回で 28〜77 秒見送った)。
 (val JOB-NEEDS (frozenset ["cluster-net"]))
 ;; 宣言から job の準備の始まりまでの許し(仮想の秒): 宣言が worker に届く数拍は入り、失敗の待ち 30 秒は入らない。
 (val DECLARE-SLACK-SECONDS 5.0)

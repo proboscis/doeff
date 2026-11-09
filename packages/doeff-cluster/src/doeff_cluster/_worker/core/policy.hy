@@ -221,7 +221,8 @@
   "spec のコードの木を用意する action(用意できていれば空)。準備に失敗した版は、間を置いてから作り直す。compile-jobs は prepare-action と同じ。"
   (setv code (code-of world (code-key spec)))
   (cond
-    (is code None) #((prepare-action spec compile-jobs))
+    ;; 先の組みの断り(REFUSED)は準備の失敗ではない — job の準備は断られないので、まだ準備していない root と同じく間を置かずに撃つ。
+    (or (is code None) (= code.state CodeState.REFUSED)) #((prepare-action spec compile-jobs))
     (and (= code.state CodeState.FAILED)
          (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec compile-jobs))
     True #()))
@@ -509,13 +510,13 @@
   {:pre [(: now int) (: warm tuple) (: world WorldView) (: job-actions tuple) (: policy WorkerPolicy)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
   "先読み(2026-09-26)の action を求めるため: 温める表の env を、job の準備を撃った後に準備し始める(準備済み・準備中なら何もしない・
-   失敗は code-retry-ms の後に撃ち直す)。同じ拍に job が同じ root の準備を撃っていれば撃たない(job の準備が先に立つ)。"
+   失敗と入口の断りは code-retry-ms の後に撃ち直す)。同じ拍に job が同じ root の準備を撃っていれば撃たない(job の準備が先に立つ)。"
   (val requested (sfor a job-actions :if (isinstance a PrepareEnv) a.key))
   (tuple (gfor w warm
                :setv code (code-of world w.key)
                :if (and (not-in w.key requested)
                         (or (is code None)
-                            (and (= code.state CodeState.FAILED)
+                            (and (in code.state #(CodeState.FAILED CodeState.REFUSED))
                                  (>= (- now (or code.failed-ms 0)) policy.code-retry-ms))))
                ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
                (PrepareEnv w.key w.runtime-env None :warm True))))
@@ -888,7 +889,8 @@
       (do
         (setv code (code-of world (code-key want)))
         (cond
-          (or (is code None) (= code.state CodeState.PREPARING)) JobPhase.PREPARING
+          ;; 先の組みの断り(REFUSED)は job の失敗ではない(coordinator へ env-failed を運ばない — 版の判定を Blocked にしない)。
+          (or (is code None) (in code.state #(CodeState.PREPARING CodeState.REFUSED))) JobPhase.PREPARING
           (and (= code.state CodeState.FAILED) (is-not code.failure None)) JobPhase.ENV-FAILED
           (= code.state CodeState.FAILED) JobPhase.CODE-FAILED
           (is-not (probe-failure world want) None) JobPhase.PROBE-FAILED

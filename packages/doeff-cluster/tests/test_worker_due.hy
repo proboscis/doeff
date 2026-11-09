@@ -13,7 +13,7 @@
         doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeState CodeView ProcessView WorldView StopStage JobRecord WorkerPolicy ProbeState ProbeView]
-        doeff_cluster._worker.intent.worker_model [StopProgress JobStop Outcome WarmChildView WarmLaunch Undeclared])
+        doeff_cluster._worker.intent.worker_model [StopProgress JobStop Outcome WarmChildView WarmLaunch WarmEnv Undeclared])
 (import doeff_cluster [spec-hash])
 (import doeff_cluster [plan statuses]
         doeff_cluster._worker.core.policy [warm-child-step kept-when-cut-off?])
@@ -54,6 +54,15 @@
   (val world (WorldView #((CodeView "rev1" CodeState.FAILED :detail "失敗" :failed-ms 1000)) #()))
   (<- due (plan-due NOW world {} POLICY))
   (<- at int (boundary due (! (policy-judged #(A1) world {})) NOW))
+  (assert (= at (+ 1000 POLICY.code-retry-ms)) at))
+
+
+(deftest test-plan-due-is-the-warm-refusal-retry-boundary
+  ;; 入口で断られた先の組みを判じ直す刻(断りの刻 + code-retry-ms — warm-actions)。
+  (val world (WorldView #((CodeView "env-k" CodeState.REFUSED :detail "断り" :failed-ms 1000)) #()))
+  (val warm #((WarmEnv :key "env-k" :runtime-env "{}")))
+  (<- due (plan-due NOW world {} POLICY))
+  (<- at int (boundary due (fn [at] (run (plan at #() world {} POLICY :warm warm))) NOW))
   (assert (= at (+ 1000 POLICY.code-retry-ms)) at))
 
 

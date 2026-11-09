@@ -260,7 +260,7 @@
 ;; 先の組み(温める表の行 — PrepareEnv :warm)だけを、組みを始める前に worker が断る 3 種(#3748・cisco-c8 の名指しの可 2026-10-06)。判じは
 ;; worker/core/env_upkeep の warm-refusal 1 つ。宣言された job の準備は断らない(今までどおり disk-full の判じだけ)。どれも恒久に数える
 ;; (RETRYABLE-KINDS に入れない — 先の組みは回の前の用意なので、回の Program の AwaitWarm に期限まで待たせず即座に WarmFailed で名乗る。
-;; worker は code-retry-ms の後に判じ直し、空きが戻れば組む):
+;; worker は code-retry-ms の後に判じ直し、空きが戻れば組む。断りは準備の失敗と別の状態〔CodeState.REFUSED〕に置くので、同じ root の job の準備を待たせない):
 ;;   no-disk-room        共有の disk の空き < 空きの最低 + 組む root 1 つの見積もり
 ;;   over-roots-cap      roots の合計 + 1 つの見積もり − 掃除で空けられる分(固定でない root)> roots の合計の上限
 ;;   no-memory-room      container の memory.current + 組みの山の見積もり > memory.max × 0.75
