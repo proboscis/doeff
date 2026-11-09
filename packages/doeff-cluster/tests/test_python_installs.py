@@ -187,6 +187,7 @@ def test_it_waits_while_uv_holds_the_install_lock(tmp_path: Path) -> None:
                 "2",
                 sys.executable,
                 "-I",
+                "-B",
                 str(TOOL),
                 "gc",
                 "--dir",
@@ -233,6 +234,7 @@ def test_the_cli_answers_one_json_line(tmp_path: Path) -> None:
         [
             sys.executable,
             "-I",
+            "-B",
             str(TOOL),
             "gc",
             "--dir",

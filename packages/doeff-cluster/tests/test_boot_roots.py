@@ -206,7 +206,7 @@ def test_the_cli_answers_one_json_line(tmp_path: Path) -> None:
     for n in range(4):
         _root(boot, n, used_at=now - (4 - n) * DAY)
     done = subprocess.run(
-        [sys.executable, "-I", str(TOOL), "gc", "--boot", str(boot), "--current", _sha(3), "--keep", "2"],
+        [sys.executable, "-I", "-B", str(TOOL), "gc", "--boot", str(boot), "--current", _sha(3), "--keep", "2"],
         capture_output=True,
         text=True,
         timeout=60,
