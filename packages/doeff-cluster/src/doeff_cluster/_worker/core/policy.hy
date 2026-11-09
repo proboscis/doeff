@@ -325,7 +325,7 @@
     ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。
     (and spec.once world.memory-tight) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
     True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if (= path WarmStart.FORK) (warm-key-of spec) None)
-                                         :warm-places (and (= path WarmStart.FORK) (warm-child-places world (warm-key-of spec)))))
+                                         :warm-places (and spec.once (= path WarmStart.FORK) (warm-child-places world (warm-key-of spec)))))
                     :hold None)))
 
 

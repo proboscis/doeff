@@ -379,8 +379,9 @@
         #((StartJob s1 1 ROOT-A :warm-key KEY-A) (StartJob s2 1 ROOT-A :warm-key KEY-A)))
       #("下限の root・印が service を名乗らない待ちの子 → 入れ物 shim" on #(s1 s2) old
         #((StartJob s1 1 ROOT-A) (StartJob s2 1 ROOT-A)))
+      ;; 頼みの cgroup を受ける版の待ちの子から分ける task は、job の名の子へ移す印(warm-places)を持つ(service は持たない)。
       #("分かれる task の在る root の 1 本の service → task も service も分ける" on #(s1 ta) ready
-        #((StartJob s1 1 ROOT-A :warm-key KEY-A) (StartJob ta 1 ROOT-A :warm-key KEY-A)))
+        #((StartJob s1 1 ROOT-A :warm-key KEY-A) (StartJob ta 1 ROOT-A :warm-key KEY-A :warm-places True)))
       #("断りの上限に届いた待ちの子の root → service は入れ物 shim(env-failed にしない)" on #(s1 s2) refused
         #((StartJob s1 1 ROOT-A) (StartJob s2 1 ROOT-A)))))
   (for [#(label policy desired observed expected) rows]
