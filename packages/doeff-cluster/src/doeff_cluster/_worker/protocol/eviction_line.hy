@@ -4,8 +4,8 @@
 ;;;                   root の cgroup を読んで追い出しまでの空きを数え、jobs の層の memory.max を「jobs の今の使い + 空き − 余裕」(上限は
 ;;;                   宣言の静的な値)に掛け直す。答え = 今の線(None = 線が無い・読めない — 見張りは機体の MemAvailable で判じる)。
 ;;;                   準備の層(prepare — keeper の版の準備)が在れば、その使いと process の有無を読み、走っている準備の山までの残りを
-;;;                   jobs の上限から引き(取り置き)、「空き − 余裕 − 取り置き」と準備の層の上限を keeper の読む file(room-file)に
-;;;                   書く。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
+;;;                   jobs の上限から引き(取り置き)、「空き − 余裕 − 取り置き」と準備が線へ足しうる量(上限 − 層の今の working set)を
+;;;                   keeper の読む file(room-file)に書く。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
 ;;;                   eviction_rules の margin-of)。
 ;;;                   会話の CLI の層(clis)に天井の宣言が在る機体は、jobs の層より先に clis の層の memory.max を床(宣言の静的な値)と天井の
 ;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、広げた上限は置いた task の
@@ -25,7 +25,7 @@
 ;;;                          時に 1 行。
 ;;;   CLIS-LENT-LOG          clis の層の上限が床を越えた(貸し始めた)時と、床へ戻った時に 1 行: 上限・床・天井・clis の使い・線の空き。
 ;;;   MARGIN-LOG             測りから導いた余裕が宣言の床を越えた時と、床へ戻った時に 1 行: 余裕・床・測った増えの数。
-;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備の層の上限 MiB>」(空きは負もありうる)。線を読めない回は
+;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備が線へ足しうる量 MiB>」(空きは負もありうる)。線を読めない回は
 ;;; 書かない(keeper は古い file を読まない — deploy/boot.sh の keeper_swap)。
 ;;; Node は自区画の API server から ServiceAccount の token で読む(読みの答え手は入口が並べる in-cluster-api-routed と HTTP の答え手)。
 ;;; cgroup の file の読みと書きは file の効果(本物の答え手は入口が並べる offloaded-file-handler — jobs の層の上限を使いより下げる書きは
@@ -42,7 +42,7 @@
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
-                                                  prepare-reserve prepare-room margin-of kernel-bytes-of clis-limit clis-lent box-free
+                                                  prepare-reserve prepare-room prepare-addable margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   jobs-box-limit placed-pending])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
@@ -301,15 +301,15 @@
   margin)
 
 
-(defk room-written [settings line margin reserve]
-  {:pre [(: settings EvictionSettings) (: line EvictionLine) (: margin int) (: reserve int)] :post [(: % str)]
+(defk room-written [settings line margin reserve addable]
+  {:pre [(: settings EvictionSettings) (: line EvictionLine) (: margin int) (: reserve int) (: addable (| int None))] :post [(: % str)]
    :tags {:context "worker" :role "protocol"}}
-  "keeper の読む file(room-file)へ、準備に使える空きと準備の層の上限を 1 行で書くため(頭の註の room-file の中身)。file か準備の層が
-   無ければ書かない。答え = 書けない訳(\"\" = 書いた・書かない)。"
+  "keeper の読む file(room-file)へ、準備に使える空きと準備が線へ足しうる量 addable を 1 行で書くため(頭の註の room-file の中身)。file か
+   準備の層が無ければ書かない。答え = 書けない訳(\"\" = 書いた・書かない)。"
   (when (or (is settings.room-file None) (is settings.prepare-cap-bytes None))
     (return ""))
   (<- room int (prepare-room line margin reserve))
-  (<- written (| FileFailed None) (WriteText settings.room-file (.format "{} {}\n" (// room MIB) (// settings.prepare-cap-bytes MIB))))
+  (<- written (| FileFailed None) (WriteText settings.room-file (.format "{} {}\n" (// room MIB) (// addable MIB))))
   (if (isinstance written FileFailed)
       (.format "keeper の準備の空きの file {} を書けない: {}" settings.room-file written.detail)
       ""))
@@ -403,13 +403,16 @@
         (:= failure (or failure prepare-read))
         (:= prepare prepare-read)))
   (<- margin int (margin-noted settings cell line jobs prepare))
-  ;; 準備の層を読めない回は、準備が走っているとみなして上限まで取り置く(準備の山を線の計算から落とさない)。
+  ;; 準備の層を読めない回は、準備が走っているとみなして上限まで取り置き、足しうる量も上限のままにする(準備の山を線の計算から落とさない)。
   (var reserve 0)
+  (var addable settings.prepare-cap-bytes)
   (when (is-not settings.prepare-cap-bytes None)
     (if (is prepare None)
         (:= reserve settings.prepare-cap-bytes)
         (do (<- held int (prepare-reserve settings.prepare-cap-bytes prepare.current-bytes prepare.populated))
-            (:= reserve held))))
+            (:= reserve held)
+            (<- can-add int (prepare-addable settings.prepare-cap-bytes prepare.working-set-bytes))
+            (:= addable can-add))))
   (setv cell.reserve reserve)
   ;; 置いた task の取り置き(要り − 今の使い — 見張りの前の回の読みの使い)。clis の層へ新しく貸さず、jobs の層の上限に残す。
   (<- pending int (placed-pending cell.needs cell.uses))
@@ -436,7 +439,7 @@
       (:= limit (min limit boxed))
       (:= intake (min intake boxed-intake))))
   (when (is-not line None)
-    (<- room-failure str (room-written settings line margin reserve))
+    (<- room-failure str (room-written settings line margin reserve addable))
     (:= failure (or failure room-failure)))
   (when (and (is-not line None) (is current None))
     ;; 使いを読めない回は、線から決めた前の上限を残す(宣言の値へ戻すと、線の手前を越えうる)。

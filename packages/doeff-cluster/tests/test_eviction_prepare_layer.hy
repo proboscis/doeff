@@ -22,7 +22,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-MIN-SAMPLES MARGIN-TICKS EvictionLine LineKind
-                                                  jobs-limit prepare-reserve prepare-room margin-of layer-memory-max])
+                                                  jobs-limit prepare-reserve prepare-room prepare-addable margin-of layer-memory-max])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted MARGIN-LOG])
 
 ;; k3s-1 の Node の宣言(11-02 の Node の status と kubelet の予約 system 384Mi・kube 768Mi・evictionHard 100Mi)。kubepods の memory.max =
@@ -74,6 +74,27 @@
   (<- narrow EvictionLine (line-of (* 600 MIB)))
   (<- squeezed int (jobs-limit JOBS-USED narrow K3S-1-MARGIN K3S-1-MARGIN (* 896 MIB) running 0))
   (assert (< squeezed JOBS-USED) (// squeezed MIB)))
+
+
+(deftest test-what-a-prepare-can-add-is-its-cap-less-the-working-set-already-counted-on-the-line
+  ;; 準備が線へ足しうる量 = 上限 − 層の今の working set。上限を越えた読みは 0。
+  (val cap (* 640 MIB))
+  (<- idle int (prepare-addable cap 0))
+  (<- residue int (prepare-addable cap (* 288 MIB)))
+  (<- over int (prepare-addable cap (+ cap MIB)))
+  (assert (= #(idle residue over) #(cap (* 352 MIB) 0)) #(idle residue over)))
+
+
+(deftest test-a-prepare-layer-holding-only-residue-asks-the-keeper-for-its-cap-less-the-residue
+  ;; 受入: process の居ない名残だけの層(k3s-1 の 11-09 の形 — 名残 288 MiB)。線の使いは名残を含むので、keeper の file の第 2 の数は
+  ;; 上限 640 でなく足しうる量 352 MiB。失敗ケース: 上限を丸ごと書くと、名残を 2 度数えて空き 400 MiB でも keeper が待ち続ける。
+  (val pods (- ALLOCATABLE (+ (* 400 MIB) K3S-1-MARGIN)))
+  (<- residue MemoryFiles (k3s-1-files pods JOBS-USED (* 288 MIB) False))
+  (<- settings EvictionSettings (settings-of True K3S-1-MARGIN))
+  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler residue) (k3s-1-api) (log-kept)]
+                          (ticks-then-files settings (EvictionCell) 1)))
+  (<- room str (content-at files ROOM-FILE))
+  (assert (= room "400 352\n") room))
 
 
 (deftest test-the-normal-room-of-a-4-gib-node-fits-the-prepare-peak
@@ -209,9 +230,9 @@
   (val reserve (* 440 MIB))
   (assert (= (int jobs-max) (- (+ JOBS-USED ROOM) K3S-1-MARGIN reserve)) jobs-max)
   (assert (<= (+ (- pods JOBS-USED (* 200 MIB)) (int jobs-max) (* 640 MIB)) (- ALLOCATABLE K3S-1-MARGIN)))
-  ;; keeper の file: 準備に使える空き(1040 − 320 − 440 = 280 MiB)と準備の層の上限 640 MiB。
+  ;; keeper の file: 準備に使える空き(1040 − 320 − 440 = 280 MiB)と準備が線へ足しうる量(640 − 200 = 440 MiB)。
   (<- room str (content-at files ROOM-FILE))
-  (assert (= room "280 640\n") room)
+  (assert (= room "280 440\n") room)
   ;; 外の working set は回ごとに同じ — 増え 0 が 2 回残り、余裕は宣言の床のまま(余裕の行は出ない)。
   (assert (= #(cell.growths cell.margin cell.reserve) #(#(0 0) K3S-1-MARGIN reserve)) cell.growths)
   (<- names tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (k3s-1-api) (log-kept)]
@@ -220,14 +241,14 @@
 
 
 (deftest test-an-idle-prepare-layer-tells-the-keeper-the-room-fits-and-the-old-shape-does-not
-  ;; 準備の走っていない平常の回: keeper の file は 1040 − 320 = 720 MiB ≥ 上限 640 MiB — keeper は準備を起こす。
+  ;; 準備の走っていない平常の回: keeper の file は 1040 − 320 = 720 MiB ≥ 足しうる量 640 − 90 = 550 MiB — keeper は準備を起こす。
   (val pods (- ALLOCATABLE ROOM))
   (<- idle MemoryFiles (k3s-1-files pods JOBS-USED (* 90 MIB) False))
   (<- settings EvictionSettings (settings-of True K3S-1-MARGIN))
   (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler idle) (k3s-1-api) (log-kept)]
                           (ticks-then-files settings (EvictionCell) 1)))
   (<- room str (content-at files ROOM-FILE))
-  (assert (= room "720 640\n") room)
+  (assert (= room "720 550\n") room)
   (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
   (assert (= (int jobs-max) (min (* 896 MIB) (- (+ JOBS-USED ROOM) K3S-1-MARGIN))) jobs-max)
   ;; 前の形(準備の層が無く余裕 1 GiB — 11-02 の k3s-1): jobs の上限は使いの上に 16 MiB しか残さず、準備の山 453 MiB は jobs の層で OOM。

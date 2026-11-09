@@ -774,8 +774,9 @@ keeper_layer() {
   fi
 }
 
-# 準備を起こしてよいか: worker が見張りの回ごとに書く $keeper_dir/prepare-room(1 行「<準備に使える空き MiB> <準備の層の上限 MiB>」—
-# worker/protocol/eviction_line の room-file)が KEEPER_ROOM_MAX_AGE 秒(既定 30)以内に書かれていて、空きが上限より小さければ偽(k_room に
+# 準備を起こしてよいか: worker が見張りの回ごとに書く $keeper_dir/prepare-room(1 行「<準備に使える空き MiB> <準備が線へ足しうる量 MiB>」—
+# 足しうる量は準備の層の上限 − 層の今の working set・worker/protocol/eviction_line の room-file)が KEEPER_ROOM_MAX_AGE 秒(既定 30)以内に
+# 書かれていて、空きがその量より小さければ偽(k_room に
 # 読んだ 2 つの数を残す)。file が無い・古い・形が違う(線を読めない worker・準備の層を知らない版の世代)は真 — 前と同じく準備を起こす。
 keeper_room() {
   k_room=""
@@ -795,7 +796,7 @@ keeper_room() {
 # (keeper_group_close)。失敗ケース(11-08 の k3s-0・k3s-2): 層に直に置いた準備で build hook の頭が OOM kill で止まり、残った forkserver と
 # 子が uv の出力の pipe を持ち続け、uv も準備も 25 時間返らず、keeper は準備中と読み続けた。準備の層
 # (DOEFF_WORKER_PREPARE_CGROUP)は、worker が追い出しの線から掛け直す jobs の層と違い、上限(準備の山)を縮めない。代わりに準備を
-# 起こす前に worker の書く空き(keeper_room)を読み、空きが準備の層の上限に足りない間は準備を起こさずに待つ(log に名指す — OOM で
+# 起こす前に worker の書く空き(keeper_room)を読み、空きが準備の足しうる量に足りない間は準備を起こさずに待つ(log に名指す — OOM で
 # 殺さない・worker/core/eviction_rules の頭の註の「準備の層」)。
 keeper_swap() {
   k_prep=$keeper_dir/prepare/$1
@@ -824,10 +825,10 @@ keeper_swap() {
   else
     k_layer=$(keeper_layer)
     if [ "$k_layer" = "${DOEFF_WORKER_PREPARE_CGROUP:-}" ] && [ -n "$k_layer" ] && ! keeper_room; then
-      # 空きが準備の山に足りない — 準備を起こさず、次の tick で読み直す(同じ訳は 1 度だけ言う)。
+      # 空きが準備の足しうる量に足りない — 準備を起こさず、次の tick で読み直す(同じ訳は 1 度だけ言う)。
       if [ "$prepare_waiting" != "$1 $k_room" ]; then
         prepare_waiting="$1 $k_room"
-        keeper_log "doeff $(keeper_short "$1") の root の準備を待つ — 追い出しの線までの空きが無い(空き − 余裕 = ${k_room%% *} MiB < 準備の層 $k_layer の上限 ${k_room#* } MiB・走っている世代はそのまま)"
+        keeper_log "doeff $(keeper_short "$1") の root の準備を待つ — 追い出しの線までの空きが無い(空き − 余裕 = ${k_room%% *} MiB < 準備の層 $k_layer の足しうる量 ${k_room#* } MiB・走っている世代はそのまま)"
       fi
       return 0
     fi

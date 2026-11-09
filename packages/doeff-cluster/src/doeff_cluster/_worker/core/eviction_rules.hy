@@ -31,8 +31,10 @@
 ;;; 置かない(縮めて殺しても memory は守れず、版上げだけが止まる — k3s-1 の 11-02 は jobs の上限 61〜139 MiB で準備の bytecode の焼きが
 ;;; OOM で落ち続けた)。準備の層の memory.max は宣言の静的な値(準備の山)で、worker は掛け直さない。準備が走っている間(層に process が
 ;;; 居る)は、その上限までの残り(上限 − 今の使い)を線の空きから先に取り置き、jobs の層の上限から引く(prepare-reserve)— 準備が山まで
-;;; 伸びても線を越えない。準備を始めてよいかは keeper が決める: worker は回ごとに「追い出しまでの空き − 余裕 − 取り置き」(prepare-room)
-;;; を keeper の読む file へ書き、keeper はそれが準備の層の上限より小さい間は準備を起こさずに待つ(OOM で殺さない)。
+;;; 伸びても線を越えない。準備を始めてよいかは keeper が決める: worker は回ごとに「追い出しまでの空き − 余裕 − 取り置き」(prepare-room)と
+;;; 準備が線へ足しうる量(prepare-addable)を keeper の読む file へ書き、keeper は空きがその量より小さい間は準備を起こさずに待つ(OOM で
+;;; 殺さない)。足しうる量は上限 − 層の今の working set: 層は memory.max で止まり、前の準備の名残(process の居ない層の page cache と slab)は
+;;; 線の使いに数え済みなので、上限を丸ごと求めると名残の分を 2 度数える(k3s-1 の 11-09 — 名残 288 MiB)。
 ;;;
 ;;; 会話の CLI の層(clis — 上に載る系の仕事を余りの空きで受ける機体 helios・atlas の限る層): 宣言の静的な memory.max は床(常駐の job の予算から
 ;;; 引いた量・今までの上限)で、機体の宣言に天井(WORKER_CLI_LAYER_CEILING)が在る機体だけ、worker は回ごとに床と天井の間で掛け直す
@@ -351,8 +353,16 @@
   {:pre [(: line EvictionLine) (: margin int) (>= margin 0) (: reserve int) (>= reserve 0)] :post [(: % int)]
    :tags {:context "worker" :role "judgment"}}
   "keeper が新しい準備を起こしてよいかを判じる空き(頭の註)を求めるため: 追い出しまでの空き − 余裕 − 走っている準備の取り置き。
-   keeper はこれが準備の層の上限以上の時だけ準備を起こす(負もありうる — 線の手前に余裕が残っていない)。"
+   keeper はこれが準備の足しうる量(prepare-addable)以上の時だけ準備を起こす(負もありうる — 線の手前に余裕が残っていない)。"
   (- line.room-bytes margin reserve))
+
+
+(defk prepare-addable [cap working-set]
+  {:pre [(: cap int) (>= cap 0) (: working-set int) (>= working-set 0)] :post [(: % int) (>= % 0)]
+   :tags {:context "worker" :role "judgment"}}
+  "新しい準備が追い出しの線へ足しうる量(頭の註)を求めるため: 準備の層の上限 cap − 層の今の working set(線の使いに数え済みの分 — 上限を
+   越えた読みは 0)。keeper は prepare-room がこの量以上の時だけ準備を起こす。"
+  (max 0 (- cap working-set)))
 
 
 (defk margin-of [growths floor]
