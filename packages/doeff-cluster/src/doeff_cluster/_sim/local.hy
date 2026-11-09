@@ -23,7 +23,7 @@
 ;;;     本番の coordinator への口 と同じ形(handlers.heartbeat-body・status-report・desired-when-unreachable・env-report・env-heartbeat-part・
 ;;;     warm-env-of-row)。コードの木の準備は SimWorker の prepare-seconds・実行環境の root の準備は env-prepare-seconds(None なら
 ;;;     prepare-seconds)の後に揃う(既定 0 = 即座・#2879)・env-failure を
-;;;     持つ worker の実行環境の準備はその失敗で終わる。入口の検めは通る(準備の層そのものは env_world と丁寧な模擬の検が持つ)。
+;;;     持つ worker の実行環境の準備はその失敗で終わる・warm-refusal を持つ worker は先の組みを始める前に断る。入口の検めは通る(準備の層そのものは env_world と丁寧な模擬の検が持つ)。
 ;;;   - 偽の宿の StartJob は、coordinator の /programs/<sha> から取った詰めた文字列を decode し(検の物と object を共有しない・運べる値か
 ;;;     を検める)、「柵(fence)→ クラスタの約束の答え(coordinator-answers)→ 宿の答え(host-answers)→ Program」の順に包んで、宿の
 ;;;     handler の節の中から Spawn する。Spawn は節の外側の handler(世界・時計)だけを持ち運ぶので、run-worker の中の handler も、他の
@@ -140,6 +140,7 @@
 ;;;   - coordinator に届かない・断られた時の例外の型は RemoteJobFailed(本番は httpx の例外)。書きの要求は 1 回だけ送る(本番の
 ;;;     宛先の部品の routed-request は接続の段の失敗だけを間を置いて 4 回まで送り直す)。
 ;;;   - 実行環境の root は準備の中身(git・uv・disk)を模擬しない(env-prepare-seconds の後に揃うか env-failure で終わる)。disk は常に ok。
+;;;     先の組みの入口の断りも判じを模擬しない(warm-refusal を持つ worker の先の組みは常に断られる)。
 ;;;   - AwaitProcessEnded は筋書きにだけ答える(世界の真実で答える — 本番の答えは coordinator の信念で、heartbeat の分だけ遅れる)。
 ;;;     job の Program が出すと柵で落ちる。
 ;;;   - AwaitDetached は読み直さず、模擬の coordinator がその task の終わりの phase を書いた時(Persist)に起きる(本番の detached-cluster は
@@ -366,7 +367,8 @@
    実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
    かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
    実行環境の宣言を持たない job の準備は env-prepare-seconds を待たない・#2879)・env-failure = 実行環境の root の準備がこの失敗で終わる
-   worker(None = 揃う)・
+   worker(None = 揃う)・warm-refusal = 先の組み(PrepareEnv :warm)をこの断りで始める前に断る worker(本番の env-host の warm-admission の
+   代役 — 組みを始めず、宣言された job の準備は断らない。None = 断らない)・
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
    (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
    壊れた worker(heartbeat の間隔を本番の beat_policy.beat-interval-ms でなくこの値にする — None = 本番の判断)・retire-stops = 反例の
@@ -407,6 +409,7 @@
   (setv #^ float prepare-seconds 0.0)
   (setv #^ (| float None) env-prepare-seconds None)
   (setv #^ (| EnvFailure None) env-failure None)
+  (setv #^ (| EnvFailure None) warm-refusal None)
   (setv #^ bool starts-down False)
   (setv #^ bool ignores-fence False)
   (setv #^ (| int None) beat-every-ms None)
@@ -475,14 +478,16 @@
 
 (defrecord SimPreparation
   "worker の宿が起こした準備 1 つ(PreparationsOf の答えの要素)。key = コードの版か env-<キー>・env = 実行環境の root か・warm = 先読みか・
-   started-ms / ready-ms = 始まりと揃う(か失敗で終わる)時刻(epoch ms)・failure = 実行環境の準備の失敗(揃うなら None)。"
+   started-ms / ready-ms = 始まりと揃う(か失敗で終わる)時刻(epoch ms)・failure = 実行環境の準備の失敗(揃うなら None)・
+   refused = 先の組みを始める前に断った記録か(failure = その断り — 宿の真実にだけ在り、世界の記録 PreparationsOf には載らない)。"
   (#^ str worker)
   (#^ str key)
   (#^ bool env)
   (#^ bool warm)
   (#^ int started-ms)
   (#^ int ready-ms)
-  (#^ (| EnvFailure None) failure))
+  (#^ (| EnvFailure None) failure)
+  (setv #^ bool refused False))
 
 
 (defrecord SimWatchFailure
@@ -2335,22 +2340,35 @@
   None)
 
 
+(defk start-preparation [worker truth key env warm now]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: key str) (: env bool) (: warm bool) (: now int)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "準備を始めるか、先の組みを始める前に断るため(warm-refusal を持つ worker の先の組みだけを断る — 本番の env-host の warm-admission の
+   代役。断りは組みを始めないので世界の準備の記録には載せない)。"
+  (if (and env warm (is-not worker.warm-refusal None))
+      (<- (PutHostTruth worker.name
+                        (replace truth :codes (| truth.codes {key (SimPreparation :worker worker.name :key key :env env :warm warm :started-ms now
+                                                                                  :ready-ms now :failure worker.warm-refusal :refused True)}))))
+      (<- (begin-preparation worker truth key env warm now)))
+  None)
+
+
 (defk prepare [worker boot key env warm]
   {:pre [(: worker SimWorker) (: boot str) (: key str) (: env bool) (: warm bool)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "コードの木か実行環境の root の準備を起こすため: prepare-seconds の後に揃う(実行環境の root は env-failure を持つ worker なら失敗で
    終わる)。worker のループは待たない(揃うのは ObserveWorld で観測する)。本番の code-host と env-host の PrepareCode・PrepareEnv と同じく、同じ鍵の準備が
-   走っている・揃っているなら起こし直さない(先読みの準備を job が頼めば job の準備へ上げる)・失敗した物だけ起こし直す。"
+   走っている・揃っているなら起こし直さない(先読みの準備を job が頼めば job の準備へ上げる)・失敗した物と断った物だけ起こし直す。"
   (<- truth HostTruth (live-truth worker.name boot))
   (<- now int (now-epoch-ms))
   (val current (.get truth.codes key))
   (cond
-    (is current None) (<- (begin-preparation worker truth key env warm now))
+    (is current None) (<- (start-preparation worker truth key env warm now))
     (and (< now current.ready-ms) current.warm (not warm))
       (<- (PutHostTruth worker.name (replace truth :codes (| truth.codes {key (replace current :warm False)}))))
     (< now current.ready-ms) None
     (is current.failure None) None
-    True (<- (begin-preparation worker truth key env warm now)))
+    True (<- (start-preparation worker truth key env warm now)))
   None)
 
 

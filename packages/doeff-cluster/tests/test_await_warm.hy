@@ -5,6 +5,7 @@
 ;;   * 組み上がれば、その時に WarmReady で返る(期限まで待たない — env を Worker の行に載せないと版が進まず、期限まで起きない)
 ;;   * 組みが恒久の失敗で終われば、WarmFailed で返り、失敗の種類(kind)が読める
 ;;   * 期限まで組み上がらなければ、最後の読み(準備中)つきの WarmWaitExpired で返る
+;;   * 先の組みを入口で断られた root の job を宣言すれば、断りの撃ち直しの間を待たずに job の準備が撃たれる
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
@@ -13,13 +14,16 @@
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [RuntimeEnv]
         doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
-(import doeff_cluster [sim-cluster SimWorker])
-(import doeff_cluster [system-of])
+(import doeff_cluster [sim-cluster SimWorker PreparationsOf])
+(import doeff_cluster [System system-of])
+(import doeff_cluster [AwaitReadiness Redeclare ServiceReadiness])
 (import doeff_cluster [AwaitWarm WarmState]
         doeff_cluster._shared.intent.warm_model [WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster [ReadRunners AwaitRunnersChange RunnersChange])
 (import doeff_cluster [warm-runtime-env])
 (import tests.env_fixtures [LOCK env-of])
+(import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.sim_programs [beacons])
 
 (val NEEDS (frozenset ["gpu"]))
 (val NO-JOBS (system-of "await-warm-scenarios" #()))
@@ -48,6 +52,12 @@
   "筋書きの担い手(gpu を専用の能力に持つ 1 台)を、組みの秒と失敗で作るため。"
   #((SimWorker :name "gpu-1" :provides (frozenset ["gpu" "net"]) :exclusive (frozenset ["gpu"])
                :env-prepare-seconds env-prepare-seconds :env-failure env-failure)))
+
+
+(defk refusing-worker [refusal]
+  {:pre [(: refusal EnvFailure)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの担い手(worker-with と同じ 1 台)を、先の組みを refusal で入口で断る形で作るため。"
+  #((SimWorker :name "gpu-1" :provides (frozenset ["gpu" "net"]) :exclusive (frozenset ["gpu"]) :warm-refusal refusal)))
 
 
 (defk warm-and-await []
@@ -101,10 +111,55 @@
   ;; 先の組みを入口で断った worker(no-disk-room・over-roots-cap・no-memory-room — 恒久)は、待ち続けず WarmFailed で返り種類が読める。
   ;; 断りは組みを始めないので、組みの秒(30 秒)を待たずに数拍で返る — 種類を一時(retryable)に数えれば期限(120 秒)まで待って赤。
   (for [refusal REFUSALS]
-    (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (worker-with 0.0 refusal))))
+    (<- seen Awaited (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (warm-and-await) :workers (! (refusing-worker refusal))))
     (assert (isinstance seen.answer WarmFailed) seen)
     (assert (= (lfor f seen.answer.state.failed #(f.worker f.kind f.retryable)) [#("gpu-1" refusal.kind.value False)]) seen)
     (assert (< seen.waited READY-SLACK-SECONDS) seen)))
+
+
+;; 先の組みの入口の断りは先の組みだけの判じで、宣言された job の準備は断られない(#3748)。断られた root の job を宣言すれば、その拍に
+;; 準備が撃たれる。失敗ケース: 断りを準備の失敗と同じ状態で読むと、job の準備が失敗の待ち(WorkerPolicy.code-retry-ms = 30 秒)に入り、
+;; 宣言の後 5 秒を過ぎても撃たれない(断りの直後に宣言した本番の回で 28〜77 秒待った)。
+(val JOB-NEEDS (frozenset ["cluster-net"]))
+;; 宣言から job の準備の始まりまでの許し(仮想の秒): 宣言が worker に届く数拍は入り、失敗の待ち 30 秒は入らない。
+(val DECLARE-SLACK-SECONDS 5.0)
+
+
+(defrecord DeclaredAfterRefusal
+  "断りの後の宣言の筋書きの結果: refused = 先の組みの AwaitWarm の答え・declared-ms = job を宣言した時刻(epoch ms)・
+   ready = job の準備完了の待ちの答え・preparations = worker が起こした実行環境の root の準備(SimPreparation の列)。"
+  (#^ object refused)
+  (#^ int declared-ms)
+  (#^ object ready)
+  (#^ tuple preparations))
+
+
+(defk declare-after-refusal [system]
+  {:pre [(: system System)] :post [(: % DeclaredAfterRefusal)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: root の先の組みを頼んで断りの答えを受け、すぐ同じ root の job(system)を宣言して Ready を待つ。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- first WarmState (warm-runtime-env env JOB-NEEDS 600.0 "tests"))
+  (<- refused (AwaitWarm first.key LIMIT-SECONDS))
+  (<- declared-ms int (now-epoch-ms))
+  (<- (Redeclare system))
+  (<- ready (AwaitReadiness "beacon" "Ready" LIMIT-SECONDS))
+  (<- made tuple (PreparationsOf "w1"))
+  (DeclaredAfterRefusal :refused refused :declared-ms declared-ms :ready ready :preparations made))
+
+
+(deftest test-a-job-declared-on-a-refused-root-prepares-on-its-next-beat
+  (for [refusal REFUSALS]
+    (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+    (<- seen DeclaredAfterRefusal
+        (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (declare-after-refusal (beacons sim-foundation)) :runtime-env env
+                     :workers #((SimWorker :name "w1" :provides JOB-NEEDS :env-prepare-seconds 0.0 :warm-refusal refusal))))
+    (assert (isinstance seen.refused WarmFailed) seen)
+    (assert (isinstance seen.ready ServiceReadiness) seen)
+    ;; 断られた先の組みは始まらず、起きた準備は宣言された job の 1 回だけ。
+    (val started (lfor p seen.preparations :if p.env p))
+    (assert (= (lfor p started p.warm) [False]) seen)
+    (val waited (/ (- (. (get started 0) started-ms) seen.declared-ms) 1000.0))
+    (assert (< waited DECLARE-SLACK-SECONDS) (.format "宣言の後 {} 秒で job の準備が撃たれた: {}" waited seen))))
 
 
 (defrecord AroundWarm
