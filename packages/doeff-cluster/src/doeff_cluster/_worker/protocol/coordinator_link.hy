@@ -217,6 +217,9 @@
           self.pools #() self.memory-mib memory-mib
           ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — worker/core/load_rules の頭の註。空 = 読まない)。file を読めない間は前の値のまま。
           self.keep-line-file keep-line-file
+          ;; 命令の層を掛け直す線の file と短い命令の余地 MiB(枠の file の行の commandLineFile と commandFloorMiB — worker/core/eviction_rules の
+          ;; 頭の註の命令の層。空と 0 = 掛け直さない)。file を読めない間は前の値のまま。
+          self.command-line-file "" self.command-floor-mib 0
           ;; 機体の測った空き: load-paths = 読む file か OS の口の印(None = 測らない)・measured = 最後に測れた値(None = まだ測れていない・最後の読みが
           ;; 読めなかった — heartbeat に載せない)・load-ticks = 前に読めた /proc/stat(CPU の使いの起点)・load-read-ms = 最後に読んだ刻・
           ;; load-reason = 前の読めない訳("" = 読めた — 同じ訳の 2 度目は log に出さない)。eviction = 機体の memory の見張りの追い出しの
@@ -832,13 +835,19 @@
       (when (isinstance text str)
         (<- read RoomReading (room-of-text text state.name))
         (:= reading read))
-      (val before (WorkerRoom :memory-mib state.memory-mib :pools state.pools :keep-line-file state.keep-line-file))
+      (val before (WorkerRoom :memory-mib state.memory-mib :pools state.pools :keep-line-file state.keep-line-file
+                              :command-line-file state.command-line-file :command-floor-mib state.command-floor-mib))
       (val after (if (is reading.room None) before reading.room))
       (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
         (<- line str (room-line before after reading))
         (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
       (setv state.pools after.pools state.memory-mib after.memory-mib state.keep-line-file after.keep-line-file
-            state.room-state reading.state state.room-reason reading.reason)))
+            state.command-line-file after.command-line-file state.command-floor-mib after.command-floor-mib
+            state.room-state reading.state state.room-reason reading.reason)
+      ;; 命令の層を掛け直す線の file と床を見張りの入れ物へ渡す(worker/core/eviction_rules の頭の註の命令の層)。
+      (when (is-not state.eviction None)
+        (setv state.eviction.command-line-file after.command-line-file
+              state.eviction.command-floor-bytes (* after.command-floor-mib MIB)))))
   None)
 
 

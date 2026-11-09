@@ -12,6 +12,9 @@
 ;;;                   取り置きの外の空きの内でだけ残す)、床を越えて貸した量を jobs の上限から引き、jobs の上限を container の中の空きの内
 ;;;                   にも収める。置いた task の取り置きは、heartbeat の返事の task の要り(入れ物の needs)と見張りの読みの task ごとの
 ;;;                   使いから数える。
+;;;                   命令の層(commands)の線の宣言(枠の file の行の commandLineFile と commandFloorMiB — 入れ物の command-line-file と
+;;;                   command-floor-bytes)が在る機体は、最後に命令の層の memory.max を MemAvailable と線から掛け直す(worker/core/eviction_rules の
+;;;                   command-layer-limit)。線の file を読めない・読み違える回は宣言の静的な値に戻す(古い空きで決めた上限を残さない)。
 ;;; 線を読めない間(Node の宣言をまだ読めない・cgroup の file を読めない・Node と cgroup が食い違う)は、jobs の層を宣言の静的な値に戻す
 ;;; (古い空きで決めた上限を残さない)。clis の層は床と clis の今の使いの大きい方に戻す(使いを読めない回は書かない)。guard が偽の見張り(起動の引数 --memory-guard off)は数えて log に出すだけで書かない。
 ;;;
@@ -25,6 +28,9 @@
 ;;;                          時に 1 行。
 ;;;   CLIS-LENT-LOG          clis の層の上限が床を越えた(貸し始めた)時と、床へ戻った時に 1 行: 上限・床・天井・clis の使い・線の空き。
 ;;;   MARGIN-LOG             測りから導いた余裕が宣言の床を越えた時と、床へ戻った時に 1 行: 余裕・床・測った増えの数。
+;;;   COMMANDS-SQUEEZE-LOG   命令の層の上限を回収で返らない量より下げた時(kernel が層の中の process を止める)に、その続きの 1 回につき 1 行: 上限・
+;;;                          回収で返らない量・tmpfs の量・線と MemAvailable の差。
+;;;   COMMANDS-LIMIT-FAILED-LOG 命令の層の memory.max を書けない・読めない訳が変わった時に 1 行。
 ;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備が線へ足しうる量 MiB>」(空きは負もありうる)。線を読めない回は
 ;;; 書かない(keeper は古い file を読まない — deploy/boot.sh の keeper_swap)。
 ;;; Node は自区画の API server から ServiceAccount の token で読む(読みの答え手は入口が並べる in-cluster-api-routed と HTTP の答え手)。
@@ -39,11 +45,12 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects [FileFailed ReadText WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
-(import doeff_cluster._worker.core.memory_rules [MIB])
-(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW EvictionLine KubeletMemory PodsMemory quantity-bytes
+(import doeff_cluster._worker.core.memory_rules [MIB meminfo-kib])
+(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable margin-of kernel-bytes-of clis-limit clis-lent box-free
-                                                  jobs-box-limit placed-pending kept-line fresh-keep-room])
+                                                  jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit])
+(import doeff_cluster._worker.core.load_rules [keep-line-of])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
 (val EVICTION-UNREAD-LOG "worker: 追い出しの線を読めない")
@@ -51,6 +58,8 @@
 (val JOBS-LIMIT-FAILED-LOG "worker: jobs の層の memory の上限を掛け直せない")
 (val MARGIN-LOG "worker: 追い出しの線の手前に残す余裕を、測った jobs と準備の層の外の伸びから替えた")
 (val CLIS-LENT-LOG "worker: 会話の CLI の層の memory の上限を、空きから床の上へ広げた・床へ戻した")
+(val COMMANDS-SQUEEZE-LOG "worker: MemAvailable が線を割ったので命令の層の上限を回収で返らない量より下げた")
+(val COMMANDS-LIMIT-FAILED-LOG "worker: 命令の層の memory の上限を掛け直せない")
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒)。
 (val REFUSAL-BODY-LIMIT 300)
 (val REQUEST-TIMEOUT-SECONDS 5.0)
@@ -68,6 +77,16 @@
   (setv #^ int held-bytes 0))
 
 
+(defrecord CommandLayerSettings
+  "命令の層(commands)の掛け直しの設定(入口が起動の時に 1 度だけ作る — worker/core/eviction_rules の頭の註の命令の層): dir = 命令の層の dir・
+   cap-bytes = 宣言の静的な memory.max・meminfo-path = MemAvailable を読む file。線の file と床は枠の file の行から入れ物へ来る(Pod を
+   作り直さずに替えられる)。"
+  {:check [(>= cap-bytes 0)]}
+  (#^ str dir)
+  (#^ int cap-bytes)
+  (setv #^ str meminfo-path "/proc/meminfo"))
+
+
 (defrecord EvictionSettings
   "追い出しの線の読みの設定(入口が起動の時に 1 度だけ作る — 頭の註): api = 自区画の API server の URL・token-file = ServiceAccount の
    token の file・node = この worker の Pod が置かれた Node の名・pods-dir = kubepods の cgroup の dir(host の cgroupfs の mount の中 —
@@ -78,7 +97,7 @@
    eviction_rules の EVICTION-MARGIN-BYTES)・prepare-dir = 準備の層の dir(None = 層が無い — keeper は準備を jobs の層で起こす)・
    prepare-cap-bytes = 準備の層の memory.max の宣言の静的な値(prepare-dir が在る時は必ず在る)・room-file = keeper の読む準備の空きの
    file(None = keeper の無い worker か準備の層が無い — 書かない)・clis = 会話の CLI の層の掛け直しの設定(None = 掛け直さない — 天井の
-   宣言が無い機体)。"
+   宣言が無い機体)・commands = 命令の層の掛け直しの設定(None = 層の宣言に commands の memory.max が無い機体)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
            (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
            (or (is clis None) (is-not jobs-dir None))]}
@@ -95,7 +114,8 @@
   (setv #^ float node-read-seconds 300.0)
   (setv #^ float node-retry-seconds 30.0)
   (setv #^ int margin-bytes EVICTION-MARGIN-BYTES)
-  (setv #^ (| CliLayerSettings None) clis None))
+  (setv #^ (| CliLayerSettings None) clis None)
+  (setv #^ (| CommandLayerSettings None) commands None))
 
 
 (defclass EvictionCell []
@@ -115,13 +135,19 @@
    最後に jobs の層の上限と同じ回に決めた、新しい受けに名乗る上限(測った余裕で数え、取り置きを入れない — None = まだ。これと
    jobs-current の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)・keep-room = heartbeat の測りが最後に
    読んだ「機体の MemAvailable − 上に載る系が残す線」(byte — None = 線が無い・読めない。worker/core/eviction_rules の頭の註の上に載る系が
-   残す線)・keep-room-at-ms = その読みの刻(None = まだ)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   残す線)・keep-room-at-ms = その読みの刻(None = まだ)・command-line-file = 命令の層の線の
+   file(枠の file の行の commandLineFile を worker/protocol/coordinator_link が書く — \"\" = 掛け直さない)・command-floor-bytes = 短い命令の
+   余地(同じく commandFloorMiB)・command-limit = 最後に書いた命令の層の上限(None = まだ書いていない)・command-use = 最後の回に読んだ
+   命令の層の内訳(None = 読めなかった)・command-squeezed = 上限を回収で返らない量より下げた続きの中・told-command-failure = log に
+   出した命令の層の失敗の訳。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None
           self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
-          self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None)))
+          self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None
+          self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
+          self.command-squeezed False self.told-command-failure "")))
 
 
 (defrecord LayerMemory
@@ -470,6 +496,71 @@
   None)
 
 
+(defk command-room-read [commands line-file]
+  {:pre [(: commands CommandLayerSettings) (: line-file str)] :post [(: % (| int None str))] :tags {:context "worker" :role "protocol"}}
+  "MemAvailable − 線(byte・負もありうる)を読むため。線の file が無い・数でない(係がまだ起きていない)は None、meminfo を読めない・形の
+   違う時は訳の文。"
+  (<- line-text (| str FileFailed) (ReadText line-file))
+  (<- line-mib (| int None) (keep-line-of (if (isinstance line-text str) line-text None)))
+  (when (is line-mib None)
+    (return None))
+  (<- meminfo (| str FileFailed) (ReadText commands.meminfo-path))
+  (when (isinstance meminfo FileFailed)
+    (return (.format "meminfo を読めない: {}" meminfo.detail)))
+  (try
+    (<- available int (meminfo-kib meminfo "MemAvailable"))
+    (- (* available 1024) (* line-mib MIB))
+    (except [error ValueError]
+      (.format "meminfo を読めない: {}" error))))
+
+
+(defk command-layer-read [commands]
+  {:pre [(: commands CommandLayerSettings)] :post [(: % (| CommandLayerUse str))] :tags {:context "worker" :role "protocol"}}
+  "命令の層の memory.current と memory.stat を内訳にするため。読めない・形の違う時は訳の文。"
+  (<- current (| str FileFailed) (ReadText (+ commands.dir "/memory.current")))
+  (when (isinstance current FileFailed)
+    (return (.format "命令の層の memory.current を読めない: {}" current.detail)))
+  (<- stat (| str FileFailed) (ReadText (+ commands.dir "/memory.stat")))
+  (when (isinstance stat FileFailed)
+    (return (.format "命令の層の memory.stat を読めない: {}" stat.detail)))
+  (try
+    (<- use CommandLayerUse (command-layer-use-of current stat))
+    use
+    (except [error ValueError]
+      (str error))))
+
+
+(defk commands-limited [commands cell guard]
+  {:pre [(: commands CommandLayerSettings) (: cell EvictionCell) (: guard bool)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "命令の層の memory.max を MemAvailable と線から掛け直すため(頭の註・worker/core/eviction_rules の command-layer-limit)。線の宣言の無い
+   機体と guard が偽の見張りは書かない。線か内訳を読めない回は宣言の静的な値を書く(前の回の小さい上限で命令の層を縛らない)。回収で返らない
+   量より下げた続きの頭と、失敗の訳が変わった時に 1 行言う。"
+  (when (or (not cell.command-line-file) (not guard))
+    (return None))
+  (<- room (| int None str) (command-room-read commands cell.command-line-file))
+  (<- use (| CommandLayerUse str) (command-layer-read commands))
+  (setv cell.command-use (if (isinstance use str) None use))
+  (var failure (cond (isinstance room str) room (isinstance use str) use True ""))
+  (var limit commands.cap-bytes)
+  (when (and (isinstance room int) (isinstance use CommandLayerUse))
+    (<- found int (command-layer-limit use room cell.command-floor-bytes commands.cap-bytes))
+    (:= limit found))
+  (<- written (| FileFailed None) (WriteText (+ commands.dir "/memory.max") (str limit)))
+  (if (isinstance written FileFailed)
+      (:= failure (.format "命令の層の memory.max に {} を書けない: {}" limit written.detail))
+      (setv cell.command-limit limit))
+  (val squeezed (and (not failure) (isinstance use CommandLayerUse) (< limit use.held-bytes)))
+  (when (and squeezed (not cell.command-squeezed))
+    (<- (slog COMMANDS-SQUEEZE-LOG :level "warning" :limit-mib (// limit MIB) :held-mib (// use.held-bytes MIB)
+              :pinned-mib (// use.pinned-bytes MIB) :room-mib (// room MIB) :floor-mib (// cell.command-floor-bytes MIB))))
+  (setv cell.command-squeezed squeezed)
+  (when (!= failure cell.told-command-failure)
+    (setv cell.told-command-failure failure)
+    (when failure
+      (<- (slog COMMANDS-LIMIT-FAILED-LOG :level "warning" :reason failure))))
+  None)
+
+
 (defk eviction-noted [settings cell guard now-ms]
   {:pre [(: settings (| EvictionSettings None)) (: cell EvictionCell) (: guard bool) (: now-ms int)] :post [(: % (| EvictionLine None))]
    :tags {:context "worker" :role "protocol"}}
@@ -489,4 +580,6 @@
   (setv cell.line line cell.line-at-ms now-ms)
   (<- (line-told settings cell line reason))
   (<- (jobs-limited settings cell line guard now-ms))
+  (when (is-not settings.commands None)
+    (<- (commands-limited settings.commands cell guard)))
   line)

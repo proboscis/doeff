@@ -21,6 +21,10 @@
 ;;; (worker/core/load_rules の頭の註の「会話のターンに残す線」— 上に載る系のターンを受ける係が書く)。worker は測りのたびにその file を
 ;;; 読み、名乗る memory の空きを線の上に絞る。欄が無い行は線を読まない。
 ;;;   {"zeus": {"memoryMiB": 63488, "keepLineFile": "/cargo-build/.keep-available-mib"}}
+;;; 行は省ける欄の組 commandLineFile と commandFloorMiB(枠と同じく heartbeat の前に読み直す)も持てる: 命令の層(commands)の memory.max を
+;;; 掛け直す線の file の絶対 path と短い命令の余地(MiB — worker/core/eviction_rules の頭の註の命令の層)。線の file は上に載る系のターンを受ける
+;;; 係が書く。2 つは組で書く(片方だけは malformed)。欄が無い行は命令の層を掛け直さない。
+;;;   {"zeus": {"memoryMiB": 63488, "commandLineFile": "/cargo-build/.command-keep-available-mib", "commandFloorMiB": 8192}}
 ;;;
 ;;; 読めた状態(heartbeat の roomFile で名乗る):
 ;;;   ok          自分の行を読めた
@@ -53,11 +57,15 @@
 (defrecord WorkerRoom
   "worker の枠: memory-mib = 常駐の job に使ってよい memory の予算(MiB — None = 名乗らない。枠の file を読まない機体の worker
    (Mac・zeus-native)が --memory-mib を渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 —
-   heartbeat の provides に足す)・keep-line-file = 会話のターンに残す線の file(頭の註の keepLineFile — 空 = 読まない)。"
-  {:check [(or (is memory-mib None) (>= memory-mib 0)) (or (= keep-line-file "") (.startswith keep-line-file "/"))]}
+   heartbeat の provides に足す)・keep-line-file = 会話のターンに残す線の file(頭の註の keepLineFile — 空 = 読まない)・command-line-file =
+   命令の層を掛け直す線の file・command-floor-mib = 短い命令の余地(頭の註の commandLineFile と commandFloorMiB — 空と 0 = 掛け直さない)。"
+  {:check [(or (is memory-mib None) (>= memory-mib 0)) (or (= keep-line-file "") (.startswith keep-line-file "/"))
+           (or (= command-line-file "") (.startswith command-line-file "/")) (>= command-floor-mib 0)]}
   (#^ (| int None) memory-mib)
   (setv #^ (get tuple #(str ...)) pools #())
-  (setv #^ str keep-line-file ""))
+  (setv #^ str keep-line-file "")
+  (setv #^ str command-line-file "")
+  (setv #^ int command-floor-mib 0))
 
 
 (defrecord RoomReading
@@ -81,6 +89,7 @@
   (val wrong (next (gfor #(k v) (zip ROOM-FIELDS fields) :if (not (and (isinstance v int) (not (isinstance v bool)) (>= v 0))) k) None))
   (<- pools (| tuple str) (row-pools (if (isinstance row dict) row {}) name))
   (<- keep-line (| tuple str) (row-keep-line-file (if (isinstance row dict) row {}) name))
+  (<- command-line (| tuple str) (row-command-line (if (isinstance row dict) row {}) name))
   (val malformed (fn [reason] (RoomReading :state RoomState.MALFORMED :room None :reason reason)))
   (cond
     (not decoded) (malformed "JSON でない")
@@ -90,9 +99,28 @@
       (malformed (.format "worker {} の行の {} が 0 以上の整数でない: {!r}" name wrong (.get row wrong)))
     (isinstance pools str) (malformed pools)
     (isinstance keep-line str) (malformed keep-line)
+    (isinstance command-line str) (malformed command-line)
     True (RoomReading :state RoomState.OK
-                      :room (WorkerRoom :memory-mib (get fields 0) :pools pools :keep-line-file (get keep-line 0))
+                      :room (WorkerRoom :memory-mib (get fields 0) :pools pools :keep-line-file (get keep-line 0)
+                                        :command-line-file (get command-line 0) :command-floor-mib (get command-line 1))
                       :reason "")))
+
+
+(defk row-command-line [row name]
+  {:pre [(: row dict) (: name str)] :post [(: % (| (get tuple #(str int)) str))] :tags {:context "worker" :role "judgment" :reads "json"}}
+  "枠の file の worker name の行から命令の層を掛け直す線の file と床(頭の註の commandLineFile と commandFloorMiB)を読むため。答え = 2 つ組
+   (欄が無ければ空の path と 0)か malformed の訳の文(片方だけ・/ で始まらない path・0 以上の整数でない床 — 黙って掛け直さない側へ倒れない)。"
+  (val path (.get row "commandLineFile" ""))
+  (val floor (.get row "commandFloorMiB" None))
+  (cond
+    (and (= path "") (is floor None)) #("" 0)
+    (or (= path "") (is floor None))
+      (.format "worker {} の行の commandLineFile と commandFloorMiB は組で書く" name)
+    (not (and (isinstance path str) (.startswith path "/")))
+      (.format "worker {} の行の commandLineFile は / で始まる file の path で書く: {!r}" name path)
+    (not (and (isinstance floor int) (not (isinstance floor bool)) (>= floor 0)))
+      (.format "worker {} の行の commandFloorMiB が 0 以上の整数でない: {!r}" name floor)
+    True #(path floor)))
 
 
 (defk row-keep-line-file [row name]
@@ -168,7 +196,8 @@
    after = 次に名乗る枠(読めなければ before と同じ)。組の印は名乗る時だけ添える。"
   (val said (fn [r] (+ (if (is r.memory-mib None) "memory の予算なし" (.format "memory {} MiB" r.memory-mib))
                        (if r.pools (.format "・pools {}" (.join "," r.pools)) "")
-                       (if r.keep-line-file (.format "・ターンに残す線 {}" r.keep-line-file) ""))))
+                       (if r.keep-line-file (.format "・ターンに残す線 {}" r.keep-line-file) "")
+                       (if r.command-line-file (.format "・命令の層の線 {}・床 {} MiB" r.command-line-file r.command-floor-mib) ""))))
   (if (= reading.state RoomState.OK)
       (.format "worker: 枠の file から {} → {} を名乗る" (said before) (said after))
       (.format "worker: 枠の file を読めない({}: {})— 前の値 {} のまま名乗る" reading.state.value reading.reason (said before))))

@@ -61,7 +61,7 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster._worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings CliLayerSettings])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings CliLayerSettings CommandLayerSettings])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max layout-held-bytes layout-layer-names
                                                   pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
@@ -114,6 +114,8 @@
 ;; 掛け直す(worker/core/eviction_rules の頭の註の会話の CLI の層)。天井は job の子へ CLI-CEILING-CHILD-VAR(byte の数)で渡す — turn-host が
 ;; 生かす CLI の本数の上限を天井から導く(起動の時の clis の memory.max は、その刻の空きで決まった値なので本数の元にならない)。
 (val CLI-LAYER "clis")
+;; 上に載る系の命令の層の名(deploy/boot.sh の層の宣言 — memory.max を worker/core/eviction_rules の頭の註の命令の層で掛け直す)。
+(val COMMAND-LAYER "commands")
 (val CLI-CEILING-VAR "WORKER_CLI_LAYER_CEILING")
 (val CLI-CEILING-CHILD-VAR "DOEFF_WORKER_CLI_CEILING")
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
@@ -205,7 +207,9 @@
       (raise (ValueError (.format "{} は byte の数で書く(max は余裕にならない)" EVICTION-MARGIN-VAR))))
     (:= margin read))
   (<- clis (| CliLayerSettings None) (cli-layer-settings-of machine-env cgroup-dir layout jobs))
-  (EvictionSettings :clis clis :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
+  (<- command-cap (| int None) (layer-memory-max layout COMMAND-LAYER))
+  (EvictionSettings :clis clis :commands (if (is command-cap None) None (CommandLayerSettings :dir (+ cgroup-dir "/" COMMAND-LAYER) :cap-bytes command-cap))
+                    :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
                     :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap
                     :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
                     :room-file (if (is prepare-cap None) None (.get machine-env PREPARE-ROOM-FILE-VAR)) :margin-bytes margin))

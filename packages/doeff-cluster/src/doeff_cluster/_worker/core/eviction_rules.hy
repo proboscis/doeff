@@ -71,6 +71,19 @@
 ;;; clis の上限 6 GiB・使い約 1 GiB の使われていない貸しを残すために jobs の層の上限を 0 まで下げ、走っていた task を 50 本を越えて kernel が
 ;;; OOM で止めた。
 ;;;
+;;; 命令の層(commands — 上に載る系が worker の外から起こす作り直せる命令の層): 宣言の静的な memory.max だけでは、機体の
+;;; 空きを見ずに build の命令が線の手前まで memory を取り、新しいターンを受ける係の余白を何時間も 0 にした(11-10 の zeus — 命令の層 35.6 GiB・
+;;; そのうちターンの走っている会話の命令は 1 本ぶん)。枠の file の行の commandLineFile(上に載る系が書く MemAvailable の線・worker/core/room_rules)と
+;;; commandFloorMiB が在る機体は、worker が見張りの回ごとに命令の層の memory.max を掛け直す(command-layer-limit):
+;;;   上限 = tmpfs の量 + max(床, 止めて返る量 + (MemAvailable − 線))  を宣言の静的な値で切る。
+;;;   回収で返らない量 = memory.current −(file − shmem)− slab_reclaimable。page cache と回収できる slab は MemAvailable に数え済みなので、
+;;;     memory.current を土台にすると、回収した page cache の分だけ次の回の上限が下がり続ける(上限 = 使い + 空き では空きは変わらず使いだけ減る)。
+;;;   tmpfs の量(shmem)は process を止めても返らない(返すのは中間物の掃除の係)ので、上限から引かない — 下げると、消せない page のために層の
+;;;     process を全部 OOM で止めても目標に届かない。
+;;;   床 = 短い命令の余地: 線を割っても命令の層がこの量までは持てる(走っているターンの短い命令を止めない)。
+;;; 上限が今の使いより下がると kernel は page cache を回収し、足りなければ層の中の process を OOM で止める。先に止まるのは上に載る系が印を
+;;; 付けた長い命令(oom_score_adj)で、短い命令より先に譲る。
+;;;
 ;;; 余裕(margin-of)は機体ごと: 機体の宣言の値(WORKER_EVICTION_MARGIN — 機体の 7 日の測りから決めた値・無ければ EVICTION-MARGIN-BYTES)を
 ;;; 床にし、worker 自身が測った「jobs と準備の層の外の working set の回あたりの増え」の高い分位(MARGIN-QUANTILE)の MARGIN-TICKS 回分が
 ;;; 床を越えれば、それを使う(機体に載る Pod が替わって伸びが大きくなった時に、宣言を書き直す前から覆う)。
@@ -152,6 +165,14 @@
   {:check [(>= bytes 0)]}
   (#^ str id)
   (#^ int bytes))
+
+
+(defrecord CommandLayerUse
+  "命令の層の memory の内訳(頭の註の命令の層): held-bytes = 回収で返らない量(memory.current −(file − shmem)− slab_reclaimable・0 未満は 0)・
+   pinned-bytes = そのうち tmpfs の量(shmem — process を止めても返らない)。"
+  {:check [(>= held-bytes 0) (>= pinned-bytes 0)]}
+  (#^ int held-bytes)
+  (#^ int pinned-bytes))
 
 
 (defk kernel-bytes-of [text]
@@ -349,6 +370,28 @@
   (val soft (- box (max 0 (- clis-limit clis-current))))
   (<- room int (kept-room soft (+ soft slack) pending))
   (max 0 (+ jobs-current room)))
+
+
+(defk command-layer-use-of [current-text stat-text]
+  {:pre [(: current-text str) (: stat-text str)] :post [(: % CommandLayerUse)] :tags {:context "worker" :role "judgment"}}
+  "命令の層の memory.current と memory.stat の中身を内訳にするため(頭の註の命令の層)。数でない・行が無い中身は ValueError。"
+  (val current (.strip current-text))
+  (when (not (.isdigit current))
+    (raise (ValueError (.format "命令の層の memory.current {!r} が数でない" current-text))))
+  (<- file int (stat-bytes stat-text "file"))
+  (<- shmem int (stat-bytes stat-text "shmem"))
+  (<- slab int (stat-bytes stat-text "slab_reclaimable"))
+  (val held (max 0 (- (int current) (max 0 (- file shmem)) slab)))
+  (CommandLayerUse :held-bytes held :pinned-bytes (min held shmem)))
+
+
+(defk command-layer-limit [use room floor cap]
+  {:pre [(: use CommandLayerUse) (: room int) (: floor int) (>= floor 0) (: cap int) (>= cap 0)] :post [(: % int) (<= 0 % cap)]
+   :tags {:context "worker" :role "judgment"}}
+  "命令の層に掛ける memory.max を求めるため(頭の註の命令の層): use = 層の内訳・room = MemAvailable − 線(線を割っていれば負)・floor = 短い
+   命令の余地・cap = 宣言の静的な値。tmpfs の量 + max(床, 止めて返る量 + room)を cap で切る。"
+  (val yieldable (- use.held-bytes use.pinned-bytes))
+  (min cap (+ use.pinned-bytes (max floor (+ yieldable room)))))
 
 
 (defk placed-pending [needs uses]
