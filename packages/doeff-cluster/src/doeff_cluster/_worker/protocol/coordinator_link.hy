@@ -909,6 +909,11 @@
                                        (proc-load-read source state.load-ticks now-ms line state.keep-line-file)))
       (val reading (if (isinstance read str) None read))
       (val reason (if (isinstance read str) read ""))
+      ;; 会話のターンに残す線の上の空きを見張りへ渡す(見張りが jobs の層の上限をその線の上にも収める — worker/core/eviction_rules の
+      ;; kept-line。読めない回は None で渡し、見張りは追い出しの線だけで数える)。
+      (when (is-not state.eviction None)
+        (setv state.eviction.keep-room (if (is reading None) None reading.keep-room-bytes)
+              state.eviction.keep-room-at-ms now-ms))
       (when (!= reason state.load-reason)
         (<- (slog (if reason (+ "worker: 機体の空きを測れない — heartbeat に載せない: " reason) "worker: 機体の空きを測れた — heartbeat に載せる")
                   :level (if reason "warning" "info"))))

@@ -141,9 +141,12 @@
 
 
 (defrecord LoadReading
-  "測りの 1 回の読みの答え: load = 名乗る測り・ticks = この読みの /proc/stat(次の読みが CPU の使いを数える起点)。"
+  "測りの 1 回の読みの答え: load = 名乗る測り・ticks = この読みの /proc/stat(次の読みが CPU の使いを数える起点)・keep-room-bytes = 機体の
+   MemAvailable − 会話のターンに残す線(byte・負もありうる — None = 線が無い・読めない。見張りが jobs の層の上限をこの線の上にも収める —
+   worker/core/eviction_rules の頭の註の上に載る系が残す線)。"
   (#^ MachineLoad load)
-  (#^ CpuTicks ticks))
+  (#^ CpuTicks ticks)
+  (setv #^ (| int None) keep-room-bytes None))
 
 
 (defk load-read-due [read-ms now-ms]
@@ -275,6 +278,7 @@
   (<- machine NodeMemory (node-memory-of meminfo memory-pressure))
   (<- by-line NodeMemory (line-memory machine line))
   (<- memory NodeMemory (kept-memory by-line machine keep-line))
+  (<- keep (| int None) (keep-line-of keep-line))
   (var cpu None)
   (when (is-not cpu-pressure None)
     (<- read Pressure (pressure-of cpu-pressure "/proc/pressure/cpu"))
@@ -290,7 +294,8 @@
                                   :memory-some-avg10 memory.some-avg10 :memory-full-avg10 memory.full-avg10
                                   :cpu-nice (if (is nice None) None (min nice busy))
                                   :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10))
-               :ticks ticks))
+               :ticks ticks
+               :keep-room-bytes (if (is keep None) None (- machine.available-bytes (* keep MIB)))))
 
 
 (defk host-load-of [counters before at-ms [line None]]

@@ -27,6 +27,14 @@
 ;;; 余裕は、掛け直しの間(見張りの回の 5 秒)に jobs と準備の層の外(ほかの Pod・常駐の job・worker の本体)が伸びる分を覆う。jobs の層の
 ;;; 中の跳ね(atlas の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
 ;;;
+;;; 上に載る系が残す線(2026-11-10): 枠の file の行が keepLineFile を名指す worker(worker/core/room_rules — 上に載る系が機体の MemAvailable を
+;;; その線より上に残したい機体)は、jobs の層の上限を、追い出しまでの空きと「機体の MemAvailable − 残す線」(keep-room — heartbeat の測りが
+;;; 読む)の小さい方で数える(kept-line — 種類 KEEP の線)。置き先は名乗る空きを同じ線の上に絞って task を置くが、task は置いた後に名乗りより
+;;; 大きく伸びうる(zeus の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本が 8 分で各 14 GiB へ伸び、MemAvailable は線を約 54 GiB 割った)。
+;;; 層の上限を線の上に置けば、伸びた task はまず kernel が jobs の層の中で回収し、足りなければ層の中の最大の process を止める — 上に載る系の
+;;; 残す線は task が割らない。会話の CLI の層(clis)と keeper の読む準備の空きはこの線で縮めない(線は上に載る系がそれらのために残す空き)。
+;;; 線を読めない・古い(LINE-FRESH-MS を越えた)回と、追い出しの線の無い機体では今までどおり追い出しまでの空きだけで数える。
+;;;
 ;;; 準備の層(prepare — keeper の版の準備・deploy/boot.sh の keeper_swap): 版上げに要る 1 回きりの短い仕事なので、task と同じ縮む層に
 ;;; 置かない(縮めて殺しても memory は守れず、版上げだけが止まる — k3s-1 の 11-02 は jobs の上限 61〜139 MiB で準備の bytecode の焼きが
 ;;; OOM で落ち続けた)。準備の層の memory.max は宣言の静的な値(準備の山)で、worker は掛け直さない。準備が走っている間(層に process が
@@ -93,6 +101,9 @@
 ;; 要りを名乗らずに置かれた task に見込む要り(置いた task の取り置き — 頭の註の会話の CLI の層): 置き先が同じ task に見込む値
 ;; (coordinator/core/measured_room の UNDECLARED-TASK-MIB)と同じ。
 (val UNDECLARED-NEED-BYTES (* 1024 MIB))
+;; 上に載る系が残す線の空き(keep-room)を jobs の層の上限に使える長さ(ms — 頭の註の上に載る系が残す線)。heartbeat の測りは 5 秒ごとに
+;; 読み直すので、その 3 回分(worker/core/load_rules の LINE-FRESH-MS と同じ長さ)。
+(val KEEP-ROOM-FRESH-MS (* 15 1000))
 ;; kubelet が Pod の全部を置く cgroup(Node の allocatable を掛ける cgroup)の名 — systemd の cgroup の driver と cgroupfs の driver。
 (val PODS-CGROUP-NAMES #("kubepods.slice" "kubepods"))
 ;; kernel の memory の値の綴り(memparse — 数 + 1 字の単位)と、k8s の量の綴り(数 + 単位)。
@@ -105,8 +116,8 @@
                      "E" (Decimal "1e18")})
 
 
-;; 線の種類(閉じた型 — 頭の註): ALLOCATABLE = allocatable の線・NODE = 機体の線。
-(defenum LineKind ALLOCATABLE NODE)
+;; 線の種類(閉じた型 — 頭の註): ALLOCATABLE = allocatable の線・NODE = 機体の線・KEEP = 上に載る系が残す線(jobs の層の上限だけが使う)。
+(defenum LineKind ALLOCATABLE NODE KEEP)
 
 
 (defrecord KubeletMemory
@@ -241,6 +252,26 @@
       node
       (NodeMemory :total-bytes line.size-bytes :available-bytes (max 0 line.room-bytes) :some-avg10 node.some-avg10
                   :full-avg10 node.full-avg10)))
+
+
+(defk kept-line [line keep-room]
+  {:pre [(: line EvictionLine) (: keep-room (| int None))] :post [(: % EvictionLine) (<= %.room-bytes line.room-bytes)]
+   :tags {:context "worker" :role "judgment"}}
+  "jobs の層の上限を数える線を、上に載る系が残す線の上にも収めるため(頭の註の上に載る系が残す線): keep-room = 機体の MemAvailable −
+   残す線(byte — None = 線が無い・古い)。keep-room が追い出しまでの空きより小さければ、同じ大きさで使いを差の分だけ多く数えた種類 KEEP の
+   線(空き = keep-room — 負もありうる)、ほかは line のまま。"
+  (if (or (is keep-room None) (>= keep-room line.room-bytes))
+      line
+      (EvictionLine :kind LineKind.KEEP :size-bytes line.size-bytes :used-bytes (+ line.used-bytes (- line.room-bytes keep-room))
+                    :room-bytes keep-room)))
+
+
+(defk fresh-keep-room [keep-room at-ms now-ms]
+  {:pre [(: keep-room (| int None)) (: at-ms (| int None)) (: now-ms int)] :post [(: % (| int None))]
+   :tags {:context "worker" :role "judgment"}}
+  "heartbeat の測りが最後に読んだ「機体の MemAvailable − 上に載る系が残す線」keep-room(at-ms = 読んだ刻)を、jobs の層の上限に使える
+   新しさの時だけ返すため(KEEP-ROOM-FRESH-MS の内 — 古い・刻の無い・壁の時計が戻った読みは None で、上限は追い出しまでの空きだけで数える)。"
+  (if (and (is-not keep-room None) (is-not at-ms None) (<= 0 (- now-ms at-ms) KEEP-ROOM-FRESH-MS)) keep-room None))
 
 
 (defk line-name [line]

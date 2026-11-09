@@ -34,7 +34,7 @@
 (import doeff_cluster._worker.core.memory_rules [JobRoot MemoryLevel MemoryLimits NodeMemory MIB memory-level])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES EvictionLine KubeletMemory LineKind PodsMemory kernel-bytes-of
                                                   quantity-bytes pods-memory-of root-working-set-of eviction-line line-memory jobs-limit
-                                                  layer-memory-max pods-dir-of])
+                                                  layer-memory-max pods-dir-of kept-line fresh-keep-room KEEP-ROOM-FRESH-MS])
 (import doeff_cluster._worker.core.load_rules [LINE-FRESH-MS fresh-line machine-load-of])
 (import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings JOBS-SQUEEZE-LOG EVICTION-LINE-LOG EVICTION-UNREAD-LOG])
@@ -197,12 +197,14 @@
 
 (defrecord SceneSeen
   "模擬の機体を回した後の世界: highest = 読みの刻ごとの Pod の working set の和の最大・kernel-kills = jobs の層の中で止めた task の数・
-   lines = 見張りと線の log の行(#(名 欄の dict) の列)・limits = 見張りが jobs の層に書いた上限の列(書いた順)。"
+   lines = 見張りと線の log の行(#(名 欄の dict) の列)・limits = 見張りが jobs の層に書いた上限の列(書いた順)・lowest = 読みの刻ごとの
+   機体の MemAvailable(capacity − 機体の Pod の外の使い − Pod の和)の最小。"
   {:tags {:context "doeff-cluster-test" :role "type"}}
   (#^ int highest)
   (#^ int kernel-kills)
   (#^ tuple lines)
-  (#^ tuple limits))
+  (#^ tuple limits)
+  (#^ int lowest))
 
 
 (defeffect ReadScene
@@ -236,15 +238,18 @@
   (KernelNow :killed stopped :jobs jobs :pods (+ others scene.resident jobs)))
 
 
-(defhandler atlas-world [#^ Scene scene #^ MemoryCell cell #^ int run-until-ms]
+(defhandler atlas-world [#^ Scene scene #^ MemoryCell cell #^ int run-until-ms #^ (| int None) keep-line]
   "見張りの外側の模擬の atlas(頭の註): Node の宣言を答える偽の API server・kubepods と root と jobs の層の cgroup の file を答える模擬の
-   kernel(jobs の層の使いを、見張りが書いた memory.max で止める)・job の根・log の行を溜める・run-until-ms 以後の待ちで止めの合図。"
+   kernel(jobs の層の使いを、見張りが書いた memory.max で止める)・job の根・log の行を溜める・run-until-ms 以後の待ちで止めの合図。
+   keep-line = 上に載る系が残す MemAvailable の線(byte — None = 線の無い機体)。在れば待ちごとに heartbeat の測りの代わりに「機体の
+   MemAvailable − 線」を見張りの入れ物へ書く(worker/protocol/coordinator_link の load-noted と同じ書き)。"
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
-  ;; 引数に残す理由: 台本と止めの合図の入れ物と止める刻は検ごとに決める値(Ask で読む設定ではない)。
+  ;; 引数に残す理由: 台本と止めの合図の入れ物と止める刻と残す線は検ごとに決める値(Ask で読む設定ではない)。
   (session var limit (* 10752 MIB))
   (session var killed False)
   (session var kills 0)
   (session var highest 0)
+  (session var lowest CAPACITY)
   (session var lines #())
   (session var limits #())
   (HttpRequest [method url]
@@ -286,11 +291,15 @@
       (:= kills (+ kills 1)))
     (:= killed seen.killed)
     (:= highest (max highest seen.pods))
+    (val available (- CAPACITY scene.system seen.pods))
+    (:= lowest (min lowest available))
+    (when (is-not keep-line None)
+      (setv cell.eviction.keep-room (- available keep-line) cell.eviction.keep-room-at-ms now))
     (when (>= now run-until-ms)
       (setv cell.closing True))
     (reperform effect))
   (ReadScene []
-    (resume (SceneSeen :highest highest :kernel-kills kills :lines lines :limits limits))))
+    (resume (SceneSeen :highest highest :kernel-kills kills :lines lines :limits limits :lowest lowest))))
 
 
 (defk machine-files []
@@ -318,10 +327,11 @@
     (ProcRow :pid 21 :ppid 20 :start-ticks 21 :rss-bytes (* 300 MIB) :comm "python")))
 
 
-(defk scene-watched [scene eviction run-until-ms]
-  {:pre [(: scene Scene) (: eviction bool) (: run-until-ms int)] :post [(: % SceneSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk scene-watched [scene eviction run-until-ms [keep-line None]]
+  {:pre [(: scene Scene) (: eviction bool) (: run-until-ms int) (: keep-line (| int None))] :post [(: % SceneSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の見張りを模擬の atlas と仮想時計の下で止めの合図まで回すため。eviction = 追い出しの線の設定を渡すか(偽 = 前の形の worker —
-   jobs の層は宣言の静的な上限のまま)。"
+   jobs の層は宣言の静的な上限のまま)・keep-line = 上に載る系が残す MemAvailable の線(byte — None = 線の無い機体)。"
   (<- cap (| int None) (layer-memory-max ATLAS-LAYOUT "jobs"))
   (val settings (MemoryWatchSettings
                   :eviction (if eviction
@@ -332,7 +342,7 @@
   (<- rows tuple (scene-rows))
   (<- files MemoryFiles (machine-files))
   (<- seen SceneSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files)
-                                     (scripted-proc-table-handler rows) (atlas-world scene cell run-until-ms)]
+                                     (scripted-proc-table-handler rows) (atlas-world scene cell run-until-ms keep-line)]
                        (watch-then-scene settings cell)))
   seen)
 
@@ -395,3 +405,50 @@
   (assert (in #(MemoryLevel.DANGER.value "allocatable") (lfor l levels #((get l "to") (get l "line")))) levels)
   (<- before SceneSeen (scene-watched OTHERS-RISE False 150000))
   (assert (> before.highest ALLOCATABLE) #((/ before.highest GIB) (/ ALLOCATABLE GIB))))
+
+
+;; 上に載る系が残す線(worker/core/eviction_rules の頭の註 — zeus の 11-09 16:52 UTC の形を atlas の Node の大きさに縮めた台本): ほかの Pod 4 GiB・
+;; worker の本体と常駐の job 4.65 GiB・名乗り 3.5 GiB 程度で置かれた task が 60 秒で 1 → 10 GiB へ伸びる。追い出しまでの空きは 10 GiB 余り
+;; 在るので、追い出しの線だけで数える上限は task を止めない(Pod の和 18.65 GiB < allocatable 19.79 GiB)。機体の MemAvailable は始め
+;; 16.6 GiB で、上に載る系が残す線 14 GiB の上は 2.6 GiB しかない。
+(val OVERGROWN (Scene :others (* 4 GIB) :others-rise 0 :others-from 0 :others-span 1 :resident (int (* 4.65 GIB))
+                      :task-from (* 1 GIB) :task-to (* 10 GIB) :task-start 10000 :task-span 60000))
+(val KEEP-LINE (* 14 GIB))
+
+
+(deftest test-the-jobs-limit-keeps-to-the-line-left-for-the-upper-system
+  (val line (EvictionLine :kind LineKind.ALLOCATABLE :size-bytes ALLOCATABLE :used-bytes (- ALLOCATABLE (* 10 GIB)) :room-bytes (* 10 GIB)))
+  ;; 線の上の空きが追い出しまでの空きより小さければ、同じ大きさで空きをその値にした線(負も・使いは差の分だけ多く数える)。
+  (<- narrow EvictionLine (kept-line line (* 2 GIB)))
+  (<- below EvictionLine (kept-line line (- (* 3 GIB))))
+  (assert (= #(narrow.kind narrow.size-bytes narrow.room-bytes) #(LineKind.KEEP ALLOCATABLE (* 2 GIB))) narrow)
+  (assert (= #(below.kind below.room-bytes) #(LineKind.KEEP (- (* 3 GIB)))) below)
+  ;; 線の上が広い・線が無い時は追い出しの線のまま。
+  (<- wide EvictionLine (kept-line line (* 12 GIB)))
+  (<- none EvictionLine (kept-line line None))
+  (assert (= #(wide none) #(line line)))
+  ;; 古い・先の刻の読みは使わない(上限は追い出しまでの空きだけで数える)。
+  (<- fresh (| int None) (fresh-keep-room (* 2 GIB) 100000 (+ 100000 KEEP-ROOM-FRESH-MS)))
+  (<- stale (| int None) (fresh-keep-room (* 2 GIB) 100000 (+ 100001 KEEP-ROOM-FRESH-MS)))
+  (<- ahead (| int None) (fresh-keep-room (* 2 GIB) 100000 99999))
+  (assert (= #(fresh stale ahead) #((* 2 GIB) None None)))
+  ;; heartbeat の測りは線の file の中身から「機体の MemAvailable − 線」を読む(線の無い読みは None)。
+  (val stat "cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 100 0 50 800 50 0 0 0 0 0\n")
+  (val meminfo (.format "MemTotal: {} kB\nMemFree: 1 kB\nMemAvailable: {} kB\n" (// CAPACITY 1024) (* 16 1024 1024)))
+  (<- kept (machine-load-of stat meminfo None None None 0 None :keep-line "14336\n"))
+  (<- unkept (machine-load-of stat meminfo None None None 0 None))
+  (assert (= #(kept.keep-room-bytes unkept.keep-room-bytes) #((* 2 GIB) None)) #(kept unkept)))
+
+
+(deftest test-a-task-grown-past-its-declaration-is-stopped-in-the-jobs-layer-before-memavailable-crosses-the-kept-line
+  (<- seen SceneSeen (scene-watched OVERGROWN True 120000 KEEP-LINE))
+  ;; 機体の MemAvailable は読みのどの刻も上に載る系の線より上(伸びた task は線を割る前に jobs の層の中で止まった)。
+  (assert (>= seen.lowest KEEP-LINE) #((/ seen.lowest GIB) (/ KEEP-LINE GIB)))
+  (assert (= seen.kernel-kills 1) seen.kernel-kills)
+  ;; 上限を使いより下げた回の線は種類 keep と名指す。
+  (<- squeezed tuple (lines-named seen.lines JOBS-SQUEEZE-LOG))
+  (assert (all (gfor told squeezed (= (get told "line") "keep"))) squeezed)
+  ;; 線を読まない worker(前の形)の同じ機体は、追い出しの線の内で task を伸ばしきり、MemAvailable が線を大きく割る。
+  (<- before SceneSeen (scene-watched OVERGROWN True 120000))
+  (assert (< before.lowest (- KEEP-LINE (* 4 GIB))) #((/ before.lowest GIB) (/ KEEP-LINE GIB)))
+  (assert (= before.kernel-kills 0) before.kernel-kills))

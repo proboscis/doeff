@@ -43,7 +43,7 @@
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable margin-of kernel-bytes-of clis-limit clis-lent box-free
-                                                  jobs-box-limit placed-pending])
+                                                  jobs-box-limit placed-pending kept-line fresh-keep-room])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
 (val EVICTION-UNREAD-LOG "worker: 追い出しの線を読めない")
@@ -113,14 +113,15 @@
    (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)・needs = 置き先が置いた task の要り(TaskNeed
    の tuple — heartbeat の返事を読んだ worker/protocol/coordinator_link が書く)・pending = 最後の回の置いた task の取り置き・jobs-intake =
    最後に jobs の層の上限と同じ回に決めた、新しい受けに名乗る上限(測った余裕で数え、取り置きを入れない — None = まだ。これと
-   jobs-current の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)。scheduler の task は 1 つの thread
-   で交互に走るので錠は要らない。"
+   jobs-current の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)・keep-room = heartbeat の測りが最後に
+   読んだ「機体の MemAvailable − 上に載る系が残す線」(byte — None = 線が無い・読めない。worker/core/eviction_rules の頭の註の上に載る系が
+   残す線)・keep-room-at-ms = その読みの刻(None = まだ)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None
           self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
-          self.box None self.needs #() self.pending 0 self.jobs-intake None)))
+          self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None)))
 
 
 (defrecord LayerMemory
@@ -376,14 +377,15 @@
   failure)
 
 
-(defk jobs-limited [settings cell line guard]
-  {:pre [(: settings EvictionSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: guard bool)] :post [(: % None)]
+(defk jobs-limited [settings cell line guard now-ms]
+  {:pre [(: settings EvictionSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: guard bool) (: now-ms int)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
   "jobs の層の memory.max を今の線から掛け直すため(頭の註): 線が在れば jobs の今の使い + 空き − 余裕 − 準備の取り置き − clis への貸し
    (上限は宣言の静的な値 — 測った余裕の宣言の床を越えた分と clis への貸しでは、使い + 置いた task の取り置きより下げない・worker/core/
    eviction_rules の jobs-limit)、線が無ければ宣言の静的な値。同じ回に新しい受けに名乗る上限(cell.jobs-intake)も決める。線が在る回は
-   keeper の読む準備の空きも書く。jobs の層が無い・guard が偽・上限なしで線も
-   無い時は書かない。上限を jobs の使いより下げた続きの頭で 1 行言う。"
+   keeper の読む準備の空きも書く。jobs の層の上限と新しい受けの上限だけは、heartbeat の測りが新しい「MemAvailable − 上に載る系が残す線」を
+   読めていれば、その線の上にも収める(worker/core/eviction_rules の kept-line — clis の層と keeper の空きは追い出しの線のまま)。jobs の層が
+   無い・guard が偽・上限なしで線も無い時は書かない。上限を jobs の使いより下げた続きの頭で 1 行言う。"
   (when (or (is settings.jobs-dir None) (not guard))
     (return None))
   (when (and (is line None) (is settings.jobs-cap-bytes None))
@@ -427,10 +429,15 @@
   ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
+  (var jobs-line line)
   (when (and (is-not line None) (is-not current None))
     (val floor-margin (min margin settings.margin-bytes))
-    (<- found int (jobs-limit current line margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
-    (<- told int (jobs-limit current line margin margin settings.jobs-cap-bytes (+ reserve lent) 0))
+    ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 名乗りより伸びた task は線を割る前に kernel が jobs の層の中で止める。
+    (<- keep-room (| int None) (fresh-keep-room cell.keep-room cell.keep-room-at-ms now-ms))
+    (<- kept EvictionLine (kept-line line keep-room))
+    (:= jobs-line kept)
+    (<- found int (jobs-limit current kept margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
+    (<- told int (jobs-limit current kept margin margin settings.jobs-cap-bytes (+ reserve lent) 0))
     (:= limit found)
     (:= intake told)
     (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))
@@ -451,8 +458,8 @@
         (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)))))
   (val squeezed (and (is-not line None) (is-not current None) (is-not limit None) (not failure) (< limit current)))
   (when (and squeezed (not cell.squeezed))
-    (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line line.kind.value :line-mib (// line.size-bytes MIB)
-              :room-mib (// line.room-bytes MIB) :margin-mib (// margin MIB) :floor-margin-mib (// settings.margin-bytes MIB)
+    (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line jobs-line.kind.value :line-mib (// jobs-line.size-bytes MIB)
+              :room-mib (// jobs-line.room-bytes MIB) :margin-mib (// margin MIB) :floor-margin-mib (// settings.margin-bytes MIB)
               :prepare-reserve-mib (// reserve MIB) :clis-lent-mib (// lent MIB) :pending-mib (// pending MIB)
               :jobs-current-mib (// current MIB) :jobs-limit-mib (// limit MIB))))
   (setv cell.squeezed squeezed)
@@ -481,5 +488,5 @@
     (:= reason (+ "Node の宣言を読み直せない(前に読めた値で数える): " cell.node-reason)))
   (setv cell.line line cell.line-at-ms now-ms)
   (<- (line-told settings cell line reason))
-  (<- (jobs-limited settings cell line guard))
+  (<- (jobs-limited settings cell line guard now-ms))
   line)
