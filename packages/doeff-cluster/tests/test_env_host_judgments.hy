@@ -30,7 +30,7 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [ReadText WriteText MakeDirectory]
         doeff_core_effects._file_effects [file-done])
-(import doeff_core_effects [StartProcess PollProcess StopProcess ProcessStarted ProcessRunning ProcessExited])
+(import doeff_core_effects [StartProcess PollProcess StopProcess RunProcess ProcessOutcome ProcessStarted ProcessRunning ProcessExited])
 (import doeff_time [Delay SetTime SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster [datetime-of-epoch-ms])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailureKind])
@@ -45,6 +45,7 @@
 (import doeff_cluster [env-host]
         doeff_cluster._worker.protocol.env_store [EnvSettings ENV-TOOL env-root WARM-REFUSED-LOG MEMORY-UNMEASURED-LOG])
 (import doeff_cluster._worker.core.env_upkeep [DEFAULT-ROOT-BYTES DEFAULT-BUILD-MEMORY-BYTES prepare-layer-dir])
+(import doeff_cluster._worker.core.job_cgroup [CLOSE-SCRIPT GROUP-SCRIPT prepare-group-dir closing-argv])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster [ObserveEnvs])
 (import doeff_cluster._worker.protocol.declared [task-spec])
@@ -78,6 +79,8 @@
     (setv #^ (get tuple #(int ...)) self.stopped #())
     ;; 起こした準備の道具の argv(起こした順 — cgroup の層への包みを確かめる)。
     (setv #^ (get tuple #(tuple ...)) self.argvs #())
+    ;; 準備の子の止めの argv(撃った順 — core/job_cgroup の CLOSE-SCRIPT)。
+    (setv #^ (get tuple #(tuple ...)) self.closes #())
     None))
 
 
@@ -126,6 +129,13 @@
             (setv runs.running (dfor #(k v) (.items runs.running) :if (!= k pid) k v))
             (resume (ProcessExited :pid pid :exit-code 0)))
       True (resume (ProcessRunning :pid pid))))
+  (RunProcess [argv]
+    ;; 準備の子の止め(CLOSE-SCRIPT)を数えて成功と答える(本物の cgroup に触らない)。ほかの子は外側の本物の答え手へ渡す。
+    (if (in CLOSE-SCRIPT argv)
+        (do (setv runs.closes (+ runs.closes #((tuple argv))))
+            (resume (ProcessOutcome :exit-code 0 :stdout "" :stderr "")))
+        (do (<- answer effect)
+            (resume answer))))
   (StopProcess [pid stop-grace]
     ;; 期限で止めた準備を数え、終わった子として答える(SIGTERM の終わり)。ほかの子は外側の本物の答え手へ渡す。
     (if (in pid runs.running)
@@ -200,11 +210,12 @@
   views)
 
 
-(deftest test-the-preparation-runs-in-the-prepare-layer-when-the-machine-names-one [tmp-path]
+(deftest test-the-preparation-runs-in-its-own-group-under-the-prepare-layer-and-the-group-is-closed-at-the-end [tmp-path]
   ;; 失敗ケース(2026-11-02 18:56 JST の k3s-0): 準備の process(と、それが起こす焼く道具の子)は jobs の層で動く job と memory を分け合い、
-  ;; 焼く子が層の上限で殺されて準備が落ちた。機体の配備が準備の層を名乗れば、準備の process をその層の cgroup.procs へ移してから
-  ;; exec する sh で包んで起こす(外の job-cgroup-placer の包みの内側 — 最後に pid を書く内の包みの層に落ち着く)。名乗らなければ包まない。
-  (import doeff_cluster._worker.core.job_cgroup [PLACE-SCRIPT])
+  ;; 焼く子が層の上限で殺されて準備が落ちた。機体の配備が準備の層を名乗れば、準備の process をその層の下のこの準備の子
+  ;; (prepare-group-dir — memory.oom.group=1)へ移してから exec する sh で包んで起こす(外の job-cgroup-placer は包み直さない)。
+  ;; 失敗ケース(11-08 の k3s-0・k3s-2): 層に直に置いた準備の頭が OOM kill で止まり、残った子孫が uv の出力の pipe を持ち続けた。準備の
+  ;; 頭が終わったら、その子の止め(CLOSE-SCRIPT)を 1 度撃つ。名乗らなければ包まず、止めも撃たない。
   (<- env RuntimeEnv (declared 1))
   (<- key str (env-key-of env))
   (<- text str (declared-text env))
@@ -218,9 +229,24 @@
     (assert (= (len runs.argvs) 1) runs.argvs)
     (val argv (get runs.argvs 0))
     (if wrapped
-        (assert (= (cut argv 4) #("/bin/sh" "-c" PLACE-SCRIPT procs)) argv)
-        (assert (!= (get argv 0) "/bin/sh") argv))
+        (do (<- group str (prepare-group-dir procs settings.state key))
+            (assert (= (cut argv 4) #("/bin/sh" "-c" GROUP-SCRIPT group)) argv)
+            (assert (.startswith group "/cg/pod/prepare/env-") group)
+            (assert (= runs.closes #((! (closing-argv group)))) runs.closes))
+        (do (assert (!= (get argv 0) "/bin/sh") argv)
+            (assert (= runs.closes #()) runs.closes)))
     (assert (in ENV-TOOL argv) argv)))
+
+
+(deftest test-two-generations-preparing-one-key-get-two-groups []
+  ;; 同じ機体に並ぶ 2 つの世代(state の dir が違う)が同じキーを準備しても、準備の子は分かれる(片方の止めがもう片方の木を止めない)。
+  ;; 同じ世代の同じキーは同じ子(前の準備の残りを GROUP-SCRIPT が止めて消してから作る)。
+  (val procs "/cg/pod/prepare/cgroup.procs")
+  (<- old str (prepare-group-dir procs "/w/gen/a/state" "env-0123abcd"))
+  (<- new str (prepare-group-dir procs "/w/gen/b/state" "env-0123abcd"))
+  (<- again str (prepare-group-dir procs "/w/gen/a/state" "env-0123abcd"))
+  (assert (!= old new) #(old new))
+  (assert (= old again) #(old again)))
 
 
 (deftest test-scenario-6-two-requests-of-one-key-launch-one-preparation [tmp-path]
@@ -600,14 +626,18 @@
 
 
 (deftest test-a-preparation-whose-mark-stands-still-for-the-stall-is-stopped [tmp-path]
+  ;; 準備の層の在る機体では、止めた準備の子の残り(頭の外の子孫)も止める(CLOSE-SCRIPT を 1 度撃つ)。
   (val runs (ToolRuns))
-  (<- settings EnvSettings (settings-at tmp-path))
+  (<- base EnvSettings (settings-at tmp-path))
+  (val settings (replace base :prepare-procs "/cg/pod/prepare/cgroup.procs"))
   (<- (warm-job-root settings))
   (<- env RuntimeEnv (declared 2))
   (<- key str (env-key-of env))
   (<- text str (declared-text env))
   (<- seen DeadlineSeen (deadline-on settings runs (stalled-scenario runs key text)))
   (assert (= runs.stopped #(FIRST-PID)) runs.stopped)
+  (<- group str (prepare-group-dir settings.prepare-procs settings.state key))
+  (assert (= runs.closes #((! (closing-argv group)))) runs.closes)
   (<- view (| CodeView None) (view-of (get seen.views 0) key))
   (assert (and (is-not view None) (= view.state CodeState.FAILED) (is-not view.failure None)
                (= view.failure.kind EnvFailureKind.PREPARE-TIMEOUT))

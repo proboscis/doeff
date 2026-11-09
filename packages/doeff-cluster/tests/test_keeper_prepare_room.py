@@ -18,7 +18,17 @@ import time
 from pathlib import Path
 
 BOOT = Path(__file__).resolve().parents[1] / "deploy" / "boot.sh"
-FUNCTIONS = ("keeper_log", "keeper_short", "keeper_alive", "keeper_mtime", "keeper_layer", "keeper_room", "keeper_swap")
+FUNCTIONS = (
+    "keeper_log",
+    "keeper_short",
+    "keeper_alive",
+    "keeper_mtime",
+    "keeper_layer",
+    "keeper_room",
+    "keeper_swap",
+    "keeper_group_open",
+    "keeper_group_close",
+)
 VERSION = "a" * 40
 WAIT_WORDS = "の root の準備を待つ — 追い出しの線までの空きが無い"
 
@@ -90,13 +100,18 @@ def test_a_short_room_keeps_the_keeper_waiting_and_names_the_shortage_once(tmp_p
 
 
 def test_enough_room_starts_the_prepare_in_the_prepare_layer_not_the_jobs_layer(tmp_path: Path) -> None:
-    """空き(720 MiB — k3s-1 の平常)が上限以上なら準備を起こし、準備の process を準備の層へ移す(jobs の層へは移さない)。"""
+    """空き(720 MiB — k3s-1 の平常)が上限以上なら準備を起こし、準備の process を準備の層の下のその版の子(memory.oom.group=1)へ移す
+    (jobs の層へも、層そのものへも移さない — 本物の cgroup での止めと消しは test_prepare_group.py)。"""
     cgroup = _world(tmp_path, prepare_layer=True)
     _room(tmp_path, "720 640\n")
     log = _swap(tmp_path, cgroup)
     assert WAIT_WORDS not in log, log
     assert (tmp_path / "keeper" / "prepare" / VERSION / "root").read_text(encoding="utf-8").strip() == f"{tmp_path}/root"
-    assert (cgroup / "prepare" / "cgroup.procs").read_text(encoding="utf-8").strip().isdigit()
+    group = cgroup / "prepare" / f"keeper-{VERSION}"
+    assert (group / "cgroup.procs").read_text(encoding="utf-8").strip().isdigit()
+    assert (group / "memory.oom.group").read_text(encoding="utf-8").strip() == "1"
+    assert (group / "cgroup.kill").read_text(encoding="utf-8").strip() == "1"
+    assert (cgroup / "prepare" / "cgroup.procs").read_text(encoding="utf-8") == ""
     assert (cgroup / "jobs" / "cgroup.procs").read_text(encoding="utf-8") == ""
 
 

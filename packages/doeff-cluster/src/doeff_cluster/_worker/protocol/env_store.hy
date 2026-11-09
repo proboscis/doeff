@@ -53,7 +53,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.launch [entry-place-of-marker])
-(import doeff_cluster._worker.core.job_cgroup [placed-argv])
+(import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse LayerMemoryUse MemoryUnread WarmRoom
                                               LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
@@ -86,6 +86,10 @@
 (val PINS-UNWRITTEN-LOG "worker: 固定の file を書けない")
 ;; 先の組みの前に memory を測れなかった行の名(#3748 — 欄: key・reason = 訳)。断らずに組み、heartbeat の memoryUnmeasured に root のキーを載せる。
 (val MEMORY-UNMEASURED-LOG "worker: 先の組みの memory を測れない")
+;; 終わった準備の子の cgroup を消せなかった行の名(欄: key・group = 子の dir・detail = 止めの script の stderr)。
+(val GROUP-UNCLOSED-LOG "worker: 準備の子の cgroup を消せない")
+;; 準備の子の止めと消しを待つ秒の上限(止めの script は SIGKILL の後の退きを 5 秒まで待つ)。
+(val CLOSE-TIMEOUT-SECONDS 10.0)
 
 
 (defrecord EnvSettings
@@ -131,14 +135,16 @@
 (defrecord PendingEnv
   "走っている準備 1 本の記録: pid = 準備の子・started-ms = 起こした時刻・result = 答えの file・progress = 進みの印の file・
    warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)・memory = 層の読みを準備の process へ渡す file・sample = 組みの
-   置かれる層の回収できない使いの、起こす前の読みと準備の間の最大(層の無い・読めない機体は None — sample-layers)。"
+   置かれる層の回収できない使いの、起こす前の読みと準備の間の最大(層の無い・読めない機体は None — sample-layers)・group = 準備の層の
+   下のこの準備の子の dir(層が無い機体は None — core/job_cgroup の「準備ごとの子」)。"
   (#^ int pid)
   (#^ int started-ms)
   (#^ str result)
   (#^ str progress)
   (#^ bool warm)
   (setv #^ str memory "")
-  (setv #^ (| LayerSample None) sample None))
+  (setv #^ (| LayerSample None) sample None)
+  (setv #^ (| str None) group None))
 
 
 (defrecord WaitingEnv
@@ -270,17 +276,36 @@
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
                                settings.uv-cache settings.repo-keys
                                settings.code-prepare settings.uv progress settings.platform memory))
-  ;; 準備の層が在れば、準備の process(と、それが起こす git・uv・焼く道具の子)をそこへ置く(EnvSettings の prepare-procs の註)。
+  ;; 準備の層が在れば、準備の process(と、それが起こす git・uv・焼く道具の子)を層の下のこの準備の子へ置く(EnvSettings の prepare-procs の
+  ;; 註・core/job_cgroup の頭の註の「準備ごとの子」— OOM kill は木を丸ごと止め、終わりに closed-group が残りを止める)。
   (var placed argv)
+  (var group None)
   (when (is-not settings.prepare-procs None)
-    (<- wrapped tuple (placed-argv settings.prepare-procs argv))
+    (<- dir str (prepare-group-dir settings.prepare-procs settings.state key))
+    (<- wrapped tuple (grouped-argv dir argv))
+    (:= group dir)
     (:= placed wrapped))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
   (<- started (StartProcess :argv placed :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
     (raise (OSError started.detail)))
-  (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm :memory memory
+  (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm :memory memory :group group
               :sample (if (is base None) None (LayerSample :base base :peak base))))
+
+
+(defk closed-group [key group]
+  {:pre [(: key str) (: group (| str None))] :post [(: % None)]}
+  "準備の頭が終わった(か止めた)準備 key の子 group(None = 準備の層が無い — 子を作っていない)の残りの process を止め、空になった子を
+   消すため(core/job_cgroup の CLOSE-SCRIPT — 準備の単位より長く生きる process を残さない)。消せなければ log に名指す(次に同じキーを
+   起こす時に GROUP-SCRIPT が止めて消し直す)。"
+  (when (is group None)
+    (return None))
+  (<- argv tuple (closing-argv group))
+  (<- closed ProcessOutcome (RunProcess :argv argv :timeout CLOSE-TIMEOUT-SECONDS))
+  (when (or (not closed.started) (!= closed.exit-code 0))
+    (<- (slog GROUP-UNCLOSED-LOG :level "warning" :key key :group group
+              :detail (cut (.strip (or closed.stderr closed.start-error "")) -300 None))))
+  None)
 
 
 (defk layer-held [settings]
@@ -827,6 +852,7 @@
                 (<- overdue bool (prepare-overdue (/ progressed 1000.0) (/ now-ms 1000.0) settings.limits))
                 (when overdue
                   (<- (StopProcess :pid p.pid :stop-grace 0.0))
+                  (<- (closed-group key p.group))
                   (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
                   (val log-path (+ settings.state "/env-requests/" key ".log"))
                   (<- stage (read-text-or-empty p.progress))
@@ -835,6 +861,8 @@
                   (<- (slog "worker: 準備を止めた(進みが止まった)" :key key :kind (str failure.kind) :detail failure.detail))
                   (:= failures (| failures {key #(failure now-ms)})))))
         (do (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
+            ;; 頭が終わった準備の木の残り(頭の外で生きる子孫)を止める — 成功・失敗とも。
+            (<- (closed-group key p.group))
             ;; 答えを書かずに終わった準備は、prepare-outcome が log の在処を添えた失敗にする。
             ;; 立てた覚えの無い子(ProcessNotChild)は終わりの番号が分からない — -1 で名指す。
             (val code (if (isinstance polled ProcessExited) polled.exit-code -1))

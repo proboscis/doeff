@@ -71,7 +71,8 @@
 #     1. worker の世代(process 1 つ)を自分の子から外して起こす(回収は PID 1 の tini)。世代ごとの状態の dir は $WORK_DIR/gen/<世代>
 #        (下の WORKER_GENERATION_DIRS — 世代の名は <POD_UID>.<起こした刻>)・boot と ready と pid の file は $DOEFF_KEEPER_DIR/gens/<世代>/。
 #     2. KEEPER_TICK_SECONDS 秒(既定 2)ごとに版の file を読み、版が替わると、その版の root を役 prepare で背景で準備し(走っている世代は
-#        止めない・cgroup の準備の層で起こし、追い出しの線までの空きが準備の層の上限に足りない間は起こさずに待つ — keeper_swap)、準備できたらその版の世代を同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
+#        止めない・cgroup の準備の層の下のその版の子で起こし〔OOM kill は準備の木を丸ごと止め、頭が終わったら残りを止めて子を消す〕、
+#        追い出しの線までの空きが準備の層の上限に足りない間は起こさずに待つ — keeper_swap)、準備できたらその版の世代を同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
 #        2 つの世代を並べる RollingUpdate と同じ形・AL-D2)。
 #     3. いちばん新しい世代が coordinator に名乗れて自分の ready の file を書いた後(受け渡しの待ち handover-pending が解けた後)に、前の
 #        世代を世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限 DRAIN_DEADLINE)、drained の後に SIGTERM を送る。前の世代は
@@ -789,7 +790,10 @@ keeper_room() {
 # 版 $1 へ替える歩(tick ごとに呼ぶ — 準備は背景で 1 度だけ起こし、済んだ後の tick で世代を起こす)。準備の結末は
 # $keeper_dir/prepare/<版>/ の file(root = 準備した root の path・failed = 失敗の印 — 300 秒で消して撃ち直す・refused = 世代を知らない
 # 版の印・pid = 準備の process)。準備は役 prepare(この script が展開し、その版の script が準備する — 版上げの前の準備と同じ道)で、
-# cgroup の層が在れば準備の層(下の keeper_layer — 準備の memory を worker の本体の守りに数えない)へ移してから起こす。準備の層
+# cgroup の層が在れば準備の層(下の keeper_layer — 準備の memory を worker の本体の守りに数えない)で起こす。準備の層では、層の下の
+# その版の子(keeper-<版> — keeper_group_open・memory.oom.group=1)へ準備の頭だけを移し、頭が終わったら子の残りを止めて子を消す
+# (keeper_group_close)。失敗ケース(11-08 の k3s-0・k3s-2): 層に直に置いた準備で build hook の頭が OOM kill で止まり、残った forkserver と
+# 子が uv の出力の pipe を持ち続け、uv も準備も 25 時間返らず、keeper は準備中と読み続けた。準備の層
 # (DOEFF_WORKER_PREPARE_CGROUP)は、worker が追い出しの線から掛け直す jobs の層と違い、上限(準備の山)を縮めない。代わりに準備を
 # 起こす前に worker の書く空き(keeper_room)を読み、空きが準備の層の上限に足りない間は準備を起こさずに待つ(log に名指す — OOM で
 # 殺さない・worker/core/eviction_rules の頭の註の「準備の層」)。
@@ -830,23 +834,74 @@ keeper_swap() {
     prepare_waiting=""
     mkdir -p "$k_prep"
     keeper_log "版の file が doeff $(keeper_short "$1") を名指す — その root を準備する(走っている世代は止めない)"
+    # 準備の層では、準備をこの版の子の cgroup(keeper_group_open)で起こし、頭が終わったら(成功・失敗とも)子の残りを止めて子を消す
+    # (keeper_group_close)。準備の出力は pipe でなく file に受ける — 頭の終わりを待ち、出力を継いだ子孫の EOF を待たない。
+    k_group=""
+    if [ -n "$k_layer" ] && [ "$k_layer" = "${DOEFF_WORKER_PREPARE_CGROUP:-}" ]; then
+      k_group=$DOEFF_WORKER_CGROUP_DIR/$k_layer/keeper-$1
+    fi
     ( (
-      if [ -n "$k_layer" ]; then
-        # この subshell の pid(dash の $$ は親の pid)を準備の層へ移す — 準備の子はこの層で起きる。
+      if [ -z "$k_group" ] && [ -n "$k_layer" ]; then
+        # この subshell の pid(dash の $$ は親の pid)を層へ移す — 準備の子はこの層で起きる。
         sh -c 'echo "$PPID"' >"$DOEFF_WORKER_CGROUP_DIR/$k_layer/cgroup.procs" 2>/dev/null ||
           keeper_log "準備を層 $k_layer へ移せない — keeper の層のまま準備する"
       fi
       unset DOEFF_BOOT_FROM_ROOT
       ROLE=prepare WORKER_DOEFF_COMMIT=$1
       export ROLE WORKER_DOEFF_COMMIT
-      if k_out=$(sh "$keeper_script" </dev/null); then
-        printf '%s\n' "$k_out" | tail -n 1 >"$k_prep/root.tmp" && mv -f "$k_prep/root.tmp" "$k_prep/root"
+      k_ok=1
+      if [ -n "$k_group" ]; then
+        if keeper_group_open "$k_group"; then
+          sh -c 'echo $$ >"$0/cgroup.procs" && exec sh "$1"' "$k_group" "$keeper_script" </dev/null >"$k_prep/out" || k_ok=0
+        else
+          k_ok=0
+        fi
+        keeper_group_close "$k_group" || true
+      else
+        sh "$keeper_script" </dev/null >"$k_prep/out" || k_ok=0
+      fi
+      if [ "$k_ok" = 1 ]; then
+        tail -n 1 "$k_prep/out" >"$k_prep/root.tmp" && mv -f "$k_prep/root.tmp" "$k_prep/root"
       else
         : >"$k_prep/failed"
         keeper_log "doeff $(keeper_short "$1") の root を準備できない — 300 秒後に撃ち直す(走っている世代はそのまま)"
       fi
     ) </dev/null & echo $! >"$k_prep/pid" )
   fi
+}
+
+# 準備の層の下に版の準備の子 $1(dir)を作るため: 前の同じ名の子(前の準備の残り)を止めて消し、層の子に memory を渡し(既に渡して
+# いれば書かない — 層に process が居ると kernel が断る)、子を作って memory.oom.group=1 を掛ける(層の上限での OOM kill が、その準備の木を
+# 丸ごと止める)。出来なければ訳を log に名指して偽 — 準備を起こさない(OOM で木を丸ごと止められない子で準備しない)。
+# worker の準備の子(worker/core/job_cgroup の GROUP-SCRIPT)と同じ決まり。
+keeper_group_open() {
+  keeper_group_close "$1" || return 1
+  if ! grep -qw memory "${1%/*}/cgroup.subtree_control" 2>/dev/null &&
+    ! echo +memory >"${1%/*}/cgroup.subtree_control" 2>/dev/null; then
+    keeper_log "準備の層 ${1%/*} の子に memory を渡せない(層に process が居る)— 準備を起こさない"
+    return 1
+  fi
+  if ! mkdir "$1" 2>/dev/null || ! echo 1 >"$1/memory.oom.group" 2>/dev/null; then
+    keeper_log "準備の子の cgroup $1 を作れない — 準備を起こさない"
+    return 1
+  fi
+}
+
+# 版の準備の子 $1(dir)の残りの process を cgroup.kill で全部止め、空になってから子を消すため(無ければ何もしない)。準備の頭が終わった後に
+# 呼ぶ — 頭の外で生き残った子孫(OOM kill で頭を失った build hook の forkserver など)を準備の終わりより長く生かさない。ポーリングの訳:
+# 子孫の退きの知らせは inotify の cgroup.events の変更だけで、SIGKILL の後の退きは ms で済む(5 秒まで待つ)。消せなければ log に名指して偽。
+keeper_group_close() {
+  [ -d "$1" ] || return 0
+  echo 1 >"$1/cgroup.kill" 2>/dev/null || true
+  k_tries=0
+  while grep -q '^populated 1' "$1/cgroup.events" 2>/dev/null && [ "$k_tries" -lt 50 ]; do
+    sleep 0.1
+    k_tries=$((k_tries + 1))
+  done
+  rmdir "$1" 2>/dev/null || {
+    keeper_log "準備の子の cgroup $1 を消せない(process が残る)"
+    return 1
+  }
 }
 
 # keeper の 1 歩: 世代の生死と ready を読み、Pod の ready を写し、いちばん新しい世代が ready なら前の世代を退かせ、落ちていれば間を

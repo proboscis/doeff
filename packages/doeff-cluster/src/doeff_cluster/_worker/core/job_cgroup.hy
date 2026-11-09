@@ -25,6 +25,13 @@
 ;;; controller を掛けた cgroup に process を置けないので、jobs の層そのものには process を置かない — 層に process が残っていない時だけ、層の
 ;;; 子へ io を掛ける(親が io を渡す時だけ — 子ごとの io.stat が読めるようになる)。memory.max・cpu の値と PSI は層 jobs のまま(子を含めて数える)。
 ;;; 終わった job の子は、次の task を置く前の掃き(SWEEP-SCRIPT — 宿 worker/protocol/process_host)が io.stat を読んでから rmdir で消す。
+;;;
+;;; 準備ごとの子(準備の層の下 — 準備 1 つを process の木 1 つに束ねるため): 実行環境の準備の 1 本ずつを、準備の層の下の自分の子
+;;; (prepare-group-dir)で起こす(GROUP-SCRIPT)。子に memory.oom.group=1 を掛け、層の上限での OOM kill がその準備の木を丸ごと止める。
+;;; 準備の頭が終わった時(成功・失敗・期限の止めとも)、起こした側が子の cgroup.kill で残りを止め、空になってから子を消す(CLOSE-SCRIPT)。
+;;; 層の memory.max(準備の山)は子の和に掛かったまま残り、層そのものには process を置かない。失敗ケース(11-08 の k3s-0・k3s-2): 準備の
+;;; 層で uv の build hook の頭が OOM kill で止まり、残った multiprocessing の forkserver と子が uv の出力の pipe を持ち続け、uv は EOF を
+;;; 待って 25 時間返らず、層の memory も持ち続けた。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import hashlib)
@@ -49,6 +56,27 @@
      "s=$(tr '\\n' ';' <\"$0/$n/io.stat\" 2>/dev/null); rmdir \"$0/$n\" 2>/dev/null && printf '%s\\t%s\\n' \"$n\" \"$s\"; done; "
      "if grep -qw io \"$0/cgroup.controllers\" 2>/dev/null && ! grep -qw io \"$0/cgroup.subtree_control\" 2>/dev/null; then "
      "echo +io >\"$0/cgroup.subtree_control\" 2>/dev/null; fi; exit 0"))
+;; 準備の子を止めて消す sh の関数の定義(GROUP-SCRIPT と CLOSE-SCRIPT が頭に置く — $1 = 子の dir): 子が無ければ何もしない。在れば
+;; cgroup.kill で子孫を全部止め、cgroup.events が populated 0 になるまで(5 秒まで)読んでから rmdir する。ポーリングの訳: 子孫の退きの
+;; 知らせは inotify の cgroup.events の変更だけで、SIGKILL の後の退きは ms で済む。消せなければ 0 以外。
+(val CLOSE-FUNCTION
+  (+ "close() { [ -d \"$1\" ] || return 0; echo 1 >\"$1/cgroup.kill\" 2>/dev/null; i=0; "
+     "while grep -q '^populated 1' \"$1/cgroup.events\" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; "
+     "rmdir \"$1\" 2>/dev/null || { echo \"準備の子の cgroup $1 を消せない(process が残る)\" >&2; return 1; }; }; "))
+;; 準備を準備の層の下の自分の子で起こす sh の script(頭の註の「準備ごとの子」): $0 = 子の dir・"$@" = 元の argv。前の同じ名の子
+;; (worker が止まって残した物)を止めて消し、層の子に memory を渡し(既に渡していれば書かない)、子を作って memory.oom.group=1 を掛け、
+;; 自分の pid を子へ移して元の argv を exec する。どれかが出来なければ元の命令を走らせずに 0 以外で終わる(OOM で木を丸ごと止められない
+;; 子で準備しない)。
+(val GROUP-SCRIPT
+  (+ CLOSE-FUNCTION
+     "l=${0%/*}; close \"$0\" || exit 1; "
+     "grep -qw memory \"$l/cgroup.subtree_control\" 2>/dev/null || echo +memory >\"$l/cgroup.subtree_control\" || "
+     "{ echo \"準備の層 $l の子に memory を渡せない(層に process が居る)\" >&2; exit 1; }; "
+     "mkdir \"$0\" && echo 1 >\"$0/memory.oom.group\" && echo $$ >\"$0/cgroup.procs\" && exec \"$@\"; exit 1"))
+;; 準備の子を止めて消す sh の script(頭の註の「準備ごとの子」): $0 = 子の dir。
+(val CLOSE-SCRIPT (+ CLOSE-FUNCTION "close \"$0\""))
+;; 準備の子の名の頭(準備の層の下 — 同じ層で準備する keeper の子 keeper-<版> と重ねない)。
+(val PREPARE-GROUP-PREFIX "env-")
 
 
 (defk job-cgroup-procs [own-cgroup sibling [root CGROUP-ROOT]]
@@ -78,8 +106,9 @@
   {:pre [(: procs str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "子の argv を、兄弟の cgroup へ移ってから元の argv を exec する sh で包むため(頭の註)。内側の宿が自分の子を別の兄弟へ包んだ argv
    (常駐の job の services・実行環境の準備の prepare)は包み直さない — jobs の層の上限は追い出しの線から掛け直され 0 まで下がるので、jobs を
-   経ると移る前に OOM kill で止まる(2026-11-04 22:05 JST の k3s-0: 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。"
-  (if (= (cut argv 3) #("/bin/sh" "-c" PLACE-SCRIPT))
+   経ると移る前に OOM kill で止まる(2026-11-04 22:05 JST の k3s-0: 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。
+   準備の子へ包んだ argv(GROUP-SCRIPT — grouped-argv)も同じく包み直さない。"
+  (if (in (cut argv 3) #(#("/bin/sh" "-c" PLACE-SCRIPT) #("/bin/sh" "-c" GROUP-SCRIPT)))
       argv
       (+ #("/bin/sh" "-c" PLACE-SCRIPT procs) argv)))
 
@@ -102,6 +131,28 @@
   "層(procs = job-cgroup-procs の答えの、層の cgroup.procs)の下の子 child の cgroup.procs の path を決めるため(共有の子 SHARED-CGROUP か
    job の子 job-subgroup-name)。"
   (posixpath.join (posixpath.dirname procs) child "cgroup.procs"))
+
+
+(defk prepare-group-dir [procs owner key]
+  {:pre [(: procs str) (: owner str) (: key str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "準備の層(procs = 層の cgroup.procs)の下の、準備 1 本の子の dir を決めるため(頭の註の「準備ごとの子」)。owner = 起こす worker の世代の
+   印(世代ごとの state の dir — 同じ機体に並ぶ 2 つの世代が同じキーを準備しても子を分ける)・key = 準備する root のキー。名は
+   PREPARE-GROUP-PREFIX + owner の sha256 の頭 8 桁 + - + キー(英数字・-・_ の外の字は _)。"
+  (val tag (cut (.hexdigest (hashlib.sha256 (.encode owner "utf-8"))) 8))
+  (val safe (re.sub "[^A-Za-z0-9_-]" "_" (if (.startswith key PREPARE-GROUP-PREFIX) (cut key (len PREPARE-GROUP-PREFIX) None) key)))
+  (posixpath.join (posixpath.dirname procs) (cut (+ PREPARE-GROUP-PREFIX tag "-" safe) SUBGROUP-NAME-MAX)))
+
+
+(defk grouped-argv [group argv]
+  {:pre [(: group str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "準備の argv を、準備の子 group(prepare-group-dir の答え)を作って移ってから元の argv を exec する sh で包むため(GROUP-SCRIPT)。"
+  (+ #("/bin/sh" "-c" GROUP-SCRIPT group) argv))
+
+
+(defk closing-argv [group]
+  {:pre [(: group str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "準備の子 group の残りを止めて子を消す argv を作るため(CLOSE-SCRIPT)。"
+  #("/bin/sh" "-c" CLOSE-SCRIPT group))
 
 
 (defk sweep-argv [procs kept]
