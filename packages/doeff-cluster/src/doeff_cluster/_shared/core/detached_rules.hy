@@ -57,6 +57,18 @@
 ;; memory の要り(SubmitDetached の memory-mib — 1 本の山の MiB)の上限。どの機体の線より大きい要りは coordinator が worker の測りと
 ;; 照らして断る(detached_policy.memory-need-refusal)— これは数の書き違い(byte や KiB で書いた値)を送る前に断る粗い上限。
 (val TASK-MEMORY-MAX-MIB (* 1024 1024))
+;; 仕事の形(SubmitDetached の shape)の長さの上限(字 — 形は行ごとに保存されるので、命令の全文のような長い値を断る)。
+(val TASK-SHAPE-MAX-LENGTH 200)
+
+
+(deff task-shape-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+  {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task の本文の欄 shape(仕事の形 — SubmitDetached の shape の註)が受けられない理由(None = 欄が無いか、TASK-SHAPE-MAX-LENGTH 字以下の
+   表示できる字だけの文字列 — 空は名乗らない)。"
+  (if (or (is value None)
+          (and (isinstance value str) (<= (len value) TASK-SHAPE-MAX-LENGTH) (or (= value "") (.isprintable value))))
+      None
+      (.format "shape は {} 字以下の表示できる字の文字列(仕事の形): {!r}" TASK-SHAPE-MAX-LENGTH value)))
 
 
 (deff task-memory-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
@@ -166,19 +178,21 @@
   (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {}) (if limit.system {"system" limit.system} {})))
 
 
-(deff task-placing-json [#^ int priority #^ (get tuple #(TaskLimit ...)) limits #^ (| int None) [memory-mib None]]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
-  {:pre [(: priority int) (: limits (get tuple #(TaskLimit ...))) (: memory-mib (| int None))] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・memory の要りを名乗らないの欄は置かない — 旧い coordinator は知らない欄を捨てる)。"
+(deff task-placing-json [#^ int priority #^ (get tuple #(TaskLimit ...)) limits #^ (| int None) [memory-mib None] #^ str [shape ""]]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: priority int) (: limits (get tuple #(TaskLimit ...))) (: memory-mib (| int None)) (: shape str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・memory の要りを名乗らない・形を名乗らないの欄は置かない — 旧い coordinator は
+   知らない欄を捨てる)。"
   (| (if priority {"priority" priority} {})
      (if limits {"limits" (task-limits-json limits)} {})
-     (if (is memory-mib None) {} {"memoryMiB" memory-mib})))
+     (if (is memory-mib None) {} {"memoryMiB" memory-mib})
+     (if shape {"shape" shape} {})))
 
 
 (defk submit-detached-task [program key * memory-mib [needs (frozenset)] [name ""] [lease-seconds DETACHED-DEFAULT-LEASE-SECONDS]
-                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""] [rerun False]]
+                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""] [rerun False] [shape ""]]
   {:pre [(: program Program) (: key str) (: needs (| (get frozenset str) (get tuple #(object ...)) (get list object) (get set object) (get dict #(object object)) str None)) (: name str) (: lease-seconds float)
          (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) (get dict #(str str)))) (: priority int) (: limits (get tuple #(TaskLimit ...))) (: notify str) (: rerun bool)
-         (: memory-mib (| int None))]
+         (: memory-mib (| int None)) (: shape str)]
    :post [(: % DetachedSubmitAnswer)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "SubmitDetached の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
@@ -198,9 +212,11 @@
                    ;; 知らせ先も受け口と同じ規則で、送る前に断る。
                    (task-notify-refusal notify)
                    ;; memory の要りも受け口と同じ規則で、送る前に断る(2026-11-02 — 無い要りも断る)。
-                   (task-memory-required-refusal memory-mib)))
+                   (task-memory-required-refusal memory-mib)
+                   ;; 仕事の形も受け口と同じ規則で、送る前に断る(2026-11-10)。
+                   (task-shape-refusal shape)))
   (when placing (raise (TypeError (+ "SubmitDetached: " placing))))
   (<- answer DetachedSubmitAnswer
       (SubmitDetached program key :needs needs :name name :lease-seconds lease-seconds :retain-seconds retain-seconds :environ environ
-                      :priority priority :limits limits :notify notify :memory-mib memory-mib :rerun rerun))
+                      :priority priority :limits limits :notify notify :memory-mib memory-mib :rerun rerun :shape shape))
   answer)

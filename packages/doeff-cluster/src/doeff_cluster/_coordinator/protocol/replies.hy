@@ -50,6 +50,9 @@
      (if task.limits {"limits" (task-limits-json task.limits)} {})
      ;; memory の要り(MiB — 置き先が予約する 1 本の山・2026-11-02)— 名乗る task だけ。
      (if (is task.memory-mib None) {} {"memoryMiB" task.memory-mib})
+     ;; 仕事の形と測った山(MiB — 置き先が要りに数える・2026-11-10)— 名乗る・測った task だけ。
+     (if task.shape {"shape" task.shape} {})
+     (if (is task.peak-mib None) {} {"peakMiB" task.peak-mib})
      ;; 走らせ直しの名乗りと今の試行の番号と上限に数えた消失の数 — 名乗る task だけ。
      (if task.rerun {"rerun" True "attempt" task.attempt "losses" task.losses} {})))
 

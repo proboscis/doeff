@@ -25,6 +25,16 @@
 ;;; 測りの task-memory-MiB(見張りの最後の読みの task ごとの memory — task の木の rss の和)で名乗り、名乗られない task は 0(要りの全部を
 ;;; 予約する)。要りを名乗らない task(切り離さない task の RemoteJob・欄の前の保存の行)は UNDECLARED-TASK-MIB を要りと見込む。
 ;;;
+;;; 測った山で数える要り(2026-11-10): 名乗った要りは送り手の見当で、実の山より小さい事がある(zeus の 11-09 16:52 UTC — 名乗り 3584 MiB の
+;;; task 3 本を名乗る空き約 9.7 GiB に置き、8 分後に各 14 GiB を使った。予約は「要り − 今の使い」なので、名乗りを越えた伸びは置く判断にも
+;;; 後の予約にも入らなかった)。coordinator は worker の測りが名乗る task ごとの今の使いの最大を行の山(peak-mib)に持ち、task の要りを
+;;;   要り = max(名乗った要り, min(max(この task の山, 同じ形の行の山の最大), その worker の線 − 床))
+;;; で数える(learned-need)。形(shape)は送り手が同じ程の memory を使う仕事に付ける印で、同じ形の行は保持の間の終わった行も数える —
+;;; 名乗りを越えて伸びた task は自分の山で予約を続け、同じ形の次の task はその山の空きが在る worker にだけ置かれる。山は worker の線 − 床
+;;; (memory-line-mib)で切る — 線より大きく測れた山(線の外の使いを数えた読み)で、その形の task がどの worker にも置けなくならない。
+;;; 初めての形と形を名乗らない task は名乗った要りのまま。置いた後に名乗りと山を越えて伸びる分は、worker が jobs の層の上限で止める
+;;; (worker/core/eviction_rules の頭の註 — 上に載る系が残す線の上・追い出しの線の手前)。
+;;;
 ;;; CPU の PSI の some avg10 が CPU-PRESSURE-STOP 以上か、memory の some avg10 が MEMORY-PRESSURE-STOP 以上の間は 0(実行を待つ process が
 ;;; もう出ている機体へ足さない)。CPU の PSI は、task の層の値(task-cpu-some-avg10)を名乗る worker はその値、名乗らない worker は機体の値。
 ;;;
@@ -146,6 +156,17 @@
   {:pre [(: memory-mib (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "task の memory の要り(MiB)を知るため: 名乗った要り memory-mib、名乗らない task(None)は UNDECLARED-TASK-MIB。"
   (if (is memory-mib None) UNDECLARED-TASK-MIB memory-mib))
+
+
+(defk learned-need [declared peak shape-peak line]
+  {:pre [(: declared (| int None)) (: peak (| int None)) (: shape-peak (| int None)) (: line (| int None))] :post [(: % int)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "task の要り(MiB)を、名乗った要りと測った山から知るため(頭の註の測った山で数える要り): declared = 名乗った要り(None = 名乗らない —
+   need-of)・peak = この task の測った山・shape-peak = 同じ形の行の測った山の最大(None = 測っていない・形を名乗らない)・line = 置き先の
+   worker の線 − 床(memory-line-mib — None = 測りの無い worker で、山を線で切らない)。max(need-of declared, min(max(peak, shape-peak), line))。"
+  (<- need int (need-of declared))
+  (val measured (max (or peak 0) (or shape-peak 0)))
+  (max need (if (is line None) measured (min measured line))))
 
 
 (defk reserved-mib-of [need use]

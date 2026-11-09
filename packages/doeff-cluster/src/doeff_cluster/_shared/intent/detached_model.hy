@@ -94,6 +94,11 @@
   ;; 前の試行の process は worker が止める。回数は coordinator の上限まで(cluster_policy.RERUN-LIMIT — 予定した退きで止まった試行は数えない)・試行が変わると知らせ先へ出口の行(kind reran)を
   ;; 積む。同じ key の送り直しの比べには入れない。
   (setv #^ bool rerun False)
+  ;; 仕事の形(2026-11-10): 同じ程の memory を使う仕事に呼び手が付ける不透明な 1 語(空 = 名乗らない)。coordinator は worker の測りが名乗る
+  ;; task ごとの今の使いの最大を行に持ち、置き先の要りを、名乗った要りと、この task と同じ形の task(保持の間の終わった行を含む)の測った山の
+  ;; 大きい方で数える(measured_room.learned-need)— 名乗りが実の山より小さくても、同じ形の 2 本目からは測った山で置かれる。同じ key の
+  ;; 送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ str shape "")
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数

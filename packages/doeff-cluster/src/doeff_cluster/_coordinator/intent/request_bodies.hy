@@ -307,6 +307,8 @@
   (setv #^ object notify None)
   ;; memory の要り(2026-11-02 — 1 本の山の MiB。置き先が測った空きから「要り − 今の使い」を予約する)。形は判断が読む。
   (setv #^ object memory-MiB None)
+  ;; 仕事の形(2026-11-10 — 切り離した task だけが読む。None = 名乗らない。置き先が同じ形の測った山を要りに数える)。形は判断が読む。
+  (setv #^ object shape None)
   ;; 担い手が消えた時の走らせ直しの名乗り(2026-11-04 — 切り離した task だけが読む。None = 名乗らない)。形は判断が読む。
   (setv #^ object rerun None)
   (setv #^ object format 1))

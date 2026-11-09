@@ -74,7 +74,10 @@
                  (if task.rerun #{} #{"rerun" "attempt" "losses"})
                  ;; 退きの印の無い行も欄を置かない(同じ訳 — 2026-11-05)。
                  (if task.retiring #{} #{"retiring"})
-                 (if task.rerun-note #{} #{"rerun_note"})))
+                 (if task.rerun-note #{} #{"rerun_note"})
+                 ;; 形と測った山の無い行も欄を置かない(同じ訳 — 2026-11-10)。
+                 (if task.shape #{} #{"shape"})
+                 (if (is task.peak-mib None) #{"peak_mib"} #{})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -138,7 +141,10 @@
               ;; 上限に数えた消失の数の欄の無い行は、前の試行を全部数えた(2026-11-05 の前は試行ごとに数えた)・退きの印なし(足した欄)。
               :losses (stored-int data "losses" (- (stored-int data "attempt" 1) 1))
               :retiring (stored-str data "retiring" "")
-              :rerun-note (stored-str data "rerun_note" "")))
+              :rerun-note (stored-str data "rerun_note" "")
+              ;; 形と測った山の欄の無い行は名乗らない・測っていない(足した欄 — 2026-11-10)。
+              :shape (stored-str data "shape" "")
+              :peak-mib (stored-optional-int data "peak_mib")))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り

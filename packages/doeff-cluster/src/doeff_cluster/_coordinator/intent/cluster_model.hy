@@ -1250,7 +1250,14 @@
   ;; 欄の無い旧い行は losses = attempt − 1(前の試行を全部数えた)・印なし・訳なしで読む。
   (setv #^ int losses 0)
   (setv #^ str retiring "")
-  (setv #^ str rerun-note ""))
+  (setv #^ str rerun-note "")
+  ;; --- 形ごとの測った山(2026-11-10)---
+  ;; shape = 送り手の名乗った仕事の形(不透明な文字列 — 同じ形の task は同じ程の memory を使うと送り手が約束する印・空 = 名乗らない)。
+  ;; peak-mib = worker の測りが名乗ったこの task の今の使いの最大(MiB — None = まだ測りに出ていない)。置き先は task の要りを、名乗りと、
+  ;; この task の山と、同じ形の行(保持の間の終わった行を含む)の山の最大の大きい方で数える(measured_room.learned-need) — 名乗りより大きく
+  ;; 伸びた task は自分の山で予約を続け、同じ形の次の task はその山で置かれる。欄の無い旧い行は名乗らない・測っていないで読む。
+  (setv #^ str shape "")
+  (setv #^ (| int None) peak-mib None))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

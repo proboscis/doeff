@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
@@ -85,6 +85,8 @@
                     (task-rerun-refusal body.rerun)
                     ;; 切り離した task は memory の要りを必須で名乗る(2026-11-02 — 要りの無い本文も断る)。
                     (task-memory-required-refusal body.memory-MiB)
+                    ;; 仕事の形(2026-11-10 — 名乗らなくてよい)。
+                    (task-shape-refusal body.shape)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
                     (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
@@ -116,7 +118,8 @@
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)
-                         :notify (or body.notify "") :memory-mib body.memory-MiB :rerun (is body.rerun True)))
+                         :notify (or body.notify "") :memory-mib body.memory-MiB :rerun (is body.rerun True)
+                         :shape (or body.shape "")))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 

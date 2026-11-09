@@ -28,7 +28,7 @@
 (import doeff_cluster._coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_hy._table [Table TableWrite TableDraft draft-of table-of])
 (import doeff_cluster._coordinator.core.cluster_rules [component-versions-of format-version-refusal])
-(import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
+(import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_rules [required-field int-field])
 (import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster._shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key drop-holders lease-holder holder-tokens-prefix live-instances])
@@ -39,7 +39,8 @@
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key dependency-key child-environ-refusal])
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
-(import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib])
+(import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
+                                                       learned-need])
 
 ;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
 ;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。送る綴りは指紋の材料の
@@ -706,13 +707,53 @@
                                           :retired-statuses (.with-writes retired (tuple (gfor key stopped (TableWrite key None)))))))
 
 
+(defk shape-peaks-of [tasks]
+  {:pre [(: tasks (get Table TaskRecord))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "形ごとの測った山を知るため(measured_room の頭の註の測った山で数える要り): 形を名乗り山を測った行(保持の間の終わった行を含む)の形 →
+   山の最大(MiB)。保持の間の終わった行(scan-rows が除く行)も読む — 終わった task の山が同じ形の次の task の要りの材料なので。"
+  (setv peaks {})
+  (for [t (.rows tasks) :if (and t.shape (is-not t.peak-mib None))]
+    (setv (get peaks t.shape) (max t.peak-mib (.get peaks t.shape 0))))
+  peaks)
+
+
+(defk task-need-of [task worker peaks]
+  {:pre [(: task TaskRecord) (: worker (| WorkerInfo None)) (: peaks dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "task を worker に置く時と置いた後の要り(MiB)を知るため: 名乗った要りと、この task の山と、同じ形の山(peaks — shape-peaks-of)を、
+   worker の線 − 床で切って比べた大きい方(measured_room.learned-need)。worker の無い・測りの無い時は山を線で切らない。"
+  (<- line (| int None) (memory-line-mib (if (is worker None) None worker.measured)))
+  (<- need int (learned-need task.memory-mib task.peak-mib (if task.shape (.get peaks task.shape) None) line))
+  need)
+
+
+;; task の測った山を書き直す刻み(MiB — 山が前の山からこれだけ伸びた heartbeat だけ行を書く。伸びる task の行を heartbeat ごとに書かない)。
+(val PEAK-STEP-MIB 256)
+
+
+(defk task-peaks-noted [tasks worker measured]
+  {:pre [(: tasks (get Table TaskRecord)) (: worker str) (: measured (| MeasuredLoad None))] :post [(: % (get Table TaskRecord))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "worker の heartbeat の測りが名乗る task ごとの今の使い(measured.task-memory-MiB)で、その worker に置いた task の測った山(peak-mib)を
+   書き直すため(measured_room の頭の註の測った山で数える要り): 山が無い行は今の使い、在る行は今の使いが山 + PEAK-STEP-MIB 以上の時だけ。
+   測りの無い・task の使いを名乗らない heartbeat は表のまま。"
+  (when (or (is measured None) (is measured.task-memory-MiB None))
+    (return tasks))
+  (setv writes [])
+  (for [#(id use) (.items measured.task-memory-MiB)]
+    (setv t (.row tasks id))
+    (when (and (is-not t None) (= t.worker worker) (in t.phase PLACED-PHASES)
+               (or (is t.peak-mib None) (>= use (+ t.peak-mib PEAK-STEP-MIB))))
+      (.append writes (TableWrite id (replace t :peak-mib use)))))
+  (if writes (.with-writes tasks (tuple writes)) tasks))
+
+
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
    task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)・
    unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(measured を載せた同じ heartbeat の状態の報告に、動いている行
    task/<id> が無いか、置いた刻 started-ms が measured_room.unseen-since の刻より後 — 走り出したばかりの task の使いは測りに出きって
-   いない)・reserved-mib = 置かれた task の memory の予約の和(task ごとに measured_room.reserved-mib-of — 要り〔名乗らない task は
-   measured_room.need-of の見込み〕− worker の測りが名乗る task の今の使い〔名乗られない task は 0 — 要りの全部〕)。
+   いない)・reserved-mib = 置かれた task の memory の予約の和(task ごとに measured_room.reserved-mib-of — 要り〔task-need-of — 名乗りと
+   測った山の大きい方〕− worker の測りが名乗る task の今の使い〔名乗られない task は 0 — 要りの全部〕)。
    置ける空きは memory-room-of・memory-misfit・task-room-of・task-memory-room-of がこの値から求める(数え方を 1 か所にする)。"
   (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0)
         unseen (dfor name (.keys state.workers) name 0)
@@ -723,6 +764,8 @@
         settles (dfor name (.keys state.workers) name 0)
         settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
         since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
+        ;; 形ごとの測った山(要りを測った山で数える — measured_room の頭の註)。
+        peaks (run (shape-peaks-of state.tasks))
         ;; measured と同じ heartbeat の状態の報告で動いていた task の id(worker ごと)。
         live (dfor name (.keys state.workers)
                    :setv report (.row state.observations.statuses name)
@@ -737,7 +780,7 @@
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks))
       (+= (get tasks t.worker) 1)
-      (+= (get reserved t.worker) (run (reserved-mib-of (run (need-of t.memory-mib)) (.get (get uses t.worker) t.id))))
+      (+= (get reserved t.worker) (run (reserved-mib-of (run (task-need-of t (.row state.workers t.worker) peaks)) (.get (get uses t.worker) t.id))))
       (setv cut-off (get since t.worker))
       (when (and (is-not cut-off None)
                  (not (and (in t.id (get live t.worker)) (is-not t.started-ms None) (<= t.started-ms cut-off))))
@@ -1656,6 +1699,8 @@
         draining (draining-workers state now))
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
   (var held (! (limit-holdings (! (placed-claims placed.tasks)) state.group-limits)))
+  ;; 形ごとの測った山(task の要りを名乗りと測った山の大きい方で数える — measured_room の頭の註)。
+  (<- peaks dict (shape-peaks-of placed.tasks))
   ;; 背景の仕事の側の予約(background-reserve-of)の守りに要る worker ごとの数: bg-held = 置いている負の優先の task(置くたびに足す)・
   ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達していない)待っている負の優先の task。
   ;; bg-wanted は拍の初めに 1 度数える — 置く順で優先 0 以上の task が先なので、背景の仕事を置き始める前に読む数は変わらない。
@@ -1681,10 +1726,13 @@
       ;; task の memory の要りが memory の空き(task-memory-room-of — 測った空き − 床 − 置いた task のまだ伸びる分)以下で、名乗った上限に
       ;; 達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の理由は待ちの文に使う。roomy = 置ける
       ;; worker と測った空きの組。
-      (<- need int (need-of task.memory-mib))
+      ;; 要りは worker ごと(測った山をその worker の線で切る — task-need-of)。
+      (var needs {})
       (var roomy #())
       (var misfits [])
       (for [w able-now]
+        (<- need int (task-need-of task w peaks))
+        (setv (get needs w.name) need)
         (<- room int (task-room-of w load))
         (<- memory-room int (task-memory-room-of w load))
         (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits
@@ -1706,7 +1754,7 @@
                        ;; 置いた task は今の刻 now に置かれ、測った刻より後なので測りにまだ出ていない(load-of の unseen と同じ数え)。
                        ;; 今の使いも名乗られていないので、要りの全部を予約する(load-of の reserved-mib と同じ数え)。
                        (get load chosen.name) (replace used :tasks (+ used.tasks 1) :unseen (+ used.unseen 1)
-                                                       :reserved-mib (+ used.reserved-mib need)))
+                                                       :reserved-mib (+ used.reserved-mib (get needs chosen.name))))
                  (when (< task.priority 0)
                    (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
@@ -2354,7 +2402,7 @@
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
   ;; 置き直しの待ちへ戻す(absorb-task-reports・#2976 の I-3 の赤 R5)— 退いた世代の heartbeat はここへ来ないので戻さない。
-  (replace seeded :tasks (heard-tasks seeded name statuses now boot body.stopping info)
+  (replace seeded :tasks (! (task-peaks-noted (heard-tasks seeded name statuses now boot body.stopping info) name body.measured))
                       :keep-marks (! (released-keep-marks seeded.keep-marks name body.kept-when-cut-off))))
 
 
