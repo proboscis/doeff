@@ -104,6 +104,21 @@
   (assert (= written {"worker/memory.min" "2G" "services/memory.min" "24G" "jobs/memory.max" "36G" "commands/memory.max" "28G"}) written))
 
 
+(deftest test-the-layers-get-io-only-when-the-parent-offers-it [#^ Path tmp-path]
+  ;; io の読み(io.stat): 親が io を渡す機体(cgroup.controllers に io)では、子に io も掛け、層ごとの device 別の書きを読めるようにする。
+  ;; 失敗ケース: 親が io を渡さない機体で +io を書くと kernel が断り、層の作りが 5 回の試しの後に止まって worker が起きない。
+  (<- scope Path (fake-container tmp-path))
+  (.write-text (/ scope "cgroup.controllers") "cpuset cpu io memory pids\n")
+  (<- done subprocess.CompletedProcess (run-layout tmp-path scope "worker:memory.min=2G,cpu.weight=1000 commands:memory.max=28G"))
+  (assert (= done.returncode 0) done.stderr)
+  (assert (= (.strip (.read-text (/ scope "cgroup.subtree_control"))) "+memory +cpu +io"))
+  (<- bare Path (fake-container (/ tmp-path "bare")))
+  (.write-text (/ bare "cgroup.controllers") "cpuset cpu memory pids\n")
+  (<- plain subprocess.CompletedProcess (run-layout (/ tmp-path "bare") bare LAYOUT))
+  (assert (= plain.returncode 0) plain.stderr)
+  (assert (= (.strip (.read-text (/ bare "cgroup.subtree_control"))) "+memory")))
+
+
 (deftest test-a-layout-with-cpu-files-gives-the-children-cpu-and-writes-each-weight [#^ Path tmp-path]
   ;; CPU の重み: cpu の file を書く層が在れば、子に memory と cpu を掛けてから重みを書く。失敗ケース: 子に cpu を
   ;; 掛けないまま cpu.weight を書くと、kernel は file を作らず(書けない)、常駐の層の thread が一括の層と同じ重みで実行待ちに並ぶ。

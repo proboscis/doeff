@@ -599,6 +599,11 @@ cgroup_layout() {
     [ -d "$cgroup_dir/$name" ] || mkdir "$cgroup_dir/$name" || cgroup_refused "層 $name を作れない"
   done
   set +f
+  # io は値を書かず、層ごと(と、層の下の子ごと)の device 別の読み書きの量(io.stat)を読むためだけに掛ける。親が io を渡さない機体
+  # (cgroup.controllers に io が無い)では掛けない — 掛けられない controller で層の作りを断らない。
+  case " $(cat "$cgroup_dir/cgroup.controllers" 2>/dev/null) " in
+    *" io "*) controllers="$controllers +io" ;;
+  esac
   tries=0
   while :; do
     for pid in $(cat "$cgroup_dir/cgroup.procs"); do
