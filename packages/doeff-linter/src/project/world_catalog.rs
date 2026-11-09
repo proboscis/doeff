@@ -8,7 +8,7 @@
 //!   * allows `:wraps` of `:world-handlers` only for handlers in the catalog (otherwise it is a configuration error).
 //!   * matches the catalog's touch targets (`touches`) against `:edge-touches` in DOEFF133.
 //!
-//! Shape: `{"handlers": [{"handler": "doeff_core_effects.os_file:os-file-handler", "touches": ["file"], "why": "…"}]}`.
+//! Shape: `{"handlers": [{"handler": "doeff_core_effects._os_file:os-file-handler", "touches": ["file"], "why": "…"}]}`.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -182,21 +182,25 @@ mod tests {
     fn bundled_catalog_is_well_formed() {
         let parsed = WorldCatalog::parse(include_str!("../../data/world_handlers.json"));
         let catalog = parsed.unwrap_or_else(|problems| panic!("the bundled catalog cannot be read:\n{}", problems.join("\n")));
-        assert!(catalog.handlers.contains_key("doeff_core_effects.os_file.os_file_handler"), "os-file-handler is not in the catalog");
+        assert!(catalog.handlers.contains_key("doeff_core_effects._os_file.os_file_handler"), "os-file-handler is not in the catalog");
         // A handler re-exported at its package entry is in the catalog as a real-I/O handler under both spellings.
         for name in ["doeff_time._handlers.async_time.async_time_handler", "doeff_time.async_time_handler"] {
             assert!(catalog.handlers.contains_key(name), "{} is not in the catalog", name);
         }
-        // Even after moving the children of doeff_core_effects to _, the old spelling can be written in :wraps while the relocation module remains.
+        // The children of doeff_core_effects were moved to _ and their relocation modules deleted, so a handler is in the catalog under
+        // the _ spelling and the entry spelling only; the old spelling (<root>.<child>) is gone with the module it named.
         for name in [
             "doeff_core_effects._handlers.await_handler",
             "doeff_core_effects.await_handler",
-            "doeff_core_effects.handlers.await_handler",
-            "doeff_core_effects.handlers.env_var_ask",
+            "doeff_core_effects._handlers.env_var_ask",
+            "doeff_core_effects.env_var_ask",
         ] {
             assert!(catalog.handlers.contains_key(name), "{} is not in the catalog", name);
         }
-        // The children for compute, VM, and measurement likewise exist in three spellings: the _ spelling, the entry spelling, and the old spelling.
+        for name in ["doeff_core_effects.handlers.await_handler", "doeff_core_effects.handlers.env_var_ask"] {
+            assert!(!catalog.handlers.contains_key(name), "{} names a deleted relocation module", name);
+        }
+        // The children for compute, VM, and measurement likewise exist in two spellings: the _ spelling and the entry spelling.
         for (child, handler) in [
             ("thread_pool_compute", "thread_pool_compute_handler"),
             ("gc_freeze", "gc_freeze_handler"),
@@ -219,13 +223,11 @@ mod tests {
             ("pooled_postgres_sql", "pooled_postgres_sql_handler"),
             ("clickhouse_http_sql", "clickhouse_http_sql_handler"),
         ] {
-            for name in [
-                format!("doeff_core_effects._{child}.{handler}"),
-                format!("doeff_core_effects.{handler}"),
-                format!("doeff_core_effects.{child}.{handler}"),
-            ] {
+            for name in [format!("doeff_core_effects._{child}.{handler}"), format!("doeff_core_effects.{handler}")] {
                 assert!(catalog.handlers.contains_key(&name), "{} is not in the catalog", name);
             }
+            let old = format!("doeff_core_effects.{child}.{handler}");
+            assert!(!catalog.handlers.contains_key(&old), "{} names a deleted relocation module", old);
         }
     }
 
@@ -248,8 +250,9 @@ mod tests {
                 moved_from.insert(new.trim().to_string(), old.trim().to_string());
             }
         }
-        // The shell of aiohttp_http_server was removed because it has the same name as the entry name (ADR-DOE-API-001 R34); use a remaining shell to check the search.
-        assert!(moved_from.contains_key("doeff_core_effects._thread_pool_compute"), "cannot find the relocation module (search root {})", packages.display());
+        // doeff_core_effects has no relocation module left (its children were all moved to _ and the shells deleted); use a remaining shell
+        // of doeff_cluster to check the search.
+        assert!(moved_from.contains_key("doeff_cluster._shared"), "cannot find the relocation module (search root {})", packages.display());
         let catalog = WorldCatalog::bundled();
         let missing: Vec<String> = catalog
             .handlers
@@ -276,12 +279,12 @@ mod tests {
             &agents,
             r#"{"handlers": [
                 {"handler": "pkg_agents:agent-handler", "touches": ["process"], "why": "w"},
-                {"handler": "doeff_core_effects.os_file:os-file-handler", "touches": ["clock"], "why": "w"}]}"#,
+                {"handler": "doeff_core_effects._os_file:os-file-handler", "touches": ["clock"], "why": "w"}]}"#,
         )
         .unwrap();
         let catalog = WorldCatalog::with_repo_catalogs(&[agents.clone()]).unwrap_or_else(|problems| panic!("{}", problems.join("\n")));
         assert_eq!(catalog.handlers["pkg_agents.agent_handler"].touches, vec![WorldTouch::Process]);
-        assert_eq!(catalog.handlers["doeff_core_effects.os_file.os_file_handler"], WorldCatalog::bundled().handlers["doeff_core_effects.os_file.os_file_handler"]);
+        assert_eq!(catalog.handlers["doeff_core_effects._os_file.os_file_handler"], WorldCatalog::bundled().handlers["doeff_core_effects._os_file.os_file_handler"]);
         assert_eq!(catalog.handlers.len(), WorldCatalog::bundled().handlers.len() + 1);
 
         let bad = dir.path().join("bad.json");

@@ -3,8 +3,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from doeff import Await, Listen, do, run
-from doeff_core_effects.handlers import await_handler, listen_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, listen_handler, scheduled
 
 
 async def tokens() -> AsyncIterator[str]:  # stand-in for the stream of an async SDK

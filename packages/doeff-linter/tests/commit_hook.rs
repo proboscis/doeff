@@ -17,7 +17,7 @@ const ARCHITECTURE: &str = r#"
            (layer entry :roles [entry] :imports [core foundation entry])]
   :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler"])])
+                     :wraps ["doeff_core_effects._os_file:os-file-handler"])])
 (defservice queue "queue" {:layers [core] :entry-modules ["app.queue.main"] :invariants ["app.queue.lease_invariants:fenced-writes"]})
 "#;
 
@@ -102,7 +102,7 @@ fn a_wraps_outside_the_catalog_is_named_and_stops() {
     let dir = baseline_repo();
     let root = dir.path();
     let stale = "doeff_cluster.host_contract:host-reader";
-    write(root, "architecture.hy", &ARCHITECTURE.replace("doeff_core_effects.os_file:os-file-handler", stale));
+    write(root, "architecture.hy", &ARCHITECTURE.replace("doeff_core_effects._os_file:os-file-handler", stale));
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args(["--output-format", "editor-json", "--no-log"])
         .current_dir(root)
@@ -133,7 +133,7 @@ fn a_repo_catalog_next_to_the_repo_reaches_the_head_tree() {
         r#"{"handlers": [{"handler": "pkg_agents:agent-handler", "touches": ["process"], "why": "starts the agent as a child process"}]}"#,
     );
     write(&root, "pyproject.toml", &PYPROJECT.replacen("[tool.doeff-linter]\n", "[tool.doeff-linter]\nworld_catalogs = [\"../agent-tools/world_handlers.json\"]\n", 1));
-    write(&root, "architecture.hy", &ARCHITECTURE.replace("\"doeff_core_effects.os_file:os-file-handler\"", "\"doeff_core_effects.os_file:os-file-handler\" \"pkg_agents:agent-handler\""));
+    write(&root, "architecture.hy", &ARCHITECTURE.replace("\"doeff_core_effects._os_file:os-file-handler\"", "\"doeff_core_effects._os_file:os-file-handler\" \"pkg_agents:agent-handler\""));
     write(&root, "app/foundation/host.hy", "(val MODULE-TAGS {:context \"shared\" :role \"foundation\"})\n(defk with-host [body] body)\n");
     write(&root, "app/queue/main.hy", "(defk cycle [] 1)\n");
     write(&root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes [writes]\n  {}\n  \"Fencing clause.\"\n  #())\n", JUDGED));

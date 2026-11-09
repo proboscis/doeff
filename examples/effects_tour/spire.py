@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass, replace
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 
 # ---- Effects: everything the fight needs from the outside world.

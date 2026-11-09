@@ -11,7 +11,7 @@ from pathlib import Path
 # The article's examples (drive, greet, stream) are imported through this path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[6] / "examples" / "yield_and_async"))
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from drive import drive, twice_async
 from greet import ada, closed, greet, greet_async, titled, together, twice
 from stream import bridged, collect, collect_in_one, counted, tokens

@@ -38,13 +38,6 @@
    "why": "entry spelling of http_production_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.http_handlers:http-production-handler",
-   "touches": [
-    "http"
-   ],
-   "why": "re-export spelling of the above"
-  },
-  {
    "handler": "doeff_core_effects._http_handlers_impl:http-fixture-handler",
    "touches": [
     "http",
@@ -69,14 +62,6 @@
    "why": "entry spelling of http_fixture_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.http_handlers:http-fixture-handler",
-   "touches": [
-    "http",
-    "file"
-   ],
-   "why": "re-export spelling of the above"
-  },
-  {
    "handler": "doeff_core_effects._os_file:os-file-handler",
    "touches": [
     "file"
@@ -89,13 +74,6 @@
     "file"
    ],
    "why": "entry spelling of os_file_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.os_file:os-file-handler",
-   "touches": [
-    "file"
-   ],
-   "why": "old spelling of os_file_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._os_process:subprocess-handler",
@@ -112,14 +90,6 @@
     "env"
    ],
    "why": "entry spelling of subprocess_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.os_process:subprocess-handler",
-   "touches": [
-    "process",
-    "env"
-   ],
-   "why": "subprocess.run, os.environ, socket.gethostname (os_process.hy:73)"
   },
   {
    "handler": "doeff_core_effects._aiohttp_http_server:aiohttp-http-server",
@@ -143,13 +113,6 @@
    "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect (installer — the real one it installs is below)"
   },
   {
-   "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-client",
-   "touches": [
-    "network"
-   ],
-   "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect (installer — the real one it installs is below)"
-  },
-  {
    "handler": "doeff_core_effects._aiohttp_ws_client:aiohttp-ws-link-handler",
    "touches": [
     "network"
@@ -162,13 +125,6 @@
     "network"
    ],
    "why": "entry spelling of aiohttp_ws_link_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-link-handler",
-   "touches": [
-    "network"
-   ],
-   "why": "connects a WebSocket with aiohttp's ClientSession.ws_connect"
   },
   {
    "handler": "doeff_core_effects._clickhouse_http_sql:clickhouse-http-sql-handler",
@@ -187,14 +143,6 @@
    "why": "entry spelling of clickhouse_http_sql_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.clickhouse_http_sql:clickhouse-http-sql-handler",
-   "touches": [
-    "http",
-    "db"
-   ],
-   "why": "POSTs with urllib.request.urlopen"
-  },
-  {
    "handler": "doeff_core_effects._postgres_sql:postgres-sql-handler",
    "touches": [
     "db",
@@ -209,14 +157,6 @@
     "thread"
    ],
    "why": "entry spelling of postgres_sql_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.postgres_sql:postgres-sql-handler",
-   "touches": [
-    "db",
-    "thread"
-   ],
-   "why": "psycopg.connect, BoundedSemaphore"
   },
   {
    "handler": "doeff_core_effects._pooled_postgres_sql:pooled-postgres-sql-handler",
@@ -235,14 +175,6 @@
    "why": "entry spelling of pooled_postgres_sql_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.pooled_postgres_sql:pooled-postgres-sql-handler",
-   "touches": [
-    "db",
-    "thread"
-   ],
-   "why": "psycopg on an Executor thread"
-  },
-  {
    "handler": "doeff_core_effects._stop_signal_handlers:os-signal-stop-handler",
    "touches": [
     "process"
@@ -255,13 +187,6 @@
     "process"
    ],
    "why": "entry spelling of os_signal_stop_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.stop_signal_handlers:os-signal-stop-handler",
-   "touches": [
-    "process"
-   ],
-   "why": "catches SIGINT and SIGTERM with signal.signal"
   },
   {
    "handler": "doeff_core_effects._thread_pool_compute:thread-pool-compute-handler",
@@ -280,14 +205,6 @@
    "why": "entry spelling of thread_pool_compute_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.thread_pool_compute:thread-pool-compute-handler",
-   "touches": [
-    "thread",
-    "clock"
-   ],
-   "why": "old spelling of thread_pool_compute_handler — written by external repos' :wraps and imports while the relocated module remains"
-  },
-  {
    "handler": "doeff_core_effects._process_meter:process-meter-handler",
    "touches": [
     "thread",
@@ -304,14 +221,6 @@
    "why": "entry spelling of process_meter_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.process_meter:process-meter-handler",
-   "touches": [
-    "thread",
-    "clock"
-   ],
-   "why": "shares the one per-process meter store with other runs and threads via threading.Lock, and a callback hooked into gc.callbacks measures GC pauses with time.monotonic (process_meter.hy)"
-  },
-  {
    "handler": "doeff_core_effects._process_latest:process-latest-handler",
    "touches": [
     "thread"
@@ -326,13 +235,6 @@
    "why": "entry spelling of process_latest_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.process_latest:process-latest-handler",
-   "touches": [
-    "thread"
-   ],
-   "why": "shares the one per-process store of the latest value with other runs and threads (process_latest.hy)"
-  },
-  {
    "handler": "doeff_core_effects._gc_freeze:gc-freeze-handler",
    "touches": [
     "process"
@@ -345,13 +247,6 @@
     "process"
    ],
    "why": "entry spelling of gc_freeze_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.gc_freeze:gc-freeze-handler",
-   "touches": [
-    "process"
-   ],
-   "why": "old spelling of gc_freeze_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._faulthandler_stack_dump:faulthandler-stack-dump-handler",
@@ -370,14 +265,6 @@
    "why": "entry spelling of faulthandler_stack_dump_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.faulthandler_stack_dump:faulthandler-stack-dump-handler",
-   "touches": [
-    "thread",
-    "file"
-   ],
-   "why": "old spelling of faulthandler_stack_dump_handler — written by external repos' :wraps and imports while the relocated module remains"
-  },
-  {
    "handler": "doeff_core_effects._handlers:await_handler",
    "touches": [
     "thread"
@@ -392,13 +279,6 @@
    "why": "entry spelling of await_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.handlers:await_handler",
-   "touches": [
-    "thread"
-   ],
-   "why": "old spelling of await_handler — written by external repos' :wraps and imports while the relocated module remains"
-  },
-  {
    "handler": "doeff_core_effects._handlers:env_var_ask",
    "touches": [
     "env"
@@ -411,13 +291,6 @@
     "env"
    ],
    "why": "entry spelling of env_var_ask (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.handlers:env_var_ask",
-   "touches": [
-    "env"
-   ],
-   "why": "old spelling of env_var_ask — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_core_effects._cache_handlers:sqlite_cache_handler",
@@ -436,14 +309,6 @@
    "why": "entry spelling of sqlite_cache_handler (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
-   "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",
-   "touches": [
-    "db",
-    "file"
-   ],
-   "why": "old spelling of sqlite_cache_handler — written by external repos' :wraps and imports while the relocated module remains"
-  },
-  {
    "handler": "doeff_core_effects._memo_handlers:sqlite_memo_handler",
    "touches": [
     "db",
@@ -458,14 +323,6 @@
     "file"
    ],
    "why": "entry spelling of sqlite_memo_handler (ADR-DOE-API-001 R5 — users read from the entry)"
-  },
-  {
-   "handler": "doeff_core_effects.memo_handlers:sqlite_memo_handler",
-   "touches": [
-    "db",
-    "file"
-   ],
-   "why": "old spelling of sqlite_memo_handler — written by external repos' :wraps and imports while the relocated module remains"
   },
   {
    "handler": "doeff_time._handlers.async_time:async_time_handler",

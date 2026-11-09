@@ -2150,7 +2150,7 @@ fn world_repo_with(files: &[(&str, String)], extra: &str, enable: &str) -> tempf
            (layer entry :roles [entry] :imports [core foundation entry])]
   :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler"])EXTRA])
+                     :wraps ["doeff_core_effects._os_file:os-file-handler"])EXTRA])
 (defservice billing "Billing" {:layers [core entry]})
 "#
     .replace("EXTRA", extra);
@@ -2172,7 +2172,7 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
         (
             "app/foundation/host.hy",
             tags("shared", "foundation")
-                + "(import httpx)\n(import doeff_core_effects.os_file [os-file-handler])\n(import doeff_core_effects.file_effects [ReadText])\n\
+                + "(import httpx)\n(import doeff_core_effects._os_file [os-file-handler])\n(import doeff_core_effects._file_effects [ReadText])\n\
                    (defk with-host [body] (with-handlers [os-file-handler (fn [] (httpx.AsyncClient))] body))\n\
                    (defk token-in-file [path] (with-handlers [os-file-handler] (ReadText path)))\n",
         ),
@@ -2184,7 +2184,7 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
         (
             "app/billing/entry/main.hy",
             tags("billing", "entry")
-                + "(import httpx)\n(import doeff_core_effects.os_file [os-file-handler])\n\
+                + "(import httpx)\n(import doeff_core_effects._os_file [os-file-handler])\n\
                    (defn fetch [] (httpx.get \"http://x\"))\n(defk run [body] (with-handlers [os-file-handler] body))\n",
         ),
         ("app/billing/entry/good.hy", tags("billing", "entry") + "(import app.foundation.host [with-host])\n(defk ok [body] (with-host body))\n"),
@@ -2203,13 +2203,13 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     assert_eq!(
         named,
         vec![
-            "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler",
-            "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler",
+            "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects._os_file:os-file-handler",
+            "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects._os_file:os-file-handler",
         ],
         "inside the list's definition with-host does not hit; a definition not in the list in the same module, and entry, do hit: {}",
         report
     );
-    let found = violation(&report, "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects.os_file:os-file-handler");
+    let found = violation(&report, "app/foundation/host.hy::DOEFF131::token_in_file::world::doeff_core_effects._os_file:os-file-handler");
     assert_eq!(found["severity"], "error");
     assert_eq!(found["level"], "critical");
 }
@@ -2304,7 +2304,7 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
         ("app/billing/core/helpers.hy", tags("billing", "judgment") + "(import app.foundation.host [with-host])\n(defk hosted [body] (with-host body))\n"),
         (
             "app/billing/tests/test_kinds.hy",
-            "(import pytest)\n(import subprocess)\n(import doeff_core_effects.os_file [os-file-handler])\n\
+            "(import pytest)\n(import subprocess)\n(import doeff_core_effects._os_file [os-file-handler])\n\
              (import app.billing.core.calc [add])\n(import app.billing.core.helpers [hosted])\n\
              (deftest test-local-good (<- n (add 1 2)) (assert (= n 3)))\n\
              (deftest test-local-marked {:marks [\"real_world\"]} (<- n (add 1 2)) (assert (= n 3)))\n\
@@ -2693,7 +2693,7 @@ fn stand_in_needs_a_contract_test_that_runs_it_beside_the_real_handler() {
               (stand-in "app.foundation.peers:with-fake-store" :real "doeff_records.store:with-store")
               (stand-in "app.foundation.peers:with-fake-queue" :real "app.foundation.host:with-queue")
               (stand-in "app.foundation.peers:with-fake-clock" :real "app.foundation.host:with-clock")
-              (stand-in "app.foundation.peers:with-fake-disk" :real "doeff_core_effects.os_file:os-file-handler"
+              (stand-in "app.foundation.peers:with-fake-disk" :real "doeff_core_effects._os_file:os-file-handler"
                 :contract-test (none :doeff-test "packages/doeff-core-effects/tests/test_os_file.hy::test-os-file-contract"))
               (stand-in "app.foundation.peers:with-ghost" :real "doeff_openai.live:with-live")"#;
     let dir = world_repo_with(&files, extra, "[\"DOEFF137\"]");
@@ -2786,11 +2786,11 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         (
             "app/billing/entry/main.hy",
-            tags("billing", "entry") + "(import doeff_core_effects.os_process [subprocess-handler])\n(defk run [body] (with-handlers [subprocess-handler] body))\n",
+            tags("billing", "entry") + "(import doeff_core_effects._os_process [subprocess-handler])\n(defk run [body] (with-handlers [subprocess-handler] body))\n",
         ),
         (
             "app/billing/tests/test_io.hy",
-            "(import doeff_core_effects.os_file [os-file-handler])\n(import doeff_core_effects.os_process [subprocess-handler])\n\
+            "(import doeff_core_effects._os_file [os-file-handler])\n(import doeff_core_effects._os_process [subprocess-handler])\n\
              (deftest test-files-only (<- n (with-handlers [os-file-handler] 1)) (assert n))\n\
              (deftest test-files-marked {:marks [\"real_world\"]} (<- n (with-handlers [os-file-handler] 1)) (assert n))\n\
              (deftest test-process (<- n (with-handlers [subprocess-handler] 1)) (assert n))\n"
@@ -2805,8 +2805,8 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
     std::fs::write(&arch_path, text).unwrap();
     let (_, report) = editor(dir.path());
     let named = keys(&report, "DOEFF131");
-    assert!(named.contains(&"app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_process:subprocess-handler".to_string()), "{:?}", named);
-    let found = violation(&report, "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects.os_process:subprocess-handler");
+    assert!(named.contains(&"app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects._os_process:subprocess-handler".to_string()), "{:?}", named);
+    let found = violation(&report, "app/billing/entry/main.hy::DOEFF131::run::world::doeff_core_effects._os_process:subprocess-handler");
     assert!(found["message"].as_str().unwrap().contains("no definition in the roster lists this handler in :wraps"), "{}", found["message"]);
     assert_eq!(
         keys(&report, "DOEFF133"),
@@ -2945,7 +2945,7 @@ fn world_handler_rules_cover_files_outside_the_layers() {
         ("app/billing/runtime/handlers.hy", "(import socket)\n(defn open-one [] (socket.socket))\n".to_string()),
         (
             "services/record/main.hy",
-            "(import threading)\n(import doeff_core_effects.os_file [os-file-handler])\n(defn serve [] (threading.Thread))\n(defn run [body] (with-handlers [os-file-handler] body))\n"
+            "(import threading)\n(import doeff_core_effects._os_file [os-file-handler])\n(defn serve [] (threading.Thread))\n(defn run [body] (with-handlers [os-file-handler] body))\n"
                 .to_string(),
         ),
         ("services/record/tests/test_main.hy", "(import socket)\n(deftest test-x (socket.socket))\n".to_string()),
@@ -2965,8 +2965,8 @@ fn world_handler_rules_cover_files_outside_the_layers() {
         "{}",
         report
     );
-    assert_eq!(keys(&report, "DOEFF131"), vec!["services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler"], "{}", report);
-    let found = violation(&report, "services/record/main.hy::DOEFF131::run::world::doeff_core_effects.os_file:os-file-handler");
+    assert_eq!(keys(&report, "DOEFF131"), vec!["services/record/main.hy::DOEFF131::run::world::doeff_core_effects._os_file:os-file-handler"], "{}", report);
+    let found = violation(&report, "services/record/main.hy::DOEFF131::run::world::doeff_core_effects._os_file:os-file-handler");
     assert!(found["message"].as_str().unwrap().contains("outside the layer locations"), "{}", found["message"]);
     assert_eq!(found["level"], "critical");
 
@@ -5119,7 +5119,7 @@ fn records_client_is_counted_by_its_outer_http_handler() {
             "app/billing/core/ports.hy",
             tags("billing", "judgment")
                 + "(import doeff_records.http_client [RecordsEndpoint http-records-handler http-table-records-handler])\n\
-                   (import doeff_core_effects.http_handlers [http-production-handler])\n\
+                   (import doeff_core_effects._http_handlers [http-production-handler])\n\
                    (defk effect-port [url] (http-records-handler (RecordsEndpoint url \"t\")))\n\
                    (defk table-port [url] (http-table-records-handler (RecordsEndpoint url \"t\") (frozenset [\"orders\"])))\n\
                    (defk answered-port [url body] (with-handlers [(http-production-handler) (effect-port url)] body))\n\

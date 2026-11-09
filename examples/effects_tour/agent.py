@@ -5,9 +5,23 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import count
 
-from doeff import Await, EffectBase, Err, Gather, Ok, Pass, Resume, Spawn, Transfer, Try, do, handler, run
-from doeff_core_effects.handlers import await_handler, try_handler
-from doeff_core_effects.scheduler import PRIORITY_IDLE, CompletePromise, CreatePromise, Wait, scheduled
+from doeff import (
+    Await,
+    EffectBase,
+    Err,
+    Gather,
+    Ok,
+    Pass,
+    Resume,
+    Spawn,
+    TaskPriority,
+    Transfer,
+    Try,
+    do,
+    handler,
+    run,
+)
+from doeff_core_effects import CompletePromise, CreatePromise, Wait, await_handler, scheduled, try_handler
 
 
 # ---- The program: an agent that plans, searches in parallel, drafts, and asks a person.
@@ -217,7 +231,7 @@ def virtual_clock(start: datetime):  # waits take no time
         heapq.heappush(sleepers, (now + timedelta(seconds=effect.seconds), next(order), promise))
         if not advancing:
             advancing = True
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)
         yield Wait(promise.future)
         return (yield Resume(k, None))
 

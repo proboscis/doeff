@@ -10,8 +10,7 @@ from pathlib import Path
 # The article's example (trading.py) is imported through this path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[6] / "examples" / "effects_tour"))
 
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled
 from trading import (
     BARS,
     OPEN,

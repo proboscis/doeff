@@ -26,7 +26,7 @@ fn repo() -> tempfile::TempDir {
            (layer entry :roles [entry] :imports [core foundation entry])]
   :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler"])])
+                     :wraps ["doeff_core_effects._os_file:os-file-handler"])])
 (defservice billing "Billing" {:layers [core entry]})
 "#;
     std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
@@ -39,7 +39,7 @@ fn repo() -> tempfile::TempDir {
         (
             "app/foundation/host.hy",
             tags("shared", "foundation")
-                + "(import httpx)\n(import doeff_core_effects.os_file [os-file-handler])\n(import doeff_core_effects.file_effects [ReadText])\n\
+                + "(import httpx)\n(import doeff_core_effects._os_file [os-file-handler])\n(import doeff_core_effects._file_effects [ReadText])\n\
                    (defk with-host [body] (with-handlers [os-file-handler (fn [] (httpx.AsyncClient))] body))\n\
                    (defk token-in-file [path] (with-handlers [os-file-handler] (ReadText path)))\n",
         ),
@@ -47,12 +47,12 @@ fn repo() -> tempfile::TempDir {
         (
             "app/billing/entry/main.hy",
             tags("billing", "entry")
-                + "(import httpx)\n(import doeff_core_effects.os_file [os-file-handler])\n\
+                + "(import httpx)\n(import doeff_core_effects._os_file [os-file-handler])\n\
                    (defn fetch [] (httpx.get \"http://x\"))\n(defk run [body] (with-handlers [os-file-handler] body))\n",
         ),
         ("app/billing/entry/fake_charge.hy", tags("billing", "entry") + "(defhandler fake-charge [] (Charge [e k] (k 1)))\n"),
         // A file outside the layer locations (the allow-list rule hits — judge_unplaced_world).
-        ("app/tools/probe.hy", "(import socket)\n(import doeff_core_effects.os_file [os-file-handler])\n(defn dial [] (socket.socket))\n(defk wrap [body] (with-handlers [os-file-handler] body))\n".to_string()),
+        ("app/tools/probe.hy", "(import socket)\n(import doeff_core_effects._os_file [os-file-handler])\n(defn dial [] (socket.socket))\n(defk wrap [body] (with-handlers [os-file-handler] body))\n".to_string()),
     ];
     for (rel, text) in files {
         let path = dir.path().join(rel);

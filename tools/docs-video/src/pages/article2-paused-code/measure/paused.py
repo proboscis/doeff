@@ -12,8 +12,7 @@ from pathlib import Path
 # The article's examples (drive, greet, stream) are imported through this path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[6] / "examples" / "yield_and_async"))
 
-from doeff_core_effects.handlers import ReadWriterLog, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import ReadWriterLog, scheduled, state, writer
 from drive import drive, greet_async
 from greet import ReadName, ada, closed, grace, greet, together, twice
 

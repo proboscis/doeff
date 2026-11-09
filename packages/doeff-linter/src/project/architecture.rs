@@ -18,7 +18,7 @@
 //!   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"  ; allowlist of definitions allowed to touch the outside world
 //!                       :touches [http file clock env]           ; what they touch (a closed vocabulary — WorldTouch)
 //!                       :answers [HttpRequest ReadText]          ; effects they answer (optional)
-//!                       :wraps ["doeff_core_effects.os_file:os-file-handler"])]  ; doeff real-I/O handlers run inside (optional)
+//!                       :wraps ["doeff_core_effects:os-file-handler"])]  ; doeff real-I/O handlers run inside (optional)
 //!   :stand-ins [(stand-in "controllers.agora_sim.peers.live_session_peer:with-live-session-peer"  ; a counterpart that answers in place of the real one in emulation
 //!                 :real "doeff_openai.live:with-live-session")]  ; the real handler the counterpart stands in for (DOEFF137 counts the contract tests per pair)
 //!   :exclude ["tests" "__pycache__" "conftest.py"]
@@ -3614,7 +3614,7 @@ mod tests {
             r#":foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file clock]
                      :answers [HttpRequest ReadText]
-                     :wraps ["doeff_core_effects.os_file:os-file-handler" "doeff_core_effects.http_handlers:http-production-handler"])
+                     :wraps ["doeff_core_effects._os_file:os-file-handler" "doeff_core_effects._http_handlers:http-production-handler"])
                    (world-handler "app.foundation.agent:claude-runtime" :touches [process])]"#,
         );
         let arch = Architecture::parse(&good, Path::new("architecture.hy")).unwrap();
@@ -3624,7 +3624,7 @@ mod tests {
         assert_eq!(host.definition, DefinitionRef { module: "app.foundation.host".into(), name: "with-host".into() });
         assert_eq!(host.touches, vec![WorldTouch::Http, WorldTouch::File, WorldTouch::Clock]);
         assert_eq!(host.answers, vec!["HttpRequest", "ReadText"]);
-        assert_eq!(host.wraps[0].spelling(), "doeff_core_effects.os_file:os-file-handler");
+        assert_eq!(host.wraps[0].spelling(), "doeff_core_effects._os_file:os-file-handler");
         assert!(arch.world_handlers[1].wraps.is_empty() && arch.world_handlers[1].answers.is_empty());
         let line = good.lines().position(|l| l.contains("app.foundation.host:with-host")).unwrap() as u32;
         assert_eq!(host.range.start.line, line);

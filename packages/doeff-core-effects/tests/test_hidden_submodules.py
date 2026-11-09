@@ -3,10 +3,12 @@
 Rule: R5 of ADR-DOE-API-001 - names are exported from the entry point (`__init__`); children are hidden by prefixing `_` to the name.
 At load time, doeff reads this package's `_effects` and `_scheduler`, and this package's entry point reads doeff first. Modules for names the entry point
 exports lazily (`_LAZY_EXPORTS` in `__getattr__`) are not loaded by `import doeff` (so as not to slow startup). The relocation
-shim modules at the old names (with `# moved-submodule-shim:` on line 1) return the `_<name>` module itself.
+shim modules once left at the old names were deleted after no repo reading doeff's main read the old paths (stage 3), so an old
+path is no module at all.
 
-Failure cases: red if importing doeff first, importing doeff_core_effects first, or importing an old path first makes the import fail,
-an entry-point name becomes a different object from doeff's name, `import doeff` loads a lazy name's module, or an old path returns a separate copy of the module.
+Failure cases: red if importing doeff first, importing doeff_core_effects first, or importing a `_` path first makes the import fail,
+an entry-point name becomes a different object from doeff's name, `import doeff` loads a lazy name's module, or an old path imports again
+(a module back at an old name hides the entry's names — ADR-DOE-API-001 R34).
 """
 
 import subprocess
@@ -16,7 +18,7 @@ import pytest
 
 #: Old and new paths of the children (10 core ones moved - storage also moved the modules below it;
 #: 23 for compute, VM, random numbers, and measurement; 11 for the next moved files, memo, and cache; 19 for process;
-#: 6 for http and ws; 7 for sql).
+#: 6 for http and ws; 7 for sql). The old paths no longer import.
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -215,7 +217,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
 
 @pytest.mark.parametrize(
     "first",
-    ["doeff", "doeff_core_effects", "doeff_core_effects.effects", "doeff_core_effects.scheduler", "doeff_core_effects._handlers"],
+    ["doeff", "doeff_core_effects", "doeff_core_effects._effects", "doeff_core_effects._scheduler", "doeff_core_effects._handlers"],
 )
 def test_the_names_are_the_same_whichever_module_is_imported_first(first: str) -> None:
     code = (
@@ -241,11 +243,16 @@ def test_import_doeff_does_not_load_the_modules_of_the_lazy_names() -> None:
     assert done.returncode == 0, done.stderr
 
 
-def test_the_old_path_gives_the_moved_module_itself() -> None:
+def test_the_old_path_is_gone_and_the_new_path_imports() -> None:
     code = (
         "import importlib\n"
         f"for old, new in {MOVED!r}.items():\n"
-        "    assert importlib.import_module(old) is importlib.import_module(new), old\n"
+        "    importlib.import_module(new)\n"
+        "    try:\n"
+        "        importlib.import_module(old)\n"
+        "    except ModuleNotFoundError:\n"
+        "        continue\n"
+        "    raise AssertionError(f'{old} still imports')\n"
     )
     done = _run(code)
     assert done.returncode == 0, done.stderr

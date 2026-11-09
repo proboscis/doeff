@@ -2,8 +2,7 @@
 from datetime import timedelta
 
 from doeff import handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled
 
 from trading import BARS, OPEN, GetTime, Log, quiet, timed_backtest, virtual_clock, wall_clock
 

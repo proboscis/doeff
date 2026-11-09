@@ -3,7 +3,7 @@ import asyncio
 from dataclasses import dataclass
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 
 # With async and await: the call names the code that answers.

@@ -13,14 +13,14 @@ from types import ModuleType
 import doeff_hy  # noqa: F401 - registers the Hy import hook
 import hy
 import pytest
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import run
 
 _SOURCE = """
 (require doeff-hy.macros *)
 (import doeff-hy.macros *)
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 
 (defk child [big]
   {:pre [(: big list)] :post [(: % int)]}

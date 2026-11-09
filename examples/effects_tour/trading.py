@@ -14,8 +14,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import count
 
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, TaskPriority, do, handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Wait, scheduled
+from doeff_core_effects import CompletePromise, CreatePromise, Wait, await_handler, scheduled
 
 
 # ---- Effects: what a strategy needs from the outside world.
