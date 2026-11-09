@@ -68,11 +68,11 @@
   (assert (= #(running idle over) #((* 440 MIB) 0 0)))
   ;; jobs の上限 = jobs の使い + 空き − 余裕 − 取り置き(静的な上限 896M と 0 の間)。
   (<- line EvictionLine (line-of ROOM))
-  (<- with-prepare int (jobs-limit JOBS-USED line K3S-1-MARGIN (* 896 MIB) running))
+  (<- with-prepare int (jobs-limit JOBS-USED line K3S-1-MARGIN K3S-1-MARGIN (* 896 MIB) running 0))
   (assert (= with-prepare (- (+ JOBS-USED ROOM) K3S-1-MARGIN running)) (// with-prepare MIB))
   ;; 空きが余裕と取り置きの和を割れば、jobs の上限は jobs の使いより下がる(縮むのは jobs の層 — 準備の層の上限は宣言の値のまま)。
   (<- narrow EvictionLine (line-of (* 600 MIB)))
-  (<- squeezed int (jobs-limit JOBS-USED narrow K3S-1-MARGIN (* 896 MIB) running))
+  (<- squeezed int (jobs-limit JOBS-USED narrow K3S-1-MARGIN K3S-1-MARGIN (* 896 MIB) running 0))
   (assert (< squeezed JOBS-USED) (// squeezed MIB)))
 
 
@@ -83,7 +83,7 @@
   (<- room int (prepare-room line K3S-1-MARGIN 0))
   (assert (>= room cap PREPARE-PEAK) #((// room MIB) (// cap MIB)))
   ;; 前の形(1 GiB を一律に引き、準備を jobs の層に置く)の jobs の上限は、同じ空きで準備の山を下回る(11-02 の OOM)。
-  (<- before int (jobs-limit JOBS-USED line EVICTION-MARGIN-BYTES (* 1536 MIB) 0))
+  (<- before int (jobs-limit JOBS-USED line EVICTION-MARGIN-BYTES EVICTION-MARGIN-BYTES (* 1536 MIB) 0 0))
   (assert (< (- before JOBS-USED) PREPARE-PEAK) (// before MIB))
   ;; 前の世代の起動の直後(空き 690 MiB)は、待つ(準備の空き < 上限)— OOM で殺す代わりに keeper が待つ。
   (<- after-boot EvictionLine (line-of (* 690 MIB)))

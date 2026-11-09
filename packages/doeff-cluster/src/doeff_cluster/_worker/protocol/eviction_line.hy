@@ -8,8 +8,10 @@
 ;;;                   書く。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
 ;;;                   eviction_rules の margin-of)。
 ;;;                   会話の CLI の層(clis)に天井の宣言が在る機体は、jobs の層より先に clis の層の memory.max を床(宣言の静的な値)と天井の
-;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、広げた上限は jobs の層を縮めて
-;;;                   残す)、床を越えて貸した量を jobs の上限から引き、jobs の上限を container の中の空きの内にも収める。
+;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、広げた上限は置いた task の
+;;;                   取り置きの外の空きの内でだけ残す)、床を越えて貸した量を jobs の上限から引き、jobs の上限を container の中の空きの内
+;;;                   にも収める。置いた task の取り置きは、heartbeat の返事の task の要り(入れ物の needs)と見張りの読みの task ごとの
+;;;                   使いから数える。
 ;;; 線を読めない間(Node の宣言をまだ読めない・cgroup の file を読めない・Node と cgroup が食い違う)は、jobs の層を宣言の静的な値に戻す
 ;;; (古い空きで決めた上限を残さない)。clis の層は床と clis の今の使いの大きい方に戻す(使いを読めない回は書かない)。guard が偽の見張り(起動の引数 --memory-guard off)は数えて log に出すだけで書かない。
 ;;;
@@ -41,7 +43,7 @@
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room margin-of kernel-bytes-of clis-limit clis-lent box-free
-                                                  jobs-box-limit])
+                                                  jobs-box-limit placed-pending])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
 (val EVICTION-UNREAD-LOG "worker: 追い出しの線を読めない")
@@ -105,16 +107,20 @@
    working set(None = 前の回に数えられなかった — 増えを数えない)・growths = 回あたりの外の増え(負は 0・新しい MARGIN-WINDOW 回)・
    margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
-   まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い — jobs-limit との差が調整ループの
+   まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い — jobs-intake との差が調整ループの
    観測する jobs の層の空き WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
    clis-current = 最後の回に読んだ clis の層の memory.current(None = 読めなかった)・lent = 最後の回に clis に床を越えて貸した量
-   (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)・needs = 置き先が置いた task の要り(TaskNeed
+   の tuple — heartbeat の返事を読んだ worker/protocol/coordinator_link が書く)・pending = 最後の回の置いた task の取り置き・jobs-intake =
+   最後に jobs の層の上限と同じ回に決めた、新しい受けに名乗る上限(測った余裕で数え、取り置きを入れない — None = まだ。これと
+   jobs-current の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)。scheduler の task は 1 つの thread
+   で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None
           self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
-          self.box None)))
+          self.box None self.needs #() self.pending 0 self.jobs-intake None)))
 
 
 (defrecord LayerMemory
@@ -322,12 +328,13 @@
       (.format "container の memory.max を読めない: {}" error))))
 
 
-(defk clis-limited [clis cell line margin reserve jobs-current]
+(defk clis-limited [clis cell line margin reserve jobs-current pending]
   {:pre [(: clis CliLayerSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: margin int) (: reserve int)
-         (: jobs-current (| int None))]
+         (: jobs-current (| int None)) (: pending int) (>= pending 0)]
    :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "会話の CLI の層の memory.max を掛け直し、床を越えて貸した量と container の中の空きを入れ物に残すため(worker/core/eviction_rules の
-   clis-limit): 線と jobs の使いと container を読めた回は空きから決めた上限(床と天井の間・使いより下げない)、線が無いか読めない回は
+   clis-limit): 線と jobs の使いと container を読めた回は空きから置いた task の取り置き pending を除いて決めた上限(床と天井の間・使いより
+   下げない)、線が無いか読めない回は
    床と clis の今の使いの大きい方。clis の使いを読めない・書けない回は前の上限を残し、その上限 − 床を貸しのまま引く。上限が床を越えた
    時と床へ戻った時に 1 行言う。答え = 書けない・読めない訳(\"\" = 書いた)。"
   (setv cell.box None)
@@ -352,7 +359,7 @@
                (:= box found))))
   (var limit (max current clis.floor-bytes))
   (when (is-not free None)
-    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes cell.clis-limit jobs-current))
+    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes cell.clis-limit pending))
     (:= limit found))
   (<- written (| FileFailed None) (WriteText (+ clis.dir "/memory.max") (str limit)))
   (when (isinstance written FileFailed)
@@ -372,8 +379,10 @@
 (defk jobs-limited [settings cell line guard]
   {:pre [(: settings EvictionSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: guard bool)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
-  "jobs の層の memory.max を今の線から掛け直すため(頭の註): 線が在れば jobs の今の使い + 空き − 余裕 − 準備の取り置き(上限は宣言の
-   静的な値)、線が無ければ宣言の静的な値。線が在る回は keeper の読む準備の空きも書く。jobs の層が無い・guard が偽・上限なしで線も
+  "jobs の層の memory.max を今の線から掛け直すため(頭の註): 線が在れば jobs の今の使い + 空き − 余裕 − 準備の取り置き − clis への貸し
+   (上限は宣言の静的な値 — 測った余裕の宣言の床を越えた分と clis への貸しでは、使い + 置いた task の取り置きより下げない・worker/core/
+   eviction_rules の jobs-limit)、線が無ければ宣言の静的な値。同じ回に新しい受けに名乗る上限(cell.jobs-intake)も決める。線が在る回は
+   keeper の読む準備の空きも書く。jobs の層が無い・guard が偽・上限なしで線も
    無い時は書かない。上限を jobs の使いより下げた続きの頭で 1 行言う。"
   (when (or (is settings.jobs-dir None) (not guard))
     (return None))
@@ -402,19 +411,30 @@
         (do (<- held int (prepare-reserve settings.prepare-cap-bytes prepare.current-bytes prepare.populated))
             (:= reserve held))))
   (setv cell.reserve reserve)
+  ;; 置いた task の取り置き(要り − 今の使い — 見張りの前の回の読みの使い)。clis の層へ新しく貸さず、jobs の層の上限に残す。
+  (<- pending int (placed-pending cell.needs cell.uses))
+  (setv cell.pending pending)
   ;; 会話の CLI の層を先に掛け直し、床を越えて貸した量を jobs の上限から引く(同じ空きを 2 つの層に重ねて貸さない)。
   (var lent 0)
   (when (is-not settings.clis None)
-    (<- clis-failure str (clis-limited settings.clis cell line margin reserve current))
+    (<- clis-failure str (clis-limited settings.clis cell line margin reserve current pending))
     (:= failure (or failure clis-failure))
     (:= lent cell.lent))
+  ;; memory.max は測った余裕の宣言の床を越えた分では使い + 取り置きより下げず(limit)、新しい受けに名乗る上限は測った余裕で数えて取り置きを
+  ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。
   (var limit settings.jobs-cap-bytes)
+  (var intake settings.jobs-cap-bytes)
   (when (and (is-not line None) (is-not current None))
-    (<- found int (jobs-limit current line margin settings.jobs-cap-bytes (+ reserve lent)))
+    (val floor-margin (min margin settings.margin-bytes))
+    (<- found int (jobs-limit current line margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
+    (<- told int (jobs-limit current line margin margin settings.jobs-cap-bytes (+ reserve lent) 0))
     (:= limit found)
+    (:= intake told)
     (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))
-      (<- boxed int (jobs-box-limit current cell.box cell.clis-limit cell.clis-current))
-      (:= limit (min limit boxed))))
+      (<- boxed int (jobs-box-limit current cell.box (- margin floor-margin) cell.clis-limit cell.clis-current pending))
+      (<- boxed-intake int (jobs-box-limit current cell.box 0 cell.clis-limit cell.clis-current 0))
+      (:= limit (min limit boxed))
+      (:= intake (min intake boxed-intake))))
   (when (is-not line None)
     (<- room-failure str (room-written settings line margin reserve))
     (:= failure (or failure room-failure)))
@@ -425,11 +445,12 @@
     (<- written (| FileFailed None) (WriteText (+ settings.jobs-dir "/memory.max") (str limit)))
     (if (isinstance written FileFailed)
         (:= failure (.format "jobs の層の memory.max に {} を書けない: {}" limit written.detail))
-        (setv cell.jobs-limit limit)))
+        (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)))))
   (val squeezed (and (is-not line None) (is-not current None) (is-not limit None) (not failure) (< limit current)))
   (when (and squeezed (not cell.squeezed))
     (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line line.kind.value :line-mib (// line.size-bytes MIB)
-              :room-mib (// line.room-bytes MIB) :margin-mib (// margin MIB) :prepare-reserve-mib (// reserve MIB)
+              :room-mib (// line.room-bytes MIB) :margin-mib (// margin MIB) :floor-margin-mib (// settings.margin-bytes MIB)
+              :prepare-reserve-mib (// reserve MIB) :clis-lent-mib (// lent MIB) :pending-mib (// pending MIB)
               :jobs-current-mib (// current MIB) :jobs-limit-mib (// limit MIB))))
   (setv cell.squeezed squeezed)
   (when (!= failure cell.told-failure)

@@ -4,7 +4,7 @@
 ;; memory.max(helios 5G・atlas 1536M)で止まっていた。atlas は機体の空き 8〜10 GiB のうち会話 1 本ぶんしか使えず、zeus が混んだ間に
 ;; 始まった会話 48 本のうち helios と atlas が受けたのは 12 本だった。
 ;;   - 判断(worker/core/eviction_rules の clis-limit・clis-lent・box-free・jobs-box-limit): 広げる量は 2 つの空きの小さい方の半分・前の
-;;     回に広げた上限は jobs の層を 0 まで縮めれば収まる間は残す・床(宣言の静的な値)と clis の今の使いより下げない・天井で止める。
+;;     回に広げた上限は空きの内でだけ残す・床(宣言の静的な値)と clis の今の使いより下げない・天井で止める。
 ;;   - worker の読み(worker/protocol/eviction_line の eviction-noted): clis の層の memory.max を書き、床を越えて貸した量を jobs の上限から
 ;;     引き、線を読めない回は床へ戻す。
 ;;   - 模擬の機体(atlas の値): 本物の見張りの背景の task を仮想時計の下で 5 秒ごとに回し、kubepods・root・container・jobs・clis の層の
@@ -28,10 +28,12 @@
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ObserveJobRoots])
-(import doeff_cluster._worker.core.memory_rules [JobRoot MIB])
-(import doeff_cluster._worker.core.eviction_rules [CLIS-ROOM-SHARE clis-limit clis-lent box-free jobs-box-limit layer-memory-max
-                                                  layout-held-bytes])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell CliLayerSettings eviction-noted CLIS-LENT-LOG])
+(import doeff_cluster._worker.core.memory_rules [JobRoot JobUse MIB])
+(import doeff_cluster._worker.core.eviction_rules [CLIS-ROOM-SHARE UNDECLARED-NEED-BYTES EvictionLine LineKind TaskNeed clis-limit clis-lent
+                                                  box-free jobs-box-limit jobs-limit layer-memory-max layout-held-bytes placed-pending
+                                                  task-needs-of])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell CliLayerSettings eviction-noted CLIS-LENT-LOG
+                                                     JOBS-SQUEEZE-LOG])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
 (import doeff_cluster._worker.entry.main [cli-layer-settings-of cli-ceiling-environ CLI-CEILING-CHILD-VAR])
 
@@ -80,21 +82,84 @@
   (assert (= over (* 7 GIB)) (/ over GIB)))
 
 
-(deftest test-a-widened-cli-layer-keeps-its-room-while-the-jobs-layer-can-give-way
-  ;; 前の回に 4 GiB まで広げ、会話が 3 GiB まで伸びた。ほかの Pod が跳ねて空きが 0.5 GiB になっても、jobs の層(2 GiB)を縮めれば収まる
-  ;; ので上限は 4 GiB のまま(受けたばかりの会話の伸びを OOM で止めない)。
-  (<- kept int (clis-limit (* 3 GIB) (// GIB 2) (* 12 GIB) FLOOR CEILING (* 4 GIB) (* 2 GIB)))
+(deftest test-a-widened-cli-layer-keeps-its-room-only-inside-the-free-room
+  ;; 前の回に 4 GiB まで広げ、会話が 3 GiB まで伸びた。空きが 2 GiB 残る間は上限 4 GiB のまま(受けたばかりの会話の伸びを縮めない)。
+  (<- kept int (clis-limit (* 3 GIB) (* 2 GIB) (* 12 GIB) FLOOR CEILING (* 4 GIB) 0))
   (assert (= kept (* 4 GIB)) (/ kept GIB))
-  ;; 空きが −1.5 GiB: jobs の層を 0 まで縮めても 0.5 GiB しか残らないので、その分だけ残す。
-  (<- shrunk int (clis-limit (* 3 GIB) (int (* -1.5 GIB)) (* 12 GIB) FLOOR CEILING (* 4 GIB) (* 2 GIB)))
+  ;; ほかの Pod が跳ねて空きが 0.5 GiB になった: 使われていない貸し 1 GiB のうち空きの内の 0.5 GiB だけ残す(jobs の層を縮めて残さない)。
+  (<- shrunk int (clis-limit (* 3 GIB) (// GIB 2) (* 12 GIB) FLOOR CEILING (* 4 GIB) 0))
   (assert (= shrunk (int (* 3.5 GIB))) (/ shrunk GIB))
-  ;; jobs の層を縮めても足りない: clis の今の使いまで(使いより下げない)。
-  (<- frozen int (clis-limit (* 3 GIB) (* -4 GIB) (* 12 GIB) FLOOR CEILING (* 4 GIB) GIB))
+  ;; 空きが負: clis の今の使いまで(使いより下げない)。
+  (<- frozen int (clis-limit (* 3 GIB) (* -4 GIB) (* 12 GIB) FLOOR CEILING (* 4 GIB) 0))
   (assert (= frozen (* 3 GIB)) (/ frozen GIB))
   ;; 床を越えて貸した量 = 上限 − 床と今の使いの大きい方(jobs の層の上限から引く)。
   (<- lent int (clis-lent (* 4 GIB) (* 3 GIB) FLOOR))
   (<- inside int (clis-lent FLOOR (* 512 MIB) FLOOR))
   (assert (= #(lent inside) #(GIB 0)) #(lent inside)))
+
+
+;; atlas の allocatable の線で、追い出しまでの空きが room の線を作るため(test_eviction_line.hy の line と同じ形)。
+(val room-line (fn [room] (EvictionLine :kind LineKind.ALLOCATABLE :size-bytes ALLOCATABLE :used-bytes (- ALLOCATABLE room) :room-bytes room)))
+
+
+;; atlas の 11-09 23:00〜23:21 JST の形: clis の上限 6 GiB・使い約 1 GiB(使われていない貸し 4.5 GiB)・jobs の層に走る task 4 GiB・
+;; 機体の宣言の余裕 1463 MiB が測りで 3374 MiB へ上がった。
+(val ATLAS-FLOOR-MARGIN (* 1463 MIB))
+(val ATLAS-MEASURED-MARGIN (* 3374 MIB))
+
+
+(deftest test-unused-cli-lending-is-returned-before-the-jobs-layer-goes-below-its-use
+  ;; 失敗ケース: 前の形は広げた clis の上限を「jobs の層を 0 まで縮めれば収まる間」は残したので、空きが 3.5 GiB − 余裕でも clis は 6 GiB の
+  ;; まま、貸した 4.5 GiB を jobs の上限から引き、jobs の上限が走っている task の使い 4 GiB より下がった(kernel が task を OOM で止めた)。
+  (val jobs-current (* 4 GIB))
+  (val room (int (* 3.5 GIB)))
+  (val free (- room ATLAS-MEASURED-MARGIN))
+  (<- clis int (clis-limit GIB free None FLOOR CEILING CEILING 0))
+  (<- lent int (clis-lent clis GIB FLOOR))
+  ;; 使われていない貸しは空きの内まで返る: 1 GiB + 空き 210 MiB は床の下なので床へ戻り、床を越えた貸しは 0。
+  (assert (= #(clis lent) #(FLOOR 0)) #((// clis MIB) (// lent MIB)))
+  (<- jobs int (jobs-limit jobs-current (room-line room) ATLAS-MEASURED-MARGIN ATLAS-FLOOR-MARGIN None lent 0))
+  (assert (>= jobs jobs-current) (// jobs MIB))
+  ;; 空きが測った余裕を割っても(2 GiB)、宣言の余裕で数えた空きが残る間は jobs の上限を使いより下げない — 余裕の上がりは新しい受けで吸う:
+  ;; 新しい受けに名乗る上限(測った余裕で数えた値)は使いより下で、置き先は置かない。
+  (val tight (room-line (* 2 GIB)))
+  (<- held int (jobs-limit jobs-current tight ATLAS-MEASURED-MARGIN ATLAS-FLOOR-MARGIN None 0 0))
+  (<- intake int (jobs-limit jobs-current tight ATLAS-MEASURED-MARGIN ATLAS-MEASURED-MARGIN None 0 0))
+  (assert (= held jobs-current) (// held MIB))
+  (assert (< intake jobs-current) (// intake MIB))
+  ;; 置いた task の取り置き 1 GiB は、宣言の余裕で数えた空き(2 GiB − 1463 MiB)の内で jobs の層に残す。
+  (<- promised int (jobs-limit jobs-current tight ATLAS-MEASURED-MARGIN ATLAS-FLOOR-MARGIN None 0 GIB))
+  (assert (= promised (+ jobs-current (- (* 2 GIB) ATLAS-FLOOR-MARGIN))) (// promised MIB))
+  ;; jobs の使いより下げるのは、clis の貸しを返しきっても宣言の余裕で数えた空きが負の時だけ(1 GiB < 1463 MiB)。
+  (<- squeezed int (jobs-limit jobs-current (room-line GIB) ATLAS-MEASURED-MARGIN ATLAS-FLOOR-MARGIN None 0 GIB))
+  (assert (= squeezed (- (+ jobs-current GIB) ATLAS-FLOOR-MARGIN)) (// squeezed MIB)))
+
+
+(deftest test-the-need-of-placed-tasks-is-not-lent-to-the-cli-layer
+  ;; 置き先が置いた task の要り(heartbeat の返事の行の memoryMiB — 名乗らない行は UNDECLARED-NEED-BYTES)。id の無い行は読まない。
+  (<- needs tuple (task-needs-of #({"id" "t1" "memoryMiB" 3584} {"id" "t2"} {"id" "t3" "memoryMiB" True} {"name" "no-id"})))
+  (assert (= needs #((TaskNeed :id "t1" :bytes (* 3584 MIB)) (TaskNeed :id "t2" :bytes UNDECLARED-NEED-BYTES)
+                     (TaskNeed :id "t3" :bytes UNDECLARED-NEED-BYTES)))
+          needs)
+  ;; 取り置き = task ごとの max(0, 要り − 今の使い): t1 は 1 GiB 使い 2.5 GiB 残り・t2 は使い無しで全部・t3 は要りを越えて使い 0。
+  (val uses #((JobUse :job "task/t1" :pid 20 :bytes GIB :processes 3) (JobUse :job "task/t3" :pid 30 :bytes (* 2 GIB) :processes 1)
+              (JobUse :job "svc" :pid 10 :bytes (* 4 GIB) :processes 1)))
+  (<- pending int (placed-pending needs uses))
+  (assert (= pending (+ (* 2560 MIB) UNDECLARED-NEED-BYTES)) (// pending MIB))
+  ;; 空き 6 GiB から clis に新しく貸すのは、取り置きの外の空き(6 GiB − 3.5 GiB)の半分だけ。
+  (<- grown int (clis-limit GIB (* 6 GIB) None FLOOR CEILING None pending))
+  (assert (= grown (+ GIB (int (* (- (* 6 GIB) pending) CLIS-ROOM-SHARE)))) (// grown MIB))
+  ;; 前の回に広げた上限も、取り置きの外の空きの内でだけ残す(取り置きで空きが埋まれば clis の今の使いと床へ戻る)。
+  (<- returned int (clis-limit GIB (* 3 GIB) None FLOOR CEILING CEILING (* 3 GIB)))
+  (assert (= returned FLOOR) (// returned MIB))
+  ;; jobs の層の上限は取り置きを入れて、新しい受けに名乗る上限は入れない(置き先が自分で予約を引く — 同じ空きを 2 度数えない)。
+  (val line (room-line (* 7 GIB)))
+  (val free (- (* 7 GIB) GIB))
+  (<- lent int (clis-lent grown GIB FLOOR))
+  (<- jobs int (jobs-limit (// GIB 2) line GIB GIB None lent pending))
+  (<- intake int (jobs-limit (// GIB 2) line GIB GIB None lent 0))
+  (assert (>= (- jobs (// GIB 2)) pending) (// jobs MIB))
+  (assert (= intake (- (+ (// GIB 2) free) lent)) (// intake MIB)))
 
 
 (deftest test-the-container-room-counts-the-other-limited-layers-and-bounds-the-jobs-layer
@@ -107,8 +172,12 @@
   (<- open (| int None) (box-free None (* 5 GIB) GIB atlas-held))
   (assert (= #(box open) #((* 14 GIB) None)) #(box open))
   ;; jobs の層の上限は、clis の上限までの残りを container の中の空きから引いた分まで。
-  (<- jobs int (jobs-box-limit GIB (* 14 GIB) (* 5 GIB) (* 2 GIB)))
-  (assert (= jobs (* 12 GIB)) (/ jobs GIB)))
+  (<- jobs int (jobs-box-limit GIB (* 14 GIB) 0 (* 5 GIB) (* 2 GIB) 0))
+  (assert (= jobs (* 12 GIB)) (/ jobs GIB))
+  ;; container の中の空きが clis の残りを割っても、置いた task の取り置きは測った余裕と宣言の余裕の差 slack の内で残す。
+  (<- held-for-tasks int (jobs-box-limit GIB (* 2 GIB) GIB (* 5 GIB) (* 2 GIB) (* 2 GIB)))
+  (<- intake int (jobs-box-limit GIB (* 2 GIB) 0 (* 5 GIB) (* 2 GIB) 0))
+  (assert (= #(held-for-tasks intake) #(GIB 0)) #((/ held-for-tasks GIB) (/ intake GIB))))
 
 
 (deftest test-the-ceiling-is-declared-per-machine-and-passed-to-the-job-children
@@ -225,6 +294,31 @@
   (<- untouched str (content-at before (+ CLIS "/memory.max")))
   (<- old-jobs str (content-at before (+ JOBS "/memory.max")))
   (assert (= #((int untouched) (int old-jobs)) #(FLOOR (+ (// GIB 2) free))) #(untouched old-jobs)))
+
+
+(deftest test-the-worker-keeps-the-need-of-placed-tasks-out-of-the-cli-layer
+  ;; 平常の atlas(上の検と同じ読み)に、置き先が要り 3584 MiB の task を置き、その task はまだ 512 MiB しか使っていない(取り置き 3 GiB)。
+  (val pods (* 12 GIB))
+  (val room (- ALLOCATABLE pods))
+  (val cell (EvictionCell))
+  (<- needs tuple (task-needs-of #({"id" "t1" "memoryMiB" 3584})))
+  (setv cell.needs needs cell.uses #((JobUse :job "task/t1" :pid 20 :bytes (// GIB 2) :processes 1)))
+  (<- start MemoryFiles (atlas-files pods (// GIB 2) GIB (* 3 GIB)))
+  (<- settings EvictionSettings (atlas-settings True))
+  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (atlas-api) slog-discard-handler]
+                          (ticked-files settings cell 2)))
+  (val free (- room GIB))
+  (val pending (* 3 GIB))
+  ;; clis に貸すのは取り置きの外の空きの半分だけ。
+  (<- written str (content-at files (+ CLIS "/memory.max")))
+  (assert (= (int written) (+ GIB (int (* (- free pending) CLIS-ROOM-SHARE)))) (// (int written) MIB))
+  (assert (= cell.pending pending) (// cell.pending MIB))
+  ;; jobs の層の上限は取り置きを覆い、置き先に名乗る受けの上限から取り置きを引いた空き(置き先が自分で引く)と clis の余白は、
+  ;; 取り置きの外の空きを分け合う(同じ空きを 2 つの受けが重ねて約束しない — 重なるのは今までと同じ床の内の残りだけ)。
+  (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
+  (assert (>= (- (int jobs-max) (// GIB 2)) pending) (// (int jobs-max) MIB))
+  (val taken (- cell.jobs-intake (// GIB 2) pending))
+  (assert (<= (+ taken (- (int written) GIB)) (+ (- free pending) (- FLOOR GIB))) #((// taken MIB) (// (int written) MIB))))
 
 
 (deftest test-an-unreadable-line-puts-the-cli-layer-back-on-its-floor-but-not-below-its-use
@@ -452,6 +546,25 @@
   (tuple (gfor #(msg fields) lines :if (= msg name) fields)))
 
 
+;; 会話の受けの無い間に clis へ貸した空きが、走っている task より先に返る形(11-09 23:00 JST の atlas の形を縮めた): ほかの Pod 10 GiB・
+;; worker の本体と常駐の job 1.5 GiB・jobs の層に長い task 3.5 GiB・使われていない CLI と daemon 1 GiB。会話は受けない(clis の上限は
+;; 空きの半分まで広がるが使われない)。180 秒からほかの Pod が 30 秒で 2 GiB 跳ね、300 秒から戻る。
+(val IDLE-LENT (Scene :others (* 10 GIB) :spike (* 2 GIB) :spike-from 180000 :spike-span 30000 :spike-until 300000
+                      :resident (int (* 1.5 GIB)) :jobs (int (* 3.5 GIB)) :idle GIB :admit-until-ms 0))
+
+
+(deftest test-an-outside-spike-takes-the-unused-cli-lending-before-the-running-task
+  (<- seen SceneSeen (scene-watched IDLE-LENT True 400000))
+  ;; 跳ねの前は clis に床を越えて貸していた。
+  (assert (> (max seen.limits) FLOOR) (/ (max seen.limits) GIB))
+  ;; 跳ねの間は使われていない貸しを返して縮み、jobs の層の上限は task の使いより下がらない — task も会話の CLI も止まらない。
+  (assert (= #(seen.task-kills seen.cli-kills) #(0 0)) seen)
+  (assert (< (min (cut seen.limits 1 None)) (max seen.limits)) seen.limits)
+  (<- squeezes tuple (lines-named seen.lines JOBS-SQUEEZE-LOG))
+  (assert (= squeezes #()) squeezes)
+  (assert (<= seen.highest ALLOCATABLE) #((/ seen.highest GIB) (/ ALLOCATABLE GIB))))
+
+
 ;; 平常の atlas(11-06 19:00〜21:30 JST の機体の使い 17.5〜20.6 GiB / 28.3 GiB の形): ほかの Pod 10 GiB・worker の本体と常駐の job 1.5 GiB・
 ;; task 1 GiB・使われていない CLI と daemon 0.5 GiB — Pod の和 13 GiB・追い出しまでの空き 約 6.8 GiB。180 秒からほかの Pod が 30 秒で
 ;; 4 GiB 跳ね(helios の 11-06 21:00 の probe の形を atlas の大きさに縮めた)、300 秒から戻る。受けるのは 240 秒まで(跳ねの後に縮むのを見る)。
@@ -467,7 +580,7 @@
   (assert (<= seen.highest ALLOCATABLE) #((/ seen.highest GIB) (/ ALLOCATABLE GIB)))
   ;; 床だけの前の形(1 本)より多くの会話を同時に受けた。
   (assert (>= seen.most 3) seen.most)
-  ;; 上限は床と天井の間で、跳ねの間に縮み(広げた分は jobs の層を縮めて残した後)、跳ねが戻った後に広がり直す。
+  ;; 上限は床と天井の間で、跳ねの間に縮み、跳ねが戻った後に広がり直す。
   (assert (all (gfor l seen.limits (<= FLOOR l CEILING))) seen.limits)
   (val peak (max seen.limits))
   (val last (get seen.limits -1))
@@ -476,7 +589,8 @@
   (assert (>= (len told) 1) told)
   (assert (> (get (get told 0) "clis_limit_mib") (// FLOOR MIB)) told)
   (assert (>= last (min seen.limits)) (/ last GIB))
-  ;; 跳ねの間に縮んだのは jobs の層(task が jobs の層の中で止まった)— 会話の CLI の広げた上限は残した。
+  ;; この跳ねは、clis の使われていない貸しを返しても線の空きに収まらない(Pod の和が allocatable を越える)ので、jobs の層が縮んだ(task が
+  ;; jobs の層の中で止まった)— 会話の CLI の使いは守った。収まる跳ねで task を止めない形は上の IDLE-LENT の検。
   (assert (= seen.task-kills 1) seen.task-kills)
   ;; 前の形(天井の宣言が無い — clis は床 1536M のまま)の同じ機体は、会話を 1 本しか受けない。
   (<- before SceneSeen (scene-watched SPIKE False 400000))

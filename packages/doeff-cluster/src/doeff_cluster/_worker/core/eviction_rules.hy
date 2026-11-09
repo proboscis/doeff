@@ -22,6 +22,8 @@
 ;;; jobs の層の memory.max(jobs-limit)= jobs の今の使い(memory.current)+ 追い出しまでの空き − 余裕 − 準備の取り置き。上限は宣言の
 ;;; 静的な値(WORKER_CGROUP_LAYOUT の jobs の memory.max)、下限は 0。kernel は jobs の層の使いをこの値で止めるので、全部の Pod の working set
 ;;; は 線 − 余裕 + 掛け直しの間のほかの伸びまでしか増えない。ほかの Pod や常駐の job が伸びて空きが縮んだ時は、jobs の層が先に縮む。
+;;; ただし測った余裕が宣言の床を越えた分と clis への貸しでは、jobs の今の使い + 置いた task の取り置きより下げない(下の会話の CLI の層の
+;;; 帳面 — 使いより下げるのは、宣言の余裕で数えた空きが負の時だけ)。
 ;;; 余裕は、掛け直しの間(見張りの回の 5 秒)に jobs と準備の層の外(ほかの Pod・常駐の job・worker の本体)が伸びる分を覆う。jobs の層の
 ;;; 中の跳ね(atlas の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
 ;;;
@@ -35,17 +37,29 @@
 ;;; 会話の CLI の層(clis — 上に載る系の仕事を余りの空きで受ける機体 helios・atlas の限る層): 宣言の静的な memory.max は床(常駐の job の予算から
 ;;; 引いた量・今までの上限)で、機体の宣言に天井(WORKER_CLI_LAYER_CEILING)が在る機体だけ、worker は回ごとに床と天井の間で掛け直す
 ;;; (clis-limit)。空きは 2 つ: 線の空き(free = 追い出しまでの空き − 余裕 − 準備の取り置き)と container の中の空き(box = container の上限 −
-;;; container の working set − 余裕 − jobs と clis の外の限る層の宣言の上限の和)。clis の今の使いの上に残す量は、
-;;;   広げる量  2 つの空きの小さい方の CLIS-ROOM-SHARE(残りは jobs の層へ)と、
-;;;   残す量    前の回の上限までの残りのうち、jobs の層を 0 まで縮めれば 2 つの空きの内に収まる量
-;;; の大きい方。広げた上限を次の回に縮めないのは、受けたばかりの会話がまだ伸びている間に上限を使いまで下げると、kernel が層の中で会話の
-;;; CLI を回収・OOM で止めるため(jobs の層は task 1 本の OOM で済むが、会話の CLI はターンを失う)。機体の外の Pod が跳ねて空きが縮むと、
-;;; 先に jobs の層が縮み(task が止まる)、jobs の層を 0 まで縮めても足りない分だけ clis の層が縮む。どの回も clis の今の使い
-;;; (memory.current)と床より下げないので、走っていた会話は今までの静的な上限より狭くならない。
-;;; jobs の層の上限は、clis に床を越えて貸した量(clis-lent)を準備の取り置きと同じく線の空きから引き(同じ空きを 2 つの層に重ねて
-;;; 貸さない)、container の中の空きから clis の上限までの残りを引いた値(jobs-box-limit)も越えない。
-;;; 会話を受ける turn-host は clis の memory.max を回ごとに読み、余白(上限 − working set)で新しいターンを受けるかを決める。生かす CLI の
-;;; 本数の上限は起動の時に天井から導く(worker が job の子へ天井を渡す — worker/entry/main の CLI-CEILING-CHILD-VAR)。
+;;; container の working set − 余裕 − jobs と clis の外の限る層の宣言の上限の和)。
+;;; 線の空きは 1 つの帳面で、次の順に約束する(先の約束ほど守る):
+;;;   1. clis の今の使いと床(走っている会話の CLI — どの回も下げない)と、jobs の今の使い(走っている task)。どちらも空きの外(使いに数え済み)。
+;;;   2. 宣言の余裕(機体の宣言の床 — 線の手前に必ず残す)。
+;;;   3. 置いた task の取り置き(pending — worker が task を受けた時の要り − 今の使いの和・placed-pending): 置き先が task を置いた時に
+;;;      約束した、まだ使っていない分。
+;;;   4. 測った余裕が宣言の床を越えた分(margin-of)。
+;;;   5. clis に床を越えて貸してまだ使われていない分(前の回の上限までの残り)。
+;;;   6. 残り(avail = 2 つの空きの小さい方 − 取り置き)を新しい受けに: CLIS-ROOM-SHARE を clis の層へ広げ(grow)、残りを jobs の層の受け
+;;;      (置き先が新しい task を置く空き)に残す。
+;;; 空きが縮むと後ろの約束から返す。clis の上限は「前の回の上限までの残り」を avail の内でだけ残し(keep)、広げる量は avail の半分なので、
+;;; clis に貸して使われていない分は、jobs の層の使いと置いた task の取り置きより先に返る。jobs の層の上限(jobs-limit)は、jobs の今の使いの
+;;; 上に「測った余裕で数えた空き − clis への貸し」と「置いた task の取り置き(宣言の余裕で数えた空きの内)」の大きい方を残すので、測った余裕
+;;; が上がっても・clis に貸しても、jobs の層の上限は jobs の使いより下がらない。下がるのは、clis の貸しを返しきっても宣言の余裕で数えた
+;;; 線の空きが負の時だけ(kubelet が Pod を追い出す前に、kernel が jobs の層の中で止める)。測った余裕の上がりは新しい受けを減らす側で
+;;; 吸う: 置き先に名乗る jobs の層の空き(jobs-intake — 受けの上限 − jobs の使い)は測った余裕で数え、取り置きを入れない(置き先は置いた
+;;; task の予約を自分で引く)。会話を受ける turn-host は clis の memory.max を回ごとに読み、余白(上限 − working set)で新しいターンを受ける
+;;; かを決めるので、2 つの受けは同じ帳面の別の行(5・6 の clis の分と、6 の jobs の分)から出て、同じ空きを重ねて約束しない。
+;;; jobs の層の上限は container の中の空きから clis の上限までの残りを引いた値(jobs-box-limit)も同じ形で越えない。生かす CLI の本数の上限は
+;;; 起動の時に天井から導く(worker が job の子へ天井を渡す — worker/entry/main の CLI-CEILING-CHILD-VAR)。
+;;; 以前は広げた clis の上限を「jobs の層を 0 まで縮めれば収まる間」は残したので、余裕が測りで上がった atlas の 11-09 23:00〜23:21 は、
+;;; clis の上限 6 GiB・使い約 1 GiB の使われていない貸しを残すために jobs の層の上限を 0 まで下げ、走っていた task を 50 本を越えて kernel が
+;;; OOM で止めた。
 ;;;
 ;;; 余裕(margin-of)は機体ごと: 機体の宣言の値(WORKER_EVICTION_MARGIN — 機体の 7 日の測りから決めた値・無ければ EVICTION-MARGIN-BYTES)を
 ;;; 床にし、worker 自身が測った「jobs と準備の層の外の working set の回あたりの増え」の高い分位(MARGIN-QUANTILE)の MARGIN-TICKS 回分が
@@ -59,7 +73,7 @@
 (import math [ceil])
 (import posixpath)
 (import re)
-(import doeff_cluster._worker.core.memory_rules [MIB NodeMemory])
+(import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX NodeMemory])
 
 ;; 余裕の宣言の無い機体の余裕(margin-of の床): atlas の 7 日(Prometheus・30 秒ごと・11-01)で、worker の外の Pod の working set の和の
 ;; 30 秒の増えは p99 0.78 GiB・p999 1.73 GiB・最大 2.5 GiB(clickhouse と garage)。最大の増えを 30 秒に均すと 5 秒の回あたり 0.42 GiB —
@@ -74,6 +88,9 @@
 ;; 会話の CLI の層に貸す、線の空き(空き − 余裕 − 準備の取り置き)の割合(頭の註の会話の CLI の層): 残りは jobs の層の上限に残す。半分ずつに
 ;; するのは、片方の層だけが伸びる時も回ごとに残りの半分を取れる(5 秒の回 5 つで 97 %)ので、使っていない層に空きを取り置かずに済むため。
 (val CLIS-ROOM-SHARE 0.5)
+;; 要りを名乗らずに置かれた task に見込む要り(置いた task の取り置き — 頭の註の会話の CLI の層): 置き先が同じ task に見込む値
+;; (coordinator/core/measured_room の UNDECLARED-TASK-MIB)と同じ。
+(val UNDECLARED-NEED-BYTES (* 1024 MIB))
 ;; kubelet が Pod の全部を置く cgroup(Node の allocatable を掛ける cgroup)の名 — systemd の cgroup の driver と cgroupfs の driver。
 (val PODS-CGROUP-NAMES #("kubepods.slice" "kubepods"))
 ;; kernel の memory の値の綴り(memparse — 数 + 1 字の単位)と、k8s の量の綴り(数 + 単位)。
@@ -114,6 +131,14 @@
   (#^ int size-bytes)
   (#^ int used-bytes)
   (#^ int room-bytes))
+
+
+(defrecord TaskNeed
+  "置き先が worker に置いた task 1 本の memory の要り(置いた task の取り置き — 頭の註の会話の CLI の層): id = task の id・bytes = 置いた時に
+   名乗った要り(byte — 名乗らない task は UNDECLARED-NEED-BYTES)。"
+  {:check [(>= bytes 0)]}
+  (#^ str id)
+  (#^ int bytes))
 
 
 (defk kernel-bytes-of [text]
@@ -222,28 +247,43 @@
   (if (is line None) "machine" line.kind.value))
 
 
-(defk jobs-limit [jobs-current line margin cap reserve]
-  {:pre [(: jobs-current int) (>= jobs-current 0) (: line EvictionLine) (: margin int) (>= margin 0) (: cap (| int None)) (: reserve int)
-         (>= reserve 0)]
+(defk kept-room [soft hard pending]
+  {:pre [(: soft int) (: hard int) (>= hard soft) (: pending int) (>= pending 0)] :post [(: % int) (>= % soft)]
+   :tags {:context "worker" :role "judgment"}}
+  "jobs の層の今の使いの上に残す空きを求めるため(頭の註の会話の CLI の層の帳面): soft = 測った余裕で数えた空き(新しい受けの空き)・
+   hard = 宣言の余裕で数えた空き(線の手前に必ず残す分だけを引いた空き — soft 以上)・pending = 置いた task の取り置き。soft と、
+   取り置きを hard の内で守った量の大きい方 — 測った余裕が上がっても取り置きは残り、hard が負の時だけ使いより下になる。"
+  (max soft (min pending hard)))
+
+
+(defk jobs-limit [jobs-current line margin floor-margin cap reserve pending]
+  {:pre [(: jobs-current int) (>= jobs-current 0) (: line EvictionLine) (: margin int) (>= margin 0) (: floor-margin int)
+         (<= 0 floor-margin margin) (: cap (| int None)) (: reserve int) (>= reserve 0) (: pending int) (>= pending 0)]
    :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
-  "jobs の層に掛ける memory.max を求めるため(頭の註): jobs の今の使い + 追い出しまでの空き − 余裕 − 準備の取り置き reserve を、0 と
-   宣言の静的な上限 cap(None = 上限なし)の間に収める。空きが余裕と取り置きの和より小さければ jobs の今の使いより下になる — kernel が
-   jobs の層の中で回収し、足りなければ jobs の中の process を止める(準備の層は縮めない)。"
-  (val wanted (max 0 (- (+ jobs-current line.room-bytes) margin reserve)))
+  "jobs の層に掛ける memory.max を求めるため(頭の註): jobs の今の使い + kept-room(追い出しまでの空き − 余裕 margin − reserve・
+   追い出しまでの空き − 宣言の余裕 floor-margin − reserve・置いた task の取り置き pending)を、0 と宣言の静的な上限 cap(None = 上限なし)の
+   間に収める。reserve = 準備の取り置きと clis の層に床を越えて貸した量の和。jobs の今の使いより下になるのは、宣言の余裕と reserve の
+   和が空きを越えた時だけ — kernel が jobs の層の中で回収し、足りなければ jobs の中の process を止める(準備の層は縮めない)。
+   margin = floor-margin・pending = 0 で呼ぶと、新しい受けに名乗る上限(jobs-intake — 測った余裕で数え、取り置きを入れない)。"
+  (val soft (- line.room-bytes margin reserve))
+  (<- room int (kept-room soft (- line.room-bytes floor-margin reserve) pending))
+  (val wanted (max 0 (+ jobs-current room)))
   (if (is cap None) wanted (min cap wanted)))
 
 
-(defk clis-limit [clis-current free box floor ceiling before jobs-current]
+(defk clis-limit [clis-current free box floor ceiling before pending]
   {:pre [(: clis-current int) (>= clis-current 0) (: free int) (: box (| int None)) (: floor int) (>= floor 0) (: ceiling int)
-         (>= ceiling floor) (: before (| int None)) (: jobs-current int) (>= jobs-current 0)]
+         (>= ceiling floor) (: before (| int None)) (: pending int) (>= pending 0)]
    :post [(: % int) (>= % clis-current) (>= % floor)] :tags {:context "worker" :role "judgment"}}
   "会話の CLI の層に掛ける memory.max を求めるため(頭の註の会話の CLI の層): free = 線の空き − 余裕 − 準備の取り置き・box = container の
-   中の空き(None = container に上限が無い)・before = 前の回に書いた上限(None = まだ)。clis の今の使いの上に残す量は、広げる量(free と
-   box の小さい方の CLIS-ROOM-SHARE・負は 0)と、前の回の上限までの残りのうち jobs の層を 0 まで縮めれば線と container の内に残る量の
-   大きい方。それを床と天井の間に収め、clis の今の使いより下げない(天井を越えて使っている読みは使いのまま)。"
+   中の空き(None = container に上限が無い)・before = 前の回に書いた上限(None = まだ)・pending = 置いた task の取り置き。貸せる空き
+   avail = free と box の小さい方 − pending(負は 0)。clis の今の使いの上に残す量は、広げる量(avail の CLIS-ROOM-SHARE)と、前の回の
+   上限までの残りのうち avail の内に収まる量の大きい方 — clis に貸して使われていない分は、jobs の層の使いと置いた task の取り置きより
+   先に返る。それを床と天井の間に収め、clis の今の使いより下げない(天井を越えて使っている読みは使いのまま)。"
   (val pool (if (is box None) free (min free box)))
-  (val grow (max 0 (int (* pool CLIS-ROOM-SHARE))))
-  (val keep (if (is before None) 0 (max 0 (min (- before clis-current) (+ pool jobs-current)))))
+  (val avail (max 0 (- pool pending)))
+  (val grow (int (* avail CLIS-ROOM-SHARE)))
+  (val keep (if (is before None) 0 (max 0 (min (- before clis-current) avail))))
   (max clis-current (min ceiling (max floor (+ clis-current (max grow keep))))))
 
 
@@ -265,12 +305,38 @@
   (- container-max container-working-set margin held))
 
 
-(defk jobs-box-limit [jobs-current box clis-limit clis-current]
-  {:pre [(: jobs-current int) (>= jobs-current 0) (: box int) (: clis-limit int) (: clis-current int) (>= clis-current 0)]
+(defk jobs-box-limit [jobs-current box slack clis-limit clis-current pending]
+  {:pre [(: jobs-current int) (>= jobs-current 0) (: box int) (: slack int) (>= slack 0) (: clis-limit int) (: clis-current int)
+         (>= clis-current 0) (: pending int) (>= pending 0)]
    :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
-  "container の中の空きから決まる jobs の層の上限を求めるため(頭の註の会話の CLI の層): jobs の今の使い + container の中の空き − clis の
-   層の上限までの残り(0 未満は 0)。jobs の層と clis の層が残りまで伸びても container の上限の手前に余裕が残る。"
-  (max 0 (- (+ jobs-current box) (max 0 (- clis-limit clis-current)))))
+  "container の中の空きから決まる jobs の層の上限を求めるため(頭の註の会話の CLI の層): jobs の今の使い + kept-room(container の中の
+   空き box − clis の層の上限までの残り(0 未満は 0)・それに測った余裕と宣言の余裕の差 slack を足した空き・置いた task の取り置き
+   pending)。jobs の層と clis の層が残りまで伸びても container の上限の手前に余裕が残る。slack = 0・pending = 0 で呼ぶと新しい受けに
+   名乗る上限。"
+  (val soft (- box (max 0 (- clis-limit clis-current))))
+  (<- room int (kept-room soft (+ soft slack) pending))
+  (max 0 (+ jobs-current room)))
+
+
+(defk placed-pending [needs uses]
+  {:pre [(: needs tuple) (: uses tuple)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
+  "置いた task の取り置き(頭の註の会話の CLI の層の帳面の 3)を求めるため: needs = 置き先が置いた task の要り(TaskNeed の tuple)・
+   uses = 見張りの最後の読みの job ごとの memory(JobUse の tuple — task の job の名は TASK-PREFIX + id)。task ごとの max(0, 要り −
+   今の使い)の和(置き先が予約する量と同じ数え — coordinator/core/measured_room の reserved-mib-of)。"
+  (sum (gfor need needs
+             (max 0 (- need.bytes (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes)))))))
+
+
+(defk task-needs-of [rows]
+  {:pre [(: rows tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "heartbeat の返事の task の行(置き先が worker に置いた task — JSON の dict の tuple)から、置いた task の要り(TaskNeed の tuple)を
+   読むため: 欄 memoryMiB(0 以上の整数 — 真偽は数えない)が在ればその byte、無い・形の違う行は UNDECLARED-NEED-BYTES。id の無い行は
+   読まない。"
+  (tuple (gfor row rows
+               :if (and (isinstance row dict) (isinstance (.get row "id") str))
+               :setv mib (.get row "memoryMiB")
+               (TaskNeed :id (get row "id")
+                         :bytes (if (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0)) (* mib MIB) UNDECLARED-NEED-BYTES)))))
 
 
 (defk prepare-reserve [cap current populated]

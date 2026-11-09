@@ -69,7 +69,7 @@
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
                                               task-uses-of jobs-room-of])
-(import doeff_cluster._worker.core.eviction_rules [EvictionLine])
+(import doeff_cluster._worker.core.eviction_rules [EvictionLine task-needs-of])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
 ;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・
@@ -298,6 +298,10 @@
       (when (and (in (get parts 1) #(".blob" ".result")) (not-in (get parts 0) ids))
         (<- (RemoveTree (os.path.join state.task-dir entry.name))))))
   (setv state.task-echo (dfor task tasks :if (.get task "detached") (get task "id") (dict task)))
+  ;; 置いた task の要りを見張りの入れ物へ渡す(jobs の層の取り置き — clis の層へ新しく貸さない・worker/core/eviction_rules の placed-pending)。
+  (when (is-not state.eviction None)
+    (<- needs tuple (task-needs-of (tuple tasks)))
+    (setv state.eviction.needs needs))
   specs)
 
 
@@ -916,7 +920,7 @@
       ;; task の層の今の空きを添える(coordinator は要りがこの空きに収まる task だけを置く — load_rules.jobs-room-of)。
       (var jobs-room None)
       (when (is-not state.eviction None)
-        (<- told (| int None) (jobs-room-of line state.eviction.jobs-limit state.eviction.jobs-current))
+        (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake state.eviction.jobs-current))
         (:= jobs-room told))
       (setv state.load-reason reason
             state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room))
