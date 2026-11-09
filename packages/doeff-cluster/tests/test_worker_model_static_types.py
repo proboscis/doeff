@@ -168,6 +168,13 @@ def _declared(module: types.ModuleType) -> set[str]:
         node.target.id
         for node in stub.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    } | {
+        # an explicit re-export (`from m import X as X`) is a name the stub declares (PEP 484)
+        alias.name
+        for node in stub.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.asname == alias.name
     }
 
 

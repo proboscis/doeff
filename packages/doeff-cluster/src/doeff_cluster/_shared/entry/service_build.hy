@@ -17,8 +17,7 @@
 (import doeff_cluster._shared.core.remote_rules [program-sha])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvVar])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster._shared.intent.job_model [IdleBudget])
-(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape Job System Declaration DeclarationRow])
+(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape IdleBudget Job System Declaration DeclarationRow])
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-spec])
 

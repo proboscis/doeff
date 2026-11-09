@@ -8,7 +8,8 @@ service_model.hy の判断と構成子を、層に合わせて core/service_rule
 
 - defrecord の型は dataclass の欄の名と順が宣言の欄と同じ。
 - deff / defk の関数は引数の名と順が同じ。
-- doeff-cluster の Hy の file(src と検)が 3 つの module から import する名は、どれも宣言に在る。
+- doeff-cluster の Hy の file(src と検)が 3 つの module から import する名は、どれも宣言に在る(明示の再公開
+  `from m import X as X` も宣言に数える)。
 """
 
 import ast
@@ -88,6 +89,18 @@ def _stub_declared_names(tree: ast.Module) -> tuple[str, ...]:
     return tuple(n for n in names if n is not None and not n.startswith("_"))
 
 
+def _stub_reexported_names(tree: ast.Module) -> tuple[str, ...]:
+    """宣言の module の直下で明示に再公開した名(`from m import X as X` — PEP 484 で stub が公開する名。service_model は
+    defsystem の展開が引く型を job_model などから引き渡す)。"""
+    return tuple(
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.asname == alias.name and not alias.name.startswith("_")
+    )
+
+
 def _stub_fields(node: ast.ClassDef) -> tuple[str, ...]:
     return tuple(
         stmt.target.id
@@ -148,4 +161,6 @@ def test_the_stubs_declare_every_name_the_package_imports() -> None:
                 words = re.sub(r":as \S+", "", match.group(1)).split()
                 used |= {hy.mangle(word) for word in words}
         assert used, module.__name__
-        assert sorted(used - set(_stub_declared_names(_stub_tree(module)))) == [], module.__name__
+        tree = _stub_tree(module)
+        declared = {*_stub_declared_names(tree), *_stub_reexported_names(tree)}
+        assert sorted(used - declared) == [], module.__name__
