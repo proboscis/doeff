@@ -33,6 +33,8 @@
 (import doeff_cluster._coordinator.protocol.kube [kube-api kube-unavailable] doeff_cluster._foundation.kube_client [kube-available kube-client] doeff_cluster._coordinator.intent.kube_model [KubeUnavailable])
 ;; HTTP の受付と停止の合図(coordinator_inbox — 以前の coordinator.hy の再輸出は #2022 で消した)。
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
+;; 置き場の書き手を 1 つに保つ錠(入れ替えで新旧の Pod が重なる間 — 下の main の註)。
+(import doeff_cluster._foundation.sole_writer [SoleWriter])
 (import doeff_cluster._coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
 (import doeff_events [MemoryBroker])
 ;; 自分の行の送り(worker の process 自身の行と同じ部品)。
@@ -41,6 +43,9 @@
 ;; では、POST の答えを待つ間に止まると後ろの行が消えた。1 回の POST の待ちの上限(ShipLimits.post_seconds 5 秒)2 回分 = 飛んでいる
 ;; POST と残りの POST。Pod の止めの猶予(宣言に書かない既定 30 秒)の内に収まり、送り先が答えない時だけ入れ替えの止まりを最大この秒延ばす。
 (val LOG-END-SECONDS 10.0)
+;; 置き場の錠を取り直す間隔(秒): 前の process が錠を離してから読み直しに入るまでの遅れの上限。入れ替えの間に届いた要求はこの分も
+;; 列で待つので、worker の返事の上限(ClusterTiming.client-reply-ms 15 秒)より十分短く置く。
+(val WRITER-POLL-SECONDS 0.1)
 
 
 
@@ -193,15 +198,27 @@
                     (redis-notices args.notice-broker args.notice-timeout-seconds args.notice-retry-seconds)))
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))
-  ;; 受付の箱は合図の受け手より先に作る(合図が箱を起こす — 要求の無い間に眠る待ちを合図の刻に抜ける・#3865)。待ち受けは読み直しの後。
+  ;; 受付の箱は合図の受け手より先に作る(合図が箱を起こす — 要求の無い間に眠る待ちを合図の刻に抜ける・#3865)。待ち受けは置き場の錠の前(下の註)。
   (setv inbox (RequestInbox args.port (/ (. (ClusterTiming) inbox-reply-ms) 1000.0) :formats ACCEPTED-FORMATS))
   (run (stop-on-signals stop :wake inbox.wake))
+  ;; 受け口は置き場の錠より先に開く: 版上げで新しい Pod は前の Pod と重なって起き、受け口を開くと
+  ;; readinessProbe(tcpSocket)で Ready になって Service に載り、Deployment(RollingUpdate)はそれを見て前の Pod を止める。前の
+  ;; process が調停ループを抜けて錠を離すまで、ここに届いた要求は受付の列で待つ(接続は断らない — 以前は前の Pod を止めてから
+  ;; 新しい Pod が Ready になるまで、受ける先が 1 つも無かった)。置き場の読み書きと k8s の見張りは錠を取った後だけ。
+  (.start inbox)
+  (setv writer (SoleWriter (str (/ (. (Path args.state-file) parent) "writer.lock"))))
+  (when (not (.try-take writer))
+    (print "coordinator: 置き場の錠を前の process が持っている — 離すまで待ちます(要求は受付の列で待たせる)" :file sys.stderr :flush True)
+    (setv waited (.wait writer (fn [] stop.requested) WRITER-POLL-SECONDS))
+    (when (is waited None)
+      (print "coordinator: 置き場の錠を待つ間に止めの合図を受けた — 置き場を読まずに止まります" :file sys.stderr :flush True)
+      (return None))
+    (print (.format "coordinator: 置き場の錠を取った({:.1f} 秒待った)" waited) :file sys.stderr :flush True))
   (setv store (WalStore (str (/ (. (Path args.state-file) parent) "wal"))))
   ;; 読み直しの以前の形の file の読みは os の file system・1 行の報告は stderr の slog・起動の時刻は壁時計・自分の環境変数(走っている
   ;; doeff の版)は本物の process の handler が答える。
   (setv state (run (scheduled (with_handlers [slog-handler os-file-handler subprocess-handler (sync-time-handler)]
                                 (state-on-start args.state-file store)))))
-  (.start inbox)
   ;; k8s の API は Pod の ServiceAccount の token が在る時だけ(手元の coordinator では Rollout の Deployment の観測が Unknown のまま)。
   ;; Rollout の相手の Deployment と、worker の置かれた Node は時間で読みに行かず、list の後の watch で見張る(見張りの受け渡しの箱は
   ;; kube-api の session に種類ごとに 1 つ。変化を受け渡したら受付の箱を起こす・#3868・#4070)。見張りは調停ループの外の thread で走り、
@@ -216,7 +233,9 @@
   ;; handler の組は coordinator_handler_sets の値(本番の組)。調停ループは主の thread の CPU の標本(cpu_samples)の下で回す。
   (run (scheduled (with_handlers (production-handlers inbox store stop kube notices)
                     (with-cpu-samples COORDINATOR-SAMPLES (run-coordinator state (ClusterTiming) naming)))))
-  (print "coordinator: 止まりました" :file sys.stderr :flush True))
+  ;; 調停ループは止まる刻の印を書き終えた — 次の process が待つ錠を、残りの行の送り(LOG-END-SECONDS)を待たずに離す。
+  (.release writer)
+  (print "coordinator: 止まりました(置き場の錠を離した)" :file sys.stderr :flush True))
 
 
 (when (= __name__ "__main__")
