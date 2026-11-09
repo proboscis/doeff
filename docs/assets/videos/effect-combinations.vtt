@@ -1,101 +1,117 @@
 WEBVTT
 
 a1
-00:00:00.250 --> 00:00:08.000
+00:00:00.250 --> 00:00:07.700
 Effect combinations. In doeff, effects nest: a sub-program inside one effect performs other effects.
 
 a2
-00:00:08.950 --> 00:00:14.950
+00:00:08.950 --> 00:00:15.200
 This matrix has the outer effect on each row, and the effect performed inside it on each column.
 
 a3
-00:00:15.500 --> 00:00:21.300
+00:00:15.750 --> 00:00:22.650
 Each cell is a rule. Under Local, Ask is scoped, while Put passes straight through.
 
 b1
-00:00:22.000 --> 00:00:27.000
+00:00:23.200 --> 00:00:27.800
 The same two effects, nested the other way around, give a different answer.
 
 b2
-00:00:27.550 --> 00:00:34.150
+00:00:28.700 --> 00:00:35.050
 Try outside Listen: the error escapes Listen, and the two logs it collected are lost.
 
 b3
-00:00:34.700 --> 00:00:43.100
+00:00:35.600 --> 00:00:43.950
 Listen outside Try: Try turns the error into Err first, so Listen returns that Err with both logs.
 
 b4
-00:00:43.650 --> 00:00:47.050
+00:00:44.500 --> 00:00:48.000
 So the outer effect decides what the caller gets.
 
 c1
-00:00:48.850 --> 00:00:52.650
+00:00:49.700 --> 00:00:54.350
 Scopes restore the environment. They never roll back the store.
 
 c2
-00:00:54.050 --> 00:01:01.300
-Inside Local, key reads inner. After it, key is outer again, but the Put to counter stays.
+00:00:54.900 --> 00:01:00.250
+Here, changes asks for key, puts one into counter, and returns the key it read.
 
 c3
-00:01:01.850 --> 00:01:09.450
-The same holds when the sub-program fails inside Try. The environment comes back, and counter is still one.
+00:01:00.800 --> 00:01:07.800
+Run it inside Local, where key is inner. Ask reads inner, and Put sets counter to one.
 
 c4
-00:01:10.250 --> 00:01:16.300
+00:01:08.400 --> 00:01:12.200
+After Local, key is outer again, but counter stays one.
+
+c5
+00:01:12.800 --> 00:01:18.500
+changes_then_fails asks and puts in the same way, and then raises an error.
+
+c6
+00:01:19.100 --> 00:01:28.000
+Run it inside Local, under Try. Ask reads inner, Put sets counter to one, and the error leaves Local.
+
+c7
+00:01:28.600 --> 00:01:34.300
+Try gives Err. The environment comes back, and counter is still one.
+
+c8
+00:01:34.900 --> 00:01:41.450
 Ask reads the scope you are in. Get and Put read one store that every scope shares.
 
 d1
-00:01:17.950 --> 00:01:23.300
+00:01:42.000 --> 00:01:47.500
 WithObserve sees every effect in its body, including the effects of the children it spawns.
 
 d2
-00:01:24.950 --> 00:01:31.200
+00:01:49.000 --> 00:01:55.800
 The observer only watches. What it returns goes nowhere, and the handlers still answer every effect.
 
 d3
-00:01:32.950 --> 00:01:40.400
+00:01:57.000 --> 00:02:03.600
 It saw Spawn, Ask, Spawn, Ask, and Gather, and both children got the value.
 
 e1
-00:01:40.950 --> 00:01:46.450
+00:02:05.000 --> 00:02:10.800
 Children under Gather share one store, and the scheduler runs one task at a time.
 
 e2
-00:01:47.450 --> 00:01:54.450
+00:02:11.500 --> 00:02:18.300
 A child that does not suspend runs to its end before the next one starts, so each one sees the last write.
 
 e3
-00:01:55.450 --> 00:02:00.100
+00:02:19.500 --> 00:02:24.400
 Gather gives zero, one, two, and counter is three.
 
 e4
-00:02:00.650 --> 00:02:05.000
+00:02:24.950 --> 00:02:29.700
 Now each child suspends on Delay, between its read and its write.
 
 e5
-00:02:06.150 --> 00:02:11.450
+00:02:30.450 --> 00:02:37.600
 While one waits, the others run and read the same zero. Two of the three updates are lost.
 
 e6
-00:02:13.650 --> 00:02:18.500
+00:02:38.150 --> 00:02:43.450
 The Rust scheduler and the Python scheduler give the same results.
 
 f1
-00:02:19.650 --> 00:02:24.700
+00:02:44.150 --> 00:02:49.900
 When a child fails, Gather raises that error in the parent, and Try gives Err.
 
 f2
-00:02:27.150 --> 00:02:34.050
+00:02:51.650 --> 00:02:58.600
 Gather does not cancel the other children. The third one still ran after the failure, and its write stays.
 
 f3
-00:02:34.600 --> 00:02:39.650
+00:02:59.150 --> 00:03:03.900
 side effects is two. If a task must stop, cancel it yourself.
 
 o1.1
-00:02:41.100 --> 00:02:47.083
+00:03:05.650 --> 00:03:11.233
 Effect combinations in doeff: the outer effect decides, scopes restore the environment,
 
 o1.2
-00:02:47.083 --> 00:02:51.350
+00:03:11.233 --> 00:03:15.200
 the store is shared, and tasks switch only where they suspend.
