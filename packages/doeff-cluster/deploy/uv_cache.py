@@ -11,7 +11,8 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            seed(DOEFF_UV_CACHE_SEED_SECRET = --secret・空きが DOEFF_UV_CACHE_SEED_MIN_FREE_GIB(既定 50)を下回れば入れない)、
            続けて DOEFF_UV_CACHE_GC_DAYS が在れば gc(--idle-days = その値・--venvs = DOEFF_UV_CACHE_GC_VENVS を `:` で分けた dir・
            --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000)・
-           --size-budget-gib = DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB(無ければ予算なし)・--floor-days = DOEFF_UV_CACHE_GC_FLOOR_DAYS(既定 1))、
+           --size-budget-gib = DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB(無ければ予算なし)・--floor-days = DOEFF_UV_CACHE_GC_FLOOR_DAYS(既定 1)・
+           --linked-limit-gib = DOEFF_UV_CACHE_GC_LINKED_LIMIT_GIB(無ければ venv の持ち分を数えるだけ))、
            続けて DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS が在り、環境変数 NODE_NAME が DOEFF_UV_CACHE_SEED_REFRESH_NODE と同じ node でだけ
            refresh(--url = DOEFF_UV_CACHE_SEED_URL・--project = その値を `:` で分けた dir・--every-seconds =
            DOEFF_UV_CACHE_SEED_REFRESH_EVERY_SECONDS(既定 72000)— 置き場の写しを置き直す node を 1 つに限り、同じ時に起きる worker が
@@ -67,6 +68,12 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            順に、--floor-days 日(既定 1)より前で、cache の外の venv が hardlink で指さず(展開済みの wheel)、上の決まり(残る venv の
            symlink・走っている process)に当たらない項目を、和が予算に収まるまで消す。venv が hardlink で持つ byte は venv の持ち分で、
            消しても disk が戻らないので数えない。
+           venv の持ち分の置き場(--linked-limit-gib — card [id]): 残る venv(--venvs の物)と --links の dir の下の venv が
+           symlink か .pth で指す cache の項目(展開済みの wheel と git の checkout)は、指す venv が残る間は消せない。その byte を持ち主
+           (指す venv — 寿命は venv の期限と、作業木と volume の寿命)の置き場として数え、答えの links に出す。--linked-limit-gib を
+           渡すと、その byte を予算の和から外して、この置き場の上限で縛る。和が上限を越えていれば、最後に使った刻の古い --venvs の venv
+           (--floor-days 日より前に使い、どの process も使っていない物)から、和が上限に収まるまで消す(--links の venv は消さない —
+           越えたままなら答えの within が false)。渡さなければ、その byte は予算の和に入ったまま(cache の予算が覆う)。
            消す物は先に同じ dir の中の別の名へ rename し(uv からは即座に見えなくなる)、その後で中身を消す。前と後の数(項目の数・file の
            数・disk の byte・file system の空き)を答えに載せる。--every-seconds を渡すと、前の gc の印(.doeff-uv-gc.json)がその秒より
            新しい時は何もしない。同じ cache の gc と seed は錠(.doeff-uv-gc.lock・.doeff-uv-seed.lock)で 1 つに限る。
@@ -819,6 +826,8 @@ class Ledger:
         self.nlink: dict[int, int] = {}
         self.seen: dict[int, int] = {}
         self.pinned: set[int] = set()
+        # venv の持ち分の置き場へ移した byte(close の linked — 予算の和に数えない)。
+        self.linked = 0
 
     def add(self, path: Path, dirs: list[os.stat_result], files: list[os.stat_result]) -> None:
         own = sum(st.st_blocks * 512 for st in dirs)
@@ -835,12 +844,15 @@ class Ledger:
         if inodes:
             self.inodes[path] = inodes
 
-    def close(self, kept: Iterable[Path]) -> None:
+    def close(self, kept: Iterable[Path], linked: Iterable[Path] = ()) -> None:
         """数え終えた後に 1 度: kept(残る項目)の外の持ち分を落とし、cache の外も指す inode を決める。kept の外の項目(期限の消しで
-        消した物)は hardlink の数 1 の file だけを持つので、inode の数えは変わらない。"""
+        消した物)は hardlink の数 1 の file だけを持つので、inode の数えは変わらない。linked(残る venv が symlink で指す項目 — venv の
+        持ち分の置き場)の持ち分は予算の和から外して self.linked に移す。それらと中身を分け合う項目の inode は、cache の外(venv の
+        持ち分)も指す物として予算に数えない。"""
         keep = set(kept)
         for path in [p for p in self.own if p not in keep]:
             self.release(path)
+        self.linked = sum(self.release(path) for path in set(linked) if path in self.own)
         self.pinned = {ino for ino, seen in self.seen.items() if self.nlink[ino] > seen}
         self.nlink.clear()
 
@@ -1289,12 +1301,58 @@ def trim(
     return {
         "bytes": size_budget,
         "fixed": fixed,
+        "linked": ledger.linked,
         "usage-before": start,
         "usage-after": usage,
         "freed": start - usage,
         "removed": removed,
         "within": usage <= size_budget,
     }
+
+
+def linked_entries(owners: Iterable[Unit], entry_bytes: dict[str, int]) -> frozenset[str]:
+    """owners(venv)が symlink か .pth で指す cache の項目のうち、entry_bytes に在る物(展開済みの wheel と git の checkout)。"""
+    return frozenset(entry for unit in owners for entry in unit.links if entry in entry_bytes)
+
+
+def trim_links(
+    owners: list[Unit],
+    entry_bytes: dict[str, int],
+    limit: int | None,
+    floor_cutoff: float,
+    used: list[str] | None,
+) -> tuple[list[Unit], frozenset[str], dict[str, object]]:
+    """venv の持ち分の置き場(頭の註 — owners = 残る venv と --links の venv が指す項目)の byte を数え、limit を越えていれば、最後に
+    使った刻の古い --venvs の venv(floor_cutoff より前に使い、どの process も使っていない物)から、和が limit に収まるまで消す
+    (limit が None なら数えるだけ)。返す物 = 消した venv・残る venv が指す項目・答え。"""
+    alive = list(owners)
+    entries = linked_entries(alive, entry_bytes)
+    start = sum(entry_bytes[entry] for entry in entries)
+    usage = start
+    gone: list[Unit] = []
+    for unit in sorted((u for u in owners if u.kind == "venv"), key=lambda u: u.last_used):
+        if limit is None or usage <= limit:
+            break
+        if not linked_entries([unit], entry_bytes) or not is_doomed(unit, floor_cutoff, used):
+            continue
+        if remove(unit):
+            gone.append(unit)
+            alive.remove(unit)
+            entries = linked_entries(alive, entry_bytes)
+            usage = sum(entry_bytes[entry] for entry in entries)
+    return (
+        gone,
+        entries,
+        {
+            "bytes": limit,
+            "usage-before": start,
+            "usage-after": usage,
+            "entries": len(entries),
+            "venvs": sum(1 for unit in alive if linked_entries([unit], entry_bytes)),
+            "removed-venvs": len(gone),
+            "within": None if limit is None else usage <= limit,
+        },
+    )
 
 
 def disk_free(path: Path) -> int:
@@ -1313,10 +1371,12 @@ def gc(
     link_roots: list[Path] | None = None,
     size_budget: int | None = None,
     floor_days: float = 1.0,
+    linked_limit: int | None = None,
 ) -> dict[str, object]:
     """古い cache の項目と使われない venv を、数えてから消すため(頭の註の gc)。link_roots = 消さずに、中の venv の symlink が指す
     展開済みの wheel の項目だけを守る置き場(UV_LINK_MODE=symlink の venv を持つ dir — --venvs の外の置き場)。size_budget = cache だけが
-    持つ byte の上限(None なら期限だけで消す)・floor_days = 予算で消す項目の、最後に使ってからの最短の日数。"""
+    持つ byte の上限(None なら期限だけで消す)・floor_days = 予算で消す項目の、最後に使ってからの最短の日数・linked_limit = venv の
+    持ち分の置き場(残る venv が symlink か .pth で指す項目)の上限(None なら数えるだけで、その byte は size_budget の和に入る)。"""
     verb = "count" if dry_run else "gc"
     mark = cache / GC_MARK
     if (
@@ -1366,6 +1426,18 @@ def gc(
         # 消せなかった)venv と環境と、symlink だけを読む置き場の venv が symlink か .pth で指す項目(展開済みの wheel と git の
         # checkout)は消さない。
         first = {unit.path for units in gone.values() for unit in units}
+        # 残る venv と --links の venv が指す項目は venv の持ち分の置き場(頭の註)— 上限を越えていれば古い venv から消す。
+        dropped, linked, links = trim_links(
+            [unit for unit in [*before.venvs, *before.holders] if unit.path not in first],
+            {str(unit.path): unit.tally.bytes for unit in [*before.archives, *before.checkouts]},
+            linked_limit,
+            time.time() - floor_days * 86400,
+            used,
+        )
+        gone["venvs"] = [*gone["venvs"], *dropped]
+        first |= {unit.path for unit in dropped}
+        result["links"] = links
+        say(f"gc: venv の持ち分 — {json.dumps(links, ensure_ascii=False, sort_keys=True)}")
         kept = frozenset(
             entry
             for unit in [*before.venvs, *before.environments, *before.holders]
@@ -1402,7 +1474,10 @@ def gc(
                     if unit.path not in removed_paths
                 ),
             ]
-            ledger.close(unit.path for unit in survivors)
+            ledger.close(
+                (unit.path for unit in survivors),
+                (Path(entry) for entry in linked) if linked_limit is not None else (),
+            )
             trimmed = trim(
                 survivors,
                 ledger,
@@ -1457,6 +1532,8 @@ class UpkeepSettings:
     # gc の予算(cache だけが持つ byte の上限 — None なら期限だけ)と、予算で消す項目の最短の日数。
     gc_size_budget: int | None = None
     gc_floor_days: float = 1.0
+    # venv の持ち分の置き場(残る venv が symlink で指す項目)の上限(None なら数えるだけ)。
+    gc_linked_limit: int | None = None
 
     @property
     def refreshes(self) -> bool:
@@ -1480,6 +1557,7 @@ class UpkeepSettings:
         links = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_LINK_ROOTS", "").split(":") if p)
         projects = env.get("DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS", "")
         size_budget = env.get("DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB", "").strip()
+        linked_limit = env.get("DOEFF_UV_CACHE_GC_LINKED_LIMIT_GIB", "").strip()
         return cls(
             node=env.get("NODE_NAME", "").strip(),
             refresh_node=env.get("DOEFF_UV_CACHE_SEED_REFRESH_NODE", "").strip(),
@@ -1497,6 +1575,7 @@ class UpkeepSettings:
             gc_link_roots=links,
             gc_size_budget=int(float(size_budget) * (1 << 30)) if size_budget else None,
             gc_floor_days=float(env.get("DOEFF_UV_CACHE_GC_FLOOR_DAYS", "1")),
+            gc_linked_limit=int(float(linked_limit) * (1 << 30)) if linked_limit else None,
         )
 
 
@@ -1536,6 +1615,7 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
                 link_roots=[r.resolve() for r in settings.gc_link_roots if r.is_dir()],
                 size_budget=settings.gc_size_budget,
                 floor_days=settings.gc_floor_days,
+                linked_limit=settings.gc_linked_limit,
             )
         except OSError as error:
             say(f"gc: 片付けられない — {error}")
@@ -1774,6 +1854,11 @@ def main(argv: list[str] | None = None) -> int:
                 default=1.0,
                 help="予算で消す項目の、最後に使ってからの最短の日数",
             )
+            p.add_argument(
+                "--linked-limit-gib",
+                type=float,
+                help="残る venv が symlink で指す項目を予算の和から外し、その和がこれを越えれば古い venv から消す",
+            )
     args = parser.parse_args(argv)
     cache: Path = args.cache.resolve()
     match args.verb:
@@ -1804,6 +1889,11 @@ def main(argv: list[str] | None = None) -> int:
                         else None
                     ),
                     floor_days=getattr(args, "floor_days", 1.0),
+                    linked_limit=(
+                        int(args.linked_limit_gib * (1 << 30))
+                        if getattr(args, "linked_limit_gib", None) is not None
+                        else None
+                    ),
                 )
             )
     return 0

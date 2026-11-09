@@ -12,6 +12,8 @@
   予算を渡すと、cache の dir の全部の byte(venv が hardlink で持つ中身を除き、cache の中で共に持つ中身は 1 度・消す単位の外の bare の
   repo も数える)が予算を越える分を、floor を過ぎた古い項目から消し、venv が hardlink か symlink で指す項目・process が読み込んだ
   項目は消さない。
+  venv の持ち分の置き場の上限を渡すと、残る venv が symlink で指す項目の byte をその置き場に数えて予算の和から外し、置き場の和が上限を
+  越える分を、floor を過ぎて process の使わない古い venv から消す(--links の venv と floor の内の venv は消さない)。
 - 置き場: s3://<bucket>/<key> の URL は Secret の鍵 endpoint(Secret が無ければ AWS_ENDPOINT_URL_S3)へ送り、upkeep は Secret の名
   だけを替えると別の置き場から入れ、戻すと元の置き場から入れる。endpoint が無ければ断る。http(s) の URL と file の path はそのまま。
 - upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。refresh は名指した node でだけ撃つ。
@@ -517,6 +519,106 @@ def test_gc_size_budget_never_removes_held_or_young_units(tmp_path: Path, loaded
     assert (venv / "big.bin").stat().st_size == 4 << 20
 
 
+def test_gc_linked_limit_counts_symlinked_bytes_in_the_venv_store_not_the_cache_sum(
+    tmp_path: Path, loaded: None
+) -> None:
+    """残る venv が symlink で指す SYMLINKED は venv の持ち分の置き場に数え(答えの links)、置き場の上限を渡すと予算の和から外す。
+    上限を渡さなければ、置き場を数えるだけで、その byte は予算の和に入ったまま(card [id])。"""
+    cache, worktrees = _cache_for_size_budget(tmp_path)
+    symlinked = uv_cache.measure(cache / "archive-v0" / "SYMLINKED")[0].bytes
+
+    counted = _size_budget_gc(cache, worktrees, 1 << 40)
+    held = uv_cache.gc(
+        cache,
+        [worktrees],
+        7.0,
+        3,
+        dry_run=False,
+        every_seconds=None,
+        size_budget=1 << 40,
+        floor_days=1.0,
+        linked_limit=symlinked,
+    )
+
+    assert counted["links"] == {
+        "bytes": None,
+        "usage-before": symlinked,
+        "usage-after": symlinked,
+        "entries": 1,
+        "venvs": 1,
+        "removed-venvs": 0,
+        "within": None,
+    }
+    assert counted["size-budget"]["linked"] == 0
+    assert held["links"]["usage-after"] == symlinked
+    assert held["links"]["within"] is True
+    assert held["size-budget"]["linked"] == symlinked
+    assert held["size-budget"]["usage-before"] == counted["size-budget"]["usage-before"] - symlinked
+    assert len(list((cache / "archive-v0").iterdir())) == 8
+
+
+def test_gc_linked_limit_removes_the_oldest_idle_symlink_venvs_until_within(
+    tmp_path: Path,
+) -> None:
+    """venv の持ち分の置き場の和が上限を越えれば、floor を過ぎた古い venv から消して収める。floor の内の venv と --links の venv は
+    消さず、収まらなければ within が false。消した venv だけが指していた項目は、置き場の外へ出て cache の予算で消せる物に戻る。"""
+    cache = tmp_path / "cache"
+    worktrees, held = tmp_path / "worktrees", tmp_path / "volumes"
+    entries = {
+        name: _write(cache / "archive-v0" / name / "m.py", name[0] * 65536).parent
+        for name in ("AGED", "BRIEF", "CURRENT", "HELD")
+    }
+    now = time.time()
+    aged = _symlinked_venv(worktrees / "wt-aged" / ".venv", entries["AGED"])
+    brief = _symlinked_venv(worktrees / "wt-brief" / ".venv", entries["BRIEF"])
+    current = _symlinked_venv(worktrees / "wt-current" / ".venv", entries["CURRENT"])
+    holder = _symlinked_venv(held / "c-1" / ".venv", entries["HELD"])
+    for path, days in [(aged, 3), (brief, 2), (holder, 3), *((e, 3) for e in entries.values())]:
+        _age(path, now - days * DAY)
+    each = uv_cache.measure(entries["AGED"])[0].bytes
+
+    def run(linked_limit: int) -> dict:
+        return uv_cache.gc(
+            cache,
+            [worktrees],
+            7.0,
+            3,
+            dry_run=False,
+            every_seconds=None,
+            link_roots=[held],
+            size_budget=0,
+            floor_days=1.0,
+            linked_limit=linked_limit,
+        )
+
+    one_over = run(3 * each)
+
+    assert not aged.exists()
+    assert all(venv.is_dir() for venv in (brief, current, holder))
+    assert one_over["links"] == {
+        "bytes": 3 * each,
+        "usage-before": 4 * each,
+        "usage-after": 3 * each,
+        "entries": 3,
+        "venvs": 3,
+        "removed-venvs": 1,
+        "within": True,
+    }
+    assert one_over["removed"]["venvs"] == 1
+    assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == ["BRIEF", "CURRENT", "HELD"]
+
+    none_left = run(0)
+
+    assert not brief.exists()
+    assert all(venv.is_dir() for venv in (current, holder))
+    assert none_left["links"]["removed-venvs"] == 1
+    assert none_left["links"]["usage-after"] == 2 * each
+    assert none_left["links"]["within"] is False
+    assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == ["CURRENT", "HELD"]
+    for venv, name in [(current, "C"), (holder, "H")]:
+        assert (venv / "lib" / "python3.14" / "site-packages" / "m.py").read_text() == name * 65536
+
+
 def test_gc_without_a_size_budget_only_expires(tmp_path: Path, loaded: None) -> None:
     cache, worktrees = _cache_for_size_budget(tmp_path)
     result = uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=None)
@@ -707,6 +809,8 @@ def test_upkeep_reads_the_environment() -> None:
     )
     assert (capped.gc_size_budget, capped.gc_floor_days) == (100 << 30, 2.0)
     assert (settings.gc_size_budget, settings.gc_floor_days) == (None, 1.0)
+    linked = uv_cache.UpkeepSettings.from_env({"DOEFF_UV_CACHE_GC_LINKED_LIMIT_GIB": "0.5"})
+    assert (linked.gc_linked_limit, settings.gc_linked_limit) == (1 << 29, None)
 
 
 def test_upkeep_seeds_then_collects(source_cache: Path, tmp_path: Path) -> None:
