@@ -390,6 +390,14 @@
   (next (gfor r latest :if (is-not r.build-memory-bytes None) r.build-memory-bytes) DEFAULT-BUILD-MEMORY-BYTES))
 
 
+(defk layer-need [peak limit]
+  {:pre [(: peak int) (: limit (| int None))] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "組みの山の見積もり peak を、組みの置かれる層(上限 limit — 読めなければ None = 切らない)で取り置く量にするため: 層の上限 ×
+   MEMORY-ROOM-RATIO で切る(先の組みの入口 warm-refusal と、準備の層の起こしの数 — env_store の prepare-room — が同じ量を使う)。切る訳は
+   warm-refusal の註(container の山で測った見積もりは同じ間の別の物を含んで大きく残る)。"
+  (if (is limit None) peak (min peak (int (* limit MEMORY-ROOM-RATIO)))))
+
+
 (defk reclaimable-bytes [roots pinned]
   {:pre [(: roots tuple) (: pinned frozenset)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "掃除で空けられる分(byte)を返すため = 掃除の候補(sweep-candidates — 固定・project ごとの新しい 2 つ・worker が作っていない dir を除く)の
@@ -417,6 +425,8 @@
                      層が無い時: memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO。memory を測れなければ判じない(呼び手が
                      測っていない印を立てる)"
   (val need-free (+ room.min-free room.root-bytes))
+  (val layer-limit (match room.memory (LayerMemoryUse :limit limit) limit _ None))
+  (<- layer-peak int (layer-need room.peak layer-limit))
   (match room
     _ :if (< room.free need-free)
       (EnvFailure :kind EnvFailureKind.NO-DISK-ROOM :retryable False
@@ -427,11 +437,11 @@
       (EnvFailure :kind EnvFailureKind.OVER-ROOTS-CAP :retryable False
                   :detail (.format "先の組みを断った: roots の合計 {} byte + root 1 つの見積もり {} byte − 掃除で空けられる {} byte > 上限 {} byte"
                                    total extra freed cap))
-    (WarmRoom :memory (LayerMemoryUse :unreclaimable held :limit limit) :peak peak)
-      :if (> (+ held (min peak (int (* limit MEMORY-ROOM-RATIO)))) limit)
+    (WarmRoom :memory (LayerMemoryUse :unreclaimable held :limit limit))
+      :if (> (+ held layer-peak) limit)
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
                   :detail (.format "先の組みを断った: 層の回収できない使い {} byte + 組みの山の見積もり {} byte > 層の memory.max {} byte"
-                                   held (min peak (int (* limit MEMORY-ROOM-RATIO))) limit))
+                                   held layer-peak limit))
     (WarmRoom :memory (MemoryUse :current current :limit limit) :peak peak) :if (> (+ current peak) (* limit MEMORY-ROOM-RATIO))
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
                   :detail (.format "先の組みを断った: memory.current {} byte + 組みの山の見積もり {} byte > memory.max {} byte × {}"

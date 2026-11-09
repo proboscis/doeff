@@ -254,8 +254,10 @@
 ;;   env-incompatible    名前の影・子の約束の版の外
 ;;   memory-killed       組みの子(uv の build・sync)が cgroup の memory の上限で殺された: signal 9 で終わり、cgroup の memory.events の
 ;;                       oom_kill が子を起こす前より増えた(恒久 — 同じ上限の下で組み直しても同じく殺される。増えていない signal 9 は
-;;                       今までどおり native-build-failed / sync-failed の一時の失敗・#3668・cisco-c8 の可 2026-10-06 00:3x)
-;;   memory-tight        task の起動を機体の memory の逼迫で見送り続け、上限(WorkerPolicy.memory-tight-hold-limit-ms)を越えた(一時 —
+;;                       今までどおり native-build-failed / sync-failed の一時の失敗・#3668・cisco-c8 の可 2026-10-06 00:3x)。
+;;                       焼く道具が報告を出せずに終わり oom_kill が増えた時も同じ。準備の層の下の準備が殺された時は、worker は失敗に
+;;                       せず 1 本だけで起こし直し(他の準備との取り合いで殺されたため)、1 本でも殺された時だけこの種類にする
+;;   memory-tight       task の起動を機体の memory の逼迫で見送り続け、上限(WorkerPolicy.memory-tight-hold-limit-ms)を越えた(一時 —
 ;;                       子 process を起こす前なので、coordinator はこの worker を避けて置き直せる)
 ;; 先の組み(温める表の行 — PrepareEnv :warm)だけを、組みを始める前に worker が断る 3 種(#3748・cisco-c8 の名指しの可 2026-10-06)。判じは
 ;; worker/core/env_upkeep の warm-refusal 1 つ。宣言された job の準備は断らない(今までどおり disk-full の判じだけ)。どれも恒久に数える

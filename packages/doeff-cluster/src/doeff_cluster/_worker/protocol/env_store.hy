@@ -56,9 +56,11 @@
 (import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse LayerMemoryUse MemoryUnread WarmRoom
-                                              LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
-(import doeff_cluster._worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
-                                             overdue-failure root-project declared-project])
+                                              LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal
+                                              DEFAULT-BUILD-MEMORY-BYTES layer-need])
+(import doeff_cluster._worker.core.env_rules [ReadyAnswer PrepareRoom launch-order prepare-request prepare-argv answer-of-text prepare-outcome
+                                             overdue-failure root-project declared-project oom-kills-of memory-killed-failure])
+(import doeff_cluster._worker.core.worker_due [due-after])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
 
 
@@ -90,6 +92,12 @@
 (val GROUP-UNCLOSED-LOG "worker: 準備の子の cgroup を消せない")
 ;; 準備の子の止めと消しを待つ秒の上限(止めの script は SIGKILL の後の退きを 5 秒まで待つ)。
 (val CLOSE-TIMEOUT-SECONDS 10.0)
+;; 準備の層の memory の上限で殺された準備を、失敗にせず待ちへ戻した行の名(欄: key・oom-kills = 準備の子の memory.events の oom_kill —
+;; 層が空いてから 1 本だけで起こし直す)。
+(val MEMORY-KILLED-LOG "worker: 準備が層の memory の上限で殺された — 層が空いてから 1 本で起こし直す")
+;; 準備の層の空きが足りずに待っている準備が在る間、層を読み直す間隔(ms — 層の空きは worker の外の物〔keeper の版の準備〕の終わりでも
+;; 戻り、その終わりは worker を起こさない)。
+(val ROOM-RECHECK-MS 5000)
 
 
 (defrecord EnvSettings
@@ -136,7 +144,9 @@
   "走っている準備 1 本の記録: pid = 準備の子・started-ms = 起こした時刻・result = 答えの file・progress = 進みの印の file・
    warm = 先読みの準備か(job がその root を求めたら job の準備へ上げる)・memory = 層の読みを準備の process へ渡す file・sample = 組みの
    置かれる層の回収できない使いの、起こす前の読みと準備の間の最大(層の無い・読めない機体は None — sample-layers)・group = 準備の層の
-   下のこの準備の子の dir(層が無い機体は None — core/job_cgroup の「準備ごとの子」)。"
+   下のこの準備の子の dir(層が無い機体は None — core/job_cgroup の「準備ごとの子」)・runtime-env と compile-jobs = 頼み(層の memory の
+   上限で殺された時に待ちへ戻す)・need = 起こした時に層の空きから取り置いた見込みの山(byte — 層で絞らない worker は 0)・alone = 1 本
+   だけで起こした準備か(層の memory の上限で殺されて起こし直した物)。"
   (#^ int pid)
   (#^ int started-ms)
   (#^ str result)
@@ -144,15 +154,21 @@
   (#^ bool warm)
   (setv #^ str memory "")
   (setv #^ (| LayerSample None) sample None)
-  (setv #^ (| str None) group None))
+  (setv #^ (| str None) group None)
+  (setv #^ str runtime-env "")
+  (setv #^ (| int None) compile-jobs None)
+  (setv #^ int need 0)
+  (setv #^ bool alone False))
 
 
 (defrecord WaitingEnv
   "起こすのを待っている準備 1 本の頼み(待ちの記録の値 — キー → この record): runtime-env = 宣言の JSON の文字列・compile-jobs = bytecode を
-   焼く道具の並べる数(None = 道具の既定 — PrepareEnv と同じ・2026-10-08)・warm = 先読みの準備か。"
+   焼く道具の並べる数(None = 道具の既定 — PrepareEnv と同じ・2026-10-08)・warm = 先読みの準備か・alone = 1 本だけで起こし直す準備か
+   (準備の層の memory の上限で殺された準備 — env_rules の launch-order)。"
   (#^ str runtime-env)
   (#^ (| int None) compile-jobs)
-  (#^ bool warm))
+  (#^ bool warm)
+  (setv #^ bool alone False))
 
 
 (defk roots-dir [settings]
@@ -248,11 +264,13 @@
   None)
 
 
-(defk launch-prepare [settings key runtime-env compile-jobs warm]
-  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool)] :post [(: % PendingEnv)]}
+(defk launch-prepare [settings key runtime-env compile-jobs warm [need 0] [alone False]]
+  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool) (: need int) (: alone bool)]
+   :post [(: % PendingEnv)]}
   "root の準備の process を 1 本起こして記録を返すため。マーカーの無い root(途中で止まった準備)は、準備の process がキーごとの錠を
    取ってから脇へ退ける(AL-D2g — root の置き場を分け合う他の世代がそのキーを準備している間に、ここで退けるとその準備を壊す)。
-   compile-jobs = 焼く道具の並べる数(頼みの JSON の compileJobs に書く)。"
+   compile-jobs = 焼く道具の並べる数(頼みの JSON の compileJobs に書く)・need = 層の空きから取り置く見込みの山・alone = 1 本だけで
+   起こす準備か(記録に残す — PendingEnv)。"
   (<- root str (env-root settings key))
   (<- now-ms int (now-epoch-ms))
   (val requests (+ settings.state "/env-requests"))
@@ -290,7 +308,19 @@
   (when (isinstance started ProcessNotStarted)
     (raise (OSError started.detail)))
   (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm :memory memory :group group
-              :sample (if (is base None) None (LayerSample :base base :peak base))))
+              :sample (if (is base None) None (LayerSample :base base :peak base))
+              :runtime-env runtime-env :compile-jobs compile-jobs :need need :alone alone))
+
+
+(defk group-oom-kills [group]
+  {:pre [(: group (| str None))] :post [(: % int)]}
+  "準備の子 group(None = 準備の層が無い)の memory.events の oom_kill を読むため(子を消す前に読む — 子の下の process が memory の上限で
+   殺された数。読めなければ 0)。"
+  (when (is group None)
+    (return 0))
+  (<- text (ReadText (+ group "/memory.events")))
+  (<- kills int (oom-kills-of (if (isinstance text str) text "")))
+  kills)
 
 
 (defk closed-group [key group]
@@ -817,28 +847,67 @@
   (WarmAdmission :refused refused :unmeasured unmeasured))
 
 
-(defk launch-waiting [settings waiting pending]
-  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict)] :post [(: % tuple)]}
-  "待っている準備のうち起こせる物を起こし、#(残りの待ち 準備中) を返すため(起こす順と数は env_rules.launch-order)。"
+(defk prepare-room [settings waiting pending infos]
+  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: infos tuple)] :post [(: % (| PrepareRoom None))]}
+  "準備を層の下に置く worker(prepare-procs の在る — 準備の層を宣言した機体)の、準備の層の空きを読むため(env_rules の launch-order が
+   起こす数をこの空きで絞る)。層で絞らない worker は None。空き = 層の memory.max − 層の回収できない使い − 走っている準備の取り置き
+   (need)の和: 起こしたばかりの準備はまだ層を使っていないので、取り置きで数える(走っている準備の今の使いと二重に数える側に倒す —
+   層を越えて並べるより、待たせる方を選ぶ)。待ちのキーの見込みの山 = 同じ project の前の組みの山の実測(infos — 最後の掃除の数えの
+   印の buildMemoryBytes)、無ければ DEFAULT-BUILD-MEMORY-BYTES。どちらも層の上限の 4 分の 3 で切る(env_upkeep の layer-need — 先の組みの
+   入口と同じ切り)。層を読めなければ空きは None(走っている準備が無い時だけ 1 本)。"
+  (when (or (is settings.prepare-procs None) (is settings.prepare-layer-dir None))
+    (return None))
+  (<- current (ReadText (+ settings.prepare-layer-dir "/memory.current")))
+  (<- limit (ReadText (+ settings.prepare-layer-dir "/memory.max")))
+  (<- stat (ReadText (+ settings.prepare-layer-dir "/memory.stat")))
+  (<- layer (| LayerMemoryUse MemoryUnread)
+      (layer-memory-use-of (if (isinstance current str) current None) (if (isinstance limit str) limit None)
+                           (if (isinstance stat str) stat None)))
+  (val cap (match layer (LayerMemoryUse :limit limit) limit _ None))
+  (<- default-need int (layer-need DEFAULT-BUILD-MEMORY-BYTES cap))
+  (var needs {})
+  (for [#(key entry) (.items waiting)]
+    (<- project str (declared-project (json.loads entry.runtime-env)))
+    (<- peak int (build-memory-estimate infos project))
+    (<- need int (layer-need peak cap))
+    (:= needs (| needs {key need})))
+  (val reserved (sum (gfor p (.values pending) p.need)))
+  (PrepareRoom :free (match layer (LayerMemoryUse :unreclaimable held :limit limit) (- limit held reserved) _ None)
+               :default-need default-need :needs needs
+               :alone (frozenset (gfor #(k w) (.items waiting) :if w.alone k))
+               :running-alone (any (gfor p (.values pending) p.alone))))
+
+
+(defk launch-waiting [settings waiting pending infos]
+  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: infos tuple)] :post [(: % tuple)]}
+  "待っている準備のうち起こせる物を起こし、#(残りの待ち 準備中) を返すため(起こす順と数は env_rules.launch-order — 準備の層を持つ
+   worker は層の空き prepare-room でも絞る・infos = 最後の掃除の数えの root ごとの観測〔見込みの山の元〕)。"
+  (<- room (| PrepareRoom None) (prepare-room settings waiting pending infos))
   (<- order tuple (launch-order (tuple (gfor #(k w) (.items waiting) #(k w.warm))) (len pending)
-                                (len (lfor p (.values pending) :if p.warm p)) settings.max-parallel))
+                                (len (lfor p (.values pending) :if p.warm p)) settings.max-parallel room))
   (var left waiting)
   (var running pending)
   (for [key order]
     (val entry (get left key))
+    (val need (if (is room None) 0 (.get room.needs key room.default-need)))
     (:= left (dfor #(k v) (.items left) :if (!= k key) k v))
-    (<- started PendingEnv (launch-prepare settings key entry.runtime-env entry.compile-jobs entry.warm))
+    (<- started PendingEnv (launch-prepare settings key entry.runtime-env entry.compile-jobs entry.warm need entry.alone))
     (:= running (| running {key started})))
   #(left running))
 
 
-(defk observe-envs [settings waiting pending failed refused]
-  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: failed dict) (: refused dict)] :post [(: % tuple)]}
-  "準備の子の終わりと期限を見て記録を進め、待ちを起こし、root の観測を返すため(refused = 先の組みの断りの記録 — 読むだけ)。答え = #(待ち 準備中 失敗 観測の tuple)。"
+(defk observe-envs [settings waiting pending failed refused infos]
+  {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict) (: failed dict) (: refused dict) (: infos tuple)] :post [(: % tuple)]}
+  "準備の子の終わりと期限を見て記録を進め、待ちを起こし、root の観測を返すため(refused = 先の組みの断りの記録 — 読むだけ・infos = 最後の
+   掃除の数えの root ごとの観測 — 準備の層の見込みの山の元)。答え = #(待ち 準備中 失敗 観測の tuple)。
+   準備の子(準備の層の下 — group)の oom_kill が増えて終わった準備(完成を書いていない)は、層を分け合った他の準備との取り合いで殺された
+   ので、失敗にせず 1 本だけで起こし直す待ち(alone)へ戻す(2026-11-09 の k3s-2 — 2 本が 1 本分の層で互いを殺し、env-incompatible と
+   記録して起こし直し続けた)。1 本だけで起こしてなお殺された準備は、層に入らない準備として memory-killed の失敗にする。"
   (<- now-ms int (now-epoch-ms))
   (<- sampled dict (sample-layers settings pending))
   (var running sampled)
   (var failures failed)
+  (var queued waiting)
   (for [#(key p) (.items sampled)]
     (<- polled (PollProcess p.pid))
     ;; 答えの file は期限を判じる前に読む: 完成を書き終えて終わりの処理の途中の準備を、期限の拍で止めない(#3515 — 完成を書いた
@@ -861,16 +930,28 @@
                   (<- (slog "worker: 準備を止めた(進みが止まった)" :key key :kind (str failure.kind) :detail failure.detail))
                   (:= failures (| failures {key #(failure now-ms)})))))
         (do (:= running (dfor #(k v) (.items running) :if (!= k key) k v))
+            ;; 子を消す前に、子の下の process が memory の上限で殺された数を読む(完成を書いた準備は見ない)。
+            (<- kills int (group-oom-kills (if (isinstance answer ReadyAnswer) None p.group)))
             ;; 頭が終わった準備の木の残り(頭の外で生きる子孫)を止める — 成功・失敗とも。
             (<- (closed-group key p.group))
             ;; 答えを書かずに終わった準備は、prepare-outcome が log の在処を添えた失敗にする。
             ;; 立てた覚えの無い子(ProcessNotChild)は終わりの番号が分からない — -1 で名指す。
             (val code (if (isinstance polled ProcessExited) polled.exit-code -1))
-            (<- failure (prepare-outcome answer code (+ settings.state "/env-requests/" key ".log")))
-            (when (is-not failure None)
-              (<- (slog "worker: 準備が失敗した" :key key :kind (str failure.kind) :detail failure.detail))
-              (:= failures (| failures {key #(failure now-ms)}))))))
-  (<- launched tuple (launch-waiting settings waiting running))
+            (val exit-log (+ settings.state "/env-requests/" key ".log"))
+            (<- outcome (| EnvFailure None) (prepare-outcome answer code exit-log))
+            (cond
+              (and (> kills 0) (not p.alone))
+                (do (<- (slog MEMORY-KILLED-LOG :level "warning" :key key :oom-kills kills))
+                    (:= queued (| queued {key (WaitingEnv :runtime-env p.runtime-env :compile-jobs p.compile-jobs :warm p.warm
+                                                          :alone True)})))
+              (> kills 0)
+                (do (<- failure EnvFailure (memory-killed-failure kills code exit-log))
+                    (<- (slog "worker: 準備が失敗した" :key key :kind (str failure.kind) :detail failure.detail))
+                    (:= failures (| failures {key #(failure now-ms)})))
+              (is-not outcome None)
+                (do (<- (slog "worker: 準備が失敗した" :key key :kind (str outcome.kind) :detail outcome.detail))
+                    (:= failures (| failures {key #(outcome now-ms)})))))))
+  (<- launched tuple (launch-waiting settings queued running infos))
   (val left (get launched 0))
   (val now-running (get launched 1))
   (<- ready tuple (ready-views settings (frozenset (+ (list now-running) (list failures) (list refused)))))
@@ -919,7 +1000,7 @@
           (:= pending (| pending {key (replace (get pending key) :warm False)})))
       (in key waiting)
         (when (not warm)
-          (:= waiting (| waiting {key wanted})))
+          (:= waiting (| waiting {key (replace wanted :alone (. (get waiting key) alone))})))
       True
         (do (:= refused (dfor #(k v) (.items refused) :if (!= k key) k v))
             (<- root str (env-root settings key))
@@ -937,12 +1018,12 @@
                   (do (<- now-ms int (now-epoch-ms))
                       (:= refused (| refused {key #(admission.refused now-ms)})))
                 None
-                  (do (<- launched tuple (launch-waiting settings (| waiting {key wanted}) pending))
+                  (do (<- launched tuple (launch-waiting settings (| waiting {key wanted}) pending measured-infos))
                       (:= waiting (get launched 0))
                       (:= pending (get launched 1)))))))
     (resume None))
   (ObserveEnvs []
-    (<- observed tuple (observe-envs settings waiting pending failed refused))
+    (<- observed tuple (observe-envs settings waiting pending failed refused measured-infos))
     (:= waiting (get observed 0))
     (:= pending (get observed 1))
     (:= failed (get observed 2))
@@ -958,7 +1039,7 @@
     ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件
     ;; (形は env-report — sim の宿と同じ関数)。
     (when (is views None)
-      (<- observed tuple (observe-envs settings waiting pending failed refused))
+      (<- observed tuple (observe-envs settings waiting pending failed refused measured-infos))
       (:= waiting (get observed 0))
       (:= pending (get observed 1))
       (:= failed (get observed 2))
@@ -1024,7 +1105,10 @@
       (<- stop-due (| DueAt DueNever) (prepare-stop-due began progressed settings.limits))
       (:= dues (+ dues #(stop-due))))
     (<- interval-due (| DueAt DueNever) (sweep-interval-due began tally settings.roots-cap-bytes swept-ms))
-    (<- due (| DueAt DueNow DueNever) (earliest-due (+ dues #(interval-due))))
+    ;; 準備の層の空きを待つ準備が在れば、ROOM-RECHECK-MS の後に層を読み直す(空きは worker の起こさない物の終わりでも戻る)。
+    (<- room-due (| DueAt DueNever)
+        (due-after began (if (and waiting (is-not settings.prepare-procs None)) #((+ began ROOM-RECHECK-MS)) #())))
+    (<- due (| DueAt DueNow DueNever) (earliest-due (+ dues #(interval-due room-due))))
     (val bells (if (is sweeping None) #() #(sweeping.done.future)))
     (val exits (+ (tuple (gfor p (.values pending) (AwaitProcessExit p.pid)))
                   (if (is prune.pid None) #() #((AwaitProcessExit prune.pid)))))

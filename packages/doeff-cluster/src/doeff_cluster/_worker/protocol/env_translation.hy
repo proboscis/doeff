@@ -904,6 +904,12 @@
                                                  :setv line (next (gfor s said :if (= (get s 0) t.tree) (get s 1)) None)
                                                  :if (!= line "-")
                                                  (TreeProblem :tree t.tree :detail (if (is line None) NO-TREE-LINE line))))))
+    ;; 報告を出せずに終わり、その間に cgroup の oom_kill が増えた: 焼きの子が memory の上限で殺された(道具の親は子の -9 で止まる —
+    ;; 2026-11-09 の k3s-2 で「焼きの道具が終わり -9 で止まった」を env-incompatible と記録した)。
+    (> result.oom-kills 0)
+      (EnvFailure :kind EnvFailureKind.MEMORY-KILLED :retryable False
+                  :detail (.format "焼く道具が報告を出せずに終わり(終了 {})、cgroup の memory.events の oom_kill が {} 増えた(memory の上限で殺された): {}"
+                                   result.code result.oom-kills detail))
     (in result.code #(0 1))
       (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
                   :detail (.format "焼く道具の全体の報告の行(stored=… rebuilt=… reused=… failed=… compile_s=… closure_s=… scan_s=…)を読めない: {}"

@@ -6,6 +6,7 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import json)
+(import re)
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits])
 
@@ -18,21 +19,47 @@
   (#^ str root))
 
 
-(defk launch-order [waiting running warm-running max-parallel]
-  {:pre [(: waiting tuple) (: running int) (: warm-running int) (: max-parallel int)] :post [(: % tuple)]}
+(defrecord PrepareRoom
+  "準備の層の空きの読み(準備を層の下に置く worker だけが launch-order に渡す — 層の無い worker は None で、memory で絞らない):
+   free = 層の memory.max − 層の今の回収できない使い − 走っている準備の見込みの山の和(byte・負もある。層を読めなければ None = 走っている
+   準備が無い時だけ 1 本起こす)・needs = 待っている準備のキー → 見込みの山(byte — 無いキーは default-need)・alone = 1 本だけで起こし直す
+   待ちのキー(層の memory の上限で殺された準備)・running-alone = 1 本だけで走っている準備が在るか。"
+  (#^ (| int None) free)
+  (#^ int default-need)
+  (#^ dict needs)
+  (setv #^ frozenset alone (frozenset))
+  (setv #^ bool running-alone False))
+
+
+(defk launch-order [waiting running warm-running max-parallel [room None]]
+  {:pre [(: waiting tuple) (: running int) (: warm-running int) (: max-parallel int) (: room (| PrepareRoom None))] :post [(: % tuple)]}
   "待っている準備(#(キー 先読みか) の列・頼まれた順)のうち、今起こすキーを起こす順に返すため(running = 走っている準備の数・
    warm-running = そのうち先読みの数)。同時の準備は max-parallel 本まで(走っている手番の CPU を奪わない)。job の準備を先に起こし、
-   先読みは枠の 1 つを job に残す。"
+   先読みは枠の 1 つを job に残す。
+   room(準備の層の空き — PrepareRoom)が在れば、層の memory でも絞る: 次の準備は、空き free がその見込みの山以上の時だけ起こし、起こした
+   分の山を空きから引く。足りない準備は断らずに待ちに残し、後ろの準備も追い越さない(大きい準備が小さい準備に先を取られ続けない)。
+   空きを読めない層では、走っている準備が無い時の 1 本だけ。1 本だけで起こし直すキー(alone)は走っている準備が無い時だけ起こし、それが
+   走っている間は何も起こさない。CPU の枠だけで決めると、1 本分の層に 2 本が並んで互いを OOM kill で止め合った(2026-11-09 の k3s-2 —
+   準備の層 640M に 1 本 約 360 MB の準備が 2 本)。"
   (val order (+ (lfor #(k w) waiting :if (not w) #(k w)) (lfor #(k w) waiting :if w #(k w))))
   (var launched #())
   (var busy running)
   (var warm-busy warm-running)
+  (var free (if (is room None) None room.free))
+  (when (and (is-not room None) room.running-alone)
+    (return #()))
   (for [#(key warm) order]
     (when (>= busy max-parallel) (break))
     (when (and warm (>= warm-busy (max 1 (- max-parallel 1)))) (continue))
+    (when (is-not room None)
+      (val need (.get room.needs key room.default-need))
+      (when (and (in key room.alone) (> busy 0)) (break))
+      (when (if (is free None) (> busy 0) (< free need)) (break))
+      (when (is-not free None) (:= free (- free need))))
     (:= launched (+ launched #(key)))
     (:= busy (+ busy 1))
-    (when warm (:= warm-busy (+ warm-busy 1))))
+    (when warm (:= warm-busy (+ warm-busy 1)))
+    (when (and (is-not room None) (in key room.alone)) (break)))
   launched)
 
 
@@ -81,6 +108,25 @@
     {"ready" {"root" root}} (ReadyAnswer :root root)
     _ (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
                   :detail (.format "準備の答えの file の形を読めない: {}" (cut text 0 ANSWER-HEAD-CHARS)))))
+
+
+(val OOM-KILL-LINE (re.compile r"(?m)^oom_kill (\d+)$"))   ; cgroup v2 の memory.events の oom_kill の行
+
+
+(defk oom-kills-of [events]
+  {:pre [(: events str)] :post [(: % int) (>= % 0)]}
+  "準備の子の cgroup の memory.events の中身(読めなければ空)から、子の下の process が memory の上限で殺された数を読むため(行が無ければ 0)。"
+  (val found (.search OOM-KILL-LINE events))
+  (if found (int (.group found 1)) 0))
+
+
+(defk memory-killed-failure [kills exit-code log]
+  {:pre [(: kills int) (: exit-code int) (: log str)] :post [(: % EnvFailure)]}
+  "1 本だけで起こし直した準備が、なお準備の層の memory の上限で殺された失敗を返すため(memory-killed — 層の上限の下では組めない。
+   env-incompatible と読まない)。"
+  (EnvFailure :kind EnvFailureKind.MEMORY-KILLED :retryable False
+              :detail (.format "準備の層に 1 本だけで起こした準備が memory の上限で殺された(oom_kill {}・終了 {})— log: {}"
+                               kills exit-code log)))
 
 
 (defk prepare-outcome [answer exit-code log]

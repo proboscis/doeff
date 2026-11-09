@@ -81,6 +81,8 @@
     (setv #^ (get tuple #(tuple ...)) self.argvs #())
     ;; 準備の子の止めの argv(撃った順 — core/job_cgroup の CLOSE-SCRIPT)。
     (setv #^ (get tuple #(tuple ...)) self.closes #())
+    ;; memory の上限で殺された(答えを書かずに -9 で終わる)とする準備の偽の pid(検が立てる)。
+    (setv #^ (get frozenset int) self.killed (frozenset))
     None))
 
 
@@ -123,6 +125,9 @@
       (not-in pid runs.running)
         (do (<- answer (PollProcess pid))
             (resume answer))
+      (in pid runs.killed)
+        (do (setv runs.running (dfor #(k v) (.items runs.running) :if (!= k pid) k v))
+            (resume (ProcessExited :pid pid :exit-code -9)))
       runs.released
         (do (val run (get runs.running pid))
             (<- (finish-preparation run.request run.result))
@@ -1173,3 +1178,119 @@
   (assert (= (len runs.launches) 2) runs.launches)
   (val requests (lfor path runs.launches (json.loads (.read-text (Path path)))))
   (assert (= (lfor r requests #((+ "env-" (get r "key")) (get r "compileJobs"))) [#(key None) #(other-key None)]) requests))
+
+
+;; --- 準備の層の空きで絞る起こし ---------------------------------------------------------------------------
+;; 失敗ケース(2026-11-09 の k3s-2): 準備の層 640M(1 本分)に job の準備 2 本を CPU の枠 2 だけで並べ、1 本 約 360 MB の準備が層の上限で
+;; 互いを OOM kill し合い、env-incompatible と記録して起こし直し続けた(patrol-watch・rules・node-boot-facts が起きない)。準備の層を持つ
+;; worker は、層の空きが準備の見込みの山以上の時だけ起こし、足りない間は断らずに待たせる。層の memory の上限で殺された準備は失敗に
+;; せず、層が空いてから 1 本だけで起こし直す。
+
+(defk layer-settings [tmp-path limit]
+  {:pre [(: tmp-path Path) (: limit int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "準備の層を持つ worker の設定を作るため: 準備の子は tmp の層の dir の下(prepare-procs)・層の memory の file は回収できない使い 0
+   (page cache 100 MiB だけ)と上限 limit。"
+  (val layer (/ tmp-path "cg" "prepare"))
+  (.mkdir layer :parents True :exist-ok True)
+  (for [#(name text) (.items (layer-files (* 100 MIB) limit (* 100 MIB)))]
+    (.write-text (/ layer name) (+ text "\n")))
+  (<- base EnvSettings (settings-at (/ tmp-path "w")))
+  (replace base :prepare-procs (str (/ layer "cgroup.procs")) :prepare-layer-dir (str layer)))
+
+
+(defrecord LayerSeen
+  "準備の層の筋書きの見え方: views = 拍ごとの観測・launches = 拍ごとの、それまでに起こした準備の道具の数。"
+  (#^ tuple views)
+  (#^ tuple launches))
+
+
+(defk two-jobs-in-one-layer [runs key text other-key other-text]
+  {:pre [(: runs ToolRuns) (: key str) (: text str) (: other-key str) (: other-text str)] :post [(: % LayerSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "job の準備 2 本を同じ拍に頼んで観測し、走っている準備を終わらせて 2 拍観測するため。"
+  (<- (PrepareEnv key text None))
+  (<- (PrepareEnv other-key other-text None))
+  (<- first tuple (ObserveEnvs))
+  (val first-launches (len runs.launches))
+  (setv runs.released True)
+  (<- second tuple (ObserveEnvs))
+  (val second-launches (len runs.launches))
+  (<- third tuple (ObserveEnvs))
+  (LayerSeen :views #(first second third) :launches #(first-launches second-launches (len runs.launches))))
+
+
+(deftest test-a-prepare-layer-for-one-preparation-runs-two-job-preparations-one-after-the-other [tmp-path]
+  (<- env RuntimeEnv (declared 1))
+  (<- other RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- other-key str (env-key-of other))
+  (<- other-text str (declared-text other))
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (layer-settings tmp-path (* 640 MIB)))
+  (<- seen LayerSeen (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                     (env-host settings)]
+                       (two-jobs-in-one-layer runs key text other-key other-text)))
+  ;; 1 拍目: 1 本だけ起き、もう 1 本は断らずに待つ(どちらも PREPARING)。
+  (assert (= (get seen.launches 0) 1) seen.launches)
+  (for [k [key other-key]]
+    (<- view (| CodeView None) (view-of (get seen.views 0) k))
+    (assert (and (is-not view None) (= view.state CodeState.PREPARING)) view))
+  ;; 2 拍目: 先の準備が終わって READY、待っていた準備が起きる。3 拍目: 両方 READY。
+  (assert (= (get seen.launches 1) 2) seen.launches)
+  (<- done (| CodeView None) (view-of (get seen.views 1) key))
+  (assert (and (is-not done None) (= done.state CodeState.READY)) done)
+  (for [k [key other-key]]
+    (<- view (| CodeView None) (view-of (get seen.views 2) k))
+    (assert (and (is-not view None) (= view.state CodeState.READY)) view)))
+
+
+(defk killed-in-a-shared-layer [runs settings key text other-key other-text]
+  {:pre [(: runs ToolRuns) (: settings EnvSettings) (: key str) (: text str) (: other-key str) (: other-text str)] :post [(: % LayerSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "2 本分の層で job の準備 2 本を起こし、先の 1 本を層の memory の上限で殺し(子の memory.events に oom_kill 1・答えなしの -9)、観測し、
+   もう 1 本を終わらせて観測し、1 本だけで起こし直した準備もまた殺して観測するため。"
+  (<- (PrepareEnv key text None))
+  (<- (PrepareEnv other-key other-text None))
+  (<- started tuple (ObserveEnvs))
+  (<- group str (prepare-group-dir settings.prepare-procs settings.state key))
+  (.mkdir (Path group) :parents True :exist-ok True)
+  (.write-text (/ (Path group) "memory.events") "low 0\nhigh 0\nmax 3\noom 1\noom_kill 1\n")
+  (setv runs.killed (frozenset [FIRST-PID]))
+  (<- killed tuple (ObserveEnvs))
+  (val killed-launches (len runs.launches))
+  (setv runs.released True)
+  (setv runs.killed (frozenset [FIRST-PID (+ FIRST-PID 2)]))
+  (<- relaunched tuple (ObserveEnvs))
+  (val relaunched-launches (len runs.launches))
+  (<- again tuple (ObserveEnvs))
+  (LayerSeen :views #(started killed relaunched again) :launches #(killed-launches relaunched-launches (len runs.launches))))
+
+
+(deftest test-a-preparation-killed-for-memory-in-a-shared-layer-waits-and-is-relaunched-alone [tmp-path]
+  (<- env RuntimeEnv (declared 1))
+  (<- other RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- other-key str (env-key-of other))
+  (<- other-text str (declared-text other))
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (layer-settings tmp-path (* 2 GIB)))
+  (<- seen LayerSeen (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                     (env-host settings)]
+                       (killed-in-a-shared-layer runs settings key text other-key other-text)))
+  ;; 2 本分の層なので 2 本とも起きる。殺された準備は失敗(env-incompatible)にならず待ちに戻り(PREPARING)、もう 1 本が走っている間は
+  ;; 起こし直さない。
+  (<- killed (| CodeView None) (view-of (get seen.views 1) key))
+  (assert (and (is-not killed None) (= killed.state CodeState.PREPARING)) killed)
+  (assert (= (get seen.launches 0) 2) seen.launches)
+  ;; もう 1 本が終わった拍で、殺された準備を 1 本だけで起こし直す。
+  (<- other-done (| CodeView None) (view-of (get seen.views 2) other-key))
+  (assert (and (is-not other-done None) (= other-done.state CodeState.READY)) other-done)
+  (assert (= (get seen.launches 1) 3) seen.launches)
+  ;; 1 本だけでもなお層の上限で殺された準備は、層に入らない準備として memory-killed の失敗(env-incompatible でない)。
+  (<- failed (| CodeView None) (view-of (get seen.views 3) key))
+  (assert (and (is-not failed None) (= failed.state CodeState.FAILED) (is-not failed.failure None)
+               (= failed.failure.kind EnvFailureKind.MEMORY-KILLED))
+          failed)
+  (assert (= (get seen.launches 2) 3) seen.launches))

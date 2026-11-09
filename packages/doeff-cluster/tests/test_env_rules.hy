@@ -1,13 +1,14 @@
 ;; 実行環境の root の準備の判断(worker/core/env_rules — #2467)を、準備の process を起こさずに確かめる。
-;;   * 起こす順: job の準備を先に・同時は max-parallel 本まで・先読みは枠の 1 つを job に残す。
+;;   * 起こす順: job の準備を先に・同時は max-parallel 本まで・先読みは枠の 1 つを job に残す。準備の層の空きを渡せば、空きが見込みの山
+;;     以上の準備だけを起こし、memory の上限で殺された準備は 1 本だけで起こし直す。
 ;;   * 準備の答えの読み: 答えの file の中身(失敗・完成・形の読めない中身)・失敗の答え・成功の答え・答えを書かずに終わった process・
 ;;     期限切れの理由。
 ;;   * 掃除の候補の project の名・準備の process の起こし方(掃除の下限は env_upkeep の 2 つの絶対の量 — test_env_warm・#3732)。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits])
-(import doeff_cluster._worker.core.env_rules [ReadyAnswer launch-order prepare-argv answer-of-text prepare-outcome overdue-failure
-                                             root-project])
+(import doeff_cluster._worker.core.env_rules [ReadyAnswer PrepareRoom launch-order prepare-argv answer-of-text prepare-outcome overdue-failure
+                                             root-project oom-kills-of memory-killed-failure])
 
 
 (deftest test-job-prepares-go-first-and-warm-ones-leave-a-slot
@@ -22,6 +23,65 @@
   (assert (= warm-only #()) warm-only)
   (<- one-slot tuple (launch-order #(#("env-w1" True) #("env-w2" True)) 0 0 1))
   (assert (= one-slot #("env-w1")) one-slot))
+
+
+(val MIB (** 1024 2))
+
+
+(deftest test-a-prepare-layer-for-one-preparation-launches-one-at-a-time
+  ;; 失敗ケース(2026-11-09 の k3s-2): 準備の層 640 MiB(1 本分)に job の準備 2 本を CPU の枠 2 だけで並べ、1 本 約 360 MB の準備が層の
+  ;; 上限で互いを OOM kill し合った。層の空きで絞れば、見込みの山 480 MiB(640 MiB × 0.75)の準備は空いた層に 1 本だけ起き、走っている
+  ;; 間(取り置きを引いた空き 160 MiB)は次を起こさず待たせる。反例: 層の空きを渡さない worker(層の無い機体)は今どおり枠まで起こす。
+  (val waiting #(#("env-j1" False) #("env-j2" False)))
+  (val needs {"env-j1" (* 480 MIB) "env-j2" (* 480 MIB)})
+  (<- empty tuple (launch-order waiting 0 0 2 (PrepareRoom :free (* 640 MIB) :default-need (* 480 MIB) :needs needs)))
+  (assert (= empty #("env-j1")) empty)
+  (<- busy tuple (launch-order #(#("env-j2" False)) 1 0 2 (PrepareRoom :free (* 160 MIB) :default-need (* 480 MIB) :needs needs)))
+  (assert (= busy #()) busy)
+  (<- unlimited tuple (launch-order waiting 0 0 2))
+  (assert (= unlimited #("env-j1" "env-j2")) unlimited)
+  ;; 層が 2 本分あれば、CPU の枠まで並べる(層で絞るのは足りない時だけ)。
+  (<- wide tuple (launch-order waiting 0 0 2 (PrepareRoom :free (* 1024 MIB) :default-need (* 480 MIB) :needs needs)))
+  (assert (= wide #("env-j1" "env-j2")) wide))
+
+
+(deftest test-a-preparation-that-does-not-fit-holds-back-the-ones-behind-it
+  ;; 足りない準備は待ちに残し、後ろの小さい準備にも先を譲らない(大きい準備が待ち続けない)。見込みの無いキーは既定の山で数える。
+  (val room (PrepareRoom :free (* 300 MIB) :default-need (* 480 MIB) :needs {"env-small" (* 100 MIB)}))
+  (<- held tuple (launch-order #(#("env-big" False) #("env-small" False)) 0 0 2 room))
+  (assert (= held #()) held)
+  (<- small tuple (launch-order #(#("env-small" False) #("env-big" False)) 0 0 2 room))
+  (assert (= small #("env-small")) small))
+
+
+(deftest test-a-preparation-killed-for-memory-is-relaunched-alone
+  ;; 層の memory の上限で殺された準備(alone)は、走っている準備が無い時だけ起こし、それが走っている間は何も起こさない。層を読めない
+  ;; (free None)時は、走っている準備が無い時の 1 本だけ。
+  (val needs {"env-a" (* 100 MIB) "env-b" (* 100 MIB)})
+  (val wide (* 4096 MIB))
+  (<- waits tuple (launch-order #(#("env-a" False) #("env-b" False)) 1 0 3
+                                (PrepareRoom :free wide :default-need (* 100 MIB) :needs needs :alone (frozenset ["env-a"]))))
+  (assert (= waits #()) waits)
+  (<- alone tuple (launch-order #(#("env-a" False) #("env-b" False)) 0 0 3
+                                (PrepareRoom :free wide :default-need (* 100 MIB) :needs needs :alone (frozenset ["env-a"]))))
+  (assert (= alone #("env-a")) alone)
+  (<- behind tuple (launch-order #(#("env-b" False)) 1 0 3
+                                 (PrepareRoom :free wide :default-need (* 100 MIB) :needs needs :running-alone True)))
+  (assert (= behind #()) behind)
+  (<- unread tuple (launch-order #(#("env-a" False) #("env-b" False)) 0 0 3 (PrepareRoom :free None :default-need 0 :needs needs)))
+  (assert (= unread #("env-a")) unread)
+  (<- unread-busy tuple (launch-order #(#("env-b" False)) 1 0 3 (PrepareRoom :free None :default-need 0 :needs needs)))
+  (assert (= unread-busy #()) unread-busy))
+
+
+(deftest test-the-oom-kills-of-a-preparation-group-are-read-from-its-memory-events
+  (<- killed int (oom-kills-of "low 0\nhigh 0\nmax 12\noom 3\noom_kill 2\noom_group_kill 1\n"))
+  (assert (= killed 2) killed)
+  (<- none int (oom-kills-of ""))
+  (assert (= none 0) none)
+  (<- failure (memory-killed-failure 1 -9 "/s/k.log"))
+  (assert (= #(failure.kind failure.retryable) #(EnvFailureKind.MEMORY-KILLED False)) failure)
+  (assert (in "/s/k.log" failure.detail) failure))
 
 
 (deftest test-answer-files-are-read-into-typed-answers
