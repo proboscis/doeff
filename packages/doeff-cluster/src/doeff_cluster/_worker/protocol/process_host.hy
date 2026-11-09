@@ -84,7 +84,8 @@
 
 (defrecord ForkedFrom
   "待ちの子から分けて起こした子の印(#3646): start-ticks = 分かれた子 A の /proc の起動の刻(pid の使い回しを見分ける)・exit-path = A が
-   終了コードを書く file・holds-input = A の入力の pipe を握って頼んだ(service — 退きの知らせをそこへ書く)。
+   終了コードを書く file・holds-input = A の入力の pipe を握って頼んだ(service — 退きの知らせをそこへ書く・頼みの欄を受ける版の待ちの子から分けた task —
+   worker の消失だけを EOF で知らせる)。
    観測・止め・回収は pid とこの印で問う(汎用の子 process の効果ではなく、待ちの子の効果)。"
   (#^ int start-ticks)
   (#^ str exit-path)
@@ -427,9 +428,14 @@
           ;; worker より長く生きる service(launch の outlives-worker)は、A に入力の EOF を退きとして待たせる
           ;; (入れ物 shim の --orphan-seconds と同じ値。印 orphanForks の無い版の待ちの子へは頼まない — warm_rules の warm-start)。
           (<- orphan (| float None) (orphan-seconds-of spec))
+          ;; task も、頼みの欄を受ける版の待ちの子(action.warm-places — 印 serviceForks)へは、worker が握る自分だけの入力の pipe を頼む。
+          ;; 頼まないと A は待ちの子の標準入力を継ぎ、worker が終わった待ちの子を回収してその pipe(hold-stdin)を閉じた時に、EOF を
+          ;; worker の消失と読んで走っている task へ TERM を送る(11-08 15:25Z の atlas — 待ちの子 1 つの終わりで、そこから分けた task が
+          ;; 全部 SIGTERM で終わった)。握った pipe の EOF は worker の消失と A の終わりだけ。受けない版へは知らない欄を送らない。
+          (val held (or service action.warm-places))
           (<- forked (ForkFromWarm :socket-path place.socket :entry entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)
-                                   :hold-input service :notice-env (if service settings.notice-env None) :orphan-seconds orphan
+                                   :hold-input held :notice-env (if service settings.notice-env None) :orphan-seconds orphan
                                    :cgroup-procs (cond service settings.service-procs
                                                        action.warm-places job-procs
                                                        True None)))
@@ -437,7 +443,7 @@
                           (JobNotStarted :name spec.name :warm-key action.warm-key :detail (+ "待ちの子が分けるのを断った: " forked.detail)
                                          :at-ms started-ms)
                           (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
-                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path :holds-input service)))))
+                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path :holds-input held)))))
       (do (<- argv tuple (shim-argv settings spec plan.argv job-procs))
           (<- answer (StartProcess :argv argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
                                    :process-group True :hold-stdin True :reap-group True))

@@ -286,6 +286,48 @@
   (assert (not-in "SECRET_TOKEN" env) env))
 
 
+(defhandler input-recorded
+  ;; 検の差し込み: process-host が待ちの子へ送る頼みの hold-input を memory の file に書き残してから、台本の答え手へ渡す。
+  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env orphan-seconds]
+    (<- (WriteText FORK-RECORD (json.dumps {"holdInput" hold-input}) :replace True))
+    (<- answer (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env :log-path log-path :exit-path exit-path
+                             :grace-seconds grace-seconds :hold-input hold-input :cgroup-procs cgroup-procs :notice-env notice-env
+                             :orphan-seconds orphan-seconds))
+    (resume answer)))
+
+
+(defk fork-input-of [spec places]
+  {:pre [(: spec JobSpec) (: places bool)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "warm-key の在る task を、頼みの欄を受ける版の待ちの子か(places — StartJob の warm-places)を添えて起こし、送った頼みの hold-input を返すため。"
+  (<- (StartJob spec 1 "/roots/env-a" :warm-key "env-a" :warm-places places))
+  (<- text str (ReadText FORK-RECORD))
+  (json.loads text))
+
+
+(defk asked-input [spec places tmp-path]
+  {:pre [(: spec JobSpec) (: places bool) (: tmp-path Path)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "台本の待ちの子の世界の上で fork-input-of を回すため。"
+  (<- settings (host-settings tmp-path))
+  (<- place WarmPlace (warm-place settings.warm-dir "env-a"))
+  (val warm (WarmScript :sockets #((WarmSocket :path place.socket)) :runs #((WarmRun :entry spec.entry :polls 1 :exit-code 0))))
+  (val script (ProcessScript :commands #() :env SCRIPT-ENV))
+  (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
+                       (scripted-warm-process-handler warm) input-recorded (process-host settings)]
+         (fork-input-of spec places))))
+
+
+(deftest test-a-warm-key-task-asks-for-an-input-pipe-the-worker-holds-so-it-outlives-the-warm-child [tmp-path]
+  ;; 11-08 15:25Z の atlas: 待ちの子から分けた task の A は、待ちの子の標準入力を継いでいた。worker が終わった待ちの子を回収して、その
+  ;; 標準入力の pipe(hold-stdin)を閉じると、走っている task の A が EOF を「worker の消失」と読んで入口へ TERM を送った(待ちの子 1 つが
+  ;; 終わるたびに、そこから分けた task が全部 SIGTERM で終わった)。頼みの欄を受ける版の待ちの子へは、task も worker が握る自分だけの
+  ;; 入力の pipe を頼む(EOF = worker の消失だけ)。受けない版へは知らない欄を送らない(前の形のまま)。
+  (<- spec JobSpec (task-spec-on "env-a"))
+  (<- held dict (asked-input spec True tmp-path))
+  (assert (= held {"holdInput" True}) held)
+  (<- old dict (asked-input spec False tmp-path))
+  (assert (= old {"holdInput" False}) old))
+
+
 (defk start-then-observe [spec]
   {:pre [(: spec JobSpec)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "warm-key の在る task を起こし、起こしの答えと、その後の観測を返すため。"
