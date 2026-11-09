@@ -411,7 +411,10 @@ def _doeff_hy_module(module: str) -> bool:
 
 def _synthesized_import(statement: ast.stmt) -> bool:
     """Is this an import statement that a macro synthesizes for each definition (a user's duplicate import must stay red, so only these are collapsed to one):
-    imports of doeff-hy's own modules, and
+    imports of doeff-hy's own modules (`from doeff_hy.<m> import …` only when every bound name is hidden — macros bind the names they pull from doeff-hy
+    under a `_` name, such as handle's `_doeff_…` clause endings and the `doeff_hy.macros` helpers; an author's `(import doeff_hy._declarations [declared-value])`
+    in a defmacro or defn body binds a public name and is a local of that function, so moving it to module level made the generated .pyi
+    re-export names the runtime module does not have), and
     `import <module> as _doeff_<name>`, which binds a module under an alias with the expansion-name prefix `_doeff_` (expansion_names.PREFIX) (the form emitted by definition macros of the owning package — the imports of the system type and
     constructor modules that doeff-cluster's defsystem emits per system. doeff-hy does not hold the owning module's spelling), and the `import doeff_core_effects._outcomes` (static_view.DEFEFFECT_OUTCOMES_MODULE) that defeffect
     emits when it places the way answers are divided, and `from doeff import Pass as _doeff_Pass`, where handle and defhandler bind a
@@ -428,8 +431,10 @@ def _synthesized_import(statement: ast.stmt) -> bool:
                 for alias in names
             )
         case ast.ImportFrom(module=str(module), level=0, names=names):
-            return _doeff_hy_module(module) or all(
-                is_alias_import(module, alias.name, alias.asname) for alias in names
+            return all(
+                (_doeff_hy_module(module) and (alias.asname or alias.name).startswith("_"))
+                or is_alias_import(module, alias.name, alias.asname)
+                for alias in names
             )
         case _:
             return False
