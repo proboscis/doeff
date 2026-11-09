@@ -43,7 +43,7 @@
 (val ATLAS-LAYOUT (+ "worker:memory.min=256M,cpu.weight=1000 services:memory.min=256M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100 "
                      "clis:memory.max=1536M,cpu.weight=100 commands:memory.max=1536M,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000"))
 (val HELIOS-LAYOUT (+ "worker:memory.min=1G,cpu.weight=1000 services:memory.min=24G,cpu.weight=1000 jobs:memory.max=8G,cpu.weight=100 "
-                      "clis:memory.max=10G,cpu.weight=100 commands:memory.max=1G,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000"))
+                      "clis:memory.max=10G,cpu.weight=100 commands:memory.max=4608M,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000"))
 (val CONTAINER-MAX (* 22 GIB))
 (val FLOOR (* 1536 MIB))
 (val CEILING (* 6 GIB))
@@ -98,10 +98,10 @@
 
 
 (deftest test-the-container-room-counts-the-other-limited-layers-and-bounds-the-jobs-layer
-  ;; jobs と clis の外の限る層の宣言の和: atlas は commands 1536M + exec 512M・helios は commands 1G + exec 512M。
+  ;; jobs と clis の外の限る層の宣言の和: atlas は commands 1536M + exec 512M・helios は commands 4608M + exec 512M。
   (<- atlas-held int (layout-held-bytes ATLAS-LAYOUT #("jobs" "clis")))
   (<- helios-held int (layout-held-bytes HELIOS-LAYOUT #("jobs" "clis")))
-  (assert (= #(atlas-held helios-held) #((* 2 GIB) (* 1536 MIB))) #(atlas-held helios-held))
+  (assert (= #(atlas-held helios-held) #((* 2 GIB) (* 5120 MIB))) #(atlas-held helios-held))
   ;; container の中の空き = 上限 − working set − 余裕 − held。上限の無い container は None。
   (<- box int (box-free CONTAINER-MAX (* 5 GIB) GIB atlas-held))
   (<- open (| int None) (box-free None (* 5 GIB) GIB atlas-held))
