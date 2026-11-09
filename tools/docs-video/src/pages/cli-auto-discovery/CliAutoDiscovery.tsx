@@ -1,5 +1,6 @@
 // The video on the CLI Auto-Discovery page (docs/14-cli-auto-discovery.md): how doeff run picks the handlers for a
 // program by where the program lives. Eight scenes, each with headlines a synthetic voice reads (narration.json):
+//   0. The title and login, still, while the introduction is said.
 //   1. A program only yields effects; which handlers answer them is decided when it runs. --program is enough.
 //   2. The markers: # doeff: interpreter, default on a function, # doeff: default on an annotated variable.
 //   3. Interpreter discovery: the module path gives a hierarchy, and the closest marked interpreter wins.
@@ -14,7 +15,7 @@ import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, glow, Headlines, IntroStill, lineMid, Lines, PAD, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -69,6 +70,11 @@ const onion = (cx: number, cy: number, w: number, h: number, margin: number) => 
 };
 
 const PROGRAM = 'myapp.features.auth.login.login_program';
+
+// 0. What the video is about, said over the title and the function it follows, shown still from the first frame.
+const OPENING_LINES: Lines = [[0, '']];
+const OPENING = f(10.0);
+const OpeningScene: React.FC = () => <IntroStill title="CLI auto-discovery" label="login: only asks for a database host and a timeout" code={LOGIN} w={620} />;
 
 // Scene 1 — a program only yields effects; the handlers are decided when it runs (cli.log, the first three runs).
 
@@ -628,6 +634,7 @@ const OutroScene: React.FC = () => {
 
 // The scenes in order; Root.tsx registers CLI_AUTO_DISCOVERY.length frames of CLI_AUTO_DISCOVERY.Video.
 export const CLI_AUTO_DISCOVERY = narrate('cli-auto-discovery', DURATIONS, NARRATION, [
+  {length: OPENING, starts: startsOf(OPENING_LINES), ids: ['t0'], node: <OpeningScene />},
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: MARKERS, starts: startsOf(MARKER_LINES), ids: ['m1', 'm2', 'm3'], node: <MarkerScene />},
   {length: INTERP, starts: startsOf(INTERP_LINES), ids: ['i1', 'i2', 'i3', 'i4'], node: <InterpreterScene />},

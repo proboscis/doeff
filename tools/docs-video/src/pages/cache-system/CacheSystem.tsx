@@ -1,5 +1,6 @@
 // The video on the Cache System page (docs/07-cache-system.md): caching is two effects and the handler that answers
 // them. Five scenes and an outro, each with headlines a synthetic voice reads (narration.json):
+//   0. The title and with_manual_cache, still, while the introduction is said.
 //   1. CacheGet asks for the value under a key, CachePut stores one; which cache answers is the handler's choice.
 //   2. Miss, then hit: the handler throws KeyError into the program at the yield, the program computes and stores;
 //      the second call is answered from the cache (408.2 ms, then 0.5 ms).
@@ -12,7 +13,7 @@ import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {fadeAt, mix, ramp} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
+import {CodeBlock, glow, Headlines, IntroStill, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -115,6 +116,11 @@ const bandOf = (frame: number, steps: [number, number][]) => {
 };
 
 // Scene 1 — two effects ask and store; the handler around the program answers them.
+
+// 0. What the video is about, said over the title and the function it follows, shown still from the first frame.
+const OPENING_LINES: Lines = [[0, '']];
+const OPENING = f(10.0);
+const OpeningScene: React.FC = () => <IntroStill title="The cache system" label="with_manual_cache: looks a value up by a key, and works it out on a miss" code={MANUAL} w={760} />;
 
 const INTRO_LINES: Lines = [
   [0, 'The cache system: the program asks for a value it has worked out before.'],
@@ -619,6 +625,7 @@ const Outro: React.FC = () => {
 
 // The scenes in order; Root.tsx registers CACHE_SYSTEM.length frames of CACHE_SYSTEM.Video.
 export const CACHE_SYSTEM = narrate('cache-system', DURATIONS, NARRATION, [
+  {length: OPENING, starts: startsOf(OPENING_LINES), ids: ['a0'], node: <OpeningScene />},
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['a1', 'a2', 'a3'], node: <IntroScene />},
   {length: MISS, starts: startsOf(MISS_LINES), ids: ['b1', 'b2', 'b3', 'b4', 'b5'], node: <MissScene />},
   {length: POLICY, starts: startsOf(POLICY_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <PolicyScene />},

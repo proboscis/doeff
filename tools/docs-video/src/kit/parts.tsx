@@ -1,6 +1,7 @@
 // The parts the scenes of the docs videos are drawn with: the headline at the top, a code box, an effect or
 // answer on the move, the glow of whatever is at work, and a clock face.
 import React from 'react';
+import {AbsoluteFill} from 'remotion';
 import {fadeAt} from './motion';
 import {ACCENT, BG, f, LOOK, MONO, MUTED, SANS, TEXT} from './theme';
 import {useSceneFrame} from './warp';
@@ -116,5 +117,20 @@ export const Clock: React.FC<{seconds: number; c: string; secondHand: boolean}> 
       {secondHand && hand(second, 46, 1.5, c)}
       <circle cx={60} cy={60} r={4} fill={c} />
     </svg>
+  );
+};
+
+// The opening of a video, still from the first frame while the introduction is said: its title, what doeff is, and
+// the code of the function the video follows.
+export const IntroStill: React.FC<{title: string; label: string; code: string[]; w: number}> = ({title, label, code, w}) => {
+  const x = (1280 - w) / 2;
+  const centered = {position: 'absolute', left: 0, right: 0, textAlign: 'center', fontFamily: SANS} as const;
+  return (
+    <AbsoluteFill>
+      <div style={{...centered, top: 62, fontSize: 60, fontWeight: 700, color: TEXT}}>{title}</div>
+      <div style={{...centered, top: 152, fontSize: 24, color: MUTED}}>doeff: algebraic effects for Python</div>
+      <div style={{position: 'absolute', left: x, top: 226, fontFamily: SANS, fontSize: 20, color: ACCENT, whiteSpace: 'nowrap'}}>{label}</div>
+      <CodeBlock lines={code} x={x} y={260} w={w} size={20} line={30} />
+    </AbsoluteFill>
   );
 };

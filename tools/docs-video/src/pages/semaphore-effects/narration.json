@@ -1,5 +1,9 @@
 [
  {
+  "id": "i0",
+  "text": "This video shows the semaphore of doeff, which limits how many tasks run at once. doeff is a library for algebraic effects in Python. We follow one function, named call, which takes a permit, does its work, and gives the permit back."
+ },
+ {
   "id": "i1",
   "text": "A semaphore is a fixed number of permits that tasks take turns holding."
  },

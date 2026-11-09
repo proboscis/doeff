@@ -1,5 +1,9 @@
 [
  {
+  "id": "a0",
+  "text": "This video shows how caching works in doeff, a library for algebraic effects in Python. We follow one function, with manual cache. It looks a value up by a key, and works it out only when the key is missing."
+ },
+ {
   "id": "a1",
   "text": "The cache system of doeff. A program asks for a value it has worked out before, and a handler keeps it."
  },

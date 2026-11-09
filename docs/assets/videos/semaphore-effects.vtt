@@ -1,77 +1,89 @@
 WEBVTT
 
+i0.1
+00:00:00.250 --> 00:00:06.050
+This video shows the semaphore of doeff, which limits how many tasks run at once.
+
+i0.2
+00:00:06.050 --> 00:00:09.700
+doeff is a library for algebraic effects in Python.
+
+i0.3
+00:00:09.700 --> 00:00:16.800
+We follow one function, named call, which takes a permit, does its work, and gives the permit back.
+
 i1
-00:00:00.250 --> 00:00:04.750
+00:00:17.350 --> 00:00:21.850
 A semaphore is a fixed number of permits that tasks take turns holding.
 
 i2.1
-00:00:05.750 --> 00:00:10.917
+00:00:22.850 --> 00:00:28.017
 Create Semaphore, Acquire Semaphore and Release Semaphore are effects.
 
 i2.2
-00:00:10.917 --> 00:00:14.450
+00:00:28.017 --> 00:00:31.550
 The scheduler answers them, like Spawn and Wait.
 
 i3.1
-00:00:15.250 --> 00:00:22.133
+00:00:32.350 --> 00:00:39.233
 A task that finds no permit is parked: the scheduler holds its k, and the other tasks run on.
 
 i3.2
-00:00:22.133 --> 00:00:23.400
+00:00:39.233 --> 00:00:40.500
 No thread blocks.
 
 p1
-00:00:24.250 --> 00:00:31.750
+00:00:41.350 --> 00:00:48.850
 Create Semaphore of two: four calls share two permits, so at most two are inside at once.
 
 p2
-00:00:32.750 --> 00:00:40.000
+00:00:49.850 --> 00:00:57.100
 C and D find no permit. Their k's wait in the semaphore's queue, in the order they asked.
 
 p3
-00:00:40.750 --> 00:00:48.600
+00:00:57.850 --> 00:01:05.700
 Each release lets the next one in: C at one second, D at two. All four finish by four seconds.
 
 f1
-00:00:50.250 --> 00:00:55.650
+00:01:07.350 --> 00:01:12.750
 With one permit, a semaphore is a mutex. Waiters are served first come, first served.
 
 f2
-00:00:56.750 --> 00:01:04.200
+00:01:13.850 --> 00:01:21.300
 A release hands the permit straight to the oldest waiter. It never sits free for another task to grab.
 
 f3
-00:01:04.750 --> 00:01:09.800
+00:01:21.850 --> 00:01:26.900
 So late, which asks right after the release, queues behind second and third.
 
 c1
-00:01:13.250 --> 00:01:18.550
+00:01:30.350 --> 00:01:35.650
 Cancel a task while it waits for a permit, and the scheduler takes it out of the queue.
 
 c2
-00:01:19.750 --> 00:01:25.750
+00:01:36.850 --> 00:01:42.850
 w1 resumes with a Task Cancelled Error at its Acquire. It never took a permit.
 
 c3
-00:01:26.300 --> 00:01:31.900
+00:01:43.400 --> 00:01:49.000
 So when the holder releases at two seconds, the permit goes to w2.
 
 l1
-00:01:33.800 --> 00:01:41.100
+00:01:50.900 --> 00:01:58.200
 A semaphore does not track who holds a permit. Fail before Release Semaphore, and that permit is lost.
 
 l2
-00:01:42.300 --> 00:01:50.400
+00:01:59.400 --> 00:02:07.500
 Without try and finally, the next task is still waiting five seconds later, and would wait forever.
 
 l3
-00:01:50.950 --> 00:01:57.300
+00:02:08.050 --> 00:02:14.400
 With try and finally, the release runs on failure too, and the next task enters at once.
 
 o1.1
-00:01:59.450 --> 00:02:06.733
+00:02:16.550 --> 00:02:23.833
 doeff: permits are effects, and a waiting task is a parked k that the scheduler resumes in order.
 
 o1.2
-00:02:06.733 --> 00:02:13.200
+00:02:23.833 --> 00:02:30.300
 Another handler can answer the same effects, say, across a cluster. pip install doeff.

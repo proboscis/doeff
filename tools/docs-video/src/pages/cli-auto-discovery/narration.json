@@ -1,5 +1,9 @@
 [
  {
+  "id": "t0",
+  "text": "This video shows how doeff run picks the handlers for a program. doeff is a library for algebraic effects in Python. We follow one small function, login, which only asks for a database host and a timeout."
+ },
+ {
   "id": "t1",
   "text": "CLI auto-discovery. doeff run finds the interpreter and the environments for your program."
  },

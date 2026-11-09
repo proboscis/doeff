@@ -1,6 +1,7 @@
 // The video on docs/21-semaphore-effects.md: a semaphore is a fixed number of permits, its three operations are
 // effects the scheduler answers, and a task without a permit is a parked k. Five scenes, each with headlines a
 // synthetic voice reads (narration.json), then the outro:
+//   0. The title and call, still, while the introduction is said.
 //   1. CreateSemaphore, AcquireSemaphore and ReleaseSemaphore are effects; a task that finds no permit is parked.
 //   2. A pool of 2 permits shared by 4 calls: at most 2 inside, the others queue (measure/pool.py).
 //   3. FIFO and direct transfer: a release hands the permit to the oldest waiter, so a late task cannot take it
@@ -13,7 +14,7 @@ import React from 'react';
 import {AbsoluteFill, Easing, interpolate} from 'remotion';
 import {clamp, fadeAt, mix, ramp, smooth} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
-import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
+import {Clock, CodeBlock, glow, Headlines, IntroStill, lineMid, Lines, Pill, startsOf} from '../../kit/parts';
 import {ACCENT, BG, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
@@ -119,6 +120,11 @@ const INTRO_LINES: Lines = [
   [15, 'A task that finds no permit is parked: the scheduler holds its k, and the other tasks run on.'],
 ];
 const INTRO = f(24);
+// 0. What the video is about, said over the title and the function it follows, shown still from the first frame.
+const OPENING_LINES: Lines = [[0, '']];
+const OPENING = f(10.0);
+const OpeningScene: React.FC = () => <IntroStill title="Semaphore effects" label="call: takes a permit, does its work, and gives the permit back" code={CALL} w={620} />;
+
 const EFFECTS = ['CreateSemaphore(2)', 'AcquireSemaphore(sem)', 'ReleaseSemaphore(sem)'];
 const CALL = [
   '@do',
@@ -623,6 +629,7 @@ const Outro: React.FC = () => {
 
 // The scenes in order; Root.tsx registers SEMAPHORE_EFFECTS.length frames of SEMAPHORE_EFFECTS.Video.
 export const SEMAPHORE_EFFECTS = narrate('semaphore-effects', DURATIONS, NARRATION, [
+  {length: OPENING, starts: startsOf(OPENING_LINES), ids: ['i0'], node: <OpeningScene />},
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2', 'i3'], node: <IntroScene />},
   {length: PL, starts: startsOf(PL_LINES), ids: ['p1', 'p2', 'p3'], node: <PoolScene />},
   {length: FF, starts: startsOf(FF_LINES), ids: ['f1', 'f2', 'f3'], node: <FifoScene />},

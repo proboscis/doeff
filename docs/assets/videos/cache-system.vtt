@@ -1,93 +1,105 @@
 WEBVTT
 
+a0.1
+00:00:00.250 --> 00:00:05.517
+This video shows how caching works in doeff, a library for algebraic effects in Python.
+
+a0.2
+00:00:05.517 --> 00:00:08.050
+We follow one function, with manual cache.
+
+a0.3
+00:00:08.050 --> 00:00:12.650
+It looks a value up by a key, and works it out only when the key is missing.
+
 a1
-00:00:00.250 --> 00:00:07.750
+00:00:13.200 --> 00:00:20.700
 The cache system of doeff. A program asks for a value it has worked out before, and a handler keeps it.
 
 a2
-00:00:08.300 --> 00:00:15.600
+00:00:21.250 --> 00:00:28.550
 Two effects do the asking. Cache Get asks for the value under a key. Cache Put stores one.
 
 a3
-00:00:16.300 --> 00:00:21.000
+00:00:29.250 --> 00:00:33.950
 Which cache answers them is not in the program. It is up to the handler around it.
 
 b1
-00:00:23.300 --> 00:00:29.150
+00:00:36.250 --> 00:00:42.100
 The first call. Cache Get goes out to the handler, and the cache has nothing under my key.
 
 b2
-00:00:29.800 --> 00:00:35.500
+00:00:42.750 --> 00:00:48.450
 So the handler throws a key error into the program, right at the yield where it was waiting.
 
 b3.1
-00:00:36.300 --> 00:00:38.650
+00:00:49.250 --> 00:00:51.600
 The program catches it, does the work,
 
 b3.2
-00:00:38.650 --> 00:00:43.350
+00:00:51.600 --> 00:00:56.300
 which takes four hundred milliseconds, and stores the answer with Cache Put.
 
 b4
-00:00:44.300 --> 00:00:50.500
+00:00:57.250 --> 00:01:03.450
 The second call. This time the handler finds my key, and resumes the program with forty-two.
 
 b5
-00:00:51.800 --> 00:00:57.700
+00:01:04.750 --> 00:01:10.650
 Half a millisecond instead of four hundred. The log shows a miss, then a hit.
 
 c1
-00:00:58.300 --> 00:01:05.450
+00:01:11.250 --> 00:01:18.400
 Cache Put can carry a policy: a time to live, a lifecycle, a storage, and metadata.
 
 c2
-00:01:06.300 --> 00:01:12.150
+00:01:19.250 --> 00:01:25.100
 The policy travels inside the effect, so the handler receives it together with the value.
 
 c3
-00:01:12.800 --> 00:01:19.400
+00:01:25.750 --> 00:01:32.350
 A persistent lifecycle resolves to disk storage. With no hints, the entry belongs in memory.
 
 c4.1
-00:01:20.300 --> 00:01:23.700
+00:01:33.250 --> 00:01:36.650
 These are hints, and the handler decides what they mean.
 
 c4.2
-00:01:23.700 --> 00:01:31.100
+00:01:36.650 --> 00:01:44.050
 The in-memory handler keeps every entry the same way: one with a time to live of a tenth of a second is still there later.
 
 e1
-00:01:32.300 --> 00:01:37.400
+00:01:45.250 --> 00:01:50.350
 The page's API example. fetch user is called twice, for the same user.
 
 e2
-00:01:38.300 --> 00:01:45.100
+00:01:51.250 --> 00:01:58.050
 The first call misses, sends the request, and stores the response. The second is served from the cache.
 
 e3
-00:01:47.300 --> 00:01:54.250
+00:02:00.250 --> 00:02:07.200
 Here the handler answer from memory decides what Get Json means, and it got exactly one request.
 
 d1
-00:01:54.800 --> 00:01:59.750
+00:02:07.750 --> 00:02:12.700
 Now the same program, run twice, under different cache handlers.
 
 d2
-00:02:00.300 --> 00:02:06.400
+00:02:13.250 --> 00:02:19.350
 The in-memory handler starts empty in every run, so both runs do the work.
 
 d3
-00:02:07.300 --> 00:02:14.050
+00:02:20.250 --> 00:02:27.000
 The SQLite handler keeps the cache in a file. The second run is a hit, in two milliseconds.
 
 d4
-00:02:15.300 --> 00:02:23.650
+00:02:28.250 --> 00:02:36.600
 With no cache handler at all, Cache Get is unhandled. The program never chose a cache. The handler does.
 
 o1.1
-00:02:24.200 --> 00:02:28.200
+00:02:37.150 --> 00:02:41.150
 Caching in doeff: the program asks and stores through effects,
 
 o1.2
-00:02:28.200 --> 00:02:32.000
+00:02:41.150 --> 00:02:44.950
 and the handler you install decides where the answers live.
