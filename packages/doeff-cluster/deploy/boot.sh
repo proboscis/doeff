@@ -55,7 +55,7 @@
 #     - drain は組まない: 印が無くても venv の hy が在れば(焼きの失敗のまま起動した worker の preStop)それを使い、無ければ断る。
 #   uv の cache は DOEFF_UV_CACHE_DIR(既定 $WORK_DIR/state/uv-cache — 実行環境の root と同じ dir)、Python は $WORK_DIR/state/python。crate の取得先は $WORK_DIR/state/cargo。
 #   uv の cache の用意(置き場の写しを空の cache へ — DOEFF_UV_CACHE_SEED_URL)と片付け(DOEFF_UV_CACHE_GC_DAYS)は、準備の終わりに背後で
-#   起こす(doeff_uv_cache_upkeep・deploy/uv_cache.py)。
+#   起こす(doeff_uv_cache_upkeep・deploy/uv_cache.py — 役 worker では常駐し、片付けを決まった間隔で回し続ける)。
 #   古い版の root の片付け(doeff_boot_roots_gc・deploy/boot_roots.py): root で起こす process は、root の印 .doeff-boot-use を付け直して
 #   その印に共有の錠(fd 7 — exec した worker・coordinator・records が終わるまで持つ)を持つ(doeff_root_hold — boot.lock の下で取るので、
 #   片付けが判じる間に錠の無い使い手は現れない)。準備の終わりに背後で、今の版・最後に使った新しい DOEFF_BOOT_ROOTS_KEEP 本(既定は
@@ -329,7 +329,10 @@ doeff_python_installs_gc() {
 }
 
 # uv の cache の用意(seed — 新しい node の空の cache に、置き場の写しを入れる)と片付け(gc — 古い項目と使われない venv を消す)を、
-# 起動の待ちの外で 1 度起こす(役 worker と prepare — 起動と版の入れ替えのたび。動詞と値の意味は deploy/uv_cache.py の頭の註の upkeep)。
+# 起動の待ちの外で起こす(役 worker と prepare — 起動と版の入れ替えのたび。動詞と値の意味は deploy/uv_cache.py の頭の註の upkeep)。
+# 役 worker は常駐させ(--repeat)、片付けを DOEFF_UV_CACHE_GC_EVERY_SECONDS ごとに回し続ける — gc の予算は回の時にしか守られず、
+# 起動と版の入れ替えの時だけの回では、回の間に cache が予算の外で育った(2026-11-09 の atlas — 予算 6 GiB に対し回の前 18.25 GB)。
+# 版の入れ替えで起きた新しい世代の常駐が持ち手を替え、前の世代の常駐は退く。役 prepare は 1 度で終わる(続く世代の起動が常駐させる)。
 # 置き場の URL(DOEFF_UV_CACHE_SEED_URL)か片付けの日数(DOEFF_UV_CACHE_GC_DAYS)が環境に在る時だけ。boot.lock を離した後に呼ぶ
 # (背後の子が錠の fd を継がない)。子の出力は cache の dir の .doeff-uv-upkeep.log へ足す — 役 prepare の標準出力(root の path の 1 行)に
 # 混ぜない。子が落ちても起動は止めない。
@@ -341,9 +344,11 @@ doeff_uv_cache_upkeep() {
     return 0
   fi
   mkdir -p "$DOEFF_UV_CACHE_DIR"
+  set -- --cache "$DOEFF_UV_CACHE_DIR"
+  [ "$role" != worker ] || set -- "$@" --repeat
   # uv の cache の錠を持たない(--no-cache)— 片付けの間、ほかの uv の cache の操作を待たせない。道具は標準の library だけを使う。
   nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$upkeep_tool" upkeep \
-    --cache "$DOEFF_UV_CACHE_DIR" </dev/null >>"$DOEFF_UV_CACHE_DIR/.doeff-uv-upkeep.log" 2>&1 &
+    "$@" </dev/null >>"$DOEFF_UV_CACHE_DIR/.doeff-uv-upkeep.log" 2>&1 &
   echo "boot: uv の cache の用意と片付けを背後で起こした(log $DOEFF_UV_CACHE_DIR/.doeff-uv-upkeep.log)" >&2
 }
 

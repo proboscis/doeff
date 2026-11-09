@@ -15,9 +15,11 @@
 - 置き場: s3://<bucket>/<key> の URL は Secret の鍵 endpoint(Secret が無ければ AWS_ENDPOINT_URL_S3)へ送り、upkeep は Secret の名
   だけを替えると別の置き場から入れ、戻すと元の置き場から入れる。endpoint が無ければ断る。http(s) の URL と file の path はそのまま。
 - upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。refresh は名指した node でだけ撃つ。
+  常駐の upkeep(--repeat)は gc と refresh の間隔の短い方ごとに回し続け、後から起きた常駐の upkeep が持ち手の印を替えると退く。
 - refresh: 空の cache に project ごとの取り込みを撃ち(venv は project の外)、組みの一時の環境を除いて pack し、lock の hash を
   metadata に載せて PUT する。置いてある写しの hash が同じか、置いてから間が無ければ組まない。取り込みが落ちれば PUT しない。
-- boot.sh: doeff_uv_cache_upkeep は役 worker と prepare で、値が環境に在る時だけ道具を背後で起こし、標準出力に何も出さない。
+- boot.sh: doeff_uv_cache_upkeep は役 worker と prepare で、値が環境に在る時だけ道具を背後で起こし、標準出力に何も出さない。役 worker
+  では常駐させる(--repeat)。
 """
 
 from __future__ import annotations
@@ -744,6 +746,103 @@ def test_upkeep_collects_when_seeding_fails(tmp_path: Path) -> None:
     assert result["gc"]["ran"] is True
 
 
+class _Clock:
+    """keep の眠りを数える偽の時計 — 眠った秒を足し、after 秒を越えたら on_wake を 1 度撃つ。"""
+
+    def __init__(self, after: float = float("inf"), on_wake=None) -> None:
+        self.slept = 0.0
+        self.after = after
+        self.on_wake = on_wake
+
+    def __call__(self, seconds: float) -> None:
+        self.slept += seconds
+        if self.on_wake is not None and self.slept >= self.after:
+            wake, self.on_wake = self.on_wake, None
+            wake()
+
+
+def test_keep_runs_upkeep_every_gc_period_until_a_later_keeper_claims(tmp_path: Path) -> None:
+    """常駐の upkeep は gc の間隔ごとに upkeep を回し続ける(起動の時の 1 回だけでない — 回が起動と版の入れ替えだけだと、回の間に
+    cache が予算の外で育った)。後から起きた常駐の upkeep が持ち手の印を書き替えると、印を読む次の眠りの区切りで退く。"""
+    cache = tmp_path / "cache"
+    settings = uv_cache.UpkeepSettings(gc_days=7.0, gc_every_seconds=3600.0)
+    runs: list[float] = []
+    clock = _Clock(after=3 * 3600 + 30, on_wake=lambda: uv_cache.claim_keeper(cache))
+    emitted: list[dict[str, object]] = []
+
+    def run(where: Path, got: object) -> dict[str, object]:
+        assert (where, got) == (cache, settings)
+        runs.append(clock.slept)
+        return {"verb": "upkeep"}
+
+    result = uv_cache.keep(cache, settings, run=run, sleep=clock, emit=emitted.append)
+    assert runs == [0.0, 3600.0, 7200.0, 10800.0]
+    assert emitted == [{"verb": "upkeep"}] * 4
+    assert result == {"verb": "keep", "rounds": 4, "reason": "superseded"}
+    # 退いた持ち手は、印を読む間隔(60 秒)より長く眠り続けない。
+    assert clock.slept == 3 * 3600 + 60
+
+
+def test_keep_wakes_at_the_shorter_of_gc_and_refresh_periods_and_runs_once_without_one(
+    tmp_path: Path,
+) -> None:
+    both = uv_cache.UpkeepSettings(
+        gc_days=7.0,
+        gc_every_seconds=3600.0,
+        seed_url="http://store/b/seed.tar.zst",
+        refresh_projects=(Path("/p"),),
+        node="n1",
+        refresh_node="n1",
+        refresh_every_seconds=600.0,
+    )
+    assert both.wake_seconds == 600.0
+    assert uv_cache.UpkeepSettings(gc_days=7.0, gc_every_seconds=3600.0).wake_seconds == 3600.0
+    seed_only = uv_cache.UpkeepSettings(seed_url="http://store/b/seed.tar.zst")
+    assert seed_only.wake_seconds is None
+    runs: list[int] = []
+    result = uv_cache.keep(
+        tmp_path / "cache",
+        seed_only,
+        run=lambda *_: runs.append(1) or {},
+        sleep=_Clock(),
+        emit=lambda _: None,
+    )
+    assert (runs, result["reason"]) == ([1], "no-period")
+    assert not (tmp_path / "cache" / uv_cache.KEEP_CLAIM).exists()
+
+
+def test_keep_reclaims_when_its_claim_vanishes(tmp_path: Path) -> None:
+    """持ち手の印が消えた(cache を空けた)時は退かずに名乗り直す — 退くと次の起動まで回が止まる。"""
+    cache = tmp_path / "cache"
+    settings = uv_cache.UpkeepSettings(gc_days=7.0, gc_every_seconds=120.0)
+    clock = _Clock(after=60, on_wake=(cache / uv_cache.KEEP_CLAIM).unlink)
+    runs: list[float] = []
+
+    def run(*_: object) -> dict[str, object]:
+        runs.append(clock.slept)
+        if len(runs) == 3:
+            uv_cache.claim_keeper(cache)
+        return {}
+
+    result = uv_cache.keep(cache, settings, run=run, sleep=clock, emit=lambda _: None)
+    assert runs == [0.0, 120.0, 240.0]
+    assert result["reason"] == "superseded"
+
+
+def test_trim_log_keeps_the_tail_of_an_appended_log(tmp_path: Path) -> None:
+    """常駐の upkeep の log(boot.sh が足しの形で開く)は cap を越えると末尾 keep byte だけを残し、続きの書きはその後ろへ足される。"""
+    log = tmp_path / "upkeep.log"
+    log.write_bytes(b"a" * 100 + b"b" * 50)
+    fd = os.open(log, os.O_WRONLY | os.O_APPEND)
+    try:
+        assert uv_cache.trim_log(fd, cap=200, keep=50) is False
+        assert uv_cache.trim_log(fd, cap=120, keep=50) is True
+        os.write(fd, b"c")
+    finally:
+        os.close(fd)
+    assert log.read_bytes() == b"b" * 50 + b"c"
+
+
 def test_upkeep_refreshes_only_on_the_named_node() -> None:
     env = {
         "DOEFF_UV_CACHE_SEED_URL": "http://store/b/seed.tar.zst",
@@ -1179,7 +1278,9 @@ def test_boot_starts_upkeep_in_the_background_only_when_asked(
     if called:
         args = record.read_text().splitlines()
         assert args[args.index("--python") + 1] == str(python)
-        assert args[-3:] == ["upkeep", "--cache", str(cache)]
+        # 役 worker は常駐させ(gc を決まった間隔で回し続ける)、役 prepare は 1 度で終わる(続く世代の起動が常駐させる)。
+        resident = ["--repeat"] if role == "worker" else []
+        assert args[args.index("upkeep") :] == ["upkeep", "--cache", str(cache), *resident]
         assert "--no-cache" in args
     else:
         assert not record.exists()

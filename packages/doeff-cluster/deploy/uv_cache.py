@@ -7,7 +7,7 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
 生きている間ずっと錠を持つ)ので、uv の外で消す。
 
 動詞(答えはどれも標準出力の JSON 1 行・訳は標準エラーの 1 行):
-  upkeep   worker の起動の準備(deploy/boot.sh の doeff_uv_cache_upkeep)が背後で 1 度起こす: 環境変数 DOEFF_UV_CACHE_SEED_URL が在れば
+  upkeep   worker の起動の準備(deploy/boot.sh の doeff_uv_cache_upkeep)が背後で起こす: 環境変数 DOEFF_UV_CACHE_SEED_URL が在れば
            seed(DOEFF_UV_CACHE_SEED_SECRET = --secret・空きが DOEFF_UV_CACHE_SEED_MIN_FREE_GIB(既定 50)を下回れば入れない)、
            続けて DOEFF_UV_CACHE_GC_DAYS が在れば gc(--idle-days = その値・--venvs = DOEFF_UV_CACHE_GC_VENVS を `:` で分けた dir・
            --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000)・
@@ -16,6 +16,11 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            refresh(--url = DOEFF_UV_CACHE_SEED_URL・--project = その値を `:` で分けた dir・--every-seconds =
            DOEFF_UV_CACHE_SEED_REFRESH_EVERY_SECONDS(既定 72000)— 置き場の写しを置き直す node を 1 つに限り、同じ時に起きる worker が
            並べて組まない)。どれが落ちても訳を 1 行出して続け、0 で終わる。
+           --repeat(役 worker の起動が渡す — 常駐の upkeep)を渡すと 1 度で終わらず、gc と refresh の間隔の短い方の秒ごとに同じ順を
+           回し続け、回ごとに答えを 1 行出す。gc の予算は回の時にしか守られないので、回を起動と版の入れ替えだけに頼ると、回の間に cache
+           が予算の外で育つ(2026-11-09 の atlas — 予算 6 GiB・間隔 72000 秒に対し、回の前 18.25 GB)。cache に 1 つだけ回るよう、
+           起きた時に持ち手の印(.doeff-uv-keep.json)を書き、眠りの間に 60 秒ごとに読んで、後から起きた常駐の upkeep(版の入れ替えで
+           起きた新しい世代)が印を替えていれば退く。標準出力が 1 MiB を越えた通常の file なら、末尾 256 KiB だけを残す。
   pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
            環境(environments-v*)・interpreter の問い合わせの控え(interpreter-v*)。
   publish  pack した file を S3 互換の object storage の URL(s3://<bucket>/<key> か path の形 http(s)://<host>/<bucket>/<key> —
@@ -100,7 +105,7 @@ import tarfile
 import tempfile
 import time
 import urllib.parse
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,6 +119,13 @@ GC_LOCK = ".doeff-uv-gc.lock"
 SEED_STAGE = ".doeff-uv-seed-"
 GC_TRASH = ".doeff-uv-gc-"
 REFRESH_LOCK = ".doeff-uv-refresh.lock"
+# 常駐の upkeep(keep)の今の持ち手の印(後から起きた持ち手が書き替え、前の持ち手は読んで退く)。
+KEEP_CLAIM = ".doeff-uv-keep.json"
+# 常駐の upkeep が眠りの間に持ち手の印を読む間隔(秒)— 退いた持ち手が眠り続ける長さの上限。
+KEEP_POLL_SECONDS = 60.0
+# 常駐の upkeep の log(標準出力)の上限と、越えた時に残す末尾の byte。
+LOG_CAP = 1 << 20
+LOG_KEEP = 256 << 10
 REFRESH_BUILD = ".doeff-uv-refresh-"
 # 置いた写しの lock の中身の hash を載せる object の metadata の header(S3 は x-amz-meta-* を HEAD でそのまま返す)。
 LOCKS_META = "x-amz-meta-doeff-uv-locks"
@@ -1452,6 +1464,15 @@ class UpkeepSettings:
             self.seed_url and self.refresh_projects and self.refresh_node == self.node != ""
         )
 
+    @property
+    def wake_seconds(self) -> float | None:
+        """常駐の upkeep(keep)が回と回の間に眠る秒 — 決まった間隔を持つ仕事(gc・refresh)の短い方。どちらも無ければ None(1 度で終わる)。"""
+        periods = [
+            *([self.gc_every_seconds] if self.gc_days is not None else []),
+            *([self.refresh_every_seconds] if self.refreshes else []),
+        ]
+        return min(periods) if periods else None
+
     @classmethod
     def from_env(cls, env: dict[str, str]) -> Self:
         days = env.get("DOEFF_UV_CACHE_GC_DAYS", "").strip()
@@ -1546,6 +1567,81 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
     return {"verb": "upkeep", "seed": seeded, "gc": collected, "refresh": refreshed}
 
 
+def trim_log(fd: int = 1, cap: int = LOG_CAP, keep: int = LOG_KEEP) -> bool:
+    """fd(常駐の upkeep の標準出力 — boot.sh が足しの形で開いた log)が通常の file で cap byte を越えていれば、末尾 keep byte だけを残す
+    ため(常駐の upkeep は回ごとに答えを足すので、版の入れ替えが無いと log が育ち続ける)。縮めたら True。"""
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_size <= cap:
+        return False
+    # fd は書くだけの形で開かれているので、同じ file を読む形で開き直して末尾を読む。
+    with open(f"/proc/self/fd/{fd}", "rb") as reader:
+        reader.seek(info.st_size - keep)
+        tail = reader.read(keep)
+    os.ftruncate(fd, 0)
+    # boot.sh は足しの形(>>)で開くので、書きは縮めた後の末尾(0)から始まる。
+    os.write(fd, tail)
+    return True
+
+
+def claim_keeper(cache: Path) -> str:
+    """この process を cache の常駐の upkeep の今の持ち手として印(.doeff-uv-keep.json)に書き、持ち手の印の値を返すため。後から起きた
+    常駐の upkeep(版の入れ替えで起きた新しい世代の起動)が印を書き替えると、前の持ち手は次に起きた時に印を読んで退く。"""
+    token = f"{os.getpid()}-{time.time_ns()}"
+    partial = cache / (KEEP_CLAIM + ".partial-" + token)
+    partial.write_text(json.dumps({"token": token, "pid": os.getpid()}) + "\n")
+    partial.replace(cache / KEEP_CLAIM)
+    return token
+
+
+def keeper_token(cache: Path) -> str | None:
+    """cache の常駐の upkeep の今の持ち手の印の値(印が無ければ None — 印は書き替えを rename で入れるので、書きかけは読まない)。"""
+    try:
+        value = json.loads((cache / KEEP_CLAIM).read_text())["token"]
+    except FileNotFoundError:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{cache / KEEP_CLAIM} の token が文字列でない: {value!r}")
+    return value
+
+
+def keep(
+    cache: Path,
+    settings: UpkeepSettings,
+    run: Callable[[Path, UpkeepSettings], dict[str, object]] = upkeep,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[dict[str, object]], None] = answer,
+) -> dict[str, object]:
+    """upkeep を、起動の時の 1 回だけでなく決まった間隔(settings.wake_seconds)で回し続けるため — gc の予算は回の時にしか守られず、
+    起動と版の入れ替えの時だけの回では、回の間に cache が予算の外で育った(2026-11-09 の atlas — 予算 6 GiB に対し回の前 18.25 GB)。
+    間隔を持つ仕事が無ければ 1 回で終わる。後から起きた常駐の upkeep が持ち手の印を替えたら退く(眠りを KEEP_POLL_SECONDS ずつに
+    分けて印を読む)。回ごとの答えは emit へ出し、退いた時の答えを返す。"""
+    cache.mkdir(parents=True, exist_ok=True)
+    wake = settings.wake_seconds
+    if wake is None:
+        result = run(cache, settings)
+        emit(result)
+        return {"verb": "keep", "rounds": 1, "reason": "no-period"}
+    token = claim_keeper(cache)
+    rounds = 0
+    while True:
+        emit(run(cache, settings))
+        rounds += 1
+        slept = 0.0
+        while slept < wake:
+            step = min(KEEP_POLL_SECONDS, wake - slept)
+            sleep(step)
+            slept += step
+            holder = keeper_token(cache)
+            if holder is None:
+                # 印が消えた(cache を手で空けた)— 退かずに持ち手を名乗り直す(名乗る者が居なくなると、次の起動まで回が止まる)。
+                token = claim_keeper(cache)
+            elif holder != token:
+                say(f"keep: 後から起きた常駐の upkeep が持ち手を替えた — 退く({rounds} 回)")
+                return {"verb": "keep", "rounds": rounds, "reason": "superseded"}
+        if trim_log():
+            say(f"keep: log が {LOG_CAP} byte を越えた — 末尾 {LOG_KEEP} byte だけを残した")
+
+
 # ── 入口 ────────────────────────────────────────────────────────────────────
 
 
@@ -1588,8 +1684,12 @@ def main(argv: list[str] | None = None) -> int:
     """命令の口(動詞と旗は頭の註)。答えの JSON を標準出力へ 1 行出すため。"""
     parser = argparse.ArgumentParser(prog="uv_cache.py", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="verb", required=True)
-    sub.add_parser("upkeep").add_argument(
-        "--cache", required=True, type=Path, help="uv の cache の dir(UV_CACHE_DIR)"
+    kept = sub.add_parser("upkeep")
+    kept.add_argument("--cache", required=True, type=Path, help="uv の cache の dir(UV_CACHE_DIR)")
+    kept.add_argument(
+        "--repeat",
+        action="store_true",
+        help="1 度で終わらず、gc と refresh の間隔の短い方ごとに回し続ける(後から起きた常駐の upkeep に退く)",
     )
     for name in ("pack", "publish", "seed", "refresh", "count", "gc"):
         p = sub.add_parser(name)
@@ -1681,6 +1781,10 @@ def main(argv: list[str] | None = None) -> int:
             answer(pack(cache, args.out))
         case "publish" | "seed" | "refresh":
             answer(store_verb(args, cache, resolve_store(args.url, args.secret)))
+        case "upkeep" if args.repeat:
+            say(
+                f"keep: {json.dumps(keep(cache, UpkeepSettings.from_env(dict(os.environ))), ensure_ascii=False)}"
+            )
         case "upkeep":
             answer(upkeep(cache, UpkeepSettings.from_env(dict(os.environ))))
         case "count" | "gc":
