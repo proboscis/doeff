@@ -604,7 +604,10 @@
   (#^ str code-path)
   ;; 待ちの子から分けて起こす task だけ: 分かれ元の待ちの子の root のキー(その task 自身の env のキー — 条 WC1)。None = 入れ物 shim で
   ;; 起こす(service・実行環境を持たない job)。どちらの道かは判断の層が決め、宿は欄のとおりに起こす(黙って別の道へ倒れない)。
-  (setv #^ (| str None) warm-key None))
+  (setv #^ (| str None) warm-key None)
+  ;; 分かれ元の待ちの子が、頼みの cgroup(cgroupProcs)を受ける版か(印の serviceForks — 待ちの子は root の版で走り、印の無い版は知らない欄を
+  ;; 断る)。真の時だけ、宿は分けた task を job の名の子へ移す(worker/core/job_cgroup の「job ごとの子」)。
+  (setv #^ bool warm-places False))
 
 
 (defclass [(dataclass :frozen True)] SignalJob [EffectBase]

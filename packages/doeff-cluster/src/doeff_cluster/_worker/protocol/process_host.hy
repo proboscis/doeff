@@ -29,7 +29,7 @@
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild ProcessSignalRefused WriteProcessInput ProcessInputWritten])
+(import doeff_core_effects [EnvEntry ProcessOutcome ReadEnvironment ReadInterpreter RunProcess StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild ProcessSignalRefused WriteProcessInput ProcessInputWritten])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout ProcessView StartJob JobStarted JobNotStarted SignalJob ReapJob RetireJob StopStage
@@ -37,7 +37,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveProcesses ObserveJobRoots])
 (import doeff_cluster._worker.core.memory_rules [JobRoot])
 (import doeff_cluster._shared.intent.job_model [JobSpec])
-(import doeff_cluster._worker.core.job_cgroup [placed-argv])
+(import doeff_cluster._worker.core.job_cgroup [job-subgroup-name layer-subgroup-procs placed-argv swept-groups sweep-argv])
 (import doeff_cluster._worker.intent.worker_model [WakeSet WorkerWakes])
 (import doeff_cluster._worker.core.worker_due [wakes-with])
 (import doeff_cluster._shared.intent.due_model [DueNever])
@@ -76,7 +76,10 @@
   ;; 常駐の job(JobSpec.once が偽)の shim を置く兄弟の cgroup の cgroup.procs(worker/core/job_cgroup の
   ;; service の類・入口 main が DOEFF_WORKER_SERVICE_CGROUP から 1 度だけ決める)。None = 置き分けない(子は外の job-cgroup-placer の置き場か、
   ;; worker と同じ cgroup)。
-  (setv #^ (| str None) service-procs None))
+  (setv #^ (| str None) service-procs None)
+  ;; task(JobSpec.once)を job の名の子へ置く jobs の層の cgroup.procs(worker/core/job_cgroup の「job ごとの子」・入口 main が
+  ;; DOEFF_WORKER_JOB_CGROUP から 1 度だけ決める)。None = 置き分けない(task は外の job-cgroup-placer の置き場)。
+  (setv #^ (| str None) job-procs None))
 
 
 (defrecord ForkedFrom
@@ -121,6 +124,13 @@
 (val SET-ASIDE-CLEARED-LOG "worker: 退けた作業 dir の消しの終わり")
 ;; 作業 dir を置き場へ退けられず、拍の中で消した時の行の名(名 + 欄 path・detail)。
 (val SET-ASIDE-FAILED-LOG "worker: 作業 dir を退けられず拍の中で消した")
+;; 終わった job の子を消した時の行の名(worker/core/job_cgroup の掃き — 名 + 欄 group = 子の名・rbytes・wbytes = 子が居た間の全部の
+;; device の読み書きの byte・devices = device ごとの <major:minor>=<読み>/<書き>)。機体の disk への書きを job の名で数える読みの元。
+(val JOB-CGROUP-IO-LOG "worker: job の cgroup の読み書き")
+;; 掃きを走らせられなかった行の名(名 + 欄 detail)。task はそのまま起こす(消し残しは次の掃きが拾う)。
+(val JOB-CGROUP-SWEEP-FAILED-LOG "worker: job の cgroup の掃きが走らない")
+;; 掃きの秒の上限(sh の rmdir と cat だけ — 越えたら諦めて次の掃きに回す)。
+(val SWEEP-TIMEOUT-SECONDS 10.0)
 
 
 (defk stop-reason-word [reason]
@@ -315,26 +325,61 @@
   (.format "{}-{}" attempt (cut digest 0 12)))
 
 
-(defk shim-argv [settings spec argv]
-  {:pre [(: settings HostSettings) (: spec JobSpec) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
-  "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ移ってから起こす形に包むため(
-   worker/core/job_cgroup の service の類)。task と、置き分けない worker(service-procs が None)は argv のまま。外の job-cgroup-placer
-   は既に包んだ argv を包み直さないので、常駐の job の子は job の兄弟を経ずに service の兄弟へ直に移る(placed-argv)。"
-  (when (or spec.once (is settings.service-procs None))
+(defk shim-argv [settings spec argv [job-procs None]]
+  {:pre [(: settings HostSettings) (: spec JobSpec) (: argv tuple) (: job-procs (| str None))] :post [(: % tuple)]
+   :tags {:context "worker" :role "protocol"}}
+  "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ、task なら job の名の子(job-procs — job-subgroup の答え・
+   None = 置き分けない)へ移ってから起こす形に包むため(worker/core/job_cgroup の service の類と「job ごとの子」)。置き分けない子は argv の
+   まま。外の job-cgroup-placer は既に包んだ argv を包み直さないので、包んだ子は共有の子を経ずに直に移る(placed-argv)。"
+  (val procs (if spec.once job-procs settings.service-procs))
+  (when (is procs None)
     (return argv))
-  (<- placed tuple (placed-argv settings.service-procs argv))
+  (<- placed tuple (placed-argv procs argv))
   placed)
 
 
-(defk start-job [settings action]
-  {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % (| Started JobNotStarted))] :tags {:context "worker" :role "protocol" :spells "env"}}
+(defk job-subgroup [settings spec kept]
+  {:pre [(: settings HostSettings) (: spec JobSpec) (: kept tuple)] :post [(: % (| str None))] :tags {:context "worker" :role "protocol"}}
+  "task を置く job の名の子の cgroup.procs を用意するため(worker/core/job_cgroup の「job ごとの子」): 先に層を掃き(終わった job の子を
+   io.stat を読んでから消し、消した子ごとに JOB-CGROUP-IO-LOG を 1 行書く・層の子へ io を掛け損ねていれば試し直す)、job の子を作る。
+   kept = 消さない job の名(走っている job — 起こしたばかりの shim はまだ子へ移っていないので、空でも消さない)。常駐の job と、置き分け
+   ない worker(job-procs が None)は None。掃きが走らなくても子を作る。子を作れなければ None(task は共有の子で起こす — 黙らずに行を書く)。"
+  (when (or (not spec.once) (is settings.job-procs None))
+    (return None))
+  (var keep #())
+  (for [name kept]
+    (:= keep #(#* keep (! (job-subgroup-name name)))))
+  (<- argv tuple (sweep-argv settings.job-procs keep))
+  (<- swept ProcessOutcome (RunProcess :argv argv :timeout SWEEP-TIMEOUT-SECONDS))
+  (if (or (not swept.started) swept.timed-out (!= swept.exit-code 0))
+      (<- (slog JOB-CGROUP-SWEEP-FAILED-LOG :level "warning"
+                :detail (or swept.start-error (.strip swept.stderr) (.format "exit {} timed-out {}" swept.exit-code swept.timed-out))))
+      (do (<- groups tuple (swept-groups swept.stdout))
+          (for [#(group totals) groups]
+            (<- (slog JOB-CGROUP-IO-LOG :level "info" :group group
+                      :rbytes (sum (gfor row totals (get row 1))) :wbytes (sum (gfor row totals (get row 2)))
+                      :devices (.join "," (gfor row totals (.format "{}={}/{}" #* row))))))))
+  (<- procs str (layer-subgroup-procs settings.job-procs (! (job-subgroup-name spec.name))))
+  (<- made (| FileFailed None) (MakeDirectory (posixpath.dirname procs)))
+  (when (isinstance made FileFailed)
+    (<- (slog JOB-CGROUP-SWEEP-FAILED-LOG :level "warning" :detail (.format "{} を作れない: {}" made.path made.detail)))
+    (return None))
+  procs)
+
+
+(defk start-job [settings action [job-procs None]]
+  {:pre [(: settings HostSettings) (: action StartJob) (: job-procs (| str None))] :post [(: % (| Started JobNotStarted))]
+   :tags {:context "worker" :role "protocol" :spells "env"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから起こす。道は判断が決めた欄のとおり(黙って別の道へ倒れない): warm-key の在る task は、その root の待ちの子へ頼んで分ける
    (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と入口の後ろの引数は shim の道と同じ job-launch の値・env は shim の
    道と同じ root の venv まで含めた job-launch の entry-env)、
    それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ(待ちの子が分けるのを
    断った・shim を起こせない)その訳の JobNotStarted を返す(例外にすると worker の process ごと落ち、機体の上の
-   job を全部道連れにした。断りの数えと起こし直しは判断の層 — policy の record-after・warm-child-actions)。"
+   job を全部道連れにした。断りの数えと起こし直しは判断の層 — policy の record-after・warm-child-actions)。
+   job-procs = task を置く job の名の子の cgroup.procs(job-subgroup の答え・None = 置き分けない)。shim の道は shim をそこへ移してから起こし、
+   待ちの子の道は、頼みの cgroup を受ける版の待ちの子(action.warm-places)の時だけ分けた子 A をそこへ移す(受けない版の子は待ちの子の
+   cgroup — 共有の子 — に残る)。"
   (val spec action.spec)
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- facts (ReadInterpreter))
@@ -385,13 +430,15 @@
           (<- forked (ForkFromWarm :socket-path place.socket :entry entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)
                                    :hold-input service :notice-env (if service settings.notice-env None) :orphan-seconds orphan
-                                   :cgroup-procs (if service settings.service-procs None)))
+                                   :cgroup-procs (cond service settings.service-procs
+                                                       action.warm-places job-procs
+                                                       True None)))
           (:= started (if (isinstance forked WarmRefused)
                           (JobNotStarted :name spec.name :warm-key action.warm-key :detail (+ "待ちの子が分けるのを断った: " forked.detail)
                                          :at-ms started-ms)
                           (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
                                    :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path :holds-input service)))))
-      (do (<- argv tuple (shim-argv settings spec plan.argv))
+      (do (<- argv tuple (shim-argv settings spec plan.argv job-procs))
           (<- answer (StartProcess :argv argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
                                    :process-group True :hold-stdin True :reap-group True))
           (:= started (if (isinstance answer ProcessNotStarted)
@@ -413,7 +460,7 @@
   (session var table {})
   ;; 退けた作業 dir の置き場と、その消しの task の記録(頭の註)。
   (session var aside (SetAside))
-  (StartJob [spec attempt code-path warm-key]
+  (StartJob [spec attempt code-path warm-key warm-places]
     (when (in spec.name table) (raise (RuntimeError f"{spec.name} は既に動いています")))
     ;; 実行環境の job は空の作業 dir で起こす — 前の job の作業 dir が残っていれば置き場へ退ける(消しは拍の外)。
     (when spec.runtime-env
@@ -421,7 +468,10 @@
       (<- moved SetAside (work-dir-set-aside settings work aside))
       (:= aside moved))
     ;; 起こせなかった子は表に載せず、その答えを返す(判断がその job だけの失敗に数える)。
-    (<- begun (| Started JobNotStarted) (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
+    ;; task は job の名の子へ置く(走っている job の子は掃きで消さない — worker/core/job_cgroup の「job ごとの子」)。
+    (<- job-procs (| str None) (job-subgroup settings spec (tuple table)))
+    (<- begun (| Started JobNotStarted) (start-job settings (StartJob spec attempt code-path :warm-key warm-key :warm-places warm-places)
+                                                   job-procs))
     (if (isinstance begun JobNotStarted)
         (resume begun)
         (do (:= table (| table {spec.name begun}))

@@ -93,6 +93,13 @@
   (next (gfor view world.warm-children :if (= view.key key) view) None))
 
 
+(defn #^ bool warm-child-places [#^ WorldView world #^ str key]  ; defk にできない: 純粋な判断の ready-tree-step が StartJob の欄に組む
+  "root のキーの待ちの子が、分ける頼みの cgroup(cgroupProcs)を受ける版か: 準備完了の印が読めて serviceForks を名乗る(同じ版から頼みの
+   cgroup を受ける — 印の無い版は知らない欄を断る)。宿は真の時だけ、分けた task を job の名の子へ移す(worker/core/job_cgroup)。"
+  (setv view (warm-child-of world key))
+  (and (is-not view None) (isinstance view.mark WarmChildMark) view.mark.services))
+
+
 (defn #^ bool warm-child-ready [#^ (| WarmChildView None) view]  ; defk にできない: 純粋な判断の start-on-ready-tree が呼ぶ
   "分けてよい待ちの子か: 走っていて(終わりを観測していない・止め始めていない)、準備完了の印が分かれる前の形。"
   (and (is-not view None) (is view.exit-code None) (is view.stop None)

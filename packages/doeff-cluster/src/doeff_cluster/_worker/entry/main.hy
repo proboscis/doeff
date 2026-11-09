@@ -14,11 +14,12 @@
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import hy)
+(import posixpath)
 (import sys)
 (import pathlib [Path])
 (import doeff [run with-handlers])
 (import doeff_core_effects [await-handler slog-handler state :as session-store])
-(import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath WriteText]
+(import doeff_core_effects [FileFailed MakeDirectory PathKind PathStat ReadText StatPath WriteText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [os-file-handler offloaded-tree-handler offloaded-file-handler])
 (import doeff_cluster._foundation.compute_pool [worker-compute-handler])
@@ -74,7 +75,7 @@
 (import doeff_cluster._worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster._worker.core.env_upkeep [prepare-layer-dir])
 (import doeff_cluster._worker.protocol.process_clock [process-clock])
-(import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT job-cgroup-procs layer-cpu-pressure])
+(import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT SHARED-CGROUP job-cgroup-procs layer-cpu-pressure layer-subgroup-procs])
 (import doeff_cluster._worker.protocol.job_cgroup [job-cgroup-placer])
 (import doeff_cluster._worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
@@ -296,6 +297,21 @@
           procs)))
 
 
+(defk job-shared-placed [procs]
+  {:pre [(: procs (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
+  "jobs の層(procs = job-cgroup-placed の答えの層の cgroup.procs・None = 置き分けない)の下に、job の名の無い子を置く共有の子
+   (worker/core/job_cgroup の SHARED-CGROUP)を起動の時に 1 度だけ作り、その cgroup.procs を答えるため(job-cgroup-placer が名の無い子を
+   すべてそこへ入れる — 層そのものに process を残さないので、層の子へ io を掛けられる)。作れない起動は断る(ValueError — 置けない子を
+   本体の cgroup で黙って走らせない)。"
+  (if (is procs None)
+      None
+      (do (<- shared str (layer-subgroup-procs procs SHARED-CGROUP))
+          (<- made (| FileFailed None) (MakeDirectory (posixpath.dirname shared)))
+          (when (isinstance made FileFailed)
+            (raise (ValueError (.format "jobs の層の共有の子 {} を作れない: {}" made.path made.detail))))
+          shared)))
+
+
 (defk cgroup-dir-environ [cgroup-dir]
   {:pre [(: cgroup-dir (| str None))] :post [(: % dict)] :tags {:context "worker" :role "main"}}
   "書ける cgroup v2 の見えの根(CGROUP-DIR-VAR)を job の子へ渡す env にするため(子が自分の子を、機体の配備が
@@ -371,7 +387,7 @@
    印の書き手と形の module leaving_mark は読まない)。機体の memory の見張りが読む process の表と、止める SignalPid は os-proc-table-handler
    が答える(見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。
    機体の memory の逼迫の観測(ObserveMemoryTight — local-host が問う)は memory-observer が、見張りと分ける入れ物 memory-cell の様子で答える
-   (task の起動の見送り — policy の ready-tree-step)。子の job を置く兄弟の cgroup(job-procs)が在れば、
+   (task の起動の見送り — policy の ready-tree-step)。子の job を置く兄弟の cgroup(job-procs — jobs の層の共有の子の cgroup.procs)が在れば、
    job-cgroup-placer を subprocess-handler のすぐ内側に置き、内側の宿が起こす子をすべて兄弟の cgroup へ入れる(本体は残る)。
    Pod の job の label(pod-labels = pod-label-parts の #(設定 入れ物))が在れば、pod-job-labels を coordinator-link の
    すぐ内側に置き(拍の宣言の読みの答えを受け取って label に写す)、自区画の API server 宛ての要求だけを区画の CA で検める
@@ -577,6 +593,8 @@
                              (job-cgroup-placed (.get machine-env PREPARE-CGROUP-VAR) cgroup-root PREPARE-CGROUP-VAR)))
         ;; 子の job を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。測りがこの層の CPU の PSI を読む(load-paths)。
         job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
+        ;; 名の無い子(shim の外の git・uv・待ちの子・入口の検め)を置く jobs の層の共有の子(task は job の名の子 — process_host の job-subgroup)。
+        shared-procs (run (with-handlers [os-file-handler] (job-shared-placed job-procs)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
@@ -584,7 +602,7 @@
                            :program-dir places.programs :python interpreter :hy-command hy-command
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
-                           :notice-env HOST-CONTRACT.notice-env :service-procs service-procs)
+                           :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
@@ -673,7 +691,7 @@
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
-                                           :job-procs job-procs :pod-labels pod-labels)))
+                                           :job-procs shared-procs :pod-labels pod-labels)))
   ;; 生存の合図の thread(scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
   ;; 拍が最後に送った本文を送り直す(判断は coordinator への口の lifeline-turn)。返事の上限は生存の窓の半分(遅い返事を待つ間に次の
   ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。ready を許す返事が届いた送りの後は、

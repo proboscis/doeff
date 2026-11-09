@@ -755,11 +755,14 @@ keeper_retire() {
 }
 
 # 準備を置く cgroup の層の名(空 = 層が無い — keeper の層のまま準備する)。準備の層(DOEFF_WORKER_PREPARE_CGROUP)の dir が在ればそれ、
-# 無ければ(準備の層を宣言しない機体)job の層(DOEFF_WORKER_JOB_CGROUP — 前の置き場)。
+# 無ければ(準備の層を宣言しない機体)job の層(DOEFF_WORKER_JOB_CGROUP — 前の置き場)の共有の子 _shared(worker が起動の時に作る —
+# worker/core/job_cgroup の SHARED-CGROUP。層の子へ io を掛けた後は層そのものに process を置けない)。共有の子を作らない版の世代は層のまま。
 keeper_layer() {
   [ -n "${DOEFF_WORKER_CGROUP_DIR:-}" ] || return 0
   if [ -n "${DOEFF_WORKER_PREPARE_CGROUP:-}" ] && [ -d "$DOEFF_WORKER_CGROUP_DIR/$DOEFF_WORKER_PREPARE_CGROUP" ]; then
     printf '%s' "$DOEFF_WORKER_PREPARE_CGROUP"
+  elif [ -n "${DOEFF_WORKER_JOB_CGROUP:-}" ] && [ -d "$DOEFF_WORKER_CGROUP_DIR/$DOEFF_WORKER_JOB_CGROUP/_shared" ]; then
+    printf '%s' "$DOEFF_WORKER_JOB_CGROUP/_shared"
   elif [ -n "${DOEFF_WORKER_JOB_CGROUP:-}" ]; then
     printf '%s' "$DOEFF_WORKER_JOB_CGROUP"
   fi

@@ -37,7 +37,7 @@
   StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster._shared.intent.job_model [JobSpec JobPhase] doeff_cluster._shared.core.job_rules [spec-hash] doeff_cluster._worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
-(import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
+(import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready warm-child-places mark-refusal
   warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys
   fork-candidate WarmStart warm-start])
 
@@ -324,7 +324,8 @@
     ;; 機体の memory が逼迫している間は、task(once)だけ起こさない(重い task を並べて機体が尽きるのを避ける)。準備と
     ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。
     (and spec.once world.memory-tight) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
-    True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if (= path WarmStart.FORK) (warm-key-of spec) None)))
+    True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if (= path WarmStart.FORK) (warm-key-of spec) None)
+                                         :warm-places (and (= path WarmStart.FORK) (warm-child-places world (warm-key-of spec)))))
                     :hold None)))
 
 

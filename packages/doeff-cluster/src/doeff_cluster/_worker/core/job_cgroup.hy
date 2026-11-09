@@ -19,15 +19,36 @@
 ;;; container の cgroup を根とする名前空間の読み取りだけの見えなので、起動の script(deploy/boot.sh の層 — WORKER_CGROUP_LAYOUT)が
 ;;; 書ける見え(host の cgroupfs の mount の中の、同じ cgroup の dir)を DOEFF_WORKER_CGROUP_DIR で渡す。/proc/self/cgroup の path は
 ;;; 名前空間の根からの path なので、その見えの下に繋げる。
+;;;
+;;; job ごとの子(jobs の層の下 — 機体の書きを job の名で読むため): task(JobSpec.once)は jobs の層の下の job の名の子
+;;; (job-subgroup-name)に置き、名の無い子(shim の外の git・uv・待ちの子・入口の検め)は共有の子 SHARED-CGROUP に置く。cgroup v2 は子に
+;;; controller を掛けた cgroup に process を置けないので、jobs の層そのものには process を置かない — 層に process が残っていない時だけ、層の
+;;; 子へ io を掛ける(親が io を渡す時だけ — 子ごとの io.stat が読めるようになる)。memory.max・cpu の値と PSI は層 jobs のまま(子を含めて数える)。
+;;; 終わった job の子は、次の task を置く前の掃き(SWEEP-SCRIPT — 宿 worker/protocol/process_host)が io.stat を読んでから rmdir で消す。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
+(import hashlib)
 (import posixpath)
+(import re)
 
 
 ;; cgroup v2 の根の mount の場所。
 (val CGROUP-ROOT "/sys/fs/cgroup")
 ;; 子の頭で走る sh の script: $0 = 兄弟の cgroup.procs・"$@" = 元の argv。
 (val PLACE-SCRIPT "echo $$ >\"$0\" && exec \"$@\"")
+;; jobs の層の下の、job の名の無い子を置く共有の子の名(_ で始まる — job の名の子は _ で始めないので重ならず、掃きも消さない)。
+(val SHARED-CGROUP "_shared")
+;; job の名の子の名の長さの上限(cgroupfs の名は 255 byte まで — 長い名は頭を残して指紋を付ける)。
+(val SUBGROUP-NAME-MAX 120)
+;; 掃きの sh の script: $0 = jobs の層の dir・"$@" = 消さない子の名(走っている job)。_ で始まる子と残す名を除いた子ごとに、io.stat を
+;; 読んでから rmdir し(process の居る子は rmdir が断るので残る)、消せた子を「<名>\t<io.stat の行を ; で繋いだ物>」の 1 行で出す。最後に、
+;; 層に io が渡されていて子へまだ掛けていなければ掛けを試す(層に process が残っている間は kernel が断る — 次の掃きで試し直す)。
+(val SWEEP-SCRIPT
+  (+ "for d in \"$0\"/*/; do n=${d%/}; n=${n##*/}; case $n in _*|'*') continue ;; esac; "
+     "k=; for x in \"$@\"; do [ \"$x\" = \"$n\" ] && k=1; done; [ -z \"$k\" ] || continue; "
+     "s=$(tr '\\n' ';' <\"$0/$n/io.stat\" 2>/dev/null); rmdir \"$0/$n\" 2>/dev/null && printf '%s\\t%s\\n' \"$n\" \"$s\"; done; "
+     "if grep -qw io \"$0/cgroup.controllers\" 2>/dev/null && ! grep -qw io \"$0/cgroup.subtree_control\" 2>/dev/null; then "
+     "echo +io >\"$0/cgroup.subtree_control\" 2>/dev/null; fi; exit 0"))
 
 
 (defk job-cgroup-procs [own-cgroup sibling [root CGROUP-ROOT]]
@@ -61,3 +82,62 @@
   (if (= (cut argv 3) #("/bin/sh" "-c" PLACE-SCRIPT))
       argv
       (+ #("/bin/sh" "-c" PLACE-SCRIPT procs) argv)))
+
+
+(defk job-subgroup-name [name]
+  {:pre [(: name str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "job の名から、jobs の層の下の job の子の名を決めるため(頭の註の「job ごとの子」)。英数字・-・_ の外の字(/ や .)は _ にする(. を
+   残さないので cgroup の file の名 cgroup.procs・io.stat と重ならない)。_ で始まる名は頭に job を付ける(共有の子 SHARED-CGROUP と掃きの
+   除外に重ねない)。SUBGROUP-NAME-MAX を越える名は頭を残し、元の名の sha256 の頭 12 桁を付ける。"
+  (var safe (re.sub "[^A-Za-z0-9_-]" "_" name))
+  (when (or (not safe) (.startswith safe "_"))
+    (:= safe (+ "job" safe)))
+  (if (<= (len safe) SUBGROUP-NAME-MAX)
+      safe
+      (+ (cut safe (- SUBGROUP-NAME-MAX 13)) "-" (cut (.hexdigest (hashlib.sha256 (.encode name "utf-8"))) 12))))
+
+
+(defk layer-subgroup-procs [procs child]
+  {:pre [(: procs str) (: child str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "層(procs = job-cgroup-procs の答えの、層の cgroup.procs)の下の子 child の cgroup.procs の path を決めるため(共有の子 SHARED-CGROUP か
+   job の子 job-subgroup-name)。"
+  (posixpath.join (posixpath.dirname procs) child "cgroup.procs"))
+
+
+(defk sweep-argv [procs kept]
+  {:pre [(: procs str) (: kept tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "層(procs = 層の cgroup.procs)の下の終わった job の子を消す掃きの argv を作るため(SWEEP-SCRIPT・kept = 消さない job の子の名)。"
+  (+ #("/bin/sh" "-c" SWEEP-SCRIPT (posixpath.dirname procs)) kept))
+
+
+(defn #^ tuple io-row [#^ str line]  ; defk にできない: io-totals の内包表記の中で 1 行ずつ呼ぶ(Program を返すと並びに組めない)
+  "io.stat の 1 行を #(<major:minor> 読んだ byte 書いた byte) に(device の行でなければ空の tuple)。rbytes・wbytes の無い行と数でない値は 0。"
+  (setv parts (.split line))
+  (if (not (and parts (re.fullmatch "[0-9]+:[0-9]+" (get parts 0))))
+      #()
+      (do (setv fields (dfor part (cut parts 1 None) :if (in "=" part) (get (.split part "=" 1) 0) (get (.split part "=" 1) 1)))
+          #((get parts 0) (int-or-zero (.get fields "rbytes" "")) (int-or-zero (.get fields "wbytes" ""))))))
+
+
+(defn #^ int int-or-zero [#^ str text]  ; defk にできない: io-row の欄の読みの中の小さな変換(Program を返すと数に組めない)
+  "10 進の数の綴りを数に(綴りが数でなければ 0)。"
+  (if (.isdigit text) (int text) 0))
+
+
+(defk io-totals [stat]
+  {:pre [(: stat str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "io.stat の中身(行か、掃きの出す ; で繋いだ行)を、device ごとの #(<major:minor> 読んだ byte 書いた byte) の並びにするため(device の
+   順)。rbytes・wbytes の無い行と形の違う欄は 0 に数える(kernel の版で欄が増えても読みを落とさない)。"
+  (tuple (sorted (gfor row (gfor line (.split (.replace stat ";" "\n") "\n") (io-row line)) :if row row))))
+
+
+(defk swept-groups [stdout]
+  {:pre [(: stdout str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "掃きの出力(SWEEP-SCRIPT — 1 行に「<子の名>\t<io.stat>」)を、消した子ごとの #(子の名 io-totals の答え) の並びにするため(形の違う行は
+   飛ばす)。io-totals は Program を返すので内包表記では呼べない: for と ! で順に読み、tuple に組む。"
+  (var groups #())
+  (for [line (.splitlines stdout)]
+    (val parts (.partition line "\t"))
+    (when (get parts 0)
+      (:= groups #(#* groups #((get parts 0) (! (io-totals (get parts 2))))))))
+  groups)
