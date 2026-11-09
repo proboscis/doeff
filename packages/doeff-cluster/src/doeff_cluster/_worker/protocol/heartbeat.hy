@@ -94,6 +94,8 @@
    ;; nice の分と task の層の CPU の PSI(名乗る時だけ — 2026-11-05。無い欄は前の版の worker と同じに読まれる)。
    #** (if (is load.cpu-nice None) {} {"cpuNice" load.cpu-nice})
    #** (if (is load.task-cpu-some-avg10 None) {} {"taskCpuSomeAvg10" load.task-cpu-some-avg10})
+   ;; task の層の今の空き(名乗る時だけ — 2026-11-09)。
+   #** (if (is load.jobs-room-mib None) {} {"jobsRoomMiB" load.jobs-room-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。
    #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})})
 

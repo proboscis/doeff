@@ -143,7 +143,7 @@
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
    ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(名乗った worker だけに載せる)。measured = 機体の測った空き
    ;; (heartbeat の measured の写し {atMs cpus cpuBusy memoryTotalMiB memoryAvailableMiB cpuSomeAvg10 cpuFullAvg10 memorySomeAvg10
-   ;; memoryFullAvg10 cpuNice taskCpuSomeAvg10 taskMemoryMiB} — 測れた worker だけに載せる)。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空き
+   ;; memoryFullAvg10 cpuNice taskCpuSomeAvg10 taskMemoryMiB jobsRoomMiB} — 測れた worker だけに載せる)。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空き
    ;; から — 測りの無い worker は 0)。taskMemoryRoomMiB = 置き先の判断と同じ数えで、いま置ける task の memory の要りの最大(測った空き −
    ;; 床 − 置いた task の「要り − 今の使い」の和 — 負は詰めすぎ)。childEnviron = worker が job の子へ渡す環境変数の名(名の順 — 名乗った worker だけに載せる。名乗らない旧い
    ;; worker に空の列を出さない: 空の列は「子へ何も渡さない」と読まれる)。

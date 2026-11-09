@@ -195,7 +195,9 @@
    内の nice > 0 の process の分(0〜1 — None = 名乗らない〔測りの前の版の worker・数えられない読み〕)・task-cpu-some-avg10 = task を
    置く cgroup の層の CPU の PSI の some の avg10(%— None = 層の無い・読めない・前の版の worker)・task-memory-MiB =
    走っている task ごとの memory の今の使い(task の id → MiB — 見張りの最後の読みの task の木の rss の和。None = 名乗らない〔見張りの
-   読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)。coordinator は保存せず、task の置き先を
+   読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)・jobs-room-MiB = task を置く cgroup の層
+   (jobs)の今の空き(MiB — 層の memory.max − memory.current・負もありうる。None = 名乗らない〔層の無い・線の古い・前の版の worker〕—
+   置き先は名乗った worker には要りがこの空きにも収まる task だけを置く・2026-11-09)。coordinator は保存せず、task の置き先を
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
@@ -215,7 +217,8 @@
   (setv #^ (| float None) memory-full-avg10 None)
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
-  (setv #^ (| dict None) task-memory-MiB None))
+  (setv #^ (| dict None) task-memory-MiB None)
+  (setv #^ (| int None) jobs-room-MiB None))
 
 
 (defwire HeartbeatBody

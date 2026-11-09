@@ -11,7 +11,8 @@
 ;;;   普通の使い     = cpu-busy − cpu-nice(nice > 0 の process の分を除いた CPU の使い — normal-busy-of)
 ;;;   memory の枠    = ⌊memory の空き / MEMORY-SLOT-MIB⌋(予約の半分ずつの守りが数で読むための単位 — task の大きさの見込みではない)
 ;;;   上限           = ⌊cpus / TASK-CORES⌋(task-cap-of — 測りが遅れても CPU の数より多くは置かない)
-;;;   memory の空き  = memory-available − MEMORY-FLOOR-MIB − Σ 置いた task の max(0, 要り − 今の使い)(MiB — memory-room-mib)
+;;;   memory の空き  = min(memory-available − MEMORY-FLOOR-MIB, jobs の層の空き − JOBS-ROOM-FLOOR-MIB)
+;;;                    − Σ 置いた task の max(0, 要り − 今の使い)(MiB — memory-room-mib。jobs の層の空きを名乗らない worker は前の項だけ)
 ;;;   まだ測りに出ていない task = 置いた task のうち、測った空きを載せた同じ heartbeat の状態の報告で動いていない物と、測った刻 −
 ;;;                               TASK-RAMP-MS より後に置いた物(置いた直後・走り出した直後の task は CPU をまだ使いきっていない —
 ;;;                               呼び手 cluster_policy.load-of が WorkerLoad.unseen に数える)
@@ -50,6 +51,14 @@
 ;;; 丸ごと追い出す(atlas の 10-30〜11-01 の 5 回)ので、置き先は追い出しまでの空きで数える。線の大きさ − 床(memory-line-mib)は、その
 ;;; worker が空いた時に受けうる要りの最大 — needs の合うどの worker の線よりも大きい要りの task は、積む時に断る(待っても入らない)。
 ;;;
+;;; jobs の層の空き(2026-11-09): task は jobs の層に入り、kernel はその層の memory.max で止める。worker はこの上限を追い出しまでの
+;;; 空きから余裕(機体ごと・測った伸びで広がる)・準備の取り置き・会話の CLI の層への貸しを引き、container の中の空きでも縛って掛け直す
+;;; (worker/core/eviction_rules の jobs-limit)ので、層の空きは追い出しまでの空き − 床よりずっと小さい時が在る。追い出しまでの空きだけで
+;;; 数えると、atlas の 11-08 14:03 は空き約 5.6 GiB と見て要り 3584 MiB の task を置き、層の空きは負(上限 3173 MiB・使い 3361 MiB — 会話の
+;;; CLI の層への貸し 4608 MiB と余裕 2766 MiB を引いた値)で、kernel が層の中の最大の process を OOM で止めた(同じ形で 3 回続いた)。
+;;; jobs の層の空きを名乗る worker には、要りがその空き − JOBS-ROOM-FLOOR-MIB − 置いた task の予約にも収まる task だけを置く(名乗らない
+;;; worker は追い出しまでの空きだけで数える)。層の空きには置いた task の今の使いが入っているので、予約は追い出しまでの空きと同じく引く。
+;;;
 ;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
 ;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に常駐の job が膨らむ分は、機体の中の cgroup の層
 ;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
@@ -75,6 +84,9 @@
 ;; 機体の宣言の値の最大〔atlas〕。task は追い出しまでの空きからこの余裕を引いた分までしか使えない)を足した値。
 (val CPU-FLOOR-CORES 1)
 (val MEMORY-FLOOR-MIB 1536)
+;; jobs の層の空きに残す量(MiB — 頭の註の jobs の層の空き)。worker は層の上限を 5 秒ごとに掛け直し、ほかの層や Pod の伸びで上限は回ごとに
+;; 数百 MiB 動く(atlas の 11-08 14:09〜14:15 は 3298 → 2852 → 1962 MiB)。置いた直後の task の伸びが次の回の縮みと重なっても層に収まる分。
+(val JOBS-ROOM-FLOOR-MIB 512)
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
 (val CPU-PRESSURE-STOP 40.0)
 (val MEMORY-PRESSURE-STOP 10.0)
@@ -145,10 +157,15 @@
 
 (defk memory-room-mib [measured reserved]
   {:pre [(: measured (| MeasuredLoad None)) (: reserved int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker に新しく置ける task の要りの最大(MiB)を知るため: 測った memory の空き − MEMORY-FLOOR-MIB − reserved(置いた task の
-   reserved-mib-of の和)。負は 0 未満のまま返す(GET /state で詰めすぎを読めるように — 置き先は 0 以下の worker に置かない)。
+  "worker に新しく置ける task の要りの最大(MiB)を知るため: min(測った memory の空き − MEMORY-FLOOR-MIB, jobs の層の空き −
+   JOBS-ROOM-FLOOR-MIB)− reserved(置いた task の reserved-mib-of の和)。jobs の層の空きを名乗らない worker は前の項だけ(頭の註の
+   jobs の層の空き)。負は 0 未満のまま返す(GET /state で詰めすぎを読めるように — 置き先は 0 以下の worker に置かない)。
    測りの無い worker は 0。"
-  (if (is measured None) 0 (- measured.memory-available-MiB MEMORY-FLOOR-MIB reserved)))
+  (when (is measured None)
+    (return 0))
+  (val line-room (- measured.memory-available-MiB MEMORY-FLOOR-MIB))
+  (val room (if (is measured.jobs-room-MiB None) line-room (min line-room (- measured.jobs-room-MiB JOBS-ROOM-FLOOR-MIB))))
+  (- room reserved))
 
 
 (defk memory-line-mib [measured]

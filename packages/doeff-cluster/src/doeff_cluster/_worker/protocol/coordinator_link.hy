@@ -68,7 +68,7 @@
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
-                                              task-uses-of])
+                                              task-uses-of jobs-room-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
@@ -913,8 +913,13 @@
       (when (is-not state.eviction None)
         (<- told (| tuple None) (task-uses-of state.eviction.uses state.eviction.uses-at-ms now-ms))
         (:= task-uses told))
+      ;; task の層の今の空きを添える(coordinator は要りがこの空きに収まる task だけを置く — load_rules.jobs-room-of)。
+      (var jobs-room None)
+      (when (is-not state.eviction None)
+        (<- told (| int None) (jobs-room-of line state.eviction.jobs-limit state.eviction.jobs-current))
+        (:= jobs-room told))
       (setv state.load-reason reason
-            state.measured (if (is reading None) None (replace reading.load :task-uses task-uses))
+            state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room))
             state.load-ticks (if (is reading None) None reading.ticks))))
   None)
 

@@ -119,7 +119,9 @@
    (PSI の file の無い機体と、full の行の無い kernel の cpu は None)・cpu-nice = cpu-busy の内の nice の分(0〜1 — cpu-busy と同じ読みで
    None)・task-cpu-some-avg10 = task の層の CPU の PSI の some の avg10(%— 層の無い・読めない worker は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
    の tuple — task-uses-of。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator の置き先は名乗られない task の要りの全部を
-   予約する・2026-11-02)。"
+   予約する・2026-11-02)・jobs-room-mib = task の層(jobs)の今の空き(MiB — 見張りが最後に掛けた jobs の層の memory.max − 読んだ
+   memory.current・jobs-room-of。負もありうる。None = 名乗らない〔線が無いか古い・層が無い〕— coordinator の置き先は、名乗った worker
+   には要りがこの空きに収まる task だけを置く・2026-11-09)。"
   {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)
            (or (is cpu-nice None) (and (is-not cpu-busy None) (<= 0 cpu-nice cpu-busy)))
            (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0))]}
@@ -134,7 +136,8 @@
   (#^ (| float None) memory-full-avg10)
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
-  (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None))
+  (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None)
+  (setv #^ (| int None) jobs-room-mib None))
 
 
 (defrecord LoadReading
@@ -189,6 +192,20 @@
       (tuple (gfor u uses :if (.startswith u.job TASK-PREFIX)
                    (TaskMemory :id (cut u.job (len TASK-PREFIX) None) :mib (// u.bytes MIB))))
       None))
+
+
+(defk jobs-room-of [line jobs-limit jobs-current]
+  {:pre [(: line (| EvictionLine None)) (: jobs-limit (| int None)) (: jobs-current (| int None))] :post [(: % (| int None))]
+   :tags {:context "worker" :role "judgment"}}
+  "heartbeat で名乗る task の層(jobs)の今の空き(MiB)を知るため: 見張りが最後に掛けた jobs の層の memory.max jobs-limit − 最後に読んだ
+   memory.current jobs-current(byte — 負もありうる。切り捨て)。jobs の層の上限は、追い出しまでの空きから余裕・準備の取り置き・会話の
+   CLI の層への貸しを引き、container の中の空きでも縛った値(worker/core/eviction_rules の jobs-limit・jobs-box-limit)で、追い出しまでの
+   空き(memory-available-mib)よりずっと小さい時が在る — atlas の 11-08 14:09 は追い出しまでの空き 7186 MiB・jobs の層の空きは負で、
+   coordinator が空きを 5650 MiB と見て置いた要り 3584 MiB の task を、kernel が jobs の層の OOM で止めた。line = 名乗りに使える新しさの線
+   (fresh-line — None は上限が今の線から決まった値と言えないので名乗らない)・上限か使いが None(まだ書いていない・読めなかった)も None。"
+  (if (or (is line None) (is jobs-limit None) (is jobs-current None))
+      None
+      (// (- jobs-limit jobs-current) MIB)))
 
 
 (defk cpu-ticks-of [text]
