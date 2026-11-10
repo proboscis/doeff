@@ -69,6 +69,16 @@
 ;;; jobs の層の空きを名乗る worker には、要りがその空き − JOBS-ROOM-FLOOR-MIB − 置いた task の予約にも収まる task だけを置く(名乗らない
 ;;; worker は追い出しまでの空きだけで数える)。層の空きには置いた task の今の使いが入っているので、予約は追い出しまでの空きと同じく引く。
 ;;;
+;;; 長く待った task の取っておき(2026-11-10): 置き先は優先と id の順に task を見て、置けない task を飛ばして後ろの task を置く。小さい
+;;; task が絶えず積まれる worker では、置いた task が終わって戻る空きを後ろの小さい task が先に取り、要りの大きい task の分の空きが溜まる
+;;; 時が来ない(helios の 11-10 — 要り 5632 MiB の task が jobs の層の空き 約 4 GiB を待って 4 時間を越え、その間に要り 1〜3.5 GiB の task が
+;;; 置かれ続けた。同じ形の要り 4096 MiB の task は 6 時間待った)。積んでから STARVE-WAIT-MS を越えて memory の空きだけで置けない task は、
+;;; 置ける worker のうち、今の task が全部終われば入る見込み(drained-room-mib)の在る 1 台にその要りを取っておく(cluster_policy の
+;;; starved-keeper)。同じ拍の後ろの順の task は、その worker の memory の空きから要りを引いて数える — 置いた task が終わった分は後ろの
+;;; task に渡らず、待った task の分として溜まる。見込みの無い worker には取っておかない: 層の中の常駐の使いで入らない task のために worker を
+;;; 塞ぎ続けない(見込みは置いた task の今の使いを足した値なので、task が終わるにつれて実の空きに近づき、入らないと分かれば取っておきは解ける)。
+;;; 取っておきは拍ごとに数え直し、保存しない。
+;;;
 ;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
 ;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に常駐の job が膨らむ分は、機体の中の cgroup の層
 ;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
@@ -108,6 +118,9 @@
 (val TASK-RAMP-MS 10000)
 ;; 予約 = 上限のこの分の 1。
 (val RESERVE-SHARE 6)
+;; 積んでからこの長さを越えて memory の空きだけで置けない task に、worker の空きを取っておく(頭の註の長く待った task の取っておき)。
+;; 短い待ちでは取っておかない — 空きは置いた task が終わるたびに戻るので、普通の待ちの間は小さい task を先に置いて機体を遊ばせない。
+(val STARVE-WAIT-MS (* 30 60 1000))
 
 
 (defk task-cap-of [cpus]
@@ -187,6 +200,17 @@
   (val line-room (- measured.memory-available-MiB MEMORY-FLOOR-MIB))
   (val room (if (is measured.jobs-room-MiB None) line-room (min line-room (- measured.jobs-room-MiB JOBS-ROOM-FLOOR-MIB))))
   (- room reserved))
+
+
+(defk drained-room-mib [measured]
+  {:pre [(: measured (| MeasuredLoad None))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の今の task が全部終われば置ける要りの最大(MiB)の見込みを知るため(頭の註の長く待った task の取っておき): 予約 0 の
+   memory-room-mib + 測りが名乗る task ごとの今の使いの和(task の使いは測った空きと jobs の層の空きの両方から引かれている)。今の使いを
+   名乗られない task の分は足さないので、見込みは小さく出る。測りの無い worker は 0。"
+  (when (is measured None)
+    (return 0))
+  (<- room int (memory-room-mib measured 0))
+  (+ room (sum (.values (or measured.task-memory-MiB {})))))
 
 
 (defk memory-line-mib [measured]

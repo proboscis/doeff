@@ -40,7 +40,7 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
-                                                       learned-need])
+                                                       learned-need drained-room-mib STARVE-WAIT-MS])
 
 ;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
 ;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。送る綴りは指紋の材料の
@@ -1391,6 +1391,34 @@
     True None))
 
 
+(defk starved-keeper [task workers needs rooms kept held groups]
+  {:pre [(: task TaskRecord) (: workers list) (: needs dict) (: rooms dict) (: kept dict) (: held dict) (: groups Table)]
+   :post [(: % (| WorkerInfo None))] :tags {:context "coordinator" :role "judgment"}}
+  "長く待った task のために空きを取っておく worker を選ぶため(measured_room の頭の註の長く待った task の取っておき — None = 取っておかない):
+   workers = task を置ける worker(生きて drain 中でも disk 尽きでもない)・needs = worker の名 → task の要り(task-need-of)・rooms = worker の
+   名 → memory の空き(task-memory-room-of — この拍に置いた task と先の取っておきを引いた値)・kept = worker の名 → この拍に先の task へ
+   取っておいた MiB・held と groups = 名乗った組の升の数と宣言(limits-misfit)。選ぶのは、組の上限に達しておらず、要りが memory の空きを
+   越え(memory の空きだけで置けない)、今の task が全部終われば入る見込み(drained-room-mib − 先の取っておき)以内の worker のうち、memory の
+   空きの最も大きい物(同じなら名の順)。"
+  (var best None)
+  (for [w (sorted workers :key (fn [w] w.name))]
+    (val need (get needs w.name))
+    (val room (get rooms w.name))
+    (<- by-limits (| TaskUnplacedKind None) (limits-misfit task.limits w.name held groups))
+    (<- drained int (drained-room-mib w.measured))
+    (when (and (is by-limits None) (> need room) (<= need (- drained (.get kept w.name 0)))
+               (or (is best None) (> room (get rooms best.name))))
+      (:= best w)))
+  best)
+
+
+(defk kept-text [text worker]
+  {:pre [(: text str) (: worker str)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "取っておきを掛けて待つ task の detail の文を決めるため: 待つ訳の文 text に、取っておく worker を名指す句を足す(worker が替わらない
+   間は同じ文 — 調停が拍ごとに書き換えて保存の版を進めない)。"
+  (.format "{} — 長く待ったので worker {} の memory の空きをこの task に取っておく(後ろの task はその空きを使わない)" text worker))
+
+
 (defk limits-misfit [limits worker held groups]
   {:pre [(: limits tuple) (: worker str) (: held dict) (: groups Table)] :post [(: % (| TaskUnplacedKind None))]
    :tags {:context "coordinator" :role "judgment"}}
@@ -1705,7 +1733,9 @@
   ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達していない)待っている負の優先の task。
   ;; bg-wanted は拍の初めに 1 度数える — 置く順で優先 0 以上の task が先なので、背景の仕事を置き始める前に読む数は変わらない。
   (setv bg-held (dfor name (.keys state.workers) name 0)
-        bg-wanted (dfor name (.keys state.workers) name 0))
+        bg-wanted (dfor name (.keys state.workers) name 0)
+        ;; 長く待った task へこの拍に取っておいた memory(worker の名 → MiB — measured_room の頭の註の取っておき)。
+        kept (dfor name (.keys state.workers) name 0))
   (for [t (scan-rows placed.tasks) :if (and (< t.priority 0) (in t.phase PLACED-PHASES) (in t.worker bg-held))]
     (+= (get bg-held t.worker) 1))
   (for [task (.values queue) :if (and (= task.phase "queued") (< task.priority 0))]
@@ -1728,6 +1758,7 @@
       ;; worker と測った空きの組。
       ;; 要りは worker ごと(測った山をその worker の線で切る — task-need-of)。
       (var needs {})
+      (var rooms {})
       (var roomy #())
       (var misfits [])
       (for [w able-now]
@@ -1735,6 +1766,7 @@
         (setv (get needs w.name) need)
         (<- room int (task-room-of w load))
         (<- memory-room int (task-memory-room-of w load))
+        (setv (get rooms w.name) memory-room)
         (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits
                                                           (get bg-held w.name) (get bg-wanted w.name) need memory-room))
         (if (is misfit None)
@@ -1745,6 +1777,17 @@
       (setv free (lfor #(w _) (sorted roomy :key (fn [pair] #((not (env-ready-on task.runtime-env (get pair 0)))
                                                               (- (get pair 1)) (. (get pair 0) name))))
                        w))
+      ;; 置けずに STARVE-WAIT-MS を越えて待った task は、memory の空きだけで置けない worker のうち、今の task が全部終われば入る見込みの在る
+      ;; 1 台に要りを取っておく(measured_room の頭の註の取っておき)。後ろの順の task は、その worker の memory の空きから要りを引いて数える。
+      (var keeper None)
+      (when (and (not free) (>= (- now task.submitted-ms) STARVE-WAIT-MS))
+        (<- chosen-keeper (| WorkerInfo None) (starved-keeper task able-now needs rooms kept held state.group-limits))
+        (:= keeper chosen-keeper)
+        (when (is-not keeper None)
+          (val kept-need (get needs keeper.name))
+          (val kept-load (get load keeper.name))
+          (setv (get load keeper.name) (replace kept-load :reserved-mib (+ kept-load.reserved-mib kept-need)))
+          (+= (get kept keeper.name) kept-need)))
       (cond
         free (do (setv chosen (get free 0)
                        ;; 準備済みの worker が無い置き先 = 冷たい起動(worker が準備してから走る)。phase を preparing にして assigned と分ける。
@@ -1768,7 +1811,8 @@
         ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now
-          (let [text (waiting-detail task (! (task-unplaced-text (! (misfit-reason misfits)))))]
+          (let [reason (! (task-unplaced-text (! (misfit-reason misfits))))
+                text (waiting-detail task (if (is keeper None) reason (! (kept-text reason keeper.name))))]
             (when (!= task.detail text)
               (setv (get writes id) (replace task :detail text))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
