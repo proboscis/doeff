@@ -46,8 +46,8 @@
                :files (+ #((MemoryFile :path "/proc/meminfo" :content (.encode meminfo)))
                          (tuple (gfor #(pid mib) (.items pss)
                                       (MemoryFile :path (.format "/proc/{}/smaps_rollup" pid)
-                                                  :content (.encode (.format "00400000-7fff [rollup]\nRss:  {} kB\nPss:  {} kB\n"
-                                                                             (* 2 mib 1024) (* mib 1024)))))))))
+                                                  :content (.encode (.format "00400000-7fff [rollup]\nRss:  {} kB\nPss:  {} kB\nAnonymous:  {} kB\n"
+                                                                             (* 2 mib 1024) (* mib 1024) (* (// mib 5) 1024)))))))))
 
 
 (defeffect ReadPssReads
@@ -61,7 +61,7 @@
   ;; 引数に残す理由: 止めの合図を出す入れ物と見張りを止める刻は検ごとに決める台本の値(Ask で読む設定ではない)。
   (session var reads #())
   (ObserveJobRoots []
-    (resume #((JobRoot :name "svc" :pid 10) (JobRoot :name "task/1" :pid 20))))
+    (resume #((JobRoot :name "svc" :pid 10 :started-ms 777) (JobRoot :name "task/1" :pid 20))))
   (ReadText [path]
     (when (.endswith path "/smaps_rollup")
       (:= reads (+ reads #(path))))
@@ -102,7 +102,7 @@
   (val reads (get seen 1))
   (val start (. (get cell.eviction.meters 0) pss-at-ms))
   (assert (= cell.eviction.meters #((JobMeter :job "svc" :pid 10 :cpu-ms 6000 :rss-bytes (* 60 MIB) :processes 3
-                                              :pss-bytes (* 45 MIB) :pss-at-ms start)))
+                                              :pss-bytes (* 45 MIB) :pss-at-ms start :body-anonymous-bytes (* 5 MIB) :started-ms 777)))
           cell.eviction.meters)
   (assert (= (len reads) 9) reads)
   (assert (= (sorted (set reads)) ["/proc/10/smaps_rollup" "/proc/11/smaps_rollup" "/proc/12/smaps_rollup"]) reads)
@@ -129,7 +129,8 @@
 
 (deftest test-the-heartbeat-names-fresh-meters-and-state-shows-them
   ;; (3) 新しい読みだけを名乗り、綴りを coordinator の受け口が読み、GET /state の worker の行に出す。
-  (val meters #((JobMeter :job "rules" :pid 41 :cpu-ms 123456 :rss-bytes (* 300 MIB) :processes 2 :pss-bytes (* 210 MIB) :pss-at-ms 5000)
+  (val meters #((JobMeter :job "rules" :pid 41 :cpu-ms 123456 :rss-bytes (* 300 MIB) :processes 2 :pss-bytes (* 210 MIB) :pss-at-ms 5000
+                           :body-anonymous-bytes (* 150 MIB) :started-ms 900)
                 (JobMeter :job "watch" :pid 42 :cpu-ms 10 :rss-bytes (* 80 MIB) :processes 1)))
   (<- fresh (| tuple None) (job-meters-told meters 1000 (+ 1000 JOB-METERS-FRESH-MS)))
   (<- stale (| tuple None) (job-meters-told meters 1000 (+ 1001 JOB-METERS-FRESH-MS)))
@@ -140,11 +141,12 @@
                                                 :job-meters fresh :job-meters-at-ms 6000)))
   (assert (= (get spelled "jobUsesAtMs") 6000) spelled)
   (assert (= (get spelled "jobUses")
-             [{"job" "rules" "pid" 41 "cpuMs" 123456 "rssMiB" 300 "processes" 2 "pssMiB" 210 "pssAtMs" 5000}
+             [{"job" "rules" "pid" 41 "cpuMs" 123456 "rssMiB" 300 "processes" 2 "pssMiB" 210 "pssAtMs" 5000 "bodyAnonymousMiB" 150 "startedAtMs" 900}
               {"job" "watch" "pid" 42 "cpuMs" 10 "rssMiB" 80 "processes" 1}])
           spelled)
   (<- read (parse MeasuredLoad spelled))
-  (assert (= read.job-uses #((MeasuredJob :job "rules" :pid 41 :cpu-ms 123456 :rss-MiB 300 :processes 2 :pss-MiB 210 :pss-at-ms 5000)
+  (assert (= read.job-uses #((MeasuredJob :job "rules" :pid 41 :cpu-ms 123456 :rss-MiB 300 :processes 2 :pss-MiB 210 :pss-at-ms 5000
+                                          :body-anonymous-MiB 150 :started-at-ms 900)
                              (MeasuredJob :job "watch" :pid 42 :cpu-ms 10 :rss-MiB 80 :processes 1)))
           read)
   (<- workers (table-from-rows {"k3s-1" (WorkerInfo "k3s-1" #("host-k3s-1") 6000 :measured read)}))
@@ -161,7 +163,7 @@
   (val services #((ProcessView "rules" spec 1 7 1000)))
   (<- load MachineLoad (machine-load-of machine 0 11000 :services services))
   (assert (= load.job-meters #((JobMeter :job "rules" :pid 7 :cpu-ms 5000 :rss-bytes (* 200 MIB) :processes 1 :pss-bytes (* 200 MIB)
-                                         :pss-at-ms 11000)))
+                                         :pss-at-ms 11000 :body-anonymous-bytes (* 200 MIB) :started-ms 1000)))
           load.job-meters)
   (<- plain MachineLoad (machine-load-of (replace machine :service-mib None) 0 11000 :services services))
   (assert (is plain.job-meters None) plain))

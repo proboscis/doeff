@@ -367,7 +367,8 @@
                                                     (JobMeter :job p.name :pid p.pid
                                                               :cpu-ms (int (* (max 0 (- at-ms p.started-ms)) machine.service-cores))
                                                               :rss-bytes (* machine.service-mib MIB) :processes 1
-                                                              :pss-bytes (* machine.service-mib MIB) :pss-at-ms at-ms))
+                                                              :pss-bytes (* machine.service-mib MIB) :pss-at-ms at-ms
+                                                              :body-anonymous-bytes (* machine.service-mib MIB) :started-ms p.started-ms))
                                               :key (fn [m] #(m.job m.pid)))))
                :job-meters-at-ms (if (is machine.service-mib None) None at-ms)))
 

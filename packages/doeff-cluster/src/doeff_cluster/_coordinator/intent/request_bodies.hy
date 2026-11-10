@@ -191,7 +191,8 @@
    job 1 つの CPU と memory の今。job = job の名・pid = 根の pid・cpu-ms = 木の process の CPU の累計の和(自分と待ち終えた子の utime + stime の
    ms — 同じ job と pid の 2 回の読みの差が、その間に木が使った CPU。pid が変われば起こし直された別の木)・rss-MiB = 木の rss の和・processes =
    木の process の数・pss-MiB = 木の PSS の和(None = worker が読めなかった・まだ読んでいない)・pss-at-ms = その PSS を読んだ刻(worker の
-   壁の時計の epoch ms — PSS は数十秒ごとにだけ読み直す)。"
+   壁の時計の epoch ms — PSS は数十秒ごとにだけ読み直す)・body-anonymous-MiB = 同じ読みの、木の中で PSS の最も大きい process(job の本体)の
+   Anonymous(None = PSS と同じ)・started-at-ms = 根を起こした刻(worker の壁の時計の epoch ms — None = 名乗らない。起動からの時間を数える)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(bool job) (> pid 0) (>= cpu-ms 0) (>= rss-MiB 0) (> processes 0) (or (is pss-MiB None) (>= pss-MiB 0))]}
   (#^ str job)
@@ -200,7 +201,9 @@
   (#^ int rss-MiB)
   (#^ int processes)
   (setv #^ (| int None) pss-MiB None)
-  (setv #^ (| int None) pss-at-ms None))
+  (setv #^ (| int None) pss-at-ms None)
+  (setv #^ (| int None) body-anonymous-MiB None)
+  (setv #^ (| int None) started-at-ms None))
 
 
 (defwire MeasuredLoad

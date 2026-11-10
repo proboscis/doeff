@@ -57,7 +57,7 @@
 (import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse
                                                 JobSteady UnitKind node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of
                                                 largest-outside steady-sizes spared-steady victim-of swarm-of resident-walks job-meters-of
-                                                pss-bytes-of _JobWalk])
+                                                pss-bytes-of anonymous-bytes-of _JobWalk])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted jobs-oom-noted])
 
@@ -142,7 +142,7 @@
    過ぎた物は読みごとに除く・調整ループが memory_observer で読む)・steady = 閉じた最大の行の間ごとの job の最大(JobSteady の列の列 —
    新しい間が後・steady-windows 個まで)・window-killed = 今の最大の行の間に見張りが止めた job の名(その間の最大を steady に残さない)・
    eviction = 追い出しの線の読みの入れ物(worker/protocol/eviction_line の EvictionCell — heartbeat の測りも最後の線を読む)・
-   pss = 常駐の job の木ごとの最後に読めた PSS(#(job の名 根の pid) → #(byte 読んだ刻) — 頭の註)・pss-read-ms = 最後に PSS を読んだ刻
+   pss = 常駐の job の木ごとの最後に読めた PSS(#(job の名 根の pid) → #(byte 読んだ刻 本体の Anonymous の byte) — 頭の註)・pss-read-ms = 最後に PSS を読んだ刻
    (None = まだ)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
@@ -430,22 +430,27 @@
 
 
 (defk tree-pss [settings walk]
-  {:pre [(: settings MemoryWatchSettings) (: walk _JobWalk)] :post [(: % (| int None))] :tags {:context "worker" :role "protocol"}}
-  "job の木 1 本(walk = _JobWalk)の process の PSS の和を、/proc/<pid>/smaps_rollup を 1 本ずつ読んで数えるため。1 本でも読めない(読む間に
-   終わった・形が違う)か、木が pss-process-limit 本を越えれば None(小さく欠けた和を作らない — 頭の註)。"
+  {:pre [(: settings MemoryWatchSettings) (: walk _JobWalk)] :post [(: % (| tuple None))] :tags {:context "worker" :role "protocol"}}
+  "job の木 1 本(walk = _JobWalk)の process の PSS の和と、PSS の最も大きい process(job の本体)の Anonymous を、/proc/<pid>/smaps_rollup を
+   1 本ずつ読んで数えるため(答え = #(PSS の和 本体の Anonymous) の byte)。1 本でも読めない(読む間に終わった・形が違う)か、木が
+   pss-process-limit 本を越えれば None(小さく欠けた和を作らない — 頭の註)。"
   (val members walk.walk.members)
   (when (> (len members) settings.pss-process-limit)
     (return None))
   (var total 0)
+  (var body #(-1 0))
   (for [member members]
     (<- text (| str None) (text-or-none (.format "{}/{}/smaps_rollup" settings.proc-dir member.pid)))
     (when (is text None)
       (return None))
     (<- size (| int None) (pss-bytes-of text))
-    (when (is size None)
+    (<- anonymous (| int None) (anonymous-bytes-of text))
+    (when (or (is size None) (is anonymous None))
       (return None))
+    (when (> size (get body 0))
+      (:= body #(size anonymous)))
     (:= total (+ total size)))
-  total)
+  #(total (get body 1)))
 
 
 (defk noted-meters [settings cell walks now-ms]
@@ -458,9 +463,9 @@
   (when (or (is read-ms None) (< now-ms read-ms) (>= (- now-ms read-ms) (* settings.pss-seconds 1000)))
     (var read {})
     (for [w residents]
-      (<- size (| int None) (tree-pss settings w))
-      (when (is-not size None)
-        (:= read (| read {#(w.root.name w.root.pid) #(size now-ms)}))))
+      (<- sizes (| tuple None) (tree-pss settings w))
+      (when (is-not sizes None)
+        (:= read (| read {#(w.root.name w.root.pid) #((get sizes 0) now-ms (get sizes 1))}))))
     (setv cell.pss read cell.pss-read-ms now-ms))
   (<- meters tuple (job-meters-of residents cell.pss))
   (setv cell.eviction.meters meters cell.eviction.meters-at-ms now-ms)

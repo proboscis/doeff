@@ -579,7 +579,7 @@
   (ObserveJobRoots []
     ;; 機体の memory の見張りの問い: 終わりをまだ観測していない子の根を、表のまま答える(子を問い直さない)。
     (resume (tuple (gfor started (.values table) :if (is started.view.exit-code None)
-                         (JobRoot :name started.view.name :pid started.view.pid)))))
+                         (JobRoot :name started.view.name :pid started.view.pid :started-ms started.view.started-ms)))))
   (WorkerWakes []
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 終わりをまだ観測していない子の終わりを待つ効果を足す。待ちの子から分けた子は起動の刻を
     ;; 照らして待つ(pid の使い回しの終わりでは起きない)。

@@ -103,9 +103,11 @@
 
 
 (defrecord JobRoot
-  "worker が起こした job の根の process 1 つ(name = job の名・pid = 根の pid — shim か待ちの子から分けた子 A)。"
+  "worker が起こした job の根の process 1 つ(name = job の名・pid = 根の pid — shim か待ちの子から分けた子 A・started-ms = 根を起こした刻
+   〔worker の壁の時計の epoch ms — None = 知らない〕)。"
   (#^ str name)
-  (#^ int pid))
+  (#^ int pid)
+  (setv #^ (| int None) started-ms None))
 
 
 (defk task-root? [root]
@@ -355,16 +357,19 @@
    cpu-ms = 木の process の CPU の累計の和(ProcRow.cpu-ms — 自分と待ち終えた子の utime + stime。同じ根の 2 回の読みの差が、その間に木が
    使った CPU)・rss-bytes = 木の rss の和・processes = 木の process の数・pss-bytes = 木の PSS の和(smaps_rollup — 読みが重いので
    見張りが pss-seconds ごとにだけ読む。None = まだ読んでいない・木の 1 本でも読めなかった・木が pss-process-limit を越えた)・
-   pss-at-ms = その PSS を読んだ刻(None = pss-bytes が None)。"
+   pss-at-ms = その PSS を読んだ刻(None = pss-bytes が None)・body-anonymous-bytes = 同じ読みの、木の中で PSS の最も大きい process(job の
+   本体)の Anonymous(None = pss-bytes が None)・started-ms = 根を起こした刻(epoch ms — None = 知らない。起動からの時間を読み手が数える)。"
   {:check [(>= cpu-ms 0) (>= rss-bytes 0) (> processes 0) (or (is pss-bytes None) (>= pss-bytes 0))
-           (= (is pss-bytes None) (is pss-at-ms None))]}
+           (= (is pss-bytes None) (is pss-at-ms None) (is body-anonymous-bytes None))]}
   (#^ str job)
   (#^ int pid)
   (#^ int cpu-ms)
   (#^ int rss-bytes)
   (#^ int processes)
   (setv #^ (| int None) pss-bytes None)
-  (setv #^ (| int None) pss-at-ms None))
+  (setv #^ (| int None) pss-at-ms None)
+  (setv #^ (| int None) body-anonymous-bytes None)
+  (setv #^ (| int None) started-ms None))
 
 
 (defk resident-walks [walks]
@@ -376,21 +381,36 @@
 (defk job-meters-of [walks pss]
   {:pre [(: walks tuple) (: pss dict)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "常駐の job ごとの CPU と memory の今(JobMeter の列 — 名の昇順)を、木(walks = resident-walks の答え)の rss と CPU の累計の和で数え、
-   PSS は pss(#(job の名 根の pid) → #(PSS の和 読んだ刻) — 見張りが最後に読めた物)から添えるため。根の pid の違う前の PSS は添えない
+   PSS は pss(#(job の名 根の pid) → #(PSS の和 読んだ刻 本体の Anonymous) — 見張りが最後に読めた物)から添えるため。根の pid の違う前の PSS は添えない
    (起こし直された job の前の木の値を今の木に付けない)。"
   (tuple (sorted (gfor w walks
                        :setv key #(w.root.name w.root.pid)
                        :setv read (.get pss key)
                        (JobMeter :job w.root.name :pid w.root.pid :cpu-ms (sum (gfor m w.walk.members m.cpu-ms))
                                  :rss-bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)
-                                 :pss-bytes (if (is read None) None (get read 0)) :pss-at-ms (if (is read None) None (get read 1))))
+                                 :pss-bytes (if (is read None) None (get read 0)) :pss-at-ms (if (is read None) None (get read 1))
+                                 :body-anonymous-bytes (if (is read None) None (get read 2)) :started-ms w.root.started-ms))
                  :key (fn [meter] #(meter.job meter.pid)))))
 
 
 (defk pss-bytes-of [text]
   {:pre [(: text str)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
   "/proc/<pid>/smaps_rollup の中身 text の行 Pss: <kB> kB を byte にするため(行が無い・数でない = None — 読めないと数える)。"
-  (val line (next (gfor l (.splitlines text) :if (.startswith l "Pss:") l) None))
+  (<- size (| int None) (rollup-bytes-of text "Pss:"))
+  size)
+
+
+(defk anonymous-bytes-of [text]
+  {:pre [(: text str)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "/proc/<pid>/smaps_rollup の中身 text の行 Anonymous: <kB> kB を byte にするため(行が無い・数でない = None)。"
+  (<- size (| int None) (rollup-bytes-of text "Anonymous:"))
+  size)
+
+
+(defk rollup-bytes-of [text head]
+  {:pre [(: text str) (: head str)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "smaps_rollup の中身 text の、頭が head の行(<head> <kB> kB)を byte にするため(行が無い・数でない = None)。"
+  (val line (next (gfor l (.splitlines text) :if (.startswith l head) l) None))
   (val parts (if (is line None) [] (.split line)))
   (if (and (= (len parts) 3) (.isdigit (get parts 1)) (= (get parts 2) "kB"))
       (* (int (get parts 1)) 1024)
