@@ -1823,6 +1823,12 @@
   {
    "package": "doeff-stream",
    "module": "doeff_stream",
+   "name": "Arm",
+   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
    "name": "CancelRun",
    "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
   },
@@ -1830,6 +1836,12 @@
    "package": "doeff-stream",
    "module": "doeff_stream",
    "name": "Cancelled",
+   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Disarm",
    "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
   },
   {

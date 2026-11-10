@@ -6,7 +6,7 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_cluster._worker.intent.worker_model [ProgramGap])
+(import doeff_cluster._worker.intent.worker_model [MemoryStops ProgramGap])
 
 
 (defclass [(dataclass :frozen True)] ObserveProcesses [EffectBase]
@@ -64,7 +64,7 @@
    見張りに続けて止められた常駐の job の起こし直しを止める(WorkerPolicy.memory-kill-limit)。")
 
 
-(defclass [(dataclass :frozen True)] ObserveMemoryStops [EffectBase]
+(defclass [(dataclass :frozen True)] ObserveMemoryStops [(get EffectBase MemoryStops)]
   "機体の memory の訳で job の process が止められた記録(MemoryStops — WorldView.memory-stops: 見張りが止めた job の根と訳・jobs の層の
    kernel の OOM kill の増えを読んだ刻)。世界の観測のまとめ(local-host)が、機体の memory の見張りの観測の答え手
    (worker/protocol/memory_observer)へ問う。判断は終わった process を回収する時に止めた訳を決め、状態の報告の訳に載せる。")

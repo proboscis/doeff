@@ -186,6 +186,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "MemoryStops",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "ProgramGap",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
