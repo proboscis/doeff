@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-ungated-refusal task-room-claim-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
@@ -70,7 +70,8 @@
   "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs・実行環境・子の環境変数(environ)が違えば 409
    (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。
    memory の要り(memoryMiB)の無い本文と、要りが needs の合うどの worker の線よりも大きい新しい task は 400 で断る
-   (task-memory-required-refusal・memory-need-refusal)。"
+   (task-memory-required-refusal・memory-need-refusal)。測った空きの門の外を名乗る本文(ungated)は要りを名乗らず組を 1 つ以上名乗る
+   (task-room-claim-refusal — 違えば 400)。"
   (setv lease (if (is body.lease-seconds None) DETACHED-DEFAULT-LEASE-SECONDS body.lease-seconds)
         retain (if (is body.retain-seconds None) DETACHED-DEFAULT-RETAIN-SECONDS body.retain-seconds)
         refusal (or (format-version-refusal body.format)
@@ -83,8 +84,11 @@
                     (task-limits-refusal body.limits)
                     (task-notify-refusal body.notify)
                     (task-rerun-refusal body.rerun)
-                    ;; 切り離した task は memory の要りを必須で名乗る(2026-11-02 — 要りの無い本文も断る)。
-                    (task-memory-required-refusal body.memory-MiB)
+                    ;; 測った空きの門の外の名乗り(2026-11-11 — 名乗らなくてよい)。
+                    (task-ungated-refusal body.ungated)
+                    ;; 切り離した task は memory の要りを必須で名乗る(2026-11-02 — 要りの無い本文も断る)。門の外の task は要りを名乗らず、
+                    ;; 組を 1 つ以上名乗る(2026-11-11)。組の列の形は上の task-limits-refusal が先に検める。
+                    (task-room-claim-refusal (is body.ungated True) body.memory-MiB (len (or body.limits [])))
                     ;; 仕事の形(2026-11-10 — 名乗らなくてよい)。
                     (task-shape-refusal body.shape)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
@@ -119,7 +123,7 @@
                          :runtime-env body.runtime-env :environ environ
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)
                          :notify (or body.notify "") :memory-mib body.memory-MiB :rerun (is body.rerun True)
-                         :shape (or body.shape "")))
+                         :shape (or body.shape "") :ungated (is body.ungated True)))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 

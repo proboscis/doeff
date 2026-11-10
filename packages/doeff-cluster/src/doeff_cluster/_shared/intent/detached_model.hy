@@ -99,6 +99,10 @@
   ;; 大きい方で数える(measured_room.learned-need)— 名乗りが実の山より小さくても、同じ形の 2 本目からは測った山で置かれる。同じ key の
   ;; 送り直しの比べには入れない。形の検めは構築関数。
   (setv #^ str shape "")
+  ;; 測った空きの門の外(2026-11-11): 真 = coordinator の置き先が機体の測った空き(CPU・memory・PSI)と予約を判じずに置く task(版の入れ替えの
+  ;; ような、混んだ時ほど要る仕事 — 空きを待つと混みが解けるまで走らない)。memory の要りを名乗らず(memory-mib は None)、同時数は系の
+  ;; 宣言の組(limits — 1 つ以上)の上限だけが限る。同じ key の送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ bool ungated False)
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数

@@ -344,6 +344,8 @@
   (setv #^ object memory-MiB None)
   ;; 仕事の形(2026-11-10 — 切り離した task だけが読む。None = 名乗らない。置き先が同じ形の測った山を要りに数える)。形は判断が読む。
   (setv #^ object shape None)
+  ;; 測った空きの門の外の名乗り(2026-11-11 — 切り離した task だけが読む。None = 名乗らない。真なら置き先が空きを判じない)。形は判断が読む。
+  (setv #^ object ungated None)
   ;; 担い手が消えた時の走らせ直しの名乗り(2026-11-04 — 切り離した task だけが読む。None = 名乗らない)。形は判断が読む。
   (setv #^ object rerun None)
   (setv #^ object format 1))

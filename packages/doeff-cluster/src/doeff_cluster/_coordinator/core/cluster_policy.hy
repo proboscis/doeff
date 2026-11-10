@@ -1778,6 +1778,7 @@
       (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
+      ;; 測った空きの門の外の task(ungated)は、名乗った組の上限に達していない worker ならどれにも置ける(下の misfit — 空きを判じない)。
       ;; task を置けるのは測った空き(task-room-of — 機体の CPU・PSI から数え、置いた task と測りにまだ出ていない task を引いた数)が在り、
       ;; task の memory の要りが memory の空き(task-memory-room-of — 測った空き − 床 − 置いた task のまだ伸びる分)以下で、名乗った上限に
       ;; 達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の理由は待ちの文に使う。roomy = 置ける
@@ -1795,8 +1796,12 @@
         (<- room int (task-room-of w load :urgent urgent))
         (<- memory-room int (task-memory-room-of w load :urgent urgent))
         (setv (get rooms w.name) memory-room)
-        (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits
-                                                          (get bg-held w.name) (get bg-wanted w.name) need memory-room))
+        ;; 測った空きの門の外の task は、空きと予約を判じず、名乗った組(宣言に無い組・組の上限)だけで判じる(measured_room の頭の註の
+        ;; 測った空きの門の外の task)。
+        (<- misfit (| TaskUnplacedKind None) (if task.ungated
+                                                 (limits-misfit task.limits w.name held state.group-limits)
+                                                 (task-misfit task.limits task.priority w room held state.group-limits
+                                                              (get bg-held w.name) (get bg-wanted w.name) need memory-room)))
         (if (is misfit None)
             (:= roomy #(#* roomy #(w room)))
             (:= misfits [#* misfits misfit])))
@@ -1807,9 +1812,10 @@
                        w))
       ;; 置けずに STARVE-WAIT-MS を越えて待った task と急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は(keeps-room?)、memory の空きだけで
       ;; 置けない worker のうち、今の task が全部終われば入る見込みの在る 1 台に要りを取っておく(measured_room の頭の註の取っておき)。
-      ;; 後ろの順の task は、その worker の memory の空きから要りを引いて数える。
+      ;; 後ろの順の task は、その worker の memory の空きから要りを引いて数える。測った空きの門の外の task は空きを待たないので取っておかない
+      ;; (置けないのは組の上限だけ — 空きを溜めても置けない)。
       (var keeper None)
-      (when (and (not free) (! (keeps-room? task.priority (- now task.submitted-ms))))
+      (when (and (not free) (not task.ungated) (! (keeps-room? task.priority (- now task.submitted-ms))))
         (<- chosen-keeper (| WorkerInfo None) (starved-keeper task able-now needs rooms kept held state.group-limits))
         (:= keeper chosen-keeper)
         (when (is-not keeper None)
@@ -2945,6 +2951,8 @@
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
   (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)
                     (task-priority-refusal body.priority) (task-limits-refusal body.limits)
+                    ;; 測った空きの門の外は切り離した task だけの名乗り(2026-11-11 — 呼び手の問い合わせに縛られた task は空きの門の内で置く)。
+                    (if (is body.ungated None) None "ungated は切り離した task(PUT /detached)だけが名乗る")
                     (! (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。

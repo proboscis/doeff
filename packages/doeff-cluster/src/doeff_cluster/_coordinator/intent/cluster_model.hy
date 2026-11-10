@@ -1261,7 +1261,11 @@
   ;; この task の山と、同じ形の行(保持の間の終わった行を含む)の山の最大の大きい方で数える(measured_room.learned-need) — 名乗りより大きく
   ;; 伸びた task は自分の山で予約を続け、同じ形の次の task はその山で置かれる。欄の無い旧い行は名乗らない・測っていないで読む。
   (setv #^ str shape "")
-  (setv #^ (| int None) peak-mib None))
+  (setv #^ (| int None) peak-mib None)
+  ;; --- 測った空きの門の外(2026-11-11)---
+  ;; ungated = 送り手が門の外を名乗った task(SubmitDetached の ungated の註)。置き先は測った空きと予約を判じず、組の上限と能力・版・drain・
+  ;; disk だけで置く(cluster_policy.place-tasks)。欄の無い旧い行は門の内で読む。
+  (setv #^ bool ungated False))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

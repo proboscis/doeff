@@ -94,6 +94,15 @@
 ;;; その値で数え(memory-room-mib の urgent)、ほかの task は今までどおり線の上の空きで数える。名乗らない worker(線が縮めていない・前の版)は
 ;;; 急ぎの task も平常の空きで数える。追い出しの線の手前の余裕(MEMORY-FLOOR-MIB・JOBS-ROOM-FLOOR-MIB)はどちらにも掛ける。
 ;;;
+;;; 測った空きの門の外の task(2026-11-11): 版の入れ替えのような、混んだ時ほど要る task は、機体の空きを待つと
+;;; 混みが解けるまで当たらない(急ぎの優先と取っておきでも、空きの判じそのものは残る — 線を外した空きも、要りが入るまで置かない。
+;;; 2026-11-11 の夜は、急ぎでない置き方の入れ替えの task が「どの機体の測った空きにも余りが無い」で 2 時間 1 本も置かれなかった — 同じ刻の
+;;; 機体は memory 46%)。送り手が ungated を名乗った task(SubmitDetached の ungated の註)は、この節の数(CPU の空き・memory の空き・PSI の
+;;; 止め・測りの有無・予約の半分ずつの守り)を判じず、能力と版・drain・disk の合う生きた worker に置く(cluster_policy.place-tasks)。同時数は
+;;; 系の宣言の組の上限だけが限る — 門の外の task は memory の要りを名乗らず、組を 1 つ以上名乗る(detached_rules.task-room-claim-refusal)。
+;;; 取っておきの対象にしない(置けないのは組の上限だけで、空きを溜めても置けない)。置いた後は、ほかの task と同じに要り(名乗らない要り
+;;; UNDECLARED-TASK-MIB か、同じ形の測った山 — learned-need)を予約に数えるので、後ろの門の内の task はその分を引いた空きで置かれる。
+;;;
 ;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
 ;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に常駐の job が膨らむ分は、機体の中の cgroup の層
 ;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
