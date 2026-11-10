@@ -1,9 +1,8 @@
 """ADR-DOE-ENFORCE-001 R8: coverage of the daily full-verification population, the shape of failure names, and where test files live.
 
-The daily full verification (gate.full in .agents/land-queue.toml) has three populations: root pytest, per-package
-pytest (`make test-packages`), and per-Rust-crate cargo test (`make test-rust`). The declaration shape
-(a separate processing stage per population) is held by the ADR deftest
-test-adr-doe-enforce-001-daily-populations-are-separate-stages; this file holds the behavior itself:
+The daily full verification (gate.full of the daily gate's declaration, kept outside this repository) has three populations:
+root pytest, per-package pytest (`make test-packages`), and per-Rust-crate cargo test (`make test-rust`). The declaration
+shape (a separate processing stage per population) belongs to that declaration and is not checked here; this file holds the behavior itself:
 
 - The package loop visits every expected set and every root outside a package's tests/ (the Makefile's PACKAGE_EXTRA_TEST_ROOTS),
   continues after a red, and names the failing packages at the end.
@@ -27,7 +26,6 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
-import shlex
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -773,39 +771,15 @@ def test_no_package_declares_its_own_pytest_ini() -> None:
     )
 
 
-def test_every_daily_stage_declares_whether_it_runs_pytest() -> None:
-    """In the daily full verification, a processing stage with the field pytest = true counts as a coverage gap if no session answers, and a stage without the field records
-    "pytest run not declared". The runner does not refuse, so a forgotten field is turned red by this repo's declaration test."""
-    full = tomllib.loads((REPO_ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
-    assert isinstance(full, list) and full, f"[gate] full is not a list of processing stages (a single string cannot carry the field pytest): {full!r}"
-    missing = [stage.get("name") for stage in full if not isinstance(stage.get("pytest"), bool)]
-    assert not missing, f"[gate] full processing stages {missing} lack the field pytest (true or false)"
-
-
 # The hook for the list of seconds that the daily pytest session prints at the end -- prints tests of 10 seconds or more with no cap on the count.
 # With a cap (the old --durations=20), when more than 20 tests over 30 seconds exist in a package the rest do not appear in the log.
 _DAILY_DURATIONS_FLAGS = ("--durations=0", "--durations-min=10")
 
 
-def _stage_run(name: str) -> str:
-    full = tomllib.loads((REPO_ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
-    return next(stage["run"] for stage in full if stage.get("name") == name)
-
-
-def test_root_stage_lists_every_slow_test() -> None:
-    """The pytest command of processing stage root prints tests of 10 seconds or more with no cap (leaving per-test seconds in the daily log)."""
-    segments = [shlex.split(part) for part in _stage_run("root").split("&&")]
-    pytest_args = [words[words.index("pytest") + 1 :] for words in segments if "pytest" in words]
-    assert len(pytest_args) == 1, f"processing stage root does not have exactly one pytest command: {_stage_run('root')}"
-    missing = [flag for flag in _DAILY_DURATIONS_FLAGS if flag not in pytest_args[0]]
-    assert not missing, f"the pytest of processing stage root lacks {missing} -- tests over 30 seconds would not appear in the daily log: {pytest_args[0]}"
-
-
 def test_make_test_packages_lists_every_slow_test(packages_round: _PackagesRound) -> None:
-    """The shape of processing stage packages (passing only PACKAGE_UV_RUN to `make test-packages`): every package session
+    """The shape the daily packages stage calls (passing only PACKAGE_UV_RUN to `make test-packages`): every package session
     prints tests of 10 seconds or more with no cap. Look at the arguments the fake runner received (the round is read together with the test above -- red is only the first package, and
     the test above checks that the loop visits all of them)."""
-    assert "make test-packages PACKAGE_UV_RUN=" in _stage_run("packages"), _stage_run("packages")
     calls, output = packages_round.made.calls, packages_round.made.output
     assert not packages_round.made.timed_out, (
         f"make test-packages did not finish in 120 seconds\n{output[-2000:]}"

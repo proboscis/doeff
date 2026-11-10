@@ -726,7 +726,7 @@ def pytest_terminal_summary(terminalreporter):
 # A run of a broad selection (the whole of this repo = over 1,500 tests) runs its bodies only when it could consume, once, a time-limited
 # grant issued by the brain. The decision (is it broad), the sum over a 30-minute window and the grant consumption are owned by
 # **one canonical place** (the agora toolchain's ~/dotfiles/agent/tests/broad_run_admission.py); this repo declares **only values**
-# in [test-admission] of .agents/land-queue.toml
+# in [test-admission] of the landing declaration, which is kept outside this repository
 # (do not put a copy of the decision here — with a copy, changing the policy leaves one side giving a stale answer).
 #
 # The admission only binds where the agora toolchain is installed.  On a machine

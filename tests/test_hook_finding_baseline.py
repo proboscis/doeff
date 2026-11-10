@@ -22,7 +22,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-import tomllib
 
 ROOT: Path = Path(__file__).resolve().parents[1]
 SCRIPT: Path = ROOT / "scripts" / "hook_finding_baseline.py"
@@ -515,29 +514,6 @@ def test_the_key_entry_prints_the_key_of_a_commit(tmp_path: Path) -> None:
                              cwd=rig.repo, env=rig.environment, capture_output=True, text=True, check=False)
     assert printed.returncode == 0, printed.stderr
     assert printed.stdout.strip() == LINTER_LOCKED.input_key(rig.repo, "HEAD")
-
-
-def test_the_daily_gate_runs_the_baseline_check_strictly() -> None:
-    # The daily whole-verification stage list has a stage that applies the same baseline comparison as the hook to the whole repo with --strict (removing it leaves nowhere that measures commits the hook passed with "cannot measure").
-    # Since 2026-10-10 the stage runs directly in the daily task's git work tree (ADR-DOE-ENFORCE-001 R10),
-    # and the list is git-tracked files -- build artifacts (.venv etc.) do not get mixed in. Preparing the baseline-key linter is in tests/test_gate_tools.py.
-    stages = tomllib.loads((ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
-    lint = [stage for stage in stages if stage["name"] == "lint"]
-    assert len(lint) == 1
-    assert "hook_finding_baseline.py --strict check doeff-linter" in lint[0]["run"]
-    assert "hook_finding_baseline.py --strict check semgrep" in lint[0]["run"]
-
-
-def test_the_daily_semgrep_check_declares_the_python_semgrep_installs_on() -> None:
-    # The semgrep comparison calls the uv.lock version of semgrep via `uv tool run`, and the tool's python is the version of the running python
-    # (scripts/semgrep_locked.py). Without the declaration it becomes the tree's .python-version (free-threaded 3.14), and `uv tool run` does not read
-    # exclude-dependencies in pyproject.toml, so it tries to build the unbuildable C accelerator ruamel-yaml-clib and fails
-    # ("semgrep JSON has no results list"). The same declaration as the commit hook's semgrep entry (the daily lint stage of 2026-10-12).
-    stages = tomllib.loads((ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
-    lint = next(stage["run"] for stage in stages if stage["name"] == "lint")
-    assert "uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep" in lint, lint
-    excluded = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["uv"]["exclude-dependencies"]
-    assert "ruamel-yaml-clib" in excluded, "the reason for the declaration is gone -- check whether the 3.12 declaration can be removed"
 
 
 def test_the_script_reads_its_sibling_modules_under_a_safe_path(monkeypatch: pytest.MonkeyPatch) -> None:

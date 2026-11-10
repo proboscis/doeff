@@ -10,15 +10,21 @@ Publishing (pushing to origin main) is done by the land queue window — push yo
 
 Since 2026-08-09, the upstream rule (main only advances with verified commits) is machine-enforced by the window's battery.
 
-The machine that runs the window is decided by `policy.runner` in `.agents/land-queue.toml` — since 2026-09-14 it is `"pod"` (land-api in the brain pod on k3s, runner `land-runner@agora-1`, push key = the deploy key in Secret `land-key-doeff`). A registered Mac announces "this repo's window is run by the pod" and skips it. To return to a Mac window, delete the runner line.
+The machine that runs the window is decided by `policy.runner` in the landing declaration — since 2026-09-14 it is `"pod"` (land-api in the brain pod on k3s, runner `land-runner@agora-1`, push key = the deploy key in Secret `land-key-doeff`). A registered Mac announces "this repo's window is run by the pod" and skips it. To return to a Mac window, delete the runner line.
 
-## `.agents/land-queue.toml` is maintainer infrastructure
+## The landing declaration is kept outside this repository
 
-This file declares the landing window and holds the maintainer's verification infrastructure. `gate.full` (the
-verbatim full check, used only by the daily verification run `ai land verify` and the full_paths run),
+The landing declaration declares the landing window and holds the maintainer's verification infrastructure. `gate.full`
+(the verbatim full check, used only by the daily verification run `ai land verify` and the full_paths run),
 `gate.timeout_s`, the focus mode policy, the `UV_CACHE_DIR` lane separation, the choice of execution surface
-(zeus / k3s), and `[test-admission]` (admission for running broad tests) all live here. **You do not need to read
-this file to use doeff or to develop doeff locally.**
+(zeus / k3s), and `[test-admission]` (admission for running broad tests) all live there. Since 2026-11-10 it is not
+in this repository: the merge queue keeps it in its own repository, and the steps after the daily verification
+(the report of public names added without a table row, the follow-up of the repositories that depend on doeff) and
+the preparation of the daily run's tools moved to the daily verification job. The commands it calls in this
+repository (`make sync`, `make test-packages`, `make test-hy-floor`, `make test-rust`,
+`scripts/hook_finding_baseline.py`, `scripts/find_internal_leftovers.py`, `scripts/count_japanese.py`) stay here;
+change one of them only after the declaration stops calling the old form. **You do not need it to use doeff or to
+develop doeff locally.**
 
 ## Hygiene of tracked files (templates and fixtures)
 

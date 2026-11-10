@@ -6,8 +6,8 @@ The server: the fixture asks the root conftest for ``redis-server`` (``machine_t
 ``--version``), starts it in a temporary directory on a free port with ``--save "" --appendonly no`` and stops it
 at the end of the module. Without one every test here is skipped as an unmet machine premise and named
 ``tool-absent`` (not executed) with the PATH that was searched, so the daily run does not read the skip as
-measured; the in-memory tests run regardless. The daily run's ``packages`` stage puts the declared redis-server
-on ``PATH`` first (``scripts/gate_tools.sh``).
+measured; the in-memory tests run regardless. The daily run puts the declared redis-server on ``PATH`` first
+(the daily verification job prepares it before every stage).
 
 The kept channels' tests at the end keep the promises of ``test_kept_notices_memory.py`` on the real server.
 

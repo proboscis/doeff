@@ -1,18 +1,14 @@
-"""The Japanese-line count (``scripts/count_japanese.py``) and its daily stage."""
+"""The Japanese-line count (``scripts/count_japanese.py``)."""
 
 from __future__ import annotations
 
 import importlib.util
-import shlex
 import sys
 from pathlib import Path
 from types import ModuleType
 
-import tomllib
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "count_japanese.py"
-LAND_QUEUE = ROOT / ".agents" / "land-queue.toml"
 
 
 def _load_script() -> ModuleType:
@@ -61,13 +57,3 @@ def test_fail_on_any_exits_1_only_when_the_total_is_not_zero(tmp_path: Path) -> 
     clean.mkdir()
     (clean / "a.py").write_text("x = 1\n", encoding="utf-8")
     assert count_japanese.main([str(clean), "--fail-on-any"]) == 0
-
-
-def test_the_daily_verification_runs_the_count_as_a_stage_that_does_not_stop_the_rest() -> None:
-    stages = tomllib.loads(LAND_QUEUE.read_text("utf-8"))["gate"]["full"]
-    stage = next((s for s in stages if s["name"] == "japanese"), None)
-    assert stage is not None, [s["name"] for s in stages]
-
-    assert "scripts/count_japanese.py" in shlex.split(stage["run"])
-    assert not stage.get("blocks_rest")
-    assert stage["pytest"] is False

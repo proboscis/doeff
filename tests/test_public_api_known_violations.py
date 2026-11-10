@@ -518,7 +518,7 @@ def _diff_against_tables(
     package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable
 ) -> tuple[dict[Key, Mapping[str, Any]], set[Key], set[Key], set[tuple[Key, Key]], list[Key]]:
     """Return one inventory package's violations, the names in the two tables, the moved rows, and the new violations in neither table (the one point that check_package and
-    tools/public_api_blame.py share for the same matching)."""
+    the report step after the daily full verification share for the same matching)."""
     directory = package["dir"]
     found = outside_rows(package)
     known = known_names(table, directory)
@@ -529,7 +529,7 @@ def _diff_against_tables(
 
 
 def unlisted_names(package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable) -> list[Key]:
-    """Violations added without being written in a table (a list of (module, name)) — read by tools/public_api_blame.py, the later stage of the daily full verification, to look up the commit that added them."""
+    """Violations added without being written in a table (a list of (module, name)) — read by the report step after the daily full verification (kept outside this repository), to look up the commit that added them."""
     entry = table["packages"].get(package["dir"])
     if package["error"] is not None or entry is None or entry["scope"] == "out of scope":
         return []

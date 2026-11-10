@@ -1032,7 +1032,7 @@ mod tests {
                       echo ${#ACP_CHECKOUT}\necho a#ACP_CHECKOUT\ncat <<EOF\n# ACP_CHECKOUT is here-document content\nEOF\n";
         assert_eq!(spelled("run.sh", source, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT"]);
         let toml = "# ACP_CHECKOUT comment\ncommand = \"PYTHONPATH=. hy x.hy\" # ACP_CHECKOUT\nkey = 'ACP_CHECKOUT'\n";
-        assert_eq!(spelled(".agents/land-queue.toml", toml, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT"]);
+        assert_eq!(spelled("declaration.toml", toml, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT"]);
     }
 
     #[test]

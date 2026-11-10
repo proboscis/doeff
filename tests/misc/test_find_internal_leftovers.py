@@ -1,7 +1,7 @@
 """The ``--fail-on`` check of the inventory of what private tooling left in the tree.
 
 ``scripts/find_internal_leftovers.py`` lists six kinds of leftovers. With ``--fail-on 1,2,4`` it is
-the ``leftovers`` stage of the daily verification of main (``.agents/land-queue.toml``): a hit of
+the ``leftovers`` stage of the daily verification of main (declared outside this repository): a hit of
 those kinds that ``KEEP`` does not keep turns the run red. These tests pin when it fails and what it
 names, on small trees that are not git work trees (the script then walks every file).
 """
@@ -9,17 +9,14 @@ names, on small trees that are not git work trees (the script then walks every f
 from __future__ import annotations
 
 import importlib.util
-import shlex
 import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "find_internal_leftovers.py"
-LAND_QUEUE = ROOT / ".agents" / "land-queue.toml"
 
 
 def _load_script() -> ModuleType:
@@ -82,14 +79,3 @@ def test_fail_on_rejects_a_value_that_is_not_kind_keys(tmp_path: Path, value: st
         leftovers.main([str(tmp_path), "--jobs", "1", "--fail-on", value])
 
     assert stopped.value.code == 2
-
-
-def test_the_daily_verification_runs_the_check_as_a_stage_that_does_not_stop_the_rest() -> None:
-    stages = tomllib.loads(LAND_QUEUE.read_text("utf-8"))["gate"]["full"]
-    stage = next((s for s in stages if s["name"] == "leftovers"), None)
-    assert stage is not None, [s["name"] for s in stages]
-
-    words = shlex.split(stage["run"])
-    assert words[words.index("scripts/find_internal_leftovers.py") + 1 :] == ["--fail-on", "1,2,4"]
-    assert not stage.get("blocks_rest")
-    assert stage["pytest"] is False

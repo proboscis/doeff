@@ -44,7 +44,7 @@ and every file under ROOT otherwise; they are read in ``--jobs`` processes. Stan
 ``--fail-on KINDS`` (comma-separated kind keys, for example ``1,2,4``) turns the run into a check:
 every hit of those kinds that ``KEEP`` does not keep is written to stderr, and the exit status is 1
 when there is one. The daily verification of main runs ``--fail-on 1,2,4`` as its ``leftovers``
-stage (``.agents/land-queue.toml``), so that a quote, a tracker id or a personal path that comes
+stage (declared outside this repository), so that a quote, a tracker id or a personal path that comes
 back into the tree turns that run red.
 """
 

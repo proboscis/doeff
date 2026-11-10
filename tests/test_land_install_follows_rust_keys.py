@@ -1,4 +1,4 @@
-"""Failure cases for: the rebuild of the land (merge) working tree ([follow] install in .agents/land-queue.toml) and make sync call the build entry point for the Rust component (doeff-vm)
+"""Failure cases for: the rebuild of the land (merge) working tree (`uv sync --frozen` — [follow] install of the landing declaration, kept outside this repository) and make sync call the build entry point for the Rust component (doeff-vm)
 only when a file in doeff-vm's tool.uv.cache-keys changes (ADR-DOE-BUILD-001).
 
 uv calls the build entry point when a cache-keys file changes, and the entry point looks up the wheel store by a key from the same files' contents. So the flag
@@ -113,9 +113,8 @@ def _crate_inputs(crate: Path) -> list[Path]:
 
 
 def _land_install() -> list[str]:
-    """Of the commands for rebuilding the land working tree, the uv command after the venv-run wrapper."""
-    install = tomllib.loads((REPO / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["follow"]["install"]
-    return shlex.split(install.split(" -- ", 1)[1])
+    """The uv command that rebuilds the land working tree (the declaration runs it after its venv-run wrapper)."""
+    return ["uv", "sync", "--frozen"]
 
 
 def _make_sync() -> list[str]:

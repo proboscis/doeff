@@ -180,7 +180,7 @@ test-changed:
 #   test_*.py under tests/fixtures are fixtures) are not passed to pytest. A test is test_*.py or test_*.hy (a Hy deftest or a
 #   script run top to bottom — collected by the doeff-adr plugin via doeff_hy_test_files in the root ini). Passing them stops the loop
 #   with rc 5 ("0 collected") and none of the later packages run (measured 2026-09-24).
-# - e2e tests that hit a real API / real CLI are excluded (-m "not e2e"), as in the daily gate (.agents/land-queue.toml gate.full).
+# - e2e tests that hit a real API / real CLI are excluded (-m "not e2e"), as in the daily gate (gate.full of the daily gate's declaration (kept outside this repository)).
 # - PACKAGE_UV_RUN: the daily gate calls this with `uv run --no-sync` right after make sync (so the implicit re-sync of a bare uv run
 #   does not rebuild the VM just built).
 # - Do not cd into the package dir; call `pytest packages/<p>/tests` from the repo root. The FAILED lines in pytest's summary are
@@ -195,7 +195,7 @@ test-changed:
 #   and the packages stage timed out, but neither the log nor the ledger had per-test seconds, so the slow tests could not be found.
 PACKAGE_UV_RUN ?= uv run
 #   2026-10-11: removed the 20-test limit (--durations=0) — with more than 20 tests over 30 seconds in a package, the rest did not reach the log.
-#   The root stage's pytest command (.agents/land-queue.toml) has the same two options.
+#   The root stage's pytest command (in the daily gate's declaration (kept outside this repository)) has the same two options.
 PACKAGE_PYTEST_DURATIONS ?= --durations=0 --durations-min=10
 # Test roots outside a package's tests/ (each root runs in its own session, like each package's tests/).
 # - packages/doeff-cluster/src/doeff_cluster/_sim: deftests under the simulated environment (tests that run each service's entry
@@ -209,7 +209,7 @@ print-package-extra-test-roots:
 	@echo $(PACKAGE_EXTRA_TEST_ROOTS)
 # - PACKAGE_JOBS: at 2 or more, run up to that many package sessions at once (scripts/run_package_sessions.sh; output is buffered per
 #   package and printed in the original order). The default 1 keeps the serial loop below. The daily gate passes it on the packages line of
-#   .agents/land-queue.toml. Package sessions are independent and only share the repo root's cache. Heavy packages (PACKAGE_HEAVY_FIRST) start
+#   its declaration (kept outside this repository). Package sessions are independent and only share the repo root's cache. Heavy packages (PACKAGE_HEAVY_FIRST) start
 #   first, to avoid the whole run being decided by one long session left at the end.
 PACKAGE_JOBS ?= 1
 PACKAGE_HEAVY_FIRST = doeff-cluster doeff-adr doeff-hy-pytest doeff-hy
