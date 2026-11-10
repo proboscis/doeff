@@ -31,9 +31,13 @@
 ;;; 平常の大きさ: 最大の行の間を閉じるたびに、その間の job の名ごとの最大を steady-windows 個まで残し(見張りが
 ;;; 止めた job の最大は残さない)、その中のいちばん大きい物を job の平常の大きさとして止める単位の選びに渡す(worker/core/memory_rules の
 ;;; victim-of — 平常の大きさで動く常駐の job は止めない)。名ごとに残すので、起こし直された job も前の走りの大きさを平常とする。
-;;; 止めた印: 止めた単位の属する job の根(名と pid)を、止めた刻とともに入れ物に kill-mark-seconds の間残す。調整ループは終わった process
-;;; を回収する時にこの印を読み(worker/protocol/memory_observer)、見張りに止められた終わりを数える — 続けて止められた常駐の job は
-;;; 起こし直さずに失敗として報告する(WorkerPolicy.memory-kill-limit)。
+;;; 止めた印: 止めた単位の属する job の根(名と pid)を、止めた刻と止めた訳とともに入れ物に kill-mark-seconds の間残す。調整ループは終わった
+;;; process を回収する時にこの印を読み(worker/protocol/memory_observer)、見張りに止められた終わりを数える — 続けて止められた常駐の job は
+;;; 起こし直さずに失敗として報告する(WorkerPolicy.memory-kill-limit)。止めた訳は状態の報告の訳に載る(task の終わりは coordinator の
+;;; lost の訳 — 前は「子 process が結果を書かずに終わった」とだけ出て、誰がなぜ止めたかが分からなかった)。
+;;; 要りの越えの止め(OVER-NEED-KILL-LOG): 上に載る系が残す線(worker/core/eviction_rules の頭の註)を機体の MemAvailable が割った回は、
+;;; 様子に依らず、要りを越えて伸びた task だけを越えの大きい順に、割った量に届くまで止める(over-need-stopped)。jobs の層の上限はこの線では
+;;; 使い + 置いた task の取り置きより下げないので、要りの内で走る task は止まらない。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -45,11 +49,11 @@
 (import doeff_time [Delay])
 (import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
-(import doeff_cluster._worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse JobSteady
-                                                node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of largest-outside
-                                                steady-sizes spared-steady victim-of swarm-of])
-(import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted])
+(import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse
+                                                JobSteady UnitKind node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of
+                                                largest-outside steady-sizes spared-steady victim-of swarm-of])
+(import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted jobs-oom-noted])
 
 (val MEMORY-WINDOW-LOG "worker: job ごとの memory")
 (val JOB-PEAK-LOG "worker: job の memory の最大")
@@ -58,6 +62,7 @@
 (val MEMORY-SWARM-KILL-LOG "worker: 機体の memory の尽きかけで job の小さい単位をまとめて止めた")
 (val MEMORY-NO-VICTIM-LOG "worker: 機体の memory が尽きかけだが止める単位が無い")
 (val MEMORY-UNREAD-LOG "worker: 機体の memory を読めない")
+(val OVER-NEED-KILL-LOG "worker: 上に載る系の残す線を割ったので、要りを越えて伸びた task を止めた")
 ;; 様子の行に並べる大きい単位の数。
 (val LEVEL-UNITS 5)
 
@@ -88,10 +93,12 @@
 
 
 (defrecord MemoryKill
-  "見張りが止めた単位の属する job の根 1 つの印: job = job(process)の名・pid = 根の pid・at-ms = 止めた刻(epoch ms — 印を残す間を数える)。"
+  "見張りが止めた単位の属する job の根 1 つの印: job = job(process)の名・pid = 根の pid・at-ms = 止めた刻(epoch ms — 印を残す間を数える)・
+   reason = 止めた訳の文(状態の報告がその job の終わりの訳に載せる — 頭の註の止めた印)。"
   (#^ str job)
   (#^ int pid)
-  (#^ int at-ms))
+  (#^ int at-ms)
+  (setv #^ str reason ""))
 
 
 (defrecord JobPeak
@@ -299,11 +306,14 @@
     (:= sent (+ sent count)))
   (setv cell.last-kill-ms now-ms)
   (val root (next (gfor r reading.roots :if (= r.name job) r) None))
+  (val node reading.node)
   (when (and (> sent 0) (is-not root None))
-    (setv cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms)))))
+    (val reason (.format "機体の memory の尽きかけで見張りが job の小さい単位 {} 個(和 {} MiB)をまとめて止めた(空き {} MiB / {} MiB)"
+                         (len swarm) (// (sum (gfor u swarm u.bytes)) (* 1024 1024)) (// node.available-bytes (* 1024 1024))
+                         (// node.total-bytes (* 1024 1024))))
+    (setv cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms :reason reason)))))
   (when (> sent 0)
     (setv cell.window-killed (| cell.window-killed #{job})))
-  (val node reading.node)
   (<- listed str (units-text swarm LEVEL-UNITS))
   (<- (slog MEMORY-SWARM-KILL-LOG :level "warning" :job job :units (len swarm) :units-mib (// (sum (gfor u swarm u.bytes)) (* 1024 1024))
             :largest listed :processes (sum (gfor u swarm (len u.members))) :sent sent
@@ -362,13 +372,48 @@
   ;; (単位の process が既に居ない)時は残さない。
   (val root (next (gfor r reading.roots :if (= r.name victim.job) r) None))
   (when (and (> sent 0) (is-not root None))
-    (setv cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms)))))
+    (val reason (.format "機体の memory の尽きかけで見張りが止めた(単位 {} MiB・空き {} MiB / {} MiB)" (// victim.bytes (* 1024 1024))
+                         (// node.available-bytes (* 1024 1024)) (// node.total-bytes (* 1024 1024))))
+    (setv cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms :reason reason)))))
   (when (> sent 0)
     (setv cell.window-killed (| cell.window-killed #{victim.job})))
   (<- (slog MEMORY-KILL-LOG :level "warning" :job victim.job :pid victim.head.pid :comm victim.head.comm
             :unit-mib (// victim.bytes (* 1024 1024)) :processes (len victim.members) :sent sent
             :node-available-mib (// node.available-bytes (* 1024 1024)) :node-total-mib (// node.total-bytes (* 1024 1024))
             :full-avg10 node.full-avg10))
+  None)
+
+
+(defk over-need-stopped [settings cell reading units now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: units tuple) (: now-ms int)] :post [(: % None)]
+   :tags {:context "worker" :role "protocol"}}
+  "機体の MemAvailable が上に載る系の残す線を割った回に、要りを越えて伸びた task だけを、越えの大きい順に割った量に届くまで SIGKILL で
+   止めるため(頭の註の要りの越えの止め・worker/core/eviction_rules の over-need-tasks)。要りの内で走る task は止めない — 線を割った訳が
+   jobs の層の外なら、新しい受けの上限が絞られるだけ。線の無い・古い回・guard が偽・止めの間隔の内は止めない。止めた task の根に訳つきの
+   印を残し、1 本ごとに 1 行言う。"
+  (when (not settings.guard)
+    (return None))
+  (when (and (is-not cell.last-kill-ms None) (< (- now-ms cell.last-kill-ms) (* settings.kill-cooldown-seconds 1000)))
+    (return None))
+  (val eviction cell.eviction)
+  (<- keep-room (| int None) (fresh-keep-room eviction.keep-room eviction.keep-room-at-ms now-ms))
+  (when (or (is keep-room None) (>= keep-room 0))
+    (return None))
+  (<- over tuple (over-need-tasks eviction.needs eviction.uses (- keep-room)))
+  (for [task over]
+    (val job (+ TASK-PREFIX task.id))
+    (val unit (next (gfor u units :if (and (= u.job job) (= u.kind UnitKind.TASK)) u) None))
+    (val root (next (gfor r reading.roots :if (= r.name job) r) None))
+    (when (and (is-not unit None) (is-not root None))
+      (<- sent int (unit-signalled unit))
+      (when (> sent 0)
+        (val reason (.format "要りを越えて伸びた task を見張りが止めた(使い {} MiB・要り {} MiB — 機体の MemAvailable が上に載る系の残す線を {} MiB 割った)"
+                             (// task.use-bytes MIB) (// task.need-bytes MIB) (// (- keep-room) MIB)))
+        (setv cell.last-kill-ms now-ms
+              cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms :reason reason)))
+              cell.window-killed (| cell.window-killed #{job})))
+      (<- (slog OVER-NEED-KILL-LOG :level "warning" :job job :pid root.pid :use-mib (// task.use-bytes MIB) :need-mib (// task.need-bytes MIB)
+                :keep-room-mib (// keep-room MIB) :processes (len unit.members) :sent sent))))
   None)
 
 
@@ -408,6 +453,10 @@
               :units listed :layers (! (layers-text reading.container)) :outside-largest (! (outside-text reading.rows walks))))
     (setv cell.level level))
   (<- (guarded settings cell reading walks level units uses now-ms))
+  ;; 上に載る系の残す線を割った回は、要りを越えた task だけを止める(頭の註の要りの越えの止め — 今の読みの使いで選ぶ)。
+  (<- (over-need-stopped settings cell reading units now-ms))
+  ;; kernel が jobs の層の memory.max で止めた数の増えを残す(状態の報告が、その間に SIGKILL で終わった task の訳に載せる)。
+  (<- (jobs-oom-noted cell.eviction now-ms))
   ;; 止めの後に最大の行の間を閉じる(今の読みで止めた job の最大を平常の大きさに残さない)。
   (<- (noted-window settings cell reading walks uses now-ms))
   None)

@@ -129,7 +129,10 @@
     (<- world WorldView (observed-world cell ended #(READY1)))
     (assert (in #("svc" root-pid) world.memory-killed) world)
     (<- reaped tuple (plan reaped-at #(SVC) world records POLICY))
-    (assert (= reaped #((ReapJob "svc" root-pid Outcome.EXITED 137 (spec-hash SVC)))) reaped)
+    ;; 回収は見張りの止めた訳を運ぶ(状態の報告の訳に載る)。
+    (val reason (. (get reaped 0) stop-reason))
+    (assert (= reaped #((ReapJob "svc" root-pid Outcome.EXITED 137 (spec-hash SVC) :stop-reason reason))) reaped)
+    (assert (.startswith reason "機体の memory の尽きかけで見張りが止めた") reason)
     (:= records (! (records-after reaped-at records reaped POLICY)))
     (assert (= (. (get records "svc") memory-kills) (+ round 1)) (get records "svc"))
     (<- again (| int None) (next-start reaped-at records empty))

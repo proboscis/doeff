@@ -31,8 +31,13 @@
 ;;; その線より上に残したい機体)は、jobs の層の上限を、追い出しまでの空きと「機体の MemAvailable − 残す線」(keep-room — heartbeat の測りが
 ;;; 読む)の小さい方で数える(kept-line — 種類 KEEP の線)。置き先は名乗る空きを同じ線の上に絞って task を置くが、task は置いた後に名乗りより
 ;;; 大きく伸びうる(zeus の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本が 8 分で各 14 GiB へ伸び、MemAvailable は線を約 54 GiB 割った)。
-;;; 層の上限を線の上に置けば、伸びた task はまず kernel が jobs の層の中で回収し、足りなければ層の中の最大の process を止める — 上に載る系の
-;;; 残す線は task が割らない。会話の CLI の層(clis)と keeper の読む準備の空きはこの線で縮めない(線は上に載る系がそれらのために残す空き)。
+;;; ただしこの線では、jobs の層の上限を「jobs の今の使い + 置いた task の取り置き(要り − 今の使い)」より下げない(kept-jobs-limit — 追い出しの
+;;; 線で数えた上限がそれより小さい時は追い出しの線のまま)。線を割る訳の大半が jobs の層の外(上に載る系の命令・会話の CLI の層)に在る機体では、
+;;; 層の上限を使いより下げると、kernel は伸びた task でなく層の中の全部の task を区別なく OOM kill で止めた(zeus の 11-09 23:57〜11-10 01:33 UTC —
+;;; 要り 1024 MiB・使い 128 MiB の task を含む 13 本が、上限を 0 まで下げた回の 1〜10 秒後に SIGKILL)。線の上の空きの縮みは新しい受けの上限
+;;; (jobs-intake)を絞って新しい task を置かない事で吸い、走っている task が要りを越えて伸びた分は、線を割った回に見張りが要りを越えた task
+;;; だけを越えの大きい順に名指して止める(over-need-tasks — worker/protocol/memory_watch)。要りの内で走る task は、線を割っても止めない。
+;;; 会話の CLI の層(clis)と keeper の読む準備の空きはこの線で縮めない(線は上に載る系がそれらのために残す空き)。
 ;;; 線を読めない・古い(LINE-FRESH-MS を越えた)回と、追い出しの線の無い機体では今までどおり追い出しまでの空きだけで数える。
 ;;;
 ;;; 準備の層(prepare — keeper の版の準備・deploy/boot.sh の keeper_swap): 版上げに要る 1 回きりの短い仕事なので、task と同じ縮む層に
@@ -100,6 +105,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import decimal [Decimal InvalidOperation])
+(import itertools [accumulate])
 (import math [ceil])
 (import posixpath)
 (import re)
@@ -408,6 +414,42 @@
    今の使い)の和(置き先が予約する量と同じ数え — coordinator/core/measured_room の reserved-mib-of)。"
   (sum (gfor need needs
              (max 0 (- need.bytes (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes)))))))
+
+
+(defk kept-jobs-limit [evicted kept jobs-current pending]
+  {:pre [(: evicted int) (>= evicted 0) (: kept int) (>= kept 0) (: jobs-current int) (>= jobs-current 0) (: pending int) (>= pending 0)]
+   :post [(: % int) (>= % 0) (<= % (max evicted kept))] :tags {:context "worker" :role "judgment"}}
+  "jobs の層の memory.max を、上に載る系が残す線(種類 KEEP)では走っている task を止める所まで下げないため(頭の註の上に載る系が残す線):
+   evicted = 追い出しの線だけで数えた上限(jobs-limit)・kept = 上に載る系が残す線でも数えた上限(kept-line の線で数えた jobs-limit —
+   evicted 以下)・pending = 置いた task の取り置き(要り − 今の使いの和 — placed-pending)。kept と「jobs の今の使い + 取り置き」(床 —
+   走っている task が今の使いを保ち、要りまで伸びられる量)の大きい方を、evicted で切る(追い出しの線の縮めは今のまま)。"
+  (max kept (min evicted (+ jobs-current pending))))
+
+
+(defrecord TaskOver
+  "要りを越えて伸びた task 1 本(頭の註の上に載る系が残す線): id = task の id・need-bytes = 置いた時に名乗った要り・use-bytes = 見張りの
+   読みの今の使い(task の根の木の rss の和)。"
+  {:check [(>= need-bytes 0) (> use-bytes need-bytes)]}
+  (#^ str id)
+  (#^ int need-bytes)
+  (#^ int use-bytes))
+
+
+(defk over-need-tasks [needs uses shortfall]
+  {:pre [(: needs tuple) (: uses tuple) (: shortfall int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "機体の MemAvailable が上に載る系の残す線を shortfall(byte)だけ割った時に、見張りが止める task を選ぶため(頭の註の上に載る系が残す線):
+   needs = 置いた task の要り(TaskNeed の tuple)・uses = 見張りの今の読みの job ごとの memory(JobUse の tuple — task の job の名は
+   TASK-PREFIX + id)。要りを越えて使う task(TaskOver)だけを、越えの大きい順(同じなら id の順)に、それより前に選んだ task の使いの和が
+   shortfall に届くまで並べる。shortfall が 0 以下・要りを越えた task が無ければ空 — 要りの内で走る task は止めない(線を割った訳が jobs
+   の層の外の伸びなら、新しい受けを絞るだけ)。"
+  (when (<= shortfall 0)
+    (return #()))
+  (val over (tuple (gfor need needs
+                         :setv used (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes))
+                         :if (> used need.bytes)
+                         (TaskOver :id need.id :need-bytes need.bytes :use-bytes used))))
+  (val ordered (sorted over :key (fn [t] #((- t.need-bytes t.use-bytes) t.id))))
+  (tuple (gfor #(task freed) (zip ordered (accumulate (gfor t ordered t.use-bytes) :initial 0)) :if (< freed shortfall) task)))
 
 
 (defk task-needs-of [rows]

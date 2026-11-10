@@ -6,7 +6,7 @@
 (import doeff [run with-handlers])
 (import doeff_cluster [CodeState CodeView ObserveWorld WorldView]
         doeff_cluster._worker.intent.worker_model [EnvDisk ProgramGap WarmChildView])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveJobsRoom ObservePrograms])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObservePrograms MemoryStops])
 (import doeff_cluster [local-host])
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))
@@ -27,6 +27,7 @@
   (ObserveLeaving [] (resume True))
   (ObserveMemoryTight [] (resume True))
   (ObserveMemoryKills [] (resume (frozenset #(#("svc" 10)))))
+  (ObserveMemoryStops [] (resume (MemoryStops)))
   (ObserveJobsRoom [] (resume (* 300 1024 1024)))
   (ObservePrograms [] (resume #(GAP))))
 

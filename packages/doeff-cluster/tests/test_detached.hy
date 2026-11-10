@@ -878,6 +878,25 @@
   (assert (= #((. (.row s.tasks id) phase) (. (.row s.tasks id) boot)) #("lost" "b1")) (.row s.tasks id)))
 
 
+(deftest test-a-task-the-worker-stopped-for-memory-is-lost-with-the-reason-the-worker-told
+  ;; 失敗ケース(2026-11-10 の zeus): worker が jobs の層の上限を使いより下げ、kernel が task を SIGKILL で止めても、lost の訳は「子 process
+  ;; が結果を書かずに終わった(last=exited)」だけで、誰がなぜ止めたかが出なかった。worker は memory の訳で止めた終わりの状態の行の訳に
+  ;; その訳を添え(worker/core/policy の stop-note)、coordinator は lost の訳にそのまま載せる。
+  (val reply-a (! (beat (ClusterState) "w" 0)))
+  (var s (get reply-a 0))
+  (val reply-b (! (put-detached s "job-oom" 0 :lease 10.0)))
+  (:= s (get reply-b 0))
+  (val id (get (get reply-b 2) "task"))
+  (val reply-c (! (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])))
+  (:= s (get reply-c 0))
+  (val told "last=exited — 要りを越えて伸びた task を見張りが止めた(使い 3000 MiB・要り 1024 MiB — 機体の MemAvailable が上に載る系の残す線を 200 MiB 割った)")
+  (val reply-d (! (beat s "w" 2000 :statuses [{"name" (+ "task/" id) "phase" "finished" "detail" told}])))
+  (:= s (get reply-d 0))
+  (val task (.row s.tasks id))
+  (assert (= task.phase "lost") #(task.phase task.detail))
+  (assert (in "要りを越えて伸びた task を見張りが止めた" task.detail) task.detail))
+
+
 (deftest test-a-detached-task-the-stopping-worker-never-started-waits-for-the-next-generation
   ;; 対照(#2976 の I-3 の赤 R5 の形のまま): 置いた世代が一度も行を報告しないまま止まり始めた task は、置き直しの待ちへ戻り、
   ;; 同じ名の次の世代に置かれる(まだ走っていないので 2 度走らない)。

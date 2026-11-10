@@ -3,10 +3,14 @@
 ;;; 様子は 5 秒ごとに入れ物に書かれる — 調整ループはその入れ物を拍ごとに読むだけ(読みも止めも見張りの側)。worker の入口(worker/entry/main)
 ;;; が並べる。見張りが止めた job の根の印(MemoryCell.kills)も同じ入れ物から ObserveMemoryKills に答える(続けて止められた job の数え)。
 ;;; jobs の層の空き(ObserveJobsRoom)は、見張りの最後の回に決めた新しい受けの上限(jobs-intake — 置いた task の取り置きを入れない)と読んだ
-;;; 使いの差(worker/protocol/eviction_line の EvictionCell)。
+;;; 使いの差(worker/protocol/eviction_line の EvictionCell)。機体の memory の訳で止められた記録(ObserveMemoryStops — 見張りの止めの訳と、
+;;; jobs の層の kernel の OOM kill の増えの刻)も答える。答える前に jobs の層の memory.events を読み直し、見張りがまだ刻を付けていない
+;;; 増えも添える(kernel が止めた子の終わりを回収する拍が、見張りの次の回より先に来ても訳を落とさない)。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveJobsRoom])
+(import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom])
+(import doeff_cluster._worker.protocol.eviction_line [jobs-oom-count])
+(import doeff_cluster._worker.intent.worker_model [MemoryStops])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
 (import doeff_cluster._worker.core.memory_rules [MemoryLevel])
 
@@ -17,6 +21,14 @@
     (resume (!= cell.level MemoryLevel.CALM)))
   (ObserveMemoryKills []
     (resume (frozenset (gfor k cell.kills #(k.job k.pid)))))
+  (ObserveMemoryStops []
+    ;; 見張りがまだ刻を付けていない oom_kill の増え(見張りの前の回の後に kernel が止めた — 今の拍で回収する終わりの訳)。
+    (val eviction cell.eviction)
+    (<- count (| int None) (jobs-oom-count eviction))
+    (resume (MemoryStops :kills (tuple (gfor k cell.kills :if k.reason #(k.job k.pid k.reason)))
+                         :oom-at-ms eviction.oom-at-ms
+                         :oom-unstamped (and (is-not count None) (is-not eviction.oom-count None) (> count eviction.oom-count))
+                         :jobs-limit-bytes eviction.jobs-limit)))
   (ObserveJobsRoom []
     ;; 上限を掛けていない・使いを読めなかった回は None(空きで縛らない)。
     (val eviction cell.eviction)

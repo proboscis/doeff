@@ -153,6 +153,17 @@
   (setv #^ (| ProgramUnfetched None) failure None))
 
 
+(defrecord MemoryStops
+  "機体の memory の訳で job の process が止められた記録(WorldView.memory-stops — 状態の報告の訳に載せる): kills = 見張りが止めた job の根と
+   止めた訳(#(process の名 根の pid 訳の文) の tuple — worker/protocol/memory_watch の MemoryKill)・oom-at-ms = jobs の層の memory.events の
+   oom_kill が増えたのを読んだ刻(epoch ms の tuple — 古い順・見張りの印を残す間の物)・oom-unstamped = 見張りの最後の回の後に oom_kill が
+   増えた(まだ刻が無い — 今の拍に起きた増えとして読む)・jobs-limit-bytes = 最後に jobs の層に掛けた memory.max(None = 掛けていない)。"
+  (setv #^ (get tuple #(tuple ...)) kills #())
+  (setv #^ (get tuple #(int ...)) oom-at-ms #())
+  (setv #^ bool oom-unstamped False)
+  (setv #^ (| int None) jobs-limit-bytes None))
+
+
 (defclass [(dataclass :frozen True)] WorldView []
   (#^ (get tuple #(CodeView ...)) codes)
   (#^ (get tuple #(ProcessView ...)) processes)
@@ -178,6 +189,10 @@
   ;; task を入れ物 shim の冷えた道で起こす(入らない待ちの子は層の上限に当たって kernel の OOM kill で落ち、起こし直しの輪になった —
   ;; 2026-11-06 の k3s-0〜2)。None = 層が無い・見張りが上限を掛けない・まだ読めていない(空きで縛らない)。既定は None(模擬の環境)。
   (setv #^ (| int None) jobs-room None)
+  ;; 機体の memory の訳で job の process が止められた記録(MemoryStops — 見張りの止めの訳と jobs の層の kernel の OOM kill の刻)。判断
+  ;; (policy の plan-job)は終わった process を回収する時に止めた訳を決め(stop-reason-of)、状態の報告の訳に載せる。既定は空(見張りを
+  ;; 持たない呼び手・模擬の環境)。
+  (setv #^ MemoryStops memory-stops (MemoryStops))
   ;; 宣言の job のうち、Program の file が手元に無い物(ProgramGap)。判断(policy の program-waits)は揃うまで job を起こさない — 子の入口は file を
   ;; 読めないと終了 code 3 で落ちる。既定は空(Program を取り寄せない呼び手)。
   (setv #^ (get tuple #(ProgramGap ...)) program-gaps #()))
@@ -350,7 +365,10 @@
   (setv #^ (| StartHold None) held None)
   ;; 機体の memory の逼迫で task の起動を最初に見送った刻(拍の終わりの held-records が書く・起こした StartJob で None に戻す)。
   ;; 逼迫が続いて WorkerPolicy.memory-tight-hold-limit-ms を越えた task は、この worker では起こさず一時の準備の失敗として報告する。
-  (setv #^ (| int None) memory-tight-since-ms None))
+  (setv #^ (| int None) memory-tight-since-ms None)
+  ;; 最後に回収した終わりを機体の memory の訳で止めた訳(ReapJob.stop-reason — None = memory の訳の止めではない)。状態の報告の訳に載せる
+  ;; (task の終わりは coordinator の lost の訳になる)。
+  (setv #^ (| str None) last-stop-reason None))
 
 
 (defclass [(dataclass :frozen True)] WorkerPolicy []
@@ -623,12 +641,14 @@
 
 (defclass [(dataclass :frozen True)] ReapJob [EffectBase]
   "終了を観測した process を観測の表から外す。memory-killed-spec = 機体の memory の見張りがこの process の木の単位を止めていれば、その
-   process の spec の指紋(spec-hash — 記憶の数え record-after が読む)・止めていなければ None。"
+   process の spec の指紋(spec-hash — 記憶の数え record-after が読む)・止めていなければ None。stop-reason = 機体の memory の訳でこの process
+   が止められた訳(見張りの止めか jobs の層の kernel の OOM kill — policy の stop-reason-of・None = memory の訳ではない)。"
   (#^ str name)
   (#^ int pid)
   (#^ Outcome outcome)
   (#^ int exit-code)
-  (setv #^ (| str None) memory-killed-spec None))
+  (setv #^ (| str None) memory-killed-spec None)
+  (setv #^ (| str None) stop-reason None))
 
 
 (defclass [(dataclass :frozen True)] RetireJob [EffectBase]

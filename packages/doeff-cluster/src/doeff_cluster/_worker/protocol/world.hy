@@ -5,10 +5,10 @@
 ;;; (AL-D2p)・機体の memory の逼迫と jobs の層の空き = worker/protocol/memory_observer・手元に無い Program の file = worker/protocol/coordinator_link。I/O を持たない。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster._worker.intent.worker_model [ObserveWorld WorldView EnvDisk
+(import doeff_cluster._worker.intent.worker_model [ObserveWorld WorldView EnvDisk MemoryStops
 ])
 (import doeff_cluster._worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveJobsRoom ObservePrograms])
+  ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObservePrograms])
 
 
 (defhandler local-host
@@ -23,7 +23,8 @@
     (<- leaving bool (ObserveLeaving))
     (<- tight bool (ObserveMemoryTight))
     (<- killed frozenset (ObserveMemoryKills))
+    (<- stops MemoryStops (ObserveMemoryStops))
     (<- room (| int None) (ObserveJobsRoom))
     (<- gaps tuple (ObservePrograms))
     (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving :memory-tight tight
-                       :memory-killed killed :jobs-room room :program-gaps gaps))))
+                       :memory-killed killed :memory-stops stops :jobs-room room :program-gaps gaps))))

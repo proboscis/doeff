@@ -50,7 +50,9 @@
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
-                                                  jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit])
+                                                  jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
+                                                  kept-jobs-limit])
+(import doeff_cluster._worker.core.env_rules [oom-kills-of])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
@@ -62,6 +64,9 @@
 (val COMMANDS-SQUEEZE-LOG "worker: MemAvailable が線を割ったので命令の層の上限を回収で返らない量より下げた")
 (val COMMANDS-LIMIT-FAILED-LOG "worker: 命令の層の memory の上限を掛け直せない")
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒)。
+;; jobs の層の oom_kill の増えの刻を残す長さ(ms — EvictionCell の oom-at-ms。見張りの止めた印を残す間 MemoryWatchSettings.kill-mark-seconds
+;; の既定と同じ — 調整ループが終わった子を回収するまでの間を十分に覆う)。
+(val OOM-MARK-MS (* 600 1000))
 (val REFUSAL-BODY-LIMIT 300)
 (val REQUEST-TIMEOUT-SECONDS 5.0)
 
@@ -144,7 +149,10 @@
    file(枠の file の行の commandLineFile を worker/protocol/coordinator_link が書く — \"\" = 掛け直さない)・command-floor-bytes = 短い命令の
    余地(同じく commandFloorMiB)・command-limit = 最後に書いた命令の層の上限(None = まだ書いていない)・command-use = 最後の回に読んだ
    命令の層の内訳(None = 読めなかった)・command-squeezed = 上限を回収で返らない量より下げた続きの中・told-command-failure = log に
-   出した命令の層の失敗の訳。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   出した命令の層の失敗の訳・jobs-dir = jobs の層の dir(見張りの最初の掛け直しで書く — None = 層が無い・まだ)・oom-count = 最後に読んだ
+   jobs の層の memory.events の oom_kill(None = まだ読めていない)・oom-at-ms = oom_kill が増えたのを読んだ刻(epoch ms の tuple — 古い順・
+   OOM-MARK-MS の内の物 — 状態の報告が、その間に SIGKILL で終わった task の訳に載せる)。scheduler の task は 1 つの thread で交互に走るので
+   錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
@@ -152,7 +160,7 @@
           self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
-          self.command-squeezed False self.told-command-failure "")))
+          self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #())))
 
 
 (defrecord LayerMemory
@@ -417,6 +425,7 @@
    keeper の読む準備の空きも書く。jobs の層の上限と新しい受けの上限だけは、heartbeat の測りが新しい「MemAvailable − 上に載る系が残す線」を
    読めていれば、その線の上にも収める(worker/core/eviction_rules の kept-line — clis の層と keeper の空きは追い出しの線のまま)。jobs の層が
    無い・guard が偽・上限なしで線も無い時は書かない。上限を jobs の使いより下げた続きの頭で 1 行言う。"
+  (setv cell.jobs-dir settings.jobs-dir)
   (when (or (is settings.jobs-dir None) (not guard))
     (return None))
   (when (and (is line None) (is settings.jobs-cap-bytes None))
@@ -474,10 +483,15 @@
   (when (and (is-not line None) (is-not current None))
     (val floor-margin (min margin settings.margin-bytes))
     ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 名乗りより伸びた task は線を割る前に kernel が jobs の層の中で止める。
+    ;; ただしこの線では使い + 置いた task の取り置きより下げない(kept-jobs-limit — 要りの内で走る task を kernel に止めさせない)。
     (<- keep-room (| int None) (fresh-keep-room cell.keep-room cell.keep-room-at-ms now-ms))
     (<- kept EvictionLine (kept-line line keep-room))
-    (:= jobs-line kept)
-    (<- found int (jobs-limit current kept margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
+    (<- evicted int (jobs-limit current line margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
+    (<- narrowed int (jobs-limit current kept margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
+    (<- found int (kept-jobs-limit evicted narrowed current pending))
+    ;; log の線の種類は、上限を決めた線(追い出しの線で決まった回は追い出しの線)。
+    (when (< found evicted)
+      (:= jobs-line kept))
     (<- told int (jobs-limit current kept margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
     (:= limit found)
     (:= intake told)
@@ -508,6 +522,34 @@
     (setv cell.told-failure failure)
     (when failure
       (<- (slog JOBS-LIMIT-FAILED-LOG :level "warning" :reason failure))))
+  None)
+
+
+(defk jobs-oom-count [cell]
+  {:pre [(: cell EvictionCell)] :post [(: % (| int None))] :tags {:context "worker" :role "protocol"}}
+  "jobs の層の memory.events の oom_kill(kernel が層の memory.max で止めた process の数)を読むため。層が無い・読めない時は None。"
+  (when (is cell.jobs-dir None)
+    (return None))
+  (<- events (| str FileFailed) (ReadText (+ cell.jobs-dir "/memory.events")))
+  (when (isinstance events FileFailed)
+    (return None))
+  (<- count int (oom-kills-of events))
+  count)
+
+
+(defk jobs-oom-noted [cell now-ms]
+  {:pre [(: cell EvictionCell) (: now-ms int)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "見張りの回ごとに jobs の層の oom_kill を読み、前に読んだ数より増えていれば今の刻を oom-at-ms に足すため(EvictionCell の註 — kernel が
+   jobs の層の memory.max で process を止めた事を、状態の報告がその task の終わりの訳に載せる)。書き手は見張りだけ(終わりを回収する拍の
+   観測 worker/protocol/memory_observer は読み直して、まだ刻を付けていない増えを答えに添えるだけ)。OOM-MARK-MS を過ぎた刻は除く。読めない回は
+   数を残す。"
+  (setv cell.oom-at-ms (tuple (gfor at cell.oom-at-ms :if (<= 0 (- now-ms at) OOM-MARK-MS) at)))
+  (<- count (| int None) (jobs-oom-count cell))
+  (when (is count None)
+    (return None))
+  (when (and (is-not cell.oom-count None) (> count cell.oom-count))
+    (setv cell.oom-at-ms (+ cell.oom-at-ms #(now-ms))))
+  (setv cell.oom-count count)
   None)
 
 

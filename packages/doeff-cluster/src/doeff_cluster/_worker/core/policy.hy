@@ -451,6 +451,31 @@
    (handoff-actions)と、その待ちを状態の行の文に出す判断(job-status — 退いた process の空き待ち・AL-D1)が同じこの 1 つを読む。"
   (>= (len (retired-of world name)) (retired-limit-for want policy)))
 
+(defk stop-reason-of [world name process]
+  {:pre [(: world WorldView) (: name str) (: process ProcessView)] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "終わった process が機体の memory の訳で止められた訳を、状態の報告の訳に載せる文にするため(ReapJob.stop-reason — task の終わりは
+   coordinator の lost の訳になる): 見張りがこの process の木を止めていれば見張りの訳(world.memory-stops.kills)。そうでなく SIGKILL で
+   終わり、process を起こした後に jobs の層の oom_kill の増えを読んでいれば(見張りがまだ刻を付けていない増えは今の増えと読む)、kernel が jobs の層の memory.max で止めた訳(その時の上限を
+   添える)。どちらでもなければ None。"
+  (val stops world.memory-stops)
+  (val watched (next (gfor #(job pid reason) stops.kills :if (and (= job name) (= pid process.pid)) reason) None))
+  (when (is-not watched None)
+    (return watched))
+  (when (or (is process.exit-code None) (!= (exit-signal process.exit-code) "SIGKILL"))
+    (return None))
+  (val rises (+ (len (tuple (gfor at stops.oom-at-ms :if (>= at process.started-ms) at))) (if stops.oom-unstamped 1 0)))
+  (when (= rises 0)
+    (return None))
+  (.format "SIGKILL で終わった — この process の走る間に kernel が jobs の層の memory.max で OOM kill した({} 回・今の上限 {})"
+           rises (if (is stops.jobs-limit-bytes None) "なし" (.format "{} MiB" (// stops.jobs-limit-bytes (* 1024 1024))))))
+
+
+(defk stop-note [record]
+  {:pre [(: record JobRecord)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "状態の報告の訳の文に、最後の終わりを機体の memory の訳で止めた訳を添える綴り(\" — <訳>\"・訳が無ければ空)を作るため。"
+  (if (is record.last-stop-reason None) "" (+ " — " record.last-stop-reason)))
+
+
 (defk plan-job [now name desired world record policy absent]
   {:pre [(: now int) (: name str) (: desired tuple) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: absent StopReason)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
@@ -462,6 +487,11 @@
   (val abandoned (and (is-not want None) want.handoff want.handoff-abandoned))
   ;; 世代をまたぐ入れ替え(AL-D2): 同じ名の worker の新しい世代の process が Ready — この(退いた)世代は退かせるだけで起こさない。
   (val superseded (and (is-not want None) want.handoff (is-not want.superseded-by None)))
+  ;; 終わった process を機体の memory の訳で止めた訳(回収の ReapJob が運ぶ — stop-reason-of)。
+  (var stop-reason None)
+  (when (and (is-not process None) (is-not process.exit-code None))
+    (<- found (| str None) (stop-reason-of world name process))
+    (:= stop-reason found))
   (cond
     ;; 諦めた入れ替えの新・新しい世代へ移った job は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
     ;; 止まりの始まった Pod の handoff の job も起こさない(印の有無に依らない — start-step の頭・AL-D2p)。
@@ -472,7 +502,9 @@
       (+ #((ReapJob name process.pid
              (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code
              ;; 機体の memory の見張りがこの process の木を止めていれば、その spec の指紋(記憶が続けて止められた回数を数える)。
-             (if (in #(name process.pid) world.memory-killed) (spec-hash process.spec) None)))
+             (if (in #(name process.pid) world.memory-killed) (spec-hash process.spec) None)
+             ;; 機体の memory の訳で止められた訳(状態の報告の訳に載せる — task の終わりは coordinator の lost の訳)。
+             :stop-reason stop-reason))
          ;; 終わった process の lease は、期限を待たずに返す(次の担い手がすぐ取れる)。
          ;; 担い手の名は子が名乗った job の名(起こした spec の名 — 退いた process も元の名)と世代の名。
          (if process.instance #((ReleaseLeases process.spec.name process.instance)) #()))
@@ -749,7 +781,7 @@
               worked (and (is-not ran-ms None) (>= ran-ms policy.memory-kill-reset-ms))
               stable (if killed worked (run (ran-stably? now record policy))))
         (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
-                 :stopping None
+                 :stopping None :last-stop-reason action.stop-reason
                  :unexpected-exits (cond (not exited) 0 stable 1 True (+ record.unexpected-exits 1))
                  :failures (cond (or (not exited) (and (= action.exit-code 0) (not killed))) 0 stable 1 True (+ record.failures 1))
                  :memory-kills (cond (not killed) (if worked 0 record.memory-kills)
@@ -983,6 +1015,8 @@
   ;; 同じ境 ran-stably? — 拍ごとに組む報告から導くので、動いている間は記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。記憶を
   ;; 0 に戻すのは、その process が終わった時(ReapJob)と名から外した時(RetireJob)の record-after。
   (<- ran-stably bool (ran-stably? now record policy))
+  ;; 最後の終わりを機体の memory の訳で止めた訳(状態の訳に添える — stop-note)。
+  (<- note str (stop-note record))
   (val stable (and (is-not process None) ran-stably))
   (JobStatus name (phase-of now want process world record policy warm-keys)
       (if (is want None) None want.revision)
@@ -1044,11 +1078,12 @@
         ;; 入れ替えの途中(新のコードの準備・新の Ready 待ち)は、旧が動いていることを示す。
         handing-off
           (.format "入れ替えを待つ(新のコード {})" (if (is code None) "未準備" code.state.value))
-        ;; 終わりの code と続けて落ちた回数は欄(failures・last-exit-code)が運ぶので、文には載せない(#3477)。
+        ;; 終わりの code と続けて落ちた回数は欄(failures・last-exit-code)が運ぶので、文には載せない(#3477)。機体の memory の訳で止められた
+        ;; 終わりは、その訳を添える(task の終わりは coordinator の lost の訳になる — 前は誰がなぜ止めたかが出なかった)。
         (and (is-not record.last-outcome None) (> record.failures 0))
-          f"last={record.last-outcome.value} backoff={(backoff-ms record policy)}ms"
+          (+ f"last={record.last-outcome.value} backoff={(backoff-ms record policy)}ms" note)
         (is-not record.last-outcome None)
-          f"last={record.last-outcome.value}"
+          (+ f"last={record.last-outcome.value}" note)
         True "")
       :failures (if stable 0 record.failures)
       :last-exit-code record.last-exit-code

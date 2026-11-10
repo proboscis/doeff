@@ -64,6 +64,12 @@
    見張りに続けて止められた常駐の job の起こし直しを止める(WorkerPolicy.memory-kill-limit)。")
 
 
+(defclass [(dataclass :frozen True)] ObserveMemoryStops [EffectBase]
+  "機体の memory の訳で job の process が止められた記録(MemoryStops — WorldView.memory-stops: 見張りが止めた job の根と訳・jobs の層の
+   kernel の OOM kill の増えを読んだ刻)。世界の観測のまとめ(local-host)が、機体の memory の見張りの観測の答え手
+   (worker/protocol/memory_observer)へ問う。判断は終わった process を回収する時に止めた訳を決め、状態の報告の訳に載せる。")
+
+
 (defclass [(dataclass :frozen True)] ObserveJobsRoom [EffectBase]
   "jobs の層の今の空き(byte・負もありうる — WorldView.jobs-room。None = 層が無い・見張りが上限を掛けない・まだ読めていない)。世界の
    観測のまとめ(local-host)が、機体の memory の見張りの観測の答え手(worker/protocol/memory_observer)へ問う。判断は、入らない待ちの子を
