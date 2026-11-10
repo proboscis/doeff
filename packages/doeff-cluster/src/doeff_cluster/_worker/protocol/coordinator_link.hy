@@ -71,6 +71,7 @@
                                               task-uses-of jobs-room-of prepare-wait-of
                                               job-meters-told])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine task-needs-of])
+(import doeff_cluster._worker.core.memory_rules [MIB])  ; room-noted が命令の層の床を byte にする
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
 ;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・

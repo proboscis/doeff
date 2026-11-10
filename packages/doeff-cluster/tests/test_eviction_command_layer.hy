@@ -26,6 +26,7 @@
 (import doeff_cluster._worker.protocol.eviction_line [COMMANDS-LIMIT-FAILED-LOG COMMANDS-SQUEEZE-LOG CommandLayerSettings EvictionCell EvictionSettings
                                                      commands-limited])
 (import doeff_cluster._worker.entry.main [eviction-settings-of])
+(import doeff_cluster._worker.protocol.coordinator_link [LinkState room-noted])
 
 (val GIB (* 1024 MIB))
 ;; 本番 zeus の値: MemTotal・命令の層の宣言の memory.max・短い命令の余地(枠の file の commandFloorMiB)。線 = 係の床 25,696 MiB(MemTotal × 0.20 の
@@ -129,6 +130,19 @@
                 {"commandLineFile" path "commandFloorMiB" -1} {"commandLineFile" path "commandFloorMiB" True}]]
     (<- wrong RoomReading (room-of-text (json.dumps {"zeus" {"memoryMiB" 1 #** fields}}) "zeus"))
     (assert (= wrong.state RoomState.MALFORMED) #(fields wrong))))
+
+
+(deftest test-the-worker-hands-the-room-file-command-floor-to-the-watch-in-bytes
+  ;; 枠の file の行の commandFloorMiB を、worker の本物の読み直し(coordinator_link の room-noted)が見張りの入れ物へ byte で渡す。
+  ;; 失敗ケース(11-10 の helios): MIB を import していない版の worker は、起動の直後の読み直しで NameError に落ちた。
+  (val path "/cargo-build/.command-keep-available-mib")
+  (val files (MemoryFiles :dirs #("/etc") :files #((MemoryFile :path "/etc/worker-room.json"
+                                                               :content (.encode (json.dumps {"zeus" {"memoryMiB" 1 "commandLineFile" path
+                                                                                                      "commandFloorMiB" 8192}}))))))
+  (val cell (EvictionCell))
+  (val link (LinkState "zeus" #("cpu") 10000 "/var/tasks" "boot" 0 0 0 :room-file "/etc/worker-room.json" :eviction cell))
+  (<- (with-handlers [(state) slog-discard-handler (memory-file-handler files)] (room-noted link)))
+  (assert (= #(cell.command-line-file cell.command-floor-bytes) #(path (* 8192 MIB))) #(cell.command-line-file cell.command-floor-bytes)))
 
 
 (deftest test-zeus-declares-the-command-line-and-floor-in-the-room-file
