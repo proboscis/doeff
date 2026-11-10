@@ -2,7 +2,7 @@
 
 訳: worker の uv の cache(DOEFF_UV_CACHE_DIR・既定 $WORK_DIR/state/uv-cache)は node の disk に在り、新しい node では空から始まる。空の
 cache で依存を取り込むと、wheel の無い package(free-threaded の 3.14t の grpcio など)を source から組み、doeff の workspace の全部で
-611 秒かかった(2026-11-01 の zeus の測り — 依存を取り込み済みの cache なら秒)。また cache は誰も消さず、zeus で展開済みの wheel の項目が
+611 秒かかった(2026-11-01 の node-h の測り — 依存を取り込み済みの cache なら秒)。また cache は誰も消さず、node-h で展開済みの wheel の項目が
 169,393 個に溜まった。`uv cache prune` は走っている uv の process が 1 つでも在ると錠を待ち続けて終わらない(常駐の job の `uv run` は
 生きている間ずっと錠を持つ)ので、uv の外で消す。
 
@@ -19,7 +19,7 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            並べて組まない)。どれが落ちても訳を 1 行出して続け、0 で終わる。
            --repeat(役 worker の起動が渡す — 常駐の upkeep)を渡すと 1 度で終わらず、gc と refresh の間隔の短い方の秒ごとに同じ順を
            回し続け、回ごとに答えを 1 行出す。gc の予算は回の時にしか守られないので、回を起動と版の入れ替えだけに頼ると、回の間に cache
-           が予算の外で育つ(2026-11-09 の atlas — 予算 6 GiB・間隔 72000 秒に対し、回の前 18.25 GB)。cache に 1 つだけ回るよう、
+           が予算の外で育つ(2026-11-09 の node-a — 予算 6 GiB・間隔 72000 秒に対し、回の前 18.25 GB)。cache に 1 つだけ回るよう、
            起きた時に持ち手の印(.doeff-uv-keep.json)を書き、眠りの間に 60 秒ごとに読んで、後から起きた常駐の upkeep(版の入れ替えで
            起きた新しい世代)が印を替えていれば退く。標準出力が 1 MiB を越えた通常の file なら、末尾 256 KiB だけを残す。
   pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
@@ -56,11 +56,11 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
                          dir の下の venv のどれも symlink か .pth の行(editable の install)で指さず、走っている process(組みの作業 dir・
                          引数・読み込んだ file)が使っていない物(proc が読めなければ消さない)。uv がその repo に持つ錠(git-v*/locks/<repo>)
                          を待たずに取れた時だけ、印 <commit>.ok を先に退けてから消す。venv は git の依存を checkout から組んだ wheel で
-                         持ち、checkout を指さない。uv は checkout を bare の repo(git-v*/db — 消さない)から作り直す。2026-11-08 の atlas
+                         持ち、checkout を指さない。uv は checkout を bare の repo(git-v*/db — 消さない)から作り直す。2026-11-08 の node-a
                          では 09-26 から 1 本も消えずに 211 本・25 GB 溜まっていた(doeff の checkout は 1 本 720〜845 MB)。
              組んだ物    sdists-v*/<種類>/… の、source 1 つの dir(版の索引 revision.* と版の dir — editable・path・pypi)と git の
                          依存の commit 1 つの dir のうち、最後の変更が --idle-days 日より前で、走っている process が使っていない物。
-                         消えた worktree の path の editable の dir は誰も使わずに残り、atlas で 26,488 個溜まっていた。uv は索引か版が
+                         消えた worktree の path の editable の dir は誰も使わずに残り、node-a で 26,488 個溜まっていた。uv は索引か版が
                          無ければ組み直し、展開済みの wheel(別の項目)を指す venv は壊れない。
            予算(--size-budget-gib)を渡すと、期限の消しの後に、cache の dir の全部の byte — cache だけが持つ byte(消す単位 — 展開済みの
            wheel・環境・一時の物・git の checkout・組んだ wheel の dir — の file のうち、hardlink の全部が単位の中に在る物と dir の byte)と、
@@ -1692,7 +1692,7 @@ def keep(
     emit: Callable[[dict[str, object]], None] = answer,
 ) -> dict[str, object]:
     """upkeep を、起動の時の 1 回だけでなく決まった間隔(settings.wake_seconds)で回し続けるため — gc の予算は回の時にしか守られず、
-    起動と版の入れ替えの時だけの回では、回の間に cache が予算の外で育った(2026-11-09 の atlas — 予算 6 GiB に対し回の前 18.25 GB)。
+    起動と版の入れ替えの時だけの回では、回の間に cache が予算の外で育った(2026-11-09 の node-a — 予算 6 GiB に対し回の前 18.25 GB)。
     間隔を持つ仕事が無ければ 1 回で終わる。後から起きた常駐の upkeep が持ち手の印を替えたら退く(眠りを KEEP_POLL_SECONDS ずつに
     分けて印を読む)。回ごとの答えは emit へ出し、退いた時の答えを返す。"""
     cache.mkdir(parents=True, exist_ok=True)
