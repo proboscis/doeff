@@ -513,6 +513,23 @@ tests = ["tests/test_docs_article_yield_and_async.py"]
 prefix = "examples/yield_and_async/"
 tests = ["tests/test_docs_article_yield_and_async.py"]
 
+# A change to the fourth English post (record and replay) or to any of its example files (examples/record_and_replay/)
+# runs the test that the post's code blocks match the example files as printed, and the checks of the body's claims (the
+# order of the memo layer's effects, no token in the file, ...). The examples memoize through make_memo_rewriter, so a
+# change to its module selects the test too. The test reads the examples by path, so import reverse-deps miss it. 7.6 s
+# (19 tests, 6 children, pytest time, 2026-11-10 conversation Pod).
+[[tool.doeff.contract-tests]]
+prefix = "docs/articles/record-and-replay.md"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/record_and_replay/"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py"
+tests = ["tests/test_docs_article_record_and_replay.py"]
+
 # Runs the examples of the page defining doeff's explanatory axis (what is algebraic effects and what is a usage example — initiative doeff-publish, milestone 17).
 [[tool.doeff.contract-tests]]
 prefix = "docs/positioning/what-doeff-is.md"
