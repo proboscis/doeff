@@ -200,9 +200,13 @@ def _forgotten_requires(
     # Both read names (LOAD_NAME, LOAD_GLOBAL) and bound names (STORE_NAME, STORE_GLOBAL, etc.) come from co_names, so if the candidates are not in the
     # union of co_names there is no warning — a module that uses the same spelling as a local name (``(check row)`` is LOAD_FAST) does not walk the instructions
     # (about 1 second each for a large module — dis is slow on free-threaded builds).
-    if candidates.isdisjoint(name for unit in units for name in unit.co_names):
+    # Walk only the units whose co_names hold a candidate (a unit that neither reads nor binds a candidate by name adds nothing below), plus the
+    # module's own code, the only place a star import can be.
+    named = tuple(unit for unit in units if not candidates.isdisjoint(unit.co_names))
+    if not named:
         return
-    instructions = tuple(ins for unit in units for ins in dis.get_instructions(unit))
+    walked = named if named[0] is code else (code, *named)
+    instructions = tuple(ins for unit in walked for ins in dis.get_instructions(unit))
     if any(ins.opname == "IMPORT_STAR" for ins in instructions):
         return  # for a module where it is unknown what gets brought in, we cannot say there is no binding
     bound = frozenset(ins.argval for ins in instructions if ins.opname in _BINDS)

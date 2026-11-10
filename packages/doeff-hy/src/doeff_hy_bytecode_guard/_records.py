@@ -219,7 +219,7 @@ def record_parts(record: MacroRecord) -> RecordParts:
 def record_from_parts(parts: RecordParts) -> MacroRecord | None:
     """Assemble a record from fields read at a boundary (None if a field has a different shape -- the caller treats it the same as no record)."""
     macros = _each(parts.macros, _used_macro)
-    absent = _each(parts.absent, _name)
+    absent = _names(parts.absent)
     providers = _each(parts.providers, _whole_require)
     values = _each(parts.values, _used_value)
     files = _each(parts.files, _used_file)
@@ -265,9 +265,13 @@ def _each(rows: object, read: Callable[[object], "_Row | None"]) -> tuple[_Row, 
     return None if any(item is None for item in read_rows) else read_rows
 
 
-def _name(value: object) -> str | None:
-    """One name field of a record (None if not a string)."""
-    return value if isinstance(value, str) else None
+def _names(rows: object) -> tuple[str, ...] | None:
+    """The names-looked-up-but-absent field of a record (None if it is not a sequence of strings) -- the same answer as reading each row with
+    :func:`_each`, without a function call per name (a record holds about 60 such names, and reading them one by one was most of reading the records
+    of the 3,000 modules the agora-controllers declaration tool loads)."""
+    if not isinstance(rows, (tuple, list)) or not all(isinstance(row, str) for row in rows):
+        return None
+    return rows if type(rows) is tuple else tuple(rows)
 
 
 #: Used-macro rows already read in this process (the row of the code constants -> the read row). The same rows recur in most Hy modules
