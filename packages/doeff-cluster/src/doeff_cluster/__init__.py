@@ -819,6 +819,92 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.protocol.meter_report import with_meter_report as with_meter_report
     from doeff_cluster._shared.protocol.supplied_values import worker_fact as worker_fact
 
+    from doeff_cluster._sim.test_recording_on_sim import ReceivedLines as ReceivedLines
+    from doeff_cluster._foundation.record_log import ReplayDiverged as ReplayDiverged
+    from doeff_cluster._worker.protocol.env_translation import env_translation as env_translation
+    from doeff_cluster._shared.core.promise_wait import promise_or_timeout as promise_or_timeout
+    from doeff_cluster._sim.test_recording_on_sim import stand_in_store as stand_in_store
+    from doeff_cluster._worker.protocol.tick_pauses import tick_pauses as tick_pauses
+    from doeff_cluster._sim.env_world import world_settings_reader as world_settings_reader
+    from doeff_cluster._record_store.intent.record_store_model import (
+        AppendRecordLines as AppendRecordLines,
+    )
+    from doeff_cluster._record_store.intent.record_store_model import (
+        CompactRecords as CompactRecords,
+    )
+    from doeff_cluster._record_store.intent.record_store_model import (
+        ListRecordRuns as ListRecordRuns,
+    )
+    from doeff_cluster._record_store.intent.record_store_model import PruneRecords as PruneRecords
+    from doeff_cluster._record_store.intent.record_store_model import ReadRecordRun as ReadRecordRun
+    from doeff_cluster._record_store.protocol.record_files import record_files as record_files
+    from doeff_cluster._foundation.record_handlers import RecordingInstaller as RecordingInstaller
+    from doeff_cluster._foundation.record_log import ReplayFinished as ReplayFinished
+    from doeff_cluster._foundation.record_handlers import effect_recorder as effect_recorder
+    from doeff_cluster._foundation.record_handlers import effect_replayer as effect_replayer
+    from doeff_cluster._coordinator.intent.request_bodies import ReadBody as ReadBody
+    from doeff_cluster._coordinator.core.resource_policy import Refused as Refused
+    from doeff_cluster._coordinator.protocol.wal_format import WalCorrupted as WalCorrupted
+    from doeff_cluster._coordinator.protocol.faults import coordinator_faults as coordinator_faults
+    from doeff_cluster._coordinator.core.wake_policy import next_wake as next_wake
+    from doeff_cluster._coordinator.protocol.request_queue import queued_requests as queued_requests
+    from doeff_cluster._coordinator.protocol.replies import reply_bodies as reply_bodies
+    from doeff_cluster._coordinator.core.resource_policy import (
+        service_readiness as service_readiness,
+    )
+    from doeff_cluster._worker.protocol.observations import CodeTimings as CodeTimings
+    from doeff_cluster._worker.intent.code_model import CompileSources as CompileSources
+    from doeff_cluster._worker.intent.code_model import ImportClosure as ImportClosure
+    from doeff_cluster._worker.intent.worker_model import MemoryStops as MemoryStops
+    from doeff_cluster._worker.intent.code_model import LinkPycs as LinkPycs
+    from doeff_cluster._worker.intent.code_model import Note as Note
+    from doeff_cluster._worker.protocol.observations import ObserveCode as ObserveCode
+    from doeff_cluster._worker.protocol.observations import ObserveEnvDisk as ObserveEnvDisk
+    from doeff_cluster._worker.protocol.observations import ObserveEnvs as ObserveEnvs
+    from doeff_cluster._worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
+    from doeff_cluster._worker.protocol.observations import ObserveJobsRoom as ObserveJobsRoom
+    from doeff_cluster._worker.protocol.observations import ObserveLeaving as ObserveLeaving
+    from doeff_cluster._worker.protocol.observations import ObserveMemoryKills as ObserveMemoryKills
+    from doeff_cluster._worker.protocol.observations import ObserveMemoryStops as ObserveMemoryStops
+    from doeff_cluster._worker.protocol.observations import ObservePrograms as ObservePrograms
+    from doeff_cluster._worker.protocol.observations import ObserveMemoryTight as ObserveMemoryTight
+    from doeff_cluster._worker.protocol.observations import ObserveProbes as ObserveProbes
+    from doeff_cluster._worker.protocol.observations import ObserveProcesses as ObserveProcesses
+    from doeff_cluster._worker.protocol.observations import (
+        ObserveWarmChildren as ObserveWarmChildren,
+    )
+    from doeff_cluster._worker.intent.code_model import ScanTree as ScanTree
+    from doeff_cluster._worker.intent.code_model import WriteMarker as WriteMarker
+    from doeff_cluster._worker.core.beat_policy import beat_interval_ms as beat_interval_ms
+    from doeff_cluster._worker.protocol.code_store import code_host as code_host
+    from doeff_cluster._worker.protocol.coordinator_link import coordinator_link as coordinator_link
+    from doeff_cluster._worker.protocol.env_store import env_host as env_host
+    from doeff_cluster._worker.protocol.env_translation import file_sha256 as file_sha256
+    from doeff_cluster._worker.protocol.job_cgroup import job_cgroup_placer as job_cgroup_placer
+    from doeff_cluster._worker.protocol.lease_release import lease_release as lease_release
+    from doeff_cluster._worker.protocol.leaving_observer import leaving_observer as leaving_observer
+    from doeff_cluster._worker.protocol.world import local_host as local_host
+    from doeff_cluster._worker.core.env_rules import lowered_priority_argv as lowered_priority_argv
+    from doeff_cluster._worker.protocol.memory_observer import memory_observer as memory_observer
+    from doeff_cluster._worker.protocol.worker_wakes import no_wakes as no_wakes
+    from doeff_cluster._worker.protocol.pod_labels import pod_job_labels as pod_job_labels
+    from doeff_cluster._worker.protocol.probes import probe_host as probe_host
+    from doeff_cluster._worker.core.heartbeat_rules import silent_ms as silent_ms
+    from doeff_cluster._worker.protocol.status_file import status_file as status_file
+    from doeff_cluster._worker.protocol.tree_files import tree_files as tree_files
+    from doeff_cluster._worker.protocol.warm_host import warm_host as warm_host
+    from doeff_cluster._shared.core.supplied_spelling import OBJECT_SPELLING as OBJECT_SPELLING
+    from doeff_cluster._shared.protocol.metrics_handlers import metrics_http as metrics_http
+    from doeff_cluster._shared.protocol.metrics_memory import metrics_memory as metrics_memory
+    from doeff_cluster._shared.core.readiness_rules import (
+        readiness_from_environ as readiness_from_environ,
+    )
+    from doeff_cluster._shared.protocol.remote import remote_cluster as remote_cluster
+    from doeff_cluster._shared.protocol.shared_handlers import shared_http as shared_http
+    from doeff_cluster._shared.core.supplied_spelling import (
+        supplied_spellings as supplied_spellings,
+    )
+    from doeff_cluster._shared.protocol.declaration_requests import update_body as update_body
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster._shared.intent.detached_model",
     "AdmitBatch": "doeff_cluster._sim.local",
