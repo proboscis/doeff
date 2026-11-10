@@ -261,14 +261,19 @@ def _each(rows: object, read: Callable[[object], "_Row | None"]) -> tuple[_Row, 
     """Read each row of a sequence (tuple or list) with read (None if it is not a sequence or any row cannot be read)."""
     if not isinstance(rows, (tuple, list)):
         return None
-    read_rows = tuple(read(row) for row in rows)
-    kept = tuple(item for item in read_rows if item is not None)
-    return kept if len(kept) == len(read_rows) else None
+    read_rows = tuple(map(read, rows))
+    return None if any(item is None for item in read_rows) else read_rows
 
 
 def _name(value: object) -> str | None:
     """One name field of a record (None if not a string)."""
     return value if isinstance(value, str) else None
+
+
+#: Used-macro rows already read in this process (the row of the code constants -> the read row). The same rows recur in most Hy modules
+#: (the rows of defk, val and the like differ only in the covered marker), and matching each row's shape again was about a third of reading
+#: the records of the 3,000 modules the agora-controllers declaration tool loads. Only tuple rows are kept (rows read from JSON are lists, not hashable).
+_USED_MACROS: dict[tuple[object, ...], "UsedMacro"] = {}
 
 
 def _whole_require(row: object) -> WholeRequire | None:
@@ -281,7 +286,19 @@ def _whole_require(row: object) -> WholeRequire | None:
 
 
 def _used_macro(row: object) -> UsedMacro | None:
-    """One used-macro row of a record (None if the shape differs)."""
+    """One used-macro row of a record (None if the shape differs) -- a tuple row read before is taken from :data:`_USED_MACROS`."""
+    if type(row) is not tuple:
+        return _used_macro_of(row)
+    known = _USED_MACROS.get(row)
+    if known is None:
+        known = _used_macro_of(row)
+        if known is not None:
+            _USED_MACROS[row] = known
+    return known
+
+
+def _used_macro_of(row: object) -> UsedMacro | None:
+    """Match the shape of one used-macro row (None if the shape differs)."""
     match row:
         case [str(table), str(module), str(name), digest, str(covered)] if (
             digest is None or isinstance(digest, str)

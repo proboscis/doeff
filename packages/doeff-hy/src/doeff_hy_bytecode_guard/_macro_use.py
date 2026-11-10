@@ -511,6 +511,8 @@ class ClosureWalk:
     #: The walk redone with per-annotation reads (``strict`` of :func:`_code_facts`) for when the closure has a function that reads a function's contents as a value. The digest for the case where
     #: a reading function is among the covered functions is built from this (a function's type annotations do not enter the digest of a closure that does not read them).
     strict: "ClosureWalk | None" = dataclasses.field(default=None, compare=False, repr=False)
+    #: The stored digests of this material (key "entry" -> the entry, None when the store is not used — read once per walk; :func:`_stored_digests`).
+    stored: "dict[str, StoredDigests | None]" = dataclasses.field(default_factory=dict, compare=False, repr=False)
 
     @property
     def everything(self) -> int:
@@ -537,11 +539,131 @@ class ClosureWalk:
         if self.strict is not None and covered & self.reads_code:
             # When a covered function reads a function's contents as a value, cover the contents of all functions (:meth:`covered_by`) — the digest of the per-annotation-read walk.
             return self.digests.setdefault(covered, self.strict.digest(self.strict.everything))
+        if covered == self.everything:
+            return self.digests.setdefault(covered, self._hashed(covered))
+        # A marker this process has not hashed yet: take the digest a previous process hashed for the same material and marker (StoredDigests), else hash it.
+        stored = _stored_digests(self)
+        made = None if stored is None else stored.known.get(covered)
+        if made is None:
+            made = self._hashed(covered)
+            if stored is not None:
+                stored.add(covered, made)
+        return self.digests.setdefault(covered, made)
+
+    def _hashed(self, covered: int) -> str:
+        """Hash the material with the code contents for covered functions and the marker :data:`_UNCOVERED` for the others (the hex digest)."""
         pieces = [self.segments[0]]
         for index, slot in enumerate(self.slots):
             text = (slot.shape if covered >> index & 1 else _UNCOVERED).encode("utf-8")
             pieces.extend((_LENGTH.pack(len(text)), text, self.segments[index + 1]))
-        return self.digests.setdefault(covered, hashlib.sha256(b"".join(pieces)).hexdigest())
+        return hashlib.sha256(b"".join(pieces)).hexdigest()
+
+
+#: Marker of the stored-digest entry key (raise the trailing number when the entry shape changes). The key also holds this module's code (:func:`_own_digest` —
+#: a change to how the material is hashed) and the digest of the whole material, so an entry only ever answers for the same material.
+DIGESTS_TAG = "doeff-hy/covered-digests/1"
+
+
+class StoredDigests:
+    """The digests per covered marker for one walk material, shared across processes through the store (the material is identified by the digest covering all
+    its functions). Verifying a .pyc record rebuilds the digest of the current closure for the marker the record holds, and the records of the 3,000 Hy modules the
+    agora-controllers declaration tool loads hold about 1,100 distinct markers — hashing the whole material for each was about 1.2 seconds of CPU per process.
+    A digest is a pure function of the material and the marker, so a stored one is the same as a rebuilt one (nothing to check). ``known`` = the digests read from
+    the store plus the ones this process hashed; ``added`` = whether this process hashed one the entry did not have (written once at exit)."""
+
+    def __init__(self, entry: str, known: dict[int, str]) -> None:
+        self.entry = entry
+        self.known = known
+        self._mut_added = False
+
+    def add(self, covered: int, digest: str) -> None:
+        """Remember a digest this process hashed (and write the entry at exit)."""
+        self.known[covered] = digest
+        self._mut_added = True
+        _note_digests_to_write()
+
+    @property
+    def added(self) -> bool:
+        """Whether this process hashed a digest the entry did not have."""
+        return self._mut_added
+
+    def write(self) -> None:
+        """Write the entry with the stored digests, the digests another process wrote since, and the ones this process hashed (silently not written where the
+        store cannot be written — the store is only for speed)."""
+        from doeff_hy_bytecode_guard import _code_store as code_store  # read only when storage is used
+        import marshal  # read only when writing
+
+        merged = {**_read_digests(self.entry), **self.known}
+        code_store.write_entry(self.entry, marshal.dumps(tuple(sorted(merged.items()))))
+
+
+#: Stored digests read in this process (entry path -> its digests — walks of the same material share one).
+_STORED_DIGESTS: dict[str, StoredDigests] = {}
+
+#: Whether the hook that writes the entries at exit is registered (one atexit hook per process — :func:`_note_digests_to_write`).
+_WRITE_AT_EXIT: dict[str, bool] = {}
+
+
+def _stored_digests(walk: ClosureWalk) -> StoredDigests | None:
+    """The stored digests for the walk's material (None if the setting does not use the store, or this module's code cannot be read) — read from the store once per
+    walk. The material is named by its digest covering all its functions (hashed here, not through :meth:`ClosureWalk.digest`, which answers with the per-annotation
+    walk's digest for a closure that reads function contents)."""
+    if "entry" in walk.stored:
+        return walk.stored["entry"]
+    from doeff_hy_bytecode_guard import _code_store as code_store  # read only when storage is used
+
+    store = code_store.store_dir()
+    own = None if store is None else _own_digest()
+    if store is None or own is None or (sys.dont_write_bytecode and not code_store.store_is_named()):
+        return walk.stored.setdefault("entry", None)
+    material = walk._hashed(walk.everything)
+    key = code_store.content_key((DIGESTS_TAG, own, str(len(walk.slots))), material.encode("ascii"))
+    entry = code_store.entry_path(store, key, code_store.DIGESTS_SUFFIX)
+    if entry not in _STORED_DIGESTS:
+        _STORED_DIGESTS[entry] = StoredDigests(entry, _read_digests(entry))
+    return walk.stored.setdefault("entry", _STORED_DIGESTS[entry])
+
+
+def _read_digests(entry: str) -> dict[int, str]:
+    """Read a stored-digest entry (empty if absent). An entry of the wrong shape is discarded by name, and empty is returned (the digests are hashed again and written)."""
+    from doeff_hy_bytecode_guard import _code_store as code_store  # read only when storage is used
+
+    data = code_store.read_entry(entry)
+    if data is None:
+        return {}
+    import marshal  # read only when it hit
+
+    try:
+        rows = marshal.loads(data)
+    except (EOFError, ValueError, TypeError) as error:
+        code_store.discard_entry(entry, f"cannot read with marshal: {error}")
+        return {}
+    match rows:
+        case tuple() if all(
+            isinstance(row, tuple) and len(row) == 2 and isinstance(row[0], int) and isinstance(row[1], str)
+            for row in rows
+        ):
+            return dict(rows)
+        case _:
+            code_store.discard_entry(entry, "stored digests have the wrong shape")
+            return {}
+
+
+def _note_digests_to_write() -> None:
+    """Write the entries at exit — one write per material per process, not one per digest (a process hashes hundreds of markers of one material)."""
+    if _WRITE_AT_EXIT.get("registered"):
+        return
+    import atexit  # read only when a digest was hashed
+
+    atexit.register(_write_digests)
+    _WRITE_AT_EXIT["registered"] = True
+
+
+def _write_digests() -> None:
+    """Write the entries with digests this process hashed (at exit)."""
+    for stored in tuple(_STORED_DIGESTS.values()):
+        if stored.added:
+            stored.write()
 
 
 @dataclass(frozen=True)

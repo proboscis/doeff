@@ -56,6 +56,10 @@ _compile_counts: dict[str, object] = {}
 #: Discarded for that path when get_code finishes (the source is not held for the life of the process).
 _source_reads: dict[str, object] = {}
 
+#: Contents of the .pyc of a Hy module that the load entry read for its header, kept per thread until the standard get_code reads the same file
+#: (:func:`_read_pycs`). threading is not loaded at startup, so this is created when Hy source is first encountered.
+_pyc_reads: dict[str, object] = {}
+
 #: sha256 of a file -- key is (path, mtime ns, size). The same macro file is checked hundreds of times in one process, so
 #: unchanged files are not re-read.
 _digests: dict[tuple[str, int, int], str] = {}
@@ -336,6 +340,9 @@ def _remembering_get_data(previous: GetData):
     built from these bytes, without re-reading the file."""
 
     def get_data(self: importlib.machinery.SourceFileLoader, path: str) -> bytes:
+        read = _read_pycs().pop(path, None) if _pyc_reads else None
+        if read is not None:
+            return read  # the .pyc the load entry already read for its header (_bytecode_header)
         data = previous(self, path)
         if is_hy_source(path):
             _last_sources()[path] = data
@@ -409,6 +416,7 @@ def _checking_get_code(previous: GetCode):
             code = _hy_code(self, fullname, path)
         finally:
             _last_sources().pop(path, None)  # the remembered source is used only during this read
+            _read_pycs().pop(importlib.util.cache_from_source(path), None)  # likewise the .pyc read for the header
         record = _remember_record(path, code)
         if code is not None and record is not None:
             # Tell the one line to add to a module where a macro was forgotten to be required, or was brought in by import (before execution -- Python emits the statement and
@@ -676,15 +684,19 @@ def _recompile(
 
 def _bytecode_header(self: importlib.machinery.SourceFileLoader, path: str) -> bytes | None:
     """The header of the .pyc next to the source (None if absent) -- look at the mode (timestamp / hash, whether checked) so it can be rewritten in the same mode.
-    Only the header bytes are read: the whole .pyc is read once more by the standard get_code, and reading it here too cost about 0.4 seconds of CPU over the
-    1,850 Hy modules one agora-controllers check loads."""
+    The whole .pyc is read here once and handed to the standard get_code's own read of the same file (:func:`_read_pycs` -- the load entry wrapper returns these
+    bytes instead of opening the file again). Opening it twice, once for the header and once for the body, cost about 0.4 seconds of CPU over the 3,000 Hy
+    modules the agora-controllers declaration tool loads."""
     from doeff_hy_bytecode_guard import _records as records  # load only when Hy source is encountered
 
+    pyc_path = importlib.util.cache_from_source(path)
     try:
-        with io.open_code(importlib.util.cache_from_source(path)) as pyc:
-            return pyc.read(records.PYC_HEADER_BYTES)
+        with io.open_code(pyc_path) as pyc:
+            data = pyc.read()
     except OSError:
         return None
+    _read_pycs()[pyc_path] = data
+    return data[: records.PYC_HEADER_BYTES]
 
 
 def _bytecode_matches_source(
@@ -753,6 +765,17 @@ def _expansion_or(
     """The module in which expansion runs in a compile outside an import -- the loaded module Hy looks up from the file name (:func:`_module_being_loaded`) takes precedence over the placed module placed.
     So that the recording context opens on the module of the table that expansion consults."""
     return _module_being_loaded(loader, path) or placed
+
+
+def _read_pycs() -> dict[str, bytes]:
+    """The table of .pyc contents this thread's load entry read for the header and has not yet handed to the standard get_code (path of the .pyc -> bytes;
+    created if first time). Emptied for the module when its load entry returns, so bytes are never handed to a later read of a rewritten file."""
+    import threading  # not loaded at startup
+
+    local = _pyc_reads.get("local")
+    if not isinstance(local, threading.local):
+        local = _pyc_reads.setdefault("local", threading.local())
+    return vars(local).setdefault("pycs", {})
 
 
 def _last_sources() -> dict[str, bytes]:

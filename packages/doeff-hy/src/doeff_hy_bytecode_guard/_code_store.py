@@ -11,7 +11,8 @@ There are 6 users, and all of them go only through here (no duplicate copies of 
     process had been re-resolving the same source content every time).
   - Reading the code for the .pyc record check (:mod:`doeff_hy_bytecode_guard._macro_use`): the readings of the function code that the macro closure digest walk reads
     (name tables, string constants, imports, the digest shape — pure readings determined by the code content), lined up in one entry per walk step and looked up; when re-read,
-    they are added.
+    they are added. The digests that check rebuilds per covered marker of a walk's material are lined up the same way, one entry per material, and written at the
+    process's exit when it hashed markers the entry did not have.
   - Trees expanded by import-time compilation (:mod:`doeff_hy_bytecode_guard._expansion_trees`): the process that compiled a changed Hy module adds the expanded
     tree and the record of the macros the expansion depended on next to its code (:func:`add_tree`). Before doeff-effect-analyzer expands the same source again, it checks against the current
     environment's macros and looks them up (:func:`tree_entries`). The bytecode store is shared by all jobs on a worker, so whichever job compiled,
@@ -24,8 +25,8 @@ Store directory = environment variable DOEFF_HY_CODE_STORE (``off`` = do not use
 script puts the default at ``$WORK_DIR/state/doeff-hy-code-store`` (the same directory as the daily full-verification task).
 
 Layout: ``<dir>/<first 2 chars of key>/<rest of key><kind suffix>``. Kinds = ``.code`` (marshaled code object — the code of dataclass functions) and
-``.imports`` (import names read by the closure walk of the worker tools — the shape is owned by the tools), ``.binding`` and ``.facts`` (the source reading and the code reading for the
-.pyc record check — shapes owned by bound_source and macro_use), and ``.tree`` (the tree expanded by import-time compilation and the macro record — shape owned by expansion_trees).
+``.imports`` (import names read by the closure walk of the worker tools — the shape is owned by the tools), ``.binding``, ``.facts`` and ``.digests`` (the source reading, the code reading
+and the per-marker closure digests for the .pyc record check — shapes owned by bound_source and macro_use), and ``.tree`` (the tree expanded by import-time compilation and the macro record — shape owned by expansion_trees).
 The key is determined only by the sha256 of the source content and the things that change how the content is read (the fields of :func:`code_key`),
 and does not depend on path or version (commit). Only ``.pyc`` (the exact contents of the .pyc the worker tools place in a tree) is keyed by the sha256 of the content, and the tree's
 .pyc is a hardlink to this file (:func:`link_pyc`).
@@ -110,6 +111,9 @@ BINDING_SUFFIX = ".binding"
 #: Reading of the code object that the macro closure digest walk reads (doeff_hy_bytecode_guard._macro_use — a pure reading determined by the code content. Its shape is
 #: owned by macro_use).
 FACTS_SUFFIX = ".facts"
+#: The digests per covered marker of one macro closure walk material, hashed by the .pyc record check (doeff_hy_bytecode_guard._macro_use — a pure value determined by
+#: the material and the marker. Its shape is owned by macro_use).
+DIGESTS_SUFFIX = ".digests"
 #: The exact contents of the .pyc that the worker tools place in a tree (header plus marshaled code — named by the content's sha256; :func:`link_pyc`).
 PYC_SUFFIX = ".pyc"
 
