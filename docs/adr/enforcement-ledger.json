@@ -301,6 +301,7 @@
     "ADR-DOE-CLUSTER-002 due-is-the-instant-the-judgment-changes",
     "ADR-DOE-CLUSTER-002 the-coordinator-wakes-only-for-a-due-a-request-a-stop-or-an-event",
     "ADR-DOE-CLUSTER-003 a-prepare-job-changed-at-the-same-version-is-recreated",
+    "ADR-DOE-CLUSTER-003 the-atlas-worker-cannot-be-preempted-by-the-coordinator",
     "ADR-DOE-CLUSTER-003 the-coordinator-and-its-prepare-job-outrank-the-default-pods",
     "ADR-DOE-CLUSTER-003 the-prepare-job-builds-the-coordinators-version",
     "ADR-DOE-CLUSTER-003 the-prepare-job-shares-only-the-root-with-the-coordinator",
