@@ -108,9 +108,12 @@
 #   CPU の枠: 子ごとに cpu.max(<quota>/<period> の µ 秒・quota は max も可)も掛けられる。container の cpu.max に当たると、kernel は
 #   その周期の残りの間 container の中の thread を層によらず全部止める(重みは止めを分けない)— 一括の仕事の層だけに枠を掛け、枠の和を
 #   container の上限から守る層の取り分を引いた値以下にすれば、上限に当たって止められるのは枠を掛けた層だけになる(和は機体の宣言が守る)。
+#   swap の上限: 子ごとに memory.swap.max も掛けられる(機体に swap と zswap の在る時 — 圧縮の pool も swap の枠を数える)。守る層(worker の
+#   本体・常駐の job・init)を 0 にし、応答に敏感な process の memory を圧縮や SSD へ出さない。container の swap の枠は kubelet が
+#   Pod の取り分から決め(memorySwap.swapBehavior LimitedSwap)、子の値はその内で効く。
 #   WORKER_CGROUP_LAYOUT = 空白で並べた「<名>:<file>=<値>,…」(名は英小文字・数字・-。file は memory.min・memory.low・memory.high・
-#   memory.max・cpu.weight・cpu.idle・cpu.max のどれか。memory の値は kernel の書式のまま・cpu.weight は 1〜10000 の整数・cpu.idle は
-#   0 か 1・cpu.max は <quota>/<period>(quota は 1000 以上の整数か max・period は 1000〜1000000 の整数)で、kernel へは空白で区切って書く)。
+#   memory.max・memory.swap.max・cpu.weight・cpu.idle・cpu.max のどれか。memory の値は kernel の書式のまま・cpu.weight は 1〜10000 の整数・
+#   cpu.idle は 0 か 1・cpu.max は <quota>/<period>(quota は 1000 以上の整数か max・period は 1000〜1000000 の整数)で、kernel へは空白で区切って書く)。
 #   最初の層に、今 worker の cgroup に居る process を全部移す(tini・この script・準備の残り)— cgroup v2 は process の居る cgroup の子に
 #   controller を掛けられないため。子には memory をいつも、cpu は cpu の file を書く層が在る時だけ掛ける。例:
 #     worker:memory.min=2G,cpu.weight=1000 services:memory.min=24G,cpu.weight=1000 jobs:memory.max=36G,cpu.weight=100
@@ -516,7 +519,7 @@ cgroup_layout() {
         continue
       fi
       case "$key" in
-        memory.min|memory.low|memory.high|memory.max)
+        memory.min|memory.low|memory.high|memory.max|memory.swap.max)
           case "$value" in
             max|[0-9]*) ;;
             *) problems="$problems 層 $name の $key の値 '$value' は数(K・M・G を付けてよい)か max で書く。" ;;
@@ -555,7 +558,7 @@ cgroup_layout() {
           esac
           [ "$ok" = 1 ] ||
             problems="$problems 層 $name の cpu.max の値 '$value' は <quota>/<period>(quota は 1000 以上の整数か max・period は 1000〜1000000 の整数)で書く。" ;;
-        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max・cpu.weight・cpu.idle・cpu.max のどれかで書く。" ;;
+        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max・memory.swap.max・cpu.weight・cpu.idle・cpu.max のどれかで書く。" ;;
       esac
     done
     IFS=$old_ifs

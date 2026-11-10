@@ -161,6 +161,23 @@
   (assert (not (.exists (/ scope "services" "cpu.max"))) "枠を宣言しない層には書かない"))
 
 
+(deftest test-a-layout-with-swap-max-keeps-the-guarded-layers-out-of-swap [#^ Path tmp-path]
+  ;; swap の上限(boot.sh の「swap の上限」): 守る層に memory.swap.max=0 を書き、宣言しない層には書かない(container の枠の内で使える)。
+  ;; 失敗ケース: swap と zswap の在る機体で守る層に 0 を書けないと、回収が常駐の job の匿名の memory を圧縮の pool と SSD へ出し、
+  ;; 常駐の service の答えが page の読み戻しを待つ。値の誤りは宣言を読む段で断る。
+  (<- scope Path (fake-container tmp-path))
+  (<- done subprocess.CompletedProcess
+      (run-layout tmp-path scope "worker:memory.min=1G,memory.swap.max=0 services:memory.min=24G,memory.swap.max=0 clis:memory.max=8G"))
+  (assert (= done.returncode 0) done.stderr)
+  (val written (dfor layer #("worker" "services") layer (.strip (.read-text (/ scope layer "memory.swap.max")))))
+  (assert (= written {"worker" "0" "services" "0"}) written)
+  (assert (not (.exists (/ scope "clis" "memory.swap.max"))) "swap の上限を宣言しない層には書かない")
+  (<- bad Path (fake-container (/ tmp-path "bad")))
+  (<- refused subprocess.CompletedProcess (run-layout (/ tmp-path "bad") bad "worker:memory.swap.max=none"))
+  (assert (= refused.returncode 2) refused)
+  (assert (in "memory.swap.max の値 'none'" refused.stderr) refused.stderr))
+
+
 (deftest test-a-bad-cpu-max-is-refused-before-any-layer-is-made [#^ Path tmp-path]
   ;; 失敗ケース: kernel の書式の空白を宣言に書けず(層の区切り)、周期の範囲(1 ms〜1 秒)の外や 1 ms 未満の quota を、層を作った後の書きで
   ;; 初めて知ると、起動が層を半端に作ったまま止まる。宣言を読む段で全部を名指して断る。
