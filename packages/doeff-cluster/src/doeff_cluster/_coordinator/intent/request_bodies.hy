@@ -186,6 +186,23 @@
   (setv #^ (get tuple #(str ...)) ready-deps #()))
 
 
+(defwire MeasuredJob
+  "heartbeat の measured の欄 jobUses の 1 行(worker/protocol/heartbeat の measured-json と同じ形・worker/core/memory_rules の JobMeter): 常駐の
+   job 1 つの CPU と memory の今。job = job の名・pid = 根の pid・cpu-ms = 木の process の CPU の累計の和(自分と待ち終えた子の utime + stime の
+   ms — 同じ job と pid の 2 回の読みの差が、その間に木が使った CPU。pid が変われば起こし直された別の木)・rss-MiB = 木の rss の和・processes =
+   木の process の数・pss-MiB = 木の PSS の和(None = worker が読めなかった・まだ読んでいない)・pss-at-ms = その PSS を読んだ刻(worker の
+   壁の時計の epoch ms — PSS は数十秒ごとにだけ読み直す)。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
+   :check [(bool job) (> pid 0) (>= cpu-ms 0) (>= rss-MiB 0) (> processes 0) (or (is pss-MiB None) (>= pss-MiB 0))]}
+  (#^ str job)
+  (#^ int pid)
+  (#^ int cpu-ms)
+  (#^ int rss-MiB)
+  (#^ int processes)
+  (setv #^ (| int None) pss-MiB None)
+  (setv #^ (| int None) pss-at-ms None))
+
+
 (defwire MeasuredLoad
   "heartbeat の機体の測った空き(欄 measured — worker/protocol/heartbeat の measured-json と同じ形・worker/core/load_rules の
    MachineLoad): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy = 前の読みからの CPU の使いの割合(0〜1 —
@@ -199,7 +216,9 @@
    (jobs)の今の空き(MiB — 層の memory.max − memory.current・負もありうる。None = 名乗らない〔層の無い・線の古い・前の版の worker〕—
    置き先は名乗った worker には要りがこの空きにも収まる task だけを置く・2026-11-09)・prepare-wait-MiB = worker の版の準備が空きを待つ間に、
    worker が新しい受けの外へ取り置いた量(MiB — None = 待っていない・前の版の worker。置き先は名乗った worker に新しく常駐の job を置かない —
-   core/cluster_policy の memory-misfit・2026-11-10)。coordinator は保存せず、task の置き先を
+   core/cluster_policy の memory-misfit・2026-11-10)・job-uses = 常駐の job ごとの CPU の累計と memory の今(MeasuredJob の列 — None =
+   名乗らない〔見張りの読みが古い・前の版の worker〕。置き先は読まず、GET /state で測りの読み手が job ごとの CPU と PSS を 1 か所から読む・
+   2026-11-10)・job-uses-at-ms = その見張りの読みの刻(worker の壁の時計の epoch ms — CPU の累計の差を割る間)。coordinator は保存せず、task の置き先を
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
@@ -221,7 +240,9 @@
   (setv #^ (| float None) task-cpu-some-avg10 None)
   (setv #^ (| dict None) task-memory-MiB None)
   (setv #^ (| int None) jobs-room-MiB None)
-  (setv #^ (| int None) prepare-wait-MiB None))
+  (setv #^ (| int None) prepare-wait-MiB None)
+  (setv #^ (| (get tuple #(MeasuredJob ...)) None) job-uses None)
+  (setv #^ (| int None) job-uses-at-ms None))
 
 
 (defwire HeartbeatBody

@@ -350,6 +350,53 @@
   uses)
 
 
+(defrecord JobMeter
+  "常駐の job 1 つ(task でない根の木)の CPU と memory の今(heartbeat の measured の欄 jobUses の 1 行): job = job の名・pid = 根の pid・
+   cpu-ms = 木の process の CPU の累計の和(ProcRow.cpu-ms — 自分と待ち終えた子の utime + stime。同じ根の 2 回の読みの差が、その間に木が
+   使った CPU)・rss-bytes = 木の rss の和・processes = 木の process の数・pss-bytes = 木の PSS の和(smaps_rollup — 読みが重いので
+   見張りが pss-seconds ごとにだけ読む。None = まだ読んでいない・木の 1 本でも読めなかった・木が pss-process-limit を越えた)・
+   pss-at-ms = その PSS を読んだ刻(None = pss-bytes が None)。"
+  {:check [(>= cpu-ms 0) (>= rss-bytes 0) (> processes 0) (or (is pss-bytes None) (>= pss-bytes 0))
+           (= (is pss-bytes None) (is pss-at-ms None))]}
+  (#^ str job)
+  (#^ int pid)
+  (#^ int cpu-ms)
+  (#^ int rss-bytes)
+  (#^ int processes)
+  (setv #^ (| int None) pss-bytes None)
+  (setv #^ (| int None) pss-at-ms None))
+
+
+(defk resident-walks [walks]
+  {:pre [(: walks tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "job の木(walks = _job-walks の答え)から常駐の job(task でない根)の物だけを選ぶため(roots の順)。"
+  (tuple (gfor w walks :if (not (.startswith w.root.name TASK-PREFIX)) w)))
+
+
+(defk job-meters-of [walks pss]
+  {:pre [(: walks tuple) (: pss dict)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "常駐の job ごとの CPU と memory の今(JobMeter の列 — 名の昇順)を、木(walks = resident-walks の答え)の rss と CPU の累計の和で数え、
+   PSS は pss(#(job の名 根の pid) → #(PSS の和 読んだ刻) — 見張りが最後に読めた物)から添えるため。根の pid の違う前の PSS は添えない
+   (起こし直された job の前の木の値を今の木に付けない)。"
+  (tuple (sorted (gfor w walks
+                       :setv key #(w.root.name w.root.pid)
+                       :setv read (.get pss key)
+                       (JobMeter :job w.root.name :pid w.root.pid :cpu-ms (sum (gfor m w.walk.members m.cpu-ms))
+                                 :rss-bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)
+                                 :pss-bytes (if (is read None) None (get read 0)) :pss-at-ms (if (is read None) None (get read 1))))
+                 :key (fn [meter] #(meter.job meter.pid)))))
+
+
+(defk pss-bytes-of [text]
+  {:pre [(: text str)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "/proc/<pid>/smaps_rollup の中身 text の行 Pss: <kB> kB を byte にするため(行が無い・数でない = None — 読めないと数える)。"
+  (val line (next (gfor l (.splitlines text) :if (.startswith l "Pss:") l) None))
+  (val parts (if (is line None) [] (.split line)))
+  (if (and (= (len parts) 3) (.isdigit (get parts 1)) (= (get parts 2) "kB"))
+      (* (int (get parts 1)) 1024)
+      None))
+
+
 (defk largest-outside [rows walks]
   {:pre [(: rows tuple) (: walks tuple)] :post [(: % (| ProcRow None))] :tags {:context "worker" :role "judgment"}}
   "job の木の外(walks = _job-walks の答えのどの木にも居ない — worker の本体・init と、kubectl exec・readinessProbe・preStop の命令)で

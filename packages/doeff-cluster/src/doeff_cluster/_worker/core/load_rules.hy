@@ -41,7 +41,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import doeff_cluster._worker.core.memory_rules [MIB NodeMemory JobUse TASK-PREFIX node-memory-of])
+(import doeff_cluster._worker.core.memory_rules [MIB NodeMemory JobUse JobMeter TASK-PREFIX node-memory-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory])
 (import doeff_cluster._worker.intent.worker_model [HostCounters])
 
@@ -54,6 +54,9 @@
 ;; 見張りが読んだ task ごとの memory の今の使いを名乗りに使う古さの上限(線と同じ — 見張りが止まった・遅れた worker は今の使いを
 ;; 名乗らず、coordinator は名乗られない task の要りの全部を予約する)。
 (val TASK-USES-FRESH-MS LINE-FRESH-MS)
+;; 見張りが読んだ常駐の job ごとの CPU と memory を名乗りに使う古さの上限(task の使いと同じ — 止まった見張りの古い累計を今の値として
+;; 名乗らない)。
+(val JOB-METERS-FRESH-MS LINE-FRESH-MS)
 ;; /proc/stat の頭の行 cpu の欄のうち、使いに数えない刻み(欄の位置 — 0 = user)。3 = idle・4 = iowait。
 (val IDLE-FIELDS #(3 4))
 ;; /proc/stat の頭の行 cpu の欄のうち、nice > 0 の process の刻み(欄の位置)。使いの内に数え、別に nice の分としても名乗る。
@@ -123,10 +126,13 @@
    working set(memory.current − inactive_file)・jobs-room-of。負もありうる。None = 名乗らない〔線が無いか古い・層が無い〕— coordinator の置き先は、名乗った worker
    には要りがこの空きに収まる task だけを置く・2026-11-09)・prepare-wait-mib = keeper が版の準備を待つ間に新しい受けの外へ取り置いた量
    (MiB — worker/core/eviction_rules の prepare-wait-reserve。None = 待っていないか名乗らない〔線が無いか古い〕— coordinator の置き先は、
-   名乗った worker に新しく常駐の job を置かない・2026-11-10)。"
+   名乗った worker に新しく常駐の job を置かない・2026-11-10)・job-meters = 常駐の job ごとの CPU と memory の今(worker/core/memory_rules の
+   JobMeter の tuple — job-meters-told。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator は保存せず GET /state の worker の行に
+   写す・2026-11-10)・job-meters-at-ms = その見張りの読みの刻(epoch ms — job-meters が None の時は None)。"
   {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)
            (or (is cpu-nice None) (and (is-not cpu-busy None) (<= 0 cpu-nice cpu-busy)))
-           (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0)) (or (is prepare-wait-mib None) (> prepare-wait-mib 0))]}
+           (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0)) (or (is prepare-wait-mib None) (> prepare-wait-mib 0))
+           (= (is job-meters None) (is job-meters-at-ms None))]}
   (#^ int at-ms)
   (#^ int cpus)
   (#^ (| float None) cpu-busy)
@@ -140,7 +146,9 @@
   (setv #^ (| float None) task-cpu-some-avg10 None)
   (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None)
   (setv #^ (| int None) jobs-room-mib None)
-  (setv #^ (| int None) prepare-wait-mib None))
+  (setv #^ (| int None) prepare-wait-mib None)
+  (setv #^ (| (get tuple #(JobMeter ...)) None) job-meters None)
+  (setv #^ (| int None) job-meters-at-ms None))
 
 
 (defrecord LoadReading
@@ -198,6 +206,15 @@
       (tuple (gfor u uses :if (.startswith u.job TASK-PREFIX)
                    (TaskMemory :id (cut u.job (len TASK-PREFIX) None) :mib (// u.bytes MIB))))
       None))
+
+
+(defk job-meters-told [meters meters-at-ms now-ms]
+  {:pre [(: meters tuple) (: meters-at-ms (| int None)) (: now-ms int)] :post [(: % (| tuple None))]
+   :tags {:context "worker" :role "judgment"}}
+  "見張りが最後に数えた常駐の job ごとの CPU と memory(meters = JobMeter の tuple・meters-at-ms = 数えた刻)を、heartbeat で名乗るかを
+   決めるため。古い(JOB-METERS-FRESH-MS を越えた)・刻の無い・壁の時計が戻った読みは None(名乗らない — 止まった見張りの累計を
+   今の値として出さない)。"
+  (if (and (is-not meters-at-ms None) (<= 0 (- now-ms meters-at-ms) JOB-METERS-FRESH-MS)) meters None))
 
 
 (defk jobs-room-of [line jobs-intake jobs-held]

@@ -8,6 +8,7 @@
 (import doeff_cluster._worker.core.heartbeat_rules [finished-task-id])
 (import doeff_cluster._worker.core.room_rules [announced-provides])
 (import doeff_cluster._worker.core.load_rules [MachineLoad])
+(import doeff_cluster._worker.core.memory_rules [MIB])
 
 
 (deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured #^ (get frozenset str) [ready-deps (frozenset)]]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
@@ -100,7 +101,14 @@
    ;; keeper が版の準備を待つ間の取り置き(待っている時だけ — 2026-11-10)。
    #** (if (is load.prepare-wait-mib None) {} {"prepareWaitMiB" load.prepare-wait-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。
-   #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})})
+   #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})
+   ;; 常駐の job ごとの CPU の累計と memory の今(名乗る時だけ — 2026-11-10。jobUsesAtMs = 見張りの読みの刻・pssMiB と pssAtMs は
+   ;; 読めた job だけ)。
+   #** (if (is load.job-meters None) {}
+           {"jobUsesAtMs" load.job-meters-at-ms
+            "jobUses" (lfor m load.job-meters
+                            (| {"job" m.job "pid" m.pid "cpuMs" m.cpu-ms "rssMiB" (// m.rss-bytes MIB) "processes" m.processes}
+                               (if (is m.pss-bytes None) {} {"pssMiB" (// m.pss-bytes MIB) "pssAtMs" m.pss-at-ms})))})})
 
 
 (defk status-report [statuses task-echo results]

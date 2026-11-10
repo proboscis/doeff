@@ -3,7 +3,8 @@
 ;;;
 ;;;   Contract  The table is in ascending pid order with no overlaps, and the row of the sleeping child has the pid of its parent. A SignalPid with a different start time is not sent and gives False (it does not send to
 ;;;             another process under a reused pid); a matching SignalPid gives True, and the sleeping child disappears from the table afterwards.
-;;;   Reading   A stat whose comm contains spaces and parentheses can be read; a zombie is not put in the table; contents with too few fields are refused by name.
+;;;   Reading   A stat whose comm contains spaces and parentheses can be read; cpu-ms is the own and waited-children ticks over the ticks per second; a zombie is not
+;;;             put in the table; contents with too few fields are refused by name.
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_core_effects [ProcessSignal])
 (import doeff_core_effects [ProcRow ReadProcTable SignalPid]
@@ -59,7 +60,16 @@
 (deftest test-a-stat-line-with-spaces-and-parens-in-comm-is-read
   (val text "4242 (a) b (c) S 7 4242 4242 0 -1 4194560 10 0 0 0 1 2 0 0 20 0 1 0 123456 1000000 300 18446744073709551615 0\n")
   (<- row (| ProcRow None) (proc-row-of-stat 4242 text 4096))
-  (assert (= row (ProcRow :pid 4242 :ppid 7 :start-ticks 123456 :rss-bytes (* 300 4096) :comm "a) b (c")) row))
+  (assert (= row (ProcRow :pid 4242 :ppid 7 :start-ticks 123456 :rss-bytes (* 300 4096) :comm "a) b (c" :cpu-ms 30)) row))
+
+
+(deftest test-cpu-ms-counts-own-and-waited-children-ticks
+  ;; utime 1 + stime 2 + cutime 30 + cstime 7 = 40 ticks: 400 ms at 100 ticks a second, 160 ms at 250.
+  (val text "77 (job) S 1 77 77 0 -1 4194560 10 0 0 0 1 2 30 7 20 0 1 0 5000 1000000 300 18446744073709551615 0\n")
+  (<- at-100 (| ProcRow None) (proc-row-of-stat 77 text 4096))
+  (assert (= at-100.cpu-ms 400) at-100)
+  (<- at-250 (| ProcRow None) (proc-row-of-stat 77 text 4096 250))
+  (assert (= at-250.cpu-ms 160) at-250))
 
 
 (deftest test-a-zombie-is-not-a-row-and-a-short-stat-is-refused

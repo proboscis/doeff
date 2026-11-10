@@ -219,7 +219,7 @@
 (import doeff_cluster._worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster._worker.core.launch [outlives-worker orphan-seconds-of])
 (import doeff_cluster._worker.protocol.drain_requests [drain-request])
-(import doeff_cluster._worker.core.memory_rules [JobRoot MIB])
+(import doeff_cluster._worker.core.memory_rules [JobRoot JobMeter MIB])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
 (import doeff_cluster._sim.memory_watch_world [SimMemoryWatch SimMemoryRead sim-watch-settings sim-proc-rows sim-meminfo-text sim-watch-answers
                                               limited-cpu-seconds])
@@ -319,15 +319,20 @@
    task-cores / task-mib = 走っている task 1 本が使う CPU と memory・nice-cores = task の外で優先度を下げて(nice > 0 で)走る process が
    使う CPU(base-cores とは別に需要へ足し、CPU の使いの内の nice の分として名乗る — 譲る命令で埋まった機体の代役)。worker は heartbeat を
    送る刻に、走っている task の数から machine-load-of で今の空きを数えて名乗る(機体の真実 — 名乗りを偽る壊れた worker は SimWorker の
-   claims-cpus)。"
-  {:check [(> cpus 0) (>= memory-mib base-mib 0) (>= base-cores 0) (> task-cores 0) (>= task-mib 0) (>= nice-cores 0)]}
+   claims-cpus)。service-mib = 常駐の job 1 つの木の rss と PSS(MiB — 在れば常駐の job ごとの CPU と memory を欄 jobUses で名乗る・本番の
+   見張りの読みの代役・2026-11-10。None = 名乗らない — 前の版の worker)・service-cores = 常駐の job 1 つが使い続ける CPU(jobUses の
+   CPU の累計 = 起こしてからの秒 × service-cores)。"
+  {:check [(> cpus 0) (>= memory-mib base-mib 0) (>= base-cores 0) (> task-cores 0) (>= task-mib 0) (>= nice-cores 0)
+           (or (is service-mib None) (>= service-mib 0)) (>= service-cores 0)]}
   (#^ int cpus)
   (#^ int memory-mib)
   (setv #^ float base-cores 0.0)
   (setv #^ int base-mib 0)
   (setv #^ float task-cores 1.0)
   (setv #^ int task-mib 1024)
-  (setv #^ float nice-cores 0.0))
+  (setv #^ float nice-cores 0.0)
+  (setv #^ (| int None) service-mib None)
+  (setv #^ float service-cores 0.0))
 
 
 ;; SimWorker の既定の機体: 模擬の筋書きが task の空きを気にせず走るための広い機体(task の空きの数え — coordinator/core/measured_room —
@@ -335,8 +340,9 @@
 (val ROOMY-MACHINE (SimMachine :cpus 64 :memory-mib 262144))
 
 
-(defk machine-load-of [machine running at-ms [claims-cpus None] [task-ids None]]
-  {:pre [(: machine SimMachine) (: running int) (: at-ms int) (: claims-cpus (| int None)) (: task-ids (| tuple None))] :post [(: % MachineLoad)]
+(defk machine-load-of [machine running at-ms [claims-cpus None] [task-ids None] [services #()]]
+  {:pre [(: machine SimMachine) (: running int) (: at-ms int) (: claims-cpus (| int None)) (: task-ids (| tuple None)) (: services tuple)]
+   :post [(: % MachineLoad)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の worker が刻 at-ms に heartbeat の measured で名乗る機体の空き(本番の worker/core/load_rules の MachineLoad と同じ形)を、機体
    machine と走っている task の数 running から作るため。需要 = base-cores + nice-cores + running × task-cores・CPU の使い = min(1, 需要 / cpus)・
@@ -344,7 +350,8 @@
    CPU の PSI の some avg10 = 需要のうち CPU に載れない割合(%)・memory の空き = memory-mib − base-mib − running × task-mib(0 まで)・
    memory の PSI の some avg10 = 空きが全体の 5% を切ると 20(他は 0)。claims-cpus = 反例の世界だけの壊れた worker が名乗る CPU の数
    (None = 機体の真実 — 名乗った数で CPU の使いを割り、機体を大きく見せる)。task-ids = 走っている task の id(在れば task ごとの memory の
-   今の使いを task-mib として名乗る — 本番の見張りの読みの代役・2026-11-02。None = 名乗らない)。"
+   今の使いを task-mib として名乗る — 本番の見張りの読みの代役・2026-11-02。None = 名乗らない)。services = 生きている常駐の job の
+   process(ProcessView の列 — 機体の service-mib が在れば job ごとの CPU と memory を名乗る。PSS の刻は at-ms)。"
   (val cpus (if (is claims-cpus None) machine.cpus claims-cpus))
   (val demand (+ machine.base-cores machine.nice-cores (* running machine.task-cores)))
   (val busy (min 1.0 (/ demand cpus)))
@@ -354,7 +361,15 @@
                :memory-available-mib available
                :cpu-some-avg10 (if (> demand cpus) (* 100.0 (/ (- demand cpus) demand)) 0.0) :cpu-full-avg10 0.0
                :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0
-               :task-uses (if (is task-ids None) None (tuple (gfor id task-ids (TaskMemory :id id :mib machine.task-mib))))))
+               :task-uses (if (is task-ids None) None (tuple (gfor id task-ids (TaskMemory :id id :mib machine.task-mib))))
+               :job-meters (if (is machine.service-mib None) None
+                               (tuple (sorted (gfor p services
+                                                    (JobMeter :job p.name :pid p.pid
+                                                              :cpu-ms (int (* (max 0 (- at-ms p.started-ms)) machine.service-cores))
+                                                              :rss-bytes (* machine.service-mib MIB) :processes 1
+                                                              :pss-bytes (* machine.service-mib MIB) :pss-at-ms at-ms))
+                                              :key (fn [m] #(m.job m.pid)))))
+               :job-meters-at-ms (if (is machine.service-mib None) None at-ms)))
 
 
 (defrecord SimWorker
@@ -2197,7 +2212,9 @@
   (val machine worker.machine)
   (when (is-not machine None)
     (val task-ids (tuple (gfor p truth.processes :if (.startswith p.name "task/") (cut p.name 5 None))))
-    (<- load MachineLoad (machine-load-of machine (len task-ids) sent-at :claims-cpus worker.claims-cpus :task-ids task-ids))
+    (val services (tuple (gfor p truth.processes :if (and (not (.startswith p.name "task/")) (is p.exit-code None)) p)))
+    (<- load MachineLoad (machine-load-of machine (len task-ids) sent-at :claims-cpus worker.claims-cpus :task-ids task-ids
+                                          :services services))
     (:= measured load))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node

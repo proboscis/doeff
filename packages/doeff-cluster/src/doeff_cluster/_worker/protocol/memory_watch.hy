@@ -35,6 +35,11 @@
 ;;; process を回収する時にこの印を読み(worker/protocol/memory_observer)、見張りに止められた終わりを数える — 続けて止められた常駐の job は
 ;;; 起こし直さずに失敗として報告する(WorkerPolicy.memory-kill-limit)。止めた訳は状態の報告の訳に載る(task の終わりは coordinator の
 ;;; lost の訳 — 前は「子 process が結果を書かずに終わった」とだけ出て、誰がなぜ止めたかが分からなかった)。
+;;; 常駐の job ごとの CPU と memory(heartbeat の measured の欄 jobUses): 回ごとに task でない根の木の CPU の累計(ProcRow.cpu-ms の和)と
+;;; rss の和を数え、pss-seconds ごとに木の process の /proc/<pid>/smaps_rollup の PSS を足す(worker/core/memory_rules の job-meters-of)。
+;;; PSS の読みは process 1 本に数 ms かかる(11-10 の測り — 機体の 421 本で 2.8 秒・stat の 40 倍)ので回ごとには読まず、木が
+;;; pss-process-limit 本を越える job(shim に引き取られた孤児の群れ)は読まない(None)。読みの答えは入れ物 eviction に置き、heartbeat の
+;;; 測りが名乗る — coordinator の GET /state の worker の行から、測りの task を置かずにどの worker の job も読める。
 ;;; 要りの越えの止め(OVER-NEED-KILL-LOG): 上に載る系が残す線(worker/core/eviction_rules の頭の註)を機体の MemAvailable が割った回は、
 ;;; 様子に依らず、要りを越えて伸びた task だけを越えの大きい順に、割った量に届くまで止める(over-need-stopped)。jobs の層の上限はこの線では
 ;;; 使い + 置いた task の取り置きより下げないので、要りの内で走る task は止まらない。
@@ -51,7 +56,8 @@
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse
                                                 JobSteady UnitKind node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of
-                                                largest-outside steady-sizes spared-steady victim-of swarm-of])
+                                                largest-outside steady-sizes spared-steady victim-of swarm-of resident-walks job-meters-of
+                                                pss-bytes-of _JobWalk])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted jobs-oom-noted])
 
@@ -73,9 +79,10 @@
    最大の行に載せる job の最低・report-jobs = 最大の行に載せる job の数の上限・kill-mark-seconds = 止めた印を残す秒(調整ループが止めた
    process の終わりを回収するまでの間を十分に覆う)・steady-windows = 平常の大きさに数える最大の行の間の数(頭の註 — 既定 12 は 1 時間)・
    eviction = 追い出しの線の読みの設定(頭の註 — None = kubelet の下に居ない worker・線を数えない)・layers = memory.current を log に出す
-   cgroup-dir の下の層の名(deploy/boot.sh の「cgroup の層」の宣言の順 — 空 = 層の無い worker)。"
+   cgroup-dir の下の層の名(deploy/boot.sh の「cgroup の層」の宣言の順 — 空 = 層の無い worker)・pss-seconds = 常駐の job の PSS を読み直す
+   間隔(頭の註)・pss-process-limit = PSS を読む木の process の数の上限(越えた job の PSS は読まない)・proc-dir = PSS を読む /proc の置き場。"
   {:check [(> sample-seconds 0) (>= window-seconds sample-seconds) (>= kill-cooldown-seconds 0) (>= report-floor-bytes 0) (> report-jobs 0)
-           (> kill-mark-seconds 0) (> steady-windows 0)]}
+           (> kill-mark-seconds 0) (> steady-windows 0) (> pss-seconds 0) (> pss-process-limit 0)]}
   (setv #^ str meminfo-path "/proc/meminfo")
   (setv #^ str pressure-path "/proc/pressure/memory")
   (setv #^ str cgroup-dir "/sys/fs/cgroup")
@@ -89,7 +96,10 @@
   (setv #^ float kill-mark-seconds 600.0)
   (setv #^ int steady-windows 12)
   (setv #^ (| EvictionSettings None) eviction None)
-  (setv #^ (get tuple #(str ...)) layers #()))
+  (setv #^ (get tuple #(str ...)) layers #())
+  (setv #^ float pss-seconds 60.0)
+  (setv #^ int pss-process-limit 64)
+  (setv #^ str proc-dir "/proc"))
 
 
 (defrecord MemoryKill
@@ -131,12 +141,14 @@
    failure = 前の読みで起きた思わぬ例外の repr(同じ例外は 2 度言わない)・kills = 止めた印(MemoryKill の列 — kill-mark-seconds を
    過ぎた物は読みごとに除く・調整ループが memory_observer で読む)・steady = 閉じた最大の行の間ごとの job の最大(JobSteady の列の列 —
    新しい間が後・steady-windows 個まで)・window-killed = 今の最大の行の間に見張りが止めた job の名(その間の最大を steady に残さない)・
-   eviction = 追い出しの線の読みの入れ物(worker/protocol/eviction_line の EvictionCell — heartbeat の測りも最後の線を読む)。
+   eviction = 追い出しの線の読みの入れ物(worker/protocol/eviction_line の EvictionCell — heartbeat の測りも最後の線を読む)・
+   pss = 常駐の job の木ごとの最後に読めた PSS(#(job の名 根の pid) → #(byte 読んだ刻) — 頭の註)・pss-read-ms = 最後に PSS を読んだ刻
+   (None = まだ)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.closing False self.level MemoryLevel.CALM self.peaks #() self.window None self.last-kill-ms None
           self.told-no-victim False self.unread "" self.failure "" self.kills #() self.steady #() self.window-killed (frozenset)
-          self.eviction (EvictionCell))))
+          self.eviction (EvictionCell) self.pss {} self.pss-read-ms None)))
 
 
 (defrecord MemoryReading
@@ -417,6 +429,44 @@
   None)
 
 
+(defk tree-pss [settings walk]
+  {:pre [(: settings MemoryWatchSettings) (: walk _JobWalk)] :post [(: % (| int None))] :tags {:context "worker" :role "protocol"}}
+  "job の木 1 本(walk = _JobWalk)の process の PSS の和を、/proc/<pid>/smaps_rollup を 1 本ずつ読んで数えるため。1 本でも読めない(読む間に
+   終わった・形が違う)か、木が pss-process-limit 本を越えれば None(小さく欠けた和を作らない — 頭の註)。"
+  (val members walk.walk.members)
+  (when (> (len members) settings.pss-process-limit)
+    (return None))
+  (var total 0)
+  (for [member members]
+    (<- text (| str None) (text-or-none (.format "{}/{}/smaps_rollup" settings.proc-dir member.pid)))
+    (when (is text None)
+      (return None))
+    (<- size (| int None) (pss-bytes-of text))
+    (when (is size None)
+      (return None))
+    (:= total (+ total size)))
+  total)
+
+
+(defk noted-meters [settings cell walks now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: walks tuple) (: now-ms int)] :post [(: % None)]
+   :tags {:context "worker" :role "protocol"}}
+  "常駐の job ごとの CPU と memory を数えて入れ物 eviction に置くため(頭の註 — heartbeat の測りが名乗る)。PSS は前に読んだ刻から
+   pss-seconds を過ぎた回(か壁の時計が戻った回)だけ読み直し、今の木に無い job の PSS は捨てる。"
+  (<- residents tuple (resident-walks walks))
+  (val read-ms cell.pss-read-ms)
+  (when (or (is read-ms None) (< now-ms read-ms) (>= (- now-ms read-ms) (* settings.pss-seconds 1000)))
+    (var read {})
+    (for [w residents]
+      (<- size (| int None) (tree-pss settings w))
+      (when (is-not size None)
+        (:= read (| read {#(w.root.name w.root.pid) #(size now-ms)}))))
+    (setv cell.pss read cell.pss-read-ms now-ms))
+  (<- meters tuple (job-meters-of residents cell.pss))
+  (setv cell.eviction.meters meters cell.eviction.meters-at-ms now-ms)
+  None)
+
+
 (defk memory-watch-step [settings cell]
   {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
   "見張りの 1 回: 読み、job ごとの最大を更新し、様子が変わったら言い、DANGER なら止め、最大の行の間の印を更新するため。"
@@ -459,6 +509,8 @@
   (<- (jobs-oom-noted cell.eviction now-ms))
   ;; 止めの後に最大の行の間を閉じる(今の読みで止めた job の最大を平常の大きさに残さない)。
   (<- (noted-window settings cell reading walks uses now-ms))
+  ;; 常駐の job ごとの CPU と memory を heartbeat の測りへ渡す(頭の註 — 重い PSS の読みは止めの後に置き、止めを遅らせない)。
+  (<- (noted-meters settings cell walks now-ms))
   None)
 
 
