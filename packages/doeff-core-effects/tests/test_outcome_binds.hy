@@ -368,6 +368,34 @@
     (assert (= passed "") #(body passed))))
 
 
+(deftest test-defk-refuses-a-name-bound-to-a-plain-value-in-the-value-position
+  ;; Failure case: (<- made (| FileFailed None) (MakeDirectory d)) then (<- written (| FileFailed None) (if (isinstance made FileFailed) made (WriteBytes …)))
+  ;; yielded the FileFailed itself when the dir could not be made, and the VM crashed with TypeError (yield got FileFailed(…)). A name that an earlier <-
+  ;; of the same defk bound with a type naming no Program, effect or opened value (Ok / Err / Some / Nothing / Absent / Raise), in a value position of a later
+  ;; bind (the expression itself, an if branch, a cond value branch), is refused at expansion time, with <- and also with !.
+  (val head "(require doeff-hy.macros [defk <- val]) (defk k [c] {:pre [(: c bool)] :post [(: % (| int str None))] :tags {:context \"outcomes-test\" :role \"program\"}} ")
+  (val bad #(#("(<- made (| str None) (f)) (<- w (| str None) (if c made (g))) w)" "the name made")
+             #("(<- made str (f)) (<- w str made) w)" "the name made")
+             #("(<- made (get tuple #(int ...)) (f)) (<- w int (cond c (g) True made)) w)" "the name made")
+             #("(<- made \"Failed\" (f)) (<- w int (g (! (if c made (h))))) w)" "(Pure made)")))
+  (for [#(body said) bad]
+    (val refused (! (expansion-refusal (+ head body))))
+    (assert (in said refused) #(body refused)))
+  ;; A name bound to a Program, an effect or an openable value, a name bound with no type, a name that is also an argument, the value wrapped
+  ;; in Pure, the value used only as an argument, and branching before the bind all pass.
+  (val clean #("(<- job Program (f)) (<- w int (if c job (g))) w)"
+               "(<- e (| EffectBase None) (f)) (<- w int (if c e (g))) w)"
+               "(<- r (| Ok Err) (f)) (<- w int (if c r (g))) w)"
+               "(<- made (f)) (<- w int (if c made (g))) w)"
+               "(<- c bool (f)) (<- w int (if c c (g))) w)"
+               "(<- made str (f)) (<- w str (if c (Pure made) (g))) w)"
+               "(<- made str (f)) (<- w str (g made)) w)"
+               "(<- made (| str None) (f)) (when c (return made)) (<- w str (g)) w)"))
+  (for [body clean]
+    (val passed (! (expansion-refusal (+ head body))))
+    (assert (= passed "") #(body passed))))
+
+
 (defk open-value [value]
   {:pre [(: value (| Ok Err Some (type Nothing)))] :post [(: % int)]
    :tags {:context "outcomes-test" :role "program"}}

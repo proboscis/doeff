@@ -18,6 +18,7 @@
 (require doeff-hy.macros [deff])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import re)
 (import hy)
 (import hy.models [Expression Symbol Keyword String List Tuple Dict Set FString FComponent Sequence Object Bytes Integer Float Complex])
 (import doeff_hy._match_fields [mangle-match-fields])
@@ -100,6 +101,124 @@
       (+ "<- / !: a literal value " (source-of found) " is in the value position of the bound expression — yielding a value that is neither an effect nor a Program fails at runtime with "
          "TypeError (yield got …). To bind the value as is, wrap it with (Pure " (source-of found)
          ") or place it with val without binding: " (source-of expr)))))
+
+
+;; The type names whose values a bind can yield again: a Program, an effect, or a value that open-bind opens (Ok / Err / Some / Nothing, Absent / Raise).
+;; A name bound by <- with a type that names none of these holds a plain value (failure example: `(<- made (| FileFailed None) (MakeDirectory d))`
+;; then `(<- written (| FileFailed None) (if (isinstance made FileFailed) made (WriteBytes …)))` yielded the FileFailed when the dir could not be made).
+(setv YIELDABLE-TYPE-NAMES
+  #{"Program" "ProgramBase" "ProgramLike" "KleisliProgram" "EffectBase" "Effect" "DoExpr" "DoCtrl" "Call" "Pure" "Expand" "EffectGenerator"
+    "object" "Any" "Ok" "Err" "Result" "Some" "Nothing" "Maybe" "Option" "Absent" "Raise"})
+
+;; The forms whose leading items name bound places (the names are collected as not-plain — another binding of the same spelling is not a plain-value name).
+(setv BINDER-HEADS #{"val" "var" "setv" "setx" ":=" "global" "nonlocal"})
+(setv BRACKET-BINDER-HEADS #{"for" "with" "let" "lfor" "gfor" "dfor" "sfor" "fn" "fn/a" "fnk" "defn" "defn/a" "for/do" "traverse"})
+
+
+(deff type-names [form]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: form Object)] :post [(: % set)]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "The identifiers that the type form of a bind names (each part of a dotted name, the identifiers of a string forward reference) — to judge whether the type
+   can hold a yieldable value."
+  (match form
+    (Symbol) (set (.split (str form) "."))
+    (String) (set (re.findall r"[A-Za-z_][A-Za-z0-9_]*" (str form)))
+    (Sequence) (.union (set) #* (gfor child form (type-names child)))
+    _ (set)))
+
+
+(deff plain-value-type? [tp]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: tp Object)] :post [(: % bool)]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "Whether the type form tp of a bind (None = no type) names only plain-value types (none of YIELDABLE-TYPE-NAMES)."
+  (and (is-not tp None) (not (& (type-names tp) YIELDABLE-TYPE-NAMES))))
+
+
+(deff symbols-in [form]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: form Object)] :post [(: % set)]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "The spellings of all symbols in form."
+  (match form
+    (Symbol) #{(str form)}
+    (Sequence) (.union (set) #* (gfor child form (symbols-in child)))
+    _ (set)))
+
+
+(deff bound-spellings [node [opaque False]]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: node Object) (: opaque bool)] :post [(: % tuple)]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "The names that node (a body form, or the list of them) binds, as #(plain other): plain = names bound by a <- with a plain-value type (outside nested
+   functions and do contexts — OPAQUE-HEADS; opaque = node is inside one), other = names bound any other way anywhere (a <- with no type or a yieldable type,
+   val / var / setv / :=, the brackets of for / with / let / comprehensions / fn, the patterns of match and except). A spelling in other is not taken as plain
+   (the same spelling may hold a Program)."
+  (let [head (head-name node)
+        parts (when (= head "<-") (cut (. (split-absent node) core) 1 None))
+        named? (and parts (>= (len parts) 2) (isinstance (get parts 0) Symbol))
+        plain? (and named? (not opaque) (= (len parts) 3) (plain-value-type? (get parts 1)))
+        own-plain (if plain? #{(str (get parts 0))} (set))
+        own-other (cond
+                    (and named? (not plain?)) #{(str (get parts 0))}
+                    (in head BINDER-HEADS) (.union (set) #* (gfor target (cut node 1 None 2) (symbols-in target)))
+                    (in head BRACKET-BINDER-HEADS) (.union (set) #* (gfor child (cut node 1 None) :if (isinstance child List) (symbols-in child)))
+                    (= head "match") (.union (set) #* (gfor pattern (cut node 2 None 2) (symbols-in pattern)))
+                    (= head "except") (symbols-in node)
+                    True (set))
+        children (cond (isinstance node Expression) (cut node 1 None)
+                       (isinstance node Sequence) node
+                       True #())
+        inner (or opaque (in head OPAQUE-HEADS))
+        below (tuple (gfor child children (bound-spellings child inner)))]
+    #((.union own-plain #* (gfor b below (get b 0)))
+      (.union own-other #* (gfor b below (get b 1))))))
+
+
+(deff bound-value-of [expr names]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: expr Object) (: names set)] :post [(: % (| Symbol None))]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "A name of names (bound to a plain value) in the value position of the bound expression expr (the expression itself, the two branches of if, the value branches of
+   cond, nested too — the same positions as plain-value-of), or None."
+  (let [head (head-name expr)
+        branches (match head
+                   "if" (cut expr 2 None)
+                   "cond" (cut expr 2 None 2)
+                   _ #())]
+    (match expr
+      (Symbol) :if (in (str expr) names) expr
+      (Expression) (next (gfor branch branches :setv found (bound-value-of branch names) :if (is-not found None) found) None)
+      _ None)))
+
+
+(deff bound-value-bind [node names]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: node Object) (: names set)] :post [(: % (| tuple None))]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "The first bind (<- or !) inside node that has a name of names in a value position of its bound expression, as #(name bind), or None — to point at the
+   bind that the refusal names. Nested functions and do contexts (OPAQUE-HEADS) are not entered (their own expansion checks them)."
+  (let [head (head-name node)
+        expr (cond (= head "<-") (let [core (. (split-absent node) core)] (when (>= (len core) 2) (get core -1)))
+                   (and (= head "!") (= (len node) 2)) (get node 1)
+                   True None)
+        hit (when (is-not expr None) (bound-value-of expr names))]
+    (cond
+      (is-not hit None) #(hit node)
+      (and (isinstance node Expression) (in head OPAQUE-HEADS)) None
+      (isinstance node Sequence) (next (gfor child node :setv found (bound-value-bind child names) :if (is-not found None) found) None)
+      True None)))
+
+
+(deff bound-value-refusal [forms params where]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: forms (| list tuple Sequence)) (: params (| set list tuple Sequence)) (: where str)] :post [(: % (| str None))]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "The refusal message if a later bind of the body forms has, in a value position of its bound expression, a name that an earlier <- bound with a plain-value type
+   (the name holds a value that is neither an effect nor a Program, so the branch fails at runtime with TypeError — yield got …), otherwise None. params = the
+   argument names (an argument may hold a Program). defk raises it as a SyntaxError."
+  (let [#(plain other) (bound-spellings (List forms))
+        names (- plain other (set (gfor p params (str p))))
+        found (when names (bound-value-bind (List forms) names))]
+    (when (is-not found None)
+      (let [#(hit node) found]
+        (+ where ": the name " (str hit) " was bound by an earlier <- with a plain-value type and is in the value position of the bound expression — "
+           "yielding a value that is neither an effect nor a Program fails at runtime with TypeError (yield got …). Branch on it before the bind "
+           "((when … (return …))), or wrap it with (Pure " (str hit) "): " (source-of node))))))
 
 
 (deff split-absent [form]  ; defk にできない: a function called at macro expansion time

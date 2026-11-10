@@ -1224,6 +1224,12 @@ defk {name}: {{:post [...]}} is required.
   ;; Rewriting of val / var / lazy val / lazy var / :=, and rejection of old lazy / lazy-val / lazy-var / set!
   ;; (ADR-DOE-HY-006). The body is kept as written in __doeff_body__.
   (setv written-body (get (_find-contract written-forms) 1))
+  ;; A name that an earlier <- bound with a plain-value type (such as a FileFailed), written in the value position of a later bind, makes that branch yield
+  ;; a value that is neither an effect nor a Program (TypeError at runtime) — refuse it here, where the bound types are known.
+  (import doeff-hy._outcome-forms [bound-value-refusal])
+  (setv refused (bound-value-refusal real-body (_extract-param-names params) (+ "defk " (str name))))
+  (when (is-not refused None)
+    (raise (SyntaxError refused)))
   (setv real-body (_rewrite-bindings real-body (+ "defk " (str name)) _BodyKind.DEFK
                                      (_extract-param-names params)
                                      :module (_module-names _hy-compiler)))
