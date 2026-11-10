@@ -101,8 +101,10 @@ from doeff_core_effects import _unhandled_hints  # noqa: F401 - registers the hi
 
 # The names below load on first use through `__getattr__` (ADR-DOE-API-001 R5: names come from this entry, the
 # modules under it start with `_`), so `import doeff` - which loads this package - does not load their modules.
-# Type checkers see them as `X as X` in the `if TYPE_CHECKING:` block. HTTP effects and handlers live in Hy and pull
-# in httpx; they are left out of the block (that would read the Hy modules), so type checkers see them as `object`.
+# Type checkers see them as `X as X` in the `if TYPE_CHECKING:` block, including the HTTP effects and handlers
+# (HttpError, HttpRequest, HttpResponse, http_fixture_handler, http_production_handler): the block runs only under a type
+# checker, which reads the generated `.pyi` beside each Hy module. Left out of the block, a name is read through the
+# module `__getattr__` as `object`, so every handler clause and annotation that uses it turns into an unknown type.
 if TYPE_CHECKING:
     from doeff_core_effects._aiohttp_http_server import WebEdge as WebEdge
     from doeff_core_effects._aiohttp_http_server import aiohttp_http_server as aiohttp_http_server
@@ -194,13 +196,18 @@ if TYPE_CHECKING:
     from doeff_core_effects._file_effects import file_done as file_done
     from doeff_core_effects._gc_freeze import gc_freeze_handler as gc_freeze_handler
     from doeff_core_effects._heap_effects import CollectAndFreeze as CollectAndFreeze
+    from doeff_core_effects._http_effects import HttpError as HttpError
     from doeff_core_effects._http_effects import HttpFailed as HttpFailed
     from doeff_core_effects._http_effects import HttpFailureKind as HttpFailureKind
     from doeff_core_effects._http_effects import HttpPhases as HttpPhases
+    from doeff_core_effects._http_effects import HttpRequest as HttpRequest
+    from doeff_core_effects._http_effects import HttpResponse as HttpResponse
     from doeff_core_effects._http_effects import HostNotResolved as HostNotResolved
     from doeff_core_effects._http_effects import HostResolved as HostResolved
     from doeff_core_effects._http_effects import ResolveFailureKind as ResolveFailureKind
     from doeff_core_effects._http_effects import ResolveHost as ResolveHost
+    from doeff_core_effects._http_handlers import http_fixture_handler as http_fixture_handler
+    from doeff_core_effects._http_handlers import http_production_handler as http_production_handler
     from doeff_core_effects._http_host_gate import HostNotAllowed as HostNotAllowed
     from doeff_core_effects._http_host_gate import http_host_gate as http_host_gate
     from doeff_core_effects._http_server_effects import AppendHttpScript as AppendHttpScript
