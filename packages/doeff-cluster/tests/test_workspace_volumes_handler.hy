@@ -191,7 +191,10 @@
    全体の同期が落ち続けている(Longhorn が束を作らない — 束は手で作られた物 bundles だけ。落ちていなければ backup の在る volume に束が在る)・
    bundle-stalled = 束 1 本の同期も落ちる(束の lastBackupName が空のまま)・bundle-lag = 束が在っても webhook の cache がまだ見ず、戻しの
    Volume の POST を 422 で断る回数。走らせた後に読む物: bundles = 手で作られた束の volume の名・target-syncs = Longhorn の backup controller が
-   backup の完了に backup の先の全体の同期を頼んだ回数(その volume の束が無い時 — Longhorn v1.13 の backup_controller.go の syncBackupVolume)。"
+   backup の完了に backup の先の全体の同期を頼んだ回数(その volume の束が無い時 — Longhorn v1.13 の backup_controller.go の syncBackupVolume)。
+   前の backup の先: legacy = 前の先の名 → その先に在る backup の組(Longhorn が束を作る — 全体の同期は落ちていない)・settings-text = 値の
+   ConfigMap の workspace-volume.json(None = 例の file)。走らせた後に読む物: legacy-bundles = 手で作られた前の先の束の (volume, 先)・
+   targets = 作った・替えた volume の spec.backupTargetName(名 → 先 — 無ければ級の先)。"
   (defn #^ None __init__ [self #^ WorkspaceVolumeWorld held #^ dict [parameters None] #^ int [settle 0] #^ bool [stuck False]
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
@@ -200,7 +203,7 @@
                           #^ int [engine-settle 0] #^ bool [engine-stuck False] #^ (| dict None) [sizes None] #^ (| dict None) [fs-sizes None]
                           #^ (| dict None) [used None] #^ int [restore-failures 0] #^ (| str None) [disk-node None]
                           #^ (| Callable None) [before-delete None] #^ bool [target-stalled False] #^ bool [bundle-stalled False]
-                          #^ int [bundle-lag 0]]
+                          #^ int [bundle-lag 0] #^ (| dict None) [legacy None] #^ (| str None) [settings-text None]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
@@ -213,6 +216,8 @@
           self.restore-failures restore-failures self.disk-node (if (is disk-node None) NODE disk-node) self.before-delete before-delete
           self.target-stalled target-stalled self.bundle-stalled bundle-stalled self.bundle-lag bundle-lag
           self.bundles (set) self.target-syncs 0
+          self.legacy (dict (or legacy {})) self.legacy-bundles (set) self.targets {}
+          self.settings-text (if (is settings-text None) SETTINGS-TEXT settings-text)
           self.doomed (set) self.failed (set) self.faulted (set)
           #^ (get tuple #(str ...)) self.events #()
           self.backup-size (if (is backup-size None) SIZE backup-size)
@@ -296,7 +301,7 @@
   {"metadata" (| {"name" name "resourceVersion" (str world.revision) "creationTimestamp" (! (iso-of 0.0))
                   "annotations" {USED-AT-KEY (str (int volume.used-at))}}
                  (if (in name world.dying) {"deletionTimestamp" (! (iso-of 0.0))} {}))
-   "spec" (| {"backupTargetName" TARGET "size" (str (.get world.sizes name (or volume.size SIZE)))}
+   "spec" (| {"backupTargetName" (.get world.targets name TARGET) "size" (str (.get world.sizes name (or volume.size SIZE)))}
              (if (in name world.sources) {"fromBackup" (get world.sources name)} {}))
    "status" (| status restore {"conditions" [placing restored] "robustness" robustness "actualSize" volume.actual})})
 
@@ -407,11 +412,16 @@
 
 (defk volume-patched [world name body]
   {:pre [(: world LonghornWorld) (: name str) (: body str)] :post [(: % HttpResponse)]}
-  "Volume の merge patch(使った刻の印の annotation か、名目の大きさ spec.size — 付いている volume だけ広げられる)に答えるため。"
+  "Volume の merge patch(使った刻の印の annotation か、名目の大きさ spec.size — 付いている volume だけ広げられる — か、backup の先
+   spec.backupTargetName)に答えるため。"
   (<- volume (held-volume world.held name))
   (when (is volume None)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
   (val patch (json.loads body))
+  (when (and (= (list patch) ["spec"]) (= (list (get patch "spec")) ["backupTargetName"]))
+    (setv (get world.targets name) (get patch "spec" "backupTargetName"))
+    (<- (changed world volume))
+    (return (! (api-answer 200 {}))))
   (when (= (list patch) ["spec"])
     (assert (= (list (get patch "spec")) ["size"]) patch)
     (assert (is-not volume.node None) volume)
@@ -446,10 +456,10 @@
   (! (api-answer 200 {"kind" "Status" "status" "Success"})))
 
 
-(defk backup-payload [backup state size]
-  {:pre [(: backup HeldBackup) (: state str) (: size int)] :post [(: % dict)]}
-  "Backup 1 つの GET の本文を綴るため(size = backup が覚える volume の名目の大きさ)。"
-  {"metadata" {"name" backup.name "labels" {"backup-volume" backup.volume "backup-target" TARGET}}
+(defk backup-payload [backup state size [target TARGET]]
+  {:pre [(: backup HeldBackup) (: state str) (: size int) (: target str)] :post [(: % dict)]}
+  "Backup 1 つの GET の本文を綴るため(size = backup が覚える volume の名目の大きさ・target = backup の先)。"
+  {"metadata" {"name" backup.name "labels" {"backup-volume" backup.volume "backup-target" target}}
    "status" {"state" state "backupCreatedAt" (if (= state "Completed") (! (iso-of backup.created-at)) "")
              "url" (if (= state "Completed") (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" backup.name backup.volume) "")
              "volumeSize" (str size)}})
@@ -461,6 +471,14 @@
   (val query (parse-qs (. (urlsplit path) query)))
   (val pairs (dict (gfor part (.split (get (.get query "labelSelector" [""]) 0) ",") :if (in "=" part) (.split part "=" 1))))
   (if (= (.get pairs "backup-target") TARGET) (.get pairs "backup-volume") None))
+
+
+(defk selected-legacy [world path]
+  {:pre [(: world LonghornWorld) (: path str)] :post [(: % (| tuple None))]}
+  "一覧の path の labelSelector が前の backup の先を選んでいれば、その (volume, 先) を得るため(前の先でなければ None)。"
+  (val query (parse-qs (. (urlsplit path) query)))
+  (val pairs (dict (gfor part (.split (get (.get query "labelSelector" [""]) 0) ",") :if (in "=" part) (.split part "=" 1))))
+  (if (in (.get pairs "backup-target") world.legacy) #((.get pairs "backup-volume") (get pairs "backup-target")) None))
 
 
 (defk snapshot-answer [world snap]
@@ -541,8 +559,14 @@
   (<- now datetime (GetTime))
   (when (is-not volume None)
     (return (! (api-answer 409 {"kind" "Status" "reason" "AlreadyExists"}))))
+  (val target (.get (get created "spec") "backupTargetName" TARGET))
+  ;; Longhorn v1.13 の webhook は、volume の backup の先の束が無い volume の戻しを 422 で断る。
+  (when (and source (in target world.legacy))
+    (when (not (! (legacy-bundle-held? world name target)))
+      (return (! (api-answer 422 {"kind" "Status" "reason" "Invalid" "message" (.format BUNDLE-UNSEEN-TEXT name)}))))
+    (setv (get world.targets name) target))
   ;; Longhorn v1.13 の webhook は、束の無い(か cache がまだ見ない)volume の戻しを 422 で断る。
-  (when (and source (or (not (! (bundle-held? world name))) (> world.bundle-lag 0)))
+  (when (and source (not-in target world.legacy) (or (not (! (bundle-held? world name))) (> world.bundle-lag 0)))
     (when (! (bundle-held? world name))
       (setv world.bundle-lag (- world.bundle-lag 1)))
     (return (! (api-answer 422 {"kind" "Status" "reason" "Invalid" "message" (.format BUNDLE-UNSEEN-TEXT name)}))))
@@ -621,7 +645,15 @@
 
 (defk backups-listed [world path]
   {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
-  "Backup の一覧(labelSelector で選ぶ)に答えるため(終わった物と途中の物)。"
+  "Backup の一覧(labelSelector で選ぶ)に答えるため(終わった物と途中の物。前の先を選べば、その先に在る backup)。"
+  (val old (! (selected-legacy world path)))
+  (when (is-not old None)
+    (val volume (get old 0))
+    (val target (get old 1))
+    (var found [])
+    (for [one (get world.legacy target) :if (= one.volume volume)]
+      (:= found (+ found [(! (backup-payload one one.state (or one.size world.backup-size) target))])))
+    (return (! (api-answer 200 {"items" found}))))
   (val chosen (! (selected-volume path)))
   (var items [])
   (for [one world.held.backups :if (= one.volume chosen)]
@@ -638,11 +670,17 @@
   (! (api-answer 200 {})))
 
 
-(defk bundle-of [volume]
-  {:pre [(: volume str)] :post [(: % str)]}
-  "volume の束 BackupVolume の名を、Longhorn v1.13 の types.GetBackupVolumeNameFromVolumeName の綴りで得るため(答え手の綴りと別に書く —
-   <名>-<字「<名>-<先>」の SHA-256 の 16 進の頭 8 字>)。"
-  (+ volume "-" (cut (.hexdigest (hashlib.sha256 (.encode (+ volume "-" TARGET) "utf-8"))) 0 8)))
+(defk bundle-of [volume [target TARGET]]
+  {:pre [(: volume str) (: target str)] :post [(: % str)]}
+  "volume の backup の先 target の束 BackupVolume の名を、Longhorn v1.13 の types.GetBackupVolumeNameFromVolumeName の綴りで得るため(答え手の
+   綴りと別に書く — <名>-<字「<名>-<先>」の SHA-256 の 16 進の頭 8 字>)。"
+  (+ volume "-" (cut (.hexdigest (hashlib.sha256 (.encode (+ volume "-" target) "utf-8"))) 0 8)))
+
+
+(defk legacy-bundle-held? [world volume target]
+  {:pre [(: world LonghornWorld) (: volume str) (: target str)] :post [(: % bool)]}
+  "前の backup の先 target に volume の束が在るかを得るため(手で作られた束か、その先に volume の backup が在る — 全体の同期が作る)。"
+  (or (in #(volume target) world.legacy-bundles) (any (gfor one (get world.legacy target) (= one.volume volume)))))
 
 
 (defk bundle-held? [world volume]
@@ -661,7 +699,15 @@
 
 (defk bundles-listed [world path]
   {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
-  "BackupVolume の一覧(labelSelector で選ぶ)に答えるため(束の在る volume に束 1 つ — status は同期の読み)。"
+  "BackupVolume の一覧(labelSelector で選ぶ)に答えるため(束の在る volume に束 1 つ — status は同期の読み。前の先の束も)。"
+  (val old (! (selected-legacy world path)))
+  (when (is-not old None)
+    (val volume (get old 0))
+    (val target (get old 1))
+    (return (! (api-answer 200 {"items" (if (! (legacy-bundle-held? world volume target))
+                                            [{"metadata" {"name" (! (bundle-of volume target))} "spec" {"volumeName" volume}
+                                              "status" {"lastBackupName" ""}}]
+                                            [])}))))
   (val chosen (! (selected-volume path)))
   (val held (and (is-not chosen None) (! (bundle-held? world chosen))))
   (! (api-answer 200 {"items" (if held
@@ -675,6 +721,14 @@
   "BackupVolume の POST に答えるため(Longhorn の同期と同じ名・label・持ち主・spec を確かめる。在れば 409 — 名が重なり 2 本にならない)。"
   (val made (json.loads body))
   (val volume (get made "spec" "volumeName"))
+  (val old (get made "spec" "backupTargetName"))
+  (when (in old world.legacy)
+    (assert (= (get made "metadata" "name") (! (bundle-of volume old))) made)
+    (assert (= (get made "metadata" "labels") {"backup-volume" volume "backup-target" old}) made)
+    (when (! (legacy-bundle-held? world volume old))
+      (return (! (api-answer 409 {"kind" "Status" "reason" "AlreadyExists"}))))
+    (.add world.legacy-bundles #(volume old))
+    (return (! (api-answer 201 made))))
   (assert (= (get made "metadata" "name") (! (bundle-of volume))) made)
   (assert (= (get made "metadata" "labels") {"backup-volume" volume "backup-target" TARGET}) made)
   (assert (= (get made "metadata" "ownerReferences")
@@ -726,7 +780,7 @@
   (cond
     (!= request.authorization (+ "Bearer " TOKEN)) (! (api-answer 401 {"kind" "Status" "reason" "Unauthorized"}))
     (and (= request.method "GET") (= path SETTINGS-PATH) world.settings-gone) (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))
-    (and (= request.method "GET") (= path SETTINGS-PATH)) (! (api-answer 200 {"data" {"workspace-volume.json" SETTINGS-TEXT}}))
+    (and (= request.method "GET") (= path SETTINGS-PATH)) (! (api-answer 200 {"data" {"workspace-volume.json" world.settings-text}}))
     (and (= request.method "GET") (= path CLASS-PATH)) (! (api-answer 200 {"parameters" world.parameters}))
     (and (= request.method "POST") (= path VOLUMES-PATH))
     (do (<- answer HttpResponse (volume-created world request.body)) answer)
@@ -756,6 +810,8 @@
         (assert (in "syncRequestedAt" (get (json.loads request.body) "spec")) request)
         (! (api-answer 200 {})))
     (and (= request.method "GET") (= path (+ TARGETS-PATH "/" TARGET))) (! (api-answer 200 {"metadata" {"name" TARGET "uid" TARGET-UID}}))
+    (and (= request.method "GET") (.startswith path (+ TARGETS-PATH "/")) (in (cut path (+ (len TARGETS-PATH) 1) None) world.legacy))
+    (! (api-answer 200 {"metadata" {"name" (cut path (+ (len TARGETS-PATH) 1) None) "uid" TARGET-UID}}))
     (and (= request.method "GET") (= path NODES-PATH)) (! (api-answer 200 (! (nodes-payload world))))
     (and (= request.method "GET") (= path OVER-PROVISIONING-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" "100"}))
     (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.held.minimal)}))
@@ -1217,6 +1273,51 @@
   (assert (= (get (json.loads (get api.created 1)) "spec" "fromBackup")
              (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" COLD-BACKUP.name NAME))
           (get api.created 1)))
+
+
+;; 前の backup の先(本番だけ — 模擬の世界は backup の先を持たない): 級の先を替えた後の値(legacyBackupTargets に前の先 1 つ)。
+(val OLD-TARGET "old-workspace")
+(val LEGACY-SETTINGS (json.dumps (| (json.loads SETTINGS-TEXT) {"legacyBackupTargets" [OLD-TARGET]})))
+
+
+(deftest test-a-name-cooled-on-the-old-target-comes-back-from-it-and-moves-to-the-class-target
+  ;; 級の先に backup が無く前の先にだけ在る冷えた名は、空で作らず前の先を名指して戻し、戻し終えたら級の先へ替える。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE) :legacy {OLD-TARGET #(COLD-BACKUP)} :settings-text LEGACY-SETTINGS))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER) (Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored" "already")) ran.outcomes)
+  (assert (= (len api.created) 1) api.created)
+  (val spec (get (json.loads (get api.created 0)) "spec"))
+  (assert (= (get spec "backupTargetName") OLD-TARGET) spec)
+  (assert (= (get spec "fromBackup") (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" COLD-BACKUP.name NAME)) spec)
+  (assert (= (get api.targets NAME) TARGET) api.targets)
+  ;; 級の先の束を、先を替える前に作った(次の backup の完了が全体の同期を頼まない)。前の先の backup は消さない。
+  (assert (in NAME api.bundles) api.bundles)
+  (assert (= (get api.legacy OLD-TARGET) #(COLD-BACKUP)) api.legacy)
+  (assert (not (any (gfor seen api.seen (= seen.method "DELETE")))) api.seen))
+
+
+(deftest test-the-class-target-wins-over-the-old-target
+  ;; 級の先に backup の在る名は前の先を読まない(前の先の古い中身で戻さない)。
+  (val newer (HeldBackup :volume NAME :name (+ NAME "-cool-9") :created-at 9.0))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(newer)) :legacy {OLD-TARGET #(COLD-BACKUP)} :settings-text LEGACY-SETTINGS))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (val spec (get (json.loads (get api.created 0)) "spec"))
+  (assert (= (get spec "backupTargetName") TARGET) spec)
+  (assert (in (.format "backup={}&" newer.name) (get spec "fromBackup")) spec)
+  (assert (not (any (gfor seen api.seen (in (+ "backup-target%3D" OLD-TARGET) seen.path)))) api.seen))
+
+
+(deftest test-a-volume-left-on-the-old-target-is-moved-to-the-class-target
+  ;; 級を替える前から在る volume(前の先を名指す)は、次の作るの ALREADY の前に級の先へ替える — 冷やす手順が前の先へ書かない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM)) :legacy {OLD-TARGET #()} :settings-text LEGACY-SETTINGS))
+  (setv (get api.targets NAME) OLD-TARGET)
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER) (Step :verb "cool" :owner OWNER))))
+  (assert (= ran.outcomes #("already" "done")) ran.outcomes)
+  (assert (= (get api.targets NAME) TARGET) api.targets)
+  ;; 冷やした backup は級の先に在り、前の先には増えない。
+  (assert (= (len api.held.backups) 1) api.held.backups)
+  (assert (= (get api.legacy OLD-TARGET) #()) api.legacy))
 
 
 (deftest test-a-volume-in-use-is-not-cooled-on-both-handlers

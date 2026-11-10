@@ -104,6 +104,13 @@
 ;;; VolumeAttachment を読んで使う ticket が無い事を確かめ、版 R の上でだけ消す(DELETE の preconditions)。消せたなら印はまだ書かれていない
 ;;; = ticket は VolumeAttachment を読んだ後に置かれたので、attach の印の書きが 404 になり、attach は「消された」と断る(使い手は作る(戻す)
 ;;; から出し直す)。印が先なら、冷やす側の版 R が古いか ticket が見えるので消さない。
+;;;
+;;; 前の backup の先(値の legacyBackupTargets): 級の parameters は作った後に替えられないので、backup の先を替える時は別の名の級を足して
+;;; 値の storageClass を移す。その時、冷えた名の唯一の中身は前の先の Backup に在る(2026-11 に Garage から nemo へ替えた時 1,636 本)。
+;;; 級の先だけを読むと、その名を空で作り直してしまう。そこで作る手順は、級の先に backup が無い名だけ前の先を順に読み、在れば前の先を
+;;; 名指す volume として戻し(webhook は volume の先の束だけを見る)、戻し終えたら級の先へ替える。前の先を名指したまま残った volume も、
+;;; 次の作るの ALREADY の前に替える — 冷やす手順と最初の backup は volume の先へ書くので、替えなければ前の先へ書き続ける。前の先の
+;;; Backup は消さない(消す手順は級の先だけを読む)— 前の先を片付けるのはこの系の外の手。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord defwire])
 (import dataclasses [dataclass])  ; defrecord・defwire の展開が使う
@@ -187,8 +194,9 @@
    volume を覆う量 — README の節「寿命」。前の版が読んだ spareVolumes は読まない)・keepDays = 最後の backup から backup を消せるまでの日数・
    growBelowPercent = 付いている volume の file system の空きがこの % を割ったら広げる(0 = 広げない)・maxSizeBytes = 広げる上限(byte —
    0 = 広げない)・freeFloorBytes = 札の disk の名 → その disk に残す実の空きの床(byte — disk-share/derive.py が shares.yaml の
-   imageDisks から導く。実の空きの線を % の量より上げる — room-bytes)。広げる 2 つの欄と床は無い ConfigMap でも読める(無ければ広げない・
-   床は % の量だけ)。"
+   imageDisks から導く。実の空きの線を % の量より上げる — room-bytes)・legacyBackupTargets = 前の backup の先の名の組(級の先を替えた後も、
+   その先にだけ backup を持つ冷えた名を戻す — 頭の註の前の backup の先)。広げる 2 つの欄と床と前の先は無い ConfigMap でも読める(無ければ
+   広げない・床は % の量だけ・前の先は無い)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ str storage-class)
   (#^ int size-bytes)
@@ -197,7 +205,8 @@
   (#^ int keep-days)
   (setv #^ int grow-below-percent 0)
   (setv #^ int max-size-bytes 0)
-  (setv #^ (| (get dict #(str int)) None) free-floor-bytes None))
+  (setv #^ (| (get dict #(str int)) None) free-floor-bytes None)
+  (setv #^ (get tuple #(str ...)) legacy-backup-targets #()))
 
 
 (defwire ConfigMapWire
@@ -1236,7 +1245,9 @@
    node を書く(restore-node-read)。POST の前に、その名の束 BackupVolume が無ければ作る(bundle-ensured — 空で作る時も戻す時も。Longhorn の
    webhook は束の在る volume の戻しだけを受け、Longhorn は束の無い volume の backup の完了に backup の先の全体の同期を頼む — 頭の註の束。
    作った直後に webhook が束を見ない 422 は、restore-seconds の内だけ間を置いて出し直す)。戻しの失敗を読めば待たず、消して同じ手順で作り直す(restore-rebuilt — 上限を過ぎれば Longhorn の訳を添えて
-   断る。戻す元の Backup が Completed でない時と使う ticket が在る時は消さずに断る)。"
+   断る。戻す元の Backup が Completed でない時と使う ticket が在る時は消さずに断る)。級の先に backup が無ければ値の legacyBackupTargets の
+   前の先を順に読み、backup の在る最初の先から、その先を名指す volume として戻し、戻し終えたら級の先へ替える(retargeted-volume)。在る
+   volume が前の先を名指していれば、ALREADY で答える前に級の先へ替える(頭の註の前の backup の先)。"
   (val doing "作成")
   (<- name str (checked-name owner doing))
   (<- settings SettingsWire (workspace-settings site owner))
@@ -1253,11 +1264,24 @@
                                (<- ended bool (waited-restored site notices owner doing name))
                                (:= settled ended))
                              (when settled
+                               ;; 前の先のまま残った volume(前の先から戻した手が先を替える前に止まった・級を替える前から在る)は、次の
+                               ;; backup が前の先へ書かないように級の先へ替える。
+                               (when (in read.backup-target settings.legacy-backup-targets)
+                                 (<- (retargeted-volume site owner doing name target)))
                                (return WorkspaceOutcome.ALREADY))
                              (<- count int (restore-rebuilt site notices owner doing name rebuilds))
                              (:= rebuilds count))
       True
-      (do (<- backups tuple (backup-views site owner doing name target))
+      (do (<- held tuple (backup-views site owner doing name target))
+          (var backups held)
+          ;; 級の先に backup の無い名は、前の先を順に読み、最初に backup の在る先から戻す(頭の註の前の backup の先)。
+          (var source-target target)
+          (for [old settings.legacy-backup-targets]
+            (when (not backups)
+              (<- older tuple (backup-views site owner doing name old))
+              (when older
+                (:= backups older)
+                (:= source-target old))))
           (<- source (| BackupView None) (newest-backup backups))
           (when (and backups (is source None))
             (raise (! (refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): " (.join "・" (gfor one backups (+ one.name " " (or one.state "?")))))))))
@@ -1267,10 +1291,12 @@
           (when (is-not source None)
             (<- chosen str (restore-node-read site owner doing parameters (! (settings-floors settings)) size))
             (:= node chosen))
-          (<- (bundle-ensured site owner doing name target))
+          ;; 前の先から戻す volume は、戻し終わるまで前の先を名指す(webhook は volume の backup の先の束だけを見る)。
+          (<- (bundle-ensured site owner doing name source-target))
+          (val made-parameters (| parameters {"backupTargetName" source-target}))
           (var body "")
           (try
-            (<- text str (volume-create-text site name parameters size (if (is source None) "" source.url) node))
+            (<- text str (volume-create-text site name made-parameters size (if (is source None) "" source.url) node))
             (:= body text)
             (except [error ValueError]
               (raise (! (refused owner doing (+ "級 " settings.storage-class " を写せない: " (str error)))))))
@@ -1280,6 +1306,8 @@
                     (return WorkspaceOutcome.DONE)
                     (do (<- ended bool (waited-restored site notices owner doing name))
                         (when ended
+                          (when (!= source-target target)
+                            (<- (retargeted-volume site owner doing name target)))
                           (return WorkspaceOutcome.RESTORED))))
             409 None
             422 (do (when (or (is source None) (not-in BUNDLE-UNSEEN (! (text-field answer.text))))
@@ -1292,6 +1320,22 @@
                     (<- (Delay site.poll-seconds)))
             _ (raise (! (status-refusal owner doing "Volume の作成" answer)))))))
   WorkspaceOutcome.ALREADY)
+
+
+(defk retargeted-volume [site owner doing name target]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str) (: target str)] :post [(: % bool)]
+   :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "volume name の backup の先(spec.backupTargetName)を級の先 target へ替えるため(頭の註の前の backup の先 — 替えた = True・volume が無い
+   404 = False)。替える前に target の束を確かめる(bundle-ensured — 次の backup の完了が全体の同期を頼まないように)。"
+  (<- (bundle-ensured site owner doing name target))
+  (val body (json.dumps {"spec" {"backupTargetName" target}} :ensure-ascii False :sort-keys True))
+  (<- answer HttpResponse (kube-answer owner doing "PATCH" (! (volume-path site name)) body MERGE-PATCH-TYPE))
+  (match (! (status-field answer.status))
+    200 (do (<- (slog "volume の backup の先を級の先へ替えた(前の先の backup から戻した・前の先のまま残った volume)" :owner owner :volume name
+                      :target target))
+            True)
+    404 False
+    _ (raise (! (status-refusal owner doing "Volume の backup の先の書き" answer)))))
 
 
 (defk marked-volume [site owner doing name]
