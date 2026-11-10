@@ -40,7 +40,7 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
-                                                       learned-need drained-room-mib keeps-room?])
+                                                       learned-need drained-room-mib keeps-room? urgent-priority?])
 
 ;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
 ;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。送る綴りは指紋の材料の
@@ -826,22 +826,24 @@
     True None))
 
 
-(defk task-room-of [worker load]
-  {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+(defk task-room-of [worker load * [urgent False]]
+  {:pre [(: worker WorkerInfo) (: load dict) (: urgent bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker に task をあと幾つ置けるかを知るため: 機体の測った空き(worker.measured)から数えた数(measured_room.measured-room — 置いた
    task と、そのうち測りにまだ出ていない task を引く。memory の空き〔task-memory-room-of〕が 0 以下なら 0)。常駐の job の今の使いは
    測った値に入っているので、その分を残して数える。以前は手書きの予約と背景の枠(枠の file の taskReserve・backgroundRoom)から置いた
-   task を引いた。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom はこの値を読む。"
+   task を引いた。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom はこの値を読む。
+   urgent = 急ぎの優先の task の数えか(measured_room の頭の註の急ぎの task の空き — GET /state は平常の数え)。"
   (val used (get load worker.name))
-  (! (measured-room worker.measured used.tasks used.unseen used.reserved-mib)))
+  (! (measured-room worker.measured used.tasks used.unseen used.reserved-mib :urgent urgent)))
 
 
-(defk task-memory-room-of [worker load]
-  {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+(defk task-memory-room-of [worker load * [urgent False]]
+  {:pre [(: worker WorkerInfo) (: load dict) (: urgent bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker に新しく置ける task の memory の要りの最大(MiB)を知るため: 測った memory の空き − 床 − 置いた task の予約の和
    (measured_room.memory-room-mib — 2026-11-02)。task の置き先(place-tasks)は要りがこの値以下の worker にだけ置き、GET /state の
-   taskMemoryRoomMiB はこの値を出す。load = load-of の答え。"
-  (! (memory-room-mib worker.measured (. (get load worker.name) reserved-mib))))
+   taskMemoryRoomMiB はこの値を出す。load = load-of の答え。urgent = 急ぎの優先の task の数えか(measured_room の頭の註の急ぎの
+   task の空き — GET /state は平常の数え)。"
+  (! (memory-room-mib worker.measured (. (get load worker.name) reserved-mib) :urgent urgent)))
 
 
 (defk memory-need-refusal [state needs memory-mib]
@@ -1768,11 +1770,13 @@
       (var rooms {})
       (var roomy #())
       (var misfits [])
+      ;; 急ぎの優先の task は、worker が上に載る系の残す線を外して名乗る空きで数える(measured_room の頭の註の急ぎの task の空き)。
+      (<- urgent bool (urgent-priority? task.priority))
       (for [w able-now]
         (<- need int (task-need-of task w peaks))
         (setv (get needs w.name) need)
-        (<- room int (task-room-of w load))
-        (<- memory-room int (task-memory-room-of w load))
+        (<- room int (task-room-of w load :urgent urgent))
+        (<- memory-room int (task-memory-room-of w load :urgent urgent))
         (setv (get rooms w.name) memory-room)
         (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits
                                                           (get bg-held w.name) (get bg-wanted w.name) need memory-room))

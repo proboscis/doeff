@@ -943,6 +943,12 @@
       (when (is-not state.eviction None)
         (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake state.eviction.jobs-held))
         (:= jobs-room told))
+      ;; 急ぎの task の jobs の層の空き(会話のターンに残す線を外した受けの上限 − 使い — load_rules の頭の註の急ぎの task の空き)。
+      ;; 線が jobs の層を縮めていない回(jobs-intake-urgent が None)は名乗らない。
+      (var urgent-jobs-room None)
+      (when (is-not state.eviction None)
+        (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake-urgent state.eviction.jobs-held))
+        (:= urgent-jobs-room told))
       ;; keeper が版の準備を待つ間の取り置きを添える(coordinator は名乗る worker に新しく常駐の job を置かない — load_rules.prepare-wait-of)。
       (var prepare-wait None)
       (when (is-not state.eviction None)
@@ -950,6 +956,7 @@
         (:= prepare-wait told))
       (setv state.load-reason reason
             state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
+                                                               :urgent-jobs-room-mib urgent-jobs-room
                                                                :prepare-wait-mib prepare-wait :job-meters job-meters
                                                                :job-meters-at-ms (if (is job-meters None) None
                                                                                      state.eviction.meters-at-ms)))

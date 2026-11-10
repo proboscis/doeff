@@ -98,6 +98,9 @@
    #** (if (is load.task-cpu-some-avg10 None) {} {"taskCpuSomeAvg10" load.task-cpu-some-avg10})
    ;; task の層の今の空き(名乗る時だけ — 2026-11-09)。
    #** (if (is load.jobs-room-mib None) {} {"jobsRoomMiB" load.jobs-room-mib})
+   ;; 会話のターンに残す線を外した急ぎの task の空き(線が空きを縮めた時だけ — 2026-11-10・worker/core/load_rules の頭の註)。
+   #** (if (is load.urgent-available-mib None) {} {"urgentMemoryAvailableMiB" load.urgent-available-mib})
+   #** (if (is load.urgent-jobs-room-mib None) {} {"urgentJobsRoomMiB" load.urgent-jobs-room-mib})
    ;; keeper が版の準備を待つ間の取り置き(待っている時だけ — 2026-11-10)。
    #** (if (is load.prepare-wait-mib None) {} {"prepareWaitMiB" load.prepare-wait-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。

@@ -33,6 +33,15 @@
 ;;; 積む時に要りを断る上限)は替えない: 線は今の取り合いの順で、機体が空いた時に受けうる大きさではない。file が無い・数でない間(係が
 ;;; まだ起きていない)と、keepLineFile の無い機体は、今までどおり追い出しまでの空き(か MemAvailable)で名乗る。
 ;;;
+;;; 急ぎの task の空き(2026-11-10): 線は作り直せる task を待たせる線で、送り手が急ぎ(coordinator/core/measured_room の
+;;; KEEP-NOW-PRIORITY 以上の優先)を名乗る task まで待たせると、その機体でしか走れない急ぎの task は MemAvailable が線を越えて戻るまで
+;;; 置かれない(zeus の 11-10 — MemAvailable 約 42 GiB・線 37984 MiB で名乗る空きは約 4 GiB、要り 6144 MiB・その機体だけを要る task が
+;;; queued のまま待ち、送り手の後の仕事が全部止まった)。線が名乗る空きを縮めている間は、線を外して追い出しの線だけで数えた空き
+;;; (urgent-available-mib)と jobs の層の空き(urgent-jobs-room-mib — 見張りの jobs-intake-urgent)も名乗り、coordinator は急ぎの task だけを
+;;; その空きで置く。置いた後の jobs の層の memory.max は、線の下でも取り置き(要り − 今の使い)まで広がる(worker/core/eviction_rules の
+;;; kept-jobs-limit)。急ぎの task は線の内の memory を使い、その分だけ上に載る系は新しいターンを待たせる(作り直せない走っている
+;;; ターンは追い出しの線の手前の空きで守られる)。線が名乗る空きを縮めていない回は名乗らない(None — 平常の空きと同じ)。
+;;;
 ;;; /proc の無い機体(macOS): 入口が LoadPaths の代わりに印 HostLoad を渡し、同じ間ごとに問い ReadHostCounters で OS の口から CPU の
 ;;; 刻みと memory を読む(答え手 foundation/host_counters — mach の host_statistics・sysctl)。CPU の使いと nice の分は /proc/stat と同じく
 ;;; 前の読みとの間の刻みの増えの比で数え、memory は OS の数えた総量と空き(host-load-of)。PSI は OS に無いので None。測りを名乗らない
@@ -128,8 +137,11 @@
    (MiB — worker/core/eviction_rules の prepare-wait-reserve。None = 待っていないか名乗らない〔線が無いか古い〕— coordinator の置き先は、
    名乗った worker に新しく常駐の job を置かない・2026-11-10)・job-meters = 常駐の job ごとの CPU と memory の今(worker/core/memory_rules の
    JobMeter の tuple — job-meters-told。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator は保存せず GET /state の worker の行に
-   写す・2026-11-10)・job-meters-at-ms = その見張りの読みの刻(epoch ms — job-meters が None の時は None)。"
+   写す・2026-11-10)・job-meters-at-ms = その見張りの読みの刻(epoch ms — job-meters が None の時は None)・urgent-available-mib /
+   urgent-jobs-room-mib = 会話のターンに残す線を外して数えた memory の空きと jobs の層の空き(MiB — 頭の註の急ぎの task の空き。None =
+   線が空きを縮めていない・名乗らない〔線が無いか古い〕— coordinator は急ぎの優先の task だけをこの空きで置く・2026-11-10)。"
   {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)
+           (or (is urgent-available-mib None) (>= memory-total-mib urgent-available-mib memory-available-mib))
            (or (is cpu-nice None) (and (is-not cpu-busy None) (<= 0 cpu-nice cpu-busy)))
            (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0)) (or (is prepare-wait-mib None) (> prepare-wait-mib 0))
            (= (is job-meters None) (is job-meters-at-ms None))]}
@@ -148,7 +160,9 @@
   (setv #^ (| int None) jobs-room-mib None)
   (setv #^ (| int None) prepare-wait-mib None)
   (setv #^ (| (get tuple #(JobMeter ...)) None) job-meters None)
-  (setv #^ (| int None) job-meters-at-ms None))
+  (setv #^ (| int None) job-meters-at-ms None)
+  (setv #^ (| int None) urgent-available-mib None)
+  (setv #^ (| int None) urgent-jobs-room-mib None))
 
 
 (defrecord LoadReading
@@ -326,7 +340,10 @@
                                   :cpu-full-avg10 (if (is cpu None) None cpu.full-avg10)
                                   :memory-some-avg10 memory.some-avg10 :memory-full-avg10 memory.full-avg10
                                   :cpu-nice (if (is nice None) None (min nice busy))
-                                  :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10))
+                                  :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10)
+                                  ;; 急ぎの task の空き(頭の註): 線が空きを縮めた時だけ、線を外した空きも名乗る。
+                                  :urgent-available-mib (if (< memory.available-bytes by-line.available-bytes)
+                                                            (// by-line.available-bytes MIB) None))
                :ticks ticks
                :keep-room-bytes (if (is keep None) None (- machine.available-bytes (* keep MIB)))))
 

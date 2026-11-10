@@ -221,7 +221,9 @@
    worker が新しい受けの外へ取り置いた量(MiB — None = 待っていない・前の版の worker。置き先は名乗った worker に新しく常駐の job を置かない —
    core/cluster_policy の memory-misfit・2026-11-10)・job-uses = 常駐の job ごとの CPU の累計と memory の今(MeasuredJob の列 — None =
    名乗らない〔見張りの読みが古い・前の版の worker〕。置き先は読まず、GET /state で測りの読み手が job ごとの CPU と PSS を 1 か所から読む・
-   2026-11-10)・job-uses-at-ms = その見張りの読みの刻(worker の壁の時計の epoch ms — CPU の累計の差を割る間)。coordinator は保存せず、task の置き先を
+   2026-11-10)・job-uses-at-ms = その見張りの読みの刻(worker の壁の時計の epoch ms — CPU の累計の差を割る間)・urgent-memory-available-MiB /
+   urgent-jobs-room-MiB = worker が上に載る系の残す線を外して数えた memory の空きと jobs の層の空き(MiB — None = 線が空きを縮めていない・前の版の
+   worker。置き先は急ぎの優先の task だけをこの空きで数える — core/measured_room の頭の註の急ぎの task の空き・2026-11-10)。coordinator は保存せず、task の置き先を
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
@@ -245,7 +247,9 @@
   (setv #^ (| int None) jobs-room-MiB None)
   (setv #^ (| int None) prepare-wait-MiB None)
   (setv #^ (| (get tuple #(MeasuredJob ...)) None) job-uses None)
-  (setv #^ (| int None) job-uses-at-ms None))
+  (setv #^ (| int None) job-uses-at-ms None)
+  (setv #^ (| int None) urgent-memory-available-MiB None)
+  (setv #^ (| int None) urgent-jobs-room-MiB None))
 
 
 (defwire HeartbeatBody

@@ -144,7 +144,9 @@
    (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)・needs = 置き先が置いた task の要り(TaskNeed
    の tuple — heartbeat の返事を読んだ worker/protocol/coordinator_link が書く)・pending = 最後の回の置いた task の取り置き・jobs-intake =
    最後に jobs の層の上限と同じ回に決めた、新しい受けに名乗る上限(測った余裕で数え、取り置きを入れない — None = まだ。これと
-   jobs-held の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)・keep-room = heartbeat の測りが最後に
+   jobs-held の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)・jobs-intake-urgent = 同じ回に
+   上に載る系が残す線を外して追い出しの線だけで数えた新しい受けの上限(急ぎの task の受け — None = 線が jobs の層を縮めていない・まだ。
+   worker/core/load_rules の頭の註の急ぎの task の空き)・keep-room = heartbeat の測りが最後に
    読んだ「機体の MemAvailable − 上に載る系が残す線」(byte — None = 線が無い・読めない。worker/core/eviction_rules の頭の註の上に載る系が
    残す線)・keep-room-at-ms = その読みの刻(None = まだ)・command-line-file = 命令の層の線の
    file(枠の file の行の commandLineFile を worker/protocol/coordinator_link が書く — \"\" = 掛け直さない)・command-floor-bytes = 短い命令の
@@ -160,7 +162,7 @@
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.prepare-wait 0 self.uses #() self.uses-at-ms None
           self.jobs-current None self.jobs-held None self.clis-limit None self.clis-current None self.lent 0
-          self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None
+          self.box None self.needs #() self.pending 0 self.jobs-intake None self.jobs-intake-urgent None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
           self.meters #() self.meters-at-ms None)))
@@ -496,6 +498,7 @@
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)
+  (var urgent None)
   (when (and (is-not line None) (is-not current None))
     (val floor-margin (min margin settings.margin-bytes))
     ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 名乗りより伸びた task は線を割る前に kernel が jobs の層の中で止める。
@@ -509,13 +512,19 @@
     (when (< found evicted)
       (:= jobs-line kept))
     (<- told int (jobs-limit working kept margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
+    ;; 急ぎの task の受け(worker/core/load_rules の頭の註の急ぎの task の空き): 同じ式を追い出しの線だけで数える。線が jobs の層を
+    ;; 縮めていない回は名乗らない(None — 置き先は平常の受けで数える)。置いた後の memory.max は kept-jobs-limit が取り置きまで広げる。
+    (<- told-urgent int (jobs-limit working line margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
+    (:= urgent (if (< told told-urgent) (min evicted told-urgent) None))
     (:= limit found)
     (:= intake told)
     (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))
       (<- boxed int (jobs-box-limit current cell.box (- margin floor-margin) cell.clis-limit cell.clis-current pending))
       (<- boxed-intake int (jobs-box-limit working cell.box 0 cell.clis-limit cell.clis-current 0))
       (:= limit (min limit boxed))
-      (:= intake (min intake boxed-intake))))
+      (:= intake (min intake boxed-intake))
+      (when (is-not urgent None)
+        (:= urgent (min urgent boxed-intake)))))
   (when (is-not line None)
     (<- room-failure str (room-written settings line margin reserve addable))
     (:= failure (or failure room-failure)))
@@ -526,7 +535,7 @@
     (<- written (| FileFailed None) (WriteText (+ settings.jobs-dir "/memory.max") (str limit)))
     (if (isinstance written FileFailed)
         (:= failure (.format "jobs の層の memory.max に {} を書けない: {}" limit written.detail))
-        (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)))))
+        (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)) cell.jobs-intake-urgent urgent)))
   (val squeezed (and (is-not line None) (is-not current None) (is-not limit None) (not failure) (< limit current)))
   (when (and squeezed (not cell.squeezed))
     (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line jobs-line.kind.value :line-mib (// jobs-line.size-bytes MIB)
