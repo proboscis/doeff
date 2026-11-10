@@ -13,6 +13,7 @@
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (require doeff-hy.record [defenum defrecord])
+(import collections.abc [Mapping])
 (import enum [StrEnum])
 (import dataclasses [dataclass])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
@@ -44,8 +45,8 @@
   (setv #^ str detail ""))
 
 
-(deff beat-interval-ms [#^ (| dict None) timing #^ dict task-echo]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
-  {:pre [(: timing (| dict None)) (: task-echo dict)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+(deff beat-interval-ms [#^ (| (get Mapping #(str object)) None) timing #^ (get Mapping #(str (get Mapping #(str object)))) task-echo]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
+  {:pre [(: timing (| (get Mapping #(str object)) None)) (: task-echo (get Mapping #(str (get Mapping #(str object)))))] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の timing(lease_ms)と、この worker に置かれた切り離した task の返事の行(leaseMs)から、heartbeat を送る間隔を決める
    ため — coordinator が生存を数える窓と task の lease の中に、届く heartbeat が何度か入る長さ。"
   (let [lease (.get (or timing {}) "lease_ms")
