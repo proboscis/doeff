@@ -6,6 +6,9 @@
 ;;;   (2) 待ちが短い task は取っておかない(小さい task を先に置く — 直す前と同じ)
 ;;;   (3) 今の task が全部終わっても入らない worker には取っておかない(層の中の常駐の使いで入らない task のために worker を塞がない)
 ;;;   (4) 見込み drained-room-mib = 予約 0 の memory の空き + 測りが名乗る task の今の使いの和
+;;;   (5) 急ぎの task の取っておき(measured_room の頭の註 — 11-10 に要り 3584 MiB・優先 0 の task が、同じ要り・同じ優先の先に積まれた
+;;;       task の後ろで 12 時間を越えて queued のままだった): 優先 KEEP-NOW-PRIORITY の task は、同じ要りで先に積まれた優先 0 の task
+;;;       より先に置き先を見て、積んだ直後から空きを取っておく。先に積まれた task も後ろの小さい task もその worker に置かれない
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -14,7 +17,7 @@
 (import doeff_cluster [WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB JOBS-ROOM-FLOOR-MIB STARVE-WAIT-MS drained-room-mib])
+(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB JOBS-ROOM-FLOOR-MIB STARVE-WAIT-MS KEEP-NOW-PRIORITY drained-room-mib keeps-room?])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
 (import doeff_hy._table [table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
@@ -107,3 +110,49 @@
   (assert (= wide (+ (- AVAILABLE-MIB MEMORY-FLOOR-MIB) RUNNING-USE)) wide)
   (<- unmeasured int (drained-room-mib None))
   (assert (= unmeasured 0)))
+
+
+(defk urgent-world []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "helios に task 1 本を置いた世界で、STARVE-WAIT-MS より前に積んだ要り 3584 MiB・優先 0 の task と、その後に積んだ同じ要りで優先
+   KEEP-NOW-PRIORITY の task と、最後に積んだ小さい task を置き先に 1 拍回し、#(先に積んだ task 急ぎの task 小さい task) の行を得るため
+   (頭の註の (5))。"
+  (val now (* 10 3600 1000))
+  (val helios (WorkerInfo "helios" #("host-helios") now :versions PY3 :measured (! (helios-measured ROOMY-JOBS-MIB))))
+  (<- workers (table-from-rows {"helios" helios}))
+  (<- running TaskRecord (waiting-task "running" RUNNING-NEED 0))
+  (<- early TaskRecord (waiting-task "a-early" RUNNING-NEED (- now STARVE-WAIT-MS 1)))
+  (<- urgent TaskRecord (waiting-task "b-urgent" RUNNING-NEED (- now 1000)))
+  (<- small TaskRecord (waiting-task "c-small" SMALL-NEED (- now 500)))
+  (<- tasks (table-from-rows {"running" (replace running :phase "assigned" :worker "helios" :started-ms 0
+                                                 :lease-until-ms (+ now LONG-LEASE-MS))
+                              "a-early" early "b-urgent" (replace urgent :priority KEEP-NOW-PRIORITY) "c-small" small}))
+  (val state (ClusterState #() workers (table-of #()) tasks))
+  (val placed (! (tasks-placed now state state.placements T)))
+  #((.row placed "a-early") (.row placed "b-urgent") (.row placed "c-small")))
+
+
+(deftest test-an-urgent-task-keeps-the-room-at-once-ahead-of-an-earlier-task-of-the-same-size
+  ;; 直す前は急ぎの task も 30 分を待ち、待ちを越えても id の先の a-early が先に取っておいた(11-10 の 12 時間の待ち)。小さい task は
+  ;; 空き(4900 − 512 − 2284 = 2104 MiB)に置かれた。
+  (<- rows tuple (urgent-world))
+  (val early (get rows 0))
+  (val urgent (get rows 1))
+  (val small (get rows 2))
+  (assert (= urgent.phase "queued") urgent)
+  (assert (in "worker helios の memory の空きをこの task に取っておく" urgent.detail) urgent.detail)
+  (assert (= early.phase "queued") early)
+  (assert (not-in "取っておく" early.detail) early.detail)
+  (assert (= small.phase "queued") small)
+  (assert (not-in "取っておく" small.detail) small.detail))
+
+
+(deftest test-the-room-is-kept-for-an-urgent-priority-or-a-long-wait
+  (<- urgent-now bool (keeps-room? KEEP-NOW-PRIORITY 0))
+  (assert urgent-now)
+  (<- plain-now bool (keeps-room? 0 0))
+  (assert (not plain-now))
+  (<- plain-long bool (keeps-room? 0 STARVE-WAIT-MS))
+  (assert plain-long)
+  (<- background-short bool (keeps-room? -1 (- STARVE-WAIT-MS 1)))
+  (assert (not background-short)))

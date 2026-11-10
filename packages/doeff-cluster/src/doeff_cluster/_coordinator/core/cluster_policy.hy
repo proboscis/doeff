@@ -40,7 +40,7 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
-                                                       learned-need drained-room-mib STARVE-WAIT-MS])
+                                                       learned-need drained-room-mib keeps-room?])
 
 ;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
 ;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。送る綴りは指紋の材料の
@@ -1784,10 +1784,11 @@
       (setv free (lfor #(w _) (sorted roomy :key (fn [pair] #((not (env-ready-on task.runtime-env (get pair 0)))
                                                               (- (get pair 1)) (. (get pair 0) name))))
                        w))
-      ;; 置けずに STARVE-WAIT-MS を越えて待った task は、memory の空きだけで置けない worker のうち、今の task が全部終われば入る見込みの在る
-      ;; 1 台に要りを取っておく(measured_room の頭の註の取っておき)。後ろの順の task は、その worker の memory の空きから要りを引いて数える。
+      ;; 置けずに STARVE-WAIT-MS を越えて待った task と急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は(keeps-room?)、memory の空きだけで
+      ;; 置けない worker のうち、今の task が全部終われば入る見込みの在る 1 台に要りを取っておく(measured_room の頭の註の取っておき)。
+      ;; 後ろの順の task は、その worker の memory の空きから要りを引いて数える。
       (var keeper None)
-      (when (and (not free) (>= (- now task.submitted-ms) STARVE-WAIT-MS))
+      (when (and (not free) (! (keeps-room? task.priority (- now task.submitted-ms))))
         (<- chosen-keeper (| WorkerInfo None) (starved-keeper task able-now needs rooms kept held state.group-limits))
         (:= keeper chosen-keeper)
         (when (is-not keeper None)

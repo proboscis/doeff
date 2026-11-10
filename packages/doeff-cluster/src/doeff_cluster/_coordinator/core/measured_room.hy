@@ -79,6 +79,13 @@
 ;;; 塞ぎ続けない(見込みは置いた task の今の使いを足した値なので、task が終わるにつれて実の空きに近づき、入らないと分かれば取っておきは解ける)。
 ;;; 取っておきは拍ごとに数え直し、保存しない。
 ;;;
+;;; 急ぎの task の取っておき(2026-11-10): 待った長さで取っておく形は、要りの同じ task どうしでは先に積んだ方を先に置く(置く順は優先と id)
+;;; ので、名乗りで先へ出たい task も 30 分を待ち、その間に後ろの task が戻る空きを取り、待ちを越えても先に積んだ同じ大きさの task が先に
+;;; 置かれた(11-10 — 要り 3584 MiB・優先 0 の task が、同じ要り・同じ優先の先に積まれた作り直せる task の後ろで 12 時間を越えて queued の
+;;; まま待ち、その task の後ろに送り手の後の仕事が全部止まった)。優先 KEEP-NOW-PRIORITY 以上の task は、置く順で優先 0 以下の task より
+;;; 先に見るうえ、memory の空きだけで置けなければ待った長さを問わずその拍から取っておく(keeps-room?)— 戻る空きは後ろの順の task に渡らず、
+;;; 置いた task が終わるたびにその task の分として溜まる。急ぎを名乗るのは送り手の宣言で、系は値の意味を読まない。
+;;;
 ;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
 ;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に常駐の job が膨らむ分は、機体の中の cgroup の層
 ;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
@@ -121,6 +128,15 @@
 ;; 積んでからこの長さを越えて memory の空きだけで置けない task に、worker の空きを取っておく(頭の註の長く待った task の取っておき)。
 ;; 短い待ちでは取っておかない — 空きは置いた task が終わるたびに戻るので、普通の待ちの間は小さい task を先に置いて機体を遊ばせない。
 (val STARVE-WAIT-MS (* 30 60 1000))
+;; この値以上の優先の task は、待った長さを問わず取っておく(頭の註の急ぎの task の取っておき)。
+(val KEEP-NOW-PRIORITY 1)
+
+
+(defk keeps-room? [priority waited-ms]
+  {:pre [(: priority int) (: waited-ms int)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "memory の空きだけで置けない task に worker の空きを取っておくかを知るため(頭の註の長く待った task と急ぎの task の取っておき):
+   優先 priority が KEEP-NOW-PRIORITY 以上か、積んでから待った長さ waited-ms が STARVE-WAIT-MS 以上。"
+  (or (>= priority KEEP-NOW-PRIORITY) (>= waited-ms STARVE-WAIT-MS)))
 
 
 (defk task-cap-of [cpus]

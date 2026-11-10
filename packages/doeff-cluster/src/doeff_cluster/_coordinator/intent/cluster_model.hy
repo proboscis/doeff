@@ -1217,7 +1217,8 @@
   ;; priority = 置く順の優先(大きいほど先・既定 0)。待っている task は (優先の大きい順, id) で置く。負の優先の task(背景の仕事)は
   ;; worker の予約(measured_room.reserve-of)の半分(切り上げ)を使わない(置いた後にもその数の空きが残る worker にだけ置く・2026-10-14 に予約の全部から半分へ)— 背景の仕事が何本積まれても、予約の半分は
   ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 名乗った同時数の上限の組(TaskLimit の tuple — 値と範囲は系の宣言の
-  ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
+  ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。優先 KEEP-NOW-PRIORITY 以上の task は、memory の空きだけで置けなければ
+  ;; 待った長さを問わず worker の空きを取っておく(measured_room の頭の註の急ぎの task の取っておき・2026-11-10)。
   (setv #^ int priority 0)
   (setv #^ (get tuple #(TaskLimit ...)) limits #())
   ;; --- 終わりの知らせ先(2026-10-21)---
