@@ -40,8 +40,9 @@ How it talks to Redis:
   one wait. Before, every notice was one ``Await``, which parks the source's task; a subscriber whose reaction is
   long took one notice per reaction, and a crowd of notices made the ones behind it wait for minutes (agora's
   turn-dispatcher: 905 notices in 3 minutes, one per ~0.16 s cycle, an input notice behind them waited ~150 s).
-- Nothing received is dropped on this side: redis-py reads a subscription's connection only when
-  ``NextAnnouncement`` asks (no background reader); what one read took and has not handed out yet is kept with the
+- Nothing received is dropped on this side: redis-py reads a subscription's Pub/Sub connection only when
+  ``NextAnnouncement`` asks (no background reader — the kept streams' read ahead, below, is the one exception and
+  is bounded); what one read took and has not handed out yet is kept with the
   subscription until the next ``NextAnnouncement``s (a closed subscription drops it — its kept-channel entries
   were handed out at the read, so they are handed out again to the reader's next subscription like any notice
   not acknowledged); what the server sent in the meantime
@@ -72,10 +73,21 @@ How it talks to Redis:
   ``redeliver_seconds`` is handed out again — the third timed check (ADR-DOE-EVENTS-002 R8 names the others): it
   reads no data and runs only while a ``NextAnnouncement`` waits and a notice is unacknowledged. Entries the bound
   trimmed before a slow reader read them are gone, like Pub/Sub notices of a lost connection.
+- The kept streams are read ahead: one task per subscription keeps an ``XREAD BLOCK`` on the server at all times,
+  from its own cursor, and keeps what it took with the subscription (``_READ_BATCH`` at most — a full store
+  stops the read until a ``NextAnnouncement`` takes it) until a ``NextAnnouncement`` hands it out; the reader's
+  positions move only at the hand-out, so what a closed subscription had read ahead is read again by the next.
+  Before, the next ``XREAD`` was sent only by the next ``NextAnnouncement`` and raced the Pub/Sub read, which
+  answers at once from the socket while a subscriber has Pub/Sub traffic: a subscriber that asks once between
+  reactions of about a second took a kept entry 2 to 3 asks after its ``XADD`` (1.3 to 3.6 s measured; an idle
+  reader of the same stream took it within 0.25 s). An entry handed out more than ``_LATE_KEPT_SECONDS`` after
+  its ``XADD`` is logged with the time from the ``XADD`` to the read and from the read to the hand-out.
 """
 
 import asyncio
 import json
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
@@ -122,6 +134,13 @@ SUBSCRIPTION_SILENCE_SECONDS: Final = 7.0
 # The most notices one read of a subscription takes from what has already come: the
 # Pub/Sub notices already received on the connection, and the entries ``XREAD … COUNT`` answers per kept stream.
 _READ_BATCH: Final = 1000
+
+# A kept channel's entry handed out later than this after its ``XADD`` is logged (the module's notes on the read
+# ahead): the time from the ``XADD`` to the read tells a slow server or connection, the time from the read to the
+# hand-out a subscriber that asks late.
+_LATE_KEPT_SECONDS: Final = 1.0
+
+_logger = logging.getLogger(__name__)
 
 # The approximate number of entries a kept channel's stream holds (``XADD … MAXLEN ~``): a reader further behind
 # than this loses the oldest, as a Pub/Sub subscriber loses what was sent while it was away.
@@ -215,14 +234,25 @@ def _same_notice(one: Announcement, other: Announcement) -> bool:
     return one.channel == other.channel and one.receipt == other.receipt
 
 
+@dataclass(frozen=True)
+class _ReadAhead:
+    """A kept channel's entry the read ahead took, and when it came (the wall clock, read beside the ``XADD`` time
+    in the entry's id)."""
+
+    notice: Announcement
+    at: float
+
+
 @final
 class _Listening:
     """The client's side of one ``ChannelSubscription``: redis-py's ``PubSub`` connection for its Pub/Sub channels
     (``None`` when it reads kept channels only), its reader's state for the kept ones, the reads in flight
-    between two ``NextAnnouncement``s of a subscription that reads kept channels, and the notices the last read took
-    that are not handed out yet (``taken`` — oldest first). Matched by identity."""
+    between two ``NextAnnouncement``s of a subscription that reads kept channels — the Pub/Sub read and the kept
+    streams' read ahead, with the entries it took and has not handed out (``ahead`` — oldest first; the module's
+    notes on the read ahead) — and the notices the last read took that are not handed out yet (``taken`` — oldest
+    first). Matched by identity."""
 
-    __slots__ = ("pubsub", "pubsub_read", "reader", "stream_read", "subscription", "taken")
+    __slots__ = ("ahead", "came", "drained", "pubsub", "pubsub_read", "reader", "stream_read", "subscription", "taken")
 
     def __init__(
         self, subscription: ChannelSubscription, pubsub: "PubSub | None", reader: _KeptReader | None
@@ -232,8 +262,28 @@ class _Listening:
         self.pubsub: Final = pubsub
         self.reader: Final = reader
         self.pubsub_read: asyncio.Task[tuple[Announcement, ...]] | None = None
-        self.stream_read: asyncio.Task[tuple[Announcement, ...]] | None = None
+        self.stream_read: asyncio.Task[None] | None = None
+        self.ahead: tuple[_ReadAhead, ...] = ()
+        # ``came`` is set while ``ahead`` holds entries (a waiting ask wakes on it); ``drained`` is set by each
+        # hand-out (a read ahead that holds ``_READ_BATCH`` entries waits for it).
+        self.came: Final = asyncio.Event()
+        self.drained: Final = asyncio.Event()
         self.taken: tuple[Announcement, ...] = ()
+
+    def took_ahead(self, entries: tuple[Announcement, ...]) -> None:
+        """Keep the entries one ``XREAD`` of the read ahead took, with when they came (the read ahead's side)."""
+        at = time.time()
+        self.ahead = (*self.ahead, *(_ReadAhead(entry, at) for entry in entries))
+        self.came.set()
+
+    def hand_ahead(self) -> tuple[Announcement, ...]:
+        """Take every entry the read ahead holds, to hand out now (empty when it holds none); a late one is logged."""
+        ahead, self.ahead = self.ahead, ()
+        self.came.clear()
+        self.drained.set()
+        if ahead:
+            _log_late(ahead, time.time())
+        return tuple(read.notice for read in ahead)
 
     def handed_from_taken(self) -> Announcement | None:
         """The oldest notice the last read took and has not handed out yet (it is handed out now), or ``None``."""
@@ -255,7 +305,33 @@ class _Listening:
                 read.cancel()
         self.pubsub_read = None
         self.stream_read = None
+        self.ahead = ()
         self.taken = ()
+
+
+def _added_at(receipt: str) -> float:
+    """The wall-clock time of an entry's ``XADD``: the milliseconds part of its stream id."""
+    return int(receipt.split("-", 1)[0]) / 1000
+
+
+def _log_late(ahead: "tuple[_ReadAhead, ...]", handed_at: float) -> None:
+    """Log one line for a hand-out whose oldest entry is later than ``_LATE_KEPT_SECONDS`` after its ``XADD``: where
+    the time went — before the read (the server or the connection) or after it (the subscriber asked late)."""
+    oldest = ahead[0]
+    receipt = oldest.notice.receipt or "0-0"
+    added = _added_at(receipt)
+    if handed_at - added <= _LATE_KEPT_SECONDS:
+        return
+    _logger.warning(
+        "kept notice handed out late: channel=%s receipt=%s name=%s xadd_to_read_ms=%d read_to_handed_ms=%d "
+        "entries=%d",
+        oldest.notice.channel,
+        receipt,
+        oldest.notice.name,
+        round((oldest.at - added) * 1000),
+        round((handed_at - oldest.at) * 1000),
+        len(ahead),
+    )
 
 
 @dataclass(frozen=True)
@@ -469,14 +545,14 @@ def _entries(answer: object) -> tuple[Announcement, ...]:
 
 
 async def _next_kept_entries(
-    client: "Redis", positions: dict[str, str], silence_seconds: float
+    client: "Redis", positions: dict[str, str], silence_seconds: float, count: int
 ) -> tuple[Announcement, ...]:
-    """``XREAD BLOCK`` for the entries after ``positions`` (``_READ_BATCH`` per stream at most — the module's notes on
+    """``XREAD BLOCK`` for the entries after ``positions`` (``count`` per stream at most — the module's notes on
     one read). Blocks half the silence; empty = nothing came (a quiet stream is not a lost connection). A server
     that does not answer within the block and the silence is a lost connection."""
     half = silence_seconds / 2
     streams = {_kept_key(channel): position for channel, position in positions.items()}
-    read = client.xread(streams, count=_READ_BATCH, block=int(half * 1000))
+    read = client.xread(streams, count=count, block=int(half * 1000))
     try:
         answer: object = await asyncio.wait_for(read, timeout=half + silence_seconds)
     except TimeoutError:
@@ -484,14 +560,36 @@ async def _next_kept_entries(
     return _entries(answer)
 
 
+async def _read_ahead(client: "Redis", listening: _Listening, silence_seconds: float) -> None:
+    """Keep an ``XREAD BLOCK`` of the subscription's kept streams on the server at all times, so that an entry is
+    read when it is added and not when the next ``NextAnnouncement`` asks (the module's notes on the read ahead).
+    Reads from its own cursor — the reader's positions when it starts — and keeps what it takes with the
+    subscription; while ``_READ_BATCH`` entries wait for a hand-out it reads nothing. Ends only by its cancel or by
+    failing (a lost connection — the next ``NextAnnouncement`` raises it)."""
+    reader = listening.reader
+    if reader is None:
+        raise LookupError(f"{listening.subscription!r} reads no kept channel")
+    cursor = {channel: reader.positions[channel] for channel in listening.subscription.kept}
+    while True:
+        room = _READ_BATCH - len(listening.ahead)
+        if room <= 0:
+            listening.drained.clear()
+            await listening.drained.wait()
+            continue
+        entries = await _next_kept_entries(client, cursor, silence_seconds, room)
+        if entries:
+            cursor = {**cursor, **{entry.channel: entry.receipt for entry in entries}}
+            listening.took_ahead(entries)
+
+
 async def _next_with_kept(
     receiving: "Redis", listening: _Listening, silence_seconds: float, redeliver_seconds: float
 ) -> tuple[Announcement, ...]:
     """The next notices of a subscription that reads kept channels (never empty): an unacknowledged notice that is
-    due again, or what the reads in flight that have answered took — the Pub/Sub connection's next notices and the
-    streams' next entries, both when both have answered (the Pub/Sub notices first). The entries are handed out
-    here, and the reader's positions move past them. The reads stay in flight across calls (a call cancelled by its
-    task leaves them for the next one)."""
+    due again, or what has come — the Pub/Sub connection's next notices when its read has answered, and every entry
+    the read ahead holds (the Pub/Sub notices first). The entries are handed out here, and the reader's positions
+    move past them. The Pub/Sub read and the read ahead stay in flight across calls (a call cancelled by its task
+    leaves them for the next one)."""
     reader = listening.reader
     if reader is None:
         raise LookupError(f"{listening.subscription!r} reads no kept channel")
@@ -504,22 +602,29 @@ async def _next_with_kept(
         if listening.pubsub is not None and listening.pubsub_read is None:
             listening.pubsub_read = asyncio.ensure_future(_next_notices(listening.pubsub, silence_seconds))
         if listening.stream_read is None:
-            positions = {channel: reader.positions[channel] for channel in listening.subscription.kept}
-            listening.stream_read = asyncio.ensure_future(_next_kept_entries(receiving, positions, silence_seconds))
-        reads = {read for read in (listening.pubsub_read, listening.stream_read) if read is not None}
-        done, _waiting = await asyncio.wait(
-            reads, timeout=reader.seconds_to_due(now, redeliver_seconds), return_when=asyncio.FIRST_COMPLETED
-        )
+            listening.stream_read = asyncio.ensure_future(_read_ahead(receiving, listening, silence_seconds))
+        if not listening.ahead and not listening.stream_read.done():
+            came = asyncio.ensure_future(listening.came.wait())
+            reads = {read for read in (listening.pubsub_read, listening.stream_read, came) if read is not None}
+            try:
+                await asyncio.wait(
+                    reads, timeout=reader.seconds_to_due(now, redeliver_seconds), return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                came.cancel()
+        if listening.stream_read.done():
+            # The read ahead ends only by failing: its lost connection is this call's (what it held is read again
+            # by the next subscription — the positions did not move past it).
+            failed, listening.stream_read = listening.stream_read, None
+            failed.result()
         notices: tuple[Announcement, ...] = ()
-        if listening.pubsub_read is not None and listening.pubsub_read in done:
+        if listening.pubsub_read is not None and listening.pubsub_read.done():
             read_notices, listening.pubsub_read = listening.pubsub_read, None
             notices = read_notices.result()
-        if listening.stream_read is not None and listening.stream_read in done:
-            read_entries, listening.stream_read = listening.stream_read, None
-            entries = read_entries.result()
-            if entries:
-                reader.positions = {**reader.positions, **{entry.channel: entry.receipt for entry in entries}}
-                notices = (*notices, *reader.hand_all(entries, loop.time()))
+        entries = listening.hand_ahead()
+        if entries:
+            reader.positions = {**reader.positions, **{entry.channel: entry.receipt for entry in entries}}
+            notices = (*notices, *reader.hand_all(entries, loop.time()))
         if notices:
             return notices
 
