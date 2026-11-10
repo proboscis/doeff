@@ -889,6 +889,10 @@
 ;; 同じ名の worker の新しい世代(Pod の作り直し)の知らせ(印を持たない)では約束を外す(同じ名の置き先を新しい世代へ引き継ぐ今までの
 ;; 前提と同じ)。届かない node の上の旧い世代は、印の在る job も長い方の柵(ClusterTiming.keep-fence-ms・240 秒)で止めるので、k8s が
 ;; 作り直した新しい世代(早くても約 350 秒後 — 数の前提は ClusterTiming.keep-fence-ms の註)とは重ならない。
+;; node に縛られた担い手(heartbeat の pinnedToNode — 2026-11-10): 同じ名の新しい世代は同じ node にしか置けず、node が届かない間は
+;; 起きないので、担い手は印の在る job をさらに長い柵(ClusterTiming.pinned-keep-fence-ms・1 時間)まで動かし続ける — coordinator と
+;; API server が同じ機体に在り、その機体が止まった間も job を止めない。約束にその名乗りを残し(KeepMark.pinned)、約束の期限をその柵から
+;; 求める(kept-window-ms — 担い手の止め切りより後・条 C4 と同じ形)。
 
 
 (defk movable? [now state job holder load timing draining]
@@ -994,17 +998,20 @@
   (if (= (len kept) (len marks)) marks kept))
 
 
-(defk remember-keep-marks [state worker boot held reply now]
-  {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: held (| tuple None)) (: reply HeartbeatReply) (: now int)]
+(defk remember-keep-marks [state worker boot held reply now [pinned False]]
+  {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: held (| tuple None)) (: reply HeartbeatReply) (: now int)
+         (: pinned bool)]
    :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "heartbeat の返事で印を付けた job を、印を渡した担い手との約束として状態に残すため(返事を送る前に状態と一緒に保存される)。印を知る
    worker(本文に keptWhenCutOff の欄が在る — held が None でない)だけ — 古い worker は印を読まずに fence で止めるので約束しない。
-   同じ担い手への約束は初めて渡した時刻を保つ。約束の列は job の名の順・job ごとに 1 つ。変わらなければ同じ状態を返す。"
+   pinned = その heartbeat で担い手が node に縛られていると名乗った(約束の印に残し、約束の期限を長い柵から求める — kept-window-ms)。
+   名乗りが替わった約束(止まり始めた世代は名乗らない)は書き直す — 担い手は名乗りを下ろした時から短い柵で止めるので、短い期限へ
+   移るのは担い手より後。同じ担い手への約束は初めて渡した時刻を保つ。約束の列は job の名の順・job ごとに 1 つ。変わらなければ同じ状態を返す。"
   (val marked (frozenset (gfor spec reply.jobs :if spec.keep-when-cut-off spec.name)))
   (val fresh (tuple (gfor name (sorted marked)
                           :setv previous (next (gfor m state.keep-marks :if (= m.job name) m) None)
-                          :if (not (and (is-not previous None) (= previous.worker worker) (= previous.boot boot)))
-                          (KeepMark :job name :worker worker :boot boot
+                          :if (not (and (is-not previous None) (= previous.worker worker) (= previous.boot boot) (= previous.pinned pinned)))
+                          (KeepMark :job name :worker worker :boot boot :pinned pinned
                                     :since-ms (if (and (is-not previous None) (= previous.worker worker)) previous.since-ms now)))))
   (val renewed (frozenset (gfor f fresh f.job)))
   (if (or (is held None) (not fresh))
@@ -1013,16 +1020,26 @@
                                                 :key (fn [m] m.job))))))
 
 
+(deff kept-window-ms [#^ ClusterTiming timing #^ bool pinned]  ; defk にできない: 約束の外し(sweep-keep-marks)と期限の刻(liveness-due)が Program の外の純粋な判断から呼ぶ
+  {:pre [(: timing ClusterTiming) (: pinned bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "印の約束を担い手の沈黙から外すまでの窓を、約束の外しとその刻の求めで同じ値にするため。node に縛られた担い手(pinned)は印の在る job を
+   長い柵(pinned-keep-fence-ms)まで動かし続けるので、kept-reassign-after-ms と keep-fence-ms の差(止め切りの最悪の残り + 余白 = 40 秒 —
+   条 C4 と同じ形)をその柵に足す。縛られていない担い手は kept-reassign-after-ms。"
+  (if pinned
+      (+ timing.pinned-keep-fence-ms (- timing.kept-reassign-after-ms timing.keep-fence-ms))
+      timing.kept-reassign-after-ms))
+
+
 (defk sweep-keep-marks [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "外してよい約束を外すため(外した約束の job は、置き先の判断が他へ移せる): 消された・忘れた Worker への約束(Worker の削除は
    「その worker はもう動いていない」という明示の宣言)と、担い手の沈黙が約束の期限(ClusterTiming.kept-reassign-after-ms)を越えた約束
    (担い手は印の在る job も途絶が長い方の柵 keep-fence-ms を越えると自分で止め、期限はその止め切りの最悪より後 — 担い手の名が替わる
-   切り替えで、旧い名の worker が二度と知らせて来ない時も外れる)。生死の比べは alive で、期限の刻は liveness-due が同じ値で求める。
-   外す物が無ければ同じ状態を返す。"
+   切り替えで、旧い名の worker が二度と知らせて来ない時も外れる。node に縛られた担い手は長い柵 pinned-keep-fence-ms から求めた期限 —
+   kept-window-ms)。生死の比べは alive で、期限の刻は liveness-due が同じ値で求める。外す物が無ければ同じ状態を返す。"
   (val held (tuple (gfor mark state.keep-marks
                          :setv holder (.row state.workers mark.worker)
-                         :if (and (is-not holder None) (alive now holder timing.kept-reassign-after-ms))
+                         :if (and (is-not holder None) (alive now holder (kept-window-ms timing mark.pinned)))
                          mark)))
   (if (= (len held) (len state.keep-marks))
       state
@@ -2143,10 +2160,12 @@
   "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定・約束の外し)が、状態がこのままで答えを変え得る最初の刻を
    知るため。どの判断も、最後の連絡 + 窓(liveness-deadline)を今の刻が越えた時に答えを変える — 窓は lease-ms(note-liveness・place-jobs・
    drain・見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・kept-reassign-after-ms
-   (sweep-keep-marks — 要求の無い間も、その刻に起きて約束を外す)・worker-forget-ms(forget-silent-workers)。答え = worker ごと・窓ごとの
+   (sweep-keep-marks — 要求の無い間も、その刻に起きて約束を外す。縛られた担い手への約束は kept-window-ms と、資源の status の長い柵
+   pinned-keep-fence-ms — 縛られた担い手の居ない worker にも足す。早く起きるのは構わない)・worker-forget-ms(forget-silent-workers)。答え = worker ごと・窓ごとの
    「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば DueNever)。生きていないと数える名(silent)が今の刻の求め直しと違えば、
    note-liveness が今の刻で答えを変えるので DueNow。"
-  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms timing.kept-reassign-after-ms timing.worker-forget-ms))
+  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms timing.kept-reassign-after-ms
+                 timing.pinned-keep-fence-ms (kept-window-ms timing True) timing.worker-forget-ms))
   (val ats (tuple (gfor w (.rows state.workers) window windows
                         :setv due (+ (liveness-deadline w window) 1)
                         :if (> due now)

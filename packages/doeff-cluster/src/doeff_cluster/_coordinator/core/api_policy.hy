@@ -546,7 +546,7 @@
                                           :boot body.boot :statuses body.statuses)))
           ;; 返事で付けた「途絶しても動かし続けてよい」印を、印を渡した担い手との約束として残す(#2804 — 返事の前に状態と一緒に保存され、
           ;; 担い手が印を持たないと知らせるまで job を他へ移さない)。
-          #((! (remember-keep-marks after name body.boot body.kept-when-cut-off reply now)) 200 reply))
+          #((! (remember-keep-marks after name body.boot body.kept-when-cut-off reply now :pinned body.pinned-to-node)) 200 reply))
     (and (= method "GET") (= parts ["state"]))
       #(state 200 (StateReply :view (! (state-view state now timing)) :audit (tuple (cut state.audit -30 None))
                               :drains (drains-view state now timing)))

@@ -54,6 +54,7 @@
   (val base (ClusterTiming))
   (val stretched (ClusterTiming :lease-ms (* 60 base.lease-ms) :fence-ms (* 60 base.fence-ms) :reassign-after-ms (* 60 base.reassign-after-ms)
                                 :keep-fence-ms (* 60 base.keep-fence-ms) :kept-reassign-after-ms (* 60 base.kept-reassign-after-ms)
+                                :pinned-keep-fence-ms (* 60 base.pinned-keep-fence-ms)
                                 :worker-forget-ms (* 60 base.worker-forget-ms)))
   (assert (= base.worker-forget-ms (* 7 24 3600 1000)) base)
   (assert (= stretched.lease-ms 600000) stretched))

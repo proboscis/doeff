@@ -10,7 +10,7 @@
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   outbox/<結末の id>(2026-10-21 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 出口を持たない今までの振る舞い)
-;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
+;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms pinned}。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 印を約束しない今までの振る舞い)
 ;;;   superseded/<名>/<世代>(AL-D2 — 退いた世代が走らせている入れ替えの job の組 SupersededRun {worker boot jobs seen_ms overlapped leaving since_ms}。無い置き場は
 ;;;   空として読む。旧い版の coordinator はこの鍵を読まずに無視する — 旧い Pod の preStop が入れ替えの job を待たない今までの振る舞い。since_ms の無い行は None として読む)
@@ -121,6 +121,14 @@
   (dfor k keys :setv row (.row table k) :if (is-not row None) :setv made (row-source k row) (get made 0) (get made 1)))
 
 
+(deff keep-mark-json [#^ KeepMark mark]  ; defk にできない: 組の作り手(durable-delta が Program の外の素の呼びで引く)の直列化
+  {:pre [(: mark KeepMark)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "印の約束 1 つの保存の行(keep/<名>)を作るため。欄 pinned は真の時だけ書く — 欄を知らない旧い版の coordinator へ戻しても、縛られた
+   担い手への約束の無い置き場は今までどおり読める(旧い版は行を KeepMark #** v で読み、知らない欄で落ちる)。"
+  (setv row (asdict mark))
+  (if mark.pinned row (dfor #(k v) (.items row) :if (!= k "pinned") k v)))
+
+
 (defn #^ SourceGroup table-group [#^ str field #^ Callable row-source]
   "Table 欄 field の行 1 つが鍵 1 つを作る組(T7)— row-source は 表の鍵と行 → #(耐久の鍵 元の値の tuple 直列化の関数)。build は全行・
    keyed は与えた表の鍵の行(無い鍵は飛ばす)だけを同じ row-source で作るので、絞った答えは全部を作った答えの部分集合になる。"
@@ -155,7 +163,7 @@
     (table-group "outbox" (fn [k e] #((+ OUTBOX k) #(#(e) (partial ended-to-json e)))))
     (SourceGroup :fields #("keep_marks")
                  :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor m state.keep-marks (+ KEEP m.job) #(#(m) (partial asdict m)))))
+                          (dfor m state.keep-marks (+ KEEP m.job) #(#(m) (partial keep-mark-json m)))))
     (SourceGroup :fields #("superseded_runs")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor r state.superseded-runs (+ SUPERSEDED r.worker "/" r.boot) #(#(r) (partial asdict r)))))

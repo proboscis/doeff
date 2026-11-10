@@ -69,7 +69,7 @@
   (val base (ClusterTiming))
   (ClusterTiming :lease-ms (* ratio base.lease-ms) :fence-ms (* ratio base.fence-ms) :reassign-after-ms (* ratio base.reassign-after-ms)
                  :silent-worker-wait-ms (* ratio base.silent-worker-wait-ms) :keep-fence-ms (* ratio base.keep-fence-ms)
-                 :kept-reassign-after-ms (* ratio base.kept-reassign-after-ms)
+                 :kept-reassign-after-ms (* ratio base.kept-reassign-after-ms) :pinned-keep-fence-ms (* ratio base.pinned-keep-fence-ms)
                  :worker-forget-ms (* ratio base.worker-forget-ms) :watch-max-ms (* ratio base.watch-max-ms)
                  :client-reply-ms (* ratio base.client-reply-ms) :inbox-reply-ms (* ratio base.inbox-reply-ms)
                  :queued-notice-ms (* ratio base.queued-notice-ms)))

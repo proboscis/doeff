@@ -490,6 +490,11 @@
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
   (.add-argument parser "--pod-ip" :default ""
                  :help "この worker の Pod の IP(k8s の downward API の status.podIP — coordinator が job の Service の振り先に書く)")
+  (.add-argument parser "--pinned-to-node" :action "store_true"
+                 :help "この worker の Pod は自分の node の外で動けない(nodeSelector などで node に縛られ、同じ名の新しい世代は node が API server に
+                        届き直すまで起きない)。途絶しても動かし続けてよい印の在る job を、coordinator が返事の timing で渡す長い柵
+                        (pinned-keep-fence-ms)まで止めない — coordinator と API server が同時に届かない間も job を動かし続ける。縛られていない worker に
+                        付けると、追い出しの後に他の node で起きた新しい世代と 2 か所で走りうる")
   (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
   (.add-argument parser "--memory-mib" :type int :default None
                  :help "常駐の job に使ってよい memory の予算(MiB・0 以上)。coordinator は置いた job の settle の和 + 新しい job の settle が
@@ -658,6 +663,8 @@
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :pod-ip args.pod-ip :boot-marks boot-marks :overlaps-elder args.overlaps-elder
+                        ;; node に縛られた worker は印の在る job を長い柵まで動かし続ける(heartbeat_rules.held-keep-fence-ms)。
+                        :pinned-to-node args.pinned-to-node
                         ;; ServiceAccount の token の古さを heartbeat で名乗る(Pod の外の worker は file が無く、名乗らない)。
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; 枠の file を heartbeat の前に読み直す(空 = 読まない)。

@@ -172,7 +172,7 @@
    ;; 途絶しても動かし続けてよい印の約束(#2883): job の名の順の列 [{job worker boot sinceMs}] — 担い手 worker の世代 boot へ時刻 sinceMs から
    ;; 渡してある。約束の在る job は、担い手が印を手放すか、Worker が消されるか、担い手の沈黙が約束の期限(kept-reassign-after-ms)を
    ;; 越えるまで他へ移らない。GET で返すだけ(約束を書き換える要求は無い)。
-   "keepMarks" (lfor m view.keep-marks {"job" m.job "worker" m.worker "boot" m.boot "sinceMs" m.since-ms})
+   "keepMarks" (lfor m view.keep-marks {"job" m.job "worker" m.worker "boot" m.boot "sinceMs" m.since-ms "pinned" m.pinned})
    ;; 組の同時数の上限(2026-10-12): 組の名の順の列 [{group scope limit perPart resourceVersion held queued}] —
    ;; 系が宣言した値と、置いている数の升 held([{worker? part? count}] — 範囲 worker の組だけ worker・区分ごとの組だけ part)と、
    ;; その組を名乗って待っている task の数。運用者が値の割れや詰まりを 1 か所で読むため。

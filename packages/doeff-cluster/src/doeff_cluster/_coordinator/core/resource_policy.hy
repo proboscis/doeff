@@ -172,13 +172,14 @@
   ;; fence でも止めず、coordinator も約束の期限(kept-reassign-after-ms — 長い方の柵より後)までは他へ移さないので、process は動き続けて
   ;; いると考えられる(監視が止まりと判じない)。印の無い job は担い手が
   ;; fence で止めているので、期限の後は NotReady のまま(他に置ける worker が無ければ置き先は保ち、担い手が戻ると起こし直す)。
-  ;; 印の在る job も、担い手は途絶が長い方の柵(ClusterTiming.keep-fence-ms)を越えたら止めるので、その後は NotReady。
+  ;; 印の在る job も、担い手は途絶が長い方の柵(ClusterTiming.keep-fence-ms — node に縛られた担い手は pinned-keep-fence-ms)を越えたら
+  ;; 止めるので、その後は NotReady。
   (when (or (is st None) (>= now (carrier-stale-from st timing)))
     (setv carrier (.row state.workers a.worker)
           silent (and carrier (alive now carrier timing.reassign-after-ms))
           mark (run (keep-mark-of state.keep-marks name))
           kept (and (is-not mark None) (= mark.worker a.worker) (is-not carrier None)
-                    (alive now carrier timing.keep-fence-ms)))
+                    (alive now carrier (if mark.pinned timing.pinned-keep-fence-ms timing.keep-fence-ms))))
     (return (no (if (or warming silent kept) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
                 (if kept
                     (.format "担い手 {} の報告が無い・古い — 途絶しても動かし続けてよい印を渡してあるので、process は動き続けていると考えられる(担い手が戻るか、Worker が消されるか、担い手の沈黙が約束の期限を越えるまで他へ移さない)"
@@ -374,7 +375,8 @@
         (+ #((warm-until state timing))
            (if (is carrier None)
                #()
-               #((+ (liveness-deadline carrier timing.reassign-after-ms) 1) (+ (liveness-deadline carrier timing.keep-fence-ms) 1))))))
+               #((+ (liveness-deadline carrier timing.reassign-after-ms) 1) (+ (liveness-deadline carrier timing.keep-fence-ms) 1)
+                 (+ (liveness-deadline carrier timing.pinned-keep-fence-ms) 1))))))
   (min (gfor due dues :if (> due now) due) :default None))
 
 

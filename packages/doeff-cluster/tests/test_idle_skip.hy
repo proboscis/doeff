@@ -22,7 +22,7 @@
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [KeepMark])
 (import doeff_cluster [liveness-due]
-        doeff_cluster._coordinator.core.cluster_policy [note-liveness forget-silent-workers alive sweep-keep-marks])
+        doeff_cluster._coordinator.core.cluster_policy [note-liveness forget-silent-workers alive sweep-keep-marks kept-window-ms])
 (import doeff_cluster [DueNow DueNever]
         doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [sweep-due]
@@ -340,8 +340,21 @@
   (assert (is held promised))
   (<- released ClusterState (sweep-keep-marks promised kept-reassign-due timing))
   (assert (= released.keep-marks #()) released.keep-marks)
+  ;; pinned-keep-fence-ms — node に縛られた担い手の長い柵(資源の status が比べる alive の窓)。
+  (<- pinned-fence-answer (| DueAt DueNow DueNever) (liveness-due silent kept-reassign-due timing))
+  (assert (= pinned-fence-answer (DueAt :at (+ seen timing.pinned-keep-fence-ms 1))) pinned-fence-answer)
+  (val pinned-fence-due pinned-fence-answer.at)
+  ;; kept-window-ms の縛られた担い手の期限 — sweep-keep-marks が縛られた担い手への約束を外す刻。
+  (<- pinned-answer (| DueAt DueNow DueNever) (liveness-due silent pinned-fence-due timing))
+  (assert (= pinned-answer (DueAt :at (+ seen (kept-window-ms timing True) 1))) pinned-answer)
+  (val pinned-due pinned-answer.at)
+  (val pinned-promise (replace silent :keep-marks #((KeepMark :job "j" :worker "w" :boot None :since-ms seen :pinned True))))
+  (<- pinned-held ClusterState (sweep-keep-marks pinned-promise (- pinned-due 1) timing))
+  (assert (is pinned-held pinned-promise))
+  (<- pinned-released ClusterState (sweep-keep-marks pinned-promise pinned-due timing))
+  (assert (= pinned-released.keep-marks #()) pinned-released.keep-marks)
   ;; worker-forget-ms — forget-silent-workers が忘れる刻。
-  (<- forget-answer (| DueAt DueNow DueNever) (liveness-due silent kept-reassign-due timing))
+  (<- forget-answer (| DueAt DueNow DueNever) (liveness-due silent pinned-due timing))
   (assert (= forget-answer (DueAt :at (+ seen timing.worker-forget-ms 1))) forget-answer)
   (val forget-due forget-answer.at)
   (<- kept ClusterState (forget-silent-workers silent (- forget-due 1) timing))

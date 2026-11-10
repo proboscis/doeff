@@ -40,8 +40,8 @@
 
 (defk heartbeat-body [* name provides exclusive node versions statuses endpoint boot boot-at tools kept [stopping False]
                       [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None] [measured None] [child-environ None]
-                      [pod-ip ""]]
-  {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str) (: pod-ip str)
+                      [pod-ip ""] [pinned False]]
+  {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str) (: pod-ip str) (: pinned bool)
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)
          (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))
@@ -64,7 +64,9 @@
    GET /state の worker の行に出す。名乗らない worker には task を置かない)。child-environ = job の子へ渡す環境変数の名(名の順 —
    worker/core/launch の child-environ-names。名乗る時だけ欄 childEnviron を書く。coordinator は GET /state の worker の行に出す)。
    pod-ip = この世代の Pod の IP(k8s の downward API の status.podIP — 空でない時だけ欄 podIp を書く。coordinator は job の Service の
-   振り先〔EndpointSlice〕に、Ready で active な process の在る世代の Pod の IP を書く — coordinator/core/endpoints_policy)。"
+   振り先〔EndpointSlice〕に、Ready で active な process の在る世代の Pod の IP を書く — coordinator/core/endpoints_policy)。
+   pinned = この世代は node に縛られていると名乗る(heartbeat_rules.pinned-claim? — 真の時だけ欄 pinnedToNode を書く。coordinator は印の
+   約束に残し、約束の期限を長い柵 pinned-keep-fence-ms から求める)。"
   (<- named (get tuple #(str ...)) (announced-provides provides pools))
   (var measured-part {})
   (when (is-not measured None)
@@ -82,6 +84,7 @@
    #** (if (is memory-mib None) {} {"memoryMiB" memory-mib})
    #** (if (is child-environ None) {} {"childEnviron" (list child-environ)})
    #** (if pod-ip {"podIp" pod-ip} {})
+   #** (if pinned {"pinnedToNode" True} {})
    #** measured-part})
 
 

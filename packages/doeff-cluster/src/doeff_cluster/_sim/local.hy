@@ -227,7 +227,7 @@
 (import doeff_cluster._worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster._worker.protocol.coordinator_link [watch-params with-bell RESEND-AFTER-MS])
-(import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held desired-after-silence silent-ms])
+(import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held desired-after-silence silent-ms pinned-claim? held-keep-fence-ms])
 ;; 周の間の待ち(AwaitNextTick)は本番の答え手 tick-pauses が宿の内側で答える。宿は起きる物の組(WorkerWakes)に、本番の送り手の口と
 ;; 同じ関数で組んだ期限と、宿の呼び鈴を入れて答える(#3871 の単位 5)。
 (import doeff_cluster._worker.protocol.tick_pauses [tick-pauses])
@@ -413,7 +413,8 @@
    1 回の手間を処理の止まりに換える・sim/memory_watch_world。None = 回さない — 本番の入口だけが回す見張りを模擬で持たない既定)・
    memory-tight = 機体の memory が逼迫したまま続く worker(観測 ObserveWorld の WorldView.memory-tight を真にする — 本番の見張りの様子が
    TIGHT か DANGER のまま続く機体の代役。worker は task を見送り、上限 WorkerPolicy.memory-tight-hold-limit-ms を越えたら env-failed・種類
-   memory-tight で報告する。偽 = 逼迫しない)。"
+   memory-tight で報告する。偽 = 逼迫しない)・pinned-to-node = node に縛られた worker(本番の --pinned-to-node — heartbeat で
+   pinnedToNode を名乗り、返事の timing が長い柵を渡せば、印の在る job をその柵まで止めない・heartbeat_rules.held-keep-fence-ms)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
   (setv #^ str doeff-commit "")
@@ -438,6 +439,7 @@
   (setv #^ bool fresh-boot-every-beat False)
   (setv #^ bool hides-retired False)
   (setv #^ (| int None) claims-cpus None)
+  (setv #^ bool pinned-to-node False)
   (setv #^ bool silent-notices False)
   (setv #^ bool steps-wall False)
   (setv #^ bool reads-room False)
@@ -941,6 +943,8 @@
   (setv #^ int stalled-until-ms 0)
   ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 本番の LinkState.keep-fence-ms と同じ・返事の timing が上書きする)。
   (setv #^ int keep-fence-ms (. (ClusterTiming) keep-fence-ms))
+  ;; node に縛られた worker の長い柵(本番の LinkState.pinned-keep-fence-ms と同じ — 返事の timing の pinned_keep_fence_ms・欄の無い返事では None)。
+  (setv #^ (| int None) pinned-keep-fence-ms None)
   (setv #^ bool sent-stopping False)
   (setv #^ (| Promise None) wake-bell None)
   (setv #^ (| Promise None) stop-bell None)
@@ -2196,6 +2200,14 @@
   #(fetched failures))
 
 
+(defk host-keep-fence-ms [worker truth]
+  {:pre [(: worker SimWorker) (: truth HostTruth)] :post [(: % int)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宿が印の在る job を途絶の後も動かし続ける柵を、止めの判断と止めの刻で同じ値にするため(本番の coordinator への口の link-keep-fence-ms と
+   同じ選び — heartbeat_rules.held-keep-fence-ms)。"
+  (<- fence int (held-keep-fence-ms truth.keep-fence-ms truth.pinned-keep-fence-ms worker.pinned-to-node truth.stopping))
+  fence)
+
+
 (defk beat-body [worker truth sent-at stopping plan]
   {:pre [(: worker SimWorker) (: truth HostTruth) (: sent-at int) (: stopping bool) (: plan SimPlan)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
@@ -2224,6 +2236,7 @@
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder
                                 :pod-ip truth.pod-ip
+                                :pinned (! (pinned-claim? worker.pinned-to-node stopping))
                                 :pools room.pools
                                 :memory-mib (if (is worker.overstates-memory None) room.memory-mib worker.overstates-memory)
                                 :measured measured))
@@ -2305,6 +2318,9 @@
                                             :keep-fence-ms (if (and timing (in "keep_fence_ms" timing))
                                                                (int (get timing "keep_fence_ms"))
                                                                truth.keep-fence-ms)
+                                            :pinned-keep-fence-ms (if (and timing (in "pinned_keep_fence_ms" timing))
+                                                                      (int (get timing "pinned_keep_fence_ms"))
+                                                                      None)
                                             :programs (| truth.programs fetched)
                                             :program-failures unfetched
                                             ;; 返事から外れた task の結果は落とす(本番の accept-tasks が結果の file を消すのと同じ)。
@@ -2324,7 +2340,7 @@
           (<- silent int (silent-ms now now-mono-ms truth.last-ok-ms truth.last-ok-mono-ms))
           (if worker.ignores-fence
               (DesiredJobs truth.last-desired :warm truth.last-warm)
-              (desired-when-unreachable silent truth.fence-ms truth.keep-fence-ms truth.last-desired truth.last-warm
+              (desired-when-unreachable silent truth.fence-ms (! (host-keep-fence-ms worker truth)) truth.last-desired truth.last-warm
                                         (unreached-reason answer))))))
 
 
@@ -2439,7 +2455,7 @@
   (val last-ok (- now silent))
   (val tick-began (- now ticking))
   (<- beat (| DueAt DueNever) (beat-due tick-began last-ok interval))
-  (<- fence (| DueAt DueNever) (fence-due tick-began last-ok truth.fence-ms truth.keep-fence-ms))
+  (<- fence (| DueAt DueNever) (fence-due tick-began last-ok truth.fence-ms (! (host-keep-fence-ms worker truth))))
   ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ — 本番の送り手の口と同じ)。
   (val resend (if truth.fresh (DueNever) (DueAt :at (+ now RESEND-AFTER-MS))))
   (<- held (| DueAt DueNever) (due-after began (+ #(truth.stalled-until-ms) (tuple (gfor p (.values truth.codes) p.ready-ms)))))
@@ -2482,7 +2498,7 @@
     ;; 合わせて判じず、明けた最初の周期で判じる。止めた周期は heartbeat を送らず、次の周期で送る(宣言を捨てた = fresh を下ろす)。
     ;; 反例の worker ignores-fence(印の無い job も途絶で止めない壊れた worker)は判じない。
     (val silenced (if (and (>= now truth.stalled-until-ms) (not worker.ignores-fence))
-                      (desired-after-silence silent truth.fence-ms truth.keep-fence-ms truth.fresh
+                      (desired-after-silence silent truth.fence-ms (! (host-keep-fence-ms worker truth)) truth.fresh
                                              truth.last-desired truth.last-warm)
                       None))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛けてある(周の頭の ticked-truth — 送っている間に来た変化も鳴らす・#2692)。

@@ -235,7 +235,7 @@
   (<- running dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] []))
   (<- marked tuple (heard (get declared 0) (| running {"boot" "w1-boot1"}) 1000))
   (<- shown list (marks-in-state (get marked 0) 1500))
-  (assert (= shown [{"job" "s0" "worker" "w1" "boot" "w1-boot1" "sinceMs" 1000}]) shown)
+  (assert (= shown [{"job" "s0" "worker" "w1" "boot" "w1-boot1" "sinceMs" 1000 "pinned" False}]) shown)
   ;; 2 台目が加わって移せる先が出来ても、担い手が印を持つと知らせる間は約束が残る(読みの口にも出続ける)。
   (<- second dict (beat-body "w2" [] []))
   (<- joined tuple (heard (get marked 0) second 2000))

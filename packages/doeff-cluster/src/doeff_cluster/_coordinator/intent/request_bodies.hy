@@ -271,7 +271,10 @@
    測った空き(MeasuredLoad — 測れない worker・旧い worker は None。task の置き先はこの値から数え、None の worker には task を置かない)・
    child-environ = worker が job の子へ渡す環境変数の名の列(名乗らない旧い worker は None — GET /state の worker の行に写すだけで、
    置き方の判断には使わない)・pod-ip = その世代の Pod の IP(欄 podIp — k8s の downward API の status.podIP か /etc/hosts の自分の名の行。
-   名乗らない worker(Pod の外・旧い worker)は空。job の Service の振り先〔EndpointSlice〕の材料 — core/endpoints_policy)。
+   名乗らない worker(Pod の外・旧い worker)は空。job の Service の振り先〔EndpointSlice〕の材料 — core/endpoints_policy)・
+   pinned-to-node = この世代は node に縛られ、印の在る job を長い柵(ClusterTiming.pinned-keep-fence-ms)まで動かし続ける(起動の引数
+   --pinned-to-node・止まり始めた世代は名乗らない — 判断は印の約束に残し、約束の期限をその柵から求める・cluster_policy.kept-window-ms。
+   名乗らない旧い worker は偽)。
    旧い worker が送る taskReserve・backgroundRoom・capacity(手書きの task の枠 — 消した欄)は欄に持たずに捨てる(:unknown :ignore)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
@@ -293,6 +296,7 @@
   (setv #^ (| (get tuple #(str ...)) None) kept-when-cut-off None)
   (setv #^ bool stopping False)
   (setv #^ bool overlaps-elder False)
+  (setv #^ bool pinned-to-node False)
   (setv #^ str account-token "ok")
   (setv #^ str room-file "ok")
   (setv #^ str doeff-commit "")

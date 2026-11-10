@@ -377,15 +377,18 @@
    印を渡した担い手は coordinator に届かない間も job を動かし続けうるので、coordinator はこの約束が在る間、job を他の worker へ置かない
    (担い手の上の置き先を、沈黙・能力の変化・drain を問わず保つ — cluster_policy.place-jobs)。約束が外れるのは、担い手の今の世代の heartbeat が
    その job の印を持たないと知らせた時(keptWhenCutOff — 印の無い返事が届いた後)・Worker が消された時・担い手の沈黙が約束の期限
-   (ClusterTiming.kept-reassign-after-ms)を越えた時の 3 つ(後の 2 つは cluster_policy.sweep-keep-marks)。
+   (ClusterTiming.kept-reassign-after-ms — 縛られた担い手は長い柵から求めた期限・cluster_policy.kept-window-ms)を越えた時の 3 つ(後の 2 つは cluster_policy.sweep-keep-marks)。
    job = job の名・worker = 印を渡した担い手の名・boot = 渡した時の担い手の process の世代(表示 — 世代が替わった担い手は新しい世代の
-   知らせで約束を外す)・since-ms = 初めて渡した時刻。保存する(durable_kv の keep/<名> — coordinator を作り直しても約束を忘れない)。
+   知らせで約束を外す)・since-ms = 初めて渡した時刻・pinned = 担い手が印を受けた heartbeat で node に縛られていると名乗った(その担い手は
+   印の在る job を長い柵 ClusterTiming.pinned-keep-fence-ms まで動かし続けるので、約束の期限もその柵から求める — cluster_policy.kept-window-ms。
+   欄の無い保存の行は偽)。保存する(durable_kv の keep/<名> — coordinator を作り直しても約束を忘れない)。
    読みの口: GET /state の keepMarks(#2883 — StateView.keep-marks)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str job)
   (#^ str worker)
   (#^ (| str None) boot)
-  (#^ int since-ms))
+  (#^ int since-ms)
+  (setv #^ bool pinned False))
 
 
 (defrecord NeedsOverride

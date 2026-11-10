@@ -37,6 +37,16 @@
   ;; 上限 15 + 接続の上限 2 + 子の停止の猶予 15 = 272 秒。余白 8 秒を足して 280 秒(reassign-after-ms の 60 秒 = fence 20 + 32 + 余白 8 と
   ;; 同じ形)。
   (setv #^ int kept-reassign-after-ms 280000)
+  ;; node に縛られた worker(起動の引数 --pinned-to-node — その Pod は自分の node の外で動けず、同じ名の新しい世代は node が API server に
+  ;; 届き直すまで起きない — 2026-11-10)が、印の在る job を途絶の後も動かし続ける上限(keep-fence-ms の代わりの、さらに長い柵)。keep-fence-ms の
+  ;; 前提(届かない node の Pod の新しい世代が約 350 秒後に他の node で動きうる)は、node に縛られた worker には当たらない — 新しい世代は
+  ;; 同じ node にしか置けず、node が届かない間は置けない(届き直すと kubelet が旧い Pod を止める)。残る守りは coordinator が約束を外して
+  ;; 他へ移す事だけで、それは約束の印に「縛られた担い手」と残し、約束の期限をこの柵から求める(cluster_policy.kept-window-ms — 条 C4 と
+  ;; 同じ形: kept-reassign-after-ms − keep-fence-ms の 40 秒をこの柵に足す)。coordinator と API server が同じ機体に在り、その機体が止まる
+  ;; (2026-11-10 13:21Z の 17 分の電源の落ち)と、全部の worker が 240 秒で印の在る job を止め、coordinator が戻るまで起こせなかった。
+  ;; 1 時間は機体の起き直し(実測 約 17 分)を覆う。代償は、node ごと死んだ縛られた担い手の約束が外れるまでこの長さ待つ事(移せる先の
+  ;; 在る job だけの損 — 移せる先の無い job は約束が外れても置き先が変わらない)。
+  (setv #^ int pinned-keep-fence-ms (* 3600 1000))
   ;; 連絡の途絶えた worker を、置き先も task も持たなければ名簿から忘れるまで(cluster_policy.forget-silent-workers)。Mac は眠り・持ち出しで
   ;; 数日沈黙するので 7 日。
   (setv #^ int worker-forget-ms (* 7 24 3600 1000))
@@ -71,6 +81,10 @@
       (raise (ValueError "約束の在る job の移し替え(kept-reassign-after-ms)は移し替え(reassign-after-ms)より長くなければならない")))
     (when (<= self.worker-forget-ms self.kept-reassign-after-ms)
       (raise (ValueError "worker を忘れる期限(worker-forget-ms)は約束の在る job の移し替え(kept-reassign-after-ms)より長くなければならない")))
+    (when (< self.pinned-keep-fence-ms self.keep-fence-ms)
+      (raise (ValueError "node に縛られた worker の柵(pinned-keep-fence-ms)は長い方の柵(keep-fence-ms)より短くてはならない")))
+    (when (<= self.worker-forget-ms (+ self.kept-reassign-after-ms (- self.pinned-keep-fence-ms self.keep-fence-ms)))
+      (raise (ValueError "worker を忘れる期限(worker-forget-ms)は縛られた担い手への約束の期限より長くなければならない")))
     (when (<= self.client-reply-ms self.watch-max-ms)
       (raise (ValueError "待ちの上限(watch-max-ms)は client の返事の打ち切り(client-reply-ms)より短くなければならない")))
     (when (<= self.inbox-reply-ms self.client-reply-ms)

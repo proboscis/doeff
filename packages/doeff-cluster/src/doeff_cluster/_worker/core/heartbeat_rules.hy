@@ -33,6 +33,33 @@
   (tuple (sorted (gfor job jobs :if (and job.keep-when-cut-off (not job.once)) job.name))))
 
 
+;; node に縛られた worker(起動の引数 --pinned-to-node — 2026-11-10): その Pod は自分の node の外で動けないので、同じ名の新しい世代は node が
+;; API server に届き直すまで起きない(届き直すと kubelet が旧い Pod を止める)。そこで印の在る job を長い方の柵(keep-fence-ms・240 秒)で
+;; なく、さらに長い柵(ClusterTiming.pinned-keep-fence-ms・1 時間)まで動かし続ける — coordinator と API server が同じ機体に在り、その機体が
+;; 止まった間も job を止めない(2026-11-10 13:21Z の 17 分の電源の落ちで、全部の worker が 240 秒で印の在る job を止めた)。
+;; 縛られていると名乗るのは止まり始めていない世代だけ(止まり始めた世代は Pod が消える途中で、名の替わる切り替えでは二度と戻らない —
+;; coordinator が約束を短い期限で外せるように、名乗りを下ろして短い柵へ戻る)。長い柵を使うのは、coordinator がその柵を返事の timing で
+;; 渡した時だけ(渡さない coordinator = 縛られた担い手を知らない旧い版で、約束を短い期限で外す — 前に受けた値を使い続けない)。
+
+(defk pinned-claim? [pinned stopping]
+  {:pre [(: pinned bool) (: stopping bool)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "この世代が heartbeat で node に縛られていると名乗るかを、名乗り(heartbeat の pinnedToNode)と柵の選び(held-keep-fence-ms)で同じ答えに
+   するため: 起動の引数で縛られた worker で、止まり始めていない世代だけ。"
+  (and pinned (not stopping)))
+
+
+(defk held-keep-fence-ms [keep-fence-ms pinned-keep-fence-ms pinned stopping]
+  {:pre [(: keep-fence-ms int) (: pinned-keep-fence-ms (| int None)) (: pinned bool) (: stopping bool)] :post [(: % int)]
+   :tags {:context "worker" :role "judgment"}}
+  "印の在る job を途絶の後も動かし続ける柵を 1 か所で選ぶため(本番の coordinator への口と sim の宿が、止めの判断と止めの刻の両方に渡す):
+   縛られていると名乗る世代(pinned-claim?)で、最後の返事の timing が長い柵 pinned-keep-fence-ms を渡した時はその柵、それ以外は
+   keep-fence-ms。"
+  (<- claimed bool (pinned-claim? pinned stopping))
+  (if (and claimed (is-not pinned-keep-fence-ms None))
+      pinned-keep-fence-ms
+      keep-fence-ms))
+
+
 (defk silent-ms [now-ms now-mono-ms since-ms since-mono-ms]
   {:pre [(: now-ms int) (: now-mono-ms int) (: since-ms int) (: since-mono-ms int)] :post [(: % int)]
    :tags {:context "worker" :role "judgment"}}

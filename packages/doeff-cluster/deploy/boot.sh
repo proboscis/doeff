@@ -8,7 +8,8 @@
 #                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・NODE_NAME(k8s の downward API の spec.nodeName —
 #                      coordinator が node の label から company-machine などの能力を導く)・WORKER_ROOM_FILE = 枠の file
 #                      (名 → memoryMiB・pools の JSON — 在れば heartbeat の前に読み直す)・WORKER_MEMORY_MIB = 常駐の job の memory の予算
-#                      (MiB — 省けば名乗らず、memory で縛られない)・
+#                      (MiB — 省けば名乗らず、memory で縛られない)・WORKER_PINNED_TO_NODE = 1 なら --pinned-to-node(Pod が node に
+#                      縛られた worker — 途絶しても動かし続けてよい印の在る job を長い柵まで止めない。縛られていない worker には付けない)・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
 #                      import の根(`,` で並べる・既定 .)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
@@ -1243,6 +1244,14 @@ fi
 set --
 [ -z "${WORKER_ROOM_FILE:-}" ] || set -- "$@" --room-file "$WORKER_ROOM_FILE"
 [ -z "${WORKER_MEMORY_MIB:-}" ] || set -- "$@" --memory-mib "$WORKER_MEMORY_MIB"
+# node に縛られた worker(Deployment が nodeSelector で 1 つの node に置く — 同じ名の新しい世代は node が API server に届き直すまで起きない)。
+case "${WORKER_PINNED_TO_NODE:-}" in
+  ''|0) ;;
+  1) set -- "$@" --pinned-to-node ;;
+  *)
+    echo "boot: WORKER_PINNED_TO_NODE は 1 か 0 で渡す(受けた値: $WORKER_PINNED_TO_NODE)" >&2
+    exit 2 ;;
+esac
 # 実行環境の root の置き場の 2 つの量(#3732 — 掃除の下限を disk 全体の割合から絶対の量へ。既定の値はここの 1 か所で、worker の
 # 入口は必ずの引数として受ける)。台ごとに変える時は Deployment の env に GiB の整数で書く:
 #   WORKER_ENV_ROOTS_GIB    roots の合計の上限(既定 20)— 越えた時は、固定(走っている job・宣言の job・準備中・温める表)でも

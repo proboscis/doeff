@@ -54,7 +54,7 @@
 (import doeff_cluster._worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence
                                                     silent-ms])
 (import doeff_cluster._worker.core.launch [program-file-text spec-program-name])
-(import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held])
+(import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held pinned-claim? held-keep-fence-ms])
 (import doeff_cluster._worker.protocol.observations [ObservePrograms])
 (import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable HeartbeatSent ReadDesired PublishStatus BootMarks WakeSet ProgramGap ProgramUnfetched
                                                  HostCounters ReadHostCounters
@@ -154,7 +154,8 @@
    EvictionCell — 在れば、見張りが最後に数えた新しい線の大きさと追い出しまでの空きを measured の memory の総量と空きとして名乗る)。
    supplied =最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
    読む・ADR-DOE-CLUSTER-004)。child-environ = job の子へ渡す環境変数の名(名の順 — worker/core/launch の child-environ-names。
-   None = 名乗らない。本番の入口が起動の時に 1 度決めて渡し、heartbeat の childEnviron で名乗る)。"
+   None = 名乗らない。本番の入口が起動の時に 1 度決めて渡し、heartbeat の childEnviron で名乗る)。pinned-to-node = この worker の Pod は
+   自分の node の外で動けない(起動の引数 --pinned-to-node — 印の在る job を長い柵まで動かし続ける・heartbeat_rules.held-keep-fence-ms)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
@@ -163,7 +164,8 @@
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
                           #^ (| int None) [memory-mib None] #^ str [keep-line-file ""] #^ (| LoadPaths HostLoad None) [load-paths None]
-                          #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]]
+                          #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]
+                          #^ bool [pinned-to-node False]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.pod-ip pod-ip
           self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -171,6 +173,9 @@
           ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 返事の timing の keep_fence_ms が上書きする。
           ;; 欄の無い返事 = 古い coordinator は印も付けないので、この既定が使われる事は無い)。
           self.keep-fence-ms (. (ClusterTiming) keep-fence-ms)
+          ;; node に縛られた worker の長い柵(返事の timing の pinned_keep_fence_ms — 欄の無い返事 = 縛られた担い手を知らない coordinator では
+          ;; None に戻し、keep-fence-ms で止める)。pinned-to-node = 起動の引数で縛られた worker か。
+          self.pinned-keep-fence-ms None self.pinned-to-node pinned-to-node
           ;; 名指しの待ち(GET /watch)で待ってもらう上限(返事の timing の watch_max_ms が上書きする — 最初の返事の前は既定・#3865)。
           self.watch-max-ms (. (ClusterTiming) watch-max-ms)
           ;; coordinator が生きていると数える窓(返事の timing の lease_ms が上書きする — 最初の返事の前は既定)。送った heartbeat の事実
@@ -238,6 +243,14 @@
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
    確かめるまで毎拍の heartbeat を続ける)、その後は上限 limit-ms(coordinator の timing の watch-max-ms — heartbeat の返事で受け取る)まで待つ。"
   {"after" (str after) "timeoutSeconds" (str (if confirmed (/ limit-ms 1000.0) 0.0)) "worker" worker "boot" boot})
+
+(defk link-keep-fence-ms [state]
+  {:pre [(: state LinkState)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "この口が印の在る job を途絶の後も動かし続ける柵を、止めの判断(desired-when-unreachable・desired-after-silence)と止めの刻(fence-due)で
+   同じ値にするため(選びは heartbeat_rules.held-keep-fence-ms)。"
+  (<- fence int (held-keep-fence-ms state.keep-fence-ms state.pinned-keep-fence-ms state.pinned-to-node state.stopping))
+  fence)
+
 
 (defk link-silence [state now-ms]
   {:pre [(: state LinkState) (: now-ms int)] :post [(: % int)]}
@@ -565,7 +578,8 @@
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
                                 :pools state.pools :memory-mib state.memory-mib :measured state.measured
-                                :child-environ state.child-environ :pod-ip state.pod-ip))
+                                :child-environ state.child-environ :pod-ip state.pod-ip
+                                :pinned (! (pinned-claim? state.pinned-to-node stopping))))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
@@ -608,6 +622,8 @@
     ;; 印の在る job の長い方の柵(#2804)も同じく受け取る。
     (when (and timing (in "keep_fence_ms" timing))
       (setv state.keep-fence-ms (int (get timing "keep_fence_ms"))))
+    ;; node に縛られた worker の長い柵も受け取る(欄の無い返事では None に戻す — 縛られた担い手を知らない coordinator は約束を短い期限で外す)。
+    (setv state.pinned-keep-fence-ms (if (and timing (in "pinned_keep_fence_ms" timing)) (int (get timing "pinned_keep_fence_ms")) None))
     ;; 名指しの待ちの上限も同じく受け取る(#3865 — coordinator の頭打ちと同じ値で問う)。
     (when (and timing (in "watch_max_ms" timing))
       (setv state.watch-max-ms (int (get timing "watch_max_ms"))))
@@ -642,7 +658,7 @@
       ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
       (setv state.last-desired None)
       (<- silent int (heard-silence state now-ms (monotonic-ms-of now-mono)))
-      (:= desired (desired-when-unreachable silent state.fence-ms state.keep-fence-ms
+      (:= desired (desired-when-unreachable silent state.fence-ms (link-keep-fence-ms state)
                                             (+ state.last-jobs state.last-tasks) state.last-warm (repr error)))))
   desired)
 
@@ -1020,7 +1036,7 @@
   ;; ので、次の周期は heartbeat を送る — 届けば返事で戻し、届かなければ desired-when-unreachable が判じる。
   ;; 沈黙は壁の時計と単調な時計の長い方(機体の suspend は壁の差が、壁の時計の戻りは単調な差が拾う)。
   (<- silent int (link-silence state now-ms))
-  (val silenced (desired-after-silence silent state.fence-ms state.keep-fence-ms (is-not state.last-desired None)
+  (val silenced (desired-after-silence silent state.fence-ms (link-keep-fence-ms state) (is-not state.last-desired None)
                                        (+ state.last-jobs state.last-tasks) state.last-warm))
   (when (is-not silenced None)
     (setv state.last-desired None)
@@ -1126,7 +1142,7 @@
     ;; 読んだ時刻で判定したので、tick の頭より後の期限はまだ判定していない。tick の後半が送信間隔より長くて既に過ぎていても捨てずに
     ;; 返し、待ち 0 で起きた次の tick が送る(#4332)。
     (<- beat (| DueAt DueNever) (beat-due tick-began last-ok state.beat-interval-ms))
-    (<- fence (| DueAt DueNever) (fence-due tick-began last-ok state.fence-ms state.keep-fence-ms))
+    (<- fence (| DueAt DueNever) (fence-due tick-began last-ok state.fence-ms (link-keep-fence-ms state)))
     ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。再送は期限でなく再送の間の待ちなので、
     ;; tick の終わりの時刻から数える。
     (val resend (if (is state.last-desired None) (DueAt :at (+ now RESEND-AFTER-MS)) (DueNever)))

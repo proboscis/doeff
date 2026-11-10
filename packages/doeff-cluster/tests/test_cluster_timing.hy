@@ -11,6 +11,7 @@
 (import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS])
 (import doeff_cluster [WorkerPolicy])
 (import doeff_cluster._worker.entry.main [timing-checked])
+(import doeff_cluster._coordinator.core.cluster_policy [kept-window-ms])
 
 ;; 本番の時間の設定と worker の既定の停止の猶予。
 (val T (ClusterTiming))
@@ -95,3 +96,33 @@
   (<- long-grace (get tuple #(ReassignTooEarly ...))
       (timing-outlasts-the-self-stop T.kept-reassign-after-ms (replace spans :stop-grace-ms (+ spans.stop-grace-ms slack 1))))
   (assert (= (len long-grace) 1) long-grace))
+
+
+;; node に縛られた担い手(heartbeat の pinnedToNode — 2026-11-10)は、印の在る job を長い柵(ClusterTiming.pinned-keep-fence-ms)まで止めない。
+;; coordinator がその担い手への約束を外す期限(cluster_policy.kept-window-ms)も同じ形: 長い柵での止め切りの最悪より後。
+
+(defk pinned-spans []
+  {:pre [] :post [(: % SelfStopSpans)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "本番の既定から、縛られた担い手の印の在る job の止め切りの内訳を作るため — 柵は長い柵(pinned-keep-fence-ms)で、ほかは production-spans と同じ。"
+  (<- spans SelfStopSpans (production-spans))
+  (replace spans :fence-ms T.pinned-keep-fence-ms))
+
+
+(deftest test-the-pinned-kept-window-outlasts-the-pinned-self-stop
+  ;; 条 C4 の確かめ(縛られた担い手): 約束の期限は長い柵での止め切りより後。縛られていない担い手の期限(kept-reassign-after-ms)のままでは
+  ;; 長い柵での止め切りより前 — 担い手が名乗りを約束に残し、coordinator が期限を長い柵から求める事が要る(失敗ケース)。
+  (<- spans SelfStopSpans (pinned-spans))
+  (val window (kept-window-ms T True))
+  (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop window spans))
+  (assert (= broken #()) #(window broken))
+  (<- short (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop T.kept-reassign-after-ms spans))
+  (assert (= (len short) 1) short)
+  ;; 縛られていない担い手の期限は今までどおり。
+  (val plain (kept-window-ms T False))
+  (assert (= plain T.kept-reassign-after-ms)))
+
+
+(deftest test-a-pinned-fence-shorter-than-the-keep-fence-is-refused
+  ;; 長い柵は長い方の柵より短くできない(縛られた担い手が縛られていない担い手より先に止まる組は、時間の設定として受けない)。
+  (with [(pytest.raises ValueError)]
+    (ClusterTiming :pinned-keep-fence-ms (- T.keep-fence-ms 1))))
