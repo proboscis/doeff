@@ -18,6 +18,12 @@
 ;;;                   command-layer-limit)。線の file を読めない・読み違える回は宣言の静的な値に戻す(古い空きで決めた上限を残さない)。
 ;;; 線を読めない間(Node の宣言をまだ読めない・cgroup の file を読めない・Node と cgroup が食い違う)は、jobs の層を宣言の静的な値に戻す
 ;;; (古い空きで決めた上限を残さない)。clis の層は床と clis の今の使いの大きい方に戻す(使いを読めない回は書かない)。guard が偽の見張り(起動の引数 --memory-guard off)は数えて log に出すだけで書かない。
+;;; 退いた世代(keeper の世代の持ち主): keeper が版を入れ替えた後、前の世代は自分の task を終わりまで回すため同じ container に残り、同じ
+;;; cgroup の層の file を見ている。層の memory.max と keeper の file を書くのは、いちばん新しい ready の世代の見張りだけ — keeper はそれが
+;;; ready になった後に前の世代の dir へ印 draining を置く(deploy/boot.sh の keeper_retire)ので、印(settings の retired-file)を読んだ
+;;; 見張りは guard が偽の見張りと同じく数えて log に出すだけになり、真に戻らない。前の世代は置き先が新しい世代に置いた task の要りを
+;;; heartbeat の返事で受けないので、書けば取り置きを 0 と数えた上限で新しい世代の task を kernel に止めさせる(2026-11-10 — 前の世代が
+;;; jobs の層を 0 へ書き、新しい世代に置いた task の準備が終了 -9 で止まり続けた)。
 ;;;
 ;;; log の行(名 + 欄の形):
 ;;;   EVICTION-LINE-LOG      線を読めるようになった時と、Node の宣言の値が替わった時に 1 行: capacity・allocatable・導いた E・kubepods の
@@ -32,6 +38,7 @@
 ;;;   COMMANDS-SQUEEZE-LOG   命令の層の上限を回収で返らない量より下げた時(kernel が層の中の process を止める)に、その続きの 1 回につき 1 行: 上限・
 ;;;                          回収で返らない量・tmpfs の量・線と MemAvailable の差。
 ;;;   COMMANDS-LIMIT-FAILED-LOG 命令の層の memory.max を書けない・読めない訳が変わった時に 1 行。
+;;;   RETIRED-LOG            keeper が退かせ始めた印を読んだ時に 1 行(以後この世代は層の上限と keeper の file を書かない): 印の file。
 ;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備が線へ足しうる量 MiB>」(空きは負もありうる)。線を読めない回は
 ;;; 書かない(keeper は古い file を読まない — deploy/boot.sh の keeper_swap)。
 ;;; Node は自区画の API server から ServiceAccount の token で読む(読みの答え手は入口が並べる in-cluster-api-routed と HTTP の答え手)。
@@ -63,6 +70,7 @@
 (val CLIS-LENT-LOG "worker: 会話の CLI の層の memory の上限を、空きから床の上へ広げた・床へ戻した")
 (val COMMANDS-SQUEEZE-LOG "worker: MemAvailable が線を割ったので命令の層の上限を回収で返らない量より下げた")
 (val COMMANDS-LIMIT-FAILED-LOG "worker: 命令の層の memory の上限を掛け直せない")
+(val RETIRED-LOG "worker: keeper がこの世代を退かせ始めた — cgroup の層の memory の上限と keeper の file を書かず、数えて log に出すだけにする")
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒)。
 ;; jobs の層の oom_kill の増えの刻を残す長さ(ms — EvictionCell の oom-at-ms。見張りの止めた印を残す間 MemoryWatchSettings.kill-mark-seconds
 ;; の既定と同じ — 調整ループが終わった子を回収するまでの間を十分に覆う)。
@@ -105,7 +113,8 @@
    prepare-cap-bytes = 準備の層の memory.max の宣言の静的な値(prepare-dir が在る時は必ず在る)・room-file = keeper の読む準備の空きの
    file(None = keeper の無い worker か準備の層が無い — 書かない)・clis = 会話の CLI の層の掛け直しの設定(None = 掛け直さない — 天井の
    宣言が無い機体)・commands = 命令の層の掛け直しの設定(None = 層の宣言に commands の memory.max が無い機体)・version-file = keeper の
-   読む版の file(None = keeper の世代でない — 準備を待つ間の取り置きをしない)・own-version = この世代の版(version-file と組で在る)。"
+   読む版の file(None = keeper の世代でない — 準備を待つ間の取り置きをしない)・own-version = この世代の版(version-file と組で在る)・
+   retired-file = keeper がこの世代を退かせる時に置く印の file(None = keeper の世代でない — 印を読まない・頭の註の退いた世代)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
            (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
            (or (is clis None) (is-not jobs-dir None)) (= (is version-file None) (is own-version None))
@@ -127,7 +136,8 @@
   (setv #^ (| CliLayerSettings None) clis None)
   (setv #^ (| CommandLayerSettings None) commands None)
   (setv #^ (| str None) version-file None)
-  (setv #^ (| str None) own-version None))
+  (setv #^ (| str None) own-version None)
+  (setv #^ (| str None) retired-file None))
 
 
 (defclass EvictionCell []
@@ -159,7 +169,8 @@
    jobs の層の memory.events の oom_kill(None = まだ読めていない)・oom-at-ms = oom_kill が増えたのを読んだ刻(epoch ms の tuple — 古い順・
    OOM-MARK-MS の内の物 — 状態の報告が、その間に SIGKILL で終わった task の訳に載せる)・meters = 見張りの最後の読みの常駐の job ごとの
    CPU と memory(worker/core/memory_rules の JobMeter の tuple — heartbeat の測りが欄 jobUses として名乗る・2026-11-10)・meters-at-ms = その
-   読みの刻(None = まだ)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+   読みの刻(None = まだ)・retired = keeper がこの世代を退かせ始めた印を読んだ(頭の註の退いた世代 — 真になったら戻らず、印を読み直さない)。
+   scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
@@ -168,7 +179,7 @@
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.jobs-intake-urgent None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
-          self.meters #() self.meters-at-ms None)))
+          self.meters #() self.meters-at-ms None self.retired False)))
 
 
 (defrecord LayerMemory
@@ -650,13 +661,32 @@
   None)
 
 
+(defk retired-noted [settings cell]
+  {:pre [(: settings EvictionSettings) (: cell EvictionCell)] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
+  "keeper がこの世代を退かせ始めたかを知るため(頭の註の退いた世代): 印の file(retired-file)が読めれば(中身は問わない — keeper は空の
+   file を置く)入れ物に残して 1 行言う。一度真になれば読み直さない。印の file の無い世代(keeper の世代でない)と、読めない回は偽。"
+  (when cell.retired
+    (return True))
+  (when (is settings.retired-file None)
+    (return False))
+  (<- mark (| str FileFailed) (ReadText settings.retired-file))
+  (when (isinstance mark FileFailed)
+    (return False))
+  (setv cell.retired True)
+  (<- (slog RETIRED-LOG :level "info" :retired-file settings.retired-file))
+  True)
+
+
 (defk eviction-noted [settings cell guard now-ms]
   {:pre [(: settings (| EvictionSettings None)) (: cell EvictionCell) (: guard bool) (: now-ms int)] :post [(: % (| EvictionLine None))]
    :tags {:context "worker" :role "protocol"}}
   "見張りの回の頭の 1 回(頭の註): Node の宣言を要る時だけ読み直し、線を数えて入れ物に残し、jobs の層の上限を掛け直すため。答え = 今の
-   線(None = 線が無いか読めない)。設定の無い worker(kubelet の下に居ない・host の cgroupfs が無い)は何もせず None。"
+   線(None = 線が無いか読めない)。設定の無い worker(kubelet の下に居ない・host の cgroupfs が無い)は何もせず None。keeper が退かせ
+   始めた世代は、guard が偽の見張りと同じく層の上限と keeper の file を書かない(頭の註の退いた世代)。"
   (when (is settings None)
     (return None))
+  (<- retired bool (retired-noted settings cell))
+  (val writes (and guard (not retired)))
   (<- (kubelet-noted settings cell now-ms))
   (var line None)
   (var reason "")
@@ -668,7 +698,7 @@
     (:= reason (+ "Node の宣言を読み直せない(前に読めた値で数える): " cell.node-reason)))
   (setv cell.line line cell.line-at-ms now-ms)
   (<- (line-told settings cell line reason))
-  (<- (jobs-limited settings cell line guard now-ms))
+  (<- (jobs-limited settings cell line writes now-ms))
   (when (is-not settings.commands None)
-    (<- (commands-limited settings.commands cell guard)))
+    (<- (commands-limited settings.commands cell writes)))
   line)

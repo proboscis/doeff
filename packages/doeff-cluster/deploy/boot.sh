@@ -76,7 +76,8 @@
 #        追い出しの線までの空きが準備の層の上限に足りない間は起こさずに待つ — keeper_swap)、準備できたらその版の世代を同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
 #        2 つの世代を並べる RollingUpdate と同じ形・AL-D2)。
 #     3. いちばん新しい世代が coordinator に名乗れて自分の ready の file を書いた後(受け渡しの待ち handover-pending が解けた後)に、前の
-#        世代を世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限 DRAIN_DEADLINE)、drained の後に SIGTERM を送る。前の世代は
+#        世代の dir に印 draining を置いて(世代の見張りはこれを読んだ後 cgroup の層の上限を書かない — DOEFF_WORKER_RETIRED_FILE)、
+#        世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限 DRAIN_DEADLINE)、drained の後に SIGTERM を送る。前の世代は
 #        自分の task と退いた handoff の process を終わりまで回してから退く(新しい世代は引き取らない)。新しい世代が名乗れない間(断られる・
 #        古い coordinator)は前の世代を drain しない — 前の世代が仕事を続ける。
 #     4. いちばん新しい世代が落ちたら、間を空けて(30 秒から倍にして 300 秒まで)同じ版で起こし直す。準備の失敗は 300 秒後に撃ち直す。
@@ -1231,6 +1232,12 @@ echo "boot: 名乗る道具 $tools" >&2
 # この Pod の worker の世代を Pod の中(container の /tmp — node の dir ではない)へ書かせる。readinessProbe が比べる。
 export DOEFF_WORKER_BOOT_FILE="${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}"
 export DOEFF_WORKER_READY_FILE="${DOEFF_WORKER_READY_FILE:-/tmp/doeff-worker-ready}"
+# keeper の世代には、keeper が退かせる時に置く印(keeper_retire の世代の dir の draining — 世代の boot の file と同じ dir)の path を渡す。
+# 見張りはこの印を読んだ後、cgroup の層の memory.max と keeper の file を書かない(書くのはいちばん新しい ready の世代だけ — 前の世代は
+# 置いた task の要りを heartbeat の返事で受けず、新しい世代の取り置きより下の上限を書いた・2026-11-10)。
+if [ -n "${DOEFF_WORKER_GENERATION:-}" ]; then
+  export DOEFF_WORKER_RETIRED_FILE="${DOEFF_WORKER_BOOT_FILE%/*}/draining"
+fi
 # 旧い WORKER_LABELS(置き場所の label)は受け付けない — 能力を WORKER_PROVIDES / WORKER_EXCLUSIVE で名乗る(ADR-DOE-CLUSTER-001 R4b)。
 if [ -n "${WORKER_LABELS:-}" ]; then
   echo "boot: WORKER_LABELS は受け付けない — WORKER_PROVIDES(と WORKER_EXCLUSIVE)で提供する能力を名乗る" >&2

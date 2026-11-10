@@ -112,6 +112,9 @@
 ;; keeper_start)が両方在る世代は、版の file の版が自分の版と違い準備がまだ走っていない間、準備の足しうる量を新しい受けの外に取り置く
 ;; (worker/core/eviction_rules の頭の註の準備を待つ間の取り置き)。
 (val VERSION-FILE-VAR "WORKER_VERSION_FILE")
+;; keeper がこの世代を退かせる時に置く印の file(deploy/boot.sh が keeper の世代にだけ渡す — keeper_retire の draining)。印を読んだ後の
+;; 見張りは cgroup の層の memory.max と keeper の file を書かない(worker/protocol/eviction_line の頭の註の退いた世代)。
+(val RETIRED-FILE-VAR "DOEFF_WORKER_RETIRED_FILE")
 (val EVICTION-MARGIN-VAR "WORKER_EVICTION_MARGIN")
 ;; 会話の CLI の層(上に載る系の仕事を余りの空きで受ける機体の限る層 — 層の名は上に載る系の会話の受け手と同じ clis)の天井の機体の
 ;; 宣言(kernel の memory の綴り)。在る機体だけ、worker は見張りの回ごとに clis の層の memory.max を宣言の静的な値(床)と天井の間で
@@ -246,6 +249,7 @@
   (val keeps (and room-file version-file own-version))
   (EvictionSettings :clis clis :commands (if (is command-cap None) None (CommandLayerSettings :dir (+ cgroup-dir "/" COMMAND-LAYER) :cap-bytes command-cap))
                     :version-file (if keeps version-file None) :own-version (if keeps own-version None)
+                    :retired-file (or (.get machine-env RETIRED-FILE-VAR) None)
                     :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
                     :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap :jobs-ceiling-bytes jobs-ceiling
                     :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
@@ -603,7 +607,7 @@
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
-                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR commit-var)
+                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR RETIRED-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
