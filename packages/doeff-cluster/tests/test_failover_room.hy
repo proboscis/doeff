@@ -27,7 +27,7 @@
                (FailoverWorker :info (WorkerInfo :name "node-e" :provides #("host-node-e" "host-systemd-readable" "pool-node-e-node-f")
                                                  :last-seen-ms 0 :exclusive #() :memory-mib 1792)
                                :memory-mib 1792)
-               (FailoverWorker :info (WorkerInfo :name "node-h" :provides #("agent" "boundary-x" "host-systemd-readable" "host-node-h")
+               (FailoverWorker :info (WorkerInfo :name "node-h" :provides #("agent" "boundary-x" "host-node-h" "host-systemd-readable")
                                                  :last-seen-ms 0 :exclusive #() :memory-mib 60000)
                                :memory-mib 60000)))
          workers))
