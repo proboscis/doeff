@@ -176,6 +176,9 @@
           ;; node に縛られた worker の長い柵(返事の timing の pinned_keep_fence_ms — 欄の無い返事 = 縛られた担い手を知らない coordinator では
           ;; None に戻し、keep-fence-ms で止める)。pinned-to-node = 起動の引数で縛られた worker か。
           self.pinned-keep-fence-ms None self.pinned-to-node pinned-to-node
+          ;; 枠の file の行の pinnedToNode(room-noted が読み直す)と、最後に返事を読めた heartbeat で縛られていると名乗ったか(coordinator が
+          ;; 約束に残した名乗り — 長い柵はこの名乗りが届いた後だけ使う。途絶の最中に枠の file が偽から真へ替わっても長くしない)。
+          self.room-pinned False self.pinned-acked False
           ;; 名指しの待ち(GET /watch)で待ってもらう上限(返事の timing の watch_max_ms が上書きする — 最初の返事の前は既定・#3865)。
           self.watch-max-ms (. (ClusterTiming) watch-max-ms)
           ;; coordinator が生きていると数える窓(返事の timing の lease_ms が上書きする — 最初の返事の前は既定)。送った heartbeat の事実
@@ -248,7 +251,9 @@
   {:pre [(: state LinkState)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "この口が印の在る job を途絶の後も動かし続ける柵を、止めの判断(desired-when-unreachable・desired-after-silence)と止めの刻(fence-due)で
    同じ値にするため(選びは heartbeat_rules.held-keep-fence-ms)。"
-  (<- fence int (held-keep-fence-ms state.keep-fence-ms state.pinned-keep-fence-ms state.pinned-to-node state.stopping))
+  ;; 縛りは、今も縛られていて(起動の引数か枠の file)、最後に返事を読めた heartbeat で名乗った時だけ。
+  (val pinned (and state.pinned-acked (or state.pinned-to-node state.room-pinned)))
+  (<- fence int (held-keep-fence-ms state.keep-fence-ms state.pinned-keep-fence-ms pinned state.stopping))
   fence)
 
 
@@ -579,7 +584,7 @@
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
                                 :pools state.pools :memory-mib state.memory-mib :measured state.measured
                                 :child-environ state.child-environ :pod-ip state.pod-ip
-                                :pinned (! (pinned-claim? state.pinned-to-node stopping))))
+                                :pinned (! (pinned-claim? (or state.pinned-to-node state.room-pinned) stopping))))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
@@ -599,6 +604,8 @@
   (try
     (<- answered (answer-json reply.answer))
     (setv state.last-ok-ms now-ms state.last-ok-mono-ms (monotonic-ms-of now-mono))
+    ;; この返事は、本文で名乗った縛り(base の pinnedToNode)を coordinator が約束に残した後の物。
+    (setv state.pinned-acked (.get base "pinnedToNode" False))
     ;; 読めた返事ごとに、生存の合図の thread への ready の許しを下ろす(下で解けて handoverPending でない返事だけが戻す — 頭の註)。
     ;; 届かない・断られた送り(answer-json が投げる)は許しを変えない: 返事を読んでいないので判じが無く、thread の送りが届く間は
     ;; coordinator が生きていると見ている。
@@ -658,7 +665,8 @@
       ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
       (setv state.last-desired None)
       (<- silent int (heard-silence state now-ms (monotonic-ms-of now-mono)))
-      (:= desired (desired-when-unreachable silent state.fence-ms (link-keep-fence-ms state)
+      (<- keep-fence int (link-keep-fence-ms state))
+      (:= desired (desired-when-unreachable silent state.fence-ms keep-fence
                                             (+ state.last-jobs state.last-tasks) state.last-warm (repr error)))))
   desired)
 
@@ -854,13 +862,15 @@
         (<- read RoomReading (room-of-text text state.name))
         (:= reading read))
       (val before (WorkerRoom :memory-mib state.memory-mib :pools state.pools :keep-line-file state.keep-line-file
-                              :command-line-file state.command-line-file :command-floor-mib state.command-floor-mib))
+                              :command-line-file state.command-line-file :command-floor-mib state.command-floor-mib
+                              :pinned-to-node state.room-pinned))
       (val after (if (is reading.room None) before reading.room))
       (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
         (<- line str (room-line before after reading))
         (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
       (setv state.pools after.pools state.memory-mib after.memory-mib state.keep-line-file after.keep-line-file
             state.command-line-file after.command-line-file state.command-floor-mib after.command-floor-mib
+            state.room-pinned after.pinned-to-node
             state.room-state reading.state state.room-reason reading.reason)
       ;; 命令の層を掛け直す線の file と床を見張りの入れ物へ渡す(worker/core/eviction_rules の頭の註の命令の層)。
       (when (is-not state.eviction None)
@@ -1036,7 +1046,8 @@
   ;; ので、次の周期は heartbeat を送る — 届けば返事で戻し、届かなければ desired-when-unreachable が判じる。
   ;; 沈黙は壁の時計と単調な時計の長い方(機体の suspend は壁の差が、壁の時計の戻りは単調な差が拾う)。
   (<- silent int (link-silence state now-ms))
-  (val silenced (desired-after-silence silent state.fence-ms (link-keep-fence-ms state) (is-not state.last-desired None)
+  (<- keep-fence int (link-keep-fence-ms state))
+  (val silenced (desired-after-silence silent state.fence-ms keep-fence (is-not state.last-desired None)
                                        (+ state.last-jobs state.last-tasks) state.last-warm))
   (when (is-not silenced None)
     (setv state.last-desired None)
@@ -1142,7 +1153,8 @@
     ;; 読んだ時刻で判定したので、tick の頭より後の期限はまだ判定していない。tick の後半が送信間隔より長くて既に過ぎていても捨てずに
     ;; 返し、待ち 0 で起きた次の tick が送る(#4332)。
     (<- beat (| DueAt DueNever) (beat-due tick-began last-ok state.beat-interval-ms))
-    (<- fence (| DueAt DueNever) (fence-due tick-began last-ok state.fence-ms (link-keep-fence-ms state)))
+    (<- keep-fence int (link-keep-fence-ms state))
+    (<- fence (| DueAt DueNever) (fence-due tick-began last-ok state.fence-ms keep-fence))
     ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。再送は期限でなく再送の間の待ちなので、
     ;; tick の終わりの時刻から数える。
     (val resend (if (is state.last-desired None) (DueAt :at (+ now RESEND-AFTER-MS)) (DueNever)))

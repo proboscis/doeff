@@ -239,3 +239,36 @@
   (assert (= (lfor p seen.mid #(p.worker p.exit-code)) [#("w1" None)]) seen.mid)
   (assert (= (lfor p seen.after #(p.worker p.exit-code)) [#("w1" None)]) seen.after)
   (assert (= (! (one-place-per-job (! (spans-of seen.after)))) #())))
+
+
+;; --- 枠の file の pinnedToNode -------------------------------------------------------------------------------------
+
+(import json)
+(import doeff_cluster [RoomReading RoomState WorkerRoom room-of-text])
+(import doeff_cluster._worker.protocol.coordinator_link [LinkState link-keep-fence-ms])
+
+
+(deftest test-the-room-file-row-can-pin-the-worker-without-recreating-the-pod
+  ;; 縛りは Pod の env(起動の引数)でなく枠の file の行の pinnedToNode でも受ける — 値を替えても Pod を作り直さない。欄の無い行は偽・
+  ;; 真偽でない値は malformed(黙って偽にも真にも倒れない)。
+  (<- pinned RoomReading (room-of-text (json.dumps {"node-a" {"memoryMiB" 1024 "pinnedToNode" True}}) "node-a"))
+  (assert (= pinned.room (WorkerRoom :memory-mib 1024 :pinned-to-node True)) pinned)
+  (<- plain RoomReading (room-of-text (json.dumps {"node-a" {"memoryMiB" 1024}}) "node-a"))
+  (assert (= plain.room.pinned-to-node False) plain)
+  (<- wrong RoomReading (room-of-text (json.dumps {"node-a" {"memoryMiB" 1024 "pinnedToNode" "yes"}}) "node-a"))
+  (assert (= wrong (RoomReading :state RoomState.MALFORMED :room None
+                                :reason "worker node-a の行の pinnedToNode は真偽で書く: 'yes'"))
+          wrong))
+
+
+(deftest test-the-link-uses-the-long-fence-only-after-the-coordinator-heard-the-pin
+  ;; 口の柵の選び: 枠の file で縛られていても、縛りを名乗った heartbeat の返事を読む前(coordinator が約束に残す前 — 途絶の最中に枠の
+  ;; file が偽から真へ替わった時)は keep-fence-ms。名乗りが届き、返事の timing が長い柵を渡した後は長い柵。枠の file が偽へ戻れば
+  ;; すぐ keep-fence-ms(短くする向きは coordinator より先でよい)。
+  (val state (LinkState "node-a" #() T.fence-ms "/nonexistent/tasks" "node-a-boot1" 0 0 0))
+  (setv state.room-pinned True state.pinned-keep-fence-ms T.pinned-keep-fence-ms)
+  (assert (= (! (link-keep-fence-ms state)) T.keep-fence-ms))
+  (setv state.pinned-acked True)
+  (assert (= (! (link-keep-fence-ms state)) T.pinned-keep-fence-ms))
+  (setv state.room-pinned False)
+  (assert (= (! (link-keep-fence-ms state)) T.keep-fence-ms)))

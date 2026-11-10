@@ -25,6 +25,10 @@
 ;;; 掛け直す線の file の絶対 path と短い命令の余地(MiB — worker/core/eviction_rules の頭の註の命令の層)。線の file は上に載る系のターンを受ける
 ;;; 係が書く。2 つは組で書く(片方だけは malformed)。欄が無い行は命令の層を掛け直さない。
 ;;;   {"node-h": {"memoryMiB": 63488, "commandLineFile": "/cargo-build/.command-keep-available-mib", "commandFloorMiB": 8192}}
+;;; 行は省ける欄 pinnedToNode(真偽 — 枠と同じく heartbeat の前に読み直す)も持てる: この worker の Pod は自分の node の外で動けない
+;;; (起動の引数 --pinned-to-node と同じ意味 — どちらかが真なら縛られている。heartbeat_rules.held-keep-fence-ms)。Pod の env で渡すと値を
+;;; 変えるたびに Pod が作り直されるので、枠の file でも受ける(2026-11-10)。欄が無い行は偽。
+;;;   {"node-h": {"memoryMiB": 63488, "pinnedToNode": true}}
 ;;;
 ;;; 読めた状態(heartbeat の roomFile で名乗る):
 ;;;   ok          自分の行を読めた
@@ -58,14 +62,16 @@
   "worker の枠: memory-mib = 常駐の job に使ってよい memory の予算(MiB — None = 名乗らない。枠の file を読まない機体の worker
    (Mac・node-h-native)が --memory-mib を渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 —
    heartbeat の provides に足す)・keep-line-file = 会話のターンに残す線の file(頭の註の keepLineFile — 空 = 読まない)・command-line-file =
-   命令の層を掛け直す線の file・command-floor-mib = 短い命令の余地(頭の註の commandLineFile と commandFloorMiB — 空と 0 = 掛け直さない)。"
+   命令の層を掛け直す線の file・command-floor-mib = 短い命令の余地(頭の註の commandLineFile と commandFloorMiB — 空と 0 = 掛け直さない)・
+   pinned-to-node = この worker の Pod は自分の node の外で動けない(頭の註の pinnedToNode — 偽 = 起動の引数の値のまま)。"
   {:check [(or (is memory-mib None) (>= memory-mib 0)) (or (= keep-line-file "") (.startswith keep-line-file "/"))
            (or (= command-line-file "") (.startswith command-line-file "/")) (>= command-floor-mib 0)]}
   (#^ (| int None) memory-mib)
   (setv #^ (get tuple #(str ...)) pools #())
   (setv #^ str keep-line-file "")
   (setv #^ str command-line-file "")
-  (setv #^ int command-floor-mib 0))
+  (setv #^ int command-floor-mib 0)
+  (setv #^ bool pinned-to-node False))
 
 
 (defrecord RoomReading
@@ -90,6 +96,7 @@
   (<- pools (| tuple str) (row-pools (if (isinstance row dict) row {}) name))
   (<- keep-line (| tuple str) (row-keep-line-file (if (isinstance row dict) row {}) name))
   (<- command-line (| tuple str) (row-command-line (if (isinstance row dict) row {}) name))
+  (val pinned (if (isinstance row dict) (.get row "pinnedToNode" False) False))
   (val malformed (fn [reason] (RoomReading :state RoomState.MALFORMED :room None :reason reason)))
   (cond
     (not decoded) (malformed "JSON でない")
@@ -100,9 +107,11 @@
     (isinstance pools str) (malformed pools)
     (isinstance keep-line str) (malformed keep-line)
     (isinstance command-line str) (malformed command-line)
+    (not (isinstance pinned bool)) (malformed (.format "worker {} の行の pinnedToNode は真偽で書く: {!r}" name pinned))
     True (RoomReading :state RoomState.OK
                       :room (WorkerRoom :memory-mib (get fields 0) :pools pools :keep-line-file (get keep-line 0)
-                                        :command-line-file (get command-line 0) :command-floor-mib (get command-line 1))
+                                        :command-line-file (get command-line 0) :command-floor-mib (get command-line 1)
+                                        :pinned-to-node pinned)
                       :reason "")))
 
 
