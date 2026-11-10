@@ -39,7 +39,7 @@
 
 
 (defclass [(dataclass :frozen True)] StaticWorkerLaunch []
-  "機体ごとの静的な worker 1 台の自己起動の版(deploy/k8s/nodes/<Node の名> — 雛形 deploy/k8s/worker の機体ごとの差)。name = worker の名
+  "機体ごとの静的な worker 1 台の自己起動の版(上に載る系の宣言の nodes/<Node の名> — 雛形 worker の機体ごとの差)。name = worker の名
    (= Node の名 — 宣言は fieldRef で受け、行に書かない)・doeff-commit = WORKER_DOEFF_COMMIT(40 字の sha — 機体の dir の version.yaml の
    1 行)。能力・枠・task に空けておく数は、上に載る系の ConfigMap と機体の dir が渡すので、この値に持たない(宣言の版の行が持つのは
    版だけ — CoordinatorLaunch と同じ形)。"

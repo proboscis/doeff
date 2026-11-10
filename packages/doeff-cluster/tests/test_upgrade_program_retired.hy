@@ -1,7 +1,7 @@
 ;; 版上げの Program の退役(2026-10-10 20:03 の決め — Program・型と effect・模擬の Flux・不変条件を丸ごと)。
 ;; worker と coordinator を新しい版へ入れ替える Program(upgrade-workers・upgrade-coordinator・upgrade-cluster)と、その型と effect
 ;; (ConfirmCleanBoot・CleanBootPassed・CleanBootRefused ほか)・模擬の Flux(sim/flux.hy)・入れ替えの順の不変条件 V1〜V5 は、本番が静的な worker を
-;; Flux が node の宣言(deploy/k8s/nodes)から作り直す形に移り(2026-10-09 15:5x・10-10 16:40 の決定)、この repo の外の使い手が 0 になった。
+;; Flux が機体ごとの宣言(上に載る系の repo が持つ)から作り直す形に移り(2026-10-09 15:5x・10-10 16:40 の決定)、この repo の外の使い手が 0 になった。
 ;; 使い手 0 の入口を残さない(後方互換を書かない)。条は守る物(Program)と一緒に消す(条を残して守り手だけ消す形にしない)。
 ;; 失敗ケース = 退役した module が import できる・architecture.hy に守る物の無い条が残る。
 (require doeff-hy.macros [deftest val])

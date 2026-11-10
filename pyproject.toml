@@ -918,7 +918,7 @@ dev = [
     # Runs the OS file-watching checks (the same library as doeff-events' files extra — #3977) in the daily run and local dev environments too.
     "watchfiles>=1.0",
     # Evaluates the CEL of doeff-cluster's ValidatingAdmissionPolicy declarations without an API server
-    # (packages/doeff-cluster/tests/test_worker_account_pod_admission.py — ADR-DOE-CLUSTER-005). Held below 0.4: from 0.4 it needs
+    # (the declaration checks of the system on top run in this environment — its ValidatingAdmissionPolicy test). Held below 0.4: from 0.4 it needs
     # google-re2, which has no wheel for the free-threaded 3.14t of .python-version and does not build without abseil.
     "cel-python>=0.3.0,<0.4",
     "hy>=1.2.0",

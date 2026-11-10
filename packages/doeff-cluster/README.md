@@ -5,7 +5,7 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 worker の再起動も要りません。
 
 この package は業務を知りません。業務の側(アプリの repo)は job を Program の値として書き、系(`defsystem`)にまとめて宣言します。
-coordinator と worker の k8s の宣言はこの package が持ちます(`deploy/k8s` — 下の「配備の材料」)。job が受け取るのは Program の値 1 つだけで、handler は
+coordinator と worker の k8s の宣言の形(名で参照する物・雛形・版の file)はこの package が決め、現場の宣言(機体ごとの dir・枠の file・版の file)は上に載る系の repo が持ちます(下の「配備の材料」— この repo には現場の宣言を置きません)。job が受け取るのは Program の値 1 つだけで、handler は
 Program の中の `with-handlers` で並べます(実行先は handler を 1 つも足しません — ADR-DOE-CLUSTER-001)。
 
 ## 全体の形
@@ -518,18 +518,18 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   3 つの file を別名に書いてから置き換え、断られた時(鍵の file が無い・形の違う url)は前の表のまま準備します。file が無ければ
   env の `WORKER_REPOS`(起動の時の値)を読み、組み直しません。
 
-- `deploy/k8s` — k8s の宣言。coordinator 1 つ(決めた 1 台の Node に置く・`deploy/k8s/coordinator`)と、機体(Node)ごとの worker 1 つ
-  (`deploy/k8s/workers` = worker の ServiceAccount と機体の dir の並び): 雛形 `deploy/k8s/worker` に、機体ごとの差(置く Node と
-  資源の上限)を `deploy/k8s/nodes/<Node の名>` が足します(名は `doeff-worker-<Node の名>`)。Flux は `deploy/k8s/coordinator` と
-  `deploy/k8s/workers` を別々の Kustomization で当てます(上に載る系が今の宣言から引き継ぐ時期を組ごとに決められます)。
-  `deploy/k8s` は全部を組み立てる入口です。worker の名と `NODE_NAME` は Node の名で、能力 `host-<Node の名>` と `host-systemd-readable` を
+- k8s の宣言(下では根を `<宣言>` と書く — 上に載る系の repo が持ち、Flux はそこから当てる)。coordinator 1 つ(決めた 1 台の Node に置く・`<宣言>/coordinator`)と、機体(Node)ごとの worker 1 つ
+  (`<宣言>/workers` = worker の ServiceAccount と機体の dir の並び): 雛形 `<宣言>/worker` に、機体ごとの差(置く Node と
+  資源の上限)を `<宣言>/nodes/<Node の名>` が足します(名は `doeff-worker-<Node の名>`)。Flux は `<宣言>/coordinator` と
+  `<宣言>/workers` を別々の Kustomization で当てます(上に載る系が今の宣言から引き継ぐ時期を組ごとに決められます)。
+  `<宣言>` は全部を組み立てる入口です。worker の名と `NODE_NAME` は Node の名で、能力 `host-<Node の名>` と `host-systemd-readable` を
   申告し、機体の `/etc/systemd/system` を読み取り専用で `/host/etc/systemd/system`(env `WORKER_HOST_SYSTEMD_ROOT`)に置きます。
   ServiceAccount `doeff-worker` の token・cluster の CA・namespace は標準の path(`/var/run/secrets/kubernetes.io/serviceaccount`)に
-  置きます。確かめは `tests/test_k8s_declarations.py`(`kubectl kustomize` で組み立てた物を読む)。
+  置きます。確かめは宣言の側の検(`kubectl kustomize` で組み立てた物を読む — 宣言と同じ repo に置く)。
 
 worker は静的に保ち、頻繁に起動し直しません(2026-10-09 の保守者の決定)。
-Pod を作り直すのは、`deploy/k8s` の宣言(雛形の型・機体の資源の上限)が変わった時だけです。worker の doeff の版は Pod の template に
-置かず、ConfigMap `worker-version`(`deploy/k8s/workers/worker-version.env` — 1 行 1 worker)の file から読みます。版の行を変えると、
+Pod を作り直すのは、`<宣言>` の宣言(雛形の型・機体の資源の上限)が変わった時だけです。worker の doeff の版は Pod の template に
+置かず、ConfigMap `worker-version`(`<宣言>/workers/worker-version.env` — 1 行 1 worker)の file から読みます。版の行を変えると、
 Pod を作り直さずに、その worker の keeper(`deploy/boot.sh` の頭の註の「版の file と keeper」)が同じ container の中に新しい版の
 worker の process を起こし、coordinator に名乗れた後に前の版の process を drain してから止めます。前の版の process は自分の task と退いた
 handoff の process を終わりまで回してから退くので、版上げで走っている仕事は切れません。今の版は coordinator の
@@ -545,45 +545,45 @@ handoff の process を終わりまで回してから退くので、版上げで
 | ConfigMap `worker-prepare` | `/opt/worker-prepare` | 起動の前に 1 度実行する script(キー `prepare.sh`・非 0 なら起動しない) | 実行せずに起動する |
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
-| ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `memoryMiB`(常駐の job の memory の予算 — coordinator は置いた job の settle の和 + 新しい job の settle がこの値以下の時だけ置く)と、省ける欄の置ける組の印 `pools`(`pool-` で始まる名の列 — heartbeat の `provides` に足す)。task の数は書かない — task の置き先は worker が heartbeat の `measured` で名乗る機体の測った空きから coordinator が数える。行に `capacity`・`taskReserve`・`backgroundRoom`(消した task の数の欄)が在っても読まずに通す。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。`pools` に機体の印 `host-`・node の label から導く能力・`pool-` で始まらない名を書いた file は崩れた file。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
-| ConfigMap `worker-version`(この package が持つ — `deploy/k8s/workers/worker-version.env`) | `/etc/worker-version`(`WORKER_VERSION_FILE` = `/etc/worker-version/<worker の名>`) | worker の名ごとの doeff の版(40 字の commit)。起動の args と preStop が自分の行を `WORKER_DOEFF_COMMIT` に入れて起動の script へ渡し、keeper が file の替わりで同じ container の中の worker の process を入れ替える(Pod を作り直さない) | Pod が起きない |
+| ConfigMap `worker-room`(上に載る系の宣言 — `<宣言>/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `memoryMiB`(常駐の job の memory の予算 — coordinator は置いた job の settle の和 + 新しい job の settle がこの値以下の時だけ置く)と、省ける欄の置ける組の印 `pools`(`pool-` で始まる名の列 — heartbeat の `provides` に足す)。task の数は書かない — task の置き先は worker が heartbeat の `measured` で名乗る機体の測った空きから coordinator が数える。行に `capacity`・`taskReserve`・`backgroundRoom`(消した task の数の欄)が在っても読まずに通す。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。`pools` に機体の印 `host-`・node の label から導く能力・`pool-` で始まらない名を書いた file は崩れた file。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
+| ConfigMap `worker-version`(上に載る系の宣言 — `<宣言>/workers/worker-version.env`) | `/etc/worker-version`(`WORKER_VERSION_FILE` = `/etc/worker-version/<worker の名>`) | worker の名ごとの doeff の版(40 字の commit)。起動の args と preStop が自分の行を `WORKER_DOEFF_COMMIT` に入れて起動の script へ渡し、keeper が file の替わりで同じ container の中の worker の process を入れ替える(Pod を作り直さない) | Pod が起きない |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
-worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`deploy/k8s/workers/worker-cluster-admin.yaml`・
+worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`<宣言>/workers/worker-cluster-admin.yaml`・
 1 人で使う cluster なので絞らない)— job の子は kubectl で cluster を扱え、上に載る系は job のための権限を与えなくてよい。
 
-coordinator の記録(WAL と snapshot)の控えは、上に載る系でなくこの package が持ちます(控えは記録を戻す元なので、上に載る系の
-有無で消えないように)。script は `deploy/k8s/coordinator/coord-wal-backup.sh` で、同じ dir の `kustomization.yaml` が ConfigMap
+coordinator の記録(WAL と snapshot)の控えの script は、coordinator の宣言と同じ所に置きます(控えは記録を戻す元なので、coordinator の宣言と
+一緒に当てる)。script は `<宣言>/coordinator/coord-wal-backup.sh` で、同じ dir の `kustomization.yaml` が ConfigMap
 `coord-wal-backup`(キー `backup.sh`・名に hash を付けない)に組み、coordinator の init container `wal-backup` が起動の前に 1 度
-実行します(直近 5 つを残す・取れない時は訳の 1 行を出して起動を通す)。確かめは `tests/test_coord_wal_backup.py`(script を sh で
+実行します(直近 5 つを残す・取れない時は訳の 1 行を出して起動を通す)。確かめは宣言の側の検(script を sh で
 実際に走らせる)。
 
 env の値は宣言の `env` が `envFrom` より優先されるので、宣言に在る名を ConfigMap に置いても効きません。coordinator の ServiceAccount
-には能力を導くための nodes の list・watch を与えます(`deploy/k8s/coordinator/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その
+には能力を導くための nodes の list・watch を与えます(`<宣言>/coordinator/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その
 Deployment の在る namespace の権限として配備する側が与えます。
 
 ### 配備の順
 
 どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)に保ちます。coordinator は古い worker を
 受けますが、古い coordinator が新しい worker を受けるとは限りません — 2026-10-11 02:21〜02:37、ある機体の worker の版を coordinator より先に
-上げた宣言が main へ入り、新しい worker が coordinator に登録できずにその機体が約 16 分止まりました。宣言の検
-`tests/test_k8s_declarations.py` の `test_no_worker_is_newer_than_the_coordinator` が、coordinator の版より新しい worker の版を commit の
+上げた宣言が main へ入り、新しい worker が coordinator に登録できずにその機体が約 16 分止まりました。宣言の側の検
+`test_no_worker_is_newer_than_the_coordinator` が、coordinator の版より新しい worker の版を commit の
 時点で断ります。worker の働きが要る変更でも、coordinator の版を先に(同じ版か、より新しい版へ)上げてから worker を上げます。本番の
-coordinator は Flux が `deploy/k8s/coordinator` の宣言から作り直し、worker の版は Flux が当てる ConfigMap `worker-version` の行で替わるので、
+coordinator は Flux が `<宣言>/coordinator` の宣言から作り直し、worker の版は Flux が当てる ConfigMap `worker-version` の行で替わるので、
 順は宣言を当てる順(main へ入れる順と、Flux の Kustomization の suspend / resume)で守ります。coordinator と worker の版の行を同じ commit で
 上げると、Flux がどちらを先に当てるかは決まらないので、coordinator の版の行を先に main へ入れます。それでも新しい worker が古い coordinator に
 名乗れない間は、keeper は前の版の process を drain せず(新しい process の ready が立たない)、前の版の process が仕事を続けます —
 coordinator が上がって新しい process が名乗れた時に入れ替わります。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
 入れ替えの順の不変条件 V1〜V5・模擬の Flux は、使い手が 0 になったので 2026-10-10 に退役しました。
 
-coordinator の版上げの commit は、`deploy/k8s/coordinator/coordinator.yaml` の `WORKER_DOEFF_COMMIT` の 1 行だけを変えます
-(ADR-DOE-CLUSTER-003)。上げ先の root を先に組む Job(`deploy/k8s/coordinator-prepare`)の版と名
+coordinator の版上げの commit は、`<宣言>/coordinator/coordinator.yaml` の `WORKER_DOEFF_COMMIT` の 1 行だけを変えます
+(上に載る系の ADR — 版上げの前に root を組む)。上げ先の root を先に組む Job(`<宣言>/coordinator-prepare`)の版と名
 (`coordinator-prepare-<commit>`)は、組み立ての時にその行から写されます。Flux はこの Job が上げ先の版の root を coordinator と同じ node・
 同じ dir に組み終えるのを待ってから(Kustomization の wait と dependsOn)Deployment coordinator を入れ替えるので、新しい Pod は組み済みの
 root で秒で起動します(前は古い Pod を止めてから新しい Pod が組み、全部の worker が 105〜141 秒 coordinator に届かなかった)。Job が組めなければ
 coordinator は古い版のまま動き続けます。node の memory の空きが足りずに Job が置けない間は、Job は失敗せずに Pending で待ちます(期限は
 Pod の側が持ち、走った時間だけを数える)。Job と coordinator は既定の 0 より高い PriorityClass `doeff-cluster-coordinator` を持ち、空きが
-足りなければ低い Pod を追い出して置かれます(ADR-DOE-CLUSTER-003 R4・R5)。
+足りなければ低い Pod を追い出して置かれます(同じ ADR)。
 
 順が決まっている変更の例:
 

@@ -1,7 +1,7 @@
 ;;; 作業場所の volume(effect の型は doeff_cluster._shared.intent.workspace_volume_model)の純粋な判断 — I/O は呼び手(本番 =
 ;;; doeff_cluster._shared.protocol.workspace_volumes・模擬 = doeff_cluster._sim.workspace_volumes)が行う。
 ;;;
-;;;   NAME-PREFIX ほか      volume の名の頭と長さの上限(deploy/k8s/workspace-volumes/workspace-volume.json の namePrefix・nameMaxLength と
+;;;   NAME-PREFIX ほか      volume の名の頭と長さの上限(上に載る系の宣言の workspace-volumes/workspace-volume.json の namePrefix・nameMaxLength と
 ;;;                         同じ値 — 検が縛る。umount と detach が API server に問わずに名を決めるため、ここに持つ)
 ;;;   owner-refusal         持ち主の id が名の条件(英字・数字・-・頭と尻は英字か数字・37 字まで)を外れる訳(外れなければ None)
 ;;;   volume-name           持ち主の id → volume の名(ws- + 小文字)。Longhorn の volume と attach の ticket の印に同じ名を使う
@@ -299,7 +299,7 @@
 (defk floor-bytes [room minimal floors]
   {:pre [(: room DiskRoom) (: minimal int) (<= 0 minimal 100) (: floors (get dict #(str int)))] :post [(: % int) (>= % 0)]}
   "札の disk 1 枚 room に残す実の空き(byte)を得るため: 最小の空きの %(Longhorn の設定)の量と、その disk の空きの床 floors(値の
-   ConfigMap の freeFloorBytes — disk の名 → byte)の大きい方。床は disk-share/shares.yaml が、disk の image を置く SSD の分け前から導く
+   ConfigMap の freeFloorBytes — disk の名 → byte)の大きい方。床は上に載る系の宣言の disk-share/shares.yaml が、disk の image を置く SSD の分け前から導く
    (image の中で Longhorn が使ってよい量を、SSD の分け前に収める — Longhorn の予約 storageReserved は名目の線にだけ効き、実の使用を
    縛らない)。床の無い disk は % の量だけ。"
   (max (// (* room.maximum minimal) 100) (.get floors room.disk 0)))

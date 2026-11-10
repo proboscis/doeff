@@ -97,7 +97,7 @@
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
-;; host の cgroupfs を書ける形で置いた場所(機体の配備の cgroup の層の部品 deploy/k8s/cgroup-layers が置く)と、cgroup の層の宣言
+;; host の cgroupfs を書ける形で置いた場所(機体の配備の cgroup の層の部品 cgroup-layers〔上に載る系の宣言〕が置く)と、cgroup の層の宣言
 ;; (deploy/boot.sh の「cgroup の層」)。両方と CGROUP-DIR-VAR が在り、worker の container が kubelet の kubepods の下に居る Pod の worker は、
 ;; 見張りの回ごとに kubelet の追い出しの線までの空きを数え、jobs の層(JOB-CGROUP-VAR)の memory.max をその空きから掛け直す
 ;; (worker/protocol/eviction_line — 宣言の jobs の memory.max はその上限)。

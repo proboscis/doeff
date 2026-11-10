@@ -36,7 +36,7 @@
 ;;;   待ちの重さ        (本番だけ)30 本の付けを並べて待たせても、変わりの知らせの箱で待つ答え手の主の scheduler の歩の数は待つ秒に比例しない
 ;;;                     (失敗ケース: 知らせを出さない箱で間隔ごとに読み直す答え手は比例する)
 ;;; 外の世界は、この file の Longhorn の相手役と mount の係の相手役・memory の file・模擬の時計。級の parameters と値の ConfigMap の中身は
-;;; 宣言の file(deploy/k8s/workspace-volumes の storageclass.yaml と workspace-volume.json)から読む。
+;;; 例の file(tests/data/workspace-volumes の storageclass.yaml と workspace-volume.json — 現場の宣言と同じ形)から読む。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
@@ -72,11 +72,11 @@
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
-(val DECLARED (/ (. (Path __file__) parent parent) "deploy" "k8s" "workspace-volumes"))
+(val DECLARED (/ (. (Path __file__) parent) "data" "workspace-volumes"))
 (val SETTINGS-TEXT (.read-text (/ DECLARED "workspace-volume.json") :encoding "utf-8"))
 (val PARAMETERS (dict (get (yaml.safe-load (.read-text (/ DECLARED "storageclass.yaml") :encoding "utf-8")) "parameters")))
 (val TOKEN "worker-identity-token")
-(val NODE "zeus")
+(val NODE "node-a")
 (val OWNER "c-EXAMPLEOWNERID000000000001")
 (val NAME "ws-c-exampleownerid000000000001")
 (val OTHER "c-EXAMPLEOTHERID00000000002")
@@ -703,7 +703,7 @@
 
 (defk nodes-payload [world]
   {:pre [(: world LonghornWorld)] :post [(: % dict)]}
-  "Longhorn の Node の一覧の本文を綴るため(zeus に札 workspace の disk 1 つ — 過剰割り当て 100% の名目で capacity 本を受ける大きさ・実の
+  "Longhorn の Node の一覧の本文を綴るため(node-a に札 workspace の disk 1 つ — 過剰割り当て 100% の名目で capacity 本を受ける大きさ・実の
    空き available から置いた volume の実の使用を引いた物 — と extra-disks)。"
   (val disk {"tags" ["ssd" "workspace"] "allowScheduling" True "storageReserved" 0})
   (val maximum (* world.held.capacity SIZE))
@@ -988,7 +988,7 @@
   (BothRan :real on-real.outcomes :held on-held :api api :sim sim :left on-real.left))
 
 
-;; volume の無い zeus の世界を作る関数(筋書きごとに新しい世界を作る — 本番用と模擬用で別の入れ物)。
+;; volume の無い node-a の世界を作る関数(筋書きごとに新しい世界を作る — 本番用と模擬用で別の入れ物)。
 (val fresh (fn [] (WorkspaceVolumeWorld NODE)))
 
 
@@ -1027,14 +1027,14 @@
 
 
 (deftest test-failure-cases-are-refused-the-same-on-both-handlers
-  (val elsewhere (HeldVolume :name NAME :node "atlas" :formatted True))
+  (val elsewhere (HeldVolume :name NAME :node "node-b" :formatted True))
   (val attached (HeldVolume :name NAME :node NODE :formatted True))
   (val other-name (! (volume-name OTHER)))
   (val cases #(;; 無い volume の attach。
                #(#() #((Step :verb "attach" :owner OWNER)) "volume が無い")
                ;; 別の node に付いた volume の attach と detach(ticket を書き換えない)。
-               #(#(elsewhere) #((Step :verb "attach" :owner OWNER)) "node atlas への ticket が在る")
-               #(#(elsewhere) #((Step :verb "detach" :owner OWNER)) "別の node atlas")
+               #(#(elsewhere) #((Step :verb "attach" :owner OWNER)) "node node-b への ticket が在る")
+               #(#(elsewhere) #((Step :verb "detach" :owner OWNER)) "別の node node-b")
                ;; attach していない volume の mount。
                #(#((HeldVolume :name NAME)) #((Step :verb "mount" :owner OWNER :path PLACE)) "attach されていない")
                ;; 付ける先に別の volume。
@@ -1100,7 +1100,7 @@
   (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER) (Step :verb "attach" :owner OWNER))))
   (val outcomes ran.outcomes) (val left ran.left)
   (assert (= (get outcomes 0) "done") outcomes)
-  (assert (and (.startswith (get outcomes 1) "refused: ") (in "5.0 秒の内に node zeus に付かない" (get outcomes 1))
+  (assert (and (.startswith (get outcomes 1) "refused: ") (in "5.0 秒の内に node node-a に付かない" (get outcomes 1))
                (in "waiting for the engine of the volume" (get outcomes 1)))
           outcomes))
 
@@ -1521,7 +1521,7 @@
   (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM))))
   (.add api.failing NAME)
   (<- ran ApiRan (on-api api #((Step :verb "attach" :owner OWNER))))
-  (assert (and (= (! (kinds ran.outcomes)) #("refused")) (in "5.0 秒の内に node zeus に付かない" (get ran.outcomes 0))) ran.outcomes)
+  (assert (and (= (! (kinds ran.outcomes)) #("refused")) (in "5.0 秒の内に node node-a に付かない" (get ran.outcomes 0))) ran.outcomes)
   (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
   (assert (not (any (gfor seen api.seen (= seen.method "DELETE")))) api.seen))
 
@@ -2013,7 +2013,7 @@
   ;; 外れている物は答えない。読みは何も変えない。
   (val here-a (HeldVolume :name "ws-c-a1" :node NODE :formatted True :used-at 100.0))
   (val here-b (HeldVolume :name "ws-c-b1" :node NODE :formatted True :used-at 200.0))
-  (val elsewhere (HeldVolume :name "ws-c-c1" :node "atlas" :formatted True :used-at 300.0))
+  (val elsewhere (HeldVolume :name "ws-c-c1" :node "node-b" :formatted True :used-at 300.0))
   (val idle (HeldVolume :name "ws-c-d1" :formatted True :used-at 400.0))
   (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(here-b here-a elsewhere idle))) #((Step :verb "attached"))))
   (assert (= ran.real #("attached c-a1@100,c-b1@200")) ran.real)

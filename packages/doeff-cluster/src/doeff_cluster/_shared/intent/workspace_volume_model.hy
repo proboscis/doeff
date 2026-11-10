@@ -1,7 +1,7 @@
 ;;; 持ち主(上に載る系が渡す id 1 つ — 例えば会話)ごとの作業場所の volume を、作る・機体の node に attach する・作業場所の path に mount
 ;;; する・外す・冷やす・消す effect の型(関数は持たない — 本番の答え手は doeff_cluster._shared.entry.workspace_volume_api の
 ;;; workspace-volumes-api・模擬の答え手は doeff_cluster._sim.workspace_volumes の held-workspace-volumes)。決まり(級・名・寿命・mount の係)は
-;;; deploy/k8s/workspace-volumes/README.md。
+;;; 上に載る系の宣言の workspace-volumes/README.md。
 ;;;
 ;;;   WorkspaceOutcome        effect の結末: DONE = 今した・ALREADY = 既にそうだった(何もしていない)・RESTORED = backup から戻した(作る時だけ)
 ;;;   WorkspaceVolumeSite     本番の答え手が読む場所と待つ秒: Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir・mountinfo の

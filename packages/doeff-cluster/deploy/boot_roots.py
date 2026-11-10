@@ -1,6 +1,6 @@
 """起動の root の置き場($WORK_DIR/boot/roots/<sha>)から、使われていない古い版の root を消す道具 — deploy/boot.sh が起動のたびに背後で呼ぶ。
 
-訳: boot.sh は宣言された commit ごとに root(source の展開と venv — 1 本 約 0.24 GB)を作るが、前は消す者が居なかった。2026-11-08 の atlas で
+訳: boot.sh は宣言された commit ごとに root(source の展開と venv — 1 本 約 0.24 GB)を作るが、前は消す者が居なかった。2026-11-08 の coordinator の機体で
 worker の置き場に 33 本・6.8 GB、coordinator の置き場に 95 本・15.3 GB(09-26 から 1 本も消えていない)溜まり、根の disk を週に約 11 GB
 減らしていた。作り手の boot.sh 自身が、作った root の終わりを持つ。
 
@@ -23,7 +23,7 @@ worker の置き場に 33 本・6.8 GB、coordinator の置き場に 95 本・15
   count  gc と同じ判じだけをする(何も消さない)。
 
 残す数の既定(DEFAULT_KEEP)はこの file 1 か所 — boot.sh は DOEFF_BOOT_ROOTS_KEEP が在る時だけ --keep を渡し、disk の分け前の宣言
-(deploy/k8s/disk-share/derive.py)は置き場の大きさをこの値から導く。
+(上に載る系の repo が持つ disk-share/derive.py)は置き場の大きさをこの値から導く。
 
 標準の library だけを使う。process の path の読みは uv の cache の片付け(同じ dir の uv_cache.py の process_paths・used_under)と同じ物を使う。
 """
