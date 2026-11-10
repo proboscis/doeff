@@ -30,28 +30,29 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
-# Names that the users' repo main imports (per module; counted 2026-10-02).
+# Names that the users' repo main imports (per module; counted 2026-10-02). The modules are named by their _ path: the
+# relocation modules at the old paths were deleted (ADR-DOE-API-001 R5, stage 3), and the users read the names from the entry.
 USED = {
     "_aiohttp_http_server": ("aiohttp-http-server",),
-    "clickhouse_http_sql": ("ClickHouseDatabase", "clickhouse-http-sql-handler", "clickhouse-schema-statements"),
-    "gc_freeze": ("gc-freeze-handler",),
-    "heap_effects": ("CollectAndFreeze",),
-    "inline_compute": ("inline-compute-handler",),
-    "os_process": ("subprocess-handler",),
-    "os_random": ("os-random-handler",),
-    "postgres_sql": ("PostgresConnections", "PostgresDatabase", "postgres-sql-handler"),
-    "process_latest": ("process-latest-handler",),
-    "process_meter": ("process-meter-handler",),
+    "_clickhouse_http_sql": ("ClickHouseDatabase", "clickhouse-http-sql-handler", "clickhouse-schema-statements"),
+    "_gc_freeze": ("gc-freeze-handler",),
+    "_heap_effects": ("CollectAndFreeze",),
+    "_inline_compute": ("inline-compute-handler",),
+    "_os_process": ("subprocess-handler",),
+    "_os_random": ("os-random-handler",),
+    "_postgres_sql": ("PostgresConnections", "PostgresDatabase", "postgres-sql-handler"),
+    "_process_latest": ("process-latest-handler",),
+    "_process_meter": ("process-meter-handler",),
     "_scheduler_channel": ("scheduler-channel-handler",),
-    "scripted_freeze": ("scripted-freeze-handler",),
-    "thread_pool_compute": ("thread-pool-compute-handler",),
+    "_scripted_freeze": ("scripted-freeze-handler",),
+    "_thread_pool_compute": ("thread-pool-compute-handler",),
 }
 
 # Among the names of the 4 public modules that had no .pyi, the names that this package's modules and probes import (counted 2026-10-17).
 USED_IN_PACKAGE = {
-    "offloaded_call": ("ThreadPerCall", "offloaded", "run-detached", "keep-nothing"),
-    "pooled_postgres_sql": ("pooled-postgres-sql-handler",),
-    "python_bytecode": (
+    "_offloaded_call": ("ThreadPerCall", "offloaded", "run-detached", "keep-nothing"),
+    "_pooled_postgres_sql": ("pooled-postgres-sql-handler",),
+    "_python_bytecode": (
         "checked-hash-pyc",
         "compiled-pyc",
         "kept-pyc",
@@ -59,7 +60,7 @@ USED_IN_PACKAGE = {
         "compile-python-sources",
         "prepare-compile-path",
     ),
-    "sql_transaction": ("TransactionFlush", "run-in-transaction", "run-in-batched-transaction", "stray-batch"),
+    "_sql_transaction": ("TransactionFlush", "run-in-transaction", "run-in-batched-transaction", "stray-batch"),
 }
 
 PROBED = {**USED, **USED_IN_PACKAGE}

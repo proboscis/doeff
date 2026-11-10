@@ -1908,6 +1908,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "ProcessSignalRefused",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "Promise",
    "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
@@ -2173,20 +2180,6 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.apart_call",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.apart_call",
-   "name": "TaskCancelledError",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.cache_effects",
    "name": "CacheLifecycle",
    "group": "Allowed — effect value type",
@@ -2231,13 +2224,6 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.channel_effects",
    "name": "Channel",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.channel_effects",
-   "name": "Promise",
    "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -2341,13 +2327,6 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.effects",
-   "name": "MissingEnvKeyError",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.faulthandler_stack_dump",
    "name": "stack_dumps_at",
    "group": "Allowed — program helper",
@@ -2443,13 +2422,6 @@
    "name": "file_done",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.handlers",
-   "name": "MissingEnvKeyError",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
   },
   {
    "package": "doeff-core-effects",
@@ -2894,13 +2866,6 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.memory_latest",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.memory_meter",
    "name": "MeterSettings",
    "group": "Allowed — handler setting type",
@@ -2968,13 +2933,6 @@
    "name": "render_prometheus",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.offloaded_call",
-   "name": "TaskCancelledError",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
   },
   {
    "package": "doeff-core-effects",
@@ -3349,23 +3307,9 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.outcomes",
-   "name": "RaiseCase",
-   "group": "Allowed — handler setting type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.pooled_postgres_sql",
    "name": "PostgresConnections",
    "group": "Allowed — handler setting type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.postgres_sql",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -3422,13 +3366,6 @@
    "module": "doeff_core_effects.postgres_sql",
    "name": "SqlUnreachable",
    "group": "Allowed — effect answer type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.postgres_sql",
-   "name": "TaskCancelledError",
-   "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -3650,13 +3587,6 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.process_latest",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.process_meter",
    "name": "MeterSettings",
    "group": "Allowed — handler setting type",
@@ -3728,41 +3658,6 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scheduler",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
-   "name": "ExternalPromiseCancelCallbackError",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
-   "name": "Future",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
-   "name": "Promise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
-   "name": "SchedulerDeadlockError",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
    "name": "SchedulerImplementation",
    "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
@@ -3777,28 +3672,7 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scheduler",
-   "name": "Semaphore",
-   "group": "Allowed — effect answer type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
    "name": "StepBudgetExceeded",
-   "group": "Allowed — exception type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
-   "name": "Task",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scheduler",
-   "name": "TaskCancelledError",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -4386,13 +4260,6 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.sql_effects",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.sql_effects",
    "name": "SqlColumn",
    "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
@@ -4651,13 +4518,6 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.stop_signal_handlers",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.storage",
    "name": "DurableStorage",
    "group": "Allowed — handler setting type",
@@ -4668,13 +4528,6 @@
    "module": "doeff_core_effects.thread_pool_compute",
    "name": "ComputeLoad",
    "group": "Allowed — effect answer type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.thread_pool_compute",
-   "name": "ExternalPromise",
-   "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {

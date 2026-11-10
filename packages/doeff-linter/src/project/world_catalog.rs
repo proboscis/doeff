@@ -250,9 +250,8 @@ mod tests {
                 moved_from.insert(new.trim().to_string(), old.trim().to_string());
             }
         }
-        // doeff_core_effects has no relocation module left (its children were all moved to _ and the shells deleted); use a remaining shell
-        // of doeff_cluster to check the search.
-        assert!(moved_from.contains_key("doeff_cluster._shared"), "cannot find the relocation module (search root {})", packages.display());
+        // No relocation module is left today (doeff_cluster's went in d6a39a3b7, doeff_core_effects' with ADR-DOE-API-001 R5 stage 3), so the
+        // search finds none and the check below holds trivially; it applies again when a later move leaves a relocation module behind.
         let catalog = WorldCatalog::bundled();
         let missing: Vec<String> = catalog
             .handlers

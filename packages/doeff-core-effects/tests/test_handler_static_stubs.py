@@ -31,10 +31,10 @@ COPY_NAME = "copied_core_effects"
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
-(import copied_core_effects.meter_effects [MeterSettings ReadMeter])
-(import copied_core_effects.memory_meter [memory-meter-handler])
-(import copied_core_effects.memory_latest [memory-latest-handler])
-(import copied_core_effects.os_file [os-file-handler])
+(import copied_core_effects._meter_effects [MeterSettings ReadMeter])
+(import copied_core_effects._memory_meter [memory-meter-handler])
+(import copied_core_effects._memory_latest [memory-latest-handler])
+(import copied_core_effects._os_file [os-file-handler])
 
 (val SETTINGS (MeterSettings))
 
