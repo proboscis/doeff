@@ -17,6 +17,7 @@
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import urllib.parse [quote :as url-quote urlencode])
+(import doeff [Program])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster._shared.intent.job_call_model [CallJob JobAnswer JobField JobRequest JobUnreachable])
@@ -43,7 +44,7 @@
    job の答えの 1 点を、相手の job の答え手の下で回す物(使い手の組み立てが作る)。"
   {:tags {:context "doeff-cluster" :role "protocol"} :check [(.strip api)]}
   (#^ str api)
-  (#^ (get Callable #(... object)) answer))
+  (#^ (get Callable #(... (get Program (| JobAnswer JobUnreachable)))) answer))
 
 
 (defk job-target [root request]
