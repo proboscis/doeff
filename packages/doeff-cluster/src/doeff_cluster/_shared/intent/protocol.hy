@@ -7,7 +7,7 @@
 
 (defclass [(dataclass :frozen True)] ClusterTiming []
   (setv #^ int lease-ms 10000)          ; これより新しい heartbeat の worker にだけ新しく割り当てる
-  ;; fence は tailnet の実測の途絶(最長 約 13 秒・2026-09-23 newmac)より長く、移し替えは fence より十分長く取る
+  ;; fence は tailnet の実測の途絶(最長 約 13 秒・2026-09-23 mac-a)より長く、移し替えは fence より十分長く取る
   ;; (止めた worker と新しい担い手が同時に動かない)。代償は障害時の移し替えが 60 秒になること。
   ;; worker は heartbeat の返事の timing から fence を受け取る(この値が唯一の定義点)。
   ;; worker が連絡の途絶から lease を持たない job と task を止めるまで。書き手(入れ替えを宣言した job)は止めない — 書きは lease の

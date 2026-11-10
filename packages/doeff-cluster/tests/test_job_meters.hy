@@ -1,6 +1,6 @@
 ;;; 常駐の job ごとの CPU と memory を heartbeat の measured の欄 jobUses に載せ、coordinator の GET /state の worker の行から読める事の検
 ;;; (2026-11-10)。実例: 測りの読み手は worker ごとに測りの task を置いて /proc を読んでいたが、task は memory の要りを名乗るので、空きの
-;;; 少ない worker(k3s-1 の空き 410 MiB・床 1536 MiB)には置けず、その worker の job を job ごとに測れなかった。worker の見張りは
+;;; 少ない worker(node-e の空き 410 MiB・床 1536 MiB)には置けず、その worker の job を job ごとに測れなかった。worker の見張りは
 ;;; job ごとの木を既に 5 秒ごとに数えているので、その読みを heartbeat に載せれば、どの worker の job も 1 か所から測れる。
 ;;;   (1) 見張りは常駐の job(task でない根)ごとに、木の CPU の累計と rss の和を毎回数え、PSS は pss-seconds ごとにだけ読む
 ;;;   (2) 木の 1 本でも PSS を読めない・木が pss-process-limit を越える job の PSS は None(小さく欠けた和を作らない・孤児の群れを読まない)
@@ -149,9 +149,9 @@
                                           :body-anonymous-MiB 150 :started-at-ms 900)
                              (MeasuredJob :job "watch" :pid 42 :cpu-ms 10 :rss-MiB 80 :processes 1)))
           read)
-  (<- workers (table-from-rows {"k3s-1" (WorkerInfo "k3s-1" #("host-k3s-1") 6000 :measured read)}))
+  (<- workers (table-from-rows {"node-e" (WorkerInfo "node-e" #("host-node-e") 6000 :measured read)}))
   (val view (! (state-view-json (! (state-view (ClusterState #() workers (table-of #()) (table-of #())) 6000 T)))))
-  (val shown (get view "workers" "k3s-1" "measured"))
+  (val shown (get view "workers" "node-e" "measured"))
   (assert (= (get shown "jobUsesAtMs") 6000) shown)
   (assert (= (lfor j (get shown "jobUses") #((get j "job") (get j "cpuMs") (.get j "pssMiB"))) [#("rules" 123456 210) #("watch" 10 None)]) shown))
 

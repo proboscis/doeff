@@ -376,7 +376,7 @@ def _assert_declared(
 def test_missing_checkout_is_skipped_and_named_premise_unmet(
     tmp_path: Path, check_layer: ModuleType | None, machine_tool
 ) -> None:
-    """zeus's shape: no custody checkout — skipped and named premise-unmet, not red."""
+    """node-h's shape: no custody checkout — skipped and named premise-unmet, not red."""
     missing = tmp_path / "no-checkout"
     result = _sample_machine(
         tmp_path,

@@ -42,24 +42,24 @@
 
 
 (deftest test-a-row-with-a-ttl-is-swept-after-it-expires-and-the-sweep-is-persisted
-  (<- reply-1 (put (ClusterState) "w/process/atlas/7" {"n" 1} 1000 :ttlSeconds 60))
+  (<- reply-1 (put (ClusterState) "w/process/node-a/7" {"n" 1} 1000 :ttlSeconds 60))
   (var s (get reply-1 0))
   (val status (get reply-1 1))
   (assert (= status 200))
   (<- reply-2 (put s "w/cycle" {"n" 2} 1000))
   (:= s (get reply-2 0))
-  (assert (= (! (expiry-of s)) {"w/process/atlas/7" 61000}))
+  (assert (= (! (expiry-of s)) {"w/process/node-a/7" 61000}))
   ;; 期限は行と一緒に保存し、読み直しで戻る
   (setv back (! (state-from-kv (! (full-kv s)) 2000)))
-  (assert (= (! (expiry-of back)) {"w/process/atlas/7" 61000}))
+  (assert (= (! (expiry-of back)) {"w/process/node-a/7" 61000}))
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (! (call s "GET" "/state" None 60000)))
-  (setv #(s2 _ _) (! (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "statuses" []} 61000)))
-  (assert (is-not (.row s1.board "w/process/atlas/7") None))
-  (assert (is (.row s2.board "w/process/atlas/7") None))
+  (setv #(s2 _ _) (! (call s "POST" "/heartbeat" {"name" "node-a" "provides" ["net"] "statuses" []} 61000)))
+  (assert (is-not (.row s1.board "w/process/node-a/7") None))
+  (assert (is (.row s2.board "w/process/node-a/7") None))
   (assert (is-not (.row s2.board "w/cycle") None))
   (setv delta (! (durable-delta s s2)))
-  (assert (= (get delta "board/w/process/atlas/7") None)))
+  (assert (= (get delta "board/w/process/node-a/7") None)))
 
 
 (deftest test-a-put-without-ttl-makes-the-row-permanent-again
@@ -139,15 +139,15 @@
 
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
-  (setv old (WorkerInfo "newmac" #("net") 0 :measured (get ROOM-LOADS 10)) busy (WorkerInfo "atlas" #("net") 0 :measured (get ROOM-LOADS 10)))
-  (var s (ClusterState :workers (! (table-from-rows {"newmac" old "atlas" busy}))))
-  (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
+  (setv old (WorkerInfo "mac-a" #("net") 0 :measured (get ROOM-LOADS 10)) busy (WorkerInfo "node-a" #("net") 0 :measured (get ROOM-LOADS 10)))
+  (var s (ClusterState :workers (! (table-from-rows {"mac-a" old "node-a" busy}))))
+  (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"] "pin" "node-a"}]} 1000))
   (:= s (get reply-11 0))
-  ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
+  ;; node-a は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (is-not (.row s.placements "j") None))
   (setv later (! (tick s (+ (. (ClusterTiming) worker-forget-ms) 1) T)))
-  (assert (not-in "newmac" (.keys later.workers)))
-  (assert (in "atlas" (.keys later.workers))))
+  (assert (not-in "mac-a" (.keys later.workers)))
+  (assert (in "node-a" (.keys later.workers))))
 
 
 ;; ---- 耐久の差分は丸ごとの直列化と同じ答え(#1843)----------------------------------------------------------
@@ -170,14 +170,14 @@
 
 
 (deftest test-the-durable-delta-equals-the-delta-of-the-full-serialization
-  (val steps [#("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "statuses" []} 1000)
+  (val steps [#("POST" "/heartbeat" {"name" "node-a" "provides" ["net"] "statuses" []} 1000)
               #("POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}} 1500)
               #("PUT" "/board/k" {"value" 1} 2000)
               #("GET" "/state" None 2500)
-              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "statuses" []} 3000)
-              #("POST" "/heartbeat" {"name" "zeus" "provides" ["net" "gpu"] "statuses" []} 3500)
+              #("POST" "/heartbeat" {"name" "node-a" "provides" ["net"] "statuses" []} 3000)
+              #("POST" "/heartbeat" {"name" "node-h" "provides" ["net" "gpu"] "statuses" []} 3500)
               #("PUT" "/board/k" {"value" 2} 4000)
-              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "statuses" []} 70000)])
+              #("POST" "/heartbeat" {"name" "node-a" "provides" ["net"] "statuses" []} 70000)])
   (var s (ClusterState))
   (var compared 0)
   (for [#(method path body now) steps]

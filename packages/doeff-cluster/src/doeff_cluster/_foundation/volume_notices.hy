@@ -1,6 +1,6 @@
 ;;; 作業場所の volume の変わりの知らせの箱(protocol/workspace_volumes の VolumeNotices の本番の形 — 頭の註の待ち方)。答え手の付け・外し・
 ;;; 戻し・消え終わりの待ちと係の答えの待ちを、間隔で読み直させず、変わった時だけ起こす。以前は待ち 1 つが 0.5 秒ごとに API server へ GET を
-;;; 1〜2 本出し、待つ volume が 30 本並ぶと答え手の process の主の thread の 1 core の大半を使った(2026-11-06 の zeus の測り — volume の
+;;; 1〜2 本出し、待つ volume が 30 本並ぶと答え手の process の主の thread の 1 core の大半を使った(2026-11-06 の node-h の測り — volume の
 ;;; 付けの task が主の thread の歩の CPU の 65%)。
 ;;;
 ;;;   VolumeNoticeBoard  箱(錠の下の可変の入れ物): 名 → 最後に変わった通し番号・名 → 掛かった鈴・file の path → 掛かった鈴。見張りの

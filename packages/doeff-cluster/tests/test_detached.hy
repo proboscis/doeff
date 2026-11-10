@@ -879,7 +879,7 @@
 
 
 (deftest test-a-task-the-worker-stopped-for-memory-is-lost-with-the-reason-the-worker-told
-  ;; 失敗ケース(2026-11-10 の zeus): worker が jobs の層の上限を使いより下げ、kernel が task を SIGKILL で止めても、lost の訳は「子 process
+  ;; 失敗ケース(2026-11-10 の node-h): worker が jobs の層の上限を使いより下げ、kernel が task を SIGKILL で止めても、lost の訳は「子 process
   ;; が結果を書かずに終わった(last=exited)」だけで、誰がなぜ止めたかが出なかった。worker は memory の訳で止めた終わりの状態の行の訳に
   ;; その訳を添え(worker/core/policy の stop-note)、coordinator は lost の訳にそのまま載せる。
   (val reply-a (! (beat (ClusterState) "w" 0)))
@@ -1000,7 +1000,7 @@
 
 
 (deftest test-a-previous-attempt-that-comes-back-from-silence-is-not-offered-and-its-result-is-not-taken
-  ;; 沈黙は死ではない(memory が詰まって heartbeat だけが止まった — 2026-10-24 の zeus): 前の試行の子は動き続けている。戻った世代の報告も結果の届けも
+  ;; 沈黙は死ではない(memory が詰まって heartbeat だけが止まった — 2026-10-24 の node-h): 前の試行の子は動き続けている。戻った世代の報告も結果の届けも
   ;; 次の試行を終わらせず、返事から外れた job は worker が止める。同じ worker の同じ世代に次の試行を置いても、返事には新しい id だけが載る。
   (val placed (! (placed-rerun "job-silent")))
   (val first-id (get placed 1))

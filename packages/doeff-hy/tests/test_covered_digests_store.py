@@ -1,7 +1,7 @@
 """Test that the digests the .pyc record check rebuilds per covered marker of a macro closure walk are kept in the store (code_store) per walk material,
 and that the next process takes them instead of hashing the material again.
 
-Measurement (2026-11-10, importing agora-controllers' declaration tool scripts.declare_round on zeus): the records of the 3,000 Hy modules it loads hold
+Measurement (2026-11-10, importing agora-controllers' declaration tool scripts.declare_round on node-h): the records of the 3,000 Hy modules it loads hold
 about 1,100 distinct covered markers over 23 walks, and hashing the whole material for each was about 1.2 seconds of the record check's 2.3 seconds of CPU.
 A digest is a pure function of the material and the marker, so the stored one is the same as a rebuilt one.
 """

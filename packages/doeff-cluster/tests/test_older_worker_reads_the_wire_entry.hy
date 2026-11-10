@@ -55,8 +55,8 @@
 
 (defk heartbeat [state rows]
   {:pre [(: state ClusterState) (: rows list)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker atlas が担い手の行 rows で名乗る(#(次の状態 返事の本文))。"
-  (! (answered state "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" {}
+  "worker node-a が担い手の行 rows で名乗る(#(次の状態 返事の本文))。"
+  (! (answered state "POST" "/heartbeat" {"name" "node-a" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" {}
                                           "statuses" rows})))
 
 

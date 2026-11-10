@@ -169,7 +169,7 @@ def test_os_watch_sees_a_file_written_after_the_answer(tmp_path: Path) -> None:
 def test_os_watch_sees_only_the_directorys_own_entries(tmp_path: Path) -> None:
     """The watch does not walk below the directory: a file written in a subdirectory is not seen, a file written in the
     directory itself is. Before the fix the watch was recursive, and starting it walked every entry on the scheduler's
-    thread (on zeus 39 s for 4,217 entries of a tool-stream directory, and no end within 260 s for 95,900)."""
+    thread (on node-h 39 s for 4,217 entries of a tool-stream directory, and no end within 260 s for 95,900)."""
     directory = tmp_path / "tool-stream"
     below = directory / "below"
     below.mkdir(parents=True)

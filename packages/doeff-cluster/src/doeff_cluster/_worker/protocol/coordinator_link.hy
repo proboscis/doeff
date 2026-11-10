@@ -17,7 +17,7 @@
 ;;;   * 拍の外の送りも背景の task(Spawn の daemon)で、前の送りから送信間隔が過ぎたら拍を待たずに送る — 拍が
 ;;;     lease より長くかかっても、送りの間が拍の長さに依らない。拍の送りと背景の送りは 1 つの送り口(sent-beat)を通り、1 本ずつ送る。
 ;;;   * 生存の合図: 背景の task は scheduler の上で回るので、拍が scheduler を塞ぐ間(同期の処理)や、scheduler の
-;;;     外の完了(HTTP の asyncio の橋・file の thread)が返らない間は送れない(zeus 2026-10-24 05:42〜05:46 JST — 拍の 250 秒の間、
+;;;     外の完了(HTTP の asyncio の橋・file の thread)が返らない間は送れない(node-h 2026-10-24 05:42〜05:46 JST — 拍の 250 秒の間、
 ;;;     背景の task も外の完了を待ったまま、lease が切れて task を全部 lost にされた)。scheduler の外の OS の thread(foundation/lifeline
 ;;;     — 入口が起こす)が、拍の側の送りが送信間隔 × beat_policy.LIFELINE-SLACK-RATIO を過ぎても来ない時に、拍が最後に送った本文を
 ;;;     そのまま送り直す。返事は読まない(宣言の読みは拍の送りだけ — coordinator は同じ本文の送り直しで lease と生存だけを延ばし、
@@ -27,7 +27,7 @@
 ;;;     拍が解いた返事ごとに拍が書き、拍の止まる間は thread の送りに 2xx が届くたびに送りの後の書きの thread が書く
 ;;;     (lifeline-settled・lifeline-ready-written)。thread の書きは 2 つが揃う時だけ — 拍が最後に読んだ返事が ready を許した(解けて
 ;;;     handoverPending でない — 許しは LifeCell.ready-file。拍が読んだ返事ごとに下ろし、解けた返事だけが戻す)と、thread の送りの返事も
-;;;     解けて handoverPending でない。拍の止まりの間も job の業務の口(Service の振り先)を網から外さないため(zeus 2026-10-26 02:59 JST —
+;;;     解けて handoverPending でない。拍の止まりの間も job の業務の口(Service の振り先)を網から外さないため(node-h 2026-10-26 02:59 JST —
 ;;;     拍が IO で 30〜62 秒止まった間、thread の heartbeat で coordinator には生きて見えたのに、ready の file が古びて Pod が Ready を失い、
 ;;;     Pod に載る job の Service の振り先が 0 になった)。thread の送りが止まれば(process 全体の止まり・拍の進みが止まりの上限を越えた)
 ;;;     ready の file も古び、Pod は今まで通り Ready を失う。

@@ -46,12 +46,12 @@
 
 (defk stranded-world []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "宣言の道具が Service a(needs net・gpu)を刻 1000 に宣言し、worker zeus(net だけ)が名乗った状態を作るため(a を置ける worker が無い —
+  "宣言の道具が Service a(needs net・gpu)を刻 1000 に宣言し、worker node-h(net だけ)が名乗った状態を作るため(a を置ける worker が無い —
    足りない能力は gpu)。"
   (<- created tuple (call (ClusterState) "POST" "/resources/Service"
                           {"name" "a" "spec" {"revision" "r1" "needs" ["net" "gpu"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}} :now 1000))
   (assert (= (get created 1) 201) created)
-  (<- world ClusterState (beat (get created 0) "zeus" ["net"] 1000))
+  (<- world ClusterState (beat (get created 0) "node-h" ["net"] 1000))
   world)
 
 
@@ -59,7 +59,7 @@
   ;; 受入の条 cafb722e5 の coordinator の側: 置き先の無い Service a の種類・足りない能力・いつからが GET /state と Service の資源に出る。
   (<- world ClusterState (stranded-world))
   (val later (+ 1000 (* 3 T.lease-ms)))
-  (<- kept ClusterState (beat world "zeus" ["net"] later))
+  (<- kept ClusterState (beat world "node-h" ["net"] later))
   (<- ticked ClusterState (tick kept later T))
   (<- seen tuple (call ticked "GET" "/state" :now later))
   (assert (in "a" (get seen 2 "unplaced")) seen)
@@ -75,7 +75,7 @@
 (deftest test-the-reading-goes-away-in-the-step-the-service-is-placed
   ;; 能力 gpu を名乗る worker が来た拍に a が置かれ、unplacedDetail と status.unplaced から消える(刻の行も外れる)。
   (<- world ClusterState (stranded-world))
-  (<- placed ClusterState (beat world "zeus" ["net" "gpu"] 2000))
+  (<- placed ClusterState (beat world "node-h" ["net" "gpu"] 2000))
   (assert (is (.row placed.unplaced-since "a") None) placed.unplaced-since)
   (<- seen tuple (call placed "GET" "/state" :now 2000))
   (assert (= (get seen 2 "unplacedDetail") {}) seen)
@@ -86,8 +86,8 @@
 (deftest test-a-worker-that-drops-the-capability-starts-a-new-since
   ;; 置かれていた a の担い手が能力を失った拍から、新しい刻で数え直す(前の置き先の無い間の刻を持ち越さない)。
   (<- world ClusterState (stranded-world))
-  (<- placed ClusterState (beat world "zeus" ["net" "gpu"] 2000))
-  (<- lost ClusterState (beat placed "zeus" ["net"] 3000))
+  (<- placed ClusterState (beat world "node-h" ["net" "gpu"] 2000))
+  (<- lost ClusterState (beat placed "node-h" ["net"] 3000))
   (<- seen tuple (call lost "GET" "/state" :now 3000))
   (assert (= (get seen 2 "unplacedDetail" "a" "sinceMs") 3000) seen)
   (assert (= (get seen 2 "unplacedDetail" "a" "missing") ["gpu"]) seen))

@@ -1,5 +1,5 @@
 ;; coordinator の機体ごとの止まりを、模擬の世界(sim-cluster — 本物の coordinator と本物の worker を仮想の時計で回す)で受ける側から
-;; 確かめる失敗ケース。2026-10-13 02:22〜02:24 JST に atlas が 3 分止まり(containerd と
+;; 確かめる失敗ケース。2026-10-13 02:22〜02:24 JST に node-a が 3 分止まり(containerd と
 ;; kubelet が答えず、host の記録にも空白)、起きた coordinator が最初の歩で全 worker を lease 切れに数え、配る担当へ消えと戻りが 33 回
 ;; 届いた。筋書きの Program が coordinator と同じ知らせの broker を読む受け手になり、coordinator を StallCoordinator で 3 分止める。
 ;;   1 誰も死なない止まり: 止まりの間と明けた後に WorkerGone が 0 回(終わりの印として、明けた後に w1 の処理を止めた時の WorkerGone・
@@ -25,7 +25,7 @@
 (val T (ClusterTiming))
 (val WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
                (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
-;; coordinator を止める長さ(2026-10-13 の atlas と同じ 3 分 — 移し替えの期限 reassign-after-ms の 60 秒も越える)。
+;; coordinator を止める長さ(2026-10-13 の node-a と同じ 3 分 — 移し替えの期限 reassign-after-ms の 60 秒も越える)。
 (val STALL-SECONDS 180.0)
 ;; 明けた後に見る長さ: 移し替えの期限を越える(誤って沈黙と数えていれば job が移る)。
 (val AFTER-SECONDS (+ (/ T.reassign-after-ms 1000) 30.0))

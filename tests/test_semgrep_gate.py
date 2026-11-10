@@ -69,7 +69,7 @@ def test_semgrep_findings_match_baseline_ratchet(per_test_deadline: float | None
         # the check run -- cut off machine circumstances such as reachability and response time from entering the check.
         # --project-root=ROOT: do not leave the root to inference from git metadata -- in a
         # check tree without .git the root falls to the scanned dir, and rules whose
-        # paths.include refers to upper segments silently drop out of the gate (measured on zeus 2026-08-17).
+        # paths.include refers to upper segments silently drop out of the gate (measured on node-h 2026-08-17).
         [
             binary,
             "--metrics=off",
@@ -91,7 +91,7 @@ def test_semgrep_findings_match_baseline_ratchet(per_test_deadline: float | None
         check=False,  # violations are judged by the number of results, not returncode (baseline ratchet)
     )
     # Since the exit code is not used for judging, the existence of the JSON is the only evidence that "the scan ran".
-    # Do not turn a startup crash (exit 1, empty stdout) into a bare JSONDecodeError (measured on zeus
+    # Do not turn a startup crash (exit 1, empty stdout) into a bare JSONDecodeError (measured on node-h
     # 2026-08-17: a crash from an interpreter mismatch was reported as an unreadable red).
     try:
         results = json.loads(proc.stdout)["results"]

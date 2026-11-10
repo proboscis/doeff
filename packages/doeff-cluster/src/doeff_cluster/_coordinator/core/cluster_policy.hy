@@ -627,7 +627,7 @@
 ;; 例外(AL-D2e): 前の世代がまだ走っている間に起きた世代(heartbeat の overlaps-elder — 同じ機体に 2 つの世代を並べる RollingUpdate で、
 ;; 起動の script が前の世代の dir の錠を持たれていると見た)の名乗りは前の世代の終わりの印でないので、担い手を外さない。
 ;;
-;; 退いた世代の止まり(2026-11-05 の zeus): overlaps-elder は「自分の外のどれかの世代の錠が持たれている」で立つので、さらに古い世代が
+;; 退いた世代の止まり(2026-11-05 の node-h): overlaps-elder は「自分の外のどれかの世代の錠が持たれている」で立つので、さらに古い世代が
 ;; 退いている間は、直前の世代が突然止まっていても立つ。名乗りで外さなかった直前の世代の担い手は、その後の名乗りの前の世代の報告にも
 ;; 載らず、期限の切れたまま行に残る — 行から担い手が外れるのを待つ process(GET /watch?lease=&vacate=)には永久の持ち主になった。
 ;; そこで外す時を名乗りの 1 回の出来事だけに結ばず、「その世代は止まった」という判じにも結ぶ: 退いた世代から最後に受けた報告
@@ -792,7 +792,7 @@
 (defk memory-room-of [worker load]
   {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad)))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "worker の常駐の job の memory の残り(MiB)を知るため: memory の予算(memory-mib)− 置いた job と surge の settle の和。
-   memory を名乗らない worker(memory-mib None — 枠の file の外の機体の worker。Mac・zeus-native の worker は file を
+   memory を名乗らない worker(memory-mib None — 枠の file の外の機体の worker。Mac・node-h-native の worker は file を
    読まない)は memory で縛らない(None)。load = load-of の答え(worker の名 → WorkerLoad)。"
   (val used (get load worker.name))
   (if (is worker.memory-mib None) None (- worker.memory-mib used.settle-mib)))
@@ -804,11 +804,11 @@
   "job(と並べた置き先 surge)を worker に新しく置けない memory の訳を、job を名指す文にするため(置けるなら None)。
    job の側の枠は「置いた job の settle の和 + 新しい job の settle ≤ memory の予算」だけで、数では縛らない。山(peak-mib)は使わない — 山は
    宣言の側の N+1 の照らし(failover_policy の規則 3)が見る。置く時に新しい job の山で照らすと、最後に置く大きい job が落ち着いた値の
-   和では入るのに断られる(本番の zeus では和が 67150 MiB になり、予算 63488 MiB を越えた)。memory を知らない job(settle-mib None — 欄の無い旧い保存の行)は新しく置かず、宣言し直しを待つ。
+   和では入るのに断られる(本番の node-h では和が 67150 MiB になり、予算 63488 MiB を越えた)。memory を知らない job(settle-mib None — 欄の無い旧い保存の行)は新しく置かず、宣言し直しを待つ。
    memory を名乗らない worker(memory-room-of が None)は memory で縛らない。置き先の判断 place-jobs・movable?・drain の move-target は
    どれも can-take を通してこの判断を読む。
    worker が版の準備を待つ間の取り置きを名乗る間(測りの prepare-wait-MiB — worker/core/eviction_rules の頭の註の準備を待つ間の取り置き)は、
-   予算に残りが在っても新しく置かない: 予算は静的な値なので、取り置きを予算から引いても k3s-1 の 11-09(予算 1792 − 取り置き 529 MiB)の
+   予算に残りが在っても新しく置かない: 予算は静的な値なので、取り置きを予算から引いても node-e の 11-09(予算 1792 − 取り置き 529 MiB)の
    形では常駐の service 2 つ(約 370 MiB)が入り、空いた分を準備より先に取った。置いた job は退かない(準備が走り出すと名乗りが消える)。"
   (<- room (| int None) (memory-room-of worker load))
   (val used (. (get load worker.name) settle-mib))
@@ -1348,7 +1348,7 @@
    使わせず優先 0 以上の task に残す数を知るため: 予約の半分(切り上げ)。
    背景の仕事は残りの半分(切り捨て)までは予約を使える(2026-10-14)。以前は予約を 1 つも使わせず、背景の仕事の
    置き場は job の側の残り(capacity − task-reserve − 常駐の job)だけだった — 常駐の job は capacity − task-reserve まで置ける(C17)ので、
-   job が増えて job の側を埋めると背景の仕事は 1 本も置かれず、本番の zeus(capacity 33・task-reserve 6・常駐の job 27)で会話の
+   job が増えて job の側を埋めると背景の仕事は 1 本も置かれず、本番の node-h(capacity 33・task-reserve 6・常駐の job 27)で会話の
    long-command 8 本が 76〜230 分 queued のまま待った。予約の中に背景の仕事の分を持てば、job の数によらず背景の仕事が走り、
    優先 0 以上の task(配備の組み立て・日次の検)には予約の半分が必ず残る(10-11 の、背景の仕事が枠を埋めて組み立てが待った件の守り)。"
   (<- reserve int (reserve-of worker.measured))
@@ -1360,7 +1360,7 @@
   "worker の予約(measured_room.reserve-of)のうち、待っている負の優先の task(背景の仕事)が在る間は優先 0 以上の task に使わせず背景の
    仕事に残す数を知るため:
    予約の残りの半分(切り捨て — foreground-reserve-of と足して予約の全部)。以前は優先 0 以上の側の半分だけを守り、背景の仕事の側の半分は
-   守らなかった — 本番の zeus(capacity 40・task-reserve 6・常駐の job 33 → task の空き 7)で優先 0 の組 4 つ(日次の検・着地の後の検 2 組・
+   守らなかった — 本番の node-h(capacity 40・task-reserve 6・常駐の job 33 → task の空き 7)で優先 0 の組 4 つ(日次の検・着地の後の検 2 組・
    着地の宣言し直し)が 4 本を持つと、残る空き 3 は予約の半分 3 を越えず、会話の long-command は 1 本も置かれなかった(2026-10-29 17:09〜
    21:11 JST に最大 27 本・3〜4 時間 queued)。背景の仕事は置いている数がこの数に満たない間は
    予約の残りを使ってよく、優先 0 以上の task は、その worker に置けうる待っている背景の仕事が在る間は、この数に満たない分を残す。"
@@ -2533,7 +2533,7 @@
         ;; 組を初めて書いた刻(受け渡しの待ちの始まり)も引き継ぐ。欄の前に保存した組は、次の報告の刻から数える。
         since (if (and (is-not prior None) (is-not prior.since-ms None)) prior.since-ms now)
         counted (frozenset (gfor j state.jobs :if (if overlap (not j.spec.once) j.spec.handoff) j.spec.name))
-        ;; 止めの途中の recreate の job も前の世代が持っている(11-07 06:42 JST の helios — running の行だけを数えると、止めの合図の直後に
+        ;; 止めの途中の recreate の job も前の世代が持っている(11-07 06:42 JST の node-c — running の行だけを数えると、止めの合図の直後に
         ;; 新しい世代の印 elder-runs が外れ、前の世代の process が持ったままの port の bind で新しい process が落ちた)。
         recreated (frozenset (gfor j state.jobs :if (and overlap (not j.spec.once) (not j.spec.handoff)) j.spec.name))
         jobs (tuple (sorted (| (& (running-names statuses) counted) (& (holding-names statuses) recreated))))
@@ -2689,7 +2689,7 @@
   ;; 入口の検めだけをして起こさず、揃ったら状態の行を elder-runs にする(superseded-reply が前の世代から外す)。
   ;; 黙った前の世代を数える窓は移し替えの期限(reassign-after-ms — 条 C4 timing-outlasts-the-self-stop): 黙った世代は途絶の柵で job を
   ;; 自分で止め始めるが、刈り終えるまでは process が port を持つ。生死の窓(lease-ms)で外すと、両方の世代が coordinator に届かない
-  ;; 途絶の後に、新しい世代が前の世代の刈りより先に起こす(11-07 06:42 JST の helios)。
+  ;; 途絶の後に、新しい世代が前の世代の刈りより先に起こす(11-07 06:42 JST の node-c)。
   (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.reassign-after-ms) (frozenset)))
   ;; 前の世代の job をまだ受け取れない間は、worker が Pod の ready の file を書かない(AL-D2k — handover-pending)。
   (val pending (and (is-not boot None) (> now 0) (handover-pending state name boot now timing ready-instances)))
@@ -2733,7 +2733,7 @@
 ;; 1 にする。根拠: 今の世代が job を受け取れるまでに要るのは、Pod の起動と最初の heartbeat・job ごとの実行環境の準備(世代をまたいで
 ;; 同じ node の root を共有するので、ふつうは準備済み — 進まない準備は 600 秒で止めてやり直す・worker の PrepareLimits.stall-seconds)・
 ;; handoff の job の Ready(新しい process が動き出してから Ready までの上限の既定 300 秒 — readiness の handoffTimeoutSeconds)。
-;; 止めてやり直す準備 1 回と Ready の待ちの和 900 秒に、Pod の起動と readiness の窓の 300 秒を足した 20 分。2026-10-22 の zeus は
+;; 止めてやり直す準備 1 回と Ready の待ちの和 900 秒に、Pod の起動と readiness の窓の 300 秒を足した 20 分。2026-10-22 の node-h は
 ;; 新しい世代の handoff の job が落ち続け、15:45:30 の始まりから 16:08:39 に人が手で外すまで 23 分止まった(この上限なら 16:05:30 に
 ;; 知らせる)。知らせるだけで諦めない: 待ちを外すと Deployment が前の世代の Pod を消し、まだ動いている前の世代の process まで止まる
 ;; (k8s の Deployment も progressDeadlineSeconds で Progressing=False を付けるだけで、旧い ReplicaSet を動かし続ける)。
@@ -2858,7 +2858,7 @@
                                          (replace s :superseded-by s.ready-instance)
                                        ;; 止まりの始まった重なりの組(AL-D2n): 今の世代の process が Ready と数えられていない拍(負荷の
                                        ;; 間など)でも印を付ける — 印が無いと、退かせた process が終わった後に、この世代の worker が
-                                       ;; 新しい試行を起こし、今の世代の process から lease を取る(10-11 21:29 JST の zeus)。値は今の
+                                       ;; 新しい試行を起こし、今の世代の process から lease を取る(10-11 21:29 JST の node-h)。値は今の
                                        ;; 世代(worker は値を読まず、在るかだけを読む)。
                                        (and s.handoff (is-not run None) run.leaving)
                                          (replace s :superseded-by (+ "generation:" (or (getattr (.row state.workers name) "boot" None) "")))

@@ -107,7 +107,7 @@
   ;; 子の入口が比べる送り手の版(名の順の #(名 版) の tuple — #3762)。Program の job は必ず持つ: service = Service の宣言の行の
   ;; run.versions(coordinator が spec-of-declaration で読み、heartbeat の返事の job の行に載せる)・task = task の行の versions(task を
   ;; 作った時の送り手の版)。coordinator の Program の行の版は、同じ sha の Program を後から別の版の送り手が置くと上書きされるので使わない
-  ;; (2026-10-06 の t661・2026-10-10 の zeus の merge-queue)。worker は Program の cache の file を版ごとに分けて
+  ;; (2026-10-06 の t661・2026-10-10 の node-h の merge-queue)。worker は Program の cache の file を版ごとに分けて
   ;; 置く(worker/core/launch.spec-program-file)— 版が替われば別の file なので取り直す。None = Program を持たない job。
   ;; 比べない欄(service の版の替わりは identity の指紋で args に載る・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| (get tuple #((get tuple #(str str)) ...)) None) versions (field :default None :compare False))

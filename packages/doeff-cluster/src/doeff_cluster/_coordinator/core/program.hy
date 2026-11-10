@@ -299,7 +299,7 @@
 
 
 ;; process の中の止まりの行の名(2026-10-16 — 名 + 欄 at = 止まりを見つけた歩の刻(ISO)・gap-ms = 経過に
-;; 数えなかった長さ・busy-ms = 前の歩の長さ・overslept-ms = 予定の起きる刻からの寝過ごし)。機体ごとの止まり(2026-10-13 の atlas)の
+;; 数えなかった長さ・busy-ms = 前の歩の長さ・overslept-ms = 予定の起きる刻からの寝過ごし)。機体ごとの止まり(2026-10-13 の node-a)の
 ;; 後に、coordinator が止まっていた事と、その長さだけ worker の沈黙・task の lease・Rollout の期限をずらした事を log から読めるように
 ;; する。保存の詰まり(busy-ms が大きい)と機体の止まり(overslept-ms が大きい)を読み分け、歩ごとに続けば止まりが続いていると分かる。
 (val STALL-LOG "coordinator: 止まっていた長さを経過に数えない")

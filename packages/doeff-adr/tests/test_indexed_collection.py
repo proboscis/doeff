@@ -532,7 +532,7 @@ else:
 def test_child_deadline_follows_the_load_scale(child_deadline: float) -> None:
     """The child time limit stretches with the load factor that the root conftest applies to the pytest-timeout deadline.
 
-    Counterexample: a fixed 30 seconds per child. In the daily 10-11 20:00 atlas run, while the worker Pod was pinned at its CPU limit of 8,
+    Counterexample: a fixed 30 seconds per child. In the daily 10-11 20:00 node-a run, while the worker Pod was pinned at its CPU limit of 8,
     the second child of test_plain_items_share_closures_without_definition_nodes (1.5 seconds alone) was killed at 30 seconds.
     """
     assert child_deadline == pytest.approx(2.0 * CHILD_DEADLINE_SECONDS)

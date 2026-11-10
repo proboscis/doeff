@@ -1,6 +1,6 @@
 //! A test that the facts cache is shared among worktrees — runs the binary in a temporary store and counts the bytes newly written to the store.
 //!
-//! On zeus, hundreds of worktrees are made per day and a checkout refreshes every file's modification time, so the whole facts cache (about 208MB) was rebuilt per worktree,
+//! On node-h, hundreds of worktrees are made per day and a checkout refreshes every file's modification time, so the whole facts cache (about 208MB) was rebuilt per worktree,
 //! writing about 3.4GB per hour to a USB SSD. A fact is determined only by the file's contents, its path from the root, and the linter's marker, so facts of files with the same contents are
 //! shared as one even across different worktrees, and per worktree only a small table of file -> fact key is put.
 

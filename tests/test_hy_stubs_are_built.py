@@ -162,7 +162,7 @@ def test_the_hook_starts_no_expansion_when_turned_off(monkeypatch: pytest.Monkey
 
 def test_the_boot_script_turns_the_hook_off_for_the_root_it_prepares() -> None:
     # The boot script's own uv sync of the worker root is the other path that builds a root: with the hook on there, the prepare layer's
-    # expansion processes went over its memory limit and the build died with BrokenProcessPool (k3s-0, 2026-11-07).
+    # expansion processes went over its memory limit and the build died with BrokenProcessPool (node-d, 2026-11-07).
     from doeff_cluster._shared.core import native_wheel
 
     syncs = [line for line in BOOT.read_text(encoding="utf-8").splitlines() if " uv sync " in line and not line.lstrip().startswith("#")]

@@ -105,7 +105,7 @@ fn a_dir_without_a_record_stays() {
 }
 
 // -- Overall cap of the store ---------------------------------------------
-// Working-tree dirs whose roots continue to exist were not deleted by the cleanup of dirs whose roots vanished, and kept growing by the number of roots (62G on zeus). When the total exceeds the cap, dirs are deleted from the one with the oldest last-used
+// Working-tree dirs whose roots continue to exist were not deleted by the cleanup of dirs whose roots vanished, and kept growing by the number of roots (62G on node-h). When the total exceeds the cap, dirs are deleted from the one with the oldest last-used
 // time to bring it back within the cap. This run's root and dirs used within the interval are not deleted.
 
 /// Runs the binary with root as the root, the store cache, and the overall cap (in bytes).
@@ -240,7 +240,7 @@ fn a_cap_sweep_in_progress_or_done_within_the_interval_is_not_repeated() {
     assert!(old.exists(), "within the interval (within the same hour), the cap cleanup is not repeated");
 }
 
-// -- Check the cap when growing (agora card: zeus's doeff-linter store was 7.9G; from 2026-10-10 14:34 zeus's disk fell below the new version's
+// -- Check the cap when growing (agora card: node-h's doeff-linter store was 7.9G; from 2026-10-10 14:34 node-h's disk fell below the new version's
 // preparation lower bound) ----------------------------------------------------------------------------------
 // The store as a whole grows when a new root dir is made (about 176MB per working tree). If the cap cleanup is checked only on a once-per-hour turn, working trees increase in between
 // and it stays over the cap. A run that newly makes a root dir checks the cap on the spot regardless of the turn interval (no patrol cleanup is added;
@@ -349,7 +349,7 @@ fn a_temporary_fact_left_by_a_cut_off_run_is_cleared_once_stale() {
 }
 
 // -- Cleanup that counts the fact store runs in a process outside the run ------------------------
-// Cleanup that counts the fact store (about 400,000 facts on zeus) took 3-19 seconds and exceeded the deadline (4 seconds) of the hook right after a write. By default it hands the cleanup, still holding the in-progress
+// Cleanup that counts the fact store (about 400,000 facts on node-h) took 3-19 seconds and exceeded the deadline (4 seconds) of the hook right after a write. By default it hands the cleanup, still holding the in-progress
 // marker, to another process, and the run does not wait. The process it was handed to finishes the cleanup, records the finish time, and removes the marker.
 
 /// Runs the binary with root as the root, the store cache, and the overall cap (in bytes), with the default of handing off the cleanup (returns the instrument's stderr output).

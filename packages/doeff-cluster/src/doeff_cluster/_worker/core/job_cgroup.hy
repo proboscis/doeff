@@ -29,7 +29,7 @@
 ;;; 準備ごとの子(準備の層の下 — 準備 1 つを process の木 1 つに束ねるため): 実行環境の準備の 1 本ずつを、準備の層の下の自分の子
 ;;; (prepare-group-dir)で起こす(GROUP-SCRIPT)。子に memory.oom.group=1 を掛け、層の上限での OOM kill がその準備の木を丸ごと止める。
 ;;; 準備の頭が終わった時(成功・失敗・期限の止めとも)、起こした側が子の cgroup.kill で残りを止め、空になってから子を消す(CLOSE-SCRIPT)。
-;;; 層の memory.max(準備の山)は子の和に掛かったまま残り、層そのものには process を置かない。失敗ケース(11-08 の k3s-0・k3s-2): 準備の
+;;; 層の memory.max(準備の山)は子の和に掛かったまま残り、層そのものには process を置かない。失敗ケース(11-08 の node-d・node-f): 準備の
 ;;; 層で uv の build hook の頭が OOM kill で止まり、残った multiprocessing の forkserver と子が uv の出力の pipe を持ち続け、uv は EOF を
 ;;; 待って 25 時間返らず、層の memory も持ち続けた。
 (require doeff-hy.macros [defk val])
@@ -106,7 +106,7 @@
   {:pre [(: procs str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "子の argv を、兄弟の cgroup へ移ってから元の argv を exec する sh で包むため(頭の註)。内側の宿が自分の子を別の兄弟へ包んだ argv
    (常駐の job の services・実行環境の準備の prepare)は包み直さない — jobs の層の上限は追い出しの線から掛け直され 0 まで下がるので、jobs を
-   経ると移る前に OOM kill で止まる(2026-11-04 22:05 JST の k3s-0: 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。
+   経ると移る前に OOM kill で止まる(2026-11-04 22:05 JST の node-d: 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。
    準備の子へ包んだ argv(GROUP-SCRIPT — grouped-argv)も同じく包み直さない。"
   (if (in (cut argv 3) #(#("/bin/sh" "-c" PLACE-SCRIPT) #("/bin/sh" "-c" GROUP-SCRIPT)))
       argv

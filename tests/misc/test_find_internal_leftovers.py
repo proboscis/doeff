@@ -52,7 +52,7 @@ def test_fail_on_names_an_unkept_tracker_id_and_exits_1(
 def test_fail_on_passes_a_tree_without_those_kinds(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    root = _tree(tmp_path, "the zeus machine runs the check\n")
+    root = _tree(tmp_path, "the doeff-worker pod runs the check\n")
 
     assert leftovers.main([str(root), "--jobs", "1", "--fail-on", "1,2,4"]) == 0
     assert capsys.readouterr().err == ""

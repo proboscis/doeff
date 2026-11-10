@@ -17,7 +17,7 @@ The machine that runs the window is decided by `policy.runner` in the landing de
 The landing declaration declares the landing window and holds the maintainer's verification infrastructure. `gate.full`
 (the verbatim full check, used only by the daily verification run `ai land verify` and the full_paths run),
 `gate.timeout_s`, the focus mode policy, the `UV_CACHE_DIR` lane separation, the choice of execution surface
-(zeus / k3s), and `[test-admission]` (admission for running broad tests) all live there. Since 2026-11-10 it is not
+(which machine runs it), and `[test-admission]` (admission for running broad tests) all live there. Since 2026-11-10 it is not
 in this repository: the merge queue keeps it in its own repository, and the steps after the daily verification
 (the report of public names added without a table row, the follow-up of the repositories that depend on doeff) and
 the preparation of the daily run's tools moved to the daily verification job. The commands it calls in this

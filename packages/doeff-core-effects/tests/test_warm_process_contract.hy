@@ -81,7 +81,7 @@
   (assert (= again gone) again))
 
 (deftest test-a-signal-the-os-refuses-is-answered-as-refused-and-the-child-keeps-running
-  ;; A machine where the OS refuses the send (EPERM -- on helios on 2026-11-01, AppArmor denied signals between processes inside a container). A refused
+  ;; A machine where the OS refuses the send (EPERM -- on node-c on 2026-11-01, AppArmor denied signals between processes inside a container). A refused
   ;; signal is not answered as WarmSignaled -- the answer is ProcessSignalRefused, and the child keeps running. Counterexample = a PermissionError being raised, or a shape that answers
   ;; as if sent (before the fix) is red. The scripted answerer has no OS refusal, so this is for the real one only.
   {:interpreters ["os-warm"]}

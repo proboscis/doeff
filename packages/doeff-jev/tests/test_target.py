@@ -41,9 +41,9 @@ def test_gateway_url_in_env_is_recognised_as_gateway_wire() -> None:
 
 def test_env_url_wins_over_config_file_and_foreign_host_needs_no_key() -> None:
     files = _files(**{CONFIG_FILE: json.dumps({"base_url": "http://file.example/v1", "model": "m-file"})})
-    target = resolve_target({"JEV_BASE_URL": "http://zeus:8646/v1/systemone", "JEV_MODEL": "seimf-27b"}, files)
+    target = resolve_target({"JEV_BASE_URL": "http://judge-host:8646/v1/systemone", "JEV_MODEL": "local-judge-27b"}, files)
     assert (target.base_url, target.model, target.wire, target.source) == (
-        "http://zeus:8646/v1/systemone", "seimf-27b", "direct", "env")
+        "http://judge-host:8646/v1/systemone", "local-judge-27b", "direct", "env")
     assert target.api_key is None
     assert not key_required(target)
     from_file = resolve_target({}, files)
@@ -59,4 +59,4 @@ def test_key_file_from_env_and_default_direct_key_file() -> None:
 
 def test_host_property() -> None:
     assert JevTarget("https://api.typesafe.ai/v1/systemone", "m", "direct", None, "x").host == "api.typesafe.ai"
-    assert JevTarget("http://zeus:8646/v1", "m", "direct", None, "x").host == "zeus:8646"
+    assert JevTarget("http://judge-host:8646/v1", "m", "direct", None, "x").host == "judge-host:8646"

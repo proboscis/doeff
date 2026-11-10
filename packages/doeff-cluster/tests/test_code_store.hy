@@ -182,7 +182,7 @@
 
 (deftest test-published-tree-without-a-valid-marker-is-rebuilt [tmp-path]
   (setv #(repo rev) (! (make-repo tmp-path)) cache (/ tmp-path "cache"))
-  ;; 以前の形で「完成品」になった木: rename はされたが印も bytecode も無い(atlas の 8d7181f と同じ)。
+  ;; 以前の形で「完成品」になった木: rename はされたが印も bytecode も無い(node-a の 8d7181f と同じ)。
   (setv old (/ cache rev))
   (.mkdir (/ old "pkg") :parents True)
   (.write-text (/ old "pkg" "m.py") "X = 1\n")

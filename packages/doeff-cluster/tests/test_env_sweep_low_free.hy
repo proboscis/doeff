@@ -6,7 +6,7 @@
 ;;            間は、固定の集合が変わった時(job が止まって root が候補になる)と完成した root の集合が変わった時だけ数え直す — 時刻では
 ;;            繰り返さない(候補が増えない限り数え直しても選べる物は同じ)。
 ;;
-;; 数は本番の実例(2026-10-08 00:33・node k3s-0 の worker — free_bytes=26796892160・cap_bytes=21474836480・pinned=1・
+;; 数は本番の実例(2026-10-08 00:33・node node-d の worker — free_bytes=26796892160・cap_bytes=21474836480・pinned=1・
 ;; candidates=2・chosen=0。04:01 の空き 26755080192 byte と最低 26843545600 byte〔WORKER_ENV_MIN_FREE_GIB 25〕)。
 ;; 使われていない root 3 つは合わせて約 623M(1 つ約 208M)。
 (require doeff-hy.macros [deftest val])

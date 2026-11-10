@@ -237,8 +237,8 @@
   (assert (is peak-kernel None) peak-kernel))
 
 
-;; 失敗ケース(2026-11-08 の k3s-0〜3 — kernel 5.15 には memory.peak が無い): 組みの山を一度も測れず、完成の印の buildMemoryBytes は
-;; k3s-1 の root 10 個で全部 null、先の組みの見積もりは毎回既定の 512 MiB だった。memory.peak の読めない kernel では、worker が組みの間に
+;; 失敗ケース(2026-11-08 の node-d〜g — kernel 5.15 には memory.peak が無い): 組みの山を一度も測れず、完成の印の buildMemoryBytes は
+;; node-e の root 10 個で全部 null、先の組みの見積もりは毎回既定の 512 MiB だった。memory.peak の読めない kernel では、worker が組みの間に
 ;; 拍ごとに読んだ組みの置かれる層の回収できない使いの最大 − 起こす前の読みを組みの山と読む。
 (deftest test-the-build-memory-on-a-kernel-without-memory-peak-is-the-rise-of-the-sampled-layer
   (<- rose (| int None) (build-memory-of None None None (LayerSample :base (* 20 1024 1024) :peak (* 470 1024 1024))))

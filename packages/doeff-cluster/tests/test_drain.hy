@@ -48,7 +48,7 @@
 
 (defclass Coord []
   "coordinator の純粋な判断(api_policy.respond / tick)を、手で送る heartbeat と readiness の報告で回す。"
-  (defn #^ None __init__ [self #^ tuple [workers #("atlas" "zeus")]]
+  (defn #^ None __init__ [self #^ tuple [workers #("node-a" "node-h")]]
     (setv self.now 5000000 self.state (ClusterState :started-ms 0) self.boots {})
     (for [w workers] (self.beat w))
     None)
@@ -107,50 +107,50 @@
 
 (defk running-writer []
   {:pre [] :post [(: % Coord)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "書き手 w が atlas で動き Ready(active)。zeus も生きている。"
+  "書き手 w が node-a で動き Ready(active)。node-h も生きている。"
   (val c (Coord))
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
-  (assert (= (c.placed "w") "atlas"))
-  (c.beat "atlas" ["w"])
-  (c.ready "atlas" "w" :role "active")
-  (c.beat "zeus")
+  (assert (= (c.placed "w") "node-a"))
+  (c.beat "node-a" ["w"])
+  (c.ready "node-a" "w" :role "active")
+  (c.beat "node-h")
   c)
 
 
 (deftest test-drain-surges-a-handoff-writer-then-moves-it-only-after-the-new-process-is-ready
   (<- c (running-writer))
-  (var view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
-  ;; 並べる: 置き先は atlas のまま、zeus へ並べた置き先(世代 +1)。zeus の heartbeat の返事に w が載る。atlas にも載ったまま。
-  (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
-  (assert (in "w" (c.names-for "zeus")))
-  (assert (in "w" (c.names-for "atlas")))
+  (var view (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a"))
+  ;; 並べる: 置き先は node-a のまま、node-h へ並べた置き先(世代 +1)。node-h の heartbeat の返事に w が載る。node-a にも載ったまま。
+  (assert (= #((c.placed "w") (c.surge "w")) #("node-a" "node-h")) c.state.surges)
+  (assert (in "w" (c.names-for "node-h")))
+  (assert (in "w" (c.names-for "node-a")))
   (assert (= (get view "drain" "phase") "Draining") view)
-  (assert (= (get view "drain" "moving") {"w" "zeus"}) view)
+  (assert (= (get view "drain" "moving") {"w" "node-h"}) view)
   (assert (not (get view "drain" "drained")))
   (assert (not (get view "ready")))
-  ;; zeus の新しい process が起きただけ(準備できたの報告がまだ)では付け替えない。
-  (c.beat "zeus" ["w"])
+  ;; node-h の新しい process が起きただけ(準備できたの報告がまだ)では付け替えない。
+  (c.beat "node-h" ["w"])
   (c.advance 5)
-  (assert (= (c.placed "w") "atlas"))
+  (assert (= (c.placed "w") "node-a"))
   ;; 準備できていない(ready 偽)の報告でも付け替えない。
-  (c.ready "zeus" "w" :ready False)
+  (c.ready "node-h" "w" :ready False)
   (c.advance)
-  (assert (= (c.placed "w") "atlas"))
-  ;; standby の Ready → 付け替える。atlas の宣言から外れる(atlas の worker は次の拍で旧を止め、lease を返す)。
-  (c.ready "zeus" "w")
+  (assert (= (c.placed "w") "node-a"))
+  ;; standby の Ready → 付け替える。node-a の宣言から外れる(node-a の worker は次の拍で旧を止め、lease を返す)。
+  (c.ready "node-h" "w")
   (c.advance)
-  (assert (= (c.placed "w") "zeus"))
+  (assert (= (c.placed "w") "node-h"))
   (assert (is (c.surge "w") None))
-  (assert (not-in "w" (c.names-for "atlas")))
-  (assert (in "w" (c.names-for "zeus")))
-  ;; 付け替えた先は並べた時の世代のまま(zeus の process は起こし直さない — その世代で Ready と数え続ける)。
+  (assert (not-in "w" (c.names-for "node-a")))
+  (assert (in "w" (c.names-for "node-h")))
+  ;; 付け替えた先は並べた時の世代のまま(node-h の process は起こし直さない — その世代で Ready と数え続ける)。
   (assert (= (get (c.call "GET" "/resources/Service/w") "status" "ready") "Ready"))
-  ;; 旧が止まる前は、atlas の上にまだ w が動いている = drain は終わっていない。
-  (c.beat "atlas" ["w"])
-  (assert (= (get (c.call "GET" "/workers/atlas") "drain" "remaining") ["w"]))
+  ;; 旧が止まる前は、node-a の上にまだ w が動いている = drain は終わっていない。
+  (c.beat "node-a" ["w"])
+  (assert (= (get (c.call "GET" "/workers/node-a") "drain" "remaining") ["w"]))
   ;; 旧が止まった報告 → drained。
-  (c.beat "atlas" [])
-  (:= view (c.call "GET" "/workers/atlas"))
+  (c.beat "node-a" [])
+  (:= view (c.call "GET" "/workers/node-a"))
   (assert (= #((get view "drain" "phase") (get view "drain" "drained")) #("Drained" True)) view)
   ;; 出来事の記録: 並べた・付け替えた。
   (setv notes (lfor e c.state.events :if (in "drain" e) (get e "drain")))
@@ -158,12 +158,12 @@
   (assert (any (gfor n notes (in "付け替えた" n))) notes))
 
 
-(defk zeus-report [row instance attempt ready reason]
+(defk node-h-report [row instance attempt ready reason]
   {:pre [(: row dict) (: instance str) (: attempt str) (: ready bool) (: reason str)] :post [(: % dict)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "zeus の上の w の process の準備の報告の本文(standby)を作るため — 版・指紋・割り当ての世代は担い手の行 row から写し、世代の名
+  "node-h の上の w の process の準備の報告の本文(standby)を作るため — 版・指紋・割り当ての世代は担い手の行 row から写し、世代の名
    instance と試行の番号 attempt だけを送り手ごとに変える。"
-  {"worker" "zeus" "pid" 1 "revision" (get row "runningRevision") "instance" instance "attempt" attempt
+  {"worker" "node-h" "pid" 1 "revision" (get row "runningRevision") "instance" instance "attempt" attempt
    "specHash" (get row "specHash") "placement" (get row "placement") "ready" ready "reason" reason "role" "standby"})
 
 
@@ -174,86 +174,86 @@
   ;; 失敗ケース: 報告の表が送り手を問わず直近 4 世代しか残さないか、必ず残す報告をいまの置き先(placements)の process だけに絞ると、
   ;; 並べた先の報告が押し出され、理由が「報告がまだ無い」になり赤。
   (<- c (running-writer))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
-  (c.beat "zeus" ["w"])
-  (val row (c.row "zeus" "w"))
-  (<- placed dict (zeus-report row (get row "instance") "1" False "並べた先は lease を待っている"))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (assert (= #((c.placed "w") (c.surge "w")) #("node-a" "node-h")) c.state.surges)
+  (c.beat "node-h" ["w"])
+  (val row (c.row "node-h" "w"))
+  (<- placed dict (node-h-report row (get row "instance") "1" False "並べた先は lease を待っている"))
   (c.call "POST" "/resources/Service/w/readiness" placed :actor None)
   (for [attempt (range 6 11)]
-    (<- elder dict (zeus-report row (.format "{}-elder" attempt) (str attempt) True "退いた世代"))
+    (<- elder dict (node-h-report row (.format "{}-elder" attempt) (str attempt) True "退いた世代"))
     (c.call "POST" "/resources/Service/w/readiness" elder :actor None))
   (c.advance)
-  (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
-  (val view (c.call "GET" "/workers/atlas"))
+  (assert (= #((c.placed "w") (c.surge "w")) #("node-a" "node-h")) c.state.surges)
+  (val view (c.call "GET" "/workers/node-a"))
   (assert (in "並べた先は lease を待っている" (get view "drain" "movingReady" "w")) view)
-  (c.ready "zeus" "w")
-  (assert (= #((c.placed "w") (c.surge "w")) #("zeus" None)) c.state.surges))
+  (c.ready "node-h" "w")
+  (assert (= #((c.placed "w") (c.surge "w")) #("node-h" None)) c.state.surges))
 
 
 (deftest test-no-target-means-no-surge-and-the-old-keeps-running-until-a-target-appears
   (<- c (running-writer))
-  ;; zeus が沈黙(死んだ)。
+  ;; node-h が沈黙(死んだ)。
   (c.advance 12)
-  (c.beat "atlas" ["w"])
-  (setv view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (c.beat "node-a" ["w"])
+  (setv view (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a"))
   (assert (is (c.surge "w") None))
-  (assert (= (c.placed "w") "atlas"))
-  (assert (in "w" (c.names-for "atlas")))
+  (assert (= (c.placed "w") "node-a"))
+  (assert (in "w" (c.names-for "node-a")))
   (assert (= (get view "drain" "phase") "Blocked") view)
   (assert (in "移す先が無い" (get view "drain" "blocked" "w")) view)
   ;; 時間が経っても旧を外さない(空白を作らない)。
-  (for [_ (range 30)] (c.beat "atlas" ["w"]) (c.advance))
-  (assert (= (c.placed "w") "atlas"))
-  ;; zeus が戻ると次の拍で並べる。
-  (c.beat "zeus")
-  (assert (= (c.surge "w") "zeus"))
-  (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Draining")))
+  (for [_ (range 30)] (c.beat "node-a" ["w"]) (c.advance))
+  (assert (= (c.placed "w") "node-a"))
+  ;; node-h が戻ると次の拍で並べる。
+  (c.beat "node-h")
+  (assert (= (c.surge "w") "node-h"))
+  (assert (= (get (c.call "GET" "/workers/node-a") "drain" "phase") "Draining")))
 
 
 (deftest test-a-target-that-is-draining-or-not-eligible-is-not-used
   (<- c (running-writer))
-  ;; zeus も drain 中 → 移す先が無い。
-  (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  ;; node-h も drain 中 → 移す先が無い。
+  (c.call "POST" "/workers/node-h/drain" {} :actor "drain@node-h")
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
   (assert (is (c.surge "w") None))
-  (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
+  (assert (= (get (c.call "GET" "/workers/node-a") "drain" "phase") "Blocked"))
   ;; Mac(kind mac)は条件を満たさないので移す先にならない。
-  (c.beat "newmac" :provides ["mac-desk"])
+  (c.beat "mac-a" :provides ["mac-desk"])
   (c.advance)
   (assert (is (c.surge "w") None))
-  (c.call "DELETE" "/workers/zeus/drain" :actor "c-test")
-  (assert (= (c.surge "w") "zeus")))
+  (c.call "DELETE" "/workers/node-h/drain" :actor "c-test")
+  (assert (= (c.surge "w") "node-h")))
 
 
 (deftest test-a-job-no-other-listed-worker-can-hold-does-not-hold-the-drain
   ;; 失敗ケース(#3669 — 2026-10-05 の記録の表の service): 能力の合う別の worker が名簿に 1 台も無い job は、待っても移す先が来ない。
   ;; drain はそれを待たず、残りが 0 なら drained を返す(preStop は上限 90 秒を待たずに終わる)。job は外さず並べず、この worker の
   ;; 上で止まるまで動かす。切り離した task は今どおり終わるまで待つ。直す前は Blocked・drained 偽(上限まで待つ)。
-  (val c (Coord #("atlas")))
+  (val c (Coord #("node-a")))
   (c.beat "mac" :provides ["mac-desk"])
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
-  (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
-  (c.beat "atlas" ["w" "r"])
-  (val view (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (assert (= #((c.placed "w") (c.placed "r")) #("node-a" "node-a")))
+  (c.beat "node-a" ["w" "r"])
+  (val view (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a"))
   (assert (= #((get view "drain" "phase") (get view "drain" "drained") (get view "drain" "remaining")) #("Drained" True [])) view)
   (assert (= #((get view "drain" "unmovable") (get view "drain" "blocked")) #(["r" "w"] {})) view)
-  ;; 移せない job は外さず並べず、この worker の上で動かし続ける(置き先は atlas のまま・返事に載る)。
+  ;; 移せない job は外さず並べず、この worker の上で動かし続ける(置き先は node-a のまま・返事に載る)。
   (assert (is (c.surge "w") None))
-  (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
-  (assert (= (sorted (c.names-for "atlas")) ["r" "w"]))
+  (assert (= #((c.placed "w") (c.placed "r")) #("node-a" "node-a")))
+  (assert (= (sorted (c.names-for "node-a")) ["r" "w"]))
   ;; 頼み直しても drained のまま。
   (c.advance 5)
-  (c.beat "atlas" ["w" "r"])
-  (assert (get (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas") "drain" "drained"))
+  (c.beat "node-a" ["w" "r"])
+  (assert (get (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a") "drain" "drained"))
   ;; 切り離した task は今どおり、終わるまで待つ(残りに載る・drained にならない)。
-  (val d (Coord #("atlas")))
+  (val d (Coord #("node-a")))
   (d.beat "mac" :provides ["mac-desk"])
   (d.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
   (d.call "PUT" "/detached/job-24" (d.task-body K3S {"revision" "r" "leaseSeconds" 60 "memoryMiB" 1024}) :actor "c-test")
   (val task (next (gfor t (.rows d.state.tasks) :if (= t.key "job-24") t)))
-  (val waiting (d.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (val waiting (d.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a"))
   (assert (= #((get waiting "drain" "drained") (get waiting "drain" "remaining")) #(False [(+ "task/" task.id)])) waiting)
   (assert (= (get waiting "drain" "unmovable") ["w"]) waiting))
 
@@ -263,14 +263,14 @@
   ;; 空きの無い場合は tests/test_cluster_policy.hy の test-a-surge-waits-while-the-job-side-is-full-and-leaves-the-task-reserve-open。
   (<- dead (running-writer))
   (dead.advance 12)
-  (dead.beat "atlas" ["w"])
-  (val silent (dead.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (dead.beat "node-a" ["w"])
+  (val silent (dead.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a"))
   (assert (= #((get silent "drain" "phase") (get silent "drain" "drained") (get silent "drain" "remaining")) #("Blocked" False ["w"]))
           silent)
   (assert (= (get silent "drain" "unmovable") []) silent)
   (<- busy (running-writer))
-  (busy.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
-  (val draining (busy.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas"))
+  (busy.call "POST" "/workers/node-h/drain" {} :actor "drain@node-h")
+  (val draining (busy.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a"))
   (assert (= #((get draining "drain" "phase") (get draining "drain" "drained") (get draining "drain" "remaining")) #("Blocked" False ["w"]))
           draining)
   (assert (= (get draining "drain" "unmovable") []) draining))
@@ -278,68 +278,68 @@
 
 (deftest test-a-draining-worker-gets-no-warm-until-the-drain-ends
   ;; 失敗ケース(#3669): drain 中の worker への heartbeat の返事には、温める表の行(新しい版の実行環境の準備)を載せない — 送り手の
-  ;; warm-view が drain 中の worker を数えないのと同じ判断。drain が解けた新しい世代には行が届く。直す前は drain 中の atlas にも行が届いた。
+  ;; warm-view が drain 中の worker を数えないのと同じ判断。drain が解けた新しい世代には行が届く。直す前は drain 中の node-a にも行が届いた。
   (<- c (running-writer))
   (c.advance 12)
-  (c.beat "atlas" ["w"])
-  (c.call "POST" "/workers/atlas/drain" {"boot" "b1"} :actor "drain@atlas")
-  (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
+  (c.beat "node-a" ["w"])
+  (c.call "POST" "/workers/node-a/drain" {"boot" "b1"} :actor "drain@node-a")
+  (assert (= (get (c.call "GET" "/workers/node-a") "drain" "phase") "Blocked"))
   (<- env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
   (c.call "POST" "/warm" {"runtimeEnv" declared "needs" K3S "ttlSeconds" 600 "holder" "c-test"} :actor "c-test")
-  (val reply (c.beat "atlas" ["w"]))
+  (val reply (c.beat "node-a" ["w"]))
   (assert (= (get reply "warm") []) reply)
   ;; 作り直した Pod の worker(別の世代)の heartbeat で drain が解ける → 温める表の行が届く。
-  (val fresh (c.beat "atlas" :boot "b2"))
-  (assert (is (.row c.state.drains "atlas") None))
+  (val fresh (c.beat "node-a" :boot "b2"))
+  (assert (is (.row c.state.drains "node-a") None))
   (assert (= (len (get fresh "warm")) 1) fresh))
 
 
 (deftest test-cancelling-the-drain-drops-the-surge-and-keeps-the-old
   (<- c (running-writer))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.beat "zeus" ["w"])
-  (setv view (c.call "DELETE" "/workers/atlas/drain" :actor "c-test"))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (c.beat "node-h" ["w"])
+  (setv view (c.call "DELETE" "/workers/node-a/drain" :actor "c-test"))
   (assert (not (get view "draining")))
   (assert (get view "ready"))
   (assert (is (c.surge "w") None))
-  (assert (= (c.placed "w") "atlas"))
-  (assert (not-in "w" (c.names-for "zeus")))
+  (assert (= (c.placed "w") "node-a"))
+  (assert (not-in "w" (c.names-for "node-h")))
   ;; 並べた先の process が Ready を報告しても(取り消しの後)付け替えない。
   (c.advance)
-  (assert (= (c.placed "w") "atlas")))
+  (assert (= (c.placed "w") "node-a")))
 
 
 (deftest test-a-recreate-service-is-stopped-and-moved-only-when-another-worker-can-take-it
   (setv c (Coord))
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
-  (assert (= (c.placed "r") "atlas"))
-  (c.beat "atlas" ["r"])
-  ;; zeus が死んでいる間の drain: 移す先が無いので外さない。
+  (assert (= (c.placed "r") "node-a"))
+  (c.beat "node-a" ["r"])
+  ;; node-h が死んでいる間の drain: 移す先が無いので外さない。
   (c.advance 12)
-  (c.beat "atlas" ["r"])
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (assert (= (c.placed "r") "atlas"))
-  (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
-  ;; zeus が戻る → 外す(止めて移す)。旧が止め終えるまで zeus には置かない。
-  (c.beat "zeus")
+  (c.beat "node-a" ["r"])
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (assert (= (c.placed "r") "node-a"))
+  (assert (= (get (c.call "GET" "/workers/node-a") "drain" "phase") "Blocked"))
+  ;; node-h が戻る → 外す(止めて移す)。旧が止め終えるまで node-h には置かない。
+  (c.beat "node-h")
   (assert (is (.row c.state.placements "r") None))
-  (assert (not-in "r" (c.names-for "atlas")))
-  (c.beat "atlas" ["r"])
+  (assert (not-in "r" (c.names-for "node-a")))
+  (c.beat "node-a" ["r"])
   (assert (is (.row c.state.placements "r") None))
-  (c.beat "atlas" [])
-  (assert (= (c.placed "r") "zeus")))
+  (c.beat "node-a" [])
+  (assert (= (c.placed "r") "node-h")))
 
 
 (deftest test-a-draining-worker-gets-no-new-placements-or-tasks
   (setv c (Coord))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
   (c.call "POST" "/resources/Service" {"name" "n" "spec" (! (service))} :expect 201)
-  (assert (= (c.placed "n") "zeus"))
+  (assert (= (c.placed "n") "node-h"))
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
-  (assert (= (. (.row c.state.tasks "t1") worker) "zeus"))
+  (assert (= (. (.row c.state.tasks "t1") worker) "node-h"))
   ;; drain 中の worker しか置ける先が無い task は失敗にせず待つ。
-  (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
+  (c.call "POST" "/workers/node-h/drain" {} :actor "drain@node-h")
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (.row c.state.tasks "t2") phase) "queued")))
 
@@ -349,44 +349,44 @@
   ;; sim の StopWorker)。coordinator はその世代を drain に載せ、新しい置き先も task も置かない(task は待つ)。同じ世代の名乗り直しは
   ;; drain を付け直さず期限を変えない。同じ名の新しい世代の heartbeat で解け、待っていた task がそこへ置かれる。
   (val c (Coord))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.beat "zeus" :stopping True)
-  (val d (.row c.state.drains "zeus"))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (c.beat "node-h" :stopping True)
+  (val d (.row c.state.drains "node-h"))
   (assert (= #(d.boot d.actor) #("b1" "worker-stopping")) d)
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (.row c.state.tasks "t1") phase) "queued") (.row c.state.tasks "t1"))
   (c.advance 2)
-  (c.beat "zeus" :stopping True)
-  (assert (= (.row c.state.drains "zeus") d) (.row c.state.drains "zeus"))
-  (c.beat "zeus" :boot "b2")
-  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
+  (c.beat "node-h" :stopping True)
+  (assert (= (.row c.state.drains "node-h") d) (.row c.state.drains "node-h"))
+  (c.beat "node-h" :boot "b2")
+  (assert (is (.row c.state.drains "node-h") None) c.state.drains)
   (val t (.row c.state.tasks "t1"))
-  (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
+  (assert (and (= t.worker "node-h") (!= t.phase "queued")) t))
 
 
 (deftest test-a-new-boot-or-the-deadline-ends-the-drain
   ;; 世代つきの頼み(Pod の preStop が自分の世代 b1 を本文で送る)の drain。
   (<- c (running-writer))
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30 "boot" "b1"} :actor "drain@zeus")
-  (assert (= (. (.row c.state.drains "zeus") boot) "b1"))
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 30 "boot" "b1"} :actor "drain@node-h")
+  (assert (= (. (.row c.state.drains "node-h") boot) "b1"))
   ;; 同じ世代の heartbeat では解けない。頼み直しは始めた時刻を変えず、期限だけ延ばす。
-  (setv since (. (.row c.state.drains "zeus") since-ms))
+  (setv since (. (.row c.state.drains "node-h") since-ms))
   (c.advance 10)
-  (c.beat "zeus")
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30 "boot" "b1"} :actor "drain@zeus")
-  (assert (= (. (.row c.state.drains "zeus") since-ms) since))
-  (assert (= (. (.row c.state.drains "zeus") until-ms) (+ c.now 30000)))
-  (assert (not (get (c.call "GET" "/workers/zeus") "ready")))
+  (c.beat "node-h")
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 30 "boot" "b1"} :actor "drain@node-h")
+  (assert (= (. (.row c.state.drains "node-h") since-ms) since))
+  (assert (= (. (.row c.state.drains "node-h") until-ms) (+ c.now 30000)))
+  (assert (not (get (c.call "GET" "/workers/node-h") "ready")))
   ;; 作り直した Pod の worker(別の世代)の heartbeat → 解ける。Ready。
-  (c.beat "zeus" :boot "b2")
-  (assert (is (.row c.state.drains "zeus") None))
-  (assert (get (c.call "GET" "/workers/zeus") "ready"))
+  (c.beat "node-h" :boot "b2")
+  (assert (is (.row c.state.drains "node-h") None))
+  (assert (get (c.call "GET" "/workers/node-h") "ready"))
   ;; 期限を過ぎた drain は調停が消す。
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 5} :actor "drain@zeus")
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 5} :actor "drain@node-h")
   (c.advance 6)
-  (assert (is (.row c.state.drains "zeus") None))
+  (assert (is (.row c.state.drains "node-h") None))
   ;; 出来事の記録に誰が drain を頼んだかが残る(Worker の資源の status.drain)。
-  (assert (any (gfor e c.state.audit (and (= e.kind "Worker") (= e.actor "drain@zeus"))))))
+  (assert (any (gfor e c.state.audit (and (= e.kind "Worker") (= e.actor "drain@node-h"))))))
 
 
 (deftest test-a-drain-asked-without-a-generation-stays-on-the-name-across-recreated-pods
@@ -395,30 +395,30 @@
   ;; 最初の作り直し(b2)の heartbeat で drain が解け、2 度目の作り直しの前に置かれた仕事が止められた(2026-10-09 00:36:50 に解け、
   ;; 00:37:33 の 2 度目の入れ替えで走っていたターン 3 本が止まった)。
   (val c (Coord))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "upgrade")
-  (assert (is (. (.row c.state.drains "zeus") boot) None) (.row c.state.drains "zeus"))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "upgrade")
+  (assert (is (. (.row c.state.drains "node-h") boot) None) (.row c.state.drains "node-h"))
   (for [boot ["b2" "b3"]]
     (c.advance 2)
-    (val reply (c.beat "zeus" :boot boot))
-    (assert (is-not (.row c.state.drains "zeus") None) #(boot c.state.drains))
+    (val reply (c.beat "node-h" :boot boot))
+    (assert (is-not (.row c.state.drains "node-h") None) #(boot c.state.drains))
     (assert (get reply "draining") #(boot reply)))
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (.row c.state.tasks "t1") phase) "queued") (.row c.state.tasks "t1"))
   ;; 頼み手が外す(DELETE)と、今の世代に task が置かれる。
-  (c.call "DELETE" "/workers/zeus/drain" :actor "upgrade")
-  (c.beat "zeus")
+  (c.call "DELETE" "/workers/node-h/drain" :actor "upgrade")
+  (c.beat "node-h")
   (val t (.row c.state.tasks "t1"))
-  (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
+  (assert (and (= t.worker "node-h") (!= t.phase "queued")) t))
 
 
 (deftest test-a-drain-asked-with-a-generation-ends-at-the-next-generation
   ;; 世代つきの頼み(Pod の preStop — 自分の世代を本文で送る)の drain は、その世代に付く: 作り直した Pod(別の世代)の heartbeat で解ける。
   (val c (Coord))
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 600 "boot" "b1"} :actor "drain@zeus")
-  (assert (= (. (.row c.state.drains "zeus") boot) "b1") (.row c.state.drains "zeus"))
-  (c.beat "zeus" :boot "b2")
-  (assert (is (.row c.state.drains "zeus") None) c.state.drains))
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 600 "boot" "b1"} :actor "drain@node-h")
+  (assert (= (. (.row c.state.drains "node-h") boot) "b1") (.row c.state.drains "node-h"))
+  (c.beat "node-h" :boot "b2")
+  (assert (is (.row c.state.drains "node-h") None) c.state.drains))
 
 
 (deftest test-the-old-pod-drain-does-not-drain-the-new-generation-of-the-same-name
@@ -426,99 +426,99 @@
   ;; ながら heartbeat を送り続け、新 Pod の worker は同じ名で名乗る。drain の印が約 2 秒ごとに付いて(旧の drain)消えた(新の
   ;; heartbeat)。旧い世代の頼みと heartbeat は、新しい世代の置き場を止めない。
   (<- c (running-writer))
-  (c.beat "zeus" :boot "old")
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@zeus")
-  (assert (= (. (.row c.state.drains "zeus") boot) "old"))
+  (c.beat "node-h" :boot "old")
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-h")
+  (assert (= (. (.row c.state.drains "node-h") boot) "old"))
   ;; 新 Pod の worker が名乗る → 旧い世代の drain は解ける(今までの規則)。
   (c.advance 11)
-  (c.beat "zeus" :boot "new")
-  (assert (is (.row c.state.drains "zeus") None))
+  (c.beat "node-h" :boot "new")
+  (assert (is (.row c.state.drains "node-h") None))
   ;; 旧 Pod は drain を頼み直し、heartbeat を送り続ける。どちらも新しい世代に drain を付け直さない。
   (for [_ (range 3)]
     (c.advance 1)
-    (setv view (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@zeus"))
-    (assert (is (.row c.state.drains "zeus") None) "旧い世代の drain の頼みが新しい世代に drain を付けた")
-    (setv old-reply (c.beat "zeus" :boot "old"))
-    (assert (is (.row c.state.drains "zeus") None) c.state.drains)
+    (setv view (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-h"))
+    (assert (is (.row c.state.drains "node-h") None) "旧い世代の drain の頼みが新しい世代に drain を付けた")
+    (setv old-reply (c.beat "node-h" :boot "old"))
+    (assert (is (.row c.state.drains "node-h") None) c.state.drains)
     ;; 旧 Pod への答え: 退いた世代で、その世代に置いた task は無い = 空いた(preStop はここで終わる)。
     (assert (get view "drain" "superseded") view)
     (assert (get view "drain" "drained") view)
     (assert (get old-reply "superseded"))
     (assert (get old-reply "draining"))
-    (setv new-reply (c.beat "zeus" :boot "new"))
+    (setv new-reply (c.beat "node-h" :boot "new"))
     (assert (not (get new-reply "draining")))
-    (assert (get (c.call "GET" "/workers/zeus") "ready")))
+    (assert (get (c.call "GET" "/workers/node-h") "ready")))
   ;; 新しい世代には新しい task を置ける。
   (c.call "POST" "/tasks" (c.task-body ["cluster-net"])
           :actor "c-test")
-  (assert (= #((. (.row c.state.tasks "t1") phase) (. (.row c.state.tasks "t1") worker)) #("assigned" "zeus"))))
+  (assert (= #((. (.row c.state.tasks "t1") phase) (. (.row c.state.tasks "t1") worker)) #("assigned" "node-h"))))
 
 
 (deftest test-the-old-generation-gets-only-its-running-handoff-jobs-and-its-own-detached-tasks
   ;; 退いた世代への返事は、動いている物を安全に畳ませるだけ: 入れ替えの job はその世代が running の物だけ(lease を持ったまま
   ;; Pod の停止まで)・recreate の job は載せない(止めて lease を返す)・退いた後に置かれた job と RemoteJob の task は載せない。
-  (setv c (Coord #("atlas")))
-  (c.beat "atlas" :boot "old")
+  (setv c (Coord #("node-a")))
+  (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
-  (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
+  (assert (= #((c.placed "w") (c.placed "r")) #("node-a" "node-a")))
   (c.call "PUT" "/detached/job-own" (c.task-body K3S {"revision" "r" "leaseSeconds" 60 "memoryMiB" 1024})
           :actor "c-test")
-  (c.beat "atlas" ["w" "r"] :boot "old")
+  (c.beat "node-a" ["w" "r"] :boot "old")
   (c.advance 1)
-  (c.beat "atlas" :boot "new")
-  ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 atlas へ置かれる)。
+  (c.beat "node-a" :boot "new")
+  ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 node-a へ置かれる)。
   (c.call "POST" "/resources/Service" {"name" "w2" "spec" (! (service))} :expect 201)
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (setv remote (next (gfor t (.rows c.state.tasks) :if (not t.detached) t))
         own (next (gfor t (.rows c.state.tasks) :if t.detached t)))
-  (assert (= #((c.placed "w2") remote.worker own.boot) #("atlas" "atlas" "old")))
-  (setv old-reply (c.beat "atlas" ["w" "r"] :boot "old"))
+  (assert (= #((c.placed "w2") remote.worker own.boot) #("node-a" "node-a" "old")))
+  (setv old-reply (c.beat "node-a" ["w" "r"] :boot "old"))
   (assert (get old-reply "superseded"))
   (assert (= (lfor j (get old-reply "jobs") (get j "name")) ["w"]) (get old-reply "jobs"))
   (assert (= (lfor t (get old-reply "tasks") (get t "id")) [own.id]) (get old-reply "tasks"))
   ;; 今の世代への返事は名の置き先の job と RemoteJob の task を全部持つ(退いた世代の task は持たない)。
-  (setv new-reply (c.beat "atlas" :boot "new"))
+  (setv new-reply (c.beat "node-a" :boot "new"))
   (assert (= (sorted (lfor j (get new-reply "jobs") (get j "name"))) ["r" "w" "w2"]))
   (assert (= (lfor t (get new-reply "tasks") (get t "id")) [remote.id])))
 
 
 (deftest test-the-old-generation-is-told-to-retire-a-handoff-job-once-the-new-generation-runs-it-ready
-  ;; 世代をまたぐ入れ替え(AL-D2): 同じ名 atlas の新しい世代が、旧い世代の動かしている入れ替えの job w の process を起こし、その process が
+  ;; 世代をまたぐ入れ替え(AL-D2): 同じ名 node-a の新しい世代が、旧い世代の動かしている入れ替えの job w の process を起こし、その process が
   ;; Ready を報告した後、旧い世代への返事は w に印 supersededBy(新しい世代の process の世代の名)を載せる — 旧い世代の worker は w を
   ;; 止めずに退かせる。新しい世代の process が Ready になる前は印を載せない(旧い世代が書き手のまま動き続ける)。
-  (setv c (Coord #("atlas")))
-  (c.beat "atlas" :boot "old")
+  (setv c (Coord #("node-a")))
+  (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
-  (c.beat "atlas" ["w"] :boot "old")
-  (c.ready "atlas" "w" :role "active")
+  (c.beat "node-a" ["w"] :boot "old")
+  (c.ready "node-a" "w" :role "active")
   (c.advance 1)
-  ;; 新しい世代の名乗り: w の process(世代の名 atlas-w-new)を起こして running と報告する(lease を待つ standby)。
-  (setv new-row (| (c.row "atlas" "w") {"instance" "atlas-w-new"}))
-  (setv (get c.boots "atlas") "new")
-  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  ;; 新しい世代の名乗り: w の process(世代の名 node-a-w-new)を起こして running と報告する(lease を待つ standby)。
+  (setv new-row (| (c.row "node-a" "w") {"instance" "node-a-w-new"}))
+  (setv (get c.boots "node-a") "new")
+  (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                "statuses" [new-row] "stopping" False}
           :actor None)
-  (setv before (c.beat "atlas" ["w"] :boot "old"))
+  (setv before (c.beat "node-a" ["w"] :boot "old"))
   (assert (get before "superseded") before)
   (assert (= (lfor j (get before "jobs") (.get j "supersededBy")) [None]) (get before "jobs"))
   ;; 新しい世代の process が Ready を報告した。
   (c.call "POST" "/resources/Service/w/readiness"
-          {"worker" "atlas" "pid" 2 "revision" (get new-row "runningRevision") "instance" "atlas-w-new" "attempt" "1"
+          {"worker" "node-a" "pid" 2 "revision" (get new-row "runningRevision") "instance" "node-a-w-new" "attempt" "1"
            "specHash" (get new-row "specHash") "placement" (get new-row "placement") "ready" True "role" "standby"}
           :actor None)
-  (setv after (c.beat "atlas" ["w"] :boot "old"))
-  (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "atlas-w-new")]) (get after "jobs"))
+  (setv after (c.beat "node-a" ["w"] :boot "old"))
+  (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "node-a-w-new")]) (get after "jobs"))
   ;; 今の世代への返事には印が無い(今の世代は書き手を受け継ぐ側)。
-  (setv current (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (setv current (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                              "statuses" [new-row] "stopping" False}
                         :actor None))
   (assert (= (lfor j (get current "jobs") (.get j "supersededBy")) [None]) (get current "jobs")))
 
 
 (deftest test-the-old-generation-keeps-a-recreate-job-until-the-new-generation-can-start-it-and-the-old-pod-stops
-  ;; 失敗ケース(AL-D2f — 10-11 17:36 JST の zeus の RollingUpdate / AL-D2k — 18:44 JST):
-  ;; 同じ名 atlas の新しい世代が、前の世代がまだ走っている間に名乗る(overlapsElder)。前の世代の動かしている recreate の job r は、
+  ;; 失敗ケース(AL-D2f — 10-11 17:36 JST の node-h の RollingUpdate / AL-D2k — 18:44 JST):
+  ;; 同じ名 node-a の新しい世代が、前の世代がまだ走っている間に名乗る(overlapsElder)。前の世代の動かしている recreate の job r は、
   ;; 新しい世代が r を起こせる(準備と入口の検めが揃った — 状態の行の phase が elder-runs)と報告し、かつ前の世代の Pod の止まりが
   ;; 始まる(preStop の drain)まで前の世代に残す。新しい世代には印 elderRuns を付けて渡し(準備と検めだけをして起こさない)、揃うまでは
   ;; handoverPending を付ける(worker は Pod の ready の file を書かない — Deployment は前の世代の Pod の削除を始めない)。揃ったら
@@ -527,22 +527,22 @@
   ;; D2f の前: 新しい世代の名乗りと同時に前の世代から r が外れ、新しい世代の準備の間(本番で 6 分)誰も動かさなかった。
   ;; D2k の前: 新しい世代の最初の返事で Pod が Ready になり、前の世代の Pod が Service の振り先から外れた後も r を前の世代に残した
   ;; (本番で 2〜7 分 届かなかった)。
-  (val c (Coord #("atlas")))
-  (c.beat "atlas" :boot "old")
+  (val c (Coord #("node-a")))
+  (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
-  (c.beat "atlas" ["r"] :boot "old")
+  (c.beat "node-a" ["r"] :boot "old")
   (c.advance 1)
-  (val old-row (c.row "atlas" "r"))
-  (setv (get c.boots "atlas") "new")
+  (val old-row (c.row "node-a" "r"))
+  (setv (get c.boots "node-a") "new")
   (val preparing {"name" "r" "phase" "preparing" "desiredRevision" (get old-row "desiredRevision")})
-  (val first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (val first (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                           "statuses" [preparing] "overlapsElder" True}
                       :actor None))
   (assert (= (lfor j (get first "jobs") #((get j "name") (.get j "elderRuns"))) [#("r" True)]) (get first "jobs"))
   (assert (get first "handoverPending") first)
-  (assert (not (get (c.call "GET" "/workers/atlas") "ready")) "受け取れない間は readinessProbe の答えも Ready でない")
+  (assert (not (get (c.call "GET" "/workers/node-a") "ready")) "受け取れない間は readinessProbe の答えも Ready でない")
   ;; 前の世代はまだ r を動かし続ける(返事に r が残る)。
-  (val old-reply (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
+  (val old-reply (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
                                               "statuses" [old-row]}
                           :actor None))
   (assert (get old-reply "superseded") old-reply)
@@ -550,27 +550,27 @@
   ;; 新しい世代が r を起こせると報告した → handoverPending が外れる(Pod が Ready になる)。前の世代の Pod の止まりはまだ始まっていない
   ;; ので、r は前の世代に残る(Service の振り先はまだ前の世代の Pod)。新しい世代の印はまだ残る。
   (val ready-row (| preparing {"phase" "elder-runs"}))
-  (val second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (val second (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                            "statuses" [ready-row] "overlapsElder" True}
                        :actor None))
   (assert (= (lfor j (get second "jobs") (.get j "elderRuns")) [True]) (get second "jobs"))
   (assert (not (.get second "handoverPending" False)) second)
-  (assert (get (c.call "GET" "/workers/atlas") "ready") "受け取れる姿になったら readinessProbe の答えも Ready")
-  (val kept (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
+  (assert (get (c.call "GET" "/workers/node-a") "ready") "受け取れる姿になったら readinessProbe の答えも Ready")
+  (val kept (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
                                          "statuses" [old-row]}
                      :actor None))
   (assert (= (lfor j (get kept "jobs") (get j "name")) ["r"]) "前の世代の Pod の止まりが始まるまで r を渡さない")
   ;; 前の世代の Pod の preStop が drain を頼んだ(Pod の削除が始まり、Service の振り先が新しい Pod へ移った)→ r が前の世代の返事から外れる。
-  (val waiting (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (val waiting (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a"))
   (assert (not (get waiting "drain" "drained")) waiting)
-  (val told (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
+  (val told (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
                                          "statuses" [old-row]}
                      :actor None))
   (assert (= (get told "jobs") []) (get told "jobs"))
   ;; 前の世代が r を止め終えた(報告に running の r が無い)→ 新しい世代の印が外れる(起こす)。
-  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old" "statuses" []}
+  (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old" "statuses" []}
           :actor None)
-  (val third (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (val third (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                           "statuses" [ready-row] "overlapsElder" True}
                       :actor None))
   (assert (= (lfor j (get third "jobs") #((get j "name") (.get j "elderRuns"))) [#("r" None)]) (get third "jobs"))
@@ -578,64 +578,64 @@
 
 
 (deftest test-an-overlapping-generation-retires-the-old-handoff-process-only-after-the-old-pod-stops
-  ;; 失敗ケース(AL-D2k — 10-11 18:44 JST の zeus の画面と web の service): 前の世代がまだ走っている間に名乗った新しい世代
+  ;; 失敗ケース(AL-D2k — 10-11 18:44 JST の node-h の画面と web の service): 前の世代がまだ走っている間に名乗った新しい世代
   ;; (overlapsElder)は、入れ替えの job w の新しい process が Ready になるまで handoverPending(Pod は Ready でない)。Ready になっても、
   ;; 前の世代の Pod の止まりが始まる(preStop の drain)までは、前の世代の w の process を退かせない(印 supersededBy を載せない —
   ;; Service の振り先はまだ前の世代の Pod)。drain が来たら印を載せる。直す前は、新しい process が Ready になった時に前の世代の
   ;; process を退かせ、振り先が新しい Pod へ移るまで w へ届かなかった。
-  (val c (Coord #("atlas")))
-  (c.beat "atlas" :boot "old")
+  (val c (Coord #("node-a")))
+  (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
-  (c.beat "atlas" ["w"] :boot "old")
-  (c.ready "atlas" "w" :role "active")
+  (c.beat "node-a" ["w"] :boot "old")
+  (c.ready "node-a" "w" :role "active")
   (c.advance 1)
-  (val old-row (c.row "atlas" "w"))
-  (val new-row (| old-row {"instance" "atlas-w-new"}))
-  (setv (get c.boots "atlas") "new")
-  (val first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (val old-row (c.row "node-a" "w"))
+  (val new-row (| old-row {"instance" "node-a-w-new"}))
+  (setv (get c.boots "node-a") "new")
+  (val first (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                           "statuses" [new-row] "overlapsElder" True "stopping" False}
                       :actor None))
   (assert (get first "handoverPending") first)
   ;; 新しい世代の process が Ready を報告した → handoverPending が外れる。前の世代の process はまだ退かせない。
   (c.call "POST" "/resources/Service/w/readiness"
-          {"worker" "atlas" "pid" 2 "revision" (get new-row "runningRevision") "instance" "atlas-w-new" "attempt" "1"
+          {"worker" "node-a" "pid" 2 "revision" (get new-row "runningRevision") "instance" "node-a-w-new" "attempt" "1"
            "specHash" (get new-row "specHash") "placement" (get new-row "placement") "ready" True "role" "standby"}
           :actor None)
-  (val second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (val second (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                            "statuses" [new-row] "overlapsElder" True "stopping" False}
                        :actor None))
   (assert (not (.get second "handoverPending" False)) second)
-  (val before (c.beat "atlas" ["w"] :boot "old"))
+  (val before (c.beat "node-a" ["w"] :boot "old"))
   (assert (= (lfor j (get before "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" None)]) (get before "jobs"))
   ;; 前の世代の Pod の preStop が drain を頼んだ → 印を載せる(前の世代の process は走っている仕事を終えて退く)。
-  (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas")
-  (val after (c.beat "atlas" ["w"] :boot "old"))
-  (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "atlas-w-new")]) (get after "jobs")))
+  (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a")
+  (val after (c.beat "node-a" ["w"] :boot "old"))
+  (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "node-a-w-new")]) (get after "jobs")))
 
 
 (deftest test-a-leaving-generation-is-told-not-to-start-a-handoff-job-even-while-the-new-process-is-not-ready
-  ;; 失敗ケース(AL-D2n — 10-11 21:29 JST の zeus): 退いた世代の Pod の止まりが始まった(preStop の drain)後、今の世代の process が
+  ;; 失敗ケース(AL-D2n — 10-11 21:29 JST の node-h): 退いた世代の Pod の止まりが始まった(preStop の drain)後、今の世代の process が
   ;; Ready と数えられていない拍(負荷の間)にも、退いた世代への返事の handoff の job に印 supersededBy を付ける。worker は印の在る
   ;; job を起こし直さない(policy.plan-job)。直す前は、今の世代の process が Ready でない拍に印を付けず、退かせた process が終わった
   ;; 後に退いた世代の worker が新しい試行を起こし、今の世代の process から lease を取った。止まりの始まる前は今どおり印を付けない。
-  (val c (Coord #("atlas")))
-  (c.beat "atlas" :boot "old")
+  (val c (Coord #("node-a")))
+  (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
-  (c.beat "atlas" ["w"] :boot "old")
-  (c.ready "atlas" "w" :role "active")
+  (c.beat "node-a" ["w"] :boot "old")
+  (c.ready "node-a" "w" :role "active")
   (c.advance 1)
-  (val old-row (c.row "atlas" "w"))
-  (val new-row (| old-row {"instance" "atlas-w-new"}))
-  (setv (get c.boots "atlas") "new")
-  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
+  (val old-row (c.row "node-a" "w"))
+  (val new-row (| old-row {"instance" "node-a-w-new"}))
+  (setv (get c.boots "node-a") "new")
+  (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                "statuses" [new-row] "overlapsElder" True "stopping" False}
           :actor None)
   ;; 今の世代の process はまだ Ready を報告していない。止まりの始まる前: 印を付けない(前の世代が書き手のまま)。
-  (val before (c.beat "atlas" ["w"] :boot "old"))
+  (val before (c.beat "node-a" ["w"] :boot "old"))
   (assert (= (lfor j (get before "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" None)]) (get before "jobs"))
   ;; 前の世代の Pod の preStop が drain を頼んだ → 今の世代の process が Ready でなくても印を付ける(値は今の世代)。
-  (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas")
-  (val after (c.beat "atlas" ["w"] :boot "old"))
+  (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a")
+  (val after (c.beat "node-a" ["w"] :boot "old"))
   (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "generation:new")]) (get after "jobs")))
 
 
@@ -643,137 +643,137 @@
   ;; 世代をまたぐ入れ替え(AL-D2): 旧い Pod の preStop は、その世代がまだ走らせている入れ替えの job の process(退かせた process — 走って
   ;; いる仕事を終えて自分で終わる)が終わるまで drained を返さない(返すと SIGTERM で仕事が切れる)。その世代の報告から job が消えたら
   ;; drained。旧い世代が lease の間 沈黙したら(Pod が消えた)待たない。直す前は、切り離した task だけを待って即座に drained を返した。
-  (setv c (Coord #("atlas")))
-  (c.beat "atlas" :boot "old")
+  (setv c (Coord #("node-a")))
+  (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
-  (c.beat "atlas" ["w"] :boot "old")
+  (c.beat "node-a" ["w"] :boot "old")
   (c.advance 1)
-  (c.beat "atlas" :boot "new")
-  (c.beat "atlas" ["w"] :boot "old")
-  (setv waiting (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (c.beat "node-a" :boot "new")
+  (c.beat "node-a" ["w"] :boot "old")
+  (setv waiting (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a"))
   (assert (not (get waiting "drain" "drained")) waiting)
   (assert (in "job/w" (get waiting "drain" "remaining")) waiting)
   ;; 退いた process が終わった(旧い世代の報告に w が無い)。
-  (c.beat "atlas" [] :boot "old")
-  (setv done (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (c.beat "node-a" [] :boot "old")
+  (setv done (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a"))
   (assert (get done "drain" "drained") done)
-  ;; 失敗ケース(AL-D2l — 10-11 18:58 JST の zeus): 走らせたまま黙った旧い世代(負荷で heartbeat が lease の 10 秒を越えて途絶えた)も、
+  ;; 失敗ケース(AL-D2l — 10-11 18:58 JST の node-h): 走らせたまま黙った旧い世代(負荷で heartbeat が lease の 10 秒を越えて途絶えた)も、
   ;; その Pod の preStop が頼んでいる間は待つ — 頼みが来る事がその Pod の worker が生きている証。直す前は黙りを「Pod が消えた」と読んで
   ;; drained を返し、preStop が終わって止めの合図がターン 15 本を切った。
-  (c.beat "atlas" ["w"] :boot "old")
+  (c.beat "node-a" ["w"] :boot "old")
   (c.advance 120)
-  (c.beat "atlas" :boot "new")
-  (val silent (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (c.beat "node-a" :boot "new")
+  (val silent (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a"))
   (assert (not (get silent "drain" "drained")) silent)
   (assert (in "job/w" (get silent "drain" "remaining")) silent)
   ;; 黙りが明けて、退いた process が終わったと報告したら drained。
-  (c.beat "atlas" [] :boot "old")
-  (val back (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (c.beat "node-a" [] :boot "old")
+  (val back (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@node-a"))
   (assert (get back "drain" "drained") back))
 
 
 (deftest test-a-prestop-of-a-never-seen-generation-does-not-drain-the-live-generation
   ;; 新しい Pod が最初の heartbeat の前に消された: その preStop の世代を coordinator は一度も見ていない。生きている今の世代を
   ;; drain させず、その世代の task は無い = drained で終わる。boot の無い頼み(版上げの Program・手の頼み)は名前に付く(世代を持たない)。
-  (setv c (Coord #("zeus")))
-  (c.beat "zeus" :boot "live")
-  (setv view (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "never-seen"} :actor "drain@zeus"))
-  (assert (is (.row c.state.drains "zeus") None) "見ていない世代の drain の頼みが今の世代に drain を付けた")
+  (setv c (Coord #("node-h")))
+  (c.beat "node-h" :boot "live")
+  (setv view (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 150 "boot" "never-seen"} :actor "drain@node-h"))
+  (assert (is (.row c.state.drains "node-h") None) "見ていない世代の drain の頼みが今の世代に drain を付けた")
   (assert (get view "drain" "superseded") view)
   (assert (get view "drain" "drained") view)
-  (assert (get (c.call "GET" "/workers/zeus") "ready"))
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150} :actor "drain@zeus")
-  (assert (is (. (.row c.state.drains "zeus") boot) None) (.row c.state.drains "zeus")))
+  (assert (get (c.call "GET" "/workers/node-h") "ready"))
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 150} :actor "drain@node-h")
+  (assert (is (. (.row c.state.drains "node-h") boot) None) (.row c.state.drains "node-h")))
 
 
 (deftest test-the-old-pod-drain-waits-for-the-detached-tasks-of-its-own-generation
   ;; 退いた世代の preStop は、その世代に置いた切り離した task が終わるまで待つ(走らせ直さない task を途中で殺さない)。
-  (setv c (Coord #("zeus")))
-  (c.beat "zeus" :boot "old")
+  (setv c (Coord #("node-h")))
+  (c.beat "node-h" :boot "old")
   (c.call "PUT" "/detached/job-24" (c.task-body K3S {"revision" "r" "leaseSeconds" 60 "memoryMiB" 1024})
           :actor "c-test")
   (setv task (next (gfor t (.rows c.state.tasks) :if (= t.key "job-24") t)))
-  (assert (= #(task.worker task.boot) #("zeus" "old")))
+  (assert (= #(task.worker task.boot) #("node-h" "old")))
   (c.advance 1)
-  (c.beat "zeus" :boot "new")
-  (setv view (c.call "POST" "/workers/zeus/drain" {"boot" "old"} :actor "drain@zeus"))
+  (c.beat "node-h" :boot "new")
+  (setv view (c.call "POST" "/workers/node-h/drain" {"boot" "old"} :actor "drain@node-h"))
   (assert (get view "drain" "superseded") view)
   (assert (not (get view "drain" "drained")) view)
   (assert (= (get view "drain" "remaining") [(+ "task/" task.id)]))
   ;; 新しい世代には drain を付けない。
-  (assert (is (.row c.state.drains "zeus") None))
-  (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
+  (assert (is (.row c.state.drains "node-h") None))
+  (c.call "POST" "/heartbeat" {"name" "node-h" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "old"
                                "statuses" [{"name" (+ "task/" task.id) "phase" "finished" "result" "R" "detail" ""}]}
           :actor None)
   (assert (= (. (.row c.state.tasks task.id) phase) "finished"))
-  (assert (get (c.call "POST" "/workers/zeus/drain" {"boot" "old"} :actor "drain@zeus") "drain" "drained")))
+  (assert (get (c.call "POST" "/workers/node-h/drain" {"boot" "old"} :actor "drain@node-h") "drain" "drained")))
 
 
 (deftest test-a-drain-ends-within-the-cap-once-its-holder-stops-asking
   ;; 失敗ケース(2026-11-03): 手の頼み手が期限 9000 秒で drain を頼み、頼み手が 1 時間で切られた後も drain が 1.5 時間残って、その worker に
   ;; 仕事が 1 つも置かれなかった。上限を越える世代なしの頼みは立たずに断られ、上限の内の頼みは頼み直しをやめると上限の内に消える。
   (val c (Coord))
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 9000} :actor "hand" :expect 400)
-  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" (+ DRAIN-MAX-TTL-SECONDS 1)} :actor "hand" :expect 400)
-  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 9000} :actor "hand" :expect 400)
+  (assert (is (.row c.state.drains "node-h") None) c.state.drains)
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" (+ DRAIN-MAX-TTL-SECONDS 1)} :actor "hand" :expect 400)
+  (assert (is (.row c.state.drains "node-h") None) c.state.drains)
   ;; 頼み直している間は、上限の何倍の時間でも drain が残り、仕事は置かれない。始めた時刻は最初の頼みのまま。
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "hand")
-  (val since (. (.row c.state.drains "zeus") since-ms))
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "hand")
+  (val since (. (.row c.state.drains "node-h") since-ms))
   (for [_ (range 6)]
     (c.advance (- DRAIN-MAX-TTL-SECONDS 1))
-    (c.beat "zeus")
-    (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "hand")
-    (assert (= (. (.row c.state.drains "zeus") since-ms) since) (.row c.state.drains "zeus"))
-    (assert (get (c.call "GET" "/workers/zeus") "draining")))
-  ;; もう 1 台は別の頼み手が空けたままにし、置ける先を zeus だけにする。
-  (c.call "POST" "/workers/atlas/drain" {} :actor "other")
-  (c.beat "atlas")
+    (c.beat "node-h")
+    (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "hand")
+    (assert (= (. (.row c.state.drains "node-h") since-ms) since) (.row c.state.drains "node-h"))
+    (assert (get (c.call "GET" "/workers/node-h") "draining")))
+  ;; もう 1 台は別の頼み手が空けたままにし、置ける先を node-h だけにする。
+  (c.call "POST" "/workers/node-a/drain" {} :actor "other")
+  (c.beat "node-a")
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (.row c.state.tasks "t1") phase) "queued") (.row c.state.tasks "t1"))
   ;; 頼み手が居なくなる: 上限の 1 秒前はまだ残り、上限を過ぎた拍に消え、同じ worker に task が置かれる。後始末の DELETE は来ない。
   (c.advance (- DRAIN-MAX-TTL-SECONDS 1))
-  (c.beat "zeus")
-  (assert (get (c.call "GET" "/workers/zeus") "draining"))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "other")
+  (c.beat "node-h")
+  (assert (get (c.call "GET" "/workers/node-h") "draining"))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "other")
   (c.advance 2)
-  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
-  (assert (not (get (c.call "GET" "/workers/zeus") "draining")))
-  (c.beat "atlas")
-  (c.beat "zeus")
+  (assert (is (.row c.state.drains "node-h") None) c.state.drains)
+  (assert (not (get (c.call "GET" "/workers/node-h") "draining")))
+  (c.beat "node-a")
+  (c.beat "node-h")
   (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (val t (.row c.state.tasks "t2"))
-  (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
+  (assert (and (= t.worker "node-h") (!= t.phase "queued")) t))
 
 
 (deftest test-a-prestop-ask-over-the-cap-is-shortened-and-not-refused
   ;; Pod の宣言の preStop の上限(DRAIN_DEADLINE)が上限より長い worker の頼み: 断ると drain をせずに Pod の停止へ進むので、上限に縮めて受ける。
   ;; 頼み直しが止まれば(Pod が消えて次の世代が来ない)上限の内に消える。
   (val c (Coord))
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 21960 "boot" "b1"} :actor "drain@zeus")
-  (assert (= (. (.row c.state.drains "zeus") until-ms) (+ c.now (* 1000 DRAIN-MAX-TTL-SECONDS))) (.row c.state.drains "zeus"))
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 21960 "boot" "b1"} :actor "drain@node-h")
+  (assert (= (. (.row c.state.drains "node-h") until-ms) (+ c.now (* 1000 DRAIN-MAX-TTL-SECONDS))) (.row c.state.drains "node-h"))
   (c.advance 2)
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 21960 "boot" "b1"} :actor "drain@zeus")
-  (assert (= (. (.row c.state.drains "zeus") until-ms) (+ c.now (* 1000 DRAIN-MAX-TTL-SECONDS))) (.row c.state.drains "zeus"))
+  (c.call "POST" "/workers/node-h/drain" {"ttlSeconds" 21960 "boot" "b1"} :actor "drain@node-h")
+  (assert (= (. (.row c.state.drains "node-h") until-ms) (+ c.now (* 1000 DRAIN-MAX-TTL-SECONDS))) (.row c.state.drains "node-h"))
   (c.advance (+ DRAIN-MAX-TTL-SECONDS 1))
-  (assert (is (.row c.state.drains "zeus") None) c.state.drains))
+  (assert (is (.row c.state.drains "node-h") None) c.state.drains))
 
 
 (deftest test-drain-requests-need-an-actor-and-a-known-worker
   (setv c (Coord))
-  (c.call "POST" "/workers/atlas/drain" {} :actor None :expect 400)
+  (c.call "POST" "/workers/node-a/drain" {} :actor None :expect 400)
   (c.call "POST" "/workers/ghost/drain" {} :expect 404)
   (c.call "GET" "/workers/ghost" :expect 404)
-  (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 0} :expect 400)
-  (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" True} :expect 400)
-  (assert (get (c.call "GET" "/workers/atlas") "ready")))
+  (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" 0} :expect 400)
+  (c.call "POST" "/workers/node-a/drain" {"ttlSeconds" True} :expect 400)
+  (assert (get (c.call "GET" "/workers/node-a") "ready")))
 
 
 (deftest test-drains-and-surges-survive-a-restart-and-an-old-store-reads-as-empty
   (<- c (running-writer))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
   (setv kv (! (full-kv c.state)))
-  (assert (in (+ DRAIN "atlas") kv))
+  (assert (in (+ DRAIN "node-a") kv))
   (assert (in (+ SURGE "w") kv))
   (setv again (! (state-from-kv kv c.now)))
   (assert (= again.drains c.state.drains))
@@ -781,11 +781,11 @@
   ;; drain の鍵を知らない置き場(2026-09-25 より前)は空として読む。
   (setv old (! (state-from-kv (dfor #(k v) (.items kv) :if (not (or (.startswith k DRAIN) (.startswith k SURGE))) k v) c.now)))
   (assert (= #((.size old.drains) (.size old.surges)) #(0 0)))
-  (assert (= (. (.row old.placements "w") worker) "atlas"))
+  (assert (= (. (.row old.placements "w") worker) "node-a"))
   ;; GET /state に drain の進みと並べた置き先が載る。
   (setv view (c.call "GET" "/state"))
-  (assert (= (get view "drains" "atlas" "moving") {"w" "zeus"}) (get view "drains"))
-  (assert (= (get view "surges" "w" "worker") "zeus")))
+  (assert (= (get view "drains" "node-a" "moving") {"w" "node-h"}) (get view "drains"))
+  (assert (= (get view "surges" "w" "worker") "node-h")))
 
 
 ;; --- preStop と readinessProbe の Program(drain_client)----------------------------------------------
@@ -810,11 +810,11 @@
   (setv calls [] clock (SimClock))
   (<- result dict ((sim-time-handler :clock clock)
               ((scripted-coordinator [{"error" "ConnectError"} {"status" 503 "body" {}} (! (drained False)) (! (drained True))] calls)
-               (await-drained "atlas" 90.0 2.0))))
+               (await-drained "node-a" 90.0 2.0))))
   (assert (= (get result "outcome") "drained") result)
   (assert (= (len calls) 4))
   ;; 頼み直すたびに期限つき(上限 + 余裕)で頼む。間は 2 秒(仮想の時計)。
-  (assert (all (gfor #(m p b) calls (and (= m "POST") (= p "/workers/atlas/drain") (= (get b "ttlSeconds") 150.0)))))
+  (assert (all (gfor #(m p b) calls (and (= m "POST") (= p "/workers/node-a/drain") (= (get b "ttlSeconds") 150.0)))))
   (assert (= (get result "elapsed") 6.0) result))
 
 ;; ⚠ core の Program は要求の形(method・path・本文)を組まず、型のある頼み AskDrain だけを出す(#2541 — 形は答え手
@@ -827,13 +827,13 @@
 
 (deftest test-await-drained-asks-with-a-typed-request-not-a-wire-shape
   (setv asks [])
-  (<- result dict ((sim-time-handler :clock (SimClock)) ((asks-of asks) (await-drained "atlas" 90.0 2.0 "b7"))))
+  (<- result dict ((sim-time-handler :clock (SimClock)) ((asks-of asks) (await-drained "node-a" 90.0 2.0 "b7"))))
   (assert (= (get result "outcome") "drained") result)
-  (assert (= asks [#("atlas" 150.0 "b7")]) asks))
+  (assert (= asks [#("node-a" 150.0 "b7")]) asks))
 
 (deftest test-await-drained-gives-up-at-the-deadline-and-stops-on-unknown-worker
   (<- result dict ((sim-time-handler :clock (SimClock))
-              ((scripted-coordinator [(! (drained False))] []) (await-drained "atlas" 10.0 2.0))))
+              ((scripted-coordinator [(! (drained False))] []) (await-drained "node-a" 10.0 2.0))))
   (assert (= (get result "outcome") "timeout") result)
   (assert (>= (get result "elapsed") 10.0))
   (<- gone dict ((sim-time-handler :clock (SimClock))
@@ -854,20 +854,20 @@
 (defhandler coordinator-of [#^ Coord coord]
   ;; 読みの要求を Coord の純粋な判断へそのまま渡す(状態は変えない)。
   (CoordinatorCall [method path body]
-    (setv #(_ status reply) (responded coord.state (! (http-request method path {} body :actor "drain@atlas")) coord.now T))
+    (setv #(_ status reply) (responded coord.state (! (http-request method path {} body :actor "drain@node-a")) coord.now T))
     (resume {"status" status "body" reply}))
   (AskDrain [name ttl-seconds own-boot]
     (val request (drain-request name ttl-seconds own-boot))
-    (setv #(_ status reply) (responded coord.state (! (http-request (get request 0) (get request 1) {} (get request 3) :actor "drain@atlas"))
+    (setv #(_ status reply) (responded coord.state (! (http-request (get request 0) (get request 1) {} (get request 3) :actor "drain@node-a"))
                                        coord.now T))
     (resume {"status" status "body" reply})))
 
 (deftest test-worker-ready-reads-the-coordinator-view
   (setv c (Coord))
-  (<- before ((coordinator-of c) (worker-ready "atlas" "b1")))
+  (<- before ((coordinator-of c) (worker-ready "node-a" "b1")))
   (assert before)
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (<- during ((coordinator-of c) (worker-ready "atlas" "b1")))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (<- during ((coordinator-of c) (worker-ready "node-a" "b1")))
   (assert (not during)))
 
 
@@ -876,13 +876,13 @@
   ;; (その世代の task が無い = drained)で終わる — 新しい世代に drain を付けて 90 秒待たない。
   (setv calls [])
   (<- sent dict ((sim-time-handler :clock (SimClock))
-            ((scripted-coordinator [(! (drained True))] calls) (await-drained "atlas" 90.0 2.0 "old"))))
+            ((scripted-coordinator [(! (drained True))] calls) (await-drained "node-a" 90.0 2.0 "old"))))
   (assert (= (get sent "outcome") "drained"))
   (assert (= (get (get (get calls 0) 2) "boot") "old"))
   (setv c (Coord))
-  (c.beat "atlas" :boot "old")
-  (c.beat "atlas" :boot "new")
-  (<- result dict ((sim-time-handler :clock (SimClock)) ((coordinator-of c) (await-drained "atlas" 90.0 2.0 "old"))))
+  (c.beat "node-a" :boot "old")
+  (c.beat "node-a" :boot "new")
+  (<- result dict ((sim-time-handler :clock (SimClock)) ((coordinator-of c) (await-drained "node-a" 90.0 2.0 "old"))))
   (assert (= (get result "outcome") "drained") result)
   (assert (= (get result "elapsed") 0.0) result)
   (assert (get result "last" "body" "drain" "superseded")))
@@ -890,15 +890,15 @@
 
 (deftest test-a-new-pod-is-not-ready-while-the-coordinator-still-sees-the-previous-pod
   ;; 2026-09-25 の配備の実弾: DaemonSet は前の Pod の終了を待たずに同じ node へ新しい Pod を作る。新しい Pod の worker は node の dir の
-  ;; lock を待つ間 heartbeat を送らないので、coordinator の見る "atlas" はまだ前の Pod(世代 b1)。前の Pod が preStop で drain を
+  ;; lock を待つ間 heartbeat を送らないので、coordinator の見る "node-a" はまだ前の Pod(世代 b1)。前の Pod が preStop で drain を
   ;; 頼む前の数秒に新しい Pod の readinessProbe が撃つと、名だけで判じる形は Ready と答えて DaemonSet を次の node へ進めた。
   (setv c (Coord))
-  (c.beat "atlas" :boot "b1")
-  (<- early ((coordinator-of c) (worker-ready "atlas" "b2")))
+  (c.beat "node-a" :boot "b1")
+  (<- early ((coordinator-of c) (worker-ready "node-a" "b2")))
   (assert (not early) "前の Pod の生存を自分の物と読んでいる")
   ;; 新しい Pod の worker が heartbeat を送り始めたら(前の Pod は終わっている — node の dir の lock)Ready。
-  (c.beat "atlas" :boot "b2")
-  (<- late ((coordinator-of c) (worker-ready "atlas" "b2")))
+  (c.beat "node-a" :boot "b2")
+  (<- late ((coordinator-of c) (worker-ready "node-a" "b2")))
   (assert late))
 
 
@@ -919,10 +919,10 @@
 (deftest test-the-heartbeat-reply-names-whether-the-worker-is-draining
   ;; worker は返事の draining を Pod の中の ready の file へ写す(readinessProbe は sh でそれを読む)。
   (setv c (Coord))
-  (setv before (c.beat "atlas"))
+  (setv before (c.beat "node-a"))
   (assert (is (get before "draining") False) before)
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (setv during (c.beat "atlas"))
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (setv during (c.beat "node-a"))
   (assert (is (get during "draining") True) during))
 
 
@@ -977,7 +977,7 @@
   (val permitting (json.dumps {"jobs" [] "tasks" [] "warm" [] "draining" False "revision" 1
                                "timing" {"lease_ms" (. T lease-ms) "fence_ms" (. T fence-ms)}}))
   (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" path)
-  (val link (LinkState "zeus" #("cpu") (. T fence-ms) (str (/ tmp-path "tasks")) "boot" 0 0 0))
+  (val link (LinkState "node-h" #("cpu") (. T fence-ms) (str (/ tmp-path "tasks")) "boot" 0 0 0))
   (<- (write-ready-file link.life))
   (assert (= link.life.ready-file path) link.life.ready-file)
   (os.utime path #(1 1))

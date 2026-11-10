@@ -16,13 +16,13 @@
 ;;;   /proc/pressure/memory  PSI の some と full の avg10(%)。
 ;;;   <task の層>/cpu.pressure  task を置く cgroup の層(worker/core/job_cgroup の兄弟の cgroup)の CPU の PSI の some の avg10(%)。層の在る
 ;;;                          worker だけが読む(LoadPaths の task-cpu-pressure)。機体の PSI の some は、優先度を下げた process の実行の待ちでも
-;;;                          立つ(2026-11-05 の zeus: 優先度を下げた命令が nice 19 core を使う間、機体の some 76%・task の層の some 5.6%)。
+;;;                          立つ(2026-11-05 の node-h: 優先度を下げた命令が nice 19 core を使う間、機体の some 76%・task の層の some 5.6%)。
 ;;;                          task の層の値は、置いた task 自身が実行を待つかを測る。
 ;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体は測りを名乗らない。
 ;;;
-;;; 会話のターンに残す線(2026-11-08): 機体の memory を、作り直せない会話のターンと作り直せる task が分け合う機体(zeus)では、
+;;; 会話のターンに残す線(2026-11-08): 機体の memory を、作り直せない会話のターンと作り直せる task が分け合う機体(node-h)では、
 ;;; 上に載る系の新しいターンを受ける係が、MemAvailable を保たせたい線(MiB の数 1 つ)を file に書く(cargo の中間物の掃除の係
-;;; deploy/k8s/nodes/zeus/cargo-build-keeper.sh が読むのと同じ file — 枠の file の行の keepLineFile が名指す)。その file が読める間は、
+;;; 上に載る系の宣言の nodes/node-h/cargo-build-keeper.sh が読むのと同じ file — 枠の file の行の keepLineFile が名指す)。その file が読める間は、
 ;;; 名乗る memory の空きを min(追い出しまでの空き, MemAvailable − 線)にする(kept-memory)。訳: 追い出しの線は kubepods の working set
 ;;; から数え、係がターンを断る MemAvailable の線より 25 GiB ほど遠い。追い出しまでの空きだけで名乗ると、係が「足りない」と新しいターンを
 ;;; 返している memory にも coordinator は task を置き、伸びた task がその memory を取る(11-08 03:00〜04:06 UTC — 追い出しまでの空き
@@ -35,7 +35,7 @@
 ;;;
 ;;; 急ぎの task の空き(2026-11-10): 線は作り直せる task を待たせる線で、送り手が急ぎ(coordinator/core/measured_room の
 ;;; KEEP-NOW-PRIORITY 以上の優先)を名乗る task まで待たせると、その機体でしか走れない急ぎの task は MemAvailable が線を越えて戻るまで
-;;; 置かれない(zeus の 11-10 — MemAvailable 約 42 GiB・線 37984 MiB で名乗る空きは約 4 GiB、要り 6144 MiB・その機体だけを要る task が
+;;; 置かれない(node-h の 11-10 — MemAvailable 約 42 GiB・線 37984 MiB で名乗る空きは約 4 GiB、要り 6144 MiB・その機体だけを要る task が
 ;;; queued のまま待ち、送り手の後の仕事が全部止まった)。線が名乗る空きを縮めている間は、線を外して追い出しの線だけで数えた空き
 ;;; (urgent-available-mib)と jobs の層の空き(urgent-jobs-room-mib — 見張りの jobs-intake-urgent)も名乗り、coordinator は急ぎの task だけを
 ;;; その空きで置く。置いた後の jobs の層の memory.max は、線の下でも取り置き(要り − 今の使い)まで広がる(worker/core/eviction_rules の
@@ -236,11 +236,11 @@
    :tags {:context "worker" :role "judgment"}}
   "heartbeat で名乗る task の層(jobs)の今の空き(MiB)を知るため: 見張りが最後に決めた新しい受けの上限 jobs-intake − 最後に読んだ
    使い jobs-held(working set − slab_reclaimable・byte — 負もありうる。切り捨て)。回収できる page cache と slab は層の上限に当たると
-   kernel が task を止める前に返すので、空きを塞がない(helios の 11-10 13:4x JST は inactive_file 2112 MiB を使いに数え、層が空でも要り
+   kernel が task を止める前に返すので、空きを塞がない(node-c の 11-10 13:4x JST は inactive_file 2112 MiB を使いに数え、層が空でも要り
    5632 MiB の task を置けなかった。15:1x JST は task 0 本の層の working set 4212 MiB のうち slab_reclaimable が 1070 MiB)。受けの上限は、追い出しまでの空きから測った余裕・準備の取り置き・会話の
    CLI の層への貸しを引き、container の中の空きでも縛った値で、置いた task の取り置きを入れない(置き先が自分で予約を引く — worker/core/
    eviction_rules の頭の註の会話の CLI の層の帳面。jobs の層の memory.max はそれに取り置きを守る分を足す)。追い出しまでの
-   空き(memory-available-mib)よりずっと小さい時が在る — atlas の 11-08 14:09 は追い出しまでの空き 7186 MiB・jobs の層の空きは負で、
+   空き(memory-available-mib)よりずっと小さい時が在る — node-a の 11-08 14:09 は追い出しまでの空き 7186 MiB・jobs の層の空きは負で、
    coordinator が空きを 5650 MiB と見て置いた要り 3584 MiB の task を、kernel が jobs の層の OOM で止めた。line = 名乗りに使える新しさの線
    (fresh-line — None は上限が今の線から決まった値と言えないので名乗らない)・上限か使いが None(まだ書いていない・読めなかった)も None。"
   (if (or (is line None) (is jobs-intake None) (is jobs-held None))

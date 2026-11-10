@@ -1,13 +1,13 @@
 ;; 上に載る系が残す線(線の種類 KEEP)で jobs の層を縮めても、要りの内で走る task を止めない — 模擬の検。
 ;;
-;; 失敗ケース(2026-11-09 23:57〜11-10 01:33 UTC の zeus): worker は jobs の層の memory.max を「jobs の使い + (MemAvailable − 残す線)− 余裕
+;; 失敗ケース(2026-11-09 23:57〜11-10 01:33 UTC の node-h): worker は jobs の層の memory.max を「jobs の使い + (MemAvailable − 残す線)− 余裕
 ;; − 取り置き」に掛け直した。MemAvailable が線を割る訳の大半は jobs の層の外(上に載る系の命令の層 22〜26 GiB・会話の CLI の層 8〜11 GiB)
 ;; に在ったのに、上限は jobs の層だけを縮めて使いより下(多くは 0)にし、kernel は伸びた task でなく層の中の全部の task を OOM kill で
 ;; 止めた(要り 1024 MiB・山 128 MiB の task を含む 13 本が、縮めの 1〜10 秒後に SIGKILL。lost の訳は「子 process が結果を書かずに
 ;; 終わった」だけ)。
 ;;   - 判断(worker/core/eviction_rules): 線 KEEP の上限は「jobs の今の使い + 置いた task の取り置き」より下げない(kept-jobs-limit — 追い出しの
 ;;     線の縮めは今のまま)。線を割った量に届くまで、要りを越えた task だけを越えの大きい順に選ぶ(over-need-tasks)。
-;;   - 模擬の機体(atlas の Node の大きさ): 本物の見張りを仮想時計の下で回す。jobs の層に task 2 本(a = 要り 4 GiB・使い 3 GiB で落ち着く、
+;;   - 模擬の機体(node-a の Node の大きさ): 本物の見張りを仮想時計の下で回す。jobs の層に task 2 本(a = 要り 4 GiB・使い 3 GiB で落ち着く、
 ;;     b = 要り 1 GiB)。模擬の kernel は jobs の層の使いが見張りの書いた memory.max を越えると、層の中のいちばん大きい task を止める(本物の
 ;;     kernel の層の OOM kill と同じ選び — 伸びた task とは限らない)。
 ;;       jobs の層の外が伸びて MemAvailable が線を割る: どの task も止まらず、jobs の層の上限は使いより下がらず、新しい受けの上限は使いを
@@ -39,7 +39,7 @@
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop OVER-NEED-KILL-LOG])
 
 (val GIB (* 1024 MIB))
-;; atlas の Node の宣言(tests/test_eviction_line と同じ値): capacity 29662296Ki・allocatable 20749400Ki・kubepods の memory.max = capacity − 7Gi。
+;; node-a の Node の宣言(tests/test_eviction_line と同じ値): capacity 29662296Ki・allocatable 20749400Ki・kubepods の memory.max = capacity − 7Gi。
 (val CAPACITY (* 29662296 1024))
 (val PODS-MAX (- CAPACITY (* 7 GIB)))
 (val LAYOUT "worker:memory.min=256M,cpu.weight=1000 services:memory.min=7168M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100")
@@ -47,7 +47,7 @@
 (val PODS (+ HOST "/kubepods.slice"))
 (val JOBS (+ PODS "/kubepods-burstable.slice/kubepods-burstable-pod1.slice/cri-containerd-1.scope/jobs"))
 (val TOKEN "/sa/token")
-(val NODE-URL "https://api.test/api/v1/nodes/atlas")
+(val NODE-URL "https://api.test/api/v1/nodes/node-a")
 (val KERNEL-PATHS #((+ PODS "/memory.max") (+ PODS "/memory.current") (+ PODS "/memory.stat") (+ HOST "/memory.stat")
                     (+ JOBS "/memory.current") (+ JOBS "/memory.stat") (+ JOBS "/memory.events")))
 ;; 上に載る系が残す MemAvailable の線と、機体の Pod の外の使い。
@@ -169,7 +169,7 @@
   (session var limits #())
   (HttpRequest [method url]
     :when (= url NODE-URL)
-    (val text (json.dumps {"metadata" {"name" "atlas"} "status" {"capacity" {"cpu" "16" "memory" "29662296Ki"}
+    (val text (json.dumps {"metadata" {"name" "node-a"} "status" {"capacity" {"cpu" "16" "memory" "29662296Ki"}
                                                                   "allocatable" {"cpu" "14" "memory" "20749400Ki"}}}))
     (resume (HttpResponse 200 {} (.encode text "utf-8") text url 0.0)))
   (ReadText [path]
@@ -251,7 +251,7 @@
   "本物の見張りを模擬の機体と仮想時計の下で止めの合図まで回すため(置き先が置いた task の要りは NEEDS)。"
   (<- cap (| int None) (layer-memory-max LAYOUT "jobs"))
   (val settings (MemoryWatchSettings
-                  :eviction (EvictionSettings :api "https://api.test" :token-file TOKEN :node "atlas" :pods-dir PODS :host-root HOST
+                  :eviction (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST
                                               :jobs-dir JOBS :jobs-cap-bytes cap)))
   (val cell (MemoryCell))
   (setv cell.eviction.needs NEEDS)
@@ -269,12 +269,12 @@
   seen)
 
 
-;; jobs の層の外の伸び(zeus の 11-10 00:58 の形を atlas の大きさに縮めた台本): 外 3 GiB が 20 秒から 20 秒で 5 GiB 伸びる・worker の本体と
+;; jobs の層の外の伸び(node-h の 11-10 00:58 の形を node-a の大きさに縮めた台本): 外 3 GiB が 20 秒から 20 秒で 5 GiB 伸びる・worker の本体と
 ;; 常駐の job 4 GiB・task a 3 GiB(要り 4 GiB)と b 0.9 GiB(要り 1 GiB)は伸びない。MemAvailable は 15.4 GiB から 10.4 GiB へ落ち、線 13 GiB を
 ;; 2.6 GiB 割る。追い出しまでの空きは 3.8 GiB 残る(追い出しの線では縮めない)。
 (val OUTSIDE-RISE (KeepScene :others (* 3 GIB) :others-rise (* 5 GIB) :others-from 20000 :others-span 20000 :resident (* 4 GIB)
                              :a-use (* 3 GIB) :b-from (* 900 MIB) :b-to (* 900 MIB) :b-start 0 :b-span 1))
-;; 要りを越えた伸び(zeus の 11-09 16:52 の形を縮めた台本): 外は伸びず、b が 20 秒から 50 秒で 1 → 6 GiB へ伸びる(要り 1 GiB)。
+;; 要りを越えた伸び(node-h の 11-09 16:52 の形を縮めた台本): 外は伸びず、b が 20 秒から 50 秒で 1 → 6 GiB へ伸びる(要り 1 GiB)。
 (val OVERGROWN (KeepScene :others (* 3 GIB) :others-rise 0 :others-from 0 :others-span 1 :resident (* 4 GIB)
                           :a-use (* 3 GIB) :b-from (* 1 GIB) :b-to (* 6 GIB) :b-start 20000 :b-span 50000))
 

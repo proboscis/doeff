@@ -1,7 +1,7 @@
 """Failure case where doeff-hy-check (doeff_hy._static_check) could run pyright in only one thread.
 
 The daily type measurement of agora-controllers (hy-type-trend, 2,551 .hy files in range) takes about 2,250 seconds for one post-expansion pyright on 1 core, and
-adding the expansion seconds does not fit in 80% (2,640 seconds) of the processing stage limit of 3,300 seconds (reading of the atlas Pod in the 10-12 12:00 JST run: the pyright
+adding the expansion seconds does not fit in 80% (2,640 seconds) of the processing stage limit of 3,300 seconds (reading of the node-a Pod in the 10-12 12:00 JST run: the pyright
 process used 1 CPU core from 03:20:30 to 03:57 UTC, and in the second half it stuck at the heap limit of 4,288 MiB with GC threads at 1.6-1.8 cores). pyright can
 split the files it checks across child processes with `--threads <n>`, but the run_pyright command had no way to pass it.
 

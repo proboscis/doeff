@@ -1,4 +1,4 @@
-;; 止まった世代の process の担い手(#3770 の続き — 2026-11-05 の zeus): 同じ名の新しい世代は、さらに古い世代がまだ退いている間に起きると
+;; 止まった世代の process の担い手(#3770 の続き — 2026-11-05 の node-h): 同じ名の新しい世代は、さらに古い世代がまだ退いている間に起きると
 ;; 重なりを名乗る(overlapsElder — 起動の script が自分の外のどれかの世代の dir の錠を持たれていると見た)。その名乗りは直前の世代の
 ;; 終わりの印でない(AL-D2e)ので、名乗りの時には担い手を外さない。直す前は、直前の世代が突然止まっていても(機体の memory の見張りに
 ;; 殺された)、その process の担い手を外す道がほかに無く、担い手は期限の切れたまま盤の行に残った。行から担い手が外れるのを待つ新しい
@@ -67,7 +67,7 @@
   (val heard-b c.now)
   (generation-beat c "a" A-ROWS)
   (assert (leased c "writer-lock" "claim" (! (token-of "w" "2-bbb"))))
-  (assert (= (. (.row c.state.workers "atlas") boot) "b"))
+  (assert (= (. (.row c.state.workers "node-a") boot) "b"))
   #(c heard-b))
 
 
@@ -84,13 +84,13 @@
 
 
 (deftest test-a-suddenly-stopped-generation-loses-its-holders-once-silent-even-when-the-successor-overlaps-an-older-one
-  ;; 失敗ケース(2026-11-05 07:51 JST の zeus): B が突然止まった後、C が A の退いている間に重なりを名乗る。直す前は B の担い手が
+  ;; 失敗ケース(2026-11-05 07:51 JST の node-h): B が突然止まった後、C が A の退いている間に重なりを名乗る。直す前は B の担い手が
   ;; 期限の切れたまま行に残り、C の process の vacate の待ちが起きなかった。
   (<- #(c _) tuple (elder-retiring-while-b-holds))
   (c.advance 1)
   ;; B は止まった(以後報告しない)。C が名乗る — B の最後の報告から lease の窓の内。
   (generation-beat c "c" C-ROWS :overlaps True)
-  (assert (= (. (.row c.state.workers "atlas") boot) "c"))
+  (assert (= (. (.row c.state.workers "node-a") boot) "c"))
   (assert (= (holders-of c "writer-lock") #((! (token-of "w" "2-bbb")))) "名乗りの時はまだ外さない(B の沈黙が窓の内)")
   (assert (not (! (vacate-woke c "writer-lock" (lease-holder "w" "3-ccc")))))
   ;; B の沈黙が lease の窓を越えるまで A と C が報告を続ける。

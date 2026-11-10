@@ -314,7 +314,7 @@ def test_an_old_record_without_a_recorded_time_is_checked_by_hash_once_and_rewri
 
 
 def test_a_same_size_edit_within_one_coarse_timestamp_tick_is_not_missed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Failure case (red atlas daily run of 2026-10-10 20:05): on a kernel with coarse timestamps (atlas 6.8 -- fine ctime only from 6.13),
+    """Failure case (red node-a daily run of 2026-10-10 20:05): on a kernel with coarse timestamps (node-a 6.8 -- fine ctime only from 6.13),
     a rewrite inside the same window as the time the record was taken does not advance mtime / ctime. If the size is also the same, all of stat matches, and the fast path trusted the stale record without
     reading the hash (the same shape as git's racy-git). Stand-in for the coarse kernel = a stat that keeps returning the first mtime / ctime seen (a kernel while the window
     has not ended)."""

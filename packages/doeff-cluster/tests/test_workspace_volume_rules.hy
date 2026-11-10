@@ -21,9 +21,9 @@
 
 ;; 持ち主の id の例(頭 c- と英大文字・数字 26 字 — 本番の id と同じ長さ)。
 (val OWNER "c-EXAMPLEOWNERID000000000001")
-;; zeus の worker の container の mountinfo の形(/work は host の USB の SSD・係が付けた volume 2 つ・空白を含む path)。
+;; node-h の worker の container の mountinfo の形(/work は host の USB の SSD・係が付けた volume 2 つ・空白を含む path)。
 (val MOUNTINFO (.join "\n" #("13419 13415 0:902 / / rw,relatime master:1 - overlay overlay rw,lowerdir=/l"
-                             "13423 13415 8:17 /agent-worker /work rw,noatime master:790 - ext4 /dev/sdb1 rw"
+                             "13423 13415 8:17 /workers /work rw,noatime master:790 - ext4 /dev/sdb1 rw"
                              "13500 13423 8:96 / /work/agent-workspaces/a-1 rw,relatime master:801 - ext4 /host/dev/longhorn/ws-c-1 rw"
                              "13501 13423 8:112 / /work/agent-workspaces/with\\040space rw,relatime master:802 - ext4 /host/dev/longhorn/ws-c-2 rw"
                              "13502 13423 0:55 / /work/agent-workspaces/a-1 rw,relatime - tmpfs tmpfs rw"
@@ -87,43 +87,43 @@
                              :other-tickets #())
                  AttachStep.WAIT)
                #(base AttachStep.PUT)
-               #((AttachView :attachment True :ticket-node "zeus" :satisfied False :message "" :state "attaching" :current-node "zeus"
+               #((AttachView :attachment True :ticket-node "node-h" :satisfied False :message "" :state "attaching" :current-node "node-h"
                              :other-tickets #())
                  AttachStep.WAIT)
-               #((AttachView :attachment True :ticket-node "zeus" :satisfied True :message "" :state "attached" :current-node "zeus"
+               #((AttachView :attachment True :ticket-node "node-h" :satisfied True :message "" :state "attached" :current-node "node-h"
                              :other-tickets #())
                  AttachStep.READY)
                ;; 満たされても、volume がまだ別の node に付いている間は待つ。
-               #((AttachView :attachment True :ticket-node "zeus" :satisfied True :message "" :state "attached" :current-node "atlas"
+               #((AttachView :attachment True :ticket-node "node-h" :satisfied True :message "" :state "attached" :current-node "node-a"
                              :other-tickets #())
                  AttachStep.WAIT)
-               #((AttachView :attachment True :ticket-node "atlas" :satisfied True :message "" :state "attached" :current-node "atlas"
+               #((AttachView :attachment True :ticket-node "node-a" :satisfied True :message "" :state "attached" :current-node "node-a"
                              :other-tickets #())
                  AttachStep.ELSEWHERE)))
   (for [#(view wanted) cases]
-    (<- step (attach-step view "zeus"))
+    (<- step (attach-step view "node-h"))
     (assert (= step wanted) #(view step))))
 
 
 (deftest test-detach-removes-waits-and-refuses-another-nodes-ticket
-  (val cases #(#((AttachView :attachment True :ticket-node "zeus" :satisfied True :message "" :state "attached" :current-node "zeus"
+  (val cases #(#((AttachView :attachment True :ticket-node "node-h" :satisfied True :message "" :state "attached" :current-node "node-h"
                              :other-tickets #())
                  DetachStep.REMOVE)
-               #((AttachView :attachment True :ticket-node None :satisfied False :message "" :state "detaching" :current-node "zeus"
+               #((AttachView :attachment True :ticket-node None :satisfied False :message "" :state "detaching" :current-node "node-h"
                              :other-tickets #())
                  DetachStep.WAIT)
                #((AttachView :attachment True :ticket-node None :satisfied False :message "" :state "detached" :current-node ""
                              :other-tickets #())
                  DetachStep.GONE)
                ;; backup の ticket が付けている間は Longhorn が付けたまま置く — この答え手の分は外れた。
-               #((AttachView :attachment True :ticket-node None :satisfied False :message "" :state "attached" :current-node "zeus"
+               #((AttachView :attachment True :ticket-node None :satisfied False :message "" :state "attached" :current-node "node-h"
                              :other-tickets #("volume-backup-controller-ws-c-1"))
                  DetachStep.GONE)
-               #((AttachView :attachment True :ticket-node "atlas" :satisfied True :message "" :state "attached" :current-node "atlas"
+               #((AttachView :attachment True :ticket-node "node-a" :satisfied True :message "" :state "attached" :current-node "node-a"
                              :other-tickets #())
                  DetachStep.ELSEWHERE)))
   (for [#(view wanted) cases]
-    (<- step (detach-step view "zeus"))
+    (<- step (detach-step view "node-h"))
     (assert (= step wanted) #(view step))))
 
 
@@ -177,7 +177,7 @@
 
 
 (deftest test-the-room-is-counted-in-bytes-on-each-longhorn-line
-  ;; zeus の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0・空き 105 GB。名目の予約の線は 200% で 210 GB、実の空きの
+  ;; node-h の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0・空き 105 GB。名目の予約の線は 200% で 210 GB、実の空きの
   ;; 線は最小の空き 0% で 105 GB・25% で 105 − 26.3 GB。
   (val maximum 105089261568)
   (val empty (DiskRoom :maximum maximum :reserved 0 :scheduled 0 :available maximum))
@@ -190,7 +190,7 @@
                         (DiskRoom :maximum (* 10 GIB) :reserved (* 5 GIB) :scheduled (* 20 GIB) :available (* 100 GIB)))
                       200 25 {}))
   (assert (= two.nominal (+ (* 17 GIB) (* -10 GIB))) two)
-  ;; 2026-11-03 16:2x JST の zeus-usb-workspace(過剰割り当て 2000% の繋ぎの下): 実の空き 62.7 GB は最小の空き 25%(26.3 GB)の線まで
+  ;; 2026-11-03 16:2x JST の node-h-usb-workspace(過剰割り当て 2000% の繋ぎの下): 実の空き 62.7 GB は最小の空き 25%(26.3 GB)の線まで
   ;; 36.4 GB。宣言の 200% では、今の予約 848 GB が上限 210 GB を越えて負。
   (val now (DiskRoom :maximum maximum :reserved 0 :scheduled 848256040960 :available 62704844800))
   (<- declared (room-bytes #(now) 200 25 {}))
@@ -199,26 +199,26 @@
 
 
 (deftest test-a-disk-floor-raises-only-the-actual-line-of-its-disk
-  ;; 2026-11-05 21:5x JST の zeus-usb-workspace: 容量 231.9 GB・実の空き 111.3 GB。disk-share/shares.yaml が USB の SSD の分け前から導いた
+  ;; 2026-11-05 21:5x JST の node-h-usb-workspace: 容量 231.9 GB・実の空き 111.3 GB。disk-share/shares.yaml が USB の SSD の分け前から導いた
   ;; 床 93.7 GB は % の線(25% = 58.0 GB)より高いので、実の空きの線の残りは 111.3 − 93.7 GB。名目の線と、床の名の無い disk は変わらない。
   (val maximum 231917150208)
   (val available 111256465408)
   (val floor 93665506817)
-  (val usb (DiskRoom :maximum maximum :reserved 0 :scheduled 691489734656 :available available :disk "zeus-usb-workspace"))
+  (val usb (DiskRoom :maximum maximum :reserved 0 :scheduled 691489734656 :available available :disk "node-h-usb-workspace"))
   (val other (DiskRoom :maximum maximum :reserved 0 :scheduled 691489734656 :available available :disk "other-disk"))
-  (<- floored (room-bytes #(usb) 300 25 {"zeus-usb-workspace" floor}))
+  (<- floored (room-bytes #(usb) 300 25 {"node-h-usb-workspace" floor}))
   (<- plain (room-bytes #(usb) 300 25 {}))
   (assert (= floored (RoomBytes :nominal plain.nominal :actual (- available floor))) floored)
   (assert (= plain.actual (- available (// maximum 4))) plain)
-  (<- unnamed (room-bytes #(other) 300 25 {"zeus-usb-workspace" floor}))
+  (<- unnamed (room-bytes #(other) 300 25 {"node-h-usb-workspace" floor}))
   (assert (= unnamed plain) unnamed)
   ;; 床が % の量より低い時は % の量を残す(床は線を下げない)。
-  (<- low (room-bytes #(usb) 300 25 {"zeus-usb-workspace" GIB}))
+  (<- low (room-bytes #(usb) 300 25 {"node-h-usb-workspace" GIB}))
   (assert (= low plain) low)
   ;; 戻す node も同じ床で選ぶ — 床の上に 10 GB しか無い disk は 20 GB を覆わない。
-  (val tight (DiskRoom :node "zeus" :maximum 100 :reserved 0 :scheduled 0 :available 100 :disk "d"))
+  (val tight (DiskRoom :node "node-h" :maximum 100 :reserved 0 :scheduled 0 :available 100 :disk "d"))
   (<- covered (restore-node #(tight) 100 0 {"d" 90} 10))
-  (assert (= covered "zeus") covered)
+  (assert (= covered "node-h") covered)
   (<- short (restore-node #(tight) 100 0 {"d" 90} 20))
   (assert (= short "") short))
 

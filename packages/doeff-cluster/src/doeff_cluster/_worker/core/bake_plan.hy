@@ -85,9 +85,9 @@
 
 ;; --- 命令の引数と並列数 ----------------------------------------------------------------------
 
-;; 焼きの並列数の既定の天井。cpu.max の無い pod(zeus の worker — node の 36 CPU が使える)では、使える CPU の数で焼くと 36 本並べ、
+;; 焼きの並列数の既定の天井。cpu.max の無い pod(node-h の worker — node の 36 CPU が使える)では、使える CPU の数で焼くと 36 本並べ、
 ;; 準備 1 回で 14 core(nice 10)を使って node の load 1 分を 170 まで上げ、同じ node の nice 0 の service が CPU を 34〜89% 待った
-;; (2026-10-12 06:50 JST の測り)。上限の在る pod の worker(atlas 8・ほかは 2〜3)は今の並列数のまま。
+;; (2026-10-12 06:50 JST の測り)。上限の在る pod の worker(node-a 8・ほかは 2〜3)は今の並列数のまま。
 (val BAKE-JOBS-CEILING 8)
 
 (defk cpu-limit-of [cpu-max available]
@@ -105,7 +105,7 @@
 ;; 焼きの並列数の memory の見積もり(2026-11-02 の測り — 2 つの木の 2878 本〔2376 本と 502 本〕を保存先なしで並べる数 2 で焼き直した
 ;; 木の PSS: 焼く子 1 本の山 198〜316 MiB・入口(この道具の親)の山 191 MiB・焼きの道具の親 31 MiB・木の山 520 MiB)。memory 4 GiB の
 ;; node の worker(jobs の層 896 MiB を動く job が約 450 MiB 使う)で CPU の数 2 だけ子を並べ、子が層の上限で殺されて準備が落ちた
-;; (2026-11-02 18:56 JST の k3s-0 — BrokenProcessPool)。
+;; (2026-11-02 18:56 JST の node-d — BrokenProcessPool)。
 ;; 子 1 本の山(焼く子は fork の後に Hy の macro の module と焼く source を読み、子ごとに持つ)。
 (val BAKE-CHILD-BYTES (* 320 1024 1024))
 ;; 子の外に要る分: 入口が読みを始めた後に閉包の歩みで伸びる分(約 100 MiB)と焼きの道具の親(約 31 MiB)に余裕を足した値。

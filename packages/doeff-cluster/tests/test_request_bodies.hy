@@ -21,7 +21,7 @@
   (assert (= lease (LeaseBody :op "claim" :token "a/1/" :permits 1 :ttl-ms 500)) lease)
   (<- result (body-of (! (http-request "POST" "/tasks/t1/result" {} {"worker" "w" "result" "R" "instance" "w-p1"}))))
   (assert (= result (TaskResultBody :worker "w" :result "R" :instance "w-p1" :format 1)) result)
-  (<- drain (body-of (! (http-request "POST" "/workers/zeus/drain" {} None))))
+  (<- drain (body-of (! (http-request "POST" "/workers/node-h/drain" {} None))))
   (assert (= drain (DrainBody)) drain)
   ;; まだ型にしていない道は JSON の object のまま。
   (<- untyped (body-of (! (http-request "GET" "/state" {} {"x" 1}))))
@@ -32,7 +32,7 @@
   (<- missing (body-of (! (http-request "POST" "/leases/app-writer" {} {"op" "claim"}))))
   (assert (isinstance missing BodyMalformed) missing)
   (assert (in "token" missing.reason) missing)
-  (<- wrong (body-of (! (http-request "POST" "/workers/zeus/drain" {} {"boot" 7}))))
+  (<- wrong (body-of (! (http-request "POST" "/workers/node-h/drain" {} {"boot" 7}))))
   (assert (in "boot" wrong.reason) wrong)
   (<- listed (body-of (! (http-request "POST" "/tasks/t1/result" {} ["w" "R"]))))
   (assert (in "JSON の object" listed.reason) listed)

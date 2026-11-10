@@ -121,7 +121,7 @@
 #   ほかの process は最初の層へ移す。訳: runc は kubectl exec・readinessProbe・preStop の process を container の cgroup へ入れようとし、
 #   子に controller を掛けた container の cgroup には入れられない(cgroup v2 は process の居る cgroup の子に controller を掛けられない)ので、
 #   init の居る cgroup へ入れる。init が worker の本体と同じ層に居ると、exec の命令の memory は worker の本体と同じ上限の無い層で増え、
-#   機体の全体の OOM まで止まらない(11-04 12:59 UTC の zeus — exec の grep 2 本が 69 GB)。init の層は memory.max を持つ限る層で、
+#   機体の全体の OOM まで止まらない(11-04 12:59 UTC の node-h — exec の grep 2 本が 69 GB)。init の層は memory.max を持つ限る層で、
 #   最初の層とは別の層(どちらも宣言を読む段で検める)。init が container の cgroup に居なければ断る(exec の命令が上限の層に入らない)。
 #   書ける見え: k8s の Pod の /sys/fs/cgroup は自分の container の cgroup を根とする読み取りだけの見えなので、機体の配備は host の cgroupfs を
 #   別の所に書ける形で置き、その場所を WORKER_CGROUP_HOST で渡す。script はその中から、名前空間の根(WORKER_CGROUP_NS_ROOT・既定
@@ -251,7 +251,7 @@ doeff_prepare() {
     # 明示の compile なので、この変数で止まらない。
     # root は型を検めないので、editable の build の型の宣言(.pyi)の hook を止める(DOEFF_HY_STUBS=off — 実行環境の準備の uv の子と
     # 同じ綴り・native_wheel.STUBS_ENV)。止めないと hook が .hy を全部展開し、展開の子が準備の層の memory を越えて殺され、準備が
-    # BrokenProcessPool で落ちた(2026-11-07 k3s-0)。export せずこの uv sync だけに置く — worker と job の子の uv sync へ継がない。
+    # BrokenProcessPool で落ちた(2026-11-07 node-d)。export せずこの uv sync だけに置く — worker と job の子の uv sync へ継がない。
     (cd "$root" && PYTHONDONTWRITEBYTECODE=1 DOEFF_HY_STUBS=off uv sync --locked --compile-bytecode --package doeff-cluster --no-dev \
       --no-install-package doeff-vm >&2)
     synced=$(date +%s)
@@ -335,7 +335,7 @@ doeff_python_installs_gc() {
 # uv の cache の用意(seed — 新しい node の空の cache に、置き場の写しを入れる)と片付け(gc — 古い項目と使われない venv を消す)を、
 # 起動の待ちの外で起こす(役 worker と prepare — 起動と版の入れ替えのたび。動詞と値の意味は deploy/uv_cache.py の頭の註の upkeep)。
 # 役 worker は常駐させ(--repeat)、片付けを DOEFF_UV_CACHE_GC_EVERY_SECONDS ごとに回し続ける — gc の予算は回の時にしか守られず、
-# 起動と版の入れ替えの時だけの回では、回の間に cache が予算の外で育った(2026-11-09 の atlas — 予算 6 GiB に対し回の前 18.25 GB)。
+# 起動と版の入れ替えの時だけの回では、回の間に cache が予算の外で育った(2026-11-09 の node-a — 予算 6 GiB に対し回の前 18.25 GB)。
 # 版の入れ替えで起きた新しい世代の常駐が持ち手を替え、前の世代の常駐は退く。役 prepare は 1 度で終わる(続く世代の起動が常駐させる)。
 # 置き場の URL(DOEFF_UV_CACHE_SEED_URL)か片付けの日数(DOEFF_UV_CACHE_GC_DAYS)が環境に在る時だけ。boot.lock を離した後に呼ぶ
 # (背後の子が錠の fd を継がない)。子の出力は cache の dir の .doeff-uv-upkeep.log へ足す — 役 prepare の標準出力(root の path の 1 行)に
@@ -796,7 +796,7 @@ keeper_room() {
 # 版の印・pid = 準備の process)。準備は役 prepare(この script が展開し、その版の script が準備する — 版上げの前の準備と同じ道)で、
 # cgroup の層が在れば準備の層(下の keeper_layer — 準備の memory を worker の本体の守りに数えない)で起こす。準備の層では、層の下の
 # その版の子(keeper-<版> — keeper_group_open・memory.oom.group=1)へ準備の頭だけを移し、頭が終わったら子の残りを止めて子を消す
-# (keeper_group_close)。失敗ケース(11-08 の k3s-0・k3s-2): 層に直に置いた準備で build hook の頭が OOM kill で止まり、残った forkserver と
+# (keeper_group_close)。失敗ケース(11-08 の node-d・node-f): 層に直に置いた準備で build hook の頭が OOM kill で止まり、残った forkserver と
 # 子が uv の出力の pipe を持ち続け、uv も準備も 25 時間返らず、keeper は準備中と読み続けた。準備の層
 # (DOEFF_WORKER_PREPARE_CGROUP)は、worker が追い出しの線から掛け直す jobs の層と違い、上限(準備の山)を縮めない。代わりに準備を
 # 起こす前に worker の書く空き(keeper_room)を読み、空きが準備の足しうる量に足りない間は準備を起こさずに待つ(log に名指す — OOM で
@@ -1248,7 +1248,7 @@ set --
 #   WORKER_ENV_ROOTS_GIB    roots の合計の上限(既定 20)— 越えた時は、固定(走っている job・宣言の job・準備中・温める表)でも
 #                           project ごとの新しい 2 つ(今の版と戻し先の版)でもない root を、最後に使った古い順に消す。合計は root ごとの
 #                           大きさの和で、root どうしが hardlink で共有する木と .pyc を重ねて数える(実の使用量より大きく出る)。
-#                           2026-10-06 の実測で root 1 つは重ねて数えて 0.19〜0.25 GB(zeus の service worker の業務の root)— 専用の
+#                           2026-10-06 の実測で root 1 つは重ねて数えて 0.19〜0.25 GB(node-h の service worker の業務の root)— 専用の
 #                           service worker(/work が共有の USB の SSD の hostPath)は 1(root 4 本分)で足りる。
 #   WORKER_ENV_MIN_FREE_GIB 共有の disk の空きの最低(既定 25)— 割った時も同じ候補の root を古い順に、空きが最低へ戻るまで消す
 #                           (#4051)。戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る(coordinator は準備済みでない

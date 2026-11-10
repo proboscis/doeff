@@ -5,7 +5,7 @@
 ;;;       測りの無い worker は 0
 ;;;   (2) 置き先は測った空きの多い worker(担う数の少ない worker ではない)。1 拍で測った空きを越えて置かない。測りの無い worker には
 ;;;       置かず、待ちの文で名指す
-;;;   (3) 予約は上限の 1/6(CPU 36 の機体で 6 — 手で書いていた zeus の値)で、半分ずつ優先 0 以上の task と背景の仕事に残す
+;;;   (3) 予約は上限の 1/6(CPU 36 の機体で 6 — 手で書いていた node-h の値)で、半分ずつ優先 0 以上の task と背景の仕事に残す
 ;;;   (4) GET /state の taskRoom は置き方と同じ数えで、worker の行に手書きの枠の欄は無い
 ;;;   (5) 優先度を下げた process(nice > 0)の CPU の使いと、task の層の外の実行の待ちでは 0 にならない。普通の優先度の使いで埋まった機体は
 ;;;       task の層の PSI を名乗る worker なら層の床の 1 本まで(名乗らない worker は 0)、task の層の task 自身が待つ機体は 0
@@ -90,7 +90,7 @@
   ;; 空いた機体でも CPU の数より多くは置かない: CPU 4 個・使い 0 → CPU の空き 3 だが、上限 4 − 置いた 3 = 1。
   (<- by-cap int (measured-room (! (load 4 0.0 60000)) 3 0 0))
   (assert (= by-cap 1))
-  ;; 失敗ケース: 混んだ機体(CPU 36 個・使い 0.98 — 空いた CPU 0.72)は、手で書いた数(zeus の 6 + 4)が残っていても 0。
+  ;; 失敗ケース: 混んだ機体(CPU 36 個・使い 0.98 — 空いた CPU 0.72)は、手で書いた数(node-h の 6 + 4)が残っていても 0。
   (<- crowded int (measured-room (! (load 36 0.98 50000)) 6 0 0))
   (assert (= crowded 0)))
 
@@ -111,7 +111,7 @@
 
 
 ;; CPU 36 個の機体の 5 秒の読み(36 × 5 秒 × 100 刻み = 18000 刻み — 1 core = 500 刻み)の頭の行 cpu の刻みの増え(user nice system idle
-;; iowait irq softirq steal)。NICE-FULL = 2026-11-05 17:4x JST の zeus(nice 19 core・user 8・system 7・idle 0.1・残りは softirq)。
+;; iowait irq softirq steal)。NICE-FULL = 2026-11-05 17:4x JST の node-h(nice 19 core・user 8・system 7・idle 0.1・残りは softirq)。
 ;; NORMAL-FULL = 同じ和を普通の優先度の使い(user と system)が埋めた読み。
 (val TICKS-BEFORE #(100000 100000 100000 100000 100000 0 100000 0))
 (val NICE-FULL #(4000 9500 3500 50 0 0 950 0))
@@ -143,7 +143,7 @@
   (<- second LoadReading (machine-load-of (! (stat-text after)) ROOMY-MEMINFO MACHINE-CPU-PSI CALM-MEMORY-PSI first.ticks 5000
                                           :task-cpu-pressure task-psi))
   (<- spelled dict (measured-json second.load))
-  (<- body HeartbeatBody (heartbeat-of {"name" "zeus" "provides" [] "measured" spelled}))
+  (<- body HeartbeatBody (heartbeat-of {"name" "node-h" "provides" [] "measured" spelled}))
   body.measured)
 
 
@@ -175,42 +175,42 @@
   (assert (= #(layerless.task-cpu-some-avg10 blind-to-layers) #(None 0)) layerless))
 
 
-;; 2026-11-05 19:4x JST の atlas(CPU 16 個・同居の service が普通の優先度で使い 0.97・機体の CPU の PSI some 54.6%・memory の空き 7266 MiB)。
+;; 2026-11-05 19:4x JST の node-a(CPU 16 個・同居の service が普通の優先度で使い 0.97・機体の CPU の PSI some 54.6%・memory の空き 7266 MiB)。
 ;; task の層の CPU の PSI は、置いた task が動けている時 3.0%・実行を待つ時 55%。
-(val ATLAS-CROWDED (MeasuredLoad :at-ms 1000 :cpus 16 :cpu-busy 0.97 :memory-total-MiB 20263 :memory-available-MiB 7266
+(val NODE-A-CROWDED (MeasuredLoad :at-ms 1000 :cpus 16 :cpu-busy 0.97 :memory-total-MiB 20263 :memory-available-MiB 7266
                                  :cpu-some-avg10 54.6 :memory-some-avg10 0.01 :cpu-nice 0.0006 :task-cpu-some-avg10 3.0))
 
 
 (deftest test-a-crowded-shared-machine-takes-one-task-on-the-share-of-its-task-layer
   ;; 失敗ケース(直す前): CPU の空き ⌊16 × 0.03 − 1⌋ < 0 なので、待っている 2 本とも空きの無い文で待ち続ける(11-04 は 9 時間)。
   ;; 直した後: task の層の PSI を名乗る worker には層の床の 1 本を置き、2 本目は空きの無い文で待つ。
-  (<- atlas WorkerInfo (worker "atlas" ATLAS-CROWDED))
-  (<- state ClusterState (state-of #(atlas) (! (queued-all ["t1" "t2"]))))
+  (<- node-a WorkerInfo (worker "node-a" NODE-A-CROWDED))
+  (<- state ClusterState (state-of #(node-a) (! (queued-all ["t1" "t2"]))))
   (val placed (! (tasks-placed 1000 state state.placements T)))
   (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
   (assert (= #((. (.row placed "t1") phase) (. (.row placed "t1") worker) (. (.row placed "t2") phase) (. (.row placed "t2") detail))
-             #("assigned" "atlas" "queued" no-room))
+             #("assigned" "node-a" "queued" no-room))
           placed)
   ;; 床は CPU の空きが床より少ない時だけ効き、置いた task の数を引く(1 本置いた worker は 0・置いていない worker は 1)。
-  (val floors #((! (layer-floor-of ATLAS-CROWDED 0)) (! (layer-floor-of ATLAS-CROWDED 1))
-                (! (layer-floor-of (replace ATLAS-CROWDED :task-cpu-some-avg10 None) 0))))
+  (val floors #((! (layer-floor-of NODE-A-CROWDED 0)) (! (layer-floor-of NODE-A-CROWDED 1))
+                (! (layer-floor-of (replace NODE-A-CROWDED :task-cpu-some-avg10 None) 0))))
   (assert (= floors #(1 0 0)) floors)
   ;; 層を名乗らない worker(前の版・層の無い機体)には床を掛けない — 機体の PSI で止める(取り分を測れない)。
-  (<- layerless int (measured-room (replace ATLAS-CROWDED :task-cpu-some-avg10 None :cpu-nice None) 0 0 0))
+  (<- layerless int (measured-room (replace NODE-A-CROWDED :task-cpu-some-avg10 None :cpu-nice None) 0 0 0))
   ;; 置いた task 自身が実行を待つ(task の層の some 55% ≥ 40%)なら床も 0。
-  (<- waiting int (measured-room (replace ATLAS-CROWDED :task-cpu-some-avg10 55.0) 0 0 0))
+  (<- waiting int (measured-room (replace NODE-A-CROWDED :task-cpu-some-avg10 55.0) 0 0 0))
   ;; memory の判定は床で緩めない: 空き 2000 − 床 1536 = 464 MiB は枠 0。予約が空きを食い尽くした機体も 0。memory の PSI の待ちも 0。
-  (<- short int (measured-room (replace ATLAS-CROWDED :memory-available-MiB 2000) 0 0 0))
-  (<- reserved int (measured-room ATLAS-CROWDED 0 0 5730))
-  (<- reclaiming int (measured-room (replace ATLAS-CROWDED :memory-some-avg10 12.0) 0 0 0))
+  (<- short int (measured-room (replace NODE-A-CROWDED :memory-available-MiB 2000) 0 0 0))
+  (<- reserved int (measured-room NODE-A-CROWDED 0 0 5730))
+  (<- reclaiming int (measured-room (replace NODE-A-CROWDED :memory-some-avg10 12.0) 0 0 0))
   (assert (= #(layerless waiting short reserved reclaiming) #(0 0 0 0 0)))
   ;; 空いた機体では床でなく CPU の空きが決める(床は空きを減らさない): 使い 0.25 → 11。
-  (<- roomy int (measured-room (replace ATLAS-CROWDED :cpu-busy 0.25 :memory-available-MiB 18000) 0 0 0))
+  (<- roomy int (measured-room (replace NODE-A-CROWDED :cpu-busy 0.25 :memory-available-MiB 18000) 0 0 0))
   (assert (= roomy 11)))
 
 
 (deftest test-the-reserve-is-a-sixth-of-the-cap-and-unseen-tasks-count-from-the-reading
-  ;; 予約 = 上限(CPU の数)の 1/6: CPU 36 の機体は 6(手で書いていた zeus の taskReserve と同じ)・16 は 2・4 は 0・測り無しは 0。
+  ;; 予約 = 上限(CPU の数)の 1/6: CPU 36 の機体は 6(手で書いていた node-h の taskReserve と同じ)・16 は 2・4 は 0・測り無しは 0。
   (<- big int (reserve-of (! (load 36 0.5 1000))))
   (<- middle int (reserve-of (! (load 16 0.5 1000))))
   (<- small int (reserve-of (! (load 4 0.5 1000))))
@@ -288,16 +288,16 @@
 (deftest test-background-tasks-leave-the-reserve-of-a-big-machine-to-the-build
   ;; CPU 36 個・使い 0.8 → 空き 6・予約 6(優先 0 以上に 3・背景の仕事に 3)。背景の仕事(優先 -1)10 本は空きが予約の半分 3 に
   ;; 下がるまでの 3 本だけ置かれ、残りは予約の文で待つ。失敗ケース: 予約を見なければ 6 本置かれ、後の組み立ての task が空くまで待つ。
-  (<- zeus WorkerInfo (worker "zeus" (! (load 36 0.8 60000 :at-ms 1000))))
+  (<- node-h WorkerInfo (worker "node-h" (! (load 36 0.8 60000 :at-ms 1000))))
   (val ids (lfor i (range 10) (.format "bg{}" i)))
-  (<- state ClusterState (state-of #(zeus) (! (queued-all ids :priority -1))))
+  (<- state ClusterState (state-of #(node-h) (! (queued-all ids :priority -1))))
   (val placed (! (tasks-placed 1000 state state.placements T)))
   (val phases (lfor id ids (. (.row placed id) phase)))
   (assert (= (.count phases "assigned") 3) phases)
   (<- reserved str (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))
   (assert (all (gfor id ids :setv row (.row placed id) :if (= row.phase "queued") (= row.detail reserved))) placed)
   ;; 後の拍で積んだ組み立ての task(優先 0)は、背景の仕事が待っていても残した予約へ置かれる。
-  (<- later ClusterState (state-of #(zeus) (| (dfor id ids id (.row placed id)) {"build" (! (queued "build"))})))
+  (<- later ClusterState (state-of #(node-h) (| (dfor id ids id (.row placed id)) {"build" (! (queued "build"))})))
   (val built (! (tasks-placed 2000 later later.placements T)))
   (assert (= (. (.row built "build") phase) "assigned") (.row built "build")))
 

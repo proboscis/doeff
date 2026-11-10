@@ -180,18 +180,18 @@ def test_the_worker_process_names_itself_and_ignores_a_job_context_in_its_enviro
         JOB_LOG_OTLP_VAR: "http://collector:4318",
         JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal",
     }
-    assert worker_log_plan(environ, "zeus-native", "b0") == JobLogTarget(
+    assert worker_log_plan(environ, "node-h-native", "b0") == JobLogTarget(
         endpoint="http://collector:4318/v1/logs",
         resource=(
             Attribute("owner.tenant", "personal"),
             Attribute("service.name", "doeff.job-log"),
-            Attribute("doeff.worker", "zeus-native"),
-            Attribute("doeff.job", "worker/zeus-native"),
+            Attribute("doeff.worker", "node-h-native"),
+            Attribute("doeff.job", "worker/node-h-native"),
             Attribute("doeff.attempt", "0"),
             Attribute("doeff.instance", "b0"),
         ),
     )
-    assert worker_log_plan(CONTEXT, "zeus-native", "b0") == JobLogOff()
+    assert worker_log_plan(CONTEXT, "node-h-native", "b0") == JobLogOff()
 
 
 def test_the_body_is_otlp_logs_json_with_one_record_per_line() -> None:
@@ -672,7 +672,7 @@ def test_a_job_forked_from_the_warm_child_ships_its_lines(
 WORKER_PROCESS = """
 import os, sys
 from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
-process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+process_lines(worker_log_plan(os.environ, "node-h-native", "b0"))
 print("worker: 起動します boot=b0", file=sys.stderr, flush=True)
 print("worker: heartbeat の gap", flush=True)
 raise RuntimeError("worker-crashed-at-the-end")
@@ -721,8 +721,8 @@ def test_the_worker_process_ships_its_own_lines_and_its_crash_traceback(tmp_path
         (
             ("owner.tenant", "personal"),
             ("service.name", "doeff.job-log"),
-            ("doeff.worker", "zeus-native"),
-            ("doeff.job", "worker/zeus-native"),
+            ("doeff.worker", "node-h-native"),
+            ("doeff.job", "worker/node-h-native"),
             ("doeff.attempt", "0"),
             ("doeff.instance", "b0"),
         )
@@ -752,7 +752,7 @@ def test_a_worker_whose_stdout_and_stderr_are_two_files_keeps_them_and_names_why
 POD_WORKER_PROCESS = """
 import os, sys
 from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
-process_lines(worker_log_plan(os.environ, "zeus", "b0"), merged="POD_UID" in os.environ)
+process_lines(worker_log_plan(os.environ, "node-h", "b0"), merged="POD_UID" in os.environ)
 print("worker: 拍の遅れ elapsed_ms=31000", file=sys.stderr, flush=True)
 print("worker: job ごとの memory", flush=True)
 """
@@ -770,13 +770,13 @@ def test_a_pod_worker_ships_its_own_lines_from_two_pipes(tmp_path: Path, collect
     assert [x.body for x in lines] == ["worker: 拍の遅れ elapsed_ms=31000".encode(), "worker: job ごとの memory".encode()]
     records = received_until(collector, len(lines))
     assert [r.body for r in records] == [x.body.decode() for x in lines]
-    assert {dict(r.resource)["doeff.job"] for r in records} == {"worker/zeus"}
+    assert {dict(r.resource)["doeff.job"] for r in records} == {"worker/node-h"}
 
 
 OUTLIVING_DESCENDANT = """
 import os, subprocess, sys
 from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
-process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+process_lines(worker_log_plan(os.environ, "node-h-native", "b0"))
 print("worker: 子を起こして終わる", file=sys.stderr, flush=True)
 # lifeline の見張りと同じ持ち方の子孫: 自分の session・stdout と stderr を指定しない(worker の fd 1・2 を継ぐ)・worker より長く生きる。
 subprocess.Popen(["sh", "-c", "sleep 0.5; echo descendant-after-the-worker >&2"], stdin=subprocess.DEVNULL, start_new_session=True)
@@ -801,7 +801,7 @@ def test_a_descendant_that_outlives_the_worker_still_writes_to_the_file(tmp_path
 FLOODING_WORKER = """
 import os, sys
 from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
-process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+process_lines(worker_log_plan(os.environ, "node-h-native", "b0"))
 for n in range(40_000):
     print(f"worker: burst line {n:06d}")
 """

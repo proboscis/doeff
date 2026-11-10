@@ -21,7 +21,7 @@
 (import doeff_cluster._worker.core.program [worker-tick HEARTBEAT-GAP-LOG])
 
 (val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))
-(val WORKER "agent-worker-2")
+(val WORKER "worker-2")
 (val LEASE-MS 10000)
 
 

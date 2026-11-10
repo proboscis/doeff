@@ -1,7 +1,7 @@
 ;; Service の置き先の一時の上書き(資源 NeedsOverride)。
 ;;
-;; 失敗ケース(直す前・2026-10-26 22:45〜23:21 JST): 復旧の手が Service 13 本の spec.needs を直の PUT で host-zeus から復旧の能力へ
-;; 書き換え、worker の側(zeus の Deployment の能力の名乗り)だけが Flux の当て直しで戻った。coordinator は 13 本の置き先を黙って空にし、
+;; 失敗ケース(直す前・2026-10-26 22:45〜23:21 JST): 復旧の手が Service 13 本の spec.needs を直の PUT で host-node-h から復旧の能力へ
+;; 書き換え、worker の側(node-h の Deployment の能力の名乗り)だけが Flux の当て直しで戻った。coordinator は 13 本の置き先を黙って空にし、
 ;; 元の needs はどこにも残っていなかった。直した後は、上書きが宣言(spec)を書き換えない記録(訳・期限・書き手)として入り、置き先の判断が
 ;; 効く needs をその記録から決める。期限の拍か、上書きの needs を満たす生きた worker が 0 になった拍に、coordinator が記録を外して同じ拍で
 ;; 宣言の needs で置き直す。版(revision)を変えずに置き先(needs・pin)を書き換える PUT は 409 で断る。
@@ -63,11 +63,11 @@
 
 (defk declared-world []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "宣言の道具 declare-tool が Service a(needs net)を宣言し、worker zeus(net)と rescue(net・専用の rescue)が名乗った状態を作るため
-   (a は zeus に置かれる — rescue は rescue を要らない仕事を受けない)。"
+  "宣言の道具 declare-tool が Service a(needs net)を宣言し、worker node-h(net)と rescue(net・専用の rescue)が名乗った状態を作るため
+   (a は node-h に置かれる — rescue は rescue を要らない仕事を受けない)。"
   (<- created tuple (call (ClusterState) "POST" "/resources/Service" {"name" "a" "spec" SPEC}))
   (assert (= (get created 1) 201) created)
-  (<- one ClusterState (beat (get created 0) "zeus" ["net"] 1000))
+  (<- one ClusterState (beat (get created 0) "node-h" ["net"] 1000))
   (<- two ClusterState (beat one "rescue" ["net" "rescue"] 1000 :exclusive ["rescue"]))
   two)
 
@@ -101,10 +101,10 @@
 (deftest test-an-override-is-a-record-beside-the-declaration-and-is-lifted-when-no-live-worker-satisfies-it
   ;; 受入の条 1・c511f7e30: 上書きは宣言の spec を書き換えない記録(訳・期限・書き手 — GET /resources と GET /state に出る)で、置き先の
   ;; 判断は上書きの needs を効かせて a を rescue へ移す。rescue が黙って上書きの needs を満たす生きた worker が 0 になった拍に、
-  ;; coordinator が記録を外し(出来事に送り手 coordinator の delete)、移し替えの窓の後に宣言の候補 zeus へ置き直す。
+  ;; coordinator が記録を外し(出来事に送り手 coordinator の delete)、移し替えの窓の後に宣言の候補 node-h へ置き直す。
   (<- world ClusterState (declared-world))
   (<- before (| str None) (placed-on world 1000))
-  (assert (= before "zeus") before)
+  (assert (= before "node-h") before)
   (<- bound ClusterState (overridden world HAND 1000))
   (<- service dict (service-of bound))
   (assert (= (get service "spec" "needs") ["net"]) service)
@@ -114,7 +114,7 @@
   (<- moved (| str None) (placed-on bound 1000))
   (assert (= moved "rescue") moved)
   (val gone (+ 1001 T.lease-ms))
-  (<- quiet ClusterState (beat bound "zeus" ["net"] gone))
+  (<- quiet ClusterState (beat bound "node-h" ["net"] gone))
   (<- lifted ClusterState (tick quiet gone T))
   (assert (is (.row lifted.needs-overrides "a") None) lifted.needs-overrides)
   (<- after dict (service-of lifted))
@@ -124,10 +124,10 @@
   (val deleted (lfor e (get events 2 "events") :if (and (= (get e "kind") "NeedsOverride") (= (get e "verb") "delete")) e))
   (assert (= (lfor e deleted (get e "actor")) ["coordinator"]) deleted)
   (val later (+ 1001 T.reassign-after-ms))
-  (<- awake ClusterState (beat lifted "zeus" ["net"] later))
+  (<- awake ClusterState (beat lifted "node-h" ["net"] later))
   (<- again ClusterState (tick awake later T))
   (<- final (| str None) (placed-on again later))
-  (assert (= final "zeus") final))
+  (assert (= final "node-h") final))
 
 
 (deftest test-an-override-is-lifted-in-the-same-step-the-new-generation-drops-the-capability
@@ -138,7 +138,7 @@
   (<- reborn ClusterState (beat bound "rescue" ["net"] 2000 :boot "b2"))
   (assert (is (.row reborn.needs-overrides "a") None) reborn.needs-overrides)
   (<- holder (| str None) (placed-on reborn 2000))
-  (assert (in holder #("zeus" "rescue")) holder))
+  (assert (in holder #("node-h" "rescue")) holder))
 
 
 (deftest test-an-override-is-lifted-at-its-deadline-or-when-cancelled
@@ -149,7 +149,7 @@
   (val deadline 6000)
   (<- due (| int None) (needs-override-due (get answer 0)))
   (assert (= due deadline) due)
-  (<- fresh ClusterState (beat (! (beat (get answer 0) "zeus" ["net"] (- deadline 1))) "rescue" ["net" "rescue"] (- deadline 1) :exclusive ["rescue"]))
+  (<- fresh ClusterState (beat (! (beat (get answer 0) "node-h" ["net"] (- deadline 1))) "rescue" ["net" "rescue"] (- deadline 1) :exclusive ["rescue"]))
   (<- kept ClusterState (tick fresh (- deadline 1) T))
   (assert (is-not (.row kept.needs-overrides "a") None) kept.needs-overrides)
   (<- woken object (tick-due kept (- deadline 1) T))
@@ -161,7 +161,7 @@
   (assert (= (get cancelled 1) 200) cancelled)
   (assert (is (.row (. (get cancelled 0) needs-overrides) "a") None) cancelled)
   (<- back (| str None) (placed-on (get cancelled 0) 1000))
-  (assert (= back "zeus") back))
+  (assert (= back "node-h") back))
 
 
 (deftest test-a-placement-rewrite-without-a-new-revision-is-refused-and-a-new-revision-passes
@@ -263,7 +263,7 @@
 
 (defk rescue-scenario []
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: beacon が zeus に置かれた後に、復旧の手が beacon を上書きで rescue の機体へ向け、rescue へ移った後に rescue の機体が死ぬ。
+  "筋書き: beacon が node-h に置かれた後に、復旧の手が beacon を上書きで rescue の機体へ向け、rescue へ移った後に rescue の機体が死ぬ。
    移った置き先・死んだ後の置き先・宣言の needs・上書きの有無を読んで返すため。"
   (<- (Delay 8.0))
   (<- link SimLink (hand-link))
@@ -290,12 +290,12 @@
 
 (deftest test-an-overridden-service-returns-to-its-own-workers-when-the-bound-worker-dies-on-sim
   ;; 受入の条 1(模擬): 上書きで rescue の機体へ向けた beacon が、rescue の死の後に上書きを失い(宣言の needs は cluster-net のまま)、
-  ;; 宣言の候補の zeus に置かれる。worker の死を試す筋書きなので本番の timing を明示して渡す。
+  ;; 宣言の候補の node-h に置かれる。worker の死を試す筋書きなので本番の timing を明示して渡す。
   (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (rescue-scenario)
-                             :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net"]))
+                             :workers #((SimWorker :name "node-h" :provides (frozenset ["cluster-net"]))
                                         (SimWorker :name "rescue" :provides (frozenset ["cluster-net" "rescue"])
                                                    :exclusive (frozenset ["rescue"])))))
-  (assert (= seen {"written" 201 "before" "zeus" "bound" "rescue" "after" "zeus" "needs" ["cluster-net"] "overrides" 0}) seen))
+  (assert (= seen {"written" 201 "before" "node-h" "bound" "rescue" "after" "node-h" "needs" ["cluster-net"] "overrides" 0}) seen))
 
 
 (val THIRTEEN (tuple (gfor i (range 1 14) (.format "b{:02d}" i))))
@@ -307,10 +307,10 @@
   (tuple (gfor n THIRTEEN :if (or (in n (get state "unplaced")) (not-in n (get state "placements"))) n)))
 
 
-(defk zeus-rebuilt-scenario []
+(defk node-h-rebuilt-scenario []
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き(2026-10-26 22:45 の形): zeus の worker が復旧の能力 rescue を専用に名乗り(手の patch)、復旧の手が 13 本の Service を上書きで
-   rescue へ向けて置く。Flux の当て直しに当たる作り直しで、zeus が rescue を名乗らない値で起き直す。起き直した後 30 秒、1 秒ごとに
+  "筋書き(2026-10-26 22:45 の形): node-h の worker が復旧の能力 rescue を専用に名乗り(手の patch)、復旧の手が 13 本の Service を上書きで
+   rescue へ向けて置く。Flux の当て直しに当たる作り直しで、node-h が rescue を名乗らない値で起き直す。起き直した後 30 秒、1 秒ごとに
    置き先の無い Service を数え、上書きの残りを読んで返すため。"
   (<- (Delay 3.0))
   (<- link SimLink (hand-link))
@@ -321,9 +321,9 @@
     (:= written (+ written #((get answer 0)))))
   (<- (Delay 10.0))
   (<- bound dict (ReadCoordinator "/state"))
-  (<- (StopWorker "zeus"))
-  (<- replaced bool (ReplaceWorker "zeus" (SimWorker :name "zeus" :provides (frozenset ["cluster-net"]))))
-  (<- started bool (StartWorker "zeus"))
+  (<- (StopWorker "node-h"))
+  (<- replaced bool (ReplaceWorker "node-h" (SimWorker :name "node-h" :provides (frozenset ["cluster-net"]))))
+  (<- started bool (StartWorker "node-h"))
   (var gaps 0)
   (for [_ (range 30)]
     (<- (Delay 1.0))
@@ -341,10 +341,10 @@
 
 
 (deftest test-thirteen-overridden-services-keep-a-placement-when-the-worker-is-rebuilt-without-the-capability-on-sim
-  ;; 受入の条 c69a30194(模擬・10-26 の形): 上書きで rescue へ向けた 13 本の Service は、zeus が rescue を名乗らない値で作り直された後、
+  ;; 受入の条 c69a30194(模擬・10-26 の形): 上書きで rescue へ向けた 13 本の Service は、node-h が rescue を名乗らない値で作り直された後、
   ;; 1 秒ごとに読んだ 30 回のどの拍でも置き先を失わない(上書きは起き直した最初の拍で外れ、同じ拍で宣言の needs で置かれる)。
   ;; 直す前の形(上書きを外さない)では、起き直した後の全部の拍で 13 本が置き先を持たない。worker の作り直しを試すので本番の timing を渡す。
-  (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (thirteen-beacons sim-foundation) (zeus-rebuilt-scenario)
-                             :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net" "rescue"])
+  (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (thirteen-beacons sim-foundation) (node-h-rebuilt-scenario)
+                             :workers #((SimWorker :name "node-h" :provides (frozenset ["cluster-net" "rescue"])
                                                    :exclusive (frozenset ["rescue"]) :machine (SimMachine :cpus 21 :memory-mib 262144)))))
-  (assert (= seen {"written" [201] "bound" ["zeus"] "replaced" #(True True) "gaps" 0 "after" ["zeus"] "overrides" 0}) seen))
+  (assert (= seen {"written" [201] "bound" ["node-h"] "replaced" #(True True) "gaps" 0 "after" ["node-h"] "overrides" 0}) seen))

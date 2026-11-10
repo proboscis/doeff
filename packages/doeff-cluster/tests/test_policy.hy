@@ -424,7 +424,7 @@
 (import doeff_cluster._worker.intent.worker_model [StartHold] doeff_cluster._worker.core.policy [start-holds])
 
 (deftest test-a-leaving-generation-starts-no-new-trial-of-a-handoff-job-even-without-the-superseded-mark
-  ;; 失敗ケース(10-11 の zeus の画面の process の群): 止まり(preStop の drain)の始まった Pod の古い世代は、
+  ;; 失敗ケース(10-11 の node-h の画面の process の群): 止まり(preStop の drain)の始まった Pod の古い世代は、
   ;; 退かせた process(名 = <元の名>#retired-<世代>)が走っている間、coordinator の返事に handoff の job が載り続け、名が空いているので、
   ;; 印 supersededBy の欠けた拍ごとに新しい試行を起こした(群 1 で 45 回・群 2 で 58 回 — 前の process を止めずに並べた)。守りは worker の
   ;; 手元の観測(WorldView.leaving — preStop の入口が置いた印)で、coordinator の印に依らない。
@@ -634,7 +634,7 @@
 (deftest test-preparing-beside-a-running-old-version-carries-the-policy-compile-jobs
   ;; 失敗ケース(2026-10-08): recreate の job の旧い process が動いている間の新しい版の準備(replace-step)は、方策の並べる数
   ;; (WorkerPolicy.compile-jobs-while-replacing)を準備の action に載せる。旧い service と新しい版の bytecode の焼きは同じ Pod の memory の
-  ;; 上限を分け合い、道具の既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)では、zeus の測り(MemoryMax 1650M・CPU 400%・並べる数 4)で回収できない
+  ;; 上限を分け合い、道具の既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)では、node-h の測り(MemoryMax 1650M・CPU 400%・並べる数 4)で回収できない
   ;; anon の最高 1.59GB が旧の 364MB と重なって上限 2Gi にほぼ並ぶ(旧が oom で殺され得る)。旧が動いていない準備(初めて起動する・止め
   ;; 終えた後)は載せない(None = 道具の既定)。直す前は方策にも準備の action にも欄が無かった。
   (val policy (replace POLICY :compile-jobs-while-replacing 3))
@@ -763,7 +763,7 @@
   held)
 
 (deftest test-a-task-held-by-memory-tightness-past-the-limit-is-reported-as-a-retryable-env-failure
-  ;; 失敗ケース: atlas の worker は逼迫の続く 80 分のあいだ見回りの task を起こさず、task は状態の行に何の訳も出さないまま 15 分を
+  ;; 失敗ケース: node-a の worker は逼迫の続く 80 分のあいだ見回りの task を起こさず、task は状態の行に何の訳も出さないまま 15 分を
   ;; 越えて残った(2026-11-08 05:50・06:36)。上限の手前では待ち(訳と上限を出す)、上限を越えた拍から env-failed・memory-tight・
   ;; retryable を報告する。
   (val tight (replace (! (world)) :memory-tight True))

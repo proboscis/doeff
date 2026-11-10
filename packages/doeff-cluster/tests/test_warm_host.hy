@@ -317,7 +317,7 @@
 
 
 (deftest test-a-warm-key-task-asks-for-an-input-pipe-the-worker-holds-so-it-outlives-the-warm-child [tmp-path]
-  ;; 11-08 15:25Z の atlas: 待ちの子から分けた task の A は、待ちの子の標準入力を継いでいた。worker が終わった待ちの子を回収して、その
+  ;; 11-08 15:25Z の node-a: 待ちの子から分けた task の A は、待ちの子の標準入力を継いでいた。worker が終わった待ちの子を回収して、その
   ;; 標準入力の pipe(hold-stdin)を閉じると、走っている task の A が EOF を「worker の消失」と読んで入口へ TERM を送った(待ちの子 1 つが
   ;; 終わるたびに、そこから分けた task が全部 SIGTERM で終わった)。頼みの欄を受ける版の待ちの子へは、task も worker が握る自分だけの
   ;; 入力の pipe を頼む(EOF = worker の消失だけ)。受けない版へは知らない欄を送らない(前の形のまま)。
@@ -401,7 +401,7 @@
 
 
 ;; --- 待ちの子から分けた task への止めの合図を OS が断る ------------------------------------------------------
-;; 2026-11-01 の helios(AppArmor が container の中の process どうしの signal を拒んだ)と同じ機体で、待ちの子から分けた task を止める。
+;; 2026-11-01 の node-c(AppArmor が container の中の process どうしの signal を拒んだ)と同じ機体で、待ちの子から分けた task を止める。
 ;; 反例 = SignalWarmChild が断りを WarmSignaled と答え、worker が KILL を送った事に数える形は、下の行の断言が赤。
 
 (defhandler warm-signals-refused

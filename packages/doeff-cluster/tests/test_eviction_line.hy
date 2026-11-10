@@ -1,13 +1,13 @@
 ;; kubelet の追い出しの線と jobs の層の上限 — 模擬の検。
 ;;
-;; 実例: atlas の worker の Pod が 10-30〜11-01 に 5 回、kubelet に追い出され、常駐の job 14 本が Pod の起き直しまで止まった。どれも
+;; 実例: node-a の worker の Pod が 10-30〜11-01 に 5 回、kubelet に追い出され、常駐の job 14 本が Pod の起き直しまで止まった。どれも
 ;; allocatable の線(Pod の全部の working set の和 > allocatable 19.79 GiB)で、機体の MemAvailable は 8〜11 GiB 残っていた。直前の 90 秒に
 ;; task が約 5 GiB 跳ね、worker の memory の線(jobs の層の静的な上限 10752M・見張りの MemAvailable / MemTotal の DANGER・heartbeat の
 ;; MemAvailable)はどれも allocatable の線から決まっていなかった。
 ;;   - 判断(worker/core/eviction_rules): kubelet と同じ式の 2 つの線(allocatable・機体)と、その近い方の追い出しまでの空き。E は手で書かず
 ;;     kubepods の memory.max − allocatable。kernel の memory の綴り・k8s の量・cgroup の層の宣言・kubepods の dir の読み。jobs の層の
 ;;     上限 = jobs の使い + 空き − 余裕(静的な上限と 0 の間)。
-;;   - 模擬の機体(atlas の値): 本物の見張りの背景の task を仮想時計の下で 5 秒ごとに回し、Node の宣言は偽の API server、kubepods・root・
+;;   - 模擬の機体(node-a の値): 本物の見張りの背景の task を仮想時計の下で 5 秒ごとに回し、Node の宣言は偽の API server、kubepods・root・
 ;;     jobs の層の cgroup の file は模擬の kernel が答える。模擬の kernel は jobs の層の使いを、見張りが書いた memory.max で止める(越える
 ;;     要求の task は jobs の層の中で OOM kill され、準備の分に戻る)。
 ;;       task が 90 秒で 5.5 GiB 跳ねる・ほかの Pod が 30 秒で 2 GiB 伸びる、の 2 つで、全部の Pod の working set の和は読みのどの刻も
@@ -41,21 +41,21 @@
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-LEVEL-LOG])
 
 (val GIB (* 1024 MIB))
-;; atlas の Node の宣言(11-01 の kubelet の configz と Node の status): capacity 29662296Ki・systemReserved 7Gi・evictionHard 1.5Gi・
+;; node-a の Node の宣言(11-01 の kubelet の configz と Node の status): capacity 29662296Ki・systemReserved 7Gi・evictionHard 1.5Gi・
 ;; allocatable 20749400Ki(= capacity − 7Gi − 1.5Gi)。kubepods の memory.max = capacity − 7Gi。
 (val CAPACITY (* 29662296 1024))
 (val ALLOCATABLE (* 20749400 1024))
 (val PODS-MAX (- CAPACITY (* 7 GIB)))
-(val ATLAS (KubeletMemory :capacity-bytes CAPACITY :allocatable-bytes ALLOCATABLE))
-;; atlas の cgroup の層の宣言(nodes/atlas/cgroup.yaml)。
-(val ATLAS-LAYOUT "worker:memory.min=256M,cpu.weight=1000 services:memory.min=7168M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100")
+(val NODE-A (KubeletMemory :capacity-bytes CAPACITY :allocatable-bytes ALLOCATABLE))
+;; node-a の cgroup の層の宣言(nodes/node-a/cgroup.yaml)。
+(val NODE-A-LAYOUT "worker:memory.min=256M,cpu.weight=1000 services:memory.min=7168M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100")
 ;; 模擬の機体の path(worker の container の cgroup は systemd の driver の形)。
 (val HOST "/host/cgroup")
 (val PODS (+ HOST "/kubepods.slice"))
 (val OWN (+ PODS "/kubepods-burstable.slice/kubepods-burstable-pod1.slice/cri-containerd-1.scope"))
 (val JOBS (+ OWN "/jobs"))
 (val TOKEN "/sa/token")
-(val NODE-URL "https://api.test/api/v1/nodes/atlas")
+(val NODE-URL "https://api.test/api/v1/nodes/node-a")
 ;; 模擬の kernel が答える cgroup の file。
 (val KERNEL-PATHS #((+ PODS "/memory.max") (+ PODS "/memory.current") (+ PODS "/memory.stat") (+ HOST "/memory.stat")
                     (+ JOBS "/memory.current") (+ JOBS "/memory.stat")))
@@ -79,9 +79,9 @@
 
 
 (deftest test-the-static-jobs-cap-and-the-pods-cgroup-are-read-from-the-declarations
-  (<- cap (| int None) (layer-memory-max ATLAS-LAYOUT "jobs"))
-  (<- services (| int None) (layer-memory-max ATLAS-LAYOUT "services"))
-  (<- missing (| int None) (layer-memory-max ATLAS-LAYOUT "clis"))
+  (<- cap (| int None) (layer-memory-max NODE-A-LAYOUT "jobs"))
+  (<- services (| int None) (layer-memory-max NODE-A-LAYOUT "services"))
+  (<- missing (| int None) (layer-memory-max NODE-A-LAYOUT "clis"))
   (assert (= #(cap services missing) #((* 10752 MIB) None None)))
   (<- systemd (| str None) (pods-dir-of OWN HOST))
   (<- cgroupfs (| str None) (pods-dir-of "/host/cgroup/kubepods/burstable/pod1/abc" "/host/cgroup/"))
@@ -91,33 +91,33 @@
 
 
 (deftest test-the-allocatable-line-is-the-pods-working-set-against-the-allocatable
-  ;; 11-01 18:27 UTC の atlas: Pod の working set 13.74 GiB → 追い出しまでの空き 19.79 − 13.74 = 6.05 GiB(stats/summary の pods の
+  ;; 11-01 18:27 UTC の node-a: Pod の working set 13.74 GiB → 追い出しまでの空き 19.79 − 13.74 = 6.05 GiB(stats/summary の pods の
   ;; available 7.55 GiB − hard 1.5 GiB)。機体の線は root の working set 12 GiB で空き 28.29 − 1.5 − 12 = 14.79 GiB — 近いのは allocatable。
   (<- pods PodsMemory (pods-memory-of (str PODS-MAX) (str (+ (int (* 13.74 GIB)) (* 2 GIB))) (.format "anon 1\ninactive_file {}\n" (* 2 GIB))))
   (<- root int (root-working-set-of (.format "anon {}\nfile {}\ninactive_file {}\n" (* 11 GIB) (* 3 GIB) (* 2 GIB))))
-  (<- line (| EvictionLine None) (eviction-line ATLAS pods root))
+  (<- line (| EvictionLine None) (eviction-line NODE-A pods root))
   (assert (= line.kind LineKind.ALLOCATABLE) line)
   (assert (= line.size-bytes ALLOCATABLE) line)
   (assert (= line.room-bytes (- ALLOCATABLE (int (* 13.74 GIB)))) line)
   ;; E は手で書かず導く: 機体の線の大きさ = capacity − (kubepods の memory.max − allocatable) = capacity − 1.5 GiB。
   (<- crowded int (root-working-set-of (.format "anon {}\nfile 0\ninactive_file 0\n" (* 26 GIB))))
-  (<- node (| EvictionLine None) (eviction-line ATLAS pods crowded))
+  (<- node (| EvictionLine None) (eviction-line NODE-A pods crowded))
   (assert (= #(node.kind node.size-bytes node.room-bytes) #(LineKind.NODE (- CAPACITY (* 1536 MIB)) (- CAPACITY (* 1536 MIB) (* 26 GIB))))
           node)
   ;; root の memory.stat の無い kernel は allocatable の線だけ。
-  (<- only (| EvictionLine None) (eviction-line ATLAS pods None))
+  (<- only (| EvictionLine None) (eviction-line NODE-A pods None))
   (assert (= only line) only))
 
 
 (deftest test-a-node-without-the-pods-allocatable-has-no-line-and-a-contradiction-is-refused
   (<- unlimited PodsMemory (pods-memory-of "max\n" "1000" "inactive_file 0\n"))
-  (<- none (| EvictionLine None) (eviction-line ATLAS unlimited None))
+  (<- none (| EvictionLine None) (eviction-line NODE-A unlimited None))
   (assert (is none None))
   (<- small PodsMemory (pods-memory-of (str (- ALLOCATABLE 1)) "1000" "inactive_file 0\n"))
-  (with [(pytest.raises ValueError)] (<- (eviction-line ATLAS small None)))
+  (with [(pytest.raises ValueError)] (<- (eviction-line NODE-A small None)))
   ;; 使いより inactive_file が大きい読み(cAdvisor と同じく working set 0)。
   (<- cached PodsMemory (pods-memory-of (str PODS-MAX) "1000" "inactive_file 4096\n"))
-  (<- line (| EvictionLine None) (eviction-line ATLAS cached None))
+  (<- line (| EvictionLine None) (eviction-line NODE-A cached None))
   (assert (= #(line.used-bytes line.room-bytes) #(0 ALLOCATABLE)) line))
 
 
@@ -177,7 +177,7 @@
 ;; --- 模擬の機体 -----------------------------------------------------------------------------------------------------------------------
 
 (defrecord Scene
-  "模擬の atlas の memory の台本(byte と ms): others = 始めのほかの Pod の working set・others-rise / others-from / others-span = ほかの
+  "模擬の node-a の memory の台本(byte と ms): others = 始めのほかの Pod の working set・others-rise / others-from / others-span = ほかの
    Pod が others-from から others-span の間に一様に伸びる量・resident = worker の本体と常駐の job(services の層)の使い・task-from /
    task-to / task-start / task-span = jobs の層の task の要求が task-start から task-span の間に task-from から task-to へ一様に伸びる・
    prepared = task が jobs の層の中で止められた後の jobs の層の使い(準備の分)・system = 機体の Pod の外の使い。"
@@ -238,8 +238,8 @@
   (KernelNow :killed stopped :jobs jobs :pods (+ others scene.resident jobs)))
 
 
-(defhandler atlas-world [#^ Scene scene #^ MemoryCell cell #^ int run-until-ms #^ (| int None) keep-line]
-  "見張りの外側の模擬の atlas(頭の註): Node の宣言を答える偽の API server・kubepods と root と jobs の層の cgroup の file を答える模擬の
+(defhandler node-a-world [#^ Scene scene #^ MemoryCell cell #^ int run-until-ms #^ (| int None) keep-line]
+  "見張りの外側の模擬の node-a(頭の註): Node の宣言を答える偽の API server・kubepods と root と jobs の層の cgroup の file を答える模擬の
    kernel(jobs の層の使いを、見張りが書いた memory.max で止める)・job の根・log の行を溜める・run-until-ms 以後の待ちで止めの合図。
    keep-line = 上に載る系が残す MemAvailable の線(byte — None = 線の無い機体)。在れば待ちごとに heartbeat の測りの代わりに「機体の
    MemAvailable − 線」を見張りの入れ物へ書く(worker/protocol/coordinator_link の load-noted と同じ書き)。"
@@ -254,7 +254,7 @@
   (session var limits #())
   (HttpRequest [method url]
     :when (= url NODE-URL)
-    (val text (json.dumps {"metadata" {"name" "atlas"} "status" {"capacity" {"cpu" "16" "memory" "29662296Ki"}
+    (val text (json.dumps {"metadata" {"name" "node-a"} "status" {"capacity" {"cpu" "16" "memory" "29662296Ki"}
                                                                   "allocatable" {"cpu" "14" "memory" "20749400Ki"}}}))
     (resume (HttpResponse 200 {} (.encode text "utf-8") text url 0.0)))
   (ReadText [path]
@@ -304,7 +304,7 @@
 
 (defk machine-files []
   {:pre [] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "模擬の atlas の file のうち変わらない物: /proc/meminfo(MemAvailable 9.68 GiB — 前の判じ方では CALM)・PSI・worker の container の
+  "模擬の node-a の file のうち変わらない物: /proc/meminfo(MemAvailable 9.68 GiB — 前の判じ方では CALM)・PSI・worker の container の
    memory・ServiceAccount の token。"
   (val meminfo (.format "MemTotal:       {} kB\nMemFree:        1024 kB\nMemAvailable:   {} kB\n" (// CAPACITY 1024)
                         (// (int (* 9.68 GIB)) 1024)))
@@ -318,7 +318,7 @@
 
 (defk scene-rows []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "模擬の atlas の process の表(常駐の job svc と task/1 — 見張りの止めの単位はどれも min-victim-bytes 未満で、見張りは止めない。
+  "模擬の node-a の process の表(常駐の job svc と task/1 — 見張りの止めの単位はどれも min-victim-bytes 未満で、見張りは止めない。
    止めるのは模擬の kernel だけ)。"
   #((ProcRow :pid 1 :ppid 0 :start-ticks 1 :rss-bytes MIB :comm "tini")
     (ProcRow :pid 10 :ppid 1 :start-ticks 10 :rss-bytes (* 10 MIB) :comm "python")
@@ -330,19 +330,19 @@
 (defk scene-watched [scene eviction run-until-ms [keep-line None]]
   {:pre [(: scene Scene) (: eviction bool) (: run-until-ms int) (: keep-line (| int None))] :post [(: % SceneSeen)]
    :tags {:context "doeff-cluster-test" :role "program"}}
-  "本物の見張りを模擬の atlas と仮想時計の下で止めの合図まで回すため。eviction = 追い出しの線の設定を渡すか(偽 = 前の形の worker —
+  "本物の見張りを模擬の node-a と仮想時計の下で止めの合図まで回すため。eviction = 追い出しの線の設定を渡すか(偽 = 前の形の worker —
    jobs の層は宣言の静的な上限のまま)・keep-line = 上に載る系が残す MemAvailable の線(byte — None = 線の無い機体)。"
-  (<- cap (| int None) (layer-memory-max ATLAS-LAYOUT "jobs"))
+  (<- cap (| int None) (layer-memory-max NODE-A-LAYOUT "jobs"))
   (val settings (MemoryWatchSettings
                   :eviction (if eviction
-                                (EvictionSettings :api "https://api.test" :token-file TOKEN :node "atlas" :pods-dir PODS :host-root HOST
+                                (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST
                                                   :jobs-dir JOBS :jobs-cap-bytes cap)
                                 None)))
   (val cell (MemoryCell))
   (<- rows tuple (scene-rows))
   (<- files MemoryFiles (machine-files))
   (<- seen SceneSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files)
-                                     (scripted-proc-table-handler rows) (atlas-world scene cell run-until-ms keep-line)]
+                                     (scripted-proc-table-handler rows) (node-a-world scene cell run-until-ms keep-line)]
                        (watch-then-scene settings cell)))
   seen)
 
@@ -407,7 +407,7 @@
   (assert (> before.highest ALLOCATABLE) #((/ before.highest GIB) (/ ALLOCATABLE GIB))))
 
 
-;; 上に載る系が残す線(worker/core/eviction_rules の頭の註 — zeus の 11-09 16:52 UTC の形を atlas の Node の大きさに縮めた台本): ほかの Pod 4 GiB・
+;; 上に載る系が残す線(worker/core/eviction_rules の頭の註 — node-h の 11-09 16:52 UTC の形を node-a の Node の大きさに縮めた台本): ほかの Pod 4 GiB・
 ;; worker の本体と常駐の job 4.65 GiB・名乗り 3.5 GiB 程度で置かれた task が 60 秒で 1 → 10 GiB へ伸びる。追い出しまでの空きは 10 GiB 余り
 ;; 在るので、追い出しの線だけで数える上限は task を止めない(Pod の和 18.65 GiB < allocatable 19.79 GiB)。機体の MemAvailable は始め
 ;; 16.6 GiB で、上に載る系が残す線 14 GiB の上は 2.6 GiB しかない。

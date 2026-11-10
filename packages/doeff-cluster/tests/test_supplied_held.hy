@@ -59,10 +59,10 @@
 (val UP (SuppliedCluster :token TOKEN :objects #(PG-OBJECT KEYS-OBJECT) :grants GRANTS))
 (val DOWN (SuppliedCluster :token TOKEN :objects #(PG-OBJECT KEYS-OBJECT) :grants GRANTS :down True))
 (val FRESH (MemoryFiles :files #((MemoryFile :path SERVICE-ACCOUNT-TOKEN-FILE :content (.encode (+ TOKEN "\n") "utf-8"))) :dirs #("/work")))
-;; 写しを持つ worker(atlas)と、その上の job の環境変数(作業の根と worker の名 — worker が子へ渡す)。
-(val ATLAS {"WORK_DIR" "/work" "DOEFF_WORKER_NAME" "atlas"})
-(val ATLAS-COPY "/work/supplied-held/atlas/configmap/apps/ledger-pg.json")
-(val KEYS-COPY "/work/supplied-held/atlas/secret/apps/deploy-keys.json")
+;; 写しを持つ worker(node-a)と、その上の job の環境変数(作業の根と worker の名 — worker が子へ渡す)。
+(val NODE-A {"WORK_DIR" "/work" "DOEFF_WORKER_NAME" "node-a"})
+(val NODE-A-COPY "/work/supplied-held/node-a/configmap/apps/ledger-pg.json")
+(val KEYS-COPY "/work/supplied-held/node-a/secret/apps/deploy-keys.json")
 
 
 (defhandler worker-environ [#^ dict environ]
@@ -75,7 +75,7 @@
 
 (defk held-under [cluster files spellings]
   {:pre [(: cluster SuppliedCluster) (: files MemoryFiles) (: spellings tuple)] :post [(: % tuple)]}
-  "cluster の世界で worker atlas が参照 spellings の写しを 1 回 持ち直した数えと、その後の file の置き場と、出した log の行を得るため。"
+  "cluster の世界で worker node-a が参照 spellings の写しを 1 回 持ち直した数えと、その後の file の置き場と、出した log の行を得るため。"
   (<- heard tuple (with_handlers [slog-discard-handler (state) (sim-time-handler :start-time HELD-AT) (worker-environ {"WORK_DIR" "/work"})
                                   (k8s-supplied-peer cluster) (memory-file-handler files) listen-handler]
                     (Listen (held-and-read spellings) :types #(SlogEffect))))
@@ -85,7 +85,7 @@
 (defk held-and-read [spellings]
   {:pre [(: spellings tuple)] :post [(: % tuple)]}
   "写しを 1 回 持ち直し、数えとその後の file の置き場を得るため(置き場は同じ答え手の中で読む)。"
-  (<- tally HoldTally (hold-supplied "atlas" spellings))
+  (<- tally HoldTally (hold-supplied "node-a" spellings))
   (<- store MemoryFiles (ReadMemoryFiles))
   #(tally store))
 
@@ -136,14 +136,14 @@
 
 
 (deftest test-a-job-placed-while-the-api-server-is-down-starts-from-the-worker-copy
-  ;; API server が答えている間に、worker atlas が自分に置かれうる job の参照の写しを持つ。
+  ;; API server が答えている間に、worker node-a が自分に置かれうる job の参照の写しを持つ。
   (<- held tuple (held-under UP FRESH SPELLINGS))
   (setv #(tally store _) held)
   (assert (= tally (HoldTally :held 2 :kept 0 :dropped 0 :pruned 0)) tally)
-  ;; API server が止まった後に atlas へ置かれた job は、値 1 つも物 1 つ丸ごとも写しで得て起動する。
-  (<- url-read tuple (job-read DOWN store ATLAS (supplied-setting "RECORDS_PG_URL_REF")))
+  ;; API server が止まった後に node-a へ置かれた job は、値 1 つも物 1 つ丸ごとも写しで得て起動する。
+  (<- url-read tuple (job-read DOWN store NODE-A (supplied-setting "RECORDS_PG_URL_REF")))
   (assert (= (get url-read 0) PG-URL) url-read)
-  (<- dir-read tuple (job-read DOWN store ATLAS (supplied-directory "LAND_KEYS_REF")))
+  (<- dir-read tuple (job-read DOWN store NODE-A (supplied-directory "LAND_KEYS_REF")))
   (assert (= (get dir-read 0) KEYS-DIR) dir-read)
   ;; 写しで答えた読みは、参照の綴りと写しを読んだ刻を warning の 1 行に出す(値は出さない)。
   (val warned (get url-read 1))
@@ -155,7 +155,7 @@
 
 (deftest test-a-directory-written-from-the-copy-has-every-held-key
   (<- held tuple (held-under UP FRESH SPELLINGS))
-  (<- whole tuple (with_handlers [(state) (environ-table-reader DECLARED) (worker-environ ATLAS) (k8s-supplied-peer DOWN)
+  (<- whole tuple (with_handlers [(state) (environ-table-reader DECLARED) (worker-environ NODE-A) (k8s-supplied-peer DOWN)
                                   (memory-file-handler (get held 1)) slog-discard-handler]
                     (written-keys "LAND_KEYS_REF")))
   (assert (= (get whole 0) {"dotfiles" DOTFILES-KEY "agent-hooks" HOOKS-KEY}) whole))
@@ -175,39 +175,39 @@
   (val store (get held 1))
   (val url-ref (SuppliedRef :kind SuppliedKind.CONFIGMAP :namespace "apps" :name "ledger-pg" :key "url"))
   ;; 失敗ケース 1: API server は届き、物が消されていた(404)— 写しが在っても写しで答えない。
-  (<- deleted tuple (job-read (SuppliedCluster :token TOKEN :objects #(KEYS-OBJECT) :grants GRANTS) store ATLAS (supplied-value url-ref)))
+  (<- deleted tuple (job-read (SuppliedCluster :token TOKEN :objects #(KEYS-OBJECT) :grants GRANTS) store NODE-A (supplied-value url-ref)))
   (assert (and (.startswith (get deleted 0) "refused: ") (in "404" (get deleted 0))) deleted)
   ;; 失敗ケース 2: 権限を外されていた(403)— 写しで答えない。
-  (<- revoked tuple (job-read (SuppliedCluster :token TOKEN :objects #(PG-OBJECT KEYS-OBJECT) :grants #()) store ATLAS (supplied-value url-ref)))
+  (<- revoked tuple (job-read (SuppliedCluster :token TOKEN :objects #(PG-OBJECT KEYS-OBJECT) :grants #()) store NODE-A (supplied-value url-ref)))
   (assert (and (.startswith (get revoked 0) "refused: ") (in "403" (get revoked 0))) revoked)
   ;; 失敗ケース 3: 届かず、写しも無い worker(まだ写しを持っていない)— 今と同じく SuppliedValueUnavailable で断る。
-  (<- unheld tuple (job-read DOWN FRESH ATLAS (supplied-value url-ref)))
+  (<- unheld tuple (job-read DOWN FRESH NODE-A (supplied-value url-ref)))
   (assert (and (.startswith (get unheld 0) "refused: ") (in "届かない" (get unheld 0)) (in "写しも無い" (get unheld 0))) unheld)
-  ;; 失敗ケース 4: 届かず、写しは別の worker(atlas)の物 — eos の上の job は atlas の写しで答えない。
-  (<- elsewhere tuple (job-read DOWN store {"WORK_DIR" "/work" "DOEFF_WORKER_NAME" "eos"} (supplied-value url-ref)))
+  ;; 失敗ケース 4: 届かず、写しは別の worker(node-a)の物 — node-b の上の job は node-a の写しで答えない。
+  (<- elsewhere tuple (job-read DOWN store {"WORK_DIR" "/work" "DOEFF_WORKER_NAME" "node-b"} (supplied-value url-ref)))
   (assert (.startswith (get elsewhere 0) "refused: ") elsewhere)
   ;; 失敗ケース 5: 届かず、写しの物は在るが宣言が名指していないキー — 写しは名指したキーしか持たないので断る。
-  (<- unnamed tuple (job-read DOWN store ATLAS (supplied-value (SuppliedRef :kind SuppliedKind.CONFIGMAP :namespace "apps" :name "ledger-pg"
+  (<- unnamed tuple (job-read DOWN store NODE-A (supplied-value (SuppliedRef :kind SuppliedKind.CONFIGMAP :namespace "apps" :name "ledger-pg"
                                                                           :key "password"))))
   (assert (and (.startswith (get unnamed 0) "refused: ") (not-in PG-PASSWORD (get unnamed 0))) unnamed)
   ;; 判定が常に断る物でないこと: 届けば API server の値で答え、写しの 1 行は出さない。
-  (<- fine tuple (job-read UP store ATLAS (supplied-value url-ref)))
+  (<- fine tuple (job-read UP store NODE-A (supplied-value url-ref)))
   (assert (and (= (get fine 0) PG-URL) (= (get fine 1) [])) fine))
 
 
 (deftest test-the-copy-follows-the-declarations-and-the-api-server-answers
   (<- first tuple (held-under UP FRESH SPELLINGS))
   ;; 値 1 つの参照は、宣言が名指したキーだけを持つ(物の password は持たない)。物 1 つ丸ごとの参照は全部のキー。
-  (<- url-keys (| list None) (copy-keys (get first 1) ATLAS-COPY))
+  (<- url-keys (| list None) (copy-keys (get first 1) NODE-A-COPY))
   (<- whole-keys (| list None) (copy-keys (get first 1) KEYS-COPY))
   (assert (and (= url-keys ["url"]) (= whole-keys ["agent-hooks" "dotfiles"])) #(url-keys whole-keys))
   ;; 届かない間は前の写しを残す(消さない・書き直さない)。
   (<- kept tuple (held-under DOWN (get first 1) SPELLINGS))
-  (<- kept-keys (| list None) (copy-keys (get kept 1) ATLAS-COPY))
+  (<- kept-keys (| list None) (copy-keys (get kept 1) NODE-A-COPY))
   (assert (and (= (get kept 0) (HoldTally :held 0 :kept 2 :dropped 0 :pruned 0)) (= kept-keys ["url"])) kept)
   ;; 宣言から外れた参照の写しは消す。
   (<- narrowed tuple (held-under UP (get first 1) #("secret:apps/deploy-keys")))
-  (<- gone (| list None) (copy-keys (get narrowed 1) ATLAS-COPY))
+  (<- gone (| list None) (copy-keys (get narrowed 1) NODE-A-COPY))
   (assert (and (= (get narrowed 0) (HoldTally :held 1 :kept 0 :dropped 0 :pruned 1)) (is gone None)) narrowed)
   ;; 403・404 で断られた物の写しは消す(消された・権限を外された値を使い続けない)。
   (<- deleted tuple (held-under (SuppliedCluster :token TOKEN :objects #(PG-OBJECT) :grants GRANTS) (get first 1) SPELLINGS))
@@ -220,7 +220,7 @@
   (val root (str tmp-path))
   (<- tally HoldTally (with_handlers [slog-discard-handler (state) (sim-time-handler :start-time HELD-AT) (worker-environ {"WORK_DIR" root})
                                       (k8s-supplied-peer UP) os-file-handler (service-account-token-file TOKEN)]
-                        (hold-supplied "atlas" SPELLINGS)))
+                        (hold-supplied "node-a" SPELLINGS)))
   (assert (= tally.held 2) tally)
   (val held-root (os.path.join root "supplied-held"))
   (var dirs [])
@@ -234,30 +234,30 @@
   (assert (and (= (len files) 2) (= file-modes #{0o600})) #(files file-modes))
   ;; log の行(写しの持ち直しと、写しで答えた読み)に値は載らない — 字のままでも base64 でも。
   (<- held tuple (held-under UP FRESH SPELLINGS))
-  (<- url-read tuple (job-read DOWN (get held 1) ATLAS (supplied-setting "RECORDS_PG_URL_REF")))
-  (<- dir-read tuple (job-read DOWN (get held 1) ATLAS (supplied-directory "LAND_KEYS_REF")))
+  (<- url-read tuple (job-read DOWN (get held 1) NODE-A (supplied-setting "RECORDS_PG_URL_REF")))
+  (<- dir-read tuple (job-read DOWN (get held 1) NODE-A (supplied-directory "LAND_KEYS_REF")))
   (<- text str (lines-text (+ (get held 2) (get url-read 1) (get dir-read 1))))
   (<- clean bool (without-values? text))
   (assert (and clean (in "configmap:apps/ledger-pg/url" text)) text))
 
 
 (deftest test-the-coordinator-names-only-the-spellings-of-jobs-the-worker-could-take
-  ;; atlas と eos は能力 pool-a を名乗り、zeus は名乗らない。job a(pool-a が要る)は atlas か eos に置かれうる — 今どちらに置かれていても、
-  ;; 両方の返事に a の参照の綴りが載る。job z(pool-z が要る)の参照は atlas に載らない。参照でない値(URL)は載らない。
+  ;; node-a と node-b は能力 pool-a を名乗り、node-h は名乗らない。job a(pool-a が要る)は node-a か node-b に置かれうる — 今どちらに置かれていても、
+  ;; 両方の返事に a の参照の綴りが載る。job z(pool-z が要る)の参照は node-a に載らない。参照でない値(URL)は載らない。
   (val a (ClusterJob (JobSpec "a" "m" #() "rev" :environ #(#("KEYS_REF" "secret:apps/deploy-keys") #("PG_REF" "configmap:apps/ledger-pg/url")
                                                          #("PLAIN" "https://example.invalid/x")))
                      :needs #("pool-a") :peak-mib 200 :settle-mib 100))
   (val z (ClusterJob (JobSpec "z" "m" #() "rev" :environ #(#("Z_REF" "secret:apps/z-only/key"))) :needs #("pool-z") :peak-mib 200 :settle-mib 100))
-  (val state (ClusterState #(a z) (! (table-from-rows {"atlas" (WorkerInfo "atlas" #("pool-a") 0 :measured (get ROOM-LOADS 10))
-                                                       "eos" (WorkerInfo "eos" #("pool-a") 0 :measured (get ROOM-LOADS 10))
-                                                       "zeus" (WorkerInfo "zeus" #("pool-z") 0 :measured (get ROOM-LOADS 10))}))))
-  (<- atlas (| tuple None) (supplied-for state "atlas"))
-  (<- eos (| tuple None) (supplied-for state "eos"))
-  (<- zeus (| tuple None) (supplied-for state "zeus"))
-  (assert (= atlas eos #("configmap:apps/ledger-pg/url" "secret:apps/deploy-keys")) #(atlas eos))
-  (assert (= zeus #("secret:apps/z-only/key")) zeus)
+  (val state (ClusterState #(a z) (! (table-from-rows {"node-a" (WorkerInfo "node-a" #("pool-a") 0 :measured (get ROOM-LOADS 10))
+                                                       "node-b" (WorkerInfo "node-b" #("pool-a") 0 :measured (get ROOM-LOADS 10))
+                                                       "node-h" (WorkerInfo "node-h" #("pool-z") 0 :measured (get ROOM-LOADS 10))}))))
+  (<- node-a (| tuple None) (supplied-for state "node-a"))
+  (<- node-b (| tuple None) (supplied-for state "node-b"))
+  (<- node-h (| tuple None) (supplied-for state "node-h"))
+  (assert (= node-a node-b #("configmap:apps/ledger-pg/url" "secret:apps/deploy-keys")) #(node-a node-b))
+  (assert (= node-h #("secret:apps/z-only/key")) node-h)
   ;; 返事の JSON は綴りだけを運ぶ。名乗っていない worker への返事には欄を書かない(空の列を渡すと写しを全部消す)。
-  (<- reply HeartbeatReply (heartbeat-reply state "atlas" (ClusterTiming)))
+  (<- reply HeartbeatReply (heartbeat-reply state "node-a" (ClusterTiming)))
   (<- body dict (reply-json reply))
   (assert (= (get body "supplied") ["configmap:apps/ledger-pg/url" "secret:apps/deploy-keys"]) body)
   (<- unknown HeartbeatReply (heartbeat-reply state "nobody" (ClusterTiming)))

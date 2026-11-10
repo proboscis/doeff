@@ -1,7 +1,7 @@
 ;; 実行環境の掃除の消しの task(env_store の removing-leftovers → sweep-leftovers → unused-store-entries)が bytecode の保存先を歩く間も、
 ;; 同じ scheduler の別の task(調整ループの拍と背景の heartbeat の代役)が回る形の検。
 ;;
-;; 実例(2026-10-11・zeus の worker): 保存先の file 104,735 個を、同期の WalkTree と file ごとの StatPath で歩いた掃除が scheduler の
+;; 実例(2026-10-11・node-h の worker): 保存先の file 104,735 個を、同期の WalkTree と file ごとの StatPath で歩いた掃除が scheduler の
 ;; thread を占め(掃除の長さの中央 13.1 秒)、tick も背景の heartbeat も止まった — heartbeat の間の遅れの行 45 行・lease(10 秒)越え 11 行・
 ;; 最大 19.1 秒。だから:
 ;;   - 保存先の歩き(file ごとの時刻の読みまで)は木の数えと消し(#3715)と同じく thread で待ち、歩いている間も別の task の拍が進む
@@ -12,7 +12,7 @@
 ;; 反例 = 直す前の形(保存先を WalkTree と file ごとの StatPath で、scheduler の thread で歩く)は、歩きが合図を待つ間 拍の task が回れず、
 ;; SCENARIO-LIMIT で赤(2026-10-12 に直す前の env_store.hy で確かめた)。
 ;;
-;; 歩きの答えから消す物を選ぶ計算(unused-store-names)も同じ(2026-11-02・zeus の worker): 歩きを thread へ出した後も、選びは scheduler の
+;; 歩きの答えから消す物を選ぶ計算(unused-store-names)も同じ(2026-11-02・node-h の worker): 歩きを thread へ出した後も、選びは scheduler の
 ;; thread に残り、50 万の entry の選びに数秒かかって、掃除の終わりのたびに拍が止まった(終わりの行の直前に生存の合図の thread が拍の
 ;; 代わりに heartbeat を送った)。だから選びは Compute で回し、本番の worker-compute-handler(main.hy の production-handlers)が pool の
 ;; thread で待つ。選びを止めておく所は env_store の unused-store-names の差し替え — 入った事を外の promise で知らせ、合図を待つ。

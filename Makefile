@@ -271,7 +271,7 @@ test-hy-floor:
 # their tests (pyo3 dev-dependency feature auto-initialize), so the test binary links libpython of the
 # uv environment: PYO3_PYTHON names that interpreter and the loader path names its LIBDIR (the uv
 # python is not installed system-wide — without it the binaries die with "libpython3.14t.so: cannot
-# open shared object file", 2026-09-24 zeus). doeff-vm-core additionally runs its invariant-checks
+# open shared object file", 2026-09-24 node-h). doeff-vm-core additionally runs its invariant-checks
 # conformance oracle (test-vm-invariants) because dev builds always enable it (ADR-DOE-ENFORCE-001 R4).
 RUST_TEST_PYTHON = $$(uv run --no-sync python -c 'import sys; print(sys.executable)')
 RUST_TEST_LIBDIR = $$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')

@@ -63,7 +63,7 @@
 (deftest test-the-link-fetches-only-programs-whose-content-matches-the-key [tmp-path]
   (val seen [])
   (<- transport (served-programs seen))
-  (val link (LinkRig "http://coord" "zeus" #("net") 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "node-h" #("net") 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
   (<- good (service-spec "good" SHA))
   (<- forged (service-spec "forged" FORGED))
   (<- absent (service-spec "absent" ABSENT))
@@ -85,7 +85,7 @@
   (val state-dir (/ tmp-path "state"))
   ;; main と同じ置き方(state dir の logs・tasks)で、取る側と渡す側が同じ programs の dir を指す。
   (<- host (host-settings state-dir))
-  (val link (LinkRig "http://coord" "zeus" #("net") 60000 :task-dir (str (/ state-dir "tasks"))))
+  (val link (LinkRig "http://coord" "node-h" #("net") 60000 :task-dir (str (/ state-dir "tasks"))))
   (assert (= (Path host.program-dir) (.program-dir link) (/ state-dir "programs")))
   (<- spec JobSpec (service-spec "svc" SHA))
   (<- planned tuple (launched host spec (str tmp-path) "1-1" 1))
@@ -129,7 +129,7 @@
   ;; 手元に取れた job だけが欠けから外れ、coordinator の答えの違いが gone に分かれる: 置かれていない 404・中身の違いは待っても届かない(真)、
   ;; 5xx・届かないは次の拍で取り直す(偽)。置き場のキーの無い job は欠けに数えない。
   (<- transport (served-programs []))
-  (val link (LinkRig "http://coord" "zeus" #("net") 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "node-h" #("net") 60000 :task-dir (str (/ tmp-path "tasks")) :transport transport))
   (<- good (service-spec "good" SHA))
   (<- forged (service-spec "forged" FORGED))
   (<- absent (service-spec "absent" ABSENT))

@@ -1,6 +1,6 @@
 ;;; Pod の止まりの印(AL-D2p): worker の Pod の preStop(drain の入口 drain_main の drain)が、止まりが始まった事を
 ;;; worker の本体へ伝える Pod の中の file。preStop は別の process が coordinator へ drain を頼むだけで、worker の本体は coordinator の返事の
-;;; 印(supersededBy)でしか退けなかった — 印の欠けた拍に、止まる Pod の古い世代が handoff の job の新しい試行を起こした(10-11 の zeus の
+;;; 印(supersededBy)でしか退けなかった — 印の欠けた拍に、止まる Pod の古い世代が handoff の job の新しい試行を起こした(10-11 の node-h の
 ;;; 画面の process の群)。
 ;;;   書く口 = leaving-mark-written(preStop の drain の頭 — coordinator へ頼む前に、この Pod の worker の世代を書く)
 ;;;   読む口 = leaving-mark-read(印の世代がこの process の世代と同じか — worker の観測の答え手 worker/protocol/leaving_observer が呼ぶ)

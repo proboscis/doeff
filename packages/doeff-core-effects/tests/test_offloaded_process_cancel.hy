@@ -374,7 +374,7 @@
   (assert (and (= (len lines) 2) (all (gfor line lines (in "'/bin/sh'" line)))) lines))
 
 
-;; (f) A machine where the OS refuses to send signals (EPERM -- on helios on 2026-11-01 AppArmor refused signals between processes inside the container):
+;; (f) A machine where the OS refuses to send signals (EPERM -- on node-c on 2026-11-01 AppArmor refused signals between processes inside the container):
 ;; neither SIGTERM nor SIGKILL reaches the child that the cancel stops. The stop handling returns after the refused SIGKILL without waiting for the child to end (if it waited, the stopping
 ;; thread would not return until the child ended), does not count it as stopped, and names the failure to stop in one warning line. The child keeps running.
 ;; Counterexamples = the form that waits for the child after the refused SIGKILL (before the fix) goes red at SCENARIO-LIMIT; the form that sends to a non-group child with Popen's terminate

@@ -1,7 +1,7 @@
 """準備 1 つを process の木 1 つに束ねる検(deploy/boot.sh の keeper_swap・keeper_group_open・keeper_group_close と、worker の
 worker/core/job_cgroup の GROUP-SCRIPT・CLOSE-SCRIPT)。
 
-実例(11-08 の k3s-0・k3s-2): keeper の版の準備を準備の層(memory.max 640M)に直に置いた。uv の build hook の頭が OOM kill で止まり、
+実例(11-08 の node-d・node-f): keeper の版の準備を準備の層(memory.max 640M)に直に置いた。uv の build hook の頭が OOM kill で止まり、
 残った multiprocessing の forkserver と子(ppid 1)が uv の出力の pipe を持ち続け、uv は EOF を待って返らず、keeper は準備中と読み
 続けた(25 時間)。孤児は層の memory も持ち続け、worker の実行環境の準備の空きも奪った。
 
@@ -203,7 +203,7 @@ keeper_swap "{VERSION}"
 def test_an_oom_in_the_keeper_prepare_stops_the_whole_tree_and_the_keeper_reads_a_failure(
     tmp_path: Path, layer: Path
 ) -> None:
-    """準備の木の 1 本が層の上限で OOM kill になり、出力の pipe を継いだ孤児が残る形(11-08 の k3s-0・k3s-2)。keeper の準備は版の子
+    """準備の木の 1 本が層の上限で OOM kill になり、出力の pipe を継いだ孤児が残る形(11-08 の node-d・node-f)。keeper の準備は版の子
     (memory.oom.group=1)で走り、kernel は木を丸ごと止め、keeper は失敗と読んで撃ち直しの待ちに入る(次の拍でも準備を起こし直さない)。
     子は消え、層に process は残らない。直す前は孤児が pipe を持ち続け、準備も keeper も返らない(SETTLE_SECONDS で落ちる)。"""
     ran = _keeper_prepares(tmp_path, layer, OOM_PREPARE)

@@ -57,7 +57,7 @@ class WatchFiles(EffectBase["FileWatch | WatchRefused"]):
     subdirectories. A change made after the answer is seen by ``NextFileChanges``; a change made before it is not.
 
     The watch is not recursive so that starting it costs the same for any number of entries: a recursive start walks
-    the whole tree first, and the operating-system answerer starts on the caller's scheduler thread — on zeus a
+    the whole tree first, and the operating-system answerer starts on the caller's scheduler thread — on node-h a
     tool-stream directory of 4,217 entries took 39 s to start and one of 95,900 had not started after 260 s, with
     every task of the turn-host waiting behind it (2026-10-17)."""
 

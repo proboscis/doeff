@@ -43,7 +43,7 @@
 ;; worker の名・gap-ms = 前の heartbeat を送ってから今の heartbeat を送るまでの ms・slowest = その間でいちばん長かった区間の名・
 ;; slowest-ms = その長さ)。間は送りの単調な時計の読み(HeartbeatSent.mono-ms)の差で計る(#3825 — at は遅れの行に書く壁の時計の刻)。
 ;; 閾 = 送った時の生存の窓(HeartbeatSent.lease-ms)× 比。拍の遅れの行(TICK-LAG-MS)は拍 1 つの中しか測らず、
-;; heartbeat を挟む隣り合う 2 つの拍の前後がどちらも 5 秒未満でも heartbeat の間は窓を越えうる(2026-10-07 13:18 JST の agent-worker-2 —
+;; heartbeat を挟む隣り合う 2 つの拍の前後がどちらも 5 秒未満でも heartbeat の間は窓を越えうる(2026-10-07 13:18 JST の worker-2 —
 ;; coordinator で生きている印が false に瞬いたのに、worker の log に遅れの行が無かった)。窓の 7 割で名指し、窓を越える前に見えるようにする。
 (val HEARTBEAT-GAP-LOG "worker: heartbeat の間の遅れ")
 (val HEARTBEAT-GAP-LEASE-RATIO 0.7)

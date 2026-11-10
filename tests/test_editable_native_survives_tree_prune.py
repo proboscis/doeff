@@ -1,7 +1,7 @@
 """Failure case: a natively built Rust part (the native extension module) installed in editable mode must still be importable after `make sync` following a copy that prunes files absent from the working tree's git listing
 (step 3 of dotfiles' remote_check -- the daily full-verification path).
 
-2026-10-07 04:00 daily run: remote_check copies the pod's tree to zeus at each step, and each copy deletes files absent from the listing (only .venv is kept).
+2026-10-07 04:00 daily run: remote_check copies the pod's tree to node-h at each step, and each copy deletes files absent from the listing (only .venv is kept).
 The build backend placed the .so inside the source tree for an editable install, so the next step's copy removed it; uv's install record (inside .venv) and
 cache-keys were unchanged, so the next `make sync` built nothing, the conftest import of doeff_vm.doeff_vm failed, and not a single pytest test ran.
 
@@ -72,7 +72,7 @@ def _tool_path() -> str:
 def _uv_cache_dir() -> str:
     """The caller's uv cache dir (`uv cache dir` -- uv itself resolves the order UV_CACHE_DIR, XDG_CACHE_HOME, HOME). The child runs with UV_OFFLINE and
     pulls build dependencies (maturin) from this cache, so pass the same dir as the caller instead of the HOME default -- the daily task has an empty per-run HOME dir, and
-    the cache lives in UV_CACHE_DIR (the worker's shared cache) (first seen 2026-10-10 20:05 on the atlas Pod, where 2 tests went red)."""
+    the cache lives in UV_CACHE_DIR (the worker's shared cache) (first seen 2026-10-10 20:05 on the node-a Pod, where 2 tests went red)."""
     uv = shutil.which("uv")
     assert uv is not None, "uv is not on the search path"
     return subprocess.run([uv, "cache", "dir"], capture_output=True, text=True, check=True).stdout.strip()

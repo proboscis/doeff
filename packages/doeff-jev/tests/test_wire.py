@@ -38,8 +38,8 @@ def test_gateway_request_translates_noul_to_boolean() -> None:
 
 
 def test_no_key_means_no_authorization_header() -> None:
-    seimf = JevTarget("http://zeus:8646/v1/systemone", "seimf", "direct", None, "env")
-    assert "authorization" not in prepare(seimf, Judge(state="s", questions={"n": Question(kind="noul", instructions="x")})).headers
+    self_hosted = JevTarget("http://judge-host:8646/v1/systemone", "local-judge", "direct", None, "env")
+    assert "authorization" not in prepare(self_hosted, Judge(state="s", questions={"n": Question(kind="noul", instructions="x")})).headers
 
 
 def test_parse_direct_answers() -> None:

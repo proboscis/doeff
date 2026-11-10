@@ -12,7 +12,7 @@ from doeff import Err, Ok, Pass, Resume, ResumeThrow, Try, do, run, with_handler
 from doeff import handler as _program_handler
 
 DIRECT = JevTarget("https://api.typesafe.ai/v1/systemone", "jev-latest", "direct", "k-direct", "default")
-SEIMF = JevTarget("http://zeus:8646/v1/systemone", "seimf-27b", "direct", None, "env")
+SELF_HOSTED = JevTarget("http://judge-host:8646/v1/systemone", "local-judge-27b", "direct", None, "env")
 ANSWER = {"answers": {"n": {"type": "noul", "noul": 0.8}, "c": {"type": "choice", "choice": "a", "confidence": 0.9}},
           "usage": {"input_tokens": 100}, "model": "jev-1.13.0"}
 
@@ -127,7 +127,7 @@ def test_foreign_target_sends_without_key() -> None:
     def flow():
         return (yield Try(judge("s", {"n": Question(kind="noul", instructions="is")})))
 
-    outcome = _run(flow(), SEIMF, script)
+    outcome = _run(flow(), SELF_HOSTED, script)
     assert isinstance(outcome, Ok)
     assert "authorization" not in script.requests[0].headers
 
@@ -230,8 +230,8 @@ def test_without_a_target_the_stack_resolves_it_from_the_process_environment(mon
     monkeypatch.setenv("HOME", str(tmp_path))
     for name in ("JEV_WIRE", "JEV_API_KEY", "JEV_API_KEY_FILE", "TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("JEV_BASE_URL", SEIMF.base_url)
-    monkeypatch.setenv("JEV_MODEL", SEIMF.model)
+    monkeypatch.setenv("JEV_BASE_URL", SELF_HOSTED.base_url)
+    monkeypatch.setenv("JEV_MODEL", SELF_HOSTED.model)
     script = HttpScript()
 
     @do
@@ -241,6 +241,6 @@ def test_without_a_target_the_stack_resolves_it_from_the_process_environment(mon
     verdict = _judged(flow(), judge_stack(http=script.handler(), journal=None))
     assert verdict.answers["n"].value == 0.8
     (request,) = script.requests
-    assert request.url == SEIMF.base_url
-    assert request.body["model"] == SEIMF.model
+    assert request.url == SELF_HOSTED.base_url
+    assert request.body["model"] == SELF_HOSTED.model
     assert "authorization" not in {name.lower() for name in request.headers}

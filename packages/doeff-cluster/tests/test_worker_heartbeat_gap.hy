@@ -1,6 +1,6 @@
 ;; worker が前の heartbeat を送ってから次の heartbeat を送るまでの間を測り、生存の窓(lease-ms)の 7 割を越えた時だけ 1 行出す検(#3850)。
 ;;
-;; 実例(2026-10-07 13:18:20 JST): 本番の worker agent-worker-2 の生きている印が coordinator で false に瞬いた(lease 10 秒を越えて
+;; 実例(2026-10-07 13:18:20 JST): 本番の worker worker-2 の生きている印が coordinator で false に瞬いた(lease 10 秒を越えて
 ;; heartbeat が届かなかった)が、worker の拍の遅れの行(TICK-LAG-MS 5 秒 — 拍 1 つの中だけを測る)は出なかった。heartbeat は拍の中の
 ;; ReadDesired でしか送られず、heartbeat を挟む隣り合う 2 つの拍がそれぞれ 5 秒未満でも、heartbeat の間は 10 秒を越えうる。
 ;;   - 隣り合う 2 つの拍がどちらも 5 秒未満(拍の遅れの行は出ない)で、heartbeat の間が 10.5 秒 → heartbeat の間の遅れの行が 1 つ出て、
@@ -28,7 +28,7 @@
 (import tests.link_rig [LinkRig])
 
 (val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))
-(val WORKER "agent-worker-2")
+(val WORKER "worker-2")
 (val LEASE-MS 10000)
 
 

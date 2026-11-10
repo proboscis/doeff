@@ -1,6 +1,6 @@
 ;; heartbeat を送った tick の後半が送信間隔より長くかかっても、次の heartbeat の期限を落とさない(#4332)— 失敗ケース。
 ;;
-;; 実例(本番 2026-10-09 11:47・12:10 の agent-worker-2): heartbeat を送った tick の後半が送信間隔(lease 10 秒の 4 分の 1 = 2.5 秒)を
+;; 実例(本番 2026-10-09 11:47・12:10 の worker-2): heartbeat を送った tick の後半が送信間隔(lease 10 秒の 4 分の 1 = 2.5 秒)を
 ;; 越えると、worker は別の起床の要因が来るまで 10〜20 秒眠り、coordinator は lease を越えた沈黙と判定した。
 ;;   - 本物の調整ループ(run-worker)・本物の coordinator-link(GET /watch を使う形 — 本番の入口と同じ)・本番の tick 間の待ち
 ;;     (tick-pauses)を仮想時計の下で動かし、heartbeat を送った tick の ObserveWorld の応答を 1 回だけ 3 秒止めても、heartbeat の送信の
@@ -34,7 +34,7 @@
 (import tests.transport_http [route-cell])
 
 (val POLICY (WorkerPolicy))
-(val WORKER "agent-worker-2")
+(val WORKER "worker-2")
 (val LEASE-MS 10000)
 (val FENCE-MS 20000)
 ;; 偽の coordinator の応答の版(GET /watch は「変わっていない」をこの版で答え続ける)。

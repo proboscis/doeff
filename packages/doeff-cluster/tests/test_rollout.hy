@@ -98,7 +98,7 @@
                              "specHash" (spec-hash spec) "placement" spec.placement}])
                        []))
     (setv #(state _ reply) (responded self.state (run (http-request "POST" "/heartbeat" {}
-                                                        {"name" "atlas" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V
+                                                        {"name" "node-a" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V
                                                          "statuses" statuses})) self.now T))
     (setv self.state state)
     (setv want (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a")
@@ -122,7 +122,7 @@
       (setv spec (get self.proc "spec"))
       (.setdefault self.first-ready (get self.proc "instance") self.now)
       (self.call "POST" "/resources/Service/writer-a/readiness"
-                 {"worker" "atlas" "pid" 1 "revision" spec.revision "instance" (get self.proc "instance")
+                 {"worker" "node-a" "pid" 1 "revision" spec.revision "instance" (get self.proc "instance")
                   "attempt" (str (get self.proc "attempt")) "specHash" (spec-hash spec) "placement" spec.placement
                   "ready" True "reason" "拍を終えた"} :actor None))
     None)

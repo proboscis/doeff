@@ -47,13 +47,13 @@
                         (create-resource declared "GroupLimit" (ResourceBody :name l.group :spec {"scope" l.scope "limit" l.limit "perPart" l.per-part "system" "probe"})
                                          "declare" 0)
                         "declare" 0 T)))
-  #((replace declared :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("host-zeus") 0 :measured (get ROOM-LOADS 30) :versions PY3)}))) sha))
+  #((replace declared :workers (! (table-from-rows {"node-h" (WorkerInfo "node-h" #("host-node-h") 0 :measured (get ROOM-LOADS 30) :versions PY3)}))) sha))
 
 
 (defk detached-reply [state sha key limits]
   {:pre [(: state ClusterState) (: sha str) (: key str) (: limits list)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "送り手の本文(組の名乗り limits の JSON)を受け口と同じ解きで PUT /detached/<key> として送った #(status 答え 状態) を得るため。"
-  (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" limits "memoryMiB" 1024}))
+  (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-node-h"] "limits" limits "memoryMiB" 1024}))
   (val reply (submit-detached state key body 0))
   #(reply.status reply.body reply.state))
 
@@ -127,7 +127,7 @@
     (assert (= status 400) #(limits status answer))
     (assert (in word answer.message) #(word answer.message))
     (assert (= after.tasks state.tasks) after.tasks)
-    (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" limits "memoryMiB" 1024}))
+    (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-node-h"] "limits" limits "memoryMiB" 1024}))
     (setv #(_ task-status task-answer) (! (submit-task state body 0)))
     (assert (= task-status 400) #(limits task-status task-answer))
     (assert (in word task-answer.message) #(word task-answer.message))))
@@ -210,7 +210,7 @@
   ;; 保存に残った旧い形の行(task が上限の値と範囲を名乗る limits — 2026-10-12 より前)は、読み分けて値を捨てて数えない: まだ終わって
   ;; いない行は理由つきの failed・終わった行はそのまま(どちらも組を名乗らない)。新しい形の行は往復しても変わらない。
   (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
-  (val row (TaskRecord "t1" "check" "sha" "rev" PY3 #("host-zeus") 15000 20000 0 :detached True :key "k"
+  (val row (TaskRecord "t1" "check" "sha" "rev" PY3 #("host-node-h") 15000 20000 0 :detached True :key "k"
                        :limits #((TaskLimit :group "heavy") (TaskLimit :group "heavy-caller" :part "caller-a"))))
   (val stored (task-record-to-json row))
   (<- back TaskRecord (task-record-from-json stored))

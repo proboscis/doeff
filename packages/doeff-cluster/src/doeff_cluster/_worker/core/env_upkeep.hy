@@ -41,7 +41,7 @@
 ;; project ごとに消さない root の数(最後に使った時刻の新しい順): 今の版と 1 つ前に動いていた版(戻し先 — #3732)。
 (val KEEP-PER-PROJECT 2)
 ;; roots の合計が上限を越えた時に、消して下げる先(上限に掛ける割合)。上限ちょうどまでしか消さないと、次に完成した
-;; root 1 つですぐ越え、「1 つ消す → 越える」の往復のたびに数えと消しが node の共有の disk を取り合った(zeus 2026-10-16 — 24 時間の約 36% が
+;; root 1 つですぐ越え、「1 つ消す → 越える」の往復のたびに数えと消しが node の共有の disk を取り合った(node-h 2026-10-16 — 24 時間の約 36% が
 ;; 掃除中・20〜60 秒おきに全 root を数え直した)。95% まで下げて、次に越えるまで root 数個分(上限 20 GiB で約 1 GiB)の余白を置く。
 (val SWEEP-TARGET-RATIO 0.95)
 
@@ -106,7 +106,7 @@
   "前の数え(known — 最後の掃除の数えの RootInfo の列)の root の大きさを使い回せるかを判じ、使えればその byte を、数え直す時は None を
    返すため(掃除のたびに全 root の木を lstat で歩き、node の共有の disk の浅い枠を取り合った)。使い回すのは、worker
    が作った同じキーの root で、完成マーカーの時刻(made-ms — 準備し直した root は時刻が変わる)と最後に使った時刻(used-ms)が前の数えと
-   同じ物だけ。完成の後に root が大きくなるのは、job が import した時に書く .pyc だけで(zeus 2026-10-16 の実測 — 完成マーカーより新しい
+   同じ物だけ。完成の後に root が大きくなるのは、job が import した時に書く .pyc だけで(node-h 2026-10-16 の実測 — 完成マーカーより新しい
    file は __pycache__ の .pyc と .last-used だけ・足された量は root の 0.03〜2.5%・中身の書き換えは無い)、job は起こす前に .last-used を
    進めるので、使われた root は次の数えで歩き直す。前の数えで測れなかった root(大きさ 0 — 完成マーカーを持つ root は空でない)と、
    完成の時刻を読めなかった root(made-ms 0)は使い回さない。"
@@ -322,7 +322,7 @@
   "cgroup の層の回収できない使い(byte)を、memory.current と memory.stat の中身から求めるため: memory.current − file − slab_reclaimable
    (anon・shmem・回収できない slab・kernel の stack と表 — 負は 0)。file(active も inactive も)と slab_reclaimable(組みが触れた多数の
    小さな file の dentry と inode)は、層の memory.max の下で組みが memory を要る時に kernel が回収する。memory.current − inactive_file で
-   数えると、process 0・anon 0 の層にも組みの名残の active_file と slab が使いとして残り(2026-11-08 の k3s-1 の準備の層 640M: memory.current
+   数えると、process 0・anon 0 の層にも組みの名残の active_file と slab が使いとして残り(2026-11-08 の node-e の準備の層 640M: memory.current
    234.8 MB・file 127.2 MB・slab_reclaimable 107.6 MB で 172.5 MB)、名残の量は触れた file の数で決まって層の大きさと関わらない。行が無い・
    数でないなら ValueError。"
   (<- file int (stat-bytes stat "file"))
@@ -419,7 +419,7 @@
                      file の数で決まり、層の大きさと関わらない)では断らない。見積もりを層の上限の 4 分の 3 で切るので、回収できない使いが上限の
                      4 分の 1 の内の層はいつも通す(組みは層の上限の内で走る)。切る訳: memory.peak の在る kernel の見積もりは準備の間の container の
                      memory.peak の上がりで、同じ間に起きた待ちの子や別の組みを含む。memory.peak は始まりからの最大で戻らないので、それを越えない
-                     組みは印を残さず(None)、含みの大きい値が project の最新の実測として残り続ける(2026-11-05 の eos: 層 1.5 GiB に見積もり
+                     組みは印を残さず(None)、含みの大きい値が project の最新の実測として残り続ける(2026-11-05 の node-b: 層 1.5 GiB に見積もり
                      1.59 GB が残り、層の使い 48 MB でも全部の先の組みを断った)。機体の見張りが層の上限を使いの下まで下げた時と、ほかの組みや
                      待ちの子が層の 4 分の 1 を越えて回収できない memory を持つ時は断る。
                      層が無い時: memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO。memory を測れなければ判じない(呼び手が

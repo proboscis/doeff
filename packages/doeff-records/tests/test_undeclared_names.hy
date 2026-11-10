@@ -42,7 +42,7 @@
 
 (deftest test-b-an-older-service-reason-and-an-unknown-route-are-read-as-before
   ;; 欄を足す前の service の理由の綴り(本番の記録の service の 2026-10-02 の log の文)からも同じ欄が戻る。
-  (<- older (undeclared-refusal (ReadRow "pane-observation" #("zeus")) "宣言に無い表: ['pane-observation']"))
+  (<- older (undeclared-refusal (ReadRow "pane-observation" #("node-h")) "宣言に無い表: ['pane-observation']"))
   (assert (= older.tables #("pane-observation")) older)
   ;; 知らない route の断り(名を載せない)は欄が空 — 使い手はどの表の断りかを決めない。
   (<- route (undeclared-refusal (ReadRow "parts" #("p1")) "知らない route: POST /v1/records/read-row"))

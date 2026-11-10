@@ -500,7 +500,7 @@ def test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expans
 def test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round(tmp_path: Path) -> None:
     """Two writers with different macro contents (a conversation work tree with a different doeff version and the stand-in for runtime-environment preparation — the user's source is the same) take turns
     reading new trees in the same store. With one entry per key, each saw the other's entry as stale, expanded again, and overwrote the same key (2026-10-12
-    zeus — 100 to 600 rebuilds per preparation). With one key holding an entry per macro environment, from the second round
+    node-h — 100 to 600 rebuilds per preparation). With one key holding an entry per macro environment, from the second round
     neither expands again."""
     store = tmp_path / "store"
     for turn in (1, 2, 3):
@@ -807,7 +807,7 @@ def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_e
     """In a process that loaded the same Hy file by package name, load it again by path under another name (the way the worker's bytecode tool loads the judgment module
     bake_plan.hy), and Hy looks up the compile's module from the file's name (``inspect.getmodule``), so the expansion runs with the module table of the
     module under the package name loaded first. If the record is made from the table of the module under the other name, that table is never consulted, an empty record with no used macros goes into the
-    shared store, and even after the macro changed the check passes through and the old expansion was used (2026-10-11 atlas — the pytest for verifying doeff's intake
+    shared store, and even after the macro changed the check passes through and the old expansion was used (2026-10-11 node-a — the pytest for verifying doeff's intake
     wrote an entry for bake_plan.hy, patrol's preparation pulled it, and with the defrecord expansion before ec08cd77d
     ``seal_record() missing ... calls_post_init``). The record is made from the table the expansion actually consulted."""
     import hy  # noqa: F401 — load the entry point that compiles Hy source

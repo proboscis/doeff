@@ -1,7 +1,7 @@
 ;;; 機体の memory の見張りの判断— 機体と container の memory の読みの綴りを数にし、job ごとの memory を process の木で
 ;;; 数え、機体の memory が尽きかけた時に先に止める木を選ぶ。I/O を持たない(読みは worker/protocol/memory_watch が効果で集める)。
 ;;;
-;;; 何のためか: atlas と zeus で、1 つの job が memory を食うと機体の全体が reclaim の thrash で数十秒〜数十分止まり、worker も coordinator も
+;;; 何のためか: node-a と node-h で、1 つの job が memory を食うと機体の全体が reclaim の thrash で数十秒〜数十分止まり、worker も coordinator も
 ;;; 応えなくなった(4 回・OOM kill は起きない)。誰が食ったかは 10 分ごとの測りの間に落ちて読めなかった。見張りは 5 秒ごとに job ごとの
 ;;; memory を数えて最大を残し、機体の空きが閾を割ったら job の木の中のいちばん大きい単位を、kernel より先に止める。
 ;;;
@@ -16,13 +16,13 @@
 ;;; 止める候補: task の単位は全部。常駐の job の単位は、その job の今の memory が平常の大きさ(JobSteady — 前の
 ;;; 最大の行の間ごとの最大のいちばん大きい物)の steady-ratio 倍以上の時か、平常の大きさがまだ無い時だけ。平常の大きさで動く常駐の
 ;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
-;;; だけだから(10-24 atlas で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
+;;; だけだから(10-24 node-a で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
 ;;; 後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
 ;;; 群れの止め(swarm-of): 止める候補の単位が無い(どれも min-victim-bytes 未満か平常の大きさの job の物)のに、
 ;;; 1 つの job の木が機体の全量の swarm-share 以上を持ち、worker の外の使用量より大きい時は、その job の BODY 以外の単位を大きい順に、
 ;;; 機体の空きを DANGER の線(danger-available)の上へ min-victim-bytes ぶん戻す量まで足して、まとめて止める。訳: CLI を多数並べて走らせる常駐の
 ;;; job は、CLI の木と、shim に引き取られた道具の子が数百の小さい単位に割れ、1 つずつはどれも 512 MiB 未満なのに、和は機体の
-;;; 半分を越える(2026-10-23 20:36〜20:46 UTC の zeus — 見張りの最大の単位 260 MiB のまま機体の空き 11 GB・PSI full 68% で機体ごと
+;;; 半分を越える(2026-10-23 20:36〜20:46 UTC の node-h — 見張りの最大の単位 260 MiB のまま機体の空き 11 GB・PSI full 68% で機体ごと
 ;;; 約 3 分止まり、その job が止まって終わって子の CLI の仕事が全部切れた)。BODY(job の本体)は止めない — 群れの止めは job の
 ;;; 子を減らして、job そのものと残りの子を生かす。worker の外の使用量より小さい job を止めない訳は平常の大きさの止めと同じ(不足が
 ;;; worker の外から来た時に、job の子を止めても戻らない)。平常の大きさは問わない(群れの job は止める単位を小さく割るので、平常の
@@ -62,9 +62,9 @@
    空き / 総量 がこれ未満で、memory の PSI の full avg10(%)がこれ以上でも DANGER(reclaim で全 process が止まり始めた)・
    tight-available と tight-full-avg10 = どちらかを越えたら TIGHT・min-victim-bytes = これより小さい単位は止めない(食った物が job の外の
    時に、小さい job を次々に止めない)・steady-ratio = 常駐の job の今の memory が平常の大きさのこの倍以上の時だけ、その job の単位を
-   止める候補にする(頭の註)。既定の値の根拠: atlas の 3 回は空き 1.5〜2.5 GiB / 28.3 GiB(5〜9%)・zeus は 7 GB / 125 GiB(5.6%)
-   で止まり、ふだんの最低は atlas 6.2 GiB(22%)・zeus 52 GiB(41%)。swarm-share = 群れの止め(頭の註)を掛ける job の木の、機体の全量に
-   占める割合の最低(既定 0.25 — zeus の 10-23 の CLI を並べる job の木は約 64 GB / 128 GB)。"
+   止める候補にする(頭の註)。既定の値の根拠: node-a の 3 回は空き 1.5〜2.5 GiB / 28.3 GiB(5〜9%)・node-h は 7 GB / 125 GiB(5.6%)
+   で止まり、ふだんの最低は node-a 6.2 GiB(22%)・node-h 52 GiB(41%)。swarm-share = 群れの止め(頭の註)を掛ける job の木の、機体の全量に
+   占める割合の最低(既定 0.25 — node-h の 10-23 の CLI を並べる job の木は約 64 GB / 128 GB)。"
   {:check [(< 0 danger-available danger-pressured-available 1) (< 0 danger-available tight-available 1) (> danger-full-avg10 0)
            (> tight-full-avg10 0) (>= min-victim-bytes 0) (> steady-ratio 1) (< 0 swarm-share 1)]}
   (setv #^ float danger-available 0.10)
@@ -421,7 +421,7 @@
   {:pre [(: rows tuple) (: walks tuple)] :post [(: % (| ProcRow None))] :tags {:context "worker" :role "judgment"}}
   "job の木の外(walks = _job-walks の答えのどの木にも居ない — worker の本体・init と、kubectl exec・readinessProbe・preStop の命令)で
    rss のいちばん大きい process を引くため(無ければ None)。見張りは木の外の process を止めないので、尽きかけの訳が木の外に在る時に
-   誰が食ったかを log に残す(11-04 12:59 UTC の zeus — exec の grep 2 本の 69 GB は、kernel が OOM で止めた 1 本しか記録に残らなかった)。
+   誰が食ったかを log に残す(11-04 12:59 UTC の node-h — exec の grep 2 本の 69 GB は、kernel が OOM で止めた 1 本しか記録に残らなかった)。
    同じ大きさなら pid の小さい物。"
   (val inside (sfor w walks member w.walk.members member.pid))
   (min (gfor r rows :if (not-in r.pid inside) r) :key (fn [r] #((- r.rss-bytes) r.pid)) :default None))

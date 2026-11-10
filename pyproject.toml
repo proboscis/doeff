@@ -250,7 +250,7 @@ record-dirs = []
 # named and failed by tests/test_contract_table_follows_packages.py (run both daily and by the whole-repo line below). An exclusion's reason must
 # state why there is "no check that verifies the package's public shape as a whole (stub matching, public names, tree-walking population checks)" —
 # the reader stops exclusions without a reason and exclusions of prefixes that are not packages. When such a check is added, rewrite the exclusion as a set.
-# Seconds in comments are wall clock running one file at a time (including startup; 2026-10-02 on zeus; total budget 60 s). Measure each file the same way when adding lines.
+# Seconds in comments are wall clock running one file at a time (including startup; 2026-10-02 on node-h; total budget 60 s). Measure each file the same way when adding lines.
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-core-effects/"
 tests = [

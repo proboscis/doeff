@@ -1,7 +1,7 @@
 ;; coordinator が worker の heartbeat を受けてから返事を置くまでの遅れを測り、閾(HEARTBEAT-LAG-MS = 5 秒)を越えた時だけ 1 行を出す検
 ;; (2026-10-07)。
 ;;
-;; 実例: 2026-10-07 13:16〜13:18 JST に本番の worker agent-worker-2 の heartbeat の往復(worker の ReadDesired)が 5.8 秒かかり、
+;; 実例: 2026-10-07 13:16〜13:18 JST に本番の worker worker-2 の heartbeat の往復(worker の ReadDesired)が 5.8 秒かかり、
 ;; coordinator の生死の表で live が lease 10 秒を越えて false に瞬いた。coordinator の log には時刻も遅れの行も無く、遅れが
 ;; coordinator の側か網かを分けられなかった。だから:
 ;;   - 返事を置くまでが 5 秒を越えた heartbeat ごとに、時刻・worker の名・かかった ms・いちばん長い区間の名を 1 行で出す
@@ -100,10 +100,10 @@
 
 (deftest test-a-heartbeat-held-by-a-slow-save-is-named-once
   ;; 保存が 6 秒かかった歩の heartbeat は、送り手の名と、いちばん長い区間 SaveState を名指す行をちょうど 1 つ出す。
-  (<- lags list (lags-of (OneHeartbeat (! (heartbeat-of "agent-worker-2" 0)) True)))
+  (<- lags list (lags-of (OneHeartbeat (! (heartbeat-of "worker-2" 0)) True)))
   (assert (= (len lags) 1) lags)
   (val lag (get lags 0))
-  (assert (= lag.worker "agent-worker-2") lag)
+  (assert (= lag.worker "worker-2") lag)
   (assert (= lag.slowest "SaveState") lag)
   (assert (>= lag.slowest-ms (* SLOW-SECONDS 1000)) lag)
   (assert (> lag.elapsed-ms HEARTBEAT-LAG-MS) lag)
@@ -115,7 +115,7 @@
 
 (deftest test-a-heartbeat-that-waited-in-the-inbox-names-the-inbox
   ;; 受付の箱に 6 秒並んでいた heartbeat は、歩の中が速くても遅れとして名指し、区間の名は Inbox。
-  (<- lags list (lags-of (OneHeartbeat (! (heartbeat-of "agent-worker-2" (int (* SLOW-SECONDS 1000)))) False)))
+  (<- lags list (lags-of (OneHeartbeat (! (heartbeat-of "worker-2" (int (* SLOW-SECONDS 1000)))) False)))
   (assert (= (len lags) 1) lags)
   (val lag (get lags 0))
   (assert (= lag.slowest "Inbox") lag)
@@ -124,5 +124,5 @@
 
 (deftest test-a-fast-heartbeat-leaves-no-line
   ;; 並びも保存も速い heartbeat は行を出さない。
-  (<- lags list (lags-of (OneHeartbeat (! (heartbeat-of "agent-worker-2" 0)) False)))
+  (<- lags list (lags-of (OneHeartbeat (! (heartbeat-of "worker-2" 0)) False)))
   (assert (= lags []) lags))

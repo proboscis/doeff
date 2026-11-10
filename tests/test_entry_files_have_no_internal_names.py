@@ -5,7 +5,9 @@ CONTRIBUTING.md, the GitHub issue and pull request templates (under .github/ISSU
 shown on the question and report screens), packages/*/README.md (also the PyPI description field), and the files under examples/.
 Internal names = 4 kinds — names of the application systems built on top, work board and conversation ids, names of cluster nodes, and personal home paths.
 
-The single source of the word list is INTERNAL_NAMES in this module. It does not read the word list of the semgrep rule doeff-packages-have-no-application-vocabulary:
+The single source of the word list is INTERNAL_NAMES in this module, except the names of cluster nodes: those are names of one
+site, so they are not written in this public tree. The site passes them in the environment variable DOEFF_INTERNAL_MACHINE_NAMES
+(comma-separated; the check of node names is off when it is unset). It does not read the word list of the semgrep rule doeff-packages-have-no-application-vocabulary:
 that one applies to all contents of generic packages as "application-system words", and includes conversation, budget, artifact and herdr.
 In entry files these 4 words appear with their general meaning (a terminal backend named herdr, the time budget of doeff-hy-pytest),
 so the entry-file list is narrowed to names and kept separately.
@@ -13,7 +15,9 @@ so the entry-file list is narrowed to names and kept separately.
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -25,14 +29,29 @@ INTERNAL_NAMES: dict[str, str] = {
     "application system name": r"agora|kanban|acp|hypha|mediagen|sporocarp|controllers/|clients/hy",
     # Keys of work board cards and milestones (ki-, ms- plus 12 hex digits), and ids of requests, conversations and messages (lt-, c-, m- plus a 26-character ULID).
     "work board and conversation id": r"(?:ki|ms)-[0-9a-f]{12}(?![0-9a-z])|(?:lt|c|m)-[0-9a-hjkmnp-tv-z]{26}(?![0-9a-z])",
-    # Cluster Nodes (names from kubectl get nodes) and the names of our own judges. Spellings followed by a letter (Atlassian) do not match.
-    "cluster node name": r"(?:zeus|atlas|eos|seimf|k3s-\d+)(?![a-z])",
     # Paths under a person's home (Linux and macOS). Case-sensitive — /users/42 in a URL does not match. Example paths are written with ~ or
     # $HOME.
     "personal home path": r"(?-i:/home/|/Users/)[A-Za-z0-9_.-]+",
 }
 
-_PATTERNS = {kind: re.compile(rf"(?i)(?<![a-z0-9])(?:{pattern})") for kind, pattern in INTERNAL_NAMES.items()}
+# Names of cluster nodes (names from kubectl get nodes) and of the site's own judges, read from the environment (module docstring).
+MACHINE_NAMES_ENV = "DOEFF_INTERNAL_MACHINE_NAMES"
+
+
+def machine_names_from(environ: Mapping[str, str]) -> tuple[str, ...]:
+    """The node names the site passed in MACHINE_NAMES_ENV (comma-separated, blanks dropped)."""
+    return tuple(name.strip() for name in environ.get(MACHINE_NAMES_ENV, "").split(",") if name.strip())
+
+
+def name_patterns(machine_names: Sequence[str]) -> dict[str, re.Pattern[str]]:
+    """The patterns per kind; with machine names, also the kind "cluster node name" (a spelling followed by a letter does not match)."""
+    kinds = dict(INTERNAL_NAMES)
+    if machine_names:
+        kinds["cluster node name"] = "(?:" + "|".join(map(re.escape, machine_names)) + ")(?![a-z])"
+    return {kind: re.compile(rf"(?i)(?<![a-z0-9])(?:{pattern})") for kind, pattern in kinds.items()}
+
+
+_PATTERNS = name_patterns(machine_names_from(os.environ))
 
 # Fixed entry files (paths from the root). Those under .github/ISSUE_TEMPLATE/, packages/*/README.md and examples/ are read from the tree.
 FIXED_ENTRY_FILES = (
@@ -46,11 +65,11 @@ FIXED_ENTRY_FILES = (
 )
 
 
-def internal_names_in(text: str) -> list[str]:
+def internal_names_in(text: str, patterns: Mapping[str, re.Pattern[str]] | None = None) -> list[str]:
     """Return the internal names in text as `<kind>: <spelling>`, in order of appearance."""
     found = [
         (match.start(), f"{kind}: {match.group(0)}")
-        for kind, pattern in _PATTERNS.items()
+        for kind, pattern in (_PATTERNS if patterns is None else patterns).items()
         for match in pattern.finditer(text)
     ]
     return [name for _, name in sorted(found)]
@@ -72,7 +91,7 @@ def entry_files(root: Path) -> list[str]:
     return fixed + issue_templates + packages + examples
 
 
-def internal_names_in_entry_files(root: Path) -> list[str]:
+def internal_names_in_entry_files(root: Path, patterns: Mapping[str, re.Pattern[str]] | None = None) -> list[str]:
     """Return the internal names in the entry files as `<path>:<line>: <kind>: <spelling>`."""
     return [
         f"{name}:{number}: {found}"
@@ -80,13 +99,15 @@ def internal_names_in_entry_files(root: Path) -> list[str]:
         for number, line in enumerate(
             (root / name).read_text(encoding="utf-8", errors="replace").splitlines(), start=1
         )
-        for found in internal_names_in(line)
+        for found in internal_names_in(line, patterns)
     ]
 
 
 #: Fake card and request ids (not real ids). The spelling is split so this file itself is not matched by the id-shape detection.
 FAKE_CARD_ID = "ki-" + "0123456789ab"
 FAKE_REQUEST_ID = "lt-" + "0123456789ABCDEFGHJKMNPQRS"
+#: Example node names standing in for the ones a site passes in MACHINE_NAMES_ENV.
+EXAMPLE_PATTERNS = name_patterns(("node-h", "node-f"))
 
 
 def test_each_kind_finds_its_names() -> None:
@@ -95,9 +116,9 @@ def test_each_kind_finds_its_names() -> None:
     assert internal_names_in("a Kanban card and the hypha view") == ["application system name: Kanban", "application system name: hypha"]
     assert internal_names_in(f"card {FAKE_CARD_ID}") == [f"work board and conversation id: {FAKE_CARD_ID}"]
     assert internal_names_in(f"request {FAKE_REQUEST_ID}") == [f"work board and conversation id: {FAKE_REQUEST_ID}"]
-    assert internal_names_in("image: zeus:5000/doeff-worker on k3s-2") == [
-        "cluster node name: zeus",
-        "cluster node name: k3s-2",
+    assert internal_names_in("image: node-h:5000/doeff-worker on node-f", EXAMPLE_PATTERNS) == [
+        "cluster node name: node-h",
+        "cluster node name: node-f",
     ]
     assert internal_names_in("cd /home/someone/repos && ls /Users/someone") == [
         "personal home path: /home/someone",
@@ -111,11 +132,18 @@ def test_general_words_and_public_names_are_not_internal_names() -> None:
         "the herdr backend keeps one conversation per session",
         "a time budget for each test and the build artifact",
         "https://github.com/proboscis/doeff",
-        "Atlassian Jira, the macp tool, seos",
+        "Atlassian Jira, the macp tool, node-hx",
         "GET https://api.example.com/users/42",
         "a 12-character id ab-4064da9af9eb and ~/project/README.md",
     ]
-    assert [text for text in spared if internal_names_in(text)] == []
+    assert [text for text in spared if internal_names_in(text, EXAMPLE_PATTERNS)] == []
+
+
+def test_node_names_come_from_the_environment() -> None:
+    # The tree names no node: without the variable the kind is absent, and the site's names are read comma-separated.
+    assert machine_names_from({}) == ()
+    assert "cluster node name" not in name_patterns(())
+    assert machine_names_from({MACHINE_NAMES_ENV: "node-h, node-f,,"}) == ("node-h", "node-f")
 
 
 def test_the_scan_reads_the_entry_files_and_finds_a_planted_name(tmp_path: Path) -> None:
@@ -138,7 +166,7 @@ def test_the_scan_reads_the_entry_files_and_finds_a_planted_name(tmp_path: Path)
         "examples/.ipynb_checkpoints/demo.py",
     ):
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / name).write_text("# zeus\n", encoding="utf-8")
+        (tmp_path / name).write_text("# node-h\n", encoding="utf-8")
     assert entry_files(tmp_path) == [
         "README.md",
         "docs/index.md",
@@ -153,9 +181,9 @@ def test_the_scan_reads_the_entry_files_and_finds_a_planted_name(tmp_path: Path)
     ]
     for name in entry_files(tmp_path):
         (tmp_path / name).write_text("# doeff\n", encoding="utf-8")
-    assert internal_names_in_entry_files(tmp_path) == []
-    (tmp_path / "packages/doeff-a/README.md").write_text("# doeff-a\n\nRuns on atlas.\n", encoding="utf-8")
-    assert internal_names_in_entry_files(tmp_path) == ["packages/doeff-a/README.md:3: cluster node name: atlas"]
+    assert internal_names_in_entry_files(tmp_path, EXAMPLE_PATTERNS) == []
+    (tmp_path / "packages/doeff-a/README.md").write_text("# doeff-a\n\nRuns on node-h.\n", encoding="utf-8")
+    assert internal_names_in_entry_files(tmp_path, EXAMPLE_PATTERNS) == ["packages/doeff-a/README.md:3: cluster node name: node-h"]
 
 
 def test_the_scan_covers_the_entry_files_of_this_repo() -> None:

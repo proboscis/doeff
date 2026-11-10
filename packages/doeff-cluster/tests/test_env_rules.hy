@@ -29,7 +29,7 @@
 
 
 (deftest test-a-prepare-layer-for-one-preparation-launches-one-at-a-time
-  ;; 失敗ケース(2026-11-09 の k3s-2): 準備の層 640 MiB(1 本分)に job の準備 2 本を CPU の枠 2 だけで並べ、1 本 約 360 MB の準備が層の
+  ;; 失敗ケース(2026-11-09 の node-f): 準備の層 640 MiB(1 本分)に job の準備 2 本を CPU の枠 2 だけで並べ、1 本 約 360 MB の準備が層の
   ;; 上限で互いを OOM kill し合った。層の空きで絞れば、見込みの山 480 MiB(640 MiB × 0.75)の準備は空いた層に 1 本だけ起き、走っている
   ;; 間(取り置きを引いた空き 160 MiB)は次を起こさず待たせる。反例: 層の空きを渡さない worker(層の無い機体)は今どおり枠まで起こす。
   (val waiting #(#("env-j1" False) #("env-j2" False)))

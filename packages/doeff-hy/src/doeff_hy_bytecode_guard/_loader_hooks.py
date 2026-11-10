@@ -745,7 +745,7 @@ def _module_being_loaded(
     (``inspect.getmodule`` -- if a module read the same file earlier under another name, that one), otherwise the module in the middle of importing
     (``self.name``, placed in ``sys.modules`` beforehand). Looking up by ``self.name`` alone, in a process that read the same file under the package name and then
     re-read it from the path under another name (bake_plan.hy of the worker bytecode tool), built an empty record from a table that expansion does not consult, and the check
-    put a pass-through entry in the shared place (2026-10-11 atlas)."""
+    put a pass-through entry in the shared place (2026-10-11 node-a)."""
     import inspect  # load only when Hy source is encountered (Hy's compile entry also loads it)
 
     try:

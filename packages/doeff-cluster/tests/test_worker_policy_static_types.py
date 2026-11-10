@@ -56,7 +56,7 @@ WORKER_BEAT_USERS = """\
 (defk probe-request [method path]
   {:pre [(: method str) (: path str)] :post [(: % (get tuple #(str ...)))] :tags {:context "probe" :role "protocol"}}
   "http-request の答え Request の欄を読む(引数の query・body が型つきで受けられるか)。"
-  (<- request (http-request method path {} {"name" "atlas" "capacity" 10}))
+  (<- request (http-request method path {} {"name" "node-a" "capacity" 10}))
   request.parts)
 
 (defk probe-drain [name]

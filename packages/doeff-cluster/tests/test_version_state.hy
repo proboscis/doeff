@@ -110,15 +110,15 @@
 
 (defk placed []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "Service w を atlas に置いた状態(atlas はまだ何も動かしていない)。"
-  (! (beat (! (declared)) "atlas")))
+  "Service w を node-a に置いた状態(node-a はまだ何も動かしていない)。"
+  (! (beat (! (declared)) "node-a")))
 
 
 (defk reporting [[extra None] [phase "running"]]
   {:pre [(: extra (| (get dict #(str object)) None)) (: phase str)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "atlas が w の行(phase・差し替えの欄)を報告した状態。"
+  "node-a が w の行(phase・差し替えの欄)を報告した状態。"
   (val s (! (placed)))
-  (! (beat s "atlas" [(! (row-of s phase extra))])))
+  (! (beat s "node-a" [(! (row-of s phase extra))])))
 
 
 (defk version-of [state [name "w"] [now START]]
@@ -144,18 +144,18 @@
 
 (defk reported-phase [phase retryable]
   {:pre [(: phase JobPhase) (: retryable bool)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "担い手 atlas が今の宣言の spec の行を phase で報告した状態(ENV-FAILED は失敗の種類と再試行するかを載せる)。"
+  "担い手 node-a が今の宣言の spec の行を phase で報告した状態(ENV-FAILED は失敗の種類と再試行するかを載せる)。"
   (! (reporting (if (= phase JobPhase.ENV-FAILED) {"failureKind" "sync-failed" "retryable" retryable} {}) phase.value)))
 
 
 (defk scaled-to-zero [rows]
   {:pre [(: rows (| (get list (get dict #(str object))) None))] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "w を replicas 0 に書き換えた後、atlas が rows(w の process がまだ生きている行・空なら止め終えた)を報告した状態。"
+  "w を replicas 0 に書き換えた後、node-a が rows(w の process がまだ生きている行・空なら止め終えた)を報告した状態。"
   (val reported (! (reporting)))
   (val row (! (row-of reported)))
   (val rescaled (! (call reported "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
                                                                 "resourceVersion" (. (.row reported.meta "Service/w") resource-version)})))
-  (! (beat rescaled "atlas" (if (is rows None) [row] rows))))
+  (! (beat rescaled "node-a" (if (is rows None) [row] rows))))
 
 
 ;; --- 1. 網羅 -----------------------------------------------------------------------------------
@@ -210,12 +210,12 @@
   ;; running-process の NotReady / Unknown の 11 の分岐が、それぞれ種類を名乗る。理由の文・ok・state は今までどおり。
   ;; 宣言が無い: 消した直後で、担い手の上で process がまだ生きている。
   (val running (! (reporting)))
-  (val deleted (! (beat (! (call running "DELETE" "/resources/Service/w")) "atlas" [(! (row-of running))])))
+  (val deleted (! (beat (! (call running "DELETE" "/resources/Service/w")) "node-a" [(! (row-of running))])))
   (assert (= (! (answer deleted)) #(NotReadyKind.NO-DECLARATION VersionState.UPDATING)))
   ;; replicas 0: 止めている途中(process がまだ生きている)。
   (assert (= (! (answer (! (scaled-to-zero None)))) #(NotReadyKind.NO-REPLICAS VersionState.UPDATING)))
-  ;; 置き先が無い: 前の担い手の停止を待つ(置いていない zeus の上で w がまだ動いている)。
-  (val waiting (! (beat (! (declared)) "zeus" [{"name" "w" "phase" "running" "runningRevision" "r1" "instance" "0-z" "specHash" "old"}])))
+  ;; 置き先が無い: 前の担い手の停止を待つ(置いていない node-h の上で w がまだ動いている)。
+  (val waiting (! (beat (! (declared)) "node-h" [{"name" "w" "phase" "running" "runningRevision" "r1" "instance" "0-z" "specHash" "old"}])))
   (assert (is (.row waiting.placements "w") None))
   (assert (= (get (unplaced-jobs START waiting T) "w") "前の担い手が止め終えるのを待っている"))
   (assert (= (! (answer waiting)) #(NotReadyKind.WAITING-PREVIOUS-HOLDER VersionState.UPDATING)))
@@ -223,9 +223,9 @@
   (assert (= (! (answer (! (declared)))) #(NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED)))
   (assert (.startswith (get (running-process (! (declared)) "w" START T) "reason") "置き先が無い: 置ける worker が無い"))
   ;; 空きが無い = memory の予算 0 の worker(理由の文に memory の訳が付く)。
-  (val full (! (beat (! (declared)) "atlas" :memory 0)))
+  (val full (! (beat (! (declared)) "node-a" :memory 0)))
   (assert (= (! (answer full)) #(NotReadyKind.NO-ROOM VersionState.BLOCKED)))
-  (assert (.startswith (get (running-process full "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い(job w を worker atlas に置くと")
+  (assert (.startswith (get (running-process full "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い(job w を worker node-a に置くと")
           (running-process full "w" START T))
   ;; 担い手の報告が古い: 移し替えの期限の内は Unknown(分からない)、過ぎた後(調停の前)は NotReady。
   (val silent (+ START (* 2 T.lease-ms)))
@@ -235,7 +235,7 @@
   (assert (= (get (running-process running "w" gone T) "state") "NotReady"))
   (assert (= (! (answer running gone)) #(NotReadyKind.CARRIER-SILENT VersionState.UPDATING)))
   ;; phase が running でない: 担い手の行にまだ載っていない。
-  (assert (= (get (running-process (! (placed)) "w" START T) "reason") "担い手 atlas の上で まだ起動していない"))
+  (assert (= (get (running-process (! (placed)) "w" START T) "reason") "担い手 node-a の上で まだ起動していない"))
   (assert (= (! (answer (! (placed)))) #(NotReadyKind.NOT-RUNNING VersionState.UPDATING)))
   ;; 版の違い・process の世代を報告しない・設定の指紋の違い・割り当ての世代の違い。
   (for [#(extra want) [[{"runningRevision" "r0"} #(NotReadyKind.REVISION-MISMATCH VersionState.UPDATING)]
@@ -287,7 +287,7 @@
   (assert (= (get body "status" "process" "runningRevision") "r1"))
   ;; running の母集団は still-live-somewhere と同じ: lease の内に報告した全部の worker の、名が一致する行と退いた行。
   ;; phase は process が生きている物(RUNNING・STOPPING・STOP-UNCONFIRMED)だけ。沈黙した worker の行は入れない。
-  (val mixed (! (beat current "zeus" [{"name" "w" "phase" "stopping" "runningRevision" "r0" "instance" "0-z"}
+  (val mixed (! (beat current "node-h" [{"name" "w" "phase" "stopping" "runningRevision" "r0" "instance" "0-z"}
                                       {"name" "w#retired-0" "retiredFrom" "w" "phase" "stop-unconfirmed" "runningRevision" "rA"}
                                       {"name" "w#retired-1" "retiredFrom" "w" "phase" "backoff" "runningRevision" "rB"}
                                       {"name" "other" "phase" "running" "runningRevision" "rX"}])))
@@ -296,7 +296,7 @@
   ;; 退いた旧い process が生きている間は、running-process が ok でも Current にしない。
   (assert (= (! (answer mixed)) #(None VersionState.UPDATING)))
   (val late (+ START (* 2 T.lease-ms)))
-  (val quiet (! (beat mixed "atlas" [(! (row-of mixed))] :now late)))
+  (val quiet (! (beat mixed "node-a" [(! (row-of mixed))] :now late)))
   (assert (= (! (pairs (! (version-of quiet :now late)))) [#("r1" False)]))
   (assert (= (get (! (version-of quiet :now late)) "state") "Current")))
 
@@ -307,7 +307,7 @@
   ;; 行き来を見逃しても落ち続けに起きる。0 に戻ると欄が消えて進む。欄を載せない行では足さない(0 と黙って倒さない)。
   (val running (! (reporting)))
   (assert (not-in "failures" (get (snapshot running START T) "Service/w" "status")))
-  (val failing (! (beat running "atlas" [(! (row-of running "backoff" {"failures" 3 "lastExitCode" 1 "lastExitAtMs" 990}))])))
+  (val failing (! (beat running "node-a" [(! (row-of running "backoff" {"failures" 3 "lastExitCode" 1 "lastExitAtMs" 990}))])))
   (assert (= (get (snapshot failing START T) "Service/w" "status" "failures") 3))
   (val body (get (responded failing (! (http-request "GET" "/resources/Service/w" {} None :actor None)) START T) 2))
   (assert (= #((get body "status" "failures") (get body "status" "process" "failures")
@@ -315,14 +315,14 @@
              #(3 3 1 990))
           body)
   ;; 同じ phase(backoff)のまま回数だけ増えても版が進む。
-  (val more (! (beat failing "atlas" [(! (row-of failing "backoff" {"failures" 4 "lastExitCode" 1 "lastExitAtMs" 995}))])))
+  (val more (! (beat failing "node-a" [(! (row-of failing "backoff" {"failures" 4 "lastExitCode" 1 "lastExitAtMs" 995}))])))
   (assert (> more.revision failing.revision) #(more.revision failing.revision))
   ;; 安定して 0 と報告されると欄が消え、版が進む。
-  (val stable (! (beat more "atlas" [(! (row-of more "running" {"failures" 0}))])))
+  (val stable (! (beat more "node-a" [(! (row-of more "running" {"failures" 0}))])))
   (assert (> stable.revision more.revision))
   (assert (not-in "failures" (get (snapshot stable START T) "Service/w" "status")))
   ;; 欄を載せない行: status.process の failures は None のまま・status には足さない。
-  (val unknown (! (beat stable "atlas" [(! (row-of stable "backoff"))])))
+  (val unknown (! (beat stable "node-a" [(! (row-of stable "backoff"))])))
   (val shown (get (responded unknown (! (http-request "GET" "/resources/Service/w" {} None :actor None)) START T) 2))
   (assert (is (get shown "status" "process" "failures") None) shown)
   (assert (not-in "failures" (get shown "status")) shown))
@@ -337,16 +337,16 @@
 
 
 (deftest test-status-process-shows-the-previous-generation-ended-by-the-new-boot
-  ;; 担い手 atlas の機体が丸ごと死に、知らせの無いまま新しい世代(起動の刻 reborn-at)で戻った(#3672)。新しい世代は前の世代の
+  ;; 担い手 node-a の機体が丸ごと死に、知らせの無いまま新しい世代(起動の刻 reborn-at)で戻った(#3672)。新しい世代は前の世代の
   ;; process の終わりを報告しない(最初の heartbeat は行を載せず、次の heartbeat で w の行を lastExitAtMs 無しで載せる)。Service の
   ;; status.process.lastExitAtMs は新しい世代の起動の刻 — 使い手はこの刻が進んだ事で、担い手の上の process が終わったと知る。
   (val born-at (- START 60000))
   (val reborn-at (- START 1000))
-  (val placed (! (beat (! (declared)) "atlas" [] :boot "b1" :boot-at born-at)))
-  (val running (! (beat placed "atlas" [(! (row-of placed))] :boot "b1" :boot-at born-at)))
+  (val placed (! (beat (! (declared)) "node-a" [] :boot "b1" :boot-at born-at)))
+  (val running (! (beat placed "node-a" [(! (row-of placed))] :boot "b1" :boot-at born-at)))
   (assert (is (get (! (process-of running)) "lastExitAtMs") None) (! (process-of running)))
-  (val reborn (! (beat running "atlas" [] :boot "b2" :boot-at reborn-at)))
-  (val again (! (beat reborn "atlas" [(! (row-of reborn "starting" {"pid" None "instance" None}))] :boot "b2" :boot-at reborn-at)))
+  (val reborn (! (beat running "node-a" [] :boot "b2" :boot-at reborn-at)))
+  (val again (! (beat reborn "node-a" [(! (row-of reborn "starting" {"pid" None "instance" None}))] :boot "b2" :boot-at reborn-at)))
   (assert (= (get (! (process-of again)) "lastExitAtMs") reborn-at) (! (process-of again))))
 
 
@@ -355,7 +355,7 @@
 ;; 終わったと知る。刻は snapshot の行の status.lastExitAtMs にも載り(担い手の行が刻を持つ間だけ)、刻だけが進んだ拍でも版と出来事が
 ;; 進む。刻が進むのは process の終わりと worker の世代の入れ替わりだけなので、同じ世代の拍のくり返しでは版は進まない。
 
-(val BORN-AT (- START 60000))      ; 担い手 atlas の 1 世代目の起動の刻
+(val BORN-AT (- START 60000))      ; 担い手 node-a の 1 世代目の起動の刻
 (val REBORN-AT (- START 1000))     ; 機体ごと死んで戻った 2 世代目の起動の刻
 
 
@@ -367,14 +367,14 @@
 
 (defk reborn-carrier []
   {:pre [] :post [(: % (get tuple #(ClusterState ClusterState ClusterState ClusterState)))] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "他に変化の無い cluster で、担い手 atlas の 1 世代目が w を走らせ、機体ごと死んで 2 世代目(起動の刻 REBORN-AT)で戻った世界の 4 拍を
+  "他に変化の無い cluster で、担い手 node-a の 1 世代目が w を走らせ、機体ごと死んで 2 世代目(起動の刻 REBORN-AT)で戻った世界の 4 拍を
    求めるため: #(1 世代目が w を走らせている 2 世代目の最初の heartbeat(行なし)2 世代目が w の行を process を起こす前の phase
    (preparing)で載せた 2 世代目が新しい pid で w を起こした)。"
-  (val placed (! (beat (! (declared)) "atlas" [] :boot "b1" :boot-at BORN-AT)))
-  (val running (! (beat placed "atlas" [(! (row-of placed))] :boot "b1" :boot-at BORN-AT)))
-  (val reborn (! (beat running "atlas" [] :boot "b2" :boot-at REBORN-AT)))
-  (val preparing (! (beat reborn "atlas" [(! (row-of reborn "preparing" {"pid" None "instance" None}))] :boot "b2" :boot-at REBORN-AT)))
-  (val restarted (! (beat preparing "atlas" [(! (row-of preparing "running" {"pid" 200 "instance" "2-b"}))] :boot "b2" :boot-at REBORN-AT)))
+  (val placed (! (beat (! (declared)) "node-a" [] :boot "b1" :boot-at BORN-AT)))
+  (val running (! (beat placed "node-a" [(! (row-of placed))] :boot "b1" :boot-at BORN-AT)))
+  (val reborn (! (beat running "node-a" [] :boot "b2" :boot-at REBORN-AT)))
+  (val preparing (! (beat reborn "node-a" [(! (row-of reborn "preparing" {"pid" None "instance" None}))] :boot "b2" :boot-at REBORN-AT)))
+  (val restarted (! (beat preparing "node-a" [(! (row-of preparing "running" {"pid" 200 "instance" "2-b"}))] :boot "b2" :boot-at REBORN-AT)))
   #(running reborn preparing restarted))
 
 
@@ -406,14 +406,14 @@
   ;; 終わりの刻を載せる行でも(刻は拍ごとに替わる欄ではない)。
   (val restarted (get (! (reborn-carrier)) 3))
   (val row (! (row-of restarted "running" {"pid" 200 "instance" "2-b"})))
-  (val carried (! (beat (! (beat restarted "atlas" [row] :boot "b2" :boot-at REBORN-AT :now (+ START 10)))
-                        "atlas" [row] :boot "b2" :boot-at REBORN-AT :now (+ START 20))))
+  (val carried (! (beat (! (beat restarted "node-a" [row] :boot "b2" :boot-at REBORN-AT :now (+ START 10)))
+                        "node-a" [row] :boot "b2" :boot-at REBORN-AT :now (+ START 20))))
   (assert (= (resource-version-of carried "Service/w") (resource-version-of restarted "Service/w"))
           #((resource-version-of restarted "Service/w") (resource-version-of carried "Service/w")))
   (assert (= (get (! (service-status carried)) "lastExitAtMs") REBORN-AT))
   (val reported (! (reporting {"lastExitCode" 0 "lastExitAtMs" 990})))
   (val own (! (row-of reported "running" {"lastExitCode" 0 "lastExitAtMs" 990})))
-  (val repeated (! (beat (! (beat reported "atlas" [own] :now (+ START 10))) "atlas" [own] :now (+ START 20))))
+  (val repeated (! (beat (! (beat reported "node-a" [own] :now (+ START 10))) "node-a" [own] :now (+ START 20))))
   (assert (= (resource-version-of repeated "Service/w") (resource-version-of reported "Service/w"))
           #((resource-version-of reported "Service/w") (resource-version-of repeated "Service/w")))
   (assert (= (get (! (service-status repeated)) "lastExitAtMs") 990)))
@@ -423,7 +423,7 @@
   ;; (c) 同じ世代で w の process が終わり(code 0 — 続けて落ちた回数 failures は増えない)、次の拍までに起こし直された: phase(running)・
   ;; ready・版の判定は同じで、変わるのは担い手の行の lastExitAtMs だけ。終わりのたびに Service の版が進む。
   (val running (! (reporting)))
-  (val ended (! (beat running "atlas" [(! (row-of running "running" {"pid" 101 "instance" "2-a" "attempts" 2
+  (val ended (! (beat running "node-a" [(! (row-of running "running" {"pid" 101 "instance" "2-a" "attempts" 2
                                                                        "lastExitCode" 0 "lastExitAtMs" 990}))])))
   (val before (! (service-status running)))
   (val after (! (service-status ended)))
@@ -431,22 +431,22 @@
   (assert (> (resource-version-of ended "Service/w") (resource-version-of running "Service/w"))
           #((resource-version-of running "Service/w") (resource-version-of ended "Service/w")))
   (assert (= (get after "lastExitAtMs") 990) after)
-  (val again (! (beat ended "atlas" [(! (row-of ended "running" {"pid" 102 "instance" "3-a" "attempts" 3
+  (val again (! (beat ended "node-a" [(! (row-of ended "running" {"pid" 102 "instance" "3-a" "attempts" 3
                                                                   "lastExitCode" 0 "lastExitAtMs" 995}))])))
   (assert (> (resource-version-of again "Service/w") (resource-version-of ended "Service/w")))
   (assert (= (get (! (service-status again)) "lastExitAtMs") 995)))
 
 
 (deftest test-a-restarted-coordinator-still-moves-the-last-exit-by-the-new-boot
-  ;; 担い手 atlas の機体が丸ごと死に、同じ機体の coordinator も一緒に作り直された(#3672 の続き — 状態の報告は保存しないので消える)。
-  ;; 作り直した coordinator は保存の行(worker/atlas の knownExits)から 1 世代目が w の process を持っていたと知り、2 世代目の heartbeat で
+  ;; 担い手 node-a の機体が丸ごと死に、同じ機体の coordinator も一緒に作り直された(#3672 の続き — 状態の報告は保存しないので消える)。
+  ;; 作り直した coordinator は保存の行(worker/node-a の knownExits)から 1 世代目が w の process を持っていたと知り、2 世代目の heartbeat で
   ;; 刻を 2 世代目の起動の刻まで進める。本物の読み直し(state-from-kv と止まっていた長さのずらし)と本物の respond を通す。
-  (val placed (! (beat (! (declared)) "atlas" [] :boot "b1" :boot-at BORN-AT)))
-  (val running (! (beat placed "atlas" [(! (row-of placed))] :boot "b1" :boot-at BORN-AT)))
+  (val placed (! (beat (! (declared)) "node-a" [] :boot "b1" :boot-at BORN-AT)))
+  (val running (! (beat placed "node-a" [(! (row-of placed))] :boot "b1" :boot-at BORN-AT)))
   (<- stored ClusterState (state-from-kv (! (full-kv running)) START))
   (val restarted (get (api-policy.resume-after-downtime stored START) 0))
-  (val reborn (! (beat restarted "atlas" [] :boot "b2" :boot-at REBORN-AT)))
-  (val again (! (beat reborn "atlas" [(! (row-of reborn "preparing" {"pid" None "instance" None}))] :boot "b2" :boot-at REBORN-AT)))
+  (val reborn (! (beat restarted "node-a" [] :boot "b2" :boot-at REBORN-AT)))
+  (val again (! (beat reborn "node-a" [(! (row-of reborn "preparing" {"pid" None "instance" None}))] :boot "b2" :boot-at REBORN-AT)))
   (assert (= (get (! (process-of again)) "lastExitAtMs") REBORN-AT) (! (process-of again)))
   (assert (= (get (! (service-status again)) "lastExitAtMs") REBORN-AT) (! (service-status again))))
 
@@ -515,36 +515,36 @@
 
 
 (deftest test-a-placement-waiting-for-the-previous-holder-to-stop-is-updating
-  ;; drain で止めて移す(recreate の Service): 移す先の zeus が戻ると置き先を外し、旧い担い手 atlas が止め終えるまで置かない。
+  ;; drain で止めて移す(recreate の Service): 移す先の node-h が戻ると置き先を外し、旧い担い手 node-a が止め終えるまで置かない。
   (val c (Coord))
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
-  (c.beat "atlas" ["r"])
+  (c.beat "node-a" ["r"])
   (assert (= (get (! (coord-version c "r")) "state") "Current"))
   (c.advance 12)
-  (c.beat "atlas" ["r"])
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.beat "zeus")
-  (c.beat "atlas" ["r"])
+  (c.beat "node-a" ["r"])
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (c.beat "node-h")
+  (c.beat "node-a" ["r"])
   (assert (is (.row c.state.placements "r") None))
   (assert (= (get (running-process c.state "r" c.now T) "kind") NotReadyKind.WAITING-PREVIOUS-HOLDER))
   (val waiting (! (coord-version c "r")))
   (assert (= (get waiting "state") "Updating") waiting)
   (assert (in "前の担い手が止め終えるのを待っている" (get waiting "reason")) waiting)
   (assert (= (! (pairs waiting)) [#("r1" False)]) waiting)
-  ;; 旧い担い手が止め終えた → zeus に置く。zeus がまだ起こしていない間も Updating、動き出したら Current。
-  (c.beat "atlas" [])
-  (assert (= (c.placed "r") "zeus"))
+  ;; 旧い担い手が止め終えた → node-h に置く。node-h がまだ起こしていない間も Updating、動き出したら Current。
+  (c.beat "node-a" [])
+  (assert (= (c.placed "r") "node-h"))
   (assert (= (get (! (coord-version c "r")) "state") "Updating"))
-  (c.beat "zeus" ["r"])
+  (c.beat "node-h" ["r"])
   (assert (= (get (! (coord-version c "r")) "state") "Current")))
 
 
 (deftest test-a-surged-handoff-writer-stays-current-and-running-lists-both-processes
   ;; drain で並べた置き先(surge)の process も running に入る(同じ版・退いていない)。版は指定どおりなので Current。
   (<- c (running-writer))
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.beat "zeus" ["w"])
-  (c.beat "atlas" ["w"])
+  (c.call "POST" "/workers/node-a/drain" {} :actor "drain@node-a")
+  (c.beat "node-h" ["w"])
+  (c.beat "node-a" ["w"])
   (val version (! (coord-version c "w")))
   (assert (= (get version "state") "Current") version)
   (assert (= (! (pairs version)) [#("r1" False) #("r1" False)]) version))
@@ -577,7 +577,7 @@
     (original state name now timing))
   (.setattr monkeypatch api-policy "service_stopped" spy)
   (.setattr monkeypatch resource-policy "service_stopped" spy)
-  ;; 止めている途中: replicas 0 だが atlas の上で w がまだ動いている。
+  ;; 止めている途中: replicas 0 だが node-a の上で w がまだ動いている。
   (val stopping (! (stop-predicate-calls (! (scaled-to-zero None)) target calls)))
   (assert (= #((get stopping 0) (get stopping 2)) #(False VersionState.UPDATING)) stopping)
   (assert (and (>= (get stopping 1) 1) (>= (get stopping 3) 1)) stopping)

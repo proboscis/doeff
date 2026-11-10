@@ -36,7 +36,7 @@ For source code (the key of :func:`code_key` — the import hook and the worker 
 the reader checks it against the current environment's macros (the check is the caller's job — :func:`current_code`). The record fingerprint (:func:`code_fingerprint`) covers everything that decides
 whether it can be used, so code with the same record rewrites one entry, while code with different records (imports from worktrees of different doeff versions, and runtime-environment preparation) sit side by side.
 With one entry per key (key tag 2), writers of different versions saw each other's entry under the same key as stale, recompiled, and overwrote each other (2026-10-12
-zeus — runtime-environment preparation rebuilt 100 to 600 files at a time even for sources of the same version). A key holds at most :data:`CODE_ENTRIES_PER_KEY` entries, and
+node-h — runtime-environment preparation rebuilt 100 to 600 files at a time even for sources of the same version). A key holds at most :data:`CODE_ENTRIES_PER_KEY` entries, and
 past that the oldest by timestamp are removed. A just-added entry is placed at a timestamp older than the key's other entries (:func:`add_code`) — until someone checks and uses it, it stays
 at the back of the order and is removed first when the cap is exceeded. So entries of one-off environments (checks in a worktree where macros are being fixed) evict each other and
 do not push out the entries of writers that keep using them. Even when more environments than the cap use the same key in turn, only the excess falls out (it is not a cliff where everything falls

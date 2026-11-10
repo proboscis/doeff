@@ -1,6 +1,6 @@
 """The place for item records can be named by the environment variable DOEFF_ADR_ITEMS_CACHE.
 
-The daily whole-verification task replaces HOME with an empty dir on each run, so in the default place (under HOME) the records are empty every time, and the atlas daily imported
+The daily whole-verification task replaces HOME with an empty dir on each run, so in the default place (under HOME) the records are empty every time, and the node-a daily imported
 309 files for collection. So that the daily task can pass a place that spans runs to the child, the place is decided in the order ini
 ``doeff_adr_items_cache`` -> environment variable ``DOEFF_ADR_ITEMS_CACHE`` -> the default under HOME.
 

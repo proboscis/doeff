@@ -43,7 +43,7 @@ def test_rollback_tag_preserves_the_retired_crate() -> None:
     # The subject of this law is the git history itself -- in an inspection tree that does not carry history (remote_check copies only the
     # git ls-files listing; no .git) it cannot be observed, so use an explicit skip rather than fail
     # (do not turn an unobservable property into a false red). In a checkout with git metadata,
-    # a missing tag = fail as before (measured 2026-08-17 zeus, route-3da438e018).
+    # a missing tag = fail as before (measured 2026-08-17 node-h, route-3da438e018).
     inside_repo = _git("rev-parse", "--git-dir")
     if inside_repo.returncode != 0:
         pytest.skip(

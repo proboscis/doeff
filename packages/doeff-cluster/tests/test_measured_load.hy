@@ -162,7 +162,7 @@
   (val paths (LoadPaths :stat (str (/ root "stat")) :meminfo (str (/ root "meminfo"))
                         :cpu-pressure (str (/ root "pressure" "cpu")) :memory-pressure (str (/ root "pressure" "memory"))
                         :task-cpu-pressure (str (/ root "jobs.cpu.pressure"))))
-  (val link (LinkRig "http://coord" "atlas" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (val link (LinkRig "http://coord" "node-a" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (setv link.state.load-paths paths)
   (val measured (fn [] (.get (get sent -1) "measured")))
   ;; 初めての拍: 使いは数えられず null・残りは読んだ値。読んだ刻は worker の壁の時計。
@@ -195,7 +195,7 @@
   (.poll link)
   (assert (= #((get (measured) "cpuBusy") (get (measured) "cpus") link.state.load-reason) #(None 2 "")) (measured))
   ;; 測らない worker(load-paths を渡さず、名乗る値も置かない口)は measured を名乗らない。
-  (val plain (LinkRig "http://coord" "zeus" #() 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)
+  (val plain (LinkRig "http://coord" "node-h" #() 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)
                      :measured None))
   (.poll plain)
   (assert (not-in "measured" (get sent -1)) (get sent -1)))
@@ -204,24 +204,24 @@
 (deftest test-the-coordinator-shows-the-measured-load-in-state-but-not-in-the-worker-resource
   (<- load LoadReading (machine-load-of STAT-B MEMINFO CPU-PSI MEMORY-PSI (CpuTicks :busy 150 :total 1000 :cpus 2) 1700000000000))
   (<- spelled dict (measured-json load.load))
-  (val body {"name" "helios" "provides" ["host-helios"]})
+  (val body {"name" "node-c" "provides" ["host-node-c"]})
   (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of (| body {"measured" spelled}))) 10)))
-  (val both (! (register-heartbeat heard (! (heartbeat-of {"name" "eos" "provides" []})) 10)))
-  (val helios (.row both.workers "helios"))
-  (assert (= #(helios.measured.cpus helios.measured.cpu-busy helios.measured.memory-available-MiB) #(2 0.4 2048)) helios.measured)
-  (assert (is (. (.row both.workers "eos") measured) None))
+  (val both (! (register-heartbeat heard (! (heartbeat-of {"name" "node-b" "provides" []})) 10)))
+  (val node-c (.row both.workers "node-c"))
+  (assert (= #(node-c.measured.cpus node-c.measured.cpu-busy node-c.measured.memory-available-MiB) #(2 0.4 2048)) node-c.measured)
+  (assert (is (. (.row both.workers "node-b") measured) None))
   ;; GET /state の worker の行: 送った measured と同じ形と値。測れない worker の行には欄が無い。
   (val workers (get (! (state-view-json (! (state-view both 20 T)))) "workers"))
-  (assert (= (get workers "helios" "measured") spelled) (get workers "helios"))
-  (assert (not-in "measured" (get workers "eos")) (get workers "eos"))
+  (assert (= (get workers "node-c" "measured") spelled) (get workers "node-c"))
+  (assert (not-in "measured" (get workers "node-b")) (get workers "node-b"))
   ;; Worker の資源の行には入れない(heartbeat ごとに変わる観測 — 入れると版と出来事が拍ごとに進む)。
-  (val row (worker-row both helios 20 T))
+  (val row (worker-row both node-c 20 T))
   (assert (not-in "measured" (| (get row "spec") (get row "status"))) row)
   ;; 次の heartbeat の値で書き直す(前の値を持ち続けない)。欄の無い heartbeat は測りを外す。
   (val again (! (register-heartbeat both (! (heartbeat-of (| body {"measured" (| spelled {"cpuBusy" 0.9 "memoryAvailableMiB" 512})}))) 30)))
-  (assert (= #((. (.row again.workers "helios") measured cpu-busy) (. (.row again.workers "helios") measured memory-available-MiB)) #(0.9 512)))
+  (assert (= #((. (.row again.workers "node-c") measured cpu-busy) (. (.row again.workers "node-c") measured memory-available-MiB)) #(0.9 512)))
   (val dropped (! (register-heartbeat again (! (heartbeat-of body)) 40)))
-  (assert (is (. (.row dropped.workers "helios") measured) None))
+  (assert (is (. (.row dropped.workers "node-c") measured) None))
   ;; 形の誤りは本文の形の誤り(400)。
   (for [wrong [{"cpus" 0} {"cpuBusy" 1.5} {"memoryAvailableMiB" 9000} {"cpuSomeAvg10" -1.0} {"cpus" "2"}]]
     (with [(pytest.raises ValueError)]

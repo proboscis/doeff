@@ -102,7 +102,7 @@
     (for [p live]
       (when (>= self.now (+ p.started-ms JOB-START))
         (self.call "POST" "/resources/Service/writer-a/readiness"
-                   {"worker" "zeus" "pid" p.pid "revision" p.spec.revision "instance" p.instance "attempt" (str p.attempt)
+                   {"worker" "node-h" "pid" p.pid "revision" p.spec.revision "instance" p.instance "attempt" (str p.attempt)
                     "specHash" (spec-hash p.spec) "placement" p.spec.placement "ready" True "reason" "拍を終えた"
                     "role" (if (= self.lease p.instance) "active" "standby")} :actor None)))))
 
@@ -115,7 +115,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "node-h" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
                        :actor None))
   (setv sim.desired (tuple (gfor j (get reply "jobs")
                                  (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
@@ -193,9 +193,9 @@
   (setv sim (Sim))
   (for [_ (range 3)] (<- (step sim)))
   ;; process は起きたが最初の報告(JOB-START)の前 → Ready の世代の名はまだ無い。
-  (setv early (ready-instances sim.state "zeus" sim.now T))
+  (setv early (ready-instances sim.state "node-h" sim.now T))
   (for [_ (range 10)] (<- (step sim)))
-  (setv later (ready-instances sim.state "zeus" sim.now T))
+  (setv later (ready-instances sim.state "node-h" sim.now T))
   (assert (is (get early "writer-a") None) early)
   (assert (= (get later "writer-a") sim.lease) later))
 
@@ -206,8 +206,8 @@
   (import doeff_cluster [WorkerInfo]
           doeff_cluster._coordinator.intent.cluster_model [WorkerReport])
   (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
-  (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 1000 :measured (get ROOM-LOADS 10))}))
-                            :observations (! (reports-observed {"zeus" (WorkerReport :at 1000 :endpoint None
+  (val state (replace empty :workers (! (table-from-rows {"node-h" (WorkerInfo "node-h" #("net") 1000 :measured (get ROOM-LOADS 10))}))
+                            :observations (! (reports-observed {"node-h" (WorkerReport :at 1000 :endpoint None
                                                                                      :jobs #((StatusRow :name "a#retired-1-x" :phase "running"
                                                                                                         :retired-from "a")))}))))
   (assert (still-live-somewhere 1000 state "a" T))
@@ -219,10 +219,10 @@
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster [WorkerInfo])
   (val state (replace (ClusterState)
-                      :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 1000 :measured (get ROOM-LOADS 10))
+                      :workers (! (table-from-rows {"node-h" (WorkerInfo "node-h" #("cluster-net" "net") 1000 :measured (get ROOM-LOADS 10))
                                 "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 61000 :exclusive #("agent-cli") :measured (get ROOM-LOADS 10))}))))
   (val text (metrics-text state 91000 T))
-  (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"zeus\"} 90.0" text) text)
+  (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"node-h\"} 90.0" text) text)
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"proboscis-mbp\"} 30.0" text) text)
-  (val forgotten (replace state :workers (! (table-from-rows {"zeus" (.row state.workers "zeus")}))))
+  (val forgotten (replace state :workers (! (table-from-rows {"node-h" (.row state.workers "node-h")}))))
   (assert (not-in "proboscis-mbp" (metrics-text forgotten 91000 T))))

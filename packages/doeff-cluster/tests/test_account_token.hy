@@ -1,5 +1,5 @@
 ;; worker の ServiceAccount の token の古さを heartbeat で名乗る。
-;; 2026-10-24 の zeus では kubelet が投影の token の置き直しを止め(20:37:48Z に置いた token が最後)、exp 21:37:48Z の 81 秒後から Pod の中で
+;; 2026-10-24 の node-h では kubelet が投影の token の置き直しを止め(20:37:48Z に置いた token が最後)、exp 21:37:48Z の 81 秒後から Pod の中で
 ;; API server を呼ぶ物が全部 401 になった。止まった事は 401 が出るまで誰にも見えなかった。
 ;;   (1) token-state は kubelet が置き直す刻(1 時間の token なら発行から 48 分・36 時間の token なら 24 時間)+ 7 分を越えた token を
 ;;       stale、exp を過ぎた token を expired と読む(10-24 の刻で確かめる)
@@ -23,7 +23,7 @@
 (import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.core.resource_policy [worker-row])
 
-;; 10-24 の zeus の最後の token(20:37:48Z に発行・期限 1 時間)と、401 が始まった刻(exp の 81 秒後)。
+;; 10-24 の node-h の最後の token(20:37:48Z に発行・期限 1 時間)と、401 が始まった刻(exp の 81 秒後)。
 (val LAST-IAT 1792874268)
 (val LAST-EXP 1792877868)
 (val FIRST-401-MS (* (+ LAST-EXP 81) 1000))
@@ -51,7 +51,7 @@
 
 
 (deftest test-a-36-hour-token-is-ok-until-the-kubelet-would-refresh-it-at-24-hours
-  ;; 11-06 に zeus・helios・atlas の期限を 36 時間へ延ばした: kubelet は年齢 24 時間で置き直すので、それまで(と余りの 7 分)は ok。
+  ;; 11-06 に node-h・node-c・node-a の期限を 36 時間へ延ばした: kubelet は年齢 24 時間で置き直すので、それまで(と余りの 7 分)は ok。
   ;; 失敗ケース = 55 分の定数の線(Pod の作成から 55 分で、置き直しの正しい worker が stale を名乗る)。
   (val lifetime (* 36 3600))
   (<- text str (jwt-of {"iat" LAST-IAT "exp" (+ LAST-IAT lifetime)}))

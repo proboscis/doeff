@@ -299,8 +299,8 @@ def test_the_entry_reports_the_stored_wheel_to_the_caller(backend: ModuleType, t
 
 
 def test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Failure case (addendum to ADR-DOE-BUILD-001 R4, 2026-10-07 -- the sync of the slot of zeus's follower arm stopped with rc=1): the entry point
-    # makes the key before consulting the store. If the output of `rustc -V` is in the key material, then in an environment without rustc on PATH (zeus's resident PATH), it fails at key creation even if the store
+    # Failure case (addendum to ADR-DOE-BUILD-001 R4, 2026-10-07 -- the sync of the slot of node-h's follower arm stopped with rc=1): the entry point
+    # makes the key before consulting the store. If the output of `rustc -V` is in the key material, then in an environment without rustc on PATH (node-h's resident PATH), it fails at key creation even if the store
     # has a wheel of the same source. The key is made without spawning a child process, and the store's wheel is returned as is. Do not replace the tool version with
     # a fixed string (go through the real path that makes the key).
     module = _backend()

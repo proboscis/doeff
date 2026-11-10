@@ -1,6 +1,6 @@
 """古い版の起動の root の片付け(deploy/boot_roots.py と、boot.sh の doeff_root_hold)の検。
 
-訳: boot.sh は宣言された commit ごとに $WORK_DIR/boot/roots/<sha> を作り、前は消す者が居なかった(2026-11-08 の atlas で worker 33 本・
+訳: boot.sh は宣言された commit ごとに $WORK_DIR/boot/roots/<sha> を作り、前は消す者が居なかった(2026-11-08 の node-a で worker 33 本・
 coordinator 95 本・計 約 22 GB)。片付けは、今の版・最後に使った新しい物・錠を持たれた物(drain 中の世代・同じ hostPath の別の Pod)・
 この名前空間の process が使う物を残し、ほかを消す。数だけで消すと drain 中の世代の root を消しうるので、錠と process の判じを確かめる。
 

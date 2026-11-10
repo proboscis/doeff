@@ -25,7 +25,7 @@
 ;;; 測りの task-memory-MiB(見張りの最後の読みの task ごとの memory — task の木の rss の和)で名乗り、名乗られない task は 0(要りの全部を
 ;;; 予約する)。要りを名乗らない task(切り離さない task の RemoteJob・欄の前の保存の行)は UNDECLARED-TASK-MIB を要りと見込む。
 ;;;
-;;; 測った山で数える要り(2026-11-10): 名乗った要りは送り手の見当で、実の山より小さい事がある(zeus の 11-09 16:52 UTC — 名乗り 3584 MiB の
+;;; 測った山で数える要り(2026-11-10): 名乗った要りは送り手の見当で、実の山より小さい事がある(node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の
 ;;; task 3 本を名乗る空き約 9.7 GiB に置き、8 分後に各 14 GiB を使った。予約は「要り − 今の使い」なので、名乗りを越えた伸びは置く判断にも
 ;;; 後の予約にも入らなかった)。coordinator は worker の測りが名乗る task ごとの今の使いの最大を行の山(peak-mib)に持ち、task の要りを
 ;;;   要り = max(名乗った要り, min(max(この task の山, 同じ形の行の山の最大), その worker の線 − 床))
@@ -40,7 +40,7 @@
 ;;;
 ;;; 優先度を下げた process を数えない訳(2026-11-05): 上に載る系は自分の命令を SCHED_IDLE と nice 10 で走らせ、普通の優先度の task に CPU を
 ;;; 譲らせる。機体の CPU の使い(cpu-busy)は nice の分を使いに数え、機体の PSI の some は譲る側の process の実行の待ちでも立つので、譲る
-;;; 命令が CPU を埋めると、普通の優先度の task が動ける機体を空き 0 と判じた(zeus: nice 19 core・user と system の和 12〜15 core・機体の
+;;; 命令が CPU を埋めると、普通の優先度の task が動ける機体を空き 0 と判じた(node-h: nice 19 core・user と system の和 12〜15 core・機体の
 ;;; some 76% の 3 時間、置かれない task が 47 本に積もり、版の配りが止まった。同じ時の task の層の some は 5.6%)。nice の分は、普通の優先度の
 ;;; task が起きれば奪える CPU として空きに数える。譲りは機体の中の cgroup の重みにも掛かる(兄弟の層の重みが同じなら、譲る命令の層も層ごとの
 ;;; 取り分を持つ)ので、置いた task が本当に動けるかは task の層の PSI で測り、待ちが閾値を越えれば 0 にする。memory の判定(空き・予約・
@@ -58,20 +58,20 @@
 ;;; memory の空き(memory-available)と総量(memory-total): worker が名乗る値。kubelet の下の worker は、kubelet が Pod を追い出す線までの
 ;;; 空き(Pod の全部の working set と allocatable の差・機体の線の近い方 — worker/core/eviction_rules)と線の大きさを名乗り、それ以外の
 ;;; worker は MemAvailable と MemTotal を名乗る。機体の MemAvailable が残っていても、allocatable の線を越えれば kubelet は worker の Pod を
-;;; 丸ごと追い出す(atlas の 10-30〜11-01 の 5 回)ので、置き先は追い出しまでの空きで数える。線の大きさ − 床(memory-line-mib)は、その
+;;; 丸ごと追い出す(node-a の 10-30〜11-01 の 5 回)ので、置き先は追い出しまでの空きで数える。線の大きさ − 床(memory-line-mib)は、その
 ;;; worker が空いた時に受けうる要りの最大 — needs の合うどの worker の線よりも大きい要りの task は、積む時に断る(待っても入らない)。
 ;;;
 ;;; jobs の層の空き(2026-11-09): task は jobs の層に入り、kernel はその層の memory.max で止める。worker はこの上限を追い出しまでの
 ;;; 空きから余裕(機体ごと・測った伸びで広がる)・準備の取り置き・会話の CLI の層への貸しを引き、container の中の空きでも縛って掛け直す
 ;;; (worker/core/eviction_rules の jobs-limit)ので、層の空きは追い出しまでの空き − 床よりずっと小さい時が在る。追い出しまでの空きだけで
-;;; 数えると、atlas の 11-08 14:03 は空き約 5.6 GiB と見て要り 3584 MiB の task を置き、層の空きは負(上限 3173 MiB・使い 3361 MiB — 会話の
+;;; 数えると、node-a の 11-08 14:03 は空き約 5.6 GiB と見て要り 3584 MiB の task を置き、層の空きは負(上限 3173 MiB・使い 3361 MiB — 会話の
 ;;; CLI の層への貸し 4608 MiB と余裕 2766 MiB を引いた値)で、kernel が層の中の最大の process を OOM で止めた(同じ形で 3 回続いた)。
 ;;; jobs の層の空きを名乗る worker には、要りがその空き − JOBS-ROOM-FLOOR-MIB − 置いた task の予約にも収まる task だけを置く(名乗らない
 ;;; worker は追い出しまでの空きだけで数える)。層の空きには置いた task の今の使いが入っているので、予約は追い出しまでの空きと同じく引く。
 ;;;
 ;;; 長く待った task の取っておき(2026-11-10): 置き先は優先と id の順に task を見て、置けない task を飛ばして後ろの task を置く。小さい
 ;;; task が絶えず積まれる worker では、置いた task が終わって戻る空きを後ろの小さい task が先に取り、要りの大きい task の分の空きが溜まる
-;;; 時が来ない(helios の 11-10 — 要り 5632 MiB の task が jobs の層の空き 約 4 GiB を待って 4 時間を越え、その間に要り 1〜3.5 GiB の task が
+;;; 時が来ない(node-c の 11-10 — 要り 5632 MiB の task が jobs の層の空き 約 4 GiB を待って 4 時間を越え、その間に要り 1〜3.5 GiB の task が
 ;;; 置かれ続けた。同じ形の要り 4096 MiB の task は 6 時間待った)。積んでから STARVE-WAIT-MS を越えて memory の空きだけで置けない task は、
 ;;; 置ける worker のうち、今の task が全部終われば入る見込み(drained-room-mib)の在る 1 台にその要りを取っておく(cluster_policy の
 ;;; starved-keeper)。同じ拍の後ろの順の task は、その worker の memory の空きから要りを引いて数える — 置いた task が終わった分は後ろの
@@ -88,7 +88,7 @@
 ;;;
 ;;; 急ぎの task の空き(2026-11-10): 上に載る系が残す線を名指す worker(worker/core/load_rules の頭の註の会話のターンに残す線)は、名乗る
 ;;; memory の空きと jobs の層の空きをその線の上に絞る。線は作り直せる task を上に載る系の仕事の後ろへ回す線で、急ぎの task まで後ろへ
-;;; 回すと、その機体でしか走れない急ぎの task は線を越えて空きが戻るまで置かれない(zeus の 11-10 — 名乗る空き約 4 GiB・要り 6144 MiB の
+;;; 回すと、その機体でしか走れない急ぎの task は線を越えて空きが戻るまで置かれない(node-h の 11-10 — 名乗る空き約 4 GiB・要り 6144 MiB の
 ;;; 急ぎでない task が queued のまま待った。同じ形の急ぎの task も同じに待つ)。線が空きを縮めている間、worker は線を外して追い出しの線
 ;;; だけで数えた空き(urgent-memory-available-MiB・urgent-jobs-room-MiB)も名乗る。優先 KEEP-NOW-PRIORITY 以上の task の memory の空きは
 ;;; その値で数え(memory-room-mib の urgent)、ほかの task は今までどおり線の上の空きで数える。名乗らない worker(線が縮めていない・前の版)は
@@ -116,11 +116,11 @@
 (val MEMORY-SLOT-MIB 1024)
 ;; 機体に残す空いた CPU と memory。CPU は常駐の job の揺れと、測りの間の増えの分。memory はその 512 MiB に、worker が jobs の層の上限で
 ;; 追い出しの線の手前に残す余裕 1024 MiB(worker/core/eviction_rules の EVICTION-MARGIN-BYTES — 宣言の無い機体の余裕で、task を受ける
-;; 機体の宣言の値の最大〔atlas〕。task は追い出しまでの空きからこの余裕を引いた分までしか使えない)を足した値。
+;; 機体の宣言の値の最大〔node-a〕。task は追い出しまでの空きからこの余裕を引いた分までしか使えない)を足した値。
 (val CPU-FLOOR-CORES 1)
 (val MEMORY-FLOOR-MIB 1536)
 ;; jobs の層の空きに残す量(MiB — 頭の註の jobs の層の空き)。worker は層の上限を 5 秒ごとに掛け直し、ほかの層や Pod の伸びで上限は回ごとに
-;; 数百 MiB 動く(atlas の 11-08 14:09〜14:15 は 3298 → 2852 → 1962 MiB)。置いた直後の task の伸びが次の回の縮みと重なっても層に収まる分。
+;; 数百 MiB 動く(node-a の 11-08 14:09〜14:15 は 3298 → 2852 → 1962 MiB)。置いた直後の task の伸びが次の回の縮みと重なっても層に収まる分。
 (val JOBS-ROOM-FLOOR-MIB 512)
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
 (val CPU-PRESSURE-STOP 40.0)

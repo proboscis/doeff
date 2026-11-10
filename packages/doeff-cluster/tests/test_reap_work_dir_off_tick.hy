@@ -1,6 +1,6 @@
 ;; 実行環境の job の作業 dir の消し(RemoveTree)が worker の拍を止めない形の検。
 ;;
-;; 実例(zeus・2026-10-23 17:42〜10-24 06:55 JST の worker の log): 区間 ActionsToPublishStatus が 10 秒を越えた拍が 17 回在り、17 回とも
+;; 実例(node-h・2026-10-23 17:42〜10-24 06:55 JST の worker の log): 区間 ActionsToPublishStatus が 10 秒を越えた拍が 17 回在り、17 回とも
 ;; その拍の中で実行環境の task を回収していた。回収(ReapJob)は作業 dir(<state>/jobs/task_<id> — 14 万 file・3.4 GiB に育つ)を
 ;; RemoveTree で消し、拍はその終わりを待った(05:47:28 に 63 秒・05:46:24 に 250 秒)。拍が止まる間は、ほかの job の起動・止め・状態の報告も
 ;; 止まった。だから:
@@ -50,7 +50,7 @@
 (val ENV-JSON {"project" {"repo" "r" "path" "p"} "repos" [{"name" "r" "url" "https://example.invalid/r"}]})
 (val SPEC (JobSpec "svc" "jobs.svc" #() "rev-a" :runtime-env (json.dumps ENV-JSON :sort-keys True) :env-key ROOT-KEY))
 (val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))
-;; 木 1 つの消しにかかる仮想の秒(zeus の 14 万 file・3.4 GiB の作業 dir の消しは 40〜250 秒)。
+;; 木 1 つの消しにかかる仮想の秒(node-h の 14 万 file・3.4 GiB の作業 dir の消しは 40〜250 秒)。
 (val SLOW-SECONDS 60.0)
 ;; 筋書きの長さ(仮想の ms): 起こし直しの待ちを挟んで回収が何度か起き、消しの task が何本か終わるまで。
 (val RUN-MS 400000)

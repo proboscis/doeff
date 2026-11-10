@@ -1,6 +1,6 @@
 """An entry point that pins the doeff-linter called by doeff's commit hook to a binary built from the same build inputs as the key the baseline file declares.
 
-What was broken: the hook called `doeff-linter` on the search path (on zeus, each seat installs it by hand in ~/.cargo/bin), and if its version differed from the baseline's it
+What was broken: the hook called `doeff-linter` on the search path (on node-h, each seat installs it by hand in ~/.cargo/bin), and if its version differed from the baseline's it
 declared itself "unmeasurable" and passed. Every time a change touched the linter's source, the hook's linter item stopped nothing until someone
 reinstalled the shared binary (the evening of 2026-10-02). land-arm automatically rebuilds the dev build whenever main's linter changes, but the hook did
 not look at it.

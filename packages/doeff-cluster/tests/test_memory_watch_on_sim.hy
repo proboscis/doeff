@@ -1,6 +1,6 @@
 ;; 模擬の worker の機体の memory の見張り(SimWorker の memory-watch)を、模擬の世界(sim-cluster — 本物の
 ;; coordinator と本物の worker を仮想の時計で回す)で確かめる失敗ケース。
-;;   - 子 process の溢れ(2026-10-30 の zeus で、job の shim の直下に孤児が約 8.2 万本溜まり、木の辿りが process の
+;;   - 子 process の溢れ(2026-10-30 の node-h で、job の shim の直下に孤児が約 8.2 万本溜まり、木の辿りが process の
 ;;     数の 2 乗の見張りの 1 回が main の scheduler を何十分も塞ぎ、heartbeat が止まって Pod が NotReady になった): 常駐の job の根の直下に
 ;;     子 8 万本を持つ worker で見張りを回しても、1 回の読みは CPU の上限の内で終わり、生死の期限を越えて待った後も coordinator は worker を
 ;;     生きていると読む。直す前の見張り(doeff 762359834 の親)では読みが上限を越えて切られ、終わらない読みの止まりで heartbeat が止まり、
@@ -16,7 +16,7 @@
 
 (val T (ClusterTiming))
 (val WORKER "w1")
-;; 群れの大きさ: 10-30 の zeus の約 8.2 万本に揃えた 8 万本(pulses の常駐の job pulse の根の直下)。
+;; 群れの大きさ: 10-30 の node-h の約 8.2 万本に揃えた 8 万本(pulses の常駐の job pulse の根の直下)。
 (val CHILDREN 80000)
 ;; 読みの間隔: 筋書きの間に群れの読みが 2 回入る長さ(短いと 8 万本の読みの数だけ壁の時間が延びる)。
 (val SAMPLE-SECONDS 30.0)

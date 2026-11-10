@@ -16,7 +16,7 @@
 //! (`ProjectRule::needs_whole_repo`), and hits in unstaged files of a commit that changed a declaration file, are not measured by the hook but are looked at by the repo-wide
 //! verification (each repo's daily run -- every 4 hours for agora-controllers) (decision of cisco-c8, 2026-10-11 11:1x). Previously the hook also did
 //! the whole-repo comparison (measuring the tip tree and the HEAD tree across the whole repo), which took 45 to 100 seconds and 1.5 to 1.7 GB per run in agora-controllers, and
-//! 23 conversations fixing the daily red committing at the same time filled up zeus (load 102/24 cores, all of swap). Whole-repo rules build the whole-repo inference world even when applied to one file
+//! 23 conversations fixing the daily red committing at the same time filled up node-h (load 102/24 cores, all of swap). Whole-repo rules build the whole-repo inference world even when applied to one file
 //! (DOEFF132 takes 28 seconds for 1 file), so applying them to the staged paths does not make them lighter either.
 //!
 //! Criticals of rules with no known list (DOEFF206-209, 211) stop in the second item above if they are in a staged path even when the same key is in HEAD. Those hits are written as
@@ -358,7 +358,7 @@ pub enum Measure {
 }
 
 /// The multiplier of the wall backstop limit that cuts off a child that does not finish without using CPU (how many times the CPU-seconds limit). A child within the CPU-seconds limit is not cut off by wall
-/// until a core's share on a busy machine falls below 1/4 (zeus has 36 cores and load 73, giving a share of about 1/2).
+/// until a core's share on a busy machine falls below 1/4 (node-h has 36 cores and load 73, giving a share of about 1/2).
 pub const WALL_BACKSTOP_FACTOR: u32 = 4;
 
 /// Pure: the decision whether to cut off one child linter run -- wall = wall seconds since it was started, cpu = the child's CPU seconds (None on machines where it cannot be read),
@@ -589,7 +589,7 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
 //   The tree is the contents of the root (--root) dir, and if the root is a dir under the working tree's root, the name is the first 16 hex digits of the sha256 of the path made by joining that position (`git rev-parse --show-prefix`)
 //   to the common dir (roots at different positions do not fight over one tree).
 //   Name representing the repo = the first 16 hex digits of the sha256 of the absolute, normalized path of the repo's git common dir (`git rev-parse --git-common-dir`). Other
-//   working trees of the same repo have the same name and share one tree -- there are hundreds of working trees (561 for agora-controllers on zeus), so per-working-tree trees would run out of disk (one tree is
+//   working trees of the same repo have the same name and share one tree -- there are hundreds of working trees (561 for agora-controllers on node-h), so per-working-tree trees would run out of disk (one tree is
 //   about 35MB), and even the first commit in a new working tree can advance, by a diff only, from a tree advanced by other working trees (near the main line).
 //   The mtime of rewritten files is set to the time they were written (tar's -m) -- with the commit's time (second granularity), two commits in the same second would give
 //   files of the same size with different contents the same key, and the facts of the previous contents would be read.

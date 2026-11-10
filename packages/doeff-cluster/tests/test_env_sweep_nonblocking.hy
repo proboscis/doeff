@@ -1,6 +1,6 @@
 ;; 掃除の uv の cache の prune が worker のループを止めない(E13 の実験用の pod で見つけた — E11 の掃除の欠陥)の検。
 ;;
-;; 実測(2026-09-26・atlas): node の disk の空きが掃除の下限を切り、worker の掃除が `uv cache prune` を同期で撃った。prune は uv の
+;; 実測(2026-09-26・node-a): node の disk の空きが掃除の下限を切り、worker の掃除が `uv cache prune` を同期で撃った。prune は uv の
 ;; cache の lock を取るので、root の準備の `uv run`(bytecode の焼き)が終わるまで待ち、その間 worker の heartbeat が止まって
 ;; coordinator が worker を沈黙と見なし、task を落とした。だから:
 ;;   - prune は別の process として起こし、worker は待たない(掃除は数秒で返る)
@@ -114,7 +114,7 @@
 
 
 (deftest test-a-finished-prune-is-not-restarted-within-the-interval [tmp-path]
-  ;; node の disk を他の物が使っていると、worker が消せる量では下限に戻らない(atlas 2026-09-26 — 掃除の拍 30 秒ごとに prune が
+  ;; node の disk を他の物が使っていると、worker が消せる量では下限に戻らない(node-a 2026-09-26 — 掃除の拍 30 秒ごとに prune が
   ;; 起き続けた)。前の prune が終わっていても、PRUNE-EVERY-SECONDS の間は起こし直さない。
   (val script (/ tmp-path "fake-uv"))
   (.write-text script (.format "#!/bin/sh\necho \"$@\" >> {}\n" (/ tmp-path "uv-calls")) :encoding "utf-8")

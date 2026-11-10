@@ -1,7 +1,7 @@
 """焼く道具(_foundation/bytecode_pool.hy)の pool の子が途中で殺されても、焼きは落ちず、答えの無い物だけを道具の親が焼き直す。
 
 直す前は、子が 1 本殺されると pool が壊れ(concurrent.futures.process.BrokenProcessPool)、道具が 0 でない終わりで止まり、準備の全体が
-「焼く道具の全体の報告の行を読めない」で落ちた(2026-11-02 18:56 JST の k3s-0 — memory 4 GiB の node の jobs の層の上限で子が OOM kill
+「焼く道具の全体の報告の行を読めない」で落ちた(2026-11-02 18:56 JST の node-d — memory 4 GiB の node の jobs の層の上限で子が OOM kill
 され、新しい版の実行環境を作れず、配備の round が 45〜51 分待って戻した)。
 
 模擬: 木の Hy の source 1 本の macro が、pool の子の中で初めて展開された時だけ自分の process を SIGKILL で止める(kernel の OOM kill と

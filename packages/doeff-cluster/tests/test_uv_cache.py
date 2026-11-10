@@ -648,7 +648,7 @@ def test_gc_removes_old_unused_checkouts_and_keeps_used_ones(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """git の checkout は期限を過ぎ、残る venv が .pth で指さず、走っている process が使っていない物だけを印ごと消す。bare の repo は
-    消さない(2026-11-08 の atlas では 09-26 から 1 本も消えずに 25 GB 溜まった)。"""
+    消さない(2026-11-08 の node-a では 09-26 から 1 本も消えずに 25 GB 溜まった)。"""
     cache, worktrees = tmp_path / "cache", tmp_path / "worktrees"
     old = _checkout(cache, "0ld0000")
     busy = _checkout(cache, "b05y000")

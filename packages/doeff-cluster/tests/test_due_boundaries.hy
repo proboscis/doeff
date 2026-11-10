@@ -37,12 +37,12 @@
 
 (defk ready-world []
   {:pre [] :post [(: % Sim)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "worker zeus の上で Service writer-a(readiness の window 10 秒)が Ready の世界を作るため。最後の拍で担い手の heartbeat と
+  "worker node-h の上で Service writer-a(readiness の window 10 秒)が Ready の世界を作るため。最後の拍で担い手の heartbeat と
    準備の報告(真)を同じ刻 sim.now に受けている。"
   (val sim (Sim HANDOFF))
   (<- (steps sim 12))
   (assert (= (get (service-readiness sim.state NAME sim.now T) "state") "Ready") sim.log)
-  (val st (.row sim.state.observations.statuses "zeus"))
+  (val st (.row sim.state.observations.statuses "node-h"))
   (assert (= st.at sim.now) #(st.at sim.now))
   sim)
 
@@ -70,7 +70,7 @@
   (val now (get seen 1))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (carrier-stale-from (.row state.observations.statuses "zeus") SHORT-LEASE)) seen)
+  (assert (= due (carrier-stale-from (.row state.observations.statuses "node-h") SHORT-LEASE)) seen)
   (assert (= before now) seen)
   (assert (= (get before "state") "Ready") seen)
   (assert (= (get at "state") "Unknown") seen))
@@ -133,7 +133,7 @@
 (deftest test-readiness-due-warm-until-while-the-carrier-is-in-the-reassign-window
   ;; 枝 warm-until(担い手がまだ移し替えの窓の内): D − 1 で変わらない事だけを縛る。
   ;; 註: この枝は D で答えを変えない(下限として早い)。猶予が終わっても担い手が移し替えの窓の内(alive)なので Unknown のまま。
-  ;; 判定が実際に変わるのは移し替えの窓の終わり liveness-deadline(zeus, reassign-after-ms) + 1 = 最後の連絡 + 60001 ms(NotReady)。
+  ;; 判定が実際に変わるのは移し替えの窓の終わり liveness-deadline(node-h, reassign-after-ms) + 1 = 最後の連絡 + 60001 ms(NotReady)。
   ;; その刻は readiness-due が次の答えとして返す(下の断言)ので、飛ばしはしない。
   (<- sim Sim (ready-world))
   (val now (+ sim.now 20000))
@@ -146,7 +146,7 @@
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "Unknown") seen)
   (<- next-due (| int None) (readiness-due state NAME due T))
-  (assert (= next-due (+ (liveness-deadline (.row state.workers "zeus") T.reassign-after-ms) 1)) #(next-due seen)))
+  (assert (= next-due (+ (liveness-deadline (.row state.workers "node-h") T.reassign-after-ms) 1)) #(next-due seen)))
 
 
 (deftest test-readiness-due-reassign-window-is-the-judgments-boundary
@@ -159,23 +159,23 @@
   (val due (get seen 0))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.reassign-after-ms) 1)) seen)
+  (assert (= due (+ (liveness-deadline (.row state.workers "node-h") T.reassign-after-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "Unknown") seen)
   (assert (= (get at "state") "NotReady") seen))
 
 
 (deftest test-readiness-due-keep-fence-window-is-the-judgments-boundary
-  ;; 枝 担い手の沈黙の窓 2(途絶の柵 keep-fence-ms): 途絶しても動かし続けてよい印を zeus に渡してある。移し替えの窓は過ぎている。
+  ;; 枝 担い手の沈黙の窓 2(途絶の柵 keep-fence-ms): 途絶しても動かし続けてよい印を node-h に渡してある。移し替えの窓は過ぎている。
   ;; D(最後の連絡 + 240 秒 + 1 ms)の 1 ms 前は Unknown(印があるので動いている見込み)、D で NotReady。
   (<- sim Sim (ready-world))
   (val now (+ sim.now 100000))
-  (val state (replace sim.state :keep-marks #((KeepMark :job NAME :worker "zeus" :boot None :since-ms sim.now))))
+  (val state (replace sim.state :keep-marks #((KeepMark :job NAME :worker "node-h" :boot None :since-ms sim.now))))
   (<- seen tuple (readiness-boundary state now T))
   (val due (get seen 0))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.keep-fence-ms) 1)) seen)
+  (assert (= due (+ (liveness-deadline (.row state.workers "node-h") T.keep-fence-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "Unknown") seen)
   (assert (= (get at "state") "NotReady") seen))
@@ -192,7 +192,7 @@
   (val due (get seen 0))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.keep-fence-ms) 1)) seen)
+  (assert (= due (+ (liveness-deadline (.row state.workers "node-h") T.keep-fence-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "NotReady") seen))
 
@@ -218,13 +218,13 @@
 ;; --- service-stopped-due ------------------------------------------------------------------------------------------------
 
 (deftest test-service-stopped-due-is-the-judgments-boundary
-  ;; 宣言と置き先を外した Service の行(running)を zeus がまだ報告している。zeus が lease の窓から外れる刻 D の 1 ms 前は
+  ;; 宣言と置き先を外した Service の行(running)を node-h がまだ報告している。node-h が lease の窓から外れる刻 D の 1 ms 前は
   ;; まだどこかで動いている(止まっていない)、D で止まっている。
   (<- sim Sim (ready-world))
   (val state (replace sim.state :jobs (tuple (gfor j sim.state.jobs :if (!= j.spec.name NAME) j)) :placements (table-of #())))
   (assert (not (service-stopped state NAME sim.now T)))
   (<- due (| int None) (service-stopped-due state NAME sim.now T))
-  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.lease-ms) 1)) due)
+  (assert (= due (+ (liveness-deadline (.row state.workers "node-h") T.lease-ms) 1)) due)
   (assert (> due sim.now) #(due sim.now))
   (assert (not (service-stopped state NAME (- due 1) T)) due)
   (assert (service-stopped state NAME due T) due))

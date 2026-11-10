@@ -1719,9 +1719,9 @@ mod tests {
         let gateway = resolve_target(&env(&[("JEV_WIRE", "gateway"), ("AI_GATEWAY_API_KEY", "g")]), &no_files, None);
         assert_eq!((gateway.base_url.as_str(), gateway.model.as_str(), gateway.wire), (GATEWAY_URL, GATEWAY_MODEL, Wire::Gateway));
         // Environment variables win over the settings file, and the settings file wins over the default.
-        let files = |path: &str| (path == "~/.config/jev/client.json").then(|| r#"{"base_url":"http://seimf:8000/v1/systemone","model":"file-model"}"#.to_string());
+        let files = |path: &str| (path == "~/.config/jev/client.json").then(|| r#"{"base_url":"http://judge-host:8000/v1/systemone","model":"file-model"}"#.to_string());
         let from_file = resolve_target(&env(&[]), &files, None);
-        assert_eq!((from_file.base_url.as_str(), from_file.model.as_str(), from_file.source), ("http://seimf:8000/v1/systemone", "file-model", "file"));
+        assert_eq!((from_file.base_url.as_str(), from_file.model.as_str(), from_file.source), ("http://judge-host:8000/v1/systemone", "file-model", "file"));
         let from_env = resolve_target(&env(&[("JEV_BASE_URL", "http://x/v1"), ("JEV_MODEL", "m")]), &files, None);
         assert_eq!((from_env.base_url.as_str(), from_env.model.as_str(), from_env.source), ("http://x/v1", "m", "env"));
     }
@@ -1737,8 +1737,8 @@ mod tests {
         assert_eq!(via.api_key, None);
         assert!(HttpGateway::new(via, Duration::from_secs(1)).is_ok());
         // If env JEV_BASE_URL is set, the repo's proxy is not used.
-        let env_wins = resolve_repo_target(&env(&[("JEV_BASE_URL", "http://seimf/v1"), ("TYPESAFE_API_KEY", "k")]), &files, Some(&proxy));
-        assert_eq!((env_wins.base_url.as_str(), env_wins.proxy), ("http://seimf/v1", false));
+        let env_wins = resolve_repo_target(&env(&[("JEV_BASE_URL", "http://judge-host/v1"), ("TYPESAFE_API_KEY", "k")]), &files, Some(&proxy));
+        assert_eq!((env_wins.base_url.as_str(), env_wins.proxy), ("http://judge-host/v1", false));
         // Even in an environment that names the gateway, the proxy is asked in the direct form with the direct model.
         let gateway_env = resolve_repo_target(&env(&[("JEV_WIRE", "gateway")]), &files, Some(&proxy));
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));

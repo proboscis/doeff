@@ -74,7 +74,7 @@ _turn_vm_oracle_on(True)
 # every cgroup above it — not over the machine's cores.  A container limited to
 # 8 CPUs on a 16-core machine still sees 16 in os.cpu_count() and its affinity,
 # and dividing by 16 halved what it lived through.  Measured 2026-10-11 20:00
-# JST (the daily run on atlas): the worker Pod sat at 7.3-8.0 of its 8 CPUs from
+# JST (the daily run on node-a): the worker Pod sat at 7.3-8.0 of its 8 CPUs from
 # 20:10 to 20:40, and a 30 s child of packages/doeff-adr/tests/
 # test_indexed_collection.py was killed.  The load
 # average still counts the whole machine, so load from outside the cgroup reads
@@ -492,7 +492,7 @@ def _watchdog_timeout_for_item(item) -> int:
 # A tool on PATH is not a working tool.  The daily run's pod has the router's
 # entry point for `codex` on PATH but no binary behind it, so `shutil.which`
 # said "present" and the real-codex test went red (exit 127) for a fact about
-# the machine, not about the code.  Likewise the daily run's machine (zeus)
+# the machine, not about the code.  Likewise the daily run's machine (node-h)
 # has no custody checkout, and the test that compares the custody contract
 # copy with its source at the pinned commit went red for the same kind of
 # fact.  Each premise is observed once per session, and the test is skipped
@@ -550,7 +550,7 @@ def _probe_tool(name: str, probe: Sequence[str]) -> _PremiseHolds | _PremiseUnme
     path = shutil.which(name)
     if path is None:
         # The searched PATH tells which machine's environment lacked the tool (the daily run
-        # went to zeus, not to the pod whose image held the tool).
+        # went to node-h, not to the pod whose image held the tool).
         searched = os.pathsep.join(os.get_exec_path())
         return _PremiseUnmet(f"{name} is not on PATH (searched: {searched})")
     asked = " ".join(probe)
@@ -1125,7 +1125,7 @@ def _startup_bytecode_message(written: Sequence[tuple[str, tuple[Path, ...]]]) -
 # (an entry point such as doeff_cluster._worker.entry.env_tool), and where nothing is found
 # at all when the developer's PYTHONPYCACHEPREFIX took the collection's bytecode
 # elsewhere.  Each such subprocess compiled its Hy modules from source again:
-# 4-9 s per process on zeus, most of test_env_careful.hy's time (agora-redesign
+# 4-9 s per process on node-h, most of test_env_careful.hy's time (agora-redesign
 # #2818, measured 2026-10-02).  On a deployed worker those subprocesses find
 # bytecode (the runtime-env preparation compiles the code inside an env root, and
 # a job's process may write the rest), so the time existed only under test.

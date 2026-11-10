@@ -22,7 +22,7 @@
 ;; 業務の repo の木の形(2026-09-25 — クラスタの仕組みを業務の repo から切り出した時に、木の形を worker の引数へ出した)。
 ;;   import-roots = 子 process の PYTHONPATH に並べる木の中の dir(前が先)。bytecode の準備(code_prepare)も同じ根で module 名を決める。
 ;;   base-paths = 土台(worker の実行環境)の側の import の路 — 木の根の**後ろ**に並べる機体の絶対 path(2026-09-26)。pod は土台の
-;;                package を image の venv に焼くので空。host の worker(zeus)は共有の venv に入れない土台の package(例 制御面の SDK)を
+;;                package を image の venv に焼くので空。host の worker(node-h)は共有の venv に入れない土台の package(例 制御面の SDK)を
 ;;                ここで宣言する。業務の code は常に木の根が先に勝つ(同じ名の module は task の版の物)。子の PYTHONPATH は木の根
 ;;                と base-paths だけで、worker の process の PYTHONPATH は継がない(宣言の外の路が黙って混ざらない)。
 ;; 定義点はここ 1 つ(worker のコードの木・入口の検め・子 process の言い換えが同じ値を読む。値は worker の composition root が引数から作る)。
@@ -187,7 +187,7 @@
   ;; jobs の層(job と待ちの子の置かれる cgroup)の今の空き = 見張りの最後の回に掛けた上限 − その回の使い(byte・負もありうる — 上限を
   ;; 使いより下げた続きの中)。判断(warm_rules の warm-child-roomless)は、待ちの子 1 本が入らない root の待ちの子を起こさず、その root の
   ;; task を入れ物 shim の冷えた道で起こす(入らない待ちの子は層の上限に当たって kernel の OOM kill で落ち、起こし直しの輪になった —
-  ;; 2026-11-06 の k3s-0〜2)。None = 層が無い・見張りが上限を掛けない・まだ読めていない(空きで縛らない)。既定は None(模擬の環境)。
+  ;; 2026-11-06 の node-d〜f)。None = 層が無い・見張りが上限を掛けない・まだ読めていない(空きで縛らない)。既定は None(模擬の環境)。
   (setv #^ (| int None) jobs-room None)
   ;; 機体の memory の訳で job の process が止められた記録(MemoryStops — 見張りの止めの訳と jobs の層の kernel の OOM kill の刻)。判断
   ;; (policy の plan-job)は終わった process を回収する時に止めた訳を決め(stop-reason-of)、状態の報告の訳に載せる。既定は空(見張りを
@@ -386,7 +386,7 @@
   ;; コードの準備に失敗した版を作り直すまでの間(失敗が続く版で git と焼きを毎拍撃たない)。
   (setv #^ int code-retry-ms 30000)
   ;; recreate の job の旧い process が動いている間の新しい版の準備で、bytecode を焼く道具に渡す並べる数(--jobs・正の整数 — 2026-10-08)。
-  ;; 旧い service と焼きが同じ Pod の memory の上限を分け合うので、道具の既定(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)より絞る。zeus の測り(MemoryMax 1650M =
+  ;; 旧い service と焼きが同じ Pod の memory の上限を分け合うので、道具の既定(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)より絞る。node-h の測り(MemoryMax 1650M =
   ;; Pod の 2Gi から旧い記録の service の anon 364MB を引いた値・CPU 400%・空の保存先から全部を焼く・1 回ずつ)で、回収できない anon の
   ;; 最高は並べる数 4 で 1.59GB(上限に当たった数 9・焼く時間 359 秒)、並べる数 2 で 358MB(上限に当たった数 0・414 秒)。2 なら旧と足して
   ;; 約 0.72GB で、Pod の上限に約 1.4GB の余りがある。旧が動いていない準備はこの値を使わない(道具の既定のまま — policy.replace-step だけが載せる)。
@@ -410,16 +410,16 @@
   ;; root の service は入れ物 shim で起こす(warm_rules の service-start)。機体の配備が worker の環境変数 DOEFF_WORKER_WARM_SERVICES で入れる。
   (setv #^ bool warm-services False)
   ;; service のために待ちの子を起こす root の、実行環境の service の本数の下限(正の整数)。待ちの子そのものが
-  ;; 読み込んだ頁を持つ(zeus の測りで RSS 約 500 MB)ので、service が 1〜2 本の root では分けても本体の合計が減らない。task か温める表の
+  ;; 読み込んだ頁を持つ(node-h の測りで RSS 約 500 MB)ので、service が 1〜2 本の root では分けても本体の合計が減らない。task か温める表の
   ;; ために待ちの子を起こす root の service は、本数によらず分ける(待ちの子は既に居る — warm_rules の service-warm-keys)。
   (setv #^ int warm-services-min 3)
   ;; 温める表の行の root にも、分かれる task が来る前から待ちの子を起こすか。偽 = 温める表の行は root を組むだけで、待ちの子は分かれる
   ;; task か service の分けが要る root にだけ起こす。task の来ない機体では温める表の待ちの子は分かれ元にならず、組みと同じ cgroup の層に
-  ;; 1 つ約 550 MB 残り(行の期限 1 時間の間)、次の版の先の組みを no-memory-room で断らせた(2026-11-05 の k3s-3: 層の上限 1.5 GiB に
+  ;; 1 つ約 550 MB 残り(行の期限 1 時間の間)、次の版の先の組みを no-memory-room で断らせた(2026-11-05 の node-g: 層の上限 1.5 GiB に
   ;; 誰も使わない待ちの子 2 つで working set 1.07〜1.34 GB・18 時間に task 0 本)。機体の配備が環境変数 DOEFF_WORKER_WARM_TABLE_CHILDREN で切る。
   (setv #^ bool warm-table-children True)
   ;; 待ちの子 1 本の大きさの見積もり(byte — その root の待ちの子の準備完了の時の RSS をまだ測っていない時に、jobs の層の空きと比べる値)。
-  ;; 2026-11-06 の k3s-0〜2 の見張りの log で準備完了の後の待ちの子は 519〜526 MiB(zeus の測りで約 500 MB)なので、少し上の 560 MiB。
+  ;; 2026-11-06 の node-d〜f の見張りの log で準備完了の後の待ちの子は 519〜526 MiB(node-h の測りで約 500 MB)なので、少し上の 560 MiB。
   (setv #^ int warm-child-size-bytes (* 560 1024 1024))
   ;; 常駐の job が機体の memory の見張りに続けて止められた時に、起こし直しを止めて失敗(phase memory-killed)として報告する回数(正の整数)。
   ;; 起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められ、要求を 1 件も回さずに起き直し続けた(2026-10-19 の本番の
@@ -433,7 +433,7 @@
   (setv #^ int memory-kill-reset-ms 600000)
   ;; 機体の memory の逼迫で task(once)の起動を見送る上限(ms)。越えた task はこの worker では起こさず、一時の準備の失敗(env-failed・
   ;; 種類 memory-tight・retryable)として報告する — coordinator はこの worker を避けて別の worker へ置き直し、置き直しの回数が尽きたら
-  ;; 理由つきで終える。上限が無いと、逼迫の続く worker に置かれた task は起こされずに何時間も残った(2026-11-08 の atlas: 日次の全体検証が
+  ;; 理由つきで終える。上限が無いと、逼迫の続く worker に置かれた task は起こされずに何時間も残った(2026-11-08 の node-a: 日次の全体検証が
   ;; 動く間、見回りの task が 2 回続けて 15 分を越えて起こされなかった。10-24 にも同じ事例)。既定 10 分 = 見回りが
   ;; 「終わらない」と数える 15 分より前に別の worker へ回る長さ。
   (setv #^ int memory-tight-hold-limit-ms 600000)
@@ -500,7 +500,7 @@
    at = 送った刻(epoch ms の壁の時計 — 送りを始めた時刻・遅れの行に書く刻)・mono-ms = 送りを始めた単調な時計の読み(ms — 間の長さの
    計り用。壁の時計は戻りうるので、間は mono-ms の差で計る・#3825)・worker = 名乗った worker の名・lease-ms = 送った時に知っていた
    生存の窓(heartbeat の返事の timing の lease_ms — まだ返事が無ければ ClusterTiming の既定)。拍の Program が前の送りとの間を測り、
-   窓に迫った間を名指す(#3850 — 隣り合う拍がどれも短いのに heartbeat の間が lease を越えた 2026-10-07 13:18 JST の agent-worker-2)。"
+   窓に迫った間を名指す(#3850 — 隣り合う拍がどれも短いのに heartbeat の間が lease を越えた 2026-10-07 13:18 JST の worker-2)。"
   {:tags {:context "worker" :role "type"}}
   (#^ int at)
   (#^ int mono-ms)

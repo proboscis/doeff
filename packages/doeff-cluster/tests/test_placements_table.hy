@@ -87,14 +87,14 @@
   (assert (is steady placed)))
 
 (deftest test-advance-drains-writes-a-surge-row-only_and-leaves-the-placements-table-alone
-  ;; 失敗ケース: drain 中の atlas の上の入れ替えの job w を zeus へ並べる。置き先の表は同じ object、並べ直しても書きは増えない。
+  ;; 失敗ケース: drain 中の node-a の上の入れ替えの job w を node-h へ並べる。置き先の表は同じ object、並べ直しても書きは増えない。
   (val state (state-of [(job-of "w" :handoff True)]
-                       {"atlas" (worker-of "atlas" 1000) "zeus" (worker-of "zeus" 1000)}
-                       {"w" (Placement "w" "atlas" 1 0)}
-                       :drains (! (table-from-rows {"atlas" (Drain "atlas" 0 600000)}))))
+                       {"node-a" (worker-of "node-a" 1000) "node-h" (worker-of "node-h" 1000)}
+                       {"w" (Placement "w" "node-a" 1 0)}
+                       :drains (! (table-from-rows {"node-a" (Drain "node-a" 0 600000)}))))
   (val stepped (advance-drains 1000 state T))
   (assert (= (tuple (.keys stepped.surges)) #("w")))
-  (assert (= (. (.row stepped.surges "w") worker) "zeus"))
+  (assert (= (. (.row stepped.surges "w") worker) "node-h"))
   (assert (is stepped.placements state.placements))
   (val again (advance-drains 1000 stepped T))
   (assert (is again.surges stepped.surges))
@@ -102,10 +102,10 @@
 
 (deftest test-advance-drains-drops-only-the-surge-that-stopped-holding
   ;; drain が解けたら並べた置き先を外す(その行だけ)。置き先の表は同じ object。
-  (val surge (Placement "w" "zeus" 2 0))
+  (val surge (Placement "w" "node-h" 2 0))
   (val state (state-of [(job-of "w" :handoff True)]
-                       {"atlas" (worker-of "atlas" 1000) "zeus" (worker-of "zeus" 1000)}
-                       {"w" (Placement "w" "atlas" 1 0)}
+                       {"node-a" (worker-of "node-a" 1000) "node-h" (worker-of "node-h" 1000)}
+                       {"w" (Placement "w" "node-a" 1 0)}
                        :surges (! (table-from-rows {"w" surge}))))
   (val stepped (advance-drains 1000 state T))
   (assert (= (.size stepped.surges) 0))

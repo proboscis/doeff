@@ -1,4 +1,4 @@
-;; 子の job を置く cgroup: zeus の機体の worker(zeus-native)は heartbeat を送る本体も子の job も同じ cgroup
+;; 子の job を置く cgroup: node-h の機体の worker(node-h-native)は heartbeat を送る本体も子の job も同じ cgroup
 ;; (CPUWeight=idle・CPUQuota=200%)に居て、機体が混んだ刻に本体が拍の間の眠り(AwaitNextTick)から 10 秒起きられず、coordinator から
 ;; 消えた。機体の配備が本体と兄弟の cgroup を分け、worker は起こす子を兄弟の cgroup へ入れる(判断 = worker/core/job_cgroup・答え手 =
 ;; worker/protocol/job_cgroup・入口の読み = worker/entry/main の job-cgroup-placed)。
@@ -154,7 +154,7 @@
 
 (deftest test-a-child-placed-in-another-layer-never-passes-through-the-job-cgroup [#^ Path tmp-path]
   ;; 本物の sh: 内の宿が別の層へ包んだ子(services・prepare)を外の placer(jobs)は包み直さない。jobs の層の上限は 0 まで下がるので、経ると
-  ;; 移る前に OOM kill で止まる(2026-11-04 22:05 JST の k3s-0 — 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。
+  ;; 移る前に OOM kill で止まる(2026-11-04 22:05 JST の node-d — 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。
   (val jobs (/ tmp-path "jobs.procs"))
   (val services (/ tmp-path "services.procs"))
   (.write-text jobs "")

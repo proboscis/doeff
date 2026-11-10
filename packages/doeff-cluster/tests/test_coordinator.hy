@@ -402,7 +402,7 @@
   (<- (on-wal-files (durable-persist store {"counter" {"nextTask" 1 "revision" 2 "auditSeq" 0}
                    "service/a" {"name" "a" "revision" "r" "needs" ["net"] "pin" None "replicas" 1 "readiness" None
                                 "owner" None "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}
-                   (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}})))
+                   (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "node-h" "generation" 3 "since_ms" 100}})))
   store)
 
 
@@ -415,7 +415,7 @@
   ;; 置き場が在るので以前の形の file は読まない — 読み直しの 1 行の報告(slog)だけに答える。
   (<- state (on-wal-files (load-state (str (/ (Path d) "absent.json")) (WalStore d) 5000)))
   ;; 読んだ置き先は旧い鍵の中身そのもの(担い手も世代も変わらない = worker は process を起こし直さない)
-  (assert (= (. (.row state.placements "a") worker) "zeus"))
+  (assert (= (. (.row state.placements "a") worker) "node-h"))
   (assert (= (. (.row state.placements "a") generation) 3))
   ;; 置き場は新しい鍵だけを持つ(読み直しても同じ)
   (<- kv dict (on-wal-files (durable-load (WalStore d))))
@@ -429,7 +429,7 @@
   ;; 2 回目の起動は置き先の鍵を書かない(起動ごとに書くのは、ずらした時計と生きていた時刻の 1 行だけ — durable_kv.resume-writes)
   (setv before (len deltas))
   (<- again (on-wal-files (load-state (str (/ (Path d) "absent.json")) (WalStore d) 6000)))
-  (assert (= (. (.row again.placements "a") worker) "zeus"))
+  (assert (= (. (.row again.placements "a") worker) "node-h"))
   (setv later (cut (lfor line (.splitlines (.read-text (/ (Path d) "wal.jsonl") :encoding "utf-8")) (get (json.loads line) "delta"))
                    before None))
   (assert (<= (len later) 1) later)
@@ -440,12 +440,12 @@
   (import doeff_cluster._coordinator.protocol.durable_kv [state-from-kv legacy-key-moves])
   (setv kv {(+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "old" "generation" 1 "since_ms" 0}
             (+ PLACEMENT "a") {"job" "a" "worker" "new" "generation" 2 "since_ms" 10}
-            (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}})
+            (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "node-h" "generation" 5 "since_ms" 0}})
   (assert (= (. (.row (. (! (state-from-kv kv 0)) placements) "a") worker) "new"))
-  (assert (= (. (.row (. (! (state-from-kv kv 0)) placements) "b") worker) "zeus"))
+  (assert (= (. (.row (. (! (state-from-kv kv 0)) placements) "b") worker) "node-h"))
   ;; 新しい鍵が在る a は書かず、無い b だけを書く。消すのは両方の旧い鍵
   (assert (= (! (legacy-key-moves kv))
-             [{(+ PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}}
+             [{(+ PLACEMENT "b") {"job" "b" "worker" "node-h" "generation" 5 "since_ms" 0}}
               {(+ LEGACY-PLACEMENT "a") None (+ LEGACY-PLACEMENT "b") None}]))
   (assert (= (! (legacy-key-moves {(+ PLACEMENT "a") {}})) [])))
 
@@ -453,7 +453,7 @@
 (deftest test-a-state-file-written-before-the-rename-keeps-its-placements
   ;; 追記の log の置き場より前の形(state.json)も、改名の前の欄の名で置き先を持っている。
   (setv data {"formatVersion" 2 "jobs" [] "workers" [] "tasks" [] "nextTask" 1
-              "assignments" {"a" {"job" "a" "worker" "atlas" "generation" 4 "since_ms" 0}}})
+              "assignments" {"a" {"job" "a" "worker" "node-a" "generation" 4 "since_ms" 0}}})
   (assert (= (. (.row (. (! (state-from-json data 0)) placements) "a") generation) 4))
   (assert (in "placements" (! (state-to-json (! (state-from-json data 0))))))
   (assert (not-in "assignments" (! (state-to-json (! (state-from-json data 0)))))))

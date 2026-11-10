@@ -8,7 +8,7 @@ The principle: "the fiber chain IS the state."
 No accumulated state, no identity tracking, no stored fiber ID lists.
 
 Contract: this check depends on nothing installed on the host that runs it — the
-answer is the same on a laptop, on the company Mac, on zeus and inside a k3s pod.
+answer is the same on a laptop, on the company Mac, on node-h and inside a k3s pod.
 The scan is in-process (pathlib + re): no external command, and no git metadata
 either, because `gate.full` ships the tree to the runner without its `.git`.
 

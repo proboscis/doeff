@@ -1,7 +1,7 @@
 """待ちの子から分かれた子 A が、入口 B を fork した後に exec する見張り。
 
 A は待ちの子の fork なので、読み込み済みの module と heap(数百 MB)の写しを持つ。A が fork のまま job の終わりまで見張ると、写しを B と
-待ちの子と分け合い続け、待ちの子が消えた後(root の世代の入れ替え)や B が heap を書き替えた後は、その頁を A だけが持つ(zeus の
+待ちの子と分け合い続け、待ちの子が消えた後(root の世代の入れ替え)や B が heap を書き替えた後は、その頁を A だけが持つ(node-h の
 daily-verify の A で PSS 270 MB・Private_Dirty 80 MB)。A の見張り(shim と同じ shim_code・刻の書き手・知らせの中継・exit の file)は
 読み込んだ module を使わないので、A は B を fork した直後に、この小さな入口へ exec して写しを手放す:
   待ちの子 ── fork ──▶ A ── fork ──▶ B(読み込み済みの入口)

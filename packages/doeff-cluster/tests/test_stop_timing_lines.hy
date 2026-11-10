@@ -125,7 +125,7 @@
 
 
 (defhandler signals-refused
-  "OS が signal の送りを全部断る機体の代役(2026-11-01 の helios — AppArmor が container の中の process どうしの signal を拒んだ):
+  "OS が signal の送りを全部断る機体の代役(2026-11-01 の node-c — AppArmor が container の中の process どうしの signal を拒んだ):
    SignalProcess に ProcessSignalRefused で答え、子は走ったまま(台本の子 process の答え手へ渡さない)。"
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
   (SignalProcess [pid signal]

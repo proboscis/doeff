@@ -1,11 +1,11 @@
 ;;; worker の ServiceAccount の token の古さの判断— I/O は呼び手(worker/protocol/coordinator_link)が行う。
 ;;;
 ;;; kubelet は投影の token を、年齢が 24 時間を越えるか残りが期限の 20% を切った時に置き直す(KUBELET-MAX-AGE-S・KUBELET-LEFT-PERCENT —
-;;; 1 時間の token なら発行から 48 分・36 時間の token なら 24 時間)。2026-10-24 の zeus では kubelet が置き直しを止め、
+;;; 1 時間の token なら発行から 48 分・36 時間の token なら 24 時間)。2026-10-24 の node-h では kubelet が置き直しを止め、
 ;;; 通信が戻った後も再開せず、JWT の exp の 81 秒後から Pod の中で API server を呼ぶ物が全部 401 になった(Pod の中からは
 ;;; kubelet の訳を読めない)。worker は token の file の発行の刻(JWT の iat)と期限(exp)を読み、置き直しの遅れを heartbeat で名乗る —
 ;;; 401 が黙って続かない様に、読み手(GET /resources/Worker)が期限の前に知る。stale の線は token 自身の期限から導く(配備の宣言の
-;;; expirationSeconds を機体ごとに変えても、線が一緒に動く — 11-06 に zeus・helios・atlas の期限を 36 時間へ延ばした時、55 分の定数の線は
+;;; expirationSeconds を機体ごとに変えても、線が一緒に動く — 11-06 に node-h・node-c・node-a の期限を 36 時間へ延ばした時、55 分の定数の線は
 ;;; 置き直しの正しい worker に stale を名乗らせた)。
 ;;;   ok          kubelet が置き直す刻 + REFRESH-SLACK-MS(token-stale-at-ms)の内で、期限の前
 ;;;   stale       token-stale-at-ms を越えた(kubelet が置き直しを取り逃している — 期限の延びない token なら間も無く 401)

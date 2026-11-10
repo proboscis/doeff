@@ -1,4 +1,4 @@
-;;; 長く待った task の取っておきの検(2026-11-10 — measured_room の頭の註の長く待った task の取っておき)。実例: helios の 11-10 は jobs の層の
+;;; 長く待った task の取っておきの検(2026-11-10 — measured_room の頭の註の長く待った task の取っておき)。実例: node-c の 11-10 は jobs の層の
 ;;; 空き 約 4 GiB で、要り 5632 MiB の task が 4 時間を越えて queued のままだった。置き先は優先と id の順に見て、置けない大きい task を
 ;;; 飛ばして後ろの要り 1〜3.5 GiB の task を置き続け、置いた task が終わって戻る空きは後ろの小さい task が先に取った。
 ;;;   (1) 反例の筋書き: STARVE-WAIT-MS を越えて待った大きい task は、今の task が全部終われば入る worker の空きを取っておき、後ろの小さい
@@ -26,7 +26,7 @@
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (val LONG-LEASE-MS (* 24 3600 1000))
 (val PY3 #((ComponentVersion "python" "3")))
-;; 11-10 08:5x JST の helios の測りに近い値(MiB)。
+;; 11-10 08:5x JST の node-c の測りに近い値(MiB)。
 (val LINE-MIB 59617)
 (val AVAILABLE-MIB 32512)
 ;; 置いた task 1 本(要り 3584 MiB・今の使い 1300 MiB — まだ 2284 MiB 伸びうる)。
@@ -40,31 +40,31 @@
 (val TIGHT-JOBS-MIB 4192)
 
 
-(defk helios-measured [jobs-room]
+(defk node-c-measured [jobs-room]
   {:pre [(: jobs-room int)] :post [(: % MeasuredLoad)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "helios の測り(CPU は空いている・機体の空きは広い)に、jobs の層の空き jobs-room と置いた task の今の使いを添えた形を作るため。"
+  "node-c の測り(CPU は空いている・機体の空きは広い)に、jobs の層の空き jobs-room と置いた task の今の使いを添えた形を作るため。"
   (MeasuredLoad :at-ms 0 :cpus 16 :cpu-busy 0.1 :memory-total-MiB LINE-MIB :memory-available-MiB AVAILABLE-MIB
                 :cpu-some-avg10 0.0 :memory-some-avg10 0.0 :task-memory-MiB {"running" RUNNING-USE} :jobs-room-MiB jobs-room))
 
 
 (defk waiting-task [id need submitted]
   {:pre [(: id str) (: need int) (: submitted int)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "能力 host-helios を要る、要り need MiB の、刻 submitted に積んだ待っている切り離した task を作るため。"
-  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" PY3 #("host-helios") LONG-LEASE-MS LONG-LEASE-MS submitted :detached True :key id
+  "能力 host-node-c を要る、要り need MiB の、刻 submitted に積んだ待っている切り離した task を作るため。"
+  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" PY3 #("host-node-c") LONG-LEASE-MS LONG-LEASE-MS submitted :detached True :key id
               :memory-mib need))
 
 
 (defk placed-world [jobs-room waited]
   {:pre [(: jobs-room int) (: waited int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "helios に task 1 本を置いた世界で、waited ミリ秒前に積んだ大きい task と、その後に積んだ小さい task を置き先に 1 拍回し、
+  "node-c に task 1 本を置いた世界で、waited ミリ秒前に積んだ大きい task と、その後に積んだ小さい task を置き先に 1 拍回し、
    #(大きい task の行 小さい task の行) を得るため。"
   (val now (* 10 3600 1000))
-  (val helios (WorkerInfo "helios" #("host-helios") now :versions PY3 :measured (! (helios-measured jobs-room))))
-  (<- workers (table-from-rows {"helios" helios}))
+  (val node-c (WorkerInfo "node-c" #("host-node-c") now :versions PY3 :measured (! (node-c-measured jobs-room))))
+  (<- workers (table-from-rows {"node-c" node-c}))
   (<- running TaskRecord (waiting-task "running" RUNNING-NEED 0))
   (<- big TaskRecord (waiting-task "a-big" BIG-NEED (- now waited)))
   (<- small TaskRecord (waiting-task "b-small" SMALL-NEED (- now 1000)))
-  (<- tasks (table-from-rows {"running" (replace running :phase "assigned" :worker "helios" :started-ms 0
+  (<- tasks (table-from-rows {"running" (replace running :phase "assigned" :worker "node-c" :started-ms 0
                                                  :lease-until-ms (+ now LONG-LEASE-MS))
                               "a-big" big "b-small" small}))
   (val state (ClusterState #() workers (table-of #()) tasks))
@@ -78,7 +78,7 @@
   (val big (get pair 0))
   (val small (get pair 1))
   (assert (= big.phase "queued") big)
-  (assert (in "worker helios の memory の空きをこの task に取っておく" big.detail) big.detail)
+  (assert (in "worker node-c の memory の空きをこの task に取っておく" big.detail) big.detail)
   (assert (= small.phase "queued") small)
   (assert (not-in "取っておく" small.detail) small.detail))
 
@@ -89,7 +89,7 @@
   (val small (get pair 1))
   (assert (= big.phase "queued") big)
   (assert (not-in "取っておく" big.detail) big.detail)
-  (assert (= #(small.phase small.worker) #("assigned" "helios")) small))
+  (assert (= #(small.phase small.worker) #("assigned" "node-c")) small))
 
 
 (deftest test-a-worker-the-task-cannot-fit-even-when-drained-is-not-kept
@@ -99,14 +99,14 @@
   (val small (get pair 1))
   (assert (= big.phase "queued") big)
   (assert (not-in "取っておく" big.detail) big.detail)
-  (assert (= #(small.phase small.worker) #("assigned" "helios")) small))
+  (assert (= #(small.phase small.worker) #("assigned" "node-c")) small))
 
 
 (deftest test-the-drained-room-adds-the-measured-task-uses-to-the-unreserved-room
-  (<- roomy int (drained-room-mib (! (helios-measured ROOMY-JOBS-MIB))))
+  (<- roomy int (drained-room-mib (! (node-c-measured ROOMY-JOBS-MIB))))
   (assert (= roomy (+ (- ROOMY-JOBS-MIB JOBS-ROOM-FLOOR-MIB) RUNNING-USE)) roomy)
   ;; 機体の空きが jobs の層より狭ければ機体の空きで数える。
-  (<- wide int (drained-room-mib (! (helios-measured 40000))))
+  (<- wide int (drained-room-mib (! (node-c-measured 40000))))
   (assert (= wide (+ (- AVAILABLE-MIB MEMORY-FLOOR-MIB) RUNNING-USE)) wide)
   (<- unmeasured int (drained-room-mib None))
   (assert (= unmeasured 0)))
@@ -114,17 +114,17 @@
 
 (defk urgent-world []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "helios に task 1 本を置いた世界で、STARVE-WAIT-MS より前に積んだ要り 3584 MiB・優先 0 の task と、その後に積んだ同じ要りで優先
+  "node-c に task 1 本を置いた世界で、STARVE-WAIT-MS より前に積んだ要り 3584 MiB・優先 0 の task と、その後に積んだ同じ要りで優先
    KEEP-NOW-PRIORITY の task と、最後に積んだ小さい task を置き先に 1 拍回し、#(先に積んだ task 急ぎの task 小さい task) の行を得るため
    (頭の註の (5))。"
   (val now (* 10 3600 1000))
-  (val helios (WorkerInfo "helios" #("host-helios") now :versions PY3 :measured (! (helios-measured ROOMY-JOBS-MIB))))
-  (<- workers (table-from-rows {"helios" helios}))
+  (val node-c (WorkerInfo "node-c" #("host-node-c") now :versions PY3 :measured (! (node-c-measured ROOMY-JOBS-MIB))))
+  (<- workers (table-from-rows {"node-c" node-c}))
   (<- running TaskRecord (waiting-task "running" RUNNING-NEED 0))
   (<- early TaskRecord (waiting-task "a-early" RUNNING-NEED (- now STARVE-WAIT-MS 1)))
   (<- urgent TaskRecord (waiting-task "b-urgent" RUNNING-NEED (- now 1000)))
   (<- small TaskRecord (waiting-task "c-small" SMALL-NEED (- now 500)))
-  (<- tasks (table-from-rows {"running" (replace running :phase "assigned" :worker "helios" :started-ms 0
+  (<- tasks (table-from-rows {"running" (replace running :phase "assigned" :worker "node-c" :started-ms 0
                                                  :lease-until-ms (+ now LONG-LEASE-MS))
                               "a-early" early "b-urgent" (replace urgent :priority KEEP-NOW-PRIORITY) "c-small" small}))
   (val state (ClusterState #() workers (table-of #()) tasks))
@@ -140,7 +140,7 @@
   (val urgent (get rows 1))
   (val small (get rows 2))
   (assert (= urgent.phase "queued") urgent)
-  (assert (in "worker helios の memory の空きをこの task に取っておく" urgent.detail) urgent.detail)
+  (assert (in "worker node-c の memory の空きをこの task に取っておく" urgent.detail) urgent.detail)
   (assert (= early.phase "queued") early)
   (assert (not-in "取っておく" early.detail) early.detail)
   (assert (= small.phase "queued") small)

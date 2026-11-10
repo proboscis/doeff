@@ -1,5 +1,5 @@
 ;; worker の作業の disk の空きの予告。
-;; 2026-10-10 13:39 JST に zeus の worker の空きが新しい版の準備の下限 WORKER_ENV_MIN_FREE_GIB(25 GiB)を切り、zeus へ置く job の新しい版の
+;; 2026-10-10 13:39 JST に node-h の worker の空きが新しい版の準備の下限 WORKER_ENV_MIN_FREE_GIB(25 GiB)を切り、node-h へ置く job の新しい版の
 ;; 準備が全部止まった。heartbeat の envCapacity は exhausted / ok の 2 語だけで、下限を切ってから分かった(1 時間に約 5 GB 減っていた)。
 ;;   (1) env-capacity は下限 + NEAR-MARGIN-BYTES(20 GB)を切った空きに near を名乗る(下限を切れば今までどおり exhausted・下限 0 は ok)
 ;;   (2) coordinator の Worker の資源の status は envCapacity が ok でない間だけ載せる(読み手が GET /resources/Worker で読む —

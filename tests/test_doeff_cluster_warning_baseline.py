@@ -24,7 +24,7 @@ SCRIPT: Path = ROOT / "scripts" / "doeff_cluster_warning_baseline.py"
 # 2026-10-10).
 # The child imports doeff and Hy inside the script. The child writes no .pyc and does not add to the unnamed Hy-expansion location (the user's cache), so
 # if the caller names the location with DOEFF_HY_CODE_STORE (daily task, worker), pass that name on to the child -- otherwise the child pays a cold Hy expansion every time
-# (about 14 s in atlas) and the check that starts it 5 times exceeded pytest-timeout's 60 s (real daily run, 2026-10-11 00:05 JST).
+# (about 14 s in node-a) and the check that starts it 5 times exceeded pytest-timeout's 60 s (real daily run, 2026-10-11 00:05 JST).
 HY_CODE_STORE_ENV: str = "DOEFF_HY_CODE_STORE"
 
 

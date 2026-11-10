@@ -3,7 +3,7 @@
 ;; 止められて終わる。retiredSeconds の無い handoff の job は、同じ世代の入れ替えで「新の Ready で旧を止める」—
 ;; 世代をまたぐ入れ替えでも同じ決まりで止める。
 ;;
-;; 出自: 10-12 の zeus の作り直しで、旧い Pod 5d6d78459d-zl8pw が 15:13:48 から 21:19:12 まで 6 時間 5 分 Terminating のまま残った。
+;; 出自: 10-12 の node-h の作り直しで、旧い Pod 5d6d78459d-zl8pw が 15:13:48 から 21:19:12 まで 6 時間 5 分 Terminating のまま残った。
 ;; 旧い世代に残った退いた process 2 本は退く知らせ(AwaitRetirement)を待たずに待ち受けを開いて動き続ける service で、
 ;; retiredSeconds も宣言しない。worker の判断 retired-actions は寿命の無い退いた process を「元の
 ;; job の新しい process が Ready と数えられたら止める」が、前の世代の worker の上には新しい process が居ない(新しい process は新しい世代の

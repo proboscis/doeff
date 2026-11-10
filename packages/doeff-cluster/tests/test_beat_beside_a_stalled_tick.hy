@@ -1,6 +1,6 @@
 ;; heartbeat の送りの間は tick の長さに依らない— 失敗ケース。
 ;;
-;; 実例(本番 2026-10-09 の agent-worker-2): worker は heartbeat を tick の中(ReadDesired)でだけ送るので、送りの間 ≒ tick の長さに
+;; 実例(本番 2026-10-09 の worker-2): worker は heartbeat を tick の中(ReadDesired)でだけ送るので、送りの間 ≒ tick の長さに
 ;; なる(今日の最長 7.3 秒)。lease は 10 秒で、13:15:04 に間 10041 ms で coordinator の名簿が gone と判じた。#4332 の直し(418d4eab6)は
 ;; 過ぎた期限を捨てないが、tick が lease より長ければ間は lease を越える。
 ;;   - 本物の調整ループ(run-worker)・本物の coordinator-link(GET /watch を使う形 — 本番の入口と同じ)・本番の tick 間の待ち
@@ -37,7 +37,7 @@
 (import tests.transport_http [route-cell])
 
 (val POLICY (WorkerPolicy))
-(val WORKER "agent-worker-2")
+(val WORKER "worker-2")
 (val LEASE-MS 10000)
 (val FENCE-MS 20000)
 ;; 偽の coordinator の応答の版(GET /watch は「変わっていない」をこの版で答え続ける)。

@@ -608,12 +608,12 @@
 
 
 (deftest test-compile-parallelism-stays-under-the-ceiling-without-a-pod-limit
-  ;; zeus の worker(cpu.max の無い pod・node の 36 CPU)は 36 本並べて焼き、準備 1 回で 14 core を使って load 1 分を 170 まで上げた
+  ;; node-h の worker(cpu.max の無い pod・node の 36 CPU)は 36 本並べて焼き、準備 1 回で 14 core を使って load 1 分を 170 まで上げた
   ;; (2026-10-12)。直す前は 36 が返った。
   (assert (= (! (cpu-limit-of "max 100000\n" 36)) BAKE-JOBS-CEILING) "上限の無い pod の 36 CPU でも天井まで")
   (assert (= (! (cpu-limit-of None 36)) BAKE-JOBS-CEILING) "cgroup の file が無くても天井まで")
   (assert (= (! (cpu-limit-of "1600000 100000\n" 36)) BAKE-JOBS-CEILING) "天井より大きい pod の上限も天井まで")
-  (assert (= (! (cpu-limit-of "800000 100000\n" 16)) 8) "atlas の上限 8 は今の並列数のまま"))
+  (assert (= (! (cpu-limit-of "800000 100000\n" 16)) 8) "node-a の上限 8 は今の並列数のまま"))
 
 
 (deftest test-bytecode-entries-travel-in-the-declaration-but-not-in-the-key

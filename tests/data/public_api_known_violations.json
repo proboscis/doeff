@@ -1896,7 +1896,7 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "WORKSPACE_SITE",
-   "reason": "The production location and wait seconds passed to workspace-volumes-api, the production handler of the workspace volume (the Longhorn namespace, the ConfigMap of values, and the dir of requests to the mount helper — the same paths as the declaration of the zeus Pod). A job's child does not inherit the env WORKER_WORKSPACE_MOUNT_DIR, so the user (agora-controllers) receives the production values from the entry point. That they equal the declaration is pinned by tests/test_workspace_mount.py and tests/test_workspace_volumes.py"
+   "reason": "The production location and wait seconds passed to workspace-volumes-api, the production handler of the workspace volume (the Longhorn namespace, the ConfigMap of values, and the dir of requests to the mount helper — the same paths as the declaration of the node-h Pod). A job's child does not inherit the env WORKER_WORKSPACE_MOUNT_DIR, so the user (agora-controllers) receives the production values from the entry point. That they equal the declaration is pinned by tests/test_workspace_mount.py and tests/test_workspace_volumes.py"
   },
   {
    "package": "doeff-cluster",

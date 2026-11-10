@@ -3,7 +3,7 @@
 ;;; 優先 KEEP-NOW-PRIORITY 以上の task だけをその空きで置く。
 ;;;   (1) worker は線が空きを縮めた時だけ urgent の空きを名乗る(heartbeat の綴りと受け口を通して読める)。線が無い時は名乗らない
 ;;;   (2) 線の下でしか空きの無い worker に、急ぎの task は置かれ、同じ要りの優先 0 の task は待つ
-;;;   (3) 失敗ケース: worker が urgent の空きを名乗らなければ、急ぎの task も優先 0 の task と同じに待つ(直す前の形 — zeus の 11-10 は
+;;;   (3) 失敗ケース: worker が urgent の空きを名乗らなければ、急ぎの task も優先 0 の task と同じに待つ(直す前の形 — node-h の 11-10 は
 ;;;       名乗る空き約 4 GiB で、要り 6144 MiB・その機体だけを要る task が queued のまま待った)
 ;;;   (4) memory-room-mib の urgent は、jobs の層の空きも urgent の値で数え、追い出しの線の手前の床は同じに引く
 (require doeff-hy.macros [defk deftest <- val])
@@ -25,11 +25,11 @@
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (val PY3 #((ComponentVersion "python" "3")))
-;; 本番 zeus の 11-10 17:44 JST の形: 線 37,984 MiB・MemAvailable 約 42 GiB(線の上 約 4 GiB)・追い出しまでの空き 40,000 MiB。
-(val ZEUS-TOTAL-MIB 128480)
+;; 本番 node-h の 11-10 17:44 JST の形: 線 37,984 MiB・MemAvailable 約 42 GiB(線の上 約 4 GiB)・追い出しまでの空き 40,000 MiB。
+(val NODE-H-TOTAL-MIB 128480)
 (val KEEP-LINE-MIB 37984)
-(val ZEUS-AVAILABLE-MIB (+ KEEP-LINE-MIB 4000))
-(val ZEUS-EVICTION (EvictionLine :kind LineKind.ALLOCATABLE :size-bytes (* 100000 MIB) :used-bytes (* 60000 MIB)
+(val NODE-H-AVAILABLE-MIB (+ KEEP-LINE-MIB 4000))
+(val NODE-H-EVICTION (EvictionLine :kind LineKind.ALLOCATABLE :size-bytes (* 100000 MIB) :used-bytes (* 60000 MIB)
                                  :room-bytes (* 40000 MIB)))
 (val STAT-A (+ "cpu  0 0 0 1000 0 0 0 0 0 0\n" (.join "" (gfor i (range 8) (.format "cpu{} 0 0 0 0 0 0 0 0 0 0\n" i)))))
 (val STAT-B (+ "cpu  100 0 0 1900 0 0 0 0 0 0\n" (.join "" (gfor i (range 8) (.format "cpu{} 0 0 0 0 0 0 0 0 0 0\n" i)))))
@@ -47,30 +47,30 @@
 
 (defk measured-of [keep]
   {:pre [(: keep (| str None))] :post [(: % MeasuredLoad)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "zeus の /proc の 2 回の読みと線の file の中身 keep を、worker の測り(machine-load-of)・heartbeat の綴り(measured-json)・coordinator の
+  "node-h の /proc の 2 回の読みと線の file の中身 keep を、worker の測り(machine-load-of)・heartbeat の綴り(measured-json)・coordinator の
    受け口(heartbeat-of)に通した測った空きを作るため。"
-  (<- meminfo str (meminfo-text ZEUS-TOTAL-MIB ZEUS-AVAILABLE-MIB))
-  (<- first LoadReading (machine-load-of STAT-A meminfo CALM-PSI CALM-PSI None 0 ZEUS-EVICTION :keep-line keep))
-  (<- second LoadReading (machine-load-of STAT-B meminfo CALM-PSI CALM-PSI first.ticks 5000 ZEUS-EVICTION :keep-line keep))
+  (<- meminfo str (meminfo-text NODE-H-TOTAL-MIB NODE-H-AVAILABLE-MIB))
+  (<- first LoadReading (machine-load-of STAT-A meminfo CALM-PSI CALM-PSI None 0 NODE-H-EVICTION :keep-line keep))
+  (<- second LoadReading (machine-load-of STAT-B meminfo CALM-PSI CALM-PSI first.ticks 5000 NODE-H-EVICTION :keep-line keep))
   (<- spelled dict (measured-json second.load))
-  (<- body HeartbeatBody (heartbeat-of {"name" "zeus" "provides" ["host-zeus"] "measured" spelled}))
+  (<- body HeartbeatBody (heartbeat-of {"name" "node-h" "provides" ["host-node-h"] "measured" spelled}))
   body.measured)
 
 
 (defk queued [id priority]
   {:pre [(: id str) (: priority int)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "能力 host-zeus を要る、要り NEED-MIB・優先 priority の待っている切り離した task を作るため。"
-  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" PY3 #("host-zeus") 15000 20000 0 :detached True :key id :memory-mib NEED-MIB
+  "能力 host-node-h を要る、要り NEED-MIB・優先 priority の待っている切り離した task を作るため。"
+  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" PY3 #("host-node-h") 15000 20000 0 :detached True :key id :memory-mib NEED-MIB
               :priority priority))
 
 
 (defk placed-phases [measured]
   {:pre [(: measured MeasuredLoad)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "測り measured を名乗る zeus 1 台に、急ぎの task と優先 0 の task(同じ要り)を置き先に 1 拍回し、#(急ぎの phase 優先 0 の phase) を
+  "測り measured を名乗る node-h 1 台に、急ぎの task と優先 0 の task(同じ要り)を置き先に 1 拍回し、#(急ぎの phase 優先 0 の phase) を
    得るため。"
   (val now 100000)
-  (val zeus (WorkerInfo "zeus" #("host-zeus") now :versions PY3 :measured measured))
-  (<- workers (table-from-rows {"zeus" zeus}))
+  (val node-h (WorkerInfo "node-h" #("host-node-h") now :versions PY3 :measured measured))
+  (<- workers (table-from-rows {"node-h" node-h}))
   (<- urgent TaskRecord (queued "a-urgent" URGENT-PRIORITY))
   (<- plain TaskRecord (queued "b-plain" 0))
   (<- tasks (table-from-rows {"a-urgent" urgent "b-plain" plain}))

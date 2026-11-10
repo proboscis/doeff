@@ -29,7 +29,7 @@
 (val LIFELINE-PERIOD-SECONDS 0.25)  ; 生存の合図の thread が送るかを判じる間
 ;; 拍の進み(調整ループが coordinator への口を最後に通った刻)が止まってから、生存の合図の thread が送り続ける上限。ループが本当に
 ;; 固まった worker(戻らない)の lease を延ばし続けない — 越えたら送りを止め、coordinator が lease の切れで worker の死を判じる。
-;; 本番で見た最長の止まりは ObserveWorld の 986 秒(zeus 2026-10-24 06:22 JST)で、それを覆う 30 分。
+;; 本番で見た最長の止まりは ObserveWorld の 986 秒(node-h 2026-10-24 06:22 JST)で、それを覆う 30 分。
 (val LIFELINE-STALL-LIMIT-MS (* 30 60 1000))
 
 (defenum WatchKind CHANGED UNCHANGED UNSUPPORTED FAILED)

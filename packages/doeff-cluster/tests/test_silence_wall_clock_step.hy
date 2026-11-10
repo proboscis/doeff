@@ -50,7 +50,7 @@
 (import tests.transport_http [route-cell])
 
 (val POLICY (WorkerPolicy))
-(val WORKER "agent-worker-2")
+(val WORKER "worker-2")
 ;; 本番と同じ時間の設定(lease 10 秒・fence 20 秒・移し替え 60 秒)。
 (val T (ClusterTiming))
 (val REVISION 3)

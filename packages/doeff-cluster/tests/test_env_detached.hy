@@ -239,10 +239,10 @@
   (<- task TaskRecord (env-task env))
   (val report (StatusRow :name "task/t1" :phase "env-failed" :failure-kind "memory-tight" :retryable True
                          :detail "機体の memory の逼迫で起動を見送り続け、上限 600 秒を越えた — この worker では起こさない"))
-  (val moved (absorb-env-failure (replace task :phase "assigned" :worker "atlas") "atlas" report 10))
+  (val moved (absorb-env-failure (replace task :phase "assigned" :worker "node-a") "node-a" report 10))
   (assert (= moved.phase "queued") moved)
-  (assert (= moved.avoid #("atlas")) moved)
-  (val cluster (ClusterState :workers (! (table-from-rows {"atlas" (WorkerInfo "atlas" #("net") 10 #() :measured (get ROOM-LOADS 1))}))
+  (assert (= moved.avoid #("node-a")) moved)
+  (val cluster (ClusterState :workers (! (table-from-rows {"node-a" (WorkerInfo "node-a" #("net") 10 #() :measured (get ROOM-LOADS 1))}))
                              :tasks (! (table-from-rows {"t1" moved}))))
   (val ended (.row (! (tasks-placed 20 cluster (table-of #()) (ClusterTiming))) "t1"))
   (assert (= ended.phase "env-failed") ended)

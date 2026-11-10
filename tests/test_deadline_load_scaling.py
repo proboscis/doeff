@@ -118,7 +118,7 @@ def test_the_load_is_divided_by_the_cpus_this_process_may_use(
 ) -> None:
     """Counterexample: dividing the load by the machine's cores.
 
-    Measured 2026-10-11 20:00 JST (the daily doeff run on atlas): the worker Pod is limited
+    Measured 2026-10-11 20:00 JST (the daily doeff run on node-a): the worker Pod is limited
     to 8 CPUs (cgroup cpu.max 800000 100000) on a 16-core machine, and it sat at 7.3-8.0
     cores from 20:10 to 20:40.  load1 / os.cpu_count() halves what the Pod lives through:
     at load 12 it reads 0.75 and holds every deadline fixed, while the Pod's 8 CPUs are

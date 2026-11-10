@@ -4838,7 +4838,7 @@ fn a_name_bound_to_a_confined_spelling_is_confined_too() {
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
         (
             "app/billing/entry/system.hy",
-            "(defsystem billing-system [foundation]\n  \"Billing system\"\n  (billing (billing-job foundation) :needs #{\"zeus\"} :replicas 1\n    \
+            "(defsystem billing-system [foundation]\n  \"Billing system\"\n  (billing (billing-job foundation) :needs #{\"node-h\"} :replicas 1\n    \
              :environ {\"BILL_KEY_REF\" \"secret:ns/bill-vapid/private_key\"\n              \
              \"BILL_PREVIOUS_KEY_REF\" \"secret:ns/bill-vapid/previous_private_key\"\n              \
              \"BILL_CONTACT\" \"https://example.org\"}))\n"

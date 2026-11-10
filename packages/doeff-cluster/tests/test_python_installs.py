@@ -1,6 +1,6 @@
 """uv の入れた Python の置き場の片付け(deploy/python_installs.py と、boot.sh の doeff_python_installs_gc)の検。
 
-訳: uv は patch の版ごとに dir を作り、版が上がっても前の版を消さない(2026-11-08 の zeus の state/python に 9 本・約 1 GB)。venv は
+訳: uv は patch の版ごとに dir を作り、版が上がっても前の版を消さない(2026-11-08 の node-h の state/python に 9 本・約 1 GB)。venv は
 patch の版の dir を直に指す事が多く、置き場の外の venv を数え切れないので、古い版の dir は消すだけでなく、同じ名で同じ minor の
 新しい版への link に置き換える。確かめる事: 使われている版(組の新しい版・走っている process の版)を残し、使われていない古い版を
 消す。古い版を指していた venv は新しい版で動き続ける。uv が入れている途中(置き場の錠を持つ間)は何も変えない。

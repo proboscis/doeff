@@ -71,7 +71,7 @@ def items_cache_dir_for(configured: str, rootpath: Path) -> Path:
 
     Order: the ini value if present (the project setting is the narrowest) -> otherwise the environment variable ITEMS_CACHE_ENV (the runner passes it per process) ->
     if neither, under the user's cache dir (``~/.cache/doeff-adr/pytest-items``). The environment variable step exists because the daily whole-system verification task
-    swaps HOME for an empty dir on every run (with the default location the records were empty every time, and the atlas daily run imported 309 files for collection).
+    swaps HOME for an empty dir on every run (with the default location the records were empty every time, and the node-a daily run imported 309 files for collection).
     Relative paths of the ini and the environment variable are resolved from rootdir.
     """
     named = configured.strip() or (environment_value(ITEMS_CACHE_ENV) or "").strip()

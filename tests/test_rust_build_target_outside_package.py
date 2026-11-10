@@ -91,7 +91,7 @@ def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
     """The `env` prefix for the build process command: the child inherits this process's environment, and it is placed only when passing CARGO_TARGET_DIR removed (`env -u`),
     pointing the temporary dir location at temp_root.
 
-    CARGO_BUILD_BUILD_DIR is removed too: zeus's worker points it at a per-worktree dir (`/cargo-build/{workspace-path-hash}`), which keeps
+    CARGO_BUILD_BUILD_DIR is removed too: node-h's worker points it at a per-worktree dir (`/cargo-build/{workspace-path-hash}`), which keeps
     the intermediates of two checkouts apart even when they share a target, so the shared-target counterexample would not reproduce there.
     A test that needs it passes it after this prefix."""
     # The wheel store is also a per-test dir (do not write to the user's ~/.cache, and tests must not pull each other's wheel of the same source).
@@ -231,7 +231,7 @@ def test_a_given_target_dir_is_used_and_kept(tmp_path: Path) -> None:
 
 
 def test_a_temporary_target_keeps_the_intermediates_out_of_the_given_build_dir(tmp_path: Path) -> None:
-    """Even if the environment points CARGO_BUILD_BUILD_DIR somewhere (zeus's worker), the temporary-target build puts intermediates in the temporary dir and removes them. Failure case: if per-build
+    """Even if the environment points CARGO_BUILD_BUILD_DIR somewhere (node-h's worker), the temporary-target build puts intermediates in the temporary dir and removes them. Failure case: if per-build
     intermediates remain at the pointed place, they eat the memory location at every uv sync."""
     newer = _two_checkouts(tmp_path).newer
     temp_root = tmp_path / "tmp"

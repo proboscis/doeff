@@ -1,6 +1,6 @@
 """Machine independence of the defsemgrep runner -- the meaning of a check is decided by the tree alone.
 
-Measured 2026-08-17 (zeus full check, route-3da438e018): the remote check tree
+Measured 2026-08-17 (node-h full check, route-3da438e018): the remote check tree
 does not carry git metadata (.git) (remote_check copies only the git ls-files listing).
 On that tree defsemgrep failed completely due to two machine dependencies:
 
@@ -184,7 +184,7 @@ def test_run_semgrep_failure_names_the_json_errors_not_only_stderr(tmp_path: Pat
 
 
 def test_crashing_scanner_is_not_reported_as_rule_not_firing(tmp_path, monkeypatch, registry):
-    """Replay of the zeus measurement: a crashing semgrep is not reported as "mismatch on the bad fixture"."""
+    """Replay of the node-h measurement: a crashing semgrep is not reported as "mismatch on the bad fixture"."""
     fake = _fake_semgrep(
         tmp_path,
         'echo "Traceback (most recent call last): scanner is broken" >&2\nexit 1\n',

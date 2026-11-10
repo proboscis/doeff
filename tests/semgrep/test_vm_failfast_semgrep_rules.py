@@ -25,7 +25,7 @@ def _semgrep_results(
         # into the scan -- cut off machine circumstances such as reachability and response time from entering the scan.
         # --project-root=project_root (default REPO_ROOT; only tests that look at the rule's paths in a temporary tree pass another root): do not leave root to inference from git metadata -- in a scan tree
         # with no .git, root falls to the scanned dir itself, and only
-        # paths.include that refers to segments above the target silently dies (zeus measurement 2026-08-17). root is the tree's root, not cwd
+        # paths.include that refers to segments above the target silently dies (node-h measurement 2026-08-17). root is the tree's root, not cwd
         # (the fixture dir) -- the rule side's include of the fixtures copy
         # (/tests/semgrep/fixtures/...) is written relative to the repo root.
         [
@@ -51,7 +51,7 @@ def _semgrep_results(
         )
 
     # exit 1 is returned by both "has findings" and "crash at startup" -- only when the JSON could be read
-    # can we say the scan ran (zeus measurement 2026-08-17: a crash from an interpreter mismatch
+    # can we say the scan ran (node-h measurement 2026-08-17: a crash from an interpreter mismatch
     # returned exit 1 + empty stdout and turned into a bare JSONDecodeError traceback).
     try:
         payload = json.loads(completed.stdout)

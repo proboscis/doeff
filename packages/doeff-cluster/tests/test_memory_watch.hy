@@ -1,6 +1,6 @@
 ;; 機体の memory の見張り— 模擬の検。
 ;;
-;; 実例: atlas(10-16 07:25 UTC・10-11 23:48・10-12 17:22)と zeus(10-11 12:12〜12:52 UTC)で、1 つの job が memory を食うと機体の全体が
+;; 実例: node-a(10-16 07:25 UTC・10-11 23:48・10-12 17:22)と node-h(10-11 12:12〜12:52 UTC)で、1 つの job が memory を食うと機体の全体が
 ;; reclaim の thrash で止まり、worker も coordinator も応えなかった(OOM kill は起きない)。誰が食ったかは 10 分ごとの測りの間に落ちて
 ;; 読めなかった。
 ;;   - 本物の見張りの背景の task(memory-watch-loop)を仮想時計の下で 5 秒ごとに回し、機体の memory の file は memory の置き場・process の表は
@@ -11,15 +11,15 @@
 ;;     process は表から消え、他は残る。
 ;;   - guard を切った見張りは様子の行だけで、何も止めない。
 ;;   - /proc/meminfo が読めない機体では訳を 1 度だけ言い、数えない・止めない。
-;;   - 平常の大きさ(10-24 atlas で、機体の空きを worker の外の Pod が食った 2 時間に、平常の約 950 MiB で動く
+;;   - 平常の大きさ(10-24 node-a で、機体の空きを worker の外の Pod が食った 2 時間に、平常の約 950 MiB で動く
 ;;     常駐の job が 11 回止められ、起こし直されては同じ大きさに戻った): 平常の大きさで動く常駐の job は尽きかけの機体でも止めず、
 ;;     止めなかった job と worker の外の使用量を 1 行で言う。平常の 2 倍の常駐の job と大きい task は止める。止めた job の間の最大は
 ;;     平常の大きさに残さない。
-;;   - 群れの止め(10-23 20:36〜20:46 UTC の zeus で、CLI を多数並べる常駐の job の木が約 64 GB に太ったのに、単位は
+;;   - 群れの止め(10-23 20:36〜20:46 UTC の node-h で、CLI を多数並べる常駐の job の木が約 64 GB に太ったのに、単位は
 ;;     どれも 512 MiB 未満で見張りは何も止めず、機体ごと約 3 分止まった): 常駐の job が 300 MiB の CLI の木 40 本と、shim に引き取られた
 ;;     200 MiB の孤児 40 本を持つ尽きかけの機体では、job の本体を残して、大きい単位から DANGER の線を戻す量まで まとめて止める。worker の
 ;;     外の使用量がその job より大きい時は止めずに 1 度だけ言う。
-;;   - 孤児の溢れ(10-30 の zeus で、shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の 2 乗の
+;;   - 孤児の溢れ(10-30 の node-h で、shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の 2 乗の
 ;;     見張りの 1 回が main の scheduler を何十分も塞いだ): 10 万本の孤児の表を尽きかけの機体で 1 回読み、止めるまでを CPU 1 秒未満で終える。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
@@ -450,7 +450,7 @@
 
 
 (deftest test-one-reading-of-a-hundred-thousand-orphans-holds-the-scheduler-under-a-second [#^ float deadline-scale-factor]
-  ;; 失敗ケース: 2026-10-30 の zeus で、job の shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の
+  ;; 失敗ケース: 2026-10-30 の node-h で、job の shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の
   ;; 2 乗だった見張りの 1 回が main の scheduler を何十分も塞いだ(生存の合図が止まり Pod が NotReady)。直す前の手順は 1 万本で約 3 秒・
   ;; 2 万本で約 19 秒。直した見張りは、10 万本の孤児の表で尽きかけの機体を 1 回読み(job の memory・止める単位 10 万余り・止める単位の
   ;; 選び)、uv の木(3205 MiB)を止めるまでを CPU 1 秒未満で終える。
@@ -495,7 +495,7 @@
 
 
 (deftest test-the-watch-logs-each-layer-and-the-largest-process-outside-the-job-trees
-  ;; 失敗ケース(11-04 12:59 UTC の zeus): kubectl exec の grep 2 本が init の層で 69 GB を持ち、見張りは「尽きかけだが止める単位が無い」と
+  ;; 失敗ケース(11-04 12:59 UTC の node-h): kubectl exec の grep 2 本が init の層で 69 GB を持ち、見張りは「尽きかけだが止める単位が無い」と
   ;; 言うだけで、どの層の誰が食ったかを残さなかった(kernel が OOM で止めた 1 本しか記録が無い)。最大の行・様子の行・止める単位の無い行に、
   ;; 層ごとの memory.current(宣言の順・読めない層は ?)と、job の木の外で rss のいちばん大きい process(init の 1 MiB より大きい grep)を出す。
   (val settings (MemoryWatchSettings :window-seconds 10.0 :layers #("worker" "exec" "jobs")))

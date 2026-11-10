@@ -237,7 +237,7 @@ to the staged paths and to their HEAD versions (including the HEAD versions of f
   the change (architecture.hy, registry tables, other sources). Hits attached to unstaged files in a commit that changed the declaration file.
   All of these are looked at by the whole-repo verification (each repo's daily run — every 4 hours for agora-controllers).
 - Reason: the whole-repo comparison (measuring the tip tree and the HEAD tree over the whole repo) takes 45-100 seconds and 1.5-1.7 GB per run in agora-controllers, and the 23 conversations
-  fixing the daily red committed at the same time and filled the machine (zeus load 102/24 cores, swap all used — 2026-10-11). A whole-repo rule builds the whole-repo inference world even when
+  fixing the daily red committed at the same time and filled the machine (node-h load 102/24 cores, swap all used — 2026-10-11). A whole-repo rule builds the whole-repo inference world even when
   applied to one file (DOEFF132 takes 28 seconds on one file, about 20 seconds in total for 42 rules), so applying it only to staged paths does not make it lighter.
 - The split of the gate's entry `--split-rules` (a change to the declaration file sends all rules to `whole`) is unchanged — the caller uses it for the whole-repo comparison.
 
@@ -247,7 +247,7 @@ to the staged paths and to their HEAD versions (including the HEAD versions of f
 0 means no limit (it measures to the end without cutting off).
 
 - The limit is measured in the child's CPU seconds (utime and stime in `/proc/<pid>/stat`, plus cutime and cstime of waited-for descendants). On a busy machine
-  only the wall seconds grow, and when it was measured by wall, a commit with 0 hits was cut off every time and blocked unless there was no limit (zeus load 42-73). A child that does not finish without using CPU
+  only the wall seconds grow, and when it was measured by wall, a commit with 0 hits was cut off every time and blocked unless there was no limit (node-h load 42-73). A child that does not finish without using CPU
   is cut off by a wall fallback limit (limit x 4). On a machine where the child's CPU seconds cannot be read (a Mac with no /proc), wall seconds are used as before.
   The decision is in one place, `cut_measure`, and the blocking line names the yardstick (`cut off at the CPU-seconds limit of N s`, `cut off at the wall limit of N s (child CPU seconds
   cannot be read on this machine)`, `cut off at the wall backstop limit of M s (... a child that does not finish without using CPU)`).
@@ -496,7 +496,7 @@ if, try, and so on, and `from m import a` gives `m.a`, `import a.b` gives `a.b`.
     one name was wrong about 1-3% of the time, and `requests_projection.hy`, which searches for 12 callee names, re-read about 500 of 4,620 files even on a warm working tree (19-34 after the fix).
   - Whether to increase the threads that overlap waits is decided by whether that thread asked for a disk read (`ru_inblock` of `getrusage`'s `RUSAGE_THREAD`) (`bulk_read::Widen` — when distinguished by time,
     it increased even for delays where a thread was merely stopped on a busy machine).
-  - The upper-limit cleanup that counts the facts store (once an hour; on zeus about 400,000 facts and 3-19 seconds — the hook that drew the turn was cut off by its limit) is handed, with an in-progress mark, to the linter's own
+  - The upper-limit cleanup that counts the facts store (once an hour; on node-h about 400,000 facts and 3-19 seconds — the hook that drew the turn was cut off by its limit) is handed, with an in-progress mark, to the linter's own
     `sweep-facts-cache` entry and not waited for (new session, no standard I/O, nice 10. If it cannot be handed over, it is cleaned within that run). The cleanup that counts only root dirs and the cleanup of dirs whose root has disappeared
     are light, so they remain within the run. Tests clean within the run with `DOEFF_LINTER_SWEEP_INLINE` and look at the result.
 - Measured (2026-10-23, agora-controllers main line Hy 4,620 files, release without LTO, the facts store is the machine's shared one):

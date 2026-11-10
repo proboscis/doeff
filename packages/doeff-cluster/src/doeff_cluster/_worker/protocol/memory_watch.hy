@@ -25,7 +25,7 @@
 ;;; 様子の行・止める単位が無い行・最大の行は、層ごとの memory.current(欄 layers — <層>=<MiB> を宣言の順に空白で並べる・読めない層は ?)と、
 ;;; job の木の外で rss のいちばん大きい process(欄 outside-largest — <pid>:<命令の名>=<MiB>・無ければ空)も載せる。訳: 見張りは job の木の外
 ;;; (worker の本体・init と、kubectl exec・readinessProbe・preStop の命令)を止めないので、尽きかけの訳が木の外に在る時に、誰がどの層で
-;;; 食ったかを残す(11-04 12:59 UTC の zeus — exec の grep 2 本の 69 GB は、kernel が OOM で止めた 1 本しか記録に残らなかった)。
+;;; 食ったかを残す(11-04 12:59 UTC の node-h — exec の grep 2 本の 69 GB は、kernel が OOM で止めた 1 本しか記録に残らなかった)。
 ;;; 止めは guard が真の時だけ(偽は log だけ — 起動の引数 --memory-guard off)。止めた後 kill-cooldown-seconds は次を止めない(止めた木の
 ;;; memory が戻るのを待つ)。
 ;;; 平常の大きさ: 最大の行の間を閉じるたびに、その間の job の名ごとの最大を steady-windows 個まで残し(見張りが

@@ -40,7 +40,7 @@
 
 (deftest test-the-world-reads-the-jobs-layer-room-from-the-watch
   ;; 失敗ケース: jobs の層の上限と使いは見張りの入れ物の中にだけ在り、調整ループは入らない待ちの子を起こし、層の OOM kill で落ちた子を
-  ;; 30 秒ごとに起こし直した(2026-11-06 の k3s-0〜2)。空き = 見張りの最後の回に決めた新しい受けの上限 − その回の working set(使い − inactive_file)。
+  ;; 30 秒ごとに起こし直した(2026-11-06 の node-d〜f)。空き = 見張りの最後の回に決めた新しい受けの上限 − その回の working set(使い − inactive_file)。
   (val cell (MemoryCell))
   (val observe (with-handlers [(memory-observer cell) nothing-else-observed local-host] (ObserveWorld)))
   (assert (is (. (run observe) jobs-room) None) "見張りがまだ上限を掛けていなければ空きで縛らない")

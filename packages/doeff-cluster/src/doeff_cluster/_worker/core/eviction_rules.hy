@@ -2,8 +2,8 @@
 ;;; memory.max を決める判断。I/O を持たない(cgroup と Node の読みと jobs の層への書きは worker/protocol/eviction_line が効果で行う)。
 ;;;
 ;;; 何のためか: kubelet は機体の memory が線を割ると、request を最も越えた Pod を丸ごと追い出す。worker の Pod は request が小さく
-;;; (atlas は 1Gi)、使いは task と常駐の job で数 GiB になるので、追い出されるのはいつも worker で、常駐の job も Pod が起き直すまで
-;;; 全部止まる(atlas で 10-30〜11-01 に 5 回 — どれも下の allocatable の線)。kernel は cgroup の memory.max を越えた所で、その cgroup の
+;;; (node-a は 1Gi)、使いは task と常駐の job で数 GiB になるので、追い出されるのはいつも worker で、常駐の job も Pod が起き直すまで
+;;; 全部止まる(node-a で 10-30〜11-01 に 5 回 — どれも下の allocatable の線)。kernel は cgroup の memory.max を越えた所で、その cgroup の
 ;;; 中だけを回収し、足りなければその中の process を OOM kill で止める。jobs の層の memory.max を kubelet の線の手前に置けば、task の
 ;;; 跳ねは kubelet より先に kernel が jobs の層の中で止め、Pod と常駐の job は残る。
 ;;;
@@ -25,15 +25,15 @@
 ;;; ただし測った余裕が宣言の床を越えた分と clis への貸しでは、jobs の今の使い + 置いた task の取り置きより下げない(下の会話の CLI の層の
 ;;; 帳面 — 使いより下げるのは、宣言の余裕で数えた空きが負の時だけ)。
 ;;; 余裕は、掛け直しの間(見張りの回の 5 秒)に jobs と準備の層の外(ほかの Pod・常駐の job・worker の本体)が伸びる分を覆う。jobs の層の
-;;; 中の跳ね(atlas の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
+;;; 中の跳ね(node-a の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
 ;;;
 ;;; 上に載る系が残す線(2026-11-10): 枠の file の行が keepLineFile を名指す worker(worker/core/room_rules — 上に載る系が機体の MemAvailable を
 ;;; その線より上に残したい機体)は、jobs の層の上限を、追い出しまでの空きと「機体の MemAvailable − 残す線」(keep-room — heartbeat の測りが
 ;;; 読む)の小さい方で数える(kept-line — 種類 KEEP の線)。置き先は名乗る空きを同じ線の上に絞って task を置くが、task は置いた後に名乗りより
-;;; 大きく伸びうる(zeus の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本が 8 分で各 14 GiB へ伸び、MemAvailable は線を約 54 GiB 割った)。
+;;; 大きく伸びうる(node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本が 8 分で各 14 GiB へ伸び、MemAvailable は線を約 54 GiB 割った)。
 ;;; ただしこの線では、jobs の層の上限を「jobs の今の使い + 置いた task の取り置き(要り − 今の使い)」より下げない(kept-jobs-limit — 追い出しの
 ;;; 線で数えた上限がそれより小さい時は追い出しの線のまま)。線を割る訳の大半が jobs の層の外(上に載る系の命令・会話の CLI の層)に在る機体では、
-;;; 層の上限を使いより下げると、kernel は伸びた task でなく層の中の全部の task を区別なく OOM kill で止めた(zeus の 11-09 23:57〜11-10 01:33 UTC —
+;;; 層の上限を使いより下げると、kernel は伸びた task でなく層の中の全部の task を区別なく OOM kill で止めた(node-h の 11-09 23:57〜11-10 01:33 UTC —
 ;;; 要り 1024 MiB・使い 128 MiB の task を含む 13 本が、上限を 0 まで下げた回の 1〜10 秒後に SIGKILL)。線の上の空きの縮みは新しい受けの上限
 ;;; (jobs-intake)を絞って新しい task を置かない事で吸い、走っている task が要りを越えて伸びた分は、線を割った回に見張りが要りを越えた task
 ;;; だけを越えの大きい順に名指して止める(over-need-tasks — worker/protocol/memory_watch)。要りの内で走る task は、線を割っても止めない。
@@ -41,22 +41,22 @@
 ;;; 線を読めない・古い(LINE-FRESH-MS を越えた)回と、追い出しの線の無い機体では今までどおり追い出しまでの空きだけで数える。
 ;;;
 ;;; 準備の層(prepare — keeper の版の準備・deploy/boot.sh の keeper_swap): 版上げに要る 1 回きりの短い仕事なので、task と同じ縮む層に
-;;; 置かない(縮めて殺しても memory は守れず、版上げだけが止まる — k3s-1 の 11-02 は jobs の上限 61〜139 MiB で準備の bytecode の焼きが
+;;; 置かない(縮めて殺しても memory は守れず、版上げだけが止まる — node-e の 11-02 は jobs の上限 61〜139 MiB で準備の bytecode の焼きが
 ;;; OOM で落ち続けた)。準備の層の memory.max は宣言の静的な値(準備の山)で、worker は掛け直さない。準備が走っている間(層に process が
 ;;; 居る)は、その上限までの残り(上限 − 今の使い)を線の空きから先に取り置き、jobs の層の上限から引く(prepare-reserve)— 準備が山まで
 ;;; 伸びても線を越えない。準備を始めてよいかは keeper が決める: worker は回ごとに「追い出しまでの空き − 余裕 − 取り置き」(prepare-room)と
 ;;; 準備が線へ足しうる量(prepare-addable)を keeper の読む file へ書き、keeper は空きがその量より小さい間は準備を起こさずに待つ(OOM で
 ;;; 殺さない)。足しうる量は上限 − 層の今の working set: 層は memory.max で止まり、前の準備の名残(process の居ない層の page cache と slab)は
-;;; 線の使いに数え済みなので、上限を丸ごと求めると名残の分を 2 度数える(k3s-1 の 11-09 — 名残 288 MiB)。
+;;; 線の使いに数え済みなので、上限を丸ごと求めると名残の分を 2 度数える(node-e の 11-09 — 名残 288 MiB)。
 ;;; 準備を待つ間の取り置き(2026-11-10): keeper が版の file の替わりを読み、空きが足しうる量に足りずに準備を待つ間(版の file の版がこの世代の
 ;;; 版と違い、準備の層に process が居ない — prepare-waiting)も、足しうる量を新しい受けの外に取り置く(prepare-wait-reserve)。取り置いた分は
 ;;; heartbeat の名乗る jobs の層の空き(jobs-intake)と会話の CLI の層への貸しに入れず、heartbeat で量を名乗る(置き先は名乗る worker に新しく
 ;;; 常駐の job を置かない)。keeper の読む空き(prepare-room)と jobs の層の memory.max には入れない — 入れると keeper の判じが自分の
 ;;; 取り置きで満たなくなり、走っている task を準備のために止める。取り置かなかった前は、空いた分を新しい task と常駐の service が先に取り、
-;;; 小さい機体の keeper の準備が起きなかった(k3s-1 の 11-09 — 版の file を替える前後に常駐の service 2 つ〔jev-proxy と minio〕を出しても、空いた分へ別の
+;;; 小さい機体の keeper の準備が起きなかった(node-e の 11-09 — 版の file を替える前後に常駐の service 2 つ〔jev-proxy と minio〕を出しても、空いた分へ別の
 ;;; 常駐の service 2 つ〔約 370 MiB〕が置かれ、空きは 403 から 335 MiB に減った)。
 ;;;
-;;; 会話の CLI の層(clis — 上に載る系の仕事を余りの空きで受ける機体 helios・atlas の限る層): 宣言の静的な memory.max は床(常駐の job の予算から
+;;; 会話の CLI の層(clis — 上に載る系の仕事を余りの空きで受ける機体 node-c・node-a の限る層): 宣言の静的な memory.max は床(常駐の job の予算から
 ;;; 引いた量・今までの上限)で、機体の宣言に天井(WORKER_CLI_LAYER_CEILING)が在る機体だけ、worker は回ごとに床と天井の間で掛け直す
 ;;; (clis-limit)。空きは 2 つ: 線の空き(free = 追い出しまでの空き − 余裕 − 準備の取り置き)と container の中の空き(box = container の上限 −
 ;;; container の working set − 余裕 − jobs と clis の外の限る層の宣言の上限の和)。
@@ -79,12 +79,12 @@
 ;;; かを決めるので、2 つの受けは同じ帳面の別の行(5・6 の clis の分と、6 の jobs の分)から出て、同じ空きを重ねて約束しない。
 ;;; jobs の層の上限は container の中の空きから clis の上限までの残りを引いた値(jobs-box-limit)も同じ形で越えない。生かす CLI の本数の上限は
 ;;; 起動の時に天井から導く(worker が job の子へ天井を渡す — worker/entry/main の CLI-CEILING-CHILD-VAR)。
-;;; 以前は広げた clis の上限を「jobs の層を 0 まで縮めれば収まる間」は残したので、余裕が測りで上がった atlas の 11-09 23:00〜23:21 は、
+;;; 以前は広げた clis の上限を「jobs の層を 0 まで縮めれば収まる間」は残したので、余裕が測りで上がった node-a の 11-09 23:00〜23:21 は、
 ;;; clis の上限 6 GiB・使い約 1 GiB の使われていない貸しを残すために jobs の層の上限を 0 まで下げ、走っていた task を 50 本を越えて kernel が
 ;;; OOM で止めた。
 ;;;
 ;;; 命令の層(commands — 上に載る系が worker の外から起こす作り直せる命令の層): 宣言の静的な memory.max だけでは、機体の
-;;; 空きを見ずに build の命令が線の手前まで memory を取り、新しいターンを受ける係の余白を何時間も 0 にした(11-10 の zeus — 命令の層 35.6 GiB・
+;;; 空きを見ずに build の命令が線の手前まで memory を取り、新しいターンを受ける係の余白を何時間も 0 にした(11-10 の node-h — 命令の層 35.6 GiB・
 ;;; そのうちターンの走っている会話の命令は 1 本ぶん)。枠の file の行の commandLineFile(上に載る系が書く MemAvailable の線・worker/core/room_rules)と
 ;;; commandFloorMiB が在る機体は、worker が見張りの回ごとに命令の層の memory.max を掛け直す(command-layer-limit):
 ;;;   上限 = tmpfs の量 + max(床, 止めて返る量 + (MemAvailable − 線))  を宣言の静的な値で切る。
@@ -111,9 +111,9 @@
 (import re)
 (import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX NodeMemory])
 
-;; 余裕の宣言の無い機体の余裕(margin-of の床): atlas の 7 日(Prometheus・30 秒ごと・11-01)で、worker の外の Pod の working set の和の
+;; 余裕の宣言の無い機体の余裕(margin-of の床): node-a の 7 日(Prometheus・30 秒ごと・11-01)で、worker の外の Pod の working set の和の
 ;; 30 秒の増えは p99 0.78 GiB・p999 1.73 GiB・最大 2.5 GiB(clickhouse と garage)。最大の増えを 30 秒に均すと 5 秒の回あたり 0.42 GiB —
-;; 1 GiB は回が 2 回遅れても覆う。機体ごとの宣言の値の決め方は deploy/k8s/cgroup-layers/cgroup-layers.yaml の頭の註。
+;; 1 GiB は回が 2 回遅れても覆う。機体ごとの宣言の値の決め方は 上に載る系の宣言の cgroup-layers/cgroup-layers.yaml の頭の註。
 (val #^ int EVICTION-MARGIN-BYTES (* 1024 MIB))
 ;; worker 自身の測りから余裕を導く数: 回あたりの増えの分位・その何回分を覆うか(回が 1 回遅れても覆う)・増えを残す回の数(5 秒の回で
 ;; 24 時間)・分位を使い始める回の数(1 時間 — それまでは宣言の床だけ)。

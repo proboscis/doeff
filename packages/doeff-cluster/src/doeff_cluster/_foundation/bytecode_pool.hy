@@ -28,7 +28,7 @@
 ;;; import の路の先頭に足す dir(前が先 — 焼く source の macro が木の中の別の module を require するため・残すかの照らしも、記録の macro の
 ;;; 提供元をこの路で引き直す)。.pyc は source の隣の __pycache__ に置く(python_bytecode の pyc-path)。
 ;;; --progress = 進みの印の file(呼び手の準備が停滞を見分ける印 — 1 つ用意し終えるたびに時刻を今にする・中身は変えない・無ければ触らない)。
-;;; 印を焼きの前と後にしか進めないと、保存先に合う code の無い焼き直し(macro を変えた版の後の初めての準備 — 2026-10-27 の zeus-native で
+;;; 印を焼きの前と後にしか進めないと、保存先に合う code の無い焼き直し(macro を変えた版の後の初めての準備 — 2026-10-27 の node-h-native で
 ;;; 2,400 本・並べる数 2)が 1 file ずつ進んでいても、焼きの全体が停滞の閾(600 秒)を越えて止められ、作り直しも同じ所で止められた。
 ;;;
 ;;; 版に依らず効く形: この道具は root の venv の python で走るが、root の版の doeff の package から名を import しない(doeff・
@@ -280,7 +280,7 @@
 
 (defn #^ tuple pooled [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; defk にできない: process の pool を回す
   "work(#(木の path 相対 path module 名) の列)を jobs 個の process の pool で用意し、work の順の bake-one の答えの列を返すため。子が
-   途中で殺されて pool が壊れた時(BrokenProcessPool — cgroup の memory の上限の OOM kill・2026-11-02 の k3s-0)は、答えの届いた物は
+   途中で殺されて pool が壊れた時(BrokenProcessPool — cgroup の memory の上限の OOM kill・2026-11-02 の node-d)は、答えの届いた物は
    そのまま使い、答えの無い物だけをこの process で 1 つずつ用意し直す(殺された子の memory は返っているので、並べずに焼けば層の上限の
    内に収まる)。焼き直した数は stderr の 1 行で名乗る(呼び手の入口が報告の行と並べて出す)。"
   (with [pool (ProcessPoolExecutor :max-workers jobs :mp-context (multiprocessing.get-context "fork")

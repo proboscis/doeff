@@ -1,7 +1,7 @@
 """The code store pulled by source content (:mod:`doeff_hy_bytecode_guard._code_store`) holds several entries per key, one per macro environment; this tests that writers with different environments
 do not overwrite each other's entries under the same key.
 
-Real case (2026-10-12, zeus): with one entry per key, the runtime preparation (the worker's baking tool -- record marker 6) and the imports of a conversation's work tree
+Real case (2026-10-12, node-h): with one entry per key, the runtime preparation (the worker's baking tool -- record marker 6) and the imports of a conversation's work tree
 (the doeff version differs per conversation -- record marker 5, etc.) saw each other's entry under the same source key as "stale", recompiled, and overwrote each other. Preparation
 re-baked 100 to 600 files at a time even for the same version of source (0 to 10 before 02:53 JST).
 

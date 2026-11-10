@@ -1,6 +1,6 @@
 """Journal handler: appends `slog("jev_judge", ...)` to a file as one JSON line. Everything else is Pass.
 
-The comparison between seimf and Jev (elapsed time, tokens, success or failure) is measured with this journal. Writing to the file happens only inside this handler
+The comparison between a self-hosted judge and Jev (elapsed time, tokens, success or failure) is measured with this journal. Writing to the file happens only inside this handler
 (the I/O boundary for observation).
 """
 

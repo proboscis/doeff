@@ -1,6 +1,6 @@
 """An entry point that pins the semgrep called by doeff's commit hook to the version the repo's uv.lock decides.
 
-If the hook calls the semgrep on the search path or in the working tree's environment, the version drifts with how the machine was set up and the state of the working tree (2026-10-02 zeus: the shared
+If the hook calls the semgrep on the search path or in the working tree's environment, the version drifts with how the machine was set up and the state of the working tree (2026-10-02 node-h: the shared
 uv tool = 1.161.0, lock = 1.169.0. In a working tree without `.venv`, `uv run --no-sync --project <root>` made an empty `.venv` on the spot and
 called the search-path one -- the baseline comparison declared itself "unmeasurable" because of the version difference and passed, stopping nothing). This reads the semgrep version in uv.lock
 and calls it from uv's tool store as `uv tool run --from semgrep==<version> semgrep`. The version is decided only by the uv.lock in the tree, and the store is

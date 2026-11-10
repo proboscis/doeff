@@ -216,10 +216,10 @@
 
 
 (deftest test-the-preparation-runs-in-its-own-group-under-the-prepare-layer-and-the-group-is-closed-at-the-end [tmp-path]
-  ;; 失敗ケース(2026-11-02 18:56 JST の k3s-0): 準備の process(と、それが起こす焼く道具の子)は jobs の層で動く job と memory を分け合い、
+  ;; 失敗ケース(2026-11-02 18:56 JST の node-d): 準備の process(と、それが起こす焼く道具の子)は jobs の層で動く job と memory を分け合い、
   ;; 焼く子が層の上限で殺されて準備が落ちた。機体の配備が準備の層を名乗れば、準備の process をその層の下のこの準備の子
   ;; (prepare-group-dir — memory.oom.group=1)へ移してから exec する sh で包んで起こす(外の job-cgroup-placer は包み直さない)。
-  ;; 失敗ケース(11-08 の k3s-0・k3s-2): 層に直に置いた準備の頭が OOM kill で止まり、残った子孫が uv の出力の pipe を持ち続けた。準備の
+  ;; 失敗ケース(11-08 の node-d・node-f): 層に直に置いた準備の頭が OOM kill で止まり、残った子孫が uv の出力の pipe を持ち続けた。準備の
   ;; 頭が終わったら、その子の止め(CLOSE-SCRIPT)を 1 度撃つ。名乗らなければ包まず、止めも撃たない。
   (<- env RuntimeEnv (declared 1))
   (<- key str (env-key-of env))
@@ -928,7 +928,7 @@
 
 
 (deftest test-a-layer-holding-only-reclaimable-leftovers-admits-a-build-and-real-use-is-refused [tmp-path]
-  ;; 失敗ケース(2026-11-08 の k3s-1 の準備の層 640M — process 0・anon 0): memory.current 234.8 MB = file 127.2 MB(active 64.9・inactive
+  ;; 失敗ケース(2026-11-08 の node-e の準備の層 640M — process 0・anon 0): memory.current 234.8 MB = file 127.2 MB(active 64.9・inactive
   ;; 62.2)+ slab_reclaimable 107.6 MB。memory.current − inactive_file で数えると 172.5 MB > 上限の 4 分の 1(160 MiB)で、見積もり
   ;; 512 MiB(上限 × 0.75 = 480 MiB で切る)と足して上限を越え、名残だけで先の組みを永く断った。page cache と回収できる slab は、組みが
   ;; 要る時に kernel が回収するので数えない — 通す。回収できない使い(anon など)が上限の 4 分の 1 を越える層は今までどおり断る。
@@ -959,7 +959,7 @@
   (assert (= run.launches 1) run.launches))
 
 
-;; 失敗ケース(2026-11-05 の eos): 層 1.5 GiB の working set 48 MB(組みの名残だけ)に、待ちの子と別の組みを含んで測った見積もり 1.59 GB が
+;; 失敗ケース(2026-11-05 の node-b): 層 1.5 GiB の working set 48 MB(組みの名残だけ)に、待ちの子と別の組みを含んで測った見積もり 1.59 GB が
 ;; project の最新の実測として残った。見積もりを層の上限でしか切らないと 48 MB + 1.59 GB > 1.61 GB で全部の先の組みを断り、宣言の後の準備に
 ;; 待ちが残る。上限の 4 分の 3(1.125 GiB)で切れば通す。
 (deftest test-a-nearly-idle-layer-admits-a-build-whose-stale-estimate-nearly-fills-the-layer [tmp-path]
@@ -1011,7 +1011,7 @@
 
 
 (deftest test-the-host-samples-the-layer-of-a-running-preparation-for-its-build-peak [tmp-path]
-  ;; 失敗ケース(2026-11-08 の k3s-0〜3 — kernel 5.15 に memory.peak が無い): 組みの山を測る物が無く、完成の印の buildMemoryBytes が全部 null
+  ;; 失敗ケース(2026-11-08 の node-d〜g — kernel 5.15 に memory.peak が無い): 組みの山を測る物が無く、完成の印の buildMemoryBytes が全部 null
   ;; だった。worker は準備を起こす前と、走っている間の拍ごとに組みの置かれる層の回収できない使いを読み、起こす前の読みと最大を準備の
   ;; process へ渡す file に書く(最大は戻らない — 100 MiB へ下がった拍の後も 470 MiB)。層の無い機体は file を書かない。
   (<- env RuntimeEnv (declared 1))
@@ -1181,7 +1181,7 @@
 
 
 ;; --- 準備の層の空きで絞る起こし ---------------------------------------------------------------------------
-;; 失敗ケース(2026-11-09 の k3s-2): 準備の層 640M(1 本分)に job の準備 2 本を CPU の枠 2 だけで並べ、1 本 約 360 MB の準備が層の上限で
+;; 失敗ケース(2026-11-09 の node-f): 準備の層 640M(1 本分)に job の準備 2 本を CPU の枠 2 だけで並べ、1 本 約 360 MB の準備が層の上限で
 ;; 互いを OOM kill し合い、env-incompatible と記録して起こし直し続けた(patrol-watch・rules・node-boot-facts が起きない)。準備の層を持つ
 ;; worker は、層の空きが準備の見込みの山以上の時だけ起こし、足りない間は断らずに待たせる。層の memory の上限で殺された準備は失敗に
 ;; せず、層が空いてから 1 本だけで起こし直す。

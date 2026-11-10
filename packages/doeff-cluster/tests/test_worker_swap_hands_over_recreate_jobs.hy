@@ -12,8 +12,8 @@
 ;; 移るまで動き続け、その後に止まる。新しい世代の keeper は前の世代の keeper が止まった後に起きる(2 つは重ならない)。振り先が移って
 ;; から新しい世代の keeper が起きるまでは、移しの間だけ(MAX-GAP-MS より短い)。
 ;; D2f の前(doeff L2027 の前): 新しい世代の名乗りと同時に前の世代の keeper が止められ、新しい世代の準備の 8 秒の間 誰も動かさなかった
-;; (本番 10-11 17:36 JST の zeus で 6 分)。D2k の前: 新しい Pod は最初の返事で Ready になり、振り先が移ってから新しい世代の準備の
-;; 8 秒の後まで keeper へ届かなかった(本番 10-11 18:44 JST の zeus で 2〜7 分)。
+;; (本番 10-11 17:36 JST の node-h で 6 分)。D2k の前: 新しい Pod は最初の返事で Ready になり、振り先が移ってから新しい世代の準備の
+;; 8 秒の後まで keeper へ届かなかった(本番 10-11 18:44 JST の node-h で 2〜7 分)。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す

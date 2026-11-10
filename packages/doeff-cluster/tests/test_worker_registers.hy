@@ -29,7 +29,7 @@
 ;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
 (val pytestmark pytest.mark.realtime)
 
-(val NAME "zeus-host-t")
+(val NAME "node-h-host-t")
 (val SERVICE "old-service")
 ;; worker は起きてから最初の拍で名乗る。起動(Hy の module の読み込み)を含めてこの秒数の内に名乗らなければ赤。
 (val REGISTER-SECONDS 30)
@@ -57,7 +57,7 @@
 (defk start-worker [url tmp-path]
   {:pre [(: url str) (: tmp-path Path)] :post [(: % subprocess.Popen)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "本物の worker の process を deploy/boot.sh の ROLE=worker と同じ引数の形で起こす(業務の repo は空の bare repo・状態・世代と
-   readiness の file・log は tmp-path の下)。能力は zeus の worker と同じ形(agent・機体・境界と、機体を専用にする)。止めるのは呼び手。"
+   readiness の file・log は tmp-path の下)。能力は node-h の worker と同じ形(agent・機体・境界と、機体を専用にする)。止めるのは呼び手。"
   (val repo (/ tmp-path "mirror.git"))
   (subprocess.run ["git" "init" "-q" "--bare" (str repo)] :check True)
   (subprocess.Popen [HY "-m" "doeff_cluster._worker.entry.main" "--coordinator" url "--name" NAME

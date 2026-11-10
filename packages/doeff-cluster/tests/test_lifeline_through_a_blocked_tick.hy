@@ -1,6 +1,6 @@
 ;; 拍が scheduler を同期で塞いでも、生存の合図の thread が heartbeat を送り続ける— 失敗ケース。
 ;;
-;; 実例(本番 zeus 2026-10-24 05:42〜05:46 JST): 機体の memory が詰まった間、拍の 1 つが 252 秒かかり(区間 ActionsToPublishStatus
+;; 実例(本番 node-h 2026-10-24 05:42〜05:46 JST): 機体の memory が詰まった間、拍の 1 つが 252 秒かかり(区間 ActionsToPublishStatus
 ;; 250 秒)、heartbeat の間は 197 秒になった。拍の外の背景の task も scheduler の上の task なので、拍が scheduler を
 ;; 塞ぐ間や外の完了が返らない間は送れない。coordinator は切り離した task の lease(60 秒)の切れで worker の死と判じ、機体の task を
 ;; 全部 lost にした(日次の検証の 04:00 の回を含む)。
@@ -17,7 +17,7 @@
 ;; 途絶の柵(20 秒)を越えた worker が自分の job を止める判断を出す。
 ;;
 ;; ready の file(Pod の readinessProbe が読む — 読み手の deploy/boot.sh の ROLE=ready は READY_MAX_AGE 秒・既定 30 より古い file を
-;; NotReady と読む)も同じ組みで見る。実例(本番 zeus 2026-10-26 02:59 JST): 拍が IO で 30〜62 秒止まった間、thread の heartbeat で
+;; NotReady と読む)も同じ組みで見る。実例(本番 node-h 2026-10-26 02:59 JST): 拍が IO で 30〜62 秒止まった間、thread の heartbeat で
 ;; coordinator には生きて見えたのに、ready の file は拍が返事を解いた時だけ書かれたので古び、Pod が Ready を失い、Pod に載る job の
 ;; Service の振り先が 0 になった(job は答え続けていた)。
 ;;   - 期待: 拍の塞ぎ(300 秒 — 本番の 62 秒より長い)の間も、thread の送りに ready を許す返事が届くたびに送りの後の書きの thread が
@@ -63,7 +63,7 @@
 (import tests.transport_http [route-cell])
 
 (val POLICY (WorkerPolicy))
-(val WORKER "zeus")
+(val WORKER "node-h")
 (val BOOT "boot")
 (val LEASE-MS 10000)
 (val FENCE-MS 20000)

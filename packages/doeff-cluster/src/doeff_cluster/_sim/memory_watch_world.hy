@@ -2,7 +2,7 @@
 ;;; memory-watch-step)を、sim の worker の世代ごとに、模擬の process の表と模擬の /proc/meminfo の上で回すための部品。回す係
 ;;; (sim/local の sim-memory-watch)が世代の宿の真実を読み、ここで表と file を作って本物の 1 回を走らせる。
 ;;;
-;;; 何のためか: 2026-10-30 の zeus で、job の shim の直下に孤児が約 8.2 万本溜まり、見張りの 1 回(木の辿りが process の数の 2 乗)が
+;;; 何のためか: 2026-10-30 の node-h で、job の shim の直下に孤児が約 8.2 万本溜まり、見張りの 1 回(木の辿りが process の数の 2 乗)が
 ;;; worker の main の scheduler を何十分も塞いだ(heartbeat が止まり Pod が NotReady)。模擬の時計は仮想なので、純な計算は時計を進めない
 ;;; — 塞ぎを模擬で見るには、1 回の読みの手間を測って worker の処理の止まりに換える(回す係が StallWorker と同じ stalled-until-ms に載せる)。
 ;;;

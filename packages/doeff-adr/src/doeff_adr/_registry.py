@@ -681,7 +681,7 @@ def _run_semgrep(
             # State the project root explicitly. If we leave it to inference from git metadata,
             # in a check tree without .git the root falls to the scanned dir itself, and only paths.include that refers to
             # segments above the target dies silently
-            # (zeus measurement 2026-08-17: rules that fire and rules that do not split by the shape of include).
+            # (node-h measurement 2026-08-17: rules that fire and rules that do not split by the shape of include).
             # None is passed only by the caller (_run_installed_semgrep_batch) that "made a git repo per target dir and fixed the root
             # there" — because the root cannot be decided as a single one.
             *(() if project_root is None else ("--project-root", str(project_root))),
@@ -707,7 +707,7 @@ def _run_semgrep(
         )
     # exit 1 is returned both for "findings present" and for "crash at startup" — only the existence of JSON is
     # evidence that the scan really ran. Silently reading a scan that did not run as "no findings" turns
-    # a scanner fault into a false red/green of "the rule does not fire" (zeus measurement
+    # a scanner fault into a false red/green of "the rule does not fire" (node-h measurement
     # 2026-08-17: an interpreter mismatch made semgrep crash at import time, and all installed
     # rules were misdiagnosed as "does not fire on the hit fixture").
     try:
@@ -760,7 +760,7 @@ def _find_tree_root(start: Path, config: Path) -> Path:
 
     Do not rely on git metadata (.git) — the meaning of the check is decided by the tree alone.
     A remote check tree carries only the list from git ls-files and has no .git (measured
-    2026-08-17 zeus: the .git anchor wiped out every installed-rule defsemgrep).
+    2026-08-17 node-h: the .git anchor wiped out every installed-rule defsemgrep).
     """
     root = start.resolve()
     while True:

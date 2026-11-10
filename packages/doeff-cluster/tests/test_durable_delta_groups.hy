@@ -31,7 +31,7 @@
 
 (deftest test-a-step-that-writes-one-field-builds-only-that-group [monkeypatch]
   ;; 1 欄(workers)だけ書いた歩: 組ごとに鍵を作る関数の呼ばれた回数を数え、workers の組だけが前後 1 回ずつ。
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "node-a" "provides" ["net"] "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
   (val served (get (responded s (! (http-request "POST" "/resources/Service" {} {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}
                                               :actor "c-test")) 1500 T) 0))
@@ -47,7 +47,7 @@
 
 (deftest test-a-step-where-every-field-is-the-same-object-builds-nothing [monkeypatch]
   ;; 全部の欄が同じ object の歩(replace だけ)は、差分が空で、どの組の鍵も作らない。
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "node-a" "provides" ["net"] "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
@@ -58,7 +58,7 @@
 (deftest test-counterexample-a-new-field-object-with-changed-content-is-not-skipped
   ;; 失敗ケース: 欄が別の object で中身が違う(node の名を替えた worker)— 差分に入り、丸ごとの直列化の差分と同じ。同じ object の
   ;; 判定が中身の変化を見逃さない。別の object で中身が同じ(作り直しただけ)なら差分に入らない。
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "node-a" "provides" ["net"] "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
   (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :node (+ w.node "-moved")))))))
   (val old (! (dk.durable-kv s)))
@@ -66,7 +66,7 @@
   (val by-full (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v) (dfor k old :if (not-in k new) k None)))
   (val got (! (dk.durable-delta s changed)))
   (assert (= got by-full) #(got by-full))
-  (assert (= (sorted got) ["worker/atlas"]) got)
+  (assert (= (sorted got) ["worker/node-a"]) got)
   (val rebuilt (replace s :workers (! (table-from-rows (dict (.items s.workers))))))
   (assert (is-not rebuilt.workers s.workers))
   (assert (= (! (dk.durable-delta s rebuilt)) {})))
@@ -78,7 +78,7 @@
   ;; 進まない。deff に戻すと呼び手が写像を受けて落ちず、この検が赤になる。
   (import pytest)
   (val read-as-delta (fn [delta] (dict (.items delta))))
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "node-a" "provides" ["net"] "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
   (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :node (+ w.node "-moved")))))))
   (with [(pytest.raises AttributeError :match "items")]

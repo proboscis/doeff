@@ -3,8 +3,8 @@ link に置き換える道具 — deploy/boot.sh が起動のたびに背後で�
 uv の置き場(uv の既定の ~/.local/share/uv/python ほか)の書き手も、入れた後に同じ道具を呼べる。
 
 訳: uv は Python の patch の版ごとに dir(例 cpython-3.14.7+freethreaded-linux-x86_64-gnu・1 本 約 0.1 GB)を作り、版が上がっても前の版の
-dir を消さない。2026-11-08 の zeus の state/python には 9 本・約 1 GB、atlas には 4 本が並んでいた。日や数で消す決まりにはできない —
-venv(pyvenv.cfg の home と bin/python の link)は patch の版の dir を直に指す事が多く(11-08 の zeus の boot の root と共有 checkout の
+dir を消さない。2026-11-08 の node-h の state/python には 9 本・約 1 GB、node-a には 4 本が並んでいた。日や数で消す決まりにはできない —
+venv(pyvenv.cfg の home と bin/python の link)は patch の版の dir を直に指す事が多く(11-08 の node-h の boot の root と共有 checkout の
 venv 117 本のうち 112 本が patch の dir を指す・85 本は追い越された 3.14.3t)、venv の置き場は作業木・job の root・uv の cache の環境ほか
 数え切れない(/work の全体を探すと 110 秒でも終わらない)。消すだけでは、数え漏らした venv が壊れる。
 

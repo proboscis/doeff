@@ -25,7 +25,7 @@ const SWEEP_INTERVAL_SECONDS: u64 = 3600;
 static TENDED_AT: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
 
 /// A root dir is decided by a hash of the root's path, so root dirs of vanished roots, such as worktrees and temporary copies for quality checks, stayed behind with nobody reading them
-/// (4136 dirs and 21.6G on zeus). At a single point on the writing side, the root's path is recorded in the root dir, the store is scanned at spaced intervals,
+/// (4136 dirs and 21.6G on node-h). At a single point on the writing side, the root's path is recorded in the root dir, the store is scanned at spaced intervals,
 /// and dirs whose recorded root no longer exists are deleted. Dirs with no record (created before this mechanism) are not deleted — whether they may be deleted is decided separately (#1472).
 /// Nothing is deleted for time alone. Deleting does not change answers (unreadable chunks are rebuilt — see the header note). Done only once per run.
 pub(super) fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
@@ -64,8 +64,8 @@ pub(super) fn note_object_bytes(written: u64) {
 const USED_RECORD: &str = "used";
 /// Environment variable that changes the cap on the whole store (bytes).
 const CAP_ENV: &str = "DOEFF_LINTER_CACHE_MAX_BYTES";
-/// Default cap on the whole store (4 GiB) — in the earlier form one worktree's root dir was about 176MB (measured on zeus 2026-10-10 — most of it the repo-wide Hy index
-/// hy-index.bin.d at 156MB), allowing about 23 roots. With the earlier default of 10 GiB (estimating 65MB per root), 7.9G piled up on zeus and the worker's
+/// Default cap on the whole store (4 GiB) — in the earlier form one worktree's root dir was about 176MB (measured on node-h 2026-10-10 — most of it the repo-wide Hy index
+/// hy-index.bin.d at 156MB), allowing about 23 roots. With the earlier default of 10 GiB (estimating 65MB per root), 7.9G piled up on node-h and the worker's
 /// disk fell below the lower bound for preparing a new version. Deleted roots are rebuilt on the next run (answers do not change).
 /// To revert = revert this value (it can also be changed per machine with the environment variable CAP_ENV).
 const DEFAULT_CAP_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -110,7 +110,7 @@ fn last_used(dir: &Path) -> u64 {
 }
 
 /// A record of the time (UNIX seconds) the cap sweep last finished. Kept separate from `.swept`, the record of the sweep of dirs whose root vanished — `.swept` is also written by
-/// older linters that lack the cap sweep, so if they shared a turn, the cap sweep would not run while an older version held the turn (on zeus's 2026-10-02 12:50
+/// older linters that lack the cap sweep, so if they shared a turn, the cap sweep would not run while an older version held the turn (on node-h's 2026-10-02 12:50
 /// scan it stayed at 63G with 0 deleted).
 const CAP_SWEEP_RECORD: &str = ".swept-cap";
 /// A marker (empty contents) while a cap sweep is in progress. It keeps concurrently running runs from overlapping the same sweep. A marker left by an aborted run is treated as absent once these seconds pass.
@@ -132,7 +132,7 @@ enum Growth {
 /// Runs the cap sweep if the interval has passed since the last cap sweep finished, or if the whole store has grown (growth — see the header note).
 /// The finish time is written after the sweep including the facts store has finished — a run aborted by, e.g., the commit hook's seconds limit writes no record, so
 /// the next run redoes it (this avoids a shape that only takes the turn and ends). If we did not check on growth, the store would stay over the cap by however much the worktrees grew within the turn interval
-/// (zeus's 7.9G). While a concurrently running run is sweeping, do not overlap even on growth.
+/// (node-h's 7.9G). While a concurrently running run is sweeping, do not overlap even on growth.
 fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64, growth: Growth) {
     let stamp = base.join(CAP_SWEEP_RECORD);
     let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
@@ -150,7 +150,7 @@ fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64, gro
         return;
     }
     let with_objects = due || growth == Growth::Objects;
-    // A sweep that counts the facts store (on zeus about 400k facts, 3 to 19 seconds) does not wait within the deadline right after a write (4 seconds) of the hook — hand it to another process
+    // A sweep that counts the facts store (on node-h about 400k facts, 3 to 19 seconds) does not wait within the deadline right after a write (4 seconds) of the hook — hand it to another process
     // while it holds the in-progress marker, and the process it was handed to removes the marker at the end. If it cannot be handed over, sweep in this run.
     if with_objects && std::env::var_os(SWEEP_INLINE_ENV).is_none() && hand_off(base, root_dir, cap, now) {
         crate::timing::count("facts-cache.sweep", "handed", 1);
@@ -216,7 +216,7 @@ pub fn run_handed_sweep(args: &[String]) -> std::process::ExitCode {
 
 /// If the whole store exceeds the cap `cap`, deletes from the dirs with the oldest last-used time to bring it back under the cap, and if still over, deletes facts
 /// oldest last-used first. Worktree dirs whose root keeps existing were not deleted by sweep_vanished_roots and kept growing
-/// as many as there were roots (62G on zeus, about 4G per hour). The root dir of this run, and dirs and facts used within IN_USE_SECONDS (roots used by
+/// as many as there were roots (62G on node-h, about 4G per hour). The root dir of this run, and dirs and facts used within IN_USE_SECONDS (roots used by
 /// concurrently running runs) are not deleted — even if the cap is briefly exceeded, roots in use are not deleted and forced to be rebuilt. Deleting does not change answers (unreadable chunks and facts are rebuilt —
 /// see the header note). If `with_objects` is false, the facts store is not counted (checked with root dirs alone — the store's facts are numerous and heavy to walk).
 fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64, with_objects: bool) {

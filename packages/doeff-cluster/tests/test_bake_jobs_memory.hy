@@ -1,5 +1,5 @@
 ;; 焼きの並列数を memory の空きで絞る判断(worker/core/bake_plan の memory-room-of・bake-jobs-of・cgroup-levels-of)。
-;; 失敗ケース(2026-11-02 18:56 JST の k3s-0): 並列数を CPU の数(2)だけで決め、memory 4 GiB の node の jobs の層(896 MiB のうち動く job が
+;; 失敗ケース(2026-11-02 18:56 JST の node-d): 並列数を CPU の数(2)だけで決め、memory 4 GiB の node の jobs の層(896 MiB のうち動く job が
 ;; 約 450 MiB)で焼く子を 2 本並べ、子が層の上限で殺されて準備が落ちた(測り: 子 1 本の山 198〜316 MiB・入口の山 191 MiB)。
 ;; 並列数は CPU の数を上限に、居る cgroup とその上の層の 上限 − 今の使い の最小から、子 1 本の見積もりで入る数へ絞る。
 (require doeff-hy.macros [deftest val <-])
@@ -20,7 +20,7 @@
 
 
 (deftest test-the-jobs-shrink-to-what-the-room-holds
-  ;; k3s-0 の jobs の層(896 MiB・動く job 約 450 MiB → 空き約 446 MiB)と準備の層(640 MiB・空)では 1 本 — CPU の 2 では並べない。
+  ;; node-d の jobs の層(896 MiB・動く job 約 450 MiB → 空き約 446 MiB)と準備の層(640 MiB・空)では 1 本 — CPU の 2 では並べない。
   (<- in-jobs int (bake-jobs-of 2 (* 446 MIB)))
   (assert (= in-jobs 1) in-jobs)
   (<- in-prepare int (bake-jobs-of 2 (* 640 MIB)))
@@ -38,7 +38,7 @@
 
 
 (deftest test-the-jobs-line-names-the-jobs-on-every-bake
-  ;; 失敗ケース(2026-11-07 の k3s-2): 絞った時だけ名乗る行は準備の記録に出ず、2333 本を 1639 秒で焼いた回の並列数が読めなかった。
+  ;; 失敗ケース(2026-11-07 の node-f): 絞った時だけ名乗る行は準備の記録に出ず、2333 本を 1639 秒で焼いた回の並列数が読めなかった。
   ;; 行は絞らなかった回も並列数・上限・空き・子の見積もりを名乗り、上限の無い層だけの空きは `-`。
   (<- narrowed str (jobs-line 1 2 (* 353 MIB)))
   (assert (= narrowed "bake_jobs=1 asked_jobs=2 room_mib=353 child_mib=320") narrowed)

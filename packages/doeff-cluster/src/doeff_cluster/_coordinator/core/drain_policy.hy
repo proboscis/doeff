@@ -277,7 +277,7 @@
    job(SupersededRun — 退かせた process が走っている仕事を終えて自分で終わるまで・AL-D2)だけ(0 で drained — preStop が終わる)。
    その世代が黙っていても待つ(AL-D2l): この頼みはその世代の Pod の preStop から来るので、その Pod の worker は生きている(worker は
    container の主の process で、終われば container ごと終わる)。黙りは負荷による遅れで、待たないと preStop が終わって止めの合図が
-   走っている仕事を切る(10-11 18:58 JST の zeus — load 58 で heartbeat が lease の 10 秒を越えて途絶え、drained を返してターン 15 本が
+   走っている仕事を切る(10-11 18:58 JST の node-h — load 58 で heartbeat が lease の 10 秒を越えて途絶え、drained を返してターン 15 本が
    切れた)。待ちの上限は preStop の側の期限(DRAIN_DEADLINE)。形は worker-view と同じ(drain_client.drain-outcome が drain.drained を
    読む)。"
   (setv w (.row state.workers name)

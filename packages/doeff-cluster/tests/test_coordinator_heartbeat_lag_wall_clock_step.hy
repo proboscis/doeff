@@ -129,7 +129,7 @@
 (defk seen-on [script]
   {:pre [(: script StepScript)] :post [(: % StepSeen)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "新しい状態の調停ループを台本の受付と仮想の時計の下で止めの合図まで回し、出た遅れの行と heartbeat を渡した刻を返すため。"
-  (val inbox (StepInbox (! (heartbeat-of "agent-worker-2")) script))
+  (val inbox (StepInbox (! (heartbeat-of "worker-2")) script))
   ;; 仮想の時計の眠り(Delay)は scheduler の上で進む。
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) wall-clock-stepped (stepped-heartbeat inbox) request-bodies reply-bodies]
                     (with-handlers (memory-notices (MemoryBroker))
@@ -144,7 +144,7 @@
   (<- seen StepSeen (seen-on (StepScript :save-seconds 6.0 :reply-seconds 0.0 :wall-back-seconds 10.0)))
   (assert (= (len seen.lags) 1) seen)
   (val lag (get seen.lags 0))
-  (assert (= lag.worker "agent-worker-2") lag)
+  (assert (= lag.worker "worker-2") lag)
   (assert (= lag.slowest "SaveState") lag)
   (assert (>= lag.slowest-ms 6000) lag)
   (assert (>= lag.elapsed-ms 6000) lag))
@@ -191,7 +191,7 @@
   ;; 壁の時計の差で測ると、時刻が戻った時に負になり max 0 で 0 に丸まって、並んでいた長さが消える。
   (val inbox (RequestInbox 0 30.0))
   (with [_ (patch.object time "monotonic" :side-effect [100.0 102.5])]
-    (val raw (RawRequest "POST" "/heartbeat" {} None (ReplySlot) "agent-worker-2" "agent-worker-2"))
+    (val raw (RawRequest "POST" "/heartbeat" {} None (ReplySlot) "worker-2" "worker-2"))
     (.offer inbox raw)
     (val batch (.taken inbox 10))
     (assert (= (len batch) 1) batch)

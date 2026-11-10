@@ -1,6 +1,6 @@
 ;; 掃除の数えを root ごとに持ち、変わっていない完成した root を数え直さない形と、上限を越えた時に余白まで消す形の検。
 ;;
-;; 実例(zeus 2026-10-16): 掃除は上限の際で「1 つ消す → 次に完成した root ですぐ越える」を繰り返し、20〜60 秒おきに
+;; 実例(node-h 2026-10-16): 掃除は上限の際で「1 つ消す → 次に完成した root ですぐ越える」を繰り返し、20〜60 秒おきに
 ;; 全 root(約 50 個・1 つ約 2〜3 万 file)を lstat で数え直した(24 時間の約 36% が掃除中)。数えの IO が node の共有の disk の浅い枠
 ;; (nr_requests=2・queue_depth=1)を取り合い、worker の本体の thread が tick の中の同期の file の効果で block 層の待ち(D 状態)に入った。
 ;;   数えの使い回し  完成の時刻(完成マーカーの mtime)と最後に使った時刻(.last-used の mtime)が前の数えと同じ root は木を歩かない
@@ -66,45 +66,45 @@
 
 
 ;; --- 判じ: 上限を越えた時の余白 -------------------------------------------------------------------------
-;; 数は zeus の本番(上限 20 GiB・root 1 つ約 0.4 GB — 2026-10-16 の実測 333〜508 MB)。
+;; 数は node-h の本番(上限 20 GiB・root 1 つ約 0.4 GB — 2026-10-16 の実測 333〜508 MB)。
 
 (val GIB (** 2 30))
-(val ZEUS-CAP (* 20 GIB))
-(val ZEUS-ROOT-BYTES (* 400 (** 10 6)))
+(val NODE-H-CAP (* 20 GIB))
+(val NODE-H-ROOT-BYTES (* 400 (** 10 6)))
 (val ROOMY-FREE (* 100 GIB))
 
 
-(defk zeus-roots [n]
+(defk node-h-roots [n]
   {:pre [(: n int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "同じ project の root n 個(i 番目は完成と最後に使った時刻が i — 番号の小さいほど古い)を返すため。"
   (tuple (gfor i (range n)
-               (RootInfo :key (.format "env-{:03d}" i) :project "p" :made-ms i :last-used-ms i :bytes ZEUS-ROOT-BYTES :owned True))))
+               (RootInfo :key (.format "env-{:03d}" i) :project "p" :made-ms i :last-used-ms i :bytes NODE-H-ROOT-BYTES :owned True))))
 
 
 (deftest test-a-sweep-over-the-cap-goes-down-to-the-margin-and-the-next-root-does-not-cross
   ;; 54 個の合計 21.6 GB は上限 21.47 GB を越える。直す前の選びは 1 つ消して 21.2 GB(上限の際)に止め、次に完成した root 1 つで
   ;; また越えた(往復)。上限の 95%(20.4 GB)まで下げる選びは古い 3 つを 1 回で消し、次に完成した root 1 つでは越えない。
-  (<- roots tuple (zeus-roots 54))
+  (<- roots tuple (node-h-roots 54))
   (<- total int (roots-bytes roots))
-  (assert (> total ZEUS-CAP) "前提: 合計は上限を越える")
-  (<- chosen tuple (sweep-choice roots (frozenset) ZEUS-CAP ROOMY-FREE 0))
+  (assert (> total NODE-H-CAP) "前提: 合計は上限を越える")
+  (<- chosen tuple (sweep-choice roots (frozenset) NODE-H-CAP ROOMY-FREE 0))
   (assert (= chosen #("env-000" "env-001" "env-002")) chosen)
   (val kept (tuple (gfor r roots :if (not-in r.key chosen) r)))
   (<- left int (roots-bytes kept))
-  (<- target int (sweep-target ZEUS-CAP))
+  (<- target int (sweep-target NODE-H-CAP))
   (assert (<= left target) (.format "1 回の消しで下げ先 {} まで下がる(残り {})" target left))
   ;; 次に完成した root 1 つ(最も新しい)では上限を越えず、掃除は何も選ばない。
-  (val next-roots (+ kept #((RootInfo :key "env-054" :project "p" :made-ms 54 :last-used-ms 54 :bytes ZEUS-ROOT-BYTES :owned True))))
-  (<- again tuple (sweep-choice next-roots (frozenset) ZEUS-CAP ROOMY-FREE 0))
+  (val next-roots (+ kept #((RootInfo :key "env-054" :project "p" :made-ms 54 :last-used-ms 54 :bytes NODE-H-ROOT-BYTES :owned True))))
+  (<- again tuple (sweep-choice next-roots (frozenset) NODE-H-CAP ROOMY-FREE 0))
   (assert (= again #()) again))
 
 
 (deftest test-a-low-free-disk-within-the-cap-is-not-pushed-down-to-the-margin
   ;; 合計が上限の内で空きだけが最低を割った時は、空きが戻る分だけ選ぶ(下げ先までは消さない — #4051 の選びのまま)。
-  (<- roots tuple (zeus-roots 50))
-  (assert (<= (! (roots-bytes roots)) ZEUS-CAP) "前提: 合計は上限の内")
+  (<- roots tuple (node-h-roots 50))
+  (assert (<= (! (roots-bytes roots)) NODE-H-CAP) "前提: 合計は上限の内")
   (val min-free (* 25 GIB))
-  (<- chosen tuple (sweep-choice roots (frozenset) ZEUS-CAP (- min-free 1) min-free))
+  (<- chosen tuple (sweep-choice roots (frozenset) NODE-H-CAP (- min-free 1) min-free))
   (assert (= chosen #("env-000")) chosen))
 
 

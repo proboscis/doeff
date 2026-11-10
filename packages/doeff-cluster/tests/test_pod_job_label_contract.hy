@@ -48,5 +48,5 @@
 (deftest test-a-contract-missing-or-adding-a-key-is-red
   (<- missing tuple (contract-drift {"prefix" JOB-LABEL-PREFIX} JOB-LABEL-PREFIX JOB-LABEL-VALUE))
   (assert (and (= (len missing) 1) (in "契約の鍵が" (get missing 0))) missing)
-  (<- added tuple (contract-drift (| CONTRACT {"node" "k3s-3"}) JOB-LABEL-PREFIX JOB-LABEL-VALUE))
+  (<- added tuple (contract-drift (| CONTRACT {"node" "node-g"}) JOB-LABEL-PREFIX JOB-LABEL-VALUE))
   (assert (and (= (len added) 1) (in "契約の鍵が" (get added 0))) added))

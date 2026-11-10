@@ -155,7 +155,7 @@
 ;; この file の検は全部、coordinator と worker を本物の子 process で起こすので subprocess-bytecode(根の conftest)を取る: 子は .pyc を
 ;; この run の 1 つの dir(PYTHONPYCACHEPREFIX)に書いて読み、Hy の code を既定の置き場に足す — 最初の検の子が compile した物を、後の検の
 ;; 子が使う。取らないと子は根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継いで何も残さず、.pyc の無い checkout(実行ごとに新しい
-;; .venv)では、検ごとに coordinator・worker・job の子が Hy を source から compile し直す — 日次の全体検証を atlas の Pod で走らせた初回
+;; .venv)では、検ごとに coordinator・worker・job の子が Hy を source から compile し直す — 日次の全体検証を node-a の Pod で走らせた初回
 ;; (2026-10-10 20:05)に、job を落とす検が compile だけで pytest の打ち切り(60 秒)を越えた。
 
 

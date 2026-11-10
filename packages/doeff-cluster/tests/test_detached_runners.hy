@@ -555,13 +555,13 @@
   ;; 名簿の担い手は coordinator の Worker の資源の spec.node(worker の --node)をそのまま名乗る — 名乗らない担い手は空(推測で埋めない)。
   (<- roster tuple (ReadRunners))
   (val facts (! (by-name roster)))
-  (assert (= #((. (get facts "a") node) (. (get facts "b") node)) #("zeus" "")) roster)
+  (assert (= #((. (get facts "a") node) (. (get facts "b") node)) #("node-h" "")) roster)
   True)
 
 (deftest test-the-roster-carries-the-k8s-node-each-runner-names
-  ;; 担い手 a は node zeus に置かれ、b は node を名乗らない(k8s の外)。名簿の読みは spec.node を写し、空を別の名で埋めない。
+  ;; 担い手 a は node node-h に置かれ、b は node を名乗らない(k8s の外)。名簿の読みは spec.node を写し、空を別の名で埋めない。
   (<- ok bool (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (nodes-named)
-                           :workers #((replace (get SIM-RUNNERS 0) :node "zeus") (get SIM-RUNNERS 1))
+                           :workers #((replace (get SIM-RUNNERS 0) :node "node-h") (get SIM-RUNNERS 1))
                            :timing TIMING))
   (assert ok))
 

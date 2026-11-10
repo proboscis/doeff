@@ -221,7 +221,12 @@ TOOLING_WORDS = (
     "acp:kanban-board",
 )
 REPOSITORY_WORDS = (*PRIVATE_REPOS[:-1], "doeff-publish", "hypha", "orch")
-MACHINE_WORDS = ("zeus", "atlas", "hermes", "doeff-worker")
+# Machine names are names of one site and are not written in this public tree: the site passes them in
+# DOEFF_INTERNAL_MACHINE_NAMES (comma-separated) and they are added to the pod name here.
+MACHINE_WORDS = (
+    "doeff-worker",
+    *(name.strip() for name in os.environ.get("DOEFF_INTERNAL_MACHINE_NAMES", "").split(",") if name.strip()),
+)
 
 
 def words(ws: tuple[str, ...]) -> re.Pattern[str]:

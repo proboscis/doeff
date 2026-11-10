@@ -5,7 +5,7 @@
 ;;;
 ;;; 使い手の調整ループの scheduler も、HTTP の asyncio の橋(await-handler の 1 つの loop の thread)も、file の効果の thread も通らない:
 ;;; HTTP は自分の同期の httpx.Client、時計の読みは 1 周ごとの新しい VM に並べる答え手(LifelineSettings.handlers — 本番 =
-;;; sync-time-handler)。ループが同期の処理で scheduler を塞ぐ間や、外の完了が返らない間も、この thread は送れる(zeus 2026-10-24
+;;; sync-time-handler)。ループが同期の処理で scheduler を塞ぐ間や、外の完了が返らない間も、この thread は送れる(node-h 2026-10-24
 ;;; 05:42〜05:46 JST — 拍の 250 秒の間、拍の外の背景の task も外の完了を待ったまま送れず、coordinator が lease の切れで機体の task を
 ;;; 全部 lost にした)。同じ process の中なので、process 全体が止まる間(GIL を放さない C の呼び・process の凍結)は守れない。
 ;;;

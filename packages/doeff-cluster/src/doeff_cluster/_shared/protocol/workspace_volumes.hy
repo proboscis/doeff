@@ -1,8 +1,8 @@
 ;;; 持ち主ごとの作業場所の volume の effect(型は doeff_cluster._shared.intent.workspace_volume_model)の本番の答え手 — その job を回す
 ;;; worker の身元(ServiceAccount の token)で自区画の API server の Longhorn の物(Volume・VolumeAttachment)を読み書きし、mount と umount は
-;;; 同じ Pod の mount の係(sidecar workspace-mount)へ頼む。決まりは deploy/k8s/workspace-volumes/README.md。
+;;; 同じ Pod の mount の係(sidecar workspace-mount)へ頼む。決まりは 上に載る系の宣言の workspace-volumes/README.md。
 ;;;
-;;;   WORKSPACE-SITE          本番の場所と待つ秒(Longhorn の namespace・値の ConfigMap・係の頼みの dir — zeus の node.yaml の emptyDir と
+;;;   WORKSPACE-SITE          本番の場所と待つ秒(Longhorn の namespace・値の ConfigMap・係の頼みの dir — node-h の node.yaml の emptyDir と
 ;;;                           同じ path・mountinfo・上限の秒)
 ;;;   volume-create-text      volume の名・級の parameters・大きさ → Longhorn の Volume の作成の本文の JSON の字(級の値の写し — README の表)
 ;;;   created-volume          CreateWorkspaceVolume: 値の ConfigMap と級(StorageClass)を読み、その名の完了した backup が在れば一番新しい物
@@ -137,9 +137,9 @@
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 
-;; 本番の場所と待つ秒。mount-dir は zeus の node.yaml の頼みの dir(emptyDir の workspace-mount の mountPath)と同じ path — 検が縛る。
+;; 本番の場所と待つ秒。mount-dir は node-h の node.yaml の頼みの dir(emptyDir の workspace-mount の mountPath)と同じ path — 検が縛る。
 ;; 待つ秒: attach は replica の engine が起きるまで(測りでは数秒)、係は空の 10 GiB の volume の mkfs.ext4 を含む。backup と戻しは中身の
-;; 量で伸びる(2026-11-03 の zeus の測り: 中身 50 MB で backup 27 秒・戻し 21 秒)— 10 GiB を書き切った volume でも収まる上限にする。
+;; 量で伸びる(2026-11-03 の node-h の測り: 中身 50 MB で backup 27 秒・戻し 21 秒)— 10 GiB を書き切った volume でも収まる上限にする。
 ;; recheck-seconds は変わりの知らせを待つ待ちの網(頭の註の待ち方): 知らせが届けば待たずに読み直すので、付けの速さはこの秒に依らない。
 ;; 待つ volume 30 本で毎秒 3 回の読み直し(以前の poll-seconds の 1/20)。
 (val WORKSPACE-SITE (WorkspaceVolumeSite :longhorn-namespace "longhorn-system"
@@ -1794,7 +1794,7 @@
    :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "広げた volume name の expand の snapshot を、子が小さい内に Longhorn に畳ませるため(README の節「広げる」の「expand の snapshot を畳む」)。
    Longhorn は広げるたびに今の head を system の snapshot expand-<大きさ> にし、子が volume-head の間は消せない。消されずに積まれた
-   expand の snapshot を、毎時の backup の後の purge が上から 1 つずつ消すと、そのたびに膨らんだ子を親へ写し直す(2026-11-04 の zeus で
+   expand の snapshot を、毎時の backup の後の purge が上から 1 つずつ消すと、そのたびに膨らんだ子を親へ写し直す(2026-11-04 の node-h で
    1 回 100〜340 秒・同じ中身を 3〜4 度書いた)。広げた直後に snapshot <名>-grow-<刻> を取って Snapshot を消すと、Longhorn は消す snapshot
    の印を付けて purge を走らせ、expand の snapshot へ小さな子(広げてからの書きだけ)を畳む。取った snapshot は子が volume-head なので
    印のまま残り、次の backup の purge が畳む。purge の終わりは待たない(Longhorn が engine の purge を並べ直して続ける)。"

@@ -34,11 +34,11 @@
 (val TOKEN "worker-identity-token")
 (val NAMESPACE-FILE (+ SERVICE-ACCOUNT-DIR "/namespace"))
 (val MY-UID "c1849b4d-0000-4c0a-8bc1-9dabdb16bda5")
-(val MY-POD "doeff-worker-k3s-3-69b587bfb7-tcfvg")
-(val SETTINGS (PodLabelSettings :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :namespace-file NAMESPACE-FILE :node "k3s-3"
+(val MY-POD "doeff-worker-node-g-69b587bfb7-tcfvg")
+(val SETTINGS (PodLabelSettings :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :namespace-file NAMESPACE-FILE :node "node-g"
                                 :pod-uid MY-UID))
 (val FILES (MemoryFiles :files #((MemoryFile :path SERVICE-ACCOUNT-TOKEN-FILE :content (.encode (+ TOKEN "\n") "utf-8"))
-                                 (MemoryFile :path NAMESPACE-FILE :content b"agent-worker"))))
+                                 (MemoryFile :path NAMESPACE-FILE :content b"workers"))))
 (val SECRETARY (JobSpec "secretary" "pkg.secretary" #() "r1"))
 (val MAIL (JobSpec "mail-derivation" "pkg.mail" #() "r1"))
 (val TASK (JobSpec "task/t-1" "pkg.task" #() "r1" :once True))
@@ -49,11 +49,11 @@
   "API server の相手役が持つ物: pods = Pod の名 → {node uid labels}・status = list に答える status(None = 普通に答える)・unreachable =
    届かない(HttpFailed で答える)・requests = 届いた要求の #(method path params 本文の JSON) の列・auth = 届いた要求の authorization の列。"
   (defn #^ None __init__ [self]
-    (setv self.pods {MY-POD {"node" "k3s-3" "uid" MY-UID
-                             "labels" {"app" "doeff-worker" "doeff.dev/node" "k3s-3" "job.doeff.dev/stale" "placed"}}
-                     "jev-proxy-548b4fc6fd-vggqq" {"node" "k3s-3" "uid" "755e8c60-other"
+    (setv self.pods {MY-POD {"node" "node-g" "uid" MY-UID
+                             "labels" {"app" "doeff-worker" "doeff.dev/node" "node-g" "job.doeff.dev/stale" "placed"}}
+                     "jev-proxy-548b4fc6fd-vggqq" {"node" "node-g" "uid" "755e8c60-other"
                                                    "labels" {"app" "jev-proxy" "job.doeff.dev/secretary" "placed"}}
-                     "doeff-worker-atlas-c5c949896-8nnvz" {"node" "atlas" "uid" "a-uid" "labels" {"app" "doeff-worker"}}}
+                     "doeff-worker-node-a-c5c949896-8nnvz" {"node" "node-a" "uid" "a-uid" "labels" {"app" "doeff-worker"}}}
           self.status None self.unreachable False self.requests #() self.auth #())))
 
 
@@ -140,7 +140,7 @@
 
 
 (deftest test-the-patch-touches-only-the-worker-prefix
-  (val current #((PodLabel :key "app" :value "doeff-worker") (PodLabel :key "doeff.dev/node" :value "k3s-3")
+  (val current #((PodLabel :key "app" :value "doeff-worker") (PodLabel :key "doeff.dev/node" :value "node-g")
                  (PodLabel :key "job.doeff.dev/old" :value "placed") (PodLabel :key "job.doeff.dev/keep" :value "placed")
                  (PodLabel :key "job.doeff.dev/odd" :value "hand-written")))
   (val wanted (frozenset #("job.doeff.dev/keep" "job.doeff.dev/odd" "job.doeff.dev/new")))
@@ -192,8 +192,8 @@
   (assert (= other {"job.doeff.dev/secretary" "placed"}) other)
   (assert (= (get api.pods MY-POD "labels" "app") "doeff-worker"))
   (assert (= api.requests
-             #(#("GET" "/api/v1/namespaces/agent-worker/pods" {"fieldSelector" "spec.nodeName=k3s-3"} None)
-              #("PATCH" (+ "/api/v1/namespaces/agent-worker/pods/" MY-POD) {}
+             #(#("GET" "/api/v1/namespaces/workers/pods" {"fieldSelector" "spec.nodeName=node-g"} None)
+              #("PATCH" (+ "/api/v1/namespaces/workers/pods/" MY-POD) {}
                 {"metadata" {"uid" MY-UID "labels" {"job.doeff.dev/secretary" "placed" "job.doeff.dev/stale" None}}})))
           api.requests)
   (assert (= (set api.auth) #{(+ "Bearer " TOKEN)}) api.auth)
@@ -300,9 +300,9 @@
 
 
 (deftest test-only-a-worker-with-a-pod-uid-and-a-node-labels-its-pod
-  (<- outside (| tuple None) (pod-label-parts None "zeus"))
+  (<- outside (| tuple None) (pod-label-parts None "node-h"))
   (<- no-node (| tuple None) (pod-label-parts MY-UID ""))
-  (<- inside (| tuple None) (pod-label-parts MY-UID "k3s-3"))
+  (<- inside (| tuple None) (pod-label-parts MY-UID "node-g"))
   (assert (= #(outside no-node) #(None None)) #(outside no-node))
   (assert (= (get inside 0) SETTINGS) inside)
   (assert (isinstance (get inside 1) PodLabelCell) inside))

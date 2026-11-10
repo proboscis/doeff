@@ -52,7 +52,7 @@
 (deftest test-the-init-layer-takes-only-the-init-and-the-first-layer-takes-the-rest [#^ Path tmp-path]
   ;; init の層(boot.sh の「init の層」): container の init(pid 1)だけを init の層へ、ほかを最初の層へ移す — runc は kubectl exec・
   ;; readinessProbe・preStop を init の cgroup へ入れるので、その memory は init の層の memory.max で止まる。失敗ケース(11-04 12:59 UTC の
-  ;; zeus): init が worker の本体と同じ上限の無い層に居て、exec の grep 2 本の 69 GB が機体の全体の OOM まで止まらなかった。
+  ;; node-h): init が worker の本体と同じ上限の無い層に居て、exec の grep 2 本の 69 GB が機体の全体の OOM まで止まらなかった。
   (<- scope Path (fake-container tmp-path))
   (.write-text (/ scope "cgroup.procs") "1\n4242\n4243\n")
   (<- done subprocess.CompletedProcess (run-layout tmp-path scope INIT-LAYOUT :init-layer "exec"))
@@ -149,7 +149,7 @@
 
 (deftest test-a-layout-with-cpu-max-writes-the-kernel-form-of-each-cap [#^ Path tmp-path]
   ;; CPU の枠(boot.sh の「CPU の枠」): cpu.max を書く層が在れば、子に cpu を掛けてから、宣言の <quota>/<period> を kernel の書式
-  ;; 「<quota> <period>」で書く。失敗ケース(11-08 の helios): 枠を掛けられないと、会話の層が container の上限 12 core を埋めた周期ごとに
+  ;; 「<quota> <period>」で書く。失敗ケース(11-08 の node-c): 枠を掛けられないと、会話の層が container の上限 12 core を埋めた周期ごとに
   ;; 常駐の job の thread も周期の残りの間止められ、常駐の service の答えの組みが 0.1 秒から 4.2 秒に伸びた。
   (<- scope Path (fake-container tmp-path))
   (<- done subprocess.CompletedProcess
@@ -256,7 +256,7 @@
     (:= beat (subprocess.Popen (list (! (placed-argv (str (/ guarded "cgroup.procs"))
                                                        #("sh" "-c" (.format "while :; do date +%s.%N >> {}; sleep 0.05; done" beats)))))))
     ;; ポーリングの訳: 拍の子(sh の loop)は始まりの知らせを持たないので、最初の拍が file に出るまで(5 秒まで)読んでから限る子を始める。読まずに始めると、64M は
-    ;; 0.13 秒で満ち、最初の拍より先に限る子が止まる(10-24 11:39 JST の本番の zeus の worker)。
+    ;; 0.13 秒で満ち、最初の拍より先に限る子が止まる(10-24 11:39 JST の本番の node-h の worker)。
     (val first-beat (+ (time.monotonic) 5))
     (while (and (not (and (.exists beats) (.strip (.read-text beats)))) (< (time.monotonic) first-beat))
       (time.sleep 0.01))

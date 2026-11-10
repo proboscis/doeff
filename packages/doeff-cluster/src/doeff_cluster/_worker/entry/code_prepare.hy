@@ -65,7 +65,7 @@
 ;;; 版上げの後の別の変更)。
 ;;;
 ;;; 道具は worker 自身のコードから file の path で起動する(準備する版の木から -m で起動すると、道具を持たない
-;;; 古い版では道具が見つからない — 2026-09-23 に atlas の版 8d7181f が bytecode 0 のまま完成品になった原因)。
+;;; 古い版では道具が見つからない — 2026-09-23 に node-a の版 8d7181f が bytecode 0 のまま完成品になった原因)。
 (require doeff-hy.macros [defk deff defhandler val var <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
@@ -489,9 +489,9 @@
   (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped))))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
   ;; 焼きの並列数: CPU から決めた数(か --jobs)を上限に、この process の居る cgroup の memory の空きで絞る(焼く子が層の上限で殺され、
-  ;; pool が壊れて準備が落ちた — 2026-11-02 の k3s-0・頭の註の手順 3)。絞らなかった回も並列数を 1 行で名乗る(plan.jobs-line — 実行環境の
+  ;; pool が壊れて準備が落ちた — 2026-11-02 の node-d・頭の註の手順 3)。絞らなかった回も並列数を 1 行で名乗る(plan.jobs-line — 実行環境の
   ;; 準備が完成の印と準備の記録に載せる。前は絞った時だけ名乗り、準備はその行を記録に出さなかったので、2333 本を 1639 秒で焼いた回の
-  ;; 並列数が読めなかった — 2026-11-07 の k3s-2)。
+  ;; 並列数が読めなかった — 2026-11-07 の node-f)。
   (setv room (run (with-handlers [os-file-handler] (usable-memory)))
         jobs (run (plan.bake-jobs-of (max 1 args.jobs) room)))
   (print (run (plan.jobs-line jobs args.jobs room)) :file sys.stderr :flush True)

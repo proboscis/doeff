@@ -50,12 +50,12 @@ shim だけを替える時(patch の直し・containerd の版上げ)は image �
 (`/dev/nvidia*`・`/dev/dri`)と driver の lib(`NVIDIA_DRIVER_CAPABILITIES` が選ぶ — EGL と GBM は `graphics`)を入れる。k3s は toolkit を
 見つけると自分で handler `nvidia` を足すが、それは元の runc の shim なので、層の OOM の印の直しが無い。GPU を使う worker はこの handler を使う。
 
-- 使える機体: toolkit を入れた機体だけ(zeus — 2026-11-05 に v1.20.1 を NVIDIA の GitHub の release の .deb で入れた。apt の源は足していない)。
+- 使える機体: toolkit を入れた機体だけ(node-h — 2026-11-05 に v1.20.1 を NVIDIA の GitHub の release の .deb で入れた。apt の源は足していない)。
   入れていない機体で使うと container が作れない。機体を足す時は toolkit を入れ、上の手順 1〜3 の後に worker の dir で
   `runtimeClassName: runc-oomscope-nvidia` と env `NVIDIA_VISIBLE_DEVICES`・`NVIDIA_DRIVER_CAPABILITIES`・`WORKER_GPU=nvidia` を足し、
-  `WORKER_PASS_ENV` に `WORKER_GPU` を足す(zeus の `nodes/zeus/gpu.yaml`)。
+  `WORKER_PASS_ENV` に `WORKER_GPU` を足す(node-h の `nodes/node-h/gpu.yaml`)。
 - GPU を持つ宣言は `WORKER_GPU` で、`NVIDIA_VISIBLE_DEVICES` ではない: toolkit(CDI の形)は device を入れた後に container の PID 1 の環境の
-  `NVIDIA_VISIBLE_DEVICES` を `void` に書き換える(実測 2026-11-07 zeus)ので、container の中の process には値が届かない。`WORKER_GPU` は
+  `NVIDIA_VISIBLE_DEVICES` を `void` に書き換える(実測 2026-11-07 node-h)ので、container の中の process には値が届かない。`WORKER_GPU` は
   toolkit が触らず、device の注入が壊れても残るので、上に載る仕事が「在るはずの GPU が無い」を読める。
 - 差し込みを替えた後(handler を足した時を含む)は、上の手順 2 の k3s の再起動が 1 度要る。再起動の前に worker の dir で使うと、Pod の
   sandbox が `no runtime for "runc-oomscope-nvidia" is configured` で作れない。

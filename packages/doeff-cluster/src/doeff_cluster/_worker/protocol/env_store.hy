@@ -20,7 +20,7 @@
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。task の中でも同期の effect は scheduler の thread を占めるので、木を相手にする effect(MeasureTree・
 ;;;     RemoveTree・bytecode の保存先の様子つきの歩き StatTree)は本番の offloaded-tree-handler が thread で待つ(
-;;;     保存先を WalkTree と file ごとの StatPath で歩いた掃除が zeus で scheduler を 10〜19 秒止めた)。
+;;;     保存先を WalkTree と file ごとの StatPath で歩いた掃除が node-h で scheduler を 10〜19 秒止めた)。
 ;;;     選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
 ;;;     選んだ root はその拍で . で始まる脇の名へ退けてから消す(消している間は選びにも完成品の観測にも出ない)。走っている掃除は同時に 1 つ。
 ;;;     固定は世代ごとに分け合う dir の root-pins/ へ file で知らせ合い、掃除はまだ走っている他の世代(状態の dir が在る)の固定も消さない
@@ -117,7 +117,7 @@
    分け合う・AL-D2・AL-D2g)・prepare-procs = 準備の process を置く兄弟の cgroup(準備の層)の cgroup.procs(None = 置き直さない — 外側の
    job-cgroup-placer が jobs の層へ置く)。準備の層は機体の配備が準備のために取り置く memory の上限で、worker は走っている準備の分を
    jobs の上限から引く(worker/core/eviction_rules の prepare-reserve)。jobs の層で焼くと、動く job と memory を分け合い、焼く子が層の
-   上限で殺されて準備が落ちた(2026-11-02 の k3s-0 — jobs 896 MiB のうち動く job が約 450 MiB)。2 つの量の値は worker の
+   上限で殺されて準備が落ちた(2026-11-02 の node-d — jobs 896 MiB のうち動く job が約 450 MiB)。2 つの量の値は worker の
    起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。prepare-layer-dir = 準備の process が置かれる cgroup の層の dir
    (先の組みの入口はこの層の memory で判じる — core/env_upkeep の warm-refusal。None = 層が無い機体・container の読みで判じる)。"
   (#^ str state)
@@ -357,7 +357,7 @@
 
 (defk sample-layers [settings pending]
   {:pre [(: settings EnvSettings) (: pending dict)] :post [(: % dict)]}
-  "走っている準備の組みの山を、memory.peak の無い kernel(5.19 より前 — k3s-0〜3 の 5.15)でも測るため: 拍ごとに組みの置かれる層の
+  "走っている準備の組みの山を、memory.peak の無い kernel(5.19 より前 — node-d〜g の 5.15)でも測るため: 拍ごとに組みの置かれる層の
    回収できない使いを 1 度読み、準備ごとの最大を上げ、上がった準備の memory の file(layer-sample->json)を置き換えで書く。準備の
    process は完成の印を書く前にこの file を読み、memory.peak を読めない時の組みの山(最大 − 起こす前の読み)にする(env_prepare の
    build-memory-of)。層は同時に走る準備と待ちの子で分け合うので、山はその間の層の上がり(組みが足した量の上の端)。答え = 記録を
@@ -647,9 +647,9 @@
   "bytecode の保存先(store — None = 使わない設定)のうち、掃除が消す物(unused-store-names)の path の列を求めるため(保存先の dir が
    無ければ空)。保存先は file ごとの時刻まで StatTree の 1 つの呼びで読む — 本番は offloaded-tree-handler が thread で待つので、file が
    10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(前は WalkTree と file ごとの StatPath を
-   scheduler の thread で歩き、zeus で 10〜19 秒止めた)。歩きの答えからの選び(unused-store-names)も Compute で回す — 本番は
+   scheduler の thread で歩き、node-h で 10〜19 秒止めた)。歩きの答えからの選び(unused-store-names)も Compute で回す — 本番は
    thread-pool-compute-handler が thread で待つ(前は scheduler の thread で回し、50 万の entry の選びが数秒かかって、掃除の終わり際に
-   調整ループを止めた — 2026-11-02 の zeus で掃除の終わりのたびに生存の合図の thread が拍の代わりに heartbeat を送った)。選びが落ちたら
+   調整ループを止めた — 2026-11-02 の node-h で掃除の終わりのたびに生存の合図の thread が拍の代わりに heartbeat を送った)。選びが落ちたら
    その例外を上げる(掃除の task の失敗として答えへ渡る)。"
   (if (is store None)
       #()
@@ -901,7 +901,7 @@
   "準備の子の終わりと期限を見て記録を進め、待ちを起こし、root の観測を返すため(refused = 先の組みの断りの記録 — 読むだけ・infos = 最後の
    掃除の数えの root ごとの観測 — 準備の層の見込みの山の元)。答え = #(待ち 準備中 失敗 観測の tuple)。
    準備の子(準備の層の下 — group)の oom_kill が増えて終わった準備(完成を書いていない)は、層を分け合った他の準備との取り合いで殺された
-   ので、失敗にせず 1 本だけで起こし直す待ち(alone)へ戻す(2026-11-09 の k3s-2 — 2 本が 1 本分の層で互いを殺し、env-incompatible と
+   ので、失敗にせず 1 本だけで起こし直す待ち(alone)へ戻す(2026-11-09 の node-f — 2 本が 1 本分の層で互いを殺し、env-incompatible と
    記録して起こし直し続けた)。1 本だけで起こしてなお殺された準備は、層に入らない準備として memory-killed の失敗にする。"
   (<- now-ms int (now-epoch-ms))
   (<- sampled dict (sample-layers settings pending))

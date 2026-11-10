@@ -26,7 +26,7 @@ R4 addendum 2), the Python version and ABI used to build, environment variables 
 tree path -- even if the pin is bumped and the working tree is recreated, the same contents give the same key. uv also looks at the tool.uv.cache-keys files and then calls the entry, so this
 declaration is the single definition of both "the set on which uv asks for a rebuild" and "the store key". The key is built without spawning child processes (ADR-DOE-BUILD-001 R4 addendum --
 the rustc version is not part of the key. The key is needed before the store lookup, so a design that spawned `rustc -V` made an environment without rustc on PATH fail at key creation even though the store
-held a wheel for the same source -- slot sync on zeus, 2026-10-07. What determines a wheel's contents is the source, the Python
+held a wheel for the same source -- slot sync on node-h, 2026-10-07. What determines a wheel's contents is the source, the Python
 ABI, the machine, the environment variables that change the build, and the build settings; the ABI exposed to Python is the C-API, so the rustc version does not leak outside the wheel).
 
 store (_wheel_slot, _store_wheel): `<store>/<package>-<key>/<wheel>` plus a used marker `.used` (replaced on every use to advance the dir's mtime).
@@ -54,7 +54,7 @@ target, the earlier tree's sources look older than the later build's products, s
 -- and once that wheel is placed under a key, every build with the same key fetches it. When the user passes CARGO_TARGET_DIR, the build happens there and it is not deleted -- the way for a
 session fixing Rust to use incremental builds (`CARGO_TARGET_DIR=<dir> uv sync`). In cargo,
 the env CARGO_TARGET_DIR beats the config's build.target-dir (and CARGO_BUILD_TARGET_DIR), so the entry's temporary dir also beats those settings.
-A build that uses the temporary dir also points the intermediate-artifact location CARGO_BUILD_BUILD_DIR at the same temporary dir. Even if the environment points that location at memory or similar (zeus's
+A build that uses the temporary dir also points the intermediate-artifact location CARGO_BUILD_BUILD_DIR at the same temporary dir. Even if the environment points that location at memory or similar (node-h's
 worker), one build's intermediates are not left behind. When the user passes CARGO_TARGET_DIR, the environment's value is left as is.
 The temporary dir's name includes the build process's pid (doeff-cargo-target-<pid>-<random chars>). A build stopped by SIGTERM or SIGKILL does no cleanup,
 so the next build, at the entry, removes dirs whose owner process is gone.

@@ -87,7 +87,7 @@
 ;;;   ReadCoordinator path      coordinator の口の GET の本文(/state・/workers/<名>・/metrics など)。
 ;;;   StopCoordinator 秒        coordinator の Pod を優雅に止め(次の拍の止めの合図)、秒の間止めてから作り直す(置き場から読み直す)。
 ;;;   CrashCoordinator 秒       次の Persist を失敗させる(返事をせずに落ちる — 取った要求の送り手には接続の失敗)。秒の後に作り直す。
-;;;   StallCoordinator 秒       coordinator の機体ごと秒の間止める(2026-10-13 の atlas の 3 分の止まりの形): 調停
+;;;   StallCoordinator 秒       coordinator の機体ごと秒の間止める(2026-10-13 の node-a の 3 分の止まりの形): 調停
 ;;;                             ループも受付も答えず、並んでいた要求と止まりの間の送りは接続の失敗になる。明けると同じ一生のまま
 ;;;                             (置き場から読み直さない)調停ループが続く。
 ;;;   FailRoute 型 path 状態 秒  coordinator の口 型 path(完全一致)への要求に、秒の間 状態(5xx など)で答える(本番の coordinator の前の
@@ -720,7 +720,7 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect StallCoordinator
-  "検の effect: coordinator の機体ごと seconds 秒止める(2026-10-13 02:22〜02:24 JST の atlas の形: containerd と
+  "検の effect: coordinator の機体ごと seconds 秒止める(2026-10-13 02:22〜02:24 JST の node-a の形: containerd と
    kubelet が 3 分答えず、coordinator の process も受付も止まった)。並んでいた要求は接続の失敗で切れ、止まりの間の送りも接続の失敗に
    なる(調停ループに届かない)。調停ループは次の取りで止まり、明けると同じ一生のまま(置き場から読み直さない)続く。答え = None。"
   {:fields [(: seconds float)]

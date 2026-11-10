@@ -393,7 +393,7 @@
 
 
 (deftest test-a-signal-the-os-refuses-is-answered-as-refused-and-the-child-keeps-running
-  ;; A machine where the OS refuses the send (EPERM -- on 2026-11-01 on helios, AppArmor denied signals between processes inside a container). A refused
+  ;; A machine where the OS refuses the send (EPERM -- on 2026-11-01 on node-c, AppArmor denied signals between processes inside a container). A refused
   ;; signal is not answered as "sent" -- the answer is ProcessSignalRefused, and the child keeps running. Counterexample = the form (before the fix) that swallows PermissionError and
   ;; answers delivered True turns the assertions below red. Both a child started as a group (os.killpg) and a non-group child (the Popen handle -> os.kill).
   {:interpreters ["subprocess" "offloaded-subprocess"]}

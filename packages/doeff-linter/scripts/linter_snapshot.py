@@ -63,7 +63,7 @@ MANIFEST = "packages/doeff-linter/Cargo.toml"
 BIN_NAME = "doeff-linter"
 STORE_ENV = "DOEFF_LINTER_SNAPSHOT_DIR"
 BUILD_COMMIT_ENV = "DOEFF_LINTER_BUILD_COMMIT"
-# A release / lto build on a cold target takes 3 to 5 minutes (measured on zeus 2026-09-29: 156 to 266 seconds).
+# A release / lto build on a cold target takes 3 to 5 minutes (measured on node-h 2026-09-29: 156 to 266 seconds).
 BUILD_TIMEOUT_S = 1800
 # Spelling of doeff's commit in the linter's `--version` (build.rs's DOEFF_LINTER_COMMIT).
 COMMIT_PATTERN = re.compile(r"\(doeff ([0-9a-f]{40})(\+dirty)?\)")

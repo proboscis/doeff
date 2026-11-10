@@ -27,14 +27,14 @@
 (setv GROUPS (table-of #((TableWrite "bg" (GroupLimit :group "bg" :scope "worker" :limit 6))
                          (TableWrite "bg-caller" (GroupLimit :group "bg-caller" :scope "cluster" :limit 2 :per-part True)))))
 
-(defk zeus-like [room reserve]
+(defk node-h-like [room reserve]
   {:pre [(: room int) (: reserve int) (>= reserve 1) (<= room (- (* RESERVE-SHARE TASK-CORES reserve) CPU-FLOOR-CORES))]
    :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "測った空きで task を room 本置け、予約(measured_room.reserve-of — 上限の 1/RESERVE-SHARE)が reserve の、能力 host-zeus の worker
+  "測った空きで task を room 本置け、予約(measured_room.reserve-of — 上限の 1/RESERVE-SHARE)が reserve の、能力 host-node-h の worker
    (最後の連絡 0・task と同じ版 python 3)を作るため: CPU は予約が reserve になる数(使い 0 — CPU では room より多く置ける)、memory の
    空きは床 + room 本分(空きを memory で room 本に絞る)。task の空きは常駐の job に依らない(常駐の job の使いは測った値に入っている)。
    下の検の数は、以前の手書きの枠(capacity − 常駐の job・task-reserve)の空きと予約を、同じ空きと予約として写した物。"
-  (WorkerInfo "zeus" #("host-zeus") 0
+  (WorkerInfo "node-h" #("host-node-h") 0
               :measured (MeasuredLoad :at-ms 0 :cpus (* RESERVE-SHARE TASK-CORES reserve) :cpu-busy 0.0 :memory-total-MiB 262144
                                       :memory-available-MiB (+ MEMORY-FLOOR-MIB (* room MEMORY-SLOT-MIB))
                                       :cpu-some-avg10 0.0 :cpu-full-avg10 0.0 :memory-some-avg10 0.0 :memory-full-avg10 0.0)
@@ -42,14 +42,14 @@
 
 (defk resident [names]
   {:pre [(: names tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "zeus に置いた常駐の job の宣言と置き先の組 #(jobs placements) を作るため。"
+  "node-h に置いた常駐の job の宣言と置き先の組 #(jobs placements) を作るため。"
   #((tuple (gfor n names (ClusterJob (JobSpec n "m" #() "rev") :peak-mib 200 :settle-mib 100)))
-    (! (table-from-rows (dfor n names n (Placement n "zeus" 1 0))))))
+    (! (table-from-rows (dfor n names n (Placement n "node-h" 1 0))))))
 
 (defk queued [id * [priority 0] [limits #()]]
   {:pre [(: id str) (: priority int) (: limits tuple)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "能力 host-zeus を要る待っている切り離した task(優先 priority・上限 limits)を作るため。"
-  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" PY3 #("host-zeus") 15000 20000 0 :detached True :key id
+  "能力 host-node-h を要る待っている切り離した task(優先 priority・上限 limits)を作るため。"
+  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" PY3 #("host-node-h") 15000 20000 0 :detached True :key id
               :priority priority :limits limits))
 
 (defk background [id caller]
@@ -66,14 +66,14 @@
 
 
 (deftest test-a-build-task-is-placed-first-even-after-ten-queued-background-tasks
-  ;; 失敗ケース(直す前は id の順に置き、先に積んだ背景の仕事 10 本が空き 10 を全部取って組み立ての task が待った): zeus の形の worker
+  ;; 失敗ケース(直す前は id の順に置き、先に積んだ背景の仕事 10 本が空き 10 を全部取って組み立ての task が待った): node-h の形の worker
   ;; (capacity 12・task-reserve 3・常駐の job 2)に背景の仕事 10 本(呼び手はみな別)を先に積み、後から組み立ての task(優先 0)を積む。
   ;; 1 拍の置きで組み立ての task が先に置かれ、背景の仕事はworker ごとの上限 6 本まで。残る 4 本は queued で、上限の固定の文で待つ。
   (setv #(jobs placements) (! (resident #("a" "b"))))
   (setv tasks {"t11" (! (queued "t11"))})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 10 3))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
   (val placed (! (tasks-placed 1000 state placements T)))
   (assert (= (. (.row placed "t11") phase) "assigned") (.row placed "t11"))
   (val longs (! (phases placed LONG-IDS)))
@@ -90,23 +90,23 @@
   (setv tasks {})
   (for [id LONG-IDS]
     (setv (get tasks id) (! (queued id :priority -1))))
-  (val first (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 10 3))})) placements (! (table-from-rows tasks))) placements T)))
+  (val first (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements (! (table-from-rows tasks))) placements T)))
   (val longs (! (phases first LONG-IDS)))
   (assert (= (.count longs "assigned") 8) longs)
   (assert (= (. (.row first "t10") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))) (.row first "t10"))
-  (val later (! (tasks-placed 2000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 10 3))})) placements
+  (val later (! (tasks-placed 2000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements
                                                 (! (table-from-rows (| (dict (.items first)) {"t11" (! (queued "t11"))}))))
                              placements T)))
   (assert (= (. (.row later "t11") phase) "assigned") (.row later "t11"))
   ;; 優先 0 の task は今までどおり予約の最後まで使える(上の組み立ての後も残した 1 本に置け、その次は空きが無い)。
-  (val more (! (tasks-placed 3000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 10 3))})) placements
+  (val more (! (tasks-placed 3000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements
                                                (! (table-from-rows (| (dict (.items later)) {"t12" (! (queued "t12")) "t13" (! (queued "t13"))}))))
                             placements T)))
   (assert (= (! (phases more ["t12" "t13"])) ["assigned" "queued"]) more)
   (assert (= (. (.row more "t13") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (.row more "t13")))
 
 (deftest test-background-tasks-run-while-resident-jobs-fill-the-job-side
-  ;; 失敗ケース(本番 2026-10-14 17:05〜): zeus の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −
+  ;; 失敗ケース(本番 2026-10-14 17:05〜): node-h の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −
   ;; task-reserve・job の側の空き 0)になると、残る空きは予約の 6 だけになり、予約を使わない背景の仕事は 1 本も置かれなかった(会話の
   ;; long-command 8 本が 76〜230 分 queued)。背景の仕事は予約の半分(切り捨て — 6 なら 3)までは使い、残りの半分(切り上げ)を優先 0 以上の
   ;; task に残す: 背景の仕事 10 本(呼び手はみな別)のうち 3 本が 1 拍で置かれ、残りは予約の文で待つ。後から積んだ組み立ての task 3 本は、
@@ -115,7 +115,7 @@
   (setv tasks {})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 6 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 6 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
   (val first (! (tasks-placed 1000 state placements T)))
   (val longs (! (phases first LONG-IDS)))
   (assert (= (.count longs "assigned") 3) longs)
@@ -129,7 +129,7 @@
   (assert (= (! (phases later builds)) ["assigned" "assigned" "assigned"]) later))
 
 (deftest test-background-tasks-keep-their-half-of-the-reserve-while-foreground-groups-run
-  ;; 失敗ケース(本番 2026-10-29 17:09〜21:11 JST): zeus の形(capacity 40・task-reserve 6・常駐の job 33 → task の
+  ;; 失敗ケース(本番 2026-10-29 17:09〜21:11 JST): node-h の形(capacity 40・task-reserve 6・常駐の job 33 → task の
   ;; 空き 7)で優先 0 の task 4 本(日次の検・着地の後の検 2 組・着地の宣言し直し)が走ると、残る空き 3 は予約の半分 3 を越えず、背景の仕事は
   ;; 1 本も置かれなかった(long-command 最大 27 本が 3〜4 時間 queued)。背景の仕事は予約の残りの半分(切り捨て — 6 なら 3)を自分の分として
   ;; 持つ: 優先 0 の 4 本と背景の仕事 10 本(呼び手はみな別)を積むと、1 拍で優先 0 の 4 本と背景の仕事 3 本が置かれる。同じ拍に積んだ
@@ -141,7 +141,7 @@
     (setv (get tasks id) (! (queued id))))
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
   (val placed (! (tasks-placed 1000 state placements T)))
   (assert (= (! (phases placed fronts)) ["assigned" "assigned" "assigned" "assigned" "queued"]) placed)
   (assert (= (. (.row placed "f5") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-BACKGROUND-RESERVED))) (.row placed "f5"))
@@ -149,7 +149,7 @@
   (assert (= (.count longs "assigned") 3) longs))
 
 (deftest test-foreground-tasks-use-the-whole-reserve-when-no-background-task-waits
-  ;; 背景の仕事の分は、背景の仕事が待っている時だけ残す: 同じ zeus の形(task の空き 7)で優先 0 の task 7 本だけを積むと 7 本とも置かれる
+  ;; 背景の仕事の分は、背景の仕事が待っている時だけ残す: 同じ node-h の形(task の空き 7)で優先 0 の task 7 本だけを積むと 7 本とも置かれる
   ;; (待つ者の無い分を空けたままにしない)。背景の仕事が予約の残りの半分を既に持っていれば、待っている背景の仕事が在っても優先 0 の
   ;; task は残りの空きを全部使える。
   (setv #(jobs placements) (! (resident (tuple (gfor i (range 33) (.format "j{:02d}" i))))))
@@ -157,7 +157,7 @@
   (setv only {})
   (for [id fronts]
     (setv (get only id) (! (queued id))))
-  (val alone (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 7 6))})) placements
+  (val alone (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements
                                                  (! (table-from-rows only)) :group-limits GROUPS)
                               placements T)))
   (assert (= (.count (! (phases alone fronts)) "assigned") 7) alone)
@@ -165,7 +165,7 @@
   (setv tasks {})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
   (val first (! (tasks-placed 1000 state placements T)))
   (assert (= (.count (! (phases first LONG-IDS)) "assigned") 4) first)
   ;; 後から積んだ優先 0 の task 4 本: 背景の仕事は自分の分 3 を越えて持っているので、優先 0 の側は残りの 3 を全部使い、4 本目は空きを待つ。
@@ -181,7 +181,7 @@
   ;; 1 本が終われば 3 本目が置かれる。
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
-  (val state (ClusterState #() (! (table-from-rows {"zeus" (! (zeus-like 17 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState #() (! (table-from-rows {"node-h" (! (node-h-like 17 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
   (val placed (! (tasks-placed 1000 state (table-of #()) T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (.row placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (.row placed "t3"))
@@ -195,7 +195,7 @@
   (<- placed (get tuple #(ClusterState str)) (program-placed (ClusterState) {"python" "3"}))
   (setv #(placed-state sha) placed)
   (val state (replace placed-state :group-limits GROUPS))
-  (<- parsed TaskBody (task-body-of (| {"program" sha "revision" "rev" "name" "bg" "needs" ["host-zeus"] "memoryMiB" 1024} body)))
+  (<- parsed TaskBody (task-body-of (| {"program" sha "revision" "rev" "name" "bg" "needs" ["host-node-h"] "memoryMiB" 1024} body)))
   (val reply (submit-detached state key parsed 0))
   #(reply.status reply.body reply.state))
 

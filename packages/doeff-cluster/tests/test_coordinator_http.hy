@@ -1,4 +1,4 @@
-;; coordinator との HTTP: coordinator が接続を使い回させること・heartbeat の途絶の数えが宛先の切り替えをまたぐこと(2026-09-23 の newmac の件)。
+;; coordinator との HTTP: coordinator が接続を使い回させること・heartbeat の途絶の数えが宛先の切り替えをまたぐこと(2026-09-23 の mac-a の件)。
 ;; 宛先の切り替えと読みの送り直しの性質は宛先の部品の検(test_coordinator_route — #2427 で httpx の client を持つ口を退役させた)。
 (require doeff-hy.macros [deftest defk deff <- val])
 (import os)

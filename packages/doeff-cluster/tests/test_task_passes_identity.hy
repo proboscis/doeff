@@ -81,16 +81,16 @@
 (deftest test-a-heartbeat-of-a-worker-holding-no-task-keeps-the-tasks-dict
   ;; 受入: 切り離した task を担わない worker の heartbeat の後、tasks は前の歩と同じ object(2 度目の heartbeat で名乗りの変化も無い)。
   (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
-  (val first (! (beat state "atlas" 1000)))
-  (val second (! (beat first "atlas" 2000)))
+  (val first (! (beat state "node-a" 1000)))
+  (val second (! (beat first "node-a" 2000)))
   (assert (is first.tasks state.tasks))
   (assert (is second.tasks first.tasks)))
 
 (deftest test-a-heartbeat-of-a-worker-holding-no-task-builds-no-task-keys [monkeypatch]
   ;; 受入: その歩の durable-delta は tasks の組の鍵を作らず(呼ばれた回数 0)、task/ の鍵を 1 本も書かない。
   (val state (ClusterState #() (! (table-from-rows {})) (table-of #()) (! (rows))))
-  (val first (! (beat state "atlas" 1000)))
-  (val second (! (beat first "atlas" 2000)))
+  (val first (! (beat state "node-a" 1000)))
+  (val second (! (beat first "node-a" 2000)))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
   (val got (! (dk.durable-delta first second)))

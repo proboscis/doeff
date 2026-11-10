@@ -121,7 +121,7 @@
   (setv #^ str doeff-commit "")
   ;; 常駐の job に使ってよい memory の予算(MiB — heartbeat の memoryMiB = 枠の file の行の値。名乗らない worker は
   ;; None)。job の側の枠: 置いた job と surge の settle の和 + 新しい job の settle がこの値以下の時だけ置く(cluster_policy.memory-misfit)。
-  ;; None の worker(枠の file の外の機体 — Mac・zeus-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
+  ;; None の worker(枠の file の外の機体 — Mac・node-h-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| int None) memory-mib None)
   ;; 機体の測った空き(heartbeat の measured — CPU の使い・memory の空き・PSI。測れない worker は None)。task の置き先はこの値から数える

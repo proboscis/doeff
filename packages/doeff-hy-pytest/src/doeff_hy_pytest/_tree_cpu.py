@@ -4,7 +4,7 @@ only tests that declared it (``doeff_hy_pytest.declare_process_tree_cpu``) use i
 
 Why it exists: a marked test (real_world) is judged by wall clock, because its weight is in child processes and outside waits and does not show in process CPU seconds
 (``time.process_time``). But for a test whose weight is the CPU of child processes (e.g. one that runs a type checker in a child),
-the wall clock stretches with machine load even when the test body is the same. In the daily run of 2026-10-22 04:00 JST (zeus, load 75-104 / 36 cores),
+the wall clock stretches with machine load even when the test body is the same. In the daily run of 2026-10-22 04:00 JST (node-h, load 75-104 / 36 cores),
 a test that runs doeff-hy-check in a child had wall clock 33 s and own CPU 0.96 s, exceeding the 30 s limit, and was green once the limit was removed. In local measurements
 most of that stretch was disk waiting (53 blocked processes, io PSI some 35-54%), and CPU waiting (schedstat run_delay) explains only part of the
 stretch - subtracting a load share from wall clock cannot subtract I/O load. Descendants' CPU seconds are the amount of work the test did and

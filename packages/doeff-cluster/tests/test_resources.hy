@@ -110,7 +110,7 @@
   (var s (get reply-5 0))
   (val status (get reply-5 1))
   (assert (= status 201))
-  (:= s (! (tick (! (beat s "atlas" 1000)) 1000 T)))
+  (:= s (! (tick (! (beat s "node-a" 1000)) 1000 T)))
   (assert (is-not (.row s.placements "a") None) s.placements)
   (setv idle (! (tick s 1500 T)))
   (assert (is idle s))
@@ -287,7 +287,7 @@
     "pid" 100 "attempts" attempts "detail" "" "instance" instance "specHash" (! (hash-of spec name)) "placement" placement}])
 
 
-(defk ready-report [spec instance [worker "atlas"] [placement 1] [attempt 1] [ready True]
+(defk ready-report [spec instance [worker "node-a"] [placement 1] [attempt 1] [ready True]
                             [name "w"]]
   {:pre [(: spec dict) (: instance str) (: worker str) (: placement int) (: attempt int) (: ready bool) (: name str)] :post [(: % dict)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -314,23 +314,23 @@
   (setv spec (| SPEC {"readiness" {"windowSeconds" 10}}))
   (<- reply-25 (call (ClusterState) "POST" "/resources/Service" {"name" "w" "spec" spec}))
   (var s (get reply-25 0))
-  (:= s (! (beat s "atlas" 1000)))
+  (:= s (! (beat s "node-a" 1000)))
   (<- running (running-row spec "1-aaa"))
-  (:= s (! (beat s "atlas" 2000 running)))
+  (:= s (! (beat s "node-a" 2000 running)))
   ;; process は動いているが、まだ「準備できた」の報告が無い(起動直後の猶予の後は NotReady)
-  (:= s (! (beat s "atlas" 20000 running)))
+  (:= s (! (beat s "node-a" 20000 running)))
   (assert (= (! (ready-of s 20000)) "NotReady"))
   (:= s (! (report s (! (ready-report spec "1-aaa")) 20000)))
-  (:= s (! (beat s "atlas" 20000 running)))
+  (:= s (! (beat s "node-a" 20000 running)))
   (assert (= (! (ready-of s 25000)) "Ready"))
   ;; window(10 秒)を過ぎて報告が途絶えると NotReady
-  (:= s (! (beat s "atlas" 30500 running)))
+  (:= s (! (beat s "node-a" 30500 running)))
   (assert (= (! (ready-of s 30500)) "NotReady"))
   ;; 別の版からの報告は数えない
   (:= s (! (report s (| (! (ready-report spec "1-aaa")) {"revision" "old" "specHash" (! (hash-of (| spec {"revision" "old"})))}) 31000)))
   (assert (= (! (ready-of s 31000)) "NotReady"))
   ;; 世代を持たない報告(以前の版の process)は数えない
-  (:= s (! (report s {"worker" "atlas" "pid" 7 "revision" "r1" "ready" True} 31500)))
+  (:= s (! (report s {"worker" "node-a" "pid" 7 "revision" "r1" "ready" True} 31500)))
   (assert (= (! (ready-of s 31500)) "NotReady")))
 
 
@@ -343,10 +343,10 @@
   (assert (!= (! (hash-of dry)) (! (hash-of wet))))
   (<- reply-26 (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" dry} :now 1000))
   (var s (get reply-26 0))
-  (:= s (! (beat s "atlas" 1000)))                                   ; 割り当てを受ける(まだ何も動いていない)
-  (:= s (! (beat s "atlas" 1500 (! (running-row dry "1-dry")))))
+  (:= s (! (beat s "node-a" 1000)))                                   ; 割り当てを受ける(まだ何も動いていない)
+  (:= s (! (beat s "node-a" 1500 (! (running-row dry "1-dry")))))
   (:= s (! (report s (! (ready-report dry "1-dry")) 2000)))
-  (:= s (! (beat s "atlas" 3000 (! (running-row dry "1-dry")))))
+  (:= s (! (beat s "node-a" 3000 (! (running-row dry "1-dry")))))
   (assert (= (! (ready-of s 3000)) "Ready"))
   ;; 設定だけを変える(版つきの PUT)。worker はまだ前の process を動かしている → 前の設定の process なので NotReady
   (<- reply-27 (call s "PUT" "/resources/Service/w" {"spec" wet "resourceVersion" (! (rv s "Service" "w"))} :now 4000))
@@ -354,15 +354,15 @@
   (val status (get reply-27 1))
   (val body (get reply-27 2))
   (assert (= status 200) body)
-  (:= s (! (beat s "atlas" 4000 (! (running-row dry "1-dry")))))
+  (:= s (! (beat s "node-a" 4000 (! (running-row dry "1-dry")))))
   (assert (= (! (ready-of s 4000)) "NotReady"))
   (assert (in "前の宣言" (get (! (call s "GET" "/resources/Service/w" :now 4000)) 2 "status" "readyReason")))
   ;; worker が前の process を止めている間も、前の process の(window の中の)報告は数えない
   (:= s (! (report s (! (ready-report dry "1-dry")) 5000)))
-  (:= s (! (beat s "atlas" 5000 (! (running-row dry "1-dry" :phase "stopping")))))
+  (:= s (! (beat s "node-a" 5000 (! (running-row dry "1-dry" :phase "stopping")))))
   (assert (= (! (ready-of s 5000)) "NotReady"))
   ;; 新しい process が running になった(同じ worker・同じ版・試行 2)。まだ 1 拍も終えていない → NotReady(前の報告は 3 秒前で window の中)
-  (:= s (! (beat s "atlas" 8000 (! (running-row wet "2-wet" :attempts 2)))))
+  (:= s (! (beat s "node-a" 8000 (! (running-row wet "2-wet" :attempts 2)))))
   (assert (= (! (ready-of s 8000)) "NotReady"))
   (assert (in "2-wet" (get (! (call s "GET" "/resources/Service/w" :now 8000)) 2 "status" "readyReason")))
   ;; 止め終えた前の process の報告が遅れて届いても数えない
@@ -370,7 +370,7 @@
   (assert (= (! (ready-of s 9000)) "NotReady"))
   ;; 新しい process が最初の拍を終えて報告した → Ready
   (:= s (! (report s (! (ready-report wet "2-wet" :attempt 2)) 28000)))
-  (:= s (! (beat s "atlas" 28000 (! (running-row wet "2-wet" :attempts 2)))))
+  (:= s (! (beat s "node-a" 28000 (! (running-row wet "2-wet" :attempts 2)))))
   (assert (= (! (ready-of s 28000)) "Ready")))
 
 
@@ -381,15 +381,15 @@
   (setv spec (| SPEC {"readiness" {"windowSeconds" 30}}) new (| spec {"run" (run (program-run "m:f" "--x"))}))
   (<- reply-28 (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (var s (get reply-28 0))
-  (:= s (! (beat s "atlas" 1000)))
-  (:= s (! (beat s "atlas" 1500 (! (running-row spec "1-a")))))
+  (:= s (! (beat s "node-a" 1000)))
+  (:= s (! (beat s "node-a" 1500 (! (running-row spec "1-a")))))
   (:= s (! (report s (! (ready-report spec "1-a")) 2000)))
   (<- reply-29 (call s "PUT" "/resources/Service/w" {"spec" new "resourceVersion" (! (rv s "Service" "w"))} :now 3000))
   (:= s (get reply-29 0))
   (:= s (! (report s (! (ready-report new "2-b" :attempt 2)) 6000)))   ; 新しい process の報告が先
   (:= s (! (report s (! (ready-report spec "1-a")) 6500)))              ; 前の process の最後の報告が後から(残す列は世代ごと)
   (assert (= (! (ready-of s 6500)) "NotReady"))                       ; heartbeat はまだ前の process を載せている
-  (:= s (! (beat s "atlas" 7000 (! (running-row new "2-b" :attempts 2)))))
+  (:= s (! (beat s "node-a" 7000 (! (running-row new "2-b" :attempts 2)))))
   (assert (= (! (ready-of s 7000)) "Ready")))
 
 
@@ -399,34 +399,34 @@
   (setv spec (| SPEC {"readiness" {"windowSeconds" 120}}))
   (<- reply-30 (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (var s (get reply-30 0))
-  (:= s (! (beat s "atlas" 1000)))
-  (:= s (! (beat s "zeus" 1000)))
-  (:= s (! (beat s "atlas" 1500 (! (running-row spec "1-atlas")))))
-  (assert (= (. (.row s.placements "w") worker) "atlas") s.placements)
-  (:= s (! (report s (! (ready-report spec "1-atlas")) 2000)))
-  (:= s (! (beat s "atlas" 2000 (! (running-row spec "1-atlas")))))
+  (:= s (! (beat s "node-a" 1000)))
+  (:= s (! (beat s "node-h" 1000)))
+  (:= s (! (beat s "node-a" 1500 (! (running-row spec "1-node-a")))))
+  (assert (= (. (.row s.placements "w") worker) "node-a") s.placements)
+  (:= s (! (report s (! (ready-report spec "1-node-a")) 2000)))
+  (:= s (! (beat s "node-a" 2000 (! (running-row spec "1-node-a")))))
   (assert (= (! (ready-of s 2000)) "Ready"))
-  ;; atlas が移し替えの期限を越えて沈黙 → zeus へ移る(割り当ての世代 2)。時刻は期限から作る(値を写さない — #2806 で 45 秒から 60 秒にした)。
+  ;; node-a が移し替えの期限を越えて沈黙 → node-h へ移る(割り当ての世代 2)。時刻は期限から作る(値を写さない — #2806 で 45 秒から 60 秒にした)。
   (val moved-at (+ 2000 T.reassign-after-ms 1000))
-  (:= s (! (beat s "zeus" moved-at)))
-  (assert (= #((. (.row s.placements "w") worker) (. (.row s.placements "w") generation)) #("zeus" 2)) s.placements)
+  (:= s (! (beat s "node-h" moved-at)))
+  (assert (= #((. (.row s.placements "w") worker) (. (.row s.placements "w") generation)) #("node-h" 2)) s.placements)
   (assert (= (! (ready-of s moved-at)) "NotReady"))
-  (:= s (! (beat s "zeus" (+ moved-at 2000) (! (running-row spec "1-zeus" :placement 2)))))
-  (assert (= (! (ready-of s (+ moved-at 2000))) "NotReady"))             ; zeus の process はまだ報告していない
-  (:= s (! (report s (! (ready-report spec "1-atlas")) (+ moved-at 3000))))  ; 凍っていた atlas の process の遅れた報告
+  (:= s (! (beat s "node-h" (+ moved-at 2000) (! (running-row spec "1-node-h" :placement 2)))))
+  (assert (= (! (ready-of s (+ moved-at 2000))) "NotReady"))             ; node-h の process はまだ報告していない
+  (:= s (! (report s (! (ready-report spec "1-node-a")) (+ moved-at 3000))))  ; 凍っていた node-a の process の遅れた報告
   (assert (= (! (ready-of s (+ moved-at 3000))) "NotReady"))
-  (val zeus-last (+ moved-at 12000))
-  (:= s (! (report s (! (ready-report spec "1-zeus" :worker "zeus" :placement 2)) zeus-last)))
-  (:= s (! (beat s "zeus" zeus-last (! (running-row spec "1-zeus" :placement 2)))))
-  (assert (= (! (ready-of s zeus-last)) "Ready"))
-  ;; zeus が期限を越えて沈黙し atlas へ戻る(割り当ての世代 3)。atlas の worker は起動し直して試行の番号が 1 に戻った — 名は新しい
-  (val back-at (+ zeus-last T.reassign-after-ms 1000))
-  (:= s (! (beat s "atlas" back-at)))
-  (assert (= #((. (.row s.placements "w") worker) (. (.row s.placements "w") generation)) #("atlas" 3)) s.placements)
-  (:= s (! (beat s "atlas" (+ back-at 1000) (! (running-row spec "1-atlas-again" :placement 3)))))
-  (:= s (! (report s (! (ready-report spec "1-atlas")) (+ back-at 1500))))  ; 最初の atlas の process の古い報告(同じ試行の番号 1)
+  (val node-h-last (+ moved-at 12000))
+  (:= s (! (report s (! (ready-report spec "1-node-h" :worker "node-h" :placement 2)) node-h-last)))
+  (:= s (! (beat s "node-h" node-h-last (! (running-row spec "1-node-h" :placement 2)))))
+  (assert (= (! (ready-of s node-h-last)) "Ready"))
+  ;; node-h が期限を越えて沈黙し node-a へ戻る(割り当ての世代 3)。node-a の worker は起動し直して試行の番号が 1 に戻った — 名は新しい
+  (val back-at (+ node-h-last T.reassign-after-ms 1000))
+  (:= s (! (beat s "node-a" back-at)))
+  (assert (= #((. (.row s.placements "w") worker) (. (.row s.placements "w") generation)) #("node-a" 3)) s.placements)
+  (:= s (! (beat s "node-a" (+ back-at 1000) (! (running-row spec "1-node-a-again" :placement 3)))))
+  (:= s (! (report s (! (ready-report spec "1-node-a")) (+ back-at 1500))))  ; 最初の node-a の process の古い報告(同じ試行の番号 1)
   (assert (= (! (ready-of s (+ back-at 1500))) "NotReady"))
-  (:= s (! (report s (! (ready-report spec "1-atlas-again" :placement 3)) (+ back-at 4000))))
+  (:= s (! (report s (! (ready-report spec "1-node-a-again" :placement 3)) (+ back-at 4000))))
   (assert (= (! (ready-of s (+ back-at 4000))) "Ready")))
 
 
@@ -446,11 +446,11 @@
   (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
   (<- created tuple (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (var s (get created 0))
-  (:= s (! (beat s "atlas" 1000)))
+  (:= s (! (beat s "node-a" 1000)))
   (<- running list (running-row spec "1-placed"))
   (for [cycle (range 3)]
     (val start (+ 2000 (* cycle 10000)))
-    (:= s (! (beat s "atlas" start running)))
+    (:= s (! (beat s "node-a" start running)))
     (:= s (! (report s (! (ready-report spec "1-placed")) start)))
     (for [attempt ELDER-ATTEMPTS]
       (val at (+ start (* (- attempt 5) 1000)))
@@ -468,9 +468,9 @@
   (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
   (<- created tuple (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (var s (get created 0))
-  (:= s (! (beat s "atlas" 1000)))
+  (:= s (! (beat s "node-a" 1000)))
   (<- running list (running-row spec "1-placed"))
-  (:= s (! (beat s "atlas" 2000 running)))
+  (:= s (! (beat s "node-a" 2000 running)))
   (:= s (! (report s (| (! (ready-report spec "1-placed" :ready False)) {"reason" "置き先はまだ温めている"}) 2000)))
   ;; 退いた世代の process 5 つが Ready を報告する(試行の番号も置き先の process と同じ 1 — 違うのは世代の名だけ)。
   (for [attempt ELDER-ATTEMPTS]
@@ -485,7 +485,7 @@
   ;; 置き先の process が黙った後は、退いた世代が Ready を報告し続けても window(30 秒)を過ぎれば NotReady。
   (for [cycle (range 1 5)]
     (val start (+ 8000 (* cycle 10000)))
-    (:= s (! (beat s "atlas" start running)))
+    (:= s (! (beat s "node-a" start running)))
     (for [attempt ELDER-ATTEMPTS]
       (:= s (! (report s (! (ready-report spec (.format "1-elder{}" attempt))) (+ start (* (- attempt 5) 1000)))))))
   (assert (= (! (ready-of s 53000)) "NotReady"))
@@ -516,27 +516,27 @@
   (setv spec (| SPEC {"readiness" {"windowSeconds" 30}}) new (| spec {"run" (run (program-run "m:f" "--apply"))}))
   (<- reply-31 (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (var s (get reply-31 0))
-  (:= s (! (beat s "atlas" 1000)))
-  (:= s (! (beat s "atlas" 1500 (! (running-row spec "1-a")))))
+  (:= s (! (beat s "node-a" 1000)))
+  (:= s (! (beat s "node-a" 1500 (! (running-row spec "1-a")))))
   (:= s (! (report s (! (metrics-body "1-a" spec 4.0)) 2000 :kind "metrics")))
   (<- text str (text-of s 2000))
   ;; 本番の Deployment と同じ名(counter は _total・duration は _seconds_sum / _count)・label は service と worker
   (assert (in "# TYPE app_condition_writes_total counter" text) text)
-  (assert (in "app_condition_writes_total{service=\"w\",worker=\"atlas\"} 4.0" text) text)
-  (assert (in "queue_depth{service=\"w\",worker=\"atlas\"} 2.0" text) text)
-  (assert (in "reconcile_pass_seconds_count{service=\"w\",worker=\"atlas\"} 3" text) text)
+  (assert (in "app_condition_writes_total{service=\"w\",worker=\"node-a\"} 4.0" text) text)
+  (assert (in "queue_depth{service=\"w\",worker=\"node-a\"} 2.0" text) text)
+  (assert (in "reconcile_pass_seconds_count{service=\"w\",worker=\"node-a\"} 3" text) text)
   ;; 報告は資源の状態を変えない(版は進まない)
   (assert (= (! (rv s "Service" "w")) (! (rv (! (report s (! (metrics-body "1-a" spec 5.0)) 2500 :kind "metrics")) "Service" "w"))))
   ;; 設定を変えて新しい process が running になった後は、前の process の計器を出さない(新しい process の報告を待つ)
   (<- reply-32 (call s "PUT" "/resources/Service/w" {"spec" new "resourceVersion" (! (rv s "Service" "w"))} :now 3000))
   (:= s (get reply-32 0))
-  (:= s (! (beat s "atlas" 4000 (! (running-row new "2-b" :attempts 2)))))
+  (:= s (! (beat s "node-a" 4000 (! (running-row new "2-b" :attempts 2)))))
   (:= s (! (report s (! (metrics-body "1-a" spec 9.0)) 4500 :kind "metrics")))
   (assert (not-in "app_condition_writes_total" (! (text-of s 4500))))
   (:= s (! (report s (! (metrics-body "2-b" new 1.0 :attempt 2)) 5000 :kind "metrics")))
-  (assert (in "app_condition_writes_total{service=\"w\",worker=\"atlas\"} 1.0" (! (text-of s 5000))))
+  (assert (in "app_condition_writes_total{service=\"w\",worker=\"node-a\"} 1.0" (! (text-of s 5000))))
   ;; 古い報告(拍が止まった process)は出さない
-  (:= s (! (beat s "atlas" 200000 (! (running-row new "2-b" :attempts 2)))))
+  (:= s (! (beat s "node-a" 200000 (! (running-row new "2-b" :attempts 2)))))
   (assert (not-in "app_condition_writes_total" (! (text-of s 200000))))
   ;; 形の正しくない報告は断る
   (setv #(_ status _) (! (call s "POST" "/resources/Service/w/metrics"
@@ -550,9 +550,9 @@
   (setv spec (| SPEC {"readiness" {"windowSeconds" 10}}))
   (<- reply-33 (call (ClusterState) "POST" "/resources/Service" {"name" "w" "spec" spec}))
   (var s (get reply-33 0))
-  (:= s (! (beat s "atlas" 19000)))
+  (:= s (! (beat s "node-a" 19000)))
   (<- running (running-row spec "1-aaa"))
-  (:= s (! (beat s "atlas" 20000 running)))
+  (:= s (! (beat s "node-a" 20000 running)))
   (:= s (! (report s (! (ready-report spec "1-aaa")) 20000)))
   (assert (= (! (ready-of s 21000)) "Ready"))
   (assert (= (! (ready-of s 40000)) "Unknown"))                ; 20 秒 heartbeat が無い
@@ -584,15 +584,15 @@
   (:= s (! (report s (! (ready-report spec "1-aaa" :attempt 2)) 2000)))
   (<- sent-string str (last-readiness-json s 2000))
   (assert (= sent-string
-             (+ "{\"worker\": \"atlas\", \"pid\": 7, \"revision\": \"r1\", \"instance\": \"1-aaa\", \"attempt\": \"2\", "
+             (+ "{\"worker\": \"node-a\", \"pid\": 7, \"revision\": \"r1\", \"instance\": \"1-aaa\", \"attempt\": \"2\", "
                 "\"specHash\": \"" (! (hash-of spec)) "\", \"placement\": 1, \"at\": 2000, \"ready\": true, \"reason\": \"拍を終えた\", "
                 "\"role\": \"active\"}"))
           sent-string)
   ;; 整数の attempt・世代を持たない旧い process の報告(欠けた欄は null)・待機の役。
-  (:= s (! (report s {"worker" "atlas" "revision" "r1" "ready" False "attempt" 3 "role" "standby"} 3000)))
+  (:= s (! (report s {"worker" "node-a" "revision" "r1" "ready" False "attempt" 3 "role" "standby"} 3000)))
   (<- sent-int str (last-readiness-json s 3000))
   (assert (= sent-int
-             (+ "{\"worker\": \"atlas\", \"pid\": null, \"revision\": \"r1\", \"instance\": null, \"attempt\": 3, "
+             (+ "{\"worker\": \"node-a\", \"pid\": null, \"revision\": \"r1\", \"instance\": null, \"attempt\": 3, "
                 "\"specHash\": null, \"placement\": null, \"at\": 3000, \"ready\": false, \"reason\": \"\", \"role\": \"standby\"}"))
           sent-int))
 
@@ -600,7 +600,7 @@
 ;; 下の検の状態の GET /metrics の本文(#2756 の前の coordinator — 計器の報告を写像で持っていた頃 — で取った物)。
 (val METRICS-TEXT
   (.join "" (gfor line #("# TYPE aa_reads_total counter"
-                         "aa_reads_total{service=\"w\",worker=\"atlas\"} 2.5"
+                         "aa_reads_total{service=\"w\",worker=\"node-a\"} 2.5"
                          "# TYPE doeff_worker_board_bytes gauge"
                          "doeff_worker_board_bytes 0.0"
                          "# TYPE doeff_worker_board_expiring_rows gauge"
@@ -618,7 +618,7 @@
                          "# TYPE doeff_worker_service_last_metrics_age_seconds gauge"
                          "doeff_worker_service_last_metrics_age_seconds{service=\"w\"} 0.5"
                          "# TYPE doeff_worker_service_metrics_age_seconds gauge"
-                         "doeff_worker_service_metrics_age_seconds{service=\"w\",worker=\"atlas\"} 0.5"
+                         "doeff_worker_service_metrics_age_seconds{service=\"w\",worker=\"node-a\"} 0.5"
                          "# TYPE doeff_worker_service_ready gauge"
                          "doeff_worker_service_ready{service=\"w\"} 1.0"
                          "# TYPE doeff_worker_service_ready_replicas gauge"
@@ -630,14 +630,14 @@
                          "# TYPE doeff_worker_service_unplaced gauge"
                          "doeff_worker_service_unplaced{service=\"w\"} 0.0"
                          "# TYPE doeff_worker_worker_heartbeat_age_seconds gauge"
-                         "doeff_worker_worker_heartbeat_age_seconds{worker=\"atlas\"} 1.5"
+                         "doeff_worker_worker_heartbeat_age_seconds{worker=\"node-a\"} 1.5"
                          "# TYPE queue_depth gauge"
-                         "queue_depth{service=\"w\",worker=\"atlas\"} 2.0"
+                         "queue_depth{service=\"w\",worker=\"node-a\"} 2.0"
                          "# TYPE reconcile_pass_seconds summary"
-                         "reconcile_pass_seconds_sum{service=\"w\",worker=\"atlas\"} 1.5"
-                         "reconcile_pass_seconds_count{service=\"w\",worker=\"atlas\"} 3"
+                         "reconcile_pass_seconds_sum{service=\"w\",worker=\"node-a\"} 1.5"
+                         "reconcile_pass_seconds_count{service=\"w\",worker=\"node-a\"} 3"
                          "# TYPE zz_writes_total counter"
-                         "zz_writes_total{service=\"w\",worker=\"atlas\"} 4.0")
+                         "zz_writes_total{service=\"w\",worker=\"node-a\"} 4.0")
                   (+ line "\n"))))
 
 
@@ -646,8 +646,8 @@
   ;; _seconds_sum の float と _seconds_count の int・gauge は float)。計器の名は送った順に依らず名の順に並ぶ。
   (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
   (var s (get (! (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000)) 0))
-  (:= s (! (beat s "atlas" 1000)))
-  (:= s (! (beat s "atlas" 1500 (! (running-row spec "1-a")))))
+  (:= s (! (beat s "node-a" 1000)))
+  (:= s (! (beat s "node-a" 1500 (! (running-row spec "1-a")))))
   (:= s (! (report s (! (ready-report spec "1-a")) 2000)))
   (:= s (! (report s (| (! (ready-report spec "1-a"))
                      {"metrics" {"counters" {"zz_writes" 4 "aa_reads" 2.5} "gauges" {"queue_depth" 2}
@@ -663,8 +663,8 @@
   ;; 報告は、観測の表の行を替えるだけ。
   (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
   (var s (get (! (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000)) 0))
-  (:= s (! (beat s "atlas" 1000)))
-  (:= s (! (beat s "atlas" 1500 (! (running-row spec "1-a")))))
+  (:= s (! (beat s "node-a" 1000)))
+  (:= s (! (beat s "node-a" 1500 (! (running-row spec "1-a")))))
   (:= s (! (report s (! (ready-report spec "1-a")) 2000)))
   (assert (= (! (ready-of s 2000)) "Ready"))
   ;; 同じ process の 2 度目の Ready(判定は Ready のまま)— 表の行は新しい報告に替わるが、版も記録も保存も動かない。

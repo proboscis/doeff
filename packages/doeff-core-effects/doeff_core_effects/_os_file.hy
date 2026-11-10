@@ -56,7 +56,7 @@
 
 (deff lower-io-priority []  ; cannot be a defk: an entry called at the start of a thread (on-start of ThreadPerCall -- outside the VM)
   {:pre [] :post [(: % bool)]}
-  "To set the IO priority of the calling thread to IDLE so the main body's small IO goes through first (mq-deadline of the zeus scheduler orders by priority class -- it does not look at the level,
+  "To set the IO priority of the calling thread to IDLE so the main body's small IO goes through first (mq-deadline of the node-h scheduler orders by priority class -- it does not look at the level,
    so the lowest BE is not effective). Does nothing and returns False on non-Linux, a platform not in the table, or a syscall failure (the cleanup proceeds even if the priority is not lowered)."
   (if (and (= sys.platform "linux") (in (platform.machine) IOPRIO-SET-SYSCALL))
       (try

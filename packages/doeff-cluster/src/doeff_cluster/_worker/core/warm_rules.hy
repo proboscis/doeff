@@ -119,7 +119,7 @@
 
 (defn #^ bool ended-killed [#^ WarmChildView view]  ; defk にできない: 純粋な判断の ended-refusing・warm-child-killed-out(Program の外の関数)が呼ぶ
   "待ちの子が、worker が止めていないのに SIGKILL で終わったか(jobs の層の memory の上限に当たった kernel の OOM kill — 準備完了の後の子
-   も。2026-11-06 の k3s-0〜2 で、入らない待ちの子が準備完了の後に落ち、30 秒ごとに起こし直された)。"
+   も。2026-11-06 の node-d〜f で、入らない待ちの子が準備完了の後に落ち、30 秒ごとに起こし直された)。"
   (and (in view.exit-code KILLED-CODES) (is view.stop None) (not view.fork-refused)))
 
 
@@ -171,7 +171,7 @@
   "root のキー key の待ちの子を起こすなら jobs の層に入らないか(起こす前の判じの 1 か所 — 判断 warm-child-step と道の warm-start が読む):
    今の子が走っておらず(起こしていない・終わった)、その root の待ちの子 1 本の大きさ(warm-child-size)が使える空き(warm-room-of から、
    同じ拍に先に起こした待ちの子の大きさ taken を引いた値)を越える。入らない待ちの子を起こすと、層の上限に当たって kernel の OOM kill が
-   層でいちばん大きい process = その待ちの子を落とし、起こし直しの輪になる(2026-11-06 の k3s-0〜2)。空きで縛らない層(None)では偽。"
+   層でいちばん大きい process = その待ちの子を落とし、起こし直しの輪になる(2026-11-06 の node-d〜f)。空きで縛らない層(None)では偽。"
   (setv room (warm-room-of key world policy))
   (and (is-not room None)
        (or (is view None) (is-not view.exit-code None))

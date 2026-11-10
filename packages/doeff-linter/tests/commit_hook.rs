@@ -463,7 +463,7 @@ fn recorded_runs(log: &Path) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// Failure case (2026-10-11, zeus load 102/24 core, decided by cisco-c8): the hook's child linter applies, to the staged paths only,
+/// Failure case (2026-10-11, node-h load 102/24 core, decided by cisco-c8): the hook's child linter applies, to the staged paths only,
 /// only rules decided by a single file (DOEFF016): it does not measure the whole repo (path `.`) and does not apply rules that declare they need the whole repo (DOEFF163).
 /// Before the fix it measured the tip tree and the HEAD tree over the whole repo (45-100 seconds and 1.5-1.7 GB per run in agora-controllers), and the 23 conversations fixing the daily reds
 /// committed at once and filled the machine. A whole-repo rule builds the whole repo's inference world even when applied to one file (DOEFF132 takes 28 seconds on 1 file),
@@ -784,7 +784,7 @@ fn a_comparison_within_the_limit_still_passes() {
     assert!(got.lines.is_empty(), "{:?}", got);
 }
 
-/// Failure case (2026-10-10, the form under load): when the machine is busy, the child linter's wall seconds stretch longer than its CPU seconds (on zeus at
+/// Failure case (2026-10-10, the form under load): when the machine is busy, the child linter's wall seconds stretch longer than its CPU seconds (on node-h at
 /// load 42-73, a commit that would be rc 0 without a limit was cut off every time at the wall limit of 40 seconds). A child that waits beyond the limit in wall but uses almost no CPU
 /// (a sleeping stand-in: standing in for a child waiting its turn on a busy machine) is within the limit in CPU seconds, so it is measured without cutting off and passes. CPU seconds can be read on Linux with /proc.
 #[cfg(target_os = "linux")]

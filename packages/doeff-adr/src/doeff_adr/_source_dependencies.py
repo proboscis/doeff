@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Upper bound of the timestamp granularity (ns) -- if the last change of a file (mtime, ctime) is within this width of the time the record was taken, it can be
 # rewritten within the same timestamp tick without stat changing (the same shape as git's racy-git). The coarse kernel ctime tick is a jiffy
-# (4 ms on atlas 6.8), and coarse file systems use 1-2 seconds (ext3 and HFS+ 1 second, FAT 2 seconds), so we use 2 seconds.
+# (4 ms on node-a 6.8), and coarse file systems use 1-2 seconds (ext3 and HFS+ 1 second, FAT 2 seconds), so we use 2 seconds.
 RACY_WINDOW_NS: int = 2_000_000_000
 
 

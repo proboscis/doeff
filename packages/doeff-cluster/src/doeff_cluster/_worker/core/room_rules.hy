@@ -8,7 +8,7 @@
 ;;; file の形(JSON): worker の名 → {"memoryMiB": 整数}。名の無い行は読まない(他の worker の行を置いてよい)。必須の欄は 1 つ:
 ;;;   memoryMiB       その worker で常駐の job に使ってよい memory の予算(0 以上の整数の MiB)。coordinator は置いた job の settle の和 +
 ;;;                   新しい job の settle がこの値以下の時だけ job を置く(job は数でなく memory で縛る)
-;;;   {"zeus": {"memoryMiB": 63488}, "atlas": {"memoryMiB": 16384}}
+;;;   {"node-h": {"memoryMiB": 63488}, "node-a": {"memoryMiB": 16384}}
 ;;; task の置き先は手で書いた数でなく、worker が heartbeat で名乗る機体の測った空き(measured — worker/core/load_rules)から coordinator が
 ;;; 数える。行に手書きの task の枠(capacity・taskReserve・backgroundRoom — 消した欄)が在っても読まずに通す(旧い版の file を読む間)。
 ;;; 行は省ける欄 warmServices(真偽)も持てる: 実行環境の service も待ちの子から分けて起こすか(WorkerPolicy.warm-services)。
@@ -16,15 +16,15 @@
 ;;; 行は省ける欄 pools(枠と同じく heartbeat の前に読み直す)も持てる: 置ける組の印の列(pool-… —
 ;;; shared/core/capabilities の pool-refusal)。worker は起動の引数の能力(--provides)との和を heartbeat の provides で名乗る — 常駐の job を
 ;;; 2 台以上の機体の組の印で宣言でき、組を替えるのに Pod を作り直さない。
-;;;   {"atlas": {"memoryMiB": 16384, "pools": ["pool-a", "pool-b"]}}
+;;;   {"node-a": {"memoryMiB": 16384, "pools": ["pool-a", "pool-b"]}}
 ;;; 行は省ける欄 keepLineFile(枠と同じく heartbeat の前に読み直す)も持てる: 会話のターンに残す MemAvailable の線の file の絶対 path
 ;;; (worker/core/load_rules の頭の註の「会話のターンに残す線」— 上に載る系のターンを受ける係が書く)。worker は測りのたびにその file を
 ;;; 読み、名乗る memory の空きを線の上に絞る。欄が無い行は線を読まない。
-;;;   {"zeus": {"memoryMiB": 63488, "keepLineFile": "/cargo-build/.keep-available-mib"}}
+;;;   {"node-h": {"memoryMiB": 63488, "keepLineFile": "/cargo-build/.keep-available-mib"}}
 ;;; 行は省ける欄の組 commandLineFile と commandFloorMiB(枠と同じく heartbeat の前に読み直す)も持てる: 命令の層(commands)の memory.max を
 ;;; 掛け直す線の file の絶対 path と短い命令の余地(MiB — worker/core/eviction_rules の頭の註の命令の層)。線の file は上に載る系のターンを受ける
 ;;; 係が書く。2 つは組で書く(片方だけは malformed)。欄が無い行は命令の層を掛け直さない。
-;;;   {"zeus": {"memoryMiB": 63488, "commandLineFile": "/cargo-build/.command-keep-available-mib", "commandFloorMiB": 8192}}
+;;;   {"node-h": {"memoryMiB": 63488, "commandLineFile": "/cargo-build/.command-keep-available-mib", "commandFloorMiB": 8192}}
 ;;;
 ;;; 読めた状態(heartbeat の roomFile で名乗る):
 ;;;   ok          自分の行を読めた
@@ -45,7 +45,7 @@
 
 (defenum RoomState OK UNREADABLE MALFORMED)
 
-;; 雛形の能力: worker の雛形(deploy/k8s/worker/worker.yaml の WORKER_PROVIDES — host-only の差も同じ)が、機体の印 host-<機体> の後ろに
+;; 雛形の能力: worker の雛形(上に載る系の宣言の worker/worker.yaml の WORKER_PROVIDES — host-only の差も同じ)が、機体の印 host-<機体> の後ろに
 ;; どの機体の worker にも渡す能力。上に載る系の照らし(常駐の job が枠に入るか)は写さずにここから読む。
 (val TEMPLATE-PROVIDES #("host-systemd-readable"))
 
@@ -56,7 +56,7 @@
 
 (defrecord WorkerRoom
   "worker の枠: memory-mib = 常駐の job に使ってよい memory の予算(MiB — None = 名乗らない。枠の file を読まない機体の worker
-   (Mac・zeus-native)が --memory-mib を渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 —
+   (Mac・node-h-native)が --memory-mib を渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 —
    heartbeat の provides に足す)・keep-line-file = 会話のターンに残す線の file(頭の註の keepLineFile — 空 = 読まない)・command-line-file =
    命令の層を掛け直す線の file・command-floor-mib = 短い命令の余地(頭の註の commandLineFile と commandFloorMiB — 空と 0 = 掛け直さない)。"
   {:check [(or (is memory-mib None) (>= memory-mib 0)) (or (= keep-line-file "") (.startswith keep-line-file "/"))

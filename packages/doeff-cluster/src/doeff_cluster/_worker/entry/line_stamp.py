@@ -44,7 +44,7 @@ OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(�
   後なので、送りが遅れて shim が KILL に先を越されても file は欠けない。上限の後に残った行は捨てて数える。
 - 送り先の値が使えない(URL の形・属性の並べ方・job の文脈の欠け)時は送らず、理由を 1 行 log に書く(job はそのまま走る)。
 
-worker の process 自身の行(機体の上で直に動く worker(zeus-native・mac-native)の log は systemd・launchd の
+worker の process 自身の行(機体の上で直に動く worker(node-h-native・mac-native)の log は systemd・launchd の
 出力先の file にしか無く、会話から読めなかった): worker の入口(worker/entry/main)も同じ刻の付け方と送り手で、自分の Python の
 出力(sys.stdout と sys.stderr)を刻つきの書き手へ差し替えて送る(process_lines・stamped_streams)。job の文脈は worker が自分で
 置く(worker_log_plan — job の名 worker/<worker の名>・試み 0・世代 = worker の boot)。差し替えるのは送り先が使えて、stdout と

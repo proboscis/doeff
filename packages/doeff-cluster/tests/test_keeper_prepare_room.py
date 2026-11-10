@@ -1,6 +1,6 @@
 """keeper の版の準備の置き場と待ち(deploy/boot.sh の keeper_swap・keeper_layer・keeper_room)の検。
 
-実例(11-02): k3s-1 の keeper が準備を jobs の層で起こし、worker が追い出しの線から縮めた jobs の上限(61〜139 MiB)で bytecode の焼きが
+実例(11-02): node-e の keeper が準備を jobs の層で起こし、worker が追い出しの線から縮めた jobs の上限(61〜139 MiB)で bytecode の焼きが
 OOM になり、300 秒ごとの撃ち直しも同じだった。直した keeper は準備を準備の層(DOEFF_WORKER_PREPARE_CGROUP — worker が縮めない)で
 起こし、worker が書く準備の空き($keeper_dir/prepare-room の「<空き MiB> <準備が線へ足しうる量 MiB>」)がその量に足りない間は準備を起こさずに
 待ち、その訳を log に 1 度名指す。
@@ -100,7 +100,7 @@ def test_a_short_room_keeps_the_keeper_waiting_and_names_the_shortage_once(tmp_p
 
 
 def test_enough_room_starts_the_prepare_in_the_prepare_layer_not_the_jobs_layer(tmp_path: Path) -> None:
-    """空き(720 MiB — k3s-1 の平常)が足しうる量以上なら準備を起こし、準備の process を準備の層の下のその版の子(memory.oom.group=1)へ移す
+    """空き(720 MiB — node-e の平常)が足しうる量以上なら準備を起こし、準備の process を準備の層の下のその版の子(memory.oom.group=1)へ移す
     (jobs の層へも、層そのものへも移さない — 本物の cgroup での止めと消しは test_prepare_group.py)。"""
     cgroup = _world(tmp_path, prepare_layer=True)
     _room(tmp_path, "720 640\n")
@@ -116,7 +116,7 @@ def test_enough_room_starts_the_prepare_in_the_prepare_layer_not_the_jobs_layer(
 
 
 def test_the_keeper_compares_the_room_with_what_the_prepare_can_add_not_with_the_whole_cap(tmp_path: Path) -> None:
-    """process の居ない名残だけの層(k3s-1 の 11-09 — 上限 640 MiB・名残 288 MiB)では、worker の書く第 2 の数は足しうる量 352 MiB で、
+    """process の居ない名残だけの層(node-e の 11-09 — 上限 640 MiB・名残 288 MiB)では、worker の書く第 2 の数は足しうる量 352 MiB で、
     空き 400 MiB ≥ 352 MiB の keeper は準備を起こす。失敗ケース: 上限 640 を丸ごと求めると、線の使いに数え済みの名残を 2 度数えて待ち続ける。"""
     cgroup = _world(tmp_path, prepare_layer=True)
     _room(tmp_path, "400 352\n")

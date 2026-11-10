@@ -3,7 +3,7 @@
 //!
 //! Why: limit the process trees of checks running at once on the same machine (Pod) to the K declared in the canonical source. doeff-linter is fired directly by
 //! conversations along many paths (`uv run doeff-linter`, poe lint, land_lint_gate, the daily stage, inside code-quality), and wrapping per path
-//! leaves forgotten paths running outside the slots (at 10-12 08:39 JST on zeus with load 105, one poe lint at 1.9 cores and two direct conversation runs at 0.64 core ran outside the slots).
+//! leaves forgotten paths running outside the slots (at 10-12 08:39 JST on node-h with load 105, one poe lint at 1.9 cores and two direct conversation runs at 0.64 core ran outside the slots).
 //! Taking the slot at the single point of binary startup puts every path into the same slots. The commit hook (`--commit-hook`) is a blocking inspection, not a check, so it
 //! takes none (see the weight note).
 //!
@@ -16,7 +16,7 @@
 //! A linter started from the wrapper carries the re-entry mark (GATED_ENV), and its descendants do not go through python. The child linter started by `--commit-hook`, which takes no slot
 //! (editor-json — a heavy-mode shape), also carries the same mark and runs outside the slots as part of the hook.
 //! On a machine without the canonical source (a machine without dotfiles), or when python cannot be found, it runs without taking a slot (same as when the canonical source cannot read its declaration).
-//! Cost: 0.2 to 0.6 seconds per heavy-mode run for `uv python find` and starting python (measured at zeus load 70 to 90).
+//! Cost: 0.2 to 0.6 seconds per heavy-mode run for `uv python find` and starting python (measured at node-h load 70 to 90).
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};

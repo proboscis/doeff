@@ -492,9 +492,9 @@
   ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。準備を待つ間の取り置きは intake からだけ引く(memory.max から引くと、
   ;; 走っている task を準備のために止める)。intake は層の held-bytes(working set − slab_reclaimable)を土台に数える: 層の memory.max に
   ;; 当たると kernel は task を止める前に回収できる page cache と slab を返すので、上限で決まる空きは上限 − held-bytes(線で決まる空きは
-  ;; 土台によらない)。memory.current を土台にすると、process の居ない page cache が層の空きを塞いだ(helios の 11-10 13:4x JST — 上限 8 GiB・
+  ;; 土台によらない)。memory.current を土台にすると、process の居ない page cache が層の空きを塞いだ(node-c の 11-10 13:4x JST — 上限 8 GiB・
   ;; inactive_file 2112 MiB を使いに数え、層が空でも要り 5632 MiB の task を置けなかった)。working set だけでも、git と uv の file 操作が残す
-  ;; slab_reclaimable が空きを塞いだ(同じ helios の 15:1x JST — task 0 本の層の working set 4212 MiB のうち slab_reclaimable 1070 MiB)。
+  ;; slab_reclaimable が空きを塞いだ(同じ node-c の 15:1x JST — task 0 本の層の working set 4212 MiB のうち slab_reclaimable 1070 MiB)。
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)

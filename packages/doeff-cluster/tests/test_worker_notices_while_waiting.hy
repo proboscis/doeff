@@ -1,6 +1,6 @@
 ;; worker の生死の知らせ(WorkerGone・WorkerBack)は、coordinator が要求を待つ間に遅れずに出る(#4270 の「別に残る事実」)。本番の
 ;; 2026-10-09 07:20 の coordinator の起き直しの後、起動の時の今の状態の知らせが 07:20:46〜07:23:51 に 1 つずつ届き、受け手には
-;; agent-worker-2 の WorkerBack が届かなかった。遅れは 28 分から 102 分へ伸び、新しい生死の動きが起きた時だけ古い知らせが 1 つ進んで
+;; worker-2 の WorkerBack が届かなかった。遅れは 28 分から 102 分へ伸び、新しい生死の動きが起きた時だけ古い知らせが 1 つ進んで
 ;; 届いた。
 ;;
 ;; 組は本番のまま: 受付の答え手(shared/protocol/inbox の http-requests と foundation の RequestInbox — HTTP の server は起こさない)・送り出し

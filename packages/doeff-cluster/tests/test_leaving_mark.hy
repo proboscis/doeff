@@ -2,7 +2,7 @@
 ;; 中の file(世代の file の隣)に書き(書き手と印の形 = worker/protocol/leaving_mark)、worker の観測のまとめ(local-host)が拍ごとに
 ;; WorldView.leaving として読む(worker の入口が並べる答え手 = worker/protocol/leaving_observer — 書き手と形を import しない)。worker の判断
 ;; (worker/core/policy の start-step)はこの観測で、止まる Pod の handoff の job の新しい試行を起こさない — coordinator の返事の印
-;; supersededBy が欠けても(10-11 の zeus の画面の process の群)。判断の側の検は test_policy.hy の AL-D2p の節。
+;; supersededBy が欠けても(10-11 の node-h の画面の process の群)。判断の側の検は test_policy.hy の AL-D2p の節。
 (require doeff-hy.macros [defhandler deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import sys)
@@ -68,11 +68,11 @@
   (val boot-file (str (/ tmp-path "doeff-worker-boot")))
   (! (with-handlers [os-file-handler] (boot-file-written boot-file "b-1234")))
   (val observe (with-handlers [os-file-handler (leaving-observer boot-file "b-1234") nothing-else-observed local-host] (ObserveWorld)))
-  (.setattr monkeypatch sys "argv" ["drain_main" "ready" "--coordinator" UNREACHABLE "--name" "zeus" "--boot-file" boot-file])
+  (.setattr monkeypatch sys "argv" ["drain_main" "ready" "--coordinator" UNREACHABLE "--name" "node-h" "--boot-file" boot-file])
   (with [exited (pytest.raises SystemExit)] (drain-main))
   (assert (= exited.value.code 1) "届かない coordinator の readinessProbe は NotReady")
   (assert (not (. (! observe) leaving)) "readinessProbe は止まりの印を書かない")
-  (.setattr monkeypatch sys "argv" ["drain_main" "drain" "--coordinator" UNREACHABLE "--name" "zeus"
+  (.setattr monkeypatch sys "argv" ["drain_main" "drain" "--coordinator" UNREACHABLE "--name" "node-h"
                                     "--deadline" "0" "--interval" "0" "--boot-file" boot-file])
   (with [drained (pytest.raises SystemExit)] (drain-main))
   (assert (= drained.value.code 0) "preStop はいつも 0 で終わる")

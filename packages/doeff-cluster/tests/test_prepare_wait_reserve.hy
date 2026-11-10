@@ -1,6 +1,6 @@
 ;; keeper が版の準備を待つ間の取り置き — 模擬の検(2026-11-10)。
 ;;
-;; 実例(11-09 の k3s-1): 22:24 UTC に版の file を 2330420f4 にした。keeper は「空き − 余裕 = 403 MiB < 準備が線へ足しうる量 568 MiB」で
+;; 実例(11-09 の node-e): 22:24 UTC に版の file を 2330420f4 にした。keeper は「空き − 余裕 = 403 MiB < 準備が線へ足しうる量 568 MiB」で
 ;; 準備を待った。worker は準備が走るまで何も取り置かず、heartbeat の名乗る空きは待つ間も 403 MiB のままで、置き先は空いた分へ常駐の
 ;; service 2 つ(patrol-watch と rules — RSS 計 約 370 MiB)を置いた。keeper の空きは 335 MiB(足しうる量 529 MiB)に減り、準備は起きなかった。
 ;;   - 判断(worker/core/eviction_rules): 版の file の版がこの世代の版と違い、準備の層に process が居ない間だけ待っている・待つ間の
@@ -32,11 +32,11 @@
 (import tests.state_rows [table-from-rows])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
-;; keeper の世代の版と、版の file に書いた新しい版(11-09 の k3s-1)。
+;; keeper の世代の版と、版の file に書いた新しい版(11-09 の node-e)。
 (val OWN (* "a" 40))
 (val NEXT "2330420f4")
 (val NEXT-FULL (+ NEXT (* "0" 31)))
-;; k3s-1 の Node の宣言と層(tests/test_eviction_prepare_layer と同じ値)。
+;; node-e の Node の宣言と層(tests/test_eviction_prepare_layer と同じ値)。
 (val CAPACITY (* 4005200 1024))
 (val ALLOCATABLE (* 2723152 1024))
 (val PODS-MAX (- CAPACITY (* 1152 MIB)))
@@ -58,7 +58,7 @@
 (val ROOM-FILE "/keeper/prepare-room")
 (val VERSION-FILE "/config/worker-version")
 (val TOKEN "/sa/token")
-(val NODE-URL "https://api.test/api/v1/nodes/k3s-1")
+(val NODE-URL "https://api.test/api/v1/nodes/node-e")
 
 
 ;; --- 判断 ---------------------------------------------------------------------------------------------------------------------------
@@ -82,8 +82,8 @@
 
 ;; --- worker の読み(eviction-noted)--------------------------------------------------------------------------------------------------
 
-(defhandler k3s-1-api []
-  "k3s-1 の Node の宣言を答える偽の API server。"
+(defhandler node-e-api []
+  "node-e の Node の宣言を答える偽の API server。"
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
   (HttpRequest [method url]
     :when (= url NODE-URL)
@@ -98,10 +98,10 @@
     (resume None)))
 
 
-(defk k3s-1-files [version prepare-used populated]
+(defk node-e-files [version prepare-used populated]
   {:pre [(: version str) (: prepare-used int) (: populated bool)] :post [(: % MemoryFiles)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "模擬の k3s-1 の cgroup と版の file を作るため: 追い出しまでの空き − 余裕が KEEPER-ROOM の線・jobs の層の使い JOBS-USED・準備の層の使い
+  "模擬の node-e の cgroup と版の file を作るため: 追い出しまでの空き − 余裕が KEEPER-ROOM の線・jobs の層の使い JOBS-USED・準備の層の使い
    prepare-used(inactive_file 0)と process の有無 populated・版の file の中身 version。"
   (val pods (- ALLOCATABLE (+ KEEPER-ROOM MARGIN)))
   (val files #((MemoryFile :path (+ PODS "/memory.max") :content (.encode (str PODS-MAX)))
@@ -124,7 +124,7 @@
   (MemoryFiles :dirs (tuple (+ (list dirs) ["/keeper"])) :files files))
 
 
-(val SETTINGS (EvictionSettings :api "https://api.test" :token-file TOKEN :node "k3s-1" :pods-dir PODS :host-root HOST :jobs-dir JOBS
+(val SETTINGS (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-e" :pods-dir PODS :host-root HOST :jobs-dir JOBS
                                 :jobs-cap-bytes JOBS-CAP :prepare-dir PREPARE :prepare-cap-bytes PREPARE-CAP :room-file ROOM-FILE
                                 :margin-bytes MARGIN :version-file VERSION-FILE :own-version OWN))
 
@@ -145,10 +145,10 @@
 
 (defk tick-on [version prepare-used populated]
   {:pre [(: version str) (: prepare-used int) (: populated bool)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "模擬の k3s-1 で見張りの回を 1 回まわし、#(入れ物 回の後の file) を得るため。"
+  "模擬の node-e で見張りの回を 1 回まわし、#(入れ物 回の後の file) を得るため。"
   (val cell (EvictionCell))
-  (<- start MemoryFiles (k3s-1-files version prepare-used populated))
-  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (k3s-1-api) (log-dropped)]
+  (<- start MemoryFiles (node-e-files version prepare-used populated))
+  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-e-api) (log-dropped)]
                           (tick-then-files cell)))
   #(cell files))
 
@@ -198,13 +198,13 @@
                 :memory-some-avg10 0.0 :task-memory-MiB {} :jobs-room-MiB 403 :prepare-wait-MiB waiting))
 
 
-(defk services-placed [k3s-1-waiting with-k3s-3]
-  {:pre [(: k3s-1-waiting (| int None)) (: with-k3s-3 bool)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "常駐の service patrol-watch(settle 250 MiB)と rules(settle 120 MiB)を、予算 1792 MiB の k3s-1(待つ間の取り置き k3s-1-waiting)と、
-   with-k3s-3 なら k3s-3 に置き先の 1 拍で置いた結果を得るため: #(job の名 → 置いた worker の名)。"
-  (val k3s-1 (WorkerInfo "k3s-1" #() 0 :memory-mib 1792 :measured (! (k3s-measured k3s-1-waiting))))
-  (val other (WorkerInfo "k3s-3" #() 0 :memory-mib 1792 :measured (! (k3s-measured None))))
-  (<- workers (table-from-rows (| {"k3s-1" k3s-1} (if with-k3s-3 {"k3s-3" other} {}))))
+(defk services-placed [node-e-waiting with-node-g]
+  {:pre [(: node-e-waiting (| int None)) (: with-node-g bool)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "常駐の service patrol-watch(settle 250 MiB)と rules(settle 120 MiB)を、予算 1792 MiB の node-e(待つ間の取り置き node-e-waiting)と、
+   with-node-g なら node-g に置き先の 1 拍で置いた結果を得るため: #(job の名 → 置いた worker の名)。"
+  (val node-e (WorkerInfo "node-e" #() 0 :memory-mib 1792 :measured (! (k3s-measured node-e-waiting))))
+  (val other (WorkerInfo "node-g" #() 0 :memory-mib 1792 :measured (! (k3s-measured None))))
+  (<- workers (table-from-rows (| {"node-e" node-e} (if with-node-g {"node-g" other} {}))))
   (val jobs #((ClusterJob (JobSpec "patrol-watch" "m" #() "rev") :peak-mib 500 :settle-mib 250)
               (ClusterJob (JobSpec "rules" "m" #() "rev") :peak-mib 240 :settle-mib 120)))
   (val state (ClusterState jobs workers))
@@ -213,15 +213,15 @@
 
 
 (deftest test-the-placer-puts-no-new-service-on-a-worker-waiting-for-its-prepare
-  ;; 受入: 待つ間の取り置きを名乗る k3s-1 には新しく常駐の service を置かず、k3s-3 へ置く。失敗ケース(直す前 — 名乗りの無い k3s-1 と
-  ;; 同じ): 予算 1792 MiB の残りに入るので、k3s-1 にも置いた(担っている数の少ない順・同じなら名の順。k3s-1 だけなら 2 つとも —
+  ;; 受入: 待つ間の取り置きを名乗る node-e には新しく常駐の service を置かず、node-g へ置く。失敗ケース(直す前 — 名乗りの無い node-e と
+  ;; 同じ): 予算 1792 MiB の残りに入るので、node-e にも置いた(担っている数の少ない順・同じなら名の順。node-e だけなら 2 つとも —
   ;; 11-09 の patrol-watch と rules)。
   (<- before dict (services-placed None True))
-  (assert (= before {"patrol-watch" "k3s-1" "rules" "k3s-3"}) before)
+  (assert (= before {"patrol-watch" "node-e" "rules" "node-g"}) before)
   (<- before-alone dict (services-placed None False))
-  (assert (= before-alone {"patrol-watch" "k3s-1" "rules" "k3s-1"}) before-alone)
+  (assert (= before-alone {"patrol-watch" "node-e" "rules" "node-e"}) before-alone)
   (<- after dict (services-placed 568 True))
-  (assert (= after {"patrol-watch" "k3s-3" "rules" "k3s-3"}) after)
+  (assert (= after {"patrol-watch" "node-g" "rules" "node-g"}) after)
   ;; 置ける先がほかに無ければ置かず、待つ訳を名指す。
   (<- alone dict (services-placed 568 False))
   (assert (= alone {}) alone))
@@ -235,10 +235,10 @@
   (assert (not-in "prepareWaitMiB" bare) bare)
   (<- spelled dict (measured-json (replace load :prepare-wait-mib 568)))
   (assert (= (get spelled "prepareWaitMiB") 568) spelled)
-  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "k3s-1" "memoryMiB" 1792 "measured" spelled})) 0)))
-  (assert (= (. (.row heard.workers "k3s-1") measured prepare-wait-MiB) 568))
-  (val old (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "k3s-1" "memoryMiB" 1792 "measured" bare})) 0)))
-  (assert (is (. (.row old.workers "k3s-1") measured prepare-wait-MiB) None))
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "node-e" "memoryMiB" 1792 "measured" spelled})) 0)))
+  (assert (= (. (.row heard.workers "node-e") measured prepare-wait-MiB) 568))
+  (val old (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "node-e" "memoryMiB" 1792 "measured" bare})) 0)))
+  (assert (is (. (.row old.workers "node-e") measured prepare-wait-MiB) None))
   ;; 置けない service の訳は、待つ間の取り置きを名指す。
   (val waiting (replace heard :jobs #((ClusterJob (JobSpec "patrol-watch" "m" #() "rev") :peak-mib 500 :settle-mib 250))))
   (val why (get (unplaced-jobs 0 waiting T) "patrol-watch"))

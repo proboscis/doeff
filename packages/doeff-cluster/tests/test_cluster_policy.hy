@@ -82,12 +82,12 @@
 
 (deftest test-general-job-is-not-placed-on-a-dedicated-worker
   ;; Mac の方が空いていても、専用の印を求めない job は k3s へ
-  (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))))
+  (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (mac "mac")) "node-a" (! (pod "node-a"))}))))
   (val placed (! (jobs-placed 1000 state T)))
-  (assert (= (sfor n ["a" "b" "c"] (. (.row placed n) worker)) #{"atlas"})))
+  (assert (= (sfor n ["a" "b" "c"] (. (.row placed n) worker)) #{"node-a"})))
 
 (deftest test-agent-job-goes-to-the-dedicated-worker
-  (setv state (ClusterState #((! (job "runner" :needs #(AGENT)))) (! (table-from-rows {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))))
+  (setv state (ClusterState #((! (job "runner" :needs #(AGENT)))) (! (table-from-rows {"mac" (! (mac "mac")) "node-a" (! (pod "node-a"))}))))
   (assert (= (. (.row (! (jobs-placed 1000 state T)) "runner") worker) "mac")))
 
 (deftest test-pin-does-not-override-the-dedicated-mark
@@ -97,7 +97,7 @@
 
 (deftest test-job-without-a-place-is-reported-unplaced
   ;; agent の job で Mac が居ない・一般の job で k3s が居ない
-  (setv state (ClusterState #((! (job "runner" :needs #(AGENT))) (! (job "placer"))) (! (table-from-rows {"atlas" (! (pod "atlas"))}))))
+  (setv state (ClusterState #((! (job "runner" :needs #(AGENT))) (! (job "placer"))) (! (table-from-rows {"node-a" (! (pod "node-a"))}))))
   (setv s2 (ClusterState #((! (job "placer"))) (! (table-from-rows {"mac" (! (mac "mac"))}))))
   (assert (is (.row (! (jobs-placed 1000 state T)) "runner") None))
   (assert (in "置ける worker が無い" (get (unplaced-jobs 1000 state T) "runner")))
@@ -106,7 +106,7 @@
 (deftest test-job-leaving-a-worker-that-became-dedicated-waits-until-it-stopped-there
   ;; mac が専用の印を付けて戻った。mac に載っていた一般の job は外れ、mac がまだ動かしていると報告している間は置かず、
   ;; 止め終えた報告の後で k3s へ置く(同じ job を 2 つ動かさない)。
-  (setv state (ClusterState #((! (job "placer"))) (! (table-from-rows {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}))
+  (setv state (ClusterState #((! (job "placer"))) (! (table-from-rows {"mac" (! (mac "mac")) "node-a" (! (pod "node-a"))}))
                             (! (table-from-rows {"placer" (Placement "placer" "mac" 2 0)}))
                             :observations (! (reports-observed {"mac" (WorkerReport :at 0 :endpoint None
                                                                                     :jobs #((StatusRow :name "placer" :phase "running")))}))))
@@ -114,7 +114,7 @@
   (assert (= (get (unplaced-jobs 1000 (replace state :placements (table-of #())) T) "placer") "前の担い手が止め終えるのを待っている"))
   (setv stopped (replace state :placements (table-of #())
                                :observations (! (reports-observed {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))))
-  (assert (= (. (.row (! (jobs-placed 2000 stopped T)) "placer") worker) "atlas")))
+  (assert (= (. (.row (! (jobs-placed 2000 stopped T)) "placer") worker) "node-a")))
 
 (defk task [id needs]
   {:pre [(: id str) (: needs tuple)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -123,12 +123,12 @@
 
 (deftest test-task-follows-the-same-dedicated-rule
   (setv workers (! (table-from-rows {"mac" (replace (! (mac "mac")) :versions #((ComponentVersion "python" "3")))
-                 "atlas" (replace (! (pod "atlas")) :versions #((ComponentVersion "python" "3")))})))
+                 "node-a" (replace (! (pod "node-a")) :versions #((ComponentVersion "python" "3")))})))
   (setv state (ClusterState #() workers (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT)))}))))
   (setv placed (! (tasks-placed 1000 state (table-of #()) T)))
-  (assert (= #((. (.row placed "t1") worker) (. (.row placed "t2") worker)) #("atlas" "mac")))
+  (assert (= #((. (.row placed "t1") worker) (. (.row placed "t2") worker)) #("node-a" "mac")))
   ;; agent の task で Mac が居なければ、送らずに失敗(理由に要る能力)
-  (setv only-pod (ClusterState #() (! (table-from-rows {"atlas" (.row workers "atlas")})) (table-of #()) (! (table-from-rows {"t3" (! (task "t3" #(AGENT)))}))))
+  (setv only-pod (ClusterState #() (! (table-from-rows {"node-a" (.row workers "node-a")})) (table-of #()) (! (table-from-rows {"t3" (! (task "t3" #(AGENT)))}))))
   (setv failed (.row (! (tasks-placed 1000 only-pod (table-of #()) T)) "t3"))
   (assert (= failed.phase "failed"))
   (assert (in "agent-cli" failed.detail)))
@@ -159,8 +159,8 @@
 (deftest test-a-queued-task-fails-when-no-registered-worker-can-ever-run-it
   ;; 待っても晴れない理由は今どおり失敗: 能力の合う worker が 1 台も登録されていない(上の test-task-follows-the-same-dedicated-rule と
   ;; 同じ)・登録された worker の版が違う・合う worker が待ちの期限(ClusterTiming.silent-worker-wait-ms)より長く live でない。
-  (setv other (replace (! (worker "atlas" 0 10 "cluster-net")) :versions #((ComponentVersion "python" "3"))))
-  (setv none (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"atlas" other})) (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) (table-of #()) T)) "t1"))
+  (setv other (replace (! (worker "node-a" 0 10 "cluster-net")) :versions #((ComponentVersion "python" "3"))))
+  (setv none (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"node-a" other})) (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) (table-of #()) T)) "t1"))
   (assert (= none.phase "failed") none.phase)
   (setv old (replace (! (worker "verify-1" 0 1 "verify")) :versions #((ComponentVersion "python" "2")) :exclusive #("verify")))
   (setv mismatch (.row (! (tasks-placed 15000 (ClusterState #() (! (table-from-rows {"verify-1" old})) (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #("verify")))}))) (table-of #()) T)) "t1"))
@@ -716,25 +716,25 @@
   (assert (= #(waiting.phase waiting.detail) #("queued" "")) waiting))
 
 (deftest test-a-surge-waits-while-the-memory-is-full-and-leaves-the-task-room-open
-  ;; drain 中の atlas の上の入れ替えの job w を並べたいが、移せる先 zeus は memory が満杯(予算 150 MiB・常駐 x の settle 100)。surge も
-  ;; memory で数えるので置かれず(入れ替えは空くまで待つ)、zeus の task の空き(測った空き 1 本)は空いたまま。予算が 200 なら同じ状態で zeus へ
+  ;; drain 中の node-a の上の入れ替えの job w を並べたいが、移せる先 node-h は memory が満杯(予算 150 MiB・常駐 x の settle 100)。surge も
+  ;; memory で数えるので置かれず(入れ替えは空くまで待つ)、node-h の task の空き(測った空き 1 本)は空いたまま。予算が 200 なら同じ状態で node-h へ
   ;; 並べる(memory が理由で待つことの対照)。
   (val handoff-job (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True) :peak-mib 200 :settle-mib 100))
   (val state (ClusterState #(handoff-job (! (job "x")))
-                           (! (table-from-rows {"atlas" (! (reserved "atlas" 0 10 0)) "zeus" (! (reserved "zeus" 0 0 1 150))}))
-                           (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "x" (Placement "x" "zeus" 1 0)}))
-                           :drains (! (table-from-rows {"atlas" (Drain "atlas" 0 600000)}))))
+                           (! (table-from-rows {"node-a" (! (reserved "node-a" 0 10 0)) "node-h" (! (reserved "node-h" 0 0 1 150))}))
+                           (! (table-from-rows {"w" (Placement "w" "node-a" 1 0) "x" (Placement "x" "node-h" 1 0)}))
+                           :drains (! (table-from-rows {"node-a" (Drain "node-a" 0 600000)}))))
   (val waited (advance-drains 1000 state T))
   (assert (= (.size waited.surges) 0) waited.surges)
   (val load (load-of waited waited.placements))
-  (val zeus (.row waited.workers "zeus"))
-  (assert (= #((! (memory-room-of zeus load)) (! (task-room-of zeus load))) #(50 1)) load)
-  (assert (in "w" (. (drain-view waited "atlas" 1000 T) blocked)) (drain-view waited "atlas" 1000 T))
-  ;; 空きの無い zeus も能力の合う worker なので、w は待つ物に残る(移せないと確定しない — #3669)。
-  (val full (drain-view waited "atlas" 1000 T))
+  (val node-h (.row waited.workers "node-h"))
+  (assert (= #((! (memory-room-of node-h load)) (! (task-room-of node-h load))) #(50 1)) load)
+  (assert (in "w" (. (drain-view waited "node-a" 1000 T) blocked)) (drain-view waited "node-a" 1000 T))
+  ;; 空きの無い node-h も能力の合う worker なので、w は待つ物に残る(移せないと確定しない — #3669)。
+  (val full (drain-view waited "node-a" 1000 T))
   (assert (= #(full.remaining full.unmovable full.phase) #(#("w") #() DrainPhase.BLOCKED)) full)
-  (val open (replace state :workers (! (rows-merged state.workers {"zeus" (replace (.row state.workers "zeus") :memory-mib 200)}))))
-  (assert (= (. (.row (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
+  (val open (replace state :workers (! (rows-merged state.workers {"node-h" (replace (.row state.workers "node-h") :memory-mib 200)}))))
+  (assert (= (. (.row (. (advance-drains 1000 open T) surges) "w") worker) "node-h")))
 
 (deftest test-the-saved-worker-rows-carry-no-task-fields-and-rows-with-them-are-read
   ;; 保存の行(state file と durable の KV)は手書きの task の枠(taskReserve・backgroundRoom — 消した欄)を書かない。前の版が書いた、
@@ -768,16 +768,16 @@
 (defk generation-beat [state boot boot-at rows now]
   {:pre [(: state ClusterState) (: boot str) (: boot-at (| int None)) (: rows list) (: now int)] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker atlas の世代 boot(起動の刻 boot-at — None は名乗らない)が job の行 rows を報告した heartbeat を 1 つ受けた後の状態を求めるため。"
-  (val body (| {"name" "atlas" "provides" ["net"] "versions" {} "boot" boot "statuses" rows}
+  "worker node-a の世代 boot(起動の刻 boot-at — None は名乗らない)が job の行 rows を報告した heartbeat を 1 つ受けた後の状態を求めるため。"
+  (val body (| {"name" "node-a" "provides" ["net"] "versions" {} "boot" boot "statuses" rows}
                (if (is boot-at None) {} {"bootAt" boot-at})))
   (! (register-heartbeat state (! (heartbeat-of body)) now)))
 
 (defk exit-of [state name]
   {:pre [(: state ClusterState) (: name str)] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "atlas の最新の報告の行 name の last-exit-at-ms を読むため(行が無ければ赤)。"
-  (val rows (lfor r (. (.row state.observations.statuses "atlas") jobs) :if (= r.name name) r))
-  (assert (= (len rows) 1) #(name (. (.row state.observations.statuses "atlas") jobs)))
+  "node-a の最新の報告の行 name の last-exit-at-ms を読むため(行が無ければ赤)。"
+  (val rows (lfor r (. (.row state.observations.statuses "node-a") jobs) :if (= r.name name) r))
+  (assert (= (len rows) 1) #(name (. (.row state.observations.statuses "node-a") jobs)))
   (. (get rows 0) last-exit-at-ms))
 
 (defk declared-w []
@@ -790,9 +790,9 @@
   (val first (! (generation-beat (! (declared-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
   (assert (is (! (exit-of first "w")) None))
   (val second (! (generation-beat first "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 10))))
-  (assert (= (! (exit-of second "w")) BOOT-2) (. (.row second.observations.statuses "atlas") jobs))
+  (assert (= (! (exit-of second "w")) BOOT-2) (. (.row second.observations.statuses "node-a") jobs))
   ;; 見せる形(GET /state の statuses と Service の status.process)も同じ刻。
-  (assert (= (get (status-row-to-json (get (. (.row second.observations.statuses "atlas") jobs) 0)) "lastExitAtMs") BOOT-2))
+  (assert (= (get (status-row-to-json (get (. (.row second.observations.statuses "node-a") jobs) 0)) "lastExitAtMs") BOOT-2))
   ;; 新しい世代が自分で報告した終わりが起動の刻より後なら、その刻(大きい方)。
   (val later (! (generation-beat first "b2" BOOT-2 [{"name" "w" "phase" "backoff" "lastExitAtMs" (+ BOOT-2 500)}] (+ BOOT-2 600))))
   (assert (= (! (exit-of later "w")) (+ BOOT-2 500))))
@@ -803,12 +803,12 @@
                                                                 {"name" "task/t1" "phase" "running" "pid" 101}]
                                  (+ BOOT-1 10))))
   (val reborn (! (generation-beat first "b2" BOOT-2 [] (+ BOOT-2 10))))
-  (assert (= (. (.row reborn.observations.statuses "atlas") jobs) #()))
+  (assert (= (. (.row reborn.observations.statuses "node-a") jobs) #()))
   (val again (! (generation-beat reborn "b2" BOOT-2 [{"name" "w" "phase" "starting"}] (+ BOOT-2 20))))
-  (assert (= (! (exit-of again "w")) BOOT-2) (. (.row again.observations.statuses "atlas") jobs))
+  (assert (= (! (exit-of again "w")) BOOT-2) (. (.row again.observations.statuses "node-a") jobs))
   ;; 持ち続けるのは宣言の在る job の名だけ(task や退いた行の名を世代ごとに溜めない)。2 世代目はまだ w の process を持たない。
-  (assert (= (. (.row reborn.workers "atlas") known-exits) #((KnownExit :job "w" :at-ms BOOT-2 :has-process False)))
-          (.row reborn.workers "atlas")))
+  (assert (= (. (.row reborn.workers "node-a") known-exits) #((KnownExit :job "w" :at-ms BOOT-2 :has-process False)))
+          (.row reborn.workers "node-a")))
 
 (deftest test-heartbeats-of-the-same-generation-do-not-move-the-last-exit
   ;; (b) 同じ世代の heartbeat を何度受けても進まない: 報告が無ければ無いまま、報告の刻が在ればその刻のまま。
@@ -831,7 +831,7 @@
   ;; 起動の刻を名乗らない新しい世代(初めて見た順で NEWER)では、process を持っていた job も進めない(推測で刻を作らない)。
   (val unnamed (! (generation-beat (! (declared-w)) "b1" None [{"name" "w" "phase" "running" "pid" 100}] 10)))
   (val renamed (! (generation-beat unnamed "b2" None [{"name" "w" "phase" "running" "pid" 200}] 20)))
-  (assert (= (. (.row renamed.workers "atlas") boot) "b2"))
+  (assert (= (. (.row renamed.workers "node-a") boot) "b2"))
   (assert (is (! (exit-of renamed "w")) None)))
 
 (deftest test-the-moved-last-exit-does-not-go-back-on-the-next-heartbeats
@@ -844,7 +844,7 @@
   (assert (= (! (exit-of crashed "w")) (+ BOOT-2 900)))
   ;; 退いた世代(1 世代目がまだ送る heartbeat — OLDER)の行が終わりの刻を載せなければ、job の行に触らない。
   (val stale (! (generation-beat crashed "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-2 960))))
-  (assert (= (.row stale.observations.statuses "atlas") (.row crashed.observations.statuses "atlas"))))
+  (assert (= (.row stale.observations.statuses "node-a") (.row crashed.observations.statuses "node-a"))))
 
 
 
@@ -913,9 +913,9 @@
   (val still (! (generation-beat second "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100 "lastExitAtMs" (- BOOT-2 5)}] (+ BOOT-2 100))))
   (assert (= (! (exit-of still "w")) BOOT-2))
   (val ended (! (generation-beat still "b1" BOOT-1 [{"name" "w" "phase" "stopped" "lastExitAtMs" (+ BOOT-2 300)}] (+ BOOT-2 310))))
-  (assert (= (! (exit-of ended "w")) (+ BOOT-2 300)) (. (.row ended.observations.statuses "atlas") jobs))
+  (assert (= (! (exit-of ended "w")) (+ BOOT-2 300)) (. (.row ended.observations.statuses "node-a") jobs))
   ;; 退いた世代は名乗りとして受けない(今の世代は b2 のまま)。2 世代目の続く heartbeat(刻を載せない行)でも戻さない。
-  (assert (= (. (.row ended.workers "atlas") boot) "b2"))
+  (assert (= (. (.row ended.workers "node-a") boot) "b2"))
   (val after (! (generation-beat ended "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 320))))
   (assert (= (! (exit-of after "w")) (+ BOOT-2 300))))
 
@@ -925,23 +925,23 @@
   (val first (! (generation-beat (! (saved-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
   (val row [{"job" "w" "atMs" None "hasProcess" True}])
   (val kv (! (full-kv first)))
-  (assert (= (get kv "worker/atlas" "knownExits") row) (get kv "worker/atlas"))
-  (val back (! (state-from-kv (| kv {"worker/atlas" (dfor #(k v) (.items (get kv "worker/atlas")) :if (!= k "knownExits") k v)})
+  (assert (= (get kv "worker/node-a" "knownExits") row) (get kv "worker/node-a"))
+  (val back (! (state-from-kv (| kv {"worker/node-a" (dfor #(k v) (.items (get kv "worker/node-a")) :if (!= k "knownExits") k v)})
                               (+ BOOT-1 20))))
-  (assert (= (. (.row back.workers "atlas") known-exits) #()) (.row back.workers "atlas"))
+  (assert (= (. (.row back.workers "node-a") known-exits) #()) (.row back.workers "node-a"))
   (val data (! (state-to-json first)))
   (val from-file (! (state-from-json (| data {"workers" (lfor w (get data "workers") (dfor #(k v) (.items w) :if (!= k "knownExits") k v))})
                                      (+ BOOT-1 20))))
-  (assert (= (. (.row from-file.workers "atlas") known-exits) #()) (.row from-file.workers "atlas"))
+  (assert (= (. (.row from-file.workers "node-a") known-exits) #()) (.row from-file.workers "node-a"))
   (val beaten (! (generation-beat back "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 30))))
-  (assert (= (get (! (full-kv beaten)) "worker/atlas" "knownExits") row)))
+  (assert (= (get (! (full-kv beaten)) "worker/node-a" "knownExits") row)))
 
 (defk restarted-and-beaten [kv]
   {:pre [(: kv dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "保存の行 kv から coordinator を作り直し(本番の load-state と同じ state-from-kv と止まっていた長さのずらし)、atlas の同じ世代 b1 が
+  "保存の行 kv から coordinator を作り直し(本番の load-state と同じ state-from-kv と止まっていた長さのずらし)、node-a の同じ世代 b1 が
    w を pid 100 で走らせていると報告した heartbeat と、1 拍の調停を受けた後の状態を求めるため。"
   (val again (get (resume-after-downtime (! (state-from-kv kv (+ BOOT-1 30))) (+ BOOT-1 30)) 0))
-  (assert (in "atlas" (.keys again.workers)) (sorted (.keys again.workers)))
+  (assert (in "node-a" (.keys again.workers)) (sorted (.keys again.workers)))
   (! (tick (! (generation-beat again "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 40))) (+ BOOT-1 41) (ClusterTiming))))
 
 (deftest test-an-old-saved-worker-row-keeps-the-running-service-in-place-after-the-coordinator-restarts
@@ -955,21 +955,21 @@
   (val running (! (tick (! (generation-beat placed "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 20)))
                         (+ BOOT-1 21) T)))
   (val before (.row running.placements "w"))
-  (assert (= before.worker "atlas") running.placements)
+  (assert (= before.worker "node-a") running.placements)
   (val kv (! (full-kv running)))
-  (assert (in "knownExits" (get kv "worker/atlas")) (get kv "worker/atlas"))
-  (val old-kv (| kv {"worker/atlas" (dfor #(k v) (.items (get kv "worker/atlas")) :if (!= k "knownExits") k v)}))
+  (assert (in "knownExits" (get kv "worker/node-a")) (get kv "worker/node-a"))
+  (val old-kv (| kv {"worker/node-a" (dfor #(k v) (.items (get kv "worker/node-a")) :if (!= k "knownExits") k v)}))
   (val from-old (! (restarted-and-beaten old-kv)))
   (val from-new (! (restarted-and-beaten kv)))
   (for [state [from-old from-new]]
     (val after (.row state.placements "w"))
     (assert (= #(after.worker after.generation) #(before.worker before.generation)) #(before after))
-    (assert (= (lfor r (. (.row state.observations.statuses "atlas") jobs) #(r.name r.pid)) [#("w" 100)]) (. (.row state.observations.statuses "atlas") jobs)))
-  (assert (= (jobs-for from-old "atlas") (jobs-for from-new "atlas")) #((jobs-for from-new "atlas") (jobs-for from-old "atlas"))))
+    (assert (= (lfor r (. (.row state.observations.statuses "node-a") jobs) #(r.name r.pid)) [#("w" 100)]) (. (.row state.observations.statuses "node-a") jobs)))
+  (assert (= (jobs-for from-old "node-a") (jobs-for from-new "node-a")) #((jobs-for from-new "node-a") (jobs-for from-old "node-a"))))
 
 (defk beat-without-rewrite [state row now]
   {:pre [(: state ClusterState) (: row dict) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "atlas の 1 世代目が w の行 row を載せた heartbeat を受けた状態を求め、保存の差分(durable-delta)が空 = 保存の行を書かないと確かめるため。"
+  "node-a の 1 世代目が w の行 row を載せた heartbeat を受けた状態を求め、保存の差分(durable-delta)が空 = 保存の行を書かないと確かめるため。"
   (val beaten (! (generation-beat state "b1" BOOT-1 [row] now)))
   (val delta (! (durable-delta state beaten)))
   (assert (= delta {}) #(now delta))
@@ -981,13 +981,13 @@
   (val idle (! (generation-beat (! (saved-w)) "b1" BOOT-1 [{"name" "w" "phase" "preparing"}] (+ BOOT-1 10))))
   (val running-row {"name" "w" "phase" "running" "pid" 100})
   (val started (! (generation-beat idle "b1" BOOT-1 [running-row] (+ BOOT-1 20))))
-  (assert (= (sorted (! (durable-delta idle started))) ["worker/atlas"]) (! (durable-delta idle started)))
+  (assert (= (sorted (! (durable-delta idle started))) ["worker/node-a"]) (! (durable-delta idle started)))
   (var running started)
   (for [at [30 40 50]]
     (:= running (! (beat-without-rewrite running running-row (+ BOOT-1 at)))))
   (val ended-row {"name" "w" "phase" "backoff" "lastExitAtMs" (+ BOOT-1 55)})
   (val ended (! (generation-beat running "b1" BOOT-1 [ended-row] (+ BOOT-1 60))))
-  (assert (= (sorted (! (durable-delta running ended))) ["worker/atlas"]) (! (durable-delta running ended)))
+  (assert (= (sorted (! (durable-delta running ended))) ["worker/node-a"]) (! (durable-delta running ended)))
   (var waiting ended)
   (for [at [70 80]]
     (:= waiting (! (beat-without-rewrite waiting ended-row (+ BOOT-1 at))))))
@@ -1028,7 +1028,7 @@
 
 (defk old-generation-holding []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "1 世代目(b1)の atlas が w(と退いた w)の process を走らせ、その process が lease を持っている状態。別の worker の process の lease も在る。"
+  "1 世代目(b1)の node-a が w(と退いた w)の process を走らせ、その process が lease を持っている状態。別の worker の process の lease も在る。"
   (val first (! (generation-beat (! (declared-w)) "b1" BOOT-1 OLD-ROWS (+ BOOT-1 10))))
   (setv #(a ok-a) (! (lease-asked first "writer-lock" "claim" (! (token-of "w" "1-aaa")) (+ BOOT-1 20)))
         #(b ok-b) (! (lease-asked a "retired-lock" "claim" (! (token-of "w" "0-zzz")) (+ BOOT-1 20)))
@@ -1043,7 +1043,7 @@
   (val reborn (! (generation-beat held "b2" (+ BOOT-1 3000) [] (+ BOOT-1 4000))))
   (assert (= (! (holders-of reborn "writer-lock")) {}) (! (holders-of reborn "writer-lock")))
   (assert (= (! (holders-of reborn "retired-lock")) {}) (! (holders-of reborn "retired-lock")))
-  ;; 外すのは atlas の前の世代の process の担い手だけ(別の worker の process の lease はそのまま)。
+  ;; 外すのは node-a の前の世代の process の担い手だけ(別の worker の process の lease はそのまま)。
   (assert (= (! (holders-of reborn "other-lock")) (! (holders-of held "other-lock"))))
   (assert (is (.row reborn.board (+ "semaphore/" "other-lock")) (.row held.board (+ "semaphore/" "other-lock"))) "外さない行は同じ object")
   (assert (= reborn.board-tally (board-tally-of reborn.board)) "世代の名乗りの後も集計は全行から求めた値と同じ")
@@ -1052,15 +1052,15 @@
   (assert ok "新しい世代の process が期限の前に lease を取れる"))
 
 (deftest test-a-new-generation-overlapping-a-running-elder-leaves-the-elder-leases-held
-  ;; 失敗ケース(AL-D2e — 10-11 17:36:49 JST の zeus の RollingUpdate): 新しい世代が、前の世代がまだ走っている
+  ;; 失敗ケース(AL-D2e — 10-11 17:36:49 JST の node-h の RollingUpdate): 新しい世代が、前の世代がまだ走っている
   ;; (起動の script が前の世代の dir の錠を持たれていると見た)と名乗る(overlapsElder)。前の世代の process は走り続けているので、担い手を
   ;; 外さず、その process の延長も通す(直す前は #3770 が外し、recreate の job の process が返しで LeaseLost で落ち、退き中の handoff の
   ;; process の lease の延長が断られて走っていた仕事が切れた)。新しい世代の process は、前の担い手が返すか期限が来るまで取れない。
   (val held (! (old-generation-holding)))
-  (val body {"name" "atlas" "provides" ["net"] "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
+  (val body {"name" "node-a" "provides" ["net"] "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
              "statuses" [] "overlapsElder" True})
   (val overlapping (! (register-heartbeat held (! (heartbeat-of body)) (+ BOOT-1 4000))))
-  (assert (= (. (.row overlapping.workers "atlas") boot) "b2"))
+  (assert (= (. (.row overlapping.workers "node-a") boot) "b2"))
   (assert (= overlapping.board held.board) (! (holders-of overlapping "writer-lock")))
   (setv #(renewed-state renewed) (! (lease-asked overlapping "writer-lock" "renew" (! (token-of "w" "1-aaa")) (+ BOOT-1 4600))))
   (assert renewed "走っている前の世代の process の延長が通る")
@@ -1083,7 +1083,7 @@
   (val held (! (old-generation-holding)))
   (val reborn (! (generation-beat held "b2" (+ BOOT-1 3000) [] (+ BOOT-1 4000))))
   (val late (! (generation-beat reborn "b1" BOOT-1 OLD-ROWS (+ BOOT-1 4500))))
-  (assert (= (. (.row late.workers "atlas") boot) "b2"))
+  (assert (= (. (.row late.workers "node-a") boot) "b2"))
   (assert (= late.board reborn.board))
   (setv #(_ renewed) (! (lease-asked late "writer-lock" "renew" (! (token-of "w" "1-aaa")) (+ BOOT-1 4600))))
   (assert (not renewed) "外した担い手の延長は通らない")
@@ -1107,14 +1107,14 @@
   (assert (. (get answer 2) ok) answer)
   (get answer 0))
 
-(defk handing-off-on-atlas []
+(defk handing-off-on-node-a []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "入れ替えの job w(寿命の上限 60 秒)と入れ替えでない job k を atlas に置いた coordinator の状態。w の退いた process 0-zzz が
+  "入れ替えの job w(寿命の上限 60 秒)と入れ替えでない job k を node-a に置いた coordinator の状態。w の退いた process 0-zzz が
    退きの保ちを持ち、同じ process が別の lease writer-lock も持つ。別の job other の process も保ちを持つ。"
   (val w (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True :retired-ms 60000) :peak-mib 200 :settle-mib 100))
   (val k (ClusterJob (JobSpec "k" "m" #() "rev") :peak-mib 200 :settle-mib 100))
-  (val placed (ClusterState #(w k) (! (table-from-rows {"atlas" (! (worker "atlas" HOLD-AT))}))
-                            :placements (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "k" (Placement "k" "atlas" 1 0)}))))
+  (val placed (ClusterState #(w k) (! (table-from-rows {"node-a" (! (worker "node-a" HOLD-AT))}))
+                            :placements (! (table-from-rows {"w" (Placement "w" "node-a" 1 0) "k" (Placement "k" "node-a" 1 0)}))))
   (val held (! (hold-asked placed "claim" (! (token-of "w" "0-zzz")) HOLD-AT)))
   (val other (! (hold-asked held "claim" (! (token-of "other" "7-ooo")) HOLD-AT)))
   (setv #(locked ok) (! (lease-asked other "writer-lock" "claim" (! (token-of "w" "1-aaa")) HOLD-AT)))
@@ -1123,14 +1123,14 @@
 
 (defk held-in-reply [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "atlas への返事の job ごとの retired-held を読むため。"
-  (val reply (! (heartbeat-reply state "atlas" T :now now)))
+  "node-a への返事の job ごとの retired-held を読むため。"
+  (val reply (! (heartbeat-reply state "node-a" T :now now)))
   (dfor spec reply.jobs spec.name spec.retired-held))
 
 (deftest test-the-reply-names-the-retired-processes-holding-the-retirement-hold
   ;; 失敗ケース: 返事に保ちの欄が無く、worker は保ちを持つ退いた process も寿命の上限で止めていた(10-16 04:28:49 JST の本番で 6 時間 7 分
   ;; 走っていた仕事が切れた)。期限の内の保ちの持ち手だけを、その job の欄に載せる。別の lease・別の job の保ちは数えない。
-  (val state (! (handing-off-on-atlas)))
+  (val state (! (handing-off-on-node-a)))
   (assert (= (! (held-in-reply state (+ HOLD-AT 100))) {"w" #("0-zzz") "k" #()}))
   ;; 延ばしが止まって期限を過ぎた保ちは数えない(process が固まった・止まった — worker は寿命の上限で止める)。
   (assert (= (! (held-in-reply state (+ HOLD-AT LEASE-TTL-MS))) {"w" #() "k" #()}))
@@ -1306,7 +1306,7 @@
 (deftest test-the-same-tasks-inserted-in-another-order-place-to-the-same-workers-and-answer-the-same-json
   ;; 失敗ケース: 表の行の並びは挿入順。置き先と GET /state の task の JSON が並びに依ると、同じ task の集合が送られた順で別の結果になる。
   (val workers (! (table-from-rows {"mac" (replace (! (mac "mac")) :versions #((ComponentVersion "python" "3")))
-                "atlas" (replace (! (pod "atlas")) :versions #((ComponentVersion "python" "3")))})))
+                "node-a" (replace (! (pod "node-a")) :versions #((ComponentVersion "python" "3")))})))
   (val rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT))) "t3" (! (task "t3" #()))})
   (val reversed-rows (dict (reversed (list (.items rows)))))
   (assert (!= (list rows) (list reversed-rows)) "挿入順が違う 2 つの dict で試す")

@@ -4175,7 +4175,7 @@ rules:
       metadata. Remote check trees carry only the git ls-files manifest and
       have no .git directory — a .git existence probe made every
       installed-rule defsemgrep erroring on such trees (measured 2026-08-17
-      on zeus, route-3da438e018). Use _find_tree_root (config-file anchor)
+      on node-h, route-3da438e018). Use _find_tree_root (config-file anchor)
       instead of probing for ".git".
     pattern-regex: '["'']\.git["'']\s*\)\s*\.(exists|is_dir)\(\)'
     paths:
@@ -4192,7 +4192,7 @@ rules:
       into "no findings". semgrep exits 1 both for findings and for a
       startup crash, so only parseable JSON proves the scan ran. Parse
       strictly and raise with stderr when the output is not JSON (measured
-      2026-08-17 on zeus: an interpreter-mismatch crash was misdiagnosed as
+      2026-08-17 on node-h: an interpreter-mismatch crash was misdiagnosed as
       "installed rule did not fire on hit fixtures").
     pattern-regex: 'json\.loads\(\s*\w+\.stdout\s+or\s'
     paths:

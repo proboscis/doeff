@@ -1,6 +1,6 @@
 """Resolution of the destination (URL, model, wire format, API key).
 
-This is the single place where it is decided. When switching to seimf (a Jev-compatible judge running on zeus's GPU), changing the single environment variable
+This is the single place where it is decided. When switching to a self-hosted judge (a Jev-compatible judge running on a GPU machine), changing the single environment variable
 `JEV_BASE_URL` is enough, and every caller that stacks this handler follows.
 
 Resolution order (the earlier wins):
@@ -56,7 +56,7 @@ class JevTarget:
 
 
 def key_required(target: JevTarget) -> bool:
-    """TypeSafe and Vercel require a key. Others (seimf) are sent even without one."""
+    """TypeSafe and Vercel require a key. Others (a self-hosted judge) are sent even without one."""
     return target.host in (TYPESAFE_HOST, GATEWAY_HOST)
 
 

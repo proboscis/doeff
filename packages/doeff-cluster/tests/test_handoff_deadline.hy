@@ -42,7 +42,7 @@
 
 
 (defclass Sim []
-  "coordinator 1 つと worker 1 台(zeus)と、その上の子 process の模擬の世界(状態を持つ object — 拍ごとに進める)。"
+  "coordinator 1 つと worker 1 台(node-h)と、その上の子 process の模擬の世界(状態を持つ object — 拍ごとに進める)。"
   (defn #^ None __init__ [self #^ dict declaration]  ; defk にできない: 模擬の世界の object の組み立て(class の口)
     "declaration = Service writer-a の宣言の spec。"
     (setv self.now 3000000
@@ -99,7 +99,7 @@
       (when (and (is p.exit-code None) (>= self.now (+ p.started-ms JOB-START)))
         (setv healthy (not-in p.spec.revision self.broken))
         (self.call "POST" "/resources/Service/writer-a/readiness"
-                   {"worker" "zeus" "pid" p.pid "revision" p.spec.revision "instance" p.instance "attempt" (str p.attempt)
+                   {"worker" "node-h" "pid" p.pid "revision" p.spec.revision "instance" p.instance "attempt" (str p.attempt)
                     "specHash" (spec-hash p.spec) "placement" p.spec.placement "ready" healthy
                     "reason" (if healthy "拍を終えた" WARMING) "role" "active"} :actor None))))
 
@@ -138,7 +138,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "node-h" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
                        :actor None))
   (.append sim.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
   (<- declared DeclaredReply (declared-reply-of-json reply))
@@ -345,7 +345,7 @@
   (val old (sim.live "r1"))
   (assert (and (= (len old) 1) (= (. (get old 0) retired-from) "writer-a")) old)
   (assert (.get (get sim.replies -1) "handoffAbandoned") (get sim.replies -1))
-  (val row (next (gfor r (. (.row sim.state.observations.statuses "zeus") jobs) :if (= r.name "writer-a") r)))
+  (val row (next (gfor r (. (.row sim.state.observations.statuses "node-h") jobs) :if (= r.name "writer-a") r)))
   (assert (= row.phase "handoff-abandoned") row)
   ;; 起こし直さない: 時間が経っても、coordinator を作り直しても(諦めは保存される)、r2 は起きない。
   (val starts-r2 (! (started sim "r2")))

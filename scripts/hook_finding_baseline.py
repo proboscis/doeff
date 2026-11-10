@@ -155,7 +155,7 @@ def lowered(baseline: Counts, current: Counts) -> Counts:
     return {rule: per_file for rule, per_file in result.items() if per_file}
 
 
-# Dirs not entered when walking a tree without git (the tree the daily stage copied to zeus -- remote_check sends only the files in the git ls-files list and no .git):
+# Dirs not entered when walking a tree without git (the tree the daily stage copied to node-h -- remote_check sends only the files in the git ls-files list and no .git):
 # things made by check runs or the environment, not tracked by git (#2906).
 UNTRACKED_DIRS: frozenset[str] = frozenset({".git", ".venv", "node_modules", "__pycache__"})
 

@@ -2,8 +2,8 @@
 ;;; references and start, a worker holds a copy of the referenced values of the jobs that could be placed on it, and a job's read
 ;;; answers from that copy only when the API server cannot be reached.
 ;;;
-;;; At 2026-10-29 23:30 JST the machine eos, which hosts the API server, went down; the jobs that
-;;; ran on eos were re-placed onto atlas in the pool, but at startup they asked the API server for their referenced values, could not
+;;; At 2026-10-29 23:30 JST the machine node-b, which hosts the API server, went down; the jobs that
+;;; ran on node-b were re-placed onto node-a in the pool, but at startup they asked the API server for their referenced values, could not
 ;;; reach it, and failed 17 times in 16 minutes. Until then no ADR decided how supplied-values behaves when the API server is down
 ;;; (checked by reading docs/adr for "supplied" — 2026-10-30).
 ;;;
@@ -36,7 +36,7 @@
        :evidence "held-entries and entries-of-answer in shared/protocol/supplied_values.hy (the form before this ADR)")
      (fact
        "A partition's API server lives on one machine. When that machine stops, workers on every machine lose access to the values. Even if a job can be placed on two machines, when the reason for moving is that machine stopping, the destination also needs the same API server to start, so it can never start (the destination lies in the same failure domain as the cause of the move)."
-       :evidence "Measured (10-29 23:31-23:47 JST: the job on atlas failed 17 times with ConnectTimeout)")]
+       :evidence "Measured (10-29 23:31-23:47 JST: the job on node-a failed 17 times with ConnectTimeout)")]
   :context
     [(interpretation
        "Running the control plane on several machines, or changing the restart interval, is outside this ADR. This ADR makes the way values are obtained itself survive an API server outage.")

@@ -5,7 +5,7 @@
 //! (measured by the #1022 instrument). For facts determined by one file's contents alone, the facts are placed on disk and
 //! only changed files are re-parsed. The answer does not change (the same file contents give the same facts).
 //!
-//! There are two stores (each working tree used to rebuild everything and write about 3.4GB per hour to zeus's USB SSD):
+//! There are two stores (each working tree used to rebuild everything and write about 3.4GB per hour to node-h's USB SSD):
 //! - The facts themselves (`objects/<kind>.<form>/<first 2 chars of hash>/<rest>`): one fact per file, placed under a key determined by contents. The key is
 //!   the linter's marker, the file's path from the root (`rel`), and the SHA-256 hash of the contents. Files with the same contents read the same fact even across working trees
 //!   (no rebuild even when a checkout makes the mtime newer). Once placed, it is never rewritten (renamed from a temporary file).
@@ -30,7 +30,7 @@
 //! The root's dir records the root's absolute path (`root.path`), and every hour the store is scanned and dirs whose recorded root no longer exists are deleted
 //! (`tend_roots`; dirs with no record are not deleted).
 //! Only changed chunks are written for the table (chunks whose rows changed, or chunks containing a vanished file). A run right after changing one file used to rewrite the whole repo's facts
-//! (about 0.35 seconds on zeus). Reading reads all chunks together. The previous forms (facts inside chunks, and
+//! (about 0.35 seconds on node-h). Reading reads all chunks together. The previous forms (facts inside chunks, and
 //! the one-file form) are not read: an unreadable chunk is treated as absent and is only rebuilt, so the answer does not change.
 //! Writes rename from a temporary file (so concurrent hooks do not corrupt each other: the later writer just wins, and both are correct facts).
 //! If `DOEFF_LINTER_NO_CACHE` is set, nothing is read or written. Unreadable or broken chunks and facts are treated as absent (that file's facts are re-parsed;

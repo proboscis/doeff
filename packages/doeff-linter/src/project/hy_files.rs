@@ -1,7 +1,7 @@
 //! Builds the list of the repo's Hy files by walking each root only once per run.
 //!
 //! The rule groups (definitions, smells, bare calls, index, headings and bindings, candidates for rewriting to defk) each walked the repo with `collect_hy_files` --
-//! about 8 times per run even for a one-file commit hook, and 0.05 seconds per walk in agora-controllers (about 1200 dirs) (zeus).
+//! about 8 times per run even for a one-file commit hook, and 0.05 seconds per walk in agora-controllers (about 1200 dirs) (node-h).
 //! Premise = this crate is used only by a binary that finishes in one run (there is no resident user), and files neither increase nor decrease during a run.
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};

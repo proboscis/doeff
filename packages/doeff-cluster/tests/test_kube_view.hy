@@ -10,7 +10,7 @@
 (val REAL-SHAPED
   {"metadata" {"generation" 7 "annotations" {"a" "b"}}
    "spec" {"replicas" 0
-           "template" {"spec" {"containers" [{"name" "app-writer" "image" "zeus:5000/app:20260924-305aac4"}
+           "template" {"spec" {"containers" [{"name" "app-writer" "image" "node-h:5000/app:20260924-305aac4"}
                                               {"name" "sidecar" "image" "busybox:1"}]}}}
    "status" {"replicas" 0 "readyReplicas" 0 "observedGeneration" 7}})
 

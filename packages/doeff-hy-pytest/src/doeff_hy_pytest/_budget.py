@@ -1518,7 +1518,7 @@ def pytest_runtest_makereport(
 
 # -- Per-test CPU seconds / steps (us/step) ratio (section 2 of design #2670) --
 # Report only (not included in the verdict, the exit code, or BudgetWarning). On a busy day all tests swing in the same direction, so outliers are found not by absolute value but by the ratio
-# between tests in the same session (multiple of the session median). Basis of the values (zeus measurement of 2026-10-12, doeff branch):
+# between tests in the same session (multiple of the session median). Basis of the values (node-h measurement of 2026-10-12, doeff branch):
 # tests with 10,000 or more steps fall within 9.7 to 19.7 us/step, and the ratio within the same run
 # is 0.85 to 1.14 between the 5th and 95th percentiles. Tests with fewer than 100 steps are numbers of fixed cost only (median 167, max 230,000 us/step), so they are not included in the ratio.
 # Review the multiplier, floor, and minimum count after reading the first 5 daily lines (the 4 lines below are the only place to change the values).
