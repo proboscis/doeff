@@ -371,6 +371,11 @@ class Residual:
         """Qualified names of ``effect_types``, sorted (for reports)."""
         return sorted({qualified_name(effect) for effect in self.effect_types})
 
+    @property
+    def empty(self) -> bool:
+        """Nothing leaves: no escape, no unread handler, no unfollowed place."""
+        return not self.escapes and not self.unknown_handlers and not self.unresolved
+
 
 def _no_carrier(_carrier: Any) -> bool:
     """The default fold: carried Programs run elsewhere unless the caller says otherwise."""
@@ -526,7 +531,10 @@ def pass_through(
     escape per effect class (the first place it was seen).  ``inner``'s unresolved
     places are kept, and so are the places a clause that answers here cannot follow
     (its ``via`` starts with the handler's name) — what such a place performs goes to
-    the handlers outside, unseen.
+    the handlers outside, unseen.  A handler that answers every effect and performs
+    nothing (``_seals``) ends all of that: whatever an unread handler or an unfollowed
+    place inside it performs reaches it and leaves nothing, so only the handlers outside
+    it are left to name.
     """
     handlers = tuple(_supplied_for(handler) for handler in handlers)
     pending: dict[type, Escape] = {}
@@ -534,7 +542,12 @@ def pass_through(
         pending.setdefault(escape.effect, escape)
     unknown = [*inner.unknown_handlers, *(h.name for h in handlers if not h.known)]
     unresolved = list(inner.unresolved)
-    for handler in reversed(handlers):
+    for depth, handler in reversed(list(enumerate(handlers))):
+        if _seals(handler, include):
+            pending.clear()
+            unknown = [h.name for h in handlers[:depth] if not h.known]
+            unresolved = []
+            continue
         emitted: dict[type, Escape] = {}
         for effect in list(pending):
             clause = next((c for c in handler.clauses if issubclass(effect, c.handles)), None)
@@ -565,6 +578,25 @@ def pass_through(
             pending.setdefault(effect, escape)
     return Residual(
         tuple(pending.values()), tuple(dict.fromkeys(unknown)), tuple(dict.fromkeys(unresolved))
+    )
+
+
+def _seals(handler: HandlerEffects, include: Callable[[Any], bool]) -> bool:
+    """Whether every effect that reaches ``handler`` ends there: a clause without a guard keyed on
+    ``EffectBase`` (the class of every effect) from which nothing leaves, and nothing the handler
+    performs around the body.  doeff-stream's step runs its Program under such a handler (declared
+    ``__doeff_handles__ = (EffectBase,)``, ``__doeff_effects__ = ()``): the Program is a value
+    made at run time the reader cannot follow, and what it would perform is answered there."""
+    if not handler.known:
+        return False
+    if handler.performs is not None and not _left_from(handler.performs, include).empty:
+        return False
+    base = _effect_base()
+    return any(
+        clause.handles is base
+        and clause.passes is None
+        and _left_from(clause.emits, include).empty
+        for clause in handler.clauses
     )
 
 

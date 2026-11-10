@@ -172,6 +172,13 @@ def _refuse_every_effect(effect: object, k: K) -> "_Performed":
     return _Performed(effect)
 
 
+# The declaration doeff-effect-analyzer reads for this handler: it has no ``isinstance`` clause to read — it answers
+# every effect (EffectBase) and performs none, so nothing the Program it wraps would perform leaves it (the reader
+# need not follow that Program, a value the step makes at run time).
+_refuse_every_effect.__doeff_handles__ = (EffectBase,)  # type: ignore[attr-defined] — the analyzer's mark on a function (no typed slot)
+_refuse_every_effect.__doeff_effects__ = ()  # type: ignore[attr-defined] — the analyzer's mark on a function (no typed slot)
+
+
 def step_name(step: Callable[..., object]) -> str:
     """The name an error gives ``step`` by."""
     return getattr(step, "__qualname__", None) or getattr(step, "__name__", None) or repr(step)
