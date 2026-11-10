@@ -107,7 +107,8 @@ The [Repository map](README.md#repository-map) in the README lists the rest of t
 5. Open the pull request against `main` and fill in the template. Link the issue it resolves
    (`Fixes #123`).
 6. CI (`Python Compatibility`) runs the core test suite on Python 3.11 to 3.14. The maintainer
-   reviews the change and merges it.
+   reviews the change and merges it. How a merge reaches `main` is described in
+   [docs/maintainers.md](docs/maintainers.md); contributors do not need it.
 
 Commit messages start with a short summary in the imperative mood (`Add doeff --version`,
 `Fix cache key for nested programs`). Use the body to say why the change is needed.
