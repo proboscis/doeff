@@ -254,7 +254,7 @@ pub fn in_population(rel: &str, decl: &HandlerArguments) -> bool {
 }
 
 /// Select files under root by extension (not walking hidden directories and generated output).
-fn walk(root: &Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
+pub(super) fn walk(root: &Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
     let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|entry| {
         let name = entry.file_name().to_string_lossy();
         entry.depth() == 0 || !entry.file_type().is_dir() || !(name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref()))

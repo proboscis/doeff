@@ -14,9 +14,12 @@
 //! EffectBase — `ProgramFields`). Branches of `if`, `when`, `cond`, `do`, `let` inside such a position
 //! stay as places that use the answer.
 //! Among arguments to a repo defk call, positions whose receiving parameter's `:pre` type cannot accept a Program (`ValueParams` — built-in value types, None, the repo's
-//! `defrecord`, `defwire`, `defenum`, and their `(get T …)`, `(of T …)`, `(| …)`) are also places that use the answer (`(counts-sources-of (measure-rows-of standing))`
+//! `defrecord`, `defwire`, `defenum`, the top-level classes of the repo's Python files, and their `(get T …)`, `(of T …)`, `(| …)`) are also places that use the answer (`(counts-sources-of (measure-rows-of standing))`
 //! — a Call is passed in, and it first hits the `:pre` type check at run time and fails. The real case: agora-controllers' job patrol failed every time about 5 minutes after startup on 2026-11-04.
 //! It was not run until the stage's cycle opened, and slipped through merge and declaration). Parameters without a type annotation, or that accept Program, object, Any, or an unknown alias are not picked up.
+//! Python classes count since agora-controllers' screen server passed `(_post-trip-start …)` bare to `preceded`, whose `:pre` is `(: step Step)` with `Step` a frozen dataclass of
+//! a .py file (2026-11-10 — every answer of a letter failed the contract for about 2 hours, card [id]). Classes whose bases name Program, EffectBase, DoExpr or Protocol are
+//! not counted (they may accept a Program — `py_value_classes_in`).
 //! Not picked up: the right side of `(<- …)`, `(! …)`, `(return …)`, arguments of a call that accepts a Program (including the form passed to a repo function — it may be a function that accepts a Program and runs it
 //! (such as run-on) and cannot be traced), and bindings to a name (it may be passed later as a Program).
 //!
@@ -249,7 +252,7 @@ pub fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProgramFields {
     fields: BTreeMap<String, BTreeSet<String>>,
-    /// Type names of the repo's `defrecord`, `defwire`, `defenum` (names including the module, mangled) — types that cannot accept a Program (if a defk parameter's
+    /// Type names of the repo's `defrecord`, `defwire`, `defenum` and Python classes (names including the module, mangled — `py_value_classes_in`) — types that cannot accept a Program (if a defk parameter's
     /// `:pre` type is only these, a bare defk call placed in that parameter is a place that uses the answer — `ValueParams`).
     #[serde(default)]
     records: BTreeSet<String>,
@@ -269,7 +272,7 @@ impl ProgramFields {
         self.fields.get(record).is_some_and(|names| names.contains(field))
     }
 
-    /// Whether the type name including the module is a repo record (`defrecord`, `defwire`, `defenum`).
+    /// Whether the type name including the module is a repo record (`defrecord`, `defwire`, `defenum`, a Python class).
     pub fn is_record(&self, qualified: &str) -> bool {
         self.records.contains(qualified)
     }
@@ -327,6 +330,44 @@ pub fn program_fields_in(source: &str, module: &str) -> ProgramFields {
             }
             _ => {}
         }
+    }
+    found
+}
+
+/// Bases that make a Python class one that may accept a Program (compared by the last segment of the spelling — `doeff.Program` too). A runtime-checkable Protocol matches by shape.
+const PROGRAM_BASES: &[&str] = &["Program", "EffectBase", "DoExpr", "Protocol"];
+
+/// Type names (`<module>.<class name>`) of the top-level classes of a Python source that cannot accept a Program (including those inside a top-level `if` — `if TYPE_CHECKING:`).
+/// A class is counted unless one of its bases names a type in PROGRAM_BASES (`Generic[T]`, `Protocol[T]` are read by the subscripted name). Empty if the source does not parse.
+pub fn py_value_classes_in(source: &str, module: &str) -> ProgramFields {
+    use rustpython_ast::{Expr, Mod, Stmt};
+    fn base_name(base: &Expr) -> Option<&str> {
+        match base {
+            Expr::Name(n) => Some(n.id.as_str()),
+            Expr::Attribute(a) => Some(a.attr.as_str()),
+            Expr::Subscript(s) => base_name(&s.value),
+            _ => None,
+        }
+    }
+    fn visit(body: &[Stmt], module: &str, found: &mut ProgramFields) {
+        for stmt in body {
+            match stmt {
+                Stmt::ClassDef(class) => {
+                    if !class.bases.iter().any(|b| base_name(b).is_some_and(|name| PROGRAM_BASES.contains(&name))) {
+                        found.records.insert(format!("{}.{}", module, class.name));
+                    }
+                }
+                Stmt::If(s) => {
+                    visit(&s.body, module, found);
+                    visit(&s.orelse, module, found);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut found = ProgramFields::default();
+    if let Ok(Mod::Module(parsed)) = rustpython_parser::parse(source, rustpython_parser::Mode::Module, "<value-classes>") {
+        visit(&parsed.body, module, &mut found);
     }
     found
 }
@@ -871,6 +912,55 @@ mod tests {
             found_in_repo(source),
             vec!["stage::measure_rows_of", "by_keyword::measure_rows_of", "by_record::fresh_standing", "in_branch::measure_rows_of"]
         );
+    }
+
+    /// A Python class of the repo also refuses a Program — the real case: agora-controllers' screen server (2026-11-10) `(preceded out (_post-trip-start …))`, where `preceded`'s
+    /// `:pre` is `(: step Step)` and `Step` is a frozen dataclass of a .py file. A class whose base names Program, EffectBase, DoExpr or Protocol, and an alias assignment, still may take one.
+    #[test]
+    fn bare_defk_calls_passed_where_a_python_class_is_received_are_found() {
+        let types = r#"from dataclasses import dataclass
+from typing import Protocol, TypeAlias
+from doeff import Program
+
+@dataclass(frozen=True)
+class Step:
+    state: int
+
+class Plain:
+    pass
+
+class Shaped(Protocol):
+    def run(self) -> int: ...
+
+class Lazy(Program):
+    pass
+
+Either: TypeAlias = Step | Plain
+"#;
+        let fields = py_value_classes_in(types, "app.types");
+        assert!(["app.types.Step", "app.types.Plain"].iter().all(|name| fields.is_record(name)));
+        assert!(["app.types.Shaped", "app.types.Lazy", "app.types.Either"].iter().all(|name| !fields.is_record(name)));
+        let source = r#"(import app.types [Step Plain Shaped Lazy Either])
+(defk preceded [commands step] {:pre [(: commands tuple) (: step Step)] :post [(: % Step)]} step)
+(defk plain-of [value] {:pre [(: value Plain)] :post [(: % Plain)]} value)
+(defk shaped-of [value] {:pre [(: value Shaped)] :post [(: % Shaped)]} value)
+(defk lazy-of [value] {:pre [(: value Lazy)] :post [(: % Lazy)]} value)
+(defk either-of [value] {:pre [(: value Either)] :post [(: % Step)]} value)
+(defk _trip-start [n] {:pre [(: n int)] :post [(: % Step)]} (Step :state n))
+(defk bare [out n]
+  (return (! (preceded out (_trip-start n)))))
+(defk banged [out n]
+  (return (! (preceded out (! (_trip-start n))))))
+(defk others [n]
+  (plain-of (_trip-start n))
+  (shaped-of (_trip-start n))
+  (lazy-of (_trip-start n))
+  (either-of (_trip-start n)))"#;
+        let bindings = crate::project::facts::hy_bindings(source, "m");
+        let defks = defk_names_in(source, "m");
+        let found: Vec<String> =
+            bare_calls_with(source, Scope { module: "m", bindings: &bindings }, &defks, &fields).iter().map(|c| c.detail()).collect();
+        assert_eq!(found, vec!["bare::_trip_start", "others::_trip_start"]);
     }
 
     /// Not picked up when the receiving parameter may accept a Program: a parameter without a type annotation, Program, object, an unknown alias, a union branch with type arguments,

@@ -851,17 +851,21 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     // the looked-up name is the written file's symbol resolved). Reverse dependencies — failure types (declared by a defeffect in another file) and Programs passed as arguments
                     // (passed by callers in other files) — are built only when looked up, and only from files that contain the looked-up name literally (`SpelledFailures`, `SpelledCallers` —
                     // both the declaration and the caller must contain the spelling of the looked-up name). A class's frozen-ness is decided by whether a class of the same name exists anywhere in the repo, so it is built from the whole repo when looked up (`Deferred`).
-                    let named_files = if enabled.contains(&ProjectRule::DefkCalledBare) {
+                    let (named_files, named_py_files) = if enabled.contains(&ProjectRule::DefkCalledBare) {
                         let known = hy_files::by_module(root);
-                        named_modules::files_of(&known, &named_modules::of_file(&known, &file.rel, source), None)
+                        let hy = named_modules::files_of(&known, &named_modules::of_file(&known, &file.rel, source), None);
+                        (hy, named_python_files(root, &file.rel, source))
                     } else {
-                        Vec::new()
+                        (Vec::new(), Vec::new())
                     };
                     let failure = spelled_failures::SpelledFailures::new(root, enabled, &definitions.tags);
                     found.extend(crate::timing::timed("single.smells", || judge_smells(&file, source, settings, definitions, enabled, &failure)));
                     found.extend(crate::timing::timed("single.stale-branches", || judge_stale_branches(&file, source, definitions, enabled, &failure)));
                     let defks = crate::timing::timed("defk-names", || bare_calls::defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
-                    let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
+                    let program_fields = crate::timing::timed("program-fields", || {
+                        let files: Vec<(String, PathBuf)> = named_files.iter().chain(&named_py_files).cloned().collect();
+                        program_fields_over(root, enabled, facts_cache::Reach::Named, &files)
+                    });
                     found.extend(crate::timing::timed("single.bare-calls", || judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields)));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         found.extend(crate::timing::timed("single.effect-mismatches", || judge_effect_mismatches(&file, source, definitions, effect_world.as_ref())));
@@ -5132,8 +5136,20 @@ fn hy_rel_files(root: &Path) -> Vec<(String, PathBuf)> {
 
 /// Collects, from the repo's Hy files, the record fields that DOEFF126 does not count as answers (fields whose declared type names Program or EffectBase) (only when the rule
 /// is enabled — otherwise empty). Reads only files that contain the spelling `(defrecord`. Like the defk names, remembered per file, and only changed files are re-read.
+/// The classes of the repo's Python files are also read, as types that cannot accept a Program (`bare_calls::py_value_classes_in`).
 fn program_fields_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::ProgramFields {
-    program_fields_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
+    if !enabled.contains(&ProjectRule::DefkCalledBare) {
+        return bare_calls::ProgramFields::default();
+    }
+    let mut files = hy_rel_files(root);
+    files.extend(handler_arguments::walk(root, &["py"]));
+    program_fields_over(root, enabled, facts_cache::Reach::Whole, &files)
+}
+
+/// The Python files of the modules a written file names (`named_modules::of_file` over a probe of .py files) — the single-file run reads the Python classes from only these.
+fn named_python_files(root: &Path, rel: &str, source: &str) -> Vec<(String, PathBuf)> {
+    let known = hy_files::ModuleFiles::new(root, &["py"], doeff_indexer::hy_index::SKIPPED_DIRS);
+    named_modules::files_of(&known, &named_modules::of_file(&known, rel, source), None)
 }
 
 /// The body of `program_fields_for` — receives the files to collect and how to look up (the same as `defk_names_over`. A record's type is looked up by a name including the module).
@@ -5144,6 +5160,9 @@ fn program_fields_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
     }
     let found: Vec<bare_calls::ProgramFields> = facts_cache::per_file_in(reach, root, "program-fields", "", files, |rel, path| {
         let source = std::fs::read_to_string(path).ok()?;
+        if rel.ends_with(".py") {
+            return Some(bare_calls::py_value_classes_in(&source, &module_of(rel))).filter(|f| !f.is_empty());
+        }
         ["(defrecord", "(defwire", "(defenum"]
             .iter()
             .any(|head| source.contains(head))
