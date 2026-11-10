@@ -3,7 +3,7 @@
 ;;; 様子は 5 秒ごとに入れ物に書かれる — 調整ループはその入れ物を拍ごとに読むだけ(読みも止めも見張りの側)。worker の入口(worker/entry/main)
 ;;; が並べる。見張りが止めた job の根の印(MemoryCell.kills)も同じ入れ物から ObserveMemoryKills に答える(続けて止められた job の数え)。
 ;;; jobs の層の空き(ObserveJobsRoom)は、見張りの最後の回に決めた新しい受けの上限(jobs-intake — 置いた task の取り置きを入れない)と読んだ
-;;; working set(使い − inactive_file)の差(worker/protocol/eviction_line の EvictionCell)。機体の memory の訳で止められた記録(ObserveMemoryStops — 見張りの止めの訳と、
+;;; 使い(working set − slab_reclaimable)の差(worker/protocol/eviction_line の EvictionCell)。機体の memory の訳で止められた記録(ObserveMemoryStops — 見張りの止めの訳と、
 ;;; jobs の層の kernel の OOM kill の増えの刻)も答える。答える前に jobs の層の memory.events を読み直し、見張りがまだ刻を付けていない
 ;;; 増えも添える(kernel が止めた子の終わりを回収する拍が、見張りの次の回より先に来ても訳を落とさない)。
 (require doeff-hy.macros [defhandler <- val])

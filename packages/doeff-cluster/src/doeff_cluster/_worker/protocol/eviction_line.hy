@@ -138,7 +138,7 @@
    準備を待つ間の取り置き(byte — 0 = 待っていない。heartbeat が名乗る・worker/core/eviction_rules の prepare-wait-reserve)・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
    まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い)・jobs-held = 同じ回に読んだ jobs の層の
-   working set(memory.current − inactive_file・None = 読めなかった・層が無い — jobs-intake との差が調整ループの観測する jobs の層の空き
+   使い(working set − slab_reclaimable — LayerMemory.held-bytes・None = 読めなかった・層が無い — jobs-intake との差が調整ループの観測する jobs の層の空き
    WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
    clis-current = 最後の回に読んだ clis の層の memory.current(None = 読めなかった)・lent = 最後の回に clis に床を越えて貸した量
    (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)・needs = 置き先が置いた task の要り(TaskNeed
@@ -168,11 +168,13 @@
 
 (defrecord LayerMemory
   "cgroup の層 1 つの読み: current-bytes = memory.current・working-set-bytes = memory.current − memory.stat の inactive_file(cAdvisor の
-   数え方)・populated = 層か子に process が居る(cgroup.events の populated)。"
-  {:check [(>= current-bytes 0) (>= working-set-bytes 0)]}
+   数え方)・populated = 層か子に process が居る(cgroup.events の populated)・held-bytes = working set − memory.stat の slab_reclaimable
+   (層の memory.max に当たると kernel が process を止める前に返す page cache と slab を除いた使い — 行の無い kernel は slab 0・0 未満は 0)。"
+  {:check [(>= current-bytes 0) (>= working-set-bytes 0) (<= 0 held-bytes working-set-bytes)]}
   (#^ int current-bytes)
   (#^ int working-set-bytes)
-  (#^ bool populated))
+  (#^ bool populated)
+  (#^ int held-bytes))
 
 
 (defwire NodeResourcesWire
@@ -305,19 +307,25 @@
   (when (isinstance stat-text FileFailed)
     (return (.format "{} の層の memory.stat を読めない: {}" name stat-text.detail)))
   (var inactive 0)
+  (var slab 0)
   (try
     (<- found int (stat-bytes stat-text "inactive_file"))
     (:= inactive found)
+    ;; slab_reclaimable の行の無い kernel は回収できる slab を 0 と読む(held-bytes は working set のまま)。
+    (when (any (gfor line (.splitlines stat-text) (.startswith line "slab_reclaimable ")))
+      (<- reclaimable int (stat-bytes stat-text "slab_reclaimable"))
+      (:= slab reclaimable))
     (except [error ValueError]
       (return (.format "{} の層の memory.stat を読めない: {}" name error))))
   (<- set-bytes int (working-set current inactive))
+  (val held (max 0 (- set-bytes slab)))
   (var alive True)
   (when populated
     (<- events (| str FileFailed) (ReadText (+ dir "/cgroup.events")))
     (when (isinstance events FileFailed)
       (return (.format "{} の層の cgroup.events を読めない: {}" name events.detail)))
     (:= alive (in "populated 1" (.splitlines events))))
-  (LayerMemory :current-bytes current :working-set-bytes set-bytes :populated alive))
+  (LayerMemory :current-bytes current :working-set-bytes set-bytes :populated alive :held-bytes held))
 
 
 (defk margin-noted [settings cell line jobs prepare]
@@ -440,7 +448,7 @@
   (<- jobs-read (| LayerMemory str) (layer-read "jobs" settings.jobs-dir False))
   (if (isinstance jobs-read str)
       (:= failure jobs-read)
-      (do (:= jobs jobs-read) (:= current jobs-read.current-bytes) (:= working jobs-read.working-set-bytes)))
+      (do (:= jobs jobs-read) (:= current jobs-read.current-bytes) (:= working jobs-read.held-bytes)))
   (setv cell.jobs-current current cell.jobs-held working)
   (var prepare None)
   (when (is-not settings.prepare-dir None)
@@ -480,10 +488,11 @@
     (:= lent cell.lent))
   ;; memory.max は測った余裕の宣言の床を越えた分では使い + 取り置きより下げず(limit)、新しい受けに名乗る上限は測った余裕で数えて取り置きを
   ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。準備を待つ間の取り置きは intake からだけ引く(memory.max から引くと、
-  ;; 走っている task を準備のために止める)。intake は層の working set(使い − inactive_file)を土台に数える: 層の memory.max に当たると
-  ;; kernel は task を止める前に回収できる page cache を返すので、上限で決まる空きは上限 − working set(線の used-bytes も working set で数える)。
-  ;; memory.current を土台にすると、process の居ない page cache が層の空きを塞いだ(helios の 11-10 13:4x JST — 上限 8 GiB・inactive_file
-  ;; 2112 MiB を使いに数え、層が空でも要り 5632 MiB の task を置けなかった)。
+  ;; 走っている task を準備のために止める)。intake は層の held-bytes(working set − slab_reclaimable)を土台に数える: 層の memory.max に
+  ;; 当たると kernel は task を止める前に回収できる page cache と slab を返すので、上限で決まる空きは上限 − held-bytes(線で決まる空きは
+  ;; 土台によらない)。memory.current を土台にすると、process の居ない page cache が層の空きを塞いだ(helios の 11-10 13:4x JST — 上限 8 GiB・
+  ;; inactive_file 2112 MiB を使いに数え、層が空でも要り 5632 MiB の task を置けなかった)。working set だけでも、git と uv の file 操作が残す
+  ;; slab_reclaimable が空きを塞いだ(同じ helios の 15:1x JST — task 0 本の層の working set 4212 MiB のうち slab_reclaimable 1070 MiB)。
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)

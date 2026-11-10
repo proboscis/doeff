@@ -123,7 +123,7 @@
    None)・task-cpu-some-avg10 = task の層の CPU の PSI の some の avg10(%— 層の無い・読めない worker は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
    の tuple — task-uses-of。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator の置き先は名乗られない task の要りの全部を
    予約する・2026-11-02)・jobs-room-mib = task の層(jobs)の今の空き(MiB — 見張りが最後に決めた新しい受けの上限 − 読んだ
-   working set(memory.current − inactive_file)・jobs-room-of。負もありうる。None = 名乗らない〔線が無いか古い・層が無い〕— coordinator の置き先は、名乗った worker
+   使い(working set − slab_reclaimable)・jobs-room-of。負もありうる。None = 名乗らない〔線が無いか古い・層が無い〕— coordinator の置き先は、名乗った worker
    には要りがこの空きに収まる task だけを置く・2026-11-09)・prepare-wait-mib = keeper が版の準備を待つ間に新しい受けの外へ取り置いた量
    (MiB — worker/core/eviction_rules の prepare-wait-reserve。None = 待っていないか名乗らない〔線が無いか古い〕— coordinator の置き先は、
    名乗った worker に新しく常駐の job を置かない・2026-11-10)・job-meters = 常駐の job ごとの CPU と memory の今(worker/core/memory_rules の
@@ -221,9 +221,9 @@
   {:pre [(: line (| EvictionLine None)) (: jobs-intake (| int None)) (: jobs-held (| int None))] :post [(: % (| int None))]
    :tags {:context "worker" :role "judgment"}}
   "heartbeat で名乗る task の層(jobs)の今の空き(MiB)を知るため: 見張りが最後に決めた新しい受けの上限 jobs-intake − 最後に読んだ
-   working set jobs-held(memory.current − inactive_file・byte — 負もありうる。切り捨て)。回収できる page cache は層の上限に当たると
+   使い jobs-held(working set − slab_reclaimable・byte — 負もありうる。切り捨て)。回収できる page cache と slab は層の上限に当たると
    kernel が task を止める前に返すので、空きを塞がない(helios の 11-10 13:4x JST は inactive_file 2112 MiB を使いに数え、層が空でも要り
-   5632 MiB の task を置けなかった)。受けの上限は、追い出しまでの空きから測った余裕・準備の取り置き・会話の
+   5632 MiB の task を置けなかった。15:1x JST は task 0 本の層の working set 4212 MiB のうち slab_reclaimable が 1070 MiB)。受けの上限は、追い出しまでの空きから測った余裕・準備の取り置き・会話の
    CLI の層への貸しを引き、container の中の空きでも縛った値で、置いた task の取り置きを入れない(置き先が自分で予約を引く — worker/core/
    eviction_rules の頭の註の会話の CLI の層の帳面。jobs の層の memory.max はそれに取り置きを守る分を足す)。追い出しまでの
    空き(memory-available-mib)よりずっと小さい時が在る — atlas の 11-08 14:09 は追い出しまでの空き 7186 MiB・jobs の層の空きは負で、
