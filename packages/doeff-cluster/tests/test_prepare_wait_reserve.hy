@@ -156,7 +156,7 @@
 (defk named-room [cell]
   {:pre [(: cell EvictionCell)] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "入れ物から heartbeat が名乗る jobs の層の空き(MiB)を求めるため(coordinator_link と同じ数え — 線は入れ物の最後の線)。"
-  (<- room (| int None) (jobs-room-of cell.line cell.jobs-intake cell.jobs-current))
+  (<- room (| int None) (jobs-room-of cell.line cell.jobs-intake cell.jobs-held))
   room)
 
 

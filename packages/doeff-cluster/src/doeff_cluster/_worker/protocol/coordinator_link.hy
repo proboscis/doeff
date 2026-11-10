@@ -934,7 +934,7 @@
       ;; task の層の今の空きを添える(coordinator は要りがこの空きに収まる task だけを置く — load_rules.jobs-room-of)。
       (var jobs-room None)
       (when (is-not state.eviction None)
-        (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake state.eviction.jobs-current))
+        (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake state.eviction.jobs-held))
         (:= jobs-room told))
       ;; keeper が版の準備を待つ間の取り置きを添える(coordinator は名乗る worker に新しく常駐の job を置かない — load_rules.prepare-wait-of)。
       (var prepare-wait None)

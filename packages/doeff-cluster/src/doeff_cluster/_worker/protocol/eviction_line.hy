@@ -137,13 +137,14 @@
    margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・prepare-wait = 最後の回の
    準備を待つ間の取り置き(byte — 0 = 待っていない。heartbeat が名乗る・worker/core/eviction_rules の prepare-wait-reserve)・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
-   まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い — jobs-intake との差が調整ループの
-   観測する jobs の層の空き WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
+   まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い)・jobs-held = 同じ回に読んだ jobs の層の
+   working set(memory.current − inactive_file・None = 読めなかった・層が無い — jobs-intake との差が調整ループの観測する jobs の層の空き
+   WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
    clis-current = 最後の回に読んだ clis の層の memory.current(None = 読めなかった)・lent = 最後の回に clis に床を越えて貸した量
    (jobs の上限から引いた量)・box = 最後の回の container の中の空き(None = 数えなかった)・needs = 置き先が置いた task の要り(TaskNeed
    の tuple — heartbeat の返事を読んだ worker/protocol/coordinator_link が書く)・pending = 最後の回の置いた task の取り置き・jobs-intake =
    最後に jobs の層の上限と同じ回に決めた、新しい受けに名乗る上限(測った余裕で数え、取り置きを入れない — None = まだ。これと
-   jobs-current の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)・keep-room = heartbeat の測りが最後に
+   jobs-held の差が heartbeat の名乗る jobs の層の空きと、調整ループの観測する WorldView.jobs-room)・keep-room = heartbeat の測りが最後に
    読んだ「機体の MemAvailable − 上に載る系が残す線」(byte — None = 線が無い・読めない。worker/core/eviction_rules の頭の註の上に載る系が
    残す線)・keep-room-at-ms = その読みの刻(None = まだ)・command-line-file = 命令の層の線の
    file(枠の file の行の commandLineFile を worker/protocol/coordinator_link が書く — \"\" = 掛け直さない)・command-floor-bytes = 短い命令の
@@ -157,7 +158,7 @@
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.prepare-wait 0 self.uses #() self.uses-at-ms None
-          self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
+          self.jobs-current None self.jobs-held None self.clis-limit None self.clis-current None self.lent 0
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #())))
@@ -432,12 +433,13 @@
     (return None))
   (var failure "")
   (var current None)
+  (var working None)
   (var jobs None)
   (<- jobs-read (| LayerMemory str) (layer-read "jobs" settings.jobs-dir False))
   (if (isinstance jobs-read str)
       (:= failure jobs-read)
-      (do (:= jobs jobs-read) (:= current jobs-read.current-bytes)))
-  (setv cell.jobs-current current)
+      (do (:= jobs jobs-read) (:= current jobs-read.current-bytes) (:= working jobs-read.working-set-bytes)))
+  (setv cell.jobs-current current cell.jobs-held working)
   (var prepare None)
   (when (is-not settings.prepare-dir None)
     (<- prepare-read (| LayerMemory str) (layer-read "準備" settings.prepare-dir True))
@@ -476,7 +478,10 @@
     (:= lent cell.lent))
   ;; memory.max は測った余裕の宣言の床を越えた分では使い + 取り置きより下げず(limit)、新しい受けに名乗る上限は測った余裕で数えて取り置きを
   ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。準備を待つ間の取り置きは intake からだけ引く(memory.max から引くと、
-  ;; 走っている task を準備のために止める)。
+  ;; 走っている task を準備のために止める)。intake は層の working set(使い − inactive_file)を土台に数える: 層の memory.max に当たると
+  ;; kernel は task を止める前に回収できる page cache を返すので、上限で決まる空きは上限 − working set(線の used-bytes も working set で数える)。
+  ;; memory.current を土台にすると、process の居ない page cache が層の空きを塞いだ(helios の 11-10 13:4x JST — 上限 8 GiB・inactive_file
+  ;; 2112 MiB を使いに数え、層が空でも要り 5632 MiB の task を置けなかった)。
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)
@@ -492,12 +497,12 @@
     ;; log の線の種類は、上限を決めた線(追い出しの線で決まった回は追い出しの線)。
     (when (< found evicted)
       (:= jobs-line kept))
-    (<- told int (jobs-limit current kept margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
+    (<- told int (jobs-limit working kept margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
     (:= limit found)
     (:= intake told)
     (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))
       (<- boxed int (jobs-box-limit current cell.box (- margin floor-margin) cell.clis-limit cell.clis-current pending))
-      (<- boxed-intake int (jobs-box-limit current cell.box 0 cell.clis-limit cell.clis-current 0))
+      (<- boxed-intake int (jobs-box-limit working cell.box 0 cell.clis-limit cell.clis-current 0))
       (:= limit (min limit boxed))
       (:= intake (min intake boxed-intake))))
   (when (is-not line None)
