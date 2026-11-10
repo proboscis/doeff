@@ -659,7 +659,7 @@
 (defeffect ReadCoordinator
   "検の effect: coordinator の口 path の GET の本文(/state・/workers/<名>・/metrics など — 届かない・断られたら RemoteJobFailed)。"
   {:fields [(: path str)]
-   :answer (| dict PlainText)
+   :answer (| (get dict #(str object)) PlainText)
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect FailRoute
