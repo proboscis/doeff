@@ -43,6 +43,13 @@
 ;;; 準備が線へ足しうる量(prepare-addable)を keeper の読む file へ書き、keeper は空きがその量より小さい間は準備を起こさずに待つ(OOM で
 ;;; 殺さない)。足しうる量は上限 − 層の今の working set: 層は memory.max で止まり、前の準備の名残(process の居ない層の page cache と slab)は
 ;;; 線の使いに数え済みなので、上限を丸ごと求めると名残の分を 2 度数える(k3s-1 の 11-09 — 名残 288 MiB)。
+;;; 準備を待つ間の取り置き(2026-11-10): keeper が版の file の替わりを読み、空きが足しうる量に足りずに準備を待つ間(版の file の版がこの世代の
+;;; 版と違い、準備の層に process が居ない — prepare-waiting)も、足しうる量を新しい受けの外に取り置く(prepare-wait-reserve)。取り置いた分は
+;;; heartbeat の名乗る jobs の層の空き(jobs-intake)と会話の CLI の層への貸しに入れず、heartbeat で量を名乗る(置き先は名乗る worker に新しく
+;;; 常駐の job を置かない)。keeper の読む空き(prepare-room)と jobs の層の memory.max には入れない — 入れると keeper の判じが自分の
+;;; 取り置きで満たなくなり、走っている task を準備のために止める。取り置かなかった前は、空いた分を新しい task と常駐の service が先に取り、
+;;; 小さい機体の keeper の準備が起きなかった(k3s-1 の 11-09 — 版の file を替える前後に常駐の service 2 つ〔jev-proxy と minio〕を出しても、空いた分へ別の
+;;; 常駐の service 2 つ〔約 370 MiB〕が置かれ、空きは 403 から 335 MiB に減った)。
 ;;;
 ;;; 会話の CLI の層(clis — 上に載る系の仕事を余りの空きで受ける機体 helios・atlas の限る層): 宣言の静的な memory.max は床(常駐の job の予算から
 ;;; 引いた量・今までの上限)で、機体の宣言に天井(WORKER_CLI_LAYER_CEILING)が在る機体だけ、worker は回ごとに床と天井の間で掛け直す
@@ -421,6 +428,27 @@
   "準備の層の上限 cap までの残りのうち、線の空きから先に取り置く量を求めるため(頭の註): 準備が走っている(populated — 層に process が
    居る)間は 上限 − 今の使い(使いが上限を越えた読みは 0)、走っていなければ 0(終わった準備の page cache の残りは取り置かない)。"
   (if populated (max 0 (- cap current)) 0))
+
+
+(defk prepare-waiting [wanted own]
+  {:pre [(: wanted (| str None)) (: own (| str None))] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "keeper が新しい版の準備を待っているかを判じるため(頭の註の準備を待つ間の取り置き): wanted = 版の file の中身(None = 無い・読めない)・
+   own = この世代の版(None = keeper の世代でない)。版の file の版(空白を除いた 40 字の 16 進 — keeper が読むのと同じ綴り・deploy/boot.sh の
+   keeper_version)がこの世代の版と違う時だけ真。読めない・綴りの違う file は偽(keeper も替えない)。"
+  (when (or (is wanted None) (is own None))
+    (return False))
+  (val version (.join "" (.split wanted)))
+  (and (= (len version) 40) (all (gfor c version (in c "0123456789abcdef"))) (!= version own)))
+
+
+(defk prepare-wait-reserve [waiting populated addable]
+  {:pre [(: waiting bool) (: populated bool) (: addable int) (>= addable 0)] :post [(: % int) (>= % 0)]
+   :tags {:context "worker" :role "judgment"}}
+  "keeper が準備を待つ間に、新しい受け(heartbeat の名乗る jobs の層の空きと会話の CLI の層への貸し)から先に取り置く量を求めるため(頭の註の
+   準備を待つ間の取り置き): waiting = keeper が新しい版の準備を待っている(prepare-waiting)・populated = 準備の層に process が居る・
+   addable = 準備が線へ足しうる量(prepare-addable)。待っていて準備がまだ走っていなければ addable、ほかは 0(走り出した準備は
+   prepare-reserve が取り置く)。"
+  (if (and waiting (not populated)) addable 0))
 
 
 (defk prepare-room [line margin reserve]

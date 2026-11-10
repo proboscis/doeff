@@ -5,7 +5,8 @@
 ;;;                   宣言の静的な値)に掛け直す。答え = 今の線(None = 線が無い・読めない — 見張りは機体の MemAvailable で判じる)。
 ;;;                   準備の層(prepare — keeper の版の準備)が在れば、その使いと process の有無を読み、走っている準備の山までの残りを
 ;;;                   jobs の上限から引き(取り置き)、「空き − 余裕 − 取り置き」と準備が線へ足しうる量(上限 − 層の今の working set)を
-;;;                   keeper の読む file(room-file)に書く。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
+;;;                   keeper の読む file(room-file)に書く。keeper の版の file の版がこの世代の版と違い、準備がまだ走っていない間は、
+;;;                   足しうる量を新しい受けの上限と clis への貸しから引いて入れ物に残す(heartbeat が名乗る — 準備を待つ間の取り置き)。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
 ;;;                   eviction_rules の margin-of)。
 ;;;                   会話の CLI の層(clis)に天井の宣言が在る機体は、jobs の層より先に clis の層の memory.max を床(宣言の静的な値)と天井の
 ;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、広げた上限は置いた task の
@@ -48,7 +49,7 @@
 (import doeff_cluster._worker.core.memory_rules [MIB meminfo-kib])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
-                                                  prepare-reserve prepare-room prepare-addable margin-of kernel-bytes-of clis-limit clis-lent box-free
+                                                  prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
 
@@ -97,10 +98,11 @@
    eviction_rules の EVICTION-MARGIN-BYTES)・prepare-dir = 準備の層の dir(None = 層が無い — keeper は準備を jobs の層で起こす)・
    prepare-cap-bytes = 準備の層の memory.max の宣言の静的な値(prepare-dir が在る時は必ず在る)・room-file = keeper の読む準備の空きの
    file(None = keeper の無い worker か準備の層が無い — 書かない)・clis = 会話の CLI の層の掛け直しの設定(None = 掛け直さない — 天井の
-   宣言が無い機体)・commands = 命令の層の掛け直しの設定(None = 層の宣言に commands の memory.max が無い機体)。"
+   宣言が無い機体)・commands = 命令の層の掛け直しの設定(None = 層の宣言に commands の memory.max が無い機体)・version-file = keeper の
+   読む版の file(None = keeper の世代でない — 準備を待つ間の取り置きをしない)・own-version = この世代の版(version-file と組で在る)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
            (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
-           (or (is clis None) (is-not jobs-dir None))]}
+           (or (is clis None) (is-not jobs-dir None)) (= (is version-file None) (is own-version None))]}
   (#^ str api)
   (#^ str token-file)
   (#^ str node)
@@ -115,7 +117,9 @@
   (setv #^ float node-retry-seconds 30.0)
   (setv #^ int margin-bytes EVICTION-MARGIN-BYTES)
   (setv #^ (| CliLayerSettings None) clis None)
-  (setv #^ (| CommandLayerSettings None) commands None))
+  (setv #^ (| CommandLayerSettings None) commands None)
+  (setv #^ (| str None) version-file None)
+  (setv #^ (| str None) own-version None))
 
 
 (defclass EvictionCell []
@@ -125,7 +129,8 @@
    told-unread = log に出した読めない訳・jobs-limit = 最後に書いた jobs の層の上限(None = まだ書いていない)・squeezed = 今の回に
    上限を jobs の使いより下げた続きの中・told-failure = log に出した jobs の層の失敗の訳・outside = 前の回の jobs と準備の層の外の
    working set(None = 前の回に数えられなかった — 増えを数えない)・growths = 回あたりの外の増え(負は 0・新しい MARGIN-WINDOW 回)・
-   margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・uses = 見張りの最後の読みの
+   margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・prepare-wait = 最後の回の
+   準備を待つ間の取り置き(byte — 0 = 待っていない。heartbeat が名乗る・worker/core/eviction_rules の prepare-wait-reserve)・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
    まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い — jobs-intake との差が調整ループの
    観測する jobs の層の空き WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
@@ -143,7 +148,7 @@
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
-          self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None
+          self.growths #() self.margin None self.told-margin None self.reserve 0 self.prepare-wait 0 self.uses #() self.uses-at-ms None
           self.jobs-current None self.clis-limit None self.clis-current None self.lent 0
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
@@ -442,17 +447,27 @@
             (<- can-add int (prepare-addable settings.prepare-cap-bytes prepare.working-set-bytes))
             (:= addable can-add))))
   (setv cell.reserve reserve)
+  ;; keeper が準備を待つ間は、足しうる量を新しい受けの外に取り置く(worker/core/eviction_rules の頭の註の準備を待つ間の取り置き)。準備の層を
+  ;; 読めない回は上の取り置きが上限を持つので、重ねて取り置かない。
+  (var waiting 0)
+  (when (and (is-not prepare None) (is-not settings.version-file None))
+    (<- wanted (| str FileFailed) (ReadText settings.version-file))
+    (<- waits bool (prepare-waiting (if (isinstance wanted str) wanted None) settings.own-version))
+    (<- held int (prepare-wait-reserve waits prepare.populated addable))
+    (:= waiting held))
+  (setv cell.prepare-wait waiting)
   ;; 置いた task の取り置き(要り − 今の使い — 見張りの前の回の読みの使い)。clis の層へ新しく貸さず、jobs の層の上限に残す。
   (<- pending int (placed-pending cell.needs cell.uses))
   (setv cell.pending pending)
   ;; 会話の CLI の層を先に掛け直し、床を越えて貸した量を jobs の上限から引く(同じ空きを 2 つの層に重ねて貸さない)。
   (var lent 0)
   (when (is-not settings.clis None)
-    (<- clis-failure str (clis-limited settings.clis cell line margin reserve current pending))
+    (<- clis-failure str (clis-limited settings.clis cell line margin (+ reserve waiting) current pending))
     (:= failure (or failure clis-failure))
     (:= lent cell.lent))
   ;; memory.max は測った余裕の宣言の床を越えた分では使い + 取り置きより下げず(limit)、新しい受けに名乗る上限は測った余裕で数えて取り置きを
-  ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。
+  ;; 入れない(intake — 置き先が置いた task の予約を自分で引く)。準備を待つ間の取り置きは intake からだけ引く(memory.max から引くと、
+  ;; 走っている task を準備のために止める)。
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)
@@ -463,7 +478,7 @@
     (<- kept EvictionLine (kept-line line keep-room))
     (:= jobs-line kept)
     (<- found int (jobs-limit current kept margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
-    (<- told int (jobs-limit current kept margin margin settings.jobs-cap-bytes (+ reserve lent) 0))
+    (<- told int (jobs-limit current kept margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
     (:= limit found)
     (:= intake told)
     (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))

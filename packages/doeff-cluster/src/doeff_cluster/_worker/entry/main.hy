@@ -108,6 +108,10 @@
 ;; 残す余裕の床・無ければ worker/core/eviction_rules の EVICTION-MARGIN-BYTES)。
 (val PREPARE-CGROUP-VAR "DOEFF_WORKER_PREPARE_CGROUP")
 (val PREPARE-ROOM-FILE-VAR "DOEFF_WORKER_PREPARE_ROOM_FILE")
+;; keeper の読む版の file。この名と、keeper がこの世代に渡した版(shared/core/launch_rules の worker-commit-env-name — deploy/boot.sh の
+;; keeper_start)が両方在る世代は、版の file の版が自分の版と違い準備がまだ走っていない間、準備の足しうる量を新しい受けの外に取り置く
+;; (worker/core/eviction_rules の頭の註の準備を待つ間の取り置き)。
+(val VERSION-FILE-VAR "WORKER_VERSION_FILE")
 (val EVICTION-MARGIN-VAR "WORKER_EVICTION_MARGIN")
 ;; 会話の CLI の層(上に載る系の仕事を余りの空きで受ける機体の限る層 — 層の名は上に載る系の会話の受け手と同じ clis)の天井の機体の
 ;; 宣言(kernel の memory の綴り)。在る機体だけ、worker は見張りの回ごとに clis の層の memory.max を宣言の静的な値(床)と天井の間で
@@ -186,7 +190,8 @@
    註)。in-pod = API server を区画の CA で検める口を組む Pod の worker か(Node の宣言をその口で読む)。Pod の外・node の名が無い・
    host の cgroupfs か cgroup の層が無い・kubelet の kubepods の下に居ない worker は None(線を数えず、機体の MemAvailable で見張る)。
    jobs の層の宣言の値を読めない起動は断る(ValueError — 上限の無いまま掛け直さない)。準備の層(PREPARE-CGROUP-VAR)は層の宣言に
-   memory.max が在る時だけ数え、機体の宣言の余裕(EVICTION-MARGIN-VAR)を読めない起動も断る(ValueError)。"
+   memory.max が在る時だけ数え、機体の宣言の余裕(EVICTION-MARGIN-VAR)を読めない起動も断る(ValueError)。版の file と自分の版は、keeper の
+   読む準備の空きの file と揃って在る世代だけ渡す(VERSION-FILE-VAR の註)。"
   (val host-root (.get machine-env CGROUP-HOST-VAR))
   (val cgroup-dir (.get machine-env CGROUP-DIR-VAR))
   (when (or (not in-pod) (not node) (not host-root) (not cgroup-dir))
@@ -208,11 +213,17 @@
     (:= margin read))
   (<- clis (| CliLayerSettings None) (cli-layer-settings-of machine-env cgroup-dir layout jobs))
   (<- command-cap (| int None) (layer-memory-max layout COMMAND-LAYER))
+  (val room-file (if (is prepare-cap None) None (.get machine-env PREPARE-ROOM-FILE-VAR)))
+  (val version-file (.get machine-env VERSION-FILE-VAR))
+  (<- commit-var str (worker-commit-env-name))
+  (val own-version (.get machine-env commit-var))
+  (val keeps (and room-file version-file own-version))
   (EvictionSettings :clis clis :commands (if (is command-cap None) None (CommandLayerSettings :dir (+ cgroup-dir "/" COMMAND-LAYER) :cap-bytes command-cap))
+                    :version-file (if keeps version-file None) :own-version (if keeps own-version None)
                     :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
                     :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap
                     :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
-                    :room-file (if (is prepare-cap None) None (.get machine-env PREPARE-ROOM-FILE-VAR)) :margin-bytes margin))
+                    :room-file room-file :margin-bytes margin))
 
 
 (defk boot-file-written [path boot]
@@ -561,7 +572,7 @@
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
-                                                     PREPARE-ROOM-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR commit-var)
+                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。

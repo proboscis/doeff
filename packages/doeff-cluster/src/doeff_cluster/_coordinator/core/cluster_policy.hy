@@ -806,12 +806,19 @@
    宣言の側の N+1 の照らし(failover_policy の規則 3)が見る。置く時に新しい job の山で照らすと、最後に置く大きい job が落ち着いた値の
    和では入るのに断られる(本番の zeus では和が 67150 MiB になり、予算 63488 MiB を越えた)。memory を知らない job(settle-mib None — 欄の無い旧い保存の行)は新しく置かず、宣言し直しを待つ。
    memory を名乗らない worker(memory-room-of が None)は memory で縛らない。置き先の判断 place-jobs・movable?・drain の move-target は
-   どれも can-take を通してこの判断を読む。"
+   どれも can-take を通してこの判断を読む。
+   worker が版の準備を待つ間の取り置きを名乗る間(測りの prepare-wait-MiB — worker/core/eviction_rules の頭の註の準備を待つ間の取り置き)は、
+   予算に残りが在っても新しく置かない: 予算は静的な値なので、取り置きを予算から引いても k3s-1 の 11-09(予算 1792 − 取り置き 529 MiB)の
+   形では常駐の service 2 つ(約 370 MiB)が入り、空いた分を準備より先に取った。置いた job は退かない(準備が走り出すと名乗りが消える)。"
   (<- room (| int None) (memory-room-of worker load))
   (val used (. (get load worker.name) settle-mib))
+  (val waiting (if (is worker.measured None) None worker.measured.prepare-wait-MiB))
   (cond
     (is job.settle-mib None)
       (.format "job {} は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ" job.spec.name)
+    (is-not waiting None)
+      (.format "job {} を worker {} に置かない — worker は版の準備が空きを待つ間の取り置き {} MiB を名乗っている(準備が走り出すまで新しく置かない)"
+               job.spec.name worker.name waiting)
     (is room None) None
     (> job.settle-mib room)
       (.format "job {} を worker {} に置くと、置いた job の settle の和 {} MiB + job の settle {} MiB = {} MiB が memory の予算 {} MiB を越える"

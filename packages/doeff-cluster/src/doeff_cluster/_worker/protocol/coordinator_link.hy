@@ -68,7 +68,7 @@
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
-                                              task-uses-of jobs-room-of])
+                                              task-uses-of jobs-room-of prepare-wait-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine task-needs-of])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
@@ -936,8 +936,14 @@
       (when (is-not state.eviction None)
         (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake state.eviction.jobs-current))
         (:= jobs-room told))
+      ;; keeper が版の準備を待つ間の取り置きを添える(coordinator は名乗る worker に新しく常駐の job を置かない — load_rules.prepare-wait-of)。
+      (var prepare-wait None)
+      (when (is-not state.eviction None)
+        (<- told (| int None) (prepare-wait-of line state.eviction.prepare-wait))
+        (:= prepare-wait told))
       (setv state.load-reason reason
-            state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room))
+            state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
+                                                               :prepare-wait-mib prepare-wait))
             state.load-ticks (if (is reading None) None reading.ticks))))
   None)
 

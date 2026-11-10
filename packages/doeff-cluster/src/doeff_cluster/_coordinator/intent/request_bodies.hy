@@ -197,12 +197,14 @@
    走っている task ごとの memory の今の使い(task の id → MiB — 見張りの最後の読みの task の木の rss の和。None = 名乗らない〔見張りの
    読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)・jobs-room-MiB = task を置く cgroup の層
    (jobs)の今の空き(MiB — 層の memory.max − memory.current・負もありうる。None = 名乗らない〔層の無い・線の古い・前の版の worker〕—
-   置き先は名乗った worker には要りがこの空きにも収まる task だけを置く・2026-11-09)。coordinator は保存せず、task の置き先を
+   置き先は名乗った worker には要りがこの空きにも収まる task だけを置く・2026-11-09)・prepare-wait-MiB = worker の版の準備が空きを待つ間に、
+   worker が新しい受けの外へ取り置いた量(MiB — None = 待っていない・前の版の worker。置き先は名乗った worker に新しく常駐の job を置かない —
+   core/cluster_policy の memory-misfit・2026-11-10)。coordinator は保存せず、task の置き先を
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
            (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10 task-cpu-some-avg10) (or (is v None) (>= v 0))))
-           (or (is cpu-nice None) (<= 0 cpu-nice 1))
+           (or (is cpu-nice None) (<= 0 cpu-nice 1)) (or (is prepare-wait-MiB None) (>= prepare-wait-MiB 0))
            (or (is task-memory-MiB None)
                (all (gfor #(k v) (.items task-memory-MiB)
                           (and (isinstance k str) (isinstance v int) (not (isinstance v bool)) (>= v 0)))))]}
@@ -218,7 +220,8 @@
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
   (setv #^ (| dict None) task-memory-MiB None)
-  (setv #^ (| int None) jobs-room-MiB None))
+  (setv #^ (| int None) jobs-room-MiB None)
+  (setv #^ (| int None) prepare-wait-MiB None))
 
 
 (defwire HeartbeatBody

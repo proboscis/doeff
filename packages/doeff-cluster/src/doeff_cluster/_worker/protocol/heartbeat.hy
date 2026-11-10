@@ -97,6 +97,8 @@
    #** (if (is load.task-cpu-some-avg10 None) {} {"taskCpuSomeAvg10" load.task-cpu-some-avg10})
    ;; task の層の今の空き(名乗る時だけ — 2026-11-09)。
    #** (if (is load.jobs-room-mib None) {} {"jobsRoomMiB" load.jobs-room-mib})
+   ;; keeper が版の準備を待つ間の取り置き(待っている時だけ — 2026-11-10)。
+   #** (if (is load.prepare-wait-mib None) {} {"prepareWaitMiB" load.prepare-wait-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。
    #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})})
 
