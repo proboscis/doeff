@@ -20,7 +20,7 @@
 ;;; 追い出しまでの空き = 2 つの線の空きの小さい方(root の memory.stat の無い kernel は allocatable の線だけ)。
 ;;;
 ;;; jobs の層の memory.max(jobs-limit)= jobs の今の使い(memory.current)+ 追い出しまでの空き − 余裕 − 準備の取り置き。上限は宣言の
-;;; 静的な値(WORKER_CGROUP_LAYOUT の jobs の memory.max)、下限は 0。kernel は jobs の層の使いをこの値で止めるので、全部の Pod の working set
+;;; 静的な値(WORKER_CGROUP_LAYOUT の jobs の memory.max — 天井を宣言した機体は下の jobs の層の天井)、下限は 0。kernel は jobs の層の使いをこの値で止めるので、全部の Pod の working set
 ;;; は 線 − 余裕 + 掛け直しの間のほかの伸びまでしか増えない。ほかの Pod や常駐の job が伸びて空きが縮んだ時は、jobs の層が先に縮む。
 ;;; ただし測った余裕が宣言の床を越えた分と clis への貸しでは、jobs の今の使い + 置いた task の取り置きより下げない(下の会話の CLI の層の
 ;;; 帳面 — 使いより下げるのは、宣言の余裕で数えた空きが負の時だけ)。
@@ -82,6 +82,15 @@
 ;;; 以前は広げた clis の上限を「jobs の層を 0 まで縮めれば収まる間」は残したので、余裕が測りで上がった node-a の 11-09 23:00〜23:21 は、
 ;;; clis の上限 6 GiB・使い約 1 GiB の使われていない貸しを残すために jobs の層の上限を 0 まで下げ、走っていた task を 50 本を越えて kernel が
 ;;; OOM で止めた。
+;;;
+;;; jobs の層の天井(2026-11-11): 会話の CLI の層を掛け直す機体でも、jobs の層の上限は宣言の静的な値(層の宣言の jobs の memory.max)で
+;;; 切っていた。機体の空きと container の中の空きが余っていても、task の層はその値の内しか使えなかった(node-c の 11-10 — MemAvailable
+;;; 約 31〜34 GiB・container の中の空き 約 8 GiB の間、上限 10 GiB の層に常駐の待ちの子の anon 約 3.3 GiB が居て、要り 3584〜5632 MiB の task を
+;;; 1 本ずつしか置けず、置かれない task が 19 時間積もった)。機体の宣言に天井(WORKER_JOBS_LAYER_CEILING — worker/entry/main)が在る機体は、
+;;; container の中の空きを読めた回だけ、jobs の層の上限を静的な値でなく天井で切る — 上限は追い出しまでの空き(jobs-limit)と container の
+;;; 中の空き(jobs-box-limit)の小さい方で決まり、静的な値は線か container を読めない回の上限と、常駐の job の予算を数える床に残る。
+;;; container の中の空きは clis の上限までの残りと、jobs と clis の外の限る層の宣言の上限を引いて数えるので、jobs が天井まで伸びても
+;;; container の上限の手前で止まる。天井は会話の CLI の層を掛け直す機体だけが宣言できる(container の中の空きを数えるのはその機体だけ)。
 ;;;
 ;;; 命令の層(commands — 上に載る系が worker の外から起こす作り直せる命令の層): 宣言の静的な memory.max だけでは、機体の
 ;;; 空きを見ずに build の命令が線の手前まで memory を取り、新しいターンを受ける係の余白を何時間も 0 にした(11-10 の node-h — 命令の層 35.6 GiB・

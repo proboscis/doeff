@@ -98,7 +98,8 @@
    token の file・node = この worker の Pod が置かれた Node の名・pods-dir = kubepods の cgroup の dir(host の cgroupfs の mount の中 —
    worker/core/eviction_rules の pods-dir-of)・host-root = host の cgroupfs の mount の場所(root の memory.stat を読む)・jobs-dir = jobs の
    層の dir(None = 層が無い — 線を数えて見張りに渡すだけ)・jobs-cap-bytes = jobs の層の memory.max の宣言の静的な値(None = 上限なし)・
-   node-read-seconds = Node の宣言を読み直す間(kubelet の設定は kubelet の起動し直しでしか替わらない)・node-retry-seconds = 読めなかった
+   jobs-ceiling-bytes = jobs の層の天井の機体の宣言(None = 宣言が無い — 線と container の中の空きを読めた回も宣言の静的な値で切る・
+   worker/core/eviction_rules の頭の註の jobs の層の天井。在る時は jobs-cap-bytes 以上で clis も在る)・node-read-seconds = Node の宣言を読み直す間(kubelet の設定は kubelet の起動し直しでしか替わらない)・node-retry-seconds = 読めなかった
    後に試し直す間・margin-bytes = jobs の層の上限に残す余裕の床(機体の宣言 WORKER_EVICTION_MARGIN — 無ければ worker/core/
    eviction_rules の EVICTION-MARGIN-BYTES)・prepare-dir = 準備の層の dir(None = 層が無い — keeper は準備を jobs の層で起こす)・
    prepare-cap-bytes = 準備の層の memory.max の宣言の静的な値(prepare-dir が在る時は必ず在る)・room-file = keeper の読む準備の空きの
@@ -107,7 +108,8 @@
    読む版の file(None = keeper の世代でない — 準備を待つ間の取り置きをしない)・own-version = この世代の版(version-file と組で在る)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
            (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
-           (or (is clis None) (is-not jobs-dir None)) (= (is version-file None) (is own-version None))]}
+           (or (is clis None) (is-not jobs-dir None)) (= (is version-file None) (is own-version None))
+           (or (is jobs-ceiling-bytes None) (and (is-not clis None) (is-not jobs-cap-bytes None) (>= jobs-ceiling-bytes jobs-cap-bytes)))]}
   (#^ str api)
   (#^ str token-file)
   (#^ str node)
@@ -115,6 +117,7 @@
   (#^ str host-root)
   (#^ (| str None) jobs-dir)
   (#^ (| int None) jobs-cap-bytes)
+  (setv #^ (| int None) jobs-ceiling-bytes None)
   (setv #^ (| str None) prepare-dir None)
   (setv #^ (| int None) prepare-cap-bytes None)
   (setv #^ (| str None) room-file None)
@@ -433,8 +436,8 @@
   {:pre [(: settings EvictionSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: guard bool) (: now-ms int)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
   "jobs の層の memory.max を今の線から掛け直すため(頭の註): 線が在れば jobs の今の使い + 空き − 余裕 − 準備の取り置き − clis への貸し
-   (上限は宣言の静的な値 — 測った余裕の宣言の床を越えた分と clis への貸しでは、使い + 置いた task の取り置きより下げない・worker/core/
-   eviction_rules の jobs-limit)、線が無ければ宣言の静的な値。同じ回に新しい受けに名乗る上限(cell.jobs-intake)も決める。線が在る回は
+   (上限は宣言の静的な値・天井を宣言した機体の container の中の空きを読めた回は天井 — 測った余裕の宣言の床を越えた分と clis への貸しでは、
+   使い + 置いた task の取り置きより下げない・worker/core/eviction_rules の jobs-limit)、線が無ければ宣言の静的な値。同じ回に新しい受けに名乗る上限(cell.jobs-intake)も決める。線が在る回は
    keeper の読む準備の空きも書く。jobs の層の上限と新しい受けの上限だけは、heartbeat の測りが新しい「MemAvailable − 上に載る系が残す線」を
    読めていれば、その線の上にも収める(worker/core/eviction_rules の kept-line — clis の層と keeper の空きは追い出しの線のまま)。jobs の層が
    無い・guard が偽・上限なしで線も無い時は書かない。上限を jobs の使いより下げた続きの頭で 1 行言う。"
@@ -499,26 +502,30 @@
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)
   (var urgent None)
+  ;; jobs の層の天井(worker/core/eviction_rules の頭の註): 宣言した機体は、container の中の空きを読めた回だけ宣言の静的な値の代わりに天井で
+  ;; 切る(下の box の上限が container の上限の手前で止める)。container を読めない回は静的な値のまま。
+  (val boxed? (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None)))
+  (val cap (if (and boxed? (is-not settings.jobs-ceiling-bytes None)) settings.jobs-ceiling-bytes settings.jobs-cap-bytes))
   (when (and (is-not line None) (is-not current None))
     (val floor-margin (min margin settings.margin-bytes))
     ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 名乗りより伸びた task は線を割る前に kernel が jobs の層の中で止める。
     ;; ただしこの線では使い + 置いた task の取り置きより下げない(kept-jobs-limit — 要りの内で走る task を kernel に止めさせない)。
     (<- keep-room (| int None) (fresh-keep-room cell.keep-room cell.keep-room-at-ms now-ms))
     (<- kept EvictionLine (kept-line line keep-room))
-    (<- evicted int (jobs-limit current line margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
-    (<- narrowed int (jobs-limit current kept margin floor-margin settings.jobs-cap-bytes (+ reserve lent) pending))
+    (<- evicted int (jobs-limit current line margin floor-margin cap (+ reserve lent) pending))
+    (<- narrowed int (jobs-limit current kept margin floor-margin cap (+ reserve lent) pending))
     (<- found int (kept-jobs-limit evicted narrowed current pending))
     ;; log の線の種類は、上限を決めた線(追い出しの線で決まった回は追い出しの線)。
     (when (< found evicted)
       (:= jobs-line kept))
-    (<- told int (jobs-limit working kept margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
+    (<- told int (jobs-limit working kept margin margin cap (+ reserve lent waiting) 0))
     ;; 急ぎの task の受け(worker/core/load_rules の頭の註の急ぎの task の空き): 同じ式を追い出しの線だけで数える。線が jobs の層を
     ;; 縮めていない回は名乗らない(None — 置き先は平常の受けで数える)。置いた後の memory.max は kept-jobs-limit が取り置きまで広げる。
-    (<- told-urgent int (jobs-limit working line margin margin settings.jobs-cap-bytes (+ reserve lent waiting) 0))
+    (<- told-urgent int (jobs-limit working line margin margin cap (+ reserve lent waiting) 0))
     (:= urgent (if (< told told-urgent) (min evicted told-urgent) None))
     (:= limit found)
     (:= intake told)
-    (when (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None))
+    (when boxed?
       (<- boxed int (jobs-box-limit current cell.box (- margin floor-margin) cell.clis-limit cell.clis-current pending))
       (<- boxed-intake int (jobs-box-limit working cell.box 0 cell.clis-limit cell.clis-current 0))
       (:= limit (min limit boxed))

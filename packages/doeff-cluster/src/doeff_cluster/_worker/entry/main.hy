@@ -122,6 +122,10 @@
 (val COMMAND-LAYER "commands")
 (val CLI-CEILING-VAR "WORKER_CLI_LAYER_CEILING")
 (val CLI-CEILING-CHILD-VAR "DOEFF_WORKER_CLI_CEILING")
+;; task の層(jobs)の天井の機体の宣言(kernel の memory の綴り)。在る機体だけ、worker は jobs の層の memory.max を宣言の静的な値で切らず、
+;; 追い出しまでの空きと container の中の空きで決めた値を天井で切る(worker/core/eviction_rules の頭の註の jobs の層の天井)。container の中の
+;; 空きを数えるのは会話の CLI の層を掛け直す機体だけなので、CLI-CEILING-VAR の無い機体の宣言は起動を断る。
+(val JOBS-CEILING-VAR "WORKER_JOBS_LAYER_CEILING")
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
 ;; (無ければ枠の file の自分の行の warmServices・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
@@ -184,14 +188,35 @@
   (if (is ceiling None) {} {CLI-CEILING-CHILD-VAR (str ceiling)}))
 
 
+(defk jobs-ceiling-bytes [machine-env cap clis]
+  {:pre [(: machine-env dict) (: cap (| int None)) (: clis (| CliLayerSettings None))] :post [(: % (| int None))]
+   :tags {:context "worker" :role "main"}}
+  "機体の宣言の task の層の天井(JOBS-CEILING-VAR)を byte の数にするため(None = 宣言が無い — jobs の層は宣言の静的な値 cap で切る)。
+   max・読めない綴り・jobs の層の memory.max(cap)が無い・会話の CLI の層を掛け直さない(clis が None — container の中の空きを数えない)・
+   天井が cap より小さい宣言は起動を断る(ValueError — container の中の空きを見ずに静的な値の上へ広げない)。"
+  (val declared (.get machine-env JOBS-CEILING-VAR))
+  (when (not declared)
+    (return None))
+  (<- read (| int None) (kernel-bytes-of declared))
+  (when (is read None)
+    (raise (ValueError (.format "{} は byte の数で書く(max は天井にならない)" JOBS-CEILING-VAR))))
+  (when (or (is cap None) (is clis None))
+    (raise (ValueError (.format "{} を宣言した機体は、{} に jobs の層の memory.max を置き、{} も宣言する" JOBS-CEILING-VAR CGROUP-LAYOUT-VAR
+                                CLI-CEILING-VAR))))
+  (when (< read cap)
+    (raise (ValueError (.format "{} {} が jobs の層の memory.max {} より小さい" JOBS-CEILING-VAR read cap))))
+  read)
+
+
 (defk eviction-settings-of [machine-env node in-pod]
   {:pre [(: machine-env dict) (: node str) (: in-pod bool)] :post [(: % (| EvictionSettings None))] :tags {:context "worker" :role "main"}}
   "機体の memory の見張りが追い出しの線を数え、jobs の層の上限を掛け直すための設定を、起動の時に 1 度だけ作るため(CGROUP-HOST-VAR の
    註)。in-pod = API server を区画の CA で検める口を組む Pod の worker か(Node の宣言をその口で読む)。Pod の外・node の名が無い・
    host の cgroupfs か cgroup の層が無い・kubelet の kubepods の下に居ない worker は None(線を数えず、機体の MemAvailable で見張る)。
    jobs の層の宣言の値を読めない起動は断る(ValueError — 上限の無いまま掛け直さない)。準備の層(PREPARE-CGROUP-VAR)は層の宣言に
-   memory.max が在る時だけ数え、機体の宣言の余裕(EVICTION-MARGIN-VAR)を読めない起動も断る(ValueError)。版の file と自分の版は、keeper の
-   読む準備の空きの file と揃って在る世代だけ渡す(VERSION-FILE-VAR の註)。"
+   memory.max が在る時だけ数え、機体の宣言の余裕(EVICTION-MARGIN-VAR)を読めない起動も断る(ValueError)。jobs の層の天井
+   (JOBS-CEILING-VAR)は jobs-ceiling-bytes が読む。版の file と自分の版は、keeper の読む準備の空きの file と揃って在る世代だけ渡す
+   (VERSION-FILE-VAR の註)。"
   (val host-root (.get machine-env CGROUP-HOST-VAR))
   (val cgroup-dir (.get machine-env CGROUP-DIR-VAR))
   (when (or (not in-pod) (not node) (not host-root) (not cgroup-dir))
@@ -212,6 +237,7 @@
       (raise (ValueError (.format "{} は byte の数で書く(max は余裕にならない)" EVICTION-MARGIN-VAR))))
     (:= margin read))
   (<- clis (| CliLayerSettings None) (cli-layer-settings-of machine-env cgroup-dir layout jobs))
+  (<- jobs-ceiling (| int None) (jobs-ceiling-bytes machine-env cap clis))
   (<- command-cap (| int None) (layer-memory-max layout COMMAND-LAYER))
   (val room-file (if (is prepare-cap None) None (.get machine-env PREPARE-ROOM-FILE-VAR)))
   (val version-file (.get machine-env VERSION-FILE-VAR))
@@ -221,7 +247,7 @@
   (EvictionSettings :clis clis :commands (if (is command-cap None) None (CommandLayerSettings :dir (+ cgroup-dir "/" COMMAND-LAYER) :cap-bytes command-cap))
                     :version-file (if keeps version-file None) :own-version (if keeps own-version None)
                     :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
-                    :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap
+                    :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap :jobs-ceiling-bytes jobs-ceiling
                     :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
                     :room-file room-file :margin-bytes margin))
 
@@ -577,7 +603,7 @@
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
-                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR commit-var)
+                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。

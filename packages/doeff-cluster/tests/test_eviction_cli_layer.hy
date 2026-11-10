@@ -35,7 +35,7 @@
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell CliLayerSettings eviction-noted CLIS-LENT-LOG
                                                      JOBS-SQUEEZE-LOG])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
-(import doeff_cluster._worker.entry.main [cli-layer-settings-of cli-ceiling-environ CLI-CEILING-CHILD-VAR])
+(import doeff_cluster._worker.entry.main [cli-layer-settings-of cli-ceiling-environ jobs-ceiling-bytes CLI-CEILING-CHILD-VAR])
 
 (val GIB (* 1024 MIB))
 ;; node-a の Node の宣言(test_eviction_line.hy と同じ 11-01 の値)と、cgroup の層の宣言(nodes/node-a/cgroup.yaml)・container の上限 22Gi。
@@ -596,3 +596,85 @@
   (<- before SceneSeen (scene-watched SPIKE False 400000))
   (assert (= #(before.most before.cli-kills) #(1 0)) before)
   (assert (= before.limits #()) before.limits))
+
+
+;; --- jobs の層の天井(worker/core/eviction_rules の頭の註の jobs の層の天井)----------------------------------------------------------
+;; 実例(node-c の 11-10): 機体の空き 約 31 GiB・container の中の空き 約 8 GiB の間も、jobs の層の上限は宣言の静的な 10 GiB で止まり、
+;; 要り 3584〜5632 MiB の task が 1 本ずつしか置かれなかった。模擬は node-a の大きさで同じ形を作る: Pod の和 3 GiB(線の空き 約 16.8 GiB)・
+;; container 3 GiB(container の中の空き 16 GiB)で、線と container だけなら jobs の層は静的な 10752M を越えて伸びられる。
+
+(val JOBS-CAP (* 10752 MIB))
+(val JOBS-CEILING (* 16 GIB))
+
+
+(defk roomy-settings [ceiling]
+  {:pre [(: ceiling (| int None))] :post [(: % EvictionSettings)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "模擬の node-a の線の設定に jobs の層の天井 ceiling(None = 宣言しない — 前の形)を足すため。"
+  (<- held int (layout-held-bytes NODE-A-LAYOUT #("jobs" "clis")))
+  (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST :jobs-dir JOBS
+                    :jobs-cap-bytes JOBS-CAP :jobs-ceiling-bytes ceiling
+                    :clis (CliLayerSettings :dir CLIS :floor-bytes FLOOR :ceiling-bytes CEILING :container-dir OWN :held-bytes held)))
+
+
+(deftest test-a-declared-jobs-ceiling-lets-the-jobs-layer-grow-past-its-static-value-up-to-the-container-room
+  (val pods (* 3 GIB))
+  (val room (- ALLOCATABLE pods))
+  (<- start MemoryFiles (node-a-files pods (// GIB 2) GIB (* 3 GIB)))
+  (<- ceiling-settings EvictionSettings (roomy-settings JOBS-CEILING))
+  (<- plain-settings EvictionSettings (roomy-settings None))
+  (val ceiled (EvictionCell))
+  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-a-api) slog-discard-handler]
+                          (ticked-files ceiling-settings ceiled 2)))
+  ;; clis は天井 6 GiB まで広がり、床を越えた 4.5 GiB を貸す。jobs の層の上限は、線の空き(使い 0.5 + 空き − 余裕 1 − 貸し 4.5)と
+  ;; container の中の空き(使い 0.5 + (22 − 3 − 余裕 1 − held 2) − clis の残り 5)の小さい方 = 11.5 GiB で、静的な 10752M を越える。
+  (<- clis-max str (content-at files (+ CLIS "/memory.max")))
+  (assert (= (int clis-max) CEILING) (// (int clis-max) MIB))
+  (val line-limit (- room (* 5 GIB)))
+  (val box-limit (+ (// GIB 2) (- (* 16 GIB) (- CEILING GIB))))
+  (assert (> line-limit box-limit) #((// line-limit MIB) (// box-limit MIB)))
+  (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
+  (assert (= (int jobs-max) box-limit) (// (int jobs-max) MIB))
+  (assert (> (int jobs-max) JOBS-CAP) (// (int jobs-max) MIB))
+  ;; 置き先に名乗る受けも同じ空きまで(task の層の空きが静的な値で止まらない)。
+  (assert (= ceiled.jobs-intake box-limit) (// ceiled.jobs-intake MIB))
+  ;; 2 つの層が上限まで伸びても、container の working set は上限 − 余裕 − held の内。
+  (assert (<= (+ (- (* 3 GIB) (// GIB 2) GIB) (int jobs-max) (int clis-max)) (- CONTAINER-MAX GIB (* 2 GIB))))
+  ;; 失敗ケース(前の形 — 天井の宣言が無い): 同じ機体で jobs の層の上限は静的な 10752M のまま。
+  (val plain (EvictionCell))
+  (<- before MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-a-api) slog-discard-handler]
+                           (ticked-files plain-settings plain 2)))
+  (<- old-jobs str (content-at before (+ JOBS "/memory.max")))
+  (assert (= #((int old-jobs) plain.jobs-intake) #(JOBS-CAP JOBS-CAP)) #((// (int old-jobs) MIB) (// plain.jobs-intake MIB))))
+
+
+(deftest test-the-jobs-ceiling-is-not-used-while-the-line-or-the-container-cannot-be-read
+  ;; 線を読めない回は、天井を宣言していても jobs の層の上限は静的な値(container の中の空きを数えずに広げない)。
+  (<- start MemoryFiles (node-a-files (* 3 GIB) (// GIB 2) GIB (* 3 GIB)))
+  (<- ceiling-settings EvictionSettings (roomy-settings JOBS-CEILING))
+  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (unread-api) slog-discard-handler]
+                          (ticked-files ceiling-settings (EvictionCell) 1)))
+  (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
+  (assert (= (int jobs-max) JOBS-CAP) (// (int jobs-max) MIB))
+  ;; container の上限を読めない回(container の memory.max の file が無い)も、線の空きが大きくても静的な値で切る。
+  (val boxless (MemoryFiles :dirs start.dirs :files (tuple (gfor f start.files :if (!= f.path (+ OWN "/memory.max")) f))))
+  (<- open-files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler boxless) (node-a-api) slog-discard-handler]
+                               (ticked-files ceiling-settings (EvictionCell) 1)))
+  (<- open-jobs str (content-at open-files (+ JOBS "/memory.max")))
+  (assert (<= (int open-jobs) JOBS-CAP) (// (int open-jobs) MIB)))
+
+
+(deftest test-the-jobs-ceiling-is-declared-per-machine-only-beside-the-cli-ceiling
+  (<- clis (| CliLayerSettings None) (cli-layer-settings-of {"WORKER_CLI_LAYER_CEILING" "6G"} OWN NODE-A-LAYOUT "jobs"))
+  (<- ceiling (| int None) (jobs-ceiling-bytes {"WORKER_JOBS_LAYER_CEILING" "16G"} JOBS-CAP clis))
+  (<- absent (| int None) (jobs-ceiling-bytes {} JOBS-CAP clis))
+  (assert (= #(ceiling absent) #(JOBS-CEILING None)) #(ceiling absent))
+  ;; 失敗ケース: 綴りが読めない・max・静的な値より小さい・jobs の層の memory.max が無い・会話の CLI の層を掛け直さない(container の中の
+  ;; 空きを数えない)宣言は起動を断る。
+  (for [#(declared cap with-clis) #(#("lots" JOBS-CAP True) #("max" JOBS-CAP True) #("8G" JOBS-CAP True) #("16G" None True)
+                                    #("16G" JOBS-CAP False))]
+    (var refused False)
+    (try
+      (<- (jobs-ceiling-bytes {"WORKER_JOBS_LAYER_CEILING" declared} cap (if with-clis clis None)))
+      (except [ValueError]
+        (:= refused True)))
+    (assert refused #(declared cap with-clis))))
