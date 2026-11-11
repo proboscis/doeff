@@ -1130,7 +1130,7 @@
                              True None)
                :if a
                :setv watch (.row state.handoffs job.spec.name)
-               (replace job.spec :placement a.generation
+               (replace job.spec :placement a.generation :peak-mib job.peak-mib
                         :ready-instance (.get (or ready-instances {}) job.spec.name)
                         :handoff-abandoned (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED))
                         :hold-version (and job.spec.handoff (is a placed) (is-not info None) (not (eligible state job info)))))))

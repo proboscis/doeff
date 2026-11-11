@@ -117,6 +117,11 @@
   ;; JST に 5 commit で全部の service が 10 回作り直された)。None = 今どおり版と commit で比べる(鍵を渡さない送り手・古い送り手)。
   ;; 欄そのものは比べない(比べは指紋 fingerprint が持つ — 下の __eq__)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| str None) content (field :default None :compare False))
+  ;; 宣言の memory の山(MiB — 宣言の行の peakMiB・ClusterJob.peak-mib。coordinator が heartbeat の返事の job の行に載せる・2026-11-11)。
+  ;; worker の機体の memory の見張りは、今の memory がこの値以下の常駐の job を止める候補にしない(worker/core/memory_rules の頭の註の
+  ;; 宣言の内)。None = 宣言なし(欄を知らない旧い coordinator の返事・旧い行 — 今どおり)。比べない欄(値が変わっても process を
+  ;; 起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ (| int None) peak-mib (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))

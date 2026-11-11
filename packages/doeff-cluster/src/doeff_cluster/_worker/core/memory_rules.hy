@@ -18,6 +18,11 @@
 ;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
 ;;; だけだから(10-24 node-a で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
 ;;; 後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
+;;; 宣言の内(within-declared? — 2026-11-11): 常駐の job の今の memory が宣言の memory の山(JobRoot.declared-bytes —
+;;; job の宣言の peak-mib を coordinator が heartbeat の返事で運ぶ)以下なら、平常の大きさに依らず、その job の単位を止める候補にしない
+;;; (平常の比べからも群れの止めからも外す — 置き先が宣言の山を数えて置いた job は、宣言の内で動く限り止めない。暇な時間の後に宣言の内で
+;;; 太った job が、観測から決まる平常の大きさの steady-ratio 倍を越えて止められうるのは保証にならない)。宣言を越えた job は今どおり
+;;; 平常の大きさで判じる。宣言の無い job(旧い coordinator・宣言の行に欄の無い job)と task は今どおり。
 ;;; 群れの止め(swarm-of): 止める候補の単位が無い(どれも min-victim-bytes 未満か平常の大きさの job の物)のに、
 ;;; 1 つの job の木が機体の全量の swarm-share 以上を持ち、worker の外の使用量より大きい時は、その job の BODY 以外の単位を大きい順に、
 ;;; 機体の空きを DANGER の線(danger-available)の上へ min-victim-bytes ぶん戻す量まで足して、まとめて止める。訳: CLI を多数並べて走らせる常駐の
@@ -26,11 +31,11 @@
 ;;; 約 3 分止まり、その job が止まって終わって子の CLI の仕事が全部切れた)。BODY(job の本体)は止めない — 群れの止めは job の
 ;;; 子を減らして、job そのものと残りの子を生かす。worker の外の使用量より小さい job を止めない訳は平常の大きさの止めと同じ(不足が
 ;;; worker の外から来た時に、job の子を止めても戻らない)。平常の大きさは問わない(群れの job は止める単位を小さく割るので、平常の
-;;; 大きさの比べでは止める候補にならず、DANGER のまま機体が止まる)。
+;;; 大きさの比べでは止める候補にならず、DANGER のまま機体が止まる)。宣言の内の job(上の宣言の内)には当てない。
 (require doeff-hy.macros [defk val])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import bisect [bisect-left])
 (import operator [attrgetter])
@@ -104,10 +109,19 @@
 
 (defrecord JobRoot
   "worker が起こした job の根の process 1 つ(name = job の名・pid = 根の pid — shim か待ちの子から分けた子 A・started-ms = 根を起こした刻
-   〔worker の壁の時計の epoch ms — None = 知らない〕)。"
+   〔worker の壁の時計の epoch ms — None = 知らない〕・declared-bytes = job の宣言の memory の山〔byte — None = 宣言なし。見張りが
+   declared-roots で添える — 頭の註の宣言の内〕)。"
   (#^ str name)
   (#^ int pid)
-  (setv #^ (| int None) started-ms None))
+  (setv #^ (| int None) started-ms None)
+  (setv #^ (| int None) declared-bytes None))
+
+
+(defk declared-roots [roots declared]
+  {:pre [(: roots tuple) (: declared dict)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "job の根(roots)に、宣言の memory の山(declared = job の名 → byte — 最後に読めた heartbeat の返事の物)を添えるため(頭の註の
+   宣言の内)。宣言に名の無い根(task・退いた process)は宣言なし。"
+  (tuple (gfor root roots (replace root :declared-bytes (.get declared root.name)))))
 
 
 (defk task-root? [root]
@@ -117,11 +131,22 @@
 
 
 (defrecord JobUse
-  "job 1 つの memory の今(job = job の名・pid = 根の pid・bytes = 根の木の rss の和・processes = 木の process の数)。"
+  "job 1 つの memory の今(job = job の名・pid = 根の pid・bytes = 根の木の rss の和・processes = 木の process の数・declared-bytes = 根の
+   宣言の memory の山〔JobRoot.declared-bytes — None = 宣言なし〕)。"
   (#^ str job)
   (#^ int pid)
   (#^ int bytes)
-  (#^ int processes))
+  (#^ int processes)
+  (setv #^ (| int None) declared-bytes None))
+
+
+(defk within-declared? [job uses]
+  {:pre [(: job str) (: uses tuple)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "常駐の job(名 job)の今の memory(uses の同じ名の和)が宣言の memory の山以下かを判じるため(頭の註の宣言の内 — 真なら、その job の
+   単位を止める候補にしない)。task・宣言の無い job・uses に無い job は偽。"
+  (val declared (tuple (gfor use uses :if (and (= use.job job) (is-not use.declared-bytes None)) use.declared-bytes)))
+  (and (not (.startswith job TASK-PREFIX)) (bool declared)
+       (<= (sum (gfor use uses :if (= use.job job) use.bytes)) (max declared))))
 
 
 (defrecord KillUnit
@@ -153,10 +178,14 @@
 (defk beyond-steady? [unit uses steadies limits]
   {:pre [(: unit KillUnit) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % bool)]
    :tags {:context "worker" :role "judgment"}}
-  "単位が止める候補かを判じるため(頭の註): TASK は候補。常駐の job の単位は、その job の今の memory(uses の同じ名の和)が平常の大きさ
-   (steadies の同じ名)の steady-ratio 倍以上か、平常の大きさがまだ無い時に候補。"
+  "単位が止める候補かを判じるため(頭の註): TASK は候補。常駐の job の単位は、その job の今の memory が宣言の memory の山以下なら
+   候補でない(within-declared? — 頭の註の宣言の内)。宣言を越えた・宣言の無い job の単位は、今の memory(uses の同じ名の和)が平常の
+   大きさ(steadies の同じ名)の steady-ratio 倍以上か、平常の大きさがまだ無い時に候補。"
   (when (= unit.kind UnitKind.TASK)
     (return True))
+  (<- within bool (within-declared? unit.job uses))
+  (when within
+    (return False))
   (val steady (next (gfor s steadies :if (= s.job unit.job) s) None))
   (when (is steady None)
     (return True))
@@ -172,8 +201,18 @@
   ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない)。
   (val large (tuple (gfor unit units :if (>= unit.bytes limits.min-victim-bytes) unit)))
   (<- beyond tuple (sequence (gfor unit large (beyond-steady? unit uses steadies limits))))
-  (val names (frozenset (gfor #(unit candidate) (zip large beyond) :if (not candidate) unit.job)))
+  (<- declared tuple (spared-declared uses limits))
+  (val names (- (frozenset (gfor #(unit candidate) (zip large beyond) :if (not candidate) unit.job)) (frozenset (gfor use declared use.job))))
   (tuple (gfor s steadies :if (in s.job names) s)))
+
+
+(defk spared-declared [uses limits]
+  {:pre [(: uses tuple) (: limits MemoryLimits)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "今の memory が min-victim-bytes 以上なのに、宣言の内で動くので止める候補にしなかった常駐の job の今(JobUse — 名の昇順・名ごとに
+   1 つ)を並べるため(止める単位が無い時の log に、止めなかった job を名指す — 頭の註の宣言の内)。"
+  (val names (sorted (sfor use uses :if (>= use.bytes limits.min-victim-bytes) use.job)))
+  (<- within tuple (sequence (gfor name names (within-declared? name uses))))
+  (tuple (gfor #(name inside) (zip names within) :if inside (next (gfor use uses :if (= use.job name) use)))))
 
 
 (defk mib-of [size]
@@ -340,7 +379,8 @@
 (defk _uses-of [walks]
   {:pre [(: walks tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "job ごとの memory の今(JobUse)を、根の木の rss の和で数えるため(walks = _job-walks の答え)。大きい順。"
-  (tuple (sorted (gfor w walks (JobUse :job w.root.name :pid w.root.pid :bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)))
+  (tuple (sorted (gfor w walks (JobUse :job w.root.name :pid w.root.pid :bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)
+                                       :declared-bytes w.root.declared-bytes))
                  :key (fn [use] #((- use.bytes) use.job)))))
 
 
@@ -519,14 +559,16 @@
   {:pre [(: units tuple) (: uses tuple) (: node NodeMemory) (: container-bytes (| int None)) (: limits MemoryLimits)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "DANGER で止める候補の単位が無い時に、まとめて止める単位を選ぶため(頭の註の群れの止め): uses(大きい順)の中で、木が機体の全量の
-   swarm-share 以上で、worker の外の使用量(機体の使用量 − container-bytes — 読めなければ問わない)より大きい最初の job の、BODY 以外の
-   単位(units — 大きい順)を、和が swarm-need に届くまで頭から足す(届かなければ全部)。当たる job が無い・単位が無ければ空。"
+   swarm-share 以上で、worker の外の使用量(機体の使用量 − container-bytes — 読めなければ問わない)より大きく、宣言の内で動いていない
+   (within-declared? — 頭の註の宣言の内)最初の job の、BODY 以外の単位(units — 大きい順)を、和が swarm-need に届くまで頭から足す
+   (届かなければ全部)。当たる job が無い・単位が無ければ空。"
   (val used (- node.total-bytes node.available-bytes))
   (val outside (if (is container-bytes None) None (max 0 (- used container-bytes))))
-  (val job (next (gfor use uses
-                       :if (and (>= use.bytes (* limits.swarm-share node.total-bytes)) (or (is outside None) (> use.bytes outside)))
-                       use)
-                 None))
+  (val large (tuple (gfor use uses
+                          :if (and (>= use.bytes (* limits.swarm-share node.total-bytes)) (or (is outside None) (> use.bytes outside)))
+                          use)))
+  (<- within tuple (sequence (gfor use large (within-declared? use.job uses))))
+  (val job (next (gfor #(use inside) (zip large within) :if (not inside) use) None))
   (when (is job None)
     (return #()))
   (<- need int (swarm-need node limits))

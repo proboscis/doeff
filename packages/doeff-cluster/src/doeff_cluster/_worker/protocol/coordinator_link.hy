@@ -71,6 +71,7 @@
                                               task-uses-of jobs-room-of prepare-wait-of
                                               job-meters-told])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine task-needs-of])
+(import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.memory_rules [MIB])  ; room-noted が命令の層の床を byte にする
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
@@ -638,6 +639,10 @@
     (when (and timing (in "lease_ms" timing))
       (setv state.lease-ms (int (get timing "lease_ms"))))
     (setv state.last-jobs jobs)
+    ;; 宣言の memory の山を見張りの入れ物へ渡す(宣言の内で動く常駐の job を止めない — worker/core/memory_rules の頭の註の宣言の内)。
+    ;; 返事ごとに置き直す(宣言だけを変えて process を起こし直さない宣言し直しも、次の返事から効く)。
+    (when (is-not state.eviction None)
+      (setv state.eviction.declared (dfor spec jobs :if (is-not spec.peak-mib None) spec.name (* spec.peak-mib MIB))))
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
     (setv state.last-tasks tasks)
     (<- (fetched-programs state cell options (+ state.last-jobs state.last-tasks)))

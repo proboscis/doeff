@@ -99,7 +99,10 @@
      ;; 途絶しても動かし続けてよい印の在る job だけ(#2804 — cluster_policy.keep-marked): worker は coordinator に届かない間もこの job を
      ;; 止めない(長い方の柵 keep-fence-ms まで)。欄を読まない古い worker は今までどおり fence で止める — 旧い worker(e06b01411 の
      ;; handlers.declared-job-spec)は知っている鍵だけを .get で読むので、この欄は捨てられる。
-     (if spec.keep-when-cut-off {"keepWhenCutOff" True} {})))
+     (if spec.keep-when-cut-off {"keepWhenCutOff" True} {})
+     ;; 宣言の memory の山を持つ job だけ(2026-11-11): worker の memory の見張りは、今の memory がこの値以下の常駐の job を
+     ;; 止めない。欄を読まない古い worker は捨てる(今どおり平常の大きさで判じる)。
+     (if (is spec.peak-mib None) {} {"peakMiB" spec.peak-mib})))
 
 
 (defk task-offer-json [#^ TaskOffer offer]

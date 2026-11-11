@@ -31,6 +31,9 @@
 ;;; 平常の大きさ: 最大の行の間を閉じるたびに、その間の job の名ごとの最大を steady-windows 個まで残し(見張りが
 ;;; 止めた job の最大は残さない)、その中のいちばん大きい物を job の平常の大きさとして止める単位の選びに渡す(worker/core/memory_rules の
 ;;; victim-of — 平常の大きさで動く常駐の job は止めない)。名ごとに残すので、起こし直された job も前の走りの大きさを平常とする。
+;;; 宣言の内(2026-11-11): 回ごとに、job の根へ最後に読めた heartbeat の返事の宣言の memory の山(入れ物 eviction の declared —
+;;; worker/protocol/coordinator_link が書く)を添え、今の memory が宣言の内の常駐の job は止めない(worker/core/memory_rules の頭の註の
+;;; 宣言の内)。止める単位が無い行は、宣言の内なので止めなかった job も名指す(欄 spared-declared — <job>=<今の MiB>/<宣言の MiB>)。
 ;;; 止めた印: 止めた単位の属する job の根(名と pid)を、止めた刻と止めた訳とともに入れ物に kill-mark-seconds の間残す。調整ループは終わった
 ;;; process を回収する時にこの印を読み(worker/protocol/memory_observer)、見張りに止められた終わりを数える — 続けて止められた常駐の job は
 ;;; 起こし直さずに失敗として報告する(WorkerPolicy.memory-kill-limit)。止めた訳は状態の報告の訳に載る(task の終わりは coordinator の
@@ -57,7 +60,7 @@
 (import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse
                                                 JobSteady UnitKind node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of
                                                 largest-outside steady-sizes spared-steady victim-of swarm-of resident-walks job-meters-of
-                                                pss-bytes-of anonymous-bytes-of _JobWalk])
+                                                pss-bytes-of anonymous-bytes-of _JobWalk declared-roots spared-declared])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted jobs-oom-noted])
 
@@ -362,6 +365,7 @@
   (when (is victim None)
     (when (not cell.told-no-victim)
       (<- spared tuple (spared-steady units uses steadies settings.limits))
+      (<- declared tuple (spared-declared uses settings.limits))
       (val used (- node.total-bytes node.available-bytes))
       (val current reading.container.current-bytes)
       (<- current-mib (| int None) (mib-or-none current))
@@ -374,6 +378,8 @@
                 :container-current-mib current-mib :container-peak-mib peak-mib :outside-worker-mib outside-mib
                 :spared-steady (.join " " (gfor s spared (.format "{}={}/{}" s.job (// (sum (gfor u uses :if (= u.job s.job) u.bytes)) (* 1024 1024))
                                                                   (// s.bytes (* 1024 1024)))))
+                :spared-declared (.join " " (gfor u declared (.format "{}={}/{}" u.job (// (sum (gfor v uses :if (= v.job u.job) v.bytes)) MIB)
+                                                                     (// u.declared-bytes MIB))))
                 :full-avg10 node.full-avg10 :layers (! (layers-text reading.container))
                 :outside-largest (! (outside-text reading.rows walks))))
       (setv cell.told-no-victim True))
@@ -489,7 +495,9 @@
   (setv cell.unread "")
   ;; 様子・止め・log の機体の空きと総量は、線が在れば追い出しまでの空きと線の大きさ(頭の註)。
   (<- line-node NodeMemory (line-memory read.node line))
-  (val reading (replace read :node line-node))
+  ;; job の根に宣言の memory の山を添える(頭の註の宣言の内 — 宣言の内の常駐の job を止めない)。
+  (<- roots tuple (declared-roots read.roots cell.eviction.declared))
+  (val reading (replace read :node line-node :roots roots))
   ;; 表を並べ直して木をたどるのは 1 回の読みに 1 度(job ごとの memory と止める単位で分けて使う)。
   (<- walks tuple (_job-walks reading.rows reading.roots))
   (<- uses tuple (_uses-of walks))

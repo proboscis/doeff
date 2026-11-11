@@ -50,6 +50,7 @@
     (raise (DeclaredReplyMalformed (.format "heartbeat の返事の Program の job {} の行に versions(名 → 版の object)が無い: {!r} — 古い coordinator の返事(coordinator を worker より先に上げる)"
                                             (.get job "name") (.get job "versions")))))
   (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
+  (val peak (.get job "peakMiB"))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) placed.revision
            :once (.get job "once" False) :placement (.get job "placement")
            :handoff (bool (.get job "handoff" False))
@@ -79,7 +80,10 @@
            ;; coordinator の返事も同じ)— 同じく旧い版をそのまま動かす。
            :hold-version (or draining (is (.get job "holdVersion" False) True))
            ;; 中身の鍵(送り手が鍵を渡した job だけが持つ・無ければ None = 版と commit で宣言の変わりを判じる)。
-           :content (.get job "content")))
+           :content (.get job "content")
+           ;; 宣言の memory の山(MiB — 2026-11-11・持つ job だけ。無い・0 以上の整数でなければ None = 宣言なし。欄を知らない
+           ;; 旧い coordinator の返事も同じ — 見張りは今どおり平常の大きさで判じる)。
+           :peak-mib (if (and (isinstance peak int) (not (isinstance peak bool)) (>= peak 0)) peak None)))
 
 
 (defwire DeclaredReply

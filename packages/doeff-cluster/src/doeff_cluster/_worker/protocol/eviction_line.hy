@@ -169,7 +169,9 @@
    jobs の層の memory.events の oom_kill(None = まだ読めていない)・oom-at-ms = oom_kill が増えたのを読んだ刻(epoch ms の tuple — 古い順・
    OOM-MARK-MS の内の物 — 状態の報告が、その間に SIGKILL で終わった task の訳に載せる)・meters = 見張りの最後の読みの常駐の job ごとの
    CPU と memory(worker/core/memory_rules の JobMeter の tuple — heartbeat の測りが欄 jobUses として名乗る・2026-11-10)・meters-at-ms = その
-   読みの刻(None = まだ)・retired = keeper がこの世代を退かせ始めた印を読んだ(頭の註の退いた世代 — 真になったら戻らず、印を読み直さない)。
+   読みの刻(None = まだ)・retired = keeper がこの世代を退かせ始めた印を読んだ(頭の註の退いた世代 — 真になったら戻らず、印を読み直さない)・
+   declared = 最後に読めた heartbeat の返事の job の名 → 宣言の memory の山(byte — JobSpec.peak-mib を持つ job だけ。worker/protocol/coordinator_link が
+   書き、機体の memory の見張りが job の根に添える — worker/core/memory_rules の頭の註の宣言の内・2026-11-11)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
@@ -179,7 +181,7 @@
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.jobs-intake-urgent None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
-          self.meters #() self.meters-at-ms None self.retired False)))
+          self.meters #() self.meters-at-ms None self.retired False self.declared {})))
 
 
 (defrecord LayerMemory
