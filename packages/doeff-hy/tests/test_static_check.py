@@ -177,8 +177,10 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
         r"fromlist=\('open_bind',\)\)\)\.open_bind\(g\(x\)\)\)\.__class__ is (?P=m)\.Pure",
         outside,
     ), outside
-    # The type-checking expansion has the same `x = perform(e)` shape as Python's @effectful (emits no yield)
-    assert "y: 'int' = _doeff_perform(g(x))" in static
+    # The type-checking expansion has the same `x = perform(e)` shape as Python's @effectful (emits no yield).
+    # The declared type is on a gensym temporary, and the bound name receives it without one (so same-named binds in other
+    # clauses / branches of the same Python function do not collide).
+    assert re.search(r"(?P<t>_hy_gensym_bound_\d+): 'int' = _doeff_perform\(g\(x\)\)\n\s*y = (?P=t)\n", static), static
     assert "yield" not in static
     # The static expansion emits no helper imports - doeff-hy-check places them once at the top of the module (#1686)
     assert "static_types" not in static
@@ -421,6 +423,114 @@ def test_a_bind_after_a_union_bind_keeps_its_answer_type(tmp_path: Path, mistake
     errors = [(d["rule"], d["message"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"]
     if mistake:
         assert [rule for rule, _ in errors] == ["reportAssignmentType"], errors
+    else:
+        assert errors == [], errors
+
+
+#: Same-named binds of different types in the parts of one Python function: the clauses of a defhandler, the branches of if / cond, and
+#: the clause shape of agora-controllers realtime_peer.hy (a `(get Promise T)` bind and a `(Wait promise.future)` bind per clause).
+#: {CLAUSE} / {BRANCH} / {PROMISE} are the source of one bind each, which the mistake turns into a source whose answer does not fit T.
+SAME_NAME_EFFECTS = """\
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Tick [(get EffectBase int)]
+  #^ int step)
+
+(defclass [(dataclass :frozen True)] Name [(get EffectBase str)]
+  #^ str prefix)
+"""
+
+SAME_NAME_BINDS = """\
+(require doeff-hy.macros [defk defhandler <-])
+(import doeff_core_effects [CreatePromise Promise Wait])
+(import probe_effects [Tick Name])
+
+(defhandler per-clause
+  (Tick [step]
+    (<- read int (Tick (+ step 1)))
+    (resume (+ read step)))
+  (Name [prefix]
+    (<- read str {CLAUSE})
+    (resume (+ prefix read))))
+
+(defhandler waiting
+  (Tick [step]
+    (<- promise (get Promise int) ((get CreatePromise int)))
+    (<- answer int (Wait promise.future))
+    (resume (+ answer step)))
+  (Name [prefix]
+    (<- promise (get Promise str) {PROMISE})
+    (<- answer str (Wait promise.future))
+    (resume (+ prefix answer))))
+
+(defk branches [flag]
+  {:pre [(: flag bool)] :post [(: % (| int str))]}
+  "if branches"
+  (if flag
+      (do (<- read int (Tick 1)) read)
+      (do (<- read str (Name "b")) read)))
+
+(defk conds [n]
+  {:pre [(: n int)] :post [(: % (| int str))]}
+  "cond branches"
+  (cond
+    (> n 1) (do (<- seen int (Tick n)) (+ seen 1))
+    (> n 0) (do (<- seen str {BRANCH}) (+ seen "!"))
+    True 0))
+
+(defk captured [flag]
+  {:pre [(: flag bool)] :post [(: % int)]}
+  "an inner fn captures a bind whose name another branch binds with another type"
+  (if flag
+      (do (<- read int (Tick 1)) (sum (map (fn [x] (+ x read)) [1 2])))
+      (do (<- read str (Name "b")) (len read))))
+"""
+
+SAME_NAME_RIGHT = {
+    "CLAUSE": "(Name prefix)",
+    "PROMISE": "((get CreatePromise str))",
+    "BRANCH": '(Name "x")',
+}
+SAME_NAME_WRONG = {
+    "CLAUSE": "(Tick 1)",
+    "PROMISE": "((get CreatePromise int))",
+    "BRANCH": "(Tick n)",
+}
+
+
+@needs_pyright
+@pytest.mark.parametrize("mistake", [False, True])
+def test_same_named_binds_of_other_types_do_not_collide(tmp_path: Path, mistake: bool) -> None:
+    """Failure case (daily hy-type-crash of agora-controllers 2026-11-11, 20 new findings): the type-checking expansion turned
+    `(<- x T e)` into `x: T = _doeff_perform(e)`, and the clauses of a defhandler and the branches of if / cond became one Python function, so
+    `read` bound as int in one part and as str in another had two declared types. pyright keeps one (the last), and reported the right
+    binds of the other parts as reportRedeclaration / reportAssignmentType. The declared type is now on a gensym temporary: 0 errors.
+    Counterexample: a bind whose source answers another type than T is still reportAssignmentType on the line of its `<-`."""
+    import contextlib
+    import io
+
+    from doeff_hy._static_check import main
+
+    text = SAME_NAME_BINDS
+    for key, value in (SAME_NAME_WRONG if mistake else SAME_NAME_RIGHT).items():
+        text = text.replace("{" + key + "}", value)
+    (tmp_path / "probe_effects.hy").write_text(SAME_NAME_EFFECTS, encoding="utf-8")
+    (tmp_path / "same_names.hy").write_text(text, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(tmp_path), "--json", "--no-cache", "--strict", str(tmp_path / "same_names.hy")])
+    errors = sorted(
+        (d["rule"], d["line"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"
+    )
+    if mistake:
+        wrong = [
+            ("reportAssignmentType", index)
+            for index, line in enumerate(SAME_NAME_BINDS.splitlines(), 1)
+            if any("{" + key + "}" in line for key in SAME_NAME_WRONG)
+        ]
+        assert len(wrong) == 3, wrong
+        assert errors == wrong, errors
     else:
         assert errors == [], errors
 

@@ -153,7 +153,8 @@ call). The rewrite and `doeff-effectful-check` cover that.
 ## The Hy side
 
 doeff-hy's expansion for type checking (`doeff-hy-check`, packages/doeff-hy/docs/static-check.md) emits
-`(<- x T e)` as `x: 'T' = _doeff_perform(e)`. This is the same shape as Python's `x = perform(e)`, and gives the same
+`(<- x T e)` as `_hy_gensym_bound_N: 'T' = _doeff_perform(e)` then `x = _hy_gensym_bound_N` (the declared type is on a
+temporary, so same-named binds of other types in other clauses / branches of one function do not collide). This is the same shape as Python's `x = perform(e)`, and gives the same
 answer type without using `yield` or `yield from`. Hy has no way yet to write an effect set, so `_doeff_perform`
 does not match against a declaration and passes values of unknown type as Any. The runtime Hy expansion can stay
 `(yield e)` — that is the same shape as the result of the `@effectful` rewrite.

@@ -1449,8 +1449,12 @@ defk {name}: {{:post [...]}} is required.
   (cond
     ;; Expansion for type checking (doeff_hy/_static_view.py): type of x = type of the answer of expr.
     ;; The same form as `x = perform(e)` of Python's `@effectful` (docs/24-effectful-perform.md),
-    ;; and the declaration of `_doeff_perform` is in static_types.pyi. `(<- x T e)` annotates x with T, so
-    ;; pyright reports red if the type of e's answer does not fit in T. e appears only once.
+    ;; and the declaration of `_doeff_perform` is in static_types.pyi. `(<- x T e)` annotates a gensym temporary with T and
+    ;; passes it to x without an annotation (`_hy_gensym_bound_N: T = _doeff_perform(e)` then `x = _hy_gensym_bound_N`),
+    ;; so pyright reports red if the type of e's answer does not fit in T, and x is narrowed to T at that place. e appears only once.
+    ;; x itself carries no declared type: the clauses of a defhandler and the branches of cond / if / do! become one Python
+    ;; function, and pyright keeps one declared type per variable (the last wins), so `(<- read int …)` in one branch and
+    ;; `(<- read str …)` in another reported the first as reportRedeclaration / reportAssignmentType although each was right.
     ;; No yield is emitted (types do not depend on yield — on 2026-09-23 it was confirmed that the reds are the same 57 as the form that kept yield in
     ;; controllers/worker of agora-controllers).
     ;; The runtime expansion does not go through this branch (the runtime `(yield e)` is the same as the result of @effectful's rewriting).
@@ -1464,7 +1468,9 @@ defk {name}: {{:post [...]}} is required.
           (is name None) bound
           (or (is source None) (not (isinstance name hy.models.Symbol)))
             `(setv ~name ~bound)
-          True `(setv (annotate ~name ~(hy.models.String source)) ~bound)))
+          True (let [held (hy.gensym "bound")]
+                 `(do (setv (annotate ~held ~(hy.models.String source)) ~bound)
+                      (setv ~name ~held)))))
     (is name None) (let [answer (hy.gensym "answer")]
                      `(do (setv ~answer ~performed)
                           (del ~bound)

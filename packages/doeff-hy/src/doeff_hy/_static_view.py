@@ -7,7 +7,8 @@ are emitted in a type-aware form while this switch is on. The switch is read onl
 expansion time (not at runtime), so ordinary imports, the bytecode cache, and runtime semantics are unchanged.
 
 Places where the shape changes under the switch (all places in macros.hy that read `_static-view?`):
-- `_bind-yield`: `(setv x (yield e))` → `x: T = _doeff_perform(e)`
+- `_bind-yield`: `(setv x (yield e))` → `_hy_gensym_bound_N: T = _doeff_perform(e)` then `x = _hy_gensym_bound_N`
+  (the declared type is on the temporary, so same-named binds of other types in other clauses / branches do not collide)
   (`_doeff_perform` is a statically declared function that returns the type of e's answer. doeff_hy/_static_types.pyi.
   Same shape as `x = perform(e)` of Python's `@effectful`)
 - defk / defp / do! / deftest / fnk: take `do` from the typed `doeff_hy._static_types.do`
