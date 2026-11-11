@@ -460,7 +460,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._sql_effects import SqlTransactionMisuse as SqlTransactionMisuse
     from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
     from doeff_core_effects._sql_effects import SqlValue as SqlValue
-    from doeff_core_effects._sqlite_file_sql import SqliteFile as SqliteFile
     from doeff_core_effects._sqlite_file_sql import SqliteFiles as SqliteFiles
     from doeff_core_effects._sqlite_file_sql import close_sqlite_files as close_sqlite_files
     from doeff_core_effects._sqlite_file_sql import open_sqlite_files as open_sqlite_files
@@ -475,8 +474,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._stack_dump_effects import ArmStackDump as ArmStackDump
     from doeff_core_effects._stack_dump_effects import DisarmStackDump as DisarmStackDump
     from doeff_core_effects._stack_dump_effects import ReadStackDumps as ReadStackDumps
-    from doeff_core_effects._stack_dump_effects import StackDumpLedger as StackDumpLedger
-    from doeff_core_effects._stack_dump_effects import stack_dumps_at as stack_dumps_at
     from doeff_core_effects._stop_signal_effects import AwaitStop as AwaitStop
     from doeff_core_effects._stop_signal_effects import RaiseStop as RaiseStop
     from doeff_core_effects._stop_signal_effects import StopBell as StopBell
@@ -569,7 +566,6 @@ _LAZY_EXPORTS = {
     "ArmStackDump": "doeff_core_effects._stack_dump_effects",
     "DisarmStackDump": "doeff_core_effects._stack_dump_effects",
     "ReadStackDumps": "doeff_core_effects._stack_dump_effects",
-    "StackDumpLedger": "doeff_core_effects._stack_dump_effects",
     "memory_stack_dump_handler": "doeff_core_effects._memory_stack_dump",
     "watched_stack_dump_handler": "doeff_core_effects._memory_stack_dump",
     "faulthandler_stack_dump_handler": "doeff_core_effects._faulthandler_stack_dump",
@@ -690,7 +686,6 @@ _LAZY_EXPORTS = {
     "checked_hash_pyc": "doeff_core_effects._python_bytecode",
     "compiled_pyc": "doeff_core_effects._python_bytecode",
     "seeded_bytes": "doeff_core_effects._seeded_random",
-    "stack_dumps_at": "doeff_core_effects._stack_dump_effects",
     "AppendHttpScript": "doeff_core_effects._http_server_effects",
     "HttpAddress": "doeff_core_effects._http_server_effects",
     "HttpBody": "doeff_core_effects._http_server_effects",
@@ -903,7 +898,6 @@ _LAZY_EXPORTS = {
     "sqlite_insert": "doeff_core_effects._sqlite_sql",
     "sqlite_query": "doeff_core_effects._sqlite_sql",
     "sqlite_sql_handler": "doeff_core_effects._sqlite_sql",
-    "SqliteFile": "doeff_core_effects._sqlite_file_sql",
     "SqliteFiles": "doeff_core_effects._sqlite_file_sql",
     "close_sqlite_files": "doeff_core_effects._sqlite_file_sql",
     "open_sqlite_files": "doeff_core_effects._sqlite_file_sql",
