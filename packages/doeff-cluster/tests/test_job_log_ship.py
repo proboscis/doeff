@@ -820,6 +820,11 @@ def test_a_flooding_worker_does_not_wait_for_a_silent_destination(tmp_path: Path
 # --- coordinator の process 自身の行(Pod の log は Pod の入れ替えで消える)--------------------------------------
 
 POD = {POD_NAME_VAR: "coordinator-5f-abc", POD_NAMESPACE_VAR: "lab-ns"}
+# coordinator の止まりの行(_coordinator/entry/main.hy の main の最後の print と同じ文 — 検が自分で綴る)。止まりの順は 調停ループの
+# 終わり(止まる刻の印を書き終えた)→ 置き場の錠を離す(次の process が待つ錠を、残りの行の送りを待たずに)→ この行 → 行の送り手が
+# この行まで送って process が終わる。錠を離した後に出すので、この行が coordinator の最後の行で、stdout と stderr のどちらへ書く形でも
+# 最後に在る。送りの検はこの行の後に別の行が無いこと・この行まで送ったことを見る(錠を離す前の文「止まりました」だけの行は旧版)。
+COORDINATOR_STOP_LINE = "coordinator: 止まりました(置き場の錠を離した)"
 
 
 def test_the_coordinator_names_itself_after_its_pod() -> None:
@@ -898,7 +903,7 @@ def test_the_coordinator_ships_its_own_lines_from_two_pipes_until_it_stops(tmp_p
     lines = file_lines(ran.out)
     bodies = [x.body for x in lines]
     assert any(b.startswith(b"coordinator: :") and "で受けます".encode() in b for b in bodies), bodies
-    assert bodies[-1] == "coordinator: 止まりました".encode(), bodies
+    assert bodies[-1] == COORDINATOR_STOP_LINE.encode(), bodies
     assert "で受けます".encode() not in ran.err, ran.err
     records = received_until(collector, len(lines))
     assert [r.body for r in records] == [x.body.decode() for x in lines]
@@ -912,7 +917,7 @@ def test_a_coordinator_without_the_destination_keeps_its_two_streams(tmp_path: P
     何も送らない。"""
     ran = coordinator_run(tmp_path, dict(POD))
     assert ran.code == 0, ran.err[-2000:]
-    assert ran.err.endswith("coordinator: 止まりました\n".encode()), ran.err[-500:]
+    assert ran.err.endswith(f"\n{COORDINATOR_STOP_LINE}\n".encode()), ran.err[-500:]
     assert STAMP.match(ran.err) is None, ran.err[:200]
     assert collector.records() == []
 
@@ -927,7 +932,7 @@ def test_a_slow_destination_still_gets_the_stop_line_of_the_coordinator(tmp_path
     lines = file_lines(ran.out)
     records = received_until(slow, len(lines))
     assert [r.body for r in records] == [x.body.decode() for x in lines]
-    assert records[-1].body == "coordinator: 止まりました"
+    assert records[-1].body == COORDINATOR_STOP_LINE
 
 
 @pytest.mark.parametrize("names", [{POD_NAME_VAR: "coordinator-5f-abc"}, {"HOSTNAME": "coordinator-5f-abc"}])
@@ -941,5 +946,5 @@ def test_a_coordinator_without_its_pod_names_ships_nothing_and_names_why(
     ran = coordinator_run(tmp_path, env)
     assert ran.code == 0, ran.err[-2000:]
     assert "line_stamp: 自分の行を送らない — coordinator の名乗りの環境変数が無い: ".encode() in ran.err, ran.err[:500]
-    assert ran.err.endswith("coordinator: 止まりました\n".encode()), ran.err[-500:]
+    assert ran.err.endswith(f"\n{COORDINATOR_STOP_LINE}\n".encode()), ran.err[-500:]
     assert collector.records() == []

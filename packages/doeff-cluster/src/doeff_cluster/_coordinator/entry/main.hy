@@ -235,6 +235,8 @@
                     (with-cpu-samples COORDINATOR-SAMPLES (run-coordinator state (ClusterTiming) naming)))))
   ;; 調停ループは止まる刻の印を書き終えた — 次の process が待つ錠を、残りの行の送り(LOG-END-SECONDS)を待たずに離す。
   (.release writer)
+  ;; 止まりの行は錠を離した後に出す、この process の最後の行: 行の送り手はこの行まで送ってから process を終える
+  ;; (tests/test_job_log_ship.py の COORDINATOR_STOP_LINE が同じ文を綴る)。
   (print "coordinator: 止まりました(置き場の錠を離した)" :file sys.stderr :flush True))
 
 
