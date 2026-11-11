@@ -14,7 +14,7 @@ The fold and the replay evaluate it through the same ``step_answer``, so both se
 from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, TypeIs, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeIs, TypeVar
 
 from doeff_core_effects import TaskPriority
 
@@ -54,6 +54,11 @@ class Run:
     publishes the end of a cancelled run): the ``Spawn`` default ``TaskPriority.NORMAL`` unless the step names another
     (any ``int``, higher first).
     """
+
+    # The declaration doeff-effect-analyzer reads: ``program`` holds the Program the fold runs (``fold`` declares in
+    # ``__doeff_runs_built__`` that it spawns it where the fold is performed), so the reader reads it where the step
+    # builds the Run.
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
 
     key: Hashable
     program: "Program[object]"
