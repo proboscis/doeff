@@ -1,7 +1,7 @@
 ;;; sqlite-file-sql-handler, a sqlite answerer for the generic SQL effects (sql_effects.hy) that opens an existing DB file (
 ;;; the body of the custody moves to doeff-cluster. It opens the file DB that the current body (Haskell StoreSqlite.hs) holds as it is and reads and writes it).
 ;;; It knows no business: the caller declares tables with SqlEnsureTables, or they already exist in the file.
-;;;   - The assembling side (composition root) opens connections with open-sqlite-files from a tuple of database declarations (SqliteFile -- name and file path)
+;;;   - The assembling side (composition root) opens connections with open-sqlite-files from a dict of database name to file path
 ;;;     (SqliteFiles), passes them to the answerer, and closes them with close-sqlite-files when stopping. Effects after closing are SqlUnreachable.
 ;;;   - It only opens an existing file: it opens with URI mode=rw, and if the file does not exist it does not create it and raises sqlite3.OperationalError at the opening (it does not recreate and
 ;;;     does not copy -- silently creating an empty DB would let the custody start running on an empty ledger).
@@ -50,14 +50,21 @@
 
 
 (defk open-sqlite-files [files]
-  {:pre [(: files (of tuple SqliteFile ...)) (all (gfor f files (isinstance f SqliteFile)))
-         (= (len files) (len (set (gfor f files f.name))))]
+  {:pre [(: files (| (of dict str str) (of tuple SqliteFile ...)))
+         (if (isinstance files dict)
+             (all (gfor [name path] (.items files) (and (isinstance name str) (isinstance path str))))
+             (and (all (gfor f files (isinstance f SqliteFile))) (= (len files) (len (set (gfor f files f.name))))))]
    :post [(: % SqliteFiles)]
    :tags {:context "sql" :role "foundation"}}
-  "To open connections from a list of database declarations (names must not repeat). If one cannot be opened midway, close those already opened and then let the exception through."
+  "To open connections from the databases to answer -- a dict of name (the effect's database) to the path of an existing DB file, or the older tuple of
+   SqliteFile declarations (names must not repeat; kept until the outside callers move to the dict, then removed). If one cannot be opened midway, close those
+   already opened and then let the exception through."
+  (val declared (if (isinstance files dict)
+                    (tuple (gfor [name path] (.items files) (SqliteFile :name name :path path)))
+                    files))
   (var opened #())
   (try
-    (for [f files]
+    (for [f declared]
       (<- connection (sqlite-file-connection f))
       (:= opened (+ opened #(connection))))
     (except [Exception]

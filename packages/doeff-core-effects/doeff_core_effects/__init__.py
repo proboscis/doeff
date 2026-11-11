@@ -287,6 +287,9 @@ if TYPE_CHECKING:
     from doeff_core_effects._memory_stack_dump import (
         memory_stack_dump_handler as memory_stack_dump_handler,
     )
+    from doeff_core_effects._memory_stack_dump import (
+        watched_stack_dump_handler as watched_stack_dump_handler,
+    )
     from doeff_core_effects._meter_effects import CountMetric as CountMetric
     from doeff_core_effects._meter_effects import MeterBucket as MeterBucket
     from doeff_core_effects._meter_effects import MeterSettings as MeterSettings
@@ -568,6 +571,7 @@ _LAZY_EXPORTS = {
     "ReadStackDumps": "doeff_core_effects._stack_dump_effects",
     "StackDumpLedger": "doeff_core_effects._stack_dump_effects",
     "memory_stack_dump_handler": "doeff_core_effects._memory_stack_dump",
+    "watched_stack_dump_handler": "doeff_core_effects._memory_stack_dump",
     "faulthandler_stack_dump_handler": "doeff_core_effects._faulthandler_stack_dump",
     "gc_freeze_handler": "doeff_core_effects._gc_freeze",
     "scripted_freeze_handler": "doeff_core_effects._scripted_freeze",

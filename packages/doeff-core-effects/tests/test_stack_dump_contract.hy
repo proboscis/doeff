@@ -10,6 +10,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import doeff_core_effects [ArmStackDump DisarmStackDump ReadStackDumps])
 (import doeff_time [Delay GetMonotonic])
+(import stack_dump_contract_handlers [WatchedDeadlines])
 
 ;; Deadline seconds of a watchdog that is not re-armed, and wait seconds that cross the deadline.
 (val SHORT-WATCH 0.1)
@@ -20,7 +21,7 @@
 
 
 (deftest test-a-watch-not-rearmed-writes-once-at-its-deadline
-  {:interpreters ["faulthandler-stack-dump" "memory-stack-dump"]}
+  {:interpreters ["faulthandler-stack-dump" "memory-stack-dump" "watched-stack-dump"]}
   (<- start float (GetMonotonic))
   (<- (ArmStackDump :at start :seconds SHORT-WATCH))
   (<- (Delay PAST-DEADLINE))
@@ -30,7 +31,7 @@
 
 
 (deftest test-a-watch-writes-only-once
-  {:interpreters ["faulthandler-stack-dump" "memory-stack-dump"]}
+  {:interpreters ["faulthandler-stack-dump" "memory-stack-dump" "watched-stack-dump"]}
   (<- start float (GetMonotonic))
   (<- (ArmStackDump :at start :seconds SHORT-WATCH))
   (<- (Delay PAST-DEADLINE))
@@ -44,7 +45,7 @@
 
 
 (deftest test-a-watch-rearmed-then-disarmed-before-its-deadline-writes-nothing
-  {:interpreters ["faulthandler-stack-dump" "memory-stack-dump"]}
+  {:interpreters ["faulthandler-stack-dump" "memory-stack-dump" "watched-stack-dump"]}
   (<- start float (GetMonotonic))
   (<- (ArmStackDump :at start :seconds LONG-WATCH))
   (<- (Delay BEFORE-DEADLINE))
@@ -57,3 +58,15 @@
   (<- later float (GetMonotonic))
   (<- written tuple (ReadStackDumps :at later))
   (assert (= written #()) (.format "a watchdog re-armed before the deadline and then disarmed wrote: {!r}" written)))
+
+
+(deftest test-the-watch-is-handed-each-deadline-and-none-on-disarm
+  {:interpreters ["watched-stack-dump"]}
+  (<- start float (GetMonotonic))
+  (<- (ArmStackDump :at start :seconds LONG-WATCH))
+  (<- (Delay BEFORE-DEADLINE))
+  (<- again float (GetMonotonic))
+  (<- (ArmStackDump :at again :seconds LONG-WATCH))
+  (<- (DisarmStackDump :at again))
+  (<- handed tuple (WatchedDeadlines))
+  (assert (= handed #((+ start LONG-WATCH) (+ again LONG-WATCH) None)) (.format "deadlines handed to the watch are {!r}" handed)))

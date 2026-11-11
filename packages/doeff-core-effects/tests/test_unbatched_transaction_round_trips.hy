@@ -19,7 +19,7 @@
 (import doeff_core_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlEnsureTables SqlParam SqlRows SqlFailed SqlTransactionMisuse SqlTable SqlColumn SqlColumnType])
 (import doeff_core_effects [postgres-sql-handler PostgresDatabase PostgresConnections])
 (import doeff_core_effects [pooled-postgres-sql-handler])
-(import doeff_core_effects [SqliteFile open-sqlite-files close-sqlite-files sqlite-file-sql-handler])
+(import doeff_core_effects [open-sqlite-files close-sqlite-files sqlite-file-sql-handler])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 (import statement_wire_tap [StatementWireTap])
 
@@ -249,7 +249,7 @@
   ;; -- the sequence of statements is the same as the baseline (it goes through the same sqlite-answer-transaction as the sqlite_store of the custody body's answerer foundation).
   (val path (str (/ tmp-path "invariant.sqlite3")))
   (.close (sqlite3.connect path))
-  (<- files (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- files (open-sqlite-files {DB path}))
   (val traced (queue.SimpleQueue))
   (.set-trace-callback (. (get files.connections 0) connection) (fn [text] (.put traced text)))
   (try

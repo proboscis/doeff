@@ -10,7 +10,7 @@
 (import pytest)
 (import doeff_core_effects [state])
 (import doeff_core_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed SqlUnreachable SqlTable SqlColumn SqlColumnType])
-(import doeff_core_effects [SqliteFile open-sqlite-files close-sqlite-files sqlite-file-sql-handler])
+(import doeff_core_effects [open-sqlite-files close-sqlite-files sqlite-file-sql-handler])
 
 (val DB "custody")
 
@@ -51,12 +51,12 @@
 
 (deftest test-written-rows-survive-closing-and-reopening [tmp-path]
   (<- path (empty-file tmp-path))
-  (<- first (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- first (open-sqlite-files {DB path}))
   (try
     (<- written (with-handler [(state) (sqlite-file-sql-handler first)] (write-two DB)))
     (finally (<- (close-sqlite-files first))))
   (assert (= written.rowcount 1) written)
-  (<- again (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- again (open-sqlite-files {DB path}))
   (try
     (<- rows (with-handler [(state) (sqlite-file-sql-handler again)] (ledger-ids DB)))
     (finally (<- (close-sqlite-files again))))
@@ -77,7 +77,7 @@
     (.executemany seed "INSERT INTO ledger VALUES (?, ?, ?)" [#(7 "seven" 1) #(8 "eight" 0)])
     (.commit seed)
     (finally (.close seed)))
-  (<- files (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- files (open-sqlite-files {DB path}))
   (try
     (<- picked (with-handler [(state) (sqlite-file-sql-handler files)]
                  (SqlQuery DB "SELECT id, label, held FROM ledger WHERE id = :id" #((SqlParam :name "id" :value 8)))))
@@ -90,13 +90,13 @@
 (deftest test-a-missing-file-is-refused-not-created [tmp-path]
   (val path (/ tmp-path "missing.db"))
   (with [(pytest.raises sqlite3.OperationalError)]
-    (<- (open-sqlite-files #((SqliteFile :name DB :path (str path))))))
+    (<- (open-sqlite-files {DB (str path)})))
   (assert (not (.exists path)) "created a missing file"))
 
 
 (deftest test-the-journal-mode-is-wal [tmp-path]
   (<- path (empty-file tmp-path))
-  (<- files (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- files (open-sqlite-files {DB path}))
   (try
     (<- mode (with-handler [(state) (sqlite-file-sql-handler files)] (SqlQuery DB "PRAGMA journal_mode" #())))
     (finally (<- (close-sqlite-files files))))
@@ -124,7 +124,7 @@
 
 (deftest test-failures-are-values-not-exceptions [tmp-path]
   (<- path (empty-file tmp-path))
-  (<- files (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- files (open-sqlite-files {DB path}))
   (try
     (<- answers (with-handler [(state) (sqlite-file-sql-handler files)] (failures DB)))
     (finally (<- (close-sqlite-files files))))
@@ -171,7 +171,7 @@
 
 (deftest test-a-failure-inside-a-transaction-rolls-back [tmp-path]
   (<- path (empty-file tmp-path))
-  (<- files (open-sqlite-files #((SqliteFile :name DB :path path))))
+  (<- files (open-sqlite-files {DB path}))
   (try
     (<- answers (with-handler [(state) (sqlite-file-sql-handler files)] (transactions DB)))
     (finally (<- (close-sqlite-files files))))
