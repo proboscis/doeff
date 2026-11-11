@@ -301,3 +301,10 @@ def fold(
         # Shielded: in a fold whose own task is being cancelled, every wait outside a shield raises again.
         yield shielded(_close(origin, running, armed))
         raise
+
+
+# The declaration doeff-effect-analyzer reads for the fold: the ``program`` of each ``Run`` the function handed as
+# ``step`` builds (``Run.__doeff_runs_carried__``) runs in a task the fold spawns, under the handlers around the fold.
+# The reader reads each such program where the step (or a function it calls) writes the Run, carried by ``Spawn``,
+# and the runner's ``yield program`` adds nothing (the Run's program taken out by the ``case Run(...)`` above).
+fold.__doeff_runs_built__ = {"step": Spawn}  # type: ignore[attr-defined] — the analyzer's mark on a function (no typed slot)

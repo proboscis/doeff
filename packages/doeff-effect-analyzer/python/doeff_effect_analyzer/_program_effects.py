@@ -39,7 +39,16 @@ generator function):
 - ``E(..., fn, ...)`` where ``fn`` is a function filling a field ``E`` declares in
   ``__doeff_runs_carried__`` (``Traverse(f, items)`` — its handler calls ``f`` for each
   item) → a carried Program: ``fn``'s body, read where it was written.  The handler's
-  ``effect.f(item)`` then adds nothing where the handler is read.
+  ``effect.f(item)`` then adds nothing where the handler is read.  A field ``E`` declares
+  there holding a value made at run time (``Spawn(program)`` with ``program`` taken out of
+  data) is a place the reader cannot follow, carried by ``E``.
+- ``f(..., step, ...)`` where ``f`` declares ``__doeff_runs_built__ = {"step": E}``
+  (doeff-stream's ``fold`` — ``{"step": Spawn}``) → each value ``step`` builds, in its
+  body or the functions it calls, whose class is not an effect and declares a field in
+  ``__doeff_runs_carried__`` (``Run(key, program)``) → a Program carried by ``E``: that
+  field, read where the value is built.  Inside ``f`` the field a ``case Run(program=p)``
+  takes out then adds nothing (``BuiltField``); a ``step`` the reader cannot read is a
+  place it cannot follow.
 - ``f(xs)`` where ``xs`` is a tuple / list literal of Program calls, or a generator
   expression / list comprehension whose element is a Program call
   (``sequence(read(v) for v in values)``) → what ``f`` takes out of ``xs`` and yields
@@ -1370,6 +1379,18 @@ class ReceivedField:
     attr: str
 
 
+@dataclass(frozen=True)
+class BuiltField:
+    """A name a ``case Cls(attr=name)`` pattern takes out of a value ``Cls`` that declares
+    ``attr`` in ``__doeff_runs_carried__`` (doeff-stream's ``Run.program``), read in a Program
+    function that declares ``__doeff_runs_built__`` (``fold``): the Program the value carries.
+    The function's declaration has it read where the value was built — carried by the effect
+    the declaration names (``_Reader._runs_built``) — so performing it here adds nothing."""
+
+    cls: type
+    attr: str
+
+
 class _IdentityKind(Enum):
     PROGRAM = "program"  # a Program argument: its function and bindings
     PROGRAM_SEQUENCE = "program-sequence"  # a tuple / list of Program arguments
@@ -1377,6 +1398,7 @@ class _IdentityKind(Enum):
     LOCAL_FUNCTION = "local-function"  # a lambda / nested def, read where it was written
     WRITTEN_ARGUMENT = "written-argument"  # a builder argument, read as a handler where written
     RECEIVED_FIELD = "received-field"  # a field of a clause's received effect
+    BUILT_FIELD = "built-field"  # a field of a value taken apart where its builder is read
     INSTANCE = "instance"  # an instance of a class
     OBJECT = "object"  # any other object, by id
 
@@ -1580,7 +1602,17 @@ class _Unpacked:
     count: int
 
 
-_PROGRAM_VALUES = (_ProgramArg, _ProgramSeq, _ProgramAnyOf, _LocalFunction)
+@dataclass(frozen=True)
+class _Captured:
+    """A name one ``case Cls(…)`` pattern captures and nothing else binds: the pattern's class
+    and the field it takes — a keyword (``Cls(program=name)``) or a position in ``Cls``'s
+    ``__match_args__`` (``Cls(_, name)``)."""
+
+    cls: ast.expr
+    field: str | int
+
+
+_PROGRAM_VALUES =(_ProgramArg, _ProgramSeq, _ProgramAnyOf, _LocalFunction)
 
 
 def _programs_of(value: "_ProgramArg | _ProgramAnyOf") -> tuple[_ProgramArg, ...]:
@@ -1688,6 +1720,8 @@ def _identity(value: Imported) -> _Identity:
     match value:
         case ReceivedField():
             return _Identity(_IdentityKind.RECEIVED_FIELD, hash(value))
+        case BuiltField():
+            return _Identity(_IdentityKind.BUILT_FIELD, hash(value))
         case _Instance(cls=cls):
             return _Identity(_IdentityKind.INSTANCE, id(cls))
         case _:
@@ -1750,6 +1784,12 @@ class _Scope:
     # A parameter with a type annotation that the body does not rebind → the annotation (the
     # contract a ``defk`` writes from its ``:pre`` — ``answers: 'tuple[HttpRespond, ...]'``).
     local_declared: dict[str, ast.expr] = field(default_factory=dict)
+    # A name one ``case Cls(…)`` pattern captures and nothing else binds → the pattern's class
+    # and the field it takes (a keyword, or a position in ``__match_args__``).
+    local_patterns: dict[str, "_Captured"] = field(default_factory=dict)
+    # The body of a Program function that declares ``__doeff_runs_built__`` (``fold``): a field
+    # its patterns take out of a value it runs is a ``BuiltField``.
+    reads_built: bool = False
     bound: _Bound = _NO_BINDINGS
     # What each expression resolved to in this scope, by id(expr).  Resolution
     # reads only the frozen fields above and the module's globals, so a scope answers the
@@ -1820,6 +1860,25 @@ class _Scope:
                 return table[name]
         return UNBOUND
 
+    def _built_field(self, name: str) -> Imported:
+        """``case Run(program=program)`` in a body that declares ``__doeff_runs_built__`` → the
+        ``BuiltField`` the pattern takes out (the field ``Run`` declares in
+        ``__doeff_runs_carried__``); anything else → ``UNBOUND``."""
+        captured = self.local_patterns.get(name)
+        if not self.reads_built or captured is None:
+            return UNBOUND
+        cls = self.resolve(captured.cls)
+        if not isinstance(cls, type) or _is_effect_class(cls):
+            return UNBOUND
+        attr = captured.field
+        if isinstance(attr, int):
+            names = getattr(cls, "__match_args__", ())
+            if attr >= len(names):
+                return UNBOUND
+            attr = names[attr]
+        effects = importlib.import_module("doeff_core_effects._effects")
+        return BuiltField(cls, attr) if attr in effects.runs_carried_of(cls) else UNBOUND
+
     def _local_element(self, name: str) -> Imported:
         """An element of a sequence of Programs a local holds: the variable of a loop
         over one (any element), or a local bound once to ``ports[i]``."""
@@ -1835,7 +1894,8 @@ class _Scope:
 
     def _local_value(self, name: str) -> Imported:
         """What a local the reader follows holds: an element of a sequence of Programs, the
-        received effect or a field of it, or a function defined in the body (or returned by a
+        received effect or a field of it, a field a pattern takes out of a built value
+        (``BuiltField``), or a function defined in the body (or returned by a
         function the body calls at once) — else ``UNBOUND``."""
         if name in self.local_functions:
             return _LocalFunction(self.local_functions[name], self)
@@ -1846,7 +1906,10 @@ class _Scope:
         if element is not UNBOUND:
             return element
         alias = self._received_alias(name)
-        return alias if alias is not UNBOUND else self._received_field(name)
+        if alias is not UNBOUND:
+            return alias
+        received = self._received_field(name)
+        return received if received is not UNBOUND else self._built_field(name)
 
     def _returned_at_once(self, name: str) -> Imported:
         """A local bound once to a call of a def of the body that takes nothing and only
@@ -2278,8 +2341,11 @@ def _scope_of(
     *,
     parent: _Scope | None = None,
     bound: _Bound = _NO_BINDINGS,
+    reads_built: bool = False,
 ) -> _Scope:
-    """The names ``function`` binds, on top of ``parent`` (the function it is nested in)."""
+    """The names ``function`` binds, on top of ``parent`` (the function it is nested in).
+    ``reads_built``: ``function`` declares ``__doeff_runs_built__`` (see ``BuiltField``); a
+    function nested in it reads the same."""
     facts = _body_facts(function)
     names = set(facts.names)
     imports = facts.imports
@@ -2309,6 +2375,8 @@ def _scope_of(
             local_unpacked=unpacked,
             local_rows=rows,
             local_declared=declared,
+            local_patterns=facts.patterns,
+            reads_built=reads_built,
             bound=own_bound,
         )
     shadowed = frozenset(names)
@@ -2325,6 +2393,8 @@ def _scope_of(
         local_unpacked={**_unshadowed(parent.local_unpacked, shadowed), **unpacked},
         local_rows={**_unshadowed(parent.local_rows, shadowed), **rows},
         local_declared={**_unshadowed(parent.local_declared, shadowed), **declared},
+        local_patterns={**_unshadowed(parent.local_patterns, shadowed), **facts.patterns},
+        reads_built=reads_built or parent.reads_built,
         bound=parent.bound.without(shadowed).plus(own_bound),
     )
 
@@ -2347,6 +2417,7 @@ class _BodyFacts:
     rows: dict[str, tuple[_Unpacked, ...]]
     declared: dict[str, ast.expr]
     rebound: frozenset[str]
+    patterns: dict[str, _Captured]
 
 
 _BODY_FACTS: dict[int, tuple[FunctionNode, _BodyFacts]] = {}
@@ -2381,6 +2452,7 @@ _BINDING_NODES = frozenset(
         ast.AnnAssign,
         ast.For,
         ast.AsyncFor,
+        ast.MatchClass,
     }
 )
 
@@ -2399,9 +2471,13 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
     loops: dict[str, list[ast.expr]] = {}
     places: list[_Unpacked] = []
     row_places: list[_Unpacked] = []
+    captures: list[tuple[str, _Captured]] = []
     for node in _body_nodes(function):
         kind = type(node)
         if kind not in _BINDING_NODES or (kind is ast.Name and not isinstance(node.ctx, ast.Store)):
+            continue
+        if kind is ast.MatchClass:
+            captures.extend(_captured_names(node))
             continue
         names |= _bound_names(node)
         imports.update(_import_bindings(node))
@@ -2473,6 +2549,13 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         for name in row_times
         if name not in assigned and name not in loops and name not in times
     }
+    # A name one pattern captures, bound nowhere else, holds the field that pattern takes.
+    captured_times = collections.Counter(name for name, _ in captures)
+    patterns = {
+        name: captured
+        for name, captured in captures
+        if captured_times[name] == 1 and name not in names and name not in rebound
+    }
     return _BodyFacts(
         names=frozenset(names),
         imports=imports,
@@ -2488,7 +2571,24 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
             name: annotation for name, annotation in _annotations(function).items() if name not in rebound
         },
         rebound=rebound,
+        patterns=patterns,
     )
+
+
+def _captured_names(pattern: ast.MatchClass) -> list[tuple[str, _Captured]]:
+    """The names ``case Cls(a, field=b)`` captures directly in its arguments, each with the
+    field it takes (a nested pattern binds what its own class takes, not a field of ``Cls``)."""
+    positional = [
+        (sub.name, _Captured(pattern.cls, index))
+        for index, sub in enumerate(pattern.patterns)
+        if isinstance(sub, ast.MatchAs) and sub.pattern is None and sub.name is not None
+    ]
+    keywords = [
+        (sub.name, _Captured(pattern.cls, attr))
+        for attr, sub in zip(pattern.kwd_attrs, pattern.kwd_patterns, strict=True)
+        if isinstance(sub, ast.MatchAs) and sub.pattern is None and sub.name is not None
+    ]
+    return [*positional, *keywords]
 
 
 def _annotations(function: FunctionNode) -> dict[str, ast.expr]:
@@ -2657,21 +2757,55 @@ def _builds_carried(value: Imported) -> bool:
     return value.attr in effects.runs_carried_of(value.cls)
 
 
-def _declared_builders(carrier: Imported, call: ast.Call) -> tuple[ast.expr, ...]:
-    """The arguments of ``call`` that fill a field ``carrier`` declares in
-    ``__doeff_runs_carried__`` — matched to the parameter names of its constructor."""
-    if not _is_effect_class(carrier):
-        return ()
+# The reason named when a function declaring ``__doeff_runs_built__`` is handed a function the
+# reader cannot read: the Programs the values it builds carry are not known.
+_UNREAD_BUILDER = "handed a function whose built Programs cannot be read"
+
+# The top-level packages a step's helpers are not read in for built values (``_Reader._built_by``):
+# library code builds no value that carries a Program.
+_LIBRARY_PACKAGES = frozenset({"doeff", "doeff_vm", "doeff_hy", "hy", "builtins"})
+
+
+def _carries_built(value: Imported) -> bool:
+    """A class, not an effect, that declares a field holding a Program in
+    ``__doeff_runs_carried__`` (doeff-stream's ``Run``) — a value a step builds and a function
+    declaring ``__doeff_runs_built__`` runs."""
+    if not isinstance(value, type) or _is_effect_class(value):
+        return False
     effects = importlib.import_module("doeff_core_effects._effects")
-    declared = effects.runs_carried_of(carrier)
+    return bool(effects.runs_carried_of(value))
+
+
+def _reads_for_built(function: types.FunctionType) -> bool:
+    """Whether ``_Reader._built_by`` reads ``function`` (not the standard library, doeff or Hy)."""
+    top = function.__module__.partition(".")[0]
+    return top not in sys.stdlib_module_names and top not in _LIBRARY_PACKAGES
+
+
+def _declared_fields(cls: type, call: ast.Call) -> tuple[ast.expr, ...]:
+    """The arguments of ``call`` that fill a field ``cls`` declares in ``__doeff_runs_carried__``
+    — matched to the parameter names of its constructor."""
+    effects = importlib.import_module("doeff_core_effects._effects")
+    declared = effects.runs_carried_of(cls)
     if not declared:
         return ()
-    names = list(inspect.signature(carrier).parameters)
+    try:
+        names = list(inspect.signature(cls).parameters)
+    except (TypeError, ValueError):
+        return ()
     leading = itertools.takewhile(lambda a: not isinstance(a, ast.Starred), call.args)
     return (
         *(argument for name, argument in zip(names, leading, strict=False) if name in declared),
         *(keyword.value for keyword in call.keywords if keyword.arg in declared),
     )
+
+
+def _declared_builders(carrier: Imported, call: ast.Call) -> tuple[ast.expr, ...]:
+    """The arguments of ``call`` that fill a field ``carrier`` declares in
+    ``__doeff_runs_carried__`` — matched to the parameter names of its constructor."""
+    if not _is_effect_class(carrier):
+        return ()
+    return _declared_fields(carrier, call)
 
 
 def _unshadowed(table: dict[str, Any], shadowed: frozenset[str]) -> dict[str, Any]:
@@ -3528,6 +3662,92 @@ class _Reader:
             return
         facts.calls.append(_Call(function, bound, location))
         self._carried_arguments(target, call, scope, filename, facts, skip=performed)
+        self._runs_built(target, function, bound, call, scope, filename, facts, location)
+
+    def _runs_built(
+        self,
+        target: Imported,
+        function: types.FunctionType,
+        bound: _Bound,
+        call: ast.Call,
+        scope: _Scope,
+        filename: str,
+        facts: _Facts,
+        location: Location,
+    ) -> None:
+        """The Programs ``function`` runs from the values the function it is handed builds
+        (``__doeff_runs_built__`` — ``fold(step, …)`` spawns the ``program`` of every ``Run``
+        ``step`` answers): each is carried by the declared effect, read where the value was
+        built.  A handed function the reader cannot read is a place it cannot follow — what
+        the Programs it builds perform is not known, and is not dropped."""
+        declared = _runs_built_of(target) or _runs_built_of(function)
+        for parameter, carrier in declared.items():
+            handed = bound.get(parameter)
+            if isinstance(handed, _LocalFunction):
+                found = self._built_in(handed.node, handed.scope, filename)
+            elif (builder := _function_of(handed)) is not None:
+                found = self._built_by(builder)
+            else:
+                passed = _passed_arguments(function, call, scope)
+                written = next((p.argument for p in passed if p.name == parameter), None)
+                text = parameter if written is None else ast.unparse(written)
+                unread = _Facts(unresolved=[(_UNREAD_BUILDER, text, location)])
+                found = [_Carried(carrier, unread, text, location)]
+            facts.carried.extend(replace(built, carrier=carrier) for built in found)
+
+    def _built_by(self, function: types.FunctionType) -> list[_Carried]:
+        """The values carrying a Program that ``function`` and the functions it calls build
+        (a ``Run(key, program)`` written in a step or in a helper the step calls), read with
+        what each call binds.  Library code (the standard library, doeff itself, Hy) builds
+        none and is not read."""
+        found: list[_Carried] = []
+        seen: set[_ReadKey] = set()
+        pending: list[tuple[types.FunctionType, _Bound]] = [(function, _NO_BINDINGS)]
+        while pending:  # noqa: DOEFF012 - a depth-first walk over the call graph
+            called, bound = pending.pop()
+            key = _ReadKey(called, bound.key)
+            if key in seen:
+                continue
+            seen.add(key)
+            located = _locate(called, bound)
+            if isinstance(located, Unresolved):
+                text = qualified_name(called)
+                found.append(
+                    _Carried(
+                        called,
+                        _Facts(unresolved=[(located.reason, located.text, located.location)]),
+                        text,
+                        located.location,
+                    )
+                )
+                continue
+            found.extend(self._built_in(located.node, located.scope, located.filename, pending))
+        return found
+
+    def _built_in(
+        self,
+        node: FunctionNode,
+        scope: _Scope,
+        filename: str,
+        pending: list[tuple[types.FunctionType, _Bound]] | None = None,
+    ) -> list[_Carried]:
+        """The carried values built in ``node`` (each with its Program read where it is
+        written), queuing on ``pending`` the functions it calls."""
+        found: list[_Carried] = []
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            target = scope.resolve(child.func)
+            if _carries_built(target):
+                for argument in _declared_fields(target, child):
+                    body = _Facts()
+                    self._performed(argument, scope, filename, body)
+                    location = Location(filename, getattr(argument, "lineno", 0))
+                    found.append(_Carried(target, body, ast.unparse(argument), location))
+            elif pending is not None and (called := _function_of(target)) is not None:
+                if _reads_for_built(called):
+                    pending.append((called, _call_bindings(called, child, scope)))
+        return found
 
     def _returned(self, expr: ast.expr, scope: _Scope, filename: str, facts: _Facts) -> None:
         """A Program factory's ``return f(...)`` / ``return E(...)``; other returns are data."""
@@ -3599,12 +3819,34 @@ class _Reader:
                 body = _Facts()
                 self._performed_passed(program, body)
                 facts.carried.append(_Carried(carrier, body, _label_of(program), location))
-        facts.carried.extend(
-            built
-            for argument in _declared_builders(carrier, call)
-            if not self._carried_programs(argument, scope)
-            and (built := self._carried_builder(carrier, argument, scope, filename)) is not None
-        )
+        for argument in _declared_builders(carrier, call):
+            if self._carried_programs(argument, scope):
+                continue
+            built = self._carried_builder(carrier, argument, scope, filename)
+            if built is None:
+                built = self._carried_value(carrier, argument, scope, filename)
+            if built is not None:
+                facts.carried.append(built)
+
+    def _carried_value(
+        self, carrier: Imported, argument: ast.expr, scope: _Scope, filename: str
+    ) -> _Carried | None:
+        """A declared field filled with something that is neither a Program call nor a function
+        the reader reads: an effect (``Spawn(Tick())`` runs it), the Program a received effect or
+        a built value carries (read where it was performed or built — nothing here), or a value
+        made at run time (``Spawn(program)`` with ``program`` taken out of data).  The last is a
+        place the reader cannot follow: what the carrier runs is not known, and is named instead
+        of dropped.  A function value (a builder the reader does not read as a Program) is left
+        as before."""
+        value = _argument_value(argument, scope)
+        if isinstance(value, _LocalFunction) or _function_of(value) is not None:
+            return None
+        body = _Facts()
+        self._performed(argument, scope, filename, body)
+        if not (body.effects or body.calls or body.carried or body.unresolved or body.handled):
+            return None
+        location = Location(filename, getattr(argument, "lineno", 0))
+        return _Carried(carrier, body, ast.unparse(argument), location)
 
     def _carried_builder(
         self, carrier: Imported, argument: ast.expr, scope: _Scope, filename: str
@@ -3681,13 +3923,15 @@ class _Reader:
 def _adds_nothing(expr: ast.expr, scope: _Scope) -> bool:
     """A yielded value whose performing adds nothing here: ``None``, or the Program the
     received effect carried (``yield effect.program`` — read where the effect was
-    performed, see ``ReceivedField``), or the Program a function field it declares in
+    performed, see ``ReceivedField``), or the Program a value built in a step carries
+    (``case Run(program=program)`` in ``fold`` — read where it was built, see
+    ``BuiltField``), or the Program a function field it declares in
     ``__doeff_runs_carried__`` builds (``yield effect.f(item)`` — see ``_builds_carried``)."""
     match expr:
         case ast.Constant(value=None):
             return True
         case ast.Name() | ast.Attribute():
-            return isinstance(scope.resolve(expr), ReceivedField)
+            return isinstance(scope.resolve(expr), (ReceivedField, BuiltField))
         case ast.Call(func=func):
             return _builds_carried(scope.resolve(func))
         case _:
@@ -3740,8 +3984,31 @@ def _locate(function: types.FunctionType, bound: _Bound = _NO_BINDINGS) -> _Loca
         return Unresolved(
             "definition not found in source", function.__qualname__, _location_of(function)
         )
-    scope = _scope_of(node, module, bound=_method_self(function, module, node).plus(bound))
+    scope = _scope_of(
+        node,
+        module,
+        bound=_method_self(function, module, node).plus(bound),
+        reads_built=bool(_runs_built_of(function)),
+    )
     return _Located(node, scope, source.filename)
+
+
+def _runs_built_of(function: Any) -> Mapping[str, Any]:
+    """What a Program function declares in ``__doeff_runs_built__``: parameter name → the
+    effect that runs, where the function is performed, the Programs carried by the values the
+    function handed in that parameter builds (doeff-stream: ``fold.__doeff_runs_built__ =
+    {"step": Spawn}`` — ``fold`` spawns the ``program`` of each ``Run`` its step answers).  A
+    carried value is a class that is not an effect and declares the field holding the Program
+    in ``__doeff_runs_carried__`` (``Run``).  The declaration may sit on the function or on the
+    wrapper its module publishes it as (``@do``)."""
+    declared = getattr(function, "__doeff_runs_built__", None)
+    if declared is None and isinstance(function, types.FunctionType):
+        published: Any = sys.modules.get(function.__module__)
+        for part in _qualname_path(function):
+            published = getattr(published, part, None)
+        if published is not None and _function_of(published) is function:
+            declared = getattr(published, "__doeff_runs_built__", None)
+    return declared if isinstance(declared, Mapping) else {}
 
 
 def _method_self(
