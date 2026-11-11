@@ -61,14 +61,24 @@
 
 (deftest test-the-kept-line-does-not-take-the-jobs-limit-below-the-use-and-the-placed-needs
   ;; 線 KEEP で数えた上限が 0 でも、使い 4 GiB + 取り置き 2 GiB の床まで残す(要りの内の task は今の使いを保ち、要りまで伸びられる)。
-  (<- floored int (kept-jobs-limit (* 8 GIB) 0 (* 4 GIB) (* 2 GIB)))
+  (<- floored int (kept-jobs-limit (* 8 GIB) 0 (* 4 GIB) (* 2 GIB) False))
   (assert (= floored (* 6 GIB)) (/ floored GIB))
   ;; 追い出しの線で数えた上限がそれより小さい時は、追い出しの線のまま(kubelet の追い出しの手前の縮めは今のまま)。
-  (<- evicted int (kept-jobs-limit (* 3 GIB) 0 (* 4 GIB) (* 2 GIB)))
+  (<- evicted int (kept-jobs-limit (* 3 GIB) 0 (* 4 GIB) (* 2 GIB) False))
   (assert (= evicted (* 3 GIB)) (/ evicted GIB))
   ;; 線 KEEP の上限が床より大きい(線の上に空きが在る)時は、その上限のまま。
-  (<- roomy int (kept-jobs-limit (* 9 GIB) (* 7 GIB) (* 4 GIB) (* 2 GIB)))
+  (<- roomy int (kept-jobs-limit (* 9 GIB) (* 7 GIB) (* 4 GIB) (* 2 GIB) False))
   (assert (= roomy (* 7 GIB)) (/ roomy GIB)))
+
+
+(deftest test-the-kept-line-does-not-narrow-the-jobs-limit-while-an-urgent-task-is-placed
+  ;; 失敗ケース: 置き先は急ぎの task を線 KEEP を外した空きで置くのに、worker が層の上限を線 KEEP の床(使い 3 GiB + 取り置き 0)まで
+  ;; 絞り、置いた急ぎの task が伸びた所で層の中で OOM kill された(2026-11-12)。急ぎの task が居る間は追い出しの線の上限のまま。
+  (<- urgent int (kept-jobs-limit (* 8 GIB) 0 (* 3 GIB) 0 True))
+  (assert (= urgent (* 8 GIB)) (/ urgent GIB))
+  ;; 追い出しの線の縮めは急ぎの task にも掛かる(kubelet の追い出しの手前)。
+  (<- evicted int (kept-jobs-limit (* 2 GIB) 0 (* 3 GIB) 0 True))
+  (assert (= evicted (* 2 GIB)) (/ evicted GIB)))
 
 
 (deftest test-only-the-tasks-grown-past-their-needs-are-chosen-in-the-order-of-their-excess

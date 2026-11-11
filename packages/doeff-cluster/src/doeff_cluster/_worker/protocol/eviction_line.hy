@@ -59,7 +59,7 @@
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
-                                                  kept-jobs-limit CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold])
+                                                  kept-jobs-limit urgent-jobs CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
 
@@ -620,7 +620,9 @@
     (<- kept EvictionLine (kept-line line keep-room))
     (<- evicted int (jobs-limit current line margin floor-margin cap (+ reserve lent) pending))
     (<- narrowed int (jobs-limit current kept margin floor-margin cap (+ reserve lent) pending))
-    (<- found int (kept-jobs-limit evicted narrowed current pending))
+    ;; 急ぎの task が居る間は線 KEEP で絞らない(置き先が線 KEEP を外した空きで置いた task を、層の上限で止めない)。
+    (<- urgent-placed frozenset (urgent-jobs cell.needs))
+    (<- found int (kept-jobs-limit evicted narrowed current pending (bool urgent-placed)))
     ;; log の線の種類は、上限を決めた線(追い出しの線で決まった回は追い出しの線)。
     (when (< found evicted)
       (:= jobs-line kept))

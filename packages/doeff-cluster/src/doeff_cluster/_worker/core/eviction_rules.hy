@@ -465,14 +465,17 @@
              (max 0 (- need.bytes (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes)))))))
 
 
-(defk kept-jobs-limit [evicted kept jobs-current pending]
-  {:pre [(: evicted int) (>= evicted 0) (: kept int) (>= kept 0) (: jobs-current int) (>= jobs-current 0) (: pending int) (>= pending 0)]
+(defk kept-jobs-limit [evicted kept jobs-current pending urgent]
+  {:pre [(: evicted int) (>= evicted 0) (: kept int) (>= kept 0) (: jobs-current int) (>= jobs-current 0) (: pending int) (>= pending 0)
+         (: urgent bool)]
    :post [(: % int) (>= % 0) (<= % (max evicted kept))] :tags {:context "worker" :role "judgment"}}
   "jobs の層の memory.max を、上に載る系が残す線(種類 KEEP)では走っている task を止める所まで下げないため(頭の註の上に載る系が残す線):
    evicted = 追い出しの線だけで数えた上限(jobs-limit)・kept = 上に載る系が残す線でも数えた上限(kept-line の線で数えた jobs-limit —
    evicted 以下)・pending = 置いた task の取り置き(要り − 今の使いの和 — placed-pending)。kept と「jobs の今の使い + 取り置き」(床 —
-   走っている task が今の使いを保ち、要りまで伸びられる量)の大きい方を、evicted で切る(追い出しの線の縮めは今のまま)。"
-  (max kept (min evicted (+ jobs-current pending))))
+   走っている task が今の使いを保ち、要りまで伸びられる量)の大きい方を、evicted で切る(追い出しの線の縮めは今のまま)。
+   urgent = 置き先が置いた task に急ぎの優先(URGENT-PRIORITY 以上)の物が在る — その間は線 KEEP で絞らず evicted のまま(置き先は急ぎの
+   task を線 KEEP を外した空きで置く — load_rules の頭の註の急ぎの task の空き。絞ると、置いた急ぎの task が層の中で OOM kill された)。"
+  (if urgent evicted (max kept (min evicted (+ jobs-current pending)))))
 
 
 (defrecord TaskOver
