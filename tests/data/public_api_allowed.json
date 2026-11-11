@@ -8040,6 +8040,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.values",
+   "name": "DescendingWithin",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
    "name": "EachEvent",
    "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
@@ -8112,6 +8119,13 @@
    "module": "doeff_records.values",
    "name": "Expectation",
    "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "FieldDecl",
+   "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {

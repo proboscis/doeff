@@ -769,17 +769,22 @@ _KEYS_BEFORE_ENGLISH: dict[str, str] = {
 
 def _with_current_keys(value: object) -> object:
     """A table version read from git history, with the keys it had before the English rewrite renamed to the current ones."""
-    match value:
-        case dict():
-            return {_KEYS_BEFORE_ENGLISH.get(key, key): _with_current_keys(item) for key, item in value.items()}
-        case list():
-            return [_with_current_keys(item) for item in value]
-        case _:
-            return value
+    # Do not write a match statement: the commit hook's semgrep cannot read a match statement as syntax.
+    if isinstance(value, dict):
+        return {_KEYS_BEFORE_ENGLISH.get(key, key): _with_current_keys(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_with_current_keys(item) for item in value]
+    return value
+
+
+#: A whole row that the history rewrite of this repo replaced (rows of "added names" in the old versions).
+_REMOVED_ROW = "[removed]"
 
 
 def _version_at(commit: str, relative: str) -> KnownTable:
-    return _with_current_keys(json.loads(_git("show", f"{commit}:{relative}")))
+    """The table at a commit. Rows the history rewrite replaced with ``[removed]`` are left out (the line alone is not JSON)."""
+    kept = [line for line in _git("show", f"{commit}:{relative}").splitlines() if line.strip() != _REMOVED_ROW]
+    return _with_current_keys(json.loads("\n".join(kept)))
 
 
 def first_version() -> KnownTable | None:
