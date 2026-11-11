@@ -1892,6 +1892,34 @@ class _Scope:
             return element if isinstance(element, (_ProgramArg, _ProgramAnyOf)) else UNBOUND
         return UNBOUND
 
+    def _chosen_program(self, name: str) -> Imported:
+        """A local bound once to a conditional either branch of which builds a Program
+        (``body = a() if c else b()`` — Hy's ``(val body (if c (a) (b)))``): that Program, written
+        here — performed or handed on, it is read as both branches, as the conditional itself is.
+        A conditional holding what a ``yield`` / ``await`` answered (``x = (yield a()) if c else
+        (yield b())``, doeff-hy's bind expression ``b.value if … else (yield b)``) holds an answer,
+        not a Program, and is not followed."""
+        value = self.local_values.get(name)
+        if (
+            not isinstance(value, ast.IfExp)
+            or _reads_itself(value, name)
+            or _holds_an_answer(value)
+        ):
+            return UNBOUND
+        key = (id(self), name)
+        choosing = _CHOOSING.get()
+        if key in choosing:
+            return UNBOUND  # a conditional reached again through its own branches
+        token = _CHOOSING.set(choosing | {key})
+        try:
+            builds = _is_program_expr(value, self)
+        finally:
+            _CHOOSING.reset(token)
+        if not builds:
+            return UNBOUND
+        program = _ProgramArg(value, self)
+        return UNBOUND if _recurs(program) else program
+
     def _local_value(self, name: str) -> Imported:
         """What a local the reader follows holds: an element of a sequence of Programs, the
         received effect or a field of it, a field a pattern takes out of a built value
@@ -1905,6 +1933,9 @@ class _Scope:
         element = self._local_element(name)
         if element is not UNBOUND:
             return element
+        chosen = self._chosen_program(name)
+        if chosen is not UNBOUND:
+            return chosen
         alias = self._received_alias(name)
         if alias is not UNBOUND:
             return alias
@@ -2127,6 +2158,49 @@ def _reads_itself(value: ast.expr, name: str) -> bool:
     earlier value, not the bound one: a local bound that way is neither followed through
     the value nor read as an instance of it."""
     return name in _names_read(value)
+
+
+def _holds_an_answer(value: ast.expr) -> bool:
+    """Whether ``value`` takes what a ``yield`` / ``await`` answered (``(yield f())``, doeff-hy's
+    bind expression): a local bound to it holds an answer, not the Program it was asked with."""
+    return any(isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await)) for node in ast.walk(value))
+
+
+# The once-bound conditionals being resolved, by scope and local (``_Scope._chosen_program``): one
+# reached again through its own branches is not read again (it would never end).
+_CHOOSING: contextvars.ContextVar[frozenset[tuple[int, str]]] = contextvars.ContextVar(
+    "_CHOOSING", default=frozenset()
+)
+
+
+def _partial_applied(call: ast.Call, scope: _Scope) -> ast.Call:
+    """``call`` of a local bound once to ``functools.partial(f, a, …, k=v)`` (``mark =
+    partial(swept, cause, …)`` — Hy's ``(val mark (partial swept cause …))``) as the call of ``f``
+    it makes: ``f(a, …, <call's arguments>, k=v, <call's keywords>)`` — a keyword of the call
+    replaces the partial's.  The partial's arguments are written in this body, so they are read
+    here as written (a table entry's are not — ``_entry_call``).  Any other call → itself."""
+    seen: set[str] = set()
+    while isinstance(call.func, ast.Name) and call.func.id not in seen:
+        seen.add(call.func.id)
+        made = scope.local_calls.get(call.func.id)
+        if (
+            made is None
+            or not made.args
+            or isinstance(made.args[0], ast.Starred)
+            or scope.resolve(made.func) is not functools.partial
+        ):
+            break
+        replaced = {keyword.arg for keyword in call.keywords if keyword.arg is not None}
+        kept = [keyword for keyword in made.keywords if keyword.arg not in replaced]
+        call = ast.copy_location(
+            ast.Call(
+                func=made.args[0],
+                args=[*made.args[1:], *call.args],
+                keywords=[*kept, *call.keywords],
+            ),
+            call,
+        )
+    return call
 
 
 def _is_name_of(value: ast.expr, name: str) -> bool:
@@ -3058,10 +3132,11 @@ def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
                 return True
             call = scope.local_calls.get(name)
             return call is not None and _is_program_expr(call, scope)
-        case ast.Call(func=func):
-            if _install_form(expr, scope) is not None:
+        case ast.Call():
+            call = _partial_applied(expr, scope)
+            if _install_form(call, scope) is not None:
                 return True
-            head = scope.resolve(func)
+            head = scope.resolve(call.func)
             # A lambda / nested def called here (``(on-raise (do! …) …)`` expands to
             # ``on_raise(…)(<local def>())``) is read as ``_local_call`` reads it.
             # ``Perform(effect)`` handed on (``(timed-stage name (Perform effect))``) is read
@@ -3916,11 +3991,12 @@ class _Reader:
 
     @staticmethod
     def _as_call(expr: ast.expr, scope: _Scope) -> ast.Call | None:
-        """``expr`` as a call, through a local bound once to one (``x = f(); yield x``)."""
+        """``expr`` as a call, through a local bound once to one (``x = f(); yield x``), and
+        a call of a local partial as the call it makes (``_partial_applied``)."""
         if isinstance(expr, ast.Call):
-            return expr
+            return _partial_applied(expr, scope)
         if isinstance(expr, ast.Name) and expr.id in scope.local_calls:
-            return scope.local_calls[expr.id]
+            return _partial_applied(scope.local_calls[expr.id], scope)
         return None
 
 
