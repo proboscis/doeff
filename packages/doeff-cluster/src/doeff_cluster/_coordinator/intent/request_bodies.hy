@@ -223,12 +223,17 @@
    名乗らない〔見張りの読みが古い・前の版の worker〕。置き先は読まず、GET /state で測りの読み手が job ごとの CPU と PSS を 1 か所から読む・
    2026-11-10)・job-uses-at-ms = その見張りの読みの刻(worker の壁の時計の epoch ms — CPU の累計の差を割る間)・urgent-memory-available-MiB /
    urgent-jobs-room-MiB = worker が上に載る系の残す線を外して数えた memory の空きと jobs の層の空き(MiB — None = 線が空きを縮めていない・前の版の
-   worker。置き先は急ぎの優先の task だけをこの空きで数える — core/measured_room の頭の註の急ぎの task の空き・2026-11-10)。coordinator は保存せず、task の置き先を
+   worker。置き先は急ぎの優先の task だけをこの空きで数える — core/measured_room の頭の註の急ぎの task の空き・2026-11-10)・
+   lend-memory-available-MiB / lend-jobs-room-MiB = worker が線の内を貸す下の線で数えた memory の空きと jobs の層の空き(MiB — None = 貸さない・
+   前の版の worker。置き先は場所を譲る名乗りの task だけを借りとしてこの空きで数える)・reclaim-MiB = 上に載る系が memory の不足で仕事を
+   待たせている間に、機体の空きが線を割った量(MiB — None = 待っていない。置き先は借りの task をこの量まで止めて待ちの行へ戻す — どちらも
+   core/measured_room の頭の註の線の内の貸し・2026-11-12)。coordinator は保存せず、task の置き先を
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
            (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10 task-cpu-some-avg10) (or (is v None) (>= v 0))))
            (or (is cpu-nice None) (<= 0 cpu-nice 1)) (or (is prepare-wait-MiB None) (>= prepare-wait-MiB 0))
+           (or (is reclaim-MiB None) (> reclaim-MiB 0))
            (or (is task-memory-MiB None)
                (all (gfor #(k v) (.items task-memory-MiB)
                           (and (isinstance k str) (isinstance v int) (not (isinstance v bool)) (>= v 0)))))]}
@@ -249,7 +254,10 @@
   (setv #^ (| (get tuple #(MeasuredJob ...)) None) job-uses None)
   (setv #^ (| int None) job-uses-at-ms None)
   (setv #^ (| int None) urgent-memory-available-MiB None)
-  (setv #^ (| int None) urgent-jobs-room-MiB None))
+  (setv #^ (| int None) urgent-jobs-room-MiB None)
+  (setv #^ (| int None) lend-memory-available-MiB None)
+  (setv #^ (| int None) lend-jobs-room-MiB None)
+  (setv #^ (| int None) reclaim-MiB None))
 
 
 (defwire HeartbeatBody

@@ -135,6 +135,18 @@
 ;;; 失わせるだけの止めをしない)。名乗りの無い task は止めないので、名乗りを外せば今までどおり空きを待つ。急ぎを名乗るのも譲るのも送り手の
 ;;; 宣言で、系は値の意味を読まない。
 ;;;
+;;; 線の内の貸し(2026-11-12): 上に載る系が残す線は、置いた task を取り返す手が無いので、上に載る系が待っていない間も線の内を空けたまま
+;;; 持たせた(node-h の 11-11〜11-12 — MemAvailable 40〜60 GiB のうち線が 38 GiB を持ち、その機体でしか走れない作り直せる task が 21〜44 本
+;;; queued のまま待ち、要り 6144 MiB の task は小さい task に追い越され続けて 47 時間待った)。線の内を貸す下の線を名指す worker
+;;; (worker/core/load_rules の頭の註の線の内の貸し)は、その下の線で数えた空き(lend-memory-available-MiB・lend-jobs-room-MiB)も名乗る。
+;;; 場所を譲る名乗り(preemptible と rerun)を持つ切り離した task は、線の上の空き(平常の空き)で置ける worker が無い時、この空きで置き
+;;; (memory-room-mib の lend)、行に借りの印(TaskRecord の borrowed)を付ける。急ぎの優先の task は急ぎの task の空きで数えるので借りに
+;;; しない。上に載る系が memory の不足で仕事を待たせている間、worker は貸しを名乗らず、機体の空きが線を割った量(reclaim-MiB)を名乗る。
+;;; その worker の借りの task を、優先の低い順・戻る memory の大きい順に、戻る memory の和が割った量に届くまで止め、場所の譲りと同じ
+;;; 次の試行の待ちの行へ戻す(cluster_policy.reclaim-plan — 担い手の消失の上限に数えない)。止めた task が worker で止まって測りから消える
+;;; までの使いは、もう戻る memory として数え(同じ測りの拍ごとに止め足さない)、割った量に届いた後は止めない。上に載る系が待っていない
+;;; 間は、線を割っていても借りを止めない(線を割る訳が jobs の層の外の伸びでも、上に載る系が仕事を受け続けられる間は譲らせない)。
+;;;
 ;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
 ;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に常駐の job が膨らむ分は、機体の中の cgroup の層
 ;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
@@ -280,18 +292,25 @@
   (max 0 (- need (or use 0))))
 
 
-(defk memory-room-mib [measured reserved * [urgent False]]
-  {:pre [(: measured (| MeasuredLoad None)) (: reserved int) (: urgent bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+(defk memory-room-mib [measured reserved * [urgent False] [lend False]]
+  {:pre [(: measured (| MeasuredLoad None)) (: reserved int) (: urgent bool) (: lend bool)] :post [(: % int)]
+   :tags {:context "coordinator" :role "judgment"}}
   "worker に新しく置ける task の要りの最大(MiB)を知るため: min(測った memory の空き − MEMORY-FLOOR-MIB, jobs の層の空き −
    JOBS-ROOM-FLOOR-MIB)− reserved(置いた task の reserved-mib-of の和)。jobs の層の空きを名乗らない worker は前の項だけ(頭の註の
    jobs の層の空き)。urgent = 急ぎの優先の task の空きか(urgent-priority? — 頭の註の急ぎの task の空き): 真なら、worker が上に載る系の
-   残す線を外して名乗った 2 つの空き(名乗らない欄は平常の空き)で数える。負は 0 未満のまま返す(GET /state で詰めすぎを読めるように —
-   置き先は 0 以下の worker に置かない)。測りの無い worker は 0。"
+   残す線を外して名乗った 2 つの空き(名乗らない欄は平常の空き)で数える。lend = 借りの空きか(頭の註の線の内の貸し): 真なら、worker が
+   線の内を貸す下の線で名乗った 2 つの空き(名乗らない欄は平常の空き)で数える(urgent が先)。負は 0 未満のまま返す(GET /state で
+   詰めすぎを読めるように — 置き先は 0 以下の worker に置かない)。測りの無い worker は 0。"
   (when (is measured None)
     (return 0))
-  (val available (if (and urgent (is-not measured.urgent-memory-available-MiB None))
-                     measured.urgent-memory-available-MiB measured.memory-available-MiB))
-  (val jobs-room (if (and urgent (is-not measured.urgent-jobs-room-MiB None)) measured.urgent-jobs-room-MiB measured.jobs-room-MiB))
+  (val available (cond
+                   (and urgent (is-not measured.urgent-memory-available-MiB None)) measured.urgent-memory-available-MiB
+                   (and lend (is-not measured.lend-memory-available-MiB None)) measured.lend-memory-available-MiB
+                   True measured.memory-available-MiB))
+  (val jobs-room (cond
+                   (and urgent (is-not measured.urgent-jobs-room-MiB None)) measured.urgent-jobs-room-MiB
+                   (and lend (is-not measured.lend-jobs-room-MiB None)) measured.lend-jobs-room-MiB
+                   True measured.jobs-room-MiB))
   (val line-room (- available MEMORY-FLOOR-MIB))
   (val room (if (is jobs-room None) line-room (min line-room (- jobs-room JOBS-ROOM-FLOOR-MIB))))
   (- room reserved))
@@ -315,20 +334,21 @@
   (if (is measured None) None (- measured.memory-total-MiB MEMORY-FLOOR-MIB)))
 
 
-(defk measured-room [measured placed unseen reserved * [urgent False]]
-  {:pre [(: measured (| MeasuredLoad None)) (: placed int) (: unseen int) (: reserved int) (: urgent bool)] :post [(: % int) (>= % 0)]
+(defk measured-room [measured placed unseen reserved * [urgent False] [lend False]]
+  {:pre [(: measured (| MeasuredLoad None)) (: placed int) (: unseen int) (: reserved int) (: urgent bool) (: lend bool)] :post [(: % int) (>= % 0)]
    :tags {:context "coordinator" :role "judgment"}}
   "worker に task をあと幾つ置けるかを機体の測った空きから知るため(頭の註の数の空き — 0 以上): measured = heartbeat の測った空き(None =
    名乗らない)・placed = その worker に置いた task の数・unseen = そのうち測りにまだ出ていない数・reserved = 置いた task の memory の
    予約の和(MiB)。測りの無い・CPU の使いをまだ数えられない・PSI の待ちが出ている機体は 0。CPU の空きは普通の使い(normal-busy-of)
    から数え、task の層の PSI を名乗る worker は層の床(layer-floor-of)を下回らない。memory の空き(memory-room-mib)は
    MEMORY-SLOT-MIB の枠の数に写す(測りに出ていない task は引かない — その使いは予約が既に引いている)。置ける task の大きさは
-   memory-room-mib が決める。urgent = 急ぎの優先の task の数えか(memory-room-mib の urgent — 頭の註の急ぎの task の空き)。"
+   memory-room-mib が決める。urgent = 急ぎの優先の task の数えか(memory-room-mib の urgent — 頭の註の急ぎの task の空き)・lend = 借りの
+   数えか(memory-room-mib の lend — 頭の註の線の内の貸し)。"
   (when (or (is measured None) (is measured.cpu-busy None))
     (return 0))
   (when (! (pressured? measured))
     (return 0))
-  (<- memory-room int (memory-room-mib measured reserved :urgent urgent))
+  (<- memory-room int (memory-room-mib measured reserved :urgent urgent :lend lend))
   (<- busy float (normal-busy-of measured))
   (val idle-cores (- (* measured.cpus (- 1 busy)) CPU-FLOOR-CORES))
   (val cpu-room (- (floor (/ idle-cores TASK-CORES)) unseen))

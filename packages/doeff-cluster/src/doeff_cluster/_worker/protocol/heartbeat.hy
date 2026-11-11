@@ -104,6 +104,10 @@
    ;; 会話のターンに残す線を外した急ぎの task の空き(線が空きを縮めた時だけ — 2026-11-10・worker/core/load_rules の頭の註)。
    #** (if (is load.urgent-available-mib None) {} {"urgentMemoryAvailableMiB" load.urgent-available-mib})
    #** (if (is load.urgent-jobs-room-mib None) {} {"urgentJobsRoomMiB" load.urgent-jobs-room-mib})
+   ;; 線の内の貸しの空きと、上に載る系が待つ間の取り返す量(名乗る時だけ — 2026-11-12・worker/core/load_rules の頭の註の線の内の貸し)。
+   #** (if (is load.lend-available-mib None) {} {"lendMemoryAvailableMiB" load.lend-available-mib})
+   #** (if (is load.lend-jobs-room-mib None) {} {"lendJobsRoomMiB" load.lend-jobs-room-mib})
+   #** (if (is load.reclaim-mib None) {} {"reclaimMiB" load.reclaim-mib})
    ;; keeper が版の準備を待つ間の取り置き(待っている時だけ — 2026-11-10)。
    #** (if (is load.prepare-wait-mib None) {} {"prepareWaitMiB" load.prepare-wait-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。

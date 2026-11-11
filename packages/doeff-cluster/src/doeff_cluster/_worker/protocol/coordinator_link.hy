@@ -231,6 +231,9 @@
           ;; 命令の層を掛け直す線の file と短い命令の余地 MiB(枠の file の行の commandLineFile と commandFloorMiB — worker/core/eviction_rules の
           ;; 頭の註の命令の層。空と 0 = 掛け直さない)。file を読めない間は前の値のまま。
           self.command-line-file "" self.command-floor-mib 0
+          ;; 線の内を貸す下の線の file と取り返しの印の file(枠の file の行の lendLineFile と reclaimFile — worker/core/load_rules の頭の註の
+          ;; 線の内の貸し。空 = 貸さない)。file を読めない間は前の値のまま。
+          self.lend-line-file "" self.reclaim-file ""
           ;; 機体の測った空き: load-paths = 読む file か OS の口の印(None = 測らない)・measured = 最後に測れた値(None = まだ測れていない・最後の読みが
           ;; 読めなかった — heartbeat に載せない)・load-ticks = 前に読めた /proc/stat(CPU の使いの起点)・load-read-ms = 最後に読んだ刻・
           ;; load-reason = 前の読めない訳("" = 読めた — 同じ訳の 2 度目は log に出さない)。eviction = 機体の memory の見張りの追い出しの
@@ -868,14 +871,15 @@
         (:= reading read))
       (val before (WorkerRoom :memory-mib state.memory-mib :pools state.pools :keep-line-file state.keep-line-file
                               :command-line-file state.command-line-file :command-floor-mib state.command-floor-mib
-                              :pinned-to-node state.room-pinned))
+                              :pinned-to-node state.room-pinned :lend-line-file state.lend-line-file
+                              :reclaim-file state.reclaim-file))
       (val after (if (is reading.room None) before reading.room))
       (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
         (<- line str (room-line before after reading))
         (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
       (setv state.pools after.pools state.memory-mib after.memory-mib state.keep-line-file after.keep-line-file
             state.command-line-file after.command-line-file state.command-floor-mib after.command-floor-mib
-            state.room-pinned after.pinned-to-node
+            state.room-pinned after.pinned-to-node state.lend-line-file after.lend-line-file state.reclaim-file after.reclaim-file
             state.room-state reading.state state.room-reason reading.reason)
       ;; 命令の層を掛け直す線の file と床を見張りの入れ物へ渡す(worker/core/eviction_rules の頭の註の命令の層)。
       (when (is-not state.eviction None)
@@ -884,13 +888,16 @@
   None)
 
 
-(defk proc-load-read [paths before now-ms line [keep-line-file ""]]
-  {:pre [(: paths LoadPaths) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None)) (: keep-line-file str)]
+(defk proc-load-read [paths before now-ms line [keep-line-file ""] [lend-line-file ""] [reclaim-file ""]]
+  {:pre [(: paths LoadPaths) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None)) (: keep-line-file str)
+         (: lend-line-file str) (: reclaim-file str)]
    :post [(: % (| LoadReading str))]}
   "機体の /proc の file(paths)を読み、測りの 1 回の読みにするため。答え = 読めた時は LoadReading、/proc/stat か /proc/meminfo を
    読めない・形の違う読みは訳の str。PSI の file を読めない機体は PSI の欄を None で名乗る(task の層の cpu.pressure も
    同じ — 層の無い worker は読まない)。before = 前に読めた刻み(CPU の使いの起点)・line = 見張りの新しい追い出しの線(None = 無いか古い)。
-   keep-line-file = 会話のターンに残す線の file(worker/core/load_rules の頭の註 — 空 = 読まない。読めない間は線が無いと読む)。"
+   keep-line-file = 会話のターンに残す線の file(worker/core/load_rules の頭の註 — 空 = 読まない。読めない間は線が無いと読む)。
+   lend-line-file / reclaim-file = 線の内を貸す下の線の file と取り返しの印の file(worker/core/load_rules の頭の註の線の内の貸し — 空 =
+   読まない。下の線を読めない間は貸さず、印を読めない間は上に載る系が待っていないと読む)。"
   (<- stat (| str FileFailed) (ReadText paths.stat))
   (<- meminfo (| str FileFailed) (ReadText paths.meminfo))
   (<- cpu-pressure (| str FileFailed) (ReadText paths.cpu-pressure))
@@ -903,6 +910,14 @@
   (when keep-line-file
     (<- read (| str FileFailed) (ReadText keep-line-file))
     (:= keep-line read))
+  (var lend-line None)
+  (when lend-line-file
+    (<- read (| str FileFailed) (ReadText lend-line-file))
+    (:= lend-line read))
+  (var reclaim-mark None)
+  (when reclaim-file
+    (<- read (| str FileFailed) (ReadText reclaim-file))
+    (:= reclaim-mark read))
   (cond
     (not (isinstance stat str)) (.format "{} を読めない: {}" paths.stat stat.detail)
     (not (isinstance meminfo str)) (.format "{} を読めない: {}" paths.meminfo meminfo.detail)
@@ -911,7 +926,9 @@
                                                     (if (isinstance memory-pressure str) memory-pressure None)
                                                     before now-ms line
                                                     (if (isinstance task-cpu-pressure str) task-cpu-pressure None)
-                                                    :keep-line (if (isinstance keep-line str) keep-line None)))
+                                                    :keep-line (if (isinstance keep-line str) keep-line None)
+                                                    :lend-line (if (isinstance lend-line str) lend-line None)
+                                                    :reclaim-mark (if (isinstance reclaim-mark str) reclaim-mark None)))
            reading
            (except [error ValueError]
              (str error)))))
@@ -948,14 +965,18 @@
           (if (is eviction None) (fresh-line None None now-ms) (fresh-line eviction.line eviction.line-at-ms now-ms)))
       (<- read (| LoadReading str) (if (isinstance source HostLoad)
                                        (host-load-read source state.load-ticks now-ms line)
-                                       (proc-load-read source state.load-ticks now-ms line state.keep-line-file)))
+                                       (proc-load-read source state.load-ticks now-ms line state.keep-line-file
+                                                       state.lend-line-file state.reclaim-file)))
       (val reading (if (isinstance read str) None read))
       (val reason (if (isinstance read str) read ""))
       ;; 会話のターンに残す線の上の空きを見張りへ渡す(見張りが jobs の層の上限をその線の上にも収める — worker/core/eviction_rules の
       ;; kept-line。読めない回は None で渡し、見張りは追い出しの線だけで数える)。
       (when (is-not state.eviction None)
         (setv state.eviction.keep-room (if (is reading None) None reading.keep-room-bytes)
-              state.eviction.keep-room-at-ms now-ms))
+              state.eviction.keep-room-at-ms now-ms
+              ;; 線の内の貸しの下の線の上の空き(見張りが借りの受けの上限を数える — 貸さない回は None)。
+              state.eviction.lend-room (if (is reading None) None reading.lend-room-bytes)
+              state.eviction.lend-room-at-ms now-ms))
       (when (!= reason state.load-reason)
         (<- (slog (if reason (+ "worker: 機体の空きを測れない — heartbeat に載せない: " reason) "worker: 機体の空きを測れた — heartbeat に載せる")
                   :level (if reason "warning" "info"))))
@@ -980,6 +1001,12 @@
       (when (is-not state.eviction None)
         (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake-urgent state.eviction.jobs-held))
         (:= urgent-jobs-room told))
+      ;; 借りの jobs の層の空き(貸す下の線で数えた受けの上限 − 使い — load_rules の頭の註の線の内の貸し)。貸しの memory の空きを名乗る
+      ;; 回だけ名乗る(貸さない回の古い受けを名乗らない)。
+      (var lend-jobs-room None)
+      (when (and (is-not state.eviction None) (is-not reading None) (is-not reading.load.lend-available-mib None))
+        (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake-lend state.eviction.jobs-held))
+        (:= lend-jobs-room told))
       ;; keeper が版の準備を待つ間の取り置きを添える(coordinator は名乗る worker に新しく常駐の job を置かない — load_rules.prepare-wait-of)。
       (var prepare-wait None)
       (when (is-not state.eviction None)
@@ -988,6 +1015,7 @@
       (setv state.load-reason reason
             state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
                                                                :urgent-jobs-room-mib urgent-jobs-room
+                                                               :lend-jobs-room-mib lend-jobs-room
                                                                :prepare-wait-mib prepare-wait :job-meters job-meters
                                                                :job-meters-at-ms (if (is job-meters None) None
                                                                                      state.eviction.meters-at-ms)))

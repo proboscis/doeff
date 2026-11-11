@@ -212,6 +212,9 @@
           self.growths #() self.margin None self.told-margin None self.reserve 0 self.prepare-wait 0 self.uses #() self.uses-at-ms None
           self.jobs-current None self.jobs-held None self.clis-limit None self.clis-current None self.lent 0
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.jobs-intake-urgent None self.keep-room None self.keep-room-at-ms None
+          ;; 線の内の貸し(worker/core/load_rules の頭の註): lend-room = heartbeat の測りが最後に読んだ「MemAvailable − 貸す下の線」(byte —
+          ;; None = 貸さない回)・lend-room-at-ms = その読みの刻・jobs-intake-lend = 同じ回に下の線で数えた借りの受けの上限(None = 貸さない)。
+          self.lend-room None self.lend-room-at-ms None self.jobs-intake-lend None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
           self.meters #() self.meters-at-ms None self.retired False self.declared {} self.box-limits #() self.box-held None)))
@@ -604,6 +607,7 @@
   (var intake settings.jobs-cap-bytes)
   (var jobs-line line)
   (var urgent None)
+  (var lend None)
   ;; jobs の層の天井(worker/core/eviction_rules の頭の註): 宣言した機体は、container の中の空きを読めた回だけ宣言の静的な値の代わりに天井で
   ;; 切る(下の box の上限が container の上限の手前で止める)。container を読めない回は静的な値のまま。
   (val boxed? (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None)))
@@ -625,6 +629,13 @@
     ;; 縮めていない回は名乗らない(None — 置き先は平常の受けで数える)。置いた後の memory.max は kept-jobs-limit が取り置きまで広げる。
     (<- told-urgent int (jobs-limit working line margin margin cap (+ reserve lent waiting) 0))
     (:= urgent (if (< told told-urgent) (min evicted told-urgent) None))
+    ;; 借りの受け(worker/core/load_rules の頭の註の線の内の貸し): 同じ式を貸す下の線で数える(下の線の方が低いので受けは広がる)。
+    ;; 貸さない回は名乗らない。置いた後の memory.max は、急ぎの task と同じく kept-jobs-limit が取り置きまで広げる。
+    (<- lend-room (| int None) (fresh-keep-room cell.lend-room cell.lend-room-at-ms now-ms))
+    (when (is-not lend-room None)
+      (<- lend-line EvictionLine (kept-line line lend-room))
+      (<- told-lend int (jobs-limit working lend-line margin margin cap (+ reserve lent waiting) 0))
+      (:= lend (if (< told told-lend) (min evicted told-lend) None)))
     (:= limit found)
     (:= intake told)
     (when boxed?
@@ -633,7 +644,9 @@
       (:= limit (min limit boxed))
       (:= intake (min intake boxed-intake))
       (when (is-not urgent None)
-        (:= urgent (min urgent boxed-intake)))))
+        (:= urgent (min urgent boxed-intake)))
+      (when (is-not lend None)
+        (:= lend (min lend boxed-intake)))))
   (when (is-not line None)
     (<- room-failure str (room-written settings line margin reserve addable))
     (:= failure (or failure room-failure)))
@@ -644,7 +657,8 @@
     (<- written (| FileFailed None) (WriteText (+ settings.jobs-dir "/memory.max") (str limit)))
     (if (isinstance written FileFailed)
         (:= failure (.format "jobs の層の memory.max に {} を書けない: {}" limit written.detail))
-        (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)) cell.jobs-intake-urgent urgent)))
+        (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)) cell.jobs-intake-urgent urgent
+              cell.jobs-intake-lend lend)))
   (val squeezed (and (is-not line None) (is-not current None) (is-not limit None) (not failure) (< limit current)))
   (when (and squeezed (not cell.squeezed))
     (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line jobs-line.kind.value :line-mib (// jobs-line.size-bytes MIB)

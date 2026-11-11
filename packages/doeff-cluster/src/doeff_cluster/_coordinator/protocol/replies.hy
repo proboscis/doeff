@@ -59,7 +59,10 @@
      (if task.rerun {"rerun" True "attempt" task.attempt "losses" task.losses} {})
      ;; 場所を譲る名乗りと、この試行を積み直した訳が場所の譲りなら譲った相手(2026-11-11)— 名乗る・譲った task だけ。
      (if task.preemptible {"preemptible" True} {})
-     (if task.preempted-by {"preemptedBy" task.preempted-by} {})))
+     (if task.preempted-by {"preemptedBy" task.preempted-by} {})
+     ;; 線の内の借りとして置いた印と、この試行が借りの取り返しで積み直された印(2026-11-12)— 借りた・取り返した task だけ。
+     (if task.borrowed {"borrowed" True} {})
+     (if task.reclaimed {"reclaimed" True} {})))
 
 
 (defk spec-json [#^ JobSpec spec]

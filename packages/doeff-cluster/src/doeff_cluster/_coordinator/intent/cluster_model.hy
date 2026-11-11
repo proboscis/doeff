@@ -1276,7 +1276,13 @@
   ;; (cluster_policy.preempted-detached)。preempted-by = この試行を積み直した訳が場所の譲りなら、譲った相手の task の id(空 = 譲っていない)。
   ;; 欄の無い旧い行は名乗らない・譲っていないで読む。
   (setv #^ bool preemptible False)
-  (setv #^ str preempted-by ""))
+  (setv #^ str preempted-by "")
+  ;; --- 線の内の貸し(2026-11-12 — core/measured_room の頭の註)---
+  ;; borrowed = この試行を、worker が線の内を貸す下の線で名乗った空きへ借りとして置いた(置き先が付ける — 場所を譲る名乗りの task だけ)。
+  ;; 上に載る系が memory の不足で仕事を待たせる間、置き先は借りの task を止めて次の試行の待ちの行へ戻す(cluster_policy.reclaimed-detached)。
+  ;; reclaimed = この試行を積み直した訳が借りの取り返しか(真 = 取り返した)。欄の無い旧い行は借りていない・取り返していないで読む。
+  (setv #^ bool borrowed False)
+  (setv #^ bool reclaimed False))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

@@ -219,10 +219,15 @@
   (if before.notify
       (DetachedEnded :id (+ attempt.id RERAN-SUFFIX) :key (or attempt.key "") :notify attempt.notify :phase "queued"
                      ;; 場所を譲って止めた試行(cluster_policy.preempted-detached)は、担い手は消えていないので譲った訳を書く。
-                     :detail (if attempt.preempted-by
+                     ;; 借りを取り返して止めた試行(cluster_policy.reclaimed-detached)も、担い手は消えていないので取り返した訳を書く。
+                     :detail (cond
+                               attempt.preempted-by
                                  (.format "優先の高い task {} に場所を譲るため worker {} で止めた — 試行 {} を最初から走らせる"
                                           attempt.preempted-by before.worker attempt.attempt)
-                                 (.format "担い手の worker {} が消えた — 試行 {} を最初から走らせる" before.worker attempt.attempt))
+                               attempt.reclaimed
+                                 (.format "上に載る系が memory を待つので、worker {} の線の内に借りて置いた試行を止めた — 試行 {} を最初から走らせる"
+                                          before.worker attempt.attempt)
+                               True (.format "担い手の worker {} が消えた — 試行 {} を最初から走らせる" before.worker attempt.attempt))
                      :failure-kind "" :finished-ms now :kind OUTBOX-RERAN)
       None))
 

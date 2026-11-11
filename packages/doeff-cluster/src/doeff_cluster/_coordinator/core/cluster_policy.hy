@@ -836,24 +836,25 @@
     True None))
 
 
-(defk task-room-of [worker load * [urgent False]]
-  {:pre [(: worker WorkerInfo) (: load dict) (: urgent bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+(defk task-room-of [worker load * [urgent False] [lend False]]
+  {:pre [(: worker WorkerInfo) (: load dict) (: urgent bool) (: lend bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker に task をあと幾つ置けるかを知るため: 機体の測った空き(worker.measured)から数えた数(measured_room.measured-room — 置いた
    task と、そのうち測りにまだ出ていない task を引く。memory の空き〔task-memory-room-of〕が 0 以下なら 0)。常駐の job の今の使いは
    測った値に入っているので、その分を残して数える。以前は手書きの予約と背景の枠(枠の file の taskReserve・backgroundRoom)から置いた
    task を引いた。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom はこの値を読む。
-   urgent = 急ぎの優先の task の数えか(measured_room の頭の註の急ぎの task の空き — GET /state は平常の数え)。"
+   urgent = 急ぎの優先の task の数えか(measured_room の頭の註の急ぎの task の空き — GET /state は平常の数え)・lend = 借りの数えか
+   (measured_room の頭の註の線の内の貸し)。"
   (val used (get load worker.name))
-  (! (measured-room worker.measured used.tasks used.unseen used.reserved-mib :urgent urgent)))
+  (! (measured-room worker.measured used.tasks used.unseen used.reserved-mib :urgent urgent :lend lend)))
 
 
-(defk task-memory-room-of [worker load * [urgent False]]
-  {:pre [(: worker WorkerInfo) (: load dict) (: urgent bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+(defk task-memory-room-of [worker load * [urgent False] [lend False]]
+  {:pre [(: worker WorkerInfo) (: load dict) (: urgent bool) (: lend bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker に新しく置ける task の memory の要りの最大(MiB)を知るため: 測った memory の空き − 床 − 置いた task の予約の和
    (measured_room.memory-room-mib — 2026-11-02)。task の置き先(place-tasks)は要りがこの値以下の worker にだけ置き、GET /state の
    taskMemoryRoomMiB はこの値を出す。load = load-of の答え。urgent = 急ぎの優先の task の数えか(measured_room の頭の註の急ぎの
-   task の空き — GET /state は平常の数え)。"
-  (! (memory-room-mib worker.measured (. (get load worker.name) reserved-mib) :urgent urgent)))
+   task の空き — GET /state は平常の数え)・lend = 借りの数えか(measured_room の頭の註の線の内の貸し)。"
+  (! (memory-room-mib worker.measured (. (get load worker.name) reserved-mib) :urgent urgent :lend lend)))
 
 
 (defk memory-need-refusal [state needs memory-mib]
@@ -1530,7 +1531,47 @@
   (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
            :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
            :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
-           :rerun-note note :detail note :preempted-by by.id))
+           :rerun-note note :detail note :preempted-by by.id :borrowed False :reclaimed False))
+
+
+(defk reclaim-victims [worker rows]
+  {:pre [(: worker WorkerInfo) (: rows tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "上に載る系が memory の不足で仕事を待たせている worker で、止めて待ちの行へ戻す借りの task を知るため(measured_room の頭の註の線の内の
+   貸し): rows = 今の task の行。worker が取り返す量(measured の reclaim-MiB)を名乗る時だけ、その worker に置いた(PLACED-PHASES)
+   借りの task(borrowed — 場所を譲る名乗りと走らせ直しの名乗りを持つ切り離した task)を、優先の低い順・測りの名乗る今の使いの大きい順
+   (同じなら id の順)に、今の使いの和が取り返す量に届くまで並べる。測りに出ていて行が置いた task でない使い(止めた後で worker がまだ
+   止めていない task)は既に戻る memory として先に数える(拍ごとに止め足さない)。名乗らない・届いている時は空。"
+  (val measured worker.measured)
+  (when (or (is measured None) (is measured.reclaim-MiB None))
+    (return #()))
+  (val uses (or measured.task-memory-MiB {}))
+  (val placed (frozenset (gfor t rows :if (and (in t.phase PLACED-PHASES) (= t.worker worker.name)) t.id)))
+  (val freeing (sum (gfor #(id use) (.items uses) :if (not-in id placed) use)))
+  (val ordered (sorted (gfor t rows :if (and t.detached t.borrowed t.preemptible t.rerun (in t.phase PLACED-PHASES)
+                                             (= t.worker worker.name))
+                             t)
+                       :key (fn [t] #(t.priority (- (.get uses t.id 0)) t.id))))
+  (var picked #())
+  (var freed freeing)
+  (for [t ordered]
+    (when (>= freed measured.reclaim-MiB)
+      (break))
+    (:= picked #(#* picked t))
+    (:= freed (+ freed (.get uses t.id 0))))
+  picked)
+
+
+(defk reclaimed-detached [task now worker]
+  {:pre [(: task TaskRecord) (: now int) (: worker str)] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "judgment"}}
+  "上に載る系が memory を待つので取り返す借りの task の次の行(measured_room の頭の註の線の内の貸し — 場所の譲りの preempted-detached と
+   同じ形・id が替わり、呼び手は前の行を消す)。担い手は消えていないので、消失の上限に数えない(losses を足さない)。detail と rerun-note に
+   取り返した訳を、reclaimed に印を残す。"
+  (val note (.format "上に載る系が memory の不足で仕事を待たせているので、worker {} の線の内に借りて置いた試行を止めた(優先 {}・場所を譲る名乗り)— 試行 {} を最初から待つ(上限に数えた消失 {}/{} 回)"
+                     worker task.priority (+ task.attempt 1) task.losses RERUN-LIMIT))
+  (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+           :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
+           :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
+           :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed True))
 
 
 (defk kept-text [text worker]
@@ -1668,7 +1709,7 @@
       (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
                :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
                :avoid #() :env-attempts 0 :failure-kind "" :retryable False :losses losses :retiring ""
-               :rerun-note note :detail note :preempted-by "")))
+               :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed False)))
 
 
 (defn #^ str waiting-detail [#^ TaskRecord task #^ str text]
@@ -1824,6 +1865,15 @@
                (not (alive now (.row state.workers task.worker) timing.reassign-after-ms))))
         (setv (get writes id) (replace task :phase "failed" :finished-ms now
                                        :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))))
+  ;; 線の内の貸しの取り返し(measured_room の頭の註): 上に載る系が memory を待つ worker の借りの task を止めて次の試行の待ちの行へ戻す。
+  ;; 待ちの行は下で queue に入り、この拍に置き直せる(その worker は待つ間は貸しを名乗らない)。
+  (val after-scan (tuple (gfor #(id task) (.items live) :setv row (if (in id writes) (get writes id) task) :if (is-not row None) row)))
+  (for [w (sorted (.rows state.workers) :key (fn [w] w.name)) :if (alive now w timing.lease-ms)]
+    (<- victims tuple (reclaim-victims w after-scan))
+    (for [v victims]
+      (<- next-row TaskRecord (reclaimed-detached v now w.name))
+      (setv (get writes v.id) None
+            (get writes next-row.id) next-row)))
   ;; 走査の後の行の読み(書いた行が先・無ければ元の行)。
   (for [#(id task) (.items live)]
     (setv now-row (if (in id writes) (get writes id) task))
@@ -1921,10 +1971,30 @@
       ;; 機体を選び、置かれた task が jobs の層の追い出しで止まり、置き直しで 1 回ごとに 5〜15 分遅れた(2026-11-11)。
       ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
       ;; 次は測った空きの多い順(以前は担っている数の少ない順 — 空いた機体があるのに混んだ機体へ置いた)、同じ空きは名の順。
-      (setv free (lfor #(w _) (sorted roomy :key (fn [pair] #((.get shorts (. (get pair 0) name) 0)
+      (var free (lfor #(w _) (sorted roomy :key (fn [pair] #((.get shorts (. (get pair 0) name) 0)
                                                               (not (env-ready-on task.runtime-env (get pair 0)))
                                                               (- (get pair 1)) (. (get pair 0) name))))
                        w))
+      ;; 線の内の貸し(measured_room の頭の註): 場所を譲る名乗りの門の内の task が線の上の空きで置けない時、worker が線の内を貸す空きで
+      ;; 数え直し、入る worker に借りとして置く(急ぎの優先の task は急ぎの task の空きで数えるので借りにしない)。
+      (var lent False)
+      (when (and (not free) (not urgent) (not task.ungated) task.detached task.preemptible task.rerun)
+        (var lend-roomy #())
+        ;; 取り返す量を名乗る worker(上に載る系が待っている)には貸さない(前の版の worker が両方を名乗っても)。
+        (for [w able-now :if (and (is-not w.measured None) (is-not w.measured.lend-memory-available-MiB None)
+                                  (is w.measured.reclaim-MiB None))]
+          (<- lend-room int (task-room-of w load :lend True))
+          (<- lend-memory-room int (task-memory-room-of w load :lend True))
+          (<- lend-misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w lend-room held state.group-limits
+                                                                 (get bg-held w.name) (get bg-wanted w.name) (get needs w.name)
+                                                                 lend-memory-room))
+          (when (is lend-misfit None)
+            (:= lend-roomy #(#* lend-roomy #(w lend-room)))))
+        (when lend-roomy
+          (:= free (lfor #(w _) (sorted lend-roomy :key (fn [pair] #((not (env-ready-on task.runtime-env (get pair 0)))
+                                                                     (- (get pair 1)) (. (get pair 0) name))))
+                         w))
+          (:= lent True)))
       ;; 場所の譲り(measured_room の頭の註): 急ぎの優先の task が memory の空きに入らない(門の内は置ける worker が無い・門の外は選んだ
       ;; worker でも要りが空きを越える)時、同じ worker の場所を譲る名乗りの優先の低い task を止めて次の試行の待ちの行へ戻し、この拍で
       ;; 急ぎの task をその worker に置く。止めた task の process は、返事から外れた job として worker が止める(走らせ直しの道と同じ)。
@@ -1950,7 +2020,7 @@
                                            :reserved-mib (max 0 (- yield-used.reserved-mib (sum (gfor v plan.victims v.reserved-mib))))
                                            :unmeasured-mib (max 0 (- yield-used.unmeasured-mib (sum (gfor v plan.victims :if (not v.measured)
                                                                                                   v.reserved-mib))))))
-          (setv free [yield-worker])))
+          (:= free [yield-worker])))
       ;; 置けずに STARVE-WAIT-MS を越えて待った task と急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は(keeps-room?)、memory の空きだけで
       ;; 置けない worker のうち、今の task が全部終われば入る見込みの在る 1 台に要りを取っておく(measured_room の頭の註の取っておき)。
       ;; 後ろの順の task は、その worker の memory の空きから要りを引いて数える。測った空きの門の外の task は空きを待たないので取っておかない
@@ -1983,9 +2053,13 @@
                  ;; 止めた task を detail に名指す。
                  (setv (get writes id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
-                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms)
-                                                   :detail (if (is yielded None)
+                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms) :borrowed lent
+                                                   :detail (cond
+                                                             lent (.format "線の上の memory の空きに入らないので、worker {} の線の内に借りとして置いた(上に載る系が memory を待つ間は止めて待ちの行へ戻す)"
+                                                                           chosen.name)
+                                                             (is yielded None)
                                                                task.detail
+                                                             True
                                                                (.format "memory の空きに入らないので、worker {} の優先の低い task {} に場所を譲らせて置いた"
                                                                         chosen.name (.join "・" (gfor v yielded.victims v.task.id)))))
                                           (replace task :phase phase :worker chosen.name :started-ms now))))

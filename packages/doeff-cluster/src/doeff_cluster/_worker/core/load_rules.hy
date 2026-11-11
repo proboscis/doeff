@@ -42,6 +42,16 @@
 ;;; kept-jobs-limit)。急ぎの task は線の内の memory を使い、その分だけ上に載る系は新しいターンを待たせる(作り直せない走っている
 ;;; ターンは追い出しの線の手前の空きで守られる)。線が名乗る空きを縮めていない回は名乗らない(None — 平常の空きと同じ)。
 ;;;
+;;; 線の内の貸し(2026-11-12): 線を高く置くのは、一度置いた task を上に載る系の仕事のために取り返す手が無かったからで、線の内の memory は
+;;; 上に載る系が待っていない間も空けたまま持たれた(node-h の 11-11〜11-12 — MemAvailable 40〜60 GiB のうち線が 38 GiB を持ち、task に残るのは
+;;; 5〜16 GiB。その機体でしか走れない作り直せる task が 21〜44 本 queued のまま待ち、要り 6144 MiB の task は 47 時間待った)。枠の file の行が
+;;; 貸す下の線の file と取り返しの印の file(room_rules の lendLineFile と reclaimFile)を名指す worker は、線が名乗る空きを縮めている間、下の線
+;;; までの空き(lend-available-mib = min(追い出しまでの空き, MemAvailable − 下の線))と、同じ下の線で数えた jobs の層の空き(lend-jobs-room-mib —
+;;; 見張りの jobs-intake-lend)も名乗る。coordinator は場所を譲る名乗り(preemptible と rerun)の task だけを、線の上の空きで置けない時に
+;;; この空きへ借りとして置く。取り返しの印の file は、上に載る系が memory の不足で仕事を待たせるたびに epoch ms を書く file で、印が
+;;; RECLAIM-FRESH-MS の内の間は貸しを名乗らず、MemAvailable が線を割った量(reclaim-mib)を名乗る — coordinator は借りの task を優先の低い順に
+;;; 止めて待ちの行へ戻す(coordinator/core/measured_room の頭の註の線の内の貸し)。上に載る系が待っていない間は取り返さない。
+;;;
 ;;; /proc の無い機体(macOS): 入口が LoadPaths の代わりに印 HostLoad を渡し、同じ間ごとに問い ReadHostCounters で OS の口から CPU の
 ;;; 刻みと memory を読む(答え手 foundation/host_counters — mach の host_statistics・sysctl)。CPU の使いと nice の分は /proc/stat と同じく
 ;;; 前の読みとの間の刻みの増えの比で数え、memory は OS の数えた総量と空き(host-load-of)。PSI は OS に無いので None。測りを名乗らない
@@ -72,6 +82,9 @@
 (val NICE-FIELD 1)
 ;; 頭の行 cpu の欄のうち、和に数える数(user nice system idle iowait irq softirq steal — 後ろの guest と guest_nice は user と nice に含まれる)。
 (val TICK-FIELDS 8)
+;; 取り返しの印(頭の註の線の内の貸し)を「上に載る系が今待っている」と読む新しさの上限。上に載る系は待たせている間、数秒ごとに仕事を
+;; 返し直して印を書き直すので、1 分書かれない印は待ちが解けたと読む。刻の比べは同じ機体の壁の時計どうし。
+(val RECLAIM-FRESH-MS (* 60 1000))
 
 
 (defrecord LoadPaths
@@ -139,9 +152,15 @@
    JobMeter の tuple — job-meters-told。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator は保存せず GET /state の worker の行に
    写す・2026-11-10)・job-meters-at-ms = その見張りの読みの刻(epoch ms — job-meters が None の時は None)・urgent-available-mib /
    urgent-jobs-room-mib = 会話のターンに残す線を外して数えた memory の空きと jobs の層の空き(MiB — 頭の註の急ぎの task の空き。None =
-   線が空きを縮めていない・名乗らない〔線が無いか古い〕— coordinator は急ぎの優先の task だけをこの空きで置く・2026-11-10)。"
+   線が空きを縮めていない・名乗らない〔線が無いか古い〕— coordinator は急ぎの優先の task だけをこの空きで置く・2026-11-10)・
+   lend-available-mib / lend-jobs-room-mib = 線の内を貸す下の線で数えた memory の空きと jobs の層の空き(MiB — 頭の註の線の内の貸し。None =
+   貸さない〔線が空きを縮めていない・下の線か取り返しの印が無い・上に載る系が待っている〕— coordinator は場所を譲る名乗りの task だけを
+   借りとしてこの空きで置く・2026-11-12)・reclaim-mib = 上に載る系が待っている間に MemAvailable が線を割った量(MiB — 頭の註の線の内の
+   貸し。None = 待っていないか割っていない — coordinator は借りの task をこの量まで止めて待ちの行へ戻す・2026-11-12)。"
   {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)
            (or (is urgent-available-mib None) (>= memory-total-mib urgent-available-mib memory-available-mib))
+           (or (is lend-available-mib None) (>= memory-total-mib lend-available-mib memory-available-mib))
+           (or (is reclaim-mib None) (> reclaim-mib 0)) (or (is reclaim-mib None) (is lend-available-mib None))
            (or (is cpu-nice None) (and (is-not cpu-busy None) (<= 0 cpu-nice cpu-busy)))
            (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0)) (or (is prepare-wait-mib None) (> prepare-wait-mib 0))
            (= (is job-meters None) (is job-meters-at-ms None))]}
@@ -162,16 +181,21 @@
   (setv #^ (| (get tuple #(JobMeter ...)) None) job-meters None)
   (setv #^ (| int None) job-meters-at-ms None)
   (setv #^ (| int None) urgent-available-mib None)
-  (setv #^ (| int None) urgent-jobs-room-mib None))
+  (setv #^ (| int None) urgent-jobs-room-mib None)
+  (setv #^ (| int None) lend-available-mib None)
+  (setv #^ (| int None) lend-jobs-room-mib None)
+  (setv #^ (| int None) reclaim-mib None))
 
 
 (defrecord LoadReading
   "測りの 1 回の読みの答え: load = 名乗る測り・ticks = この読みの /proc/stat(次の読みが CPU の使いを数える起点)・keep-room-bytes = 機体の
    MemAvailable − 会話のターンに残す線(byte・負もありうる — None = 線が無い・読めない。見張りが jobs の層の上限をこの線の上にも収める —
-   worker/core/eviction_rules の頭の註の上に載る系が残す線)。"
+   worker/core/eviction_rules の頭の註の上に載る系が残す線)・lend-room-bytes = 機体の MemAvailable − 線の内を貸す下の線(byte・負もありうる —
+   None = 貸さない回〔load の lend-available-mib が None〕。見張りが借りの受けの上限 jobs-intake-lend をこの線で数える — 頭の註の線の内の貸し)。"
   (#^ MachineLoad load)
   (#^ CpuTicks ticks)
-  (setv #^ (| int None) keep-room-bytes None))
+  (setv #^ (| int None) keep-room-bytes None)
+  (setv #^ (| int None) lend-room-bytes None))
 
 
 (defk load-read-due [read-ms now-ms]
@@ -208,6 +232,44 @@
       (NodeMemory :total-bytes memory.total-bytes
                   :available-bytes (min memory.available-bytes (max 0 (- machine.available-bytes (* keep MIB))))
                   :some-avg10 memory.some-avg10 :full-avg10 memory.full-avg10)))
+
+
+(defk reclaiming? [mark-text at-ms]
+  {:pre [(: mark-text (| str None)) (: at-ms int)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "取り返しの印の file の中身 mark-text(頭の註の線の内の貸し — 上に載る系が仕事を待たせた最後の刻の epoch ms・None = 読めない)から、
+   上に載る系が今 memory の不足で仕事を待たせているかを知るため: 印が数で、測りの刻 at-ms との差が RECLAIM-FRESH-MS の内(前後どちらも —
+   同じ機体の壁の時計)なら真。読めない・数でない・古い印は偽(待っていない)。"
+  (<- mark (| int None) (keep-line-of mark-text))
+  (and (is-not mark None) (<= (abs (- at-ms mark)) RECLAIM-FRESH-MS)))
+
+
+(defrecord LentRoom
+  "線の内の貸しの 1 回の数え(頭の註の線の内の貸し): available-mib = 名乗る貸しの memory の空き(None = 貸さない)・room-bytes = 機体の
+   MemAvailable − 下の線(None = 貸さない — 見張りの借りの受けの線)・reclaim-mib = 名乗る取り返しの量(None = 取り返さない)。"
+  {:check [(= (is available-mib None) (is room-bytes None)) (or (is reclaim-mib None) (> reclaim-mib 0))
+           (or (is reclaim-mib None) (is available-mib None))]}
+  (#^ (| int None) available-mib)
+  (#^ (| int None) room-bytes)
+  (#^ (| int None) reclaim-mib))
+
+
+(defk lent-room [kept by-line machine keep lend reclaiming]
+  {:pre [(: kept NodeMemory) (: by-line NodeMemory) (: machine NodeMemory) (: keep (| int None)) (: lend (| int None)) (: reclaiming bool)]
+   :post [(: % LentRoom)] :tags {:context "worker" :role "judgment"}}
+  "線の内を貸す空きと取り返す量を数えるため(頭の註の線の内の貸し): kept = 線の上に絞った名乗り(kept-memory)・by-line = 追い出しの線で
+   数えた名乗り(line-memory)・machine = 機体の MemTotal と MemAvailable・keep = 会話のターンに残す線(MiB — None = 無い)・lend = 貸す
+   下の線(MiB — None = 読めない)・reclaiming = 上に載る系が今待っている(reclaiming?)。上に載る系が待っている間は貸さず、MemAvailable が
+   線を割った量(MiB の切り上げ — 割っていなければ None)を取り返す量とする。待っていない間は、線が名乗りを縮めていて、下の線が線より
+   低い時だけ、min(追い出しまでの空き, max(線の上の空き, MemAvailable − 下の線))を貸しの空きとする。"
+  (cond
+    (is keep None) (LentRoom :available-mib None :room-bytes None :reclaim-mib None)
+    reclaiming (do (val short (- (* keep MIB) machine.available-bytes))
+                   (LentRoom :available-mib None :room-bytes None :reclaim-mib (if (> short 0) (- (// (- short) MIB)) None)))
+    (and (is-not lend None) (< lend keep) (< kept.available-bytes by-line.available-bytes))
+      (do (val room (- machine.available-bytes (* lend MIB)))
+          (LentRoom :available-mib (// (min by-line.available-bytes (max kept.available-bytes room)) MIB) :room-bytes room
+                    :reclaim-mib None))
+    True (LentRoom :available-mib None :room-bytes None :reclaim-mib None)))
 
 
 (defk task-uses-of [uses uses-at-ms now-ms]
@@ -309,16 +371,19 @@
       (min 1.0 (/ (- after.nice before.nice) (- after.total before.total)))))
 
 
-(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None] [task-cpu-pressure None] [keep-line None]]
+(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None] [task-cpu-pressure None] [keep-line None]
+                       [lend-line None] [reclaim-mark None]]
   {:pre [(: stat str) (: meminfo str) (: cpu-pressure (| str None)) (: memory-pressure (| str None)) (: before (| CpuTicks None)) (: at-ms int)
-         (: line (| EvictionLine None)) (: task-cpu-pressure (| str None)) (: keep-line (| str None))]
+         (: line (| EvictionLine None)) (: task-cpu-pressure (| str None)) (: keep-line (| str None)) (: lend-line (| str None))
+         (: reclaim-mark (| str None))]
    :post [(: % LoadReading)] :tags {:context "worker" :role "judgment"}}
   "/proc/stat・/proc/meminfo・PSI の 2 つの file の中身(読めない PSI の file は None)と前の /proc/stat の読み before を、機体の測った
    空きにするため。line = 機体の memory の見張りが最後に数えた追い出しの線(worker/core/eviction_rules — None = 線が無いか古い)。
    線が在れば memory の総量と空きは線の大きさと追い出しまでの空き(見張りの DANGER と同じ量 — coordinator はこの空きで task を置く)、
    無ければ MemTotal と MemAvailable。task-cpu-pressure = task の層の cpu.pressure の中身(None = 層が無いか読めない)。keep-line = 会話の
-   ターンに残す線の file の中身(頭の註 — None = 読まない・読めない。読めれば空きを MemAvailable − 線の上に絞る — kept-memory)。形の
-   違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
+   ターンに残す線の file の中身(頭の註 — None = 読まない・読めない。読めれば空きを MemAvailable − 線の上に絞る — kept-memory)。
+   lend-line / reclaim-mark = 線の内を貸す下の線の file と取り返しの印の file の中身(頭の註の線の内の貸し — None = 読まない・読めない。
+   lent-room)。形の違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
   (<- ticks CpuTicks (cpu-ticks-of stat))
   (<- busy (| float None) (cpu-busy-between before ticks))
   (<- nice (| float None) (cpu-nice-between before ticks))
@@ -326,6 +391,9 @@
   (<- by-line NodeMemory (line-memory machine line))
   (<- memory NodeMemory (kept-memory by-line machine keep-line))
   (<- keep (| int None) (keep-line-of keep-line))
+  (<- lend (| int None) (keep-line-of lend-line))
+  (<- reclaiming bool (reclaiming? reclaim-mark at-ms))
+  (<- lent LentRoom (lent-room memory by-line machine keep lend reclaiming))
   (var cpu None)
   (when (is-not cpu-pressure None)
     (<- read Pressure (pressure-of cpu-pressure "/proc/pressure/cpu"))
@@ -343,9 +411,12 @@
                                   :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10)
                                   ;; 急ぎの task の空き(頭の註): 線が空きを縮めた時だけ、線を外した空きも名乗る。
                                   :urgent-available-mib (if (< memory.available-bytes by-line.available-bytes)
-                                                            (// by-line.available-bytes MIB) None))
+                                                            (// by-line.available-bytes MIB) None)
+                                  ;; 線の内の貸し(頭の註): 貸す空きか、上に載る系が待つ間の取り返す量。
+                                  :lend-available-mib lent.available-mib :reclaim-mib lent.reclaim-mib)
                :ticks ticks
-               :keep-room-bytes (if (is keep None) None (- machine.available-bytes (* keep MIB)))))
+               :keep-room-bytes (if (is keep None) None (- machine.available-bytes (* keep MIB)))
+               :lend-room-bytes lent.room-bytes))
 
 
 (defk host-load-of [counters before at-ms [line None]]

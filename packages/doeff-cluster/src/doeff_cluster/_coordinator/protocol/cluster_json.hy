@@ -82,7 +82,10 @@
                  (if task.ungated #{} #{"ungated"})
                  ;; 場所を譲る名乗りの無い行と、譲った印の無い行も欄を置かない(同じ訳 — 2026-11-11)。
                  (if task.preemptible #{} #{"preemptible"})
-                 (if task.preempted-by #{} #{"preempted_by"})))
+                 (if task.preempted-by #{} #{"preempted_by"})
+                 ;; 借りの印と取り返した印の無い行も欄を置かない(同じ訳 — 2026-11-12)。
+                 (if task.borrowed #{} #{"borrowed"})
+                 (if task.reclaimed #{} #{"reclaimed"})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -154,7 +157,10 @@
               :ungated (stored-bool data "ungated" False)
               ;; 場所を譲る名乗りと譲った印の欄の無い行は名乗らない・譲っていない(足した欄 — 2026-11-11)。
               :preemptible (stored-bool data "preemptible" False)
-              :preempted-by (stored-str data "preempted_by" "")))
+              :preempted-by (stored-str data "preempted_by" "")
+              ;; 借りの印と取り返した印の欄の無い行は借りていない・取り返していない(足した欄 — 2026-11-12)。
+              :borrowed (stored-bool data "borrowed" False)
+              :reclaimed (stored-bool data "reclaimed" False)))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; cannot be a defk: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り
