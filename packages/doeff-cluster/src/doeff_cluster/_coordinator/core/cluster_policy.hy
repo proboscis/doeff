@@ -753,11 +753,13 @@
    unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(measured を載せた同じ heartbeat の状態の報告に、動いている行
    task/<id> が無いか、置いた刻 started-ms が measured_room.unseen-since の刻より後 — 走り出したばかりの task の使いは測りに出きって
    いない)・reserved-mib = 置かれた task の memory の予約の和(task ごとに measured_room.reserved-mib-of — 要り〔task-need-of — 名乗りと
-   測った山の大きい方〕− worker の測りが名乗る task の今の使い〔名乗られない task は 0 — 要りの全部〕)。
+   測った山の大きい方〕− worker の測りが名乗る task の今の使い〔名乗られない task は 0 — 要りの全部〕)・unmeasured-mib = 置かれた task の
+   うち worker の測りが今の使いを名乗らない task の要りの和(測った空きにまだ出ていない分 — WorkerLoad の註)。
    置ける空きは memory-room-of・memory-misfit・task-room-of・task-memory-room-of がこの値から求める(数え方を 1 か所にする)。"
   (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0)
         unseen (dfor name (.keys state.workers) name 0)
         reserved (dfor name (.keys state.workers) name 0)
+        unmeasured (dfor name (.keys state.workers) name 0)
         ;; 測りの名乗る task ごとの今の使い(worker ごと — 名乗らない worker は空)。
         uses (dfor #(name w) (.items state.workers)
                    name (if (or (is w.measured None) (is w.measured.task-memory-MiB None)) {} w.measured.task-memory-MiB))
@@ -780,13 +782,18 @@
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks))
       (+= (get tasks t.worker) 1)
-      (+= (get reserved t.worker) (run (reserved-mib-of (run (task-need-of t (.row state.workers t.worker) peaks)) (.get (get uses t.worker) t.id))))
+      (setv need (run (task-need-of t (.row state.workers t.worker) peaks))
+            use (.get (get uses t.worker) t.id))
+      (+= (get reserved t.worker) (run (reserved-mib-of need use)))
+      (when (is use None)
+        (+= (get unmeasured t.worker) need))
       (setv cut-off (get since t.worker))
       (when (and (is-not cut-off None)
                  (not (and (in t.id (get live t.worker)) (is-not t.started-ms None) (<= t.started-ms cut-off))))
         (+= (get unseen t.worker) 1))))
   (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name) :settle-mib (get settles name)
-                                                    :unseen (get unseen name) :reserved-mib (get reserved name))))
+                                                    :unseen (get unseen name) :reserved-mib (get reserved name)
+                                                    :unmeasured-mib (get unmeasured name))))
 
 
 (defk memory-room-of [worker load]
@@ -1786,6 +1793,9 @@
       ;; 要りは worker ごと(測った山をその worker の線で切る — task-need-of)。
       (var needs {})
       (var rooms {})
+      ;; 要りの足りなさ(worker の名 → MiB — 置き先の順の頭)。門の外の task は、測った空きから測りにまだ出ていない task の要りだけを
+      ;; 引いた空き(伸びの見込みを引かない — measured_room の頭の註の置き先の順)で数える。門の内の task は数えない(0 — roomy は要りが入る worker だけ)。
+      (var shorts {})
       (var roomy #())
       (var misfits [])
       ;; 急ぎの優先の task は、worker が上に載る系の残す線を外して名乗る空きで数える(measured_room の頭の註の急ぎの task の空き)。
@@ -1796,6 +1806,9 @@
         (<- room int (task-room-of w load :urgent urgent))
         (<- memory-room int (task-memory-room-of w load :urgent urgent))
         (setv (get rooms w.name) memory-room)
+        (when task.ungated
+          (<- bare-room int (memory-room-mib w.measured (. (get load w.name) unmeasured-mib) :urgent urgent))
+          (setv (get shorts w.name) (max 0 (- need bare-room))))
         ;; 測った空きの門の外の task は、空きと予約を判じず、名乗った組(宣言に無い組・組の上限)だけで判じる(measured_room の頭の註の
         ;; 測った空きの門の外の task)。
         (<- misfit (| TaskUnplacedKind None) (if task.ungated
@@ -1805,9 +1818,14 @@
         (if (is misfit None)
             (:= roomy #(#* roomy #(w room)))
             (:= misfits [#* misfits misfit])))
+      ;; 置き先の順の頭は要りの足りなさ(shorts — 入る worker は 0)の小さい順(measured_room の頭の註の測った空きの門の外の task の置き先の
+      ;; 順)。門の内の task はどれも 0 で順は変わらない。門の外の task は、要りの入る worker が在ればそこへ、どこにも入らなければ足りなさの
+      ;; 最も小さい worker へ置く(待たない)。前は空きを判じず次の順だけで選び、測った空きの数が同じ 0 の 2 台から名の順で memory の少ない
+      ;; 機体を選び、置かれた task が jobs の層の追い出しで止まり、置き直しで 1 回ごとに 5〜15 分遅れた(2026-11-11)。
       ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
       ;; 次は測った空きの多い順(以前は担っている数の少ない順 — 空いた機体があるのに混んだ機体へ置いた)、同じ空きは名の順。
-      (setv free (lfor #(w _) (sorted roomy :key (fn [pair] #((not (env-ready-on task.runtime-env (get pair 0)))
+      (setv free (lfor #(w _) (sorted roomy :key (fn [pair] #((.get shorts (. (get pair 0) name) 0)
+                                                              (not (env-ready-on task.runtime-env (get pair 0)))
                                                               (- (get pair 1)) (. (get pair 0) name))))
                        w))
       ;; 置けずに STARVE-WAIT-MS を越えて待った task と急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は(keeps-room?)、memory の空きだけで
@@ -1832,7 +1850,8 @@
                        ;; 置いた task は今の刻 now に置かれ、測った刻より後なので測りにまだ出ていない(load-of の unseen と同じ数え)。
                        ;; 今の使いも名乗られていないので、要りの全部を予約する(load-of の reserved-mib と同じ数え)。
                        (get load chosen.name) (replace used :tasks (+ used.tasks 1) :unseen (+ used.unseen 1)
-                                                       :reserved-mib (+ used.reserved-mib (get needs chosen.name))))
+                                                       :reserved-mib (+ used.reserved-mib (get needs chosen.name))
+                                                       :unmeasured-mib (+ used.unmeasured-mib (get needs chosen.name))))
                  (when (< task.priority 0)
                    (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))

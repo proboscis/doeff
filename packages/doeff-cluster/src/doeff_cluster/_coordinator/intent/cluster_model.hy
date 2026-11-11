@@ -165,13 +165,16 @@
    measured_room.TASK-RAMP-MS より後に置いた task — 測りの無い worker は 0)・reserved-mib = 置いた task の memory の予約の和(MiB —
    task ごとの max(0, 要り − 測りの名乗る今の使い)・measured_room.reserved-mib-of — 2026-11-02)。job の側の空き(memory-room-of・
    memory-misfit)は settle-mib と worker の memory-mib から、task の空き(task-room-of・task-memory-room-of)は worker の measured と
-   tasks・unseen・reserved-mib から求める。jobs は置く順にだけ使う。"
+   tasks・unseen・reserved-mib から求める。jobs は置く順にだけ使う。unmeasured-mib = 置いた task のうち、worker の測りが今の使いを
+   名乗らない task(置いた直後・測りの前の版の worker)の要りの和(MiB — 測った空きにまだ出ていない分。測りが使いを名乗る task のこれから
+   伸びる分は入れない)。測った空きの門の外の task の置き先の順(measured_room の頭の註)が、伸びの見込みを引かない空きを数えるのに使う。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ int jobs)
   (#^ int tasks)
   (#^ int settle-mib)
   (setv #^ int unseen 0)
-  (setv #^ int reserved-mib 0))
+  (setv #^ int reserved-mib 0)
+  (setv #^ int unmeasured-mib 0))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
