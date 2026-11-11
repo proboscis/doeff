@@ -68,6 +68,12 @@
 
 ### Changed
 
+- **Breaking (doeff-hy):** `<-` and `!` also refuse, at expansion time, a literal value (or a plain-value name in a
+  `defk`) as the last form of a `do` or `let` in the value position of the bound expression — e.g.
+  `(<- x (if c (f) (do (<- y (g)) (if (is y None) None (h y)))))`. The last form of a multi-line `do` is the value
+  the bind yields, so a bare `None` there failed at runtime with `TypeError (yield got None)` (a failure example: the
+  branch that handled a refused `git merge --ff-only` crashed and a finished operation was recorded as failed). Wrap
+  the value with `(Pure …)`.
 - **Breaking (doeff-core-effects, behaviour change):** a cancelled task stays cancelled. Before, one `Cancel` threw
   `TaskCancelledError` into the task once; a task that caught it (an `except`, or a `Try` that turned it into `Err`)
   went on running — borrowing credentials, calling services — while its waiters were already told it was cancelled

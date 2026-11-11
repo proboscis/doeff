@@ -72,17 +72,29 @@
 (setv PLAIN-VALUE-SYMBOLS #{"None" "True" "False"})
 
 
+(deff value-branches [expr]  ; defk にできない: a function called at macro expansion time
+  {:pre [(: expr Object)] :post [(: % tuple)]
+   :tags {:context "doeff-hy-outcomes" :role "foundation"}}
+  "The sub-forms of expr whose value is the value of expr — the two branches of if, the value branches of cond, and the last form of do / let — so that
+   plain-value-of and bound-value-of read the same nested value positions. The last form of a multi-line do counts (failure example:
+   `(<- back (if timeout (settle p) (do (<- cleared (Clear p)) (if (is cleared None) None (+ …)))))` yielded a bare None when git refused a
+   fast-forward, and a finished operation was recorded as failed)."
+  (match (head-name expr)
+    "if" (tuple (cut expr 2 None))
+    "cond" (tuple (cut expr 2 None 2))
+    "do" (if (> (len expr) 1) (tuple (cut expr -1 None)) #())
+    "let" (if (> (len expr) 2) (tuple (cut expr -1 None)) #())
+    _ #()))
+
+
 (deff plain-value-of [expr]  ; defk にできない: a function called at macro expansion time
   {:pre [(: expr Object)] :post [(: % (| Object None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "One literal value that the bound expression expr (the expression of `<-`, the content of `!`) can evaluate to (None if none) — to refuse at expansion time a bind that
-   yields a value that is neither an effect nor a Program. Only value positions are looked at: the expression itself, the two branches of if, and the value branches of cond (nested too).
-   when / unless become None when the condition fails, so the whole expression is returned."
+   yields a value that is neither an effect nor a Program. Only value positions are looked at: the expression itself, the two branches of if, the value branches of cond,
+   and the last form of do / let (nested too — value-branches). when / unless become None when the condition fails, so the whole expression is returned."
   (let [head (head-name expr)
-        branches (match head
-                   "if" (cut expr 2 None)
-                   "cond" (cut expr 2 None 2)
-                   _ #())]
+        branches (value-branches expr)]
     (match expr
       (Symbol) :if (in (str expr) PLAIN-VALUE-SYMBOLS) expr
       (| (Keyword) (String) (FString) (Bytes) (Integer) (Float) (Complex) (List) (Tuple) (Dict) (Set)) expr
@@ -176,12 +188,8 @@
   {:pre [(: expr Object) (: names set)] :post [(: % (| Symbol None))]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "A name of names (bound to a plain value) in the value position of the bound expression expr (the expression itself, the two branches of if, the value branches of
-   cond, nested too — the same positions as plain-value-of), or None."
-  (let [head (head-name expr)
-        branches (match head
-                   "if" (cut expr 2 None)
-                   "cond" (cut expr 2 None 2)
-                   _ #())]
+   cond, the last form of do / let, nested too — the same positions as plain-value-of), or None."
+  (let [branches (value-branches expr)]
     (match expr
       (Symbol) :if (in (str expr) names) expr
       (Expression) (next (gfor branch branches :setv found (bound-value-of branch names) :if (is-not found None) found) None)

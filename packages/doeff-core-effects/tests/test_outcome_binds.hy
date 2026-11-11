@@ -353,7 +353,13 @@
              #("(<- x (cond c (f) True False)) x)" "literal value False")
              #("(<- (when c (f))))" "literal value (when c (f))")
              #("(<- x {\"a\" 1}) x)" "Pure {\"a\" 1}")
-             #("(do! (+ 1 (! (if c 0 (g))))))" "a literal value 0")))
+             #("(do! (+ 1 (! (if c 0 (g))))))" "a literal value 0")
+             ;; The last form of a multi-line do / let is a value position too (failure example: the branch that handled a refused
+             ;; `git merge --ff-only` yielded the bare None of `(do (<- cleared (Clear p)) (if (is cleared None) None …))`).
+             #("(<- x (if c (f) (do (<- y (g)) (if (is y None) None (+ \"no: \" y))))) x)" "literal value None")
+             #("(<- x (do (g) None)) x)" "literal value None")
+             #("(<- x (cond c (f) True (do (g) (when c (h))))) x)" "literal value (when c (h))")
+             #("(<- x (let [y 1] (g y) 2)) x)" "literal value 2")))
   (for [#(body said) bad]
     (val refused (! (expansion-refusal (+ head body))))
     (assert (in said refused) #(body refused)))
@@ -362,7 +368,10 @@
                "(<- x (f (if c None 1))) x)"
                "(<- x (cond c (f) True (Pure False))) x)"
                "(<- x (if c (g) (f))) x)"
-               "(do! (+ 1 (! (if c (Pure 0) (g))))))"))
+               "(do! (+ 1 (! (if c (Pure 0) (g))))))"
+               "(<- x (if c (f) (do (<- y (g)) (if (is y None) (Pure None) (h y))))) x)"
+               "(<- x (do None (f))) x)"
+               "(<- x (let [y 1] (f y))) x)"))
   (for [body clean]
     (val passed (! (expansion-refusal (+ head body))))
     (assert (= passed "") #(body passed))))
@@ -377,7 +386,8 @@
   (val bad #(#("(<- made (| str None) (f)) (<- w (| str None) (if c made (g))) w)" "the name made")
              #("(<- made str (f)) (<- w str made) w)" "the name made")
              #("(<- made (get tuple #(int ...)) (f)) (<- w int (cond c (g) True made)) w)" "the name made")
-             #("(<- made \"Failed\" (f)) (<- w int (g (! (if c made (h))))) w)" "(Pure made)")))
+             #("(<- made \"Failed\" (f)) (<- w int (g (! (if c made (h))))) w)" "(Pure made)")
+             #("(<- made (| str None) (f)) (<- w (| str None) (if c (g) (do (h) made))) w)" "the name made")))
   (for [#(body said) bad]
     (val refused (! (expansion-refusal (+ head body))))
     (assert (in said refused) #(body refused)))
