@@ -36,6 +36,7 @@ from doeff import Program, do
 from doeff_stream._measure import FoldMeasured, caller_measures
 from doeff_stream._source import Inputs, RunEnded
 from doeff_stream._step import (
+    A,
     Answered,
     Arm,
     Cancelled,
@@ -186,9 +187,12 @@ def _close(
 
 @do
 def fold(
-    step: Callable[[S, object], "Next[S] | Program[Next[S]]"], initial: S, inputs: Inputs
-) -> Generator[Any, Any, object]:
+    step: Callable[[S, object], "Next[S, A] | Program[Next[S, A]]"], initial: S, inputs: Inputs
+) -> Generator[Any, Any, A]:
     """Run ``step`` over the inputs of ``inputs`` from ``initial`` until it answers ``Finish(value)``; answer ``value``.
+
+    The answer's type is the ``A`` of the step's ``Next[S, A]`` (the type its ``Finish`` carries — ``object`` when the
+    step answers a bare ``Next[S]``).
 
     A step that answers a Program is evaluated under the handler that refuses every effect: its value is the
     ``Next``, and an effect it performs raises ``StepYieldedEffectError`` here like any error of the step.
@@ -221,7 +225,7 @@ def fold(
             answer = checked_next(answer, frozenset(running))
             step_seconds = (yield GetMonotonic()) - clock.began if clock is not None else 0.0
             state = answer.state
-            finish: Finish | None = None
+            finish: Finish[A] | None = None
             for effect in answer.effects:
                 match effect:
                     case Run(key=key, program=program, priority=priority):

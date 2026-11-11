@@ -14,7 +14,7 @@ The fold and the replay evaluate it through the same ``step_answer``, so both se
 from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Generic, TypeIs, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeIs, TypeVar
 
 from doeff_core_effects import TaskPriority
 
@@ -22,6 +22,21 @@ from doeff import DoExpr, EffectBase, K, Program, do, handler
 
 S = TypeVar("S")
 T = TypeVar("T")
+
+if TYPE_CHECKING:
+    # The type of the value a Finish ends the fold with. The default (PEP 696) is read by type
+    # checkers only: typing.TypeVar takes ``default`` from Python 3.13, and typing_extensions is
+    # not a runtime dependency (the same form as doeff/result.py). A step that names no answer
+    # type (``Next[S]``) keeps the fold answering ``object``. ``_A_co`` is the classes' — covariant
+    # (a frozen value), so a ``Next[S, X]`` is a ``Next[S, object]`` and a typed step still passes
+    # where a bare one is taken; ``A`` is the functions'.
+    from typing_extensions import TypeVar as _DefaultedTypeVar
+
+    A = _DefaultedTypeVar("A", default=object)
+    _A_co = _DefaultedTypeVar("_A_co", covariant=True, default=object)
+else:
+    A = TypeVar("A")
+    _A_co = TypeVar("_A_co", covariant=True)
 
 
 @dataclass(frozen=True)
@@ -90,27 +105,28 @@ class Disarm:
 
 
 @dataclass(frozen=True)
-class Finish:
+class Finish(Generic[_A_co]):
     """End the fold with ``value``: the effect after which the step is not called again.
 
     An answer has at most one. It may stand anywhere among the effects — the runtime carries it out after the others
     (so the effects of several reducers can be joined in any order). The runtime cancels the runs that are still running and waits until each has ended before the fold answers
-    ``value``; their ends are not given to a step any more.
+    ``value``; their ends are not given to a step any more. ``_A_co`` = the type of ``value``: the fold's answer.
     """
 
-    value: object
+    value: _A_co
 
 
-StepEffect = Run | CancelRun | Arm | Disarm | Finish
-"""Everything a step may ask the runtime to do."""
+StepEffect = Run | CancelRun | Arm | Disarm | Finish[_A_co]
+"""Everything a step may ask the runtime to do (``StepEffect[X]`` = its ``Finish`` ends the fold with an ``X``)."""
 
 
 @dataclass(frozen=True)
-class Next(Generic[S]):
-    """A step's answer: the next state and the effects to carry out, in order."""
+class Next(Generic[S, _A_co]):
+    """A step's answer: the next state and the effects to carry out, in order. ``_A_co`` = the type of the value its
+    ``Finish`` ends the fold with (``object`` when the step does not name it)."""
 
     state: S
-    effects: tuple[StepEffect, ...] = ()
+    effects: tuple[StepEffect[_A_co], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -196,13 +212,13 @@ def step_answer(
     return value
 
 
-def is_program_answer(answer: "Next[S] | Program[Next[S]]") -> TypeIs["Program[Next[S]]"]:
+def is_program_answer(answer: "Next[S, A] | Program[Next[S, A]]") -> TypeIs["Program[Next[S, A]]"]:
     """Whether the step answered a Program (to evaluate) rather than a value (to check as it is)."""
     # The tuple form: to the type checker DoExpr is the union of the program nodes, at run time a virtual base.
     return isinstance(answer, (DoExpr,))
 
 
-def checked_next(answer: "Next[S]", running: frozenset[Hashable]) -> "Next[S]":
+def checked_next(answer: "Next[S, A]", running: frozenset[Hashable]) -> "Next[S, A]":
     """``answer`` as the ``Next`` it must be, or the error naming what is wrong with it.
 
     ``running`` = the keys whose runs have not come back yet. Refused: an answer that is not a ``Next``, an effect

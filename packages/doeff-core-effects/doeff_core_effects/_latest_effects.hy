@@ -25,14 +25,20 @@
 
 
 (defeffect ReadLatest
-  "Read the latest value of type kind (None if there is none yet - see the header comment)."
-  {:fields [(: kind type)]
-   :answer (| object None)
+  "Read the latest value of type kind (None if there is none yet - see the header comment). The answer is typed by kind: the store is keyed
+   by the exact type of the placed value, so a value read under kind is an instance of kind."
+  {:tp [T]
+   :fields [(: kind (get type T))]
+   :pre [(: kind type)]
+   :answer (| T None)
    :tags {:context "latest" :role "foundation"}})
 
 
 (defeffect AwaitLatest
-  "Wait until the latest value of type kind becomes something other than seen (compared with is), and answer that value (see the header comment)."
-  {:fields [(: kind type) (: seen object)]
-   :answer (| object None)
+  "Wait until the latest value of type kind becomes something other than seen (compared with is), and answer that value (see the header comment).
+   The answer is typed by kind, as for ReadLatest."
+  {:tp [T]
+   :fields [(: kind (get type T)) (: seen object)]
+   :pre [(: kind type)]
+   :answer (| T None)
    :tags {:context "latest" :role "foundation"}})

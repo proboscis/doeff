@@ -38,7 +38,7 @@
 (deftest test-a-published-value-is-read-back
   {:interpreters ["process-latest" "memory-latest"]}
   (<- (PublishLatest (Progress :waiting "list of record tables")))
-  (<- value (ReadLatest Progress))
+  (<- value (| Progress None) (ReadLatest Progress))
   (assert (= value (Progress :waiting "list of record tables")) (.format "Read of the published value is {!r}" value)))
 
 
@@ -55,9 +55,9 @@
   (<- (PublishLatest (Progress :waiting "list")))
   (<- (PublishLatest (Faults :total 2)))
   (<- (PublishLatest (LoudFaults :total 7)))
-  (<- progress (ReadLatest Progress))
-  (<- faults (ReadLatest Faults))
-  (<- loud (ReadLatest LoudFaults))
+  (<- progress (| Progress None) (ReadLatest Progress))
+  (<- faults (| Faults None) (ReadLatest Faults))
+  (<- loud (| LoudFaults None) (ReadLatest LoudFaults))
   (assert (= progress (Progress :waiting "list")) (.format "Progress after publishing Faults is {!r}" progress))
   (assert (= faults (Faults :total 2)) (.format "Faults after publishing the child type LoudFaults is {!r} (not overwritten by the child type)" faults))
   (assert (= loud (LoudFaults :total 7)) (.format "Read of LoudFaults is {!r}" loud)))
@@ -72,7 +72,7 @@
 (defk waiting-for [seen]
   {:pre [(: seen (| Progress None))] :post [(: % (| Progress None))] :tags {:context "latest-test" :role "program"}}
   "Waits until Progress's latest value differs from seen and answers that value (a Program run in a separate task)."
-  (<- value (AwaitLatest Progress seen))
+  (<- value (| Progress None) (AwaitLatest Progress seen))
   value)
 
 
