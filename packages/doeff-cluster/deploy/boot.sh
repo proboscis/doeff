@@ -30,6 +30,8 @@
 #
 # 自己起動(WORKER_DOEFF_COMMIT が在る時 — 土台だけの image・deploy/base/Dockerfile。設計 D13・E13):
 #   image に焼いた script の受け持ちは展開と引き継ぎだけ: WORKER_DOEFF_URL(既定 https://github.com/proboscis/doeff.git)の
+#   (置き場 $WORK_DIR/boot/doeff.git に無い commit の取り寄せは、下の「読み取りの鍵の表」が在ればそれを通す — doeff を非公開の repo から
+#   読む機体は、表に doeff の鍵つきの行を置けば https の url のまま鍵で読める。表が無ければ鍵なし)
 #   WORKER_DOEFF_COMMIT を $WORK_DIR/boot/roots/<sha> に展開し(展開の済んだ印 .doeff-boot-extracted)、root の中の同じ commit の
 #   packages/doeff-cluster/deploy/boot.sh へ exec で引き継ぐ(DOEFF_BOOT_FROM_ROOT=1 — 中身が同じでも引き継ぐ)。root の準備(venv と
 #   doeff-vm の wheel・完成の印 .doeff-boot-ready)と役の起動は引き継いだ先 — 宣言した commit の script — がする。だから準備の手順を
@@ -98,6 +100,9 @@
 #   GIT_SSH_COMMAND(ssh -F)でそこへ向ける(機体の ~/.gitconfig と ~/.ssh/config は読まない・書かない)。GitHub の deploy key は repo ごとなので、鍵を 1 本しか渡さない
 #   GIT_SSH_COMMAND では uv の git の依存(別の非公開 repo)を読めない。表は url に鍵を結ぶだけで url を断らない — 表に無い url は
 #   worker が鍵なしで clone する(公開の repo は通り、読めない非公開の repo は clone の失敗 repo-unreachable で返る)。
+#   鍵つきの行の repo は、表の綴りのほかの綴り(https・ssh:// と scp の形・.git の有無)でも同じ鍵の別名へ書き換える — uv の git の依存や
+#   WORKER_DOEFF_URL は https で書かれ、表の ssh の綴りと違っても鍵で読める。.git の無い綴りは git の前方一致なので、表に無い名の頭が同じ
+#   repo(<名>-x)も拾う(鍵が合わず断られる — その repo も表に置けば、長い方の綴りが勝つ)。
 #   WORKER_REPOS が無く /etc/worker-git/id が在れば、今までどおりそれを唯一の deploy key として使う。
 #
 # cgroup の層(WORKER_CGROUP_LAYOUT が在る時):
@@ -188,6 +193,26 @@ if [ -z "${DOEFF_BOOT_STARTED_MS:-}" ]; then
 fi
 export DOEFF_BOOT_STARTED_MS
 
+# doeff の置き場($boot/doeff.git)を作り、$commit を取り寄せる(doeff_extract の boot.lock の下)。読み取りの鍵の表が在れば、それを組んで
+# git をそこへ向けてから取り寄せる — 向けはこの subshell の中だけに置き、表の鍵が欠けても取り寄せの失敗として返す(役 coordinator・drain
+# の起動を表の組みで止めない・役 worker は後の repo_access で止まる)。答え = 置き場に $commit が在るか。
+doeff_fetch() (
+  # repo_access は url を自分の変数に使うので、取り寄せの url を先に取っておく。
+  from=$url
+  if [ -n "${WORKER_REPOS:-}" ] || [ -n "${WORKER_REPOS_FILE:-}" ]; then
+    repo_access || exit 1
+  fi
+  if [ ! -d "$boot/doeff.git" ]; then
+    rm -rf "$boot/doeff.git.tmp"
+    git clone -q --bare "$from" "$boot/doeff.git.tmp" || exit 1
+    mv "$boot/doeff.git.tmp" "$boot/doeff.git" || exit 1
+  fi
+  git -C "$boot/doeff.git" fetch -q origin "+refs/heads/*:refs/heads/*" || true
+  git -C "$boot/doeff.git" cat-file -e "$commit^{commit}" 2>/dev/null ||
+    git -C "$boot/doeff.git" fetch -q origin "$commit" 2>/dev/null || true
+  git -C "$boot/doeff.git" cat-file -e "$commit^{commit}" 2>/dev/null
+)
+
 # 自己起動の root を展開する(image に焼いた script の受け持ち — 準備はしない)。引き継いだ先も sha と root を求めるために呼ぶ(展開の済んだ
 # root には何もしない)。drain は展開しない(preStop で clone も展開もしない — 準備の済んだ root を使うだけ)。
 doeff_extract() {
@@ -198,15 +223,13 @@ doeff_extract() {
   # 同じ node の dir を使う次の Pod と重ならないよう、展開と準備は排他(fd 8・済めば離す)。
   exec 8>"$boot/boot.lock"
   flock 8
-  if [ ! -d "$boot/doeff.git" ]; then
-    git clone -q --bare "$url" "$boot/doeff.git.tmp"
-    mv "$boot/doeff.git.tmp" "$boot/doeff.git"
+  if [ ! -d "$boot/doeff.git" ] || ! git -C "$boot/doeff.git" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    doeff_fetch || echo "boot: doeff の置き場 $boot/doeff.git へ $url から $commit を取り寄せられない(非公開の repo は読み取りの鍵の表に鍵つきの行が要る)" >&2
   fi
-  if ! git -C "$boot/doeff.git" cat-file -e "$commit^{commit}" 2>/dev/null; then
-    git -C "$boot/doeff.git" fetch -q origin "+refs/heads/*:refs/heads/*" || true
-    git -C "$boot/doeff.git" fetch -q origin "$commit" 2>/dev/null || true
+  if ! sha=$(git -C "$boot/doeff.git" rev-parse -q --verify "$commit^{commit}"); then
+    echo "boot: doeff $commit が置き場 $boot/doeff.git に無い" >&2
+    exit 1
   fi
-  sha=$(git -C "$boot/doeff.git" rev-parse --verify "$commit^{commit}")
   root=$boot/roots/$sha
   if [ -f "$root/.doeff-boot-ready" ] || [ -f "$root/.doeff-boot-extracted" ]; then
     :
@@ -473,7 +496,14 @@ repo_access() {
       host=${userhost#*@}
       printf 'Host %s\n  HostName %s\n  User %s\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s/known_hosts\n  StrictHostKeyChecking yes\n' \
         "$alias" "$host" "$user" "$key" "$keys" >>"$dir/.ssh_config.$$"
-      printf '[url "ssh://%s@%s/%s"]\n  insteadOf = %s\n' "$user" "$alias" "$path" "$url" >>"$dir/.gitconfig.$$"
+      # 表の綴りと、同じ repo のほかの綴り(頭の註の「読み取りの鍵の表」)を、どれも同じ別名へ書き換える。
+      bare=${path%.git}
+      {
+        printf '[url "ssh://%s@%s/%s"]\n  insteadOf = %s\n' "$user" "$alias" "$path" "$url"
+        for spelling in "ssh://$user@$host/$bare" "$user@$host:$bare" "https://$host/$bare"; do
+          printf '  insteadOf = %s\n  insteadOf = %s.git\n' "$spelling" "$spelling"
+        done
+      } >>"$dir/.gitconfig.$$"
     fi
     [ "$json" = "{" ] || json="$json,"
     json="$json\"$url\":\"$key\""
