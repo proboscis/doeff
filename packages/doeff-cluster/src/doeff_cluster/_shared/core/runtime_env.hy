@@ -91,7 +91,7 @@
 
 
 (defk check-sender-source [checkouts repos sender-repo]
-  {:pre [(: checkouts tuple) (: repos tuple) (: sender-repo str)] :post [(: % bool)]}
+  {:pre [(: checkouts (of tuple LocalCheckout ...)) (: repos (of tuple RepoCheckout ...)) (: sender-repo str)] :post [(: % bool)]}
   "送り手自身の source が、宣言の sender-repo と同じ commit の汚れていない checkout であることを確かめる。"
   (<- root (| str None) (SenderSourceRoot))
   (val declared (next (gfor r repos :if (= r.name sender-repo) r) None))
@@ -109,7 +109,8 @@
 
 
 (defk runtime-env-of-checkouts [checkouts project import-roots [env-vars #()] [tools #()] [sender-repo None]]
-  {:pre [(: checkouts tuple) (: project ProjectOfCheckout) (: import-roots tuple) (: env-vars tuple) (: tools tuple)
+  {:pre [(: checkouts (of tuple LocalCheckout ...)) (: project ProjectOfCheckout) (: import-roots (of tuple str ...))
+         (: env-vars (of tuple EnvVar ...)) (: tools (of tuple ToolRequirement ...))
          (: sender-repo (| str None))]
    :post [(: % RuntimeEnv)]}
   "手元の checkout から宣言を組み立てる(送る前の唯一の口)。uv.lock の sha256 は checkout から計算する。
