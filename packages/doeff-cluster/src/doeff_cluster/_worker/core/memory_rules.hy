@@ -17,16 +17,22 @@
 ;;; 止める候補が 1 つも無い時だけ選ぶ(victim-of の urgent)。訳: 本番へ届ける急ぎの task は機体の中でいちばん大きい単位になりやすく、
 ;;; 大きさの順だけで選ぶと、同じ機体で作り直せる task が走り続ける間に急ぎの task が止められた(2026-11-11 の 15〜16 時に 14 分で 5 本)。
 ;;; 要りの越えの止め(eviction_rules の over-need-tasks)も同じに、急ぎの task を後に並べる。
-;;; 止める候補: task の単位は全部。常駐の job の単位は、その job の今の memory が平常の大きさ(JobSteady — 前の
-;;; 最大の行の間ごとの最大のいちばん大きい物)の steady-ratio 倍以上の時か、平常の大きさがまだ無い時だけ。平常の大きさで動く常駐の
-;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
-;;; だけだから(10-24 node-a で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
-;;; 後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
+;;; 止める候補: task の単位は全部。常駐の job の単位は、その job の今の memory が基準の大きさ(steady-base — 下)の steady-ratio 倍以上の
+;;; 時か、基準の大きさが無い時だけ。平常の大きさで動く常駐の job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は
+;;; 直らず、起こし直された job が同じ大きさに戻ってまた止められるだけだから(10-24 node-a で 2 時間に 11 回)。平常の大きさより
+;;; steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
+;;; 基準の大きさ(steady-base — 2026-11-12): 平常の大きさ(JobSteady — 前の最大の行の間ごとの最大のいちばん大きい物)と、宣言の memory の
+;;; 山(下の宣言の内)の大きい方。どちらも無い job は基準が無い。宣言の山を基準に入れる訳: 平常の大きさは worker の process の中だけに
+;;; 在り、worker の起動で空になる。見張りが止めた間の最大は平常に残さないので、DANGER のまま止められ続ける job は平常の大きさを
+;;; 覚えられない。前は平常の大きさがまだ無い job を、宣言の山を少しでも越えていれば候補にしたので、宣言 565 MiB で 591 MiB の常駐の job
+;;; が、worker の起動の直後の DANGER の機体で 7 分に 5 回止められ、起こし直しが止まった(2026-11-11 19:14〜19:21 UTC — 不足は worker の
+;;; 外から来ていて、止めても空きは戻らなかった)。宣言の山は worker の起動をまたいで残る(heartbeat の返事が運ぶ)ので、起動の直後も
+;;; 暇な時間(平常の大きさが宣言より小さい)の後も、宣言の山の steady-ratio 倍未満の job は止める候補にならない。
 ;;; 宣言の内(within-declared? — 2026-11-11): 常駐の job の今の memory が宣言の memory の山(JobRoot.declared-bytes —
 ;;; job の宣言の peak-mib を coordinator が heartbeat の返事で運ぶ)以下なら、平常の大きさに依らず、その job の単位を止める候補にしない
 ;;; (平常の比べからも群れの止めからも外す — 置き先が宣言の山を数えて置いた job は、宣言の内で動く限り止めない。暇な時間の後に宣言の内で
-;;; 太った job が、観測から決まる平常の大きさの steady-ratio 倍を越えて止められうるのは保証にならない)。宣言を越えた job は今どおり
-;;; 平常の大きさで判じる。宣言の無い job(旧い coordinator・宣言の行に欄の無い job)と task は今どおり。
+;;; 太った job が、観測から決まる平常の大きさの steady-ratio 倍を越えて止められうるのは保証にならない)。宣言を越えた job は
+;;; 基準の大きさ(上)で判じる。宣言の無い job(旧い coordinator・宣言の行に欄の無い job)は平常の大きさだけで判じ、task は全部が候補。
 ;;; 群れの止め(swarm-of): 止める候補の単位が無い(どれも min-victim-bytes 未満か平常の大きさの job の物)のに、
 ;;; 1 つの job の木が機体の全量の swarm-share 以上を持ち、worker の外の使用量より大きい時は、その job の BODY 以外の単位を大きい順に、
 ;;; 機体の空きを DANGER の線(danger-available)の上へ min-victim-bytes ぶん戻す量まで足して、まとめて止める。訳: CLI を多数並べて走らせる常駐の
@@ -182,35 +188,46 @@
                (JobSteady :job name :bytes (max (gfor window windows steady window :if (= steady.job name) steady.bytes))))))
 
 
+(defk steady-base [job uses steadies]
+  {:pre [(: job str) (: uses tuple) (: steadies tuple)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "常駐の job(名 job)の今の memory を比べる基準の大きさを求めるため(頭の註の基準の大きさ): 平常の大きさ(steadies の同じ名)と宣言の
+   memory の山(uses の同じ名の declared-bytes)の大きい方。どちらも無ければ None。"
+  (val sizes (+ (tuple (gfor s steadies :if (= s.job job) s.bytes))
+                (tuple (gfor use uses :if (and (= use.job job) (is-not use.declared-bytes None)) use.declared-bytes))))
+  (if sizes (max sizes) None))
+
+
 (defk beyond-steady? [unit uses steadies limits]
   {:pre [(: unit KillUnit) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % bool)]
    :tags {:context "worker" :role "judgment"}}
   "単位が止める候補かを判じるため(頭の註): TASK は候補。常駐の job の単位は、その job の今の memory が宣言の memory の山以下なら
-   候補でない(within-declared? — 頭の註の宣言の内)。宣言を越えた・宣言の無い job の単位は、今の memory(uses の同じ名の和)が平常の
-   大きさ(steadies の同じ名)の steady-ratio 倍以上か、平常の大きさがまだ無い時に候補。"
+   候補でない(within-declared? — 頭の註の宣言の内)。宣言を越えた・宣言の無い job の単位は、今の memory(uses の同じ名の和)が基準の
+   大きさ(steady-base — 平常の大きさと宣言の山の大きい方)の steady-ratio 倍以上か、基準の大きさが無い時に候補。"
   (when (= unit.kind UnitKind.TASK)
     (return True))
   (<- within bool (within-declared? unit.job uses))
   (when within
     (return False))
-  (val steady (next (gfor s steadies :if (= s.job unit.job) s) None))
-  (when (is steady None)
+  (<- base (| int None) (steady-base unit.job uses steadies))
+  (when (is base None)
     (return True))
   (val now (sum (gfor use uses :if (= use.job unit.job) use.bytes)))
-  (>= now (* limits.steady-ratio steady.bytes)))
+  (>= now (* limits.steady-ratio base)))
 
 
 (defk spared-steady [units uses steadies limits]
   {:pre [(: units tuple) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
-  "min-victim-bytes 以上の単位を持つのに、平常の大きさで動くので止める候補にしなかった job の平常の大きさ(JobSteady — 名の昇順)を
-   並べるため(止める単位が無い時の log に、止めなかった job を名指す)。"
+  "min-victim-bytes 以上の単位を持つのに、基準の大きさ(steady-base)の steady-ratio 倍未満で動くので止める候補にしなかった job の
+   基準の大きさ(JobSteady — 名の昇順)を並べるため(止める単位が無い時の log に、止めなかった job を名指す)。"
   ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない)。
   (val large (tuple (gfor unit units :if (>= unit.bytes limits.min-victim-bytes) unit)))
   (<- beyond tuple (sequence (gfor unit large (beyond-steady? unit uses steadies limits))))
   (<- declared tuple (spared-declared uses limits))
-  (val names (- (frozenset (gfor #(unit candidate) (zip large beyond) :if (not candidate) unit.job)) (frozenset (gfor use declared use.job))))
-  (tuple (gfor s steadies :if (in s.job names) s)))
+  (val names (sorted (- (frozenset (gfor #(unit candidate) (zip large beyond) :if (not candidate) unit.job))
+                        (frozenset (gfor use declared use.job)))))
+  (<- bases tuple (sequence (gfor name names (steady-base name uses steadies))))
+  (tuple (gfor #(name base) (zip names bases) :if (is-not base None) (JobSteady :job name :bytes base))))
 
 
 (defk spared-declared [uses limits]
@@ -541,7 +558,7 @@
    :tags {:context "worker" :role "judgment"}}
   "DANGER の時に止める単位を選ぶため(頭の註の順): 止める候補(beyond-steady? — uses = job ごとの今の memory・steadies = job ごとの平常の
    大きさ)の中で、BRANCH・LEAF・TASK のいちばん大きい物、それが min-victim-bytes 未満なら BODY のいちばん大きい物。どれも無ければ止めない
-   (None — 食った物は job の外か、平常の大きさで動く常駐の job だけ)。units は大きい順。urgent = 急ぎの優先の task の job の名
+   (None — 食った物は job の外か、基準の大きさの steady-ratio 倍未満で動く常駐の job だけ)。units は大きい順。urgent = 急ぎの優先の task の job の名
    (eviction_rules の urgent-jobs — 頭の註の急ぎの task): その job の単位は、ほかの候補が 1 つも無い時だけ選ぶ。"
   ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない)。
   (val large (tuple (gfor u units :if (>= u.bytes limits.min-victim-bytes) u)))

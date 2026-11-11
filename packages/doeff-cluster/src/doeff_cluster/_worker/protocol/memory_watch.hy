@@ -34,6 +34,8 @@
 ;;; 宣言の内(2026-11-11): 回ごとに、job の根へ最後に読めた heartbeat の返事の宣言の memory の山(入れ物 eviction の declared —
 ;;; worker/protocol/coordinator_link が書く)を添え、今の memory が宣言の内の常駐の job は止めない(worker/core/memory_rules の頭の註の
 ;;; 宣言の内)。止める単位が無い行は、宣言の内なので止めなかった job も名指す(欄 spared-declared — <job>=<今の MiB>/<宣言の MiB>)。
+;;; 宣言を越えた job は、平常の大きさと宣言の山の大きい方(基準の大きさ — worker/core/memory_rules の steady-base)の steady-ratio 倍未満
+;;; なら止めない(欄 spared-steady — <job>=<今の MiB>/<基準の MiB>)。平常の大きさは worker の起動で空になるが、宣言の山は残る。
 ;;; 止めた印: 止めた単位の属する job の根(名と pid)を、止めた刻と止めた訳とともに入れ物に kill-mark-seconds の間残す。調整ループは終わった
 ;;; process を回収する時にこの印を読み(worker/protocol/memory_observer)、見張りに止められた終わりを数える — 続けて止められた常駐の job は
 ;;; 起こし直さずに失敗として報告する(WorkerPolicy.memory-kill-limit)。止めた訳は状態の報告の訳に載る(task の終わりは coordinator の

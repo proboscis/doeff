@@ -7,6 +7,12 @@
 ;;     (指紋 spec-hash に入らない)。欄の無い返事(旧い coordinator)は宣言なし。
 ;;   - 宣言の内の常駐の job は、平常の大きさの 2 倍でも・平常の大きさが無くても止める候補でない。宣言を越えた job は今どおり。
 ;;   - 群れの止めも、宣言の内の job には当てない。止める単位が無い行は、宣言の内なので止めなかった job を名指す。
+;;
+;; 失敗ケース(2026-11-11 19:14〜19:21 UTC): 平常の大きさは worker の process の中だけに在り、worker の起動で空になる。平常の大きさが
+;; まだ無い job は、宣言の山を少しでも越えていれば止める候補だったので、宣言 565 MiB で 591 MiB の常駐の job が、worker の起動の直後の
+;; DANGER の機体で 7 分に 5 回止められ、起こし直しが止まった(止めた間の最大は平常に残さないので、平常の大きさを覚えられない)。
+;;   - 宣言を越えた job は、平常の大きさと宣言の山の大きい方(基準の大きさ)の steady-ratio 倍以上の時だけ止める候補。
+;;   - 宣言も平常の大きさも無い job は今どおり止める候補。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
@@ -22,7 +28,7 @@
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
 (import doeff_cluster._worker.protocol.declared [declared-job-spec])
 (import doeff_cluster._worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLimits MIB UnitKind _job-uses _kill-units
-                                                declared-roots spared-declared victim-of])
+                                                declared-roots spared-declared spared-steady victim-of])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell MEMORY-NO-VICTIM-LOG MEMORY-SWARM-KILL-LOG])
 (import tests.state_rows [table-from-rows])
 (import tests.test_memory_watch [row swarm-rows swarm-files memory-world watch-then-seen lines-named WatchSeen])
@@ -97,6 +103,28 @@
   ;; 宣言を越えても平常の大きさの内(平常 1900 MiB)なら、今どおり止めない。
   (<- steady (| KillUnit None) (dispatch-victim 2000 1000 #((JobSteady :job "dispatch" :bytes (* 1900 MIB)))))
   (assert (is steady None) steady))
+
+
+(deftest test-a-resident-job-just-beyond-its-declared-peak-is-not-a-candidate-while-no-steady-size-is-known
+  ;; worker の起動の直後(平常の大きさが空): 宣言 565 MiB で 591 MiB(宣言の 1.05 倍)の dispatch は止めない。
+  (<- fresh (| KillUnit None) (dispatch-victim 576 565 #()))
+  (assert (is fresh None) fresh)
+  ;; 暇な時間の後(平常 315 MiB が宣言より小さい)も、宣言の山の 1.5 倍未満なら止めない。
+  (<- idle (| KillUnit None) (dispatch-victim 576 565 STEADY-300))
+  (assert (is idle None) idle)
+  ;; 宣言の山の 1.5 倍(848 MiB)以上に跳ねた物は、平常の大きさが無くても止める。
+  (<- jumped (| KillUnit None) (dispatch-victim 900 565 #()))
+  (assert (= #(jumped.job jumped.kind jumped.head.pid) #("dispatch" UnitKind.LEAF 62)) jumped)
+  ;; 宣言も平常の大きさも無い job は今どおり止める。
+  (<- unknown (| KillUnit None) (dispatch-victim 576 None #()))
+  (assert (= #(unknown.job unknown.head.pid) #("dispatch" 62)) unknown)
+  ;; 止める単位が無い時の log に、基準の大きさ(宣言の山)と一緒に名指す job。
+  (<- rows tuple (dispatch-rows 576))
+  (<- roots tuple (declared-roots #((JobRoot :name "dispatch" :pid 60)) {"dispatch" (* 565 MIB)}))
+  (<- units tuple (_kill-units rows roots))
+  (<- uses tuple (_job-uses rows roots))
+  (<- named tuple (spared-steady units uses #() (MemoryLimits)))
+  (assert (= (tuple (gfor s named #(s.job (// s.bytes MIB)))) #(#("dispatch" 565))) named))
 
 
 (deftest test-a-task-is-a-candidate-whatever-the-declarations-say
