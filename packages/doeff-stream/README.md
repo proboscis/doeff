@@ -25,7 +25,7 @@ There are only four parts. There is no family of operators such as map, window, 
 
 | effect | Behavior |
 |---|---|
-| `Run(key, program, priority=TaskPriority.NORMAL)` | Runs `program` (a Program or an effect) in a new task. Its end comes back as a single input carrying `key`. A `Run` for a key that is already running, and a `program` that is neither a Program nor an effect, are rejected. `priority` is the scheduler priority of the run's two tasks (the program and the watcher that publishes its end — see "Why every ending becomes an input"): the `Spawn` default `TaskPriority.NORMAL` unless named (any `int`, higher runs first; a non-`int` is rejected) |
+| `Run(key, program, priority=TaskPriority.NORMAL)` | Runs `program` (a Program or an effect) in a new task. Its end comes back as a single input carrying `key`. A `Run` for a key that is already running, and a `program` that is neither a Program nor an effect, are rejected. `priority` is the scheduler priority of the run's task (and of the watcher a `CancelRun` of it starts — see "Why every ending becomes an input"): the `Spawn` default `TaskPriority.NORMAL` unless named (any `int`, higher runs first; a non-`int` is rejected) |
 | `CancelRun(key)` | Cancels the task for `key`. Its end still comes back as a single input (`Cancelled` if the cancellation took effect, or its own ending if it had already finished). Does nothing for a key that is not running |
 | `Arm(tag, at)` | Sets this fold's deadline `tag` to `at` (a timezone-aware `datetime`). No task is created; the fold hands `ArmTimer` to the timer handler. It comes back at `at` as a `TimerFired(tag)` input. Setting an existing tag again moves the deadline. Rejected in a fold that does not have `timers()` as a source |
 | `Disarm(tag)` | Removes this fold's deadline `tag`. Its `TimerFired` does not come back. Does nothing for a tag that is not set (including one already removed or already fired) |
@@ -33,14 +33,14 @@ There are only four parts. There is no family of operators such as map, window, 
 
 When the step raises an exception, or when the fold's task is cancelled, the fold removes the deadlines that are still set, cancels the running tasks, and then lets the exception propagate. It also removes the remaining deadlines on `Finish`.
 
-The fold sets an `Arm` deadline in the timer handler with a tag that pairs its own mark with `tag`. `TimerFired` reaches every subscriber on the bus, but the fold turns back only the ones with its own mark into `TimerFired(tag)` for the step, and discards the deadlines of other folds on the same bus. So folds on the same bus do not get mixed up even if they use the same tag. Re-arming a single deadline needs neither a task nor a run ending (`Run(key, ArmTimer(tag, at))` creates two tasks and adds one ending input).
+The fold sets an `Arm` deadline in the timer handler with a tag that pairs its own mark with `tag`. `TimerFired` reaches every subscriber on the bus, but the fold turns back only the ones with its own mark into `TimerFired(tag)` for the step, and discards the deadlines of other folds on the same bus. So folds on the same bus do not get mixed up even if they use the same tag. Re-arming a single deadline needs neither a task nor a run ending (`Run(key, ArmTimer(tag, at))` creates a task and adds one ending input).
 
 ## Why every ending becomes an input
 
-A single `Run` creates two tasks: the task that runs the program, and a task that watches it with `Wait`. The watcher receives the ending in a try/except and does one `Publish` for any of value, exception, or cancellation. `CancelRun` cancels only the program's task, not the watcher.
-So even the ending of a task cancelled before it started becomes an input. When the program's task ends with `TaskCancelledError`, the result is `Cancelled` if the step cancelled that key, and `Raised` if the error was raised by the program itself (waiting on another task that was cancelled).
+A single `Run` creates one task. It runs the program, receives the ending in a try/except and does one `Publish` for either a value or an exception (the `TaskCancelledError` of a cancellation included). A `CancelRun` cancels that task and then creates a second task, a watcher that waits for it with `Wait`. The fold never cancels the watcher. A task cancelled before it started, or cancelled again at its `Publish`, publishes nothing, and the watcher publishes its ending instead. So even the ending of a task cancelled before it started becomes an input. A task that did publish also ends as cancelled, and then its watcher publishes a second ending. Each ending carries a mark for its own run, so the fold passes over the second ending of a run whose ending it already took, even when a new run with the same key is started. A `Run` that is never cancelled costs one task and one `Publish`.
+When the program's task ends with `TaskCancelledError`, the result is `Cancelled` if the step cancelled that key, and `Raised` if the error was raised by the program itself (waiting on another task that was cancelled).
 
-The watcher's `Publish` is queued in the fold's subscriber queue, so a task that ends while the step is handling another input is not lost. The ending of a task run by another fold on the same bus
+The `Publish` is queued in the fold's subscriber queue, so a task that ends while the step is handling another input is not lost. The ending of a task run by another fold on the same bus
 is told apart from this fold's own and discarded.
 
 ## Contracts that steps and runs must keep

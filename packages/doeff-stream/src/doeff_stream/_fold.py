@@ -1,14 +1,17 @@
 """The runtime: ``fold(step, initial, merge(sources...))``.
 
 The fold waits for one input at a time, gives it to the step and carries out the effects the step answers. A ``Run``
-starts two tasks: the runner (the program) and its watcher. The watcher waits for the runner and publishes how it
-ended — value, exception or cancel — as one ``RunEnded`` on the bus, which reaches the fold through its subscriber
-queue like any other input. So the end of every run is an input, whichever way it ended, and the fold itself never
-waits for a run's answer: it only waits for the next input.
+starts one task, the runner: it runs the program and publishes how it ended — value or exception — as one
+``RunEnded`` on the bus, which reaches the fold through its subscriber queue like any other input. So the end of every
+run is an input, whichever way it ended, and the fold itself never waits for a run's answer: it only waits for the
+next input.
 
-The watcher is never cancelled by the fold (``CancelRun`` cancels the runner), so it is there to publish the end even
-of a runner cancelled before it started. A runner that ended with ``TaskCancelledError`` is ``Cancelled`` only when the
-step cancelled it; one that raised it on its own (a wait on another cancelled task) is ``Raised``.
+A ``CancelRun`` cancels the runner and starts a watcher, which the fold never cancels: a runner cancelled before it
+started, or cancelled again at its publish, publishes nothing, and its watcher publishes its end. A runner that did
+publish ends cancelled too (a cancelled task ends cancelled even when it returns), so its watcher publishes a second
+end: each ``RunEnded`` carries the mark of its run, and the fold reads past the end of a run whose end it already
+took. A runner that ended with ``TaskCancelledError`` is ``Cancelled`` only when the step cancelled it; one that raised
+it on its own (a wait on another cancelled task) is ``Raised``.
 
 An ``Arm`` / ``Disarm`` starts no task: the fold performs ``ArmTimer`` / ``DisarmTimer`` itself, under a ``_FoldTimer``
 tag (the fold's ``origin`` and the step's tag). Its ``TimerFired`` reaches every subscriber of the bus; the fold takes
@@ -57,12 +60,17 @@ S = TypeVar("S")
 
 @dataclass(frozen=True)
 class _Running:
-    """One run the fold started and whose end has not reached the step: its two tasks, and whether the step
-    cancelled it."""
+    """One run the fold started and whose end has not reached the step: its runner, the mark its ends carry, its
+    priority, and the watcher the step's cancel started (``None`` while the step has not cancelled it)."""
 
-    runner: Task[object]
-    watcher: Task[None]
-    cancelled: bool = False
+    runner: Task[None]
+    mark: object
+    priority: int
+    watcher: Task[None] | None = None
+
+    @property
+    def cancelled(self) -> bool:
+        return self.watcher is not None
 
 
 @dataclass(frozen=True)
@@ -83,17 +91,33 @@ class _FoldTimer:
 
 
 @do
-def _watch(origin: object, key: Hashable, runner: Task[object]) -> Generator[Any, Any, None]:
-    """Wait for ``runner`` and publish how it ended. Every exception the wait raises — the runner's own, or
-    ``TaskCancelledError`` for a cancelled runner — is caught here, so this publishes exactly once. (Not ``Try``: it
-    needs a handler the caller may not have installed, and a watcher that fails to publish is a lost end.)"""
+def _reported(
+    origin: object, mark: object, key: Hashable, program: "Program[object]"
+) -> Generator[Any, Any, None]:
+    """The runner: run ``program`` and publish how it ended. Every exception it raises — its own, or
+    ``TaskCancelledError`` for a cancel — is caught here, so a runner that reaches its publish publishes once. (Not
+    ``Try``: it needs a handler the caller may not have installed, and a runner that fails to publish is a lost end.)"""
     try:
-        value = yield Wait(runner)
-    except Exception as error:  # every way the runner fails is one end
+        value = yield program
+    except Exception as error:  # every way the program fails is one end
         end: RunEnd = Raised(key, error)
     else:
         end = Answered(key, value)
-    yield Publish(RunEnded(origin, key, end))
+    yield Publish(RunEnded(origin, mark, key, end))
+
+
+@do
+def _watch_cancelled(
+    origin: object, mark: object, key: Hashable, runner: Task[None]
+) -> Generator[Any, Any, None]:
+    """Wait for the cancelled ``runner`` and publish its end when its task ended cancelled. A runner cancelled before
+    it started, or again at its publish, published nothing; one that published ended cancelled all the same, and the
+    fold reads past this second end of ``mark``. A runner that returned before the cancel reached it ends with its
+    value, and this publishes nothing."""
+    try:
+        yield Wait(runner)
+    except Exception as error:  # the runner catches its program's errors: this is its cancel
+        yield Publish(RunEnded(origin, mark, key, Raised(key, error)))
 
 
 def _as_step_input(ended: RunEnded, running: _Running) -> RunEnd:
@@ -120,13 +144,18 @@ def _own_input(
 ) -> object:
     """The input the step is given for the bus event ``event`` of the fold ``origin``, or ``_FOREIGN``.
 
-    A run end or a deadline of this fold leaves the fold's tables (``running`` / ``armed``) here.
+    A run end or a deadline of this fold leaves the fold's tables (``running`` / ``armed``) here. The second end of a
+    cancelled run (its watcher's, after the runner's own) is read past like another fold's input.
     """
     match event:
         case RunEnded(origin=other) if other is not origin:
             return _FOREIGN
-        case RunEnded(key=key):
-            return _as_step_input(event, running.pop(key))
+        case RunEnded(key=key, mark=mark):
+            entry = running.get(key)
+            if entry is None or entry.mark is not mark:
+                return _FOREIGN
+            del running[key]
+            return _as_step_input(event, entry)
         case TimerFired(tag=_FoldTimer(origin=other)) if other is not origin:
             return _FOREIGN
         case TimerFired(tag=_FoldTimer(tag=tag)):
@@ -169,8 +198,8 @@ def _set_deadline(
 def _close(
     origin: object, running: dict[Hashable, _Running], armed: set[Hashable]
 ) -> Generator[Any, Any, None]:
-    """Disarm the deadlines still set, cancel every run still running and wait until each has ended (its watcher
-    published its end).
+    """Disarm the deadlines still set, cancel every run still running and wait until each has ended (its runner, and
+    the watcher of a run the step cancelled, published what they publish).
 
     The wait has no deadline: the fold has no clock. A run that does not end once cancelled (it waits inside
     ``shielded``, or never waits) holds the fold here — a run that waits on the outside world bounds its own wait.
@@ -181,8 +210,22 @@ def _close(
     for entry in running.values():
         yield Cancel(entry.runner)
     for entry in running.values():
-        yield Wait(entry.watcher)
+        yield _ended(entry)
     running.clear()
+
+
+@do
+def _ended(entry: _Running) -> Generator[Any, Any, None]:
+    """Wait until the run ``entry`` has ended, once ``_close`` cancelled it: its watcher if the step cancelled it,
+    else its runner, whose wait raises the cancel ``_close`` just made (the runner catches every error of its
+    program)."""
+    if entry.watcher is not None:
+        yield Wait(entry.watcher)
+    else:
+        try:
+            yield Wait(entry.runner)
+        except TaskCancelledError:
+            pass  # the cancel _close made: the runner published what it could
 
 
 @do
@@ -229,15 +272,21 @@ def fold(
             for effect in answer.effects:
                 match effect:
                     case Run(key=key, program=program, priority=priority):
-                        # The watcher too: a watcher below its runner would hold the end behind the lower work.
-                        runner = yield Spawn(program, priority=priority)
-                        watcher = yield Spawn(_watch(origin, key, runner), priority=priority)
-                        running[key] = _Running(runner, watcher)
+                        mark = object()
+                        runner = yield Spawn(
+                            _reported(origin, mark, key, program), priority=priority
+                        )
+                        running[key] = _Running(runner, mark, priority)
                     case CancelRun(key=key):
                         entry = running.get(key)
                         if entry is not None and not entry.cancelled:
                             yield Cancel(entry.runner)
-                            running[key] = replace(entry, cancelled=True)
+                            # At the run's priority: a watcher below its runner would hold the end behind lower work.
+                            watcher = yield Spawn(
+                                _watch_cancelled(origin, entry.mark, key, entry.runner),
+                                priority=entry.priority,
+                            )
+                            running[key] = replace(entry, watcher=watcher)
                     case Arm() | Disarm():
                         yield _set_deadline(effect, origin, inputs, armed)
                     case Finish():

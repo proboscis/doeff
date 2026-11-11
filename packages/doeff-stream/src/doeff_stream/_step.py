@@ -50,8 +50,9 @@ class Run:
     Its end comes back to the step as one input with ``key``. A key names one run while it is running: a ``Run``
     of a key whose end has not come back yet is refused. Once the end came back, the key may be used again.
 
-    ``priority`` is the scheduler priority of the run's two tasks (the program and its watcher, which publishes the
-    end): the ``Spawn`` default ``TaskPriority.NORMAL`` unless the step names another (any ``int``, higher first).
+    ``priority`` is the scheduler priority of the run's task (and of the watcher a ``CancelRun`` of it starts, which
+    publishes the end of a cancelled run): the ``Spawn`` default ``TaskPriority.NORMAL`` unless the step names another
+    (any ``int``, higher first).
     """
 
     key: Hashable
