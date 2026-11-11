@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import pytest
-from doeff_core_effects import Cancel, Spawn, TaskCancelledError, Wait
+from doeff_core_effects import Cancel, Spawn, TaskCancelledError, Wait, shielded
 from doeff_events import (
     ArmTimer,
     EventBus,
@@ -30,6 +30,7 @@ from doeff_events import (
 from doeff_stream import (
     Answered,
     Cancelled,
+    CancelRun,
     Finish,
     Inputs,
     Next,
@@ -42,7 +43,7 @@ from doeff_stream import (
     timers,
 )
 from doeff_stream._source import RunEnded
-from doeff_time import Delay
+from doeff_time import Delay, GetTime
 from stream_test_support import T0, Kick, forever, run_on_sim
 
 from doeff import do
@@ -159,6 +160,49 @@ def test_finish_cancels_the_runs_still_running_and_waits_for_them() -> None:
         return program()
 
     assert run_on_sim(observed(inputs, body)) == ("done", ["a", "b"])
+
+
+@do
+def unwinds_for_an_hour(key: str):
+    try:
+        return (yield forever())
+    except TaskCancelledError:
+        yield shielded(Delay(3600.0))
+        yield Publish(Unwound(key))
+        raise
+
+
+def test_finish_waits_for_runs_that_take_time_to_unwind() -> None:
+    # "a" the step never cancelled (the fold waits for its runner), "b" it cancelled before (its watcher): each
+    # unwinds for an hour after its cancel, so a fold that answered without waiting would answer an hour early.
+    def step(state: int, event: object) -> Next[int, str]:
+        match state, event:
+            case 0, Kick():
+                runs = (Run("a", unwinds_for_an_hour("a")), Run("b", unwinds_for_an_hour("b")))
+                return Next(1, (*runs, CancelRun("b")))
+            case 1, Kick():
+                return Next(2, (Finish("done"),))
+            case _:
+                return Next(state)
+
+    inputs = merge(subscribe(Kick))
+
+    def body(on_host):
+        @do
+        def program():
+            task = yield Spawn(on_host(fold(step, 0, inputs)))
+            yield Delay(1.0)
+            yield Publish(Kick())
+            yield Delay(1.0)
+            yield Publish(Kick())
+            answer = yield Wait(task)
+            answered_at = yield GetTime()
+            told = yield WaitForEvents(Unwound)
+            return (answer, answered_at - T0, sorted(event.key for event in told))
+
+        return program()
+
+    assert run_on_sim(observed(inputs, body)) == ("done", timedelta(hours=1, seconds=2), ["a", "b"])
 
 
 def test_a_step_that_raises_cancels_the_runs_still_running() -> None:
