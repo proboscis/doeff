@@ -14,7 +14,12 @@
 ;;;
 ;;; Answerers: process-latest-handler (process_latest.hy - the real one. One store per process shared by name, so different runs and threads read the same value) and
 ;;; memory-latest-handler (memory_latest.hy - state within a single run only). The two pass the same contract tests (tests/test_latest_contract.hy).
-(require doeff-hy.macros [defeffect])
+(require doeff-hy.macros [defeffect val])
+(import typing [TypeVar])
+
+;; The type of the value read under kind (ReadLatest / AwaitLatest answer T | None). A TypeVar read by the runtime answer type; for type checking,
+;; the expansion of :tp [T] sets the class's type parameter T (the same form as SqlTransaction in _sql_effects.hy).
+(val T (TypeVar "T"))
 
 
 (defeffect PublishLatest
