@@ -25,15 +25,27 @@
 ;;; 測りの task-memory-MiB(見張りの最後の読みの task ごとの memory — task の木の rss の和)で名乗り、名乗られない task は 0(要りの全部を
 ;;; 予約する)。要りを名乗らない task(切り離さない task の RemoteJob・欄の前の保存の行)は UNDECLARED-TASK-MIB を要りと見込む。
 ;;;
-;;; 測った山で数える要り(2026-11-10): 名乗った要りは送り手の見当で、実の山より小さい事がある(node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の
-;;; task 3 本を名乗る空き約 9.7 GiB に置き、8 分後に各 14 GiB を使った。予約は「要り − 今の使い」なので、名乗りを越えた伸びは置く判断にも
-;;; 後の予約にも入らなかった)。coordinator は worker の測りが名乗る task ごとの今の使いの最大を行の山(peak-mib)に持ち、task の要りを
-;;;   要り = max(名乗った要り, min(max(この task の山, 同じ形の行の山の最大), その worker の線 − 床))
-;;; で数える(learned-need)。形(shape)は送り手が同じ程の memory を使う仕事に付ける印で、同じ形の行は保持の間の終わった行も数える —
-;;; 名乗りを越えて伸びた task は自分の山で予約を続け、同じ形の次の task はその山の空きが在る worker にだけ置かれる。山は worker の線 − 床
-;;; (memory-line-mib)で切る — 線より大きく測れた山(線の外の使いを数えた読み)で、その形の task がどの worker にも置けなくならない。
-;;; 初めての形と形を名乗らない task は名乗った要りのまま。置いた後に名乗りと山を越えて伸びる分は、worker が jobs の層の上限で止める
-;;; (worker/core/eviction_rules の頭の註 — 上に載る系が残す線の上・追い出しの線の手前)。
+;;; 測った山で数える要り(2026-11-10・名乗りを下限から外した 2026-11-11): 名乗った要りは送り手の見当で、実の山より小さい事も大きい事もある
+;;; (小さい側 = node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本を名乗る空き約 9.7 GiB に置き、8 分後に各 14 GiB を使った。大きい側 =
+;;; 11-11 16:4x の機体 — 名乗り 8192 MiB の task の山 882 MiB・名乗り 5632 MiB の task の山 1888 MiB など、名乗りが実の山の 4〜9 倍で、置き済みの
+;;; task の予約の和 18,967 MiB に対し実の使いは約 3,800 MiB。機体に約 26,000 MiB の空きが在るのに memory の空きは −3,484 MiB と数えた)。
+;;; coordinator は worker の測りが名乗る task ごとの今の使いの最大を行の山(peak-mib)に持ち、形(shape — 送り手が同じ程の memory を使う
+;;; 仕事に付ける印)ごとに、保持の間の行(終わった行を含む)の山の最大と、終わり(finished)まで走った行が在るか(settled)を読む
+;;; (cluster_policy.shape-peaks-of — ShapePeak)。task の要りは(learned-need):
+;;;   同じ形に終わりまで走った行が在る   要り = min(⌈max(この task の山, 同じ形の山の最大) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, 線 − 床)
+;;;   無い(形を名乗らない・初めての形)  要り = max(名乗った要り, min(max(この task の山, 同じ形の山の最大), 線 − 床))
+;;; 名乗りは、終わりまで測った山の無い仕事の見込みにだけ使う — 同じ形の山を知った後は、送り手が見込みの数を名乗っても予約にならない
+;;; (送り手の数を手で下げる直しは、新しい送り手が見込みを名乗る度に同じ失敗を戻す)。終わりまで走った行を待つのは、走っている行の山は
+;;; まだ伸びる途中の値だから(日次の回は 15〜20 分かけて伸びる — 上の memory の要りの予約の節)。終わりの前に止まった行(lost・failed)の山は
+;;; 最大には数える(止まった時までの山は要りの下限)が、終わりまでの測りには数えない。
+;;; 余裕 SHAPE-PEAK-MARGIN と PEAK-STEP-MIB の訳: 行の山は前の山から PEAK-STEP-MIB 伸びた heartbeat でだけ書き直すので、実の山より最大で
+;;; その分小さい。同じ形の回どうしの揺れは、11-11 17:2x の保持の間(約 48 時間)に終わりまで走った同じ形の続く回の山を前の回までの最大と
+;;; 比べると、固い仕事を名乗る送り手の 24 組のうち 23 組が 1.25 倍の内だった(残りの 1 組は 1.69 倍)。保持の間の最大を使うので、大きく
+;;; 伸びた回が 1 度在れば、その形の次の回はその山で数える。
+;;; 山は worker の線 − 床(memory-line-mib)で切る — 線より大きく測れた山(線の外の使いを数えた読み)で、その形の task がどの worker にも
+;;; 置けなくならない。置いた後に要りを越えて伸びる分は、worker が jobs の層の上限で止める(worker/core/eviction_rules の頭の註 — jobs の層の
+;;; memory.max は追い出しの線の手前に掛かり、上に載る系が残す線を割った回は名乗りを越えた task だけを止める。worker が要りの越えを読むのは
+;;; 名乗った要り — 返事の task の行の memoryMiB)。伸びた task の山は行に書かれ、次の拍からその形の要りを上げる。
 ;;;
 ;;; CPU の PSI の some avg10 が CPU-PRESSURE-STOP 以上か、memory の some avg10 が MEMORY-PRESSURE-STOP 以上の間は 0(実行を待つ process が
 ;;; もう出ている機体へ足さない)。CPU の PSI は、task の層の値(task-cpu-some-avg10)を名乗る worker はその値、名乗らない worker は機体の値。
@@ -131,8 +143,10 @@
 ;;; 優先 0 以上の task と背景の仕事(負の優先の task)の取り分の守り(cluster_policy.task-misfit)は、予約(reserve-of = 上限 /
 ;;; RESERVE-SHARE)を半分ずつに分けて読む。RESERVE-SHARE は、36 core の機体の予約が手で書いていた 6(半分ずつ 3)と同じになる値。
 (require doeff-hy.macros [defk val])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
-(import math [floor])
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import math [ceil floor])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 
 ;; task 1 本に見込む CPU の数。会話の test や build の 1 本は、混んでいない機体で CPU 1 つ前後を使う。
@@ -160,6 +174,11 @@
 ;; 走り出した task の CPU の使いが測りに出きるまでの見込みの長さ(worker の測りの間 5 秒の 2 回分 — CPU の使いは前の読みとの間の増えで
 ;; 数える)。memory はこの見込みで数えない(task は分の単位で伸びる — 要りの予約で数える)。
 (val TASK-RAMP-MS 10000)
+;; task の測った山を書き直す刻み(MiB — 山が前の山からこれだけ伸びた heartbeat だけ行を書く — cluster_policy.task-peaks-noted。伸びる task の
+;; 行を heartbeat ごとに書かない)。行の山は実の山より最大でこの分小さいので、同じ形の山で数える要りに足す(頭の註の測った山で数える要り)。
+(val PEAK-STEP-MIB 256)
+;; 同じ形の山で数える要りに掛ける率(頭の註の測った山で数える要り — 同じ形の続く回の山の揺れ)。
+(val SHAPE-PEAK-MARGIN 1.25)
 ;; 予約 = 上限のこの分の 1。
 (val RESERVE-SHARE 6)
 ;; 積んでからこの長さを越えて memory の空きだけで置けない task に、worker の空きを取っておく(頭の註の長く待った task の取っておき)。
@@ -231,14 +250,26 @@
   (if (is memory-mib None) UNDECLARED-TASK-MIB memory-mib))
 
 
+(defrecord ShapePeak
+  "形 1 つの測った山(頭の註の測った山で数える要り — cluster_policy.shape-peaks-of): mib = 形を名乗り山を測った行(保持の間の終わった行を
+   含む)の山の最大・settled = そのうち終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限にしない)。"
+  {:check [(>= mib 0)]}
+  (#^ int mib)
+  (#^ bool settled))
+
+
 (defk learned-need [declared peak shape-peak line]
-  {:pre [(: declared (| int None)) (: peak (| int None)) (: shape-peak (| int None)) (: line (| int None))] :post [(: % int)]
+  {:pre [(: declared (| int None)) (: peak (| int None)) (: shape-peak (| ShapePeak None)) (: line (| int None))] :post [(: % int)]
    :tags {:context "coordinator" :role "judgment"}}
   "task の要り(MiB)を、名乗った要りと測った山から知るため(頭の註の測った山で数える要り): declared = 名乗った要り(None = 名乗らない —
-   need-of)・peak = この task の測った山・shape-peak = 同じ形の行の測った山の最大(None = 測っていない・形を名乗らない)・line = 置き先の
-   worker の線 − 床(memory-line-mib — None = 測りの無い worker で、山を線で切らない)。max(need-of declared, min(max(peak, shape-peak), line))。"
+   need-of)・peak = この task の測った山・shape-peak = 同じ形の行の測った山(ShapePeak — None = 測っていない・形を名乗らない)・line = 置き先の
+   worker の線 − 床(memory-line-mib — None = 測りの無い worker で、山を線で切らない)。同じ形に終わりまで走った行が在れば
+   min(⌈max(peak, 形の山) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, line)(名乗りを見ない)、無ければ max(need-of declared, min(max(peak, 形の山), line))。"
+  (val measured (max (or peak 0) (if (is shape-peak None) 0 shape-peak.mib)))
+  (val learned (+ (ceil (* measured SHAPE-PEAK-MARGIN)) PEAK-STEP-MIB))
+  (when (and (is-not shape-peak None) shape-peak.settled)
+    (return (if (is line None) learned (min learned line))))
   (<- need int (need-of declared))
-  (val measured (max (or peak 0) (or shape-peak 0)))
   (max need (if (is line None) measured (min measured line))))
 
 
