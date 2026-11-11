@@ -19,7 +19,8 @@
                               event-by-key-statement list-rows-statement top-rows-statement table-field-index-name
                               ordered-index-name ordered-expression ordered-within-index-name ordered-within-index table-field-expression
                               keyed-within-index-name keyed-within-index declared-indexes retired-index? table-shaped-index?])
-(import doeff_records._laws [LAW-SCHEMA])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
+(import doeff_records._values [FieldDecl TableDecl RecordsSchema])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -256,9 +257,22 @@
 ;; 行の大きさは本番の表 message の行(13,941 行・約 25 MB — 1 行 約 1.8 KB・2026-10-17 の測り)に近づける(欄 note に ANY-OF-NOTE-BLOCKS 個の
 ;; md5 の綴り)。計画は見積もりで選ばれ、表を頭から読む見積もりは行ごとの payload の jsonb への読み直しを安く数えるので、数十 byte の行
 ;; だけの置き場では値 500 個の組に Seq Scan が選ばれる(1 万行で 1 頁 約 22 ms — 答えは同じ・2026-10-17 の探り)。
+;; 表 parts の索引の構成はこの検が自分で宣言する(共有の LAW-SCHEMA を使わない): LAW-SCHEMA の parts は別の読みの検のために索引を足す
+;; 宣言で、2026-11-10 に keyed-within の color(`e512c0f00`)が欄の式 × 鍵の順の索引を足すと、planner は値の組の読みにもそれを選び
+;; (Index Scan・読んだ行 500)、欄の式の索引の名だけを待った検が落ちた。構成は 2 つ: 欄の式の索引だけ(ANY-OF-FIELD-SCHEMA)と、
+;; 鍵の順の組の索引の共に在る形(ANY-OF-KEYED-SCHEMA)。どちらも、組に当たる行を鍵の順に返し・表を頭から読まず・引いた索引の条件
+;; (Index Cond)が color の値の組で・読んだ行が 1 頁 + 1 行を越えず・2 倍の置き場でも増えない事を確かめる(索引の名を許すだけにしない)。
 (val ANY-OF-ROWS 10000)
 (val ANY-OF-VALUES 500)
 (val ANY-OF-NOTE-BLOCKS 50)
+;; 1 頁の答えの鍵: color が c1 … c{ANY-OF-VALUES} の行(鍵 p1 …)の鍵の綴りを、符号点の順(COLLATE "C")に。
+(val ANY-OF-KEYS (tuple (sorted (gfor g (range 1 (+ ANY-OF-VALUES 1)) (json.dumps [(.format "p{}" g)])))))
+(val ANY-OF-FIELDS #((FieldDecl "id" #(MAKER)) (FieldDecl "color" #(MAKER)) (FieldDecl "state" #(MAKER)) (FieldDecl "note" #(MAKER))))
+(val ANY-OF-FIELD-SCHEMA
+  (RecordsSchema :tables {"parts" (TableDecl :name "parts" :key-fields #("id") :fields ANY-OF-FIELDS :indexes #("color"))}))
+(val ANY-OF-KEYED-SCHEMA
+  (RecordsSchema :tables {"parts" (TableDecl :name "parts" :key-fields #("id") :fields ANY-OF-FIELDS :indexes #("color")
+                                             :keyed-within #("color"))}))
 
 
 (defk part-rows-statement [prefix count]
@@ -298,7 +312,8 @@
 (defk any-of-reads-on-seeded-store [prefix count]
   {:pre [(: prefix str) (: count int)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
-  "用意した置き場 prefix の表 parts に count 行を置いて統計を取り、値の組の 1 頁の読みの #(走査の節 引いた索引の名 返した行の数) を返すため。"
+  "用意した置き場 prefix の表 parts に count 行を置いて統計を取り、値の組の 1 頁の読みの #(走査の節 引いた索引の条件 返した鍵) を返すため
+   (引いた索引の条件 = 索引を引いた節の #(索引の名 Index Cond) の集まり)。"
   (<- seed (part-rows-statement prefix count))
   (for [statement #(seed (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
     (<- seeded (SqlQuery DATABASE statement.text statement.params))
@@ -309,43 +324,88 @@
   (val plan (get answer.rows 0 0))
   (val explained (if (isinstance plan str) (json.loads plan) plan))
   (<- scans (table-scans prefix explained))
-  (<- names (index-names explained))
+  (<- nodes (plan-nodes (get explained 0 "Plan")))
+  (val conditions (frozenset (gfor node nodes :if (in "Index Name" node) #((get node "Index Name") (.get node "Index Cond" "")))))
   (<- listed (SqlQuery DATABASE statement.text statement.params))
   (assert (isinstance listed SqlRows) (repr listed))
-  #(scans names (len listed.rows)))
+  #(scans conditions (tuple (gfor record listed.rows (get record 0)))))
 
 
-(defk any-of-reads-at [connections count]
-  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+(defk color-indexes [prefix schema]
+  {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % frozenset)]
    :tags {:context "records" :role "program"}}
-  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して表 parts に count 行を置き、値の組の読みを測るため(終わりに表を消す)。
-   答え = #(走査の節 引いた索引の名 返した行の数 欄 color の索引の名)。"
-  (val store (prepared-store connections (fresh-prefix)))
+  "宣言 schema の置き場(接頭辞 prefix)に在るべき索引のうち、parts の欄 color の式を持つ索引の名を集めるため(検の前提の索引の構成)。"
+  (<- declared (declared-indexes prefix schema))
+  (<- color (table-field-expression "" "parts" "color"))
+  (frozenset (gfor index declared :if (in color index.text) index.name)))
+
+
+(defk any-of-reads-at [connections schema count]
+  {:pre [(: connections PostgresConnections) (: schema RecordsSchema) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・宣言 schema の表と索引)を用意して表 parts に count 行を置き、値の組の読みを測るため(終わりに表を消す)。
+   答え = #(走査の節 引いた索引の条件 返した鍵 parts の color の式を持つ索引の名)。"
+  (val store (prepared-store connections (fresh-prefix) schema))
   (var measured #())
   (try
     (:= measured (run-sql connections (any-of-reads-on-seeded-store store.prefix count)))
     (finally
       (run-sql connections (drop-records-tables store))))
-  (<- color-index (table-field-index-name store.prefix "parts" "color"))
-  (+ measured #(color-index)))
+  (<- indexes (color-indexes store.prefix schema))
+  (+ measured #(indexes)))
+
+
+(defk checked-any-of-reads [connections schema]
+  {:pre [(: connections PostgresConnections) (: schema RecordsSchema)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "宣言 schema の置き場を ANY-OF-ROWS 行と 2 倍の行で作って値の組の読みを測り、両方の測りが値の組の読みの性質を満たす事を確かめるため
+   (答え = {置き場の行の数 #(読んだ行 引いた索引の名)} — 呼び手が索引の構成ごとの事を足して確かめる)。"
+  (<- small (any-of-reads-at connections schema ANY-OF-ROWS))
+  (<- large (any-of-reads-at connections schema (* 2 ANY-OF-ROWS)))
+  (var seen {})
+  (for [#(rows #(scans conditions keys indexes)) #(#(ANY-OF-ROWS small) #((* 2 ANY-OF-ROWS) large))]
+    ;; 1 頁 = 組に当たる行 ANY-OF-VALUES 行を鍵の綴りの順に(続きの有無を知るための 1 行は当たる行が無いので出ない)。
+    (assert (= keys ANY-OF-KEYS) (repr #(rows (len keys) (cut keys 5) scans)))
+    ;; 置き場の表を頭から読む節が無い。
+    (assert (not (lfor #(kind table _) scans :if (= kind "Seq Scan") table)) (repr #(rows scans)))
+    ;; 引いた索引は color の式を持つ宣言の索引で、その条件(Index Cond)が color の値の組(= ANY)— 索引で組に当たる行だけを引き、
+    ;; 当たらない行を濾しで落とさない。
+    (assert conditions (repr #(rows scans)))
+    (for [#(name condition) conditions]
+      (assert (in name indexes) (repr #(rows name indexes conditions)))
+      (assert (and (in "'color'" condition) (in "= ANY" condition)) (repr #(rows name condition))))
+    ;; 読んだ行は 1 頁 + 1 行を越えない(組に当たる行だけ)。
+    (<- read (total-read scans))
+    (assert (<= read (+ ANY-OF-VALUES 1)) (repr #(rows read scans)))
+    (:= seen (| seen {rows #(read (frozenset (gfor #(name _) conditions name)))})))
+  ;; 2 倍の置き場でも読んだ行は増えない(読むのは組に当たる行だけ — 当たらない行の数に依らない)。
+  (assert (<= (get seen (* 2 ANY-OF-ROWS) 0) (get seen ANY-OF-ROWS 0)) (repr seen))
+  seen)
 
 
 (deftest test-a-list-by-a-value-set-reads-through-the-field-index-on-a-store-twice-as-large
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 検の前提: parts の color の式を持つ索引は欄の式の索引だけ(鍵の順の組の索引も上から読む組の索引も無い)。
+  (<- field-index (table-field-index-name "records_" "parts" "color"))
+  (<- premise (color-indexes "records_" ANY-OF-FIELD-SCHEMA))
+  (assert (= premise (frozenset #(field-index))) (repr premise))
   (val connections (postgres-connections 2))
   (try
-    (<- small (any-of-reads-at connections ANY-OF-ROWS))
-    (<- large (any-of-reads-at connections (* 2 ANY-OF-ROWS)))
-    (for [#(scans names returned color-index) #(small large)]
-      ;; 1 頁 = 組に当たる行 ANY-OF-VALUES 行(続きの有無を知るための 1 行は当たる行が無いので出ない)。
-      (assert (= returned ANY-OF-VALUES) (repr #(returned scans)))
-      ;; 欄の式の索引を引く・置き場の表を頭から読む節が無い。
-      (assert (in color-index names) (repr #(color-index names scans)))
-      (assert (not (lfor #(kind table _) scans :if (= kind "Seq Scan") table)) (repr scans)))
-    ;; 2 倍の置き場でも読んだ行は増えない(読むのは組に当たる行だけ — 当たらない行の数に依らない)。
-    (<- small-read (total-read (get small 0)))
-    (<- large-read (total-read (get large 0)))
-    (assert (<= large-read small-read) (repr #(small-read large-read small large)))
+    (<- (checked-any-of-reads connections ANY-OF-FIELD-SCHEMA))
+    (finally
+      (.close connections))))
+
+
+(deftest test-a-list-by-a-value-set-reads-only-the-matching-rows-beside-the-keyed-index-on-a-store-twice-as-large
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 検の前提: parts の color の式を持つ索引は欄の式の索引と鍵の順の組の索引(keyed-within)の 2 つ — planner はどちらも選べる。
+  (<- field-index (table-field-index-name "records_" "parts" "color"))
+  (<- keyed-index (keyed-within-index-name "records_" "parts" "color"))
+  (<- premise (color-indexes "records_" ANY-OF-KEYED-SCHEMA))
+  (assert (= premise (frozenset #(field-index keyed-index))) (repr premise))
+  (val connections (postgres-connections 2))
+  (try
+    (<- (checked-any-of-reads connections ANY-OF-KEYED-SCHEMA))
     (finally
       (.close connections))))
 
