@@ -33,6 +33,10 @@ What it does:
     only the doeff-linter and doeff-indexer crates and the link are built (before, a temporary dir was used and every build started cold; the first seat
     to commit after a new pin paid 9 minutes under high load). So that two processes building different shas at the same time do not
     overwrite the same release/ binary, building and copying are serialized one at a time with a flock on `<target>.lock`.
+    The intermediate-artifact location (env CARGO_BUILD_BUILD_DIR) is also pinned to the shared target. A machine can point it at
+    `<memory dir>/{workspace-path-hash}`, and the cross-section is extracted into a new temporary dir on every call, so the hash changed on every
+    call and every dependency crate was built cold — on 2026-11-11 a commit hook under load 30 was cut off at its 580-second limit 4 times in a row
+    while the shared target went unused.
     build.rs has no .git in the cross-section, so the 40-digit sha is passed in env DOEFF_LINTER_BUILD_COMMIT. After confirming that the built binary's `--version` names exactly that sha
     (with no +dirty), it is placed by rename from a temporary name.
   * Names starting with GIT_ are removed from the env passed to git — when called inside another repo's git hook, GIT_DIR and the like that git passes win over `-C`,
@@ -42,7 +46,7 @@ Usage: uv run --script packages/doeff-linter/scripts/linter_snapshot.py <doeff c
   If it can build, prints the binary's path on one line and exits 0; if not, prints the reason on one line to stderr and exits 1 (the caller falls back to its own environment's linter),
   and exits 2 on a bad argument.
 Tests = tests/test_linter_snapshot.py (3 concurrent processes build only once, working-tree changes are not read, a linter that does not name its sha is not placed,
-a sha with unchanged input is copied without building, a sha with changed input is built, and cargo's target follows the cache root rather than the store).
+a sha with unchanged input is copied without building, a sha with changed input is built, cargo's target follows the cache root rather than the store, and cargo's build dir is the shared target even when the environment points it elsewhere).
 """
 
 
@@ -63,6 +67,8 @@ MANIFEST = "packages/doeff-linter/Cargo.toml"
 BIN_NAME = "doeff-linter"
 STORE_ENV = "DOEFF_LINTER_SNAPSHOT_DIR"
 BUILD_COMMIT_ENV = "DOEFF_LINTER_BUILD_COMMIT"
+# cargo's intermediate-artifact location — pinned to the shared target (see the header comment).
+BUILD_DIR_ENV = "CARGO_BUILD_BUILD_DIR"
 # A release / lto build on a cold target takes 3 to 5 minutes (measured on node-h 2026-09-29: 156 to 266 seconds).
 BUILD_TIMEOUT_S = 1800
 # Spelling of doeff's commit in the linter's `--version` (build.rs's DOEFF_LINTER_COMMIT).
@@ -167,7 +173,7 @@ def build_into(source: Path, sha: str, cargo_target: Path, target: Path, env: di
         done = subprocess.run(
             [cargo, "build", "--release", "--locked", "--manifest-path", str(source / MANIFEST)],
             capture_output=True, text=True, check=False, timeout=BUILD_TIMEOUT_S,
-            env={**env, "CARGO_TARGET_DIR": str(cargo_target), BUILD_COMMIT_ENV: sha},
+            env={**env, "CARGO_TARGET_DIR": str(cargo_target), BUILD_DIR_ENV: str(cargo_target), BUILD_COMMIT_ENV: sha},
         )
         if done.returncode != 0:
             last = (done.stderr.strip().splitlines() or [""])[-1]

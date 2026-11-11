@@ -35,6 +35,7 @@ manifest=$5
 marker=$(cat "$(dirname "$manifest")/marker")
 mkdir -p "$CARGO_TARGET_DIR/release"
 echo built >> "$FAKE_CARGO_COUNT"
+echo "$CARGO_BUILD_BUILD_DIR" >> "$FAKE_CARGO_COUNT.build-dir"
 sleep 1
 printf '#!/bin/sh\\necho "doeff-linter 0.2.0 (doeff %s%s)"\\necho "%s"\\n' "$DOEFF_LINTER_BUILD_COMMIT" "$FAKE_CARGO_SUFFIX" "$marker" > "$CARGO_TARGET_DIR/release/doeff-linter"
 chmod +x "$CARGO_TARGET_DIR/release/doeff-linter"
@@ -128,6 +129,22 @@ def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
     kept = tmp_path / "cache" / "cargo-target" / "doeff-linter" / "release" / "doeff-linter"
     assert kept.exists()
     assert "second" in subprocess.run([str(kept)], capture_output=True, text=True, check=True).stdout
+
+
+def test_the_build_dir_is_the_shared_target_even_when_the_environment_points_it_elsewhere(tmp_path: Path) -> None:
+    # A machine can point cargo's intermediates at `<dir>/{workspace-path-hash}`; the cross-section is extracted into a new temporary dir per call,
+    # so that hash changed every call and every build started cold (2026-11-11). Both builds must hand cargo the shared target as the build dir.
+    # Counterexample: in the earlier form that passed the environment's value through, cargo receives the template and this test is red.
+    repo = stage(tmp_path)
+    env = [*environ(tmp_path, ""), f"CARGO_BUILD_BUILD_DIR={tmp_path / 'ram' / '{workspace-path-hash}'}"]
+    snapshot(repo, env).communicate(timeout=50)
+    (repo / "packages/doeff-linter/marker").write_text("second", encoding="utf-8")
+    git_env = ["env", "-i", f"PATH={os.pathsep.join(os.get_exec_path())}", f"HOME={tmp_path}"]
+    subprocess.run([*git_env, "git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "y"],
+                   check=True, capture_output=True)
+    snapshot(repo, env).communicate(timeout=50)
+    shared = tmp_path / "cache" / "cargo-target" / "doeff-linter"
+    assert (tmp_path / "count.build-dir").read_text(encoding="utf-8") == f"{shared}\n{shared}\n"
 
 
 def test_the_cargo_target_follows_the_cache_root_not_the_snapshot_store(tmp_path: Path) -> None:
