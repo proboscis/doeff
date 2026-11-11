@@ -19,6 +19,8 @@
 (import doeff [with-handlers])
 (import doeff_core_effects [ReadText SlogEffect WriteText])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles memory-file-handler slog-discard-handler state])
+(import doeff_time [SimClock sim-time-handler])
+(import tests.clock_fixtures [clock-at])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.eviction_rules [CommandLayerUse command-layer-limit command-layer-use-of])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text])
@@ -140,7 +142,10 @@
                                                                                                       "commandFloorMiB" 8192}}))))))
   (val cell (EvictionCell))
   (val link (LinkState "node-a" #("cpu") 10000 "/var/tasks" "boot" 0 0 0 :room-file "/etc/worker-room.json" :eviction cell))
-  (<- (with-handlers [(state) slog-discard-handler (memory-file-handler files)] (room-noted link)))
+  ;; room-noted は読み直しの刻を GetTime で読む(時計の無い検は単位の換算の前に UnhandledEffect で止まり、MIB の import 漏れを見ない)。
+  ;; 刻はこの検の固定の 1 点(2026-11-10 02:00 UTC)— 前に読んだ刻が無い(room-read-ms = None)ので、読み直しの判断は必ず読む側に倒れる。
+  (<- clock SimClock (clock-at 1794276000000))
+  (<- (with-handlers [(sim-time-handler :clock clock) (state) slog-discard-handler (memory-file-handler files)] (room-noted link)))
   (assert (= #(cell.command-line-file cell.command-floor-bytes) #(path (* 8192 MIB))) #(cell.command-line-file cell.command-floor-bytes)))
 
 
