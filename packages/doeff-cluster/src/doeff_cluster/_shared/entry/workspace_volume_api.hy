@@ -55,7 +55,7 @@
     (<- room WorkspaceRoom (workspace-room site))
     (resume room))
   (ReadWorkspacePlace [owner path]
-    (<- place WorkspacePlace (place-read site owner path))
+    (<- place WorkspacePlace (place-read site notices owner path))
     (resume place))
   (ReadAttachedWorkspaceVolumes []
     (<- attached tuple (attached-volumes site))

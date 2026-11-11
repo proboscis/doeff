@@ -67,7 +67,7 @@
 (import doeff_cluster._shared.protocol.workspace_volumes [RESTORE-REBUILDS SettingsWire VolumeNotices workspace-settings])
 (import doeff_cluster._shared.entry.workspace_volume_api [NOTICES-KEY workspace-volumes-api])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
-(import doeff_cluster._sim.workspace_volumes [HeldBackup HeldVolume WorkspaceVolumeWorld held-volume held-workspace-volumes put-volume])
+(import doeff_cluster._sim.workspace_volumes [HeldBackup HeldVolume WorkspaceVolumeWorld device-remade held-volume held-workspace-volumes put-volume])
 (import doeff_cluster._foundation.volume_notices [VolumeNoticeBoard])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -187,7 +187,8 @@
    途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
    名・engine-left = 名目の大きさを書いた後に engine が広がるまでの読みの残り・doomed = 戻しの読みが尽きた所で失敗する volume の名・failed =
    戻しに失敗した volume の名・faulted = ほかの訳で robustness faulted の volume の名・events = Volume の作り(make)・消しの受け(drop)・消え
-   終わり(gone)の順の記録・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。束 BackupVolume: target-stalled = backup の先の
+   終わり(gone)の順の記録・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み(device の読みの外)・probed = 係が受けた
+   device の読みの頼み。束 BackupVolume: target-stalled = backup の先の
    全体の同期が落ち続けている(Longhorn が束を作らない — 束は手で作られた物 bundles だけ。落ちていなければ backup の在る volume に束が在る)・
    bundle-stalled = 束 1 本の同期も落ちる(束の lastBackupName が空のまま)・bundle-lag = 束が在っても webhook の cache がまだ見ず、戻しの
    Volume の POST を 422 で断る回数。走らせた後に読む物: bundles = 手で作られた束の volume の名・target-syncs = Longhorn の backup controller が
@@ -229,7 +230,8 @@
           #^ (get tuple #(str ...)) self.created #()
           #^ (get tuple #(SeenRequest ...)) self.seen #()
           #^ bool self.settings-gone False
-          #^ (get tuple #(str ...)) self.asked #())))
+          #^ (get tuple #(str ...)) self.asked #()
+          #^ (get tuple #(str ...)) self.probed #())))
 
 
 (defk api-answer [status payload]
@@ -848,12 +850,23 @@
 (defk mountinfo-of [world]
   {:pre [(: world LonghornWorld)] :post [(: % str)]}
   "答え手の process の mountinfo を、世界の付いている volume から綴るため(係が host の /dev/longhorn/<名> の device で付けた形 — 空白は
-   8 進の escape)。"
+   8 進の escape)。付いている mount の major:minor は volume の今の device(device-of)・古い mount(stale-at — 模擬の device-remade)は
+   作り直す前の device(minor が 1 つ上)。"
   (val base #("1 0 0:902 / / rw,relatime - overlay overlay rw" "2 1 8:17 /agent-worker /work rw,noatime master:790 - ext4 /dev/sdb1 rw"))
-  (val lines (lfor #(index volume) (enumerate world.held.volumes) :if (is-not volume.mounted-at None)
-                   (.format "{} 2 8:{} / {} rw,relatime master:9 - ext4 /host/dev/longhorn/{} rw" (+ 100 index) (* 16 index)
-                            (.replace volume.mounted-at " " "\\040") volume.name)))
+  (val lines (lfor #(index volume) (enumerate world.held.volumes)
+                   #(place minor) #(#(volume.mounted-at (* 16 index)) #(volume.stale-at (+ (* 16 index) 1)))
+                   :if (is-not place None)
+                   (.format "{} 2 8:{} / {} rw,relatime master:9 - ext4 /host/dev/longhorn/{} rw" (+ 100 index) minor
+                            (.replace place " " "\\040") volume.name)))
   (+ (.join "\n" (+ (list base) lines)) "\n"))
+
+
+(defk device-of [world name]
+  {:pre [(: world LonghornWorld) (: name str)] :post [(: % (| str None))]}
+  "世界の volume name の今の device(host の /dev/longhorn/<名>)の major:minor を得るため(この node に attach されていなければ None —
+   mountinfo-of と同じ番号)。"
+  (val found (lfor #(index volume) (enumerate world.held.volumes) :if (and (= volume.name name) (= volume.node world.held.node)) index))
+  (if found (.format "8:{}" (* 16 (get found 0))) None))
 
 
 (defk keeper-run [world line]
@@ -865,8 +878,21 @@
   (val target (get parts 2))
   (<- volume (held-volume world.held name))
   (val there (lfor one world.held.volumes :if (= one.mounted-at target) one))
+  (val stale (lfor one world.held.volumes :if (= one.stale-at target) one))
   (<- stat (| PathStat FileFailed) (StatPath target))
+  (<- current (| str None) (device-of world name))
   (cond
+    (= verb "device") (+ "0\ndevice " (or current "-"))
+    (= verb "drop-stale")
+    (cond
+      (and (not there) (not stale)) (+ "0\nworkspace-mount: " target " には何も付いていない")
+      (and there (= (. (get there 0) name) name))
+      (+ "1\nworkspace-mount: " target " の " name " は今の device で付いている — 古い mount でない(外すなら umount)")
+      (or there (!= (. (get stale 0) name) name)) (+ "1\nworkspace-mount: " target " に付いているのは " name " の古い mount でない")
+      (in target world.held.busy) (+ "1\nworkspace-mount: " target " を外せなかった(使っている process が在る)")
+      True (do (<- (put-volume world.held (replace (get stale 0) :stale-at None)))
+               (+ "0\nworkspace-mount: " target " の " name " の古い mount を外した")))
+    (and stale (in verb #("mount" "umount" "grow"))) (+ "1\nworkspace-mount: " target " には別の物が付いている")
     (= verb "mount")
     (cond
       (or (isinstance stat FileFailed) (!= stat.kind PathKind.DIRECTORY))
@@ -914,7 +940,9 @@
     (if (or world.silent (isinstance moved FileFailed))
         (resume moved)
         (do (<- line str (ReadText target))
-            (setv world.asked (+ world.asked #((.strip line))))
+            (if (.startswith line "device ")
+                (setv world.probed (+ world.probed #((.strip line))))
+                (setv world.asked (+ world.asked #((.strip line)))))
             (<- answer str (keeper-run world (.strip line)))
             (<- (WriteText (+ (cut target 0 -4) ".out") answer))
             (<- (RemoveTree target))
@@ -1435,6 +1463,8 @@
 (deftest test-the-place-is-read-the-same-on-both-handlers
   (val mounted (HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True))
   (val other (HeldVolume :name (! (volume-name OTHER)) :node NODE :mounted-at PLACE :formatted True))
+  (val stale (HeldVolume :name NAME :node NODE :stale-at PLACE :formatted True))
+  (val other-stale (HeldVolume :name (! (volume-name OTHER)) :node NODE :stale-at PLACE :formatted True))
   (val place (Step :verb "place" :owner OWNER :path PLACE))
   (val cases #(;; 何も無い・空の dir — 付けてよい。
                #(#() #() WORKER-FILES "place ready")
@@ -1446,7 +1476,10 @@
                #(#() #(COLD-BACKUP) FILLED-FILES "place clash")
                ;; 付いている物。
                #(#(mounted) #() WORKER-FILES "place mounted")
-               #(#(other) #() WORKER-FILES "place clash")))
+               #(#(other) #() WORKER-FILES "place clash")
+               ;; device が作り直され、前の device を指したまま残る古い mount — 名は持ち主の volume でも付いているとは読まない。
+               #(#(stale) #() WORKER-FILES "place stale")
+               #(#(other-stale) #() WORKER-FILES "place clash")))
   (for [#(volumes backups files wanted) cases]
     (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes volumes :backups backups)) #(place) 0.0 files))
     (assert (= ran.real #(wanted)) #(wanted ran.real))
@@ -1471,6 +1504,72 @@
   (<- empty BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(attached))) #((Step :verb "mount" :owner OWNER :path PLACE)) 0.0
                           EMPTY-DIR-FILES))
   (assert (= #(empty.real empty.held) #(#("done") #("done"))) #(empty.real empty.held)))
+
+
+;; --- device が付いたまま作り直された古い mount(STALE)-----------------------------------------------------------------
+
+;; 付いたまま device が作り直された後の volume: attach されたまま、付ける先には前の device を指す古い mount だけが残る。
+(val REMADE (HeldVolume :name NAME :node NODE :stale-at PLACE :formatted True))
+
+
+(deftest test-a-device-remade-while-attached-leaves-a-stale-mount
+  ;; 模擬の出来事 device-remade: 付いていた mount は古い mount に替わり、volume は attach されたまま。付いていない volume には何もしない。
+  (val world (WorkspaceVolumeWorld NODE :volumes #((HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True)
+                                                   (HeldVolume :name (! (volume-name OTHER)) :node NODE :formatted True))))
+  (<- (device-remade world NAME))
+  (<- (device-remade world (! (volume-name OTHER))))
+  (assert (= world.volumes #(REMADE (HeldVolume :name (! (volume-name OTHER)) :node NODE :formatted True))) world.volumes))
+
+
+(deftest test-a-stale-mount-is-dropped-and-the-current-device-mounted-on-both-handlers
+  ;; 古い mount の上で使わせない: mount は古い mount を外してから今の device を付ける。2 度目は ALREADY(付いているのは今の device)。
+  (val steps #((Step :verb "place" :owner OWNER :path PLACE) (Step :verb "mount" :owner OWNER :path PLACE)
+               (Step :verb "place" :owner OWNER :path PLACE) (Step :verb "mount" :owner OWNER :path PLACE)))
+  (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(REMADE))) steps 0.0 EMPTY-DIR-FILES))
+  (val wanted #("place stale" "done" "place mounted" "already"))
+  (assert (= ran.real wanted) ran.real)
+  (assert (= ran.held wanted) ran.held)
+  (val after (HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True))
+  (assert (= ran.api.held.volumes #(after)) ran.api.held.volumes)
+  (assert (= ran.sim.volumes #(after)) ran.sim.volumes)
+  ;; 係への頼みは古い mount の外しと今の device の付けの 1 つずつ。device の番号は付ける先に何かが付いている時に読む。
+  (assert (= ran.api.asked #((+ "drop-stale " NAME " " PLACE) (+ "mount " NAME " " PLACE))) ran.api.asked)
+  (assert (= ran.api.probed #((+ "device " NAME " " PLACE) (+ "device " NAME " " PLACE) (+ "device " NAME " " PLACE)
+                               (+ "device " NAME " " PLACE)))
+          ran.api.probed))
+
+
+(deftest test-a-stale-mount-in-use-is-not-dropped-and-not-mounted-over-on-both-handlers
+  ;; 古い mount に使い手が在る(cwd か開いた file)。mount は外さず付けずに訳つきで断る — 古い mount の上で使わせない。umount と detach も断る。
+  (val make (fn [] (WorkspaceVolumeWorld NODE :volumes #(REMADE) :busy (frozenset #(PLACE)))))
+  (val steps #((Step :verb "mount" :owner OWNER :path PLACE) (Step :verb "umount" :owner OWNER :path PLACE) (Step :verb "detach" :owner OWNER)
+               (Step :verb "place" :owner OWNER :path PLACE)))
+  (<- ran BothRan (both make steps 0.0 EMPTY-DIR-FILES))
+  (for [outcomes #(ran.real ran.held)]
+    (assert (= (! (kinds outcomes)) #("refused" "refused" "refused" "place stale")) outcomes)
+    (for [refusal (cut outcomes 3)]
+      (assert (in (+ PLACE " の volume " NAME " の古い mount を外せない — mount の係が断った: ") refusal) refusal)
+      (assert (in "使っている process が在る" refusal) refusal)))
+  (assert (= ran.api.held.volumes #(REMADE)) ran.api.held.volumes)
+  (assert (= ran.sim.volumes #(REMADE)) ran.sim.volumes)
+  ;; detach の ticket の書きは無い。
+  (assert (not (any (gfor seen ran.api.seen (= seen.method "PATCH")))) ran.api.seen))
+
+
+(deftest test-a-stale-mount-is-dropped-once-and-the-volume-detached-on-both-handlers
+  ;; 外しの頼み(umount → detach)は、使い手が無ければ古い mount を 1 回で外して detach まで進む。外し直しは重ならない(2 度目は ALREADY —
+  ;; 係へ頼まない)。umount を経ない detach も、古い mount を外してから進む。
+  (for [steps #(#((Step :verb "umount" :owner OWNER :path PLACE) (Step :verb "detach" :owner OWNER)
+                  (Step :verb "umount" :owner OWNER :path PLACE) (Step :verb "detach" :owner OWNER))
+                #((Step :verb "detach" :owner OWNER) (Step :verb "umount" :owner OWNER :path PLACE) (Step :verb "detach" :owner OWNER)))]
+    (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(REMADE))) steps 0.0 EMPTY-DIR-FILES))
+    (val wanted (if (= (len steps) 4) #("done" "done" "already" "already") #("done" "already" "already")))
+    (assert (= ran.real wanted) #(steps ran.real))
+    (assert (= ran.held wanted) #(steps ran.held))
+    (val after (HeldVolume :name NAME :formatted True))
+    (assert (= (lfor one ran.api.held.volumes (replace one :used-at 0.0)) [after]) ran.api.held.volumes)
+    (assert (= (lfor one ran.sim.volumes (replace one :used-at 0.0)) [after]) ran.sim.volumes)
+    (assert (= ran.api.asked #((+ "drop-stale " NAME " " PLACE))) ran.api.asked)))
 
 
 ;; --- 置き場の数え(作る前に数える・置けない volume を残さない)----------------------------------------------------------

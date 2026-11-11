@@ -8,7 +8,11 @@
 ;;;   ticket-id             volume の名 → この答え手が VolumeAttachment に置く ticket の id(longhorn-api-<名>)
 ;;;   mount-entries         mountinfo の字 → mount の行の組(path の 8 進の escape を戻す)
 ;;;   mounted-at            mount の行の組と path → その path に一番上に付いている物(無ければ None)
-;;;   volume-mount-points   mount の行の組と volume の名 → その volume の device が付いている path の組
+;;;   mount-hold            mount の行 1 つ・volume の名・その volume の今の device の major:minor → 付いている(HELD)・古い mount(STALE)・
+;;;                         別の物(OTHER)(下の註の「付いている」の定義)
+;;;   device-read           mount の係の頼み device の答えの訳 → volume の今の device の major:minor(device が無ければ None・形が違えば None
+;;;                         の答え)
+;;;   volume-holds          mount の行の組と volume の名と今の device → その volume が付いている(HELD)か古い mount(STALE)の path の組
 ;;;   attach-step           Longhorn の様子 → attach の次の一手(ticket を置く・待つ・付いた・別の node に付いている)
 ;;;   detach-step           Longhorn の様子 → detach の次の一手(ticket を外す・待つ・外れた・別の node に付いている)
 ;;;   using-tickets         VolumeAttachment の ticket の id の組 → Longhorn の手順の外の ticket(使っている印 — 冷やす側の snapshot と backup の
@@ -30,7 +34,15 @@
 ;;;                         disk のうち名目の残りが一番大きい物の node — 無ければ空)
 ;;;
 ;;; device の見分け方: mount の係は attach した volume を host の /dev/longhorn/<名> の device で付ける(係の /host/dev/longhorn/<名>)。
-;;; mountinfo の source はその path なので、dir の名が longhorn で file の名が volume の名の source を、その volume の mount と読む。
+;;; mountinfo の source はその path なので、dir の名が longhorn で file の名が volume の名の source を、その volume の mount の候補と読む
+;;; (volume-of-entry)。
+;;;
+;;; 「volume X が path P に付いている」の定義(1 つ — 上に載る系の mount の係の script も同じ定義で判じる・2026-11-12):
+;;; P の一番上の mount の major:minor(mountinfo の 3 つ目の欄)が、今の /dev/longhorn/<X> の major:minor と等しい時だけ HELD。mount 元の
+;;; 名が X で番号が違う(device が無い時も)物は STALE — Longhorn の engine が付いたまま起こし直されると /dev/longhorn/<X> は新しい番号で
+;;; 作り直され、古い mount は古い device を指したまま残る(ext4 は shutdown して読み書きが I/O error になる・mount 元の字は同じ)。
+;;; 名だけで判じると、壊れた mount を付いていると読み、その上で使い始める。答え手の container は host の /dev を持たないので、今の
+;;; device の番号は mount の係に読ませる(係の頼み device)。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
@@ -49,6 +61,8 @@
 (val TICKET-TYPE "longhorn-api")
 ;; attach した volume の device の dir の名(host の /dev/longhorn)。
 (val DEVICE-DIR-NAME "longhorn")
+;; device の番号の字(major:minor — mountinfo の 3 つ目の欄と stat の %Hr:%Lr と同じ綴り)。
+(val DEVICE-NUMBER (re.compile r"[0-9]+:[0-9]+"))
 ;; mountinfo の path の 8 進の escape(空白・tab・改行・\)。
 (val MOUNTINFO-ESCAPE (re.compile r"\\([0-7]{3})"))
 ;; 使い手が volume に置く刻の印(annotation・epoch 秒の字)。attach は ticket を置いた後に、detach は ticket を外した後に書く。冷やす側は
@@ -74,13 +88,18 @@
 
 (defenum AttachStep PUT WAIT READY ELSEWHERE)
 (defenum DetachStep REMOVE WAIT GONE ELSEWHERE)
+;; mount の行 1 つと volume の関わり(頭の註の「付いている」の定義): HELD = 今の device が付いている・STALE = 名は volume の device だが番号が
+;; 今の device と違う古い mount・OTHER = 別の物。
+(defenum MountHold HELD STALE OTHER)
 
 
 (defrecord MountEntry
-  "mountinfo の行 1 つ: mount-point = 付いている path・source = 付けた物(block device なら device の path)・fs-type = file system の型。"
+  "mountinfo の行 1 つ: mount-point = 付いている path・source = 付けた物(block device なら device の path)・fs-type = file system の型・
+   device = file system の device の major:minor(mountinfo の 3 つ目の欄 — block device の file system なら付けた device の番号)。"
   (#^ str mount-point)
   (#^ str source)
-  (#^ str fs-type))
+  (#^ str fs-type)
+  (setv #^ str device ""))
 
 
 (defrecord AttachView
@@ -185,7 +204,8 @@
       (when (>= (len fields) (+ dash 3))
         (:= entries (+ entries #((MountEntry :mount-point (! (_unescaped (get fields 4)))
                                              :source (! (_unescaped (get fields (+ dash 2))))
-                                             :fs-type (get fields (+ dash 1)))))))))
+                                             :fs-type (get fields (+ dash 1))
+                                             :device (get fields 2))))))))
   entries)
 
 
@@ -204,15 +224,46 @@
       None))
 
 
-(defk volume-mount-points [entries name]
-  {:pre [(: entries (get tuple #(MountEntry ...))) (: name str)] :post [(: % (get tuple #(str ...)))]}
-  "mount の行の組 entries のうち、volume name の device が付いている path を、書かれた順に重ねずに並べるため。"
-  (var points #())
+(defk mount-hold [entry name device]
+  {:pre [(: entry MountEntry) (: name str) (: device (| str None))] :post [(: % MountHold)]}
+  "mount の行 entry と volume name の関わりを、頭の註の「付いている」の定義で得るため: entry の major:minor が name の今の device の番号
+   device(None = device が無い — attach されていない)と等しければ HELD・mount 元の名が name なら STALE・ほかは OTHER。"
+  (<- found (| str None) (volume-of-entry entry))
+  (cond
+    (and (is-not device None) (= entry.device device)) MountHold.HELD
+    (= found name) MountHold.STALE
+    True MountHold.OTHER))
+
+
+(defrecord DeviceRead
+  "mount の係の頼み device の答え: number = volume の今の device の major:minor(None = device が無い — この node に attach されていない)。"
+  (#^ (| str None) number))
+
+
+(defk device-read [notes]
+  {:pre [(: notes str)] :post [(: % (| DeviceRead None))]}
+  "mount の係の頼み device の答えの訳 notes から、device の番号を得るため(行 `device <major>:<minor>` か、device が無い時の `device -` —
+   その行が無いか形が違えば None)。"
+  (val found (lfor line (.splitlines notes) :if (.startswith line "device ") (.strip (cut line (len "device ") None))))
+  (cond
+    (not found) None
+    (= (get found 0) "-") (DeviceRead :number None)
+    (is-not (re.fullmatch DEVICE-NUMBER (get found 0)) None) (DeviceRead :number (get found 0))
+    True None))
+
+
+(defk volume-holds [entries name device]
+  {:pre [(: entries (get tuple #(MountEntry ...))) (: name str) (: device (| str None))]
+   :post [(: % (get tuple #((get tuple #(str MountHold)) ...)))]}
+  "mount の行の組 entries のうち、mount 元の名が volume name の物(volume-of-entry — 係が付けた mount の候補)を、path と関わり(HELD か
+   STALE — mount-hold・device は name の今の device の番号)の組にして、書かれた順に重ねずに並べるため。"
+  (var holds #())
   (for [entry entries]
     (<- found (| str None) (volume-of-entry entry))
-    (when (and (= found name) (not-in entry.mount-point points))
-      (:= points (+ points #(entry.mount-point)))))
-  points)
+    (<- hold MountHold (mount-hold entry name device))
+    (when (and (= found name) (not-in #(entry.mount-point hold) holds))
+      (:= holds (+ holds #(#(entry.mount-point hold))))))
+  holds)
 
 
 (defk attach-step [view node]

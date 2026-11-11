@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.workspace_volumes import HeldVolume as HeldVolume
     from doeff_cluster._sim.workspace_volumes import WorkspaceVolumeWorld as WorkspaceVolumeWorld
     from doeff_cluster._sim.workspace_volumes import held_workspace_volumes as held_workspace_volumes
+    from doeff_cluster._sim.workspace_volumes import device_remade as device_remade
     from doeff_cluster._sim.k8s_supplied import OBJECT_PATH as OBJECT_PATH
     from doeff_cluster._sim.k8s_supplied import HeldEntry as HeldEntry
     from doeff_cluster._sim.k8s_supplied import HeldObject as HeldObject
@@ -1106,6 +1107,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "HeldVolume": "doeff_cluster._sim.workspace_volumes",
     "WorkspaceVolumeWorld": "doeff_cluster._sim.workspace_volumes",
     "held_workspace_volumes": "doeff_cluster._sim.workspace_volumes",
+    "device_remade": "doeff_cluster._sim.workspace_volumes",
     "held_value_of": "doeff_cluster._sim.k8s_supplied",
     "held_whole_of": "doeff_cluster._sim.k8s_supplied",
     "host_answers": "doeff_cluster._sim.local",
