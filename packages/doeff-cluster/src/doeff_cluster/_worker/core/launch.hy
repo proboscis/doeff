@@ -12,7 +12,7 @@
 (import pathlib [Path])
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster._shared.core.run_context_rules [process-context-environ])
-(import doeff_cluster._shared.intent.job_model [JobSpec LEGACY-ENTRY-PLACE])
+(import doeff_cluster._shared.intent.job_model [JobSpec CHILD-ENTRY-PLACES LEGACY-ENTRY-PLACE])
 (import doeff_cluster._shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout])
 
@@ -28,6 +28,23 @@
     (not (isinstance marker dict)) None
     (isinstance (.get marker "entryPlace") str) (get marker "entryPlace")
     True LEGACY-ENTRY-PLACE))
+
+
+;; worker 自身の doeff の、子の入口(job_entry・shim)の在る置き場(job_model の CHILD-ENTRY-PLACES の先頭 — この版の doeff の置き場)。
+;; worker の python・hy(worker の venv)で起きる process は、この置き場の名で解ける。
+(val WORKER-ENTRY-PLACE (get CHILD-ENTRY-PLACES 0))
+
+
+(defk child-entry-place [runtime-env root-place]
+  {:pre [(: runtime-env (| str None)) (: root-place (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "子へ送る入口の名の置き場を選ぶため(入口の検め probes の launch-probe と子の起動 process_host の start-job が同じ選びを使う —
+   検めた名と起こす名が分かれない)。宣言の名 spec.entry(返事の行の綴り・指紋の材料 — 置き場 LEGACY-ENTRY-PLACE)は替えず、子へ
+   送る名だけを JobSpec.entry-at でこの置き場へ替える。実行環境の job(runtime-env が在る)は子が root の版の doeff で起きるので、
+   root の完成の印の置き場 root-place(呼び手が印を読む — env_store の root-entry-place。None = 印の読めない root で名を替えない)。
+   木の job は子が worker の hy と木の PYTHONPATH で起きる(shim も同じ環境で WORKER-ENTRY-PLACE の名で起きる — shim-argv)ので、
+   WORKER-ENTRY-PLACE。宣言の綴りの置き場を木の job へそのまま送ると、移し替えの module(d6a39a3b7 で消した worker.py)の無い
+   worker の hy では解けない。"
+  (if runtime-env root-place WORKER-ENTRY-PLACE))
 
 
 ;; 子 process へ継ぐ worker の環境変数の許可表(実行環境の job — 2026-09-26)。これ以外(PYTHON*・HY_*・UV_* の他・LD_*・VIRTUAL_ENV・
@@ -164,7 +181,7 @@
    fd の番号を job へ渡す環境変数の名(#3672 — 宿の契約 HOST-CONTRACT の notice-env・呼び手が名を渡す。shim は worker が標準入力へ
    書いた行をその pipe へ中継する)— 入口の検めは知らせを受けないので None。orphan-seconds = worker の消失の後に job が自分で終わるのを
    待つ秒(orphan-seconds-of — None = 消失ですぐ止める)。"
-  (+ #(python "-B" "-m" "doeff_cluster._worker.entry.shim" (str (/ grace-ms 1000)))
+  (+ #(python "-B" "-m" (+ WORKER-ENTRY-PLACE ".shim") (str (/ grace-ms 1000)))
      (if stamp-lines #("--stamp-lines") #())
      (if (is notice-env None) #() #("--notice-env" notice-env))
      (if (is orphan-seconds None) #() #("--orphan-seconds" (str orphan-seconds)))
@@ -209,8 +226,8 @@
    (実行環境の job だけが読む — 読むのは呼び手: ReadEnvironment の names = CHILD-ENV-ALLOWED・prefixes = CHILD-ENV-PREFIXES)。
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
    fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。
-   entry = `-m` へ渡す子の入口の名(実行環境の job は root の完成の印の置き場の名 spec.entry-at — 呼び手が印を読む。
-   木の job は spec.entry)。"
+   entry = `-m` へ渡す子の入口の名(spec.entry-at を child-entry-place の置き場で — 実行環境の job は root の完成の印の置き場・
+   木の job は WORKER-ENTRY-PLACE。呼び手が選ぶ)。"
   (<- context dict (process-context-environ spec instance attempt))
   (val worker-env (| context {"DOEFF_WORKER_PID" (str worker-pid)}
                      (if program-path {program-env program-path} {})))

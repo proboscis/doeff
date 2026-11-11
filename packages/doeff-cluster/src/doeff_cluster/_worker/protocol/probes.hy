@@ -32,7 +32,7 @@
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_cluster._worker.protocol.observations [ObserveProbes])
 (import doeff_cluster._worker.core.worker_rules [probe-refusal])
-(import doeff_cluster._worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES shim-argv])
+(import doeff_cluster._worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-entry-place shim-argv])
 (import doeff_cluster._worker.protocol.env_store [root-entry-place])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_cluster._worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
@@ -56,7 +56,8 @@
   "走っている検めの束 1 本(木ごとに 1 本): pid = shim の process(group の先頭)・specs = 束の spec・targets = 束の対象(検める順)・
    runtime-env = 実行環境の宣言・started-ms = 起こした時刻(epoch ms)・out / err = 標準出力と標準エラーを受ける file・
    stopping-ms = 時間切れで止めの合図を送った時刻(epoch ms・送っていなければ None — #2940)・entry-place = 対象の入口の名の置き場
-   (実行環境の束は root の完成の印の置き場・木の束は None — 起こす時と片づける時が同じ対象の名を読む)。"
+   (launch.child-entry-place の答え — 実行環境の束は root の完成の印の置き場・木の束は worker 自身の置き場。起こす時と片づける時が
+   同じ対象の名を読む)。"
   (#^ int pid)
   (#^ tuple specs)
   (#^ tuple targets)
@@ -84,14 +85,15 @@
   "束 1 本を起こすため: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。n = 出力の file の名の番号。"
   (val code-path (get batch 0))
   (val runtime-env (get batch 1))
-  ;; 実行環境の束は、子と同じく root の完成の印の置き場の名を検める(子は root の版の doeff で起きる)。
+  ;; 検める名は子と同じ置き場の名(child-entry-place — 実行環境の束は root の完成の印の置き場・木の束は worker 自身の置き場)。
   (var allowed #())
-  (var place None)
+  (var root-place None)
   (when runtime-env
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read)
     (<- found (| str None) (root-entry-place code-path))
-    (:= place found))
+    (:= root-place found))
+  (<- place (| str None) (child-entry-place runtime-env root-place))
   (val targets (tuple (dict.fromkeys (gfor spec specs target (probe-targets spec place) target))))
   (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :layout settings.layout
                                     :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir))

@@ -43,7 +43,7 @@
 (import doeff_cluster._shared.intent.due_model [DueNever])
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_core_effects [AwaitWarmChildExit])
-(import doeff_cluster._worker.core.launch [JobLaunch job-launch orphan-seconds-of spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster._worker.core.launch [JobLaunch child-entry-place job-launch orphan-seconds-of spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
@@ -397,12 +397,15 @@
   (when spec.program
     (<- cached Path (spec-program-file (Path settings.program-dir) spec))
     (:= program-path (str cached)))
-  ;; root へ送る子の入口の名: 子は root の版の doeff で起きるので、実行環境の job は root の完成の印の置き場の名。
-  ;; 木の job は宣言の名のまま。shim の下の道と待ちの子から分ける道が同じ名を使う。
-  (var entry spec.entry)
+  ;; 子へ送る入口の名: 入口の検めと同じ選び(child-entry-place)の置き場の名 — 実行環境の job は root の完成の印の置き場
+  ;; (子は root の版の doeff で起きる)・木の job は worker 自身の置き場(子は worker の hy で起きる)。shim の下の道と待ちの子から
+  ;; 分ける道が同じ名を使う。
+  (var root-place None)
   (when spec.runtime-env
-    (<- place (| str None) (root-entry-place action.code-path))
-    (:= entry (.entry-at spec place)))
+    (<- found (| str None) (root-entry-place action.code-path))
+    (:= root-place found))
+  (<- place (| str None) (child-entry-place spec.runtime-env root-place))
+  (val entry (.entry-at spec place))
   (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :entry entry :python settings.python :hy-command settings.hy-command
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid

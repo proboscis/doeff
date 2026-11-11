@@ -301,6 +301,16 @@
     (JobProcessWaitExpired) (raise (AssertionError (+ "job の process が名乗られない: " (repr seen))))))
 
 
+(defk ready-seen [seen]
+  {:pre [(: seen (| ServiceReadiness ServiceFailed ReadinessWaitExpired))] :post [(: % ServiceReadiness)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "宣言の後の準備の待ちが Ready を見たことを、次の待ちの前に確かめるため(Ready にならずに期限が来た・落ちたなら、その答えを名指して
+   止める — 後の process の待ちは Ready の後を前提に読むので、入口の検めで止まった job を pid の待ち切れに化けさせない)。"
+  (match seen
+    (ServiceReadiness :state "Ready") seen
+    _ (raise (AssertionError (+ "宣言の後に Service が Ready にならない: " (repr seen))))))
+
+
 (defk declared-and-crashed [system]
   {:pre [(: system System)] :post [(: % CrashAnswers)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 系を宣言して Ready を待ち、job を落として worker が起こし直す(pid が替わる)のを見て、もう一度 Ready を待つため。最後に、
@@ -308,6 +318,7 @@
   ;; 待ちの上限は、壊した答え手で assert が pytest の打ち切り(60 秒)より先に鳴る長さ(普通の走りは全体で十数秒)。
   (<- declared tuple (Redeclare system))
   (<- first (| ServiceReadiness ServiceFailed ReadinessWaitExpired) (AwaitReadiness JOB "Ready" 30.0))
+  (<- (ready-seen first))
   (<- before (| JobProcessSeen JobProcessWaitExpired) (AwaitJobProcess JOB #() 10.0))
   (<- before-pid int (seen-pid before))
   (<- crashed int (Crash JOB))

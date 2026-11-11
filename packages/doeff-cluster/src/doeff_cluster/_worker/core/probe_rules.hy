@@ -70,7 +70,8 @@
 
 (defn #^ list probe-targets [#^ JobSpec spec #^ (| str None) place]
   "検める import path の列: 入口の module だけ(Program の job は関数の参照を持たない — 版と復元は起こした子が検める)。名は子と同じ
-   置き場 place の名(spec.entry-at — 実行環境の job は root の完成の印の置き場・None = spec.entry のまま)。"
+   置き場 place の名(spec.entry-at — place は子の起動と同じ選び launch.child-entry-place の答え: 実行環境の job は root の完成の印の
+   置き場・木の job は worker 自身の置き場・None = 印の読めない root で spec.entry のまま)。"
   [(.entry-at spec place)])
 
 

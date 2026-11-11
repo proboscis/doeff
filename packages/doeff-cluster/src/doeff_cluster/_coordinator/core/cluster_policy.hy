@@ -42,8 +42,9 @@
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
                                                        learned-need drained-room-mib keeps-room? urgent-priority?])
 
-;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
-;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。送る綴りは指紋の材料の
+;; 子の入口の名。子は `hy -m <名>` として起きるので、worker が子の起きる doeff で解ける置き場の名へ替えて検め・起こす
+;; (worker/core/launch の child-entry-place と JobSpec.entry-at — 実行環境の job は root ごとの置き場で、_worker の無い古い版の root では
+;; 区画を隠す前の名・木の job は worker 自身の置き場)。送る綴りは指紋の材料の
 ;; 綴り(置き場 LEGACY-ENTRY-PLACE)と同じにする: 置き場を読まない古い worker は返事の名を綴りのまま指紋に入れるので、綴りが違うと
 ;; coordinator を先に上げた拍に全部の job を起こし直し、その後も指紋が宣言と合わずに NotReady のまま残る(2026-11-02 の本番 —
 ;; tests/test_older_worker_reads_the_wire_entry.hy)。

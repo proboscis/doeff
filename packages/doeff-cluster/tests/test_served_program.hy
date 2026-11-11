@@ -5,10 +5,9 @@
 ;;; 返事の job に置き場のキーが載り、accept-programs が cache の file を書き、その file を job_entry の service 入口の子 process で
 ;;; 走らせる。Program は自分で土台の reader と scheduler を並べるので、入口は何も足さずに tally の値 102(base 100 + step 2)を返す。
 (require doeff-hy.macros [deftest defk <- val var])
+(import dataclasses [replace])
 (import json)
 (import os)
-(import subprocess)
-(import sys)
 (import time)
 (import pathlib [Path])
 (import httpx)
@@ -21,7 +20,10 @@
 (import tests.link_rig [LinkRig])
 (import doeff_cluster._worker.core.launch [spec-program-file])
 (import doeff_cluster [process-versions])
-(import doeff_cluster._worker.intent.worker_model [DesiredJobs] doeff_cluster [JobSpec])
+(import doeff_cluster._worker.intent.worker_model [DesiredJobs ProbeEntry] doeff_cluster [JobSpec ProbeState ProbeView ProcessView])
+(import doeff_cluster._worker.protocol.process_host [HostSettings])
+(import tests.host_rig [host-settings job-ended run-on-host])
+(import tests.probe_rig [HY probe-settings run-probes observed])
 (import tests.fixtures.services [lab])
 (import tests.fixtures.envs [plain-foundation])
 (import pytest)
@@ -58,6 +60,14 @@
   found)
 
 
+(defk probe-entered [spec code-path]
+  {:pre [(: spec JobSpec) (: code-path str)] :post [(: % ProbeView)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "返事の spec の入口を worker と同じ検め(木の束)に積み、答えを返すため(子を起こす前に、起こす名が木の hy で解けることを見る)。"
+  (<- (ProbeEntry spec code-path))
+  (<- view ProbeView (observed spec))
+  view)
+
+
 (deftest test-a-declared-program-reaches-the-worker-and-runs-in-job-entry [served-coordinator tmp-path]
   ;; fixture の答えは coordinator の base URL の文字列(型の無い fixture の値を、ここで str に絞ってから URL を組む)。
   (assert (isinstance served-coordinator str) served-coordinator)
@@ -82,12 +92,18 @@
       (val cached (! (spec-program-file (.program-dir link) spec)))
       (assert (.exists cached) (list (.iterdir (.program-dir link))))
       (assert (= (get (json.loads (.read-text cached :encoding "utf-8")) "blob") (get declaration.programs sha)))
-      ;; 子 process: 宣言の引数(identity の指紋)と cache の file で job_entry の service 入口を起こす。
-      (val done (subprocess.run [sys.executable "-m" "hy" "-m" (. spec entry) #* spec.args "--program" (str cached)]
-                                :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120
-                                :env (| (dict os.environ) {"PYTHONPATH" (str PACKAGE-ROOT)} (dict spec.environ))))
-      (assert (= done.returncode 0) done.stderr)
-      (assert (in "が終わった: 102" done.stderr) done.stderr))
+      ;; 子 process: worker の本物の境界で起こす — 入口の検め(probe-host)が返事の spec の入口を子と同じ選び(launch の
+      ;; child-entry-place)の名で検め、子の起動(process-host)が同じ名で job_entry の service 入口を、宣言の引数(identity の指紋)と
+      ;; cache の file で起こす。返事の行の名 spec.entry(指紋の綴りの置き場)をそのまま `hy -m` へ渡すと、移し替えの module の無い
+      ;; doeff の hy では解けない(d6a39a3b7 の後の日次の赤)。
+      (<- probed ProbeView (run-probes (! (probe-settings tmp-path)) (probe-entered spec (str PACKAGE-ROOT))))
+      (assert (= probed.state ProbeState.PASSED) probed)
+      (<- host HostSettings (host-settings (/ tmp-path "host") :hy-command HY))
+      (val settings (replace host :program-dir (str (.program-dir link))))
+      (<- ended ProcessView (run-on-host settings (job-ended spec (str PACKAGE-ROOT) 120)))
+      (val log (.read-text (next (.glob (Path settings.log-dir) (+ JOB ".*.log"))) :encoding "utf-8" :errors "replace"))
+      (assert (= ended.exit-code 0) log)
+      (assert (in "が終わった: 102" log) log))
     (finally
       ;; 共有の coordinator から、この検の Service を消す(他の検に残さない)。
       (httpx.delete (+ served-coordinator "/resources/Service/" JOB) :params {"force" "true"}
