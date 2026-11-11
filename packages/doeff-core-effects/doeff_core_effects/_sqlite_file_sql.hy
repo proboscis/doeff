@@ -50,12 +50,18 @@
 
 
 (defk open-sqlite-files [files]
-  {:pre [(: files (of dict str str)) (all (gfor [name path] (.items files) (and (isinstance name str) (isinstance path str))))]
+  {:pre [(: files (| (of dict str str) (of tuple SqliteFile ...)))
+         (if (isinstance files dict)
+             (all (gfor [name path] (.items files) (and (isinstance name str) (isinstance path str))))
+             (and (all (gfor f files (isinstance f SqliteFile))) (= (len files) (len (set (gfor f files f.name))))))]
    :post [(: % SqliteFiles)]
    :tags {:context "sql" :role "foundation"}}
-  "To open connections from the databases to answer -- a dict of name (the effect's database) to the path of an existing DB file. If one cannot be opened
-   midway, close those already opened and then let the exception through."
-  (val declared (tuple (gfor [name path] (.items files) (SqliteFile :name name :path path))))
+  "To open connections from the databases to answer -- a dict of name (the effect's database) to the path of an existing DB file, or the older tuple of
+   SqliteFile declarations (names must not repeat; kept until the outside callers move to the dict, then removed). If one cannot be opened midway, close those
+   already opened and then let the exception through."
+  (val declared (if (isinstance files dict)
+                    (tuple (gfor [name path] (.items files) (SqliteFile :name name :path path)))
+                    files))
   (var opened #())
   (try
     (for [f declared]
