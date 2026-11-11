@@ -9,8 +9,13 @@
 ;;;   * mount: 付ける先が絶対の正規の path でない・付ける先に別の volume・付ける先の dir に中身が在る(隠さない — 外側の file の答え手で
 ;;;     読む)・この node に attach されていない・別の path に付いている時は断る。
 ;;;     付ける先に同じ volume が付いていれば ALREADY・ほかは付けて DONE(空の volume は ext4 を作った事にする)。
-;;;   * umount: 付ける先に何も無ければ ALREADY・別の volume なら断る・使っている process が在れば断る・ほかは外して DONE。
-;;;   * detach: まだ mount されていれば断る・別の node に付いていれば断る・無い volume と外れた volume は ALREADY・ほかは外して DONE。
+;;;     付ける先に持ち主の volume の古い mount(下の device の作り直し)が在れば、使っている process が在れば断り、無ければ外してから付ける。
+;;;   * umount: 付ける先に何も無ければ ALREADY・別の volume なら断る・使っている process が在れば断る・ほかは外して DONE(古い mount も)。
+;;;   * detach: まだ mount されていれば断る・古い mount は使っている process が在れば断り、無ければ外して進む・別の node に付いていれば
+;;;     断る・無い volume と外れた volume は ALREADY・ほかは外して DONE。
+;;;   * device の作り直し(device-remade — 検と模擬の世界が筋書きの途中で起こす出来事): Longhorn の engine が付いたまま起こし直され、
+;;;     /dev/longhorn/<名> が新しい番号で作り直される。付いていた mount は前の device を指す古い mount(stale-at)に替わり、volume は attach
+;;;     されたまま・mount されていない様子になる(本番の「付いている」の定義 — doeff_cluster._shared.core.workspace_volume_rules の頭の註)。
 ;;;   * 作る(戻す): volume が無く、その名の完了した backup が在れば戻して RESTORED(file system を持つ)。backup は在るが完了した物が無ければ断る。
 ;;;   * 置き場: 作る(戻す)前に、札の disk の線ごとの残りの byte(名目 = capacity × size-bytes − volume の名目の和・実 = 同じ大きさ −
 ;;;     volume の実の使用の和 − 最小の空き minimal%)が入る大きさ(戻しは backup の大きさ)を覆わなければ、外れた volume を本番と同じ
@@ -20,7 +25,8 @@
 ;;;   * 冷やす: 無い volume は ALREADY・付いている volume は断る・ほかは backup(<名>-cool-<刻>)を足して volume を消し DONE。
 ;;;   * 消す: volume が在れば断る・backup が無ければ ALREADY・最後の backup から keep-days の内なら断る・ほかは backup を消して DONE。
 ;;;   * まとめて冷やす: 外れている volume を cooling-order(線ごとの残りの byte・需要 = spare-bytes)の順に冷やす。
-;;;   * 付ける先の読み: 付ける先に持ち主の volume が付いていれば MOUNTED・別の volume なら CLASH。何も付いていなければ、dir が無いか空なら
+;;;   * 付ける先の読み: 付ける先に持ち主の volume が付いていれば MOUNTED・その古い mount なら STALE・別の volume(古い mount も)なら CLASH。
+;;;     何も付いていなければ、dir が無いか空なら
 ;;;     READY・中身が在れば、持ち主の volume か backup が在る時 CLASH・無い時 OUTSIDE。
 ;;;   * 付いた volume の読み: 世界の機体の node に付いた volume を、名の順に持ち主の id(小文字)と使った刻で答える。
 ;;; 模擬の世界の時間は doeff-time の GetTime(外側に時計の答え手が要る)。付ける先の dir の中身は外側の file の答え手(本番と同じ effect)。
@@ -44,11 +50,12 @@
 
 (defrecord HeldVolume
   "模擬の世界の volume 1 つ: name = volume の名・node = attach された node(None = 外れている)・mounted-at = 付いている path(None = 付いて
-   いない)・formatted = file system を持つか(初めて mount した時に作る・backup から戻した volume は持つ)・used-at = 使った刻(epoch 秒 —
+   いない)・stale-at = 前の device を指したまま残る古い mount の path(None = 無い — device-remade)・formatted = file system を持つか(初めて mount した時に作る・backup から戻した volume は持つ)・used-at = 使った刻(epoch 秒 —
    作った時・attach と detach が書く)・size = 名目の大きさ(byte — 0 = 世界の size-bytes)・actual = 実の使用(byte)。"
   (#^ str name)
   (setv #^ (| str None) node None)
   (setv #^ (| str None) mounted-at None)
+  (setv #^ (| str None) stale-at None)
   (setv #^ bool formatted False)
   (setv #^ float used-at 0.0)
   (setv #^ int size 0)
@@ -104,6 +111,29 @@
   (setv world.volumes (if (any (gfor one world.volumes (= one.name volume.name)))
                           (tuple (gfor one world.volumes (if (= one.name volume.name) volume one)))
                           (+ world.volumes #(volume))))
+  None)
+
+
+(defk device-remade [world name]
+  {:pre [(: world WorkspaceVolumeWorld) (: name str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "世界 world の volume name の device が、付いたまま作り直される出来事を起こすため(頭の註の device の作り直し — 付いていた mount は前の
+   device を指す古い mount に替わり、volume は attach されたまま。付いていなければ何もしない)。"
+  (val volume (! (held-volume world name)))
+  (when (and (is-not volume None) (is-not volume.mounted-at None))
+    (! (put-volume world (replace volume :mounted-at None :stale-at volume.mounted-at))))
+  None)
+
+
+(defk sim-stale-dropped [world owner doing name target]
+  {:pre [(: world WorkspaceVolumeWorld) (: owner str) (: doing str) (: name str) (: target str)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "foundation"}}
+  "付ける先 target に残る volume name の古い mount を、本番の係の頼み drop-stale と同じく外すため(使っている process が在れば本番と同じ
+   綴りで断る)。"
+  (when (in target world.busy)
+    (raise (! (sim-refused owner doing (+ target " の volume " name " の古い mount を外せない — mount の係が断った: " target
+                                          " を外せなかった(使っている process が在る)")))))
+  (val volume (! (held-volume world name)))
+  (! (put-volume world (replace volume :stale-at None)))
   None)
 
 
@@ -242,8 +272,11 @@
   (val name (! (sim-name world owner doing True)))
   (val target (! (sim-target owner doing path)))
   (val there (lfor one world.volumes :if (= one.mounted-at target) one))
+  (val stale (lfor one world.volumes :if (= one.stale-at target) one))
   (when there
     (return (if (= (. (get there 0) name) name) WorkspacePlace.MOUNTED WorkspacePlace.CLASH)))
+  (when stale
+    (return (if (= (. (get stale 0) name) name) WorkspacePlace.STALE WorkspacePlace.CLASH)))
   (<- filled bool (sim-filled target))
   (cond
     (not filled) WorkspacePlace.READY
@@ -257,6 +290,11 @@
   (val doing "mount")
   (val name (! (sim-name world owner doing False)))
   (val target (! (sim-target owner doing path)))
+  (val stale (lfor one world.volumes :if (= one.stale-at target) one))
+  (when stale
+    (when (!= (. (get stale 0) name) name)
+      (raise (! (sim-refused owner doing (.format "{} には別の物({})が付いている" target (. (get stale 0) name))))))
+    (<- (sim-stale-dropped world owner doing name target)))
   (val there (lfor one world.volumes :if (= one.mounted-at target) one))
   (val volume (! (held-volume world name)))
   (<- filled bool (sim-filled target))
@@ -279,6 +317,12 @@
   (val doing "umount")
   (val name (! (sim-name world owner doing False)))
   (val target (! (sim-target owner doing path)))
+  (val stale (lfor one world.volumes :if (= one.stale-at target) one))
+  (when stale
+    (when (!= (. (get stale 0) name) name)
+      (raise (! (sim-refused owner doing (.format "{} に付いているのは volume {} でない({})" target name (. (get stale 0) name))))))
+    (<- (sim-stale-dropped world owner doing name target))
+    (return WorkspaceOutcome.DONE))
   (val there (lfor one world.volumes :if (= one.mounted-at target) one))
   (cond
     (not there) WorkspaceOutcome.ALREADY
@@ -295,9 +339,12 @@
   "DetachWorkspaceVolume を世界 world に当てるため(頭の註の契約)。"
   (val doing "detach")
   (val name (! (sim-name world owner doing False)))
+  (val found (! (held-volume world name)))
+  (when (and (is-not found None) (is-not found.mounted-at None))
+    (raise (! (sim-refused owner doing (+ "まだ " found.mounted-at " に mount されている(先に umount)")))))
+  (when (and (is-not found None) (is-not found.stale-at None))
+    (<- (sim-stale-dropped world owner doing name found.stale-at)))
   (val volume (! (held-volume world name)))
-  (when (and (is-not volume None) (is-not volume.mounted-at None))
-    (raise (! (sim-refused owner doing (+ "まだ " volume.mounted-at " に mount されている(先に umount)")))))
   (when world.down
     (raise (WorkspaceClusterUnreachable (str (! (sim-refused owner doing "API server に届かない: 模擬の世界が down"))))))
   (<- now float (sim-now))

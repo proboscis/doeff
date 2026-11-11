@@ -56,6 +56,12 @@
 ;;; 係への頼み(README の節「mount の係」): 頼みの dir に `<鍵>.tmp` を書いて `<鍵>.req` へ名を替え、`<鍵>.out`(1 行目 = 0 か 1・2 行目から
 ;;; 訳)を待って読み、消す。鍵 = <命令>-<volume の名>-<時計の μ 秒>。係の無い worker(頼みの dir が無い)は頼む前に断る。
 ;;;
+;;; 古い mount(rules の頭の註の「付いている」の定義 — STALE): 付ける先に何かが付いていれば、volume の今の device の major:minor を係に
+;;; 読ませ(頼み device — 答え手の container は host の /dev を持たない)、mountinfo の major:minor と照らす。名だけで判じない。古い mount は
+;;; 係に外させる(頼み drop-stale — 係は使い手(cwd・開いた file)が在れば外さずに断る)。mount は古い mount を外してから今の device を
+;;; 付け、外せなければ断る(古い mount の上で使わせない)。umount と detach も古い mount を外してから進む。見つけた古い mount は volume
+;;; ごとに log に 1 行出す。
+;;;
 ;;; 断る物(WorkspaceVolumeRefused — 持ち主の id・volume の名・何をしようとしたか・理由): 名の条件を外れる id(作る前に)・無い volume の
 ;;; attach・別の node に ticket の在る volume の attach と detach・上限の秒の内に付かない・外れない・係が答えない・係が断った・mount の
 ;;; 残る volume の detach・付ける先に別の物・API server に届かない・断られた・token が読めない・答えの形が違う・backup は在るが完了した物が
@@ -132,11 +138,11 @@
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
                                                            WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BACKUP-COMPLETED BackupView backup-volume-name CoolingPlan DetachStep DiskRoom MountEntry
-                                                         NAME-PREFIX RoomBytes USED-AT-KEY WarmVolume attach-step cooling-name growing-name first-name first-backup-due?
-                                                         cooling-order detach-step mount-entries mounted-at restore-node room-bytes room-covers?
-                                                         newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
-                                                         volume-mount-points volume-name volume-of-entry])
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BACKUP-COMPLETED BackupView backup-volume-name CoolingPlan DetachStep DeviceRead
+                                                         device-read DiskRoom MountEntry MountHold NAME-PREFIX RoomBytes USED-AT-KEY WarmVolume attach-step cooling-name growing-name first-name
+                                                         first-backup-due? cooling-order detach-step mount-entries mount-hold mounted-at restore-node room-bytes
+                                                         room-covers? newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
+                                                         volume-holds volume-name volume-of-entry])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactMissing])
 (import doeff_cluster._shared.core.clock [datetime-of-epoch-ms now-epoch-ms])
 (import doeff_cluster._shared.protocol.supplied_values [FILE-MODE KUBE-API REFUSAL-BODY-LIMIT REQUEST-TIMEOUT-SECONDS SERVICE-ACCOUNT-TOKEN-FILE
@@ -1478,16 +1484,20 @@
 (defk detached-volume [site notices owner]
   {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume の、この機体の node への attach を外し、外れるまで待つため(ticket を外した = DONE・無かった = ALREADY)。
-   まだ mount されている volume は外さない(外すと file system が書きの途中で切れる — 先に umount)。別の node に ticket の在る volume・
+   まだ mount されている volume は外さない(外すと file system が書きの途中で切れる — 先に umount)。古い mount(頭の註 — STALE)は係に
+   外させてから進む(使い手が在って係が断れば断る)。別の node に ticket の在る volume・
    上限の秒の内に外れない時は断る。外したら Volume に使い終わりの刻の印を書く(冷やす順が読む — volume が無ければ書かない)。待つ間に読み直すのは Volume か VolumeAttachment が変わった時
    だけ(頭の註の待ち方)。"
   (val doing "detach")
   (<- name str (checked-name owner doing))
   (<- node str (worker-fact WorkerFactName.NODE_NAME))
   (<- entries tuple (mount-table site owner doing))
-  (<- points tuple (volume-mount-points entries name))
+  (<- holds tuple (volume-mounts site notices owner doing name entries))
+  (val points (lfor #(point hold) holds :if (= hold MountHold.HELD) point))
   (when points
     (raise (! (refused owner doing (+ "まだ " (.join "・" points) " に mount されている(先に umount)")))))
+  (for [#(point hold) holds]
+    (<- (stale-dropped site notices owner doing name point)))
   (<- started float (GetMonotonic))
   (var removed False)
   (while True
@@ -1555,6 +1565,62 @@
   (KeeperAnswer :code 1 :notes ""))
 
 
+(defk device-number [site notices owner doing name path]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: path str)] :post [(: % (| str None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "volume name の今の device(host の /dev/longhorn/<名>)の major:minor を、mount の係に読ませて得るため(None = device が無い — この node に
+   attach されていない。頭の註の古い mount — 答え手の container は host の /dev を持たない)。path は係が確かめる付ける先(付いている dir)。
+   係が断る・答えの形が違えば断る。"
+  (<- answer KeeperAnswer (keeper-answer site notices owner doing "device" name path))
+  (when (!= answer.code 0)
+    (raise (! (refused owner doing (+ "mount の係が device の番号を読めない: " answer.notes)))))
+  (<- read (| DeviceRead None) (device-read answer.notes))
+  (when (is read None)
+    (raise (! (refused owner doing (+ "mount の係の device の答えの形が違う: " (cut answer.notes 0 REFUSAL-BODY-LIMIT))))))
+  read.number)
+
+
+(defk top-hold [site notices owner doing name target at]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: target str)
+         (: at (| MountEntry None))]
+   :post [(: % (| MountHold None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "付ける先 target に一番上に付いている物 at(mounted-at — None = 何も付いていない)と volume name の関わりを、rules の頭の註の「付いて
+   いる」の定義で得るため(None = 何も付いていない。付いていれば今の device の番号を係に読ませる — device-number)。"
+  (when (is at None)
+    (return None))
+  (<- device (| str None) (device-number site notices owner doing name target))
+  (! (mount-hold at name device)))
+
+
+(defk volume-mounts [site notices owner doing name entries]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: entries (get tuple #(MountEntry ...)))]
+   :post [(: % (get tuple #((get tuple #(str MountHold)) ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "mount の行の組 entries のうち volume name の mount の path と関わり(HELD か STALE — volume-holds)を得るため。mount 元の名が name の行が
+   在る時だけ、今の device の番号を係に読ませる(無ければ係に頼まずに空の組 — 係は付ける mount の元に必ず /dev/longhorn/<名> を書く)。"
+  (var candidate None)
+  (for [entry entries]
+    (<- found (| str None) (volume-of-entry entry))
+    (when (and (is candidate None) (= found name))
+      (:= candidate entry.mount-point)))
+  (when (is candidate None)
+    (return #()))
+  (<- device (| str None) (device-number site notices owner doing name candidate))
+  (! (volume-holds entries name device)))
+
+
+(defk stale-dropped [site notices owner doing name target]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: doing str) (: name str) (: target str)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "付ける先 target に付いた volume name の古い mount(頭の註 — STALE)を、mount の係に外させるため(頼み drop-stale)。見つけた事を log に 1 行
+   出す。係が断れば(使い手が在る・古い mount でなくなった)断る — 古い mount の上で使わせない。"
+  (<- (slog "古い mount を見つけた(device が作り直され、mount が前の device を指したまま — 読み書きは I/O error)— 使い手が無ければ外す"
+            :level "warning" :owner owner :volume name :path target :doing doing))
+  (<- answer KeeperAnswer (keeper-answer site notices owner doing "drop-stale" name target))
+  (when (!= answer.code 0)
+    (raise (! (refused owner doing (+ target " の volume " name " の古い mount を外せない — mount の係が断った: " answer.notes)))))
+  None)
+
+
 (defk checked-path [owner doing path]
   {:pre [(: owner str) (: doing str) (: path str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "付ける先 path が絶対の正規の path(. や .. や重ねた / や尻の / を含まない)かを確かめるため(違えば断る — 作業の根の下かは係が確かめる)。"
@@ -1592,19 +1658,21 @@
   (bool backups))
 
 
-(defk place-read [site owner path]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspacePlace)] :tags {:context "doeff-cluster" :role "protocol"}}
+(defk place-read [site notices owner path]
+  {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: path str)] :post [(: % WorkspacePlace)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume を付ける先 path の様子を読むため(ReadWorkspacePlace の答え — WorkspacePlace の頭の註): 一番上に付いている物が
-   持ち主の volume なら MOUNTED・別の物なら CLASH。何も付いていなければ、dir が無いか空なら READY、中身が在れば持ち主が volume か backup を
-   持つかで CLASH か OUTSIDE。何も変えない。"
+   持ち主の volume の今の device なら MOUNTED・持ち主の volume の古い mount なら STALE・別の物なら CLASH(頭の註の古い mount)。何も付いて
+   いなければ、dir が無いか空なら READY、中身が在れば持ち主が volume か backup を持つかで CLASH か OUTSIDE。何も変えない。"
   (val doing "付ける先の読み")
   (<- name str (checked-name owner doing))
   (<- target str (checked-path owner doing path))
   (<- entries tuple (mount-table site owner doing))
   (<- at (| MountEntry None) (mounted-at entries target))
-  (when (is-not at None)
-    (<- found (| str None) (volume-of-entry at))
-    (return (if (= found name) WorkspacePlace.MOUNTED WorkspacePlace.CLASH)))
+  (<- hold (| MountHold None) (top-hold site notices owner doing name target at))
+  (match hold
+    MountHold.HELD (return WorkspacePlace.MOUNTED)
+    MountHold.STALE (return WorkspacePlace.STALE)
+    MountHold.OTHER (return WorkspacePlace.CLASH))
   (<- filled bool (place-filled owner doing target))
   (when (not filled)
     (return WorkspacePlace.READY))
@@ -1615,18 +1683,19 @@
 (defk mounted-volume [site notices owner path]
   {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume を path に mount するため(付けた = DONE・既に付いていた = ALREADY)。付ける先の dir は作り、外した後も残す。
-   付ける先に別の物が付いている・中身の在る dir(volume の外に書かれた物 — 付けると隠す)・係が断った時は断る(attach していない volume は
-   係が device の無い事で断る)。"
+   付ける先に持ち主の volume の古い mount(頭の註 — STALE)が付いていれば、係に外させてから今の device を付ける(使い手が在って係が断れば
+   断る — 古い mount の上で使わせない)。付ける先に別の物が付いている・中身の在る dir(volume の外に書かれた物 — 付けると隠す)・係が
+   断った時は断る(attach していない volume は係が device の無い事で断る)。"
   (val doing "mount")
   (<- name str (checked-name owner doing))
   (<- target str (checked-path owner doing path))
   (<- entries tuple (mount-table site owner doing))
   (<- at (| MountEntry None) (mounted-at entries target))
-  (when (is-not at None)
-    (<- found (| str None) (volume-of-entry at))
-    (if (= found name)
-        (return WorkspaceOutcome.ALREADY)
-        (raise (! (refused owner doing (.format "{} には別の物({})が付いている" target at.source))))))
+  (<- hold (| MountHold None) (top-hold site notices owner doing name target at))
+  (match hold
+    MountHold.HELD (return WorkspaceOutcome.ALREADY)
+    MountHold.STALE (<- (stale-dropped site notices owner doing name target))
+    MountHold.OTHER (raise (! (refused owner doing (.format "{} には別の物({})が付いている" target at.source)))))
   (<- filled bool (place-filled owner doing target))
   (when filled
     (raise (! (refused owner doing (+ target " に中身が在る(volume の外に書かれた物 — 付けると隠すので付けない)")))))
@@ -1641,18 +1710,19 @@
 
 (defk unmounted-volume [site notices owner path]
   {:pre [(: site WorkspaceVolumeSite) (: notices VolumeNotices) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "path に付いた持ち主 owner の volume を外すため(外した = DONE・何も付いていなかった = ALREADY)。別の物が付いている・係が断った
-   (使っている process が在る)時は断る。付ける先の dir は残す。"
+  "path に付いた持ち主 owner の volume を外すため(外した = DONE・何も付いていなかった = ALREADY)。持ち主の volume の古い mount(頭の註 —
+   STALE)も係に外させる(DONE)。別の物が付いている・係が断った(使っている process が在る)時は断る。付ける先の dir は残す。"
   (val doing "umount")
   (<- name str (checked-name owner doing))
   (<- target str (checked-path owner doing path))
   (<- entries tuple (mount-table site owner doing))
   (<- at (| MountEntry None) (mounted-at entries target))
-  (when (is at None)
-    (return WorkspaceOutcome.ALREADY))
-  (<- found (| str None) (volume-of-entry at))
-  (when (!= found name)
-    (raise (! (refused owner doing (.format "{} に付いているのは volume {} でない({})" target name at.source)))))
+  (<- hold (| MountHold None) (top-hold site notices owner doing name target at))
+  (match hold
+    None (return WorkspaceOutcome.ALREADY)
+    MountHold.STALE (do (<- (stale-dropped site notices owner doing name target))
+                        (return WorkspaceOutcome.DONE))
+    MountHold.OTHER (raise (! (refused owner doing (.format "{} に付いているのは volume {} でない({})" target name at.source)))))
   (<- answer KeeperAnswer (keeper-answer site notices owner doing "umount" name target))
   (when (!= answer.code 0)
     (raise (! (refused owner doing (+ "mount の係が断った: " answer.notes)))))

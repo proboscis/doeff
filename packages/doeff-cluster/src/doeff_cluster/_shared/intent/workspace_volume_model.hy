@@ -16,9 +16,12 @@
 ;;;                           戻しが失敗した volume は待たず、戻す元の backup が完了していれば消して戻し直す(上限まで失敗すれば断る)
 ;;;   AttachWorkspaceVolume   持ち主の volume を、答え手の機体の node に attach し、Longhorn が付け終わるまで待つ
 ;;;   MountWorkspaceVolume    attach した volume を path に mount する(path の dir は答え手が作る。空の volume には ext4 を作る。中身の在る
-;;;                           dir には付けない — 中身を隠さない)
-;;;   UmountWorkspaceVolume   path に付いた持ち主の volume を外す(何も付いていなければ ALREADY。使っている process が在れば断る)
-;;;   DetachWorkspaceVolume   持ち主の volume の attach を外し、外れるまで待つ(まだどこかに mount されていれば断る)
+;;;                           dir には付けない — 中身を隠さない)。path に持ち主の volume の古い mount(STALE — device が作り直された)が
+;;;                           在れば、使い手が無い時だけ外してから今の device を付ける(使い手が在れば断る — 古い mount の上で使わせない)
+;;;   UmountWorkspaceVolume   path に付いた持ち主の volume を外す(何も付いていなければ ALREADY。使っている process が在れば断る)。古い
+;;;                           mount も同じく外す
+;;;   DetachWorkspaceVolume   持ち主の volume の attach を外し、外れるまで待つ(まだどこかに mount されていれば断る — 古い mount は使い手が
+;;;                           無ければ外してから進む)
 ;;;   CoolWorkspaceVolume     外れている持ち主の volume の backup を取り、完了を確かめてから volume を消す(無ければ ALREADY。使っている・
 ;;;                           冷やす途中に使い始めた volume は消さずに断る)
 ;;;   PurgeWorkspaceVolume    冷えた持ち主の backup を消す(最後の backup から値の keepDays を過ぎた物だけ。backup が無ければ ALREADY・
@@ -31,7 +34,7 @@
 ;;;                           volume を消せずに残したか)
 ;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の線ごとの残りの byte と値の spareBytes
 ;;;   ReadWorkspaceRoom       札の disk の線ごとの残りの byte を読む(何も変えない)
-;;;   WorkspacePlace          ReadWorkspacePlace の答え: 付ける先の様子(MOUNTED・READY・OUTSIDE・CLASH)
+;;;   WorkspacePlace          ReadWorkspacePlace の答え: 付ける先の様子(MOUNTED・STALE・READY・OUTSIDE・CLASH)
 ;;;   ReadWorkspacePlace      持ち主の volume を付ける先の様子を読む(何も変えない)— 呼び手が、volume の外に中身を持つ持ち主を見分けるため
 ;;;   AttachedWorkspaceVolume ReadAttachedWorkspaceVolumes の答えの 1 つ: 持ち主の id と使った刻
 ;;;   ReadAttachedWorkspaceVolumes 答え手の機体の node に付いた持ち主の volume を読む(何も変えない)— 呼び手が、自分の覚えの外で付いたままの
@@ -52,11 +55,13 @@
 
 (defenum WorkspaceOutcome DONE ALREADY RESTORED)
 
-;; 付ける先の様子(ReadWorkspacePlace の答え): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空(付けて
+;; 付ける先の様子(ReadWorkspacePlace の答え): MOUNTED = 持ち主の volume の今の device が付いている・STALE = 持ち主の volume の古い mount
+;; が付いている(Longhorn が device を作り直し、mount が前の device を指したまま — 読み書きは I/O error。mount は付け直しで今の device に
+;; 替わる — MountWorkspaceVolume)・READY = 何も付いておらず dir が無いか空(付けて
 ;; よい)・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外に在る —
 ;; 付けると中身を隠す)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ(付けても付けなくても、
 ;; どちらかの中身が見えなくなる)。
-(defenum WorkspacePlace MOUNTED READY OUTSIDE CLASH)
+(defenum WorkspacePlace MOUNTED STALE READY OUTSIDE CLASH)
 
 
 (defrecord WorkspaceVolumeSite

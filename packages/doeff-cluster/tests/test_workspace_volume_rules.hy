@@ -3,7 +3,10 @@
 ;;;
 ;;;   名                持ち主の id は英字・数字・-(頭と尻は英字か数字)・37 字まで。名は ws- + 小文字(40 字まで)。外れる id は断る(失敗ケース —
 ;;;                     縮めた名・重なった名・k8s の名に成らない名を作らない)
-;;;   mountinfo         path の 8 進の escape を戻す・後の行ほど上・Longhorn の device の source だけを volume の mount と読む
+;;;   mountinfo         path の 8 進の escape を戻す・後の行ほど上・major:minor を読む・Longhorn の device の source だけを volume の mount の
+;;;                     候補と読む
+;;;   付いている        major:minor が今の device と等しい時だけ HELD・名が合い番号が違う(device が無い時も)物は STALE(失敗ケース — device が
+;;;                     作り直された古い mount を付いていると読まない)・ほかは OTHER
 ;;;   attach の一手     VolumeAttachment がまだ無い → 待つ・ticket が無い → 置く・別の node → 断る(失敗ケース — 別の機体の ticket を
 ;;;                     書き換えない)・満たされて付いた → 付いた
 ;;;   detach の一手     別の node → 断る(失敗ケース)・この node → 外す・外れる途中 → 待つ・ほかの ticket が付けている → この答え手の分は外れた
@@ -12,10 +15,10 @@
 ;;;                     ごと — 負も足す)・冷やす順(2 時間を過ぎた物は全部・両方の線が需要の byte を覆うまで古い順に・冷やした volume が線ごとに
 ;;;                     空ける byte は名目 = spec.size・実 = actualSize・覆えなければ 2 時間を過ぎた物だけ)
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView backup-volume-name DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView backup-volume-name DetachStep DiskRoom MountEntry MountHold NAME-MAX-LENGTH
                                                          NAME-PREFIX CoolingPlan RoomBytes WarmVolume attach-step cooling-name cooling-order
-                                                         detach-step first-backup-due? first-name growing-name mount-entries mounted-at newest-backup owner-refusal restore-node room-bytes
-                                                         room-covers? ticket-id using-tickets volume-mount-points volume-name volume-of-entry])
+                                                         detach-step first-backup-due? first-name growing-name mount-entries mount-hold mounted-at newest-backup owner-refusal restore-node room-bytes
+                                                         room-covers? ticket-id using-tickets volume-holds volume-name volume-of-entry])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -56,7 +59,7 @@
   (<- entries (mount-entries MOUNTINFO))
   (assert (= (len entries) 5) entries)
   (assert (= (get entries 3) (MountEntry :mount-point "/work/agent-workspaces/with space" :source "/host/dev/longhorn/ws-c-2"
-                                         :fs-type "ext4"))
+                                         :fs-type "ext4" :device "8:112"))
           (get entries 3))
   ;; 同じ path に重ねて付いた物は、後の行(上)を読む。
   (<- top (mounted-at entries "/work/agent-workspaces/a-1"))
@@ -67,17 +70,39 @@
 
 (deftest test-only-a-longhorn-device-counts-as-a-volume-mount
   (<- entries (mount-entries MOUNTINFO))
-  (<- points (volume-mount-points entries "ws-c-1"))
-  (assert (= points #("/work/agent-workspaces/a-1")) points)
-  (<- spaced (volume-mount-points entries "ws-c-2"))
-  (assert (= spaced #("/work/agent-workspaces/with space")) spaced)
-  (<- none (volume-mount-points entries "ws-c-3"))
+  (<- points (volume-holds entries "ws-c-1" "8:96"))
+  (assert (= points #(#("/work/agent-workspaces/a-1" MountHold.HELD))) points)
+  (<- spaced (volume-holds entries "ws-c-2" "8:112"))
+  (assert (= spaced #(#("/work/agent-workspaces/with space" MountHold.HELD))) spaced)
+  (<- none (volume-holds entries "ws-c-3" "8:128"))
   (assert (= none #()) none)
   (<- tmpfs (volume-of-entry (MountEntry :mount-point "/work/x" :source "tmpfs" :fs-type "tmpfs")))
   (assert (is tmpfs None) tmpfs)
   ;; dir の名が longhorn でない device(host の disk)は volume と読まない。
   (<- disk (volume-of-entry (MountEntry :mount-point "/work" :source "/dev/ws-c-1" :fs-type "ext4")))
   (assert (is disk None) disk))
+
+
+(deftest test-a-mount-whose-device-was-remade-is-stale-not-held
+  ;; Longhorn の engine が付いたまま起こし直され、/dev/longhorn/ws-c-1 が 8:96 から 8:144 に作り直された。古い mount は 8:96 のまま残る。
+  (<- entries (mount-entries MOUNTINFO))
+  (val entry (get entries 2))
+  (<- held (mount-hold entry "ws-c-1" "8:96"))
+  (assert (= held MountHold.HELD) held)
+  (<- remade (mount-hold entry "ws-c-1" "8:144"))
+  (assert (= remade MountHold.STALE) remade)
+  ;; device が無い(attach が外れた)時も、名が合う mount は古い mount。
+  (<- gone (mount-hold entry "ws-c-1" None))
+  (assert (= gone MountHold.STALE) gone)
+  ;; 名の違う volume の mount・volume でない mount は別の物。
+  (<- other (mount-hold entry "ws-c-2" "8:112"))
+  (assert (= other MountHold.OTHER) other)
+  (<- tmpfs (mount-hold (get entries 4) "ws-c-1" "8:96"))
+  (assert (= tmpfs MountHold.OTHER) tmpfs)
+  (<- stale (volume-holds entries "ws-c-1" "8:144"))
+  (assert (= stale #(#("/work/agent-workspaces/a-1" MountHold.STALE))) stale)
+  (<- detached (volume-holds entries "ws-c-2" None))
+  (assert (= detached #(#("/work/agent-workspaces/with space" MountHold.STALE))) detached))
 
 
 (deftest test-attach-puts-waits-and-refuses-another-nodes-ticket
