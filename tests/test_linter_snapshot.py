@@ -264,3 +264,54 @@ def test_a_missing_commit_is_unavailable(tmp_path: Path) -> None:
     assert proc.returncode == 1, (out, err)
     assert "is not in doeff" in err
     assert not (tmp_path / "count").exists()
+
+
+def lookup(repo: Path, env: list[str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [*env, "uv", "run", "--script", str(SCRIPT), "--lookup", str(repo), "HEAD"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+
+def test_a_lookup_of_a_sha_not_in_the_store_answers_at_once_without_building(tmp_path: Path) -> None:
+    # A commit hook asks with --lookup and must never build (a release / lto build of a new sha did not fit in the 600-second tool call under load 30).
+    # A sha the store does not have is answered with the reason and exit 1, and cargo is not run. Counterexample: in the form without --lookup, the hook builds and this is red.
+    repo = stage(tmp_path)
+    proc = lookup(repo, environ(tmp_path, ""))
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 1, (out, err)
+    assert out == ""
+    assert "lookup only — not built" in err
+    assert not (tmp_path / "count").exists()
+
+
+def test_a_lookup_finds_a_placed_linter_and_a_same_key_copy(tmp_path: Path) -> None:
+    # A linter placed ahead of time (the plain form) is found by the lookup, and a later sha with the same input key is copied (a copy is not a build).
+    repo = stage_with_key(tmp_path)
+    env = environ(tmp_path, "")
+    built = snapshot(repo, env).communicate(timeout=50)[0].strip()
+    found = lookup(repo, env).communicate(timeout=50)[0].strip()
+    assert found == built
+    (repo / "README.md").write_text("change outside the linter's inputs\n", encoding="utf-8")
+    second_sha = commit_all(repo, tmp_path, "outside")
+    proc = lookup(repo, env)
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 0, err
+    assert Path(out.strip()).parent.name == second_sha
+    assert (tmp_path / "count").read_text(encoding="utf-8") == "built\n"
+
+
+def test_a_lookup_does_not_wait_for_a_sha_being_built(tmp_path: Path) -> None:
+    # While another process holds the sha's lock (building it), the lookup answers "being built" at once instead of queueing behind the build.
+    repo = stage(tmp_path)
+    env = environ(tmp_path, "")
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    store = tmp_path / "store"
+    store.mkdir()
+    with open(store / (sha + ".lock"), "w") as held:
+        SNAPSHOT.fcntl.flock(held, SNAPSHOT.fcntl.LOCK_EX)
+        proc = lookup(repo, env)
+        out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 1, (out, err)
+    assert "being built" in err
+    assert not (tmp_path / "count").exists()

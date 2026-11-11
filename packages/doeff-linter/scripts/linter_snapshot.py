@@ -42,11 +42,17 @@ What it does:
   * Names starting with GIT_ are removed from the env passed to git — when called inside another repo's git hook, GIT_DIR and the like that git passes win over `-C`,
     and git reads that repo's objects (#1517).
 
-Usage: uv run --script packages/doeff-linter/scripts/linter_snapshot.py <doeff checkout> <commit>
-  If it can build, prints the binary's path on one line and exits 0; if not, prints the reason on one line to stderr and exits 1 (the caller falls back to its own environment's linter),
-  and exits 2 on a bad argument.
+Lookup only (`--lookup`): a commit hook runs inside a caller's time limit (a conversation's tool call is cut at 600 seconds), and a release /
+  lto build of a new sha on a loaded machine does not fit in it (2026-11-11: load 30, cut 4 times in a row even with the shared target). So the hook asks with `--lookup`:
+  the store's linter of the sha, or a copy of a linter with the same input key (a copy, not a build), and otherwise the reason and exit 1 without building. It does not wait for
+  the sha's lock — if another process holds it (building that sha now), it answers "being built" at once. The build is done ahead of time by one place outside the hook
+  (a shared-checkout owner job, after doeff's main or a pin moves), with the plain (building) form.
+Usage: uv run --script packages/doeff-linter/scripts/linter_snapshot.py [--lookup] <doeff checkout> <commit>
+  If it can build (or, with --lookup, find), prints the binary's path on one line and exits 0; if not, prints the reason on one line to stderr and exits 1 (the caller falls back
+  to its own environment's linter, or names the lint "not measurable"), and exits 2 on a bad argument.
 Tests = tests/test_linter_snapshot.py (3 concurrent processes build only once, working-tree changes are not read, a linter that does not name its sha is not placed,
-a sha with unchanged input is copied without building, a sha with changed input is built, cargo's target follows the cache root rather than the store, and cargo's build dir is the shared target even when the environment points it elsewhere).
+a sha with unchanged input is copied without building, a sha with changed input is built, cargo's target follows the cache root rather than the store, cargo's build dir is the shared target even when the environment points it elsewhere,
+and a lookup never builds: it finds a placed or same-key linter, answers a missing one at once, and does not wait for a sha being built).
 """
 
 
@@ -241,9 +247,9 @@ def place(store: Path, sha: str, partial: Path, key: str | None) -> Path:
     return binary
 
 
-def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> SnapshotReady | SnapshotUnavailable:
+def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str], build: bool = True) -> SnapshotReady | SnapshotUnavailable:
     """Return from the store the linter built from the cross-section of doeff's rev — if absent, take the sha's lock; if a linter with the same input exists, copy it; if not, build it only once
-    (see the header comment)."""
+    (see the header comment). build=False is the lookup (`--lookup`): the same store and the same copy by input key, but it does not wait for the lock and does not build."""
     env = git_environ(environ)
     sha = resolve_commit(checkout, rev, env)
     if not sha:
@@ -254,8 +260,14 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> Snapsh
         store.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         return SnapshotUnavailable("cannot create store " + str(store) + ": " + str(error))
+    # A placed binary is only ever put by rename, so it is read without the lock (a lookup does not queue behind a build of the same sha).
+    if not build and binary.exists():
+        return SnapshotReady(binary, built=False)
     with open(store / (sha + ".lock"), "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX if build else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return SnapshotUnavailable("the linter of " + sha + " is being built by another process (lookup only — not waited for)")
         if binary.exists():
             return SnapshotReady(binary, built=False)
         partial = store / (sha + ".partial")
@@ -264,6 +276,8 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> Snapsh
         if same is not None:
             shutil.copy2(same, partial)
             return SnapshotReady(place(store, sha, partial, key), built=False)
+        if not build:
+            return SnapshotUnavailable("the store " + str(store) + " has no linter of " + sha + " (lookup only — not built)")
         work = Path(tempfile.mkdtemp(prefix="doeff-linter-snapshot-" + sha[:12] + "-"))
         try:
             failure = extract_inputs(checkout, sha, work, env) or build_into(
@@ -277,11 +291,13 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str]) -> Snapsh
 
 
 def main(argv: list[str]) -> int:
-    """If it can build, print the path and return 0; if not, print the reason on one line and return 1; a bad argument returns 2."""
-    if len(argv) != 2:
-        print("Usage: uv run --script linter_snapshot.py <doeff checkout> <commit>", file=sys.stderr)
+    """If it can build (with --lookup, find), print the path and return 0; if not, print the reason on one line and return 1; a bad argument returns 2."""
+    build = argv[:1] != ["--lookup"]
+    args = argv if build else argv[1:]
+    if len(args) != 2:
+        print("Usage: uv run --script linter_snapshot.py [--lookup] <doeff checkout> <commit>", file=sys.stderr)
         return 2
-    got = snapshot_linter(Path(argv[0]), argv[1], dict(os.environ))
+    got = snapshot_linter(Path(args[0]), args[1], dict(os.environ), build)
     if isinstance(got, SnapshotReady):
         print(got.path)
         return 0
