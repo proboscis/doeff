@@ -182,7 +182,8 @@
    (read by pooled-postgres-sql-handler as the number of scheduler permits); timeouts = limits put on connections that are opened; origin = the mark of signals this lease emits
    (the lease rings same-process bells after sending a signal, so the listener does not ring notifications with this mark; see the header comment)."
 
-  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; cannot be a defk: initialization of a resource class
+  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * #^ int [size DEFAULT-POOL-SIZE]
+                  #^ PostgresTimeouts [timeouts DEFAULT-TIMEOUTS]]  ; cannot be a defk: initialization of a resource class
     "Receives the sequence of database declarations, the limit on connections lent at once per database, and the connection limits. Transaction round trips are sent in pipeline mode
      (see the header comment), so if psycopg and libpq lack pipeline mode this place (built by the assembling side at startup) fails by naming it."
     (import psycopg)

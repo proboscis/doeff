@@ -105,7 +105,7 @@ SHARED_NAMES = ("Ask", "Get", "Put", "Tell", "Spawn", "Gather", "Wait", "Promise
 
 #: Names the entry point exports lazily, and their modules (not loaded by `import doeff`).
 LAZY_NAMES = {
-    "StepBudget": "doeff_core_effects._scheduler",
+    "StepBudgetExceeded": "doeff_core_effects._scheduler",
     "DurableStorage": "doeff_core_effects._storage",
     "SQLiteStorage": "doeff_core_effects._storage.sqlite",
     "AbsentAsToken": "doeff_core_effects._outcomes",

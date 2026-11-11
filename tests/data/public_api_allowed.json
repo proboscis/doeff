@@ -2237,6 +2237,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.clickhouse_http_sql",
+   "name": "ClickHouseDatabase",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.clickhouse_http_sql",
    "name": "SqlColumnType",
    "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
@@ -2748,6 +2755,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.memo_handlers",
+   "name": "InMemoryStorage",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_handlers",
    "name": "MemoKeyFn",
    "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
@@ -2757,6 +2771,13 @@
    "module": "doeff_core_effects.memo_handlers",
    "name": "RecomputeCost",
    "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_handlers",
+   "name": "SQLiteStorage",
+   "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -3323,6 +3344,20 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.postgres_sql",
    "name": "PostgresConnections",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PostgresDatabase",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PostgresTimeouts",
    "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -4527,6 +4562,34 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.storage",
    "name": "DurableStorage",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.storage",
+   "name": "InMemoryStorage",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.storage",
+   "name": "SQLiteStorage",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.storage.memory",
+   "name": "InMemoryStorage",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.storage.sqlite",
+   "name": "SQLiteStorage",
    "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
   },

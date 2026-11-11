@@ -53,7 +53,6 @@ _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN = "aiohttp types are partially unknown to v
 
 #: Top-level names of doeff_core_effects whose types remain unknown, and the reason (when adding, write the reason with it).
 _CORE_HEAD_GAPS: dict[str, str] = {
-    "doeff_core_effects.WebEdge": _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN,
     "doeff_core_effects.aiohttp_ws_link_handler": _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN,
 }
 #: The doeff_core_effects modules all of whose public names have known types (the range this test protects). For now all are counted through the hidden modules below.

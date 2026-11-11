@@ -106,7 +106,7 @@ def content_address(effect: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def cache_handler(storage: DurableStorage) -> ProgramHandler:
+def cache_handler(storage: DurableStorage | InMemoryStorage | SQLiteStorage) -> ProgramHandler:
     """Interpret CacheGet/CachePut/CacheExists against a pluggable storage backend.
 
     Storage methods return Programs (DoExpr). The handler yields them to get values.

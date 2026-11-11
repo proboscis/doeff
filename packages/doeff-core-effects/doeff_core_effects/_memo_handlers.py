@@ -132,7 +132,7 @@ def _effect_cost(effect) -> RecomputeCost:
 
 
 def memo_handler(
-    storage: DurableStorage | Program[DurableStorage],
+    storage: DurableStorage | InMemoryStorage | SQLiteStorage | Program[DurableStorage],
     *,
     cost: RecomputeCost | str | None = None,
     name: str | None = None,

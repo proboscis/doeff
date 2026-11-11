@@ -106,7 +106,6 @@ from doeff_core_effects import _unhandled_hints  # noqa: F401 - registers the hi
 # checker, which reads the generated `.pyi` beside each Hy module. Left out of the block, a name is read through the
 # module `__getattr__` as `object`, so every handler clause and annotation that uses it turns into an unknown type.
 if TYPE_CHECKING:
-    from doeff_core_effects._aiohttp_http_server import WebEdge as WebEdge
     from doeff_core_effects._aiohttp_http_server import aiohttp_http_server as aiohttp_http_server
     from doeff_core_effects._aiohttp_ws_client import (
         aiohttp_ws_link_handler as aiohttp_ws_link_handler,
@@ -283,7 +282,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._memo_policy import MemoPolicy as MemoPolicy
     from doeff_core_effects._memo_policy import RecomputeCost as RecomputeCost
     from doeff_core_effects._memory_file import memory_file_handler as memory_file_handler
-    from doeff_core_effects._memory_latest import MemoryLatestStore as MemoryLatestStore
     from doeff_core_effects._memory_latest import memory_latest_handler as memory_latest_handler
     from doeff_core_effects._memory_meter import memory_meter_handler as memory_meter_handler
     from doeff_core_effects._memory_stack_dump import (
@@ -378,7 +376,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._process_effects import not_started_outcome as not_started_outcome
     from doeff_core_effects._process_effects import start_refusal as start_refusal
     from doeff_core_effects._process_effects import timed_out_outcome as timed_out_outcome
-    from doeff_core_effects._process_exit import ExitEnd as ExitEnd
     from doeff_core_effects._process_exit import ExitWaitUnavailable as ExitWaitUnavailable
     from doeff_core_effects._process_exit import process_exit_handler as process_exit_handler
     from doeff_core_effects._process_latest import process_latest_handler as process_latest_handler
@@ -388,12 +385,9 @@ if TYPE_CHECKING:
     from doeff_core_effects._python_bytecode import compiled_pyc as compiled_pyc
     from doeff_core_effects._random_effects import RandomBytes as RandomBytes
     from doeff_core_effects._rooted_file import rooted_file_handler as rooted_file_handler
-    from doeff_core_effects._scheduler import ProcessStepBudget as ProcessStepBudget
     from doeff_core_effects._scheduler import SchedulerImplementation as SchedulerImplementation
     from doeff_core_effects._scheduler import SchedulerIndexDriftError as SchedulerIndexDriftError
     from doeff_core_effects._scheduler import SchedulerIntrospection as SchedulerIntrospection
-    from doeff_core_effects._scheduler import SpentStepBudget as SpentStepBudget
-    from doeff_core_effects._scheduler import StepBudget as StepBudget
     from doeff_core_effects._scheduler import StepBudgetExceeded as StepBudgetExceeded
     from doeff_core_effects._scheduler import TaskCompleted as TaskCompleted
     from doeff_core_effects._scheduler_channel import Channel as Channel
@@ -542,12 +536,9 @@ _LAZY_EXPORTS = {
     "HttpResponse": "doeff_core_effects._effects",
     "http_fixture_handler": "doeff_core_effects._http_handlers",
     "http_production_handler": "doeff_core_effects._http_handlers",
-    "ProcessStepBudget": "doeff_core_effects._scheduler",
     "SchedulerImplementation": "doeff_core_effects._scheduler",
     "SchedulerIndexDriftError": "doeff_core_effects._scheduler",
     "SchedulerIntrospection": "doeff_core_effects._scheduler",
-    "SpentStepBudget": "doeff_core_effects._scheduler",
-    "StepBudget": "doeff_core_effects._scheduler",
     "StepBudgetExceeded": "doeff_core_effects._scheduler",
     "TaskCompleted": "doeff_core_effects._scheduler",
     "Channel": "doeff_core_effects._scheduler_channel",
@@ -596,7 +587,6 @@ _LAZY_EXPORTS = {
     "AwaitLatest": "doeff_core_effects._latest_effects",
     "PublishLatest": "doeff_core_effects._latest_effects",
     "ReadLatest": "doeff_core_effects._latest_effects",
-    "MemoryLatestStore": "doeff_core_effects._memory_latest",
     "memory_latest_handler": "doeff_core_effects._memory_latest",
     "CountMetric": "doeff_core_effects._meter_effects",
     "MeterBucket": "doeff_core_effects._meter_effects",
@@ -747,7 +737,6 @@ _LAZY_EXPORTS = {
     "WsTextSent": "doeff_core_effects._http_server_effects",
     "ws_shortcut_for": "doeff_core_effects._http_server_effects",
     "ws_shortcut_outcome": "doeff_core_effects._http_server_effects",
-    "WebEdge": "doeff_core_effects._aiohttp_http_server",
     "aiohttp_http_server": "doeff_core_effects._aiohttp_http_server",
     "ScriptSend": "doeff_core_effects._scripted_http_server",
     "script_sent": "doeff_core_effects._scripted_http_server",
@@ -799,7 +788,6 @@ _LAZY_EXPORTS = {
     "run_scripted": "doeff_core_effects._scripted_process",
     "scripted_command_peer": "doeff_core_effects._scripted_process",
     "scripted_process_handler": "doeff_core_effects._scripted_process",
-    "ExitEnd": "doeff_core_effects._process_exit",
     "ExitWaitUnavailable": "doeff_core_effects._process_exit",
     "process_exit_handler": "doeff_core_effects._process_exit",
     "process_latest_handler": "doeff_core_effects._process_latest",

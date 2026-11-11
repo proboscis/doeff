@@ -20,7 +20,8 @@
   "The 179 rows (20 packages, 109 names) of the group \"Boundary — handler setting type\" were moved because the allowed group \"Allowed — handler setting type\", whose shape the inventory verifies (a type defined by that package that appears in the annotations of handlers, handler classes and factory arguments exposed by the same package — following fields of setting types defined by the package; the inventory's settings), was added: the 112 rows that fit the shape (18 packages, 64 names) and 3 rows in \"added names\" moved to the allowed table with the basis ADR-DOE-API-001 R2, and the group disappeared. Of the 67 rows that do not fit (9 packages, 45 names — appearing in no exposed handler or factory argument), the 66 rows of types moved to the group \"Violation — annotate the factory arguments or move inside\", and the 1 row of the function default_session_backend to the group \"Violation — move to an inner module\". If it is a type passed to a handler, write the type in the argument of the factory or handler that takes it (a Hy defn argument, or an unannotated backend=None, etc.) and move it to the allowed table; if it is not passed, move it inside.",
   "The 3 rows of choice, noul and score (functions that build a Question) of the doeff-system-one group \"Violation — annotate the effect field or move inside\" were removed. The 3 functions were removed after rewriting the callers in outside repos (rulebook/core.py of agent-commons; first_reader.hy and 2 tests of agora-controllers) and callers inside doeff to Question(kind=…, instructions=…, options=…/levels=…) (the order of R1 and R20). The group keeps the 3 rows of answer_choice, answer_noul and answer_score (functions that build an Answer), which were moved into it.",
   "The last 2 rows of ChangedRow (event_source, memory) of the doeff-records group \"Violation — annotate the effect field or move inside\" were removed. The signal-type contract is written as the Protocol KeyedSignal (a read-only field keys: tuple[ChangedRow, ...] — a shape that a frozen dataclass field fits; placed in the inner _values and not public), and the annotation of the binding SignalTables.signal was changed from the bare type to type[KeyedSignal]. The inventory also reads the return type of a Protocol property as a field, so following handler argument bindings → SignalTables.signal → KeyedSignal.keys, ChangedRow appears in settings. The 2 rows moved to the group \"Allowed — handler setting type\" on the basis of R2.",
-  "The doeff-system-one group \"Violation — annotate the effect field or move inside\" became empty and disappeared. answer_choice, answer_noul and answer_score (functions that build an Answer) were removed: the confidence formula of noul (distance from 0.5 × 2 — which existed in three places, among them doeff-system-one and doeff-jev) was moved to a single place, the class method Answer.noul of Judge's answer type Answer, and the callers of choice and score were rewritten to Answer(kind=…, value=…, confidence=…). No repo that reads doeff's main has callers; the callers in the tests of agent-commons and dotfiles, which read a pinned doeff version, will be rewritten to Answer.noul and Answer(…) when the version is raised."
+  "The doeff-system-one group \"Violation — annotate the effect field or move inside\" became empty and disappeared. answer_choice, answer_noul and answer_score (functions that build an Answer) were removed: the confidence formula of noul (distance from 0.5 × 2 — which existed in three places, among them doeff-system-one and doeff-jev) was moved to a single place, the class method Answer.noul of Judge's answer type Answer, and the callers of choice and score were rewritten to Answer(kind=…, value=…, confidence=…). No repo that reads doeff's main has callers; the callers in the tests of agent-commons and dotfiles, which read a pinned doeff version, will be rewritten to Answer.noul and Answer(…) when the version is raised.",
+  "Of the 19 rows of the doeff-core-effects group \"Violation — annotate the factory arguments or move inside\", 15 left the table. The 9 rows of the 5 types handed to handlers moved to the group \"Allowed — handler setting type\" of the allowed table on the basis of R2: ClickHouseDatabase and PostgresDatabase already appear in handler arguments; PostgresTimeouts is now written in the annotation of the timeouts argument of PostgresConnections; InMemoryStorage and SQLiteStorage (the two storages the package ships) are now written in the annotation of the storage argument of memo_handler and cache_handler. The 6 names with 6 rows that no handler receives (WebEdge, MemoryLatestStore, ExitEnd — state a handler builds inside itself; StepBudget, SpentStepBudget, ProcessStepBudget — the state of the process step budget that arm_step_budget of the inner _scheduler keeps) were removed from the entry point and stay only in their inner modules (0 callers in outside repos; the tests read them from the inner modules). 4 rows stay, both argument types of a public program helper rather than of a handler: StackDumpLedger (3 rows — the argument and answer of stack_dumps_at; agora-controllers builds its own stack dump handler with the two, so the outside caller is rewritten first, the order of R20) and SqliteFile (1 row — the argument of open_sqlite_files, whose answer SqliteFiles is what the handler receives)."
  ],
  "packages": {
   "doeff-adr": {
@@ -1147,52 +1148,17 @@
    "scope": "in scope",
    "names": {
     "Violation — annotate the factory arguments or move inside": {
-     "doeff_core_effects.aiohttp_http_server": [
-      "WebEdge"
-     ],
-     "doeff_core_effects.clickhouse_http_sql": [
-      "ClickHouseDatabase"
-     ],
      "doeff_core_effects.faulthandler_stack_dump": [
       "StackDumpLedger"
      ],
-     "doeff_core_effects.memo_handlers": [
-      "InMemoryStorage",
-      "SQLiteStorage"
-     ],
-     "doeff_core_effects.memory_latest": [
-      "MemoryLatestStore"
-     ],
      "doeff_core_effects.memory_stack_dump": [
       "StackDumpLedger"
-     ],
-     "doeff_core_effects.postgres_sql": [
-      "PostgresDatabase",
-      "PostgresTimeouts"
-     ],
-     "doeff_core_effects.process_exit": [
-      "ExitEnd"
-     ],
-     "doeff_core_effects.scheduler": [
-      "ProcessStepBudget",
-      "SpentStepBudget",
-      "StepBudget"
      ],
      "doeff_core_effects.sqlite_file_sql": [
       "SqliteFile"
      ],
      "doeff_core_effects.stack_dump_effects": [
       "StackDumpLedger"
-     ],
-     "doeff_core_effects.storage": [
-      "InMemoryStorage",
-      "SQLiteStorage"
-     ],
-     "doeff_core_effects.storage.memory": [
-      "InMemoryStorage"
-     ],
-     "doeff_core_effects.storage.sqlite": [
-      "SQLiteStorage"
      ]
     }
    }

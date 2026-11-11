@@ -25,7 +25,6 @@ from doeff_core_effects import (
     CreatePromise,
     SchedulerImplementation,
     Spawn,
-    StepBudget,
     StepBudgetExceeded,
     Try,
     Wait,
@@ -33,7 +32,7 @@ from doeff_core_effects import (
     try_handler,
 )
 from doeff_core_effects import _scheduler as scheduler_module
-from doeff_core_effects._scheduler import arm_step_budget, disarm_step_budget
+from doeff_core_effects._scheduler import StepBudget, arm_step_budget, disarm_step_budget
 
 from doeff import Program, do, run
 
