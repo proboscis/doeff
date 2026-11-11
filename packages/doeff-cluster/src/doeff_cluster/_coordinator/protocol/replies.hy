@@ -62,7 +62,11 @@
      (if task.preempted-by {"preemptedBy" task.preempted-by} {})
      ;; 線の内の借りとして置いた印と、この試行が借りの取り返しで積み直された印(2026-11-12)— 借りた・取り返した task だけ。
      (if task.borrowed {"borrowed" True} {})
-     (if task.reclaimed {"reclaimed" True} {})))
+     (if task.reclaimed {"reclaimed" True} {})
+     ;; 置いた刻のその worker の測った空き(measured の memoryAvailableMiB と atMs・2026-11-12)— 測りの在る worker に置いた試行だけ。
+     ;; worker の行の measured は今の 1 回だけなので、終わった task の置いた刻の空きはここで読む。
+     (if (is task.placed-memory-available-mib None) {} {"placedMemoryAvailableMiB" task.placed-memory-available-mib})
+     (if (is task.placed-measured-at-ms None) {} {"placedMeasuredAtMs" task.placed-measured-at-ms})))
 
 
 (defk spec-json [#^ JobSpec spec]

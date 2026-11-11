@@ -1529,6 +1529,7 @@
   (val note (.format "優先 {} の task {} に場所を譲るため worker {} で止めた(優先 {}・場所を譲る名乗り)— 試行 {} を最初から待つ(上限に数えた消失 {}/{} 回)"
                      by.priority by.id worker task.priority (+ task.attempt 1) task.losses RERUN-LIMIT))
   (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+           :placed-memory-available-mib None :placed-measured-at-ms None
            :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
            :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
            :rerun-note note :detail note :preempted-by by.id :borrowed False :reclaimed False))
@@ -1569,6 +1570,7 @@
   (val note (.format "上に載る系が memory の不足で仕事を待たせているので、worker {} の線の内に借りて置いた試行を止めた(優先 {}・場所を譲る名乗り)— 試行 {} を最初から待つ(上限に数えた消失 {}/{} 回)"
                      worker task.priority (+ task.attempt 1) task.losses RERUN-LIMIT))
   (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+           :placed-memory-available-mib None :placed-measured-at-ms None
            :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
            :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
            :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed True))
@@ -1707,6 +1709,7 @@
       (end-detached task "lost" now (.format "{} — 担い手が消えた試行が走らせ直しの上限 {} 回に達した" why RERUN-LIMIT))
     True
       (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+               :placed-memory-available-mib None :placed-measured-at-ms None
                :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
                :avoid #() :env-attempts 0 :failure-kind "" :retryable False :losses losses :retiring ""
                :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed False)))
@@ -2049,10 +2052,16 @@
                    (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
+                 ;; 置いた拍に数えた worker の測った空きと、その測りの刻を行に写す(task が終わった後も置いた刻の空きを読むため —
+                 ;; worker の measured は保存しない拍ごとの観測)。測りの無い worker(門の外の task だけが置ける)は写さない。
+                 (setv seen chosen.measured
+                       seen-available (if (is seen None) None seen.memory-available-MiB)
+                       seen-at (if (is seen None) None seen.at-ms))
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。場所を譲らせて置いた task は、
                  ;; 止めた task を detail に名指す。
                  (setv (get writes id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
+                                                   :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms) :borrowed lent
                                                    :detail (cond
                                                              lent (.format "線の上の memory の空きに入らないので、worker {} の線の内に借りとして置いた(上に載る系が memory を待つ間は止めて待ちの行へ戻す)"
@@ -2062,7 +2071,8 @@
                                                              True
                                                                (.format "memory の空きに入らないので、worker {} の優先の低い task {} に場所を譲らせて置いた"
                                                                         chosen.name (.join "・" (gfor v yielded.victims v.task.id)))))
-                                          (replace task :phase phase :worker chosen.name :started-ms now))))
+                                          (replace task :phase phase :worker chosen.name :started-ms now
+                                                   :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at))))
         ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(測った空きが 0・測りが無い・上限・予約): 失敗にせず待つ。
         ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
@@ -2132,6 +2142,7 @@
         failed (replace task :failure-kind kind :retryable retryable :detail detail))
   (if (and retryable (< task.env-attempts ENV-RETRIES))
       (replace failed :phase "queued" :worker None :boot None :started-ms None
+               :placed-memory-available-mib None :placed-measured-at-ms None
                :avoid (+ task.avoid #(worker)) :env-attempts (+ task.env-attempts 1))
       (end-env-failed failed now detail)))
 
@@ -2232,6 +2243,7 @@
                       (gone-detached task now (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた" worker)
                                      (.format "worker {} の世代 {} が止まり始めを名乗った" worker task.boot))
                       (replace task :phase "queued" :worker None :boot None :started-ms None
+                               :placed-memory-available-mib None :placed-measured-at-ms None
                                :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))))
 
 

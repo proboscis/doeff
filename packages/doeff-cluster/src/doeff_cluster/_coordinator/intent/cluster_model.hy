@@ -1282,7 +1282,14 @@
   ;; 上に載る系が memory の不足で仕事を待たせる間、置き先は借りの task を止めて次の試行の待ちの行へ戻す(cluster_policy.reclaimed-detached)。
   ;; reclaimed = この試行を積み直した訳が借りの取り返しか(真 = 取り返した)。欄の無い旧い行は借りていない・取り返していないで読む。
   (setv #^ bool borrowed False)
-  (setv #^ bool reclaimed False))
+  (setv #^ bool reclaimed False)
+  ;; --- 置いた刻の測った空き(2026-11-12)---
+  ;; placed-memory-available-mib / placed-measured-at-ms = 置き先がこの試行を worker に置いた拍に数えた、その worker の測った空き
+  ;; (heartbeat の measured の memory-available-MiB と at-ms — None = 測りの無い worker に置いた・置いていない・引き取った行)。置いた時の
+  ;; started-ms と同じくこの試行の置きの事実なので行に持ち、待ちの行へ戻す所で started-ms と一緒に消す。worker の measured は保存しない
+  ;; 拍ごとの観測なので、task が終わった後に置いた刻の空きを読むにはこの写しを読む。欄の無い旧い行は None で読む。
+  (setv #^ (| int None) placed-memory-available-mib None)
+  (setv #^ (| int None) placed-measured-at-ms None))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

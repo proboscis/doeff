@@ -85,7 +85,10 @@
                  (if task.preempted-by #{} #{"preempted_by"})
                  ;; 借りの印と取り返した印の無い行も欄を置かない(同じ訳 — 2026-11-12)。
                  (if task.borrowed #{} #{"borrowed"})
-                 (if task.reclaimed #{} #{"reclaimed"})))
+                 (if task.reclaimed #{} #{"reclaimed"})
+                 ;; 置いた刻の測った空きの無い行も欄を置かない(同じ訳 — 2026-11-12)。
+                 (if (is task.placed-memory-available-mib None) #{"placed_memory_available_mib"} #{})
+                 (if (is task.placed-measured-at-ms None) #{"placed_measured_at_ms"} #{})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -160,7 +163,10 @@
               :preempted-by (stored-str data "preempted_by" "")
               ;; 借りの印と取り返した印の欄の無い行は借りていない・取り返していない(足した欄 — 2026-11-12)。
               :borrowed (stored-bool data "borrowed" False)
-              :reclaimed (stored-bool data "reclaimed" False)))
+              :reclaimed (stored-bool data "reclaimed" False)
+              ;; 置いた刻の測った空きの欄の無い行は読めない(足した欄 — 2026-11-12)。
+              :placed-memory-available-mib (stored-optional-int data "placed_memory_available_mib")
+              :placed-measured-at-ms (stored-optional-int data "placed_measured_at_ms")))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; cannot be a defk: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り
