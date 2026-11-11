@@ -72,6 +72,91 @@
   (assert (in "identitiesonly yes" lines) ssh-b))
 
 
+(deftest test-a-keyed-repo-is-read-with-its-key-in-every-spelling [tmp-path]
+  ;; 反例(doeff が非公開の repo へ移った後): 表の綴りが ssh でも、uv の git の依存と WORKER_DOEFF_URL は https(.git の有無)で書かれ、
+  ;; 鍵なしの https で「could not read Username」と断られる。鍵つきの行の repo は、どの綴りでも同じ鍵の別名へ書き換わる。
+  (val home (/ tmp-path "home"))
+  (val keys (/ tmp-path "keys"))
+  (.mkdir home)
+  (.mkdir keys)
+  (for [name #("key-a" "known_hosts")] (.write-text (/ keys name) "x\n"))
+  (<- done subprocess.CompletedProcess (run-access home keys (.format "{}=key-a {}=" PRIVATE-A PUBLIC)))
+  (assert (= done.returncode 0) done.stderr)
+  (val access (. (Path (.strip done.stdout)) parent))
+  (for [spelling ["https://github.com/owner/private-a.git" "https://github.com/owner/private-a"
+                  "ssh://git@github.com/owner/private-a.git" "git@github.com:owner/private-a"]]
+    (<- seen str (seen-by access ["git" "ls-remote" "--get-url" spelling]))
+    (assert (= (.strip seen) "ssh://git@doeff-repo-1/owner/private-a.git") #(spelling seen)))
+  (<- url-p str (seen-by access ["git" "ls-remote" "--get-url" PUBLIC]))
+  (assert (= (.strip url-p) PUBLIC) url-p))
+
+
+(val FAKE-SSH (+ "#!/bin/sh\n"
+                 "# 検の ssh: git が向けた host(引数の頭の旗の後の 1 つ)を記し、検の repo を upload-pack で渡す。\n"
+                 "while [ $# -gt 0 ]; do\n"
+                 "  case $1 in -F|-o|-i|-p) shift 2 ;; -*) shift ;; *) break ;; esac\n"
+                 "done\n"
+                 "echo \"$1\" >>\"$FAKE_SSH_LOG\"\n"
+                 "exec git upload-pack \"$FAKE_SSH_REPO\"\n"))
+
+
+(defk git-in [cwd #* args]
+  {:pre [(: cwd Path) (: args tuple)] :post [(: % str)]}
+  "tmp の repo で git を 1 回撃つ(検の doeff の材料を作るため)。"
+  (. (subprocess.run ["git" "-C" (str cwd) #* args] :capture-output True :text True :check True) stdout))
+
+
+(defk private-doeff [tmp]
+  {:pre [(: tmp Path)] :post [(: % str)]}
+  "root の起動の script(自分の名乗りと git の向けを出して終わる)を持つ commit 1 つの repo を tmp/src に作る。答え = その sha。"
+  (val src (/ tmp "src"))
+  (val deploy (/ src "packages" "doeff-cluster" "deploy"))
+  (.mkdir deploy :parents True)
+  (.write-text (/ deploy "boot.sh") "echo \"root の script: [${GIT_CONFIG_GLOBAL:-}]\"\n")
+  (<- (git-in src "init" "-q"))
+  (<- (git-in src "add" "."))
+  (<- (git-in src "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-q" "-m" "x"))
+  (<- head str (git-in src "rev-parse" "HEAD"))
+  (.strip head))
+
+
+(deftest test-the-doeff-fetch-reads-a-private-repo-through-the-key-table [tmp-path]
+  ;; 反例(2026-11-11 — doeff が非公開の repo へ移った): image の起動の script は置き場に無い commit を鍵の表を組む前に鍵なしの https で
+  ;; 取り寄せ、版を上げた worker が起きられない。表が在れば取り寄せは表を通り、https の url のまま鍵の別名(検の ssh)で読む。表の向けは
+  ;; 取り寄せの中だけに置き、引き継いだ root の script へ継がない。
+  (<- sha str (private-doeff tmp-path))
+  (val keys (/ tmp-path "keys"))
+  (val bin (/ tmp-path "bin"))
+  (val log (/ tmp-path "ssh.log"))
+  (.mkdir keys)
+  (.mkdir bin)
+  (for [name #("key-a" "known_hosts")] (.write-text (/ keys name) "x\n"))
+  (.write-text (/ bin "ssh") FAKE-SSH)
+  (.chmod (/ bin "ssh") 0o755)
+  (val done (subprocess.run ["sh" BOOT-SH]
+                            :env {"PATH" (+ (str bin) ":/usr/bin:/bin") "HOME" (str tmp-path) "ROLE" "records"
+                                  "WORK_DIR" (str (/ tmp-path "work")) "WORKER_DOEFF_COMMIT" sha
+                                  "WORKER_DOEFF_URL" "https://github.com/owner/private-a.git"
+                                  "WORKER_REPOS" (.format "{}=key-a" PRIVATE-A) "WORKER_REPO_KEYS_DIR" (str keys)
+                                  "GIT_TERMINAL_PROMPT" "0" "FAKE_SSH_LOG" (str log) "FAKE_SSH_REPO" (str (/ tmp-path "src"))}
+                            :capture-output True :text True :timeout 60))
+  (assert (= done.returncode 0) (+ done.stdout done.stderr))
+  (assert (in "root の script: []" done.stdout) (+ done.stdout done.stderr))
+  (assert (in "git@doeff-repo-1" (.read-text log)) (.read-text log)))
+
+
+(deftest test-a-failed-doeff-fetch-says-why [tmp-path]
+  ;; 取り寄せの失敗を黙らず、理由の 1 行を出して止まる(前は失敗を || true で黙らせ、後の rev-parse の素の失敗だけが残った)。
+  (val done (subprocess.run ["sh" BOOT-SH]
+                            :env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "ROLE" "records"
+                                  "WORK_DIR" (str (/ tmp-path "work")) "WORKER_DOEFF_COMMIT" (* "a" 40)
+                                  "WORKER_DOEFF_URL" (str (/ tmp-path "missing.git")) "GIT_TERMINAL_PROMPT" "0"}
+                            :capture-output True :text True :timeout 60))
+  (assert (!= done.returncode 0) done.stdout)
+  (assert (in "取り寄せられない" done.stderr) done.stderr)
+  (assert (in "置き場" done.stderr) done.stderr))
+
+
 (deftest test-a-missing-key-stops-the-boot [tmp-path]
   (val home (/ tmp-path "home"))
   (val keys (/ tmp-path "keys"))
