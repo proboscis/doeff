@@ -61,7 +61,7 @@
                                                 JobSteady UnitKind node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of
                                                 largest-outside steady-sizes spared-steady victim-of swarm-of resident-walks job-meters-of
                                                 pss-bytes-of anonymous-bytes-of _JobWalk declared-roots spared-declared])
-(import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks])
+(import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks urgent-jobs])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted jobs-oom-noted])
 
 (val MEMORY-WINDOW-LOG "worker: job ごとの memory")
@@ -352,7 +352,9 @@
   (when (and (is-not cell.last-kill-ms None) (< (- now-ms cell.last-kill-ms) (* settings.kill-cooldown-seconds 1000)))
     (return None))
   (<- steadies tuple (steady-sizes cell.steady))
-  (<- victim (| KillUnit None) (victim-of units uses steadies settings.limits))
+  ;; 急ぎの優先の task(置き先が返事の行で運ぶ優先 — eviction_rules の urgent-jobs)は、ほかの候補が残る間は止めない(2026-11-11)。
+  (<- urgent frozenset (urgent-jobs cell.eviction.needs))
+  (<- victim (| KillUnit None) (victim-of units uses steadies settings.limits :urgent urgent))
   (val node reading.node)
   ;; 止める候補の単位が無ければ、群れの止め(頭の註の MEMORY-SWARM-KILL-LOG)を試す。
   (var swarm #())

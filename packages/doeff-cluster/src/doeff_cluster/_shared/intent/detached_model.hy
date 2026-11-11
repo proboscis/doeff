@@ -103,6 +103,11 @@
   ;; ような、混んだ時ほど要る仕事 — 空きを待つと混みが解けるまで走らない)。memory の要りを名乗らず(memory-mib は None)、同時数は系の
   ;; 宣言の組(limits — 1 つ以上)の上限だけが限る。同じ key の送り直しの比べには入れない。形の検めは構築関数。
   (setv #^ bool ungated False)
+  ;; 場所を譲る名乗り(2026-11-11): 真 = 優先の高い task(急ぎの優先 — coordinator/core/measured_room の KEEP-NOW-PRIORITY 以上)が memory の
+  ;; 空きに入らない時、coordinator がこの task(その task より優先の低い物だけ)を止めて場所を空けてよい。止めた task は走らせ直しの道で
+  ;; id の替わった次の試行として列へ戻り、最初から走る(担い手の消失の上限に数えない)。走らせ直し rerun も名乗る(構築関数と受け口が断る)。
+  ;; 名乗らない task は止めない(今までどおり)。同じ key の送り直しの比べには入れない。
+  (setv #^ bool preemptible False)
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数

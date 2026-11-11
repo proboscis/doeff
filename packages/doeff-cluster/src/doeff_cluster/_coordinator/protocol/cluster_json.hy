@@ -79,7 +79,10 @@
                  (if task.shape #{} #{"shape"})
                  (if (is task.peak-mib None) #{"peak_mib"} #{})
                  ;; 門の内の行も欄を置かない(同じ訳 — 2026-11-11)。
-                 (if task.ungated #{} #{"ungated"})))
+                 (if task.ungated #{} #{"ungated"})
+                 ;; 場所を譲る名乗りの無い行と、譲った印の無い行も欄を置かない(同じ訳 — 2026-11-11)。
+                 (if task.preemptible #{} #{"preemptible"})
+                 (if task.preempted-by #{} #{"preempted_by"})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -148,7 +151,10 @@
               :shape (stored-str data "shape" "")
               :peak-mib (stored-optional-int data "peak_mib")
               ;; 門の外の欄の無い行は門の内(足した欄 — 2026-11-11)。
-              :ungated (stored-bool data "ungated" False)))
+              :ungated (stored-bool data "ungated" False)
+              ;; 場所を譲る名乗りと譲った印の欄の無い行は名乗らない・譲っていない(足した欄 — 2026-11-11)。
+              :preemptible (stored-bool data "preemptible" False)
+              :preempted-by (stored-str data "preempted_by" "")))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り

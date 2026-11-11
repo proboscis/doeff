@@ -118,7 +118,7 @@
 (import math [ceil])
 (import posixpath)
 (import re)
-(import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX NodeMemory])
+(import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX URGENT-PRIORITY NodeMemory])
 
 ;; 余裕の宣言の無い機体の余裕(margin-of の床): node-a の 7 日(Prometheus・30 秒ごと・11-01)で、worker の外の Pod の working set の和の
 ;; 30 秒の増えは p99 0.78 GiB・p999 1.73 GiB・最大 2.5 GiB(clickhouse と garage)。最大の増えを 30 秒に均すと 5 秒の回あたり 0.42 GiB —
@@ -183,10 +183,12 @@
 
 (defrecord TaskNeed
   "置き先が worker に置いた task 1 本の memory の要り(置いた task の取り置き — 頭の註の会話の CLI の層): id = task の id・bytes = 置いた時に
-   名乗った要り(byte — 名乗らない task は UNDECLARED-NEED-BYTES)。"
+   名乗った要り(byte — 名乗らない task は UNDECLARED-NEED-BYTES)・priority = 置き方の優先(返事の行の priority — 無い行は 0。見張りは
+   memory_rules の URGENT-PRIORITY 以上の task を、ほかの候補が残る間は止めない — 2026-11-11)。"
   {:check [(>= bytes 0)]}
   (#^ str id)
-  (#^ int bytes))
+  (#^ int bytes)
+  (setv #^ int priority 0))
 
 
 (defrecord CommandLayerUse
@@ -437,18 +439,20 @@
 
 (defrecord TaskOver
   "要りを越えて伸びた task 1 本(頭の註の上に載る系が残す線): id = task の id・need-bytes = 置いた時に名乗った要り・use-bytes = 見張りの
-   読みの今の使い(task の根の木の rss の和)。"
+   読みの今の使い(task の根の木の rss の和)・priority = 置き方の優先(TaskNeed の priority)。"
   {:check [(>= need-bytes 0) (> use-bytes need-bytes)]}
   (#^ str id)
   (#^ int need-bytes)
-  (#^ int use-bytes))
+  (#^ int use-bytes)
+  (setv #^ int priority 0))
 
 
 (defk over-need-tasks [needs uses shortfall]
   {:pre [(: needs tuple) (: uses tuple) (: shortfall int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "機体の MemAvailable が上に載る系の残す線を shortfall(byte)だけ割った時に、見張りが止める task を選ぶため(頭の註の上に載る系が残す線):
    needs = 置いた task の要り(TaskNeed の tuple)・uses = 見張りの今の読みの job ごとの memory(JobUse の tuple — task の job の名は
-   TASK-PREFIX + id)。要りを越えて使う task(TaskOver)だけを、越えの大きい順(同じなら id の順)に、それより前に選んだ task の使いの和が
+   TASK-PREFIX + id)。要りを越えて使う task(TaskOver)だけを、急ぎの優先(URGENT-PRIORITY 以上)でない物を先に、その中は越えの大きい順
+   (同じなら id の順)に並べ、それより前に選んだ task の使いの和が
    shortfall に届くまで並べる。shortfall が 0 以下・要りを越えた task が無ければ空 — 要りの内で走る task は止めない(線を割った訳が jobs
    の層の外の伸びなら、新しい受けを絞るだけ)。"
   (when (<= shortfall 0)
@@ -456,21 +460,32 @@
   (val over (tuple (gfor need needs
                          :setv used (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes))
                          :if (> used need.bytes)
-                         (TaskOver :id need.id :need-bytes need.bytes :use-bytes used))))
-  (val ordered (sorted over :key (fn [t] #((- t.need-bytes t.use-bytes) t.id))))
+                         (TaskOver :id need.id :need-bytes need.bytes :use-bytes used :priority need.priority))))
+  ;; 急ぎの task は、ほかの越えた task を全部止めても届かない時だけ止める(2026-11-11)。
+  (val ordered (sorted over :key (fn [t] #((>= t.priority URGENT-PRIORITY) (- t.need-bytes t.use-bytes) t.id))))
   (tuple (gfor #(task freed) (zip ordered (accumulate (gfor t ordered t.use-bytes) :initial 0)) :if (< freed shortfall) task)))
 
 
 (defk task-needs-of [rows]
   {:pre [(: rows tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の task の行(置き先が worker に置いた task — JSON の dict の tuple)から、置いた task の要り(TaskNeed の tuple)を
-   読むため: 欄 memoryMiB(0 以上の整数 — 真偽は数えない)が在ればその byte、無い・形の違う行は UNDECLARED-NEED-BYTES。id の無い行は
+   読むため: 欄 memoryMiB(0 以上の整数 — 真偽は数えない)が在ればその byte、無い・形の違う行は UNDECLARED-NEED-BYTES。欄 priority
+   (整数 — 真偽は数えない)が在ればその優先、無い・形の違う行は 0。id の無い行は
    読まない。"
   (tuple (gfor row rows
                :if (and (isinstance row dict) (isinstance (.get row "id") str))
                :setv mib (.get row "memoryMiB")
+               :setv priority (.get row "priority")
                (TaskNeed :id (get row "id")
-                         :bytes (if (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0)) (* mib MIB) UNDECLARED-NEED-BYTES)))))
+                         :bytes (if (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0)) (* mib MIB) UNDECLARED-NEED-BYTES)
+                         :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)))))
+
+
+(defk urgent-jobs [needs]
+  {:pre [(: needs tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "memory の見張りが後に止める急ぎの task の job の名を知るため(memory_rules の victim-of の urgent): needs = 置き先が置いた task の
+   要り(TaskNeed の tuple — priority を持つ)。優先が URGENT-PRIORITY 以上の task の job の名(TASK-PREFIX + id)。"
+  (frozenset (gfor need needs :if (>= need.priority URGENT-PRIORITY) (+ TASK-PREFIX need.id))))
 
 
 (defk prepare-reserve [cap current populated]

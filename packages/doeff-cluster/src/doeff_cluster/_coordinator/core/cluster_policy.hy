@@ -20,7 +20,7 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-memory-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
@@ -1446,6 +1446,91 @@
   best)
 
 
+(defk yield-candidates [task worker tasks peaks taken]
+  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: tasks tuple) (: peaks dict) (: taken frozenset)]
+   :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "急ぎの task に場所を譲らせうる、worker に置いた task を、止める順に知るため(measured_room の頭の註の場所の譲り): tasks = task の
+   行・peaks = 形ごとの測った山(shape-peaks-of — 要りの数え task-need-of)・taken = この拍に既に止めると決めた task の id。候補は、
+   その worker に置かれ(PLACED-PHASES)、場所を譲る名乗り(preemptible — 走らせ直しの名乗りと組)を持ち、task より優先の低い切り離した
+   task。答え = YieldCandidate の tuple — 戻る MiB = 止めると戻る memory(測りの名乗る今の使い + まだ予約している伸びる分 = load-of と
+   同じ数えの max(要り, 今の使い))。順は優先の低い順、同じ優先は戻る MiB の大きい順(止める本数を少なくする)、同じなら id の順。"
+  (val uses (if (or (is worker.measured None) (is worker.measured.task-memory-MiB None)) {} worker.measured.task-memory-MiB))
+  (var rows #())
+  (for [t tasks :if (and t.detached t.preemptible t.rerun (in t.phase PLACED-PHASES) (= t.worker worker.name)
+                         (< t.priority task.priority) (not-in t.id taken))]
+    (val use (.get uses t.id))
+    (<- need int (task-need-of t worker peaks))
+    (<- reserved int (reserved-mib-of need use))
+    (:= rows #(#* rows (YieldCandidate :task t :reserved-mib reserved :freed-mib (+ reserved (or use 0)) :measured (is-not use None)))))
+  (tuple (sorted rows :key (fn [c] #(c.task.priority (- c.freed-mib) c.task.id)))))
+
+
+(defk yield-victims [need room candidates]
+  {:pre [(: need int) (: room int) (: candidates tuple)] :post [(: % (| tuple None))] :tags {:context "coordinator" :role "judgment"}}
+  "急ぎの task の要り need を、memory の空き room の worker に入れるために止める task を知るため(measured_room の頭の註の場所の譲り):
+   candidates = yield-candidates の答え(止める順)。頭から、戻る MiB の和を空きに足して要りに届くまで取った YieldCandidate の tuple。
+   止めなくても入る(要り ≤ 空き)・全部止めても届かない時は None(譲らせない — 届かない止めで仕事を失わせない)。"
+  (when (<= need room)
+    (return None))
+  (var picked #())
+  (var freed 0)
+  (for [c candidates]
+    (when (>= (+ room freed) need)
+      (break))
+    (:= picked #(#* picked c))
+    (:= freed (+ freed c.freed-mib)))
+  (if (>= (+ room freed) need) picked None))
+
+
+(defk yield-plan [task workers needs rooms counts tasks peaks taken held groups bg-held bg-wanted]
+  {:pre [(: task TaskRecord) (: workers list) (: needs dict) (: rooms dict) (: counts dict) (: tasks tuple) (: peaks dict) (: taken frozenset)
+         (: held dict) (: groups Table) (: bg-held dict) (: bg-wanted dict)]
+   :post [(: % (| YieldPlan None))] :tags {:context "coordinator" :role "judgment"}}
+  "急ぎの task が memory の空きに入らない拍に、どの worker でどの task に場所を譲らせて置くかを知るため(measured_room の頭の註の場所の
+   譲り — None = 譲らせない): workers = 置き先の候補(門の内の task は置ける worker 全部・門の外の task は組の上限に達していない worker)・
+   needs / rooms = worker の名 → task の要りと、その task を数える memory の空き(門の内は task-memory-room-of・門の外は測りにまだ出て
+   いない要りだけを引いた空き)・counts = worker の名 → 測った数の空き(task-room-of — 門の外の task は読まない)・tasks・peaks・taken =
+   yield-candidates の引数・held・groups・bg-held・bg-wanted = task-misfit の引数(worker の名 → 数)。worker ごとに止める task を
+   yield-victims で選び、門の内の task は止めた後の数と memory の空きで task-misfit を問い直す(memory と数の外の訳 — 組の上限・予約・
+   測りの無さ — で置けない worker では譲らせない)。選ぶのは止める本数の少ない worker、同じなら戻る MiB の和の小さい物、同じなら名の順。"
+  (var best None)
+  (var best-key None)
+  (for [w (sorted workers :key (fn [w] w.name))]
+    (val need (get needs w.name))
+    (val room (get rooms w.name))
+    (<- candidates tuple (yield-candidates task w tasks peaks taken))
+    (<- victims (| tuple None) (yield-victims need room candidates))
+    (when (is-not victims None)
+      (val freed (sum (gfor v victims v.freed-mib)))
+      (val background (len (lfor v victims :if (< v.task.priority 0) v)))
+      ;; 門の外の task は組の上限だけで判じる(workers は組の上限に達していない worker — 問い直さない)。
+      (var misfit None)
+      (when (not task.ungated)
+        (<- found (| TaskUnplacedKind None)
+            (task-misfit task.limits task.priority w (+ (get counts w.name) (len victims)) held groups
+                         (- (get bg-held w.name) background) (get bg-wanted w.name) need (+ room freed)))
+        (:= misfit found))
+      (val key #((len victims) freed w.name))
+      (when (and (is misfit None) (or (is best-key None) (< key best-key)))
+        (:= best (YieldPlan :worker w :victims victims))
+        (:= best-key key))))
+  best)
+
+
+(defk preempted-detached [task now by worker]
+  {:pre [(: task TaskRecord) (: now int) (: by TaskRecord) (: worker str)] :post [(: % TaskRecord)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "急ぎの task by に場所を譲るため止める切り離した task の次の行(measured_room の頭の註の場所の譲り — 走らせ直しの道の次の試行と
+   同じ形・id が替わり、呼び手は前の行を消す)。担い手は消えていないので、消失の上限に数えない(losses を足さない)。detail と rerun-note に
+   止めた訳を、preempted-by に譲った相手の id を残す。"
+  (val note (.format "優先 {} の task {} に場所を譲るため worker {} で止めた(優先 {}・場所を譲る名乗り)— 試行 {} を最初から待つ(上限に数えた消失 {}/{} 回)"
+                     by.priority by.id worker task.priority (+ task.attempt 1) task.losses RERUN-LIMIT))
+  (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+           :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
+           :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
+           :rerun-note note :detail note :preempted-by by.id))
+
+
 (defk kept-text [text worker]
   {:pre [(: text str) (: worker str)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "取っておきを掛けて待つ task の detail の文を決めるため: 待つ訳の文 text に、取っておく worker を名指す句を足す(worker が替わらない
@@ -1581,7 +1666,7 @@
       (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
                :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
                :avoid #() :env-attempts 0 :failure-kind "" :retryable False :losses losses :retiring ""
-               :rerun-note note :detail note)))
+               :rerun-note note :detail note :preempted-by "")))
 
 
 (defn #^ str waiting-detail [#^ TaskRecord task #^ str text]
@@ -1770,6 +1855,10 @@
         bg-wanted (dfor name (.keys state.workers) name 0)
         ;; 長く待った task へこの拍に取っておいた memory(worker の名 → MiB — measured_room の頭の註の取っておき)。
         kept (dfor name (.keys state.workers) name 0))
+  ;; この拍に急ぎの task へ場所を譲らせると決めた task の id(measured_room の頭の註の場所の譲り — 同じ task を 2 度止めない)。
+  (var taken (frozenset))
+  ;; 譲らせる候補を探す task の行(拍の初めに置かれていた task — この拍に置いた task は優先が低いので急ぎの task の後に置かれる)。
+  (val placed-rows (tuple (scan-rows placed.tasks)))
   (for [t (scan-rows placed.tasks) :if (and (< t.priority 0) (in t.phase PLACED-PHASES) (in t.worker bg-held))]
     (+= (get bg-held t.worker) 1))
   (for [task (.values queue) :if (and (= task.phase "queued") (< task.priority 0))]
@@ -1794,6 +1883,9 @@
       ;; 要りは worker ごと(測った山をその worker の線で切る — task-need-of)。
       (var needs {})
       (var rooms {})
+      ;; worker の名 → 測った数の空きと、門の外の task の memory の空き(場所の譲りが読む — yield-plan)。
+      (var counts {})
+      (var bares {})
       ;; 要りの足りなさ(worker の名 → MiB — 置き先の順の頭)。門の外の task は、測った空きから測りにまだ出ていない task の要りだけを
       ;; 引いた空き(伸びの見込みを引かない — measured_room の頭の註の置き先の順)で数える。門の内の task は数えない(0 — roomy は要りが入る worker だけ)。
       (var shorts {})
@@ -1806,10 +1898,12 @@
         (setv (get needs w.name) need)
         (<- room int (task-room-of w load :urgent urgent))
         (<- memory-room int (task-memory-room-of w load :urgent urgent))
-        (setv (get rooms w.name) memory-room)
+        (setv (get rooms w.name) memory-room
+              (get counts w.name) room)
         (when task.ungated
           (<- bare-room int (memory-room-mib w.measured (. (get load w.name) unmeasured-mib) :urgent urgent))
-          (setv (get shorts w.name) (max 0 (- need bare-room))))
+          (setv (get bares w.name) bare-room
+                (get shorts w.name) (max 0 (- need bare-room))))
         ;; 測った空きの門の外の task は、空きと予約を判じず、名乗った組(宣言に無い組・組の上限)だけで判じる(measured_room の頭の註の
         ;; 測った空きの門の外の task)。
         (<- misfit (| TaskUnplacedKind None) (if task.ungated
@@ -1829,6 +1923,32 @@
                                                               (not (env-ready-on task.runtime-env (get pair 0)))
                                                               (- (get pair 1)) (. (get pair 0) name))))
                        w))
+      ;; 場所の譲り(measured_room の頭の註): 急ぎの優先の task が memory の空きに入らない(門の内は置ける worker が無い・門の外は選んだ
+      ;; worker でも要りが空きを越える)時、同じ worker の場所を譲る名乗りの優先の低い task を止めて次の試行の待ちの行へ戻し、この拍で
+      ;; 急ぎの task をその worker に置く。止めた task の process は、返事から外れた job として worker が止める(走らせ直しの道と同じ)。
+      ;; 譲らせる先が無ければ今までどおり(門の内は待つか取っておく・門の外は足りなさの最も小さい worker へ置く)。
+      (var yielded None)
+      (when (and urgent (or (not free) (and task.ungated (> (get shorts (. (get free 0) name)) 0))))
+        (<- plan (| YieldPlan None) (yield-plan task (if task.ungated free able-now) needs (if task.ungated bares rooms) counts
+                                                placed-rows peaks taken held state.group-limits bg-held bg-wanted))
+        (when (is-not plan None)
+          (:= yielded plan)
+          (val yield-worker plan.worker)
+          (for [v plan.victims]
+            (<- next-row TaskRecord (preempted-detached v.task now task yield-worker.name))
+            (setv (get writes v.task.id) None
+                  (get writes next-row.id) next-row)
+            (:= taken (| taken (frozenset #(v.task.id))))
+            (when (< v.task.priority 0)
+              (-= (get bg-held yield-worker.name) 1)))
+          ;; 止めた task の分を置いた task の数え(load-of)から外す: 数と予約と測りにまだ出ていない要り。今の使いは worker が止めて次の
+          ;; 測りに出るまで測った空きに残る(この拍の後ろの task は、戻る前の空きで数える)。
+          (val yield-used (get load yield-worker.name))
+          (setv (get load yield-worker.name) (replace yield-used :tasks (max 0 (- yield-used.tasks (len plan.victims)))
+                                           :reserved-mib (max 0 (- yield-used.reserved-mib (sum (gfor v plan.victims v.reserved-mib))))
+                                           :unmeasured-mib (max 0 (- yield-used.unmeasured-mib (sum (gfor v plan.victims :if (not v.measured)
+                                                                                                  v.reserved-mib))))))
+          (setv free [yield-worker])))
       ;; 置けずに STARVE-WAIT-MS を越えて待った task と急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は(keeps-room?)、memory の空きだけで
       ;; 置けない worker のうち、今の task が全部終われば入る見込みの在る 1 台に要りを取っておく(measured_room の頭の註の取っておき)。
       ;; 後ろの順の task は、その worker の memory の空きから要りを引いて数える。測った空きの門の外の task は空きを待たないので取っておかない
@@ -1857,10 +1977,15 @@
                    (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
-                 ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
+                 ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。場所を譲らせて置いた task は、
+                 ;; 止めた task を detail に名指す。
                  (setv (get writes id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
-                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
+                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms)
+                                                   :detail (if (is yielded None)
+                                                               task.detail
+                                                               (.format "memory の空きに入らないので、worker {} の優先の低い task {} に場所を譲らせて置いた"
+                                                                        chosen.name (.join "・" (gfor v yielded.victims v.task.id)))))
                                           (replace task :phase phase :worker chosen.name :started-ms now))))
         ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(測った空きが 0・測りが無い・上限・予約): 失敗にせず待つ。
         ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
@@ -1948,7 +2073,8 @@
                (TaskOffer :id task.id :name task.name :revision task.revision :versions task.versions :program task.program
                           :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
                           :runtime-env task.runtime-env :environ task.environ :memory-mib task.memory-mib
-                          :rerun task.rerun :attempt task.attempt :losses task.losses :notify task.notify))))
+                          :rerun task.rerun :attempt task.attempt :losses task.losses :notify task.notify
+                          :priority task.priority :preemptible task.preemptible))))
 
 
 (defn #^ TaskRecord task-finished [#^ TaskRecord task #^ int now #^ str detail #^ (| str None) result]
@@ -2651,6 +2777,9 @@
               ;; 上限に数えた消失の数を運ばない写し(2026-11-05 の前の worker)は、前の試行を全部数えた。
               :losses (int-field echo "losses" (- (int-field echo "attempt" 1) 1))
               :notify (if (isinstance (.get echo "notify") str) (.get echo "notify") "")
+              ;; 置き方の優先と場所を譲る名乗り(2026-11-11 — 運ばない写しは優先 0・名乗らない。名乗りは走らせ直しの名乗りと組でだけ読む)。
+              :priority (int-field echo "priority" 0)
+              :preemptible (and (is (.get echo "preemptible") True) (is (.get echo "rerun") True))
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 
 
@@ -2973,6 +3102,8 @@
                     (task-priority-refusal body.priority) (task-limits-refusal body.limits)
                     ;; 測った空きの門の外は切り離した task だけの名乗り(2026-11-11 — 呼び手の問い合わせに縛られた task は空きの門の内で置く)。
                     (if (is body.ungated None) None "ungated は切り離した task(PUT /detached)だけが名乗る")
+                    ;; 場所を譲る名乗りも切り離した task だけ(2026-11-11 — 止めた task は走らせ直しの道で列へ戻る)。
+                    (if (is body.preemptible None) None "preemptible は切り離した task(PUT /detached)だけが名乗る")
                     (! (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。

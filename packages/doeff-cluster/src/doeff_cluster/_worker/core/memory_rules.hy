@@ -13,6 +13,10 @@
 ;;;               process だけ(子が在れば BODY — job の本体・子が無ければ LEAF — 食った道具そのもの)。
 ;;; 止める順(victim-of): BRANCH・LEAF・TASK のいちばん大きい物が先(job の本体を止めると、その job の子が全部止まる)。それが
 ;;; min-victim-bytes 未満の時だけ BODY のいちばん大きい物。
+;;; 急ぎの task(2026-11-11): 置き先が heartbeat の返事の task の行で運ぶ優先(priority)が URGENT-PRIORITY 以上の task の単位は、ほかの
+;;; 止める候補が 1 つも無い時だけ選ぶ(victim-of の urgent)。訳: 本番へ届ける急ぎの task は機体の中でいちばん大きい単位になりやすく、
+;;; 大きさの順だけで選ぶと、同じ機体で作り直せる task が走り続ける間に急ぎの task が止められた(2026-11-11 の 15〜16 時に 14 分で 5 本)。
+;;; 要りの越えの止め(eviction_rules の over-need-tasks)も同じに、急ぎの task を後に並べる。
 ;;; 止める候補: task の単位は全部。常駐の job の単位は、その job の今の memory が平常の大きさ(JobSteady — 前の
 ;;; 最大の行の間ごとの最大のいちばん大きい物)の steady-ratio 倍以上の時か、平常の大きさがまだ無い時だけ。平常の大きさで動く常駐の
 ;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
@@ -59,6 +63,9 @@
 (val DOMINANT-SHARE 0.5)
 ;; task の名の頭(doeff-cluster の task の job の名 — task/<id>)。
 (val TASK-PREFIX "task/")
+;; 急ぎの優先の下限(頭の註の急ぎの task — coordinator の measured_room.KEEP-NOW-PRIORITY と同じ値。置き先が heartbeat の返事の task の行の
+;; priority で運ぶ優先がこの値以上の task を、見張りはほかの候補が残る間は止めない)。
+(val URGENT-PRIORITY 1)
 
 
 (defrecord MemoryLimits
@@ -529,16 +536,20 @@
   units)
 
 
-(defk victim-of [units uses steadies limits]
-  {:pre [(: units tuple) (: uses tuple) (: steadies tuple) (: limits MemoryLimits)] :post [(: % (| KillUnit None))]
+(defk victim-of [units uses steadies limits [urgent (frozenset)]]
+  {:pre [(: units tuple) (: uses tuple) (: steadies tuple) (: limits MemoryLimits) (: urgent frozenset)] :post [(: % (| KillUnit None))]
    :tags {:context "worker" :role "judgment"}}
   "DANGER の時に止める単位を選ぶため(頭の註の順): 止める候補(beyond-steady? — uses = job ごとの今の memory・steadies = job ごとの平常の
    大きさ)の中で、BRANCH・LEAF・TASK のいちばん大きい物、それが min-victim-bytes 未満なら BODY のいちばん大きい物。どれも無ければ止めない
-   (None — 食った物は job の外か、平常の大きさで動く常駐の job だけ)。units は大きい順。"
+   (None — 食った物は job の外か、平常の大きさで動く常駐の job だけ)。units は大きい順。urgent = 急ぎの優先の task の job の名
+   (eviction_rules の urgent-jobs — 頭の註の急ぎの task): その job の単位は、ほかの候補が 1 つも無い時だけ選ぶ。"
   ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない)。
   (val large (tuple (gfor u units :if (>= u.bytes limits.min-victim-bytes) u)))
   (<- beyond tuple (sequence (gfor u large (beyond-steady? u uses steadies limits))))
-  (val candidates (tuple (gfor #(u candidate) (zip large beyond) :if candidate u)))
+  (val all-candidates (tuple (gfor #(u candidate) (zip large beyond) :if candidate u)))
+  ;; 急ぎの task の単位は、ほかの候補が残る間は選ばない(頭の註の急ぎの task)。
+  (val ordinary (tuple (gfor u all-candidates :if (not-in u.job urgent) u)))
+  (val candidates (if ordinary ordinary all-candidates))
   (val leaves (tuple (gfor u candidates :if (!= u.kind UnitKind.BODY) u)))
   (val bodies (tuple (gfor u candidates :if (= u.kind UnitKind.BODY) u)))
   (cond leaves (get leaves 0)

@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-ungated-refusal task-room-claim-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-ungated-refusal task-room-claim-refusal task-preemptible-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
@@ -71,7 +71,8 @@
    (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。
    memory の要り(memoryMiB)の無い本文と、要りが needs の合うどの worker の線よりも大きい新しい task は 400 で断る
    (task-memory-required-refusal・memory-need-refusal)。測った空きの門の外を名乗る本文(ungated)は要りを名乗らず組を 1 つ以上名乗る
-   (task-room-claim-refusal — 違えば 400)。"
+   (task-room-claim-refusal — 違えば 400)。場所を譲る名乗り(preemptible)は走らせ直し(rerun)も名乗る本文だけが持てる
+   (task-preemptible-refusal — 違えば 400)。"
   (setv lease (if (is body.lease-seconds None) DETACHED-DEFAULT-LEASE-SECONDS body.lease-seconds)
         retain (if (is body.retain-seconds None) DETACHED-DEFAULT-RETAIN-SECONDS body.retain-seconds)
         refusal (or (format-version-refusal body.format)
@@ -86,6 +87,8 @@
                     (task-rerun-refusal body.rerun)
                     ;; 測った空きの門の外の名乗り(2026-11-11 — 名乗らなくてよい)。
                     (task-ungated-refusal body.ungated)
+                    ;; 場所を譲る名乗り(2026-11-11 — 名乗らなくてよい。名乗る task は走らせ直しも名乗る)。
+                    (task-preemptible-refusal body.preemptible (is body.rerun True))
                     ;; 切り離した task は memory の要りを必須で名乗る(2026-11-02 — 要りの無い本文も断る)。門の外の task は要りを名乗らず、
                     ;; 組を 1 つ以上名乗る(2026-11-11)。組の列の形は上の task-limits-refusal が先に検める。
                     (task-room-claim-refusal (is body.ungated True) body.memory-MiB (len (or body.limits [])))
@@ -123,7 +126,8 @@
                          :runtime-env body.runtime-env :environ environ
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)
                          :notify (or body.notify "") :memory-mib body.memory-MiB :rerun (is body.rerun True)
-                         :shape (or body.shape "") :ungated (is body.ungated True)))
+                         :shape (or body.shape "") :ungated (is body.ungated True)
+                         :preemptible (is body.preemptible True)))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
@@ -214,7 +218,11 @@
   "純粋: 走らせ直された行 before と次の試行の行 attempt から、出口へ積む走らせ直しの行を知るため(知らせ先の無い task は None)。"
   (if before.notify
       (DetachedEnded :id (+ attempt.id RERAN-SUFFIX) :key (or attempt.key "") :notify attempt.notify :phase "queued"
-                     :detail (.format "担い手の worker {} が消えた — 試行 {} を最初から走らせる" before.worker attempt.attempt)
+                     ;; 場所を譲って止めた試行(cluster_policy.preempted-detached)は、担い手は消えていないので譲った訳を書く。
+                     :detail (if attempt.preempted-by
+                                 (.format "優先の高い task {} に場所を譲るため worker {} で止めた — 試行 {} を最初から走らせる"
+                                          attempt.preempted-by before.worker attempt.attempt)
+                                 (.format "担い手の worker {} が消えた — 試行 {} を最初から走らせる" before.worker attempt.attempt))
                      :failure-kind "" :finished-ms now :kind OUTBOX-RERAN)
       None))
 

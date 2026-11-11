@@ -1268,7 +1268,14 @@
   ;; --- 測った空きの門の外(2026-11-11)---
   ;; ungated = 送り手が門の外を名乗った task(SubmitDetached の ungated の註)。置き先は測った空きと予約を判じず、組の上限と能力・版・drain・
   ;; disk だけで置く(cluster_policy.place-tasks)。欄の無い旧い行は門の内で読む。
-  (setv #^ bool ungated False))
+  (setv #^ bool ungated False)
+  ;; --- 優先の高い task への場所の譲り(2026-11-11)---
+  ;; preemptible = 送り手が「場所を譲るため止めてよい」と名乗った task(SubmitDetached の preemptible の註 — rerun も名乗る)。急ぎの優先の
+  ;; task が memory の空きに入らない拍に、置き先がこの task(その task より優先の低い物)を止めて次の試行の待ちの行へ戻す
+  ;; (cluster_policy.preempted-detached)。preempted-by = この試行を積み直した訳が場所の譲りなら、譲った相手の task の id(空 = 譲っていない)。
+  ;; 欄の無い旧い行は名乗らない・譲っていないで読む。
+  (setv #^ bool preemptible False)
+  (setv #^ str preempted-by ""))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -1397,13 +1404,34 @@
 ;; 待ちの上限は worker も問いに載せる取り交わしの値なので ClusterTiming の watch-max-ms(shared/intent/protocol — #3865)。
 
 
+(defrecord YieldCandidate
+  "急ぎの task に場所を譲らせうる、worker に置いた task 1 本(cluster_policy.yield-candidates の答えの 1 行 — measured_room の頭の註の
+   場所の譲り): task = 置いた task の行・reserved-mib = 置き先がまだ予約している伸びる分(MiB — measured_room.reserved-mib-of)・
+   freed-mib = 止めると戻る memory(測りの名乗る今の使い + reserved-mib)・measured = 測りが今の使いを名乗っていた(偽 = 要りの全部を
+   測った空きにまだ出ていない分 unmeasured-mib に数えていた)。"
+  {:tags {:context "coordinator" :role "type"} :check [(>= reserved-mib 0) (>= freed-mib reserved-mib)]}
+  (#^ TaskRecord task)
+  (#^ int reserved-mib)
+  (#^ int freed-mib)
+  (#^ bool measured))
+
+
+(defrecord YieldPlan
+  "急ぎの task 1 本を置くために場所を譲らせる先(cluster_policy.yield-plan の答え — measured_room の頭の註の場所の譲り): worker = 急ぎの
+   task を置く worker・victims = その worker で止めて次の試行の待ちの行へ戻す task(YieldCandidate の tuple — 1 本以上)。"
+  {:tags {:context "coordinator" :role "type"} :check [(> (len victims) 0)]}
+  (#^ WorkerInfo worker)
+  (#^ (get tuple #(YieldCandidate ...)) victims))
+
+
 (defrecord TaskOffer
   "heartbeat の返事で worker の process へ渡す task 1 つ(cluster_policy.tasks-for — 返事に載せる欄だけを TaskRecord から写す。lease の期限の
    ような拍ごとに変わる欄を持たないので、返事の等しさで worker の見え方を比べられる — watch_policy.worker-mark): id・name・revision・
    versions = 送り手の版・program = 詰めた Program の置き場のキー・detached / key / lease-ms / retain-ms / needs = 切り離した task が
    引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数・
    memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)・rerun / attempt / losses / notify = 走らせ
-   直しの名乗りと試行の番号と上限に数えた消失の数と知らせ先(引き取った行も同じ約束で続けるため)。"
+   直しの名乗りと試行の番号と上限に数えた消失の数と知らせ先(引き取った行も同じ約束で続けるため)・priority / preemptible = 置き方の優先と
+   場所を譲る名乗り(worker の memory の見張りが急ぎの task を後に止めるため・引き取った行も同じ約束で続けるため — 2026-11-11)。"
   (#^ str id)
   (#^ str name)
   (#^ str revision)
@@ -1420,7 +1448,9 @@
   (setv #^ bool rerun False)
   (setv #^ int attempt 1)
   (setv #^ int losses 0)
-  (setv #^ str notify ""))
+  (setv #^ str notify "")
+  (setv #^ int priority 0)
+  (setv #^ bool preemptible False))
 
 
 (defrecord WarmOffer

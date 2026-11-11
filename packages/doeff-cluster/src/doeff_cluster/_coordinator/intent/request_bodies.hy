@@ -346,6 +346,8 @@
   (setv #^ object shape None)
   ;; 測った空きの門の外の名乗り(2026-11-11 — 切り離した task だけが読む。None = 名乗らない。真なら置き先が空きを判じない)。形は判断が読む。
   (setv #^ object ungated None)
+  ;; 場所を譲る名乗り(2026-11-11 — 切り離した task だけが読む。None = 名乗らない。真なら急ぎの task が止めて場所を空けてよい)。形は判断が読む。
+  (setv #^ object preemptible None)
   ;; 担い手が消えた時の走らせ直しの名乗り(2026-11-04 — 切り離した task だけが読む。None = 名乗らない)。形は判断が読む。
   (setv #^ object rerun None)
   (setv #^ object format 1))

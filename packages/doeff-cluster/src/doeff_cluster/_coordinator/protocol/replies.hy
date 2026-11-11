@@ -56,7 +56,10 @@
      ;; 測った空きの門の外の名乗り(2026-11-11)— 名乗る task だけ。
      (if task.ungated {"ungated" True} {})
      ;; 走らせ直しの名乗りと今の試行の番号と上限に数えた消失の数 — 名乗る task だけ。
-     (if task.rerun {"rerun" True "attempt" task.attempt "losses" task.losses} {})))
+     (if task.rerun {"rerun" True "attempt" task.attempt "losses" task.losses} {})
+     ;; 場所を譲る名乗りと、この試行を積み直した訳が場所の譲りなら譲った相手(2026-11-11)— 名乗る・譲った task だけ。
+     (if task.preemptible {"preemptible" True} {})
+     (if task.preempted-by {"preemptedBy" task.preempted-by} {})))
 
 
 (defk spec-json [#^ JobSpec spec]
@@ -115,7 +118,11 @@
      (if (is offer.memory-mib None) {} {"memoryMiB" offer.memory-mib})
      ;; 引き取った行が同じ約束で続けるための写し(worker は読まずに状態の報告へ添えて返す)。
      (if offer.rerun {"rerun" True "attempt" offer.attempt "losses" offer.losses} {})
-     (if offer.notify {"notify" offer.notify} {})))
+     (if offer.notify {"notify" offer.notify} {})
+     ;; 置き方の優先と場所を譲る名乗り(2026-11-11 — worker の memory の見張りは急ぎの優先の task を後に止める。欄を読まない古い worker は
+     ;; 捨てる)。既定の値(優先 0・名乗らない)は欄を置かない。
+     (if offer.priority {"priority" offer.priority} {})
+     (if offer.preemptible {"preemptible" True} {})))
 
 
 (defk heartbeat-reply-json [#^ HeartbeatReply reply]
