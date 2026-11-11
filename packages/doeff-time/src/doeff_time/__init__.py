@@ -42,14 +42,10 @@ from doeff_time._internals.sim_clock import SimClock as SimClock
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
 if TYPE_CHECKING:
-    from doeff_time._handlers.async_time import AsyncTimeRuntime as AsyncTimeRuntime
     from doeff_time._handlers.sim_time import LogFormatter as LogFormatter
-    from doeff_time._handlers.sync_time import SyncTimeRuntime as SyncTimeRuntime
 
 _LAZY_EXPORTS: dict[str, str] = {
-    "AsyncTimeRuntime": "doeff_time._handlers.async_time",
     "LogFormatter": "doeff_time._handlers.sim_time",
-    "SyncTimeRuntime": "doeff_time._handlers.sync_time",
 }
 
 

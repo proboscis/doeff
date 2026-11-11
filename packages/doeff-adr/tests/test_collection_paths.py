@@ -5,8 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
-from doeff_adr import DEFAULT_FILE_PATTERNS
-from doeff_adr._pytest_plugin import HyFileMatcher
+from doeff_adr._pytest_plugin import DEFAULT_FILE_PATTERNS, HyFileMatcher
 
 pytest_plugins = ["pytester"]
 

@@ -16,6 +16,7 @@
   "The 41 names of doeff-core-effects in the group \"Violation — annotate the effect field or move inside\" were sorted name by name: the 14 names with 39 rows that the inventory reads as effect answer types moved to the group \"Allowed — effect answer type\" of the allowed table; the 8 names with 14 rows of handler scripts, settings and factory-argument types (MeterBucket, RaiseCase, SchedulerImplementation, ScriptedUpstream, ScriptedWs*) moved to the group \"Boundary — handler setting type\"; the 6 handler-internal parts (SqlText, SqlPlaceholder, DriverValue, WsCloseFrame, VmWork, TraceSink — 0 callers in outside repos) were removed from the entry point and the old-path fixed lists and left the table. For the remaining 9 names (ComputeLoad, InterpreterFacts, ProcessInputWritten, ProcessNotChild, ProcessRunning, ModuleFound, WarmRunning, HttpPhases, HttpFailureKind), the effects now state their answer types, so their 25 rows moved to the group \"Allowed — effect answer type\" of the allowed table. PRIORITY_HIGH, PRIORITY_IDLE, PRIORITY_NORMAL and Resumption were settled as follows: the task priority became the IntEnum TaskPriority (IDLE, NORMAL, HIGH), written in the annotation of the priority field of Spawn, Wait and Race, and placed in the group \"Allowed — effect value type\" of the allowed table. The 3 old constants were removed from the entry point and the old path doeff_core_effects.scheduler after the 8 caller files in agora-controllers were rewritten to TaskPriority and doeff-min-commit was raised (agora-controllers 27188d6c), and this group of doeff-core-effects became empty and disappeared (the order of ADR-DOE-API-001 R20). Resumption is neither an effect field nor an answer but vocabulary for declaring effect types, so it is placed only inside (doeff_core_effects._effects — the place ADR-DOE-CORE-EFFECTS-003 R15 names), and doeff-hy and tests read it from there (0 callers in outside repos).",
   "The group \"Violation — write the effect's answer type\" was separated from effect result types by the machine proposal; it holds names that no effect of the package writes as an answer type (the T of EffectBase[T] or :answer of defeffect) — the answers of effects that wrote the answer only in a docstring, and names that are no effect's answer. The fix is either to write the answer type in the answering effect and move it to the group \"Allowed — effect answer type\" of the allowed table, or to move names that no effect answers to an inner module (of the 1,034 rows of the group \"Boundary — effect result type\", the 603 rows that the inventory reads as answer types were moved to the allowed table and the remaining 431 rows to this group. Fix package by package).",
   "The 62 rows of the group \"Violation — annotate the effect field or move inside\" of the small 14 packages were split: the 24 rows of effect answer and value types moved to the allowed table; the 10 rows of settings and argument types passed to handlers (among them Drop and WhenUnsent of doeff-events and NotificationCapture of doeff-notify) moved to the group \"Boundary — handler setting type\"; the 9 rows of names that the sibling cards writing type aliases of answers put in answers (NoticeSent and NoticeGapTold of doeff-events; SeedreamImage of doeff-seedream) moved to the group \"Violation — write the effect's answer type\"; and the 19 names with 19 rows that appear in no effect were moved inside and removed. The 3 rows of choice, noul and score of doeff-system-one have many callers in outside repos, so they stay and will be fixed in a separate change.",
+  "The last 11 rows of 5 small packages were removed. SecretManagerClient of doeff-google-secret-manager (group \"Violation — move into a handler\") is the type of the client argument of production_handlers, so the inventory reads it as a handler setting type and it moved to the group \"Allowed — handler setting type\" of the allowed table (ADR-DOE-API-001 R2). KeptReaders of doeff-events and AsyncTimeRuntime and SyncTimeRuntime of doeff-time (group \"Violation — annotate the factory arguments or move inside\") are parts the handlers build inside and are the type of no handler or factory argument, and MacroRecord of doeff-hy (group \"Violation — move to an inner module\") is read only by doeff's own tools, so the 4 names were removed from the entry points and are read from their inner modules (0 callers in outside repos). DEFAULT_FILE_PATTERNS and DoeffAdrHyFile of doeff-adr (group \"Boundary — pytest plugin registration\") are not read by pytest by name — the pytest11 entry point loads doeff_adr._pytest_plugin — so they were removed from the entry point after the callers in outside repos were rewritten (agora-controllers reads the patterns from doeff_adr._pytest_plugin; jev-proxy, which pins an older doeff commit, collects its Hy tests with the ini doeff_hy_test_files instead of DoeffAdrHyFile when it raises the pin); the 3 groups became empty and disappeared.",
   "The group \"Boundary — bus event type\" became empty and disappeared. It held the event classes that a package's handler Publishes to the bus and that the body names and receives with WaitForEvent and WaitForEvents (the 7 names StopArrived, SourceFailed, SourceStalled, SourceResumed, SourceMissed, SourceStarted and TimerFired of doeff-events — 31 rows when split; after the forwarding modules were removed, 7 rows at the entry point remained). The answer of a wait is decided by the type the body names and cannot be written as one type in the T of EffectBase[T], so the waiting effect class now declares the package's bus events in its own __doeff_bus_events__, the inventory's answer_types reads them as the wait's answer types, and the 7 rows moved to the group \"Allowed — effect answer type\" of the allowed table. This group had been split off from the group \"Violation — write the effect's answer type\"; the 21 rows for the answers of Publish and PublishGap in that group (including NoticeSent and NoticeGapTold moved into it) write their answer types in the effect and moved to the allowed table, and the 4 rows of MarkGap (the value of when_unsent of NoticeRoute — no effect's answer) moved to the group \"Boundary — handler setting type\", the same as Drop and WhenUnsent of the same choice.",
   "The 179 rows (20 packages, 109 names) of the group \"Boundary — handler setting type\" were moved because the allowed group \"Allowed — handler setting type\", whose shape the inventory verifies (a type defined by that package that appears in the annotations of handlers, handler classes and factory arguments exposed by the same package — following fields of setting types defined by the package; the inventory's settings), was added: the 112 rows that fit the shape (18 packages, 64 names) and 3 rows in \"added names\" moved to the allowed table with the basis ADR-DOE-API-001 R2, and the group disappeared. Of the 67 rows that do not fit (9 packages, 45 names — appearing in no exposed handler or factory argument), the 66 rows of types moved to the group \"Violation — annotate the factory arguments or move inside\", and the 1 row of the function default_session_backend to the group \"Violation — move to an inner module\". If it is a type passed to a handler, write the type in the argument of the factory or handler that takes it (a Hy defn argument, or an unannotated backend=None, etc.) and move it to the allowed table; if it is not passed, move it inside.",
   "The 3 rows of choice, noul and score (functions that build a Question) of the doeff-system-one group \"Violation — annotate the effect field or move inside\" were removed. The 3 functions were removed after rewriting the callers in outside repos (rulebook/core.py of agent-commons; first_reader.hy and 2 tests of agora-controllers) and callers inside doeff to Question(kind=…, instructions=…, options=…/levels=…) (the order of R1 and R20). The group keeps the 3 rows of answer_choice, answer_noul and answer_score (functions that build an Answer), which were moved into it.",
@@ -27,14 +28,7 @@
  "packages": {
   "doeff-adr": {
    "scope": "in scope",
-   "names": {
-    "Boundary — pytest plugin registration": {
-     "doeff_adr.pytest_plugin": [
-      "DEFAULT_FILE_PATTERNS",
-      "DoeffAdrHyFile"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-cluster": {
    "scope": "in scope",
@@ -1178,16 +1172,7 @@
   },
   "doeff-events": {
    "scope": "in scope",
-   "names": {
-    "Violation — annotate the factory arguments or move inside": {
-     "doeff_events.handlers.memory_notices": [
-      "KeptReaders"
-     ],
-     "doeff_events.handlers.redis_notices": [
-      "KeptReaders"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-flow": {
    "scope": "in scope",
@@ -1203,32 +1188,11 @@
   },
   "doeff-google-secret-manager": {
    "scope": "in scope",
-   "names": {
-    "Violation — move into a handler": {
-     "doeff_google_secret_manager.client": [
-      "SecretManagerClient"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-hy": {
    "scope": "in scope",
-   "names": {
-    "Violation — move to an inner module": {
-     "doeff_hy_bytecode_guard.expansion_trees": [
-      "MacroRecord"
-     ],
-     "doeff_hy_bytecode_guard.macro_hints": [
-      "MacroRecord"
-     ],
-     "doeff_hy_bytecode_guard.macro_use": [
-      "MacroRecord"
-     ],
-     "doeff_hy_bytecode_guard.records": [
-      "MacroRecord"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-hy-pytest": {
    "scope": "in scope",
@@ -1292,16 +1256,7 @@
   },
   "doeff-time": {
    "scope": "in scope",
-   "names": {
-    "Violation — annotate the factory arguments or move inside": {
-     "doeff_time.handlers.async_time": [
-      "AsyncTimeRuntime"
-     ],
-     "doeff_time.handlers.sync_time": [
-      "SyncTimeRuntime"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-traverse": {
    "scope": "in scope",

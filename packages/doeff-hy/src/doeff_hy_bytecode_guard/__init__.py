@@ -67,21 +67,17 @@ from doeff_hy_bytecode_guard._loader_hooks import install as install
 TYPE_CHECKING = False  # do not load typing and records at startup -- type checkers read the branch on this name as true
 
 if TYPE_CHECKING:
-    # Record types (public names used in annotations -- the values are built by _loader_hooks' macro_recording, record_from_json, and loaded_record).
     from doeff_hy_bytecode_guard._macro_hints import HyMacroUseWarning as HyMacroUseWarning
-    from doeff_hy_bytecode_guard._records import MacroRecord as MacroRecord
 
 del TYPE_CHECKING  # do not make it an entry-point name (the inventory counts the names of the entry module)
 
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
-# MacroRecord has long been a type-only name at the entry point -- when the entry point has a __getattr__, the
-# inventory counts the TYPE_CHECKING names, so it is placed here so that it is also readable at runtime (records is
-# not loaded at startup -- it is loaded when the name is first looked up).
+# The record type MacroRecord is not shown here: only doeff's own tools read records, and they import it from the
+# inner module _records (ADR-DOE-API-001 R1).
 _LAZY_EXPORTS: dict[str, str] = {
     "HyMacroUseWarning": "doeff_hy_bytecode_guard._macro_hints",
-    "MacroRecord": "doeff_hy_bytecode_guard._records",
 }
 
 

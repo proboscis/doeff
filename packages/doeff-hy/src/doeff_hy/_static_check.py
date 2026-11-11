@@ -134,7 +134,7 @@ from doeff_hy._expansion_names import PREFIX as _EXPANSION_PREFIX
 from doeff_hy._expansion_names import is_alias_import
 
 if TYPE_CHECKING:
-    from doeff_hy_bytecode_guard import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
 _SKIP_DIRS = frozenset({".git", ".venv", "venv", "__pycache__", "node_modules", ".exp"})
 
