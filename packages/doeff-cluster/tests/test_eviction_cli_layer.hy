@@ -1,6 +1,6 @@
 ;; 会話の CLI の層(clis)の memory の上限を、追い出しまでの空きと container の中の空きから掛け直す — 模擬の検。
 ;;
-;; 実例(card [id] の調べ・11-06 19:00〜21:30 JST): node-c と node-a が会話を受ける本数は機体の空きでなく、clis の静的な
+;; 実例(11-06 19:00〜21:30 JST の調べ): node-c と node-a が会話を受ける本数は機体の空きでなく、clis の静的な
 ;; memory.max(node-c 5G・node-a 1536M)で止まっていた。node-a は機体の空き 8〜10 GiB のうち会話 1 本ぶんしか使えず、node-h が混んだ間に
 ;; 始まった会話 48 本のうち node-c と node-a が受けたのは 12 本だった。
 ;;   - 判断(worker/core/eviction_rules の clis-limit・clis-lent・box-free・jobs-box-limit): 広げる量は 2 つの空きの小さい方の半分・前の

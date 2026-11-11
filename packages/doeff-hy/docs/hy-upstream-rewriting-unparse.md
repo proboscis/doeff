@@ -1,7 +1,7 @@
 # Report text for Hy upstream (not yet submitted)
 
 doeff-hy works around this in `doeff_hy/_ast_unparse.py`. The root cause is in Hy itself, so the text below should be
-[removed]
+filed as an issue on hylang/hy (whether to submit is still open. As of 2026-09-23 no identical report was found, and
 `hy/compat.py` on master has the same shape). Once upstream ships a fixed version, `install()` does nothing
 (`ast.unparse` is no longer `hy.compat.rewriting_unparse`), at which point the workaround should be removed.
 

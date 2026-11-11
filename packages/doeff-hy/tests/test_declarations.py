@@ -143,7 +143,7 @@ def test_spells_and_reads_name_any_outer_form() -> None:
 
 
 def test_spells_names_the_records_api_form() -> None:
-    # [removed]
+    # The one point that spells the shape of the doeff-records API (where of ListRows, RecordsSchema) is
     # claimed as :spells "records" (claiming schema would mean a different boundary). Names outside the list are still refused as before.
     ns = evaluate("""
 (defk where-of [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :spells "records"}} x)

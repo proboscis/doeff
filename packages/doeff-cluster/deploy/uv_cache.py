@@ -68,7 +68,7 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            順に、--floor-days 日(既定 1)より前で、cache の外の venv が hardlink で指さず(展開済みの wheel)、上の決まり(残る venv の
            symlink・走っている process)に当たらない項目を、和が予算に収まるまで消す。venv が hardlink で持つ byte は venv の持ち分で、
            消しても disk が戻らないので数えない。
-           venv の持ち分の置き場(--linked-limit-gib — card [id]): 残る venv(--venvs の物)と --links の dir の下の venv が
+           venv の持ち分の置き場(--linked-limit-gib): 残る venv(--venvs の物)と --links の dir の下の venv が
            symlink か .pth で指す cache の項目(展開済みの wheel と git の checkout)は、指す venv が残る間は消せない。その byte を持ち主
            (指す venv — 寿命は venv の期限と、作業木と volume の寿命)の置き場として数え、答えの links に出す。--linked-limit-gib を
            渡すと、その byte を予算の和から外して、この置き場の上限で縛る。和が上限を越えていれば、最後に使った刻の古い --venvs の venv

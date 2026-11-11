@@ -1,5 +1,5 @@
 """英語の記事 2 本目「Yield and async」(docs/articles/yield-and-async.md)の例が doeff でそのまま走り、記事が見せる通りに
-印字する事の検(取り組み doeff-publish・card [id])。
+印字する事の検。
 
 囲みは 1 本目の記事(tests/test_docs_article_algebraic_effects.py)と同じ書き方で読む:
 
@@ -49,7 +49,7 @@ _HEADER = re.compile(r"# (?P<name>\w+\.py)(?P<excerpt> \(excerpt\))?")
 _SEGMENT = re.compile(r"^-- ([\w ]+): .*$\n", re.MULTILINE)
 # IO の差し替えだけに読める語。記事が IO の例の節(見出しが「## I/O」で始まる節)の外で使えば、IO の差し替えの話に読める。
 _IO_ONLY_WORDS = re.compile(r"\b(swap\w*|fake\w*|mock\w*|real I/O)", re.IGNORECASE)
-# [removed]
+# 記事の中に、AI が書いた・AI の agent が書いたと名乗る行を置かない。書き手を名乗る文の形だけを探す。
 _AI_AUTHORSHIP = re.compile(
     r"\b(written|drafted|generated|authored)\s+(by|with)\s+(an?\s+)?(AI|LLM|agent|Claude|ChatGPT)\b"
     r"|\b(an?\s+)?(AI|LLM)(\s+agent)?\s+(wrote|drafted|generated|authored)\b",

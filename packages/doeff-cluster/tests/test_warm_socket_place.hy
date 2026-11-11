@@ -11,7 +11,7 @@
 
 ;; Mac の worker の世代の状態の dir(keeper の世代の名 = local.<boot の ms 13 桁>)と、Linux の Pod の世代の状態の dir
 ;; (世代の名 = Pod の uid 36 字 + . + 13 桁)。
-(val MAC-STATE "/Users/user/.local/state/doeff-agent-worker/node/gen/local.1794013200000/state")
+(val MAC-STATE "/Users/agent/.local/state/doeff-agent-worker/node/gen/local.1794013200000/state")
 (val POD-STATE "/work/gen/3f6c1d2e-9a8b-4c7d-8e6f-5a4b3c2d1e0f.1794013200000/state")
 (val SHARED "/work/state")
 (val BOOT "0b6f5e2a9c1d4f3e8a7b6c5d4e3f2a1b")

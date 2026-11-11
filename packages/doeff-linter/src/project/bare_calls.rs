@@ -18,7 +18,7 @@
 //! — a Call is passed in, and it first hits the `:pre` type check at run time and fails. The real case: agora-controllers' job patrol failed every time about 5 minutes after startup on 2026-11-04.
 //! It was not run until the stage's cycle opened, and slipped through merge and declaration). Parameters without a type annotation, or that accept Program, object, Any, or an unknown alias are not picked up.
 //! Python classes count since agora-controllers' screen server passed `(_post-trip-start …)` bare to `preceded`, whose `:pre` is `(: step Step)` with `Step` a frozen dataclass of
-//! a .py file (2026-11-10 — every answer of a letter failed the contract for about 2 hours, card [id]). Classes whose bases name Program, EffectBase, DoExpr or Protocol are
+//! a .py file (2026-11-10 — every answer of a letter failed the contract for about 2 hours). Classes whose bases name Program, EffectBase, DoExpr or Protocol are
 //! not counted (they may accept a Program — `py_value_classes_in`).
 //! Not picked up: the right side of `(<- …)`, `(! …)`, `(return …)`, arguments of a call that accepts a Program (including the form passed to a repo function — it may be a function that accepts a Program and runs it
 //! (such as run-on) and cannot be traced), and bindings to a name (it may be passed later as a Program).

@@ -47,8 +47,8 @@
 ;; Optional :tags keys. :spells = a claim that the definition exists to spell out an outside shape at one point; :reads = a claim that it exists to read an outside shape into a type at one point —
 ;; doeff-linter's DOEFF172 (mapping placement) does not count these as 'building a dict is the point' (made writable in #2299;
 ;; #2515 widened the shape names beyond json and added :reads for the reading side — cisco-c8's line-drawing decision, 2026-10-02). The value is from the closed list SPELLS (shape names).
-;; [removed]
-;; [removed]
+;; records = the shape of the doeff-records API (where of ListRows, table declarations of RecordsSchema — a shape fixed outside; #2515).
+;; env = the shape of an environment (the reader-environment mapping accepted by doeff's Local, a child process's environ — an outside API that accepts only mappings; #2610).
 (setv OPTIONAL-TAG-KEYS #(":spells" ":reads"))
 (setv SPELLS #("json" "http" "env" "schema" "records"))
 

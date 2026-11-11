@@ -165,7 +165,7 @@ type holes in user code (loose `#^ object` annotations, passing `str | None` as 
 `typings/acp_client` stub (19), and the shape of Hy's own compilation (`setv` inside a comprehension becomes
 `nonlocal`; 2). There were 0 false positives caused by doeff-hy's expansion.
 
-## [removed]
+## Decisions made (reversible decisions, 2026-09-23)
 
 | Decision | Reason | How to revert |
 |---|---|---|

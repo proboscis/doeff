@@ -1,7 +1,7 @@
 //! Body text of definitions — `bodies` of editor-json (the body lines for the reading plane).
 //!
 //! The reading plane of doeff-runner (webview) shows entities such as definitions as HTML cards, and **shows only the body as text**. The shape of the body text was
-//! [removed]
+//! approved, and the source of truth for the table is section 2.2 of `docs/design/hy-reading-plane/artifacts/v2/design.md` and
 //! section 2 of `v3/design.md` (the source of truth for meaning is ADR-DOE-HY-006). How Hy forms are read is kept in this one place in the linter (the decision of #849, "do not keep
 //! a copy of the reading method"), and the plane only draws lines and ranges of text.
 //!

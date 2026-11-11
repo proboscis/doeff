@@ -523,7 +523,7 @@ def test_gc_linked_limit_counts_symlinked_bytes_in_the_venv_store_not_the_cache_
     tmp_path: Path, loaded: None
 ) -> None:
     """残る venv が symlink で指す SYMLINKED は venv の持ち分の置き場に数え(答えの links)、置き場の上限を渡すと予算の和から外す。
-    上限を渡さなければ、置き場を数えるだけで、その byte は予算の和に入ったまま(card [id])。"""
+    上限を渡さなければ、置き場を数えるだけで、その byte は予算の和に入ったまま。"""
     cache, worktrees = _cache_for_size_budget(tmp_path)
     symlinked = uv_cache.measure(cache / "archive-v0" / "SYMLINKED")[0].bytes
 
