@@ -10,7 +10,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import threading)
 (import time)
-(import doeff [with_handlers])
+(import doeff [Perform with_handlers])
 (import doeff_core_effects [Spawn Gather])
 (import doeff_core_effects [await-handler])
 (import doeff_core_effects [http-production-handler])
@@ -67,7 +67,7 @@
   {:pre [] :post [(: % tuple)]}
   "読み 1 本を撃ち、#(答え 掛かった秒) を返すため。"
   (<- began float (GetMonotonic))
-  (<- answer (ReadRow "parts" #("p1")))
+  (<- answer (Perform (ReadRow "parts" #("p1"))))
   (<- ended float (GetMonotonic))
   #(answer (- ended began)))
 

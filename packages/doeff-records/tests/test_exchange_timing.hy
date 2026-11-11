@@ -10,7 +10,7 @@
 (require doeff-hy.macros [deftest defhandler defeffect defk <- val var])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defeffect の展開が名指す
-(import doeff [EffectBase Program run with_handlers])
+(import doeff [EffectBase Perform Program run with_handlers])
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [http-production-handler])
@@ -71,7 +71,7 @@
   "表 parts の変化の読み(待ち 0 秒)を 2 回と、行の読みを 1 回撃つため(答えの種は問わない — 位置の外れの Reset も往復 1 本)。"
   (<- first (WatchChanges #("parts") (WatchCursor 0 0)))
   (<- second (WatchChanges #("parts") (WatchCursor 0 0)))
-  (<- row (ReadRow "parts" #("p1")))
+  (<- row (Perform (ReadRow "parts" #("p1"))))
   #(first second row))
 
 

@@ -13,7 +13,7 @@
 (require doeff-hy.macros [deftest val])
 (import pathlib [Path])
 (import typing [get-args])
-(import doeff-records [ReadRowAnswer Row Missing Unreachable])
+(import doeff-records [ReadRow ReadRowAnswer Row Missing Unreachable])
 (import doeff_records._wire [OPERATIONS PATH-PREFIX])
 
 
@@ -80,12 +80,21 @@
      ;; Moved from ADR-DOE-CORE-EFFECTS-003 (2026-11-04) so that the core ADR does not import doeff-records. The fact it checks is the one
      ;; ADR-DOE-CORE-EFFECTS-003 cites (its problem fact on doeff-records' failure answers and rules R5 and R14).
      (deftest test-adr-doe-records-001-read-row-answer-mixes-success-absence-failure
-       ;; Fact: ReadRow's answer lists success, absence, and failure in one union (why ADR-DOE-CORE-EFFECTS-003 R5's declaration is needed — before stage 3, so there is no declaration yet).
-       ;; The three phrases are the Japanese text of packages/doeff-records/README.md, kept as \u escapes so the check still reads that file:
-       ;; "failure answers", "returned as values", "only composition errors are raised as exceptions".
+       ;; Fact: ReadRow's answer lists success, absence, and failure in one union (the answering handlers keep answering with values — ADR-DOE-CORE-EFFECTS-003 R4),
+       ;; and since the ReadRow switch of stages 3 and 5 its defeffect declaration says which is which (R5, R17): Row = success, Missing = absence, Unreachable = failure.
+       ;; The README table says so (header "failure answers" and "declared by defeffect") and no longer says the failures are returned as values for every effect.
+       ;; The phrases are the Japanese text of packages/doeff-records/README.md, kept as \u escapes so the check still reads that file:
+       ;; "failure answers", "declared by defeffect", "returned as values" (the effects without a declaration), "only composition errors are raised as exceptions".
        (assert (= (get-args ReadRowAnswer) #(Row Missing Unreachable)))
+       (val outcomes ReadRow.__doeff_outcomes__)
+       (assert (= outcomes.success #(Row)) outcomes)
+       (assert (= outcomes.absent #(Missing)) outcomes)
+       (assert (= outcomes.failure #(Unreachable)) outcomes)
+       (assert (= outcomes.value #()) outcomes)
        (val readme (.read-text (/ REPO-ROOT "packages/doeff-records/README.md") :encoding "utf-8"))
-       (assert (in "\u5931\u6557\u306e\u7b54\u3048" readme))
+       (assert (in "| \u5931\u6557\u306e\u7b54\u3048 |" readme))
+       (assert (not-in "\u5931\u6557\u306e\u7b54\u3048(\u5024\u3067\u8fd4\u3059)" readme))
+       (assert (in "`defeffect` \u3067\u5ba3\u8a00\u3057\u3066\u3044\u308b" readme))
        (assert (in "\u5024\u3067\u8fd4\u3059" readme))
        (assert (in "\u4f8b\u5916\u3067\u4e0a\u304c\u308b\u306e\u306f\u7d44\u307f\u7acb\u3066\u306e\u8aa4\u308a" readme)))]
   :plans [])
