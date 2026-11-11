@@ -25,7 +25,7 @@
 (import doeff_cluster._worker.core.eviction_rules [CommandLayerUse command-layer-limit command-layer-use-of])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text])
 (import doeff_cluster._worker.protocol.eviction_line [COMMANDS-LIMIT-FAILED-LOG COMMANDS-SQUEEZE-LOG CommandLayerSettings EvictionCell EvictionSettings
-                                                     commands-limited])
+                                                     BoxLayerLimit commands-limited])
 (import doeff_cluster._worker.entry.main [eviction-settings-of])
 (import doeff_cluster._worker.protocol.coordinator_link [LinkState room-noted])
 
@@ -214,6 +214,24 @@
   (<- limit int (written-limit files))
   (assert (= limit (* 25 GIB)) (/ limit GIB))
   (assert (= cell.command-limit (* 25 GIB)) cell.command-limit))
+
+
+(deftest test-the-line-limit-never-writes-above-the-limit-the-container-room-was-counted-with
+  ;; 同じ機体で命令の層が container の中の限る層としても掛け直された回(入れ物の box-limits — worker/core/eviction_rules の頭の註の
+  ;; container の中の限る層)は、線から決まる上限 25 GiB がその値(10 GiB)を越えても、その値で切る(container の中の空きを数えた上限の
+  ;; 上へ書くと、同じ空きを jobs の層にも貸す)。
+  (<- start MemoryFiles (layer-files (* 20 GIB) (+ LINE (* 5 GIB)) (.format "{}\n" LINE-MIB)))
+  (<- cell EvictionCell (armed-cell LINE-FILE))
+  (setv cell.box-limits #((BoxLayerLimit :name "commands" :limit-bytes (* 10 GIB))))
+  (<- files MemoryFiles (with-handlers [(state) (memory-file-handler start) slog-discard-handler] (limited-then-files cell True)))
+  (<- limit int (written-limit files))
+  (assert (= limit (* 10 GIB)) (/ limit GIB))
+  ;; ほかの層の名の値では切らない。
+  (<- other EvictionCell (armed-cell LINE-FILE))
+  (setv other.box-limits #((BoxLayerLimit :name "exec" :limit-bytes GIB)))
+  (<- other-files MemoryFiles (with-handlers [(state) (memory-file-handler start) slog-discard-handler] (limited-then-files other True)))
+  (<- other-limit int (written-limit other-files))
+  (assert (= other-limit (* 25 GIB)) (/ other-limit GIB)))
 
 
 (deftest test-a-machine-without-the-line-or-a-guard-off-watch-writes-nothing

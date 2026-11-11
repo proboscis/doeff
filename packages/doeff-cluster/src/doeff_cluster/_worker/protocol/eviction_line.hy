@@ -9,9 +9,10 @@
 ;;;                   足しうる量を新しい受けの上限と clis への貸しから引いて入れ物に残す(heartbeat が名乗る — 準備を待つ間の取り置き)。余裕は機体の宣言の床と、回ごとに測る jobs と準備の層の外の working set の増えから導く(worker/core/
 ;;;                   eviction_rules の margin-of)。
 ;;;                   会話の CLI の層(clis)に天井の宣言が在る機体は、jobs の層より先に clis の層の memory.max を床(宣言の静的な値)と天井の
-;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、広げた上限は置いた task の
-;;;                   取り置きの外の空きの内でだけ残す)、床を越えて貸した量を jobs の上限から引き、jobs の上限を container の中の空きの内
-;;;                   にも収める。置いた task の取り置きは、heartbeat の返事の task の要り(入れ物の needs)と見張りの読みの task ごとの
+;;;                   間で掛け直し(worker/core/eviction_rules の clis-limit — clis の今の使いより下げず、使いの上には需要の余白だけを
+;;;                   置いた task の取り置きの外の空きの内で残す)、床を越えて貸した量を jobs の上限から引き、jobs の上限を container の中の
+;;;                   空きの内にも収める。container の中の空きは、jobs と clis の外の限る層の取り置き(今掛けている上限 − 層の working set)を
+;;;                   引いて数え、層の余地の宣言が在る層はその前に memory.max を回収で返らない量 + 余地に掛け直す(box-layers-held)。置いた task の取り置きは、heartbeat の返事の task の要り(入れ物の needs)と見張りの読みの task ごとの
 ;;;                   使いから数える。
 ;;;                   命令の層(commands)の線の宣言(枠の file の行の commandLineFile と commandFloorMiB — 入れ物の command-line-file と
 ;;;                   command-floor-bytes)が在る機体は、最後に命令の層の memory.max を MemAvailable と線から掛け直す(worker/core/eviction_rules の
@@ -58,7 +59,7 @@
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
-                                                  kept-jobs-limit])
+                                                  kept-jobs-limit CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
 
@@ -79,26 +80,56 @@
 (val REQUEST-TIMEOUT-SECONDS 5.0)
 
 
+(defrecord BoxLayerSettings
+  "container の中の限る層 1 つ(jobs と clis の外で memory.max を持つ層 — worker/core/eviction_rules の頭の註の container の中の限る層)の
+   設定: name = 層の名・dir = 層の dir・cap-bytes = 宣言の静的な memory.max(天井)・floor-bytes = 機体の宣言の層の余地(None = 宣言が
+   無い — 掛け直さず静的な値のまま)。"
+  {:check [(>= cap-bytes 0) (or (is floor-bytes None) (<= 0 floor-bytes cap-bytes))]}
+  (#^ str name)
+  (#^ str dir)
+  (#^ int cap-bytes)
+  (setv #^ (| int None) floor-bytes None))
+
+
 (defrecord CliLayerSettings
   "会話の CLI の層(clis)の掛け直しの設定(入口が起動の時に 1 度だけ作る — worker/core/eviction_rules の頭の註の会話の CLI の層): dir = clis の
    層の dir・floor-bytes = 宣言の静的な memory.max(床)・ceiling-bytes = 機体の宣言の天井・container-dir = worker の container の cgroup の
-   dir(memory.max と working set を読む)・held-bytes = jobs と clis の外の限る層の宣言の memory.max の和(container の中の空きから引く)。"
-  {:check [(>= floor-bytes 0) (>= ceiling-bytes floor-bytes) (>= held-bytes 0)]}
+   dir(memory.max と working set を読む)・turn-room-bytes = 需要の余白(会話の CLI の新しい受け k 本分 — 機体の宣言の 1 本の要り × k)・
+   layers = jobs と clis の外の限る層(BoxLayerSettings の tuple — container の中の空きから取り置く)。"
+  {:check [(>= floor-bytes 0) (>= ceiling-bytes floor-bytes) (>= turn-room-bytes 0)]}
   (#^ str dir)
   (#^ int floor-bytes)
   (#^ int ceiling-bytes)
   (#^ str container-dir)
-  (setv #^ int held-bytes 0))
+  (setv #^ int turn-room-bytes (* CLI-TURN-SLOTS CLI-TURN-BYTES))
+  (setv #^ tuple layers #()))
+
+
+(defrecord BoxLayerLimit
+  "container の中の限る層 1 つに最後に掛けた memory.max(入れ物 EvictionCell の box-limits — 命令の層の線の掛け直しがこれを越えて書かない):
+   name = 層の名・limit-bytes = 書いた上限。"
+  {:check [(>= limit-bytes 0)]}
+  (#^ str name)
+  (#^ int limit-bytes))
+
+
+(defrecord BoxLayerUse
+  "container の中の限る層 1 つの読み: use = 回収で返らない量の内訳(worker/core/eviction_rules の command-layer-use-of)・working-set-bytes =
+   memory.current − inactive_file(container の working set に数え済みの分)。"
+  {:check [(>= working-set-bytes 0)]}
+  (#^ CommandLayerUse use)
+  (#^ int working-set-bytes))
 
 
 (defrecord CommandLayerSettings
   "命令の層(commands)の掛け直しの設定(入口が起動の時に 1 度だけ作る — worker/core/eviction_rules の頭の註の命令の層): dir = 命令の層の dir・
-   cap-bytes = 宣言の静的な memory.max・meminfo-path = MemAvailable を読む file。線の file と床は枠の file の行から入れ物へ来る(Pod を
-   作り直さずに替えられる)。"
+   cap-bytes = 宣言の静的な memory.max・meminfo-path = MemAvailable を読む file・name = 層の名(container の中の限る層として掛けた上限
+   EvictionCell.box-limits を引く名)。線の file と床は枠の file の行から入れ物へ来る(Pod を作り直さずに替えられる)。"
   {:check [(>= cap-bytes 0)]}
   (#^ str dir)
   (#^ int cap-bytes)
-  (setv #^ str meminfo-path "/proc/meminfo"))
+  (setv #^ str meminfo-path "/proc/meminfo")
+  (setv #^ str name "commands"))
 
 
 (defrecord EvictionSettings
@@ -171,7 +202,9 @@
    CPU と memory(worker/core/memory_rules の JobMeter の tuple — heartbeat の測りが欄 jobUses として名乗る・2026-11-10)・meters-at-ms = その
    読みの刻(None = まだ)・retired = keeper がこの世代を退かせ始めた印を読んだ(頭の註の退いた世代 — 真になったら戻らず、印を読み直さない)・
    declared = 最後に読めた heartbeat の返事の job の名 → 宣言の memory の山(byte — JobSpec.peak-mib を持つ job だけ。worker/protocol/coordinator_link が
-   書き、機体の memory の見張りが job の根に添える — worker/core/memory_rules の頭の註の宣言の内・2026-11-11)。
+   書き、機体の memory の見張りが job の根に添える — worker/core/memory_rules の頭の註の宣言の内・2026-11-11)・box-limits = container の中の
+   限る層に最後に掛けた上限(BoxLayerLimit の tuple — 書いた層だけ。命令の層の線の掛け直しはその層の値を越えて書かない)・box-held =
+   最後の回に container の中の空きから限る層の分として引いた取り置きの和(None = 数えなかった)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
@@ -181,7 +214,7 @@
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.jobs-intake-urgent None self.keep-room None self.keep-room-at-ms None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
-          self.meters #() self.meters-at-ms None self.retired False self.declared {})))
+          self.meters #() self.meters-at-ms None self.retired False self.declared {} self.box-limits #() self.box-held None)))
 
 
 (defrecord LayerMemory
@@ -397,14 +430,68 @@
       (.format "container の memory.max を読めない: {}" error))))
 
 
+(defk box-layer-read [layer]
+  {:pre [(: layer BoxLayerSettings)] :post [(: % (| BoxLayerUse str))] :tags {:context "worker" :role "protocol"}}
+  "container の中の限る層 1 つの memory.current と memory.stat を、回収で返らない量の内訳と working set にするため。読めない・形の違う時は
+   訳の文。"
+  (<- current (| str FileFailed) (ReadText (+ layer.dir "/memory.current")))
+  (when (isinstance current FileFailed)
+    (return (.format "{} の層の memory.current を読めない: {}" layer.name current.detail)))
+  (<- stat (| str FileFailed) (ReadText (+ layer.dir "/memory.stat")))
+  (when (isinstance stat FileFailed)
+    (return (.format "{} の層の memory.stat を読めない: {}" layer.name stat.detail)))
+  (try
+    (<- use CommandLayerUse (command-layer-use-of current stat))
+    (<- inactive int (stat-bytes stat "inactive_file"))
+    (<- set-bytes int (working-set (int (.strip current)) inactive))
+    (BoxLayerUse :use use :working-set-bytes set-bytes)
+    (except [error ValueError]
+      (.format "{} の層を読めない: {}" layer.name error))))
+
+
+(defk box-layers-held [clis cell boxed]
+  {:pre [(: clis CliLayerSettings) (: cell EvictionCell) (: boxed bool)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "container の中の限る層(jobs と clis の外)の memory.max を掛け直し、container の中の空きから引く取り置きの和を入れ物(box-held)に残すため
+   (worker/core/eviction_rules の頭の註の container の中の限る層): 余地の宣言の在る層は、boxed(この回に container の中の空きを数える)なら
+   回収で返らない量 + 余地(box-layer-limit)、数えない回は宣言の静的な値に戻す(古い使いで決めた上限を残さない)。取り置きは層ごとに
+   今掛けている上限 − 層の working set(layer-hold)。層を読めない・書けない回は、その層の今の上限(書けなければ前に書いた値、まだなら
+   静的な値)の全部を取り置く。答え = 読めない・書けない訳(\"\" = 揃った)。"
+  (var held 0)
+  (var failure "")
+  (var limits #())
+  (for [layer clis.layers]
+    (<- read (| BoxLayerUse str) (box-layer-read layer))
+    (val before (next (gfor l cell.box-limits :if (= l.name layer.name) l.limit-bytes) None))
+    (var limit (if (is before None) layer.cap-bytes before))
+    (when (is-not layer.floor-bytes None)
+      (var wanted layer.cap-bytes)
+      (when (and boxed (isinstance read BoxLayerUse))
+        (<- found int (box-layer-limit read.use layer.floor-bytes layer.cap-bytes))
+        (:= wanted found))
+      (<- written (| FileFailed None) (WriteText (+ layer.dir "/memory.max") (str wanted)))
+      (if (isinstance written FileFailed)
+          (do (:= failure (or failure (.format "{} の層の memory.max に {} を書けない: {}" layer.name wanted written.detail)))
+              (when (is-not before None)
+                (:= limits (+ limits #((BoxLayerLimit :name layer.name :limit-bytes before))))))
+          (do (:= limit wanted)
+              (:= limits (+ limits #((BoxLayerLimit :name layer.name :limit-bytes wanted)))))))
+    (if (isinstance read str)
+        (do (:= failure (or failure read))
+            (:= held (+ held limit)))
+        (do (<- hold int (layer-hold limit read.working-set-bytes))
+            (:= held (+ held hold)))))
+  (setv cell.box-limits limits cell.box-held held)
+  failure)
+
+
 (defk clis-limited [clis cell line margin reserve jobs-current pending]
   {:pre [(: clis CliLayerSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: margin int) (: reserve int)
          (: jobs-current (| int None)) (: pending int) (>= pending 0)]
    :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "会話の CLI の層の memory.max を掛け直し、床を越えて貸した量と container の中の空きを入れ物に残すため(worker/core/eviction_rules の
-   clis-limit): 線と jobs の使いと container を読めた回は空きから置いた task の取り置き pending を除いて決めた上限(床と天井の間・使いより
-   下げない)、線が無いか読めない回は
-   床と clis の今の使いの大きい方。clis の使いを読めない・書けない回は前の上限を残し、その上限 − 床を貸しのまま引く。上限が床を越えた
+   clis-limit): 線と jobs の使いと container を読めた回は空きから置いた task の取り置き pending を除いて決めた上限(clis の今の使い +
+   需要の余白・床と天井の間・使いより下げない)、線が無いか読めない回は床と clis の今の使いの大きい方。その前に jobs と clis の外の
+   限る層を掛け直して取り置きを数える(box-layers-held)。clis の使いを読めない・書けない回は前の上限を残し、その上限 − 床を貸しのまま引く。上限が床を越えた
    時と床へ戻った時に 1 行言う。答え = 書けない・読めない訳(\"\" = 書いた)。"
   (setv cell.box None)
   (<- read (| LayerMemory str) (layer-read "clis" clis.dir False))
@@ -414,21 +501,23 @@
     (return read))
   (val current read.current-bytes)
   (setv cell.clis-current current)
-  (var failure "")
+  (val readable (and (is-not line None) (is-not jobs-current None)))
+  (<- layers-failure str (box-layers-held clis cell readable))
+  (var failure layers-failure)
   (var free None)
   (var box None)
-  (when (and (is-not line None) (is-not jobs-current None))
+  (when readable
     (<- container (| LayerMemory str) (layer-read "container" clis.container-dir False))
     (<- container-max (| int None str) (container-max-read clis.container-dir))
     (cond
-      (isinstance container str) (:= failure container)
-      (isinstance container-max str) (:= failure container-max)
+      (isinstance container str) (:= failure (or failure container))
+      (isinstance container-max str) (:= failure (or failure container-max))
       True (do (:= free (- line.room-bytes margin reserve))
-               (<- found (| int None) (box-free container-max container.working-set-bytes margin clis.held-bytes))
+               (<- found (| int None) (box-free container-max container.working-set-bytes margin cell.box-held))
                (:= box found))))
   (var limit (max current clis.floor-bytes))
   (when (is-not free None)
-    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes cell.clis-limit pending))
+    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes clis.turn-room-bytes pending))
     (:= limit found))
   (<- written (| FileFailed None) (WriteText (+ clis.dir "/memory.max") (str limit)))
   (when (isinstance written FileFailed)
@@ -635,17 +724,20 @@
 (defk commands-limited [commands cell guard]
   {:pre [(: commands CommandLayerSettings) (: cell EvictionCell) (: guard bool)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
   "命令の層の memory.max を MemAvailable と線から掛け直すため(頭の註・worker/core/eviction_rules の command-layer-limit)。線の宣言の無い
-   機体と guard が偽の見張りは書かない。線か内訳を読めない回は宣言の静的な値を書く(前の回の小さい上限で命令の層を縛らない)。回収で返らない
-   量より下げた続きの頭と、失敗の訳が変わった時に 1 行言う。"
+   機体と guard が偽の見張りは書かない。線か内訳を読めない回は宣言の静的な値を書く(前の回の小さい上限で命令の層を縛らない)。同じ回に
+   container の中の限る層として掛けた上限(入れ物の box-limits — container の中の空きはその値で取り置いた)が在れば、静的な値の代わりに
+   それを越えて書かない。回収で返らない量より下げた続きの頭と、失敗の訳が変わった時に 1 行言う。"
   (when (or (not cell.command-line-file) (not guard))
     (return None))
   (<- room (| int None str) (command-room-read commands cell.command-line-file))
   (<- use (| CommandLayerUse str) (command-layer-read commands))
   (setv cell.command-use (if (isinstance use str) None use))
   (var failure (cond (isinstance room str) room (isinstance use str) use True ""))
-  (var limit commands.cap-bytes)
+  (val boxed (next (gfor l cell.box-limits :if (= l.name commands.name) l.limit-bytes) None))
+  (val cap (if (is boxed None) commands.cap-bytes (min boxed commands.cap-bytes)))
+  (var limit cap)
   (when (and (isinstance room int) (isinstance use CommandLayerUse))
-    (<- found int (command-layer-limit use room cell.command-floor-bytes commands.cap-bytes))
+    (<- found int (command-layer-limit use room cell.command-floor-bytes cap))
     (:= limit found))
   (<- written (| FileFailed None) (WriteText (+ commands.dir "/memory.max") (str limit)))
   (if (isinstance written FileFailed)

@@ -61,9 +61,9 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster._worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings CliLayerSettings CommandLayerSettings])
-(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max layout-held-bytes layout-layer-names
-                                                  pods-dir-of])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings CliLayerSettings CommandLayerSettings BoxLayerSettings])
+(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES CLI-TURN-BYTES CLI-TURN-SLOTS kernel-bytes-of layer-memory-max
+                                                  layout-limited-layers layer-floors-of layout-layer-names pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster._worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster._worker.core.places [worker-places])
@@ -125,6 +125,16 @@
 (val COMMAND-LAYER "commands")
 (val CLI-CEILING-VAR "WORKER_CLI_LAYER_CEILING")
 (val CLI-CEILING-CHILD-VAR "DOEFF_WORKER_CLI_CEILING")
+;; 会話の CLI の層の需要の余白の機体の宣言(worker/core/eviction_rules の頭の註の会話の CLI の層の帳面の 5): 会話の CLI 1 本の要り(kernel の
+;; memory の綴り)と、使いに出る前に受けてよい本数 k(0 以上の整数)。余白 = 1 本の要り × k。無ければ eviction_rules の CLI-TURN-BYTES と
+;; CLI-TURN-SLOTS。CLI-CEILING-VAR の無い機体(clis を掛け直さない)の宣言は起動を断る。
+(val CLI-TURN-BYTES-VAR "WORKER_CLI_TURN_BYTES")
+(val CLI-TURN-SLOTS-VAR "WORKER_CLI_TURN_SLOTS")
+;; container の中の限る層(jobs と clis の外で memory.max を持つ層)の余地の機体の宣言(空白で並べた「<層の名>=<kernel の memory の綴り>」 —
+;; worker/core/eviction_rules の頭の註の container の中の限る層)。名指した層だけ、worker は回ごとに memory.max を回収で返らない量 + 余地
+;; (宣言の静的な値を天井)に掛け直す。CLI-CEILING-VAR の無い機体(container の中の空きを数えない)・層の宣言に memory.max の無い層・
+;; jobs と clis・余地が静的な値より大きい宣言は起動を断る。
+(val LAYER-FLOORS-VAR "WORKER_LAYER_FLOORS")
 ;; task の層(jobs)の天井の機体の宣言(kernel の memory の綴り)。在る機体だけ、worker は jobs の層の memory.max を宣言の静的な値で切らず、
 ;; 追い出しまでの空きと container の中の空きで決めた値を天井で切る(worker/core/eviction_rules の頭の註の jobs の層の天井)。container の中の
 ;; 空きを数えるのは会話の CLI の層を掛け直す機体だけなので、CLI-CEILING-VAR の無い機体の宣言は起動を断る。
@@ -165,23 +175,68 @@
   read)
 
 
+(defk cli-turn-room-bytes [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "main"}}
+  "会話の CLI の層の需要の余白(1 本の要り × k — CLI-TURN-BYTES-VAR の註)を機体の宣言から求めるため。無い欄は既定の値。max・読めない
+   綴り・0 以上の整数でない本数は起動を断る(ValueError)。"
+  (var need CLI-TURN-BYTES)
+  (val declared (.get machine-env CLI-TURN-BYTES-VAR))
+  (when declared
+    (<- read (| int None) (kernel-bytes-of declared))
+    (when (is read None)
+      (raise (ValueError (.format "{} は byte の数で書く(max は 1 本の要りにならない)" CLI-TURN-BYTES-VAR))))
+    (:= need read))
+  (var slots CLI-TURN-SLOTS)
+  (val counted (.strip (.get machine-env CLI-TURN-SLOTS-VAR "")))
+  (when counted
+    (when (not (.isdigit counted))
+      (raise (ValueError (.format "{} は 0 以上の整数で書く: {!r}" CLI-TURN-SLOTS-VAR counted))))
+    (:= slots (int counted)))
+  (* need slots))
+
+
+(defk box-layers-of [machine-env cgroup-dir layout jobs]
+  {:pre [(: machine-env dict) (: cgroup-dir str) (: layout str) (: jobs str)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "container の中の空きから取り置く限る層(jobs と clis の外で memory.max を持つ層 — BoxLayerSettings の tuple)を、層の宣言と機体の宣言の
+   層の余地(LAYER-FLOORS-VAR)から作るため。余地を名指した層が限る層に無い・余地が静的な値より大きい宣言は起動を断る(ValueError)。"
+  (<- limited tuple (layout-limited-layers layout #(jobs CLI-LAYER)))
+  (<- floors tuple (layer-floors-of (.get machine-env LAYER-FLOORS-VAR "")))
+  (val names (tuple (gfor layer limited layer.name)))
+  (for [declared floors]
+    (when (not-in declared.name names)
+      (raise (ValueError (.format "{} の層 {} は {} の memory.max を持つ jobs と {} の外の層でない" LAYER-FLOORS-VAR declared.name
+                                  CGROUP-LAYOUT-VAR CLI-LAYER)))))
+  (var layers #())
+  (for [layer limited]
+    (val floor (next (gfor f floors :if (= f.name layer.name) f.bytes) None))
+    (when (and (is-not floor None) (> floor layer.cap-bytes))
+      (raise (ValueError (.format "{} の層 {} の余地 {} が memory.max {} より大きい" LAYER-FLOORS-VAR layer.name floor layer.cap-bytes))))
+    (:= layers (+ layers #((BoxLayerSettings :name layer.name :dir (+ cgroup-dir "/" layer.name) :cap-bytes layer.cap-bytes
+                                             :floor-bytes floor)))))
+  layers)
+
+
 (defk cli-layer-settings-of [machine-env cgroup-dir layout jobs]
   {:pre [(: machine-env dict) (: cgroup-dir str) (: layout str) (: jobs (| str None))] :post [(: % (| CliLayerSettings None))]
    :tags {:context "worker" :role "main"}}
   "会話の CLI の層の掛け直しの設定を作るため(CLI-CEILING-VAR の註): 天井の宣言が無ければ None。天井が在るのに、層の宣言に clis の
-   memory.max(床)か jobs の層が無い・天井が床より小さい起動は断る(ValueError)。ほかの限る層の上限の和は jobs と clis の外の層の
-   memory.max の宣言の和。"
+   memory.max(床)か jobs の層が無い・天井が床より小さい起動は断る(ValueError)。天井の無い機体が需要の余白か層の余地を宣言した起動も
+   断る(掛け直さない層の宣言を黙って捨てない)。container の中の空きから取り置く層は box-layers-of。"
   (<- ceiling (| int None) (cli-ceiling-bytes machine-env))
   (when (is ceiling None)
+    (val stray (lfor name #(CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR) :if (.strip (.get machine-env name "")) name))
+    (when stray
+      (raise (ValueError (.format "{} は {} を宣言した機体だけが置ける" (.join "・" stray) CLI-CEILING-VAR))))
     (return None))
   (<- floor (| int None) (layer-memory-max layout CLI-LAYER))
   (when (or (is floor None) (not jobs))
     (raise (ValueError (.format "{} を宣言した機体は、{} に {} の層の memory.max と jobs の層を置く" CLI-CEILING-VAR CGROUP-LAYOUT-VAR CLI-LAYER))))
   (when (< ceiling floor)
     (raise (ValueError (.format "{} {} が {} の層の memory.max {} より小さい" CLI-CEILING-VAR ceiling CLI-LAYER floor))))
-  (<- held int (layout-held-bytes layout #(jobs CLI-LAYER)))
+  (<- turn-room int (cli-turn-room-bytes machine-env))
+  (<- layers tuple (box-layers-of machine-env cgroup-dir layout jobs))
   (CliLayerSettings :dir (+ cgroup-dir "/" CLI-LAYER) :floor-bytes floor :ceiling-bytes ceiling :container-dir cgroup-dir
-                    :held-bytes held))
+                    :turn-room-bytes turn-room :layers layers))
 
 
 (defk cli-ceiling-environ [machine-env]
@@ -247,7 +302,7 @@
   (<- commit-var str (worker-commit-env-name))
   (val own-version (.get machine-env commit-var))
   (val keeps (and room-file version-file own-version))
-  (EvictionSettings :clis clis :commands (if (is command-cap None) None (CommandLayerSettings :dir (+ cgroup-dir "/" COMMAND-LAYER) :cap-bytes command-cap))
+  (EvictionSettings :clis clis :commands (if (is command-cap None) None (CommandLayerSettings :dir (+ cgroup-dir "/" COMMAND-LAYER) :cap-bytes command-cap :name COMMAND-LAYER))
                     :version-file (if keeps version-file None) :own-version (if keeps own-version None)
                     :retired-file (or (.get machine-env RETIRED-FILE-VAR) None)
                     :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
@@ -607,7 +662,8 @@
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
-                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR RETIRED-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR commit-var)
+                                                     PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR RETIRED-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR
+                                                     CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。

@@ -3,8 +3,10 @@
 ;; 実例(11-06 19:00〜21:30 JST の調べ): node-c と node-a が会話を受ける本数は機体の空きでなく、clis の静的な
 ;; memory.max(node-c 5G・node-a 1536M)で止まっていた。node-a は機体の空き 8〜10 GiB のうち会話 1 本ぶんしか使えず、node-h が混んだ間に
 ;; 始まった会話 48 本のうち node-c と node-a が受けたのは 12 本だった。
-;;   - 判断(worker/core/eviction_rules の clis-limit・clis-lent・box-free・jobs-box-limit): 広げる量は 2 つの空きの小さい方の半分・前の
-;;     回に広げた上限は空きの内でだけ残す・床(宣言の静的な値)と clis の今の使いより下げない・天井で止める。
+;;   - 判断(worker/core/eviction_rules の clis-limit・clis-lent・box-free・jobs-box-limit): clis の今の使いの上に残すのは需要の余白
+;;     (会話の CLI の新しい受け k 本分)のうち 2 つの空きの小さい方の内の量だけ・前の回の上限を持ち越さない・床(宣言の静的な値)と clis の
+;;     今の使いより下げない・天井で止める。jobs と clis の外の限る層は、今掛けている上限 − 層の working set だけを container の中の空きから
+;;     取り置く(余地の宣言の在る層は回収で返らない量 + 余地に掛け直す)。
 ;;   - worker の読み(worker/protocol/eviction_line の eviction-noted): clis の層の memory.max を書き、床を越えて貸した量を jobs の上限から
 ;;     引き、線を読めない回は床へ戻す。
 ;;   - 模擬の機体(node-a の値): 本物の見張りの背景の task を仮想時計の下で 5 秒ごとに回し、kubepods・root・container・jobs・clis の層の
@@ -29,13 +31,15 @@
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ObserveJobRoots])
 (import doeff_cluster._worker.core.memory_rules [JobRoot JobUse MIB])
-(import doeff_cluster._worker.core.eviction_rules [CLIS-ROOM-SHARE UNDECLARED-NEED-BYTES EvictionLine LineKind TaskNeed clis-limit clis-lent
-                                                  box-free jobs-box-limit jobs-limit layer-memory-max layout-held-bytes placed-pending
-                                                  task-needs-of])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell CliLayerSettings eviction-noted CLIS-LENT-LOG
-                                                     JOBS-SQUEEZE-LOG])
+(import doeff_cluster._worker.core.eviction_rules [CLI-TURN-BYTES CLI-TURN-SLOTS CLIS-ROOM-SHARE UNDECLARED-NEED-BYTES EvictionLine LineKind LimitedLayer
+                                                  TaskNeed clis-limit clis-lent box-free jobs-box-limit jobs-limit
+                                                  layer-memory-max layout-limited-layers layer-hold
+                                                  placed-pending task-needs-of])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell CliLayerSettings BoxLayerSettings BoxLayerLimit
+                                                     CommandLayerSettings eviction-noted CLIS-LENT-LOG JOBS-SQUEEZE-LOG])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
 (import doeff_cluster._worker.entry.main [cli-layer-settings-of cli-ceiling-environ jobs-ceiling-bytes CLI-CEILING-CHILD-VAR])
+(import doeff_cluster._worker.entry.main [box-layers-of cli-turn-room-bytes])
 
 (val GIB (* 1024 MIB))
 ;; node-a の Node の宣言(test_eviction_line.hy と同じ 11-01 の値)と、cgroup の層の宣言(nodes/node-a/cgroup.yaml)・container の上限 22Gi。
@@ -55,43 +59,58 @@
 (val OWN (+ PODS "/kubepods-burstable.slice/kubepods-burstable-pod1.slice/cri-containerd-1.scope"))
 (val JOBS (+ OWN "/jobs"))
 (val CLIS (+ OWN "/clis"))
+(val COMMANDS (+ OWN "/commands"))
+(val EXEC (+ OWN "/exec"))
 (val TOKEN "/sa/token")
 (val NODE-URL "https://api.test/api/v1/nodes/node-a")
 ;; 会話 1 本に受け手(turn-host)が見込む量(上に載る系の機体の宣言 TURN_HOST_TURN_RAM_MIB)と、受けた本数を数える窓
 ;; (cli_host_room_rules の 120 秒)。
 (val NEED GIB)
 (val RECENT-MS 120000)
+;; 宣言の無い機体の需要の余白(1 本の要り × k)と、模擬の node-a の機体の宣言の余白(allocatable 約 20 GiB の小さい機体 — 1 GiB × 2 本。
+;; 宣言の無い 4 本では、ほかの Pod の 4 GiB の跳ねを jobs の層だけで吸えない本数の会話を受ける)。
+(val TURN-ROOM (* CLI-TURN-SLOTS CLI-TURN-BYTES))
+(val NODE-A-TURN-ROOM (* 2 GIB))
 
 
 ;; --- 判断 ---------------------------------------------------------------------------------------------------------------------------
 
-(deftest test-the-cli-layer-grows-by-half-the-room-between-its-floor-and-its-ceiling
-  ;; 空き 6 GiB・container の中の空きは大きい: clis の今の使い 1 GiB の上に 3 GiB を広げる(残りの 3 GiB は jobs の層へ)。
-  (<- grown int (clis-limit GIB (* 6 GIB) (* 12 GIB) FLOOR CEILING None 0))
-  (assert (= grown (+ GIB (int (* 6 GIB CLIS-ROOM-SHARE)))) (/ grown GIB))
-  ;; 広げても天井で止まる。空きが無ければ床(今までの静的な上限)。
-  (<- capped int (clis-limit GIB (* 20 GIB) (* 20 GIB) FLOOR CEILING None 0))
-  (<- none int (clis-limit (* 512 MIB) (- GIB) (* 12 GIB) FLOOR CEILING None 0))
-  (assert (= #(capped none) #(CEILING FLOOR)) #(capped none))
-  ;; container の中の空きが線の空きより小さければ、そちらの半分。container に上限が無ければ線の空きだけ。
-  (<- boxed int (clis-limit GIB (* 6 GIB) (* 2 GIB) FLOOR CEILING None 0))
-  (<- unboxed int (clis-limit GIB (* 6 GIB) None FLOOR CEILING None 0))
+(deftest test-the-cli-layer-keeps-only-its-demand-room-above-its-use-between-its-floor-and-its-ceiling
+  ;; 空き 10 GiB・container の中の空きは大きい: clis の今の使い 1 GiB の上に需要の余白 4 GiB(1 本の要り 1 GiB × 4 本)だけを残す
+  ;; (残りの 6 GiB は jobs の層へ)。空きの半分ではない。
+  (<- grown int (clis-limit GIB (* 10 GIB) (* 12 GIB) FLOOR CEILING TURN-ROOM 0))
+  (assert (= grown (+ GIB TURN-ROOM)) (/ grown GIB))
+  ;; 空きが余っても使いの上は余白まで(天井 6 GiB に張り付かない)。余白が天井を越えれば天井で止まる。空きが無ければ床(今までの静的な上限)。
+  (<- roomy int (clis-limit GIB (* 20 GIB) (* 20 GIB) FLOOR CEILING TURN-ROOM 0))
+  (<- capped int (clis-limit (* 3 GIB) (* 20 GIB) (* 20 GIB) FLOOR CEILING TURN-ROOM 0))
+  (<- none int (clis-limit (* 512 MIB) (- GIB) (* 12 GIB) FLOOR CEILING TURN-ROOM 0))
+  (assert (= #(roomy capped none) #((+ GIB TURN-ROOM) CEILING FLOOR)) #(roomy capped none))
+  ;; 空きが少ない回は、余白を空きの CLIS-ROOM-SHARE で切る(残りの半分は jobs の層の受けへ)。container の中の空きが線の空きより小さければ、
+  ;; そちらで数える。container に上限が無ければ線の空きだけ。
+  (<- boxed int (clis-limit GIB (* 6 GIB) (* 2 GIB) FLOOR CEILING TURN-ROOM 0))
+  (<- unboxed int (clis-limit GIB (* 6 GIB) None FLOOR CEILING TURN-ROOM 0))
   (assert (= #(boxed unboxed) #((* 2 GIB) (* 4 GIB))) #((/ boxed GIB) (/ unboxed GIB)))
   ;; 使いが天井を越えていても、使いより下げない。
-  (<- over int (clis-limit (* 7 GIB) (* 6 GIB) None FLOOR CEILING (* 7 GIB) 0))
+  (<- over int (clis-limit (* 7 GIB) (* 6 GIB) None FLOOR CEILING TURN-ROOM 0))
   (assert (= over (* 7 GIB)) (/ over GIB)))
 
 
-(deftest test-a-widened-cli-layer-keeps-its-room-only-inside-the-free-room
-  ;; 前の回に 4 GiB まで広げ、会話が 3 GiB まで伸びた。空きが 2 GiB 残る間は上限 4 GiB のまま(受けたばかりの会話の伸びを縮めない)。
-  (<- kept int (clis-limit (* 3 GIB) (* 2 GIB) (* 12 GIB) FLOOR CEILING (* 4 GIB) 0))
-  (assert (= kept (* 4 GIB)) (/ kept GIB))
-  ;; ほかの Pod が跳ねて空きが 0.5 GiB になった: 使われていない貸し 1 GiB のうち空きの内の 0.5 GiB だけ残す(jobs の層を縮めて残さない)。
-  (<- shrunk int (clis-limit (* 3 GIB) (// GIB 2) (* 12 GIB) FLOOR CEILING (* 4 GIB) 0))
-  (assert (= shrunk (int (* 3.5 GIB))) (/ shrunk GIB))
-  ;; 空きが負: clis の今の使いまで(使いより下げない)。
-  (<- frozen int (clis-limit (* 3 GIB) (* -4 GIB) (* 12 GIB) FLOOR CEILING (* 4 GIB) 0))
-  (assert (= frozen (* 3 GIB)) (/ frozen GIB))
+(deftest test-unused-cli-lending-goes-back-to-the-jobs-intake-on-the-next-tick
+  ;; 失敗ケース(前の形): 広げた上限を、前の回の上限までの残りが空きの内である間は持ち続けたので、会話の CLI が使わなくなった貸しが jobs の
+  ;; 層の受けから引かれ続けた(node-c の 11-11 16:4x JST — 上限 16 GiB のうち使われていない 6771 MiB)。今の形は前の回の上限を入力に持たず、
+  ;; 使いが 6 GiB から 1 GiB へ減った次の回の上限は 1 GiB + 余白(床の上)。
+  (val room (* 12 GIB))
+  (<- shrunk int (clis-limit GIB room room FLOOR (* 16 GIB) TURN-ROOM 0))
+  (assert (= shrunk (+ GIB TURN-ROOM)) (/ shrunk GIB))
+  ;; 返った貸しは、同じ container の中の空きから決まる jobs の層の受け(jobs-box-limit — 新しい受けの上限)に入る: 前の形の上限 10 GiB を
+  ;; 残すより 5 GiB 大きい。
+  (<- intake int (jobs-box-limit 0 room 0 shrunk GIB 0))
+  (<- kept-intake int (jobs-box-limit 0 room 0 (* 10 GIB) GIB 0))
+  (assert (= #(intake (- intake kept-intake)) #((- room TURN-ROOM) (* 5 GIB))) #((/ intake GIB) (/ kept-intake GIB)))
+  ;; ほかの Pod が跳ねて空きが 0.5 GiB になった: 余白も空きの半分の 0.25 GiB だけ(jobs の層を縮めて残さない)。空きが負: clis の今の使いまで。
+  (<- tight int (clis-limit (* 3 GIB) (// GIB 2) (* 12 GIB) FLOOR CEILING TURN-ROOM 0))
+  (<- frozen int (clis-limit (* 3 GIB) (* -4 GIB) (* 12 GIB) FLOOR CEILING TURN-ROOM 0))
+  (assert (= #(tight frozen) #((int (* 3.25 GIB)) (* 3 GIB))) #((/ tight GIB) (/ frozen GIB)))
   ;; 床を越えて貸した量 = 上限 − 床と今の使いの大きい方(jobs の層の上限から引く)。
   (<- lent int (clis-lent (* 4 GIB) (* 3 GIB) FLOOR))
   (<- inside int (clis-lent FLOOR (* 512 MIB) FLOOR))
@@ -114,7 +133,7 @@
   (val jobs-current (* 4 GIB))
   (val room (int (* 3.5 GIB)))
   (val free (- room NODE-A-MEASURED-MARGIN))
-  (<- clis int (clis-limit GIB free None FLOOR CEILING CEILING 0))
+  (<- clis int (clis-limit GIB free None FLOOR CEILING TURN-ROOM 0))
   (<- lent int (clis-lent clis GIB FLOOR))
   ;; 使われていない貸しは空きの内まで返る: 1 GiB + 空き 210 MiB は床の下なので床へ戻り、床を越えた貸しは 0。
   (assert (= #(clis lent) #(FLOOR 0)) #((// clis MIB) (// lent MIB)))
@@ -146,11 +165,11 @@
               (JobUse :job "svc" :pid 10 :bytes (* 4 GIB) :processes 1)))
   (<- pending int (placed-pending needs uses))
   (assert (= pending (+ (* 2560 MIB) UNDECLARED-NEED-BYTES)) (// pending MIB))
-  ;; 空き 6 GiB から clis に新しく貸すのは、取り置きの外の空き(6 GiB − 3.5 GiB)の半分だけ。
-  (<- grown int (clis-limit GIB (* 6 GIB) None FLOOR CEILING None pending))
+  ;; 空き 6 GiB から clis に新しく貸すのは、取り置きの外の空き(6 GiB − 3.5 GiB)の半分の内の余白だけ。
+  (<- grown int (clis-limit GIB (* 6 GIB) None FLOOR CEILING TURN-ROOM pending))
   (assert (= grown (+ GIB (int (* (- (* 6 GIB) pending) CLIS-ROOM-SHARE)))) (// grown MIB))
-  ;; 前の回に広げた上限も、取り置きの外の空きの内でだけ残す(取り置きで空きが埋まれば clis の今の使いと床へ戻る)。
-  (<- returned int (clis-limit GIB (* 3 GIB) None FLOOR CEILING CEILING (* 3 GIB)))
+  ;; 取り置きで空きが埋まれば clis の今の使いと床へ戻る。
+  (<- returned int (clis-limit GIB (* 3 GIB) None FLOOR CEILING TURN-ROOM (* 3 GIB)))
   (assert (= returned FLOOR) (// returned MIB))
   ;; jobs の層の上限は取り置きを入れて、新しい受けに名乗る上限は入れない(置き先が自分で予約を引く — 同じ空きを 2 度数えない)。
   (val line (room-line (* 7 GIB)))
@@ -163,10 +182,19 @@
 
 
 (deftest test-the-container-room-counts-the-other-limited-layers-and-bounds-the-jobs-layer
-  ;; jobs と clis の外の限る層の宣言の和: node-a は commands 1536M + exec 512M・node-c は commands 4608M + exec 512M。
-  (<- node-a-held int (layout-held-bytes NODE-A-LAYOUT #("jobs" "clis")))
-  (<- node-c-held int (layout-held-bytes NODE-C-LAYOUT #("jobs" "clis")))
-  (assert (= #(node-a-held node-c-held) #((* 2 GIB) (* 5120 MIB))) #(node-a-held node-c-held))
+  ;; jobs と clis の外の限る層: node-a は commands 1536M・exec 512M・node-c は commands 4608M・exec 512M。
+  (<- node-a-layers tuple (layout-limited-layers NODE-A-LAYOUT #("jobs" "clis")))
+  (<- node-c-layers tuple (layout-limited-layers NODE-C-LAYOUT #("jobs" "clis")))
+  (assert (= node-a-layers #((LimitedLayer :name "commands" :cap-bytes FLOOR) (LimitedLayer :name "exec" :cap-bytes (* 512 MIB))))
+          node-a-layers)
+  (assert (= (sum (gfor l node-c-layers l.cap-bytes)) (* 5120 MIB)) node-c-layers)
+  ;; 層の取り置き = 今掛けている上限 − 層の working set(使いは container の working set に数え済み)。使いのない層は上限の全部。
+  (<- commands-hold int (layer-hold FLOOR 0))
+  (<- exec-hold int (layer-hold (* 512 MIB) 0))
+  (val node-a-held (+ commands-hold exec-hold))
+  (<- used int (layer-hold FLOOR (* 1024 MIB)))
+  (<- over int (layer-hold FLOOR (* 2 GIB)))
+  (assert (= #(node-a-held used over) #((* 2 GIB) (* 512 MIB) 0)) #(node-a-held used over))
   ;; container の中の空き = 上限 − working set − 余裕 − held。上限の無い container は None。
   (<- box int (box-free CONTAINER-MAX (* 5 GIB) GIB node-a-held))
   (<- open (| int None) (box-free None (* 5 GIB) GIB node-a-held))
@@ -183,9 +211,12 @@
 (deftest test-the-ceiling-is-declared-per-machine-and-passed-to-the-job-children
   (val env {"WORKER_CLI_LAYER_CEILING" "6G"})
   (<- clis (| CliLayerSettings None) (cli-layer-settings-of env OWN NODE-A-LAYOUT "jobs"))
-  (assert (= #(clis.dir clis.floor-bytes clis.ceiling-bytes clis.container-dir clis.held-bytes)
-             #(CLIS FLOOR CEILING OWN (* 2 GIB)))
+  (assert (= #(clis.dir clis.floor-bytes clis.ceiling-bytes clis.container-dir clis.turn-room-bytes)
+             #(CLIS FLOOR CEILING OWN TURN-ROOM))
           clis)
+  (assert (= clis.layers #((BoxLayerSettings :name "commands" :dir COMMANDS :cap-bytes FLOOR)
+                           (BoxLayerSettings :name "exec" :dir EXEC :cap-bytes (* 512 MIB))))
+          clis.layers)
   (<- environ dict (cli-ceiling-environ env))
   (assert (= environ {CLI-CEILING-CHILD-VAR (str CEILING)}) environ)
   ;; 宣言の無い機体は掛け直さず、子へも渡さない。
@@ -220,7 +251,7 @@
 (defk node-a-files [pods jobs clis container]
   {:pre [(: pods int) (: jobs int) (: clis int) (: container int)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "模擬の node-a の cgroup と ServiceAccount の file を作るため: kubepods・jobs・clis・container の使い(page cache 0)と、root は Pod の外に
-   2 GiB。"
+   2 GiB。jobs と clis の外の限る層(commands・exec)は使い 0 で宣言の静的な上限のまま。"
   (val files #((MemoryFile :path (+ PODS "/memory.max") :content (.encode (str PODS-MAX)))
                (MemoryFile :path (+ PODS "/memory.current") :content (.encode (str pods)))
                (MemoryFile :path (+ PODS "/memory.stat") :content (.encode (.format STAT pods)))
@@ -234,20 +265,35 @@
                (MemoryFile :path (+ CLIS "/memory.current") :content (.encode (str clis)))
                (MemoryFile :path (+ CLIS "/memory.stat") :content (.encode (.format STAT clis)))
                (MemoryFile :path (+ CLIS "/memory.max") :content (.encode (str FLOOR)))
+               (MemoryFile :path (+ COMMANDS "/memory.current") :content b"0\n")
+               (MemoryFile :path (+ COMMANDS "/memory.stat") :content (.encode (+ (.format STAT 0) "shmem 0\nslab_reclaimable 0\n")))
+               (MemoryFile :path (+ COMMANDS "/memory.max") :content (.encode (str FLOOR)))
+               (MemoryFile :path (+ EXEC "/memory.current") :content b"0\n")
+               (MemoryFile :path (+ EXEC "/memory.stat") :content (.encode (+ (.format STAT 0) "shmem 0\nslab_reclaimable 0\n")))
+               (MemoryFile :path (+ EXEC "/memory.max") :content (.encode (str (* 512 MIB))))
                (MemoryFile :path TOKEN :content b"token\n")))
   (val dirs (sorted (sfor f files d (gfor i (range 2 (+ 1 (len (.split f.path "/")))) (.join "/" (cut (.split f.path "/") 0 i)))
                           :if (!= d f.path) d)))
   (MemoryFiles :dirs (tuple dirs) :files files))
 
 
+(defk node-a-layers [floors]
+  {:pre [(: floors str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "模擬の node-a の jobs と clis の外の限る層の設定を、機体の宣言の層の余地 floors(WORKER_LAYER_FLOORS の綴り — 空 = 掛け直さない)から
+   作るため(入口と同じ組み立て)。"
+  (<- layers tuple (box-layers-of {"WORKER_LAYER_FLOORS" floors} OWN NODE-A-LAYOUT "jobs"))
+  layers)
+
+
 (defk node-a-settings [clis]
   {:pre [(: clis bool)] :post [(: % EvictionSettings)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "模擬の node-a の線の設定を作るため。clis = 会話の CLI の層を掛け直すか(偽 = 天井の宣言の無い前の形)。"
   (<- jobs-cap (| int None) (layer-memory-max NODE-A-LAYOUT "jobs"))
-  (<- held int (layout-held-bytes NODE-A-LAYOUT #("jobs" "clis")))
+  (<- layers tuple (node-a-layers ""))
   (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST :jobs-dir JOBS
                     :jobs-cap-bytes jobs-cap
-                    :clis (if clis (CliLayerSettings :dir CLIS :floor-bytes FLOOR :ceiling-bytes CEILING :container-dir OWN :held-bytes held)
+                    :clis (if clis (CliLayerSettings :dir CLIS :floor-bytes FLOOR :ceiling-bytes CEILING :container-dir OWN
+                                    :turn-room-bytes NODE-A-TURN-ROOM :layers layers)
                               None)))
 
 
@@ -276,9 +322,9 @@
   (<- settings EvictionSettings (node-a-settings True))
   (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-a-api) slog-discard-handler]
                           (ticked-files settings cell 2)))
-  ;; clis の上限 = 1 GiB + (空き − 余裕) の半分。jobs の上限 = jobs の使い + 空き − 余裕 − 床を越えて貸した量。
+  ;; clis の上限 = 1 GiB + 需要の余白(空き − 余裕の内)。jobs の上限 = jobs の使い + 空き − 余裕 − 床を越えて貸した量。
   (val free (- room GIB))
-  (val clis-max (+ GIB (int (* free CLIS-ROOM-SHARE))))
+  (val clis-max (+ GIB (min NODE-A-TURN-ROOM (int (* free CLIS-ROOM-SHARE)))))
   (<- written str (content-at files (+ CLIS "/memory.max")))
   (assert (= (int written) clis-max) (/ (int written) GIB))
   (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
@@ -309,9 +355,9 @@
                           (ticked-files settings cell 2)))
   (val free (- room GIB))
   (val pending (* 3 GIB))
-  ;; clis に貸すのは取り置きの外の空きの半分だけ。
+  ;; clis に貸すのは取り置きの外の空きの内の余白だけ。
   (<- written str (content-at files (+ CLIS "/memory.max")))
-  (assert (= (int written) (+ GIB (int (* (- free pending) CLIS-ROOM-SHARE)))) (// (int written) MIB))
+  (assert (= (int written) (+ GIB (min NODE-A-TURN-ROOM (int (* (- free pending) CLIS-ROOM-SHARE))))) (// (int written) MIB))
   (assert (= cell.pending pending) (// cell.pending MIB))
   ;; jobs の層の上限は取り置きを覆い、置き先に名乗る受けの上限から取り置きを引いた空き(置き先が自分で引く)と clis の余白は、
   ;; 取り置きの外の空きを分け合う(同じ空きを 2 つの受けが重ねて約束しない — 重なるのは今までと同じ床の内の残りだけ)。
@@ -473,6 +519,8 @@
                   (= path (+ JOBS "/memory.stat")) (.format STAT jobs)
                   (= path (+ CLIS "/memory.current")) (str clis)
                   (= path (+ CLIS "/memory.stat")) (.format STAT clis)
+                  (in path #((+ COMMANDS "/memory.current") (+ EXEC "/memory.current"))) "0\n"
+                  (in path #((+ COMMANDS "/memory.stat") (+ EXEC "/memory.stat"))) (+ (.format STAT 0) "shmem 0\nslab_reclaimable 0\n")
                   True (raise (ValueError (.format "模擬の node-a に無い file {}" path))))))
   (WriteText [path text]
     :when (in path #((+ JOBS "/memory.max") (+ CLIS "/memory.max")))
@@ -610,10 +658,11 @@
 (defk roomy-settings [ceiling]
   {:pre [(: ceiling (| int None))] :post [(: % EvictionSettings)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "模擬の node-a の線の設定に jobs の層の天井 ceiling(None = 宣言しない — 前の形)を足すため。"
-  (<- held int (layout-held-bytes NODE-A-LAYOUT #("jobs" "clis")))
+  (<- layers tuple (node-a-layers ""))
   (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST :jobs-dir JOBS
                     :jobs-cap-bytes JOBS-CAP :jobs-ceiling-bytes ceiling
-                    :clis (CliLayerSettings :dir CLIS :floor-bytes FLOOR :ceiling-bytes CEILING :container-dir OWN :held-bytes held)))
+                    :clis (CliLayerSettings :dir CLIS :floor-bytes FLOOR :ceiling-bytes CEILING :container-dir OWN
+                                            :turn-room-bytes NODE-A-TURN-ROOM :layers layers)))
 
 
 (deftest test-a-declared-jobs-ceiling-lets-the-jobs-layer-grow-past-its-static-value-up-to-the-container-room
@@ -625,12 +674,12 @@
   (val ceiled (EvictionCell))
   (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-a-api) slog-discard-handler]
                           (ticked-files ceiling-settings ceiled 2)))
-  ;; clis は天井 6 GiB まで広がり、床を越えた 4.5 GiB を貸す。jobs の層の上限は、線の空き(使い 0.5 + 空き − 余裕 1 − 貸し 4.5)と
-  ;; container の中の空き(使い 0.5 + (22 − 3 − 余裕 1 − held 2) − clis の残り 5)の小さい方 = 11.5 GiB で、静的な 10752M を越える。
+  ;; clis は使い 1 GiB + 余白 2 GiB まで広がり、床を越えた 1.5 GiB を貸す。jobs の層の上限は、線の空き(使い 0.5 + 空き − 余裕 1 − 貸し
+  ;; 1.5)と container の中の空き(使い 0.5 + (22 − 3 − 余裕 1 − held 2) − clis の残り 2)の小さい方 = 14.5 GiB で、静的な 10752M を越える。
   (<- clis-max str (content-at files (+ CLIS "/memory.max")))
-  (assert (= (int clis-max) CEILING) (// (int clis-max) MIB))
-  (val line-limit (- room (* 5 GIB)))
-  (val box-limit (+ (// GIB 2) (- (* 16 GIB) (- CEILING GIB))))
+  (assert (= (int clis-max) (+ GIB NODE-A-TURN-ROOM)) (// (int clis-max) MIB))
+  (val line-limit (- (+ (// GIB 2) room) GIB (- (int clis-max) FLOOR)))
+  (val box-limit (+ (// GIB 2) (- (* 16 GIB) NODE-A-TURN-ROOM)))
   (assert (> line-limit box-limit) #((// line-limit MIB) (// box-limit MIB)))
   (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
   (assert (= (int jobs-max) box-limit) (// (int jobs-max) MIB))
@@ -678,3 +727,151 @@
       (except [ValueError]
         (:= refused True)))
     (assert refused #(declared cap with-clis))))
+
+
+;; --- 使われていない貸しの返しと container の中の限る層(card の実例 node-c の 11-11 16:4x JST)------------------------------------------
+;; node-c の jobs の層の受けは、clis の上限 16 GiB のうち使われていない 6771 MiB と、commands・gate・exec の取り置き 5120 MiB(使い約 92 MiB)を
+;; 引いた値で名乗られ、受けに入らない task は空きを縮めないので貸しも取り置きも戻らなかった。模擬は node-a の大きさで同じ形を作る。
+
+(defk with-content [files path text]
+  {:pre [(: files MemoryFiles) (: path str) (: text str)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "模擬の file の path の中身を text に替えた file の組を作るため(読みの形を検ごとに替える)。"
+  (MemoryFiles :dirs files.dirs :files (tuple (gfor f files.files (if (= f.path path) (MemoryFile :path path :content (.encode text)) f)))))
+
+
+(defk busy-then-idle [settings cell]
+  {:pre [(: settings EvictionSettings) (: cell EvictionCell)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "会話の CLI が 5 GiB を使う回の後に、CLI が止まって 1 GiB へ減った回(clis・container・Pod の和が 4 GiB ずつ減る)を回し、2 つの回の
+   clis の上限と jobs の層の受けを読むため(答え = #(前の上限 前の受け 後の上限 後の受け))。"
+  (<- (eviction-noted settings cell True 5000))
+  (val busy #(cell.clis-limit cell.jobs-intake))
+  (<- (WriteText (+ CLIS "/memory.current") (str GIB)))
+  (<- (WriteText (+ OWN "/memory.current") (str (* 3 GIB))))
+  (<- (WriteText (+ PODS "/memory.current") (str (* 3 GIB))))
+  (<- (eviction-noted settings cell True 10000))
+  #(#* busy cell.clis-limit cell.jobs-intake))
+
+
+(deftest test-unused-cli-lending-goes-back-to-the-jobs-intake-while-a-placed-task-waits-for-room
+  ;; 線の空きの大きい node-a(Pod の和 7 GiB — CLI が止まった後は 3 GiB): 会話の CLI が 5 GiB を使い、clis の上限は天井 6 GiB。置き先が要り 4 GiB の task を置き、
+  ;; まだ 0.5 GiB しか使っていない(jobs の層の需要 — 取り置き 3.5 GiB)。
+  (val cell (EvictionCell))
+  (<- needs tuple (task-needs-of #({"id" "t1" "memoryMiB" 4096})))
+  (setv cell.needs needs cell.uses #((JobUse :job "task/t1" :pid 20 :bytes (// GIB 2) :processes 1)))
+  (<- start MemoryFiles (node-a-files (* 7 GIB) (// GIB 2) (* 5 GIB) (* 7 GIB)))
+  (<- settings EvictionSettings (roomy-settings JOBS-CEILING))
+  (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-a-api) slog-discard-handler]
+                   (busy-then-idle settings cell)))
+  (val busy-limit (get seen 0))
+  (val busy-intake (get seen 1))
+  (val idle-limit (get seen 2))
+  (val idle-intake (get seen 3))
+  (assert (= busy-limit CEILING) (// busy-limit MIB))
+  ;; CLI が止まった次の回の上限は、使い 1 GiB + 余白 2 GiB(前の回の 6 GiB を持ち越さない)。
+  (assert (= idle-limit (+ GIB NODE-A-TURN-ROOM)) (// idle-limit MIB))
+  ;; 返った貸しは同じ回の jobs の層の受け(置き先に名乗る上限)に入る: container の中の空き(22 − 3 − 余裕 1 − held 2 = 16 GiB)から余白
+  ;; だけを引いた 0.5 + 16 − 2 GiB。前の形(前の回の上限 6 GiB を持ち越す)なら 0.5 + 16 − 5 GiB で、要り 4 GiB の task の残り 3.5 GiB の外に
+  ;; 新しい受けは 8 GiB しか残らなかった。
+  (assert (= idle-intake (+ (// GIB 2) (- (* 16 GIB) NODE-A-TURN-ROOM))) (// idle-intake MIB))
+  (assert (= (- idle-intake (+ (// GIB 2) (- (* 16 GIB) (- CEILING GIB)))) (- CEILING (+ GIB NODE-A-TURN-ROOM)))
+          #((// idle-intake MIB) (// busy-intake MIB)))
+  ;; 置いた task の取り置きは、jobs の層の上限が覆う(clis へ貸さない)。
+  (assert (>= (- cell.jobs-limit (// GIB 2)) cell.pending) #((// cell.jobs-limit MIB) (// cell.pending MIB))))
+
+
+(val COMMAND-USE (* 300 MIB))
+(val EXEC-USE (* 100 MIB))
+(val COMMAND-ROOM (* 256 MIB))
+
+
+(defk layered-files [start]
+  {:pre [(: start MemoryFiles)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "模擬の node-a の file に、命令の層の使い COMMAND-USE と exec の層の使い EXEC-USE(どちらも anon — container の working set に数え済み)を
+   入れるため。"
+  (<- commands MemoryFiles (with-content start (+ COMMANDS "/memory.current") (str COMMAND-USE)))
+  (<- commands-stat MemoryFiles (with-content commands (+ COMMANDS "/memory.stat")
+                                              (+ (.format STAT COMMAND-USE) "shmem 0\nslab_reclaimable 0\n")))
+  (<- exec MemoryFiles (with-content commands-stat (+ EXEC "/memory.current") (str EXEC-USE)))
+  (<- exec-stat MemoryFiles (with-content exec (+ EXEC "/memory.stat") (+ (.format STAT EXEC-USE) "shmem 0\nslab_reclaimable 0\n")))
+  exec-stat)
+
+
+(defk layered-settings [floors]
+  {:pre [(: floors str)] :post [(: % EvictionSettings)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "模擬の node-a の線の設定を、機体の宣言の層の余地 floors(WORKER_LAYER_FLOORS の綴り)で作るため。"
+  (<- layers tuple (node-a-layers floors))
+  (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST :jobs-dir JOBS
+                    :jobs-cap-bytes JOBS-CAP :jobs-ceiling-bytes JOBS-CEILING
+                    :clis (CliLayerSettings :dir CLIS :floor-bytes FLOOR :ceiling-bytes CEILING :container-dir OWN
+                                            :turn-room-bytes NODE-A-TURN-ROOM :layers layers)))
+
+
+(deftest test-the-limited-layers-are-relimited-by-their-use-and-held-once-out-of-the-container-room
+  ;; container 3 GiB の working set に、命令の層 300 MiB と exec の層 100 MiB の使いが入っている。命令の層だけ余地 256 MiB を宣言した。
+  (val container (* 3 GIB))
+  (<- start MemoryFiles (node-a-files (* 3 GIB) (// GIB 2) GIB container))
+  (<- files MemoryFiles (layered-files start))
+  (<- settings EvictionSettings (layered-settings "commands=256M"))
+  (val cell (EvictionCell))
+  (<- after MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (node-a-api) slog-discard-handler]
+                          (ticked-files settings cell 1)))
+  ;; 命令の層の上限は回収で返らない量 + 余地。余地の宣言の無い exec は静的な値のまま。
+  (<- commands-max str (content-at after (+ COMMANDS "/memory.max")))
+  (<- exec-max str (content-at after (+ EXEC "/memory.max")))
+  (assert (= #((int commands-max) (int exec-max)) #((+ COMMAND-USE COMMAND-ROOM) (* 512 MIB))) #(commands-max exec-max))
+  (assert (= cell.box-limits #((BoxLayerLimit :name "commands" :limit-bytes (+ COMMAND-USE COMMAND-ROOM)))) cell.box-limits)
+  ;; container の中の空きは、層ごとに「今掛けている上限 − 層の working set」だけを引く — 使いは container の working set に 1 度だけ数える。
+  (val held (+ COMMAND-ROOM (- (* 512 MIB) EXEC-USE)))
+  (assert (= cell.box-held held) (// cell.box-held MIB))
+  (assert (= cell.box (- CONTAINER-MAX container GIB held)) (// cell.box MIB))
+  ;; 失敗ケース(前の形): 静的な値の和 2 GiB を取り置き、使い 400 MiB を working set と 2 度引いた。今の形の空きはその差だけ大きく、jobs の
+  ;; 層の受けに入る。
+  (assert (= (- cell.box (- CONTAINER-MAX container GIB (* 2 GIB))) (- (* 2 GIB) held)) (// cell.box MIB)))
+
+
+(deftest test-the-limited-layers-go-back-to-their-static-limits-while-the-room-cannot-be-counted
+  ;; 線を読めない回は、余地の宣言の在る層も静的な値に戻す(jobs の層が静的な値に戻るので、限る層の静的な値の和で container に収める)。
+  (<- start MemoryFiles (node-a-files (* 3 GIB) (// GIB 2) GIB (* 3 GIB)))
+  (<- files MemoryFiles (layered-files start))
+  (<- settings EvictionSettings (layered-settings "commands=256M"))
+  (val lowered (EvictionCell))
+  (<- unread MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (unread-api) slog-discard-handler]
+                           (ticked-files settings lowered 1)))
+  (<- commands-max str (content-at unread (+ COMMANDS "/memory.max")))
+  (assert (= (int commands-max) FLOOR) (// (int commands-max) MIB))
+  ;; 層を読めない回(命令の層の memory.stat が無い)は、その層の上限の全部を取り置き、訳を言う(JOBS-LIMIT-FAILED-LOG の訳)。
+  (val statless (MemoryFiles :dirs files.dirs :files (tuple (gfor f files.files :if (!= f.path (+ COMMANDS "/memory.stat")) f))))
+  (val cell (EvictionCell))
+  (<- (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler statless) (node-a-api) slog-discard-handler]
+        (ticked-files settings cell 1)))
+  (assert (= cell.box-held (+ FLOOR (- (* 512 MIB) EXEC-USE))) (// cell.box-held MIB))
+  (assert (in "commands" cell.told-failure) cell.told-failure))
+
+
+(deftest test-the-demand-room-and-the-layer-floors-are-declared-per-machine
+  (val env {"WORKER_CLI_LAYER_CEILING" "6G" "WORKER_CLI_TURN_BYTES" "1536M" "WORKER_CLI_TURN_SLOTS" "3"
+            "WORKER_LAYER_FLOORS" "commands=256M exec=128M"})
+  (<- clis (| CliLayerSettings None) (cli-layer-settings-of env OWN NODE-A-LAYOUT "jobs"))
+  (assert (= clis.turn-room-bytes (* 3 1536 MIB)) clis.turn-room-bytes)
+  (assert (= clis.layers #((BoxLayerSettings :name "commands" :dir COMMANDS :cap-bytes FLOOR :floor-bytes COMMAND-ROOM)
+                           (BoxLayerSettings :name "exec" :dir EXEC :cap-bytes (* 512 MIB) :floor-bytes (* 128 MIB))))
+          clis.layers)
+  (<- default-room int (cli-turn-room-bytes {}))
+  (assert (= default-room TURN-ROOM) default-room)
+  ;; 失敗ケース: 綴りの読めない余白・本数、jobs・clis・層の宣言に無い層・静的な値より大きい余地・2 度の宣言、天井の無い機体の宣言は起動を断る。
+  (for [extra #({"WORKER_CLI_TURN_BYTES" "max"} {"WORKER_CLI_TURN_SLOTS" "two"} {"WORKER_LAYER_FLOORS" "jobs=1G"}
+                {"WORKER_LAYER_FLOORS" "clis=1G"} {"WORKER_LAYER_FLOORS" "gate=1G"} {"WORKER_LAYER_FLOORS" "exec=1G"}
+                {"WORKER_LAYER_FLOORS" "exec=1M exec=2M"} {"WORKER_LAYER_FLOORS" "exec"})]
+    (var refused False)
+    (try
+      (<- (cli-layer-settings-of (| {"WORKER_CLI_LAYER_CEILING" "6G"} extra) OWN NODE-A-LAYOUT "jobs"))
+      (except [ValueError]
+        (:= refused True)))
+    (assert refused extra))
+  (for [stray #({"WORKER_LAYER_FLOORS" "commands=256M"} {"WORKER_CLI_TURN_SLOTS" "2"})]
+    (var stray-refused False)
+    (try
+      (<- (cli-layer-settings-of stray OWN NODE-A-LAYOUT "jobs"))
+      (except [ValueError]
+        (:= stray-refused True)))
+    (assert stray-refused stray)))
