@@ -8,9 +8,9 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 
 ## 公開 effect
 
-| effect | 入力 | 成功の答え | 失敗の答え(値で返す) |
+| effect | 入力 | 成功の答え | 失敗の答え |
 |---|---|---|---|
-| `ReadRow(table, key)` | 表・キー | `Row(key, value, version)` か `Missing()` | `Unreachable` |
+| `ReadRow(table, key)` | 表・キー | 答えの分け方は `defeffect` で宣言している(`:absent [Missing]`・`:failure [Unreachable]`・`:value` は無し)。成功 = `Row(key, value, version)`。不在 = `Missing()`(その鍵の行が無い・保持の期限を過ぎた終端の行 — 呼び手の `<-` が `Absent` に変える。値で受けたい所は `maybe` か `absent-as` で包む) | 失敗 = `Unreachable`(handler は今までどおり値で答え、呼び手の `<-` が `Raise(Unreachable)` に変える。値で受けたい所は `on-raise` か `result` で包む) |
 | `ListRows(table, where, fields, cursor, limit, descending_by, where_any)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限(1 以上 `LIST_LIMIT_MAX` = 5,000 以下 — 外は作る時に `ValueError`)・上から読む欄(下の註)・索引の欄の値の組(下の註) | 答えの分け方は `defeffect` で宣言している(`:failure [Unreachable NotIndexed]`・`:value [Reset]`・`:absent` は無し)。成功 = `Page(rows, next_cursor, epoch, sequence)`。値 = `Reset(epoch, floor)`(`cursor` の世代が置き場の版と違う・刈った変更より前の位置 — 一覧の頭から読み直して続ける普通の答え。失敗にも不在にもせず、呼び手が `Page` と分けて扱う) | 失敗 = `Unreachable`・`NotIndexed`(索引の無い欄で絞った誤り — 読み直しても同じ答えになり続きが無い。handler は今までどおり値で答え、呼び手の `<-` が `Raise(Unreachable)`・`Raise(NotIndexed)` に変える。値で受けたい所は `on-raise` か `result` で包む) |
 | `PutRow(table, key, value, expect, idempotency_key=None)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)・書き 1 つの身元の冪等キー(下の「行の書きの冪等キー」)。書き手の名は欄に無く、handler を組む時に身元から入る | 答えの分け方は `defeffect` で宣言している(`:failure [Refused Unreachable]`・`:value [Conflict]`・`:absent` は無し)。成功 = `Written(version, value, position, replayed)`(同じ冪等キー・同じ本文の送り直しは前の答えを `replayed=True` で)。値 = `Conflict(current)`(期待が今の行と合わない版の負け — 呼び手が読み直して撃ち直す普通の答え。失敗にも不在にもせず、呼び手が `Written` と分けて扱う) | 失敗 = `Refused(reason)`(宣言が許さない書き・同じ冪等キーの別の本文)・`Unreachable`(handler は今までどおり値で答え、呼び手の `<-` が `Raise(Refused)` / `Raise(Unreachable)` に変える。値で受けたい所は `on-raise` か `result` で包む) |
 | `WatchChanges(tables, cursor, timeout, limit, streams)` | 表の列・位置・待つ秒・上限・末尾を知りたい追記の列(既定 = 無し) | 答えの分け方は `defeffect` で宣言している(`:failure [Unreachable]`・`:value [Reset]`・`:absent` は無し)。成功 = `Changes(items, cursor, tails)`(`tails` = 名指した列ごとの末尾 `StreamTail(stream, sequence, at)` か `StreamTailEmpty(stream)` — 名指した順・名指さなければ空)。値 = `Reset(epoch, floor)`(`cursor` の世代が置き場の版と違う・刈った変更より前の位置 — `WatchCursor(epoch, floor)` から読み直して続ける普通の答え。失敗にも不在にもせず、呼び手が `Changes` と分けて扱う) | 失敗 = `Unreachable`(handler は今までどおり値で答え、呼び手の `<-` が `Raise(Unreachable)` に変える。値で受けたい所は `on-raise` か `result` で包む) |
@@ -23,6 +23,8 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `AppendEvents(appends)` | 追記の束 = `EventAppend(stream, idempotency_key, body)`(欄と意味は `AppendEvent` と同じ)の空でない tuple。同じ列の同じ冪等キーが 2 度出る束は作る時に `ValueError` | `AppendedEvents(items)`(束の順の、追記ごとの `Appended` か `Refused`) | `Unreachable`(束の全部が積まれたか、どれも積まれていない) |
 | `PutRowsAppendEvents(writes, appends, idempotency_key=None)` | 行の書きの束(`PutRows` と同じ `RowWrite` の空でない tuple・同じ検め)・追記の束(`AppendEvents` と同じ `EventAppend` の空でない tuple・同じ検め)・書き 1 つの冪等キー(`PutRows` と同じ) | 答えの分け方は `defeffect` で宣言している(`:failure [RowsRefused AppendRefused Unreachable]`・`:value [RowsConflict]`)。成功 = `WrittenAndAppended(rows, appends, replayed)`(`rows` = 行の束の `WrittenRows`・`appends` = 束の順の `Appended`。冪等キーの送り直しは前の答えを `replayed=True` で)。値 = `RowsConflict`(`PutRows` と同じ — 何も書かない) | 失敗 = `RowsRefused`(行の束の断り・同じ冪等キーの別の本文 — 何も書かない)・`AppendRefused(index, stream, idempotency_key, reason)`(追記の束のある追記の断り — 束の順で最初の断り。何も書かない)・`Unreachable`(全部が積まれたか、何も積まれていない) |
 | `ReadBatch(reads)` | 読みの束 = `ReadRow` か `ListRows` の空でない tuple(`READ_BATCH_MAX` 個まで・束の中の `ListRows` の `limit` の和は `LIST_LIMIT_MAX` まで — 外は作る時に `ValueError`・読みでない項は `TypeError`) | `BatchRead(items)`(束の順の、読みごとの答え — `ReadRow` は `Row` か `Missing`・`ListRows` は `Page` か `Reset` か `NotIndexed`) | `Unreachable`(束の全部が届かない — 読みの一部だけの答えは返さない) |
+
+答えの分け方は effect ごとの `defeffect` の宣言(`:absent`・`:failure`・`:value`)で決める。宣言のある effect は、handler が今までどおり答えを全部値で返し(handler の節は `Absent`・`Raise` を出さない)、呼び手の `<-` が `:absent` の型を `Absent` に・`:failure` の型を `Raise(答え)` に変える — 束ねた名は成功の型と `:value` の型だけになる。不在や失敗を値で受けたい呼び手は `maybe`・`absent-as`・`on-raise`・`result` で包む。宣言の無い `AppendEvents`・`ReadBatch`・`CountRows` は、失敗を今までどおり値で返す。
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
 (`doeff_cluster._shared.intent.semaphore_model`)をそのまま使う。
@@ -186,7 +188,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | 口 | 答え |
 |---|---|
 | `RowType(table, model)` | 表 1 つの行の型(欄の名 = 表の定義の欄の名・alias が在れば alias。写しは pydantic の `TypeAdapter`) |
-| `read_typed(row_type, key)` | `TypedRow(key, value, version)` か `Missing`・`Unreachable` |
+| `read_typed(row_type, key)` | `TypedRow(key, value, version)`。`Missing` は `ReadRow` の宣言どおり不在で `<-` が `Absent` に、`Unreachable` は失敗で `Raise` にして呼び手へ逃がす(値で受けたい所は `maybe`・`absent-as` か `on-raise`・`result` で包む) |
 | `list_typed(row_type, where=, cursor=, limit=, where_any=)` | `TypedPage(rows, next_cursor, epoch, sequence)` か `Reset`(`ListRows` の値の答えのまま)。`Unreachable`・`NotIndexed` は `ListRows` の宣言どおり失敗で、`<-` が `Raise` にして呼び手へ逃がす(値で受けたい所は `on-raise` か `result` で包む) |
 | `put_typed(row_type, key, value, expect)` | `TypedWritten(version, value, position)` か `TypedConflict(current)`(`PutRow` の値の答えのまま)。`Refused`・`Unreachable` は `PutRow` の宣言どおり失敗で、`<-` が `Raise` にして呼び手へ逃がす(値で受けたい所は `on-raise` か `result` で包む) |
 | `typed_change(row_type, change)` | `RowChanged` → `TypedRowChanged`(`RowRemoved` はそのまま) |

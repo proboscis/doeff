@@ -33,8 +33,9 @@
 (defk reads []
   {:pre [] :post [(: % tuple)]}
   "読みの 4 つ(parts の ReadRow・ListRows・WatchChanges と journal の ReadEvents)の答え(ListRows・WatchChanges・ReadEvents は失敗と宣言した
-   Unreachable が <- で Raise になるので、on-raise で Unreachable の値へ戻して ReadRow と並べる)。"
-  (<- read (ReadRow "parts" #("p1")))
+   Unreachable が <- で Raise になるので、on-raise で Unreachable の値へ戻す。ReadRow は不在 Missing を Absent・失敗 Unreachable を Raise に
+   するので、handler が値で答える事(R4)を見るために宣言を開かずに(Perform)値のまま受けて並べる)。"
+  (<- read (Perform (ReadRow "parts" #("p1"))))
   (<- listed (on-raise (ListRows "parts") (Unreachable detail) (Unreachable detail)))
   (<- watched (on-raise (WatchChanges #("parts") (WatchCursor 1 0) :timeout 0.0) (Unreachable detail) (Unreachable detail)))
   (<- events (on-raise (ReadEvents "journal" 0) (Unreachable detail) (Unreachable detail)))

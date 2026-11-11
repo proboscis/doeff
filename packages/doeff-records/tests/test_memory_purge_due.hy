@@ -5,7 +5,7 @@
 ;; 片付ける)— 刈りは SweepExpired の時だけ走り、読みと書きは走査しない。
 (require doeff-hy.macros [defk <- val var])
 (import dataclasses)
-(import doeff [run with_handlers])
+(import doeff [Perform run with_handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy._frozen [FrozenMap])
@@ -92,7 +92,7 @@
   (for [offset read-offsets]
     (<- (Delay (- offset waited)))
     (setv waited offset)
-    (<- row (ReadRow "tickets" #("g" "t1")))
+    (<- row (Perform (ReadRow "tickets" #("g" "t1"))))
     (.append seen (isinstance row Row)))
   seen)
 

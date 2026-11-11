@@ -23,7 +23,7 @@
 (import doeff_hy._wire_codec [Codec row-codec-of])
 (import doeff_hy._wire_malformed [Malformed])
 (import doeff_records._values [Row Missing Page Written RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
-                              ExpectVersion ExpectAny Expectation Reset Unreachable checked-table-name])
+                              ExpectVersion ExpectAny Expectation Reset checked-table-name])
 (import doeff_records._effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
 
 (setv M (TypeVar "M"))
@@ -142,10 +142,11 @@
 ;; --- 読み書き(汎用の effect の上の Program)----------------------------------------------------------------
 
 (defk read-typed [#^ (get RowType M) row-type #^ (get tuple #(str ...)) key]
-  {:pre [(: row-type (get RowType M)) (: key (get tuple #(str ...)))] :post [(: % (| (get TypedRow M) Missing Unreachable))]}
-  "行を鍵で 1 つ読み、行の型で返す。答え = TypedRow | Missing | Unreachable。"
-  (<- answer (ReadRow row-type.table key))
-  (if (isinstance answer Row) (typed-row row-type answer) answer))
+  {:pre [(: row-type (get RowType M)) (: key (get tuple #(str ...)))] :post [(: % (get TypedRow M))]}
+  "行を鍵で 1 つ読み、行の型で返す。答え = TypedRow。ReadRow が不在と宣言した Missing は <- が Absent にし、失敗と宣言した Unreachable は
+   Raise にして呼び手へ逃がす(不在を値で受けたい呼び手は maybe か absent-as で、失敗を値で受けたい呼び手は on-raise か result で包む)。"
+  (<- row (ReadRow row-type.table key))
+  (typed-row row-type row))
 
 
 (defk list-typed [#^ (get RowType M) row-type * [where None] [cursor None] [limit DEFAULT-LIST-LIMIT] [where-any None]]

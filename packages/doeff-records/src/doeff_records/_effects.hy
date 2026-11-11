@@ -25,7 +25,7 @@
 (import doeff_hy._frozen [FrozenMap freeze-json])
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny Expectation WatchCursor ListCursor Page checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
-                              Event EventAbsent EventRetired Changes Reset
+                              Event EventAbsent EventRetired Changes Reset Row Missing
                               Appended Refused Events NotIndexed Written Conflict WrittenRows RowsConflict RowsRefused
                               WrittenAndAppended AppendRefused ReadRowAnswer CountRowsAnswer
                               ReadBatchAnswer PutRowAnswer AppendEventsAnswer
@@ -90,13 +90,18 @@
     (raise (TypeError (+ what ".expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
 
 
-(defclass [(dataclass :frozen True)] ReadRow [(get EffectBase ReadRowAnswer)]
-  "行を鍵で 1 つ読む。答え = Row | Missing | Unreachable。"
-  (#^ str table)
-  (#^ (get tuple #(str ...)) key)
-  (defn #^ None __post_init__ [self]
-    (checked-table-name self.table "ReadRow.table")
-    (checked-key self.key "ReadRow.key")))
+(defeffect ReadRow
+  "行を鍵で 1 つ読む。答え = Row | Missing | Unreachable。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17): Row = 成功 / Missing = 不在(その鍵の行が無い、または保持の期限を過ぎた終端の行 —
+   <- は Absent を出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。値の答えは無い。答える handler は今までどおり
+   3 つとも値で答える(R4)。"
+  {:fields [(: table str) (: key (get tuple #(str ...)))]
+   :pre [(checked-table-name table "ReadRow.table")
+         (checked-key key "ReadRow.key")]
+   :answer (| Row Missing Unreachable)
+   :absent [Missing]
+   :failure [Unreachable]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defn #^ bool checked-list-rows [#^ object ask]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
