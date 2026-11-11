@@ -4,9 +4,11 @@ for it, and the fold never waits for a run's answer outside the step.
 Each case starts runs from the first input and records every input the step is given; the step finishes once the
 ends it expects have come, and one more quiet input (a timer) shows no second end came for any run.
 
-Counterexamples these checks name: a runtime that runs the program and publishes its own end (a runner cancelled
-before it started publishes nothing — the watcher check finds no end); a runtime that only reports
-values (the exception case never finishes); a runtime that waits for the answer inside the fold (the second run's end
+Counterexamples these checks name: a runtime whose runner publishes its own end and starts no watcher when the step
+cancels it (a runner cancelled before it started publishes nothing — the cancelled-before-start checks find no end); a
+runtime that takes every end it is published (a runner that published ends cancelled, and its watcher publishes a
+second end — the cancel checks find two, or a key used again takes the old run's second end); a runtime that only
+reports values (the exception case never finishes); a runtime that waits for the answer inside the fold (the second run's end
 comes after the first's though it ended first).
 """
 
@@ -29,7 +31,7 @@ from doeff_stream import (
     subscribe,
     timers,
 )
-from doeff_stream._fold import _watch
+from doeff_stream._fold import _watch_cancelled
 from doeff_stream._source import RunEnded
 from stream_test_support import T0, Kick, Started, forever, on_bus, run_on_sim
 
@@ -123,21 +125,54 @@ def test_a_run_cancelled_in_the_answer_that_started_it_gives_one_cancelled_input
 
 
 def test_a_runner_cancelled_before_it_started_still_gives_its_end() -> None:
-    # Through the fold a runner always starts before the fold's next effect (Spawn runs the child first), so this
-    # checks the watcher itself on a runner that never ran: its program publishes nothing, the watcher one end.
+    # The watcher itself on a runner that never ran: its program publishes nothing, the watcher one end.
     origin = object()
+    mark = object()
 
     @do
     def program():
         runner = yield Spawn(starts_then_waits("r"), priority=TaskPriority.IDLE)
         yield Cancel(runner)
-        yield _watch(origin, "r", runner)
+        yield _watch_cancelled(origin, mark, "r", runner)
         return (yield WaitForEvents(RunEnded, Started))
 
     (ended,) = run_on_sim(on_bus(EventBus(), "host", merge(subscribe(Started)), program()))
     assert ended.origin is origin
+    assert ended.mark is mark
     assert isinstance(ended.end, Raised)
     assert isinstance(ended.end.error, TaskCancelledError)
+
+
+def test_an_idle_run_cancelled_in_the_answer_that_started_it_gives_one_cancelled_input() -> None:
+    # Below the fold's priority the runner has not started when the cancel reaches it: only its watcher publishes.
+    seen = run_case(
+        recording((Run("r", starts_then_waits("r"), TaskPriority.IDLE), CancelRun("r")))
+    )
+    assert Started("r") not in seen
+    assert ends_of(seen) == [Cancelled("r")]
+
+
+def test_a_key_used_again_after_a_cancel_takes_only_the_new_run_s_end() -> None:
+    # The cancelled runner publishes its end and ends cancelled, so its watcher publishes a second one; the step
+    # starts "r" again on the first. The second end of the old run must not be taken as the new run's end.
+    def step(seen: tuple, event: object) -> Next[tuple]:
+        seen = (*seen, event)
+        match event:
+            case Kick():
+                return Next(seen, (Run("r", starts_then_waits("r")),))
+            case Started():
+                return Next(seen, (CancelRun("r"),))
+            case Cancelled(key="r"):
+                return Next(seen, (Run("r", answers(9)),))
+            case Answered(key="r"):
+                return Next(seen, (Run(QUIET, ArmTimer(QUIET, T0 + timedelta(hours=1))),))
+            case TimerFired(tag=tag) if tag == QUIET:
+                return Next(seen, (Finish(seen),))
+            case _:
+                return Next(seen)
+
+    seen = run_case(step)
+    assert ends_of(seen) == [Cancelled("r"), Answered("r", 9)]
 
 
 def test_a_cancel_the_run_raised_on_its_own_is_raised_not_cancelled() -> None:

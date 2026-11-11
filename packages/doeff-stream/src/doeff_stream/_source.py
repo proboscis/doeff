@@ -19,10 +19,12 @@ from doeff_stream._step import Answered, Cancelled, Raised, RunEnd
 
 @dataclass(frozen=True)
 class RunEnded:
-    """The bus event a run's watcher publishes when the run's task ended: the fold ``origin`` that started it, its
-    ``key`` and ``end``. The fold takes the events of its own origin and gives the step ``end``."""
+    """The bus event a run publishes when it ended (its runner, or the watcher of a cancelled run): the fold
+    ``origin`` that started it, the ``mark`` of that one run, its ``key`` and ``end``. The fold takes the events of its
+    own origin and gives the step ``end`` once per mark."""
 
     origin: object
+    mark: object
     key: Hashable
     end: RunEnd
 
