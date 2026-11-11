@@ -111,13 +111,13 @@
   (#^ Callable stop))
 
 
-(deff watch-mark [seen]  ; defk にできない: 見張りの thread が呼ぶ callback(watch-reporter が作る — Program の外)と defk の両方が同じ印を作る
+(deff watch-mark [seen]  ; cannot be a defk: 見張りの thread が呼ぶ callback(watch-reporter が作る — Program の外)と defk の両方が同じ印を作る
   {:pre [(: seen (| OpaqueJson str))] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
   "見張りが伝える物の比べの印を作るため: object は JSON の文・読めない理由はその文。"
   (if (isinstance seen str) #("error" seen) #("body" seen.text)))
 
 
-(deff watch-reporter [box key wake]  ; defk にできない: k8s の client の見張りの thread(Program の外)が、変化を受けるたびに呼ぶ callback を作る
+(deff watch-reporter [box key wake]  ; cannot be a defk: k8s の client の見張りの thread(Program の外)が、変化を受けるたびに呼ぶ callback を作る
   {:pre [(: box queue.SimpleQueue) (: key str) (: wake Callable)] :post [(: % Callable)] :tags {:context "coordinator" :role "protocol"}}
   "key の見張りの thread が呼ぶ callback を作るため: 受けた物(object か、読めない理由)が前に受け渡した物と違えば箱に受け渡して wake を呼ぶ
    (同じ物は続けて受け渡さない — 断られた見張りが試し直すたびに調停ループを起こさない)。最後に受け渡した印は callback ごとに持つ — 見張りを

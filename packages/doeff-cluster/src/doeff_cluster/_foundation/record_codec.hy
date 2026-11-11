@@ -308,7 +308,7 @@
        "f" (dfor f (dataclasses.fields v) f.name (encode-value (getattr v f.name) handles))}
     True (raise (UnencodableValue (.format "記録の形にできない値の型: {}" (type-name (type v)))))))
 
-(deff encode-error [#^ BaseException e #^ (| HandleTable None) [handles None]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+(deff encode-error [#^ BaseException e #^ (| HandleTable None) [handles None]]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
   {:pre [(: e BaseException) (: handles (| HandleTable None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "例外 → JSON。型の名・args・文・JSON にできる属性(__ で始まる物を除く — doeff の traceback 等)。"
   (setv args [])
@@ -320,7 +320,7 @@
       (try (setv (get attrs k) (encode-value x handles)) (except [UnencodableValue] None))))
   {"$e" (type-name (type e)) "args" args "msg" (str e) "attrs" attrs})
 
-(deff decode-value [#^ JsonValue j]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+(deff decode-value [#^ JsonValue j]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
   {:pre [(: j JsonValue)] :post [(: % RestoredValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "encode-value の逆。handle は ReplayHandle(再生の札)になる。"
   ;; 契約の確かめは入口の 1 度だけにし、節ごとの再帰は契約の無い局所の関数で回す(節ごとに確かめると大きな値で約 1.8 倍 — #2722)。
@@ -351,7 +351,7 @@
       True (dfor #(k x) (.items j) k (restored x))))
   (restored j))
 
-(deff decode-error [#^ dict j]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+(deff decode-error [#^ dict j]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
   {:pre [(: j dict)] :post [(: % BaseException)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "記録の例外を同じ型・同じ args・同じ属性で作り直す(__init__ は呼ばない — 独自の __init__ を持つ例外も同じ物になる)。
    型を import できなければ RecordedError(型の名と文)。"
@@ -374,7 +374,7 @@
 
 ;; --- 差分(大きな値) ---------------------------------------------------------------------------
 
-(deff _list-ops [prev new]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+(deff _list-ops [prev new]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
   {:pre [(: prev list) (: new list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "prev の list から new の list を作る手順: [\"r\" 始め 長さ](prev の連続した区間)と [\"v\" 値](新しい項)。"
   (setv index {})
@@ -395,7 +395,7 @@
   (flush)
   ops)
 
-(deff delta-of [#^ JsonValue prev #^ JsonValue new]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+(deff delta-of [#^ JsonValue prev #^ JsonValue new]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
   {:pre [(: prev JsonValue) (: new JsonValue)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "JSON の値 prev から new への差分(どの節も印付きの dict)。"
   ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
@@ -409,7 +409,7 @@
       True {"$v" new}))
   (delta prev new))
 
-(deff apply-delta [#^ JsonValue prev #^ dict delta]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+(deff apply-delta [#^ JsonValue prev #^ dict delta]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
   {:pre [(: prev JsonValue) (: delta dict)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "delta-of の逆 — 形の版 1 の記録の値を、前の値と差分から戻す。"
   ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
@@ -457,7 +457,7 @@
     None)
   (defn #^ int __len__ [self] (len self.order)))
 
-(deff intern-json [#^ JsonValue j #^ BlobMemory seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+(deff intern-json [#^ JsonValue j #^ BlobMemory seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
   {:pre [(: j JsonValue) (: seen BlobMemory) (: emit Callable) (: min-chars int)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "JSON の値 j を下から畳む: canonical が min-chars 以上の dict / list の節を {\"$ref\": h} に置き換え、seen に無い h なら
    (emit h 畳んだ節)を呼んで中身を書かせ、seen に足す。子が先に畳まれるので、親の比べる形の長さは子の参照の長さで測る。
@@ -480,7 +480,7 @@
     {"$ref" h})
   (folded j))
 
-(deff resolve-refs [#^ JsonValue j #^ dict blobs #^ (| dict None) [memo None]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+(deff resolve-refs [#^ JsonValue j #^ dict blobs #^ (| dict None) [memo None]]  ; cannot be a defk: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
   {:pre [(: j JsonValue) (: blobs dict) (: memo (| dict None))] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
   "intern-json の逆。blobs = h → 畳んだ節(blob の行の v)。無い参照は ValueError(記録が欠けている)。"
   (setv memo (if (is memo None) {} memo))
@@ -558,12 +558,12 @@
 ;; --- 型の宣言(__record_spec__)を読む ----------------------------------------------------------------
 ;; 宣言の値は欄の名(SPEC-FIELDS)と値の綴り(StrEnum の値)で読む(RecordSpec を import しない)。
 
-(deff _spec-subject [#^ str field]  ; defk にできない: 記録係・再生係が登録の subject として呼ぶ callback を作る
+(deff _spec-subject [#^ str field]  ; cannot be a defk: 記録係・再生係が登録の subject として呼ぶ callback を作る
   {:pre [(: field str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "foundation"}}
   "宣言の subject(記録の引数の欄の名)→ 対の鍵を作る関数(その欄の値の文字列)。"
   (fn [args] (str (.get args field))))
 
-(deff _codec-from-spec [#^ type cls]  ; defk にできない: codec-of(記録係・再生係が Program の外で呼ぶ純粋な関数)が呼ぶ
+(deff _codec-from-spec [#^ type cls]  ; cannot be a defk: codec-of(記録係・再生係が Program の外で呼ぶ純粋な関数)が呼ぶ
   {:pre [(: cls type)] :post [(: % EffectCodec)] :tags {:context "doeff-cluster" :role "foundation"}}
   "型の宣言の値 → 登録。宣言の欄を検め、読めない値は MalformedRecordSpec で型の名と欄を名指す(黙って既定の扱いへ倒さない)。"
   (setv where (type-name cls)
@@ -595,7 +595,7 @@
                :unexecuted (get _SPEC-UNEXECUTED unexecuted)
                :binds (if (is binds None) None (str binds))))
 
-(deff _declared-codec [#^ type cls]  ; defk にできない: codec-of と can-record(Program の外の純粋な関数)が呼ぶ
+(deff _declared-codec [#^ type cls]  ; cannot be a defk: codec-of と can-record(Program の外の純粋な関数)が呼ぶ
   {:pre [(: cls type)] :post [(: % (| EffectCodec None))] :tags {:context "doeff-cluster" :role "foundation"}}
   "型そのものの宣言(__dict__ の __record_spec__ — 親の宣言は継がない)から作った登録。初めて見た時に作って表に入れる。宣言が無ければ None。"
   (setv codec (.get _DECLARED cls))
@@ -608,7 +608,7 @@
   (setv (get _DECLARED cls) codec)
   codec)
 
-(deff can-record [#^ type cls]  ; defk にできない: 使い手の repo の登録漏れの検が Program の外で型ごとに問う
+(deff can-record [#^ type cls]  ; cannot be a defk: 使い手の repo の登録漏れの検が Program の外で型ごとに問う
   {:pre [(: cls type)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
   "その effect の型を記録できるか(登録表に在るか、型そのものが記録の形の宣言を持つか — 子 class は親の宣言では記録できない)。
    宣言が読めなければ MalformedRecordSpec(記録できるとも、できないとも答えない)。"

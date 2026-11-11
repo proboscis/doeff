@@ -17,7 +17,7 @@
     True (DueAt :at (min instants))))
 
 
-(deff earlier-of [#^ (| DueAt DueNow DueNever) first #^ (| DueAt DueNow DueNever) second]  ; defk にできない: earliest-due の reduce(Program の外)が呼ぶ純粋な比べ
+(deff earlier-of [#^ (| DueAt DueNow DueNever) first #^ (| DueAt DueNow DueNever) second]  ; cannot be a defk: earliest-due の reduce(Program の外)が呼ぶ純粋な比べ
   {:pre [(: first (| DueAt DueNow DueNever)) (: second (| DueAt DueNow DueNever))] :post [(: % (| DueAt DueNow DueNever))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "期限の答え 2 つのうち、先に判断を求める方を選ぶため: 今すぐは刻より先、刻どうしは早い方、無しはもう片方に譲る。"

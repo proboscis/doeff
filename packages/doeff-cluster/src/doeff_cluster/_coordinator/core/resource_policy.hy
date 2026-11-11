@@ -94,7 +94,7 @@
 
 
 (defn #^ (| GenerationRow None) carrying-row [#^ ClusterState state #^ str worker #^ str name #^ int now #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — observed-of)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — observed-of)が呼ぶ
   "Service name を置き先の worker で今動かしている process の行と、それを報告した世代(Service の status.process — 外の測り手は行の
    pid から process を読む)。今の世代の行が running なら今の世代の行。running でない間(同じ名の新しい世代が名乗り、前の世代が
    job を動かしている受け渡しの間 — 行の phase は elder-runs ほか)は、前の世代が running と報告した行(cluster_policy.elder-rows —
@@ -126,22 +126,22 @@
 ;; 判定の期限(#3064): readiness の判定が now と比べる期限の値の定義点。判定(running-process・service-readiness)はこの値と now を
 ;; 比べ、静かな区間の次の期限(readiness-due)も同じ値を読む(#1383 の決めの条件 (1) — 模擬だけの見積もりを持たない)。
 
-(defn #^ int carrier-stale-from [#^ WorkerReport st #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(running-process・handoff_policy.carrier-rows)が呼ぶ
+(defn #^ int carrier-stale-from [#^ WorkerReport st #^ ClusterTiming timing]  ; cannot be a defk: coordinator の純粋な判断(running-process・handoff_policy.carrier-rows)が呼ぶ
   "担い手の worker の報告 st を古いと数える最初の刻(報告の刻 + lease-ms + 1 ms)。"
   (+ st.at timing.lease-ms 1))
 
 
-(defn #^ int warm-until [#^ ClusterState state #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(running-process)が呼ぶ
+(defn #^ int warm-until [#^ ClusterState state #^ ClusterTiming timing]  ; cannot be a defk: coordinator の純粋な判断(running-process)が呼ぶ
   "coordinator の起動の直後(担い手の報告が揃っていない間)を終える刻(起動の刻 + lease-ms)。"
   (+ state.started-ms timing.lease-ms))
 
 
-(defn #^ int unreported-until [#^ ClusterState state #^ int window-ms]  ; defk にできない: coordinator の純粋な判断(service-readiness)が呼ぶ
+(defn #^ int unreported-until [#^ ClusterState state #^ int window-ms]  ; cannot be a defk: coordinator の純粋な判断(service-readiness)が呼ぶ
   "今の process の報告がまだ無い時に Unknown と言う間を終える刻(起動の刻 + window)。"
   (+ state.started-ms window-ms))
 
 
-(defn #^ int report-expired-from [#^ ReadinessReport report #^ int window-ms]  ; defk にできない: coordinator の純粋な判断(service-readiness)が呼ぶ
+(defn #^ int report-expired-from [#^ ReadinessReport report #^ int window-ms]  ; cannot be a defk: coordinator の純粋な判断(service-readiness)が呼ぶ
   "準備の報告 report を window の外と数える最初の刻(受けた刻 + window + 1 ms)。"
   (+ report.origin.at window-ms 1))
 
@@ -235,7 +235,7 @@
   (next (gfor r (reversed (or reports #())) :if (report-matches r.origin proc) r) None))
 
 
-(defn #^ (| str None) last-refusal [#^ ClusterState state #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断(handoff_policy.next-watch)が呼ぶ
+(defn #^ (| str None) last-refusal [#^ ClusterState state #^ str name #^ str want]  ; cannot be a defk: coordinator の純粋な判断(handoff_policy.next-watch)が呼ぶ
   "入れ替えを諦めた記録(HandoffWatch.last-report — 表示)に、新の世代が「なぜ準備できないか」を添えるため: 今の宣言の spec(指紋 want)を
    名乗る送り手が送った最後の ReportReady(偽)の reason(業務の側が書く)。無ければ None。前の試行の reason も載せるよう世代の名で
    絞らないので、Ready かどうかの判断には使わない(判断は service-readiness — 置き先の process の報告だけを数える)。表を読むのは
@@ -247,7 +247,7 @@
 
 
 (defn #^ frozenset placed-senders [#^ ClusterState state #^ str name]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — record-readiness・metrics_policy.record-metrics)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — record-readiness・metrics_policy.record-metrics)が呼ぶ
   "Service name の置き先(いまの置き先と drain で並べた置き先)の担い手が、名 name の行で動かしていると最後に報告した process の
    送り手 #(worker 世代の名) の組。readiness の判定(running-process)が報告を数える相手の候補で、報告の表がこの送り手の報告を
    必ず残す(keep-report)。時刻は問わない(担い手の報告が古い間も、最後に報告された process を置き先の process とみなす)。"
@@ -335,7 +335,7 @@
 
 
 (defn #^ bool service-stopped [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.target-view と version-state)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — api_policy.target-view と version-state)が呼ぶ
   "Service name が止まっているか: 宣言が無いか replicas 0、かつ置き先が無く、どこにも生きていない(still-live-somewhere)。
    Rollout の相手の観測(api_policy.target-view の stopped)と版の判定(version-state の Stopped)が同じ条件を読むための定義点。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
@@ -405,7 +405,7 @@
 
 
 (defn #^ tuple live-processes [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — observed-of と version-state)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — observed-of と version-state)が呼ぶ
   "Service name の process が生きている行の版と、入れ替えで退いた旧い process か(status.version.running — 事実の列で、判定ではない)。
    母集団は still-live-somewhere と同じ(cluster_policy.service-rows)で、phase は PROCESS-PHASES。drain で並べた置き先の process も入る。"
   (tuple (gfor row (service-rows now state name timing)
@@ -415,14 +415,14 @@
 
 
 (defn #^ (| JobPhase None) phase-named [#^ (| str None) phase]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "worker の行の phase の綴り → JobPhase。coordinator の知らない綴り(coordinator より新しい worker の phase)は None —
    呼び手は既定の状態へ倒さず「分からない」と答える。"
   (next (gfor p JobPhase :if (= p.value phase) p) None))
 
 
 (defn #^ NotReadyKind unplaced-not-ready [#^ UnplacedKind kind]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — running-process)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — running-process)が呼ぶ
   "置き先が無い理由の種類 → running-process の NotReady の種類(unplaced-jobs の 3 種をそのまま種類にする)。"
   (match kind
     UnplacedKind.WAITING-PREVIOUS-HOLDER NotReadyKind.WAITING-PREVIOUS-HOLDER
@@ -431,7 +431,7 @@
 
 
 (defn #^ VersionState phase-version [#^ JobPhase phase #^ bool retryable]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "担い手の行の phase(running-process が running でないと答えた行)→ 版の判定の状態。retryable = ENV-FAILED の失敗を worker が
    再試行するか(行の retryable)。phase を足したら写し先をここに足す — 漏れると何も返さず、網羅の検査(test_version_state)が赤になる。"
   (match phase
@@ -463,7 +463,7 @@
 
 (defn #^ VersionState not-ready-version [#^ NotReadyKind kind #^ (| JobPhase None) phase #^ bool retryable
                                          #^ bool [stuck False]]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "running-process が ok でない理由の種類 → 版の判定の状態(Unknown の答えは version-state が先に Unknown にする)。phase・retryable は
    種類が NOT-RUNNING の時だけ読む: 担い手の行の phase(None = 行にまだ載っていない = 宣言を受け取っていない)と ENV-FAILED を
    再試行するか。stuck は種類が REVISION-MISMATCH・SPEC-MISMATCH の時だけ読む: 動いている process の行が、新しい版の実行環境の
@@ -489,7 +489,7 @@
 
 
 (defn #^ VersionVerdict not-ready-verdict [#^ dict proc]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "running-process の NotReady の答え → 版の判定(理由は running-process の文)。担い手の行が coordinator の知らない phase を
    持つ時は Unknown(既定の状態へ倒さない)。"
   ;; row は種類が NOT-RUNNING の答え(担い手の行 — 行に載っていなければ None)と REVISION-MISMATCH・SPEC-MISMATCH の答え(動いている
@@ -505,7 +505,7 @@
 
 
 (defn #^ VersionVerdict version-state [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — snapshot と observed-of)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(Program の外 — snapshot と observed-of)が呼ぶ
   "Service name の指定の版が実際に仕事をしているか(status.version)。上から順に判定する:
    受け付けていない宣言 → Blocked・止まっている(service-stopped)→ Stopped・担い手の報告が途絶えている(running-process の
    Unknown)→ Unknown・入れ替えを諦めた → Blocked・running-process が ok でない → 理由の種類と phase で Updating / Blocked・
@@ -616,7 +616,7 @@
       None))
 
 
-(deff handover-of [#^ ClusterState state #^ WorkerInfo w #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
+(deff handover-of [#^ ClusterState state #^ WorkerInfo w #^ int now #^ ClusterTiming timing]  ; cannot be a defk: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
   {:pre [(: state ClusterState) (: w WorkerInfo) (: now int) (: timing ClusterTiming)] :post [(: % (| dict None))]
    :tags {:context "coordinator" :role "judgment"}}
   "worker w の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
@@ -717,7 +717,7 @@
   {"spec" (rollout-spec-to-json r.spec) "status" (rollout-status-to-json r.status)})
 
 
-(deff group-limit-row [#^ GroupLimit limit]  ; defk にできない: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
+(deff group-limit-row [#^ GroupLimit limit]  ; cannot be a defk: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
   {:pre [(: limit GroupLimit)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "組の上限 1 つの資源の行 {spec status} を綴るため(status は空 — 置いている数は拍ごとに動くので版に入れず、GET /state の groupLimits
    に出す)。"
@@ -1027,14 +1027,14 @@
 (setv NEEDS-OVERRIDE-REASON-CHARS 200)
 
 
-(deff needs-override-spec [#^ NeedsOverride override]  ; defk にできない: 版の比べ(snapshot・row-of)と保存の綴り(state file・durable KV — Program の外)が呼ぶ純粋な綴り
+(deff needs-override-spec [#^ NeedsOverride override]  ; cannot be a defk: 版の比べ(snapshot・row-of)と保存の綴り(state file・durable KV — Program の外)が呼ぶ純粋な綴り
   {:pre [(: override NeedsOverride)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "上書き 1 つの JSON の形(資源の行の spec・保存の値・GET の答えで同じ形 — 読みは state_json.needs-override-from-json)を 1 か所で綴るため。"
   {"needs" (list override.needs) "reason" override.reason "expiresAtMs" override.expires-ms "writer" override.writer
    "sinceMs" override.since-ms})
 
 
-(deff needs-override-row [#^ NeedsOverride override]  ; defk にできない: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
+(deff needs-override-row [#^ NeedsOverride override]  ; cannot be a defk: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
   {:pre [(: override NeedsOverride)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "上書き 1 つの資源の行 {spec status} を綴るため(status は空 — 外れたかどうかは行の有無と出来事の記録で表す)。"
   {"spec" (needs-override-spec override) "status" {}})

@@ -161,7 +161,7 @@
   (+ #("/bin/sh" "-c" SWEEP-SCRIPT (posixpath.dirname procs)) kept))
 
 
-(defn #^ tuple io-row [#^ str line]  ; defk にできない: io-totals の内包表記の中で 1 行ずつ呼ぶ(Program を返すと並びに組めない)
+(defn #^ tuple io-row [#^ str line]  ; cannot be a defk: io-totals の内包表記の中で 1 行ずつ呼ぶ(Program を返すと並びに組めない)
   "io.stat の 1 行を #(<major:minor> 読んだ byte 書いた byte) に(device の行でなければ空の tuple)。rbytes・wbytes の無い行と数でない値は 0。"
   (setv parts (.split line))
   (if (not (and parts (re.fullmatch "[0-9]+:[0-9]+" (get parts 0))))
@@ -170,7 +170,7 @@
           #((get parts 0) (int-or-zero (.get fields "rbytes" "")) (int-or-zero (.get fields "wbytes" ""))))))
 
 
-(defn #^ int int-or-zero [#^ str text]  ; defk にできない: io-row の欄の読みの中の小さな変換(Program を返すと数に組めない)
+(defn #^ int int-or-zero [#^ str text]  ; cannot be a defk: io-row の欄の読みの中の小さな変換(Program を返すと数に組めない)
   "10 進の数の綴りを数に(綴りが数でなければ 0)。"
   (if (.isdigit text) (int text) 0))
 

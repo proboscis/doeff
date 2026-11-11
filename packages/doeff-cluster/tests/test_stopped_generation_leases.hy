@@ -34,12 +34,12 @@
   (+ (holder-tokens-prefix (lease-holder job instance)) "1"))
 
 
-(defn #^ bool leased [#^ Coord c #^ str lock #^ str op #^ str token]  ; defk にできない: 模擬の世界の method を呼ぶ(状態を進める)
+(defn #^ bool leased [#^ Coord c #^ str lock #^ str op #^ str token]  ; cannot be a defk: 模擬の世界の method を呼ぶ(状態を進める)
   "lease lock への操作 op を token で 1 つ当て、答えの ok を返す(期限は LEASE-TTL-MS)。"
   (get (c.call "POST" (+ "/leases/" lock) {"op" op "token" token "permits" 1 "ttlMs" LEASE-TTL-MS} :actor None) "ok"))
 
 
-(defn #^ tuple holders-of [#^ Coord c #^ str lock]  ; defk にできない: 模擬の世界の状態を読む(leased と組で使う)
+(defn #^ tuple holders-of [#^ Coord c #^ str lock]  ; cannot be a defk: 模擬の世界の状態を読む(leased と組で使う)
   "盤の lease lock の行の担い手の token(並べた列 — 行が無ければ空)。"
   (setv row (.row c.state.board (+ "semaphore/" lock)))
   (if (is row None) #() (tuple (sorted (get row.value "holders")))))

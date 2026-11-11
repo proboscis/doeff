@@ -85,7 +85,7 @@
 (defclass ApiServerWorld []
   "API server の相手役の世界と、受けた物の入れ物: token = 認める身元の token・namespaces = 身元が Service を書ける namespace・down = 届かない
    世界か・objects = 持つ Service(初めて作った順)・seen = 受けた要求(受けた順)。受けるたびに組を作り直す。"
-  (defn #^ None __init__ [self #^ str token #^ tuple namespaces #^ bool [down False]]  ; defk にできない: class の作り手(Python が呼ぶ口)
+  (defn #^ None __init__ [self #^ str token #^ tuple namespaces #^ bool [down False]]  ; cannot be a defk: class の作り手(Python が呼ぶ口)
     "空の相手役を作るため。"
     (setv self.token token
           self.namespaces namespaces

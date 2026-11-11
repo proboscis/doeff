@@ -671,12 +671,12 @@
   (setv #^ str reason "")
   (setv #^ (| str None) last-report None)
 
-  (defn #^ (get dict #(str object)) to-json [self]  ; defk にできない: 保存の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
+  (defn #^ (get dict #(str object)) to-json [self]  ; cannot be a defk: 保存の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
     "保存の形(durable_kv と state-to-json が使う)。"
     {"declaration" self.declaration "sinceMs" self.since-ms "phase" self.phase.value
      "abandonedMs" self.abandoned-ms "reason" self.reason "lastReport" self.last-report})
 
-  (defn #^ (get dict #(str object)) status-json [self #^ int timeout-ms]  ; defk にできない: 資源の表示の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
+  (defn #^ (get dict #(str object)) status-json [self #^ int timeout-ms]  ; cannot be a defk: 資源の表示の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
     "Service の資源の status.handoff に載せる形(段が変わる時だけ変わる — 拍ごとに版と出来事の記録を進めない)。"
     (| {"phase" self.phase.value "sinceMs" self.since-ms "timeoutSeconds" (/ timeout-ms 1000)}
        (if (= self.phase HandoffPhase.ABANDONED)

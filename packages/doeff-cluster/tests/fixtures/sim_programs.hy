@@ -42,7 +42,7 @@
 
 ;; --- 詰められるが解けない値(Program を解けない宿の枝の見本)------------------------------------------------------
 
-(deff refuse-to-load []  ; defk にできない: cloudpickle が詰めた値を解く時に呼ぶ素の関数(Program の外)
+(deff refuse-to-load []  ; cannot be a defk: cloudpickle が詰めた値を解く時に呼ぶ素の関数(Program の外)
   {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "詰めた値を解く時に必ず断るため(実行先で Program を解けない — 版の違い・消えた module の代役)。"
   (raise (RuntimeError "解けない値(検の見本)")))

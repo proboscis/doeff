@@ -19,7 +19,7 @@
   "知らせの本文が出来事の型の形でない(受け手の源を名指しで落とす訳 — 形の違い Malformed を持つ)。")
 
 
-(deff notice-of [wire-type body]  ; defk にできない: doeff-events の道の decode(Program の外で呼ぶ普通の関数)から呼ぶ
+(deff notice-of [wire-type body]  ; cannot be a defk: doeff-events の道の decode(Program の外で呼ぶ普通の関数)から呼ぶ
   {:pre [(: wire-type type) (: body str)] :post [(: % (| WorkerGone WorkerBack))] :tags {:context "coordinator" :role "protocol"}}
   "知らせの本文を出来事の型へ解いて確かめるため(形が違えば MalformedNotice)。"
   (match (.decode-json (. wire-type __doeff_wire__ codec) body)
@@ -32,7 +32,7 @@
 
 ;; 道の表の行の型は doeff-events の受ける NoticeRoute[object](型ごとの行を 1 つの組に並べる形)なので、channel と encode は値の型 object の
 ;; callback で受ける(契約 :pre が 2 つの型だけを通し、本体はその型へ絞ってから使う)。
-(deff notice-text [#^ object event]  ; defk にできない: doeff-events の道の encode(Program の外で呼ぶ普通の関数)
+(deff notice-text [#^ object event]  ; cannot be a defk: doeff-events の道の encode(Program の外で呼ぶ普通の関数)
   {:pre [(: event (| WorkerGone WorkerBack))] :post [(: % str)] :tags {:context "coordinator" :role "protocol"}}
   "出来事を知らせの本文(defwire の JSON)へ綴るため。"
   (if (isinstance event #(WorkerGone WorkerBack))
@@ -40,20 +40,20 @@
       (raise (TypeError (repr event)))))
 
 
-(deff gone-of [body]  ; defk にできない: doeff-events の道の decode(Program の外で呼ぶ普通の関数)
+(deff gone-of [body]  ; cannot be a defk: doeff-events の道の decode(Program の外で呼ぶ普通の関数)
   {:pre [(: body str)] :post [(: % WorkerGone)] :tags {:context "coordinator" :role "protocol"}}
   "知らせの本文を WorkerGone へ解いて確かめるため(形が違えば MalformedNotice)。"
   (notice-of WorkerGone body))
 
 
-(deff back-of [body]  ; defk にできない: doeff-events の道の decode(Program の外で呼ぶ普通の関数)
+(deff back-of [body]  ; cannot be a defk: doeff-events の道の decode(Program の外で呼ぶ普通の関数)
   {:pre [(: body str)] :post [(: % WorkerBack)] :tags {:context "coordinator" :role "protocol"}}
   "知らせの本文を WorkerBack へ解いて確かめるため(形が違えば MalformedNotice)。"
   (notice-of WorkerBack body))
 
 
 
-(deff notice-channel [#^ object event]  ; defk にできない: doeff-events の道の channel(Program の外で呼ぶ普通の関数)
+(deff notice-channel [#^ object event]  ; cannot be a defk: doeff-events の道の channel(Program の外で呼ぶ普通の関数)
   {:pre [(: event (| WorkerGone WorkerBack))] :post [(: % str)] :tags {:context "coordinator" :role "protocol"}}
   "出来事を出す channel を決めるため(どの worker の出来事も 1 本の channel)。"
   WORKER-NOTICE-CHANNEL)

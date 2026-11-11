@@ -133,7 +133,7 @@
   #^ (get tuple #(str ...)) fields)
 
 
-(deff new-store-lock []  ; defk にできない: 置き場を同期に組む呼び(MemoryStore の組み立てと、pickle・copy から戻す所が呼ぶ — 錠は thread の間の取り決めで effect にならない)
+(deff new-store-lock []  ; cannot be a defk: 置き場を同期に組む呼び(MemoryStore の組み立てと、pickle・copy から戻す所が呼ぶ — 錠は thread の間の取り決めで effect にならない)
   {:pre [] :post [(: % (get AbstractContextManager #(bool None)))] :tags {:context "records" :role "foundation"}}
   "置き場 1 つの錠を作るため(同じ thread の入れ子は通す RLock)。thread に触るのはこの関数だけで、MemoryStore の class は作らずに
    make-lock として受ける(既定がこの関数 — 頭の註の最後の段)。"
@@ -219,7 +219,7 @@
           self.bells {}
           self.sorted-texts {}
           self.indexed-texts {}))
-  (deff __deepcopy__ [self memo]  ; defk にできない: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
+  (deff __deepcopy__ [self memo]  ; cannot be a defk: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
     {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
     "置き場の写しを作るため(使い手の模擬の検が、種を置いた置き場を検ごとに写す — 写しへの書きは元の置き場に届かない)。書き換える
      入れ物だけを写し、中身の値は共有する: 表 → 鍵 → 置き場の行の 2 段の dict・変更の列と刻・出来事の列と冪等キーの引き・消した鍵の覚え・
@@ -247,7 +247,7 @@
 
 ;; --- 呼び鈴(WatchChanges と WatchEvents の待ち手を起こす)---------------------------------------------------
 
-(deff ring-bells [store names]  ; defk にできない: 錠の内で同期に置き場を書く関数(handler の節と、handler の外から置き場を直に書く模擬の支度の両方)が呼ぶ
+(deff ring-bells [store names]  ; cannot be a defk: 錠の内で同期に置き場を書く関数(handler の節と、handler の外から置き場を直に書く模擬の支度の両方)が呼ぶ
   {:pre [(: store MemoryStore) (: names (| frozenset None))] :post [(: % None)]
    :tags {:context "records" :role "foundation"}}
   "書きが動かした名(表か列 — None = 全部: 版が進んだ・床が上がった)を待っている呼び鈴へ知らせて外すため。待つ名の重ならない待ち手は
@@ -262,7 +262,7 @@
   None)
 
 
-(deff _bell-names [tables streams]  ; defk にできない: 錠の内で同期に呼ぶ(watch-round と書きの鳴らし)
+(deff _bell-names [tables streams]  ; cannot be a defk: 錠の内で同期に呼ぶ(watch-round と書きの鳴らし)
   {:pre [(: tables tuple) (: streams tuple)] :post [(: % frozenset)]
    :tags {:context "records" :role "foundation"}}
   "呼び鈴が待つ名と書きが鳴らす名の形を 1 か所で決めるため: 表は #(\"table\" 表)・列は #(\"stream\" 列)(表と列が同じ綴りでも混ざらない)。
@@ -295,7 +295,7 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
-(defn #^ object guarded [#^ MemoryStore store #^ Callable operation]  ; defk にできない: 錠の内で同期に置き場を触る関数を 1 つ呼ぶ(_pg.hy の guarded と同じ役)
+(defn #^ object guarded [#^ MemoryStore store #^ Callable operation]  ; cannot be a defk: 錠の内で同期に置き場を触る関数を 1 つ呼ぶ(_pg.hy の guarded と同じ役)
   "operation(引数なしの関数)を置き場の錠の内で呼ぶ — 保持の刈りと操作の組を、他の thread の操作と重ねない。"
   (with [store.lock] (operation)))
 
@@ -307,7 +307,7 @@
   (with [store.lock] (purge-expired-locked store now-ms)))
 
 
-(defn #^ Swept memory-sweep [#^ MemoryStore store #^ int now-ms]  ; defk にできない: SweepExpired の節が錠の内で同期に流す置き場の書き(purge-expired と同じ作法)
+(defn #^ Swept memory-sweep [#^ MemoryStore store #^ int now-ms]  ; cannot be a defk: SweepExpired の節が錠の内で同期に流す置き場の書き(purge-expired と同じ作法)
   "SweepExpired に答えるため: 期限を過ぎた行と出来事を回収してから、外してよい刻の来た鍵の覚えを外す(頭の註の「鍵の覚えの外し」— 回収が
    今捨てた出来事の覚えも、長さが過ぎていれば同じ回に外れる)。答え = 消した行の数と外した覚えの数。"
   (with [store.lock]
@@ -315,13 +315,13 @@
     (Swept rows (forget-keys-locked store now-ms) (forget-write-keys-locked store now-ms))))
 
 
-(defn #^ bool stored-row-expired? [#^ TableDecl decl #^ StoredRow stored #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
+(defn #^ bool stored-row-expired? [#^ TableDecl decl #^ StoredRow stored #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
   "置き場の行 stored(表 decl)が刻 now-ms で保持の期限を過ぎた終端の行か — 回収の前の読みに出さないため(回収と同じ判定
    admission.row-expired?)。読みの関数(行・一覧・変更の列)の期限の見えはこの 1 つ。"
   (row-expired? decl stored.row.value stored.updated-ms now-ms))
 
 
-(defn #^ bool stored-event-expired? [#^ MemoryStore store #^ StreamDecl decl #^ Event event #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で出来事ごとに呼ぶ)
+(defn #^ bool stored-event-expired? [#^ MemoryStore store #^ StreamDecl decl #^ Event event #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で出来事ごとに呼ぶ)
   "置き場の出来事 event(列 decl)が刻 now-ms で保持の期限を過ぎたか — 回収の前の読みに出さないため(回収と同じ判定
    admission.event-expired?。組で数える列は組の最後の出来事の刻 StoredGroup.last-at で数える — 回収の GroupDue と同じ)。読みの関数
    (追記の読み・列の待ち・列の末尾)の期限の見えはこの 1 つ。送ってから外す列(StreamDecl.archive-before-retire)は、書きが冪等キーを
@@ -335,7 +335,7 @@
   (event-expired? decl (if (is group None) event.at (. (get store.groups #(event.stream group)) last-at)) now-ms))
 
 
-(defn #^ bool hidden-change? [#^ MemoryStore store #^ (| RowChanged RowRemoved) change #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(memory-watch-scan が内包表記の中で変更ごとに呼ぶ)
+(defn #^ bool hidden-change? [#^ MemoryStore store #^ (| RowChanged RowRemoved) change #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読みの判定(memory-watch-scan が内包表記の中で変更ごとに呼ぶ)
   "変更 change を WatchChanges の答えから外すか: 行の変わり(RowChanged)で、その行の今の値が刻 now-ms で保持の期限を過ぎた終端の行
    (回収の前 — 消えた の変更は回収 SweepExpired か、その行への書きが積む)。消えた(RowRemoved)と期限の無い表の変わりは外さない(PostgreSQL の
    pg_sql.hidden-changes-filter と同じ判定)。"
@@ -353,13 +353,13 @@
   (int (* 1000 retention.seconds)))
 
 
-(defn #^ None note-purge-due [#^ MemoryStore store #^ int due-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+(defn #^ None note-purge-due [#^ MemoryStore store #^ int due-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き
   "行か出来事を書いた時、それが消え得る刻で置き場の purge-due-ms を早める(遅くはしない — 下限のまま正しい)。"
   (when (or (is store.purge-due-ms None) (< due-ms store.purge-due-ms))
     (setv store.purge-due-ms due-ms)))
 
 
-(defn #^ None push-due [#^ MemoryStore store #^ int due-ms #^ (| RowDue EventDue GroupDue) item]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+(defn #^ None push-due [#^ MemoryStore store #^ int due-ms #^ (| RowDue EventDue GroupDue) item]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き
   "期限の索引に項を 1 つ積み、消え得る刻を早める。heap の要素は #(刻 積んだ順 項)の組 — heapq は要素どうしの比べでしか並べないので、
    刻と一意の番号を前に置き、項そのものは比べさせない。"
   (+= store.expiry-order 1)
@@ -367,7 +367,7 @@
   (note-purge-due store due-ms))
 
 
-(defn #^ None note-event-due [#^ MemoryStore store #^ StreamDecl decl #^ Event event]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+(defn #^ None note-event-due [#^ MemoryStore store #^ StreamDecl decl #^ Event event]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き
   "期限つき(KeepFor)の列に積んだ出来事 1 つを期限の索引に入れる。出来事ごとに数える列は出来事の項・組で数える列は組の最後の刻が
    動いた時(組が生まれた時を含む)だけ組の項を積む — 前の組の項は last-at が合わなくなり、取り出した時に読み捨てる。送ってから外す列
    (StreamDecl.archive-before-retire)は回収が外さないので項を積まない(組の最後の刻は読みの期限の見えに要るので数える)。"
@@ -392,7 +392,7 @@
   None)
 
 
-(defn #^ bool due-live? [#^ MemoryStore store #^ (| RowDue EventDue GroupDue) item]  ; defk にできない: 錠の内で同期に読む置き場の読み
+(defn #^ bool due-live? [#^ MemoryStore store #^ (| RowDue EventDue GroupDue) item]  ; cannot be a defk: 錠の内で同期に読む置き場の読み
   "期限の索引の項が、まだ置き場に在る物を指すか(偽 = 読み捨てる — 行が消えた・出来事が消えた・組の最後の刻が動いた)。"
   (match item
     (RowDue :table table :text text :stored stored)
@@ -405,7 +405,7 @@
     _ (raise (TypeError (.format "期限の索引の項ではない: {!r}" item)))))
 
 
-(defn #^ (| int None) next-purge-due [#^ MemoryStore store]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みと索引の読み捨て
+(defn #^ (| int None) next-purge-due [#^ MemoryStore store]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読みと索引の読み捨て
   "残っている行と出来事のうち、最も早く消える物の刻(row-expired? / event-expired? が真になる最初の刻)。無ければ None。
    索引の先頭の読み捨てられる項を外してから先頭の刻を読む — 費用は外した項の数 × log(索引の長さ)で、行と出来事の数に比例しない。
    終端でない行は索引に無い — 終端になる書きの時に項を積む。"
@@ -414,7 +414,7 @@
   (if store.expiry (get (get store.expiry 0) 0) None))
 
 
-(defn #^ int purge-expired-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired が錠の内で同期に呼ぶ置き場の書き
+(defn #^ int purge-expired-locked [#^ MemoryStore store #^ int now-ms]  ; cannot be a defk: purge-expired が錠の内で同期に呼ぶ置き場の書き
   "purge-expired の中身(呼び手が錠を持つ)。消え得る刻(purge-due-ms)より前なら索引を見ない。刈った後は刻を数え直す。"
   (when (or (is store.purge-due-ms None) (< now-ms store.purge-due-ms))
     (return 0))
@@ -423,7 +423,7 @@
   removed)
 
 
-(defn #^ int purge-expired-scan [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired-locked が錠の内で同期に呼ぶ置き場の書き
+(defn #^ int purge-expired-scan [#^ MemoryStore store #^ int now-ms]  ; cannot be a defk: purge-expired-locked が錠の内で同期に呼ぶ置き場の書き
   "期限の来た項だけを期限の索引から取り出し、指す行と出来事を消す。費用は取り出した項の数 × log(索引の長さ)— 行と出来事の数に
    比例しない(2026-09-29 の実測: 前の形は刈りのたびに全部の行と出来事を読み、手番の模擬の筋書き 1 つで刈り 731 回 × 出来事の全部 —
    ここの出自の issue は #907)。行の RowRemoved は表の名・鍵の文字列の順に積む(前の全部の走査と同じ順)。"
@@ -459,7 +459,7 @@
   None)
 
 
-(defn #^ None remember-events [#^ MemoryStore store #^ list events #^ int now-ms]  ; defk にできない: drop-events と retire-touched-events が錠の内で同期に呼ぶ置き場の書き
+(defn #^ None remember-events [#^ MemoryStore store #^ list events #^ int now-ms]  ; cannot be a defk: drop-events と retire-touched-events が錠の内で同期に呼ぶ置き場の書き
   "保持の期限を過ぎた出来事の冪等キーを刻 now-ms に覚え(retired-keys — 番号と本文の指紋だけ・remembered-at — 覚えた刻)、消した後か、
    送ってから外す列で置き場に残した出来事の同じ鍵の追記を、覚えで判じられるようにするため(#3022)。覚えが既に在る鍵は書き換えない
    (覚えた刻も — PostgreSQL の鍵だけの表の ON CONFLICT DO NOTHING と同じ)。"
@@ -472,7 +472,7 @@
   None)
 
 
-(defn #^ None settle-departed-keys [#^ MemoryStore store #^ list events #^ int now-ms]  ; defk にできない: drop-events が錠の内で同期に呼ぶ置き場の書き
+(defn #^ None settle-departed-keys [#^ MemoryStore store #^ list events #^ int now-ms]  ; cannot be a defk: drop-events が錠の内で同期に呼ぶ置き場の書き
   "置き場を去った出来事 events の鍵の覚えを、列の覚え方(StreamDecl.key-memory — 頭の註の「鍵の覚えの外し」)に従って残すため: 覚えを
    残さない列は覚えを外し(在れば — 送ってから外す列で書きが覚えた鍵)、長さを限った列は覚えて、外してよい刻(覚えた刻 + 長さ)を覚えの
    外しの索引に積み、外さない列は覚えるだけ。"
@@ -489,7 +489,7 @@
   None)
 
 
-(defn #^ int forget-keys-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: SweepExpired の節が錠の内で同期に呼ぶ置き場の書き
+(defn #^ int forget-keys-locked [#^ MemoryStore store #^ int now-ms]  ; cannot be a defk: SweepExpired の節が錠の内で同期に呼ぶ置き場の書き
   "長さを限って覚えた鍵(RememberKeysFor)のうち、外してよい刻 now-ms が来た覚えを外すため(頭の註の「鍵の覚えの外し」— 回収の一部)。
    索引の項は、覚えがまだ在り、鍵の出来事が置き場に無く(送ってから外す列は送り先に在ると確かめて外した後)、覚えた刻から列の長さを
    過ぎた時だけ覚えを外し、他は読み捨てる(出来事が置き場に残る鍵は、出来事を外す時に項を積み直す — settle-departed-keys)。費用は
@@ -506,7 +506,7 @@
   forgotten)
 
 
-(defn #^ None drop-events [#^ MemoryStore store #^ list events #^ int now-ms]  ; defk にできない: purge-expired-scan が錠の内で同期に呼ぶ置き場の書き
+(defn #^ None drop-events [#^ MemoryStore store #^ list events #^ int now-ms]  ; cannot be a defk: purge-expired-scan が錠の内で同期に呼ぶ置き場の書き
   "期限の来た出来事を冪等キーの引きと出来事の列から外し、鍵の覚え(retired-keys)へ番号と本文の指紋だけを、列の覚え方に従って移す
    (#3022 — 消した後の同じ鍵の追記も memory-append が同じ規則で判じる・settle-departed-keys)。覚えが既に在る鍵は書き換えない
    (PostgreSQL の鍵だけの表の ON CONFLICT DO NOTHING と同じ)。列は番号の順なので、1 つずつ番号で二分探索して外す。列は差し替える
@@ -526,7 +526,7 @@
 
 ;; --- 行 --------------------------------------------------------------------------------------------------
 
-(defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ReadRow に答えるため: 行が無いか、刻 now-ms で保持の期限を過ぎた終端の行(回収の前でも)なら Missing。"
   (setv decl (store.schema.table ask.table)
         stored (.get (get store.rows ask.table) (key-text ask.key)))
@@ -540,7 +540,7 @@
   #^ FrozenMap rest)
 
 
-(defn #^ (| KeyedTexts None) memory-keyed-texts [#^ MemoryStore store #^ TableDecl decl #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (| KeyedTexts None) memory-keyed-texts [#^ MemoryStore store #^ TableDecl decl #^ FrozenMap where-any]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "鍵の欄が 1 つの表で、値の組の絞り where-any がその鍵の欄を名指す時に、組の値の行を鍵で直に引くため(None = 鍵で引けない絞り — 呼び手は
    表の全部の行に絞りを当てる)。PostgreSQL の置き場の `key IN (…)` と同じ行を答える: 鍵は文字列の tuple なので、組の文字列でない値
    (数・真偽・null)は鍵の欄の値と json-equal? で等しくならず、どの行にも合わない。行の値の鍵の欄は鍵と同じ値(書きの判定 judge-put が
@@ -562,7 +562,7 @@
               :rest (FrozenMap (dfor #(name wanted) (.items where-any) :if (!= name field) name wanted))))
 
 
-(defn #^ list memory-matching-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ list memory-matching-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の行のうち、絞り(where・where-any)に合い、刻 now-ms で保持の期限を過ぎていない行の鍵の綴りを、綴りの順に返すため
    (ListRows と CountRows が同じ行を数える 1 点)。絞りを当てる候補は memory-candidate-texts が選ぶ(鍵で直に引いた行・宣言の index の
    欄の値の覚え・並べた鍵の覚え) — 上から読む頁の送りが頁ごとに表の全部の鍵を並べ直さない。"
@@ -573,7 +573,7 @@
         text))
 
 
-(defn #^ bool memory-row-visible? [#^ TableDecl decl #^ StoredRow stored #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
+(defn #^ bool memory-row-visible? [#^ TableDecl decl #^ StoredRow stored #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
   "置き場の行 stored が絞り(where・where-any)に合い、刻 now-ms で保持の期限を過ぎていないか — 一覧と数え(memory-matching-texts)と
    鍵の順の頁(memory-key-page-texts)が同じ行を見るための 1 つの判じ。"
   (and (row-matches? where stored.row.value)
@@ -581,7 +581,7 @@
        (not (stored-row-expired? decl stored now-ms))))
 
 
-(defn #^ (get list str) memory-sorted-texts [#^ MemoryStore store #^ str table-name]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get list str) memory-sorted-texts [#^ MemoryStore store #^ str table-name]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の鍵の綴りを綴りの順に並べた list を返すため(覚えが無ければ並べて覚える)。覚えは行の鍵が増える・消える書き
    (memory-store-row・remove-stored-row)が並びを保ったまま直すので、頁ごとに並べ直さない。返した list は呼び手が変えない。"
   (setv texts (.get store.sorted-texts table-name))
@@ -593,7 +593,7 @@
   texts)
 
 
-(defn #^ None note-text-added [#^ MemoryStore store #^ str table-name #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-store-row が新しい鍵を置いた時)
+(defn #^ None note-text-added [#^ MemoryStore store #^ str table-name #^ str text]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(memory-store-row が新しい鍵を置いた時)
   "表 table-name に新しく置いた鍵の綴り text を、並べた鍵の覚え(在れば)の並びの位置へ入れるため。"
   (setv texts (.get store.sorted-texts table-name))
   (when (is-not texts None)
@@ -601,7 +601,7 @@
   None)
 
 
-(defn #^ None note-text-removed [#^ MemoryStore store #^ str table-name #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(remove-stored-row が鍵を消した時)
+(defn #^ None note-text-removed [#^ MemoryStore store #^ str table-name #^ str text]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(remove-stored-row が鍵を消した時)
   "表 table-name から消した鍵の綴り text を、並べた鍵の覚え(在れば)から外すため。"
   (setv texts (.get store.sorted-texts table-name))
   (when (is-not texts None)
@@ -609,20 +609,20 @@
   None)
 
 
-(defn #^ (| tuple None) field-slot [#^ (| FrozenMap None) value #^ str field]  ; defk にできない: 錠の内で同期に呼ぶ欄の値の覚えの読み書きの判じ(内包表記と for が行ごとに呼ぶ)
+(defn #^ (| tuple None) field-slot [#^ (| FrozenMap None) value #^ str field]  ; cannot be a defk: 錠の内で同期に呼ぶ欄の値の覚えの読み書きの判じ(内包表記と for が行ごとに呼ぶ)
   "行の値 value(None = 行が無い)の欄 field が欄の値の覚えのどこに入るか: #(印)(印は admission.json-equal-token — 印を作れない値は
    None の印)/ None = 欄が無く、どの等しさの絞りにも合わない(row-matches? と row-matches-any? は欄の無い行を合わせない)。"
   (if (and (is-not value None) (in field value)) #((json-equal-token (get value field))) None))
 
 
-(defn #^ None index-add [#^ dict index #^ (| tuple None) slot #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ欄の値の覚えの書き
+(defn #^ None index-add [#^ dict index #^ (| tuple None) slot #^ str text]  ; cannot be a defk: 錠の内で同期に呼ぶ欄の値の覚えの書き
   "欄の値の覚え index の slot(field-slot の答え)の並びへ鍵の綴り text を並びの位置で入れるため(slot が None なら入れない)。"
   (when (is-not slot None)
     (bisect.insort (.setdefault index (get slot 0) []) text))
   None)
 
 
-(defn #^ None index-remove [#^ dict index #^ (| tuple None) slot #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ欄の値の覚えの書き
+(defn #^ None index-remove [#^ dict index #^ (| tuple None) slot #^ str text]  ; cannot be a defk: 錠の内で同期に呼ぶ欄の値の覚えの書き
   "欄の値の覚え index の slot の並びから鍵の綴り text を外すため(空になった並びは印ごと外す — 覚えの大きさを今の値の数に保つ)。"
   (when (is-not slot None)
     (setv texts (get index (get slot 0)))
@@ -632,7 +632,7 @@
   None)
 
 
-(defn #^ None note-row-indexed [#^ MemoryStore store #^ str table-name #^ str text #^ (| FrozenMap None) old #^ (| FrozenMap None) new]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-store-row と remove-stored-row が行を置き換える・消す時)
+(defn #^ None note-row-indexed [#^ MemoryStore store #^ str table-name #^ str text #^ (| FrozenMap None) old #^ (| FrozenMap None) new]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(memory-store-row と remove-stored-row が行を置き換える・消す時)
   "表 table-name の鍵の綴り text の行の値が old から new に変わった事(None = 行が無い)を、作ってある欄の値の覚えへ写すため。並べた鍵の
    覚えの無い表の覚えは古い物(行を直に置いた使い手の後)なので、直さずに外す — 次の読みが作り直す。"
   (when (not-in table-name store.sorted-texts)
@@ -646,7 +646,7 @@
   None)
 
 
-(defn #^ (get dict #(object (get list str))) memory-field-index [#^ MemoryStore store #^ str table-name #^ str field]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get dict #(object (get list str))) memory-field-index [#^ MemoryStore store #^ str table-name #^ str field]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の宣言の index の欄 field の値の覚え(印 → 鍵の綴りの並び)を返すため(覚えが無ければ表の行から作って覚える)。返した dict と
    並びは呼び手が変えない。"
   (setv texts (memory-sorted-texts store table-name)
@@ -660,7 +660,7 @@
   index)
 
 
-(defn #^ (| (get list str) None) memory-indexed-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (| (get list str) None) memory-indexed-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "絞り(where の等号・where-any の値の組)が名指す宣言の index の欄のうち、合い得る行の最も少ない欄の値の覚えから、その欄の値に合い得る
    行の鍵の綴りを綴りの順に返すため(None = index の欄の絞りが無いか、どの欄の絞りの値にも印を作れない — 呼び手は並べた鍵を辿る)。
    候補は欄の値の印が絞りの値の印と同じ行と、値の印を作れない行(json-equal? で照らすまで分からない)— 呼び手が候補に全部の絞りと期限を
@@ -681,7 +681,7 @@
     _ (list (heapq.merge #* runs))))
 
 
-(defn #^ (get tuple #((get list str) FrozenMap)) memory-candidate-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get tuple #((get list str) FrozenMap)) memory-candidate-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "絞り(where・where-any)を当てる候補の鍵の綴り(綴りの順)と、候補に当てる where-any を #(texts rest) で返すため(一覧・数え・鍵の順の頁の
    1 点): 鍵の欄の値の組の絞りは鍵で直に引いた行(memory-keyed-texts — rest は鍵の欄を除いた組)/ 宣言の index の欄の等しさの絞りは
    その欄の値の覚え(memory-indexed-texts)/ ほかは並べた鍵の覚え(memory-sorted-texts)。返した list は呼び手が変えない。"
@@ -692,7 +692,7 @@
   #((if (is indexed None) (memory-sorted-texts store table-name) indexed) where-any))
 
 
-(defn #^ (get list str) memory-key-page-texts [#^ MemoryStore store #^ TableDecl decl #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (get list str) memory-key-page-texts [#^ MemoryStore store #^ TableDecl decl #^ ListRows ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "鍵の順の頁(ListRows の並べる欄の無い読み)に出す行の鍵の綴りを、cursor の位置の後から綴りの順に最大 limit + 1 件返すため(limit 件を
    越える 1 件は続きの有無の判じだけに使う)。cursor の位置は並べた鍵の上を二分探しで探し、絞りは位置の後から綴りの順に当てて limit + 1 件
    見つけた所で止める — 頁ごとに表の全行を並べて絞りを当てると、頭からの頁送りの全読みが表の行の数の 2 乗になる(2026-10-31 の実測:
@@ -708,7 +708,7 @@
                 (+ ask.limit 1))))
 
 
-(defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ListRows に答えるため: 刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない(頁の上限の前に除く — 続きの位置がずれない)。"
   (setv decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
@@ -742,7 +742,7 @@
         store.head))
 
 
-(defn #^ (| Count NotIndexed) memory-count-rows [#^ MemoryStore store #^ CountRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (| Count NotIndexed) memory-count-rows [#^ MemoryStore store #^ CountRows ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "CountRows に答えるため: 絞りに合い、刻 now-ms で保持の期限を過ぎていない行のうち、下限 at-least があれば欄の値が整数で下限以上の行を
    数える(索引の無い欄の絞りは NotIndexed)。"
   (setv decl (store.schema.table ask.table))
@@ -759,21 +759,21 @@
                     1))))
 
 
-(defn #^ BatchRead memory-read-batch [#^ MemoryStore store #^ ReadBatch ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み(memory-read-row と同じ作法)
+(defn #^ BatchRead memory-read-batch [#^ MemoryStore store #^ ReadBatch ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み(memory-read-row と同じ作法)
   "ReadBatch の束に答えるため: 錠の内で束の順に読み 1 つずつを、同じ読みを 1 つ撃った時と同じ関数(memory-read-row・
    memory-list-rows)で同じ刻 now-ms に読む(memory の束は 1 つの断面 — 間に書きは入らない)。"
   (BatchRead (tuple (gfor one ask.reads
                           (if (isinstance one ReadRow) (memory-read-row store one now-ms) (memory-list-rows store one now-ms))))))
 
 
-(defn #^ (| Row None) memory-current-row [#^ MemoryStore store #^ str table #^ (get tuple #(str ...)) key]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ読み
+(defn #^ (| Row None) memory-current-row [#^ MemoryStore store #^ str table #^ (get tuple #(str ...)) key]  ; cannot be a defk: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ読み
   "書きの判定に渡す今の行(無ければ None)を置き場から引く。"
   (setv stored (.get (get store.rows table) (key-text key)))
   (if (is stored None) None stored.row))
 
 
 (defn #^ Written memory-store-row [#^ MemoryStore store #^ str table #^ tuple key #^ (| Row None) current #^ FrozenMap value
-                                   #^ str writer #^ FrozenMap diff #^ int now-ms]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
+                                   #^ str writer #^ FrozenMap diff #^ int now-ms]  ; cannot be a defk: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
   "判定を通った 1 行を置き場に書き、変更の列に 1 つ積み、書き手 writer が書いた差分 diff の書きの控えを変更の番号で置く(PutRow と PutRows の
    書きを 1 つにし、版と番号の採り方と書いた欄の導き方 — 判定にかけた差分の欄・admission.judged-diff の 1 か所 — を揃えるため)。"
   (setv version (if (is current None) 1 (+ current.version 1)))
@@ -813,7 +813,7 @@
     True stored.row))
 
 
-(defn #^ (| Written WrittenRows WrittenAndAppended Refused RowsRefused None) write-replay [#^ MemoryStore store #^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(memory-put-row / memory-put-rows の頭)
+(defn #^ (| Written WrittenRows WrittenAndAppended Refused RowsRefused None) write-replay [#^ MemoryStore store #^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読み(memory-put-row / memory-put-rows の頭)
   "鍵つきの書き ask の、同じ鍵の覚えによる答え(送り直しの答え・別の本文の断り・覚えが無ければ None)を引くため(頭の註の「行の書きの
    冪等キー」— 判じは admission.judge-write-replay の 1 か所)。"
   (if (is ask.idempotency-key None)
@@ -822,7 +822,7 @@
                           (append-parts ask))))
 
 
-(defn #^ None remember-write [#^ MemoryStore store #^ (| PutRow PutRows PutRowsAppendEvents) ask #^ (| Written WrittenRows WrittenAndAppended) answer #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(書きの確定と同じ錠の内で覚える)
+(defn #^ None remember-write [#^ MemoryStore store #^ (| PutRow PutRows PutRowsAppendEvents) ask #^ (| Written WrittenRows WrittenAndAppended) answer #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(書きの確定と同じ錠の内で覚える)
   "確定した鍵つきの書き ask の答えを、本文の指紋と覚えた刻と一緒に覚え、外してよい刻を覚えの外しの索引に積むため(鍵の無い書きは覚えない)。"
   (when (is-not ask.idempotency-key None)
     (setv key ask.idempotency-key)
@@ -834,7 +834,7 @@
   None)
 
 
-(defn #^ int forget-write-keys-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: SweepExpired の節が錠の内で同期に呼ぶ置き場の書き
+(defn #^ int forget-write-keys-locked [#^ MemoryStore store #^ int now-ms]  ; cannot be a defk: SweepExpired の節が錠の内で同期に呼ぶ置き場の書き
   "覚えた刻から WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを外すため(回収の一部 — PostgreSQL の handler の
    forget-write-keys と同じ境: 覚えた刻 + 長さ ≤ 今)。答え = 外した覚えの数。"
   (setv forgotten 0)
@@ -863,7 +863,7 @@
   written)
 
 
-(defn #^ (| WrittenRows RowsConflict RowsRefused) memory-put-rows [#^ MemoryStore store #^ str writer #^ PutRows ask #^ int now-ms]  ; defk にできない: memory の handler が同期に呼ぶ置き場の書き(memory-put-row と同じ作法)
+(defn #^ (| WrittenRows RowsConflict RowsRefused) memory-put-rows [#^ MemoryStore store #^ str writer #^ PutRows ask #^ int now-ms]  ; cannot be a defk: memory の handler が同期に呼ぶ置き場の書き(memory-put-row と同じ作法)
   "PutRows の束を全部か 0 で書く: 鍵つきの束は同じ鍵の覚えで先に判じ(memory-put-row と同じ)、他は全部の行を束の順に引き(期限を過ぎた
    行は消して無い行として — writable-row)、判定(admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積み、鍵つきなら
    答えを覚える。"
@@ -879,7 +879,7 @@
   written)
 
 
-(defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査
+(defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask #^ int now-ms]  ; cannot be a defk: 錠の内(watch-round)で同期に呼ぶ置き場の走査
   "今ある変更から 1 回ぶんの答え(待たない)。位置が今の版の外なら Reset。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の
    変わりは、回収の前でも出さない(上限の前に除く — 次の位置がずれない・hidden-change?)。名指した列(ask.streams)の末尾(最後の生きている
    出来事の番号と刻)は、変更と同じ錠の内の同じ断面で ReadStreamEnd と同じ探し方で読み、名指した順の tails にする(#3718)。"
@@ -907,7 +907,7 @@
   (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head)) tails))
 
 
-(defn #^ (| EventsMoved EventsQuiet) memory-events-scan [#^ MemoryStore store #^ WatchEvents ask #^ int now-ms]  ; defk にできない: 錠の内(watch-round)で同期に呼ぶ置き場の走査(memory-watch-scan と同じ作法)
+(defn #^ (| EventsMoved EventsQuiet) memory-events-scan [#^ MemoryStore store #^ WatchEvents ask #^ int now-ms]  ; cannot be a defk: 錠の内(watch-round)で同期に呼ぶ置き場の走査(memory-watch-scan と同じ作法)
   "WatchEvents の今の答え(待たない): 列 ask.stream に after より後の、刻 now-ms で保持の期限を過ぎていない出来事が在れば EventsMoved
    (回収の前の期限を過ぎた出来事では動かない)。出来事の列は番号の順なので、after の位置から後ろだけを見る(番号は全部の列で 1 本 —
    他の列の出来事は読み捨てる)。"
@@ -927,7 +927,7 @@
   #^ bool quiet)
 
 
-(deff watch-round [store ask now-ms bell]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の走査と呼び鈴の掛け
+(deff watch-round [store ask now-ms bell]  ; cannot be a defk: 錠の内(guarded の fn)で同期に呼ぶ置き場の走査と呼び鈴の掛け
   {:pre [(: store MemoryStore) (: ask (| WatchChanges WatchEvents)) (: now-ms int) (: bell (| ExternalPromise None))] :post [(: % WatchRound)]
    :tags {:context "records" :role "foundation"}}
   "刻 now-ms の断面を 1 回走査し(回収は走らせない — 期限を過ぎた行と出来事は走査が自分で除く・頭の註)、待ち続ける答えなら呼び鈴 bell を
@@ -1048,7 +1048,7 @@
 
 
 (defn #^ (| AppendNew AppendReplay Refused) judged-append [#^ MemoryStore store #^ StreamDecl decl #^ str stream #^ str idempotency-key
-                                                          #^ object body #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みと片付け(memory-append・memory-put-rows-append-events)
+                                                          #^ object body #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読みと片付け(memory-append・memory-put-rows-append-events)
   "追記 1 つを積んでよいかを判じるため(積まない — AppendEvent と PutRowsAppendEvents の判じを 1 つにする): 触る単位の期限を過ぎた出来事を
    片付け(retire-touched-events)、冪等キーの前の使い(生きた出来事・無ければ保持の期限で消した鍵の覚え)を引いて admission.judge-append で判じる。"
   (retire-touched-events store decl idempotency-key now-ms)
@@ -1059,7 +1059,7 @@
 
 
 (defn #^ Appended memory-store-event [#^ MemoryStore store #^ str writer #^ StreamDecl decl #^ str stream #^ str idempotency-key
-                                      #^ object body #^ (| WatchCursor None) position #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-append・memory-put-rows-append-events)
+                                      #^ object body #^ (| WatchCursor None) position #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(memory-append・memory-put-rows-append-events)
   "判じを通った新しい出来事 1 つを列に積むため(AppendEvent と PutRowsAppendEvents の積み方を 1 つにする — position = 同じ書きの行の最後の
    変更の位置・行を伴わない追記は None)。"
   (+= store.event-head 1)
@@ -1075,7 +1075,7 @@
   (Appended event.sequence False))
 
 
-(defn #^ object memory-append-one [#^ MemoryStore store #^ str writer #^ EventAppend one #^ (| StoreFault None) fault #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-append-events が束の順に呼ぶ)
+(defn #^ object memory-append-one [#^ MemoryStore store #^ str writer #^ EventAppend one #^ (| StoreFault None) fault #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(memory-append-events が束の順に呼ぶ)
   "束の追記 1 つを、同じ追記の AppendEvent として memory-append で判じて積むため。故障 fault の当たった追記は、lands でなければ積まずに
    故障の答え・lands なら積んでから故障の答え(answered と同じ差し替えを追記ごとに)。"
   (setv single (AppendEvent one.stream one.idempotency-key one.body))
@@ -1085,13 +1085,13 @@
     True (do (memory-append store writer single now-ms) fault.answer)))
 
 
-(defn #^ AppendedEvents memory-append-events [#^ MemoryStore store #^ str writer #^ AppendEvents ask #^ (get tuple #((| StoreFault None) ...)) faults #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-append と同じ作法)
+(defn #^ AppendedEvents memory-append-events [#^ MemoryStore store #^ str writer #^ AppendEvents ask #^ (get tuple #((| StoreFault None) ...)) faults #^ int now-ms]  ; cannot be a defk: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-append と同じ作法)
   "AppendEvents の束に答えるため: 錠の内で束の順に追記 1 つずつを memory-append-one で判じて積む(間に他の書きは
    入らない — 番号は束の順に増え、断られた追記は他の追記を止めない)。faults = 追記ごとに当たる故障(append-faults の答え — 無ければ None)。"
   (AppendedEvents (tuple (gfor #(one fault) (zip ask.appends faults :strict True) (memory-append-one store writer one fault now-ms)))))
 
 
-(defn #^ object memory-put-rows-append-events [#^ MemoryStore store #^ str writer #^ PutRowsAppendEvents ask #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-put-rows と同じ作法)
+(defn #^ object memory-put-rows-append-events [#^ MemoryStore store #^ str writer #^ PutRowsAppendEvents ask #^ int now-ms]  ; cannot be a defk: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-put-rows と同じ作法)
   "PutRowsAppendEvents に錠の内の 1 回で全部か 0 で答えるため: 鍵つきの書きは同じ鍵の覚えで先に判じ(行の束と追記の束の
    両方の指紋 — memory-put-rows と同じ)、次に行の束を PutRows と同じく判じ(admission.judge-put-rows — 通らなければその答えで何も書かない)、
    次に追記を束の順に積まずに判じる(judged-append — 断りがあれば束の順で最初の断りの AppendRefused で何も書かない)。全部通れば行を束の順に
@@ -1123,7 +1123,7 @@
   answer)
 
 
-(defn #^ (| Events NotIndexed) memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ (| Events NotIndexed) memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ReadEvents に答えるため: 刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない(上限の前に除く)。key-head を付けた読みは、
    冪等キーの頭が key-head の出来事だけを数える(列が頭で引けなければ NotIndexed)。"
   (setv decl (store.schema.stream ask.stream)
@@ -1139,7 +1139,7 @@
   (Events items (if items (. (get items -1) sequence) ask.after)))
 
 
-(defn #^ (| StreamEnd StreamEmpty) memory-read-stream-end [#^ MemoryStore store #^ ReadStreamEnd ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
+(defn #^ (| StreamEnd StreamEmpty) memory-read-stream-end [#^ MemoryStore store #^ ReadStreamEnd ask #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
   "ReadStreamEnd に答えるため: 刻 now-ms の断面で、列 stream の保持の期限を過ぎていない最後の出来事の番号(末尾は期限で変わる — 回収の前の
    期限を過ぎた出来事は数えない・全部過ぎれば StreamEmpty。列の出来事は番号の昇順に並ぶので後ろから探す)。"
   (setv decl (store.schema.stream ask.stream))
@@ -1149,7 +1149,7 @@
   (StreamEmpty))
 
 
-(defn #^ (| Event EventAbsent EventRetired) memory-read-event-by-key [#^ MemoryStore store #^ ReadEventByKey ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
+(defn #^ (| Event EventAbsent EventRetired) memory-read-event-by-key [#^ MemoryStore store #^ ReadEventByKey ask #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の読み(read-at-now の operation)
   "ReadEventByKey に答えるため: 列を辿らずに冪等キーの引き(by-idempotency)で出来事を 1 つ引く。刻 now-ms で保持の期限を過ぎていれば回収の前でも
    EventRetired・回収で消した鍵は覚え(retired-keys)の番号で EventRetired・どちらにも無ければ EventAbsent(消した鍵の再送は新しい出来事を
    積まない — judge-append — ので、生きた出来事と覚えは同じ鍵で重ならない)。"
@@ -1187,7 +1187,7 @@
   (guarded store (fn [] (prune-changes-locked store ask now-ms))))
 
 
-(defn #^ Pruned prune-changes-locked [#^ MemoryStore store #^ PruneChanges ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+(defn #^ Pruned prune-changes-locked [#^ MemoryStore store #^ PruneChanges ask #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き
   "memory-prune-changes の中身(呼び手が錠を持つ)。"
   (setv before (- now-ms (int (* 1000 ask.keep-seconds)))
         ;; 刈る範囲は番号の前方の連なり(刻が古い変更の最大の番号まで — PostgreSQL の handler と同じ)。upto-seq(送って確かめた番号の
@@ -1211,7 +1211,7 @@
   (tuple (sorted (gfor #(name decl) (.items store.schema.streams) :if decl.archive-before-retire name))))
 
 
-(defn #^ ExpiredEvents expired-page-locked [#^ MemoryStore store #^ tuple names #^ ReadExpiredEvents ask]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の読み
+(defn #^ ExpiredEvents expired-page-locked [#^ MemoryStore store #^ tuple names #^ ReadExpiredEvents ask]  ; cannot be a defk: 錠の内(guarded の fn)で同期に呼ぶ置き場の読み
   "ReadExpiredEvents の中身(呼び手が錠を持つ — PostgreSQL の handler の pg-read-expired-events と同じ頁): 続きの位置の列の、刻 ask.at
    の境で期限を過ぎた出来事(覚えた出来事を含む — stored-event-expired?)を、積んだ刻と番号の順に位置より後から 1 頁。頁が満ちれば
    その列の続き、満ちなければ次の列の頭(最後の列なら None)を続きの位置にする。"
@@ -1235,7 +1235,7 @@
                          True None)))
 
 
-(defn #^ RetiredEvents retire-archived-locked [#^ MemoryStore store #^ RetireArchivedEvents ask #^ int now-ms]  ; defk にできない: 錠の内(guarded の fn)で同期に呼ぶ置き場の書き
+(defn #^ RetiredEvents retire-archived-locked [#^ MemoryStore store #^ RetireArchivedEvents ask #^ int now-ms]  ; cannot be a defk: 錠の内(guarded の fn)で同期に呼ぶ置き場の書き
   "RetireArchivedEvents の中身(呼び手が錠を持つ): 送り先に在ると確かめた番号の出来事のうち、列 ask.stream の物で刻 ask.at の境で今も
    期限を過ぎた物だけを外して鍵を刻 now-ms に覚え(drop-events)、組からも外す(空になった組は外す)。答え = 外した出来事の数。"
   (setv decl (store.schema.stream ask.stream))
@@ -1289,7 +1289,7 @@
   answer)
 
 
-(defn #^ (| Unreachable None) unreachable-for [#^ MemoryStore store #^ tuple names]  ; defk にできない: handler の節の頭で同期に置き場の状態を読む(guarded と同じ位置)
+(defn #^ (| Unreachable None) unreachable-for [#^ MemoryStore store #^ tuple names]  ; cannot be a defk: handler の節の頭で同期に置き場の状態を読む(guarded と同じ位置)
   "names(effect が触る表と列の名)のどれかが届かない状態なら Unreachable、でなければ None(faults.SetStoreOutage)。"
   (setv outage store.outage)
   ;; 置いた不達は detail を持つ(detail が None の SetStoreOutage は不達を外す — memory-records-handler の節)。
@@ -1300,7 +1300,7 @@
 
 ;; --- 故障(検の口 faults.AddStoreFault / ClearStoreFaults)----------------------------------------------
 
-(defn #^ None memory-add-fault [#^ MemoryStore store #^ StoreFault fault]  ; defk にできない: handler の節と、doeff の実行の外で同期に筋書きを組む使い手(検の世界の支度)が呼ぶ置き場の書き
+(defn #^ None memory-add-fault [#^ MemoryStore store #^ StoreFault fault]  ; cannot be a defk: handler の節と、doeff の実行の外で同期に筋書きを組む使い手(検の世界の支度)が呼ぶ置き場の書き
   "故障を 1 つ置き場の故障の列の末尾に置く(AddStoreFault の節と同じ書き)。"
   (when (not (isinstance fault StoreFault))
     (raise (TypeError (.format "置けるのは StoreFault: {!r}" fault))))
@@ -1309,7 +1309,7 @@
   None)
 
 
-(defn #^ None memory-clear-faults [#^ MemoryStore store #^ (| (get frozenset str) None) names]  ; defk にできない: handler の節と、doeff の実行の外で同期に筋書きを組む使い手が呼ぶ置き場の書き
+(defn #^ None memory-clear-faults [#^ MemoryStore store #^ (| (get frozenset str) None) names]  ; cannot be a defk: handler の節と、doeff の実行の外で同期に筋書きを組む使い手が呼ぶ置き場の書き
   "names と名が 1 つでも重なる故障を外す(None = 全部 — ClearStoreFaults の節と同じ書き)。"
   (with [store.lock]
     (setv store.faults (if (is names None)
@@ -1318,7 +1318,7 @@
   None)
 
 
-(defn #^ None memory-spend-fault [#^ MemoryStore store #^ StoreFault fault]  ; defk にできない: handler の節が置き場の錠の内で同期に呼ぶ故障の列の書き(memory-add-fault と同じ作法)
+(defn #^ None memory-spend-fault [#^ MemoryStore store #^ StoreFault fault]  ; cannot be a defk: handler の節が置き場の錠の内で同期に呼ぶ故障の列の書き(memory-add-fault と同じ作法)
   "当たった故障 fault の当たる回数(StoreFault.times)を 1 つ使うため: 回数の無い故障は何もしない・残り 1 回の故障は列から外し・他は
    回数を 1 減らした故障に置き換える(置いた順は変えない — 列の中の同じ故障 object を探す)。"
   (when (is-not fault.times None)
@@ -1374,7 +1374,7 @@
   found)
 
 
-(defn #^ tuple first-seen-faults [#^ tuple faults]  ; defk にできない: answered-appends の for が同期に読む純粋な並べ直し
+(defn #^ tuple first-seen-faults [#^ tuple faults]  ; cannot be a defk: answered-appends の for が同期に読む純粋な並べ直し
   "束の追記ごとに当たった故障の並び faults(当たらない追記は None)から、当たった故障を最初に当たった順に 1 つずつ並べるため(同じ故障
    object は 1 度だけ — 束の故障の回数を 1 回ずつ使う)。"
   (tuple (gfor #(index fault) (enumerate faults)
@@ -1404,7 +1404,7 @@
   (if (is landed-cut None) answer landed-cut.answer))
 
 
-(defn #^ object rows-events-fault-answer [#^ PutRowsAppendEvents ask #^ int at #^ StoreFault fault]  ; defk にできない: answered-rows-events が同期に呼ぶ純粋な読み替え
+(defn #^ object rows-events-fault-answer [#^ PutRowsAppendEvents ask #^ int at #^ StoreFault fault]  ; cannot be a defk: answered-rows-events が同期に呼ぶ純粋な読み替え
   "PutRowsAppendEvents に当たった故障 fault の答えを、当たった所 at(0 = 書き全体・i = 追記の束の i - 1 番目)に合わせて読み替えるため: 追記に
    当たった Refused はその追記の AppendRefused(束は全部か 0 — 追記 1 つの断りで何も書かない形)・ほかは故障の答えのまま(PutRows の故障と同じ)。"
   (if (and (> at 0) (isinstance fault.answer Refused))
@@ -1666,14 +1666,14 @@
   #^ MemoryMark mark)
 
 
-(deff memory-mark [store]  ; defk にできない: 錠の内で同期に置き場の位置を読む(置き場の書きと同じ作法 — effect を出さない)
+(deff memory-mark [store]  ; cannot be a defk: 錠の内で同期に置き場の位置を読む(置き場の書きと同じ作法 — effect を出さない)
   {:pre [(: store MemoryStore)] :post [(: % MemoryMark)]}
   "置き場の今の位置を読むため(模擬の源の始まり — 始まりの位置の effect を出さない)。"
   (with [store.lock]
     (MemoryMark :epoch store.epoch :sequence store.head :event store.event-head)))
 
 
-(deff binding-keys [binding changes events]  ; defk にできない: 錠の外で同期に組む純粋な判断(memory-signals-since が内包表記の中で呼ぶ)
+(deff binding-keys [binding changes events]  ; cannot be a defk: 錠の外で同期に組む純粋な判断(memory-signals-since が内包表記の中で呼ぶ)
   {:pre [(: binding SignalTables) (: changes (get tuple #((| RowChanged RowRemoved) ...))) (: events (get tuple #(Event ...)))] :post [(: % (get tuple #(ChangedRow ...)))]}
   "結び 1 つの合図の keys を組むため: 結んだ表の変わった行(ChangedRow(表, 行の鍵の綴り)— 初めて出た順・同じ行は 1 つ)と、結んだ列の
    追記の頭(ChangedRow(列, 頭の番号の綴り))。記録の置き場の源と同じ keys の形。"
@@ -1687,7 +1687,7 @@
   (+ unique heads))
 
 
-(deff memory-signals-since [store bindings mark]  ; defk にできない: 錠の内で同期に置き場を読む(置き場の書きと同じ作法)
+(deff memory-signals-since [store bindings mark]  ; cannot be a defk: 錠の内で同期に置き場を読む(置き場の書きと同じ作法)
   {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: mark MemoryMark)] :post [(: % MemorySignals)]}
   "位置 mark より後の書きを、結びごとの合図にするため(結んだ表と列の書きの無い結びは出さない)。置き場の版が変わった・保持の刈りで位置が床より
    前になった時は、結びごとに keys の空な合図を 1 つ発する(受け手は読み直す — 記録の置き場の源が Reset で読み直すのと同じ)。"
@@ -1761,7 +1761,7 @@
                              WaitWithinEffect Spawn Cancel Wait))
 
 
-(deff memory-signal-handler [store bindings subscriber]  ; defk にできない: with-handlers の列に置く素の工場の関数 — 閉じの検の道具が宣言を読む形(records-signal-handler と同じ)
+(deff memory-signal-handler [store bindings subscriber]  ; cannot be a defk: with-handlers の列に置く素の工場の関数 — 閉じの検の道具が宣言を読む形(records-signal-handler と同じ)
   {:pre [(: store MemoryStore) (: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}
   "memory の置き場 store の書きを合図として発する源で本体を包む関数を作るため(模擬の組の源 — 素の工場で、with-handlers の列に置く)。bindings =
    SignalTables の tuple / subscriber = 購読者の名前。包んだ本体の間だけ源の task が動く。"

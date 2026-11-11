@@ -106,7 +106,7 @@
       CLOUDPICKLE-DISPATCH))
 
   ;; obj は pickle が詰めようとしている値そのもの(どの値にもなる)。答えは pickle の reduce の組か NotImplemented(cloudpickle の規則)。
-  (defn #^ (| tuple NotImplementedType) reducer-override [self #^ object obj]  ; defk にできない: pickle の library が呼ぶ callback
+  (defn #^ (| tuple NotImplementedType) reducer-override [self #^ object obj]  ; cannot be a defk: pickle の library が呼ぶ callback
     "handler の値に当たったら断り、それ以外は cloudpickle の規則に任せる。値ごと詰める関数(cloudpickle の規則が reduce の組を返した
      関数)は、その組を置き場に依らない組へ替える(portable-reduction)。"
     (when (and (callable obj) (not (isinstance obj type)) (hasattr obj "__doeff_handler_data__"))

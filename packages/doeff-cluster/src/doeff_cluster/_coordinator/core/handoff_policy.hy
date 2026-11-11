@@ -39,7 +39,7 @@
 (setv FINGERPRINT-MEMO-MAX 4096)
 
 
-(defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
+(defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; cannot be a defk: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
   "諦めを解く合図にする宣言の指紋: Service の宣言の保存の形(job-to-json)全体の指紋。process の形(spec-hash)に加えて、replicas・
    readiness(期限を延ばす書き換えを含む)・条件の書き換えでも変わる — 宣言を書き換えれば、同じ process の形でも入れ替えを試し直す。
    同じ job の object には覚えた値を返す(上の _FINGERPRINTS — 答えは object の中身だけで決まる)。"
@@ -56,13 +56,13 @@
   fingerprint)
 
 
-(defn #^ (| HandoffWatch None) kept-watch [#^ ClusterState state #^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(next-watch・handoff-due)が呼ぶ
+(defn #^ (| HandoffWatch None) kept-watch [#^ ClusterState state #^ ClusterJob job]  ; cannot be a defk: coordinator の純粋な判断(next-watch・handoff-due)が呼ぶ
   "Service job の保存した見張りのうち、今の宣言で始めた物(宣言の指紋が同じ)。見張りを持たなければ指紋を求めない。"
   (setv kept (.row state.handoffs job.spec.name))
   (if (and (is-not kept None) (= kept.declaration (declaration-fingerprint job))) kept None))
 
 
-(defn #^ (| tuple None) carrier-rows [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ (| tuple None) carrier-rows [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; cannot be a defk: coordinator の純粋な判断が呼ぶ
   "Service name の担い手の worker が報告した job の行(報告が lease-ms より新しい時だけ)。置き先が無い・
    報告が無い・古い時は None(判じない — 作り直しの直後に「旧が居ない」と取り違えて諦めを捨てないため)。"
   (setv placed (.row state.placements name)
@@ -72,24 +72,24 @@
       st.jobs))
 
 
-(defn #^ bool retired-live [#^ tuple rows #^ str name]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ bool retired-live [#^ tuple rows #^ str name]  ; cannot be a defk: coordinator の純粋な判断が呼ぶ
   "担い手の行に、Service name の退いた旧の process(retiredFrom = name)が動いている形で在るか(戻る先が在るか)。"
   (any (gfor row rows (and (= row.retired-from name) (in row.phase LIVE-PHASES)))))
 
 
-(defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ JobSpec spec]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ JobSpec spec]  ; cannot be a defk: coordinator の純粋な判断が呼ぶ
   "担い手の行に、今の宣言の spec で起こした Service name の process が動いている形で在るか(期限の起点)。指紋の比べは spec-hash-matches
    (中身の鍵の在る宣言を古い worker が版の指紋で起こした process も数える)。"
   (any (gfor row rows (and (= row.name name) (spec-hash-matches spec row.spec-hash) (in row.phase LIVE-PHASES)))))
 
 
-(defn #^ int handoff-deadline [#^ HandoffWatch watch #^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(next-watch)が呼ぶ
+(defn #^ int handoff-deadline [#^ HandoffWatch watch #^ ClusterJob job]  ; cannot be a defk: coordinator の純粋な判断(next-watch)が呼ぶ
   "入れ替えの見張り watch を諦めてよい最初の刻(起点 + 宣言の handoffTimeoutSeconds)。next-watch の諦めの境の定義点 — 静かな区間の
    次の期限(handoff-due・#3064)も同じ値を読む。"
   (+ watch.since-ms (handoff-timeout-ms job.readiness)))
 
 
-(defn #^ (| HandoffWatch None) next-watch [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
+(defn #^ (| HandoffWatch None) next-watch [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]  ; cannot be a defk: coordinator の純粋な判断が呼ぶ
   "Service job の 1 拍後の見張り(持たないなら None)。規則は頭注の 1〜3。"
   ;; 入れ替えでない Service は指紋を求めずに抜ける(指紋は見張りを持つ時と、見張りを始める時だけ要る)。
   (when (not (and job.spec.handoff (> job.replicas 0)))
@@ -143,7 +143,7 @@
   (min (gfor due dues :if (> due now) due) :default None))
 
 
-(defn #^ ClusterState watch-handoffs [#^ int now #^ ClusterState state #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(api_policy.settle)が呼ぶ
+(defn #^ ClusterState watch-handoffs [#^ int now #^ ClusterState state #^ ClusterTiming timing]  ; cannot be a defk: coordinator の純粋な判断(api_policy.settle)が呼ぶ
   "1 拍: 入れ替えの Service ごとに期限の見張りを進める(始める・諦める・捨てる)。変える物が無ければ同じ object(版と保存を進めない)。"
   (when (and (= (.size state.handoffs) 0) (not (any (gfor job state.jobs job.spec.handoff))))
     (return state))

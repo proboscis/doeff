@@ -166,7 +166,7 @@
   (#^ int client-ms))
 
 
-(deff talk-over-ws [#^ int port]  ; defk にできない: 外の library(asyncio.to_thread)が外の thread で呼ぶ callback
+(deff talk-over-ws [#^ int port]  ; cannot be a defk: 外の library(asyncio.to_thread)が外の thread で呼ぶ callback
   {:pre [(: port int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "protocol"}}
   "外の thread の客: 自分の event loop で talk を回す(答え = Heard の tuple)。"
   (defn :async #^ tuple talk []

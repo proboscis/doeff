@@ -42,7 +42,7 @@
     True (and (= (type a) (type b)) (= a b))))
 
 
-(defn #^ object json-equal-token [#^ object value]  ; defk にできない: memory の置き場が錠の内で同期に呼ぶ索引の鍵の綴り(json-equal? と同じ作法の純関数)
+(defn #^ object json-equal-token [#^ object value]  ; cannot be a defk: memory の置き場が錠の内で同期に呼ぶ索引の鍵の綴り(json-equal? と同じ作法の純関数)
   "値 value の json-equal? の等しさの印(hash できる値 — None = 印を作れない値: 浮動小数の NaN と hash できない値)。2 つの値の印が
    どちらも在る時、印が等しい事と json-equal? で等しい事は同じ — memory の置き場の索引(欄の値 → 鍵の綴り)の鍵にするため。真偽は数と
    分け・数は数として比べ(1 と 1.0 は同じ印)・写像は欄の名と値の印の組・配列(list と tuple)は印の並び・ほかは型と値。"
@@ -58,12 +58,12 @@
            (except [TypeError] None))))
 
 
-(defn #^ str key-text [#^ (get tuple #(str ...)) key]  ; defk にできない: memory の置き場が錠の内で同期に呼ぶ置き場の読み書き(memory-read-row・memory-store-row・hidden-change? ほか)と、使い手の同期の畳みが呼ぶ純粋な綴り(defk にすると錠の内で Program を走らせる手が無く、素の呼びは Program の値を辞書の鍵に引いて黙って外れる)
+(defn #^ str key-text [#^ (get tuple #(str ...)) key]  ; cannot be a defk: memory の置き場が錠の内で同期に呼ぶ置き場の読み書き(memory-read-row・memory-store-row・hidden-change? ほか)と、使い手の同期の畳みが呼ぶ純粋な綴り(defk にすると錠の内で Program を走らせる手が無く、素の呼びは Program の値を辞書の鍵に引いて黙って外れる)
   "鍵の綴り(JSON の配列・ASCII だけ)。頁の順はこの綴りの符号点の順 — PG では COLLATE \"C\" の順と同じになる。鍵は鍵の欄の順の文字列の tuple。"
   (json.dumps (list key) :separators #("," ":") :ensure-ascii True))
 
 
-(defn #^ (get tuple #(str ...)) key-from-text [#^ str text]  ; defk にできない: key-text と対の同期の綴りの戻し(使い手の同期の畳みと内包表記が呼ぶ)
+(defn #^ (get tuple #(str ...)) key-from-text [#^ str text]  ; cannot be a defk: key-text と対の同期の綴りの戻し(使い手の同期の畳みと内包表記が呼ぶ)
   "key-text の綴りから鍵(鍵の欄の順の文字列の tuple)へ戻す。"
   (tuple (json.loads text)))
 
@@ -102,7 +102,7 @@
   (and (bool decl.terminal) (in (state-of decl value) decl.terminal)))
 
 
-(defn #^ FrozenMap judged-diff [#^ TableDecl decl #^ FrozenMap diff]  ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
+(defn #^ FrozenMap judged-diff [#^ TableDecl decl #^ FrozenMap diff]  ; cannot be a defk: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
   "判定にかける差分: 書きの差分から、宣言に無い欄で値が None の物を落とす(残りの判定は全部この差分で判じる)。
    None は「その欄を消す」なので、行に無い欄の None は確定する中身を変えない — 行の型に既定値 None の欄を足した書き手は、その欄を
    宣言していない置き場にも書ける。宣言から外した欄が古い行に残っていても、その欄の None は落とすので欄は行に残り(消すのは欄を
@@ -168,7 +168,7 @@
       (Admitted value)))
 
 
-(defn #^ (| tuple RowsConflict RowsRefused) judge-put-rows [#^ RecordsSchema schema #^ tuple writes #^ tuple currents]  ; defk にできない: handler(memory・PG)が置き場の lock と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+(defn #^ (| tuple RowsConflict RowsRefused) judge-put-rows [#^ RecordsSchema schema #^ tuple writes #^ tuple currents]  ; cannot be a defk: handler(memory・PG)が置き場の lock と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
   "PutRows の束を全部か 0 で書けるかの判断を 1 か所に置く(memory と PostgreSQL の handler が同じ答えを返すため)。
    writes = RowWrite の tuple / currents = 各行の今の行(Row か None・writes と同じ順)。
    答え = 全部通れば各行の Admitted の tuple(writes と同じ順)/ 期待の合わない行があれば束の順で最初の行の RowsConflict /
@@ -190,7 +190,7 @@
 ;; 前にここで判じる: 同じ本文なら覚えた答えを送り直しと名乗って返し(行に触らない)、別の本文は冪等キーの断り。覚えの無い鍵と鍵の無い
 ;; 書きは今までどおり期待と書きの判定へ進む。
 
-(defn #^ dict expect-form [#^ object expect]  ; defk にできない: write-digest が置き場の錠の内と transaction の中で同期に呼ぶ綴り(この file の判断はすべて純関数の defn)
+(defn #^ dict expect-form [#^ object expect]  ; cannot be a defk: write-digest が置き場の錠の内と transaction の中で同期に呼ぶ綴り(この file の判断はすべて純関数の defn)
   "書きの期待を本文の指紋の綴りの形にするため(wire の expect の object と同じ形 — 期待の違う書きを別の本文と数える)。"
   (match expect
     (ExpectAbsent) {"kind" "absent"}
@@ -199,7 +199,7 @@
     _ (raise (TypeError (.format "知らない期待: {!r}" expect)))))
 
 
-(defn #^ str write-digest [#^ bool rows #^ tuple writes #^ (| tuple None) [appends None]]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
+(defn #^ str write-digest [#^ bool rows #^ tuple writes #^ (| tuple None) [appends None]]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
   "行の書き 1 つの本文の指紋を作るため(同じ冪等キーの書きが同じ書きの送り直しか、鍵の使い回しかを見分ける — 鍵と書き手の名は含めず、
    書きの種(rows = 束 PutRows か 1 行 PutRow か・追記の束を伴う PutRowsAppendEvents か)と、書きの並び writes の表・鍵・値・期待と、
    追記の束 appends(None = 追記を伴わない書き)の列・冪等キー・本文を含める)。writes = PutRow 1 つの tuple か行の束(どれも欄 table・key・
@@ -213,7 +213,7 @@
                     "appends" (lfor one appends {"stream" one.stream "idempotencyKey" one.idempotency-key "body" one.body})})))
 
 
-(defn #^ (| Written WrittenRows WrittenAndAppended) replayed-answer [#^ (| Written WrittenRows WrittenAndAppended) answer]  ; defk にできない: judge-write-replay が同期に呼ぶ値の作り直し(この file の判断はすべて純関数の defn)
+(defn #^ (| Written WrittenRows WrittenAndAppended) replayed-answer [#^ (| Written WrittenRows WrittenAndAppended) answer]  ; cannot be a defk: judge-write-replay が同期に呼ぶ値の作り直し(この file の判断はすべて純関数の defn)
   "覚えた書きの答えを、送り直しと名乗る答えにするため(版・値・位置・番号は前の答えのまま — 束は束の名乗りと各項の名乗りの両方。追記の束を
    伴う答えは、追記の各項も今は積んでいないと名乗る)。"
   (match answer
@@ -225,7 +225,7 @@
 
 (defn #^ (| Written WrittenRows WrittenAndAppended Refused RowsRefused None) judge-write-replay [#^ (| str None) key #^ bool rows #^ tuple writes
                                                                               #^ (| RememberedWrite None) remembered
-                                                                              #^ (| tuple None) [appends None]]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+                                                                              #^ (| tuple None) [appends None]]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
   "冪等キー key の書き(rows = 束か・writes = 書きの並び — write-digest と同じ)を、同じ鍵の覚え remembered(無ければ None)で判じるため
    (memory と PostgreSQL の handler が同じ答えを返す 1 か所)。appends = 追記の束(PutRowsAppendEvents — 指紋に含める。None = 追記を伴わない)。
    答え = 送り直しの答え(覚えた答えを replayed 真で — 期待も書きの判定も
@@ -243,7 +243,7 @@
 ;; 期限の判定は読みと回収の両方が使う(#3561): 読み(memory の読みの関数・PostgreSQL の読みの文の条件)は回収を待たずに期限を過ぎた
 ;; 行と出来事を出さず、回収(SweepExpired)と書きが触る物の片付け(#3605 の D)は同じ境で消す。境の刻は retention-cutoff-ms の 1 か所。
 
-(defn #^ (| int None) retention-cutoff-ms [#^ (| TableDecl StreamDecl) decl #^ int now-ms]  ; defk にできない: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ境の計算(この file の判断はすべて純関数の defn)
+(defn #^ (| int None) retention-cutoff-ms [#^ (| TableDecl StreamDecl) decl #^ int now-ms]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ境の計算(この file の判断はすべて純関数の defn)
   "保持の期限の境の刻(epoch ミリ秒): KeepFor の宣言なら 今 − 保持の秒(ミリ秒へ切り捨て)— 数え始める刻がこれ以下の物は期限を過ぎた。
    KeepForever なら None(期限が無い)。row-expired?・event-expired? と、PostgreSQL の読みと回収の文の境は、この 1 つの値を使う。"
   (if (isinstance decl.retention KeepFor)
@@ -307,7 +307,7 @@
   (all (gfor #(name wanted) (.items where) (and (in name value) (json-equal? (get value name) wanted)))))
 
 
-(defn #^ bool row-matches-any? [#^ FrozenMap where-any #^ FrozenMap value]  ; defk にできない: memory の置き場が錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+(defn #^ bool row-matches-any? [#^ FrozenMap where-any #^ FrozenMap value]  ; cannot be a defk: memory の置き場が錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "行の値 value が ListRows の値の組の絞り where-any に合うか(欄ごとに、欄が在り値が組のどれかと json-equal? で等しい — 欄どうしは AND・
    空の写像は全部の行に合う)を判じるため。PostgreSQL の置き場の文の条件は pg_sql の any-of-filter。"
   (all (gfor #(name members) (.items where-any)
@@ -349,7 +349,7 @@
   (#^ int sequence))
 
 
-(defn #^ str body-digest [#^ object body]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
+(defn #^ str body-digest [#^ object body]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
   "本文の指紋 = 正規の綴り(canonical-json)の UTF-8 の sha256(16 進 64 字)。保持の期限で本文を消した鍵の覚え(RetiredKey)に残し、
    消した後の再送の本文と比べる — 綴りが等しい ⇔ 指紋が等しい(sha256 の衝突を除く)ので、生きた出来事の比べと同じ規則になる。"
   (.hexdigest (hashlib.sha256 (.encode (canonical-json body) "utf-8"))))

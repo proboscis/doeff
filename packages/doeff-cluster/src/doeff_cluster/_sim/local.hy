@@ -1476,7 +1476,7 @@
   answer)
 
 
-(deff answered-body [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+(deff answered-body [#^ tuple answer #^ str what]  ; cannot be a defk: 答えの節が返事を Program への答えか例外に変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % (| dict list str int float bool None PlainText))] :tags {:context "doeff-cluster" :role "judgment"}}
   "返事 #(status 本文) の本文を返すため(300 以上・届かないなら理由つきの RemoteJobFailed — 本番の raise-for-status に当たる)。"
   (when (or (is (get answer 0) None) (>= (get answer 0) 300))
@@ -1484,7 +1484,7 @@
   (get answer 1))
 
 
-(deff refused-or-body [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+(deff refused-or-body [#^ tuple answer #^ str what]  ; cannot be a defk: 答えの節が返事を Program への答えか例外に変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % (| dict list str int float bool None PlainText))] :tags {:context "doeff-cluster" :role "judgment"}}
   "切り離した task と温める表の口の返事を読むため: 呼び手の誤り(400・409・413・429)は本番の client と同じ DetachedRefused
    (detached.detached-refusal)、それ以外は answered-body。"
@@ -1493,7 +1493,7 @@
     (answered-body answer what)))
 
 
-(deff object-body [#^ (| dict list str int float bool None PlainText) body #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+(deff object-body [#^ (| dict list str int float bool None PlainText) body #^ str what]  ; cannot be a defk: 答えの節が返事を Program への答えか例外に変える純粋な判断
   {:pre [(: body (| dict list str int float bool None PlainText)) (: what str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
   "欄を読む口の本文が JSON の object であることを確かめて dict として返すため(object でない本文は本番の送り手と同じく
    RemoteJobFailed — 型を持たない本文を添字で読まない)。"
@@ -1502,25 +1502,25 @@
       (raise (RemoteJobFailed (.format "{}: coordinator の返事の本文が object でない: {!r}" what body)))))
 
 
-(deff answered-object [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+(deff answered-object [#^ tuple answer #^ str what]  ; cannot be a defk: 答えの節が返事を Program への答えか例外に変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
   "欄を読む口の返事 #(status 本文) の本文を dict で返すため(answered-body の後に object であることを確かめる)。"
   (object-body (answered-body answer what) what))
 
 
-(deff refused-or-object [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えか例外に変える純粋な判断
+(deff refused-or-object [#^ tuple answer #^ str what]  ; cannot be a defk: 答えの節が返事を Program への答えか例外に変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
   "切り離した task と温める表の口の返事の本文を dict で返すため(refused-or-body の後に object であることを確かめる)。"
   (object-body (refused-or-body answer what) what))
 
 
-(deff unreached-reason [#^ tuple answer]  ; defk にできない: 答えの節が返事の理由を読む純粋な判断
+(deff unreached-reason [#^ tuple answer]  ; cannot be a defk: 答えの節が返事の理由を読む純粋な判断
   {:pre [(: answer tuple)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "届かなかった返事 #(None {\"error\" 理由}) の理由の 1 行を読むため。"
   (if (isinstance (get answer 1) dict) (str (.get (get answer 1) "error" "")) (str (get answer 1))))
 
 
-(deff board-written [#^ tuple answer]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
+(deff board-written [#^ tuple answer]  ; cannot be a defk: 答えの節が返事を Program への答えに変える純粋な判断
   {:pre [(: answer tuple)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
   "盤の compare-and-set の返事を WriteShared の答えにするため(409 = 合わなかった = 偽 — 本番の shared-http(write-accepted)と同じ読み)。"
   (if (= (get answer 0) 409) False (do (answered-body answer "盤に書けない") True)))
@@ -1676,7 +1676,7 @@
      (if (any (gfor w writes (and (.startswith w.key "outbox/") (is-not w.value None)))) (frozenset #(OUTBOX-BELL)) (frozenset))))
 
 
-(deff outbox-read-of [#^ tuple answer]  ; defk にできない: 答えの節が返事を読む純粋な判断
+(deff outbox-read-of [#^ tuple answer]  ; cannot be a defk: 答えの節が返事を読む純粋な判断
   {:pre [(: answer tuple)] :post [(: % (| dict str))] :tags {:context "doeff-cluster" :role "judgment"}}
   "出口の口の返事 #(status 本文) を、本番の outbox-response と同じく本文の object か理由の文にするため(届かない・200 でない・object でない
    本文は理由の文)。"
@@ -1775,7 +1775,7 @@
       _ (<- (Delay 1.0)))))
 
 
-(deff warm-answer-of [#^ tuple answer #^ str what]  ; defk にできない: 答えの節が返事を Program への答えに変える純粋な判断
+(deff warm-answer-of [#^ tuple answer #^ str what]  ; cannot be a defk: 答えの節が返事を Program への答えに変える純粋な判断
   {:pre [(: answer tuple) (: what str)] :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "judgment"}}
   "温める表の返事を、本番の warm-cluster と同じ読み(同じ定義 detached.warm-unconnected・warm-server-failure)で答えにするため:
    期限まで届かない = WarmUnreachable・coordinator の 5xx = WarmUnreachable・断り(400 ほか)= DetachedRefused・それ以外 = 行の姿。"
@@ -3404,17 +3404,17 @@
 (val ROLLED "rolled")  ; RollBellOf の約束の値(worker の一生の係が世代の終わりと競わせて見分ける)
 
 
-(defn #^ str elder-key [#^ str name #^ str boot]  ; defk にできない: 世界の handler の節(Program の外の純粋な綴り)が呼ぶ
+(defn #^ str elder-key [#^ str name #^ str boot]  ; cannot be a defk: 世界の handler の節(Program の外の純粋な綴り)が呼ぶ
   "退いた世代 boot の宿の真実を置く hosts の鍵。"
   (+ name ELDER-MARK boot))
 
 
-(defn #^ str host-key [#^ dict hosts #^ str name #^ (| str None) boot]  ; defk にできない: 世界の handler の節が呼ぶ純粋な判断
+(defn #^ str host-key [#^ dict hosts #^ str name #^ (| str None) boot]  ; cannot be a defk: 世界の handler の節が呼ぶ純粋な判断
   "worker name の世代 boot の宿の真実の hosts の鍵: 退いた世代として置いてあればその鍵、そうでなければ(None・今の世代)名。"
   (if (and (is-not boot None) (in (elder-key name boot) hosts)) (elder-key name boot) name))
 
 
-(defn #^ str pid-host-key [#^ dict hosts #^ str name #^ int pid]  ; defk にできない: end-process(純粋な綴り)が呼ぶ
+(defn #^ str pid-host-key [#^ dict hosts #^ str name #^ int pid]  ; cannot be a defk: end-process(純粋な綴り)が呼ぶ
   "worker name の process pid を持つ宿の真実の hosts の鍵(今の世代か、退いた世代のどれか)。見つからなければ名。"
   (next (gfor #(key truth) (.items hosts)
               :if (and (or (= key name) (.startswith key (+ name ELDER-MARK)))

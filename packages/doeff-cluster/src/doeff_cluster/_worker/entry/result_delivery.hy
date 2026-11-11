@@ -17,7 +17,7 @@
 (import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 
-(deff deliver-task-result [#^ RunContext ctx #^ str encoded]  ; defk にできない: process の入口(Program の外)が届けを 1 回走らせる
+(deff deliver-task-result [#^ RunContext ctx #^ str encoded]  ; cannot be a defk: process の入口(Program の外)が届けを 1 回走らせる
   {:pre [(: ctx RunContext) (: encoded str)] :post [(: % None)] :tags {:context "worker" :role "main"}}
   "task の詰めた結果 encoded を coordinator の POST /tasks/<id>/result へ届けるため(届かなければ worker の heartbeat が file の結果を運ぶ)。
    送り直しは接続の段の一巡し直し 1 回だけ(子の終わりを長く止めない)。"

@@ -212,7 +212,7 @@
 (val STAMP-PATTERN (re.compile r"(?<= )(pod|script|exec|imported|answered)=(\d+|-)(?= )"))
 
 
-(deff quiet-coordinator [#^ httpx.Request request]  ; defk にできない: 外の library(httpx の MockTransport)が呼ぶ callback
+(deff quiet-coordinator [#^ httpx.Request request]  ; cannot be a defk: 外の library(httpx の MockTransport)が呼ぶ callback
   {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "検の coordinator: heartbeat に空の宣言で答える(待ちの口は持たない)。"
   (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" [] "draining" False}))

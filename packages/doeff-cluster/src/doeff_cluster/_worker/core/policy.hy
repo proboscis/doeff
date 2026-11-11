@@ -104,12 +104,12 @@
   (setv probe (if (probed-job spec) (probe-of world spec) None))
   (if (and (is-not probe None) (= probe.state ProbeState.FAILED)) probe None))
 
-(defn #^ (| ProbeView None) probe-in-flight [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+(defn #^ (| ProbeView None) probe-in-flight [#^ WorldView world #^ JobSpec spec]  ; cannot be a defk: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "spec の入口の検めが走っている・同じ木の検めの終わりを待っているなら、その観測(2026-09-27 — 状態の probing)。"
   (setv probe (if (probed-job spec) (probe-of world spec) None))
   (if (and (is-not probe None) (in probe.state #(ProbeState.RUNNING ProbeState.QUEUED))) probe None))
 
-(defn #^ (| ProbeStatus None) probe-status [#^ int now #^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ
+(defn #^ (| ProbeStatus None) probe-status [#^ int now #^ WorldView world #^ JobSpec spec]  ; cannot be a defk: 純粋な判断の statuses(Program の外の関数)が呼ぶ
   "状態の報告の検めの姿: 宣言の spec の検めが通っていない間(走っている・待っている・失敗した)だけ。経過の秒は今の検めを起こしてから
    (失敗した後は、その回を起こしてから失敗までではなく 0 — 次の撃ち直しまでの間は failed の理由で読む)。"
   (setv probe (if (probed-job spec) (probe-of world spec) None))
@@ -123,7 +123,7 @@
                    ;; 失敗した回の理由は、失敗の間は detail、撃ち直した後は last-failure が運ぶ。
                    :last-failure (if (= probe.state ProbeState.FAILED) probe.detail probe.last-failure))))
 
-(defn #^ str probing-detail [#^ ProbeStatus probe]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ
+(defn #^ str probing-detail [#^ ProbeStatus probe]  ; cannot be a defk: 純粋な判断の statuses(Program の外の関数)が呼ぶ
   "検めの間の状態の 1 行(何回目か・何秒か・直前の失敗の理由)。"
   (+ (if (= probe.state ProbeState.QUEUED.value)
          (.format "入口の検めの順番待ち(同じ木の検めが走っている・{} 回目)" probe.attempts)
@@ -163,7 +163,7 @@
    報告だけがこの境を持ち、入れ替えで名から外した後の新しい process は、前の process が長く動いた後でも前の落ち続けの回数を引き継いだ)。"
   (and (is-not record.last-start-ms None) (>= (- now record.last-start-ms) policy.stable-run-ms)))
 
-(defn #^ (| int None) backoff-from [#^ JobRecord record]  ; defk にできない: 純粋な判断の in-backoff(Program の外の関数)が呼ぶ
+(defn #^ (| int None) backoff-from [#^ JobRecord record]  ; cannot be a defk: 純粋な判断の in-backoff(Program の外の関数)が呼ぶ
   "起こし直しの間(backoff)を数える起点を 1 か所で決める(in-backoff と、期限の worker_due.plan-due が読む): 最後の StartJob が起こせ
    なかった刻(終わりより後の出来事なので先に読む)、それ以外は停止を求めずに終わった刻。どちらも無ければ None。"
   (cond
@@ -175,7 +175,7 @@
   (setv since (backoff-from record))
   (and (is-not since None) (< (- now since) (backoff-ms record policy))))
 
-(defn #^ bool memory-given-up [#^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+(defn #^ bool memory-given-up [#^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; cannot be a defk: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "常駐の job spec が機体の memory の見張りに続けて止められ、起こし直しを止めたか(起こしの段 start-step と状態の行の phase-of・job-status が
    同じ述語を読む): memory-kill-limit 回に達し、最後に止められた process の spec が今の宣言と同じ(宣言が変われば新しい spec は起こす)。
    task は 1 度だけ走るので当たらない(止められた task は終わった task として返る)。"
@@ -183,7 +183,7 @@
        (>= record.memory-kills policy.memory-kill-limit)
        (= record.memory-killed-spec (spec-hash spec))))
 
-(defn #^ bool memory-tight-lapsed [#^ int now #^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+(defn #^ bool memory-tight-lapsed [#^ int now #^ JobSpec spec #^ JobRecord record #^ WorkerPolicy policy]  ; cannot be a defk: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "機体の memory の逼迫での task の起動の見送りが上限を越えたか(起こしの段 start-step と状態の行の phase-of・job-status・期限の
    worker_due.plan-due が同じ述語を読む): task(once)で、まだ起こしておらず(last-outcome が無い)、逼迫で最初に
    見送った刻から memory-tight-hold-limit-ms 以上経った。越えた task はこの worker では起こさない(coordinator が置き直した先と 2 か所で
@@ -227,14 +227,14 @@
          (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec compile-jobs))
     True #()))
 
-(defn #^ (| ProgramGap None) program-gap-of [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の program-waits(Program の外の関数)が呼ぶ
+(defn #^ (| ProgramGap None) program-gap-of [#^ WorldView world #^ JobSpec spec]  ; cannot be a defk: 純粋な判断の program-waits(Program の外の関数)が呼ぶ
   "spec の job の Program の file が手元に無ければ、その観測(無ければ None)。"
   (for [gap world.program-gaps]
     (when (= gap.job spec.name) (return gap)))
   None)
 
 
-(defn #^ bool program-waits [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+(defn #^ bool program-waits [#^ WorldView world #^ JobSpec spec]  ; cannot be a defk: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "spec の job を、Program の file が届くまで起こさないか(起こしの段 ready-tree-step・入れ替えの replace-step と handoff-actions・状態の行の
    phase-of が同じ述語を読む)。file が無いまま起こすと子の入口が読めずに終了 code 3 で落ち、coordinator に届かない間は取り直せないので
    落ち続ける。待てば次に取れた拍で起こせる。ただし coordinator が渡さないと答えた(gone)task は起こす: 子の入口が TaskFailed を結果の
@@ -245,7 +245,7 @@
        (not (and spec.once (is-not gap.failure None) gap.failure.gone))))
 
 
-(defn #^ str program-wait-detail [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の job-status の文(Program の外の関数)が呼ぶ
+(defn #^ str program-wait-detail [#^ WorldView world #^ JobSpec spec]  ; cannot be a defk: 純粋な判断の job-status の文(Program の外の関数)が呼ぶ
   "Program の file を待っている job の状態の行の文(取れなかった訳が在れば添える)。"
   (setv gap (program-gap-of world spec))
   (if (or (is gap None) (is gap.failure None))
@@ -291,13 +291,13 @@
     _ StartHold.PROBE-FAILED))
 
 
-(defn #^ bool elder-waits [#^ JobSpec spec]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+(defn #^ bool elder-waits [#^ JobSpec spec]  ; cannot be a defk: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "前の世代が動かしている印(elder-runs)を持つ常駐の recreate の job か(AL-D2f — 起こしの段 ready-tree-step と状態の行の phase-of が
    同じ述語を読む)。handoff と task は印を受けない。"
   (and spec.elder-runs (not spec.handoff) (not spec.once)))
 
 
-(defn #^ bool elder-ready [#^ int now #^ JobSpec spec #^ (| CodeView None) code #^ WorldView world #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+(defn #^ bool elder-ready [#^ int now #^ JobSpec spec #^ (| CodeView None) code #^ WorldView world #^ WorkerPolicy policy]  ; cannot be a defk: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
   "前の世代が動かしている印の job が、起こせる所まで揃ったか(AL-D2f — 状態の行の elder-runs): 木が READY で、入口の検めが通った
    (起こしの段 ready-tree-step が検めの action を返さない)。coordinator はこの行を見て前の世代から外す。"
   (setv tree (ready-path code))
@@ -440,13 +440,13 @@
       #()))
 
 
-(defn #^ int retired-limit-for [#^ JobSpec want #^ WorkerPolicy policy]  ; defk にできない: worker の純粋な判断(handoff-actions — defn)が呼ぶ
+(defn #^ int retired-limit-for [#^ JobSpec want #^ WorkerPolicy policy]  ; cannot be a defk: worker の純粋な判断(handoff-actions — defn)が呼ぶ
   "入れ替えの job want が同時に残す退いた process の数の上限 R を決めるため: 宣言の readiness の retiredLimit(JobSpec.retired-limit)が
    在ればそれ、無ければ worker の既定 policy.retired-limit(#4072 の D-3 の改め)。"
   (if (is want.retired-limit None) policy.retired-limit want.retired-limit))
 
 (defn #^ bool retired-room-full [#^ JobSpec want #^ str name #^ WorldView world #^ WorkerPolicy policy]
-  ;; defk にできない: worker の純粋な判断(handoff-actions・phase の外の job-status の文 — defn の中)が呼ぶ
+  ;; cannot be a defk: worker の純粋な判断(handoff-actions・phase の外の job-status の文 — defn の中)が呼ぶ
   "入れ替えの job name の退いてまだ動いている process が上限 R(retired-limit-for)に達しているか — 今の process を退かせずに待つ判断
    (handoff-actions)と、その待ちを状態の行の文に出す判断(job-status — 退いた process の空き待ち・AL-D1)が同じこの 1 つを読む。"
   (>= (len (retired-of world name)) (retired-limit-for want policy)))
@@ -834,7 +834,7 @@
   (#^ (| int None) backoff-ms)
   (#^ bool memory-killed))
 
-(defn #^ (| str None) exit-signal [#^ int exit-code]  ; defk にできない: 回収の行の欄を作る素の関数(exit-notes の gfor の中)
+(defn #^ (| str None) exit-signal [#^ int exit-code]  ; cannot be a defk: 回収の行の欄を作る素の関数(exit-notes の gfor の中)
   "終了 code を、終わらせた signal の名にする(signal で終わっていなければ None)。負の code = 子が直に signal で終わった(subprocess の
    returncode・待ちの子の exit の file — -1 は待ちの子の終わりの印が無い時の値 WarmLost と重なるので読まない)。128 + 番号 = 入れ物 shim が
    job の signal の終わりを写した値(shim.exit-status — 139 = SIGSEGV)。名の無い番号は SIG<番号>。"

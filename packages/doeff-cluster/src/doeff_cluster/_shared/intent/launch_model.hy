@@ -27,7 +27,7 @@
   (#^ (get tuple #(str ...)) exclusive)
   (#^ str doeff-commit)
   (setv #^ (| int None) memory-mib None)
-  (defn #^ None __post_init__ [self]  ; defk にできない: dataclass の __post_init__ — 起動の時に断られる値を宣言の時に断る
+  (defn #^ None __post_init__ [self]  ; cannot be a defk: dataclass の __post_init__ — 起動の時に断られる値を宣言の時に断る
     (when (not self.name)
       (raise (ValueError "WorkerLaunch.name は空でない worker の名")))
     (when (not self.provides)
@@ -45,7 +45,7 @@
    版だけ — CoordinatorLaunch と同じ形)。"
   (#^ str name)
   (#^ str doeff-commit)
-  (defn #^ None __post_init__ [self]  ; defk にできない: dataclass の __post_init__ — 起動の時に断られる値を宣言の時に断る
+  (defn #^ None __post_init__ [self]  ; cannot be a defk: dataclass の __post_init__ — 起動の時に断られる値を宣言の時に断る
     (when (not self.name)
       (raise (ValueError "StaticWorkerLaunch.name は空でない worker の名")))
     (when (not (and (= (len self.doeff-commit) 40) (all (gfor ch self.doeff-commit (in ch "0123456789abcdef")))))
@@ -55,7 +55,7 @@
 (defclass [(dataclass :frozen True)] CoordinatorLaunch []
   "coordinator の自己起動の版(WORKER_DOEFF_COMMIT — boot.sh は ROLE=coordinator でも同じ名で読む)。"
   (#^ str doeff-commit)
-  (defn #^ None __post_init__ [self]  ; defk にできない: dataclass の __post_init__
+  (defn #^ None __post_init__ [self]  ; cannot be a defk: dataclass の __post_init__
     (when (not (and (= (len self.doeff-commit) 40) (all (gfor ch self.doeff-commit (in ch "0123456789abcdef")))))
       (raise (ValueError (.format "CoordinatorLaunch の doeff-commit は 40 字の sha: {!r}" self.doeff-commit))))))
 

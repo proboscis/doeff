@@ -12,7 +12,7 @@
 (import doeff_cluster._shared.core.capabilities [effect-needs-problem])
 
 
-(deff task-priority-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
+(deff task-priority-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 priority(置く順の優先)が受けられない理由(None = 欄が無い・整数)。真偽値は整数として受けない。"
   (if (or (is value None) (and (isinstance value int) (not (isinstance value bool))))
@@ -24,7 +24,7 @@
 (val TASK-NOTIFY-MAX-LENGTH 200)
 
 
-(deff task-notify-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-notify-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 notify(終わりの知らせ先)が受けられない理由(None = 欄が無いか、空白を持たない
    TASK-NOTIFY-MAX-LENGTH 字までの文字列)。読み手は語の頭で自分の行を選ぶので、空白で語を割らせない。"
@@ -34,7 +34,7 @@
       (.format "notify は空白を持たない {} 字までの文字列(終わりの知らせ先): {!r}" TASK-NOTIFY-MAX-LENGTH value)))
 
 
-(deff task-rerun-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-rerun-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 rerun(担い手が消えた時の走らせ直しの名乗り)が受けられない理由(None = 欄が無いか、真偽の値)。"
   (if (or (is value None) (isinstance value bool))
@@ -42,7 +42,7 @@
       (.format "rerun は真偽の値(担い手が消えた時の走らせ直しの名乗り): {!r}" value)))
 
 
-(deff task-preemptible-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value #^ bool rerun]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-preemptible-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value #^ bool rerun]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: rerun bool)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 preemptible(優先の高い task に場所を譲るため止めて最初から動き直してよい名乗り — SubmitDetached の preemptible の註)が
    受けられない理由(None = 欄が無いか偽、または真偽の真で走らせ直し rerun も名乗る)。止めた task は走らせ直しの道で列へ戻るので、
@@ -54,19 +54,19 @@
     True None))
 
 
-(deff task-preemptible-json [#^ bool preemptible]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+(deff task-preemptible-json [#^ bool preemptible]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: preemptible bool)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "場所を譲る名乗りを本文の欄に綴るため(名乗らない task は欄を置かない — 旧い coordinator は知らない欄を捨てる)。"
   (if preemptible {"preemptible" True} {}))
 
 
-(deff task-rerun-json [#^ bool rerun]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+(deff task-rerun-json [#^ bool rerun]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: rerun bool)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "走らせ直しの名乗りを本文の欄に綴るため(名乗らない task は欄を置かない)。"
   (if rerun {"rerun" True} {}))
 
 
-(deff task-notify-json [#^ str notify]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+(deff task-notify-json [#^ str notify]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: notify str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "知らせ先の本文の欄を綴るため(空 = 知らせない は欄を置かない — 旧い coordinator は知らない欄を捨てる)。"
   (if notify {"notify" notify} {}))
@@ -79,7 +79,7 @@
 (val TASK-SHAPE-MAX-LENGTH 200)
 
 
-(deff task-shape-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-shape-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 shape(仕事の形 — SubmitDetached の shape の註)が受けられない理由(None = 欄が無いか、TASK-SHAPE-MAX-LENGTH 字以下の
    表示できる字だけの文字列 — 空は名乗らない)。"
@@ -89,7 +89,7 @@
       (.format "shape は {} 字以下の表示できる字の文字列(仕事の形): {!r}" TASK-SHAPE-MAX-LENGTH value)))
 
 
-(deff task-memory-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-memory-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 memoryMiB(memory の要り — 1 本の山の MiB)が受けられない理由(None = 欄が無いか、1 以上 TASK-MEMORY-MAX-MIB
    以下の整数)。真偽値は整数として受けない。"
@@ -99,7 +99,7 @@
       (.format "memoryMiB は 1 以上 {} 以下の整数(task 1 本の memory の山の MiB): {!r}" TASK-MEMORY-MAX-MIB value)))
 
 
-(deff task-memory-required-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-memory-required-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "切り離した task の送り(PUT /detached の本文と構築関数 submit-detached-task)の memory の要りが受けられない理由(None = 1 以上
    TASK-MEMORY-MAX-MIB 以下の整数)。要りの無い送りも断る(2026-11-02 から必須 — 名乗らない task を一律の見込みで数える道を閉じる)。
@@ -110,7 +110,7 @@
       (task-memory-refusal value)))
 
 
-(deff task-ungated-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
+(deff task-ungated-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 ungated(測った空きの門の外の名乗り — SubmitDetached の ungated の註)が受けられない理由(None = 欄が無いか、真偽の値)。"
   (if (or (is value None) (isinstance value bool))
@@ -118,7 +118,7 @@
       (.format "ungated は真偽の値(測った空きの門の外で置く名乗り): {!r}" value)))
 
 
-(deff task-room-claim-refusal [#^ bool ungated #^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) memory #^ int group-count]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+(deff task-room-claim-refusal [#^ bool ungated #^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) memory #^ int group-count]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: ungated bool) (: memory (| (get Mapping #(str object)) (get Sequence object) str int float bool None)) (: group-count int)]
    :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "切り離した task の送り(PUT /detached の本文と構築関数 submit-detached-task)の、置き先の空きの名乗りが受けられない理由を知るため
@@ -137,7 +137,7 @@
 (val TASK-LIMIT-KEYS (frozenset #("group" "part")))
 
 
-(deff task-limit-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読みと構築関数が呼ぶ純粋な判断
+(deff task-limit-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読みと構築関数が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "同時数の上限の組の名乗り 1 つ(本文の JSON の object {group part?})が受けられない理由(受けられれば None)。上限の値と範囲の欄
    (limit・scope — 2026-10-12 より前の送り手の形)は受けない — 値と範囲は系の宣言の GroupLimit が持つ。"
@@ -153,7 +153,7 @@
     True None))
 
 
-(deff task-limits-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
+(deff task-limits-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 limits(同時数の上限の組の列)が受けられない理由(None = 欄が無い・どれも受けられる)。同じ組を 2 度名乗る列は断る。"
   (cond
@@ -165,19 +165,19 @@
                (if twice (.format "limits に同じ組が 2 度ある: {}" twice) None)))))
 
 
-(deff task-limits-of [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; defk にできない: coordinator の本文と保存の行の読み(Program の外)が呼ぶ純粋な読み
+(deff task-limits-of [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文と保存の行の読み(Program の外)が呼ぶ純粋な読み
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (get tuple #(TaskLimit ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "受けられる limits の JSON(task-limits-refusal が None の値)→ TaskLimit の tuple(欄が無ければ空)。"
   (tuple (gfor item (or value []) (TaskLimit :group (get item "group") :part (.get item "part" "")))))
 
 
-(deff task-limit-json [#^ TaskLimit limit]  ; defk にできない: 本文の綴り(handler と模擬の宿)と保存の綴り(Program の外)が呼ぶ純粋な綴り
+(deff task-limit-json [#^ TaskLimit limit]  ; cannot be a defk: 本文の綴り(handler と模擬の宿)と保存の綴り(Program の外)が呼ぶ純粋な綴り
   {:pre [(: limit TaskLimit)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "組の名乗り 1 つ → 本文と保存の JSON の object を綴るため(区分を名乗らない組は part の欄を置かない)。"
   (| {"group" limit.group} (if limit.part {"part" limit.part} {})))
 
 
-(deff task-limits-json [#^ (get tuple #(TaskLimit ...)) limits]  ; defk にできない: 本文の綴り(handler と模擬の宿)と保存の綴り(Program の外)が呼ぶ純粋な綴り
+(deff task-limits-json [#^ (get tuple #(TaskLimit ...)) limits]  ; cannot be a defk: 本文の綴り(handler と模擬の宿)と保存の綴り(Program の外)が呼ぶ純粋な綴り
   {:pre [(: limits (get tuple #(TaskLimit ...)))] :post [(: % (get list (get dict #(str object))))] :tags {:context "doeff-cluster" :role "judgment"}}
   "TaskLimit の tuple → 本文と保存の JSON の形(task-limits-of の逆)。"
   (lfor l limits (task-limit-json l)))
@@ -186,7 +186,7 @@
 (val GROUP-LIMIT-KEYS (frozenset #("scope" "limit" "perPart" "system")))
 
 
-(deff group-limit-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) name #^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) spec]  ; defk にできない: 系の構成子(module の読み込みの時)・coordinator の受け口と保存の読み直し(Program の外)が呼ぶ純粋な判断
+(deff group-limit-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) name #^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) spec]  ; cannot be a defk: 系の構成子(module の読み込みの時)・coordinator の受け口と保存の読み直し(Program の外)が呼ぶ純粋な判断
   {:pre [(: name (| (get Mapping #(str object)) (get Sequence object) str int float bool None)) (: spec (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "系が宣言する組の上限 1 つ(name = 組の名・spec = JSON の object {scope limit perPart? system?})が受けられない理由(受けられれば None)。
@@ -207,20 +207,20 @@
     True None))
 
 
-(deff group-limit-of [#^ str name #^ (get Mapping #(str object)) spec]  ; defk にできない: 系の構成子と coordinator の受け口・保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff group-limit-of [#^ str name #^ (get Mapping #(str object)) spec]  ; cannot be a defk: 系の構成子と coordinator の受け口・保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: name str) (: spec (get Mapping #(str object)))] :post [(: % GroupLimit)] :tags {:context "doeff-cluster" :role "judgment"}}
   "受けられる組の上限(group-limit-refusal が None の名と spec)→ GroupLimit。"
   (GroupLimit :group name :scope (get spec "scope") :limit (get spec "limit") :per-part (.get spec "perPart" False) :system (.get spec "system" "")))
 
 
-(deff group-limit-spec [#^ GroupLimit limit]  ; defk にできない: 宣言の行の組み立て(module の外の CLI)と coordinator の資源の行・保存の綴り(Program の外)が呼ぶ純粋な綴り
+(deff group-limit-spec [#^ GroupLimit limit]  ; cannot be a defk: 宣言の行の組み立て(module の外の CLI)と coordinator の資源の行・保存の綴り(Program の外)が呼ぶ純粋な綴り
   {:pre [(: limit GroupLimit)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "GroupLimit → 資源 GroupLimit の spec の JSON の形(group-limit-of の逆 — 区分ごとに数えない組は perPart の欄を、持ち主の無い組は
    system の欄を置かない)。"
   (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {}) (if limit.system {"system" limit.system} {})))
 
 
-(deff task-placing-json [#^ int priority #^ (get tuple #(TaskLimit ...)) limits #^ (| int None) [memory-mib None] #^ str [shape ""]]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+(deff task-placing-json [#^ int priority #^ (get tuple #(TaskLimit ...)) limits #^ (| int None) [memory-mib None] #^ str [shape ""]]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: priority int) (: limits (get tuple #(TaskLimit ...))) (: memory-mib (| int None)) (: shape str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・memory の要りを名乗らない・形を名乗らないの欄は置かない — 旧い coordinator は
    知らない欄を捨てる)。"
@@ -230,7 +230,7 @@
      (if shape {"shape" shape} {})))
 
 
-(deff task-ungated-json [#^ bool ungated]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+(deff task-ungated-json [#^ bool ungated]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: ungated bool)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "測った空きの門の外の名乗りを本文の欄に綴るため(名乗らない task は欄を置かない — 旧い coordinator は知らない欄を捨てる)。"
   (if ungated {"ungated" True} {}))

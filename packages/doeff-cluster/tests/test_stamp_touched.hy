@@ -30,14 +30,14 @@
 (val BUILT [0])
 
 
-(deff counted-row-of [state jobs key now timing]  ; defk にできない: stamp(外の library の純粋な関数)が呼ぶ差し替えの callback
+(deff counted-row-of [state jobs key now timing]  ; cannot be a defk: stamp(外の library の純粋な関数)が呼ぶ差し替えの callback
   {:pre [(: state ClusterState) (: jobs dict) (: key str) (: now int) (: timing ClusterTiming)] :post [(: % (| dict None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本物の row-of を呼び、組んだ行の数を BUILT に数える。"
   (setv (get BUILT 0) (+ (get BUILT 0) 1))
   (ROW-OF state jobs key now timing))
 
 
-(deff refuse-whole-snapshot [state now timing]  ; defk にできない: stamp(外の library の純粋な関数)が呼ぶ差し替えの callback
+(deff refuse-whole-snapshot [state now timing]  ; cannot be a defk: stamp(外の library の純粋な関数)が呼ぶ差し替えの callback
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "stamp が状態全体の snapshot を組んだら赤にする。"
   (raise (AssertionError "stamp が状態全体の snapshot を組んだ")))
@@ -70,13 +70,13 @@
 (val SEEN [0 #()])
 
 
-(deff every-key [before after jobs-before jobs-after]  ; defk にできない: stamp(外の library の純粋な関数)が呼ぶ差し替えの callback
+(deff every-key [before after jobs-before jobs-after]  ; cannot be a defk: stamp(外の library の純粋な関数)が呼ぶ差し替えの callback
   {:pre [(: before ClusterState) (: after ClusterState) (: jobs-before dict) (: jobs-after dict)] :post [(: % frozenset)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "前の形の比べる範囲 = 両方の snapshot の鍵の全部(物差し)。"
   (| (frozenset (snapshot before 0 (ClusterTiming))) (frozenset (snapshot after 0 (ClusterTiming)))))
 
 
-(deff checking-stamp [before after actor now timing]  ; defk にできない: api_policy.settle(外の library の純粋な関数)が呼ぶ差し替えの callback
+(deff checking-stamp [before after actor now timing]  ; cannot be a defk: api_policy.settle(外の library の純粋な関数)が呼ぶ差し替えの callback
   {:pre [(: before ClusterState) (: after ClusterState) (: actor str) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "settle の stamp を、触った資源だけの本物と、全部の鍵を比べる物差しの両方で組み、食い違いを SEEN に積む(答えは本物の方)。"
   (setv got (stamp before after actor now timing))
@@ -131,7 +131,7 @@
 (val CAPTURED [None])
 
 
-(deff capture-stamp [before after actor now timing]  ; defk にできない: api_policy.settle(外の library の純粋な関数)が呼ぶ差し替えの callback
+(deff capture-stamp [before after actor now timing]  ; cannot be a defk: api_policy.settle(外の library の純粋な関数)が呼ぶ差し替えの callback
   {:pre [(: before ClusterState) (: after ClusterState) (: actor str) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)]}
   "本物の stamp の答えのうち、copier が Ready の最後の状態を CAPTURED に残す(終わりの止めの拍では Ready でなくなるため)。"
   (setv got (stamp before after actor now timing)

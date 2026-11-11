@@ -95,7 +95,7 @@
     (setv self.state (run (tick self.state self.now T)))
     None)
 
-  (defn #^ dict task-body [self #^ list needs #^ (| dict None) [extra None]]  ; defk にできない: 模擬の世界の method(置き場の状態を進めて本文を返す)
+  (defn #^ dict task-body [self #^ list needs #^ (| dict None) [extra None]]  ; cannot be a defk: 模擬の世界の method(置き場の状態を進めて本文を返す)
     "task の本文: 詰めた Program を置き場に(送り手の版 {} で)置いてから、置き場のキーを運ぶ本文(service の宣言と同じ運び方)。"
     (setv #(self.state sha) (run (program-placed self.state {} :now self.now)))
     (| {"program" sha "revision" "r1" "needs" needs} (or extra {})))

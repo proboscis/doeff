@@ -87,7 +87,7 @@
 (setv #^ TypeAlias ModelTypes "type[Object] | tuple[type[Object], ...]")
 
 
-(defn #^ bool literal? [#^ Object form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ bool literal? [#^ Object form]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "Program の引数に置ける literal か(静的に値が決まる form だけを通すため)。"
   (cond
     (isinstance form #(String Integer Float Keyword)) True
@@ -96,7 +96,7 @@
     True False))
 
 
-(defn #^ (get list (get tuple #(Object Object))) string-dict [#^ Object form #^ str where #^ str key #^ ModelTypes value-types #^ str value-word]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get list (get tuple #(Object Object))) string-dict [#^ Object form #^ str where #^ str key #^ ModelTypes value-types #^ str value-word]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "文字列の鍵の dict の literal を検め、鍵と値の form の組の list を返す(:readiness・:environ の共通の読み)。"
   (when (not (isinstance form Dict))
     (raise (SyntaxError (.format "{}: {} は文字列の鍵の dict の literal: {}" where key (hy.repr form)))))
@@ -109,7 +109,7 @@
   pairs)
 
 
-(defn #^ (get tuple #(Dict (get list str) (get list str))) environ-values [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #(Dict (get list str) (get list str))) environ-values [#^ Object form #^ str where]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "job の :environ の dict の literal を検め、#(既定の値の dict の form 宣言の時に埋める名の list 空を「無し」と読む名の list) を返すため
    (頭の註 — 値は空でない文字列・(filled)・(empty) のどれか)。既定の値の dict では (filled) と (empty) を空の文字列にする(job の構成子と静的な
    記述が読む値)。"
@@ -129,7 +129,7 @@
     (sorted (get marks EMPTY-MARK))))
 
 
-(defn #^ (get dict #(str (| int float))) idle-budget-value [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get dict #(str (| int float))) idle-budget-value [#^ Object form #^ str where]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "job の :idle-budget の map の literal(頭の註)を展開の時に検め、宣言の行の idleBudget の形の dict(cpu は float・pss は int)を返すため。
    鍵の綴りと literal の型はここで、値の規則(0 以上・元の値は上限以下)は job_rules.idle-budget-refusal で検める。"
   (when (not (isinstance form Dict))
@@ -154,7 +154,7 @@
   value)
 
 
-(defn #^ (| str int float) static-value [#^ Object form]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (| str int float) static-value [#^ Object form]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "literal の form → 静的な記述(__doeff_system__)に載せる Python の値。"
   (cond
     (isinstance form String) (str form)
@@ -163,7 +163,7 @@
     True (hy.repr form)))
 
 
-(defn #^ (get tuple #(str Expression (get dict #(str Object)) StaticRecord)) read-job [#^ Object row #^ (get list str) params #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #(str Expression (get dict #(str Object)) StaticRecord)) read-job [#^ Object row #^ (get list str) params #^ str system]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "job の行 1 つを検め、#(名 Program の form 鍵 → 値の form の dict 静的な記述) を返す。"
   (when (not (and (isinstance row Expression) (>= (len row) 2) (isinstance (get row 0) Symbol)))
     (raise (SyntaxError (.format "defsystem {}: job の行は (名 (関数 引数…) :鍵 値 …): {}" system (hy.repr row)))))
@@ -248,7 +248,7 @@
   #(name program values static))
 
 
-(defn #^ TaskLimit read-task-limit [#^ Object group #^ Object spec #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ TaskLimit read-task-limit [#^ Object group #^ Object spec #^ str where]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "`:task-limits` の組の上限 1 つ(組の名の form と上限の dict の form)を展開の時に検め、#(名 範囲 上限 区分ごとか) を返すため。"
   (setv name (str group))
   (when (or (not name) (in "/" name))
@@ -270,7 +270,7 @@
   #(name (str scope) (int limit) (= (str per-part) "True")))
 
 
-(defn #^ (get tuple #((get list TaskLimit) (get dict #(str StaticRecord)))) read-task-limits [#^ Object form #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #((get list TaskLimit) (get dict #(str StaticRecord)))) read-task-limits [#^ Object form #^ str system]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "系の頭の `:task-limits` の値の form を展開の時に検め、#(組の上限の #(名 範囲 上限 区分ごとか) の list 静的な記述の dict) を返すため —
    linter が実行せずに読めるように、形は組の名(「/」を含まない空でない文字列の literal)→ {\"scope\" 範囲 \"limit\" 1 以上の整数
    \"perPart\" True|False?} の dict の literal だけ。同じ規則で doeff-cluster の service_build.system-of がもう 1 度検める。"
@@ -283,7 +283,7 @@
   #(groups (dfor #(name scope limit per-part) groups name {"scope" scope "limit" limit "perPart" per-part})))
 
 
-(defn #^ (get tuple #((get dict #(str Object)) (get list Object))) head-options [#^ (get list Object) rows #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #((get dict #(str Object)) (get list Object))) head-options [#^ (get list Object) rows #^ str system]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "系の本体の form の列(説明の文を除いた物)から、頭の `:鍵 値` の組(job の行の前 — SYSTEM-KEYS)を読み、#(鍵の綴り → 値の form の
    dict 残りの job の行) を返すため。知らない鍵・値の無い鍵・2 回目の鍵は展開の時の SyntaxError。"
   (setv count (len (list (takewhile (fn [i] (isinstance (get rows i) Keyword)) (range 0 (len rows) 2))))
@@ -298,25 +298,25 @@
   #((dfor i (range count) (get keys i) (get rows (+ (* 2 i) 1))) (list (cut rows (* 2 count) None))))
 
 
-(defn #^ Expression dotted [#^ str spelling]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression dotted [#^ str spelling]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "展開が import する module を、1 つの綴りの定義元(DEFSYSTEM-IMPORTS)から書くため — 点つきの綴りを
    Hy の読み取り器が source から作るのと同じ形 `(. a b c)` にする(点つきの Symbol は作れない)。位置は持たせない — 展開の常として
    defsystem の form の位置が入る(hy.read で読むと読んだ文字列の 1 行目の位置が残り、この式の赤が file の頭を指す)。"
   (Expression [(Symbol ".") #* (gfor part (.split spelling ".") (Symbol part))]))
 
 
-(defn #^ Expression import-of [#^ (get tuple #(str str)) place]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression import-of [#^ (get tuple #(str str)) place]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "展開が置く `(import <module> :as <名>)` を作るため(place = DEFSYSTEM-IMPORTS の 1 つ — #(module の綴り 束ねる名))。"
   (setv #(module alias) place)
   `(import ~(dotted module) :as ~(Symbol alias)))
 
 
-(defn #^ Expression in-module [#^ (get tuple #(str str)) place #^ str name]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression in-module [#^ (get tuple #(str str)) place #^ str name]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "展開が import した module(place = DEFSYSTEM-IMPORTS の 1 つ)の名を引く式を作るため — import が束ねた名を頭に持つ点つきの式で引く。"
   (dotted (+ (get place 1) "." name)))
 
 
-(defn #^ Expression call-shape-form [#^ Expression program]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression call-shape-form [#^ Expression program]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "Program の呼び出し (関数 引数… :鍵 値 …) → 実行時に CallShape(関数・位置の引数・名の引数の値)を作る form。
    defk の呼び出しの結果からは引数を読めないので、宣言の表示(describe)と土台の置き方の検めのために形を残す。"
   (setv positional [] named [] rest (list (cut program 1 None)))
@@ -329,7 +329,7 @@
   `(~(in-module DEFSYSTEM-MODEL "CallShape") :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
-(defn #^ (get tuple #(Symbol (| Symbol None))) param-parts [#^ Object param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ (get tuple #(Symbol (| Symbol None))) param-parts [#^ Object param #^ str system]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "系の引数 1 つ → #(名の記号 型の記号か None)。引数は素の記号か、型の注記つき #^ T foundation(読み取り器の (annotate foundation T))。
    型は module の最上位の型の名(記号・点つきの記号)だけを受ける — 静的な記述に型の module:qualname を残し、汎用の模擬の検が型から
    模擬の土台を引くため。"
@@ -344,7 +344,7 @@
                                       system (hy.repr param))))))
 
 
-(defn #^ Expression defsystem-form [#^ Object name #^ Object params #^ (get tuple #(Object ...)) body]  ; defk にできない: macro の展開の時に呼ぶ関数
+(defn #^ Expression defsystem-form [#^ Object name #^ Object params #^ (get tuple #(Object ...)) body]  ; cannot be a defk: macro の展開の時に呼ぶ関数
   "defsystem の展開: 土台を受けて doeff_cluster._shared.entry.service_build.system-of を呼ぶ関数と、静的な記述 __doeff_system__・
    __doeff_tags__(役 entry)を置く form を作るため。引数に型の注記が在れば、記述の param_types(名 → 型の module:qualname)に残す。"
   (setv system (str name))

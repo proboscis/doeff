@@ -47,7 +47,7 @@
   None)
 
 
-(deff main []  ; defk にできない: process の入口(`hy -m` の __main__ が Program の外で handler の組を並べて走らせる)
+(deff main []  ; cannot be a defk: process の入口(`hy -m` の __main__ が Program の外で handler の組を並べて走らせる)
   {:pre [] :post [(: % None)] :tags {:context "worker" :role "main" :reads "json" :spells "json"}}
   "実行環境(root)1 つを準備して答えの JSON を書く入口(並び = 土台の本物の答え手 + 翻訳)。"
   (setv parser (argparse.ArgumentParser :description "実行環境(root)1 つの準備"))

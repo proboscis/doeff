@@ -63,7 +63,7 @@
     (setv self.kind kind self.handlers handlers self.workers workers)))
 
 
-(deff sim-runners-rig [tmp-path]  ; defk にできない: pytest の params が渡す組を開く関数で、deftest が Program の外で呼ぶ
+(deff sim-runners-rig [tmp-path]  ; cannot be a defk: pytest の params が渡す組を開く関数で、deftest が Program の外で呼ぶ
   {:pre [(: tmp-path Path)] :post [(: % RunnersRig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "sim の組を開くため(担い手 a・b は sim-cluster の worker — 筋書きを回す時に SIM-RUNNERS で並べる)。"
   (RunnersRig "sim" [] {}))
@@ -125,7 +125,7 @@
         (resume False))))
 
 
-(deff coordinator-runners-rig [tmp-path]  ; defk にできない: pytest の params が渡す組を開く関数で、deftest が Program の外で呼ぶ
+(deff coordinator-runners-rig [tmp-path]  ; cannot be a defk: pytest の params が渡す組を開く関数で、deftest が Program の外で呼ぶ
   {:pre [(: tmp-path Path)] :post [(: % RunnersRig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator の組を開くため(担い手 a・b の RigWorker と、本物の detached-cluster・operator の口)。"
   (let [clock (SimClock)
@@ -528,7 +528,7 @@
 
 ;; --- 本物の client: coordinator に届かない送りと待ちは値で答える -------------------------------------------------------------
 
-(deff cut-off [request]  ; defk にできない: httpx の MockTransport が呼ぶ callback
+(deff cut-off [request]  ; cannot be a defk: httpx の MockTransport が呼ぶ callback
   {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator に届かない transport(接続が断られる)として、要求ごとに接続の失敗を上げるため。"
   (raise (httpx.ConnectError "connection refused" :request request)))

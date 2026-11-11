@@ -216,7 +216,7 @@
     (resume answer)))
 
 
-(deff on-real-processes [#^ str place #^ str warm-dir #^ Program program]  ; defk にできない: 検が自分の scheduler と本物の event loop(子の終わると読める fd)で回す入口
+(deff on-real-processes [#^ str place #^ str warm-dir #^ Program program]  ; cannot be a defk: 検が自分の scheduler と本物の event loop(子の終わると読める fd)で回す入口
   {:pre [(: place str) (: warm-dir str) (: program Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を本物の答え手の組(外側が先 — 宿の表の state・event loop・実時間・file・子 process・子の終わりの待ち・待ちの子・宿 warm_host)の
    上で回すため。待ちの子の置き場の根は warm-dir・log は place の下(socket は短い根の下 — warm_rules の warm-socket-of)。"

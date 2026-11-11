@@ -208,6 +208,6 @@
   answer)
 
 
-(defn #^ ScriptedCommand git-command [#^ tuple checkouts]  ; defk にできない: handler の列(ProcessScript)を組む時に Program の外で呼ぶ
+(defn #^ ScriptedCommand git-command [#^ tuple checkouts]  ; cannot be a defk: handler の列(ProcessScript)を組む時に Program の外で呼ぶ
   "checkout の世界(GitCheckout の tuple)に答える git の台本の命令を作るため(scripted-process-handler の ProcessScript に並べる)。"
   (ScriptedCommand :name "git" :run (partial git-answer checkouts)))

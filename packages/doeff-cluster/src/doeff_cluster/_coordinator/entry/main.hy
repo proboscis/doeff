@@ -167,7 +167,7 @@
 ;; --- composition root ------------------------------------------------------------------
 
 
-(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster._coordinator.entry.main` の __main__ と boot.sh が素の関数として呼ぶ)
+(deff main []  ; cannot be a defk: console script の main(`hy -m doeff_cluster._coordinator.entry.main` の __main__ と boot.sh が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "coordinator" :role "main"}}
   "coordinator の process の入口: 起動の引数から置き場と受け口を組み立て、置き場から状態を読み直して、本番の handler の組の上で調停ループを回すため。"
   ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(Pod の log は

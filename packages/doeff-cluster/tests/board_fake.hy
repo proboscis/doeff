@@ -98,7 +98,7 @@
             (resume (HttpResponse reply.status {} (.encode text "utf-8") text url 0.0))))))
 
 
-(deff board-handlers [#^ dict store]  ; defk にできない: 組み立て(Program を走らせる前)が handler の list を作る準備
+(deff board-handlers [#^ dict store]  ; cannot be a defk: 組み立て(Program を走らせる前)が handler の list を作る準備
   {:pre [(: store dict)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "盤 store の上の共有の保存の handler の list(外側が先): fake の盤と、本番と同じ shared-http(宛先 = fake の盤だけ)。"
   [(board-fake store {}) (shared-http (RouteCell (CoordinatorRoute :urls #(BOARD-URL) :active 0 :switched-at-ms 0)) BOARD-ROUTE)])

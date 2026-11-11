@@ -406,7 +406,7 @@
 
 ;; --- 本物の client(warm-cluster): coordinator に届かない頼みは値で答える(2026-09-28)---------------------------
 
-(deff answers-503 [request]  ; defk にできない: httpx の MockTransport が同期で呼ぶ外の callback
+(deff answers-503 [request]  ; cannot be a defk: httpx の MockTransport が同期で呼ぶ外の callback
   {:pre [(: request httpx.Request)] :post [(: % httpx.Response)]}
   "coordinator の /warm の代役: どの要求にも 503 を返す(作り直しの最中の coordinator の 5xx)。"
   (httpx.Response 503 :json {"error" "coordinator が作り直しの最中"}))

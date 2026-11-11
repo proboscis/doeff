@@ -22,7 +22,7 @@
 (val BEATS 5)
 
 
-(deff burn-cpu [ms]  ; defk にできない: thread の CPU を使う計算そのもの(効果を出さない素の関数 — 計算する job の本体が 1 秒ごとに呼ぶ)
+(deff burn-cpu [ms]  ; cannot be a defk: thread の CPU を使う計算そのもの(効果を出さない素の関数 — 計算する job の本体が 1 秒ごとに呼ぶ)
   {:pre [(: ms int)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "thread の CPU 秒を ms だけ使うため(壁の時計ではない — 混んだ機体で縮まない)。"
   (setv end (+ (time.thread-time-ns) (* ms 1000000)))

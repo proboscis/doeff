@@ -21,12 +21,12 @@
 (val DOWN (Unreachable "届かない(筋書き)"))
 
 
-(defn #^ object in-store [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+(defn #^ object in-store [#^ MemoryStore store program]  ; cannot be a defk: 検の入口で run を撃つ
   "仮想の時計と memory の置き場(書き手 MAKER)の下で program を回して答えを返す。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
 
-(defn #^ FrozenMap part [#^ str id]  ; defk にできない: 検の支度が同期に組む行の値
+(defn #^ FrozenMap part [#^ str id]  ; cannot be a defk: 検の支度が同期に組む行の値
   (FrozenMap {"id" id "label" "a" "state" "open"}))
 
 
@@ -53,7 +53,7 @@
   #(put rows appended))
 
 
-(defn #^ StoreFault fault-on [#^ StoreOperation operation answer * [lands False] [matching None]]  ; defk にできない: 検の支度が同期に組む値
+(defn #^ StoreFault fault-on [#^ StoreOperation operation answer * [lands False] [matching None]]  ; cannot be a defk: 検の支度が同期に組む値
   "parts と journal に当たる故障 1 つ。"
   (StoreFault (frozenset #("parts" "journal")) operation answer :lands lands :matching matching))
 

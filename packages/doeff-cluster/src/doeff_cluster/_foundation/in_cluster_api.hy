@@ -46,7 +46,7 @@
 
 (defclass ClusterCaMissing [FileNotFoundError]
   "API server 宛ての要求を、区画の CA の file が無い worker で、失敗を値で受けない呼び手へ止めた(要求を出していない)— 宛先と CA の file の path を名指す。"
-  (defn #^ None __init__ [self #^ str url #^ str ca-path]  ; defk にできない: 例外の型を作る時に Python が呼ぶ口(__init__)
+  (defn #^ None __init__ [self #^ str url #^ str ca-path]  ; cannot be a defk: 例外の型を作る時に Python が呼ぶ口(__init__)
     (.__init__ (super) (.format CA-MISSING url ca-path))
     (setv self.url url
           self.ca-path ca-path)))

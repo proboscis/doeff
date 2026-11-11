@@ -132,7 +132,7 @@
 (setv KeyMemory (| RememberKeysForever RememberKeysFor RememberNoKeys))
 
 
-(defn #^ (| int None) key-memory-ms [#^ KeyMemory memory]  ; defk にできない: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ値の読み
+(defn #^ (| int None) key-memory-ms [#^ KeyMemory memory]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と文の組み立てで同期に呼ぶ値の読み
   "置き場の覚えの外し(memory・PG の回収と出来事の外し)が覚え方を 1 つの数で読めるように、覚えを残す長さ(ミリ秒 — 切り捨て)にするため。
    None = 外さない(RememberKeysForever)・0 = 残さない(RememberNoKeys)。"
   (match memory
@@ -290,7 +290,7 @@
     "宣言した欄の名(宣言の順)。"
     (tuple (gfor f self.fields f.name)))
 
-  (deff __setstate__ [self state]  ; defk にできない: pickle と copy が呼ぶ class の口(同期の呼び — Program を実行しない)
+  (deff __setstate__ [self state]  ; cannot be a defk: pickle と copy が呼ぶ class の口(同期の呼び — Program を実行しない)
     {:pre [(: self TableDecl) (: state dict)] :post [(: % None)] :tags {:context "records" :role "type"}}
     "pickle / copy から戻す時に中身を入れ、欄の名の索引を作り直すため(索引を持つ前に pickle した宣言も引けるように)。"
     (.update self.__dict__ state)
@@ -402,7 +402,7 @@
 (val WRITE-KEY-MAX-LENGTH 200)
 
 
-(defn #^ (| str None) checked-write-key [#^ object key #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め(effects.check-row-write と同じ位置)
+(defn #^ (| str None) checked-write-key [#^ object key #^ str what]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め(effects.check-row-write と同じ位置)
   "行の書きの冪等キーの欄を作る時に検めるため(None = 鍵の無い書き・空でない WRITE-KEY-MAX-LENGTH 字までの文字列)。"
   (when (and (is-not key None) (not (and (isinstance key str) key (<= (len key) WRITE-KEY-MAX-LENGTH))))
     (raise (ValueError (.format "{} は None か空でない {} 字までの文字列: {!r}" what WRITE-KEY-MAX-LENGTH key))))
@@ -455,7 +455,7 @@
 (setv STORED-TEXT "_stored_text")
 
 
-(defn #^ object stored-value [#^ object holder #^ str name #^ str what]  ; defk にできない: __getattr__ が属の読みごとに同期に呼ぶ
+(defn #^ object stored-value [#^ object holder #^ str name #^ str what]  ; cannot be a defk: __getattr__ が属の読みごとに同期に呼ぶ
   "綴りだけを持って作った答え holder の欄 value を、保存の綴りから解いて凍らせて置くため(__getattr__ の 1 か所 — value の外の名と、綴りを
    持たない答えの value は AttributeError)。"
   (setv text (.get (object.__getattribute__ holder "__dict__") STORED-TEXT))
@@ -466,12 +466,12 @@
   value)
 
 
-(defn #^ (| str None) stored-text [#^ (| Row RowChanged) holder]  ; defk にできない: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
+(defn #^ (| str None) stored-text [#^ (| Row RowChanged) holder]  ; cannot be a defk: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
   "答え holder(Row・RowChanged)が持つ保存の綴り(持たなければ None — 綴りの無い答えは呼び手が値から綴る)。"
   (.get (vars holder) STORED-TEXT))
 
 
-(defn #^ object with-stored-text [#^ object holder #^ str text]  ; defk にできない: 下の作り手(同期の defn)が呼ぶ属の置き
+(defn #^ object with-stored-text [#^ object holder #^ str text]  ; cannot be a defk: 下の作り手(同期の defn)が呼ぶ属の置き
   "作った答え holder に保存の綴り text を持たせて返すため(綴りは holder.value の JSON の綴りでなければならない — 呼び手が同じ値から綴る)。"
   (object.__setattr__ holder STORED-TEXT text)
   holder)
@@ -495,7 +495,7 @@
         self
         (Row (copy.deepcopy self.key memo) self.value self.version))))
 
-(defn #^ Row stored-row [#^ (get tuple #(str ...)) key #^ str text #^ int version]  ; defk にできない: pg.row-of(頁の行を内包表記で組む純粋な綴り)が行ごとに同期に呼ぶ作り手
+(defn #^ Row stored-row [#^ (get tuple #(str ...)) key #^ str text #^ int version]  ; cannot be a defk: pg.row-of(頁の行を内包表記で組む純粋な綴り)が行ごとに同期に呼ぶ作り手
   "置き場が保存した値の綴り text だけを持つ行を作るため(値は読まれた時に解く — 頭の註の保存の綴り。欄を絞らない一覧の行は解かれずに
    答えへ綴りのまま継がれる)。"
   (setv row (object.__new__ Row))
@@ -503,7 +503,7 @@
   (object.__setattr__ row "version" version)
   (with-stored-text row text))
 
-(defn #^ Row spelled-row [#^ (get tuple #(str ...)) key #^ FrozenMap value #^ str text #^ int version]  ; defk にできない: memory の置き場の書き(錠の内の同期の defn)が呼ぶ作り手
+(defn #^ Row spelled-row [#^ (get tuple #(str ...)) key #^ FrozenMap value #^ str text #^ int version]  ; cannot be a defk: memory の置き場の書き(錠の内の同期の defn)が呼ぶ作り手
   "値 value と、その値を書いた時に 1 度だけ綴った text を一緒に持つ行を作るため(値を持つ置き場 — memory — の行)。"
   (with-stored-text (Row key value version) text))
 
@@ -563,14 +563,14 @@
     "綴りだけを持って作った変更(stored-change)の value を、初めて読んだ時に保存の綴りから解くため(頭の註の保存の綴り)。"
     (stored-value self name "RowChanged.value")))
 
-(defn #^ RowChanged stored-change [#^ str table #^ (get tuple #(str ...)) key #^ int version #^ str text #^ int sequence #^ int at]  ; defk にできない: stored-row と同じ — pg.changes-of の内包表記が呼ぶ
+(defn #^ RowChanged stored-change [#^ str table #^ (get tuple #(str ...)) key #^ int version #^ str text #^ int sequence #^ int at]  ; cannot be a defk: stored-row と同じ — pg.changes-of の内包表記が呼ぶ
   "置き場が保存した値の綴り text だけを持つ変更を作るため(stored-row と同じ — 値は読まれた時に解く)。"
   (setv change (object.__new__ RowChanged))
   (for [#(name value) #(#("table" table) #("key" key) #("version" version) #("sequence" sequence) #("at" at))]
     (object.__setattr__ change name value))
   (with-stored-text change text))
 
-(defn #^ RowChanged spelled-change [#^ str table #^ (get tuple #(str ...)) key #^ int version #^ FrozenMap value #^ str text #^ int sequence #^ int at]  ; defk にできない: spelled-row と同じ
+(defn #^ RowChanged spelled-change [#^ str table #^ (get tuple #(str ...)) key #^ int version #^ FrozenMap value #^ str text #^ int sequence #^ int at]  ; cannot be a defk: spelled-row と同じ
   "値 value と、その値を書いた時に 1 度だけ綴った text を一緒に持つ変更を作るため(spelled-row と同じ)。"
   (with-stored-text (RowChanged table key version value sequence at) text))
 

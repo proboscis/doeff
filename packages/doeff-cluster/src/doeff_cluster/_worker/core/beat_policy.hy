@@ -45,7 +45,7 @@
   (setv #^ str detail ""))
 
 
-(deff beat-interval-ms [#^ (| (get Mapping #(str object)) None) timing #^ (get Mapping #(str (get Mapping #(str object)))) task-echo]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
+(deff beat-interval-ms [#^ (| (get Mapping #(str object)) None) timing #^ (get Mapping #(str (get Mapping #(str object)))) task-echo]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
   {:pre [(: timing (| (get Mapping #(str object)) None)) (: task-echo (get Mapping #(str (get Mapping #(str object)))))] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の timing(lease_ms)と、この worker に置かれた切り離した task の返事の行(leaseMs)から、heartbeat を送る間隔を決める
    ため — coordinator が生存を数える窓と task の lease の中に、届く heartbeat が何度か入る長さ。"
@@ -55,7 +55,7 @@
     (max 1 (min (+ [(// window BEAT-LEASE-DIVISOR)] (lfor ms task-leases (// ms BEAT-TASK-LEASE-DIVISOR)))))))
 
 
-(deff heartbeat-due [#^ bool watching #^ bool fresh #^ bool woken #^ bool statuses-changed #^ int silent-ms #^ int interval-ms]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
+(deff heartbeat-due [#^ bool watching #^ bool fresh #^ bool woken #^ bool statuses-changed #^ int silent-ms #^ int interval-ms]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
   {:pre [(: watching bool) (: fresh bool) (: woken bool) (: statuses-changed bool) (: silent-ms int) (: interval-ms int)]
    :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
   "この拍で heartbeat を送るかを決めるため。watching = 待ちの口を使えている・fresh = 前の heartbeat が届いた・woken = 待ちが「変わった」
@@ -63,7 +63,7 @@
   (or (not watching) (not fresh) woken statuses-changed (>= silent-ms interval-ms)))
 
 
-(deff lifeline-due [#^ bool ready #^ int since-sent-ms #^ int interval-ms #^ int since-progress-ms]  ; defk にできない: 生存の合図の thread の 1 周(worker/protocol/coordinator_link の lifeline-turn — scheduler の外の thread の VM)が判じる純粋な判断
+(deff lifeline-due [#^ bool ready #^ int since-sent-ms #^ int interval-ms #^ int since-progress-ms]  ; cannot be a defk: 生存の合図の thread の 1 周(worker/protocol/coordinator_link の lifeline-turn — scheduler の外の thread の VM)が判じる純粋な判断
   {:pre [(: ready bool) (: since-sent-ms int) (: interval-ms int) (: since-progress-ms int)] :post [(: % bool)]
    :tags {:context "worker" :role "judgment"}}
   "生存の合図の thread がこの周に heartbeat を送るかを決めるため。ready = 送る本文が在り(拍が 1 度送った)、
@@ -77,7 +77,7 @@
 
 
 
-(deff watch-reading [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
+(deff watch-reading [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
   {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % WatchReading)]
    :tags {:context "worker" :role "judgment"}}
   "GET /watch の返事(status = None は届かない)を待ちの答えの種類に読むため。"
@@ -89,7 +89,7 @@
     True (WatchReading :kind WatchKind.FAILED :detail (.format "{}: {}" status (cut (str body) 0 200)))))
 
 
-(deff reply-revision [#^ dict reply]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
+(deff reply-revision [#^ dict reply]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ読みを使う
   {:pre [(: reply dict)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の版(次の待ちの after)を読むため。欄の無い返事は待つ口の無い旧い coordinator の物(None)。"
   (let [revision (.get reply "revision")]

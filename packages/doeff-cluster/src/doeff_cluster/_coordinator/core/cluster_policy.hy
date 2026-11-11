@@ -130,7 +130,7 @@
 (val IMAGE-FOLLOW-KEYS #("baseFrom" "base" "overlay"))
 
 
-(deff raw-entry-refusal [#^ (get Mapping #(str object)) item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+(deff raw-entry-refusal [#^ (get Mapping #(str object)) item]  ; cannot be a defk: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: item Mapping)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "run の無い宣言の行(worker に module と引数を直に起こさせる生の entry の job)を断る理由の文 — 書きの口の 400・保存の読み直しの
    RefusedJob の理由に同じ文を出すため。宣言の job は Program の値 1 つだけ(ADR-DOE-CLUSTER-001 R1・R7)。"
@@ -138,7 +138,7 @@
            (.get item "entry") (.get item "args")))
 
 
-(deff identity-hash [#^ (get Mapping #(str object)) run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+(deff identity-hash [#^ (get Mapping #(str object)) run]  ; cannot be a defk: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: run Mapping)] :post [(: % str) (= (len %) 16)] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の同一性の指紋 = identity(関数の参照と引数の正規 JSON)と versions の sha256 の頭 16 桁。job の引数に載り、
    spec-hash(revision・environ と一緒)の材料になる。詰めた Program の中身(program の sha)は入れない — 揺れるため(改訂 1 の A)。"
@@ -148,7 +148,7 @@
        0 16))
 
 
-(deff program-row-refusal [#^ (get Mapping #(str object)) item #^ (get dict #(str object)) run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+(deff program-row-refusal [#^ (get Mapping #(str object)) item #^ (get dict #(str object)) run]  ; cannot be a defk: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: item Mapping) (: run dict)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の宣言の行 item(run = 行の run — 呼び手が JSON の object と確かめた物)が受けられない理由(受けられれば None)。
    旧い形(run.factory・run.env・run.config・requires)・
@@ -179,7 +179,7 @@
     True (environ-refusal environ declared)))
 
 
-(deff environ-refusal [#^ dict environ #^ list declared]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+(deff environ-refusal [#^ dict environ #^ list declared]  ; cannot be a defk: 宣言の読み(coordinator の純粋な判断)が呼ぶ
   {:pre [(: environ dict) (: declared list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "宣言の行・task の本文の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_rules.child-environ-refusal —
    EnvVar の名の形・worker の予約・秘密の中身の名)で、env-vars と同じ名は断る(子の環境変数の足し口を 1 つにする — 改訂 1 の G)。"
@@ -191,7 +191,7 @@
       None))
 
 
-(deff task-environ-refusal [#^ (| dict list tuple str int float bool None) environ #^ (| dict list tuple str int float bool None) runtime]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+(deff task-environ-refusal [#^ (| dict list tuple str int float bool None) environ #^ (| dict list tuple str int float bool None) runtime]  ; cannot be a defk: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: environ (| dict list tuple str int float bool None)) (: runtime (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文の environ(子の環境変数 — 無ければ空)が受けられない理由。規則は service の宣言の行と同じ
    environ-refusal 1 つ(2026-09-28)。runtimeEnv の形の誤りは runtime-env-refusal が断るので、ここでは object の時だけ
@@ -316,7 +316,7 @@
 
 ;; --- 割り当て ------------------------------------------------------------------------
 
-(deff liveness-deadline [#^ WorkerInfo worker #^ int window-ms]  ; defk にできない: 生死の比べ alive(Program の外の純粋な判断)が呼ぶ
+(deff liveness-deadline [#^ WorkerInfo worker #^ int window-ms]  ; cannot be a defk: 生死の比べ alive(Program の外の純粋な判断)が呼ぶ
   {:pre [(: worker WorkerInfo) (: window-ms int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker を窓 window-ms の内で生きていると数える最後の刻(epoch ms)を求めるため。生死の判断(alive・forget-silent-workers)と、その
    答えが変わる最初の刻を求める liveness-due が同じこの値で比べる(#3061 — 片方だけ比べ方を変えると、模擬の静かな区間が判断の
@@ -329,13 +329,13 @@
   (<= now (liveness-deadline worker window-ms)))
 
 
-(deff silent-names [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: note-liveness(Program の外の純粋な判断)が呼ぶ
+(deff silent-names [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; cannot be a defk: note-liveness(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % frozenset)] :tags {:context "coordinator" :role "judgment"}}
   "刻 now に生きていないと数える worker の名を求めるため(note-liveness と liveness-due が同じ求め方を使う)。"
   (frozenset (gfor w (.rows state.workers) :if (not (alive now w timing.lease-ms)) w.name)))
 
 
-(deff note-liveness [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; defk にできない: 調停の純粋な判断(api_policy.settle — Program の外)が呼ぶ
+(deff note-liveness [#^ ClusterState state #^ int now #^ ClusterTiming timing]  ; cannot be a defk: 調停の純粋な判断(api_policy.settle — Program の外)が呼ぶ
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "生きていないと数える worker の名(ClusterState.silent)を今の時刻で求め直すため(#1934)。変わらなければ同じ値を返す(版を進めない)。
    変われば新しい値 — Worker の資源の status の live が変わり、stamp が版を進めて出来事を 1 行残す(死んだ拍と戻った拍だけ)。"
@@ -373,7 +373,7 @@
                    (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
 
 
-(deff placeable [#^ (get tuple #(str ...)) needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
+(deff placeable [#^ (get tuple #(str ...)) needs #^ WorkerInfo worker]  ; cannot be a defk: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
   {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):
    needs ⊆ provides ∪ derived(node の label から coordinator が導いた能力)、かつ worker が専用の能力(exclusive)を持てば、そのどれかを needs に持つ(一般の仕事を専用の担い手に置かない)。"
@@ -381,7 +381,7 @@
        (or (not worker.exclusive) (bool (& (set needs) (set worker.exclusive))))))
 
 
-(deff named-capabilities [#^ (| tuple list None) provides #^ (| tuple list None) exclusive #^ bool old-labels #^ str what]  ; defk にできない: heartbeat の本文と保存の JSON を読む境界(Program の外)が呼ぶ
+(deff named-capabilities [#^ (| tuple list None) provides #^ (| tuple list None) exclusive #^ bool old-labels #^ str what]  ; cannot be a defk: heartbeat の本文と保存の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: provides (| tuple list None)) (: exclusive (| tuple list None)) (: old-labels bool) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "judgment"}}
   "worker の能力の名乗り(provides・exclusive の名の列 — None = 欄が無い)→ #(provides exclusive)。exclusive は provides の一部でなければ
    ならない。旧い形(labels だけで provides の無い名乗り — old-labels)は BodyInvalid(ADR-DOE-CLUSTER-001 R4b)。heartbeat の本文の型
@@ -395,14 +395,14 @@
   #(provides exclusive))
 
 
-(deff request-needs [#^ (get Mapping #(str object)) body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
+(deff request-needs [#^ (get Mapping #(str object)) body #^ str what]  ; cannot be a defk: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: body Mapping) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は BodyInvalid(理由つき・ValueError の子)—
    旧い宣言は受け付けない・要る能力は必ず書く(改訂 1 の I)。"
   (needs-named (.get body "needs") (.get body "requires") what))
 
 
-(deff needs-named [#^ object needs #^ object requires #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
+(deff needs-named [#^ object needs #^ object requires #^ str what]  ; cannot be a defk: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: needs "JSON の値 — 能力の名の列か、欄が無い None") (: requires "JSON の値 — 旧い形の欄の値か、欄が無い None") (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "要る能力の名乗り(needs と旧い形の requires の値 — None = 欄が無い)→ 名の順の tuple。宣言の行(request-needs)と本文の型(#2445)が
    同じ規則で読む: requires は BodyInvalid・空の needs は BodyInvalid。"
@@ -415,7 +415,7 @@
   needs)
 
 
-(deff task-body-refusal [#^ ClusterState state #^ TaskBody body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+(deff task-body-refusal [#^ ClusterState state #^ TaskBody body]  ; cannot be a defk: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: body TaskBody)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
    Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・子の環境変数 environ(service の :environ と同じ規則)・needs の欠け。task も Program の値 1 つで、handler は Program の
@@ -441,7 +441,7 @@
       True (or (task-environ-refusal body.environ body.runtime-env) (needs-refusal body.needs body.requires)))))
 
 
-(deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+(deff program-versions [#^ ClusterState state #^ str sha]  ; cannot be a defk: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
    運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
@@ -451,7 +451,7 @@
   (component-versions-of row.versions))
 
 
-(deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+(deff needs-refusal [#^ (| dict list tuple str int float bool None) needs #^ (| dict list tuple str int float bool None) requires]  ; cannot be a defk: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: needs (| dict list tuple str int float bool None)) (: requires (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "本文の needs(と旧い形の requires)が受けられない理由(受けられれば None)— 400 の理由の文を 1 か所で作るため。"
   (try
@@ -461,7 +461,7 @@
       (str error))))
 
 
-(deff effective-needs [#^ ClusterState state #^ ClusterJob job]  ; defk にできない: 置き先の判断(eligible)と表示の綴り(unplaced-text の呼び手 — Program の外の純粋な判断)が呼ぶ
+(deff effective-needs [#^ ClusterState state #^ ClusterJob job]  ; cannot be a defk: 置き先の判断(eligible)と表示の綴り(unplaced-text の呼び手 — Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: job ClusterJob)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "Service に効く needs を、置き先の判断の 1 か所で決めるため: needs の一時の上書き(資源 NeedsOverride)が在れば
    上書きの needs、無ければ宣言の needs(ClusterJob.needs — 上書きは宣言を書き換えない)。上書きの行は、期限の来た拍と上書きの needs を
@@ -496,7 +496,7 @@
 
 
 (defn #^ tuple elder-rows [#^ int now #^ ClusterState state #^ str worker #^ ClusterTiming timing]
-  ;; defk にできない: coordinator の純粋な判断(service-rows の内包表記と resource_policy.carrying-row — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(service-rows の内包表記と resource_policy.carrying-row — defn)が呼ぶ
   "純粋: 名 worker の退いた世代のうち、組(SupersededRun)の最後の報告が lease の内の世代の、組の job の行(GenerationRow の列・世代の順)。
    世代の受け渡しの間、job を今動かしている process の行を Service の観測(service-rows・resource_policy.carrying-row)に出すため。
    黙った世代の行は数えない(handover-runs と同じ窓 — 黙った世代の process は止まったと読む)。"
@@ -684,7 +684,7 @@
   freed)
 
 
-(deff retired-silence-deadline [#^ WorkerReport report #^ int window-ms]  ; defk にできない: 掃除の期限 sweep-due の内包表記の中から呼ぶ純粋な比べ
+(deff retired-silence-deadline [#^ WorkerReport report #^ int window-ms]  ; cannot be a defk: 掃除の期限 sweep-due の内包表記の中から呼ぶ純粋な比べ
   {:pre [(: report WorkerReport) (: window-ms int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "退いた世代を窓 window-ms の内で生きていると数える最後の刻(その世代から最後に受けた報告 report の刻 + 窓・epoch ms)を求めるため。
    止まりの判じ(sweep-stopped-generations)と、その答えが変わる最初の刻を求める sweep-due が同じこの値で比べる(今の世代の生死の
@@ -1030,7 +1030,7 @@
                                                 :key (fn [m] m.job))))))
 
 
-(deff kept-window-ms [#^ ClusterTiming timing #^ bool pinned]  ; defk にできない: 約束の外し(sweep-keep-marks)と期限の刻(liveness-due)が Program の外の純粋な判断から呼ぶ
+(deff kept-window-ms [#^ ClusterTiming timing #^ bool pinned]  ; cannot be a defk: 約束の外し(sweep-keep-marks)と期限の刻(liveness-due)が Program の外の純粋な判断から呼ぶ
   {:pre [(: timing ClusterTiming) (: pinned bool)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "印の約束を担い手の沈黙から外すまでの窓を、約束の外しとその刻の求めで同じ値にするため。node に縛られた担い手(pinned)は印の在る job を
    長い柵(pinned-keep-fence-ms)まで動かし続けるので、kept-reassign-after-ms と keep-fence-ms の差(止め切りの最悪の残り + 余白 = 40 秒 —
@@ -2450,7 +2450,7 @@
 
 ;; --- HTTP の要求への返事(判断の部品。要求の振り分けは api_policy) -----------------------------------
 
-(deff text-map? [#^ object value]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+(deff text-map? [#^ object value]  ; cannot be a defk: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: value "JSON の値")] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "JSON の値が「名 → 文字列」の object か — heartbeat の versions・tools(component-versions-of が名の順に並べる)を写す前に確かめるため。"
   (and (isinstance value dict) (all (gfor #(k v) (.items value) (and (isinstance k str) (isinstance v str))))))
@@ -2651,7 +2651,7 @@
 
 (defn #^ ClusterState elder-runs-written [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
                                           #^ WorkerReport report #^ (| bool None) [overlapped None]]
-  ;; defk にできない: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
   "純粋: 退いた世代 boot の報告(statuses と、それを worker-report の形にした report)の後の、退いた世代の組の列(superseded-runs-after)と
    その組の job の行(ClusterObservations.elder-statuses — elder-statuses-after)を一緒に書くため。組と行を同じ歩で書くので、行は組が
    job を持つ間だけ残る。"
@@ -2662,13 +2662,13 @@
 
 
 (defn #^ str elder-key [#^ str name #^ str boot]
-  ;; defk にできない: coordinator の純粋な判断(elder-rows の内包表記・elder-statuses-after — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(elder-rows の内包表記・elder-statuses-after — defn)が呼ぶ
   "退いた世代の報告の表(ClusterObservations.elder-statuses)の鍵 — 保存の superseded/<名>/<世代> と同じ組。"
   (+ name "/" boot))
 
 
 (defn #^ Table elder-statuses-after [#^ Table elders #^ tuple runs #^ str name #^ str boot #^ WorkerReport report]
-  ;; defk にできない: coordinator の純粋な判断(elder-runs-written — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(elder-runs-written — defn)が呼ぶ
   "純粋: 組の列 runs を書いた後の、退いた世代の報告の表 elders(世代の受け渡しの間、job を今動かしている process の行を Service の
    観測に出すため — resource_policy.carrying-row と service-rows)。名 name の世代 boot の行を、report のうち組が持つ job の行(と、
    その job から入れ替えで退いた process の行)だけにして置き直し、組の無い鍵の行を外す(覚える数は組の数と同じ)。同じ値の行は
@@ -2690,7 +2690,7 @@
 
 (defn #^ tuple superseded-runs-after [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
                                       #^ (| bool None) [overlapped None]]
-  ;; defk にできない: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
   "純粋: 退いた世代 boot の報告 statuses の後の、退いた世代の走らせている常駐の job の組の列(AL-D2)。この世代の行を、報告の
    running の job の名で置き直す(空なら外す)。数える job は handoff の job、組が overlapped(新しい世代が重なりを名乗った — 名乗りの
    時に overlapped = 真で種を置く・それ以外の報告は前の組の印を引き継ぐ)なら recreate の job も(task は除く)— recreate の job は
@@ -2895,7 +2895,7 @@
 
 (defn #^ bool handover-pending [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
                                 #^ (| dict None) ready-instances]
-  ;; defk にできない: coordinator の純粋な判断(heartbeat-reply の値・drain_policy.worker-view — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(heartbeat-reply の値・drain_policy.worker-view — defn)が呼ぶ
   "純粋: 名 name の今の世代 boot が、同じ名の前の世代がまだ動かしている常駐の job をまだ受け取れないか(AL-D2k)。止めている job の
    判断は handover-blockers(この関数はその有無だけを読む — 止まりの名指しと同じ判断)。真の間、worker は Pod の ready の file を
    書かず、Deployment は前の世代の Pod の削除を
@@ -2918,7 +2918,7 @@
 
 (defn #^ tuple handover-blockers [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
                                   #^ (| dict None) ready-instances]
-  ;; defk にできない: coordinator の純粋な判断(handover-pending・資源の行 resource_policy.handover-of — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(handover-pending・資源の行 resource_policy.handover-of — defn)が呼ぶ
   "純粋: 名 name の今の世代 boot の受け渡しを止めている job(HandoverBlocker の列・job の名の順)。handover-pending
    は空でない時に真 — 止める判断の定義点はここ 1 つ。数えるのは、重なりを名乗った前の世代(overlapped)のうち、止まりがまだ始まって
    いない(leaving でない)・最後の報告が lease の内の組の job だけ。recreate の job = 今の世代の状態の行が HANDOVER-SETTLED-PHASES に
@@ -2968,7 +2968,7 @@
 
 
 (defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]
-  ;; defk にできない: coordinator の純粋な判断(heartbeat-reply の内包表記の前の値)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(heartbeat-reply の内包表記の前の値)が呼ぶ
   "純粋: 名 name の worker の、送り手の世代 boot と違う前の世代がまだ動かしている常駐の job の名(AL-D2f — その世代の最後の報告が
    window-ms 以内の、新しい世代が重なりを名乗った(overlapped)SupersededRun の行だけ。window-ms を越えて黙った世代の行は数えない —
    前の世代が止まれば今の世代が起こす)。"
@@ -2991,7 +2991,7 @@
 
 
 (defn #^ frozenset holding-names [#^ tuple statuses]
-  ;; defk にできない: coordinator の純粋な判断(superseded-runs-after の setv の中 — defn)が呼ぶ
+  ;; cannot be a defk: coordinator の純粋な判断(superseded-runs-after の setv の中 — defn)が呼ぶ
   "退いた世代の報告のうち、その process がまだ在る(HOLDING-PHASES — 刈りの前の)job の名(入れ替えで退いた process の行は元の名で
    数える)。前の世代が持っている port や置き場を、新しい世代が起こす process と取り合わせないため(heartbeat-reply の印 elder-runs)。"
   (frozenset (gfor row statuses
@@ -3279,13 +3279,13 @@
   (tuple (sorted (sfor w (.rows state.workers) :if w.node w.node))))
 
 
-(deff derived-capabilities [#^ (get Table str) labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+(deff derived-capabilities [#^ (get Table str) labels #^ tuple table]  ; cannot be a defk: coordinator の調停(Program)が呼ぶ純粋な判断
   {:pre [(: labels (get Table str)) (: table tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "node の label → その node の worker に足す能力(名の順)。table = ClusterNaming の node-capabilities #(#(鍵 値 能力) …)。"
   (tuple (sorted (sfor #(key value capability) table :if (= (.row labels key) value) capability))))
 
 
-(deff with-derived-capabilities [#^ ClusterState state #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+(deff with-derived-capabilities [#^ ClusterState state #^ tuple table]  ; cannot be a defk: coordinator の調停(Program)が呼ぶ純粋な判断
   {:pre [(: state ClusterState) (: table tuple)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "node の label の観測から、各 worker の derived(導いた能力)を作り直す。label を読めなかった node(error)の worker は前の値を保つ
    (届かない間に会社の機体の能力を外したり足したりしない — 次に読めた時に直る)。node を名乗らない worker は空。"

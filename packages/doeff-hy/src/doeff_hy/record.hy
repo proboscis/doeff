@@ -88,7 +88,7 @@
 ;;;   3. When another type wants the same check, make that field's type an already-checked record
 ;;;      (`#^ ChatId chat` — do not line up the same predicate on string fields).
 ;;; Only when a named predicate is truly needed, add a reason comment to a pure deff
-;;; (`; defk にできない: called by defrecord's :check at construction`) and :tags {… :role "judgment"}.
+;;; (`; cannot be a defk: called by defrecord's :check at construction`) and :tags {… :role "judgment"}.
 ;;;
 ;;; Expansion (with header dict):
 ;;;   (do (import doeff_hy._declarations doeff_hy.record doeff_hy._record_check)

@@ -44,7 +44,7 @@
    "untilMs" state.until-ms "memoryUnmeasured" state.memory-unmeasured "depsReady" (list state.deps-ready)})
 
 
-(defn #^ WarmState warm-state-of-json [#^ (get Mapping #(str object)) value]  ; defk にできない: coordinator の純粋な判断と HTTP の handler の境界で読む
+(defn #^ WarmState warm-state-of-json [#^ (get Mapping #(str object)) value]  ; cannot be a defk: coordinator の純粋な判断と HTTP の handler の境界で読む
   "通信の本文 → WarmState。欄 depsReady の無い本文(依存のキーを照らす前の coordinator)は ready を依存の部分も揃った worker と読む。"
   (WarmState :key (get value "key") :ready (tuple (get value "ready")) :preparing (tuple (get value "preparing"))
              :deps-ready (tuple (.get value "depsReady" (get value "ready")))

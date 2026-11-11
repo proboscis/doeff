@@ -14,18 +14,18 @@
 (import tests.test_drain [Coord service K3S T])
 
 
-(defn #^ dict new-beat [#^ Coord c #^ str worker #^ list statuses]  ; defk にできない: 模擬の世界の method を呼ぶ(状態を進める)
+(defn #^ dict new-beat [#^ Coord c #^ str worker #^ list statuses]  ; cannot be a defk: 模擬の世界の method を呼ぶ(状態を進める)
   "今の世代(boot new)の heartbeat(前の世代がまだ走っている間に起きたと名乗る)。"
   (c.call "POST" "/heartbeat" {"name" worker "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                "statuses" statuses "overlapsElder" True "stopping" False}
           :actor None))
 
 
-(defn #^ (| dict None) handover [#^ Coord c #^ str worker]  ; defk にできない: 模擬の世界の method を呼ぶ
+(defn #^ (| dict None) handover [#^ Coord c #^ str worker]  ; cannot be a defk: 模擬の世界の method を呼ぶ
   (.get (get (c.call "GET" (+ "/resources/Worker/" worker)) "status") "handover"))
 
 
-(defn #^ dict metric-lines [#^ Coord c #^ str prefix]  ; defk にできない: 模擬の世界の method を呼ぶ
+(defn #^ dict metric-lines [#^ Coord c #^ str prefix]  ; cannot be a defk: 模擬の世界の method を呼ぶ
   "GET /metrics の本文(metrics-text)の行のうち prefix で始まる物(sample の綴り → 値)。"
   (dfor line (.splitlines (metrics-text c.state c.now T))
         :if (.startswith line prefix)
@@ -33,7 +33,7 @@
         sample (float value)))
 
 
-(defn #^ None hold-both [#^ Coord c #^ int seconds #^ list new-statuses]  ; defk にできない: 模擬の世界の時計と method を進める
+(defn #^ None hold-both [#^ Coord c #^ int seconds #^ list new-statuses]  ; cannot be a defk: 模擬の世界の時計と method を進める
   "前の世代と今の世代の両方が lease の内に報告し続ける間に、時計を seconds 秒進める(前の世代が黙れば受け渡しの待ちは外れる)。"
   (for [_ (range (// seconds 5))]
     (c.advance 5)

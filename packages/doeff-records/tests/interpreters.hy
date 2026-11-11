@@ -103,7 +103,7 @@
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)] program))))
 
 
-(defn prepared-store [connections #^ str prefix [schema LAW-SCHEMA]]  ; defk にできない: 検の解釈器の組み立て(Program の外)で呼ぶ
+(defn prepared-store [connections #^ str prefix [schema LAW-SCHEMA]]  ; cannot be a defk: 検の解釈器の組み立て(Program の外)で呼ぶ
   "表を用意して(prepare-records-store)置き場を返す — 検の置き場 1 つにつき 1 度。schema = 表と索引の宣言(既定は LAW-SCHEMA — 索引の
    構成を検の前提に持つ検は自分の宣言を渡す)。"
   (run-sql connections (prepare-records-store DATABASE DATABASE schema prefix)))

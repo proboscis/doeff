@@ -21,7 +21,7 @@
 (setv PROGRAM-GRACE-MS (* 10 60 1000))          ; 参照の無い Program を残す長さ(置いてから)
 
 
-(deff program-write [#^ ClusterState state #^ str sha #^ ProgramBody body #^ int now]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
+(deff program-write [#^ ClusterState state #^ str sha #^ ProgramBody body #^ int now]  ; cannot be a defk: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: sha str) (: body ProgramBody) (: now int)] :post [(: % tuple) (= (len %) 3)]
    :tags {:context "coordinator" :role "judgment"}}
   "PUT /programs/<sha>: キーの形と大きさと中身の sha256 を確かめて置き、#(次の状態 status 本文) を返す。同じキーを置き直すと期限だけ
@@ -36,7 +36,7 @@
            200 (ProgramStored :sha sha))))
 
 
-(deff program-read [#^ ClusterState state #^ str sha]  ; defk にできない: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
+(deff program-read [#^ ClusterState state #^ str sha]  ; cannot be a defk: coordinator の要求の振り分け(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple) (= (len %) 3)] :tags {:context "coordinator" :role "judgment"}}
   "GET /programs/<sha>: 置いた Program(無ければ 404)。"
   (setv row (.row state.programs sha))
@@ -46,7 +46,7 @@
       #(state 200 row)))
 
 
-(deff program-refs [#^ ClusterState state]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
+(deff program-refs [#^ ClusterState state]  ; cannot be a defk: coordinator の調停(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState)] :post [(: % frozenset)] :tags {:context "coordinator" :role "judgment"}}
   "置き場の Program を今参照している物のキーの集合 — 掃除で残す物を決めるため。受け付けた Service の行と、task の行(待ち・走っている・
    終わって結果を保持している物の全部 — 行が消えるまで参照は続く)。参照の定義点はここ 1 つ。"
@@ -54,7 +54,7 @@
                 (lfor t (.rows state.tasks) :if t.program t.program))))
 
 
-(deff sweep-programs [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ
+(deff sweep-programs [#^ ClusterState state #^ int now]  ; cannot be a defk: coordinator の調停(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "受け付けた Service と task の行のどれも参照せず、置いてから PROGRAM-GRACE-MS を過ぎた Program を消す。"
   ;; 猶予を過ぎた Program が無ければ、参照の走査(program-refs — tasks と services を回る)を回さない。

@@ -60,24 +60,24 @@
   versions)
 
 
-(defn run-on [store program]  ; defk にできない: 検の composition root — thread ごとに run で Program を走らせる入口
+(defn run-on [store program]  ; cannot be a defk: 検の composition root — thread ごとに run で Program を走らせる入口
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
 
-(defn race [store writer-program reader-program]  ; defk にできない: thread を起こして待つ検の足場(Program の外)
+(defn race [store writer-program reader-program]  ; cannot be a defk: thread を起こして待つ検の足場(Program の外)
   "書き手と読み手を別の thread で同時に回す。答え = 書き手の答え(どちらかの thread が失敗したらその例外を上げる)。"
   (setv running (threading.Event)
         answers {}
         failures []
         start (threading.Barrier 2))
   (.set running)
-  (defn write []  ; defk にできない: threading.Thread の target に渡す callback
+  (defn write []  ; cannot be a defk: threading.Thread の target に渡す callback
     (.wait start)
     (try
       (setv (get answers "writer") (run-on store writer-program))
       (except [error Exception] (.append failures error))
       (finally (.clear running))))
-  (defn read []  ; defk にできない: threading.Thread の target に渡す callback
+  (defn read []  ; cannot be a defk: threading.Thread の target に渡す callback
     (.wait start)
     (try
       (setv (get answers "reader") (run-on store (reader-program running)))
@@ -168,7 +168,7 @@
 ;; 冪等キーの引き・消した鍵の覚え・期限の索引・組)だけを写し、作った後に変えない値(置き場の行・行・出来事)は共有する。
 ;; 反例 = 入れ物を 1 つでも元と共有すると、写しへの書きが元の置き場に漏れる(元への書きも写しに漏れる)。
 
-(defn #^ object written-in [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+(defn #^ object written-in [#^ MemoryStore store program]  ; cannot be a defk: 検の入口で run を撃つ
   "置き場 store へ program の書きを、仮想の時計と memory の handler の下で撃つため。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
@@ -193,7 +193,7 @@
   True)
 
 
-(defn #^ tuple contents-of [#^ MemoryStore store]  ; defk にできない: 検の入口で置き場の中身を同期に読む(Program を実行しない)
+(defn #^ tuple contents-of [#^ MemoryStore store]  ; cannot be a defk: 検の入口で置き場の中身を同期に読む(Program を実行しない)
   "置き場の中身を比べられる形で取り出すため(行・番号・変更・出来事・冪等キーの引き・組・索引の数)。"
   #((rows-of store) store.head (len store.changes) (len store.changed-at) (tuple (lfor event store.events event.sequence))
     (frozenset (.keys store.by-idempotency))

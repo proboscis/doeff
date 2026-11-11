@@ -26,12 +26,12 @@
 (val PG-SKIP-REASON (pg-skip-reason))
 
 
-(defn sql-rows [connections #^ str text]  ; defk にできない: 検の組み立てで別の run を回す入口
+(defn sql-rows [connections #^ str text]  ; cannot be a defk: 検の組み立てで別の run を回す入口
   "文 text を 1 つ流して行を返す(前の版の表の形を作る・覚えの行を直に読む検の口)。"
   (. (run-sql connections (SqlQuery DATABASE text #())) rows))
 
 
-(defn counted-prepare [connections #^ str prefix]  ; defk にできない: 検の組み立てで別の run を回す入口
+(defn counted-prepare [connections #^ str prefix]  ; cannot be a defk: 検の組み立てで別の run を回す入口
   "置き場を用意し、#(置き場 用意が流した文の綴りの並び) を返す。"
   (setv counts (StatementCounts)
         store (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (probe-sql-handler connections DATABASE (QueryProbe counts))]
@@ -39,7 +39,7 @@
   #(store (tuple (gfor flush counts.flushes text flush text))))
 
 
-(defn on-store-at [connections store #^ datetime at effect]  ; defk にできない: 検の組み立てで別の run を回す入口
+(defn on-store-at [connections store #^ datetime at effect]  ; cannot be a defk: 検の組み立てで別の run を回す入口
   "置き場 store の書き手 maker の handler の下で、時計を at に置いて effect を 1 つ撃ち、答えを返す。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock :current-time at)) (postgres-sql-handler connections)
                                   (pg-records-handler store MAKER ORIGIN-HOST)]

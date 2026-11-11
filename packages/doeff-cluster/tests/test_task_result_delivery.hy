@@ -62,7 +62,7 @@
   answered)
 
 
-(deff unreachable [request]  ; defk にできない: httpx の MockTransport が呼ぶ callback
+(deff unreachable [request]  ; cannot be a defk: httpx の MockTransport が呼ぶ callback
   {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator に届かない網(接続の段で落ちる)を作るため。"
   (raise (httpx.ConnectError "coordinator に届かない" :request request)))

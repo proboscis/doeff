@@ -47,7 +47,7 @@
   "The way a clause ends contradicts the effect's resumption declaration (raised at definition time).")
 
 
-(deff parse-clause-options [forms where]  ; defk にできない: a function called at macro expansion time
+(deff parse-clause-options [forms where]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: forms list) (: where str)] :post [(: % ClauseOptions)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Separates the leading keys of a clause body, `:when guard` and `:finish-reason \"reason\"` (in either order). An unknown key, or a reason that is not a
@@ -67,14 +67,14 @@
     (ClauseOptions :guard (.get found ":when") :finish-reason (.get found ":finish-reason") :body items)))
 
 
-(deff irrefutable-pattern? [pattern]  ; defk にできない: a function called at macro expansion time
+(deff irrefutable-pattern? [pattern]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: pattern Object)] :post [(: % bool)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Checks whether the last arm of a match is a catch-all (`_` or a single-name capture); without one, a path remains where a non-matching value slips through."
   (and (isinstance pattern Symbol) (not-in "." (str pattern))))
 
 
-(deff match-terminates? [form]  ; defk にできない: a function called at macro expansion time
+(deff match-terminates? [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % bool)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Checks whether a (match subject pattern [:if guard] body ...) clause ends on every path: the body of every arm ends, and the last arm is a catch-all
@@ -88,7 +88,7 @@
          (all (gfor arm arms (_terminates arm.body))))))
 
 
-(deff match-arms [form]  ; defk にできない: a function called at macro expansion time
+(deff match-arms [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % (| list None))]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Splits (match subject pattern [:if guard] body ...) into a list of arms (None if any arm lacks a body). It also keeps each arm's guard form;
@@ -108,7 +108,7 @@
     arms))
 
 
-(deff try-terminates? [form]  ; defk にできない: a function called at macro expansion time
+(deff try-terminates? [form]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: form Expression)] :post [(: % bool)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Checks whether a (try body ... (except [...] ...) ...) clause ends on every path: the body ends and each except body also ends
@@ -121,7 +121,7 @@
          (all (gfor h handlers (_seq-terminates (list (cut h 2 None))))))))
 
 
-(deff ops-in [node]  ; defk にできない: a function called at macro expansion time
+(deff ops-in [node]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: node Object)] :post [(: % frozenset)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "The set of names of ending operations used in the form (not counting those inside quote), for checking against the effect's resumption declaration."
@@ -134,14 +134,14 @@
       _ (frozenset))))
 
 
-(deff clause-ops [forms]  ; defk にできない: a function called at macro expansion time
+(deff clause-ops [forms]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: forms list)] :post [(: % frozenset)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "The set of names of ending operations used by the clause body."
   (| (frozenset) #* (gfor form forms (ops-in form))))
 
 
-(deff effect-name [etype]  ; defk にできない: a function called at macro expansion time
+(deff effect-name [etype]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: etype Object)] :post [(: % (| str None))]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "The name of the effect type at the head of the clause (the last segment if dotted), to identify effects recognizable by name (Raise / Absent)."
@@ -149,7 +149,7 @@
     (get (.split (str etype) ".") -1)))
 
 
-(deff check-clause-by-name [etype ops options where]  ; defk にできない: a function called at macro expansion time
+(deff check-clause-by-name [etype ops options where]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: etype Object) (: ops frozenset) (: options ClauseOptions) (: where str)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Turns violations detectable at expansion time into SyntaxError: resume / transfer in a Raise clause (it would continue as if a failure had succeeded),
@@ -174,14 +174,14 @@
     None))
 
 
-(deff ending-spec-form [etype ops options]  ; defk にできない: a function called at macro expansion time
+(deff ending-spec-form [etype ops options]  ; cannot be a defk: a function called at macro expansion time
   {:pre [(: etype Object) (: ops frozenset) (: options ClauseOptions)] :post [(: % Tuple)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "The form describing one clause, passed to the definition-time check: #(effect type, tuple of names of operations used, whether a reason is present)."
   `#(~etype #(~@(lfor op (sorted ops) (String op))) ~(is-not options.finish-reason None)))
 
 
-(deff check-clause-endings [handler clauses]  ; defk にできない: a check the expanded handler calls at definition time (performs no effect)
+(deff check-clause-endings [handler clauses]  ; cannot be a defk: a check the expanded handler calls at definition time (performs no effect)
   {:pre [(: handler str) (: clauses list)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Checks how each clause of the handler ends against the resumption handling (Resumption) declared by the clause's effect type. Cases not identifiable by name
@@ -218,7 +218,7 @@
 (setv CHECKED-DEFINITIONS (set))
 
 
-(deff check-clause-endings-once [data handler specs]  ; defk にできない: a check called when the expanded handler wraps a body (performs no effect)
+(deff check-clause-endings-once [data handler specs]  ; cannot be a defk: a check called when the expanded handler wraps a body (performs no effect)
   {:pre [(: data Callable) (: handler str) (: specs Callable)] :post [(: % None)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "Runs the clause-ending check of a defhandler once per definition, when the handler first wraps a body (the module has been fully loaded by then,
@@ -231,7 +231,7 @@
   None)
 
 
-(deff fell-through [handler effect-label]  ; defk にできない: called by the expanded handler's clause at run time (only builds an exception)
+(deff fell-through [handler effect-label]  ; cannot be a defk: called by the expanded handler's clause at run time (only builds an exception)
   {:pre [(: handler str) (: effect-label str)] :post [(: % RuntimeError)]
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "The error for when a clause exits without either resume or finish (the scope is not silently ended with None; R15)."

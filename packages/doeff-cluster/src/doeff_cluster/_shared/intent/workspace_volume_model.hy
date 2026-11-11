@@ -102,7 +102,7 @@
    volume を消せずに残した(消す前の読みの後の書きが上限の回数まで続いた — 中身は無いが、持ち主の volume はまだ在る)か。呼び手は fresh でも、
    kept なら持ち主が volume を持つと読む(次の作るが ALREADY で答え、付ける先の様子が volume の外の中身と並ぶ)。"
   (defn __init__ [self #^ str message #^ bool fresh #^ bool [kept False]]
-    ;; defk にできない: 例外の作り手(raise が呼ぶ口)
+    ;; cannot be a defk: 例外の作り手(raise が呼ぶ口)
     "断りの文 message と、中身を持たない持ち主か fresh と、置けなかった volume を残したか kept を持つため(作る前の数えの断りは volume を
      作っていないので kept False)。"
     (.__init__ (super) message)

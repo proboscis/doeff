@@ -17,7 +17,7 @@
 (val CAPABILITY-PATTERN (re.compile r"[a-z0-9][a-z0-9.-]*"))
 
 
-(deff capability-refusal [name]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ純粋な判断
+(deff capability-refusal [name]  ; cannot be a defk: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ純粋な判断
   {:pre [(: name str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "能力の名 1 つが名として受けられない理由(受けられれば None)— 旧い label の形(`kind=k3s`)を黙って名にしないため。"
   (cond
@@ -49,7 +49,7 @@
     True None))
 
 
-(deff capabilities-of [#^ object value #^ str what]  ; defk にできない: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
+(deff capabilities-of [#^ object value #^ str what]  ; cannot be a defk: 宣言・heartbeat・保存の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: value "JSON の値 — 能力の名の列(list・tuple・set・frozenset)が正しい形") (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "JSON の能力の名の列(list・tuple・frozenset)→ 名の順の重なりの無い tuple(比べる時に順が揃う)。旧い形(label の object)や
    名として受けられない値は BodyInvalid(送り手の誤り — ValueError の子)(what = 誤りの文の欄の名)。"
@@ -81,7 +81,7 @@
                None)))
 
 
-(deff environ-pairs [#^ dict environ]  ; defk にできない: coordinator の本文の読み・worker の返事の読み(Program の外)が呼ぶ純粋な判断
+(deff environ-pairs [#^ dict environ]  ; cannot be a defk: coordinator の本文の読み・worker の返事の読み(Program の外)が呼ぶ純粋な判断
   {:pre [(: environ dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "子の環境変数の dict → 名の順の #(名 値) の tuple(TaskRecord.environ・JobSpec.environ の形)— 行と spec の比べと指紋を
    名の順 1 つにするため。"

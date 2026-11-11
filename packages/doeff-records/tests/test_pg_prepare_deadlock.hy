@@ -31,12 +31,12 @@
 (val pytestmark pytest.mark.realtime)
 
 
-(defn blocked-by [watcher #^ int pid]  ; defk にできない: 検の素の接続で数える
+(defn blocked-by [watcher #^ int pid]  ; cannot be a defk: 検の素の接続で数える
   "接続 pid の lock を待っている接続の数。"
   (get (.fetchone (.execute watcher "SELECT count(*) FROM pg_stat_activity WHERE %s = ANY(pg_blocking_pids(pid))" #(pid))) 0))
 
 
-(defn prepare-against-a-writer [#^ str prefix]  ; defk にできない: 用意を thread の run で回し、書きの代役を素の接続で流す入口
+(defn prepare-against-a-writer [#^ str prefix]  ; cannot be a defk: 用意を thread の run で回し、書きの代役を素の接続で流す入口
   "用意済みの置き場 prefix を、書きの錠の中の書きの代役が row_changes を持っている間にもう一度用意する。書きの代役は用意が待ち始めてから
    append_rows も取りに行く。#(用意の答え 用意が開いた transaction の数 書きの代役の失敗の SQLSTATE か None) を返す。"
   (setv connections (postgres-connections 2)
@@ -45,7 +45,7 @@
         watcher (open-postgres)
         pool (ThreadPoolExecutor :max-workers 1)
         writer-failed None)
-  (defn prepare []  ; defk にできない: thread の target
+  (defn prepare []  ; cannot be a defk: thread の target
     (try
       (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))
                                       (probe-sql-handler connections DATABASE (QueryProbe counts))]
@@ -76,14 +76,14 @@
       (.close connections))))
 
 
-(defn prepare-beside-a-writer [#^ str prefix #^ object program]  ; defk にできない: 用意を thread の run で回し、書きの代役を素の接続で流す入口
+(defn prepare-beside-a-writer [#^ str prefix #^ object program]  ; cannot be a defk: 用意を thread の run で回し、書きの代役を素の接続で流す入口
   "書きの錠を取らない書きの代役が置き場 prefix の 3 つの表に RowExclusiveLock を持っている間に program(用意)を流す。program が終わるか
    代役を待ち始めるまで待ち、代役を commit してから #(program の答え 代役を待ち始めた本数) を返す。"
   (setv connections (postgres-connections 2)
         writer (open-postgres)
         watcher (open-postgres)
         pool (ThreadPoolExecutor :max-workers 1))
-  (defn prepare []  ; defk にできない: thread の target
+  (defn prepare []  ; cannot be a defk: thread の target
     (try
       (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))
                                       (probe-sql-handler connections DATABASE (QueryProbe (StatementCounts)))]
@@ -126,7 +126,7 @@
   answer)
 
 
-(defn with-prepared-store [check]  ; defk にできない: 検の置き場の組み立てと後片付け
+(defn with-prepared-store [check]  ; cannot be a defk: 検の置き場の組み立てと後片付け
   "使い捨ての置き場を用意して check に接頭辞を渡し、後で表を消す。"
   (setv connections (postgres-connections 1)
         store (prepared-store connections (fresh-prefix)))

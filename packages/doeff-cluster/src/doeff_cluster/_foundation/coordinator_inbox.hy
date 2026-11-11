@@ -52,7 +52,7 @@
 (setv LIVE-STALL-SECONDS 120.0)
 
 
-(deff probe-verdict [#^ str path #^ (| float None) stalled-seconds]  ; defk にできない: 受け口の HTTP の thread(Program の外)が probe ごとに呼ぶ純粋な綴り
+(deff probe-verdict [#^ str path #^ (| float None) stalled-seconds]  ; cannot be a defk: 受け口の HTTP の thread(Program の外)が probe ごとに呼ぶ純粋な綴り
   {:pre [(: path str) (: stalled-seconds (| float None))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
   "純粋: probe の答え #(status 本文)。stalled-seconds = ループの止まりの秒(RequestInbox.stalled-seconds — 歩の中なら歩に入ってから・待って
    いるなら待つと定めた刻を越えてから・まだ 1 度も取りに来ていなければ None)。

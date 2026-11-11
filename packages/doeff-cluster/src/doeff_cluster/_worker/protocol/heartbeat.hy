@@ -11,7 +11,7 @@
 (import doeff_cluster._worker.core.memory_rules [MIB])
 
 
-(deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured #^ (get frozenset str) [ready-deps (frozenset)]]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
+(deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured #^ (get frozenset str) [ready-deps (frozenset)]]  ; cannot be a defk: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: views (get tuple #(CodeView ...))) (: capacity str) (: unmeasured (get frozenset str)) (: ready-deps (get frozenset str))] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
   "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
    失敗のキーを env- を外して・disk の条件)にするため。unmeasured = 先の組みを memory を測らずに始めた root のキー(#3748 — 観測に在る root だけを
@@ -29,7 +29,7 @@
      "capacity" capacity}))
 
 
-(deff env-heartbeat-part [#^ (get dict #(str object)) report #^ str platform]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
+(deff env-heartbeat-part [#^ (get dict #(str object)) report #^ str platform]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: report (get dict #(str object))) (: platform str)] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol"}}
   "root の姿(env-report)を heartbeat の本文に足す欄(platform・envs・envCapacity)にするため。"
   {"platform" platform

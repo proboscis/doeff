@@ -232,7 +232,7 @@
   started-at)
 
 
-(deff on-real-clock [#^ Program program]  ; defk にできない: 検が自分の scheduler と本物の event loop(機体の終わると読める fd の読み待ち)で回す入口
+(deff on-real-clock [#^ Program program]  ; cannot be a defk: 検が自分の scheduler と本物の event loop(機体の終わると読める fd の読み待ち)で回す入口
   {:pre [(: program Program)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を本物の答え手の組(外側が先 — event loop・実時間・子 process・子の終わりの待ち)の上で回すため(core の
    test_process_exit_wait の handled と同じ組)。"

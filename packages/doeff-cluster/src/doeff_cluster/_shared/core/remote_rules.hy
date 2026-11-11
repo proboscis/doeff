@@ -30,7 +30,7 @@
 
 
 ;; この process の版の識別(process-versions)を綴るのは io の層の process_versions.hy(#1630)。ここは突き合わせの判断だけ。
-(defn #^ (get tuple #(VersionDiff ...)) version-diffs [#^ (get dict #(str str)) expected #^ (get dict #(str str)) actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ (get tuple #(VersionDiff ...)) version-diffs [#^ (get dict #(str str)) expected #^ (get dict #(str str)) actual]  ; cannot be a defk: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "送り手の版(expected)と受け側の版(actual)の食い違った欄(VersionDiff の tuple・欄の名の順)。env のキー(envKey)は両方が名乗る
    時だけ比べて先頭に置く(送り手が env の外 — 開発の checkout — で動く時は、残りの欄と宣言の組み立ての「汚れたツリーを断る」が
    source の一致を保つ)。"
@@ -41,18 +41,18 @@
                (VersionDiff key (.get expected key) (.get actual key)))))
 
 
-(defn #^ str diffs-text [#^ (get tuple #(VersionDiff ...)) diffs]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ str diffs-text [#^ (get tuple #(VersionDiff ...)) diffs]  ; cannot be a defk: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "版の違いの列(version-diffs の答え)を 1 行で名指す。違いが在ると分かっている呼び手が使う — 答えに None を含まない(#1690)。"
   (.join "・" (gfor d diffs (.format "{}: 送り手 {} / 受け側 {}" d.field d.sender d.env))))
 
 
-(defn #^ (| str None) version-mismatch [#^ (get dict #(str str)) expected #^ (get dict #(str str)) actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ (| str None) version-mismatch [#^ (get dict #(str str)) expected #^ (get dict #(str str)) actual]  ; cannot be a defk: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "違いを 1 行で名指す。同じなら None。"
   (setv diffs (version-diffs expected actual))
   (if diffs (diffs-text diffs) None))
 
 
-(deff program-sha [#^ str blob]  ; defk にできない: 送り手(declare・task の client)・coordinator の置き場・worker の cache が Program の外で呼ぶ
+(deff program-sha [#^ str blob]  ; cannot be a defk: 送り手(declare・task の client)・coordinator の置き場・worker の cache が Program の外で呼ぶ
   {:pre [(: blob str)] :post [(: % str) (= (len %) 64)] :tags {:context "doeff-cluster" :role "judgment"}}
   "詰めた Program の置き場のキー(中身の sha256 の 16 進 64 桁)。/programs/<sha> の鍵・宣言の行と task の本文の program・worker の
    cache の file の名はどれもこの値(定義点はここ 1 つ — ADR-DOE-CLUSTER-001 R3b・改訂 1 の F)。"

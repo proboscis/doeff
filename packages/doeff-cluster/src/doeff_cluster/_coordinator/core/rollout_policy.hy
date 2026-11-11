@@ -181,37 +181,37 @@
 ;; rollout-step が now と比べる段の期限の値の定義点。段の判断はこの値と now を比べ、静かな区間の次の期限(rollout-phase-due)も同じ値を
 ;; 読む(#1383 の決めの条件 (1))。秒の欄は小数を許すので、「長さを越えた最初の刻」は floor + 1、「長さに達した最初の刻」は ceil。
 
-(defn #^ int ms-past [#^ int start #^ (| int float) seconds]  ; defk にできない: coordinator の純粋な判断(段の期限)が呼ぶ
+(defn #^ int ms-past [#^ int start #^ (| int float) seconds]  ; cannot be a defk: coordinator の純粋な判断(段の期限)が呼ぶ
   "start から seconds 秒を越えた(> の比べが真になる)最初の刻(ms)。"
   (+ start (math.floor (* 1000 seconds)) 1))
 
 
-(defn #^ int ms-reached [#^ int start #^ (| int float) seconds]  ; defk にできない: coordinator の純粋な判断(段の期限)が呼ぶ
+(defn #^ int ms-reached [#^ int start #^ (| int float) seconds]  ; cannot be a defk: coordinator の純粋な判断(段の期限)が呼ぶ
   "start から seconds 秒に達した(>= の比べが真になる)最初の刻(ms)。"
   (+ start (math.ceil (* 1000 seconds))))
 
 
-(defn #^ int ready-timeout-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+(defn #^ int ready-timeout-from [#^ RolloutSpec spec #^ int since]  ; cannot be a defk: coordinator の純粋な判断(rollout-step)が呼ぶ
   "WaitingNewReady で新が Ready にならないまま時間切れと数える最初の刻(段の起点 since + readyTimeoutSeconds を越えた刻)。"
   (ms-past since spec.ready-timeout-seconds))
 
 
-(defn #^ int stop-timeout-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+(defn #^ int stop-timeout-from [#^ RolloutSpec spec #^ int since]  ; cannot be a defk: coordinator の純粋な判断(rollout-step)が呼ぶ
   "StoppingOld で旧が止まらないまま時間切れと数える最初の刻(段の起点 since + stopTimeoutSeconds を越えた刻)。"
   (ms-past since spec.stop-timeout-seconds))
 
 
-(defn #^ int fail-after-from [#^ RolloutSpec spec #^ int down]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+(defn #^ int fail-after-from [#^ RolloutSpec spec #^ int down]  ; cannot be a defk: coordinator の純粋な判断(rollout-step)が呼ぶ
   "Observing で新が NotReady のまま失敗と数える最初の刻(NotReady の起点 down + failAfterSeconds を越えた刻)。"
   (ms-past down spec.fail-after-seconds))
 
 
-(defn #^ int observed-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+(defn #^ int observed-from [#^ RolloutSpec spec #^ int since]  ; cannot be a defk: coordinator の純粋な判断(rollout-step)が呼ぶ
   "Observing で観察の期間を終えたと数える最初の刻(段の起点 since + observeSeconds に達した刻)。"
   (ms-reached since spec.observe-seconds))
 
 
-(defn #^ int rollback-late-from [#^ RolloutSpec spec #^ int since]  ; defk にできない: coordinator の純粋な判断(rollout-step)が呼ぶ
+(defn #^ int rollback-late-from [#^ RolloutSpec spec #^ int since]  ; cannot be a defk: coordinator の純粋な判断(rollout-step)が呼ぶ
   "RollingBack で戻しが終わらないと印を付ける最初の刻(段の起点 since + rollbackTimeoutSeconds を越えた刻)。"
   (ms-past since spec.rollback-timeout-seconds))
 
@@ -329,7 +329,7 @@
   (min RETRY-MAX-MS (* RETRY-FIRST-MS (** 2 (max 0 (- failures 1))))))
 
 
-(defn #^ int action-retry-from [#^ dict last]  ; defk にできない: coordinator の純粋な判断(action-due)が呼ぶ
+(defn #^ int action-retry-from [#^ dict last]  ; cannot be a defk: coordinator の純粋な判断(action-due)が呼ぶ
   "失敗した直前の action last と同じ action を、もう一度出してよい最初の刻(失敗の刻 + 失敗の数に応じた間)。action-due の境の定義点 —
    静かな区間の次の期限(rollout-phase-due・#3064)も同じ値を読む。"
   (+ (.get last "at" 0) (retry-delay-ms (.get last "count" 1))))

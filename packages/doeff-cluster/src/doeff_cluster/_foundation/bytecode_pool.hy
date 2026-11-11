@@ -71,7 +71,7 @@
 (setv SHARE-DOWN {"reason" None})
 
 
-(defn #^ ModuleType guard-module []  ; defk にできない: root の版の doeff の macro を使わない道具の素の関数(頭の註)
+(defn #^ ModuleType guard-module []  ; cannot be a defk: root の版の doeff の macro を使わない道具の素の関数(頭の註)
   "root の guard の module — root の guard が起動時に SourceFileLoader に被せた口の持ち主を、module の名で import せずに引くため(頭の註)。
    口が包まれていない・持ち主が 2 つの名を出さない root は、焼いた .pyc に記録を付けられない(import が全部を compile し直す)ので落とす。"
   (for [hook GUARD-HOOKS]
@@ -82,25 +82,25 @@
                                 (.join "・" GUARD-NAMES)))))
 
 
-(defn #^ str pyc-path [#^ str source]  ; defk にできない: 内包表記と process の pool の中で呼ぶ path の計算
+(defn #^ str pyc-path [#^ str source]  ; cannot be a defk: 内包表記と process の pool の中で呼ぶ path の計算
   "source の path → 同じ dir の __pycache__ の .pyc の path(import が探す名 — <名>.<cache の印>.pyc)。"
   (setv #(head tail) (posixpath.split source))
   (posixpath.join head "__pycache__" (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc")))
 
 
-(defn #^ bytes pyc-head [#^ bytes data]  ; defk にできない: process の pool の子が呼ぶ素の組み立て
+(defn #^ bytes pyc-head [#^ bytes data]  ; cannot be a defk: process の pool の子が呼ぶ素の組み立て
   "source の中身 data の、import が source の hash で検める .pyc の頭(PEP 552 — magic・flags・source の hash 8 byte の PYC-HEAD-BYTES)。"
   (+ importlib.util.MAGIC-NUMBER
      (.to-bytes CHECKED-HASH-FLAGS 4 "little")
      (importlib.util.source-hash data)))
 
 
-(defn #^ bytes checked-hash-pyc [#^ CodeType code #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ素の組み立て
+(defn #^ bytes checked-hash-pyc [#^ CodeType code #^ bytes data]  ; cannot be a defk: process の pool の子が呼ぶ素の組み立て
   "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 pyc-head、続けて marshal した code)。"
   (+ (pyc-head data) (marshal.dumps code)))
 
 
-(defn #^ tuple compiled-pyc [#^ str name #^ str path #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ焼き
+(defn #^ tuple compiled-pyc [#^ str name #^ str path #^ bytes data]  ; cannot be a defk: process の pool の子が呼ぶ焼き
   "source の中身 1 つを、import が検める方式の .pyc の中身にするため — #(.pyc の中身 None)、焼けない時は #(None 理由)(import の時に同じ
    誤りが出るので、ここでは記録だけ)。Hy の source は root の guard の source_to_code_as_import で、import と同じく module を置いた中で
    compile し、展開が依った macro の記録を付ける(記録の無い .pyc は import の時に guard が compile し直す)。"
@@ -111,7 +111,7 @@
       #(None (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
 
 
-(defn #^ None prepare-path [#^ tuple paths]  ; defk にできない: process の pool の initializer(素の関数として呼ばれる)
+(defn #^ None prepare-path [#^ tuple paths]  ; cannot be a defk: process の pool の initializer(素の関数として呼ばれる)
   "焼く process の import の路の先頭に木の根を足し(前が先)、焼く途中の import が timestamp 方式の .pyc を書かないようにするため。"
   (setv sys.dont-write-bytecode True)
   (setv (cut sys.path 0 0) (list paths))
@@ -119,7 +119,7 @@
   None)
 
 
-(defn #^ None share-file-states []  ; defk にできない: process の pool の initializer から呼ぶ素の関数
+(defn #^ None share-file-states []  ; cannot be a defk: process の pool の initializer から呼ぶ素の関数
   "この process の照らし(bytecode-is-current と焼き)の全部で、macro の提供元の file の状態を 1 度だけ読むため — root の guard の import の
    範囲の memo(持ち主の module の IMPORT_SCOPE と ImportScope — doeff-hy の _import_scope)を 1 つ置き、焼きの間は file を変わらない物と
    扱う(焼きの間に変わるのは .pyc だけで、macro の提供元の source は変わらない)。memo が無いと照らし 1 回ごとに提供元を stat し直し、
@@ -134,7 +134,7 @@
   None)
 
 
-(defn #^ ModuleType store-module-at [#^ str path]  ; defk にできない: 入口が pool を起こす前に 1 度だけ呼ぶ素の読み(fork の子が引き継ぐ)
+(defn #^ ModuleType store-module-at [#^ str path]  ; cannot be a defk: 入口が pool を起こす前に 1 度だけ呼ぶ素の読み(fork の子が引き継ぐ)
   "worker の版の code_store.py を path で module として読むため(頭の註 --store-module)。"
   (setv spec (importlib.util.spec-from-file-location STORE-MODULE-NAME path))
   (when (or (is spec None) (is spec.loader None))
@@ -145,7 +145,7 @@
   module)
 
 
-(defn #^ bool current-pyc [#^ str tree #^ str rel]  ; defk にできない: root の版の doeff の macro を使わない道具の素の関数(頭の註)
+(defn #^ bool current-pyc [#^ str tree #^ str rel]  ; cannot be a defk: root の版の doeff の macro を使わない道具の素の関数(頭の註)
   "木に既に在る source 1 つの .pyc が、今の source の hash と今の環境の macro の記録に合うか — 合えば焼き直さずに残すため(.pyc か source を
    読めない時は偽 = 用意する)。照らし方は import の読みの口と同じ root の guard の bytecode_is_current(記録の macro の提供元は module 名から
    今の import の路で引き直す — prepare-path の後に呼ぶ)。"
@@ -157,7 +157,7 @@
     (except [OSError] False)))
 
 
-(defn #^ None write-pyc [#^ str source #^ bytes pyc]  ; defk にできない: process の pool の子が呼ぶ file の書き
+(defn #^ None write-pyc [#^ str source #^ bytes pyc]  ; cannot be a defk: process の pool の子が呼ぶ file の書き
   "source の隣の __pycache__ へ .pyc を置く(別の file へ書いて置き換える — hardlink の先の別の木の .pyc を書き換えない)。"
   (setv cache (pyc-path source))
   (os.makedirs (posixpath.dirname cache) :exist-ok True)
@@ -167,7 +167,7 @@
   None)
 
 
-(defn #^ str place-pyc [#^ (| str None) store #^ str source #^ bytes pyc]  ; defk にできない: process の pool の子が呼ぶ file の書き
+(defn #^ str place-pyc [#^ (| str None) store #^ str source #^ bytes pyc]  ; cannot be a defk: process の pool の子が呼ぶ file の書き
   "source の .pyc を置くため: 保存先が在れば、保存先の中身の同じ file への hardlink で置き(code_store の link-pyc — root ごとに同じ中身を
    新しく書かない)、置けなかった・保存先を使わない時は write-pyc で書く。答え = hardlink で置けなかった理由(置けた・保存先を使わない時は空)。"
   (setv problem (if (is store None) None (.link-pyc (get sys.modules STORE-MODULE-NAME) store pyc (pyc-path source))))
@@ -176,7 +176,7 @@
   (or problem ""))
 
 
-(defn #^ None mark-progress [#^ (| str None) progress]  ; defk にできない: 焼きの結果を待つ loop の中で呼ぶ素の file の触り
+(defn #^ None mark-progress [#^ (| str None) progress]  ; cannot be a defk: 焼きの結果を待つ loop の中で呼ぶ素の file の触り
   "進みの印の file の時刻を今にするため(頭の註 --progress)。None = 印の無い起動 — 何もしない。印の file が消えていても焼きは止めない
    (印は見張りの材料)。"
   (when (is-not progress None)
@@ -187,19 +187,19 @@
   None)
 
 
-(defn #^ (| str None) share-reason [#^ str problem]  ; defk にできない: process の pool の子が呼ぶ素の関数
+(defn #^ (| str None) share-reason [#^ str problem]  ; cannot be a defk: process の pool の子が呼ぶ素の関数
   "分け合う保存先を使えなかった理由を、この process の以後の焼きで分け合う保存先を引かない印にして、報告の理由の文にするため
    (SHARE-DOWN — 届かない保存先へ 1 本ごとに期限まで待たない)。"
   (setv (get SHARE-DOWN "reason") problem)
   (.format "分け合う保存先を使えない(この process の残りは機体の中で焼く): {}" problem))
 
 
-(defn #^ (| str None) joined-reasons [#* reasons]  ; defk にできない: process の pool の子が呼ぶ素の関数
+(defn #^ (| str None) joined-reasons [#* reasons]  ; cannot be a defk: process の pool の子が呼ぶ素の関数
   "理由の文(空と None を除く)を 1 つの文につなぐため(1 本の答えの理由は 1 つ — 報告は理由ごとに 1 行)。"
   (or (.join "; " (gfor r reasons :if r r)) None))
 
 
-(defn #^ tuple shared-entry [share #^ str store #^ str key is-current]  ; defk にできない: process の pool の子が呼ぶ素の関数
+(defn #^ tuple shared-entry [share #^ str store #^ str key is-current]  ; cannot be a defk: process の pool の子が呼ぶ素の関数
   "分け合う保存先から鍵の entry を取り寄せ、今の環境に合う物の中身と理由の文を #(中身か None 理由か None) で返すため(code_store の
    fetch-shared-code — 合う entry は機体の保存先へ手元の写しとして置かれる)。保存先が使えなければ、この process では以後引かない。"
   (setv code-store (get sys.modules STORE-MODULE-NAME))
@@ -210,7 +210,7 @@
       #(None (share-reason (str error))))))
 
 
-(defn #^ (| str None) published [share #^ str key code #^ bytes body]  ; defk にできない: process の pool の子が呼ぶ素の関数
+(defn #^ (| str None) published [share #^ str key code #^ bytes body]  ; cannot be a defk: process の pool の子が呼ぶ素の関数
   "焼いた code を分け合う保存先へ置くため(code_store の publish-code — ほかの機体が同じ鍵の同じ記録の code を取り寄せて焼かない)。
    答え = 置けなかった理由か None(保存先が使えなければ、この process では以後引かない)。"
   (setv code-store (get sys.modules STORE-MODULE-NAME))
@@ -221,7 +221,7 @@
       (share-reason (str error)))))
 
 
-(defn #^ tuple bake-one [#^ (| str None) store share #^ bool look-only #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
+(defn #^ tuple bake-one [#^ (| str None) store share #^ bool look-only #^ str tree #^ str rel #^ str name]  ; cannot be a defk: process の pool の子が素の関数として呼ぶ
   "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を置いた — 置き方の理由は place-pyc)・
    \"fetched\"(分け合う保存先の code から .pyc を置いた — ほかの機体が焼いた物)・
    \"rebuilt\"(焼いて .pyc を置き、code を保存先へ足した — 足せなかった・hardlink で置けなかった時は理由)・\"failed\"(焼けない・
@@ -278,7 +278,7 @@
   #("rebuilt" (joined-reasons fetch-reason problem placed shared-problem)))
 
 
-(defn #^ tuple pooled [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; defk にできない: process の pool を回す
+(defn #^ tuple pooled [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; cannot be a defk: process の pool を回す
   "work(#(木の path 相対 path module 名) の列)を jobs 個の process の pool で用意し、work の順の bake-one の答えの列を返すため。子が
    途中で殺されて pool が壊れた時(BrokenProcessPool — cgroup の memory の上限の OOM kill・2026-11-02 の node-d)は、答えの届いた物は
    そのまま使い、答えの無い物だけをこの process で 1 つずつ用意し直す(殺された子の memory は返っているので、並べずに焼けば層の上限の
@@ -301,14 +301,14 @@
                (if gone (rebaked one progress tree rel name) (.result f)))))
 
 
-(defn #^ tuple rebaked [one #^ (| str None) progress #^ str tree #^ str rel #^ str name]  ; defk にできない: pool の後の素の焼き直し
+(defn #^ tuple rebaked [one #^ (| str None) progress #^ str tree #^ str rel #^ str name]  ; cannot be a defk: pool の後の素の焼き直し
   "pool が壊れて答えの無い物 1 つを、この process で用意し直して進みの印を進めるため(pooled)。答えは bake-one の答え。"
   (setv result (one tree rel name))
   (mark-progress progress)
   result)
 
 
-(defn #^ tuple pass-results [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; defk にできない: process の pool を回す
+(defn #^ tuple pass-results [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; cannot be a defk: process の pool を回す
   "work を 1 回り用意し、work の順の one の答えの列を返すため(jobs が 1 か 1 本だけならこの process で順に・それ以外は pool で)。"
   (if (or (<= jobs 1) (<= (len work) 1))
       (tuple (gfor #(tree rel name) work
@@ -318,7 +318,7 @@
       (pooled work jobs paths one progress)))
 
 
-(defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress share]  ; defk にできない: process の pool を回す
+(defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress share]  ; cannot be a defk: process の pool を回す
   "items(#(木の path 相対 path module 名) の列)のうち、在る .pyc が今の source と macro に合わない物をこの順に用意し、#(焼けなかった物の
    #(木の path 相対 path 理由) の列 保存先から書いた物の #(木の path 相対 path) の列 焼かずに残した物の #(木の path 相対 path) の列
    保存先へ書けなかった理由の列(重ねない・名の順) 分け合う保存先から書いた物の #(木の path 相対 path) の列)を返すため。jobs 個の
@@ -347,7 +347,7 @@
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "fetched") #((get item 0) (get item 1))))))
 
 
-(defn shared-store [#^ ModuleType code-store #^ (| str None) store]  ; defk にできない: 入口が pool を起こす前に 1 度だけ呼ぶ素の関数
+(defn shared-store [#^ ModuleType code-store #^ (| str None) store]  ; cannot be a defk: 入口が pool を起こす前に 1 度だけ呼ぶ素の関数
   "この回に使う分け合う保存先(code_store の Share か None)を決め、どうしたかを stderr の 1 行で名乗るため(呼び手の入口が報告の行と
    並べて出す)。名指しが無い・機体の保存先を使わない回は None。名指しが在っても形が誤り・鍵の file が読めない・焼く前の 1 回の一覧の
    問いに答えない時は、理由を名乗って None(準備は機体の中で焼く — 届かない保存先へ 1 本ごとに期限まで待たない)。"
@@ -370,7 +370,7 @@
                   None)))))
 
 
-(defn #^ None main []  ; defk にできない: console の入口(素の関数として呼ばれる)
+(defn #^ None main []  ; cannot be a defk: console の入口(素の関数として呼ばれる)
   "標準入力の焼く物を用意し、焼けなかった物・保存先から書いた物・焼かずに残した物・保存先へ書けなかった理由を標準出力へ書くため
    (頭の註の形)。"
   (setv parser (argparse.ArgumentParser))

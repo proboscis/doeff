@@ -28,7 +28,7 @@
   None)
 
 
-(deff main []  ; defk にできない: 子の process の入口(`__main__` が素の関数として呼ぶ)
+(deff main []  ; cannot be a defk: 子の process の入口(`__main__` が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "main"}}
   "検の job の本体: 本番の答え手と file の答え手を並べ、scheduler の下で知らせを待ち続けるため。"
   (run (scheduled (with-handlers [(state) os-file-handler pipe-retirement-notices] (listen (get sys.argv 1)))))

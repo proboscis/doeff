@@ -83,7 +83,7 @@
   (#^ (get ClassVar WireShape) __doeff-wire__))
 
 
-(deff wire-config [names unknown]  ; defk にできない: called when the defwire expansion loads the module (a place where a Program cannot be run)
+(deff wire-config [names unknown]  ; cannot be a defk: called when the defwire expansion loads the module (a place where a Program cannot be run)
   {:pre [(: names dict) (: unknown str) (in unknown UNKNOWN-FIELDS)]
    :post [(: % dict)]
    :tags {:context "wire" :role "judgment"}}
@@ -99,7 +99,7 @@
    "defer_build" True})
 
 
-(deff wire-shape [wire-type names unknown [description None]]  ; defk にできない: called when the defwire expansion loads the module (a place where a Program cannot be run)
+(deff wire-shape [wire-type names unknown [description None]]  ; cannot be a defk: called when the defwire expansion loads the module (a place where a Program cannot be run)
   {:pre [(: wire-type type) (: names dict) (: unknown str) (: description (| str None))]
    :post [(: % WireShape)]
    :tags {:context "wire" :role "judgment"}}

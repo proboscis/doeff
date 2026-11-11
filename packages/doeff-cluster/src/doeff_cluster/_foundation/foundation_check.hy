@@ -36,7 +36,7 @@
   (#^ (get tuple #(type ...)) effects))
 
 
-(deff closed? [#^ FoundationClosure closure]  ; defk にできない: 検と CLI が値を読むだけの純粋な判断
+(deff closed? [#^ FoundationClosure closure]  ; cannot be a defk: 検と CLI が値を読むだけの純粋な判断
   {:pre [(: closure FoundationClosure)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
   "閉じているか — gap・読めない handler・追えない所のどれも無い時だけ真(読めない物を閉じていると数えない)。"
   (not (or closure.gaps closure.unknown closure.unresolved)))

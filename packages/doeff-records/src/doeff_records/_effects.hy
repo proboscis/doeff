@@ -60,7 +60,7 @@
   limit)
 
 
-(defn #^ None check-free-of-nul [#^ object value #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+(defn #^ None check-free-of-nul [#^ object value #^ str what]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
   "書きの値(行の鍵・欄の値・出来事の本文・冪等キー)の文字列と object の名に NUL 文字(U+0000)が無い事を作る時に検めるため。
    PostgreSQL の jsonb と text は NUL を持てず(jsonb は 22P05・text は 22021 で文が落ちる)、落ちた文の後始末は同じ接続のほかの書きまで
    巻き込む — 置き場まで渡さずに書き手の誤り(ValueError — HTTP の口では 400 malformed)として断り、memory の置き場の模擬も同じ所で断る。"
@@ -78,7 +78,7 @@
       _ None)))
 
 
-(defn #^ None check-row-write [#^ object write #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+(defn #^ None check-row-write [#^ object write #^ str what]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
   "1 行の書きの欄(table・key・value・expect)を作る時に検め、value を深く凍らせる — PutRow と RowWrite の検めを 1 つにするため。"
   (checked-table-name write.table (+ what ".table"))
   (checked-key write.key (+ what ".key"))
@@ -104,7 +104,7 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defn #^ bool checked-list-rows [#^ object ask]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+(defn #^ bool checked-list-rows [#^ object ask]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
   "ListRows の欄(table・where・where-any・fields・cursor・limit・descending-by・ascending-by)を作る時に検め、where と where-any を深く凍らせる。
    断りの型と文言は defclass の時から変えない。写像の凍らせは欄を置き換えるので、:pre には欄の値でなく effect 自身(ask)を渡す。"
   (checked-table-name ask.table "ListRows.table")
@@ -178,7 +178,7 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defn #^ bool checked-at-least [#^ object at-least]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+(defn #^ bool checked-at-least [#^ object at-least]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
   "CountRows の下限 at-least(None か (欄の名, 下限の整数) の tuple)を作る時に検める。通れば True。"
   (when (is-not at-least None)
     (when (not (and (isinstance at-least tuple) (= (len at-least) 2)))
@@ -235,7 +235,7 @@
       (raise (ValueError (.format "ReadBatch の ListRows の limit の和 {} が上限 {} を越える(束を割るか limit を絞る)" listed LIST-LIMIT-MAX))))))
 
 
-(defn #^ bool checked-put-row [#^ object ask]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+(defn #^ bool checked-put-row [#^ object ask]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
   "PutRow の欄(table・key・value・expect・idempotency-key)を作る時に検め、value を深く凍らせる — 行の書きの欄の検め(table → key →
    NUL → value → expect)のあとに冪等キーを検める。断りの型と文言と順は defclass の時から変えない。写像の凍らせは欄を置き換えるので、
    :pre には欄の値でなく effect 自身(ask)を渡す。"
@@ -275,7 +275,7 @@
     (check-row-write self "RowWrite")))
 
 
-(defn #^ bool checked-put-rows [#^ object writes #^ object idempotency-key]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+(defn #^ bool checked-put-rows [#^ object writes #^ object idempotency-key]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
   "PutRows の欄(writes・idempotency-key)を作る時に検める — 冪等キーは None か空でない文字列・writes は RowWrite の空でない tuple で、
    同じ表の同じ鍵を 2 度含まない。断りの型と文言と順は defclass の時から変えない。"
   (checked-write-key idempotency-key "PutRows.idempotency_key")
@@ -283,7 +283,7 @@
   True)
 
 
-(defn #^ None check-row-writes [#^ object writes #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(checked-put-rows・checked-put-rows-append-events)
+(defn #^ None check-row-writes [#^ object writes #^ str what]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(checked-put-rows・checked-put-rows-append-events)
   "行の書きの束 writes を作る時に検める — RowWrite の空でない tuple で、同じ表の同じ鍵を 2 度含まない(PutRows と PutRowsAppendEvents の
    検めを 1 つにするため。what = 断りの文の頭の effect の名)。"
   (when (not (and (isinstance writes tuple) writes (all (gfor w writes (isinstance w RowWrite)))))
@@ -312,19 +312,19 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defn #^ (get tuple #((| PutRow RowWrite) ...)) write-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
+(defn #^ (get tuple #((| PutRow RowWrite) ...)) write-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
   "行の書き ask を、冪等キーの判じ(admission.write-digest・judge-write-replay)が読む書きの並びにするため(PutRow は自分 1 つ・PutRows と
    PutRowsAppendEvents は行の束 — どれも欄 table・key・value・expect を持つ)。"
   (if (isinstance ask #(PutRows PutRowsAppendEvents)) ask.writes #(ask)))
 
 
-(defn #^ (| (get tuple #(EventAppend ...)) None) append-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: write-parts と同じ
+(defn #^ (| (get tuple #(EventAppend ...)) None) append-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; cannot be a defk: write-parts と同じ
   "行の書き ask の、冪等キーの本文の指紋(admission.write-digest)に含める追記の束を読むため(PutRowsAppendEvents は追記の束・PutRow と PutRows は
    None — 前からの書きの指紋の綴りを変えない)。"
   (if (isinstance ask PutRowsAppendEvents) ask.appends None))
 
 
-(defn #^ bool checked-watch-changes [#^ object tables #^ object cursor #^ object timeout #^ object limit #^ object streams]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+(defn #^ bool checked-watch-changes [#^ object tables #^ object cursor #^ object timeout #^ object limit #^ object streams]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
   "WatchChanges の欄(tables・cursor・timeout・limit・streams)を作る時に検める — tables は空でない tuple で表の名・cursor は WatchCursor・
    timeout は 0 以上の秒・limit は 1 以上の整数・streams は列の名の tuple で同じ列を 2 度含まない。断りの型と文言は defclass の時から変えない。"
   (when (not (and (isinstance tables tuple) tables)) (raise (TypeError "WatchChanges.tables は空でない tuple")))
@@ -359,14 +359,14 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defn #^ str checked-event-key [#^ object idempotency-key #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは ValueError で上げ、通れば鍵(空でない文字列 = 真)を返す)
+(defn #^ str checked-event-key [#^ object idempotency-key #^ str what]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは ValueError で上げ、通れば鍵(空でない文字列 = 真)を返す)
   "冪等キーの欄を作る時に検める(空でない文字列)— ReadEventByKey の検め。AppendEvent と EventAppend は check-event-append が同じ検めを持つ。"
   (when (not (and (isinstance idempotency-key str) idempotency-key))
     (raise (ValueError (+ what ".idempotency_key は空でない文字列"))))
   idempotency-key)
 
 
-(defn #^ None check-event-append [#^ object append #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+(defn #^ None check-event-append [#^ object append #^ str what]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
   "追記 1 つの欄(stream・idempotency-key・body)を作る時に検め、body を深く凍らせる — AppendEvent と EventAppend の検めを 1 つにするため。"
   (object.__setattr__ append "body" (freeze-json append.body))
   (checked-table-name append.stream (+ what ".stream"))
@@ -376,7 +376,7 @@
   (check-free-of-nul append.body (+ what ".body")))
 
 
-(defn #^ bool checked-event-append [#^ object append #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め
+(defn #^ bool checked-event-append [#^ object append #^ str what]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め
   "check-event-append を defeffect の :pre から呼ぶ形 — :pre は真偽の条件を assert するので、検めを通れば True を返す。body を深く凍らせる
    ので、:pre には欄の値でなく effect 自身(self)を渡す。"
   (check-event-append append what)
@@ -422,7 +422,7 @@
       (raise (ValueError (.format "AppendEvents.appends に同じ追記が 2 度出る(列・冪等キー): {!r}" repeated))))))
 
 
-(defn #^ bool checked-put-rows-append-events [#^ object writes #^ object appends #^ object idempotency-key]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+(defn #^ bool checked-put-rows-append-events [#^ object writes #^ object appends #^ object idempotency-key]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
   "PutRowsAppendEvents の欄(writes・appends・idempotency-key)を作る時に検めるため — 冪等キーと行の束は PutRows と同じ・追記の束は
    AppendEvents と同じ(EventAppend の空でない tuple で、同じ列の同じ冪等キーを 2 度含まない)。"
   (checked-write-key idempotency-key "PutRowsAppendEvents.idempotency_key")

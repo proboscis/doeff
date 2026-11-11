@@ -35,17 +35,17 @@
 (val PARTS (RowType "parts" Part))
 
 
-(defn #^ object in-store [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+(defn #^ object in-store [#^ MemoryStore store program]  ; cannot be a defk: 検の入口で run を撃つ
   "仮想の時計と memory の置き場(書き手 MAKER)の下で program を回して答えを返す。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
 
-(defn #^ ReadRow ask [#^ str id]  ; defk にできない: 検の支度が同期に組む値
+(defn #^ ReadRow ask [#^ str id]  ; cannot be a defk: 検の支度が同期に組む値
   "表 parts の行 id を読む ReadRow。"
   (ReadRow "parts" #(id)))
 
 
-(defn #^ None put-part [#^ MemoryStore store #^ str id #^ str label]  ; defk にできない: 検の支度が同期に置く行
+(defn #^ None put-part [#^ MemoryStore store #^ str id #^ str label]  ; cannot be a defk: 検の支度が同期に置く行
   "表 parts に行 id を置く(検の前提)。"
   (in-store store (PutRow "parts" #(id) (FrozenMap {"label" label}) (ExpectAbsent))))
 

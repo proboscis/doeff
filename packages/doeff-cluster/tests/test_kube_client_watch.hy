@@ -124,11 +124,11 @@
    遅れた ACK を待って 1 往復 40 ms 遅れる)。"
   (setv protocol-version "HTTP/1.1")
 
-  (deff log-message [self format #* args]  ; defk にできない: http.server が呼ぶ素の callback
+  (deff log-message [self format #* args]  ; cannot be a defk: http.server が呼ぶ素の callback
     {:pre [(: self BaseHTTPRequestHandler) (: format str) (: args tuple)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
     None)
 
-  (deff do-GET [self]  ; defk にできない: http.server が呼ぶ素の callback
+  (deff do-GET [self]  ; cannot be a defk: http.server が呼ぶ素の callback
     {:pre [(: self BaseHTTPRequestHandler)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
     (let [parts (urlsplit self.path)
           params (parse-qs parts.query)]
@@ -145,7 +145,7 @@
                                                   "items" [(if (.endswith parts.path "/nodes") NODE-A DEP-A)]})))
       None))
 
-  (deff do-PATCH [self]  ; defk にできない: http.server が呼ぶ素の callback
+  (deff do-PATCH [self]  ; cannot be a defk: http.server が呼ぶ素の callback
     {:pre [(: self BaseHTTPRequestHandler)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
     (.read self.rfile (int (.get self.headers "Content-Length" "0")))
     (.note self.server.kube (get self.client-address 1) "PATCH" (. (urlsplit self.path) path) {})

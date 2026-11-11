@@ -295,12 +295,12 @@
    持ち主が 1 つの task なので値の型ではなく帳面。札ごとの刻を session の値に控えて読み書きしない(要求ごとに控えの Get と Put と
    TakeMarks が土台まで往復していた)。"
 
-  (deff __init__ [self]  ; defk にできない: 帳面の class の初期化
+  (deff __init__ [self]  ; cannot be a defk: 帳面の class の初期化
     {:pre [(: self MarkBook)] :post [(: % None)]}
     "刻の無い帳面にするため。"
     (setv #^ (get tuple #(MarkAt ...)) self.marks #()))
 
-  (deff stamp [self mark at]  ; defk にできない: 要求の task と StampRequest の答え手の節が刻を打つ帳面の口
+  (deff stamp [self mark at]  ; cannot be a defk: 要求の task と StampRequest の答え手の節が刻を打つ帳面の口
     {:pre [(: self MarkBook) (: mark RequestMark) (: at float)] :post [(: % None)]}
     "刻 mark を単調時計の秒 at と組にして帳面の末尾に足すため。"
     (setv self.marks (+ self.marks #((MarkAt :mark mark :at at))))))
@@ -325,27 +325,27 @@
    task なので値の型ではなく帳面。session の値に控えて読み書きしない(要求ごとに Track と Settle の effect と控えの Get と Put が土台まで
    往復していた)。"
 
-  (deff __init__ [self]  ; defk にできない: 帳面の class の初期化
+  (deff __init__ [self]  ; cannot be a defk: 帳面の class の初期化
     {:pre [(: self RequestLedger)] :post [(: % None)]}
     "空の台帳にするため。tickets = 札 → 走り中の要求の Task か、track より先に答え終えた札の None(Spawn の直後に子が先に走っても台帳に
      終わった task を残さない)。"
     (setv self.tickets {}))
 
-  (deff track [self ticket task]  ; defk にできない: 受けの loop が要求の task を載せる帳面の口
+  (deff track [self ticket task]  ; cannot be a defk: 受けの loop が要求の task を載せる帳面の口
     {:pre [(: self RequestLedger) (: ticket str) (: task Task)] :post [(: % None)]}
     "受けの loop が Spawn した要求の task を台帳に載せるため(先に答え終えた札なら外すだけ)。"
     (setv self.tickets (if (and (in ticket self.tickets) (is (get self.tickets ticket) None))
                            (dfor [k t] (.items self.tickets) :if (!= k ticket) k t)
                            (| self.tickets {ticket task}))))
 
-  (deff settle [self ticket]  ; defk にできない: 要求の task が答え終えた事を書く帳面の口
+  (deff settle [self ticket]  ; cannot be a defk: 要求の task が答え終えた事を書く帳面の口
     {:pre [(: self RequestLedger) (: ticket str)] :post [(: % None)]}
     "要求の task が答え終えた札を台帳から外すため(まだ載っていなければ、答え終えた印を置く)。"
     (setv self.tickets (if (in ticket self.tickets)
                            (dfor [k t] (.items self.tickets) :if (!= k ticket) k t)
                            (| self.tickets {ticket None}))))
 
-  (deff pending [self]  ; defk にできない: 受けの loop が閉じの後に残りを読む帳面の口
+  (deff pending [self]  ; cannot be a defk: 受けの loop が閉じの後に残りを読む帳面の口
     {:pre [(: self RequestLedger)] :post [(: % tuple)]}
     "台帳に残る走り中の要求の Task の列を読むため。"
     (tuple (gfor task (.values self.tickets) :if (is-not task None) task))))
@@ -962,7 +962,7 @@
   "開いた HTTP の口: url = 基の URL(http://host:port)/ stop = 殻の止めの口 / close() = 止めて port を返す(受けている要求を答え終えてから)。"
   (#^ str url)
   (#^ (get Callable #([] None)) stop)
-  (deff close [self]  ; defk にできない: 検の殻を閉じる同期の口(Program の外の検の try / finally が呼ぶ)
+  (deff close [self]  ; cannot be a defk: 検の殻を閉じる同期の口(Program の外の検の try / finally が呼ぶ)
     {:pre [(: self RunningServer)] :post [(: % None)] :tags {:context "records" :role "entry"}}
     "口を止める(止めの合図を立て、入口の run が待ち受けを閉じて終わるのを待つ)。2 度目は何もしない。"
     (self.stop)
@@ -990,7 +990,7 @@
   handler-for)
 
 
-(deff shell-run [program failures]  ; defk にできない: 検の殻の thread の target(framework の入口 — 別の run は Program の中から立てられない)
+(deff shell-run [program failures]  ; cannot be a defk: 検の殻の thread の target(framework の入口 — 別の run は Program の中から立てられない)
   {:pre [(: program (| Program EffectBase)) (: failures queue.Queue)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "入口の Program を scheduler の下で 1 回走らせ、落ちたら殻の待ち手へ例外を渡すため(表の用意の告知の前に落ちても殻が 30 秒待たない)。"
   (try
@@ -1000,7 +1000,7 @@
   None)
 
 
-(deff start-records-server [config]  ; defk にできない: 入口の run を別の thread で立てる検の殻(framework の入口 — 返す物が開いた口)
+(deff start-records-server [config]  ; cannot be a defk: 入口の run を別の thread で立てる検の殻(framework の入口 — 返す物が開いた口)
   {:pre [(: config RecordsServerConfig)] :post [(: % RunningServer)] :tags {:context "records" :role "entry"}}
   "入口の Program(serve-records)を別の thread の run で回して口を開き、表の用意の告知を待って RunningServer を返す。土台は本番と同じ
    待ち受け・時計・Await の橋・計算の pool(aiohttp-http-server・async-time-handler・await-handler・thread-pool-compute-handler)で、

@@ -39,7 +39,7 @@
   (assert transcript))
 
 
-(defn in-store [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+(defn in-store [#^ MemoryStore store program]  ; cannot be a defk: 検の入口で run を撃つ
   "仮想の時計と memory の置き場(書き手 MAKER)の下で program を回して答えを返す。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
@@ -64,7 +64,7 @@
     (resume answer)))
 
 
-(defn read-over-http [#^ MemoryStore store #^ list sent ask]  ; defk にできない: 検の入口で記録の service を起こして run を撃つ
+(defn read-over-http [#^ MemoryStore store #^ list sent ask]  ; cannot be a defk: 検の入口で記録の service を起こして run を撃つ
   "memory の置き場を口の奥に置いた記録の service を起こし、client の handler で ask を 1 つ撃って答えを返すため(送った要求の URL は sent へ)。"
   (setv clock (SimClock))
   (setv server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
@@ -77,7 +77,7 @@
     (finally (.close server))))
 
 
-(defn reads-on-journal [#^ int count]  ; defk にできない: 検の入口で記録の service を起こして run を撃つ
+(defn reads-on-journal [#^ int count]  ; cannot be a defk: 検の入口で記録の service を起こして run を撃つ
   "journal に count 個を積んだ置き場で、在る鍵と無い鍵を口越しに 1 回ずつ引くため。答え = #(積んだ番号 在る鍵の答え その要求 無い鍵の答え その要求)。"
   (setv store (MemoryStore LAW-SCHEMA))
   (setv sequences (in-store store (append-journal count)))

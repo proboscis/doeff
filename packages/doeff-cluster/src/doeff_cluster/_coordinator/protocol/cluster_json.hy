@@ -9,7 +9,7 @@
 (import doeff_cluster._shared.core.detached_rules [task-limits-refusal task-limits-of task-limits-json])
 
 
-(defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; defk にできない: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ
+(defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; cannot be a defk: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ
   "保存の形 → HandoffWatch(HandoffWatch.to-json の逆)。知らない段は読めない(ValueError — 黙って待ちに戻さない)。"
   (HandoffWatch :declaration (get data "declaration") :since-ms (get data "sinceMs")
                 :phase (HandoffPhase (get data "phase"))
@@ -58,7 +58,7 @@
                  :job-service-namespaces (tuple (sorted (set namespaces)))))
 
 
-(deff task-record-to-json [#^ TaskRecord task]  ; defk にできない: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り
+(deff task-record-to-json [#^ TaskRecord task]  ; cannot be a defk: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り
   {:pre [(: task TaskRecord)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。
    知らせ先の無い行は欄 notify を置かない(欄を知らない前の版の coordinator へ戻しても、知らせ先の無い開いた行を
@@ -157,7 +157,7 @@
               :preempted-by (stored-str data "preempted_by" "")))
 
 
-(deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り
+(deff ended-to-json [#^ DetachedEnded ended]  ; cannot be a defk: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り
   {:pre [(: ended DetachedEnded)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "終わりの出口の行 → 保存と GET /outbox の返事の JSON の形(欄の名は camel — 読み手の DetachedEndedWire と同じ)。"
   {"id" ended.id "key" ended.key "notify" ended.notify "phase" ended.phase "detail" ended.detail "failureKind" ended.failure-kind
@@ -176,7 +176,7 @@
 ;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの
 ;; BodyInvalid とは別)。無い欄は既定値で読む(既定値が None の欄は必須)。
 
-(deff stored-str [#^ dict data #^ str key #^ (| str None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-str [#^ dict data #^ str key #^ (| str None) [default None]]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str) (: default (| str None))] :post [(: % str)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の文字列の欄を str として読むため(無ければ default・default が None なら必須)。"
   (when (and (not-in key data) (is default None))
@@ -187,7 +187,7 @@
   value)
 
 
-(deff stored-optional-str [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-optional-str [#^ dict data #^ str key]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の、無くてよい文字列の欄を str か None として読むため。"
   (setv value (.get data key None))
@@ -196,7 +196,7 @@
   value)
 
 
-(deff stored-int [#^ dict data #^ str key #^ (| int None) [default None]]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-int [#^ dict data #^ str key #^ (| int None) [default None]]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str) (: default (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の整数の欄を int として読むため(無ければ default・default が None なら必須。真偽値は整数と数えない)。"
   (when (and (not-in key data) (is default None))
@@ -207,7 +207,7 @@
   value)
 
 
-(deff stored-optional-int [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-optional-int [#^ dict data #^ str key]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str)] :post [(: % (| int None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の、無くてよい整数の欄を int か None として読むため。"
   (setv value (.get data key None))
@@ -216,7 +216,7 @@
   value)
 
 
-(deff stored-bool [#^ dict data #^ str key #^ bool default]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-bool [#^ dict data #^ str key #^ bool default]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str) (: default bool)] :post [(: % bool)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の真偽値の欄を bool として読むため。"
   (setv value (.get data key default))
@@ -225,7 +225,7 @@
   value)
 
 
-(deff stored-optional-dict [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-optional-dict [#^ dict data #^ str key]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str)] :post [(: % (| dict None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の、無くてよい object の欄を dict か None として読むため。"
   (setv value (.get data key None))
@@ -234,7 +234,7 @@
   value)
 
 
-(deff stored-items [#^ dict data #^ str key]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-items [#^ dict data #^ str key]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict) (: key str)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の配列の欄を tuple として読むため(無ければ空)。JSON を通った行は list、JSON を通らずに渡る行(asdict のまま)は tuple で来る。"
   (setv value (.get data key #()))
@@ -243,7 +243,7 @@
   (tuple value))
 
 
-(deff stored-limits [#^ dict data]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+(deff stored-limits [#^ dict data]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: data dict)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
   "保存の行の欄 limits(同時数の上限の列)を TaskLimit の tuple として読むため(無ければ空)。形の違う値は受け口と同じ規則の理由で断る。"
   (setv value (list (stored-items data "limits"))
@@ -253,7 +253,7 @@
   (task-limits-of value))
 
 
-(deff old-limits-reason [#^ list limits]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
+(deff old-limits-reason [#^ list limits]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な判断
   {:pre [(: limits list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の task の行の limits が旧い形(上限の値 limit と範囲 scope を task が名乗る — 2026-10-12 より前)なら、まだ終わっていない行を
    failed にする理由の文(新しい形なら None)。値の持ち主は系の宣言 1 つになったので、旧い行の値を読んで数えない。"
@@ -262,7 +262,7 @@
       None))
 
 
-(deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
+(deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; cannot be a defk: 保存の読み直し(Program の外)が呼ぶ純粋な判断
   {:pre [(: old (| dict list None)) (: extra list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の task の行が旧い形なら、まだ終わっていない行を failed にする理由の文(新しい形なら None)。old = 行の requires の値・
    extra = 今の TaskRecord に無い欄の名(requires・blob・env ほか)。"

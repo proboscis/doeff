@@ -204,7 +204,7 @@
                           #^ (| dict None) [used None] #^ int [restore-failures 0] #^ (| str None) [disk-node None]
                           #^ (| Callable None) [before-delete None] #^ bool [target-stalled False] #^ bool [bundle-stalled False]
                           #^ int [bundle-lag 0] #^ (| dict None) [legacy None] #^ (| str None) [settings-text None]]
-    ;; defk にできない: class の作り手(Python が呼ぶ口)
+    ;; cannot be a defk: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
           self.parameters (if (is parameters None) PARAMETERS parameters)

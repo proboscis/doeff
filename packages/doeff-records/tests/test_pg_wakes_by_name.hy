@@ -63,9 +63,9 @@
 (defclass ScanCounts []
   "待ちの読み直しの数え(scan-tap が数える — 走らせる VM の thread だけが書く): changes = 頼んだ表の組 → 変更の列の読みの数 / events = 列 →
    追記の列の読みの数。"
-  (defn __init__ [self]  ; defk にできない: 検の資源の class の初期化
+  (defn __init__ [self]  ; cannot be a defk: 検の資源の class の初期化
     (setv self.changes {} self.events {}))
-  (defn note [self #^ str statement #^ tuple params]  ; defk にできない: 代役の答え手の節が同期に数える
+  (defn note [self #^ str statement #^ tuple params]  ; cannot be a defk: 代役の答え手の節が同期に数える
     "置き場の読みの文 1 つを数える(変更の列の読み = 引数 t0, t1 … の表の組・追記の列の読み = 引数 ledger の列)。他の文は数えない。"
     (setv values (dfor p params p.name p.value))
     (cond
@@ -75,7 +75,7 @@
       (and (in "append_rows AS old" statement) (in "ORDER BY old.seq" statement))
         (do (setv stream (get values "ledger"))
             (setv (get self.events stream) (+ (.get self.events stream 0) 1)))))
-  (defn snapshot [self]  ; defk にできない: 検の本体が同期に読む
+  (defn snapshot [self]  ; cannot be a defk: 検の本体が同期に読む
     "今の数えの写し(changes と events の dict の組)。"
     #((dict self.changes) (dict self.events))))
 

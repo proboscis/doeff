@@ -14,7 +14,7 @@
 
 
 ;; text は環境変数の値そのもの。
-(defn #^ (| int float None) environ-number [#^ str text]  ; defk にできない: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
+(defn #^ (| int float None) environ-number [#^ str text]  ; cannot be a defk: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
   "環境変数の値 → JSON の数(整数の綴りは int・小数か指数の綴りは float)。数の綴りでない・有限でなければ None。"
   (if (not (re.fullmatch ENVIRON-NUMBER text))
       None
@@ -23,7 +23,7 @@
 
 
 ;; readiness は宣言の値そのもの・environ は job の environ(名 → 値 — 上書きを重ねた後)。
-(defn #^ (| str None) readiness-environ-refusal [#^ object readiness #^ dict environ]  ; defk にできない: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
+(defn #^ (| str None) readiness-environ-refusal [#^ object readiness #^ dict environ]  ; cannot be a defk: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
   "宣言の readiness のうち :environ の名で書いた欄(値が文字列 — readiness_model の註)を environ で読めるか検め、読めなければ理由の文、
    読めれば None。dict でない readiness は readiness-refusal が断るので見ない。"
   (when (not (isinstance readiness dict))
@@ -38,7 +38,7 @@
 
 
 ;; readiness は宣言の値そのもの(readiness-environ-refusal を通った物)・environ は job の environ(名 → 値 — 上書きを重ねた後)。
-(defn #^ object readiness-from-environ [#^ object readiness #^ dict environ]  ; defk にできない: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
+(defn #^ object readiness-from-environ [#^ object readiness #^ dict environ]  ; cannot be a defk: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
   "宣言の readiness → :environ の名で書いた欄を environ のその名の値の数に置き換えた readiness(coordinator が受ける行の形 — 欄はいつも数)。
    dict でない readiness はそのまま返す(readiness-refusal が断る)。"
   (if (isinstance readiness dict)
@@ -47,13 +47,13 @@
 
 
 ;; value は宣言の欄の値そのもの(数かどうかを確かめる)。
-(defn #^ bool positive-number [#^ object value]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
+(defn #^ bool positive-number [#^ object value]  ; cannot be a defk: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
   "JSON の正の数か(bool は数に数えない)。"
   (and (isinstance value #(int float)) (not (isinstance value bool)) (> value 0)))
 
 
 ;; readiness は宣言の値そのもの(None か dict のはず — 違えば理由を返す)。
-(defn #^ (| str None) readiness-refusal [#^ object readiness #^ str update]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
+(defn #^ (| str None) readiness-refusal [#^ object readiness #^ str update]  ; cannot be a defk: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
   "宣言の readiness(None か dict)と入れ替えの形 update → 読めなければ理由の文、読めれば None。service の宣言(service_model.service)と
    coordinator の宣言の読み(cluster_policy.job-from-json)の 2 つの入口が同じ規則で検める(定義点はここ 1 つ)。"
   (cond
@@ -80,23 +80,23 @@
 
 
 ;; value は宣言の欄の値そのもの(整数かどうかを確かめる)。
-(defn #^ bool positive-integer [#^ object value]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
+(defn #^ bool positive-integer [#^ object value]  ; cannot be a defk: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
   "JSON の正の整数か(bool は数に数えない)。"
   (and (isinstance value int) (not (isinstance value bool)) (> value 0)))
 
 
-(defn #^ (| int None) retired-limit-of [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ (| int None) retired-limit-of [#^ (| dict None) readiness]  ; cannot be a defk: coordinator の純粋な判断(Program の外)が呼ぶ
   "宣言の readiness(None か検めを通った dict)→ 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め)。書かなければ None(worker の
    既定 WorkerPolicy.retired-limit を使う)。"
   (if (is readiness None) None (.get readiness "retiredLimit")))
 
 
-(defn #^ int handoff-timeout-ms [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ int handoff-timeout-ms [#^ (| dict None) readiness]  ; cannot be a defk: coordinator の純粋な判断(Program の外)が呼ぶ
   "宣言の readiness(None か検めを通った dict)→ 入れ替えの新の世代が Ready になるまで待つ上限(ms)。書かなければ既定。"
   (int (* 1000 (.get (or readiness {}) "handoffTimeoutSeconds" HANDOFF-TIMEOUT-SECONDS))))
 
 
-(defn #^ (| int None) retired-lifetime-ms [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+(defn #^ (| int None) retired-lifetime-ms [#^ (| dict None) readiness]  ; cannot be a defk: coordinator の純粋な判断(Program の外)が呼ぶ
   "宣言の readiness(None か検めを通った dict)→ 入れ替えで退いた process の寿命の上限(ms — #4072 の D-2)。書かなければ None(既定は
    置かない — None の job は今どおり新の世代が Ready と数えられた時に退いた旧を止める。書いた job は新の Ready で止めず、旧が自分で
    終わるか、退いてからこの長さを越えた時に止める)。"

@@ -32,7 +32,7 @@
   (assert transcript))
 
 
-(defn in-store [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+(defn in-store [#^ MemoryStore store program]  ; cannot be a defk: 検の入口で run を撃つ
   "仮想の時計と memory の置き場(書き手 MAKER)の下で program を回して答えを返す。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 

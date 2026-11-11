@@ -97,7 +97,7 @@
   (setv #^ (| str None) reason None))
 
 
-(defn #^ (| str None) probe-verdict [#^ list targets #^ dict results]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
+(defn #^ (| str None) probe-verdict [#^ list targets #^ dict results]  ; cannot be a defk: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
   "純粋: spec の検める対象と、束の結果(対象 → 読み込めない理由か None)→ 最初に読み込めなかった対象の理由(全部読めたら None)。
    結果に無い対象は、検めの本体が答えなかった物として読み込めない扱いにする。"
   (for [target targets]
@@ -107,7 +107,7 @@
   None)
 
 
-(defn #^ ProbeSettled probe-settle [#^ list targets #^ dict results #^ bool timed-out #^ (| str None) stuck #^ (| str None) crash]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
+(defn #^ ProbeSettled probe-settle [#^ list targets #^ dict results #^ bool timed-out #^ (| str None) stuck #^ (| str None) crash]  ; cannot be a defk: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
   "純粋: 束が終わった後の spec 1 つの行き先。targets = spec の対象・results = 束が出した対象ごとの結果・timed-out = 時間切れで止めた・
    stuck = 時間切れの時に進んでいた対象(束の順で結果の無い最初の物)・crash = 本体が 0 以外で終わった時の理由(0 で終わったら None)。
    対象の結果が全部出ていれば結果どおり。時間切れなら、進んでいた対象を持つ spec だけ時間切れ、ほかは待ちへ戻す。0 以外で終わった束の

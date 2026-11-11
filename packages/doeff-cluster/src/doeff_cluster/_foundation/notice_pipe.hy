@@ -61,7 +61,7 @@
       (.complete promise word))))
 
 
-(deff read-notice-lines [#^ int fd #^ NoticeBox box]  ; defk にできない: 読みの thread の target(threading が呼ぶ素の関数 — Program の外)
+(deff read-notice-lines [#^ int fd #^ NoticeBox box]  ; cannot be a defk: 読みの thread の target(threading が呼ぶ素の関数 — Program の外)
   {:pre [(: fd int) (: box NoticeBox)] :post [(: % None)] :tags {:context "doeff-cluster" :role "foundation"}}
   "知らせの pipe の読み口 fd を行ごとに読み、前後の空白を除いた語を箱へ置くため(EOF まで — shim が終わると EOF)。空の行は捨てる。"
   (with [stream (os.fdopen fd "rb")]

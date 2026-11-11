@@ -21,7 +21,7 @@
 (val TEST-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "test-sender"))
 
 
-(deff failure-kind [#^ httpx.TransportError error]  ; defk にできない: handler の節が httpx の例外を値に写す純粋な判断(except の中で呼ぶ)
+(deff failure-kind [#^ httpx.TransportError error]  ; cannot be a defk: handler の節が httpx の例外を値に写す純粋な判断(except の中で呼ぶ)
   {:pre [(: error httpx.TransportError)] :post [(: % HttpFailureKind)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "httpx の通信の失敗を、本番の答え手と同じ失敗の種類にするため(接続の段 → 時間切れ → ほか の順に読む)。"
   (cond
@@ -43,13 +43,13 @@
                     (HttpResponse answer.status-code (dict answer.headers) answer.content answer.text url 0.0))))))
 
 
-(deff route-cell [#^ str [url COORDINATOR-URL]]  ; defk にできない: 組み立て(Program を走らせる前)が handler の引数を作る準備
+(deff route-cell [#^ str [url COORDINATOR-URL]]  ; cannot be a defk: 組み立て(Program を走らせる前)が handler の引数を作る準備
   {:pre [(: url str)] :post [(: % RouteCell)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "口の handler が要求から要求へ持ち越す宛先の状態の入れ物(宛先 1 つ — 組み立てのたびに新しく作る)。"
   (RouteCell (CoordinatorRoute :urls #(url) :active 0 :switched-at-ms 0)))
 
 
-(deff detached-sender [#^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]  ; defk にできない: 組み立て(Program を走らせる前)が handler の引数を作る準備
+(deff detached-sender [#^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]  ; cannot be a defk: 組み立て(Program を走らせる前)が handler の引数を作る準備
   {:pre [(: revision str) (: runtime-env (| RuntimeEnv None)) (: deadline-seconds float)] :post [(: % DetachedSender)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "検の切り離した task の送り手(版の識別はこの process の版 — 本番の組み立ては宿の契約の Ask で読む)。"

@@ -99,7 +99,7 @@
 
 ;; --- 要求の形と答えの読み(本番の detached-cluster・warm-cluster と sim の宿が同じ関数を使う — 本文を写さない)-----------------------
 
-(deff detached-path [#^ str key #^ str suffix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+(deff detached-path [#^ str key #^ str suffix]  ; cannot be a defk: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: key str) (: suffix str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "切り離した task の口の path(key は path の 1 節に収まるよう quote する)を作るため。"
   (+ "/detached/" (url-quote key :safe "") suffix))
@@ -118,7 +118,7 @@
      (if environ {"environ" (dict environ)} {})))
 
 
-(deff detached-refusal [#^ (| int None) status #^ (| dict None) body]  ; defk にできない: 本番の client と sim の宿が同じ判断で返事を読む
+(deff detached-refusal [#^ (| int None) status #^ (| dict None) body]  ; cannot be a defk: 本番の client と sim の宿が同じ判断で返事を読む
   {:pre [(: status (| int None)) (: body (| dict None))] :post [(: % (| DetachedRefused None))]
    :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
   "返事が呼び手の誤り(400・409・413・429 — 形の誤り・同じ key の別の仕事・上限越え)なら、呼び手へ投げる DetachedRefused を作るため
@@ -128,13 +128,13 @@
       None))
 
 
-(deff submit-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+(deff submit-unreachable [#^ str reason]  ; cannot be a defk: 本番の client と sim の宿が同じ答えを作る純粋な判断
   {:pre [(: reason str)] :post [(: % DetachedUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "送りが coordinator に届かなかった時の答えを作るため(送れたかは分からない — key で冪等なので呼び手が送り直してよい)。"
   (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" reason)))
 
 
-(deff awaited-answer [#^ (| dict None) view #^ str reason #^ str key #^ float waited #^ (| float int None) timeout-seconds]  ; defk にできない: 本番の client と sim の宿が同じ判断で待ちの 1 拍を読む
+(deff awaited-answer [#^ (| dict None) view #^ str reason #^ str key #^ float waited #^ (| float int None) timeout-seconds]  ; cannot be a defk: 本番の client と sim の宿が同じ判断で待ちの 1 拍を読む
   {:pre [(: view (| dict None)) (: reason str) (: key str) (: waited float) (: timeout-seconds (| float int None))]
    :post [(: % (| DetachedAwaited None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "待ちの 1 拍の読み(view = GET /detached/<key> の本文・届かなければ None と理由 reason)から、答えるか(DetachedAwaited)・待ち続けるか
@@ -226,7 +226,7 @@
   queue)
 
 
-(deff unknown-timing-confirmed[#^ DetachedUnknown unknown #^ (| dict str) view]  ; defk にできない: 本番の client と sim の宿が同じ判断で「行の無い key」を確かめる
+(deff unknown-timing-confirmed[#^ DetachedUnknown unknown #^ (| dict str) view]  ; cannot be a defk: 本番の client と sim の宿が同じ判断で「行の無い key」を確かめる
   {:pre [(: unknown DetachedUnknown) (: view (| dict str))] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "GET /state に行の無い key を「知らない」と答えてよいかを決めるため: GET /state には coordinator が起きた直後の印が無く、状態を失った
    coordinator は担い手の worker の最初の heartbeat まで走っている task を知らない(detached_policy.detached-read の warming)。
@@ -245,7 +245,7 @@
                                             unknown.key))))
 
 
-(deff runner-facts-of-view [#^ dict workers]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
+(deff runner-facts-of-view [#^ dict workers]  ; cannot be a defk: 本番の client と sim の宿が同じ読みを使う純粋な判断
   {:pre [(: workers dict)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator の GET /state の workers(名 → {provides exclusive live draining taskRoom node …})を名簿の断面(RunnerFact の tuple・名の順)に
    するため。taskRoom(#3489)と node(Worker の資源の spec.node — 空 = k8s の外・#3747)は coordinator が必ず書く欄 — 無い
@@ -258,7 +258,7 @@
                            :node (str (get w "node")) :cpu-busy (if (is busy None) None (float busy))))))
 
 
-(deff runners-change-of [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
+(deff runners-change-of [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; cannot be a defk: 本番の client と sim の宿が同じ読みを使う純粋な判断
   {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % RunnersChangeAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "GET /watch の返事(status = None は届かない)を AwaitRunnersChange の答えにするため: 404 = 待つ口の無い旧い coordinator・
@@ -270,7 +270,7 @@
     True (runners-unreachable (.format "{}: {}" status (cut (str body) 0 200)))))
 
 
-(deff watch-query [#^ int after #^ float timeout-seconds]  ; defk にできない: 本番の client と sim の宿が同じ問いを作る純粋な判断
+(deff watch-query [#^ int after #^ float timeout-seconds]  ; cannot be a defk: 本番の client と sim の宿が同じ問いを作る純粋な判断
   {:pre [(: after int) (: timeout-seconds float)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "AwaitRunnersChange の GET /watch の問いを作るため(worker を名指さない — coordinator 全体の版)。"
   {"after" (str (max 0 after)) "timeoutSeconds" (str timeout-seconds)})
@@ -325,7 +325,7 @@
       _ (<- (Delay poll-seconds)))))
 
 
-(deff runners-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+(deff runners-unreachable [#^ str reason]  ; cannot be a defk: 本番の client と sim の宿が同じ答えを作る純粋な判断
   {:pre [(: reason str)] :post [(: % RunnersUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "名簿の読みが coordinator に届かなかった時の答えを作るため。"
   (RunnersUnreachable :detail (.format "coordinator に届かない: {}" reason)))
@@ -360,26 +360,26 @@
           facts)))
 
 
-(deff services-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+(deff services-unreachable [#^ str reason]  ; cannot be a defk: 本番の client と sim の宿が同じ答えを作る純粋な判断
   {:pre [(: reason str)] :post [(: % ServicesUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "Service の一覧の読みが coordinator に届かなかった時の答えを作るため。"
   (ServicesUnreachable :detail (.format "coordinator に届かない: {}" reason)))
 
 
-(deff warm-request-body [#^ dict runtime-env #^ frozenset needs #^ float ttl-seconds #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff warm-request-body [#^ dict runtime-env #^ frozenset needs #^ float ttl-seconds #^ str holder]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: runtime-env dict) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "POST /warm の本文を作るため(runtime-env = 実行環境の宣言の JSON)。"
   {"runtimeEnv" runtime-env "needs" (sorted needs) "ttlSeconds" ttl-seconds "holder" holder "format" PROTOCOL-FORMAT})
 
 
-(deff warm-path [#^ str key]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff warm-path [#^ str key]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: key str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "温める表の行 key の読みの path を作るため。"
   (+ "/warm/" (url-quote key :safe "")))
 
 
-(deff absent-warm-state [#^ str key]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+(deff absent-warm-state [#^ str key]  ; cannot be a defk: 本番の client と sim の宿が同じ答えを作る純粋な判断
   {:pre [(: key str)] :post [(: % WarmState)] :tags {:context "doeff-cluster" :role "protocol"}}
   "表に無い行(404 — 期限で消えたか、書かれていない)の答えを作るため: ready も preparing も空・期限 0。"
   (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0))
@@ -389,14 +389,14 @@
 (val SERVER-ERROR 500)
 
 
-(deff warm-unconnected [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+(deff warm-unconnected [#^ str reason]  ; cannot be a defk: 本番の client と sim の宿が同じ答えを作る純粋な判断
   {:pre [(: reason str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "温める表の頼みか読みが送り直しの期限まで coordinator に届かなかった時の答えを作るため(温まったかは分からない — 呼び手は温まって
    いないと同じに読み、次の拍で頼み直す)。"
   (WarmUnreachable :detail (.format "coordinator の /warm に接続できない: {}" reason)))
 
 
-(deff warm-server-failure [#^ int status #^ str text]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
+(deff warm-server-failure [#^ int status #^ str text]  ; cannot be a defk: 本番の client と sim の宿が同じ答えを作る純粋な判断
   {:pre [(: status int) (: text str)] :post [(: % WarmUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
   "coordinator が温める表の口で 5xx(SERVER-ERROR 以上)を返した時の答えを作るため(呼び手の誤りではない — 届かないと同じに読む)。"
   (WarmUnreachable :detail (.format "coordinator の /warm が {} を返した: {}" status text)))
@@ -642,7 +642,7 @@
                                                            :failure-kind e.failure-kind :finished-ms e.finished-ms :kind e.kind))))))
 
 
-(deff outbox-ack-answer [#^ str id #^ (| dict str) read]  ; defk にできない: 本番の client と sim の宿が同じ判断で受領の返事を答えにする
+(deff outbox-ack-answer [#^ str id #^ (| dict str) read]  ; cannot be a defk: 本番の client と sim の宿が同じ判断で受領の返事を答えにする
   {:pre [(: id str) (: read (| dict str))] :post [(: % DetachedAckAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "DELETE /outbox/<id> の返事 read(本文の JSON の object か、届かなかった・断られた理由の文)を AckDetachedOutbox の答えにするため。"
   (if (isinstance read str)
@@ -650,7 +650,7 @@
       (DetachedOutboxAcked :id id :acked (is (.get read "acked") True))))
 
 
-(deff outbox-path [#^ str id]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff outbox-path [#^ str id]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: id str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
   "出口の行 1 つの受領の path(id は path の 1 節に収まるよう quote する)を作るため。"
   (+ "/outbox/" (url-quote id :safe "")))
@@ -669,7 +669,7 @@
     _ "答えが無い"))
 
 
-(deff outbox-query [#^ str prefix #^ tuple kinds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff outbox-query [#^ str prefix #^ tuple kinds]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: prefix str) (: kinds tuple)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "GET /outbox の問いの欄(知らせ先の頭と、読む行の種類の , 区切り — detached_model の行の種類)を作るため。"
   {"prefix" prefix "kinds" (.join "," kinds)})

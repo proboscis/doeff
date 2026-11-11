@@ -73,7 +73,7 @@
       (! (replayed rec (get loaded 0) args))))
 
 
-(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster._shared.entry.replay_main` の __main__ が素の関数として呼ぶ)
+(deff main []  ; cannot be a defk: console script の main(`hy -m doeff_cluster._shared.entry.replay_main` の __main__ が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
   "再生の道具の引数を読み、入口の Program(replay)を 1 度走らせて、その code で終わるため。"
   (setv parser (argparse.ArgumentParser :description "記録の上で job の Program を再生する"))

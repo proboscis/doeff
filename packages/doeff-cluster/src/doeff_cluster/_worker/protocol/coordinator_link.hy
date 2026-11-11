@@ -242,7 +242,7 @@
 
 
 
-(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed #^ int limit-ms]  ; defk にできない: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol)
+(deff watch-params [#^ int after #^ str worker #^ str boot #^ bool confirmed #^ int limit-ms]  ; cannot be a defk: この口と sim の宿が同じ問いを作る(worker/core/beat_policy から移した — 役 protocol)
   {:pre [(: after int) (: worker str) (: boot str) (: confirmed bool) (: limit-ms int)] :post [(: % dict)] :tags {:context "worker" :role "protocol"}}
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
    確かめるまで毎拍の heartbeat を続ける)、その後は上限 limit-ms(coordinator の timing の watch-max-ms — heartbeat の返事で受け取る)まで待つ。"

@@ -122,12 +122,12 @@
   (| env {"PATH" (if path (+ bin ":" path) bin) "VIRTUAL_ENV" venv}))
 
 
-(defn #^ Path program-file [#^ Path program-dir #^ str sha]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+(defn #^ Path program-file [#^ Path program-dir #^ str sha]  ; cannot be a defk: 検の道具と言い換えの handler が値として呼ぶ
   "詰めた Program の置き場のキー → この worker の cache の file(coordinator への口が取って書き、子へ渡す — 定義点は 1 つ)。"
   (/ program-dir (+ sha ".json")))
 
 
-(defn #^ str program-file-text [#^ str blob #^ (get Mapping #(str object)) versions]  ; defk にできない: 検の道具と言い換えの handler が値として呼ぶ
+(defn #^ str program-file-text [#^ str blob #^ (get Mapping #(str object)) versions]  ; cannot be a defk: 検の道具と言い換えの handler が値として呼ぶ
   "cache の file の中身(子の入口 job_entry の read-program が読む形 {\"blob\" \"versions\"} — service と task で同じ・定義点は 1 つ)。"
   (json.dumps {"blob" blob "versions" versions}))
 
@@ -154,7 +154,7 @@
   (/ program-dir name))
 
 
-(defn #^ bool outlives-worker [#^ JobSpec spec]  ; defk にできない: 純粋な判断の warm-start(Program の外の関数)が呼ぶ
+(defn #^ bool outlives-worker [#^ JobSpec spec]  ; cannot be a defk: 純粋な判断の warm-start(Program の外の関数)が呼ぶ
   "worker が消えても job を止めず、退いた process と同じに寿命の上限まで回すかを、宣言から決めるため(定義点は
    ここ 1 つ)。退きの寿命の上限 retired-ms を持つ handoff の service だけが真: worker の世代の入れ替えでは、その job の旧い process は
    退いて寿命の上限まで回る(policy の retired-actions)ので、worker が落ちた時も同じ寿命で回す。他の job(task・recreate・寿命を宣言しない

@@ -367,7 +367,7 @@
 (defclass Forgetful [dict]
   "書いても覚えない dict — 保持の期限で消した冪等キーの覚え(MemoryStore.retired-keys)をこれにした置き場は、#3022 の前の置き場の形
    (出来事を消すと鍵も忘れ、消した後の同じ鍵が新しい出来事になる)の代役になる。"
-  (defn __setitem__ [self key value]  ; defk にできない: dict の書きの口(置き場が錠の内で同期に呼ぶ)を塞ぐ
+  (defn __setitem__ [self key value]  ; cannot be a defk: dict の書きの口(置き場が錠の内で同期に呼ぶ)を塞ぐ
     None))
 
 
@@ -449,7 +449,7 @@
   (assert (not (breaks? law-stale-put-conflicts (broken-harness (MemoryStore LAW-SCHEMA) None)))))
 
 
-(defn test-the-unseen-law-turns-red-when-reads-stop-judging-expiry [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-the-unseen-law-turns-red-when-reads-stop-judging-expiry [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; #3561: 読みの側の期限の判定を外した memory の置き場(読みの関数が使う判定 stored-row-expired? / stored-event-expired? を「期限を
   ;; 過ぎていない」に差し替えた源)では法 15 が赤になる。読みは回収しないので、回収の前の期限を過ぎた行と出来事を読みから隠すのは読みの判定
   ;; 1 か所だけ — 回収を読みの前に重ねて、判定を外しても破れない形にしない。行の判定と出来事の判定を 1 つずつ外し、どちらでも赤。
@@ -464,7 +464,7 @@
             "出来事の期限の判定を外した置き場")))
 
 
-(defn test-the-touched-write-laws-turn-red-when-writes-leave-expired-records-in-place [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-the-touched-write-laws-turn-red-when-writes-leave-expired-records-in-place [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; #3605 の D: 書きの前の回収を外した memory の置き場で、書きが触る期限を過ぎた物を片付けない形は法 16・17 で赤になる — 行の書きが
   ;; 期限を過ぎた行をそのまま判定に渡す(writable-row を素の行の引き memory-current-row に差し替える)と、ExpectAbsent が Conflict になる。
   ;; 追記が期限を過ぎた出来事を片付けない(retire-touched-events を何もしない関数に差し替える)と、回収の前の断りの文が回収の後と違い、期限を
@@ -497,7 +497,7 @@
     (resume answer)))
 
 
-(defn test-the-archive-laws-turn-red-when-unsent-events-are-retired [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-the-archive-laws-turn-red-when-unsent-events-are-retired [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 送ってから外す列の関門を破る置き場で法 19〜21 が赤になる — 確かめた番号を見ずに外す・読みの境 T を見ずに外す・
   ;; 書きが触った期限を過ぎた出来事を送らずに外す(retire-touched-events に印の無い宣言を渡し、覚えるだけの片付けを捨てる片付けにする)・
   ;; 印の無い列(前からの形 — 回収が送らずに外す)。壊していない置き場では緑(比べの基準)。
@@ -521,7 +521,7 @@
           "印の無い列(回収が送らずに外す)"))
 
 
-(defn forget-every-due-key [store now-ms]  ; defk にできない: memory.forget-keys-locked の差し替え(錠の内で同期に呼ばれる置き場の書き)
+(defn forget-every-due-key [store now-ms]  ; cannot be a defk: memory.forget-keys-locked の差し替え(錠の内で同期に呼ばれる置き場の書き)
   ;; 出来事が置き場に残るかを見ない覚えの外しの顔: 覚えた刻から列の長さを過ぎた覚えを全部外す — 送ってから外す列で
   ;; 送り先に届かない間の覚えも外れる。
   (setv forgotten 0)
@@ -534,7 +534,7 @@
   forgotten)
 
 
-(defn test-the-key-memory-laws-turn-red-when-keys-are-forgotten-wrongly [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-the-key-memory-laws-turn-red-when-keys-are-forgotten-wrongly [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 鍵の覚え方の関門を破る置き場で法 22・23 が赤になる — 覚えを外さない置き場(前の形)・覚え方を読まずに全部の列で
   ;; 覚え続ける置き場・送り先に届かない間の覚えも外す置き場。壊していない置き場では緑(比べの基準)。
   (for [law [law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired]]

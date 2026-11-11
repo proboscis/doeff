@@ -106,7 +106,7 @@
   (#^ Callable handled-cpu))
 
 
-(deff other-thread-clocks [native-id]  ; defk にできない: 標本の thread が窓の行を組む時に素の関数として呼ぶ
+(deff other-thread-clocks [native-id]  ; cannot be a defk: 標本の thread が窓の行を組む時に素の関数として呼ぶ
   {:pre [(: native-id int)] :post [(: % Counter)] :tags {:context "doeff-cluster" :role "foundation"}}
   "主の thread(kernel の番号 native-id)の外の全 thread の tid ごとの CPU 秒を読むため(頭の註 — 時計の番号は glibc の pthread_getcpuclockid と
    同じ形)。読む間に終わった thread は除き、一覧を読めなければ空。"

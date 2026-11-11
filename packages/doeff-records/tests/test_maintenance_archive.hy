@@ -78,7 +78,7 @@
 
 (defclass ExpiredShelf []
   "置き場の顔の控え: pages = 答える頁の並び(読みのたびに先頭から 1 つ)/ asked = 撃たれた ReadExpiredEvents と RetireArchivedEvents の並び。"
-  (defn __init__ [self pages]  ; defk にできない: 検の控えの class の初期化
+  (defn __init__ [self pages]  ; cannot be a defk: 検の控えの class の初期化
     (setv self.pages (tuple pages)
           self.asked #())))
 

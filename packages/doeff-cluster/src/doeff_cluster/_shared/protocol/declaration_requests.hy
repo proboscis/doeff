@@ -158,7 +158,7 @@
     True (! (update-body (get current "resourceVersion") spec))))
 
 
-(deff create-body [#^ Mapping row]  ; defk にできない: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
+(deff create-body [#^ Mapping row]  ; cannot be a defk: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
   {:pre [(: row Mapping)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
   "まだ無い Service を作る POST /resources/Service の本文を作るため(declare の CLI と手元の sim-cluster で同じ形)。台数は行の値(job の
    :replicas)。"

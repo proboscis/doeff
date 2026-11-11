@@ -41,13 +41,7 @@ JAPANESE = re.compile("[\u3041-\u3096\u30a1-\u30fa\u30fc\u3005\u3400-\u4dbf\u4e0
 
 # Words that stay Japanese: proper nouns (a name of a person, a place, a product) and fixed spellings
 # that code matches, each with the reason it cannot be translated.
-KEEP: tuple[str, ...] = (
-    # The reason marker of a deff (`; defk にできない: <reason>`, "cannot be a defk"). The deff ratchet
-    # of ADR-DOE-HY-004 (DEFF-REASON-MARK) and doeff-linter's DOEFF111 (default of
-    # definitions.deff_reason_marker) match this spelling, so a translated marker reads as a deff with
-    # no reason; the reason after the marker is written in English.
-    "defk にできない",
-)
+KEEP: tuple[str, ...] = ()
 
 # Words that stay Japanese in one file only: the Japanese words that a detector of Japanese provenance matches (its
 # patterns must spell them as they are written) and the test inputs that name them. Kept per file so that the same
@@ -55,6 +49,9 @@ KEEP: tuple[str, ...] = (
 # same pattern; a translated word would stop the detector from finding the Japanese text it is there to find.
 _PROVENANCE_SPEAKERS: tuple[str, ...] = ("利用者", "ユーザー", "オペレーター")  # "user", "user", "operator"
 _VERBATIM_WORDS: tuple[str, ...] = ("逐語", "原文")  # "verbatim", "original text"
+# The earlier spelling of the deff reason marker ("cannot be a defk"). doeff-linter still reads it beside the configured
+# marker (LEGACY_REASON_MARKER), so its source, its docs and the test inputs that check that the earlier spelling is read spell it.
+_LEGACY_DEFF_MARKER: tuple[str, ...] = ("defk にできない",)
 KEEP_IN: dict[str, tuple[str, ...]] = {
     "scripts/check_no_operator_quotes.py": (*_PROVENANCE_SPEAKERS, *_VERBATIM_WORDS),
     "tests/misc/test_check_no_operator_quotes.py": (*_PROVENANCE_SPEAKERS, *_VERBATIM_WORDS),
@@ -71,6 +68,13 @@ KEEP_IN: dict[str, tuple[str, ...]] = {
         # personal TODO words: later (twice), to be checked, memo, myself, to remember, forget
         "あとで", "後で", "要確認", "メモ", "自分", "覚え", "忘れ",
     ),
+    "packages/doeff-linter/docs/SPECIFICATION.md": _LEGACY_DEFF_MARKER,
+    "packages/doeff-linter/src/project/defn_to_defk.rs": _LEGACY_DEFF_MARKER,
+    "packages/doeff-linter/src/project/mod.rs": _LEGACY_DEFF_MARKER,
+    "packages/doeff-linter/src/project/settings.rs": _LEGACY_DEFF_MARKER,
+    "packages/doeff-linter/tests/fixtures/program_sleep/waits.hy": _LEGACY_DEFF_MARKER,
+    "packages/doeff-linter/tests/layer_rules.rs": _LEGACY_DEFF_MARKER,
+    "packages/doeff-linter/tests/semantic_rules.rs": _LEGACY_DEFF_MARKER,
 }
 # This file spells every word above.
 KEEP_IN["scripts/count_japanese.py"] = tuple(dict.fromkeys(word for words in KEEP_IN.values() for word in words))

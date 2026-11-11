@@ -130,7 +130,7 @@
     (when (and (is-not self.program None) (is self.versions None))
       (raise (ValueError (.format "Program の job {} には送り手の版 versions が必要です" self.name)))))
 
-  (defn [cached-property] #^ str fingerprint [self]  ; defk にできない: 値の属性(Program の外の純粋な判断 probe-of・statuses が読む)
+  (defn [cached-property] #^ str fingerprint [self]  ; cannot be a defk: 値の属性(Program の外の純粋な判断 probe-of・statuses が読む)
     "指紋 spec-hash の計算の本体(公開の入口は doeff_cluster._shared.core.job_rules.spec-hash)。値ごとに最初に読まれた時に 1 度だけ
      計り、その値の中に覚える(覚えの寿命 = この値。module の大域には持たない)。dataclasses.replace で作り直した値は別の object なので
      計り直す — 欄が変われば指紋も変わる。材料の欄(name・entry・args・revision・once・runtime-env・environ・content)は str・bool と str の
@@ -154,13 +154,13 @@
   ;; 比べは指紋 1 つ。前は dataclass の作る比べ(比べる欄 = 指紋の材料の欄)で、指紋と同じ意味だった。中身の鍵の
   ;; 在る値は版が違っても同じ process の形なので、欄ごとの比べでは表せない — worker の「宣言が変わったか」(plan-job の (= want process.spec))と
   ;; 指紋を 1 つの定義にする。
-  (defn #^ bool __eq__ [self #^ object other]  ; defk にできない: 値の比べの口
+  (defn #^ bool __eq__ [self #^ object other]  ; cannot be a defk: 値の比べの口
     (and (isinstance other JobSpec) (= self.fingerprint other.fingerprint)))
 
-  (defn #^ int __hash__ [self]  ; defk にできない: 値の hash の口(比べと揃える)
+  (defn #^ int __hash__ [self]  ; cannot be a defk: 値の hash の口(比べと揃える)
     (hash self.fingerprint))
 
-  (defn #^ str entry-at [self #^ (| str None) place]  ; defk にできない: 値の読み口(指紋 fingerprint と worker の起こし方が読む)
+  (defn #^ str entry-at [self #^ (| str None) place]  ; cannot be a defk: 値の読み口(指紋 fingerprint と worker の起こし方が読む)
     "入口の名 entry(置き場の列 CHILD-ENTRY-PLACES のどれかの下の module)を、置き場 place の下の同じ module の名で返す(place = None・
      列の外の名は entry のまま)。worker が root へ送る名(子の起動・待ちの子から分ける task・入口の確かめ)と指紋の材料が、同じ読みで
      置き場を替える。"

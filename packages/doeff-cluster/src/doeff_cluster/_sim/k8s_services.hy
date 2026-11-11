@@ -16,7 +16,7 @@
   "模擬の答え手 held-kube-services が作った物を残す入れ物 — 検と模擬の世界が、走らせた後に読むため。services・ingresses = namespace と名ごとに
    最後に当てた宣言(KubeService・KubeIngress)の組(初めて作った順)・down = API server に届かない世界か。当てるたびに組を作り直す(書き換える
    のは欄 services・ingresses の値だけ)。"
-  (defn #^ None __init__ [self #^ bool [down False]]  ; defk にできない: class の作り手(Python が呼ぶ口)
+  (defn #^ None __init__ [self #^ bool [down False]]  ; cannot be a defk: class の作り手(Python が呼ぶ口)
     "空の入れ物を作るため(down = API server に届かない世界)。"
     (setv #^ (get tuple #(KubeService ...)) self.services #()
           #^ (get tuple #(KubeIngress ...)) self.ingresses #()

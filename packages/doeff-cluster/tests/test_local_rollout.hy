@@ -92,7 +92,7 @@
                   :workers WORKERS :deployments DEPLOYMENTS)))
 
 
-(deff stop-old-before-ready [spec status from-view to-view now]  ; defk にできない: api_policy の純粋な判断の callback を置き換える反例
+(deff stop-old-before-ready [spec status from-view to-view now]  ; cannot be a defk: api_policy の純粋な判断の callback を置き換える反例
   {:pre [(: spec RolloutSpec) (: status RolloutStatus) (: from-view TargetView) (: to-view TargetView) (: now int)]
    :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "反例: 新の状態にかかわらず、旧を先に 0 台にする誤った順序。"

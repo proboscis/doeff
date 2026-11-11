@@ -429,7 +429,7 @@
 ;; TypeError)ので、契約には返す class を綴る。前の Callable[[object], Program] は公開 API の目録(tools/public_api_inventory.py)が
 ;; handler と読めず、工場が未分類になった。BodyWrapper は Callable[[object], Program](SignalSourceFactory の make の答え)
 ;; にもそのまま入る。
-(deff records-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3104)
+(deff records-signal-handler [bindings subscriber]  ; cannot be a defk: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3104)
   {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}
   "記録の変化を合図として発する源で本体を包む関数を作るため(素の工場 — Program ではなく、with-handlers の列に置く)。bindings =
    SignalTables の tuple(合図の型 → 表と列の名前の組)/ subscriber = 購読者の名前(誤りの文で名指す)。購読の始まりの位置は、包んだ
@@ -467,7 +467,7 @@
 (val READ-SIGNAL-EFFECTS (+ #(ReadSignalSource CreateExternalPromise) SOURCE-EFFECTS))
 
 
-(deff read-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3127)
+(deff read-signal-handler [bindings subscriber]  ; cannot be a defk: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3127)
   {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}
   "組み立ての entry が with-handlers の列に置く源の工場(素の工場 — #3127)。包んだ本体を走らせる頭で、その組で記録に答えている handler に
    源の工場を ReadSignalSource で問い(本番 = 記録の HTTP の client・PostgreSQL が答える long-poll の源・模擬 = memory の記録の handler が答える

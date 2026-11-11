@@ -321,7 +321,7 @@
   None)
 
 
-(defn #^ (| bool str) warm-services-of [#^ (| str None) value]  ; defk にできない: 起動の setv の連なり(Program の外)で値を読む
+(defn #^ (| bool str) warm-services-of [#^ (| str None) value]  ; cannot be a defk: 起動の setv の連なり(Program の外)で値を読む
   "WARM-SERVICES-VAR の値を方策の真偽に読むため。無い = 偽・on = 真・off = 偽。それ以外は起動を断る訳の文を返す。"
   (cond
     (is value None) False
@@ -330,7 +330,7 @@
     True (.format "{} は on か off で書く: {!r}" WARM-SERVICES-VAR value)))
 
 
-(defn #^ (| bool str) warm-table-children-of [#^ (| str None) value]  ; defk にできない: 起動の setv の連なり(Program の外)で値を読む
+(defn #^ (| bool str) warm-table-children-of [#^ (| str None) value]  ; cannot be a defk: 起動の setv の連なり(Program の外)で値を読む
   "WARM-TABLE-CHILDREN-VAR の値を方策の真偽に読むため。無い = 真・on = 真・off = 偽。それ以外は起動を断る訳の文を返す。"
   (cond
     (is value None) True
@@ -561,7 +561,7 @@
   state)
 
 
-(deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster._worker.entry.main` の __main__ と boot.sh の旧い名の入口が素の関数として呼ぶ)
+(deff main []  ; cannot be a defk: console script の main(`hy -m doeff_cluster._worker.entry.main` の __main__ と boot.sh の旧い名の入口が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "worker" :role "main" :reads "env"}}
   "worker の process の入口: 起動の引数と機体の環境変数から組み立て、本番の handler の組の上で調整ループを回すため。"
   ;; import の終わりの刻(この関数は module の import が済んでから呼ばれる — 起動の内訳の 1 行の 4 番目の刻・#3676)。

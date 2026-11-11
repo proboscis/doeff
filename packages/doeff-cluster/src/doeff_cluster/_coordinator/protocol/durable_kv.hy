@@ -58,7 +58,7 @@
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
 
-(deff board-entry [#^ ClusterState state #^ str key]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(deff board-entry [#^ ClusterState state #^ str key]  ; cannot be a defk: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: state ClusterState) (: key str)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤の行 1 つの耐久の形 {value resourceVersion [expiresMs]}。期限の無い行は expiresMs を持たない(2026-09-25 より前の形と同じ)。"
   (setv row (.row state.board key))
@@ -66,7 +66,7 @@
      (if (is row.expires-ms None) {} {"expiresMs" row.expires-ms})))
 
 
-(deff counter-json [#^ ClusterState state]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(deff counter-json [#^ ClusterState state]  ; cannot be a defk: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "鍵 counter の値。"
   (| {"nextTask" state.next-task "revision" state.revision "auditSeq" state.audit-seq "aliveMs" state.alive-ms}
@@ -74,7 +74,7 @@
      (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
 
 
-(deff worker-json [#^ WorkerInfo w]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
+(deff worker-json [#^ WorkerInfo w]  ; cannot be a defk: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: w WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "鍵 worker/<名> の値。lastSeenMs は生存の印の拍で写した w.seen-mark(heartbeat ごとに進む last-seen-ms は書かない — 書きは
    印の拍ごと・#2903 の前は ClusterState.seen-marks から引いた)。"
@@ -108,20 +108,20 @@
   (setv #^ (| (get Callable #([ClusterState (get tuple #(str ...))] Sources)) None) keyed None))
 
 
-(deff table-sources [#^ ClusterState state #^ str field row-source]  ; defk にできない: SourceGroup.build(durable-delta が Program の外の素の呼びで引く)の本体
+(deff table-sources [#^ ClusterState state #^ str field row-source]  ; cannot be a defk: SourceGroup.build(durable-delta が Program の外の素の呼びで引く)の本体
   {:pre [(: state ClusterState) (: field str) (: row-source Callable)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "Table 欄 field の全行から作った組の鍵(row-source は 表の鍵と行 → #(耐久の鍵 元の値の tuple 直列化の関数))。"
   (dfor #(k row) (.items (getattr state field)) :setv made (row-source k row) (get made 0) (get made 1)))
 
 
-(deff table-sources-keyed [#^ ClusterState state #^ (get tuple #(str ...)) keys #^ str field row-source]  ; defk にできない: SourceGroup.keyed(同上)の本体
+(deff table-sources-keyed [#^ ClusterState state #^ (get tuple #(str ...)) keys #^ str field row-source]  ; cannot be a defk: SourceGroup.keyed(同上)の本体
   {:pre [(: state ClusterState) (: field str) (: keys tuple) (: row-source Callable)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "Table 欄 field の表の鍵 keys の行だけから作った組の鍵(無い鍵は飛ばす)。"
   (setv table (getattr state field))
   (dfor k keys :setv row (.row table k) :if (is-not row None) :setv made (row-source k row) (get made 0) (get made 1)))
 
 
-(deff keep-mark-json [#^ KeepMark mark]  ; defk にできない: 組の作り手(durable-delta が Program の外の素の呼びで引く)の直列化
+(deff keep-mark-json [#^ KeepMark mark]  ; cannot be a defk: 組の作り手(durable-delta が Program の外の素の呼びで引く)の直列化
   {:pre [(: mark KeepMark)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "印の約束 1 つの保存の行(keep/<名>)を作るため。欄 pinned は真の時だけ書く — 欄を知らない旧い版の coordinator へ戻しても、縛られた
    担い手への約束の無い置き場は今までどおり読める(旧い版は行を KeepMark #** v で読み、知らない欄で落ちる)。"

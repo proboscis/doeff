@@ -14,7 +14,7 @@
 (defclass ReadinessLog []
   "fake の答え手 readiness-claims が報告を積む入れ物 — テストと模擬の世界が、走らせた後に受けた報告を読むため。claims = 揃えた報告
    (ReadinessClaim)の組(受けた順)。積むたびに組を作り直す(書き換えるのは欄 claims の値だけ)。"
-  (defn #^ None __init__ [self]  ; defk にできない: class の作り手(Python が呼ぶ口)
+  (defn #^ None __init__ [self]  ; cannot be a defk: class の作り手(Python が呼ぶ口)
     "空の入れ物を作るため。"
     (setv #^ (get tuple #(ReadinessClaim ...)) self.claims #())))
 

@@ -74,7 +74,7 @@
     True row))
 
 
-(deff decoded-program [#^ str blob]  ; defk にできない: process の入口(Program の外)が詰めた Program を解く
+(deff decoded-program [#^ str blob]  ; cannot be a defk: process の入口(Program の外)が詰めた Program を解く
   {:pre [(: blob str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "worker" :role "main"}}
   "詰めた Program を解くため: #(Program None) か、解けない時は #(None RemoteJobFailed)。"
   (try
@@ -83,7 +83,7 @@
       #(None (RemoteJobFailed (.format "Program を解けない: {}: {}" (. (type error) __name__) error))))))
 
 
-(deff read-program [#^ str path #^ str env-key]  ; defk にできない: process の入口(Program の外)が file を読む
+(deff read-program [#^ str path #^ str env-key]  ; cannot be a defk: process の入口(Program の外)が file を読む
   {:pre [(: path str) (: env-key str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "worker" :role "main" :reads "json"}}
   "Program の file → #(Program None) か #(None 断り)。service・task・probe が同じ読みを使うため(入口の形を分けない — R3・R3b)。
    断り = VersionMismatch(file の版がこの process の版と違う — 食い違った欄と env のキーを持ち、解かない)か RemoteJobFailed
@@ -101,7 +101,7 @@
               (decoded-program (get row "blob")))))))
 
 
-(defn #^ None run-service [#^ argparse.Namespace args]  ; defk にできない: process の入口(Program の外)
+(defn #^ None run-service [#^ argparse.Namespace args]  ; cannot be a defk: process の入口(Program の外)
   "service の入口: Program を解いて、そのまま走らせる(handler を足さない — R2)。"
   (setv ctx (context-from-env))
   (setv #(program refusal) (read-program args.program (or ctx.env-key "")))
@@ -113,7 +113,7 @@
   (print (.format "service: {} が終わった: {!r}" ctx.job result) :file sys.stderr :flush True))
 
 
-(deff task-outcome [#^ str program-path #^ RunContext ctx]  ; defk にできない: process の入口(Program の外)
+(deff task-outcome [#^ str program-path #^ RunContext ctx]  ; cannot be a defk: process の入口(Program の外)
   {:pre [(: program-path str) (: ctx RunContext)] :post [(: % (| TaskSucceeded TaskFailed))]
    :tags {:context "worker" :role "main"}}
   "task の入口の本体: service と同じ読み(版 → 復元)の後に走らせ、どこで断ったか分かる失敗を返す(handler は足さない — R2)。"
@@ -126,7 +126,7 @@
             (failed-from error))))))
 
 
-(defn #^ None run-probe [#^ argparse.Namespace args]  ; defk にできない: process の入口(Program の外)
+(defn #^ None run-probe [#^ argparse.Namespace args]  ; cannot be a defk: process の入口(Program の外)
   "入口の検め: 版と復元だけを確かめて走らせない(worker が起こす前に、起こせない理由を先に出すため)。"
   (setv #(program refusal) (read-program args.program ""))
   (when (is-not refusal None)
@@ -135,7 +135,7 @@
   (print (.format "probe: {} を解けた" args.program) :file sys.stderr :flush True))
 
 
-(defn #^ None run-task [#^ argparse.Namespace args]  ; defk にできない: process の入口(Program の外)
+(defn #^ None run-task [#^ argparse.Namespace args]  ; cannot be a defk: process の入口(Program の外)
   "task の入口: 結果を必ず file に書き、終わる前に coordinator へ直に届けてから 0 で終わる(届かなければ worker の heartbeat が file の
    結果を運ぶ)。"
   (setv ctx (context-from-env))
@@ -149,7 +149,7 @@
   (print (.format "task: {} → {}" ctx.job (. (type outcome) __name__)) :file sys.stderr :flush True))
 
 
-(defn #^ None _decline-httpx-cli []  ; defk にできない: process の入口(Program の外)が process の module の表を決める
+(defn #^ None _decline-httpx-cli []  ; cannot be a defk: process の入口(Program の外)が process の module の表を決める
   "子 process で httpx の端末の client(httpx._main — click・rich・pygments を読む)を読まないため。httpx の頭は
    `try: from ._main import main except ImportError:` で端末の client を読み、同じ venv に click・rich・pygments が在れば(開発の
    道具の依存で入る)httpx を使う全部の子がそれを起動で読んでいた(module 80 個ほど・約 7 MB)。sys.modules の値 None は Python の
@@ -159,7 +159,7 @@
   None)
 
 
-(defn #^ None main []  ; defk にできない: process の入口
+(defn #^ None main []  ; cannot be a defk: process の入口
   "子 process の入口の引数を読む。旧い引数(--factory・--env・--config・task の --blob・--versions)は argparse が知らない引数として断る。
    httpx の端末の client を断る印(_decline-httpx-cli)を、Program を解く前(Program の module が httpx を読む前)に置く。"
   (_decline-httpx-cli)

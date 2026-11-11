@@ -23,7 +23,7 @@
 (val #^ (get re.Pattern str) CONTENT-KEY (re.compile r"[0-9A-Za-z._:-]{1,128}"))
 
 
-(defn #^ (| str None) content-refusal [#^ object value]  ; defk にできない: 宣言の組み立て(system-declaration)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+(defn #^ (| str None) content-refusal [#^ object value]  ; cannot be a defk: 宣言の組み立て(system-declaration)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
   "宣言の行の中身の鍵 content(無い = None)を受けられない理由を、送り手と coordinator が同じ 1 つの規則で言うため(受けられれば None)。"
   (if (or (is value None) (and (isinstance value str) (.fullmatch CONTENT-KEY value)))
       None
@@ -32,7 +32,7 @@
 
 ;; 常駐の job の memory: 起動の山 peakMiB と落ち着いた値 settleMiB(MiB の整数・0 以上・落ち着きは山以下)。
 ;; 値の持ち主は job の宣言(defsystem の :peak-mib・:settle-mib)で、既定の値で埋めない。
-(defn #^ (| str None) memory-refusal [#^ object peak #^ object settle]  ; defk にできない: 宣言の値を作る時(defsystem の構成子)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+(defn #^ (| str None) memory-refusal [#^ object peak #^ object settle]  ; cannot be a defk: 宣言の値を作る時(defsystem の構成子)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
   "job の memory の山 peak・落ち着いた値 settle(MiB)を受けられない理由を、送り手と coordinator が同じ 1 つの規則で言うため(受けられれば
    None)。真偽は整数と読まない。"
   (setv wrong (lfor #(field value) #(#("peakMiB" peak) #("settleMiB" settle))
@@ -44,7 +44,7 @@
     True None))
 
 
-(defn #^ (| str None) single-host-refusal [#^ object value]  ; defk にできない: 宣言の値を作る時と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+(defn #^ (| str None) single-host-refusal [#^ object value]  ; cannot be a defk: 宣言の値を作る時と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
   "job を 1 台の worker に縛ってよい訳 singleHost(無い = None)を受けられない理由(受けられれば None)。訳は空白だけでない文字列。"
   (if (or (is value None) (and (isinstance value str) (.strip value)))
       None
@@ -56,17 +56,17 @@
 (val IDLE-BUDGET-KEYS #("cpuCores" "pssMB" "fromCpuCores" "fromPssMB"))
 
 
-(defn #^ (get TypeGuard (| int float)) core-count? [#^ object value] ; defk にできない: idle-budget-read の型を絞る判定(TypeGuard)
+(defn #^ (get TypeGuard (| int float)) core-count? [#^ object value] ; cannot be a defk: idle-budget-read の型を絞る判定(TypeGuard)
   "暇な時の予算の cpu の値(0 以上の有限の数 — 真偽は数と読まない)か。"
   (and (isinstance value #(int float)) (not (isinstance value bool)) (math.isfinite value) (>= value 0)))
 
 
-(defn #^ (get TypeGuard int) megabytes? [#^ object value] ; defk にできない: idle-budget-read の型を絞る判定(TypeGuard)
+(defn #^ (get TypeGuard int) megabytes? [#^ object value] ; cannot be a defk: idle-budget-read の型を絞る判定(TypeGuard)
   "暇な時の予算の pss の値(0 以上の整数の MB — 真偽は整数と読まない)か。"
   (and (isinstance value int) (not (isinstance value bool)) (>= value 0)))
 
 
-(defn #^ (| IdleBudget str) idle-budget-read [#^ object value]  ; defk にできない: 宣言の値を作る時(defsystem の展開と構成子)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+(defn #^ (| IdleBudget str) idle-budget-read [#^ object value]  ; cannot be a defk: 宣言の値を作る時(defsystem の展開と構成子)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
   "宣言の行の idleBudget の object を、送り手と coordinator が同じ 1 つの規則で読むため: 受けられれば IdleBudget、受けられなければ理由の
    文。鍵は IDLE-BUDGET-KEYS のちょうど 4 つ・cpu は 0 以上の有限の数・pss は 0 以上の整数・元の値は上限以下。"
   (when (not (and (isinstance value dict) (= (set value) (set IDLE-BUDGET-KEYS))))
@@ -83,7 +83,7 @@
                value)))
 
 
-(defn #^ (| str None) idle-budget-refusal [#^ object value]  ; defk にできない: 宣言の値を作る時と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
+(defn #^ (| str None) idle-budget-refusal [#^ object value]  ; cannot be a defk: 宣言の値を作る時と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
   "job の暇な時の予算 idleBudget(無い = None)を受けられない理由(受けられれば None — 規則は idle-budget-read)。"
   (if (is value None)
       None
@@ -91,12 +91,12 @@
         (if (isinstance read str) read None))))
 
 
-(defn #^ (get dict #(str (| int float))) idle-budget-json [#^ IdleBudget ceiling]  ; defk にできない: 宣言の行の組み立てと coordinator の spec の綴り(Program の外の純粋な変換)が呼ぶ
+(defn #^ (get dict #(str (| int float))) idle-budget-json [#^ IdleBudget ceiling]  ; cannot be a defk: 宣言の行の組み立てと coordinator の spec の綴り(Program の外の純粋な変換)が呼ぶ
   "IdleBudget → 宣言の行と Service の spec の idleBudget の object(idle-budget-read の逆)。"
   {"cpuCores" ceiling.cpu-cores "pssMB" ceiling.pss-mb "fromCpuCores" ceiling.from-cpu-cores "fromPssMB" ceiling.from-pss-mb})
 
 
-(defn #^ bool spec-hash-matches [#^ JobSpec spec #^ (| str None) reported]  ; defk にできない: coordinator の純粋な判断(Program の外 — running-process・new-generation-live)が spec-hash と並べて呼ぶ
+(defn #^ bool spec-hash-matches [#^ JobSpec spec #^ (| str None) reported]  ; cannot be a defk: coordinator の純粋な判断(Program の外 — running-process・new-generation-live)が spec-hash と並べて呼ぶ
   "worker が報告した process の指紋 reported が、今の宣言 spec の process の物か(coordinator の readiness・入れ替えの見張りが読む)。
    中身の鍵(JobSpec.content)の在る宣言は、鍵で計った指紋に加えて、鍵を外した版の指紋(版と commit で計る今までの
    指紋)も受ける: 鍵の欄を読まない古い worker は版で計った指紋を報告し、その指紋が合うのは宣言の版そのもので起こした process だけ。"

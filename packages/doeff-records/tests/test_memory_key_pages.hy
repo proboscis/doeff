@@ -17,7 +17,7 @@
 (val NO-WHERE-ANY (FrozenMap))
 
 
-(defn reference-page [store ask now-ms]  ; defk にできない: 錠の内の読み(memory-list-rows)と比べる同期の読みの写し
+(defn reference-page [store ask now-ms]  ; cannot be a defk: 錠の内の読み(memory-list-rows)と比べる同期の読みの写し
   "直す前の鍵の順の頁の読みを写した物 — 表の全部の鍵を並べ、全部の行に絞りと期限を当て、cursor の位置の後の limit 件を取る。続きの cursor は
    位置の後に絞りに合う行が limit 件より多い時だけ。直した読みが同じ頁を返す事を比べるため。"
   (setv decl (store.schema.table ask.table)
@@ -37,7 +37,7 @@
         store.head))
 
 
-(defn put-ticket [store group id owner state now-ms]  ; defk にできない: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
+(defn put-ticket [store group id owner state now-ms]  ; cannot be a defk: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
   "表 tickets に 1 行(組 group・番号 id・持ち主 owner・状態 state)を刻 now-ms で書くため(閉じた行 done は保持の秒の後に読みから消える)。"
   (setv key #(group id)
         current (memory.memory-current-row store "tickets" key))
@@ -46,7 +46,7 @@
                            MAKER (FrozenMap {"owner" owner "state" state}) now-ms))
 
 
-(defn seeded-store [count]  ; defk にできない: 検の種を同期に組む
+(defn seeded-store [count]  ; cannot be a defk: 検の種を同期に組む
   "表 tickets に count 行を鍵の順と違う順で置いた置き場を作るため(持ち主は 3 人に配り、5 行に 1 行を刻 0 で閉じる — 保持の秒の後の読みでは
    閉じた行が消える)。"
   (setv store (MemoryStore LAW-SCHEMA))
@@ -56,7 +56,7 @@
   store)
 
 
-(defn pages-agree [store where where-any limit now-ms]  ; defk にできない: 錠の内の読みを同期に呼んで比べる
+(defn pages-agree [store where where-any limit now-ms]  ; cannot be a defk: 錠の内の読みを同期に呼んで比べる
   "頭から頁を送り、頁ごとに直した読みと直す前の読みが同じ答え(行・続きの cursor・epoch・head)を返す事を確かめ、読んだ行の鍵を返すため。"
   (setv cursor None keys [])
   (while True
@@ -70,7 +70,7 @@
       (return keys))))
 
 
-(defn test-pages-and-cursors-match-the-full-scan-at-every-boundary []  ; defk にできない: 錠の内の読みを同期に呼んで比べる検
+(defn test-pages-and-cursors-match-the-full-scan-at-every-boundary []  ; cannot be a defk: 錠の内の読みを同期に呼んで比べる検
   ;; 絞り(無し・where・where-any・両方)× limit(1・割り切れる・割り切れない・行の数ちょうど・行の数より多い)× 期限(前・後)。
   (setv store (seeded-store 60))
   (for [#(where where-any) #(#(NO-WHERE NO-WHERE-ANY)
@@ -87,7 +87,7 @@
   (assert (= (len later) 48) later))
 
 
-(defn test-rows-written-and-removed-between-pages-are-seen-like-the-full-scan []  ; defk にできない: 錠の内の読みと書きを同期に混ぜる検
+(defn test-rows-written-and-removed-between-pages-are-seen-like-the-full-scan []  ; cannot be a defk: 錠の内の読みと書きを同期に混ぜる検
   ;; 頁の間に cursor の位置より前と後へ行を足し、cursor の位置の行そのものを消しても、次の頁は直す前の読みと同じ(並べた鍵の覚えが書きで
   ;; 直る)。
   (setv store (seeded-store 30)
@@ -108,7 +108,7 @@
   (assert (= (len rest) 31) rest))
 
 
-(defn test-a-copied-store-pages-on-its-own-keys []  ; defk にできない: pickle と copy の後の置き場を同期に読む検
+(defn test-a-copied-store-pages-on-its-own-keys []  ; cannot be a defk: pickle と copy の後の置き場を同期に読む検
   ;; 並べた鍵の覚えは置き場の中身から導ける物 — copy と pickle は運ばず、写しへの書きは元の置き場の頁に出ない。
   (setv store (seeded-store 20))
   (pages-agree store NO-WHERE NO-WHERE-ANY 6 0)
@@ -118,7 +118,7 @@
   (assert (= (len (pages-agree store NO-WHERE NO-WHERE-ANY 6 0)) 20) store))
 
 
-(defn test-a-page-judges-only-the-rows-it-needs [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-a-page-judges-only-the-rows-it-needs [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 2,000 行の表の頁 1 枚は、cursor の位置の後から limit + 1 行だけ絞りを当てる(表の全部の行に当てない)。
   (setv store (seeded-store 2000) calls [] original memory.memory-row-visible?)
   (defn counted [#* args]
@@ -138,14 +138,14 @@
 ;; 表で、1,000 個の鍵の組の読みが行ごとに組の値を順に比べ、読みの繰り返しが表の大きさの 2 乗で伸びた。引いた答えは表の全部の行に絞りを
 ;; 当てた読み(直す前の読み)と同じ。
 
-(defn put-part [store id color note state]  ; defk にできない: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
+(defn put-part [store id color note state]  ; cannot be a defk: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
   "表 parts に 1 行(番号 id・色 color・整数の欄 note・状態 state)を置くため(鍵で引く読みと全部の行に絞りを当てる読みを比べる種)。"
   (setv key #(id)
         value (FrozenMap {"id" id "label" (+ "l-" id) "color" color "note" note "state" state}))
   (memory.memory-store-row store "parts" key (memory.memory-current-row store "parts" key) value MAKER value 0))
 
 
-(defn seeded-parts [count]  ; defk にできない: 検の種を同期に組む
+(defn seeded-parts [count]  ; cannot be a defk: 検の種を同期に組む
   "表 parts に count 行を鍵の順と違う順で置いた置き場を作るため(色は 3 色に配り、note は行ごとに違う整数)。"
   (setv store (MemoryStore LAW-SCHEMA))
   (for [i (range count)]
@@ -154,7 +154,7 @@
   store)
 
 
-(defn scanned-texts [store where where-any]  ; defk にできない: 錠の内の読みと比べる同期の読みの写し
+(defn scanned-texts [store where where-any]  ; cannot be a defk: 錠の内の読みと比べる同期の読みの写し
   "表 parts の全部の行に絞りを当てた鍵の綴り(綴りの順)— 鍵で引く読みと比べる直す前の読み。"
   (setv table (get store.rows "parts"))
   (lfor text (sorted table)
@@ -163,7 +163,7 @@
         text))
 
 
-(defn test-a-key-set-read-answers-the-rows-of-the-full-scan []  ; defk にできない: 錠の内の読みを同期に呼んで比べる検
+(defn test-a-key-set-read-answers-the-rows-of-the-full-scan []  ; cannot be a defk: 錠の内の読みを同期に呼んで比べる検
   ;; 組 × 残りの絞り × limit: 鍵の頁・上から読む頁・数えが、表の全部の行に絞りを当てた読みと同じ行を答える。組は置き場に無い鍵・文字列で
   ;; ない値(数・真偽・null)・重なりを含み、鍵の順と違う順に並べる。
   (setv store (seeded-parts 300)
@@ -191,7 +191,7 @@
               #(where any-of limit ordered)))))
 
 
-(defn test-a-key-set-read-judges-only-the-named-keys [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-a-key-set-read-judges-only-the-named-keys [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 3,000 行の表の 1,000 個の鍵の組の読みは、組の鍵の行だけに残りの絞りを当てる(表の全部の行に当てない)。
   (setv store (seeded-parts 3000) calls [] original memory.memory-row-visible?)
   (defn counted [#* args]

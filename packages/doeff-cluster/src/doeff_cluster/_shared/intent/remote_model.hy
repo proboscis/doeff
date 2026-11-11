@@ -64,7 +64,7 @@
 (defclass VersionMismatch [RemoteJobFailed]
   "送り手と受け側の Python / cloudpickle / doeff の版が違う。受け側は復元せずに断る。
    diffs = 食い違った欄(VersionDiff の tuple)・env-key = 実行する側の env のキー(env の task でなければ空)。"
-  (defn #^ None __init__ [self #^ str message #^ (get tuple #(VersionDiff ...)) [diffs #()] #^ str [env-key ""]]  ; defk にできない: 例外の class の初期化
+  (defn #^ None __init__ [self #^ str message #^ (get tuple #(VersionDiff ...)) [diffs #()] #^ str [env-key ""]]  ; cannot be a defk: 例外の class の初期化
     (.__init__ (super) message)
     (setv self.diffs diffs self.env-key env-key)))
 
@@ -72,7 +72,7 @@
 (defclass EnvUnavailable [RemoteJobFailed]
   "実行環境(runtime env)を準備できなかった(子 process を起こす前 — 同じ task を 2 度実行していない)。
    kind = runtime_env_model.EnvFailureKind の値・detail = 理由。"
-  (defn #^ None __init__ [self #^ str kind #^ str detail]  ; defk にできない: 例外の class の初期化
+  (defn #^ None __init__ [self #^ str kind #^ str detail]  ; cannot be a defk: 例外の class の初期化
     (.__init__ (super) (.format "実行環境を準備できない({}): {}" kind detail))
     (setv self.kind kind self.detail detail)))
 

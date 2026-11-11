@@ -44,7 +44,7 @@
 (defclass FixedPage [BaseHTTPRequestHandler]
   "記録の service の代役: どの要求にも 200 と同じ頁の本文 server.payload で答える。"
   (setv protocol-version "HTTP/1.1")
-  (deff do-POST [self]  ; defk にできない: http.server が要求ごとの thread で呼ぶ素の method
+  (deff do-POST [self]  ; cannot be a defk: http.server が要求ごとの thread で呼ぶ素の method
     {:pre [(: self FixedPage)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
     (.read self.rfile (int (.get self.headers "Content-Length" "0")))
     (.send-response self 200)
@@ -53,7 +53,7 @@
     (.end-headers self)
     (.write self.wfile self.server.payload)
     None)
-  (deff log-message [self #* args]  ; defk にできない: http.server が要求ごとに呼ぶ log の口(検の出力を要求の行で埋めない)
+  (deff log-message [self #* args]  ; cannot be a defk: http.server が要求ごとに呼ぶ log の口(検の出力を要求の行で埋めない)
     {:pre [(: self FixedPage) (: args tuple)] :post [(: % None)] :tags {:context "records" :role "foundation"}}
     None))
 

@@ -14,7 +14,7 @@
                                                        EnvFailureKind RETRYABLE-KINDS EnvFailure])
 
 
-(defn #^ (| str None) child-environ-refusal [#^ object environ]  ; defk にできない: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
+(defn #^ (| str None) child-environ-refusal [#^ object environ]  ; cannot be a defk: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
   "子の環境変数の組が受けられない理由(受けられれば None)。規則は型の側 EnvVar.environ-refusal の 1 つ(型の構成子と同じ規則)。"
   (EnvVar.environ-refusal environ))
 

@@ -32,7 +32,7 @@
                            {"pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor KEEP-SECONDS))}))))
 
 
-(defn #^ object as-writer [#^ MemoryStore store #^ str writer #^ Program program]  ; defk にできない: 検の入口で run を撃つ
+(defn #^ object as-writer [#^ MemoryStore store #^ str writer #^ Program program]  ; cannot be a defk: 検の入口で run を撃つ
   "仮想の時計と、書き手 writer の memory の置き場 store の handler の下で program を回して答えを返すため。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store writer)] program))))
 

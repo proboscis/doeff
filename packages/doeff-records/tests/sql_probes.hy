@@ -25,9 +25,9 @@
 (defclass StatementCounts []
   "DB へ流れた往復の数え(thread の間で共有): creates = CREATE の文の数 / upserts = state_rows への INSERT の数 / flushes = 往復の列(流れた
    順 — 往復ごとにその往復で流した文の綴りの tuple。効果 1 回が流した往復を、前後の長さの差で切り出すため・#3561・#3605)。"
-  (defn __init__ [self]  ; defk にできない: 検の資源の class の初期化
+  (defn __init__ [self]  ; cannot be a defk: 検の資源の class の初期化
     (setv self.lock (threading.Lock) self.creates 0 self.upserts 0 self.flushes #()))
-  (defn record [self #^ tuple statements]  ; defk にできない: 複数の thread の run から同期に数える
+  (defn record [self #^ tuple statements]  ; cannot be a defk: 複数の thread の run から同期に数える
     "往復 1 回(流す文の綴りの tuple)を数え、その往復の state_rows への INSERT が何本目か(1 から数えた番号の tuple)を返す。"
     (with [self.lock]
       (setv self.flushes (+ self.flushes #(statements)))

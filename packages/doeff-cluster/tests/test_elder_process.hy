@@ -8,7 +8,7 @@
 (import tests.test_drain [Coord service K3S T])
 
 
-(defn #^ dict generation-beat [#^ Coord c #^ str boot #^ list statuses #^ bool [overlaps False] #^ (| int None) [boot-at None]]  ; defk にできない: 模擬の世界の method を呼ぶ(状態を進める)
+(defn #^ dict generation-beat [#^ Coord c #^ str boot #^ list statuses #^ bool [overlaps False] #^ (| int None) [boot-at None]]  ; cannot be a defk: 模擬の世界の method を呼ぶ(状態を進める)
   "worker node-a の世代 boot の heartbeat(overlaps = 前の世代がまだ走っている間に起きたと名乗る・boot-at = 名乗る起動の刻)。"
   (c.call "POST" "/heartbeat" (| {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" boot
                                   "statuses" statuses "stopping" False}
@@ -17,7 +17,7 @@
           :actor None))
 
 
-(defn #^ dict service-status [#^ Coord c #^ str name]  ; defk にできない: 模擬の世界の method を呼ぶ
+(defn #^ dict service-status [#^ Coord c #^ str name]  ; cannot be a defk: 模擬の世界の method を呼ぶ
   (get (c.call "GET" (+ "/resources/Service/" name)) "status"))
 
 

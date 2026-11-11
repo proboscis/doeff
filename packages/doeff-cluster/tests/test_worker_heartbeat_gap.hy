@@ -193,7 +193,7 @@
 (val REPLY-LEASE-MS 8000)
 
 
-(deff lease-reply [#^ httpx.Request request]  ; defk にできない: httpx の MockTransport が呼ぶ callback
+(deff lease-reply [#^ httpx.Request request]  ; cannot be a defk: httpx の MockTransport が呼ぶ callback
   {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "heartbeat に生存の窓 REPLY-LEASE-MS を載せた返事をする偽の coordinator。"
   (httpx.Response 200 :json {"jobs" [] "tasks" [] "warm" [] "draining" False

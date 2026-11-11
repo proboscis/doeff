@@ -879,18 +879,18 @@
 (val ANSWER-ENCODER (json.JSONEncoder :ensure-ascii False :separators #("," ":")))
 
 
-(defn #^ object plain-value [#^ (| Row RowChanged) holder]  ; defk にできない: answer-object が内包表記の中で行ごとに同期に呼ぶ値の写し
+(defn #^ object plain-value [#^ (| Row RowChanged) holder]  ; cannot be a defk: answer-object が内包表記の中で行ごとに同期に呼ぶ値の写し
   "行・変更の値を wire の object(dict と list)へ戻すため(encode-answer の値の写し)。"
   (thaw-json holder.value))
 
 
-(defn #^ SpelledJson spelled-value [#^ (| Row RowChanged) holder]  ; defk にできない: plain-value と同じ
+(defn #^ SpelledJson spelled-value [#^ (| Row RowChanged) holder]  ; cannot be a defk: plain-value と同じ
   "行・変更の値を綴りにするため(answer-text の値の写し): 保存の綴りを持てばそのまま継ぎ、持たなければ値から 1 度綴る。"
   (setv text (stored-text holder))
   (SpelledJson (if (is text None) (.encode ANSWER-ENCODER (thaw-json holder.value)) text)))
 
 
-(defn #^ str spelled-json [#^ object wire]  ; defk にできない: answer-text の綴りが object を深さの順に辿る再帰の同期の綴り
+(defn #^ str spelled-json [#^ object wire]  ; cannot be a defk: answer-text の綴りが object を深さの順に辿る再帰の同期の綴り
   "SpelledJson を含みうる wire の object を、JSON の綴りにするため(SpelledJson はそのまま継ぐ・ほかは ANSWER-ENCODER と同じ綴り)。"
   ;; 行ごとに通る小さな値(文字列・整数)は json の部品で直に綴る(ANSWER-ENCODER.encode は整数 1 つにも綴りの機械を組み直す)。
   (setv kind (type wire))

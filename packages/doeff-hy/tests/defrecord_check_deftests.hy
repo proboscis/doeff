@@ -63,7 +63,7 @@
   #^ str value)
 
 
-(defn refused [#^ str source]  ; defk にできない: a local helper that only receives the expansion error as a string inside the test
+(defn refused [#^ str source]  ; cannot be a defk: a local helper that only receives the expansion error as a string inside the test
   "Expand source and return the message when it was refused (None if not refused)."
   (try
     (hy.eval (hy.read-many (+ "(require doeff-hy.record [defrecord])\n" source)) :module (hy.I.types.ModuleType "probe"))

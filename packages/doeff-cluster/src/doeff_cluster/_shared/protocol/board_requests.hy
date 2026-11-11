@@ -12,13 +12,13 @@
 (import doeff_hy._json_value [OpaqueJson])
 
 
-(deff board-read-request [#^ str prefix]  ; defk にできない: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+(deff board-read-request [#^ str prefix]  ; cannot be a defk: 本番の client(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: prefix str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "ReadShared を coordinator の盤の読みの要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。"
   #("GET" "/board" {"prefix" prefix} None))
 
 
-(deff board-write-request [#^ str key #^ OpaqueJson value #^ bool conditioned #^ (| OpaqueJson None) expect #^ (| int float None) ttl-seconds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff board-write-request [#^ str key #^ OpaqueJson value #^ bool conditioned #^ (| OpaqueJson None) expect #^ (| int float None) ttl-seconds]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: key str) (: value OpaqueJson) (: conditioned bool) (: expect (| OpaqueJson None))
          (: ttl-seconds (| int float None))]
    :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
@@ -32,21 +32,21 @@
        (if (is ttl-seconds None) {} {"ttlSeconds" ttl-seconds}))))
 
 
-(deff lease-request [#^ str name #^ str op #^ str token #^ int permits #^ int ttl-ms]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff lease-request [#^ str name #^ str op #^ str token #^ int permits #^ int ttl-ms]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: name str) (: op str) (: token str) (: permits int) (: ttl-ms int)] :post [(: % tuple) (= (len %) 4)]
    :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "LeaseOp を coordinator の lease の口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。"
   #("POST" (+ "/leases/" (url-quote name :safe "")) {} {"op" op "token" token "permits" permits "ttlMs" ttl-ms}))
 
 
-(deff lease-wait-request [#^ str name]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff lease-wait-request [#^ str name]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: name str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "AwaitLeaseFree を coordinator の待ちの口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。
    timeoutSeconds は付けない — coordinator が自分の待ちの上限(ClusterTiming.watch-max-ms)で返す。"
   #("GET" "/watch" {"lease" name} None))
 
 
-(deff lease-wait-answer [#^ dict answered]  ; defk にできない: 本番の client と sim の宿が同じ読みをする純粋な判断
+(deff lease-wait-answer [#^ dict answered]  ; cannot be a defk: 本番の client と sim の宿が同じ読みをする純粋な判断
   {:pre [(: answered dict)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "GET /watch?lease=<名> の返事の本文 {\"revision\" … \"changed\" …} を、空きを見たか(changed)にするため。形が違えば ValueError。"
   (if (isinstance (.get answered "changed") bool)
@@ -54,14 +54,14 @@
       (raise (ValueError (.format "lease の待ちの返事の形が違う: {!r}" answered)))))
 
 
-(deff lease-vacate-request [#^ str name #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+(deff lease-vacate-request [#^ str name #^ str holder]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
   {:pre [(: name str) (: holder str)] :post [(: % tuple) (= (len %) 4)] :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "AwaitLeaseVacated を coordinator の待ちの口の要求 #(method path query 本文) にするため(本番の shared-http と sim の宿で同じ形)。
    timeoutSeconds は付けない — coordinator が自分の待ちの上限(ClusterTiming.watch-max-ms)で返す。"
   #("GET" "/watch" {"lease" name "vacate" holder} None))
 
 
-(deff lease-vacate-answer [#^ dict answered #^ str holder]  ; defk にできない: 本番の client と sim の宿が同じ読みをする純粋な判断
+(deff lease-vacate-answer [#^ dict answered #^ str holder]  ; cannot be a defk: 本番の client と sim の宿が同じ読みをする純粋な判断
   {:pre [(: answered dict) (: holder str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "GET /watch?lease=<名>&vacate=<担い手> の返事の本文 {\"revision\" … \"changed\" … \"vacate\" <担い手>} を、担い手の外の token が無いのを
    見たか(changed)にするため。vacate の欄が待った担い手と違う・無い答えは ValueError — この問いを知らない旧い coordinator は vacate を

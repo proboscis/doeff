@@ -26,7 +26,7 @@
 (val EVENT-COUNT 2000)
 
 
-(defn count-scans [monkeypatch]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
+(defn count-scans [monkeypatch]  ; cannot be a defk: pytest の monkeypatch で module の関数を包む(Program の外)
   "purge-expired-scan を包み、呼ばれた回数を数える箱(list の長さ)を返すため。"
   (setv calls [] original memory.purge-expired-scan)
   (defn counted [store now-ms]
@@ -36,7 +36,7 @@
   calls)
 
 
-(defn run-on [store program]  ; defk にできない: 検の入口で Program を run する
+(defn run-on [store program]  ; cannot be a defk: 検の入口で Program を run する
   "仮想の時計と memory の置き場で program を回すため。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
@@ -52,7 +52,7 @@
   #((len before.items) (len after.items)))
 
 
-(defn test-appends-before-the-due-time-do-not-rescan-the-store [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-appends-before-the-due-time-do-not-rescan-the-store [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 2000 個を積んで読む間(期限の前)は 1 度も走査しない。
   (setv scans (count-scans monkeypatch))
   (setv got (run-on (MemoryStore SCHEMA) (pulses-then-wait EVENT-COUNT 1)))
@@ -71,7 +71,7 @@
   got)
 
 
-(defn test-the-events-still-expire-when-the-due-time-comes [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-the-events-still-expire-when-the-due-time-comes [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 期限を過ぎた後の読みは走査せずに期限を過ぎた出来事を出さず(#3561)、期限を過ぎた後の回収(SweepExpired)で 1 度だけ走査して全部消す。
   ;; その後の書きは走査しない(書きは刈らない — #3605 の D・消え得る物も無い)。
   (setv scans (count-scans monkeypatch) store (MemoryStore SCHEMA))
@@ -97,7 +97,7 @@
   seen)
 
 
-(defn test-a-row-that-becomes-terminal-later-expires-from-its-terminal-write [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-a-row-that-becomes-terminal-later-expires-from-its-terminal-write [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 開けた行は消え得ない(終端でない)ので刻を持たない。閉じた書きが刻を足し、閉じた刻から保持の秒を過ぎて初めて読みに出なくなる。
   ;; 読みは走査しない(期限の見えは読みが持つ — #3561)ので、行は回収(SweepExpired)まで置き場に残る。
   (setv scans (count-scans monkeypatch) store (MemoryStore LAW-SCHEMA))
@@ -113,7 +113,7 @@
 ;; 出自 = 手番の模擬の筋書き 1 つ(置く係の入れ替えが期限まで Ready にならない)が CPU 5.6 秒: 刈り 731 回がそれぞれ全部の出来事と
 ;; 期限つきの表の全部の行を読み、組の刻の表も毎回作り直していた。
 
-(defn count-calls [monkeypatch names]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
+(defn count-calls [monkeypatch names]  ; cannot be a defk: pytest の monkeypatch で module の関数を包む(Program の外)
   "memory の module の関数 names(行と出来事 1 つずつに対して呼ぶ判定)を包み、呼ばれた回数の合計を数える箱(list の長さ)を返すため。"
   (setv calls [])
   (for [name names]
@@ -142,7 +142,7 @@
   #((len pairs.items) (len tickets.rows)))
 
 
-(defn test-the-cost-of-a-purge-does-not-grow-with-the-events-in-the-store [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-the-cost-of-a-purge-does-not-grow-with-the-events-in-the-store [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 反例: 期限の無い列に出来事が 0 個の置き場と 3000 個の置き場で、同じ 200 回の回収(組と行が 1 秒ごとに期限を迎える)が
   ;; 行と出来事 1 つずつの判定(組の名・終端か)を呼ぶ回数は同じ — 前の形は刈りのたびに全部の出来事の組の名を引き直していた
   ;; (3000 個の置き場で 1 刈り 3000 回以上)。
@@ -182,7 +182,7 @@
   seen)
 
 
-(defn test-a-group-whose-last-event-moves-later-is-not-purged-early []  ; defk にできない: 検の入口で Program を run する
+(defn test-a-group-whose-last-event-moves-later-is-not-purged-early []  ; cannot be a defk: 検の入口で Program を run する
   ;; 反例: 組の最初の出来事の期限(60 秒)は索引の先頭に残るが、組の最後の刻が 50 秒へ動いたので読み捨てる — 61 秒の刈りの後もまだ 2 つとも
   ;; 残り、組の最後の出来事から保持の秒を過ぎた 111 秒の刈りで組ごと消える。
   (setv store (MemoryStore LAW-SCHEMA))
@@ -203,7 +203,7 @@
   None)
 
 
-(defn test-rows-removed-in-one-purge-are-listed-in-key-order []  ; defk にできない: 検の入口で Program を run する
+(defn test-rows-removed-in-one-purge-are-listed-in-key-order []  ; cannot be a defk: 検の入口で Program を run する
   ;; 1 回の刈りで消えた行の RowRemoved は、期限の順(t2 が先)ではなく表の名・鍵の順(t1 が先)に続きの番号で積む(前の全部の走査と
   ;; 同じ順 — 変更の列を読む使い手の答えを変えない)。
   (setv store (MemoryStore LAW-SCHEMA))

@@ -240,7 +240,7 @@
     (resume None)))
 
 
-(deff line-answer [#^ MemoryCoordinator coordinator #^ dict line request]  ; defk にできない: httpx の MockTransport が要求ごとに同期で呼ぶ callback
+(deff line-answer [#^ MemoryCoordinator coordinator #^ dict line request]  ; cannot be a defk: httpx の MockTransport が要求ごとに同期で呼ぶ callback
   {:pre [(: coordinator MemoryCoordinator) (: line dict) (: request httpx.Request)] :post [(: % httpx.Response)]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator への線: 届く間は MemoryCoordinator が答え、切れている間は接続できない(httpx.ConnectError)。"
@@ -280,7 +280,7 @@
 (val CONTRACT-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "c-contract"))
 
 
-(deff declared-coordinator [#^ SimClock clock]  ; defk にできない: 組み立て(Program を走らせる前)が呼ぶ Program の外の準備
+(deff declared-coordinator [#^ SimClock clock]  ; cannot be a defk: 組み立て(Program を走らせる前)が呼ぶ Program の外の準備
   {:pre [(: clock SimClock)] :post [(: % MemoryCoordinator)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "Service SERVICE を宣言した MemoryCoordinator(時計 = clock)。宣言は運用者と同じ口(POST /resources/Service)で送る。"
   (let [coordinator (MemoryCoordinator clock)
@@ -394,19 +394,19 @@
   answer)
 
 
-(deff contract-route []  ; defk にできない: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
+(deff contract-route []  ; cannot be a defk: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
   {:pre [] :post [(: % RouteCell)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本物の handler が要求から要求へ持ち越す宛先の状態の入れ物(宛先 = MemoryCoordinator の 1 つ — 解釈器を開くたびに新しく作る)。"
   (RouteCell (CoordinatorRoute :urls #(COORDINATOR) :active 0 :switched-at-ms 0)))
 
 
-(deff contract-report []  ; defk にできない: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
+(deff contract-report []  ; cannot be a defk: 組み立ての表(INTERPRETERS)が本物の handler を作る時に呼ぶ Program の外の準備
   {:pre [] :post [(: % ServiceReport)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "SERVICE の報告の送り手(送り手の worker と版は固定)。"
   (ServiceReport SERVICE {"worker" "w1" "pid" 1 "revision" "r1"}))
 
 
-(deff semaphore-session []  ; defk にできない: 組み立ての表(INTERPRETERS)が handler を作る時に呼ぶ Program の外の準備
+(deff semaphore-session []  ; cannot be a defk: 組み立ての表(INTERPRETERS)が handler を作る時に呼ぶ Program の外の準備
   {:pre [] :post [(: % SemaphoreSession)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "cluster-semaphore の担い手 1 つの手元の記憶(解釈器を開くたびに新しく作る)。"
   (SemaphoreSession SEMAPHORE-HOLDER :ttl-seconds SEMAPHORE-TTL-SECONDS))

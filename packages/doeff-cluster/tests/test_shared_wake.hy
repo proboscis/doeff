@@ -62,7 +62,7 @@
   batch)
 
 
-(deff take-on-a-thread [inbox timeout]  ; defk にできない: threading.Thread が別の thread で呼ぶ target
+(deff take-on-a-thread [inbox timeout]  ; cannot be a defk: threading.Thread が別の thread で呼ぶ target
   {:pre [(: inbox RequestInbox) (: timeout float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "別の thread の取り手として、scheduler の上で受付から 1 度取るため(probe を、取り手が待っている最中に読む検の取り手)。"
   (run (scheduled (taken-by-loop inbox timeout)))

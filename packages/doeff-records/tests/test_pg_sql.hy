@@ -301,7 +301,7 @@
   (val key (random.randint 1 2000000000))
   (val holder (open-postgres))
   (val waiter (open-postgres))
-  (defn wait-for-lock []  ; defk にできない: thread の target
+  (defn wait-for-lock []  ; cannot be a defk: thread の target
     (.execute waiter "BEGIN")
     (.execute waiter "SELECT pg_advisory_xact_lock(%s)" #(key))
     (.execute waiter "COMMIT"))
@@ -339,7 +339,7 @@
   (val store (prepared-store connections (fresh-prefix)))
   (val old (open-postgres))
   (val answers [])
-  (defn write []  ; defk にできない: thread の target
+  (defn write []  ; cannot be a defk: thread の target
     (.append answers (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)
                                                      (pg-records-handler store MAKER ORIGIN-HOST)]
                                                     (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent)))))))

@@ -40,7 +40,7 @@
 
 (deftest test-the-heartbeat-names-the-child-environ-only-when-the-link-has-it [tmp-path]
   (setv sent #())
-  (deff handle [#^ httpx.Request request]  ; defk にできない: httpx.MockTransport が呼ぶ callback
+  (deff handle [#^ httpx.Request request]  ; cannot be a defk: httpx.MockTransport が呼ぶ callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
     "口が送った heartbeat の本文を控え、宣言の空の返事で答えるため。"
     (nonlocal sent)

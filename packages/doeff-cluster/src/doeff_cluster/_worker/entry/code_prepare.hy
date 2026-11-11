@@ -416,7 +416,7 @@
 (val READ-THREADS 32)
 
 
-(deff read-source [path]  ; defk にできない: thread の pool で回す読み(VM の外)
+(deff read-source [path]  ; cannot be a defk: thread の pool で回す読み(VM の外)
   {:pre [(: path str)] :post [(: % (| str None))]}
   "source 1 つを、前の読み(file の効果 ReadText の答え手 — UTF-8・読めない byte は置き換え)と同じ文字列に読むため(中身の鍵が前の
    準備の entry と揃う)。読めない file は None — 歩みは何も import しない物として扱う。"
@@ -426,7 +426,7 @@
       None)))
 
 
-(deff read-entry-or-none [path]  ; defk にできない: thread の pool で回す読み(VM の外)
+(deff read-entry-or-none [path]  ; cannot be a defk: thread の pool で回す読み(VM の外)
   {:pre [(: path (| str None))] :post [(: % (| bytes None))]}
   "保存先の entry 1 つを code_store の read-entry で読むため(path が None なら読まずに None)。"
   (if (is path None) None (store.read-entry path)))
@@ -465,7 +465,7 @@
 
 ;; --- 入口 --------------------------------------------------------------------------------
 
-(defn #^ None main []  ; defk にできない: console の入口(素の関数として呼ばれる)
+(defn #^ None main []  ; cannot be a defk: console の入口(素の関数として呼ばれる)
   ;; file の読み(cgroup の上限・変わった path の一覧・木の path の解き)は本物の file の答え手(os-file-handler)の下で。
   (setv default-jobs (run (with-handlers [os-file-handler] (usable-cpus))))
   (setv parser (argparse.ArgumentParser))

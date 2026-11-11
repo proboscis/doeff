@@ -897,7 +897,7 @@
   (WarmRun :seen seen :launches (len runs.launches) :lines notes.lines))
 
 
-(defn layer-files [current limit file [slab 0]]  ; defk にできない: 検の値を組むだけの素の関数
+(defn layer-files [current limit file [slab 0]]  ; cannot be a defk: 検の値を組むだけの素の関数
   "cgroup の層の memory の file の中身(byte の数から): file = page cache(全部 inactive に置く)・slab = 回収できる slab。"
   {"memory.current" (str current) "memory.max" (str limit)
    "memory.stat" (.format "anon 1\ninactive_file {}\nfile {}\nslab_reclaimable {}" file file slab)})

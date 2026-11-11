@@ -26,7 +26,7 @@
 (val FAKE-RMDIR "#!/bin/sh\n[ -s \"$1/cgroup.procs\" ] && exit 1\nrm -rf \"$1\"\n")
 
 
-(defn #^ Path group-dir [#^ Path root #^ str name #^ str procs]  ; defk にできない: 検の木の下ごしらえ(Program でない tmp の file を作る)
+(defn #^ Path group-dir [#^ Path root #^ str name #^ str procs]  ; cannot be a defk: 検の木の下ごしらえ(Program でない tmp の file を作る)
   "模擬の cgroup の dir を 1 つ作る(cgroup.procs の中身と io.stat を置く)。"
   (setv d (/ root name))
   (.mkdir d :parents True :exist-ok True)
@@ -35,7 +35,7 @@
   d)
 
 
-(defn #^ Path jobs-layer [#^ Path tmp #^ str controllers]  ; defk にできない: 検の木の下ごしらえ
+(defn #^ Path jobs-layer [#^ Path tmp #^ str controllers]  ; cannot be a defk: 検の木の下ごしらえ
   "模擬の jobs の層(層の cgroup.procs は空・controllers = 親が渡す controller・subtree_control は空)と偽の rmdir の dir を作る。"
   (setv layer (/ tmp "cg" "jobs"))
   (.mkdir layer :parents True)

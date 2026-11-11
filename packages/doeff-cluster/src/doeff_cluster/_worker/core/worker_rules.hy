@@ -16,7 +16,7 @@
       spec.revision))
 
 
-(defn #^ (| str None) ready-path [#^ (| CodeView None) code]  ; defk にできない: 純粋な判断の start-actions(Program の外の関数)が呼ぶ
+(defn #^ (| str None) ready-path [#^ (| CodeView None) code]  ; cannot be a defk: 純粋な判断の start-actions(Program の外の関数)が呼ぶ
   "木が READY ならその path、観測が無い・READY でなければ None(CodeView が READY ⇔ path の在る事を作る時に確かめる)。"
   (if (is code None) None code.path))
 

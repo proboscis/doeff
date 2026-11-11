@@ -26,12 +26,12 @@
 (val ROUNDS 10)
 
 
-(defn race-prepares [#^ str prefix * keep-lock]  ; defk にできない: RACERS 本の thread でそれぞれ別の run を回す入口
+(defn race-prepares [#^ str prefix * keep-lock]  ; cannot be a defk: RACERS 本の thread でそれぞれ別の run を回す入口
   "RACERS 本の接続から同じ置き場を同時に用意し、上がった失敗の SQLSTATE(他の例外は型の名)の列を返す。"
   (setv connections (postgres-connections RACERS)
         start (threading.Barrier RACERS)
         raised [])
-  (defn attempt []  ; defk にできない: thread の target
+  (defn attempt []  ; cannot be a defk: thread の target
     (.wait start)
     (try
       (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))
@@ -48,7 +48,7 @@
   raised)
 
 
-(defn cleanup [#^ str prefix]  ; defk にできない: 検の後片付けで別の run を回す入口
+(defn cleanup [#^ str prefix]  ; cannot be a defk: 検の後片付けで別の run を回す入口
   "検の置き場の表を消す。"
   (setv connections (postgres-connections 1))
   (run-sql connections (drop-records-tables (run-sql connections (prepare-records-store DATABASE DATABASE LAW-SCHEMA prefix))))
@@ -87,7 +87,7 @@
   (val creates-after-prepare counts.creates)
   (val start (threading.Barrier RACERS))
   (val answers [])
-  (defn request []  ; defk にできない: thread の target
+  (defn request []  ; cannot be a defk: thread の target
     (.wait start)
     (.append answers (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) counting
                                                      (pg-records-handler store MAKER ORIGIN-HOST)]

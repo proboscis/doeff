@@ -102,7 +102,7 @@
   ;; heartbeat から消え、崩れた file の間は前に名乗った組の印のまま。
   ;; 失敗ケース = 組の印を起動の時にしか読まない(Pod を作り直さないと効かない)・崩れた file で組の印を落とす・起動の引数の能力を捨てる。
   (setv sent #())
-  (deff handle [#^ httpx.Request request]  ; defk にできない: httpx.MockTransport が呼ぶ callback
+  (deff handle [#^ httpx.Request request]  ; cannot be a defk: httpx.MockTransport が呼ぶ callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
     "口が送った heartbeat の本文を控え、宣言の空の返事で答えるため。"
     (nonlocal sent)
@@ -175,7 +175,7 @@
 
 (deftest test-the-heartbeat-follows-the-room-file-and-keeps-the-last-value-when-it-breaks [tmp-path]
   (setv sent #())
-  (deff handle [#^ httpx.Request request]  ; defk にできない: httpx.MockTransport が呼ぶ callback
+  (deff handle [#^ httpx.Request request]  ; cannot be a defk: httpx.MockTransport が呼ぶ callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "foundation"}}
     "口が送った heartbeat の本文を控え、宣言の空の返事で答えるため。"
     (nonlocal sent)

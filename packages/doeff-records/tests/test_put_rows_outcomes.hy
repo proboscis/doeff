@@ -22,12 +22,12 @@
 (val DETAIL "記録の service が落ちている(筋書き)")
 
 
-(defn #^ object in-store [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ
+(defn #^ object in-store [#^ MemoryStore store program]  ; cannot be a defk: 検の入口で run を撃つ
   "仮想の時計と memory の置き場(書き手 MAKER)の下で program を回して答えを返す。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
 
-(defn #^ PutRows batch [#^ str id #^ object value #^ object expect * [idempotency-key None]]  ; defk にできない: 検の支度が同期に組む値
+(defn #^ PutRows batch [#^ str id #^ object value #^ object expect * [idempotency-key None]]  ; cannot be a defk: 検の支度が同期に組む値
   "表 parts の 1 行の束(行 id を value の差分で expect の期待のもとに書く)。"
   (PutRows #((RowWrite "parts" #(id) (FrozenMap value) expect)) :idempotency-key idempotency-key))
 

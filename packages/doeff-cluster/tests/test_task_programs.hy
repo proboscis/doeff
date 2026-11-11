@@ -229,7 +229,7 @@
   {:pre [(: seen list)] :post [(: % httpx.MockTransport)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の /programs/<sha> の偽の口(task と service の 2 つを持つ・取った path を seen に積む)。"
   (val table {TASK-SHA TASK-BLOB SERVICE-SHA SERVICE-BLOB})
-  (deff answer [request]  ; defk にできない: httpx の MockTransport が呼ぶ素の callback
+  (deff answer [request]  ; cannot be a defk: httpx の MockTransport が呼ぶ素の callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
     "置き場の読み 1 件の答え(在れば {\"blob\" \"versions\"}・無ければ 404)。"
     (.append seen request.url.path)
@@ -282,7 +282,7 @@
 (defk coordinator-programs [cell now]
   {:pre [(: cell list) (: now int)] :post [(: % httpx.MockTransport)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の GET /programs/<sha> を、cell の先頭に持つ coordinator の状態の本物の振り分け(call)で答える偽の網。"
-  (deff answer [request]  ; defk にできない: httpx の MockTransport が呼ぶ素の callback
+  (deff answer [request]  ; cannot be a defk: httpx の MockTransport が呼ぶ素の callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
     "Program の読み 1 件を coordinator の振り分けに渡し、その status と本文で答える。"
     (let [answered (run (call (get cell 0) "GET" request.url.path None now))]

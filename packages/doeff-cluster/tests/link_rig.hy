@@ -105,7 +105,7 @@
   answer)
 
 
-(deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str typing.Any)) versions]  ; defk にできない: 検が Program の外で file を置く道具
+(deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str typing.Any)) versions]  ; cannot be a defk: 検が Program の外で file を置く道具
   {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator への口が /programs/<sha> から取って置くのと同じ cache の file を置くため(置き場と中身の形の定義点は worker/core/launch の
    program-file と program-file-text — handlers.hy の同じ名の道具を #2427 でここへ移した)。"

@@ -19,14 +19,14 @@
 (val COLORS #("red" "blue" "green" 1 1.0 True False None (FrozenMap {"tone" "red"}) #("red") math.nan))
 
 
-(defn put-part [store id color state]  ; defk にできない: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
+(defn put-part [store id color state]  ; cannot be a defk: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
   "表 parts に 1 行(番号 id・色 color・状態 state)を刻 0 で置くため(色は宣言の index の欄・ラベルは id ごとに違う index の欄)。"
   (setv key #(id)
         value (FrozenMap {"id" id "label" (+ "l-" id) "color" color "note" (len id) "state" state}))
   (memory.memory-store-row store "parts" key (memory.memory-current-row store "parts" key) value MAKER value 0))
 
 
-(defn seeded-parts [count]  ; defk にできない: 検の種を同期に組む
+(defn seeded-parts [count]  ; cannot be a defk: 検の種を同期に組む
   "表 parts に count 行を鍵の順と違う順で置いた置き場を作るため(色は COLORS を順に配り、7 行に 1 行は色の欄を持たない)。"
   (setv store (MemoryStore LAW-SCHEMA))
   (for [i (range count)]
@@ -38,7 +38,7 @@
   store)
 
 
-(defn scanned-texts [store table-name where where-any now-ms]  ; defk にできない: 錠の内の読みと比べる同期の読みの写し
+(defn scanned-texts [store table-name where where-any now-ms]  ; cannot be a defk: 錠の内の読みと比べる同期の読みの写し
   "表の全部の行に絞りと期限を当てた鍵の綴り(綴りの順)— 直す前の読み。"
   (setv decl (store.schema.table table-name)
         table (get store.rows table-name))
@@ -50,7 +50,7 @@
         text))
 
 
-(defn paged-texts [store table-name where where-any limit now-ms]  ; defk にできない: 錠の内の読みを同期に呼ぶ
+(defn paged-texts [store table-name where where-any limit now-ms]  ; cannot be a defk: 錠の内の読みを同期に呼ぶ
   "鍵の順の頁を頭から送り、出た行の鍵の綴りを並べて返すため。"
   (setv cursor None keys [])
   (while True
@@ -61,7 +61,7 @@
       (return keys))))
 
 
-(defn reads-agree [store table-name filters now-ms]  ; defk にできない: 錠の内の読みを同期に呼んで比べる
+(defn reads-agree [store table-name filters now-ms]  ; cannot be a defk: 錠の内の読みを同期に呼んで比べる
   "絞りの組 filters ごとに、一覧・数え・鍵の順の頁が表の全部の行を照らした読みと同じ行を答える事を確かめるため。"
   (setv decl (store.schema.table table-name))
   (for [#(where where-any) filters]
@@ -84,7 +84,7 @@
               #(NO-WHERE (FrozenMap {"color" #("red") "id" #("p0011" "p0022" "p0033")}))))))
 
 
-(defn test-a-token-is-equal-exactly-when-the-values-are-json-equal []  ; defk にできない: 純関数の印を同期に比べる検
+(defn test-a-token-is-equal-exactly-when-the-values-are-json-equal []  ; cannot be a defk: 純関数の印を同期に比べる検
   ;; 印の作れる 2 つの値の印が等しい事と json-equal? で等しい事は同じ(NaN と hash できない値は印を作らない)。
   (setv values (+ COLORS #(0 0.0 -0.0 "1" "" #() (FrozenMap) [] {} ["red"] {"tone" "red"} #(1 True) #(1.0 True) #(True 1)
                            (FrozenMap {"a" #(1 None)}) {"a" [1.0 None]} (* 2 (** 10 20)) (float (* 2 (** 10 20))))))
@@ -97,13 +97,13 @@
   (assert (is (json-equal-token (bytearray b"x")) None)))
 
 
-(defn test-indexed-reads-answer-the-rows-of-the-full-scan []  ; defk にできない: 錠の内の読みを同期に呼んで比べる検
+(defn test-indexed-reads-answer-the-rows-of-the-full-scan []  ; cannot be a defk: 錠の内の読みを同期に呼んで比べる検
   ;; 欄の値の種類(真偽と数・整数と浮動小数・写像と配列・NaN・null・欄の無い行)× 絞り(where・where-any・両方・組の重なり・空の組・鍵の組と
   ;; 一緒)× limit: 一覧・数え・頁が、表の全部の行を照らした読みと同じ行を答える。
   (reads-agree (seeded-parts 400) "parts" PART-FILTERS 0))
 
 
-(defn test-indexed-reads-follow-writes-removals-and-copies []  ; defk にできない: 錠の内の読みと書きを同期に混ぜる検
+(defn test-indexed-reads-follow-writes-removals-and-copies []  ; cannot be a defk: 錠の内の読みと書きを同期に混ぜる検
   ;; 覚えを作った後の書き(色を替える・欄を外す・新しい行)と消し・copy と pickle の写しへの書きの後も、読みは全部の行を照らした読みと同じ。
   (setv store (seeded-parts 200))
   (reads-agree store "parts" PART-FILTERS 0)
@@ -122,7 +122,7 @@
   (reads-agree store "parts" PART-FILTERS 0))
 
 
-(defn test-rows-placed-directly-are-seen-after-the-sorted-keys-are-dropped []  ; defk にできない: 置き場の行を直に置く使い手の作法を同期に写す検
+(defn test-rows-placed-directly-are-seen-after-the-sorted-keys-are-dropped []  ; cannot be a defk: 置き場の行を直に置く使い手の作法を同期に写す検
   ;; 置き場の行を直に置く使い手(使い手の模擬の、前の版の状態の種まき)は、並べた鍵の覚え(sorted-texts の表の覚え)を外す — 欄の値の
   ;; 覚えもそれで外れ、次の読みが作り直す(古い覚えで答えず、直に置いた行の書き換えの後の書きも崩れない)。
   (setv store (seeded-parts 100))
@@ -135,7 +135,7 @@
   (reads-agree store "parts" PART-FILTERS 0))
 
 
-(defn test-indexed-reads-hide-expired-rows-like-the-full-scan []  ; defk にできない: 錠の内の読みを同期に呼んで比べる検
+(defn test-indexed-reads-hide-expired-rows-like-the-full-scan []  ; cannot be a defk: 錠の内の読みを同期に呼んで比べる検
   ;; 保持の期限の後の読みは、覚えに残る閉じた行を出さない(回収の前でも)— 全部の行を照らした読みと同じ。
   (setv store (MemoryStore LAW-SCHEMA))
   (for [n (range 90)]
@@ -149,7 +149,7 @@
   (reads-agree store "tickets" filters (+ KEEP-MS 1)))
 
 
-(defn test-an-indexed-read-judges-only-the-rows-of-the-value [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-an-indexed-read-judges-only-the-rows-of-the-value [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 3,000 行の表(色 3 つ)の色の絞りの読みは、その色の行だけに絞りを当てる(表の全部の行を照らす読みに戻すと 3,000 回になり赤)。
   (setv store (MemoryStore LAW-SCHEMA))
   (for [n (range 3000)]

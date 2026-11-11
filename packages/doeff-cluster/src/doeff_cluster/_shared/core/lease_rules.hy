@@ -9,13 +9,13 @@
 (import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS LeaseAnswer])
 
 
-(deff lease-holder [#^ str job #^ str instance]  ; defk にできない: worker の返し(worker/protocol/lease_release)も呼ぶ純粋な判断
+(deff lease-holder [#^ str job #^ str instance]  ; cannot be a defk: worker の返し(worker/protocol/lease_release)も呼ぶ純粋な判断
   {:pre [(: job str) (: instance str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "名前付きの lease の担い手の名を、名乗る側(子の土台)と外す側(worker)が同じ綴りで作るため: <job>/<process の世代の名>。"
   (.format "{}/{}" job instance))
 
 
-(deff holder-tokens-prefix [#^ str holder]  ; defk にできない: SemaphoreSession(手元の記憶の class)と worker の返し(Program の外)が呼ぶ純粋な判断
+(deff holder-tokens-prefix [#^ str holder]  ; cannot be a defk: SemaphoreSession(手元の記憶の class)と worker の返し(Program の外)が呼ぶ純粋な判断
   {:pre [(: holder str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "担い手 holder の token の頭(<担い手>/)を、token を作る側(SemaphoreSession.next-token)と担い手の token を全部外す側(worker/protocol/lease_release)が
    同じ綴りで作るため。"
@@ -153,7 +153,7 @@
 
 
 ;; row は盤の行の値そのもの(JSON の値 — BoardRow.value。形を確かめてから読む — 形の読めない値は触らず None)。
-(deff holders-shifted [#^ object row #^ int gap-ms]  ; defk にできない: coordinator の起き直し(api_policy.resume-after-downtime — Program の外の純粋な判断)が呼ぶ
+(deff holders-shifted [#^ object row #^ int gap-ms]  ; cannot be a defk: coordinator の起き直し(api_policy.resume-after-downtime — Program の外の純粋な判断)が呼ぶ
   {:pre [(: row (| dict list str int float bool None)) (: gap-ms int)] :post [(: % (| (get dict #(str object)) None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "純粋: 担い手の期限を gap-ms だけ後へずらした行。coordinator が止まっていた長さ gap-ms を担い手の期限に数えないため(起き直した時に

@@ -42,7 +42,7 @@
 (defk served-programs [seen]
   {:pre [(: seen list)] :post [(: % httpx.MockTransport)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "coordinator の /programs/<sha> の偽の口(取った path を seen に積む)。"
-  (deff answer [request]  ; defk にできない: httpx の MockTransport が呼ぶ素の callback
+  (deff answer [request]  ; cannot be a defk: httpx の MockTransport が呼ぶ素の callback
     {:pre [(: request httpx.Request)] :post [(: % httpx.Response)] :tags {:context "doeff-cluster-test" :role "entry"}}
     (.append seen request.url.path)
     (cond

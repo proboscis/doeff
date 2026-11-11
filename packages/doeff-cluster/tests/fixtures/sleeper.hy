@@ -23,7 +23,7 @@
                                    "(.rename staged path)"
                                    "(time.sleep 3600)"]))
 
-(deff main []  ; defk にできない: 子の process の入口(`__main__` が素の関数として呼ぶ)
+(deff main []  ; cannot be a defk: 子の process の入口(`__main__` が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "main"}}
   "worker の smoke 用の job の本体: 拍を file へ書き続け、SIGTERM で後始末して終わるため。"
   (setv beat (Path (get sys.argv 1)) flag (Flag))

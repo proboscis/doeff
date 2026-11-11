@@ -255,6 +255,6 @@
     _ (! (refused 2 (.format "台本の git が知らない呼び: {}" argv)))))
 
 
-(defn #^ ScriptedCommand worktree-git-command [#^ (get tuple #(OriginBranch ...)) origins #^ bool reachable]  ; defk にできない: handler の列(scripted-command-peer・ProcessScript)を組む時に Program の外で呼ぶ
+(defn #^ ScriptedCommand worktree-git-command [#^ (get tuple #(OriginBranch ...)) origins #^ bool reachable]  ; cannot be a defk: handler の列(scripted-command-peer・ProcessScript)を組む時に Program の外で呼ぶ
   "台本の git を ScriptedCommand 1 つにするため(origins = origin に在る branch・reachable = 機体から origin に届くか)。"
   (ScriptedCommand :name "git" :run (fn [commands request] (worktree-git-answer origins reachable request))))

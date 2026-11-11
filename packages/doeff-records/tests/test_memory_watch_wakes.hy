@@ -28,12 +28,12 @@
 (val LONG-WAIT 30.0)
 
 
-(defn run-on [store program]  ; defk にできない: 検の入口で Program を run する
+(defn run-on [store program]  ; cannot be a defk: 検の入口で Program を run する
   "仮想の時計と memory の置き場で program を回すため。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)] program))))
 
 
-(defn count-scans [monkeypatch]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
+(defn count-scans [monkeypatch]  ; cannot be a defk: pytest の monkeypatch で module の関数を包む(Program の外)
   "memory-watch-scan を包み、呼ばれた回数を数える箱(list の長さ)を返すため。"
   (setv calls [] original memory.memory-watch-scan)
   (defn counted [store ask now-ms]
@@ -59,7 +59,7 @@
   #(answer at))
 
 
-(defn test-an-idle-wait-scans-without-polling-and-ends-at-the-timeout [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-an-idle-wait-scans-without-polling-and-ends-at-the-timeout [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 変更が来なければ timeout の刻に空の Changes が返る。その間に読み直さない(前の形は 600 回走査した)。
   (setv scans (count-scans monkeypatch))
   (setv #(answer at) (run-on (MemoryStore LAW-SCHEMA) (idle-wait)))
@@ -87,7 +87,7 @@
   #(answer at))
 
 
-(defn test-a-direct-synchronous-write-wakes-the-waiter-at-its-instant []  ; defk にできない: 検の入口で Program を run する
+(defn test-a-direct-synchronous-write-wakes-the-waiter-at-its-instant []  ; cannot be a defk: 検の入口で Program を run する
   ;; handler の外の同期の書きでも待ち手が起き、書いた刻(5 秒)に変更が返る(timeout の 30 秒を待たない)。
   (setv store (MemoryStore LAW-SCHEMA))
   (setv #(answer at) (run-on store (wait-for-direct-write store)))
@@ -128,7 +128,7 @@
   #(answer at done-at))
 
 
-(defn test-a-row-expiring-during-the-wait-is-delivered-at-the-next-sweep []  ; defk にできない: 検の入口で Program を run する
+(defn test-a-row-expiring-during-the-wait-is-delivered-at-the-next-sweep []  ; cannot be a defk: 検の入口で Program を run する
   ;; 待っている間に保持の期限が来た行の消え(RowRemoved)は、期限の刻には届かず(時間で起きて回収しない — #3561)、待つ表の外への書きでも
   ;; 届かず(書きは触る行だけを片付ける — #3605 の D)、回収(SweepExpired)が積んだ刻に届く(timeout の 600 秒を待たない)。
   (setv #(answer at done-at) (run-on (MemoryStore LAW-SCHEMA) (wait-for-expiry)))
@@ -144,7 +144,7 @@
   answer)
 
 
-(defn [pytest.mark.realtime] test-a-write-from-another-thread-wakes-a-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
+(defn [pytest.mark.realtime] test-a-write-from-another-thread-wakes-a-waiter-on-the-wall-clock []  ; cannot be a defk: 2 つの thread で置き場を共有する検
   ;; 実の時計で待つ thread を、別の thread の直の書きが起こす(timeout の 30 秒を待たない)。
   (setv store (MemoryStore LAW-SCHEMA)
         box []
@@ -174,7 +174,7 @@
   at)
 
 
-(defn test-a-positive-timeout-below-one-tick-still-lets-the-clock-move []  ; defk にできない: 検の入口で Program を run する
+(defn test-a-positive-timeout-below-one-tick-still-lets-the-clock-move []  ; cannot be a defk: 検の入口で Program を run する
   ;; 残りの秒を渡して待ち直す呼び手が同じ刻で回り続けないよう、正の timeout は時計を少なくとも 1 刻み(1 マイクロ秒)進める。
   (setv at (run-on (MemoryStore LAW-SCHEMA) (tiny-wait)))
   (assert (= at 1e-06) at))
@@ -204,7 +204,7 @@
   woke)
 
 
-(defn test-waiters-wake-in-the-order-they-waited []  ; defk にできない: 検の入口で Program を run する
+(defn test-waiters-wake-in-the-order-they-waited []  ; cannot be a defk: 検の入口で Program を run する
   ;; 待ち手は掛けた順に起きる(呼び鈴を set に持つと順が object の番地で決まり、走らせるたびに模擬の結果が揺れた — 使い手の手番の模擬が
   ;; 3 回に 1〜2 回赤)。
   (setv store (MemoryStore LAW-SCHEMA))
@@ -268,7 +268,7 @@
   ended)
 
 
-(defn test-a-waiter-woken-by-a-write-to-another-table-still-takes-its-cancel []  ; defk にできない: 検の入口で Program を run する
+(defn test-a-waiter-woken-by-a-write-to-another-table-still-takes-its-cancel []  ; cannot be a defk: 検の入口で Program を run する
   ;; 変更の刈り(床が上がる)は charters の待ち手の呼び鈴も鳴らす(待ち手は起きて走査し、自分の表に変更が無ければ掛け直す — 呼び鈴を
   ;; 名ごとにした後、自分の表の外の鳴らしで起きるのは版の更新と変更の刈りだけ)。起きている最中に届いた取り消しを待ち手が飲み込むと、
   ;; 待ち手は掛け直して timeout(30 秒)まで生き、取り消した側もそこまで止まる — 使い手の模擬で、複数の表の待ちを Race した係が
@@ -280,7 +280,7 @@
 
 ;; --- 名ごとの呼び鈴と列の待ち(出自の issue は #1019)--------------------------------------------------------
 
-(defn count-events-scans [monkeypatch]  ; defk にできない: pytest の monkeypatch で module の関数を包む(Program の外)
+(defn count-events-scans [monkeypatch]  ; cannot be a defk: pytest の monkeypatch で module の関数を包む(Program の外)
   "memory-events-scan を包み、呼ばれた回数を数える箱(list の長さ)を返すため。"
   (setv calls [] original memory.memory-events-scan)
   (defn counted [store ask now-ms]
@@ -318,7 +318,7 @@
   woke)
 
 
-(defn test-a-write-wakes-only-the-waiters-of-its-name [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+(defn test-a-write-wakes-only-the-waiters-of-its-name [monkeypatch]  ; cannot be a defk: pytest の fixture を受ける検
   ;; 行の書きは表の待ち手だけを・追記は列の待ち手だけを起こす。charters の待ち手はどちらでも起きず、timeout の刻に空の Changes で返る
   ;; (走査は掛けた時の 2 回と timeout の 1 回だけ — 起こされていれば走査が増える)。列の待ち手は 5 秒の行の書きでは走査しない。
   (setv watch-scans (count-scans monkeypatch)
@@ -340,7 +340,7 @@
   answer)
 
 
-(defn [pytest.mark.realtime] test-an-append-from-another-thread-wakes-a-stream-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
+(defn [pytest.mark.realtime] test-an-append-from-another-thread-wakes-a-stream-waiter-on-the-wall-clock []  ; cannot be a defk: 2 つの thread で置き場を共有する検
   ;; 実の時計で列を待つ thread を、別の thread の直の追記が起こす(timeout の 30 秒を待たない)。
   (setv store (MemoryStore LAW-SCHEMA)
         box []

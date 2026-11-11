@@ -22,7 +22,7 @@
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-spec])
 
 
-(deff job [#^ str name #^ object program * #^ CallShape call needs #^ int replicas #^ (| (get dict #(str (| float str))) None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+(deff job [#^ str name #^ object program * #^ CallShape call needs #^ int replicas #^ (| (get dict #(str (| float str))) None) [readiness None] #^ str [update "recreate"]  ; cannot be a defk: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
            #^ (| (get dict #(str str)) None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None]
            #^ (| IdleBudget None) [idle-budget None] #^ (| (get frozenset str) None) [filled None]]
   {:pre [(: name str) (: call CallShape) (: needs (| (get frozenset str) (get set str) (get list str) (get tuple #(str ...)) None)) (: replicas int) (: readiness (| (get dict #(str (| float str))) None)) (: update str) (: environ (| (get dict #(str str)) None))
@@ -75,7 +75,7 @@
        :idle-budget idle-budget :filled filled-given))
 
 
-(deff system-of [#^ str name #^ (get tuple #(Job ...)) jobs * #^ (get tuple #(GroupLimit ...)) [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+(deff system-of [#^ str name #^ (get tuple #(Job ...)) jobs * #^ (get tuple #(GroupLimit ...)) [task-limits #()]]  ; cannot be a defk: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
   {:pre [(: name str) (: jobs (get tuple #(Job ...))) (: task-limits (get tuple #(GroupLimit ...)))] :post [(: % System)] :tags {:context "doeff-cluster" :role "main"}}
   "job の組と組の同時数の上限を系にする(job の名の重なり・組の名の重なり・受けられない上限は断る — 上限の規則は coordinator の
    受け口と同じ group-limit-refusal)。名の無い組の上限には宣言する系の名 name を付ける(GroupLimit の system — coordinator は別の系が
@@ -101,7 +101,7 @@
   (System :name name :jobs jobs :task-limits named))
 
 
-(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| (get dict #(str (get dict #(str str)))) None) [environ None] * #^ (get dict #(str str)) versions  ; defk にできない: declare の CLI が呼ぶ
+(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| (get dict #(str (get dict #(str str)))) None) [environ None] * #^ (get dict #(str str)) versions  ; cannot be a defk: declare の CLI が呼ぶ
                           #^ (| (get dict #(str str)) None) [contents None]]
   {:pre [(: system System) (: revision str) (: versions (get dict #(str str))) (: runtime-env (| RuntimeEnv None)) (: environ (| (get dict #(str (get dict #(str str)))) None)) (: contents (| (get dict #(str str)) None))]
    :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}
@@ -176,7 +176,7 @@
   (Declaration :rows rows :programs programs :limits system.task-limits))
 
 
-(deff resolve-value [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
+(deff resolve-value [#^ str path]  ; cannot be a defk: CLI の入口(declare)が引数の文字列を解く
   {:pre [(: path str)] :post [(: % (| (get Callable #(... object)) System))] :tags {:context "doeff-cluster" :role "main"}}
   "`module:attr` の import path を値に解くため(名を解く口はここ 1 つ — 契約の dynamic_imports で名指す・#1692)。答えは系の関数・
    土台の関数か、旧い形の系の値(呼び手の declare が形を見て、理由つきで断る)。"
@@ -186,7 +186,7 @@
   (getattr (importlib.import-module module) attr))
 
 
-(deff resolve [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く
+(deff resolve [#^ str path]  ; cannot be a defk: CLI の入口(declare)が引数の文字列を解く
   {:pre [(: path str)] :post [(: % (get Callable #(... object)))] :tags {:context "doeff-cluster" :role "main"}}
   "`module:attr` の import path を関数に解く(declare の系の関数と土台の関数)。旧い形の系の値(System)は関数ではないので、
    名指しで断る(declare はその前に理由つきで断るので、ここへ来るのは呼び手の誤り)。"

@@ -11,7 +11,7 @@
 (import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteOptions RoutedReply route-of routed-request])
 
 
-(deff task-result-request [#^ str task #^ str worker #^ str instance #^ str result]  ; defk にできない: 本番の子 process の入口(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
+(deff task-result-request [#^ str task #^ str worker #^ str instance #^ str result]  ; cannot be a defk: 本番の子 process の入口(Program の外の I/O の道具)と sim の宿が同じ形を作る純粋な判断
   {:pre [(: task str) (: worker str) (: instance str) (: result str)] :post [(: % tuple) (= (len %) 4)]
    :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
   "終わった task の結果 1 つ → #(method path query 本文)。task = coordinator の振った task の id・worker / instance = 送り手の子 process の
@@ -21,7 +21,7 @@
     {"worker" worker "instance" instance "result" result "format" PROTOCOL-FORMAT}))
 
 
-(deff task-id-of-job [#^ str job]  ; defk にできない: 本番の子 process の入口(Program の外の I/O の道具)と sim の宿が同じ判断を使う
+(deff task-id-of-job [#^ str job]  ; cannot be a defk: 本番の子 process の入口(Program の外の I/O の道具)と sim の宿が同じ判断を使う
   {:pre [(: job str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
   "子 process の job の名(worker が渡す DOEFF_WORKER_JOB — task は task/<id>)から、結果を届ける task の id を読むため。task/<id> の形で
    なければ None(worker の外で task の入口だけを動かした時 — 届ける相手が無いので、結果は file の路だけになる)。"

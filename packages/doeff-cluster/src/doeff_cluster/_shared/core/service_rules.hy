@@ -12,7 +12,7 @@
 (import doeff_cluster._shared.intent.service_model [CallShape Job System RecordArgument])
 
 
-(deff function-reference [#^ (get Callable #(... object)) function #^ str where]  ; defk にできない: 宣言の値を作る時(module の読み込み・declare)に呼ぶ純粋な判断
+(deff function-reference [#^ (get Callable #(... object)) function #^ str where]  ; cannot be a defk: 宣言の値を作る時(module の読み込み・declare)に呼ぶ純粋な判断
   {:pre [(: function (get Callable #(... object))) (: where str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "module の最上位の関数 → `module:qualname`。入れ子の関数・lambda・handler の値は実行先で import しても引けない(または値として
    詰めることになる)ので断る — 土台を最上位の関数で渡す決まり(計画 6 節)の検め。"
@@ -28,7 +28,7 @@
 
 
 
-(deff canonical-record [value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+(deff canonical-record [value #^ str where]  ; cannot be a defk: 宣言の値を作る時に呼ぶ純粋な判断
   {:pre [(: value RecordArgument) (: where str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "系の引数の record 1 つ → identity の正規の値 {\"record\": \"module:qualname\", \"fields\": {欄: 正規の値}}。土台を欄の名と型を持つ 1 つの
    値で渡せるようにするため(汎用の模擬のテストが土台の型から模擬の土台を組める)。型は関数と同じく module の最上位に
@@ -43,7 +43,7 @@
                   name (canonical-argument (getattr value name) where))})
 
 
-(deff canonical-argument [#^ object value #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+(deff canonical-argument [#^ object value #^ str where]  ; cannot be a defk: 宣言の値を作る時に呼ぶ純粋な判断
   {:pre [(: value (| (get Callable #(... object)) str int float bool list tuple dict RecordArgument None)) (: where str)]
    :post [(: % (| (get dict #(str object)) str int float bool (get list object) None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
@@ -62,7 +62,7 @@
     True (raise (TypeError (.format "{}: identity に載せられない値 {!r}" where value)))))
 
 
-(deff identity-of [#^ CallShape call #^ str where]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+(deff identity-of [#^ CallShape call #^ str where]  ; cannot be a defk: 宣言の値を作る時に呼ぶ純粋な判断
   {:pre [(: call CallShape) (: where str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "呼び出しの形 → identity(関数の参照・位置の引数・名の引数の正規 JSON)。spec-hash の材料(改訂 1 の A)。"
   {"function" (function-reference call.function where)
@@ -70,7 +70,7 @@
    "kwargs" (dfor k (sorted call.kwargs) k (canonical-argument (get call.kwargs k) where))})
 
 
-(deff describe-identity [#^ (get dict #(str object)) identity]  ; defk にできない: 宣言の値を作る時に呼ぶ純粋な判断
+(deff describe-identity [#^ (get dict #(str object)) identity]  ; cannot be a defk: 宣言の値を作る時に呼ぶ純粋な判断
   {:pre [(: identity (get dict #(str object)))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "identity → 表示の 1 行 `module:qualname(引数, 名=値)`(関数の引数は参照の名で・record は `module:型(欄=値, …)`)。"
   (defn #^ str show [#^ object v]
@@ -86,7 +86,7 @@
 
 
 
-(deff job-named [#^ System system #^ str name]  ; defk にできない: 宣言の道具と sim の宿が呼ぶ純粋な読み
+(deff job-named [#^ System system #^ str name]  ; cannot be a defk: 宣言の道具と sim の宿が呼ぶ純粋な読み
   {:pre [(: system System) (: name str)] :post [(: % (| Job None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "系の中の名 name の job(無ければ None)。"
   (next (gfor j system.jobs :if (= j.name name) j) None))
@@ -134,7 +134,7 @@
   found)
 
 
-(deff environ-overlay-refusal [#^ System system #^ (get Mapping #(str object)) environ]  ; defk にできない: 宣言の値を作る時(declare の CLI・sim-cluster の宣言)に呼ぶ純粋な判断
+(deff environ-overlay-refusal [#^ System system #^ (get Mapping #(str object)) environ]  ; cannot be a defk: 宣言の値を作る時(declare の CLI・sim-cluster の宣言)に呼ぶ純粋な判断
   {:pre [(: system System) (: environ (get Mapping #(str object)))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "job ごとの environ の上書き(job 名 → {名: 文字列})を検め、断る理由の文を返す(無ければ None)。系に無い job・宣言の :environ に
    無い名・文字列でない値は断る — 上書きは宣言に書いた名の値だけを変え、黙って名を足さない(本番の declare と sim-cluster が同じ規則)。"

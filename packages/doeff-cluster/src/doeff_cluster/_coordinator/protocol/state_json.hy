@@ -20,7 +20,7 @@
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 
-(deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
+(deff read-service-rows [#^ list rows]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
   {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の Service の行の列 → #(受け付けた ClusterJob の tuple  名 → RefusedJob)。読めない行(旧い宣言の形・壊れた行)は落とさずに
    RefusedJob にして理由を持つ — 新しい coordinator が旧い置き場を読んで落ちないため(改訂 1 の C)。"
@@ -64,7 +64,7 @@
    "outbox" (dfor #(k e) (.items state.outbox) k (ended-to-json e))})
 
 
-(deff worker-generations-json [#^ WorkerInfo worker]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(deff worker-generations-json [#^ WorkerInfo worker]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: worker WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "worker の世代の順(今の世代と退いた世代)と、世代をまたいで数える最後に終わったと知れた刻を保存の形へ写すため(state file と
    durable の KV が使う)。読み直した後も、退いた世代の heartbeat を新しい世代と取り違えず、coordinator の作り直しの後に来る新しい世代の
@@ -95,7 +95,7 @@
   {"boot" (.get data "boot") "retired" (tuple (.get data "retired" [])) "boot_at" (boot-at-of data) "known_exits" known})
 
 
-(deff resource-meta-to-json [#^ ResourceMeta meta]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(deff resource-meta-to-json [#^ ResourceMeta meta]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: meta ResourceMeta)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "資源の版の記録 → 保存の JSON の形(state file と durable の KV が使う — #2447 の前の形と同じ)。"
   {"resourceVersion" meta.resource-version "generation" meta.generation "createdBy" meta.created-by "createdMs" meta.created-ms
@@ -109,7 +109,7 @@
                 :updated-by (str (.get data "updatedBy" "")) :updated-ms (int (.get data "updatedMs" 0))))
 
 
-(deff rollout-row-to-json [#^ RolloutRow row]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(deff rollout-row-to-json [#^ RolloutRow row]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: row RolloutRow)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "Rollout 1 つ → 保存の JSON の形 {spec status}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
   {"spec" (rollout-spec-to-json row.spec) "status" (rollout-status-to-json row.status)})
@@ -120,7 +120,7 @@
   (RolloutRow :spec (validate-rollout-spec (get data "spec")) :status (rollout-status-from-json (get data "status"))))
 
 
-(deff group-limit-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+(deff group-limit-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
   {:pre [(: name str) (: spec (| dict list str int float bool None))] :post [(: % GroupLimit)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の組の上限 1 つ(組の名と spec — group-limit-spec の形)→ GroupLimit。系の構成子・受け口と同じ規則(group-limit-refusal)で検め、
    受けられない値は理由つきの ValueError(保存の行の壊れ — 黙って既定の値で読まない)。"
@@ -130,7 +130,7 @@
   (group-limit-of name spec))
 
 
-(deff needs-override-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+(deff needs-override-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
   {:pre [(: name str) (: spec (| dict list str int float bool None))] :post [(: % NeedsOverride)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の置き先の上書き 1 つ(Service の名と resource_policy.needs-override-spec の形)→ NeedsOverride を読み直すため。欄の欠け・型の誤り・
    空の needs は理由つきの ValueError(保存の行の壊れ — 黙って既定の値で読まない)。"
@@ -152,7 +152,7 @@
                  :expires-ms (get spec "expiresAtMs") :writer (get spec "writer") :since-ms (get spec "sinceMs")))
 
 
-(deff audit-event-to-json [#^ AuditEvent event]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(deff audit-event-to-json [#^ AuditEvent event]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: event AuditEvent)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "出来事の記録 1 件 → 保存と見せる JSON の形(state file・durable の KV・GET /events と /state — #2447 の前の形と同じ)。"
   {"seq" event.seq "at" event.at "actor" event.actor "verb" event.verb "kind" event.kind "name" event.name
@@ -168,7 +168,7 @@
               :changes (dict (.get data "changes" {}))))
 
 
-(deff program-row-to-json [#^ ProgramRow row]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(deff program-row-to-json [#^ ProgramRow row]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: row ProgramRow)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "置き場の Program の行 → 保存の JSON の形 {blob versions putMs}(state file と durable の KV が使う — #2447 の前の形と同じ)。"
   {"blob" row.blob "versions" row.versions "putMs" row.put-ms})
@@ -180,7 +180,7 @@
   (ProgramRow :blob (get data "blob") :versions (dict (.get data "versions" {})) :put-ms (int (get data "putMs"))))
 
 
-(deff warm-entry-to-json [#^ WarmEntry entry]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+(deff warm-entry-to-json [#^ WarmEntry entry]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: entry WarmEntry)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "温める表の行 → 保存の JSON の形(state file と durable の KV が使う)。"
   (| (asdict entry) {"needs" (list entry.needs)}))
@@ -273,7 +273,7 @@
     :started-ms now))
 
 
-(deff worker-capabilities-of [#^ dict body #^ str what]  ; defk にできない: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
+(deff worker-capabilities-of [#^ dict body #^ str what]  ; cannot be a defk: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "protocol"}}
   "保存の worker の行(JSON)の名乗り → #(provides exclusive)。規則は heartbeat の本文と同じ named-capabilities(旧い labels・exclusive は
    provides の一部 — ADR-DOE-CLUSTER-001 R4b)。"

@@ -590,7 +590,7 @@
    出すため、effect の handler(effect-recorder)そのものではなく body を包む関数にする(http-production-handler の client の寿命と同じ形)。"
   (setv _doeff_is_handler_fn True)
   (defn #^ None __init__ [self #^ EffectLog log] (setv self.log log))
-  (deff __call__ [self body]  ; defk にできない: with-handlers が body を渡して呼ぶ素の口
+  (deff __call__ [self body]  ; cannot be a defk: with-handlers が body を渡して呼ぶ素の口
     {:pre [(: self RecordingInstaller) (: body (| Program EffectBase))] :post [(: % Program)] :tags {:context "doeff-cluster" :role "foundation"}}
     (recorded-run self.log body)))
 

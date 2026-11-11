@@ -77,44 +77,44 @@
 
 ;; --- 組み立て ----------------------------------------------------------------------------------------------------------------------
 
-(defn quick-connections []  ; defk にできない: 検の資源の組み立て(Program の外)
+(defn quick-connections []  ; cannot be a defk: 検の資源の組み立て(Program の外)
   "query 用の接続の貸し出し(文の上限 1 秒)。"
   (PostgresConnections #((PostgresDatabase :name DATABASE :dsn PG-DSN)) :size 2 :timeouts QUICK-TIMEOUTS))
 
 
-(defn ddl-connections []  ; defk にできない: 検の資源の組み立て(Program の外)
+(defn ddl-connections []  ; cannot be a defk: 検の資源の組み立て(Program の外)
   "索引の用意の接続の貸し出し(本番と同じ DDL-DATABASE の接続 1 本・文の上限なし)。"
   (PostgresConnections #((PostgresDatabase :name DDL-DATABASE :dsn PG-DSN)) :size 1 :timeouts DDL-TIMEOUTS))
 
 
-(defn run-on [quick ddl program]  ; defk にできない: 検の入口で run を撃つ
+(defn run-on [quick ddl program]  ; cannot be a defk: 検の入口で run を撃つ
   "query 用と索引の用意の SQL の答え手と仮想の時計の下で program を 1 回走らせる。"
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) inline-compute-handler (postgres-sql-handler quick) (postgres-sql-handler ddl)] program))))
 
 
-(defn as-maker [store program]  ; defk にできない: 検の入口の組み立て
+(defn as-maker [store program]  ; cannot be a defk: 検の入口の組み立て
   "program を書き手 MAKER の PostgreSQL の置き場の handler の下に置く。"
   (with_handlers [(pg-records-handler store MAKER ORIGIN-HOST)] program))
 
 
-(defn blocked-by [watcher #^ int pid]  ; defk にできない: 検の素の接続で数える
+(defn blocked-by [watcher #^ int pid]  ; cannot be a defk: 検の素の接続で数える
   "接続 pid の lock を待っている接続の数。"
   (get (.fetchone (.execute watcher "SELECT count(*) FROM pg_stat_activity WHERE %s = ANY(pg_blocking_pids(pid))" #(pid))) 0))
 
 
-(defn index-validity [watcher #^ str name]  ; defk にできない: 検の素の接続で読む
+(defn index-validity [watcher #^ str name]  ; cannot be a defk: 検の素の接続で読む
   "索引 name の使える形か(True / False — 無ければ None)。"
   (setv found (.fetchone (.execute watcher "SELECT i.indisvalid FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid
                                             WHERE c.relname = %s" #(name))))
   (if (is found None) None (get found 0)))
 
 
-(defn statistics-present? [watcher #^ str name]  ; defk にできない: 検の素の接続で読む
+(defn statistics-present? [watcher #^ str name]  ; cannot be a defk: 検の素の接続で読む
   "名 name の式の統計(表の欄の式の索引と同じ名 — DeclaredIndex の statistics)が在るか。"
   (is-not (.fetchone (.execute watcher "SELECT 1 FROM pg_statistic_ext WHERE stxname = %s" #(name))) None))
 
 
-(defn create-declared-note-index [watcher #^ str prefix [counted True]]  ; defk にできない: 検の素の接続で宣言の索引を作る
+(defn create-declared-note-index [watcher #^ str prefix [counted True]]  ; cannot be a defk: 検の素の接続で宣言の索引を作る
   "宣言 NOTE-SCHEMA の表 parts の欄 note の表の欄の式の索引を、宣言の文の字面のまま作る(counted = 索引と同じ名の式の統計も先に
    作るか)。答え = 索引の名。"
   (setv declared (run (field-index prefix "parts" "note" True)))
@@ -124,7 +124,7 @@
   declared.name)
 
 
-(defn hold-writer [writer #^ str prefix]  ; defk にできない: 検の素の接続で書きの代役を始める
+(defn hold-writer [writer #^ str prefix]  ; cannot be a defk: 検の素の接続で書きの代役を始める
   "書きの錠の外の書きの代役を始める(state_rows に RowExclusiveLock — CREATE INDEX CONCURRENTLY はこの transaction の終わりを待ち、
    移行の transaction の中の CREATE INDEX は ShareLock を待つ)。答え = 代役の接続の pid。"
   (setv pid (get (.fetchone (.execute writer "SELECT pg_backend_pid()")) 0))
@@ -133,7 +133,7 @@
   pid)
 
 
-(defn wait-until-blocked [watcher #^ int pid]  ; defk にできない: 検の素の接続で待つ
+(defn wait-until-blocked [watcher #^ int pid]  ; cannot be a defk: 検の素の接続で待つ
   "接続 pid を待つ接続が現れるまで待つ(締め切りを越えたら赤)。"
   (setv deadline (+ (time.monotonic) DEADLINE-SECONDS))
   (while (and (= (blocked-by watcher pid) 0) (< (time.monotonic) deadline))
@@ -141,7 +141,7 @@
   (assert (>= (blocked-by watcher pid) 1) "索引の作りが書きの代役を待ち始めなかった"))
 
 
-(defn with-seeded-store [check]  ; defk にできない: 検の置き場の組み立てと後片付け
+(defn with-seeded-store [check]  ; cannot be a defk: 検の置き場の組み立てと後片付け
   "宣言 LAW-SCHEMA の置き場を用意して表 parts に行 p1(note = n1)を置き、check に #(接頭辞 quick ddl) を渡して、後で表を消す。"
   (setv prefix (fresh-prefix)
         quick (quick-connections)
@@ -157,14 +157,14 @@
       (.close ddl))))
 
 
-(defn reads-of [quick ddl store]  ; defk にできない: 検の入口で run を撃つ
+(defn reads-of [quick ddl store]  ; cannot be a defk: 検の入口で run を撃つ
   "#(行 p1 の ReadRow・欄 color の ListRows・欄 note の ListRows) の答え。"
   #((run-on quick ddl (as-maker store (ReadRow "parts" #("p1"))))
     (run-on quick ddl (as-maker store (ListRows "parts" :where {"color" "red"})))
     (run-on quick ddl (as-maker store (ListRows "parts" :where {"note" "n1"})))))
 
 
-(defn listed-keys [answer]  ; defk にできない: 検の答えの読み
+(defn listed-keys [answer]  ; cannot be a defk: 検の答えの読み
   "頁の行の鍵の並び(頁でなければ答えのまま — 赤の文に載せる)。"
   (if (isinstance answer Page) (tuple (gfor row answer.rows row.key)) answer))
 
@@ -248,7 +248,7 @@
 
 ;; --- 旧い形の索引・作りかけ・錠 ------------------------------------------------------------------------------------------------------
 
-(defn create-former-indexes [watcher #^ str prefix]  ; defk にできない: 検の素の接続で旧い版の索引を作る
+(defn create-former-indexes [watcher #^ str prefix]  ; cannot be a defk: 検の素の接続で旧い版の索引を作る
   "欄 note の旧い形の 2 つの索引(全部の行の (ledger, 欄の式) と前の部分索引 — 旧い版の名と形)と、宣言に無い手の索引(旧い形でない名)を
    作る。答え = #(旧い形の名 前の部分索引の名 手の索引の名)。"
   (setv legacy (run (index-name prefix "note"))
@@ -496,7 +496,7 @@
           (.close watcher))))))
 
 
-(defn released-with-notice [other store]  ; defk にできない: 検の素の接続と別の run で錠を放す代役
+(defn released-with-notice [other store]  ; cannot be a defk: 検の素の接続と別の run で錠を放す代役
   "別の process の代役の接続 other が持つ索引の用意の錠を放し、本番の作り手と同じ合図(SqlNotify — 別の接続の貸し出しなので別の process の
    合図として届く)を出す。"
   (.execute other "SELECT pg_advisory_unlock(hashtext(%s))" #((run (index-lock-key store.prefix))))
@@ -533,12 +533,12 @@
           (.close watcher))))))
 
 
-(defn deadlocks [watcher]  ; defk にできない: 検の素の接続で数える
+(defn deadlocks [watcher]  ; cannot be a defk: 検の素の接続で数える
   "この database で PostgreSQL が見つけた deadlock の数(pg_stat_database)。"
   (get (.fetchone (.execute watcher "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()")) 0))
 
 
-(defn build-beside-a-lock-seeker [prefix quick ddl seek]  ; defk にできない: 回を thread の run で回し、書きの代役を素の接続で流す入口
+(defn build-beside-a-lock-seeker [prefix quick ddl seek]  ; cannot be a defk: 回を thread の run で回し、書きの代役を素の接続で流す入口
   "回 A が索引の用意の錠を取って作り始め、作りが書きの代役を待つ間に、錠を求める相手 seek(→ 結末を返す関数)を走らせ、相手が錠を求め
    始めてから 2.5 秒(待つ側の deadlock の検めが済む 1 秒より長い)後に代役を外す。#(A の回の答え 相手の結末 その間の deadlock の数) を返す。"
   (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix))
@@ -590,7 +590,7 @@
   (with-seeded-store
     (fn [prefix quick ddl]
       (setv seeker (open-postgres))
-      (defn seek []  ; defk にできない: thread の target
+      (defn seek []  ; cannot be a defk: thread の target
         (.execute seeker "SELECT pg_advisory_lock(hashtext(%s))" #((run (index-lock-key prefix))))
         (.execute seeker "SELECT pg_advisory_unlock(hashtext(%s))" #((run (index-lock-key prefix))))
         True)
@@ -620,13 +620,13 @@
     (resume None)))
 
 
-(defn serve-in-thread [#^ str prefix opened stopping ended]  ; defk にできない: 記録の service を別の thread の run で起こす検の殻
+(defn serve-in-thread [#^ str prefix opened stopping ended]  ; cannot be a defk: 記録の service を別の thread の run で起こす検の殻
   "本番の土台の口(records-connected・PG-STORE・宣言 NOTE-SCHEMA)の下で記録の service を別の thread で起こし、終わりの code を ended へ渡す。"
   (setv settings (RecordsSettings :dsn PG-DSN :prefix prefix :origin-host ORIGIN-HOST :pool-size 2
                                   :address (HttpAddress :host "127.0.0.1" :port 0)
                                   :maintenance (MaintenancePlan :interval-seconds 60.0 :keep-seconds 604800.0))
         serving (dataclasses.replace (run (records-serving NOTE-SCHEMA settings PG-STORE)) :maintenance None))
-  (defn body []  ; defk にできない: thread の target
+  (defn body []  ; cannot be a defk: thread の target
     (try
       (.put ended (run (records-process (fn [program] (scheduled (with_handlers [await-handler (state) (async-time-handler) (stop-when stopping)]
                                                                                 (records-connected settings (with_handlers [(listening-into opened)]
@@ -640,7 +640,7 @@
   thread)
 
 
-(defn over-http [#^ str url ask]  ; defk にできない: 検の入口で client の run を撃つ
+(defn over-http [#^ str url ask]  ; cannot be a defk: 検の入口で client の run を撃つ
   "記録の service の口へ client の handler で ask を 1 つ撃つ。"
   (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock)) records-unwaited
                                   (http-records-handler (RecordsEndpoint url :writer MAKER))]

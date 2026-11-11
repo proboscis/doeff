@@ -162,7 +162,7 @@
 
 (defclass RecordsSqlFailed [RuntimeError]
   "engine が答えた失敗(SqlFailed)— 文か表の形の食い違いで、実装の誤り。sqlstate = SQLSTATE(5 文字か None)。"
-  (defn #^ None __init__ [self #^ (| str None) sqlstate #^ str reason]  ; defk にできない: 例外の class の初期化
+  (defn #^ None __init__ [self #^ (| str None) sqlstate #^ str reason]  ; cannot be a defk: 例外の class の初期化
     (.__init__ (super) (.format "PostgreSQL が断った({}): {}" sqlstate reason))
     (setv self.sqlstate sqlstate)
     (setv self.reason reason)))
@@ -208,7 +208,7 @@
    書きは scheduler の thread の上で、driver の thread は触らない。読みは手入れの係(別の thread の VM — http_server の頭の註の手入れ)
    からも来る: 書きは属性 1 つずつの値の差し替え(frozenset と tuple)で、読み手は 1 回に属性 1 つだけを読むので、裂けた値を読まない。"
 
-  (defn #^ None __init__ [self]  ; defk にできない: 資源の class の初期化
+  (defn #^ None __init__ [self]  ; cannot be a defk: 資源の class の初期化
     "観測の前の覚え(使える索引の在る欄は無い)を作るため。"
     (setv self.fields (frozenset)
           self.scoped (frozenset)
@@ -216,15 +216,15 @@
           self.missing #()
           self.retired #()))
 
-  (defn #^ bool covers [self #^ str table #^ str field]  ; defk にできない: ListRows の判断の中で同期に読む覚え(Program を返すと真偽にならない)
+  (defn #^ bool covers [self #^ str table #^ str field]  ; cannot be a defk: ListRows の判断の中で同期に読む覚え(Program を返すと真偽にならない)
     "表 table の欄 field に、使える索引が在ると観測したかを読むため。"
     (in (IndexedField :table table :field field) self.fields))
 
-  (defn #^ frozenset scoped-fields [self #^ str table]  ; defk にできない: 読みの文を組む前に同期に読む覚え(Program を返すと集合にならない)
+  (defn #^ frozenset scoped-fields [self #^ str table]  ; cannot be a defk: 読みの文を組む前に同期に読む覚え(Program を返すと集合にならない)
     "表 table の欄のうち、表の欄の式の索引が在ると観測した欄の名の集合を読むため(読みの文の条件の形を決める — pg_sql.row-filter)。"
     (frozenset (gfor indexed self.scoped :if (= indexed.table table) indexed.field)))
 
-  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ frozenset settled #^ tuple missing #^ tuple retired]  ; defk にできない: 観測した拍に同期に書き替える資源の覚え
+  (defn #^ None observed [self #^ frozenset fields #^ frozenset scoped #^ frozenset settled #^ tuple missing #^ tuple retired]  ; cannot be a defk: 観測した拍に同期に書き替える資源の覚え
     "置き場の索引を観測した断面で、覚えを書き替えるため(消えた索引の欄は外れる)。"
     (setv self.fields fields
           self.scoped scoped
@@ -233,12 +233,12 @@
           self.retired retired)
     None)
 
-  (defn #^ None dropped [self #^ str name]  ; defk にできない: 宣言に無い索引を外し終えた拍に同期に書き替える資源の覚え
+  (defn #^ None dropped [self #^ str name]  ; cannot be a defk: 宣言に無い索引を外し終えた拍に同期に書き替える資源の覚え
     "索引の用意が外し終えた宣言に無い索引 name を、外す物の並びから除くため(次の観測を待たずに、回が外し残しを数える)。"
     (setv self.retired (tuple (gfor retired self.retired :if (!= retired name) retired)))
     None)
 
-  (defn #^ None added [self #^ str name #^ tuple fields]  ; defk にできない: 索引を作り終えた拍に同期に足す資源の覚え
+  (defn #^ None added [self #^ str name #^ tuple fields]  ; cannot be a defk: 索引を作り終えた拍に同期に足す資源の覚え
     "索引の用意が作り終えた索引(名 name・答える欄 fields)を覚えに足すため(次の観測を待たずに ListRows が使う。表の欄の式で照らす欄
      scoped は、表の標本を取り直した後の観測が書く)。"
     (setv self.fields (| self.fields (frozenset fields))
@@ -1012,12 +1012,12 @@
   (StoreHead :epoch (int (get record 0)) :floor (int (get record 1)) :head (int (get record 2))))
 
 
-(defn #^ FrozenMap decoded-value [#^ str payload]  ; defk にできない: 頁の行を内包表記で 1 度に組む listed-rows-of が行ごとに呼ぶ純粋な綴り(defk にすると行ごとに Program を bind し、頁の行の数だけ費用が足される)
+(defn #^ FrozenMap decoded-value [#^ str payload]  ; cannot be a defk: 頁の行を内包表記で 1 度に組む listed-rows-of が行ごとに呼ぶ純粋な綴り(defk にすると行ごとに Program を bind し、頁の行の数だけ費用が足される)
   "state_rows / row_changes の payload(JSON の綴り)を行の値(深く凍らせた写像)にするため。DB から読む境界はここ 1 か所。"
   (frozen-json-object (json.loads payload) "state_rows の payload"))
 
 
-(defn #^ Row row-of [#^ tuple record]  ; defk にできない: decoded-value と同じ — listed-rows-of の内包表記が行ごとに呼ぶ純粋な綴り
+(defn #^ Row row-of [#^ tuple record]  ; cannot be a defk: decoded-value と同じ — listed-rows-of の内包表記が行ごとに呼ぶ純粋な綴り
   "state_rows の行(key payload version …)を Row にするため。値は解かず、payload の綴りを保存の綴りとして持たせる(_values.hy の頭の註 —
    値は読まれた時に解き、欄を絞らない一覧の行は綴りのまま答えに継がれる)。"
   (stored-row (key-from-text (get record 0)) (get record 1) (int (get record 2))))
@@ -1057,7 +1057,7 @@
                       (int (get record 1)) (event-position (.get decoded "position"))))))
 
 
-(defn #^ (| WatchCursor None) event-position [#^ object stored]  ; defk にできない: events-of の内包表記が出来事ごとに同期に呼ぶ純粋な綴りの戻し(decoded-value と同じ)
+(defn #^ (| WatchCursor None) event-position [#^ object stored]  ; cannot be a defk: events-of の内包表記が出来事ごとに同期に呼ぶ純粋な綴りの戻し(decoded-value と同じ)
   "append_rows の payload の鍵 position の値({epoch sequence} | 無い)を、出来事の位置(Event.position)に戻すため。"
   (if (is stored None) None (WatchCursor (int (get stored "epoch")) (int (get stored "sequence")))))
 
@@ -1506,7 +1506,7 @@
   (LockedRow :current row :cleanup NO-STEPS))
 
 
-(defn #^ tuple split-spellings [#^ tuple bulk #^ object value #^ str whole]  ; defk にできない: 書きの行ごとと移しの候補の行ごとに同期に呼ぶ純粋な綴り(移しは内包表記で 1,000 行を組む)
+(defn #^ tuple split-spellings [#^ tuple bulk #^ object value #^ str whole]  ; cannot be a defk: 書きの行ごとと移しの候補の行ごとに同期に呼ぶ純粋な綴り(移しは内包表記で 1,000 行を組む)
   "行の値 value(正規の綴り whole)を、列 payload と列 bulk に置く 2 つの綴りにするため(_pg_sql.hy の頭の註の state_rows): 大きい欄の名
    bulk に当たる欄を bulk の綴りへ、残りを payload の綴りへ(どちらも正規の綴り — canonical-json)。値に大きい欄が無ければ綴り直さず、
    大きい欄を宣言した表は #(whole "{}")(列 bulk は分け終えた印 '{}' — 移しの候補に出ない)・宣言しない表は #(whole None)(列 bulk は NULL)。"

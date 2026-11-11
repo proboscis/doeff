@@ -118,7 +118,7 @@
     True None))
 
 
-(deff settled-value [outcome]  ; defk にできない: 本番の handler と sim の宿の節が、結果を呼び手への答えか例外に変える純粋な判断
+(deff settled-value [outcome]  ; cannot be a defk: 本番の handler と sim の宿の節が、結果を呼び手への答えか例外に変える純粋な判断
   {:pre [(: outcome (| TaskSucceeded TaskFailed))] :post [(: % "task の Program の戻り値(型は Program ごと)")]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "task の結果を、呼び手の RemoteJob の答え(戻り値)か、呼び手へ届ける例外(Program が投げた例外そのもの — 詰められない例外なら

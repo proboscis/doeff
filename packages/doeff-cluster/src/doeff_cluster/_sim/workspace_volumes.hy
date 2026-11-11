@@ -76,7 +76,7 @@
   (defn #^ None __init__ [self #^ str node #^ (get tuple #(HeldVolume ...)) [volumes #()] #^ frozenset [busy (frozenset)]
                           #^ bool [down False] #^ (get tuple #(HeldBackup ...)) [backups #()] #^ int [capacity 20] #^ int [minimal 0] #^ int [warm-hours 2]
                           #^ int [spare-bytes 17179869184] #^ int [keep-days 7] #^ int [size-bytes 2147483648]]
-    ;; defk にできない: class の作り手(Python が呼ぶ口)
+    ;; cannot be a defk: class の作り手(Python が呼ぶ口)
     "入れ物を作るため(volumes と backups = 前から在る物)。"
     (setv self.node node
           #^ (get tuple #(HeldVolume ...)) self.volumes volumes

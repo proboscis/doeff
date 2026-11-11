@@ -10,7 +10,7 @@
 (import doeff_cluster._worker.core.drain_client [worker-path])
 
 
-(deff drain-request [#^ str name #^ float ttl-seconds #^ (| str None) own-boot]  ; defk にできない: 答え手 drain-requests と手元の sim-cluster の宿(local.hy)が同じ形を作る純粋な言い換え
+(deff drain-request [#^ str name #^ float ttl-seconds #^ (| str None) own-boot]  ; cannot be a defk: 答え手 drain-requests と手元の sim-cluster の宿(local.hy)が同じ形を作る純粋な言い換え
   {:pre [(: name str) (: ttl-seconds float) (: own-boot (| str None))] :post [(: % (get tuple #(str str (get dict #(str str)) (get dict #(str object))))) (= (len %) 4)]
    :tags {:context "worker" :role "protocol" :spells "http"}}
   "drain の頼みを要求 #(method path query 本文) にするため。ttl-seconds = drain の期限・own-boot = 頼み手の worker の process の世代
