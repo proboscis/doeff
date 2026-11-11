@@ -7,6 +7,7 @@
 ;;;   効く値が送り手と送った順で割れた。送り手の名乗る欄の集合と、数えの関数が受ける物を契約の検で固定する。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import collections.abc [Callable])
 (import dataclasses [fields replace])
 (import inspect)
 (import doeff [with-handlers])
@@ -22,7 +23,7 @@
 (import doeff_cluster [system-of system-declaration])
 (import doeff_cluster._shared.entry.declare [apply-declaration])
 (import doeff_cluster [ClusterState]
-        doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord TaskUnplacedKind PLACED-PHASES])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody ResourceBody])
 (import doeff_cluster [Refused]
         doeff_cluster._coordinator.core.resource_policy [create-resource update-resource stamp])
@@ -34,6 +35,7 @@
 (import doeff_cluster [System])
 (import doeff_cluster._shared.entry._system_form :as system_form)
 (import tests.detached_rig [slow-add RIG-PROVIDES])
+(import doeff_hy._table [Table])
 (import tests.state_rows [table-from-rows])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -191,6 +193,22 @@
   (assert (= (tuple (gfor b (get world "posts") (get b "name"))) #("llm")) world))
 
 
+;; 組の上限の数えの関数と、受ける引数の名(置き方の判断は task の行を受けない — 下の検の註)。
+(val COUNTING-SIGNATURES
+  #(#(cluster_policy.hold-limits ["held" "limits" "worker" "groups"])
+    #(cluster_policy.limits-misfit ["limits" "worker" "held" "groups"])
+    #(cluster_policy.limit-holdings ["claims" "groups"])
+    #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups" "bg_held" "bg_wanted" "need" "memory_room"])
+    #(cluster_policy.placed-claims ["tasks"])))
+
+
+(defk signature-misfits [pinned]
+  {:pre [(: pinned tuple)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "数えの関数と固定した引数の名の組の列 pinned のうち、引数が固定と違う関数を知るため: 外れの文の list(空 = 固定どおり)。"
+  (lfor #(f params) pinned :if (!= (list (. (inspect.signature f) parameters)) params)
+        (.format "{} の引数 {} が固定 {} と違う" f.__name__ (inspect.signature f) params)))
+
+
 (deftest test-the-sender-facing-fields-and-the-counting-inputs-are-pinned
   ;; 盲検 B: 送り手の名乗る欄を足して置き方がそれで数えると、提示の検を全部通りながら上限の値が送り手へ戻った。送り手の欄の集合と、数えの
   ;; 関数が受ける物を固定する — 足す時は、組の上限の数えに送り手の値を入れない事を確かめ(値と範囲の持ち主は系の宣言 GroupLimit だけ)、
@@ -198,24 +216,29 @@
   ;; 受けない。memory-mib(memory の要り — 2026-11-02)は memory の空きの比べ(task-misfit の need)だけが読み、組の上限の数えは受けない。
   ;; rerun(走らせ直しの名乗り — 2026-11-04・TaskBody にも同じ名で載る)は担い手が消えた試行を待ちの行へ戻す判断と、次の試行を
   ;; 置ける worker の判じ(heard-since-rerun — attempt と刻だけを読む)が読み、組の上限の数えは受けない。
+  ;; shape(仕事の形 — 2026-11-10・TaskBody にも同じ名で載る)は memory の要りの数え(cluster_policy.shape-peaks-of・task-need-of・
+  ;; measured_room.learned-need)だけが読み、その答えは task-misfit の need として memory の空きと比べるだけで、組の上限の数えは受けない。
+  ;; ungated(測った空きの門の外 — 2026-11-11・TaskBody にも同じ名で載る)は置き先の判じを task-misfit から limits-misfit だけへ替え、置き先の順
+  ;; (要りの足りなさ)を変えるが、組の升の数え(hold-limits の 1 本 = 1)と宣言の値・範囲は変えない。preemptible(場所を譲る名乗り —
+  ;; 2026-11-11・TaskBody にも同じ名で載る)は急ぎの task に memory を譲らせる task を選ぶ判じ(cluster_policy.yield-candidates)だけが読み、
+  ;; 譲らせた拍の組の上限の判じ(yield-plan の task-misfit)は止めた task の升を引かない held と宣言の値で問い直す — 組の升の数えは受けない。
+  ;; 3 つとも下の test-the-group-holdings-ignore-the-shape-the-measured-peak-and-ungated が数えの答えで確かめる。
   (assert (= (tuple (gfor f (fields TaskLimit) f.name)) #("group" "part"))
           "TaskLimit は組の名と区分だけ — 値・範囲・重さを task に名乗らせない(値の持ち主は系の宣言)")
   (assert (= (tuple (gfor f (fields SubmitDetached) f.name))
-             #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify" "memory_mib" "rerun"))
+             #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify" "memory_mib" "rerun" "shape"
+               "ungated" "preemptible"))
           "SubmitDetached の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   (assert (= (tuple (gfor f (fields TaskBody) f.name))
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
-               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "rerun" "format"))
+               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "shape" "ungated" "preemptible" "rerun"
+               "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・
   ;; 置いている数・系の宣言の表だけを受ける。task の行を読むのは、置いている task の名乗りを射影する placed-claims と tasks-placed の
   ;; 呼びだけ(既に在る送り手の欄 — environ など — を数えに読ませない。設計のレビューの指摘 2-a)。
-  (for [#(f params) [#(cluster_policy.hold-limits ["held" "limits" "worker" "groups"])
-                     #(cluster_policy.limits-misfit ["limits" "worker" "held" "groups"])
-                     #(cluster_policy.limit-holdings ["claims" "groups"])
-                     #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups" "bg_held" "bg_wanted" "need" "memory_room"])
-                     #(cluster_policy.placed-claims ["tasks"])]]
-    (assert (= (list (. (inspect.signature f) parameters)) params) #(f.__name__ (inspect.signature f)))))
+  (<- misfits list (signature-misfits COUNTING-SIGNATURES))
+  (assert (= misfits []) misfits))
 
 
 (deftest test-the-placed-claims-are-one-per-placed-task-whatever-else-the-sender-sent
@@ -229,6 +252,151 @@
   (val waiting (replace plain :id "t3" :key "k3" :phase "queued" :worker None))
   (<- answer tuple (cluster_policy.placed-claims (! (table-from-rows {"t1" plain "t2" loud "t3" waiting}))))
   (assert (= (sorted answer :key repr) [#(claims "w1") #(claims "w1")]) answer))
+
+
+;; shape(仕事の形)・測った山(peak-mib)・門の外の名乗り(ungated)・場所を譲る名乗り(preemptible)だけが違う、置いた task の行。どれも組 llm(cluster の範囲・上限 2)と組 gpu
+;; (worker の範囲・上限 1)を名乗り、w1 に置いた。shape の違う行は shape-peaks-of で互いに違う山を引く(memory の要りは違う)。
+(val OWNED (system-of "alpha" #() :task-limits #((GroupLimit :group "llm" :scope "cluster" :limit 2)
+                                                 (GroupLimit :group "gpu" :scope "worker" :limit 1))))
+(val PLACED (TaskRecord "t0" "check" "sha" "rev" #() #("local") 15000 20000 0 :detached True :key "k0"
+                        :limits #((TaskLimit :group "llm") (TaskLimit :group "gpu")) :phase "assigned" :worker "w1" :memory-mib 1024))
+(val SHAPED #(PLACED
+              (replace PLACED :id "t1" :key "k1" :shape "small" :peak-mib 512)
+              (replace PLACED :id "t2" :key "k2" :shape "huge" :peak-mib 60000)
+              (replace PLACED :id "t3" :key "k3" :peak-mib 9000)
+              (replace PLACED :id "t4" :key "k4" :shape "deploy" :ungated True :memory-mib None)
+              (replace PLACED :id "t5" :key "k5" :shape "batch" :preemptible True :rerun True :priority -1)))
+
+
+(defk owner-holdings [tasks groups]
+  {:pre [(: tasks Table) (: groups Table)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "本物の組の升の数え(place-tasks の拍の頭と同じ placed-claims から limit-holdings)を、壊した数えと同じ形で owner-only-misfits に渡すため。"
+  (<- claims tuple (cluster_policy.placed-claims tasks))
+  (<- held dict (cluster_policy.limit-holdings claims groups))
+  held)
+
+
+(defk owner-only-misfits [count-of]
+  {:pre [(: count-of Callable)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "組の升の数え count-of(置いた task の表と系の宣言の表 → 升 → 置いている数)が、送り手の shape・測った山・ungated・preemptible で組の上限の値・範囲・
+   1 本の重さを変えない事を判じるため: 外れの文の list(空 = 守る)。比べる数は宣言 OWNED から手で書いた値で、count-of の答えから作らない。"
+  (<- state ClusterState (declared OWNED.task-limits))
+  (val groups state.group-limits)
+  (var misfits [])
+  ;; 1 本の重さ: どの行も 1 本だけ置けば、名乗った組の升ごとに 1(組 gpu の升は置いた worker w1 — 範囲は宣言の worker)。
+  (for [t SHAPED]
+    (<- one dict (count-of (! (table-from-rows {t.id t})) groups))
+    (when (!= one {#("llm" "" None) 1 #("gpu" "" "w1") 1})
+      (:= misfits [#* misfits (.format "{}(shape {!r}・山 {}・ungated {}・preemptible {})1 本の持分: {}"
+                                       t.id t.shape t.peak-mib t.ungated t.preemptible one)])))
+  ;; 形の違う 6 本は同じ升に 6 と数える(形で升を分けない)。
+  (<- six dict (count-of (! (table-from-rows (dfor t SHAPED t.id t))) groups))
+  (when (!= six {#("llm" "" None) 6 #("gpu" "" "w1") 6})
+    (:= misfits [#* misfits (.format "形の違う 6 本の持分: {}" six)]))
+  ;; 値と範囲は宣言: 形だけが違う 2 本(山 512 と 60000)で組 llm(上限 2)は cluster のどの worker でも埋まり、組 gpu(worker の範囲・上限 1)は
+  ;; w1 だけが埋まる。山の大きい 1 本だけなら組 llm にはまだ 1 本置ける。
+  (<- two dict (count-of (! (table-from-rows {"t1" (get SHAPED 1) "t2" (get SHAPED 2)})) groups))
+  (<- one-huge dict (count-of (! (table-from-rows {"t2" (get SHAPED 2)})) groups))
+  (for [#(held group worker expected) [#(two "llm" "w2" TaskUnplacedKind.TASK-LIMITED)
+                                       #(two "gpu" "w1" TaskUnplacedKind.TASK-LIMITED)
+                                       #(two "gpu" "w2" None)
+                                       #(one-huge "llm" "w2" None)]]
+    (<- misfit (| TaskUnplacedKind None) (cluster_policy.limits-misfit #((TaskLimit :group group)) worker held groups))
+    (when (!= misfit expected)
+      (:= misfits [#* misfits (.format "持分 {} で組 {} を {} に置く判じ: {}(宣言どおりなら {})" held group worker misfit expected)])))
+  misfits)
+
+
+(defk peak-weighted-holdings [tasks groups]
+  {:pre [(: tasks Table) (: groups Table)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "負例の壊した数え: 置いた task 1 本を、測った山 4096 MiB ごとに 1 本と重く数える(1 本の重さが送り手の欄へ移る)— owner-only-misfits が拒む事を示すため。"
+  (var held {})
+  (for [t (.rows tasks) :if (in t.phase PLACED-PHASES)]
+    (for [_ (range (+ 1 (// (or t.peak-mib 0) 4096)))]
+      (<- more dict (cluster_policy.hold-limits held t.limits t.worker groups))
+      (:= held more)))
+  held)
+
+
+(defk shape-split-holdings [tasks groups]
+  {:pre [(: tasks Table) (: groups Table)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "負例の壊した数え: 組の升を task の shape ごとに分ける(上限の範囲が送り手の欄へ移り、形を名乗り替えれば同じ組に上限を越えて置ける)—
+   owner-only-misfits が拒む事を示すため。"
+  (var held {})
+  (for [t (.rows tasks) :if (in t.phase PLACED-PHASES)]
+    (<- own dict (cluster_policy.hold-limits {} t.limits t.worker groups))
+    (for [#(slot count) (.items own)]
+      (val key #(#* slot t.shape))
+      (:= held (| held {key (+ (.get held key 0) count)}))))
+  held)
+
+
+(defk ungated-free-holdings [tasks groups]
+  {:pre [(: tasks Table) (: groups Table)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "負例の壊した数え: 測った空きの門の外の task(ungated)を組の升に数えない(門の外の 1 本の重さが 0 になり、組の上限を越えて置ける)—
+   owner-only-misfits が拒む事を示すため。"
+  (<- claims tuple (cluster_policy.placed-claims (! (table-from-rows (dfor t (.rows tasks) :if (not t.ungated) t.id t)))))
+  (<- held dict (cluster_policy.limit-holdings claims groups))
+  held)
+
+
+(defk preemptible-free-holdings [tasks groups]
+  {:pre [(: tasks Table) (: groups Table)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "負例の壊した数え: 場所を譲る名乗りの task(preemptible)を組の升に数えない(譲れる 1 本の重さが 0 になり、組の上限を越えて置ける)—
+   owner-only-misfits が拒む事を示すため。"
+  (<- claims tuple (cluster_policy.placed-claims (! (table-from-rows (dfor t (.rows tasks) :if (not t.preemptible) t.id t)))))
+  (<- held dict (cluster_policy.limit-holdings claims groups))
+  held)
+
+
+(defk limits-misfit-by-shape [limits worker held groups shape]
+  {:pre [(: limits tuple) (: worker str) (: held dict) (: groups Table) (: shape str)] :post [(: % (| TaskUnplacedKind None))]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "負例の壊した判じ: 組の上限の判じが task の shape を受け、形を名乗った task には上限を 2 倍に数える(値が送り手の欄へ移る)—
+   引数の固定(signature-misfits)が拒む事を示すため。"
+  (var full False)
+  (for [l limits :setv declared (.row groups l.group) :if (is-not declared None)]
+    (<- slot tuple (cluster_policy.limit-slot l declared worker))
+    (when (>= (.get held slot 0) (* declared.limit (if shape 2 1)))
+      (:= full True)))
+  (if full TaskUnplacedKind.TASK-LIMITED None))
+
+
+(deftest test-the-group-holdings-ignore-the-shape-the-measured-peak-and-ungated
+  ;; 正例: 本物の数え(placed-claims から limit-holdings)は、shape・測った山・ungated・preemptible だけが違う task の組の持分を等しく 1 本 = 1 と数え、
+  ;; 上限の値と範囲は系の宣言 GroupLimit のまま(送り手の欄へ移らない)。
+  (<- misfits list (owner-only-misfits owner-holdings))
+  (assert (= misfits []) misfits))
+
+
+(deftest test-a-counting-that-mixes-the-shape-into-the-group-limits-is-refused
+  ;; 負例: shape・測った山・ungated・preemptible を組の升・1 本の重さ・上限の値へ混ぜる壊した実装を、上の判じと引数の固定がどれも拒む
+  ;; (判じが空の検になっていない事を示す)。
+  (for [broken [peak-weighted-holdings shape-split-holdings ungated-free-holdings preemptible-free-holdings]]
+    (<- misfits list (owner-only-misfits broken))
+    (assert misfits (.format "壊した数え {} を拒まなかった" broken.__name__)))
+  (<- by-signature list (signature-misfits #(#(limits-misfit-by-shape ["limits" "worker" "held" "groups"]))))
+  (assert by-signature "shape を受ける組の上限の判じを引数の固定が拒まなかった"))
+
+
+(defk shaped-scenario []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "組 llm(alpha の宣言・上限 1)を名乗り、shape と memory の要りだけが違う長い task 3 本を出して 5 秒(仮想)後の GET /state を返すため
+   (llm-summary が読む形 — 断りは無い)。"
+  (for [#(i shape memory) [#(0 "small" 512) #(1 "huge" 2048) #(2 "" 1024)]]
+    (<- (submit-detached-task (slow-add 30.0 i) :needs LOCAL :key (.format "llm-{}" i) :lease-seconds 5.0
+                              :limits #((TaskLimit :group "llm")) :memory-mib memory :shape shape)))
+  (<- (Delay 5.0))
+  (<- state dict (ReadCoordinator "/state"))
+  {"refused" None "state" state})
+
+
+(deftest test-tasks-that-differ-only-in-shape-share-the-group-limit-on-sim
+  ;; 正例(sim — 本物の coordinator): shape と要りだけが違う 3 本は、組 llm の宣言の値 1 で 1 本だけが置かれる(形ごとに上限を持たない)。
+  (<- observed dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) ALPHA (shaped-scenario)
+                                 :workers #((SimWorker :name "w1" :provides LOCAL))))
+  (<- summary dict (llm-summary observed))
+  (assert (= summary {"limit" 1 "system" "alpha" "held" 1 "phases" ["assigned" "queued" "queued"]}) summary))
 
 
 (deftest test-the-defsystem-form-reads-the-same-scopes-and-keys-as-the-rule
