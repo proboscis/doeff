@@ -40,7 +40,8 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
-                                                       learned-need drained-room-mib keeps-room? urgent-priority?])
+                                                       learned-need drained-room-mib keeps-room? urgent-priority?
+                                                       ShapePeak PEAK-STEP-MIB])
 
 ;; 子の入口の名。子は `hy -m <名>` として起きるので、worker が子の起きる doeff で解ける置き場の名へ替えて検め・起こす
 ;; (worker/core/launch の child-entry-place と JobSpec.entry-at — 実行環境の job は root ごとの置き場で、_worker の無い古い版の root では
@@ -711,24 +712,25 @@
 (defk shape-peaks-of [tasks]
   {:pre [(: tasks (get Table TaskRecord))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "形ごとの測った山を知るため(measured_room の頭の註の測った山で数える要り): 形を名乗り山を測った行(保持の間の終わった行を含む)の形 →
-   山の最大(MiB)。保持の間の終わった行(scan-rows が除く行)も読む — 終わった task の山が同じ形の次の task の要りの材料なので。"
+   ShapePeak(山の最大と、終わり〔finished〕まで走った行が在るか)。保持の間の終わった行(scan-rows が除く行)も読む — 終わった task の山が
+   同じ形の次の task の要りの材料なので。"
   (setv peaks {})
   (for [t (.rows tasks) :if (and t.shape (is-not t.peak-mib None))]
-    (setv (get peaks t.shape) (max t.peak-mib (.get peaks t.shape 0))))
+    (setv before (.get peaks t.shape))
+    (setv (get peaks t.shape)
+          (ShapePeak :mib (max t.peak-mib (if (is before None) 0 before.mib))
+                     :settled (or (= t.phase "finished") (and (is-not before None) before.settled)))))
   peaks)
 
 
 (defk task-need-of [task worker peaks]
   {:pre [(: task TaskRecord) (: worker (| WorkerInfo None)) (: peaks dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "task を worker に置く時と置いた後の要り(MiB)を知るため: 名乗った要りと、この task の山と、同じ形の山(peaks — shape-peaks-of)を、
-   worker の線 − 床で切って比べた大きい方(measured_room.learned-need)。worker の無い・測りの無い時は山を線で切らない。"
+   worker の線 − 床で切って数えた値(measured_room.learned-need — 同じ形を終わりまで測っていれば名乗りを見ない)。worker の無い・測りの無い
+   時は山を線で切らない。"
   (<- line (| int None) (memory-line-mib (if (is worker None) None worker.measured)))
   (<- need int (learned-need task.memory-mib task.peak-mib (if task.shape (.get peaks task.shape) None) line))
   need)
-
-
-;; task の測った山を書き直す刻み(MiB — 山が前の山からこれだけ伸びた heartbeat だけ行を書く。伸びる task の行を heartbeat ごとに書かない)。
-(val PEAK-STEP-MIB 256)
 
 
 (defk task-peaks-noted [tasks worker measured]
