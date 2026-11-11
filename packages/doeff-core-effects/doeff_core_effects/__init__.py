@@ -324,7 +324,9 @@ if TYPE_CHECKING:
     from doeff_core_effects._os_warm_process import (
         os_warm_process_handler as os_warm_process_handler,
     )
+    from doeff_core_effects._os_warm_process import own_oom_score_adj as own_oom_score_adj
     from doeff_core_effects._os_warm_process import own_thread_count as own_thread_count
+    from doeff_core_effects._os_warm_process import put_own_oom_score_adj as put_own_oom_score_adj
     from doeff_core_effects._os_warm_process import proc_stat_of as proc_stat_of
     from doeff_core_effects._os_warm_process import warm_answer_line as warm_answer_line
     from doeff_core_effects._os_warm_process import warm_request_of as warm_request_of
@@ -819,7 +821,9 @@ _LAZY_EXPORTS = {
     "WarmProcUnavailable": "doeff_core_effects._os_warm_process",
     "input_written": "doeff_core_effects._os_warm_process",
     "os_warm_process_handler": "doeff_core_effects._os_warm_process",
+    "own_oom_score_adj": "doeff_core_effects._os_warm_process",
     "own_thread_count": "doeff_core_effects._os_warm_process",
+    "put_own_oom_score_adj": "doeff_core_effects._os_warm_process",
     "proc_stat_of": "doeff_core_effects._os_warm_process",
     "warm_answer_line": "doeff_core_effects._os_warm_process",
     "warm_request_of": "doeff_core_effects._os_warm_process",

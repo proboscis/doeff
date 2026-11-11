@@ -44,6 +44,11 @@ orphanSeconds を受けられる事は印の orphanForks で名乗る(worker は
   永続の世代へ移す)。分かれた子は待ちの子の GC の数えと heap を受け継ぐので、凍らせないと、数えが閾値の手前で起きた待ちの子から分かれた
   子は最初の行の前に GC を走らせ、読み込んだ約 100 MB の heap の頁を写す(copy-on-write の fault 約 2.5 万回・job-start → 最初の行が
   中央 71 → 271 ms — #3765)。凍らせた object の数を準備完了の印に残す。
+- OOM の順: 待ちの子は task の子と同じ jobs の層(job_cgroup の共有の子)に居て、1 本 約 600 MB を持つ。層が上限に当たると kernel は
+  要りを見ずに oom_score(rss + oom_score_adj)で止める process を選ぶので、待ちの子は受け付けの前に自分の oom_score_adj を
+  WAITING_OOM_SCORE_ADJ へ上げ(待ちの子は作り直せる)、A は入口を起こす前に受け継いだ元の値へ戻す(元の値は特権の書き手が最後に
+  置いた値以上なので、戻すのに特権は要らない)。前の形では全部の process が Pod の値で並び、名乗った要りの内で走る task(使い
+  約 700 MB)が待ちの子より先に止められた(2026-11-11)。準備完了の印に両方の値を残す。
 
 使い方: python -m doeff_cluster._worker.entry.warm_child --root <root の dir> --socket <socket の path> --ready <準備完了の印の path>
         [--preload <module の名>]…
@@ -69,7 +74,7 @@ from typing import NoReturn
 import hy  # noqa: F401 — Hy の importer を据える(入口と、前もって読む module の多くは Hy)
 from doeff import ReadVmLiveCounts, run
 from doeff_core_effects import vm_probe_handler
-from doeff_core_effects import own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
+from doeff_core_effects import own_oom_score_adj, own_thread_count, proc_stat_of, put_own_oom_score_adj, warm_answer_line, warm_request_of
 from doeff_core_effects._os_warm_process import WarmRequestWire
 from doeff_core_effects._process_stat import ProcStat
 from doeff_core_effects import WarmForked, WarmRefused
@@ -95,6 +100,8 @@ START_REFUSED_CODE = 3
 SESSION_LED = b"1"
 # A が頼みの cgroup に移れなかった時に待ちの子へ送る 1 byte(A は入口を起こさずに終わる)。
 CGROUP_REFUSED = b"2"
+# 待ちの子が待つ間の oom_score_adj(kernel の上限 — 頭注の OOM の順)。
+WAITING_OOM_SCORE_ADJ = 1000
 
 
 def module_named(name: str) -> ModuleType:
@@ -215,8 +222,11 @@ def placed_in(procs: str) -> bool:
     return True
 
 
-def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, given: int | None) -> NoReturn:
-    """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になり、頼みの cgroup が在ればそこへ移ってから待ちの子へ
+def run_forked(
+    request: WarmRequestWire, closing: tuple[int, ...], led: int, given: int | None, job_adj: int | None
+) -> NoReturn:
+    """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になり、oom_score_adj を待ちの子が受け継いだ値(job_adj —
+    None は読めない機体)へ戻し(頭注の OOM の順)、頼みの cgroup が在ればそこへ移ってから待ちの子へ
     知らせ(led へ 1 byte — 移れなければ断りの byte を送り、入口を起こさずに終わる)、入力の pipe(given — service の頼み)を標準入力にし、
     log(1 行ごとに刻を付ける書き手の pipe)・知らせの pipe・env・cwd・子孫の引き取りを整えてから、TERM を block して B を fork し、
     読み込んだ module を持たない見張り(worker/entry/warm_watch)へ exec する(見張りは job の終了コードを exit の
@@ -225,6 +235,8 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, giv
         with contextlib.suppress(OSError):
             os.close(descriptor)
     os.setsid()
+    if job_adj is not None:
+        run(put_own_oom_score_adj(job_adj))
     if request.cgroup_procs is not None and not placed_in(request.cgroup_procs):
         os.write(led, CGROUP_REFUSED)
         os._exit(START_REFUSED_CODE)
@@ -277,16 +289,17 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, giv
     watched(plan)
 
 
-def forked(request: WarmRequestWire, closing: tuple[int, ...], given: int | None) -> WarmForked | WarmRefused:
+def forked(request: WarmRequestWire, closing: tuple[int, ...], given: int | None, job_adj: int | None) -> WarmForked | WarmRefused:
     """A を fork し、A が session の先頭になった知らせを期限の内に受けてから、pid と起動の刻を答えにするため。知らせが来なければ・A が
-    頼みの cgroup に移れなければ断る。given = A の標準入力にする入力の pipe の読み口(待ちの子の写しは fork の後に閉じる)。"""
+    頼みの cgroup に移れなければ断る。given = A の標準入力にする入力の pipe の読み口(待ちの子の写しは fork の後に閉じる)・job_adj = A が
+    戻す oom_score_adj(頭注の OOM の順)。"""
     led_read, led_write = os.pipe()
     sys.stdout.flush()
     sys.stderr.flush()
     pid = os.fork()
     if pid == 0:
         os.close(led_read)
-        run_forked(request, closing, led_write, given)
+        run_forked(request, closing, led_write, given, job_adj)
     os.close(led_write)
     if given is not None:
         os.close(given)
@@ -349,7 +362,7 @@ def fitted(request: WarmRequestWire | WarmRefused, given: tuple[int, ...]) -> Wa
             return request
 
 
-def handled(connection: socket.socket, closing: tuple[int, ...]) -> None:
+def handled(connection: socket.socket, closing: tuple[int, ...], job_adj: int | None) -> None:
     """頼み 1 つを受けるため: 読めない・形の違う頼み・添えた fd の合わない頼みは断り(添えた fd は閉じる)、受けた頼みは A を fork して
     pid と起動の刻を答える。"""
     received = received_request(connection)
@@ -363,7 +376,7 @@ def handled(connection: socket.socket, closing: tuple[int, ...]) -> None:
             answered(connection, request)
         case WarmRequestWire():
             given = received.given[0] if received.given else None
-            answered(connection, forked(request, (*closing, connection.fileno()), given))
+            answered(connection, forked(request, (*closing, connection.fileno()), given, job_adj))
 
 
 def reaped() -> None:
@@ -384,7 +397,7 @@ def drained(wake: int) -> None:
             pass
 
 
-def served(listener: socket.socket, worker: int, wake: tuple[int, int]) -> None:
+def served(listener: socket.socket, worker: int, wake: tuple[int, int], job_adj: int | None) -> None:
     """頼みと A の終わり(SIGCHLD の起こし)と worker の消失(stdin の EOF)を 1 つの select で待つため。worker が消えたら戻る。"""
     closing = (listener.fileno(), *wake)
     while True:
@@ -396,7 +409,7 @@ def served(listener: socket.socket, worker: int, wake: tuple[int, int]) -> None:
             return
         if listener in readable:
             connection, _ = listener.accept()
-            handled(connection, closing)
+            handled(connection, closing, job_adj)
 
 
 def refused_start(reason: str) -> NoReturn:
@@ -445,6 +458,11 @@ def main() -> None:
     signal.set_wakeup_fd(wake[1], warn_on_full_buffer=False)
     signal.signal(signal.SIGCHLD, lambda _signum, _frame: None)
     root = os.path.realpath(options.root)
+    # 受け付けの前に待ちの子を kernel の OOM の先に並べ、受け継いだ値を A へ渡す(頭注の OOM の順)。読めない機体では何も書かない。
+    job_adj: int | None = run(own_oom_score_adj())
+    waiting_adj: int | None = None
+    if job_adj is not None and run(put_own_oom_score_adj(WAITING_OOM_SCORE_ADJ)):
+        waiting_adj = WAITING_OOM_SCORE_ADJ
     # 受け付けの前に heap を掃いて凍らせる(頭注 — 分かれた子が受け継いだ GC の数えで最初の行の前に heap を写さない)。
     gc.collect()
     gc.freeze()
@@ -461,10 +479,13 @@ def main() -> None:
         "serviceForks": True,
         # 頼みの orphanSeconds(worker の消失を退きとして待つ — 頭注)を受けられる版である印。
         "orphanForks": True,
+        # 待つ間の oom_score_adj と、A が戻す受け継いだ値(頭注の OOM の順 — 読めない機体は None)。
+        "oomScoreAdj": waiting_adj,
+        "jobOomScoreAdj": job_adj,
     }
     write_replacing(options.ready, json.dumps(facts, ensure_ascii=False))
     print(f"warm_child: 準備完了 root={root} module={len(sys.modules)}", file=sys.stderr, flush=True)
-    served(listener, sys.stdin.fileno(), wake)
+    served(listener, sys.stdin.fileno(), wake, job_adj)
     print("warm_child: worker が消えたので終わります", file=sys.stderr, flush=True)
     sys.stderr.flush()
     os._exit(0)

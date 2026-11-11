@@ -22,7 +22,7 @@ import sys
 
 from doeff import ReadVmLiveCounts, run
 from doeff_core_effects import vm_probe_handler
-from doeff_core_effects import own_thread_count
+from doeff_core_effects import own_oom_score_adj, own_thread_count
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "main"}
 LINUX = sys.platform.startswith("linux")
@@ -88,6 +88,8 @@ def facts() -> dict[str, object]:
         "threads": threads,
         "vmLive": list(live),
         "gcFrozen": gc.get_freeze_count(),
+        # 入口が走る時の oom_score_adj(待ちの子が上げた値でなく、受け継いだ値へ戻っている事を検が見る)。
+        "oomScoreAdj": run(own_oom_score_adj()),
     }
 
 

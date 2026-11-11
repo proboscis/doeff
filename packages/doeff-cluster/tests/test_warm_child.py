@@ -253,6 +253,27 @@ def test_the_warm_child_freezes_its_loaded_heap_so_a_forked_job_starts_with_it_f
         stopped(warm)
 
 
+@pytest.mark.skipif(not os.path.isfile("/proc/self/oom_score_adj"), reason="oom_score_adj の無い機体(kernel が値で選ばない)")
+def test_the_waiting_child_is_the_first_oom_victim_and_a_forked_job_runs_at_the_inherited_value(
+    place: Path, start_warm_child: StartWarmChild
+) -> None:
+    """失敗ケース: 待ちの子は task の子と同じ jobs の層に居て、層が上限に当たると kernel は oom_score(rss + oom_score_adj)で止める
+    process を選ぶ。前の形では待ちの子と task が同じ値で並び、名乗った要りの内で走る task が待ちの子より先に止められた。待ちの子は待つ間
+    oom_score_adj を 1000 に上げ、分かれた入口は受け継いだ値(この検の process の値)で走る。前の形では印の欄が無く、入口と同じ値で赤。"""
+    inherited = int(Path("/proc/self/oom_score_adj").read_text())
+    warm = started(place, start_warm_child)
+    try:
+        facts = readied(warm)
+        assert facts["oomScoreAdj"] == 1000, facts
+        assert facts["jobOomScoreAdj"] == inherited, facts
+        assert int(Path(f"/proc/{facts['pid']}/oom_score_adj").read_text()) == 1000
+        out = place / "facts.json"
+        ended(forked_job(warm, "a", ["inspect", str(out)]))
+        assert json.loads(out.read_text())["oomScoreAdj"] == inherited
+    finally:
+        stopped(warm)
+
+
 def test_a_forked_job_runs_the_loaded_entry_in_process_and_writes_its_exit_code(place: Path, start_warm_child: StartWarmChild) -> None:
     """分かれた子は exec せずに読み込み済みの入口を走らせ(命令行は待ちの子のまま)、終了コードを exit の file に書く。"""
     warm = started(place, start_warm_child)

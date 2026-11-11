@@ -208,6 +208,27 @@
     True (raise (WarmProcUnavailable (.format "Machine with no known thread count reader: {}" system)))))
 
 
+(defk own-oom-score-adj []
+  {:pre [] :post [(: % (| int None))] :tags {:context "process" :role "foundation"}}
+  "Read this process's oom_score_adj (the warm child raises its own while it waits and gives the inherited value back to the child it splits off).
+   A machine without it (outside Linux, or a Linux without /proc) = None -- the kernel there picks no OOM victim by this value."
+  (val path (os.path.join PROC-ROOT "self" "oom_score_adj"))
+  (if (and (= (platform.system) "Linux") (os.path.isfile path))
+      (with [f (open path :encoding "ascii")] (int (.strip (.read f))))
+      None))
+
+
+(defk put-own-oom-score-adj [value]
+  {:pre [(: value int) (<= -1000 value 1000)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
+  "Write this process's oom_score_adj (Linux: raising it, or giving back a value at or above the one a privileged writer last set, needs no privilege).
+   A machine without it = False (nothing written)."
+  (val path (os.path.join PROC-ROOT "self" "oom_score_adj"))
+  (when (not (and (= (platform.system) "Linux") (os.path.isfile path)))
+    (return False))
+  (with [f (open path "w" :encoding "ascii")] (.write f (str value)))
+  True)
+
+
 (defk linux-proc-stat [pid]
   {:pre [(: pid int)] :post [(: % (| ProcStat None))] :tags {:context "process" :role "foundation"}}
   "Read the state and start-ticks of the process pid from /proc on Linux. Does not exist = None. Without /proc, WarmProcUnavailable.
