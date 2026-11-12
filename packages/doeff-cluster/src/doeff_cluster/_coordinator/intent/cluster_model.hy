@@ -26,6 +26,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow MeasuredLoad PrepareReport])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
+(import doeff_cluster._shared.intent.compartment_model [MachineCompartments HeldCompartment])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -500,6 +501,20 @@
   (#^ int queued))
 
 
+(defrecord MachineCompartmentsView
+  "machine 1 台の区画の画面(GET /state の machineCompartments — ADR-DOE-CLUSTER-005 R1・R2): row = 宣言の行(資源 MachineCompartments)・
+   resource-version = その資源の版・memory-mib / memory-limit-mib / cpu-millis = 区画の和(outside を含む)・reported-total-mib = その
+   machine の区画を持つ worker が測りで名乗った memory の総量の最大(None = 名乗った worker が無い)。coordinator は和を総量と並べて見せるだけで、
+   和が総量を越えても断らない(R1 — 機体の大きさとの照らしは宣言する site の test)。運用者が machine ごとの区画を 1 か所で読むため。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ MachineCompartments row)
+  (#^ (| int None) resource-version)
+  (#^ int memory-mib)
+  (#^ int memory-limit-mib)
+  (#^ int cpu-millis)
+  (#^ (| int None) reported-total-mib))
+
+
 (defenum UnplacedKind WAITING-PREVIOUS-HOLDER NO-ELIGIBLE-WORKER NO-ROOM)
 
 
@@ -534,7 +549,9 @@
    版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)・group-limits = 組の同時数の上限の画面の列
    (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride)・
    unplaced-detail = 置き先の無い Service の読みの列(Service の名の順 — UnplacedView — unplaced と同じ Service)・
-   claims = 置いた task の申告の列(task の id の順 — TaskClaim)。
+   claims = 置いた task の申告の列(task の id の順 — TaskClaim)・
+   machine-compartments = machine ごとの区画の画面(machine の名の順 — MachineCompartmentsView)・worker-compartments = 名簿の worker ごとの
+   持つ区画(heartbeat の返事の compartments と同じ写し — 区画を持たない worker は空の列)。
    JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
@@ -552,7 +569,9 @@
   (setv #^ (get tuple #(GroupLimitView ...)) group-limits #())
   (setv #^ (get tuple #(NeedsOverride ...)) needs-overrides #())
   (setv #^ (get tuple #(UnplacedView ...)) unplaced-detail #())
-  (setv #^ (get tuple #(TaskClaim ...)) claims #()))
+  (setv #^ (get tuple #(TaskClaim ...)) claims #())
+  (setv #^ (get tuple #(MachineCompartmentsView ...)) machine-compartments #())
+  (setv #^ (get dict #(str (get tuple #(HeldCompartment ...)))) worker-compartments (field :default-factory dict)))
 
 
 (defenum DrainPhase
@@ -1427,7 +1446,11 @@
   (setv #^ (get Table int) unplaced-since (field :default-factory (partial table-of #())))
   ;; 置いた task の申告(2026-11-12 — ADR-DOE-CLUSTER-005 R4): task の id → TaskClaim。task が置いた phase へ移った歩で 1 行書き、置いた
   ;; phase を出た歩で外す(task_claims.claims-noted — 置きと出が通る 1 点)。保存する(durable_kv の claim/<id>)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get Table TaskClaim) claims (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table TaskClaim) claims (field :default-factory (partial table-of #())))
+  ;; machine の用途の区画の宣言(ADR-DOE-CLUSTER-005 R1): machine の名 → MachineCompartments(資源 MachineCompartments — site の宣言の
+  ;; 手順が書く)。heartbeat の返事は worker の持つ区画をここから写す(R2)。置き方はまだ読まない(置き方の切り替えの card)。保存する
+  ;; (durable_kv の compartments/<名>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table MachineCompartments) machine-compartments (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []
@@ -1538,7 +1561,10 @@
   (#^ (get tuple #(int ...)) formats)
   (#^ int revision)
   (setv #^ bool handover-pending False)
-  (setv #^ (| (get tuple #(str ...)) None) supplied None))
+  (setv #^ (| (get tuple #(str ...)) None) supplied None)
+  ;; この worker が持つ区画(ADR-DOE-CLUSTER-005 R2 — 資源 MachineCompartments の行からの写し・層の名の順)。空 = どの行もこの worker を
+  ;; 名指さない(区画を持たない — worker は新しい上限を書かない)。None = 渡さない(名乗っていない worker・退いた世代への返事)。
+  (setv #^ (| (get tuple #(HeldCompartment ...)) None) compartments None))
 
 
 (defclass [(dataclass :frozen True)] Watcher []

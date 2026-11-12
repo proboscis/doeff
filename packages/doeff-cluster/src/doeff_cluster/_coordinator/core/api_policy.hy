@@ -4,7 +4,7 @@
 ;;; 「それを受けた調停の変化(送り手 = coordinator)」を分けて版と記録を付ける(resource_policy.stamp)。
 ;;;
 ;;; HTTP(資源の口・2026-09-24):
-;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout | GroupLimit | NeedsOverride)
+;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout | GroupLimit | NeedsOverride | MachineCompartments)
 ;;;   GET    /resources/<Kind>/<名>        1 つ(resourceVersion・generation・所有者・作った / 書いた送り手・spec・status)
 ;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service・Rollout・GroupLimit — 組の同時数の上限・NeedsOverride — Service の置き先の
 ;;;                                         一時の上書き {"needs" "reason" "ttlSeconds"} — 宣言は書き換えない)。在れば 409
@@ -217,7 +217,7 @@
                "superseded_runs"   ; 退いた世代の最後の報告の刻 — 沈黙を lease で数える・受け渡しの待ちの始まり — 止まりの知らせの起点
                "alive_ms")))       ; 生きていた刻 — now にする(止まりの直後の再起動で二重にずらさない)
 (val STALL-UNSHIFTED-FIELDS
-  (frozenset #("jobs" "refused" "group_limits"            ; 宣言 — 刻を持たない
+  (frozenset #("jobs" "refused" "group_limits" "machine_compartments"  ; 宣言 — 刻を持たない
                "placements" "surges"                     ; 置いた刻 since-ms は事実(期限は担い手の最後の連絡で数える)
                "keep_marks"                              ; 渡した刻 since-ms は事実(約束の期限は担い手の最後の連絡で数える)
                "programs"                                ; 置いた刻 put-ms は事実(掃除の猶予は参照の無い blob だけ)

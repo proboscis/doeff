@@ -18,6 +18,8 @@
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
+(import doeff_cluster._shared.intent.compartment_model [MachineCompartments])
+(import doeff_cluster._shared.core.compartment_rules [machine-compartments-refusal machine-compartments-of machine-compartments-spec])
 
 
 (deff read-service-rows [#^ list rows]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
@@ -57,6 +59,7 @@
    "rollouts" (dfor #(k r) (.items state.rollouts) k (rollout-row-to-json r))
    "groupLimits" (dfor #(k l) (.items state.group-limits) k (group-limit-spec l))
    "needsOverrides" (dfor o (.rows state.needs-overrides) o.service (needs-override-spec o))
+   "machineCompartments" (dfor m (.rows state.machine-compartments) m.machine (machine-compartments-spec m))
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
@@ -129,6 +132,16 @@
   (when (is-not refusal None)
     (raise (ValueError (+ "保存の組の上限が誤っている: " refusal))))
   (group-limit-of name spec))
+
+
+(deff machine-compartments-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: name str) (: spec (| dict list str int float bool None))] :post [(: % MachineCompartments)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "保存の machine の区画の宣言 1 つ(machine の名と spec — machine-compartments-spec の形)→ MachineCompartments を読み直すため。資源の口と
+   同じ行の中の規則(machine-compartments-refusal)で検め、受けられない値は理由つきの ValueError(保存の行の壊れ — 黙って読み飛ばさない)。"
+  (setv refusal (machine-compartments-refusal name spec))
+  (when (is-not refusal None)
+    (raise (ValueError (+ "保存の machine の区画の宣言が誤っている: " refusal))))
+  (machine-compartments-of name spec))
 
 
 (deff needs-override-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
@@ -281,6 +294,9 @@
     :group-limits (table-of (tuple (gfor #(k v) (.items (.get data "groupLimits" {})) (TableWrite k (group-limit-from-json k v)))))
     ;; Service の needs の一時の上書き(2026-10-27)は、それより前の file には無い(空として読む)。
     :needs-overrides (table-of (tuple (gfor #(k v) (.items (.get data "needsOverrides" {})) (TableWrite k (needs-override-from-json k v)))))
+    ;; machine の区画の宣言(ADR-DOE-CLUSTER-005)は、それより前の file には無い(空として読む)。
+    :machine-compartments (table-of (tuple (gfor #(k v) (.items (.get data "machineCompartments" {}))
+                                                 (TableWrite k (machine-compartments-from-json k v)))))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (table-of (tuple (gfor #(k v) (.items (.get data "drains" {})) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (.items (.get data "surges" {})) (TableWrite k (Placement #** v)))))

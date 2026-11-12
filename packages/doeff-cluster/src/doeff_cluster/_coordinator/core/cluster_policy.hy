@@ -20,9 +20,10 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-memory-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES TaskClaim])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld MachineCompartmentsView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES TaskClaim])
 (import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
+(import doeff_cluster._shared.core.compartment_rules [held-compartments])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [due-of-instants])
 (import doeff_cluster._coordinator.intent.worker_notices [WorkerBack WorkerGone])
@@ -1634,6 +1635,33 @@
                                :queued (len (lfor t queued :if (any (gfor l t.limits (= l.group name))) t))))))
 
 
+(defk machine-compartments-views [state]
+  {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "GET /state の区画の画面の列(machine の名の順 — MachineCompartmentsView・ADR-DOE-CLUSTER-005 R1・R2)を作るため: 宣言の行と版、区画の和、
+   その machine の区画を持つ worker が名乗った memory の総量。運用者が machine ごとの区画を 1 か所で読み、和を総量と並べて照らす。"
+  (tuple (gfor row (sorted (.rows state.machine-compartments) :key (fn [m] m.machine))
+               :setv named (frozenset (gfor c row.compartments :if c.worker c.worker))
+               :setv totals (lfor n (sorted named)
+                                  :setv w (.row state.workers n)
+                                  :if (and (is-not w None) (is-not w.measured None))
+                                  w.measured.memory-total-MiB)
+               (MachineCompartmentsView :row row
+                                        :resource-version (resource-version-of state (+ "MachineCompartments/" row.machine))
+                                        :memory-mib (sum (gfor c row.compartments c.memory-mib))
+                                        :memory-limit-mib (sum (gfor c row.compartments c.memory-limit-mib))
+                                        :cpu-millis (sum (gfor c row.compartments c.cpu-millis))
+                                        :reported-total-mib (max totals :default None)))))
+
+
+(defk compartments-of-worker [state name]
+  {:pre [(: state ClusterState) (: name str)] :post [(: % (| tuple None))] :tags {:context "coordinator" :role "judgment"}}
+  "heartbeat の返事に載せる、worker name の持つ区画(ADR-DOE-CLUSTER-005 R2 — 行からの写し)を知るため。名簿に無い worker(まだ名乗って
+   いない)は None(欄を書かない)。どの行も名指さない worker は空の列(区画を持たない)。"
+  (if (is (.row state.workers name) None)
+      None
+      (held-compartments (tuple (.rows state.machine-compartments)) name)))
+
+
 (setv DETACHED-TERMINAL #("finished" "code-failed" "env-failed" "failed" "version-mismatch" "lost" "cancelled"))
 ;; 実行環境の準備の一時の失敗を、別の worker へ置き直す回数の上限(起動前なので同じ task を 2 度実行しない)。
 (setv ENV-RETRIES 2)
@@ -3062,6 +3090,8 @@
   ;; 退いた process は Pod の止まりの drain の上限(寿命の上限 + 5 分)の内で終わる。
   (val hold-row (.row state.board (semaphore-key RETIREMENT-HOLD)))
   (<- supplied (| tuple None) (supplied-for state name))
+  ;; compartments = この worker の持つ区画(ADR-DOE-CLUSTER-005 R2): worker は層の上限に写す(R3)。退いた世代への返事には載せない。
+  (<- compartments (| tuple None) (compartments-of-worker state name))
   (var held-specs #())
   (for [spec (jobs-for state name ready-instances)]
     (<- held tuple (live-instances (if (and spec.handoff (is-not hold-row None)) hold-row.value None) now spec.name))
@@ -3073,7 +3103,7 @@
                                          kept)))
                   :tasks (tasks-for state name boot) :warm (warms-for state name now)
                   :timing timing :draining (is-not (.row state.drains name) None) :superseded False :formats (tuple ACCEPTED-FORMATS)
-                  :revision state.revision :handover-pending pending :supplied supplied))
+                  :revision state.revision :handover-pending pending :supplied supplied :compartments compartments))
 
 
 ;; 受け渡しで「今の世代が受け取れる」と数える recreate の job の phase(AL-D2k): 準備と検めが揃って待っている(elder-runs)か、もう
@@ -3269,7 +3299,11 @@
              ;; 置いた task の申告(task の id の順 — ADR-DOE-CLUSTER-005 R4)。
              :claims (tuple (sorted (.rows state.claims) :key (fn [c] c.task)))
              ;; 置き先の無い Service の種類・足りない能力・いつから(unplaced と同じ Service)。
-             :unplaced-detail (unplaced-views now state timing)))
+             :unplaced-detail (unplaced-views now state timing)
+             ;; machine ごとの区画と、名簿の worker ごとの持つ区画(heartbeat の返事と同じ写し — ADR-DOE-CLUSTER-005 R2)。
+             :machine-compartments (! (machine-compartments-views state))
+             :worker-compartments (dfor n (sorted (.keys state.workers))
+                                        n (held-compartments (tuple (.rows state.machine-compartments)) n))))
 
 
 (defn #^ (| str None) runtime-env-refusal [#^ (get Mapping #(str object)) body]
