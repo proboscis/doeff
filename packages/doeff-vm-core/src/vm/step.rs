@@ -56,8 +56,7 @@ impl VM {
             .get(seg_id)
             .map_or(false, |s| s.frames.is_empty())
         {
-            let parent = self.segments.get(seg_id).and_then(|s| s.parent);
-            self.segments.free(seg_id);
+            let parent = self.free_completed_fibers(seg_id);
             self.current_segment = parent;
             if parent.is_some() {
                 return continue_send(value, error_context);
@@ -109,6 +108,25 @@ impl VM {
         }
     }
 
+    /// Free the completed fiber `seg_id` and every completed fiber above it,
+    /// answering the first ancestor that still has frames (None at the top).
+    /// A completed fiber only passes the value or error on to its parent, so
+    /// the run of them (the boundary fibers of a handler stack a body leaves)
+    /// is left in one step instead of one step per fiber.
+    fn free_completed_fibers(&mut self, seg_id: FiberId) -> Option<FiberId> {
+        let mut cursor = seg_id;
+        loop {
+            let parent = self.segments.get(cursor).and_then(|s| s.parent);
+            self.segments.free(cursor);
+            match parent {
+                Some(next) if self.segments.get(next).map_or(false, |s| s.frames.is_empty()) => {
+                    cursor = next;
+                }
+                other => return other,
+            }
+        }
+    }
+
     // -------------------------------------------------------------------
     // Raise — signal error to the current stream
     // -------------------------------------------------------------------
@@ -127,8 +145,7 @@ impl VM {
             .get(seg_id)
             .map_or(false, |s| s.frames.is_empty())
         {
-            let parent = self.segments.get(seg_id).and_then(|s| s.parent);
-            self.segments.free(seg_id);
+            let parent = self.free_completed_fibers(seg_id);
             self.current_segment = parent;
             if parent.is_some() {
                 return continue_raise(error, error_context);

@@ -269,8 +269,54 @@ def test_the_one_step_form_spends_fewer_vm_steps_than_the_nested_form():
 
     nested = steps_of(deep(False))
     one = steps_of(deep(True))
-    # At least the per-layer entry step and the empty body fiber's climb for all but one layer.
-    assert nested - one >= 2 * (layers - 1), (nested, one)
+    # At least the per-layer entry step for all but one layer (the empty fibers both forms
+    # leave on return are freed in one step, test_leaving_a_stack_costs_the_same_steps_at_any_depth).
+    assert nested - one >= layers - 1, (nested, one)
+
+
+@dataclasses.dataclass(frozen=True)
+class Grab(EffectBase):
+    """Answered by `grabbing` with the boundaries between the perform site and it."""
+
+
+@handler
+def grabbing(effect, k):
+    """Ends the run with the captured boundaries (the scheduler's capture at a Spawn)."""
+    if isinstance(effect, Grab):
+        return (yield get_inner_boundaries(k))
+    return (yield Pass(effect, k))
+
+
+def stack_of(depth):
+    """`depth` naming handlers, captured as the scheduler captures a spawn-site stack."""
+    program = functools.reduce(lambda inner, i: naming(f"h{i}")(inner), range(depth), Grab())
+    return run(grabbing(program))
+
+
+@do
+def break_now():
+    raise Broken("body")
+
+
+@pytest.mark.parametrize("body", [ask_who_or(7), break_now()], ids=["value", "error"])
+def test_leaving_a_stack_costs_the_same_steps_at_any_depth(body):
+    """A body's value or error leaves the run of frameless boundary fibers in one step:
+    each fiber only hands the result to its parent, so a task re-entered under a deep
+    spawn-site stack pays no step per layer on its way out."""
+
+    def leave(depth):
+        return steps_of(catching_broken(reinstall_one_step(body, stack_of(depth))))
+
+    shallow, deep = leave(1), leave(60)
+    assert deep == shallow, (shallow, deep)
+
+
+@do
+def catching_broken(program):
+    try:
+        return (yield program)
+    except Broken:
+        return None
 
 
 @pytest.mark.parametrize(
