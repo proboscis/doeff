@@ -27,6 +27,7 @@
 ;; ---------------------------------------------------------------------------
 
 (import os.path)
+(import doeff-hy._quoted-forms [packed-text])
 (import dataclasses [dataclass])
 (import importlib)
 (import inspect)
@@ -791,10 +792,11 @@ defk {name}: :post type annotation cannot be an empty string.
 (defn _quoted-forms [forms]
   "The body expression placed in `__doeff_body__`: a `QuotedForms` holding the body as a single string of `hy.repr` (turned back into models when read).
    If the body were embedded with quote, Hy would compile it into code that builds the model tree on every import, and half of the compile time without a .pyc
-   went there (measured 2026-09-28 — the note at the top of doeff_hy/_quoted_forms.py)."
+   went there (measured 2026-09-28 — the note at the top of doeff_hy/_quoted_forms.py). The string is placed packed (zlib of its UTF-8 — packed-text):
+   every importing process holds it for its whole life (the same note)."
   `(do
      (import doeff-hy._quoted-forms [QuotedForms :as _doeff-QuotedForms])
-     (_doeff-QuotedForms ~(hy.models.String (hy.repr (hy.models.List forms))))))
+     (_doeff-QuotedForms ~(hy.models.Bytes (packed-text (hy.repr (hy.models.List forms)))))))
 
 (defn _result-symbol [origin]
   "`_contract_result`, which points at the result of the body. The position is taken from the last expression (so that the red of `return` and of the return type

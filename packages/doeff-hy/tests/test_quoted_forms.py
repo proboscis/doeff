@@ -11,7 +11,7 @@ import hy
 import hy.compiler
 import hy.models
 
-from doeff_hy._quoted_forms import QuotedForms
+from doeff_hy._quoted_forms import QuotedForms, packed_text
 from doeff_hy._sexpr import args_of, body_of
 
 SOURCE = """
@@ -73,3 +73,28 @@ def test_the_compiled_module_does_not_rebuild_the_body_models() -> None:
     ]
     assert model_calls == []
     assert "QuotedForms" in ast.unparse(compiled)
+
+
+def test_the_body_text_is_carried_packed_and_reads_back_whole() -> None:
+    # The text is placed packed (zlib of its UTF-8): a body with one non-ASCII character would otherwise be held at 2 bytes per character for life.
+    namespace: dict[str, object] = {"__name__": "quoted_forms_packed_probe"}
+    note = "本文の文字列は畳んで持つ。" * 40
+    hy.eval(hy.read_many(SOURCE + f'\n(defk noted [x] {{:pre [(: x int)] :post [(: % int)]}} (setv message "{note}") (+ x (len message)))\n'), namespace)
+    body = namespace["noted"].__doeff_body__
+    assert isinstance(body, QuotedForms)
+    assert isinstance(body.packed, bytes)
+    assert note in body.text
+    assert len(body.packed) < len(body.text.encode("utf-8")) // 4
+    assert str(body[0][2]) == note  # (setv message "…") — the string reads back whole
+
+
+def test_a_text_compiled_before_packing_is_still_read() -> None:
+    # Code compiled before the text was packed passes the string itself; it reads, compares and hashes the same as the packed form.
+    text = hy.repr(hy.models.List([hy.models.Expression([hy.models.Symbol("+"), hy.models.Integer(1), hy.models.Integer(2)])]))
+    old = QuotedForms(text)
+    new = QuotedForms(packed_text(text))
+    assert old.text == new.text == text
+    assert old == new
+    assert hash(old) == hash(new)
+    assert list(old) == list(new)
+    assert QuotedForms(packed_text(text)) == new
