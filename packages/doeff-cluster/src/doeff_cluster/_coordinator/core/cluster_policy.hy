@@ -20,7 +20,7 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-memory-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
@@ -1829,6 +1829,44 @@
                (TableWrite id new))))
 
 
+;; 置き方の判断が読まない欄を空にした行の覚え(task の行の object の id → #(行 行の側の PlacementClass) — 2026-11-12)。待っている
+;; task の行は、変わらない拍には同じ object が状態の tasks に残る(書き直すと新しい object になる)ので、object ごとに 1 度だけ空にする
+;; (欄の多い行の写しが、置けない判断を借りた後の place-tasks の費用の大半だった)。行そのものを一緒に持つので、持っている間に id が別の
+;; object へ使い回されない。上限 PLACEMENT-ROW-MEMO-MAX を越えたら全部を捨てて覚え直す(handoff_policy の _FINGERPRINTS と同じ形)。
+(setv _PLACEMENT-ROWS {})
+(setv PLACEMENT-ROW-MEMO-MAX 8192)
+
+
+(defn #^ PlacementClass placement-row [#^ TaskRecord task]  ; cannot be a defk: 覚えの dict を引く(Program の外の純粋な判断 placement-class の材料)
+  "task の行から、置き方の判断(able・task-misfit・starved-keeper・線の内の貸し・置き先の順)が読まない欄(id・名・Program・期限・detail・
+   環境変数・知らせ先など)を空にした行と、実行環境の宣言の JSON の文字列を持つ PlacementClass(unheard と keeps は空の値 — 呼び手の
+   placement-class が拍の値で埋める)を得るため。読む欄を空にすると違う task が同じ判断を借りるので、迷う欄は残す(残すと判断を借りる
+   task が減るだけで答えは変わらない)。同じ行の object には覚えた値を返す。"
+  (setv kept (.get _PLACEMENT-ROWS (id task)))
+  (when (and (is-not kept None) (is (get kept 0) task))
+    (return (get kept 1)))
+  (setv row (replace task :id "" :name "" :program None :revision "" :lease-ms 0 :lease-until-ms 0 :submitted-ms 0
+                          :detail "" :key None :retain-ms 0 :environ #() :notify "" :queued-noticed-ms None
+                          :rerun-note "" :runtime-env None)
+        env (if (is task.runtime-env None) None (json.dumps task.runtime-env :sort-keys True :ensure-ascii False)))
+  (when (>= (len _PLACEMENT-ROWS) PLACEMENT-ROW-MEMO-MAX)
+    (.clear _PLACEMENT-ROWS))
+  (setv shape (PlacementClass :row row :env env :unheard (frozenset) :keeps False))
+  (setv (get _PLACEMENT-ROWS (id task)) #(task shape))
+  shape)
+
+
+(defk placement-class [task workers now]
+  {:pre [(: task TaskRecord) (: workers tuple) (: now int)] :post [(: % PlacementClass)] :tags {:context "coordinator" :role "judgment"}}
+  "待っている task の置き方を決める task の側の入力を 1 つの値にするため(place-tasks が、置けないと判じた task と同じ値の後ろの task を、
+   置き先の数えが変わるまで数え直さない — 2026-11-12・PlacementClass の註)。行の側は placement-row(読まない欄を空にした行)。
+   workers = 状態の全部の worker の行(次の試行の task の unheard を数える)。"
+  (<- keeps bool (keeps-room? task.priority (- now task.submitted-ms)))
+  (replace (placement-row task)
+           :unheard (frozenset (gfor w workers :if (not (heard-since-rerun task w)) w.name))
+           :keeps keeps))
+
+
 (defk tasks-placed [now state placements timing]
   {:pre [(: now int) (: state ClusterState) (: placements (get Table Placement)) (: timing ClusterTiming)] :post [(: % (get Table TaskRecord))]
    :tags {:context "coordinator" :role "judgment"}}
@@ -1922,19 +1960,51 @@
     (+= (get bg-held t.worker) 1))
   ;; worker ごとの memory の空き(背景の仕事は急ぎでない — 平常の数え)は、背景の仕事が待っている拍だけ 1 度数える。
   (var bg-memory-rooms {})
-  (for [task (.values queue) :if (and (= task.phase "queued") (< task.priority 0))]
-    (for [w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w) (not-in w.name draining)
-                                           (env-room-on task w))]
-      (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
-      (when (and (is bg-limited None) (not task.ungated) (not-in w.name bg-memory-rooms))
-        (<- bg-memory-room int (task-memory-room-of w load))
-        (:= bg-memory-rooms (| bg-memory-rooms {w.name bg-memory-room})))
-      (when (and (is bg-limited None)
-                 (or task.ungated (<= (! (task-need-of task w peaks)) (get bg-memory-rooms w.name))))
-        (+= (get bg-wanted w.name) 1))))
+  ;; 置き方の task の側の入力(placement-class)は待っている task ごとに 1 度だけ求め、下の 2 つの使い回しの鍵にする。
+  (val worker-rows (tuple (.rows state.workers)))
+  (val classes {})
+  (for [#(id task) (.items queue)]
+    (<- queued-class PlacementClass (placement-class task worker-rows now))
+    (setv (get classes id) queued-class))
+  ;; 同じ入力の背景の仕事は同じ worker で数える(この数えの間は組の升と負荷が変わらない)— 入力 → 数える worker の名。
+  (val bg-counted {})
+  (for [#(id task) (.items queue) :if (and (= task.phase "queued") (< task.priority 0))]
+    (val bg-class (get classes id))
+    (when (not-in bg-class bg-counted)
+      (var counted #())
+      (for [w worker-rows :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w) (not-in w.name draining)
+                                   (env-room-on task w))]
+        (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
+        (when (and (is bg-limited None) (not task.ungated) (not-in w.name bg-memory-rooms))
+          (<- bg-memory-room int (task-memory-room-of w load))
+          (:= bg-memory-rooms (| bg-memory-rooms {w.name bg-memory-room})))
+        (when (and (is bg-limited None)
+                   (or task.ungated (<= (! (task-need-of task w peaks)) (get bg-memory-rooms w.name))))
+          (:= counted #(#* counted w.name))))
+      (setv (get bg-counted bg-class) counted))
+    (for [name (get bg-counted bg-class)]
+      (+= (get bg-wanted name) 1)))
+  ;; 置けないと判じた入力の答え(入力 → #(数えの代 待ちの文 — None = 文を書かずに待つ))。数えの代(epoch)は、この拍に task を置いた・
+  ;; 取っておいた・場所を譲らせた時に進む(負荷・組の升・背景の仕事の数・取っておき・止めた task の数えが変わる)。同じ入力の後ろの
+  ;; task は、代が同じ間は worker ごとの要り・空き・置けない理由を数え直さずに同じ文で待つ(2026-11-12 — 置けない task が数百本溜まると、
+  ;; 要求ごとの調停が待っている task の数 × worker の数の数えで主 thread を埋めた)。急ぎの優先の task は場所の譲りの候補(taken)を読む
+  ;; ので借りない。
+  (val unplaced-verdicts {})
+  (var epoch 0)
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted queue :key (fn [i] #((- (. (get queue i) priority)) i)))]
     (setv task (get queue id))
+    ;; 急ぎの優先の task は、worker が上に載る系の残す線を外して名乗る空きで数える(measured_room の頭の註の急ぎの task の空き)。
+    (<- urgent bool (urgent-priority? task.priority))
+    (val task-class (get classes id))
+    ;; 同じ入力の task が、この拍の今の数えで置けないと判じられた: 同じ文で待つ(上の unplaced-verdicts の註)。
+    (when (and (not urgent) (in task-class unplaced-verdicts))
+      (val known-reason (get unplaced-verdicts task-class))
+      (when (is-not known-reason None)
+        (val known-text (waiting-detail task known-reason))
+        (when (!= task.detail known-text)
+          (setv (get writes id) (replace task :detail known-text))))
+      (continue))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
       (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w)) w)
@@ -1956,8 +2026,6 @@
       (var shorts {})
       (var roomy #())
       (var misfits [])
-      ;; 急ぎの優先の task は、worker が上に載る系の残す線を外して名乗る空きで数える(measured_room の頭の註の急ぎの task の空き)。
-      (<- urgent bool (urgent-priority? task.priority))
       (for [w able-now]
         (<- need int (task-need-of task w peaks))
         (setv (get needs w.name) need)
@@ -2046,7 +2114,9 @@
           (val kept-need (get needs keeper.name))
           (val kept-load (get load keeper.name))
           (setv (get load keeper.name) (replace kept-load :reserved-mib (+ kept-load.reserved-mib kept-need)))
-          (+= (get kept keeper.name) kept-need)))
+          (+= (get kept keeper.name) kept-need)
+          ;; 取っておきで worker の memory の空きが減った — 置けないと判じた答えは、後ろの task に貸さない。
+          (.clear unplaced-verdicts)))
       (cond
         free (do (setv chosen (get free 0)
                        ;; 準備済みの worker が無い置き先 = 冷たい起動(worker が準備してから走る)。phase を preparing にして assigned と分ける。
@@ -2062,6 +2132,8 @@
                    (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
+                 ;; 負荷と組の升が変わった(場所を譲らせた分も)— 置けないと判じた答えは、後ろの task に貸さない。
+                 (.clear unplaced-verdicts)
                  ;; 置いた拍に数えた worker の測った空きと、その測りの刻を行に写す(task が終わった後も置いた刻の空きを読むため —
                  ;; worker の measured は保存しない拍ごとの観測)。測りの無い worker(門の外の task だけが置ける)は写さない。
                  (setv seen chosen.measured
@@ -2089,6 +2161,9 @@
         able-now
           (let [reason (! (task-unplaced-text (! (misfit-reason misfits))))
                 text (waiting-detail task (if (is keeper None) reason (! (kept-text reason keeper.name))))]
+            ;; 取っておかずに待つ答えは、同じ入力の後ろの task に貸す(取っておいた時は上で答えを捨てた)。
+            (when (and (not urgent) (is keeper None))
+              (setv (get unplaced-verdicts task-class) reason))
             (when (!= task.detail text)
               (setv (get writes id) (replace task :detail text))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
@@ -2128,7 +2203,10 @@
                       (replace task :detail (waiting-detail task (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
                                                                           (list task.needs) names limit-s)))
                     task.detached (end-detached task (unplaceable-phase task state now timing) now ended)
-                    True (replace task :phase "failed" :finished-ms now :detail ended)))))))
+                    True (replace task :phase "failed" :finished-ms now :detail ended))))
+        ;; 置ける worker が drain 中か disk 尽きだけ: 文を書かずに待つ答えを、同じ入力の後ろの task に貸す。
+        (not urgent)
+          (setv (get unplaced-verdicts task-class) None))))
   (task-writes state.tasks writes))
 
 
@@ -2438,9 +2516,17 @@
   (<- split tuple (task-split state.tasks now))
   (setv #(scanned earliest) split)
   (setv dues (if (is earliest None) [] [earliest]))
+  ;; 能力と版の合う worker は、置き方の判断が読む欄の同じ待っている task で同じ(placement-row の行 → worker の列)— 待っている task の数 ×
+  ;; worker の数の比べを、入力の数 × worker の数にする(2026-11-12 — place-tasks の判断を借りる直しと同じ時)。
+  (val capables {})
   (for [task (.values scanned)]
     (<- lapse (| int None) (task-lapse-at task now))
-    (val capable (if (= task.phase "queued") (lfor w (.rows state.workers) :if (can-run-task task w) w) []))
+    (val capable (if (= task.phase "queued")
+                     (do (val shape (placement-row task))
+                         (when (not-in shape capables)
+                           (setv (get capables shape) (lfor w (.rows state.workers) :if (can-run-task task w) w)))
+                         (get capables shape))
+                     []))
     (val live (lfor w capable :if (alive now w timing.lease-ms) w))
     (<- waited (| int None) (wait-lapse-at capable timing))
     (val tried (match task

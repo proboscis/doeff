@@ -1438,6 +1438,19 @@
   (#^ (get tuple #(YieldCandidate ...)) victims))
 
 
+(defrecord PlacementClass
+  "待っている task の置き方を決める入力のうち task の側の分(cluster_policy.placement-class の答え — 拍の中で同じ値の task は、置き先の数え
+   〔負荷・組の升・取っておき〕が変わらない間は同じ判断になる。2026-11-12): row = 置き方の判断が読まない欄(id・名・Program・期限・detail・
+   環境変数・知らせ先など)を空にした task の行・env = 実行環境の宣言の JSON の文字列(None = 宣言なし — 行の dict は hash できないので
+   文字列で持つ)・unheard = 次の試行の task を、積み直した後にまだ連絡の無い worker の名(heard-since-rerun が偽 — 最初の試行は空)・
+   keeps = 置けない時に worker の空きを取っておく task か(measured_room.keeps-room? — 待った長さで変わる)。保存しない拍の中の値。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ TaskRecord row)
+  (#^ (| str None) env)
+  (#^ (get frozenset str) unheard)
+  (#^ bool keeps))
+
+
 (defrecord TaskOffer
   "heartbeat の返事で worker の process へ渡す task 1 つ(cluster_policy.tasks-for — 返事に載せる欄だけを TaskRecord から写す。lease の期限の
    ような拍ごとに変わる欄を持たないので、返事の等しさで worker の見え方を比べられる — watch_policy.worker-mark): id・name・revision・
