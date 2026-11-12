@@ -14,19 +14,24 @@
 (import doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster._coordinator.intent.task_table [TaskTable TaskIndex task-table-of task-index index-of-rows])
 (import doeff_cluster._coordinator.core.api_policy [tick])
+(import doeff_cluster._coordinator.core.program_policy [program-refs])
+(import doeff_cluster._coordinator.core.cluster_policy [sweep-due])
+(import doeff_cluster._coordinator.intent.cluster_model [ProgramRow])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 (val PHASES #("queued" "assigned" "preparing" "finished" "failed" "cancelled" "lost"))
 (val SHAPES #("" "a" "b" "c"))
+;; 詰めた Program の置き場のキー(None = Program を持たない旧い形の終わった行)。
+(val PROGRAMS #(SAMPLE-TASK-PROGRAM "p1" "p2" None))
 (val NOW 1000000)
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
 
 (defk random-task [rng id]
   {:pre [(: rng random.Random) (: id str)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "索引の読む欄(切り離したか・phase・終わった刻・保持の長さ・形・山)を乱数で選んだ task の行 1 本を作るため。"
+  "索引の読む欄(切り離したか・phase・終わった刻・保持の長さ・形・山・Program の参照)を乱数で選んだ task の行 1 本を作るため。"
   (val phase (.choice rng PHASES))
-  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" #() #() 15000 (+ NOW 20000) 0
+  (TaskRecord id "digest" (.choice rng PROGRAMS) "rev" #() #() 15000 (+ NOW 20000) 0
               :detached (< (.random rng) 0.8)
               :phase phase
               :worker (if (in phase #("assigned" "preparing")) "w0" None)
@@ -49,8 +54,8 @@
 
 (defk index-view [index]
   {:pre [(: index TaskIndex)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "索引を比べられる値にするため(走査の対象の行・保持の行の期限・最小の期限・形ごとの山)。"
-  #(index.live index.held index.earliest index.peaks))
+  "索引を比べられる値にするため(走査の対象の行・保持の行の期限・最小の期限・形ごとの山・Program の参照の数え)。"
+  #(index.live index.held index.earliest index.peaks index.programs))
 
 
 (defk random-writes [rng table]
@@ -125,3 +130,30 @@
   (val ticked (! (tick (ClusterState :tasks tasks) NOW T)))
   (assert (is ticked.tasks tasks))
   (assert (= (len reads) 0) (len reads)))
+
+
+(deftest test-program-refs-read-no-task-rows-whatever-the-row-count [#^ pytest.MonkeyPatch monkeypatch]
+  ;; 失敗ケース(直す前 — 2026-11-13): 置き場の掃除の期限(sweep-due)は調停の毎歩に Program の参照(program-refs)を問い、参照は task の表の
+  ;; 全部の行を読んだので、1 要求の費用が保持の間の終わった行を含む行の総数に比例した。参照は索引の数えから読む: 保持の行が 1,000 本でも
+  ;; 2,000 本でも、program-refs と sweep-due は task の表の全部の行を 1 度も読まず(読みの口 rows・items・keys を数える)、答えは全部の行から
+  ;; 求めた参照と同じ。
+  (val reads [])
+  (for [name #("rows" "items" "keys")]
+    (.setattr monkeypatch TaskTable name (counting-reads reads (getattr Table name))))
+  (for [count #(1000 2000)]
+    (val held (lfor i (range count)
+                    (TaskRecord (.format "f{}" i) "digest" (get PROGRAMS (% i 3)) "rev" #() #() 15000 (+ NOW 20000) 0
+                                :detached True :phase "finished" :finished-ms (- NOW 1000) :retain-ms 3600000)))
+    (val tasks (task-table-of (tuple (gfor t held (TableWrite t.id t)))))
+    (val programs (table-of #((TableWrite SAMPLE-TASK-PROGRAM (ProgramRow :blob "x" :versions {} :put-ms 0))
+                              (TableWrite "gone" (ProgramRow :blob "x" :versions {} :put-ms 0)))))
+    (val state (ClusterState :tasks tasks :programs programs))
+    ;; 索引は最初の読みで 1 度だけ全部の行から作る(読み直しの後と同じ)— 数えるのはその後の読み。
+    (task-index tasks)
+    (.clear reads)
+    (val refs (program-refs state))
+    (<- due (sweep-due state NOW T))
+    (assert (= (len reads) 0) #(count (len reads)))
+    (assert (= refs (frozenset (gfor t held :if t.program t.program))) refs)
+    ;; 参照の無い Program "gone" の猶予は過ぎている — 掃除の期限は今。
+    (assert (= (. (type due) __name__) "DueNow") due)))

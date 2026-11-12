@@ -5,14 +5,14 @@
 ;;; 綴りはどれも defk で、呼び手は <- / ! で受ける(ADR-DOE-HY-004 R10 — 検と模擬の入口 responded は request_bodies.hy で run する)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
-(import doeff_cluster._shared.intent.protocol [Reply PlainText])
+(import doeff_cluster._shared.intent.protocol [Reply PlainText SpelledJson])
 (import dataclasses [asdict])
 (import json)
 (import collections.abc [Callable Iterable Mapping])
 (import doeff_cluster._shared.intent.job_model [JobSpec])
 (import doeff_cluster._coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved UnplacedView WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
-                                                       BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
+                                                       BoardUsage BoardRead BoardRow BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                                                        DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
                                                        ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable ReadinessReport])
@@ -363,12 +363,40 @@
    "maxRows" usage.max-rows "maxBytes" usage.max-bytes "maxValueBytes" usage.max-value-bytes})
 
 
+;; 盤の行ごとの JSON の断片の覚え(盤の行の object の id → #(行 鍵 版なしの断片 版つきの断片 版つきの値) — 2026-11-13)。盤の行は書きの
+;; たびに新しい object になり、書かれない行は同じ object のまま盤に残るので、行の object ごとに 1 度だけ綴れば、変わらない行を読みの
+;; たびに綴り直さない(GET /board は前置きに合う行を毎回全部返す — 2 万行の読みの綴りが本番の主 thread の 1 割を占めた)。行そのものを
+;; 一緒に持つので、持っている間に id が別の object へ使い回されない。上限を越えたら全部を捨てて覚え直す(cluster_policy の
+;; _PLACEMENT-ROWS と同じ形)。
+(setv _BOARD-SPELLINGS {})
+(setv BOARD-SPELLING-MEMO-MAX 131072)
+
+
+(defn #^ tuple board-row-spelling [#^ str key #^ BoardRow row]  ; cannot be a defk: 覚えの dict を引く(綴りの board-answer-json の材料)
+  "盤の行 1 つの JSON の object の断片(鍵: 値 と 鍵: {value resourceVersion} — json.dumps の既定の区切りと同じ綴り)を、行の object ごとに
+   1 度だけ綴るため。答え = #(行 鍵 版なしの断片 版つきの断片 版つきの値)。"
+  (setv kept (.get _BOARD-SPELLINGS (id row)))
+  (when (and (is-not kept None) (is (get kept 0) row) (= (get kept 1) key))
+    (return kept))
+  (setv versioned {"value" row.value "resourceVersion" row.version}
+        head (+ (json.dumps key :ensure-ascii False) ": ")
+        spelled #(row key (+ head (json.dumps row.value :ensure-ascii False)) (+ head (json.dumps versioned :ensure-ascii False)) versioned))
+  (when (>= (len _BOARD-SPELLINGS) BOARD-SPELLING-MEMO-MAX)
+    (.clear _BOARD-SPELLINGS))
+  (setv (get _BOARD-SPELLINGS (id row)) spelled)
+  spelled)
+
+
 (defk board-answer-json [#^ (| BoardRead BoardWritten BoardConflict BoardRefused) answer]
   {:pre [(: answer (| BoardRead BoardWritten BoardConflict BoardRefused))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "盤の口の答え → JSON の形(#2614 の前に api_policy.respond-board と cluster_policy.board-write が組んでいた形と同じ)。"
+  "盤の口の答え → JSON の形(#2614 の前に api_policy.respond-board と cluster_policy.board-write が組んでいた形と同じ)。読みの答えは、行ごとに
+   1 度だけ綴った断片をつないだ文字列を先に持つ SpelledJson(送る byte は json.dumps と同じ — 綴り直さない)。"
   (cond
     (isinstance answer BoardRead)
-      (dfor e answer.entries e.key (if answer.with-versions {"value" e.value "resourceVersion" e.version} e.value))
+      (do (setv spellings (lfor #(key row) answer.entries (board-row-spelling key row))
+                at (if answer.with-versions 3 2))
+          (SpelledJson (dfor s spellings (get s 1) (if answer.with-versions (get s 4) (. (get s 0) value)))
+                       (+ "{" (.join ", " (gfor s spellings (get s at))) "}")))
     (isinstance answer BoardWritten) {"ok" True "resourceVersion" answer.version}
     (isinstance answer BoardConflict)
       (| {"ok" False "current" answer.current "resourceVersion" answer.version}

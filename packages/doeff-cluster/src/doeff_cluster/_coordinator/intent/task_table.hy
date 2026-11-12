@@ -5,7 +5,8 @@
 ;;; 新しい object になるので、同じ object の間の覚えでは要求をまたいで使い回せず、1 要求の費用が保持の間の終わった行を含む行の総数に
 ;;; 比例した(約 1,800 行で主 thread の CPU 98〜99%)。
 ;;; TaskTable は Table の子 class で、with-writes(と Table の下書きの freeze — どちらも with-writes を通る)のたびに、書いた行の前と後だけを
-;;; 読んで索引を次の値へ進め、新しい表と一緒に返す。読み手(cluster_policy の scan-rows・task-split・shape-peaks-of・placed-claims)は
+;;; 読んで索引を次の値へ進め、新しい表と一緒に返す。読み手(cluster_policy の scan-rows・task-split・shape-peaks-of・placed-claims と
+;;; program_policy.program-refs — 2026-11-13)は
 ;;; 索引を引くだけで、全部の行を回らない。保持の間の終わった行は走査の対象の索引に入らず、形ごとの山へは行が書かれた時に 1 度だけ足す。
 ;;; 索引は最初に読まれた時に全部の行から 1 度だけ作り(読み直しの後・table-of で作った表)、その後は書きの差分だけで進む。
 ;;; 索引と全部の行から作り直した値が同じである事は tests/test_task_index.hy が任意の書きの列で照らす。
@@ -39,13 +40,15 @@
 (defrecord TaskIndex
   "task の表の派生の値(頭の註): live = 走査の対象の行(held-row? でない行 — task の id → 行。保持の間の終わった行を含まない)・held = 保持の
    行のうち終わった刻を持つ行の期限(task の id → finished-ms + retain-ms + 1 — cluster_policy.task-lapse-at と同じ式)・earliest = held の
-   最小(無ければ None)・tallies = 形 → ShapeTally・peaks = 形 → ShapePeak(tallies から求めた値 — 読み手が引く)。どの dict も作った後に
-   書き換えない(古い表を持つ読み手が古い値を読み続ける)。"
+   最小(無ければ None)・tallies = 形 → ShapeTally・peaks = 形 → ShapePeak(tallies から求めた値 — 読み手が引く)・programs = 詰めた
+   Program の置き場のキー → そのキーを参照する行の数(保持の間の終わった行を含む全部の行 — program_policy.program-refs が置き場の掃除で
+   残す物を決める。0 になったキーは入れない)。どの dict も作った後に書き換えない(古い表を持つ読み手が古い値を読み続ける)。"
   (#^ dict live)
   (#^ dict held)
   (#^ (| int None) earliest)
   (#^ dict tallies)
-  (#^ dict peaks))
+  (#^ dict peaks)
+  (#^ dict programs))
 
 
 (defn #^ bool held-row? [#^ object task]
@@ -67,8 +70,10 @@
 
 (defn #^ TaskIndex index-of-rows [#^ tuple rows]
   "全部の行から作った索引(最初の読み・照らしの test の正解)。"
-  (setv live {} held {} tallies {})
+  (setv live {} held {} tallies {} programs {})
   (for [task rows]
+    (when task.program
+      (setv (get programs task.program) (+ (.get programs task.program 0) 1)))
     (if (held-row? task)
         (do (setv lapse (held-lapse task))
             (when (is-not lapse None)
@@ -82,14 +87,14 @@
                                                  :finished (+ (if (is before None) 0 before.finished)
                                                               (if (= task.phase "finished") 1 0))))))
   (TaskIndex :live live :held held :earliest (if held (min (.values held)) None) :tallies tallies
-             :peaks (dfor #(shape tally) (.items tallies) shape (peak-of-tally tally))))
+             :peaks (dfor #(shape tally) (.items tallies) shape (peak-of-tally tally)) :programs programs))
 
 
 (defn #^ TaskIndex index-after [#^ TaskIndex index #^ dict changes]
   "index に書き changes(task の id → #(前の行か None 書いた後の行か None))を当てた次の索引(index は変えない)。費用は書いた行の数と、
    変わった dict の写し(live は走査の対象の行の数・held は保持の行の数 — どちらも書きの在った時だけ・C の写し)に比例し、保持の行を回らない。"
-  (setv live index.live held index.held earliest index.earliest tallies index.tallies
-        live-copied False held-copied False tallies-copied False touched (set))
+  (setv live index.live held index.held earliest index.earliest tallies index.tallies programs index.programs
+        live-copied False held-copied False tallies-copied False programs-copied False touched (set))
   (for [#(id #(old new)) (.items changes)]
     ;; 走査の対象の行。
     (setv was-live (and (is-not old None) (not (held-row? old))))
@@ -109,6 +114,18 @@
       (if (is new-lapse None)
           (.pop held id None)
           (setv (get held id) new-lapse)))
+    ;; Program の参照の数え(前の行の参照を引き、後の行の参照を足す — 同じキーのままなら数えは変わらない)。
+    (setv old-program (if (is old None) None old.program) new-program (if (is new None) None new.program))
+    (when (!= old-program new-program)
+      (when (not programs-copied)
+        (setv programs (dict programs) programs-copied True))
+      (when old-program
+        (setv left (- (get programs old-program) 1))
+        (if (> left 0)
+            (setv (get programs old-program) left)
+            (.pop programs old-program)))
+      (when new-program
+        (setv (get programs new-program) (+ (.get programs new-program 0) 1))))
     ;; 形ごとの山(形を名乗り山を測った行だけ)。
     (for [#(row sign) #(#(old -1) #(new 1))]
       (when (and (is-not row None) row.shape (is-not row.peak-mib None))
@@ -138,7 +155,7 @@
           (do (.pop peaks shape None)
               (.pop tallies shape None))
           (setv (get peaks shape) peak))))
-  (TaskIndex :live live :held held :earliest earliest :tallies tallies :peaks peaks))
+  (TaskIndex :live live :held held :earliest earliest :tallies tallies :peaks peaks :programs programs))
 
 
 (defclass TaskTable [Table]
