@@ -63,6 +63,9 @@
 ;;; 線の空きは 1 つの帳面で、次の順に約束する(先の約束ほど守る):
 ;;;   1. clis の今の使いと床(走っている会話の CLI — どの回も下げない)と、jobs の今の使い(走っている task)。どちらも空きの外(使いに数え済み)。
 ;;;   2. 宣言の余裕(機体の宣言の床 — 線の手前に必ず残す)。
+;;;   2'. 上に載る系が clis に残させる余白(kept — 上に載る系が書く file の byte の数・機体の宣言 WORKER_CLI_KEPT_FILE が名指す。clis の
+;;;      今の使いの上に、置いた task の取り置きと jobs の層の受けより先に残す。上に載る系は自分の急ぎの仕事だけをこの余白へ入れ、ほかの
+;;;      仕事はこの余白の手前で止める — worker は数を持たず、何に使うかも知らない)。線の空きが kept より小さい回は残る空きまで。
 ;;;   3. 置いた task の取り置き(pending — worker が task を受けた時の要り − 今の使いの和・placed-pending): 置き先が task を置いた時に
 ;;;      約束した、まだ使っていない分。
 ;;;   4. 測った余裕が宣言の床を越えた分(margin-of)。
@@ -369,19 +372,22 @@
   (if (is cap None) wanted (min cap wanted)))
 
 
-(defk clis-limit [clis-current free box floor ceiling turn-room pending]
+(defk clis-limit [clis-current free box floor ceiling turn-room pending [kept 0]]
   {:pre [(: clis-current int) (>= clis-current 0) (: free int) (: box (| int None)) (: floor int) (>= floor 0) (: ceiling int)
-         (>= ceiling floor) (: turn-room int) (>= turn-room 0) (: pending int) (>= pending 0)]
-   :post [(: % int) (>= % clis-current) (>= % floor) (<= % (max floor (+ clis-current turn-room)))]
+         (>= ceiling floor) (: turn-room int) (>= turn-room 0) (: pending int) (>= pending 0) (: kept int) (>= kept 0)]
+   :post [(: % int) (>= % clis-current) (>= % floor) (<= % (max floor (+ clis-current kept turn-room)))]
    :tags {:context "worker" :role "judgment"}}
   "会話の CLI の層に掛ける memory.max を求めるため(頭の註の会話の CLI の層): free = 線の空き − 余裕 − 準備の取り置き・box = container の
-   中の空き(None = container に上限が無い)・turn-room = 需要の余白(会話の CLI の新しい受け k 本分)・pending = 置いた task の取り置き。
-   貸せる空き avail = free と box の小さい方 − pending(負は 0)。clis の今の使いの上に残すのは需要の余白のうち avail の CLIS-ROOM-SHARE の
-   内に収まる量だけ(前の回の上限を持ち越さない — 使われていない貸しは次の回に jobs の層の受けへ戻る)。それを床と天井の間に収め、clis の今の使いより
-   下げない(天井を越えて使っている読みは使いのまま)。"
+   中の空き(None = container に上限が無い)・turn-room = 需要の余白(会話の CLI の新しい受け k 本分)・pending = 置いた task の取り置き・
+   kept = 上に載る系が clis に残させる余白(頭の註の帳面の 2' — 0 = 残させない)。
+   残す余白 = kept を free と box の小さい方 pool(負は 0)で切った量 — pending より先に取る。貸せる空き avail = pool − 残す余白 − pending
+   (負は 0)。clis の今の使いの上に残すのは、残す余白と、需要の余白のうち avail の CLIS-ROOM-SHARE の内に収まる量(前の回の上限を持ち越さない —
+   使われていない貸しは次の回に jobs の層の受けへ戻る)。それを床と天井の間に収め、clis の今の使いより下げない(天井を越えて使っている読みは
+   使いのまま)。"
   (val pool (if (is box None) free (min free box)))
-  (val avail (max 0 (- pool pending)))
-  (max clis-current (min ceiling (max floor (+ clis-current (min turn-room (int (* avail CLIS-ROOM-SHARE))))))))
+  (val held (min kept (max 0 pool)))
+  (val avail (max 0 (- pool held pending)))
+  (max clis-current (min ceiling (max floor (+ clis-current held (min turn-room (int (* avail CLIS-ROOM-SHARE))))))))
 
 
 (defk clis-lent [limit clis-current floor]

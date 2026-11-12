@@ -18,7 +18,7 @@
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が名指す・replace は設定の欄を替える
 (import json)
 (import doeff [with-handlers])
 (import doeff_core_effects [SlogEffect ReadText WriteText HttpRequest HttpResponse])
@@ -38,7 +38,7 @@
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell CliLayerSettings BoxLayerSettings BoxLayerLimit
                                                      CommandLayerSettings eviction-noted CLIS-LENT-LOG JOBS-SQUEEZE-LOG])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
-(import doeff_cluster._worker.entry.main [cli-layer-settings-of cli-ceiling-environ jobs-ceiling-bytes CLI-CEILING-CHILD-VAR])
+(import doeff_cluster._worker.entry.main [cli-layer-settings-of cli-ceiling-environ jobs-ceiling-bytes CLI-CEILING-CHILD-VAR CLI-KEPT-FILE-CHILD-VAR])
 (import doeff_cluster._worker.entry.main [box-layers-of cli-turn-room-bytes])
 
 (val GIB (* 1024 MIB))
@@ -875,3 +875,76 @@
       (except [ValueError]
         (:= stray-refused True)))
     (assert stray-refused stray)))
+
+
+;; --- 上に載る系が clis に残させる余白(eviction_rules の頭の註の帳面の 2')------------------------------------------------------------
+
+;; 上に載る系が書く余白の file(模擬の path)と、その値(3 GiB — 上に載る系の急ぎの仕事 3 本ぶん)。
+(val KEPT-FILE "/run/upper/clis-kept-bytes")
+(val KEPT (* 3 GIB))
+
+
+(deftest test-the-kept-room-stays-above-the-cli-use-before-placed-tasks-and-the-demand-room
+  ;; 空きが余る回: 使い 1 GiB の上に、残させる余白 3 GiB と、残りの空き(10 − 3 GiB)の半分の内の需要の余白(4 GiB の内)を残す。
+  (val wide (* 16 GIB))
+  (<- roomy int (clis-limit GIB (* 10 GIB) None FLOOR wide TURN-ROOM 0 KEPT))
+  (assert (= roomy (+ GIB KEPT (min TURN-ROOM (int (* 7 GIB CLIS-ROOM-SHARE))))) (// roomy MIB))
+  ;; ターンの外が空きを埋めた回(空き 3 GiB・置いた task の取り置き 2 GiB): 残させる余白は取り置きより先に残る(需要の余白は 0)。残させない
+  ;; 前の形は取り置きの外の 1 GiB の半分だけで、床に戻る。
+  (<- tight int (clis-limit GIB (* 3 GIB) None FLOOR wide TURN-ROOM (* 2 GIB) KEPT))
+  (<- unkept int (clis-limit GIB (* 3 GIB) None FLOOR wide TURN-ROOM (* 2 GIB)))
+  (assert (= #(tight unkept) #((+ GIB KEPT) FLOOR)) #((// tight MIB) (// unkept MIB)))
+  ;; 空きが残させる余白より小さい回は残る空きまで(線を越えて貸さない)。container の中の空きでも同じく切る。線を越えた回は使いのまま。
+  (<- short int (clis-limit GIB GIB None FLOOR wide TURN-ROOM 0 KEPT))
+  (<- boxed int (clis-limit GIB (* 10 GIB) GIB FLOOR wide TURN-ROOM 0 KEPT))
+  (<- over int (clis-limit (* 2 GIB) (- GIB) None FLOOR wide TURN-ROOM 0 KEPT))
+  (assert (= #(short boxed over) #((* 2 GIB) (* 2 GIB) (* 2 GIB))) #((// short MIB) (// boxed MIB) (// over MIB)))
+  ;; 天井は越えない。
+  (<- capped int (clis-limit GIB (* 10 GIB) None FLOOR CEILING TURN-ROOM 0 KEPT))
+  (assert (= capped CEILING) (// capped MIB))
+  ;; 床を越えて貸した量(jobs の層の上限から引く)に残させる余白が入る — jobs の層の受けから先に取る。
+  (<- lent int (clis-lent tight GIB FLOOR))
+  (assert (= lent (- (+ GIB KEPT) FLOOR)) (// lent MIB)))
+
+
+(deftest test-the-kept-file-is-declared-per-machine-and-passed-to-the-job-children
+  (val env {"WORKER_CLI_LAYER_CEILING" "6G" "WORKER_CLI_KEPT_FILE" KEPT-FILE})
+  (<- clis (| CliLayerSettings None) (cli-layer-settings-of env OWN NODE-A-LAYOUT "jobs"))
+  (assert (= clis.kept-file KEPT-FILE) clis.kept-file)
+  (<- environ dict (cli-ceiling-environ env))
+  (assert (= environ {CLI-CEILING-CHILD-VAR (str CEILING) CLI-KEPT-FILE-CHILD-VAR KEPT-FILE}) environ)
+  ;; 宣言の無い機体は読まず、子へも渡さない。
+  (<- plain (| CliLayerSettings None) (cli-layer-settings-of {"WORKER_CLI_LAYER_CEILING" "6G"} OWN NODE-A-LAYOUT "jobs"))
+  (assert (= plain.kept-file "") plain.kept-file)
+  ;; 天井の無い機体の宣言・絶対でない path は起動を断る。
+  (for [declared #({"WORKER_CLI_KEPT_FILE" KEPT-FILE} {"WORKER_CLI_LAYER_CEILING" "6G" "WORKER_CLI_KEPT_FILE" "run/kept"})]
+    (var refused False)
+    (try
+      (<- (cli-layer-settings-of declared OWN NODE-A-LAYOUT "jobs"))
+      (except [ValueError]
+        (:= refused True)))
+    (assert refused declared)))
+
+
+(deftest test-the-worker-reads-the-kept-file-every-tick-and-counts-a-missing-file-as-zero
+  ;; 平常の node-a(test-the-worker-writes-the-cli-layer-limit-and-lends-it-out-of-the-jobs-layer と同じ使い)に、上に載る系が 3 GiB を書いた file。
+  (val pods (* 12 GIB))
+  (val free (- (- ALLOCATABLE pods) GIB))
+  (<- base MemoryFiles (node-a-files pods (// GIB 2) GIB (* 3 GIB)))
+  (val start (MemoryFiles :dirs (+ base.dirs #("/run" "/run/upper"))
+                          :files (+ base.files #((MemoryFile :path KEPT-FILE :content (.encode (.format "{}\n" KEPT)))))))
+  (<- plain EvictionSettings (node-a-settings True))
+  (val settings (replace plain :clis (replace plain.clis :kept-file KEPT-FILE)))
+  (<- files MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler start) (node-a-api) slog-discard-handler]
+                          (ticked-files settings (EvictionCell) 2)))
+  (<- written str (content-at files (+ CLIS "/memory.max")))
+  (val kept-max (+ GIB KEPT (min NODE-A-TURN-ROOM (int (* (- free KEPT) CLIS-ROOM-SHARE)))))
+  (assert (= (int written) kept-max) #((// (int written) MIB) (// kept-max MIB)))
+  ;; jobs の層の上限は残させた余白の分も貸しとして引く(jobs の受けから先に取る)。
+  (<- jobs-max str (content-at files (+ JOBS "/memory.max")))
+  (assert (= (int jobs-max) (- (+ (// GIB 2) free) (- kept-max FLOOR))) (// (int jobs-max) MIB))
+  ;; file がまだ無い(上に載る系が書く前)回は 0 — 残させない前の形と同じ上限。
+  (<- bare MemoryFiles (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler base) (node-a-api) slog-discard-handler]
+                         (ticked-files settings (EvictionCell) 2)))
+  (<- unkept str (content-at bare (+ CLIS "/memory.max")))
+  (assert (= (int unkept) (+ GIB (min NODE-A-TURN-ROOM (int (* free CLIS-ROOM-SHARE))))) (// (int unkept) MIB)))
