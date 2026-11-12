@@ -2,7 +2,7 @@
 
 A step is a pure function ``step(state, input) -> Next(state, effects)``, or a function whose answer is a Program of
 that ``Next`` that performs no effect (a defk that only composes other defks). The effects are values the runtime
-carries out: ``Run`` starts a program in a task of its own, ``CancelRun`` cancels one, ``Arm`` / ``Disarm`` set and
+carries out: ``Run`` starts a program in a task of its own (or, ``inline``, runs it in the fold's task), ``CancelRun`` cancels one, ``Arm`` / ``Disarm`` set and
 take back a deadline of the fold's own (no task), ``Finish`` ends the fold.
 Every ``Run`` comes back to the step as exactly one input with its key — ``Answered`` (the program's value),
 ``Raised`` (the exception it ended with) or ``Cancelled`` (it ended by the ``CancelRun`` of its key).
@@ -53,11 +53,19 @@ class Run:
     ``priority`` is the scheduler priority of the run's task (and of the watcher a ``CancelRun`` of it starts, which
     publishes the end of a cancelled run): the ``Spawn`` default ``TaskPriority.NORMAL`` unless the step names another
     (any ``int``, higher first).
+
+    ``inline=True`` runs the program in the fold's own task instead, where the effect is carried out: no task, no
+    watcher and no trip of its end over the bus. The fold takes no input while it runs, and gives the step its end
+    (``Answered`` / ``Raised``) as the next input, before any input waiting on the bus. A step whose runs go one at a
+    time anyway (it holds its inputs while a run is running) pays for no task per run this way. ``priority`` is not
+    read, and a ``CancelRun`` never finds an inline run running: its end has come back before the step is given
+    another input.
     """
 
     key: Hashable
     program: "Program[object]"
     priority: TaskPriority | int = TaskPriority.NORMAL
+    inline: bool = False
 
     def __post_init__(self) -> None:
         # Checked here, not at the Spawn: the step's mistake is named where it was made, and the replay sees it too.
@@ -65,6 +73,8 @@ class Run:
             raise TypeError(
                 f"Run of the key {self.key!r} takes an int priority, got {type(self.priority).__name__}"
             )
+        if not isinstance(self.inline, bool):
+            raise TypeError(f"Run of the key {self.key!r} takes a bool inline, got {type(self.inline).__name__}")
 
 
 @dataclass(frozen=True)
