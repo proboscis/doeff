@@ -17,6 +17,7 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of])
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_hy._table [Table TableWrite table-of])
+(import doeff_cluster._coordinator.intent.task_table [task-table-of])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 
@@ -267,7 +268,7 @@
                                #** generation)))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (table-of (tuple (gfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) (TableWrite k (Placement #** v)))))
-    :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
+    :tasks (task-table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
     :board board-rows

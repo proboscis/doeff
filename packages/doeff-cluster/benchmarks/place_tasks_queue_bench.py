@@ -5,7 +5,10 @@ per-worker limit of 2 that is already full on the one worker with room, and queu
 worker. Each request to the coordinator runs one settle (a tick) on its single loop, so the column "slow" models how
 many replies of a 10-minute window would wait over 1 second (the coordinator's "slow reply" line) when requests
 arrive at --rate per second and each costs the measured tick.
-Usage: uv run python benchmarks/place_tasks_queue_bench.py [--counts 0,100,200,400] [--repeat 3] [--rate 10] [--profile]
+The column "request s" is one request's settle as the coordinator runs it: a heartbeat first writes one task row (a
+new task table object, as every write makes), then the settle runs on it. --held sets how many finished rows are kept
+for callers; a request's cost should not grow with it (only the queued and placed rows are walked).
+Usage: uv run python benchmarks/place_tasks_queue_bench.py [--counts 0,100,200,400] [--held 1400] [--repeat 3] [--rate 10] [--profile]
 """
 
 import argparse
@@ -22,6 +25,7 @@ from doeff_cluster import ClusterState, ClusterTiming, GroupLimit, TaskLimit, Wo
 from doeff_cluster._coordinator.core.api_policy import tick
 from doeff_cluster._coordinator.core.cluster_policy import place_tasks
 from doeff_cluster._coordinator.intent.cluster_model import TaskRecord
+from doeff_cluster._coordinator.intent.task_table import task_table_of
 from doeff_cluster._coordinator.intent.request_bodies import MeasuredLoad
 from doeff_hy._table import TableWrite, table_of
 
@@ -99,8 +103,8 @@ def queued_task(i: int, kind: str) -> TaskRecord:
     return replace(base, memory_mib=40_000, priority=-1)
 
 
-def held_tasks() -> list[TaskRecord]:
-    """Two running prewarm tasks on node-c (its group limit is full) and 1,400 finished rows kept for callers."""
+def held_tasks(held: int) -> list[TaskRecord]:
+    """Two running prewarm tasks on node-c (its group limit is full) and `held` finished rows kept for callers."""
     running = [
         replace(
             queued_task(90_000 + i, "prewarm"),
@@ -114,17 +118,22 @@ def held_tasks() -> list[TaskRecord]:
     ]
     finished = [
         replace(
-            queued_task(100_000 + i, "long"), id=f"f{i}", phase="finished", finished_ms=NOW - 1000
+            queued_task(100_000 + i, "long"),
+            id=f"f{i}",
+            phase="finished",
+            finished_ms=NOW - 1000,
+            shape=f"long-{i % 40}",
+            peak_mib=1000 + i,
         )
-        for i in range(1400)
+        for i in range(held)
     ]
     return running + finished
 
 
-def state_with(count: int) -> ClusterState:
-    """Build the cluster state with `count` unplaceable queued tasks on top of the held rows."""
+def state_with(count: int, held: int = 1400) -> ClusterState:
+    """Build the cluster state with `count` unplaceable queued tasks on top of `held` finished rows."""
     kinds = ("prewarm", "durable", "long")
-    rows = held_tasks() + [queued_task(i, kinds[i % 3]) for i in range(count)]
+    rows = held_tasks(held) + [queued_task(i, kinds[i % 3]) for i in range(count)]
     groups = table_of(
         (
             TableWrite("prewarm", GroupLimit(group="prewarm", scope="worker", limit=2)),
@@ -135,7 +144,7 @@ def state_with(count: int) -> ClusterState:
         (),
         table_of(tuple(TableWrite(m.name, worker_of(m)) for m in MACHINES)),
         table_of(()),
-        table_of(tuple(TableWrite(r.id, r) for r in rows)),
+        task_table_of(tuple(TableWrite(r.id, r) for r in rows)),
         group_limits=groups,
     )
 
@@ -172,29 +181,52 @@ def tick_once(state: ClusterState) -> object:
     return run(tick(state, NOW + 1, TIMING))
 
 
+def request_once(state: ClusterState, step: int) -> object:
+    """Run one request as the coordinator does: a heartbeat writes the measured peak of a running task, then the settle."""
+    running = state.tasks.row("r0")
+    heard = replace(
+        state, tasks=state.tasks.with_writes((TableWrite("r0", replace(running, peak_mib=100 + step)),))
+    )
+    return run(tick(heard, NOW + 1, TIMING))
+
+
+def request_seconds(state: ClusterState, repeat: int) -> float:
+    """Return the fastest of `repeat` requests, each on a fresh task table (one written row, as a heartbeat makes)."""
+    best = float("inf")
+    for step in range(repeat):
+        start = time.perf_counter()
+        request_once(state, step)
+        best = min(best, time.perf_counter() - start)
+    return best
+
+
 def main() -> None:
     """Print, for each queue length, the seconds of one place-tasks and of one whole tick in the steady state."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--counts", default="0,50,100,200,400")
+    parser.add_argument("--held", type=int, default=1400)
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--rate", type=float, default=10.0)
     parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
     counts = [int(c) for c in args.counts.split(",")]
-    print(f"{'queued':>7} {'place-tasks s':>14} {'tick s':>8} {'writes':>7} {'slow':>6}")
+    print(f"held rows {args.held}")
+    print(f"{'queued':>7} {'place-tasks s':>14} {'tick s':>8} {'request s':>10} {'writes':>7} {'slow':>6}")
     for count in counts:
         # The first tick writes the waiting text into each row; the ticks after it are the steady state.
-        state = run(tick(state_with(count), NOW, TIMING))
+        state = run(tick(state_with(count, args.held), NOW, TIMING))
         writes = run(place_tasks(NOW + 1, state, state.placements, TIMING))
         place = best_seconds(partial(place_once, state), args.repeat)
         whole = best_seconds(partial(tick_once, state), args.repeat)
+        request = request_seconds(state, args.repeat)
         print(
-            f"{count:>7} {place:>14.3f} {whole:>8.3f} {len(writes):>7} {slow_replies(whole, args.rate):>6}"
+            f"{count:>7} {place:>14.3f} {whole:>8.3f} {request:>10.4f} {len(writes):>7}"
+            f" {slow_replies(request, args.rate):>6}"
         )
         if args.profile and count == max(counts):
             profiler = cProfile.Profile()
             profiler.enable()
-            run(place_tasks(NOW + 1, state, state.placements, TIMING))
+            request_once(state, args.repeat)
             profiler.disable()
             pstats.Stats(profiler).sort_stats("tottime").print_stats(30)
 

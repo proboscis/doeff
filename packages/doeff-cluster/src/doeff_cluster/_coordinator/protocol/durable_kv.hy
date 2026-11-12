@@ -33,6 +33,7 @@
 (import collections.abc [Callable])
 (import functools [partial])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark SupersededRun])
+(import doeff_cluster._coordinator.intent.task_table [task-table-of])
 (import doeff_cluster._coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json job-from-json board-changes board-tally-of value-size
@@ -280,7 +281,7 @@
                                  :exclusive (get caps 1) :node (.get w "node" "")
                                  :seen-mark (.get w "lastSeenMs")
                                  #** generation)))))
-    :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
+    :tasks (task-table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
     :next-task (.get counter "nextTask" 1)
     :task-prefix (.get counter "taskPrefix" "t")
     :revision (.get counter "revision" 0)

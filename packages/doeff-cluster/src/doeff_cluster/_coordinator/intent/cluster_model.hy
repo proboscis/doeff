@@ -22,6 +22,7 @@
 (import doeff [EffectBase])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._table [Table table-of])
+(import doeff_cluster._coordinator.intent.task_table [ENDED-PHASES TaskTable task-table-of])
 (import doeff_cluster._shared.intent.job_model [IdleBudget JobSpec])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow MeasuredLoad PrepareReport])
@@ -1326,15 +1327,15 @@
 (setv PLACED-PHASES (frozenset #("assigned" "preparing")))
 
 
-;; 終わった task の phase(旧い形の保存の行を読む時に、まだ終わっていない行だけを断る — task-record-from-json)。
-(setv ENDED-PHASES (frozenset #("finished" "code-failed" "failed" "version-mismatch" "lost" "cancelled" "env-failed")))
+;; 終わった task の phase(ENDED-PHASES)は task の表の索引と分け合う(task_table — 切り離した終わりの行を走査の対象から外す)。
 
 
 (defclass [(dataclass :frozen True)] ClusterState []
   (setv #^ (get tuple #(ClusterJob ...)) jobs #())
   (setv #^ (get Table WorkerInfo) workers (field :default-factory (partial table-of #())))
   (setv #^ (get Table Placement) placements (field :default-factory (partial table-of #()))) ; job の名 → Placement
-  (setv #^ (get Table TaskRecord) tasks (field :default-factory (partial table-of #())))
+  ;; task の表は TaskTable(書きのたびに派生の値の索引を差分で進める — task_table の頭の註)。
+  (setv #^ (get Table TaskRecord) tasks (field :default-factory (partial task-table-of #())))
   (setv #^ int next-task 1)
   ;; task の id の頭(2026-09-27 — #757)。id = <頭><番号>。以前からの置き場は "t"(t1, t2 …)。置き場の無いところから起きた
   ;; coordinator は起動ごとに違う頭を振る(cluster_policy.fresh-task-prefix)— 前の coordinator が振った id(worker に blob が

@@ -294,7 +294,8 @@
    置くため(節の頭の註)。変わらなければ state をそのまま返す。"
   (var marks #())
   (var rows #())
-  (for [task (.rows state.tasks)]
+  ;; 積むのは queued の行だけなので、走査の対象の行(task の表の索引 — 保持の間の終わった行を回らない)の queued の行だけを読む。
+  (for [task (scan-rows state.tasks) :if (= task.phase "queued")]
     (<- row (| DetachedEnded None) (overdue-of task now timing))
     (when (is-not row None)
       (:= marks (+ marks #((TableWrite task.id (replace task :queued-noticed-ms now)))))
