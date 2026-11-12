@@ -14,6 +14,7 @@ the same scope:
 - effects from a handler body travel to the outer boundaries;
 - a Spawn inside the reinstalled stack captures the same boundaries again;
 - the one-step form uses fewer VM steps than the nested form;
+- leaving the stack, directly or as a spawned task, costs the same steps at any depth;
 - a malformed stack is named where it is built.
 
 Boundaries are captured exactly as the scheduler captures them: a catching
@@ -308,6 +309,32 @@ def test_leaving_a_stack_costs_the_same_steps_at_any_depth(body):
         return steps_of(catching_broken(reinstall_one_step(body, stack_of(depth))))
 
     shallow, deep = leave(1), leave(60)
+    assert deep == shallow, (shallow, deep)
+
+
+@handler
+def who_only(effect: Who, k):
+    """Declares the one effect type it answers, so Spawn and Wait pass it without a step."""
+    return (yield Resume(k, "who-only"))
+
+
+@do
+def spawn_and_wait(program):
+    task = yield Spawn(program)
+    return (yield Wait(task))
+
+
+def test_a_spawned_task_costs_the_same_steps_under_any_depth():
+    """A task re-entered under its spawn-site stack leaves it in one step, so what the task
+    adds over running its body inline does not grow with the number of handlers."""
+
+    def task_cost(depth):
+        def under(program):
+            return scheduled(functools.reduce(lambda inner, _: who_only(inner), range(depth), program))
+
+        return steps_of(under(spawn_and_wait(ask_who_or(7)))) - steps_of(under(ask_who_or(7)))
+
+    shallow, deep = task_cost(1), task_cost(60)
     assert deep == shallow, (shallow, deep)
 
 
