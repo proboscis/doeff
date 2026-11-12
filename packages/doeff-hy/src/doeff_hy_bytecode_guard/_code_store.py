@@ -309,6 +309,23 @@ def add_code(store: str, key: str, code: CodeType, data: bytes | None = None) ->
     )
 
 
+def keep_code(store: str, key: str, code: CodeType, data: bytes) -> str | None:
+    """Put the used mark on the entry of key key that holds code (the entry with code's record — :func:`code_fingerprint`), or add it when the store no longer has it — for a
+    .pyc the worker's baking tool carried over from another root's tree and used without looking the store up (ADR-DOE-BUILD-002 R3c). Without this, an entry that roots keep
+    using through the carry-over is not marked, the sweep removes it after 7 days, and the next preparation with nothing to carry from rebakes it (R3b). The mark is the
+    same as a use of :func:`current_data` (advanced only when older than :data:`TOUCH_AFTER_SECONDS`). data = the marshaled bytes of code (the bytes after the header of the
+    carried .pyc). Returns the reason it could not be added (same as :func:`add_code` — None if marked or added)."""
+    path = os.path.join(_code_dir(store, key), code_fingerprint(code) + CODE_SUFFIX)
+    try:
+        at = os.stat(path).st_mtime_ns
+    except FileNotFoundError:
+        return add_code(store, key, code, data)
+    except OSError as error:
+        return f"cannot read the store entry of a carried .pyc: {error}"
+    _touch_if_older(path, at)
+    return None
+
+
 def add_tree(store: str, key: str, name: str, data: bytes) -> str | None:
     """Add a tree entry expanded by import-time compilation to key key (name = name — the fingerprint of the macro record the expansion depended on; an entry with the same name is rewritten).
     How the added entry's time is placed and how the cap on the key's entry count (:data:`TREE_ENTRIES_PER_KEY`) is kept are the same as :func:`add_code`. Returns the reason it could not be

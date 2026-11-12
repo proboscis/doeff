@@ -27,10 +27,29 @@
 
 (defrecord BakeTree
   "焼く木 1 つ。named = 命令に書かれた木の綴り(報告の行の名 — 呼び手はこの綴りで木を引き当てる)・path = symlink を辿った絶対 path・
-   roots = 木の中の import の根(前が先)。"
+   roots = 木の中の import の根(前が先)・inherit = 写し元の木(--inherit — 準備がこの木を hardlink で写した、依存のキーの同じ完成済みの
+   root の木・None = 無い)。"
   (#^ str named)
   (#^ str path)
-  (#^ tuple roots))
+  (#^ tuple roots)
+  (setv #^ (| str None) inherit None))
+
+
+(defrecord ClosureRow
+  "閉包の表の 1 行(閉包の歩みが訪ねた source 1 つ): rel = 木の中の相対 path・name = module 名・imports = import の名(imported-names の
+   答えの形 #(#(点の数 名 取り出す名の tuple) …))。"
+  (#^ str rel)
+  (#^ str name)
+  (#^ tuple imports))
+
+
+(defrecord ClosureWalk
+  "閉包の歩みの答え: scopes = 木ごとの焼く範囲(木の順の、相対 path の frozenset か None = 根の下を全部)・rows = 木ごとの閉包の表の行
+   (木の順の、ClosureRow の tuple — 次の準備が写し元の表として読む)・changed = 写し元から変わった木の module 名(写し元の木と表が全部の木に
+   在る時だけ — 無ければ None で、焼きの道具へ写し元を渡さない)。"
+  (#^ tuple scopes)
+  (#^ tuple rows)
+  (#^ (| frozenset None) changed))
 
 
 (defrecord ModuleIndex
@@ -166,6 +185,16 @@
                    (TreeArgs :named tree :roots (tuple (gfor r (.split (get roots i) ",") :if r r)))))))
 
 
+(defk tree-inherits [count inherits]
+  {:pre [(: count int) (: inherits tuple)] :post [(: % (| tuple str))] :tags {:context "worker" :role "judgment"}}
+  "--inherit の値の列(inherits — 木ごとに 1 つ・空の文字 = 写し元の無い木)を、木の順の写し元の木の列(str か None)に揃えるため。
+   --inherit を書かない命令は全部 None。数が木の数と揃わなければ使い方の誤りの文。"
+  (cond
+    (not inherits) (tuple (gfor _ (range count) None))
+    (!= (len inherits) count) (.format "--inherit は --tree ごとに 1 つ書く(木 {} に --inherit {})" count (len inherits))
+    True (tuple (gfor i inherits (if i i None)))))
+
+
 (defk trees-import-path [trees]
   {:pre [(: trees tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "焼く process の import の路の先頭に足す dir(木の順・木の中は根の順)を求めるため — 焼く source の macro が同じ木や別の木の module を
@@ -280,6 +309,60 @@
   (if (is problem None) entries problem))
 
 
+;; --- 閉包の表(写し元の木からの引き継ぎ・ADR-DOE-BUILD-002 R3c)----------------------------------------------------
+;; 準備は木の根に、閉包の歩みが訪ねた source ごとの module 名と import の名の表を 1 つ残す(隠し file — 走査と git archive の中身に
+;; 混ざらず、木を写す時にも写されない)。次の準備は、写し元の木(--inherit)の表のうち、写し元と同じ file(同じ inode)の source の行を
+;; 使い、source も保存先の entry も読まない。表は、どの module が写し元から変わったか(焼きの道具へ渡す changed)を求める材料でもある。
+
+;; 表の file の名(木の根)と、形の印(形か imported-names の読み方を変えたら末尾の番号を上げる — 古い表は読まない)。
+(val CLOSURE-TABLE ".doeff-closure-table.json")
+(val CLOSURE-TABLE-TAG "doeff-cluster/closure-table/1")
+
+
+(defk closure-table-text [rows hy-version]
+  {:pre [(: rows tuple) (: hy-version str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "木 1 つの閉包の表の行(ClosureRow の列)を表の file の中身(JSON の境界の 1 点)に綴るため。Hy の source の import の名は Hy の読み手の
+   版で変わりうるので、Hy の版を載せる。"
+  (json.dumps {"tag" CLOSURE-TABLE-TAG
+               "hy" hy-version
+               "rows" (lfor r rows [r.rel r.name (lfor #(dots name names) r.imports [dots name (list names)])])}
+              :ensure-ascii False))
+
+
+(defk closure-table-of [text hy-version]
+  {:pre [(: text str) (: hy-version str)] :post [(: % (| dict None))] :tags {:context "worker" :role "judgment"}}
+  "表の file の中身を、相対 path → ClosureRow の dict にするため。JSON でない・形の印か Hy の版が違う・行の形が違う表は None(その木は
+   写し元の表を持たない物として扱う — 全部を今までどおり読む)。"
+  (var parsed None)
+  (try
+    (:= parsed (json.loads text))
+    (except [ValueError]
+      (:= parsed None)))
+  (val rows (if (and (isinstance parsed dict) (= (.get parsed "tag") CLOSURE-TABLE-TAG) (= (.get parsed "hy") hy-version))
+                (.get parsed "rows")
+                None))
+  (val shaped (and (isinstance rows list)
+                   (all (gfor r rows
+                              (and (isinstance r list) (= (len r) 3) (isinstance (get r 0) str) (isinstance (get r 1) str)
+                                   (isinstance (get r 2) list)
+                                   (all (gfor e (get r 2)
+                                              (and (isinstance e list) (= (len e) 3) (isinstance (get e 0) int) (isinstance (get e 1) str)
+                                                   (isinstance (get e 2) list) (all (gfor x (get e 2) (isinstance x str)))))))))))
+  (if shaped
+      (dfor r rows (get r 0) (ClosureRow :rel (get r 0) :name (get r 1)
+                                         :imports (tuple (gfor e (get r 2) #((get e 0) (get e 1) (tuple (get e 2)))))))
+      None))
+
+
+(defk changed-modules [visited same tables]
+  {:pre [(: visited tuple) (: same frozenset) (: tables tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "写し元から変わった木の module 名を求めるため: 閉包の歩みが訪ねた module(visited — #(木の番号 相対 path module 名) の列)のうち写し元と
+   同じ file でない物(変わった・増えた)と、写し元の表の module(tables — 木の順の 相対 path → ClosureRow の dict)のうち、今の歩みで
+   写し元と同じ file と確かめられなかった物(消えた・変わった・今の閉包の外に出た)。same = 写し元と同じ file と確かめた #(木の番号 相対 path)。"
+  (| (frozenset (gfor #(i rel name) visited :if (not-in #(i rel) same) name))
+     (frozenset (gfor #(i table) (enumerate tables) row (.values table) :if (not-in #(i row.rel) same) row.name))))
+
+
 (defk scoped-sources [sources scope]
   {:pre [(: sources (| list tuple)) (: scope (| frozenset None))] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
   "木の走査の source の列(sources)を、その木の焼く範囲(scope — 閉包の相対 path・None = 根の下を全部)に絞るため(焼く物と検めの対象)。"
@@ -309,23 +392,27 @@
   (tuple (gfor item (sorted items :key (fn [i] #((- i.size) i.tree i.rel))) #(item.tree item.rel item.name))))
 
 
-(defk bake-argv [python tool jobs paths store-module store progress]
-  {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple) (: store-module str) (: store (| str None)) (: progress (| str None))]
+(defk bake-argv [python tool jobs paths store-module store progress [inherits #()]]
+  {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple) (: store-module str) (: store (| str None)) (: progress (| str None))
+         (: inherits tuple)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "焼きの道具(tool = worker 自身のコードの _foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
    準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir・store-module = worker の版の doeff-hy の
    code_store.py・store = 保存先の dir — None は保存先を使わない・progress = 進みの印の file — 道具が 1 つ用意するたびに時刻を進める・
-   None は印を触らない)。"
+   None は印を触らない・inherits = #(木の path 写し元の木の path) の列 — 道具が写し元の .pyc を置いて照らさずに残す・ADR-DOE-BUILD-002 R3c)。"
   (+ #(python "-m" "hy" tool "--jobs" (str jobs) "--store-module" store-module)
      (if (is store None) #() #("--store" store))
      (if (is progress None) #() #("--progress" progress))
-     (tuple (gfor p paths a #("--path" p) a))))
+     (tuple (gfor p paths a #("--path" p) a))
+     (tuple (gfor #(tree source) inherits a #("--inherit" tree source) a))))
 
 
-(defk bake-input [items]
-  {:pre [(: items tuple)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "焼く物(#(木の path 相対 path module 名) の列)を焼きの道具の標準入力(1 つ 1 行・tab で区切る・この順に焼く)にするため。"
-  (.join "" (gfor #(tree rel name) items (.format "{}\t{}\t{}\n" tree rel name))))
+(defk bake-input [items [changed (frozenset)]]
+  {:pre [(: items tuple) (: changed frozenset)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "焼く物(#(木の path 相対 path module 名) の列)を焼きの道具の標準入力(1 つ 1 行・tab で区切る・この順に焼く)にするため。写し元から
+   変わった module(changed)は 1 つ 1 行の `changed\\t<module 名>`(名の順)。"
+  (+ (.join "" (gfor #(tree rel name) items (.format "{}\t{}\t{}\n" tree rel name)))
+     (.join "" (gfor name (sorted changed) (.format "changed\t{}\n" name)))))
 
 
 (defk bake-answer [text]

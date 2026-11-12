@@ -24,6 +24,8 @@
 ;;;                                                          無い物と今の macro に合わない物だけを焼く・版と root をまたぐ — #3858)。
 ;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
 ;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)。
+;;;                                                          依存のキーの同じ root から写した木は、変わらない source の .pyc と
+;;;                                                          閉包の表を写し元の木から引き継ぐ(R3c — inherit-trees)。
 ;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
@@ -112,6 +114,16 @@
    根は比べない — 写すのは写し元の commit が追跡する file だけで、木の中身は repo と commit で決まる(venv・焼いた .pyc・native の組みの
    出力は追跡しない物なので、写し元の宣言が違っても新しい木へ渡らない)。直す前は環境の同一性(lock を含む元の鍵)で root を選び、
    uv.lock が替わるたびに全部の木を展開し直した。"
+  (<- found (| tuple None) (source-root request repo))
+  (if (is found None)
+      None
+      (TreeSource :dir (.format "{}/{}" (. (get found 0) root) (. (get found 1) name)) :commit (. (get found 1) commit))))
+
+
+(defk source-root [request repo]
+  {:pre [(: request PrepareRequest) (: repo RepoCheckout)] :post [(: % (| tuple None))] :tags {:context "worker" :role "judgment"}}
+  "宣言の repo 1 つの木を写す元の root と、その root の宣言の同じ repo を #(KnownRoot RepoCheckout) で選ぶため(選び方は tree-source の
+   註 — 同じ repo を持つ完成済みの root のうち最も新しく完成した物)。無ければ None。"
   (<- wanted dict (repo-source-material repo))
   (var best None)
   (var best-order None)
@@ -120,9 +132,35 @@
                (or (is best-order None) (> #(k.made-ms k.root) best-order)))
       (<- held (| RepoCheckout None) (repo-in k.env wanted))
       (when (is-not held None)
-        (:= best (TreeSource :dir (.format "{}/{}" k.root held.name) :commit held.commit))
+        (:= best #(k held))
         (:= best-order #(k.made-ms k.root)))))
   best)
+
+
+(defk inherit-trees [request]
+  {:pre [(: request PrepareRequest)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  "焼く道具に、変わらない source の .pyc と閉包の表を写し元の木から引き継がせる時の、repo の名 → 写し元の木の dir を求めるため
+   (ADR-DOE-BUILD-002 R3c)。宣言の全部の repo の木の写し元(source-root)が 1 つの同じ root で、その root の platform と依存のキー
+   (dependency-key — project の repo の commit の外の全部: uv.lock・他の repo の commit・python・import の根)が新しい root と同じ時だけ
+   引き継ぐ — venv と Hy の版と木の外の macro の提供元が同じで、木の中の差は焼く道具が file の同じさで見分けられる。写し元の違う repo が
+   混ざる・依存のキーが違う時は空(どの木も引き継がず、保存先から書く)。"
+  (var chosen None)
+  (var mixed False)
+  (var held-of {})
+  (for [repo request.env.repos]
+    (<- found (| tuple None) (source-root request repo))
+    (cond
+      (is found None) (:= mixed True)
+      (and (is-not chosen None) (!= (. (get found 0) root) chosen.root)) (:= mixed True)
+      True (do (:= chosen (get found 0))
+               (:= held-of (| held-of {repo.name (. (get found 1) name)})))))
+  (if (or mixed (is chosen None) (!= chosen.platform request.platform))
+      {}
+      (do (<- theirs str (dependency-key chosen.env request.platform))
+          (<- ours str (dependency-key request.env request.platform))
+          (if (= theirs ours)
+              (dfor #(name held) (.items held-of) name (.format "{}/{}" chosen.root held))
+              {}))))
 
 
 (defk env-marker->json [marker]
@@ -430,13 +468,16 @@
 (defk bytecode-trees [request state editable]
   {:pre [(: request PrepareRequest) (: state PrepareState) (: editable tuple)] :post [(: % tuple)]}
   "焼く根を持つ repo ごとの焼く木(BytecodeTree の列・宣言の repo の順)を作るため — 焼く根 = 宣言の import の根と venv に editable で
-   入る dir(bytecode-roots)・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。"
+   入る dir(bytecode-roots)・宣言の根を持つかで木の問題の扱いが分かれる(bytecode-outcome)。写し元の木(inherit-trees)が在れば
+   木ごとに添える(ADR-DOE-BUILD-002 R3c)。"
+  (<- inherits dict (inherit-trees request))
   (var trees #())
   (for [repo request.env.repos]
     (<- roots tuple (bytecode-roots request.env editable repo.name))
     (when roots
       (<- declared tuple (repo-roots request.env repo.name))
-      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots :declared (bool declared)))))))
+      (:= trees (+ trees #((BytecodeTree :tree (.format "{}/{}" request.root repo.name) :roots roots :declared (bool declared)
+                                         :inherit (.get inherits repo.name)))))))
   trees)
 
 
@@ -482,7 +523,9 @@
    editable — flat layout の package — は tests や docs も焼くが、中身の同じ source は保存先から書く)。木の問題の扱いは
    bytecode-outcome。1 回の焼きの前と後に進みの印を触り直す(StageStarted を同じ名で — 印の中身は変えず時刻だけ進む)。.pyc は source の
    中身で引く保存先から書き、焼くのは中身の変わった file と macro の出所の変わった使う側だけ(#3858 — 前は前の root から引き継ぎ、
-   引き継ぎ元の無い root と macro の file が変わった版は全部を焼き直した・負荷の高い時に 267.9 秒 — #3515)。
+   引き継ぎ元の無い root と macro の file が変わった版は全部を焼き直した・負荷の高い時に 267.9 秒 — #3515)。保存先の上で、依存のキーの
+   同じ root から写した木は、変わらない source の .pyc と閉包の表を写し元の木から引き継ぐ(inherit-trees・ADR-DOE-BUILD-002 R3c — 仕事は
+   写し元からの差の大きさ)。
    焼く前に venv の Hy の compiler の版を読む(完成マーカーに残す — #3706)。"
   (<- pdir str (project-dir request.env request.root))
   (<- editable tuple (ReadEditableRoots pdir request.root))

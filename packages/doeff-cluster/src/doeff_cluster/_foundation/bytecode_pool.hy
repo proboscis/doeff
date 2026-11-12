@@ -3,9 +3,10 @@
 ;;; 渡す(chunksize 1 — 束で渡すと遅い file を含む束を 1 core が抱える)。渡す順は呼び手が決める(大きい source から)。
 ;;;
 ;;;   python -m hy <worker のコード>/doeff_cluster/_foundation/bytecode_pool.hy --jobs N --store-module <code_store.py>
-;;;       [--store <保存先の dir>] [--progress <進みの印の file>] [--path <dir> …] < 焼く物の行
+;;;       [--store <保存先の dir>] [--progress <進みの印の file>] [--path <dir> …] [--inherit <木> <写し元の木> …] < 焼く物の行
 ;;;
-;;; 標準入力 = 焼く物 1 つ 1 行の `<木の path>\t<相対 path>\t<module 名>`(この順に pool へ渡す)。
+;;; 標準入力 = 焼く物 1 つ 1 行の `<木の path>\t<相対 path>\t<module 名>`(この順に pool へ渡す)と、写し元から変わった module 1 つ
+;;; 1 行の `changed\t<module 名>`(--inherit の在る時だけ)。
 ;;; 1 つの用意(bake-one): source の中身で保存先(doeff-hy の code_store — 版・作業木をまたいで中身で引く入口の 1 つ)を引き、鍵に並ぶ macro の
 ;;; 環境ごとの code のうち今の source と今の環境の macro に合う物が在れば(doeff-hy の bytecode-is-current — Hy の source は記録の macro の
 ;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を置く(stored)。無い・合わない物は焼いて .pyc を置き、今の環境の code を
@@ -18,6 +19,13 @@
 ;;; 同じ 245 本をそれぞれ 166〜979 秒かけて焼いた)。用意は 2 回り: 1 回り目は焼かずに書けるだけ書き、2 回り目に残りを焼く(bake の註)。
 ;;; 分け合う保存先が届かない・鍵を断る・誤りを返す時は、名乗ってその回(子の process では残り)は機体の中で焼く — 準備は落とさない。
 ;;; 木に既に在る .pyc(同じ commit の木を hardlink で写した root)が今の source と macro に合う物は、pool へ渡さずに残す(reused)。
+;;; 写し元の木(--inherit <木> <写し元の木> — 準備がこの木を hardlink で写した、依存のキーの同じ完成済みの root の木・ADR-DOE-BUILD-002
+;;; R3c)が在れば、焼く前に、写し元の file と同じ file(同じ inode — 中身の変わらない source)の .pyc を写し元の木から hardlink で置く。
+;;; 置いた .pyc は、頭(PEP 552 の checked hash)が今の source に合い、記録の依る module(root の guard の bytecode_dependency_modules)が
+;;; 変わった module(標準入力の changed の行 — 準備の道具が閉包の歩みで求めた、写し元から変わった・増えた・消えた木の module)に無ければ、
+;;; 照らさずに残す(reused・保存先の印は keep-mark が進める)。依る module が変わった物と記録を読めない物は、今までどおり照らし
+;;; (bytecode_is_current)、合わなければ保存先の道で用意する。仕事の量は写し元からの差の大きさになる(全部を保存先で引いて照らすと、
+;;; 変わらない約 3,250 本の照らしが CPU の飽和した機体で 36〜109 秒かかった — 2026-11-10)。
 ;;; 標準出力 = 1 つ 1 行で、焼けなかった物は `failed\t<木の path>\t<相対 path>\t<理由>`(理由の tab と改行は空白)、保存先の code から書いた
 ;;; 物は `stored\t<木の path>\t<相対 path>`、分け合う保存先の code から書いた物は `fetched\t<木の path>\t<相対 path>`、焼かずに残した物は
 ;;; `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由と、分け合う保存先を使えなかった理由と、保存先の
@@ -50,6 +58,7 @@
 (import os)
 (import posixpath)
 (import sys)
+(import time)
 (import concurrent.futures [ProcessPoolExecutor as-completed])
 (import concurrent.futures.process [BrokenProcessPool])
 (import functools [partial])
@@ -155,6 +164,82 @@
           data (.read-bytes (Path source)))
     (.bytecode-is-current (guard-module) source existing data)
     (except [OSError] False)))
+
+
+(defn #^ bool same-file [#^ str here #^ str there]  ; cannot be a defk: root の版の doeff の macro を使わない道具の素の関数(頭の註)
+  "2 つの path が同じ file(同じ device の同じ inode)か — 準備が写し元の木から hardlink で写した source は、写し元の file と同じ file
+   (中身が変わらない)。どちらかを読めなければ偽。"
+  (try
+    (os.path.samestat (os.stat here) (os.stat there))
+    (except [OSError] False)))
+
+
+(defn #^ bool carry-pyc [#^ str tree #^ str source #^ str rel]  ; cannot be a defk: 焼く前に親が呼ぶ素の file の置き
+  "新しい木 tree の source rel が写し元の木 source の rel と同じ file なら、写し元の .pyc を tree の同じ置き場へ hardlink で置くため
+   (置いたか — 写し元に .pyc が無い・置けない時は偽で、その物は今までどおり保存先の道で用意する)。別の名に link してから置き換える
+   (写し元の .pyc と保存先の .pyc は書き換えない — R6)。既に同じ file が置かれていれば置き直さない。"
+  (setv here (posixpath.join tree rel)
+        origin (pyc-path (posixpath.join source rel))
+        target (pyc-path here)
+        temporary (.format "{}.{}.carry" target (os.getpid)))
+  (when (not (same-file here (posixpath.join source rel)))
+    (return False))
+  (try
+    (setv seen (os.stat origin))
+    (except [OSError]
+      (return False)))
+  (when (and (os.path.lexists target) (os.path.samestat (os.lstat target) seen))
+    (return True))
+  (try
+    (os.makedirs (posixpath.dirname target) :exist-ok True)
+    (os.link origin temporary)
+    (os.replace temporary target)
+    True
+    (except [OSError]
+      (when (os.path.lexists temporary)
+        (os.unlink temporary))
+      False)))
+
+
+(defn #^ bool carried-current [#^ str tree #^ str rel #^ frozenset changed]  ; cannot be a defk: root の版の doeff の macro を使わない道具の素の関数(頭の註)
+  "写し元から置いた .pyc を照らさずに残せるか(偽 = 照らしで決める — current-pyc)。頭が今の source の checked hash の頭(pyc-head)と
+   同じで、root の guard の bytecode_dependency_modules が答える記録の依る module(Python の source は空)が changed と重ならない時だけ真。
+   その名を出さない古い root の guard と、記録を module で判じられない .pyc(None)は照らしへ回す。"
+  (setv source (posixpath.join tree rel)
+        modules-of (getattr (guard-module) "bytecode_dependency_modules" None))
+  (try
+    (setv pyc (.read-bytes (Path (pyc-path source)))
+          data (.read-bytes (Path source)))
+    (except [OSError]
+      (return False)))
+  (when (or (not (callable modules-of)) (!= (cut pyc 0 PYC-HEAD-BYTES) (pyc-head data)))
+    (return False))
+  (setv modules (modules-of source pyc))
+  (and (is-not modules None) (not (& modules changed))))
+
+
+(defn #^ (| str None) keep-mark [#^ (| str None) store #^ str tree #^ str rel #^ str name]  ; cannot be a defk: 照らさずに残した物ごとに親が呼ぶ素の関数
+  "照らさずに残した引き継ぎの .pyc の保存先の印を進めるため(R3c — 印が進まないと、使い続ける entry を掃除が 7 日で消す・R3b)。.pyc の
+   時刻が code_store の TOUCH-AFTER-SECONDS より新しければ何もしない(続く root の準備は stat 1 回で済む)。古ければ .pyc の時刻を今に
+   し(保存先の .pyc は R6 で木の .pyc と同じ file)、code の entry は code_store の keep-code で印を進めるか、無ければ足し直す。答え =
+   印を進められなかった理由(None = 進めた・進めるまでもない・保存先を使わない)。"
+  (when (is store None)
+    (return None))
+  (setv code-store (get sys.modules STORE-MODULE-NAME)
+        source (posixpath.join tree rel)
+        cache (pyc-path source))
+  (try
+    (setv at (. (os.stat cache) st-mtime-ns))
+    (when (< (- (time.time-ns) at) (* code-store.TOUCH-AFTER-SECONDS 1000000000))
+      (return None))
+    (setv pyc (.read-bytes (Path cache))
+          data (.read-bytes (Path source)))
+    (os.utime cache)
+    (except [error OSError]
+      (return (.format "引き継いだ .pyc の保存先の印を進められない: {}" error))))
+  (setv body (cut pyc PYC-HEAD-BYTES None)
+        key (.code-key code-store source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize))
+  (.keep-code code-store store key (marshal.loads body) body))
 
 
 (defn #^ None write-pyc [#^ str source #^ bytes pyc]  ; cannot be a defk: process の pool の子が呼ぶ file の書き
@@ -318,7 +403,20 @@
       (pooled work jobs paths one progress)))
 
 
-(defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress share]  ; cannot be a defk: process の pool を回す
+(defn #^ tuple carry [#^ tuple items #^ dict inherits #^ frozenset changed #^ (| str None) store]  ; cannot be a defk: 焼く前に親が呼ぶ素の関数
+  "写し元の木の在る木の items(#(木の path 相対 path module 名) の列)に、写し元の .pyc を置き(carry-pyc)、照らさずに残せる物
+   (carried-current)の保存先の印を進めるため(頭の註 --inherit)。答え = #(items と同じ順の、照らさずに残すか の列 置いた数
+   印を進められなかった理由の列)。inherits = 木の path → 写し元の木の path(--inherit)。"
+  (setv carried (tuple (gfor #(tree rel _) items
+                             :setv source (.get inherits tree)
+                             (and (is-not source None) (carry-pyc tree source rel))))
+        trusted (tuple (gfor #(#(tree rel _) placed) (zip items carried) (and placed (carried-current tree rel changed))))
+        marks (tuple (gfor #(item keep) (zip items trusted) :if keep (keep-mark store #* item))))
+  #(trusted (sum carried) (tuple (gfor m marks :if m m))))
+
+
+(defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress share
+                     #^ dict inherits #^ frozenset changed]  ; cannot be a defk: process の pool を回す
   "items(#(木の path 相対 path module 名) の列)のうち、在る .pyc が今の source と macro に合わない物をこの順に用意し、#(焼けなかった物の
    #(木の path 相対 path 理由) の列 保存先から書いた物の #(木の path 相対 path) の列 焼かずに残した物の #(木の path 相対 path) の列
    保存先へ書けなかった理由の列(重ねない・名の順) 分け合う保存先から書いた物の #(木の path 相対 path) の列)を返すため。jobs 個の
@@ -328,10 +426,17 @@
    share = 分け合う保存先(code_store の Share・None = 使わない)。在れば 2 回りで用意する: 1 回り目は焼かずに機体の保存先と
    分け合う保存先から書けるだけ書き(焼く 1 本の秒の間に取り寄せは数十本進む)、2 回り目に残りを、焼く直前にもう 1 度取り寄せを試してから
    焼く。同じ root を同時に準備する並びの多い機体が先へ進んで置いた物を、並びの少ない機体が焼かずに取り寄せるため — 1 回りだけでは、
-   準備を早く始めた機体は、遅れて始めた並びの多い機体が置く物を待たずに焼いてしまう。"
+   準備を早く始めた機体は、遅れて始めた並びの多い機体が置く物を待たずに焼いてしまう。
+   inherits・changed = 写し元の木と、写し元から変わった module(頭の註 --inherit — carry)。写し元から置いた .pyc のうち、照らさずに
+   残せる物は照らさず、残りは今までどおり照らす(焼かずに残した物の列に入る)。置いた数と照らさずに残した数は stderr の 1 行で名乗る。"
   (prepare-path paths)
-  (setv kept (tuple (gfor i items (current-pyc (get i 0) (get i 1))))
+  (setv #(trusted carried carry-problems) (carry items inherits changed store)
+        kept (tuple (gfor #(i t) (zip items trusted) (or t (current-pyc (get i 0) (get i 1)))))
         work (tuple (gfor #(i k) (zip items kept) :if (not k) i)))
+  (when inherits
+    (print (.format "写し元の木から引き継いだ .pyc: carried={} trusted={} checked={}"
+                    carried (sum trusted) (- carried (sum trusted)))
+           :file sys.stderr :flush True))
   (mark-progress progress)
   (setv first-results (if (is share None) #() (pass-results work jobs paths (partial bake-one store share True) progress))
         answered (dict (gfor #(item result) (zip work first-results) :if (!= (get result 0) "missed") #(item result)))
@@ -343,7 +448,8 @@
   #((tuple (gfor #(item result) (zip work results) :if (= (get result 0) "failed") #((get item 0) (get item 1) (get result 1))))
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "stored") #((get item 0) (get item 1))))
     (tuple (gfor #(i k) (zip items kept) :if k #((get i 0) (get i 1))))
-    (tuple (sorted (sfor r (+ first-results results) :if (and (!= (get r 0) "failed") (get r 1)) (get r 1))))
+    (tuple (sorted (| (sfor r (+ first-results results) :if (and (!= (get r 0) "failed") (get r 1)) (get r 1))
+                      (set carry-problems))))
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "fetched") #((get item 0) (get item 1))))))
 
 
@@ -379,6 +485,8 @@
   (.add-argument parser "--store" :default None :help "保存先の dir(無ければ保存先を使わない)")
   (.add-argument parser "--progress" :default None :help "進みの印の file(1 つ用意し終えるたびに時刻を進める・無ければ触らない)")
   (.add-argument parser "--path" :action "append" :help "焼く process の import の路の先頭に足す dir(前が先)")
+  (.add-argument parser "--inherit" :action "append" :nargs 2 :metavar #("TREE" "SOURCE")
+                 :help "木と、その写し元の木(依存のキーの同じ完成済みの root の木 — 頭の註)")
   (setv args (.parse-args parser))
   ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster/_foundation)が sys.path の先頭に入る。焼く木の module 名が
   ;; そこで解けてしまわないよう外す。
@@ -386,9 +494,17 @@
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
   (setv code-store (store-module-at args.store-module))
   (guard-module)  ; guard の口の無い root は焼く前に落とす(焼いても記録を付けられない)
-  (setv items (tuple (gfor line (.splitlines (.read sys.stdin)) :setv parts (.split line "\t" 2) :if (= (len parts) 3) (tuple parts))))
+  (setv lines (.splitlines (.read sys.stdin))
+        changed (frozenset (gfor line lines :if (.startswith line "changed\t") (cut line (len "changed\t") None)))
+        items (tuple (gfor line lines
+                           :if (not (.startswith line "changed\t"))
+                           :setv parts (.split line "\t" 2)
+                           :if (= (len parts) 3)
+                           (tuple parts)))
+        inherits (dict (gfor #(tree source) (or args.inherit []) #(tree source))))
   (setv share (shared-store code-store args.store))
-  (setv #(failed stored reused unstored fetched) (bake items args.jobs (tuple (or args.path [])) args.store args.progress share))
+  (setv #(failed stored reused unstored fetched)
+        (bake items args.jobs (tuple (or args.path [])) args.store args.progress share inherits changed))
   (for [#(tree rel reason) failed]
     (print (.format "failed\t{}\t{}\t{}" tree rel (.join " " (.split reason))) :flush True))
   (for [#(tree rel) stored]

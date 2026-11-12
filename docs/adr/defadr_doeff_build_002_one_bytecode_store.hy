@@ -33,8 +33,9 @@
 ;; Marker of spelling a store entry (the kind-suffix strings .code and .imports — this spelling outside the entry point is a second store). doeff-hy-check's
 ;; expansion cache (doeff_hy/_static_cache — type-check expansions, .json and .txt) is not a bytecode store, so it does not match.
 (val ENTRY-SUFFIX (re.compile r"[\"']\.(?:code|imports)[\"']"))
-;; Marker of carrying .pyc over from the previous version's tree (the old storage form — the tool arguments --from / --changed).
-(val CARRY-ARGUMENT (re.compile r"\"--(?:from|changed)\""))
+;; Marker of a tool argument that hands the tools a list of changed paths from outside (the old carry-over form — --changed). Since R3c the carry-over
+;; decides what is unchanged by file identity inside the baking tool, so no such list exists.
+(val CARRY-ARGUMENT (re.compile r"\"--changed\""))
 
 ;; Marker of knowledge of where .pyc files live (the __pycache__ dir name, the .pyc suffix, functions computing a .pyc path from a source). Inside doeff-cluster only the
 ;; baking tool's modules and the simulated world may spell it (R3b — if the tree-placing translation or a preparation program places .pyc, that is a second carry-over from the previous root).
@@ -72,7 +73,7 @@
 
 (defk carries-from-a-previous-tree [text]
   {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "Whether the source of a bytecode preparation tool has arguments that carry over from the previous version's tree (--from, --changed); comment lines starting with ; are not counted."
+  "Whether the source of a bytecode preparation tool has an argument that takes a list of changed paths from outside (--changed — R3c); comment lines starting with ; are not counted."
   (val code (.join "\n" (gfor line (.splitlines text) :if (not (.startswith (.lstrip line) ";")) line)))
   (bool (.search CARRY-ARGUMENT code)))
 
@@ -147,7 +148,7 @@
 
 
 (defadr ADR-DOE-BUILD-002
-  :title "There is one store to look up and add bytecode: doeff-hy's code_store. The key is only the source content and what changes how it is read, independent of the version, and macro origins are checked through the record on the hit code. The worker's bytecode preparation does not carry over from the previous version's tree; it writes from the store and bakes only what changed in content"
+  :title "There is one store to look up and add bytecode: doeff-hy's code_store. The key is only the source content and what changes how it is read, independent of the version, and macro origins are checked through the record on the hit code. The worker's bytecode preparation writes from the store and bakes only what changed in content; on top of the store it carries over the unchanged files from the root the tree was copied from (R3c)"
   :status "accepted"
   :scope ["packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py"
           "packages/doeff-hy/src/doeff_hy_bytecode_guard/_loader_hooks.py"
@@ -187,6 +188,7 @@
      (rule R2c "Addendum to R2b (2026-10-12): when a worktree's .pyc matches the source but that .pyc's record does not match the current environment's macros, the import hook looks up the key's entries with the same check as R2b before recompiling. If a matching entry exists it uses it without compiling and rewrites the .pyc in the same scheme (timestamp or hash) as the .pyc it read. If none matches, it compiles as today and adds the entry as the current environment's. Reason: when the store was not looked up merely because a .pyc existed, the first import in a worktree reused while swapping the sibling doeff (the deployment-declaration tree, a long-lived conversation tree) recompiled every Hy module of the tree even though the store had entries of the same version (2026-10-12: about 880 files and about 670 CPU seconds for collecting one agora_sim check). Failure cases = test_a_stale_pyc_in_a_reused_tree_takes_the_stores_matching_entry_without_compiling and test_a_stale_checked_hash_pyc_takes_the_stores_matching_entry_and_is_rewritten_in_the_same_form in packages/doeff-hy/tests/test_bytecode_guard.py (the no-matching-entry side = test_a_stale_pyc_with_no_matching_entry_in_the_store_compiles_and_adds_the_entry).")
      (rule R3 "The worker's bytecode preparation carries over neither .pyc nor import names from the previous version's tree (it has no --from, --changed or carry-over source selection). .pyc are written from the store's code, and only what is missing or does not match the current macros is baked and added. The closure's import names are also looked up from the store by the key of the source content (kind .imports).")
      (rule R3b "Addendum to R3 (2026-10-17, design-validation blind test B): only the baking tool places .pyc in a root's tree. Inside doeff-cluster, only the baking tool's modules (bytecode_pool, code_prepare, code_plan, bake_plan, code_model) and the simulated world hold knowledge of where .pyc lives (the spellings \"__pycache__\" and \".pyc\", pyc-path, cache_from_source). Reason: an implementation that hardlinked the source root's .pyc into a new root through a separate effect of the tree-placing translation passed both the R3 check (the tool's --from, --changed) and the tree-shape check. Carried-over .pyc do not advance the store's use marks, so the cleanup deleted the .pyc and code of the store the root used after 7 days, and stale .pyc of changed Python sources remained in the completed root (measured in blind test B — store .pyc 24 → 0, new bytes of the next root 188,416). Failure cases = this file's test-adr-doe-build-002-only-the-bytecode-tool-places-pyc and the blind-test-B lines of judgments-reject-the-counterexamples.")
+     (rule R3c "Amendment to R3 (2026-11-12, root fix): the store stays the one place to look code up, and on top of it the baking tool carries over from the root the new tree was copied from, so the work of preparing a new commit is the size of the difference. The runtime-environment preparation names, per tree, the tree it was copied from (--inherit) only when every repo's tree was copied from one completed root whose platform and dependency key (dependency-key — uv.lock, the other repos' commits, python, import roots) equal the new root's: the venv, the Hy version and the macro providers outside the trees are then the same. The preparation tool keeps the closure's import names in a table at each tree's root (.doeff-closure-table.json — module name and import names per visited source, tagged with the Hy version) and, for a source that is the same file (same inode) as the source tree's, takes them from the source tree's table without reading the source or the store; the others are read as in R3. From the walk it derives the changed modules (visited sources that are not the same file, and modules of the source table not confirmed the same — removed, changed or out of the closure) and hands them to the baking tool. The baking tool hardlinks the source tree's .pyc into the new tree for every source that is the same file (it alone places .pyc — R3b stands; the tree-placing translation still copies only tracked paths), and keeps a placed .pyc without the full check when its PEP 552 header is the checked-hash header of the current source and the root guard's bytecode_dependency_modules (the modules of the record's macro, provider, value and file rows — empty for Python source) shares no name with the changed modules; a .pyc whose record cannot be judged by its modules (an environment read, a mid-import digest, another Hy version, an old root guard without the function) or that depends on a changed module gets the full check (bytecode_is_current) and, if stale, the store path. For each kept .pyc whose time is older than the store's touch interval it advances the store's marks (the .pyc's time — the store's .pyc is the same file by R6 — and the code entry through code_store.keep_code, which adds the entry back when the sweep removed it), so the R3b failure (entries in use expiring) does not return. Without a source tree (new workers, an empty /work, a different dependency key) everything is written from the store as in R3. The tools take no list of changed paths from outside (law the-prepare-tool-takes-no-list-of-changed-paths). Reason: with R3 alone the work was the size of the closure, not of the commit — every new commit's root looked up and checked about 3,250 .pyc and re-read about 3,250 import-name entries although 0-8 were rebaked, which took 53-145 seconds for a root on a machine with saturated CPUs (bytecode 36-109 s, closure 7-72 s — 2026-11-10; a single thread's speed fell to 2.5-2.8 GHz, so priorities could not shorten it). Failure cases = test_a_five_changed_sources_are_the_only_work_and_the_rest_is_reused_unchecked, test_b_a_changed_macro_definition_checks_its_users_again_instead_of_reusing and test_c_without_a_source_tree_the_preparation_writes_from_the_store_as_before in packages/doeff-cluster/tests/test_code_prepare_inherits.py, and packages/doeff-hy/tests/test_bytecode_dependency_modules.py.")
      (rule R4 "The store dir is env DOEFF_HY_CODE_STORE. The worker's boot script defaults it to $WORK_DIR/state/doeff-hy-code-store and lets the caller's value take precedence (local single-node cluster tests pass the same dir across cases).")
      (rule R5 "Entries unused for 7 days are removed by the worker's cleanup (the same 7 days as native wheels — CODE-STORE-UNUSED-SECONDS = WHEEL-UNUSED-SECONDS).")
      (rule R5b "Addendum to R5 (2026-10-12): the cleanup removes, as a whole, a store dir in which neither it nor anything below it has moved for 7 days (env_store's unused-store-names). Dirs containing used entries and freshly created empty dirs are kept. Reason: R2b's key dirs grow with the number of sources per version, so removing only entries leaves empty dirs forever and the number the store walk reads keeps growing. Failure case = test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused in packages/doeff-cluster/tests/test_env_store.hy.")
@@ -199,10 +201,10 @@
        :counterexamples
          [(counterexample "The import hook (loader_hooks) spells os.path.join(store, key[:2], key[2:] + \".code\") itself (the form before this change — the preparation tool could not look up the same store)")
           (counterexample "A worker tool puts a .pyc cache in its own dir (a third store)")])
-     (law the-prepare-tool-does-not-carry-from-a-previous-tree
-       :statement "not carries_from_a_previous_tree(PREPARE-TOOL)"
+     (law the-prepare-tool-takes-no-list-of-changed-paths
+       :statement "not carries_from_a_previous_tree(PREPARE-TOOL) and not carries_from_a_previous_tree(POOL-TOOL)"
        :counterexamples
-         [(counterexample "--from <previous tree> and --changed <list of diffs> remain among the tool's arguments (leaving a path where preparation without a carry-over source rebakes everything)")])
+         [(counterexample "--changed <list of diffs> among the tools' arguments (the pre-#3858 form: a list handed in by the caller decided what was unchanged, a second account of the tree beside the tree itself — R3c decides by file identity inside the baking tool)")])
      (law only-the-bytecode-tool-places-pyc
        :statement "for_all file f in packages/doeff-cluster/src: spells_bytecode_placement(f) => f in BYTECODE-TOOL-FILES"
        :counterexamples
@@ -222,11 +224,11 @@
        (val found (run (store-layout-files repo-root)))
        (val violations (run (layout-violations found)))
        (assert (= violations []) (+ "a second bytecode store (ADR-DOE-BUILD-002 R1): " (str violations))))
-     (deftest test-adr-doe-build-002-the-prepare-tool-does-not-carry-from-a-previous-tree
+     (deftest test-adr-doe-build-002-the-prepare-tool-takes-no-list-of-changed-paths
        (val repo-root (. (Path __file__) parent parent parent))
        (for [rel #(PREPARE-TOOL POOL-TOOL)]
          (assert (not (run (carries-from-a-previous-tree (.read-text (/ repo-root rel) :encoding "utf-8"))))
-                 (+ rel ": arguments carrying over from the previous version's tree remain (ADR-DOE-BUILD-002 R3)"))))
+                 (+ rel ": an argument taking a list of changed paths from outside remains (ADR-DOE-BUILD-002 R3c)"))))
      (deftest test-adr-doe-build-002-only-the-bytecode-tool-places-pyc
        (val repo-root (. (Path __file__) parent parent parent))
        (val found (run (placement-files repo-root)))
@@ -265,8 +267,9 @@
        (assert (= (len (run (layout-violations (frozenset #{ENTRY second})))) 1))
        (assert (= (run (layout-violations (frozenset #{ENTRY}))) []))
        (assert (= (len (run (layout-violations (frozenset #{second})))) 2))
-       (assert (run (carries-from-a-previous-tree "(.add-argument parser \"--from\" :action \"append\")\n")))
-       (assert (not (run (carries-from-a-previous-tree ";; formerly carried over with \"--from\"\n"))))
+       (assert (run (carries-from-a-previous-tree "(.add-argument parser \"--changed\" :action \"append\")\n")))
+       (assert (not (run (carries-from-a-previous-tree ";; formerly carried over with \"--changed\"\n"))))
+       (assert (not (run (carries-from-a-previous-tree "(.add-argument parser \"--inherit\" :action \"append\")\n"))))
        ;; Counterexample (R3b, blind test B): a line where the tree-placing translation spells where .pyc lives is red. Comment lines and the word __pycache__ inside prose (without quotes) are not counted.
        (assert (run (spells-bytecode-placement "(val PYCACHE-DIR \"__pycache__\")\n")))
        (assert (run (spells-bytecode-placement "(when (.endswith e.name \".pyc\") (<- (LinkFile a b)))\n")))
