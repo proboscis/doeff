@@ -6,21 +6,22 @@
 ;; 置いた要り 6144 MiB の task の実行環境の準備が、jobs の層の上限で終了 -9 に止まり続けた。
 ;;   - worker の読み(worker/protocol/eviction_line の eviction-noted): 同じ模擬の cgroup の file の上で 2 つの世代の見張りを交互に回す。
 ;;     新しい世代は置いた task の取り置きまで上限を残し、keeper が印 draining を置いた前の世代は書かない — 最後の値は新しい世代の値。
-;;     印の無い間(と、印を読まない前の形)は、前の世代の書きが取り置きより下の値で新しい世代の上限を上書きする(失敗ケース)。
+;;     印の無い間は前の世代だけが書き(新しい世代は前の世代が居る間は書かない — 世代の書き手)、2 つの世代が交互に書く回が無い。
+;;     印を読まない前の形は、前の世代の書きが取り置きより下の値で新しい世代の上限を上書きする(失敗ケース)。
 ;;   - 印の path(deploy/boot.sh の keeper_retire が置く所と、世代へ渡す DOEFF_WORKER_RETIRED_FILE)が揃う事は
 ;;     tests/test_keeper_retired_mark.py。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import doeff [with-handlers])
-(import doeff_core_effects [SlogEffect WriteText HttpRequest HttpResponse])
+(import doeff_core_effects [FileFailed SlogEffect WriteText HttpRequest HttpResponse])
 (import doeff_core_effects [state])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster._worker.core.memory_rules [JobUse MIB])
-(import doeff_cluster._worker.core.eviction_rules [layer-memory-max task-needs-of])
-(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted RETIRED-LOG])
+(import doeff_cluster._worker.core.eviction_rules [layer-memory-max task-needs-of writing-elder-of])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted RETIRED-LOG ELDER-WRITES-LOG])
 
 (val GIB (* 1024 MIB))
 ;; node-a の Node の宣言(test_eviction_line.hy と同じ値)と jobs の層の宣言。
@@ -37,7 +38,8 @@
 ;; keeper の世代の dir(deploy/boot.sh の $DOEFF_KEEPER_DIR/gens/<世代>)と、前の世代の退きの印。
 (val ELDER-DIR "/keeper/gens/pod1.1000")
 (val ELDER-MARK (+ ELDER-DIR "/draining"))
-(val NEWER-MARK "/keeper/gens/pod1.2000/draining")
+(val NEWER-DIR "/keeper/gens/pod1.2000")
+(val NEWER-MARK (+ NEWER-DIR "/draining"))
 ;; 平常の空き(Pod の和 12 GiB — 追い出しまでの空き約 7.8 GiB)・jobs の層の使い 2 GiB・上に載る系が残す線を 1 GiB 割った読み。
 (val PODS-USED (* 12 GIB))
 (val JOBS-USED (* 2 GIB))
@@ -87,7 +89,7 @@
                (MemoryFile :path TOKEN :content b"token\n")))
   (val parents (sfor f files d (gfor i (range 2 (+ 1 (len (.split f.path "/")))) (.join "/" (cut (.split f.path "/") 0 i)))
                      :if (!= d f.path) d))
-  (MemoryFiles :dirs (tuple (sorted (| parents #{"/keeper" "/keeper/gens" ELDER-DIR}))) :files files))
+  (MemoryFiles :dirs (tuple (sorted (| parents #{"/keeper" "/keeper/gens" ELDER-DIR NEWER-DIR}))) :files files))
 
 
 (defk settings-of [mark]
@@ -164,7 +166,7 @@
   ;; 新しい世代の見張りは、上に載る系が残す線を割った回も置いた task の取り置きまで jobs の層を残す(kept-jobs-limit)。
   (assert (= young.pending PENDING) (// young.pending MIB))
   (assert (= young.jobs-limit (+ JOBS-USED PENDING)) (// young.jobs-limit MIB))
-  ;; 失敗ケース(印の無い間 — 前の形と同じ 2 人の書き手): 前の世代は取り置きを 0 と数え、後に書いた jobs の今の使いの値が残る。
+  ;; 印の無い間は前の世代が書き手で、新しい世代は書かない — 前の世代の数えた値(取り置き 0 の jobs の今の使い)が残る。
   (assert (< (int before) (+ JOBS-USED PENDING)) (// (int before) MIB))
   (assert (= (int before) JOBS-USED) (// (int before) MIB))
   ;; keeper が印を置いた後は、前の世代は書かず、新しい世代の上限が残る。前の世代は線を数え続け(log と測りのため)、退きを 1 度だけ言う。
@@ -172,7 +174,9 @@
   (assert old.retired)
   (assert (not young.retired))
   (assert (is-not old.line None))
-  (assert (= (.count names RETIRED-LOG) 1) names))
+  (assert (= (.count names RETIRED-LOG) 1) names)
+  ;; 新しい世代は前の世代が書いていると読んだ時と、居なくなったと読んだ時に 1 行ずつ言う。
+  (assert (= (.count names ELDER-WRITES-LOG) 2) names))
 
 
 (deftest test-the-old-shape-without-the-mark-lets-the-elder-overwrite-the-newer-limit
@@ -188,3 +192,85 @@
   (assert (< (int after) (+ JOBS-USED PENDING)) (// (int after) MIB))
   (assert (not old.retired))
   (assert (not-in RETIRED-LOG names) names))
+
+
+(defeffect WriterIs
+  "これから見張りの回を回す世代の名を告げる — テストだけの effect。"
+  {:fields [name] :answer None :tags {:context "doeff-cluster-test" :role "intent"}})
+
+
+(defeffect ReadWrites
+  "jobs の層の memory.max への書きを、書いた世代の名と値の組で書いた順に問う — テストだけの effect。"
+  {:fields [] :answer tuple :tags {:context "doeff-cluster-test" :role "intent"}})
+
+
+(defhandler jobs-writes-kept []
+  "jobs の層の memory.max への書きを、その時に回していた世代の名と組で溜め(書き自体は外の模擬の file へ渡す)、ReadWrites に答える答え手。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  (session var writer "")
+  (session var writes #())
+  (WriterIs [name]
+    (:= writer name)
+    (resume None))
+  (WriteText [path text]
+    :when (= path (+ JOBS "/memory.max"))
+    (:= writes (+ writes #(#(writer (int text)))))
+    (<- answer (| FileFailed None) effect)
+    (resume answer))
+  (ReadWrites []
+    (resume writes)))
+
+
+(defk switch-ticked [newer elder newer-cell elder-cell]
+  {:pre [(: newer EvictionSettings) (: elder EvictionSettings) (: newer-cell EvictionCell) (: elder-cell EvictionCell)]
+   :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "keeper の版の入れ替えを模すため: 新しい世代が起きてから ready になるまで(印の無い間)3 回、keeper が前の世代の dir に印を置いた後に
+   3 回、どちらも新しい世代・前の世代の順に 5 秒おきに回す。答え = #(書きの組の tuple 最後の memory.max)。"
+  (for [#(at-ms marked) #(#(5000 False) #(10000 False) #(15000 False) #(20000 True) #(25000 True) #(30000 True))]
+    (when (and marked (not elder-cell.retired))
+      (<- (WriteText ELDER-MARK "")))
+    (for [cell #(newer-cell elder-cell)]
+      (setv cell.keep-room KEEP-ROOM cell.keep-room-at-ms at-ms))
+    (<- (WriterIs "newer"))
+    (<- (eviction-noted newer newer-cell True at-ms))
+    (<- (WriterIs "elder"))
+    (<- (eviction-noted elder elder-cell True at-ms)))
+  (<- writes tuple (ReadWrites))
+  (<- files MemoryFiles (ReadMemoryFiles))
+  #(writes (int (.decode (. (next (gfor f files.files :if (= f.path (+ JOBS "/memory.max")) f)) content) "utf-8"))))
+
+
+(deftest test-only-one-generation-writes-the-jobs-layer-across-the-switch
+  ;; 実例(2026-11-10): 2 つの世代の見張りが同じ jobs の層の memory.max を 5 秒ごとに書き合い、上限が新しい世代の値と前の世代の縮めの値
+  ;; (0 も)の間を行き来した。前の世代にも置いた task が在る(要り 2048 MiB・使い 256 MiB)ので、2 つの世代の数える上限は違う。
+  (<- newer EvictionSettings (settings-of NEWER-MARK))
+  (<- elder EvictionSettings (settings-of ELDER-MARK))
+  (<- young EvictionCell (newer-cell))
+  (<- old EvictionCell (elder-cell))
+  (<- elder-needs tuple (task-needs-of #({"id" "t0" "memoryMiB" 2048})))
+  (setv old.needs elder-needs old.uses #((JobUse :job "task/t0" :pid 10 :bytes (* 256 MIB) :processes 1)))
+  (<- files MemoryFiles (shared-files))
+  (<- answer tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (node-a-api) (log-kept)
+                                   (jobs-writes-kept)]
+                     (switch-ticked newer elder young old)))
+  (val writers (tuple (gfor #(who _) (get answer 0) who)))
+  (val elder-limit (+ JOBS-USED (* 1792 MIB)))
+  (val newer-limit (+ JOBS-USED PENDING))
+  ;; 印の前の 3 回は前の世代だけ、印の後の 3 回は新しい世代だけが書く — 書き手は 1 度だけ替わり、交互に書く回が無い。
+  (assert (= writers #("elder" "elder" "elder" "newer" "newer" "newer")) (get answer 0))
+  (assert (= (tuple (gfor #(who limit) (get answer 0) :if (= who "elder") limit)) #(elder-limit elder-limit elder-limit)) (get answer 0))
+  (assert (= (get answer 1) newer-limit) (// (get answer 1) MIB))
+  (assert (is young.elder None))
+  (assert young.elder-gone))
+
+
+(deftest test-the-oldest-unmarked-generation-is-the-writer
+  ;; 書き手の決まり: 自分より前に起きた印の無い世代のいちばん古い 1 つ。後に起きた世代と、形の違う名は数えない。
+  (<- none-older (| str None) (writing-elder-of "pod1.2000" #("pod1.3000")))
+  (<- oldest (| str None) (writing-elder-of "pod1.3000" #("pod1.2000" "pod1.1000" "pod1.4000")))
+  (<- odd-names (| str None) (writing-elder-of "pod1.2000" #("pod1" "pod1.x10" "")))
+  (<- odd-own (| str None) (writing-elder-of "local" #("pod1.1000")))
+  (assert (is none-older None))
+  (assert (= oldest "pod1.1000") oldest)
+  (assert (is odd-names None))
+  (assert (is odd-own None)))
