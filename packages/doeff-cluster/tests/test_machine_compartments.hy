@@ -219,7 +219,8 @@
   ;; その層を書かない。守る区画 services は memory.max = memoryLimitMiB と memory.min = memoryMiB。書きは最初の回の 1 度だけ(値が同じ
   ;; 返事を受け直しても書かない)。
   (<- answer tuple (run-ticks HELD))
-  (val #(writes last) answer)
+  (val writes (get answer 0))
+  (val last (get answer 1))
   (val limits (tuple (gfor #(path value) writes :if (!= path "log") #(path value))))
   (assert (= limits #(#((+ JOBS "/memory.max") (* 4096 MIB)) #((+ SERVICES "/memory.max") (* 3072 MIB))
                       #((+ SERVICES "/memory.min") (* 2048 MIB))))
@@ -231,7 +232,8 @@
 (deftest test-without-compartments-the-watch-rewrites-the-jobs-layer-every-round
   ;; 失敗ケース(区画の無い前の形): 見張りが jobs の層の memory.max を回ごとに測りから書き直し、宣言の 1 つの値は無い。
   (<- answer tuple (run-ticks None))
-  (val #(writes last) answer)
+  (val writes (get answer 0))
+  (val last (get answer 1))
   (val jobs-writes (lfor #(path value) writes :if (= path (+ JOBS "/memory.max")) value))
   (assert (= (len jobs-writes) 3) writes)
   (assert (!= (int last) (* 4096 MIB)) last))
