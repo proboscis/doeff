@@ -2053,11 +2053,24 @@ the effect in the enclosing do-context.
                                  (hy.repr value)))))
   (list value))
 
+(setv _TEST-TIERS #("small" "medium" "large"))
+
+(defn _test-tier [value]
+  "Check the value of deftest's :tier (the size class of the test: small, medium or large) and return it as a string.
+   Reject anything else — a misspelt tier silently read as the default would put a slow test into the fast set.
+   A helper called at expansion time, so it is a defn (it cannot be a defk)."
+  (when (not (and (isinstance value hy.models.String) (in (str value) _TEST-TIERS)))
+    (raise (SyntaxError (.format "deftest :tier must be one of the strings {} — received: {}"
+                                 (.join " " (gfor t _TEST-TIERS (hy.repr (hy.models.String t))))
+                                 (hy.repr value)))))
+  (str value))
+
 (defn _extract-test-meta [body]
   "Parse optional test metadata dict from front of body.
-   Supported keys: :interpreters, :params, :env, :marks, :skip-if, :skip-reason, :scans.
+   Supported keys: :interpreters, :params, :env, :marks, :skip-if, :skip-reason, :scans, :tier.
    :scans = the dirs or globs the test walks and reads (a tuple of strings).
-   Returns #(interpreters params-dict env-dict marks skip-if skip-reason scans real-body).
+   :tier = the size class of the test (\"small\", \"medium\" or \"large\"; None when not written).
+   Returns #(interpreters params-dict env-dict marks skip-if skip-reason scans tier real-body).
    Skips leading docstring if present."
   (setv interpreters None
         params-dict None
@@ -2066,6 +2079,7 @@ the effect in the enclosing do-context.
         skip-if-expr None
         skip-reason None
         scans None
+        tier None
         real-body body)
   (setv meta-idx None)
   (for [#(i form) (enumerate body)]
@@ -2098,8 +2112,10 @@ the effect in the enclosing do-context.
       (when (= (str k) ":skip-reason")
         (setv skip-reason v))
       (when (= (str k) ":scans")
-        (setv scans (_test-scans v)))))
-  #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body))
+        (setv scans (_test-scans v)))
+      (when (= (str k) ":tier")
+        (setv tier (_test-tier v)))))
+  #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans tier real-body))
 
 (import doeff-hy._static-view [deftest-fixture-annotation :as _deftest-fixture-annotation])
 
@@ -2167,6 +2183,14 @@ the effect in the enclosing do-context.
      {:scans #(\"scripts/business_fakes/*/*.txt\")}
      (assert (all-rows-load)))
 
+   A test that is not small (it runs child processes, opens sockets or takes over a minute) declares its
+   size class, which pytest's --doeff-tier option of doeff-hy-pytest selects on (a test without :tier is
+   small unless the plugin's settings map one of its marks to another tier):
+
+   (deftest test-git-push-round-trip
+     {:tier \"medium\"}
+     (assert (push-and-fetch)))
+
    A fixture may carry its type for the static check — `(deftest test-x [#^ str label] …)`;
    pytest's built-in fixtures (tmp_path, monkeypatch, capsys, …) and doeff_interpreter are typed
    by doeff-hy-check without it, any other unannotated fixture is `object`.
@@ -2185,7 +2209,7 @@ the effect in the enclosing do-context.
         fixture-params (lfor #(param-name _) fixture-annotations param-name))
 
   ;; Parse optional metadata dict
-  (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body)
+  (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans tier real-body)
     (_extract-test-meta body))
 
   ;; Rewriting of val / var / lazy val / lazy var / := (ADR-DOE-HY-006)
@@ -2258,6 +2282,11 @@ the effect in the enclosing do-context.
   ;; :scans → @pytest.mark.scans("glob", ...) (a declaration of the dir or glob to scan and read — the selection tool reads the source, and it can be read from the marker when run)
   (when (is-not scans None)
     (setv item-decorators (+ item-decorators [#("scans" None (hy.models.List scans))])))
+
+  ;; :tier → @pytest.mark.tier_<tier> (the size class as a mark name — the item record keeps only mark names,
+  ;; and the tier option of doeff-hy-pytest reads it at collection; a test without :tier gets its tier from the plugin's settings)
+  (when (is-not tier None)
+    (.append item-decorators #("mark" (+ "tier_" tier) None)))
 
   ;; In the expansion for type checking, the decorator's pytest is looked up through the alias
   ;; `_doeff_pytest` that doeff-hy-check places once at the top of the module (STATIC_HELPER_IMPORTS in doeff_hy/_static_view.py) — an `import pytest` per deftest

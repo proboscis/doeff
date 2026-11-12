@@ -8,6 +8,10 @@ Hy's replacement of `ast.unparse` recurses without stopping there
 Its other role is the time limit for Hy tests (doeff_hy_pytest/_budget.py - does nothing when unconfigured). The hooks are
 re-exported from this module so that they ride on the single entry point (`doeff_hy`).
 
+Its third role is the test tiers (doeff_hy_pytest/_tier.py): every test gets a size class (small, medium, large), `--doeff-tier`
+runs only the named ones, and small tests that start child processes, use network sockets or run over a minute are listed.
+Its hooks share names with the budget's, so it is registered as its own plugin through `pytest_plugins` below.
+
 The public names are only the two per-test declarations (`declare_step_budget`, `declare_process_tree_cpu`) and the entry point
 (doeff-hy-pytest's share of the rule "the public API a doeff subpackage shows users is only effects and handlers").
 Hooks are picked up by pytest from module attributes, so they are not in `__all__`. The measuring internals (`_budget`,
@@ -30,5 +34,8 @@ from doeff_hy_pytest._budget import pytest_terminal_summary as pytest_terminal_s
 from doeff_hy_pytest._budget import pytest_unconfigure as pytest_unconfigure
 
 __all__ = ["declare_process_tree_cpu", "declare_step_budget"]
+
+# pytest registers the modules named here along with this plugin module (PytestPluginManager.consider_module).
+pytest_plugins = ["doeff_hy_pytest._tier"]
 
 install()

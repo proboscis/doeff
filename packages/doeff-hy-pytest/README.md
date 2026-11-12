@@ -10,12 +10,13 @@ optional time limits for tests.
 ## What it does
 
 pytest loads the plugin by itself (entry point `pytest11`, name `doeff_hy`). It does
-two things:
+three things:
 
 | Job | When it acts | Setting needed |
 | --- | --- | --- |
 | Fixes a Hy problem on Python 3.14 | At pytest start-up, before any conftest imports Hy | None |
 | Time limits for Hy tests | During each test in a `.hy` file | Yes; off by default |
+| [Test tiers](#test-tiers): runs only the tests of a size class | At collection, and during each small test | `--doeff-tier` to choose; the marker mapping is optional |
 
 **The Python 3.14 fix.** Hy replaces `ast.unparse`. On Python 3.14, when pytest reads
 fixture annotations as strings, that replacement recurses without end. The plugin
@@ -136,6 +137,73 @@ With `-v`, the summary prints one line per measured test: steps, handler calls, 
 CPU seconds. Use these numbers to pick a step limit.
 
 The report and failure messages are currently written in Japanese.
+
+## Test tiers
+
+Every test has one size class, its tier. The classes follow the usual small / medium /
+large test sizes:
+
+| Tier | What the test may do |
+| --- | --- |
+| small | Runs in the test process only: no child process, no network socket, under a minute |
+| medium | Uses the one machine: child processes, local sockets, local services |
+| large | Uses more than the machine: remote services, other machines, a real account |
+
+The plugin decides a test's tier at collection, in this order:
+
+1. The test's own tier mark. A `deftest` writes it with `:tier`; a Python test writes
+   `@pytest.mark.tier_medium`. With several, the largest wins.
+2. The marks of the test mapped by `doeff_tier_by_marker`. With several, the largest
+   tier wins.
+3. `doeff_tier_default` (`small` when not set).
+
+So a repo whose tests already carry a mark for their kind maps those marks once and
+gets every tier without rewriting a test:
+
+```toml
+[tool.pytest.ini_options]
+doeff_tier_by_marker = ["real_world=medium", "e2e=large"]
+```
+
+`--doeff-tier` runs only the named tiers and deselects the rest; with it, the summary
+prints the count of tests per tier:
+
+```bash
+pytest --doeff-tier small          # the fast set, for each change
+pytest --doeff-tier medium,large   # the rest, after merge
+```
+
+```text
+==== doeff test tiers ====
+selected tiers: small; tests per tier (selected / collected): small 3 / 3, medium 0 / 2, large 0 / 3
+```
+
+The tier is read after `-m` and `-k`, so the counts are of the tests they left.
+
+**Small tests that are not small.** While a small test's call phase runs, the plugin
+watches for a child process and a network socket (Python audit events such as
+`subprocess.Popen`, `os.posix_spawn`, `socket.connect` and `socket.bind`), and it
+measures the call's wall-clock seconds. A small test that did either, or ran over
+`doeff_tier_small_seconds` (60 when not set), is listed at the end of the run. The list
+is report only and does not change the test's outcome; give the test its real tier or
+make it small:
+
+```text
+small tests that are not small: 1 (report only -- declare their tier or make them small)
+  tests/test_git.hy::test_push: started a child process (subprocess.Popen 'git')
+```
+
+Under pytest-xdist the list is shown in the controlling process too; the counts per tier
+are counted where the tests are collected.
+
+| Setting | Meaning |
+| --- | --- |
+| `--doeff-tier` | Tiers to run, separated by commas. Without it every tier runs |
+| `doeff_tier_by_marker` | Lines `marker=tier`: the tier of a test without a tier mark |
+| `doeff_tier_default` | Tier of a test with neither a tier mark nor a mapped mark (`small`) |
+| `doeff_tier_small_seconds` | Wall-clock seconds above which a small test is listed (60) |
+
+An unknown tier name in any of them stops pytest at start-up with a `UsageError`.
 
 ## How it fits with the other doeff packages
 
