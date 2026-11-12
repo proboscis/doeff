@@ -1904,7 +1904,7 @@
   ;; 形ごとの測った山(task の要りを名乗りと測った山の大きい方で数える — measured_room の頭の註)。
   (<- peaks dict (shape-peaks-of placed.tasks))
   ;; 背景の仕事の側の予約(background-reserve-of)の守りに要る worker ごとの数: bg-held = 置いている負の優先の task(置くたびに足す)・
-  ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達していない)待っている負の優先の task。
+  ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達しておらず、門の内なら要りが memory の空きに入る)待っている負の優先の task。
   ;; bg-wanted は拍の初めに 1 度数える — 置く順で優先 0 以上の task が先なので、背景の仕事を置き始める前に読む数は変わらない。
   (setv bg-held (dfor name (.keys state.workers) name 0)
         bg-wanted (dfor name (.keys state.workers) name 0)
@@ -1920,7 +1920,15 @@
     (for [w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w) (not-in w.name draining)
                                            (env-room-on task w))]
       (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
-      (when (is bg-limited None)
+      ;; 門の内の背景の task は、要りがその worker の memory の空きに入る時だけ数える。入らない task のために予約を残しても、その task は
+      ;; 置けず、優先 0 以上の task だけが待たされる(2026-11-12 — memory に入らない背景の task が予約の半分を押さえ、優先 0 の task が
+      ;; 何時間も置かれなかった)。門の外の task は memory の空きを待たないので数える。
+      (var bg-fits True)
+      (when (not task.ungated)
+        (<- bg-need int (task-need-of task w peaks))
+        (<- bg-memory-room int (task-memory-room-of w load))
+        (:= bg-fits (<= bg-need bg-memory-room)))
+      (when (and (is bg-limited None) bg-fits)
         (+= (get bg-wanted w.name) 1))))
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted queue :key (fn [i] #((- (. (get queue i) priority)) i)))]

@@ -223,3 +223,21 @@
     (setv #(status answer _) (! (submitted "k" body)))
     (assert (= status 400) #(body status answer))
     (assert (in word answer.message) answer.message)))
+
+(deftest test-background-tasks-that-fit-no-memory-do-not-hold-the-reserve
+  ;; 失敗ケース(2026-11-12): memory の空きに入らない背景の仕事が待っている間、優先 0 以上の task は予約のうち背景の仕事に残す半分を
+  ;; 使わなかった — 背景の仕事は memory で置けないので、その半分は誰にも使われず、優先 0 の task が何時間も待った。同じ node-h の形
+  ;; (task の空き 7・予約 6)に、どの worker の memory にも入らない背景の仕事 10 本と優先 0 の task 5 本を積むと、1 拍で優先 0 の 5 本が
+  ;; 全部置かれ、背景の仕事は memory の文で待つ。
+  (setv #(jobs placements) (! (resident (tuple (gfor i (range 33) (.format "j{:02d}" i))))))
+  (val fronts ["f1" "f2" "f3" "f4" "f5"])
+  (setv tasks {})
+  (for [id fronts]
+    (setv (get tasks id) (! (queued id))))
+  (for [#(i id) (enumerate LONG-IDS)]
+    (setv (get tasks id) (replace (! (background id (.format "c-{}" i))) :memory-mib 262144)))
+  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val placed (! (tasks-placed 1000 state placements T)))
+  (assert (= (! (phases placed fronts)) ["assigned" "assigned" "assigned" "assigned" "assigned"]) placed)
+  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
+  (assert (all (gfor id LONG-IDS (and (= (. (.row placed id) phase) "queued") (= (. (.row placed id) detail) no-memory)))) placed))
