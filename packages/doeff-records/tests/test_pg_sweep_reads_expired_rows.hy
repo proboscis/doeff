@@ -8,7 +8,7 @@
 ;; 反例(前の形 — 候補の読みの文に最後に書いた刻の条件が無い): 候補の読みが EXPIRED-ROWS + FRESH-ROWS 行を返し、赤。
 ;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [defeffect defhandler deftest defk <- val var])
-(import doeff [run with_handlers])
+(import doeff [Perform run with_handlers])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
@@ -77,7 +77,8 @@
   (<- written tuple (ReadTally))
   (<- swept (SweepExpired))
   (<- tally tuple (ReadTally))
-  (<- old (ReadRow "tickets" #("g" "old-1")))
+  ;; 回収した行の不在 Missing を値のまま受ける(<- だと ReadRow の宣言が Absent にする)。
+  (<- old (Perform (ReadRow "tickets" #("g" "old-1"))))
   (<- fresh (ReadRow "tickets" #("g" (.format "fresh-{}" FRESH-ROWS))))
   (<- open (ReadRow "tickets" #("g" "open-1")))
   {"swept" swept "old" old "fresh" fresh "open" open "sweep-statements" (cut tally (len written) None)})
