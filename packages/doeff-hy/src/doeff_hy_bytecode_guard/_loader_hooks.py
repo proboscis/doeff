@@ -536,6 +536,40 @@ def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
     return isinstance(code, CodeType) and _record_is_current_here(code)
 
 
+def bytecode_dependency_modules(path: str, pyc: bytes) -> frozenset[str] | None:
+    """The module names whose files decide whether the record of a .pyc of Hy source is current — the defining modules of the used macros, the fully required providers,
+    the modules of the values outside macros, and every module the closure of those depended on (the record's file rows). So the tool that precompiles bytecode, carrying a
+    .pyc over from the tree of a root with the same dependencies (the same venv and Hy version), keeps it without :func:`bytecode_is_current` when none of these modules
+    changed between the two trees — the check looks the rows up again by module name, and the modules' files are all it reads (ADR-DOE-BUILD-002 R3c).
+
+    Python source has no record: the empty set. None when the .pyc cannot be judged by its modules — its body is not code, it carries no record of this version, the record
+    was made for another Hy version, or a row has no comparable digest (a read of an environment variable — always stale —, or a digest made mid-import — judged stale
+    once the current walk can compare it): the caller checks with :func:`bytecode_is_current`."""
+    if not is_hy_source(path):
+        return frozenset()
+    from doeff_hy_bytecode_guard import _records as records  # load only when the tool carries a Hy .pyc over
+    import marshal  # load only when a Hy .pyc is encountered
+
+    try:
+        code = marshal.loads(pyc[records.PYC_HEADER_BYTES :])
+    except (EOFError, ValueError, TypeError):
+        return None
+    record = _record_of(code) if isinstance(code, CodeType) else None
+    if record is None or record.hy_version != _hy_version():
+        return None
+    digests = (*(used.digest for used in record.macros), *(value.digest for value in record.values))
+    if any(digest is None or digest == records.ENVIRONMENT_READ for digest in digests):
+        return None
+    return frozenset(
+        (
+            *(used.module for used in record.macros),
+            *(provider.module for provider in record.providers),
+            *(value.module for value in record.values),
+            *(used.module for used in record.files),
+        )
+    )
+
+
 def _store_key(fullname: str, path: str, source: bytes) -> str:
     """The code key determined by the source contents (the key and ordering are defined in one place, code_store -- one key holds entries per macro environment)."""
     from doeff_hy_bytecode_guard import _code_store as code_store  # load only when using the store

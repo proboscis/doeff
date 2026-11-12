@@ -862,7 +862,11 @@
      (if (is jobs None) #() #("--jobs" (str jobs)))
      (if entries #("--entries" (.join "," entries)) #())
      (if progress #("--progress" progress) #())
-     (tuple (gfor t trees a #("--tree" t.tree "--roots" (.join "," t.roots)) a))))
+     (tuple (gfor t trees a #("--tree" t.tree "--roots" (.join "," t.roots)) a))
+     ;; 写し元の木(ADR-DOE-BUILD-002 R3c)は、どれかの木に在る時だけ木ごとに 1 つ並べる(無い木は空の値)。
+     (if (any (gfor t trees t.inherit))
+         (tuple (gfor t trees a #("--inherit" (or t.inherit "")) a))
+         #())))
 
 
 (defk reported-counts [text trees]
@@ -1086,7 +1090,8 @@
 
   (CompileTrees [project-dir trees entries jobs]
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
-    ;; 無い物だけを焼く(#3858 — 前の root からの引き継ぎと、その差の一覧は持たない)。
+    ;; 無い物だけを焼く(#3858)。写し元の木(BytecodeTree の inherit — 依存のキーの同じ完成済みの root の木)が在れば、道具は変わらない
+    ;; source の .pyc と閉包の表をそこから引き継ぐ(ADR-DOE-BUILD-002 R3c — 差の一覧は渡さず、道具が file の同じさで見分ける)。
     (<- env tuple (uv-environment shared-dir uv-cache))
     (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs progress))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))

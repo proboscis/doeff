@@ -174,10 +174,13 @@
 
 (defrecord BytecodeTree
   "bytecode を焼く木 1 つ(CompileTrees の欄)。tree = repo の木の path・roots = 木の中の焼く根(宣言の import の根と、venv に editable で
-   入る dir)・declared = 宣言の import の根を持つ repo の木か(その木の問題は env の失敗・editable で入るだけの木の問題は記録だけ)。"
+   入る dir)・declared = 宣言の import の根を持つ repo の木か(その木の問題は env の失敗・editable で入るだけの木の問題は記録だけ)・
+   inherit = 写し元の木(この木を写した、依存のキーの同じ完成済みの root の木 — 焼く道具が変わらない source の .pyc と閉包の表を引き継ぐ・
+   ADR-DOE-BUILD-002 R3c。None = 引き継がない)。"
   (#^ str tree)
   (#^ tuple roots)
-  (#^ bool declared))
+  (#^ bool declared)
+  (setv #^ (| str None) inherit None))
 
 
 (defrecord TreeProblem

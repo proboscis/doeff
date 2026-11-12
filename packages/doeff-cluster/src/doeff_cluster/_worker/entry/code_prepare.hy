@@ -3,6 +3,9 @@
 ;;; worker は版ごとに木を展開する。.pyc は source の中身で引く保存先(doeff-hy の code_store — 入口は 1 つ・版・木・root をまたいで中身の同じ
 ;;; source の code を引く)から書き、無い物・今の macro に合わない物だけを焼いて保存先へ足す(#3858 — 前は前の版の木から変わっていない file の
 ;;; .pyc を hardlink で引き継いだので、引き継ぎ元の root が無い時 — 新しい worker・空の /work・テストの 1 台 — は全部を焼き直した)。
+;;; 保存先の上で、写し元の木(--inherit — 準備がこの木を hardlink で写した、依存のキーの同じ完成済みの root の木・ADR-DOE-BUILD-002 R3c)が
+;;; 全部の木に在れば、写し元と同じ file(同じ inode)の source は、閉包の import の名を写し元の木の閉包の表(bake_plan の CLOSURE-TABLE)から
+;;; 読み、.pyc は焼きの道具が写し元から置いて、依る macro の module が変わらなければ照らさずに残す — 仕事は写し元からの差の大きさになる。
 ;;; 検める方式(PEP 552 の checked hash)なので、保存先の code を誤って使っても import が source の hash を突き合わせて焼き直す — 古い
 ;;; bytecode が黙って使われることはない。Hy の source の code は、さらに展開が依った macro の記録を今の環境の macro の file と照らしてから使う。
 ;;; 共有の venv・doeff・標準 library には書かない(本番の image の焼き方 deploy/bytecode.py は木の外も歩き、実行時に検めない方式で焼くので、
@@ -10,6 +13,7 @@
 ;;;
 ;;;   PYTHONDONTWRITEBYTECODE=1 hy <worker のコード>/doeff_cluster/_worker/entry/code_prepare.hy --revision <版> [--jobs N]
 ;;;       [--entries <module,…>] [--progress <進みの印の file>] --tree <木> --roots <根,…> [--tree … --roots … …]
+;;;       [--inherit <写し元の木|空> …(木ごとに 1 つ・--tree の順)]
 ;;;
 ;;; 木ごとの引数の揃え方(1 つだけ): --tree・--roots は --tree の順に並べる。--roots は木ごとに必ず 1 つ(import の根 — 木の中の dir・`,` で
 ;;; 並べる・前が先)。数が揃わなければ使い方の誤り(終わり 2)。保存先の dir は環境変数 DOEFF_HY_CODE_STORE(code_store の store-dir —
@@ -163,7 +167,10 @@
   (#^ tuple items)
   (#^ int jobs)
   (#^ tuple paths)
-  (#^ (| str None) code-store))
+  (#^ (| str None) code-store)
+  ;; 写し元の木(#(木の path 写し元の木の path) の列)と、写し元から変わった module 名(ADR-DOE-BUILD-002 R3c — 空 = 引き継がない)。
+  (setv #^ tuple inherits #())
+  (setv #^ frozenset changed (frozenset)))
 
 
 ;; --- 保存先の entry の効果(閉包の import の名 — 答え手 store-entries が code_store を呼ぶ)----------------------------------
@@ -197,6 +204,23 @@
   (#^ tuple paths))
 
 
+(defclass [(dataclass :frozen True)] SameFiles [EffectBase]
+  "path の組(#(新しい木の path 写し元の木の path) の列)ごとに、2 つが同じ file(同じ inode — 準備が hardlink で写した、中身の変わらない
+   source)かを読む(答え手が並べて読む)。答え = 組の順の bool の列(どちらかを読めない組は偽)。"
+  (#^ tuple pairs))
+
+
+(defclass [(dataclass :frozen True)] ReadClosureTable [EffectBase]
+  "写し元の木の閉包の表の file を読む。答え = 中身か None(無い・読めない)。"
+  (#^ str path))
+
+
+(defclass [(dataclass :frozen True)] WriteClosureTable [EffectBase]
+  "木の閉包の表の file を書く(一時の file に書いてから置き換える)。答え = 書けなかった理由か None。"
+  (#^ str path)
+  (#^ str text))
+
+
 (defclass [(dataclass :frozen True)] MarkProgress [EffectBase]
   "準備の進みの印(呼び手の準備が渡す file)の時刻を進める。呼び手は印の時刻で準備の停滞を見分けるので、遅いが進んでいる歩みと焼きを
    止まりと読ませないため。答え = None(印の無い起動では何もしない)。")
@@ -204,13 +228,15 @@
 
 ;; --- Program -----------------------------------------------------------------------------
 
-(defk bake-trees [shaped]
-  {:pre [(: shaped tuple)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
-  "揃えた木の組(TreeArgs の列)を焼く木(BakeTree の列)にするため: 木の path を symlink を辿った絶対 path にする(読めなければ OSError)。"
+(defk bake-trees [shaped [inherits #()]]
+  {:pre [(: shaped tuple) (: inherits tuple)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "揃えた木の組(TreeArgs の列)を焼く木(BakeTree の列)にするため: 木の path を symlink を辿った絶対 path にする(読めなければ OSError)。
+   inherits = 木の順の写し元の木(plan.tree-inherits の答え — 空 = どの木にも無い)。"
   (var trees #())
-  (for [given shaped]
+  (for [#(i given) (enumerate shaped)]
     (<- seen PathStat (file-done (StatPath given.named)))
-    (:= trees (+ trees #((plan.BakeTree :named given.named :path seen.real-path :roots given.roots)))))
+    (:= trees (+ trees #((plan.BakeTree :named given.named :path seen.real-path :roots given.roots
+                                        :inherit (if inherits (get inherits i) None))))))
   trees)
 
 
@@ -249,61 +275,125 @@
           problem)))
 
 
+(defk inherited-tables [trees hy-version]
+  {:pre [(: trees tuple) (: hy-version str)] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
+  "木ごとの写し元の閉包の表(相対 path → ClosureRow の dict)を読むため(ADR-DOE-BUILD-002 R3c)。全部の木に写し元の木と読める表が在る
+   時だけ木の順の表の列、1 つでも欠ければ None(どの木も引き継がない — 欠けた木の消えた module が分からず、焼きの道具へ渡す changed を
+   求められない)。"
+  (var tables #())
+  (for [tree trees]
+    (var table None)
+    (when (is-not tree.inherit None)
+      (<- text (| str None) (ReadClosureTable (posixpath.join tree.inherit plan.CLOSURE-TABLE)))
+      (when (is-not text None)
+        (<- read (| dict None) (plan.closure-table-of text hy-version))
+        (:= table read)))
+    (:= tables (+ tables #(table))))
+  (if (and tables (all (gfor t tables (is-not t None)))) tables None))
+
+
+(defk read-imports [trees places code-store hy-version]
+  {:pre [(: trees tuple) (: places tuple) (: code-store (| str None)) (: hy-version str)] :post [(: % tuple)]
+   :tags {:context "worker" :role "main"}}
+  "閉包の一回りで写し元から引き継げない source(places — #(木の番号 相対 path) の列)の import の名を読むため: source と保存先の entry を
+   それぞれまとめて読み(答え手が並べて読む — 効果の頭の註)、保存先に中身の同じ source の entry が在ればそれを使い、無ければ構文を読んで
+   保存先へ足す(頭の註の手順 2・#3858)。答え = places の順の #(import の名か None〔読めない source〕 構文を読み直したか 保存先へ書けなかった
+   理由か None) の列。"
+  (<- texts tuple (ReadSources (tuple (gfor place places (posixpath.join (. (get trees (get place 0)) path) (get place 1))))))
+  (var paths #())
+  (for [#(place text) (zip places texts)]
+    (if (is text None)
+        (:= paths (+ paths #(None)))
+        (do (<- path (| str None) (imports-entry-path code-store (get place 1) text hy-version))
+            (:= paths (+ paths #(path))))))
+  (<- datas tuple (ReadStoreEntries paths))
+  (var answers #())
+  (for [#(place text path data) (zip places texts paths datas)]
+    (val rel (get place 1))
+    (if (is text None)
+        (:= answers (+ answers #(#(None False None))))
+        (do (<- stored (| tuple None) (stored-imports path data))
+            (match stored
+              None (do (val listed (plan.imported-names rel text))
+                       (<- problem (| str None) (store-imports code-store rel text hy-version listed))
+                       (:= answers (+ answers #(#(listed True problem)))))
+              _ (:= answers (+ answers #(#(stored False None))))))))
+  answers)
+
+
 (defk closure-of-trees [trees sources entries code-store hy-version]
-  {:pre [(: trees tuple) (: sources tuple) (: entries tuple) (: code-store (| str None)) (: hy-version str)] :post [(: % tuple)]
+  {:pre [(: trees tuple) (: sources tuple) (: entries tuple) (: code-store (| str None)) (: hy-version str)] :post [(: % plan.ClosureWalk)]
    :tags {:context "worker" :role "main"}}
   "木ごとの焼く範囲(trees と同じ順の、相対 path の frozenset か None = 根の下を全部)を求めるため。entries が在れば、entries から import を
    静的に辿った、木をまたぐ閉包(source は module ごとに 1 度だけ読む — 読めない source は何も import しない物として扱う)。
-   import の名は、保存先に中身の同じ source の entry が在ればそれを使い、無ければ構文を読んで保存先へ足す(頭の註の手順 2・#3858)。
-   保存先へ書けなかった理由は Note に 1 度ずつ出す(次の準備が読み直すだけ)。"
+   全部の木に写し元の木と閉包の表が在れば(inherited-tables)、写し元と同じ file の source は表の import の名を使い、source も保存先の
+   entry も読まない(ADR-DOE-BUILD-002 R3c)。ほかの source の import の名は read-imports が読む。保存先へ書けなかった理由は Note に
+   1 度ずつ出す(次の準備が読み直すだけ)。答え = 焼く範囲・次の準備に残す閉包の表の行・写し元から変わった module(plan.ClosureWalk)。"
   (if (not entries)
-      (tuple (gfor _ trees None))
+      (plan.ClosureWalk :scopes (tuple (gfor _ trees None)) :rows (tuple (gfor _ trees #())) :changed None)
       (do (<- index (plan.module-index trees sources))
+          (<- tables (| tuple None) (inherited-tables trees hy-version))
           (var seen (frozenset))
           (var frontier (frozenset entries))
           (var modules 0)
           (var reread 0)
+          (var carried 0)
           (var unstored #())
+          (var same (frozenset))
+          (var visited #())
+          (var rows #())
           (while frontier
             (<- found tuple (plan.closure-step index frontier seen))
             (:= seen (| seen (frozenset found)))
-            ;; 一回りで訪ねる source と、その保存先の entry を、それぞれまとめて読む(答え手が並べて読む — 効果の頭の註)。
             (var places #())
             (for [m found]
               (<- place tuple (plan.module-place index m))
-              (:= places (+ places #(place))))
-            (<- texts tuple (ReadSources (tuple (gfor place places (posixpath.join (. (get trees (get place 0)) path) (get place 1))))))
-            (var paths #())
-            (for [#(place text) (zip places texts)]
-              (if (is text None)
-                  (:= paths (+ paths #(None)))
-                  (do (<- path (| str None) (imports-entry-path code-store (get place 1) text hy-version))
-                      (:= paths (+ paths #(path))))))
-            (<- datas tuple (ReadStoreEntries paths))
+              (:= places (+ places #((tuple place)))))
+            ;; 写し元の表に行の在る source は、写し元と同じ file かを一回りでまとめて読む(同じ file なら中身は写し元のまま)。
+            (val candidates (if (is tables None) #() (tuple (gfor #(i rel) places :if (in rel (get tables i)) #(i rel)))))
+            (<- flags tuple (SameFiles (tuple (gfor #(i rel) candidates
+                                                    #((posixpath.join (. (get trees i) path) rel) (posixpath.join (. (get trees i) inherit) rel))))))
+            (:= same (| same (frozenset (gfor #(c f) (zip candidates flags) :if f c))))
+            (val reading (tuple (gfor place places :if (not-in place same) place)))
+            (<- answers tuple (read-imports trees reading code-store hy-version))
+            (val read-of (dict (zip reading answers)))
             (var imports #())
-            (for [#(place text path data) (zip places texts paths datas)]
+            (for [#(m place) (zip found places)]
+              (val i (get place 0))
               (val rel (get place 1))
-              (if (is text None)
-                  (:= imports (+ imports #(#())))
-                  (do (:= modules (+ modules 1))
-                      (<- stored (| tuple None) (stored-imports path data))
-                      (var listed #())
-                      (match stored
-                        None (do (:= listed (plan.imported-names rel text))
-                                 (:= reread (+ reread 1))
-                                 (<- problem (| str None) (store-imports code-store rel text hy-version listed))
-                                 (when (and (is-not problem None) (not-in problem unstored))
-                                   (:= unstored (+ unstored #(problem)))))
-                        _ (:= listed stored))
-                      (:= imports (+ imports #(listed))))))
+              (:= visited (+ visited #(#(i rel m))))
+              (var listed #())
+              (if (in place same)
+                  (do (:= listed (. (get (get tables i) rel) imports))
+                      (:= carried (+ carried 1))
+                      (:= modules (+ modules 1))
+                      (:= rows (+ rows #(#(i (plan.ClosureRow :rel rel :name m :imports listed))))))
+                  (do (val read-names (get (get read-of place) 0))
+                      (val again (get (get read-of place) 1))
+                      (val unsaved (get (get read-of place) 2))
+                      (when (is-not read-names None)
+                        (:= listed read-names)
+                        (:= modules (+ modules 1))
+                        (:= rows (+ rows #(#(i (plan.ClosureRow :rel rel :name m :imports listed))))))
+                      (when again
+                        (:= reread (+ reread 1)))
+                      (when (and (is-not unsaved None) (not-in unsaved unstored))
+                        (:= unstored (+ unstored #(unsaved))))))
+              (:= imports (+ imports #(listed))))
             (<- (MarkProgress))
             (<- named frozenset (plan.imported-modules index found imports))
             (:= frontier named))
           (for [problem unstored]
             (<- (Note (.format "import の名を保存先へ書けない(次の準備が読み直す): {}" problem))))
-          (<- (Note (.format "closure_modules={} closure_reread={}" modules reread)))
+          (<- (Note (.format "closure_modules={} closure_reread={} closure_carried={}" modules reread carried)))
           (<- scopes tuple (plan.closure-scopes index seen (len trees)))
-          scopes)))
+          (var changed None)
+          (when (is-not tables None)
+            (<- moved frozenset (plan.changed-modules visited same tables))
+            (:= changed moved))
+          (plan.ClosureWalk :scopes scopes
+                            :rows (tuple (gfor k (range (len trees)) (tuple (gfor #(i row) rows :if (= i k) row))))
+                            :changed changed))))
 
 
 (defk prepare-trees [trees revision jobs entries code-store hy-version]
@@ -319,7 +409,10 @@
     (:= scans (+ scans #(scanned))))
   (<- scanned-at float (GetMonotonic))
   (<- (MarkProgress))
-  (<- scopes tuple (closure-of-trees trees (tuple (gfor s scans (tuple (get s 0)))) entries code-store hy-version))
+  (<- walk plan.ClosureWalk (closure-of-trees trees (tuple (gfor s scans (tuple (get s 0)))) entries code-store hy-version))
+  (val scopes walk.scopes)
+  ;; 写し元の .pyc の引き継ぎ(R3c)は、閉包の歩みが写し元から変わった module を求められた時だけ焼きの道具へ渡す。
+  (val inherits (if (is walk.changed None) #() (tuple (gfor t trees #(t.path t.inherit)))))
   (<- closed float (GetMonotonic))
   ;; 木ごとの用意する物の計画と、その大きさ(読めない source は大きさ 0 — 焼きが理由つきで断る)。全部の木の物を大きい順に 1 つの pool で用意する。
   (var plans #())
@@ -334,7 +427,7 @@
   (<- order tuple (plan.bake-order items))
   (<- paths tuple (plan.trees-import-path trees))
   (<- (MarkProgress))
-  (<- answer plan.BakeAnswer (BakeSources order jobs paths code-store))
+  (<- answer plan.BakeAnswer (BakeSources order jobs paths code-store inherits (or walk.changed (frozenset))))
   (<- (MarkProgress))
   (val failures answer.failed)
   (<- baked float (GetMonotonic))
@@ -344,7 +437,7 @@
     (<- (Note (.format "保存先を使えない(書けない code は次の準備が焼き直す・hardlink で置けない .pyc は書いた): {}" reason))))
   ;; 検め: 用意した結果を木から読み直す(焼きの答えを信じず、置かれた物を数える)。
   (var outcomes #())
-  (for [#(tree scope tree-plan) (zip trees scopes plans)]
+  (for [#(tree scope tree-plan rows) (zip trees scopes plans walk.rows)]
     (<- failed list (plan.tree-failures failures tree.path))
     (<- after tuple (ScanTree tree.path))
     (<- after-sources list (plan.scoped-sources (get after 0) scope))
@@ -352,6 +445,12 @@
     (<- problem (| str None) (tree-problem after-sources after-pycs (frozenset (gfor f failed (get f 0))) tree.roots))
     (if (is problem None)
         (do (<- marker dict (marker-content revision True after-sources after-pycs failed tree.roots))
+            ;; 閉包の表は完成の印の前に置く(次の準備の写し元になるのは完成した root の木だけ — R3c)。
+            (when entries
+              (<- text str (plan.closure-table-text rows hy-version))
+              (<- unwritten (| str None) (WriteClosureTable (posixpath.join tree.path plan.CLOSURE-TABLE) text))
+              (when (is-not unwritten None)
+                (<- (Note (.format "閉包の表を書けない(次の準備は全部を読む): {}: {}" tree.named unwritten)))))
             (<- (WriteMarker tree.path marker)))
         (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem))))
     (<- stored int (plan.tree-count answer.stored tree.path))
@@ -381,11 +480,12 @@
   ;; subprocess-handler が答える)。道具が 0 でない終わりで止まれば、焼きの失敗でなく道具の失敗として落ちる。
   ;; 引数に残す理由: 印の file の path は起動ごとの値(--progress・None = 印の無い起動)。焼きの道具は 1 つ用意するたびに印を進める —
   ;; 焼きの前後だけの印では、進んでいる焼き直しの全体が停滞の閾を越えて止められる。
-  (BakeSources [items jobs paths code-store]
+  (BakeSources [items jobs paths code-store inherits changed]
     ;; interpreter は venv の prefix から求める(hy の起動は sys.executable を hy の入口に差し替えるので、sys.executable では起こせない)。
     (<- facts InterpreterFacts (ReadInterpreter))
-    (<- argv tuple (plan.bake-argv (posixpath.join facts.prefix "bin" "python") POOL-TOOL jobs paths CODE-STORE code-store progress))
-    (<- text str (plan.bake-input items))
+    (<- argv tuple (plan.bake-argv (posixpath.join facts.prefix "bin" "python") POOL-TOOL jobs paths CODE-STORE code-store progress
+                                   inherits))
+    (<- text str (plan.bake-input items changed))
     (<- outcome ProcessOutcome (RunProcess :argv argv :stdin text))
     (when (!= outcome.exit-code 0)
       (raise (RuntimeError (.format "焼きの道具が終わり {} で止まった: {}" outcome.exit-code
@@ -441,14 +541,53 @@
         (tuple (.map pool reader paths)))))
 
 
+(deff same-file [pair]  ; cannot be a defk: thread の pool で回す読み(VM の外)
+  {:pre [(: pair tuple)] :post [(: % bool)]}
+  "#(新しい木の path 写し元の木の path) の 2 つが同じ file(同じ device の同じ inode)か(どちらかを読めなければ偽)。"
+  (try
+    (os.path.samestat (os.stat (get pair 0)) (os.stat (get pair 1)))
+    (except [OSError]
+      False)))
+
+
+(deff read-table [path]  ; cannot be a defk: 閉包の表の読み(VM の外 — 答え手が呼ぶ)
+  {:pre [(: path str)] :post [(: % (| str None))]}
+  "閉包の表の file を読むため(無い・読めない file は None — その木は写し元の表を持たない物として扱う)。"
+  (try
+    (.read-text (Path path) :encoding "utf-8")
+    (except [OSError]
+      None)))
+
+
+(deff write-table [path text]  ; cannot be a defk: 閉包の表の書き(VM の外 — 答え手が呼ぶ)
+  {:pre [(: path str) (: text str)] :post [(: % (| str None))]}
+  "閉包の表の file を、一時の file に書いてから置き換えるため(書きかけを読ませない)。答え = 書けなかった理由か None。"
+  (setv temporary (.format "{}.{}.tmp" path (os.getpid)))
+  (try
+    (.write-text (Path temporary) text :encoding "utf-8")
+    (os.replace temporary path)
+    None
+    (except [error OSError]
+      (when (os.path.lexists temporary)
+        (os.unlink temporary))
+      (str error))))
+
+
 (defhandler closure-reads
-  ;; 閉包の歩みの読みの効果を、thread の pool で並べた読みに訳す(main が被せる)。
+  ;; 閉包の歩みの読みの効果を、thread の pool で並べた読みに訳す(main が被せる)。閉包の表の読み書きもここで答える。
   (ReadSources [paths]
     (<- texts tuple (read-all read-source paths))
     (resume texts))
   (ReadStoreEntries [paths]
     (<- datas tuple (read-all read-entry-or-none paths))
-    (resume datas)))
+    (resume datas))
+  (SameFiles [pairs]
+    (<- flags tuple (read-all same-file pairs))
+    (resume flags))
+  (ReadClosureTable [path]
+    (resume (read-table path)))
+  (WriteClosureTable [path text]
+    (resume (write-table path text))))
 
 
 (defhandler progress-marks [path]
@@ -476,17 +615,22 @@
   (.add-argument parser "--tree" :action "append" :required True :help "焼く木(幾つでも — 木ごとの引数はこの順に並べる)")
   (.add-argument parser "--roots" :action "append" :help "木の中の import の根(`,` で並べる・前が先 — 木ごとに 1 つ)")
   (.add-argument parser "--progress" :default "" :help "進みの印の file(閉包の一回りと焼きの前後に時刻を進める・空 = 印を触らない)")
+  (.add-argument parser "--inherit" :action "append"
+                 :help "写し元の木(依存のキーの同じ完成済みの root の、この木の写し元の木・空 = 無い — 木ごとに 1 つ・ADR-DOE-BUILD-002 R3c)")
   (setv args (.parse-args parser))
   (setv shaped (run (plan.tree-arguments (tuple args.tree) (tuple (or args.roots [])))))
   (when (isinstance shaped str)
     (.error parser shaped))
+  (setv inherits (run (plan.tree-inherits (len args.tree) (tuple (or args.inherit [])))))
+  (when (isinstance inherits str)
+    (.error parser inherits))
   ;; 焼く途中の import(Hy の require 等)が timestamp 方式の .pyc を書かないようにする。
   (setv sys.dont-write-bytecode True)
   ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster/_worker/entry)が sys.path の先頭に入る。
   ;; 焼く木の module 名がそこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
-  (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped))))
+  (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped inherits))))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
   ;; 焼きの並列数: CPU から決めた数(か --jobs)を上限に、この process の居る cgroup の memory の空きで絞る(焼く子が層の上限で殺され、
   ;; pool が壊れて準備が落ちた — 2026-11-02 の node-d・頭の註の手順 3)。絞らなかった回も並列数を 1 行で名乗る(plan.jobs-line — 実行環境の
