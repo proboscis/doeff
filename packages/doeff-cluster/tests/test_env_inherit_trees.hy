@@ -12,7 +12,7 @@
 
 
 (defk request-of [env known]
-  {:pre [(: known tuple)] :post [(: % PrepareRequest)] :tags {:context "worker" :role "test"}}
+  {:pre [(: env RuntimeEnv) (: known tuple)] :post [(: % PrepareRequest)] :tags {:context "doeff-cluster-test" :role "program"}}
   "新しい root の準備の要求(worker と同じ置き場 state/roots/<キー>)。"
   (<- key str (env-key env PLATFORM))
   (PrepareRequest :env env :key key :platform PLATFORM :root (.format "/state/roots/{}" key)
@@ -20,7 +20,7 @@
 
 
 (defk known-of [env root made [platform PLATFORM]]
-  {:pre [(: root str) (: made int)] :post [(: % KnownRoot)] :tags {:context "worker" :role "test"}}
+  {:pre [(: env RuntimeEnv) (: root str) (: made int) (: platform str)] :post [(: % KnownRoot)] :tags {:context "doeff-cluster-test" :role "program"}}
   "完成済みの root 1 つ。"
   (KnownRoot :env env :root root :platform platform :made-ms made :hy-version None))
 
