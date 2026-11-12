@@ -125,6 +125,11 @@
 (val COMMAND-LAYER "commands")
 (val CLI-CEILING-VAR "WORKER_CLI_LAYER_CEILING")
 (val CLI-CEILING-CHILD-VAR "DOEFF_WORKER_CLI_CEILING")
+;; 上に載る系が会話の CLI の層に残させる余白(byte の数)を書く file の機体の宣言(絶対の path — worker/core/eviction_rules の頭の註の帳面の 2')。
+;; worker は見張りの回ごとに読み、clis の今の使いの上に、置いた task の取り置きと jobs の層の受けより先に残す。数は上に載る系が持ち、worker は
+;; 写しを持たない。path は job の子へ CLI-KEPT-FILE-CHILD-VAR で渡す(書くのは上に載る系の子)。CLI-CEILING-VAR の無い機体の宣言は起動を断る。
+(val CLI-KEPT-FILE-VAR "WORKER_CLI_KEPT_FILE")
+(val CLI-KEPT-FILE-CHILD-VAR "DOEFF_WORKER_CLI_KEPT_FILE")
 ;; 会話の CLI の層の需要の余白の機体の宣言(worker/core/eviction_rules の頭の註の会話の CLI の層の帳面の 5): 会話の CLI 1 本の要り(kernel の
 ;; memory の綴り)と、使いに出る前に受けてよい本数 k(0 以上の整数)。余白 = 1 本の要り × k。無ければ eviction_rules の CLI-TURN-BYTES と
 ;; CLI-TURN-SLOTS。CLI-CEILING-VAR の無い機体(clis を掛け直さない)の宣言は起動を断る。
@@ -224,7 +229,7 @@
    断る(掛け直さない層の宣言を黙って捨てない)。container の中の空きから取り置く層は box-layers-of。"
   (<- ceiling (| int None) (cli-ceiling-bytes machine-env))
   (when (is ceiling None)
-    (val stray (lfor name #(CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR) :if (.strip (.get machine-env name "")) name))
+    (val stray (lfor name #(CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR CLI-KEPT-FILE-VAR) :if (.strip (.get machine-env name "")) name))
     (when stray
       (raise (ValueError (.format "{} は {} を宣言した機体だけが置ける" (.join "・" stray) CLI-CEILING-VAR))))
     (return None))
@@ -235,15 +240,29 @@
     (raise (ValueError (.format "{} {} が {} の層の memory.max {} より小さい" CLI-CEILING-VAR ceiling CLI-LAYER floor))))
   (<- turn-room int (cli-turn-room-bytes machine-env))
   (<- layers tuple (box-layers-of machine-env cgroup-dir layout jobs))
+  (<- kept-file str (cli-kept-file-of machine-env))
   (CliLayerSettings :dir (+ cgroup-dir "/" CLI-LAYER) :floor-bytes floor :ceiling-bytes ceiling :container-dir cgroup-dir
-                    :turn-room-bytes turn-room :layers layers))
+                    :turn-room-bytes turn-room :layers layers :kept-file kept-file))
+
+
+(defk cli-kept-file-of [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % str)] :tags {:context "worker" :role "main"}}
+  "上に載る系が clis に残させる余白の file の宣言(CLI-KEPT-FILE-VAR の註)を読むため(\"\" = 宣言が無い)。絶対の path でない宣言は起動を断る
+   (ValueError — 子と worker の作業 dir が違うと別の file を読む)。"
+  (val declared (.strip (.get machine-env CLI-KEPT-FILE-VAR "")))
+  (when (and declared (not (.startswith declared "/")))
+    (raise (ValueError (.format "{} は絶対の path で書く: {!r}" CLI-KEPT-FILE-VAR declared))))
+  declared)
 
 
 (defk cli-ceiling-environ [machine-env]
   {:pre [(: machine-env dict)] :post [(: % dict)] :tags {:context "worker" :role "main"}}
-  "会話の CLI の層の天井を job の子へ渡す env にするため(CLI-CEILING-VAR の註 — byte の数)。宣言が無ければ渡さない。"
+  "会話の CLI の層の天井(CLI-CEILING-VAR の註 — byte の数)と、clis に残させる余白の file(CLI-KEPT-FILE-VAR の註)を job の子へ渡す env に
+   するため。宣言が無い物は渡さない。"
   (<- ceiling (| int None) (cli-ceiling-bytes machine-env))
-  (if (is ceiling None) {} {CLI-CEILING-CHILD-VAR (str ceiling)}))
+  (<- kept-file str (cli-kept-file-of machine-env))
+  (| (if (is ceiling None) {} {CLI-CEILING-CHILD-VAR (str ceiling)})
+     (if kept-file {CLI-KEPT-FILE-CHILD-VAR kept-file} {})))
 
 
 (defk jobs-ceiling-bytes [machine-env cap clis]

@@ -95,14 +95,16 @@
   "会話の CLI の層(clis)の掛け直しの設定(入口が起動の時に 1 度だけ作る — worker/core/eviction_rules の頭の註の会話の CLI の層): dir = clis の
    層の dir・floor-bytes = 宣言の静的な memory.max(床)・ceiling-bytes = 機体の宣言の天井・container-dir = worker の container の cgroup の
    dir(memory.max と working set を読む)・turn-room-bytes = 需要の余白(会話の CLI の新しい受け k 本分 — 機体の宣言の 1 本の要り × k)・
-   layers = jobs と clis の外の限る層(BoxLayerSettings の tuple — container の中の空きから取り置く)。"
+   layers = jobs と clis の外の限る層(BoxLayerSettings の tuple — container の中の空きから取り置く)・kept-file = 上に載る系が clis に
+   残させる余白(byte の数)を書く file(worker/core/eviction_rules の頭の註の帳面の 2' — \"\" = 読まない)。"
   {:check [(>= floor-bytes 0) (>= ceiling-bytes floor-bytes) (>= turn-room-bytes 0)]}
   (#^ str dir)
   (#^ int floor-bytes)
   (#^ int ceiling-bytes)
   (#^ str container-dir)
   (setv #^ int turn-room-bytes (* CLI-TURN-SLOTS CLI-TURN-BYTES))
-  (setv #^ tuple layers #()))
+  (setv #^ tuple layers #())
+  (setv #^ str kept-file ""))
 
 
 (defrecord BoxLayerLimit
@@ -487,6 +489,22 @@
   failure)
 
 
+(defk clis-kept-read [path]
+  {:pre [(: path str)] :post [(: % (| int str)) (or (isinstance % str) (>= % 0))] :tags {:context "worker" :role "protocol"}}
+  "上に載る系が clis に残させる余白を読むため(CliLayerSettings の kept-file — worker/core/eviction_rules の頭の註の帳面の 2'): \"\" の path は
+   0(読まない)。file の中身は byte の数 1 つ。file が無い・読めない時も 0(上に載る系が書く前の起動の間 — 残させる物がまだ無い)。中身が
+   数でない時は読めない訳(呼び手は 0 で数え、訳を見張りの log へ渡す — clis の掛け直しは止めない)。"
+  (when (= path "")
+    (return 0))
+  (<- text (| str FileFailed) (ReadText path))
+  (when (isinstance text FileFailed)
+    (return 0))
+  (val value (.strip text))
+  (if (.isdigit value)
+      (int value)
+      (.format "clis に残させる余白の file {} の中身が byte の数でない: {!r}" path value)))
+
+
 (defk clis-limited [clis cell line margin reserve jobs-current pending]
   {:pre [(: clis CliLayerSettings) (: cell EvictionCell) (: line (| EvictionLine None)) (: margin int) (: reserve int)
          (: jobs-current (| int None)) (: pending int) (>= pending 0)]
@@ -520,7 +538,11 @@
                (:= box found))))
   (var limit (max current clis.floor-bytes))
   (when (is-not free None)
-    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes clis.turn-room-bytes pending))
+    (<- kept (| int str) (clis-kept-read clis.kept-file))
+    (when (isinstance kept str)
+      (:= failure (or failure kept)))
+    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes clis.turn-room-bytes pending
+                              (if (isinstance kept str) 0 kept)))
     (:= limit found))
   (<- written (| FileFailed None) (WriteText (+ clis.dir "/memory.max") (str limit)))
   (when (isinstance written FileFailed)
