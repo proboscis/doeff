@@ -15,7 +15,7 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (import dataclasses [dataclass field])
 (import threading)
-(import doeff [EffectBase])
+(import doeff [EffectBase Perform])
 (import doeff_core_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlRows SqlUnreachable])
 (import doeff_core_effects._sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction])
 (import doeff_core_effects [PostgresConnections]
@@ -184,7 +184,8 @@
   {:pre [(: counts StatementCounts) (: ask EffectBase)] :post [(: % tuple)]
    :tags {:context "records" :role "program"}}
   "効果 ask を 1 回撃ち、その間に DB へ流れた往復を切り出すため。答え = #(答え 往復の tuple)— 往復ごとに流した文の綴りの tuple(文の数は
-   往復の文を並べた数)。"
+   往復の文を並べた数)。答えは handler が答えた値のまま受ける — 宣言を開かずに(Perform)撃つので、ReadRow の不在 Missing も Absent に
+   ならずに値で返る。"
   (val mark (len counts.flushes))
-  (<- answer ask)
+  (<- answer (Perform ask))
   #(answer (tuple (cut counts.flushes mark None))))
