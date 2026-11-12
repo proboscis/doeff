@@ -13,7 +13,9 @@
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限(天井 BAKE-JOBS-CEILING)・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS room-compartments])
+;; worker w1・w2 の tasks 区画(ADR-DOE-CLUSTER-005 — 置き方は区画の申告の和で置く)。
+(setv ROOMS (room-compartments #("w1" "w2") 10))
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
@@ -477,12 +479,12 @@
   (<- key str (key-on declared "linux-x86_64"))
   (val task (! (env-task "t1" declared)))
   ;; 準備済みの w2 を、名前順で先の w1(空き同じ)より優先する
-  (val warm-state (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}))
+  (val warm-state (ClusterState :machine-compartments ROOMS :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}))
                                 :tasks (! (table-from-rows {"t1" task}))))
   (val placed (.row (! (tasks-placed 10 warm-state (table-of #()) TIMING)) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "w2")) placed)
   ;; 準備済みが無ければ置くが phase は preparing(assigned と分ける)で、冷たい起動を数える
-  (val cold-state (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0))})) :tasks (! (table-from-rows {"t1" task}))))
+  (val cold-state (ClusterState :machine-compartments ROOMS :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0))})) :tasks (! (table-from-rows {"t1" task}))))
   (val cold (.row (! (tasks-placed 10 cold-state (table-of #()) TIMING)) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks (! (table-from-rows {"t1" cold}))))
@@ -497,7 +499,7 @@
 
 (deftest test-cold-starts-are-counted-in-the-metrics
   (<- declared dict (declared-of "app-1"))
-  (<- placed tuple (program-placed (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0))})) :tasks (! (table-from-rows {"t1" (! (env-task "t1" declared))}))
+  (<- placed tuple (program-placed (ClusterState :machine-compartments ROOMS :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0))})) :tasks (! (table-from-rows {"t1" (! (env-task "t1" declared))}))
                                                  :next-task 2)
                                    {} :now 10))
   (val submitted (responded (get placed 0) (! (http-request "POST" "/tasks" {}
@@ -512,12 +514,12 @@
   (<- declared dict (declared-of "app-1"))
   (<- key str (key-on declared "linux-x86_64"))
   (val task (! (env-task "t1" declared)))
-  (val two (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}))
+  (val two (ClusterState :machine-compartments ROOMS :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}))
                          :tasks (! (table-from-rows {"t1" task}))))
   (assert (= (. (.row (! (tasks-placed 10 two (table-of #()) TIMING)) "t1") worker) "w2") "空きの尽きた worker を避ける")
-  (val only (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))})) :tasks (! (table-from-rows {"t1" task}))))
+  (val only (ClusterState :machine-compartments ROOMS :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))})) :tasks (! (table-from-rows {"t1" task}))))
   (assert (= (. (.row (! (tasks-placed 10 only (table-of #()) TIMING)) "t1") phase) "queued") "置ける先が無ければ待つ")
-  (val ready (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))})) :tasks (! (table-from-rows {"t1" task}))))
+  (val ready (ClusterState :machine-compartments ROOMS :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))})) :tasks (! (table-from-rows {"t1" task}))))
   (assert (= (. (.row (! (tasks-placed 10 ready (table-of #()) TIMING)) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
 
 

@@ -23,6 +23,7 @@
 (import doeff_cluster._shared.core.detached_rules [task-shape-refusal task-placing-json TASK-SHAPE-MAX-LENGTH])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])
+(import tests.room_rows [compartments-like-rooms])
 (import doeff_hy._table [Table TableWrite])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -59,7 +60,9 @@
   (<- next TaskRecord (task-of "next" #("host-node-h") queued-shape))
   (<- rows (table-from-rows (| {"next" next} (if (is grown None) {} {grown.id grown}))))
   (<- none (table-from-rows {}))
-  (val state (ClusterState #() workers none rows))
+  ;; node-h の tasks 区画は、伸びた task の分と名乗る空きの和(区画の和は伸びた task の申告を数える — ADR-DOE-CLUSTER-005 R5)。
+  (<- compartments Table (compartments-like-rooms {"node-h" (replace node-h :measured (! (measured (+ NODE-H-ROOM-MIB GROWN-MIB MEMORY-FLOOR-MIB) {})))}))
+  (val state (ClusterState #() workers none rows :machine-compartments compartments))
   (! (tasks-placed 1000 state state.placements T)))
 
 
@@ -135,9 +138,9 @@
   ;; node-h の 11-09 の形: 同じ形の task が 14,238 MiB まで伸びて走っている(その山は heartbeat が行に書いた)。
   (<- base TaskRecord (task-of "t41112" #("host-node-h") SHAPE))
   (val grown (replace base :phase "assigned" :worker "node-h" :started-ms 0 :peak-mib GROWN-MIB))
-  ;; 通る例: 次の同じ形の task の要りは測った山 14,238 MiB で、名乗る空き 9,682 MiB の node-h には置かず、空きの無い文で待つ。
+  ;; 通る例: 次の同じ形の task の申告は測った山 14,238 MiB で、伸びた task の申告の残り 9,682 MiB の node-h の区画には置かず、和の越えの文で待つ。
   (<- placed (get Table TaskRecord) (placed-with grown SHAPE))
-  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
+  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL))
   (val next (.row placed "next"))
   (assert (= #(next.phase next.detail) #("queued" no-memory)) next)
   ;; 形を名乗らない task と、まだ測っていない初めての形の task は名乗り 3,584 MiB のまま置く(山を知らない仕事は名乗りを信じる —
@@ -179,10 +182,11 @@
   (<- workers (table-from-rows {"node-h" node-h}))
   (<- rows (table-from-rows {"done" done "next" big}))
   (<- none (table-from-rows {}))
-  (val state (ClusterState #() workers none rows))
+  (<- compartments Table (compartments-like-rooms {"node-h" node-h}))
+  (val state (ClusterState #() workers none rows :machine-compartments compartments))
   (<- placed (get Table TaskRecord) (tasks-placed 1000 state state.placements T))
   (assert (= (. (.row placed "next") phase) "assigned") (.row placed "next"))
   ;; 終わりまで走った行の無い形(前の回が走っている途中)は名乗りのまま数え、空きの無い文で待つ。
   (<- running-rows (table-from-rows {"done" (replace done :phase "assigned" :finished-ms None) "next" big}))
-  (<- waiting (get Table TaskRecord) (tasks-placed 1000 (ClusterState #() workers none running-rows) state.placements T))
+  (<- waiting (get Table TaskRecord) (tasks-placed 1000 (ClusterState #() workers none running-rows :machine-compartments compartments) state.placements T))
   (assert (= (. (.row waiting "next") phase) "queued") (.row waiting "next")))

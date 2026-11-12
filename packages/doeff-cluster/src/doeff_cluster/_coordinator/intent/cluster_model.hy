@@ -735,19 +735,17 @@
 ;; 材料の判定(running-process・入れ替えの見張り・停止の述語)の答えは、理由の文ではなく下の閉じた型で運ぶ — version-state は種類を
 ;; 網羅の match で状態へ写し、文を読んで分けない。
 
-(defenum TaskUnplacedKind TASK-NO-ROOM TASK-NO-MEMORY TASK-LIMITED TASK-RESERVED TASK-BACKGROUND-RESERVED TASK-UNDECLARED TASK-UNMEASURED)
+(defenum TaskUnplacedKind TASK-LIMITED TASK-UNDECLARED TASK-NO-COMPARTMENT TASK-COMPARTMENT-FULL)
 
 
-;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
-;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも測った空き(task-room-of —
-;; CPU・memory・PSI から数えた数)が 0・TASK-NO-MEMORY = 数の空きの在る worker は在るが、どれも memory の空き(task-memory-room-of —
-;; 測った空き − 床 − 置いた task の「要り − 今の使い」の和)が task の要りに足りない(2026-11-02)・TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に
-;; 達している・TASK-RESERVED = 空きは在るが、残りが worker の予約(measured_room.reserve-of)のうち優先 0 以上の task に残す半分
-;; (切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-BACKGROUND-RESERVED = 空きは
-;; 在るが、残りが予約のうち背景の仕事に残す半分(切り捨て)だけで、背景の仕事が待っている間は優先 0 以上の task はそこを使わない
-;; (2026-10-29)・TASK-UNDECLARED = task の名乗った組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から
-;; 読み直した — 宣言されるまで待つ・2026-10-12)・TASK-UNMEASURED = 置ける worker のどれも機体の測った空き(heartbeat の measured)を
-;; 名乗らない(/proc の無い機体・測りの前の版の worker・CPU の使いをまだ数えられない初めの読み — 名乗るまで待つ)。
+;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text・ADR-DOE-CLUSTER-005 R8)。
+;; 門の内の task(ungated でない)だけが待つ。TASK-LIMITED = task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に達している・
+;; TASK-UNDECLARED = task の名乗った組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から読み直した — 宣言される
+;; まで待つ・2026-10-12)・TASK-NO-COMPARTMENT = 能力と版の合う置ける worker のどれも tasks 区画を持たない(資源 MachineCompartments の
+;; どの行も名指さない — 宣言されるまで待つ)・TASK-COMPARTMENT-FULL = tasks 区画を持つ worker は在るが、どの区画も、置いた task の申告の
+;; 和にこの task の申告(memory か CPU)を足すと区画の宣言を越える(置いた task が終わるまで待つ — R5)。2026-11-12 までの測った空きの
+;; 理由(TASK-NO-ROOM・TASK-NO-MEMORY・TASK-RESERVED・TASK-BACKGROUND-RESERVED・TASK-UNMEASURED)は置き方が測った空きを読まなく
+;; なったので無い(行き先は ADR-DOE-CLUSTER-005 の WAIT-REASON-DESTINATIONS)。
 
 
 (defenum NotReadyKind
@@ -1475,20 +1473,26 @@
 ;; 待ちの上限は worker も問いに載せる取り交わしの値なので ClusterTiming の watch-max-ms(shared/intent/protocol — #3865)。
 
 
+(defrecord ClaimedSum
+  "worker 1 台の tasks 区画に数える申告の和(cluster_policy.claimed-sums・取っておき・足りなさ — ADR-DOE-CLUSTER-005 R5・R6):
+   memory-mib = memory の申告の和(MiB)・cpu-millis = CPU の申告の和(millicore)。保存しない拍の中の値(申告そのものは表 claims)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ int memory-mib)
+  (#^ int cpu-millis))
+
+
 (defrecord YieldCandidate
-  "急ぎの task に場所を譲らせうる、worker に置いた task 1 本(cluster_policy.yield-candidates の答えの 1 行 — measured_room の頭の註の
-   場所の譲り): task = 置いた task の行・reserved-mib = 置き先がまだ予約している伸びる分(MiB — measured_room.reserved-mib-of)・
-   freed-mib = 止めると戻る memory(測りの名乗る今の使い + reserved-mib)・measured = 測りが今の使いを名乗っていた(偽 = 要りの全部を
-   測った空きにまだ出ていない分 unmeasured-mib に数えていた)。"
-  {:tags {:context "coordinator" :role "type"} :check [(>= reserved-mib 0) (>= freed-mib reserved-mib)]}
+  "急ぎの task に場所を譲らせうる、worker に置いた task 1 本(cluster_policy.yield-candidates の答えの 1 行 — ADR-DOE-CLUSTER-005 R6 の
+   場所の譲り): task = 置いた task の行・memory-mib と cpu-millis = 止めると tasks 区画の和から外れる申告(task_claims.claim-mib-of・
+   claim-cpu-of)。保存しない拍の中の値。"
+  {:tags {:context "coordinator" :role "type"} :check [(>= memory-mib 0) (>= cpu-millis 0)]}
   (#^ TaskRecord task)
-  (#^ int reserved-mib)
-  (#^ int freed-mib)
-  (#^ bool measured))
+  (#^ int memory-mib)
+  (#^ int cpu-millis))
 
 
 (defrecord YieldPlan
-  "急ぎの task 1 本を置くために場所を譲らせる先(cluster_policy.yield-plan の答え — measured_room の頭の註の場所の譲り): worker = 急ぎの
+  "急ぎの task 1 本を置くために場所を譲らせる先(cluster_policy.yield-plan の答え — ADR-DOE-CLUSTER-005 R6 の場所の譲り): worker = 急ぎの
    task を置く worker・victims = その worker で止めて次の試行の待ちの行へ戻す task(YieldCandidate の tuple — 1 本以上)。"
   {:tags {:context "coordinator" :role "type"} :check [(> (len victims) 0)]}
   (#^ WorkerInfo worker)

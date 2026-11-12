@@ -25,6 +25,10 @@
     (get (.getsockname s) 1)))
 
 
+;; 共有の coordinator を使う検の worker の名(test_detached の served の組・test_served_program・test_task_programs)。
+(val SERVED-WORKERS #("w1" "served-program-worker" "served-task-program-worker"))
+
+
 (defk start-coordinator [tmp-path]
   {:pre [(: tmp-path Path)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "本物の coordinator の process を起こし、GET /state に答えるまで待つため。答え = #(URL process)。止めるのは呼び手。"
@@ -38,6 +42,16 @@
   (while (< (time.monotonic) deadline)
     (try
       (when (= (. (httpx.get (+ url "/state") :timeout 1.0) status-code) 200)
+        ;; 共有の coordinator を使う検の worker の tasks 区画を、site の宣言の代役として資源の口で書く(置き方は区画の申告の和で
+        ;; 置き、区画を持たない worker には門の内の task を置かない — ADR-DOE-CLUSTER-005 R2・R5)。
+        (for [name SERVED-WORKERS]
+          (val made (httpx.post (+ url "/resources/MachineCompartments") :timeout 10.0 :headers {"X-Actor" "site"}
+                                :json {"name" name
+                                       "spec" {"compartments" [{"use" "tasks" "worker" name "layer" "jobs"
+                                                                "memoryMiB" 65536 "cpuMillis" 16000}]}}))
+          (when (!= made.status-code 201)
+            (.kill process)
+            (raise (RuntimeError (+ "区画の宣言を書けなかった: " made.text)))))
         (return #(url process)))
       (except [httpx.TransportError] None))
     (when (is-not (.poll process) None)

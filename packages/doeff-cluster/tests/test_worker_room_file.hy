@@ -11,7 +11,7 @@
 ;; 失敗ケース = 起動の時の値を名乗り続ける(file の変更が効かない)・崩れた file で既定の値や 0 を名乗る・下げた枠で走っている job を外す。
 (require doeff-hy.macros [deff defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS room-compartments])
 (import json)
 (import dataclasses [replace])
 (import httpx)
@@ -274,13 +274,15 @@
 (deftest test-lowering-the-room-below-what-is-used-keeps-placed-work-and-places-nothing-new
   ;; node-h は測った空き 6 本・memory 400 MiB で常駐の job a・b・c(settle 100 ずつ)と task t1・t2 を担う。測った空きが 1 本・memory
   ;; 250 MiB へ下がる heartbeat の後: Worker の行は新しい値になり、memory の残り(250 − 300 = −50)は負、task の空き(1 − 2 本はまだ測りに
-  ;; 出ていない)は 0。置いた job と task はそのまま担い、新しい job d は memory の訳で置かれず、新しい task t3 は空きの無い理由で待つ。
+  ;; 出ていない)は 0。置いた job と task はそのまま担い、新しい job d は memory の訳で置かれず、新しい task t3 は区画の和の越えの理由で待つ。
   (val placed (! (table-from-rows {"a" (Placement "a" "node-h" 1 0) "b" (Placement "b" "node-h" 1 0) "c" (Placement "c" "node-h" 1 0)})))
   (val running (! (table-from-rows {"t1" (replace (! (task "t1")) :phase "assigned" :worker "node-h")
                                     "t2" (replace (! (task "t2")) :phase "assigned" :worker "node-h")
                                     "t3" (replace (! (task "t3")) :detached True)})))
   (val state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c")) (! (job "d"))) (! (table-from-rows {"node-h" (! (sized "node-h" 6 400))}))
-                           placed running))
+                           placed running
+                           ;; tasks 区画は置いた 2 本分(置き方は区画の申告の和で置き、測った空きを読まない — ADR-DOE-CLUSTER-005)。
+                           :machine-compartments (room-compartments #("node-h") 2)))
   (val lowered (! (register-heartbeat state (! (heartbeat-of {"name" "node-h" "provides" [] "measured" (get ROOM-JSONS 1)
                                                              "memoryMiB" 250 "versions" {"python" "3"}})) 1000)))
   (val node-h (.row lowered.workers "node-h"))
@@ -295,7 +297,7 @@
              [#("assigned" "node-h") #("assigned" "node-h")])
           after.tasks)
   (val waiting (.row after.tasks "t3"))
-  (assert (= #(waiting.phase waiting.worker waiting.detail) #("queued" None (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM)))) waiting)
+  (assert (= #(waiting.phase waiting.worker waiting.detail) #("queued" None (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)))) waiting)
   (val load (load-of after after.placements))
   (assert (= #((! (memory-room-of (.row after.workers "node-h") load)) (! (task-room-of (.row after.workers "node-h") load))) #(-50 0)) load))
 

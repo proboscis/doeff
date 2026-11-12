@@ -1208,18 +1208,18 @@
   (assert (= (get scene.rows "trio/result" "sum") 103) scene.rows))
 
 
-(deftest test-a-counterexample-worker-that-overclaims-its-cpus-breaks-c17
-  ;; 条 C17 の失敗ケース: 本当は CPU 1 つ(残す 1 を引くと空きの無い — 受ける数 0)の機体の worker が heartbeat の measured で CPU を
-  ;; 4 つと名乗る(SimWorker の claims-cpus)と、coordinator が名乗りどおり手番の task を置き、本当に受ける数 0 を越えて task が動き、
-  ;; 条 C17 の判断がその瞬間を名指す。
+(deftest test-a-worker-that-overclaims-its-cpus-no-longer-breaks-c17
+  ;; 条 C17 と law placement-reads-claims-not-measurements(ADR-DOE-CLUSTER-005): 本当は CPU 1 つ(残す 1 を引くと受ける数 0)の機体の
+  ;; worker が heartbeat の measured で CPU を 4 つと名乗っても(SimWorker の claims-cpus)、coordinator は測りを読まず、機体の宣言の
+  ;; tasks 区画(sim-compartments — 本当の機体から)の和で置くので、受ける数 0 を越えて task は動かない。測った空きで置いていた頃は名乗り
+  ;; どおりに置き、条 C17 の判断がその瞬間を名指した(この検の前の形の失敗ケース)。
   (val machine (SimMachine :cpus 1 :memory-mib 262144))
   (<- admits int (machine-admits machine))
   (assert (= admits 0))
   (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene)
                                       :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :machine machine :claims-cpus 4))))
   (<- taken tuple (tasks-stay-within-the-machine scene.tasks #((MachineAdmits :worker "w1" :admits admits))))
-  (assert taken #(taken scene))
-  (assert (all (gfor t taken (and (>= t.running 1) (= t.limit 0)))) taken))
+  (assert (= taken #()) #(taken scene)))
 
 
 (defk placements-after [seconds]

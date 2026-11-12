@@ -20,6 +20,7 @@
 (import doeff_cluster [TaskLimit GroupLimit])
 (import doeff_hy._table [TableWrite table-of])
 (import tests.state_rows [table-from-rows])
+(import tests.room_rows [compartments-like-rooms])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (setv PY3 #((ComponentVersion "python" "3")))
@@ -73,7 +74,8 @@
   (setv tasks {"t11" (! (queued "t11"))})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements (! (table-from-rows tasks)) :group-limits GROUPS
+                     :machine-compartments (! (compartments-like-rooms {"node-h" (! (node-h-like 10 3))}))))
   (val placed (! (tasks-placed 1000 state placements T)))
   (assert (= (. (.row placed "t11") phase) "assigned") (.row placed "t11"))
   (val longs (! (phases placed LONG-IDS)))
@@ -82,132 +84,13 @@
   (<- limited str (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))
   (assert (all (gfor id LONG-IDS :if (= (. (.row placed id) phase) "queued") (= (. (.row placed id) detail) limited))) placed))
 
-(deftest test-background-tasks-leave-half-the-reserve-for-the-build-that-comes-later
-  ;; 背景の仕事(優先 < 0)は予約の半分(切り上げ)を優先 0 以上の task に残す(2026-10-14 — 以前は予約を全部残した):
-  ;; worker ごとの上限が無くても、背景の仕事 10 本は空き 10 のうち予約 3 の 2 を残した 8 本までしか置かれない。後の拍で積んだ組み立ての
-  ;; task は、背景の仕事が走っている間でも残した予約へ置かれる。
-  (setv #(jobs placements) (! (resident #("a" "b"))))
-  (setv tasks {})
-  (for [id LONG-IDS]
-    (setv (get tasks id) (! (queued id :priority -1))))
-  (val first (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements (! (table-from-rows tasks))) placements T)))
-  (val longs (! (phases first LONG-IDS)))
-  (assert (= (.count longs "assigned") 8) longs)
-  (assert (= (. (.row first "t10") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))) (.row first "t10"))
-  (val later (! (tasks-placed 2000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements
-                                                (! (table-from-rows (| (dict (.items first)) {"t11" (! (queued "t11"))}))))
-                             placements T)))
-  (assert (= (. (.row later "t11") phase) "assigned") (.row later "t11"))
-  ;; 優先 0 の task は今までどおり予約の最後まで使える(上の組み立ての後も残した 1 本に置け、その次は空きが無い)。
-  (val more (! (tasks-placed 3000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 10 3))})) placements
-                                               (! (table-from-rows (| (dict (.items later)) {"t12" (! (queued "t12")) "t13" (! (queued "t13"))}))))
-                            placements T)))
-  (assert (= (! (phases more ["t12" "t13"])) ["assigned" "queued"]) more)
-  (assert (= (. (.row more "t13") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (.row more "t13")))
-
-(deftest test-background-tasks-run-while-resident-jobs-fill-the-job-side
-  ;; 失敗ケース(本番 2026-10-14 17:05〜): node-h の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −
-  ;; task-reserve・job の側の空き 0)になると、残る空きは予約の 6 だけになり、予約を使わない背景の仕事は 1 本も置かれなかった(会話の
-  ;; long-command 8 本が 76〜230 分 queued)。背景の仕事は予約の半分(切り捨て — 6 なら 3)までは使い、残りの半分(切り上げ)を優先 0 以上の
-  ;; task に残す: 背景の仕事 10 本(呼び手はみな別)のうち 3 本が 1 拍で置かれ、残りは予約の文で待つ。後から積んだ組み立ての task 3 本は、
-  ;; 背景の仕事が走っている間でも残した予約へ置かれる。
-  (setv #(jobs placements) (! (resident (tuple (gfor i (range 27) (.format "j{:02d}" i))))))
-  (setv tasks {})
-  (for [#(i id) (enumerate LONG-IDS)]
-    (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 6 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val first (! (tasks-placed 1000 state placements T)))
-  (val longs (! (phases first LONG-IDS)))
-  (assert (= (.count longs "assigned") 3) longs)
-  (<- reserved str (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))
-  (assert (all (gfor id LONG-IDS :if (= (. (.row first id) phase) "queued") (= (. (.row first id) detail) reserved))) first)
-  (val builds ["b1" "b2" "b3"])
-  (setv more (dict (.items first)))
-  (for [id builds]
-    (setv (get more id) (! (queued id))))
-  (val later (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows more))) placements T)))
-  (assert (= (! (phases later builds)) ["assigned" "assigned" "assigned"]) later))
-
-(deftest test-background-tasks-keep-their-half-of-the-reserve-while-foreground-groups-run
-  ;; 失敗ケース(本番 2026-10-29 17:09〜21:11 JST): node-h の形(capacity 40・task-reserve 6・常駐の job 33 → task の
-  ;; 空き 7)で優先 0 の task 4 本(日次の検・着地の後の検 2 組・着地の宣言し直し)が走ると、残る空き 3 は予約の半分 3 を越えず、背景の仕事は
-  ;; 1 本も置かれなかった(long-command 最大 27 本が 3〜4 時間 queued)。背景の仕事は予約の残りの半分(切り捨て — 6 なら 3)を自分の分として
-  ;; 持つ: 優先 0 の 4 本と背景の仕事 10 本(呼び手はみな別)を積むと、1 拍で優先 0 の 4 本と背景の仕事 3 本が置かれる。同じ拍に積んだ
-  ;; 優先 0 の 5 本目は、背景の仕事が待っている間は背景の仕事の分を使わず、その旨の文で待つ。
-  (setv #(jobs placements) (! (resident (tuple (gfor i (range 33) (.format "j{:02d}" i))))))
-  (val fronts ["f1" "f2" "f3" "f4" "f5"])
-  (setv tasks {})
-  (for [id fronts]
-    (setv (get tasks id) (! (queued id))))
-  (for [#(i id) (enumerate LONG-IDS)]
-    (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val placed (! (tasks-placed 1000 state placements T)))
-  (assert (= (! (phases placed fronts)) ["assigned" "assigned" "assigned" "assigned" "queued"]) placed)
-  (assert (= (. (.row placed "f5") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-BACKGROUND-RESERVED))) (.row placed "f5"))
-  (val longs (! (phases placed LONG-IDS)))
-  (assert (= (.count longs "assigned") 3) longs))
-
-(deftest test-foreground-tasks-use-the-whole-reserve-when-no-background-task-waits
-  ;; 背景の仕事の分は、背景の仕事が待っている時だけ残す: 同じ node-h の形(task の空き 7)で優先 0 の task 7 本だけを積むと 7 本とも置かれる
-  ;; (待つ者の無い分を空けたままにしない)。背景の仕事が予約の残りの半分を既に持っていれば、待っている背景の仕事が在っても優先 0 の
-  ;; task は残りの空きを全部使える。
-  (setv #(jobs placements) (! (resident (tuple (gfor i (range 33) (.format "j{:02d}" i))))))
-  (val fronts (lfor i (range 7) (.format "f{}" i)))
-  (setv only {})
-  (for [id fronts]
-    (setv (get only id) (! (queued id))))
-  (val alone (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements
-                                                 (! (table-from-rows only)) :group-limits GROUPS)
-                              placements T)))
-  (assert (= (.count (! (phases alone fronts)) "assigned") 7) alone)
-  ;; 背景の仕事 10 本だけを先に積む: 空き 7 のうち優先 0 以上の task に残す 3 を除いた 4 本が置かれる(優先 0 の側の守りは今までどおり)。
-  (setv tasks {})
-  (for [#(i id) (enumerate LONG-IDS)]
-    (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs (! (table-from-rows {"node-h" (! (node-h-like 7 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val first (! (tasks-placed 1000 state placements T)))
-  (assert (= (.count (! (phases first LONG-IDS)) "assigned") 4) first)
-  ;; 後から積んだ優先 0 の task 4 本: 背景の仕事は自分の分 3 を越えて持っているので、優先 0 の側は残りの 3 を全部使い、4 本目は空きを待つ。
-  (setv more (dict (.items first)))
-  (for [id (cut fronts 4)]
-    (setv (get more id) (! (queued id))))
-  (val later (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows more))) placements T)))
-  (assert (= (! (phases later (cut fronts 4))) ["assigned" "assigned" "assigned" "queued"]) later)
-  (assert (= (. (.row later "f3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (.row later "f3")))
-
-(deftest test-background-tasks-that-do-not-fit-the-memory-keep-no-reserve-from-the-foreground
-  ;; 失敗ケース(本番 2026-11-12 10:45 JST〜): 背景の仕事(優先 -1・要り 2560 MiB)が memory の空きの足りなさ(TASK-NO-MEMORY)で
-  ;; どの worker にも置けないまま 160 本待ち、待っている数が予約の背景の仕事の分を守ったので、優先 0 の task 94 本が背景の仕事の分の
-  ;; 文で 3 時間超待った — 背景の仕事も優先 0 の task もその分を使わなかった。待っている背景の仕事は、その worker の memory の空きに
-  ;; 要りが入る時だけ予約の分を守る: node-h の形(task の空き 6・予約 6・memory の空き 6 本分)に要りが memory の空きを越える背景の
-  ;; 仕事 4 本と優先 0 の task 4 本を積むと、優先 0 の 4 本とも置かれ、背景の仕事は memory の空きの文で待つ。
-  (val heavy (+ (* 6 MEMORY-SLOT-MIB) 1))
-  (val fronts ["f1" "f2" "f3" "f4"])
-  (val bgs ["g1" "g2" "g3" "g4"])
-  (setv tasks {})
-  (for [id fronts]
-    (setv (get tasks id) (! (queued id))))
-  (for [#(i id) (enumerate bgs)]
-    (setv (get tasks id) (replace (! (background id (.format "c-{}" i))) :memory-mib heavy)))
-  (val state (ClusterState #() (! (table-from-rows {"node-h" (! (node-h-like 6 6))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
-  (val placed (! (tasks-placed 1000 state (table-of #()) T)))
-  (assert (= (! (phases placed fronts)) ["assigned" "assigned" "assigned" "assigned"]) placed)
-  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
-  (assert (all (gfor id bgs (and (= (. (.row placed id) phase) "queued") (= (. (.row placed id) detail) no-memory)))) placed)
-  ;; 同じ形で背景の仕事の要りが memory の空きに入れば、今までどおり背景の仕事の分(予約 6 の半分 3)を守る: 優先 0 は 3 本だけ置かれる。
-  (setv fitting (dict tasks))
-  (for [id bgs]
-    (setv (get fitting id) (replace (get tasks id) :memory-mib None)))
-  (val guarded (! (tasks-placed 1000 (replace state :tasks (! (table-from-rows fitting))) (table-of #()) T)))
-  (assert (= (.count (! (phases guarded fronts)) "assigned") 3) guarded))
-
 (deftest test-one-caller-runs-at-most-two-background-tasks-at-once
   ;; 同じ呼び手の背景の仕事 3 本: 呼び手ごとの上限 2(cluster の範囲)で 2 本だけ置かれ、3 本目は上限の文で待つ。別の呼び手の 1 本は置かれる。
   ;; 1 本が終われば 3 本目が置かれる。
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
-  (val state (ClusterState #() (! (table-from-rows {"node-h" (! (node-h-like 17 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState #() (! (table-from-rows {"node-h" (! (node-h-like 17 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS
+                     :machine-compartments (! (compartments-like-rooms {"node-h" (! (node-h-like 17 3))}))))
   (val placed (! (tasks-placed 1000 state (table-of #()) T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (.row placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (.row placed "t3"))

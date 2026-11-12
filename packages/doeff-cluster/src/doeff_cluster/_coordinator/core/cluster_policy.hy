@@ -20,16 +20,17 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-memory-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld MachineCompartmentsView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES TaskClaim])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld MachineCompartmentsView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ClaimedSum YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES TaskClaim])
 (import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
+(import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
 (import doeff_cluster._shared.core.compartment_rules [held-compartments])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [due-of-instants])
 (import doeff_cluster._coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_hy._table [Table TableWrite TableDraft draft-of table-of])
 (import doeff_cluster._coordinator.intent.task_table [task-index held-row?])
-(import doeff_cluster._coordinator.core.cluster_rules [component-versions-of format-version-refusal])
+(import doeff_cluster._coordinator.core.cluster_rules [component-versions-of format-version-refusal placeable])
 (import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_rules [required-field int-field])
 (import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX])
@@ -41,9 +42,10 @@
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key dependency-key child-environ-refusal])
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
-(import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
-                                                       drained-room-mib keeps-room? urgent-priority? PEAK-STEP-MIB])
-(import doeff_cluster._coordinator.core.task_claims [shape-peaks-of task-need-of claim-mib-of offered-mib-of])
+(import doeff_cluster._coordinator.core.measured_room [measured-room unseen-since need-of reserved-mib-of memory-room-mib learned-need
+                                                       keeps-room? KEEP-NOW-PRIORITY PEAK-STEP-MIB])
+(import doeff_cluster._coordinator.core.task_claims [shape-peaks-of task-need-of claim-mib-of claim-cpu-of offered-mib-of
+                                                     tasks-compartments-of compartment-clamp TASK-CPU-MILLIS])
 
 ;; 子の入口の名。子は `hy -m <名>` として起きるので、worker が子の起きる doeff で解ける置き場の名へ替えて検め・起こす
 ;; (worker/core/launch の child-entry-place と JobSpec.entry-at — 実行環境の job は root ごとの置き場で、_worker の無い古い版の root では
@@ -373,14 +375,6 @@
                (if (in name state.silent)
                    (WorkerGone :worker name :boot w.boot :deadline-ms (liveness-deadline w timing.lease-ms))
                    (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
-
-
-(deff placeable [#^ (get tuple #(str ...)) needs #^ WorkerInfo worker]  ; cannot be a defk: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
-  {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
-  "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):
-   needs ⊆ provides ∪ derived(node の label から coordinator が導いた能力)、かつ worker が専用の能力(exclusive)を持てば、そのどれかを needs に持つ(一般の仕事を専用の担い手に置かない)。"
-  (and (<= (set needs) (| (set worker.provides) (set worker.derived)))
-       (or (not worker.exclusive) (bool (& (set needs) (set worker.exclusive))))))
 
 
 (deff named-capabilities [#^ (| tuple list None) provides #^ (| tuple list None) exclusive #^ bool old-labels #^ str what]  ; cannot be a defk: heartbeat の本文と保存の JSON を読む境界(Program の外)が呼ぶ
@@ -747,8 +741,9 @@
         settles (dfor name (.keys state.workers) name 0)
         settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
         since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
-        ;; 形ごとの測った山(申告の行の無い置いた task の要りを数える — task_claims.claim-mib-of)。
+        ;; 形ごとの測った山と tasks 区画(申告の行の無い置いた task の要りを数える — task_claims.claim-mib-of・compartment-clamp)。
         peaks (run (shape-peaks-of state.tasks))
+        compartments (tasks-compartments-of state)
         ;; measured と同じ heartbeat の状態の報告で動いていた task の id(worker ごと)。
         live (dfor name (.keys state.workers)
                    :setv report (.row state.observations.statuses name)
@@ -763,7 +758,7 @@
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks))
       (+= (get tasks t.worker) 1)
-      (setv need (run (claim-mib-of t state.claims (.row state.workers t.worker) peaks))
+      (setv need (run (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
             use (.get (get uses t.worker) t.id))
       (+= (get reserved t.worker) (run (reserved-mib-of need use)))
       (when (is use None)
@@ -835,26 +830,38 @@
   (! (memory-room-mib worker.measured (. (get load worker.name) reserved-mib) :urgent urgent :lend lend)))
 
 
-(defk memory-need-refusal [state needs memory-mib]
-  {:pre [(: state ClusterState) (: needs tuple) (: memory-mib (| int None))] :post [(: % (| str None))]
+(defk memory-need-refusal [state needs memory-mib shape ungated]
+  {:pre [(: state ClusterState) (: needs tuple) (: memory-mib (| int None)) (: shape str) (: ungated bool)] :post [(: % (| str None))]
    :tags {:context "coordinator" :role "judgment"}}
-  "積む時に、待っても置けない大きさの task を断る理由を知るため(None = 受ける — 2026-11-02): memory の要り memory-mib が、能力 needs の
-   合うどの worker の線(measured_room.memory-line-mib — 名乗った memory の総量〔kubelet の下の worker は追い出しの線の大きさ〕− 床)
-   よりも大きい。測りを名乗る合う worker が 1 台も無い間(coordinator の起動の直後・測りの前の版の worker だけ)と、要りを名乗らない
-   task は判じない(待たせる)。今だけ空きの足りない task は断らずに queued で待つ(置き先の task-misfit が TASK-NO-MEMORY を名乗る)。"
-  (when (is memory-mib None)
+  "積む時に、待っても置けない大きさの task を断る理由を知るため(None = 受ける — ADR-DOE-CLUSTER-005 R8): 門の内の task の申告(送り手の
+   見当 memory-mib と同じ形 shape の測った山から task_claims.task-need-of の決め方で数えた memory と、TASK-CPU-MILLIS)が、能力 needs の
+   合う worker の持つどの tasks 区画よりも大きい。区画を持つ合う worker が 1 台も無い間は判じない(待たせる — 宣言を待つ)。門の外の
+   task(ungated)は大きさで断らない(区画を越えて置かれる — R6)。今だけ区画の和の足りない task は断らずに queued で待つ(置き先が
+   TASK-COMPARTMENT-FULL を名乗る)。"
+  (when ungated
     (return None))
-  (var widest None)
-  (var names #())
-  (for [w (.rows state.workers) :if (and (placeable needs w) (is-not w.measured None))]
-    (<- line (| int None) (memory-line-mib w.measured))
-    (:= names #(#* names w.name))
-    (when (or (is widest None) (> line widest))
-      (:= widest line)))
-  (if (and (is-not widest None) (> memory-mib widest))
-      (.format "memoryMiB {} は、能力 {} の合うどの worker({})の memory の線 − 床の最大 {} MiB よりも大きい — 置ける worker が無い"
-               memory-mib (list needs) (.join "・" (sorted names)) widest)
-      None))
+  (val compartments (tasks-compartments-of state))
+  (val matching (lfor #(name held) (sorted (.items compartments))
+                      :setv w (.row state.workers name)
+                      :if (and (is-not held None) (is-not w None) (placeable needs w))
+                      #(name held)))
+  (when (not matching)
+    (return None))
+  (val clamp (max (gfor #(_ held) matching held.memory-mib)))
+  (val widest-cpu (max (gfor #(_ held) matching held.cpu-millis)))
+  (<- peaks dict (shape-peaks-of state.tasks))
+  (val peak (if shape (.get peaks shape) None))
+  ;; 申告の決め方は置く時と同じ(上限で切る前の見当を断りに使う — 上限で切った値は区画に入るので、切らずに越えるかを見る)。
+  (<- need int (learned-need memory-mib None peak None))
+  (val names (.join "・" (gfor #(name _) matching name)))
+  (cond
+    (and (not (and (is-not peak None) peak.settled)) (> need clamp))
+      (.format "memoryMiB {} は、能力 {} の合う worker({})の tasks 区画の memoryMiB の最大 {} MiB よりも大きい — 置ける worker が無い"
+               need (list needs) names clamp)
+    (> TASK-CPU-MILLIS widest-cpu)
+      (.format "task の CPU の申告 {} millicore は、能力 {} の合う worker({})の tasks 区画の cpuMillis の最大 {} よりも大きい — 置ける worker が無い"
+               TASK-CPU-MILLIS (list needs) names widest-cpu)
+    True None))
 
 
 (defn #^ tuple active-jobs [#^ ClusterState state]
@@ -1289,22 +1296,17 @@
 (defk task-unplaced-text [kind]
   {:pre [(: kind TaskUnplacedKind)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "待っている task を置けない理由の種類 → task の detail に書く文を決めるため(place-tasks が書く・GET /state の task の detail に出る)。
-   文は種類ごとに固定 — 待つ間に調停が拍ごとに書き換えて保存の版を進めない。"
+   文は種類ごとに固定 — 待つ間に調停が拍ごとに書き換えて保存の版を進めない(worker ごとの和と区画は GET /state の claims と
+   workerCompartments で読む)。"
   (match kind
-    TaskUnplacedKind.TASK-NO-ROOM
-      "能力と版の合う worker は在るが、どの機体の測った空き(CPU・memory・PSI)にも task を置く余りが無い — 空くまで待つ"
-    TaskUnplacedKind.TASK-NO-MEMORY
-      "能力と版の合う worker は在るが、どの機体の memory の空き(測った空き − 置いた task のまだ伸びる分)も task の memory の要りに足りない — 空くまで待つ"
     TaskUnplacedKind.TASK-LIMITED
       "task の名乗った組(limits)の同時数が系の宣言の上限に達している — 同じ組の task が終わるまで待つ"
-    TaskUnplacedKind.TASK-RESERVED
-      "負の優先の task(背景の仕事)は worker の予約のうち優先 0 以上の task に残す半分を使わない — 予約を越える空きができるまで待つ"
-    TaskUnplacedKind.TASK-BACKGROUND-RESERVED
-      "優先 0 以上の task は、背景の仕事が待っている間は worker の予約のうち背景の仕事に残す半分を使わない — 空きができるまで待つ"
     TaskUnplacedKind.TASK-UNDECLARED
       "task の名乗った組(limits)が系の宣言(資源 GroupLimit)に無い — 組の上限が宣言されるまで待つ"
-    TaskUnplacedKind.TASK-UNMEASURED
-      "能力と版の合う worker は在るが、どれも機体の測った空き(heartbeat の measured)を名乗っていない — 測った空きを名乗るまで待つ"))
+    TaskUnplacedKind.TASK-NO-COMPARTMENT
+      "能力と版の合う worker は在るが、どれも tasks 区画(資源 MachineCompartments)を持たない — 区画が宣言されるまで待つ"
+    TaskUnplacedKind.TASK-COMPARTMENT-FULL
+      "能力と版の合う worker の tasks 区画のどれも、置いた task の申告の和にこの task の申告(memory・CPU)を足すと宣言を越える — 置いた task が終わるまで待つ"))
 
 
 (defk limit-slot [limit declared worker]
@@ -1348,155 +1350,148 @@
   after)
 
 
-(defk foreground-reserve-of [worker]
-  {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker の予約(measured_room.reserve-of — 機体の CPU の数から導く。以前は手書きの task-reserve)のうち、負の優先の task(背景の仕事)に
-   使わせず優先 0 以上の task に残す数を知るため: 予約の半分(切り上げ)。
-   背景の仕事は残りの半分(切り捨て)までは予約を使える(2026-10-14)。以前は予約を 1 つも使わせず、背景の仕事の
-   置き場は job の側の残り(capacity − task-reserve − 常駐の job)だけだった — 常駐の job は capacity − task-reserve まで置ける(C17)ので、
-   job が増えて job の側を埋めると背景の仕事は 1 本も置かれず、本番の node-h(capacity 33・task-reserve 6・常駐の job 27)で会話の
-   long-command 8 本が 76〜230 分 queued のまま待った。予約の中に背景の仕事の分を持てば、job の数によらず背景の仕事が走り、
-   優先 0 以上の task(配備の組み立て・日次の検)には予約の半分が必ず残る(10-11 の、背景の仕事が枠を埋めて組み立てが待った件の守り)。"
-  (<- reserve int (reserve-of worker.measured))
-  (- reserve (// reserve 2)))
+;; 申告の和の無い値(置いた task も取っておきも無い worker)。
+(val NOTHING-CLAIMED (ClaimedSum :memory-mib 0 :cpu-millis 0))
 
 
-(defk background-reserve-of [worker]
-  {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker の予約(measured_room.reserve-of)のうち、待っている負の優先の task(背景の仕事)が在る間は優先 0 以上の task に使わせず背景の
-   仕事に残す数を知るため:
-   予約の残りの半分(切り捨て — foreground-reserve-of と足して予約の全部)。以前は優先 0 以上の側の半分だけを守り、背景の仕事の側の半分は
-   守らなかった — 本番の node-h(capacity 40・task-reserve 6・常駐の job 33 → task の空き 7)で優先 0 の組 4 つ(日次の検・着地の後の検 2 組・
-   着地の宣言し直し)が 4 本を持つと、残る空き 3 は予約の半分 3 を越えず、会話の long-command は 1 本も置かれなかった(2026-10-29 17:09〜
-   21:11 JST に最大 27 本・3〜4 時間 queued)。背景の仕事は置いている数がこの数に満たない間は
-   予約の残りを使ってよく、優先 0 以上の task は、その worker に置けうる待っている背景の仕事が在る間は、この数に満たない分を残す。"
-  (<- reserve int (reserve-of worker.measured))
-  (// reserve 2))
+(defk claimed-plus [total memory cpu]
+  {:pre [(: total ClaimedSum) (: memory int) (: cpu int)] :post [(: % ClaimedSum)] :tags {:context "coordinator" :role "judgment"}}
+  "申告の和 total に task 1 本の申告(memory の MiB・CPU の millicore — 外す時は負)を足した和を知るため(置く・取っておく・止めるのたびに)。"
+  (ClaimedSum :memory-mib (+ total.memory-mib memory) :cpu-millis (+ total.cpu-millis cpu)))
 
 
-(defk task-misfit [limits priority worker room held groups bg-held bg-wanted need memory-room]
-  {:pre [(: limits tuple) (: priority int) (: worker WorkerInfo) (: room int) (: held dict) (: groups Table) (: bg-held int)
-         (: bg-wanted int) (: need int) (: memory-room int)]
-   :post [(: % (| TaskUnplacedKind None))]
-   :tags {:context "coordinator" :role "judgment"}}
-  "能力と版の合う worker 1 台に、待っている task(名乗った組 limits・優先 priority — task の行は受けない)を今置けない理由を知るため
-   (None = 置ける)。room = その worker の測った空き(task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・
-   groups = 系が宣言した GroupLimit の表・bg-held = その worker に置いている負の優先の task の数・bg-wanted = その worker に今置けうる
-   待っている負の優先の task の数・need = task の memory の要り(MiB — measured_room.need-of)・memory-room = その worker の memory の
-   空き(task-memory-room-of)。名乗った組の
-   どれかが宣言に無い → TASK-UNDECLARED・worker が測った空きを名乗らない(measured が無いか CPU の使いをまだ数えられない)→
-   TASK-UNMEASURED・空きが無い → TASK-NO-ROOM・要りが memory の空きを越える → TASK-NO-MEMORY(2026-11-02)・
-   名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
-   負の優先の task で、空きが予約のうち優先 0 以上の task に残す数(foreground-reserve-of)以下で、置いている背景の仕事が背景の仕事に残す数
-   (background-reserve-of)に達している → TASK-RESERVED(2026-10-11・残す数は 2026-10-14 に予約の全部から半分へ・背景の仕事の側の半分は
-   2026-10-29)・優先 0 以上の task で、空きが背景の仕事に残す数のうち置いている数に満たない分(待っている背景の仕事の数まで)以下 →
-   TASK-BACKGROUND-RESERVED。比べる値は宣言の値で、task の名乗りに値は無い。"
-  (<- by-limits (| TaskUnplacedKind None) (limits-misfit limits worker.name held groups))
-  (<- kept int (foreground-reserve-of worker))
-  (<- bg-floor int (background-reserve-of worker))
-  (val bg-kept (max 0 (min (- bg-floor bg-held) bg-wanted)))
+(defk claimed-sums [state compartments peaks]
+  {:pre [(: state ClusterState) (: compartments dict) (: peaks dict)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "worker ごとの、置いた task(PLACED-PHASES)の申告の和(ADR-DOE-CLUSTER-005 R5 — worker の名 → ClaimedSum)を知るため。申告は表 claims の
+   行(task_claims.claim-mib-of・claim-cpu-of — 行の無い置いた task は上限 compartment-clamp での今の決め方)。compartments =
+   tasks-compartments-of の答え。測った負荷は読まない。"
+  (var sums (dfor name (.keys state.workers) name NOTHING-CLAIMED))
+  (for [t (scan-rows state.tasks) :if (and (in t.phase PLACED-PHASES) (in t.worker sums))]
+    (<- memory int (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
+    (<- cpu int (claim-cpu-of t state.claims))
+    (<- added ClaimedSum (claimed-plus (get sums t.worker) memory cpu))
+    (:= sums (| sums {t.worker added})))
+  sums)
+
+
+(defk compartment-misfit [held used kept need cpu]
+  {:pre [(: held (| HeldCompartment None)) (: used ClaimedSum) (: kept ClaimedSum) (: need int) (: cpu int)]
+   :post [(: % (| TaskUnplacedKind None))] :tags {:context "coordinator" :role "judgment"}}
+  "worker 1 台の tasks 区画に、申告 need(MiB)と cpu(millicore)の task が入らない訳を知るため(None = 入る — ADR-DOE-CLUSTER-005 R5):
+   held = その worker の tasks 区画(None = 持たない → TASK-NO-COMPARTMENT)・used = 置いた task の申告の和・kept = この拍に先の task へ
+   取っておいた申告(R6 の取っておき — 門の外の task は NOTHING-CLAIMED を渡す)。memory の和 + need が memoryMiB を、または CPU の和 +
+   cpu が cpuMillis を越える → TASK-COMPARTMENT-FULL。測った負荷・床・予約は読まない。"
   (cond
-    (= by-limits TaskUnplacedKind.TASK-UNDECLARED) by-limits
-    (or (is worker.measured None) (is worker.measured.cpu-busy None)) TaskUnplacedKind.TASK-UNMEASURED
-    (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
-    (> need memory-room) TaskUnplacedKind.TASK-NO-MEMORY
-    by-limits by-limits
-    (and (< priority 0) (<= room kept) (>= bg-held bg-floor)) TaskUnplacedKind.TASK-RESERVED
-    (and (>= priority 0) (<= room bg-kept)) TaskUnplacedKind.TASK-BACKGROUND-RESERVED
+    (is held None) TaskUnplacedKind.TASK-NO-COMPARTMENT
+    (or (> (+ used.memory-mib kept.memory-mib need) held.memory-mib)
+        (> (+ used.cpu-millis kept.cpu-millis cpu) held.cpu-millis))
+      TaskUnplacedKind.TASK-COMPARTMENT-FULL
     True None))
 
 
-(defk starved-keeper [task workers needs rooms kept held groups]
-  {:pre [(: task TaskRecord) (: workers list) (: needs dict) (: rooms dict) (: kept dict) (: held dict) (: groups Table)]
+(defk compartment-shortfall [held used need cpu]
+  {:pre [(: held (| HeldCompartment None)) (: used ClaimedSum) (: need int) (: cpu int)] :post [(: % ClaimedSum)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "門の外の task(ungated)を和を越えて置く worker の順の頭を知るため(ADR-DOE-CLUSTER-005 R6 — memory、次に CPU の小さいほど先): 区画に
+   足りない memory と CPU。区画を持たない worker は申告の全部を足りなさに数える。"
+  (if (is held None)
+      (ClaimedSum :memory-mib need :cpu-millis cpu)
+      (ClaimedSum :memory-mib (max 0 (- (+ used.memory-mib need) held.memory-mib))
+                  :cpu-millis (max 0 (- (+ used.cpu-millis cpu) held.cpu-millis)))))
+
+
+(defk compartment-remainder [held used kept]
+  {:pre [(: held HeldCompartment) (: used ClaimedSum) (: kept ClaimedSum)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "入る worker の間の順(ADR-DOE-CLUSTER-005 R5 — 宣言の残りの大きい順)の値を知るため: memoryMiB − 置いた task の memory の申告の和 −
+   この拍の取っておき。"
+  (- held.memory-mib used.memory-mib kept.memory-mib))
+
+
+(defk starved-keeper [task workers compartments sums kept need cpu held groups]
+  {:pre [(: task TaskRecord) (: workers list) (: compartments dict) (: sums dict) (: kept dict) (: need int) (: cpu int) (: held dict)
+         (: groups Table)]
    :post [(: % (| WorkerInfo None))] :tags {:context "coordinator" :role "judgment"}}
-  "長く待った task のために空きを取っておく worker を選ぶため(measured_room の頭の註の長く待った task の取っておき — None = 取っておかない):
-   workers = task を置ける worker(生きて drain 中でも disk 尽きでもない)・needs = worker の名 → task の要り(task-need-of)・rooms = worker の
-   名 → memory の空き(task-memory-room-of — この拍に置いた task と先の取っておきを引いた値)・kept = worker の名 → この拍に先の task へ
-   取っておいた MiB・held と groups = 名乗った組の升の数と宣言(limits-misfit)。選ぶのは、組の上限に達しておらず、要りが memory の空きを
-   越え(memory の空きだけで置けない)、今の task が全部終われば入る見込み(drained-room-mib − 先の取っておき)以内の worker のうち、memory の
-   空きの最も大きい物(同じなら名の順)。"
+  "入らない門の内の task のために申告を取っておく worker を選ぶため(ADR-DOE-CLUSTER-005 R6 の取っておき — None = 取っておかない):
+   workers = task を置ける worker(生きて drain 中でも disk 尽きでもない)・compartments = worker の名 → tasks 区画・sums = 置いた task の
+   申告の和・kept = この拍に先の task へ取っておいた申告(worker の名 → ClaimedSum)・need と cpu = この task の申告・held と groups =
+   名乗った組の升の数と宣言(limits-misfit)。選ぶのは、区画を持ち、組の上限に達しておらず、置いた task が全部終われば申告が先の取っておきの
+   残りに入る worker のうち、宣言の残り(compartment-remainder)の最も大きい物(同じなら名の順)。"
   (var best None)
+  (var best-room None)
   (for [w (sorted workers :key (fn [w] w.name))]
-    (val need (get needs w.name))
-    (val room (get rooms w.name))
+    (val compartment (get compartments w.name))
     (<- by-limits (| TaskUnplacedKind None) (limits-misfit task.limits w.name held groups))
-    (<- drained int (drained-room-mib w.measured))
-    (when (and (is by-limits None) (> need room) (<= need (- drained (.get kept w.name 0)))
-               (or (is best None) (> room (get rooms best.name))))
-      (:= best w)))
+    (when (and (is-not compartment None) (is by-limits None))
+      (<- drained (| TaskUnplacedKind None) (compartment-misfit compartment NOTHING-CLAIMED (get kept w.name) need cpu))
+      (<- room int (compartment-remainder compartment (get sums w.name) (get kept w.name)))
+      (when (and (is drained None) (or (is best-room None) (> room best-room)))
+        (:= best w)
+        (:= best-room room))))
   best)
 
 
-(defk yield-candidates [task worker tasks peaks claims taken]
-  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: tasks tuple) (: peaks dict) (: claims (get Table TaskClaim)) (: taken frozenset)]
+(defk yield-candidates [task worker tasks state compartments peaks taken]
+  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: tasks tuple) (: state ClusterState) (: compartments dict) (: peaks dict)
+         (: taken frozenset)]
    :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
-  "急ぎの task に場所を譲らせうる、worker に置いた task を、止める順に知るため(measured_room の頭の註の場所の譲り): tasks = task の
-   行・peaks と claims = 形ごとの測った山(shape-peaks-of)と置いた task の申告の表(要りの数え task_claims.claim-mib-of)・taken = この拍に
-   既に止めると決めた task の id。候補は、
-   その worker に置かれ(PLACED-PHASES)、場所を譲る名乗り(preemptible — 走らせ直しの名乗りと組)を持ち、task より優先の低い切り離した
-   task。答え = YieldCandidate の tuple — 戻る MiB = 止めると戻る memory(測りの名乗る今の使い + まだ予約している伸びる分 = load-of と
-   同じ数えの max(要り, 今の使い))。順は優先の低い順、同じ優先は戻る MiB の大きい順(止める本数を少なくする)、同じなら id の順。"
-  (val uses (if (or (is worker.measured None) (is worker.measured.task-memory-MiB None)) {} worker.measured.task-memory-MiB))
+  "急ぎの task に場所を譲らせうる、worker に置いた task を、止める順に知るため(ADR-DOE-CLUSTER-005 R6 の場所の譲り — 止めた task の申告は
+   区画の和から外れる): tasks = task の行・state と compartments と peaks = 申告の読み(claim-mib-of の表と上限と形の山)・taken = この拍に
+   既に止めると決めた task の id。候補は、その worker に置かれ(PLACED-PHASES)、場所を譲る名乗り(preemptible — 走らせ直しの名乗りと
+   組)を持ち、task より優先の低い切り離した task。答え = YieldCandidate の tuple。順は優先の低い順、同じ優先は memory の申告の大きい順
+   (止める本数を少なくする)、同じなら id の順。"
   (var rows #())
   (for [t tasks :if (and t.detached t.preemptible t.rerun (in t.phase PLACED-PHASES) (= t.worker worker.name)
                          (< t.priority task.priority) (not-in t.id taken))]
-    (val use (.get uses t.id))
-    (<- need int (claim-mib-of t claims worker peaks))
-    (<- reserved int (reserved-mib-of need use))
-    (:= rows #(#* rows (YieldCandidate :task t :reserved-mib reserved :freed-mib (+ reserved (or use 0)) :measured (is-not use None)))))
-  (tuple (sorted rows :key (fn [c] #(c.task.priority (- c.freed-mib) c.task.id)))))
+    (<- memory int (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
+    (<- cpu int (claim-cpu-of t state.claims))
+    (:= rows #(#* rows (YieldCandidate :task t :memory-mib memory :cpu-millis cpu))))
+  (tuple (sorted rows :key (fn [c] #(c.task.priority (- c.memory-mib) c.task.id)))))
 
 
-(defk yield-victims [need room candidates]
-  {:pre [(: need int) (: room int) (: candidates tuple)] :post [(: % (| tuple None))] :tags {:context "coordinator" :role "judgment"}}
-  "急ぎの task の要り need を、memory の空き room の worker に入れるために止める task を知るため(measured_room の頭の註の場所の譲り):
-   candidates = yield-candidates の答え(止める順)。頭から、戻る MiB の和を空きに足して要りに届くまで取った YieldCandidate の tuple。
-   止めなくても入る(要り ≤ 空き)・全部止めても届かない時は None(譲らせない — 届かない止めで仕事を失わせない)。"
-  (when (<= need room)
+(defk yield-victims [held used kept need cpu candidates]
+  {:pre [(: held HeldCompartment) (: used ClaimedSum) (: kept ClaimedSum) (: need int) (: cpu int) (: candidates tuple)]
+   :post [(: % (| tuple None))] :tags {:context "coordinator" :role "judgment"}}
+  "急ぎの task の申告 need・cpu を、tasks 区画 held(置いた task の申告の和 used・この拍の取っておき kept)に入れるために止める task を
+   知るため(ADR-DOE-CLUSTER-005 R6 の場所の譲り): candidates = yield-candidates の答え(止める順)。頭から、止めた task の申告を和から
+   外して入るまで取った YieldCandidate の tuple。止めなくても入る・全部止めても入らない時は None(譲らせない — 入らない止めで仕事を
+   失わせない)。"
+  (<- fits (| TaskUnplacedKind None) (compartment-misfit held used kept need cpu))
+  (when (is fits None)
     (return None))
   (var picked #())
-  (var freed 0)
+  (var left used)
   (for [c candidates]
-    (when (>= (+ room freed) need)
-      (break))
     (:= picked #(#* picked c))
-    (:= freed (+ freed c.freed-mib)))
-  (if (>= (+ room freed) need) picked None))
+    (<- freed ClaimedSum (claimed-plus left (- c.memory-mib) (- c.cpu-millis)))
+    (:= left freed)
+    (<- after (| TaskUnplacedKind None) (compartment-misfit held left kept need cpu))
+    (when (is after None)
+      (return picked)))
+  None)
 
 
-(defk yield-plan [task workers needs rooms counts tasks peaks claims taken held groups bg-held bg-wanted]
-  {:pre [(: task TaskRecord) (: workers list) (: needs dict) (: rooms dict) (: counts dict) (: tasks tuple) (: peaks dict)
-         (: claims (get Table TaskClaim)) (: taken frozenset)
-         (: held dict) (: groups Table) (: bg-held dict) (: bg-wanted dict)]
+(defk yield-plan [task workers compartments sums kept need cpu tasks state peaks taken]
+  {:pre [(: task TaskRecord) (: workers list) (: compartments dict) (: sums dict) (: kept dict) (: need int) (: cpu int) (: tasks tuple)
+         (: state ClusterState) (: peaks dict) (: taken frozenset)]
    :post [(: % (| YieldPlan None))] :tags {:context "coordinator" :role "judgment"}}
-  "急ぎの task が memory の空きに入らない拍に、どの worker でどの task に場所を譲らせて置くかを知るため(measured_room の頭の註の場所の
-   譲り — None = 譲らせない): workers = 置き先の候補(門の内の task は置ける worker 全部・門の外の task は組の上限に達していない worker)・
-   needs / rooms = worker の名 → task の要りと、その task を数える memory の空き(門の内は task-memory-room-of・門の外は測りにまだ出て
-   いない要りだけを引いた空き)・counts = worker の名 → 測った数の空き(task-room-of — 門の外の task は読まない)・tasks・peaks・claims・taken =
-   yield-candidates の引数・held・groups・bg-held・bg-wanted = task-misfit の引数(worker の名 → 数)。worker ごとに止める task を
-   yield-victims で選び、門の内の task は止めた後の数と memory の空きで task-misfit を問い直す(memory と数の外の訳 — 組の上限・予約・
-   測りの無さ — で置けない worker では譲らせない)。選ぶのは止める本数の少ない worker、同じなら戻る MiB の和の小さい物、同じなら名の順。"
+  "急ぎの task(優先 KEEP-NOW-PRIORITY 以上)が tasks 区画のどれにも入らない拍に、どの worker でどの task に場所を譲らせて置くかを知るため
+   (ADR-DOE-CLUSTER-005 R6 の場所の譲り — None = 譲らせない): workers = 置き先の候補(組の上限に達していない置ける worker)・
+   compartments・sums・kept = worker の名 → tasks 区画・置いた task の申告の和・この拍の取っておき(門の外の task は取っておきを見ない —
+   呼び手が NOTHING-CLAIMED の dict を渡す)・need と cpu = 急ぎの task の申告・tasks・state・peaks・taken = yield-candidates の引数。
+   区画を持つ worker ごとに止める task を yield-victims で選ぶ。選ぶのは止める本数の少ない worker、同じなら止めた申告の和の小さい物、
+   同じなら名の順。"
   (var best None)
   (var best-key None)
   (for [w (sorted workers :key (fn [w] w.name))]
-    (val need (get needs w.name))
-    (val room (get rooms w.name))
-    (<- candidates tuple (yield-candidates task w tasks peaks claims taken))
-    (<- victims (| tuple None) (yield-victims need room candidates))
-    (when (is-not victims None)
-      (val freed (sum (gfor v victims v.freed-mib)))
-      (val background (len (lfor v victims :if (< v.task.priority 0) v)))
-      ;; 門の外の task は組の上限だけで判じる(workers は組の上限に達していない worker — 問い直さない)。
-      (var misfit None)
-      (when (not task.ungated)
-        (<- found (| TaskUnplacedKind None)
-            (task-misfit task.limits task.priority w (+ (get counts w.name) (len victims)) held groups
-                         (- (get bg-held w.name) background) (get bg-wanted w.name) need (+ room freed)))
-        (:= misfit found))
-      (val key #((len victims) freed w.name))
-      (when (and (is misfit None) (or (is best-key None) (< key best-key)))
-        (:= best (YieldPlan :worker w :victims victims))
-        (:= best-key key))))
+    (val compartment (get compartments w.name))
+    (when (is-not compartment None)
+      (<- candidates tuple (yield-candidates task w tasks state compartments peaks taken))
+      (<- victims (| tuple None) (yield-victims compartment (get sums w.name) (get kept w.name) need cpu candidates))
+      (when (is-not victims None)
+        (val key #((len victims) (sum (gfor v victims v.memory-mib)) w.name))
+        (when (or (is best-key None) (< key best-key))
+          (:= best (YieldPlan :worker w :victims victims))
+          (:= best-key key)))))
   best)
 
 
@@ -1515,52 +1510,11 @@
            :rerun-note note :detail note :preempted-by by.id :borrowed False :reclaimed False))
 
 
-(defk reclaim-victims [worker rows]
-  {:pre [(: worker WorkerInfo) (: rows tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
-  "上に載る系が memory の不足で仕事を待たせている worker で、止めて待ちの行へ戻す借りの task を知るため(measured_room の頭の註の線の内の
-   貸し): rows = 今の task の行。worker が取り返す量(measured の reclaim-MiB)を名乗る時だけ、その worker に置いた(PLACED-PHASES)
-   借りの task(borrowed — 場所を譲る名乗りと走らせ直しの名乗りを持つ切り離した task)を、優先の低い順・測りの名乗る今の使いの大きい順
-   (同じなら id の順)に、今の使いの和が取り返す量に届くまで並べる。測りに出ていて行が置いた task でない使い(止めた後で worker がまだ
-   止めていない task)は既に戻る memory として先に数える(拍ごとに止め足さない)。名乗らない・届いている時は空。"
-  (val measured worker.measured)
-  (when (or (is measured None) (is measured.reclaim-MiB None))
-    (return #()))
-  (val uses (or measured.task-memory-MiB {}))
-  (val placed (frozenset (gfor t rows :if (and (in t.phase PLACED-PHASES) (= t.worker worker.name)) t.id)))
-  (val freeing (sum (gfor #(id use) (.items uses) :if (not-in id placed) use)))
-  (val ordered (sorted (gfor t rows :if (and t.detached t.borrowed t.preemptible t.rerun (in t.phase PLACED-PHASES)
-                                             (= t.worker worker.name))
-                             t)
-                       :key (fn [t] #(t.priority (- (.get uses t.id 0)) t.id))))
-  (var picked #())
-  (var freed freeing)
-  (for [t ordered]
-    (when (>= freed measured.reclaim-MiB)
-      (break))
-    (:= picked #(#* picked t))
-    (:= freed (+ freed (.get uses t.id 0))))
-  picked)
-
-
-(defk reclaimed-detached [task now worker]
-  {:pre [(: task TaskRecord) (: now int) (: worker str)] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "judgment"}}
-  "上に載る系が memory を待つので取り返す借りの task の次の行(measured_room の頭の註の線の内の貸し — 場所の譲りの preempted-detached と
-   同じ形・id が替わり、呼び手は前の行を消す)。担い手は消えていないので、消失の上限に数えない(losses を足さない)。detail と rerun-note に
-   取り返した訳を、reclaimed に印を残す。"
-  (val note (.format "上に載る系が memory の不足で仕事を待たせているので、worker {} の線の内に借りて置いた試行を止めた(優先 {}・場所を譲る名乗り)— 試行 {} を最初から待つ(上限に数えた消失 {}/{} 回)"
-                     worker task.priority (+ task.attempt 1) task.losses RERUN-LIMIT))
-  (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
-           :placed-memory-available-mib None :placed-measured-at-ms None
-           :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
-           :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
-           :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed True))
-
-
 (defk kept-text [text worker]
   {:pre [(: text str) (: worker str)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "取っておきを掛けて待つ task の detail の文を決めるため: 待つ訳の文 text に、取っておく worker を名指す句を足す(worker が替わらない
    間は同じ文 — 調停が拍ごとに書き換えて保存の版を進めない)。"
-  (.format "{} — 長く待ったので worker {} の memory の空きをこの task に取っておく(後ろの task はその空きを使わない)" text worker))
+  (.format "{} — worker {} の tasks 区画にこの task の申告を取っておく(後ろの task はその分を使わない)" text worker))
 
 
 (defk limits-misfit [limits worker held groups]
@@ -1585,18 +1539,14 @@
 
 (defk misfit-reason [kinds]
   {:pre [(: kinds list)] :post [(: % TaskUnplacedKind)] :tags {:context "coordinator" :role "judgment"}}
-  "置ける worker のどれにも置けない task の待ちの理由を 1 つに決めるため(kinds = worker ごとの task-misfit の答え・空でない)。
-   宣言に無い組 → 上限 → 予約 → memory の空き → 数の空き → 測りの無さの順に、待てば晴れる理由の具体な物を名乗る(測った空きの無い worker と測りを名乗らない
-   worker が並ぶ時は空きの無さを名乗る — 測りを名乗る worker が在る)。"
+  "置ける worker のどれにも置けない task の待ちの理由を 1 つに決めるため(kinds = worker ごとの limits-misfit か compartment-misfit の
+   答え・空でない)。宣言に無い組 → 上限 → 区画の和 → 区画の無さの順に、待てば晴れる理由の具体な物を名乗る(区画の和で入らない worker と
+   区画を持たない worker が並ぶ時は和を名乗る — 区画を持つ worker が在る)。"
   (cond
     (in TaskUnplacedKind.TASK-UNDECLARED kinds) TaskUnplacedKind.TASK-UNDECLARED
     (in TaskUnplacedKind.TASK-LIMITED kinds) TaskUnplacedKind.TASK-LIMITED
-    (in TaskUnplacedKind.TASK-RESERVED kinds) TaskUnplacedKind.TASK-RESERVED
-    (in TaskUnplacedKind.TASK-BACKGROUND-RESERVED kinds) TaskUnplacedKind.TASK-BACKGROUND-RESERVED
-    (in TaskUnplacedKind.TASK-NO-MEMORY kinds) TaskUnplacedKind.TASK-NO-MEMORY
-    (in TaskUnplacedKind.TASK-NO-ROOM kinds) TaskUnplacedKind.TASK-NO-ROOM
-    (in TaskUnplacedKind.TASK-UNMEASURED kinds) TaskUnplacedKind.TASK-UNMEASURED
-    True TaskUnplacedKind.TASK-NO-ROOM))
+    (in TaskUnplacedKind.TASK-COMPARTMENT-FULL kinds) TaskUnplacedKind.TASK-COMPARTMENT-FULL
+    True TaskUnplacedKind.TASK-NO-COMPARTMENT))
 
 
 (defk limits-undeclared-refusal [groups value]
@@ -1934,15 +1884,6 @@
                (not (alive now (.row state.workers task.worker) timing.reassign-after-ms))))
         (setv (get writes id) (replace task :phase "failed" :finished-ms now
                                        :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))))
-  ;; 線の内の貸しの取り返し(measured_room の頭の註): 上に載る系が memory を待つ worker の借りの task を止めて次の試行の待ちの行へ戻す。
-  ;; 待ちの行は下で queue に入り、この拍に置き直せる(その worker は待つ間は貸しを名乗らない)。
-  (val after-scan (tuple (gfor #(id task) (.items live) :setv row (if (in id writes) (get writes id) task) :if (is-not row None) row)))
-  (for [w (sorted (.rows state.workers) :key (fn [w] w.name)) :if (alive now w timing.lease-ms)]
-    (<- victims tuple (reclaim-victims w after-scan))
-    (for [v victims]
-      (<- next-row TaskRecord (reclaimed-detached v now w.name))
-      (setv (get writes v.id) None
-            (get writes next-row.id) next-row)))
   ;; 走査の後の行の読み(書いた行が先・無ければ元の行)。
   (for [#(id task) (.items live)]
     (setv now-row (if (in id writes) (get writes id) task))
@@ -1957,72 +1898,44 @@
   (when (and (is-not earliest None) (>= now earliest))
     (for [#(id lapse) (.items (. (task-index state.tasks) held)) :if (>= now lapse)]
       (setv (get writes id) None)))
-  ;; 待っている task が無ければ、置く判断(負荷・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
+  ;; 待っている task が無ければ、置く判断(区画の和・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
   ;; 模擬の拍の大半だった(#2655 の profile: replace 135,053 回・2.3 秒)。
   (when (not queue)
     (return (task-writes state.tasks writes)))
   (setv placed (replace state :tasks (.with-writes state.tasks (task-writes state.tasks writes))))
-  (setv load (load-of placed placements)
-        draining (draining-workers state now))
+  (setv draining (draining-workers state now))
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
   (var held (! (limit-holdings (! (placed-claims placed.tasks)) state.group-limits)))
-  ;; 形ごとの測った山(task の要りを名乗りと測った山の大きい方で数える — measured_room の頭の註)。
+  ;; 形ごとの測った山(申告の決め方 — task_claims の頭の註)。
   (<- peaks dict (shape-peaks-of placed.tasks))
-  ;; 背景の仕事の側の予約(background-reserve-of)の守りに要る worker ごとの数: bg-held = 置いている負の優先の task(置くたびに足す)・
-  ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達しておらず、門の内の task は要りが
-  ;; memory の空きに入る)待っている負の優先の task。
-  ;; bg-wanted は拍の初めに 1 度数える — 置く順で優先 0 以上の task が先なので、背景の仕事を置き始める前に読む数は変わらない。
-  ;; 要りが memory の空きを越える task(TASK-NO-MEMORY)を数えると、置けない背景の仕事が予約の背景の仕事の分を守り続け、背景の仕事も
-  ;; 優先 0 以上の task もその分を使わない(2026-11-12 — 要り 2560 MiB の背景の仕事 160 本がどの worker の空きにも入らず待ち、優先 0 の
-  ;; task 94 本が背景の仕事の分の文で 3 時間超待った)。
-  (setv bg-held (dfor name (.keys state.workers) name 0)
-        bg-wanted (dfor name (.keys state.workers) name 0)
-        ;; 長く待った task へこの拍に取っておいた memory(worker の名 → MiB — measured_room の頭の註の取っておき)。
-        kept (dfor name (.keys state.workers) name 0))
-  ;; この拍に急ぎの task へ場所を譲らせると決めた task の id(measured_room の頭の註の場所の譲り — 同じ task を 2 度止めない)。
+  ;; worker ごとの tasks 区画(ADR-DOE-CLUSTER-005 R1・R2 — 無ければ None)と、置いた task の申告の和(R5 — 置く・止めるたびに足し引く)。
+  ;; 置く判断はこの 2 つと組の上限だけを読み、測った負荷(CPU の使い・memory の空き・PSI・task ごとの使い)・床・予約を読まない
+  ;; (law placement-reads-claims-not-measurements)。
+  (val compartments (tasks-compartments-of placed))
+  (<- sums dict (claimed-sums placed compartments peaks))
+  ;; 取っておき(R6 — worker の名 → この拍に先の門の内の task へ取っておいた申告の和)。門の外の task は読まない。
+  (setv kept (dfor name (.keys state.workers) name NOTHING-CLAIMED)
+        unkept (dfor name (.keys state.workers) name NOTHING-CLAIMED))
+  ;; この拍に急ぎの task へ場所を譲らせると決めた task の id(R6 の場所の譲り — 同じ task を 2 度止めない)。
   (var taken (frozenset))
   ;; 譲らせる候補を探す task の行(拍の初めに置かれていた task — この拍に置いた task は優先が低いので急ぎの task の後に置かれる)。
   (val placed-rows (tuple (scan-rows placed.tasks)))
-  (for [t (scan-rows placed.tasks) :if (and (< t.priority 0) (in t.phase PLACED-PHASES) (in t.worker bg-held))]
-    (+= (get bg-held t.worker) 1))
-  ;; worker ごとの memory の空き(背景の仕事は急ぎでない — 平常の数え)は、背景の仕事が待っている拍だけ 1 度数える。
-  (var bg-memory-rooms {})
-  ;; 置き方の task の側の入力(placement-class)は待っている task ごとに 1 度だけ求め、下の 2 つの使い回しの鍵にする。
+  ;; 置き方の task の側の入力(placement-class)は待っている task ごとに 1 度だけ求め、下の使い回しの鍵にする。
   (val worker-rows (tuple (.rows state.workers)))
   (val classes {})
   (for [#(id task) (.items queue)]
     (<- queued-class PlacementClass (placement-class task worker-rows now))
     (setv (get classes id) queued-class))
-  ;; 同じ入力の背景の仕事は同じ worker で数える(この数えの間は組の升と負荷が変わらない)— 入力 → 数える worker の名。
-  (val bg-counted {})
-  (for [#(id task) (.items queue) :if (and (= task.phase "queued") (< task.priority 0))]
-    (val bg-class (get classes id))
-    (when (not-in bg-class bg-counted)
-      (var counted #())
-      (for [w worker-rows :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w) (not-in w.name draining)
-                                   (env-room-on task w))]
-        (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
-        (when (and (is bg-limited None) (not task.ungated) (not-in w.name bg-memory-rooms))
-          (<- bg-memory-room int (task-memory-room-of w load))
-          (:= bg-memory-rooms (| bg-memory-rooms {w.name bg-memory-room})))
-        (when (and (is bg-limited None)
-                   (or task.ungated (<= (! (task-need-of task w peaks)) (get bg-memory-rooms w.name))))
-          (:= counted #(#* counted w.name))))
-      (setv (get bg-counted bg-class) counted))
-    (for [name (get bg-counted bg-class)]
-      (+= (get bg-wanted name) 1)))
-  ;; 置けないと判じた入力の答え(入力 → #(数えの代 待ちの文 — None = 文を書かずに待つ))。数えの代(epoch)は、この拍に task を置いた・
-  ;; 取っておいた・場所を譲らせた時に進む(負荷・組の升・背景の仕事の数・取っておき・止めた task の数えが変わる)。同じ入力の後ろの
-  ;; task は、代が同じ間は worker ごとの要り・空き・置けない理由を数え直さずに同じ文で待つ(2026-11-12 — 置けない task が数百本溜まると、
-  ;; 要求ごとの調停が待っている task の数 × worker の数の数えで主 thread を埋めた)。急ぎの優先の task は場所の譲りの候補(taken)を読む
-  ;; ので借りない。
+  ;; 置けないと判じた入力の答え(入力 → 待ちの文 — None = 文を書かずに待つ)。この拍に task を置いた・取っておいた・場所を譲らせた時に
+  ;; 捨てる(区画の和・組の升・取っておきが変わる)。同じ入力の後ろの task は、捨てるまで worker ごとの和と理由を数え直さずに同じ文で待つ
+  ;; (2026-11-12 — 置けない task が数百本溜まると、要求ごとの調停が待っている task の数 × worker の数の数えで主 thread を埋めた)。
+  ;; 急ぎの優先の task は場所の譲りの候補(taken)を読むので借りない。
   (val unplaced-verdicts {})
-  (var epoch 0)
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted queue :key (fn [i] #((- (. (get queue i) priority)) i)))]
     (setv task (get queue id))
-    ;; 急ぎの優先の task は、worker が上に載る系の残す線を外して名乗る空きで数える(measured_room の頭の註の急ぎの task の空き)。
-    (<- urgent bool (urgent-priority? task.priority))
+    ;; 急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は、入らなければ優先の低い task に場所を譲らせる(R6)。
+    (val urgent (>= task.priority KEEP-NOW-PRIORITY))
     (val task-class (get classes id))
     ;; 同じ入力の task が、この拍の今の数えで置けないと判じられた: 同じ文で待つ(上の unplaced-verdicts の註)。
     (when (and (not urgent) (in task-class unplaced-verdicts))
@@ -2037,80 +1950,41 @@
       (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
-      ;; 測った空きの門の外の task(ungated)は、名乗った組の上限に達していない worker ならどれにも置ける(下の misfit — 空きを判じない)。
-      ;; task を置けるのは測った空き(task-room-of — 機体の CPU・PSI から数え、置いた task と測りにまだ出ていない task を引いた数)が在り、
-      ;; task の memory の要りが memory の空き(task-memory-room-of — 測った空き − 床 − 置いた task のまだ伸びる分)以下で、名乗った上限に
-      ;; 達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の理由は待ちの文に使う。roomy = 置ける
-      ;; worker と測った空きの組。
-      ;; 要りは worker ごと(測った山をその worker の線で切る — task-need-of)。
-      (var needs {})
-      (var rooms {})
-      ;; worker の名 → 測った数の空きと、門の外の task の memory の空き(場所の譲りが読む — yield-plan)。
-      (var counts {})
-      (var bares {})
-      ;; 要りの足りなさ(worker の名 → MiB — 置き先の順の頭)。門の外の task は、測った空きから測りにまだ出ていない task の要りだけを
-      ;; 引いた空き(伸びの見込みを引かない — measured_room の頭の註の置き先の順)で数える。門の内の task は数えない(0 — roomy は要りが入る worker だけ)。
-      (var shorts {})
-      (var roomy #())
+      ;; この task の申告(R4 — 上限は要る能力の合う worker の tasks 区画の最大・置いた歩に claims-noted が同じ値を表に書く)。
+      (<- need int (task-need-of task (compartment-clamp placed compartments task.needs) peaks))
+      (val cpu TASK-CPU-MILLIS)
+      ;; 門の外の task(ungated)は取っておきを見ない(R6)。
+      (val seen-kept (if task.ungated unkept kept))
+      ;; 入る worker(fits)と、入らない worker の理由(misfits)。門の外の task は組の上限の外の worker を、区画の有無によらず和を越えて
+      ;; 置く候補(over)にも数える。
+      (var fits #())
+      (var over #())
+      (var unlimited [])
       (var misfits [])
       (for [w able-now]
-        (<- need int (task-need-of task w peaks))
-        (setv (get needs w.name) need)
-        (<- room int (task-room-of w load :urgent urgent))
-        (<- memory-room int (task-memory-room-of w load :urgent urgent))
-        (setv (get rooms w.name) memory-room
-              (get counts w.name) room)
-        (when task.ungated
-          (<- bare-room int (memory-room-mib w.measured (. (get load w.name) unmeasured-mib) :urgent urgent))
-          (setv (get bares w.name) bare-room
-                (get shorts w.name) (max 0 (- need bare-room))))
-        ;; 測った空きの門の外の task は、空きと予約を判じず、名乗った組(宣言に無い組・組の上限)だけで判じる(measured_room の頭の註の
-        ;; 測った空きの門の外の task)。
-        (<- misfit (| TaskUnplacedKind None) (if task.ungated
-                                                 (limits-misfit task.limits w.name held state.group-limits)
-                                                 (task-misfit task.limits task.priority w room held state.group-limits
-                                                              (get bg-held w.name) (get bg-wanted w.name) need memory-room)))
-        (if (is misfit None)
-            (:= roomy #(#* roomy #(w room)))
-            (:= misfits [#* misfits misfit])))
-      ;; 置き先の順の頭は要りの足りなさ(shorts — 入る worker は 0)の小さい順(measured_room の頭の註の測った空きの門の外の task の置き先の
-      ;; 順)。門の内の task はどれも 0 で順は変わらない。門の外の task は、要りの入る worker が在ればそこへ、どこにも入らなければ足りなさの
-      ;; 最も小さい worker へ置く(待たない)。前は空きを判じず次の順だけで選び、測った空きの数が同じ 0 の 2 台から名の順で memory の少ない
-      ;; 機体を選び、置かれた task が jobs の層の追い出しで止まり、置き直しで 1 回ごとに 5〜15 分遅れた(2026-11-11)。
-      ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
-      ;; 次は測った空きの多い順(以前は担っている数の少ない順 — 空いた機体があるのに混んだ機体へ置いた)、同じ空きは名の順。
-      (var free (lfor #(w _) (sorted roomy :key (fn [pair] #((.get shorts (. (get pair 0) name) 0)
-                                                              (not (env-ready-on task.runtime-env (get pair 0)))
-                                                              (- (get pair 1)) (. (get pair 0) name))))
-                       w))
-      ;; 線の内の貸し(measured_room の頭の註): 場所を譲る名乗りの門の内の task が線の上の空きで置けない時、worker が線の内を貸す空きで
-      ;; 数え直し、入る worker に借りとして置く(急ぎの優先の task は急ぎの task の空きで数えるので借りにしない)。
-      (var lent False)
-      (when (and (not free) (not urgent) (not task.ungated) task.detached task.preemptible task.rerun)
-        (var lend-roomy #())
-        ;; 取り返す量を名乗る worker(上に載る系が待っている)には貸さない(前の版の worker が両方を名乗っても)。
-        (for [w able-now :if (and (is-not w.measured None) (is-not w.measured.lend-memory-available-MiB None)
-                                  (is w.measured.reclaim-MiB None))]
-          (<- lend-room int (task-room-of w load :lend True))
-          (<- lend-memory-room int (task-memory-room-of w load :lend True))
-          (<- lend-misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w lend-room held state.group-limits
-                                                                 (get bg-held w.name) (get bg-wanted w.name) (get needs w.name)
-                                                                 lend-memory-room))
-          (when (is lend-misfit None)
-            (:= lend-roomy #(#* lend-roomy #(w lend-room)))))
-        (when lend-roomy
-          (:= free (lfor #(w _) (sorted lend-roomy :key (fn [pair] #((not (env-ready-on task.runtime-env (get pair 0)))
-                                                                     (- (get pair 1)) (. (get pair 0) name))))
-                         w))
-          (:= lent True)))
-      ;; 場所の譲り(measured_room の頭の註): 急ぎの優先の task が memory の空きに入らない(門の内は置ける worker が無い・門の外は選んだ
-      ;; worker でも要りが空きを越える)時、同じ worker の場所を譲る名乗りの優先の低い task を止めて次の試行の待ちの行へ戻し、この拍で
-      ;; 急ぎの task をその worker に置く。止めた task の process は、返事から外れた job として worker が止める(走らせ直しの道と同じ)。
-      ;; 譲らせる先が無ければ今までどおり(門の内は待つか取っておく・門の外は足りなさの最も小さい worker へ置く)。
+        (<- by-limits (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
+        (if (is-not by-limits None)
+            (:= misfits [#* misfits by-limits])
+            (do (:= unlimited [#* unlimited w])
+                (<- misfit (| TaskUnplacedKind None) (compartment-misfit (get compartments w.name) (get sums w.name) (get seen-kept w.name)
+                                                                         need cpu))
+                (cond
+                  (is misfit None) (:= fits #(#* fits w))
+                  True (do (:= misfits [#* misfits misfit])
+                           (when task.ungated (:= over #(#* over w))))))))
+      ;; 入る worker の順(R5): 実行環境を準備済みの worker が先(準備を task の待ちに入れない・2026-09-26)、次に宣言の残りの大きい順、
+      ;; 同じなら名の順。
+      (var free [])
+      (for [w fits]
+        (<- room int (compartment-remainder (get compartments w.name) (get sums w.name) (get seen-kept w.name)))
+        (:= free [#* free #(#((not (env-ready-on task.runtime-env w)) (- room) w.name) w)]))
+      (:= free (lfor #(_ w) (sorted free :key (fn [pair] (get pair 0))) w))
+      ;; 場所の譲り(R6): 急ぎの優先の task がどの区画にも入らない時、区画を持つ worker の場所を譲る名乗りの優先の低い task を止めて
+      ;; 次の試行の待ちの行へ戻し、この拍で急ぎの task をその worker に置く。止めた task の申告は和から外れ、process は返事から外れた job と
+      ;; して worker が止める(走らせ直しの道と同じ)。門の外の task は止めた task が止まり終えるのを待たない(置く判断は申告の和だけを読む)。
       (var yielded None)
-      (when (and urgent (or (not free) (and task.ungated (> (get shorts (. (get free 0) name)) 0))))
-        (<- plan (| YieldPlan None) (yield-plan task (if task.ungated free able-now) needs (if task.ungated bares rooms) counts
-                                                placed-rows peaks placed.claims taken held state.group-limits bg-held bg-wanted))
+      (when (and urgent (not free))
+        (<- plan (| YieldPlan None) (yield-plan task unlimited compartments sums seen-kept need cpu placed-rows placed peaks taken))
         (when (is-not plan None)
           (:= yielded plan)
           (val yield-worker plan.worker)
@@ -2119,70 +1993,65 @@
             (setv (get writes v.task.id) None
                   (get writes next-row.id) next-row)
             (:= taken (| taken (frozenset #(v.task.id))))
-            (when (< v.task.priority 0)
-              (-= (get bg-held yield-worker.name) 1)))
-          ;; 止めた task の分を置いた task の数え(load-of)から外す: 数と予約と測りにまだ出ていない要り。今の使いは worker が止めて次の
-          ;; 測りに出るまで測った空きに残る(この拍の後ろの task は、戻る前の空きで数える)。
-          (val yield-used (get load yield-worker.name))
-          (setv (get load yield-worker.name) (replace yield-used :tasks (max 0 (- yield-used.tasks (len plan.victims)))
-                                           :reserved-mib (max 0 (- yield-used.reserved-mib (sum (gfor v plan.victims v.reserved-mib))))
-                                           :unmeasured-mib (max 0 (- yield-used.unmeasured-mib (sum (gfor v plan.victims :if (not v.measured)
-                                                                                                  v.reserved-mib))))))
+            (<- freed ClaimedSum (claimed-plus (get sums yield-worker.name) (- v.memory-mib) (- v.cpu-millis)))
+            (setv (get sums yield-worker.name) freed))
           (:= free [yield-worker])))
-      ;; 置けずに STARVE-WAIT-MS を越えて待った task と急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は(keeps-room?)、memory の空きだけで
-      ;; 置けない worker のうち、今の task が全部終われば入る見込みの在る 1 台に要りを取っておく(measured_room の頭の註の取っておき)。
-      ;; 後ろの順の task は、その worker の memory の空きから要りを引いて数える。測った空きの門の外の task は空きを待たないので取っておかない
-      ;; (置けないのは組の上限だけ — 空きを溜めても置けない)。
+      ;; 門の外の task は待たない(R6・law ungated-work-never-waits-for-room): 入る区画も譲らせる先も無ければ、組の上限の外の worker のうち
+      ;; 足りなさ(compartment-shortfall — 区画を持たない worker は申告の全部)の最も小さい worker に和を越えて置く。越えた分は GET /state の
+      ;; 申告と区画の和で読める。
+      (var beyond False)
+      (when (and (not free) task.ungated over)
+        (var ranked [])
+        (for [w over]
+          (<- short ClaimedSum (compartment-shortfall (get compartments w.name) (get sums w.name) need cpu))
+          (:= ranked [#* ranked #(#(short.memory-mib short.cpu-millis (not (env-ready-on task.runtime-env w)) w.name) w)]))
+        (:= free [(get (get (sorted ranked :key (fn [pair] (get pair 0))) 0) 1)])
+        (:= beyond True))
+      ;; 入らない門の内の task のうち、急ぎの優先(KEEP-NOW-PRIORITY 以上)の task と STARVE-WAIT-MS を越えて待った task は(keeps-room?)、
+      ;; 置いた task が全部終われば入る 1 台にこの拍の申告を取っておく(R6 の取っておき)。後ろの順の門の内の task は、その worker の和に
+      ;; 取っておきを足して数える(後ろの小さい task が、終わる task の返した分を先に取らない)。
       (var keeper None)
       (when (and (not free) (not task.ungated) (! (keeps-room? task.priority (- now task.submitted-ms))))
-        (<- chosen-keeper (| WorkerInfo None) (starved-keeper task able-now needs rooms kept held state.group-limits))
+        (<- chosen-keeper (| WorkerInfo None) (starved-keeper task able-now compartments sums kept need cpu held state.group-limits))
         (:= keeper chosen-keeper)
         (when (is-not keeper None)
-          (val kept-need (get needs keeper.name))
-          (val kept-load (get load keeper.name))
-          (setv (get load keeper.name) (replace kept-load :reserved-mib (+ kept-load.reserved-mib kept-need)))
-          (+= (get kept keeper.name) kept-need)
-          ;; 取っておきで worker の memory の空きが減った — 置けないと判じた答えは、後ろの task に貸さない。
+          (<- more ClaimedSum (claimed-plus (get kept keeper.name) need cpu))
+          (setv (get kept keeper.name) more)
+          ;; 取っておきで worker の和が増えた — 置けないと判じた答えは、後ろの task に貸さない。
           (.clear unplaced-verdicts)))
       (cond
         free (do (setv chosen (get free 0)
                        ;; 準備済みの worker が無い置き先 = 冷たい起動(worker が準備してから走る)。phase を preparing にして assigned と分ける。
                        phase (if (and (is-not task.runtime-env None) (not (env-ready-on task.runtime-env chosen)))
-                                 "preparing" "assigned")
-                       used (get load chosen.name)
-                       ;; 置いた task は今の刻 now に置かれ、測った刻より後なので測りにまだ出ていない(load-of の unseen と同じ数え)。
-                       ;; 今の使いも名乗られていないので、要りの全部を予約する(load-of の reserved-mib と同じ数え)。
-                       (get load chosen.name) (replace used :tasks (+ used.tasks 1) :unseen (+ used.unseen 1)
-                                                       :reserved-mib (+ used.reserved-mib (get needs chosen.name))
-                                                       :unmeasured-mib (+ used.unmeasured-mib (get needs chosen.name))))
-                 (when (< task.priority 0)
-                   (+= (get bg-held chosen.name) 1))
+                                 "preparing" "assigned"))
+                 (<- added ClaimedSum (claimed-plus (get sums chosen.name) need cpu))
+                 (setv (get sums chosen.name) added)
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
-                 ;; 負荷と組の升が変わった(場所を譲らせた分も)— 置けないと判じた答えは、後ろの task に貸さない。
+                 ;; 和と組の升が変わった(場所を譲らせた分も)— 置けないと判じた答えは、後ろの task に貸さない。
                  (.clear unplaced-verdicts)
-                 ;; 置いた拍に数えた worker の測った空きと、その測りの刻を行に写す(task が終わった後も置いた刻の空きを読むため —
-                 ;; worker の measured は保存しない拍ごとの観測)。測りの無い worker(門の外の task だけが置ける)は写さない。
+                 ;; 置いた拍の worker の測った空きと、その測りの刻を行に写す(観測だけ — 置く判断は読まない・R11。task が終わった後も
+                 ;; 置いた刻の空きを読むため — worker の measured は保存しない拍ごとの観測)。測りの無い worker は写さない。
                  (setv seen chosen.measured
                        seen-available (if (is seen None) None seen.memory-available-MiB)
                        seen-at (if (is seen None) None seen.at-ms))
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。場所を譲らせて置いた task は、
-                 ;; 止めた task を detail に名指す。
+                 ;; 止めた task を detail に名指す。和を越えて置いた門の外の task は、そう書く。
                  (setv (get writes id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
                                                    :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at
-                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms) :borrowed lent
+                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms)
                                                    :detail (cond
-                                                             lent (.format "線の上の memory の空きに入らないので、worker {} の線の内に借りとして置いた(上に載る系が memory を待つ間は止めて待ちの行へ戻す)"
-                                                                           chosen.name)
+                                                             beyond (.format "tasks 区画の申告の和に入らないので、待たない仕事として worker {} に和を越えて置いた"
+                                                                             chosen.name)
                                                              (is yielded None)
                                                                task.detail
                                                              True
-                                                               (.format "memory の空きに入らないので、worker {} の優先の低い task {} に場所を譲らせて置いた"
+                                                               (.format "tasks 区画の申告の和に入らないので、worker {} の優先の低い task {} に場所を譲らせて置いた"
                                                                         chosen.name (.join "・" (gfor v yielded.victims v.task.id)))))
                                           (replace task :phase phase :worker chosen.name :started-ms now
                                                    :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at))))
-        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(測った空きが 0・測りが無い・上限・予約): 失敗にせず待つ。
+        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(区画の和・区画の無さ・組の上限): 失敗にせず待つ。
         ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now

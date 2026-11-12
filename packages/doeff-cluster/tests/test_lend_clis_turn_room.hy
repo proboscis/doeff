@@ -163,38 +163,6 @@
   (dfor t (.rows placed) t.id t))
 
 
-(deftest test-a-preemptible-task-borrows-the-demand-room-and-a-plain-task-waits
-  (<- task TaskRecord (queued "t-build"))
-  (<- keep TaskRecord (queued "t-keep" :preemptible False))
-  (<- lending WorkerInfo (node-c))
-  (<- plain-worker WorkerInfo (node-c :lend False))
-  (<- rows dict (placed-rows {"t-build" task} lending))
-  (val placed (get rows "t-build"))
-  (assert (= #(placed.phase placed.worker placed.borrowed) #("assigned" "node-c" True)) placed)
-  ;; 失敗ケース(直す前の形): 借りの受けを名乗らない node-c では、要り 3584 MiB の task は jobs の層の空き 2679 MiB を待つ。
-  (<- before dict (placed-rows {"t-build" task} plain-worker))
-  (assert (= (. (get before "t-build") phase) "queued") (get before "t-build"))
-  ;; 譲れない task は借りに置かない。
-  (<- plain dict (placed-rows {"t-keep" keep} lending))
-  (assert (= #((. (get plain "t-keep") phase) (. (get plain "t-keep") borrowed)) #("queued" False)) (get plain "t-keep")))
-
-
-(deftest test-the-loan-is-stopped-only-while-the-upper-system-waits
-  ;; 待っている(返す量 211 MiB を名乗る): 借りの task を止めて次の試行の待ちの行へ戻す(消失に数えない)。
-  (<- loan TaskRecord (borrowed "a-build"))
-  (<- waiting WorkerInfo (node-c :lend False :reclaim 211 :uses {"a-build" 3000}))
-  (<- quiet-worker WorkerInfo (node-c :lend False :uses {"a-build" 3000}))
-  (<- rows dict (placed-rows {"a-build" loan} waiting))
-  (assert (not-in "a-build" rows) rows)
-  (val again (get rows "a-build-r2"))
-  (assert (= #(again.phase again.losses again.reclaimed again.borrowed) #("queued" 0 True False)) again)
-  ;; 待っていない: 借りの受けが無くても止めない。
-  (<- quiet dict (placed-rows {"a-build" loan} quiet-worker))
-  (assert (= #((. (get quiet "a-build") phase) (. (get quiet "a-build") borrowed)) #("assigned" True)) quiet))
-
-
-;; --- 枠の file ----------------------------------------------------------------------------------------------------------------------
-
 (deftest test-a-row-without-a-keep-line-takes-the-reclaim-mark-alone
   (<- alone object (room-of-text "{\"node-c\": {\"memoryMiB\": 8192, \"reclaimFile\": \"/run/mark\"}}" "node-c"))
   (assert (= #(alone.state alone.room.lend-line-file alone.room.reclaim-file) #(RoomState.OK "" "/run/mark")) alone)

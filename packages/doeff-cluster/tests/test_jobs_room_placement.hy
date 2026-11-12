@@ -64,25 +64,6 @@
   (.row placed "declare"))
 
 
-(deftest test-a-task-larger-than-the-jobs-layer-room-waits-instead-of-being-killed
-  ;; 直す前の数え(層の空きを名乗らない worker と同じ)は、追い出しまでの空き 7186 − 床 1536 = 5650 MiB を見て要り 3584 MiB を置く。
-  (<- before TaskRecord (placed-on-node-a None))
-  (assert (= #(before.phase before.worker) #("assigned" "node-a")) before)
-  ;; 層の空き 3471 − 1959 = 1512 MiB を名乗れば置かず、queued で待たせ、待ちの文は空きの無さを名指す(層の空き − 層の床 1000 MiB は
-  ;; memory の枠 1 つに満たないので、数の空きも 0 — 待ちの文は数の空きの無さ。どちらも失敗にしない)。
-  (<- after TaskRecord (placed-on-node-a (- JOBS-LIMIT-MIB JOBS-CURRENT-MIB)))
-  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
-  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
-  (assert (= after.phase "queued") after)
-  (assert (in after.detail #(no-room no-memory)) after)
-  ;; 枠が残る程度の層の空き(要りには足りない)では、待ちの文は memory の空きの無さを名指す。
-  (<- short TaskRecord (placed-on-node-a (+ 2048 JOBS-ROOM-FLOOR-MIB)))
-  (assert (= #(short.phase short.detail) #("queued" no-memory)) short)
-  ;; 層が要り + 層の床まで空けば置く。
-  (<- roomy TaskRecord (placed-on-node-a (+ DECLARE-NEED JOBS-ROOM-FLOOR-MIB)))
-  (assert (= #(roomy.phase roomy.worker) #("assigned" "node-a")) roomy))
-
-
 (deftest test-the-memory-room-is-the-smaller-of-the-line-and-the-jobs-layer-less-the-reservations
   (val line-room (- EVICTION-ROOM-MIB MEMORY-FLOOR-MIB))
   ;; 層の空きを名乗らない worker は追い出しまでの空きだけで数える(前の版の worker と同じ)。

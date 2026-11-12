@@ -7,7 +7,9 @@
 ;; 窓そのもの(exit 0 の直後の worker の死)は sim-cluster の反例 test_task_result_window.hy が通す。
 (require doeff-hy.macros [deftest defk deff <- val])
 (import httpx)
-(import tests.room_rows [ROOM-JSONS])
+(import tests.room_rows [ROOM-JSONS room-compartments])
+;; 名乗る worker の tasks 区画(ADR-DOE-CLUSTER-005 — 置き方は区画の申告の和で置く)。
+(setv ROOMS (room-compartments #("w" "w1" "w2" "other") 10))
 (import doeff_cluster [ClusterTiming Request])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [http-request])
@@ -43,7 +45,7 @@
   {:pre [(: worker str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "worker が名乗り、task を 1 本出し、worker の次の heartbeat でその worker に置いた状態 #(状態 task の id) を作るため(時刻 0〜200)。"
   (<- alive dict (beat-body worker []))
-  (<- joined tuple (answer (ClusterState) "POST" "/heartbeat" alive 0))
+  (<- joined tuple (answer (ClusterState :machine-compartments ROOMS) "POST" "/heartbeat" alive 0))
   (<- placed tuple (program-placed (get joined 0) V :now 100))
   (<- submitted tuple (answer (get placed 0) "POST" "/tasks"
                               {"program" (get placed 1) "revision" "r" "needs" ["net"] "name" "n" "leaseSeconds" 15.0} 100))

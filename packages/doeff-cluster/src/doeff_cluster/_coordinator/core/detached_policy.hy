@@ -69,7 +69,7 @@
 (defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ TaskBody body #^ int now]
   "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs・実行環境・子の環境変数(environ)が違えば 409
    (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。
-   memory の要り(memoryMiB)の無い本文と、要りが needs の合うどの worker の線よりも大きい新しい task は 400 で断る
+   memory の要り(memoryMiB)の無い本文と、申告が needs の合うどの worker の tasks 区画よりも大きい新しい門の内の task は 400 で断る
    (task-memory-required-refusal・memory-need-refusal)。測った空きの門の外を名乗る本文(ungated)は要りを名乗らず組を 1 つ以上名乗る
    (task-room-claim-refusal — 違えば 400)。場所を譲る名乗り(preemptible)は走らせ直し(rerun)も名乗る本文だけが持てる
    (task-preemptible-refusal — 違えば 400)。待ちの期限(queueLimitSeconds)は 1 以上の整数の秒(task-queue-limit-refusal — 違えば 400)。"
@@ -109,8 +109,9 @@
           (Reply state 200 (DetachedSubmitted :key key :id existing.id :created False :phase existing.phase))
           (Reply state 409 (ErrorReply :message (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
-  ;; needs の合うどの worker の線よりも大きい要りは、待っても置けないので積まずに断る(2026-11-02 — 今だけ空きの足りない task は積んで待つ)。
-  (setv too-big (run (memory-need-refusal state needs body.memory-MiB)))
+  ;; needs の合うどの worker の tasks 区画よりも大きい申告は、待っても置けないので積まずに断る(ADR-DOE-CLUSTER-005 R8 — 今だけ和の
+  ;; 足りない task は積んで待つ・門の外の task は断らない)。
+  (setv too-big (run (memory-need-refusal state needs body.memory-MiB (or body.shape "") (is body.ungated True))))
   (when too-big (return (Reply state 400 (ErrorReply :message too-big))))
   (setv open-count (len (lfor t (scan-rows state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.rows state.tasks) :if t.detached t)))

@@ -11,7 +11,9 @@
 ;;               (本番の土台の os-environ-reader が外へ通した Ask)。値の字面どおりの読みの契約は test_environ_reader.hy。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_events [MemoryBroker])
-(import tests.room_rows [ROOM-JSONS])
+(import tests.room_rows [ROOM-JSONS room-compartments])
+;; 名乗る worker w の tasks 区画(ADR-DOE-CLUSTER-005 — 置き方は区画の申告の和で置く)。
+(setv ROOMS (room-compartments #("w") 10))
 (import json)
 (import os)
 (import sys)
@@ -129,7 +131,7 @@
 (deftest test-the-coordinator-refuses-a-task-body-with-a-reserved-or-secret-name
   ;; POST /tasks・PUT /detached のどちらも、本文の environ の誤りは 400 と理由で、状態を変えない。実行環境の env-vars と同じ名も断る
   ;; (子の環境変数の足し口を 1 つにする — service の宣言の行と同じ)。
-  (<- placed tuple (program-placed (ClusterState) V))
+  (<- placed tuple (program-placed (ClusterState :machine-compartments ROOMS) V))
   (val state (get placed 0))
   (val sha (get placed 1))
   (val base {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "memoryMiB" 1024})
@@ -160,7 +162,7 @@
 (deftest test-the-coordinator-carries-the-environ-to-the-worker-child-like-a-service [tmp-path]
   ;; 両方の task の行が environ を持ち、heartbeat の返事の行に載り、worker の task-spec が JobSpec.environ に写し、ProcessHost が
   ;; service と同じ路で子の環境変数に置く。environ の無い task の行と返事は欄を持たない(以前と同じ形)。
-  (<- worker tuple (beat (ClusterState) 0))
+  (<- worker tuple (beat (ClusterState :machine-compartments ROOMS) 0))
   (<- placed tuple (program-placed (get worker 0) V))
   (val sha (get placed 1))
   (val body {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "environ" {URL-NAME URL} "memoryMiB" 1024})
@@ -182,7 +184,7 @@
 
 (deftest test-the-same-key-with-another-environ-is-other-work
   ;; 冪等の鍵: 同じ key・同じ environ の送り直しは同じ行(created = false)、違う environ は 409(別の仕事 — Program の読む設定が違う)。
-  (<- placed tuple (program-placed (ClusterState) V))
+  (<- placed tuple (program-placed (ClusterState :machine-compartments ROOMS) V))
   (val state (get placed 0))
   (val sha (get placed 1))
   (val body {"program" sha "revision" "r" "needs" ["net"] "environ" {URL-NAME URL} "memoryMiB" 1024})
