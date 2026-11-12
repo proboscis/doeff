@@ -1789,13 +1789,13 @@
                (raise (TypeError (.format "{}: 温める表の返事の本文が dict でない: {!r}" what body)))))))
 
 
-(defk warm-write [link env needs ttl-seconds holder]
-  {:pre [(: link SimLink) (: env RuntimeEnv) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % WarmAnswer)]
+(defk warm-write [link env needs ttl-seconds holder urgent]
+  {:pre [(: link SimLink) (: env RuntimeEnv) (: needs frozenset) (: ttl-seconds float) (: holder str) (: urgent bool)] :post [(: % WarmAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "WarmRuntimeEnv を本番の warm-cluster(warm-written)と同じ本文(warm-request-body)で POST /warm に書き、今の姿を読むため(届かない・coordinator の
    5xx は本番と同じ WarmUnreachable)。"
   (<- declared dict (runtime-env->json env))
-  (<- written tuple (send-resent link "POST" "/warm" {} (warm-request-body declared needs ttl-seconds holder)))
+  (<- written tuple (send-resent link "POST" "/warm" {} (warm-request-body declared needs ttl-seconds holder urgent)))
   (warm-answer-of written "温める表に書けない"))
 
 
@@ -2039,8 +2039,8 @@
   (AwaitServiceReady [name]
     (<- ready ServiceReady (await-service-ready link name))
     (resume ready))
-  (WarmRuntimeEnv [env needs ttl-seconds holder]
-    (<- warmed WarmAnswer (warm-write link env needs (float ttl-seconds) holder))
+  (WarmRuntimeEnv [env needs ttl-seconds holder urgent]
+    (<- warmed WarmAnswer (warm-write link env needs (float ttl-seconds) holder urgent))
     (resume warmed))
   (ReadWarmState [key]
     (<- warm WarmAnswer (warm-read link key))

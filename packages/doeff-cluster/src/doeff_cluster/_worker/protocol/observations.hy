@@ -76,6 +76,13 @@
    起こさない(warm_rules の warm-child-roomless)。")
 
 
+(defclass [(dataclass :frozen True)] ObserveUrgentJobsRoom [EffectBase]
+  "急ぎの jobs の層の今の空き(byte・負もありうる — WorldView.urgent-jobs-room。上に載る系の残す線を外して決めた受けの上限 − 使い。
+   None = 線が層を縮めていない・見張りが上限を掛けない・まだ読めていない)。世界の観測のまとめ(local-host)が、機体の memory の見張りの
+   観測の答え手(worker/protocol/memory_observer)へ問う。判断は、急ぎを名乗る温める行の root の待ちの子だけをこの空きで判じる
+   (warm_rules の warm-room-of)。")
+
+
 (defclass [(dataclass :frozen True)] ObservePrograms [(get EffectBase (get tuple #(ProgramGap ...)))]
   "宣言の job のうち、Program の file が手元に無い物(ProgramGap の tuple — WorldView.program-gaps)。世界の観測のまとめ(local-host)が、
    Program の cache のただ 1 つの書き手である coordinator への口(worker/protocol/coordinator_link)へ問う。")

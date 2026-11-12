@@ -14,9 +14,10 @@
 (deff warm-env-of-row [#^ dict row #^ str platform]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断で返事を読む
   {:pre [(: row dict) (: platform str)] :post [(: % WarmEnv)] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の温める表の行 1 つを、この worker の root のキー(platform で計算した env のキーに env- を付けた物)の WarmEnv に
-   するため。"
+   するため(行の急ぎの名乗り urgent — 欄が真の時だけ真 — も写す)。"
   (WarmEnv :key (+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json (get row "runtimeEnv"))) platform)))
-           :runtime-env (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False)))
+           :runtime-env (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False)
+           :urgent (is (.get row "urgent") True)))
 
 
 (deff finished-task-id [s]  ; cannot be a defk: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が状態の行を読む純粋な判断

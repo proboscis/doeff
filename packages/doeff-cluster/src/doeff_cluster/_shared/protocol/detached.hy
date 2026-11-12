@@ -366,11 +366,12 @@
   (ServicesUnreachable :detail (.format "coordinator に届かない: {}" reason)))
 
 
-(deff warm-request-body [#^ dict runtime-env #^ frozenset needs #^ float ttl-seconds #^ str holder]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
-  {:pre [(: runtime-env dict) (: needs frozenset) (: ttl-seconds float) (: holder str)] :post [(: % dict)]
+(deff warm-request-body [#^ dict runtime-env #^ frozenset needs #^ float ttl-seconds #^ str holder #^ bool [urgent False]]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: runtime-env dict) (: needs frozenset) (: ttl-seconds float) (: holder str) (: urgent bool)] :post [(: % dict)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "POST /warm の本文を作るため(runtime-env = 実行環境の宣言の JSON)。"
-  {"runtimeEnv" runtime-env "needs" (sorted needs) "ttlSeconds" ttl-seconds "holder" holder "format" PROTOCOL-FORMAT})
+  "POST /warm の本文を作るため(runtime-env = 実行環境の宣言の JSON・urgent = 急ぎの名乗り — 真の時だけ欄を載せる)。"
+  (| {"runtimeEnv" runtime-env "needs" (sorted needs) "ttlSeconds" ttl-seconds "holder" holder "format" PROTOCOL-FORMAT}
+     (if urgent {"urgent" True} {})))
 
 
 (deff warm-path [#^ str key]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
@@ -771,13 +772,13 @@
           (warm-state-of-json row))))
 
 
-(defk warm-written [cell options deadline-seconds env needs ttl-seconds holder]
+(defk warm-written [cell options deadline-seconds env needs ttl-seconds holder urgent]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: deadline-seconds float) (: env RuntimeEnv) (: needs frozenset)
-         (: ttl-seconds float) (: holder str)]
+         (: ttl-seconds float) (: holder str) (: urgent bool)]
    :post [(: % WarmAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "温める表の行を書いて今の姿を読むため(POST /warm — 同じ行への頼み直しは同じ意味なので、通信の失敗を越えて送り直す)。"
   (<- declared dict (runtime-env->json env))
-  (<- answer (resent-answer cell options "POST" "/warm" None (warm-request-body declared needs ttl-seconds holder) deadline-seconds))
+  (<- answer (resent-answer cell options "POST" "/warm" None (warm-request-body declared needs ttl-seconds holder urgent) deadline-seconds))
   (<- state (warm-answer answer None))
   state)
 
@@ -826,8 +827,8 @@
 ;; 本物の温める表: coordinator の /warm へ、汎用の HttpRequest で話す(#2337 の 4c — httpx を直に持っていた WarmClient を替えた)。
 ;; 答えは WarmAnswer(coordinator に届かなければ WarmUnreachable — 例外で呼び手を落とさない)。書きの送り手の名は options の actor。
 (defhandler warm-cluster [#^ RouteCell cell #^ RouteOptions options]
-  (WarmRuntimeEnv [env needs ttl-seconds holder]
-    (<- state (warm-written cell options options.resend-deadline-seconds env needs (float ttl-seconds) holder))
+  (WarmRuntimeEnv [env needs ttl-seconds holder urgent]
+    (<- state (warm-written cell options options.resend-deadline-seconds env needs (float ttl-seconds) holder urgent))
     (resume state))
   (ReadWarmState [key]
     (<- state (warm-read cell options options.resend-deadline-seconds key))

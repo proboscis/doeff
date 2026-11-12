@@ -8,7 +8,7 @@
 (import doeff_cluster._worker.intent.worker_model [ObserveWorld WorldView EnvDisk MemoryStops
 ])
 (import doeff_cluster._worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObservePrograms])
+  ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObserveUrgentJobsRoom ObservePrograms])
 
 
 (defhandler local-host
@@ -25,6 +25,7 @@
     (<- killed frozenset (ObserveMemoryKills))
     (<- stops MemoryStops (ObserveMemoryStops))
     (<- room (| int None) (ObserveJobsRoom))
+    (<- urgent-room (| int None) (ObserveUrgentJobsRoom))
     (<- gaps tuple (ObservePrograms))
     (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving :memory-tight tight
-                       :memory-killed killed :memory-stops stops :jobs-room room :program-gaps gaps))))
+                       :memory-killed killed :memory-stops stops :jobs-room room :urgent-jobs-room urgent-room :program-gaps gaps))))

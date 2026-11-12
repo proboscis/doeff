@@ -2919,7 +2919,7 @@
       (tuple (gfor w (sorted (.rows state.warms) :key (fn [w] w.key))
                    :if (and (> w.until-ms now) (placeable w.needs info)
                             (tools-cover w.runtime-env info))
-                   (WarmOffer :key w.key :runtime-env w.runtime-env)))))
+                   (WarmOffer :key w.key :runtime-env w.runtime-env :urgent (> w.urgent-until-ms now))))))
 
 
 (defk supplied-for [state worker]

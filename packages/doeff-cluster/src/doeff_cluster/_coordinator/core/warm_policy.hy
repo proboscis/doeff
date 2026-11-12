@@ -64,7 +64,13 @@
     (except [error ValueError]
       (return #(state 400 (ErrorReply :message (str error))))))
   (setv key (run (warm-key env needs))
-        entry (WarmEntry key declared needs (+ now (int (* 1000 ttl))) (or body.holder actor))
+        until (+ now (int (* 1000 ttl)))
+        before (.row state.warms key)
+        ;; 急ぎの名乗りの期限(WarmEntry の urgent-until-ms): 急ぎの頼みは自分の期限まで延ばし、平常の頼み直しは前の名乗りの期限を残す。
+        urgent-until (cond body.urgent until
+                           (is before None) 0
+                           True before.urgent-until-ms)
+        entry (WarmEntry key declared needs until (or body.holder actor) urgent-until)
         after (replace state :warms (.with-writes state.warms #((TableWrite key entry)))))
   #(after 200 (warm-view after entry now timing)))
 

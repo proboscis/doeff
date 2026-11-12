@@ -6,7 +6,7 @@
 (import doeff [run with-handlers])
 (import doeff_cluster [CodeState CodeView ObserveWorld WorldView]
         doeff_cluster._worker.intent.worker_model [EnvDisk ProgramGap WarmChildView])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObservePrograms MemoryStops])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObserveUrgentJobsRoom ObservePrograms MemoryStops])
 (import doeff_cluster [local-host])
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))
@@ -29,6 +29,7 @@
   (ObserveMemoryKills [] (resume (frozenset #(#("svc" 10)))))
   (ObserveMemoryStops [] (resume (MemoryStops)))
   (ObserveJobsRoom [] (resume (* 300 1024 1024)))
+  (ObserveUrgentJobsRoom [] (resume (* 900 1024 1024)))
   (ObservePrograms [] (resume #(GAP))))
 
 
@@ -36,4 +37,4 @@
   (val world (run (with-handlers [observed local-host] (ObserveWorld))))
   (assert (isinstance world WorldView) world)
   (assert (= world (WorldView #(CODE ENV) #() #() :env-disk DISK :warm-children #(CHILD) :leaving True :memory-tight True
-                         :memory-killed (frozenset #(#("svc" 10))) :jobs-room (* 300 1024 1024) :program-gaps #(GAP))) world))
+                         :memory-killed (frozenset #(#("svc" 10))) :jobs-room (* 300 1024 1024) :urgent-jobs-room (* 900 1024 1024) :program-gaps #(GAP))) world))

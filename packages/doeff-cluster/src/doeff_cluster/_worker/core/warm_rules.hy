@@ -155,27 +155,40 @@
   (if (and (is-not view None) (is-not view.size-bytes None)) view.size-bytes policy.warm-child-size-bytes))
 
 
-(defn #^ (| int None) warm-room-of [#^ str key #^ WorldView world #^ WorkerPolicy policy]  ; cannot be a defk: 純粋な判断の warm-child-roomless が呼ぶ
+(defn #^ (| int None) warm-room-of [#^ str key #^ WorldView world #^ WorkerPolicy policy #^ bool [urgent False]]  ; cannot be a defk: 純粋な判断の warm-child-roomless が呼ぶ
   "root のキー key の待ちの子に使える jobs の層の空き(byte — None = 空きで縛らない・WorldView.jobs-room): 見張りの読んだ空きから、
    ほかの root の起こし中の待ちの子(走っていて、止めておらず、まだ準備済みでない — 見張りの読みにまだ全部は載っていない)の大きさを
-   引く。準備済みの子は層の使いに載っているので引かない。"
-  (if (is world.jobs-room None)
+   引く。準備済みの子は層の使いに載っているので引かない。urgent = 急ぎを名乗る温める行の root か(WarmEnv の urgent — urgent-warm-keys):
+   真なら、上に載る系の残す線を外した空き(WorldView.urgent-jobs-room — heartbeat の urgent-jobs-room と同じ数え方)から引く。線が層を
+   縮めていない回(None)は平常の空き。急ぎの組は、置き先が優先 KEEP-NOW-PRIORITY 以上の task を同じ空きで置く組と同じ — 送り手が急ぎの
+   task を送る root の待ちの子を、その task と同じ線の内側に起こす。"
+  (setv base (if (and urgent (is-not world.urgent-jobs-room None)) world.urgent-jobs-room world.jobs-room))
+  (if (is base None)
       None
-      (- world.jobs-room
+      (- base
          (sum (gfor view world.warm-children
                     :if (and (!= view.key key) (is view.exit-code None) (is view.stop None) (not (warm-child-ready view)))
                     (warm-child-size view policy))))))
 
 
-(defn #^ bool warm-child-roomless [#^ str key #^ (| WarmChildView None) view #^ WorldView world #^ WorkerPolicy policy #^ int [taken 0]]  ; cannot be a defk: 純粋な判断の warm-start・phase-of が呼ぶ
+(defn #^ bool warm-child-roomless [#^ str key #^ (| WarmChildView None) view #^ WorldView world #^ WorkerPolicy policy #^ int [taken 0]
+                                   #^ bool [urgent False]]  ; cannot be a defk: 純粋な判断の warm-start・phase-of が呼ぶ
   "root のキー key の待ちの子を起こすなら jobs の層に入らないか(起こす前の判じの 1 か所 — 判断 warm-child-step と道の warm-start が読む):
    今の子が走っておらず(起こしていない・終わった)、その root の待ちの子 1 本の大きさ(warm-child-size)が使える空き(warm-room-of から、
    同じ拍に先に起こした待ちの子の大きさ taken を引いた値)を越える。入らない待ちの子を起こすと、層の上限に当たって kernel の OOM kill が
-   層でいちばん大きい process = その待ちの子を落とし、起こし直しの輪になる(2026-11-06 の node-d〜f)。空きで縛らない層(None)では偽。"
-  (setv room (warm-room-of key world policy))
+   層でいちばん大きい process = その待ちの子を落とし、起こし直しの輪になる(2026-11-06 の node-d〜f)。空きで縛らない層(None)では偽。
+   urgent = 急ぎを名乗る温める行の root か(warm-room-of の urgent — 線を外した空きで判じる)。"
+  (setv room (warm-room-of key world policy :urgent urgent))
   (and (is-not room None)
        (or (is view None) (is-not view.exit-code None))
        (> (warm-child-size view policy) (- room taken))))
+
+
+(defk urgent-warm-keys [warm]
+  {:pre [(: warm tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "急ぎを名乗る温める行の root のキーを知るため(warm = heartbeat の返事の温める表の行 WarmEnv の tuple — 判断 warm-child-actions が
+   その root の待ちの子を warm-child-roomless の urgent で判じる)。"
+  (frozenset (gfor w warm :if w.urgent w.key)))
 
 
 (defk vm-rss-bytes [text]
