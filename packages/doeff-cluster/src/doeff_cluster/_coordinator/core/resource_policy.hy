@@ -695,6 +695,12 @@
                ;; 枠の file の状態(heartbeat の roomFile — unreadable・malformed の間 worker は前に名乗った枠のまま)。
                ;; 同じく ok でない間だけ載せる(読み手が枠の変更が効いていない事を知る)。
                (if (!= w.room-file "ok") {"roomFile" w.room-file} {})
+               ;; 準備の姿(heartbeat の prepare — worker/core/prepare_rules)。done でない間だけ載せる(done の worker と準備の file を読まない
+               ;; worker の status の形・版は以前と同じ)— 知らせる読み手が、準備が落ちた・読めない worker を能力の欠けとして読む。揺れる訳の文
+               ;; (reason)と足した能力は載せない(版を進めない — GET /state の worker の行で読む)。状態と段の切り替わりの拍で版が進む。
+               (if (and (is-not w.prepare None) (!= w.prepare.state "done"))
+                   {"prepare" {"state" w.prepare.state "sinceMs" w.prepare.since-ms "stage" w.prepare.stage}}
+                   {})
                ;; 世代をまたぐ recreate の job の受け渡し(AL-D2f): 前の世代がまだ動かしている job(重なりを名乗った新しい世代の間の
                ;; SupersededRun)と、今の世代が起こせると報告した job(状態の行の phase が elder-runs)。受け渡しが進むたびに版が進み、
                ;; この worker を名指した 2 つの世代の GET /watch が起きる(前の世代は外す返事を、今の世代は印の外れを次の heartbeat を

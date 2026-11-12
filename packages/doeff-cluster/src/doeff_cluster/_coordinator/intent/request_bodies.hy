@@ -260,6 +260,20 @@
   (setv #^ (| int None) reclaim-MiB None))
 
 
+(defwire PrepareReport
+  "heartbeat の準備の姿(欄 prepare — worker/protocol/heartbeat の prepare-json と同じ形・worker/core/prepare_rules の頭の註): state = 準備の
+   状態(running = 続いている・done = 済んだ・failed = 落ちた・unreadable = 準備の file を読めない・malformed = file の形の誤り)・
+   provides = 準備で足した能力の名の列(provides に足して名乗った物 — 写すだけ)・since-ms = その状態に入った刻(epoch ms・None = 書き手が
+   書かなかった)・stage = 段の名(running の今の段・failed の落ちた段 — 空 = 無い)・reason = 訳の文(空 = 無い)。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
+   :check [(in state #("running" "done" "failed" "unreadable" "malformed")) (or (is since-ms None) (>= since-ms 0))]}
+  (#^ str state)
+  (setv #^ (get tuple #(str ...)) provides #())
+  (setv #^ (| int None) since-ms None)
+  (setv #^ str stage "")
+  (setv #^ str reason ""))
+
+
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
    provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・versions / tools = 名 → 版・platform・
@@ -282,7 +296,8 @@
    名乗らない worker(Pod の外・旧い worker)は空。job の Service の振り先〔EndpointSlice〕の材料 — core/endpoints_policy)・
    pinned-to-node = この世代は node に縛られ、印の在る job を長い柵(ClusterTiming.pinned-keep-fence-ms)まで動かし続ける(起動の引数
    --pinned-to-node・止まり始めた世代は名乗らない — 判断は印の約束に残し、約束の期限をその柵から求める・cluster_policy.kept-window-ms。
-   名乗らない旧い worker は偽)。
+   名乗らない旧い worker は偽)。prepare = 準備の姿(PrepareReport — 準備の file を渡された worker だけが名乗る。名乗らない worker・旧い
+   worker は None。準備で足した能力は provides に入って届く — 判断は GET /state の worker の行と、done でない間の Worker の status に写す)。
    旧い worker が送る taskReserve・backgroundRoom・capacity(手書きの task の枠 — 消した欄)は欄に持たずに捨てる(:unknown :ignore)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
@@ -312,7 +327,8 @@
   (setv #^ (| int None) memory-MiB None)
   (setv #^ (| MeasuredLoad None) measured None)
   (setv #^ (| (get tuple #(str ...)) None) child-environ None)
-  (setv #^ str pod-ip ""))
+  (setv #^ str pod-ip "")
+  (setv #^ (| PrepareReport None) prepare None))
 
 
 (defwire ResourceBody

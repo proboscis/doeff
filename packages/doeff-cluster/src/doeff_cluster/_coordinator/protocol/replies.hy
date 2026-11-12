@@ -169,7 +169,8 @@
    ;; jobUses = 常駐の job ごとの [{job pid cpuMs rssMiB processes pssMiB pssAtMs bodyAnonymousMiB startedAtMs}])。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空き
    ;; から — 測りの無い worker は 0)。taskMemoryRoomMiB = 置き先の判断と同じ数えで、いま置ける task の memory の要りの最大(測った空き −
    ;; 床 − 置いた task の「要り − 今の使い」の和 — 負は詰めすぎ)。childEnviron = worker が job の子へ渡す環境変数の名(名の順 — 名乗った worker だけに載せる。名乗らない旧い
-   ;; worker に空の列を出さない: 空の列は「子へ何も渡さない」と読まれる)。
+   ;; worker に空の列を出さない: 空の列は「子へ何も渡さない」と読まれる)。prepare = 準備の姿(heartbeat の prepare の写し {state sinceMs stage
+   ;; reason provides} — 準備の file を渡された worker だけに載せる。done の時も載せる)。
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
                                    "node" w.info.node "taskRoom" w.task-room "taskMemoryRoomMiB" w.task-memory-room-mib
@@ -177,6 +178,10 @@
                                    "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
                                   (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})
                                   (if (is w.info.child-environ None) {} {"childEnviron" (list w.info.child-environ)})
+                                  (if (is w.info.prepare None) {}
+                                      {"prepare" {"state" w.info.prepare.state "sinceMs" w.info.prepare.since-ms
+                                                  "stage" w.info.prepare.stage "reason" w.info.prepare.reason
+                                                  "provides" (list w.info.prepare.provides)}})
                                   (if (in w.info.name measured) {"measured" (get measured w.info.name)} {})))
    "placements" (dfor #(k v) (.items view.placements) k (asdict v))
    "unplaced" view.unplaced

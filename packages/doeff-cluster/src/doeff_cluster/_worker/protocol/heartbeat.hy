@@ -7,6 +7,7 @@
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.heartbeat_rules [finished-task-id])
 (import doeff_cluster._worker.core.room_rules [announced-provides])
+(import doeff_cluster._worker.core.prepare_rules [PrepareReading])
 (import doeff_cluster._worker.core.load_rules [MachineLoad])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 
@@ -40,8 +41,9 @@
 
 (defk heartbeat-body [* name provides exclusive node versions statuses endpoint boot boot-at tools kept [stopping False]
                       [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None] [measured None] [child-environ None]
-                      [pod-ip ""] [pinned False]]
+                      [pod-ip ""] [pinned False] [prepare None]]
   {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str) (: pod-ip str) (: pinned bool)
+         (: prepare (| PrepareReading None))
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)
          (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))
@@ -66,8 +68,14 @@
    pod-ip = この世代の Pod の IP(k8s の downward API の status.podIP — 空でない時だけ欄 podIp を書く。coordinator は job の Service の
    振り先〔EndpointSlice〕に、Ready で active な process の在る世代の Pod の IP を書く — coordinator/core/endpoints_policy)。
    pinned = この世代は node に縛られていると名乗る(heartbeat_rules.pinned-claim? — 真の時だけ欄 pinnedToNode を書く。coordinator は印の
-   約束に残し、約束の期限を長い柵 pinned-keep-fence-ms から求める)。"
-  (<- named (get tuple #(str ...)) (announced-provides provides pools))
+   約束に残し、約束の期限を長い柵 pinned-keep-fence-ms から求める)。prepare = 準備の file から読んだ準備の姿(worker/core/prepare_rules —
+   準備の file を渡された worker だけ。足す能力を組の印と同じく provides の後ろに足して名乗り、姿を欄 prepare で名乗る。coordinator は
+   GET /state の worker の行と、済んでいない間の Worker の status に出す)。"
+  (<- named (get tuple #(str ...)) (announced-provides provides (+ pools (if (is prepare None) #() prepare.provides))))
+  (var prepare-part {})
+  (when (is-not prepare None)
+    (<- row (get dict #(str object)) (prepare-json prepare))
+    (:= prepare-part {"prepare" row}))
   (var measured-part {})
   (when (is-not measured None)
     (<- row (get dict #(str object)) (measured-json measured))
@@ -85,7 +93,15 @@
    #** (if (is child-environ None) {} {"childEnviron" (list child-environ)})
    #** (if pod-ip {"podIp" pod-ip} {})
    #** (if pinned {"pinnedToNode" True} {})
+   #** prepare-part
    #** measured-part})
+
+
+(defk prepare-json [reading]
+  {:pre [(: reading PrepareReading)] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "名乗る準備の姿を、heartbeat の欄 prepare の JSON の形にするため(coordinator/intent/request_bodies の PrepareReport と同じ形)。"
+  {"state" reading.state.value "provides" (list reading.provides) "sinceMs" reading.since-ms
+   "stage" reading.stage "reason" reading.reason})
 
 
 (defk measured-json [load]
