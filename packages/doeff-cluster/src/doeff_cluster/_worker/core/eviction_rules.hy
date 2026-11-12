@@ -684,8 +684,12 @@
    の頭の註の世代の書き手)— 世代 own の見張りが書いてよいかを決めるため。unmarked = own の外の、印の無い世代の名の tuple。答え = own より
    前に起きた印の無い世代のいちばん古い名(None = 無い — own が書く)。own の名が形の違う時と、形の違う名は数えない(None — 前の形の
    とおり書く)。"
-  (val at (generation-ms-of own))
+  (<- at (| int None) (generation-ms-of own))
   (when (is at None)
     (return None))
-  (val elders (sorted (gfor name unmarked :setv ms (generation-ms-of name) :if (and (is-not ms None) (< ms at)) #(ms name))))
-  (if elders (get (get elders 0) 1) None))
+  (var elders #())
+  (for [name unmarked]
+    (<- ms (| int None) (generation-ms-of name))
+    (when (and (is-not ms None) (< ms at))
+      (:= elders (+ elders #(#(ms name))))))
+  (if elders (get (min elders) 1) None))
