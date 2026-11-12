@@ -1978,13 +1978,6 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
-   "name": "shielded",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R18"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects",
    "name": "own_oom_score_adj",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1995,6 +1988,13 @@
    "name": "put_own_oom_score_adj",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "shielded",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R18"
   },
   {
    "package": "doeff-core-effects",
