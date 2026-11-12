@@ -27,6 +27,7 @@
 (import doeff_cluster._shared.core.due_policy [due-of-instants])
 (import doeff_cluster._coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_hy._table [Table TableWrite TableDraft draft-of table-of])
+(import doeff_cluster._coordinator.intent.task_table [task-index held-row?])
 (import doeff_cluster._coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_rules [required-field int-field])
@@ -1791,29 +1792,24 @@
 
 
 (defn #^ bool held-task? [#^ TaskRecord task]
-  "切り離した終わりの行(結果を保持しているだけ)か。切り離していない終わった行は含まない(lease を延ばされ走査の対象のまま)。"
-  (and task.detached (in task.phase DETACHED-TERMINAL)))
+  "切り離した終わりの行(結果を保持しているだけ)か。切り離していない終わった行は含まない(lease を延ばされ走査の対象のまま)。
+   task の表の索引と同じ判じ(task_table.held-row?)。"
+  (held-row? task))
 
 
 (defn #^ list scan-rows [#^ (get Table TaskRecord) tasks]
   "走査の対象の行(held-task? でない行 — 結果を保持しているだけの切り離した終わりを除く)を id の順で。数え・並べの読みが保持側の行を回さないため
-   (task-split の走査の対象と同じ行 — 期限の最小は要らない読みの口)。"
-  (lfor t (.rows tasks) :if (not (held-task? t)) t))
+   (task-split の走査の対象と同じ行 — 期限の最小は要らない読みの口)。task の表の索引から読む(保持の行を回らない — task_table)。"
+  (list (.values (. (task-index tasks) live))))
 
 
 (defk task-split [tasks now]
   {:pre [(: tasks (get Table TaskRecord)) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "1 走査で tasks を、走査の対象の行(held-task? でない行 — id の順を保つ dict)と、保持側の最小期限(task-lapse-at と同じ式 —
-   終わった刻 finished-ms を持たない行は除く。無ければ None)に分けるため。#(走査の対象 最小期限) を返す。"
-  (val live {})
-  (var earliest None)
-  (for [#(id task) (.items tasks)]
-    (if (held-task? task)
-        (when (is-not task.finished-ms None)
-          (val lapse (+ task.finished-ms task.retain-ms 1))
-          (when (or (is earliest None) (< lapse earliest)) (:= earliest lapse)))
-        (setv (get live id) task)))
-  #(live earliest))
+   終わった刻 finished-ms を持たない行は除く。無ければ None)に分けるため。#(走査の対象 最小期限) を返す。どちらも task の表の索引が書きの
+   たびに持ち続ける値(task_table — 保持の行を回らない)。走査の対象の dict は読み手が書き換えない。"
+  (val index (task-index tasks))
+  #(index.live index.earliest))
 
 
 (defk wait-lapse-at [capable timing]
@@ -1931,9 +1927,8 @@
   ;; 保持側の行は書かず元の object のまま残す。期限(finished-ms + retain-ms + 1 — task-lapse-at と同じ式)が来た行は落とす(期限の来た拍だけ
   ;; 全行を読む)。finished-ms の無い行は毎拍 now から数えるので落ちない。
   (when (and (is-not earliest None) (>= now earliest))
-    (for [task (.rows state.tasks)]
-      (when (and (held-task? task) (is-not task.finished-ms None) (>= now (+ task.finished-ms task.retain-ms 1)))
-        (setv (get writes task.id) None))))
+    (for [#(id lapse) (.items (. (task-index state.tasks) held)) :if (>= now lapse)]
+      (setv (get writes id) None)))
   ;; 待っている task が無ければ、置く判断(負荷・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
   ;; 模擬の拍の大半だった(#2655 の profile: replace 135,053 回・2.3 秒)。
   (when (not queue)

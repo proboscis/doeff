@@ -160,6 +160,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import math [ceil floor])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
+;; 形ごとの測った山の型は task の表の索引と分け合う(task_table — 索引が形ごとの山を書きのたびに持ち続ける)。
+(import doeff_cluster._coordinator.intent.task_table [ShapePeak])
 
 ;; task 1 本に見込む CPU の数。会話の test や build の 1 本は、混んでいない機体で CPU 1 つ前後を使う。
 (val TASK-CORES 1)
@@ -260,14 +262,6 @@
   {:pre [(: memory-mib (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "task の memory の要り(MiB)を知るため: 名乗った要り memory-mib、名乗らない task(None)は UNDECLARED-TASK-MIB。"
   (if (is memory-mib None) UNDECLARED-TASK-MIB memory-mib))
-
-
-(defrecord ShapePeak
-  "形 1 つの測った山(頭の註の測った山で数える要り — task_claims.shape-peaks-of): mib = 形を名乗り山を測った行(保持の間の終わった行を
-   含む)の山の最大・settled = そのうち終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限にしない)。"
-  {:check [(>= mib 0)]}
-  (#^ int mib)
-  (#^ bool settled))
 
 
 (defk learned-need [declared peak shape-peak line]

@@ -345,9 +345,11 @@
 
   (defn #^ (get Table V) freeze [self]
     "A new Table with the writes applied (the original table itself if there are no writes). May be called any number of times; neither the draft nor the original table changes."
-    (if self._writes
-        (_with-pending self._table self._writes)
-        self._table))
+    ;; A subclass of Table that keeps a value derived from its rows (it advances that value in its with-writes) receives the writes through
+    ;; its with-writes, so the frozen table keeps the derived value; a plain Table takes the bulk path.
+    (cond (not self._writes) self._table
+          (is (type self._table) Table) (_with-pending self._table self._writes)
+          True (.with-writes self._table (tuple (gfor #(key value) (.items self._writes) (TableWrite key value))))))
 
   (defn #^ int size [self]
     "The number of rows (after applying this draft's writes), so that the emptiness of a draft is read by count rather than truthiness."

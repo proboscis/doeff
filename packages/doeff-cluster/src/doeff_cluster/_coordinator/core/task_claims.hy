@@ -24,6 +24,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskClaim TaskRecord WorkerInfo PLACED-PHASES])
 (import doeff_cluster._coordinator.core.measured_room [learned-need memory-line-mib ShapePeak TASK-CORES])
 (import doeff_hy._table [Table TableWrite])
+(import doeff_cluster._coordinator.intent.task_table [task-index])
 
 ;; 1 core の millicore。
 (val MILLIS-PER-CORE 1000)
@@ -33,14 +34,8 @@
   {:pre [(: tasks (get Table TaskRecord))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "形ごとの測った山を知るため(measured_room の頭の註の測った山で数える要り): 形を名乗り山を測った行(保持の間の終わった行を含む)の形 →
    ShapePeak(山の最大と、終わり〔finished〕まで走った行が在るか)。保持の間の終わった行(scan-rows が除く行)も読む — 終わった task の山が
-   同じ形の次の task の申告の材料なので。"
-  (setv peaks {})
-  (for [t (.rows tasks) :if (and t.shape (is-not t.peak-mib None))]
-    (setv before (.get peaks t.shape))
-    (setv (get peaks t.shape)
-          (ShapePeak :mib (max t.peak-mib (if (is before None) 0 before.mib))
-                     :settled (or (= t.phase "finished") (and (is-not before None) before.settled)))))
-  peaks)
+   同じ形の次の task の申告の材料なので。値は task の表の索引が書きのたびに持ち続ける(task_table — 行を回らない)。読み手は書き換えない。"
+  (. (task-index tasks) peaks))
 
 
 (defk task-need-of [task worker peaks]
