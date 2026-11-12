@@ -46,6 +46,8 @@
 ;;;                          回収で返らない量・tmpfs の量・線と MemAvailable の差。
 ;;;   COMMANDS-LIMIT-FAILED-LOG 命令の層の memory.max を書けない・読めない訳が変わった時に 1 行。
 ;;;   RETIRED-LOG            keeper が退かせ始めた印を読んだ時に 1 行(以後この世代は層の上限と keeper の file を書かない): 印の file。
+;;;   COMPARTMENTS-LOG       区画の上限を層へ書いた時(持つ区画が替わった時だけ)に 1 行: 書いた file と値。
+;;;   COMPARTMENTS-FAILED-LOG 区画の上限を層へ書けない訳が変わった時に 1 行。
 ;;;   ELDER-WRITES-LOG       層を書く前の世代が替わった時(居ると読んだ時・居なくなった時)に 1 行: 前の世代の名("" = 居なくなった — この世代が
 ;;;                          書き始める)。
 ;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備が線へ足しうる量 MiB>」(空きは負もありうる)。線を読めない回は
@@ -61,6 +63,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_hy._wire [Malformed parse-json])
 (import doeff_core_effects [slog])
+(import doeff [Pure])
 (import doeff_core_effects [FileFailed ListDirectory PathKind ReadText WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster._worker.core.memory_rules [MIB meminfo-kib])
@@ -72,6 +75,7 @@
                                                   CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold writing-elder-of])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
+(import doeff_cluster._shared.core.compartment_rules [compartment-files held-limit-bytes])
 
 (val EVICTION-LINE-LOG "worker: 追い出しの線を読めた")
 (val EVICTION-UNREAD-LOG "worker: 追い出しの線を読めない")
@@ -82,6 +86,8 @@
 (val COMMANDS-SQUEEZE-LOG "worker: MemAvailable が線を割ったので命令の層の上限を回収で返らない量より下げた")
 (val COMMANDS-LIMIT-FAILED-LOG "worker: 命令の層の memory の上限を掛け直せない")
 (val RETIRED-LOG "worker: keeper がこの世代を退かせ始めた — cgroup の層の memory の上限と keeper の file を書かず、数えて log に出すだけにする")
+(val COMPARTMENTS-LOG "worker: 持つ区画の memory の上限を cgroup の層へ書いた")
+(val COMPARTMENTS-FAILED-LOG "worker: 持つ区画の memory の上限を cgroup の層へ書けない")
 (val ELDER-WRITES-LOG "worker: cgroup の層の memory の上限を書く前の世代が替わった — 前の世代が居る間はこの世代は書かない")
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒)。
 ;; jobs の層の oom_kill の増えの刻を残す長さ(ms — EvictionCell の oom-at-ms。見張りの止めた印を残す間 MemoryWatchSettings.kill-mark-seconds
@@ -160,7 +166,8 @@
    file(None = keeper の無い worker か準備の層が無い — 書かない)・clis = 会話の CLI の層の掛け直しの設定(None = 掛け直さない — 天井の
    宣言が無い機体)・commands = 命令の層の掛け直しの設定(None = 層の宣言に commands の memory.max が無い機体)・version-file = keeper の
    読む版の file(None = keeper の世代でない — 準備を待つ間の取り置きをしない)・own-version = この世代の版(version-file と組で在る)・
-   retired-file = keeper がこの世代を退かせる時に置く印の file(None = keeper の世代でない — 印を読まない・頭の註の退いた世代)。"
+   retired-file = keeper がこの世代を退かせる時に置く印の file(None = keeper の世代でない — 印を読まない・頭の註の退いた世代)・
+   layers-dir = cgroup の層の dir の親(層 <名> は layers-dir/<名> — 持つ区画の上限を書く所・ADR-DOE-CLUSTER-005 R3。None = 書かない)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
            (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
            (or (is clis None) (is-not jobs-dir None)) (= (is version-file None) (is own-version None))
@@ -183,7 +190,8 @@
   (setv #^ (| CommandLayerSettings None) commands None)
   (setv #^ (| str None) version-file None)
   (setv #^ (| str None) own-version None)
-  (setv #^ (| str None) retired-file None))
+  (setv #^ (| str None) retired-file None)
+  (setv #^ (| str None) layers-dir None))
 
 
 (defclass EvictionCell []
@@ -221,7 +229,11 @@
    declared = 最後に読めた heartbeat の返事の job の名 → 宣言の memory の山(byte — JobSpec.peak-mib を持つ job だけ。worker/protocol/coordinator_link が
    書き、機体の memory の見張りが job の根に添える — worker/core/memory_rules の頭の註の宣言の内・2026-11-11)・box-limits = container の中の
    限る層に最後に掛けた上限(BoxLayerLimit の tuple — 書いた層だけ。命令の層の線の掛け直しはその層の値を越えて書かない)・box-held =
-   最後の回に container の中の空きから限る層の分として引いた取り置きの和(None = 数えなかった)。
+   最後の回に container の中の空きから限る層の分として引いた取り置きの和(None = 数えなかった)・compartments = 最後に読めた heartbeat の
+   返事の持つ区画(HeldCompartment の tuple — worker/protocol/coordinator_link が書く・ADR-DOE-CLUSTER-005 R2。空 = 区画を持たない)・
+   compartment-files = 区画の上限として最後に書けた file の path → 中身(変わった file だけを書き直す — R3)・told-compartment-failure = log に
+   出した区画の書きの失敗の訳。区画の持つ層は、見張りが測りから掛け直さない(jobs・clis・命令の層・container の中の限る層とも、区画の
+   memory.max をその層の上限として数える)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
@@ -237,7 +249,8 @@
           self.clis-lend-limit None self.clis-reclaim None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
-          self.meters #() self.meters-at-ms None self.retired False self.elder None self.elder-gone False self.declared {} self.box-limits #() self.box-held None)))
+          self.meters #() self.meters-at-ms None self.retired False self.elder None self.elder-gone False self.declared {} self.box-limits #() self.box-held None)
+    (setv self.compartments #() self.compartment-files {} self.told-compartment-failure "")))
 
 
 (defrecord LayerMemory
@@ -491,7 +504,11 @@
       (when (and boxed (isinstance read BoxLayerUse))
         (<- found int (box-layer-limit read.use layer.floor-bytes layer.cap-bytes))
         (:= wanted found))
-      (<- written (| FileFailed None) (WriteText (+ layer.dir "/memory.max") (str wanted)))
+      ;; 区画の持つ層は区画の上限のまま(compartments-written が書く — 測りから掛け直さない)。
+      (<- held-limit (| int None) (held-limit-bytes cell.compartments layer.name))
+      (when (is-not held-limit None)
+        (:= wanted held-limit))
+      (<- written (| FileFailed None) (if (is held-limit None) (WriteText (+ layer.dir "/memory.max") (str wanted)) (Pure None)))
       (if (isinstance written FileFailed)
           (do (:= failure (or failure (.format "{} の層の memory.max に {} を書けない: {}" layer.name wanted written.detail)))
               (when (is-not before None)
@@ -566,7 +583,12 @@
     (<- lend-limit int (clis-lend-limit found current free box clis.floor-bytes clis.turn-bytes held))
     (<- reclaim int (clis-reclaim found current free box clis.ceiling-bytes clis.turn-room-bytes held))
     (setv cell.clis-lend-limit lend-limit cell.clis-reclaim reclaim))
-  (<- written (| FileFailed None) (WriteText (+ clis.dir "/memory.max") (str limit)))
+  ;; 区画の持つ clis の層は区画の上限のまま(compartments-written が書く)— 床を越えて貸さず、需要の余白も貸さない(区画が用途を分ける)。
+  (<- clis-held (| int None) (held-limit-bytes cell.compartments (posixpath.basename clis.dir)))
+  (when (is-not clis-held None)
+    (:= limit clis-held)
+    (setv cell.clis-lend-limit None cell.clis-reclaim None))
+  (<- written (| FileFailed None) (if (is clis-held None) (WriteText (+ clis.dir "/memory.max") (str limit)) (Pure None)))
   (when (isinstance written FileFailed)
     (setv cell.lent (if (is cell.clis-limit None) 0 (max 0 (- cell.clis-limit clis.floor-bytes)))
           cell.clis-lend-limit None cell.clis-reclaim None)
@@ -574,7 +596,7 @@
   (val before cell.clis-limit)
   (setv cell.clis-limit limit cell.box box)
   (<- lent int (clis-lent limit current clis.floor-bytes))
-  (setv cell.lent lent)
+  (setv cell.lent (if (is clis-held None) lent 0))
   (when (!= (> limit clis.floor-bytes) (and (is-not before None) (> before clis.floor-bytes)))
     (<- (slog CLIS-LENT-LOG :level "info" :clis-limit-mib (// limit MIB) :floor-mib (// clis.floor-bytes MIB)
               :ceiling-mib (// clis.ceiling-bytes MIB) :clis-current-mib (// current MIB)
@@ -595,7 +617,10 @@
   (setv cell.jobs-dir settings.jobs-dir)
   (when (or (is settings.jobs-dir None) (not guard))
     (return None))
-  (when (and (is line None) (is settings.jobs-cap-bytes None))
+  ;; 区画の持つ jobs の層(ADR-DOE-CLUSTER-005 R3): 上限は区画の memory.max(compartments-written が書く)で、見張りは書かない。新しい受けの
+  ;; 上限は今までどおり数え、区画の上限で切る(置き方の切り替えまで、置き先は測った空きで置く)。
+  (<- jobs-held-limit (| int None) (held-limit-bytes cell.compartments (posixpath.basename settings.jobs-dir)))
+  (when (and (is line None) (is settings.jobs-cap-bytes None) (is jobs-held-limit None))
     (return None))
   (var failure "")
   (var current None)
@@ -656,7 +681,12 @@
   ;; jobs の層の天井(worker/core/eviction_rules の頭の註): 宣言した機体は、container の中の空きを読めた回だけ宣言の静的な値の代わりに天井で
   ;; 切る(下の box の上限が container の上限の手前で止める)。container を読めない回は静的な値のまま。
   (val boxed? (and (is-not settings.clis None) (is-not cell.box None) (is-not cell.clis-limit None) (is-not cell.clis-current None)))
-  (val cap (if (and boxed? (is-not settings.jobs-ceiling-bytes None)) settings.jobs-ceiling-bytes settings.jobs-cap-bytes))
+  (val cap (cond (is-not jobs-held-limit None) jobs-held-limit
+                 (and boxed? (is-not settings.jobs-ceiling-bytes None)) settings.jobs-ceiling-bytes
+                 True settings.jobs-cap-bytes))
+  (when (is-not jobs-held-limit None)
+    (:= limit jobs-held-limit)
+    (:= intake jobs-held-limit))
   (when (and (is-not line None) (is-not current None))
     (val floor-margin (min margin settings.margin-bytes))
     ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 新しい受けに名乗る上限だけを線の上に収める。memory.max は追い出しの線だけで
@@ -700,11 +730,14 @@
   (when (is-not line None)
     (<- room-failure str (room-written settings line margin reserve addable))
     (:= failure (or failure room-failure)))
-  (when (and (is-not line None) (is current None))
+  (when (and (is-not line None) (is current None) (is jobs-held-limit None))
     ;; 使いを読めない回は、線から決めた前の上限を残す(宣言の値へ戻すと、線の手前を越えうる)。
     (:= limit None))
+  (when (is-not jobs-held-limit None)
+    ;; 区画の持つ層の上限は区画の値(書くのは compartments-written)。受けの上限は区画の上限で切る。
+    (:= limit jobs-held-limit))
   (when (is-not limit None)
-    (<- written (| FileFailed None) (WriteText (+ settings.jobs-dir "/memory.max") (str limit)))
+    (<- written (| FileFailed None) (if (is jobs-held-limit None) (WriteText (+ settings.jobs-dir "/memory.max") (str limit)) (Pure None)))
     (if (isinstance written FileFailed)
         (:= failure (.format "jobs の層の memory.max に {} を書けない: {}" limit written.detail))
         (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)) cell.jobs-intake-urgent urgent
@@ -803,7 +836,11 @@
   (when (and (isinstance room int) (isinstance use CommandLayerUse))
     (<- found int (command-layer-limit use room cell.command-floor-bytes cap))
     (:= limit found))
-  (<- written (| FileFailed None) (WriteText (+ commands.dir "/memory.max") (str limit)))
+  ;; 区画の持つ命令の層は区画の上限のまま(compartments-written が書く — 線と床から掛け直さない)。
+  (<- commands-held (| int None) (held-limit-bytes cell.compartments commands.name))
+  (when (is-not commands-held None)
+    (:= limit commands-held))
+  (<- written (| FileFailed None) (if (is commands-held None) (WriteText (+ commands.dir "/memory.max") (str limit)) (Pure None)))
   (if (isinstance written FileFailed)
       (:= failure (.format "命令の層の memory.max に {} を書けない: {}" limit written.detail))
       (setv cell.command-limit limit))
@@ -862,6 +899,34 @@
   (is-not elder None))
 
 
+(defk compartments-written [settings cell]
+  {:pre [(: settings EvictionSettings) (: cell EvictionCell)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "持つ区画(cell.compartments — heartbeat の返事の写し)を層の cgroup の file へ写すため(ADR-DOE-CLUSTER-005 R3): 区画ごとに memory.max =
+   memoryLimitMiB、守る区画は memory.min = memoryMiB も。前に書けた中身と同じ file は書かない(値が変わった時だけ書く)。空の区画の列は
+   何も書かない(kernel に在る値は残る — R2)。層の dir の親を知らない設定は書かない。書けた file の組が替わった時と、失敗の訳が替わった時に
+   1 行言う。"
+  (when (is settings.layers-dir None)
+    (return None))
+  (<- files tuple (compartment-files cell.compartments settings.layers-dir))
+  (var written-now {})
+  (var failure "")
+  (for [#(path text) files]
+    (if (= (.get cell.compartment-files path) text)
+        (:= written-now (| written-now {path text}))
+        (do (<- written (| FileFailed None) (WriteText path text))
+            (if (isinstance written FileFailed)
+                (:= failure (or failure (.format "{} に {} を書けない: {}" path text written.detail)))
+                (:= written-now (| written-now {path text}))))))
+  (when (and written-now (!= written-now cell.compartment-files))
+    (<- (slog COMPARTMENTS-LOG :level "info" :files (dfor #(p t) (.items written-now) p (// (int t) MIB)))))
+  (setv cell.compartment-files written-now)
+  (when (!= failure cell.told-compartment-failure)
+    (setv cell.told-compartment-failure failure)
+    (when failure
+      (<- (slog COMPARTMENTS-FAILED-LOG :level "warning" :reason failure))))
+  None)
+
+
 (defk eviction-noted [settings cell guard now-ms]
   {:pre [(: settings (| EvictionSettings None)) (: cell EvictionCell) (: guard bool) (: now-ms int)] :post [(: % (| EvictionLine None))]
    :tags {:context "worker" :role "protocol"}}
@@ -885,6 +950,9 @@
     (:= reason (+ "Node の宣言を読み直せない(前に読めた値で数える): " cell.node-reason)))
   (setv cell.line line cell.line-at-ms now-ms)
   (<- (line-told settings cell line reason))
+  ;; 持つ区画の上限を先に書く(区画の持つ層を、見張りの掛け直しは書かない)。
+  (when writes
+    (<- (compartments-written settings cell)))
   (<- (jobs-limited settings cell line writes now-ms))
   (when (is-not settings.commands None)
     (<- (commands-limited settings.commands cell writes)))
