@@ -180,17 +180,24 @@
   read)
 
 
+(defk cli-turn-bytes [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "main"}}
+  "会話の CLI 1 本の要り(CLI-TURN-BYTES-VAR の註 — 需要の余白の元で、需要の余白の貸しが clis に残す量の元)を機体の宣言から求めるため。
+   無い欄は既定の値。max・読めない綴りは起動を断る(ValueError)。"
+  (val declared (.get machine-env CLI-TURN-BYTES-VAR))
+  (when (not declared)
+    (return CLI-TURN-BYTES))
+  (<- read (| int None) (kernel-bytes-of declared))
+  (when (is read None)
+    (raise (ValueError (.format "{} は byte の数で書く(max は 1 本の要りにならない)" CLI-TURN-BYTES-VAR))))
+  read)
+
+
 (defk cli-turn-room-bytes [machine-env]
   {:pre [(: machine-env dict)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "main"}}
   "会話の CLI の層の需要の余白(1 本の要り × k — CLI-TURN-BYTES-VAR の註)を機体の宣言から求めるため。無い欄は既定の値。max・読めない
    綴り・0 以上の整数でない本数は起動を断る(ValueError)。"
-  (var need CLI-TURN-BYTES)
-  (val declared (.get machine-env CLI-TURN-BYTES-VAR))
-  (when declared
-    (<- read (| int None) (kernel-bytes-of declared))
-    (when (is read None)
-      (raise (ValueError (.format "{} は byte の数で書く(max は 1 本の要りにならない)" CLI-TURN-BYTES-VAR))))
-    (:= need read))
+  (<- need int (cli-turn-bytes machine-env))
   (var slots CLI-TURN-SLOTS)
   (val counted (.strip (.get machine-env CLI-TURN-SLOTS-VAR "")))
   (when counted
@@ -239,10 +246,11 @@
   (when (< ceiling floor)
     (raise (ValueError (.format "{} {} が {} の層の memory.max {} より小さい" CLI-CEILING-VAR ceiling CLI-LAYER floor))))
   (<- turn-room int (cli-turn-room-bytes machine-env))
+  (<- turn int (cli-turn-bytes machine-env))
   (<- layers tuple (box-layers-of machine-env cgroup-dir layout jobs))
   (<- kept-file str (cli-kept-file-of machine-env))
   (CliLayerSettings :dir (+ cgroup-dir "/" CLI-LAYER) :floor-bytes floor :ceiling-bytes ceiling :container-dir cgroup-dir
-                    :turn-room-bytes turn-room :layers layers :kept-file kept-file))
+                    :turn-room-bytes turn-room :turn-bytes turn :layers layers :kept-file kept-file))
 
 
 (defk cli-kept-file-of [machine-env]

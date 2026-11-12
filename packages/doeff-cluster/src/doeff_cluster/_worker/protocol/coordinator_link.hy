@@ -71,7 +71,7 @@
                                                   prepare-after prepare-line])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
                                               task-uses-of jobs-room-of prepare-wait-of
-                                              job-meters-told])
+                                              job-meters-told ClisRoomLend clis-room-lend])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine task-needs-of])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.memory_rules [MIB])  ; room-noted が命令の層の床を byte にする
@@ -1047,18 +1047,31 @@
       (when (and (is-not state.eviction None) (is-not reading None) (is-not reading.load.lend-available-mib None))
         (<- told (| int None) (jobs-room-of line state.eviction.jobs-intake-lend state.eviction.jobs-held))
         (:= lend-jobs-room told))
+      ;; 需要の余白の貸し(load_rules の頭の註の線の内の貸し — 線の無い機体): 枠の file の行が取り返しの印の file だけを名指す worker は、
+      ;; 印が古い間は需要の余白を縮めた借りの受けを、印が新しい間は需要の余白を戻すため返す量を名乗る(見張りが数えた回だけ)。
+      (var clis-lend None)
+      (when (and (is-not state.eviction None) (is-not reading None) (is-not line None) state.reclaim-file (not state.lend-line-file)
+                 (not state.keep-line-file))
+        (<- widened (| int None) (jobs-room-of line state.eviction.jobs-intake-lend state.eviction.jobs-held))
+        (<- told ClisRoomLend (clis-room-lend reading.reclaiming reading.load.memory-available-mib jobs-room widened
+                                              state.eviction.clis-reclaim))
+        (:= clis-lend told))
       ;; keeper が版の準備を待つ間の取り置きを添える(coordinator は名乗る worker に新しく常駐の job を置かない — load_rules.prepare-wait-of)。
       (var prepare-wait None)
       (when (is-not state.eviction None)
         (<- told (| int None) (prepare-wait-of line state.eviction.prepare-wait))
         (:= prepare-wait told))
+      (val load (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
+                                                    :urgent-jobs-room-mib urgent-jobs-room
+                                                    :lend-jobs-room-mib lend-jobs-room
+                                                    :prepare-wait-mib prepare-wait :job-meters job-meters
+                                                    :job-meters-at-ms (if (is job-meters None) None
+                                                                          state.eviction.meters-at-ms))))
       (setv state.load-reason reason
-            state.measured (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
-                                                               :urgent-jobs-room-mib urgent-jobs-room
-                                                               :lend-jobs-room-mib lend-jobs-room
-                                                               :prepare-wait-mib prepare-wait :job-meters job-meters
-                                                               :job-meters-at-ms (if (is job-meters None) None
-                                                                                     state.eviction.meters-at-ms)))
+            state.measured (if (or (is load None) (is clis-lend None))
+                               load
+                               (replace load :lend-available-mib clis-lend.available-mib :lend-jobs-room-mib clis-lend.jobs-room-mib
+                                        :reclaim-mib clis-lend.reclaim-mib))
             state.load-ticks (if (is reading None) None reading.ticks))))
   None)
 

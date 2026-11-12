@@ -35,6 +35,10 @@
 ;;; keepLineFile の在る行だけが持てる。欄が無い行は線の内を貸さない。
 ;;;   {"node-h": {"memoryMiB": 63488, "keepLineFile": "/cargo-build/.keep-available-mib",
 ;;;               "lendLineFile": "/cargo-build/.command-keep-available-mib", "reclaimFile": "/cargo-build/.turns-short-at-ms"}}
+;;; keepLineFile の無い行は reclaimFile だけを持てる: 会話の CLI の層を掛け直す機体(worker/core/eviction_rules の頭の註の需要の余白の貸し)で、
+;;; 需要の余白を作り直せる task へ貸し、上に載る系が待つ間だけ取り返す(2026-11-12)。会話の CLI の層を掛け直さない worker では何も変えない。
+;;; keepLineFile の在る行の reclaimFile は lendLineFile と組で書く(線の内の貸しと需要の余白の貸しを 1 行で混ぜない)。
+;;;   {"node-c": {"memoryMiB": 8192, "reclaimFile": "/run/upper/reclaim-at-ms"}}
 ;;;
 ;;; 読めた状態(heartbeat の roomFile で名乗る):
 ;;;   ok          自分の行を読めた
@@ -70,11 +74,13 @@
    heartbeat の provides に足す)・keep-line-file = 会話のターンに残す線の file(頭の註の keepLineFile — 空 = 読まない)・command-line-file =
    命令の層を掛け直す線の file・command-floor-mib = 短い命令の余地(頭の註の commandLineFile と commandFloorMiB — 空と 0 = 掛け直さない)・
    pinned-to-node = この worker の Pod は自分の node の外で動けない(頭の註の pinnedToNode — 偽 = 起動の引数の値のまま)・lend-line-file /
-   reclaim-file = 線の内を貸す下の線の file と取り返しの印の file(頭の註の lendLineFile と reclaimFile — 組で空 = 貸さない)。"
+   reclaim-file = 線の内を貸す下の線の file と取り返しの印の file(頭の註の lendLineFile と reclaimFile — 組で空 = 貸さない・
+   reclaim-file だけ = 線の無い行の需要の余白の貸し)。"
   {:check [(or (is memory-mib None) (>= memory-mib 0)) (or (= keep-line-file "") (.startswith keep-line-file "/"))
            (or (= command-line-file "") (.startswith command-line-file "/")) (>= command-floor-mib 0)
-           (= (= lend-line-file "") (= reclaim-file ""))
-           (or (= lend-line-file "") (and (.startswith lend-line-file "/") (.startswith reclaim-file "/") (!= keep-line-file "")))]}
+           (or (= lend-line-file "") (!= reclaim-file "")) (or (= reclaim-file "") (.startswith reclaim-file "/"))
+           (or (= lend-line-file "") (and (.startswith lend-line-file "/") (!= keep-line-file "")))
+           (or (= reclaim-file "") (!= lend-line-file "") (= keep-line-file ""))]}
   (#^ (| int None) memory-mib)
   (setv #^ (get tuple #(str ...)) pools #())
   (setv #^ str keep-line-file "")
@@ -122,6 +128,8 @@
     (isinstance lend-line str) (malformed lend-line)
     (and (get lend-line 0) (not (get keep-line 0)))
       (malformed (.format "worker {} の行の lendLineFile は keepLineFile の在る行だけが書ける" name))
+    (and (get lend-line 1) (not (get lend-line 0)) (get keep-line 0))
+      (malformed (.format "worker {} の行は keepLineFile を持つので、reclaimFile は lendLineFile と組で書く" name))
     (not (isinstance pinned bool)) (malformed (.format "worker {} の行の pinnedToNode は真偽で書く: {!r}" name pinned))
     True (RoomReading :state RoomState.OK
                       :room (WorkerRoom :memory-mib (get fields 0) :pools pools :keep-line-file (get keep-line 0)
@@ -151,13 +159,17 @@
 (defk row-lend-line [row name]
   {:pre [(: row dict) (: name str)] :post [(: % (| (get tuple #(str str)) str))] :tags {:context "worker" :role "judgment" :reads "json"}}
   "枠の file の worker name の行から線の内を貸す下の線の file と取り返しの印の file(頭の註の lendLineFile と reclaimFile)を読むため。答え =
-   2 つ組(欄が無ければ空の path 2 つ)か malformed の訳の文(片方だけ・/ で始まらない path — 取り返しの印を読まずに貸す側へ倒れない)。"
+   2 つ組(欄が無ければ空の path 2 つ・reclaimFile だけの行は下の線を空の path で — 頭の註の需要の余白の貸し)か malformed の訳の文
+   (lendLineFile だけ・/ で始まらない path — 取り返しの印を読まずに貸す側へ倒れない)。"
   (val lend (.get row "lendLineFile" ""))
   (val reclaim (.get row "reclaimFile" ""))
   (cond
     (and (= lend "") (= reclaim "")) #("" "")
-    (or (= lend "") (= reclaim ""))
-      (.format "worker {} の行の lendLineFile と reclaimFile は組で書く" name)
+    (= reclaim "")
+      (.format "worker {} の行の lendLineFile は reclaimFile と組で書く" name)
+    (not (and (isinstance reclaim str) (.startswith reclaim "/")))
+      (.format "worker {} の行の reclaimFile は / で始まる file の path で書く: {!r}" name reclaim)
+    (= lend "") #("" reclaim)
     (not (and (isinstance lend str) (.startswith lend "/")))
       (.format "worker {} の行の lendLineFile は / で始まる file の path で書く: {!r}" name lend)
     (not (and (isinstance reclaim str) (.startswith reclaim "/")))
@@ -240,7 +252,10 @@
                        (if r.pools (.format "・pools {}" (.join "," r.pools)) "")
                        (if r.keep-line-file (.format "・ターンに残す線 {}" r.keep-line-file) "")
                        (if r.command-line-file (.format "・命令の層の線 {}・床 {} MiB" r.command-line-file r.command-floor-mib) "")
-                       (if r.lend-line-file (.format "・線の内を貸す線 {}・取り返しの印 {}" r.lend-line-file r.reclaim-file) ""))))
+                       (cond
+                         r.lend-line-file (.format "・線の内を貸す線 {}・取り返しの印 {}" r.lend-line-file r.reclaim-file)
+                         r.reclaim-file (.format "・需要の余白を貸す取り返しの印 {}" r.reclaim-file)
+                         True ""))))
   (if (= reading.state RoomState.OK)
       (.format "worker: 枠の file から {} → {} を名乗る" (said before) (said after))
       (.format "worker: 枠の file を読めない({}: {})— 前の値 {} のまま名乗る" reading.state.value reading.reason (said before))))

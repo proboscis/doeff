@@ -51,6 +51,10 @@
 ;;; この空きへ借りとして置く。取り返しの印の file は、上に載る系が memory の不足で仕事を待たせるたびに epoch ms を書く file で、印が
 ;;; RECLAIM-FRESH-MS の内の間は貸しを名乗らず、MemAvailable が線を割った量(reclaim-mib)を名乗る — coordinator は借りの task を優先の低い順に
 ;;; 止めて待ちの行へ戻す(coordinator/core/measured_room の頭の註の線の内の貸し)。上に載る系が待っていない間は取り返さない。
+;;; 線の無い機体の会話の CLI の層の需要の余白も、同じ欄で貸す(worker/core/eviction_rules の頭の註の需要の余白の貸し・2026-11-12): 枠の file の行が
+;;; 取り返しの印の file だけを名指す worker は、印が古い間は需要の余白を縮めて数えた jobs の層の受け(見張りの jobs-intake-lend)が平常の受けより
+;;; 広い回に、memory の空きを平常のまま貸しの空きとして名乗り、その受けを lend-jobs-room-mib で名乗る。印が新しい間は貸さず、需要の余白を戻すため
+;;; 返す量(見張りの clis-reclaim — MiB の切り上げ)を reclaim-mib で名乗る(clis-room-lend)。
 ;;;
 ;;; /proc の無い機体(macOS): 入口が LoadPaths の代わりに印 HostLoad を渡し、同じ間ごとに問い ReadHostCounters で OS の口から CPU の
 ;;; 刻みと memory を読む(答え手 foundation/host_counters — mach の host_statistics・sysctl)。CPU の使いと nice の分は /proc/stat と同じく
@@ -191,11 +195,14 @@
   "測りの 1 回の読みの答え: load = 名乗る測り・ticks = この読みの /proc/stat(次の読みが CPU の使いを数える起点)・keep-room-bytes = 機体の
    MemAvailable − 会話のターンに残す線(byte・負もありうる — None = 線が無い・読めない。見張りが jobs の層の上限をこの線の上にも収める —
    worker/core/eviction_rules の頭の註の上に載る系が残す線)・lend-room-bytes = 機体の MemAvailable − 線の内を貸す下の線(byte・負もありうる —
-   None = 貸さない回〔load の lend-available-mib が None〕。見張りが借りの受けの上限 jobs-intake-lend をこの線で数える — 頭の註の線の内の貸し)。"
+   None = 貸さない回〔load の lend-available-mib が None〕。見張りが借りの受けの上限 jobs-intake-lend をこの線で数える — 頭の註の線の内の貸し)・
+   reclaiming = 取り返しの印が新しい(上に載る系が今 memory の不足で仕事を待たせている — reclaiming?・印を読まない回は偽。heartbeat が
+   需要の余白の貸しと取り返しを決める — 頭の註の線の内の貸し)。"
   (#^ MachineLoad load)
   (#^ CpuTicks ticks)
   (setv #^ (| int None) keep-room-bytes None)
-  (setv #^ (| int None) lend-room-bytes None))
+  (setv #^ (| int None) lend-room-bytes None)
+  (setv #^ bool reclaiming False))
 
 
 (defk load-read-due [read-ms now-ms]
@@ -270,6 +277,33 @@
           (LentRoom :available-mib (// (min by-line.available-bytes (max kept.available-bytes room)) MIB) :room-bytes room
                     :reclaim-mib None))
     True (LentRoom :available-mib None :room-bytes None :reclaim-mib None)))
+
+
+(defrecord ClisRoomLend
+  "需要の余白の貸しの 1 回の名乗り(頭の註の線の内の貸し — 線の無い機体の会話の CLI の層): available-mib = 貸しの memory の空き・jobs-room-mib =
+   借りの jobs の層の空き(どちらも None = 貸さない)・reclaim-mib = 返す量(None = 取り返さない)。"
+  {:check [(= (is available-mib None) (is jobs-room-mib None)) (or (is reclaim-mib None) (> reclaim-mib 0))
+           (or (is reclaim-mib None) (is available-mib None))]}
+  (#^ (| int None) available-mib)
+  (#^ (| int None) jobs-room-mib)
+  (#^ (| int None) reclaim-mib))
+
+
+(defk clis-room-lend [reclaiming memory-available-mib jobs-room-mib lend-jobs-room-mib reclaim-bytes]
+  {:pre [(: reclaiming bool) (: memory-available-mib int) (: jobs-room-mib (| int None)) (: lend-jobs-room-mib (| int None))
+         (: reclaim-bytes (| int None))]
+   :post [(: % ClisRoomLend)] :tags {:context "worker" :role "judgment"}}
+  "会話の CLI の層の需要の余白を貸す名乗りを決めるため(頭の註の線の内の貸し — 線の無い機体): reclaiming = 取り返しの印が新しい・
+   memory-available-mib = 平常の memory の空き・jobs-room-mib = 平常の jobs の層の空き(None = 名乗らない)・lend-jobs-room-mib = 見張りが
+   需要の余白を縮めて数えた受けの空き(jobs-room-of — None = 数えなかった・広がらない)・reclaim-bytes = 見張りの返す量(byte — None = 数えなかった)。
+   待っている間は貸さず、返す量が正なら MiB の切り上げで名乗る。待っていない間は、借りの受けが平常の受けより広い時だけ、memory の空きを
+   平常のまま貸しの空きとして名乗る(線の無い機体では需要の余白は jobs の層の受けだけを縮める)。"
+  (cond
+    reclaiming (ClisRoomLend :available-mib None :jobs-room-mib None
+                             :reclaim-mib (if (and (is-not reclaim-bytes None) (> reclaim-bytes 0)) (- (// (- reclaim-bytes) MIB)) None))
+    (and (is-not lend-jobs-room-mib None) (or (is jobs-room-mib None) (> lend-jobs-room-mib jobs-room-mib)))
+      (ClisRoomLend :available-mib memory-available-mib :jobs-room-mib lend-jobs-room-mib :reclaim-mib None)
+    True (ClisRoomLend :available-mib None :jobs-room-mib None :reclaim-mib None)))
 
 
 (defk task-uses-of [uses uses-at-ms now-ms]
@@ -416,7 +450,8 @@
                                   :lend-available-mib lent.available-mib :reclaim-mib lent.reclaim-mib)
                :ticks ticks
                :keep-room-bytes (if (is keep None) None (- machine.available-bytes (* keep MIB)))
-               :lend-room-bytes lent.room-bytes))
+               :lend-room-bytes lent.room-bytes
+               :reclaiming reclaiming))
 
 
 (defk host-load-of [counters before at-ms [line None]]
