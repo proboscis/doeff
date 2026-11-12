@@ -24,7 +24,7 @@
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
-(import doeff_cluster._shared.core.compartment_rules [held-compartments-of])
+(import doeff_cluster._shared.core.compartment_rules [held-compartments-of compartment-refusal compartment-files guarded?])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.eviction_rules [layer-memory-max])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted COMPARTMENTS-LOG])
@@ -237,3 +237,22 @@
   (val jobs-writes (lfor #(path value) writes :if (= path (+ JOBS "/memory.max")) value))
   (assert (= (len jobs-writes) 3) writes)
   (assert (!= (int last) (* 4096 MIB)) last))
+
+
+(deftest test-a-hosted-compartment-is-guarded-only-with-a-higher-limit
+  ;; 守る hosted(R3 の改め 2026-11-12 — 止めてはいけない仕事の層): memoryLimitMiB > memoryMiB を書いた hosted だけが守る区画で、層に
+  ;; memory.min = memoryMiB と memory.max = memoryLimitMiB を書く。書かない hosted は memory.max = memoryMiB だけ。失敗ケース: 上限の無い守り
+  ;; (memoryLimitMiB = memoryMiB の hosted に memoryLimitMiB を書く)と、tasks の memoryLimitMiB は断る。
+  (val guarded {"use" "hosted" "worker" "w-h" "layer" "clis" "memoryMiB" 20480 "memoryLimitMiB" 28672 "cpuMillis" 0})
+  (assert (is (compartment-refusal "node-h" 0 guarded) None))
+  (assert (in "守る hosted" (compartment-refusal "node-h" 0 (| guarded {"memoryLimitMiB" 20480}))))
+  (assert (in "memoryLimitMiB" (compartment-refusal "node-h" 0 (| guarded {"use" "tasks"}))))
+  (assert (guarded? "hosted" 20480 28672))
+  (assert (not (guarded? "hosted" 4096 4096)))
+  (assert (guarded? "services" 4096 4096))
+  (val held #((HeldCompartment :use "hosted" :layer "clis" :memory-mib 20480 :memory-limit-mib 28672 :cpu-millis 0)
+              (HeldCompartment :use "hosted" :layer "commands" :memory-mib 4096 :memory-limit-mib 4096 :cpu-millis 0)))
+  (<- files tuple (compartment-files held "/L"))
+  (assert (= files #(#("/L/clis/memory.max" (str (* 28672 MIB))) #("/L/clis/memory.min" (str (* 20480 MIB)))
+                     #("/L/commands/memory.max" (str (* 4096 MIB)))))
+          files))

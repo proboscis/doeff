@@ -15,8 +15,12 @@
 ;; prepare = 版の準備の層・hosted = 上に載る系が走らせる process のために worker が持つ層(1 つの層に 1 区画)・outside = OS・kubelet・
 ;; doeff の走らせない process と Pod(worker も層も名指さない)。
 (val COMPARTMENT-USES (frozenset #("tasks" "services" "worker" "prepare" "hosted" "outside")))
-;; memoryLimitMiB を memoryMiB より大きくでき、層に memory.min = memoryMiB も掛ける用途(守る区画)。
+;; いつも守る用途: memoryLimitMiB を memoryMiB より大きくでき、層に memory.min = memoryMiB も掛ける(守る区画)。
 (val PROTECTED-USES (frozenset #("services" "worker")))
+;; memoryLimitMiB を書ける用途: いつも守る用途と hosted。hosted は止めてはいけない仕事(会話の CLI・マージの列の門の命令 — MUST-NOT-WAIT)の
+;; 層に限って、memoryLimitMiB > memoryMiB を書いた時だけ守る区画になる(memory.min = memoryMiB・上限は必ず memoryLimitMiB — R3 の改め
+;; 2026-11-12)。書かない hosted は上限 memoryMiB だけ。
+(val GUARDABLE-USES (frozenset #("services" "worker" "hosted")))
 ;; worker 1 つが高々 1 つ持つ用途(置き方の和の区画)。
 (val SINGLE-USES (frozenset #("tasks" "services")))
 
@@ -24,7 +28,7 @@
 (defrecord Compartment
   "区画 1 つ(資源 MachineCompartments の spec の compartments の 1 行): use = 用途(COMPARTMENT-USES)・worker = 区画を持つ doeff の worker の
    名・layer = その worker の cgroup の層の名(outside は worker も layer も空)・memory-mib = 区画を計画し守る量・memory-limit-mib = 使ってよい
-   最大(PROTECTED-USES の外は memory-mib と同じ・守る区画は memory-mib 以上)・cpu-millis = CPU の宣言(1000 = 1 core)。"
+   最大(GUARDABLE-USES の外は memory-mib と同じ・守る区画は memory-mib 以上・守る hosted は memory-mib より大きい)・cpu-millis = CPU の宣言(1000 = 1 core)。"
   {:tags {:context "doeff-cluster" :role "intent"}
    :check [(>= memory-mib 0) (>= memory-limit-mib memory-mib) (>= cpu-millis 0)]}
   (#^ str use)
@@ -45,8 +49,8 @@
 
 (defrecord HeldCompartment
   "worker 1 つが持つ区画(heartbeat の返事の compartments の 1 行 — MachineCompartments の行からの写し・R2): use・layer・memory-mib・
-   memory-limit-mib・cpu-millis は Compartment と同じ意味。worker は層 layer に memory.max = memory-limit-mib を、守る区画(PROTECTED-USES)は
-   memory.min = memory-mib も書く(R3)。"
+   memory-limit-mib・cpu-millis は Compartment と同じ意味。worker は層 layer に memory.max = memory-limit-mib を、守る区画(PROTECTED-USES と、
+   memory-limit-mib > memory-mib の hosted — compartment_rules.guarded?)は memory.min = memory-mib も書く(R3)。"
   {:tags {:context "doeff-cluster" :role "intent"}
    :check [(>= memory-mib 0) (>= memory-limit-mib memory-mib) (>= cpu-millis 0)]}
   (#^ str use)

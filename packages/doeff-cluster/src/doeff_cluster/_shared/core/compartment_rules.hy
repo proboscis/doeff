@@ -6,7 +6,7 @@
 (import collections.abc [Mapping Sequence])
 (import posixpath)
 (import doeff_cluster._shared.intent.compartment_model [Compartment MachineCompartments HeldCompartment COMPARTMENT-USES PROTECTED-USES
-                                                       SINGLE-USES])
+                                                       GUARDABLE-USES SINGLE-USES])
 
 
 ;; 1 MiB(byte)。
@@ -22,6 +22,13 @@
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
   "値が 0 以上の整数か(真偽値は整数として受けない)を知るため。"
   (and (isinstance value int) (not (isinstance value bool)) (>= value 0)))
+
+
+(deff guarded? [#^ str use #^ int memory-mib #^ int memory-limit-mib]  ; cannot be a defk: compartment-files の内包表記と site の宣言の読み(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: use str) (: memory-mib int) (: memory-limit-mib int)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "区画が守る区画(層に memory.min = memoryMiB を掛け、worker の Pod の requests に数える — R3)かを知るため: use services と worker はいつも、
+   hosted は memoryLimitMiB > memoryMiB を書いた時だけ(止めてはいけない仕事の層 — R3 の改め 2026-11-12)。"
+  (or (in use PROTECTED-USES) (and (= use "hosted") (> memory-limit-mib memory-mib))))
 
 
 (deff compartment-refusal [#^ str machine #^ int index #^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) row]  ; cannot be a defk: machine-compartments-refusal の loop(Program の外の純粋な判断)が呼ぶ
@@ -48,9 +55,11 @@
       (.format "{} の layer は英小文字・数字・- の cgroup の 1 段の名: {!r}" where layer)
     (not (whole-number? memory)) (.format "{} の memoryMiB は 0 以上の整数: {!r}" where memory)
     (not (whole-number? limit)) (.format "{} の memoryLimitMiB は 0 以上の整数: {!r}" where limit)
-    (and (in "memoryLimitMiB" row) (not-in use PROTECTED-USES))
-      (.format "{} の memoryLimitMiB は use {} だけが書く(ほかの区画の上限は memoryMiB): {!r}" where (sorted PROTECTED-USES) limit)
+    (and (in "memoryLimitMiB" row) (not-in use GUARDABLE-USES))
+      (.format "{} の memoryLimitMiB は use {} だけが書く(ほかの区画の上限は memoryMiB): {!r}" where (sorted GUARDABLE-USES) limit)
     (< limit memory) (.format "{} の memoryLimitMiB {} が memoryMiB {} より小さい" where limit memory)
+    (and (in "memoryLimitMiB" row) (= use "hosted") (<= limit memory))
+      (.format "{} の守る hosted は memoryLimitMiB {} を memoryMiB {} より大きく書く(上限の無い守りは置かない)" where limit memory)
     (not (whole-number? (.get row "cpuMillis"))) (.format "{} の cpuMillis は 0 以上の整数: {!r}" where (.get row "cpuMillis"))
     True None))
 
@@ -169,10 +178,10 @@
   {:pre [(: held (get tuple #(HeldCompartment ...))) (: layers-dir str)] :post [(: % (get tuple #(tuple ...)))]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "worker が持つ区画を層の cgroup の file に写す書きの列(#(path 中身) — 層の名の順・R3)を決めるため: 区画ごとに層 layers-dir/<layer> の
-   memory.max = memoryLimitMiB、守る区画(PROTECTED-USES)は memory.min = memoryMiB も。CPU の量は書かない(cpu.max を掛けない — R3)。"
+   memory.max = memoryLimitMiB、守る区画(guarded?)は memory.min = memoryMiB も。CPU の量は書かない(cpu.max を掛けない — R3)。"
   (tuple (gfor h held
                #(name value) (+ #(#("memory.max" h.memory-limit-mib))
-                                (if (in h.use PROTECTED-USES) #(#("memory.min" h.memory-mib)) #()))
+                                (if (guarded? h.use h.memory-mib h.memory-limit-mib) #(#("memory.min" h.memory-mib)) #()))
                #((posixpath.join layers-dir h.layer name) (str (* value MIB))))))
 
 
