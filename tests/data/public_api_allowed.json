@@ -2341,13 +2341,6 @@
   },
   {
    "package": "doeff-core-effects",
-   "module": "doeff_core_effects.faulthandler_stack_dump",
-   "name": "stack_dumps_at",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-core-effects",
    "module": "doeff_core_effects.file_effects",
    "name": "Appended",
    "group": "Allowed — effect answer type",
@@ -2905,13 +2898,6 @@
    "name": "MeterSnapshot",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.memory_stack_dump",
-   "name": "stack_dumps_at",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
   },
   {
    "package": "doeff-core-effects",
@@ -4527,13 +4513,6 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.sqlite_sql",
    "name": "sqlite_query",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.stack_dump_effects",
-   "name": "stack_dumps_at",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },
