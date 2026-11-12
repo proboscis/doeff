@@ -89,7 +89,17 @@
 ;;; 使わない貸しが jobs の受けから引かれ続け、jobs の需要(置かれず待つ task)は受けに入らないので空きを縮めず、貸しは戻らなかった
 ;;; (node-c の 11-11 16:4x JST — clis の上限 16 GiB のうち使われていない 6771 MiB)。
 ;;;
-;;; container の中の限る層(2026-11-11): jobs と clis の外で memory.max を持つ層(commands・gate・exec)は、container の中の空きから
+;;; 需要の余白の貸し(2026-11-12): 需要の余白は、置いた task を上に載る系の仕事のために取り返す手が無かったので、会話の CLI が使わない間も
+;;; jobs の層の受けから引かれた(node-c の 11-12 18:2x JST — clis の上限 11950 MiB・使い 7959 MiB の残り 3991 MiB が受けの外に残り、受けは
+;;; 2679 MiB で、要り 3584 MiB の作り直せる task が待った)。枠の file の行が取り返しの印の file だけを名指す worker(room_rules の reclaimFile
+;;; — lendLineFile と keepLineFile の無い行)は、同じ帳面で需要の余白を 1 本の要り ÷ CLIS-ROOM-SHARE まで縮めた clis の上限(clis-lend-limit —
+;;; 借りを置いた後の回も、残りの CLIS-ROOM-SHARE が 1 本の要りを覆い、受け手が受けられる本数を 0 にしない)で数えた jobs の層の受けを、借りの
+;;; 受けとして名乗る(worker/core/load_rules の頭の註の線の内の貸しと同じ欄)。置いた借りの task は取り置き(帳面の 3)なので、次の回の clis の
+;;; 上限はその分だけ需要の余白を縮める。上に載る系が memory の不足で仕事を待たせている間(取り返しの印が新しい間)は貸さず、需要の余白を戻す
+;;; ために返す量(clis-reclaim — 需要の余白の不足 ÷ CLIS-ROOM-SHARE)を名乗る — coordinator は借りの task をその量まで止めて待ちの行へ戻す。
+;;; 需要の余白の値そのものは変えない(上に載る系が待つ時は今までどおり k 本分を空ける)。
+;;;
+;;; container の中の限る層(2026-11-11):jobs と clis の外で memory.max を持つ層(commands・gate・exec)は、container の中の空きから
 ;;; 「その層に今掛けている memory.max − 層の今の working set」(layer-hold — 層が伸びうる残り。使いは container の working set に数え済みなので
 ;;; 引かない)を取り置く。機体の宣言に層の余地(WORKER_LAYER_FLOORS — worker/entry/main)が在る層は、worker が回ごとに memory.max を
 ;;; 「回収で返らない量 + 余地」で宣言の静的な値を天井に掛け直す(box-layer-limit — 下の命令の層と同じ内訳)。余地は層の使いの上に必ず残す量で、
@@ -390,7 +400,33 @@
   (max clis-current (min ceiling (max floor (+ clis-current held (min turn-room (int (* avail CLIS-ROOM-SHARE))))))))
 
 
-(defk clis-lent [limit clis-current floor]
+(defk clis-lend-limit [limit clis-current free box floor turn [kept 0]]
+  {:pre [(: limit int) (: clis-current int) (>= clis-current 0) (>= limit clis-current) (: free int) (: box (| int None)) (: floor int)
+         (>= limit floor 0) (: turn int) (>= turn 0) (: kept int) (>= kept 0)]
+   :post [(: % int) (<= (max clis-current floor) % limit)] :tags {:context "worker" :role "judgment"}}
+  "借りの受けを数える clis の上限を求めるため(頭の註の需要の余白の貸し): limit = この回の clis の上限(clis-limit)・turn = 会話の CLI の
+   1 本の要り・ほかは clis-limit と同じ。clis の今の使いの上に、残す余白(clis-limit と同じく kept を空きで切った量)と、1 本の要り ÷
+   CLIS-ROOM-SHARE(切り上げ — 借りを置いた後の回の clis の上限が 1 本の要りを残す空き)だけを残した上限を、床と limit の間に収める。"
+  (val pool (if (is box None) free (min free box)))
+  (val held (min kept (max 0 pool)))
+  (val keep (- (// (- turn) CLIS-ROOM-SHARE)))
+  (min limit (max floor clis-current (+ clis-current held (int keep)))))
+
+
+(defk clis-reclaim [limit clis-current free box ceiling turn-room [kept 0]]
+  {:pre [(: limit int) (: clis-current int) (>= clis-current 0) (: free int) (: box (| int None)) (: ceiling int) (: turn-room int)
+         (>= turn-room 0) (: kept int) (>= kept 0)]
+   :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
+  "上に載る系が待つ間に需要の余白を戻すため jobs の層から返す量(byte)を求めるため(頭の註の需要の余白の貸し): limit = この回の clis の
+   上限(clis-limit)・ほかは clis-limit と同じ。clis の上限が届くべき値(今の使い + 残す余白 + 需要の余白・天井で切る)との差を
+   CLIS-ROOM-SHARE で割った量(返した空きのその割合が clis の上限に入る — 切り上げ)。差が無ければ 0。"
+  (val pool (if (is box None) free (min free box)))
+  (val held (min kept (max 0 pool)))
+  (val short (- (min ceiling (+ clis-current held turn-room)) limit))
+  (if (> short 0) (int (- (// (- short) CLIS-ROOM-SHARE))) 0))
+
+
+(defk clis-lent[limit clis-current floor]
   {:pre [(: limit int) (: clis-current int) (>= clis-current 0) (: floor int) (>= floor 0)] :post [(: % int) (>= % 0)]
    :tags {:context "worker" :role "judgment"}}
   "会話の CLI の層に床を越えて貸した量(jobs の層の上限から引く — 頭の註の会話の CLI の層)を求めるため: 上限 − 床と今の使いの大きい方

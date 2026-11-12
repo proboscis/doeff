@@ -67,6 +67,7 @@
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
+                                                  clis-lend-limit clis-reclaim
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
                                                   kept-jobs-limit urgent-jobs CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold writing-elder-of])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
@@ -105,14 +106,16 @@
   "会話の CLI の層(clis)の掛け直しの設定(入口が起動の時に 1 度だけ作る — worker/core/eviction_rules の頭の註の会話の CLI の層): dir = clis の
    層の dir・floor-bytes = 宣言の静的な memory.max(床)・ceiling-bytes = 機体の宣言の天井・container-dir = worker の container の cgroup の
    dir(memory.max と working set を読む)・turn-room-bytes = 需要の余白(会話の CLI の新しい受け k 本分 — 機体の宣言の 1 本の要り × k)・
+   turn-bytes = 1 本の要り(需要の余白の貸しが残す量の元 — worker/core/eviction_rules の頭の註の需要の余白の貸し)・
    layers = jobs と clis の外の限る層(BoxLayerSettings の tuple — container の中の空きから取り置く)・kept-file = 上に載る系が clis に
    残させる余白(byte の数)を書く file(worker/core/eviction_rules の頭の註の帳面の 2' — \"\" = 読まない)。"
-  {:check [(>= floor-bytes 0) (>= ceiling-bytes floor-bytes) (>= turn-room-bytes 0)]}
+  {:check [(>= floor-bytes 0) (>= ceiling-bytes floor-bytes) (>= turn-room-bytes 0) (>= turn-bytes 0)]}
   (#^ str dir)
   (#^ int floor-bytes)
   (#^ int ceiling-bytes)
   (#^ str container-dir)
   (setv #^ int turn-room-bytes (* CLI-TURN-SLOTS CLI-TURN-BYTES))
+  (setv #^ int turn-bytes CLI-TURN-BYTES)
   (setv #^ tuple layers #())
   (setv #^ str kept-file ""))
 
@@ -229,6 +232,9 @@
           ;; 線の内の貸し(worker/core/load_rules の頭の註): lend-room = heartbeat の測りが最後に読んだ「MemAvailable − 貸す下の線」(byte —
           ;; None = 貸さない回)・lend-room-at-ms = その読みの刻・jobs-intake-lend = 同じ回に下の線で数えた借りの受けの上限(None = 貸さない)。
           self.lend-room None self.lend-room-at-ms None self.jobs-intake-lend None
+          ;; 需要の余白の貸し(worker/core/eviction_rules の頭の註): clis-lend-limit = 最後の回に借りの受けを数えた clis の上限(None = 数えなかった)・
+          ;; clis-reclaim = 同じ回に需要の余白を戻すため jobs の層から返す量(byte — None = 数えなかった)。
+          self.clis-lend-limit None self.clis-reclaim None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
           self.meters #() self.meters-at-ms None self.retired False self.elder None self.elder-gone False self.declared {} self.box-limits #() self.box-held None)))
@@ -526,7 +532,7 @@
    需要の余白・床と天井の間・使いより下げない)、線が無いか読めない回は床と clis の今の使いの大きい方。その前に jobs と clis の外の
    限る層を掛け直して取り置きを数える(box-layers-held)。clis の使いを読めない・書けない回は前の上限を残し、その上限 − 床を貸しのまま引く。上限が床を越えた
    時と床へ戻った時に 1 行言う。答え = 書けない・読めない訳(\"\" = 書いた)。"
-  (setv cell.box None)
+  (setv cell.box None cell.clis-lend-limit None cell.clis-reclaim None)
   (<- read (| LayerMemory str) (layer-read "clis" clis.dir False))
   (when (isinstance read str)
     (setv cell.clis-current None
@@ -553,12 +559,17 @@
     (<- kept (| int str) (clis-kept-read clis.kept-file))
     (when (isinstance kept str)
       (:= failure (or failure kept)))
-    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes clis.turn-room-bytes pending
-                              (if (isinstance kept str) 0 kept)))
-    (:= limit found))
+    (val held (if (isinstance kept str) 0 kept))
+    (<- found int (clis-limit current free box clis.floor-bytes clis.ceiling-bytes clis.turn-room-bytes pending held))
+    (:= limit found)
+    ;; 需要の余白の貸し(worker/core/eviction_rules の頭の註): 借りの受けを数える上限と、上に載る系が待つ間に返す量を同じ帳面で数える。
+    (<- lend-limit int (clis-lend-limit found current free box clis.floor-bytes clis.turn-bytes held))
+    (<- reclaim int (clis-reclaim found current free box clis.ceiling-bytes clis.turn-room-bytes held))
+    (setv cell.clis-lend-limit lend-limit cell.clis-reclaim reclaim))
   (<- written (| FileFailed None) (WriteText (+ clis.dir "/memory.max") (str limit)))
   (when (isinstance written FileFailed)
-    (setv cell.lent (if (is cell.clis-limit None) 0 (max 0 (- cell.clis-limit clis.floor-bytes))))
+    (setv cell.lent (if (is cell.clis-limit None) 0 (max 0 (- cell.clis-limit clis.floor-bytes)))
+          cell.clis-lend-limit None cell.clis-reclaim None)
     (return (or failure (.format "clis の層の memory.max に {} を書けない: {}" limit written.detail))))
   (val before cell.clis-limit)
   (setv cell.clis-limit limit cell.box box)
@@ -682,7 +693,16 @@
       (when (is-not urgent None)
         (:= urgent (min urgent boxed-intake)))
       (when (is-not lend None)
-        (:= lend (min lend boxed-intake)))))
+        (:= lend (min lend boxed-intake)))
+      ;; 需要の余白の貸し(worker/core/eviction_rules の頭の註): 下の線の貸しが無い回は、clis の上限を借りの受けを数える上限へ縮めた
+      ;; 同じ 2 つの式で受けを数える(縮めた分だけ受けが広がる回だけ名乗る)。線の式は clis の今の使いの上の残りを全部引く(床の内の残りを
+      ;; 2 つの受けに重ねない — 借りを置いた後の回の clis の上限が 1 本の要りを残す)。置いた後の memory.max は置いた task の取り置きで広がる。
+      (when (and (is lend None) (is-not cell.clis-lend-limit None) (< cell.clis-lend-limit cell.clis-limit))
+        (val lend-lent (- cell.clis-lend-limit cell.clis-current))
+        (<- told-lend int (jobs-limit working kept margin margin cap (+ reserve lend-lent waiting) 0))
+        (<- boxed-lend int (jobs-box-limit working cell.box 0 cell.clis-lend-limit cell.clis-current 0))
+        (val widened (min told-lend boxed-lend))
+        (:= lend (if (< intake widened) widened None)))))
   (when (is-not line None)
     (<- room-failure str (room-written settings line margin reserve addable))
     (:= failure (or failure room-failure)))
