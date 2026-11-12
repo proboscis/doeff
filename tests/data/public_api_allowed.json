@@ -1984,6 +1984,20 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "own_oom_score_adj",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "put_own_oom_score_adj",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_http_server",
    "name": "HttpAddress",
    "group": "Allowed — effect value type",
