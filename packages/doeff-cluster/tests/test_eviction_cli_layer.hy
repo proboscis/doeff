@@ -157,8 +157,8 @@
 (deftest test-the-need-of-placed-tasks-is-not-lent-to-the-cli-layer
   ;; 置き先が置いた task の要り(heartbeat の返事の行の memoryMiB — 名乗らない行は UNDECLARED-NEED-BYTES)。id の無い行は読まない。
   (<- needs tuple (task-needs-of #({"id" "t1" "memoryMiB" 3584} {"id" "t2"} {"id" "t3" "memoryMiB" True} {"name" "no-id"})))
-  (assert (= needs #((TaskNeed :id "t1" :bytes (* 3584 MIB)) (TaskNeed :id "t2" :bytes UNDECLARED-NEED-BYTES)
-                     (TaskNeed :id "t3" :bytes UNDECLARED-NEED-BYTES)))
+  (assert (= needs #((TaskNeed :id "t1" :bytes (* 3584 MIB)) (TaskNeed :id "t2" :bytes UNDECLARED-NEED-BYTES :declared False)
+                     (TaskNeed :id "t3" :bytes UNDECLARED-NEED-BYTES :declared False)))
           needs)
   ;; 取り置き = task ごとの max(0, 要り − 今の使い): t1 は 1 GiB 使い 2.5 GiB 残り・t2 は使い無しで全部・t3 は要りを越えて使い 0。
   (val uses #((JobUse :job "task/t1" :pid 20 :bytes GIB :processes 3) (JobUse :job "task/t3" :pid 30 :bytes (* 2 GIB) :processes 1)

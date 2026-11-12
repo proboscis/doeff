@@ -410,7 +410,8 @@
 ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註 — node-h の 11-09 16:52 UTC の形を node-a の Node の大きさに縮めた台本): ほかの Pod 4 GiB・
 ;; worker の本体と常駐の job 4.65 GiB・名乗り 3.5 GiB 程度で置かれた task が 60 秒で 1 → 10 GiB へ伸びる。追い出しまでの空きは 10 GiB 余り
 ;; 在るので、追い出しの線だけで数える上限は task を止めない(Pod の和 18.65 GiB < allocatable 19.79 GiB)。機体の MemAvailable は始め
-;; 16.6 GiB で、上に載る系が残す線 14 GiB の上は 2.6 GiB しかない。
+;; 16.6 GiB で、上に載る系が残す線 14 GiB の上は 2.6 GiB しかない。この模擬の機体は置き先の返事を受けない(置いた task の要りを知らない)ので、
+;; 見張りは task を名指して止めない — 要りを越えて伸びた task の止めは tests/test_jobs_keep_line.hy が検める。
 (val OVERGROWN (Scene :others (* 4 GIB) :others-rise 0 :others-from 0 :others-span 1 :resident (int (* 4.65 GIB))
                       :task-from (* 1 GIB) :task-to (* 10 GIB) :task-start 10000 :task-span 60000))
 (val KEEP-LINE (* 14 GIB))
@@ -440,15 +441,18 @@
   (assert (= #(kept.keep-room-bytes unkept.keep-room-bytes) #((* 2 GIB) None)) #(kept unkept)))
 
 
-(deftest test-a-task-grown-past-its-declaration-is-stopped-in-the-jobs-layer-before-memavailable-crosses-the-kept-line
+(deftest test-the-kept-line-does-not-narrow-the-jobs-layer-limit
+  ;; 契約の改め(2026-11-12 — worker/core/eviction_rules の頭の註): 前の形は、線を割る前に jobs の層の memory.max を絞り、伸びた task を
+  ;; kernel に層の中で止めさせた(この台本で kernel の止め 1 回・MemAvailable は線の上)。kernel の上限は層の中の process を区別しない
+  ;; ので、線を割っている間は取り置きを持たない process(実行環境の準備・名の無い子)も止まった。今は線で memory.max を絞らない。
   (<- seen SceneSeen (scene-watched OVERGROWN True 120000 KEEP-LINE))
-  ;; 機体の MemAvailable は読みのどの刻も上に載る系の線より上(伸びた task は線を割る前に jobs の層の中で止まった)。
-  (assert (>= seen.lowest KEEP-LINE) #((/ seen.lowest GIB) (/ KEEP-LINE GIB)))
-  (assert (= seen.kernel-kills 1) seen.kernel-kills)
-  ;; 上限を使いより下げた回の線は種類 keep と名指す。
+  (<- unkept SceneSeen (scene-watched OVERGROWN True 120000))
+  ;; 台本は線を大きく割る(線が上限を絞る形なら、割る前に止まった伸び)。
+  (assert (< seen.lowest (- KEEP-LINE (* 4 GIB))) #((/ seen.lowest GIB) (/ KEEP-LINE GIB)))
+  ;; 書いた上限の列は、線を読まない機体の列と同じ(追い出しの線だけで数えた値)で、kernel は層の中で何も止めない。
+  (assert seen.limits)
+  (assert (= seen.limits unkept.limits) #(seen.limits unkept.limits))
+  (assert (= #(seen.kernel-kills unkept.kernel-kills) #(0 0)) #(seen.kernel-kills unkept.kernel-kills))
+  ;; 上限を使いより下げた回が在っても、その線は追い出しの線(種類 keep と名指す行は無い)。
   (<- squeezed tuple (lines-named seen.lines JOBS-SQUEEZE-LOG))
-  (assert (all (gfor told squeezed (= (get told "line") "keep"))) squeezed)
-  ;; 線を読まない worker(前の形)の同じ機体は、追い出しの線の内で task を伸ばしきり、MemAvailable が線を大きく割る。
-  (<- before SceneSeen (scene-watched OVERGROWN True 120000))
-  (assert (< before.lowest (- KEEP-LINE (* 4 GIB))) #((/ before.lowest GIB) (/ KEEP-LINE GIB)))
-  (assert (= before.kernel-kills 0) before.kernel-kills))
+  (assert (not (any (gfor told squeezed (= (get told "line") "keep")))) squeezed))

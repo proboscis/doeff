@@ -38,8 +38,8 @@
 ;;; 置かれない(node-h の 11-10 — MemAvailable 約 42 GiB・線 37984 MiB で名乗る空きは約 4 GiB、要り 6144 MiB・その機体だけを要る task が
 ;;; queued のまま待ち、送り手の後の仕事が全部止まった)。線が名乗る空きを縮めている間は、線を外して追い出しの線だけで数えた空き
 ;;; (urgent-available-mib)と jobs の層の空き(urgent-jobs-room-mib — 見張りの jobs-intake-urgent)も名乗り、coordinator は急ぎの task だけを
-;;; その空きで置く。置いた後の jobs の層の memory.max は、線の下でも取り置き(要り − 今の使い)まで広がる(worker/core/eviction_rules の
-;;; kept-jobs-limit)。急ぎの task は線の内の memory を使い、その分だけ上に載る系は新しいターンを待たせる(作り直せない走っている
+;;; その空きで置く。置いた後の jobs の層の memory.max は、線では絞らない(worker/core/eviction_rules の頭の註の
+;;; 上に載る系が残す線)。急ぎの task は線の内の memory を使い、その分だけ上に載る系は新しいターンを待たせる(作り直せない走っている
 ;;; ターンは追い出しの線の手前の空きで守られる)。線が名乗る空きを縮めていない回は名乗らない(None — 平常の空きと同じ)。
 ;;;
 ;;; 線の内の貸し(2026-11-12): 線を高く置くのは、一度置いた task を上に載る系の仕事のために取り返す手が無かったからで、線の内の memory は

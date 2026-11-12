@@ -27,16 +27,28 @@
 ;;; 余裕は、掛け直しの間(見張りの回の 5 秒)に jobs と準備の層の外(ほかの Pod・常駐の job・worker の本体)が伸びる分を覆う。jobs の層の
 ;;; 中の跳ね(node-a の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
 ;;;
-;;; 上に載る系が残す線(2026-11-10): 枠の file の行が keepLineFile を名指す worker(worker/core/room_rules — 上に載る系が機体の MemAvailable を
-;;; その線より上に残したい機体)は、jobs の層の上限を、追い出しまでの空きと「機体の MemAvailable − 残す線」(keep-room — heartbeat の測りが
-;;; 読む)の小さい方で数える(kept-line — 種類 KEEP の線)。置き先は名乗る空きを同じ線の上に絞って task を置くが、task は置いた後に名乗りより
-;;; 大きく伸びうる(node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本が 8 分で各 14 GiB へ伸び、MemAvailable は線を約 54 GiB 割った)。
-;;; ただしこの線では、jobs の層の上限を「jobs の今の使い + 置いた task の取り置き(要り − 今の使い)」より下げない(kept-jobs-limit — 追い出しの
-;;; 線で数えた上限がそれより小さい時は追い出しの線のまま)。線を割る訳の大半が jobs の層の外(上に載る系の命令・会話の CLI の層)に在る機体では、
-;;; 層の上限を使いより下げると、kernel は伸びた task でなく層の中の全部の task を区別なく OOM kill で止めた(node-h の 11-09 23:57〜11-10 01:33 UTC —
-;;; 要り 1024 MiB・使い 128 MiB の task を含む 13 本が、上限を 0 まで下げた回の 1〜10 秒後に SIGKILL)。線の上の空きの縮みは新しい受けの上限
-;;; (jobs-intake)を絞って新しい task を置かない事で吸い、走っている task が要りを越えて伸びた分は、線を割った回に見張りが要りを越えた task
-;;; だけを越えの大きい順に名指して止める(over-need-tasks — worker/protocol/memory_watch)。要りの内で走る task は、線を割っても止めない。
+;;; 上に載る系が残す線(2026-11-10・改め 2026-11-12): 枠の file の行が keepLineFile を名指す worker(worker/core/room_rules — 上に載る系が機体の
+;;; MemAvailable をその線より上に残したい機体)は、新しい受けに名乗る上限(jobs-intake)を、追い出しまでの空きと「機体の MemAvailable − 残す線」
+;;; (keep-room — heartbeat の測りが読む)の小さい方で数える(kept-line — 種類 KEEP の線)。置き先は名乗る空きを同じ線の上に絞って task を置くが、
+;;; task は置いた後に名乗りより大きく伸びうる(node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本が 8 分で各 14 GiB へ伸び、MemAvailable は
+;;; 線を約 54 GiB 割った)。走っている task が名乗った要りを越えて伸びた分は、線を割った回に見張りが要りを越えた task だけを越えの大きい順に
+;;; 名指して止める(over-need-tasks — worker/protocol/memory_watch)。
+;;; この線は jobs の層の memory.max には使わない(memory.max は追い出しの線だけで数える — 線の無い機体と同じ)。線は作り直せる task の新しい受けを
+;;; 待たせる線で、kernel の上限は層の中を区別なく止めるので、線の前後に MemAvailable が張りつく機体では、止めてはいけない物から止まった:
+;;;   - 上限を線で数えたまま使いより下げた形(11-09 23:57〜11-10 01:33 UTC の node-h): 線を割る訳の大半は jobs の層の外(上に載る系の命令・会話の
+;;;     CLI の層)に在ったのに、kernel は伸びた task でなく層の中の全部の task を OOM kill で止めた(要り 1024 MiB・使い 128 MiB の task を含む
+;;;     13 本が、上限を 0 まで下げた回の 1〜10 秒後に SIGKILL)。
+;;;   - 上限を「jobs の今の使い + 置いた task の取り置き(要り − 今の使い)」で止めた形(11-10〜11-12): 取り置きを持たない process(実行環境の準備・
+;;;     task の名の無い子〔git・uv〕・要りを使い切った task)の余地は 0 で、準備の process が層の中で OOM kill され続けた(node-h の 11-12 11:38 UTC —
+;;;     置いた task 0 本・層の memory.current 557 MiB = memory.max 557 MiB・oom_kill 282。実行環境を準備できず、その機体へ置いた task が始まらない)。
+;;; 要りの内で走る task と、要りを名乗らずに置かれた task(TaskNeed の declared が偽)は、線を割っても見張りが名指して止めない。名乗らない task に
+;;; 見込む要り(UNDECLARED-NEED-BYTES)は取り置きの量で、止める閾値ではない: 置き先が空きを待たせずに置く task は要りを名乗れず(shared/core/
+;;; detached_rules の task-room-claim-refusal)、見込みを閾値にすると、空きを待たせない task が線を割った回に止まった(node-h の 11-12 11:05 UTC —
+;;; 使い 1043 MiB の task を、見込み 1024 MiB を越えたとして止めた)。名乗らない task と準備の伸びは、追い出しの線で数えた層の上限(kernel)と
+;;; 機体の memory の見張り(worker/core/memory_rules の victim-of)が止める。
+;;; 機体の swap の空きは keep-room に足さない(2026-11-12): 線は上に載る系が swap へ出さずに使える memory として残す量で(MemAvailable の数え方)、
+;;; 圧縮の swap(zram)は出した page も RAM を使い、kernel が出すのは回収の圧が掛かった後になる。層が swap へ出せる量は cgroup の memory.swap.max
+;;; (機体の配備が決める)で決まり、機体の swap の空きとは別の量。swap を見込んで受けを広げたい機体は、線の値を下げる(線は上に載る系の宣言)。
 ;;; 会話の CLI の層(clis)と keeper の読む準備の空きはこの線で縮めない(線は上に載る系がそれらのために残す空き)。
 ;;; 線を読めない・古い(LINE-FRESH-MS を越えた)回と、追い出しの線の無い機体では今までどおり追い出しまでの空きだけで数える。
 ;;;
@@ -157,7 +169,8 @@
 ;; 跳ね — tests/test_eviction_cli_layer.hy)。空きの多い回は余白の方が小さいので、余白が上限を決める。
 (val CLIS-ROOM-SHARE 0.5)
 ;; 要りを名乗らずに置かれた task に見込む要り(置いた task の取り置き — 頭の註の会話の CLI の層): 置き先が同じ task に見込む値
-;; (coordinator/core/measured_room の UNDECLARED-TASK-MIB)と同じ。
+;; (coordinator/core/measured_room の UNDECLARED-TASK-MIB)と同じ。取り置きにだけ数え、要りの越えの止めの閾値にはしない(頭の註の上に載る系が
+;; 残す線)。
 (val UNDECLARED-NEED-BYTES (* 1024 MIB))
 ;; 上に載る系が残す線の空き(keep-room)を jobs の層の上限に使える長さ(ms — 頭の註の上に載る系が残す線)。heartbeat の測りは 5 秒ごとに
 ;; 読み直すので、その 3 回分(worker/core/load_rules の LINE-FRESH-MS と同じ長さ)。
@@ -205,13 +218,15 @@
 
 
 (defrecord TaskNeed
-  "置き先が worker に置いた task 1 本の memory の要り(置いた task の取り置き — 頭の註の会話の CLI の層): id = task の id・bytes = 置いた時に
-   名乗った要り(byte — 名乗らない task は UNDECLARED-NEED-BYTES)・priority = 置き方の優先(返事の行の priority — 無い行は 0。見張りは
-   memory_rules の URGENT-PRIORITY 以上の task を、ほかの候補が残る間は止めない — 2026-11-11)。"
+  "置き先が worker に置いた task 1 本の memory の要り(置いた task の取り置き — 頭の註の会話の CLI の層): id = task の id・bytes = 取り置きに
+   数える要り(byte — 置いた時に名乗った要り。名乗らない task は見込み UNDECLARED-NEED-BYTES)・priority = 置き方の優先(返事の行の priority —
+   無い行は 0。見張りは memory_rules の URGENT-PRIORITY 以上の task を、ほかの候補が残る間は止めない — 2026-11-11)・declared = 置いた時に
+   要りを名乗ったか(偽 = bytes は見込み — 取り置きにだけ数え、要りの越えの止めの閾値にしない・頭の註の上に載る系が残す線)。"
   {:check [(>= bytes 0)]}
   (#^ str id)
   (#^ int bytes)
-  (setv #^ int priority 0))
+  (setv #^ int priority 0)
+  (setv #^ bool declared True))
 
 
 (defrecord CommandLayerUse
@@ -471,19 +486,6 @@
              (max 0 (- need.bytes (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes)))))))
 
 
-(defk kept-jobs-limit [evicted kept jobs-current pending urgent]
-  {:pre [(: evicted int) (>= evicted 0) (: kept int) (>= kept 0) (: jobs-current int) (>= jobs-current 0) (: pending int) (>= pending 0)
-         (: urgent bool)]
-   :post [(: % int) (>= % 0) (<= % (max evicted kept))] :tags {:context "worker" :role "judgment"}}
-  "jobs の層の memory.max を、上に載る系が残す線(種類 KEEP)では走っている task を止める所まで下げないため(頭の註の上に載る系が残す線):
-   evicted = 追い出しの線だけで数えた上限(jobs-limit)・kept = 上に載る系が残す線でも数えた上限(kept-line の線で数えた jobs-limit —
-   evicted 以下)・pending = 置いた task の取り置き(要り − 今の使いの和 — placed-pending)。kept と「jobs の今の使い + 取り置き」(床 —
-   走っている task が今の使いを保ち、要りまで伸びられる量)の大きい方を、evicted で切る(追い出しの線の縮めは今のまま)。
-   urgent = 置き先が置いた task に急ぎの優先(URGENT-PRIORITY 以上)の物が在る — その間は線 KEEP で絞らず evicted のまま(置き先は急ぎの
-   task を線 KEEP を外した空きで置く — load_rules の頭の註の急ぎの task の空き。絞ると、置いた急ぎの task が層の中で OOM kill された)。"
-  (if urgent evicted (max kept (min evicted (+ jobs-current pending)))))
-
-
 (defrecord TaskOver
   "要りを越えて伸びた task 1 本(頭の註の上に載る系が残す線): id = task の id・need-bytes = 置いた時に名乗った要り・use-bytes = 見張りの
    読みの今の使い(task の根の木の rss の和)・priority = 置き方の優先(TaskNeed の priority)。"
@@ -498,13 +500,15 @@
   {:pre [(: needs tuple) (: uses tuple) (: shortfall int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "機体の MemAvailable が上に載る系の残す線を shortfall(byte)だけ割った時に、見張りが止める task を選ぶため(頭の註の上に載る系が残す線):
    needs = 置いた task の要り(TaskNeed の tuple)・uses = 見張りの今の読みの job ごとの memory(JobUse の tuple — task の job の名は
-   TASK-PREFIX + id)。要りを越えて使う task(TaskOver)だけを、急ぎの優先(URGENT-PRIORITY 以上)でない物を先に、その中は越えの大きい順
+   TASK-PREFIX + id)。名乗った要りを越えて使う task(TaskOver)だけを、急ぎの優先(URGENT-PRIORITY 以上)でない物を先に、その中は越えの大きい順
    (同じなら id の順)に並べ、それより前に選んだ task の使いの和が
    shortfall に届くまで並べる。shortfall が 0 以下・要りを越えた task が無ければ空 — 要りの内で走る task は止めない(線を割った訳が jobs
-   の層の外の伸びなら、新しい受けを絞るだけ)。"
+   の層の外の伸びなら、新しい受けを絞るだけ)。要りを名乗らずに置かれた task(declared が偽)は選ばない — 見込みの要りは取り置きの量で、
+   止める閾値ではない(頭の註の上に載る系が残す線)。"
   (when (<= shortfall 0)
     (return #()))
   (val over (tuple (gfor need needs
+                         :if need.declared
                          :setv used (sum (gfor use uses :if (= use.job (+ TASK-PREFIX need.id)) use.bytes))
                          :if (> used need.bytes)
                          (TaskOver :id need.id :need-bytes need.bytes :use-bytes used :priority need.priority))))
@@ -516,16 +520,19 @@
 (defk task-needs-of [rows]
   {:pre [(: rows tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の task の行(置き先が worker に置いた task — JSON の dict の tuple)から、置いた task の要り(TaskNeed の tuple)を
-   読むため: 欄 memoryMiB(0 以上の整数 — 真偽は数えない)が在ればその byte、無い・形の違う行は UNDECLARED-NEED-BYTES。欄 priority
+   読むため: 欄 memoryMiB(0 以上の整数 — 真偽は数えない)が在ればその byte、無い・形の違う行は見込み UNDECLARED-NEED-BYTES で、要りを
+   名乗らない task と読む(declared が偽 — 置き先が空きを待たせずに置く task は memoryMiB を運ばない)。欄 priority
    (整数 — 真偽は数えない)が在ればその優先、無い・形の違う行は 0。id の無い行は
    読まない。"
   (tuple (gfor row rows
                :if (and (isinstance row dict) (isinstance (.get row "id") str))
                :setv mib (.get row "memoryMiB")
+               :setv declared (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0))
                :setv priority (.get row "priority")
                (TaskNeed :id (get row "id")
-                         :bytes (if (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0)) (* mib MIB) UNDECLARED-NEED-BYTES)
-                         :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)))))
+                         :bytes (if declared (* mib MIB) UNDECLARED-NEED-BYTES)
+                         :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)
+                         :declared declared))))
 
 
 (defk urgent-jobs [needs]
