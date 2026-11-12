@@ -674,3 +674,24 @@
   (val parts (.split (cut own (+ (len root) 1) None) "/"))
   (val at (next (gfor #(i part) (enumerate parts) :if (in part PODS-CGROUP-NAMES) i) None))
   (if (is at None) None (posixpath.join root #* (cut parts 0 (+ at 1)))))
+
+
+(defk generation-ms-of [name]
+  {:pre [(: name str)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "keeper の世代の名(deploy/boot.sh の keeper_start の「<Pod の uid>.<起こした刻 ms>」)から起こした刻を読むため(None = 形が違う)。"
+  (val parts (.rpartition name "."))
+  (val tail (get parts 2))
+  (if (and (get parts 1) (.isascii tail) (.isdigit tail)) (int tail) None))
+
+
+(defk writing-elder-of [own unmarked]
+  {:pre [(: own str) (: unmarked tuple)] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "同じ container の keeper の世代のうち、cgroup の層の上限を書くのは印 draining の無い世代のいちばん古い 1 つだけ(worker/protocol/eviction_line
+   の頭の註の世代の書き手)— 世代 own の見張りが書いてよいかを決めるため。unmarked = own の外の、印の無い世代の名の tuple。答え = own より
+   前に起きた印の無い世代のいちばん古い名(None = 無い — own が書く)。own の名が形の違う時と、形の違う名は数えない(None — 前の形の
+   とおり書く)。"
+  (val at (generation-ms-of own))
+  (when (is at None)
+    (return None))
+  (val elders (sorted (gfor name unmarked :setv ms (generation-ms-of name) :if (and (is-not ms None) (< ms at)) #(ms name))))
+  (if elders (get (get elders 0) 1) None))

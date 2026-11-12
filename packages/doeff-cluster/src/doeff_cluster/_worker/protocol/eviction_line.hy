@@ -25,6 +25,12 @@
 ;;; 見張りは guard が偽の見張りと同じく数えて log に出すだけになり、真に戻らない。前の世代は置き先が新しい世代に置いた task の要りを
 ;;; heartbeat の返事で受けないので、書けば取り置きを 0 と数えた上限で新しい世代の task を kernel に止めさせる(2026-11-10 — 前の世代が
 ;;; jobs の層を 0 へ書き、新しい世代に置いた task の準備が終了 -9 で止まり続けた)。
+;;; 世代の書き手(keeper の世代の持ち主): 印だけでは、新しい世代が起きてから前の世代に印が付くまで(新しい世代が coordinator に名乗って
+;;; ready になるまで — 受け渡しの待ちの間は長い)、2 つの世代が交互に書く。新しい世代も前の世代が置いた task の要りを受けないので、書けば
+;;; 前の世代の task を同じ道で止めさせる。そこで keeper の世代は、同じ keeper の dir(retired-file の 2 つ上 — deploy/boot.sh の
+;;; $keeper_dir/gens)に自分より前に起きた印の無い世代が在る間も書かない(worker/core/eviction_rules の writing-elder-of — 書くのは印の無い
+;;; 世代のいちばん古い 1 つ)。keeper は新しい世代が ready になった後にだけ前の世代へ印を置くので、書き手は前の世代から新しい世代へ 1 つずつ
+;;; 移り、2 つが同時に書く間が無い。終わった前の世代の dir は keeper が次の歩で消す。前の世代が居なくなったと読んだ後は読み直さない。
 ;;;
 ;;; log の行(名 + 欄の形):
 ;;;   EVICTION-LINE-LOG      線を読めるようになった時と、Node の宣言の値が替わった時に 1 行: capacity・allocatable・導いた E・kubepods の
@@ -40,6 +46,8 @@
 ;;;                          回収で返らない量・tmpfs の量・線と MemAvailable の差。
 ;;;   COMMANDS-LIMIT-FAILED-LOG 命令の層の memory.max を書けない・読めない訳が変わった時に 1 行。
 ;;;   RETIRED-LOG            keeper が退かせ始めた印を読んだ時に 1 行(以後この世代は層の上限と keeper の file を書かない): 印の file。
+;;;   ELDER-WRITES-LOG       層を書く前の世代が替わった時(居ると読んだ時・居なくなった時)に 1 行: 前の世代の名("" = 居なくなった — この世代が
+;;;                          書き始める)。
 ;;; room-file の中身(keeper が sh で読む 1 行): 「<準備に使える空き MiB> <準備が線へ足しうる量 MiB>」(空きは負もありうる)。線を読めない回は
 ;;; 書かない(keeper は古い file を読まない — deploy/boot.sh の keeper_swap)。
 ;;; Node は自区画の API server から ServiceAccount の token で読む(読みの答え手は入口が並べる in-cluster-api-routed と HTTP の答え手)。
@@ -49,17 +57,18 @@
 (require doeff-hy.record [defrecord defwire])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])  ; defrecord・defwire の展開が名指す
+(import posixpath)
 (import urllib.parse [quote :as url-quote])
 (import doeff_hy._wire [Malformed parse-json])
 (import doeff_core_effects [slog])
-(import doeff_core_effects [FileFailed ReadText WriteText])
+(import doeff_core_effects [FileFailed ListDirectory PathKind ReadText WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster._worker.core.memory_rules [MIB meminfo-kib])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
-                                                  kept-jobs-limit urgent-jobs CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold])
+                                                  kept-jobs-limit urgent-jobs CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold writing-elder-of])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
 
@@ -72,6 +81,7 @@
 (val COMMANDS-SQUEEZE-LOG "worker: MemAvailable が線を割ったので命令の層の上限を回収で返らない量より下げた")
 (val COMMANDS-LIMIT-FAILED-LOG "worker: 命令の層の memory の上限を掛け直せない")
 (val RETIRED-LOG "worker: keeper がこの世代を退かせ始めた — cgroup の層の memory の上限と keeper の file を書かず、数えて log に出すだけにする")
+(val ELDER-WRITES-LOG "worker: cgroup の層の memory の上限を書く前の世代が替わった — 前の世代が居る間はこの世代は書かない")
 ;; API server の断りの本文を訳に載せる長さと、要求 1 本の時間切れ(秒)。
 ;; jobs の層の oom_kill の増えの刻を残す長さ(ms — EvictionCell の oom-at-ms。見張りの止めた印を残す間 MemoryWatchSettings.kill-mark-seconds
 ;; の既定と同じ — 調整ループが終わった子を回収するまでの間を十分に覆う)。
@@ -203,6 +213,8 @@
    OOM-MARK-MS の内の物 — 状態の報告が、その間に SIGKILL で終わった task の訳に載せる)・meters = 見張りの最後の読みの常駐の job ごとの
    CPU と memory(worker/core/memory_rules の JobMeter の tuple — heartbeat の測りが欄 jobUses として名乗る・2026-11-10)・meters-at-ms = その
    読みの刻(None = まだ)・retired = keeper がこの世代を退かせ始めた印を読んだ(頭の註の退いた世代 — 真になったら戻らず、印を読み直さない)・
+   elder = 層を書いている前の世代の名(頭の註の世代の書き手 — None = 居ない・まだ読んでいない)・elder-gone = 前の世代が居ないと読んだ
+   (真になったら戻らず、読み直さない)・
    declared = 最後に読めた heartbeat の返事の job の名 → 宣言の memory の山(byte — JobSpec.peak-mib を持つ job だけ。worker/protocol/coordinator_link が
    書き、機体の memory の見張りが job の根に添える — worker/core/memory_rules の頭の註の宣言の内・2026-11-11)・box-limits = container の中の
    限る層に最後に掛けた上限(BoxLayerLimit の tuple — 書いた層だけ。命令の層の線の掛け直しはその層の値を越えて書かない)・box-held =
@@ -219,7 +231,7 @@
           self.lend-room None self.lend-room-at-ms None self.jobs-intake-lend None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
-          self.meters #() self.meters-at-ms None self.retired False self.declared {} self.box-limits #() self.box-held None)))
+          self.meters #() self.meters-at-ms None self.retired False self.elder None self.elder-gone False self.declared {} self.box-limits #() self.box-held None)))
 
 
 (defrecord LayerMemory
@@ -809,16 +821,45 @@
   True)
 
 
+(defk elder-noted [settings cell]
+  {:pre [(: settings EvictionSettings) (: cell EvictionCell)] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
+  "同じ container に層を書いている前の世代が居るかを知るため(頭の註の世代の書き手): keeper の dir の世代の dir を並べ、自分の外の印の
+   無い世代から書き手を決める(worker/core/eviction_rules の writing-elder-of)。替わった時に 1 行言う。答え = 前の世代が居る(この世代は
+   書かない)。印の file の無い世代(keeper の世代でない)・一度居ないと読んだ後・dir を並べられない回は偽(前の形のとおり書く)。"
+  (when (or (is settings.retired-file None) cell.elder-gone)
+    (return False))
+  (val own-dir (posixpath.dirname settings.retired-file))
+  (val gens (posixpath.dirname own-dir))
+  (val own (posixpath.basename own-dir))
+  (val mark (posixpath.basename settings.retired-file))
+  (<- entries (ListDirectory gens))
+  (when (isinstance entries FileFailed)
+    (return False))
+  (var unmarked #())
+  (for [entry entries]
+    (when (and (= entry.kind PathKind.DIRECTORY) (!= entry.name own))
+      (<- marked (| str FileFailed) (ReadText (posixpath.join gens entry.name mark)))
+      (when (isinstance marked FileFailed)
+        (:= unmarked (+ unmarked #(entry.name))))))
+  (<- elder (| str None) (writing-elder-of own unmarked))
+  (when (!= elder cell.elder)
+    (<- (slog ELDER-WRITES-LOG :level "info" :elder (or elder ""))))
+  (setv cell.elder elder cell.elder-gone (is elder None))
+  (is-not elder None))
+
+
 (defk eviction-noted [settings cell guard now-ms]
   {:pre [(: settings (| EvictionSettings None)) (: cell EvictionCell) (: guard bool) (: now-ms int)] :post [(: % (| EvictionLine None))]
    :tags {:context "worker" :role "protocol"}}
   "見張りの回の頭の 1 回(頭の註): Node の宣言を要る時だけ読み直し、線を数えて入れ物に残し、jobs の層の上限を掛け直すため。答え = 今の
    線(None = 線が無いか読めない)。設定の無い worker(kubelet の下に居ない・host の cgroupfs が無い)は何もせず None。keeper が退かせ
-   始めた世代は、guard が偽の見張りと同じく層の上限と keeper の file を書かない(頭の註の退いた世代)。"
+   始めた世代と、層を書いている前の世代が居る世代は、guard が偽の見張りと同じく層の上限と keeper の file を書かない(頭の註の退いた
+   世代・世代の書き手)。"
   (when (is settings None)
     (return None))
   (<- retired bool (retired-noted settings cell))
-  (val writes (and guard (not retired)))
+  (<- elder bool (elder-noted settings cell))
+  (val writes (and guard (not retired) (not elder)))
   (<- (kubelet-noted settings cell now-ms))
   (var line None)
   (var reason "")
