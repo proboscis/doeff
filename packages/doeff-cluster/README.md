@@ -399,6 +399,10 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 ;; RemoteJob・SubmitDetached・WarmRuntimeEnv は構築関数(remote-job・submit-detached-task・warm-runtime-env)を通して出す。
 ;; needs を検めてから effect を出し、答えを返す。切り離した task は memory の要り :memory-mib(1 本の山の MiB)が必須で、
 ;; 渡さない呼びは構築関数が TypeError で、本文に memoryMiB の無い PUT /detached は coordinator が 400 で断る。
+;; :shape に仕事の種類(同じ程の memory を使う仕事に付ける印)を名乗ると、同じ種類の task が終わりまで走った後は、coordinator は
+;; :memory-mib を読まず、種類の測った山 × 1.25 + 256 MiB を申告にする。申告は置いた時に決まり、走る間は変わらない(GET /state の
+;; claims — task の id → {memoryMiB cpuMillis}。worker が task の使いを比べる量もこの申告)。:shape を名乗らない task は、自分の前の
+;; 試行の山からだけ学ぶ。
 ;; 例外は :ungated True(測った空きの門の外 — 混んだ時ほど要る版の入れ替えのような task)で、要りを名乗らず :limits に系の宣言の組を
 ;; 1 つ以上名乗る。coordinator は機体の測った空きを判じずに置き、同時数は組の上限だけが限る。
 ;; 作り直せる task は :rerun True :preemptible True で「場所を譲るため止めてよい」と名乗れる。優先 1 以上の task が memory の空きに

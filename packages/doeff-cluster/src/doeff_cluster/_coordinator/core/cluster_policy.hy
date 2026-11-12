@@ -20,7 +20,7 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-memory-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES TaskClaim])
 (import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
@@ -40,8 +40,8 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since need-of reserved-mib-of memory-room-mib memory-line-mib
-                                                       learned-need drained-room-mib keeps-room? urgent-priority?
-                                                       ShapePeak PEAK-STEP-MIB])
+                                                       drained-room-mib keeps-room? urgent-priority? PEAK-STEP-MIB])
+(import doeff_cluster._coordinator.core.task_claims [shape-peaks-of task-need-of claim-mib-of offered-mib-of])
 
 ;; 子の入口の名。子は `hy -m <名>` として起きるので、worker が子の起きる doeff で解ける置き場の名へ替えて検め・起こす
 ;; (worker/core/launch の child-entry-place と JobSpec.entry-at — 実行環境の job は root ごとの置き場で、_worker の無い古い版の root では
@@ -709,30 +709,6 @@
                                           :retired-statuses (.with-writes retired (tuple (gfor key stopped (TableWrite key None)))))))
 
 
-(defk shape-peaks-of [tasks]
-  {:pre [(: tasks (get Table TaskRecord))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
-  "形ごとの測った山を知るため(measured_room の頭の註の測った山で数える要り): 形を名乗り山を測った行(保持の間の終わった行を含む)の形 →
-   ShapePeak(山の最大と、終わり〔finished〕まで走った行が在るか)。保持の間の終わった行(scan-rows が除く行)も読む — 終わった task の山が
-   同じ形の次の task の要りの材料なので。"
-  (setv peaks {})
-  (for [t (.rows tasks) :if (and t.shape (is-not t.peak-mib None))]
-    (setv before (.get peaks t.shape))
-    (setv (get peaks t.shape)
-          (ShapePeak :mib (max t.peak-mib (if (is before None) 0 before.mib))
-                     :settled (or (= t.phase "finished") (and (is-not before None) before.settled)))))
-  peaks)
-
-
-(defk task-need-of [task worker peaks]
-  {:pre [(: task TaskRecord) (: worker (| WorkerInfo None)) (: peaks dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "task を worker に置く時と置いた後の要り(MiB)を知るため: 名乗った要りと、この task の山と、同じ形の山(peaks — shape-peaks-of)を、
-   worker の線 − 床で切って数えた値(measured_room.learned-need — 同じ形を終わりまで測っていれば名乗りを見ない)。worker の無い・測りの無い
-   時は山を線で切らない。"
-  (<- line (| int None) (memory-line-mib (if (is worker None) None worker.measured)))
-  (<- need int (learned-need task.memory-mib task.peak-mib (if task.shape (.get peaks task.shape) None) line))
-  need)
-
-
 (defk task-peaks-noted [tasks worker measured]
   {:pre [(: tasks (get Table TaskRecord)) (: worker str) (: measured (| MeasuredLoad None))] :post [(: % (get Table TaskRecord))]
    :tags {:context "coordinator" :role "judgment"}}
@@ -755,8 +731,8 @@
    task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)・
    unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(measured を載せた同じ heartbeat の状態の報告に、動いている行
    task/<id> が無いか、置いた刻 started-ms が measured_room.unseen-since の刻より後 — 走り出したばかりの task の使いは測りに出きって
-   いない)・reserved-mib = 置かれた task の memory の予約の和(task ごとに measured_room.reserved-mib-of — 要り〔task-need-of — 名乗りと
-   測った山の大きい方〕− worker の測りが名乗る task の今の使い〔名乗られない task は 0 — 要りの全部〕)・unmeasured-mib = 置かれた task の
+   いない)・reserved-mib = 置かれた task の memory の予約の和(task ごとに measured_room.reserved-mib-of — 要り〔置いた時に固定した申告 — task_claims.claim-mib-of〕
+   − worker の測りが名乗る task の今の使い〔名乗られない task は 0 — 要りの全部〕)・unmeasured-mib = 置かれた task の
    うち worker の測りが今の使いを名乗らない task の要りの和(測った空きにまだ出ていない分 — WorkerLoad の註)。
    置ける空きは memory-room-of・memory-misfit・task-room-of・task-memory-room-of がこの値から求める(数え方を 1 か所にする)。"
   (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0)
@@ -769,7 +745,7 @@
         settles (dfor name (.keys state.workers) name 0)
         settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
         since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
-        ;; 形ごとの測った山(要りを測った山で数える — measured_room の頭の註)。
+        ;; 形ごとの測った山(申告の行の無い置いた task の要りを数える — task_claims.claim-mib-of)。
         peaks (run (shape-peaks-of state.tasks))
         ;; measured と同じ heartbeat の状態の報告で動いていた task の id(worker ごと)。
         live (dfor name (.keys state.workers)
@@ -785,7 +761,7 @@
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks))
       (+= (get tasks t.worker) 1)
-      (setv need (run (task-need-of t (.row state.workers t.worker) peaks))
+      (setv need (run (claim-mib-of t state.claims (.row state.workers t.worker) peaks))
             use (.get (get uses t.worker) t.id))
       (+= (get reserved t.worker) (run (reserved-mib-of need use)))
       (when (is use None)
@@ -1449,11 +1425,12 @@
   best)
 
 
-(defk yield-candidates [task worker tasks peaks taken]
-  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: tasks tuple) (: peaks dict) (: taken frozenset)]
+(defk yield-candidates [task worker tasks peaks claims taken]
+  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: tasks tuple) (: peaks dict) (: claims (get Table TaskClaim)) (: taken frozenset)]
    :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "急ぎの task に場所を譲らせうる、worker に置いた task を、止める順に知るため(measured_room の頭の註の場所の譲り): tasks = task の
-   行・peaks = 形ごとの測った山(shape-peaks-of — 要りの数え task-need-of)・taken = この拍に既に止めると決めた task の id。候補は、
+   行・peaks と claims = 形ごとの測った山(shape-peaks-of)と置いた task の申告の表(要りの数え task_claims.claim-mib-of)・taken = この拍に
+   既に止めると決めた task の id。候補は、
    その worker に置かれ(PLACED-PHASES)、場所を譲る名乗り(preemptible — 走らせ直しの名乗りと組)を持ち、task より優先の低い切り離した
    task。答え = YieldCandidate の tuple — 戻る MiB = 止めると戻る memory(測りの名乗る今の使い + まだ予約している伸びる分 = load-of と
    同じ数えの max(要り, 今の使い))。順は優先の低い順、同じ優先は戻る MiB の大きい順(止める本数を少なくする)、同じなら id の順。"
@@ -1462,7 +1439,7 @@
   (for [t tasks :if (and t.detached t.preemptible t.rerun (in t.phase PLACED-PHASES) (= t.worker worker.name)
                          (< t.priority task.priority) (not-in t.id taken))]
     (val use (.get uses t.id))
-    (<- need int (task-need-of t worker peaks))
+    (<- need int (claim-mib-of t claims worker peaks))
     (<- reserved int (reserved-mib-of need use))
     (:= rows #(#* rows (YieldCandidate :task t :reserved-mib reserved :freed-mib (+ reserved (or use 0)) :measured (is-not use None)))))
   (tuple (sorted rows :key (fn [c] #(c.task.priority (- c.freed-mib) c.task.id)))))
@@ -1485,14 +1462,15 @@
   (if (>= (+ room freed) need) picked None))
 
 
-(defk yield-plan [task workers needs rooms counts tasks peaks taken held groups bg-held bg-wanted]
-  {:pre [(: task TaskRecord) (: workers list) (: needs dict) (: rooms dict) (: counts dict) (: tasks tuple) (: peaks dict) (: taken frozenset)
+(defk yield-plan [task workers needs rooms counts tasks peaks claims taken held groups bg-held bg-wanted]
+  {:pre [(: task TaskRecord) (: workers list) (: needs dict) (: rooms dict) (: counts dict) (: tasks tuple) (: peaks dict)
+         (: claims (get Table TaskClaim)) (: taken frozenset)
          (: held dict) (: groups Table) (: bg-held dict) (: bg-wanted dict)]
    :post [(: % (| YieldPlan None))] :tags {:context "coordinator" :role "judgment"}}
   "急ぎの task が memory の空きに入らない拍に、どの worker でどの task に場所を譲らせて置くかを知るため(measured_room の頭の註の場所の
    譲り — None = 譲らせない): workers = 置き先の候補(門の内の task は置ける worker 全部・門の外の task は組の上限に達していない worker)・
    needs / rooms = worker の名 → task の要りと、その task を数える memory の空き(門の内は task-memory-room-of・門の外は測りにまだ出て
-   いない要りだけを引いた空き)・counts = worker の名 → 測った数の空き(task-room-of — 門の外の task は読まない)・tasks・peaks・taken =
+   いない要りだけを引いた空き)・counts = worker の名 → 測った数の空き(task-room-of — 門の外の task は読まない)・tasks・peaks・claims・taken =
    yield-candidates の引数・held・groups・bg-held・bg-wanted = task-misfit の引数(worker の名 → 数)。worker ごとに止める task を
    yield-victims で選び、門の内の task は止めた後の数と memory の空きで task-misfit を問い直す(memory と数の外の訳 — 組の上限・予約・
    測りの無さ — で置けない worker では譲らせない)。選ぶのは止める本数の少ない worker、同じなら戻る MiB の和の小さい物、同じなら名の順。"
@@ -1501,7 +1479,7 @@
   (for [w (sorted workers :key (fn [w] w.name))]
     (val need (get needs w.name))
     (val room (get rooms w.name))
-    (<- candidates tuple (yield-candidates task w tasks peaks taken))
+    (<- candidates tuple (yield-candidates task w tasks peaks claims taken))
     (<- victims (| tuple None) (yield-victims need room candidates))
     (when (is-not victims None)
       (val freed (sum (gfor v victims v.freed-mib)))
@@ -2109,7 +2087,7 @@
       (var yielded None)
       (when (and urgent (or (not free) (and task.ungated (> (get shorts (. (get free 0) name)) 0))))
         (<- plan (| YieldPlan None) (yield-plan task (if task.ungated free able-now) needs (if task.ungated bares rooms) counts
-                                                placed-rows peaks taken held state.group-limits bg-held bg-wanted))
+                                                placed-rows peaks placed.claims taken held state.group-limits bg-held bg-wanted))
         (when (is-not plan None)
           (:= yielded plan)
           (val yield-worker plan.worker)
@@ -2269,11 +2247,12 @@
   ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
   ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す — adopt-running-detached・
   ;; 2026-09-27)。子の環境変数は service の job の行の environ と同じ欄(切り離した task は写しにも残る)。JSON は protocol/replies。
+  ;; memory-mib は置いた時に固定した申告(task_claims.offered-mib-of — worker が task の使いを比べる量)。
   (tuple (gfor task (sorted (scan-rows state.tasks) :key (fn [t] t.id))
                :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
                (TaskOffer :id task.id :name task.name :revision task.revision :versions task.versions :program task.program
                           :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
-                          :runtime-env task.runtime-env :environ task.environ :memory-mib task.memory-mib
+                          :runtime-env task.runtime-env :environ task.environ :memory-mib (run (offered-mib-of task state.claims))
                           :rerun task.rerun :attempt task.attempt :losses task.losses :notify task.notify
                           :priority task.priority :preemptible task.preemptible))))
 
@@ -3287,6 +3266,8 @@
              :group-limits (! (group-limit-views state))
              ;; 置き先の一時の上書き(Service の名の順)。
              :needs-overrides (tuple (sorted (.rows state.needs-overrides) :key (fn [o] o.service)))
+             ;; 置いた task の申告(task の id の順 — ADR-DOE-CLUSTER-005 R4)。
+             :claims (tuple (sorted (.rows state.claims) :key (fn [c] c.task)))
              ;; 置き先の無い Service の種類・足りない能力・いつから(unplaced と同じ Service)。
              :unplaced-detail (unplaced-views now state timing)))
 

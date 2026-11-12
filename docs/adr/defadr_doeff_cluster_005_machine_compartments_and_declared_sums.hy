@@ -185,8 +185,10 @@
          [(counterexample "Taking the sender's number as a lower bound after the shape has finished rows — image builds keep reserving 6 times their use")
           (counterexample "Recomputing the claim of a running task every tick — when old rows leave retention its claim drops and R7 stops it as over")
           (counterexample "Clamping by the measured line — the declaration moves with other mechanisms' use, which this ADR removes from placement")]
-       :enforced-by ["planned with the declarations from history: a test of the derivation with and without finished rows and of a claim kept across ticks"]
-       :wiring "Unwired (2026-11-12) — wired with the declarations from history")
+       :enforced-by ["packages/doeff-cluster/tests/test_task_claims.hy::test-the-declaration-follows-the-settled-peak-of-the-shape-not-the-senders-number"
+                     "packages/doeff-cluster/tests/test_task_claims.hy::test-the-claim-is-fixed-when-placed-and-dropped-when-the-task-leaves"
+                     "packages/doeff-cluster/tests/test_task_claims.hy::test-a-claim-survives-the-state-file-and-the-durable-keys"]
+       :wiring "Wired (2026-11-12) for the derivation and the claim kept while placed (coordinator/core/task_claims); the clamp is still the placing worker's measured line minus the floor until placement reads the tasks compartments")
      (law every-wait-reason-has-a-destination
        :statement "for_all member k of TaskUnplacedKind: k ∈ WAIT-REASON-DESTINATIONS ∧ every destination in CONDITION-DESTINATIONS ∈ DESTINATIONS"
        :counterexamples

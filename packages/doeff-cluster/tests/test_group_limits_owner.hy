@@ -216,7 +216,7 @@
   ;; 受けない。memory-mib(memory の要り — 2026-11-02)は memory の空きの比べ(task-misfit の need)だけが読み、組の上限の数えは受けない。
   ;; rerun(走らせ直しの名乗り — 2026-11-04・TaskBody にも同じ名で載る)は担い手が消えた試行を待ちの行へ戻す判断と、次の試行を
   ;; 置ける worker の判じ(heard-since-rerun — attempt と刻だけを読む)が読み、組の上限の数えは受けない。
-  ;; shape(仕事の形 — 2026-11-10・TaskBody にも同じ名で載る)は memory の要りの数え(cluster_policy.shape-peaks-of・task-need-of・
+  ;; shape(仕事の形 — 2026-11-10・TaskBody にも同じ名で載る)は memory の要りの数え(task_claims.shape-peaks-of・task-need-of・
   ;; measured_room.learned-need)だけが読み、その答えは task-misfit の need として memory の空きと比べるだけで、組の上限の数えは受けない。
   ;; ungated(測った空きの門の外 — 2026-11-11・TaskBody にも同じ名で載る)は置き先の判じを task-misfit から limits-misfit だけへ替え、置き先の順
   ;; (要りの足りなさ)を変えるが、組の升の数え(hold-limits の 1 本 = 1)と宣言の値・範囲は変えない。preemptible(場所を譲る名乗り —

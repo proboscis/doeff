@@ -21,7 +21,7 @@
 (import doeff_hy._wire [dump])
 (import doeff_cluster._shared.intent.semaphore_model [LeaseAnswer])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json status-row-to-json])
-(import doeff_cluster._coordinator.protocol.state_json [audit-event-to-json])
+(import doeff_cluster._coordinator.protocol.state_json [audit-event-to-json task-claim-spec])
 (import doeff_cluster._shared.core.detached_rules [group-limit-spec task-limits-json])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster._shared.intent.detached_model [DetachedOutbox DetachedOutboxAcked])
@@ -211,6 +211,9 @@
    ;; 置き先の一時の上書き(2026-10-27): Service の名の順の列 [{service needs reason expiresAtMs writer sinceMs}] —
    ;; 宣言の needs の代わりに今効いている needs と、その訳・期限・書き手。宣言の spec は書き換えないので、ここで読む。
    "needsOverrides" (lfor o view.needs-overrides (| {"service" o.service} (needs-override-spec o)))
+   ;; 置いた task の申告(2026-11-12 — ADR-DOE-CLUSTER-005 R4): task の id → {memoryMiB cpuMillis} — 置いた拍に決めて、置いている間は
+   ;; 変えない量。task の行の memoryMiB は送り手の見当で、heartbeat の返事で worker へ渡すのはこの申告。
+   "claims" (dfor c view.claims c.task (task-claim-spec c))
    ;; 置き先の無い Service の読み(2026-10-27): Service の名 → {kind needs missing pin sinceMs}(unplaced と同じ鍵)—
    ;; 種類(no-eligible-worker など)・効く needs・足りない能力(生きていて drain 中でない worker のどれも名乗らない能力)・固定・置き先が
    ;; 無いと最初に見た刻。外の見張りが理由の文を読み解かずに、どの Service がいつから何の能力が足りずに置けないかを読むため。

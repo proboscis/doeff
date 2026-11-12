@@ -31,7 +31,7 @@
 ;;; task の予約の和 18,967 MiB に対し実の使いは約 3,800 MiB。機体に約 26,000 MiB の空きが在るのに memory の空きは −3,484 MiB と数えた)。
 ;;; coordinator は worker の測りが名乗る task ごとの今の使いの最大を行の山(peak-mib)に持ち、形(shape — 送り手が同じ程の memory を使う
 ;;; 仕事に付ける印)ごとに、保持の間の行(終わった行を含む)の山の最大と、終わり(finished)まで走った行が在るか(settled)を読む
-;;; (cluster_policy.shape-peaks-of — ShapePeak)。task の要りは(learned-need):
+;;; (task_claims.shape-peaks-of — ShapePeak)。task の要りは(learned-need):
 ;;;   同じ形に終わりまで走った行が在る   要り = min(⌈max(この task の山, 同じ形の山の最大) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, 線 − 床)
 ;;;   無い(形を名乗らない・初めての形)  要り = max(名乗った要り, min(max(この task の山, 同じ形の山の最大), 線 − 床))
 ;;; 名乗りは、終わりまで測った山の無い仕事の見込みにだけ使う — 同じ形の山を知った後は、送り手が見込みの数を名乗っても予約にならない
@@ -263,7 +263,7 @@
 
 
 (defrecord ShapePeak
-  "形 1 つの測った山(頭の註の測った山で数える要り — cluster_policy.shape-peaks-of): mib = 形を名乗り山を測った行(保持の間の終わった行を
+  "形 1 つの測った山(頭の註の測った山で数える要り — task_claims.shape-peaks-of): mib = 形を名乗り山を測った行(保持の間の終わった行を
    含む)の山の最大・settled = そのうち終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限にしない)。"
   {:check [(>= mib 0)]}
   (#^ int mib)
