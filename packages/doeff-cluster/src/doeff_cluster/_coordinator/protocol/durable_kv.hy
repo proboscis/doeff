@@ -5,7 +5,7 @@
 ;;; Service や Rollout の書きに引きずられず、逆に Service の書きが盤全体を書き直さない。
 ;;;
 ;;; キー:
-;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  needsoverride/<名>  claim/<task の id>  audit/<番号 10 桁>  counter
+;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  needsoverride/<名>  claim/<task の id>  compartments/<machine>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   outbox/<結末の id>(2026-10-21 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
@@ -38,9 +38,11 @@
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json job-from-json board-changes board-tally-of value-size
 ] doeff_cluster._coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
-                                               group-limit-from-json needs-override-from-json task-claim-spec task-claim-from-json])
+                                               group-limit-from-json needs-override-from-json task-claim-spec task-claim-from-json
+                                               machine-compartments-from-json])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster._shared.core.detached_rules [group-limit-spec])
+(import doeff_cluster._shared.core.compartment_rules [machine-compartments-spec])
 (import doeff_hy._table [TableWrite table-of])
 
 (setv BOARD "board/")
@@ -53,6 +55,8 @@
 (val GROUP-LIMIT "grouplimit/")
 ;; Service の needs の一時の上書き(2026-10-27 — 資源 NeedsOverride 1 つに鍵 1 つ。無い置き場は空として読む)。
 (val NEEDS-OVERRIDE "needsoverride/")
+;; machine の用途の区画の宣言(ADR-DOE-CLUSTER-005 — 資源 MachineCompartments 1 つに鍵 1 つ。無い置き場は空として読む)。
+(val MACHINE-COMPARTMENTS "compartments/")
 ;; 切り離した task の終わりの出口(2026-10-21 — 出口の行 1 つに鍵 1 つ。鍵 = 結末の id)。
 (val OUTBOX "outbox/")
 ;; 置いた task の申告(2026-11-12 — 申告 1 つに鍵 1 つ。鍵 = task の id。無い置き場は空として読む)。
@@ -158,6 +162,7 @@
     (table-group "rollouts" (fn [k r] #((+ "rollout/" k) #(#(r) (partial rollout-row-to-json r)))))
     (table-group "group_limits" (fn [k l] #((+ GROUP-LIMIT k) #(#(l) (partial group-limit-spec l)))))
     (table-group "needs_overrides" (fn [k o] #((+ NEEDS-OVERRIDE k) #(#(o) (partial needs-override-spec o)))))
+    (table-group "machine_compartments" (fn [k m] #((+ MACHINE-COMPARTMENTS k) #(#(m) (partial machine-compartments-spec m)))))
     (table-group "drains" (fn [k d] #((+ DRAIN k) #(#(d) (partial asdict d)))))
     (table-group "surges" (fn [k a] #((+ SURGE k) #(#(a) (partial asdict a)))))
     (table-group "warms" (fn [k w] #((+ WARM k) #(#(w) (partial warm-entry-to-json w)))))
@@ -291,6 +296,7 @@
     :rollouts (table-of (tuple (gfor #(k v) (part "rollout/") (TableWrite k (rollout-row-from-json v)))))
     :group-limits (table-of (tuple (gfor #(k v) (part GROUP-LIMIT) (TableWrite k (group-limit-from-json k v)))))
     :needs-overrides (table-of (tuple (gfor #(k v) (part NEEDS-OVERRIDE) (TableWrite k (needs-override-from-json k v)))))
+    :machine-compartments (table-of (tuple (gfor #(k v) (part MACHINE-COMPARTMENTS) (TableWrite k (machine-compartments-from-json k v)))))
     :drains (table-of (tuple (gfor #(k v) (part DRAIN) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (part SURGE) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。

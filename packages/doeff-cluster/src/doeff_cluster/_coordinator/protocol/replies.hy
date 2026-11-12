@@ -23,6 +23,7 @@
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster._coordinator.protocol.state_json [audit-event-to-json task-claim-spec])
 (import doeff_cluster._shared.core.detached_rules [group-limit-spec task-limits-json])
+(import doeff_cluster._shared.core.compartment_rules [machine-compartments-spec held-compartment-json])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster._shared.intent.detached_model [DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster._coordinator.protocol.cluster_json [ended-to-json])
@@ -136,13 +137,15 @@
 
 (defk heartbeat-reply-json [#^ HeartbeatReply reply]
   {:pre [(: reply HeartbeatReply)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "heartbeat の返事 → JSON の形(superseded は退いた世代への返事の時だけ・supplied は渡す時だけ書く)。"
+  "heartbeat の返事 → JSON の形(superseded は退いた世代への返事の時だけ・supplied と compartments は渡す時だけ書く)。"
   (| {"jobs" (! (spelled-each spec-json reply.jobs)) "tasks" (! (spelled-each task-offer-json reply.tasks))
       "warm" (lfor w reply.warm (| {"key" w.key "runtimeEnv" w.runtime-env} (if w.urgent {"urgent" True} {}))) "timing" (asdict reply.timing)
       "draining" reply.draining "formats" (list reply.formats) "revision" reply.revision}
      (if reply.superseded {"superseded" True} {})
      (if reply.handover-pending {"handoverPending" True} {})
-     (if (is-not reply.supplied None) {"supplied" (list reply.supplied)} {})))
+     (if (is-not reply.supplied None) {"supplied" (list reply.supplied)} {})
+     ;; 持つ区画(ADR-DOE-CLUSTER-005 R2 — 空の列 = 区画を持たない)。欄を読まない古い worker は捨てる。
+     (if (is-not reply.compartments None) {"compartments" (lfor h reply.compartments (held-compartment-json h))} {})))
 
 
 (defk state-view-json [#^ StateView view]
@@ -217,7 +220,16 @@
    ;; 置き先の無い Service の読み(2026-10-27): Service の名 → {kind needs missing pin sinceMs}(unplaced と同じ鍵)—
    ;; 種類(no-eligible-worker など)・効く needs・足りない能力(生きていて drain 中でない worker のどれも名乗らない能力)・固定・置き先が
    ;; 無いと最初に見た刻。外の見張りが理由の文を読み解かずに、どの Service がいつから何の能力が足りずに置けないかを読むため。
-   "unplacedDetail" (dict (zip (gfor u view.unplaced-detail u.service) (! (spelled-each unplaced-view-json view.unplaced-detail))))})
+   "unplacedDetail" (dict (zip (gfor u view.unplaced-detail u.service) (! (spelled-each unplaced-view-json view.unplaced-detail))))
+   ;; machine の用途の区画(ADR-DOE-CLUSTER-005 R1・R2): machine の名 → {resourceVersion compartments memoryMiB memoryLimitMiB cpuMillis
+   ;; reportedTotalMiB?} — 宣言の区画の列と、その和と、区画を持つ worker が名乗った memory の総量(名乗った worker が在る時だけ)。
+   "machineCompartments" (dfor m view.machine-compartments
+                               m.row.machine (| {"resourceVersion" m.resource-version}
+                                                (machine-compartments-spec m.row)
+                                                {"memoryMiB" m.memory-mib "memoryLimitMiB" m.memory-limit-mib "cpuMillis" m.cpu-millis}
+                                                (if (is m.reported-total-mib None) {} {"reportedTotalMiB" m.reported-total-mib})))
+   ;; 名簿の worker ごとの持つ区画(heartbeat の返事の compartments と同じ写し — 空の列 = 区画を持たない)。
+   "workerCompartments" (dfor #(n held) (.items view.worker-compartments) n (lfor h held (held-compartment-json h)))})
 
 
 (defk unplaced-view-json [#^ UnplacedView view]

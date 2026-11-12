@@ -14,6 +14,9 @@
 ;;;   Service の PUT で、版(spec.revision)を変えずに置き先(needs・pin)を変える書きは 409 で断り、資源 NeedsOverride を案内する
 ;;;   (2026-10-27 — placement-rewrite-refusal)。宣言の道具は revision に宣言の版を入れるので、宣言は断られない。
 ;;;   照らすのは版で、送り手の名乗りではない。
+;;; - MachineCompartments(ADR-DOE-CLUSTER-005 R1)= machine 1 台の用途の区画の宣言(名 = machine の名・spec = {compartments: [{use worker
+;;;   layer memoryMiB memoryLimitMiB? cpuMillis}]})。site の宣言の手順が版つきで書き(作る・書き直す・消す)、形は
+;;;   shared/core/compartment_rules の規則で、行をまたぐ規則(worker は 1 台の machine の下だけ)は compartments-clash で検める。
 ;;; - NeedsOverride(2026-10-27)= Service 1 つの置き先の一時の上書き(名 = Service の名・spec = {needs reason
 ;;;   ttlSeconds} — 作る時だけ。版つきの書き直しは無い。延ばす・変えるのは DELETE してから作り直す)。宣言(Service の spec)は書き換えず、
 ;;;   置き先の判断が効く needs をこの行から決める(cluster_policy.effective-needs)。調停の拍ごとに(lift-needs-overrides — api_policy.settle が
@@ -45,12 +48,15 @@
 (import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 (import doeff_cluster._shared.core.capabilities [capabilities-of])
+(import doeff_cluster._shared.intent.compartment_model [MachineCompartments])
+(import doeff_cluster._shared.core.compartment_rules [machine-compartments-refusal machine-compartments-of machine-compartments-spec
+                                                     compartments-clash])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者の記録(本当の持ち主は coordinator には分からない)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
 (setv MIGRATION "migration")              ; 旧い形の状態の file に版を振った送り手
 (setv AUDIT-PER-KIND 300)                 ; 出来事の記録の上限(kind ごと)
-(setv KINDS #("Service" "Worker" "Task" "Rollout" "GroupLimit" "NeedsOverride"))
+(setv KINDS #("Service" "Worker" "Task" "Rollout" "GroupLimit" "NeedsOverride" "MachineCompartments"))
 
 
 (defclass Refused [Exception]
@@ -730,6 +736,13 @@
   {"spec" (group-limit-spec limit) "status" {}})
 
 
+(deff machine-compartments-row [#^ MachineCompartments row]  ; cannot be a defk: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
+  {:pre [(: row MachineCompartments)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "machine 1 台の区画の資源の行 {spec status} を綴るため(status は空 — 和と測りは拍ごとに動くので版に入れず、GET /state の
+   machineCompartments に出す)。"
+  {"spec" (machine-compartments-spec row) "status" {}})
+
+
 (defn #^ dict snapshot [#^ ClusterState state #^ int now #^ ClusterTiming timing]
   "資源ごとの {spec status}。比べて版を進める単位。変わりやすい観測(生存の時刻・lease の期限)は入れない。同じ名の宣言と受け付けない
    行が両方在れば受け付けない行(後に書く)が勝つ — row-of と同じ順。"
@@ -739,7 +752,8 @@
      (dfor t (.rows state.tasks) (key-of "Task" t.id) (task-row t))
      (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))
      (dfor #(name l) (.items state.group-limits) (key-of "GroupLimit" name) (group-limit-row l))
-     (dfor o (.rows state.needs-overrides) (key-of "NeedsOverride" o.service) (needs-override-row o))))
+     (dfor o (.rows state.needs-overrides) (key-of "NeedsOverride" o.service) (needs-override-row o))
+     (dfor m (.rows state.machine-compartments) (key-of "MachineCompartments" m.machine) (machine-compartments-row m))))
 
 
 (defn #^ (| dict None) row-of [#^ ClusterState state #^ dict jobs #^ str key #^ int now #^ ClusterTiming timing]
@@ -754,6 +768,7 @@
     "Rollout" (if (setx rollout (.row state.rollouts name)) (rollout-row rollout) None)
     "GroupLimit" (if (setx limit (.row state.group-limits name)) (group-limit-row limit) None)
     "NeedsOverride" (if (setx override (.row state.needs-overrides name)) (needs-override-row override) None)
+    "MachineCompartments" (if (setx machine (.row state.machine-compartments name)) (machine-compartments-row machine) None)
     _ (raise (ValueError (+ "snapshot の鍵の種類を知らない: " key)))))
 
 
@@ -789,7 +804,7 @@
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
    - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)/
      世代をまたぐ受け渡し(退いた世代の組と、組の在る worker の報告 — AL-D2f)。
-     Task・Rollout・GroupLimit・NeedsOverride: 自分の行(上書きが Service の needs を書き換えた時は、Service の宣言の変化として上で拾う)。"
+     Task・Rollout・GroupLimit・NeedsOverride・MachineCompartments: 自分の行(上書きが Service の needs を書き換えた時は、Service の宣言の変化として上で拾う)。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
                        (moved-names before.observations.readiness after.observations.readiness)
@@ -837,13 +852,15 @@
                  (frozenset (gfor n (.changed-keys before.tasks after.tasks) (key-of "Task" n)))
                  (frozenset (gfor n (moved-names before.rollouts after.rollouts) (key-of "Rollout" n)))
                  (frozenset (gfor n (moved-names before.group-limits after.group-limits) (key-of "GroupLimit" n)))
-                 (frozenset (gfor n (moved-names before.needs-overrides after.needs-overrides) (key-of "NeedsOverride" n))))
+                 (frozenset (gfor n (moved-names before.needs-overrides after.needs-overrides) (key-of "NeedsOverride" n)))
+                 (frozenset (gfor n (moved-names before.machine-compartments after.machine-compartments) (key-of "MachineCompartments" n))))
         present (| (frozenset (gfor n all-services :if (or (in n jobs-after) (is-not (.row after.refused n) None)) (key-of "Service" n)))
                    (frozenset (gfor n (.keys after.workers) (key-of "Worker" n)))
                    (frozenset (gfor n (.keys after.tasks) (key-of "Task" n)))
                    (frozenset (gfor n (.keys after.rollouts) (key-of "Rollout" n)))
                    (frozenset (gfor n (.keys after.group-limits) (key-of "GroupLimit" n)))
-                   (frozenset (gfor n (.keys after.needs-overrides) (key-of "NeedsOverride" n))))
+                   (frozenset (gfor n (.keys after.needs-overrides) (key-of "NeedsOverride" n)))
+                   (frozenset (gfor n (.keys after.machine-compartments) (key-of "MachineCompartments" n))))
         unversioned (frozenset (gfor k present :if (is (.row after.meta k) None) k)))
   (| moved unversioned))
 
@@ -998,7 +1015,7 @@
   (EventsView :revision state.revision :seq state.audit-seq :events (cut rows (- limit) None)))
 
 
-;; --- 書きの口(Service・Rollout・GroupLimit)---------------------------------------------------
+;; --- 書きの口(Service・Rollout・GroupLimit・MachineCompartments)---------------------------------------------------
 
 (defn #^ None check-version [#^ ClusterState state #^ str key #^ (| int None) version #^ bool [required True]]
   (setv current (resource-version-of state key))
@@ -1021,6 +1038,17 @@
   (setv refusal (group-limit-refusal name spec))
   (when (is-not refusal None) (refuse 400 refusal))
   (group-limit-of name spec))
+
+
+(defn #^ MachineCompartments checked-machine-compartments [#^ ClusterState state #^ str name #^ (| dict None) spec]
+  "資源 MachineCompartments の作り・書き直しの spec を、行の中の規則(machine-compartments-refusal)と行をまたぐ規則(compartments-clash —
+   ほかの machine の行と worker が重ならない)で検めて MachineCompartments にするため(受けられなければ 400)。"
+  (setv refusal (machine-compartments-refusal name spec))
+  (when (is-not refusal None) (refuse 400 refusal))
+  (setv row (machine-compartments-of name spec)
+        clash (compartments-clash (tuple (gfor m (.rows state.machine-compartments) :if (!= m.machine name) m)) row))
+  (when (is-not clash None) (refuse 400 clash))
+  row)
 
 
 ;; --- Service の needs の一時の上書き(資源 NeedsOverride — 2026-10-27)-------------------------------
@@ -1158,6 +1186,10 @@
     (= kind "GroupLimit")
       (do (when (is-not (.row state.group-limits name) None) (refuse 409 (+ "もう在る GroupLimit: " name)))
           (replace state :group-limits (.with-writes state.group-limits #((TableWrite name (checked-group-limit name body.spec))))))
+    (= kind "MachineCompartments")
+      (do (when (is-not (.row state.machine-compartments name) None) (refuse 409 (+ "もう在る MachineCompartments: " name)))
+          (replace state :machine-compartments (.with-writes state.machine-compartments
+                                                             #((TableWrite name (checked-machine-compartments state name body.spec))))))
     True (refuse 405 (+ "この kind は API から作れない: " kind))))
 
 
@@ -1209,6 +1241,12 @@
           (check-version state key body.resource-version)
           ;; 値と範囲を変えてよい(宣言し直し)。置いている task は止めず、次の置きから新しい値で数える。
           (replace state :group-limits (.with-writes state.group-limits #((TableWrite name limit)))))
+    ;; 区画を書き直す(宣言し直し)。worker は次の heartbeat の返事で新しい区画を受け取り、変わった層の上限だけを書き直す(R3)。
+    (= kind "MachineCompartments")
+      (do (when (is (.row state.machine-compartments name) None) (refuse 404 (+ "無い MachineCompartments: " name)))
+          (setv row (checked-machine-compartments state name body.spec))
+          (check-version state key body.resource-version)
+          (replace state :machine-compartments (.with-writes state.machine-compartments #((TableWrite name row)))))
     (= kind "NeedsOverride")
       (refuse 405 (.format "NeedsOverride は書き直さない(延ばす・変えるなら DELETE /resources/NeedsOverride/{} の後に作り直す)" name))
     True (refuse 405 (+ "この kind は API から書けない: " kind))))
@@ -1256,6 +1294,10 @@
     (= kind "GroupLimit")
       (do (when (is (.row state.group-limits name) None) (refuse 404 (+ "無い GroupLimit: " name)))
           (replace state :group-limits (.with-writes state.group-limits #((TableWrite name None)))))
+    ;; 区画の宣言を消す: その machine の worker は次の返事で空の区画を受け取り、新しい上限を書かない(kernel に在る値は残る — R2)。
+    (= kind "MachineCompartments")
+      (do (when (is (.row state.machine-compartments name) None) (refuse 404 (+ "無い MachineCompartments: " name)))
+          (replace state :machine-compartments (.with-writes state.machine-compartments #((TableWrite name None)))))
     ;; 上書きを外し、Service を元の needs(上書きの間の持ち主の宣言し直しを含む)で置き直す — 期限・能力の消えと同じ外し方。
     (= kind "NeedsOverride")
       (do (setv override (.row state.needs-overrides name))
