@@ -423,6 +423,20 @@
   (#^ int since-ms))
 
 
+(defrecord TaskClaim
+  "置いた task 1 本の申告(ADR-DOE-CLUSTER-005 R4 — 2026-11-12): 置いた拍に task_claims.task-need-of で 1 度だけ決め、task が置いた phase
+   (PLACED-PHASES)に居る間は変えない量。置いた task の予約の数え(cluster_policy.load-of)・場所の譲りの戻る量(yield-candidates)・heartbeat の
+   返事の task の行の memoryMiB(worker が task の使いを比べる量 — tasks-for)はこの行を読む。拍ごとに数え直すと、古い行が保持の外へ出た拍や
+   山が伸びた拍に、走っている task の申告が動き、急に要りの越えや空きの余りになる。task の行には持たない — task の行の memory-mib は
+   送り手の見当で、同じ量の別の事実なので、置いた後の申告は別の表(ClusterState.claims — task の id で引く)に持つ。
+   task = task の id(表の鍵と同じ)・memory-mib = memory の申告(MiB)・cpu-millis = CPU の申告(millicore — 全部の task で
+   measured_room.TASK-CORES core)。保存する(durable_kv の claim/<id>)。"
+  {:tags {:context "coordinator" :role "type"} :check [(>= memory-mib 0) (>= cpu-millis 0)]}
+  (#^ str task)
+  (#^ int memory-mib)
+  (#^ int cpu-millis))
+
+
 (defrecord SupersededRun
   "退いた世代(同じ名の新しい世代が名乗った後の旧い Pod)が、まだ走らせていると報告した入れ替え(handoff)の job の組(AL-D2)。旧い Pod の
    preStop の drain(drain_policy.superseded-worker-view)は、この組が空になるまで(退かせた process が走っている仕事を終えて自分で終わる
@@ -519,7 +533,8 @@
    doeff の版(ClusterState の running-commit — 読めなければ None で、JSON の欄 coordinatorCommit を書かない。版上げの Program が「新しい
    版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)・group-limits = 組の同時数の上限の画面の列
    (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride)・
-   unplaced-detail = 置き先の無い Service の読みの列(Service の名の順 — UnplacedView — unplaced と同じ Service)。
+   unplaced-detail = 置き先の無い Service の読みの列(Service の名の順 — UnplacedView — unplaced と同じ Service)・
+   claims = 置いた task の申告の列(task の id の順 — TaskClaim)。
    JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
@@ -536,7 +551,8 @@
   (#^ (| str None) coordinator-commit)
   (setv #^ (get tuple #(GroupLimitView ...)) group-limits #())
   (setv #^ (get tuple #(NeedsOverride ...)) needs-overrides #())
-  (setv #^ (get tuple #(UnplacedView ...)) unplaced-detail #()))
+  (setv #^ (get tuple #(UnplacedView ...)) unplaced-detail #())
+  (setv #^ (get tuple #(TaskClaim ...)) claims #()))
 
 
 (defenum DrainPhase
@@ -1408,7 +1424,10 @@
   ;; 置き先の無い Service に刻を置き、置かれた Service の行を外す(置かれないまま続く間は最初の刻を保つ)。GET /state の unplacedDetail と
   ;; Service の資源の status.unplaced の sinceMs に出る — 外の見張りが「いつから置き先が無いか」を読むため。保存しない(起き直した後は、
   ;; 起きた後の最初の拍から数える)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get Table int) unplaced-since (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table int) unplaced-since (field :default-factory (partial table-of #())))
+  ;; 置いた task の申告(2026-11-12 — ADR-DOE-CLUSTER-005 R4): task の id → TaskClaim。task が置いた phase へ移った歩で 1 行書き、置いた
+  ;; phase を出た歩で外す(task_claims.claims-noted — 置きと出が通る 1 点)。保存する(durable_kv の claim/<id>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table TaskClaim) claims (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []

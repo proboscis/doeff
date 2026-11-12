@@ -61,6 +61,7 @@
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._coordinator.core.wake_policy [next-wake after-step wait-seconds planned-wake-ms count-unsettled])
 (import doeff_cluster._coordinator.core.detached_policy [outbox-noted queued-noticed])
+(import doeff_cluster._coordinator.core.task_claims [claims-noted])
 
 
 
@@ -443,6 +444,10 @@
   ;; 歩の中の判断(tick・要求ごとの答え)に散っているが、どれもこの歩の前後の差に現れる(detached_policy.outbox-noted の註)。保存と同じ
   ;; 1 回で耐久になり、返事はその後なので、終わりを答えた task の出口の行が落ちた coordinator から消える事は無い。
   (:= next (outbox-noted state next now))
+  ;; 置いた task の申告: この歩に置いた phase へ移った task に申告を書き、置いた phase を出た task の申告を外す(同じ前後の差の 1 点 —
+  ;; task_claims の頭の註)。保存と同じ 1 回で耐久になる。
+  (<- claimed ClusterState (claims-noted state next))
+  (:= next claimed)
   ;; queued の期限超え: 知らせ先つきの task が queued のまま期限を越えた歩で、待ちの行を 1 度だけ積む(同じ保存で耐久)。
   (<- overdue ClusterState (queued-noticed next now timing))
   (:= next overdue)

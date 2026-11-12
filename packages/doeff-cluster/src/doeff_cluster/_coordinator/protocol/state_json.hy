@@ -6,7 +6,7 @@
 (import collections.abc [Callable])
 (import dataclasses [asdict])
 (import doeff_cluster._coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain KnownExit
-                                                       NeedsOverride])
+                                                       NeedsOverride TaskClaim])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster._coordinator.core.cluster_rules [component-versions-of])
 (import doeff_hy._wire [parse Malformed])
@@ -61,7 +61,8 @@
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
    "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))
-   "outbox" (dfor #(k e) (.items state.outbox) k (ended-to-json e))})
+   "outbox" (dfor #(k e) (.items state.outbox) k (ended-to-json e))
+   "claims" (dfor #(k c) (.items state.claims) k (task-claim-spec c))})
 
 
 (deff worker-generations-json [#^ WorkerInfo worker]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
@@ -150,6 +151,25 @@
       (raise (ValueError (.format "保存の置き先の上書き {} の {} が文字列でない: {!r}" name k (get spec k))))))
   (NeedsOverride :service name :needs needs :reason (get spec "reason")
                  :expires-ms (get spec "expiresAtMs") :writer (get spec "writer") :since-ms (get spec "sinceMs")))
+
+
+(deff task-claim-spec [#^ TaskClaim claim]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)と GET /state が呼ぶ純粋な綴り
+  {:pre [(: claim TaskClaim)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "置いた task の申告 1 つ → 保存と見せる JSON の形 {memoryMiB cpuMillis}(鍵は task の id)。"
+  {"memoryMiB" claim.memory-mib "cpuMillis" claim.cpu-millis})
+
+
+(deff task-claim-from-json [#^ str task #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: task str) (: spec (| dict list str int float bool None))] :post [(: % TaskClaim)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "保存の申告 1 つ(task の id と task-claim-spec の形)→ TaskClaim を読み直すため。欄の欠け・0 未満・整数でない値は理由つきの ValueError
+   (保存の行の壊れ — 黙って既定の値で読まない)。"
+  (when (not (isinstance spec dict))
+    (raise (ValueError (.format "保存の申告 {} が object でない: {!r}" task spec))))
+  (for [k #("memoryMiB" "cpuMillis")]
+    (setv v (.get spec k))
+    (when (or (not (isinstance v int)) (isinstance v bool) (< v 0))
+      (raise (ValueError (.format "保存の申告 {} の {} が 0 以上の整数でない: {!r}" task k v)))))
+  (TaskClaim :task task :memory-mib (get spec "memoryMiB") :cpu-millis (get spec "cpuMillis")))
 
 
 (deff audit-event-to-json [#^ AuditEvent event]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
@@ -270,6 +290,8 @@
     :handoffs (table-of (tuple (gfor #(k v) (.items (.get data "handoffs" {})) (TableWrite k (handoff-watch-from-json v)))))
     ;; 切り離した task の終わりの出口(2026-10-21)は、それより前の file には無い(空として読む)。
     :outbox (table-of (tuple (gfor #(k e) outbox (TableWrite k e))))
+    ;; 置いた task の申告(2026-11-12)は、それより前の file には無い(空として読む — 申告の無い置いた task は task_claims.claim-mib-of が数える)。
+    :claims (table-of (tuple (gfor #(k v) (.items (.get data "claims" {})) (TableWrite k (task-claim-from-json k v)))))
     :started-ms now))
 
 
