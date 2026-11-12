@@ -134,9 +134,12 @@
 
 (defclass [(dataclass :frozen True)] WarmEnv []
   "coordinator の温める表から受けた env 1 つ(heartbeat の返事の warm)。key = この worker の root のキー(env-<キー>)・
-   runtime-env = 宣言の JSON の文字列。worker は job の準備より低い優先度で準備する(準備済みなら何もしない)。"
+   runtime-env = 宣言の JSON の文字列・urgent = 行の急ぎの名乗り(送り手の宣言 — 真なら判断は root の待ちの子を、上に載る系の残す線を
+   外した jobs の層の空き WorldView.urgent-jobs-room で起こしてよいか判じる — warm_rules の warm-room-of)。worker は job の準備より低い
+   優先度で準備する(準備済みなら何もしない)。"
   (#^ str key)
-  (#^ str runtime-env))
+  (#^ str runtime-env)
+  (setv #^ bool urgent False))
 
 
 (defrecord ProgramUnfetched
@@ -189,6 +192,11 @@
   ;; task を入れ物 shim の冷えた道で起こす(入らない待ちの子は層の上限に当たって kernel の OOM kill で落ち、起こし直しの輪になった —
   ;; 2026-11-06 の node-d〜f)。None = 層が無い・見張りが上限を掛けない・まだ読めていない(空きで縛らない)。既定は None(模擬の環境)。
   (setv #^ (| int None) jobs-room None)
+  ;; 急ぎの jobs の層の空き = 上に載る系(会話のターン)の残す線を外して決めた受けの上限 − 同じ使い(byte — 見張りの jobs-intake-urgent。
+  ;; heartbeat が名乗る urgent-jobs-room と同じ数え方)。判断(warm_rules の warm-room-of)は、急ぎを名乗る温める行(WarmEnv の urgent)の
+  ;; root の待ちの子だけをこの空きで判じる。None = 線が層を縮めていない・見張りが上限を掛けない・まだ読めていない(jobs-room で判じる)。
+  ;; 既定は None(模擬の環境)。
+  (setv #^ (| int None) urgent-jobs-room None)
   ;; 機体の memory の訳で job の process が止められた記録(MemoryStops — 見張りの止めの訳と jobs の層の kernel の OOM kill の刻)。判断
   ;; (policy の plan-job)は終わった process を回収する時に止めた訳を決め(stop-reason-of)、状態の報告の訳に載せる。既定は空(見張りを
   ;; 持たない呼び手・模擬の環境)。

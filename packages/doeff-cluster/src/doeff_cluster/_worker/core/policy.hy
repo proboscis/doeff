@@ -39,6 +39,7 @@
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready warm-child-places mark-refusal
   warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys
+  urgent-warm-keys
   fork-candidate WarmStart warm-start])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
@@ -626,12 +627,14 @@
    (温める表は policy.warm-table-children が真の時だけ)と、service を分ける root(service-warm-keys)のうち READY の物。要る root と
    観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める
    材料 — fork-refusals)。jobs の層の空きは、同じ拍に先に起こした待ちの子の大きさを引いて次の root に渡す(warm_rules の
-   warm-child-roomless の taken — 2 つの root の待ちの子を 1 本分の空きに並べて起こさない)。"
+   warm-child-roomless の taken — 2 つの root の待ちの子を 1 本分の空きに並べて起こさない)。急ぎを名乗る温める行の root
+   (urgent-warm-keys)の待ちの子は、上に載る系の残す線を外した jobs の層の空きで判じる(warm_rules の warm-room-of の urgent)。"
   (val services (service-warm-keys desired policy))
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
                             (if policy.warm-table-children (tuple (gfor w warm w.key)) #())
                             (tuple services))))
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
+  (<- urgent frozenset (urgent-warm-keys (if policy.warm-table-children warm #())))
   (<- refusals dict (fork-refusals records))
   (var actions #())
   (var taken 0)
@@ -639,7 +642,7 @@
     (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm services))
     (val view (warm-child-of world key))
     (<- step tuple (warm-child-step now key launch view policy :refusal (.get refusals key)
-                                    :roomless (warm-child-roomless key view world policy :taken taken)))
+                                    :roomless (warm-child-roomless key view world policy :taken taken :urgent (in key urgent))))
     (when (any (gfor a step (isinstance a StartWarmChild)))
       (:= taken (+ taken (warm-child-size view policy))))
     (:= actions (+ actions step)))

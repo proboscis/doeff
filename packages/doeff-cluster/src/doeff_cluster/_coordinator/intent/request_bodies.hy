@@ -363,13 +363,15 @@
 
 (defwire WarmBody
   "POST /warm の本文: runtime-env = 温める実行環境の宣言・ttl-seconds = 行の期限・needs(と旧い requires)= 要る能力・holder = 頼み手
-   (None = 送り手)。中身の規則は warm_policy が読む。"
+   (None = 送り手)・urgent = 急ぎの名乗り(shared/intent/warm_model の WarmRuntimeEnv の urgent — 欄の無い本文は偽)。中身の規則は
+   warm_policy が読む。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ object runtime-env None)
   (setv #^ object ttl-seconds None)
   (setv #^ object needs None)
   (setv #^ object requires None)
-  (setv #^ (| str None) holder None))
+  (setv #^ (| str None) holder None)
+  (setv #^ bool urgent False))
 
 
 (defwire LegacyJobsBody

@@ -8,7 +8,7 @@
 ;;; 増えも添える(kernel が止めた子の終わりを回収する拍が、見張りの次の回より先に来ても訳を落とさない)。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom])
+(import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObserveUrgentJobsRoom])
 (import doeff_cluster._worker.protocol.eviction_line [jobs-oom-count])
 (import doeff_cluster._worker.intent.worker_model [MemoryStops])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
@@ -34,4 +34,10 @@
     (val eviction cell.eviction)
     (resume (if (or (is eviction.jobs-intake None) (is eviction.jobs-held None))
                 None
-                (- eviction.jobs-intake eviction.jobs-held)))))
+                (- eviction.jobs-intake eviction.jobs-held))))
+  (ObserveUrgentJobsRoom []
+    ;; 線が jobs の層を縮めていない回(jobs-intake-urgent が None — heartbeat も urgent-jobs-room を名乗らない)・使いを読めなかった回は None。
+    (val eviction cell.eviction)
+    (resume (if (or (is eviction.jobs-intake-urgent None) (is eviction.jobs-held None))
+                None
+                (- eviction.jobs-intake-urgent eviction.jobs-held)))))

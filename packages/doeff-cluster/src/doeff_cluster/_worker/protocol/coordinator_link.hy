@@ -415,16 +415,14 @@
 (defk accepted-warm [state rows]
   {:pre [(: state LinkState) (: rows list)] :post [(: % tuple)]}
   "heartbeat の返事の温める表の行 → この worker の root のキーの WarmEnv(キーは行ごとに 1 度だけ計算する — 計算は warm-env-of-row、
-   sim の宿と同じ関数)。"
+   sim の宿と同じ関数。急ぎの名乗りは行の今の値で、返事ごとに写し直す)。"
   (if (not state.handles-envs)
       #()
-      (do (val out [])
-          (for [row rows]
-            (val text (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False))
+      (do (val texts (tuple (gfor row rows (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False))))
+          (for [#(row text) (zip rows texts)]
             (when (not-in text state.warm-keys)
-              (setv (get state.warm-keys text) (warm-env-of-row row (current-platform))))
-            (.append out (get state.warm-keys text)))
-          (tuple out))))
+              (setv (get state.warm-keys text) (warm-env-of-row row (current-platform)))))
+          (tuple (gfor #(row text) (zip rows texts) (replace (get state.warm-keys text) :urgent (is (.get row "urgent") True)))))))
 
 
 (defk ready-file-written [life]

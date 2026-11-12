@@ -63,14 +63,18 @@
 
 (defclass [(dataclass :frozen True)] WarmRuntimeEnv [EffectBase]
   "env を needs の合う worker で温めるよう頼む(needs = 要る能力の名の frozenset・同じ env と needs の組は同じ行 — 頼み直すと期限だけ延びる)。
-   ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)。
+   ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)・urgent = 急ぎの名乗り
+   (送り手の宣言 — 真なら、worker は行の root の待ちの子を、上に載る系の残す線を外した jobs の層の空きで起こしてよいか判じる。
+   置き先が優先 KEEP-NOW-PRIORITY 以上の task を線を外した空きで数えるのと同じ組 — 急ぎの task を送る送り手が、その task の root を
+   温める時に名乗る。意味〔なぜ急ぐか〕は送り手が持ち、ここは業務の語を持たない)。
    答え = WarmAnswer(WarmState か、coordinator に届かなかった WarmUnreachable)。"
   (#^ RuntimeEnv env)
   (#^ (get frozenset str) needs)
   (#^ float ttl-seconds)
   ;; needs の検め(空・旧い形)は型の外 — 作り手は構築関数 doeff_cluster._shared.core.warm_rules.warm-runtime-env を通す
   ;; (intent は core を読まない・#2564)。
-  (#^ str holder))
+  (#^ str holder)
+  (setv #^ bool urgent False))
 
 
 (defclass [(dataclass :frozen True)] ReadWarmState [EffectBase]

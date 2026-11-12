@@ -188,12 +188,17 @@
 (defclass [(dataclass :frozen True)] WarmEntry []
   "温める表の行 1 つ(2026-09-26・WarmRuntimeEnv)。key = 宣言(platform を含まない)と needs の組のキー・runtime-env = 宣言の JSON・
    needs = 準備してほしい worker に要る能力・until-ms = 期限(過ぎた行は調停が消す)・holder = 頼んだ主体(記録と表示だけ)。
-   能力の合う worker は heartbeat の返事で行を受け取り、job の準備より低い優先度で準備する。行の期限の内は掃除がその root を消さない。"
+   能力の合う worker は heartbeat の返事で行を受け取り、job の準備より低い優先度で準備する。行の期限の内は掃除がその root を消さない。
+   urgent-until-ms = 急ぎの名乗りの期限(2026-11-12 — 急ぎを名乗った最後の頼みの期限。この刻までは行を急ぎとして配る〔WarmOffer の
+   urgent〕・0 = 名乗られていない)。行のキーは宣言と needs の組で、急ぎの名乗りを含まない — 同じ root を急ぎの送り手と平常の送り手が
+   頼んでも行は 1 つで、平常の頼み直しは急ぎを消さず、急ぎの送り手が頼みを止めれば期限で平常へ戻る(名乗りは行の今の属性なので、別の
+   表や追記の列にしない)。"
   (#^ str key)
   (#^ (get dict #(str object)) runtime-env)
   (#^ (get tuple #(str ...)) needs)
   (#^ int until-ms)
-  (#^ str holder))
+  (#^ str holder)
+  (setv #^ int urgent-until-ms 0))
 
 
 (defrecord ProgramRow
@@ -1481,9 +1486,11 @@
 
 
 (defrecord WarmOffer
-  "heartbeat の返事で worker へ配る温める表の行 1 つ(cluster_policy.warms-for): key = 行のキー・runtime-env = 宣言の JSON。"
+  "heartbeat の返事で worker へ配る温める表の行 1 つ(cluster_policy.warms-for): key = 行のキー・runtime-env = 宣言の JSON・urgent = 行が
+   急ぎの名乗りの期限の内か(WarmEntry の urgent-until-ms — worker は真の行の root の待ちの子を、線を外した jobs の層の空きで判じる)。"
   (#^ str key)
-  (#^ (get dict #(str object)) runtime-env))
+  (#^ (get dict #(str object)) runtime-env)
+  (setv #^ bool urgent False))
 
 
 (defrecord HeartbeatReply

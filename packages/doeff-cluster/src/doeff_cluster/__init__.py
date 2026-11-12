@@ -864,6 +864,7 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.protocol.observations import ObserveEnvs as ObserveEnvs
     from doeff_cluster._worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
     from doeff_cluster._worker.protocol.observations import ObserveJobsRoom as ObserveJobsRoom
+    from doeff_cluster._worker.protocol.observations import ObserveUrgentJobsRoom as ObserveUrgentJobsRoom
     from doeff_cluster._worker.protocol.observations import ObserveLeaving as ObserveLeaving
     from doeff_cluster._worker.protocol.observations import ObserveMemoryKills as ObserveMemoryKills
     from doeff_cluster._worker.protocol.observations import ObserveMemoryStops as ObserveMemoryStops
@@ -1282,6 +1283,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ObserveEnvs": "doeff_cluster._worker.protocol.observations",
     "ObserveJobRoots": "doeff_cluster._worker.protocol.observations",
     "ObserveJobsRoom": "doeff_cluster._worker.protocol.observations",
+    "ObserveUrgentJobsRoom": "doeff_cluster._worker.protocol.observations",
     "ObserveLeaving": "doeff_cluster._worker.protocol.observations",
     "ObserveMemoryKills": "doeff_cluster._worker.protocol.observations",
     "ObserveMemoryStops": "doeff_cluster._worker.protocol.observations",
