@@ -27,7 +27,7 @@
 ;; ---------------------------------------------------------------------------
 
 (import os.path)
-(import doeff-hy._quoted-forms [packed-text])
+(import doeff-hy._quoted-forms [packed-text :as _packed-text])
 (import dataclasses [dataclass])
 (import importlib)
 (import inspect)
@@ -796,7 +796,7 @@ defk {name}: :post type annotation cannot be an empty string.
    every importing process holds it for its whole life (the same note)."
   `(do
      (import doeff-hy._quoted-forms [QuotedForms :as _doeff-QuotedForms])
-     (_doeff-QuotedForms ~(hy.models.Bytes (packed-text (hy.repr (hy.models.List forms)))))))
+     (_doeff-QuotedForms ~(hy.models.Bytes (_packed-text (hy.repr (hy.models.List forms)))))))
 
 (defn _result-symbol [origin]
   "`_contract_result`, which points at the result of the body. The position is taken from the last expression (so that the red of `return` and of the return type
