@@ -36,6 +36,10 @@ class Helped(EffectBase):
 
 class Planned(EffectBase):
     pass
+
+
+class Inline(EffectBase):
+    pass
 """
 
 PROGRAMS_PY = """\
@@ -43,7 +47,7 @@ from doeff import do
 from doeff_core_effects import Spawn
 from doeff_stream import Answered, Finish, Next, Run, fold
 
-from {pkg}.effects import Helped, Planned, Tick, Work
+from {pkg}.effects import Helped, Inline, Planned, Tick, Work
 
 
 @do
@@ -61,7 +65,7 @@ def step(state, event):
         case Answered():
             return Next(state, (Finish(state),))
         case _:
-            return Next(state + 1, (Run("work", work()), Run("tick", Tick())))
+            return Next(state + 1, (Run("work", work()), Run("tick", Tick()), Run("inline", Inline(), inline=True)))
 
 
 def _planned_runs(state):
@@ -131,7 +135,8 @@ def test_the_programs_of_the_runs_a_step_builds_are_spawned_where_the_fold_is_pe
 ) -> None:
     left = analyze_program(f"{pkg}.programs:folds").residual_with(SPAWN)
 
-    assert {"Work", "Tick"} <= _short(left.effect_names)
+    # An inline Run is read the same: the fold takes its program out in a case of its own.
+    assert {"Work", "Tick", "Inline"} <= _short(left.effect_names)
     assert left.unresolved == ()
 
 
@@ -139,7 +144,7 @@ def test_the_runs_are_carried_by_spawn_and_not_performed_by_the_fold_itself(pkg:
     # The counter-case: with Spawn's carried Programs not folded in, the runs' effects do not leave.
     left = analyze_program(f"{pkg}.programs:folds").residual
 
-    assert not {"Work", "Tick"} & _short(left.effect_names)
+    assert not {"Work", "Tick", "Inline"} & _short(left.effect_names)
 
 
 def test_runs_built_in_the_functions_the_step_calls_are_read_too(pkg: str) -> None:

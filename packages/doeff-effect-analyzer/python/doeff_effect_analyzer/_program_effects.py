@@ -2549,12 +2549,16 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
         for name in row_times
         if name not in assigned and name not in loops and name not in times
     }
-    # A name one pattern captures, bound nowhere else, holds the field that pattern takes.
-    captured_times = collections.Counter(name for name, _ in captures)
+    # A name bound nowhere else, which every pattern capturing it takes out of the same field of the
+    # same class (``case Run(program=program, inline=True)`` and ``case Run(program=program)`` in
+    # two cases), holds that field.
+    taken: dict[str, set[tuple[str, str | int]]] = {}
+    for name, captured in captures:
+        taken.setdefault(name, set()).add((ast.dump(captured.cls), captured.field))
     patterns = {
         name: captured
         for name, captured in captures
-        if captured_times[name] == 1 and name not in names and name not in rebound
+        if len(taken[name]) == 1 and name not in names and name not in rebound
     }
     return _BodyFacts(
         names=frozenset(names),
