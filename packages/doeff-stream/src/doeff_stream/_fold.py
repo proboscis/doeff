@@ -6,6 +6,11 @@ starts one task, the runner: it runs the program and publishes how it ended — 
 run is an input, whichever way it ended, and the fold itself never waits for a run's answer: it only waits for the
 next input.
 
+A ``Run(…, inline=True)`` starts no task: the fold yields its program in its own task where it carries out the effect,
+and gives the step its end (``Answered`` / ``Raised``) as the next input, before any input queued on the bus. While it
+runs the fold takes no input. A step that holds its inputs while a run is running (its runs go one at a time) saves the
+task, the publish and the bus trip of every run this way.
+
 A ``CancelRun`` cancels the runner and starts a watcher, which the fold never cancels: a runner cancelled before it
 started, or cancelled again at its publish, publishes nothing, and its watcher publishes its end. A runner that did
 publish ends cancelled too (a cancelled task ends cancelled even when it returns), so its watcher publishes a second
@@ -104,6 +109,18 @@ def _reported(
     else:
         end = Answered(key, value)
     yield Publish(RunEnded(origin, mark, key, end))
+
+
+@do
+def _inline(key: Hashable, program: "Program[object]") -> Generator[Any, Any, RunEnd]:
+    """Run the inline ``program`` in the fold's task and answer how it ended, as the input the step is given. Every
+    exception it raises is its ``Raised`` end, like a runner's (a ``TaskCancelledError`` of the fold's own cancel too:
+    the fold's next wait raises the cancel again)."""
+    try:
+        value = yield program
+    except Exception as error:  # every way the program fails is one end
+        return Raised(key, error)
+    return Answered(key, value)
 
 
 @do
@@ -253,24 +270,31 @@ def fold(
     running: dict[Hashable, _Running] = {}
     # The tags of the step's deadlines set and not yet fired or disarmed: the fold disarms them when it ends.
     armed: set[Hashable] = set()
+    # The ends of the inline runs carried out and not given to the step yet: they go before any input on the bus.
+    inline_ends: list[RunEnd] = []
     state = initial
     measured: bool = yield caller_measures()
     try:
         while True:
-            event = yield WaitForEvent(*inputs.event_types)
-            event = _own_input(event, origin, running, armed)
-            if event is _FOREIGN:
-                continue
+            if inline_ends:
+                event = inline_ends.pop(0)
+            else:
+                event = yield WaitForEvent(*inputs.event_types)
+                event = _own_input(event, origin, running, armed)
+                if event is _FOREIGN:
+                    continue
             clock = (yield _start_clock(inputs)) if measured else None
             answer = step(state, event)
             if is_program_answer(answer):
                 answer = yield step_answer(step, answer)
-            answer = checked_next(answer, frozenset(running))
+            answer = checked_next(answer, frozenset(running) | {end.key for end in inline_ends})
             step_seconds = (yield GetMonotonic()) - clock.began if clock is not None else 0.0
             state = answer.state
             finish: Finish[A] | None = None
             for effect in answer.effects:
                 match effect:
+                    case Run(key=key, program=program, inline=True):
+                        inline_ends.append((yield _inline(key, program)))
                     case Run(key=key, program=program, priority=priority):
                         mark = object()
                         runner = yield Spawn(
