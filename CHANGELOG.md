@@ -4,6 +4,12 @@
 
 ### Added
 
+- **doeff-hy, doeff-hy-pytest:** test tiers. `deftest` takes `:tier` (`"small"`, `"medium"` or `"large"`) and marks the
+  test `tier_<tier>`; any other value is refused at expansion. The plugin gives every test a tier: its own tier mark,
+  else the tier its marks map to in the ini setting `doeff_tier_by_marker` (e.g. `real_world=medium`), else
+  `doeff_tier_default` (`small`), so a repo whose tests already carry marks gets every tier without rewriting a test.
+  `pytest --doeff-tier small` runs only the small tests. A small test whose call phase starts a child process, uses a
+  network socket or runs over `doeff_tier_small_seconds` (60) is listed at the end of the run; the list is report only.
 - **doeff-core-effects:** `shielded(program)` runs `program` without being cancelled — the cleanup of a cancelled
   task that has to wait (see the cancellation entry under Changed). With no scheduler in scope nothing can cancel the
   program, so it just runs. It is a program helper exported from the import root (ADR-DOE-API-001 R18).
