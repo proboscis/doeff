@@ -46,8 +46,8 @@
 ;;; pss-process-limit 本を越える job(shim に引き取られた孤児の群れ)は読まない(None)。読みの答えは入れ物 eviction に置き、heartbeat の
 ;;; 測りが名乗る — coordinator の GET /state の worker の行から、測りの task を置かずにどの worker の job も読める。
 ;;; 要りの越えの止め(OVER-NEED-KILL-LOG): 上に載る系が残す線(worker/core/eviction_rules の頭の註)を機体の MemAvailable が割った回は、
-;;; 様子に依らず、要りを越えて伸びた task だけを越えの大きい順に、割った量に届くまで止める(over-need-stopped)。jobs の層の上限はこの線では
-;;; 使い + 置いた task の取り置きより下げないので、要りの内で走る task は止まらない。
+;;; 様子に依らず、名乗った要りを越えて伸びた task だけを越えの大きい順に、割った量に届くまで止める(over-need-stopped)。jobs の層の
+;;; memory.max はこの線では絞らないので、要りの内で走る task・要りを名乗らずに置かれた task・実行環境の準備は、線を割っても止まらない。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -409,8 +409,9 @@
 (defk over-need-stopped [settings cell reading units now-ms]
   {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: units tuple) (: now-ms int)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
-  "機体の MemAvailable が上に載る系の残す線を割った回に、要りを越えて伸びた task だけを、越えの大きい順に割った量に届くまで SIGKILL で
-   止めるため(頭の註の要りの越えの止め・worker/core/eviction_rules の over-need-tasks)。要りの内で走る task は止めない — 線を割った訳が
+  "機体の MemAvailable が上に載る系の残す線を割った回に、名乗った要りを越えて伸びた task だけを、越えの大きい順に割った量に届くまで SIGKILL で
+   止めるため(頭の註の要りの越えの止め・worker/core/eviction_rules の over-need-tasks)。要りの内で走る task と、要りを名乗らずに置かれた
+   task は止めない — 線を割った訳が
    jobs の層の外なら、新しい受けの上限が絞られるだけ。線の無い・古い回・guard が偽・止めの間隔の内は止めない。止めた task の根に訳つきの
    印を残し、1 本ごとに 1 行言う。"
   (when (not settings.guard)

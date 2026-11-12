@@ -69,7 +69,7 @@
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   clis-lend-limit clis-reclaim
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
-                                                  kept-jobs-limit urgent-jobs CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold writing-elder-of])
+                                                  CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold writing-elder-of])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
 (import doeff_cluster._worker.core.load_rules [keep-line-of])
 
@@ -588,8 +588,9 @@
   "jobs の層の memory.max を今の線から掛け直すため(頭の註): 線が在れば jobs の今の使い + 空き − 余裕 − 準備の取り置き − clis への貸し
    (上限は宣言の静的な値・天井を宣言した機体の container の中の空きを読めた回は天井 — 測った余裕の宣言の床を越えた分と clis への貸しでは、
    使い + 置いた task の取り置きより下げない・worker/core/eviction_rules の jobs-limit)、線が無ければ宣言の静的な値。同じ回に新しい受けに名乗る上限(cell.jobs-intake)も決める。線が在る回は
-   keeper の読む準備の空きも書く。jobs の層の上限と新しい受けの上限だけは、heartbeat の測りが新しい「MemAvailable − 上に載る系が残す線」を
-   読めていれば、その線の上にも収める(worker/core/eviction_rules の kept-line — clis の層と keeper の空きは追い出しの線のまま)。jobs の層が
+   keeper の読む準備の空きも書く。新しい受けの上限だけは、heartbeat の測りが新しい「MemAvailable − 上に載る系が残す線」を
+   読めていれば、その線の上にも収める(worker/core/eviction_rules の kept-line — jobs の層の memory.max と clis の層と keeper の空きは追い出しの
+   線のまま: 線を割っても、取り置きを持たない process〔実行環境の準備・名の無い子〕を層の中で OOM kill させない)。jobs の層が
    無い・guard が偽・上限なしで線も無い時は書かない。上限を jobs の使いより下げた続きの頭で 1 行言う。"
   (setv cell.jobs-dir settings.jobs-dir)
   (when (or (is settings.jobs-dir None) (not guard))
@@ -650,7 +651,6 @@
   ;; slab_reclaimable が空きを塞いだ(同じ node-c の 15:1x JST — task 0 本の層の working set 4212 MiB のうち slab_reclaimable 1070 MiB)。
   (var limit settings.jobs-cap-bytes)
   (var intake settings.jobs-cap-bytes)
-  (var jobs-line line)
   (var urgent None)
   (var lend None)
   ;; jobs の層の天井(worker/core/eviction_rules の頭の註): 宣言した機体は、container の中の空きを読めた回だけ宣言の静的な値の代わりに天井で
@@ -659,31 +659,25 @@
   (val cap (if (and boxed? (is-not settings.jobs-ceiling-bytes None)) settings.jobs-ceiling-bytes settings.jobs-cap-bytes))
   (when (and (is-not line None) (is-not current None))
     (val floor-margin (min margin settings.margin-bytes))
-    ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 名乗りより伸びた task は線を割る前に kernel が jobs の層の中で止める。
-    ;; ただしこの線では使い + 置いた task の取り置きより下げない(kept-jobs-limit — 要りの内で走る task を kernel に止めさせない)。
+    ;; 上に載る系が残す線(worker/core/eviction_rules の頭の註): 新しい受けに名乗る上限だけを線の上に収める。memory.max は追い出しの線だけで
+    ;; 数える — 線で絞ると、線を割っている間は層の余地が置いた task の取り置きだけになり、取り置きを持たない process(実行環境の準備・
+    ;; 名の無い子)を kernel が層の中で OOM kill した。名乗った要りを越えて伸びた task は、見張りが名指して止める(memory_watch)。
     (<- keep-room (| int None) (fresh-keep-room cell.keep-room cell.keep-room-at-ms now-ms))
     (<- kept EvictionLine (kept-line line keep-room))
     (<- evicted int (jobs-limit current line margin floor-margin cap (+ reserve lent) pending))
-    (<- narrowed int (jobs-limit current kept margin floor-margin cap (+ reserve lent) pending))
-    ;; 急ぎの task が居る間は線 KEEP で絞らない(置き先が線 KEEP を外した空きで置いた task を、層の上限で止めない)。
-    (<- urgent-placed frozenset (urgent-jobs cell.needs))
-    (<- found int (kept-jobs-limit evicted narrowed current pending (bool urgent-placed)))
-    ;; log の線の種類は、上限を決めた線(追い出しの線で決まった回は追い出しの線)。
-    (when (< found evicted)
-      (:= jobs-line kept))
     (<- told int (jobs-limit working kept margin margin cap (+ reserve lent waiting) 0))
-    ;; 急ぎの task の受け(worker/core/load_rules の頭の註の急ぎの task の空き): 同じ式を追い出しの線だけで数える。線が jobs の層を
-    ;; 縮めていない回は名乗らない(None — 置き先は平常の受けで数える)。置いた後の memory.max は kept-jobs-limit が取り置きまで広げる。
+    ;; 急ぎの task の受け(worker/core/load_rules の頭の註の急ぎの task の空き): 同じ式を追い出しの線だけで数える。線が新しい受けを
+    ;; 縮めていない回は名乗らない(None — 置き先は平常の受けで数える)。置いた後の memory.max は追い出しの線の上限のまま。
     (<- told-urgent int (jobs-limit working line margin margin cap (+ reserve lent waiting) 0))
     (:= urgent (if (< told told-urgent) (min evicted told-urgent) None))
     ;; 借りの受け(worker/core/load_rules の頭の註の線の内の貸し): 同じ式を貸す下の線で数える(下の線の方が低いので受けは広がる)。
-    ;; 貸さない回は名乗らない。置いた後の memory.max は、急ぎの task と同じく kept-jobs-limit が取り置きまで広げる。
+    ;; 貸さない回は名乗らない。置いた後の memory.max は、急ぎの task と同じく追い出しの線の上限のまま。
     (<- lend-room (| int None) (fresh-keep-room cell.lend-room cell.lend-room-at-ms now-ms))
     (when (is-not lend-room None)
       (<- lend-line EvictionLine (kept-line line lend-room))
       (<- told-lend int (jobs-limit working lend-line margin margin cap (+ reserve lent waiting) 0))
       (:= lend (if (< told told-lend) (min evicted told-lend) None)))
-    (:= limit found)
+    (:= limit evicted)
     (:= intake told)
     (when boxed?
       (<- boxed int (jobs-box-limit current cell.box (- margin floor-margin) cell.clis-limit cell.clis-current pending))
@@ -717,8 +711,8 @@
               cell.jobs-intake-lend lend)))
   (val squeezed (and (is-not line None) (is-not current None) (is-not limit None) (not failure) (< limit current)))
   (when (and squeezed (not cell.squeezed))
-    (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line jobs-line.kind.value :line-mib (// jobs-line.size-bytes MIB)
-              :room-mib (// jobs-line.room-bytes MIB) :margin-mib (// margin MIB) :floor-margin-mib (// settings.margin-bytes MIB)
+    (<- (slog JOBS-SQUEEZE-LOG :level "warning" :line line.kind.value :line-mib (// line.size-bytes MIB)
+              :room-mib (// line.room-bytes MIB) :margin-mib (// margin MIB) :floor-margin-mib (// settings.margin-bytes MIB)
               :prepare-reserve-mib (// reserve MIB) :clis-lent-mib (// lent MIB) :pending-mib (// pending MIB)
               :jobs-current-mib (// current MIB) :jobs-limit-mib (// limit MIB))))
   (setv cell.squeezed squeezed)

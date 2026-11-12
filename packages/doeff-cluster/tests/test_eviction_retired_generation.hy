@@ -4,8 +4,11 @@
 ;; 残り、その見張りが新しい世代と同じ jobs の層の memory.max を書き続けた。前の世代は置き先が新しい世代に置いた task の要りを heartbeat の
 ;; 返事で受けないので取り置きを 0 と数え、上に載る系が残す線を割った回に上限を jobs の今の使いまで(実例では 0 まで)下げた。新しい世代に
 ;; 置いた要り 6144 MiB の task の実行環境の準備が、jobs の層の上限で終了 -9 に止まり続けた。
+;; 2026-11-12 から、上に載る系が残す線は jobs の層の memory.max を絞らない(worker/core/eviction_rules の頭の註)。2 つの世代の数える上限が
+;; 違うのは、測った余裕が違う時: 前の世代は何時間も測った外の増えから余裕を宣言の床より上げていて、起きたばかりの新しい世代は床のまま。
+;; この検の台本はその形(前の世代の余裕 3072 MiB・新しい世代 1024 MiB)で、線を割った読み(KEEP-ROOM)は両方に渡したまま。
 ;;   - worker の読み(worker/protocol/eviction_line の eviction-noted): 同じ模擬の cgroup の file の上で 2 つの世代の見張りを交互に回す。
-;;     新しい世代は置いた task の取り置きまで上限を残し、keeper が印 draining を置いた前の世代は書かない — 最後の値は新しい世代の値。
+;;     新しい世代の上限は置いた task の使い + 取り置きより上で、keeper が印 draining を置いた前の世代は書かない — 最後の値は新しい世代の値。
 ;;     印の無い間は前の世代だけが書き(新しい世代は前の世代が居る間は書かない — 世代の書き手)、2 つの世代が交互に書く回が無い。
 ;;     印を読まない前の形は、前の世代の書きが取り置きより下の値で新しい世代の上限を上書きする(失敗ケース)。
 ;;   - 印の path(deploy/boot.sh の keeper_retire が置く所と、世代へ渡す DOEFF_WORKER_RETIRED_FILE)が揃う事は
@@ -20,7 +23,8 @@
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster._worker.core.memory_rules [JobUse MIB])
-(import doeff_cluster._worker.core.eviction_rules [layer-memory-max task-needs-of writing-elder-of])
+(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-MIN-SAMPLES layer-memory-max task-needs-of
+                                                  writing-elder-of])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted RETIRED-LOG ELDER-WRITES-LOG])
 
 (val GIB (* 1024 MIB))
@@ -48,6 +52,12 @@
 (val NEED-MIB 6144)
 (val TASK-USE (* 512 MIB))
 (val PENDING (- (* NEED-MIB MIB) TASK-USE))
+;; 追い出しまでの空き(allocatable の線)と、2 つの世代の数える上限。前の世代は外の増え 1536 MiB/回を MARGIN-MIN-SAMPLES 回測っていて
+;; 余裕は 2 回分の 3072 MiB — 上限は新しい世代に置いた task の使い + 取り置きより下。新しい世代は宣言の床 1024 MiB。
+(val ROOM (- ALLOCATABLE PODS-USED))
+(val ELDER-GROWTH (* 1536 MIB))
+(val ELDER-LIMIT (+ JOBS-USED (- ROOM (* 2 ELDER-GROWTH))))
+(val NEWER-LIMIT (+ JOBS-USED (- ROOM EVICTION-MARGIN-BYTES)))
 (val STAT "anon {}\nfile 0\ninactive_file 0\n")
 
 
@@ -111,9 +121,11 @@
 
 (defk elder-cell []
   {:pre [] :post [(: % EvictionCell)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "前の世代の入れ物を作るため: drain された後は heartbeat の返事を受けず、置いた task の要りを知らない(退いた handoff の process だけ)。"
+  "前の世代の入れ物を作るため: drain された後は heartbeat の返事を受けず、置いた task の要りを知らない(退いた handoff の process だけ)。
+   起きてから長く、外の増えを測って余裕を宣言の床より上げている。"
   (val cell (EvictionCell))
-  (setv cell.uses #((JobUse :job "handoff/retired-4" :pid 10 :bytes (* 256 MIB) :processes 1)))
+  (setv cell.uses #((JobUse :job "handoff/retired-4" :pid 10 :bytes (* 256 MIB) :processes 1))
+        cell.growths (* #(ELDER-GROWTH) MARGIN-MIN-SAMPLES))
   cell)
 
 
@@ -163,14 +175,15 @@
   (val before (get answer 0))
   (val after (get answer 1))
   (val names (get answer 2))
-  ;; 新しい世代の見張りは、上に載る系が残す線を割った回も置いた task の取り置きまで jobs の層を残す(kept-jobs-limit)。
+  ;; 新しい世代の見張りは、上に載る系が残す線を割った回も追い出しの線だけで上限を数え、置いた task の使い + 取り置きより上に残す。
   (assert (= young.pending PENDING) (// young.pending MIB))
-  (assert (= young.jobs-limit (+ JOBS-USED PENDING)) (// young.jobs-limit MIB))
-  ;; 印の無い間は前の世代が書き手で、新しい世代は書かない — 前の世代の数えた値(取り置き 0 の jobs の今の使い)が残る。
+  (assert (= young.jobs-limit NEWER-LIMIT) (// young.jobs-limit MIB))
+  (assert (>= NEWER-LIMIT (+ JOBS-USED PENDING)) (// NEWER-LIMIT MIB))
+  ;; 印の無い間は前の世代が書き手で、新しい世代は書かない — 前の世代の数えた値(取り置き 0・上げた余裕で数えた上限)が残る。
   (assert (< (int before) (+ JOBS-USED PENDING)) (// (int before) MIB))
-  (assert (= (int before) JOBS-USED) (// (int before) MIB))
+  (assert (= (int before) ELDER-LIMIT) (// (int before) MIB))
   ;; keeper が印を置いた後は、前の世代は書かず、新しい世代の上限が残る。前の世代は線を数え続け(log と測りのため)、退きを 1 度だけ言う。
-  (assert (= (int after) (+ JOBS-USED PENDING)) (// (int after) MIB))
+  (assert (= (int after) NEWER-LIMIT) (// (int after) MIB))
   (assert old.retired)
   (assert (not young.retired))
   (assert (is-not old.line None))
@@ -180,8 +193,8 @@
 
 
 (deftest test-the-old-shape-without-the-mark-lets-the-elder-overwrite-the-newer-limit
-  ;; 失敗ケース: 印を読まない前の形(retired-file None)では、keeper が印を置いた後も前の世代が書き続け、最後の値は新しい世代の取り置き
-  ;; より下(jobs の今の使い)。
+  ;; 失敗ケース: 印を読まない前の形(retired-file None)では、keeper が印を置いた後も前の世代が書き続け、最後の値は新しい世代に置いた
+  ;; task の使い + 取り置きより下(前の世代の数えた上限)。
   (<- newer EvictionSettings (settings-of None))
   (<- elder EvictionSettings (settings-of None))
   (<- young EvictionCell (newer-cell))
@@ -189,7 +202,8 @@
   (<- answer tuple (run-world newer elder young old))
   (val after (get answer 1))
   (val names (get answer 2))
-  (assert (< (int after) (+ JOBS-USED PENDING)) (// (int after) MIB))
+  (assert (= (int after) ELDER-LIMIT) (// (int after) MIB))
+  (assert (< ELDER-LIMIT (+ JOBS-USED PENDING)) (// ELDER-LIMIT MIB))
   (assert (not old.retired))
   (assert (not-in RETIRED-LOG names) names))
 
@@ -242,7 +256,7 @@
 
 (deftest test-only-one-generation-writes-the-jobs-layer-across-the-switch
   ;; 実例(2026-11-10): 2 つの世代の見張りが同じ jobs の層の memory.max を 5 秒ごとに書き合い、上限が新しい世代の値と前の世代の縮めの値
-  ;; (0 も)の間を行き来した。前の世代にも置いた task が在る(要り 2048 MiB・使い 256 MiB)ので、2 つの世代の数える上限は違う。
+  ;; (0 も)の間を行き来した。前の世代にも置いた task が在る(要り 2048 MiB・使い 256 MiB — 取り置きは上げた余裕で数えた空きの内)。
   (<- newer EvictionSettings (settings-of NEWER-MARK))
   (<- elder EvictionSettings (settings-of ELDER-MARK))
   (<- young EvictionCell (newer-cell))
@@ -254,12 +268,10 @@
                                    (jobs-writes-kept)]
                      (switch-ticked newer elder young old)))
   (val writers (tuple (gfor #(who _) (get answer 0) who)))
-  (val elder-limit (+ JOBS-USED (* 1792 MIB)))
-  (val newer-limit (+ JOBS-USED PENDING))
   ;; 印の前の 3 回は前の世代だけ、印の後の 3 回は新しい世代だけが書く — 書き手は 1 度だけ替わり、交互に書く回が無い。
   (assert (= writers #("elder" "elder" "elder" "newer" "newer" "newer")) (get answer 0))
-  (assert (= (tuple (gfor #(who limit) (get answer 0) :if (= who "elder") limit)) #(elder-limit elder-limit elder-limit)) (get answer 0))
-  (assert (= (get answer 1) newer-limit) (// (get answer 1) MIB))
+  (assert (= (tuple (gfor #(who limit) (get answer 0) :if (= who "elder") limit)) #(ELDER-LIMIT ELDER-LIMIT ELDER-LIMIT)) (get answer 0))
+  (assert (= (get answer 1) NEWER-LIMIT) (// (get answer 1) MIB))
   (assert (is young.elder None))
   (assert young.elder-gone))
 

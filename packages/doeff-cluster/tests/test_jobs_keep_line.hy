@@ -5,14 +5,20 @@
 ;; に在ったのに、上限は jobs の層だけを縮めて使いより下(多くは 0)にし、kernel は伸びた task でなく層の中の全部の task を OOM kill で
 ;; 止めた(要り 1024 MiB・山 128 MiB の task を含む 13 本が、縮めの 1〜10 秒後に SIGKILL。lost の訳は「子 process が結果を書かずに
 ;; 終わった」だけ)。
-;;   - 判断(worker/core/eviction_rules): 線 KEEP の上限は「jobs の今の使い + 置いた task の取り置き」より下げない(kept-jobs-limit — 追い出しの
-;;     線の縮めは今のまま)。線を割った量に届くまで、要りを越えた task だけを越えの大きい順に選ぶ(over-need-tasks)。
+;;   - 判断(worker/core/eviction_rules): 線 KEEP は jobs の層の memory.max に使わない(追い出しの線の縮めは今のまま)。線を割った量に届くまで、
+;;     名乗った要りを越えた task だけを越えの大きい順に選ぶ(over-need-tasks — 要りを名乗らずに置かれた task は選ばない)。
+;;
+;; 失敗ケース(2026-11-12 11:05〜11:38 UTC の node-h): 上限を「jobs の今の使い + 置いた task の取り置き」で止めた形では、MemAvailable が線の
+;; 前後に張りつく間、取り置きを持たない process の余地が 0 だった。実行環境の準備の process は層の中で OOM kill され続け(置いた task 0 本・
+;; 層の memory.current 557 MiB = memory.max 557 MiB・oom_kill 282)、置き先が空きを待たせずに置いた task(要りを名乗れない)は、使い 1043 MiB で
+;; 見込みの要り 1024 MiB を越えたとして見張りに止められた。
 ;;   - 模擬の機体(node-a の Node の大きさ): 本物の見張りを仮想時計の下で回す。jobs の層に task 2 本(a = 要り 4 GiB・使い 3 GiB で落ち着く、
 ;;     b = 要り 1 GiB)。模擬の kernel は jobs の層の使いが見張りの書いた memory.max を越えると、層の中のいちばん大きい task を止める(本物の
 ;;     kernel の層の OOM kill と同じ選び — 伸びた task とは限らない)。
 ;;       jobs の層の外が伸びて MemAvailable が線を割る: どの task も止まらず、jobs の層の上限は使いより下がらず、新しい受けの上限は使いを
 ;;       越えない(新しい task を置かない)。
 ;;       b が要りを越えて伸びて MemAvailable が線を割る: 見張りが b だけを止め、a は走り続ける。止めた訳は止めた印に残る。
+;;       線を割った後に、要りを名乗らない b と task でない準備の process が伸びる: どれも止まらず、jobs の層の上限は使いの上に余地を残す。
 ;;   - 止めた訳(worker/core/policy の stop-reason-of): 見張りの止めの訳と、process の走る間に jobs の層の oom_kill が増えて SIGKILL で終わった
 ;;     時の kernel の止めの訳が、回収の action と状態の報告の訳(task の終わりは coordinator の lost の訳)に載る。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
@@ -34,7 +40,8 @@
         doeff_cluster._worker.intent.worker_model [Outcome])
 (import doeff_cluster [plan records-after statuses])
 (import doeff_cluster._worker.core.memory_rules [JobRoot JobUse MIB])
-(import doeff_cluster._worker.core.eviction_rules [TaskNeed TaskOver kept-jobs-limit over-need-tasks layer-memory-max])
+(import doeff_cluster._worker.core.eviction_rules [TaskNeed TaskOver UNDECLARED-NEED-BYTES over-need-tasks task-needs-of placed-pending
+                                                  layer-memory-max])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell jobs-oom-noted])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop OVER-NEED-KILL-LOG])
 
@@ -59,26 +66,21 @@
 
 ;; --- 判断 ---------------------------------------------------------------------------------------------------------------------------
 
-(deftest test-the-kept-line-does-not-take-the-jobs-limit-below-the-use-and-the-placed-needs
-  ;; 線 KEEP で数えた上限が 0 でも、使い 4 GiB + 取り置き 2 GiB の床まで残す(要りの内の task は今の使いを保ち、要りまで伸びられる)。
-  (<- floored int (kept-jobs-limit (* 8 GIB) 0 (* 4 GIB) (* 2 GIB) False))
-  (assert (= floored (* 6 GIB)) (/ floored GIB))
-  ;; 追い出しの線で数えた上限がそれより小さい時は、追い出しの線のまま(kubelet の追い出しの手前の縮めは今のまま)。
-  (<- evicted int (kept-jobs-limit (* 3 GIB) 0 (* 4 GIB) (* 2 GIB) False))
-  (assert (= evicted (* 3 GIB)) (/ evicted GIB))
-  ;; 線 KEEP の上限が床より大きい(線の上に空きが在る)時は、その上限のまま。
-  (<- roomy int (kept-jobs-limit (* 9 GIB) (* 7 GIB) (* 4 GIB) (* 2 GIB) False))
-  (assert (= roomy (* 7 GIB)) (/ roomy GIB)))
-
-
-(deftest test-the-kept-line-does-not-narrow-the-jobs-limit-while-an-urgent-task-is-placed
-  ;; 失敗ケース: 置き先は急ぎの task を線 KEEP を外した空きで置くのに、worker が層の上限を線 KEEP の床(使い 3 GiB + 取り置き 0)まで
-  ;; 絞り、置いた急ぎの task が伸びた所で層の中で OOM kill された(2026-11-12)。急ぎの task が居る間は追い出しの線の上限のまま。
-  (<- urgent int (kept-jobs-limit (* 8 GIB) 0 (* 3 GIB) 0 True))
-  (assert (= urgent (* 8 GIB)) (/ urgent GIB))
-  ;; 追い出しの線の縮めは急ぎの task にも掛かる(kubelet の追い出しの手前)。
-  (<- evicted int (kept-jobs-limit (* 2 GIB) 0 (* 3 GIB) 0 True))
-  (assert (= evicted (* 2 GIB)) (/ evicted GIB)))
+(deftest test-a-task-placed-without-a-declared-need-is-not-stopped-at-the-default-need
+  ;; 失敗ケース(頭の註の 11-12 11:05 UTC): 置き先が空きを待たせずに置く task は要りを名乗れず、返事の行は memoryMiB を運ばない。worker は
+  ;; 見込み 1024 MiB を要りと読み、線を割った回に、使い 1043 MiB の task を「要りを越えた」として止めた。
+  (<- needs tuple (task-needs-of #({"id" "deploy"} {"id" "declared" "memoryMiB" 1024})))
+  (assert (= (tuple (gfor n needs #(n.id n.bytes n.declared))) #(#("deploy" UNDECLARED-NEED-BYTES False) #("declared" (* 1024 MIB) True))) needs)
+  (val uses #((JobUse :job "task/deploy" :pid 20 :bytes (* 1043 MIB) :processes 2)
+              (JobUse :job "task/declared" :pid 30 :bytes (* 1043 MIB) :processes 2)))
+  ;; 線を大きく割った回も、名乗らない task は選ばない(同じ使いの、要り 1024 MiB を名乗った task だけを選ぶ)。
+  (<- over tuple (over-need-tasks needs uses (* 8 GIB)))
+  (assert (= over #((TaskOver :id "declared" :need-bytes (* 1024 MIB) :use-bytes (* 1043 MIB)))) over)
+  (<- alone tuple (over-need-tasks (tuple (gfor n needs :if (not n.declared) n)) uses (* 8 GIB)))
+  (assert (= alone #()) alone)
+  ;; 見込みは取り置きには今までどおり数える(使いの出る前は 1 本 1024 MiB を層に残す)。
+  (<- pending int (placed-pending needs #()))
+  (assert (= pending (* 2 UNDECLARED-NEED-BYTES)) (// pending MIB)))
 
 
 (deftest test-only-the-tasks-grown-past-their-needs-are-chosen-in-the-order-of-their-excess
@@ -105,7 +107,8 @@
   "模擬の機体の memory の台本(byte と ms): others = 始めの jobs の層の外の Pod(上に載る系の命令と会話の CLI の層を含む)の使い・
    others-rise / others-from / others-span = その外が others-from から others-span の間に一様に伸びる量・resident = worker の本体と常駐の
    job の使い・a-use = task a の使い(落ち着いた値)・b-from / b-to / b-start / b-span = task b の使いが b-start から b-span の間に b-from
-   から b-to へ一様に伸びる。"
+   から b-to へ一様に伸びる・prep-rise / prep-from / prep-span = jobs の層の中の task でない process(実行環境の準備 — 置いた task の
+   取り置きを持たない)が prep-from から prep-span の間に 0 から一様に伸びる量(既定 = 居ない)。"
   {:tags {:context "doeff-cluster-test" :role "type"}}
   (#^ int others)
   (#^ int others-rise)
@@ -116,7 +119,10 @@
   (#^ int b-from)
   (#^ int b-to)
   (#^ int b-start)
-  (#^ int b-span))
+  (#^ int b-span)
+  (setv #^ int prep-rise 0)
+  (setv #^ int prep-from 0)
+  (setv #^ int prep-span 1))
 
 
 (defrecord KeepSeen
@@ -152,16 +158,26 @@
   (dfor #(id use) (.items {"a" scene.a-use "b" b}) :if (not-in id gone) id use))
 
 
+(defk layer-uses [scene stopped now]
+  {:pre [(: scene KeepScene) (: stopped tuple) (: now int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "刻 now の jobs の層の中の使い(名 → byte)を求めるため: 走っている task と、task でない準備の process(名 prep — 伸び始める前と
+   止められた後は載せない)。"
+  (<- tasks dict (task-uses scene stopped now))
+  (<- prep int (ramp 0 scene.prep-rise scene.prep-from scene.prep-span now))
+  (val gone (sfor #(id _) stopped id))
+  (if (and (> prep 0) (not-in "prep" gone)) (| tasks {"prep" prep}) tasks))
+
+
 (defk kernel-stopped [scene limit stopped now]
   {:pre [(: scene KeepScene) (: limit int) (: stopped tuple) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "模擬の kernel の刻 now の止め(頭の註): jobs の層の使いが上限 limit を越える間、層の中のいちばん大きい task を止める。答え = 止めた後の
-   止められた task の列。"
+  "模擬の kernel の刻 now の止め(頭の註): jobs の層の使いが上限 limit を越える間、層の中のいちばん大きい task(か準備の process)を止める。
+   答え = 止めた後の止められた物の列。"
   (var gone stopped)
-  (var uses (! (task-uses scene gone now)))
+  (var uses (! (layer-uses scene gone now)))
   (while (and uses (> (sum (.values uses)) limit))
     (val largest (max (sorted uses) :key (fn [id] (get uses id))))
     (:= gone (+ gone #(#(largest "kernel"))))
-    (:= uses (! (task-uses scene gone now))))
+    (:= uses (! (layer-uses scene gone now))))
   gone)
 
 
@@ -186,7 +202,7 @@
     :when (in path KERNEL-PATHS)
     (<- now int (now-epoch-ms))
     (:= stopped (! (kernel-stopped scene limit stopped now)))
-    (<- uses dict (task-uses scene stopped now))
+    (<- uses dict (layer-uses scene stopped now))
     (val jobs (sum (.values uses)))
     (<- others int (ramp scene.others scene.others-rise scene.others-from scene.others-span now))
     (val pods (+ others scene.resident jobs))
@@ -203,15 +219,17 @@
     (<- now int (now-epoch-ms))
     (:= limit (int text))
     (:= limits (+ limits #(limit)))
-    (<- uses dict (task-uses scene stopped now))
+    (<- uses dict (layer-uses scene stopped now))
     (:= gap (min gap (- limit (sum (.values uses)))))
     (resume None))
   (ReadProcTable []
     (<- now int (now-epoch-ms))
-    (<- uses dict (task-uses scene stopped now))
-    (val roots #((ProcRow :pid 1 :ppid 0 :start-ticks 1 :rss-bytes MIB :comm "tini")
-                 (ProcRow :pid 20 :ppid 1 :start-ticks 20 :rss-bytes MIB :comm "shim")
-                 (ProcRow :pid 30 :ppid 1 :start-ticks 30 :rss-bytes MIB :comm "shim")))
+    (<- uses dict (layer-uses scene stopped now))
+    ;; 準備の process は job の根の外(worker の本体の子)に居る — 見張りの止める単位に入らない。
+    (val roots (+ #((ProcRow :pid 1 :ppid 0 :start-ticks 1 :rss-bytes MIB :comm "tini")
+                    (ProcRow :pid 20 :ppid 1 :start-ticks 20 :rss-bytes MIB :comm "shim")
+                    (ProcRow :pid 30 :ppid 1 :start-ticks 30 :rss-bytes MIB :comm "shim"))
+                  (if (in "prep" uses) #((ProcRow :pid 41 :ppid 1 :start-ticks 41 :rss-bytes (get uses "prep") :comm "uv")) #())))
     (resume (+ roots (tuple (gfor #(id pid) #(#("a" 21) #("b" 31)) :if (in id uses)
                                   (ProcRow :pid pid :ppid (- pid 1) :start-ticks pid :rss-bytes (get uses id) :comm "python"))))))
   (SignalPid []
@@ -231,7 +249,7 @@
   (DelayEffect []
     (<- now int (now-epoch-ms))
     (:= stopped (! (kernel-stopped scene limit stopped now)))
-    (<- uses dict (task-uses scene stopped now))
+    (<- uses dict (layer-uses scene stopped now))
     (<- others int (ramp scene.others scene.others-rise scene.others-from scene.others-span now))
     (val available (- CAPACITY SYSTEM others scene.resident (sum (.values uses))))
     (:= lowest (min lowest available))
@@ -256,15 +274,15 @@
                         (MemoryFile :path TOKEN :content b"token\n"))))
 
 
-(defk keep-watched [scene run-until-ms]
-  {:pre [(: scene KeepScene) (: run-until-ms int)] :post [(: % KeepSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "本物の見張りを模擬の機体と仮想時計の下で止めの合図まで回すため(置き先が置いた task の要りは NEEDS)。"
+(defk keep-watched [scene run-until-ms needs]
+  {:pre [(: scene KeepScene) (: run-until-ms int) (: needs tuple)] :post [(: % KeepSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "本物の見張りを模擬の機体と仮想時計の下で止めの合図まで回すため(needs = 置き先が置いた task の要り)。"
   (<- cap (| int None) (layer-memory-max LAYOUT "jobs"))
   (val settings (MemoryWatchSettings
                   :eviction (EvictionSettings :api "https://api.test" :token-file TOKEN :node "node-a" :pods-dir PODS :host-root HOST
                                               :jobs-dir JOBS :jobs-cap-bytes cap)))
   (val cell (MemoryCell))
-  (setv cell.eviction.needs NEEDS)
+  (setv cell.eviction.needs needs)
   (<- files MemoryFiles (machine-files))
   (<- seen KeepSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (keep-world scene cell run-until-ms)]
                       (watch-then-scene settings cell)))
@@ -287,6 +305,12 @@
 ;; 要りを越えた伸び(node-h の 11-09 16:52 の形を縮めた台本): 外は伸びず、b が 20 秒から 50 秒で 1 → 6 GiB へ伸びる(要り 1 GiB)。
 (val OVERGROWN (KeepScene :others (* 3 GIB) :others-rise 0 :others-from 0 :others-span 1 :resident (* 4 GIB)
                           :a-use (* 3 GIB) :b-from (* 1 GIB) :b-to (* 6 GIB) :b-start 20000 :b-span 50000))
+;; 取り置きの外の伸び(頭の註の 11-12 の形を縮めた台本): 外の伸びで線を 2.6 GiB 割った後(40 秒から)に、jobs の層の中で、要りを名乗らずに
+;; 置かれた task b が 50 秒から 10 秒で 900 → 1100 MiB(見込みの要り 1024 MiB を越える)へ、task でない準備の process が 50 秒から 20 秒で
+;; 0 → 1 GiB へ伸びる。a は要り 3136 MiB のほぼ全部を使っている(取り置き 63 MiB)。追い出しまでの空きは 2.7 GiB 残る。
+(val UNRESERVED-GROWTH (KeepScene :others (* 3 GIB) :others-rise (* 5 GIB) :others-from 20000 :others-span 20000 :resident (* 4 GIB)
+                                  :a-use (* 3 GIB) :b-from (* 900 MIB) :b-to (* 1100 MIB) :b-start 50000 :b-span 10000
+                                  :prep-rise GIB :prep-from 50000 :prep-span 20000))
 
 
 (defk lines-named [lines name]
@@ -296,7 +320,7 @@
 
 
 (deftest test-the-outside-crossing-the-kept-line-stops-no-task-and-only-closes-the-intake
-  (<- seen KeepSeen (keep-watched OUTSIDE-RISE 90000))
+  (<- seen KeepSeen (keep-watched OUTSIDE-RISE 90000 NEEDS))
   ;; どの task も止まらない: 書いた上限はどの回も jobs の層の使い以上(前は 0 まで下げ、kernel が層の task を全部止めた)。
   (assert (= seen.stopped #()) #(seen.stopped (lfor l seen.limits (// l MIB))))
   ;; 線は割れた(外の伸びで)。
@@ -313,7 +337,7 @@
 
 
 (deftest test-a-task-grown-past-its-need-is-stopped-alone-and-the-task-inside-its-need-keeps-running
-  (<- seen KeepSeen (keep-watched OVERGROWN 120000))
+  (<- seen KeepSeen (keep-watched OVERGROWN 120000 NEEDS))
   ;; 止まったのは b だけで、止めたのは見張り(kernel の層の OOM kill ではない)。a は走り続ける。
   (assert (= seen.stopped #(#("b" "watch"))) seen.stopped)
   (<- told tuple (lines-named seen.lines OVER-NEED-KILL-LOG))
@@ -325,6 +349,27 @@
   ;; MemAvailable は線を見張りの 1 回の伸び(5 秒で 0.5 GiB)より大きく割らない。
   (assert (>= seen.lowest (- KEEP-LINE GIB)) (/ seen.lowest GIB))
   (assert (>= seen.lowest-limit-over-use 0) (/ seen.lowest-limit-over-use GIB)))
+
+
+(deftest test-the-processes-without-a-reservation-keep-their-room-while-the-kept-line-is-crossed
+  ;; 置き先の返事の行: a は要り 3136 MiB を名乗り、b は memoryMiB を運ばない(置き先が空きを待たせずに置いた task)。
+  (<- needs tuple (task-needs-of #({"id" "a" "memoryMiB" 3136} {"id" "b"})))
+  (<- seen KeepSeen (keep-watched UNRESERVED-GROWTH 120000 needs))
+  ;; 線は伸びの間ずっと割れている(外の伸びで 10.4 GiB・層の中の伸びの後は 9.2 GiB)。
+  (assert (< seen.lowest (- KEEP-LINE (* 3 GIB))) (/ seen.lowest GIB))
+  ;; kernel は層の中で何も止めない(前は上限 = 使い + 取り置き 186 MiB 以下で、準備の伸びた所でいちばん大きい a を止めた)。準備の process と
+  ;; 要りの内の a は走り続ける。
+  (assert (= seen.stopped #()) #(seen.stopped (lfor l seen.limits (// l MIB))))
+  (assert (= seen.cell.eviction.oom-at-ms #()) seen.cell.eviction.oom-at-ms)
+  ;; 見張りも、見込みの要り 1024 MiB を越えた b(名乗らない task)を止めない。
+  (<- over tuple (lines-named seen.lines OVER-NEED-KILL-LOG))
+  (assert (= over #()) over)
+  (assert (= seen.cell.kills #()) seen.cell.kills)
+  ;; 書いた上限はどの回も、使いの上に取り置きの外の process の余地を残す(準備の 5 秒の伸び 256 MiB の 4 倍以上)。
+  (assert (>= seen.lowest-limit-over-use GIB) (/ seen.lowest-limit-over-use GIB))
+  ;; 線は新しい受けだけを絞る: 置き先に名乗る jobs の層の空きは 0 以下のまま(新しい task を置かない)。
+  (val eviction seen.cell.eviction)
+  (assert (<= eviction.jobs-intake eviction.jobs-current) #((/ eviction.jobs-intake GIB) (/ eviction.jobs-current GIB))))
 
 
 ;; --- jobs の層の kernel の OOM kill の数え -------------------------------------------------------------------------------------------
