@@ -335,7 +335,9 @@
                     :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
                     :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap :jobs-ceiling-bytes jobs-ceiling
                     :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
-                    :room-file room-file :margin-bytes margin))
+                    :room-file room-file :margin-bytes margin
+                    ;; 持つ区画の上限を書く層の dir の親(ADR-DOE-CLUSTER-005 R3 — 層 <名> は cgroup-dir/<名>)。
+                    :layers-dir cgroup-dir))
 
 
 (defk boot-file-written [path boot]

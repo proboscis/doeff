@@ -46,6 +46,7 @@
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster._shared.core.clock [now-epoch-ms monotonic-ms-of datetime-of-epoch-ms])
 (import doeff_cluster._shared.core.remote_rules [program-sha])
+(import doeff_cluster._shared.core.compartment_rules [held-compartments-of])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
 (import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply RouteRefused routed-request answer-json])
 (import doeff_cluster._worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
@@ -406,6 +407,17 @@
   None)
 
 
+(defk accepted-compartments [state field]
+  {:pre [(: state LinkState) (: field (| list dict str int float bool None))] :post [(: % None)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "heartbeat の返事の compartments(この worker の持つ区画 — ADR-DOE-CLUSTER-005 R2)を見張りの入れ物へ写すため(見張りが層の上限に書く — R3)。
+   欄の無い返事(退いた世代への返事・古い coordinator)は前の値のまま。形の違う欄は held-compartments-of が ValueError で落とす(拍の except が
+   名乗れないの 1 行にする — 黙って空に読まない)。見張りの無い worker(入れ物の無い worker)は読むだけ。"
+  (<- held (| tuple None) (held-compartments-of field))
+  (when (and (is-not held None) (is-not state.eviction None))
+    (setv state.eviction.compartments held))
+  None)
+
+
 (defk accepted-supplied [state field]
   {:pre [(: state LinkState) (: field (| list dict str int float bool None))] :post [(: % None)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "heartbeat の返事の supplied(この worker に置かれうる job の参照の綴りの列 — ADR-DOE-CLUSTER-004)を入れ物に写すため。欄の無い返事
@@ -658,6 +670,7 @@
     (<- warm tuple (accepted-warm state (.get answered "warm" [])))
     (setv state.last-warm warm)
     (<- (accepted-supplied state (.get answered "supplied")))
+    (<- (accepted-compartments state (.get answered "compartments")))
     ;; 返事を読み終えてから出す(返事の読みが毎回落ちる時に、名乗れた・名乗れないの 2 行を拍ごとに繰り返さない)。
     (<- (told-once state "" (.format "worker: coordinator {} に名乗りました" endpoint)))
     ;; 起動の内訳の 1 行(#3676): 最初に返事を読み終えた拍で 1 度だけ — Pod の起動 → boot.sh → exec → import → この答え。
