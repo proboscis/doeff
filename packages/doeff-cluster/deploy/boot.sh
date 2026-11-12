@@ -7,7 +7,8 @@
 #   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_PROVIDES(提供する能力の名 a,b)・
 #                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・NODE_NAME(k8s の downward API の spec.nodeName —
 #                      coordinator が node の label から company-machine などの能力を導く)・WORKER_ROOM_FILE = 枠の file
-#                      (名 → memoryMiB・pools の JSON — 在れば heartbeat の前に読み直す)・WORKER_MEMORY_MIB = 常駐の job の memory の予算
+#                      (名 → memoryMiB・pools の JSON — 在れば heartbeat の前に読み直す)・WORKER_PREPARE_FILE = 準備の file
+#                      (準備で足す能力と準備の状態の JSON — 渡せば heartbeat の前に読み直す)・WORKER_MEMORY_MIB = 常駐の job の memory の予算
 #                      (MiB — 省けば名乗らず、memory で縛られない)・WORKER_PINNED_TO_NODE = 1 なら --pinned-to-node(Pod が node に
 #                      縛られた worker — 途絶しても動かし続けてよい印の在る job を長い柵まで止めない。縛られていない worker には付けない)・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
@@ -1280,6 +1281,10 @@ fi
 # coordinator が数える — 手書きの task の枠(WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・WORKER_CAPACITY)は渡されても読まない。
 set --
 [ -z "${WORKER_ROOM_FILE:-}" ] || set -- "$@" --room-file "$WORKER_ROOM_FILE"
+# 準備の file: WORKER_PREPARE_FILE(state・provides・sinceMs・stage・reason の JSON — worker/core/prepare_rules の頭の註)が渡されれば、
+# worker は heartbeat の前にその file を読み直し、file の能力を WORKER_PROVIDES に足して名乗り、準備の状態を heartbeat の prepare で
+# 名乗る。上に載る系の準備を起動の前に待たずに worker を起こし、準備が済んだ後で能力を足すため(file はまだ無くてよい — running と名乗る)。
+[ -z "${WORKER_PREPARE_FILE:-}" ] || set -- "$@" --prepare-file "$WORKER_PREPARE_FILE"
 [ -z "${WORKER_MEMORY_MIB:-}" ] || set -- "$@" --memory-mib "$WORKER_MEMORY_MIB"
 # node に縛られた worker(Deployment が nodeSelector で 1 つの node に置く — 同じ名の新しい世代は node が API server に届き直すまで起きない)。
 case "${WORKER_PINNED_TO_NODE:-}" in

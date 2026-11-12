@@ -38,7 +38,7 @@
 (import os)
 (import pathlib [Path])
 (import doeff_core_effects [slog])
-(import doeff_core_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree]
+(import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath WriteText MakeDirectory ListDirectory RemoveTree]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects [HttpResponse HttpFailed])
@@ -67,6 +67,8 @@
 (import doeff_cluster._worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
+(import doeff_cluster._worker.core.prepare_rules [PrepareReading PrepareState prepare-of-text prepare-missing prepare-unreadable
+                                                  prepare-after prepare-line])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
                                               task-uses-of jobs-room-of prepare-wait-of
                                               job-meters-told])
@@ -156,7 +158,9 @@
    supplied =最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
    読む・ADR-DOE-CLUSTER-004)。child-environ = job の子へ渡す環境変数の名(名の順 — worker/core/launch の child-environ-names。
    None = 名乗らない。本番の入口が起動の時に 1 度決めて渡し、heartbeat の childEnviron で名乗る)。pinned-to-node = この worker の Pod は
-   自分の node の外で動けない(起動の引数 --pinned-to-node — 印の在る job を長い柵まで動かし続ける・heartbeat_rules.held-keep-fence-ms)。"
+   自分の node の外で動けない(起動の引数 --pinned-to-node — 印の在る job を長い柵まで動かし続ける・heartbeat_rules.held-keep-fence-ms)。
+   prepare-file = 準備の file(None = 読まない。渡すと heartbeat の前に読み直し、file の能力を起動の引数の能力に足して名乗り、準備の姿を
+   heartbeat の prepare で名乗る — worker/core/prepare_rules)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
@@ -166,7 +170,7 @@
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
                           #^ (| int None) [memory-mib None] #^ str [keep-line-file ""] #^ (| LoadPaths HostLoad None) [load-paths None]
                           #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]
-                          #^ bool [pinned-to-node False]]
+                          #^ bool [pinned-to-node False] #^ (| str None) [prepare-file None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.pod-ip pod-ip
           self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -226,6 +230,9 @@
           ;; 常駐の job の memory の予算(None = 名乗らない)。どちらも file を読めない間は前の値のまま。
           self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
           self.pools #() self.memory-mib memory-mib
+          ;; 準備の file(worker/core/prepare_rules の頭の註): prepare-file = 読む file(None = 読まない — heartbeat に prepare を載せない)・
+          ;; prepare = 最後に名乗る準備の姿(None = まだ読んでいない)・prepare-read-ms = 最後に読んだ刻。
+          self.prepare-file prepare-file self.prepare None self.prepare-read-ms None
           ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — worker/core/load_rules の頭の註。空 = 読まない)。file を読めない間は前の値のまま。
           self.keep-line-file keep-line-file
           ;; 命令の層を掛け直す線の file と短い命令の余地 MiB(枠の file の行の commandLineFile と commandFloorMiB — worker/core/eviction_rules の
@@ -588,7 +595,8 @@
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
                                 :pools state.pools :memory-mib state.memory-mib :measured state.measured
                                 :child-environ state.child-environ :pod-ip state.pod-ip
-                                :pinned (! (pinned-claim? (or state.pinned-to-node state.room-pinned) stopping))))
+                                :pinned (! (pinned-claim? (or state.pinned-to-node state.room-pinned) stopping))
+                                :prepare state.prepare))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
@@ -888,6 +896,40 @@
   None)
 
 
+(defk prepare-noted [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "準備の file を枠の file と同じ間(room-read-due)で読み直し、次の heartbeat で名乗る準備の姿と足す能力を file の値にするため
+   (worker/core/prepare_rules — 準備が起動の後に済んでも、Pod を作り直さずに能力を足す)。file が無い間は running、在るのに読めない・
+   形が崩れている間は前に名乗った能力のまま状態だけを名乗る。姿が変わった時に log へ 1 行出す。file を読まない worker
+   (prepare-file が None)は何もしない。"
+  (when (is-not state.prepare-file None)
+    (<- now-ms int (now-epoch-ms))
+    (<- due bool (room-read-due state.prepare-read-ms now-ms))
+    (when due
+      (setv state.prepare-read-ms now-ms)
+      (val before state.prepare)
+      (<- text (ReadText state.prepare-file))
+      (var after None)
+      (match text
+        (FileFailed :detail detail)
+          (do (<- seen (StatPath state.prepare-file))
+              (if (and (isinstance seen PathStat) (= seen.kind PathKind.MISSING))
+                  (do (<- missing PrepareReading (prepare-missing before state.boot-at))
+                      (:= after missing))
+                  (do (<- broken PrepareReading (prepare-unreadable detail))
+                      (<- kept PrepareReading (prepare-after before broken now-ms))
+                      (:= after kept))))
+        _ (do (<- read PrepareReading (prepare-of-text text))
+              (<- named PrepareReading (prepare-after before read now-ms))
+              (:= after named)))
+      (<- line (| str None) (prepare-line before after))
+      (when (is-not line None)
+        (<- (slog line :level (if (in after.state #(PrepareState.UNREADABLE PrepareState.MALFORMED PrepareState.FAILED))
+                                  "warning" "info"))))
+      (setv state.prepare after)))
+  None)
+
+
 (defk proc-load-read [paths before now-ms line [keep-line-file ""] [lend-line-file ""] [reclaim-file ""]]
   {:pre [(: paths LoadPaths) (: before (| CpuTicks None)) (: now-ms int) (: line (| EvictionLine None)) (: keep-line-file str)
          (: lend-line-file str) (: reclaim-file str)]
@@ -1150,6 +1192,8 @@
     (<- (token-noted state))
     ;; 枠の file を読み直す(READ-EVERY-MS ごと — 次の heartbeat が名乗る)。
     (<- (room-noted state))
+    ;; 準備の file を読み直す(枠の file と同じ間 — 次の heartbeat が足す能力と準備の姿を名乗る)。
+    (<- (prepare-noted state))
     ;; 機体の空きを測り直す(LOAD-READ-EVERY-MS ごと — 次の heartbeat が名乗る)。
     (<- (load-noted state))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。

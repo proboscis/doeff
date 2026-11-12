@@ -1,7 +1,7 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster._worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
-;;;     [--room-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
+;;;     [--room-file FILE] [--prepare-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -606,6 +606,10 @@
   (.add-argument parser "--room-file" :default ""
                  :help "枠の file(JSON — worker の名 → memoryMiB・pools)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
                         値を名乗る — 枠の変更で worker を起こし直さない。空 = 読まない")
+  (.add-argument parser "--prepare-file" :default ""
+                 :help "準備の file(JSON — state・provides・sinceMs・stage・reason。worker/core/prepare_rules)。渡すと heartbeat の前に
+                        読み直し、file の能力を --provides に足して名乗り、準備の状態を heartbeat の prepare で名乗る — 準備を起動の前に
+                        待たずに、済んだ後で能力を足す。空 = 読まない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
   (.add-argument parser "--repo" :required True :help "コードを取り出す git repo")
@@ -774,6 +778,8 @@
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; 枠の file を heartbeat の前に読み直す(空 = 読まない)。
                         :room-file (or args.room-file None)
+                        ;; 準備の file を heartbeat の前に読み直し、準備で足す能力と準備の状態を名乗る(空 = 読まない)。
+                        :prepare-file (or args.prepare-file None)
                         ;; 起動の時に名乗る memory の予算(枠の file の行か --memory-mib — None = 名乗らない)。
                         :memory-mib room.memory-mib
                         ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — 空 = 読まない。heartbeat の前に枠の file と一緒に読み直す)。
