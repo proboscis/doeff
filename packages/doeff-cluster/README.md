@@ -403,6 +403,9 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 ;; 1 つ以上名乗る。coordinator は機体の測った空きを判じずに置き、同時数は組の上限だけが限る。
 ;; 作り直せる task は :rerun True :preemptible True で「場所を譲るため止めてよい」と名乗れる。優先 1 以上の task が memory の空きに
 ;; 入らない時、coordinator は同じ worker のそれより優先の低い名乗りの task を止めて次の試行の待ちの行へ戻し、急ぎの task をすぐ置く。
+;; :queue-limit-seconds n は待ちの期限: queued のまま積んだ刻から n 秒を越えても置かれない task を、coordinator は phase cancelled で
+;; 終え、detail に期限・待った長さ・最後の置かれない理由を書く(知らせ先には終わりの行が 1 つ届く)。置いた task には効かない。名乗らなければ
+;; 今までどおり置けるまで待つ。
 (<- total (remote-job (add-task production-foundation n) :needs NET :name "add"))
 (<- submitted (submit-detached-task (summarize production-foundation rows) :key job-id :needs NET :lease-seconds 60.0
                                     :memory-mib 2048))

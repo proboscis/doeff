@@ -134,6 +134,20 @@
     True None))
 
 
+;; 待ちの期限(SubmitDetached の queue-limit-seconds — queued のまま待ってよい秒)の上限(30 日 — 数の書き違い〔ms で書いた値〕を断る粗い上限)。
+(val TASK-QUEUE-LIMIT-MAX-SECONDS (* 30 24 3600))
+
+
+(deff task-queue-limit-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+  {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task の本文の欄 queueLimitSeconds(待ちの期限 — SubmitDetached の queue-limit-seconds の註)が受けられない理由を知るため(None = 欄が無いか、
+   1 以上 TASK-QUEUE-LIMIT-MAX-SECONDS 以下の整数)。真偽値は整数として受けない。"
+  (if (or (is value None)
+          (and (isinstance value int) (not (isinstance value bool)) (<= 1 value TASK-QUEUE-LIMIT-MAX-SECONDS)))
+      None
+      (.format "queueLimitSeconds は 1 以上 {} 以下の整数(queued のまま待ってよい秒): {!r}" TASK-QUEUE-LIMIT-MAX-SECONDS value)))
+
+
 (val TASK-LIMIT-KEYS (frozenset #("group" "part")))
 
 
@@ -236,12 +250,19 @@
   (if ungated {"ungated" True} {}))
 
 
+(deff task-queue-limit-json [#^ (| int None) queue-limit-seconds]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: queue-limit-seconds (| int None))] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "待ちの期限を本文の欄に綴るため(期限なしの task は欄を置かない — 旧い coordinator は知らない欄を捨てる)。"
+  (if (is queue-limit-seconds None) {} {"queueLimitSeconds" queue-limit-seconds}))
+
+
 (defk submit-detached-task [program key * memory-mib [needs (frozenset)] [name ""] [lease-seconds DETACHED-DEFAULT-LEASE-SECONDS]
                            [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""] [rerun False] [shape ""]
-                           [ungated False] [preemptible False]]
+                           [ungated False] [preemptible False] [queue-limit-seconds None]]
   {:pre [(: program Program) (: key str) (: needs (| (get frozenset str) (get tuple #(object ...)) (get list object) (get set object) (get dict #(object object)) str None)) (: name str) (: lease-seconds float)
          (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) (get dict #(str str)))) (: priority int) (: limits (get tuple #(TaskLimit ...))) (: notify str) (: rerun bool)
-         (: memory-mib (| int None)) (: shape str) (: ungated bool) (: preemptible bool)]
+         (: memory-mib (| int None)) (: shape str) (: ungated bool) (: preemptible bool)
+         (: queue-limit-seconds (| int None))]
    :post [(: % DetachedSubmitAnswer)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "SubmitDetached の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
@@ -250,7 +271,8 @@
    出口へ積む先 — 空 = 知らせない)は受け口と同じ規則で検める。rerun = 担い手が消えた時に走らせ直す名乗り(SubmitDetached の rerun の註)。memory の要り memory-mib(1 本の山の MiB)は必須で、渡さない呼びも
    None も TypeError で断る(2026-11-02 — 受け口も要りの無い本文を 400 で断る)。ungated = 測った空きの門の外の名乗り(SubmitDetached の
    ungated の註 — 2026-11-11): 真なら memory-mib は None で、limits を 1 つ以上名乗る(task-room-claim-refusal — 違えば TypeError)。preemptible = 優先の高い task に場所を譲るため
-   止めてよい名乗り(SubmitDetached の preemptible の註 — rerun も名乗る。違えば TypeError)。検めた SubmitDetached をその場で出し、答え(DetachedSubmitted か DetachedUnreachable)を返す(defk は作った effect を
+   止めてよい名乗り(SubmitDetached の preemptible の註 — rerun も名乗る。違えば TypeError)。queue-limit-seconds = 待ちの期限の秒(SubmitDetached の
+   queue-limit-seconds の註 — None = 期限なし・2026-11-12)。検めた SubmitDetached をその場で出し、答え(DetachedSubmitted か DetachedUnreachable)を返す(defk は作った effect を
    値として返せない — doeff-hy の _guard-performed)。needs の検めを型(intent)の外のここに置くのは、intent が core の判断を読まないため(#2564)。
    (名を submit-detached にしないのは、coordinator の判断 detached_policy.submit-detached と sim の口 local.submit-detached が同じ名を持つため。)"
   (<- problem (effect-needs-problem needs))
@@ -268,10 +290,12 @@
                    ;; 仕事の形も受け口と同じ規則で、送る前に断る(2026-11-10)。
                    (task-shape-refusal shape)
                    ;; 場所を譲る名乗りも受け口と同じ規則で、送る前に断る(走らせ直しを名乗らない task は名乗れない)。
-                   (task-preemptible-refusal preemptible rerun)))
+                   (task-preemptible-refusal preemptible rerun)
+                   ;; 待ちの期限も受け口と同じ規則で、送る前に断る(2026-11-12)。
+                   (task-queue-limit-refusal queue-limit-seconds)))
   (when placing (raise (TypeError (+ "SubmitDetached: " placing))))
   (<- answer DetachedSubmitAnswer
       (SubmitDetached program key :needs needs :name name :lease-seconds lease-seconds :retain-seconds retain-seconds :environ environ
                       :priority priority :limits limits :notify notify :memory-mib memory-mib :rerun rerun :shape shape
-                      :ungated ungated :preemptible preemptible))
+                      :ungated ungated :preemptible preemptible :queue-limit-seconds queue-limit-seconds))
   answer)

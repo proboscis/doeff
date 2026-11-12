@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-ungated-refusal task-room-claim-refusal task-preemptible-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-ungated-refusal task-room-claim-refusal task-preemptible-refusal task-queue-limit-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
@@ -72,7 +72,7 @@
    memory の要り(memoryMiB)の無い本文と、要りが needs の合うどの worker の線よりも大きい新しい task は 400 で断る
    (task-memory-required-refusal・memory-need-refusal)。測った空きの門の外を名乗る本文(ungated)は要りを名乗らず組を 1 つ以上名乗る
    (task-room-claim-refusal — 違えば 400)。場所を譲る名乗り(preemptible)は走らせ直し(rerun)も名乗る本文だけが持てる
-   (task-preemptible-refusal — 違えば 400)。"
+   (task-preemptible-refusal — 違えば 400)。待ちの期限(queueLimitSeconds)は 1 以上の整数の秒(task-queue-limit-refusal — 違えば 400)。"
   (setv lease (if (is body.lease-seconds None) DETACHED-DEFAULT-LEASE-SECONDS body.lease-seconds)
         retain (if (is body.retain-seconds None) DETACHED-DEFAULT-RETAIN-SECONDS body.retain-seconds)
         refusal (or (format-version-refusal body.format)
@@ -94,6 +94,8 @@
                     (task-room-claim-refusal (is body.ungated True) body.memory-MiB (len (or body.limits [])))
                     ;; 仕事の形(2026-11-10 — 名乗らなくてよい)。
                     (task-shape-refusal body.shape)
+                    ;; 待ちの期限(2026-11-12 — 名乗らなくてよい)。
+                    (task-queue-limit-refusal body.queue-limit-seconds)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
                     (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
@@ -127,7 +129,8 @@
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)
                          :notify (or body.notify "") :memory-mib body.memory-MiB :rerun (is body.rerun True)
                          :shape (or body.shape "") :ungated (is body.ungated True)
-                         :preemptible (is body.preemptible True)))
+                         :preemptible (is body.preemptible True)
+                         :queue-limit-ms (if (is body.queue-limit-seconds None) None (* 1000 body.queue-limit-seconds))))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 

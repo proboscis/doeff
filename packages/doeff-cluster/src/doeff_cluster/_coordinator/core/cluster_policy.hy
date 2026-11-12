@@ -1754,13 +1754,37 @@
   "純粋: 切り離した task 1 本の期限の判断。lapsed = 自分の期限(task-lapse-at の刻)が来た。retiring = 担い手の世代が予定どおり退いている訳
    (retiring-of — None = 退きの印が無い)。保持の期限を過ぎた終わりの行は None(消す)。置いた task の lease(担い手の worker の heartbeat が
    延ばす)が切れた = 担い手が消えた(gone-detached — 名乗らない task は lost・名乗った task は id の替わった次の試行の行。退きの印のある
-   lease 切れは走らせ直しの上限に数えない)。呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
+   lease 切れは走らせ直しの上限に数えない)。呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。待ちの期限を名乗った
+   queued の task の期限が来た = 置かれないまま期限を越えた(queue-expired-detached — cancelled で終える)。"
   (cond
     (in task.phase DETACHED-TERMINAL)
       (if lapsed None task)
     (and (in task.phase PLACED-PHASES) lapsed)
       (gone-detached task now (.format "担い手の worker {} の lease が切れた(worker の死とみなす)" task.worker) retiring)
+    (and (= task.phase "queued") lapsed (is-not task.queue-limit-ms None))
+      (! (queue-expired-detached task now))
     True task))
+
+
+(defk span-text [ms]
+  {:pre [(: ms int)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "待った長さを、送り手の会話や運用者が読む「N 時間 M 分」の形にするため(1 時間に満たなければ分だけ)。"
+  (val minutes (// ms 60000))
+  (if (>= minutes 60)
+      (.format "{} 時間 {} 分" (// minutes 60) (% minutes 60))
+      (.format "{} 分" minutes)))
+
+
+(defk queue-expired-detached [task now]
+  {:pre [(: task TaskRecord) (: now int)] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "judgment"}}
+  "純粋: 待ちの期限(queue-limit-ms — SubmitDetached の queue-limit-seconds の註)を越えて queued のままの切り離した task を cancelled で終える
+   ため。送り手が置かれない task を何十時間も黙って待たないよう、detail に期限・待った長さ・最後の置かれない理由(待つ間の detail)を書く
+   — 終わりなので知らせ先へ出口の終わりの行が届き、送り手は頼み直すか別の道を選べる(2026-11-12)。置いた task には効かない。"
+  (<- limit str (span-text task.queue-limit-ms))
+  (<- waited str (span-text (- now task.submitted-ms)))
+  (end-detached task "cancelled" now
+                (.format "待ちの期限 {} を越えて queued のまま置かれなかったので取り消した(待った長さ {})— 最後の置かれない理由: {}"
+                         limit waited (or task.detail "理由の記録なし"))))
 
 
 (defn #^ str unplaceable-phase [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
@@ -1778,11 +1802,13 @@
   "task 1 本が自分の期限の欄で変わる最初の刻を知るため(place-tasks はこの刻から変える・task-due は同じ値を次に試す刻にする)。
    切り離していない task = lease の期限の次の ms(呼び手が問い合わせを止めた — 行を落とす)。切り離した task の終わりの行 = 保持の期限の
    次の ms(行を消す — 終わった刻を持たない行は now から数える)。置いた切り離した task = lease の期限の次の ms(担い手の worker の死 —
-   lost)。待っている切り離した task は自分の期限では変わらない(None — 待ちの期限は wait-lapse-at)。"
+   lost)。待ちの期限を名乗った queued の切り離した task = 積んだ刻 + 期限の次の ms(置かれないまま期限を越えた — cancelled)。ほかの
+   待っている切り離した task は自分の期限では変わらない(None — 担い手の沈黙の待ちの期限は wait-lapse-at)。"
   (match task
     (TaskRecord :detached False) (+ task.lease-until-ms 1)
     (TaskRecord :phase phase) :if (in phase DETACHED-TERMINAL) (+ (or task.finished-ms now) task.retain-ms 1)
     (TaskRecord :phase phase) :if (in phase PLACED-PHASES) (+ task.lease-until-ms 1)
+    (TaskRecord :phase "queued" :queue-limit-ms limit) :if (is-not limit None) (+ task.submitted-ms limit 1)
     _ None))
 
 
@@ -3289,6 +3315,8 @@
                     (if (is body.ungated None) None "ungated は切り離した task(PUT /detached)だけが名乗る")
                     ;; 場所を譲る名乗りも切り離した task だけ(2026-11-11 — 止めた task は走らせ直しの道で列へ戻る)。
                     (if (is body.preemptible None) None "preemptible は切り離した task(PUT /detached)だけが名乗る")
+                    ;; 待ちの期限も切り離した task だけ(2026-11-12 — 縛られた task は呼び手が問い合わせを止めれば消える)。
+                    (if (is body.queue-limit-seconds None) None "queueLimitSeconds は切り離した task(PUT /detached)だけが名乗る")
                     (! (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。

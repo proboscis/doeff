@@ -66,7 +66,9 @@
      ;; 置いた刻のその worker の測った空き(measured の memoryAvailableMiB と atMs・2026-11-12)— 測りの在る worker に置いた試行だけ。
      ;; worker の行の measured は今の 1 回だけなので、終わった task の置いた刻の空きはここで読む。
      (if (is task.placed-memory-available-mib None) {} {"placedMemoryAvailableMiB" task.placed-memory-available-mib})
-     (if (is task.placed-measured-at-ms None) {} {"placedMeasuredAtMs" task.placed-measured-at-ms})))
+     (if (is task.placed-measured-at-ms None) {} {"placedMeasuredAtMs" task.placed-measured-at-ms})
+     ;; 待ちの期限(ms — queued のまま積んだ刻からこの長さを越えると置き先が取り消す・2026-11-12)— 名乗る task だけ。
+     (if (is task.queue-limit-ms None) {} {"queueLimitMs" task.queue-limit-ms})))
 
 
 (defk spec-json [#^ JobSpec spec]

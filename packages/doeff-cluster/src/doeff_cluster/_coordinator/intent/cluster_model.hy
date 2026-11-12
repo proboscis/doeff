@@ -1299,7 +1299,11 @@
   ;; started-ms と同じくこの試行の置きの事実なので行に持ち、待ちの行へ戻す所で started-ms と一緒に消す。worker の measured は保存しない
   ;; 拍ごとの観測なので、task が終わった後に置いた刻の空きを読むにはこの写しを読む。欄の無い旧い行は None で読む。
   (setv #^ (| int None) placed-memory-available-mib None)
-  (setv #^ (| int None) placed-measured-at-ms None))
+  (setv #^ (| int None) placed-measured-at-ms None)
+  ;; --- 待ちの期限(2026-11-12)---
+  ;; queue-limit-ms = 送り手の名乗った待ちの期限(SubmitDetached の queue-limit-seconds の註 — None = 期限なし)。queued のまま submitted-ms から
+  ;; この長さを越えた行を、置き先は phase cancelled で終える(cluster_policy.settle-detached — 期限の刻は task-lapse-at)。欄の無い旧い行は期限なしで読む。
+  (setv #^ (| int None) queue-limit-ms None))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

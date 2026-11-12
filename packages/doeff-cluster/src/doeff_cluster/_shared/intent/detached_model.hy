@@ -109,6 +109,11 @@
   ;; id の替わった次の試行として列へ戻り、最初から走る(担い手の消失の上限に数えない)。走らせ直し rerun も名乗る(構築関数と受け口が断る)。
   ;; 名乗らない task は止めない(今までどおり)。同じ key の送り直しの比べには入れない。
   (setv #^ bool preemptible False)
+  ;; 待ちの期限(2026-11-12): queued のまま置かれずに待ってよい長さの秒(None = 期限なし — 今までどおり置けるまで待つ)。積んだ刻(走らせ直しと
+  ;; 場所の譲りの次の試行は積み直した刻)から数え、この秒を越えても置かれない task を coordinator は phase cancelled で終え、detail に待った
+  ;; 長さと最後の置かれない理由を書く(cluster_policy.settle-detached)— 終わりなので知らせ先へ出口の終わりの行が届く。置いた task には効かない。
+  ;; 同じ key の送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ (| int None) queue-limit-seconds None)
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
