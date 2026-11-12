@@ -3,7 +3,7 @@
 ;;; ROOM-LOADS の n 番目 = 空いた CPU n + 1 個の機体の読み(使い 0・memory 256 GiB・刻 0)。coordinator の数え(core/measured_room)で
 ;;; task の空きがちょうど n になり、置いた task を 1 本ずつ引く(刻 0 の読みには、置いた task はどれもまだ出ていない)— 手書きの task の
 ;;; 枠 n(以前の taskReserve + backgroundRoom)と同じ置かれ方を、測った空きで作るため。予約は上限の 1/6(n + 1 が 6 未満なら 0)。
-(require doeff-hy.macros [val defk <-])
+(require doeff-hy.macros [val defk deff <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "fixture"})
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 
@@ -40,3 +40,15 @@
                                                                :compartments #((Compartment :use "tasks" :worker name :layer "jobs"
                                                                                             :memory-mib memory :memory-limit-mib memory
                                                                                             :cpu-millis (* 1000 cores)))))))))
+
+
+(deff room-compartments [#^ tuple names #^ int rooms]  ; cannot be a defk: 検の rig の class と状態の初めの値(Program の外)が呼ぶ純粋な fixture
+  {:pre [(: names tuple) (: rooms int)] :post [(: % Table)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "heartbeat で名乗る worker の名 names ごとに、ROOM-JSONS の rooms 番目の読みに当たる tasks 区画(rooms core・memory の空き − 床)を
+   宣言した表を作るため(頭の註の compartments-like-rooms と同じ値 — 名乗る前の状態に置く)。"
+  (table-of (tuple (gfor name (sorted names)
+                         (TableWrite name (MachineCompartments :machine name
+                                                               :compartments #((Compartment :use "tasks" :worker name :layer "jobs"
+                                                                                            :memory-mib (- 262144 MEMORY-FLOOR-MIB)
+                                                                                            :memory-limit-mib (- 262144 MEMORY-FLOOR-MIB)
+                                                                                            :cpu-millis (* 1000 rooms)))))))))

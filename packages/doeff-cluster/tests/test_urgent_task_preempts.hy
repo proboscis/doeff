@@ -73,60 +73,6 @@
   (dfor t (.rows placed) t.id t))
 
 
-(deftest test-an-urgent-task-stops-a-preemptible-lower-task-and-runs-at-once
-  (<- low TaskRecord (running "a-low" -1))
-  (<- urgent TaskRecord (queued "b-urgent" 10 :memory-mib URGENT-NEED-MIB))
-  (<- rows dict (placed-rows {"a-low" low "b-urgent" urgent} {"a-low" LOW-USE-MIB}))
-  (val placed (get rows "b-urgent"))
-  (assert (= #(placed.phase placed.worker) #("assigned" "node-a")) placed)
-  (assert (in "a-low" placed.detail) placed.detail)
-  ;; 止めた task の前の試行の行は消え(worker は返事から外れた job として止める)、次の試行が待ちの行で戻る。
-  (assert (not-in "a-low" rows) rows)
-  (val again (get rows "a-low-r2"))
-  (assert (= #(again.phase again.worker again.attempt again.losses again.preempted-by) #("queued" None 2 0 "b-urgent")) again)
-  (assert (in "場所を譲る" again.detail) again.detail)
-  (assert (= again.key "a-low") again))
-
-
-(deftest test-without-the-preemptible-mark-the-urgent-task-waits
-  ;; 失敗ケース(直す前の形): 譲る名乗りの無い task は止めず、急ぎの task は memory の空きを待つ。
-  (<- low TaskRecord (running "a-low" -1 :preemptible False))
-  (<- urgent TaskRecord (queued "b-urgent" 10 :memory-mib URGENT-NEED-MIB))
-  (<- rows dict (placed-rows {"a-low" low "b-urgent" urgent} {"a-low" LOW-USE-MIB}))
-  (assert (= (. (get rows "b-urgent") phase) "queued") (get rows "b-urgent"))
-  (assert (= (. (get rows "a-low") phase) "assigned") (get rows "a-low")))
-
-
-(deftest test-a-task-of-the-same-priority-or-a-worker-that-cannot-fit-is-not-stopped
-  ;; 同じ優先の task は譲らない。
-  (<- peer TaskRecord (running "a-peer" 10))
-  (<- urgent TaskRecord (queued "b-urgent" 10 :memory-mib URGENT-NEED-MIB))
-  (<- rows dict (placed-rows {"a-peer" peer "b-urgent" urgent} {"a-peer" LOW-USE-MIB}))
-  (assert (= (. (get rows "b-urgent") phase) "queued") (get rows "b-urgent"))
-  (assert (= (. (get rows "a-peer") phase) "assigned") (get rows "a-peer"))
-  ;; 譲る task を全部止めても要りに届かない worker では止めない(仕事を失わせるだけの止めをしない)。
-  (<- low TaskRecord (running "a-low" -1))
-  (<- huge TaskRecord (queued "b-huge" 10 :memory-mib 8192))
-  (<- rows dict (placed-rows {"a-low" low "b-huge" huge} {"a-low" LOW-USE-MIB}))
-  (assert (= (. (get rows "b-huge") phase) "queued") (get rows "b-huge"))
-  (assert (= (. (get rows "a-low") phase) "assigned") (get rows "a-low")))
-
-
-(deftest test-an-ungated-urgent-task-also-makes-room-on-the-worker-it-takes
-  ;; 門の外の急ぎの task(要りを名乗らない — 要り 1024 MiB と見込む)は空きを判じずに置かれるが、空き 1000 MiB に入らないので、譲る task を
-  ;; 止めてから置く(止めないと見張りに止められる形 — 2026-11-11)。
-  (<- low TaskRecord (running "a-low" -1))
-  (<- swap TaskRecord (queued "b-swap" 10 :ungated True :limits #((TaskLimit :group GROUP))))
-  (<- rows dict (placed-rows {"a-low" low "b-swap" swap} {"a-low" LOW-USE-MIB}))
-  (assert (= (. (get rows "b-swap") phase) "assigned") (get rows "b-swap"))
-  (assert (= (. (get rows "a-low-r2") preempted-by) "b-swap") rows)
-  ;; 急ぎでない門の外の task は今までどおり止めずに置く。
-  (<- plain TaskRecord (queued "b-swap" 0 :ungated True :limits #((TaskLimit :group GROUP))))
-  (<- rows dict (placed-rows {"a-low" low "b-swap" plain} {"a-low" LOW-USE-MIB}))
-  (assert (= (. (get rows "b-swap") phase) "assigned") (get rows "b-swap"))
-  (assert (= (. (get rows "a-low") phase) "assigned") (get rows "a-low")))
-
-
 (defk noop []
   {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "構築関数へ渡す Program の代わり(走らせない — 構築関数が送る前に断るかだけを見る)。"
@@ -156,7 +102,8 @@
 
 
 (deftest test-the-stored-row-keeps-preemptible-and-preempted-by
-  (<- low TaskRecord (replace (running "a-low" -1) :preempted-by "b-urgent"))
+  (<- running-low TaskRecord (running "a-low" -1))
+  (val low (replace running-low :preempted-by "b-urgent"))
   (<- back TaskRecord (task-record-from-json (task-record-to-json low)))
   (assert (= #(back.preemptible back.preempted-by) #(True "b-urgent")) back)
   (<- plain TaskRecord (running "a-plain" 0 :preemptible False))

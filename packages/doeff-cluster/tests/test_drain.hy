@@ -4,7 +4,7 @@
 ;;   保存と読み直し。時刻は純粋な now の引数(Program の検は doeff-time の SimClock)。
 (require doeff-hy.macros [deftest defhandler <- val var defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-JSONS])
+(import tests.room_rows [ROOM-JSONS room-compartments])
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster [ClusterTiming])
@@ -49,7 +49,10 @@
 (defclass Coord []
   "coordinator の純粋な判断(api_policy.respond / tick)を、手で送る heartbeat と readiness の報告で回す。"
   (defn #^ None __init__ [self #^ tuple [workers #("node-a" "node-h")]]
-    (setv self.now 5000000 self.state (ClusterState :started-ms 0) self.boots {})
+    (setv self.now 5000000
+          ;; 名乗る worker の tasks 区画(ADR-DOE-CLUSTER-005 — 置き方は区画の申告の和で置く)を名乗る前に宣言して置く。
+          self.state (ClusterState :started-ms 0 :machine-compartments (room-compartments #("node-a" "node-h" "mac" "mac-a") 10))
+          self.boots {})
     (for [w workers] (self.beat w))
     None)
 

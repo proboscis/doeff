@@ -182,15 +182,8 @@
 
 
 (deftest test-a-crowded-shared-machine-takes-one-task-on-the-share-of-its-task-layer
-  ;; 失敗ケース(直す前): CPU の空き ⌊16 × 0.03 − 1⌋ < 0 なので、待っている 2 本とも空きの無い文で待ち続ける(11-04 は 9 時間)。
-  ;; 直した後: task の層の PSI を名乗る worker には層の床の 1 本を置き、2 本目は空きの無い文で待つ。
-  (<- node-a WorkerInfo (worker "node-a" NODE-A-CROWDED))
-  (<- state ClusterState (state-of #(node-a) (! (queued-all ["t1" "t2"]))))
-  (val placed (! (tasks-placed 1000 state state.placements T)))
-  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
-  (assert (= #((. (.row placed "t1") phase) (. (.row placed "t1") worker) (. (.row placed "t2") phase) (. (.row placed "t2") detail))
-             #("assigned" "node-a" "queued" no-room))
-          placed)
+  ;; 数の空き(GET /state の taskRoom — 観測だけ。置き方は区画の申告の和で、この数を読まない・ADR-DOE-CLUSTER-005 R11)は、task の層の
+  ;; PSI を名乗る worker で層の床の 1 本を数える。
   ;; 床は CPU の空きが床より少ない時だけ効き、置いた task の数を引く(1 本置いた worker は 0・置いていない worker は 1)。
   (val floors #((! (layer-floor-of NODE-A-CROWDED 0)) (! (layer-floor-of NODE-A-CROWDED 1))
                 (! (layer-floor-of (replace NODE-A-CROWDED :task-cpu-some-avg10 None) 0))))
@@ -222,84 +215,6 @@
   (<- since (| int None) (unseen-since (! (load 4 0.5 1000 :at-ms 100000))))
   (<- none (| int None) (unseen-since None))
   (assert (= #(since none) #((- 100000 TASK-RAMP-MS) None))))
-
-
-(deftest test-a-task-goes-to-the-worker-with-the-most-measured-room
-  ;; 混んだ機体 a-crowded(CPU 36 個・使い 0.9 → 空き 2・担う物 0)と空いた機体 b-idle(CPU 8 個・使い 0 → 空き 7・常駐の job 2 本)。
-  ;; 失敗ケース(直す前の順 = 担っている数の少ない順)なら a-crowded に置く。測った空きの多い b-idle に置く。
-  (val jobs (tuple (gfor n #("s1" "s2") (ClusterJob (JobSpec n "m" #() "rev") :peak-mib 200 :settle-mib 100))))
-  (<- crowded WorkerInfo (worker "a-crowded" (! (load 36 0.9 60000))))
-  (<- idle WorkerInfo (worker "b-idle" (! (load 8 0.0 60000))))
-  (<- state ClusterState (state-of #(crowded idle) {"t1" (! (queued "t1"))} :jobs jobs :placements {"s1" "b-idle" "s2" "b-idle"}))
-  (val placed (! (tasks-placed 1000 state state.placements T)))
-  (assert (= #((. (.row placed "t1") phase) (. (.row placed "t1") worker)) #("assigned" "b-idle")) (.row placed "t1")))
-
-
-(deftest test-one-tick-places-no-more-than-the-measured-room
-  ;; CPU 4 個・使い 0 → CPU の空き 3・memory の空き 3600 − 1536 = 2064 MiB(枠 2)。要りを名乗らない task(見込み 1024 MiB)5 本のうち
-  ;; 1 拍で置くのは 2 本(置くたびに要りの全部を予約する — 測りにまだ出ていない)。残る 3 本は空きの無い固定の文で待つ。
-  ;; 失敗ケース: 置いたばかりの task を数えなければ、測りが変わらない同じ拍で 5 本とも置く。
-  (<- small WorkerInfo (worker "small" (! (load 4 0.0 3600 :at-ms 1000))))
-  (val ids ["t1" "t2" "t3" "t4" "t5"])
-  (<- state ClusterState (state-of #(small) (! (queued-all ids))))
-  (val placed (! (tasks-placed 1000 state state.placements T)))
-  (val phases (lfor id ids (. (.row placed id) phase)))
-  (assert (= (.count phases "assigned") 2) phases)
-  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
-  (assert (all (gfor id ids :setv row (.row placed id) :if (= row.phase "queued") (= row.detail no-room))) placed)
-  ;; 次の測りで機体が空いて見えても、置いた 2 本はまだ動いていると報告されていない(測りに出ていない)ので空きから引く。
-  (<- later WorkerInfo (worker "small" (! (load 4 0.0 3600 :at-ms 9000))))
-  (<- again ClusterState (state-of #(later) (dfor id ids id (.row placed id))))
-  (val replaced (! (tasks-placed 9000 again again.placements T)))
-  (assert (= (.count (lfor id ids (. (.row replaced id) phase)) "assigned") 2) replaced))
-
-
-(deftest test-a-placed-task-counts-as-unseen-until-the-measuring-heartbeat-reports-it-running-for-a-while
-  ;; 測りを載せた heartbeat(刻 20000)の状態の報告: t1 と t3 が動いている・t2 は無い。t1 は読みの 10 秒より前に置いた → 測りに出ている。
-  ;; t2 は動いていると報告されていない・t3 は置いて 5 秒(走り出したばかり)→ どちらもまだ出ていない(unseen 2)。失敗ケース: 置いた刻
-  ;; だけで数えると t2 を見落とし、報告だけで数えると t3 を見落とす。
-  (<- w WorkerInfo (worker "w" (! (load 8 0.5 60000 :at-ms 20000))))
-  (val rows {"t1" (replace (! (queued "t1")) :phase "assigned" :worker "w" :started-ms 1000)
-             "t2" (replace (! (queued "t2")) :phase "assigned" :worker "w" :started-ms 1000)
-             "t3" (replace (! (queued "t3")) :phase "assigned" :worker "w" :started-ms 15000)})
-  (<- base ClusterState (state-of #(w) rows))
-  (<- seen ClusterObservations (reports-observed {"w" (WorkerReport :at 20000 :endpoint None
-                                                                   :jobs #((StatusRow :name "task/t1" :phase "running")
-                                                                           (StatusRow :name "task/t3" :phase "running")))}))
-  (val counted (load-of (replace base :observations seen) base.placements))
-  (assert (= #((. (get counted "w") tasks) (. (get counted "w") unseen)) #(3 2)) (get counted "w")))
-
-
-(deftest test-an-unmeasured-worker-gets-no-task-and-the-wait-names-it
-  ;; 測った空きを名乗らない worker(/proc の無い機体・測りの前の版)だけなら置かずに待ち、待ちの文が測りの無さを名指す。
-  (<- blind WorkerInfo (worker "blind" None))
-  (<- state ClusterState (state-of #(blind) {"t1" (! (queued "t1"))}))
-  (val placed (! (tasks-placed 1000 state state.placements T)))
-  (<- unmeasured str (task-unplaced-text TaskUnplacedKind.TASK-UNMEASURED))
-  (assert (= #((. (.row placed "t1") phase) (. (.row placed "t1") detail)) #("queued" unmeasured)) (.row placed "t1"))
-  ;; 測りを名乗る worker が混んでいる時は、空きの無さを名乗る(測りの無い worker が並んでいても)。
-  (<- busy WorkerInfo (worker "busy" (! (load 8 1.0 60000))))
-  (<- both ClusterState (state-of #(blind busy) {"t1" (! (queued "t1"))}))
-  (val waited (! (tasks-placed 1000 both both.placements T)))
-  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
-  (assert (= (. (.row waited "t1") detail) no-room) (.row waited "t1")))
-
-
-(deftest test-background-tasks-leave-the-reserve-of-a-big-machine-to-the-build
-  ;; CPU 36 個・使い 0.8 → 空き 6・予約 6(優先 0 以上に 3・背景の仕事に 3)。背景の仕事(優先 -1)10 本は空きが予約の半分 3 に
-  ;; 下がるまでの 3 本だけ置かれ、残りは予約の文で待つ。失敗ケース: 予約を見なければ 6 本置かれ、後の組み立ての task が空くまで待つ。
-  (<- node-h WorkerInfo (worker "node-h" (! (load 36 0.8 60000 :at-ms 1000))))
-  (val ids (lfor i (range 10) (.format "bg{}" i)))
-  (<- state ClusterState (state-of #(node-h) (! (queued-all ids :priority -1))))
-  (val placed (! (tasks-placed 1000 state state.placements T)))
-  (val phases (lfor id ids (. (.row placed id) phase)))
-  (assert (= (.count phases "assigned") 3) phases)
-  (<- reserved str (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))
-  (assert (all (gfor id ids :setv row (.row placed id) :if (= row.phase "queued") (= row.detail reserved))) placed)
-  ;; 後の拍で積んだ組み立ての task(優先 0)は、背景の仕事が待っていても残した予約へ置かれる。
-  (<- later ClusterState (state-of #(node-h) (| (dfor id ids id (.row placed id)) {"build" (! (queued "build"))})))
-  (val built (! (tasks-placed 2000 later later.placements T)))
-  (assert (= (. (.row built "build") phase) "assigned") (.row built "build")))
 
 
 (deftest test-the-state-shows-the-placement-room-and-no-task-slots

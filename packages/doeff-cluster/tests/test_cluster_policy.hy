@@ -1,6 +1,6 @@
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS compartments-like-rooms])
 
 (import dataclasses [replace])
 (import doeff_cluster [JobSpec])
@@ -18,6 +18,14 @@
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "要る能力 needs と置き先の指定 pin と落ち着いた memory settle(MiB — None = memory を知らない旧い保存の行)を持つ job の行を作るため。"
   (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin :peak-mib (if (is settle None) None (* 2 settle)) :settle-mib settle))
+(defk with-rooms [state]
+  {:pre [(: state ClusterState)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "状態 state の worker ごとに、測った空きに当たる tasks 区画(room_rows.compartments-like-rooms)を宣言した状態を作るため(置き方は区画の
+   申告の和で置く — ADR-DOE-CLUSTER-005)。"
+  (<- compartments Table (compartments-like-rooms (dfor w (.rows state.workers) w.name w)))
+  (replace state :machine-compartments compartments))
+
+
 (defk worker [name seen [room 10] #* provides]
   {:pre [(: name str) (: seen int) (: room int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "最後の連絡が seen で能力 provides と測った空き room(tests/room_rows の ROOM-LOADS)を持つ worker の記録(memory は名乗らない)を作るため。"
@@ -124,7 +132,7 @@
 (deftest test-task-follows-the-same-dedicated-rule
   (setv workers (! (table-from-rows {"mac" (replace (! (mac "mac")) :versions #((ComponentVersion "python" "3")))
                  "node-a" (replace (! (pod "node-a")) :versions #((ComponentVersion "python" "3")))})))
-  (setv state (ClusterState #() workers (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT)))}))))
+  (setv state (! (with-rooms (ClusterState #() workers (table-of #()) (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #(AGENT)))}))))))
   (setv placed (! (tasks-placed 1000 state (table-of #()) T)))
   (assert (= #((. (.row placed "t1") worker) (. (.row placed "t2") worker)) #("node-a" "mac")))
   ;; agent の task で Mac が居なければ、送らずに失敗(理由に要る能力)
@@ -143,7 +151,7 @@
   {:pre [(: seen int) (: detached bool)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "能力 verify を持つ唯一の worker(最後の連絡 = seen)と、それを要る待っている task 1 本(lease の期限 20000)の状態を作るため。"
   (val v (replace (! (worker "verify-1" seen 1 "verify")) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
-  (ClusterState #() (! (table-from-rows {"verify-1" v})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #("verify"))) :detached detached)}))))
+  (! (with-rooms (ClusterState #() (! (table-from-rows {"verify-1" v})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #("verify"))) :detached detached)}))))))
 
 (deftest test-a-queued-task-waits-while-its-only-capable-worker-is-silent
   ;; 失敗ケース(直す前の形では failed): 唯一の能力の合う worker の最後の連絡が生存の窓(lease-ms 10 秒)より古い — 入れ替えの間の沈黙。
@@ -609,7 +617,7 @@
 ;; --- worker の枠 ----------------------------------------------------------------------------------------
 ;; job の側は memory で数える: 置いた job と surge の settle の和 + 新しい job の settle ≤ memory-mib の時だけ置く(memory-misfit)。task の側は
 ;; 機体の測った空き(heartbeat の measured — task-room-of)で、常駐の job の数に依らない(常駐の job の使いは測った値に入っている)。置けない
-;; job は memory の訳を、置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
+;; job は memory の訳を、置けない task は理由の閉じた語 TASK-COMPARTMENT-FULL の固定の文を持って待つ。
 
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [UnplacedKind]
@@ -674,7 +682,7 @@
   (var jobs #())
   (for [n (range count)]
     (:= jobs (+ jobs #((! (job (.format "r{}" n)))))))
-  (val state (ClusterState jobs (! (table-from-rows {"mac" (! (reserved "mac" 0 2 1))}))))
+  (val state (! (with-rooms (ClusterState jobs (! (table-from-rows {"mac" (! (reserved "mac" 0 2 1))}))))))
   (<- placed Table (jobs-placed 0 state T))
   (val after (replace state :placements placed :tasks tasks))
   (<- room int (task-room-of (.row after.workers "mac") (load-of after placed)))
@@ -685,8 +693,9 @@
 (deftest test-resident-jobs-do-not-shrink-the-task-room
   ;; 受入 ca5ce3521: 背景の仕事を同時に置ける数は常駐の job を置いても減らない(常駐の job の使いは測った空きにもう入っている — 置いた
   ;; 数で二重に引かない)。測った空き 3 本の worker の task の空きは、常駐の job が 0 本でも 6 本でも 3 で、task を 4 本積むと 3 本置き 1 本は
-  ;; TASK-NO-ROOM で待つ(以前の形 — 手書きの capacity から job も引く — では 6 本の時に task の空きが減った)。
-  (val waits (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM)))
+  ;; 区画の和の越え(TASK-COMPARTMENT-FULL — 区画は測った空き 3 本に当たる)で待つ(以前の形 — 手書きの capacity から job も引く —
+  ;; では 6 本の時に task の空きが減った)。
+  (val waits (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)))
   (val none (! (room-beside-jobs 0)))
   (val six (! (room-beside-jobs 6)))
   (assert (= none #(0 3 ["assigned" "assigned" "assigned" "queued"] waits)) none)
@@ -694,22 +703,22 @@
 
 (deftest test-a-task-without-room-waits-with-the-same-reason-on-every-reconcile
   ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、測った空きが 0 で task の空きが 0(常駐の
-  ;; job は空きを使わない)。task は queued のまま、detail に TASK-NO-ROOM の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに
+  ;; job は空きを使わない)。task は queued のまま、detail に TASK-COMPARTMENT-FULL の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに
   ;; 保存しない)。
-  (val full (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))
-                          (! (table-from-rows {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}))
-                          (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))))
+  (val full (! (with-rooms (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))
+                                         (! (table-from-rows {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}))
+                                         (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))))))
   (val once (! (tick full 1000 T)))
   (val waiting (.row once.tasks "t1"))
   (assert (= #(waiting.phase waiting.worker) #("queued" None)) waiting)
-  (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) waiting.detail)
+  (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL))) waiting.detail)
   (val twice (! (tick once 2000 T)))
   (assert (is (.row twice.tasks "t1") waiting) (.row twice.tasks "t1"))
   (assert (= twice.revision once.revision) #(once.revision twice.revision))
   (assert (not (durable-changed once twice))))
 
 (deftest test-a-task-on-a-draining-worker-only-still-waits-without-the-room-reason
-  ;; 置ける先が drain 中の worker だけの task は、今までどおり理由を書かずに待つ(空きの話ではない — TASK-NO-ROOM にしない)。
+  ;; 置ける先が drain 中の worker だけの task は、今までどおり理由を書かずに待つ(空きの話ではない — TASK-COMPARTMENT-FULL にしない)。
   (val state (ClusterState #() (! (table-from-rows {"mac" (! (reserved "mac" 0 2 0))})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))
                            :drains (! (table-from-rows {"mac" (Drain "mac" 0 600000)}))))
   (val waiting (.row (! (tasks-placed 1000 state (table-of #()) T)) "t1"))

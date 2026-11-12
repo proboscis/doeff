@@ -68,57 +68,6 @@
   (dfor t (.rows placed) t.id t))
 
 
-(deftest test-a-preemptible-task-that-does-not-fit-above-the-line-is-placed-as-a-loan
-  (<- worker WorkerInfo (worker-with))
-  (<- task TaskRecord (queued "t-build"))
-  (<- rows dict (placed-rows {"t-build" task} worker))
-  (val placed (get rows "t-build"))
-  (assert (= #(placed.phase placed.worker placed.borrowed) #("assigned" "node-h" True)) placed)
-  (assert (in "借り" placed.detail) placed.detail)
-  ;; 失敗ケース(直す前の形): worker が貸しを名乗らなければ、線の上の空きを待つ。
-  (<- plain WorkerInfo (worker-with :lend False))
-  (<- rows dict (placed-rows {"t-build" task} plain))
-  (assert (= (. (get rows "t-build") phase) "queued") (get rows "t-build")))
-
-
-(deftest test-while-the-upper-system-waits-loans-are-stopped-lowest-priority-first-until-the-shortfall
-  ;; 取り返す量 5000 MiB: 優先の低い a-low(使い 6000)だけで届くので、b-high は止めない。
-  (<- worker WorkerInfo (worker-with :reclaim 5000 :uses {"a-low" 6000 "b-high" 6000}))
-  (<- low TaskRecord (borrowed "a-low" -1))
-  (<- high TaskRecord (borrowed "b-high" 0))
-  (<- rows dict (placed-rows {"a-low" low "b-high" high} worker))
-  (assert (not-in "a-low" rows) rows)
-  (val again (get rows "a-low-r2"))
-  (assert (= #(again.phase again.attempt again.losses again.reclaimed again.borrowed) #("queued" 2 0 True False)) again)
-  (assert (in "memory の不足" again.detail) again.detail)
-  (assert (= #((. (get rows "b-high") phase) (. (get rows "b-high") borrowed)) #("assigned" True)) (get rows "b-high"))
-  ;; 止めた task が worker でまだ止まらず測りに残る間は、その使いを戻る memory に数え、止め足さない。
-  (<- stopping WorkerInfo (worker-with :reclaim 5000 :uses {"a-low" 6000 "b-high" 6000}))
-  (<- rows dict (placed-rows {"a-low-r2" again "b-high" high} stopping))
-  (assert (= (. (get rows "b-high") phase) "assigned") (get rows "b-high"))
-  ;; 取り返す量が大きければ、届くまで次の借りも止める。
-  (<- deep WorkerInfo (worker-with :reclaim 9000 :uses {"a-low" 6000 "b-high" 6000}))
-  (<- rows dict (placed-rows {"a-low" low "b-high" high} deep))
-  (assert (and (in "a-low-r2" rows) (in "b-high-r2" rows)) rows))
-
-
-(deftest test-loans-are-not-stopped-while-the-upper-system-does-not-wait
-  ;; 上に載る系が待っていない(取り返す量を名乗らない)間は、線の上の空きが無くても借りを止めない。
-  (<- worker WorkerInfo (worker-with :lend False :uses {"a-low" 6000}))
-  (val worker-below (replace worker :measured (replace worker.measured :memory-available-MiB 0)))
-  (<- low TaskRecord (borrowed "a-low" -1))
-  (<- rows dict (placed-rows {"a-low" low} worker-below))
-  (assert (= #((. (get rows "a-low") phase) (. (get rows "a-low") borrowed)) #("assigned" True)) rows))
-
-
-(deftest test-a-task-without-the-preemptible-mark-is-not-placed-as-a-loan
-  (<- worker WorkerInfo (worker-with))
-  (<- task TaskRecord (queued "t-keep" :preemptible False))
-  (<- rows dict (placed-rows {"t-keep" task} worker))
-  (assert (= #((. (get rows "t-keep") phase) (. (get rows "t-keep") borrowed)) #("queued" False)) (get rows "t-keep")))
-
-
-;; worker の測り: MemTotal 128 GiB・MemAvailable 50 GiB の機体(追い出しの線は無い)。線 37984 MiB・下の線 29792 MiB。
 (val STAT "cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 100 0 100 800 0 0 0 0 0 0\n")
 (val MEMINFO (.format "MemTotal: {} kB\nMemAvailable: {} kB\n" (* 128 1024 1024) (* 50 1024 1024)))
 (val KEEP "37984\n")

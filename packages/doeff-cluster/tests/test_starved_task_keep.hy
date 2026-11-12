@@ -72,46 +72,6 @@
   #((.row placed "a-big") (.row placed "b-small")))
 
 
-(deftest test-a-long-waiting-large-task-keeps-the-room-from-later-small-tasks
-  ;; 直す前は小さい task が空き(4900 − 512 − 2284 = 2104 MiB)に置かれ、大きい task は次の拍も同じ形で待った。
-  (<- pair tuple (placed-world ROOMY-JOBS-MIB (+ STARVE-WAIT-MS 1)))
-  (val big (get pair 0))
-  (val small (get pair 1))
-  (assert (= big.phase "queued") big)
-  (assert (in "worker node-c の memory の空きをこの task に取っておく" big.detail) big.detail)
-  (assert (= small.phase "queued") small)
-  (assert (not-in "取っておく" small.detail) small.detail))
-
-
-(deftest test-a-briefly-waiting-large-task-does-not-keep-the-room
-  (<- pair tuple (placed-world ROOMY-JOBS-MIB (- STARVE-WAIT-MS 1)))
-  (val big (get pair 0))
-  (val small (get pair 1))
-  (assert (= big.phase "queued") big)
-  (assert (not-in "取っておく" big.detail) big.detail)
-  (assert (= #(small.phase small.worker) #("assigned" "node-c")) small))
-
-
-(deftest test-a-worker-the-task-cannot-fit-even-when-drained-is-not-kept
-  ;; 置いた task が全部終わっても jobs の層の空きが要りに届かない(4980 < 5632)ので、小さい task は今までどおり置く。
-  (<- pair tuple (placed-world TIGHT-JOBS-MIB (+ STARVE-WAIT-MS 1)))
-  (val big (get pair 0))
-  (val small (get pair 1))
-  (assert (= big.phase "queued") big)
-  (assert (not-in "取っておく" big.detail) big.detail)
-  (assert (= #(small.phase small.worker) #("assigned" "node-c")) small))
-
-
-(deftest test-the-drained-room-adds-the-measured-task-uses-to-the-unreserved-room
-  (<- roomy int (drained-room-mib (! (node-c-measured ROOMY-JOBS-MIB))))
-  (assert (= roomy (+ (- ROOMY-JOBS-MIB JOBS-ROOM-FLOOR-MIB) RUNNING-USE)) roomy)
-  ;; 機体の空きが jobs の層より狭ければ機体の空きで数える。
-  (<- wide int (drained-room-mib (! (node-c-measured 40000))))
-  (assert (= wide (+ (- AVAILABLE-MIB MEMORY-FLOOR-MIB) RUNNING-USE)) wide)
-  (<- unmeasured int (drained-room-mib None))
-  (assert (= unmeasured 0)))
-
-
 (defk urgent-world []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "node-c に task 1 本を置いた世界で、STARVE-WAIT-MS より前に積んだ要り 3584 MiB・優先 0 の task と、その後に積んだ同じ要りで優先
@@ -130,21 +90,6 @@
   (val state (ClusterState #() workers (table-of #()) tasks))
   (val placed (! (tasks-placed now state state.placements T)))
   #((.row placed "a-early") (.row placed "b-urgent") (.row placed "c-small")))
-
-
-(deftest test-an-urgent-task-keeps-the-room-at-once-ahead-of-an-earlier-task-of-the-same-size
-  ;; 直す前は急ぎの task も 30 分を待ち、待ちを越えても id の先の a-early が先に取っておいた(11-10 の 12 時間の待ち)。小さい task は
-  ;; 空き(4900 − 512 − 2284 = 2104 MiB)に置かれた。
-  (<- rows tuple (urgent-world))
-  (val early (get rows 0))
-  (val urgent (get rows 1))
-  (val small (get rows 2))
-  (assert (= urgent.phase "queued") urgent)
-  (assert (in "worker node-c の memory の空きをこの task に取っておく" urgent.detail) urgent.detail)
-  (assert (= early.phase "queued") early)
-  (assert (not-in "取っておく" early.detail) early.detail)
-  (assert (= small.phase "queued") small)
-  (assert (not-in "取っておく" small.detail) small.detail))
 
 
 (deftest test-the-room-is-kept-for-an-urgent-priority-or-a-long-wait

@@ -10,7 +10,9 @@
 ;;;             返事から外れた task の Program の cache は消す(service の job の Program は消さない)。
 (require doeff-hy.macros [deftest defk deff <- val var])
 (import json)
-(import tests.room_rows [ROOM-JSONS])
+(import tests.room_rows [ROOM-JSONS room-compartments])
+;; heartbeat で名乗る worker w と wa の tasks 区画(ADR-DOE-CLUSTER-005 — 置き方は区画の申告の和で置く)。
+(val ROOMS (room-compartments #("w" "wa" "wb") 10))
 (import os)
 (import subprocess)
 (import sys)
@@ -113,7 +115,7 @@
 
 (deftest test-the-task-versions-come-from-the-placed-program
   ;; 置く worker との版の突き合わせ(cloudpickle は版をまたいで復元できる保証が無い)は、置き場の版で行う。
-  (<- worker tuple (beat (ClusterState) 0 []))
+  (<- worker tuple (beat (ClusterState :machine-compartments ROOMS) 0 []))
   (<- same tuple (program-placed (get worker 0) V "c2FtZQ=="))
   (<- other tuple (program-placed (get same 0) OTHER "b3RoZXI="))
   (<- a tuple (call (get other 0) "POST" "/tasks" {"program" (get same 1) "revision" "r" "needs" ["net"]} 10))
@@ -126,7 +128,7 @@
 
 
 (deftest test-the-heartbeat-reply-carries-only-the-program-key-of-each-task
-  (<- worker tuple (beat (ClusterState) 0 []))
+  (<- worker tuple (beat (ClusterState :machine-compartments ROOMS) 0 []))
   (<- placed tuple (program-placed (get worker 0) V))
   (<- remote tuple (call (get placed 0) "POST" "/tasks" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
   (<- detached tuple (call (get remote 0) "PUT" "/detached/job-b" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
@@ -144,7 +146,7 @@
   ;; 参照の無い Program は置いてから PROGRAM-GRACE-MS の後に消える。task の行(待ち・走っている・終わって結果を保持している)が参照する
   ;; Program は残り、行が消えたら猶予の後に消える。
   (val later (+ PROGRAM-GRACE-MS 1000))
-  (<- worker tuple (beat (ClusterState) 0 []))
+  (<- worker tuple (beat (ClusterState :machine-compartments ROOMS) 0 []))
   (<- kept tuple (program-placed (get worker 0) V "a2VwdA=="))
   (<- remote-program tuple (program-placed (get kept 0) V "cmVtb3Rl"))
   (<- loose tuple (program-placed (get remote-program 0) V "bG9vc2U="))
@@ -175,7 +177,7 @@
 (deftest test-an-empty-coordinator-adopts-a-running-detached-task-by-its-program-key [tmp-path]
   ;; worker は切り離した task の返事の行(置き場のキー program を含む)を状態の報告に写す。状態を失った coordinator は同じ sha の行を
   ;; 引き取り、同じ返事に載せる(担い手の cache の Program で走り続ける — 置き場に Program が無くてよい)。
-  (<- worker tuple (beat (ClusterState) 0 []))
+  (<- worker tuple (beat (ClusterState :machine-compartments ROOMS) 0 []))
   (<- placed tuple (program-placed (get worker 0) V))
   (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
   (val id (get put 2 "task"))
@@ -184,7 +186,7 @@
   (.accept-tasks link (get reply 2 "tasks"))
   (val row (get (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))) 0))
   (assert (= (get row "task" "program") (get placed 1)) row)
-  (<- fresh tuple (beat (ClusterState) 5000 [row]))
+  (<- fresh tuple (beat (ClusterState :machine-compartments ROOMS) 5000 [row]))
   (assert (= (. (.row (. (get fresh 0) tasks) id) program) (get placed 1)))
   (assert (= (lfor t (get fresh 2 "tasks") (get t "program")) [(get placed 1)]) (get fresh 2))
   (assert (= (.size (. (get fresh 0) programs)) 0) "置き場を失った coordinator は Program を持たない")
@@ -192,7 +194,7 @@
   (for [echo [(dfor #(k v) (.items (get row "task")) :if (!= k "program") k v)
               (| (get row "task") {"program" "not-a-sha"})
               (| (get row "task") {"blob" "QkxPQg=="} {"program" None})]]
-    (<- refused tuple (beat (ClusterState) 5000 [(| row {"task" echo})]))
+    (<- refused tuple (beat (ClusterState :machine-compartments ROOMS) 5000 [(| row {"task" echo})]))
     (assert (= (get refused 2 "tasks") []) echo)
     (assert (is (.row (. (get refused 0) tasks) id) None) echo)))
 
@@ -200,7 +202,7 @@
 (deftest test-saved-task-rows-that-carry-a-blob-are-read-without-a-program
   ;; 置き場 /programs の前の coordinator が書いた task の行(詰めた Program を行の blob に持つ)は、読み直しで coordinator を落とさない:
   ;; 終わっていない行は failed(理由つき — 走らせない)、終わった行は Program 無し(program None)で結果を保つ。
-  (<- worker tuple (beat (ClusterState) 0 []))
+  (<- worker tuple (beat (ClusterState :machine-compartments ROOMS) 0 []))
   (<- placed tuple (program-placed (get worker 0) V))
   (<- open tuple (call (get placed 0) "PUT" "/detached/job-open" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
   (<- done tuple (call (get open 0) "PUT" "/detached/job-done" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
@@ -308,7 +310,7 @@
   (val mine (! (process-versions os.environ)))
   (val blob (encode-program (based-add 3)))
   (val sha (program-sha blob))
-  (<- worker-a tuple (heartbeat-of (ClusterState) "wa" mine 0))
+  (<- worker-a tuple (heartbeat-of (ClusterState :machine-compartments ROOMS) "wa" mine 0))
   (<- worker-b tuple (heartbeat-of (get worker-a 0) "wb" OTHER 0))
   (<- placed-a tuple (call (get worker-b 0) "PUT" (+ "/programs/" sha) {"blob" blob "versions" mine} 1))
   (assert (= (get placed-a 1) 200) placed-a)
