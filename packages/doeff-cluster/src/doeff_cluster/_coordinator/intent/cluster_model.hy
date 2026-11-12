@@ -1070,17 +1070,11 @@
   (#^ int max-value-bytes))
 
 
-(defrecord BoardEntryView
-  "GET /board の答えの行 1 つ: key・value = 書かれた値(JSON の値のまま)・version = 行の版。"
-  (#^ str key)
-  (#^ object value)
-  (#^ int version))
-
-
 (defrecord BoardRead
-  "GET /board の答え(#2614): entries = 前置きに合う行(鍵の順)・with-versions = 版も見せるか(問いの withVersions)。JSON の形
-   (鍵 → 値、または鍵 → {value resourceVersion})は coordinator/protocol/replies が綴る。"
-  (#^ (get tuple #(BoardEntryView ...)) entries)
+  "GET /board の答え(#2614): entries = 前置きに合う行の #(鍵 盤の行) の組(鍵の順 — 盤の行の object のまま運ぶ。読みのたびに行ごとの
+   写しを作らず、綴りの 1 点が行の object ごとに 1 度だけ綴った断片を使い回す — 2026-11-13)・with-versions = 版も見せるか(問いの
+   withVersions)。JSON の形(鍵 → 値、または鍵 → {value resourceVersion})は coordinator/protocol/replies が綴る。"
+  (#^ (get tuple #((get tuple #(str BoardRow)) ...)) entries)
   (#^ bool with-versions))
 
 
@@ -1498,12 +1492,12 @@
 (defrecord PlacementClass
   "待っている task の置き方を決める入力のうち task の側の分(cluster_policy.placement-class の答え — 拍の中で同じ値の task は、置き先の数え
    〔負荷・組の升・取っておき〕が変わらない間は同じ判断になる。2026-11-12): row = 置き方の判断が読まない欄(id・名・Program・期限・detail・
-   環境変数・知らせ先など)を空にした task の行・env = 実行環境の宣言の JSON の文字列(None = 宣言なし — 行の dict は hash できないので
-   文字列で持つ)・unheard = 次の試行の task を、積み直した後にまだ連絡の無い worker の名(heard-since-rerun が偽 — 最初の試行は空)・
-   keeps = 置けない時に worker の空きを取っておく task か(measured_room.keeps-room? — 待った長さで変わる)。保存しない拍の中の値。"
+   環境変数・知らせ先など)を空にした task の行と実行環境の宣言の JSON の文字列の組に振った番号(cluster_policy.placement-row — 同じ組には
+   同じ番号。行の全部の欄の hash を、置き方の鍵を引くたびに求め直さないため — 2026-11-13)・unheard = 次の試行の task を、積み直した後に
+   まだ連絡の無い worker の名(heard-since-rerun が偽 — 最初の試行は空)・keeps = 置けない時に worker の空きを取っておく task か
+   (measured_room.keeps-room? — 待った長さで変わる)。保存しない拍の中の値。"
   {:tags {:context "coordinator" :role "type"}}
-  (#^ TaskRecord row)
-  (#^ (| str None) env)
+  (#^ int row)
   (#^ (get frozenset str) unheard)
   (#^ bool keeps))
 

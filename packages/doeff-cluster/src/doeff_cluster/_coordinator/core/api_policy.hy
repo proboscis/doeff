@@ -38,7 +38,7 @@
 (import doeff [run])
 (import doeff_cluster._coordinator.intent.request_bodies [BodyMalformed BodyUnreadable RequestBody])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead ClusterNaming Fault RolloutStatus RolloutTarget StateReply
                                                        DeploymentSeen DeploymentUnreadable ServiceBody LegacyJobs])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._shared.core.lease_rules [holders-shifted])
@@ -586,12 +586,11 @@
         head (get parts 0))
   (cond
     (and (= method "GET") (= parts ["board"]))
-      ;; 前置きで絞ってから合う鍵だけを並べる(全行を並べ替えない — 盤の 2 万行を読みのたびに並べ替える費用が main thread の 1 割を占めた)。
-      (do (setv prefix (.get request.query "prefix" "")
-                board state.board)
-          #(state 200 (BoardRead :entries (tuple (gfor k (sorted (gfor k (.keys board) :if (.startswith k prefix) k))
-                                                       :setv row (.row board k)
-                                                       (BoardEntryView :key k :value row.value :version row.version)))
+      ;; 前置きで絞ってから合う行だけを並べる(全行を並べ替えない — 盤の 2 万行を読みのたびに並べ替える費用が main thread の 1 割を占めた)。
+      ;; 行は object のまま渡す(行ごとの写しを作らない — 綴りは行の object ごとに 1 度だけ・replies.board-row-spelling)。鍵は一意なので、
+      ;; #(鍵 行) の組の並べ替えは鍵だけを比べる。
+      (do (setv prefix (.get request.query "prefix" ""))
+          #(state 200 (BoardRead :entries (tuple (sorted (gfor pair (.items state.board) :if (.startswith (get pair 0) prefix) pair)))
                                  :with-versions (bool (.get request.query "withVersions")))))
     (and (= method "POST") (= head "leases") (= (len parts) 2))
       (! (lease-write state (get parts 1) body now))

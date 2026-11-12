@@ -7,6 +7,7 @@
 (import dataclasses [replace])
 (import functools)
 (import hashlib)
+(import itertools)
 (import itertools [groupby])
 (import operator [attrgetter])
 (import json)
@@ -1863,23 +1864,36 @@
 ;; object へ使い回されない。上限 PLACEMENT-ROW-MEMO-MAX を越えたら全部を捨てて覚え直す(handoff_policy の _FINGERPRINTS と同じ形)。
 (setv _PLACEMENT-ROWS {})
 (setv PLACEMENT-ROW-MEMO-MAX 8192)
+;; 空にした行と実行環境の宣言の組 → その組に振った番号(PlacementClass.row — 2026-11-13)。置き方の鍵は拍ごとに待っている task の数だけ
+;; 作って引くので、鍵が行そのものを持つと、引くたびに行の全部の欄の hash と比べを求め直した(本番の主 thread の 7〜8%)。番号は行の object
+;; ごとに 1 度だけ組から引く。番号は捨てた後も使い回さない(_PLACEMENT-NUMBERS は数え続ける)ので、同じ番号は同じ組 — 捨てた後に同じ組へ
+;; 別の番号が振られても、判断を借りる task が減るだけで答えは変わらない。
+(setv _PLACEMENT-NUMBERS (itertools.count))
+(setv _PLACEMENT-GROUPS {})
 
 
 (defn #^ PlacementClass placement-row [#^ TaskRecord task]  ; cannot be a defk: 覚えの dict を引く(Program の外の純粋な判断 placement-class の材料)
   "task の行から、置き方の判断(able・task-misfit・starved-keeper・線の内の貸し・置き先の順)が読まない欄(id・名・Program・期限・detail・
-   環境変数・知らせ先など)を空にした行と、実行環境の宣言の JSON の文字列を持つ PlacementClass(unheard と keeps は空の値 — 呼び手の
-   placement-class が拍の値で埋める)を得るため。読む欄を空にすると違う task が同じ判断を借りるので、迷う欄は残す(残すと判断を借りる
-   task が減るだけで答えは変わらない)。同じ行の object には覚えた値を返す。"
+   環境変数・知らせ先など)を空にした行と、実行環境の宣言の JSON の文字列の組に振った番号を持つ PlacementClass(unheard と keeps は空の
+   値 — 呼び手の placement-class が拍の値で埋める)を得るため。読む欄を空にすると違う task が同じ判断を借りるので、迷う欄は残す(残すと
+   判断を借りる task が減るだけで答えは変わらない)。同じ行の object には覚えた値を返す。"
   (setv kept (.get _PLACEMENT-ROWS (id task)))
   (when (and (is-not kept None) (is (get kept 0) task))
     (return (get kept 1)))
   (setv row (replace task :id "" :name "" :program None :revision "" :lease-ms 0 :lease-until-ms 0 :submitted-ms 0
                           :detail "" :key None :retain-ms 0 :environ #() :notify "" :queued-noticed-ms None
                           :rerun-note "" :runtime-env None)
-        env (if (is task.runtime-env None) None (json.dumps task.runtime-env :sort-keys True :ensure-ascii False)))
+        env (if (is task.runtime-env None) None (json.dumps task.runtime-env :sort-keys True :ensure-ascii False))
+        group #(row env))
   (when (>= (len _PLACEMENT-ROWS) PLACEMENT-ROW-MEMO-MAX)
     (.clear _PLACEMENT-ROWS))
-  (setv shape (PlacementClass :row row :env env :unheard (frozenset) :keeps False))
+  (when (>= (len _PLACEMENT-GROUPS) PLACEMENT-ROW-MEMO-MAX)
+    (.clear _PLACEMENT-GROUPS))
+  (setv number (.get _PLACEMENT-GROUPS group))
+  (when (is number None)
+    (setv number (next _PLACEMENT-NUMBERS)
+          (get _PLACEMENT-GROUPS group) number))
+  (setv shape (PlacementClass :row number :unheard (frozenset) :keeps False))
   (setv (get _PLACEMENT-ROWS (id task)) #(task shape))
   shape)
 

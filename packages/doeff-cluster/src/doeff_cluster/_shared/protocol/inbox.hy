@@ -15,7 +15,7 @@
 (import urllib.parse [unquote :as url-unquote])
 (import doeff_core_effects [CreateExternalPromise ExternalPromise TaskPriority Promise Wait])
 (import doeff_time [WaitWithin])
-(import doeff_cluster._shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText NextRequests ServiceReached])
+(import doeff_cluster._shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText SpelledJson NextRequests ServiceReached])
 
 
 (defclass [runtime-checkable] ReplyTarget [Protocol]
@@ -63,11 +63,12 @@
 
 
 (defn #^ tuple encoded-reply [#^ object body]
-  "返事の本文を送る byte と content-type の組にするため(PlainText はそのまま text・ほかは JSON)。受付の箱の HTTP の thread は
-   この組をそのまま書く(coordinator と記録の置き場の受付が同じ 1 点を使う)。"
-  (if (isinstance body PlainText)
-      #((.encode body.text "utf-8") body.content-type)
-      #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
+  "返事の本文を送る byte と content-type の組にするため(PlainText はそのまま text・先に綴った SpelledJson はその text・ほかは JSON)。
+   受付の箱の HTTP の thread はこの組をそのまま書く(coordinator と記録の置き場の受付が同じ 1 点を使う)。"
+  (cond
+    (isinstance body PlainText) #((.encode body.text "utf-8") body.content-type)
+    (isinstance body SpelledJson) #((.encode body.text "utf-8") "application/json; charset=utf-8")
+    True #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
 
 
 (defk raw-requests [inbox timeout-seconds limit]

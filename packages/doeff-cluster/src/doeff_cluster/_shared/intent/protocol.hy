@@ -131,6 +131,17 @@
   (setv #^ str content-type "text/plain; version=0.0.4; charset=utf-8"))
 
 
+(defclass SpelledJson [dict]
+  "JSON の object の返事の本文で、送る文字列 text を先に綴った物(2026-11-13 — 綴りの 1 点 coordinator/protocol/replies が、変わらない行の
+   断片を行ごとに 1 度だけ綴ってつなぐ返事)。dict としては text を解いた値と同じに読める(手元の宿・test は dict のまま読む)。送る byte は
+   shared/protocol/inbox の encoded-reply が text から作り、json.dumps で綴り直さない。作った後に dict を書き換えない(text と食い違う)。"
+  (setv __slots__ #("text"))
+
+  (defn #^ None __init__ [self #^ dict pairs #^ str text]
+    (.__init__ (super) pairs)
+    (setv self.text text)))
+
+
 (defclass [(dataclass :frozen True)] NextRequests [EffectBase]
   "受付に並んだ要求をまとめて取る(coordinator と record-store の受け口の effect)。結果は Request の list。最初の 1 件を
    timeout-seconds まで待ち(来なければ空 = 期限の経過で次の歩へ進む・None = 期限なし — 要求か停止の合図か外の出来事でだけ起きる)、

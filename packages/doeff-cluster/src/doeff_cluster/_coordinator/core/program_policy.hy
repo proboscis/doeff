@@ -15,6 +15,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ProgramRow ProgramStored ErrorReply])
 (import doeff_cluster._shared.core.remote_rules [program-sha])
 (import doeff_cluster._coordinator.intent.request_bodies [ProgramBody])
+(import doeff_cluster._coordinator.intent.task_table [task-index])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))
 (setv PROGRAM-MAX-BYTES (* 4 1024 1024))       ; 詰めた Program 1 つの上限(base64 の文字列の長さ)
@@ -49,9 +50,11 @@
 (deff program-refs [#^ ClusterState state]  ; cannot be a defk: coordinator の調停(Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState)] :post [(: % frozenset)] :tags {:context "coordinator" :role "judgment"}}
   "置き場の Program を今参照している物のキーの集合 — 掃除で残す物を決めるため。受け付けた Service の行と、task の行(待ち・走っている・
-   終わって結果を保持している物の全部 — 行が消えるまで参照は続く)。参照の定義点はここ 1 つ。"
-  (frozenset (+ (lfor j state.jobs :if j.spec.program j.spec.program)
-                (lfor t (.rows state.tasks) :if t.program t.program))))
+   終わって結果を保持している物の全部 — 行が消えるまで参照は続く)。参照の定義点はここ 1 つ。task の行の参照は task の表の索引の数え
+   (task_table の TaskIndex.programs — 書きのたびに差分で進む)から読み、行を回らない: 掃除の期限(sweep-due)は調停の毎歩に問うので、
+   全部の行を読むと 1 要求の費用が保持の間の終わった行を含む行の総数に比例した(2026-11-13)。"
+  (| (frozenset (gfor j state.jobs :if j.spec.program j.spec.program))
+     (frozenset (.keys (. (task-index state.tasks) programs)))))
 
 
 (deff sweep-programs [#^ ClusterState state #^ int now]  ; cannot be a defk: coordinator の調停(Program の外の純粋な判断)が呼ぶ
