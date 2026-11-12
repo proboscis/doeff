@@ -1,8 +1,8 @@
 ;;; 置いた task の申告(ADR-DOE-CLUSTER-005 R4 — 2026-11-12): task が置いた phase へ移った歩で、送り手の見当(task の行の memory-mib)と
 ;;; 測った山(task の行の peak-mib と同じ形の行の山 — shape-peaks-of)から memory の申告を 1 度だけ決め、task の id で引く表
 ;;; (ClusterState.claims — TaskClaim)に固定する。決め方は measured_room.learned-need(頭の註の測った山で数える要り):
-;;;   同じ形に終わりまで走った行が在る   申告 = min(⌈max(この task の山, 同じ形の山の最大) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, 線 − 床)
-;;;   無い(形を名乗らない・初めての形)  申告 = max(送り手の見当〔無ければ UNDECLARED-TASK-MIB〕, min(max(この task の山, 同じ形の山), 線 − 床))
+;;;   同じ形に終わりまで走った行が在る   申告 = min(⌈max(この task の山, 同じ形の山の最大) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, 上限)
+;;;   無い(形を名乗らない・初めての形)  申告 = max(送り手の見当〔無ければ UNDECLARED-TASK-MIB〕, min(max(この task の山, 同じ形の山), 上限))
 ;;; CPU の申告は全部の task で TASK-CORES core(task ごとの CPU の使いは記録していない)。
 ;;;
 ;;; 固定する訳: 以前は置いた task の要りを拍ごとに数え直した(load-of)。同じ形の古い行が保持の外へ出た拍や、ほかの task の山が伸びた拍に、
@@ -11,23 +11,49 @@
 ;;; 量を読んでいた — 同じ形の山が 615 MiB の task を、置き先は 1,025 MiB で数え、worker は名乗りの 4,096 MiB を越えるまで越えと見なかった。
 ;;; 今はどちらも申告を読む。
 ;;;
-;;; 線 − 床で切るのは置いた worker の測った線(measured_room.memory-line-mib)で、区画の宣言を置き先が読むまでの間の上限。
-;;; 申告は置いた時に決めるので、線が後で動いても置いた task の申告は動かない。
+;;; 上限は、task の要る能力の合う worker の持つ tasks 区画の memoryMiB の最大(compartment-clamp — R4。区画を持つ合う worker が無ければ
+;;; 切らない)。以前は置いた worker の測った線 − 床で切った — 測った空きは置き方から外したので(R5)、上限も宣言から読む。置く判断
+;;; (cluster_policy.place-tasks)と申告の書き(claims-noted)は同じ歩の状態から同じ上限を読む。申告は置いた時に決めるので、区画が後で
+;;; 変わっても置いた task の申告は動かない。
 ;;;
 ;;; 書きと外しは 1 歩の前後の差の 1 点(claims-noted — program.coordinator-step が保存の直前に呼ぶ): 置いた phase へ移った行(置き直しで
 ;;; worker か置いた刻が替わった行を含む)に申告を書き、置いた phase を出た行・消えた行の申告を外す。置く判断(cluster_policy.place-tasks)、
 ;;; 状態を失った coordinator の引き取り(adopted-task)、走らせ直し(行の id が替わる)のどの道も、この歩の前後の差に現れる。
 ;;; 申告の無い置いた task(表の前の版で置いた行)は、その拍の決め方の値で数える(claim-mib-of)— 次に置き直すまで。
-(require doeff-hy.macros [defk <- val])
+(require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskClaim TaskRecord WorkerInfo PLACED-PHASES])
-(import doeff_cluster._coordinator.core.measured_room [learned-need memory-line-mib ShapePeak TASK-CORES])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskClaim TaskRecord PLACED-PHASES])
+(import doeff_cluster._coordinator.core.measured_room [learned-need ShapePeak TASK-CORES])
+(import doeff_cluster._coordinator.core.cluster_rules [placeable])
+(import doeff_cluster._shared.core.compartment_rules [held-compartments])
 (import doeff_hy._table [Table TableWrite])
 (import doeff_cluster._coordinator.intent.task_table [task-index])
 
 ;; 1 core の millicore。
 (val MILLIS-PER-CORE 1000)
+;; task 1 本の CPU の申告(millicore — 頭の註)。
+(val TASK-CPU-MILLIS (* TASK-CORES MILLIS-PER-CORE))
+
+
+(deff tasks-compartments-of [#^ ClusterState state]  ; cannot be a defk: place-tasks・load-of・申告の上限の内包表記(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "名簿の worker ごとの tasks 区画(ADR-DOE-CLUSTER-005 R1・R2 — worker の名 → HeldCompartment、持たない worker は None)を知るため。
+   置く判断の和(R5)と申告の上限(R4)が同じ写しを読む。"
+  (setv rows (tuple (.rows state.machine-compartments)))
+  (dfor name (.keys state.workers)
+        name (next (gfor h (held-compartments rows name) :if (= h.use "tasks") h) None)))
+
+
+(deff compartment-clamp [#^ ClusterState state #^ dict compartments #^ (get tuple #(str ...)) needs]  ; cannot be a defk: place-tasks・load-of・claims-noted の loop(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState) (: compartments dict) (: needs tuple)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "要る能力 needs の task の申告の上限(MiB — 頭の註の上限・R4)を知るため: 置き場所の規則(placeable)の合う worker の持つ tasks 区画の
+   memoryMiB の最大。区画を持つ合う worker が無ければ None(切らない)。compartments = tasks-compartments-of の答え。"
+  (max (gfor #(name held) (.items compartments)
+             :setv w (.row state.workers name)
+             :if (and (is-not held None) (is-not w None) (placeable needs w))
+             held.memory-mib)
+       :default None))
 
 
 (defk shape-peaks-of [tasks]
@@ -38,26 +64,32 @@
   (. (task-index tasks) peaks))
 
 
-(defk task-need-of [task worker peaks]
-  {:pre [(: task TaskRecord) (: worker (| WorkerInfo None)) (: peaks dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "task を worker に置く時の memory の申告(MiB)を知るため(頭の註の決め方): 送り手の見当と、この task の山と、同じ形の山(peaks —
-   shape-peaks-of)を、worker の線 − 床で切って数えた値(measured_room.learned-need — 同じ形を終わりまで測っていれば見当を見ない)。
-   worker の無い・測りの無い時は山を線で切らない。置いた後の task の申告は表の行(claim-mib-of)で読み、この値を数え直さない。"
-  (<- line (| int None) (memory-line-mib (if (is worker None) None worker.measured)))
-  (<- need int (learned-need task.memory-mib task.peak-mib (if task.shape (.get peaks task.shape) None) line))
+(defk task-need-of [task clamp peaks]
+  {:pre [(: task TaskRecord) (: clamp (| int None)) (: peaks dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "task を置く時の memory の申告(MiB)を知るため(頭の註の決め方): 送り手の見当と、この task の山と、同じ形の山(peaks —
+   shape-peaks-of)を、上限 clamp(compartment-clamp — None = 切らない)で切って数えた値(measured_room.learned-need — 同じ形を終わりまで
+   測っていれば見当を見ない)。置いた後の task の申告は表の行(claim-mib-of)で読み、この値を数え直さない。"
+  (<- need int (learned-need task.memory-mib task.peak-mib (if task.shape (.get peaks task.shape) None) clamp))
   need)
 
 
-(defk claim-mib-of [task claims worker peaks]
-  {:pre [(: task TaskRecord) (: claims (get Table TaskClaim)) (: worker (| WorkerInfo None)) (: peaks dict)] :post [(: % int)]
+(defk claim-mib-of [task claims clamp peaks]
+  {:pre [(: task TaskRecord) (: claims (get Table TaskClaim)) (: clamp (| int None)) (: peaks dict)] :post [(: % int)]
    :tags {:context "coordinator" :role "judgment"}}
   "置いた task の memory の申告(MiB)を知るため: 表 claims に行が在ればその memory-mib(置いた時に固定した値)、無ければ(表の前の版で
-   置いた行)task-need-of の今の値。"
+   置いた行)上限 clamp での task-need-of の今の値。"
   (val claim (.row claims task.id))
   (when (is-not claim None)
     (return claim.memory-mib))
-  (<- need int (task-need-of task worker peaks))
+  (<- need int (task-need-of task clamp peaks))
   need)
+
+
+(defk claim-cpu-of [task claims]
+  {:pre [(: task TaskRecord) (: claims (get Table TaskClaim))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "置いた task の CPU の申告(millicore)を知るため: 表 claims に行が在ればその cpu-millis、無ければ TASK-CPU-MILLIS。"
+  (val claim (.row claims task.id))
+  (if (is claim None) TASK-CPU-MILLIS claim.cpu-millis))
 
 
 (defk offered-mib-of [task claims]
@@ -80,8 +112,8 @@
 (defk claims-noted [before after]
   {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "1 歩の前後の状態 before・after から、この歩に置かれた task の申告を表 claims に書き、置いた phase を出た task・消えた task の申告を
-   外すため(頭の註の書きと外しの 1 点)。申告の決め方は task-need-of を、置いた worker と after の形の山で読む。変わらなければ after を
-   そのまま返す。"
+   外すため(頭の註の書きと外しの 1 点)。申告の決め方は task-need-of を、after の区画から求めた上限(compartment-clamp)と after の形の
+   山で読む(置く判断と同じ歩の状態)。変わらなければ after をそのまま返す。"
   (val changed (.changed-keys before.tasks after.tasks))
   (when (not changed)
     (return after))
@@ -99,9 +131,10 @@
       (.append placed row)))
   (when placed
     (<- peaks dict (shape-peaks-of after.tasks))
+    (val compartments (tasks-compartments-of after))
     (for [t placed]
-      (<- need int (task-need-of t (.row after.workers t.worker) peaks))
-      (.append writes (TableWrite t.id (TaskClaim :task t.id :memory-mib need :cpu-millis (* TASK-CORES MILLIS-PER-CORE))))))
+      (<- need int (task-need-of t (compartment-clamp after compartments t.needs) peaks))
+      (.append writes (TableWrite t.id (TaskClaim :task t.id :memory-mib need :cpu-millis TASK-CPU-MILLIS)))))
   (if writes
       (replace after :claims (.with-writes after.claims (tuple writes)))
       after))
