@@ -14,9 +14,10 @@
 (import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._coordinator.protocol.replies [task-summary])
-(import doeff_hy._table [table-of])
+(import doeff_hy._table [Table table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])
+(import tests.room_rows [compartments-like-rooms])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (val PY3 #((ComponentVersion "python" "3")))
@@ -44,7 +45,8 @@
   "worker 1 台の状態で task rows を置き先に 1 拍回し、拍の後の全部の行(id → 行)を得るため。"
   (<- workers (table-from-rows {worker.name worker}))
   (<- tasks (table-from-rows rows))
-  (val state (ClusterState #() workers (table-of #()) tasks))
+  (<- compartments Table (compartments-like-rooms {worker.name worker}))
+  (val state (ClusterState #() workers (table-of #()) tasks :machine-compartments compartments))
   (val placed (! (tasks-placed NOW state state.placements T)))
   (dfor t (.rows placed) t.id t))
 

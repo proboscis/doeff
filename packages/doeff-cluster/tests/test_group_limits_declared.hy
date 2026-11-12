@@ -4,7 +4,7 @@
 ;;; 宣言に無い組を名乗る task を受け口で断る。/state の groupLimits に組ごとの宣言の値と置いている数が出る。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS compartments-like-rooms])
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table table-of])
@@ -47,7 +47,10 @@
                         (create-resource declared "GroupLimit" (ResourceBody :name l.group :spec {"scope" l.scope "limit" l.limit "perPart" l.per-part "system" "probe"})
                                          "declare" 0)
                         "declare" 0 T)))
-  #((replace declared :workers (! (table-from-rows {"node-h" (WorkerInfo "node-h" #("host-node-h") 0 :measured (get ROOM-LOADS 30) :versions PY3)}))) sha))
+  (val node-h (WorkerInfo "node-h" #("host-node-h") 0 :measured (get ROOM-LOADS 30) :versions PY3))
+  ;; node-h の tasks 区画は測った空き 30 本に当たる(置き方は区画の申告の和で置く — ADR-DOE-CLUSTER-005)。
+  (<- compartments Table (compartments-like-rooms {"node-h" node-h}))
+  #((replace declared :workers (! (table-from-rows {"node-h" node-h})) :machine-compartments compartments) sha))
 
 
 (defk detached-reply [state sha key limits]

@@ -176,16 +176,16 @@
          [(counterexample "Keeping the pressure stop next to the sums — a machine with 33 GiB free and 51 % CPU pressure takes 0 tasks again")
           (counterexample "Ordering fitting workers by measured room — the measured load returns through the choice")
           (counterexample "Subtracting a floor from the compartment — the floor returns as a second, hidden compartment size")]
-       :enforced-by ["planned with the placement switch: a placement test that varies the measured load and expects the same placements"]
-       :wiring "Unwired (2026-11-12) — wired with the placement switch")
+       :enforced-by ["packages/doeff-cluster/tests/test_declared_sum_placement.hy::test-placement-reads-claims-not-measurements"]
+       :wiring "Wired (2026-11-13) — the test places the same queue on the same compartments under an idle and a crowded measured load (no free memory, full CPU, high pressure) and expects the same placements and wait reasons, with every compartment's claim sums within its declaration")
      (law ungated-work-never-waits-for-room
        :statement "for_all ungated task t with at least one live worker matching its capabilities, version, drain and disk, whose declared group limits are not reached: t is placed in the first tick that considers it, whatever the sums, keeps and compartments"
        :counterexamples
          [(counterexample "Requiring a compartment for ungated tasks — while a machine's row is missing or misspelled, the deploy that would write it waits with TASK-NO-COMPARTMENT")
           (counterexample "Letting an ungated task wait for the preempted tasks to stop — a deploy waits as long as the slowest stop")
           (counterexample "Treating priority >= KEEP-NOW-PRIORITY as ungated — two flags for one fact; a sender that raises priority for order also skips the sums")]
-       :enforced-by ["planned with the placement switch: a placement test with every compartment full and one worker without a compartment"]
-       :wiring "Unwired (2026-11-12) — wired with the placement switch")
+       :enforced-by ["packages/doeff-cluster/tests/test_declared_sum_placement.hy::test-ungated-work-never-waits-for-room"]
+       :wiring "Wired (2026-11-13) — the test fills every compartment, keeps one worker without a compartment and a crowded measured load, and expects an ungated task of priority 1 placed in the first tick: over the sum when nothing can be stopped, on a worker without any compartment, and by stopping a preemptible lower-priority task when one exists")
      (law the-claim-follows-the-measured-peaks-and-stays
        :statement "for_all task t whose shape s has a row that ran to finished within retention: the memory declaration of t = min(ceil(max(peak(t), max peak(s)) x SHAPE-PEAK-MARGIN) + PEAK-STEP-MIB, the largest tasks compartment of the workers matching t), independent of t's memoryMiB ∧ for_all placed task t: claim(t) does not change while t stays placed"
        :counterexamples
@@ -195,7 +195,7 @@
        :enforced-by ["packages/doeff-cluster/tests/test_task_claims.hy::test-the-declaration-follows-the-settled-peak-of-the-shape-not-the-senders-number"
                      "packages/doeff-cluster/tests/test_task_claims.hy::test-the-claim-is-fixed-when-placed-and-dropped-when-the-task-leaves"
                      "packages/doeff-cluster/tests/test_task_claims.hy::test-a-claim-survives-the-state-file-and-the-durable-keys"]
-       :wiring "Wired (2026-11-12) for the derivation and the claim kept while placed (coordinator/core/task_claims); the clamp is still the placing worker's measured line minus the floor until placement reads the tasks compartments")
+       :wiring "Wired (2026-11-12) for the derivation and the claim kept while placed (coordinator/core/task_claims); the clamp is the largest tasks compartment of the matching workers since the placement switch (2026-11-13 — task_claims.compartment-clamp)")
      (law every-wait-reason-has-a-destination
        :statement "for_all member k of TaskUnplacedKind: k ∈ WAIT-REASON-DESTINATIONS ∧ every destination in CONDITION-DESTINATIONS ∈ DESTINATIONS"
        :counterexamples

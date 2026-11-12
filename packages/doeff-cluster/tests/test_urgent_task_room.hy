@@ -88,22 +88,6 @@
   (assert (is plain.urgent-memory-available-MiB None) plain))
 
 
-(deftest test-an-urgent-task-is-placed-under-the-keep-line-and-a-plain-task-waits
-  (assert (! (urgent-priority? URGENT-PRIORITY)))
-  (assert (not (! (urgent-priority? (- KEEP-NOW-PRIORITY 1)))))
-  (<- measured MeasuredLoad (measured-of (str KEEP-LINE-MIB)))
-  (<- phases tuple (placed-phases measured))
-  (assert (= (get phases 0) "assigned") phases)
-  (assert (= (get phases 1) "queued") phases))
-
-
-(deftest test-without-the-urgent-room-the-urgent-task-waits-behind-the-keep-line
-  ;; 失敗ケース: urgent の空きを名乗らない worker(直す前の形)では、急ぎの task も線の上の空き 4000 − 1536 MiB に入らず待つ。
-  (<- measured MeasuredLoad (measured-of (str KEEP-LINE-MIB)))
-  (<- phases tuple (placed-phases (replace measured :urgent-memory-available-MiB None)))
-  (assert (= phases #("queued" "queued")) phases))
-
-
 (deftest test-the-urgent-memory-room-counts-the-urgent-jobs-room-with-the-same-floors
   (val measured (MeasuredLoad :at-ms 0 :cpus 8 :cpu-busy 0.1 :memory-total-MiB 100000 :memory-available-MiB 4000
                               :jobs-room-MiB 1000 :urgent-memory-available-MiB 40000 :urgent-jobs-room-MiB 20000))

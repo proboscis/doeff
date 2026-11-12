@@ -1,7 +1,9 @@
 ;; coordinator: 作り直し・盤の compare-and-set・task の一生(置く・結果・期限・版・担い手の沈黙)・調停ループの Program・shim。
 (require doeff-hy.macros [deftest defhandler defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-JSONS])
+(import tests.room_rows [ROOM-JSONS room-compartments])
+;; 名乗る worker の tasks 区画(ADR-DOE-CLUSTER-005 — 置き方は区画の申告の和で置く)。
+(setv ROOMS (room-compartments #("a" "w" "s" "runner") 10))
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import subprocess)
@@ -56,7 +58,7 @@
 
 (deftest test-restart-keeps-placements-of-workers-that-have-not-reported-yet
   ;; 作り直した coordinator へ最初に名乗った worker に全 job が寄らないこと(実測 2026-09-23 の欠陥)。
-  (<- reply-1 (beat (ClusterState) "a" 0))
+  (<- reply-1 (beat (ClusterState :machine-compartments ROOMS) "a" 0))
   (var s (get reply-1 0))
   (<- reply-2 (beat s "b" 0))
   (:= s (get reply-2 0))
@@ -96,7 +98,7 @@
 
 
 (deftest test-task-goes-to-a-worker-and-its-result-comes-back
-  (<- reply-5 (beat (ClusterState) "w" 0))
+  (<- reply-5 (beat (ClusterState :machine-compartments ROOMS) "w" 0))
   (var s (get reply-5 0))
   (<- reply-6 (submit s 100))
   (:= s (get reply-6 0))
@@ -123,7 +125,7 @@
 
 
 (deftest test-task-is-dropped-when-the-caller-stops-asking
-  (<- reply-10 (beat (ClusterState) "w" 0))
+  (<- reply-10 (beat (ClusterState :machine-compartments ROOMS) "w" 0))
   (var s (get reply-10 0))
   (<- reply-11 (submit s 0 :lease 5.0))
   (:= s (get reply-11 0))
@@ -145,7 +147,7 @@
 
 
 (deftest test-task-from-a-different-version-is-refused-before-sending
-  (<- reply-16 (beat (ClusterState) "w" 0))
+  (<- reply-16 (beat (ClusterState :machine-compartments ROOMS) "w" 0))
   (var s (get reply-16 0))
   (<- reply-17 (submit s 10 :versions (| V {"python" "3.9.6"})))
   (:= s (get reply-17 0))
@@ -160,7 +162,7 @@
 
 
 (deftest test-task-of-a-silent-worker-fails-and-is-not-rerun
-  (<- reply-19 (beat (ClusterState) "w" 0))
+  (<- reply-19 (beat (ClusterState :machine-compartments ROOMS) "w" 0))
   (var s (get reply-19 0))
   (<- reply-20 (submit s 0 :lease 100.0))
   (:= s (get reply-20 0))
@@ -211,7 +213,7 @@
                         (! (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}]}))
                         (! (req "PUT" "/board/k" {"value" 1}))
                         (! (req "GET" "/nothing"))]))
-  (<- final ClusterState ((! (scripted script)) (run-coordinator (ClusterState) T (ClusterNaming))))
+  (<- final ClusterState ((! (scripted script)) (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming))))
   (assert (= (lfor r script.replies (get r 1)) [200 200 200 404]))
   (assert (= (. (.row final.placements "a") worker) "w"))
   ;; 永続化は変化のあったまとまりだけ。盤の書きは盤のキー 1 つだけ(資源の状態を書き直さない)
@@ -227,7 +229,7 @@
   ;; 3 件が 1 まとまり: まとまりの永続化は 1 回、返事は 3 件とも永続化の後。最後の永続化は止まる時の生存の印(#3865)。
   (setv order [])
   (setv script (Script [[(! (req "PUT" "/board/a" {"value" 1})) (! (req "PUT" "/board/b" {"value" 2})) (! (req "GET" "/board"))]]))
-  (<- final ClusterState ((! (scripted script)) ((recording order) (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))
+  (<- final ClusterState ((! (scripted script)) ((recording order) (durable-states (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming))))))
   (assert (= order ["persist" "reply /board/a" "reply /board/b" "reply /board" "persist"]) order)
   (assert (= (len script.saved) 2))
   (assert (= (sorted (get script.saved 1)) ["counter"]) (get script.saved 1)))
@@ -237,7 +239,7 @@
   (import pytest)
   (setv script (Script [[(! (req "PUT" "/board/a" {"value" 1}))] [(! (req "PUT" "/board/b" {"value" 2}))]] :fail-at 2))
   (with [(pytest.raises Crashed)]
-    (<- _ ClusterState ((! (scripted script)) (run-coordinator (ClusterState) T (ClusterNaming)))))
+    (<- _ ClusterState ((! (scripted script)) (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming)))))
   (assert (= (lfor r script.replies (get r 0)) ["/board/a"]))
   (assert (= (lfor d script.saved (sorted d)) [["board/a"]])))
 
@@ -252,7 +254,7 @@
   (import pytest)
   (val script (Script [(! (req "PUT" "/board/k" {"value" 1}))]))
   (with [(pytest.raises AttributeError :match "delta")]
-    (<- _ ClusterState ((! (scripted script)) (old-field-name-reader (durable-states (run-coordinator (ClusterState) T (ClusterNaming))))))))
+    (<- _ ClusterState ((! (scripted script)) (old-field-name-reader (durable-states (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming))))))))
 
 
 (defhandler fault-log [#^ list faults]
@@ -273,7 +275,7 @@
   (val faults [])
   (val script (Script [[(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V}))
                         (! (req "PUT" "/board/k" [1 2]))]]))
-  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/heartbeat" 500) #("/board/k" 400)]) script.replies)
   (val body (get (get script.replies 0) 2))
   (assert (get body "fault") body)
@@ -294,7 +296,7 @@
   (val script (Script [(! (req "POST" "/resources/Service" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}}))
                        (! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "" "needs" ["net"]}}))
                        (! (req "GET" "/state"))]))
-  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1)))
              [#("/resources/Service" 400) #("/resources/Service/a" 400) #("/state" 200)])
           script.replies)
@@ -313,7 +315,7 @@
   (val faults [])
   (val script (Script [(! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}}))
                        (! (req "GET" "/state"))]))
-  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
+  (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState :machine-compartments ROOMS) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/resources/Service/a" 500) #("/state" 200)]) script.replies)
   (assert (get (get (get script.replies 0) 2) "fault") script.replies)
   (assert (= (lfor f faults #(f.method f.path f.error-type)) [#("PUT" "/resources/Service/a" "TypeError")]) faults)

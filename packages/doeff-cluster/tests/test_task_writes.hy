@@ -3,7 +3,7 @@
 ;;; 時間では測らない。数える物は 3 つ: TaskRecord の replace の呼び数・書きの列の長さ(変わった行の数)・行の同一性(is)。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS compartments-like-rooms])
 
 (import hy)
 (import pathlib [Path])
@@ -16,7 +16,7 @@
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster._coordinator.core [cluster_policy])
 (import doeff_cluster._coordinator.core.cluster_policy [place-tasks tasks-placed heard-tasks])
-(import doeff_hy._table [TableWrite draft-of table-of])
+(import doeff_hy._table [Table TableWrite draft-of table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])
 
@@ -34,10 +34,11 @@
 
 (defk state-of [rows workers]
   {:pre [(: rows dict) (: workers dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "task の行 rows と worker workers を持つ状態を作るため。"
+  "task の行 rows と worker workers(測った空きに当たる tasks 区画を宣言した — room_rows.compartments-like-rooms)を持つ状態を作るため。"
   (<- tasks (table-from-rows rows))
   (<- worker-rows (table-from-rows workers))
-  (ClusterState :workers worker-rows :tasks tasks))
+  (<- compartments Table (compartments-like-rooms workers))
+  (ClusterState :workers worker-rows :tasks tasks :machine-compartments compartments))
 
 (defn [contextmanager] counting-replaces []
   "with の間に cluster_policy が呼んだ replace のうち、TaskRecord を書き直した呼びの数(答えの list の 0 番)を数える。"

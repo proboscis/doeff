@@ -92,36 +92,6 @@
   (replace (ClusterState #() workers (table-of #()) tasks) :observations seen))
 
 
-(deftest test-light-tasks-do-not-take-the-room-a-heavy-task-grows-into
-  ;; 反例の筋書き(赤 → 緑): 刻 0 に重い回(要り 6000)を置き、刻 60 秒に軽い task 12 本(要り 700)を積む。heartbeat ごと(60 秒)に機体の
-  ;; 真実から測りを作って置き先を回し、重い回が 600 秒で伸びきるまで続ける。直す前の数え(空き ⌊(空き − 床) / 1024⌋ − 10 秒だけの
-  ;; 測りに出ていない task)は、伸びる前の空き 11484 MiB を見て 9 本、次の拍で残りの 3 本も置き、伸びた後の空きは
-  ;; 16384 − 4000 − 6000 − 12 × 600 = −816 MiB(kubelet の追い出し・見張りの止め)。予約で数えると、重い回のまだ伸びる 5100 MiB を
-  ;; 引いた空きにだけ軽い task を置き、伸びきった後も機体の空きは床(MEMORY-FLOOR-MIB)を割らない。
-  (var rows {"heavy" (! (queued "heavy" HEAVY-NEED))})
-  (var lowest LINE-MIB)
-  (for [now (range 0 (+ GROW-AFTER-MS 120001) 60000)]
-    (when (= now 60000)
-      (for [i (range 12)]
-        (<- light TaskRecord (queued (.format "light{:02d}" i) LIGHT-NEED))
-        (:= rows (| rows {light.id light}))))
-    (<- state ClusterState (world-at rows now))
-    (val placed (! (tasks-placed now state state.placements T)))
-    (:= rows (dict (.items placed)))
-    (<- after WorkerInfo (node-a-at rows now))
-    (:= lowest (min lowest after.measured.memory-available-MiB)))
-  (val running (lfor t (.values rows) :if (= t.phase "assigned") t.id))
-  (assert (in "heavy" running) running)
-  ;; 重い回が伸びきった後も空きは床を割らない(直す前は −816)。
-  (assert (>= lowest MEMORY-FLOOR-MIB) #(lowest running))
-  ;; 置けなかった軽い task は queued のまま待ち、待ちの文は空きの無さを名指す(失敗にしない)。
-  (val waiting (lfor t (.values rows) :if (= t.phase "queued") t))
-  (assert waiting running)
-  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
-  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
-  (assert (all (gfor t waiting (in t.detail #(no-room no-memory)))) waiting))
-
-
 (defk submitted [key body]
   {:pre [(: key str) (: body dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "詰めた Program を置き場に置き、刻 0 の node-a(何も置いていない)の測りを持つ状態へ、本文 body を受け口と同じ解きで PUT /detached/<key>
@@ -169,21 +139,6 @@
   (assert (= (len (list (.rows state.tasks))) 0) state.tasks)
   ;; 欄の前に保存した行(memory_mib の無い行)の読みは、今も名乗らない行として受ける(置き先は見込みの要りで数える)。
   (assert (is (task-memory-refusal None) None)))
-
-
-(deftest test-a-need-larger-than-every-line-is-refused-and-a-short-room-waits
-  ;; node-a の線 − 床 = 16384 − 1536 = 14848 MiB。それより大きい要りは待っても置けないので、積む時に 400 で断る(queued のまま待たせない)。
-  (setv #(status answer state) (! (submitted "too-big" {"memoryMiB" 20000})))
-  (assert (= status 400) #(status answer))
-  (assert (and (in "14848" answer.message) (in "node-a" answer.message)) answer.message)
-  (assert (= (len (list (.rows state.tasks))) 0) state.tasks)
-  ;; 線には入るが、今の空き(12384 − 1536 = 10848 MiB)には入らない要りは積んで queued で待ち、待ちの文が memory の空きを名指す。
-  (setv #(status answer state) (! (submitted "later" {"memoryMiB" 12000})))
-  (assert (= status 200) #(status answer))
-  (val placed (! (tasks-placed 0 state state.placements T)))
-  (val row (get (list (.rows placed)) 0))
-  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
-  (assert (= #(row.phase row.detail row.memory-mib) #("queued" no-memory 12000)) row))
 
 
 (deftest test-the-need-is-stored-and-shown-with-the-memory-room

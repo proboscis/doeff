@@ -3,7 +3,7 @@
 ;;;
 ;;; 実例: どの worker にも置けない task が数百本溜まり、要求ごとの調停の place-tasks が待っている task の数 × worker の数だけ要り・空き・
 ;;; 置けない理由を数え直して、coordinator の主 thread を埋めた(返事の遅れが worker の拍と task の送りを遅くした)。時間では測らず、1 拍で
-;;; 置けない理由の判断(task-misfit)が呼ばれた回数と、置いた task・待ちの文の答えで見る。
+;;; 置けない理由の区画の判断(compartment-misfit — ADR-DOE-CLUSTER-005 R5)が呼ばれた回数と、置いた task・待ちの文の答えで見る。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -16,7 +16,7 @@
 (import doeff_cluster._coordinator.core [cluster_policy :as cluster-policy])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS compartments-like-rooms])
 (import tests.state_rows [table-from-rows])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -49,14 +49,17 @@
 
 (defk state-of [workers tasks]
   {:pre [(: workers Table) (: tasks list)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "worker の表 workers と task の列 tasks を持ち、組 one を宣言した状態を作るため。"
-  (ClusterState #() workers (table-of #()) (table-of (tuple (gfor t tasks (TableWrite t.id t)))) :group-limits GROUPS))
+  "worker の表 workers(測った空きに当たる tasks 区画を宣言した — room_rows.compartments-like-rooms)と task の列 tasks を持ち、組 one を
+   宣言した状態を作るため。"
+  (<- compartments Table (compartments-like-rooms (dfor w (.rows workers) w.name w)))
+  (ClusterState #() workers (table-of #()) (table-of (tuple (gfor t tasks (TableWrite t.id t)))) :group-limits GROUPS
+                :machine-compartments compartments))
 
 (defk watch-misfits [monkeypatch]
   {:pre [(: monkeypatch pytest.MonkeyPatch)] :post [(: % Mock)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "置けない理由の判断 task-misfit を、元の関数を呼びながら呼びを記録する Mock に差し替え、その Mock を返すため。"
-  (val spy (Mock :wraps cluster-policy.task-misfit))
-  (monkeypatch.setattr cluster-policy (hy.mangle "task-misfit") spy)
+  "置けない理由の区画の判断 compartment-misfit を、元の関数を呼びながら呼びを記録する Mock に差し替え、その Mock を返すため。"
+  (val spy (Mock :wraps cluster-policy.compartment-misfit))
+  (monkeypatch.setattr cluster-policy (hy.mangle "compartment-misfit") spy)
   spy)
 
 (defk phase-count [tasks phase]
@@ -66,13 +69,13 @@
 
 
 (deftest test-a-queue-that-fits-nowhere-is-judged-once-per-worker_not-once-per-task [#^ pytest.MonkeyPatch monkeypatch]
-  ;; 失敗ケース(直す前は task ごとに worker の数だけ数え直した — 40 本 × 3 台 = 120 回): 要りがどの worker の memory の空きにも入らない
+  ;; 失敗ケース(直す前は task ごとに worker の数だけ数え直した — 40 本 × 3 台 = 120 回): 申告がどの worker の tasks 区画にも入らない
   ;; 同じ形の task 40 本。最初の 1 本だけが worker ごとに判じられ、後ろの 39 本は同じ理由の文で待つ。
   (val spy (! (watch-misfits monkeypatch)))
   (val tasks (! (waiting-tasks (range QUEUED) :memory 10000000)))
   (val placed (! (tasks-placed 1000 (! (state-of (! (workers-of 3)) tasks)) (table-of #()) T)))
   (assert (= spy.call-count 3) spy.call-count)
-  (val text (! (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY)))
+  (val text (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)))
   (assert (all (gfor t (.rows placed) (and (= t.phase "queued") (in text t.detail))))
           (lfor t (.rows placed) #(t.id t.phase t.detail))))
 

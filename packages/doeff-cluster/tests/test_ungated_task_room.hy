@@ -68,34 +68,6 @@
   (dfor id rows id (.row placed id)))
 
 
-(deftest test-an-ungated-task-is-placed-on-a-worker-with-no-measured-room
-  (<- swap TaskRecord (queued "a-swap" :ungated True :limits SWAP-LIMITS))
-  (<- plain TaskRecord (queued "b-plain" :memory-mib NEED-MIB))
-  (<- rows dict (placed-rows {"a-swap" swap "b-plain" plain}))
-  (assert (= (. (get rows "a-swap") phase) "assigned") (get rows "a-swap"))
-  (assert (= (. (get rows "a-swap") worker) "node-a") (get rows "a-swap"))
-  ;; 門の内の task は同じ worker の空きの無さで待つ(失敗にしない)。
-  (assert (= (. (get rows "b-plain") phase) "queued") (get rows "b-plain")))
-
-
-(deftest test-without-ungated-the-same-task-waits-for-room
-  ;; 失敗ケース(直す前の形): 門の外を名乗らない task は、組と要りが同じでも測った空きの無さで queued のまま待つ。
-  (<- swap TaskRecord (queued "a-swap" :limits SWAP-LIMITS :memory-mib NEED-MIB))
-  (<- rows dict (placed-rows {"a-swap" swap}))
-  (assert (= (. (get rows "a-swap") phase) "queued") (get rows "a-swap")))
-
-
-(deftest test-an-ungated-task-waits-behind-its-group-limit
-  ;; cluster で 1 本の錠: 同じ組の門の外の task 2 本は、1 本だけが置かれ、もう 1 本は組の上限で待つ。
-  (<- first TaskRecord (queued "a-swap" :ungated True :limits SWAP-LIMITS))
-  (<- second TaskRecord (queued "b-swap" :ungated True :limits SWAP-LIMITS))
-  (<- rows dict (placed-rows {"a-swap" first "b-swap" second}))
-  (assert (= (. (get rows "a-swap") phase) "assigned") (get rows "a-swap"))
-  (assert (= (. (get rows "b-swap") phase) "queued") (get rows "b-swap"))
-  (<- limited str (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))
-  (assert (in limited (. (get rows "b-swap") detail)) (get rows "b-swap")))
-
-
 (defk submitted [key body]
   {:pre [(: key str) (: body dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "詰めた Program を置き場に置き、測った空きが 0 の node-a と組の宣言 GROUPS を持つ状態へ、本文 body を受け口と同じ解きで

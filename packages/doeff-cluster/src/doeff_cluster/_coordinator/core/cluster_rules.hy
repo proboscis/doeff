@@ -1,9 +1,10 @@
 ;;; coordinator の小さな純粋な判断 — 本文の版の検め・版の組の並べ(cluster_model から移した・#2023)・宣言の行と query の欄の読み
-;;; (required-field・int-field — cluster_json から移した・#2448)。
+;;; (required-field・int-field — cluster_json から移した・#2448)・置き場所の規則 placeable(cluster_policy から移した — task の申告の上限を
+;;; 決める task_claims も同じ規則を読む・ADR-DOE-CLUSTER-005 R4)。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import collections.abc [Mapping])
-(import doeff_cluster._coordinator.intent.cluster_model [ComponentVersion ACCEPTED-FORMATS])
+(import doeff_cluster._coordinator.intent.cluster_model [ComponentVersion ACCEPTED-FORMATS WorkerInfo])
 (import doeff_cluster._shared.intent.protocol [BodyInvalid])
 
 
@@ -40,3 +41,9 @@
       (raise (BodyInvalid (.format "{} は整数: {!r}" key value))))))
 
 
+(deff placeable [#^ (get tuple #(str ...)) needs #^ WorkerInfo worker]  ; cannot be a defk: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):
+   needs ⊆ provides ∪ derived(node の label から coordinator が導いた能力)、かつ worker が専用の能力(exclusive)を持てば、そのどれかを needs に持つ(一般の仕事を専用の担い手に置かない)。"
+  (and (<= (set needs) (| (set worker.provides) (set worker.derived)))
+       (or (not worker.exclusive) (bool (& (set needs) (set worker.exclusive))))))

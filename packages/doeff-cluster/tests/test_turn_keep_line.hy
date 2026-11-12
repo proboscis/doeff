@@ -113,27 +113,6 @@
   (assert (= spaced KEEP-LINE-MIB) spaced))
 
 
-(deftest test-a-task-goes-to-the-other-worker-while-the-machine-is-near-the-turn-line
-  ;; 通る例: node-h は追い出しまでの空き 40,000 MiB でも MemAvailable が線の 1,516 MiB 上 → 名乗る空き 1,516 MiB で、要り 4,096 MiB の
-  ;; task は置けない。memory の空いた node-c(20,000 MiB)へ置く。node-h でしか走れない task は空きの無い文で待つ(作り直せる task が待つ)。
-  (<- kept MeasuredLoad (measured-of (! (meminfo-text NODE-H-TOTAL-MIB NODE-H-AVAILABLE-MIB)) NODE-H-EVICTION (str KEEP-LINE-MIB)))
-  (<- placed (get Table TaskRecord) (placed-on kept))
-  (val any (.row placed "any"))
-  (val only (.row placed "only"))
-  (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
-  (assert (= #(any.phase any.worker) #("assigned" "node-c")) any)
-  (assert (= #(only.phase only.detail) #("queued" no-room)) only)
-  ;; MemAvailable が線 + 要り + 床へ戻れば、node-h でしか走れない task も置く。
-  (<- recovered MeasuredLoad (measured-of (! (meminfo-text NODE-H-TOTAL-MIB (+ KEEP-LINE-MIB NEED-MIB 1536))) NODE-H-EVICTION (str KEEP-LINE-MIB)))
-  (<- later (get Table TaskRecord) (placed-on recovered))
-  (assert (= #((. (.row later "only") phase) (. (.row later "only") worker)) #("assigned" "node-h")) (.row later "only"))
-  ;; 失敗ケース(直す前 = 線を読まない): node-h は追い出しまでの空き 40,000 MiB を名乗るので、MemAvailable が線の 1,516 MiB 上しか無い
-  ;; 同じ刻に node-h でしか走れない task を置く — 伸びれば MemAvailable は線の 2,580 MiB 下で、係がターンを返している memory を task が取る。
-  (<- before-fix MeasuredLoad (measured-of (! (meminfo-text NODE-H-TOTAL-MIB NODE-H-AVAILABLE-MIB)) NODE-H-EVICTION None))
-  (<- old (get Table TaskRecord) (placed-on before-fix))
-  (assert (= #((. (.row old "only") phase) (. (.row old "only") worker)) #("assigned" "node-h")) (.row old "only")))
-
-
 (deftest test-the-room-file-row-names-the-keep-line-file
   ;; 通る例: 行の keepLineFile が線の file を名指す。欄の無い行は読まない(空)。
   (<- node-h RoomReading (room-of-text (json.dumps {"node-h" {"memoryMiB" 63488 "keepLineFile" "/cargo-build/.keep-available-mib"}}) "node-h"))
