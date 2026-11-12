@@ -198,7 +198,7 @@
   #(#(cluster_policy.hold-limits ["held" "limits" "worker" "groups"])
     #(cluster_policy.limits-misfit ["limits" "worker" "held" "groups"])
     #(cluster_policy.limit-holdings ["claims" "groups"])
-    #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups" "bg_held" "bg_wanted" "need" "memory_room"])
+    #(cluster_policy.compartment-misfit ["held" "used" "kept" "need" "cpu"])
     #(cluster_policy.placed-claims ["tasks"])))
 
 
@@ -213,25 +213,26 @@
   ;; 盲検 B: 送り手の名乗る欄を足して置き方がそれで数えると、提示の検を全部通りながら上限の値が送り手へ戻った。送り手の欄の集合と、数えの
   ;; 関数が受ける物を固定する — 足す時は、組の上限の数えに送り手の値を入れない事を確かめ(値と範囲の持ち主は系の宣言 GroupLimit だけ)、
   ;; この表を直す。notify(終わりの知らせ先)は出口へ積む判断(detached_policy.outbox-noted)だけが読み、下の数えの関数は
-  ;; 受けない。memory-mib(memory の要り — 2026-11-02)は memory の空きの比べ(task-misfit の need)だけが読み、組の上限の数えは受けない。
+  ;; 受けない。memory-mib(memory の要り — 2026-11-02)は memory の空きの比べ(compartment-misfit の need)だけが読み、組の上限の数えは受けない。
   ;; rerun(走らせ直しの名乗り — 2026-11-04・TaskBody にも同じ名で載る)は担い手が消えた試行を待ちの行へ戻す判断と、次の試行を
   ;; 置ける worker の判じ(heard-since-rerun — attempt と刻だけを読む)が読み、組の上限の数えは受けない。
   ;; shape(仕事の形 — 2026-11-10・TaskBody にも同じ名で載る)は memory の要りの数え(task_claims.shape-peaks-of・task-need-of・
-  ;; measured_room.learned-need)だけが読み、その答えは task-misfit の need として memory の空きと比べるだけで、組の上限の数えは受けない。
-  ;; ungated(測った空きの門の外 — 2026-11-11・TaskBody にも同じ名で載る)は置き先の判じを task-misfit から limits-misfit だけへ替え、置き先の順
+  ;; measured_room.learned-need)だけが読み、その答えは compartment-misfit の need として memory の空きと比べるだけで、組の上限の数えは受けない。
+  ;; ungated(測った空きの門の外 — 2026-11-11・TaskBody にも同じ名で載る)は置き先の判じを compartment-misfit から limits-misfit だけへ替え、置き先の順
   ;; (要りの足りなさ)を変えるが、組の升の数え(hold-limits の 1 本 = 1)と宣言の値・範囲は変えない。preemptible(場所を譲る名乗り —
   ;; 2026-11-11・TaskBody にも同じ名で載る)は急ぎの task に memory を譲らせる task を選ぶ判じ(cluster_policy.yield-candidates)だけが読み、
-  ;; 譲らせた拍の組の上限の判じ(yield-plan の task-misfit)は止めた task の升を引かない held と宣言の値で問い直す — 組の升の数えは受けない。
-  ;; 3 つとも下の test-the-group-holdings-ignore-the-shape-the-measured-peak-and-ungated が数えの答えで確かめる。
+  ;; 譲らせた拍の組の上限の判じ(yield-plan の compartment-misfit)は止めた task の升を引かない held と宣言の値で問い直す — 組の升の数えは受けない。
+  ;; 3 つとも下の test-the-group-holdings-ignore-the-shape-the-measured-peak-and-ungated が数えの答えで確かめる。queue-limit-seconds(待ちの
+  ;; 期限 — 2026-11-12・TaskBody にも同じ名で載る)は待ちの期限を越えた task の取り消し(queue-expired-detached)だけが読み、上の数えの関数は受けない。
   (assert (= (tuple (gfor f (fields TaskLimit) f.name)) #("group" "part"))
           "TaskLimit は組の名と区分だけ — 値・範囲・重さを task に名乗らせない(値の持ち主は系の宣言)")
   (assert (= (tuple (gfor f (fields SubmitDetached) f.name))
              #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify" "memory_mib" "rerun" "shape"
-               "ungated" "preemptible"))
+               "ungated" "preemptible" "queue_limit_seconds"))
           "SubmitDetached の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   (assert (= (tuple (gfor f (fields TaskBody) f.name))
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
-               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "shape" "ungated" "preemptible" "rerun"
+               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "shape" "ungated" "preemptible" "queue_limit_seconds" "rerun"
                "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・

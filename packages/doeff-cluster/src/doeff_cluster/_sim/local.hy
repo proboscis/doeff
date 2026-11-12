@@ -185,6 +185,7 @@
 (import doeff_cluster._shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster._coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster._shared.intent.compartment_model [Compartment MachineCompartments])
+(import doeff_cluster._coordinator.core.measured_room [CPU-FLOOR-CORES MEMORY-FLOOR-MIB])
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster._coordinator.core.program [run-coordinator])
 (import doeff_cluster._coordinator.entry.main [load-state with-running-commit])
@@ -3016,15 +3017,16 @@
 (defk sim-compartments [workers]
   {:pre [(: workers tuple)] :post [(: % Table)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の worker が載る機体の区画の宣言(資源 MachineCompartments の表 — ADR-DOE-CLUSTER-005 R1)を、本番の site の宣言の代役として
-   作るため: 機体(SimMachine)の在る worker ごとに tasks 区画 1 つ(層 jobs・memoryMiB = 機体の memory − task の外の memory・cpuMillis =
-   ⌊機体の CPU − task の外の CPU⌋ core)。行の名は worker の node(無ければ worker の名)で、同じ node の worker は 1 行に並べる。機体の
+   作るため: 機体(SimMachine)の在る worker ごとに tasks 区画 1 つ(層 jobs・memoryMiB = 機体の memory − task の外の memory −
+   MEMORY-FLOOR-MIB・cpuMillis = ⌊機体の CPU − task の外の CPU − CPU-FLOOR-CORES⌋ core — 機体の残りは worker と system の分で、測った空きで
+   置いていた頃の床と同じ値。筋書きが前と同じ数の task を並べて置く)。行の名は worker の node(無ければ worker の名)で、同じ node の worker は 1 行に並べる。機体の
    無い worker(測りを名乗らない前の版の代役)は区画を持たない(門の内の task を受けない — R2)。"
   (var rows {})
   (for [w workers :if (is-not w.machine None)]
     (val m w.machine)
-    (val memory (- m.memory-mib m.base-mib))
+    (val memory (max 0 (- m.memory-mib m.base-mib MEMORY-FLOOR-MIB)))
     (val compartment (Compartment :use "tasks" :worker w.name :layer "jobs" :memory-mib memory :memory-limit-mib memory
-                                  :cpu-millis (* 1000 (int (- m.cpus m.base-cores)))))
+                                  :cpu-millis (* 1000 (max 0 (int (- m.cpus m.base-cores CPU-FLOOR-CORES))))))
     (val machine (or w.node w.name))
     (:= rows (| rows {machine #(#* (.get rows machine #()) compartment)})))
   (table-of (tuple (gfor #(machine compartments) (sorted (.items rows))
@@ -3039,12 +3041,13 @@
   (<- now int (now-epoch-ms))
   ;; 読み直しの 1 行の報告(本番の入口と同じ slog)は、ここで stderr へ出す。
   (var state None)
+  ;; sim の機体の区画の宣言(本番では site の宣言の手順が資源の口で書き、保存を越えて残る — sim-compartments)。読み直した状態が区画を
+  ;; 持たなければ(宣言を書きの道で残していない sim の置き場)同じ宣言を置き直す。
+  (<- compartments Table (sim-compartments plan.workers))
   (if (.exists parts.store)
       (do (<- loaded ClusterState (with-handlers [slog-handler] (load-state NO-STATE-FILE parts.store now)))
-          (:= state loaded))
-      ;; 新しい状態には sim の機体の区画を宣言して置く(本番では site の宣言の手順が資源の口で書く — sim-compartments)。
-      (do (<- compartments Table (sim-compartments plan.workers))
-          (:= state (ClusterState :started-ms now :task-prefix (fresh-task-prefix now) :machine-compartments compartments))))
+          (:= state (if (.size loaded.machine-compartments) loaded (replace loaded :machine-compartments compartments))))
+      (:= state (ClusterState :started-ms now :task-prefix (fresh-task-prefix now) :machine-compartments compartments)))
   (<- environ (get tuple #(EnvEntry ...)) (CoordinatorEnvironOf))
   (<- started ClusterState (with-handlers [(scripted-process-handler (ProcessScript :commands #() :env environ))]
                              (with-running-commit state)))
