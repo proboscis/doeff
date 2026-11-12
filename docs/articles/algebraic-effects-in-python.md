@@ -8,7 +8,7 @@ First, the idea of doeff in a minute: a function yields effects, handlers stacke
 
 [![Video (1:04): what doeff is: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/aYGCqwXx0hk/maxresdefault.jpg)](https://youtu.be/aYGCqwXx0hk)
 
-[The same video as an mp4 file (1:04)](../assets/videos/article-concept.mp4)
+[The same video as an mp4 file (2:28)](../assets/videos/article-concept.mp4)
 
 Then the card fight this post builds on, as one function with handlers stacked around it:
 

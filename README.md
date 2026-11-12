@@ -108,7 +108,7 @@ answer them with the rest of the function as `k`, and the same function runs und
 
 https://github.com/user-attachments/assets/be50116f-4af5-4925-a4ec-7045dc589b07
 
-[The video as an mp4 file (1:04)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
+[The video as an mp4 file (2:28)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
 
 The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.
