@@ -176,6 +176,32 @@
   (assert (= (! (phases later (cut fronts 4))) ["assigned" "assigned" "assigned" "queued"]) later)
   (assert (= (. (.row later "f3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (.row later "f3")))
 
+(deftest test-background-tasks-that-do-not-fit-the-memory-keep-no-reserve-from-the-foreground
+  ;; 失敗ケース(本番 2026-11-12 10:45 JST〜): 背景の仕事(優先 -1・要り 2560 MiB)が memory の空きの足りなさ(TASK-NO-MEMORY)で
+  ;; どの worker にも置けないまま 160 本待ち、待っている数が予約の背景の仕事の分を守ったので、優先 0 の task 94 本が背景の仕事の分の
+  ;; 文で 3 時間超待った — 背景の仕事も優先 0 の task もその分を使わなかった。待っている背景の仕事は、その worker の memory の空きに
+  ;; 要りが入る時だけ予約の分を守る: node-h の形(task の空き 6・予約 6・memory の空き 6 本分)に要りが memory の空きを越える背景の
+  ;; 仕事 4 本と優先 0 の task 4 本を積むと、優先 0 の 4 本とも置かれ、背景の仕事は memory の空きの文で待つ。
+  (val heavy (+ (* 6 MEMORY-SLOT-MIB) 1))
+  (val fronts ["f1" "f2" "f3" "f4"])
+  (val bgs ["g1" "g2" "g3" "g4"])
+  (setv tasks {})
+  (for [id fronts]
+    (setv (get tasks id) (! (queued id))))
+  (for [#(i id) (enumerate bgs)]
+    (setv (get tasks id) (replace (! (background id (.format "c-{}" i))) :memory-mib heavy)))
+  (val state (ClusterState #() (! (table-from-rows {"node-h" (! (node-h-like 6 6))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val placed (! (tasks-placed 1000 state (table-of #()) T)))
+  (assert (= (! (phases placed fronts)) ["assigned" "assigned" "assigned" "assigned"]) placed)
+  (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-NO-MEMORY))
+  (assert (all (gfor id bgs (and (= (. (.row placed id) phase) "queued") (= (. (.row placed id) detail) no-memory)))) placed)
+  ;; 同じ形で背景の仕事の要りが memory の空きに入れば、今までどおり背景の仕事の分(予約 6 の半分 3)を守る: 優先 0 は 3 本だけ置かれる。
+  (setv fitting (dict tasks))
+  (for [id bgs]
+    (setv (get fitting id) (replace (get tasks id) :memory-mib None)))
+  (val guarded (! (tasks-placed 1000 (replace state :tasks (! (table-from-rows fitting))) (table-of #()) T)))
+  (assert (= (.count (! (phases guarded fronts)) "assigned") 3) guarded))
+
 (deftest test-one-caller-runs-at-most-two-background-tasks-at-once
   ;; 同じ呼び手の背景の仕事 3 本: 呼び手ごとの上限 2(cluster の範囲)で 2 本だけ置かれ、3 本目は上限の文で待つ。別の呼び手の 1 本は置かれる。
   ;; 1 本が終われば 3 本目が置かれる。

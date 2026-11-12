@@ -1904,8 +1904,12 @@
   ;; 形ごとの測った山(task の要りを名乗りと測った山の大きい方で数える — measured_room の頭の註)。
   (<- peaks dict (shape-peaks-of placed.tasks))
   ;; 背景の仕事の側の予約(background-reserve-of)の守りに要る worker ごとの数: bg-held = 置いている負の優先の task(置くたびに足す)・
-  ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達していない)待っている負の優先の task。
+  ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達しておらず、門の内の task は要りが
+  ;; memory の空きに入る)待っている負の優先の task。
   ;; bg-wanted は拍の初めに 1 度数える — 置く順で優先 0 以上の task が先なので、背景の仕事を置き始める前に読む数は変わらない。
+  ;; 要りが memory の空きを越える task(TASK-NO-MEMORY)を数えると、置けない背景の仕事が予約の背景の仕事の分を守り続け、背景の仕事も
+  ;; 優先 0 以上の task もその分を使わない(2026-11-12 — 要り 2560 MiB の背景の仕事 160 本がどの worker の空きにも入らず待ち、優先 0 の
+  ;; task 94 本が背景の仕事の分の文で 3 時間超待った)。
   (setv bg-held (dfor name (.keys state.workers) name 0)
         bg-wanted (dfor name (.keys state.workers) name 0)
         ;; 長く待った task へこの拍に取っておいた memory(worker の名 → MiB — measured_room の頭の註の取っておき)。
@@ -1916,11 +1920,17 @@
   (val placed-rows (tuple (scan-rows placed.tasks)))
   (for [t (scan-rows placed.tasks) :if (and (< t.priority 0) (in t.phase PLACED-PHASES) (in t.worker bg-held))]
     (+= (get bg-held t.worker) 1))
+  ;; worker ごとの memory の空き(背景の仕事は急ぎでない — 平常の数え)は、背景の仕事が待っている拍だけ 1 度数える。
+  (var bg-memory-rooms {})
   (for [task (.values queue) :if (and (= task.phase "queued") (< task.priority 0))]
     (for [w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w) (not-in w.name draining)
                                            (env-room-on task w))]
       (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
-      (when (is bg-limited None)
+      (when (and (is bg-limited None) (not task.ungated) (not-in w.name bg-memory-rooms))
+        (<- bg-memory-room int (task-memory-room-of w load))
+        (:= bg-memory-rooms (| bg-memory-rooms {w.name bg-memory-room})))
+      (when (and (is bg-limited None)
+                 (or task.ungated (<= (! (task-need-of task w peaks)) (get bg-memory-rooms w.name))))
         (+= (get bg-wanted w.name) 1))))
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted queue :key (fn [i] #((- (. (get queue i) priority)) i)))]
