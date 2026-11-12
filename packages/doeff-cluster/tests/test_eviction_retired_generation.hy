@@ -196,7 +196,7 @@
 
 (defeffect WriterIs
   "これから見張りの回を回す世代の名を告げる — テストだけの effect。"
-  {:fields [name] :answer None :tags {:context "doeff-cluster-test" :role "intent"}})
+  {:fields [(: name str)] :answer None :tags {:context "doeff-cluster-test" :role "intent"}})
 
 
 (defeffect ReadWrites
