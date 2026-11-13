@@ -242,6 +242,15 @@ fn hook_checks_new_findings_caused_by_a_fragment_change() {
     let output = run(root, &["--commit-hook"]);
     assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stderr));
     assert!(String::from_utf8_lossy(&output.stderr).contains("DOEFF148"), "{}", String::from_utf8_lossy(&output.stderr));
+    write(root, "MSG", "Enable the vocabulary checks\n\nLint-Baseline: declarations — migrate existing spellings separately\n");
+    let output = run(root, &["--commit-hook", "--commit-message", "MSG"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let split = run(root, &["--split-rules", "--commit-message", "MSG", "declarations/lists.hy"]);
+    let report: Value = serde_json::from_slice(&split.stdout).unwrap();
+    let overlay = report["baseline_overlay"].as_array().unwrap();
+    for file in ["architecture.hy", "declarations/lists.hy", "declarations/services/queue.hy"] {
+        assert!(overlay.contains(&serde_json::json!(file)), "{report}");
+    }
 }
 
 #[test]
@@ -263,4 +272,31 @@ fn cross_reference_and_reader_errors_include_a_source_line() {
     write(dir.path(), "declarations/lists.hy", "\n(defarchitecture-lists sample :retired-words [");
     let stderr = error(dir.path(), "a parenthesis or string is not closed");
     assert!(stderr.contains("declarations/lists.hy:2:"), "{stderr}");
+}
+
+#[test]
+fn hook_checks_glob_additions_and_deletions_against_untouched_sources() {
+    for deleting in [false, true] {
+        let dir = repo(true);
+        let root = dir.path();
+        config(root, r#"["architecture.hy", "declarations/**/*.hy"]"#);
+        let settings = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        write(root, "pyproject.toml", &settings.replace("\"DOEFF016\"", "\"DOEFF016\", \"DOEFF114\""));
+        write(root, "declarations/services/queue.hy", "(defservice queue \"Queue\" {:layers [core]})\n");
+        write(root, "declarations/lists.hy", "(defarchitecture-lists sample :retired-words [])\n");
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "baseline"]);
+        if deleting {
+            git(root, &["rm", "declarations/services/queue.hy"]);
+        } else {
+            write(root, "declarations/new.hy", r#"(defarchitecture-lists sample
+              :confined-spellings [(confined-spelling "forbidden" :patterns ["forbidden"] :files ["app/**/*.hy"] :why "keep out")])"#);
+            git(root, &["add", "declarations/new.hy"]);
+        }
+        let output = run(root, &["--commit-hook"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "deleting={deleting}: {stderr}");
+        assert!(stderr.contains(if deleting { "DOEFF114" } else { "DOEFF148" }), "{stderr}");
+    }
 }

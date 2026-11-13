@@ -4,7 +4,7 @@
 //! `[tool.doeff-linter.commit_hook]` (the limit in seconds). The original implementation = agora-controllers'
 //! `scripts/commit_hook.hy` (lint-staged, whole-repo-fresh).
 //!
-//! There are 3 kinds of things that stop a commit (all only within the staged paths -- the child linter measures only the staged paths and their HEAD version):
+//! There are 3 kinds of things that stop a commit (within staged paths for source-only commits, or across the repo for declaration changes):
 //! - Among the staged sources (.hy, .hyk, .hyp, .py), errors of non-critical rules that are outside the registry (the linter lowers registry-known ones to warnings).
 //! - Among the staged sources' criticals, those not in the HEAD version (`new_critical` of `--baseline-report`).
 //! - Those for which the number of major warnings in the staged sources increased over the HEAD version, per rule (warnings do not change the exit code, so
@@ -12,12 +12,9 @@
 //!   files is also counted) -- comparing per file would also stop moves and splits that do not increase warnings. The baseline is the HEAD version itself, so
 //!   after a commit that reduced them, the next commit's baseline naturally goes down (no baseline file to keep, nothing to forget to lower).
 //!
-//! The rules applied are, among the enabled rules, only those decided by the contents of a single file and the config (the quick of split_rules). Rules that declare they need the whole repo
-//! (`ProjectRule::needs_whole_repo`), and hits in unstaged files of a commit that changed a declaration file, are not measured by the hook but are looked at by the repo-wide
-//! verification (each repo's daily run -- every 4 hours for agora-controllers) (decision of cisco-c8, 2026-10-11 11:1x). Previously the hook also did
-//! the whole-repo comparison (measuring the tip tree and the HEAD tree across the whole repo), which took 45 to 100 seconds and 1.5 to 1.7 GB per run in agora-controllers, and
-//! 23 conversations fixing the daily red committing at the same time filled up node-h (load 102/24 cores, all of swap). Whole-repo rules build the whole-repo inference world even when applied to one file
-//! (DOEFF132 takes 28 seconds for 1 file), so applying them to the staged paths does not make them lighter either.
+//! For source-only commits, the hook applies only rules decided from one file to staged paths. Rules that need the whole repo remain the responsibility of repo-wide verification.
+//! A declaration change (config, any architecture fragment including added or deleted glob matches, or registry) instead uses `split_for_change`, just like `--split-rules`:
+//! all enabled non-semantic rules are applied across both the HEAD tree and the current repo, since the declaration can change the answer in untouched files.
 //!
 //! Criticals of rules with no known list (DOEFF206-209, 211) stop in the second item above if they are in a staged path even when the same key is in HEAD. Those hits are written as
 //! "existing hit in a changed file (also on main ...)" rather than "not on HEAD", with one line of guidance on how to fix added
@@ -226,28 +223,45 @@ pub fn baseline_overlay(message: &str, declarations: &Declarations) -> Vec<Strin
 pub fn declarations_of(root: &Path, config: Option<(&Config, &Path)>) -> Declarations {
     let rel = |path: &Path| crate::project::paths::declared_rel(root, path);
     let config_dir = config.and_then(|(_, path)| path.parent().map(Path::to_path_buf)).unwrap_or_else(|| root.to_path_buf());
-    let architecture = match config.and_then(|(c, _)| c.architecture.clone()) {
-        Some(path) => config_dir.join(path),
-        None => root.join("architecture.hy"),
-    };
+    // Every declaration file (a config architecture list is read as one declaration — a change to any of its files is a change to the declaration): the files a glob names now,
+    // and the glob itself (a file the commit adds or deletes under it is a change to the declaration too).
+    let spellings = crate::config::declaration_spellings(config.map(|(c, _)| c), &config_dir, root);
+    let architecture: Vec<String> = spellings
+        .iter()
+        .flat_map(|spelling| std::iter::once(spelling.clone()).chain(crate::project::paths::expand_glob(spelling).into_iter().filter(move |f| f != spelling)))
+        .map(|path| rel(&path))
+        .fold(Vec::new(), |mut out, path| {
+            if !out.contains(&path) {
+                out.push(path);
+            }
+            out
+        });
     let registry = config.and_then(|(c, _)| c.registry.as_ref());
     let files = config
         .map(|(_, path)| rel(path))
         .into_iter()
-        .chain(std::iter::once(rel(&architecture)))
+        .chain(architecture.iter().cloned())
         .chain(registry.into_iter().flat_map(|r| r.files.iter().cloned()))
         .chain(registry.into_iter().flat_map(|r| r.config_files.iter().map(|f| rel(&config_dir.join(f)))))
         .collect();
     let dirs = registry.map(|r| r.dirs.iter().map(|d| d.trim_end_matches('/').to_string()).collect()).unwrap_or_default();
-    let switches = config.map(|(_, path)| rel(path)).into_iter().chain(std::iter::once(rel(&architecture))).collect();
+    let switches = config.map(|(_, path)| rel(path)).into_iter().chain(architecture.iter().filter(|f| !f.contains('*')).cloned()).collect();
     Declarations { files, dirs, switches }
 }
 
-/// Pure: whether the changed paths (from the root) include a declaration file or a file under a declaration dir.
+/// Pure: whether the changed paths (from the root) include a declaration file or a file under a declaration dir. A declaration file written as a glob (`architecture/*.hy`)
+/// counts every path it matches.
 pub fn touches_declaration(changed: &[String], declarations: &Declarations) -> bool {
     changed.iter().any(|path| {
-        declarations.files.iter().any(|f| f == path) || declarations.dirs.iter().any(|d| path.starts_with(&format!("{}/", d)))
+        declarations.files.iter().any(|f| f == path || (f.contains('*') && glob_names(f, path)))
+            || declarations.dirs.iter().any(|d| path.starts_with(&format!("{}/", d)))
     })
+}
+
+/// Pure: whether a glob from the root (`/`-separated) names the path from the root (the whole path is matched, not only the file name).
+fn glob_names(glob: &str, path: &str) -> bool {
+    let pattern: Vec<&str> = glob.split('/').filter(|p| !p.is_empty()).collect();
+    crate::project::paths::segments_match(&pattern, &path.split('/').collect::<Vec<_>>())
 }
 
 /// Pure: the split of rules to apply to a change -- the one place shared by the gate and the commit hook. Normally split by the rules' own declarations (split_rules), and for a change that changed
@@ -1066,10 +1080,15 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                     && blocking.fresh_critical.is_empty()
                     && blocking.grown_warnings.is_empty()),
             );
+            let scope = if measurements.iter().any(|m| m.target == Side::Tip && m.paths.iter().any(|p| p == ".")) {
+                "repo after declaration change"
+            } else {
+                "staged file"
+            };
             let lines = blocking
                 .staged
                 .iter()
-                .map(|line| format!("violation in staged file: {}", line))
+                .map(|line| format!("violation in {}: {}", scope, line))
                 .chain(blocking.fresh_critical.not_on_head.iter().map(|ident| format!("not on HEAD critical: {}", ident)))
                 .chain(blocking.grown_warnings.iter().map(|line| format!("major warnings increased over the HEAD version (count over the set of staged files): {}", line)))
                 .chain(already_on_head_lines(&blocking))
@@ -1117,10 +1136,12 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     if staged.is_empty() {
         return Ok(Judged::unmeasured());
     }
-    // Apply only rules decided by a single file to the staged paths -- rules that need the whole repo, and hits in unstaged files of a commit that changed a declaration file,
-    // are looked at by the whole-repo verification (the note at the top).
-    let quick = split_rules(&options.enabled).quick;
-    let paths = linted_paths(&staged, |p| root.join(p).exists());
+    // A declaration change can create findings in untouched files. Use the same promotion as --split-rules;
+    // source-only commits still measure only staged paths with rules decided from one file.
+    let declaration_changed = touches_declaration(&staged, &options.declarations);
+    let split = split_for_change(&options.enabled, &staged, &options.declarations);
+    let quick = if declaration_changed { split.whole } else { split.quick };
+    let paths = if declaration_changed { vec![".".to_string()] } else { linted_paths(&staged, |p| root.join(p).exists()) };
     if quick.is_empty() || paths.is_empty() {
         return Ok(Judged::unmeasured());
     }
@@ -1150,6 +1171,9 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     let removed = removed_paths(root).map_err(Stop::Failed)?;
     let head_paths: Vec<String> = tree
         .map(|t| {
+            if declaration_changed {
+                return vec![".".to_string()];
+            }
             paths
                 .iter()
                 .chain(linted_paths(&removed, |p| t.join(p).is_file()).iter())
@@ -1171,7 +1195,8 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     let baseline = scratch.path.join("baseline.json");
     std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("cannot write {}: {}", baseline.display(), e)))?;
     let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
-    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), options.timeout), "the staged files")?;
+    let what = if declaration_changed { "the repo after declaration change" } else { "the staged files" };
+    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), options.timeout), what)?;
     blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
     // Read the identifiers of the HEAD version with the same spelling the child linter uses to read the baseline file (baseline::baseline_identities), and split the hits that stop.
     let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;

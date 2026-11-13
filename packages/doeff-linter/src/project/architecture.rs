@@ -32,7 +32,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader, StrKind};
+use doeff_indexer::hy_index::reader::{Delim, Form, Node, ReadIssue, Reader, StrKind};
 use doeff_indexer::hy_index::LineIndex;
 use serde::Serialize;
 
@@ -115,6 +115,9 @@ pub struct ArchService {
     /// The position of the defservice in architecture.hy (the position of the DOEFF117 notice).
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
+    /// The declaration file the defservice is written in (`range` is a position in it — the declaration can be split into several files).
+    #[serde(skip)]
+    pub file: PathBuf,
 }
 
 /// The `:system` declaration of defservice (a closed set).
@@ -633,6 +636,9 @@ pub struct ConfinedSpelling {
     /// The position in architecture.hy (the position of the hit when no file matches :files).
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
+    /// The declaration file the group is written in (`range` is a position in it).
+    #[serde(skip)]
+    pub file: PathBuf,
 }
 
 /// One whole declaration of effects (`(effect-census "name" :files [..] :effects [..] :base "EffectBase" :why "…")` of `:effect-census` —
@@ -716,6 +722,9 @@ pub struct CountedSpelling {
     /// The position in architecture.hy (the position of the hit when there is nowhere to count).
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
+    /// The declaration file the counted spelling is written in (`range` is a position in it).
+    #[serde(skip)]
+    pub file: PathBuf,
 }
 
 /// Rules for fake handlers (`:business-fakes {…}` — DOEFF143). The spelling patterns of files are globs from the repo root.
@@ -938,8 +947,25 @@ impl Architecture {
 
     /// Reads a file into a declaration (a list of reasons with positions when it cannot be read or the shape is wrong). root is the repo root (the base of :contract-files paths).
     pub fn load(path: &Path, root: &Path) -> Result<Architecture, Vec<String>> {
-        let source = std::fs::read_to_string(path).map_err(|e| vec![format!("cannot read {}: {}", path.display(), e)])?;
-        Architecture::parse_at(&source, path, root)
+        Architecture::load_all(&[path.to_path_buf()], root)
+    }
+
+    /// Reads several declaration files into one declaration (`[tool.doeff-linter] architecture` as a list — config::declaration_files). The files are read as one:
+    /// exactly one defarchitecture across them, defservice in any of them, and the list keys of defarchitecture-lists in any of them (each key in one place only).
+    pub fn load_all(paths: &[PathBuf], root: &Path) -> Result<Architecture, Vec<String>> {
+        let mut sources = Vec::new();
+        let mut problems = Vec::new();
+        for path in paths {
+            match std::fs::read_to_string(path) {
+                Ok(source) => sources.push((path.as_path(), source)),
+                Err(e) => problems.push(format!("cannot read {}: {}", path.display(), e)),
+            }
+        }
+        if !problems.is_empty() {
+            return Err(problems);
+        }
+        let sources: Vec<(&Path, &str)> = sources.iter().map(|(path, source)| (*path, source.as_str())).collect();
+        Architecture::parse_sources(&sources, root)
     }
 
     /// Turns source into a declaration (reads the dir where architecture.hy is as the repo root — the default location).
@@ -950,57 +976,101 @@ impl Architecture {
 
     /// Turns source into a declaration (root is the repo root — the contract files of :contract-files are read from here).
     pub fn parse_at(source: &str, path: &Path, root: &Path) -> Result<Architecture, Vec<String>> {
-        let mut reader = Reader::new(source, 0, source.len());
-        let forms = reader.read_all();
-        let lines = LineIndex::new(source);
-        let mut parser = Parser { src: source, lines: &lines, path, root, problems: Vec::new(), unknown: Vec::new() };
-        if !reader.issues.is_empty() {
-            parser.problems.push(format!("{}: a parenthesis or string is not closed", path.display()));
-        }
-        let mut architecture: Option<Architecture> = None;
-        let mut services: Vec<ArchService> = Vec::new();
-        for form in &forms {
-            let Some(items) = parser.paren(form) else { continue };
-            match items.first().and_then(|h| parser.symbol(h)) {
-                Some("defarchitecture") => {
-                    if architecture.is_some() {
-                        parser.problem(form, "there are two defarchitecture forms");
-                    }
-                    architecture = parser.architecture(form, &items, path);
-                }
-                Some("defservice") => {
-                    if let Some(service) = parser.service(form, &items) {
-                        if services.iter().any(|s| s.name == service.name) {
-                            parser.problem(form, &format!("service {} is declared twice", service.name));
-                        }
-                        services.push(service);
-                    }
-                }
-                Some("require" | "import") => {}
-                Some(other) => parser.problem(form, &format!("a form that cannot be placed in architecture.hy: {} (only defarchitecture and defservice)", other)),
-                None => {}
+        Architecture::parse_sources(&[(path, source)], root)
+    }
+
+    /// Turns the sources of one or more declaration files (in the configured order) into one declaration. Each reason carries the path and line of the file it was written in.
+    pub fn parse_sources(sources: &[(&Path, &str)], root: &Path) -> Result<Architecture, Vec<String>> {
+        let mut problems: Vec<String> = Vec::new();
+        let mut notices: Vec<super::notice::ConfigNotice> = Vec::new();
+        // The defarchitecture read, with where it was written (`file:line:column`) and where it wrote each list key.
+        let mut architecture: Option<(Architecture, String, Vec<(String, String)>)> = None;
+        let mut services: Vec<(ArchService, String)> = Vec::new();
+        let mut lists: Vec<ArchitectureLists> = Vec::new();
+        for (path, source) in sources {
+            let mut reader = Reader::new(source, 0, source.len());
+            let forms = reader.read_all();
+            let lines = LineIndex::new(source);
+            let mut parser = Parser { src: source, lines: &lines, path, root, problems: Vec::new(), unknown: Vec::new(), list_keys: Vec::new() };
+            for issue in &reader.issues {
+                let offset = match issue {
+                    ReadIssue::Unclosed { open, .. } => *open,
+                    ReadIssue::Mismatched { at, .. } | ReadIssue::StrayCloser { at } => *at,
+                    ReadIssue::UnterminatedString { start } => *start,
+                };
+                let at = lines.position(offset);
+                parser.problems.push(format!("{}:{}:{}: a parenthesis or string is not closed or is mismatched", path.display(), at.line + 1, at.character + 1));
             }
-        }
-        let Some(mut architecture) = architecture else {
-            parser.problems.push(format!("{}: there is no defarchitecture", path.display()));
-            return Err(parser.problems);
-        };
-        architecture.services = services;
-        architecture.notices = parser
-            .unknown
-            .iter()
-            .map(|(offset, key)| super::notice::ConfigNotice {
+            for form in &forms {
+                let Some(items) = parser.paren(form) else { continue };
+                match items.first().and_then(|h| parser.symbol(h)) {
+                    Some("defarchitecture") => {
+                        let at = parser.at(form);
+                        if let Some((_, first, _)) = &architecture {
+                            parser.problem(form, &format!("there are two defarchitecture forms (the other at {})", first));
+                        }
+                        parser.list_keys.clear();
+                        if let Some(read) = parser.architecture(form, &items, path) {
+                            architecture = Some((read, at, std::mem::take(&mut parser.list_keys)));
+                        }
+                    }
+                    Some("defservice") => {
+                        if let Some(service) = parser.service(form, &items) {
+                            if let Some((_, first)) = services.iter().find(|(s, _)| s.name == service.name) {
+                                parser.problem(form, &format!("service {} is declared twice (the other at {})", service.name, first));
+                            }
+                            services.push((service, parser.at(form)));
+                        }
+                    }
+                    Some("defarchitecture-lists") => lists.extend(parser.architecture_lists(form, &items)),
+                    Some("require" | "import") => {}
+                    Some(other) => parser.problem(
+                        form,
+                        &format!("a form that cannot be placed in architecture.hy: {} (only defarchitecture, defarchitecture-lists and defservice)", other),
+                    ),
+                    None => {}
+                }
+            }
+            notices.extend(parser.unknown.iter().map(|(offset, key)| super::notice::ConfigNotice {
                 file: path.to_path_buf(),
                 key: key.clone(),
                 kind: super::notice::NoticeKind::Key,
                 range: crate::position::line_range(source, *offset),
-            })
-            .collect();
-        parser.check(&architecture);
-        if parser.problems.is_empty() {
+            }));
+            problems.append(&mut parser.problems);
+        }
+        let Some((mut architecture, at, written)) = architecture else {
+            let files: Vec<String> = sources.iter().map(|(path, _)| path.display().to_string()).collect();
+            problems.push(format!("{}: there is no defarchitecture", files.join(", ")));
+            return Err(problems);
+        };
+        // The list keys written outside defarchitecture: the name is the defarchitecture's, and each key is written in one place only.
+        let mut placed: Vec<(String, String)> = written;
+        for read in lists {
+            if read.name != architecture.name {
+                problems.push(format!("{}: defarchitecture-lists {} names a declaration other than defarchitecture {}", read.at, read.name, architecture.name));
+            }
+            for (key, at, value) in read.keys {
+                if let Some((_, first)) = placed.iter().find(|(k, _)| *k == key) {
+                    problems.push(format!("{}: {} is written in two places (the other at {}) — write each list key in one place", at, key, first));
+                    continue;
+                }
+                placed.push((key, at));
+                match value {
+                    ArchitectureList::RetiredWords(words) => architecture.retired_words = words,
+                    ArchitectureList::ConfinedSpellings(groups) => architecture.confined_spellings = groups,
+                    ArchitectureList::SemanticLines(lines) => architecture.semantic_lines = lines,
+                    ArchitectureList::CountedSpellings(counted) => architecture.counted_spellings = counted,
+                }
+            }
+        }
+        architecture.services = services.into_iter().map(|(service, _)| service).collect();
+        architecture.notices = notices;
+        problems.extend(check(&architecture, &at));
+        if problems.is_empty() {
             Ok(architecture)
         } else {
-            Err(parser.problems)
+            Err(problems)
         }
     }
 
@@ -1115,12 +1185,74 @@ struct Parser<'a> {
     problems: Vec<String>,
     /// Keys this binary does not know (the byte position, and which form the key was in).
     unknown: Vec<(usize, String)>,
+    /// The list keys (LIST_KEYS) the defarchitecture being read wrote, with where (`file:line:column`) — a key written there cannot be written again in defarchitecture-lists.
+    list_keys: Vec<(String, String)>,
 }
 
 /// A list of key and value pairs (`:root "x" :layers [...]`).
 type Pairs<'f> = Vec<(&'f Form, &'f Form)>;
 
+/// The keys of defarchitecture that may also be written outside it, in `(defarchitecture-lists NAME :KEY VALUE …)` — the long word lists, so that a
+/// declaration split into files can keep them in a file of their own. Each key is written in one place only (in defarchitecture or in one defarchitecture-lists).
+pub const LIST_KEYS: [&str; 4] = [":retired-words", ":confined-spellings", ":semantic-lines", ":counted-spellings"];
+
+/// The value of one list key (a closed set of LIST_KEYS).
+enum ArchitectureList {
+    RetiredWords(Vec<RetiredWords>),
+    ConfinedSpellings(Vec<ConfinedSpelling>),
+    SemanticLines(Vec<SemanticLine>),
+    CountedSpellings(Vec<CountedSpelling>),
+}
+
+/// One `(defarchitecture-lists NAME :KEY VALUE …)` read — the name, where the form is, and the keys with where each is written.
+struct ArchitectureLists {
+    name: String,
+    at: String,
+    keys: Vec<(String, String, ArchitectureList)>,
+}
+
 impl<'a> Parser<'a> {
+    /// Where a form is written (`file:line:column`, 1-based) — the prefix of a reason, also named by a reason written in another file.
+    fn at(&self, form: &Form) -> String {
+        let at = self.lines.position(form.span.start);
+        format!("{}:{}:{}", self.path.display(), at.line + 1, at.character + 1)
+    }
+
+    /// Reads the value of one list key (the key is one of LIST_KEYS).
+    fn list(&mut self, key: &Form, value: &Form) -> Option<ArchitectureList> {
+        match self.text(key) {
+            ":retired-words" => Some(ArchitectureList::RetiredWords(self.retired_words(value))),
+            ":confined-spellings" => Some(ArchitectureList::ConfinedSpellings(self.confined_spellings(value))),
+            ":semantic-lines" => Some(ArchitectureList::SemanticLines(self.semantic_lines(value))),
+            ":counted-spellings" => Some(ArchitectureList::CountedSpellings(self.counted_spellings(value))),
+            other => {
+                self.problem(key, &format!("{} cannot be written in defarchitecture-lists (only {})", other, LIST_KEYS.join(" ")));
+                None
+            }
+        }
+    }
+
+    /// `(defarchitecture-lists NAME :KEY VALUE …)` — list keys of the defarchitecture NAME written outside it (only LIST_KEYS; each key once in the form).
+    fn architecture_lists(&mut self, form: &Form, items: &[&Form]) -> Option<ArchitectureLists> {
+        let Some(name) = items.get(1).and_then(|f| self.name(f)) else {
+            self.problem(form, "defarchitecture-lists has no name (the name of the defarchitecture whose lists it holds)");
+            return None;
+        };
+        let mut read = ArchitectureLists { name, at: self.at(form), keys: Vec::new() };
+        let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
+        for (key, value) in self.pairs(&rest) {
+            let spelling = self.text(key);
+            if let Some((_, first, _)) = read.keys.iter().find(|(k, _, _)| k == spelling) {
+                self.problem(key, &format!("{} is written in two places (the other at {}) — write each list key in one place", spelling, first));
+                continue;
+            }
+            let at = self.at(key);
+            let Some(value) = self.list(key, value) else { continue };
+            read.keys.push((spelling.to_string(), at, value));
+        }
+        Some(read)
+    }
+
     /// Accumulates a key this binary does not know as a notice (not an error, and that key's value is not read).
     fn unknown_key(&mut self, key: &Form, owner: &str) {
         let text = self.text(key).to_string();
@@ -1331,13 +1463,24 @@ impl<'a> Parser<'a> {
                     arch.raw_io_roots = Some(roots);
                 }
                 ":test-forms" => arch.test_forms = self.test_forms(value),
-                ":retired-words" => arch.retired_words = self.retired_words(value),
+                ":retired-words" | ":confined-spellings" | ":semantic-lines" | ":counted-spellings" => {
+                    let at = self.at(key);
+                    if let Some((_, first)) = self.list_keys.iter().find(|(name, _)| name == self.text(key)) {
+                        self.problem(key, &format!("{} is written in two places (the other at {}) — write each list key in one place", self.text(key), first));
+                        continue;
+                    }
+                    self.list_keys.push((self.text(key).to_string(), at));
+                    let Some(value) = self.list(key, value) else { continue };
+                    match value {
+                        ArchitectureList::RetiredWords(words) => arch.retired_words = words,
+                        ArchitectureList::ConfinedSpellings(groups) => arch.confined_spellings = groups,
+                        ArchitectureList::SemanticLines(lines) => arch.semantic_lines = lines,
+                        ArchitectureList::CountedSpellings(counted) => arch.counted_spellings = counted,
+                    }
+                }
                 ":retired-calls" => arch.retired_calls = self.retired_calls(value),
                 ":environment-branches" => arch.environment_branches = self.environment_branches(value),
-                ":semantic-lines" => arch.semantic_lines = self.semantic_lines(value),
                 ":single-point-vocabulary" => arch.single_point_vocabulary = self.single_point_vocabulary(value),
-                ":confined-spellings" => arch.confined_spellings = self.confined_spellings(value),
-                ":counted-spellings" => arch.counted_spellings = self.counted_spellings(value),
                 ":effect-census" => arch.effect_census = self.effect_census(value),
                 ":field-holders" => arch.field_holders = self.field_holders(value),
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
@@ -1800,6 +1943,7 @@ impl<'a> Parser<'a> {
                 bound_names: Vec::new(),
                 why: String::new(),
                 range,
+                file: self.path.to_path_buf(),
             };
             let mut bound_in: Option<&Form> = None;
             let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
@@ -2080,7 +2224,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if let (true, Some(pattern), Some(&wanted)) = (complete, pattern, wanted.first()) {
-                out.push(CountedSpelling { name, pattern, files, within, wanted, why, range });
+                out.push(CountedSpelling { name, pattern, files, within, wanted, why, range, file: self.path.to_path_buf() });
             }
         }
         out
@@ -3198,6 +3342,7 @@ impl<'a> Parser<'a> {
             entry_modules: None,
             system: None,
             range,
+            file: self.path.to_path_buf(),
         };
         let mut exemptions_form: Option<&Form> = None;
         for part in items.iter().skip(2) {
@@ -3242,121 +3387,129 @@ impl<'a> Parser<'a> {
         Some(service)
     }
 
-    /// Checks for name mismatches (nonexistent layers, services, and the foundation and shared layers).
-    fn check(&mut self, arch: &Architecture) {
-        let layers: BTreeSet<&str> = arch.layers.iter().map(|l| l.name.as_str()).collect();
-        let services: BTreeSet<&str> = arch.services.iter().map(|s| s.name.as_str()).collect();
-        let http_only: BTreeSet<&str> = arch
-            .services
-            .iter()
-            .filter(|s| s.public_contract == PublicContract::Http)
-            .map(|s| s.name.as_str())
-            .collect();
-        let file = self.path.display().to_string();
-        let push = |problems: &mut Vec<String>, text: String| problems.push(format!("{}: {}", file, text));
-        for layer in &arch.layers {
-            for target in layer.imports.iter().flatten() {
-                if !layers.contains(target.as_str()) {
-                    push(&mut self.problems, format!("{} in :imports of layer {} is not in :layers", target, layer.name));
-                }
-            }
-            for target in layer.dependency_layers.iter().flatten() {
-                if !layers.contains(target.as_str()) {
-                    push(&mut self.problems, format!("{} in :dependency-layers of layer {} is not in :layers", target, layer.name));
-                }
-            }
-        }
-        if let Some(foundation) = &arch.foundation {
-            if !layers.contains(foundation.as_str()) {
-                push(&mut self.problems, format!("there is no layer in :layers with the same name as :foundation {}", foundation));
+}
+
+/// Checks for name mismatches (nonexistent layers, services, and the foundation and shared layers). A reason about a defservice names the file and line it is written in,
+/// the others the file of defarchitecture.
+fn check(arch: &Architecture, at: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let layers: BTreeSet<&str> = arch.layers.iter().map(|l| l.name.as_str()).collect();
+    let services: BTreeSet<&str> = arch.services.iter().map(|s| s.name.as_str()).collect();
+    let http_only: BTreeSet<&str> = arch
+        .services
+        .iter()
+        .filter(|s| s.public_contract == PublicContract::Http)
+        .map(|s| s.name.as_str())
+        .collect();
+    let file = at;
+    let push = |problems: &mut Vec<String>, text: String| problems.push(format!("{}: {}", file, text));
+    let at_service = |problems: &mut Vec<String>, service: &ArchService, text: String| {
+        problems.push(format!("{}:{}:{}: {}", service.file.display(), service.range.start.line + 1, service.range.start.character + 1, text))
+    };
+    for layer in &arch.layers {
+        for target in layer.imports.iter().flatten() {
+            if !layers.contains(target.as_str()) {
+                push(&mut problems, format!("{} in :imports of layer {} is not in :layers", target, layer.name));
             }
         }
-        if let Some(decl) = &arch.environment_branches {
-            for layer in decl.layers.iter().filter(|layer| !layers.contains(layer.as_str())) {
-                push(&mut self.problems, format!("{} in :layers of :environment-branches is not in :layers", layer));
-            }
-        }
-        if let Some(place) = &arch.verification_environment {
-            if place.is_empty() || place.contains('/') {
-                push(&mut self.problems, format!(":verification-environment {:?} must be a single dir name directly under root (not containing `/`)", place));
-            }
-            if arch.shared.as_deref() == Some(place.as_str()) || arch.foundation.as_deref() == Some(place.as_str()) {
-                push(&mut self.problems, format!(":verification-environment {} cannot have the same name as shared or foundation", place));
-            }
-            if arch.services.iter().any(|s| s.dir == *place) {
-                push(&mut self.problems, format!(":verification-environment {} cannot have the same name as a declared service's dir", place));
-            }
-        }
-        for module in &arch.root_modules {
-            if module.is_empty() || module.contains('/') || module.contains('.') {
-                push(&mut self.problems, format!(":root-modules {:?} must be a single module name directly under root (a file stem — not containing `/` or `.`)", module));
-            }
-        }
-        for open in &arch.open_layers {
-            if !layers.contains(open.as_str()) {
-                push(&mut self.problems, format!("{} in :open-layers is not in :layers", open));
-            }
-        }
-        for (i, placed) in arch.placed_dependencies.iter().enumerate() {
-            if !layers.contains(placed.as_str()) {
-                push(&mut self.problems, format!("{} in :placed-dependencies is not in :layers", placed));
-            } else if arch.foundation.as_deref() == Some(placed.as_str()) {
-                push(&mut self.problems, format!("{} in :placed-dependencies is a :foundation layer — it is not applied to a layer outside services", placed));
-            }
-            if arch.placed_dependencies[..i].contains(placed) {
-                push(&mut self.problems, format!("{} in :placed-dependencies is written twice", placed));
-            }
-        }
-        // Sending and receiving modules are allowed only in the foundation layer (DOEFF120) — writing :wire-modules in a declaration with no foundation allows nothing, so it is an error.
-        if !arch.wire_modules.is_empty() && arch.foundation.is_none() {
-            push(&mut self.problems, ":wire-modules requires :foundation (the sending and receiving modules that are allowed JsonValue are placed only in the foundation layer)".to_string());
-        }
-        // Allowlist definitions are placed only in the foundation layer (R2) — writing an allowlist in a declaration with no foundation leaves nowhere to place it, so it is an error.
-        if !arch.world_handlers.is_empty() && arch.foundation.is_none() {
-            push(&mut self.problems, ":world-handlers requires :foundation (definitions allowed to touch the outside world are placed only in the foundation layer)".to_string());
-        }
-        if arch.edge_mark.is_some() && arch.world_handlers.is_empty() {
-            push(&mut self.problems, ":edge-mark requires :world-handlers (edge tests are tests that reach the allowlist definitions)".to_string());
-        }
-        // The counterparts' contract tests are counted by DOEFF137 with the same index and graph as the edge tests of :world-handlers (with the same enabling condition) — a declaration that is not judged is an error.
-        if !arch.stand_ins.is_empty() && arch.edge_mark.is_none() {
-            push(&mut self.problems, ":stand-ins requires :edge-mark (DOEFF137 counts the counterparts' contract tests the same way as the edge tests of :world-handlers)".to_string());
-        }
-        for handler in &arch.world_handlers {
-            for wrapped in &handler.wraps {
-                if arch.world_handlers.iter().any(|h| h.definition == *wrapped) {
-                    push(
-                        &mut self.problems,
-                        format!("{} in :wraps of world-handler {} is an allowlist definition — write only doeff real-I/O handlers in :wraps", wrapped.spelling(), handler.definition.spelling()),
-                    );
-                }
-            }
-        }
-        for service in &arch.services {
-            for layer in &service.layers {
-                if !layers.contains(layer.as_str()) {
-                    push(&mut self.problems, format!("{} in :layers of service {} is not in :layers of defarchitecture", layer, service.name));
-                }
-                if arch.foundation.as_deref() == Some(layer.as_str()) {
-                    push(&mut self.problems, format!("foundation layer {} cannot be placed in :layers of service {} (it is a layer outside services)", layer, service.name));
-                }
-            }
-            for dependency in &service.depends_on {
-                if !services.contains(dependency.as_str()) {
-                    push(&mut self.problems, format!("{} in :depends-on of service {} is not a declared service", dependency, service.name));
-                }
-                if http_only.contains(dependency.as_str()) {
-                    push(
-                        &mut self.problems,
-                        format!(
-                            "service {} lists {} in :depends-on, but it is :public-contract http (its public contract is the HTTP surface only) — do not put it in an in-process dependency; read it over HTTP",
-                            service.name, dependency
-                        ),
-                    );
-                }
+        for target in layer.dependency_layers.iter().flatten() {
+            if !layers.contains(target.as_str()) {
+                push(&mut problems, format!("{} in :dependency-layers of layer {} is not in :layers", target, layer.name));
             }
         }
     }
+    if let Some(foundation) = &arch.foundation {
+        if !layers.contains(foundation.as_str()) {
+            push(&mut problems, format!("there is no layer in :layers with the same name as :foundation {}", foundation));
+        }
+    }
+    if let Some(decl) = &arch.environment_branches {
+        for layer in decl.layers.iter().filter(|layer| !layers.contains(layer.as_str())) {
+            push(&mut problems, format!("{} in :layers of :environment-branches is not in :layers", layer));
+        }
+    }
+    if let Some(place) = &arch.verification_environment {
+        if place.is_empty() || place.contains('/') {
+            push(&mut problems, format!(":verification-environment {:?} must be a single dir name directly under root (not containing `/`)", place));
+        }
+        if arch.shared.as_deref() == Some(place.as_str()) || arch.foundation.as_deref() == Some(place.as_str()) {
+            push(&mut problems, format!(":verification-environment {} cannot have the same name as shared or foundation", place));
+        }
+        if arch.services.iter().any(|s| s.dir == *place) {
+            push(&mut problems, format!(":verification-environment {} cannot have the same name as a declared service's dir", place));
+        }
+    }
+    for module in &arch.root_modules {
+        if module.is_empty() || module.contains('/') || module.contains('.') {
+            push(&mut problems, format!(":root-modules {:?} must be a single module name directly under root (a file stem — not containing `/` or `.`)", module));
+        }
+    }
+    for open in &arch.open_layers {
+        if !layers.contains(open.as_str()) {
+            push(&mut problems, format!("{} in :open-layers is not in :layers", open));
+        }
+    }
+    for (i, placed) in arch.placed_dependencies.iter().enumerate() {
+        if !layers.contains(placed.as_str()) {
+            push(&mut problems, format!("{} in :placed-dependencies is not in :layers", placed));
+        } else if arch.foundation.as_deref() == Some(placed.as_str()) {
+            push(&mut problems, format!("{} in :placed-dependencies is a :foundation layer — it is not applied to a layer outside services", placed));
+        }
+        if arch.placed_dependencies[..i].contains(placed) {
+            push(&mut problems, format!("{} in :placed-dependencies is written twice", placed));
+        }
+    }
+    // Sending and receiving modules are allowed only in the foundation layer (DOEFF120) — writing :wire-modules in a declaration with no foundation allows nothing, so it is an error.
+    if !arch.wire_modules.is_empty() && arch.foundation.is_none() {
+        push(&mut problems, ":wire-modules requires :foundation (the sending and receiving modules that are allowed JsonValue are placed only in the foundation layer)".to_string());
+    }
+    // Allowlist definitions are placed only in the foundation layer (R2) — writing an allowlist in a declaration with no foundation leaves nowhere to place it, so it is an error.
+    if !arch.world_handlers.is_empty() && arch.foundation.is_none() {
+        push(&mut problems, ":world-handlers requires :foundation (definitions allowed to touch the outside world are placed only in the foundation layer)".to_string());
+    }
+    if arch.edge_mark.is_some() && arch.world_handlers.is_empty() {
+        push(&mut problems, ":edge-mark requires :world-handlers (edge tests are tests that reach the allowlist definitions)".to_string());
+    }
+    // The counterparts' contract tests are counted by DOEFF137 with the same index and graph as the edge tests of :world-handlers (with the same enabling condition) — a declaration that is not judged is an error.
+    if !arch.stand_ins.is_empty() && arch.edge_mark.is_none() {
+        push(&mut problems, ":stand-ins requires :edge-mark (DOEFF137 counts the counterparts' contract tests the same way as the edge tests of :world-handlers)".to_string());
+    }
+    for handler in &arch.world_handlers {
+        for wrapped in &handler.wraps {
+            if arch.world_handlers.iter().any(|h| h.definition == *wrapped) {
+                push(
+                    &mut problems,
+                    format!("{} in :wraps of world-handler {} is an allowlist definition — write only doeff real-I/O handlers in :wraps", wrapped.spelling(), handler.definition.spelling()),
+                );
+            }
+        }
+    }
+    for service in &arch.services {
+        for layer in &service.layers {
+            if !layers.contains(layer.as_str()) {
+                at_service(&mut problems, service, format!("{} in :layers of service {} is not in :layers of defarchitecture", layer, service.name));
+            }
+            if arch.foundation.as_deref() == Some(layer.as_str()) {
+                at_service(&mut problems, service, format!("foundation layer {} cannot be placed in :layers of service {} (it is a layer outside services)", layer, service.name));
+            }
+        }
+        for dependency in &service.depends_on {
+            if !services.contains(dependency.as_str()) {
+                at_service(&mut problems, service, format!("{} in :depends-on of service {} is not a declared service", dependency, service.name));
+            }
+            if http_only.contains(dependency.as_str()) {
+                at_service(
+                    &mut problems,
+                    service,
+                    format!(
+                        "service {} lists {} in :depends-on, but it is :public-contract http (its public contract is the HTTP surface only) — do not put it in an in-process dependency; read it over HTTP",
+                        service.name, dependency
+                    ),
+                );
+            }
+        }
+    }
+    problems
 }
 
 #[cfg(test)]

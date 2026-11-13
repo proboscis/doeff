@@ -302,9 +302,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF148 walks only the head dirs of the groups' :files globs (it does not read the whole repo).
                 if enabled.contains(&ProjectRule::SpellingOutsideItsFiles) && !architecture.confined_spellings.is_empty() {
-                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) = crate::timing::timed("confined-spellings", || {
-                        confined_spellings::find(root, &architecture.confined_spellings, &architecture_rel, focus)
+                        confined_spellings::find(root, &architecture.confined_spellings, |file| declared_rel(root, file), focus)
                     });
                     drafts.extend(found.into_iter().map(|found| {
                         let (message, detail) = match &found.problem {
@@ -336,9 +335,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
                 // DOEFF161 also walks only the head dirs of the declaration's :files globs (it does not read the whole repo).
                 if enabled.contains(&ProjectRule::SpellingCountDiffers) && !architecture.counted_spellings.is_empty() {
-                    let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) = crate::timing::timed("counted-spellings", || {
-                        counted_spellings::find(root, &architecture.counted_spellings, &architecture_rel)
+                        counted_spellings::find(root, &architecture.counted_spellings, |file| declared_rel(root, file))
                     });
                     drafts.extend(found.into_iter().map(|found| {
                         let message = match &found.problem {
@@ -596,7 +594,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         }
                     }
                     if enabled.contains(&ProjectRule::ServiceUntestedOnSim) {
-                        drafts.extend(judge_untested_services(architecture, hy).into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
+                        drafts.extend(judge_untested_services(root, architecture, hy).into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
                     }
                     if enabled.contains(&ProjectRule::ServiceInvariantsMissing) {
                         drafts.extend(judge_service_invariants(root, architecture, hy));
@@ -2477,7 +2475,6 @@ fn zero_range() -> Range {
 
 /// DOEFF117 (info): a declared dependency that no module of that service reads. Positioned at the defservice name in architecture.hy.
 fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architecture, crossings: &BTreeSet<(String, String)>) -> Vec<Draft> {
-    let rel = declared_rel(root, &architecture.path);
     let mut drafts = Vec::new();
     for service in &architecture.services {
         for dependency in &service.depends_on {
@@ -2487,8 +2484,8 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
             drafts.push(Draft {
                 rule: ProjectRule::UnusedDependency,
                 layer: None,
-                rel: rel.clone(),
-                path: architecture.path.clone(),
+                rel: declared_rel(root, &service.file),
+                path: service.file.clone(),
                 range: service.range,
                 message: format!("{}'s :depends-on entry {} is not read by any module of {}", service.name, dependency, service.name),
                 detail: Some(format!("{}>{}", service.name, dependency)),
@@ -3813,7 +3810,7 @@ fn judge_business_fakes(
         .collect();
     if enabled.contains(&ProjectRule::ServiceWithoutCounterexample) {
         drafts.extend(
-            judge_counterexample_coverage(architecture, &graph, hy, &clauses, &produced, &counterexamples)
+            judge_counterexample_coverage(root, architecture, &graph, hy, &clauses, &produced, &counterexamples)
                 .into_iter()
                 .map(|d| Draft { path: root.join(&d.rel), ..d }),
         );
@@ -3828,7 +3825,7 @@ fn judge_business_fakes(
             .into_iter()
             .map(|(key, breaks)| (names.key(&key, || format!("counterexample table row {}", key)), breaks))
             .collect();
-        let (found, claim_problems) = judge_clause_coverage(architecture, &graph, hy, &clauses, &produced, &counterexamples, &claims);
+        let (found, claim_problems) = judge_clause_coverage(root, architecture, &graph, hy, &clauses, &produced, &counterexamples, &claims);
         drafts.extend(found.into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
         problems.extend(claims.problems);
         problems.extend(claim_problems);
@@ -3839,7 +3836,7 @@ fn judge_business_fakes(
 
 /// DOEFF136: for each service, walks callers backward from the entry-layer definitions, and if no deftest under the simulation environment (:verification-environment)
 /// is reached, reports that defservice. A service with no entry layer is not counted.
-fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
+fn judge_untested_services(repo: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let Some(place) = architecture.verification_environment.as_deref() else { return Vec::new() };
     let root = layers::normalize_dir(&architecture.root);
     let sim = format!("{}/{}", root, place);
@@ -3878,8 +3875,8 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
         drafts.push(Draft {
             rule: ProjectRule::ServiceUntestedOnSim,
             layer: None,
-            rel: "architecture.hy".to_string(),
-            path: PathBuf::from("architecture.hy"),
+            rel: declared_rel(repo, &service.file),
+            path: service.file.clone(),
             range: service.range,
             message: format!("service {}'s entry layer ({} definitions) is not reached by any deftest of the simulation environment {}", service.name, seeds.len(), sim),
             detail: Some(service.name.clone()),
@@ -3892,7 +3889,6 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
 
 /// DOEFF163: turns gaps in a code-holding service's invariant declarations into drafts at the defservice's position (key detail = the service's name; a missing function is named with `::`).
 fn judge_service_invariants(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let rel = declared_rel(root, &architecture.path);
     invariants::gaps(architecture, hy)
         .into_iter()
         .map(|(service, gap)| {
@@ -3900,8 +3896,8 @@ fn judge_service_invariants(root: &Path, architecture: &architecture::Architectu
             Draft {
                 rule: ProjectRule::ServiceInvariantsMissing,
                 layer: None,
-                rel: rel.clone(),
-                path: architecture.path.clone(),
+                rel: declared_rel(root, &service.file),
+                path: service.file.clone(),
                 range: service.range,
                 detail: Some(match gap.detail() {
                     Some(spelling) => format!("{}::{}", service.name, spelling),
@@ -3917,7 +3913,6 @@ fn judge_service_invariants(root: &Path, architecture: &architecture::Architectu
 
 /// DOEFF173: turns gaps in a code-holding service's system declarations into drafts at the defservice's position (key detail = the service's name; a missing system is named with `::`).
 fn judge_service_systems(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
-    let rel = declared_rel(root, &architecture.path);
     system_decls::gaps(root, architecture, hy)
         .into_iter()
         .map(|(service, gap)| {
@@ -3925,8 +3920,8 @@ fn judge_service_systems(root: &Path, architecture: &architecture::Architecture,
             Draft {
                 rule: ProjectRule::ServiceSystemMissing,
                 layer: None,
-                rel: rel.clone(),
-                path: architecture.path.clone(),
+                rel: declared_rel(root, &service.file),
+                path: service.file.clone(),
                 range: service.range,
                 detail: Some(match gap.detail() {
                     Some(spelling) => format!("{}::{}", service.name, spelling),
@@ -4084,6 +4079,7 @@ fn entry_seeds(root: &str, service: &architecture::ArchService, graph: &Definiti
 /// The owner is the service dir that contains the file of the clause's effect's defining origin (an effect under no service's dir is a foundation effect). It counts as present if even one deftest reaching a counterexample clause
 /// reaches the service's entry-layer definitions (walking the same graph as DOEFF136 backward). The population is the same as DOEFF136 (services with definitions in the entry layer).
 fn judge_counterexample_coverage(
+    repo: &Path,
     architecture: &architecture::Architecture,
     graph: &DefinitionGraph,
     hy: &HashMap<String, HyFileIndex>,
@@ -4120,8 +4116,8 @@ fn judge_counterexample_coverage(
             Draft {
                 rule: ProjectRule::ServiceWithoutCounterexample,
                 layer: None,
-                rel: "architecture.hy".to_string(),
-                path: PathBuf::from("architecture.hy"),
+                rel: declared_rel(repo, &service.file),
+                path: service.file.clone(),
                 range: service.range,
                 message: format!(
                     "service {} has no counterexample of a broken handler (of {} counterexample-table clauses, {} are candidates — no deftest reaching any of them reaches {})",
@@ -4147,6 +4143,7 @@ fn judge_counterexample_coverage(
 /// the production entry, and services with definitions in the entry layer). The clause a counterexample clause claims is read from the counterexample table row's `breaks:` (claims), and if even one deftest reaching the clause reaches
 /// the service's entry layer, that clause is covered. The second return value = the reasons for `breaks:` claiming a service or clause not in the declaration (unreadable rows of the table).
 fn judge_clause_coverage(
+    repo: &Path,
     architecture: &architecture::Architecture,
     graph: &DefinitionGraph,
     hy: &HashMap<String, HyFileIndex>,
@@ -4196,8 +4193,8 @@ fn judge_clause_coverage(
             Draft {
                 rule: ProjectRule::ClauseWithoutCounterexample,
                 layer: None,
-                rel: "architecture.hy".to_string(),
-                path: PathBuf::from("architecture.hy"),
+                rel: declared_rel(repo, &service.file),
+                path: service.file.clone(),
                 range: service.range,
                 detail: Some(match gap.detail() {
                     Some(clause) => format!("{}::{}", service.name, clause),

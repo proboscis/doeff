@@ -245,8 +245,8 @@ struct Setup {
     settings: ProjectSettings,
     /// Unknown config keys and rule IDs (the rest was read without them -- reported by DOEFF100).
     notices: Vec<project::notice::ConfigNotice>,
-    /// The service and layer declaration files that were read (the declaration rules judge them even if they are outside the root -- not counted as outside the named range).
-    declaration: Option<PathBuf>,
+    /// The service and layer declaration files that were read (one or more) (the declaration rules judge them even if they are outside the root -- not counted as outside the named range).
+    declaration: Vec<PathBuf>,
 }
 
 impl Setup {
@@ -460,17 +460,14 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     let mut notices: Vec<project::notice::ConfigNotice> = loaded.as_ref().map(|l| l.notices.clone()).unwrap_or_default();
     let config_file = loaded.as_ref().map(|l| (l.path.clone(), l.text.clone()));
     let config = loaded.map(|l| l.config);
-    // The service and layer declaration: the config's architecture (from the config file's dir), or architecture.hy at the repo root.
-    let architecture_path = match config.as_ref().and_then(|c| c.architecture.clone()) {
-        Some(path) => Some(config_dir.clone().unwrap_or_else(|| root.clone()).join(path)),
-        None => Some(root.join("architecture.hy")).filter(|p| p.is_file()),
-    };
-    let declaration = architecture_path.clone();
-    let mut architecture = match architecture_path {
-        Some(path) => Some(
-            project::architecture::Architecture::load(&path, &root).map_err(|problems| format!("architecture.hy errors:\n  {}", problems.join("\n  ")))?,
+    // The service and layer declaration: the config's architecture (one path or a list of paths and globs, from the config file's dir), or architecture.hy at the repo root.
+    let declaration = config::declaration_files(config.as_ref(), config_dir.as_deref().unwrap_or(&root), &root)?;
+    let mut architecture = match declaration.is_empty() {
+        false => Some(
+            project::architecture::Architecture::load_all(&declaration, &root)
+                .map_err(|problems| format!("architecture.hy errors:\n  {}", problems.join("\n  ")))?,
         ),
-        None => None,
+        true => None,
     };
     // The repo's catalogs of real I/O handlers (--world-catalog wins over the config's world_catalogs, which are from the config file's dir).
     let world_catalogs = config::repo_world_catalogs(&args.world_catalog, config.as_ref(), config_dir.as_deref().unwrap_or(&root));
@@ -480,9 +477,10 @@ fn prepare(args: &Args) -> Result<Setup, String> {
         architecture.repo_catalog = Some(std::sync::Arc::new(catalog));
     }
     // The population query (`population_of`) re-reads the same declaration with the declaration's dir as the root. When the way of reading is the same, pass what was read so it is not read twice.
-    if let (Some(path), Some(architecture)) = (&declaration, &architecture) {
-        if path.parent() == Some(root.as_path()) {
-            doeff_linter::population::remember_declaration(path, std::sync::Arc::new(architecture.clone()));
+    // (A declaration split into files is remembered at the file of defarchitecture — the one the query finds; the layers it reads are all written there.)
+    if let Some(architecture) = &architecture {
+        if architecture.path.parent() == Some(root.as_path()) {
+            doeff_linter::population::remember_declaration(&architecture.path, std::sync::Arc::new(architecture.clone()));
         }
     }
     notices.extend(architecture.iter().flat_map(|a| a.notices.iter().cloned()));
@@ -981,7 +979,7 @@ fn run_editor(args: &Args) -> ExitCode {
     report.out_of_scope = match (&only, stdin_file.is_none() && setup.has_project_rules()) {
         (Some(named), true) => {
             Some(
-                project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, setup.declaration.as_deref())
+                project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, &setup.declaration)
                     .iter()
                     .map(|p| p.to_string_lossy().into_owned())
                     .collect(),
@@ -1050,7 +1048,7 @@ fn run_as_hook(args: &Args) -> ExitCode {
                 exclude_patterns,
                 settings: ProjectSettings::default(),
                 notices: Vec::new(),
-                declaration: None,
+                declaration: Vec::new(),
             }
         }
     };
@@ -1286,7 +1284,7 @@ fn run_normal(args: &Args) -> ExitCode {
         // read only under this path (the focus of Target::Whole).
         let only: Option<Vec<PathBuf>> = if args.modified { Some(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect())) } else { only_paths(&args.paths) };
         if let (Some(named), false) = (&only, args.modified) {
-            outside = project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, setup.declaration.as_deref());
+            outside = project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, &setup.declaration);
             for path in &outside {
                 eprintln!("{}", outside_line(path, &setup.root));
             }

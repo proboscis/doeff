@@ -50,8 +50,8 @@ fn definition_span(source: &str, name: &str) -> Option<(usize, usize)> {
     top_level::definition(source, &forms, name).map(|form| (form.span.start, form.span.end))
 }
 
-/// Judges one declaration. Files that could not be read are pushed to errors.
-fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<CountFinding> {
+/// Judges one declaration (declaration_rel = the file it is written in, from the root). Files that could not be read are pushed to errors.
+fn judge_one(root: &Path, declared: &CountedSpelling, declaration_rel: &str, errors: &mut Vec<String>) -> Vec<CountFinding> {
     let finding = |rel: String, range: Range, problem: CountProblem, detail: String| CountFinding {
         rel,
         group: declared.name.clone(),
@@ -64,7 +64,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
     let population = selected(root, &declared.files, &[], Extensions::Any);
     if population.is_empty() {
         return vec![finding(
-            architecture_rel.to_string(),
+            declaration_rel.to_string(),
             declared.range,
             CountProblem::Missing { reason: "no file matches :files".to_string() },
             format!("{}:missing", declared.name),
@@ -89,7 +89,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
         }
         let (rel, line) = match starts.first() {
             Some(&(i, at)) => (texts[i].0.clone(), line_of(&texts[i].2, at)),
-            None => (texts.first().map(|t| t.0.clone()).unwrap_or_else(|| architecture_rel.to_string()), 0),
+            None => (texts.first().map(|t| t.0.clone()).unwrap_or_else(|| declaration_rel.to_string()), 0),
         };
         return vec![finding(
             rel,
@@ -106,7 +106,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
             .find_map(|(rel, source, code)| definition_span(source, name).map(|span| (rel, code, span)));
         let Some((rel, code, (start, end))) = located else {
             out.push(finding(
-                architecture_rel.to_string(),
+                declaration_rel.to_string(),
                 declared.range,
                 CountProblem::Missing { reason: format!("the Hy files of :files have no definition {}", name) },
                 format!("{}:{}:missing", declared.name, name),
@@ -126,16 +126,22 @@ fn judge_one(root: &Path, declared: &CountedSpelling, architecture_rel: &str, er
     out
 }
 
-/// Judges all declarations. architecture_rel is the path of architecture.hy from the root (the location of a declaration with nothing to count).
-pub fn find(root: &Path, declarations: &[CountedSpelling], architecture_rel: &str) -> (Vec<CountFinding>, Vec<String>) {
+/// Judges all declarations. `declared_in` spells a declaration file from the root (paths::declared_rel) — a declaration with nothing to count is reported in the file it is written in.
+pub fn find(root: &Path, declarations: &[CountedSpelling], declared_in: impl Fn(&Path) -> String) -> (Vec<CountFinding>, Vec<String>) {
     let mut errors = Vec::new();
-    let found = declarations.iter().flat_map(|declared| judge_one(root, declared, architecture_rel, &mut errors)).collect();
+    let found = declarations.iter().flat_map(|declared| judge_one(root, declared, &declared_in(&declared.file), &mut errors)).collect();
     (found, errors)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// The declarations are written in architecture.hy at the root.
+    fn declared_here(_: &Path) -> String {
+        "architecture.hy".to_string()
+    }
 
     fn declared(pattern: &str, files: &[&str], within: &[&str], wanted: WantedCount) -> CountedSpelling {
         CountedSpelling {
@@ -146,6 +152,7 @@ mod tests {
             wanted,
             why: "reason".to_string(),
             range: Range::default(),
+            file: PathBuf::from("architecture.hy"),
         }
     }
 
@@ -162,9 +169,9 @@ mod tests {
     #[test]
     fn the_total_over_the_files_must_be_the_count_and_comments_do_not_count() {
         let dir = repo(&[("p/a.hy", "(f \"POST\") ; \"POST\"\n"), ("p/b.hy", "(g \"POST\")\n")]);
-        let (hits, _) = find(dir.path(), &[declared(r#""POST""#, &["p/*.hy"], &[], WantedCount::Exactly(2))], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[declared(r#""POST""#, &["p/*.hy"], &[], WantedCount::Exactly(2))], declared_here);
         assert!(hits.is_empty(), "{:?}", hits);
-        let (hits, _) = find(dir.path(), &[declared(r#""POST""#, &["p/*.hy"], &[], WantedCount::Exactly(3))], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[declared(r#""POST""#, &["p/*.hy"], &[], WantedCount::Exactly(3))], declared_here);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].problem, CountProblem::Mismatch { found: 2, wanted: WantedCount::Exactly(3), within: None });
         assert_eq!(hits[0].rel, "p/a.hy");
@@ -173,9 +180,9 @@ mod tests {
     #[test]
     fn at_least_accepts_more_and_other_files_are_read_as_they_are() {
         let dir = repo(&[("s/rules.yaml", "- id: one\n- id: one\n")]);
-        let (hits, _) = find(dir.path(), &[declared(r"id: one", &["s/rules.yaml"], &[], WantedCount::AtLeast(1))], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[declared(r"id: one", &["s/rules.yaml"], &[], WantedCount::AtLeast(1))], declared_here);
         assert!(hits.is_empty(), "{:?}", hits);
-        let (hits, _) = find(dir.path(), &[declared(r"id: two", &["s/rules.yaml"], &[], WantedCount::AtLeast(1))], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[declared(r"id: two", &["s/rules.yaml"], &[], WantedCount::AtLeast(1))], declared_here);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "s/rules.yaml");
     }
@@ -185,7 +192,7 @@ mod tests {
         let text = "(defk send [x] (Req \"POST\" x))\n\n(defk read [x] (Req \"GET\" x))\n(setv loose (Req \"POST\" 1))\n";
         let dir = repo(&[("p/peer.hy", text)]);
         let (hits, _) =
-            find(dir.path(), &[declared(r#""POST""#, &["p/peer.hy"], &["send", "read", "gone"], WantedCount::Exactly(1))], "architecture.hy");
+            find(dir.path(), &[declared(r#""POST""#, &["p/peer.hy"], &["send", "read", "gone"], WantedCount::Exactly(1))], declared_here);
         let details: Vec<&str> = hits.iter().map(|h| h.detail.as_str()).collect();
         assert_eq!(details, vec!["g:read", "g:gone:missing"], "{:?}", hits);
         assert_eq!(hits[0].range.start.line, 2);
@@ -195,7 +202,7 @@ mod tests {
     #[test]
     fn an_empty_population_is_missing_not_green() {
         let dir = repo(&[]);
-        let (hits, _) = find(dir.path(), &[declared(r"x", &["gone/*.hy"], &[], WantedCount::Exactly(0))], "architecture.hy");
+        let (hits, _) = find(dir.path(), &[declared(r"x", &["gone/*.hy"], &[], WantedCount::Exactly(0))], declared_here);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].detail, "g:missing");
     }

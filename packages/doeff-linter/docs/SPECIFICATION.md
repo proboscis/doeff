@@ -79,7 +79,7 @@ contained in the baseline's set (decision A of #1762). Running the baseline side
 - **Rules with no list of known violations** (rules the registry does not lower — DOEFF206-209, 211): in a run that names paths (the files staged for the commit hook, and the checks of
   the changed parts before registration), every critical of that rule under the named paths goes into `new_critical`, even if the baseline has the same identifier — a changed file
   with a hit is blocked (granularity is per file). A run with no names compares only against the baseline difference (the overall count is reported daily).
-  Rules that declare they need the whole repo (DOEFF206, 207, 209) are not applied in the commit hook; the whole-repo verification looks at them (see
+  For source-only commits, rules that declare they need the whole repo (DOEFF206, 207, 209) are not applied in the commit hook; the whole-repo verification looks at them (see
   "Scope the commit hook applies to" below).
   The commit hook writes the blocking hits divided by whether the same identifier exists in the HEAD version (`commit_hook::split_by_head` — the blocking decision is unchanged):
   those that do not are written as "not on HEAD critical: <identifier>", and those that do as
@@ -217,7 +217,7 @@ a layer appearing twice in `order`, a layer name not in `order` (keys and values
 | `test_sleep` | `parts`, `names`, `exclude` (the population of DOEFF211 = where Hy tests live. If the section is absent, DOEFF211 does not judge) | — |
 | `laws` (array) | `name`, `adr`, `statement`, `rules`, `layers` | if layers is empty, all layers |
 | `translation_effects` | `handler_layers`, `intent_layers`, `max_depth` (DOEFF130 — section 21. DOEFF174's reach uses the same `max_depth`), `domain_layers` (DOEFF174's business layers — if written, a wrong name is a settings error) | protocol, intent, 8; domain_layers is whichever of core and intent are in the declaration |
-| `commit_hook` | `whole_repo_rules` (a retired key — not read, just named in one line. Whether a rule needs the whole repo is declared by the rule, and the hook does not apply that rule), `timeout_s` (the limit in seconds per child linter run; 0 means no limit; when exceeded, it is treated as unmeasurable and the commit is blocked — see "Commit hook limit" below) | none, 20 |
+| `commit_hook` | `whole_repo_rules` (a retired key — not read, just named in one line. Whether a rule needs the whole repo is declared by the rule, and source-only commits do not apply that rule), `timeout_s` (the limit in seconds per child linter run; 0 means no limit; when exceeded, it is treated as unmeasurable and the commit is blocked — see "Commit hook limit" below) | none, 20 |
 | `registry` | `dirs` (a dir of one-key-one-file), `files` (one key per line), `config_files` (one key per line, relative to the settings file's dir), `reconciling` | dirs and files are from the repo root |
 | `rules.<ID>` | `registered_severity` (severity of a violation in the registry: error, warning, info) | warning |
 | `rules.<ID>` | `level` (severity of the rule: critical, major, minor, info. Can be written for any rule. Not lowered by the registry — the axis on which the editor counts "untouched criticals") | the "default severity" table below; rules not in the table take it from the rule's own severity (error = major, warning = minor, info = info) |
@@ -228,18 +228,11 @@ The linter that fires `--commit-hook` is the one built once on the machine from 
 `packages/doeff-linter/scripts/linter_snapshot.py` (`uv run --script <path> <doeff checkout> <commit>` prints the path of the binary in the store;
 if it cannot build, it ends with 1 and the caller falls back to its own environment's linter). Repos do not keep a copy of the build.
 
-### Scope the commit hook applies to (cisco-c8's decision of 2026-10-11)
+### Scope the commit hook applies to
 
-`--commit-hook` applies, among enabled rules, only those decided by the contents of a single file plus the settings (the `quick` of `--split-rules` — regardless of whether the declaration file changed),
-to the staged paths and to their HEAD versions (including the HEAD versions of files deleted in the stage). It does not measure the whole repo (path `.`).
+For source-only commits, `--commit-hook` applies the enabled rules decided from one file plus settings to staged paths and their HEAD versions (including deleted paths). Rules that need the whole repo remain deferred to repo-wide verification.
 
-- What it does not apply: hits of rules that declare they need the whole repo (rules whose `whole_repo` in `--list-rules` is true) — both those inside staged files and those attached to files outside
-  the change (architecture.hy, registry tables, other sources). Hits attached to unstaged files in a commit that changed the declaration file.
-  All of these are looked at by the whole-repo verification (each repo's daily run — every 4 hours for agora-controllers).
-- Reason: the whole-repo comparison (measuring the tip tree and the HEAD tree over the whole repo) takes 45-100 seconds and 1.5-1.7 GB per run in agora-controllers, and the 23 conversations
-  fixing the daily red committed at the same time and filled the machine (node-h load 102/24 cores, swap all used — 2026-10-11). A whole-repo rule builds the whole-repo inference world even when
-  applied to one file (DOEFF132 takes 28 seconds on one file, about 20 seconds in total for 42 rules), so applying it only to staged paths does not make it lighter.
-- The split of the gate's entry `--split-rules` (a change to the declaration file sends all rules to `whole`) is unchanged — the caller uses it for the whole-repo comparison.
+If the staged paths touch a declaration (the config, any architecture file or glob match, or the registry), the hook uses the same promotion as `--split-rules`: all enabled non-semantic rules are measured across the current repo and HEAD. This includes findings caused by a changed declaration in untouched source files. Added and deleted fragment paths match the configured glob even if that path does not currently exist. A declaration change therefore costs a whole-repo comparison; the normal source-only path remains focused. The configured per-child timeout still applies, and a comparison that cannot finish stops the commit.
 
 ### Commit hook limit (original issue #2723)
 
@@ -284,7 +277,7 @@ the current dir). A conversation's commit hook sends this report, with the conve
 - **Measurements**: `target` = what was measured (`HEAD` = the HEAD version, `stage` = the version of the staged paths measured in the working tree). `paths` = the paths passed to the child linter
   (relative to the root — for the HEAD version, the staged paths that exist in HEAD plus files deleted in the stage). `violations` = in the same form as the child linter's editor-json violations
   (`violations[]` in section 2 — for the HEAD version, after re-rooting the HEAD tree's paths under the tip's root, so they can be compared with the stage version by the same path).
-  `judged_rules` = the child linter's editor-json `judged_rules` (only rules decided by one file — rules that need the whole repo are not applied by the hook, so they are not listed).
+  `judged_rules` = the child linter's editor-json `judged_rules` (single-file rules for source-only commits; all enabled non-semantic rules for declaration changes).
 - **Measurements that fire no child** (empty stage, no rules to apply, no paths the linter reads, the HEAD version of a first commit or only-new files): that measurement's
   `paths`, `violations`, and `judged_rules` are empty. There are still two measurements, HEAD and stage.
 - **When not judged**: when cut off at the limit (exit code 1) or when git or the linter did not run (exit code 2), `measurements` is empty.
@@ -533,7 +526,27 @@ which effects a handler answers (15 more on main, and 0 fewer).
 
 ## 9. architecture.hy — the single declaration of services and layers
 
-The repo's top-level `architecture.hy` (or the settings' `architecture = "<path relative to the settings file>"`) is the only place that declares services and layers.
+The repo's top-level `architecture.hy` declares services and layers by default. The settings' `architecture` accepts either one path or a non-empty list of paths and globs, relative to the settings file:
+
+```toml
+[tool.doeff-linter]
+architecture = ["architecture.hy", "architecture/lists.hy", "architecture/services/*.hy"]
+```
+
+Globs support `*` within a path segment and `**` across zero or more directories. Files are read in configured order (glob matches are sorted); overlapping paths read each file once. An explicit missing file, an unmatched glob, or an empty list is a configuration error. With no `architecture` setting, an absent root `architecture.hy` still means no architecture declaration.
+
+All selected files form one declaration: exactly one `defarchitecture`, and each `defservice` name at most once. Services can be written in any selected file, even before the file containing `defarchitecture`. The four vocabulary keys `:retired-words`, `:confined-spellings`, `:semantic-lines`, and `:counted-spellings` may instead be written in one or more fragments:
+
+```hy
+; architecture/lists.hy
+(defarchitecture-lists sample
+  :retired-words [(retired-words "old-name" :words ["obsolete"]
+                    :files ["app/**/*.hy"] :instead "current")])
+```
+
+The fragment's name must equal the `defarchitecture` name. Each of the four keys may appear in only one place across `defarchitecture` and all fragments, including empty lists; duplicate keys are errors. Other architecture keys belong in `defarchitecture`. Fragment values use the same syntax and validation as inline values. `require` and `import` remain accepted without execution.
+
+Findings on a service or vocabulary declaration use that declaration's file and position. Configuration errors and unknown-key notices also identify their source file. The commit hook and `--split-rules` treat changes to any selected file, including added or deleted glob matches, as declaration changes and run all enabled rules over the repo. Blob-backed scans read the same complete declaration.
 If the declaration file is outside the root (such as the root architecture.hy of a package whose root is `src/` by the settings' `root`), the key's path is relative to the root and contains `..`
 (`../architecture.hy::DOEFF163::…` — absolute paths per machine are not put in keys).
 doeff-linter reads this **without executing it**, using doeff-indexer's Hy reader. If present, layers and roles are copied from here, and the TOML's

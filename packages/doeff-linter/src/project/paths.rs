@@ -45,6 +45,33 @@ pub fn glob_matches(pattern: &str, rel: &str) -> bool {
     segments_match(&parts, &path)
 }
 
+/// The files a path glob names (`/`-separated, `*` and `**` as in glob_matches, matched against the whole path) — walks only the dir before the first segment with `*`,
+/// in path order. A spelling without `*` is returned as it is (whether it exists is for the reader to say).
+pub fn expand_glob(pattern: &Path) -> Vec<std::path::PathBuf> {
+    let spelling = pattern.to_string_lossy().replace('\\', "/");
+    if !spelling.contains('*') {
+        return vec![pattern.to_path_buf()];
+    }
+    let parts: Vec<&str> = spelling.split('/').collect();
+    let literal = parts.iter().take_while(|part| !part.contains('*')).count();
+    let base = parts[..literal].join("/");
+    let base = if base.is_empty() && spelling.starts_with('/') { "/".to_string() } else { base };
+    let rest: Vec<&str> = parts[literal..].iter().copied().filter(|p| !p.is_empty()).collect();
+    let mut found: Vec<std::path::PathBuf> = walkdir::WalkDir::new(if base.is_empty() { "." } else { base.as_str() })
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| {
+            let rel = entry.path().strip_prefix(if base.is_empty() { "." } else { base.as_str() }).unwrap_or(entry.path());
+            let names: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+            segments_match(&rest, &names.iter().map(String::as_str).collect::<Vec<_>>())
+        })
+        .map(|entry| entry.into_path())
+        .collect();
+    found.sort();
+    found
+}
+
 /// Matches a sequence of glob segments against a sequence of path segments (`**` is zero or more segments).
 pub(crate) fn segments_match(pattern: &[&str], path: &[&str]) -> bool {
     match pattern.split_first() {

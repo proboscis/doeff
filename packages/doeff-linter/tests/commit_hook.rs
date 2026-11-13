@@ -1,6 +1,6 @@
 //! Tests for `doeff-linter --commit-hook`: make a temporary git repo, commit a clean baseline, stage changes, and
-//! look at the hook's exit code and stderr lines. The hook applies to staged paths only rules decided by a single file (DOEFF016, etc.), and does not apply rules that need the whole repo
-//! (DOEFF163: its hits attach to the defservice position in architecture.hy); the whole-repo verification looks at those.
+//! look at the hook's exit code and stderr lines. Source-only commits apply single-file rules to staged paths;
+//! declaration changes apply all enabled rules across the repo, including findings on untouched files.
 
 use serde_json::Value;
 use std::path::Path;
@@ -486,11 +486,10 @@ fn the_hook_lints_only_the_staged_paths_with_the_rules_judged_from_one_file() {
     }
 }
 
-/// Failure case (the counterpart of the above): the hook does not stop for hits of whole-repo rules (DOEFF163 attached to architecture.hy outside the staged files: a commit that renamed the invariant's function,
-/// a commit that removed :invariants) or for hits (DOEFF102) in unstaged files of a commit that changed only a declaration
-/// (before the fix it stopped with 1). All of them are looked at by the verification every 4 hours (whole repo).
+/// Whole-repo rules stay deferred for source-only commits. Changing a declaration can introduce
+/// findings in untouched sources, so both an architecture edit and a layer ban must stop.
 #[test]
-fn hits_outside_the_staged_files_are_left_to_the_whole_verification() {
+fn declaration_changes_check_the_whole_repo_but_source_changes_stay_focused() {
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"Fencing clause.\"\n  #())\n", JUDGED));
@@ -504,7 +503,7 @@ fn hits_outside_the_staged_files_are_left_to_the_whole_verification() {
     write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(code, 1, "{}", stderr);
 
     let dir = baseline_repo();
     let root = dir.path();
@@ -516,7 +515,7 @@ fn hits_outside_the_staged_files_are_left_to_the_whole_verification() {
     write(root, "architecture.hy", &forbidding);
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(code, 1, "{}", stderr);
 }
 
 /// If nothing is staged, exit 0 without firing the linter.

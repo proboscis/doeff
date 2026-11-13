@@ -182,14 +182,14 @@ pub fn walked_rel(root: &Path, include: &[PathBuf], path: &Path) -> Option<Strin
 /// Of the paths named on the command line (files or dirs), returns the Hy files outside the range the linter walks (`walked` -- under the root and the config's `include`).
 /// Rules judge only walked files, so naming a file outside the range judges nothing, and staying silent reads as "measured and passed" --
 /// the caller names this list and separates it from green. A dir is expanded into the Hy files under it (walked the same way as `collect`). Non-Hy files and nonexistent
-/// paths are not returned (Python rules gather files from the named paths and apply to them, so they measure even outside the range). `declaration` (the service that was read and the layer
-/// declaration file -- e.g. an architecture.hy outside the package root) is judged by the declaration rules, so it is not returned. The returned path is the form under the named path (the caller passes a
+/// paths are not returned (Python rules gather files from the named paths and apply to them, so they measure even outside the range). `declaration` (the service and layer
+/// declaration files that were read -- e.g. an architecture.hy outside the package root) are judged by the declaration rules, so they are not returned. The returned path is the form under the named path (the caller passes a
 /// normalized absolute path -- the same form as the violation's path).
-pub fn outside_walk(root: &Path, include: &[PathBuf], named: &[PathBuf], declaration: Option<&Path>) -> Vec<PathBuf> {
+pub fn outside_walk(root: &Path, include: &[PathBuf], named: &[PathBuf], declaration: &[PathBuf]) -> Vec<PathBuf> {
     let walked: BTreeSet<PathBuf> = walked(root, include)
         .into_iter()
         .map(|(_, path)| path)
-        .chain(declaration.map(Path::to_path_buf))
+        .chain(declaration.iter().cloned())
         .filter_map(|path| path.canonicalize().ok())
         .collect();
     let outside: BTreeSet<PathBuf> = named

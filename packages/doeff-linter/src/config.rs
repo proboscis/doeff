@@ -2,7 +2,7 @@
 //!
 //! Loads configuration from pyproject.toml [tool.doeff-linter] section
 
-use crate::project::layers::{LayersSection, RolesSection, TagsSection};
+use crate::project::layers::{LayersSection, PathPatterns, RolesSection, TagsSection};
 use crate::project::settings::{
     EnvironmentNamesSection, LawEntry, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection, ServicesSection, DefinitionsSection,
     ProgramSleepSection,
@@ -88,8 +88,9 @@ pub struct Config {
     pub test_sleep: Option<TestSleepSection>,
 
     /// Path of architecture.hy, the declaration of services and layers (relative to the config file's dir). If not written, looks for architecture.hy at the repo root.
+    /// A list of paths and globs (`["architecture.hy", "architecture/*.hy"]`) reads the declaration from several files, read together as one (`declaration_files`).
     #[serde(default)]
-    pub architecture: Option<String>,
+    pub architecture: Option<PathPatterns>,
 
     /// Path of the repo root (the base for module names, layer locations, registries, and key paths) (relative to the config file's dir). If not written, the config file's dir.
     /// `--root` wins. This is so that, with the root set under a monorepo package's `src/`, module names match import names (`doeff_cluster.x`)
@@ -582,6 +583,41 @@ pub fn repo_world_catalogs(cli: &[PathBuf], config: Option<&Config>, config_dir:
         return cli.to_vec();
     }
     config.map(|c| c.world_catalogs.iter().map(|path| config_dir.join(path)).collect()).unwrap_or_default()
+}
+
+/// The spellings of the declaration files (architecture.hy), each a path or a path glob -- the config's architecture (one path or a list, from the config file's dir),
+/// or architecture.hy at the repo root. The run (declaration_files) and the commit hook (commit_hook::declarations_of) read this one answer.
+pub fn declaration_spellings(config: Option<&Config>, config_dir: &Path, root: &Path) -> Vec<PathBuf> {
+    match config.and_then(|c| c.architecture.as_ref()) {
+        Some(patterns) => patterns.list().into_iter().map(|pattern| config_dir.join(pattern)).collect(),
+        None => vec![root.join("architecture.hy")],
+    }
+}
+
+/// The declaration files the run reads, in the written order (a file named twice is read once). With no config architecture, the root's architecture.hy
+/// if it exists (no file = no declaration). A glob that names no file is an error (a glob that silently names nothing would drop the services written there).
+pub fn declaration_files(config: Option<&Config>, config_dir: &Path, root: &Path) -> Result<Vec<PathBuf>, String> {
+    let spellings = declaration_spellings(config, config_dir, root);
+    if config.and_then(|c| c.architecture.as_ref()).is_none() {
+        return Ok(spellings.into_iter().filter(|path| path.is_file()).collect());
+    }
+    if spellings.is_empty() {
+        return Err("settings architecture must name at least one declaration file".to_string());
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for spelling in &spellings {
+        let found = crate::project::paths::expand_glob(spelling);
+        if found.is_empty() {
+            return Err(format!("settings architecture {} names no file", spelling.display()));
+        }
+        for file in found {
+            if seen.insert(file.canonicalize().unwrap_or_else(|_| file.clone())) {
+                files.push(file);
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// Merge command line arguments with config file settings

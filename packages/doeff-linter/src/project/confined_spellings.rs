@@ -45,7 +45,8 @@ pub struct ConfinedFinding {
 /// For each group, finds matches outside `:except` (in the order of group declarations, then path order). Files that could not be read are pushed to errors. If focus (a name given on the command line)
 /// is present, reads only the files under it — a match attaches to its file, one per file, so the answer is the same as reading everything and then filtering by the named paths
 /// (the population-0 notice is decided by the glob and is not read). A one-file commit hook used to read the whole population for every group.
-pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, focus: Option<&[PathBuf]>) -> (Vec<ConfinedFinding>, Vec<String>) {
+/// `declared_in` spells a declaration file from the root (paths::declared_rel) — a group whose :files match nothing is reported in the file the group is written in.
+pub fn find(root: &Path, groups: &[ConfinedSpelling], declared_in: impl Fn(&Path) -> String, focus: Option<&[PathBuf]>) -> (Vec<ConfinedFinding>, Vec<String>) {
     let mut out = Vec::new();
     let mut errors = Vec::new();
     for group in groups {
@@ -53,7 +54,7 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, fo
         let population = selected_files(root, &group.files, &[]);
         if population.is_empty() {
             out.push(ConfinedFinding {
-                rel: architecture_rel.to_string(),
+                rel: declared_in(&group.file),
                 group: group.name.clone(),
                 why: group.why.clone(),
                 range: group.range,
@@ -102,6 +103,11 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, fo
 mod tests {
     use super::*;
 
+    /// The groups are written in architecture.hy at the root.
+    fn declared_here(_: &Path) -> String {
+        "architecture.hy".to_string()
+    }
+
     fn group(patterns: &[&str], files: &[&str], except: &[&str]) -> ConfinedSpelling {
         ConfinedSpelling {
             name: "g".to_string(),
@@ -112,6 +118,7 @@ mod tests {
             bound_names: Vec::new(),
             why: "reason".to_string(),
             range: Range::default(),
+            file: PathBuf::from("architecture.hy"),
         }
     }
 
@@ -121,7 +128,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
         std::fs::write(dir.path().join("s/a.hy"), "; \"/api/intake\" was retired\n(setv u \"/api/intake\")\n").unwrap();
         std::fs::write(dir.path().join("s/b.py"), "# /api/intake\nx = 1\n").unwrap();
-        let (hits, errors) = find(dir.path(), &[group(&[r"/api/intake"], &["s/**"], &[])], "architecture.hy", None);
+        let (hits, errors) = find(dir.path(), &[group(&[r"/api/intake"], &["s/**"], &[])], declared_here, None);
         assert!(errors.is_empty(), "{:?}", errors);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "s/a.hy");
@@ -135,7 +142,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
         std::fs::write(dir.path().join("s/a.hy"), "(PostIntake x)\n(PostIntake y)\n").unwrap();
         std::fs::write(dir.path().join("s/b.hy"), "(PostIntake x)\n").unwrap();
-        let (hits, _) = find(dir.path(), &[group(&[r"\bPostIntake\b"], &["s/**"], &["s/b.hy"])], "architecture.hy", None);
+        let (hits, _) = find(dir.path(), &[group(&[r"\bPostIntake\b"], &["s/**"], &["s/b.hy"])], declared_here, None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "s/a.hy");
         assert_eq!(hits[0].problem, ConfinedProblem::Outside { count: 2 });
@@ -144,7 +151,7 @@ mod tests {
     #[test]
     fn an_empty_population_is_missing_not_green() {
         let dir = tempfile::tempdir().unwrap();
-        let (hits, _) = find(dir.path(), &[group(&[r"x"], &["gone/**"], &[])], "architecture.hy", None);
+        let (hits, _) = find(dir.path(), &[group(&[r"x"], &["gone/**"], &[])], declared_here, None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].rel, "architecture.hy");
         assert_eq!(hits[0].problem, ConfinedProblem::Missing);
@@ -159,11 +166,11 @@ mod tests {
         std::fs::write(dir.path().join("s/b.hy"), "(PostIntake y)\n").unwrap();
         std::fs::write(dir.path().join("s/broken.hy"), [0xff_u8, 0xfe]).unwrap();
         let groups = [group(&[r"\bPostIntake\b"], &["s/**"], &[])];
-        let (all, all_errors) = find(dir.path(), &groups, "architecture.hy", None);
+        let (all, all_errors) = find(dir.path(), &groups, declared_here, None);
         assert_eq!(all.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["s/a.hy", "s/b.hy"]);
         assert_eq!(all_errors.len(), 1, "{:?}", all_errors);
         let named = [dir.path().join("s/a.hy")];
-        let (hits, errors) = find(dir.path(), &groups, "architecture.hy", Some(&named));
+        let (hits, errors) = find(dir.path(), &groups, declared_here, Some(&named));
         assert!(errors.is_empty(), "{:?}", errors);
         assert_eq!(hits.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["s/a.hy"]);
     }
