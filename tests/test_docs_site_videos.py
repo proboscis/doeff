@@ -1,18 +1,18 @@
 """Tests for the chapter videos of the docs (section 23 of initiative doeff-publish).
 
-A chapter page writes a video as `[![<description>](assets/videos/<name>.jpg)](assets/videos/<name>.mp4)`. On the GitHub repo screen the single-frame image becomes a
-link to the mp4, and on the docs site a hook (tools/docs_site/hooks.py) replaces it with a video element. Videos are made with tools/docs-video.
+A chapter page writes a video as `[![<description>](assets/videos/<name>.gif)](https://youtu.be/<id>)`. GitHub plays no repo mp4, so on the GitHub repo
+screen the trailer GIF animates and links to the same video uploaded to YouTube; on the docs site a hook (tools/docs_site/hooks.py) replaces it with a video
+element that plays the repo's `assets/videos/<name>.mp4`. Videos are made with tools/docs-video.
 
-1. The mp4 and the single-frame image that the page points to exist, and the mp4 is within the size limit — so the videos in the repo do not make clones too heavy.
-   For a page that turns the video's opening into a GIF (`assets/videos/<name>.gif`), the single-frame image of the same name (the site's poster) also exists, and the GIF is
-   within the size limit. GitHub does not play the repo's mp4 but animates a GIF as an image.
-2. The hook replaces the link with a video element that uses that image as the poster.
+1. The GIF (or still) that the page points to, the single-frame image of the same name (the site's poster) and the mp4 of the same name exist, and the mp4 and
+   the GIF are within their size limits — so the videos in the repo do not make clones too heavy. No page links an image to a repo mp4, which GitHub only downloads.
+2. The hook replaces the link with a video element that plays the mp4 and uses that image as the poster.
 3. Narration voice is made with the OpenAI text-to-speech API, not a local speech-synthesis model. If this is reverted, fix this test and tools/docs-video/tts.py
    in the same change.
 4. At the head of the first article, the concept video (a video service thumbnail link and a link to the same video as an mp4 file) comes before the
    card fight video. At the head of the sections for the 3 article videos, a video service thumbnail link and a one-line click-through figure follow, and the hook replaces the link with a player.
-   The README has the GitHub-attached videos (the concept video, then the card fight video) as bare single lines (the GitHub screen turns each into
-   a player), and has a link to the article.
+   The README links the concept video, then the card fight video, as video service thumbnail lines (an unposted GitHub attachment is not readable
+   without signing in), and has a link to the article.
    The second article ("Yield and async") has its 2 video service thumbnail links at the head of the post and of its section on how the paused
    code goes on, each followed by a link to the same video as an mp4 file.
 5. Every mp4 in docs/assets/videos has its subtitle files (<name>.vtt and <name>.srt) next to it, and they say every line of its narration.json once, in order,
@@ -35,7 +35,13 @@ ARTICLE = DOCS / "articles" / "algebraic-effects-in-python.md"
 ARTICLE_2 = DOCS / "articles" / "yield-and-async.md"
 README = ROOT / "README.md"
 TTS = ROOT / "tools" / "docs-video" / "tts.py"
-VIDEO_LINK = re.compile(r"\[!\[[^\]]*\]\(([^)\s]+\.(?:jpg|gif))\)\]\(([^)\s]+\.mp4)\)")
+# A chapter video: the trailer GIF (or the still) of assets/videos/<name> linked to the same video on YouTube.
+VIDEO_LINK = re.compile(
+    r"\[!\[[^\]]*\]\(((?:\.\./)*assets/videos/[a-z0-9-]+)\.(gif|jpg)\)\]\(https://youtu\.be/([A-Za-z0-9_-]+)\)"
+)
+# An image linked to a repo mp4 — GitHub only downloads it.
+REPO_MP4_LINK = re.compile(r"\[!\[[^\]]*\]\([^)\s]+\)\]\(([^)\s]+\.mp4)\)")
+README_YOUTUBE_LINE = r"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/([A-Za-z0-9_-]+)/maxresdefault\.jpg\)\]\(https://youtu\.be/\1\)$"
 MAX_VIDEO_BYTES = 6_000_000
 MAX_GIF_BYTES = 3_000_000
 # Packages that make voice locally (run a model on the local machine). tts.py neither imports nor depends on them.
@@ -56,12 +62,24 @@ LOCAL_TTS_PACKAGES = (
 
 
 def _video_links() -> list[tuple[Path, Path, Path]]:
-    """List of (page, image, mp4) for the video links written in docs pages — to check existence and size."""
+    """List of (page, image, mp4) for the video links written in docs pages — to check existence and size.
+
+    The mp4 is the repo copy of the same name, which the docs site plays and which was uploaded to YouTube.
+    """
     return [
-        (page, (page.parent / poster).resolve(), (page.parent / video).resolve())
+        (page, (page.parent / f"{stem}.{suffix}").resolve(), (page.parent / f"{stem}.mp4").resolve())
         for page in sorted(DOCS.rglob("*.md"))
-        for poster, video in VIDEO_LINK.findall(page.read_text(encoding="utf-8"))
+        for stem, suffix, _ in VIDEO_LINK.findall(page.read_text(encoding="utf-8"))
     ]
+
+
+def test_no_page_links_an_image_to_a_repo_mp4() -> None:
+    for page in sorted(DOCS.rglob("*.md")):
+        found = REPO_MP4_LINK.findall(page.read_text(encoding="utf-8"))
+        assert not found, (
+            f"{page.relative_to(ROOT)} links an image to {found[0]}: GitHub only downloads a repo mp4 — "
+            "upload the video to YouTube and link the trailer GIF to it (tools/docs-video/README.md)"
+        )
 
 
 def test_the_home_page_has_its_video() -> None:
@@ -123,6 +141,24 @@ def test_the_hook_puts_the_still_as_the_poster_of_a_gif_link() -> None:
     assert 'poster="../assets/videos/home.jpg"' in out
 
 
+def test_the_hook_plays_the_repo_mp4_of_a_gif_linked_to_youtube(tmp_path: Path) -> None:
+    (tmp_path / "assets" / "videos").mkdir(parents=True)
+    (tmp_path / "assets" / "videos" / "home.vtt").write_text("WEBVTT\n", encoding="utf-8")
+    # The GIF is left out of the site, so its src arrives as the file's GitHub URL.
+    content = (
+        '<p><a href="https://youtu.be/nPCqzhV2rn8"><img alt="A video" '
+        'src="https://github.com/proboscis/doeff/blob/main/docs/assets/videos/home.gif" /></a></p>'
+    )
+    hooks = _hooks()
+    out = hooks.youtube_to_iframes(hooks.videos_to_players(content, tmp_path, "01-getting-started/"))
+    assert out.startswith("<p><video "), out
+    assert 'src="../assets/videos/home.mp4"' in out
+    assert 'poster="../assets/videos/home.jpg"' in out
+    assert 'src="../assets/videos/home.vtt"' in out
+    assert "<iframe" not in out
+    assert "youtu" not in out
+
+
 def test_the_hook_leaves_other_links_alone() -> None:
     content = '<p><a href="01-getting-started/"><img alt="x" src="a.png" /></a></p>'
     assert _hooks().videos_to_players(content) == content
@@ -182,10 +218,13 @@ def test_the_two_videos_of_the_second_article_sit_at_their_section_heads() -> No
         assert (VIDEOS / f"{name}.mp4").is_file()
 
 
-def test_the_readme_has_the_attached_video_and_the_article_link() -> None:
+def test_the_readme_links_its_videos_to_youtube_and_has_the_article_link() -> None:
     readme = README.read_text(encoding="utf-8")
-    assert re.search(r"^https://github\.com/user-attachments/assets/[0-9a-f-]+$", readme, re.MULTILINE), (
-        "README has no bare single line for the GitHub-attached video"
+    assert re.search(README_YOUTUBE_LINE, readme, re.MULTILINE), (
+        "README has no video service thumbnail link on a line of its own"
+    )
+    assert "user-attachments" not in readme, (
+        "README carries a GitHub attachment: one never posted is not readable without signing in"
     )
     assert "docs/articles/algebraic-effects-in-python.md" in readme
 
@@ -316,9 +355,9 @@ def test_the_concept_video_comes_before_the_card_fight_video() -> None:
         "the first article does not link the article-concept video above the article-opening video"
     )
     readme = README.read_text(encoding="utf-8")
-    attached = re.findall(r"^https://github\.com/user-attachments/assets/([0-9a-f-]+)$", readme, re.MULTILINE)
-    assert attached[:2] == ["be50116f-4af5-4925-a4ec-7045dc589b07", "ff86b076-b18a-4082-9319-6b5c9f21e712"], (
-        "README does not attach the article-concept video above the attached card fight video"
+    linked = re.findall(README_YOUTUBE_LINE, readme, re.MULTILINE)
+    assert linked[:2] == ["aYGCqwXx0hk", "BRYMn0aoiEk"], (
+        "README does not link the article-concept video above the card fight video"
     )
-    assert 0 <= readme.find("docs/assets/videos/article-concept.mp4") < readme.find(f"assets/{attached[1]}")
+    assert 0 <= readme.find("docs/assets/videos/article-concept.mp4") < readme.find("https://youtu.be/BRYMn0aoiEk")
     assert (VIDEOS / "article-concept.mp4").is_file()

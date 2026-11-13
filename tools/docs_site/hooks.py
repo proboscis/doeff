@@ -6,10 +6,11 @@
    not rewritten -- mkdocs emits a warning and a --strict build fails. Code in fences and inside `` ` `` is not rewritten.
 2. Drop the word after the language at the head of a fence. The example checks in docs read the markers ```python excerpt and ```hy file=greet.hy, but pymdownx.superfences
    cannot read a bare word after the language and does not see the fence as a fence, so even the headings after it collapse. file=<name> becomes the fence's title.
-3. Make chapter videos playable. A page writes a video as `[![<description>](assets/videos/<name>.jpg)](assets/videos/<name>.mp4)` --
-   GitHub strips markdown video elements, so on the repo screen the one-frame image becomes a link to the mp4. On the site, that link is
-   replaced with a video element whose poster is the one-frame image (videos are made with tools/docs-video). For pages whose image is the head GIF of the video
-   (`assets/videos/<name>.gif` -- animates on the GitHub repo screen), the poster is the one-frame image of the same name (<name>.jpg).
+3. Make chapter videos playable. A page writes a video as `[![<description>](assets/videos/<name>.gif)](https://youtu.be/<id>)` --
+   GitHub plays no repo mp4 and strips markdown video elements, so on the repo screen the trailer GIF animates and links to the same video on YouTube.
+   On the site, that link is replaced with a video element that plays the repo's `assets/videos/<name>.mp4`, whose poster is the one-frame
+   image of the same name (<name>.jpg) (videos are made with tools/docs-video). The older form, an image linked to `assets/videos/<name>.mp4`,
+   is replaced the same way.
    A video with a subtitle file (`assets/videos/<name>.vtt` -- the narration's words, which the video also shows) gets it as its English captions track.
 4. Make click-through figures animate. A page writes a figure as a single line `[![<description>](assets/figures/<name>.gif)](<link target>)` -- on GitHub and Zenn
    the GIF of the same content animates and the link target can be followed. On the site, that line is replaced with the figure body (`docs/assets/figures/<name>.html` -- the figure's style and motion are held by
@@ -23,6 +24,7 @@
 from __future__ import annotations
 
 import html
+import posixpath
 import re
 from itertools import accumulate
 from pathlib import Path
@@ -41,6 +43,11 @@ INLINE_LINK = re.compile(r"(\]\()([^)\s]+)(\s+\"[^\"]*\")?(\))")
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # A form where a one-frame image is a link to an mp4 (HTML after building from markdown). The order of img attributes does not matter.
 VIDEO_LINK = re.compile(r'<a href="([^"]+\.mp4)">(<img\b[^>]*>)</a>')
+# A chapter video's trailer GIF (or still) made into a link to the same video on a video service (HTML after building from markdown).
+# The GIF is left out of the site, so by then its src is the file's GitHub URL; only the name is read from it.
+CHAPTER_VIDEO_LINK = re.compile(
+    r'<a href="https://youtu\.be/[A-Za-z0-9_-]+">(<img\b[^>]*\bsrc="[^"]*assets/videos/([a-z0-9-]+)\.(?:gif|jpg)"[^>]*>)</a>'
+)
 IMG_ATTR = re.compile(r'\b(src|alt)="([^"]*)"')
 # A one-line click-through figure (HTML after building from markdown). A form where a paragraph holds only the figure's GIF; the link may or may not be present.
 FIGURE_LINE = re.compile(
@@ -112,19 +119,16 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
     )
 
 
-def videos_to_players(content: str, docs_dir: Path | None = None) -> str:
-    """Replace a one-frame image or GIF made into a link to an mp4 with a video element that plays with the one-frame image as poster (3 at the head of the module).
+def videos_to_players(content: str, docs_dir: Path | None = None, page_url: str = "") -> str:
+    """Replace a one-frame image or GIF made into a link to an mp4, or to the same video on YouTube, with a video element that plays the repo's mp4 with the one-frame image as poster (3 at the head of the module).
 
     With docs_dir given, a video whose subtitle file docs/assets/videos/<name>.vtt exists gets it as its captions track.
+    page_url is the page's site URL (mkdocs Page.url); a video linked to YouTube plays assets/videos/<name>.mp4 relative to it.
     """
 
-    def player(match: re.Match[str]) -> str:
-        """Replace one link with a video. The description (alt) becomes the name for screen readers."""
-        src = match.group(1)
-        attrs = dict(IMG_ATTR.findall(match.group(2)))
-        poster = attrs.get("src", "")
-        if poster.endswith(".gif"):
-            poster = poster.removesuffix(".gif") + ".jpg"
+    def player(src: str, image: str, poster: str) -> str:
+        """Make one video of an mp4, its poster and the image linked to it. The description (alt) becomes the name for screen readers."""
+        attrs = dict(IMG_ATTR.findall(image))
         vtt = src.removesuffix(".mp4") + ".vtt"
         captioned = docs_dir is not None and (docs_dir / "assets" / "videos" / Path(vtt).name).is_file()
         track = f'<track kind="captions" srclang="en" label="English" src="{vtt}" default>' if captioned else ""
@@ -134,7 +138,19 @@ def videos_to_players(content: str, docs_dir: Path | None = None) -> str:
             f'style="width: 100%; height: auto;">{track}{html.escape(html.unescape(attrs.get("alt", "")))}</video>'
         )
 
-    return VIDEO_LINK.sub(player, content)
+    def linked_to_mp4(match: re.Match[str]) -> str:
+        """The still is the poster; a GIF's poster is the still of the same name."""
+        src, image = match.groups()
+        poster = dict(IMG_ATTR.findall(image)).get("src", "")
+        return player(src, image, poster.removesuffix(".gif") + ".jpg" if poster.endswith(".gif") else poster)
+
+    def linked_to_youtube(match: re.Match[str]) -> str:
+        """The repo's mp4 and still of the GIF's name, as paths from the page."""
+        image, name = match.groups()
+        stem = posixpath.relpath(f"assets/videos/{name}", posixpath.dirname(page_url) or ".")
+        return player(f"{stem}.mp4", image, f"{stem}.jpg")
+
+    return CHAPTER_VIDEO_LINK.sub(linked_to_youtube, VIDEO_LINK.sub(linked_to_mp4, content))
 
 
 def figures_to_steps(content: str, docs_dir: Path) -> str:
@@ -178,4 +194,4 @@ def on_page_content(content: str, page: Page, config: MkDocsConfig, files: Files
     Called after mkdocs has rewritten relative paths of links and images to site paths, so paths can be used as they are.
     """
     docs_dir = Path(config.docs_dir).resolve()
-    return youtube_to_iframes(videos_to_players(figures_to_steps(content, docs_dir), docs_dir))
+    return youtube_to_iframes(videos_to_players(figures_to_steps(content, docs_dir), docs_dir, page.url))

@@ -106,14 +106,14 @@ pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 What doeff is, in a narrated video (1:04): a function yields effects, handlers stacked outside it
 answer them with the rest of the function as `k`, and the same function runs under many stacks.
 
-https://github.com/user-attachments/assets/be50116f-4af5-4925-a4ec-7045dc589b07
+[![Video (1:04): what doeff is: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/aYGCqwXx0hk/maxresdefault.jpg)](https://youtu.be/aYGCqwXx0hk)
 
 [The video as an mp4 file (2:28)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
 
 The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.
 
-https://github.com/user-attachments/assets/ff86b076-b18a-4082-9319-6b5c9f21e712
+[![Video (1:51): one card fight as one function, with handlers stacked around it](https://img.youtube.com/vi/BRYMn0aoiEk/maxresdefault.jpg)](https://youtu.be/BRYMn0aoiEk)
 
 For the whole walk-through, read
 [Algebraic effects for Python](https://github.com/proboscis/doeff/blob/main/docs/articles/algebraic-effects-in-python.md),

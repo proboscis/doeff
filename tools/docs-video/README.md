@@ -12,33 +12,32 @@ home page's video, check it, and attach it to the page.
 
 ## How a page shows its video
 
-A page links its still to its video, right below the page's opening paragraph:
+GitHub plays no mp4 from a repository page and keeps no `<video>` or `<iframe>` in Markdown, so a repository
+page cannot play a video in place. Each page's video is therefore uploaded to YouTube (the doeff channel,
+unlisted), and the page links a moving trailer of the video to it, right below the page's opening paragraph:
 
 ```markdown
-[![<what the video shows, in one sentence>](assets/videos/<name>.jpg)](assets/videos/<name>.mp4)
+[![<what the video shows, in one sentence>](assets/videos/<name>.gif)](https://youtu.be/<id>)
 ```
 
 | Where the page is read | What the reader sees |
 |---|---|
-| GitHub (repository view) | The still, linking to the mp4. GitHub removes `<video>` from Markdown, so a link is all a repository page can carry. |
-| The docs site (`make docs-site`) | A player with the still as its poster. The site hook (`tools/docs_site/hooks.py`) turns the link into a `<video>`. |
+| GitHub (repository view) | The trailer GIF moving in place; a click plays the full video on YouTube. |
+| The docs site (`make docs-site`) | A player of `<name>.mp4` from the repository, with `<name>.jpg` as its poster and `<name>.vtt` as its captions. The site hook (`tools/docs_site/hooks.py`) finds the files from the GIF's name. |
 
-A page can show the opening of its video moving on GitHub instead of the still: GitHub plays no mp4 in a
-repository view, but it animates a GIF. `node gif.mjs <name>` (or `--all`; run it under `agora-browser` or with
-`DOCS_VIDEO_CHROME` set) makes a trailer, not a cut-off opening: the first scenes up to the last scene boundary within
-15 seconds (the whole first scene when it is longer), then a 1.5 second end card "Watch the full video (m:ss)" that
-shows the video goes on and how long it is. It writes `docs/assets/videos/<name>.gif` (640 px wide, 10 frames a
-second, under 1.5 MB), and the page links the GIF to the video in the same way:
+The trailer is not a cut-off opening: `node gif.mjs <name>` (or `--all`; run it under `agora-browser` or with
+`DOCS_VIDEO_CHROME` set) takes the first scenes up to the last scene boundary within 15 seconds (the whole
+first scene when it is longer), then a 1.5 second end card "Watch the full video (m:ss)" that shows the video
+goes on and how long it is. It writes `docs/assets/videos/<name>.gif` (640 px wide, 10 frames a second, under
+1.5 MB). `mkdocs.yml` leaves the GIFs out of the site, which never shows them.
 
-```markdown
-[![<what the video shows, in one sentence>](assets/videos/<name>.gif)](assets/videos/<name>.mp4)
-```
+The mp4, its still and its subtitles stay in the repository: the docs site plays them, `render.mjs
+--audio-from` takes the sound of the committed mp4, and they are the copy that was uploaded. When a video is
+rendered again, upload it again and point the page at the new id.
 
-On the docs site the hook still makes a player of it, with `<name>.jpg` as the poster. Every page with a
-video does this; `mkdocs.yml` leaves the GIFs out of the site, which never shows them.
-
-`tests/test_docs_site_videos.py` checks that every such link points at its files (for a GIF, the still as
-well), that each mp4 is at most 6 MB and that each GIF is at most 3 MB.
+`tests/test_docs_site_videos.py` checks that every such link points at its files (the GIF, the still and the
+mp4 of the same name), that each mp4 is at most 6 MB and that each GIF is at most 3 MB, and that no page links
+a repository mp4, which GitHub would only download.
 
 ## Setup
 
@@ -94,7 +93,8 @@ The narration never uses a local text-to-speech model, and
    Where memory is short, set `DOCS_VIDEO_CONCURRENCY` (e.g. 4) to render with fewer browser tabs at once.
    The narration wavs are not committed: to render a page again whose `narration.json` and `durations.json` have not
    changed, without saying it again, add `--audio-from ../../docs/assets/videos/<name>.mp4` to take the sound of the committed mp4.
-8. Attach it to the page with the link above, below the page's opening paragraph.
+8. Make the trailer (`node gif.mjs <name>`), upload the mp4 to the doeff YouTube channel as unlisted, and attach
+   it to the page with the link above, below the page's opening paragraph.
 9. Check: `uv run pytest tests/test_docs_site_videos.py` and `make docs-site`.
 
 ## The look and the rules
