@@ -5,10 +5,12 @@
 ;;; jobs の層の空き(ObserveJobsRoom)は、見張りの最後の回に決めた新しい受けの上限(jobs-intake — 置いた task の取り置きを入れない)と読んだ
 ;;; 使い(working set − slab_reclaimable)の差(worker/protocol/eviction_line の EvictionCell)。機体の memory の訳で止められた記録(ObserveMemoryStops — 見張りの止めの訳と、
 ;;; jobs の層の kernel の OOM kill の増えの刻)も答える。答える前に jobs の層の memory.events を読み直し、見張りがまだ刻を付けていない
-;;; 増えも添える(kernel が止めた子の終わりを回収する拍が、見張りの次の回より先に来ても訳を落とさない)。
+;;; 増えも添える(kernel が止めた子の終わりを回収する拍が、見張りの次の回より先に来ても訳を落とさない)。この worker の持つ区画
+;;; (ObserveCompartments)は、同じ入れ物が持つ heartbeat の返事の写し(EvictionCell.compartments)で答える。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObserveUrgentJobsRoom])
+(import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObserveUrgentJobsRoom
+  ObserveCompartments])
 (import doeff_cluster._worker.protocol.eviction_line [jobs-oom-count])
 (import doeff_cluster._worker.intent.worker_model [MemoryStops])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
@@ -40,4 +42,7 @@
     (val eviction cell.eviction)
     (resume (if (or (is eviction.jobs-intake-urgent None) (is eviction.jobs-held None))
                 None
-                (- eviction.jobs-intake-urgent eviction.jobs-held)))))
+                (- eviction.jobs-intake-urgent eviction.jobs-held))))
+  (ObserveCompartments []
+    ;; 最後に読めた heartbeat の返事の持つ区画(coordinator への口が入れ物へ写す — coordinator_link の accepted-compartments)。
+    (resume cell.eviction.compartments)))

@@ -859,6 +859,7 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.intent.code_model import LinkPycs as LinkPycs
     from doeff_cluster._worker.intent.code_model import Note as Note
     from doeff_cluster._worker.protocol.observations import ObserveCode as ObserveCode
+    from doeff_cluster._worker.protocol.observations import ObserveCompartments as ObserveCompartments
     from doeff_cluster._worker.protocol.observations import ObserveEnvDisk as ObserveEnvDisk
     from doeff_cluster._worker.protocol.observations import ObserveEnvs as ObserveEnvs
     from doeff_cluster._worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
@@ -1277,6 +1278,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MaterializeTree": "doeff_cluster._worker.intent.env_prepare_model",
     "Note": "doeff_cluster._worker.intent.code_model",
     "ObserveCode": "doeff_cluster._worker.protocol.observations",
+    "ObserveCompartments": "doeff_cluster._worker.protocol.observations",
     "ObserveEnvDisk": "doeff_cluster._worker.protocol.observations",
     "ObserveEnvs": "doeff_cluster._worker.protocol.observations",
     "ObserveJobRoots": "doeff_cluster._worker.protocol.observations",

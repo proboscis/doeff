@@ -308,6 +308,7 @@
     "ADR-DOE-CLUSTER-005 one-budget-has-one-declaration",
     "ADR-DOE-CLUSTER-005 placement-reads-claims-not-measurements",
     "ADR-DOE-CLUSTER-005 the-claim-follows-the-measured-peaks-and-stays",
+    "ADR-DOE-CLUSTER-005 the-preparation-parallelism-follows-the-compartment",
     "ADR-DOE-CLUSTER-005 ungated-work-never-waits-for-room",
     "ADR-DOE-CORE-001 spawn-observer-inheritance",
     "ADR-DOE-CORE-002 effect-creation-is-cheap",
