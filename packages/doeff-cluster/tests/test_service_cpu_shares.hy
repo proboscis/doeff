@@ -2,13 +2,16 @@
 ;; 読みの service の答えの thread が一括の常駐(写しの係など)と同じ順番で CPU を待った(2026-11-13 の node-a — 待ちの中央 4.8 ms・
 ;; p95 49 ms)。job の宣言の欄 :cpu-share が宣言の行 → coordinator → heartbeat の返事 → worker の JobSpec と運ばれ、取り分を名乗る
 ;; 機体の worker は job を services の層の下のその名の子に置く。
-(require doeff-hy.macros [deftest <- val])
+(require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_core_effects [ProcessOutcome RunProcess subprocess-handler os-file-handler])
+(import doeff_core_effects [ProcessOutcome RunProcess subprocess-handler os-file-handler state])
+(import doeff_time [SimClock sim-time-handler Delay])
+(import doeff_cluster [ObserveProcesses WorkerWakes no-wakes DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [JobSpec job system-of])
 (import doeff_cluster [ClusterJob ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [Placement])
@@ -16,7 +19,7 @@
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
 (import doeff_cluster._worker.protocol.declared [declared-job-spec])
 (import doeff_cluster._worker.core.job_cgroup [placed-argv service-shares-of share-procs shares-argv])
-(import doeff_cluster._worker.protocol.process_host [HostSettings ready-shares shim-argv service-procs-of])
+(import doeff_cluster._worker.protocol.process_host [HostSettings ready-shares shim-argv service-procs-of process-host])
 (import doeff_cluster._worker.entry.main [SERVICE-SHARES-VAR service-shares-placed])
 (import tests.host_rig [host-settings])
 (import tests.state_rows [table-from-rows])
@@ -26,6 +29,35 @@
 (import tests.fixtures.envs [plain-foundation])
 
 (val SHIM-ARGV #("python" "-m" "doeff_cluster._worker.entry.shim" "--" "uv" "run" "hy"))
+
+
+(defk elder-leaves [layer]
+  {:pre [(: layer Path)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "job を起こさず、旧世代の終了の前後を同じ宿の観測で確かめるため。"
+  (<- (ObserveProcesses))
+  (<- pending (WorkerWakes :began 0 :began-mono-ms 0))
+  (assert (isinstance pending.due DueAt) pending)
+  (assert (= (.read-text (/ layer "cgroup.subtree_control")) ""))
+  (.write-text (/ layer "cgroup.procs") "")
+  (<- (Delay 5))
+  (<- (ObserveProcesses))
+  (assert (= (.strip (.read-text (/ layer "reads" "cpu.weight"))) "400"))
+  (assert (= (.strip (.read-text (/ layer "_shared" "cpu.weight"))) "100"))
+  (<- finished (WorkerWakes :began 5000 :began-mono-ms 5000))
+  (assert (isinstance finished.due DueNever) finished)
+  None)
+
+
+(deftest test-the-host-enables-shares-after-the-elder-leaves-without-starting-another-job [#^ Path tmp-path]
+  ;; 最後の job を起こした後で旧世代が退く反例。観測と期限だけで有効化し、動いた後は再試行の期限を外す。
+  (val layer (/ tmp-path "services"))
+  (.mkdir layer)
+  (.write-text (/ layer "cgroup.subtree_control") "")
+  (.write-text (/ layer "cgroup.procs") "123\n")
+  (<- base HostSettings (host-settings tmp-path))
+  (val placing (replace base :service-layer (str layer) :service-shares #(#("reads" 400))))
+  (<- (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler subprocess-handler no-wakes (process-host placing)]
+                    (elder-leaves layer))))
 
 
 (deftest test-the-worker-reads-its-share-from-the-mounted-room-file-without-a-pod-env-change [#^ Path tmp-path]
