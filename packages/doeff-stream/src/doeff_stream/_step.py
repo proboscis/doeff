@@ -60,6 +60,12 @@ class Run:
     time anyway (it holds its inputs while a run is running) pays for no task per run this way. ``priority`` is not
     read, and a ``CancelRun`` never finds an inline run running: its end has come back before the step is given
     another input.
+
+    ``name`` names the run's task where the scheduler places it: the scheduler counts a task's steps under the frame
+    that yielded its ``Spawn`` (``StepTally``'s sites), and every runner is spawned from the fold, so without a name
+    all the runs of a fold count as one site. A run with a name is spawned from a frame of that name instead, so each
+    kind of work the step starts is counted apart. ``None`` (the default) spawns from the fold as before. An inline
+    run starts no task and does not read it.
     """
 
     # The declaration doeff-effect-analyzer reads: ``program`` holds the Program the fold runs (``fold`` declares in
@@ -71,6 +77,7 @@ class Run:
     program: "Program[object]"
     priority: TaskPriority | int = TaskPriority.NORMAL
     inline: bool = False
+    name: str | None = None
 
     def __post_init__(self) -> None:
         # Checked here, not at the Spawn: the step's mistake is named where it was made, and the replay sees it too.
@@ -80,6 +87,11 @@ class Run:
             )
         if not isinstance(self.inline, bool):
             raise TypeError(f"Run of the key {self.key!r} takes a bool inline, got {type(self.inline).__name__}")
+        if self.name is not None and (not isinstance(self.name, str) or not self.name):
+            # The name becomes the spawning frame's name: an empty one would name no site.
+            raise TypeError(
+                f"Run of the key {self.key!r} takes a non-empty str name or None, got {self.name!r}"
+            )
 
 
 @dataclass(frozen=True)

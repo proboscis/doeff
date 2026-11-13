@@ -6,6 +6,9 @@ starts one task, the runner: it runs the program and publishes how it ended — 
 run is an input, whichever way it ended, and the fold itself never waits for a run's answer: it only waits for the
 next input.
 
+A ``Run(…, name=…)`` spawns its runner from a frame of that name (``_launcher``), so the scheduler counts the run's
+steps under its name and not under the fold.
+
 A ``Run(…, inline=True)`` starts no task: the fold yields its program in its own task where it carries out the effect,
 and gives the step its end (``Answered`` / ``Raised``) as the next input, before any input queued on the bus. While it
 runs the fold takes no input. A step that holds its inputs while a run is running (its runs go one at a time) saves the
@@ -34,6 +37,8 @@ and ``GetMonotonic`` (the clock handler). Without such a handler it measures not
 
 from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass, replace
+from functools import cache
+from types import FunctionType
 from typing import Any, TypeVar
 
 from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait, shielded
@@ -109,6 +114,23 @@ def _reported(
     else:
         end = Answered(key, value)
     yield Publish(RunEnded(origin, mark, key, end))
+
+
+def _launch(spawn: Spawn) -> Generator[Any, Any, Task[None]]:
+    """Yield ``spawn`` and answer its task: the body ``_launcher`` copies under a run's name. A bare generator, not
+    ``@do``: the VM runs the wrapper's generator as the frame that yields the ``Spawn``, and the copy's code carries the
+    name the scheduler reads there."""
+    task: Task[None] = yield spawn
+    return task
+
+
+@cache
+def _launcher(name: str) -> Callable[[Spawn], "Program[Task[None]]"]:
+    """The ``_launch`` whose code is named ``name``, wrapped in ``@do``: the frame a named ``Run``'s runner is spawned
+    from, so the scheduler counts its steps under ``name`` (``Run.name``). One per name — the names are the kinds of
+    work a step starts, not one per run."""
+    code = _launch.__code__.replace(co_name=name, co_qualname=name)
+    return do(FunctionType(code, _launch.__globals__, name))
 
 
 @do
@@ -295,11 +317,10 @@ def fold(
                 match effect:
                     case Run(key=key, program=program, inline=True):
                         inline_ends.append((yield _inline(key, program)))
-                    case Run(key=key, program=program, priority=priority):
+                    case Run(key=key, program=program, priority=priority, name=name):
                         mark = object()
-                        runner = yield Spawn(
-                            _reported(origin, mark, key, program), priority=priority
-                        )
+                        spawn = Spawn(_reported(origin, mark, key, program), priority=priority)
+                        runner = yield (spawn if name is None else _launcher(name)(spawn))
                         running[key] = _Running(runner, mark, priority)
                     case CancelRun(key=key):
                         entry = running.get(key)
