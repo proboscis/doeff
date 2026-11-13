@@ -37,6 +37,7 @@
    :single-host \"<訳>\" は job を 1 台の worker に縛ってよい訳(任意 — 書いた job は置き先が 2 台以上の照らしの外になる)。
    :idle-budget {:cpu-cores 0.2 :pss-mb 300 :from-cpu-cores 0.1 :from-pss-mb 250} は job の暇な時の予算(任意 — 上限と、上限を出した
    元の暇な時の値。Service の spec の idleBudget に載り、読むのは使う側)。
+   :cpu-share \"<名>\" は job を置く CPU の取り分の名(任意 — 名の取り分を宣言した worker は job を services の層の下のその名の子に置く)。
    説明の文の後・job の行の前に :task-limits {\"<組>\" {\"scope\" \"worker\" \"limit\" 6}} を置くと、系が組の同時数の上限を宣言する
    (task は組の名だけを名乗る — 値の持ち主は系の宣言)。
    形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。

@@ -15,6 +15,16 @@
 ;;; その兄弟へ置く(worker/protocol/process_host の start-job)。配備は兄弟ごとに memory の守り(memory.min)と上限(memory.max)を分けて掛け、
 ;;; 1 本の task が上限まで memory を使っても、kernel はその兄弟の中だけで回収して止め、常駐の job の兄弟は回収されない。
 ;;;
+;;; 取り分(services の層の下 — 常駐の job の間の CPU の順を分けるため): 機体の配備が DOEFF_WORKER_SERVICE_SHARES に取り分の名と CPU の
+;;; 重み(例 `reads=400`)を名乗ると、worker は services の層の下に共有の子 SHARED-CGROUP(重み SHARED-SHARE-WEIGHT — 取り分を宣言しない
+;;; 常駐の job・service の待ちの子・root の準備)と取り分の名の子を作り、宣言の欄 cpu-share(JobSpec.cpu-share)がその名の常駐の job だけを
+;;; 名の子へ置く(名乗っていない名の job は共有の子)。層そのものには process を置かず、層の cgroup.subtree_control に cpu を掛けて子へ
+;;; 重みを書く(SHARES-SCRIPT — 宿 worker/protocol/process_host が常駐の job を起こす前に試す)。層に前の世代の process が残っている間は
+;;; kernel が掛けを断り、子は重みなしで層の重みを分け合う(次に起こす時に試し直す)。memory は層の値のまま: 区画の守り(memory.min)は
+;;; 層 services に掛かり、mount の memory_recursiveprot で子へ使いに比べて分かれる(子に区画の値を書かない — 区画 1 つ = 層 1 つ)。
+;;; 失敗ケース(2026-11-13 の node-a): 平らな services の層の中では CPU の重みが thread ごとで、読みの service の答えの thread の CPU の
+;;; 待ちが中央 4.8 ms・p95 49 ms になり、一括の常駐(写しの係など)と同じ順番で並んでいた。
+;;;
 ;;; 根(root): 兄弟の cgroup.procs を書く cgroup v2 の mount の場所。既定は CGROUP-ROOT。k8s の Pod の worker の /sys/fs/cgroup は自分の
 ;;; container の cgroup を根とする名前空間の読み取りだけの見えなので、起動の script(deploy/boot.sh の層 — WORKER_CGROUP_LAYOUT)が
 ;;; 書ける見え(host の cgroupfs の mount の中の、同じ cgroup の dir)を DOEFF_WORKER_CGROUP_DIR で渡す。/proc/self/cgroup の path は
@@ -37,6 +47,7 @@
 (import hashlib)
 (import posixpath)
 (import re)
+(import doeff_cluster._shared.core.job_rules [cpu-share-refusal])
 
 
 ;; cgroup v2 の根の mount の場所。
@@ -77,6 +88,19 @@
 (val CLOSE-SCRIPT (+ CLOSE-FUNCTION "close \"$0\""))
 ;; 準備の子の名の頭(準備の層の下 — 同じ層で準備する keeper の子 keeper-<版> と重ねない)。
 (val PREPARE-GROUP-PREFIX "env-")
+;; services の層の共有の子の CPU の重み(頭の註の「取り分」— cgroup v2 の既定の重みと同じ値)。取り分の重みはこの値と比べて名乗る。
+(val SHARED-SHARE-WEIGHT 100)
+;; 取り分の重みの範囲(cgroup v2 の cpu.weight が受ける値)。
+(val SHARE-WEIGHT-MIN 1)
+(val SHARE-WEIGHT-MAX 10000)
+;; 取り分を整える sh の script(頭の註の「取り分」): $0 = services の層の dir・"$@" = 「<子の名>=<重み>」の並び(共有の子を含む)。子を
+;; 作り(在れば書かない)、層の子にまだ cpu を掛けていなければ掛けを試す。掛けられない(層に process が居る)なら deferred を出して 0 で
+;; 終わる。掛かっていれば子ごとに重みを書いて on を出す。子を作れない・重みを書けない時は 0 以外。
+(val SHARES-SCRIPT
+  (+ "for p in \"$@\"; do mkdir -p \"$0/${p%%=*}\" || exit 1; done; "
+     "if ! grep -qw cpu \"$0/cgroup.subtree_control\" 2>/dev/null; then "
+     "echo +cpu >\"$0/cgroup.subtree_control\" 2>/dev/null || { echo deferred; exit 0; }; fi; "
+     "for p in \"$@\"; do echo \"${p#*=}\" >\"$0/${p%%=*}/cpu.weight\" || exit 1; done; echo on"))
 
 
 (defk job-cgroup-procs [own-cgroup sibling [root CGROUP-ROOT]]
@@ -192,3 +216,41 @@
     (when (get parts 0)
       (:= groups #(#* groups #((get parts 0) (! (io-totals (get parts 2))))))))
   groups)
+
+
+(defk service-shares-of [text]
+  {:pre [(: text str)] :post [(: % (| (get tuple #((get tuple #(str int)) ...)) str))] :tags {:context "worker" :role "judgment"}}
+  "機体の配備の取り分の宣言(DOEFF_WORKER_SERVICE_SHARES の値 — 空白で並べた「<名>=<重み>」)を #(名 重み) の並び(書いた順)にするため
+   (頭の註の「取り分」)。名の規則は宣言の欄 cpu-share と同じ(job_rules.cpu-share-refusal — _ で始まる共有の子の名と重ならない)・重みは
+   SHARE-WEIGHT-MIN〜SHARE-WEIGHT-MAX の整数。読めない宣言・名の重なりは理由の文(起動を断る — 名乗った取り分を黙って捨てない)。"
+  (var shares #())
+  (for [entry (.split text)]
+    (val parts (.partition entry "="))
+    (val name (get parts 0))
+    (val weight (get parts 2))
+    (when (or (not (get parts 1)) (is-not (cpu-share-refusal name) None))
+      (return (.format "取り分 {!r} は「<名>=<重み>」(名は英小文字か数字で始まる英小文字・数字・- の 1〜32 字)" entry)))
+    (when (not (and (.isdigit weight) (<= SHARE-WEIGHT-MIN (int weight) SHARE-WEIGHT-MAX)))
+      (return (.format "取り分 {} の重み {!r} は {}〜{} の整数" name weight SHARE-WEIGHT-MIN SHARE-WEIGHT-MAX)))
+    (when (in name (lfor share shares (get share 0)))
+      (return (.format "取り分 {} が 2 回ある" name)))
+    (:= shares #(#* shares #(name (int weight)))))
+  (if shares shares "取り分の宣言が空"))
+
+
+(defk shares-argv [layer shares]
+  {:pre [(: layer str) (: shares tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "services の層(layer = 層の dir)の下の共有の子と取り分の子を作り、層に cpu を掛けて重みを書く argv を作るため(SHARES-SCRIPT・
+   shares = service-shares-of の答え)。共有の子は先頭に SHARED-SHARE-WEIGHT で置く。"
+  (+ #("/bin/sh" "-c" SHARES-SCRIPT layer (.format "{}={}" SHARED-CGROUP SHARED-SHARE-WEIGHT))
+     (tuple (gfor #(name weight) shares (.format "{}={}" name weight)))))
+
+
+(defk share-procs [layer shares share default]
+  {:pre [(: layer (| str None)) (: shares tuple) (: share (| str None)) (: default (| str None))] :post [(: % (| str None))]
+   :tags {:context "worker" :role "judgment"}}
+  "常駐の job を置く cgroup.procs を決めるため(頭の註の「取り分」): job の取り分の名 share を機体が名乗っていれば services の層 layer の
+   下のその名の子、名乗っていない・名の無い job は default(共有の子 — 取り分を名乗らない機体は層そのものか None)。"
+  (if (and (is-not layer None) (is-not share None) (in share (lfor s shares (get s 0))))
+      (posixpath.join layer share "cgroup.procs")
+      default))

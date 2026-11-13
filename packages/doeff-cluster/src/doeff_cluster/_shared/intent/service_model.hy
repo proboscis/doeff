@@ -60,7 +60,8 @@
    か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)・peak-mib = 起動の memory の山(MiB)・
    settle-mib = 落ち着いた memory(MiB・山以下 — どちらも必ず宣言する)・single-host = 1 台の worker に縛ってよい訳
    (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)・idle-budget = 暇な時の予算(job_model.IdleBudget —
-   規則は job_rules.idle-budget-read。無ければ None。読むのは Service の spec を読む使う側で、置き方と process の形は読まない)・filled = environ の名のうち宣言の時に埋める名(defsystem の印
+   規則は job_rules.idle-budget-read。無ければ None。読むのは Service の spec を読む使う側で、置き方と process の形は読まない)・
+   cpu-share = worker の services の層の下の CPU の取り分の名(規則は job_rules.cpu-share-refusal。無ければ None = 取り分の無い共有の子)・filled = environ の名のうち宣言の時に埋める名(defsystem の印
    (filled) — 既定を持たず、宣言する者が上書きで値を渡す。上書きの後も空なら断るのは宣言する者の確かめ)。"
   (#^ str name)
   (#^ object program)
@@ -74,6 +75,7 @@
   (#^ int settle-mib)
   (setv #^ (| str None) single-host None)
   (setv #^ (| IdleBudget None) idle-budget None)
+  (setv #^ (| str None) cpu-share None)
   (setv #^ (get frozenset str) filled (frozenset)))
 
 
@@ -114,6 +116,7 @@
   #^ (get NotRequired (get dict #(str object))) runtimeEnv
   #^ (get NotRequired str) singleHost
   #^ (get NotRequired (get dict #(str (| int float)))) idleBudget
+  #^ (get NotRequired str) cpuShare
   #^ (get NotRequired str) content)
 
 

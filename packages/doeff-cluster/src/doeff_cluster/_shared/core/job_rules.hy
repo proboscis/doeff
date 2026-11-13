@@ -51,6 +51,19 @@
       (.format "singleHost は 1 台に縛る訳の空でない文字列か null: {!r}" value)))
 
 
+;; 常駐の job の CPU の取り分の名 cpuShare(任意の欄 — 書かない job には無い): worker の services の層の下の子の名(worker/core/job_cgroup の
+;; 頭の註の「取り分」)。英小文字か数字で始まり、英小文字・数字・- の 1〜32 字(_ で始まる名は worker の共有の子と重なるので書けない)。
+(val #^ (get re.Pattern str) CPU-SHARE-NAME (re.compile r"[a-z0-9][a-z0-9-]{0,31}"))
+
+
+(defn #^ (| str None) cpu-share-refusal [#^ object value]  ; cannot be a defk: 宣言の値を作る時と coordinator の宣言の読み・worker の返事の読み(Program の外の純粋な判断)が呼ぶ
+  "常駐の job の CPU の取り分の名 cpuShare(無い = None)を受けられない理由を、送り手・coordinator・worker が同じ 1 つの規則で言うため
+   (受けられれば None)。"
+  (if (or (is value None) (and (isinstance value str) (.fullmatch CPU-SHARE-NAME value)))
+      None
+      (.format "cpuShare は取り分の名(英小文字か数字で始まる英小文字・数字・- の 1〜32 字)か null: {!r}" value)))
+
+
 ;; 常駐の job の暇な時の予算 idleBudget(任意の欄 — 書かない job には無い・型は job_model.IdleBudget): 暇な時の上限 cpuCores(core の数)・
 ;; pssMB(MB の整数)と、上限を出した元の暇な時の値 fromCpuCores・fromPssMB(同じ単位・上限以下)。doeff-cluster は運ぶだけ。
 (val IDLE-BUDGET-KEYS #("cpuCores" "pssMB" "fromCpuCores" "fromPssMB"))

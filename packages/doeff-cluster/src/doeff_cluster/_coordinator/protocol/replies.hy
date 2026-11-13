@@ -129,7 +129,10 @@
      (if spec.keep-when-cut-off {"keepWhenCutOff" True} {})
      ;; 宣言の memory の山を持つ job だけ(2026-11-11): worker の memory の見張りは、今の memory がこの値以下の常駐の job を
      ;; 止めない。欄を読まない古い worker は捨てる(今どおり平常の大きさで判じる)。
-     (if (is spec.peak-mib None) {} {"peakMiB" spec.peak-mib})))
+     (if (is spec.peak-mib None) {} {"peakMiB" spec.peak-mib})
+     ;; CPU の取り分の名を宣言した job だけ: worker は取り分を宣言した機体で、process を services の層の下のその名の子に置く。
+     ;; 欄を読まない古い worker は捨てる(今どおり services の層に置く)。
+     (if (is spec.cpu-share None) {} {"cpuShare" spec.cpu-share})))
 
 
 (defk task-offer-json [#^ TaskOffer offer]

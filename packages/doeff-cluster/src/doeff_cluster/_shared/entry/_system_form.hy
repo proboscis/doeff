@@ -30,6 +30,9 @@
 ;;;   — cpu-cores・pss-mb = 暇な時の上限(core の数・MB)、from-* = 上限を出した元の暇な時の値(上限以下)。規則は job_rules.idle-budget-refusal
 ;;;   (coordinator の宣言の読みと同じ)。静的な記述と宣言の行に idleBudget(鍵 cpuCores・pssMB・fromCpuCores・fromPssMB)で載る(書かない
 ;;;   job には鍵が無い)。doeff-cluster は運ぶだけで、読むのは Service の spec を読む使う側(置き方と process の形は読まない)。
+;;;   :cpu-share は常駐の job を置く CPU の取り分の名の文字列の literal で、任意の欄(規則は job_rules.cpu-share-refusal — coordinator の宣言の
+;;;   読みと同じ)。worker は名の取り分を宣言した機体でだけ、job を services の層の下のその名の子に置く(worker/core/job_cgroup の頭の註の
+;;;   「取り分」)。静的な記述と宣言の行に cpuShare で載る(書かない job には鍵が無い)。process の形ではないので指紋 spec-hash に入らない。
 ;;;   :reads / :writes は job が外の置き場(記録の service など)から読む・書く物の集合で、任意の欄 — 文字列の literal の集合で、綴りは
 ;;;   <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。置き場の名の集合は使い手の repo の語彙なので doeff は持たない。静的な記述の
 ;;;   job の dict にだけ載り、job の値(doeff-cluster の Job)と宣言の行には載らない(実行時に読む物が無い)。使い手の系の job に欄を
@@ -52,7 +55,7 @@
 ;; 系の型の module が持つ(展開の時の検めと、構成子 service_build.job の実行時の検めが 1 つの定義を読む)。
 (import doeff_cluster._shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES])
 ;; 暇な時の予算の規則(展開の時の検めと、構成子 service_build.job・coordinator の宣言の読みが 1 つの定義を読む)。
-(import doeff_cluster._shared.core.job_rules [idle-budget-refusal])
+(import doeff_cluster._shared.core.job_rules [idle-budget-refusal cpu-share-refusal])
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 
@@ -64,7 +67,7 @@
 (setv DEFSYSTEM-BUILD #("doeff_cluster._shared.entry.service_build" "_doeff_cluster_service_build"))
 (setv DEFSYSTEM-IMPORTS #(DEFSYSTEM-MODEL DEFSYSTEM-BUILD))
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host" ":idle-budget"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12)。
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host" ":idle-budget" ":cpu-share"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12)。
 (setv SYSTEM-KEYS #(":task-limits"))
 ;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ —
 ;; 誤りの文に並べる順を持つので写しを持ち、規則との一致は tests/test_group_limits_owner.hy が検める)。
@@ -199,6 +202,11 @@
               (raise (SyntaxError (.format "{}: :single-host は 1 台の worker に縛ってよい訳の空でない文字列の literal: {}"
                                            where (hy.repr v)))))
             (setv (get values key) v (get static "singleHost") (str v)))
+      ":cpu-share"
+        (do (when (not (and (isinstance v String) (is (cpu-share-refusal (str v)) None)))
+              (raise (SyntaxError (.format "{}: :cpu-share は CPU の取り分の名(英小文字か数字で始まる英小文字・数字・- の 1〜32 字)の文字列の literal: {}"
+                                           where (hy.repr v)))))
+            (setv (get values key) v (get static "cpuShare") (str v)))
       ":idle-budget"
         (do (setv ceiling (idle-budget-value v where))
             ;; 構成子 job へは型 IdleBudget(service_model が引き渡す)の値で、静的な記述へは宣言の行と同じ綴りの dict で渡す。
