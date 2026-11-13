@@ -37,7 +37,7 @@
 (import doeff_core_effects [BoundAbsent maybe result on-raise absent-as absent-raises])
 
 ;; The foundation vocabulary and its defhandler-made responders (derived from __doeff_body__ without annotation - D6).
-(import doeff_core_effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile LinkFiles MakeSymlink CompilePythonSources ReadMemoryFiles])
+(import doeff_core_effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath CopyFile CopyTree AcquireLock TryLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile LinkFiles MakeSymlink CompilePythonSources ReadMemoryFiles])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [rooted-file-handler])
@@ -232,7 +232,7 @@
   :effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText
             AppendBytes TruncateFile SyncDirectory
             MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath
-            CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree
+            CopyFile CopyTree AcquireLock TryLock ReleaseLock ReadDiskFree
             ReadDiskUsage MeasureTree LinkFile LinkFiles MakeSymlink CompilePythonSources
             ReadMemoryFiles]
   :handlers [os-file-handler memory-file-handler rooted-file-handler]

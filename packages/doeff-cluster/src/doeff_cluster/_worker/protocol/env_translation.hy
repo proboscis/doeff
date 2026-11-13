@@ -344,12 +344,28 @@
 
 ;; --- 要求ごとの訳し ------------------------------------------------------------------------
 
+;; mirror を使った印の file(bare mirror の dir の直下 — git は知らない名を読まない)。
+(val MIRROR-USED ".used")
+
+
+(defk touched-mirror [mirror]
+  {:pre [(: mirror str)] :post [(: % None)]}
+  "mirror を使うたびに印の file を置き換えて mirror の dir の時刻を進めるため(native の wheel の .used と同じ作法)。worker の掃除
+   (env_store の unused-mirrors)は、root の宣言が指さず dir の時刻が 7 日動かない mirror を消す — 印が無いと、fetch の無い使い
+   (commit が在った・木を写した)では git が dir に書かず、使っている mirror の時刻が動かない。EnsureMirror は url の錠の中で進めるので、
+   錠を取ってから時刻を読み直す掃除は、準備が今使う mirror を消さない。書けない(disk が満ちた等)時は準備を止めない — 時刻が進まない
+   mirror も root の宣言が指す間は消えない。"
+  (<- (WriteText (posixpath.join mirror MIRROR-USED) "" :replace True))
+  None)
+
+
 (defk mirror-of [url mirror env]
   {:pre [(: url str) (: mirror str) (: env tuple)] :post [(: % (| MirrorReady EnvFailure))]}
   "url の bare mirror を用意する(在ればそのまま・無ければ clone して置き換える)。clone できなければ一時の repo-unreachable。"
   (<- kind PathKind (kind-at mirror))
   (if (!= kind PathKind.MISSING)
-      (MirrorReady :path mirror)
+      (do (<- (touched-mirror mirror))
+          (MirrorReady :path mirror))
       (do (<- (MakeDirectory (posixpath.dirname mirror)))
           (val tmp (+ mirror ".tmp"))
           (<- (remove-if-present tmp))
@@ -357,6 +373,7 @@
           (if (= cloned.code 0)
               (do (<- moved (| None FileFailed) (RenamePath tmp mirror))
                   (<- (settled moved "mirror を置けない"))
+                  (<- (touched-mirror mirror))
                   (MirrorReady :path mirror))
               (do (<- detail str (tail-of cloned))
                   (<- (remove-if-present tmp))
@@ -1010,10 +1027,12 @@
     (resume answer))
 
   (FetchCommit [mirror commit]
+    (<- (touched-mirror mirror))
     (<- answer (| FetchState EnvFailure) (fetch-commit mirror commit repo-keys))
     (resume answer))
 
   (MaterializeTree [mirror commit dest source]
+    (<- (touched-mirror mirror))
     (<- placed TreePlaced (materialize mirror commit dest source progress))
     (resume placed))
 

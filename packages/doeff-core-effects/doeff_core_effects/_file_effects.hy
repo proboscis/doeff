@@ -43,6 +43,8 @@
 ;;;                  moved, replacing). Answer = None
 ;;;   RemoveTree     Remove a file or dir with its contents (refused if missing; for a symlink only the link is removed). Answer = None
 ;;;   AcquireLock    Take a lock file exclusively (wait until it can be taken). Answer = LockHeld
+;;;   TryLock        Take a lock file exclusively only if it is free now (never waits). Answer = LockHeld, or LockBusy when another holder has it (for a sweeper
+;;;                  that must skip what a writer holds rather than wait on the scheduler's thread)
 ;;;   ReleaseLock    Release a held lock. Answer = None
 ;;;   ReadDiskFree   The free space (bytes) of the file system containing path (a missing path is measured at its existing parent). Answer = int
 ;;;   ReadDiskUsage  The total and free space (bytes) of the file system containing path (a missing path is measured at its existing parent -- #2504). Answer = DiskUsage
@@ -109,6 +111,11 @@
   "A held lock (path = the lock file, token = the handle passed when releasing)."
   (#^ str path)
   (#^ int token))
+
+
+(defrecord LockBusy
+  "TryLock found the lock held by another holder (path = the lock file). Nothing is held, so there is nothing to release."
+  (#^ str path))
 
 
 (defrecord Appended
@@ -254,6 +261,11 @@
 
 (defclass [(dataclass :frozen True)] AcquireLock [(get EffectBase (| LockHeld FileFailed))]
   "Take a lock exclusively (header note)."
+  (#^ str path))
+
+
+(defclass [(dataclass :frozen True)] TryLock [(get EffectBase (| LockHeld LockBusy FileFailed))]
+  "Take a lock exclusively only if it is free now (header note)."
   (#^ str path))
 
 
