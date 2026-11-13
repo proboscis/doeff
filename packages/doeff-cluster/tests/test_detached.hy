@@ -1001,6 +1001,26 @@
   (assert (= #(placed.phase placed.attempt placed.boot) #("assigned" 2 "b2")) placed))
 
 
+(deftest test-the-next-attempt-of-a-runtime-env-task-waits-for-the-worker-instead-of-ending-tool-missing
+  ;; 2026-11-13: 実行環境を宣言した task(宣言の道具は無い)の次の試行は、積み直した同じ拍に連絡のあった worker が無いので置き先が空になり、
+  ;; 「宣言の道具 [] を名乗る worker が無い」の env-failed で終わっていた。道具は欠けていないので、連絡が戻るまで待って置く。
+  (import tests.env_fixtures [LOCK env-of])
+  (import doeff_cluster [RuntimeEnv runtime-env->json])
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (val joined (! (beat (ClusterState :machine-compartments ROOMS) "w" 0)))
+  (val put (! (put-detached (get joined 0) "job-env" 0 :lease 2.0 :extra (| RERUN-BODY {"runtimeEnv" (runtime-env->json env)}))))
+  (val id (get (get put 2) "task"))
+  (val running (get (! (beat (get put 0) "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])) 0))
+  (val lapsed (! (tick running 3500 T)))
+  (val row (! (row-of-key lapsed "job-env")))
+  (assert (= #(row.phase row.attempt row.worker) #("queued" 2 None)) row)
+  (assert (not-in "名乗る worker が無い" row.detail) row)
+  (val heard (! (beat lapsed "w" 3600 :boot "b2")))
+  (val placed (! (row-of-key (get heard 0) "job-env")))
+  (assert (= #(placed.attempt placed.worker placed.boot) #(2 "w" "b2")) placed)
+  (assert (in placed.phase #("assigned" "preparing")) placed))
+
+
 (deftest test-a-previous-attempt-that-comes-back-from-silence-is-not-offered-and-its-result-is-not-taken
   ;; 沈黙は死ではない(memory が詰まって heartbeat だけが止まった — 2026-10-24 の node-h): 前の試行の子は動き続けている。戻った世代の報告も結果の届けも
   ;; 次の試行を終わらせず、返事から外れた job は worker が止める。同じ worker の同じ世代に次の試行を置いても、返事には新しい id だけが載る。
