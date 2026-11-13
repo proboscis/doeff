@@ -718,7 +718,7 @@
         ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先・自分の版)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
-                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
+                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR SERVICE-SHARES-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
                                                      PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR RETIRED-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR
                                                      CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR commit-var)
