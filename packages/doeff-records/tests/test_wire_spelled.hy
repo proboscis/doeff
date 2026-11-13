@@ -4,13 +4,17 @@
 ;;; - memory の置き場と PostgreSQL の置き場の両方で、一覧(欄を絞らない・絞る・上から読む)と変更の読みの答えの新旧の本文が JSON として同じ。
 ;;; - 欄を絞らない一覧と変更の読みの行は保存の綴りを持ち、PostgreSQL の置き場の行は答えを綴った後も値を解いていない(欄 value が無い)。
 ;;; - 綴りだけを持つ行は、値を読まれた時に 1 度だけ解き、値から作った行と等しい(等しさ・repr・match は前のまま)。
+;;; - PostgreSQL の置き場が読んだ出来事(pg.events-of)は payload の綴りを持ち、答えの本文を綴った後も payload を解いていない(欄 body が
+;;;   無い)。欄を読まれた時に 1 度だけ解き、値から作った出来事と等しい。前は出来事の頁を読むたびに、1 件ごとに payload を解き・本文を深く
+;;;   凍らせ・戻し・Python の再帰で綴り直していた(1 頁 1,000 件・1 件 600 byte で読み解きと綴りが CPU 約 0.1 秒)。
 (require doeff-hy.macros [deftest defk <- val])
 (import json)
 (import pytest)
 (import doeff [run])
 (import doeff_hy._frozen [FrozenMap thaw-json])
-(import doeff_records [ExpectAbsent ExpectVersion Row RowChanged Page Changes Written WatchCursor]
+(import doeff_records [ExpectAbsent ExpectVersion Row RowChanged Page Changes Written WatchCursor Event Events]
         doeff_records._values [stored-row stored-change stored-text])
+(import doeff_records._pg [events-of])
 (import doeff_records [ListRows WatchChanges PutRow])
 (import doeff_records._laws [MAKER LawHarness as-writer])
 (import doeff_records._wire [encode-answer answer-text])
@@ -93,3 +97,38 @@
   (val change (stored-change "parts" #("p1") 3 text 9 100))
   (assert (= change (RowChanged "parts" #("p1") 3 made.value 9 100)))
   (with [(pytest.raises AttributeError)] (. (Row #("p1") (FrozenMap {"id" "p1"}) 1) missing-name)))
+
+
+(deftest test-a-read-event-carries-its-stored-payload-undecoded
+  ;; append_rows の行(seq at payload)3 つ: 行と一緒に積んだ出来事(position 付き)・本文が object でない出来事・本文の中に
+  ;; "position" の字を持つ出来事(位置は無い)。payload は置き場の書きと同じ正規の綴り(鍵の昇順)。
+  (val body {"label" ODD-LABEL "grant" NESTED-GRANT})
+  (val spell (fn [payload] (json.dumps payload :ensure-ascii False :separators #("," ":") :sort-keys True)))
+  (val records [#(7 1700000000000 (spell {"idempotencyKey" "k1" "writer" "maker" "body" body "position" {"epoch" 2 "sequence" 9}}))
+                #(8 1700000000001 (spell {"idempotencyKey" "k2" "writer" "maker" "body" [1 "二" None 2.5]}))
+                #(9 1700000000002 (spell {"idempotencyKey" "k3" "writer" "maker" "body" {"position" "left"}}))])
+  (val events (run (events-of "moves" records)))
+  (val answer (Events events 9))
+  ;; 答えの本文を綴っても、出来事は payload を解いていない(欄 body が置かれていない — 位置の無い出来事は冪等キーも書き手も置かれていない)。
+  (val spelled (run (answer-text answer)))
+  (for [event events]
+    (assert (= (stored-text event) (get (get records (- event.sequence 7)) 2)) event)
+    (assert (not-in "body" (vars event)) event))
+  (assert (not-in "idempotency_key" (vars (get events 1))) (get events 1))
+  (assert (not-in "writer" (vars (get events 1))) (get events 1))
+  ;; 本文は前の綴り(encode-answer の object を json.dumps で綴った物)と JSON として同じ。
+  (val plain (json.dumps (run (encode-answer answer)) :ensure-ascii False :separators #("," ":")))
+  (assert (= (json.loads spelled) (json.loads plain)) #(spelled plain))
+  ;; 欄は読まれた時に 1 度だけ解き、値から作った出来事と等しい(等しさ・repr は前のまま — repr は鍵の順も写すので、比べる相手の本文は
+  ;; payload と同じ鍵の昇順で作る)。
+  (assert (= (get events 0) (Event "moves" 7 "k1" body "maker" 1700000000000 (WatchCursor 2 9))))
+  (val made #((Event "moves" 7 "k1" (json.loads (spell body)) "maker" 1700000000000 (WatchCursor 2 9))
+              (Event "moves" 8 "k2" [1 "二" None 2.5] "maker" 1700000000001)
+              (Event "moves" 9 "k3" {"position" "left"} "maker" 1700000000002)))
+  (assert (= events made))
+  (assert (= (repr events) (repr made)))
+  (assert (is (. (get events 0) body) (. (get events 0) body)))
+  (assert (isinstance (. (get events 0) body) FrozenMap))
+  (assert (= (run (answer-text answer)) spelled))
+  (with [(pytest.raises AttributeError)] (. (get events 0) missing-name))
+  (with [(pytest.raises AttributeError)] (. (get made 0) missing-name)))

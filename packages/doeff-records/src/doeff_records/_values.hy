@@ -11,6 +11,8 @@
 ;;; 行の値を運ぶ答え(Row・RowChanged)は、置き場が保存した値の綴り(JSON の文字列)を一緒に持てる(stored-row・stored-change・
 ;;; spelled-row・spelled-change)。綴りを持つ値は使われた時に 1 度だけ解いて凍らせ(stored-value)、HTTP の口は綴りをそのまま答えに継ぐ
 ;;; (wire.answer-text — 欄を絞らない一覧と変更の読みが、変わっていない行を読みのたびに解き直し綴り直さないため)。
+;;; 出来事(Event)も、置き場が保存した payload の綴りを持てる(stored-event)。冪等キー・本文・書き手は読まれた時に 1 度だけ解き、HTTP の口は
+;;; payload の綴りをそのまま答えに継ぐ(出来事の頁の読みが、読まれない出来事を読みのたびに解き直し綴り直さないため)。
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が _typed.hy に在る — 業務の呼び手はそちらを使う。
 (require doeff-hy.macros [val deff])
 (require doeff-hy.record [defrecord])
@@ -21,7 +23,7 @@
 (import re)
 (import typing [Protocol])
 (import doeff [Program])
-(import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
+(import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of thaw-json])
 
 (setv #^ (get re.Pattern str) TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
 (setv #^ (get re.Pattern str) FIELD-NAME-PATTERN (re.compile "^[A-Za-z_][A-Za-z0-9_]{0,62}$"))
@@ -466,8 +468,8 @@
   value)
 
 
-(defn #^ (| str None) stored-text [#^ (| Row RowChanged) holder]  ; cannot be a defk: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
-  "答え holder(Row・RowChanged)が持つ保存の綴り(持たなければ None — 綴りの無い答えは呼び手が値から綴る)。"
+(defn #^ (| str None) stored-text [#^ object holder]  ; cannot be a defk: 答えの綴り(wire.answer-text)が内包表記の中で行ごとに同期に呼ぶ属の読み
+  "答え holder(Row・RowChanged・Event)が持つ保存の綴り(持たなければ None — 綴りの無い答えは呼び手が値から綴る)。"
   (.get (vars holder) STORED-TEXT))
 
 
@@ -620,6 +622,28 @@
     (when (not (and (isinstance self.items tuple) self.items (all (gfor item self.items (isinstance item #(Appended Refused))))))
       (raise (TypeError (.format "AppendedEvents.items は Appended | Refused の空でない tuple: {!r}" self.items))))))
 
+;; 出来事の保存の綴り: 置き場の payload({body idempotencyKey writer} と、行と一緒に積んだ出来事だけが持つ position の JSON の object の綴り —
+;; 鍵の名と値の形は HTTP の口の出来事の object と同じ)から作った出来事(stored-event)は、payload の綴りを属 STORED-TEXT に持ち、欄
+;; idempotency-key・body・writer を置かない(行の保存の綴りと同じく dataclass の欄ではない — 等しさ・repr・match・欄の並びは今のまま)。
+;; 初めて 3 つの欄のどれかを読んだ時に payload を 1 度だけ解いて欄に置き、本文は解いたままの値(属 DECODED-BODY — 凍らせていない)で持って、
+;; 初めて body を読んだ時に深く凍らせる(Event.__getattr__)。HTTP の口は payload の綴りをそのまま答えに継ぐ(wire.answer-text)。
+;; 出来事の頁(1 頁 1,000 件まで)を読むたびに、答えへ綴るだけの出来事を 1 件ごとに解き・深く凍らせ・戻し・綴り直さないため。
+;; 欄 position は既定の値(None)を class が持ち、置かない欄の読みを __getattr__ で受けられないので、作る時に決める: payload の綴りに
+;; 鍵の名 "position" の字が無ければ None、在れば(本文の中の字かもしれない)その場で payload を解いて読む。
+(setv DECODED-BODY "_decoded_body")
+(setv STORED-EVENT-FIELDS (frozenset #("idempotency_key" "body" "writer")))
+(setv POSITION-KEY-TEXT "\"position\"")
+
+
+(defn #^ dict decode-stored-event [#^ object event #^ str text]  ; cannot be a defk: __getattr__ と作り手(同期の defn)が呼ぶ欄の置き
+  "保存の綴り text を 1 度解き、出来事 event の欄 idempotency-key・writer と解いたままの本文(DECODED-BODY)を置いて、解いた object を返すため。"
+  (setv decoded (json.loads text))
+  (object.__setattr__ event "idempotency_key" (get decoded "idempotencyKey"))
+  (object.__setattr__ event "writer" (get decoded "writer"))
+  (object.__setattr__ event DECODED-BODY (get decoded "body"))
+  decoded)
+
+
 (defclass [(dataclass :frozen True)] Event []
   "追記の列の出来事 1 つ。body = JSON の値(深く凍らせる)/ at = 積んだ時刻(epoch ミリ秒)/ writer = 積んだ書き手の名 /
    position = 出来事と同じ書き(PutRowsAppendEvents)で積んだ行の最後の変更の位置(WatchCursor — 出来事の読み手が、その位置まで追いついた
@@ -635,7 +659,38 @@
   (defn #^ None __post_init__ [self]
     (object.__setattr__ self "body" (freeze-json self.body))
     (when (not (or (is self.position None) (isinstance self.position WatchCursor)))
-      (raise (TypeError (.format "Event.position は WatchCursor か None: {!r}" self.position))))))
+      (raise (TypeError (.format "Event.position は WatchCursor か None: {!r}" self.position)))))
+  (defn #^ object __getattr__ [self #^ str name]
+    "保存の綴りだけを持って作った出来事(stored-event)の欄 idempotency-key・body・writer を、初めて読んだ時に綴りから解いて置くため
+     (上の註 — 3 つの外の名と、保存の綴りを持たない出来事の欄は AttributeError)。本文は読まれた時にだけ深く凍らせる。"
+    (setv held (object.__getattribute__ self "__dict__"))
+    (when (or (not-in name STORED-EVENT-FIELDS) (not-in STORED-TEXT held))
+      (raise (AttributeError (.format "{!r} object has no attribute {!r}" (. (type self) __name__) name))))
+    (when (not-in DECODED-BODY held)
+      (decode-stored-event self (get held STORED-TEXT)))
+    (when (= name "body")
+      (object.__setattr__ self "body" (freeze-json (get held DECODED-BODY))))
+    (get held name)))
+
+(defn #^ Event stored-event [#^ str stream #^ int sequence #^ int at #^ str text]  ; cannot be a defk: pg.events-of(頁の出来事を内包表記で組む純粋な綴り)が出来事ごとに同期に呼ぶ作り手
+  "置き場が保存した payload の綴り text だけを持つ出来事を作るため(冪等キー・本文・書き手は読まれた時に解く — 上の註。読まれない頁の
+   出来事は解かれずに答えへ綴りのまま継がれる)。位置は作る時に決める(上の註 — 綴りに鍵の名の字が在る時だけ、その場で解く)。"
+  (setv event (object.__new__ Event))
+  (object.__setattr__ event "stream" stream)
+  (object.__setattr__ event "sequence" sequence)
+  (object.__setattr__ event "at" at)
+  (object.__setattr__ event STORED-TEXT text)
+  (when (in POSITION-KEY-TEXT text)
+    (setv stored (.get (decode-stored-event event text) "position"))
+    (when (is-not stored None)
+      (object.__setattr__ event "position" (WatchCursor (int (get stored "epoch")) (int (get stored "sequence"))))))
+  event)
+
+(defn #^ object spellable-body [#^ Event event]  ; cannot be a defk: 答えの綴り(wire.answer-text)が出来事ごとに同期に呼ぶ属の読み
+  "出来事の本文を、JSON に綴るための値(dict・list・文字列・数・真偽・None)で返すため: 解いたままの本文を持てばそのまま返し(凍らせず
+   戻さない — 呼び手は綴るだけで変えない)、持たなければ凍らせた body を戻す。"
+  (setv held (vars event))
+  (if (in DECODED-BODY held) (get held DECODED-BODY) (thaw-json event.body)))
 
 
 (defclass [(dataclass :frozen True)] WrittenAndAppended []

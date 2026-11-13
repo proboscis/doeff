@@ -126,7 +126,7 @@
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty stored-row stored-change
-                              Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead
+                              Event stored-event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead
                               WrittenAndAppended AppendRefused])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey ReadBatch CountRows write-parts PutRowsAppendEvents append-parts])
@@ -1051,15 +1051,10 @@
    :tags {:context "records" :role "foundation"}}
   "append_rows の行(seq at payload)の列を、列 stream の番号の順の出来事(Event)の tuple にするため(出来事を出す読みの全部が通る 1 点 —
    1 行の event-of もここを通る。内包表記で 1 度に組む・純粋 — 束の読みでは decoded-batch が scheduler の thread の外で回す)。payload の鍵
-   position(行と一緒に積んだ出来事だけが持つ)は Event.position に読む(鍵が無ければ None)。"
-  (tuple (gfor #(record decoded) (gfor record records #(record (json.loads (get record 2))))
-               (Event stream (int (get record 0)) (get decoded "idempotencyKey") (get decoded "body") (get decoded "writer")
-                      (int (get record 1)) (event-position (.get decoded "position"))))))
-
-
-(defn #^ (| WatchCursor None) event-position [#^ object stored]  ; cannot be a defk: events-of の内包表記が出来事ごとに同期に呼ぶ純粋な綴りの戻し(decoded-value と同じ)
-  "append_rows の payload の鍵 position の値({epoch sequence} | 無い)を、出来事の位置(Event.position)に戻すため。"
-  (if (is stored None) None (WatchCursor (int (get stored "epoch")) (int (get stored "sequence")))))
+   position(行と一緒に積んだ出来事だけが持つ)は Event.position に読む(鍵が無ければ None)。payload は解かず、保存の綴りとして持たせる
+   (_values.hy の stored-event — 冪等キー・本文・書き手は読まれた時に解く。1 頁 1,000 件を読むたびに、答えへ綴るだけの出来事を 1 件ごとに
+   解かず、深く凍らせない)。"
+  (tuple (gfor record records (stored-event stream (int (get record 0)) (int (get record 1)) (get record 2)))))
 
 
 (defk event-of [stream record]
