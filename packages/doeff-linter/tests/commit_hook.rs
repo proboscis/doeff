@@ -518,6 +518,82 @@ fn declaration_changes_check_the_whole_repo_but_source_changes_stay_focused() {
     assert_eq!(code, 1, "{}", stderr);
 }
 
+/// Failure case (2026-11-13): a declaration change measures the whole repo, and an error outside the registry that main already has in a file the commit does not touch
+/// (DOEFF016 here; DOEFF004 and DOEFF119 in agora-controllers) stopped every declaration change, even a comment-only one -- the errors were not compared with the HEAD version.
+/// It passes now; the same error still stops once the commit touches its file, and an error the declaration itself makes in an untouched file still stops
+/// (declaration_changes_check_the_whole_repo_but_source_changes_stay_focused).
+#[test]
+fn a_declaration_change_does_not_stop_on_errors_main_already_has_in_untouched_files() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "app/queue/tool.py", "from . import main\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "an error already on main"]);
+    write(root, "architecture.hy", &format!(";; a comment\n{}", ARCHITECTURE));
+    git(root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(!stderr.contains("app/queue/tool.py"), "{}", stderr);
+
+    write(root, "app/queue/tool.py", "from . import main\n# touched\n");
+    git(root, &["add", "app/queue/tool.py"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("violation in repo after declaration change: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
+}
+
+/// A repo `repo` next to a path dependency `lib` (`[tool.uv.sources] lib = { path = "../lib" }`) whose effect `lib.Op` is re-exported from `lib._effects`, a lower-layer module;
+/// the test-only handler of app/queue/tests is a DOEFF157 hit only when `lib.Op` resolves to its defining module. Committed as the baseline (the hit is on main).
+fn repo_with_a_path_dependency_hit(outer: &Path) -> std::path::PathBuf {
+    let root = outer.join("repo");
+    write(outer, "lib/src/lib/__init__.py", "from lib._effects import Op as Op\n");
+    write(outer, "lib/src/lib/_effects.py", "class Op:\n    pass\n");
+    write(&root, "pyproject.toml", "[tool.doeff-linter]\nenable = [\"DOEFF157\"]\n\n[tool.doeff-linter.commit_hook]\ntimeout_s = 120\n\n[tool.uv.sources]\nlib = { path = \"../lib\", editable = true }\n");
+    write(
+        &root,
+        "architecture.hy",
+        &ARCHITECTURE.replace(
+            ":foundation foundation",
+            ":foundation foundation\n  :business-fakes {:simulation [\"app/sim/**\"] :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.queue\"] :lower-layer-modules [\"lib._effects\"]}",
+        ),
+    );
+    write(&root, "app/foundation/host.hy", "(val MODULE-TAGS {:context \"shared\" :role \"foundation\"})\n(defk with-host [body] body)\n");
+    write(&root, "app/queue/main.hy", "(defk cycle [] 1)\n");
+    write(&root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes [writes]\n  {}\n  \"Fencing clause.\"\n  #())\n", JUDGED));
+    write(&root, "app/queue/tests/test_op.hy", "(import lib [Op])\n(defhandler test-op (Op [] (resume 1)))\n(deftest test-with-op (with-handlers [test-op] 1))\n");
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "baseline with a test-only fake of a lower-layer effect"]);
+    root
+}
+
+/// Failure case (2026-11-13): the HEAD tree is placed under the fact cache, where the relative path of `[tool.uv.sources]` does not reach the dependency and there is no
+/// `.venv`, so a name defined in a path dependency resolved on the tip only: an existing DOEFF157 hit on such a name was missing from the HEAD version and every
+/// declaration change stopped with "not on HEAD critical". The hook passes the checkout's dirs to the HEAD run as `--import-root`, the hit is on both sides, and a
+/// comment-only declaration change passes. `--split-rules` prints the same dirs for the merge gate.
+#[test]
+fn a_name_from_a_path_dependency_resolves_on_the_head_tree_too() {
+    let outer = tempfile::TempDir::new().unwrap();
+    let root = repo_with_a_path_dependency_hit(outer.path());
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter")).args(["--output-format", "editor-json", "--no-log"]).current_dir(&root).output().unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("{}: {}", e, String::from_utf8_lossy(&output.stderr)));
+    let keys: Vec<&str> = report["violations"].as_array().unwrap().iter().filter(|v| v["rule"] == "DOEFF157").filter_map(|v| v["key"].as_str()).collect();
+    assert_eq!(keys, vec!["app/queue/tests/test_op.hy::DOEFF157::test-op::lib.Op"], "the fixture does not fire: {}", report["violations"]);
+
+    write(&root, "architecture.hy", &format!(";; a comment\n{}", std::fs::read_to_string(root.join("architecture.hy")).unwrap()));
+    git(&root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(&root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(!stderr.contains("not on HEAD"), "{}", stderr);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter")).args(["--split-rules", "architecture.hy"]).current_dir(&root).env_remove("GIT_DIR").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let split: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let lib = outer.path().join("lib").canonicalize().unwrap();
+    let named: Vec<std::path::PathBuf> = split["import_roots"].as_array().unwrap().iter().map(|p| std::path::PathBuf::from(p.as_str().unwrap())).collect();
+    assert_eq!(named, vec![lib.join("src"), lib], "{}", split);
+}
+
 /// If nothing is staged, exit 0 without firing the linter.
 #[test]
 fn nothing_staged_passes() {

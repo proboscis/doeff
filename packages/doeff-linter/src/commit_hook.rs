@@ -5,7 +5,8 @@
 //! `scripts/commit_hook.hy` (lint-staged, whole-repo-fresh).
 //!
 //! There are 3 kinds of things that stop a commit (within staged paths for source-only commits, or across the repo for declaration changes):
-//! - Among the staged sources (.hy, .hyk, .hyp, .py), errors of non-critical rules that are outside the registry (the linter lowers registry-known ones to warnings).
+//! - Among the staged sources (.hy, .hyk, .hyp, .py), errors of non-critical rules that are outside the registry (the linter lowers registry-known ones to warnings). In a declaration
+//!   change, errors in untouched files stop only when the HEAD version does not have them (stopping_errors).
 //! - Among the staged sources' criticals, those not in the HEAD version (`new_critical` of `--baseline-report`).
 //! - Those for which the number of major warnings in the staged sources increased over the HEAD version, per rule (warnings do not change the exit code, so
 //!   new warnings crept in and the count did not go down while fixing). The count is compared as a total over the set of staged files (the HEAD version of moved or deleted
@@ -93,6 +94,23 @@ pub fn linted_paths(staged: &[String], exists: impl Fn(&str) -> bool) -> Vec<Str
 /// Criticals are judged only by the comparison with HEAD, not by the presence of the registry, so they are not included.
 pub fn blocking_violations(report: &Value) -> Vec<&Value> {
     violations(report).filter(|v| v["severity"] == "error" && v["level"] != "critical").collect()
+}
+
+/// Pure: the lines of the errors that stop (blocking_violations of the tip, as violation_line) -- every one in a staged path, and, outside the staged paths, only those the HEAD
+/// version (head, re-pointed to the tip's root) does not have on the same line. A declaration change measures the whole repo, and an untouched file is the same on both trees,
+/// so its error is new only when the declaration made it (as for criticals, which are compared by new_critical). Without the comparison, every existing error on main
+/// outside the registry stopped every declaration change (2026-11-13: DOEFF004 and DOEFF119 hits already on main stopped a comment-only change to architecture.hy).
+/// A source-only commit measures only staged paths, so nothing changes for it (an existing error in a file you touch still stops).
+pub fn stopping_errors(tip: &Value, head: &Value, staged: &[String]) -> Vec<String> {
+    let on_head: BTreeSet<String> = blocking_violations(head).into_iter().map(|v| violation_line(head, v)).collect();
+    blocking_violations(tip)
+        .into_iter()
+        .filter(|v| {
+            let path = relative_to_root(tip, v["path"].as_str().unwrap_or(""));
+            staged.iter().any(|p| p == path) || !on_head.contains(&violation_line(tip, v))
+        })
+        .map(|v| violation_line(tip, v))
+        .collect()
 }
 
 fn violations(report: &Value) -> impl Iterator<Item = &Value> {
@@ -184,6 +202,17 @@ pub fn resolve_timeout(section: Option<&CommitHookSection>, cli: Option<u64>) ->
     match cli.or_else(|| section.and_then(|s| s.timeout_s)).unwrap_or(DEFAULT_TIMEOUT_S) {
         UNBOUNDED_TIMEOUT_S => None,
         secs => Some(Duration::from_secs(secs)),
+    }
+}
+
+/// Pure: chooses the limit per child linter run of a declaration change (the argument wins over both keys; otherwise `declaration_timeout_s`; otherwise the same as
+/// resolve_timeout). A declaration change measures the whole repo with every enabled rule on both trees -- about 7 CPU minutes per child in agora-controllers against
+/// under a minute for the staged paths -- so one limit for both either cuts every declaration change or stops bounding the usual commit.
+pub fn resolve_declaration_timeout(section: Option<&CommitHookSection>, cli: Option<u64>) -> Option<Duration> {
+    match cli.or_else(|| section.and_then(|s| s.declaration_timeout_s)) {
+        Some(UNBOUNDED_TIMEOUT_S) => None,
+        Some(secs) => Some(Duration::from_secs(secs)),
+        None => resolve_timeout(section, None),
     }
 }
 
@@ -294,6 +323,8 @@ pub struct CommitHookOptions {
     pub cli_disable: Vec<String>,
     /// The limit per child linter run (None = no limit).
     pub timeout: Option<Duration>,
+    /// The limit per child linter run of a declaration change, which measures the whole repo on both trees (None = no limit; `declaration_timeout_s`, else the same as timeout).
+    pub declaration_timeout: Option<Duration>,
     /// The linter fired as the child (normally the current binary).
     pub linter: PathBuf,
     /// The root of the store for the HEAD tree's results (the root of facts_cache -- if None, the store is not used and the HEAD tree is measured every time).
@@ -301,6 +332,9 @@ pub struct CommitHookOptions {
     /// The repo's catalogs of real I/O handlers (absolute paths -- the tip config's world_catalogs from its dir, or the --world-catalog arguments).
     /// Passed to both children as --world-catalog: the HEAD tree is placed outside the checkout, where the config's relative paths do not reach the package's repo.
     pub world_catalogs: Vec<PathBuf>,
+    /// The checkout's dirs outside the root for resolving where an effect name is defined (absolute paths -- origins::dependency_roots of the root, or the --import-root
+    /// arguments). Passed to the HEAD child as --import-root: from the HEAD tree the relative paths of `[tool.uv.sources]` do not reach the package's repo and there is no `.venv`.
+    pub import_roots: Vec<PathBuf>,
 }
 
 impl CommitHookOptions {
@@ -323,6 +357,8 @@ impl CommitHookOptions {
             cli_enable: cli_enable.to_vec(),
             cli_disable: cli_disable.to_vec(),
             timeout: resolve_timeout(section, cli_timeout),
+            declaration_timeout: resolve_declaration_timeout(section, cli_timeout),
+            import_roots: crate::origins::dependency_roots(&root),
             config: config.map(|(_, path)| path),
             root,
             linter,
@@ -439,7 +475,7 @@ pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
         ),
     };
     format!(
-        "could not measure {} — the child linter for {} rule(s) ({}) applied on the {} was {}. The hits of these rules have not been checked, so the commit is stopped (limit = timeout_s in [tool.doeff-linter.commit_hook] of the settings: child CPU seconds; 0 means no limit)",
+        "could not measure {} — the child linter for {} rule(s) ({}) applied on the {} was {}. The hits of these rules have not been checked, so the commit is stopped (limit = timeout_s in [tool.doeff-linter.commit_hook] of the settings, declaration_timeout_s for a declaration change: child CPU seconds; 0 means no limit)",
         unmeasured.what,
         rules.len(),
         rules.join(","),
@@ -971,6 +1007,8 @@ fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String],
     let args = config_args(options, tree)
         .into_iter()
         .chain(options.world_catalogs.iter().flat_map(|catalog| ["--world-catalog".to_string(), catalog.to_string_lossy().into_owned()]))
+        // The tip derives these dirs from its own files; the HEAD tree placed elsewhere cannot (CommitHookOptions::import_roots).
+        .chain(tree.into_iter().flat_map(|_| options.import_roots.iter()).flat_map(|dir| ["--import-root".to_string(), dir.to_string_lossy().into_owned()]))
         .chain(["--enable".to_string(), rules.join(",")])
         .chain(extra.iter().cloned())
         .chain(std::iter::once("--".to_string()))
@@ -1145,6 +1183,7 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     if quick.is_empty() || paths.is_empty() {
         return Ok(Judged::unmeasured());
     }
+    let timeout = if declaration_changed { options.declaration_timeout } else { options.timeout };
     let mut blocking = Blocking::default();
     let scratch = Scratch::create().map_err(Stop::Failed)?;
     // The HEAD tree is placed one per repo at commit-hook-tree/<name representing the repo>/tree under the fact cache's root and advanced by diff (head_tree, #3858).
@@ -1186,7 +1225,7 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
         .unwrap_or_default();
     let base = match tree {
         Some(t) if !head_paths.is_empty() => {
-            let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), options.timeout), "the HEAD version")?;
+            let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), timeout), "the HEAD version")?;
             rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
             report
         }
@@ -1196,8 +1235,8 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("cannot write {}: {}", baseline.display(), e)))?;
     let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
     let what = if declaration_changed { "the repo after declaration change" } else { "the staged files" };
-    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), options.timeout), what)?;
-    blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
+    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), timeout), what)?;
+    blocking.staged = stopping_errors(&tip, &base, &staged);
     // Read the identifiers of the HEAD version with the same spelling the child linter uses to read the baseline file (baseline::baseline_identities), and split the hits that stop.
     let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;
     blocking.fresh_critical =
@@ -1272,7 +1311,7 @@ mod tests {
 
     #[test]
     fn commit_hook_names_a_retired_hand_list() {
-        let kept = CommitHookSection { whole_repo_rules: ids(&["DOEFF163"]), timeout_s: None };
+        let kept = CommitHookSection { whole_repo_rules: ids(&["DOEFF163"]), timeout_s: None, declaration_timeout_s: None };
         assert!(retired_whole_repo_rules_note(Some(&kept)).is_some_and(|line| line.contains("retired")));
         assert_eq!(retired_whole_repo_rules_note(Some(&CommitHookSection::default())), None);
         assert_eq!(retired_whole_repo_rules_note(None), None);
@@ -1417,13 +1456,48 @@ mod tests {
 
     #[test]
     fn commit_hook_timeout_prefers_cli_then_config_then_default() {
-        let section = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7) };
+        let section = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7), declaration_timeout_s: None };
         assert_eq!(resolve_timeout(Some(&section), Some(3)), Some(Duration::from_secs(3)));
         assert_eq!(resolve_timeout(Some(&section), None), Some(Duration::from_secs(7)));
         assert_eq!(resolve_timeout(None, None), Some(Duration::from_secs(DEFAULT_TIMEOUT_S)));
         // 0 seconds means no limit (whether by argument or config).
         assert_eq!(resolve_timeout(Some(&section), Some(0)), None);
-        assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0) }), None), None);
+        assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0), declaration_timeout_s: None }), None), None);
+    }
+
+    /// A declaration change has its own limit (declaration_timeout_s); without the key it is the usual limit, and the argument still wins over both.
+    #[test]
+    fn commit_hook_declaration_timeout_falls_back_to_the_usual_limit() {
+        let usual = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7), declaration_timeout_s: None };
+        assert_eq!(resolve_declaration_timeout(Some(&usual), None), Some(Duration::from_secs(7)));
+        assert_eq!(resolve_declaration_timeout(None, None), Some(Duration::from_secs(DEFAULT_TIMEOUT_S)));
+        let own = CommitHookSection { declaration_timeout_s: Some(900), ..usual };
+        assert_eq!(resolve_declaration_timeout(Some(&own), None), Some(Duration::from_secs(900)));
+        assert_eq!(resolve_timeout(Some(&own), None), Some(Duration::from_secs(7)));
+        assert_eq!(resolve_declaration_timeout(Some(&own), Some(3)), Some(Duration::from_secs(3)));
+        assert_eq!(resolve_declaration_timeout(Some(&own), Some(0)), None);
+        assert_eq!(resolve_declaration_timeout(Some(&CommitHookSection { declaration_timeout_s: Some(0), ..own }), None), None);
+    }
+
+    fn error_at(root: &str, rel: &str, line: u64, rule: &str) -> Value {
+        serde_json::json!({"rule": rule, "severity": "error", "level": "major", "path": format!("{}/{}", root, rel), "range": {"start": {"line": line}}, "message": "m"})
+    }
+
+    /// An error outside the staged paths stops only when the HEAD version does not have it on the same line; one in a staged path stops either way.
+    #[test]
+    fn commit_hook_errors_already_on_head_stop_only_in_staged_paths() {
+        let head = serde_json::json!({"root": "/r", "violations": [error_at("/r", "old.py", 3, "DOEFF004"), error_at("/r", "touched.py", 1, "DOEFF004")]});
+        let tip = serde_json::json!({"root": "/r", "violations": [
+            error_at("/r", "old.py", 3, "DOEFF004"),
+            error_at("/r", "touched.py", 1, "DOEFF004"),
+            error_at("/r", "old.py", 9, "DOEFF004"),
+            error_at("/r", "untouched.py", 1, "DOEFF119"),
+        ]});
+        assert_eq!(
+            stopping_errors(&tip, &head, &ids(&["touched.py", "architecture.hy"])),
+            vec!["touched.py:2: DOEFF004 m".to_string(), "old.py:10: DOEFF004 m".to_string(), "untouched.py:2: DOEFF119 m".to_string()]
+        );
+        assert_eq!(stopping_errors(&tip, &tip, &[]), Vec::<String>::new());
     }
 
     /// The no-limit command is one line made by adding no limit to the same linter, root, config, --enable / --disable, and commit body file,
@@ -1440,9 +1514,11 @@ mod tests {
             cli_enable: Vec::new(),
             cli_disable: Vec::new(),
             timeout: Some(Duration::from_secs(20)),
+            declaration_timeout: Some(Duration::from_secs(20)),
             linter: PathBuf::from("/bin/doeff-linter"),
             cache: None,
             world_catalogs: Vec::new(),
+            import_roots: Vec::new(),
         };
         assert_eq!(unbounded_command(&options), "/bin/doeff-linter --commit-hook --root /repo --config /repo/pyproject.toml --commit-hook-timeout-s 0");
         options.root = PathBuf::from("/my repo/it's");

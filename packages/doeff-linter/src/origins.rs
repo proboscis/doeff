@@ -277,11 +277,7 @@ impl<'a> Origins<'a> {
         };
         push(root.to_path_buf());
         push(root.join("src"));
-        for dir in uv_source_dirs(root) {
-            push(dir.join("src"));
-            push(dir);
-        }
-        for dir in venv_dirs(root) {
+        for dir in derived_dirs(root) {
             push(dir);
         }
         let project_modules = project_hy.iter().map(|(rel, index)| (index.module.clone(), rel.clone())).collect();
@@ -414,6 +410,28 @@ fn absolute(module: &str, package: bool, hop: &Hop) -> Option<String> {
     }
     base.extend(hop.module.split('.').filter(|p| !p.is_empty()));
     Some(base.join("."))
+}
+
+/// The starting dirs the resolver derives from the project root's own files, in lookup order: each path dependency of `[tool.uv.sources]` (its `src` first)
+/// and the dirs of `.venv` (`uv_source_dirs`, `venv_dirs`).
+fn derived_dirs(root: &Path) -> Vec<PathBuf> {
+    uv_source_dirs(root).into_iter().flat_map(|dir| [dir.join("src"), dir]).chain(venv_dirs(root)).collect()
+}
+
+/// The starting dirs outside the project root that the resolver derives from root's files (absolute, existing, in lookup order). A run on a copy of the project placed
+/// elsewhere (the commit hook's HEAD tree under the fact cache) cannot derive them: the relative paths of `[tool.uv.sources]` (`../doeff/packages/…`) do not reach the package's
+/// repo from there, and the copy has no `.venv`. So the hook reads them from the checkout and passes them to that run as `--import-root` (without them a name defined in
+/// a path dependency does not resolve on the HEAD side only, and its hits look new on the tip).
+pub fn dependency_roots(root: &Path) -> Vec<PathBuf> {
+    let inside = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut out: Vec<PathBuf> = Vec::new();
+    for dir in derived_dirs(root) {
+        let dir = dir.canonicalize().unwrap_or(dir);
+        if dir.is_dir() && !dir.starts_with(&inside) && !out.contains(&dir) {
+            out.push(dir);
+        }
+    }
+    out
 }
 
 /// The dir of a path dependency in `[tool.uv.sources]` of `pyproject.toml` (a path relative to root is from root).

@@ -139,6 +139,9 @@ pub struct CommitHookSection {
     /// Upper limit per child linter run (seconds, default 20). If exceeded, it is treated as unmeasurable and does not block.
     #[serde(default)]
     pub timeout_s: Option<u64>,
+    /// Upper limit per child linter run of a declaration change (seconds; the whole repo with every enabled rule on both trees). If absent, the same as timeout_s.
+    #[serde(default)]
+    pub declaration_timeout_s: Option<u64>,
 }
 
 impl Config {

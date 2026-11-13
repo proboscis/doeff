@@ -133,7 +133,8 @@ struct Args {
     list_rules: bool,
 
     /// Prints as JSON, and exits, the split of rules to apply to the changed paths (path arguments; from the repo root) -- {"quick", "whole", "declaration_changed",
-    /// "baseline_overlay", "world_catalogs" (the repo's catalogs of real I/O handlers as absolute paths -- pass each as --world-catalog to a run on a tree placed elsewhere)}.
+    /// "baseline_overlay", "world_catalogs" (the repo's catalogs of real I/O handlers as absolute paths -- pass each as --world-catalog to a run on a tree placed elsewhere),
+    /// "import_roots" (the checkout's dirs for resolving names defined outside the repo, as absolute paths -- pass each as --import-root to the same run)}.
     /// The single judgment shared with the commit hook (a change to a declaration file also moves rules decided by one file into whole),
     /// the interface the merge gate reads
     #[arg(long)]
@@ -162,6 +163,12 @@ struct Args {
     /// checkout, where the config's relative paths do not reach the package's repo
     #[arg(long, value_name = "PATH")]
     world_catalog: Vec<PathBuf>,
+
+    /// A dir outside the root to look up modules in when resolving where an effect name is defined (may be repeated) -- added after the dirs derived from the root's
+    /// `[tool.uv.sources]` and `.venv`. The commit hook passes the checkout's dirs (absolute paths, `--split-rules` prints them) to the run on the HEAD tree placed outside the
+    /// checkout, where those relative paths do not reach the package's repo
+    #[arg(long, value_name = "DIR")]
+    import_root: Vec<PathBuf>,
 
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
@@ -476,6 +483,9 @@ fn prepare(args: &Args) -> Result<Setup, String> {
             .map_err(|problems| format!("config errors:\n  {}", problems.join("\n  ")))?;
         architecture.repo_catalog = Some(std::sync::Arc::new(catalog));
     }
+    if let Some(architecture) = architecture.as_mut() {
+        architecture.import_roots = args.import_root.iter().map(|dir| cwd.join(dir)).collect();
+    }
     // The population query (`population_of`) re-reads the same declaration with the declaration's dir as the root. When the way of reading is the same, pass what was read so it is not read twice.
     // (A declaration split into files is remembered at the file of defarchitecture — the one the query finds; the layers it reads are all written there.)
     if let Some(architecture) = &architecture {
@@ -788,6 +798,9 @@ fn run_commit_hook(args: &Args) -> ExitCode {
     if !args.world_catalog.is_empty() {
         options.world_catalogs = args.world_catalog.iter().map(|path| cwd.join(path)).collect();
     }
+    if !args.import_root.is_empty() {
+        options.import_roots = args.import_root.iter().map(|dir| cwd.join(dir)).collect();
+    }
     if let Some(file) = &args.commit_message {
         let message = match std::fs::read_to_string(file) {
             Ok(message) => message,
@@ -809,6 +822,7 @@ fn run_commit_hook(args: &Args) -> ExitCode {
                 "declaration_changed": changed_declaration,
                 "baseline_overlay": options.overlay,
                 "world_catalogs": options.world_catalogs,
+                "import_roots": options.import_roots,
             })
         );
         return ExitCode::SUCCESS;
