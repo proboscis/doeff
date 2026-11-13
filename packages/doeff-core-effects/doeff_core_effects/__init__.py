@@ -112,6 +112,7 @@ if TYPE_CHECKING:
     )
     from doeff_core_effects._apart_call import ApartClosed as ApartClosed
     from doeff_core_effects._apart_call import run_apart as run_apart
+    from doeff_core_effects._cache import cache as cache
     from doeff_core_effects._cache_effects import CacheDelete as CacheDelete
     from doeff_core_effects._cache_effects import CacheDeleteEffect as CacheDeleteEffect
     from doeff_core_effects._cache_effects import CacheExists as CacheExists
@@ -273,6 +274,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._memo_effects import MemoPut as MemoPut
     from doeff_core_effects._memo_effects import MemoPutEffect as MemoPutEffect
     from doeff_core_effects._memo_handlers import MemoKeyFn as MemoKeyFn
+    from doeff_core_effects._memo_handlers import content_address as content_address
     from doeff_core_effects._memo_handlers import in_memory_memo_handler as in_memory_memo_handler
     from doeff_core_effects._memo_handlers import make_memo_rewriter as make_memo_rewriter
     from doeff_core_effects._memo_handlers import memo_handler as memo_handler
@@ -654,6 +656,7 @@ _LAZY_EXPORTS = {
     "MemoPut": "doeff_core_effects._memo_effects",
     "MemoPutEffect": "doeff_core_effects._memo_effects",
     "MemoKeyFn": "doeff_core_effects._memo_handlers",
+    "content_address": "doeff_core_effects._memo_handlers",
     "in_memory_memo_handler": "doeff_core_effects._memo_handlers",
     "make_memo_rewriter": "doeff_core_effects._memo_handlers",
     "memo_handler": "doeff_core_effects._memo_handlers",
@@ -680,6 +683,7 @@ _LAZY_EXPORTS = {
     "CacheLifecycle": "doeff_core_effects._cache_policy",
     "CachePolicy": "doeff_core_effects._cache_policy",
     "CacheStorage": "doeff_core_effects._cache_policy",
+    "cache": "doeff_core_effects._cache",
     # program helpers used by external repos (ADR-DOE-API-001 R18, R25)
     "file_done": "doeff_core_effects._file_effects",
     "computed": "doeff_core_effects._inline_compute",

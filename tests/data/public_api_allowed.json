@@ -1978,6 +1978,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "content_address",
+   "group": "Allowed — conversion function",
+   "basis": "Default key function of make_memo_rewriter and memo_rewriters (the default of their key_fn): checks outside this repository call it to read the key a recorded effect is stored under, and the inventory reads it as a conversion function of the shape ADR-DOE-API-001 R35 states."
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "own_oom_score_adj",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"

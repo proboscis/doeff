@@ -1749,6 +1749,12 @@
    "module": "doeff_stream",
    "name": "fold",
    "reason": "The runtime entry of doeff-stream. When a step returns a Program, fold itself wraps that Program with a handler (_refuse_every_effect) that refuses every effect — if callers had to wrap it, a step that forgot would be able to emit effects, so fold wraps it, on the condition set by the owners of cli_host and scheduling. It wraps only around the step's Program and touches neither run nor the caller's handlers. That it refuses is pinned by packages/doeff-stream/tests/test_program_step.py"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "cache",
+   "reason": "The decorator that memoizes a @do function through MemoExists, MemoGet and MemoPut, with the function's name and arguments as the key. Release 0.8.0 showed it as doeff_core_effects.cache.cache and the published durable-execution example decorates its steps with it; after the child cache was hidden with _ (ADR-DOE-API-001 R5) it had no public path, so the entry point shows it. It takes settings and returns a decorator, not a program, so it is not of the helper shape of R18 and no allowed group checks its shape — it stays here as a violation that is shown until a rule gives decorators over program functions a shape"
   }
  ]
 }

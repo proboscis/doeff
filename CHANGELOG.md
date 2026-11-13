@@ -16,6 +16,10 @@
 - **doeff-core-effects:** the two effects `shielded` performs are public as `ShieldEnter` and `ShieldExit` (they were
   `_ShieldEnter` and `_ShieldExit`). The packages' own cleanup performs them without the program writing them, so a
   handler that admits only the effects it names can now name them. The old private names are gone.
+- **doeff-core-effects:** `cache` (the decorator that memoizes a `@do` function through `MemoExists`, `MemoGet` and
+  `MemoPut`) and `content_address` (the default key function of `make_memo_rewriter` and `memo_rewriters`) are
+  exported from the import root: `from doeff_core_effects import cache, content_address`. Release 0.8.0 read them
+  from `doeff_core_effects.cache` and `doeff_core_effects.memo_handlers`, which are no longer modules.
 - **doeff-run:** a new package for running an image with a given command, environment variables, volumes and resource
   limits. Five effects (`RunStart`, `RunStop`, `RunRemove`, `RunStatus`, `RunReadEvents`) answer with values, not
   exceptions: a handle, a state (`RunPending`, `RunLive`, `RunStopped`, `RunGone`) and a numbered list of state events.
