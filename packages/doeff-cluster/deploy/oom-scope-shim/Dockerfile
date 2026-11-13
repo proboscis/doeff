@@ -10,7 +10,8 @@ RUN git clone --branch "${CONTAINERD_TAG}" "${CONTAINERD_REPO}" /src && \
 WORKDIR /src
 COPY oom-limit.patch /oom-limit.patch
 ENV GOFLAGS=-mod=vendor CGO_ENABLED=0
-RUN git apply /oom-limit.patch && \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    git apply /oom-limit.patch && \
     go test ./cmd/containerd-shim-runc-v2/runc/ -run LimitOOM && \
     go build -trimpath -o /out/containerd-shim-runc-oomscope-v2 \
       -ldflags "-s -w -X github.com/containerd/containerd/v2/version.Version=${CONTAINERD_TAG}+oomscope \
