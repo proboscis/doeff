@@ -47,7 +47,7 @@
 (import doeff_cluster._foundation.in_cluster_api [SERVICE-ACCOUNT-CA-PATH in-cluster-api-routed])
 (import doeff_cluster._worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
 (import doeff_cluster._shared.core.launch_rules [worker-commit-env-name])
-(import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
+(import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of room-service-shares-of])
 (import doeff_cluster._worker.core.load_rules [HostLoad load-paths-under])
 (import doeff_cluster._worker.entry.host_load [os-host-counters])
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-environ-names])
@@ -444,20 +444,30 @@
 
 
 
-(defk service-shares-placed [text procs]
-  {:pre [(: text (| str None)) (: procs (| str None))] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
-  "機体の配備が名乗った常駐の job の CPU の取り分(text = SERVICE-SHARES-VAR の値・無ければ None)を起動の時に 1 度だけ読み、services の層
+(defk service-shares-placed [text procs [room-file ""] [name ""]]
+  {:pre [(: text (| str None)) (: procs (| str None)) (: room-file str) (: name str)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "機体の配備が名乗った常駐の job の CPU の取り分(text = SERVICE-SHARES-VAR の値・無ければ枠の file の自分の行の serviceShares)を
+   起動の時に 1 度だけ読み、services の層
    (procs = job-cgroup-placed の答えの層の cgroup.procs)の下に共有の子と取り分の子を作るため(worker/core/job_cgroup の「取り分」)。
    答え = #(層の dir 取り分の並び 名の無い常駐の置き場の cgroup.procs)— 名乗らない機体は #(None #() procs)(今どおり層そのもの)。
    読めない宣言・services の層の無い機体・子を作れない起動は断る(ValueError — 名乗った取り分を黙って捨てない)。cpu の掛けと重みは
    宿 process_host が常駐の job を起こす前に試す(前の世代の process が層に残る間は掛からない)。"
-  (when (is text None)
+  (var shares None)
+  (when (is-not text None)
+    (<- parsed (| tuple str) (service-shares-of text))
+    (:= shares parsed))
+  (when (and (is text None) room-file)
+    (<- body (| str FileFailed) (ReadText room-file))
+    (when (isinstance body FileFailed)
+      (raise (ValueError (.format "serviceShares: {} を読めない: {}" room-file body.detail))))
+    (<- parsed (| tuple str None) (room-service-shares-of body name))
+    (:= shares parsed))
+  (when (is shares None)
     (return #(None #() procs)))
+  (when (isinstance shares str)
+    (raise (ValueError (.format "{} / serviceShares を読めない: {}" SERVICE-SHARES-VAR shares))))
   (when (is procs None)
     (raise (ValueError (.format "{} は {} の層の下を分ける — 層の名が無い" SERVICE-SHARES-VAR SERVICE-CGROUP-VAR))))
-  (<- shares (| tuple str) (service-shares-of text))
-  (when (isinstance shares str)
-    (raise (ValueError (.format "{}={!r} を読めない: {}" SERVICE-SHARES-VAR text shares))))
   (val layer (posixpath.dirname procs))
   (for [name #(SHARED-CGROUP #* (gfor share shares (get share 0)))]
     (<- made (| FileFailed None) (MakeDirectory (posixpath.join layer name)))
@@ -755,7 +765,7 @@
         ;; 常駐の job の CPU の取り分(機体の配備が名乗った時だけ — 名の無い常駐・待ちの子・root の準備は層の共有の子へ)。
         #(service-layer service-shares service-procs) (run (with-handlers [os-file-handler]
                                                                (service-shares-placed (.get machine-env SERVICE-SHARES-VAR)
-                                                                                      service-layer-procs)))
+                                                                                      service-layer-procs args.room-file args.name)))
         ;; 実行環境の準備の process を置く兄弟の cgroup(準備の層 — 機体の配備が名を渡した時だけ・EnvSettings の prepare-procs の註)。
         prepare-procs (run (with-handlers [os-file-handler]
                              (job-cgroup-placed (.get machine-env PREPARE-CGROUP-VAR) cgroup-root PREPARE-CGROUP-VAR)))

@@ -13,6 +13,8 @@
 ;;; 数える。行に手書きの task の枠(capacity・taskReserve・backgroundRoom — 消した欄)が在っても読まずに通す(旧い版の file を読む間)。
 ;;; 行は省ける欄 warmServices(真偽)も持てる: 実行環境の service も待ちの子から分けて起こすか(WorkerPolicy.warm-services)。
 ;;; 起動の時に 1 度だけ読む(枠と違って読み直さない)— 版の file の入れ替えで新しい世代が起きた時に効き、Pod の template を変えずに機体ごとに入れる。
+;;; 同じく起動時だけ読む serviceShares(文字列・例 "reads=400")は常駐の CPU の相対的な取り分。量(memoryMiB・cpuMillis)ではない。
+;;; 環境変数の追加で Pod を作り直さずに渡すための欄で、worker/core/job_cgroup の service-shares-of が綴りと重みを検める。
 ;;; 行は省ける欄 pools(枠と同じく heartbeat の前に読み直す)も持てる: 置ける組の印の列(pool-… —
 ;;; shared/core/capabilities の pool-refusal)。worker は起動の引数の能力(--provides)との和を heartbeat の provides で名乗る — 常駐の job を
 ;;; 2 台以上の機体の組の印で宣言でき、組を替えるのに Pod を作り直さない。
@@ -53,6 +55,7 @@
 (import enum [StrEnum])  ; defenum の展開が使う
 (import json)
 (import doeff_cluster._shared.core.capabilities [HOST-PREFIX capabilities-of pool-refusal])
+(import doeff_cluster._worker.core.job_cgroup [service-shares-of])
 
 ;; 枠の file を読み直す間。kubelet が ConfigMap の変更を Pod の file へ写すのに 1 分前後かかるので、拍ごとに読まなくても遅れは増えない。
 (val READ-EVERY-MS (* 10 1000))
@@ -236,6 +239,23 @@
     (is value None) None
     (isinstance value bool) value
     True (.format "枠の file の worker {} の warmServices は true か false で書く: {!r}" name value)))
+
+
+(defk room-service-shares-of [text name]
+  {:pre [(: text str) (: name str)] :post [(: % (| tuple str None))] :tags {:context "worker" :role "judgment" :reads "json"}}
+  "枠の file の自分の行の serviceShares を読むため。欄が無ければ None(平らな層のまま)、在れば job_cgroup の取り分の並び。
+   読めない JSON・自分の行の欠け・欄の型と値の誤りは断る訳を返す。誤りで取り分を黙って無効にしない。"
+  (val decoded (try #((json.loads text)) (except [json.JSONDecodeError] #())))
+  (val parsed (if decoded (get decoded 0) None))
+  (val row (if (isinstance parsed dict) (.get parsed name) None))
+  (when (not (isinstance row dict))
+    (return (.format "serviceShares: worker {} の行が object として読めない" name)))
+  (when (not-in "serviceShares" row)
+    (return None))
+  (val value (get row "serviceShares"))
+  (if (isinstance value str)
+      (! (service-shares-of value))
+      (.format "serviceShares: worker {} の値は文字列で書く: {!r}" name value)))
 
 
 (defk room-read-due [read-ms now-ms]

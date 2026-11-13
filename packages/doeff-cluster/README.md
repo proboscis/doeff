@@ -123,9 +123,14 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - `:cpu-share "<名>"` は常駐の job を置く CPU の取り分の名で、任意です(英小文字か数字で始まる英小文字・数字・- の 1〜32 字 —
   `job_rules.cpu-share-refusal`)。宣言の行・Service の spec・heartbeat の返事の job の行に `cpuShare` で載り、worker の JobSpec の比べない
   欄 `cpu-share` になります(指紋に入らず、値だけを変えても process を起こし直しません — 次に起こす時の置き場に効きます)。
-  機体の配備が worker の環境変数 `DOEFF_WORKER_SERVICE_SHARES`(空白で並べた `<名>=<cpu.weight>`・例 `reads=400`)で取り分を名乗ると、
+  機体の配備が枠の file(`--room-file` / `WORKER_ROOM_FILE`)の自分の行の `serviceShares`(空白で並べた `<名>=<cpu.weight>`・例 `"reads=400"`)で
+  取り分を名乗ると、
   worker は services の層の下に共有の子 `_shared`(重み 100)と取り分の子を作って層に cpu を掛け、その名の job を名の子へ、ほかの
   常駐の job・待ちの子・root の準備を `_shared` へ置きます。memory の守りは層の値のままです(mount の `memory_recursiveprot` で子へ分かれる)。
+  世代の起動時だけ読みます。既存の ConfigMap の volume に値を写してから worker の版を替えると、Pod を作り直さずに反映できます。
+  環境変数 `DOEFF_WORKER_SERVICE_SHARES` を明示した場合はそちらが勝ちます。欄が無い行は平らな層のまま、読めない file・行・不正な値は
+  起動を断ります。旧世代の process が層の直下に残る間は cpu の有効化を延期し、新しい常駐の起動の前に再試行します。
+  優先を戻す時は重みを 100 にして世代を替えます。cpu を有効にした親へ process は置けないので、動いた子の構造は残します。
 - `:reads` / `:writes` は job が外の置き場から読む・書く物の文字列の集合で、任意です(綴りは `<置き場>:<名>` — `:` がちょうど 1 つ・
   両側が空でない。空の集合 `#{}` は「読み書きしない」の宣言)。静的な記述 `__doeff_system__` の job にだけ載り、Job と宣言の行には
   載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。
