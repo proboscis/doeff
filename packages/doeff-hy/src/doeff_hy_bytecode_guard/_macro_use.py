@@ -326,6 +326,14 @@ def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of)
         IMPORT_SCOPE.reset(token)
 
 
+def record_rows_have_comparable_digests(record: MacroRecord) -> bool:
+    """Whether every used-macro row and value row of the record carries a digest the check can compare — none made mid-import (None) and none marked
+    :data:`ENVIRONMENT_READ` (always stale). Only then do the files of the record's modules decide whether it is current
+    (:func:`doeff_hy_bytecode_guard._loader_hooks.bytecode_dependency_modules` — ADR-DOE-BUILD-002 R3c); the meaning of the mark stays with the check."""
+    digests = (*(used.digest for used in record.macros), *(value.digest for value in record.values))
+    return all(digest is not None and digest != ENVIRONMENT_READ for digest in digests)
+
+
 def _rows_are_current(record: MacroRecord, sha256_of: Sha256Of) -> bool:
     """Whether the record rows (used macros, values outside the macro, names looked up but absent, files for when digests cannot be compared) match the current environment."""
     by_files = False
