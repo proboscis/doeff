@@ -7,9 +7,12 @@ phase starts a child process, uses a network socket or runs over ``doeff_tier_sm
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from doeff_hy_pytest._tier import (
     SettingError,
+    _AuditWatcher,
     finding_reasons,
     parse_tier_by_marker,
     parse_tier_selection,
@@ -213,3 +216,18 @@ def test_a_small_test_over_the_seconds_is_listed(pytester: pytest.Pytester) -> N
     found = _findings(result)
     assert list(found) == ["test_slow.hy::test_spins"], result.stdout.str()
     assert found["test_slow.hy::test_spins"].endswith("s (small is up to 0.1 s)")
+
+
+def test_nested_equal_watches_keep_the_outer_watch_active() -> None:
+    """Closing an empty inner watch must leave the outer watch to receive later events."""
+    watcher = _AuditWatcher()
+    outer = watcher.open()
+    inner = watcher.open()
+    watcher.close(inner)
+    sys.audit("socket.connect", "after-inner")
+    watcher.close(outer)
+
+    assert inner.seen == {}
+    assert outer.seen == {"socket.connect": "'after-inner'"}
+    sys.audit("socket.bind", "after-outer")
+    assert outer.seen == {"socket.connect": "'after-inner'"}

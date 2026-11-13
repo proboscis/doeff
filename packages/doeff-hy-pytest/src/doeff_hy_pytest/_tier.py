@@ -133,10 +133,11 @@ class SmallFinding:
     reasons: str
 
 
-@dataclass
+@dataclass(eq=False)
 class _Watch:
     """The events seen while one small test's call phase runs (the first argument of each event, shortened)."""
 
+    # A watch is a lifetime token: equal events do not make two watches interchangeable.
     seen: dict[str, str] = field(default_factory=dict)
 
 
