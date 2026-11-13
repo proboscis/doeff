@@ -316,3 +316,32 @@ fn a_worktree_of_a_later_commit_misses_only_the_changed_file() {
     };
     assert_eq!(keys(&report), keys(&whole), "the answer looked up from the table differs from the run without the cache");
 }
+
+/// Blob-backed scans read all declaration fragments, including a changed vocabulary file;
+/// cached source facts cannot freeze the declaration's previous rule inputs.
+#[test]
+fn split_declarations_are_read_in_a_fresh_blob_backed_worktree() {
+    let main = repo();
+    write(main.path(), "pyproject.toml", &CONFIG
+        .replace(r#"architecture = "architecture.hy""#, r#"architecture = ["architecture.hy", "declarations/*.hy"]"#)
+        .replace(r#"enable = ["DOEFF126"]"#, r#"enable = ["DOEFF126", "DOEFF150"]"#));
+    write(main.path(), "declarations/words.hy", r#"(defarchitecture-lists sample
+      :retired-words [(retired-words "old-name" :words ["rows-by-text"] :files ["app/**/*.hy"] :in lines :instead "rows-of")])"#);
+    git(main.path(), &["add", "-A"]);
+    git(main.path(), &["commit", "-qm", "split declarations"]);
+    let cache = tempfile::tempdir().unwrap();
+    let (first, _) = single(main.path(), cache.path(), HOF);
+    assert!(first["violations"].as_array().unwrap().iter().any(|v| v["rule"] == "DOEFF150"), "{first}");
+    let parent = tempfile::tempdir().unwrap();
+    let fresh = parent.path().join("fresh");
+    git(main.path(), &["worktree", "add", "-q", "--detach", fresh.to_str().unwrap()]);
+    let (second, stderr) = single(&fresh, cache.path(), HOF);
+    assert_eq!(keys(&first), keys(&second));
+    assert!(scan_reads(&stderr) <= FILLERS / 4, "{stderr}");
+    write(&fresh, "declarations/words.hy", "(defarchitecture-lists sample :retired-words [])\n");
+    let (changed, _) = single(&fresh, cache.path(), HOF);
+    assert!(!changed["violations"].as_array().unwrap().iter().any(|v| v["rule"] == "DOEFF150"), "{changed}");
+    let empty = tempfile::tempdir().unwrap();
+    let (uncached, _) = single(&fresh, empty.path(), HOF);
+    assert_eq!(keys(&changed), keys(&uncached));
+}
