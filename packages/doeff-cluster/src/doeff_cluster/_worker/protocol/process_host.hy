@@ -37,7 +37,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveProcesses ObserveJobRoots])
 (import doeff_cluster._worker.core.memory_rules [JobRoot])
 (import doeff_cluster._shared.intent.job_model [JobSpec])
-(import doeff_cluster._worker.core.job_cgroup [job-subgroup-name layer-subgroup-procs placed-argv swept-groups sweep-argv])
+(import doeff_cluster._worker.core.job_cgroup [job-subgroup-name layer-subgroup-procs placed-argv share-procs shares-argv swept-groups sweep-argv])
 (import doeff_cluster._worker.intent.worker_model [WakeSet WorkerWakes])
 (import doeff_cluster._worker.core.worker_due [wakes-with])
 (import doeff_cluster._shared.intent.due_model [DueNever])
@@ -79,7 +79,12 @@
   (setv #^ (| str None) service-procs None)
   ;; task(JobSpec.once)を job の名の子へ置く jobs の層の cgroup.procs(worker/core/job_cgroup の「job ごとの子」・入口 main が
   ;; DOEFF_WORKER_JOB_CGROUP から 1 度だけ決める)。None = 置き分けない(task は外の job-cgroup-placer の置き場)。
-  (setv #^ (| str None) job-procs None))
+  (setv #^ (| str None) job-procs None)
+  ;; 常駐の job の CPU の取り分(worker/core/job_cgroup の「取り分」・入口 main が DOEFF_WORKER_SERVICE_SHARES から 1 度だけ決める):
+  ;; service-layer = services の層の dir・service-shares = #(名 重み) の並び。None・空 = 分けない(service-procs が層そのもの)。分ける時の
+  ;; service-procs は層の共有の子。
+  (setv #^ (| str None) service-layer None)
+  (setv #^ (get tuple #((get tuple #(str int)) ...)) service-shares #()))
 
 
 (defrecord ForkedFrom
@@ -132,6 +137,11 @@
 (val JOB-CGROUP-SWEEP-FAILED-LOG "worker: job の cgroup の掃きが走らない")
 ;; 掃きの秒の上限(sh の rmdir と cat だけ — 越えたら諦めて次の掃きに回す)。
 (val SWEEP-TIMEOUT-SECONDS 10.0)
+;; services の層の取り分を整えた時の行の名(worker/core/job_cgroup の「取り分」— 欄 state = on〔cpu を掛けて重みを書いた〕・deferred〔層に
+;; process が残り掛けを見送った〕・failed〔script が走らない・子を作れない〕)。
+(val SERVICE-SHARES-LOG "worker: services の層の取り分")
+;; 取り分を整える script の時間の上限(秒 — 子の dir の作りと数個の file の書きだけ)。
+(val SHARES-TIMEOUT-SECONDS 10.0)
 
 
 (defk stop-reason-word [reason]
@@ -332,11 +342,37 @@
   "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ、task なら job の名の子(job-procs — job-subgroup の答え・
    None = 置き分けない)へ移ってから起こす形に包むため(worker/core/job_cgroup の service の類と「job ごとの子」)。置き分けない子は argv の
    まま。外の job-cgroup-placer は既に包んだ argv を包み直さないので、包んだ子は共有の子を経ずに直に移る(placed-argv)。"
-  (val procs (if spec.once job-procs settings.service-procs))
+  (<- service-procs (| str None) (service-procs-of settings spec))
+  (val procs (if spec.once job-procs service-procs))
   (when (is procs None)
     (return argv))
   (<- placed tuple (placed-argv procs argv))
   placed)
+
+
+
+(defk service-procs-of [settings spec]
+  {:pre [(: settings HostSettings) (: spec JobSpec)] :post [(: % (| str None))] :tags {:context "worker" :role "protocol"}}
+  "常駐の job を置く cgroup.procs を決めるため(worker/core/job_cgroup の「取り分」): job の取り分 spec.cpu-share を機体が名乗っていれば
+   services の層の下のその名の子、それ以外は settings.service-procs(取り分を名乗る機体は層の共有の子・名乗らない機体は層そのもの)。"
+  (<- procs (| str None) (share-procs settings.service-layer settings.service-shares spec.cpu-share settings.service-procs))
+  procs)
+
+
+(defk ready-shares [settings]
+  {:pre [(: settings HostSettings)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "常駐の job を起こす前に、services の層の取り分を整えるため(worker/core/job_cgroup の「取り分」— 子を作り、層に cpu を掛けて子へ重みを
+   書く)。取り分を名乗らない機体は何もしない。層に前の世代の process が残って掛けられない時と、script が走らない時は行を書いて進む
+   (job は共有の子か取り分の子で起きる — 重みが効かないだけで、置き場は作ってある)。"
+  (when (or (is settings.service-layer None) (not settings.service-shares))
+    (return None))
+  (<- argv tuple (shares-argv settings.service-layer settings.service-shares))
+  (<- ran ProcessOutcome (RunProcess :argv argv :timeout SHARES-TIMEOUT-SECONDS))
+  (val state (if (or (not ran.started) ran.timed-out (!= ran.exit-code 0)) "failed" (.strip ran.stdout)))
+  (when (!= state "on")
+    (<- (slog SERVICE-SHARES-LOG :level (if (= state "failed") "warning" "info") :state state :layer settings.service-layer
+              :detail (or ran.start-error (.strip ran.stderr) (.format "exit {} timed-out {}" ran.exit-code ran.timed-out)))))
+  None)
 
 
 (defk job-subgroup [settings spec kept]
@@ -380,8 +416,12 @@
    job を全部道連れにした。断りの数えと起こし直しは判断の層 — policy の record-after・warm-child-actions)。
    job-procs = task を置く job の名の子の cgroup.procs(job-subgroup の答え・None = 置き分けない)。shim の道は shim をそこへ移してから起こし、
    待ちの子の道は、頼みの cgroup を受ける版の待ちの子(action.warm-places)の時だけ分けた子 A をそこへ移す(受けない版の子は待ちの子の
-   cgroup — 共有の子 — に残る)。"
+   cgroup — 共有の子 — に残る)。常駐の job は、置く前に services の層の取り分を整え(ready-shares)、取り分の子か共有の子へ置く
+   (service-procs-of)。"
   (val spec action.spec)
+  (when (not spec.once)
+    (<- (ready-shares settings)))
+  (<- service-procs (| str None) (service-procs-of settings spec))
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- facts (ReadInterpreter))
   (<- started-ms int (now-epoch-ms))
@@ -439,7 +479,7 @@
           (<- forked (ForkFromWarm :socket-path place.socket :entry entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)
                                    :hold-input held :notice-env (if service settings.notice-env None) :orphan-seconds orphan
-                                   :cgroup-procs (cond service settings.service-procs
+                                   :cgroup-procs (cond service service-procs
                                                        action.warm-places job-procs
                                                        True None)))
           (:= started (if (isinstance forked WarmRefused)

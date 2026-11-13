@@ -75,7 +75,7 @@
 (import doeff_cluster._worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster._worker.core.env_upkeep [prepare-layer-dir])
 (import doeff_cluster._worker.protocol.process_clock [process-clock])
-(import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT SHARED-CGROUP job-cgroup-procs layer-cpu-pressure layer-subgroup-procs])
+(import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT SHARED-CGROUP job-cgroup-procs layer-cpu-pressure layer-subgroup-procs service-shares-of])
 (import doeff_cluster._worker.protocol.job_cgroup [job-cgroup-placer])
 (import doeff_cluster._worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
@@ -94,6 +94,8 @@
 (val LOAD-DIR-VAR "DOEFF_WORKER_LOAD_DIR")
 ;; 常駐の job の shim を置く兄弟の cgroup の名(無ければ置き分けない・worker/core/job_cgroup の service の類)。
 (val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
+;; 常駐の job の CPU の取り分の名と重み(空白で並べた「<名>=<重み>」— 無ければ services の層を分けない・worker/core/job_cgroup の「取り分」)。
+(val SERVICE-SHARES-VAR "DOEFF_WORKER_SERVICE_SHARES")
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
@@ -441,6 +443,29 @@
           shared)))
 
 
+
+(defk service-shares-placed [text procs]
+  {:pre [(: text (| str None)) (: procs (| str None))] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "機体の配備が名乗った常駐の job の CPU の取り分(text = SERVICE-SHARES-VAR の値・無ければ None)を起動の時に 1 度だけ読み、services の層
+   (procs = job-cgroup-placed の答えの層の cgroup.procs)の下に共有の子と取り分の子を作るため(worker/core/job_cgroup の「取り分」)。
+   答え = #(層の dir 取り分の並び 名の無い常駐の置き場の cgroup.procs)— 名乗らない機体は #(None #() procs)(今どおり層そのもの)。
+   読めない宣言・services の層の無い機体・子を作れない起動は断る(ValueError — 名乗った取り分を黙って捨てない)。cpu の掛けと重みは
+   宿 process_host が常駐の job を起こす前に試す(前の世代の process が層に残る間は掛からない)。"
+  (when (is text None)
+    (return #(None #() procs)))
+  (when (is procs None)
+    (raise (ValueError (.format "{} は {} の層の下を分ける — 層の名が無い" SERVICE-SHARES-VAR SERVICE-CGROUP-VAR))))
+  (<- shares (| tuple str) (service-shares-of text))
+  (when (isinstance shares str)
+    (raise (ValueError (.format "{}={!r} を読めない: {}" SERVICE-SHARES-VAR text shares))))
+  (val layer (posixpath.dirname procs))
+  (for [name #(SHARED-CGROUP #* (gfor share shares (get share 0)))]
+    (<- made (| FileFailed None) (MakeDirectory (posixpath.join layer name)))
+    (when (isinstance made FileFailed)
+      (raise (ValueError (.format "services の層の子 {} を作れない: {}" made.path made.detail)))))
+  #(layer shares (! (layer-subgroup-procs procs SHARED-CGROUP))))
+
+
 (defk cgroup-dir-environ [cgroup-dir]
   {:pre [(: cgroup-dir (| str None))] :post [(: % dict)] :tags {:context "worker" :role "main"}}
   "書ける cgroup v2 の見えの根(CGROUP-DIR-VAR)を job の子へ渡す env にするため(子が自分の子を、機体の配備が
@@ -725,8 +750,12 @@
         ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層が置く・無ければ /sys/fs/cgroup)。
         cgroup-root (.get machine-env CGROUP-DIR-VAR CGROUP-ROOT)
         ;; 常駐の job の shim を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
-        service-procs (run (with-handlers [os-file-handler]
-                             (job-cgroup-placed (.get machine-env SERVICE-CGROUP-VAR) cgroup-root SERVICE-CGROUP-VAR)))
+        service-layer-procs (run (with-handlers [os-file-handler]
+                                   (job-cgroup-placed (.get machine-env SERVICE-CGROUP-VAR) cgroup-root SERVICE-CGROUP-VAR)))
+        ;; 常駐の job の CPU の取り分(機体の配備が名乗った時だけ — 名の無い常駐・待ちの子・root の準備は層の共有の子へ)。
+        #(service-layer service-shares service-procs) (run (with-handlers [os-file-handler]
+                                                               (service-shares-placed (.get machine-env SERVICE-SHARES-VAR)
+                                                                                      service-layer-procs)))
         ;; 実行環境の準備の process を置く兄弟の cgroup(準備の層 — 機体の配備が名を渡した時だけ・EnvSettings の prepare-procs の註)。
         prepare-procs (run (with-handlers [os-file-handler]
                              (job-cgroup-placed (.get machine-env PREPARE-CGROUP-VAR) cgroup-root PREPARE-CGROUP-VAR)))
@@ -741,7 +770,8 @@
                            :program-dir places.programs :python interpreter :hy-command hy-command
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
-                           :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs)
+                           :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs
+                           :service-layer service-layer :service-shares service-shares)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv
                            ;; service だけが分かれる root の待ちの子を置く cgroup(版の切り替えの道を task の層の CPU の枠に置かない)。

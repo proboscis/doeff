@@ -16,7 +16,7 @@
 (import typing [TypeGuard])
 
 (import doeff_cluster._shared.intent.job_model [JobSpec LEGACY-ENTRY-PLACE])
-(import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal idle-budget-read idle-budget-json])
+(import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal idle-budget-read idle-budget-json cpu-share-refusal])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
@@ -122,7 +122,9 @@
                    :versions (if (json-object? versions) (environ-pairs versions) #())
                    :environ (if (json-object? environ) (environ-pairs environ) #())
                    ;; 中身の鍵(在れば指紋と比べが版と commit の代わりにこれを読む・program-row-refusal が形を確かめた)。
-                   :content (.get item "content")))
+                   :content (.get item "content")
+                   ;; CPU の取り分の名(在る宣言だけ — job-from-json が cpu-share-refusal で確かめた後。比べない欄)。
+                   :cpu-share (if (isinstance (.get item "cpuShare") str) (.get item "cpuShare") None)))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
 
@@ -236,6 +238,7 @@
         idle-budget (if (is (.get item "idleBudget") None) None (idle-budget-read (.get item "idleBudget"))))
   (setv memory-problem (or (if (and (is peak None) (is settle None)) None (memory-refusal peak settle))
                            (single-host-refusal single-host)
+                           (cpu-share-refusal (.get item "cpuShare"))
                            (if (isinstance idle-budget str) idle-budget None)))
   (when (is-not memory-problem None)
     (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") memory-problem))))
@@ -284,7 +287,9 @@
                  (if (is job.peak-mib None) {} {"peakMiB" job.peak-mib "settleMiB" job.settle-mib})
                  (if (is job.single-host None) {} {"singleHost" job.single-host})
                  ;; 暇な時の予算は宣言した job にだけ書く(書かない宣言の spec の形・版は以前と同じ)。
-                 (if (is job.idle-budget None) {} {"idleBudget" (idle-budget-json job.idle-budget)})))
+                 (if (is job.idle-budget None) {} {"idleBudget" (idle-budget-json job.idle-budget)})
+                 ;; CPU の取り分の名も宣言した job にだけ書く。
+                 (if (is job.spec.cpu-share None) {} {"cpuShare" job.spec.cpu-share})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
   (| base extra {"run" job.run}))
 

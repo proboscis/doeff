@@ -9,6 +9,7 @@
 (import pathlib [Path])
 (import doeff_hy._wire [Malformed parse])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
+(import doeff_cluster._shared.core.job_rules [cpu-share-refusal])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
 (import doeff_cluster._shared.intent.job_model [JobSpec] doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
@@ -51,6 +52,7 @@
                                             (.get job "name") (.get job "versions")))))
   (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
   (val peak (.get job "peakMiB"))
+  (val share (.get job "cpuShare"))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) placed.revision
            :once (.get job "once" False) :placement (.get job "placement")
            :handoff (bool (.get job "handoff" False))
@@ -83,7 +85,9 @@
            :content (.get job "content")
            ;; 宣言の memory の山(MiB — 2026-11-11・持つ job だけ。無い・0 以上の整数でなければ None = 宣言なし。欄を知らない
            ;; 旧い coordinator の返事も同じ — 見張りは今どおり平常の大きさで判じる)。
-           :peak-mib (if (and (isinstance peak int) (not (isinstance peak bool)) (>= peak 0)) peak None)))
+           :peak-mib (if (and (isinstance peak int) (not (isinstance peak bool)) (>= peak 0)) peak None)
+           ;; CPU の取り分の名(持つ job だけ。無い・名の規則に合わなければ None = 取り分なし — 欄を知らない旧い coordinator の返事も同じ)。
+           :cpu-share (if (and (isinstance share str) (is (cpu-share-refusal share) None)) share None)))
 
 
 (defwire DeclaredReply

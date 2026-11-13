@@ -120,6 +120,12 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   外れれば展開の時・構成子・coordinator の宣言の読みが同じ規則 `job_rules.idle-budget-read` で断ります)。宣言の行と Service の spec に
   `idleBudget`(`{"cpuCores" … "pssMB" … "fromCpuCores" … "fromPssMB" …}`)で載り、書かない job には鍵がありません。
   doeff-cluster は運んで保存するだけで、置き方にも process の形(指紋)にも入りません — 読むのは Service の spec を読む使う側です。
+- `:cpu-share "<名>"` は常駐の job を置く CPU の取り分の名で、任意です(英小文字か数字で始まる英小文字・数字・- の 1〜32 字 —
+  `job_rules.cpu-share-refusal`)。宣言の行・Service の spec・heartbeat の返事の job の行に `cpuShare` で載り、worker の JobSpec の比べない
+  欄 `cpu-share` になります(指紋に入らず、値だけを変えても process を起こし直しません — 次に起こす時の置き場に効きます)。
+  機体の配備が worker の環境変数 `DOEFF_WORKER_SERVICE_SHARES`(空白で並べた `<名>=<cpu.weight>`・例 `reads=400`)で取り分を名乗ると、
+  worker は services の層の下に共有の子 `_shared`(重み 100)と取り分の子を作って層に cpu を掛け、その名の job を名の子へ、ほかの
+  常駐の job・待ちの子・root の準備を `_shared` へ置きます。memory の守りは層の値のままです(mount の `memory_recursiveprot` で子へ分かれる)。
 - `:reads` / `:writes` は job が外の置き場から読む・書く物の文字列の集合で、任意です(綴りは `<置き場>:<名>` — `:` がちょうど 1 つ・
   両側が空でない。空の集合 `#{}` は「読み書きしない」の宣言)。静的な記述 `__doeff_system__` の job にだけ載り、Job と宣言の行には
   載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。

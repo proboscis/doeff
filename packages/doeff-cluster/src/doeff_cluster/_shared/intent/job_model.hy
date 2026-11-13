@@ -122,6 +122,11 @@
   ;; 宣言の内)。None = 宣言なし(欄を知らない旧い coordinator の返事・旧い行 — 今どおり)。比べない欄(値が変わっても process を
   ;; 起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| int None) peak-mib (field :default None :compare False))
+  ;; 常駐の job の CPU の取り分の名(宣言の行の cpuShare・規則は job_rules.cpu-share-refusal。coordinator が heartbeat の返事の job の行に
+  ;; 載せる)。worker は名の取り分を宣言した機体でだけ、process を services の層の下のその名の子に置く(worker/core/job_cgroup の頭の註の
+  ;; 「取り分」)。None = 取り分なし(欄を知らない旧い coordinator の返事・旧い行 — 共有の子か層そのもの)。比べない欄(値だけが変わっても
+  ;; process を起こし直さない — 次に起こす時の置き場に効く・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ (| str None) cpu-share (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
