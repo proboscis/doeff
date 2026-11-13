@@ -2,7 +2,8 @@
 ;;; 種類の名で待ちの訳を分けられるようにする。
 ;;;   (1) 綴りの表 TASK-UNPLACED-KIND-NAMES は TaskUnplacedKind の全ての値を、値の名のまま綴る(種類が増えたらこの検が落ちる)
 ;;;   (2) place-tasks は detail の文と同じ判断の種類を行に書く(区画の無さ・区画の和・組の上限 — 同じ入力の後ろの task が判断を借りる時も)
-;;;   (3) GET /state の task 行は種類を名乗る行だけ unplacedKind を出す(置いた行・終えた行は欄を出さない)
+;;;   (3) GET /state の task 行は種類を名乗る行と queued の行に unplacedKind を出す(種類の無い queued の行は null・置いた行・終えた行は
+;;;       欄を出さない — 外の読み手は欄の無い queued の行を種類を出さない前の版の coordinator と読む)
 ;;;   (4) 種類は保存しない — 読み直した行は種類を持たず、次の拍の place-tasks が detail の文が同じでも書き直す
 ;;; 失敗ケース = 直す前の形(種類は detail の文の中だけに在り、文を言い替えるたびに外の写しが黙って数え損ねた)。
 (require doeff-hy.macros [defk deftest <- val])
@@ -139,3 +140,17 @@
   (<- again dict (placed-rows {"w-a" 1024} {"held" held "q" back}))
   (<- rewritten bool (kind-agrees (get again "q") TaskUnplacedKind.TASK-COMPARTMENT-FULL))
   (assert rewritten (get again "q")))
+
+
+(deftest test-a-queued-row-without-a-kind-spells-the-field-as-null
+  ;; 種類の無い待ち(走らせ直しの次の試行・準備の失敗の後の置き直しなど — detail だけを書く)も、queued の行は欄を null で出す。
+  ;; 失敗ケース = 直す前の形(欄を出さず、外の読み手が種類を出さない前の版の coordinator と見分けられなかった)。
+  (<- q TaskRecord (queued "q"))
+  (val waiting (replace q :detail "走らせ直しの次の試行を待つ"))
+  (assert (is waiting.unplaced-kind None) waiting)
+  (<- row dict (task-summary waiting))
+  (assert (in "unplacedKind" row) row)
+  (assert (is (get row "unplacedKind") None) row)
+  ;; 種類を持つ queued の行は名を出す。
+  (<- named dict (task-summary (replace waiting :unplaced-kind TaskUnplacedKind.TASK-LIMITED)))
+  (assert (= (get named "unplacedKind") "TASK-LIMITED") named))

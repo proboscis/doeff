@@ -79,8 +79,11 @@
      (if (is task.placed-measured-at-ms None) {} {"placedMeasuredAtMs" task.placed-measured-at-ms})
      ;; 待ちの期限(ms — queued のまま積んだ刻からこの長さを越えると置き先が取り消す・2026-11-12)— 名乗る task だけ。
      (if (is task.queue-limit-ms None) {} {"queueLimitMs" task.queue-limit-ms})
-     ;; 置けない訳の種類(TASK-UNPLACED-KIND-NAMES の名 — detail の文と同じ判断・2026-11-13)— 待つ訳を書いた task だけ。
-     (if (is task.unplaced-kind None) {} {"unplacedKind" (get TASK-UNPLACED-KIND-NAMES task.unplaced-kind)})))
+     ;; 置けない訳の種類(TASK-UNPLACED-KIND-NAMES の名 — detail の文と同じ判断・2026-11-13)。queued の行は欄を常に出す(種類の無い待ちは
+     ;; null)— 外の読み手は欄の無い queued の行を、種類を出さない前の版の coordinator と読む。ほかの phase は種類を持つ行だけ。
+     (cond (is-not task.unplaced-kind None) {"unplacedKind" (get TASK-UNPLACED-KIND-NAMES task.unplaced-kind)}
+           (= task.phase "queued") {"unplacedKind" None}
+           True {})))
 
 
 (defk spec-json [#^ JobSpec spec]
