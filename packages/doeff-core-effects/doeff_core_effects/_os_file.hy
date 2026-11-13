@@ -35,10 +35,10 @@
 (import tempfile)
 (import time)
 (import pathlib [Path])
-(import doeff_core_effects._file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage Appended StatPath ReadText ReadBytes
+(import doeff_core_effects._file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld LockBusy DiskUsage Appended StatPath ReadText ReadBytes
                                          WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory
                                          WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree
-                                         AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
+                                         AcquireLock TryLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          LinkFiles CompilePythonSources MakeSymlink])
 (import doeff_core_effects._python_bytecode [compile-python-sources])
 (import doeff_core_effects._darwin_volume [darwin-volume-free])
@@ -245,6 +245,22 @@
     (val fd (os.open path (| os.O-RDWR os.O-CREAT) 0o644))
     (fcntl.flock fd fcntl.LOCK-EX)
     (LockHeld :path path :token fd)
+    (except [error OSError]
+      (<- answer FileFailed (failed path error))
+      answer)))
+
+
+(defk try-lock [path]
+  {:pre [(: path str)] :post [(: % (| LockHeld LockBusy FileFailed))]}
+  "To take a lock file exclusively only if it is free now (LOCK_NB -- a held lock is LockBusy and the opened file is closed again)."
+  (try
+    (val fd (os.open path (| os.O-RDWR os.O-CREAT) 0o644))
+    (try
+      (fcntl.flock fd (| fcntl.LOCK-EX fcntl.LOCK-NB))
+      (LockHeld :path path :token fd)
+      (except [BlockingIOError]
+        (os.close fd)
+        (LockBusy :path path)))
     (except [error OSError]
       (<- answer FileFailed (failed path error))
       answer)))
@@ -463,6 +479,9 @@
     (resume answer))
   (AcquireLock [path]
     (<- answer (acquire-lock path))
+    (resume answer))
+  (TryLock [path]
+    (<- answer (try-lock path))
     (resume answer))
   (ReleaseLock [held]
     (<- answer (guarded held.path (fn [] (_release held))))

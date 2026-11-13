@@ -14,6 +14,7 @@
 ;;;                    ok でない語を名乗った後は、その線の上 NEAR-RETURN-BYTES を越えるまで near)
 ;;;   warm-refusal     先の組み(温める表の行)を始める前に断るか(no-disk-room・over-roots-cap・no-memory-room — #3748)。見積もりは
 ;;;                    root-estimate(disk)と build-memory-estimate(memory の山)・memory の読みは memory-use-of
+;;;   unused-mirror-names  掃除の残りの片づけが消す repo の bare mirror(root の宣言が指さず、7 日使われない物)
 ;;;
 ;;; 掃除の下限は 2 つの絶対の量(#3732 — 以前の「volume の 15% と準備を始める空きの大きい方」の割合は外した。root の置き場は他の物と
 ;;; 共有の disk に在り、root の外の物で空きが割合の下限を常に割ると、組むたびに固定されていない root を消し続けた — 戻し先の版の root も):
@@ -30,6 +31,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import json)
+(import re)
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.core.eviction_rules [stat-bytes])
 
@@ -37,6 +39,11 @@
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
 ;; 7 日使われない bytecode の保存先の entry を消す(native の wheel と同じ 7 日の作法 — entry は使うたびに時刻を進める・#3858)。
 (val CODE-STORE-UNUSED-SECONDS WHEEL-UNUSED-SECONDS)
+;; どの root の宣言からも指されず 7 日使われない repo の bare mirror を消す(native の wheel と同じ 7 日の作法 — mirror は使うたびに
+;; 印の file を置き換えて dir の時刻を進める・env_translation の touched-mirror)。
+(val MIRROR-UNUSED-SECONDS WHEEL-UNUSED-SECONDS)
+;; worker の作る mirror の dir の名(url の digest16 + .git — clone の書きかけは .git.tmp。group 1 = digest16 = 錠 locks/mirror-<digest16> の名)。
+(val MIRROR-NAME-PATTERN (re.compile r"([0-9a-f]{16})\.git(?:\.tmp)?"))
 (val SWEEP-EVERY-MS 30000)              ; roots の合計が上限を越えている間の掃除の間隔(前の掃除の終わりから — 固定の集合が変わった時はすぐ)
 ;; project ごとに消さない root の数(最後に使った時刻の新しい順): 今の版と 1 つ前に動いていた版(戻し先 — #3732)。
 (val KEEP-PER-PROJECT 2)
@@ -447,3 +454,17 @@
                   :detail (.format "先の組みを断った: memory.current {} byte + 組みの山の見積もり {} byte > memory.max {} byte × {}"
                                    current peak limit MEMORY-ROOM-RATIO))
     _ None))
+
+
+(defk unused-mirror-names [entries referenced now-ms]
+  {:pre [(: entries tuple) (: referenced frozenset) (: now-ms int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "repo の bare mirror の置き場(分け合う dir の mirrors/)に、消す持ち主を置くため、掃除が消す mirror の名の列(名の順)を求める:
+   entries = 置き場の dir の #(名 時刻の epoch ミリ秒) の列・referenced = root の宣言が指す mirror の名の頭(url の digest16)の集合。
+   消すのは worker の作る名(MIRROR-NAME-PATTERN — clone の書きかけ .git.tmp も)のうち、referenced に当たらず、MIRROR-UNUSED-SECONDS より
+   長く時刻の進んでいない物だけ。鍵の表に無い事は消す訳にしない(公開の repo の mirror は鍵なしで正しく作られる)。前は誰も消さず、宣言から
+   外した repo の mirror が worker の volume に期限なく残った(2026-11-11 の実例 — 177M の mirror が 9 日使われずに残った)。"
+  (val limit-ms (* 1000 MIRROR-UNUSED-SECONDS))
+  (tuple (sorted (gfor #(name at) entries
+                       :setv matched (MIRROR-NAME-PATTERN.fullmatch name)
+                       :if (and (is-not matched None) (not-in (.group matched 1) referenced) (> (- now-ms at) limit-ms))
+                       name))))

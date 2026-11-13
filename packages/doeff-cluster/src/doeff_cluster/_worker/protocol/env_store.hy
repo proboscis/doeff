@@ -15,7 +15,8 @@
 ;;;   * 掃除(sweep): roots の合計が上限(settings.roots-cap-bytes)を越えた時か、共有の disk の空きが最低 settings.min-free-bytes を
 ;;;     割った時に、固定されていない root を古い順に消す(選びは env_upkeep.sweep-choice — project ごとの新しい 2 つは残す・#3732・#4051。
 ;;;     候補を全部消しても空きが戻らない時は準備を disk-full で断る)・uv の cache を prune(待たない)・
-;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数えは前の数えと完成の時刻・使った時刻が同じ root を歩かずに
+;;;     7 日使われない wheel と、root の宣言が指さず 7 日使われない repo の bare mirror(url の錠を待たずに取れた物だけ)を消す。
+;;;     消すのは worker が作った dir だけ。数えは前の数えと完成の時刻・使った時刻が同じ root を歩かずに
 ;;;     大きさを使い回す(env_upkeep の kept-bytes)。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。task の中でも同期の effect は scheduler の thread を占めるので、木を相手にする effect(MeasureTree・
@@ -38,7 +39,8 @@
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree]
+(import doeff_core_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree
+                           TryLock LockHeld LockBusy ReleaseLock]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
@@ -55,13 +57,14 @@
 (import doeff_cluster._worker.core.launch [entry-place-of-marker])
 (import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
-                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse LayerMemoryUse MemoryUnread WarmRoom
+                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MIRROR-UNUSED-SECONDS unused-mirror-names MemoryUse LayerMemoryUse MemoryUnread WarmRoom
                                               LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal
                                               DEFAULT-BUILD-MEMORY-BYTES layer-need])
 (import doeff_cluster._worker.core.env_rules [ReadyAnswer PrepareRoom launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project declared-project oom-kills-of memory-killed-failure])
 (import doeff_cluster._worker.core.worker_due [due-after])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
+(import doeff_cluster._worker.protocol.env_translation [digest16 listed-url])
 
 
 (val ENV-TOOL "doeff_cluster._worker.entry.env_tool")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
@@ -74,6 +77,10 @@
 ;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
 ;; took-ms = 数えの始めから消しの終わりまでの ms)。
 (val SWEEP-DONE-LOG "worker: 掃除の終わり")
+;; 使われない repo の bare mirror を消した行の名(名 + 欄の形: mirror = mirrors/ の下の dir の名・unused-ms = 最後に使ってからの ms)。
+(val MIRROR-SWEPT-LOG "worker: 使われない mirror を消した")
+;; 鍵の表を読めず、mirror の名を決められないので mirror を消さなかった行の名(path = 鍵の表の file)。
+(val MIRRORS-UNKEYED-LOG "worker: 鍵の表を読めない — mirror を消さない")
 ;; 消すと選んだ root を退ける脇の名の印(.<名>.swept.<時刻> — . で始まる名は完成品としても掃除の候補としても読まれない。worker が
 ;; 消しの途中で止まって残った脇の dir は、次の掃除の残りの片づけが消す)。
 (val SWEPT-MARK ".swept.")
@@ -523,7 +530,8 @@
 
 
 (defrecord RemovedRoots
-  "掃除の消し(ループの外の task)の答え: paths = 消した dir(脇へ退けた root・途中で止まった準備の残り・7 日使われない wheel)。"
+  "掃除の消し(ループの外の task)の答え: paths = 消した dir(脇へ退けた root・途中で止まった準備の残り・7 日使われない wheel・使われない
+   mirror)。"
   (#^ (get tuple #(str ...)) paths))
 
 
@@ -629,7 +637,7 @@
    wheel(build の口の保存先 — 口が使うたびに dir の中の印の file を置き換えて dir の時刻を進める)と、7 日使われない bytecode の
    保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)と中が全部 7 日動いて
    いない保存先の dir(unused-store-names)と、終わった世代の固定の
-   file(AL-D2g)を消し、消した path の列を返すため。"
+   file(AL-D2g)と、root の宣言が指さず 7 日使われない repo の bare mirror(unused-mirrors)を消し、消した path の列を返すため。"
   (<- place str (roots-dir settings))
   (<- roots (ListDirectory place))
   (val aside (if (isinstance roots FileFailed)
@@ -652,7 +660,142 @@
   (val doomed (+ aside stale unused ended))
   (for [target doomed]
     (<- (RemoveTree target)))
-  doomed)
+  ;; root の宣言が指さず 7 日使われない repo の bare mirror(mirror ごとに url の錠の中で消す — unused-mirrors)。
+  (<- mirrors tuple (unused-mirrors settings pins now-ms))
+  (+ doomed mirrors))
+
+
+(defk mirrors-dir [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % str)]}
+  "repo の bare mirror の置き場の dir を返すため(分け合う dir — 無ければ state — の mirrors。名は env_translation の EnsureMirror と同じ)。"
+  (+ (or settings.shared settings.state) "/mirrors"))
+
+
+(defk read-repo-keys [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % (| dict None))] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "mirror の名を EnsureMirror と同じく決めるため、鍵の表(settings.repo-keys の JSON — URL → deploy key)を読む。設定が空なら空の表・
+   読めない・形の違う表は None(mirror の名を決められない — 呼び手は mirror を消さない)。"
+  (when (not settings.repo-keys)
+    (return {}))
+  (<- text (ReadText settings.repo-keys))
+  (val data (if (isinstance text str) (try (json.loads text) (except [ValueError] None)) None))
+  (if (isinstance data dict) data None))
+
+
+(defk declared-urls [declared]
+  {:pre [(: declared dict)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "宣言の JSON(完成マーカーと準備の要求の env の欄)から repo の url の列を読むため(形の違う欄は飛ばす)。"
+  (match declared
+    {"repos" (list)} (tuple (gfor r (get declared "repos") :if (and (isinstance r dict) (isinstance (.get r "url") str)) (get r "url")))
+    _ #()))
+
+
+(defk mirror-names-of [url keys]
+  {:pre [(: url str) (: keys dict)] :post [(: % tuple)]}
+  "宣言の url 1 つが指しうる mirror の名の頭(digest16)を返すため: 宣言の綴りの名と、鍵の表の綴り(listed-url — EnsureMirror が mirror の
+   名に使う綴り)の名。"
+  (<- spelled str (digest16 url))
+  (<- source (| str None) (listed-url url keys))
+  (if (is source None)
+      #(spelled)
+      (do (<- listed str (digest16 source))
+          #(spelled listed))))
+
+
+(defk recent-requests [state now-ms]
+  {:pre [(: state str) (: now-ms int)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "世代 1 つ(state = その世代の状態の dir)の準備の要求の file(env-requests/<キー>.json)のうち、MIRROR-UNUSED-SECONDS の内に書いた物の
+   宣言(env の欄)の列を返すため(準備中の root の宣言 — 完成マーカーはまだ無い。準備は停滞の期限で止まるので、それより古い要求は
+   準備中でない)。読めない file は飛ばす。"
+  (val place (+ state "/env-requests"))
+  (<- entries (ListDirectory place))
+  (var declared #())
+  (when (not (isinstance entries FileFailed))
+    (for [entry entries]
+      (val path (+ place "/" entry.name))
+      (when (and (= entry.kind PathKind.FILE) (.endswith entry.name ".json") (not (.endswith entry.name ".result.json")))
+        (<- at (| int None) (modified-ms path))
+        (when (and (is-not at None) (<= (- now-ms at) (* 1000 MIRROR-UNUSED-SECONDS)))
+          (<- text (ReadText path))
+          (val data (if (isinstance text str) (try (json.loads text) (except [ValueError] None)) None))
+          (when (isinstance data dict)
+            (:= declared (+ declared #((.get data "env")))))))))
+  declared)
+
+
+(defk referenced-mirrors [settings pins keys now-ms]
+  {:pre [(: settings EnvSettings) (: pins tuple) (: keys dict) (: now-ms int)] :post [(: % frozenset)]}
+  "root の宣言が指す mirror の名の頭(digest16)の集合を返すため: 置き場の root(完成マーカーの宣言)と、この世代とまだ走っている他の
+   世代(pins — PinRecord の列)の新しい準備の要求の宣言(recent-requests)の repo の url から。"
+  (<- names tuple (root-dirs settings))
+  (<- roots str (roots-dir settings))
+  (var declared #())
+  (for [name names]
+    (<- marker (read-marker (+ roots "/" name)))
+    (when (isinstance marker dict)
+      (:= declared (+ declared #((.get marker "env"))))))
+  (for [state (+ #(settings.state) (tuple (gfor r pins :if r.alive r.state)))]
+    (<- requested tuple (recent-requests state now-ms))
+    (:= declared (+ declared requested)))
+  (var referenced (frozenset))
+  (for [env (gfor d declared :if (isinstance d dict) d)]
+    (<- urls tuple (declared-urls env))
+    (for [url urls]
+      (<- spelled tuple (mirror-names-of url keys))
+      (:= referenced (| referenced (frozenset spelled)))))
+  referenced)
+
+
+(defk unused-mirrors [settings pins now-ms]
+  {:pre [(: settings EnvSettings) (: pins tuple) (: now-ms int)] :post [(: % tuple)]}
+  "repo の bare mirror の置き場の持ち主として、root の宣言が指さず MIRROR-UNUSED-SECONDS 使われない mirror を消し、消した path の列を
+   返すため(選びは env_upkeep の unused-mirror-names・消しは mirror ごとに url の錠の中で — removed-mirror)。前は mirror を消す持ち主が
+   居らず、宣言から外した repo の mirror が worker の volume に期限なく残った。鍵の表を読めない時は名を決められないので何も消さない。"
+  (<- keys (| dict None) (read-repo-keys settings))
+  (when (is keys None)
+    (<- (slog MIRRORS-UNKEYED-LOG :path settings.repo-keys))
+    (return #()))
+  (<- place str (mirrors-dir settings))
+  (<- listed (ListDirectory place))
+  (when (isinstance listed FileFailed)
+    (return #()))
+  (var entries #())
+  (for [entry listed]
+    (when (= entry.kind PathKind.DIRECTORY)
+      (<- at (| int None) (modified-ms (+ place "/" entry.name)))
+      (when (is-not at None)
+        (:= entries (+ entries #(#(entry.name at)))))))
+  (<- referenced frozenset (referenced-mirrors settings pins keys now-ms))
+  (<- chosen tuple (unused-mirror-names (tuple entries) referenced now-ms))
+  (var removed #())
+  (for [name chosen]
+    (<- gone bool (removed-mirror settings name now-ms))
+    (when gone
+      (:= removed (+ removed #((+ place "/" name))))))
+  removed)
+
+
+(defk removed-mirror [settings name now-ms]
+  {:pre [(: settings EnvSettings) (: name str) (: now-ms int)] :post [(: % bool)]}
+  "選んだ mirror 1 つを、その url の錠(locks/mirror-<digest16> — EnsureMirror と同じ錠)を待たずに取れた時だけ、錠の中で時刻を読み直して
+   まだ古ければ消すため。錠を取られている mirror(準備の clone・fetch の最中)は残して次の掃除へ回す — 待つと掃除の task が scheduler の
+   thread を塞ぐ。読み直すのは、選んだ後に EnsureMirror が錠の中で使った印を進めた mirror を消さないため。答え = 消したか。"
+  (val shared (or settings.shared settings.state))
+  (val path (+ (mirrors-dir settings) "/" name))
+  (<- got (| LockHeld LockBusy FileFailed) (TryLock (posixpath.join shared "locks" (+ "mirror-" (cut name 0 16)))))
+  (match got
+    (LockHeld) (try
+                 (<- at (| int None) (modified-ms path))
+                 (<- still tuple (unused-mirror-names (if (is at None) #() #(#(name at))) (frozenset) now-ms))
+                 (when (not still)
+                   (return False))
+                 (<- gone (| None FileFailed) (RemoveTree path))
+                 (when (isinstance gone FileFailed)
+                   (return False))
+                 (<- (slog MIRROR-SWEPT-LOG :level "info" :mirror name :unused-ms (- now-ms at)))
+                 (return True)
+                 (finally (<- (ReleaseLock got))))
+    _ False))
 
 
 (defk unused-store-entries [store now-ms]

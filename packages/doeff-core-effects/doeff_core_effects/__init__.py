@@ -169,6 +169,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._file_effects import LinkFile as LinkFile
     from doeff_core_effects._file_effects import LinkFiles as LinkFiles
     from doeff_core_effects._file_effects import ListDirectory as ListDirectory
+    from doeff_core_effects._file_effects import LockBusy as LockBusy
     from doeff_core_effects._file_effects import LockHeld as LockHeld
     from doeff_core_effects._file_effects import MakeDirectory as MakeDirectory
     from doeff_core_effects._file_effects import MakeSymlink as MakeSymlink
@@ -184,6 +185,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._file_effects import ReadMemoryFiles as ReadMemoryFiles
     from doeff_core_effects._file_effects import ReadText as ReadText
     from doeff_core_effects._file_effects import ReleaseLock as ReleaseLock
+    from doeff_core_effects._file_effects import TryLock as TryLock
     from doeff_core_effects._file_effects import RemoveTree as RemoveTree
     from doeff_core_effects._file_effects import RenamePath as RenamePath
     from doeff_core_effects._file_effects import StatPath as StatPath
@@ -617,6 +619,7 @@ _LAZY_EXPORTS = {
     "LinkFile": "doeff_core_effects._file_effects",
     "LinkFiles": "doeff_core_effects._file_effects",
     "ListDirectory": "doeff_core_effects._file_effects",
+    "LockBusy": "doeff_core_effects._file_effects",
     "LockHeld": "doeff_core_effects._file_effects",
     "MakeDirectory": "doeff_core_effects._file_effects",
     "MakeSymlink": "doeff_core_effects._file_effects",
@@ -632,6 +635,7 @@ _LAZY_EXPORTS = {
     "ReadMemoryFiles": "doeff_core_effects._file_effects",
     "ReadText": "doeff_core_effects._file_effects",
     "ReleaseLock": "doeff_core_effects._file_effects",
+    "TryLock": "doeff_core_effects._file_effects",
     "RemoveTree": "doeff_core_effects._file_effects",
     "RenamePath": "doeff_core_effects._file_effects",
     "StatPath": "doeff_core_effects._file_effects",

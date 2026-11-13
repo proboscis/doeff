@@ -15,15 +15,15 @@
 (import posixpath)
 (import dataclasses [replace])
 (import doeff [EffectBase])
-(import doeff_core_effects._file_effects [FileFailed PathStat LockHeld Appended StatPath ReadText ReadBytes WriteText WriteBytes AppendText
+(import doeff_core_effects._file_effects [FileFailed PathStat LockHeld LockBusy Appended StatPath ReadText ReadBytes WriteText WriteBytes AppendText
                                          AppendBytes TruncateFile SyncDirectory
-                                         MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
+                                         MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock TryLock
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
                                          LinkFiles CompilePythonSources MakeSymlink])
 
 ;; Effects with one path, and effects with two paths (copy source and copy target).
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory
-                    ListDirectory WalkTree StatTree RemoveTree AcquireLock ReadDiskFree ReadDiskUsage MeasureTree))
+                    ListDirectory WalkTree StatTree RemoveTree AcquireLock TryLock ReadDiskFree ReadDiskUsage MeasureTree))
 (val MOVE-EFFECTS #(CopyFile LinkFile CopyTree RenamePath))
 ;; Sum of the answer types of the file effects (failure, status, lock, total and free space, append result, contents, listing, free-space and size bytes, a write with no answer).
 (val ANSWER (| FileFailed PathStat LockHeld DiskUsage Appended str bytes tuple int None))
@@ -73,6 +73,9 @@
         (replace answer :real-path inner))
     (LockHeld :path held)
     (do (<- inner str (inner-path root held))
+        (replace answer :path inner))
+    (LockBusy :path busy)
+    (do (<- inner str (inner-path root busy))
         (replace answer :path inner))
     _ answer))
 

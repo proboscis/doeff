@@ -19,7 +19,7 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled Spawn Wait])
 (import doeff_core_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName ReadEnvironment])
-(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile LinkFiles CompilePythonSources MakeSymlink])
+(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld LockBusy TryLock MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile LinkFiles CompilePythonSources MakeSymlink])
 (import doeff_core_effects._python_bytecode [pyc-path])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [os-file-handler])
@@ -304,6 +304,30 @@
   (assert (isinstance third LockHeld) third)
   (assert (= seen.locks #()) seen)
   (assert (= (lfor f seen.files f.path) ["/r/lock"]) seen))
+
+
+(defk tried-twice [lock]
+  {:pre [(: lock str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "A scenario of TryLock: takes a free lock, tries it again while held (busy at once -- it never waits), and takes it again after release."
+  (<- first (| LockHeld LockBusy FileFailed) (TryLock lock))
+  (<- busy (| LockHeld LockBusy FileFailed) (TryLock lock))
+  (<- (ReleaseLock first))
+  (<- again (| LockHeld LockBusy FileFailed) (TryLock lock))
+  (<- (ReleaseLock again))
+  #(first busy again))
+
+
+(defn #^ None test-try-lock-answers-busy-without-waiting-on-both-file-systems []
+  ;; TryLock is the same lock as AcquireLock but never waits (a sweeper that must skip what a writer holds): a held lock is LockBusy
+  ;; at once, and the lock can be taken again after release. The real one (flock LOCK_NB) and the no-I/O one give the same answers.
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv lock (os.path.join (os.path.realpath tmp) "lock"))
+    (setv #(first busy again) (on [os-file-handler] (tried-twice lock)))
+    (assert (and (isinstance first LockHeld) (isinstance again LockHeld)) #(first again))
+    (assert (= busy (LockBusy :path lock)) busy))
+  (setv #(first busy again) (on [(state) (memory-file-handler (MemoryFiles :dirs #("/r")))] (tried-twice "/r/lock")))
+  (assert (and (isinstance first LockHeld) (isinstance again LockHeld)) #(first again))
+  (assert (= busy (LockBusy :path "/r/lock")) busy))
 
 
 ;; --- No-I/O child process ----------------------------------------------------------------------------------------------------

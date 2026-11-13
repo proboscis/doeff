@@ -16,10 +16,10 @@
 (import collections.abc [Callable])
 (import dataclasses [replace :as with-fields])
 (import doeff_core_effects._scheduler [CreatePromise CompletePromise Wait])
-(import doeff_core_effects._file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
+(import doeff_core_effects._file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld LockBusy MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
                                          StatPath MakeSymlink Appended AppendBytes TruncateFile SyncDirectory
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
+                                         CopyTree RenamePath RemoveTree AcquireLock TryLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
                                          MeasureTree LinkFile LinkFiles CompilePythonSources SourceNotCompiled])
 (import doeff_core_effects._python_bytecode [compiled-pyc kept-pyc pyc-path])
 
@@ -484,6 +484,20 @@
           (:= waiters (+ waiters #(#(at promise))))
           (<- (Wait promise.future))
           (resume (LockHeld :path at :token (len store.locks))))
+      True
+      (do (<- kind PathKind (kind-in store at))
+          (<- made (if (= kind PathKind.MISSING) (with-file store at b"" None) (return-store store)))
+          (if (isinstance made FileFailed)
+              (resume made)
+              (do (:= store (with-fields made :locks (+ made.locks #(at))))
+                  (resume (LockHeld :path at :token (len store.locks))))))))
+  (TryLock [path]
+    ;; The same lock as AcquireLock, but a held lock answers LockBusy at once instead of waiting (it never joins the waiters).
+    (<- asked str (normal path))
+    (<- at (| str FileFailed) (resolved store asked True))
+    (cond
+      (isinstance at FileFailed) (resume at)
+      (in at store.locks) (resume (LockBusy :path at))
       True
       (do (<- kind PathKind (kind-in store at))
           (<- made (if (= kind PathKind.MISSING) (with-file store at b"" None) (return-store store)))
