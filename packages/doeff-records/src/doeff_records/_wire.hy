@@ -29,7 +29,7 @@
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused Count StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
-                              EventsQuiet EventAbsent EventRetired BatchRead stored-text WrittenAndAppended AppendRefused])
+                              EventsQuiet EventAbsent EventRetired BatchRead stored-text spellable-body WrittenAndAppended AppendRefused])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows PutRowsAppendEvents])
 
@@ -867,7 +867,9 @@
 
 ;; --- 答え ------------------------------------------------------------------------------------------------
 ;;; 答えの本文の綴り(answer-text — HTTP の口が送る本文)は、行と変更の値を保存の綴り(_values.hy の頭の註)のまま継ぎ、値を解かず
-;;; 戻さず綴り直さない(綴りを持たない値だけを値から綴る)。綴りの形は encode-answer の object を json.dumps で綴った物と同じ
+;;; 戻さず綴り直さない(綴りを持たない値だけを値から綴る)。出来事も、保存の綴り(置き場の payload — 鍵の名と値の形が出来事の object と
+;;; 同じ)を持てば、鍵 stream・sequence・at を頭に足して payload の綴りをそのまま継ぐ(spelled-event — 鍵の順は encode-answer と違うが、JSON
+;;; として同じ object)。綴りを持たない出来事の本文は、値から JSON の機械で 1 度に綴る(Python の再帰で綴り直さない)。綴りの形は encode-answer の object を json.dumps で綴った物と同じ
 ;;; (鍵の順・区切り・ASCII の外の字をそのまま書く — 検 tests/test_wire_spelled.hy)。encode-answer は wire の object(dict と list)を
 ;;; 返す形のまま残す(答えの見本の検と、答えの object を読む呼び手のため)— 2 つは answer-object の 1 か所から作り、値の写し方だけが違う。
 
@@ -879,13 +881,16 @@
 (val ANSWER-ENCODER (json.JSONEncoder :ensure-ascii False :separators #("," ":")))
 
 
-(defn #^ object plain-value [#^ (| Row RowChanged) holder]  ; cannot be a defk: answer-object が内包表記の中で行ごとに同期に呼ぶ値の写し
-  "行・変更の値を wire の object(dict と list)へ戻すため(encode-answer の値の写し)。"
-  (thaw-json holder.value))
+(defn #^ object plain-value [#^ (| Row RowChanged Event) holder]  ; cannot be a defk: answer-object が内包表記の中で行ごとに同期に呼ぶ値の写し
+  "行・変更の値と出来事の本文を wire の object(dict と list)へ戻すため(encode-answer の値の写し — 受け取った呼び手が変えてよい写し)。"
+  (thaw-json (if (is (type holder) Event) holder.body holder.value)))
 
 
-(defn #^ SpelledJson spelled-value [#^ (| Row RowChanged) holder]  ; cannot be a defk: plain-value と同じ
-  "行・変更の値を綴りにするため(answer-text の値の写し): 保存の綴りを持てばそのまま継ぎ、持たなければ値から 1 度綴る。"
+(defn #^ SpelledJson spelled-value [#^ (| Row RowChanged Event) holder]  ; cannot be a defk: plain-value と同じ
+  "行・変更の値と出来事の本文を綴りにするため(answer-text の値の写し): 行と変更は保存の綴りを持てばそのまま継ぎ、持たなければ値から 1 度
+   綴る。出来事の本文は解いたままの値(無ければ戻した値 — spellable-body)から 1 度綴る。"
+  (when (is (type holder) Event)
+    (return (SpelledJson (.encode ANSWER-ENCODER (spellable-body holder)))))
   (setv text (stored-text holder))
   (SpelledJson (if (is text None) (.encode ANSWER-ENCODER (thaw-json holder.value)) text)))
 
@@ -902,6 +907,17 @@
       (+ "{" (.join "," (gfor #(name item) (.items wire) (+ (encode-basestring name) ":" (spelled-json item)))) "}")
     (is kind list) (+ "[" (.join "," (gfor item wire (spelled-json item))) "]")
     True (.encode ANSWER-ENCODER wire)))
+
+
+(defn #^ (| SpelledJson None) spelled-event [#^ Event event #^ Callable value-of]  ; cannot be a defk: answer-object が出来事ごとに同期に呼ぶ綴りの継ぎ(spelled-value と同じ)
+  "出来事 1 つの wire の object の綴りを、保存の綴り(置き場の payload の object の綴り — _values.hy の stored-event)を継いで作るため:
+   鍵 stream・sequence・at を頭に足し、payload の object の中身をそのまま続ける。継ぐのは答えの本文の綴り(value-of が spelled-value)で、
+   出来事が object の綴りを持つ時だけ。ほかは None(呼び手が event-json で object を作る)。"
+  (setv text (if (is value-of spelled-value) (stored-text event) None))
+  (if (and (is-not text None) (.startswith text "{\""))
+      (SpelledJson (+ "{\"stream\":" (encode-basestring event.stream) ",\"sequence\":" (int.__repr__ event.sequence)
+                      ",\"at\":" (int.__repr__ event.at) "," (cut text 1 None)))
+      None))
 
 
 (defk row-json [row value-of]
@@ -921,11 +937,11 @@
       {"kind" "rowRemoved" "table" table "key" (list key) "sequence" sequence}))
 
 
-(defk event-json [event]
-  {:pre [(: event Event)] :post [(: % dict)]}
-  "追記の列の出来事 1 つを wire の object にする。鍵 position は行と一緒に積んだ出来事(Event.position が在る)の時だけ
-   出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。"
-  (| {"stream" event.stream "sequence" event.sequence "idempotencyKey" event.idempotency-key "body" (thaw-json event.body)
+(defk event-json [event value-of]
+  {:pre [(: event Event) (: value-of Callable)] :post [(: % dict)]}
+  "追記の列の出来事 1 つを wire の object にする(本文は row-json と同じく value-of で写す — plain-value | spelled-value)。鍵 position は
+   行と一緒に積んだ出来事(Event.position が在る)の時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。"
+  (| {"stream" event.stream "sequence" event.sequence "idempotencyKey" event.idempotency-key "body" (value-of event)
       "writer" event.writer "at" event.at}
      (if (is event.position None) {} {"position" (! (watch-cursor-json event.position))})))
 
@@ -999,7 +1015,7 @@
           {"kind" "batchRead" "items" read-items})
     (Events :items items :last_sequence last-sequence)
       (do (setv encoded [])
-          (for [event items] (.append encoded (! (event-json event))))
+          (for [event items] (.append encoded (or (spelled-event event value-of) (! (event-json event value-of)))))
           {"kind" "events" "items" encoded "lastSequence" last-sequence})
     (WrittenRows :items items :replayed replayed)
       (do (val written-items [])
@@ -1028,7 +1044,7 @@
     (EventsMoved) {"kind" "eventsMoved"}
     (EventsQuiet) {"kind" "eventsQuiet"}
     ;; ReadEventByKey の答え: 出来事は events の items と同じ object を欄 event に入れ子で運ぶ(読みは同じ event-from)。
-    (Event) {"kind" "event" "event" (! (event-json answer))}
+    (Event) {"kind" "event" "event" (or (spelled-event answer value-of) (! (event-json answer value-of)))}
     (EventAbsent) {"kind" "eventAbsent"}
     (EventRetired :sequence sequence) {"kind" "eventRetired" "sequence" sequence}))
 
