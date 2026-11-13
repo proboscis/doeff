@@ -62,12 +62,13 @@
   (setv #^ (| IdleBudget None) idle-budget None))
 
 
-(defenum GenerationOrder CURRENT OLDER NEWER)
+(defenum GenerationOrder CURRENT OLDER NEWER REVIVED)
 
 
 ;; heartbeat の process の世代が、同じ名の今の世代に比べてどれか(cluster_policy.generation-order — 2026-09-27)。
 ;; CURRENT = 今の世代(初めての名・世代を名乗らない旧い worker を含む)・OLDER = 古い世代(名乗りとして受けない)・
-;; NEWER = 新しい世代(今の世代を退かせる)。
+;; NEWER = 新しい世代(今の世代を退かせる)・REVIVED = 古い世代だが、今の世代が lease の窓を越えて黙った後に届いた(今の世代に
+;; 戻す — cluster_policy.heard-generation-order・2026-11-11)。
 
 
 (defwire KnownExit
