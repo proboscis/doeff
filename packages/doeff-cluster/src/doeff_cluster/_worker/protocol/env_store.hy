@@ -781,7 +781,8 @@
    まだ古ければ消すため。錠を取られている mirror(準備の clone・fetch の最中)は残して次の掃除へ回す — 待つと掃除の task が scheduler の
    thread を塞ぐ。読み直すのは、選んだ後に EnsureMirror が錠の中で使った印を進めた mirror を消さないため。答え = 消したか。"
   (val shared (or settings.shared settings.state))
-  (val path (+ (mirrors-dir settings) "/" name))
+  (<- place str (mirrors-dir settings))
+  (val path (+ place "/" name))
   (<- got (| LockHeld LockBusy FileFailed) (TryLock (posixpath.join shared "locks" (+ "mirror-" (cut name 0 16)))))
   (match got
     (LockHeld) (try
