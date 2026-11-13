@@ -86,12 +86,12 @@ def default_cache_key(func_name: str, args: tuple, kwargs: FrozenDict) -> tuple:
 
 def cache(
     ttl: float | None = None,
-    key_func: Callable | None = None,
+    key_func: Callable[[str, tuple[Any, ...], Mapping[str, Any]], Any] | None = None,
     *,
     lifecycle: Lifecycle | str | None = None,
     metadata: Mapping[str, Any] | None = None,
     policy: MemoPolicy | Mapping[str, Any] | None = None,
-) -> Callable:
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Cache decorator that uses MemoGet/MemoPut effects for memoization.
 
     The cache key defaults to ``(func_name, args, FrozenDict(kwargs))`` where
@@ -111,7 +111,7 @@ def cache(
         policy=policy,
     )
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         func_name = _function_identifier(func)
 
         @do
