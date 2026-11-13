@@ -25,7 +25,7 @@
 (import pathlib [Path])
 (import posixpath)
 (import doeff_core_effects [slog])
-(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat RemoveTree RenamePath StatPath WriteText]
+(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
@@ -40,7 +40,7 @@
 (import doeff_cluster._worker.core.job_cgroup [job-subgroup-name layer-subgroup-procs placed-argv share-procs shares-argv swept-groups sweep-argv])
 (import doeff_cluster._worker.intent.worker_model [WakeSet WorkerWakes])
 (import doeff_cluster._worker.core.worker_due [wakes-with])
-(import doeff_cluster._shared.intent.due_model [DueNever])
+(import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_core_effects [AwaitWarmChildExit])
 (import doeff_cluster._worker.core.launch [JobLaunch child-entry-place job-launch orphan-seconds-of spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
@@ -142,6 +142,8 @@
 (val SERVICE-SHARES-LOG "worker: services の層の取り分")
 ;; 取り分を整える script の時間の上限(秒 — 子の dir の作りと数個の file の書きだけ)。
 (val SHARES-TIMEOUT-SECONDS 10.0)
+;; 旧世代が退いた後に次の job の起動が無くても有効化する。未有効の間だけ、5 秒後の観測で再試行する。
+(val SHARES-RETRY-MS 5000)
 
 
 (defk stop-reason-word [reason]
@@ -360,19 +362,29 @@
 
 
 (defk ready-shares [settings]
-  {:pre [(: settings HostSettings)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  {:pre [(: settings HostSettings)] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
   "常駐の job を起こす前に、services の層の取り分を整えるため(worker/core/job_cgroup の「取り分」— 子を作り、層に cpu を掛けて子へ重みを
    書く)。取り分を名乗らない機体は何もしない。層に前の世代の process が残って掛けられない時と、script が走らない時は行を書いて進む
-   (job は共有の子か取り分の子で起きる — 重みが効かないだけで、置き場は作ってある)。"
+   (job は共有の子か取り分の子で起きる — 重みが効かないだけで、置き場は作ってある)。有効化できたかを返し、見送った時は観測が再試行する。"
   (when (or (is settings.service-layer None) (not settings.service-shares))
-    (return None))
+    (return True))
   (<- argv tuple (shares-argv settings.service-layer settings.service-shares))
   (<- ran ProcessOutcome (RunProcess :argv argv :timeout SHARES-TIMEOUT-SECONDS))
   (val state (if (or (not ran.started) ran.timed-out (!= ran.exit-code 0)) "failed" (.strip ran.stdout)))
   (when (!= state "on")
     (<- (slog SERVICE-SHARES-LOG :level (if (= state "failed") "warning" "info") :state state :layer settings.service-layer
               :detail (or ran.start-error (.strip ran.stderr) (.format "exit {} timed-out {}" ran.exit-code ran.timed-out)))))
-  None)
+  (= state "on"))
+
+
+(defk retry-shares [settings]
+  {:pre [(: settings HostSettings)] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
+  "未有効の取り分を観測の期限で再試行するため。親の直下が空になるまでは file を読むだけで、旧世代の process を止めたり移したりしない。"
+  (<- procs (| str FileFailed) (ReadText (posixpath.join settings.service-layer "cgroup.procs")))
+  (when (isinstance procs FileFailed)
+    (<- (slog SERVICE-SHARES-LOG :level "warning" :state "failed" :layer settings.service-layer :detail procs.detail))
+    (return False))
+  (if (.strip procs) False (! (ready-shares settings))))
 
 
 (defk job-subgroup [settings spec kept]
@@ -509,6 +521,9 @@
   (session var table {})
   ;; 退けた作業 dir の置き場と、その消しの task の記録(頭の註)。
   (session var aside (SetAside))
+  ;; 有効化までだけ観測の期限を持つ。常駐の起動の後で旧世代が退いた場合も、起動をもう一度要求せずに取り分を有効にする。
+  (session var shares-ready (or (is settings.service-layer None) (not settings.service-shares)))
+  (session var shares-read-ms None)
   (StartJob [spec attempt code-path warm-key warm-places]
     (when (in spec.name table) (raise (RuntimeError f"{spec.name} は既に動いています")))
     ;; 実行環境の job は空の作業 dir で起こす — 前の job の作業 dir が残っていれば置き場へ退ける(消しは拍の外)。
@@ -597,6 +612,12 @@
       (:= table (| table {name told})))
     (resume None))
   (ObserveProcesses []
+    (when (not shares-ready)
+      (<- now int (now-epoch-ms))
+      (when (or (is shares-read-ms None) (< now shares-read-ms) (>= now (+ shares-read-ms SHARES-RETRY-MS)))
+        (<- enabled bool (retry-shares settings))
+        (:= shares-ready enabled)
+        (:= shares-read-ms now)))
     ;; 終わりを観測していない子だけを問う(終わりを答えた子は答え手が回収して忘れるので、ここに exit-code を残す)。待ちの子から分けた子は
     ;; 起動の刻と exit の file で問う(A の終わり = exit の file の値・印の無い終わりは -1)。
     (var seen {})
@@ -634,5 +655,8 @@
                                 (AwaitProcessExit started.view.pid)))))
     ;; 走っている消しの task に渡していない物が置き場に在れば、その task の終わりでも起きる(次の観測が次の task を起こす)。
     (val bells (if (and aside.unhanded (is-not aside.clearing None)) #(aside.clearing.done.future) #()))
-    (<- merged WakeSet (wakes-with outer (DueNever) bells exits))
+    (val share-due (cond shares-ready (DueNever)
+                        (is shares-read-ms None) (DueNow)
+                        True (DueAt :at (+ shares-read-ms SHARES-RETRY-MS))))
+    (<- merged WakeSet (wakes-with outer share-due bells exits))
     (resume merged)))
