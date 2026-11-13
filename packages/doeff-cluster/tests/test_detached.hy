@@ -1001,6 +1001,45 @@
   (assert (= #(placed.phase placed.attempt placed.boot) #("assigned" 2 "b2")) placed))
 
 
+(deftest test-the-next-attempt-of-an-env-task-waits-for-a-worker-heard-since-the-rerun
+  ;; 実行環境の宣言を持つ task も同じく待つ: 積み直した拍に連絡のある worker が無い(able が空)のを、宣言の道具の欠けと読んで
+  ;; env-failed(tool-missing)で終えない(2026-11-13 日次の検証の t49996-r2 が積み直した 0.3 秒後に「宣言の道具 [] を名乗る worker が無い」で終わった)。
+  (import tests.env_fixtures [LOCK env-of])
+  (import doeff_cluster [RuntimeEnv])
+  (import doeff_cluster [runtime-env->json])
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- declared (runtime-env->json env))
+  (val joined (! (beat (ClusterState :machine-compartments ROOMS) "w" 0)))
+  (val put (! (put-detached (get joined 0) "job-env-short" 0 :lease 2.0 :extra (| RERUN-BODY {"runtimeEnv" declared}))))
+  (val id (get (get put 2) "task"))
+  (val running (get (! (beat (get put 0) "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])) 0))
+  (val lapsed (! (tick running 3500 T)))
+  (val row (! (row-of-key lapsed "job-env-short")))
+  (assert (< (- 3500 1000) T.lease-ms) "worker は生死の窓の内だが、積み直した後の連絡はまだ無い")
+  (assert (= #(row.phase row.attempt row.worker row.failure-kind) #("queued" 2 None "")) row)
+  (val heard (! (beat lapsed "w" 3600 :boot "b2")))
+  (val placed (! (row-of-key (get heard 0) "job-env-short")))
+  ;; この worker は環境の準備済みを名乗っていないので、置かれた次の試行は preparing から始まる。
+  (assert (= #(placed.phase placed.attempt placed.worker placed.boot) #("preparing" 2 "w" "b2")) placed)
+  (val offers (get (get heard 2) "tasks"))
+  (assert (= (lfor o offers (get o "id")) [row.id]) offers))
+
+
+(deftest test-an-env-task-whose-tools-no-live-worker-names-ends-as-tool-missing
+  ;; 上の待ちの対: 能力の合う生きた worker のどれも宣言の道具を名乗らなければ、待っても晴れないので tool-missing で終える。
+  (import tests.env_fixtures [LOCK env-of])
+  (import doeff_cluster [RuntimeEnv])
+  (import doeff_cluster [runtime-env->json])
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- declared (runtime-env->json env))
+  (val joined (! (beat (ClusterState :machine-compartments ROOMS) "w" 0)))
+  (val put (! (put-detached (get joined 0) "job-env-tool" 0 :extra {"runtimeEnv" (| declared {"tools" [{"name" "rg" "version" "14"}]})})))
+  (val ticked (! (tick (get put 0) 100 T)))
+  (val row (! (row-of-key ticked "job-env-tool")))
+  (assert (= #(row.phase row.failure-kind row.retryable) #("env-failed" "tool-missing" False)) row)
+  (assert (in "rg=14" row.detail) row.detail))
+
+
 (deftest test-a-previous-attempt-that-comes-back-from-silence-is-not-offered-and-its-result-is-not-taken
   ;; 沈黙は死ではない(memory が詰まって heartbeat だけが止まった — 2026-10-24 の node-h): 前の試行の子は動き続けている。戻った世代の報告も結果の届けも
   ;; 次の試行を終わらせず、返事から外れた job は worker が止める。同じ worker の同じ世代に次の試行を置いても、返事には新しい id だけが載る。
