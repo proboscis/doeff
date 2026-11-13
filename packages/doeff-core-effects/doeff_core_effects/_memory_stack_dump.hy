@@ -15,7 +15,7 @@
 (import doeff_core_effects._stack_dump_effects [ArmStackDump DisarmStackDump ReadStackDumps StackDumpLedger stack-dumps-at])
 
 
-(defhandler watched-stack-dump-handler [#^ (of Callable [(| float None)] Program) watch]
+(defhandler watched-stack-dump-handler [#^ (get Callable #([(| float None)] Program)) watch]
   "Answer the watchdog effects with a ledger and hand each new deadline (None = disarmed) to watch (see header note)."
   ;; Why it stays an argument: watch is the real watchdog of the assembling side (a thread or faulthandler that writes outside the run), not a setting read with Ask.
   (session var ledger (StackDumpLedger :deadline None :written #()))
