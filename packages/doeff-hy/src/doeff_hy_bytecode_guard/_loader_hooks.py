@@ -557,8 +557,9 @@ def bytecode_dependency_modules(path: str, pyc: bytes) -> frozenset[str] | None:
     record = _record_of(code) if isinstance(code, CodeType) else None
     if record is None or record.hy_version != _hy_version():
         return None
-    digests = (*(used.digest for used in record.macros), *(value.digest for value in record.values))
-    if any(digest is None or digest == records.ENVIRONMENT_READ for digest in digests):
+    from doeff_hy_bytecode_guard import _macro_use as macro_use  # load only when a record of this version is carried over
+
+    if not macro_use.record_rows_have_comparable_digests(record):
         return None
     return frozenset(
         (

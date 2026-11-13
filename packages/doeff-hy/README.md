@@ -142,7 +142,7 @@ The optional map after the test name (or after its fixture list) takes these key
 | `:marks` | Adds pytest marks (`pytest -m "not slow"`) | `{:marks ["slow"]}` |
 | `:skip-if` / `:skip-reason` | Skips when the expression is true; it is evaluated when the module is imported | `{:skip-if (not (shutil.which "git")) :skip-reason "git not installed"}` |
 | `:scans` | Declares the dirs or globs the test walks and reads, as the pytest mark `scans` | `{:scans #("data/*.txt")}` |
-| `:tier` | The test's size class, `"small"`, `"medium"` or `"large"`, as the pytest mark `tier_<tier>` (`pytest --doeff-tier small` — see [doeff-hy-pytest](../doeff-hy-pytest/README.md#test-tiers)) | `{:tier "medium"}` |
+| `:tier` | The test's size class, `"small"`, `"medium"` or `"large"`, as the pytest mark `tier_<tier>` (`pytest --doeff-tier small` — see [doeff-hy-pytest](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy-pytest/README.md#test-tiers)) | `{:tier "medium"}` |
 
 With `:interpreters`, resolve the name in `conftest.py`:
 
