@@ -17,6 +17,7 @@
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text memory-need-refusal])
 (import doeff_cluster._coordinator.core.task_claims [tasks-compartments-of compartment-clamp task-need-of TASK-CPU-MILLIS])
+(import doeff_cluster._coordinator.core.measured_room [STARVE-WAIT-MS])
 (import doeff_cluster._coordinator.intent.cluster_model [TaskUnplacedKind])
 (import doeff_cluster._shared.intent.compartment_model [Compartment MachineCompartments])
 (import doeff_hy._table [Table TableWrite table-of])
@@ -187,6 +188,33 @@
   (assert (= (. (get kept-rows "opening") phase) "queued"))
   (assert (in "取っておく" (. (get kept-rows "opening") detail)) (. (get kept-rows "opening") detail))
   (assert (= (. (get kept-rows "z-later") phase) "queued")))
+
+
+(deftest test-a-long-waiting-task-keeps-its-claim-so-later-smaller-tasks-do-not-pass-it
+  ;; R6 の長く待った task の取っておき(区画の申告の和で数える): w-a の区画 4096 MiB に譲らない task 2048 MiB が走っている。先に積んだ
+  ;; 3072 MiB の task は入らず、後に積んだ 1024 MiB の task は入る。失敗ケース: 取っておきが無いと、走る task が終わって返る区画を後ろの
+  ;; 小さい task が先に取り続け、先に積んだ task は何時間も置かれない。
+  (<- workers dict (workers-with IDLE))
+  (<- held TaskRecord (running "held" "w-a" :priority 0 :memory-mib 2048 :preemptible False))
+  (<- old TaskRecord (queued "a-old" :memory-mib 3072))
+  (<- new TaskRecord (queued "z-new" :memory-mib 1024))
+  ;; 先の task が STARVE-WAIT-MS より短く待った間は取っておかず、後ろの小さい task は空いた区画に置かれる。
+  (<- fresh ClusterState (state-of workers {"w-a" #(4096 4000)} {"held" held "a-old" old "z-new" new}))
+  (<- fresh-rows dict (placed-rows fresh))
+  (assert (= (. (get fresh-rows "a-old") phase) "queued"))
+  (assert (= (. (get fresh-rows "z-new") phase) "assigned"))
+  ;; STARVE-WAIT-MS を越えて待った先の task は、置いた task が終われば入る w-a に申告を取っておき、後ろの小さい task はその分を使わない。
+  (val starved (replace old :submitted-ms (- NOW STARVE-WAIT-MS 1)))
+  (<- kept ClusterState (state-of workers {"w-a" #(4096 4000)} {"held" held "a-old" starved "z-new" new}))
+  (<- kept-rows dict (placed-rows kept))
+  (assert (= (. (get kept-rows "a-old") phase) "queued"))
+  (assert (in "w-a の tasks 区画にこの task の申告を取っておく" (. (get kept-rows "a-old") detail)) (. (get kept-rows "a-old") detail))
+  (assert (= (. (get kept-rows "z-new") phase) "queued") (. (get kept-rows "z-new") detail))
+  ;; 走る task が終わって区画が返ると、先の task がその拍に置かれる(後ろの task は残りの 1024 MiB に入る)。
+  (<- freed ClusterState (state-of workers {"w-a" #(4096 4000)} {"a-old" starved "z-new" new}))
+  (<- freed-rows dict (placed-rows freed))
+  (assert (= (. (get freed-rows "a-old") phase) "assigned"))
+  (assert (= (. (get freed-rows "a-old") worker) "w-a")))
 
 
 (deftest test-the-submit-refusal-and-the-claim-clamp-read-the-tasks-compartments
