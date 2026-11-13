@@ -541,7 +541,7 @@
       ;; 止まり始めを名乗る heartbeat(#2819)は、写した後にその世代の drain の頼みとして通す — drain が増えた heartbeat は
       ;; quiet-heartbeat の比べ(drains も見る)で静かでなくなり、同じ歩で調停が置き先を外す。
       (do (setv name body.name
-                heard (absorb-stopping (! (register-heartbeat state body now)) name body.boot body.stopping now))
+                heard (absorb-stopping (! (register-heartbeat state body now timing)) name body.boot body.stopping now))
           (setv after (if (and settled (quiet-heartbeat state heard name now timing)) heard (! (settle state heard name now timing)))
                 reply (! (heartbeat-reply after name timing (ready-instances after name now timing) :now now
                                           :boot body.boot :statuses body.statuses)))
