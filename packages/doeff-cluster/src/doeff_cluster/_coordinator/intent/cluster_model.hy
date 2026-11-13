@@ -739,6 +739,7 @@
 
 
 ;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text・ADR-DOE-CLUSTER-005 R8)。
+;; 種類そのものも TaskRecord.unplaced-kind に持ち、GET /state の task 行の unplacedKind に出す(綴りの表は replies.TASK-UNPLACED-KIND-NAMES)。
 ;; 門の内の task(ungated でない)だけが待つ。TASK-LIMITED = task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に達している・
 ;; TASK-UNDECLARED = task の名乗った組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から読み直した — 宣言される
 ;; まで待つ・2026-10-12)・TASK-NO-COMPARTMENT = 能力と版の合う置ける worker のどれも tasks 区画を持たない(資源 MachineCompartments の
@@ -1331,7 +1332,13 @@
   ;; --- 待ちの期限(2026-11-12)---
   ;; queue-limit-ms = 送り手の名乗った待ちの期限(SubmitDetached の queue-limit-seconds の註 — None = 期限なし)。queued のまま submitted-ms から
   ;; この長さを越えた行を、置き先は phase cancelled で終える(cluster_policy.settle-detached — 期限の刻は task-lapse-at)。欄の無い旧い行は期限なしで読む。
-  (setv #^ (| int None) queue-limit-ms None))
+  (setv #^ (| int None) queue-limit-ms None)
+  ;; --- 置けない訳の種類(2026-11-13)---
+  ;; unplaced-kind = 待っている task の detail に書いた置けない訳の種類(TaskUnplacedKind — 文は task-unplaced-text がこの種類から作る)。
+  ;; place-tasks が detail の文と同じ所で一緒に書き、置いた・別の訳の文で待つ・終えた行は None にする(待つ訳を書かない行は None)。
+  ;; 外の読み手は GET /state の task 行の unplacedKind で種類を読み、文を照らさない。拍ごとの判断なので保存しない(読み直した後の最初の
+  ;; place-tasks が書き直す — cluster_json.task-record-to-json)。
+  (setv #^ (| TaskUnplacedKind None) unplaced-kind None))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

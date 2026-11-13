@@ -13,7 +13,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved UnplacedView WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardRow BoardWritten BoardConflict BoardRefused
-                                                       TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
+                                                       TaskRecord TaskUnplacedKind TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                                                        DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
                                                        ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable ReadinessReport])
 (import doeff_cluster._shared.intent.warm_model [WarmState])
@@ -37,6 +37,15 @@
   (for [item items]
     (:= spelled #(#* spelled (! (spell item)))))
   (list spelled))
+
+
+;; 待っている task を置けない訳の種類(TaskUnplacedKind)→ GET /state の task 行の unplacedKind の綴り(外へ見せる約束 — 外の読み手は
+;; detail の文を照らさずこの名で分ける・2026-11-13)。綴りはここだけ。種類を足したらここにも足す(test_task_unplaced_kind が全ての値を pin する)。
+(val TASK-UNPLACED-KIND-NAMES
+  {TaskUnplacedKind.TASK-LIMITED "TASK-LIMITED"
+   TaskUnplacedKind.TASK-UNDECLARED "TASK-UNDECLARED"
+   TaskUnplacedKind.TASK-NO-COMPARTMENT "TASK-NO-COMPARTMENT"
+   TaskUnplacedKind.TASK-COMPARTMENT-FULL "TASK-COMPARTMENT-FULL"})
 
 
 (defk task-summary [#^ TaskRecord task]
@@ -69,7 +78,9 @@
      (if (is task.placed-memory-available-mib None) {} {"placedMemoryAvailableMiB" task.placed-memory-available-mib})
      (if (is task.placed-measured-at-ms None) {} {"placedMeasuredAtMs" task.placed-measured-at-ms})
      ;; 待ちの期限(ms — queued のまま積んだ刻からこの長さを越えると置き先が取り消す・2026-11-12)— 名乗る task だけ。
-     (if (is task.queue-limit-ms None) {} {"queueLimitMs" task.queue-limit-ms})))
+     (if (is task.queue-limit-ms None) {} {"queueLimitMs" task.queue-limit-ms})
+     ;; 置けない訳の種類(TASK-UNPLACED-KIND-NAMES の名 — detail の文と同じ判断・2026-11-13)— 待つ訳を書いた task だけ。
+     (if (is task.unplaced-kind None) {} {"unplacedKind" (get TASK-UNPLACED-KIND-NAMES task.unplaced-kind)})))
 
 
 (defk spec-json [#^ JobSpec spec]
