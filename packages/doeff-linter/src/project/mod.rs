@@ -3487,7 +3487,7 @@ fn judge_business_fakes(
     let counterexamples = table(&decl.counterexamples, registry::Absent::Unreadable);
     let unserved = table(&decl.unserved, registry::Absent::Empty);
     // A clause's effect and a table row's effect are both matched by the canonical name of their defining origin (a table row stays in the spelling as written — notices are given with the key as written).
-    let mut names = EffectNames::new(crate::origins::Origins::new(root, hy));
+    let mut names = EffectNames::new(crate::origins::Origins::new(root, hy).with_roots(architecture.import_roots.iter().cloned()));
     let (external, external_written) = names.table(&external, decl.external_effects.as_deref(), &mut problems);
     let (counterexamples, counterexample_written) = names.table(&counterexamples, decl.counterexamples.as_deref(), &mut problems);
     let (unserved, _) = names.table(&unserved, decl.unserved.as_deref(), &mut problems);

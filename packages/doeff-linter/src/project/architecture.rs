@@ -906,6 +906,10 @@ pub struct Architecture {
     /// config). None = only the bundled catalog. The declaration does not read it; it only carries it to the rules that match the declaration against the catalog.
     #[serde(skip)]
     pub repo_catalog: Option<std::sync::Arc<super::world_catalog::WorldCatalog>>,
+    /// Starting dirs outside the root for resolving where an effect name is defined, added after those the resolver derives from the root's own files (`--import-root` —
+    /// set by the run; the commit hook passes the checkout's `origins::dependency_roots` to the run on the HEAD tree placed elsewhere). The declaration does not read it.
+    #[serde(skip)]
+    pub import_roots: Vec<PathBuf>,
 }
 
 impl Architecture {
@@ -1409,6 +1413,7 @@ impl<'a> Parser<'a> {
             path: path.to_path_buf(),
             notices: Vec::new(),
             repo_catalog: None,
+            import_roots: Vec::new(),
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
         let mut open_given = false;
