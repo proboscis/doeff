@@ -475,7 +475,8 @@
   (val records {"s1" (JobRecord "s1" :attempts 1) "s2" (JobRecord "s2" :attempts 1)})
   ;; 新しい root の待ちの子が無い → 待ちの子を起こすだけ・旧は止めない。起こし中(印なし)→ 何もしない。
   (<- bare tuple (plan NOW desired (observed #()) records on))
-  (assert (= bare #((StartWarmChild KEY-A LAUNCH-A))) bare)
+  ;; service だけが分かれる root なので、待ちの子は service の兄弟の cgroup に起こす(WarmLaunch の service)。
+  (assert (= bare #((StartWarmChild KEY-A (replace LAUNCH-A :service True)))) bare)
   (<- starting tuple (plan NOW desired (observed #((! (child KEY-A :mark None)))) records on))
   (assert (= starting #()) starting)
   ;; 待っている間の見送りの訳は WARM-CHILD・状態は旧い版が走っている事と待ちの子の準備中。
