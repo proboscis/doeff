@@ -189,3 +189,11 @@
   {:pre [(: held (get tuple #(HeldCompartment ...))) (: layer str)] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "層 layer を区画が持てば、その memory.max(byte — memoryLimitMiB)を知るため(None = 区画の無い層 — 見張りが今までどおり掛け直す)。"
   (next (gfor h held :if (= h.layer layer) (* h.memory-limit-mib MIB)) None))
+
+
+(deff held-cpu-millis [#^ (get tuple #(HeldCompartment ...)) held #^ (get tuple #(str ...)) uses]  ; cannot be a defk: worker の純粋な判断(policy の prepare-action — Program の外の関数)と site の宣言の検が呼ぶ
+  {:pre [(: held (get tuple #(HeldCompartment ...))) (: uses (get tuple #(str ...)))] :post [(: % (| int None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker が持つ区画のうち、用途の列 uses の前から数えて最初に持つ用途の区画の CPU の宣言(cpuMillis — 1000 = 1 core)を知るため
+   (None = どの用途の区画も持たない)。同じ用途の区画を幾つも持てば層の名の順の最初(held の順)。"
+  (next (gfor use uses h held :if (= h.use use) h.cpu-millis) None))

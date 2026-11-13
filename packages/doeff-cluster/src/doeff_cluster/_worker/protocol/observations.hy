@@ -7,6 +7,7 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_cluster._worker.intent.worker_model [MemoryStops ProgramGap])
+(import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
 
 
 (defclass [(dataclass :frozen True)] ObserveProcesses [EffectBase]
@@ -81,6 +82,13 @@
    None = 線が層を縮めていない・見張りが上限を掛けない・まだ読めていない)。世界の観測のまとめ(local-host)が、機体の memory の見張りの
    観測の答え手(worker/protocol/memory_observer)へ問う。判断は、急ぎを名乗る温める行の root の待ちの子だけをこの空きで判じる
    (warm_rules の warm-room-of)。")
+
+
+(defclass [(dataclass :frozen True)] ObserveCompartments [(get EffectBase (get tuple #(HeldCompartment ...)))]
+  "この worker の持つ区画(HeldCompartment の tuple — WorldView.compartments。最後に読めた heartbeat の返事の写し・空 = 区画を持たないか、
+   まだ読めていない)。世界の観測のまとめ(local-host)が、機体の memory の見張りの観測の答え手(worker/protocol/memory_observer — 見張りの
+   入れ物が写しを持つ)へ問う。判断は、準備の区画(無ければ task の区画)の CPU の宣言から bytecode を焼く道具の並べる数を決める(policy の
+   prepare-action)。")
 
 
 (defclass [(dataclass :frozen True)] ObservePrograms [(get EffectBase (get tuple #(ProgramGap ...)))]

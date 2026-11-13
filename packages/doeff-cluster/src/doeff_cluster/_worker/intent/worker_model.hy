@@ -17,6 +17,7 @@
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster._shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
 
 
 ;; 業務の repo の木の形(2026-09-25 — クラスタの仕組みを業務の repo から切り出した時に、木の形を worker の引数へ出した)。
@@ -203,7 +204,12 @@
   (setv #^ MemoryStops memory-stops (MemoryStops))
   ;; 宣言の job のうち、Program の file が手元に無い物(ProgramGap)。判断(policy の program-waits)は揃うまで job を起こさない — 子の入口は file を
   ;; 読めないと終了 code 3 で落ちる。既定は空(Program を取り寄せない呼び手)。
-  (setv #^ (get tuple #(ProgramGap ...)) program-gaps #()))
+  (setv #^ (get tuple #(ProgramGap ...)) program-gaps #())
+  ;; この worker の持つ区画(HeldCompartment の列 — 最後に読めた heartbeat の返事の写し・coordinator の MachineCompartments の行からの
+  ;; 写しで、新しい事実ではない)。判断(policy の prepare-action)は、準備の区画(無ければ task の区画)の CPU の宣言(cpuMillis)から bytecode を焼く
+  ;; 道具の並べる数を決める — container の CPU の上限(cgroup の cpu.max)を読まない。既定は空(区画を持たない worker・見張りを持たない
+  ;; 呼び手・模擬の環境 — 道具の既定の並べる数のまま)。
+  (setv #^ (get tuple #(HeldCompartment ...)) compartments #()))
 
 
 (defclass StopStage [Enum]
@@ -604,7 +610,8 @@
 
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]
   "revision のコードを展開し始める。完了は ObserveWorld の CodeView で観測する。compile-jobs = bytecode を焼く道具の並べる数(--jobs —
-   recreate の job の旧い process が動いている間の準備だけ WorkerPolicy.compile-jobs-while-replacing・None = 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)。"
+   準備の区画(無ければ task の区画)の CPU の宣言から判断が決める・policy の compartment-jobs。recreate の job の旧い process が動いている間の準備は
+   WorkerPolicy.compile-jobs-while-replacing との小さい方。None = 区画を持たない worker — 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)。"
   (#^ str revision)
   (#^ (| int None) compile-jobs))
 

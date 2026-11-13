@@ -113,7 +113,9 @@
   {:pre [(: cpu-max (| str None)) (: available int)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "cgroup v2 の cpu.max の中身(\"<quota> <period>\" か \"max <period>\")と使える CPU の数から、焼きの並列数を決めるため(pod の上限を
    越えないため — node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた)。上限の無い pod でも BAKE-JOBS-CEILING
-   を越えない(同じ node の service の CPU を奪わないため)。"
+   を越えない(同じ node の service の CPU を奪わないため)。これは呼び手が --jobs を渡さない時の既定(区画を持たない worker の準備と、
+   worker の外で走る起動の script の準備)。区画を持つ worker は、準備の区画(無ければ task の区画)の CPU の宣言から決めた数を --jobs で渡す
+   (worker/core/policy の compartment-jobs — ADR-DOE-CLUSTER-005 R3)。"
   (val parts (if cpu-max (.split cpu-max) []))
   (val usable (if (and (= (len parts) 2) (!= (get parts 0) "max"))
                   (min available (math.ceil (/ (int (get parts 0)) (int (get parts 1)))))

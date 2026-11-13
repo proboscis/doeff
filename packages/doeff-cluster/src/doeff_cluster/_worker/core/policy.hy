@@ -36,6 +36,9 @@
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
   StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster._shared.intent.job_model [JobSpec JobPhase] doeff_cluster._shared.core.job_rules [spec-hash] doeff_cluster._worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
+(import doeff_cluster._shared.core.compartment_rules [held-cpu-millis])
+(import doeff_cluster._worker.core.bake_plan [BAKE-JOBS-CEILING])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready warm-child-places mark-refusal
   warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys
@@ -211,21 +214,38 @@
     ;; KILL 後は待つだけ。確認できないまま置き換えを起動しない。
     True #()))
 
-(defn #^ (| PrepareCode PrepareEnv) prepare-action [#^ JobSpec spec #^ (| int None) compile-jobs]
-  "spec の置き場を用意する action: 実行環境の job は env の root(PrepareEnv)、それ以外は commit の木(PrepareCode)。compile-jobs = bytecode を
-   焼く道具の並べる数(None = 道具の既定 — 旧い process が動いている間の準備だけ replace-step が方策の値を渡す・2026-10-08)。"
+;; 準備の CPU の宣言を持つ区画の用途(前が先 — compartment_rules の held-cpu-millis の uses・ADR-DOE-CLUSTER-005 R3): 準備の区画を持つ
+;; worker は準備の区画、持たない worker は task の区画(準備の層の無い worker は、準備を task の層に置く)。
+(val PREPARE-USES #("prepare" "tasks"))
+
+(defn #^ (| int None) compartment-jobs [#^ (get tuple #(HeldCompartment ...)) held #^ (| int None) asked]  ; cannot be a defk: 純粋な判断の prepare-action(Program の外の関数)と warm-actions の内包表記と site の宣言の検が呼ぶ
+  "bytecode を焼く道具の並べる数を、この worker の準備の CPU の宣言から決めるため(ADR-DOE-CLUSTER-005 R3 — CPU の量は区画の cpuMillis
+   だけ・container の CPU の上限を読まない): held = この worker の持つ区画・asked = 呼び手の絞り(recreate の job の旧い process が動いて
+   いる間の方策の値・None = 絞らない)。準備の区画も task の区画も持たない worker は asked のまま(None = 道具の既定 — cgroup の CPU の
+   上限と天井)。持つ worker は、準備の区画(無ければ task の区画)の cpuMillis を core へ切り上げた数(1 以上・天井 BAKE-JOBS-CEILING
+   まで — cpuMillis 0 の区画は 1 = 並べない)で、asked が在ればその小さい方。道具はこの数を、さらに自分の居る層の memory の空きで絞る
+   (bake_plan の bake-jobs-of)。"
+  (match (held-cpu-millis held PREPARE-USES)
+    None asked
+    millis (min (max 1 (min BAKE-JOBS-CEILING (// (+ millis 999) 1000)))
+                (if (is asked None) BAKE-JOBS-CEILING asked))))
+
+(defn #^ (| PrepareCode PrepareEnv) prepare-action [#^ JobSpec spec #^ WorldView world #^ (| int None) compile-jobs]
+  "spec の置き場を用意する action: 実行環境の job は env の root(PrepareEnv)、それ以外は commit の木(PrepareCode)。bytecode を焼く道具の
+   並べる数は、この worker の準備の CPU の宣言から決める(compartment-jobs — 区画を持たない worker は compile-jobs のまま)。
+   compile-jobs = 呼び手の絞り(None = 絞らない — 旧い process が動いている間の準備だけ replace-step が方策の値を渡す・2026-10-08)。"
   (if spec.runtime-env
-      (PrepareEnv (code-key spec) spec.runtime-env compile-jobs)
-      (PrepareCode (code-key spec) compile-jobs)))
+      (PrepareEnv (code-key spec) spec.runtime-env (compartment-jobs world.compartments compile-jobs))
+      (PrepareCode (code-key spec) (compartment-jobs world.compartments compile-jobs))))
 
 (defn #^ tuple prepare-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy #^ (| int None) compile-jobs]
   "spec のコードの木を用意する action(用意できていれば空)。準備に失敗した版は、間を置いてから作り直す。compile-jobs は prepare-action と同じ。"
   (setv code (code-of world (code-key spec)))
   (cond
     ;; 先の組みの断り(REFUSED)は準備の失敗ではない — job の準備は断られないので、まだ準備していない root と同じく間を置かずに撃つ。
-    (or (is code None) (= code.state CodeState.REFUSED)) #((prepare-action spec compile-jobs))
+    (or (is code None) (= code.state CodeState.REFUSED)) #((prepare-action spec world compile-jobs))
     (and (= code.state CodeState.FAILED)
-         (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec compile-jobs))
+         (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec world compile-jobs))
     True #()))
 
 (defn #^ (| ProgramGap None) program-gap-of [#^ WorldView world #^ JobSpec spec]  ; cannot be a defk: 純粋な判断の program-waits(Program の外の関数)が呼ぶ
@@ -352,7 +372,8 @@
     ;; 機体の memory の逼迫で見送り続けて上限を越えた task は、この worker では起こさない(逼迫が解けても — 状態の行の env-failed を読んだ
     ;; coordinator が別の worker へ置き直すので、ここで起こすと 2 か所で走る)。宣言から外れるまで待つ。
     (memory-tight-lapsed now spec record policy) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT-TIMEOUT)
-    ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)で焼く。
+    ;; 動いている process が無いので、焼く道具の並べる数は絞らない(この worker の準備の CPU の宣言の数 — 区画を持たない worker は
+    ;; 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)。
     (is tree None) (StartStep :actions (prepare-actions now spec world policy None) :hold (! (prepare-hold code record)))
     True (! (ready-tree-step now spec tree world record policy warm-keys))))
 
@@ -405,7 +426,7 @@
             (program-waits world want) #()
             (retired-room-full want process.name world policy) #()
             True #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
-      ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
+      ;; 焼く道具の並べる数は絞らない(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
       (prepare-actions now want world policy None)))
 
 (defn #^ tuple retired-actions [#^ int now #^ ProcessView process #^ str origin #^ tuple desired #^ WorldView world
@@ -551,8 +572,9 @@
                         (or (is code None)
                             (and (in code.state #(CodeState.FAILED CodeState.REFUSED))
                                  (>= (- now (or code.failed-ms 0)) policy.code-retry-ms))))
-               ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
-               (PrepareEnv w.key w.runtime-env None :warm True))))
+               ;; 焼く道具の並べる数は絞らない(絞るのは recreate の job の replace-step だけ — 2026-10-08)。この worker の準備の CPU の
+               ;; 宣言の数で焼く(compartment-jobs)。
+               (PrepareEnv w.key w.runtime-env (compartment-jobs world.compartments None) :warm True))))
 
 (defk warm-stop-step [now view policy]
   {:pre [(: now int) (: view WarmChildView) (: policy WorkerPolicy)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
