@@ -585,21 +585,33 @@
       order))
 
 
-;; 前の世代が動いている間に名乗った新しい世代(2026-11-11): 重なりの判じを worker の名乗り(overlapsElder — 起動の script が前の世代の
-;; dir の錠を持たれていると見た)だけに頼ると、置き場の dir を移した新しい世代(錠の dir が前の世代と別)は重なりを名乗らず、coordinator は
-;; 前の世代が終わったと読んで、前の世代の担い手を外し、常駐の job を前の世代から止めさせた。coordinator が自分で見る証拠でも重なりと
-;; 判じる: 前の世代が lease の内に報告していて、その世代と新しい世代が別の Pod(報告の Pod の IP が両方在って違う)。同じ Pod の
-;; 起こし直し(container の再起動 — Pod の IP は同じ)は前の世代の process が終わった印のまま。Pod の IP を名乗らない worker は
-;; 名乗り(overlapsElder)だけで判じる(今どおり)。
-(defk overlapping-elder [order declared previous previous-report pod-ip now lease-ms]
-  {:pre [(: order GenerationOrder) (: declared bool) (: previous (| WorkerInfo None)) (: previous-report (| WorkerReport None))
-         (: pod-ip str) (: now int) (: lease-ms int)]
-   :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
-  "新しい世代(order が NEWER)の名乗りが、前の世代 previous(最新の報告 previous-report)がまだ動いている間の物かを判じるため。
-   declared = heartbeat の overlapsElder・pod-ip = 新しい世代の Pod の IP。前の世代の世代か報告を知らなければ偽。"
-  (and (= order GenerationOrder.NEWER) (is-not previous None) (is-not previous.boot None) (is-not previous-report None)
-       (or declared
-           (and (alive now previous lease-ms) (bool pod-ip) (bool previous-report.pod-ip) (!= pod-ip previous-report.pod-ip)))))
+;; 名乗りの無い重なり(2026-11-11): 重なりの判じを新しい世代の名乗り(overlapsElder — 起動の script が前の世代の dir の錠を持たれて
+;; いると見た)だけに頼ると、置き場の dir を移した新しい世代(錠の dir が前の世代と別)は重なりを名乗らず、coordinator は前の世代が
+;; 終わったと読んで、常駐の job を前の世代から止めさせた。新しい世代の名乗りの時点では、前の世代が突然止まった(その作り直し — #3770
+;; の前提どおり終わりの印)か、まだ動いているかを coordinator は見分けられない。見分ける証拠は前の世代の heartbeat そのもの: 新しい
+;; 世代が名乗った後に前の世代の heartbeat が届けば、前の世代はまだ動いている — その世代の組を重なりの組にし(overlapped)、常駐の job を
+;; 新しい世代が受け取れると報告するまで前の世代に残す(AL-D2f と同じ受け渡し)。止まり始めを名乗る heartbeat(#2819)は重なりにしない
+;; (止まる世代 — 今どおり job を止めて渡す)。届かなければ今どおり(突然止まった worker の作り直しを待たせない)。
+(defk heard-elder-overlap [body]
+  {:pre [(: body HeartbeatBody)] :post [(: % (| bool None))] :tags {:context "coordinator" :role "judgment"}}
+  "退いた世代の heartbeat body を受けた後の、その世代の組の overlapped の値を決めるため(superseded-runs-after の overlapped —
+   None = 前の組の印を引き継ぐ)。止まり始めを名乗らない heartbeat は、前の世代がまだ動いている証拠なので真。"
+  (if body.stopping None True))
+
+
+;; 名乗りから前の世代の次の heartbeat までの間(heartbeat の間隔 — 数秒)の置き先(2026-11-11): 新しい世代が job の条件を満たさないと、
+;; 置き先の判断がその間に job を名から外し、届いた前の世代の heartbeat への返事から job が消える(前の世代は止める)。名乗りの時、
+;; lease の内に報告していた前の世代の最新の報告を退いた世代の報告(ClusterObservations.retired-statuses)に置き、その報告の刻から
+;; lease の窓の内は、報告が動かしている job の置き先を保つ(held-placements)。前の世代が黙れば窓で外れる。
+(defn #^ frozenset recently-carried [#^ ClusterState state #^ str name #^ (| str None) boot #^ int now #^ int lease-ms]
+  ;; cannot be a defk: held-placements の判断の中で job ごとに引く純粋な読み(内包表記)
+  "純粋: 名 name の今の世代 boot と違う退いた世代の報告(retired-statuses)のうち、刻が lease-ms の内の報告で process がまだ在る
+   (HOLDING-PHASES)job の名。"
+  (frozenset (gfor #(key report) (.items state.observations.retired-statuses)
+                   :if (and (.startswith key (+ name "/")) (!= key (elder-key name (or boot ""))) (< (- now report.at) lease-ms))
+                   row report.jobs
+                   :if (in row.phase HOLDING-PHASES)
+                   (or row.retired-from row.name))))
 
 
 (defn #^ tuple retired-with [#^ tuple retired #^ str boot]
@@ -1001,8 +1013,10 @@
       ;; 同じ名の前の世代がまだ動かしている job(elder-held — 重なりの受け渡しの間)は、今の世代(新しい世代)が条件を満たさなくても
       ;; 置き先を保つ(2026-11-11 — 新しい世代は準備の上限で落ちて能力が足りず、置き先が外れて前の世代の job が止められた)。
       ;; 置き先が名から動くのは、新しい世代が受け取る(elder-runs を報告して前の世代が渡す)か、前の世代が黙って elder-held から抜けた後。
+      ;; 名乗りから前の世代の次の heartbeat までの間は、前の世代の最新の報告(recently-carried — lease の窓の内)で保つ。
       (val carried (and (is-not worker.boot None)
-                        (in job.spec.name (elder-held state current.worker worker.boot now timing.reassign-after-ms timing.lease-ms))))
+                        (or (in job.spec.name (elder-held state current.worker worker.boot now timing.reassign-after-ms))
+                            (in job.spec.name (recently-carried state current.worker worker.boot now timing.lease-ms)))))
       (val fit (or (eligible state job worker) carried))
       (val leaving (and (in current.worker draining) (not job.spec.handoff)))
       (val awake (alive now worker timing.reassign-after-ms))
@@ -2692,7 +2706,9 @@
                                                                                                       :jobs (! (rows-with-known-exits current-report.jobs known)))))))))
               name boot statuses now
               ;; 退いた世代の報告も今の世代の報告と同じ形で持つ(受け渡しの間、job を今動かしている process の行 — elder-statuses-after)。
-              (! (worker-report statuses now body.endpoint known body.pod-ip)))))
+              (! (worker-report statuses now body.endpoint known body.pod-ip))
+              ;; 新しい世代が名乗った後に届いた退いた世代の heartbeat は、その世代がまだ動いている証拠(heard-elder-overlap — 2026-11-11)。
+              :overlapped (! (heard-elder-overlap body)))))
   (setv envs (or body.envs (EnvsReport))
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
         node body.node
@@ -2734,14 +2750,18 @@
         ;; job の行の最後に終わったと知れた刻は、known-exits-after が前の知れた刻と世代の比べから数えた known(worker-report — #3672)。
         report (! (worker-report statuses now body.endpoint known body.pod-ip))
         ;; 新しい世代の名乗りで、前の世代の process が持っていた名前付きの lease を外す(#3770 — 前の世代の最新の報告は、この
-        ;; heartbeat で置き換える前の adopted.observations.statuses の行)。前の世代がまだ走っている間に起きた世代(overlapping-elder —
-        ;; 名乗りの overlaps-elder か、lease の内の前の世代と別の Pod・RollingUpdate・AL-D2e)は外さない: 前の世代の process は走り続け、
-        ;; 延長を通し、終わる時に返すか期限で戻す。前の世代が実は止まっていれば、黙った窓の後に sweep-stopped-generations が外す(その
-        ;; 材料に、前の世代の最新の報告を退いた世代の報告として置く — 刻はその世代から最後に聞いた刻のまま)。
+        ;; heartbeat で置き換える前の adopted.observations.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
+        ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。前の世代が実は止まっていれば、
+        ;; 黙った窓の後に sweep-stopped-generations が外す(その材料に、前の世代の最新の報告を退いた世代の報告として置く — 刻はその世代から
+        ;; 最後に聞いた刻のまま)。重なりを名乗らない新しい世代でも、前の世代が lease の内に報告していれば、その報告を置く(名乗りから前の
+        ;; 世代の次の heartbeat までの置き先の材料 — recently-carried)。
         ;; 黙った今の世代から古い世代へ戻す時(REVIVED)は、黙った世代の process の担い手を外す(黙った世代を止まったと判じる —
         ;; sweep-stopped-generations と同じ窓を越えている)。
         previous-report (.row adopted.observations.statuses name)
-        elder (! (overlapping-elder order body.overlaps-elder previous previous-report body.pod-ip now lease-ms))
+        elder (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
+                   (is-not previous-report None))
+        recent (and (= order GenerationOrder.NEWER) (is-not previous None) (is-not previous.boot None) (is-not previous-report None)
+                    (alive now previous lease-ms))
         revived (= order GenerationOrder.REVIVED)
         freed (if (or (and (= order GenerationOrder.NEWER) (not elder)) revived)
                   (! (board-without-generation-holders adopted.board previous-report))
@@ -2750,7 +2770,7 @@
         ;; 今の世代に戻した世代(REVIVED)は、もう退いた世代でない — その世代の組(SupersededRun)・組の job の行・止まりの判じの材料を外す。
         own-key (elder-key name (or boot ""))
         retired-statuses (cond
-                           elder (.with-writes adopted.observations.retired-statuses
+                           (or elder recent) (.with-writes adopted.observations.retired-statuses
                                                #((TableWrite (elder-key name previous.boot) previous-report)))
                            (and revived (is-not (.row adopted.observations.retired-statuses own-key) None))
                              (.with-writes adopted.observations.retired-statuses #((TableWrite own-key None)))
@@ -2771,15 +2791,11 @@
                      :board board-state.board :board-tally board-state.board-tally)
         ;; 前の世代がまだ走っている間に起きた世代の名乗り(AL-D2f): 前の世代の最新の報告の running の常駐の job を、前の世代が動かして
         ;; いる組(SupersededRun)の種にする — 前の世代の次の heartbeat を待たずに、今の世代への最初の返事から印 elder-runs を付ける。
-        ;; 名乗らずに Pod の違いから推した重なり(overlapping-elder の 2 つ目)は仮の組: 組の最後の報告の刻を前の世代が最後に報告した刻に
-        ;; する(seen-ms < since-ms — tentative-run)。前の世代の heartbeat が新しく届けば確かな組になり、届かなければ lease の窓で外れる
-        ;; (死んだ前の世代を移し替えの期限まで待たない — 突然止まった worker の作り直し・#3770)。
         seeded (if elder
                    (elder-runs-written registered name previous.boot previous-report.jobs now
                                        ;; 前の世代の最新の報告を、組の job の行として持ち続ける(刻はこの heartbeat の後の知れた刻)。
                                        (replace previous-report :jobs (! (rows-with-known-exits previous-report.jobs known)))
-                                       :overlapped True
-                                       :seen (if body.overlaps-elder now previous-report.at))
+                                       :overlapped True)
                    registered))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
@@ -2789,7 +2805,7 @@
 
 
 (defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
-                                                  #^ WorkerReport report]
+                                                  #^ WorkerReport report #^ (| bool None) [overlapped None]]
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
    lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。
    その世代が走らせている入れ替えの job の組(SupersededRun — 旧い Pod の preStop が待つ・AL-D2)と、組の job の行(report — この
@@ -2799,16 +2815,16 @@
                              :observations (replace state.observations
                                                     :retired-statuses (.with-writes state.observations.retired-statuses
                                                                                     #((TableWrite (elder-key name boot) report))))))
-  (elder-runs-written heard name boot statuses now report))
+  (elder-runs-written heard name boot statuses now report :overlapped overlapped))
 
 
 (defn #^ ClusterState elder-runs-written [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
-                                          #^ WorkerReport report #^ (| bool None) [overlapped None] #^ (| int None) [seen None]]
+                                          #^ WorkerReport report #^ (| bool None) [overlapped None]]
   ;; cannot be a defk: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
   "純粋: 退いた世代 boot の報告(statuses と、それを worker-report の形にした report)の後の、退いた世代の組の列(superseded-runs-after)と
    その組の job の行(ClusterObservations.elder-statuses — elder-statuses-after)を一緒に書くため。組と行を同じ歩で書くので、行は組が
-   job を持つ間だけ残る。seen = 組の最後の報告の刻(None = now — その世代の heartbeat を今受けた)。"
-  (setv runs (superseded-runs-after state name boot statuses now :overlapped overlapped :seen seen))
+   job を持つ間だけ残る。"
+  (setv runs (superseded-runs-after state name boot statuses now :overlapped overlapped))
   (replace state :superseded-runs runs
                  :observations (replace state.observations
                                         :elder-statuses (elder-statuses-after state.observations.elder-statuses runs name boot report))))
@@ -2842,15 +2858,14 @@
 
 
 (defn #^ tuple superseded-runs-after [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
-                                      #^ (| bool None) [overlapped None] #^ (| int None) [seen None]]
+                                      #^ (| bool None) [overlapped None]]
   ;; cannot be a defk: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
   "純粋: 退いた世代 boot の報告 statuses の後の、退いた世代の走らせている常駐の job の組の列(AL-D2)。この世代の行を、報告の
    running の job の名で置き直す(空なら外す)。数える job は handoff の job、組が overlapped(新しい世代が重なりを名乗った — 名乗りの
    時に overlapped = 真で種を置く・それ以外の報告は前の組の印を引き継ぐ)なら recreate の job も(task は除く)— recreate の job は
    新しい世代が起こせると報告するまで退いた世代に残す(AL-D2f — heartbeat-reply の印 elder-runs と superseded-reply)。recreate の job は
    止めの途中(stopping・stop-unconfirmed — 前の世代の process がまだ刈られていない)の行も数える(holding-names)。名 name の行の
-   うち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。
-   seen = 組の最後の報告の刻(None = now。推した重なりの種は前の世代が最後に報告した刻 — tentative-run)。"
+   うち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。"
   (setv info (.row state.workers name)
         kept (if (is info None) #() info.retired)
         prior (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
@@ -2867,7 +2882,7 @@
         others (tuple (gfor r state.superseded-runs
                             :if (not (and (= r.worker name) (or (= r.boot boot) (not-in r.boot kept))))
                             r)))
-  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms (if (is seen None) now seen) :overlapped overlap :leaving leaving
+  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now :overlapped overlap :leaving leaving
                                                            :since-ms since))
                            #()))
                  :key (fn [r] #(r.worker r.boot)))))
@@ -3020,7 +3035,7 @@
   ;; 黙った前の世代を数える窓は移し替えの期限(reassign-after-ms — 条 C4 timing-outlasts-the-self-stop): 黙った世代は途絶の柵で job を
   ;; 自分で止め始めるが、刈り終えるまでは process が port を持つ。生死の窓(lease-ms)で外すと、両方の世代が coordinator に届かない
   ;; 途絶の後に、新しい世代が前の世代の刈りより先に起こす(11-07 06:42 JST の node-c)。
-  (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.reassign-after-ms timing.lease-ms) (frozenset)))
+  (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.reassign-after-ms) (frozenset)))
   ;; 前の世代の job をまだ受け取れない間は、worker が Pod の ready の file を書かない(AL-D2k — handover-pending)。
   (val pending (and (is-not boot None) (> now 0) (handover-pending state name boot now timing ready-instances)))
   ;; 退きの保ち(readiness_model の RETIREMENT-HOLD): 入れ替えの job ごとに、期限の内の保ちの持ち手の世代の名を
@@ -3033,9 +3048,13 @@
   ;; unfit = 前の世代がまだ動かしている job のうち、この世代が条件を満たさない物(2026-11-11): 置き先は前の世代のために名に保つ
   ;; (held-placements)が、この世代へは載せない — この世代は準備も起動もせず、前の世代が動かし続ける(superseded-reply)。受け渡しの
   ;; 止まり(handover-blockers)には残るので、この世代は Pod の ready の file を書かず、前の世代の Pod は消されない。
+  ;; 名乗りから前の世代の次の heartbeat までの間に置き先を保った job(recently-carried)も同じ。
   (val info (.row state.workers name))
-  (val unfit (if (and elder (is-not info None))
-                 (frozenset (gfor job state.jobs :if (and (in job.spec.name elder) (not (eligible state job info))) job.spec.name))
+  (val carried (if (and (is-not boot None) (> now 0))
+                   (| elder (recently-carried state name boot now timing.lease-ms))
+                   elder))
+  (val unfit (if (and carried (is-not info None))
+                 (frozenset (gfor job state.jobs :if (and (in job.spec.name carried) (not (eligible state job info))) job.spec.name))
                  (frozenset)))
   (var held-specs #())
   (for [spec (gfor s (jobs-for state name ready-instances) :if (not-in s.name unfit) s)]
@@ -3130,25 +3149,15 @@
   (min (gfor r (handover-runs state name boot now timing) :if (is-not r.since-ms None) r.since-ms) :default None))
 
 
-(defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms #^ int lease-ms]
+(defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]
   ;; cannot be a defk: coordinator の純粋な判断(heartbeat-reply の内包表記の前の値)が呼ぶ
   "純粋: 名 name の worker の、送り手の世代 boot と違う前の世代がまだ動かしている常駐の job の名(AL-D2f — その世代の最後の報告が
    window-ms 以内の、新しい世代が重なりを名乗った(overlapped)SupersededRun の行だけ。window-ms を越えて黙った世代の行は数えない —
-   前の世代が止まれば今の世代が起こす)。仮の組(tentative-run — 名乗りの無い重なりを推した種で、前の世代の heartbeat がまだ新しく
-   届いていない)は、生死の窓 lease-ms を越えて黙ったら数えない(突然止まった前の世代を移し替えの期限まで待たない)。"
+   前の世代が止まれば今の世代が起こす)。"
   (frozenset (gfor r state.superseded-runs
-                   :if (and r.overlapped (= r.worker name) (!= r.boot boot)
-                            (< (- now r.seen-ms) (if (tentative-run r) (min window-ms lease-ms) window-ms)))
+                   :if (and r.overlapped (= r.worker name) (!= r.boot boot) (< (- now r.seen-ms) window-ms))
                    job r.jobs
                    job)))
-
-
-(deff tentative-run [#^ SupersededRun run]  ; cannot be a defk: elder-held(defn)の内包表記の中から呼ぶ純粋な比べ
-  {:pre [(: run SupersededRun)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
-  "退いた世代の組 run が、名乗りの無い重なりを推した仮の種のままか(組を書いた刻 since-ms より後にその世代の報告が届いていない —
-   種は最後の報告の刻を前の世代が最後に報告した刻にする・register-heartbeat)を判じるため。前の世代の heartbeat が届けば seen-ms が
-   since-ms 以上になり、確かな重なりの組になる。"
-  (and (is-not run.since-ms None) (< run.seen-ms run.since-ms)))
 
 
 (defn #^ frozenset running-names [#^ tuple statuses]
