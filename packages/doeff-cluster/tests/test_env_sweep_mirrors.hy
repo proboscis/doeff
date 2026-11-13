@@ -41,12 +41,12 @@
 (val LOCKED-URL "https://example.com/owner/locked.git")        ; どの宣言も指さず古いが、錠を取られている
 (val HALF-URL "https://example.com/owner/half.git")            ; clone の書きかけ(.git.tmp)が残った
 (val ROOT-NAME "0123456789abcdef01234567")
+(val USED-URL "https://example.com/owner/used.git")          ; 在る mirror を EnsureMirror で使う
+;; url の mirror の名の頭(EnsureMirror と同じ式 — sha256 の頭 16 桁)。
+(val NAMES (dfor url #(POINTED-URL REQUESTED-URL KEYED-LISTED DROPPED-URL FRESH-URL LOCKED-URL HALF-URL USED-URL)
+                 url (cut (.hexdigest (hashlib.sha256 (.encode url "utf-8"))) 0 16)))
 
 
-(defk name-of [url]
-  {:pre [(: url str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "url の mirror の名の頭を、EnsureMirror と同じ式(sha256 の頭 16 桁)で求めるため。"
-  (cut (.hexdigest (hashlib.sha256 (.encode url "utf-8"))) 0 16))
 
 
 (defk placed-mirror [place name at]
@@ -79,18 +79,18 @@
   ;; 鍵の表(KEYED-URL の repo を別の綴りで持つ — EnsureMirror はその綴りで mirror を名付ける)。
   (val keys (/ tmp-path "repo-keys.json"))
   (.write-text keys (json.dumps {KEYED-LISTED "/keys/keyed"}))
-  (val pointed (placed-mirror mirrors (+ (name-of POINTED-URL) ".git") old))
-  (val requested (placed-mirror mirrors (+ (name-of REQUESTED-URL) ".git") old))
-  (val keyed (placed-mirror mirrors (+ (name-of KEYED-LISTED) ".git") old))
-  (val dropped (placed-mirror mirrors (+ (name-of DROPPED-URL) ".git") old))
-  (val fresh (placed-mirror mirrors (+ (name-of FRESH-URL) ".git") (- now-s 60)))
-  (val locked (placed-mirror mirrors (+ (name-of LOCKED-URL) ".git") old))
-  (val half (placed-mirror mirrors (+ (name-of HALF-URL) ".git.tmp") old))
-  (val foreign (placed-mirror mirrors "hand-made.git" old))
+  (<- pointed Path (placed-mirror mirrors (+ (get NAMES POINTED-URL) ".git") old))
+  (<- requested Path (placed-mirror mirrors (+ (get NAMES REQUESTED-URL) ".git") old))
+  (<- keyed Path (placed-mirror mirrors (+ (get NAMES KEYED-LISTED) ".git") old))
+  (<- dropped Path (placed-mirror mirrors (+ (get NAMES DROPPED-URL) ".git") old))
+  (<- fresh Path (placed-mirror mirrors (+ (get NAMES FRESH-URL) ".git") (- now-s 60)))
+  (<- locked Path (placed-mirror mirrors (+ (get NAMES LOCKED-URL) ".git") old))
+  (<- half Path (placed-mirror mirrors (+ (get NAMES HALF-URL) ".git.tmp") old))
+  (<- foreign Path (placed-mirror mirrors "hand-made.git" old))
   (val settings (EnvSettings :state (str state-dir) :uv-cache (str (/ tmp-path "uv-cache")) :hy-command "hy" :platform "test"
                              :code-prepare PREPARE-TOOL :roots-cap-bytes 0 :repo-keys (str keys)))
   ;; 錠を取られている mirror: 検の殻が EnsureMirror と同じ錠の file を持つ間に掃除する。
-  (val fd (os.open (str (/ locks (+ "mirror-" (name-of LOCKED-URL)))) (| os.O-RDWR os.O-CREAT) 0o644))
+  (val fd (os.open (str (/ locks (+ "mirror-" (get NAMES LOCKED-URL)))) (| os.O-RDWR os.O-CREAT) 0o644))
   (fcntl.flock fd fcntl.LOCK-EX)
   (try
     (<- removed tuple (with-handlers [slog-handler os-file-handler inline-compute-handler] (sweep-leftovers settings (int (* now-s 1000)))))
@@ -110,7 +110,7 @@
   ;; 鍵の表を読めない時は、宣言の url から mirror の名(鍵の表の綴りの名)を決められないので、どの mirror も消さない。
   (val state-dir (/ tmp-path "state"))
   (val now-s (time.time))
-  (val dropped (placed-mirror (/ state-dir "mirrors") (+ (name-of DROPPED-URL) ".git") (- now-s MIRROR-UNUSED-SECONDS 3600)))
+  (<- dropped Path (placed-mirror (/ state-dir "mirrors") (+ (get NAMES DROPPED-URL) ".git") (- now-s MIRROR-UNUSED-SECONDS 3600)))
   (val settings (EnvSettings :state (str state-dir) :uv-cache (str (/ tmp-path "uv-cache")) :hy-command "hy" :platform "test"
                              :code-prepare PREPARE-TOOL :roots-cap-bytes 0 :repo-keys (str (/ tmp-path "missing.json"))))
   (<- removed tuple (with-handlers [slog-handler os-file-handler inline-compute-handler] (sweep-leftovers settings (int (* now-s 1000)))))
@@ -133,14 +133,13 @@
   ;; 使った印: 在る mirror を EnsureMirror で使う(clone も fetch もしない)だけでも、url の錠の中で印の file を置き換え、mirror の dir の時刻が
   ;; 進む — 進まないと、使っている mirror を掃除が 7 日で消す。
   (val state-dir (/ tmp-path "state"))
-  (val url "https://example.com/owner/used.git")
   (val old (- (time.time) MIRROR-UNUSED-SECONDS 3600))
-  (val mirror (placed-mirror (/ state-dir "mirrors") (+ (name-of url) ".git") old))
+  (<- mirror Path (placed-mirror (/ state-dir "mirrors") (+ (get NAMES USED-URL) ".git") old))
   (val settings {"runtime-env.state" (str state-dir) "runtime-env.shared" (str state-dir) "runtime-env.uv-cache" (str (/ tmp-path "uv-cache"))
                  "runtime-env.repo-keys" {} "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" ""
                  "runtime-env.notes" "/dev/null"})
   (<- ready MirrorReady (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
-                                       (EnsureMirror url)))
+                                       (EnsureMirror USED-URL)))
   (assert (= ready.path (str mirror)) ready)
   (assert (.exists (/ mirror MIRROR-USED)) "使った印の file が無い")
   (assert (> (. (.stat mirror) st-mtime) (+ old 3600)) "在る mirror を使っても dir の時刻が進まない"))
